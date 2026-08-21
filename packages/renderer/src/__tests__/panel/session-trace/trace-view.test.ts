@@ -27,10 +27,16 @@ import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import type { ServerMessageMap } from '@xyz-agent/shared'
 import type { DerivedStatus } from '@/types'
 
-// ── mock '@/api' 门面（store 只消费 session.getTraceEntries）──
-const apiMock = vi.hoisted(() => ({ getTraceEntries: vi.fn() }))
+// ── mock '@/api' 门面（store 只消费 session.getTraceEntries / fetchCurrentSystemPrompt）──
+const apiMock = vi.hoisted(() => ({
+  getTraceEntries: vi.fn(),
+  fetchCurrentSystemPrompt: vi.fn(),
+}))
 vi.mock('@/api', () => ({
-  session: { getTraceEntries: apiMock.getTraceEntries },
+  session: {
+    getTraceEntries: apiMock.getTraceEntries,
+    fetchCurrentSystemPrompt: apiMock.fetchCurrentSystemPrompt,
+  },
 }))
 
 // ── mock useTraceJump（TraceView 溯源链接只验证事件编排链路，真实编排归 useTraceJump.test.ts）──
@@ -342,5 +348,93 @@ describe('溯源跳转（§3.1 样例 5：SESSION 行 parentSession 链接 + rev
     } finally {
       scrollSpy.mockRestore()
     }
+  })
+})
+
+describe('C2 现取当前 system prompt（§3.1 失败路径：无留痕降级，RPC session.fetchCurrentSystemPrompt）', () => {
+  /** 无 SYSTEM 留痕快照（留痕包未装/被禁/旧 session → 状态行降级出现现取按钮）。 */
+  function buildNoSystemSnapshot(): ServerMessageMap['session.traceEntries'] {
+    const snap = buildFullKindsSnapshot()
+    return {
+      ...snap,
+      entries: snap.entries.filter((e) => (e as { customType?: unknown }).customType !== 'xyz:system-prompt'),
+    }
+  }
+
+  /** fetchedAt 用无时区 ISO（本地时刻语义），断言时间字符串不受 vitest 运行时区影响。 */
+  const FETCHED_AT = '2026-08-21T10:00:00'
+
+  it('点击现取 → busy 态（置灰 + spin）且重入不发第二发；成功后展示摘要 +「当前值，非历史」标注', async () => {
+    apiMock.getTraceEntries.mockResolvedValue(buildNoSystemSnapshot())
+    let resolveFetch!: (v: ServerMessageMap['session.currentSystemPrompt']) => void
+    apiMock.fetchCurrentSystemPrompt.mockImplementation(
+      () => new Promise((res) => { resolveFetch = res }),
+    )
+    const view = await mountTraceView()
+    const btn = view.find('[data-testid="trace-fetch-current"]')
+    // idle：可点 + 标注可见
+    expect(btn.attributes('disabled')).toBeUndefined()
+    expect(view.find('[data-testid="trace-fetch-current-note"]').text()).toBe('当前值，非历史')
+
+    await btn.trigger('click')
+    expect(apiMock.fetchCurrentSystemPrompt).toHaveBeenCalledWith(SID)
+    // busy：按钮置灰 + icon 转 spin
+    const busyBtn = view.find('[data-testid="trace-fetch-current"]')
+    expect(busyBtn.attributes('disabled')).toBeDefined()
+    expect(busyBtn.find('svg').classes().join(' ')).toContain('animate-spin')
+    // 重入保护：busy 期间再点不发第二个 RPC
+    await busyBtn.trigger('click')
+    expect(apiMock.fetchCurrentSystemPrompt).toHaveBeenCalledTimes(1)
+
+    resolveFetch({ sessionId: SID, fullText: 'prompt body', charCount: 12702, fetchedAt: FETCHED_AT })
+    await vi.waitFor(() => expect(view.find('[data-testid="trace-fetch-current-result"]').exists()).toBe(true))
+    const result = view.find('[data-testid="trace-fetch-current-result"]')
+    expect(result.text()).toContain('12702')
+    expect(result.text()).toContain('10:00:00')
+    // 标注仍在（成功态不掩盖「当前值，非历史」）+ 按钮恢复可点（可重新现取）
+    expect(view.find('[data-testid="trace-fetch-current-note"]').text()).toBe('当前值，非历史')
+    expect(view.find('[data-testid="trace-fetch-current-error"]').exists()).toBe(false)
+    expect(view.find('[data-testid="trace-fetch-current"]').attributes('disabled')).toBeUndefined()
+    view.unmount()
+  })
+
+  it('session 不活跃（code=session_not_active）→ 专属错误文案替换标注，按钮恢复可点', async () => {
+    apiMock.getTraceEntries.mockResolvedValue(buildNoSystemSnapshot())
+    apiMock.fetchCurrentSystemPrompt.mockRejectedValue(
+      Object.assign(new Error('Session not active'), { code: 'session_not_active' }),
+    )
+    const view = await mountTraceView()
+    await view.find('[data-testid="trace-fetch-current"]').trigger('click')
+    await vi.waitFor(() => expect(view.find('[data-testid="trace-fetch-current-error"]').exists()).toBe(true))
+    expect(view.find('[data-testid="trace-fetch-current-error"]').text()).toContain('session 不活跃')
+    // 错误态：无结果摘要 + 无「当前值，非历史」标注（错误文案优先）+ 按钮可重试
+    expect(view.find('[data-testid="trace-fetch-current-result"]').exists()).toBe(false)
+    expect(view.find('[data-testid="trace-fetch-current-note"]').exists()).toBe(false)
+    expect(view.find('[data-testid="trace-fetch-current"]').attributes('disabled')).toBeUndefined()
+    view.unmount()
+  })
+
+  it('现取超时（code=fetch_current_prompt_timeout）→ 超时文案；未知 code → 通用文案', async () => {
+    apiMock.getTraceEntries.mockResolvedValue(buildNoSystemSnapshot())
+    apiMock.fetchCurrentSystemPrompt.mockRejectedValueOnce(
+      Object.assign(new Error('Timed out'), { code: 'fetch_current_prompt_timeout' }),
+    )
+    const view = await mountTraceView()
+    await view.find('[data-testid="trace-fetch-current"]').trigger('click')
+    await vi.waitFor(() => expect(view.find('[data-testid="trace-fetch-current-error"]').text()).toContain('超时'))
+
+    // 未知 code（如传输层 disconnected 之外的意外错误）→ 通用文案兜底
+    apiMock.fetchCurrentSystemPrompt.mockRejectedValueOnce(new Error('surprise'))
+    await view.find('[data-testid="trace-fetch-current"]').trigger('click')
+    await vi.waitFor(() => expect(view.find('[data-testid="trace-fetch-current-error"]').text()).toContain('现取失败'))
+    view.unmount()
+  })
+
+  it('对照：有 SYSTEM 留痕（promptVersion 非空）→ 无现取按钮/标注（仅降级路径可见）', async () => {
+    const view = await mountTraceView() // 默认 fixture 含 sp1 v2
+    expect(view.find('[data-testid="trace-fetch-current"]').exists()).toBe(false)
+    expect(view.find('[data-testid="trace-fetch-current-note"]').exists()).toBe(false)
+    expect(apiMock.fetchCurrentSystemPrompt).not.toHaveBeenCalled()
+    view.unmount()
   })
 })

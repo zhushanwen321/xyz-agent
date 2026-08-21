@@ -63,9 +63,13 @@
         :context-only="partition.contextOnly"
         :active-groups="partition.activeGroups"
         :search-text="partition.searchText"
+        :current-prompt="partition.currentPrompt"
+        :fetching="partition.currentPromptFetching"
+        :fetch-error-code="partition.currentPromptErrorCode"
         @toggle-group="onToggleGroup"
         @toggle-context="onToggleContext"
         @update:search-text="(v) => setFilter(props.sessionId, { searchText: v })"
+        @fetch-current="fetchCurrentPrompt(props.sessionId)"
       />
       <div
         ref="scrollEl"
@@ -138,6 +142,7 @@ import type { TraceKindGroup, TraceRow } from '@xyz-agent/core/domain/session-tr
 import { useTraceRows } from '@/composables/features/trace/useTraceRows'
 import {
   ensureTraceLoaded,
+  fetchCurrentPrompt,
   retryTraceLoad,
   selectTraceEntry,
   setTraceFilter,

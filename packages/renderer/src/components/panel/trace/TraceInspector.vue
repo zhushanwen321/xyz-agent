@@ -30,7 +30,8 @@
     <p class="flex-shrink-0 px-2.5 pb-1.5 pt-1 text-[11px] text-neutral-faint">{{ t('panel.trace.inspectorSubtitle') }}</p>
     <!-- body：kind 分支详情 -->
     <div class="min-h-0 flex-1 overflow-y-auto px-2.5 pb-4" data-testid="trace-inspector-body">
-      <!-- 损坏行恢复指引（§3.1）：打开 JSONL 所在目录（通道待常驻扩展接线，先置灰收口文案） -->
+      <!-- 损坏行恢复指引（§3.1）：打开 JSONL 所在目录（Electron reveal-in-folder IPC →
+           shell.showItemInFolder；路径来自快照 filePath，未落盘/未知时置灰） -->
       <div
         v-if="row.kind === 'MALFORMED'"
         class="mb-2 flex flex-wrap items-center gap-2 rounded-sm border border-hairline bg-bg-input px-2.5 py-2"
@@ -39,8 +40,10 @@
         <Button
           variant="ghost"
           size="sm"
-          disabled
+          :disabled="revealPath === null"
           class="h-5 gap-1 px-1.5 text-[11px] text-neutral-dim"
+          data-testid="trace-malformed-reveal"
+          @click="onRevealFolder"
         >
           <FolderOpen class="size-3" />
           {{ t('panel.trace.malformedOpenDir') }}
@@ -99,6 +102,7 @@ import { useTraceRows } from '@/composables/features/trace/useTraceRows'
 import { clearTraceSelection, useSessionTrace } from '@/composables/features/trace/useSessionTrace'
 import { jumpToParentSession } from '@/composables/features/trace/useTraceJump'
 import { useToast } from '@/composables/useToast'
+import { revealInFolder } from '@/lib/ipc'
 import { KIND_BADGE_CLASS } from './trace-kind-style'
 
 const props = defineProps<{
@@ -264,6 +268,20 @@ async function onJumpParent(): Promise<void> {
   if (!result.ok) {
     toastError(t(result.reason === 'target_not_found' ? 'panel.trace.jumpTargetNotFound' : 'panel.trace.jumpLoadFailed'))
   }
+}
+
+/** reveal 数据源：分区快照透传的 session JSONL 绝对路径（未知 → 按钮置灰）。 */
+const revealPath = computed<string | null>(() => partition.value.filePath || null)
+
+/** 打开 JSONL 所在目录（§3.1 损坏行恢复指引）：Electron reveal-in-folder IPC →
+ *  shell.showItemInFolder。main 校验绝对路径；web/mock 无 IPC 时 no-op。 */
+function onRevealFolder(): void {
+  const p = revealPath.value
+  if (p === null) return
+  void revealInFolder(p).catch((e: unknown) => {
+    toastError(t('panel.trace.malformedRevealFailed'))
+    console.error('[trace] reveal-in-folder failed:', e)
+  })
 }
 
 /** JSON.stringify 缩进宽度（原始 entry 兜底展示）。 */

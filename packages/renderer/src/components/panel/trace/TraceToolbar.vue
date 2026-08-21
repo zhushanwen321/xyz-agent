@@ -25,19 +25,34 @@
         :title="stats.promptVersion === null ? t('panel.trace.systemNoTraceHint') : undefined"
       >{{ stats.promptVersion === null ? t('panel.trace.promptNoTrace') : t('panel.trace.promptVersion', { version: stats.promptVersion }) }}</span>
       <!-- SYSTEM 无留痕降级（§3.1）：现取按钮 + 「当前值，非历史」标注。现取通道在常驻
-           文件扩展（不随可禁留痕包），接线前按钮置灰（trace-i18n 只收口文案）。 -->
+           文件扩展（不随可禁留痕包）；RPC session.fetchCurrentSystemPrompt（仅活跃
+           session，错误 code 映射文案）。成功后摘要行内展示（全文由 runtime 广播的
+           xyz:current-system-prompt DATA 行承载，点行 inspector 可看）。 -->
       <template v-if="stats.promptVersion === null">
         <Button
           variant="ghost"
           size="sm"
-          disabled
+          :disabled="fetching"
           class="h-4 gap-0.5 px-1 text-[10px]"
           data-testid="trace-fetch-current"
+          @click="emit('fetch-current')"
         >
-          <RefreshCw class="size-2.5" />
+          <RefreshCw class="size-2.5" :class="fetching ? 'animate-spin' : ''" />
           {{ t('panel.trace.systemFetchCurrent') }}
         </Button>
-        <span class="text-[10px] text-neutral-faint" data-testid="trace-fetch-current-note">{{ t('panel.trace.systemCurrentNotHistory') }}</span>
+        <span
+          v-if="fetchErrorMessage !== null"
+          class="text-[10px] text-danger"
+          data-testid="trace-fetch-current-error"
+        >{{ fetchErrorMessage }}</span>
+        <template v-else>
+          <span
+            v-if="currentPrompt !== null"
+            class="text-[10px] text-neutral-dim"
+            data-testid="trace-fetch-current-result"
+          >{{ t('panel.trace.systemFetchedSummary', { count: currentPrompt.charCount, time: fetchedTime }) }}</span>
+          <span class="text-[10px] text-neutral-faint" data-testid="trace-fetch-current-note">{{ t('panel.trace.systemCurrentNotHistory') }}</span>
+        </template>
       </template>
     </div>
     <!-- 控制行：chips + 搜索 + context toggle -->
@@ -92,6 +107,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { TRACE_KIND_GROUPS } from '@xyz-agent/core/domain/session-trace'
 import type { TraceKindGroup, TraceRow } from '@xyz-agent/core/domain/session-trace'
+import type { TraceCurrentPromptSummary } from '@/composables/features/trace/useSessionTrace'
 
 type ChipKey = 'all' | TraceKindGroup
 
@@ -101,12 +117,18 @@ const props = defineProps<{
   contextOnly: boolean
   activeGroups: readonly TraceKindGroup[]
   searchText: string
+  /** 现取结果摘要（null = 未现取过）。 */
+  currentPrompt: TraceCurrentPromptSummary | null
+  fetching: boolean
+  /** 现取失败 code（null = 无错误）；文案映射见 FETCH_ERROR_KEY。 */
+  fetchErrorCode: string | null
 }>()
 
 const emit = defineEmits<{
   'toggle-group': [group: ChipKey]
   'toggle-context': []
   'update:searchText': [value: string]
+  'fetch-current': []
 }>()
 
 const { t } = useI18n()
@@ -129,6 +151,32 @@ const stats = computed(() => {
 const searchModel = computed({
   get: () => props.searchText,
   set: (value: string) => emit('update:searchText', value),
+})
+
+/** 现取失败 code → 文案键（runtime 错误 code 三类 + 传输层兜底；session 不活跃是最常见
+ *  的用户可见错误——非活跃 session 无 pi 进程，现取无源）。 */
+const FETCH_ERROR_KEY: Record<string, string> = {
+  session_not_active: 'panel.trace.fetchNotActive',
+  session_busy: 'panel.trace.fetchBusy',
+  fetch_current_prompt_timeout: 'panel.trace.fetchTimeout',
+  timeout: 'panel.trace.fetchTimeout',
+  disconnected: 'panel.trace.fetchFailed',
+}
+
+/** toTimeString() 前 8 字符 = 'HH:MM:SS'。 */
+const HH_MM_SS_END = 8
+
+const fetchErrorMessage = computed<string | null>(() =>
+  props.fetchErrorCode === null ? null : t(FETCH_ERROR_KEY[props.fetchErrorCode] ?? 'panel.trace.fetchFailed'),
+)
+
+/** fetchedAt（ISO）→ 本地 HH:MM:SS（状态行紧凑展示；解析失败原样展示）。 */
+const fetchedTime = computed<string>(() => {
+  const iso = props.currentPrompt?.fetchedAt ?? ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  // toTimeString() 形如 'HH:MM:SS GMT+0800...'：截前 8 字符即时刻
+  return d.toTimeString().slice(0, HH_MM_SS_END)
 })
 
 /** chip label 的 i18n 键（分组 SSOT 的 UI 侧标签，键内容收口 trace-i18n）。 */

@@ -125,6 +125,12 @@ export function openExternal(url: string): Promise<void> {
   return api?.openExternal(url) ?? Promise.resolve()
 }
 
+/** 在文件管理器中显示文件（main shell.showItemInFolder；trace MALFORMED 行「打开所在目录」
+ *  恢复指引）。main 侧校验绝对路径后才放行。无 IPC（web/mock）静默 no-op。 */
+export function revealInFolder(filePath: string): Promise<unknown> {
+  return api?.revealInFolder?.(filePath) ?? Promise.resolve()
+}
+
 // ── Browser drawer（嵌入式浏览器，WebContentsView 生命周期）─────────────
 // Wave 2：renderer → main 五个 IPC 封装（create/navigate/hide/show/destroy）。
 // onBrowserState 订阅主进程推送的加载状态（url/isLoading/error），供 BrowserPane 更新地址栏 + 态切换。

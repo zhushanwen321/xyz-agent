@@ -252,6 +252,15 @@ export const session = {
     return { sessionId, source: 'empty', entries: [], malformed: [] }
   },
   /**
+   * 现取当前 system prompt（session-trace §3.1 失败路径，C2）。mock 轨道无 pi 进程，
+   * 恒 reject session_not_active（与 real 轨道「非活跃 session」错误路径同形，供 UI
+   * 错误态演示）。与 real domain 同接口（api/index 门面三元要求两侧同构）。
+   */
+  async fetchCurrentSystemPrompt(sessionId: string): Promise<import('@xyz-agent/shared').ServerMessageMap['session.currentSystemPrompt']> {
+    await sleep(TIMING.ack)
+    throw Object.assign(new Error(`Session ${sessionId} not active (mock)`), { code: 'session_not_active' })
+  },
+  /**
    * 按 cwd 分组返回（对齐后端 SessionGroup[]，D7）。
    * runtime 的 config.sessions reply 是 `{ groups: SessionGroup[] }`，同构返分组结构。
    * 同 cwd 的 session 归入一组，组内保持插入顺序（按 lastActiveAt 降序更贴近真实，

@@ -418,7 +418,14 @@ export default {
     systemNoTraceHint: 'not traced (trace extension not active in that period)',
     systemFetchCurrent: 'Fetch current',
     systemCurrentNotHistory: 'Current value, not historical',
+    // Fetch result / error copy (§3.1 failure path C2 wiring; code → key map in TraceToolbar)
+    systemFetchedSummary: 'Fetched {count} chars at {time}',
+    fetchNotActive: 'Session not active; fetch is only available for active sessions',
+    fetchBusy: 'Session is generating/compacting; retry shortly',
+    fetchTimeout: 'Fetch timed out; please retry',
+    fetchFailed: 'Fetch failed; please retry',
     malformedOpenDir: 'Reveal in folder',
+    malformedRevealFailed: 'Failed to open the folder',
     // Fork-source jump (§3.1 sample 5: SESSION row parentSession link -> source session + forkEntryId reveal)
     jumpParent: 'fork source',
     jumpParentTitle: 'Jump to the source session and reveal the fork point',

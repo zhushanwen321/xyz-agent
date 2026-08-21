@@ -47,6 +47,7 @@ function buildFileSnapshot(): ServerMessageMap['session.traceEntries'] {
   return {
     sessionId: SID,
     source: 'file',
+    filePath: `/pi/sessions/${SID}.jsonl`,
     header: { type: 'session', version: 1, id: 'h0', cwd: '/w/demo' },
     entries: [
       { type: 'custom', id: 'sp1', parentId: 'h0', customType: 'xyz:system-prompt', data: { version: 2, reason: 'resume', hash: 'aabbcc', charCount: 12702 } },
@@ -167,7 +168,13 @@ describe('A51 trace i18n：zh-CN/en-US 键集合对称 + 双语值 + 组件引�
       'systemNoTraceHint',
       'systemFetchCurrent',
       'systemCurrentNotHistory',
+      'systemFetchedSummary',
+      'fetchNotActive',
+      'fetchBusy',
+      'fetchTimeout',
+      'fetchFailed',
       'malformedOpenDir',
+      'malformedRevealFailed',
       // 预置键抽查（空态/损坏行/无留痕标注——四类边界的渲染入口）
       'emptyNotPersisted',
       'malformedLine',
@@ -204,7 +211,8 @@ describe('A51 四类边界文案组件渲染（zh-CN mount DOM 断言）', () =>
     expect(malformedRow.text()).toContain('无法解析的 entry（第 4 行）')
     expect(malformedRow.attributes('title')).toContain('第 4 行')
 
-    // inspector：选中损坏行 → 打开所在目录按钮（通道未接线置灰）+ 行号提示
+    // inspector：选中损坏行 → 打开所在目录按钮（快照带 filePath → 可点；reveal 调用链
+    // 归 trace-inspector.test.ts）+ 行号提示
     selectTraceEntry(SID, 'malformed:4')
     await nextTick()
     const inspector = mount(TraceInspector, { props: { sessionId: SID } })
@@ -212,7 +220,7 @@ describe('A51 四类边界文案组件渲染（zh-CN mount DOM 断言）', () =>
     expect(actions.exists()).toBe(true)
     expect(actions.text()).toContain('打开所在目录')
     expect(actions.text()).toContain('第 4 行')
-    expect(actions.find('button').attributes('disabled')).toBeDefined()
+    expect(actions.find('[data-testid="trace-malformed-reveal"]').attributes('disabled')).toBeUndefined()
     inspector.unmount()
     view.unmount()
   })
@@ -238,7 +246,7 @@ describe('A51 四类边界文案组件渲染（zh-CN mount DOM 断言）', () =>
     rpcView.unmount()
   })
 
-  it('SYSTEM 无留痕：无 SYSTEM 行 → 标注 + hover hint + 置灰现取按钮 +「当前值，非历史」；有留痕 → promptVersion 且无降级 UI', async () => {
+  it('SYSTEM 无留痕：无 SYSTEM 行 → 标注 + hover hint + 可点现取按钮（idle）+「当前值，非历史」；有留痕 → promptVersion 且无降级 UI', async () => {
     apiMock.getTraceEntries.mockResolvedValue(buildNoSystemSnapshot())
     const view = await mountTraceView()
     const prompt = view.find('[data-testid="trace-stats-prompt"]')
@@ -247,7 +255,8 @@ describe('A51 四类边界文案组件渲染（zh-CN mount DOM 断言）', () =>
     const fetchBtn = view.find('[data-testid="trace-fetch-current"]')
     expect(fetchBtn.exists()).toBe(true)
     expect(fetchBtn.text()).toContain('现取当前值')
-    expect(fetchBtn.attributes('disabled')).toBeDefined()
+    // idle 可点（busy 才置灰；交互链归 trace-view.test.ts C2 块）
+    expect(fetchBtn.attributes('disabled')).toBeUndefined()
     expect(view.find('[data-testid="trace-fetch-current-note"]').text()).toBe('当前值，非历史')
     view.unmount()
 

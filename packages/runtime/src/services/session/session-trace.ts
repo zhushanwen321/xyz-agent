@@ -43,6 +43,8 @@ export interface SessionTraceSnapshot {
   sessionId: string
   /** 数据通路：rpc（活跃，权威解析）/ file（非活跃或 RPC 失败降级）/ empty（未落盘空态）。 */
   source: 'rpc' | 'file' | 'empty'
+  /** session JSONL 绝对路径（reveal 按钮数据源；empty 未落盘/路径未知时缺省）。 */
+  filePath?: string | null
   /** JSONL 首行 header 完整 entry（parentSession 两形态原样透传）；未落盘/首行损坏时缺省。 */
   header?: SessionTraceHeaderPayload
   /** entry 全集（不含 header）。RPC 权威解析或文件解析（含 handoff_marker 等自定义行）。 */
@@ -113,5 +115,5 @@ export function buildTraceSnapshotFromFile(
     entries.push(line.entry)
   }
   const sessionEnd = sessionStore.readSessionEndMeta(filePath) ?? undefined
-  return { sessionId, source: 'file', ...(header !== undefined ? { header } : {}), entries, malformed, ...(sessionEnd !== undefined ? { sessionEnd } : {}) }
+  return { sessionId, source: 'file', filePath, ...(header !== undefined ? { header } : {}), entries, malformed, ...(sessionEnd !== undefined ? { sessionEnd } : {}) }
 }

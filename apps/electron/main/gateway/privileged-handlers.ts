@@ -15,7 +15,7 @@ import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { IpcHandlerDeps } from '../interfaces.js'
-import { isValidExternalUrl } from './input-validators.js'
+import { isValidAbsolutePath, isValidExternalUrl } from './input-validators.js'
 
 /**
  * 注册特权 IPC handler（open-external / pick-directory / pick-file）。
@@ -38,6 +38,22 @@ export function registerPrivilegedHandlers(deps: IpcHandlerDeps): void {
     } catch (err) {
       // openExternal 失败不致命，返回 false 让调用方降级
       console.error('[ipc] open-external failed:', err)
+      return false
+    }
+  })
+
+  // reveal-in-folder：在文件管理器中显示文件（trace MALFORMED 行「打开所在目录」恢复
+  // 指引，§3.1）。输入校验：绝对路径（来源 runtime 快照 filePath；相对路径在 main cwd
+  // 下解析歧义，直接拒绝）。showItemInFolder 对不存在文件静默 no-op，存在性不校验——
+  // session JSONL 可能恰在删除窗口内，静默降级比误报错诚实。风格对齐 open-external
+  //（try/catch + 返回 false 降级）。
+  ipcMain.handle('reveal-in-folder', (_event, filePath: unknown): boolean => {
+    if (!isValidAbsolutePath(filePath)) return false
+    try {
+      shell.showItemInFolder(filePath)
+      return true
+    } catch (err) {
+      console.error('[ipc] reveal-in-folder failed:', err)
       return false
     }
   })

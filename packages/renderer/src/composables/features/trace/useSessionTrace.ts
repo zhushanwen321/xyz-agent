@@ -42,6 +42,14 @@ export interface TraceRevealRequest {
   nonce: number
 }
 
+/** 现取当前 system prompt 的展示摘要（§3.1 失败路径；全文不进分区——fetch 命中后 runtime
+ *  广播的 xyz:current-system-prompt DATA 行（inspector 原始 JSON）承载全文，分区只存计数/时间）。 */
+export interface TraceCurrentPromptSummary {
+  charCount: number
+  /** 扩展取值时刻（ISO）。 */
+  fetchedAt: string
+}
+
 /** 单个 session 的 trace 分区状态（数据 + 视图态，reactive 容器——ADR-0049 响应式契约）。 */
 export interface TraceSessionPartition {
   /** 加载态：idle 未加载 / loading / ready / error。 */
@@ -57,6 +65,15 @@ export interface TraceSessionPartition {
   /** 加载失败信息（error 态展示；文案 i18n 在组件层，此处存 code/message 数据）。 */
   errorCode: string | null
   errorMessage: string | null
+  /** session JSONL 绝对路径（快照透传；MALFORMED 行 reveal 按钮数据源，未落盘/未知为 null）。 */
+  filePath: string | null
+  // ── 现取当前 system prompt（§3.1 失败路径；与视图态同分区，切视图不丢）──
+  /** 最近一次现取结果（null = 未现取过）。 */
+  currentPrompt: TraceCurrentPromptSummary | null
+  currentPromptFetching: boolean
+  /** 现取失败 code（session_not_active / session_busy / fetch_current_prompt_timeout /
+   *  兜底 fetch_failed）；文案映射在组件层。null = 无错误。 */
+  currentPromptErrorCode: string | null
   // ── 视图状态（per-session 分区；D5c）──
   view: TraceMainView
   contextOnly: boolean
@@ -79,6 +96,10 @@ function createDefaultPartition(): TraceSessionPartition {
     leafId: null,
     errorCode: null,
     errorMessage: null,
+    filePath: null,
+    currentPrompt: null,
+    currentPromptFetching: false,
+    currentPromptErrorCode: null,
     view: 'chat',
     contextOnly: false,
     activeGroups: [],
@@ -168,6 +189,7 @@ async function loadTrace(sid: string): Promise<void> {
       // 加载期间被 cleanup（session 删除）/ 已被重试覆盖：丢弃过期回包
       if (s.status !== 'loading') return
       s.source = snap.source
+      s.filePath = snap.filePath ?? null
       s.header = snap.header as TraceSessionHeader | undefined
       s.entries = [...snap.entries]
       s.malformed = [...snap.malformed]
@@ -198,6 +220,39 @@ export function ensureTraceLoaded(sid: string): void {
 /** 强制重拉（error 态重试按钮 / empty 态手动刷新）。 */
 export function retryTraceLoad(sid: string): void {
   void loadTrace(sid)
+}
+
+/** 现取进行中的 sid 集（防重入；模块级与 subscribedSids 同范式，不依赖 current 读取）。 */
+const fetchingPromptSids = new Set<string>()
+
+/**
+ * 现取当前 system prompt（§3.1 失败路径 / D2，C2 前端接线）：仅活跃 session 可用，非活跃
+ * reject code=session_not_active。结果存展示摘要（计数/时间）；全文由 runtime 广播的
+ * xyz:current-system-prompt DATA 行承载（增量腿自动追加，inspector 可看）。错误存 code，
+ * 文案映射在组件层。重入保护：同 sid 在途时静默忽略（按钮 busy 态外的第二道防线）。
+ */
+export async function fetchCurrentPrompt(sid: string): Promise<void> {
+  if (fetchingPromptSids.has(sid)) return
+  fetchingPromptSids.add(sid)
+  partitions.updateFor(sid, (s) => {
+    s.currentPromptFetching = true
+    s.currentPromptErrorCode = null
+  })
+  try {
+    const result = await sessionApi.fetchCurrentSystemPrompt(sid)
+    partitions.updateFor(sid, (s) => {
+      s.currentPromptFetching = false
+      s.currentPrompt = { charCount: result.charCount, fetchedAt: result.fetchedAt }
+    })
+  } catch (e) {
+    const err = e as Error & { code?: string }
+    partitions.updateFor(sid, (s) => {
+      s.currentPromptFetching = false
+      s.currentPromptErrorCode = err.code ?? 'fetch_failed'
+    })
+  } finally {
+    fetchingPromptSids.delete(sid)
+  }
 }
 
 /** 选中行（A44 drawer 联动）：写 selectedKey + drawer 未开时自动打开（保持当前 tab，D5b 临时页）。 */
@@ -252,6 +307,7 @@ export function setTraceFilter(
 // 分区销毁：session 删除时 useSidebar.deleteSession → triggerSessionCleanups 统一调到这里。
 registerSessionCleanup((sid) => {
   subscribedSids.delete(sid)
+  fetchingPromptSids.delete(sid)
 })
 
 /**
@@ -265,6 +321,7 @@ export function useSessionTrace(): {
   partition: ComputedRef<TraceSessionPartition>
   ensureLoaded: typeof ensureTraceLoaded
   retry: typeof retryTraceLoad
+  fetchCurrentPrompt: typeof fetchCurrentPrompt
   select: typeof selectTraceEntry
   clearSelection: typeof clearTraceSelection
   setView: typeof setTraceView
@@ -274,6 +331,7 @@ export function useSessionTrace(): {
     partition: partitions.current,
     ensureLoaded: ensureTraceLoaded,
     retry: retryTraceLoad,
+    fetchCurrentPrompt,
     select: selectTraceEntry,
     clearSelection: clearTraceSelection,
     setView: setTraceView,

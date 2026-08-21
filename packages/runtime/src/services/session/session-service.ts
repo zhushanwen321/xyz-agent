@@ -776,6 +776,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         return {
           sessionId,
           source: 'rpc',
+          filePath,
           ...(header !== undefined ? { header } : {}),
           entries,
           malformed: [],
@@ -1302,6 +1303,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     try {
       this.onSessionCreated?.(summary)
     } catch (e: unknown) {
+      // 降级策略（best-effort）：插件回调异常不阻断创建主流程，仅落日志
       console.error(`[session-service] onSessionCreated listener error (sessionId=${summary.id}):`, e)
     }
   }
@@ -1321,6 +1323,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     try {
       this.onSessionDestroyed?.(destroyedSummary)
     } catch (e: unknown) {
+      // 降级策略（best-effort）：插件回调异常不阻断删除主流程，仅落日志
       console.error(`[session-service] onSessionDestroyed listener error (sessionId=${sessionId}):`, e)
     }
     // wave:perf-w20（D6-1）：session 删除 / pi 进程退出时清历史重建缓存 + lastLeafId。

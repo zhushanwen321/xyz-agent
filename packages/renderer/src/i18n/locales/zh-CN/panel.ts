@@ -416,7 +416,14 @@ export default {
     systemNoTraceHint: '无留痕（该时段留痕 extension 未启用）',
     systemFetchCurrent: '现取当前值',
     systemCurrentNotHistory: '当前值，非历史',
+    // 现取结果/错误文案（§3.1 失败路径 C2 接线；code → 键映射在 TraceToolbar）
+    systemFetchedSummary: '已现取 {count} 字符（{time}）',
+    fetchNotActive: 'session 不活跃，无法现取（仅活跃 session 可用）',
+    fetchBusy: 'session 正在生成/压缩中，稍后重试',
+    fetchTimeout: '现取超时，请重试',
+    fetchFailed: '现取失败，请重试',
     malformedOpenDir: '打开所在目录',
+    malformedRevealFailed: '打开目录失败',
     // 溯源跳转（§3.1 样例 5：SESSION 行 parentSession 链接 → 源 session + forkEntryId 定位）
     jumpParent: 'fork 溯源',
     jumpParentTitle: '跳转到源 session 并定位 fork 点',

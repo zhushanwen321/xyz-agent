@@ -22,7 +22,10 @@ const handlers = new Map<string, (...args: unknown[]) => unknown>()
 const dialogMock = vi.hoisted(() => ({
   showOpenDialog: vi.fn(async () => ({ canceled: false, filePaths: ['/picked'] })),
 }))
-const shellMock = vi.hoisted(() => ({ openExternal: vi.fn(async () => {}) }))
+const shellMock = vi.hoisted(() => ({
+  openExternal: vi.fn(async () => {}),
+  showItemInFolder: vi.fn(),
+}))
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -177,5 +180,49 @@ describe('pick-file IPC handler', () => {
     const result = await pickFile({}, {})
     expect(result).toEqual({ canceled: true, path: null })
     expect(dialogMock.showOpenDialog).not.toHaveBeenCalled()
+  })
+})
+
+describe('C2 reveal-in-folder IPC（trace MALFORMED 行「打开所在目录」）', () => {
+  beforeEach(() => {
+    handlers.clear()
+    vi.clearAllMocks()
+    registerPrivilegedHandlers({} as never)
+  })
+
+  it('绝对路径 → shell.showItemInFolder 放行并返回 true', async () => {
+    const reveal = handlers.get('reveal-in-folder')!
+    const result = await reveal({}, '/pi/sessions/s1.jsonl')
+    expect(result).toBe(true)
+    expect(shellMock.showItemInFolder).toHaveBeenCalledWith('/pi/sessions/s1.jsonl')
+  })
+
+  it('相对路径 → 拒绝（返回 false）且不触 shell', async () => {
+    const reveal = handlers.get('reveal-in-folder')!
+    const result = await reveal({}, 'sessions/s1.jsonl')
+    expect(result).toBe(false)
+    expect(shellMock.showItemInFolder).not.toHaveBeenCalled()
+  })
+
+  it('非 string 输入（IPC 边界无类型保障）→ 拒绝不抛', async () => {
+    const reveal = handlers.get('reveal-in-folder')!
+    expect(await reveal({}, undefined)).toBe(false)
+    expect(await reveal({}, 42)).toBe(false)
+    expect(shellMock.showItemInFolder).not.toHaveBeenCalled()
+  })
+
+  it('shell 抛异常 → console.error 降级返回 false（open-external 同风格）', async () => {
+    shellMock.showItemInFolder.mockImplementationOnce(() => {
+      throw new Error('shell crash')
+    })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const reveal = handlers.get('reveal-in-folder')!
+      const result = await reveal({}, '/pi/sessions/s1.jsonl')
+      expect(result).toBe(false)
+      expect(errSpy).toHaveBeenCalled()
+    } finally {
+      errSpy.mockRestore()
+    }
   })
 })

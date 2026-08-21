@@ -908,6 +908,9 @@ export interface ServerMessageMapBase {
   'session.traceEntries': {
     sessionId: string
     source: 'rpc' | 'file' | 'empty'
+    /** session JSONL 绝对路径（reveal 按钮数据源——MALFORMED 行「打开所在目录」经 Electron
+     *  shell.showItemInFolder 定位；empty 未落盘/路径未知时缺省）。 */
+    filePath?: string | null
     header?: SessionTraceHeaderPayload
     entries: unknown[]
     malformed: SessionTraceMalformedLine[]

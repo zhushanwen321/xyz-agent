@@ -56,6 +56,14 @@ vi.mock('@/api', async (importOriginal) => {
   return { ...actual, session: { ...actual.session, getTraceEntries: apiMock.getTraceEntries } }
 })
 
+// ── mock '@/lib/ipc' revealInFolder（reveal 调用链组件层段落：TraceInspector →
+//  lib/ipc；electronAPI 边界归 ipc-reveal-in-folder.test.ts，两段拼接成完整链）──
+const ipcMock = vi.hoisted(() => ({ revealInFolder: vi.fn() }))
+vi.mock('@/lib/ipc', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ipc')>()
+  return { ...actual, revealInFolder: ipcMock.revealInFolder }
+})
+
 import TraceInspector from '@/components/panel/trace/TraceInspector.vue'
 import {
   _resetTraceStoreForTest,
@@ -71,6 +79,7 @@ function buildSnapshot(): ServerMessageMap['session.traceEntries'] {
   return {
     sessionId: SID,
     source: 'file',
+    filePath: `/pi/sessions/${SID}.jsonl`,
     header: { type: 'session', version: 1, id: 'h0', cwd: '/w/demo' },
     entries: [
       { type: 'message', id: 'u1', parentId: 'h0', message: { role: 'user', content: '帮我修一下重试逻辑' } },
@@ -78,7 +87,7 @@ function buildSnapshot(): ServerMessageMap['session.traceEntries'] {
       { type: 'compaction', id: 'c1', parentId: 'b1', summary: '## 压缩摘要正文', firstKeptEntryId: 'b1', tokensBefore: 152311 },
       { type: 'message', id: 'u2', parentId: 'c1', message: { role: 'user', content: '压缩后的消息' } },
     ],
-    malformed: [],
+    malformed: [{ lineNumber: 5, raw: 'not json' }],
     leafId: 'u2',
   }
 }
@@ -213,5 +222,40 @@ describe('A44 drawer inspector 联动（选中切入临时页 / 返回复原 / �
     expect(useSessionTrace().partition.value.view).toBe('chat')
     expect(useSessionTrace().partition.value.searchText).toBe('')
     wrapper.unmount()
+  })
+})
+
+describe('C2 MALFORMED 行「打开所在目录」（reveal-in-folder IPC 接线，§3.1 损坏行恢复指引）', () => {
+  it('选中损坏行 + 快照带 filePath → 按钮可点，点击调 lib/ipc.revealInFolder(filePath)', async () => {
+    await readyPartition()
+    selectTraceEntry(SID, 'malformed:5')
+    await nextTick()
+    const view = mount(TraceInspector, { props: { sessionId: SID } })
+    const actions = view.find('[data-testid="trace-malformed-actions"]')
+    expect(actions.exists()).toBe(true)
+    const revealBtn = view.find('[data-testid="trace-malformed-reveal"]')
+    expect(revealBtn.exists()).toBe(true)
+    expect(revealBtn.attributes('disabled')).toBeUndefined()
+
+    ipcMock.revealInFolder.mockResolvedValueOnce(true)
+    await revealBtn.trigger('click')
+    expect(ipcMock.revealInFolder).toHaveBeenCalledTimes(1)
+    expect(ipcMock.revealInFolder).toHaveBeenCalledWith(`/pi/sessions/${SID}.jsonl`)
+    view.unmount()
+  })
+
+  it('快照无 filePath（未落盘/路径未知）→ 按钮置灰且点击不触发 IPC', async () => {
+    const snap = buildSnapshot()
+    delete snap.filePath
+    apiMock.getTraceEntries.mockResolvedValue(snap)
+    await readyPartition()
+    selectTraceEntry(SID, 'malformed:5')
+    await nextTick()
+    const view = mount(TraceInspector, { props: { sessionId: SID } })
+    const revealBtn = view.find('[data-testid="trace-malformed-reveal"]')
+    expect(revealBtn.attributes('disabled')).toBeDefined()
+    await revealBtn.trigger('click')
+    expect(ipcMock.revealInFolder).not.toHaveBeenCalled()
+    view.unmount()
   })
 })

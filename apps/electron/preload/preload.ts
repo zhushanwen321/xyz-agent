@@ -50,6 +50,9 @@ export interface ElectronAPI {
   }>
   /** 在默认浏览器中打开外部链接 */
   openExternal(url: string): Promise<void>
+  /** 在文件管理器中显示文件（trace MALFORMED 行「打开所在目录」；main 校验绝对路径后
+   *  shell.showItemInFolder，返回是否放行） */
+  revealInFolder(filePath: string): Promise<boolean>
   /** 监听 macOS 全屏状态变化 */
   onFullscreenChanged(callback: (payload: { isFullscreen: boolean }) => void): () => void
   // ── 窗口控制（win/linux 自绘圆点点击）─────────────────────────
@@ -223,6 +226,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     filters?: Array<{ name: string; extensions: string[] }>
   }) => ipcRenderer.invoke('pick-file', options),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+  revealInFolder: (filePath: string) => ipcRenderer.invoke('reveal-in-folder', filePath),
   onFullscreenChanged: (callback: (payload: { isFullscreen: boolean }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { isFullscreen: boolean }) => callback(payload)
     ipcRenderer.on('fullscreen-changed', handler)
