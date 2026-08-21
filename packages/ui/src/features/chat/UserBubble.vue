@@ -98,7 +98,10 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowRight, Check, Copy, FileText, Pencil } from '@lucide/vue'
-import { Button, Textarea } from '@xyz-agent/ui'
+// primitives 直接路径（不经 @xyz-agent/ui 顶层 barrel）：chat 组件被 barrel 再导出，
+// barrel 自引用会闭合一族循环依赖环（详见 BashOutputBlock.vue 同款注释）
+import { Button } from '../../primitives/button'
+import { Textarea } from '../../primitives/textarea'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'
 import type { Segment } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'

@@ -49,7 +49,7 @@ vi.mock('@/stores/session', () => ({
     groups: [],
     list: [],
     activeId: null,
-    setGroups: vi.fn(),
+    applySnapshot: vi.fn(),
   }),
 }))
 vi.mock('@/stores/fileTree', () => ({

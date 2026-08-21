@@ -8,7 +8,7 @@
  *   - 文件 IO 范式参考 config-service.ts L216-248（load 容错 / save atomicWrite + uniqueTmpSuffix）
  *
  * 本 wave 只实现存储 + CRUD（getAllPresets/getPreset/savePreset/deletePreset/defaultPresetId）。
- * resolve(preset, cwd) 留给 wave2（依赖 ExtensionService.getBuiltinExtensionPaths 提取）。
+ * resolve(preset, cwd) 留给 wave2（依赖 ExtensionService.getDiscoveredAndDisabled 提取）。
  *
  * 组合根（packages/runtime/src/index.ts）构造，SessionService 加 setPresetService setter
  * （参考 setConfigService session-service.ts L187-189）。
@@ -121,7 +121,7 @@ export class PresetService {
 
   constructor(
     private readonly configStore: IConfigStore,
-    // extensionService 本 wave 不用，但 wave2 的 resolve 依赖它（getBuiltinExtensionPaths/scanExtensions）。
+    // extensionService 本 wave 不用，但 wave2 的 resolve 依赖它（getDiscoveredAndDisabled）。
     // 提前对齐双参构造，避免 wave2 改构造签名 → 破坏 wave3 组合根 + 所有测试构造点。
     private readonly extensionService: IExtensionService,
   ) {}
@@ -536,22 +536,25 @@ export class PresetService {
   /**
    * 解析 extensionPaths（设计文档 §2.3/§2.4）。
    *
-   * M1 根因修复：不再调 getExtensionPaths(cwd)（已含 builtin）再 prepend builtin（double-builtin），
+   * M1：不调 getExtensionPaths(cwd)（其已做 enabled 过滤，preset 需要原始集合自筛），
    * 改为调 getDiscoveredAndDisabled(cwd) 拿原始 discovered + disabled，本地 resolveExtensions
-   * + applyPresetMode 完成过滤，builtin 只在最终 prepend 一次（注入点唯一化）。
+   * + applyPresetMode 完成过滤。
    *
-   * builtin 永远前置（不受 extensionMode 影响），用户 extension 按 mode 二次筛选：
+   * [builtin npm 化（34234fb66）] builtin = mandatory-extensions.json 里 tier=infrastructure
+   * 的 npm 包，随 discovery 进入 discovered 集合，由 applyPresetMode 保活——旧文件型
+   * getBuiltinExtensionPaths 路径前置已随迁移消亡，本函数无独立 builtin 注入。
+   *
+   * 用户 extension 按 mode 二次筛选：
    *   - all: 全部 enabled
    *   - allowlist: enabled && name in preset.allowedExtensions
    *   - denylist: enabled && name not in preset.deniedExtensions
-   *   - none: 空（builtin 仍前置）
+   *   - none: 空（仅 infrastructure 存活）
    *
    * tier 语义（applyPresetMode 内置）：
    *   - infrastructure 包（presetOverridable=false）：任何模式都存活，不可覆盖
    *   - feature mandatory / 普通包：presetOverridable=true，按 mode 过滤
    */
   private async resolveExtensionPaths(preset: PiLaunchPreset, cwd: string): Promise<string[]> {
-    const builtinPaths = this.extensionService.getBuiltinExtensionPaths()
     const { discovered, disabledSet } = await this.extensionService.getDiscoveredAndDisabled(cwd)
 
     // 一次读盘：disabled 过滤 + tier 推导
@@ -566,10 +569,10 @@ export class PresetService {
       preset.allowedExtensions ?? [],
       preset.deniedExtensions ?? [],
     )
-    // builtin 永远前置 + 过滤后可加载的路径。
+    // 过滤后可加载的路径（builtin infrastructure 包已在 deduped 内，见函数头注释）。
     // .filter(r => r.loadable) 排除被 disabled 的普通包（applyPresetMode 不过滤 disabled，
     // 只按 preset mode 过滤 presetOverridable/name，disabled 过滤在此完成）
-    return [...builtinPaths, ...afterPreset.filter(r => r.loadable).map(r => r.path)]
+    return afterPreset.filter(r => r.loadable).map(r => r.path)
   }
 
   /**

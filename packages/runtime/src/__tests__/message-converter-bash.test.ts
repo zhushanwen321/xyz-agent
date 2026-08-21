@@ -6,7 +6,7 @@
  * - exitCode undefined → null（防 JSON 丢值，与 dispatcher 广播时 ?? null 对称）
  * - excludeFromContext 透传（!! 归一为 boolean）
  *
- * 对应 AGENTS.md 规则 7.5 持久化链路：重开 session 时 bash 执行记录经此分支还原为
+ * 对应 AGENTS.md 关键规则 9 持久化链路：重开 session 时 bash 执行记录经此分支还原为
  * 带 bashExecution 字段的 system 消息，前端统一走 BashOutputBlock 渲染（与实时 effect 路径一致）。
  *
  * 运行：npx vitest run src/__tests__/message-converter-bash.test.ts

@@ -3,7 +3,7 @@
  *
  * 锁定：pi 改写 session 名（session_info_changed）经 runtime event-adapter 映射为
  * session.renamed 推送（payload { sessionId, name }）。useChat.ensureStreamSubscription
- * 的 switch 须消费此事件，调 sessionStore.updateLabel 同步，否则 pi 改名后前端侧栏不更新。
+ * 的 switch 须消费此事件，经 sessionStore.applySnapshot 同步，否则 pi 改名后前端侧栏不更新。
  *
  * 事故背景：tui-to-gui-mapping-audit.md:62 标记 session_info_changed 未处理，
  * useChat 的 switch 落到 default:break 丢弃。本次补 case 消费。
@@ -14,7 +14,7 @@
  * - payload.name 为 undefined → 跳过
  *
  * mock 策略：vi.hoisted + vi.mock('@/api')（chat.streamSubscribe 捕获回调，手动触发），
- * 真用 useSessionStore（验证 updateLabel 落点）+ useChat（被测入口）。
+ * 真用 useSessionStore（验证 applySnapshot 落点）+ useChat（被测入口）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/session-renamed-sync.test.ts
  */
@@ -57,7 +57,7 @@ beforeEach(() => {
 function seedSession(s: SessionSummary): void {
   const store = useSessionStore()
   const group: SessionGroup = { cwd: s.cwd, sessions: [s] }
-  store.setGroups([group])
+  store.applySnapshot({ groups: [group] })
 }
 
 describe('session.renamed 事件 → store label 同步', () => {

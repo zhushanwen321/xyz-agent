@@ -110,7 +110,8 @@ describe('EventAdapter: toolResult message_start 语义修正', () => {
     // assistant turn message_start 产出 message.message_start
     expect(sent).toHaveLength(2)
     expect(sent[0].type).toBe('message.tool_call_end')
-    expect(sent[0].payload).toMatchObject({ toolCallId: 'tc-1', status: 'completed' })
+    // [w21] payload 换 toolResult message entry 形态（isError:false ≡ status:'completed'）
+    expect(sent[0].payload).toMatchObject({ entry: { type: 'message', message: { toolCallId: 'tc-1', isError: false } } })
     expect(sent[1].type).toBe('message.message_start')
   })
 })

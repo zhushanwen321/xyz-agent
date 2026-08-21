@@ -39,7 +39,7 @@ interface Fixture {
     streamSubscribe: ReturnType<typeof vi.fn>
   }
   chatStore: ReturnType<typeof createChatStore>
-  sessionStore: { updateLabel: ReturnType<typeof vi.fn>; updateSessionState: ReturnType<typeof vi.fn> }
+  sessionStore: { applySnapshot: ReturnType<typeof vi.fn> }
   toast: { error: ReturnType<typeof vi.fn> }
   /** 主动向 sid 的 streamSubscribe handler 注入一条 ServerMessage（模拟 WS 事件） */
   emit: (sid: string, m: ServerMessage) => void
@@ -67,7 +67,7 @@ function makeFixture(): Fixture {
       }
     }),
   }
-  const sessionStore = { updateLabel: vi.fn(), updateSessionState: vi.fn() }
+  const sessionStore = { applySnapshot: vi.fn() }
   const toast = { error: vi.fn() }
   const compactQueue = { flush: vi.fn().mockResolvedValue(true) }
   const deps: UseChatDeps = {
@@ -149,11 +149,11 @@ describe('createUseChat factory 行为', () => {
     f.dispose()
   })
 
-  it('session.renamed → sessionStore.updateLabel', async () => {
+  it('session.renamed → sessionStore.applySnapshot(label)', async () => {
     const f = makeFixture()
     await f.useChat.send('s6', textToSegments('hi'))
     f.emit('s6', msg('s6', 'session.renamed', { name: '新名' }))
-    expect(f.sessionStore.updateLabel).toHaveBeenCalledWith('s6', '新名')
+    expect(f.sessionStore.applySnapshot).toHaveBeenCalledWith('s6', { label: '新名' })
     f.dispose()
   })
 
@@ -161,15 +161,15 @@ describe('createUseChat factory 行为', () => {
     const f = makeFixture()
     await f.useChat.send('s6b', textToSegments('hi'))
     f.emit('s6b', msg('s6b', 'session.renamed', { name: '' }))
-    expect(f.sessionStore.updateLabel).not.toHaveBeenCalled()
+    expect(f.sessionStore.applySnapshot).not.toHaveBeenCalled()
     f.dispose()
   })
 
-  it('session.state_changed → sessionStore.updateSessionState', async () => {
+  it('session.state_changed → sessionStore.applySnapshot(modelId/thinkingLevel)', async () => {
     const f = makeFixture()
     await f.useChat.send('s7', textToSegments('hi'))
     f.emit('s7', msg('s7', 'session.state_changed', { modelId: 'gpt-4', thinkingLevel: 'high' }))
-    expect(f.sessionStore.updateSessionState).toHaveBeenCalledWith('s7', {
+    expect(f.sessionStore.applySnapshot).toHaveBeenCalledWith('s7', {
       modelId: 'gpt-4',
       thinkingLevel: 'high',
     })

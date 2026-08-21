@@ -90,9 +90,9 @@ describe('SessionsShellSm 首屏冒烟（TC-6 / 渲染 gate）', () => {
 
   it('session-list DOM 存在 + 渲染 seeded session 项；初始 focusedSessionId===null', async () => {
     const wrapper = mount(SessionsShellSm)
-    useSessionStore().setGroups([
+    useSessionStore().applySnapshot({ groups: [
       { cwd: '/a', label: '/a', sessions: [summary('s1', '任务一'), summary('s2', '任务二'), summary('s3', '任务三')] },
-    ])
+    ] })
     await wrapper.vm.$nextTick()
 
     // 渲染 gate（§8）：session-list DOM 存在 + 含 3 个 session-item
@@ -108,9 +108,9 @@ describe('SessionsShellSm 首屏冒烟（TC-6 / 渲染 gate）', () => {
   it('切换 session 后 focused chip 更新 + focusedSessionId 变化（AC6 语义）', async () => {
     const wrapper = mount(SessionsShellSm)
     const sidebar = (wrapper.vm as unknown as { sidebar: { focusedSessionId: { value: string | null }, selectSession: (id: string) => Promise<void> } }).sidebar
-    useSessionStore().setGroups([
+    useSessionStore().applySnapshot({ groups: [
       { cwd: '/a', label: '/a', sessions: [summary('s1', '任务一'), summary('s2', '任务二')] },
-    ])
+    ] })
     await wrapper.vm.$nextTick()
 
     expect(sidebar.focusedSessionId.value).toBeNull()

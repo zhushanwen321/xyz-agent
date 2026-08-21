@@ -67,9 +67,14 @@ function makeMocks(opts: {
   const recordFn = vi.fn()
   const workspace = { record: recordFn } as unknown as WorkspaceService
 
+  // [W2 语义变更] mock getState 的 sessionFile 跟随最近一次 switchSession 实参——真实 pi
+  // 行为（switch_session 后 get_state.sessionFile 即写目标，ADR-0063 I1）；未 switch 过时
+  // 保持原固定值（create 路径 pi 新 session 延迟写入窗口的 mock 语义，tc1-tc4 依赖）。
+  // session-lifecycle 的 attach 断言依赖该语义（原固定假路径会被判 I1 分裂）。
+  let lastSwitchTarget: string | undefined
   const client = {
-    getState: vi.fn(async () => ({ sessionId: 'pi-s1', sessionFile: '/tmp/pi.jsonl' })),
-    switchSession: vi.fn(async () => undefined),
+    getState: vi.fn(async () => ({ sessionId: 'pi-s1', sessionFile: lastSwitchTarget ?? '/tmp/pi.jsonl' })),
+    switchSession: vi.fn(async (p: string) => { lastSwitchTarget = p }),
     prompt: vi.fn(async () => ({})),
   } as unknown as IPiEngine
 
@@ -118,8 +123,6 @@ function makeMocks(opts: {
     persistPresetBinding: persistPresetBindingFn,
     trash: vi.fn(),
     invalidateMetaCache: vi.fn(),
-    patchSessionCwd: vi.fn(() => true),
-    persistSessionName: vi.fn(),
   } as unknown as ISessionStore
 
   const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspace)

@@ -1,8 +1,9 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter as pathDelimiter, join } from 'node:path'
+import { delimiter as pathDelimiter, dirname, join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { RpcClient, type RpcClientOptions } from './rpc-client.js'
+import { assertPiSessionFile } from './session-attach-assert.js'
 import type { IProcessManager } from '../../services/ports/pi-engine.js'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
@@ -114,6 +115,30 @@ interface ManagedProcess {
 }
 
 /**
+ * 短命 pi 附着就绪上限（W11）：spawn 冷启动中位数 ~500ms（P0.5 探针，瓶颈在 Node
+ * 冷启动）+ switchSession RPC（<1ms），端到端预算 ~600ms；5s 上限覆盖慢机/首次冷缓存。
+ */
+const EPHEMERAL_READY_TIMEOUT_MS = 5_000
+
+/**
+ * 给 promise 套一层超时（短命 pi 就绪等待专用）。
+ *
+ * 超时后底层 promise 仍可能 pending（switchSession 自身 SLOW_TIMEOUT_MS 120s）——
+ * withEphemeralPi 的 finally destroySession 会 kill 进程 → RpcClient.rejectAll 让其
+ * settle，本包装的 then/catch 已就位，不产生 unhandled rejection。
+ */
+function raceReadyTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    timer.unref()
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
+
+/**
  * Manages pi subprocess lifecycles. Each session gets its own
  * isolated pi process spawned via `pi --mode rpc`.
  */
@@ -195,7 +220,7 @@ export class ProcessManager implements IProcessManager {
           )
         }
         throw new Error(
-          `Failed to start pi process. Ensure pi is installed globally (npm i -g @mariozechner/pi-coding-agent). `
+          `Failed to start pi process. Ensure pi is installed globally (npm i -g @earendil-works/pi-coding-agent). `
           + `Searched: PATH, ~/.nvm/versions/*/bin/pi, /usr/local/bin/pi. `
           + `Original error: ${msg}`,
         )
@@ -203,15 +228,24 @@ export class ProcessManager implements IProcessManager {
       throw e
     }
 
-    // Listen for unexpected exits to notify upper layer
+    // Listen for unexpected exits to notify upper layer.
+    // onExit 返回的 unsubscribe 刻意不持有：client 生命周期与 Map 条目一致，
+    // intentional destroy 由下方 clientToId 无条目守卫覆盖，无需显式解绑。
     client.onExit((code, stderr) => {
-      // If processes no longer has this sessionId, it was destroyed intentionally
-      if (!this.processes.has(sessionId)) return
-      console.warn(`[process-manager] session ${sessionId} process exited unexpectedly (code: ${code})`)
-      this.processes.delete(sessionId)
+      // 反查当前 id：闭包捕获的 sessionId 在 rekey 后过期（create 路径 tempId → piSessionId），
+      // 用 has(capturedId) 守卫会在 rekey 后误判「已被清理」→ 死亡通知整条丢失（僵尸 session 根因）。
+      // clientToId 与 processes 由 createSession/destroySession/rekey 成对维护，执行时反查天然同步。
+      const currentId = this.clientToId.get(client)
+      // clientToId 无条目 = 已被 destroySession 清理（intentional destroy），跳过通知
+      if (currentId === undefined) return
+      console.warn(`[process-manager] session ${currentId} process exited unexpectedly (code: ${code})`)
+      this.processes.delete(currentId)
       this.clientToId.delete(client)
+      // 命名消歧：this.exitCallbacks 是 ProcessManager 的 Set<(sessionId, code, stderr) => void>
+      // （上层多播，process-manager.ts:123），与 RpcClient.exitCallbacks（Set<(code, stderr) => void>）
+      // 是不同类、不同签名的同名字段
       for (const cb of this.exitCallbacks) {
-        cb(sessionId, code, stderr)
+        cb(currentId, code, stderr)
       }
     })
 
@@ -226,6 +260,51 @@ export class ProcessManager implements IProcessManager {
   }
 
   /**
+   * W11（数据源治理）：短命 pi 附着指定 session 文件执行一次性 RPC，用后即毁。
+   *
+   * 形态（探针场景 B 定型，逐次冷起——父文档 D2 裁决禁 warm pi）：复用 createSession
+   * spawn `pi --mode rpc` → `switchSession(sessionFile)` 附着该文件（就绪上限 5s）→
+   * fn(client) → destroySession。session JSONL 本体的唯一写方是 pi：fn 内的 RPC
+   * （如 setSessionName）由 pi 自身 appendFileSync 落盘，xyz 不触碰文件。
+   *
+   * 附着经 switchSession RPC 而非 `pi --session <file>` CLI flag——RpcClient 的 spawn
+   * 参数面（rpc-client.ts）不在本 wave 改动范围，switchSession 是既有附着原语
+   * （restoreSession 同款）。spawn 时 pi 先建内存新 session（首条 assistant 前不落盘，
+   * 规则 #6），switchSession 切走后即弃，sessions 目录零残留。
+   *
+   * 失败语义：spawn 失败 / 就绪超时 / fn 抛错一律 rethrow（进程在 finally 销毁），
+   * 调用方（如 renameSession 非活跃分支）按既有失败路径报错、保留旧值可重试。
+   *
+   * @param sessionFile 目标 session JSONL 绝对路径（须已存在；不存在时 switchSession
+   *                    由 pi 报错，走同一失败路径）
+   * @param fn          就绪后在附着 client 上执行的一次性操作
+   */
+  async withEphemeralPi<T>(sessionFile: string, fn: (client: RpcClient) => Promise<T>): Promise<T> {
+    // spawn cwd 只影响 pi 初始（弃用）session 的上下文，不影响 switchSession 后的目标
+    // session；取 sessions 目录（文件所在处，扫描结果保证存在）——目标 session 自身
+    // header 的 cwd 死路径场景由调用方处理（renameSession 非活跃分支附着前 F3 归一化
+    // cwd fallback，p1p4-closure W1；restoreSession 同款），与本入口无关。目录竞态消失时
+    // 兜底 homedir，让失败落在 switchSession（pi 报「文件不存在」）而非 spawn ENOENT。
+    const spawnCwd = existsSync(dirname(sessionFile)) ? dirname(sessionFile) : homedir()
+    const ephemeralId = `ephemeral-${Date.now()}-${crypto.randomUUID()}`
+    const client = await this.createSession(ephemeralId, spawnCwd)
+    try {
+      await raceReadyTimeout(
+        client.switchSession(sessionFile),
+        EPHEMERAL_READY_TIMEOUT_MS,
+        `Ephemeral pi attach timed out after ${EPHEMERAL_READY_TIMEOUT_MS}ms (sessionFile: ${sessionFile})`,
+      )
+      // W2（restore-fork-attach-fix F4）：附着必断言（I1）。withEphemeralPi 附着本就是
+      // 真实文件、天然通过；接线它使「附着必断言」成为无例外结构（设计文档 D4），
+      // 新附着调用点照抄即得守卫。
+      await assertPiSessionFile(client, sessionFile, `withEphemeralPi(${sessionFile})`)
+      return await fn(client)
+    } finally {
+      await this.destroySession(ephemeralId)
+    }
+  }
+
+  /**
    * Kill the pi subprocess for a session.
    */
   async destroySession(sessionId: string): Promise<void> {
@@ -233,7 +312,8 @@ export class ProcessManager implements IProcessManager {
     if (!proc) return
     // Remove from maps first to prevent exitCallback from triggering,
     // but keep a reference so we can kill after removal.
-    // kill() is guaranteed to resolve (SIGTERM → 2s → SIGKILL).
+    // kill() is guaranteed to resolve (SIGCONT → SIGTERM → 2s → SIGKILL).
+    // 幂等：Map 无条目时（并发 deleteSession / 强杀分支已先行）静默跳过，不重复 kill。
     this.processes.delete(sessionId)
     this.clientToId.delete(proc.client)
     try {

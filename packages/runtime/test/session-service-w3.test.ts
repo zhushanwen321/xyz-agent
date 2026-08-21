@@ -1,13 +1,17 @@
 /**
  * W3 TDD tests：SessionService 副作用迁移（U7 + E2）。
  *
- * 背景：attachUsageListener（第二条 pi 事件订阅）承载 3 个副作用，W3 迁移到中间事件链路：
+ * 背景：attachUsageListener（第二条 pi 事件订阅）承载副作用，W3 迁移到中间事件链路：
  *   1. isGenerating 复位（agent_end）—— handleTurnEndSideEffects
- *   2. tryPersistLabel（turn_end 主路径 + agent_end 兜底）—— handleTurnUsageSideEffects / handleTurnEndSideEffects
- *   3. tokenCount 写入（turn_end + agent_end）—— applyContextUpdate 接收 totalTokens
+ *   2. tokenCount 写入（turn_end + agent_end）—— applyContextUpdate 接收 totalTokens
+ *   3. project sidecar 兜底 —— handleTurnUsageSideEffects / handleTurnEndSideEffects
+ *
+ * W1（数据源治理）改写：label 持久化不再经 turn_end/agent_end 兜底直写（机制已删），
+ * 活跃 label 唯一写入口 = renameSession / create / forkSession 的 set_session_name RPC。
+ * 本文件保留「turn/agent 结束不再直写 session_info」回归守卫。
  *
  * U7：副作用经中间事件链路保留（不走 attachUsageListener）
- *   - onTurnFinalize→handleTurnEndSideEffects：isGenerating=false + tryPersistLabel 被调
+ *   - onTurnFinalize→handleTurnEndSideEffects：isGenerating=false
  *   - onContextUpdate 含 totalTokens→applyContextUpdate：tokenCount 写入
  * E2：完整 pi 事件流集成（message_start→...→turn_end→agent_end），断言终态
  *   isGenerating===false + tokenCount>0 + inputTokens>0
@@ -16,7 +20,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { tmpdir } from 'node:os'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { IGitInfoReader } from '../src/services/ports/git-info.js'
@@ -39,7 +43,6 @@ const mocks = vi.hoisted(() => ({
     value: { provider: 'test-provider', modelId: 'test-model' } as
       { provider: string; modelId: string } | null,
   },
-  persistSessionNameMock: vi.fn(),
 }))
 
 vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
@@ -47,8 +50,6 @@ vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
   return {
     ...actual,
     scanPiSessions: () => mocks.mockScannedSessions,
-    persistSessionName: mocks.persistSessionNameMock,
-    patchSessionCwd: vi.fn(() => true),
   }
 })
 vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
@@ -84,6 +85,8 @@ interface MockClient {
   followUp: MockInstance<(content: string) => Promise<unknown>>
   setModel: MockInstance<(provider: string, modelId: string) => Promise<unknown>>
   setThinkingLevel: MockInstance<(level: string) => Promise<unknown>>
+  /** set_session_name RPC mock（W1：create 显式 label / 活跃 rename 经此持久化）。 */
+  setSessionName: MockInstance<(name: string) => Promise<unknown>>
   compact: MockInstance<() => Promise<unknown>>
   clear: MockInstance<() => Promise<unknown>>
   getHistory: MockInstance<() => Promise<unknown>>
@@ -110,6 +113,7 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     followUp: vi.fn().mockResolvedValue(undefined),
     setModel: vi.fn().mockResolvedValue(undefined),
     setThinkingLevel: vi.fn().mockResolvedValue(undefined),
+    setSessionName: vi.fn<(name: string) => Promise<unknown>>().mockResolvedValue(undefined),
     compact: vi.fn().mockResolvedValue(undefined),
     clear: vi.fn().mockResolvedValue(undefined),
     getHistory: vi.fn().mockResolvedValue({ data: { messages: [] } }),
@@ -221,7 +225,6 @@ interface Setup {
 function resetMockState(): void {
   mocks.mockScannedSessions.length = 0
   mocks.defaultModel.value = { provider: 'test-provider', modelId: 'test-model' }
-  mocks.persistSessionNameMock.mockClear()
 }
 
 describe('SessionService · W3 副作用迁移（U7）', () => {
@@ -233,47 +236,22 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
     setup = createSetup()
   })
 
-  // ── handleTurnUsageSideEffects（turn_end 主路径：tryPersistLabel）──
-  describe('handleTurnUsageSideEffects（turn_end → tryPersistLabel 主路径）', () => {
-    it('session 文件已存在时调 tryPersistLabel（首 turn 即持久化）', async () => {
-      // 用真实临时文件让 existsSync 返回 true
+  // ── handleTurnUsageSideEffects（turn_end：label 兜底直写已随 W1 机制删除）──
+  describe('handleTurnUsageSideEffects（turn_end → label 不再直写）', () => {
+    it('session 文件已存在时也不直写 session_info（W1：label 持久化唯一路径 = set_session_name RPC）', async () => {
+      // 用真实临时文件让 existsSync 返回 true——即便文件存在也不再写（回归守卫：
+      // 直写与 pi rename-session 扩展构成 last-write-wins，会覆盖用户手动命名）
       const dir = mkdtempSync(join(tmpdir(), 'w3-tu-'))
       try {
         const filePath = join(dir, 's.jsonl')
         writeFileSync(filePath, '{}')
         const { id } = await setup.seedSession({ label: 'my-label', sessionFile: filePath })
+        const before = readFileSync(filePath, 'utf-8')
 
         setup.service.handleTurnUsageSideEffects(id)
 
-        // tryPersistLabel 经 persistSessionName 调用（label 已持久化到 session_info 行）
-        expect(mocks.persistSessionNameMock).toHaveBeenCalledTimes(1)
-        expect(mocks.persistSessionNameMock).toHaveBeenCalledWith(filePath, 'my-label', id, expect.any(String))
-      } finally {
-        rmSync(dir, { recursive: true, force: true })
-      }
-    })
-
-    it('文件尚不存在时跳过 tryPersistLabel（existsSync guard，不重置 labelPersisted）', async () => {
-      const { id } = await setup.seedSession({ sessionFile: '/nonexistent/path/s.jsonl' })
-
-      setup.service.handleTurnUsageSideEffects(id)
-
-      // 文件不存在，不调 persistSessionName（规则 #6：禁止在 pi flush 前创建文件）
-      expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
-    })
-
-    it('labelPersisted=true 时不再重复持久化（幂等）', async () => {
-      const dir = mkdtempSync(join(tmpdir(), 'w3-tu-idem-'))
-      try {
-        const filePath = join(dir, 's.jsonl')
-        writeFileSync(filePath, '{}')
-        const { id } = await setup.seedSession({ label: 'lbl', sessionFile: filePath })
-
-        setup.service.handleTurnUsageSideEffects(id)
-        setup.service.handleTurnUsageSideEffects(id)
-
-        // 第二次因 labelPersisted=true 被短路，只调一次
-        expect(mocks.persistSessionNameMock).toHaveBeenCalledTimes(1)
+        // W11 后 xyz 已无任何直写 session JSONL 的代码路径（R1 无条件检查），文件字节不变
+        expect(readFileSync(filePath, 'utf-8')).toBe(before)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
@@ -281,12 +259,11 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
 
     it('未知 session 不抛错（静默 no-op）', () => {
       expect(() => setup.service.handleTurnUsageSideEffects('ghost')).not.toThrow()
-      expect(mocks.persistSessionNameMock).not.toHaveBeenCalled()
     })
   })
 
-  // ── handleTurnEndSideEffects（agent_end：isGenerating=false + tryPersistLabel 兜底）──
-  describe('handleTurnEndSideEffects（agent_end → isGenerating 复位 + tryPersistLabel 兜底）', () => {
+  // ── handleTurnEndSideEffects（agent_end：isGenerating 复位；label 兜底直写已删）──
+  describe('handleTurnEndSideEffects（agent_end → isGenerating 复位；label 不再直写）', () => {
     it('复位 isGenerating=false（不迁移则 session 永远 busy，下条消息被拒）', async () => {
       const { id } = await setup.seedSession()
       // 先标记为生成中（模拟 sendPrompt 后的状态）
@@ -299,18 +276,17 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
       expect(setup.service.getSummary(id)?.status).toBe('idle')
     })
 
-    it('兜底调 tryPersistLabel（turn_end 漏写时 agent_end 补写）', async () => {
+    it('agent_end 也不直写 session_info（W1：兜底直写机制已整体删除）', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'w3-te-'))
       try {
         const filePath = join(dir, 's.jsonl')
         writeFileSync(filePath, '{}')
         const { id } = await setup.seedSession({ label: 'fallback-label', sessionFile: filePath })
+        const before = readFileSync(filePath, 'utf-8')
 
-        // 模拟 turn_end 没触发 handleTurnUsageSideEffects，直接到 agent_end
         setup.service.handleTurnEndSideEffects(id)
 
-        expect(mocks.persistSessionNameMock).toHaveBeenCalledTimes(1)
-        expect(mocks.persistSessionNameMock).toHaveBeenCalledWith(filePath, 'fallback-label', id, expect.any(String))
+        expect(readFileSync(filePath, 'utf-8')).toBe(before)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
@@ -321,33 +297,37 @@ describe('SessionService · W3 副作用迁移（U7）', () => {
     })
   })
 
-  // ── applyContextUpdate 接收 totalTokens（tokenCount 写入）──
-  describe('applyContextUpdate 接收 totalTokens（tokenCount 写入）', () => {
-    it('传 totalTokens 时写入 session.tokenCount', async () => {
-      const { id } = await setup.seedSession()
-      // 初始 tokenCount=0
+  // ── applyContextUpdate 接收 totalTokens（W10：tokenCount 改由 usage 实例快照派生）──
+  describe('applyContextUpdate 接收 totalTokens（W10：tokenCount 派生自 usage 快照）', () => {
+    it('tokenCount 不再被事件直写，派生自 usage 实例快照（事件链路 totalTokens 与 inputTokens 同值）', async () => {
+      const { id, client } = await setup.seedSession()
+      // 初始 tokenCount=0（快照未播种）
       expect(setup.service.getSummary(id)?.tokenCount).toBe(0)
 
+      // 事件到达：只失效，不直写 tokenCount
       setup.service.applyContextUpdate(id, 25000, 30000)
-
-      // tokenCount 写入（totalTokens）
-      expect(setup.service.getSummary(id)?.tokenCount).toBe(30000)
-    })
-
-    it('未传 totalTokens 时 tokenCount 不变（向后兼容）', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.applyContextUpdate(id, 25000)
-      // tokenCount 保持 0（未传 totalTokens）
       expect(setup.service.getSummary(id)?.tokenCount).toBe(0)
-      // inputTokens 仍正常回写
-      expect(setup.service.getInputTokens(id)).toBe(25000)
+
+      // 快照播种（fetch get_session_stats 唯一数据写路径）后派生
+      client.getSessionStats.mockResolvedValue({
+        contextUsage: { tokens: 25000, contextWindow: 100000, percent: 25 },
+      })
+      setup.service.getScalarReplicatedStates(id)?.usage.refetch()
+      await new Promise<void>(r => setTimeout(r, 0))
+      expect(setup.service.getSummary(id)?.tokenCount).toBe(25000)
     })
 
-    it('totalTokens=0 时 tokenCount 写 0（agent_end usage 缺失场景）', async () => {
-      const { id } = await setup.seedSession()
+    it('inputTokens=0 时 applyContextUpdate 早退（不广播），快照派生值保持', async () => {
+      const { id, client } = await setup.seedSession()
+      client.getSessionStats.mockResolvedValue({
+        contextUsage: { tokens: 18000, contextWindow: 100000, percent: 18 },
+      })
+      setup.service.getScalarReplicatedStates(id)?.usage.refetch()
+      await new Promise<void>(r => setTimeout(r, 0))
       setup.service.applyContextUpdate(id, 0, 0)
-      // inputTokens=0 守卫，整个方法早退（不广播不回写）
-      expect(setup.service.getSummary(id)?.tokenCount).toBe(0)
+      // inputTokens=0 守卫早退；tokenCount/inputTokens 保持快照派生值
+      expect(setup.service.getSummary(id)?.tokenCount).toBe(18000)
+      expect(setup.service.getInputTokens(id)).toBe(18000)
     })
   })
 })
@@ -435,6 +415,11 @@ describe('SessionService · W3 E2：完整 pi 事件流集成', () => {
       getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>().mockResolvedValue({
         sessionId: piSid, sessionFile: `/fake/${piSid}.jsonl`,
       }),
+      // W10：get_session_stats 是 usage 唯一数据源——E2 断言的 inputTokens/tokenCount
+      // 派生自 usage 实例快照（agent_end 事件 usage 与此快照口径同源，tokens 一致）。
+      getSessionStats: vi.fn<() => Promise<unknown>>().mockResolvedValue({
+        contextUsage: { tokens: 163500, contextWindow: 200000, percent: 81.75 },
+      }),
       onEvent: vi.fn<(listener: PiEventListener) => () => void>((listener) => {
         eventListeners.push(listener)
         return () => {}
@@ -479,14 +464,19 @@ describe('SessionService · W3 E2：完整 pi 事件流集成', () => {
     // flush 异步 hook（tool-call-* 是 void this.handle...）
     await new Promise<void>(r => setTimeout(r, 10))
 
+    // W10：事件只失效——usage 实例 markDirty 后防抖（真 timers 300ms）未到点，显式 refetch
+    // 让快照收敛权威值（模拟防抖到点的拉取），再断言派生读点。
+    service2.getScalarReplicatedStates(piSid)?.usage.refetch()
+    await new Promise<void>(r => setTimeout(r, 10))
+
     // ── 断言终态（3 个副作用全迁移后应满足）──
     const finalSummary = service2.getSummary(piSid)
     expect(finalSummary).toBeDefined()
     // 1. isGenerating 复位（agent_end onTurnFinalize → handleTurnEndSideEffects）
     expect(finalSummary!.status).toBe('idle')
-    // 2. tokenCount 写入（>0，经 onContextUpdate totalTokens → applyContextUpdate）
+    // 2. tokenCount 派生（>0，usage 实例快照 inputTokens 投影，W10 事件直写已删）
     expect(finalSummary!.tokenCount).toBeGreaterThan(0)
-    // 3. inputTokens 写入（>0，agent_end usage 回写）
+    // 3. inputTokens 派生（>0，usage 实例快照读点）
     expect(service2.getInputTokens(piSid)).toBeGreaterThan(0)
 
     // 附带验证：message.complete 已发布（EventAdapter handleAgentEnd → interpreter 转发；

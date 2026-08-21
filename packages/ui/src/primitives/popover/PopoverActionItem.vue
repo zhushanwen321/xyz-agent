@@ -7,7 +7,9 @@
  * （动作无「当前值」概念），结构固定为单 leading-icon + 单行 label。
  * 共享基础类抽自 composables/logic/popover-styles.ts。
  */
-import { Button } from '@xyz-agent/ui'
+// ui 包内相对导入（不经 @xyz-agent/ui 顶层 barrel）：primitives 是顶层 barrel 的
+// 再导出来源，顶层 barrel 自引用会闭合循环依赖环
+import { Button } from '../button'
 import { POPOVER_LIST_ITEM_CLASS } from './styles'
 
 const props = defineProps<{

@@ -58,13 +58,11 @@ function makeSessionStore(metas: ScannedSessionMeta[]): ISessionStore {
     scanSessions: () => metas,
     invalidateScanCache: () => {},
     refreshAll: () => {},
-    persistSessionName: () => {},
     persistSessionEnd: () => {},
     persistPresetBinding: () => {},
     persistProjectBinding: () => {},
     extractSessionOutcome: () => null,
     invalidateMetaCache: () => {},
-    patchSessionCwd: () => true,
     convertHistory: () => [],
     rebuildHistoryFromEntries: () => ({ messages: [], clientUuidMap: new Map(), orphanToolResults: [] }),
     parseSessionHeader: () => null,
@@ -77,7 +75,7 @@ function makeSessionStore(metas: ScannedSessionMeta[]): ISessionStore {
       }
     },
     readSessionEndMeta: (p: string) => readSessionEndMeta(p),
-    persistHandedOff: () => {},
+    persistHandoffSidecar: () => {},
     trash: () => {},
   }
 }
@@ -129,7 +127,6 @@ function makeEnv(opts: { metas?: ScannedSessionMeta[]; active?: boolean } = {}) 
     bus,
   )
   svc.setMessageBus(bus)
-  svc.setModelContextWindowResolver(() => 128000)
   return { svc, bus, publishSpy, broadcasts, client, pm }
 }
 

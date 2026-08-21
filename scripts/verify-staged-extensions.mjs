@@ -103,7 +103,8 @@ function checkManifest(pkgDir) {
  * 分类 import 错误：判断是否为 pi runtime 差异导致的 dev 环境假阳性。
  *
  * bundle 的正确性由 esbuild 保证（inline 完整、无语法错，否则不产出 index.js）。
- * pi 0.84.1 实测能加载全部 staged 包（get_state success，2026-08-12 重测；staged 包清单以 mandatory-extensions.json SSOT 为准，不在此写死包数）。
+ * pi 0.84.1 实测能加载全部 builtin 包（get_state success，2026-08-12 重测，包数以
+ * mandatory-extensions.json SSOT 为准，不在此写死计数）。
  * verify-staged 用 node import，
  * 与 pi jiti runtime 有两类差异，需降级（不视为 bundle 缺陷）：
  *  - external：涉及 pi virtualModules（@earendil-works/* 等），dev 环境 node_modules
@@ -143,6 +144,34 @@ async function main() {
 	if (pkgDirs.length === 0) {
 		console.error(`[verify-staged] ✗ staged 无 pi-* 包目录: ${STAGED}`);
 		console.error(`[verify-staged] 恢复: bash scripts/prepare-builtin-extensions.sh`);
+		process.exit(1);
+	}
+
+	// SSOT 集合断言：staged 包集合必须与 mandatory-extensions.json 派生集合完全相等
+	//（多/少都 fail）。逐包校验只保证「发现的包各自合格」，bundle-extensions.mjs 或
+	// extraResources 拷贝漏掉部分包时会静默放行（PR #185 review S2：13 包漏 1 剩 12 全 pass）。
+	const mandatoryPath = join(REPO_ROOT, "packages/shared/src/mandatory-extensions.json");
+	let expectedDirs;
+	try {
+		const mandatory = JSON.parse(readFileSync(mandatoryPath, "utf8"));
+		expectedDirs = mandatory.map((p) => p.name.replace(/^@zhushanwen\//, "")).sort();
+	} catch (err) {
+		console.error(`[verify-staged] ✗ 无法读取 mandatory-extensions.json SSOT: ${mandatoryPath}`);
+		console.error(`[verify-staged] ${err.message}`);
+		process.exit(1);
+	}
+	const stagedSet = new Set(pkgDirs);
+	const missingFromStaged = expectedDirs.filter((d) => !stagedSet.has(d));
+	const extraInStaged = pkgDirs.filter((d) => !expectedDirs.includes(d));
+	if (missingFromStaged.length > 0 || extraInStaged.length > 0) {
+		console.error(`[verify-staged] ✗ staged 包集合与 mandatory-extensions.json SSOT 不一致:`);
+		if (missingFromStaged.length > 0) {
+			console.error(`[verify-staged]   SSOT 有而 staged 缺（bundle/拷贝遗漏）: ${missingFromStaged.join(", ")}`);
+		}
+		if (extraInStaged.length > 0) {
+			console.error(`[verify-staged]   staged 有而 SSOT 无（残留或 SSOT 未更新）: ${extraInStaged.join(", ")}`);
+		}
+		console.error(`[verify-staged] 恢复: 重新运行 bash scripts/prepare-builtin-extensions.sh；仍不一致则核对 packages/shared/src/mandatory-extensions.json`);
 		process.exit(1);
 	}
 

@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-model-switch",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Intelligent model recommendation and switching for Pi coding agent",
   "type": "module",
   "main": "index.ts",
@@ -44,6 +44,7 @@
     }
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
     "vitest": "^4.1.8"
   },
   "scripts": {

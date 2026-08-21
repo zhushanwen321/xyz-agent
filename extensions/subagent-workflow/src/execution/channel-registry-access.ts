@@ -76,7 +76,9 @@ function readHandshakeSlot(): ChannelRegistryHandshake | undefined {
     );
     return undefined;
   }
-  const version = (slot as { version?: unknown }).version;
+  // 断言目标含必填 version 字段（object/null 已守卫；version 值本身在下一行校验），
+  // 对齐 format.ts extractAgentName 的必填字段断言先例，避免全可选断言零校验。
+  const version = (slot as { version: unknown }).version;
   if (version !== HANDSHAKE_VERSION) {
     logger.warn(
       `[pi-subagent-workflow] channel handshake version mismatch (got ${String(

@@ -91,6 +91,12 @@ export function formatElapsedSeconds(seconds: number): string {
 const SHORT_ID_SYNC_SEGMENTS = 2;
 /** background id 取前 N 段（bg/${tag}/${seq}）。 */
 const SHORT_ID_BG_SEGMENTS = 3;
+/** subagent record id 的 `sa-` 前缀（前缀后接 UUID）。 */
+const SA_ID_PREFIX = "sa-";
+/** formatToolCall bash 分支 command 预览截断长度（字符）。 */
+const BASH_PREVIEW_MAX_CHARS = 60;
+/** formatToolCall default 分支 args JSON 预览截断长度（字符）。 */
+const ARGS_PREVIEW_MAX_CHARS = 50;
 
 /**
  * 从完整 record id 提取短编号用于列表展示.
@@ -105,8 +111,8 @@ const SHORT_ID_BG_SEGMENTS = 3;
  */
 export function shortId(id: string): string {
   // sa- 前缀的 subagent ID：保留前缀 + UUID 前 3 段（与纯 UUID 的 3 段信息量等价）
-  if (id.startsWith("sa-")) {
-    return "sa-" + id.slice(3).split("-").slice(0, SHORT_ID_BG_SEGMENTS).join("-");
+  if (id.startsWith(SA_ID_PREFIX)) {
+    return SA_ID_PREFIX + id.slice(SA_ID_PREFIX.length).split("-").slice(0, SHORT_ID_BG_SEGMENTS).join("-");
   }
   const segments = id.split("-");
   if (segments.length <= SHORT_ID_SYNC_SEGMENTS) return id;
@@ -310,7 +316,7 @@ export function formatToolCall(
   switch (toolName) {
     case "bash": {
       const command = (args.command as string) || "...";
-      const preview = command.length > 60 ? `${command.slice(0, 60)}...` : command;
+      const preview = command.length > BASH_PREVIEW_MAX_CHARS ? `${command.slice(0, BASH_PREVIEW_MAX_CHARS)}...` : command;
       return theme.fg("muted", "$ ") + theme.fg("toolOutput", preview);
     }
     case "read": {
@@ -354,7 +360,7 @@ export function formatToolCall(
     }
     default: {
       const argsStr = JSON.stringify(args);
-      const preview = argsStr.length > 50 ? `${argsStr.slice(0, 50)}...` : argsStr;
+      const preview = argsStr.length > ARGS_PREVIEW_MAX_CHARS ? `${argsStr.slice(0, ARGS_PREVIEW_MAX_CHARS)}...` : argsStr;
       return theme.fg("accent", toolName) + theme.fg("dim", ` ${preview}`);
     }
   }

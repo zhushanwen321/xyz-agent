@@ -75,13 +75,14 @@ interface PendingToolDetails {
 /**
  * 模块级 EventBus 监听器 unsubscribe 函数列表。
  *
- * EventBus 是进程级单例（真实 SDK resource-loader 构造一次，跨 /reload、会话切换复用）。
- * 工厂函数 pendingNotificationsExtension 每次 reload 都重新执行，若不先移除旧监听器，
- * N 次 reload 后 EventBus 上会累积 N 组监听器（>11 后抛 Possible EventEmitter memory leak）。
+ * [W4 注释修正] 原 rationale（"EventBus 进程级单例 + reload 累积 N 组监听器"）在
+ * pi 0.84.1 不成立：pi.events.on 的返回值是 runtime.trackEventBusSubscription 跟踪的
+ * unsubscribe（loader.js:338-341），runtime.invalidate() 时自动全部退订——session 替换
+ * （dispose）与 /reload（invalidate 先于重新 load）都触发；且 session 替换会创建全新
+ * ResourceLoader → 全新 eventBus（agent-session-services.js:63-68），旧 bus 整体废弃。
  *
- * 用模块级变量跨 reload 持久：工厂入口先调用上一轮的 unsubscribe 清理旧监听器，
- * 再注册新的。这同时修复了多 session 串数据问题——reload 后只有当前闭包的监听器存活，
- * currentSessionId 始终是最新 session（旧闭包的过期 currentSessionId 不会再给事件打戳）。
+ * 下方的工厂入口手工清理因此是双重冗余（无害）：pi 已自动清理 tracked 订阅。
+ * 保留是防御性兜底（不依赖 pi 内部清理时机，卸载幂等）。
  */
 let unsubscribers: Array<() => void> = [];
 

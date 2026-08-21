@@ -7,7 +7,8 @@
  * 为什么单独一个 port（不塞进 IConfigStore）：
  * settings.json 同时被 model 域（defaultModel/skills/...）和 extension 域（packages[]）读写。
  * 两个域管的是同一文件的不同字段——物理同文件、逻辑分区。给每个域一个窄 port，
- * 各 port 的实现都经 pi-settings-store（唯一读写层 + 异步互斥），杜绝跨域 RMW 竞态（D17）。
+ * 各 port 的实现都经 pi-settings-store（唯一读写层 + 跨进程锁 + 字段域 merge），
+ * 杜绝跨域 RMW 竞态（D17）。
  *
  * disabled-packages.json 是 xyz-agent 自己的文件（pi 不读），与 settings.json 分离，
  * 仍归本域管理（toggle/disable 语义），但不经 settings.json 的互斥——它没有跨域竞争。
@@ -17,7 +18,8 @@
  * Extension 配置 port —— pi settings.json 的 packages[] + disabled-packages.json。
  *
  * 读操作同步（settings.json 经 pi-settings-store 的 3s 缓存，高频读不触盘）；
- * 写操作异步（经 pi-settings-store.updateSettingsSync 的 RMW，sync IO 单线程不交错；签名保持 async 守 port 契约）。
+ * 写操作异步（经 pi-settings-store.updateSettingsFields 的锁内 RMW + extension 字段域
+ * merge——跨进程与 pi 互斥靠 proper-lockfile；签名保持 async 守 port 契约）。
  */
 export interface IExtensionSettings {
   // ── settings.json packages[]（extension 安装清单）──

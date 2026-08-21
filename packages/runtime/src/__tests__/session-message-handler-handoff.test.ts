@@ -46,7 +46,6 @@ function makeHandler(opts: MakeHandlerOpts = {}) {
     handoffService: opts.handoffService,
     nextPushId: vi.fn().mockReturnValue('push-1'),
     broadcastSessionList: vi.fn(),
-    clearExtensionTimeoutsForSession: vi.fn(),
   }
   const handler = new SessionMessageHandler(ctx as unknown as ConstructorParameters<typeof SessionMessageHandler>[0])
   return { ctx, cap, handler }

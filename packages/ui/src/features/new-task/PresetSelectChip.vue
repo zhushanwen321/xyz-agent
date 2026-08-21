@@ -6,7 +6,7 @@
  * features/new-task/（C-NT-4）。变化：presetStore.presets/defaultPresetId/openRequest →
  * deps.presets/deps.defaultPresetId/deps.presetOpenRequest（NewTaskDeps inject，C-W4-1，
  * Ref 保持响应式）；usePiPresets().loadPresets/setDefault → deps.loadPresets/deps.setDefaultPreset；
- * ui 原语走 @xyz-agent/ui barrel。三态（landing/锁定/历史）逻辑 + emit 契约（select/
+ * ui 原语走包内相对导入（不经顶层 barrel，防自引用环）。三态（landing/锁定/历史）逻辑 + emit 契约（select/
  * update:presetOpen）逐字迁移（CT-4，不做功能改动）。
  *
  * 三态（由 props.sessionId + props.launchPresetId 派生）：
@@ -41,7 +41,12 @@
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, Lock, SlidersHorizontal } from '@lucide/vue'
-import { Button, Checkbox, Popover, PopoverContent, PopoverTrigger, PopoverListItem, HoverCard, HoverCardContent, HoverCardTrigger } from '@xyz-agent/ui'
+// ui 原语走包内相对导入（不经 @xyz-agent/ui 顶层 barrel）：new-task 组件经顶层 barrel
+// 再导出，顶层 barrel 自引用会闭合循环依赖环（R2 S-1）
+import { Button } from '../../primitives/button'
+import { Checkbox } from '../../primitives/checkbox'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '../../primitives/hover-card'
+import { Popover, PopoverContent, PopoverTrigger, PopoverListItem } from '../../primitives/popover'
 import { useNewTaskDeps } from './new-task-deps'
 import type { PiLaunchPreset } from '@xyz-agent/shared'
 

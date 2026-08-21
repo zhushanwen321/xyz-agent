@@ -15,11 +15,12 @@ import builtinData from '../../generated/builtin-providers.json'
 import { deriveEnabled } from '../../services/provider-catalog.js'
 import { JsonStore } from '../../utils/json-store.js'
 import { getModelsPath, getPiAgentDir } from './pi-paths.js'
-// settings.json 的唯一读写层（D17 收口）：readSettings/updateSettingsSync/PiSettings/缓存/原子写
-// 都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一所有者 + 缓存。
+// settings.json 的唯一读写层（D17 收口）：readSettings/updateSettingsFields/PiSettings/缓存/
+// 跨进程锁/原子写都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一
+// 所有者 + 缓存 + 锁。
 import {
   readSettings,
-  updateSettingsSync,
+  updateSettingsFields,
   invalidateSettingsCache,
 } from './pi-settings-store.js'
 // enabledModels 白名单读写（Phase 1 拆出到 pi-enabled-models）：本文件的 pickFirstModelProvider /
@@ -153,7 +154,7 @@ function pickFirstModelProvider(
   // A8：跳过被 enabledModels 禁用的 provider（与 findValidDefaultModel 主路径守卫一致），
   // 避免 removeProvider/upsertProvider 重选与 findValidDefaultModel fallback 选到用户已禁用的 provider。
   // enabledModels 空（全启用）时 deriveEnabled 恒 true，行为不变。重选场景 enabledModels 不变，
-  // 实时读 getEnabledModels 安全（无 updateSettingsSync 回调内 stale 风险）。
+  // 实时读 getEnabledModels 安全（无 updateSettingsFields 回调内 stale 风险）。
   const enabledModels = getEnabledModels()
   for (const [pid, pcfg] of Object.entries(providers)) {
     if (!deriveEnabled(pid, enabledModels)) continue
@@ -195,10 +196,10 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
   models.providers[providerId] = config
   writeModels(models)
 
-  // 同步校验 defaultModel：经 updateSettingsSync 单次 RMW。
+  // 同步校验 defaultModel：经 updateSettingsFields('model') 单次锁内 RMW。
   // 结果通过外层变量捕获（mutator 不返回值）。
   let outcome: { newDefault?: { provider: ProviderId; modelId: string } } = {}
-  updateSettingsSync(s => {
+  updateSettingsFields('model', s => {
     if (s.defaultProvider !== providerId) { outcome = {}; return }
 
     // models 未参与本次更新（partial upsert：clearApiKey 剥离 apiKey / quota 覆写 /
@@ -246,9 +247,9 @@ export function removeProvider(providerId: string): {
   delete models.providers[providerId]
   writeModels(models)
 
-  // 同步清理 defaultProvider/defaultModel：经 updateSettingsSync 单次 RMW。
+  // 同步清理 defaultProvider/defaultModel：经 updateSettingsFields('model') 单次锁内 RMW。
   let outcome: { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } = { removed: true }
-  updateSettingsSync(s => {
+  updateSettingsFields('model', s => {
     if (s.defaultProvider !== providerId) { outcome = { removed: true }; return }
     delete s.defaultProvider
     delete s.defaultModel
@@ -280,8 +281,9 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 }
 
 // ── Settings.json 操作 ───────────────────────────────────────
-// readSettings/updateSettingsSync 收敛到 pi-settings-store（D17 唯一读写层）；setSettingsPath 供测试 tmpdir 隔离。
-export { readSettings, writeSettings, updateSettingsSync, setSettingsPath } from './pi-settings-store.js'
+// readSettings/writeSettings/setSettingsPath 收敛到 pi-settings-store（D17 唯一读写层）；
+// updateSettingsFields 不在此 re-export（零外部消费者，直接从 pi-settings-store import）。
+export { readSettings, writeSettings, setSettingsPath } from './pi-settings-store.js'
 
 /**
  * 纯校验：检查 defaultProvider/defaultModel 在 models.json 中是否有效。
@@ -325,7 +327,7 @@ export function findValidDefaultModel(): {
   // models.json apiKey 任一）。遍历而非取排序第一个——amazon-bedrock 等 ambient 认证
   // provider 无凭据时不可用，不能作为默认。
   // wasFixed=false：兜底是临时展示，不是配置修复——写回 settings.json 会污染用户配置
-  //（曾踩坑：兜底结果经 updateSettingsSync 覆盖用户默认 provider，见 2026-08-09 回归）。
+  //（曾踩坑：兜底结果经 updateSettingsFields 覆盖用户默认 provider，见 2026-08-09 回归）。
   if (!fallback) {
     const authCredentials = readAuthCredentials()
     const builtinProviders = (builtinData.providers ?? []) as Array<{
@@ -356,7 +358,7 @@ export function findValidDefaultModel(): {
 export function getDefaultModel(): { provider: ProviderId; modelId: string } | null {
   const { result, wasFixed } = findValidDefaultModel()
   if (wasFixed && result) {
-    updateSettingsSync(s => {
+    updateSettingsFields('model', s => {
       s.defaultProvider = result.provider
       s.defaultModel = result.modelId
     })
@@ -366,7 +368,7 @@ export function getDefaultModel(): { provider: ProviderId; modelId: string } | n
 }
 
 export function setDefaultModel(provider: ProviderId, modelId: string): void {
-  updateSettingsSync(s => {
+  updateSettingsFields('model', s => {
     s.defaultProvider = provider
     s.defaultModel = modelId
   })
@@ -377,7 +379,7 @@ export function getDefaultThinkingLevel(): string {
 }
 
 export function setDefaultThinkingLevel(level: string): void {
-  updateSettingsSync(s => { s.defaultThinkingLevel = level })
+  updateSettingsFields('model', s => { s.defaultThinkingLevel = level })
 }
 
 // ── models.json 无效 provider 清理（重装后 "Model not found" 自愈）──────
@@ -389,6 +391,10 @@ export function setDefaultThinkingLevel(level: string): void {
 // 7 个）时条目五字段全缺，旧实现重启即删除（用户刚保存的 apiKey/authMethod 静默丢失）。
 // 这类空壳从 catalog 合并 models 修复（模型级 baseUrl 由 catalog 提供），保留用户数据且
 // 仍满足 bundled pi 严格校验；非 catalog 的空壳（外部脚本 fixture）维持删除语义。
+// [W1b 语义变更] 无效判定已对齐 pi 0.84.1 八字段（isInvalidProvider，锚点见
+// pi-provider-repair.ts）：QuickSetup 条目通常含 apiKey → 直接合法，不再进修复路径；
+// 修复路径仅剩八字段全缺（连 apiKey 都无）的 catalog 空壳。曾被旧五字段判定误删的
+// 配置不追溯恢复（known-issue，见 pi-provider-repair.ts）。
 // MF-6（R4 review）：修复前提是 catalog models 每个模型都有可用 baseUrl（见下）。
 // azure-openai-responses 的 38 个 catalog models 全为空串 baseUrl，合并即毒化 pi 组合，
 // 排除出修复名单（维持删除语义）——目录中不存在任何可用 baseUrl 数据。
@@ -403,15 +409,21 @@ const builtinModelsById = new Map<string, PiModelDefinition[]>(
 )
 
 /**
- * 启动时清理 models.json 里的无效 provider（五字段全缺的空壳）。
+ * 启动时清理 models.json 里的无效 provider（八字段全缺的空壳，判定 = isInvalidProvider，
+ * 对齐 pi 0.84.1 applyModelsJson 抛错条件，锚点与 known-issue 见 pi-provider-repair.ts）。
  *
- * 修复根因：空壳 provider（如 {apiKey, name} 无五字段任一）导致 bundled pi 0.80.3
+ * 修复根因（历史）：空壳 provider（如仅 {name}，八字段全缺）导致 bundled pi 0.80.3
  * 严格校验时整个 models.json 加载失败。系统 pi 0.83 对此容错但 bundled 0.80.3 不容错，
  * 重装后切换 bundled pi 必现 "Model not found"。本函数让 xyz-agent 自愈这种脏数据。
  *
- * MF-5：catalog 已知内置 provider 的空壳（QuickSetup 保存空 baseUrl 模板产生，含用户
- * 刚保存的 apiKey）不删除，合并 catalog models 修复（条目合法化，apiKey/authMethod 保留，
- * 模型级 baseUrl 由 catalog 提供）。非 catalog 空壳维持删除语义（外部 fixture 不留存）。
+ * [W1b 语义变更] 0.84.1 判定放宽为八字段（apiKey/oauth/authHeader 在场即合法）：
+ * 只配 apiKey 的合法 provider 不再被删（旧五字段判定的误删是数据丢失级 bug，审计 A-02；
+ * 被误删数据不追溯恢复——known-issue 见 pi-provider-repair.ts）。
+ *
+ * MF-5：catalog 已知内置 provider 的空壳不删除，合并 catalog models 修复（条目合法化，
+ * name/authMethod 等既有字段保留，模型级 baseUrl 由 catalog 提供）。[W1b 语义变更]
+ * QuickSetup 保存的条目含 apiKey 时直接合法、不进修复路径；修复路径仅剩无 apiKey 的
+ * catalog 空壳。非 catalog 空壳维持删除语义（外部 fixture 不留存）。
  * MF-6：修复前提是 catalog models 每个模型均有非空 baseUrl（pi modelFromJson 对空 baseUrl
  * 直接 throw，毒化整个 provider 组合且无自愈路径）。catalog models 含空 baseUrl 的 provider
  * （azure-openai-responses）排除出修复名单，维持删除语义；catalog 未来补全 baseUrl 后自动恢复修复。
@@ -429,13 +441,14 @@ export function sanitizeInvalidProviders(): { removed: string[]; repaired: strin
     const repaired: string[] = []
     for (const [id, cfg] of Object.entries(draft.providers)) {
       if (isInvalidProvider(cfg)) {
-        // catalog 已知内置 provider 的空壳 → 合并 catalog models 修复（保留 apiKey/authMethod）。
+        // catalog 已知内置 provider 的空壳 → 合并 catalog models 修复（保留 name/authMethod
+        // 等既有字段；[W1b 语义变更] 含 apiKey 的条目直接合法，不进此分支）。
         // MF-6（R4 review）：catalog models 含空 baseUrl 的 provider 不可修复——pi modelFromJson
         // 对每个自定义模型强制非空 baseUrl（空串非 nullish，`??` 不跳过 → 直接 throw），任一空
         // baseUrl 模型即毒化整个 provider 组合（composeModelProvider 抛错 → pi 回退 builtin base，
         // 用户 apiKey 静默失效且条目 isInvalidProvider===false 无自愈路径）。这类 provider
         // （azure-openai-responses 38/38 模型空 baseUrl）维持删除语义；过滤空 baseUrl 模型会退回
-        // models:[] 五字段全缺态再次被删（transient 非法态），合成 baseUrl 不可接受（catalog 无数据）。
+        // models:[] 八字段全缺态再次被删（transient 非法态），合成 baseUrl 不可接受（catalog 无数据）。
         const catalogModels = builtinModelsById.get(id)
         if (catalogModels && catalogModels.length > 0 && catalogModels.every(m => !!m.baseUrl)) {
           draft.providers[id] = { ...cfg, models: catalogModels }

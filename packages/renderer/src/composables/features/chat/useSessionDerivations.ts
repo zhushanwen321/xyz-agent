@@ -46,7 +46,9 @@ export interface SessionDigest {
  * session id 命名空间一致，Pinia store 是应用级单例。deleteSession 时调 invalidateStatusCache
  * 清理，避免已删 session 的 computed 残留（残留非泄漏——页面刷新全清，但显式清理更洁）。
  */
+// @data-owner #11 —— #11 session 活跃态的 renderer 派生缓存（per-session DerivedStatus computed 复用；失效经 invalidateStatusCache，非第二写方）
 const statusCache = new Map<string, ComputedRef<DerivedStatus>>()
+// @data-owner #7 —— #7 消息列表的 renderer 派生缓存（per-session SessionDigest computed 复用，非第二写方）
 const digestCache = new Map<string, ComputedRef<SessionDigest>>()
 
 export function useSessionDerivations() {

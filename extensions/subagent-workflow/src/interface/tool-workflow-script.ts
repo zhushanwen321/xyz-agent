@@ -211,8 +211,9 @@ export function registerWorkflowScriptTool(
           result = await actionList(registry);
           break;
         default:
-          result = textResult(`Unknown action: ${String(params.action)}`, true);
-          break;
+          // 防御性（schema StringEnum 先拦）：throw（W4b）——pi 只对 execute throw 置
+          // isError:true，返回值里的 isError 被 agent-loop 丢弃（agent-loop.js:453-483）。
+          throw new Error(`Unknown action: ${String(params.action)}`);
       }
       // GUI 协议：RPC 模式下附加 __gui__ 到 details
       return withScriptGui(result, toGuiCtx(ctx));
@@ -241,28 +242,27 @@ export function registerWorkflowScriptTool(
 
 export function actionGenerate(params: ScriptParams, signal: AbortSignal | undefined): TextContent {
   if (signal?.aborted) {
-    return textResult("Operation aborted before start", true);
+    // throw（W4b）：pi 只对 execute throw 置 isError:true（返回值 isError 被丢弃）
+    throw new Error("Operation aborted before start");
   }
   const name = params.name;
   const script = params.script;
   if (!name || !script) {
-    return textResult("generate requires 'name' and 'script' parameters", true);
+    throw new Error("generate requires 'name' and 'script' parameters");
   }
 
  // 1. Reject ESM syntax (Worker runs CJS); 'export const meta' 例外
   const stripped = script.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
   if (/\bimport\s+(?:type\s+)?[\w{*]/.test(stripped)) {
-    return textResult(
+    throw new Error(
       "Script uses ESM 'import' syntax. Workflow scripts run in a CJS Worker — use require() instead.",
-      true,
     );
   }
   const hasExportMeta = /\bexport\s+const\s+meta\s*=/.test(stripped);
   const otherExports = stripped.match(/\bexport\s+(?:const|let|var|function|default|\{)/g);
   if (otherExports && !hasExportMeta) {
-    return textResult(
+    throw new Error(
       "Script uses ESM 'export' (non-meta). Use 'const meta = {...}' at top level instead.",
-      true,
     );
   }
 
@@ -270,17 +270,15 @@ export function actionGenerate(params: ScriptParams, signal: AbortSignal | undef
   const hasPiMeta = /\/\*\s*@pi-meta\s*\n/.test(script);
   const hasLegacyMeta = script.includes("const meta") || script.includes("export const meta");
   if (!hasPiMeta && !hasLegacyMeta) {
-    return textResult(
+    throw new Error(
       "Script must contain a meta declaration: a /* @pi-meta */ YAML block comment (preferred) or legacy const meta = { ... }. The block has the form: a block comment starting with /* @pi-meta followed by YAML (name/description/phases/parameters?/usage?), closed by */ on its own line.",
-      true,
     );
   }
 
  // 3. Check agent usage
   if (!/\bagent\s*\(/.test(stripped)) {
-    return textResult(
+    throw new Error(
       "Script does not contain any agent() calls. A workflow must call agent() at least once.",
-      true,
     );
   }
 
@@ -290,7 +288,7 @@ export function actionGenerate(params: ScriptParams, signal: AbortSignal | undef
     new Function(`(async () => { ${cjsScript} })();`);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return textResult(`Syntax error in script: ${msg}`, true);
+    throw new Error(`Syntax error in script: ${msg}`);
   }
 
  // 4b. Round-trip: validate /* @pi-meta */ YAML before writing (v5 §4.7 / ERR4 — report linePos, don't write bad files)
@@ -300,9 +298,8 @@ export function actionGenerate(params: ScriptParams, signal: AbortSignal | undef
       const loc = "linePos" in detailed && detailed.linePos
         ? ` (line ${detailed.linePos.line}, col ${detailed.linePos.col})`
         : "";
-      return textResult(
+      throw new Error(
         `Generated /* @pi-meta */ YAML cannot be parsed${loc}: ${detailed.error}. Common causes: YAML indent errors, patternProperties regex must use double backslash (\\d not \d), or a stray star-slash inside the YAML body. Fix the meta block and retry.`,
-        true,
       );
     }
   }
@@ -332,7 +329,7 @@ async function actionLint(
 ): Promise<TextContent> {
   const name = params.name;
   if (!name) {
-    return textResult("lint requires 'name' parameter", true);
+    throw new Error("lint requires 'name' parameter");
   }
   const source = await loadScriptSource(name, registry);
   if (!source) {
@@ -341,9 +338,8 @@ async function actionLint(
     const suggestions = available
       .map((wf) => `  - ${wf.name}: ${wf.meta.description || "(no description)"}`)
       .join("\n");
-    return textResult(
+    throw new Error(
       `Workflow '${name}' not found or not available.\nAvailable:\n${suggestions || "  (none)"}`,
-      true,
     );
   }
 
@@ -386,7 +382,7 @@ async function loadScriptSource(
 async function actionSave(params: ScriptParams): Promise<TextContent> {
   const name = params.name;
   if (!name) {
-    return textResult("save requires 'name' parameter (tmp script name)", true);
+    throw new Error("save requires 'name' parameter (tmp script name)");
   }
   try {
     const result = await saveWorkflow(name, params.newName);
@@ -395,12 +391,10 @@ async function actionSave(params: ScriptParams): Promise<TextContent> {
       details: { action: "save", name, ok: true },
     };
   } catch (err: unknown) {
+    // throw（W4）：pi 只对 execute throw 置 isError:true（返回值里的 isError 被
+    // agent-loop 丢弃，agent-loop.js:453-483）——文案原样进 toolResult。
     const msg = err instanceof Error ? err.message : String(err);
-    return {
-      content: [{ type: "text", text: `Save failed: ${msg}` }],
-      details: { action: "save", name, ok: false },
-      isError: true,
-    };
+    throw new Error(`Save failed: ${msg}`);
   }
 }
 
@@ -413,7 +407,7 @@ function actionDelete(
 ): TextContent {
   const name = params.name;
   if (!name) {
-    return textResult("delete requires 'name' parameter", true);
+    throw new Error("delete requires 'name' parameter");
   }
  // deleteWorkflow 内部检查 isRunning（防止删运行中脚本）
   try {
@@ -425,12 +419,9 @@ function actionDelete(
       details: { action: "delete", name, ok: true },
     };
   } catch (err: unknown) {
+    // throw（W4）：同 save——pi 契约只有 throw 才置 isError:true。
     const msg = err instanceof Error ? err.message : String(err);
-    return {
-      content: [{ type: "text", text: `Delete failed: ${msg}` }],
-      details: { action: "delete", name, ok: false },
-      isError: true,
-    };
+    throw new Error(`Delete failed: ${msg}`);
   }
 }
 
@@ -451,17 +442,22 @@ async function actionList(registry: WorkflowScriptRegistry): Promise<TextContent
       details: { action: "list", count: available.length },
     };
   } catch (err: unknown) {
+    // throw（W4b）：list 失败改 throw（原 return isError 被 pi 丢弃），文案保持
     const msg = err instanceof Error ? err.message : String(err);
-    return textResult(`List failed: ${msg}`, true);
+    throw new Error(`List failed: ${msg}`);
   }
 }
 
 // ── helper ───────────────────────────────────────────────────
 
-function textResult(text: string, isError = false): TextContent {
+/**
+ * 构造纯文本非错误结果（W4b：isError 参数已删除——pi 只对 execute throw 置
+ * isError:true，返回值里的 isError 被 agent-loop 丢弃（agent-loop.js:453-483），
+ * 错误一律 throw，编译器兜底防回潮）。
+ */
+function textResult(text: string): TextContent {
   return {
     content: [{ type: "text", text }],
     details: undefined,
-    isError: isError || undefined,
   };
 }

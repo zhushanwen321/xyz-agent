@@ -32,8 +32,9 @@ export function nextTracePushId(): string {
 }
 
 /**
- * 现取 system prompt 的 custom entry customType。写入方 = 常驻 xyz-agent-extension.js 的
- * /__xyz_get_system_prompt__ 命令 handler（字面量锤定，纯 JS 不 import 本模块）；读取方 =
+ * 现取 system prompt 的 custom entry customType。写入方 = builtin agent-ext 包
+ *（infrastructure 不可禁）的 /__xyz_get_system_prompt__ 命令 handler（字面量锤定，不 import
+ * 本模块）；读取方 =
  * session-service.fetchCurrentSystemPrompt 轮询匹配。与留痕包的 xyz:system-prompt（core
  * SYSTEM_PROMPT_CUSTOM_TYPE）语义不同：这是「当前值现取」，非留痕历史。
  */

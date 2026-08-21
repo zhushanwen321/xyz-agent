@@ -30,6 +30,9 @@ import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
 import { asBoundedString, asString } from '../validation.js'
 
+/** 毫秒 → 秒换算（令牌桶按秒补充令牌） */
+const MS_PER_SECOND = 1_000
+
 /**
  * 每插件 notify 令牌桶（D7「限流与防毒化」）。
  *
@@ -52,7 +55,7 @@ export class NotifyRateLimiter {
   tryAcquire(pluginId: string, nowMs: number = Date.now()): boolean {
     const capacity = this.config.ratePerSec
     const bucket = this.buckets.get(pluginId) ?? { tokens: capacity, lastRefillMs: nowMs }
-    const elapsedSec = Math.max(0, nowMs - bucket.lastRefillMs) / 1000
+    const elapsedSec = Math.max(0, nowMs - bucket.lastRefillMs) / MS_PER_SECOND
     bucket.tokens = Math.min(capacity, bucket.tokens + elapsedSec * this.config.ratePerSec)
     bucket.lastRefillMs = nowMs
     if (bucket.tokens < 1) {

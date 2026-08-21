@@ -5,8 +5,8 @@
  * [w4 迁移] 自 renderer components/new-task/BranchSelectPopover.vue（364 行）迁入 ui 包
  * features/new-task/（C-NT-4）。变化：worktreeApi.listBranches → deps.listBranches
  * （NewTaskDeps inject，C-W4-1）；useToast().error → deps.toast.error（gitGraphStub）；
- * useFlatListNav 本地化（C-W4-3）；ui 原语走 @xyz-agent/ui barrel。props/emits/双 tab 模板
- * 逐字迁移（CT-4，不做功能改动）。
+ * useFlatListNav 本地化（C-W4-3）；ui 原语走包内相对导入（不经顶层 barrel，防自引用环）。
+ * props/emits/双 tab 模板逐字迁移（CT-4，不做功能改动）。
  *
  * 语义升级：从「选分支 popover」升级为「Git popover（分支/Worktree 双 tab）」。
  * Tab 栏在搜索框上方，分支 tab 承载原有全部分支逻辑，Worktree tab 承载 worktree 列表。
@@ -42,7 +42,10 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GitBranch, GitFork, Plus, GitGraph, TriangleAlert, Loader2 } from '@lucide/vue'
-import { Input, PopoverListItem, PopoverActionItem } from '@xyz-agent/ui'
+// ui 原语走包内相对导入（不经 @xyz-agent/ui 顶层 barrel）：new-task 组件经顶层 barrel
+// 再导出，顶层 barrel 自引用会闭合循环依赖环（R2 S-1）
+import { Input } from '../../primitives/input'
+import { PopoverActionItem, PopoverListItem } from '../../primitives/popover'
 import { useNewTaskDeps } from './new-task-deps'
 import { useFlatListNav } from './composables/useFlatListNav'
 

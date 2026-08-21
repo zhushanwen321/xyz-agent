@@ -149,7 +149,8 @@ export function scheduleTimeBudget(
  * （worker+gate+controller）+ assignRuntime（注入 runtime，恢复 I1）+ 注册到
  * deps.runs + store.save。
  *
- * @param spec RunSpec（不可变输入，含 scriptSource/args）
+ * @param spec RunSpec（scriptSource 只读；args 会被原地注入 _runId——rfl C2 契约，
+ * worker 启动与崩溃重建共用同一 args 对象）
  * @param deps LifecycleDeps（store/workerHost/runner/runs）
  * @param signal 外部 abort signal（可选；abort 时调 abortRun）
  * @returns runId（wf-<timestamp>-<random>）
@@ -167,6 +168,14 @@ export async function runWorkflow(
   validateRunArgs(spec);
 
   const runId = generateRunId();
+  // rfl 仪表（tier-1 §7.1）：注入稳定 _runId。runAndWait 与 executeNestedWorkflow
+  // 两个 args 入口都经本 choke point；rebuildRuntime 复用 run.spec.args 同一对象
+  // （error-recovery.ts），worker rebuild 后脚本侧 $ARGS._runId 不漂移——修复
+  // 「rebuild 回退 run-<Date.now()> 导致同一逻辑 run 碎裂到多个 state 目录」。
+  // 注入在 validateRunArgs 之后，不参与脚本参数 schema 校验（引擎内部字段）。
+  if (spec.args && typeof spec.args === "object") {
+    spec.args._runId = runId;
+  }
   deps.log?.("debug", "workflow:lifecycle", "runWorkflow start", { runId, scriptName: spec.scriptName });
 
  // P1-2: pre-aborted signal → fail fast

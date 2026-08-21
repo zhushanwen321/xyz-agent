@@ -27,7 +27,7 @@ vi.mock('@/api/transport', () => ({
 // mock pending：register 返回可控 Promise，create 返回固定 id
 const registerMock = vi.fn()
 vi.mock('@/api/pending', () => ({
-  create: () => 'test-id',
+  createCommandId: () => 'test-id',
   register: (id: string) => registerMock(id),
   reject: vi.fn(),
 }))

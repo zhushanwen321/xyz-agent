@@ -37,7 +37,7 @@ vi.mock('@/stores/session', () => ({
     list: [],
     activeId: null,
     get listLoadError() { return sessionState.listLoadError },
-    setGroups: vi.fn(),
+    applySnapshot: vi.fn(),
     setListLoadError: vi.fn((msg: string | null) => { sessionState.listLoadError = msg }),
   }),
 }))

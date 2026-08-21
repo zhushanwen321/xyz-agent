@@ -75,7 +75,9 @@ function seedSessions(): void {
       ],
     },
   ]
-  useSessionStore().setGroups(groups)
+  // ADR-0059 薄壳 store 无 setGroups 整表入口（main 侧 W 修订），走 applySnapshot
+  //（new-task use-new-task-flow.test.ts 同款范式）
+  useSessionStore().applySnapshot({ groups })
 }
 
 /** 挂载后的响应式上下文建立（模块级 watch 无需组件；await 一轮微任务让初始 ensureLoaded 启动）。 */

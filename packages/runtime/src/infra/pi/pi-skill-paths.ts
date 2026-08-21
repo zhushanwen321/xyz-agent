@@ -17,7 +17,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SkillDirConfig } from '@xyz-agent/shared'
-import { updateSettingsSync, readSettings } from './pi-settings-store.js'
+import { updateSettingsFields, readSettings } from './pi-settings-store.js'
 import {
   getSkillDirs as getDiscoverySkillDirs,
   getSkillPathScopes as getDiscoverySkillScopes,
@@ -31,7 +31,7 @@ import { normalizeToHome } from '../../utils/path-utils.js'
  * 在 setSkillPaths/addSkillPath/removeSkillPath 写入 discovery 后调用，保持派生缓存一致。
  */
 function syncSkillDirsToSettings(): void {
-  updateSettingsSync(s => { s.skills = getDiscoverySkillDirs() })
+  updateSettingsFields('skills', s => { s.skills = getDiscoverySkillDirs() })
 }
 
 /**

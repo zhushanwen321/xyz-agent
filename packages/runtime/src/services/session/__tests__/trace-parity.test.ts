@@ -33,13 +33,11 @@ const store: ISessionStore = {
   scanSessions: () => [],
   invalidateScanCache: () => {},
   refreshAll: () => {},
-  persistSessionName: () => {},
   persistSessionEnd: () => {},
   persistPresetBinding: () => {},
   persistProjectBinding: () => {},
   extractSessionOutcome: () => null,
   invalidateMetaCache: () => {},
-  patchSessionCwd: () => true,
   convertHistory: () => [],
   rebuildHistoryFromEntries: () => ({ messages: [], clientUuidMap: new Map(), orphanToolResults: [] }),
   parseSessionHeader: () => null,
@@ -52,7 +50,7 @@ const store: ISessionStore = {
     }
   },
   readSessionEndMeta: (p: string) => readSessionEndMeta(p),
-  persistHandedOff: () => {},
+  persistHandoffSidecar: () => {},
   trash: () => {},
 }
 

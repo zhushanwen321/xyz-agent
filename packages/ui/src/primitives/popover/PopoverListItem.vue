@@ -18,7 +18,9 @@
  * 命中 selected 时尾部渲染 Check（accent 色）。
  */
 import { Check } from '@lucide/vue'
-import { Button } from '@xyz-agent/ui'
+// ui 包内相对导入（不经 @xyz-agent/ui 顶层 barrel）：primitives 是顶层 barrel 的
+// 再导出来源，顶层 barrel 自引用会闭合循环依赖环
+import { Button } from '../button'
 import {
   POPOVER_LIST_ITEM_CLASS,
   POPOVER_LIST_ITEM_ACTIVE_CLASS,

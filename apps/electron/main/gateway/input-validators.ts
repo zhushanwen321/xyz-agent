@@ -5,15 +5,17 @@
  * 把校验逻辑抽成纯函数，handler 调用后决定放行/拒绝。
  *
  * [HISTORICAL] 不变量：
- * - openExternal 必须校验 http/https 协议（防 file:// / javascript: 等危险协议）
+ * - openExternal 必须校验 http/https 协议（防 file:// / javascript: 等）
  * - 路径类校验用 path.resolve 规范化 + 前缀匹配（防 ../ 穿越）
  *   追加 path.sep 后缀防止前缀误判（/Users/foo 匹配到 /Users/foobar）
+ * - will-navigate 只放行应用自身源（isAllowedAppNavigation，integrity-hardening D2b）
  *
  * 这是纯函数文件——签名即设计，不深化骨架。
  *
- * 依赖方向：无下游（纯函数，type-only import node:path）
+ * 依赖方向：无下游（纯函数，import node:path + node:url）
  */
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /**
  * 校验 URL 是否允许 openExternal。
@@ -51,4 +53,50 @@ export function isPathInAllowedPrefixes(filePath: string, allowedPrefixes: reado
  */
 export function isValidAbsolutePath(filePath: unknown): filePath is string {
   return typeof filePath === 'string' && filePath.length > 0 && path.isAbsolute(filePath)
+}
+
+/**
+ * D2b 导航拦截（integrity-hardening §3.2）：判定主窗口 will-navigate 目标是否应用自身源。
+ *
+ * 为什么拦截：renderer 一旦被注入（XSS），`window.location = 'https://evil.com'` 整页
+ * 导航会让 preload 对新页面重新注入 electronAPI——攻击页拿到 runtime token/port 连本机
+ * WS，一次性注入升级为持久接管。in-page/hash 导航不触发 will-navigate（Electron 语义），
+ * SPA 路由不受影响；loadURL/loadFile 程序化导航同样不触发。
+ *
+ * 允许两类（OR，缺省的参数不参与判定）：
+ *  - devOrigin：dev 态 Vite dev server（origin 形式，如 http://localhost:1420）。
+ *    HMR full-reload 同源放行
+ *  - fileRoot：file:// 且路径在 fileRoot 目录内（prod/E2E 态 loadFile 自源）。
+ *    两条件同时启用而非按 isDev 二选一：E2E 是「构建产物 + isDev=true」形态（XYZ_E2E），
+ *    loadFile 自源在任何模式都要放行；fileRoot 限定 appPath（应用安装目录/项目根），
+ *    不放行任意 file:// 页（防 preload 注入到不可信本地页）
+ *
+ * @param url will-navigate 目标 URL
+ * @param opts.devOrigin dev 态 dev server origin（origin 形式字符串）
+ * @param opts.fileRoot prod/E2E 态允许的 file:// 根目录（app.getAppPath()）
+ * @returns true=应用自身源放行 / false=调用方应 preventDefault
+ */
+export function isAllowedAppNavigation(
+  url: string,
+  opts: { devOrigin?: string; fileRoot?: string },
+): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (opts.devOrigin && parsed.origin === opts.devOrigin) return true
+  if (opts.fileRoot && parsed.protocol === 'file:') {
+    // fileURLToPath 统一平台差异（Windows file URL 带 /C:/ 前导斜杠）+ 解码 %xx
+    let filePath: string
+    try {
+      filePath = fileURLToPath(parsed)
+    } catch {
+      return false
+    }
+    const root = opts.fileRoot.endsWith(path.sep) ? opts.fileRoot : opts.fileRoot + path.sep
+    return filePath.startsWith(root)
+  }
+  return false
 }

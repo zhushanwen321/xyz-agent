@@ -366,7 +366,7 @@ describe('边界3 持久化（CL2）：clearEnabledModels 后 settings.json 物�
     let raw = JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8'))
     expect(raw.enabledModels).toEqual(['openai/*'])
 
-    // clearEnabledModels 用 updateSettingsSync(delete) 删字段
+    // clearEnabledModels 用 updateSettingsFields('model', delete) 删字段
     clearEnabledModels()
     // 文件仍存在（只删 key，非删文件）
     expect(existsSync(join(agentDir, 'settings.json'))).toBe(true)

@@ -17,7 +17,8 @@
  *    - XYZ_AGENT_PORT_OFFSET ?? DEV_PORT_OFFSET
  *    - app.setPath('userData', 隔离目录)  ← 防 Chromium LevelDB LOCK 竞争
  *
- * 3. local-file:// 协议路径白名单（app.getAppPath/getDataDir/homedir/tmpdir + path.sep 后缀）
+ * 3. local-file:// 协议路径白名单 = computeLocalFilePrefixes 纯函数
+ *    （app.getAppPath/getDataDir/tmpdir/用户内容子目录 + path.sep 后缀；dev 含 cwd，打包态剔除）
  *
  * 4. Runtime 启动时序（D1 决策）：createWindow 先于 spawn runtime
  *    - whenReady: createWindow → register → registerShortcuts → runtime.startAndNotify
@@ -73,6 +74,7 @@ import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
 import { flushStderrSink } from './supervisor/process-control.js'
 import { expandLocalFilePath } from './utils/path.js'
+import { computeLocalFilePrefixes } from './utils/local-file-prefixes.js'
 
 // ── PATH 修复（GUI 启动时补全用户级 bin 目录）──────────────────────
 // macOS LaunchServices 给 GUI 进程的 PATH 是最小值（/usr/bin:/bin:...），
@@ -125,6 +127,18 @@ if (isDev) {
   app.setPath('userData', path.join(homedir(), '.xyz-agent-dev', 'electron'))
 }
 
+// ── 单实例锁（integrity-hardening §3.2 D2d）───────────────────────
+// 双开 = 两个实例并发 spawn runtime、并发读写同一数据目录，会命中「pi session 文件
+// EEXIST 永久卡死」历史事故区（AGENTS.md 规则 6）。锁必须晚于上面 isDev 块的
+// app.setPath('userData')：Electron 单实例锁按 userData 路径区分，dev 隔离目录
+// 让 dev 实例与 prod 实例互不误伤。第二实例 app.quit() 后模块级代码仍会同步执行
+// （quit 流程触发 before-quit，其清理链对未启动状态幂等），whenReady guard
+// 阻止其创建窗口 / spawn runtime。
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+}
+
 // ── 全局状态容器 ─────────────────────────────────────────────────
 // 构造三个 Facade + MainContext（替代旧代码散落的 let mainWindow / let settingsWindow）
 const runtime = new RuntimeSupervisor()
@@ -168,6 +182,24 @@ registerIpcHandlers({
 
 // ── App 生命周期编排 ─────────────────────────────────────────────
 
+// D2d：主实例收到 second-instance（Windows/Linux 双击图标再次启动；macOS `open -n`）
+// 时聚焦既有主窗口——用户意图是「把 app 带到前台」而非开新实例。
+if (gotSingleInstanceLock) {
+  app.on('second-instance', () => {
+    const win = ctx.mainWindow
+    if (win && !win.isDestroyed()) {
+      // 最小化（Windows 常见）先还原再聚焦，Electron 官方 second-instance 模板语义
+      if (win.isMinimized()) win.restore()
+      win.focus()
+      return
+    }
+    // macOS 窗口全关但 app 存活的边角（open -n 触发）：重建主窗口，对齐 activate 行为
+    if (BrowserWindow.getAllWindows().length === 0) {
+      void bootstrapMainWindow()
+    }
+  })
+}
+
 /**
  * 初始化主窗口 + 快捷键 + runtime（mock 模式跳过 runtime）。
  * whenReady 和 activate 共用此逻辑（消除重复）。
@@ -193,6 +225,8 @@ async function bootstrapMainWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // D2d 第二实例退出路径：app.quit() 已在模块加载期触发，不再初始化任何子系统
+  if (!gotSingleInstanceLock) return
   // dev 模式 Dock 图标：未打包的 Electron 运行时用内置默认图标（蓝色 Electron logo），
   // 不读 electron-builder 的 build/icon.*（那只在打包产物生效）。macOS dock 图标跟随
   // app bundle——dev 无 bundle，必须显式 setIcon 才有新 LOGO（双鱼太极）。
@@ -213,29 +247,19 @@ app.whenReady().then(async () => {
     const rawPath = decodeURIComponent(new URL(request.url).pathname)
     // 渲染进程无法安全展开 ~，主进程统一处理（图片 URL 可能含 ~/）
     const filePath = expandLocalFilePath(rawPath)
-    // [HISTORICAL] W3：禁止把整个 homedir() 加入白名单——会把「不能读 ~/.ssh」
-    // 放宽成「能读 ~/.ssh」。白名单只含可信子集：
-    //   - app.getAppPath()：当前 app 资源目录（dev 模式即项目根）
-    //   - getDataDir()：xyz-agent 数据目录（动态推导，dev=~/.xyz-agent-dev，符合架构约定 #2）
-    //   - <getDataDir()>/attachments：会话级图片附件目录（runtime session-service 持久化路径，
-    //     按 sessionId 分区。放行整个 attachments 目录——全是用户自粘图片非敏感，安全粒度等同 tmpdir；
-    //     protocol handler 无状态拿不到 session 上下文，无法按 session 推导）
-    //   - process.cwd()：当前项目工作目录（图片预览主要场景，cwd 通常是用户项目）
-    //   - os.tmpdir()：临时文件（导出/截图等 + landing 态图片降级路径）
-    //   - 特定用户子目录：~/Documents / ~/Desktop / ~/Downloads（用户内容常见位置，
-    //     预览家目录下的普通文件）。绝不放行 ~ 本身（含 ~/.ssh、~/.aws 等敏感文件）。
-    // Append path.sep to prevent prefix false-positives (e.g. /Users/foo matching /Users/foobar)
-    const sep = path.sep
-    const home = homedir()
-    const userContentSubdirs = ['Documents', 'Desktop', 'Downloads'].map(d => path.join(home, d))
-    const allowedPrefixes = [
-      app.getAppPath(),
-      getDataDir(),
-      path.join(getDataDir(), 'attachments'),
-      process.cwd(),
-      tmpdir(),
-      ...userContentSubdirs,
-    ].map(p => p.endsWith(sep) ? p : p + sep)
+    // [HISTORICAL] W3 → D2a：白名单构造收敛到 computeLocalFilePrefixes 纯函数。
+    // 打包态剔除 process.cwd()——macOS 打包版从 Finder/Dock 启动时 cwd 是 /，
+    // 前缀匹配 startsWith('/') 对任意绝对路径恒真，白名单塌缩为全盘，「绝不放行
+    // ~ 本身（含 ~/.ssh）」的注释护栏曾被该运行时环境击穿。不变量守护已移到单测：
+    // main/test/local-file-prefixes.test.ts（打包态不含文件系统根 / 不含 homedir 本身）。
+    // 各成员的取舍理由见 utils/local-file-prefixes.ts 文件头。
+    const allowedPrefixes = computeLocalFilePrefixes({
+      isPackaged: app.isPackaged,
+      cwd: process.cwd(),
+      appPath: app.getAppPath(),
+      dataDir: getDataDir(),
+      tmpdir: tmpdir(),
+    })
     const resolved = path.resolve(filePath)
     // 校验逻辑集中到 input-validators，拒绝不在白名单前缀内的路径（防目录穿越）
     if (!isPathInAllowedPrefixes(resolved, allowedPrefixes)) {

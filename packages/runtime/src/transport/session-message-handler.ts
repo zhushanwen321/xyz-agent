@@ -27,7 +27,6 @@ export interface SessionHandlerContext extends MessageHandlerContext {
   messageBus?: IMessageBus
   nextPushId(): string
   broadcastSessionList(): void
-  clearExtensionTimeoutsForSession(sessionId: string): void
   /** 广播一条 ServerMessage 给所有连接（FR-12：fork 后广播 session.forkNotice）。 */
   broadcast(msg: ServerMessage): void
 }
@@ -193,26 +192,25 @@ export class SessionMessageHandler {
         }
       }
       case 'session.delete': {
+        // D6a：挂起 UI 请求清理（extensionTimeoutMgr）不经此处直接调用——已汇聚到
+        // onSessionDestroyed 回调（server.ts setServices 注册，removeSessionEntry 触发，
+        // 覆盖主动删 / 进程退出 / restore 清场全部路径），单一清理入口。
         const delSid = msg.payload.sessionId
-        this.ctx.clearExtensionTimeoutsForSession(delSid)
         await this.ctx.sessionService.delete(delSid)
         this.ctx.reply(ws, msg.id, 'session.deleted', { sessionId: delSid })
         return this.ctx.broadcastSessionList()
       }
       case 'session.deleteByCwd': {
-        // deleteByCwd 是 best-effort 聚合（永远 resolve），clearExtensionTimeoutsForSession
-        // 只对 result.deleted 调用（失败的 session 未真正删除，不需清 timeout）。
-        // 与 session.delete 的「先清 timeout 再 delete」顺序相反——批量需先拿到聚合结果才知道清谁。
-        const cwd = msg.payload?.cwd
+        // deleteByCwd 是 best-effort 聚合（永远 resolve）。清理同 session.delete：经
+        // onSessionDestroyed 汇聚点统一触发（deleted 的 active session 走 removeSessionEntry；
+        // 非 active 的本就无 in-flight 挂起状态），不再按 result.deleted 逐个直接调用。
         // cwd 非空字符串校验：与 extension-message-handler 的 invalid_payload 范式对齐。
         // 不走「reply 空 BatchDeleteResult 成功」——那会让前端误判删除成功，掩盖参数错误。
+        const cwd = msg.payload?.cwd
         if (!cwd || typeof cwd !== 'string') {
           return this.ctx.sendError(ws, 'invalid_payload', 'session.deleteByCwd requires a non-empty "cwd" string', msg.id)
         }
         const result = await this.ctx.sessionService.deleteByCwd(cwd)
-        for (const id of result.deleted) {
-          this.ctx.clearExtensionTimeoutsForSession(id)
-        }
         this.ctx.reply(ws, msg.id, 'session.deletedByCwd', result)
         return this.ctx.broadcastSessionList()
       }

@@ -183,6 +183,24 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     return cachedMainSessionFile;
   }
 
+  /**
+   * 按 sessionId 解析主 session 文件路径（文件名约定 `<ISO 时间戳>_<sessionId>.jsonl`）。
+   * [E2E 实测] attach 场景下 ctx.sessionManager.getSessionFile() 会返回前一 session 的
+   * 文件（session_start(root=01a01bf5) 时仍返回刚新建 session 的路径）——恢复逻辑
+   * 读错文件会整段漏判。此处按 id 从 sessions 目录解析为准；新 session 文件未 flush
+   * 时（AGENTS.md 规则 6：首条 assistant 消息前可能不存在）返回 undefined，调用方
+   * （fork 解析 / 孤儿恢复）对该场景本就无 entry 可读。
+   */
+  function resolveMainSessionFileById(sessionId: string): string | undefined {
+    const sessionsDir = path.join(getAgentDir(), "..", "sessions");
+    try {
+      const match = fs.readdirSync(sessionsDir).find((f) => f.endsWith(`_${sessionId}.jsonl`));
+      return match === undefined ? undefined : path.join(sessionsDir, match);
+    } catch {
+      return undefined;
+    }
+  }
+
   // resources_discover：不再注入额外 skill 目录（ADR-031 废弃 discovery.json）。
   // pi 核心 auto-discovery 已覆盖 .agents/skills 等标准目录，子 session 的
   // --skill 由 agent({skill}) 调用方显式传入，无需 extension 额外补充。
@@ -381,9 +399,20 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     // SR-3: 无论 new 还是 existing（/resume /fork 复用），session_start 都必须注入 handler
     service.setUiRequestHandler(uiRequestHandler);
 
+    // 主 session 文件：按 sessionId 解析（getSessionFile() 在 attach 场景会返回前一
+    // session 的文件，E2E 实测），未 flush 的新 session 回退 getSessionFile()。
+    // 值直传 initSession——jiti 多实例分裂下闭包缓存（cachedMainSessionFile）不跨
+    // 实例共享，恢复逻辑经缓存读会拿到滞后一个事件的值（E2E 实测 ENOENT 漏判）；
+    // 缓存本身保留给既有 getter 消费者（fork source 解析）。
+    cachedMainSessionFile =
+      resolveMainSessionFileById(ctx.sessionManager.getSessionId()) ??
+      ctx.sessionManager.getSessionFile() ??
+      undefined;
+
     service.initSession({
       pi,
       sessionId: ctx.sessionManager.getSessionId(),
+      mainSessionFile: cachedMainSessionFile,
       // 注入 ctx.ui.setWidget 作为 streaming sink（只绑方法，不持有整个 ctx）。
       // background subagent 执行期间，text_delta 经 SubagentStream 合并后由此通道转发。
       // [W1 修复] ctx.mode === 'rpc' 守卫：TUI/json/print 下 streamSink = undefined（无 widget 噪音），
@@ -412,8 +441,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
 
     // S-2: 启动 idle record GC 定时器（30 天 TTL，每小时检查一次）
     service.startGcTimer();
-
-    cachedMainSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
 
     try {
       maybeCleanupExpiredSessionFiles(agentDir, cwd);
@@ -471,6 +498,19 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
             id: run.runId,
             reason: "failed",
           });
+          // 恢复终态必须落盘：save 走冷路径（done 绕过去抖）同步写 state 文件 +
+          // append 终态 workflow-record entry——entry_appended 事件驱动 runtime 派生
+          // 缓存失效重拉（无 triggerTurn 副作用）。不 save 则 entry/state 双双停留
+          // running，侧栏永久卡 running。失败仅记日志不阻断其余 run 的恢复（下次
+          // session_start 重开重试，恢复循环天然幂等）。
+          try {
+            await store.save(run);
+          } catch (err) {
+            logger.error("[subagent-workflow] kill-9 recovery store.save failed", {
+              runId: run.runId,
+              reason: err instanceof Error ? err.message : String(err),
+            });
+          }
         }
         runs.set(run.runId, run);
       }

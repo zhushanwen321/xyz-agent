@@ -47,7 +47,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
   config: { getGlobalSkills: vi.fn().mockResolvedValue([]), getProjectSkills: vi.fn().mockResolvedValue([]), onSkillCacheInvalidated: () => () => {} },
 }))
 vi.mock('@/stores/session', () => ({
-  useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
+  useSessionStore: () => ({ active: undefined, list: [], applySnapshot: vi.fn() }),
 }))
 
 // ── ComposerInput mock：emit input 设 draft + emit keydown Enter 触发 onSend ──

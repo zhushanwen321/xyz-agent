@@ -83,7 +83,7 @@ function makeMessage(id: string): Message {
 // seed pinia session store（ADR-0059：useSessionStore 单例）
 function seedSessions(_sidebar: ReturnType<typeof useSidebarNew>, ids: string[]): void {
   const group: SessionGroup = { cwd: '/proj', sessions: ids.map(makeSummary) }
-  useSessionStore().setGroups([group])
+  useSessionStore().applySnapshot({ groups: [group] })
 }
 
 /** hydrate 指定 session（绕过 selectSession 的 api 拉取，直接注入消息） */

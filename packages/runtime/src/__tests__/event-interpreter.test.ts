@@ -100,6 +100,26 @@ describe('EventInterpreter compaction 编排 (M4 事件驱动)', () => {
     expect(onCompactingStateChange).toHaveBeenCalledWith('s1', false)
   })
 
+  it('TC2b: compaction_end{result 无 summary} 成功（D2 closure）→ 仍恒发 compactionSummary 帧（summary 缺省透传，reducer 侧两侧同 fallback）', () => {
+    const { interp, sent } = makeInterpreter({})
+
+    interp.interpret([{
+      kind: 'compaction-end',
+      reason: 'auto',
+      result: { tokensBefore: 999 }, // summary 缺失（LLM 异常返回无摘要的成功压缩）
+      aborted: false,
+    }])
+
+    // 恒发帧（原 `if (r.summary)` 真值门已删）：payload.summary 为 undefined，下游
+    // registry/reducer 走「上下文已压缩」fallback——live 与重开（pi 无条件落盘）一致，
+    // 登记例外④消灭（等价性断言见 apply-entry-equivalence E4b）
+    const summary = sent.find((m) => m.type === 'message.compactionSummary')
+    expect(summary).toBeDefined()
+    expect(summary!.payload).toMatchObject({ sessionId: 's1', summary: undefined, tokensBefore: 999 })
+    const compacted = sent.find((m) => m.type === 'session.compacted')
+    expect(compacted).toBeDefined()
+  })
+
   it('TC3: compaction_end aborted（无 errorMessage 真值）→ session.compacted（不带 error）+ 复位，无 compactionSummary', () => {
     const onContextUpdate = vi.fn()
     const { interp, sent } = makeInterpreter({ onContextUpdate })

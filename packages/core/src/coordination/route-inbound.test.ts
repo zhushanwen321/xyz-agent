@@ -56,6 +56,7 @@ function makeEffects(overrides?: Partial<InboundEffects>): InboundEffects {
     onSubagents: vi.fn(),
     onWorkflowUpdate: vi.fn(),
     onGlobalError: vi.fn(),
+    onSessionError: vi.fn(),
     ...overrides,
   }
 }
@@ -306,6 +307,42 @@ describe('configureRouteInbound — global 通道 + L9 + effects（⑤/⑦）', 
     // message 缺失 → 默认 'Unknown error'
     dispatcher({ type: 'error', payload: {} } as unknown as ServerMessage)
     expect(effects.onGlobalError).toHaveBeenLastCalledWith('Unknown error')
+  })
+
+  it('⑦ error 带 sid 无 id（D6b：fire-and-forget 失败，如 extension.ui_response 无进程）→ dispatchSession + onSessionError', () => {
+    const ports = makePorts()
+    const effects = makeEffects()
+    const dispatcher = configureRouteInbound(ports, effects)
+    dispatcher({
+      type: 'error',
+      payload: { code: 'handler_error', message: 'No active session for extension response: s1', sessionId: 's1' },
+    } as unknown as ServerMessage)
+    // session 通道仍分发（订阅者可见），effect 兜底保证无订阅者也不丢
+    expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1)
+    expect(effects.onSessionError).toHaveBeenCalledWith('s1', {
+      code: 'handler_error',
+      message: 'No active session for extension response: s1',
+    })
+    expect(ports.events.dispatchGlobal).not.toHaveBeenCalled()
+    expect(effects.onGlobalError).not.toHaveBeenCalled()
+    // message 缺失 → 兜底 'Unknown error'（防御运行时坏形状）
+    dispatcher({ type: 'error', payload: { sessionId: 's1' } } as unknown as ServerMessage)
+    expect(effects.onSessionError).toHaveBeenLastCalledWith('s1', { code: undefined, message: 'Unknown error' })
+  })
+
+  it('⑦ error 带 id 命中 pending → 仍走 pending 分流，不触发 onSessionError（请求级失败归 pending reject）', () => {
+    // has 默认 mockReturnValue(true)（对齐 RPC reply 场景）
+    const ports = makePorts()
+    const effects = makeEffects()
+    const dispatcher = configureRouteInbound(ports, effects)
+    dispatcher({
+      type: 'error',
+      id: 'req-1',
+      payload: { code: 'message_blocked', message: 'blocked', sessionId: 's1' },
+    } as unknown as ServerMessage)
+    expect(ports.pending.resolveEnvelope).toHaveBeenCalledTimes(1)
+    expect(effects.onSessionError).not.toHaveBeenCalled()
+    expect(ports.events.dispatchSession).not.toHaveBeenCalled()
   })
 })
 

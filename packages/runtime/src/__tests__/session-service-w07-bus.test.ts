@@ -2,8 +2,8 @@
  * SessionService × MessageBus 集成测试（wave:perf-w07，D1-1 接 bus 第一批的 session 侧）。
  *
  * 锁定两条新增 publish 语义：
- * - context.update（applyContextUpdate turn-end 路径）：state topic——分配 seq 写 stateSnapshot
- *   （'context' typeKey 同 key 覆盖）、不入 ring；重连订阅从 state 快照恢复。
+ * - context.update（W12 起 usage 实例快照应用后挂钩发布）：state topic——分配 seq 写
+ *   stateSnapshot（'context' typeKey 同 key 覆盖）、不入 ring；重连订阅从 state 快照恢复。
  * - session.exited（onSessionExit 进程退出路径）：stream topic——带 seq，且 publish 必须发生在
  *   removeSessionEntry（内部 bus.clearSession 清订阅者集合）之前，否则订阅 renderer 收不到。
  *
@@ -12,9 +12,10 @@
  *
  * 运行：cd packages/runtime && npx vitest run src/__tests__/session-service-w07-bus.test.ts
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SessionService } from '../services/session/session-service.js'
 import { MessageBus } from '../services/message-bus/message-bus.js'
+import { SCALAR_STATE_DEBOUNCE_MS } from '../services/session/replicated-states.config.js'
 import type { IMessageBroker } from '../interfaces.js'
 import type { IPiEngine, IProcessManager } from '../services/ports/pi-engine.js'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -47,8 +48,19 @@ function makeEnv() {
   const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
 
   let exitHandler: ((sessionId: string, code: number | null, stderr: string) => void) | null = null
+  // W12：client 需供四实例播种 fetch（getState/getSessionStats）——usage 快照就位后
+  // context.update 挂钩才有值可发（percent 3.90625 → 投影 round = 4，与旧 resolver 重算同值）
   const client = {
     getCommands: vi.fn(async () => []),
+    getState: vi.fn(async () => ({
+      sessionName: 'bus',
+      thinkingLevel: 'low',
+      model: { id: 'test-model', provider: 'test-provider' },
+      pendingMessageCount: 0,
+    })),
+    getSessionStats: vi.fn(async () => ({
+      contextUsage: { tokens: 5000, contextWindow: 128000, percent: 3.90625 },
+    })),
   } as unknown as IPiEngine
   const pm = {
     onSessionExit: vi.fn((h: (sessionId: string, code: number | null, stderr: string) => void) => {
@@ -74,9 +86,6 @@ function makeEnv() {
   // 对齐组合根（index.ts）：构造参数的 bus 只喂给 dispatcher，SessionService 自身的
   // this.messageBus 靠 setMessageBus setter 注入（applyContextUpdate / onSessionExit 的 publish 用）。
   svc.setMessageBus(bus)
-  // contextWindow resolver：computeUsage 算 usagePercent 用（128k 窗口）
-  svc.setModelContextWindowResolver(() => 128000)
-
   return {
     svc, bus, broadcasts,
     triggerExit: (sid: string, code: number | null, stderr: string) => {
@@ -87,26 +96,36 @@ function makeEnv() {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers()
   vi.clearAllMocks()
+})
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('SessionService × MessageBus（wave:perf-w07）', () => {
-  it('W07-3: applyContextUpdate publish context.update（state）——重连订阅从 state 快照恢复，不入 ring', async () => {
+  it('W07-3: applyContextUpdate 失效后 usage 快照应用发布 context.update（state）——重连订阅从 state 快照恢复，不入 ring', async () => {
     const { svc, bus, broadcasts } = makeEnv()
     await svc.initializeManagedSession('s-ctx', {} as unknown as IPiEngine, '/tmp', 'test')
+    await vi.advanceTimersByTimeAsync(1) // flush 四实例播种 refetch（含挂钩发布的排程，label/queue 已撤销 PR #185）
 
     const online = createMockWs()
     bus.subscribe('s-ctx', online)
 
+    // W12：事件只做失效（markDirty）——发布由 usage fetch 成功后的挂钩承担
+    //（防抖 300ms + 快照 RPC + setTimeout 0 宏任务，advance 一并推进）
     svc.applyContextUpdate('s-ctx', 5000, 10000)
+    await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 50)
 
     // 在线订阅者收到带 seq 的 context.update
     const ctxMsg = findMsg(parseSent(online), 'context.update')
     expect(ctxMsg).toBeDefined()
     expect(typeof ctxMsg!.seq).toBe('number')
+    // payload = usage 实例快照投影（percent 3.90625 → round 4；与旧「事件值 + resolver 重算」
+    // 的 round(5000 / 128000 * 100) = 4 同值——切换前后等价）
     expect(ctxMsg!.payload).toMatchObject({
       sessionId: 's-ctx',
-      usagePercent: 4, // round(5000 / 128000 * 100)
+      usagePercent: 4,
       inputTokens: 5000,
       contextLimit: 128000,
     })

@@ -113,8 +113,9 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
 
   // 注册 schedule tool
   // execute 内联闭包：从 SDK 全签名 (toolCallId, params, signal, onUpdate, ctx) 提取 params 转调
-  // handler。catch 兜底 INTERNAL + 未初始化异常（R3：handler 不 catch getService()，
-  // 初始化异常穿透到这里，保持 'Error: Scheduler not initialized' 格式）。
+  // handler。错误路径 throw（W4）：pi 只对 execute throw 置 isError:true（返回值里的
+  // isError 被 agent-loop 丢弃）；getService() 未初始化异常穿透到这里，包装
+  // 'Error: Scheduler not initialized' 格式（R3 格式保持）。
   pi.registerTool({
     name: 'schedule',
     label: 'Schedule',
@@ -131,16 +132,12 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
       try {
         return await createScheduleHandler(getService())(params)
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
-          details: {},
-          isError: true,
-        }
+        throw new Error(`Error: ${err instanceof Error ? err.message : String(err)}`)
       }
     },
   })
 
-  // 注册 schedule_control tool
+  // 注册 schedule_control tool（错误路径同上：throw 让 pi 置 isError）
   pi.registerTool({
     name: 'schedule_control',
     label: 'Schedule Control',
@@ -157,11 +154,7 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
       try {
         return await createScheduleControlHandler(getService())(params)
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
-          details: {},
-          isError: true,
-        }
+        throw new Error(`Error: ${err instanceof Error ? err.message : String(err)}`)
       }
     },
   })

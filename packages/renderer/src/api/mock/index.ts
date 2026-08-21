@@ -17,7 +17,7 @@
  * connected），打一次 console.warn 提示。
  */
 import type {
-  Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo, BuiltinProviderTemplate,
+  Message, ModelInfo, ServerMessage, ServerMessageMap, ServerMessageUnion, SessionSummary, SessionGroup, ProviderInfo, BuiltinProviderTemplate,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
@@ -87,7 +87,7 @@ function warnIfRealClientActive(): void {
  * [W17] pushSession 是 mock 与 real events 总线的接触点：首次推送时检测 real ws-client 是否
  * 已 connected，若是则 warn（防 mock 推送污染 real 订阅者）。
  */
-function pushSession(sessionId: string, msg: ServerMessage): void {
+function pushSession(sessionId: string, msg: ServerMessageUnion): void {
   warnIfRealClientActive()
   events.dispatchSession(sessionId, msg)
 }
@@ -167,16 +167,20 @@ const TIMING: Timing = {
   steerDrain: 1500, // steer/followUp 入队 → 模拟 drain（pi 投递）间隔，让 QueueBubble 可见
 }
 
-const streamHandlers = new Map<string, Set<(msg: ServerMessage) => void>>()
+// taste:allow-no-data-owner W24-EX-D（VITE_MOCK 测试基建，登记草稿）：mock 流式 handler 表
+const streamHandlers = new Map<string, Set<(msg: ServerMessageUnion) => void>>()
 /** 已 abort 的 session：send 循环检查后提前返回 */
+// taste:allow-no-data-owner W24-EX-D（VITE_MOCK 测试基建，登记草稿）：mock 取消标记集合
 const cancelled = new Set<string>()
 /** 运行中的 setTimeout 句柄，resolve 后自动移除，避免 Set 无限增长 */
+// taste:allow-no-data-owner W24-EX-D（VITE_MOCK 测试基建，登记草稿）：mock 定时器句柄集合
 const timers = new Set<ReturnType<typeof setTimeout>>()
 /**
  * mock 队列状态镜像（steer/followUp pending）。
  * steer/followUp 入队时 push + emit 全量 queue_update（QueueBubble 渲染），
  * 延迟后 splice 模拟 drain（pi 投递）+ emit 全量（移除该项）→ drainPending 取 segments + appendUser（complete user 进对话流）。
  */
+// taste:allow-no-data-owner W24-EX-D（VITE_MOCK 测试基建，登记草稿）：mock 队列缓冲
 const mockQueues = new Map<string, { steering: string[]; followUp: string[] }>()
 
 /** 清理所有未触发的 timer（测试 teardown / 模块卸载时调用） */
@@ -192,7 +196,7 @@ function nextId(prefix: string): string {
   return `${prefix}-${idSeq}`
 }
 
-function emit(sessionId: string, msg: ServerMessage): void {
+function emit(sessionId: string, msg: ServerMessageUnion): void {
   streamHandlers.get(sessionId)?.forEach((h) => h(msg))
 }
 
@@ -202,9 +206,15 @@ function emitQueueUpdate(sessionId: string): void {
   const steering = q?.steering.length ? q.steering : undefined
   const followUp = q?.followUp.length ? q.followUp : undefined
   // 两者皆空时仍 emit（空 payload），让 store 侧 queue_update handler delete queueState
+  // pendingMessageCount = steering + followUp 条数和（W8 契约必填，对齐 event-adapter 翻译口径）
   emit(sessionId, {
     type: 'message.queue_update',
-    payload: { sessionId, steering, followUp },
+    payload: {
+      sessionId,
+      steering,
+      followUp,
+      pendingMessageCount: (q?.steering.length ?? 0) + (q?.followUp.length ?? 0),
+    },
   })
 }
 
@@ -483,13 +493,18 @@ export const session = {
  * - 命令含 'fail' → error：exitCode:1 + 'command not found'（覆盖错误态视觉）
  * - 命令含 'empty' → empty-output：exitCode:0 + ''（覆盖空输出态）
  * - 命令含 'timeout' → 近似超时：cancelled:true + exitCode:null（覆盖取消态视觉；
- *   真实 timeout 走 finalizeBashOnly 置 error:'timeout'，bashResultEffect 不读 error，
- *   不动 store 时 mock 无法注入该标记，用 cancelled 近似 + 长 delay 模拟 timer 到期）
+ *   真实 timeout 由 finalizeBashOnly 置 error:'timeout'（W1 entry 化后仅手动种子场景
+ *   可达，正常流转无 streaming bash 消息），bashResultEffect 构造 entry 不读 error
+ *   字段、mock 无法注入该标记，用 cancelled 近似 + 长 delay 模拟 timer 到期）
  * - 命令含 'truncate' → truncated:true（覆盖 W4 截断标记视觉）
  *
  * delay 是 bashStart→bashResult 间隔，让 streaming loading 态可见。
  */
-function resolveBashMockBranch(command: string): { result: Record<string, unknown>; delay: number } {
+// result 锚定 protocol 契约（ServerMessageMap['message.bashResult'] 的分支可变字段子集）——
+// spread 进 payload 后由 map 登记静态校验（emit 参数为分发联合，缺字段即编译错）
+function resolveBashMockBranch(
+  command: string,
+): { result: Pick<ServerMessageMap['message.bashResult'], 'output' | 'exitCode' | 'cancelled' | 'truncated'>; delay: number } {
   const cmd = command.toLowerCase()
   // 2s 让 loading 态（spinner + 取消按钮）足够可见；timeout 用 3s 强调 timer 到期节奏
   const MOCK_BASH_DELAY = 2000
@@ -559,7 +574,7 @@ export const chat = {
    */
   async compact(sessionId: string): Promise<void> {
     await sleep(TIMING.ack)
-    emit(sessionId, { type: 'session.compacting', payload: { sessionId, status: 'compacting' } })
+    emit(sessionId, { type: 'session.compacting', payload: { sessionId, status: 'compacting', reason: 'manual' } })
     await sleep(TIMING.fileChangesGap)
     emit(sessionId, { type: 'session.compacted', payload: { sessionId, status: 'compacted' } })
   },
@@ -585,10 +600,11 @@ export const chat = {
       type: 'message.bashStart',
       payload: { sessionId, command, excludeFromContext: !!excludeFromContext, timestamp: Date.now() },
     })
-    // bashStart→bashResult 间 mockDelay 让 loading 态可见（streaming spinner + 取消按钮）。
-    // timeout 分支用更长 delay 模拟 bash timer 到期（真实超时态由 finalizeBashOnly 置
-    // error:'timeout'，此处只能用 cancelled:true 近似——bashResultEffect 不读 error 字段，
-    // 不动 chat-bash-effects.ts 时无法在 mock 注入 error:'timeout'）。
+    // bashStart→bashResult 间 mockDelay 让 loading 态可见（W1 entry 化后 bashStart 写
+    // ephemeral executingBash 瞬时执行反馈，非消息数组项）。timeout 分支用更长 delay 模拟
+    // bash timer 到期（真实超时态由 finalizeBashOnly 置 error:'timeout'，此处只能用
+    // cancelled:true 近似——bashResultEffect 构造 bashExecution entry 不含 error 字段，
+    // mock 无法注入 error:'timeout'）。
     const branch = resolveBashMockBranch(command)
     await sleep(branch.delay)
     emit(sessionId, {
@@ -661,7 +677,7 @@ export const chat = {
     timers.add(t)
   },
 
-  streamSubscribe(sessionId: string, handler: (msg: ServerMessage) => void): () => void {
+  streamSubscribe(sessionId: string, handler: (msg: ServerMessageUnion) => void): () => void {
     let set = streamHandlers.get(sessionId)
     if (!set) {
       set = new Set()

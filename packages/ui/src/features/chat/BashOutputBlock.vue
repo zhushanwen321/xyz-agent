@@ -108,7 +108,11 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { SquareTerminal } from '@lucide/vue'
-import { Button } from '@xyz-agent/ui'
+// 经 primitives 子模块直接导入而非 @xyz-agent/ui 顶层 barrel：本组件被 Turn.vue 直接
+// 引用且经 features/chat barrel 再导出，顶层 barrel 自引用会闭合
+// BashOutputBlock → index → features/chat → Turn → BashOutputBlock 循环依赖环
+// （Turn.vue W4·D4 turn 内 notice 编排引入，运行时解析结果与 barrel re-export 一致）
+import { Button } from '../../primitives/button'
 import { RUNNING_LOADER_SVG } from './block-icon'
 import { useChatViewDeps } from './chat-view-deps'
 import type { Message } from '@xyz-agent/shared'

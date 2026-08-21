@@ -3,20 +3,21 @@
     展示组件 · Fork 反馈行（FR-12，spec §3）。
     fork 成功后在主线对话流插一条 transient 反馈行（非 banner，遵循架构约定 #3）。
 
-    规范（spec §3）：
-    - 容器：info-soft 底 + border + radius + padding 7px 11px
-    - 图标：GitFork（14px，info 色）
-    - 文案：「已 fork 到后台 · [分支名]」或「已在新分支提问 · [预览]」
-    - 查看链接：accent 色，点击跳转到该分支
-    - 关闭 ×：subtle 色 + hover fg
-    - 动效：notice-in 200ms（从 -4px translateY 淡入）
+    规范（2026-08-19 收敛到 v6 卡片语言，design-system.md §2.5 通知族二分裁决）：
+    - 容器：info-soft 单手段分隔（无 border，v6「Card 去 border 走 bg 层级」）+ radius + px-3 py-1.5
+    - 宽度：mx-auto max-w content-max-w，与对话流内容列对齐（Turn/SystemNotice 同体系）
+    - 图标：GitFork（info 色）
+    - 文案：「已 fork 到后台 · [分支名]」或「已在新分支提问 · [预览]」（label 单行 truncate）
+    - 查看链接：accent 色 + hover 下划线（无 hover 底色，避免卡片内嵌卡片）
+    - 关闭 ×：24px 命中区，subtle 色 + hover fg
+    - 动效：notice-in 200ms（从 -4px translateY 淡入），motion-reduce 关闭
 
     降级：sessionDeleted=true 时分支已删，「查看」降级为纯文本不可点（spec §4 Key States）。
     用 xyz-ui Button 组件，禁止原生 HTML 表单元素（关闭/查看均走 Button）。
   -->
-  <div class="fork-notice flex items-center gap-2 rounded-[var(--radius)] border border-border bg-info-soft px-[11px] py-[7px] animate-notice-in">
+  <div class="fork-notice mx-auto flex w-full max-w-[var(--content-max-w)] items-center gap-2 rounded-[var(--radius)] bg-info-soft px-3 py-1.5 animate-notice-in motion-reduce:animate-none">
     <GitFork class="size-3.5 shrink-0 text-info" />
-    <span class="min-w-0 flex-1 text-[length:var(--text-sm)] leading-snug text-neutral-fg">
+    <span class="min-w-0 flex-1 truncate text-[length:var(--text-sm)] leading-snug text-neutral-fg">
       {{ prefix }}<span v-if="label" class="font-[550]">{{ label }}</span>
     </span>
     <!-- 查看链接：sessionDeleted 时降级为纯文本 span（不可点，无交互语义） -->
@@ -25,7 +26,7 @@
       v-if="!sessionDeleted"
       variant="ghost"
       size="sm"
-      class="h-auto shrink-0 p-0 text-[length:var(--text-sm)] text-accent hover:bg-accent-soft hover:text-accent-hover"
+      class="h-auto shrink-0 p-0 text-[length:var(--text-sm)] text-accent underline-offset-2 hover:bg-transparent hover:text-accent-hover hover:underline"
       data-testid="fork-notice-view"
       @click="emit('view')"
     >
@@ -42,7 +43,7 @@
     <Button
       variant="ghost"
       size="icon"
-      class="size-5 shrink-0 text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg"
+      class="size-6 shrink-0 text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg"
       :title="t('panel.forkNotice.dismiss')"
       @click="emit('dismiss')"
     >

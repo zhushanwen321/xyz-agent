@@ -272,7 +272,7 @@ function renderOutcomeSection(
   if (node.status === "running" && node.live) {
     // 运行中：显示实时指标（elapsed/tokens/turns）替代空荡的 "Still running..."
     const live = projectLiveProgress(node.live);
-    const tokK = live.totalTokens > 0 ? `${Math.round(live.totalTokens / 1000)}k tok` : "0 tok";
+    const tokK = live.totalTokens > 0 ? `${Math.round(live.totalTokens / BUDGET_TOKENS_DIVISOR)}k tok` : "0 tok";
     rightLines.push(theme.fg("dim", `  Running · ${formatElapsedSeconds(live.elapsedSeconds)} · ${tokK} · ${live.turns} turn${live.turns !== 1 ? "s" : ""}`));
     if (live.lastError) {
       rightLines.push(theme.fg("warning", `  ⚠ ${live.lastError.slice(0, mainWidth - BOX_BORDER_CHARS)}`));

@@ -120,6 +120,7 @@ function createDefaultPartition(): TraceSessionPartition {
 // boundSid 必须 ref 包装（core/domain/drawer/control.ts 同款注释）：普通 let 的重新赋值不触发
 // sidRef computed 失效（let 变量读取无响应式依赖），重绑后分区键会永远指向旧 ref。
 // 显式注解类型：Vue 3.5 的 ref<T> 条件类型在 T 本身是 Ref 时会退化，注解强制 Ref 包装。
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：分区键绑定的 ref 包装（响应式接线结构，非数据缓存）
 const boundSid: Ref<Ref<string | null> | null> = ref(null)
 const sidRef = computed<string | null>(() => boundSid.value?.value ?? null)
 
@@ -135,6 +136,7 @@ export function bindTraceSessionId(bound: Ref<string | null>): void {
 const partitions = useSessionScopedState<TraceSessionPartition>(sidRef, createDefaultPartition)
 
 /** 已建立增量订阅的 sid 集（防重复注册，规则 2）。 */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：订阅去重集合
 const subscribedSids = new Set<string>()
 
 /** 增量订阅 handler：按 payload.sessionId 写分区（updateFor 捕获语义，防切 session 竞态）。 */
@@ -161,6 +163,7 @@ function ensureIncrementSubscription(sid: string): void {
  * 找回。回包 ready 后按序 flush（entry.id 去重使与快照重叠无害）；error 路径保留缓冲，
  * 重试 ready 时再 flush；session 删除时随 cleanup 一并丢弃。
  */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：loading 窗口推送缓冲（trace 台账数据的过渡队列，flush 后即空）
 const pendingAppends = new Map<string, Array<{ entries: unknown[]; leafId?: string | null }>>()
 
 /** 增量合并核心：entry.id 去重追加 + leafId 滚动（protocol「消费端按 entry.id 去重追加」；
@@ -265,6 +268,7 @@ export function retryTraceLoad(sid: string): void {
 }
 
 /** 现取进行中的 sid 集（防重入；模块级与 subscribedSids 同范式，不依赖 current 读取）。 */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：防重入集合
 const fetchingPromptSids = new Set<string>()
 
 /**

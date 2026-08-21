@@ -1,31 +1,6 @@
-import type { VariantProps } from 'class-variance-authority'
-import { cva } from 'class-variance-authority'
+// buttonVariants 定义在 ./button-variants.ts（独立文件，防 Button.vue ↔ 本 barrel
+// 自引用环）；此处 `export *` 保持原导出面，外部消费方（顶层 barrel / renderer
+// re-export shim）import 路径不变。
+export * from './button-variants'
 
 export { default as Button } from './Button.vue'
-
-export const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
-  {
-    variants: {
-      variant: {
-        default: 'bg-accent text-accent-fg hover:bg-accent-hover',
-        secondary:
-          'bg-transparent border border-border text-neutral-fg hover:bg-surface-hover',
-        ghost: 'hover:bg-surface-hover',
-        danger: 'text-danger hover:bg-danger-soft',
-      },
-      size: {
-        default: 'h-9 px-4 py-2',
-        dense: 'h-8 px-3',
-        sm: 'h-9 rounded-md px-3',
-        icon: 'h-10 w-10',
-      },
-    },
-    defaultVariants: {
-      variant: 'default',
-      size: 'default',
-    },
-  },
-)
-
-export type ButtonVariants = VariantProps<typeof buttonVariants>

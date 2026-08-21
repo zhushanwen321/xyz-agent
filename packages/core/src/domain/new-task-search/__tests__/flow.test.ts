@@ -144,6 +144,7 @@ describe('useNewTaskFlow', () => {
       pendingModel: null,
       segments: [textSeg('hello')],
       bashCommand: null,
+      pendingThinkingLevel: 'high',
     })
     // thinkingLevel apply（C-W4-3 留壳步经端口）
     expect(deps.ports.createSessionFlow.setThinkingLevel).toHaveBeenCalledWith('s1', 'high')
@@ -177,6 +178,7 @@ describe('useNewTaskFlow', () => {
       pendingModel: null,
       segments: [textSeg('ls')],
       bashCommand: { command: 'ls', excludeFromContext: true },
+      pendingThinkingLevel: null,
     })
     expect(deps.ports.chat.sendBash).toHaveBeenCalledWith('s1', 'ls', true)
     expect(deps.ports.chat.send).not.toHaveBeenCalled()

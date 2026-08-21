@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 import { createForkedSessionFile } from '../src/services/session/session-fork.js'
 import { parseJsonl } from '../src/utils/jsonl.js'
@@ -38,10 +38,12 @@ describe('createForkedSessionFile', () => {
     await Promise.all([rm(sourceDir, { recursive: true, force: true }), rm(targetDir, { recursive: true, force: true })])
   })
 
-  /** 构建测试 JSONL：session header + 3 turn（user/assistant/toolResult） */
-  async function writeSourceJSONL(): Promise<void> {
+  /** 构建测试 JSONL：session header + 3 turn（user/assistant/toolResult）。
+   * [W1 语义变更] cwd 用真实存在的 sourceDir——createForkedSessionFile 生成 header 时
+   * 对继承 cwd 做存活兜底（死路径 → homedir），fixture 必须用活路径才能锁定「继承源 cwd」。 */
+  async function writeSourceJSONL(cwd: string = sourceDir): Promise<void> {
     const lines = [
-      { type: 'session', version: 3, id: 'src-session-id', timestamp: '2026-07-07T01:00:00.000Z', cwd: '/test' },
+      { type: 'session', version: 3, id: 'src-session-id', timestamp: '2026-07-07T01:00:00.000Z', cwd },
       { type: 'model_change', id: 'mc1', parentId: null, timestamp: '2026-07-07T01:00:00.100Z', provider: 'p', modelId: 'm' },
       // turn 1
       { type: 'message', id: 'u1', parentId: 'mc1', timestamp: '2026-07-07T01:00:01.000Z', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
@@ -101,8 +103,22 @@ describe('createForkedSessionFile', () => {
     expect(header.type).toBe('session')
     expect(header.id).toBe(sessionId) // 新 session id
     expect(header.id).not.toBe('src-session-id') // 不是源 id
-    expect(header.cwd).toBe('/test') // 继承源 cwd
+    expect(header.cwd).toBe(sourceDir) // 继承源 cwd（活路径原样保留）
     expect(header.parentSession).toBe(sourceFile) // 指回源文件
+  })
+
+  // [W1 语义变更：直附着正式文件] restore-fork-attach-fix F1/MF2——fork 直附着后 pi 加载
+  // header cwd，死路径必 throw MissingSessionCwdError，故 newHeader 生成时兜底（C7）。
+  it('源 header cwd 为死路径时，fork 产物 header cwd 兜底 homedir', async () => {
+    const deadCwd = join(sourceDir, 'deleted-worktree')
+    await writeSourceJSONL(deadCwd)
+
+    const { filePath } = await createForkedSessionFile(sourceFile, 'a1', true, targetDir)
+
+    const entries = await readForked(filePath)
+    const header = entries[0]
+    expect(header.cwd).toBe(homedir()) // 兜底为存活路径
+    expect(header.cwd).not.toBe(deadCwd)
   })
 
   it('源文件不存在时报错', async () => {

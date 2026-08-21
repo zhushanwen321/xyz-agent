@@ -1,5 +1,11 @@
 # @zhushanwen/pi-todo
 
+## 0.8.1
+
+### Patch Changes
+
+- 8e52cb3ba: Dependency range correction: pin `@xyz-agent/extension-protocol` from `workspace:^0.4.0` to `workspace:*` (align with current workspace version, eliminate install drift flagged in review), plus dev-only coverage tooling declaration. No runtime behavior change.
+
 ## 0.8.0
 
 ### Minor Changes

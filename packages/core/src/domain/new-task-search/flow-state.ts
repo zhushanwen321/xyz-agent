@@ -99,20 +99,26 @@ const ALLOWED: Record<NewTaskFlowState, NewTaskFlowState[]> = {
 }
 
 // ── 模块级单实例状态（Q2=A 单实例：composable 模块单例）──
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：新任务流程状态机单例（core SSOT，Q2=A composable 模块单例，12 类未覆盖）
 const state: Ref<NewTaskFlowState> = ref('idle')
 /** 当前 flow 绑定的 session（统一延迟 create 后，landing 态恒为 null，首发提交 submitFirstMessage 才绑定） */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：flow 绑定 session 单例 ref（同上）
 const currentSession: Ref<SessionSummary | null> = ref(null)
 /** landing 态用户选定但尚未 create 的 cwd（选目录只记值不建 session；首发提交才用它 create）。null=空 chip 态 */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：landing 态待定 cwd 单例 ref（同上）
 const pendingCwd: Ref<string | null> = ref(null)
 /**
  * landing 态用户选定但尚未 apply 的模型（"provider/modelId" 复合串，与 SessionSummary.modelId 同格式）。
  * landing 态 session 尚未 create，无法调 model.switch RPC。记 pendingModel 供 Composer 显示，
  * 首发提交 create session 后 apply（model.switch）。null=未选，回退全局默认。
  */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：landing 态待定 model 单例 ref（同上）
 const pendingModel: Ref<string | null> = ref(null)
 /** submitFirstMessage in-flight 标记（双击并发只建 1 session） */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：submitFirstMessage in-flight 标记（同上）
 const createInFlight = ref(false)
 /** submitCreateBranch in-flight 标记（AC-7.9 飞行中 disabled 防重复 + T6.6 composable 层守卫） */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：submitCreateBranch in-flight 标记（同上）
 const branchCreateInFlight = ref(false)
 
 /**

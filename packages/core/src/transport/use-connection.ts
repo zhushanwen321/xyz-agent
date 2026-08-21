@@ -24,7 +24,7 @@
  * 依赖方向：use-connection → ws-client + coordination/route-inbound + shared（端口常量）。
  */
 import { watch } from 'vue'
-import { connect, disconnect, getState, onMessage, setFailed, setRestarting } from './ws-client'
+import { connect, disconnect, getState, onMessage, onQueueDrop, setFailed, setRestarting } from './ws-client'
 import {
   configureRouteInbound,
   type InboundEffects,
@@ -107,6 +107,8 @@ let removeRuntimePortListener: (() => void) | null = null
 let removeRuntimeRestartingListener: (() => void) | null = null
 let removeRuntimeFailedListener: (() => void) | null = null
 let removeStateWatch: (() => void) | null = null
+/** pre-auth 队列丢弃监听的取消函数（ws-client onQueueDrop 单槽；teardown 时调用；非空即已安装） */
+let removeQueueDropListener: (() => void) | null = null
 /** visibility 监听的取消函数（teardown 时调用；非空即已安装） */
 let removeVisibilityListener: (() => void) | null = null
 /**
@@ -115,6 +117,51 @@ let removeVisibilityListener: (() => void) | null = null
  * null 表示从未连过（此时也无 url 可复用，visibility 不触发重连）。
  */
 let lastConnectedUrl: string | null = null
+
+// ── 断连宽限兜底（review findings-confirmation #1.2：纯网络断连零复位缺口）──
+
+/**
+ * 网络断连宽限期：断连后不立即收口在途流，宽限期内重连成功则由 ring 回放 / live 事件
+ * 驱动正常收口；到期仍未恢复才调 onRuntimeUnavailable 收口（streaming 态不再挂到
+ * streaming timer 10min）。取 10s 的依据：重连退避序列 1s+2s+4s=7s < 10s（覆盖 2-3 次
+ * 退避尝试，秒级网络抖动无收口噪音）；gate v4 实测 30s 断连场景在 10s 即复位。
+ */
+export const DISCONNECT_GRACE_MS = 10_000
+
+/** 宽限 timer（模块级单例，随 stateWatch 生命周期；teardown 清理）。null = 未 armed。 */
+let disconnectGraceTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearDisconnectGrace(): void {
+  if (disconnectGraceTimer) {
+    clearTimeout(disconnectGraceTimer)
+    disconnectGraceTimer = null
+  }
+}
+
+/**
+ * 网络断连宽限：到期仍非 connected → 收口在途流。
+ *
+ * 收口时机语义论证（「立即收口」被否决的原因）：网络断连大概率短暂可恢复（退避重连
+ * 1-30s），重连成功后 runtime MessageBus ring 回放补齐断连窗口内的 message.complete
+ * （gate v4 已证实该回放链内容级工作）。若断连瞬间立即 finalizeAllStreaming，在途流被
+ * 收口为 error 态，回放的 message.complete 因 sealed 守卫（D-010：complete handler 只
+ * 收口 status==='streaming' 的实体）无法覆盖已收口的 error——可恢复的流被不可逆误伤。
+ * 故选「等重连结果 + 超时兜底」：到期时已重连成功则不收口（回放失败子场景仍由既有
+ * streaming timer 10min 兜底——不以误伤重连后在途流为代价缩短它）；到期仍断连才收口
+ * （网络中断超宽限，error 语义成立）。IPC 崩溃路径（restarting/failed）不走宽限：进程
+ * 没了流物理不可能恢复，立即收口（见 stateWatch）。
+ *
+ * 已 armed 则不重置：从首次断连起算单窗口，断连/恢复 flapping 下累计宽容有界。
+ */
+function armDisconnectGrace(): void {
+  if (disconnectGraceTimer !== null) return
+  disconnectGraceTimer = setTimeout(() => {
+    disconnectGraceTimer = null
+    if (getState().value !== 'connected') {
+      currentPorts().onRuntimeUnavailable('disconnect')
+    }
+  }, DISCONNECT_GRACE_MS)
+}
 
 /**
  * 安装入站分发器（幂等：仅安装一次）。onMessage 占用 ws-client 单槽。
@@ -216,18 +263,59 @@ export function useConnection() {
     // （subscribed 标记）不会自行失效，不主动重发则重连后 session 级消息永久丢失
     // （W09 删除 broadcast 兜底腿后 publish 定向推送是唯一通道）。首次连接时
     // subscriptionStates 为空 → no-op，无副作用。
+    //
+    // [review findings-confirmation #1.2] 本 watch 是断连清理的**单一汇合点**：网络断连
+    // （onclose → disconnected/reconnecting）与 IPC 崩溃（setRestarting/setFailed 置态）
+    // 都经 state 迁移在此汇合调 pending.rejectAll + onRuntimeUnavailable（消两份触发逻辑）。
+    // IPC 监听器（onRuntimeRestarting/onRuntimeFailed）只负责置态，不再各自携带清理副本。
     const stopStateWatch = watch(getState(), (newState, oldState) => {
+      // IPC 崩溃路径：进入 restarting/failed 即收口——任何旧态进入均适用（含未连上 /
+      // 重试中 runtime 崩溃，对齐原 IPC 监听器无条件清理语义）。runtime 崩溃 = pi 子进程
+      // 没了 = 流物理不可能恢复，不走断连宽限（等下去没有意义），且清掉已 armed 的宽限
+      // timer（避免到期二次触发）。
+      if (newState === 'restarting' || newState === 'failed') {
+        ports.pending.rejectAll(
+          Object.assign(
+            new Error(ports.t(newState === 'restarting' ? 'connection.runtimeRestarting' : 'connection.runtimeUnavailable')),
+            { code: 'disconnected' },
+          ),
+        )
+        clearDisconnectGrace()
+        ports.onRuntimeUnavailable(newState === 'restarting' ? 'restart' : 'disconnect')
+        return
+      }
       if (oldState === 'connected' && newState !== 'connected') {
-        // code='disconnected' 供调用方（useFileTree catch 等）识别传输断开类失败（对齐 request.ts send-fail reject）
+        // 网络断连路径（ws onclose → disconnected/reconnecting）：code='disconnected' 供调用方
+        // （useFileTree catch 等）识别传输断开类失败（对齐 request.ts send-fail reject）。
         ports.pending.rejectAll(
           Object.assign(new Error(ports.t('connection.disconnectedError')), { code: 'disconnected' }),
         )
+        // 在途流不立即收口：等重连结果（ring 回放补齐终态），DISCONNECT_GRACE_MS 超时兜底。
+        // 语义论证见 armDisconnectGrace 注释。
+        armDisconnectGrace()
       }
       if (newState === 'connected' && oldState !== 'connected') {
         resubscribeAll()
       }
     })
     removeStateWatch = stopStateWatch
+
+    // pre-auth 队列丢弃 → 立即 reject 对应 pending（任何模式都安装，对齐 stateWatch 体例）。
+    // 队列消息与 request 层 pending 一一对应：TCP open → auth.result 窗口内 send() 入队的
+    // 消息在 auth 失败 / 断连清队时永无 reply，若不在此 reject，pending 要等 request 层
+    // 65s sweep 才收口。错误构造对齐 stateWatch 断连分支（code='disconnected' 供调用方
+    // 识别传输断开类失败）；无 id 消息（非 RPC 型，如 flush 前 close 的 notify）无 pending 可收，跳过。
+    if (!removeQueueDropListener) {
+      removeQueueDropListener = onQueueDrop((msgs) => {
+        for (const msg of msgs) {
+          if (typeof msg.id !== 'string') continue
+          ports.pending.reject(
+            msg.id,
+            Object.assign(new Error(ports.t('connection.disconnectedError')), { code: 'disconnected' }),
+          )
+        }
+      })
+    }
 
     // mock 模式：走 mock，不需要端口发现，也不监听 runtime 崩溃事件（mock 无 runtime 进程）
     if (ports.env.isMock) {
@@ -245,25 +333,20 @@ export function useConnection() {
       }
     })
 
-    // 监听 runtime 崩溃重启中（主进程正在拉起新实例 → 进 restarting 态，停自动重连）
-    // runtime 崩溃 = pi 子进程没了 = 流不可能继续。重置 chat 活跃态 + 清理 pending，
-    // 避免 UI 卡「思考中」+ in-flight Promise 永挂（runtime 重启后是全新实例，旧 pending 永远收不到响应）。
-    // ask-user pending 同理：pi 死了 ask-user 的 Promise 永远不会被 resolve，必须清空（T5）。
+    // 监听 runtime 崩溃重启中（主进程正在拉起新实例 → 进 restarting 态，停自动重连）。
+    // [review findings-confirmation #1.2] 监听器只置态；pending 清理 + 对话流收口
+    // （onRuntimeUnavailable）统一在 stateWatch 汇合点执行（restarting 迁移分支），
+    // 不在此携带副本——网络断连与 IPC 崩溃两条路径同一处触发。
+    // runtime 崩溃 = pi 子进程没了 = 流不可能继续，收口语义（chat 活跃态重置 + ask-user
+    // pending 清空，T5）见 stateWatch / onRuntimeUnavailable 注释。
     removeRuntimeRestartingListener = ports.ipc.onRuntimeRestarting(() => {
       setRestarting()
-      ports.pending.rejectAll(
-        Object.assign(new Error(ports.t('connection.runtimeRestarting')), { code: 'disconnected' }),
-      )
-      ports.onRuntimeUnavailable('restart')
     })
 
-    // 监听 runtime 重启用尽（主进程放弃 → 进 failed 态，等用户手动重试）
+    // 监听 runtime 重启用尽（主进程放弃 → 进 failed 态，等用户手动重试）。
+    // 同上：只置态，清理经 stateWatch 的 failed 迁移分支汇合触发。
     removeRuntimeFailedListener = ports.ipc.onRuntimeFailed(() => {
       setFailed()
-      ports.pending.rejectAll(
-        Object.assign(new Error(ports.t('connection.runtimeUnavailable')), { code: 'disconnected' }),
-      )
-      ports.onRuntimeUnavailable('disconnect')
     })
 
     // 尝试从主进程获取已知端口（S1-W1：连接前拉 token——auth 握手凭据经 IPC 下发）
@@ -305,6 +388,13 @@ export function useConnection() {
       removeStateWatch()
       removeStateWatch = null
     }
+    // pre-auth 队列丢弃监听随 stateWatch 一同拆卸（teardown 后不应再有 pending reject 回调）
+    if (removeQueueDropListener) {
+      removeQueueDropListener()
+      removeQueueDropListener = null
+    }
+    // 断连宽限 timer 随 stateWatch 一同拆卸（teardown 后不应再有收口回调）
+    clearDisconnectGrace()
     // W4：卸载 visibilitychange 监听（与 init 的安装配对，防内存泄漏 + 重复触发）
     if (removeVisibilityListener) {
       removeVisibilityListener()

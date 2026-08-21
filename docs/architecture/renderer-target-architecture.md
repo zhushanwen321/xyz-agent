@@ -1,6 +1,6 @@
 # Renderer 目标架构 + Plugin 渲染机制设计（v6）
 
-> **状态**：目标架构设计（待评审 → 视觉稿联动 → 实施计划）
+> **状态**：**已 supersede（2026-08-20）**——终态架构以 [renderer-rebuild-architecture.md](renderer-rebuild-architecture.md)（现行 SSOT，以包为层）为准；本文档的七层目标概念保留作历史参考，新代码落位不要按本文档的分层。
 > **性质**：长期方案。抛开当前架构，按最长期合理方案重新设计 renderer 分层 + plugin 渲染终态。
 > **定位**：本文档与 `v6-architecture-refactor.md`（审查+缝补）互补。那份回答「现状有什么问题、怎么修」，本文档回答「终态应该长什么样」。
 > **依据**：plugin-sdk 架构审查 + extension-gui-protocol 整合分析 + VSCode 插件调研 + 16 视图挂载点盘点（5 路深度探索交叉验证）。

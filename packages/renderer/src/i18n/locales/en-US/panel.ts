@@ -100,6 +100,9 @@ export default {
     bashNoContext: 'no context',
     bashCancel: 'Cancel',
     bashUnknownCommand: '(unknown command)',
+    // [W4 turn-attribution] bg-notify trigger turn origin row (Turn.vue) + executing-bash transient row prefix (MessageStream.vue)
+    turnTriggerBgNotify: 'Background task finished · resumed',
+    executingBash: 'Running',
   },
   git: {
     title: 'Git',

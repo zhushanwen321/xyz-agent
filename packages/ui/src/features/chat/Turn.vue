@@ -19,6 +19,20 @@
       @edit-state-change="emit('edit-state-change', $event)"
     />
 
+    <!-- trigger 起点行（W4·D3）：无 user 起点的后台续跑 turn（隐藏完成通知边界开启）渲染轻量
+         弱化起点行替代 user 气泡——横线分隔 + Bell 图标 + 小号文案，视觉语言对齐 SystemNotice
+         元信息行（不冒充用户发言）。assistant 自启 turn（user:null 无 trigger）两者皆不渲染。 -->
+    <div
+      v-else-if="turn.trigger === 'bg-notify'"
+      class="mx-auto flex w-full min-w-0 items-center gap-2 py-1 animate-notice-in"
+      data-testid="turn-trigger-bgnotify"
+    >
+      <span class="h-px flex-1 bg-border" />
+      <Bell class="size-3 shrink-0 text-neutral-mid" />
+      <span class="min-w-0 shrink-0 text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ t('panel.message.turnTriggerBgNotify') }}</span>
+      <span class="h-px flex-1 bg-border" />
+    </div>
+
     <!-- assistant 区 -->
     <div class="group/ai flex flex-col gap-0 self-stretch">
       <!-- turn-meta：TurnMeta 子组件（展开态直接读 useTurnExpansion 共享 store） -->
@@ -103,11 +117,27 @@
         :session-id="sessionId"
       />
     </div>
+
+    <!-- turn 内 notice（W4·D4）：bash 执行记录 / liveOnly 健康警告按到达序在 turn 内部末尾渲染
+         （不切断回合）。bashExecution 复用 BashOutputBlock（既有 bash 消费点，取消按钮经
+         abortBash 仍可用）；liveOnly（stream_warn）与其余 system notice 走 SystemNotice 弱化行。
+         wrapper 的 data-testid（turn-inline-bash / turn-inline-notice）是 W4 渲染契约——
+         不落在子组件根上，避免覆盖 BashOutputBlock 自身的 bash-output-block testid。 -->
+    <div
+      v-for="n in turn.notices"
+      :key="n.id"
+      :data-testid="n.bashExecution ? 'turn-inline-bash' : 'turn-inline-notice'"
+    >
+      <BashOutputBlock v-if="n.bashExecution" :message="n" :session-id="sessionId" />
+      <SystemNotice v-else :message="n" />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { Bell } from '@lucide/vue'
 import type { MessageTurn, FlatBlock } from '@xyz-agent/core/domain/chat'
 import { countThinking, countToolCalls, flattenTurnBlocks, computeTraceWindow, turnStableId, W } from '@xyz-agent/core/domain/chat'
 import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
@@ -117,6 +147,8 @@ import TurnMeta from './TurnMeta.vue'
 import TurnSummary from './TurnSummary.vue'
 import Block from './Block.vue'
 import TraceCompactorRow from './TraceCompactorRow.vue'
+import BashOutputBlock from './BashOutputBlock.vue'
+import SystemNotice from './SystemNotice.vue'
 import { useTurnElapsed } from './composables/useTurnElapsed'
 import { useChatViewDeps } from './chat-view-deps'
 
@@ -132,6 +164,9 @@ const props = withDefaults(
   }>(),
   { isSessionActive: undefined },
 )
+
+/** trigger 起点行文案（W4·D3）：仅 bg-notify turn 渲染，见 template 注释。 */
+const { t } = useI18n()
 
 /**
  * B9：编辑状态变化通知父组件。

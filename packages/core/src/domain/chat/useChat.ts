@@ -13,33 +13,36 @@
  *            → api.events.streamSubscribe → store.applyMessageEvent（message.* 单一入口）
  *            → MessageStream 响应式渲染 + useVirtuaFollow.followIfStuck
  *
- * hydrate：首次进入 session 调 api.chat.getHistory 注入历史 fixture（含 tool_call/summary），
- * 让 UC-2 切换会话可见块类型丰富度（G2-006）。
+ * hydrate：首次进入 session 调 api.chat.getHistory 注入历史（含 tool_call/summary），
+ * 让 UC-2 切换会话可见块类型丰富度（G2-006）。messages 为 applyEntry reducer 重放投影
+ * （W20 D5，详见 hydrateHistory 注释）。
  *
  * abort：调 api.chat.abort（方法存在，中断流转 DEFERRED G-025）。
  */
 import { ref } from 'vue'
-import type { Segment } from '@xyz-agent/shared'
+import type { Segment, SessionViewSnapshot } from '@xyz-agent/shared'
 import { segmentsToPrompt } from '@xyz-agent/shared'
 import {
   subscribeSession,
   clearSubscription,
+  invalidateSubscription,
   resetSubscriptionStates,
 } from '../../coordination/subscription-state'
 import type { ChatStoreInstance } from './store'
 import type { ChatApiPort, WriteSegmentsFn } from './api-port'
+import { splitHistoryBeforeAnchor } from './mutations'
 import { createMessageCoalescer } from './delta-coalescer'
 
 /**
  * SessionStoreLike —— useChat 消费 session store 的最小结构类型。
  *
  * 不 import 整个 SessionStoreInstance（避免 core 内 chat→session 域强耦合 + 返回类型膨胀）。
- * useChat 只用 updateLabel（session.renamed）+ updateSessionState（state_changed/thinkingLevelSet）。
- * 结构性类型，renderer useSessionStore() 返回值自动满足。
+ * useChat 只用 applySnapshot 的单 session 形态（session.renamed / state_changed /
+ * thinkingLevelSet 三个广播驱动的跨 store 字段更新）。结构性类型，renderer useSessionStore()
+ * 返回值自动满足。
  */
 export interface SessionStoreLike {
-  updateLabel(id: string, label: string): void
-  updateSessionState(id: string, patch: { modelId?: string; thinkingLevel?: string }): void
+  applySnapshot(id: string, snapshot: SessionViewSnapshot): void
 }
 
 /**
@@ -92,6 +95,7 @@ export interface UseChatDeps {
  * 强行套用破坏消费方签名 + 语义错位（w4 retrospect 教训 #3：handoff 范式要求需结合代码
  * 所在层判断适用性）。
  */
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：会话级流订阅表（ADR-0049 例外：全局 sid 协调器模块级 Map，上方注释已述）
 const streamSubscriptions = new Map<string, () => void>()
 
 /**
@@ -110,6 +114,7 @@ const coalescer = createMessageCoalescer()
  * MessageStream 据此显隐「加载更多历史」按钮。hydrate 时设置。
  * 用 ref<Set> 保证响应式（MessageStream 的 computed showLoadMore 能自动更新）。
  */
+// @data-owner #7 —— #7 消息列表 hydrate 派生标记（尾读截断→「加载更多」显隐；权威 = session 文件 entries）
 const historyTruncatedSessions = ref<Set<string>>(new Set())
 
 /**
@@ -120,6 +125,7 @@ const historyTruncatedSessions = ref<Set<string>>(new Set())
  * RPC 未达 pi / dispatcher busy 预检拒绝，pi 未发 compaction_end，interpreter 不参与，零反馈）→ toast 兜底。
  * 仅 manual compact() 路径读写 key——auto-compaction 的 compaction_end handler 见 key 不在则跳过（不污染）。
  */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：manual compact in-flight 到达标记（流程状态，非 GUI 数据）
 const manualCompactionState = new Map<string, boolean>()
 
 /**
@@ -192,9 +198,8 @@ export function ensureStreamSubscription(
   const unsub = deps.chatApi.streamSubscribe(sid, (msg) => {
     // [send.rejected] 防御性反馈通道（D-006 独立类型，不进对话流）
     if (msg.type === 'send.rejected') {
-      const payload = msg.payload as { sessionId: string; reason: string; message: string }
       chat.clearPendingSend(sid)
-      deps.toast.error(payload.message ?? deps.t('composable.agentProcessing'))
+      deps.toast.error(msg.payload.message ?? deps.t('composable.agentProcessing'))
       return
     }
     // message.* → 单一入口（F2 重构：消除 double-dispatch）。
@@ -208,7 +213,7 @@ export function ensureStreamSubscription(
       coalescer.enqueue(sid, msg, (m) => chat.applyMessageEvent(sid, m))
       return
     }
-    // session.* → 跨 store 协调（sessionStore.updateLabel/updateSessionState/setCompacting），
+    // session.* → 跨 store 协调（sessionStore.applySnapshot/setCompacting），
     // 保留在 useChat（stores 间禁止互相 import）。
     switch (msg.type) {
       // [fix-handoff-with-message] session.handoffStarted 不再处理：前端已删除「正在交接…」
@@ -216,8 +221,7 @@ export function ensureStreamSubscription(
       case 'session.compacting': {
         // #6 + M4：compact 生命周期开始（interpreter 从 compaction_start 事件唯一驱动，走 session 通道）。
         // reason 区分手动/自动，驱动 MessageStream compacting 浮层文案（M4 事件驱动核心价值）。
-        const compactingPayload = msg.payload as { reason?: string }
-        chat.setCompacting(sid, true, compactingPayload.reason)
+        chat.setCompacting(sid, true, msg.payload.reason)
         break
       }
       case 'session.compacted': {
@@ -232,9 +236,8 @@ export function ensureStreamSubscription(
         // - error 非空（compact 失败）：仅保留队列，不 flush——错误反馈归 interpreter
         //   （compaction_end{errorMessage} → message.error 对话流），handler 不 toast（避免双提示）。
         // - error 为 undefined（compact 成功 / aborted）：flush 重放；flush 返回 false（重放 RPC 失败）→
-        //   toast 提示（队列保留，下次 compact 成功时重试）。
-        const payload = msg.payload as { error?: string }
-        if (payload.error === undefined) {
+        // toast 提示（队列保留，下次 compact 成功时重试）。
+        if (msg.payload.error === undefined) {
           void deps
             .getCompactQueue()
             .flush(sid)
@@ -249,21 +252,20 @@ export function ensureStreamSubscription(
         // guard：payload.name 为空时跳过 —— 防 pi 推空名/旧名覆盖用户手动 rename 的值。
         // 用闭包 sid（对称 compacting/compacted handler）：session.* 走 session 级通道
         // (events.on(sid, ...))，payload.sessionId 恒等于订阅 sid，不信任 payload 可能的篡改。
-        const payload = msg.payload as { name?: string }
-        if (payload.name) {
-          sessionStore.updateLabel(sid, payload.name)
+        if (msg.payload.name) {
+          sessionStore.applySnapshot(sid, { label: msg.payload.name })
         }
         break
       }
       case 'session.state_changed': {
         // 模型切换后 runtime 推送（model-service switchModel 末尾广播，含新 modelId/thinkingLevel
-        // + 按新 contextWindow 重算的用量）。局部更新 session 状态，不触发整表 setGroups。
+        // + 按新 contextWindow 重算的用量）。applySnapshot 单 session 快照按 D1b 合并
+        // （undefined 字段 = 快照未涉及，不覆盖），不触发整表替换。
         // thinkingLevel optional：未设置时（undefined）不更新，保留旧值。
-        const p = msg.payload as { sessionId?: string; modelId?: string; thinkingLevel?: string }
-        if (p.sessionId) {
-          sessionStore.updateSessionState(p.sessionId, {
-            ...(p.modelId !== undefined && { modelId: p.modelId }),
-            ...(p.thinkingLevel !== undefined && { thinkingLevel: p.thinkingLevel }),
+        if (msg.payload.sessionId) {
+          sessionStore.applySnapshot(msg.payload.sessionId, {
+            ...(msg.payload.modelId !== undefined && { modelId: msg.payload.modelId }),
+            ...(msg.payload.thinkingLevel !== undefined && { thinkingLevel: msg.payload.thinkingLevel }),
           })
         }
         break
@@ -273,9 +275,8 @@ export function ensureStreamSubscription(
         // 补 state_changed 的时序缺口：switchModel 的 broadcastSessionState 在 set_model RPC resolve 后
         // 立即广播，而 thinking_level_changed 事件可能晚到（异步），此时 state_changed 的 thinkingLevel 为空。
         // 本 handler 独立更新 thinkingLevel，不依赖两条消息的先后顺序。
-        const p = msg.payload as { sessionId?: string; level?: string }
-        if (p.sessionId && p.level) {
-          sessionStore.updateSessionState(p.sessionId, { thinkingLevel: p.level })
+        if (msg.payload.sessionId && msg.payload.level) {
+          sessionStore.applySnapshot(msg.payload.sessionId, { thinkingLevel: msg.payload.level })
         }
         break
       }
@@ -611,6 +612,17 @@ export function createUseChat(deps: UseChatDeps) {
   /**
    * 拉取并注入历史（首次进入 session）。
    * 无历史（空 session）也标记 hydrated，避免反复请求。
+   *
+   * [W20 D5 重放喂入侧] getHistory 返回的 messages 是 core applyEntry reducer 对
+   * pi entry 日志的重放投影（runtime wire 层：getEntries → liftHistoryToEntries →
+   * replayEntries，见 infra/pi/message-converter.ts）——hydrate 直接消费 reducer 产物，
+   * 不做二次转换；getHistory RPC 链不变（session-service getEntries 增量现状保留）。
+   * [W21 已接] 实时侧喂同一 reducer：message_end / tool_call_end 重构 entry 经
+   * store.applyMessageEvent → applyEntryFrame 累积 per-session reducer state
+   * （messages ref 的实时渲染仍走 overlay 路径，ref 与 reducer state 收敛归 W22 对账）。
+   * [W5 D5] store.hydrate 内部同时记录尾窗锚（首条消息 `piEntryId ?? id`，唯一写方），
+   * 供 loadMoreHistory 锚定切分——两条历史读取路径（RPC getEntries entry 树重建 /
+   * 文件尾读 mapSessionEntries）都携带 entry 派生 id，边界消息身份稳定可得。
    */
   async function hydrateHistory(sessionId: string): Promise<void> {
     if (chat.isHydrated(sessionId)) return
@@ -644,14 +656,36 @@ export function createUseChat(deps: UseChatDeps) {
   /**
    * W4 H4：加载更多历史（fallback 全量读 + 合并去重）。
    *
-   * 调 getFullHistory RPC（runtime 全量文件读取），与 store 现有消息按 id 去重后
-   * 合并到列表头部。幂等：重复调用不追加已有消息（FR-4/AC-7）。
-   * RPC 失败时不破坏现有消息（catch 吞错，与 hydrateHistory 的 markHistoryFailed 同策略）。
+   * [W5 D5 锚定切分] getFullHistory（runtime 全量文件读取，消息 id = entry 派生 uuidv7）
+   * 取回后**按 hydrate 尾窗锚切分**，只把锚之前的段交给 prependHistory。为什么不能靠
+   * id 去重：活跃 session 的 store 混合 live 消息（`u-`/`e<N>`/`bash-` 前缀 id）与
+   * hydrate 文件侧消息（uuidv7 id），两个 id 空间**永不相等**——live 消息在文件里的
+   * 对应物会被旧去重误判为新消息，重复前插、分组错乱（机制 5）。锚 = hydrate 尾窗
+   * 首条的 entry 身份（store.hydrate 记录，唯一写方），锚之前的段必然不在 store 中。
+   *
+   * 三级定位见 mutations.splitHistoryBeforeAnchor（exact / fingerprint / none）：
+   * 非 exact 即 console.warn（V6 验收：console 出现锚降级 warn = 兜底路径命中，需检查
+   * compaction / 外部改写情形）；none 时 prependHistory 的 id 去重兜底仍在（安全网）。
+   *
+   * 幂等：切分后空段不写入（FR-4/AC-7）；锚即全量首条 = 没有更早历史，标记清除后
+   * 按钮隐藏（hasMoreHistory → false）。RPC 失败不破坏现有消息（catch 吞错，与
+   * hydrateHistory 的 markHistoryFailed 同策略），用户可重试。
    */
   async function loadMoreHistory(sessionId: string): Promise<void> {
     try {
       const fullHistory = await deps.chatApi.getFullHistory(sessionId)
-      chat.prependHistory(sessionId, fullHistory)
+      // 锚消息 = store 当前最旧消息：live 消息只 append 到尾部，load-more 前最旧的
+      // 仍是 hydrate 尾窗首条（fingerprint 降级用其 role/首段文本/timestamp）。
+      const anchor = chat.getHydrateAnchor(sessionId)
+      const anchorSource = chat.getMessages(sessionId)[0]
+      const { segment, strategy } = splitHistoryBeforeAnchor(fullHistory, anchor, anchorSource)
+      if (strategy !== 'exact') {
+        console.warn(
+          `[useChat] loadMoreHistory anchor split degraded to '${strategy}' for session ${sessionId}` +
+            ` (anchor=${String(anchor)}) — ${strategy === 'none' ? 'id-dedup safety net engaged (live duplicates possible)' : 'content-fingerprint located the split point'}`,
+        )
+      }
+      chat.prependHistory(sessionId, segment)
       clearHistoryTruncated(sessionId) // N1: 全量加载后不再有更多历史
     // eslint-disable-next-line taste/no-silent-catch -- 加载更多是 best-effort：失败不破坏现有消息，用户可重试。与 hydrateHistory markHistoryFailed 同策略。
     } catch (e) {
@@ -699,4 +733,32 @@ export function createUseChat(deps: UseChatDeps) {
     sendBash,
     abortBash,
   }
+}
+
+/**
+ * 失效指定 session 的本地流订阅标记（session.exited 时由 useMessageEffects 调用）。
+ *
+ * 收到 session.exited = 服务端订阅必然已被 bus.clearSession 清除（pi 死亡 →
+ * removeSessionEntry → clearSession），本地两层幂等标记必须同步失效，否则 respawn 后
+ * ensureStreamSubscription 被短路，链路断裂：
+ * - streamSubscriptions 条目不清 → events 层 handler 不重挂 + 残留旧 handler（若只删
+ *   标记不 unsub，重挂后同 sid 双 handler 双 dispatch）；
+ * - subscriptionStates 条目不清（clearSubscription）→ subscribeSession 幂等守卫
+ *   （subscribed=true）短路，不重发 subscribe RPC → 新 pi 的 message.* 定向推送无订阅者，
+ *   UI 卡「进行中…」而回复实际已生成。
+ *
+ * 与 disposeSession 的区别：session 仍存在（dead 占位 UI 可「重新打开」），只失效订阅，
+ * 不清 chat store 分区/historyTruncated/manualCompaction 等业务状态。
+ */
+export function invalidateStreamSubscription(sessionId: string): void {
+  const unsub = streamSubscriptions.get(sessionId)
+  if (unsub) {
+    unsub()
+    streamSubscriptions.delete(sessionId)
+  }
+  // 收口兜底（对齐 disposeSession）：unsub 后不会再有新消息入缓冲，残留 delta 落地显示
+  coalescer.flush(sessionId)
+  // invalidateSubscription（非 clearSubscription）：额外清 in-flight 去重条目，防 respawn 后
+  // 首次 ensureStreamSubscription 复用死 Promise 而不重发 subscribe RPC
+  invalidateSubscription(sessionId)
 }

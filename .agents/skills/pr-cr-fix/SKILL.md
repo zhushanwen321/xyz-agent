@@ -18,11 +18,12 @@ description: >-
 - xyz-agent git worktree 中
 - 当前分支相对 main 有 commits（`git log main..HEAD` 非空）
 - 有 GitHub CLI（`gh`）认证
+- 全局安装 fallow（`npm i -g fallow`，实测 2.88.2）——阶段 1.5 度量门禁依赖
 
 ## 调用约定
 
 - `cwd`：git 根目录绝对路径（`git rev-parse --show-toplevel`）
-- 阶段 1 / 3a 派 subagent 执行；阶段 2 由主 agent 直接派 workflow（不经 subagent 封装）
+- 阶段 1 / 3a 派 subagent 执行；阶段 1.5（确定性度量脚本）主 agent 直接跑；阶段 2 由主 agent 直接派 workflow（不经 subagent 封装）
 - 主 agent 全程只做编排 + Gate 校验 + push 前用户授权确认
 
 ---
@@ -85,7 +86,122 @@ python3 .agents/skills/pr-cr-fix/scripts/validate-extensions-yaml.py <extension-
 
 ---
 
+## 阶段 1.5：度量快照 + Gate-1.5（硬门禁）[MANDATORY]
+
+确定性代码度量（圈复杂度 / 循环依赖 / 重复 / 死代码），机器计算、脚本判定，不经 LLM。**未过 Gate-1.5 禁止进入阶段 2。**
+
+### 执行（主 agent 直接跑）
+
+```bash
+python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main
+```
+
+- 产出 `.review/metrics.json`（fail/warn 清单 + 高 CRAP 靶子清单）；exit 1 = fail，exit 2 = 工具错误（中止）
+- 阈值 SSOT = 仓库根 `.fallowrc.json` 的 `health` 节；脚本读取该文件，禁止在命令行另传阈值
+- fallow 缺失时脚本 exit 2 并给出安装命令
+
+### Gate-1.5 判定
+
+| verdict | 含义 | 动作 |
+|---------|------|------|
+| `fail` | 有 fail 级 introduced 问题 | **打回**：派 worker 修复 → 重跑本脚本，上限 3 轮；超限停手上报用户 |
+| `warn` | 仅 warn 级 | 放行；`.review/metrics.json` 的 warn + targets 清单由阶段 2 对应 agent 消费 |
+| `pass` | 干净 | 放行 |
+
+### 门禁项分级
+
+| 级别 | 项 | 阈值 |
+|------|----|------|
+| **fail** | introduced 函数圈复杂度 | > 15 |
+| **fail** | 新增循环依赖 | 全部 |
+| **fail** | 新增无法解析的 import | 全部 |
+| **warn** | introduced 认知复杂度 > 15 / CRAP ≥ 30 | 注入阶段 2 review |
+| **warn** | introduced 死代码（未用文件/导出/类型/依赖等） | 注入阶段 2 review |
+| **warn** | 新增重复块 | 注入阶段 2 review |
+
+### 设计理由（为什么不直接用 fallow verdict 门禁）
+
+fallow audit 的 complexity findings 超阈值即 fail、无 warn 档；且无 `--coverage` 数据时覆盖率是静态估算（无测试路径的文件按 cov≈0，CC≥5 即 CRAP≥30），认知复杂度/CRAP 放 fail 档会被估算噪声误杀。metrics-gate.py 用同一份 audit JSON 做显式双轨判定：结构性硬指标（CC / cycle / unresolved import）fail；覆盖率相关指标（认知 / CRAP / 死代码 / 重复）warn 给阶段 2 消费。接入真实覆盖率（vitest coverage-final.json + `fallow audit --coverage`）后 CRAP 可升级为 fail 档。
+
+---
+
+## 阶段 1.6：增量覆盖率门禁（Gate-1.6）[MANDATORY]
+
+> **[HISTORICAL 2026-08-21] 曾有稳定假 pass，根因已修复并双向验收**（真实 diff 17 包
+> 非空报告全绿 exit 0 + 高阈值探针 fail 方向 exit 1）。主因：OK 路径漏记 `report[pkg] =
+> entry`，全部包 OK 时 report 恒空被 `all(空)==True` 判 pass；同批修复 basename 兜底误配、
+> hoisting 幻影依赖（改按 package.json 声明判定，24 个 vitest 包已全部声明
+> @vitest/coverage-v8）、extensions/shared 三层目录漏切、git diff 瞬态空输出四项加固。
+> 完整根因链与守卫见 coverage-gate.py 头部 [HISTORICAL] 段。守卫原则：**记账不闭合
+> （迭代数 ≠ 报告条目数）与 all-SKIP 一律 exit 2（工具错误），绝不静默 pass**。
+
+**口径 [MANDATORY]**：**增量覆盖率 ≥ 80% 才达标。**（2026-08-21 用户决策：从 50% 起步值 ratchet 至业界事实标准 80%——Sonar Way 默认「coverage on new code ≥80%」门禁，调研见 `references/coverage-industry-research.md`）与 Gate-1.5 互补：Gate-1.5 是静态结构度量（不跑测试），Gate-1.6 跑测试量「新代码有没有被测到」。与 renderer 全量 thresholds gate（vitest.config 内、CI 强制）互补：全量阈值防整体退化，增量阈值防「新代码不写测试」。TEST-STRATEGY.md §7「以增量覆盖率为准」的工具化落地。
+
+### 执行顺序：coverage-gate 先跑，metrics-gate 后跑
+
+coverage-gate 产出 `.review/coverage.json` 的 `files` 节（全文件级真实 lcov 覆盖率），metrics-gate（Gate-1.5）消费它把 complexity warn 中**真实文件覆盖 ≥80%** 的条目移入 covered 列表（出 warn、保留证据链），替换 fallow 静态估算。阶段 1 初跑与 3a 复跑均按 **coverage → metrics** 顺序；coverage.json 缺失或 base 不匹配时 metrics-gate 自动降级静态估算（不阻塞，报告标注 `fallow-static`）。
+
+### 执行（主 agent 直接跑）
+
+```bash
+python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main
+```
+
+- 自动检测 base...HEAD 改动过 `src/` 的 vitest 包（含 `extensions/shared/<lib>` 三层目录），逐包跑 `vitest run --coverage`（lcov），解析 lcov DA 行命中 × git diff 新增行号（精确路径匹配），算**可执行新增行覆盖率**
+- **判定**：任一被 gate 包增量 < 80%（默认）或测试失败 → `verdict=fail` exit 1；记账不闭合 / all-SKIP / git 瞬态异常 → exit 2（工具错误，修复后重跑）；产出 `.review/coverage.json`（packages 增量口径 + files 全文件级真实覆盖率）
+- SKIP 语义：按 package.json **声明**判定（非 node 解析——node-linker=hoisted 下解析恒真）；24 个 vitest 包已全部声明，出现 SKIP 即配置漂移，按报告内指引补声明
+- **注意**：修复 worker 在途时本地读数会被污染——Gate-1.6 必须在干净工作区（全部改动已 commit）跑；`--packages <pkg>` 探针运行会覆盖 `.review/coverage.json`（单包产物），探针后需重跑全量恢复
+
+**Gate-1.6 判定**：fail → 派测试专项 subagent 补测试 → 重跑（上限 3 轮）。补测试优先级看 `.review/coverage.json` 的 uncovered_files 清单（按可执行新增行缺口排序）。
+
+### 怎么看覆盖率（人工排查）
+
+```bash
+# 单包全量 + HTML 报告（产物 <pkg>/coverage/index.html，浏览器打开逐行看）
+cd packages/renderer && npx vitest run --coverage        # 已配 thresholds，跌破 exit 非0
+cd packages/core && npx vitest run --coverage            # 未配 thresholds，仅出报告
+
+# 增量口径（本 PR 新增可执行行的覆盖率）
+python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main
+
+# CI 产物：PR checks 页 Test (renderer) job → artifact "coverage-report"（lcov + html）
+```
+
+renderer 全量阈值（S3-W1 基线-2~3% 重校准：lines 68 / stmts 66 / branches 56 / functions 60）由 CI 强制；其余包 provider 已全部声明（增量口径由 Gate-1.6 覆盖），全量 thresholds 先测量后设阈（见 TEST-STRATEGY §7）。
+
+---
+
+## [OPTIONAL] Mutation testing 深检（StrykerJS）
+
+覆盖率证明「代码被跑过」，**mutation score 证明「断言真能抓 bug」**——覆盖率高但断言弱的测试（无断言/toMatchSnapshot 滥用/只断言不抛错）覆盖率满分也抓不住回归。对高风险模块的测试质量存疑时用。
+
+**工具**：StrykerJS（`@stryker-mutator/core` + `@stryker-mutator/vitest-runner` ≥ 9.3，2025-11 起官方支持 vitest 4；perTest coverage 分析、只跑与被突变文件相关的测试；不支持 vitest Browser Mode——本项目 happy-dom/node 环境不受影响）。
+
+**何时跑**（不进默认 gate——全量 mutation 太慢，一个中型包 10-30 分钟）：
+1. Gate-1.5 `targets.high_crap` 靶子的函数已补测试后，验证断言强度
+2. review-test-coverage 报告「弱断言」疑点（覆盖了但可疑）
+3. 修复 bug 后验证回归测试真能拦住（mutant = 人为重引入 bug，测试必须杀掉）
+
+**定向跑法**（只突变指定文件，非全包）：
+
+```bash
+cd <pkg> && pnpm add -D @stryker-mutator/core @stryker-mutator/vitest-runner
+cat > stryker.config.json << 'EOF'
+{ "testRunner": "vitest", "coverageAnalysis": "perTest",
+  "mutate": ["src/<target-file>.ts"], "reporters": ["clear-text", "progress"] }
+EOF
+npx stryker run
+```
+
+判定参考：mutation score ≥ 60% 可接受、≥ 80% 良好；存活的 mutant 逐个看——要么断言缺（补），要么等价变异（记录豁免）。产出不进 `.review/`（临时深检，结论写进 test-coverage 维度报告即可）。
+
+---
+
 ## 阶段 2：review + fix
+
+### 阶段 1.5 / 1.6 产物消费约定
+
+`.review/metrics.json`（阶段 1.5 必然产出）与 `.review/coverage.json`（阶段 1.6）由以下维度按各自 agent 定义的输入约定消费：review-test-coverage 消费 `targets.high_crap` 靶子清单（优先核对这些函数的测试覆盖）+ coverage.json 的 `uncovered_files` 清单（增量未覆盖文件优先补测试）；review-monorepo-impact 消费 `fail`/`warn` 中的循环依赖条目（不再手工 grep import 链）。其余 6 维不变。
 
 ### [MANDATORY] 双路径选择
 
@@ -93,7 +209,7 @@ python3 .agents/skills/pr-cr-fix/scripts/validate-extensions-yaml.py <extension-
 
 **适用条件**：当前主 agent 是 pi agent，且能调用内置 workflow（`pi workflow list` 中名为 `review-fix-loop`、无 `.js` 路径后缀的条目即内置版；解析顺序：内置 → npm 包 → 项目 `.pi/workflows/`）。
 
-主 agent 直接用 workflow 工具跑内置 `review-fix-loop`（7 维并行 review → 聚合 → fix → 重审直到 clean/converged/stuck）：
+主 agent 直接用 workflow 工具跑内置 `review-fix-loop`（8 维并行 review → 聚合 → fix → 重审直到 clean/converged/stuck）：
 
 > **[MANDATORY] 主 agent 直接派，禁止 subagent 封装**：workflow 工具 `action:"run"` 是异步后台运行 + notifyDone 自动注入结果，主 agent 直接拿 `terminated/rounds/aggregated_file`。workflow 自己会派 review agent + fix agent，subagent 封装只是多一层中转，白耗 context。
 
@@ -106,7 +222,7 @@ python3 .agents/skills/pr-cr-fix/scripts/validate-extensions-yaml.py <extension-
 pi workflow run review-fix-loop --args '{
   targetType: "git-diff",
   target: "main",
-  batch1: "<repo>/.agents/skills/pr-cr-fix/agents/review-arch-boundary.md,<repo>/.agents/skills/pr-cr-fix/agents/review-business-logic.md,<repo>/.agents/skills/pr-cr-fix/agents/review-extension-api.md,<repo>/.agents/skills/pr-cr-fix/agents/review-monorepo-impact.md,<repo>/.agents/skills/pr-cr-fix/agents/review-type-safety.md,<repo>/.agents/skills/pr-cr-fix/agents/review-electron-build.md,<repo>/.agents/skills/pr-cr-fix/agents/review-test-coverage.md",
+  batch1: "<repo>/.agents/skills/pr-cr-fix/agents/review-arch-boundary.md,<repo>/.agents/skills/pr-cr-fix/agents/review-business-logic.md,<repo>/.agents/skills/pr-cr-fix/agents/review-extension-api.md,<repo>/.agents/skills/pr-cr-fix/agents/review-monorepo-impact.md,<repo>/.agents/skills/pr-cr-fix/agents/review-type-safety.md,<repo>/.agents/skills/pr-cr-fix/agents/review-electron-build.md,<repo>/.agents/skills/pr-cr-fix/agents/review-test-coverage.md,<repo>/.agents/skills/pr-cr-fix/agents/review-data-governance.md",
   maxRounds: 10,
   autoCommit: true,
   recheckAfterFix: false,
@@ -129,7 +245,7 @@ pi workflow run review-fix-loop --args '{
 git diff main...HEAD --stat
 ```
 
-**Step 2 — 并行派 reviewer subagent**：7 个维度按「维度 → Agent 映射」表全派。**并行上限 ≤5**（全局 AGENTS.md subagent 约束）：分两批派发（batch1: arch-boundary / business-logic / type-safety / electron-build / test-coverage，batch2: extension-api / monorepo-impact），或按全局规则「一般用 3 个」分三批。每个 subagent 的 task 必须包含：
+**Step 2 — 并行派 reviewer subagent**：8 个维度按「维度 → Agent 映射」表全派。**并行上限 ≤5**（全局 AGENTS.md subagent 约束）：分两批派发（batch1: arch-boundary / business-logic / type-safety / electron-build / test-coverage，batch2: extension-api / monorepo-impact / data-governance），或按全局规则「一般用 3 个」分三批。每个 subagent 的 task 必须包含：
 
 - worktree cwd（绝对路径，避免 multi-worktree cwd 陷阱）
 - focus（见下方「维度 → Agent 映射」表对应审查焦点）
@@ -148,6 +264,8 @@ git diff main...HEAD --stat
 **Step 4 — 修复 MUST_FIX**（条件触发，`must_fix > 0` 时）：
 - 按文件归属分组，每组派 1 个 `worker` subagent 并行修复（≤5）
 - worker task 含：review 报告原文路径（worker 必须复读）+ 本组问题清单 + 「全部修复，不挑 level」+ 「修复后 `pnpm -r typecheck` 通过」
+- **每条先验证真实性再修**：worker 逐条读代码证实 review 断言；不成立的（误报）在报告列「已验证不成立 + 证据（file:line + 逻辑）」，不盲改
+- **测试类问题派独立测试 subagent**，与修复 worker 分离：补测试 / 验证修复有效性（bug 类修复要求「修前红修后绿」——回归测试在旧代码上必须 fail、新代码上 pass，证明测试真能抓 bug 而非凑数）
 - 修复后 commit：`fix: review round 1 — N must-fix`
 
 ##### 第 2 轮（强制）
@@ -169,6 +287,7 @@ Agent 定义位于本 skill 目录 `agents/review-<维度>.md`（不全局暴露
 | 测试覆盖 | `agents/review-test-coverage.md` | 新增逻辑有测试、边缘情况覆盖、vitest 合规（禁 node:test）、领域测试点（session 双状态/Extension vs Plugin/ports 接口） |
 | 扩展接口 | `agents/review-extension-api.md` | Pi 扩展 tool/command schema 完整性、向后兼容性、扩展规范合规（docs/extensions/extension-conventions.md + development-guide.md） |
 | Monorepo 影响 | `agents/review-monorepo-impact.md` | workspace 包间依赖（packages/* + apps/* + extensions/* + extensions/shared/*）、循环依赖、公共 API 变更对下游影响 |
+| 数据治理 | `agents/review-data-governance.md` | pi 文件直写（绝对写规则）、第二写入者、事件直写状态、renderer 零派生、未登记缓存、扩展数据通道（appendEntry/get_entries）、登记表同步。准绳：docs/architecture/data-source-governance.md + data-source-registry.md |
 
 ### 严重度分级
 
@@ -207,10 +326,10 @@ Agent 定义位于本 skill 目录 `agents/review-<维度>.md`（不全局暴露
 - [ ] 错误路径必须重置 `isGenerating` / `streamingMessage` 等加载状态
 - [ ] `finally` 块或显式 error handler 中清理状态；无可能的无限加载态
 
-**6. 代码质量**
-- [ ] 无死代码（unused imports / variables）、无 console.log 残留
-- [ ] 无硬编码 magic numbers / strings
-- [ ] 可先跑 fallow 静态分析取基线：`fallow scan $(git diff main...HEAD --name-only)`，关注复杂度热点（函数 > 80 行 / 圈复杂度 > 15）、重复代码、未使用导出、循环依赖
+**6. 代码质量（确定性度量）**
+- [ ] 跑阶段 1.5 同一门禁：`python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main`，fail 项必须修复
+- [ ] `.review/metrics.json` 的 warn 项人工过一遍：认知复杂度 / CRAP 热点、重复块、死代码
+- [ ] 无 console.log 残留、无硬编码 magic numbers / strings
 
 **7. Electron IPC 安全**
 - [ ] 通过 preload 桥接，渲染进程不直接 `require('electron')`
@@ -271,6 +390,13 @@ Agent 定义位于本 skill 目录 `agents/review-<维度>.md`（不全局暴露
 
 ### 3a — pre-merge 验证
 
+先复跑两道结构/覆盖率门禁（阶段 2 修复会改代码，1.5/1.6 初跑读数已过期）。**顺序固定 coverage → metrics**（coverage-gate 的 files 节供 metrics-gate 替换 fallow 静态估算）：
+
+```bash
+python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main    # 增量 <80% 补测试
+python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main     # fail 必须修复
+```
+
 ```text
 agent: "general-purpose"
 cwd:   <git 根>
@@ -280,6 +406,8 @@ task:  "跑 bash scripts/pr-pre-merge.sh --quiet
 ```
 
 **Gate-3a**（硬 gate）：`result === 'PASS'` 才继续。FAIL 按 `failed_step` 对应工种重派 worker 修复后重跑。
+
+**real-pi 测试分工 [MANDATORY]**：CI 不跑 real-pi 测试（ci.yml test-runtime 显式设 `XYZ_SKIP_REAL_PI=1`，只跑凭证无关子集）；**开发验收必须跑 real-pi**——本阶段 pr-pre-merge.sh 的 `test:runtime` 步骤（`cd packages/runtime && npx vitest run`）不设 skip，双池全量含 real-pi 等价性测试（live ≡ reload 基线，SSOT 见 TEST-STRATEGY.md「等价性测试双轨」）。凭证缺失时用例以显式理由 skip——**输出中出现 real-pi skip 即视为开发验收不完整**，须补凭证（`~/.pi` 三源探测，见 `pi-fixture.ts` `REAL_PI_READY`）后重跑，不得凭 skip 输出宣布 PASS。
 
 ### 3b — push（需用户授权）
 
@@ -319,7 +447,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 
 ## 关键约束 [MANDATORY]
 
-1. **阶段顺序不可调换**：1 (PR) → 2 (review+fix) → 3 (pre-merge + push)
+1. **阶段顺序不可调换**：1 (PR) → 1.5 (度量门禁) → 1.6 (增量覆盖率门禁) → 2 (review+fix) → 3 (pre-merge + push)；Gate-1.5 fail 时禁止进入阶段 2，Gate-1.6 fail 时补测试后重跑（上限 3 轮）
 2. **主 agent 不跑 review/fix 实现命令**：review 委托 workflow（路径 1）或 subagent（路径 2）。PR 生命周期操作（commit / push / pr-status.sh / pr-pre-merge.sh）主 agent 可直接跑
 3. **push 必须用户授权**：任何 push 操作前必须告知用户结果并获得确认
 4. **force-push 决策传递**：阶段 1 `force_push=true` → 阶段 3b 必须用 `--force-with-lease`；裸 `--force` 禁止
@@ -342,6 +470,8 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 | 失败 | 动作 |
 |------|------|
 | Gate-1 拿不到 URL | 重试阶段 1；gh 认证问题先 `gh auth login` |
+| Gate-1.5 fail 超 3 轮 | 上报用户决策（不自动继续，不进阶段 2） |
+| Gate-1.6 增量覆盖率 <80% | 派测试专项 subagent 按 coverage.json uncovered_files 补测试 → 重跑（上限 3 轮；超限上报用户） |
 | Gate-2 `terminated=needs-redesign` | 结构性问题，上报用户决策（不自动重试） |
 | Gate-2 `terminated=stuck` | 看 aggregated.md 判断是 reviewer 误报还是真问题；误报可人工 ack 后进阶段 3，真问题上报用户 |
 | Gate-3a pre-merge FAIL | 按 `failed_step` 重派 worker 修复后重跑 |
@@ -360,8 +490,13 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 │   ├── review-test-coverage.md
 │   ├── review-extension-api.md
 │   ├── review-monorepo-impact.md
+│   ├── review-data-governance.md
 │   └── review-aggregator.md
+├── references/            # 调研参考（git 跟踪）
+│   └── coverage-industry-research.md   # 增量覆盖率门禁业界调研（vitest 原生能力/diff-cover/阈值惯例/采纳决策）
 └── scripts/              # 校验脚本
+    ├── metrics-gate.py   # 阶段 1.5 度量门禁（fallow audit 包装 + 显式双轨判定 + 真实覆盖率分流）
+    ├── coverage-gate.py  # 阶段 1.6 增量覆盖率门禁（vitest --coverage lcov × git diff，≥80%；产出 files 节供 metrics-gate 消费）
     ├── validate-skill-yaml.py
     └── validate-extensions-yaml.py
 ```

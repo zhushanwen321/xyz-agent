@@ -19,6 +19,7 @@ import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
 import { handleCompletion } from '@/composables/effects/useCompletionNotify'
+import { invalidateStreamSubscription } from '@xyz-agent/core'
 import type { InboundEffects } from '@xyz-agent/core'
 import type { ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
 
@@ -30,14 +31,40 @@ const t = i18n.global.t
  * 不能只依赖 session 通道的惰性订阅（ensureStreamSubscription 在首次 send 时建立）：
  * 进程可能在用户首次发消息前就死（如 extension 加载失败 exit(1)），此时无订阅者，
  * dispatchSession 会静默丢弃。因此 routeInbound 对 session.exited 做兜底处理，
- * 保证 markSessionError + markDead + toast 一定执行。
+ * 保证 markSessionError + markDead + invalidateStreamSubscription + toast 一定执行。
+ *
+ * invalidateStreamSubscription：失效本地流订阅标记（服务端订阅已随 bus.clearSession
+ * 清除），respawn 后 ensureStreamSubscription 才会重挂 events handler + 重发 subscribe。
  */
 function handleSessionExited(sessionId: string, payload: { code: number | null; reason: string }): void {
   useChatStore().markSessionError(sessionId, payload.reason)
   useSessionStore().markDead(sessionId)
+  // 失效本地流订阅标记：服务端订阅已随 bus.clearSession 清除（pi 死亡），本地幂等标记
+  // 不失效则 respawn 后 ensureStreamSubscription 被短路 → 新 turn 的 message.* 丢失
+  //（UI 卡「进行中…」）。放 markDead 之后：错误消息/dead 态等 UI 反馈先落地
+  invalidateStreamSubscription(sessionId)
+  // D6b（integrity-hardening §3.6）：pi 死后清掉该 session 挂起的 ask-user / dialog 分区
+  //（对齐 deleteSession 路径 useSidebar 的 extensionUIStore.clearSession 写法）。
+  // 不清则切走再切回（restore 起新 pi）后旧请求重弹，作答发给新进程被静默丢弃（M8 幽灵弹窗）。
+  useExtensionUIStore().clearSession(sessionId)
   // reason 可能含多行 stderr，toast 只取首行（完整内容在聊天流 error 消息里）
   const shortReason = payload.reason.split('\n')[0]
   useToast().error(t('connection.runtimeExited', { reason: shortReason }))
+}
+
+/**
+ * 处理带 sessionId、未命中 pending 的 error envelope（D6b）。
+ *
+ * 典型场景：pi 死后残留弹窗的作答经 sendExtensionUIResponse 发出，runtime 侧「client
+ * 不存在」回 error envelope（fire-and-forget 无 msg.id，不走 pending reject）——此前落
+ * session 通道被静默丢弃，用户作答石沉大海。现复用 markSessionError（session 级错误
+ * 统一入口：追加 error assistant 消息 + finalize）进消息流展示，并 toast 保证切走的
+ * session 也可见。
+ */
+function handleSessionError(sessionId: string, payload: { code?: string; message?: string }): void {
+  const text = t('connection.sessionRequestFailed', { message: payload.message ?? 'Unknown error' })
+  useChatStore().markSessionError(sessionId, text)
+  useToast().error(text)
 }
 
 /**
@@ -92,5 +119,6 @@ export function createInboundEffects(): InboundEffects {
     onSubagents: handleSubagents,
     onWorkflowUpdate: handleWorkflowUpdate,
     onGlobalError: handleGlobalError,
+    onSessionError: handleSessionError,
   }
 }

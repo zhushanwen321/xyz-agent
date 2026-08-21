@@ -94,7 +94,10 @@
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, Check, ChevronRight, Copy, Maximize, Minimize, X, ZoomIn, ZoomOut } from '@lucide/vue'
-import { Button, Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@xyz-agent/ui'
+// primitives 直接路径（不经 @xyz-agent/ui 顶层 barrel）：chat 组件被 barrel 再导出，
+// barrel 自引用会闭合一族循环依赖环（详见 BashOutputBlock.vue 同款注释）
+import { Button } from '../../primitives/button'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '../../primitives/dialog'
 import { getCurrentTheme } from './composables/use-theme'
 import { useCopy } from './composables/useCopy'
 import { useMermaidZoom } from './composables/useMermaidZoom'

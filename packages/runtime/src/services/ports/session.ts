@@ -112,8 +112,6 @@ export interface ISessionStore {
   invalidateScanCache(): void
   /** 刷新 pi 配置缓存（models + settings 全量重读）。 */
   refreshAll(): void
-  /** 持久化 session 名称。 */
-  persistSessionName(filePath: string, name: string, id?: string, cwd?: string): void
   /** 持久化 session 终态（W4，ADR 0042）。 */
   persistSessionEnd(filePath: string, outcome: SessionOutcome, reason?: string): void
   /** 持久化 launch preset 绑定到 .preset.json sidecar（设计文档 §4）。 */
@@ -124,8 +122,6 @@ export interface ISessionStore {
   extractSessionOutcome(filePath: string): SessionOutcome | null
   /** 清除 session 元信息缓存的 stale 条目（session 删除/重命名后调用，避免无界增长）。 */
   invalidateMetaCache(filePath: string): void
-  /** 修正 session 文件的 cwd 字段。 */
-  patchSessionCwd(filePath: string, newCwd: string): boolean
   /**
    * 翻译 pi 历史（unknown[] → Message[]）。pi 结构只在此实现内部断言。
    *
@@ -169,13 +165,16 @@ export interface ISessionStore {
    */
   readSessionEndMeta(filePath: string): SessionEndSidecarMeta | null
   /**
-   * 向源 session JSONL 追加 handoff_marker entry（供 scanner 尾读提取 handedOffTo）。
+   * 将 handoff 标记持久化到 sidecar `.handoff.json`（W11 迁移，scanner 经
+   * extractHandedOff 尾读提取 handedOffTo）。
    *
-   * filePath 为空 / 文件不存在（pi 延迟写入窗口，规则 #6）→ console.warn + 静默跳过
-   * （绝不创建文件，与 pi 0.80.3 _persist openSync('wx') 竞态防护）。写失败 catch→
-   * console.error 不抛。
+   * filePath 为空 / JSONL 文件不存在（pi 延迟写入窗口，规则 #6）→ console.warn +
+   * 静默跳过（绝不创建文件，与 pi 0.80.3 _persist openSync('wx') 竞态防护）。
+   * 写失败 catch → console.error 不抛；写后失效 meta 缓存。
+   * [HISTORICAL] 原实现向 JSONL 直写 handoff_marker entry（活跃交接时与源 pi 进程
+   * 同文件双写方），W11 迁 sidecar（D3b 裁决）。
    */
-  persistHandedOff(filePath: string, newSessionId: string): void
+  persistHandoffSidecar(filePath: string, newSessionId: string): void
   /** 删除文件/目录到废纸篓（session 资源清理）。 */
   trash(path: string): void
 }

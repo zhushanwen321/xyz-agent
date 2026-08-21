@@ -25,8 +25,9 @@ target/
 .claude/worktrees/
 
 # pi resources — pi binary downloaded by prepare-pi-resources.sh from badlogic/pi-mono
-# gh releases. Nothing under here is tracked. Builtin extensions are npm deps (root
-# package.json), skills are user/project-level — neither is bundled here.
+# gh releases. Builtin extensions are staged esbuild bundles (prepare-builtin-extensions.sh,
+# under extensions/@zhushanwen/), skills are user/project-level — all build-generated,
+# none tracked here.
 apps/electron/resources/
 
 # built-in xyz plugins 编译产物（scripts/prepare-builtin-plugins.sh 构建期生成，

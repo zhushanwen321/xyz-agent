@@ -1,7 +1,9 @@
 # ADR 0042：runtime 写 session_end 终态 entry
 
-- 状态：Accepted
+- 状态：Accepted（正文原决策已修订，见下）
 - 日期：2026-07-16
+
+> **修订记录（2026-08-19）**：本文正文的「append `session_end` entry 到 JSONL」原决策已由 **ADR-0042 前案 W1**（历史 effort 的 W1 sidecar 修订，**非** data-source-governance 计划的 wave W1——该计划 W1 是活跃 label 直写切 RPC，与 sidecar 无关）改为 **runtime 单写 sidecar `<sessionFile>.meta.json`**（`persistSessionEnd`：原子写 + 写前 existsSync 守卫 + 写后失效 meta 缓存）。sidecar 是 xyz 自有文件，不污染 JSONL、规避 pi `openSync("wx")` 竞态；该形态经 [ADR-0062](0062-single-data-owner-absolute-write-rule.md)（D3 选项 a）追认为登记在案的合法形态（sidecar 家族四后缀之一，见登记表 §4）。正文历史内容保留原貌，仅「决策」节头部加修订标注。
 
 ## 背景
 
@@ -16,6 +18,8 @@
 经 pi JSONL 格式深度验证（3790 个 session 文件实证）确认：pi JSONL 是 append-only 事件流日志，**不写 session 生命周期终结标记**。仅靠回扫文件尾部 stopReason 只能覆盖 ~2.5% 的情况（pi 自己写出 abort/error），进程崩溃 / kill / 静默卡死（最常见的"坏 session"）在 JSONL 里毫无痕迹。
 
 ## 决策
+
+**[已修订——ADR-0042 前案 W1]** 现行决策 = **runtime 单写 sidecar `.meta.json`**（`persistSessionEnd`），scanner 经 `scanSessionMeta` 读 sidecar 获得终态；以下 append JSONL 原文保留为历史决策原貌。
 
 runtime 在 session 结束时**主动 append 一条 `session_end` entry** 到 JSONL 文件：
 

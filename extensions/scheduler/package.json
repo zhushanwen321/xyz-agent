@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-scheduler",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "main": "index.ts",
   "pi": {
@@ -19,6 +19,7 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
     "fast-check": "^4.9.0",
     "vitest": "^4.1.8"
   },

@@ -35,8 +35,6 @@ const mocks = vi.hoisted(() => ({
       { provider: string; modelId: string } | null,
   },
   refreshAllMock: vi.fn(),
-  persistSessionNameMock: vi.fn(),
-  patchSessionCwdMock: vi.fn(() => true),
   trashMock: vi.fn(),
   convertPiHistoryMock: vi.fn((raw: unknown) => raw),
 }))
@@ -46,8 +44,6 @@ vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
   return {
     ...actual,
     scanPiSessions: () => mocks.mockScannedSessions,
-    persistSessionName: mocks.persistSessionNameMock,
-    patchSessionCwd: mocks.patchSessionCwdMock,
   }
 })
 vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {

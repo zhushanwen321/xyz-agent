@@ -10,7 +10,7 @@
  *
  * per-session 隔离：session 已建态按 sessionId 查真值（经 deps.getSessionState，非读全局 active），
  * split panel 下两个 Composer 各读各的 session 状态，不串读。底层数据已 per-session
- * （SessionSummary.modelId/thinkingLevel + updateSessionState(id,...)），此处只接对数据源。
+ * （SessionSummary.modelId/thinkingLevel + applySnapshot(id,...)），此处只接对数据源。
  *
  * landing 态（sessionId=null）session 尚未 create，无法调 model.switch / setThinkingLevel RPC。
  * 选定值记入 pendingModel + localThinkingLevel，submitFirstMessage create session 后 apply。

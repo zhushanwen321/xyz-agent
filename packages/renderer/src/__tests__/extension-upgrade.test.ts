@@ -13,7 +13,7 @@ vi.mock('../api/transport', () => ({
 }))
 
 vi.mock('../api/pending', () => ({
-  create: vi.fn(() => 'test-id'),
+  createCommandId: vi.fn(() => 'test-id'),
   register: vi.fn(() => Promise.resolve()),
   reject: vi.fn(),
 }))
@@ -25,7 +25,7 @@ import * as pending from '../api/pending'
 describe('extension domain upgrade', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(pending.create).mockReturnValue('test-id')
+    vi.mocked(pending.createCommandId).mockReturnValue('test-id')
     vi.mocked(pending.register).mockReturnValue(Promise.resolve())
   })
 
@@ -47,7 +47,7 @@ describe('extension domain upgrade', () => {
 describe('extension domain setAutoUpgrade', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(pending.create).mockReturnValue('test-id')
+    vi.mocked(pending.createCommandId).mockReturnValue('test-id')
     vi.mocked(pending.register).mockReturnValue(Promise.resolve())
   })
 

@@ -26,7 +26,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join, relative } from 'node:path'
 
 import type { IGitInfoReader } from '../src/services/ports/git-info.js'
-import { sessionMetaCache } from '../src/services/session/session-meta-cache.js'
 
 import type {
   IMessageBroker,
@@ -57,8 +56,6 @@ const mocks = vi.hoisted(() => ({
       { provider: string; modelId: string } | null,
   },
   refreshAllMock: vi.fn(),
-  persistSessionNameMock: vi.fn(),
-  patchSessionCwdMock: vi.fn(() => true),
   trashMock: vi.fn(),
   convertPiHistoryMock: vi.fn((raw: unknown) => raw),
   // entry-tree-builder.rebuildHistoryFromEntries mock：默认 identity-ish（返 entries 当 messages），
@@ -80,8 +77,6 @@ vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
   return {
     ...actual,
     scanPiSessions: () => mockScannedSessions,
-    persistSessionName: mocks.persistSessionNameMock,
-    patchSessionCwd: mocks.patchSessionCwdMock,
   }
 })
 vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
@@ -135,6 +130,8 @@ interface MockClient {
   followUp: MockInstance<(content: string) => Promise<unknown>>
   setModel: MockInstance<(provider: string, modelId: string) => Promise<unknown>>
   setThinkingLevel: MockInstance<(level: string) => Promise<unknown>>
+  /** set_session_name RPC mock（W1 数据源治理：活跃 label 持久化唯一写入口）。 */
+  setSessionName: MockInstance<(name: string) => Promise<unknown>>
   compact: MockInstance<() => Promise<unknown>>
   clear: MockInstance<() => Promise<unknown>>
   getHistory: MockInstance<() => Promise<unknown>>
@@ -165,6 +162,7 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     followUp: vi.fn<(content: string) => Promise<unknown>>().mockResolvedValue(undefined),
     setModel: vi.fn<(provider: string, modelId: string) => Promise<unknown>>().mockResolvedValue(undefined),
     setThinkingLevel: vi.fn<(level: string) => Promise<unknown>>().mockResolvedValue(undefined),
+    setSessionName: vi.fn<(name: string) => Promise<unknown>>().mockResolvedValue(undefined),
     compact: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
     clear: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
     getHistory: vi.fn<() => Promise<unknown>>().mockResolvedValue({ data: { messages: [] } }),
@@ -192,7 +190,6 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
 /** 重置跨用例共享状态。 */
 function resetMockState(): void {
   mockScannedSessions.length = 0
-  sessionMetaCache.clear()
   mocks.defaultModel.value = { provider: 'test-provider', modelId: 'test-model' }
   mocks.convertPiHistoryMock.mockImplementation((raw: unknown) => raw)
   mocks.rebuildHistoryFromEntriesMock.mockImplementation((entries: unknown[]) => ({ messages: entries as unknown[], clientUuidMap: new Map<string, string>() }))
@@ -255,6 +252,9 @@ function createSetup(): Setup {
     }),
     onSessionExit: vi.fn((cb) => { exitCb = cb }),
     destroyAll: vi.fn(async () => { clientMap.clear() }),
+    // W11：短命 pi 附着 mock——默认以新 ephemeral client 执行 fn（受控可断言）
+    withEphemeralPi: vi.fn(async <T,>(_sessionFile: string, fn: (c: IPiEngine) => Promise<T>) =>
+      fn(makeMockClient() as unknown as IPiEngine)),
   } as unknown as IProcessManager
 
   const broker: IMessageBroker = {
@@ -349,6 +349,44 @@ function findBroadcast<T extends ServerMessage['type']>(setup: Setup, type: T): 
     if (call[0].type === type) return call[0] as ServerMessage<T>
   }
   return undefined
+}
+
+/**
+ * W12：按 type 取**最后一条** publish——state 话题快照挂钩在多实例收敛过程中可能发
+ * 中间组合帧（如 modelId 先收敛、thinkingLevel 在途），终态 = 最后一条（last-value 语义，
+ * 与 renderer stateSnapshot 回放同口径）。
+ */
+function findLastBroadcast<T extends ServerMessage['type']>(setup: Setup, type: T): ServerMessage<T> | undefined {
+  const calls = vi.mocked(setup.messageBus.publish).mock.calls
+  for (let i = calls.length - 1; i >= 0; i--) {
+    if (calls[i]![1].type === type) return calls[i]![1] as ServerMessage<T>
+  }
+  return undefined
+}
+
+/**
+ * W10：播种 usage 实例快照（inputTokens 唯一数据源 = get_session_stats，旧 setInputTokens
+ * 缓存直写已删——用例需要预设 inputTokens 时经权威源播种，对齐生产行为）。
+ * refetch 绕过防抖立即拉取，flush 一个 macrotask 等 doFetch promise 落位。
+ */
+async function seedUsageSnapshot(
+  setup: Setup,
+  id: string,
+  client: MockClient,
+  contextUsage: { tokens: number; contextWindow: number; percent: number },
+): Promise<void> {
+  client.getSessionStats.mockResolvedValue({ contextUsage })
+  setup.service.getScalarReplicatedStates(id)?.usage.refetch()
+  await new Promise<void>(r => setTimeout(r, 0))
+}
+
+/**
+ * W12：等 state 话题快照挂钩发布落地——事件/查询失效后防抖 300ms（SCALAR_STATE_DEBOUNCE_MS）
+ * + 快照 fetch（mock 即时 resolve）+ setTimeout 0 挂钩宏任务，400ms 覆盖整链
+ *（真 timers，本文件无 fake timers）。
+ */
+async function waitForSnapshotPublish(): Promise<void> {
+  await new Promise<void>(r => setTimeout(r, 400))
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -616,6 +654,8 @@ describe('SessionService · lifecycle', () => {
 
     it('queries commands and broadcasts session.commands on create', async () => {
       const { id } = await setup.seedSession({ commands: [{ name: 'xyz-navigate', source: 'extension' }] })
+      // W12：激活发布 = 播种 fetch 快照应用后的挂钩（异步宏任务），等落地
+      await waitForSnapshotPublish()
       // commands 广播给前端
       const cmds = findBroadcast(setup, 'session.commands')
       expect(cmds?.payload).toMatchObject({ sessionId: id })
@@ -631,8 +671,10 @@ describe('SessionService · lifecycle', () => {
           },
         ],
       })
+      // W12：激活发布经快照挂钩，等落地
+      await waitForSnapshotPublish()
       const cmds = findBroadcast(setup, 'session.commands')
-      // sourceInfo 从 pi get_commands 透传到 session.commands 广播 payload
+      // sourceInfo 从 pi get_commands 透传到快照（commands 实例整字段持有）再到广播 payload
       expect(cmds?.payload.commands[0]).toMatchObject({
         name: 'fix',
         source: 'skill',
@@ -710,21 +752,38 @@ describe('SessionService · lifecycle', () => {
   })
 
   describe('renameSession', () => {
-    it('persists new name for active session via pi-config-bridge', async () => {
-      const { id } = await setup.seedSession({ sessionFile: '/fake/x.jsonl' })
+    it('active session：新名经 pi set_session_name RPC 持久化（W1：不再直写 session JSONL）', async () => {
+      const { id, client } = await setup.seedSession({ sessionFile: '/fake/x.jsonl' })
       await setup.service.renameSession(id, 'new name')
-      expect(mocks.persistSessionNameMock).toHaveBeenCalledWith('/fake/x.jsonl', 'new name', id, expect.any(String))
+      // W1 接口契约：活跃分支唯一写入口 = setSessionName RPC（seedSession 的 create 显式
+      // label 也走同一 RPC，故断言最后一次调用是 rename 的新名）
+      expect(client.setSessionName).toHaveBeenLastCalledWith('new name')
+      // 直写路径已随 W11 全删（persistSessionName 不存在），回归守卫由 R1 检查承担
       expect(mocks.refreshAllMock).toHaveBeenCalled()
       expect(setup.service.getSummary(id)?.label).toBe('new name')
     })
 
-    it('persists name via scanned file when session is not active', async () => {
+    it('active session：pi client 不可用（崩溃窗口）时 throw，不静默丢写', async () => {
+      const { id } = await setup.seedSession({ sessionFile: '/fake/x.jsonl' })
+      // 模拟 pi 崩溃：clientMap 移除该 session 的 client（pm.getClient 返回 undefined）
+      setup.clientMap.delete(id)
+      await expect(setup.service.renameSession(id, 'new name')).rejects.toThrow('pi process is not available')
+      // 未持久化、内存 label 也未变（先 RPC 后改内存，失败保留旧名可重试）
+      expect(setup.service.getSummary(id)?.label).toBe('seed')
+    })
+
+    it('non-active session：短命 pi 附着后 set_session_name RPC（W11：直写全删）', async () => {
       mockScannedSessions.push({
         id: 'scan-ren', filePath: '/fake/scan-ren.jsonl', cwd: tmpdir(), name: null,
         lastModified: Date.now(), timestamp: new Date().toISOString(), size: 0, outcome: null,
       })
+      const ephemeral = makeMockClient()
+      vi.mocked(setup.pm.withEphemeralPi).mockImplementationOnce(async (_f, fn) =>
+        fn(ephemeral as unknown as IPiEngine))
       await setup.service.renameSession('scan-ren', 'renamed')
-      expect(mocks.persistSessionNameMock).toHaveBeenCalledWith('/fake/scan-ren.jsonl', 'renamed', 'scan-ren', tmpdir())
+      // 非活跃分支经短命 pi 附着目标文件后 RPC（xyz 不再直写 session JSONL）
+      expect(setup.pm.withEphemeralPi).toHaveBeenCalledWith('/fake/scan-ren.jsonl', expect.any(Function))
+      expect(ephemeral.setSessionName).toHaveBeenCalledWith('renamed')
     })
   })
 
@@ -743,8 +802,9 @@ describe('SessionService · lifecycle', () => {
         vi.mocked(setup.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
         const summary = await setup.service.restoreSession('persist-1')
         expect(summary.id).toBe('persist-1')
-        // restoreSession 读原文件 → 写 tmpFile → switchSession(tmpFile)
-        expect(client.switchSession).toHaveBeenCalledWith(expect.stringContaining('xyz-session-persist-1'))
+        // [W1 语义变更：直附着正式文件] switchSession 收到原 filePath（不再写
+        // $TMPDIR tmpFile 后切 tmp——pi switch_session 永久重绑读写目标）
+        expect(client.switchSession).toHaveBeenCalledWith(filePath)
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
@@ -814,22 +874,26 @@ describe('SessionService · Facade', () => {
       await expect(setup.service.switchModel('ghost', 'p' as ProviderId, 'm')).rejects.toThrow('session not active')
     })
 
-    it('切换后广播 session.state_changed（含按新 contextWindow 重算用量）', async () => {
+    it('切换后广播 session.state_changed（payload 全字段来自三实例快照，W12）', async () => {
       const { id, client } = await setup.seedSession()
-      // 注入 resolver：anthropic/claude-x contextWindow=200000
-      setup.service.setModelContextWindowResolver((_p, _m) => 200000)
-      // 预置 inputTokens 缓存（模拟 onContextUpdate 已回写）
-      setup.service.setInputTokens(id, 12000)
+      // W18：resolver 注入链已删（W12 后生产零消费）——payload 数值全部来自 pi 快照
+      // W10：inputTokens 唯一数据源 = usage 实例快照（播种替代旧 setInputTokens 直写）
+      await seedUsageSnapshot(setup, id, client, { tokens: 12000, contextWindow: 200000, percent: 6 })
       vi.mocked(client.setModel).mockClear()
       vi.mocked(setup.broker.broadcast).mockClear()
       vi.mocked(setup.messageBus.publish).mockClear()
-      // get_state 返回 thinkingLevel（broadcastSessionState 查 pi get_state）
-      // W2 收口后用 client.getState()，返回归一后的 state 对象
-      vi.mocked(client.getState).mockResolvedValueOnce({ thinkingLevel: 'high' })
+      // W12：get_state 权威翻新（thinkingLevel + 新模型）——mockResolvedValue 持续，
+      // modelId / thinkingLevel 两实例防抖重拉都消费同一权威值
+      vi.mocked(client.getState).mockResolvedValue({
+        thinkingLevel: 'high',
+        model: { id: 'claude-x', provider: 'anthropic' },
+      })
 
       await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
+      // W12：即时广播退役——三实例防抖重拉收敛后经快照挂钩发布
+      await waitForSnapshotPublish()
 
-      const stateChanged = findBroadcast(setup, 'session.state_changed')
+      const stateChanged = findLastBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
       expect(stateChanged!.payload).toMatchObject({
         sessionId: id,
@@ -837,34 +901,38 @@ describe('SessionService · Facade', () => {
         thinkingLevel: 'high',
         inputTokens: 12000,
         contextLimit: 200000,
-        usagePercent: 6, // Math.round(12000 / 200000 * 100)
+        usagePercent: 6,
       })
     })
 
-    it('未注入 resolver 时 contextLimit=0 usagePercent=0，仍广播 state_changed', async () => {
-      const { id } = await setup.seedSession()
-      // 不注入 resolver
-      setup.service.setInputTokens(id, 5000)
+    it('未注入 resolver 时 payload 仍读快照真值（旧「resolver 缺省 0」口径随 W12 退役）', async () => {
+      const { id, client } = await setup.seedSession()
+      // 不注入 resolver；快照播种 inputTokens（payload 透出快照三字段真值）
+      await seedUsageSnapshot(setup, id, client, { tokens: 5000, contextWindow: 100000, percent: 5 })
 
       await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
+      await waitForSnapshotPublish()
 
       const stateChanged = findBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
       expect(stateChanged!.payload).toMatchObject({
-        contextLimit: 0,
-        usagePercent: 0,
+        contextLimit: 100000,
+        usagePercent: 5,
         inputTokens: 5000,
       })
     })
 
-    it('get_state 失败时不阻塞，thinkingLevel 回退缓存值', async () => {
+    it('get_state 失败时不阻塞：快照播种失败，payload 回退缓存值（fetch 失败兜底发布）', async () => {
       const { id, client } = await setup.seedSession()
-      setup.service.setModelContextWindowResolver(() => 100000)
-      setup.service.setThinkingLevelCache(id, 'medium')
-      // W2 收口后 broadcastSessionState 用 client.getState()，失败时 thinkingLevel 回退缓存值
-      vi.mocked(client.getState).mockRejectedValueOnce(new Error('get_state boom'))
+      // thinkingLevel 过渡期缓存播种（getSummary fallback 值）：经公开 setThinkingLevel
+      // 写入（旧 setThinkingLevelCache 直写缓存已随 W12 移交死代码删除）
+      await setup.service.setThinkingLevel(id, 'medium')
+      // W12：get_state 持续失败 → modelId/thinkingLevel 实例退避重试、快照缺失 →
+      // fetch 落定兜底发布（对齐旧 broadcastSessionState「失败不阻塞、thinkingLevel 回退缓存」）
+      vi.mocked(client.getState).mockRejectedValue(new Error('get_state boom'))
 
       await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
+      await waitForSnapshotPublish()
 
       const stateChanged = findBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
@@ -882,112 +950,102 @@ describe('SessionService · Facade', () => {
     })
   })
 
-  describe('setInputTokens 回写缓存（onContextUpdate 打通用例）', () => {
-    it('U-setInput-1：setInputTokens 写入后 getInputTokens 读回正确值', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.setInputTokens(id, 12345)
+  describe('getInputTokens（W10：usage 实例快照派生，唯一数据源 = get_session_stats）', () => {
+    it('U-setInput-1：快照播种后 getInputTokens 读回快照 inputTokens', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 12345, contextWindow: 200000, percent: 6 })
       expect(setup.service.getInputTokens(id)).toBe(12345)
     })
 
-    it('U-setInput-2：setInputTokens 对不存在的 session 不抛错（静默忽略）', () => {
-      expect(() => setup.service.setInputTokens('nonexistent', 100)).not.toThrow()
+    it('U-setInput-2：不存在的 session（无实例）返回 0，不抛错', () => {
       expect(setup.service.getInputTokens('nonexistent')).toBe(0)
+    })
+
+    it('U-setInput-3：applyContextUpdate 事件不直写快照（事件只做失效，W10 五写点收编）', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 12345, contextWindow: 200000, percent: 6 })
+      setup.service.applyContextUpdate(id, 99999)
+      // 事件参数不直写：快照保持播种值（真 timers 下防抖未到点，无重拉）
+      expect(setup.service.getInputTokens(id)).toBe(12345)
     })
   })
 
-  describe('applyContextUpdate（session 级状态单一 owner：回写缓存 + 算用量 + 广播）', () => {
-    it('回写 inputTokens 缓存 + 广播 context.update（含按 contextWindow 重算的 usagePercent）', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.setModelContextWindowResolver(() => 100000)
-      // modelId 初始为 default 'test-provider/test-model'，resolver 按 provider/model 查 contextWindow
+  describe('applyContextUpdate（session 级状态单一 owner：W12 事件只失效，发布归快照挂钩）', () => {
+    it('失效收敛后广播 context.update（payload 全字段来自 usage 快照），不直写快照', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 10000, contextWindow: 100000, percent: 10 })
+      // pi 侧权威已翻新为事件值 25000（同源：turn_end 事件与 get_session_stats 同一数据，
+      // 事件即时值即快照将收敛的值——等价性依据）
+      client.getSessionStats.mockResolvedValue({ contextUsage: { tokens: 25000, contextWindow: 100000, percent: 25 } })
       vi.mocked(setup.broker.broadcast).mockClear()
       vi.mocked(setup.messageBus.publish).mockClear()
 
+      // W12：事件只失效（markDirty），发布由防抖重拉的快照挂钩承担
       setup.service.applyContextUpdate(id, 25000)
+      await waitForSnapshotPublish()
 
-      expect(setup.service.getInputTokens(id)).toBe(25000)
-      const ctxUpdate = findBroadcast(setup, 'context.update')
+      const ctxUpdate = findLastBroadcast(setup, 'context.update')
       expect(ctxUpdate).toBeDefined()
       expect(ctxUpdate!.payload).toMatchObject({
         sessionId: id,
         inputTokens: 25000,
         contextLimit: 100000,
-        usagePercent: 25, // Math.round(25000 / 100000 * 100)
+        usagePercent: 25, // round(pi percent 25)——与旧「事件值 + resolver 重算」round(25000/100000*100) 同值
       })
+      // 快照经唯一数据写路径（fetch）收敛 pi 权威值
+      expect(setup.service.getInputTokens(id)).toBe(25000)
     })
 
-    it('inputTokens 为 0 时不回写不广播（agent_end 前的空 usage）', async () => {
+    it('inputTokens 为 0 时不广播（agent_end 前的空 usage；markDirty 失效仍发出）', async () => {
       const { id } = await setup.seedSession()
-      setup.service.setModelContextWindowResolver(() => 100000)
       vi.mocked(setup.broker.broadcast).mockClear()
 
       setup.service.applyContextUpdate(id, 0)
 
-      expect(setup.service.getInputTokens(id)).toBe(0) // 未回写
+      expect(setup.service.getInputTokens(id)).toBe(0) // 快照未播种（mock getSessionStats 默认 {} → 拉取失败保留空）
       expect(findBroadcast(setup, 'context.update')).toBeUndefined()
     })
 
     it('session 不存在时不广播', async () => {
-      setup.service.setModelContextWindowResolver(() => 100000)
       expect(() => setup.service.applyContextUpdate('ghost', 1000)).not.toThrow()
       expect(findBroadcast(setup, 'context.update')).toBeUndefined()
     })
 
-    it('未注入 resolver 时 contextLimit=0 usagePercent=0', async () => {
-      const { id } = await setup.seedSession()
+    it('未注入 resolver：payload 读快照 pi 权威值（resolver 不再参与，W12）', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 5000, contextWindow: 100000, percent: 5 })
 
       setup.service.applyContextUpdate(id, 5000)
+      await waitForSnapshotPublish()
 
       const ctxUpdate = findBroadcast(setup, 'context.update')
       expect(ctxUpdate).toBeDefined()
-      expect(ctxUpdate!.payload).toMatchObject({ contextLimit: 0, usagePercent: 0, inputTokens: 5000 })
+      expect(ctxUpdate!.payload).toMatchObject({ contextLimit: 100000, usagePercent: 5, inputTokens: 5000 })
     })
   })
 
-  describe('getUsagePercent', () => {
-    it('按缓存 inputTokens + 当前 modelId contextWindow 算百分比', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.setModelContextWindowResolver(() => 200000)
-      setup.service.setInputTokens(id, 100000)
+  describe('getUsagePercent（W10：usage 实例快照派生 pi 权威 percent）', () => {
+    it('读快照 usagePercent（pi get_session_stats 投影，不再本地按缓存重算）', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 100000, contextWindow: 200000, percent: 50 })
 
-      expect(setup.service.getUsagePercent(id)).toBe(50) // 100000/200000*100
+      expect(setup.service.getUsagePercent(id)).toBe(50)
     })
 
-    it('usagePercent 上限 100（inputTokens 超过 contextWindow）', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.setModelContextWindowResolver(() => 100000)
-      setup.service.setInputTokens(id, 150000)
+    it('快照 percent 已被 pi clamp 到 100（inputTokens 超过 contextWindow）', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 150000, contextWindow: 100000, percent: 100 })
 
-      expect(setup.service.getUsagePercent(id)).toBe(100) // Math.min(150, 100)
+      expect(setup.service.getUsagePercent(id)).toBe(100)
     })
 
-    it('未注入 resolver 返回 0', async () => {
+    it('快照未播种（percent 缺失）返回 0', async () => {
       const { id } = await setup.seedSession()
-      setup.service.setInputTokens(id, 99999)
       expect(setup.service.getUsagePercent(id)).toBe(0)
     })
 
     it('session 不存在返回 0', () => {
       expect(setup.service.getUsagePercent('ghost')).toBe(0)
-    })
-  })
-
-  describe('setThinkingLevelCache 回写缓存（thinking_level_changed 打通用例）', () => {
-    it('U-setThinking-1：setThinkingLevelCache 写入后 getSummary().thinkingLevel 读回正确值', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.setThinkingLevelCache(id, 'high')
-      expect(setup.service.getSummary(id)?.thinkingLevel).toBe('high')
-    })
-
-    it('U-setThinking-2：setThinkingLevelCache 传 undefined 时不覆盖已有值', async () => {
-      const { id } = await setup.seedSession()
-      setup.service.setThinkingLevelCache(id, 'high')
-      setup.service.setThinkingLevelCache(id, undefined)
-      expect(setup.service.getSummary(id)?.thinkingLevel).toBe('high')
-    })
-
-    it('U-setThinking-2b：setThinkingLevelCache 对不存在的 session 不抛错', () => {
-      expect(() => setup.service.setThinkingLevelCache('ghost', 'high')).not.toThrow()
     })
   })
 
@@ -1016,25 +1074,44 @@ describe('SessionService · Facade', () => {
     it('U-setLabel-3：setLabelCache 对不存在的 session 不抛错（迟到事件的迟到回调）', () => {
       expect(() => setup.service.setLabelCache('ghost', 'x')).not.toThrow()
     })
+
+    it('U-setLabel-empty：空串 label 是权威空值必须写入（pi 清空 session name 场景，组合根 name ?? "" 兜底的下游路径）', async () => {
+      // 链路：pi session_info_changed name 为空 → interpreter onSessionRenamed 透传
+      // undefined → 组合根 index.ts name ?? '' 兜底为 '' → setLabelCache(id, '')。
+      // '' 是 pi 的权威「未命名」声明（sessionName 空 = 未命名合法态）——若 setLabelCache
+      // 对空值 return early，内存 label 永远停留在旧名，getSummary/listPersistedSessions
+      // 与 pi 侧持久化漂移（旧名复活 bug）。
+      const { id } = await setup.seedSession({ label: 'old-label' })
+      setup.service.setLabelCache(id, '')
+      expect(setup.service.getSummary(id)?.label).toBe('')
+
+      // broadcastSessionList 数据源同值（空串覆盖旧名，非「字段不动」）
+      const groups = setup.service.listPersistedSessions()
+      const summary = groups.flatMap(g => g.sessions).find(s => s.id === id)
+      expect(summary?.label).toBe('')
+    })
   })
 
-  describe('inputTokens 缓存（W3：经 applyContextUpdate + handleTurnEndSideEffects 迁移）', () => {
-    // W3：attachUsageListener 已删除，inputTokens/tokenCount 回写经中间事件链路：
-    //   - applyContextUpdate(sid, inputTokens, totalTokens)：写 inputTokens + tokenCount
+  describe('inputTokens / tokenCount（W3 事件链路迁移 → W10 usage 实例收编）', () => {
+    // W3：attachUsageListener 已删除，回写经中间事件链路（applyContextUpdate /
+    // handleTurnEndSideEffects）。W10：applyContextUpdate 不再直写 inputTokens/tokenCount
+    //   - applyContextUpdate(sid, inputTokens, totalTokens)：只失效 usage 实例 + 即时广播
+    //   - getInputTokens / tokenCount（toSummary）：usage 实例快照派生
     //   - handleTurnEndSideEffects(sid)：复位 isGenerating（agent_end 副作用）
-    it('agent_end usage 经 applyContextUpdate 回写 inputTokens + tokenCount', async () => {
-      const { id } = await setup.seedSession()
-      // 模拟 EventInterpreter onContextUpdate 回调（agent_end usage）
-      setup.service.applyContextUpdate(id, 15000, 20000)
+    it('getInputTokens / tokenCount 均派生自 usage 实例快照（唯一数据源）', async () => {
+      const { id, client } = await setup.seedSession()
+      // 播种权威快照（事件链路三条路径 totalTokens 与 inputTokens 同值，tokenCount 同语义派生）
+      await seedUsageSnapshot(setup, id, client, { tokens: 15000, contextWindow: 100000, percent: 15 })
       expect(setup.service.getInputTokens(id)).toBe(15000)
-      expect(setup.service.getSummary(id)?.tokenCount).toBe(20000)
+      expect(setup.service.getSummary(id)?.tokenCount).toBe(15000)
     })
 
-    it('agent_end 无 usage（inputTokens=0）时 applyContextUpdate 早退，保持原值', async () => {
-      const { id } = await setup.seedSession()
-      // inputTokens=0 守卫，整个方法早退（不回写不广播）
+    it('agent_end 无 usage（inputTokens=0）时 applyContextUpdate 早退，快照保持', async () => {
+      const { id, client } = await setup.seedSession()
+      await seedUsageSnapshot(setup, id, client, { tokens: 15000, contextWindow: 100000, percent: 15 })
+      // inputTokens=0 守卫：不广播（markDirty 失效仍发出，真 timers 防抖未到点无重拉）
       setup.service.applyContextUpdate(id, 0, 0)
-      expect(setup.service.getInputTokens(id)).toBe(0)
+      expect(setup.service.getInputTokens(id)).toBe(15000)
     })
 
     it('handleTurnEndSideEffects 复位 isGenerating（agent_end 迁移）', async () => {
@@ -1051,18 +1128,21 @@ describe('SessionService · Facade', () => {
   })
 
   describe('fetchAndBroadcastContext（session 恢复后推送用量）', () => {
-    it('contextUsage.tokens 有值 → 广播 context.update（含 inputTokens/contextLimit/usagePercent）', async () => {
-      const client = setup.mountClient('sid-ctx')
-      client.getSessionStats.mockResolvedValueOnce({
+    it('contextUsage.tokens 有值 → 查询失效收敛后经快照挂钩广播 context.update（W12）', async () => {
+      const { id, client } = await setup.seedSession()
+      // mockResolvedValue 持续：fetchContext 查询 RPC 与防抖重拉 RPC 拿同一权威值
+      client.getSessionStats.mockResolvedValue({
         contextUsage: { tokens: 69000, contextWindow: 512000, percent: 13.5 },
       })
 
-      await setup.service.fetchAndBroadcastContext('sid-ctx')
+      await setup.service.fetchAndBroadcastContext(id)
+      // W12：fetchAndBroadcastContext 只做查询失效，发布归 usage fetch 快照挂钩
+      await waitForSnapshotPublish()
 
       const msg = findBroadcast(setup, 'context.update')
       expect(msg).toBeDefined()
       expect(msg!.payload).toMatchObject({
-        sessionId: 'sid-ctx',
+        sessionId: id,
         inputTokens: 69000,
         contextLimit: 512000,
         usagePercent: 14, // Math.round(13.5)
@@ -1779,19 +1859,36 @@ describe('SessionService · 业务持久化写安全守卫（W2 ipc-converge-a3 
       expect(file.entries).toHaveLength(1)
     })
 
-    it('write 到已损坏的 segments.json → 重置后写入成功（best-effort，不阻断）', async () => {
+    it('write 到已损坏的 segments.json → 隔离现场后写入成功（D1c，best-effort，不阻断）', async () => {
       const sessionId = 'seg-test-write-corrupted-' + Date.now()
       const dir = getAttachmentsDir(sessionId)
       writtenDirs.push(dir)
-      // 先构造损坏文件
+      // 先构造半截 JSON（模拟写盘半途崩溃的磁盘残留）
       mkdirSync(dir, { recursive: true })
-      writeFileSync(join(dir, 'segments.json'), '{corrupted!!!', 'utf-8')
+      const halfJson = '{"version": 1, "entries": [{"clientUuid": "u-lo'
+      writeFileSync(join(dir, 'segments.json'), halfJson, 'utf-8')
 
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      // write 不抛（捕获了 parse 错误 → 重置为新文件 → 写入成功）
+      // fake timers 冻结时间戳 → .corrupt-<ts> 副本路径确定可断言（json-store.test.ts 同款）
+      const FROZEN_ISO = '2026-01-01T00:00:00.000Z'
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date(FROZEN_ISO))
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      // write 不抛（隔离半截文件 → 以空文件基底写入成功）
       await service.writeSegmentsMetadata(sessionId, makeEntry('u-recover'))
-      warnSpy.mockRestore()
 
+      // error 日志含路径与恢复指引（断言在 mockRestore 前——restore 会清 mock.calls）
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      const logMsg = String(errorSpy.mock.calls[0]!.join(' '))
+      expect(logMsg).toContain('segments.json malformed')
+      expect(logMsg).toContain('恢复指引')
+      errorSpy.mockRestore()
+      vi.useRealTimers()
+
+      // 原文隔离至 .corrupt-<ts> 副本且内容不变（取证现场），原位置是合法新文件
+      const corruptPath = join(dir, `segments.json.corrupt-${FROZEN_ISO.replace(/[:.]/g, '')}`)
+      expect(existsSync(corruptPath)).toBe(true)
+      expect(readFileSync(corruptPath, 'utf-8')).toBe(halfJson)
       const file = readSidecar(sessionId)
       expect(file.entries).toHaveLength(1)
       expect(file.entries[0].clientUuid).toBe('u-recover')

@@ -1,7 +1,7 @@
 /**
  * Workspace 域 —— 最近工作区记录查询 + 仓库模式检测。
  *
- * 依赖方向：command（类型化原语，统一 pending.create + register + transport.send）。
+ * 依赖方向：command（类型化原语，统一 pending.createCommandId + register + transport.send）。
  *
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（W3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。

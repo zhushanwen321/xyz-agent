@@ -19,7 +19,7 @@
  * 依赖方向：SessionApiPort（./api-port）+ createSessionStore 类型（./store）+ Segment/SessionSummary
  * （@xyz-agent/shared）。core 零 renderer import。
  */
-import type { Segment, SessionSummary } from '@xyz-agent/shared'
+import type { Segment, SessionSummary, ThinkingLevel } from '@xyz-agent/shared'
 import type { SessionApiPort } from './api-port'
 import type { createSessionStore } from './store'
 
@@ -102,6 +102,8 @@ export interface CreateSessionFlowInput {
   segments: Segment[]
   /** bash 首发（landing 态 !/!! 前缀）；存在时 label 从 command 取 */
   bashCommand?: { command: string; excludeFromContext: boolean } | null
+  /** landing 态选定的思考等级（透传 session.create，session 创建即带正确等级） */
+  pendingThinkingLevel?: ThinkingLevel | null
 }
 
 /** createSessionFlow 的返回值（非 null 分支；null = guard 命中未创建）。 */
@@ -112,6 +114,73 @@ export interface CreateSessionFlowResult {
   migratedSegments: Segment[]
 }
 
+/** step 1 输入：首条 text 段 trim（无 text 段 → ''；guard 判定与 label 派生共用）。 */
+function firstTextTrimmed(input: CreateSessionFlowInput): string {
+  const firstTextSeg = input.segments.find(
+    (s): s is Extract<Segment, { type: 'text' }> => s.type === 'text',
+  )
+  return firstTextSeg?.text?.trim() ?? ''
+}
+
+/** step 1 guard：无 text trim 且无非 text 段且无 bashCommand → 无可用内容（不创建）。 */
+function hasSubmittableContent(input: CreateSessionFlowInput, trimmed: string): boolean {
+  const hasNonTextSegment = input.segments.some((s) => s.type !== 'text')
+  return Boolean(trimmed) || hasNonTextSegment || input.bashCommand != null
+}
+
+/** step 4：调 api.create（null 参数归一 undefined；override 优先级见 createSessionFlow 注释）。 */
+async function createSessionRecord(
+  ctx: CreateSessionFlowCtx,
+  input: CreateSessionFlowInput,
+  cwd: string,
+  label: string,
+): Promise<SessionSummary> {
+  return ctx.api.create(
+    cwd,
+    label,
+    input.presetId ?? undefined,
+    input.projectId ?? undefined,
+    input.pendingModel ?? undefined,
+    input.pendingThinkingLevel ?? undefined,
+  )
+}
+
+/** step 5：INV-7 降级比对（runtime create 内部可能降级 homedir）。 */
+function notifyCwdFallback(ctx: CreateSessionFlowCtx, reqCwd: string, actualCwd: string): void {
+  if (reqCwd && actualCwd !== reqCwd) {
+    ctx.onCwdFallback?.(reqCwd, actualCwd)
+  }
+}
+
+/** step 7：applyModel（pendingModel 空跳过；壳适配 useModel().switchModel）。 */
+async function applyPendingModel(
+  ctx: CreateSessionFlowCtx,
+  sessionId: string,
+  pendingModel: string | null | undefined,
+): Promise<void> {
+  if (pendingModel) {
+    await ctx.applyModel?.(sessionId, pendingModel)
+  }
+}
+
+/** step 8：migrateImages（needsMigrate image 段经 api.migrateImage 迁移，更新 path + 重置 needsMigrate）。 */
+async function migrateSegments(segments: Segment[], sessionId: string, api: SessionApiPort): Promise<Segment[]> {
+  const needsMigrateImages = segments.filter(
+    (s): s is Extract<Segment, { type: 'image' }> => s.type === 'image' && s.needsMigrate === true,
+  )
+  if (needsMigrateImages.length === 0) {
+    return segments
+  }
+  const migrated = await migrateTmpdirImages(needsMigrateImages, sessionId, api)
+  return segments.map((s) => {
+    if (s.type === 'image' && migrated.has(s.path)) {
+      // 迁移成功：更新 path + 重置 needsMigrate=false（避免后续重发误迁移）
+      return { ...s, path: migrated.get(s.path)!, needsMigrate: false }
+    }
+    return s
+  })
+}
+
 /**
  * 创建 session 的纯编排原语（IF5）。
  *
@@ -119,7 +188,7 @@ export interface CreateSessionFlowResult {
  * 1. guard：无 text trim 且无非 text 段且无 bashCommand → 返回 null（不创建）
  * 2. cwd 兜底：input.cwd ?? ctx.defaultCwd
  * 3. label 派生：bashCommand ? command : trimmed（codePoint 前 10 + 省略号）
- * 4. create：api.create(cwd, label, presetId ?? undefined)
+ * 4. create：api.create(cwd, label, presetId, projectId, modelOverride, thinkingOverride)
  * 5. INV-7 降级：cwd && created.cwd !== cwd → onCwdFallback?.(cwd, created.cwd)
  * 6. appendSession：store.appendSession(created)
  * 7. applyModel：pendingModel 非空 → ctx.applyModel?.(created.id, pendingModel)
@@ -133,12 +202,8 @@ export async function createSessionFlow(
   input: CreateSessionFlowInput,
 ): Promise<CreateSessionFlowResult | null> {
   // 1. 空 content guard（对齐 renderer：无可用内容时不创建）
-  const firstTextSeg = input.segments.find(
-    (s): s is Extract<Segment, { type: 'text' }> => s.type === 'text',
-  )
-  const trimmed = firstTextSeg?.text?.trim() ?? ''
-  const hasOnlyNonText = input.segments.some((s) => s.type !== 'text')
-  if (!trimmed && !hasOnlyNonText && !input.bashCommand) {
+  const trimmed = firstTextTrimmed(input)
+  if (!hasSubmittableContent(input, trimmed)) {
     return null
   }
 
@@ -146,41 +211,24 @@ export async function createSessionFlow(
   const cwd = input.cwd ?? ctx.defaultCwd
 
   // 3. label 派生（bash 首发用 command，否则首条 text）
-  const labelSource = input.bashCommand ? input.bashCommand.command : trimmed
-  const label = deriveSessionLabel(labelSource)
+  const label = deriveSessionLabel(input.bashCommand ? input.bashCommand.command : trimmed)
 
   // 4. create session（label 已派生；presetId 透传；projectId 归属透传：D14 语义修正，创建时归属当前 activeProject）
-  const created = await ctx.api.create(cwd, label, input.presetId ?? undefined, input.projectId ?? undefined)
+  // B3：modelOverride/thinkingOverride 透传——session 创建即带正确模型，消除 config.sessions 广播覆盖竞态。
+  // 优先级：override > preset > 全局默认。applyModel 保留作 fallback（override 未传时仍执行）。
+  const created = await createSessionRecord(ctx, input, cwd, label)
 
   // 5. INV-7 cwd 降级比对（runtime create 内部可能降级 homedir）
-  if (cwd && created.cwd !== cwd) {
-    ctx.onCwdFallback?.(cwd, created.cwd)
-  }
+  notifyCwdFallback(ctx, cwd, created.cwd)
 
   // 6. appendSession（store 真实响应式，非 mock）
   ctx.store.appendSession(created)
 
   // 7. applyModel（pendingModel 空跳过；壳适配 useModel().switchModel）
-  const pending = input.pendingModel
-  if (pending) {
-    await ctx.applyModel?.(created.id, pending)
-  }
+  await applyPendingModel(ctx, created.id, input.pendingModel)
 
   // 8. migrateImages（needsMigrate image 段经 api.migrateImage 迁移）
-  const needsMigrateImages = input.segments.filter(
-    (s): s is Extract<Segment, { type: 'image' }> => s.type === 'image' && s.needsMigrate === true,
-  )
-  let migratedSegments = input.segments
-  if (needsMigrateImages.length > 0) {
-    const migrated = await migrateTmpdirImages(needsMigrateImages, created.id, ctx.api)
-    migratedSegments = input.segments.map((s) => {
-      if (s.type === 'image' && migrated.has(s.path)) {
-        // 迁移成功：更新 path + 重置 needsMigrate=false（避免后续重发误迁移）
-        return { ...s, path: migrated.get(s.path)!, needsMigrate: false }
-      }
-      return s
-    })
-  }
+  const migratedSegments = await migrateSegments(input.segments, created.id, ctx.api)
 
   // 9. 返回创建结果
   return { session: created, migratedSegments }

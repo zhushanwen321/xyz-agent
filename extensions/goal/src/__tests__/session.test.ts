@@ -1,9 +1,12 @@
 /**
- * session.ts 测试 — reconstructGoalState + isStaleContextError
+ * session.ts 测试 — reconstructGoalState
  *
  * 覆盖：
  * - MF-7: reconstructGoalState 3 条 FR（G-006 entry GC / G-015 强制激活 / G-024 throw→null）
- * - MF-8: isStaleContextError 5 pattern 匹配（G-010）
+ *
+ * [REMOVED W4] isStaleContextError + STALE_CONTEXT_PATTERNS 测试随实现删除——
+ * 双重废（无生产调用方 + patterns 与 pi 0.84.1 真实 stale 文案零匹配），见
+ * session.ts 的 [REMOVED W4] 注释。
  *
  * 用 fake SessionPort（内存 entries 数组）。
  */
@@ -19,9 +22,7 @@ import {
 import type { SessionEntryLike, SessionPort } from "../ports";
 import {
 	createGoalSession,
-	isStaleContextError,
 	reconstructGoalState,
-	STALE_CONTEXT_PATTERNS,
 } from "../session";
 
 // ── Fake SessionPort ─────────────────────────────────
@@ -38,37 +39,6 @@ function makeFakeSessionPort(entries: SessionEntryLike[]): SessionPort {
 function makeGoalStateEntry(state: GoalRuntimeState): SessionEntryLike {
 	return { type: "custom", customType: ENTRY_TYPE, data: serializeState(state) };
 }
-
-// ── isStaleContextError（MF-8, FR-8.2 G-010）──────────
-
-describe("isStaleContextError (FR-8.2 G-010)", () => {
-	it("5 个 STALE_CONTEXT_PATTERNS 各匹配", () => {
-		for (const pattern of STALE_CONTEXT_PATTERNS) {
-			const err = new Error(`something ${pattern} happened`);
-			expect(isStaleContextError(err)).toBe(true);
-		}
-	});
-
-	it("大小写混合匹配", () => {
-		expect(isStaleContextError(new Error("Context CANCELED"))).toBe(true);
-		expect(isStaleContextError(new Error("ABORTED by user"))).toBe(true);
-	});
-
-	it("非 stale 错误 → false", () => {
-		expect(isStaleContextError(new Error("network timeout"))).toBe(false);
-		expect(isStaleContextError(new Error("permission denied"))).toBe(false);
-	});
-
-	it("字符串输入（非 Error）", () => {
-		expect(isStaleContextError("the context was aborted")).toBe(true);
-		expect(isStaleContextError("random error string")).toBe(false);
-	});
-
-	it("null/undefined 输入 → false（不抛错）", () => {
-		expect(isStaleContextError(null)).toBe(false);
-		expect(isStaleContextError(undefined)).toBe(false);
-	});
-});
 
 // ── reconstructGoalState（MF-7）──────────────────────
 

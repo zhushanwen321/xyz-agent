@@ -6,7 +6,7 @@
  * 上层（panel/useComposerModelThinking、features/useNewTaskFlow）不再直调 @/api。
  *
  * 两种态的统一处理：
- * - session 已建态：直接调 RPC + 乐观更新 sessionStore.updateSessionState（立即生效，
+ * - session 已建态：直接调 RPC + 乐观更新 sessionStore.applySnapshot（立即生效，
  *   不依赖 state_changed 广播到达——未发消息的 session 可能无 streamSubscription，
  *   广播会丢）。
  * - landing 延迟态（useNewTaskFlow）：session 尚未 create，无法调 RPC。本 composable
@@ -14,8 +14,8 @@
  *   的能力，供 submitFirstMessage 在 create session 后调用，消除 useNewTaskFlow 与
  *   useComposerModelThinking 中重复的「RPC + 乐观更新」逻辑。
  *
- * 与 useThinkingLevelSync 的联动：模型切换的乐观更新按 sessionId 写 sessionStore 对应
- * session 的 modelId（updateSessionState），useThinkingLevelSync 的 watch(currentThinkingLevelMap)
+ * 与 useThinkingLevelSync 的联动：模型切换的乐观更新按 sessionId 经 applySnapshot 写
+ * sessionStore 对应 session 的 modelId，useThinkingLevelSync 的 watch(currentThinkingLevelMap)
  * 会在 modelId 变化后自动对齐思考等级（同体系直接映射 / 跨体系重置到最高可用档，经 onReset →
  * onThinkingSelect → setThinkingLevel 回到此 composable）。本 composable 只负责单次 RPC +
  * 乐观更新，不破坏该 watch 链。
@@ -43,8 +43,9 @@ export function useModel() {
    */
   async function switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<void> {
     await modelApi.switchModel(sessionId, provider, modelId)
-    // 乐观更新：立即同步 active.modelId（复合串 "provider/modelId"）
-    sessionStore.updateSessionState(sessionId, {
+    // 乐观更新：立即同步 active.modelId（复合串 "provider/modelId"；applySnapshot 单字段入参，
+    // 权威确认经 session.state_changed 广播回流）
+    sessionStore.applySnapshot(sessionId, {
       modelId: `${provider}/${modelId}`,
     })
   }
@@ -64,7 +65,7 @@ export function useModel() {
    */
   async function setThinkingLevel(sessionId: string, level: string): Promise<void> {
     await sessionApi.setThinkingLevel(sessionId, level)
-    sessionStore.updateSessionState(sessionId, { thinkingLevel: level })
+    sessionStore.applySnapshot(sessionId, { thinkingLevel: level })
   }
 
   return { switchModel, setThinkingLevel }

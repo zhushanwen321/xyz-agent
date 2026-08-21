@@ -4,7 +4,7 @@
 
 AI Agent 桌面工作台（macOS / Windows / Linux），基于 Electron + Vue 3 + Node.js Runtime 架构。
 
-通过 [pi](https://github.com/badlogic/pi-mono)（npm 包名 `@earendil-works/pi-coding-agent`）的子进程 RPC 协议与各类 AI Agent 通信，提供多 session 管理、双 Panel split view、subagent/workflow 编排、目标驱动自治循环、定时调度等能力，面向长时间、多任务的 Agent 协作场景。10 个 Agent 扩展随应用打包内置，开箱即用。
+通过 [pi](https://github.com/badlogic/pi-mono)（npm 包名 `@earendil-works/pi-coding-agent`）的子进程 RPC 协议与各类 AI Agent 通信，提供多 session 管理、双 Panel split view、subagent/workflow 编排、目标驱动自治循环、定时调度等能力，面向长时间、多任务的 Agent 协作场景。13 个 Agent 扩展随应用打包内置，开箱即用。
 
 > 开发约定、关键规则与调试纪律见 [AGENTS.md](AGENTS.md)。
 
@@ -73,7 +73,7 @@ curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJ
 - **终端** — 命令式缓冲区渲染，版本化重放，会话级持久分区
 - **Git** — 分支与变更状态展示，worktree 创建/切换/清理
 
-### 内置扩展（10 个，随应用打包）
+### 内置扩展（13 个，随应用打包）
 
 | 扩展 | 用途 |
 |------|------|
@@ -87,8 +87,12 @@ curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJ
 | `pi-session-reader` | 读取 / 查询 session 历史（树、家族、执行树、搜索、导出） |
 | `pi-rename-session` | 首轮对话后自动生成会话标题 |
 | `pi-pending-notifications` | 跨扩展异步操作注册 / 查询（长任务期间防消息注入） |
+| `pi-agent-ext` | 会话树导航（`/xyz-navigate`）+ 内部 reload（`/__xyz_reload__`） |
+| `pi-system-prompt` | 系统提示词注入（AGENTS.md / settings 追加段） |
+| `pi-msg-id-mapper` | client UUID ↔ user entry ID 映射 |
+| `pi-system-prompt-trace` | system prompt 建立或变化时写入 xyz:system-prompt 留痕 entry |
 
-其中 3 个基础设级（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output`）常驻不可禁用，其余 7 个可在设置中禁用。另有 `pi-cw-tool`（cw 2.0 runner 实操指南 + cw_query 只读查询工具）、`pi-model-switch`（模型推荐切换）、`pi-plan`（轻量 plan 模式）、`pi-unified-hooks`（统一 hooks）4 个包经 npm 发布，可按需安装。
+其中 6 个基础设级（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output` / `pi-agent-ext` / `pi-system-prompt` / `pi-msg-id-mapper`）常驻不可禁用，其余 8 个可在设置中禁用。另有 `pi-cw-tool`（cw 2.0 runner 实操指南 + cw_query 只读查询工具）、`pi-model-switch`（模型推荐切换）、`pi-plan`（轻量 plan 模式）、`pi-unified-hooks`（统一 hooks）4 个包经 npm 发布，可按需安装。
 
 ### 模型与设置
 
@@ -142,7 +146,7 @@ curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJ
 
 太极有两套独立的扩展机制：
 
-**pi Extension** — 运行在 pi 子进程内，经 `--extension` 参数加载，负责 Agent 能力扩展（工具、命令、事件钩子）。源码在本仓 `extensions/` 目录（14 个 `@zhushanwen/pi-*` 包 + `shared/` 共享库），其中 10 个经 esbuild bundle 后随应用打包内置。开发文档：
+**pi Extension** — 运行在 pi 子进程内，经 `--extension` 参数加载，负责 Agent 能力扩展（工具、命令、事件钩子）。源码在本仓 `extensions/` 目录（17 个 `@zhushanwen/pi-*` 包 + `shared/` 共享库），其中 13 个经 esbuild bundle 后随应用打包内置。开发文档：
 
 - [扩展开发指南](docs/extensions/development-guide.md) — 单一权威源：结构、生命周期、发布
 - [扩展强约束](docs/extensions/extension-conventions.md) — 必须遵守的约定
@@ -223,7 +227,7 @@ pnpm build:e2e && pnpm test:e2e
 │   ├── plugin-sdk/           # 插件开发 SDK（类型 + mock）
 │   ├── extension-protocol/   # Extension GUI 渲染协议（TUI/GUI 双模类型）
 │   └── create-xyz-plugin/    # 插件项目脚手架
-├── extensions/               # 14 个 @zhushanwen/pi-* pi 扩展源码 + shared/ 共享库
+├── extensions/               # 17 个 @zhushanwen/pi-* pi 扩展源码 + shared/ 共享库
 ├── e2e/                      # Playwright E2E spec + 视觉基线（visual-baselines）
 ├── scripts/                  # 构建 / 验证 / 发布脚本（preflight / postbuild / verify-* / bundle-extensions）
 ├── resources/                # pi binary + 内置 statusline 插件

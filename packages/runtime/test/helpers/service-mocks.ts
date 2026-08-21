@@ -127,6 +127,9 @@ export function createMockSessionServiceInstance(options: SessionServiceMockOpti
     abort: vi.fn().mockResolvedValue(undefined),
     switchModel: vi.fn().mockResolvedValue(undefined),
     getRpcClient: getRpcClientImpl ? vi.fn().mockImplementation(getRpcClientImpl) : vi.fn(),
+    // D6a：server.setServices 装配时注册挂起 UI 请求汇聚清理（onSessionDestroyed 回调），
+    // mock 缺此方法会在 setServices 内抛 TypeError。
+    setOnSessionDestroyed: vi.fn(),
   }
 
   return { instance, sendMessageMock, sendSubagentMessageMock }
@@ -173,6 +176,9 @@ export function createMockSessionServiceClass(options: SessionServiceMockOptions
     abort = vi.fn().mockResolvedValue(undefined)
     switchModel = vi.fn().mockResolvedValue(undefined)
     getRpcClient = getRpcClientImpl ? vi.fn().mockImplementation(getRpcClientImpl) : vi.fn()
+    // D6a：server.setServices 装配时注册挂起 UI 请求汇聚清理（onSessionDestroyed 回调），
+    // mock 缺此方法会在 setServices 内抛 TypeError。
+    setOnSessionDestroyed = vi.fn()
   }
 }
 

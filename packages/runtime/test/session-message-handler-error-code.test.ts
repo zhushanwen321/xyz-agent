@@ -45,7 +45,6 @@ function makeHandler(createImpl: ReturnType<typeof vi.fn>, forkImpl?: ReturnType
     sessionService,
     nextPushId: vi.fn().mockReturnValue('p1'),
     broadcastSessionList: vi.fn(),
-    clearExtensionTimeoutsForSession: vi.fn(),
   }
   const handler = new SessionMessageHandler(ctx as unknown as ConstructorParameters<typeof SessionMessageHandler>[0])
   return { ctx, cap, handler }

@@ -19,18 +19,21 @@ import type { SideDrawerTab, OpenDrawerOptions, OpenSubagentOptions } from './ty
 // ── 不分区的瞬时参数（模块级单例，消费后清空）──
 // 供 renderer 兼容层 re-export（useSideDrawer() 返回形状含这三个 ref + consumeBrowserUrl）。
 /** Doc tab 当前展示的命令名（点击用户气泡 slash chip 时设置） */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：drawer doc tab 瞬时参数（消费后清空）
 export const selectedCommandName = ref<string | null>(null)
 /**
  * Detail tab 打开时立即展示的文件路径（点击即看 diff）。
  * 由变更集卡等非文件树入口设置；useDetailPane watch 它并强制 diff 模式。
  * 用完即清空（消费后置 null），避免残留导致下次打开 detail tab 被旧值劫持。
  */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：drawer detail tab 瞬时参数（消费后清空）
 export const detailFilePath = ref<string | null>(null)
 /**
  * Browser tab 打开时立即加载的 URL（点击 agent 输出的链接设置）。
  * 由 useMarkdownInteractions 外链分支设置；SideDrawer/BrowserPane 据此触发导航。
  * 用完即清空（消费后置 null），避免残留导致下次打开 browser tab 被旧值劫持。
  */
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：drawer browser tab 瞬时参数（消费后清空）
 export const browserUrl = ref<string | null>(null)
 
 /** 消费 browserUrl：读取并清空（BrowserPane 挂载时调，取到非空值触发导航） */

@@ -12,7 +12,7 @@ import { mapSessionEntries } from './session-entry-mapper.js'
  *
  * 与 convertPiHistory（消费 get_messages 扁平 message 列表）的关系：
  * - 复用 convertPiHistory 做 message→Message 翻译（含 toolResult 合并 / compactionSummary /
- *   custom / branchSummary 系统消息处理），保证与 RPC/文件路径行为一致（规则 7.5）。
+ *   custom / branchSummary 系统消息处理），保证与 RPC/文件路径行为一致（关键规则 9）。
  * - 额外能力：用 custom entry "xyz.client-msg-id" 的 clientUuid 映射 +
  *   segments.json sidecar 的结构化 Segment[]，精确还原 composer 提交时的 badge 结构
  *   （convertPiHistory 路径无 entry 树信息，只能用 textToSegments 兜底纯文本）。
@@ -54,7 +54,7 @@ export interface RebuiltHistory {
 /**
  * xyz-client-msg-id extension 写入的 customType 常量。
  *
- * 与 extension 实现的 customType 字符串严格一致（步骤 1 的 xyz-client-msg-id-mapper extension）。
+ * 与 extension 实现的 customType 字符串严格一致（步骤 1 的 @zhushanwen/pi-msg-id-mapper extension）。
  * 改名需同步 extension 端 + 测试。xyz. 前缀是 xyz-agent namespace 约定，避免与 pi/其他扩展冲突。
  */
 const CLIENT_MSG_ID_TYPE = 'xyz.client-msg-id'
@@ -77,7 +77,7 @@ const CLIENT_MSG_ID_TYPE = 'xyz.client-msg-id'
  *    custom / branchSummary 系统消息处理），产出 Message[]。entryIds 平行传入，使产出的
  *    user/assistant Message 带 piEntryId（从 entryIds[i] 取）。
  *    ⚠️ M2 前 RPC 路径手写两遍扫只提取 message entry，丢弃 compaction/branch/custom_message，
- *    导致活跃 session 重开时这三类记录消失（违反 AGENTS.md #7.5「可重开恢复」）；
+ *    导致活跃 session 重开时这三类记录消失（违反 AGENTS.md 关键规则 9「可重开恢复」）；
  *    改用共享 mapper 后两路径覆盖 by construction 一致。
  *
  * 4. 回填 segments：对 user message 按 piEntryId 查 clientUuidMap → 查 segmentsMetadata
@@ -96,10 +96,10 @@ export function rebuildHistoryFromEntries(
 ): RebuiltHistory {
   // 1. mapSessionEntries 统一映射（共享单点，M2 接入）。
   //    四类 entry（message/compaction/custom_message/branch_summary）→ messages 伪消息，
-  //    供 convertPiHistory 单点消费（AGENTS.md 规则 7.5：RPC/文件两路径覆盖一致）；
+  //    供 convertPiHistory 单点消费（AGENTS.md 关键规则 9：RPC/文件两路径覆盖一致）；
   //    custom → customDataEntries（下方建 clientUuidMap 用）；label/session_info 等跳过。
   //    替代旧手写两遍扫（旧实现只提取 message entry，丢弃 compaction/branch/custom_message，
-  //    导致活跃 session 重开时这三类记录消失——违反规则 7.5「可重开恢复」）。
+  //    导致活跃 session 重开时这三类记录消失——违反关键规则 9「可重开恢复」）。
   const { messages, entryIds, customDataEntries } = mapSessionEntries(entries)
 
   // 2. clientUuidMap 从 customDataEntries 建（扫 xyz.client-msg-id custom entry）。

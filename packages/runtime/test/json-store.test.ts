@@ -61,10 +61,13 @@ describe('JsonStore', () => {
     })
 
     it('returns defaultValue on corrupt JSON', () => {
+      // D1c 后损坏文件走 error 级隔离日志，mock 掉避免测试输出噪音
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const path = join(tmpDir, 'corrupt.json')
       writeFileSync(path, '{ not valid json', 'utf-8')
       const store = new JsonStore<{ count: number }>(path, { count: 0 })
       expect(store.read()).toEqual({ count: 0 })
+      errorSpy.mockRestore()
     })
 
     it('serves cached value within TTL', () => {
@@ -96,6 +99,90 @@ describe('JsonStore', () => {
         },
       })
       expect(store.read()).toEqual({ providers: { a: {} } })
+    })
+  })
+
+  // ── D1c 损坏隔离：parse 失败 / 读失败(非 ENOENT) → rename .corrupt-<ts> + error 日志 + 默认值 ──
+  describe('corrupt quarantine (D1c)', () => {
+    const FROZEN_ISO = '2026-01-01T00:00:00.000Z'
+    let errorSpy: ReturnType<typeof vi.spyOn>
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date(FROZEN_ISO))
+      errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      errorSpy.mockRestore()
+      vi.useRealTimers()
+    })
+
+    /** fake timers 下的确定性强副本路径（ISO 压缩格式：去冒号/点号）。 */
+    function expectedCorruptPath(path: string): string {
+      return `${path}.corrupt-${FROZEN_ISO.replace(/[:.]/g, '')}`
+    }
+
+    it('半截 JSON → 返回默认值，原文隔离至 .corrupt-<ts> 副本且内容不变，原文件移走', () => {
+      const path = join(tmpDir, 'half.json')
+      const halfJson = '{"providers": {"a": {"ap' // 模拟写盘半途崩溃的磁盘残留
+      writeFileSync(path, halfJson, 'utf-8')
+
+      const store = new JsonStore(path, { providers: {} })
+      expect(store.read()).toEqual({ providers: {} }) // 返回默认值
+
+      const corruptPath = expectedCorruptPath(path)
+      expect(existsSync(corruptPath)).toBe(true) // 副本存在
+      expect(readFileSync(corruptPath, 'utf-8')).toBe(halfJson) // 内容 = 原文（取证现场）
+      expect(existsSync(path)).toBe(false) // 原文件已移走（不会被默认值写回合法化）
+
+      // error 日志含路径与恢复指引
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      const logMsg = String(errorSpy.mock.calls[0]!.join(' '))
+      expect(logMsg).toContain('parse failed')
+      expect(logMsg).toContain(path)
+      expect(logMsg).toContain(corruptPath)
+      expect(logMsg).toContain('恢复指引')
+    })
+
+    it('隔离后 write 写全新合法文件，.corrupt 副本保留（失败模式 A 断链）', () => {
+      const path = join(tmpDir, 'recover.json')
+      writeFileSync(path, '{ broken', 'utf-8')
+      const store = new JsonStore<Record<string, unknown>>(path, {})
+
+      expect(store.read()).toEqual({}) // 损坏 → 默认值
+      store.write({ fresh: true }) // 后续写不应被半截文件污染
+
+      expect(JSON.parse(readFileSync(path, 'utf-8'))).toEqual({ fresh: true }) // 新文件合法
+      expect(readFileSync(expectedCorruptPath(path), 'utf-8')).toBe('{ broken') // 现场仍在
+    })
+
+    it('读错误(非 ENOENT，path 是目录 → EISDIR)同样隔离现场后降级', () => {
+      const path = join(tmpDir, 'as-dir.json')
+      mkdirSync(path) // readFileSync 对目录抛 EISDIR（非 ENOENT → 走隔离分支）
+
+      const store = new JsonStore(path, { n: 0 })
+      expect(store.read()).toEqual({ n: 0 })
+
+      expect(existsSync(path)).toBe(false) // 被移走
+      expect(existsSync(expectedCorruptPath(path))).toBe(true)
+      expect(String(errorSpy.mock.calls[0]!.join(' '))).toContain('read failed')
+    })
+
+    it('rename 失败 → 原文件保留原位、仍返回默认值、日志升级提示人工介入', () => {
+      const path = join(tmpDir, 'locked.json')
+      writeFileSync(path, '{ broken', 'utf-8')
+      // 预占 .corrupt 目标为目录 → renameSync(file, dir) 必然抛错（隔离失败模拟：目录只读等）
+      mkdirSync(expectedCorruptPath(path))
+
+      const store = new JsonStore(path, { n: 0 })
+      expect(store.read()).toEqual({ n: 0 })
+
+      expect(readFileSync(path, 'utf-8')).toBe('{ broken') // 现场保留原位
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      const logMsg = String(errorSpy.mock.calls[0]!.join(' '))
+      expect(logMsg).toContain('损坏隔离失败')
+      expect(logMsg).toContain('人工检查')
     })
   })
 

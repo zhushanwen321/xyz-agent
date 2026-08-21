@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-quota-providers",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Quota provider data fetching and caching layer for Pi extensions",
   "type": "module",
   "main": "src/index.ts",
@@ -24,6 +24,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
     "vitest": "^4.1.8"
   }
 }

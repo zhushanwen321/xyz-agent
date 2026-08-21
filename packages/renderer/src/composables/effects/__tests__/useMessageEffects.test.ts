@@ -2,12 +2,13 @@
  * useMessageEffects 测试（架构审计 §11.4）。
  *
  * core use-connection 是 headless（零 store），副作用回调实现归位 renderer 本层。
- * 本测试锁定 5 个 InboundEffects 回调的 store/toast 接线 + runtime 清理回调：
- * - onSessionExited → markSessionError + markDead + toast（首行 reason）
+ * 本测试锁定 InboundEffects 回调的 store/toast 接线 + runtime 清理回调：
+ * - onSessionExited → markSessionError + markDead + clearSession（D6b 清挂起弹窗分区）+ toast（首行 reason）
  * - onMessageComplete → 算 focusedSid + handleCompletion（aborted 过滤链在
  *   useCompletionNotify.test.ts 覆盖，本层只验证接线）
  * - onSubagents → applyRecords；onWorkflowUpdate → triggerWorkflowReload
  * - onGlobalError → toast
+ * - onSessionError → markSessionError + toast（D6b：带 sid error envelope 兜底展示）
  * - handleRuntimeUnavailable → finalizeAllStreaming + clearAllPending（T5）
  *
  * 运行：cd packages/renderer && npx vitest run src/composables/effects/__tests__/useMessageEffects.test.ts
@@ -20,6 +21,7 @@ const storeMocks = vi.hoisted(() => ({
   finalizeAllStreaming: vi.fn(),
   markDead: vi.fn(),
   clearAllPending: vi.fn(),
+  clearSession: vi.fn(),
   applyRecords: vi.fn(),
   triggerWorkflowReload: vi.fn(),
   // panel store 最小形状（panels 可整体替换模拟聚焦 session 变化）
@@ -42,7 +44,7 @@ vi.mock('@/stores/panel', () => ({
   usePanelStore: () => ({ panels: storeMocks.panels, activePanelId: storeMocks.activePanelId }),
 }))
 vi.mock('@/stores/extension-ui', () => ({
-  useExtensionUIStore: () => ({ clearAllPending: storeMocks.clearAllPending }),
+  useExtensionUIStore: () => ({ clearAllPending: storeMocks.clearAllPending, clearSession: storeMocks.clearSession }),
 }))
 vi.mock('@/stores/subagent', () => ({
   useSubagentStore: () => ({ applyRecords: storeMocks.applyRecords }),
@@ -68,11 +70,13 @@ describe('createInboundEffects（§11.4 InboundEffects 接线）', () => {
     storeMocks.activePanelId = 'root-panel'
   })
 
-  it('onSessionExited → markSessionError + markDead + toast（reason 只取首行）', () => {
+  it('onSessionExited → markSessionError + markDead + clearSession（D6b 清挂起弹窗分区） + toast（reason 只取首行）', () => {
     effects.onSessionExited!('s1', { code: 1, reason: 'Session process exited (code: 1)\n\nError: ext load failed' })
 
     expect(storeMocks.markSessionError).toHaveBeenCalledWith('s1', 'Session process exited (code: 1)\n\nError: ext load failed')
     expect(storeMocks.markDead).toHaveBeenCalledWith('s1')
+    // D6b：pi 死后清该 session 的 ask-user / dialog pending 分区（对齐 deleteSession 路径）
+    expect(storeMocks.clearSession).toHaveBeenCalledWith('s1')
     expect(storeMocks.toastError).toHaveBeenCalledTimes(1)
     const msg = storeMocks.toastError.mock.calls[0]![0] as string
     // toast 含首行 reason + i18n 文案（zh-CN 默认 locale）
@@ -126,6 +130,14 @@ describe('createInboundEffects（§11.4 InboundEffects 接线）', () => {
     effects.onGlobalError!('config load failed')
 
     expect(storeMocks.toastError).toHaveBeenCalledWith('config load failed')
+  })
+
+  it('onSessionError → markSessionError（i18n 前缀 + runtime message）+ toast（D6b：残留弹窗作答失败可见）', () => {
+    effects.onSessionError!('s1', { code: 'handler_error', message: 'No active session for extension response: s1' })
+
+    // zh-CN 默认 locale：i18n 前缀 + 透传 runtime message
+    expect(storeMocks.markSessionError).toHaveBeenCalledWith('s1', '会话请求失败：No active session for extension response: s1')
+    expect(storeMocks.toastError).toHaveBeenCalledWith('会话请求失败：No active session for extension response: s1')
   })
 })
 

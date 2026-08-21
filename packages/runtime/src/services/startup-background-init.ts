@@ -14,13 +14,18 @@
  *   autoUpgrade 仍会尝试升级打包内置包）→ getPiVersion（mutate appInfo + 补发 app.info）→
  *   skillRegistry.initGlobal → pluginService.initialize → ensureAutoRenameDefault。
  * 全串行的取舍：约束零竞态面 + best-effort 语义最易保持；代价 = 后台总完成时间为各段之和。
+ * ⑨ 孤儿 pi 收殓（integrity-hardening §3.4 D4a）不在串行链上——独立 5s 定时器，
+ * 调度点在序列最前（宽限从启动起计，见函数体注释）。
  *
  * 每步独立 try/catch：任一步失败不阻塞其余（与改造前 best-effort 语义一致），
  * 无 rejection 逃逸。
  */
 import { migrateProviderConfig } from './migration/legacy-provider-migration.js'
 import { setMigrationGate } from './session/session-lifecycle.js'
+import { cleanupTmpMigrateResidue } from '../infra/pi/session-file-utils.js'
+import { getSessionsDir } from '../infra/pi/pi-paths.js'
 import { ensureAutoRenameDefault } from './worktree-config-helper.js'
+import { ORPHAN_REAP_DELAY_MS, reapOrphanPiProcesses } from './reap-orphan-pi.js'
 import type { PiConfigStore } from '../infra/pi/pi-config-store.js'
 import type { AuthStorage } from './auth/auth-storage.js'
 import type { ExtensionService } from './extension-service.js'
@@ -48,6 +53,22 @@ export interface StartupBackgroundDeps {
 export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Promise<void> {
   const { configStore, authStorage, extensionService, pm, appInfo, broadcastAppInfo, skillRegistry, pluginService } = deps
   const tBg = performance.now()
+
+  // ⑨ 孤儿 pi 收殓（integrity-hardening §3.4 D4a）：上一代 runtime 被 SIGKILL/OOM 后
+  // 残留的 pi 进程（持有 API key、可能继续烧 token）由新 runtime 兜底回收。
+  // 调度点刻意放在序列最前：宽限 5s 从启动起计，而非从串行链链尾起计——③ autoUpgrade
+  // 等网络步骤耗时不可控，链尾再计会把实际宽限拉长到数十秒，违背 G4「秒级回收」。
+  // 收殓只读进程表 + 处置非子进程，与本序列其余步骤无共享状态；reapOrphanPiProcesses
+  // 内部全 catch 不抛，外层再兜一层 catch，异常不可能外溢影响其他启动步。
+  // 5s 为初值（设计 D4a ⛔实施期门：宽限值待 S6 真机实测调整）——给 pi 的 stdin-EOF
+  // 自杀链留优雅退出时间。
+  const reapTimer = setTimeout(() => {
+    void reapOrphanPiProcesses({ sessionsDir: getSessionsDir(), ownPid: process.pid }).catch((e) => {
+      console.warn('[runtime] orphan pi reap failed unexpectedly:', e)
+    })
+  }, ORPHAN_REAP_DELAY_MS)
+  // unref：不让收殓定时器独自挂住进程生命周期（正常场景 runtime 长活，仅测试/工具受益）。
+  reapTimer.unref()
 
   // ① provider 迁移 → migrationReady gate（D8-3）：session spawn（create/restore/fork）
   // 在迁移完成前等待该 promise。gate 显式 .then(onFulfilled, onRejected) 双处理——
@@ -149,6 +170,21 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
   } catch (e) {
     // best-effort：初始化失败不影响主流程（下次启动重试），仅记录诊断信息
     console.warn('[runtime] auto-rename default initialization failed:', e)
+  }
+
+  // ⑧ sessions 目录 `.tmp-migrate-*.jsonl` 崩溃残留清扫（W3 残留清理）：目录级兜底，
+  // 补 cleanupMigrateResidues 只在附着前/delete 链触发的覆盖缺口（不再被 restore 的
+  // session 其残留会永久留存）。同步 readdir/unlink 扫一个本地目录（毫秒级）且在
+  // listen 后的后台序列里执行，不阻塞启动路径；函数内部对过期阈值（1h）内的文件不删
+  //（防并发误删进行中的归一化临时文件），失败逐文件 warn 不上抛。
+  try {
+    const removed = cleanupTmpMigrateResidue(getSessionsDir())
+    if (removed > 0) {
+      console.log(`[runtime] cleaned ${removed} stale .tmp-migrate-*.jsonl residue file(s) from sessions dir`)
+    }
+  } catch (e) {
+    // best-effort：清扫失败不影响主流程（残留仅是磁盘垃圾，下次启动重试）
+    console.warn('[runtime] tmp-migrate residue cleanup failed:', e)
   }
 
   // 后台初始化耗时分解探针（06 §5 m-7）：listen 后各段（改造前这些段全部堆在 listen 前）。

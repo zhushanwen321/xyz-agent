@@ -567,7 +567,7 @@ describe('ExtensionResolver', () => {
       expect(result.extensionDirs.length).toBeGreaterThanOrEqual(3)
     })
 
-    it('skips bundled when packaged', () => {
+    it('throws when packaged and bundled dir missing (W-RT-7 fail-fast)', () => {
       const home = '/home/user'
       vi.stubEnv('HOME', home)
 
@@ -600,9 +600,10 @@ describe('ExtensionResolver', () => {
       })
 
       resolver = new ExtensionResolver({ thirdPartyDir })
-      const result = resolver.resolve('/project', true, [])
-      expect(result.extensionDirs.length).toBe(1)
-      expect(result.extensionDirs[0].path).toBe(`${thirdPartyDir}/ext-c`)
+      // W-RT-7 恢复（electron-build review R1-S2）：packaged 分支 builtin staged 目录缺失 =
+      // 打包错误（extraResources 漏拷），fail-fast throw 而非静默返回空（静默会让
+      // system-prompt / msg-id 映射 / reload 命令全部无声失效）
+      expect(() => resolver.resolve('/project', true, [])).toThrow(/builtin extensions directory missing/)
     })
 
     it('scanDiscoveryExtensions: discovers single-file *.ts extensions', () => {

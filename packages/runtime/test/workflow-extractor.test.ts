@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extractWorkflowsFromSessionFile } from '../src/services/session/workflow-extractor.js'
+import { extractWorkflowsFromSessionFile, scanWorkflowEntries } from '../src/services/session/workflow-extractor.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -541,5 +541,103 @@ describe('extractWorkflowsFromSessionFile', () => {
     expect(record.agentCalls[2].status).toBe('pending')
     expect(record.agentCalls[2].sessionId).toBeUndefined()
     expect(record.agentCalls[2].phase).toBe('Phase2')
+  })
+})
+
+
+// ── W18：scanWorkflowEntries（entry 扫描器：自描述优先 + legacy 兜底）─────────────
+describe('scanWorkflowEntries（W18 entry 扫描器）', () => {
+  let tempDirBase: string
+
+  beforeEach(() => {
+    tempDirBase = mkdtempSync(join(tmpdir(), 'workflow-scan-test-'))
+  })
+
+  afterEach(() => {
+    rmSync(tempDirBase, { recursive: true, force: true })
+  })
+
+  /** 构造 wf-run-v2 快照（最小可用形态） */
+  function makeSnapshot(runId: string, status: 'running' | 'done', reason?: string): Record<string, unknown> {
+    return {
+      v: 'wf-run-v2',
+      runId,
+      spec: { scriptName: 'test-flow', description: 'Test' },
+      state: { status, reason, budget: { usedTokens: 100, usedCost: 0, totalCallCount: 1 }, calls: [], trace: [] },
+      meta: { startedAt: '2026-08-19T00:00:00Z' },
+    }
+  }
+
+  /** 构造自描述 workflow-record entry（W17 v1：{v:1, snapshot, updatedAt}） */
+  function workflowRecordEntry(snapshot: Record<string, unknown>): Record<string, unknown> {
+    return {
+      type: 'custom',
+      customType: 'workflow-record',
+      id: 'e-1',
+      parentId: null,
+      timestamp: '2026-08-19T00:00:00Z',
+      data: { v: 1, snapshot, updatedAt: '2026-08-19T00:00:01Z' },
+    }
+  }
+
+  it('自描述命中：workflow-record entry → WorkflowRunRecord（stateFilePath 空串，快照内嵌无需 state 文件）', () => {
+    const records = scanWorkflowEntries([
+      workflowRecordEntry(makeSnapshot('wf-run-1', 'done', 'completed')),
+    ])
+
+    expect(records).toHaveLength(1)
+    expect(records[0]!.runId).toBe('wf-run-1')
+    expect(records[0]!.status).toBe('done')
+    expect(records[0]!.reason).toBe('completed')
+    expect(records[0]!.stateFilePath).toBe('')
+    expect(records[0]!.agentCalls).toEqual([])
+  })
+
+  it('同 runId 多条取最后（每次 flush append 完整快照，running → done 收敛终态）', () => {
+    const records = scanWorkflowEntries([
+      workflowRecordEntry(makeSnapshot('wf-run-2', 'running')),
+      workflowRecordEntry(makeSnapshot('wf-run-2', 'done', 'completed')),
+    ])
+
+    expect(records).toHaveLength(1)
+    expect(records[0]!.status).toBe('done')
+  })
+
+  it('entry 层版本守卫：data.v≠1 跳过（全部无效 → legacy 兜底链）', () => {
+    const records = scanWorkflowEntries([
+      { type: 'custom', customType: 'workflow-record', data: { v: 2, snapshot: makeSnapshot('wf-v2-entry', 'running') } },
+    ])
+    // v2 entry 无效 → 无自描述命中 → legacy 兜底（无 workflow-state-link → 空列表）
+    expect(records).toEqual([])
+  })
+
+  it('快照层版本守卫：snapshot.v≠wf-run-v2 跳过该 run（D-5 两级版本独立）', () => {
+    const badSnapshot = { ...makeSnapshot('wf-bad', 'running'), v: 'wf-run-v1' }
+    const records = scanWorkflowEntries([
+      workflowRecordEntry(badSnapshot),
+      workflowRecordEntry(makeSnapshot('wf-good', 'running')),
+    ])
+
+    expect(records.map((r) => r.runId)).toEqual(['wf-good'])
+  })
+
+  it('无自描述 entry 的旧 session → legacy 兜底（workflow-state-link + state 文件路径，tempdir 真文件）', () => {
+    const stateFilePath = join(tempDirBase, 'wf-legacy-run.jsonl')
+    const snapshot = makeSnapshot('wf-legacy-run', 'done', 'completed')
+    writeFileSync(stateFilePath, JSON.stringify(snapshot) + '\n')
+    const records = scanWorkflowEntries([
+      {
+        type: 'custom', customType: 'workflow-state-link',
+        data: { runId: 'wf-legacy-run', path: stateFilePath, updatedAt: '2026-08-19T00:00:00Z' },
+      },
+    ])
+
+    expect(records).toHaveLength(1)
+    expect(records[0]!.runId).toBe('wf-legacy-run')
+    expect(records[0]!.stateFilePath).toBe(stateFilePath)
+  })
+
+  it('空 entry 列表返回空数组', () => {
+    expect(scanWorkflowEntries([])).toEqual([])
   })
 })

@@ -28,13 +28,19 @@
 // 默认常量
 // ============================================================
 
+/** 毫秒/秒（时间换算常数）。 */
+const MS_PER_SECOND = 1000;
+/** 秒/分钟（时间换算常数）。 */
+const SECONDS_PER_MINUTE = 60;
+
 /**
  * 默认 idle 超时（per-record）。
  *
  * V2 §5.4 / 决策 4：初拟 ≤ prompt cache TTL（~5min）——超出 cacheTTL 的活进程白占
  * 内存（续聊仍 cache miss），小于则 kill 丢热 cache。实测定（P-timeout）。
  */
-export const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟
+const IDLE_TIMEOUT_MINUTES = 5;
+export const DEFAULT_IDLE_TIMEOUT_MS = IDLE_TIMEOUT_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND;
 
 /**
  * 从环境变量 XYZ_SUBAGENT_IDLE_TIMEOUT_MS 读取全局默认超时。
@@ -376,7 +382,8 @@ const activateLockTails = new Map<string, Promise<void>>();
  * 的错误（调用方可用 message action 重试）。30s 远超正常冷路径 resume spawn 耗时（~ms 级），
  * 留足异常恢复余量而不误伤正常排队。
  */
-const ACTIVATE_LOCK_TIMEOUT_MS = 30 * 1000;
+const ACTIVATE_LOCK_TIMEOUT_SECONDS = 30;
+const ACTIVATE_LOCK_TIMEOUT_MS = ACTIVATE_LOCK_TIMEOUT_SECONDS * MS_PER_SECOND;
 
 export function acquireActivateLock(recordId: string): Promise<() => void> {
   const prev = activateLockTails.get(recordId) ?? Promise.resolve();
