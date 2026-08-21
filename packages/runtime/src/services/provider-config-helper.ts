@@ -354,6 +354,9 @@ export async function setProvider(
   if (data.models !== undefined) {
     const rawModels = data.models as Array<Record<string, unknown>>
     const existingModels = (existing.models ?? []) as ConfigModelDefinition[]
+    // G3 写侧切换：model 级 enabled 收集到 providers.json modelStates（下方 modify 落盘），
+    // 不再写 models.json（pi schema 外寄生字段）。
+    const modelStatesUpdates: Record<string, { enabled: boolean }> = {}
     merged.models = rawModels.map(m => {
       const id = String(m.id ?? '')
       const base = existingModels.find(em => em.id === id) ?? {} as Partial<ConfigModelDefinition>
@@ -371,12 +374,18 @@ export async function setProvider(
         // buildMap() returned undefined (all passthrough) → remove from model
         delete model.thinkingLevelMap
       }
-      // review must_fix #1：前端回传的 model 级 api/baseUrl/enabled 必须写回，
+      // review must_fix #1：前端回传的 model 级 api/baseUrl 必须写回，
       // 否则编辑保存即丢失（新模型 base={} 全丢，编辑现有模型被 base 旧值覆盖）。
       // 对齐 provider 级的「if (m.X !== undefined) model.X = ...」模式。
+      // enabled 例外（G3）：pi schema 外寄生字段不写 models.json，迁 providers.json
+      // modelStates——base 残留的旧 enabled（迁移失败窗口数据）一并剥除，保证本
+      // 路径不再序列化该字段进 models.json。
+      delete model.enabled
+      if (typeof m.enabled === 'boolean' && id) {
+        modelStatesUpdates[id] = { enabled: m.enabled }
+      }
       if (typeof m.api === 'string') model.api = m.api
       if (typeof m.baseUrl === 'string') model.baseUrl = m.baseUrl
-      if (typeof m.enabled === 'boolean') model.enabled = m.enabled
       // compat 透传：前端 compat 编辑器回传的兼容性覆盖必须写回，
       // 否则编辑保存即丢失用户手动配置的 compat（隐性数据丢失 bug）。
       // 类型守卫对齐 isValidThinkingLevelMap：必须排除 null（typeof null === 'object'）
@@ -401,6 +410,20 @@ export async function setProvider(
       }
       return model as unknown as ConfigModelDefinition
     })
+    // G3 写侧切换：model 级 enabled 落 providers.json modelStates（RMW 合并，只覆写本次
+    // 回传的 model 条目，其余 modelStates 保留）。await 对齐 authMethod 的 MF-1 语义：
+    // modify 失败 reject 上抛（handler try-catch 转 sendError），不静默吞。extrasStore
+    // 未注入时丢弃 + warn（宁丢不写错位——生产恒注入）。
+    if (Object.keys(modelStatesUpdates).length > 0) {
+      if (extrasStore) {
+        await extrasStore.modify(providerId, current => ({
+          ...current,
+          modelStates: { ...current?.modelStates, ...modelStatesUpdates },
+        }))
+      } else {
+        console.warn(`[config-service] model enabled states dropped for ${providerId}: providerExtrasStore not injected (G3 写侧切换)`)
+      }
+    }
   }
   const result = configStore.upsertProvider(providerId, merged)
   // 边界1（wave3 TC5 / C2）：新建 provider 时若 enabledModels 非空，加 <id>/* 白名单守卫——

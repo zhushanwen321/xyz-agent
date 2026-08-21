@@ -215,3 +215,84 @@ describe('setProvider 写侧切换（A1-5 路径 2/3）', () => {
     expect(existsSync(extrasPath)).toBe(false)
   })
 })
+
+describe('setProvider 写侧切换（G3 残留：models[].enabled → providers.json modelStates）', () => {
+  function makeSvc(): ConfigService {
+    return new ConfigService('/tmp/project', configStore, undefined, extrasStore)
+  }
+
+  it('model enabled 写 providers.json modelStates，models.json 不再落 enabled 字段', async () => {
+    writeModelsJson({
+      'my-custom': { apiKey: 'sk-x', baseUrl: 'https://x.example.com' },
+    })
+    const svc = makeSvc()
+
+    await svc.setProvider('my-custom', {
+      models: [
+        { id: 'm1', name: 'M1', enabled: false },
+        { id: 'm2', name: 'M2' }, // 未传 enabled：不产生 modelStates 条目
+      ],
+    })
+
+    // models.json：models[].enabled 不再序列化（pi schema 外寄生字段）
+    const models = readModelsRaw()['my-custom']?.models as Array<Record<string, unknown>>
+    expect(models).toHaveLength(2)
+    expect(models[0]).toEqual({ id: 'm1', name: 'M1' })
+    expect(models[1]).toEqual({ id: 'm2', name: 'M2' })
+    // providers.json：modelStates 记录启停（仅含显式传 enabled 的条目）
+    expect(readExtrasRaw()['my-custom']).toEqual({
+      modelStates: { m1: { enabled: false } },
+    })
+  })
+
+  it('base 残留的旧 enabled（迁移失败窗口数据）写入时一并剥除', async () => {
+    writeModelsJson({
+      p1: {
+        baseUrl: 'https://x.example.com',
+        models: [{ id: 'm1', name: 'M1', enabled: true }], // 旧寄生数据
+      },
+    })
+    const svc = makeSvc()
+
+    // 回传不带 enabled：base spread 会把旧 enabled 带进 model 对象——G3 修复后 delete 剥除
+    await svc.setProvider('p1', { models: [{ id: 'm1', name: 'M1' }] })
+
+    const models = readModelsRaw().p1?.models as Array<Record<string, unknown>>
+    expect(models[0]).toEqual({ id: 'm1', name: 'M1' })
+    // 未显式传 enabled → 不写 modelStates（旧值也不搬运——读侧双读兜底仍能读到旧数据）
+    expect(readExtrasRaw().p1).toBeUndefined()
+  })
+
+  it('modelStates RMW 合并：既有条目（如 authMethod/quota）与未回传的 model 条目保留', async () => {
+    writeModelsJson({ p1: { baseUrl: 'https://x.example.com' } })
+    await extrasStore.modify('p1', () => ({
+      authMethod: 'api_key',
+      modelStates: { 'kept-model': { enabled: false }, m1: { enabled: true } },
+    }))
+    const svc = makeSvc()
+
+    await svc.setProvider('p1', { models: [{ id: 'm1', name: 'M1', enabled: false }] })
+
+    // authMethod 与未在本次回传中的 kept-model 保留；m1 被覆写
+    expect(readExtrasRaw().p1).toEqual({
+      authMethod: 'api_key',
+      modelStates: { 'kept-model': { enabled: false }, m1: { enabled: false } },
+    })
+    expect(readModelsRaw().p1?.authMethod).toBeUndefined()
+  })
+
+  it('未注入 extrasStore 时 model enabled 丢弃 + 不抛错（宁丢不写错位，与 authMethod 对称）', async () => {
+    writeModelsJson({})
+    const svc = new ConfigService('/tmp/project', configStore, undefined, undefined)
+
+    await svc.setProvider('my-custom', {
+      apiKey: 'sk-x',
+      baseUrl: 'https://x.example.com',
+      models: [{ id: 'm1', name: 'M1', enabled: false }],
+    })
+
+    const models = readModelsRaw()['my-custom']?.models as Array<Record<string, unknown>>
+    expect(models[0]).toEqual({ id: 'm1', name: 'M1' })
+    expect(existsSync(extrasPath)).toBe(false)
+  })
+})
