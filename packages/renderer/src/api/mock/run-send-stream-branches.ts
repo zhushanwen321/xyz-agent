@@ -5,6 +5,7 @@
  * （[w21] entry 形态 payload，协议同步 event-adapter 重构载体）+ 分支专属 widget 帧。
  */
 import { guiResult, guiComponent } from "@xyz-agent/extension-protocol";
+import type { PiMessageEntry, PiToolCallEntryForm } from "@xyz-agent/shared";
 import type { SendStreamDeps } from "./run-send-stream";
 
 // 导出：三个 emit*Branch 导出函数的签名引用（private_type_leak 修复——签名占有的类型须随导出可达）
@@ -31,7 +32,7 @@ function toolCallEntry(
   toolCallId: string,
   toolName: string,
   args: Record<string, unknown>
-): Record<string, unknown> {
+): PiToolCallEntryForm {
   return {
     type: "toolCall",
     toolCallId,
@@ -47,7 +48,7 @@ function toolResultEntry(
   toolName: string,
   details: Record<string, unknown>,
   content: Array<Record<string, unknown>> = [{ type: "text", text: "done" }]
-): Record<string, unknown> {
+): PiMessageEntry {
   return {
     type: "message",
     parentId: null,

@@ -56,6 +56,14 @@ export function errorWithCode(message: string, code: string | number): Error & {
 /** session 创建/恢复/fork 时 model 未配置的错误码（前端据此引导用户去 Settings 配置） */
 export const MODEL_NOT_CONFIGURED = 'MODEL_NOT_CONFIGURED'
 
+/**
+ * packaged 模式 builtin extensions staged 目录缺失（electron-build R3-S1）。
+ * extension-resolver 的打包产物断链 fail-fast throw 携带此 code，供 facade
+ * （session-service.getExtensionPaths）区分「不可降级」错误 rethrow 贯通 fail-fast
+ * 与「可降级」意外错误维持降级，消息匹配不可靠（见 errorWithCode 用法约定）。
+ */
+export const BUILTIN_EXTENSIONS_MISSING = 'BUILTIN_EXTENSIONS_MISSING'
+
 /** session 恢复时找不到磁盘 session 文件（pi 延迟写入窗口崩溃 / 文件被删） */
 export const SESSION_NOT_FOUND = 'SESSION_NOT_FOUND'
 /** session 恢复时 spawn pi / switchSession / initialize 失败 */

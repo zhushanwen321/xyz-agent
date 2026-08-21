@@ -56,7 +56,7 @@ import {
   SCALAR_STATE_DEBOUNCE_MS,
 } from './replicated-states.config.js'
 import { HistoryRebuildCache, mergeIncrementalMessages } from './history-rebuild-cache.js'
-import { toErrorMessage, isEnoent } from '../../utils/errors.js'
+import { toErrorMessage, isEnoent, BUILTIN_EXTENSIONS_MISSING } from '../../utils/errors.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
 import { PresetService, type PresetResolution } from '../preset-service.js'
 // MessageBus（wave:runtime-wiring）：per-session 消息广播核心。setter 注入（同 setConfigService 模式），
@@ -1205,6 +1205,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     try {
       return await this.extensionService.getExtensionPaths(cwd)
     } catch (e) {
+      // 打包产物断链（builtin staged 目录缺失）不可降级：rethrow 贯通 resolver 的
+      // fail-fast（electron-build R3-S1）——吞掉会让无 presetId 的 session 启动路径
+      // pi 无 --extension 静默启动（system-prompt 注入 / msg-id 映射无声失效），
+      // 与 preset 路径（getLaunchPresetOptions 全链无 catch）语义对齐，错误冒泡到
+      // session handler 可见。其余意外错误维持降级（旧版兼容：空列表不阻断会话）。
+      if (typeof e === 'object' && e !== null && (e as NodeJS.ErrnoException).code === BUILTIN_EXTENSIONS_MISSING) throw e
       console.warn('[session-service] getExtensionPaths failed:', e)
       return []
     }

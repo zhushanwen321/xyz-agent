@@ -18,6 +18,7 @@ import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename, resolve } from 'node:path'
 import { getNpmDir, getExtensionsDir } from '../pi/pi-paths.js'
 import { canonicalizePath } from '../../utils/path-utils.js'
+import { errorWithCode, BUILTIN_EXTENSIONS_MISSING } from '../../utils/errors.js'
 import { readSettings } from '../pi/pi-settings-store.js'
 import { mandatoryExtensions } from '@xyz-agent/shared'
 import type { IExtensionResolver, ExtensionPaths, DiscoveredExtension, ExtensionSource } from '../../services/ports/installer.js'
@@ -89,15 +90,21 @@ export class ExtensionResolver implements IExtensionResolver {
   }
 
   /**
-   * 扫描 npm extension：从 package.json dependencies 提取白名单。
+   * 扫描 npm extension：用户手动 npm 安装的扩展（dev 模式从 package.json dependencies
+   * 白名单 resolve）。
    *
-   * 注意（2026-07-04 任务一后）：builtin @zhushanwen/pi-* 已改为 Settings 推荐安装，
-   * 不再打包进产物（electron-builder.yml 移除了 @zhushanwen extraResources 拷贝）。
-   * 打包模式下此方法扫描 Resources/node_modules/@zhushanwen/，目录不存在时
-   * existsSync 兜底返回空 Map（用户通过 Settings 安装的扩展走 settings 源，不经过此方法）。
+   * builtin @zhushanwen/pi-* 不经此方法：现行 staged 打包内置——esbuild bundle 到
+   * apps/electron/resources/extensions/@zhushanwen/，electron-builder extraResources
+   * 拷贝为 Resources/extensions/，由 scanBundledExtensions 扫描，清单 SSOT =
+   * packages/shared/src/mandatory-extensions.json。用户经 Settings 安装的扩展走
+   * settings 源（scanSettingsExtensions），同样不经此方法。
    *
-   * 开发模式下 projectRoot = apps/electron（runtime cwd），读 apps/electron/package.json
-   * 的 dependencies。@zhushanwen/pi-* 不再是根依赖，此处返回空。
+   * [HISTORICAL] builtin 机制演化：builtin 依赖（随产物 node_modules 打包）→ Settings
+   * 推荐安装不打包进产物（2026-07-04，electron-builder.yml 曾移除 @zhushanwen
+   * extraResources 拷贝）→ mandatory npm 安装 → staged 打包内置（2026-08-12，现行）。
+   * 打包模式下此方法扫描 Resources/node_modules/@zhushanwen/（演化第一阶段的遗留
+   * 兜底路径，现行打包不产出该目录，existsSync 不存在即返回空 Map）；开发模式下
+   * projectRoot = apps/electron（runtime cwd），读 apps/electron/package.json。
    */
   scanNpmExtensions(projectRoot: string, packaged: boolean): ExtensionMap {
     const result: ExtensionMap = new Map()
@@ -222,10 +229,13 @@ export class ExtensionResolver implements IExtensionResolver {
       // dev 模式返回空仍合法（packaged 分支不触发）。恢复点：文件型 builtin 迁移 npm 包
       // （34234fb66）时旧 getBuiltinExtensionPaths 的同款 fail-fast 丢失。
       if (!existsSync(builtinDir)) {
-        throw new Error(
+        // 携带结构化 code（BUILTIN_EXTENSIONS_MISSING）：session-service.getExtensionPaths
+        // facade 据此 rethrow 贯通 fail-fast（electron-build R3-S1），消息匹配不可靠。
+        throw errorWithCode(
           `[extension] builtin extensions directory missing in packaged build: ${builtinDir} ` +
             `(expected staged Resources/extensions/@zhushanwen from electron-builder extraResources; ` +
             `verify with scripts/postbuild-validate.sh)`,
+          BUILTIN_EXTENSIONS_MISSING,
         )
       }
       this.scanDirectory(builtinDir, result, 'bundled')

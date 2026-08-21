@@ -96,7 +96,13 @@ export interface ChatViewState {
   messages: Message[]
   /** userEntryId → clientUuid（"xyz.client-msg-id" custom entry 累积，badge 回填查表用） */
   clientUuidMap: Map<string, string>
-  /** 窗口内无法配对的孤儿 toolResult（增量合并阶段按 toolCallId 回填，W20 review Fix-1 语义） */
+  /**
+   * 窗口内无法配对的孤儿 toolResult。消费方在 runtime 侧增量合并阶段（session-service
+   * getHistory since 增量路径：rebuildHistoryFromEntries 透出本字段 →
+   * message-converter applyOrphanToolResults 按 toolCallId 回填缓存中 assistant 的
+   * toolCall，W20 review Fix-1）。renderer live 链路无读取方——孤儿仅簿记残留，
+   * 一致性由下次 hydrate 全量重建兜底。
+   */
   orphanToolResults: PiToolResultBody[]
   /**
    * reducer 簿记：已投递过 toolResult 的 toolCallId 集合（双入口幂等去重键，R2-S1）。
@@ -169,9 +175,6 @@ function applyToolResultMessage(state: ChatViewState, body: PiMessageBody): Chat
       ...(fill.outputRaw !== undefined && { outputRaw: fill.outputRaw }),
       ...(fill.isError && { status: 'error' as const }),
       ...(fill.details !== undefined && { details: fill.details }),
-      // [W5] images 保字段：shared.ToolCall 暂无 images 类型声明（W5 边界未动
-      // shared），spread 条件属性保运行时字段——数据不丢优先（live≡replay），
-      // 类型声明与渲染消费待后续 wave shared 加字段后收口。
       ...(fill.images !== undefined && { images: fill.images }),
     }
     const updatedHost: Message = { ...host, toolCalls: tcs.map((t) => (t === matched ? filled : t)) }

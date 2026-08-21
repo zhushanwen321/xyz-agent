@@ -265,6 +265,38 @@ describe('subagent store — clearSession (per-session 分区释放)', () => {
     const store = useSubagentStore()
     expect(() => store.clearSession('never')).not.toThrow()
   })
+
+  it('strike 簿记随分区清除：clearSession 后重新预置分区，strike 从 0 重新计（不残留旧计数）', async () => {
+    // R3 test-coverage S1：与 workflow.test.ts 同款簿记用例。若 clearSession 漏删 strike
+    // （subagent.ts emptyResultStrikes.delete），残留计数让重新预置后的首次空结果直接
+    // strike 2/2 误判删空 → 分区保留断言红。
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const store = useSubagentStore()
+    vi.mocked(sessionApi.getSubagents).mockResolvedValue([])
+
+    // 预置非空分区 → strike 1/2：空结果保留
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-keep' })])
+    await store.loadSubagents('session-1')
+    expect(store.getRecordsBySession('session-1')).toHaveLength(1)
+
+    // clearSession：分区 + strike 簿记一并清除
+    store.clearSession('session-1')
+    expect(store.getRecordsBySession('session-1')).toEqual([])
+
+    // 重新预置非空分区 → 第 1 次空结果从 strike 1 重新计（保留分区 + warn 明示 1/2）。
+    // 残留计数场景（clearSession 漏删）此步为 strike 2/2 → 分区被清 → 断言红
+    store.applyRecords('session-1', [makeRecord({ subagentId: 'bg-keep-2' })])
+    await store.loadSubagents('session-1')
+    expect(store.getRecordsBySession('session-1')).toHaveLength(1)
+    expect(store.getRecordsBySession('session-1')[0].subagentId).toBe('bg-keep-2')
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('empty strike 1/2'), 'session-1')
+
+    // 再 1 次空 → strike 2/2 判真实删空放行（重新计数的完整语义闭环）
+    await store.loadSubagents('session-1')
+    expect(store.getRecordsBySession('session-1')).toEqual([])
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('clearing partition'), 'session-1')
+    warnSpy.mockRestore()
+  })
 })
 
 describe('subagent store — isRunning', () => {

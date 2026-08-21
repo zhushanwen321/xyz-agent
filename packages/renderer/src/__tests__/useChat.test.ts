@@ -338,7 +338,7 @@ describe('useChat compact 状态机（#6）', () => {
     const chat = useChatStore()
     const { compact } = useChat()
     await compact('c-flow')
-    emit({ type: 'session.compacting', payload: { sessionId: 'c-flow', status: 'compacting' } })
+    emit({ type: 'session.compacting', payload: { sessionId: 'c-flow', status: 'compacting', reason: 'manual' } })
     expect(chat.isCompacting('c-flow')).toBe(true)
     emit({ type: 'session.compacted', payload: { sessionId: 'c-flow', status: 'compacted' } })
     expect(chat.isCompacting('c-flow')).toBe(false)

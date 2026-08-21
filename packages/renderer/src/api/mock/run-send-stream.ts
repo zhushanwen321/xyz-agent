@@ -4,7 +4,7 @@
  * 全程检查 cancelled。extension:widget/status 走 session 通道，与 streamSubscribe 独立。
  * tool_call + widget 分支序列拆在 run-send-stream-branches.ts（同本文件从 index.ts 抽出先例）。
  */
-import type { ServerMessage } from "@xyz-agent/shared";
+import type { ServerMessageUnion } from "@xyz-agent/shared";
 import {
   detectBranch,
   emitReadBranch,
@@ -29,9 +29,11 @@ export interface Timing {
 /** index.ts 注入的模块私有依赖（行为与抽离前完全一致） */
 export interface SendStreamDeps {
   nextId(prefix: string): string;
-  emit(sessionId: string, msg: ServerMessage): void;
+  /** ServerMessageUnion（非宽 ServerMessage）：mock 帧构造点（本文件 + branches）受
+   *  type↔payload 配对编译校验，缺字段即编译错（对齐 mock/index.ts 的 emit/pushSession） */
+  emit(sessionId: string, msg: ServerMessageUnion): void;
   sleep(ms: number): Promise<void>;
-  pushSession(sessionId: string, msg: ServerMessage): void;
+  pushSession(sessionId: string, msg: ServerMessageUnion): void;
   isCancelled(sessionId: string): boolean;
   TIMING: Timing;
 }

@@ -222,9 +222,6 @@ function buildMessage(
     ...(acc.thinking.length > 0 && { thinking: acc.thinking }),
     ...(acc.toolCalls.length > 0 && { toolCalls: acc.toolCalls }),
     ...(acc.contentBlocks.length > 0 && { contentBlocks: acc.contentBlocks }),
-    // [W5] user 消息 image part → images 保字段：shared.Message 暂无 images 类型声明
-    //（W5 边界未动 shared），spread 保运行时字段（数据不丢优先），渲染消费与类型
-    // 声明待后续 wave shared 加字段后收口。
     ...(acc.imageParts.length > 0 && { images: acc.imageParts }),
     ...fileChangesField(body, acc.toolCalls),
     ...usageField(body),

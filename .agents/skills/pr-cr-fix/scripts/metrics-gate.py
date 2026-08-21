@@ -141,8 +141,12 @@ def judge(report: dict, thresholds: dict) -> dict:
 
     dup_groups = [g for g in report.get("duplication", {}).get("clone_groups", []) if g.get("introduced")]
     for g in sorted(dup_groups, key=lambda g: -(g.get("line_count") or 0))[:5]:
-        files = [i.get("path") for i in g.get("instances", []) if isinstance(i, dict)]
-        warn.append({"type": "duplication", "files": files, "reason": f"重复块 {g.get('line_count')} 行 × {len(files)} 处"})
+        # fallow clone_groups instance 的字段是 file/start_line（无 path/line 键），
+        # 取错键会全量得 None（R3 monorepo-impact S-2 的 5 条 path=null 根因）
+        files = [i.get("file") for i in g.get("instances", []) if isinstance(i, dict)]
+        # path = 首个实例文件（便于 grep 定位；完整面在 files 数组，同 locate_dead_code_item 的 files 模式）
+        warn.append({"type": "duplication", "path": files[0] if files else None, "files": files,
+                     "reason": f"重复块 {g.get('line_count')} 行 × {len(files)} 处"})
 
     targets.sort(key=lambda e: -(e.get("crap") or 0))
     verdict = "fail" if fail else ("warn" if warn else "pass")

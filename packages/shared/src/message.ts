@@ -40,6 +40,11 @@ export interface ToolCall {
   detail?: string | Record<string, unknown>
   /** 实时流式失败（tool_execution_end isError）时的错误文本，与 status:'error' 同源 */
   error?: string
+  /**
+   * 工具结果携带的图片（W5 提取，pi toolResult content 的 image 块：base64 data + mimeType）。
+   * core apply-entry 保字段写入（normalizePiToolResult 归一）；渲染消费待后续 wave。
+   */
+  images?: Array<{ data: string; mimeType: string }>
   status: ToolCallStatus
   startTime: number
   endTime?: number
@@ -296,6 +301,12 @@ export interface Message {
    *  effect 创建 system 消息，历史经 converter 还原为 system 消息，统一走 BashOutputBlock 渲染。
    *  与 toolCall 互斥（bash 不走工具链）。 */
   bashExecution?: BashExecutionData
+  /**
+   * 消息携带的图片（W5 提取）：user 消息 image part（pi UserMessage.content 的
+   * ImageContent 块：base64 data + mimeType）。core apply-entry-convert 保字段写入
+   *（extension sendMessage images 通道 / 手写 session 文件可达）；渲染消费待后续 wave。
+   */
+  images?: Array<{ data: string; mimeType: string }>
   /** pi CustomMessage details 原始字段（含 __gui__ 结构化渲染数据）。
    *  前端检测 details.__gui__ 路由到 GuiComponentRenderer。 */
   details?: Record<string, unknown>

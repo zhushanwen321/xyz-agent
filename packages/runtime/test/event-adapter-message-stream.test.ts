@@ -1,6 +1,6 @@
 /**
- * EventAdapter message_update / message_start 定向测试（CRAP 靶子：handleMessageUpdate /
- * handleMessageStart）。
+ * EventAdapter message_update / message_start / message_end 定向测试（CRAP 靶子：
+ * handleMessageUpdate / handleMessageStart / handleMessageEnd）。
  *
  * 已有覆盖：FR-5 error sub-type、FR-2 customType 透传、toolResult/user role 忽略、
  * toolcall_end 锚点（equivalence/tool-call-index）。本文件补齐 sub-type 翻译矩阵的
@@ -12,10 +12,13 @@
  * - 未知 sub-type：warn + noop（不崩）
  * - customStart 畸形守卫：customType 非字符串不误入 custom 分支、details 数组/原始值 →
  *   undefined、content 非字符串 → undefined、display 非布尔 → undefined
+ * - message_end role 白名单（R3 business-logic INFO）：allowed role 通过（user/assistant/
+ *   toolResult 全量下发）、未建模 role（bashExecution 等）warn + 跳过（双计防线）、
+ *   customType 判定优先于白名单（对齐 handleMessageStart）、畸形 message warn + 降级丢弃
  *
  * 运行：cd packages/runtime && npx vitest run test/event-adapter-message-stream.test.ts
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createEventAdapter, type WsSender, type EventAdapterOptions } from './helpers/event-adapter-test-fixture.js'
 import { EventAdapter } from '../src/infra/pi/event-adapter.js'
 import type { ServerMessage, ServerMessageUnion } from '@xyz-agent/shared'
@@ -166,5 +169,81 @@ describe('message_start 畸形字段守卫（handleMessageStart custom 分支）
     expect(sent[0].type).toBe('message.message_start')
     const start = sent[0] as MessageStartFrame
     expect(start.payload.messageId).toMatch(/^a-/)
+  })
+})
+
+// ── message_end role 白名单（R3 business-logic INFO：S2 双计防线直接断言）──
+// pi 0.84.1 实证未建模 role（bashExecution/compactionSummary/branchSummary）不经 message_end，
+// 但该假设此前只存在于注释——白名单把它升级为结构防线：若未来 pi 行为漂移补发这些 role，
+// 未列 role 必须被跳过（否则 registry applyEntry 与 bashResultEffect 等既有 effect 双计）。
+
+describe('message_end role 白名单（handleMessageEnd）', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    warnSpy.mockRestore()
+  })
+
+  it('allowed role（user/assistant/toolResult）→ message.message_end 帧（entry 实时 feed 载体）', async () => {
+    for (const role of ['user', 'assistant', 'toolResult']) {
+      const { adapter, sent } = createAdapter()
+      const ts = 1_755_000_000_000
+      const message = { role, content: 'hello', timestamp: ts }
+      dispatchOne(adapter, { type: 'message_end', message })
+      await flushAsync()
+
+      expect(sent).toHaveLength(1)
+      expect(sent[0].type).toBe('message.message_end')
+      // entry 形状：type message / parentId null / timestamp 由 message.timestamp 派生 ISO /
+      // message 原样透传（reducer 输入 = 持久化 entry 同构）
+      expect(sent[0].payload).toEqual({
+        sessionId: SID,
+        entry: { type: 'message', parentId: null, timestamp: new Date(ts).toISOString(), message },
+      })
+    }
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('未建模 role（bashExecution/compactionSummary）→ warn + 跳过：零 WS 帧（双计防线）', async () => {
+    const { adapter, sent } = createAdapter()
+    for (const role of ['bashExecution', 'compactionSummary', 'branchSummary']) {
+      dispatchOne(adapter, { type: 'message_end', message: { role, content: 'x' } })
+    }
+    await flushAsync()
+
+    expect(sent).toEqual([]) // 不产任何 WS 帧（含 noop 帧也不上 wire）
+    for (const role of ['bashExecution', 'compactionSummary', 'branchSummary']) {
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`message_end with unmodeled role '${role}', skipping (dual-count guard`),
+      )
+    }
+  })
+
+  it('customType 判定：role 不在白名单但 customType 存在 → 放行（custom 以 customType 为权威标识，对齐 handleMessageStart）', async () => {
+    const { adapter, sent } = createAdapter()
+    // pi custom message 的 role 形如 'custom'（不在白名单），权威标识是 customType 字段
+    const message = { role: 'custom', customType: 'subagent-bg-notify', content: 'bg done' }
+    dispatchOne(adapter, { type: 'message_end', message })
+    await flushAsync()
+
+    expect(sent).toHaveLength(1)
+    const end = sent[0] as Extract<ServerMessageUnion, { type: 'message.message_end' }>
+    expect(sent[0].type).toBe('message.message_end')
+    expect(end.payload.entry.message).toEqual(message)
+    expect(warnSpy).not.toHaveBeenCalled() // custom 放行不是告警路径
+  })
+
+  it('畸形 message（缺失 / role 非字符串）→ warn + noop 降级丢弃（不中断事件流）', async () => {
+    const { adapter, sent } = createAdapter()
+    dispatchOne(adapter, { type: 'message_end' }) // message 缺失（pi 契约外）
+    dispatchOne(adapter, { type: 'message_end', message: { role: 42 } }) // role 非字符串
+    await flushAsync()
+
+    expect(sent).toEqual([])
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('message_end without message or role, skipping'))
   })
 })

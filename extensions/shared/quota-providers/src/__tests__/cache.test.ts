@@ -393,9 +393,15 @@ describe("trackSpeed", () => {
 
     trackSpeed(1000, 1000, "provider/model:v2");
 
+    // persistDailyRecord 原子写：writeFileSync 走唯一 tmp 路径 + rename 落位
     expect(mockWriteFileSync).toHaveBeenCalledWith(
       expect.stringContaining("provider_model_v2.json"),
       expect.any(String),
+      "utf-8",
+    );
+    expect(mockRenameSync).toHaveBeenCalledWith(
+      expect.stringContaining(".tmp"),
+      "/tmp/agent/token-stats/provider_model_v2.json",
     );
   });
 
@@ -576,9 +582,11 @@ describe("corrupt file quarantine (D1c)", () => {
       expect.stringMatching(/\.corrupt-\d{4}-\d{2}-\d{2}T\d{9}Z$/),
     );
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("quarantined"));
-    // 继续工作：今日记录正常追加写回（非静默清空后无产出）
+    // 继续工作：今日记录正常追加写回（非静默清空后无产出）。
+    // 原子写后 writeFileSync 落在唯一 tmp 路径（`<file>.tmp_<pid>_<rand>`），按前缀筛
     const written = mockWriteFileSync.mock.calls.find(
-      (c: unknown[]) => c[0] === SPEED_FILE,
+      (c: unknown[]) =>
+        typeof c[0] === "string" && (c[0] as string).startsWith(`${SPEED_FILE}.tmp_`),
     );
     expect(written).toBeDefined();
     const records = JSON.parse(written![1] as string) as Record<string, unknown>;

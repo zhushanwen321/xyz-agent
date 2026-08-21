@@ -318,20 +318,37 @@ describe('workflow store — clearSession（per-session 分区释放，ADR-0049 
     expect(() => store.clearSession('never')).not.toThrow()
   })
 
-  it('strike 簿记随分区清除：clearSession 后单次空结果重新从 strike 1 计（不残留旧计数）', async () => {
+  it('strike 簿记随分区清除：clearSession 后重新预置分区，strike 从 0 重新计（不残留旧计数）', async () => {
+    // R3 test-coverage S1 强化：旧断言 clearSession 后未重新预置非空分区，守卫条件
+    // （空结果 && 分区非空）本就不满足——无法区分计数清除与残留。此处重新预置非空分区，
+    // 若 clearSession 漏删 strike（workflow.ts emptyResultStrikes.delete），残留计数 1 会让
+    // 下一次空结果直接 strike 2/2 误判删空 → 分区保留断言红。
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const store = useWorkflowStore()
-    store.applyRecords('session-1', [makeRecord()])
-
-    // strike 1/2：空结果保留
     vi.mocked(sessionApi.getWorkflows).mockResolvedValue([])
+
+    // 预置非空分区 → strike 1/2：空结果保留
+    store.applyRecords('session-1', [makeRecord({ runId: 'wf-keep' })])
     await store.loadWorkflows('session-1')
     expect(store.getRecordsBySession('session-1')).toHaveLength(1)
 
-    // clearSession 清分区 + strike 计数 → 此时空结果直接正常写入（分区已空，守卫本就不触发）
+    // clearSession：分区 + strike 簿记一并清除
     store.clearSession('session-1')
+    expect(store.getRecordsBySession('session-1')).toEqual([])
+
+    // 重新预置非空分区 → 第 1 次空结果必须从 strike 1 重新计（保留分区）。
+    // 残留计数场景（clearSession 漏删）此步为 strike 2/2 → 分区被清 → 断言红
+    store.applyRecords('session-1', [makeRecord({ runId: 'wf-keep-2' })])
+    await store.loadWorkflows('session-1')
+    expect(store.getRecordsBySession('session-1')).toHaveLength(1)
+    expect(store.getRecordsBySession('session-1')[0].runId).toBe('wf-keep-2')
+    // warn 明示 strike 1/2（从 0 重新计数的直接证据，而非残留的 2/2）
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('empty strike 1/2'), 'session-1')
+
+    // 再 1 次空 → strike 2/2 判真实删空放行（重新计数的完整语义闭环）
     await store.loadWorkflows('session-1')
     expect(store.getRecordsBySession('session-1')).toEqual([])
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('clearing partition'), 'session-1')
     warnSpy.mockRestore()
   })
 })

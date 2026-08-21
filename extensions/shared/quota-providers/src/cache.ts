@@ -306,10 +306,10 @@ function persistDailyRecord<T extends unknown[]>(
 		if (d < cutoff) delete records[d];
 	}
 
-	// 写回
+	// 写回（原子写：唯一 tmp + rename，防并发多 session 半写损坏 + 读改写竞态截断）
 	try {
 		mkdirSync(dir, { recursive: true });
-		writeFileSync(filePath, JSON.stringify(records));
+		atomicWriteJson(filePath, records);
 	} catch (e) {
 		// 写入失败属于容错路径：记录后继续（records 已返回，下次写入重试）
 		console.warn(`[quota-cache] ${recordName} record write failed:`, e);
