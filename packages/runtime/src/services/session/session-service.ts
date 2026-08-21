@@ -16,7 +16,7 @@ import { join, isAbsolute, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { expandHome, isStrictlyUnder } from '../../utils/path-utils.js'
-import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataFile, SegmentsMetadataEntry, ProviderId } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, ServerMessageMap, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataFile, SegmentsMetadataEntry, ProviderId } from '@xyz-agent/shared'
 import { BUILTIN_PRESET_IDS, IMAGE_LIMITS } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
@@ -32,7 +32,7 @@ import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-histo
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
-import { buildTraceSnapshotFromFile, parseTraceHeaderLine, nextTracePushId } from './session-trace.js'
+import { buildTraceSnapshotFromFile, parseTraceHeaderLine, nextTracePushId, CURRENT_SYSTEM_PROMPT_CUSTOM_TYPE } from './session-trace.js'
 import type { SessionTraceSnapshot } from './session-trace.js'
 import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import { applyOrphanToolResults } from '../../infra/pi/message-converter.js'
@@ -81,6 +81,11 @@ interface ManagedSession extends IManagedSessionView {
 
 /** 百分比上限（usagePercent 计算唯一常量，消除 model-service / index.ts 的重复）。 */
 const MAX_PERCENT = 100
+
+/** 现取 system prompt 轮询参数：命令 handler 毫秒级完成，250ms 间隔 1-2 轮命中；
+ * 8s 超时上限覆盖慢盘/慢命令（超时地 fetch_current_prompt_timeout，前端可重试）。 */
+const FETCH_CURRENT_PROMPT_POLL_MS = 250
+const FETCH_CURRENT_PROMPT_TIMEOUT_MS = 8000
 
 /**
  * fork 点 entryId 按 timestamp 匹配时的容差（W7）。
@@ -847,6 +852,86 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (active?.sessionFilePath) return active.sessionFilePath
     const target = this.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
     return target?.filePath ?? null
+  }
+
+  /**
+   * 现取当前 system prompt（session-trace design §3.1 失败路径 / D2）。
+   *
+   * 通道：pi RPC 无 get_system_prompt 命令、getSystemPrompt() 只在 extension API，且现取
+   * 不能依赖可禁的留痕包（system-prompt-trace 是 feature tier）——链路固定为：
+   *   client.prompt('/__xyz_get_system_prompt__')（常驻 xyz-agent-extension.js 注册，
+   *   /__ 内部命令不经 LLM；RPC prompt 在 preflight 后即返回，不等 handler 完成）
+   *   → handler 写 xyz:current-system-prompt custom entry
+   *   → 本方法轮询 get_entries(since=基线) 拉到该 entry 后提取返回。
+   *
+   * 副作用：命中后滚动 traceLeafCache 基线 + 广播 session.traceEntryAppended（现取 entry
+   * 作为 DATA 行同步出现在 trace 台账，留下取值痕迹；custom 不进 LLM context，零模型影响）。
+   *
+   * @throws code=session_not_active（无活跃 pi 进程——非活跃 session 无现取源）/
+   *   session_busy（生成/压缩中，命令会排队导致超时，预检拒绝更诚实）/
+   *   fetch_current_prompt_timeout（轮询超时，命令未产出 entry）
+   */
+  async fetchCurrentSystemPrompt(sessionId: string): Promise<ServerMessageMap['session.currentSystemPrompt']> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) {
+      throw Object.assign(new Error(`Session ${sessionId} not active`), { code: 'session_not_active' })
+    }
+    // busy 预检只看明确的 busy 信号（生成/压缩中命令会排队导致超时）；sessions Map 无条目
+    //（恢复窗口/测试简化态）不拒——能否执行由 pi 决定
+    const active = this.sessions.get(sessionId)
+    if (active?.isGenerating || active?.isCompacting) {
+      throw Object.assign(new Error(`Session ${sessionId} is busy`), { code: 'session_busy' })
+    }
+    // since 基线：trace 打开过则用缓存；否则 getEntries() 全量拉一次建立（全量拉是接受的
+    // 一次性开销——现取是用户显式动作）
+    let baseline = this.traceLeafCache.get(sessionId)
+    if (baseline === undefined) {
+      const initial = await client.getEntries() as { data?: { leafId?: string | null } }
+      baseline = initial.data?.leafId ?? undefined
+      if (baseline) this.traceLeafCache.set(sessionId, baseline)
+    }
+    await client.prompt('/__xyz_get_system_prompt__')
+    // 轮询：命令 handler 毫秒级完成，RPC 往返 1-2 轮命中；超时上限覆盖慢盘/慢命令
+    const deadline = Date.now() + FETCH_CURRENT_PROMPT_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, FETCH_CURRENT_PROMPT_POLL_MS))
+      let delta: unknown[] = []
+      let newLeafId: string | null = null
+      try {
+        const result = await client.getEntries(baseline ?? undefined) as { data?: { entries?: unknown[]; leafId?: string | null } }
+        delta = result.data?.entries ?? []
+        newLeafId = result.data?.leafId ?? null
+      } catch (e) {
+        if (isEntryNotFoundError(e)) {
+          // 基线跨 pi 进程失效：重建后继续轮询（命令可能已产出 entry）
+          this.traceLeafCache.delete(sessionId)
+          baseline = undefined
+          continue
+        }
+        throw e
+      }
+      const hit = [...delta].reverse().find(
+        (e) => (e as { type?: unknown; customType?: unknown })?.type === 'custom'
+          && (e as { customType?: unknown })?.customType === CURRENT_SYSTEM_PROMPT_CUSTOM_TYPE,
+      )
+      if (newLeafId) this.traceLeafCache.set(sessionId, newLeafId)
+      if (hit) {
+        // 增量同步给 trace 台账（DATA 行留取值痕迹；消费端按 entry.id 去重）
+        if (delta.length > 0 && this.messageBus) {
+          this.messageBus.publish(sessionId, {
+            type: 'session.traceEntryAppended',
+            id: nextTracePushId(),
+            payload: { sessionId, entries: delta, leafId: newLeafId },
+          })
+        }
+        const data = (hit as { data?: Record<string, unknown> }).data
+        const fullText = typeof data?.fullText === 'string' ? data.fullText : ''
+        const charCount = typeof data?.charCount === 'number' ? data.charCount : fullText.length
+        const fetchedAt = typeof data?.fetchedAt === 'string' ? data.fetchedAt : ''
+        return { sessionId, fullText, charCount, fetchedAt }
+      }
+    }
+    throw Object.assign(new Error(`Timed out fetching current system prompt for session ${sessionId}`), { code: 'fetch_current_prompt_timeout' })
   }
 
   /**

@@ -7,6 +7,7 @@
  */
 import type {
   ServerMessage,
+  ServerMessageMap,
   SessionSummary,
   SessionGroup,
   Message,
@@ -181,6 +182,13 @@ export interface ISessionService {
    * Trace 视图打开时全量拉取（session.getTraceEntries → reply session.traceEntries）。
    */
   getTraceEntries(sessionId: string): Promise<SessionTraceSnapshot>
+  /**
+   * 现取当前 system prompt（session-trace design §3.1 失败路径 / D2）：经常驻扩展
+   * /__xyz_get_system_prompt__ 命令写 xyz:current-system-prompt custom entry，轮询
+   * get_entries(since) 拉到后提取返回。仅活跃 session 可用（非活跃无 pi 进程）。
+   * @throws code=session_not_active / session_busy / fetch_current_prompt_timeout
+   */
+  fetchCurrentSystemPrompt(sessionId: string): Promise<ServerMessageMap['session.currentSystemPrompt']>
   /**
    * 增量腿补拉（session-trace A33）：触发事件（message_end/compaction_end/agent_settled/
    * entry_appended）或 lifecycle RPC（set_model/set_thinking_level）成功后调用。

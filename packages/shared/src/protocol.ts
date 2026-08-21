@@ -47,6 +47,10 @@ export type ClientMessageType =
   // session-trace（design D4 数据通路 A1）：session.getTraceEntries 拉全量 trace 台账
   //（活跃走 RPC get_entries + header 首行补读；非活跃走文件直读），reply session.traceEntries。
   | 'session.getTraceEntries'
+  // session-trace（design §3.1 失败路径 / D2）：现取当前 system prompt（pi RPC 无
+  // get_system_prompt，通道在常驻 xyz-agent-extension.js 的 /__xyz_get_system_prompt__
+  // 命令 → xyz:current-system-prompt custom entry → runtime 轮询拉取）。
+  | 'session.fetchCurrentSystemPrompt'
   | 'session.handoff' | 'session.abortHandoff'
   // runtime-message-bus（slice:runtime-message-bus，wave:protocol-seq）：
   // session.subscribe 订阅某 session 的 live 事件流（bus.publish 推送的带 seq 消息），
@@ -261,6 +265,7 @@ export interface ClientMessageMap {
   'session.getCommands': { sessionId: string }
   'session.getContext': { sessionId: string }
   'session.getTraceEntries': { sessionId: string }
+  'session.fetchCurrentSystemPrompt': { sessionId: string }
   'session.compact': { sessionId: string; customInstructions?: string }
   'session.rename': { sessionId: string; name: string }
   // session.setProject：手动归类（SessionItem「归入项目」菜单）。
@@ -609,6 +614,8 @@ export type ServerMessageType =
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
   // session-trace（design D4）：getTraceEntries 的 reply（全量台账）+ 增量腿推送（since 增量 entries）。
   | 'session.traceEntries' | 'session.traceEntryAppended'
+  // session-trace（design §3.1 失败路径）：现取当前 system prompt 的 reply（当前值非历史）。
+  | 'session.currentSystemPrompt'
   | 'subagent.stream_delta'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
@@ -915,6 +922,15 @@ export interface ServerMessageMapBase {
     sessionId: string
     entries: unknown[]
     leafId: string | null
+  }
+  // session.currentSystemPrompt：session.fetchCurrentSystemPrompt 的 reply。当前时刻
+  // 的 system prompt 全文（常驻扩展现取，非留痕历史——留痕归 xyz:system-prompt entry）。
+  // fetchedAt 是扩展取值时刻（ISO），charCount 与 fullText 一致。
+  'session.currentSystemPrompt': {
+    sessionId: string
+    fullText: string
+    charCount: number
+    fetchedAt: string
   }
   // session.workflowActionDone：workflow 操作完成确认（session.workflowAction RPC reply）
   'session.workflowActionDone': { sessionId: string; action: 'pause' | 'resume' | 'abort'; runId: string }
@@ -1341,6 +1357,7 @@ export interface ReplyPayloadMap {
   'session.getCommands': ServerMessageMap['session.commands']
   'session.getContext': ServerMessageMap['context.update']
   'session.getTraceEntries': ServerMessageMap['session.traceEntries']
+  'session.fetchCurrentSystemPrompt': ServerMessageMap['session.currentSystemPrompt']
   'session.getFullHistory': ServerMessageMap['session.fullHistory']
   'session.getSubagentHistory': ServerMessageMap['session.subagentHistory']
   'session.getSubagents': ServerMessageMap['session.subagents']
