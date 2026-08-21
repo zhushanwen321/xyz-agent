@@ -1,0 +1,66 @@
+/**
+ * A2-4 i18n 断言：quota 失败态恢复指引文案在 zh-CN / en-US 双侧存在且非空。
+ *
+ * reason 透传（QuotaFetchResult.reason）已到 RPC 响应，失败态渲染归 Phase B——
+ * 本测试守卫 Phase B 依赖的 i18n key 不被误删/漏译（机械闸门，与 locale-sync-check 互补：
+ * sync-check 只比对双侧 key 集合一致，不校验本功能 key 的存在性与非空）。
+ *
+ * 测试框架：vitest。运行：cd packages/renderer && npx vitest run src/__tests__/i18n/quota-reason-i18n.test.ts
+ */
+import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+
+interface LocaleObject {
+  [key: string]: string | LocaleObject
+}
+
+/** 读 .ts locale 文件为对象（export default {...}，与 locale-sync-check 同模式） */
+function loadLocaleObject(filePath: string): LocaleObject {
+  const src = readFileSync(filePath, 'utf-8')
+  const match = src.match(/export\s+default\s+(\{[\s\S]*\})\s*$/)
+  if (!match) throw new Error(`无法解析 locale 文件: ${filePath}`)
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function(`return (${match[1]});`)() as LocaleObject
+}
+
+const LOCALES_DIR = resolve(__dirname, '../../i18n/locales')
+
+/** A2-4 新增 key（settings.ts 的 providerEdit 命名空间，quota 失败态恢复指引） */
+const REQUIRED_QUOTA_FAIL_KEYS = [
+  'quotaFetchFailUnauthorized',
+  'quotaFetchFailNetwork',
+] as const
+
+/** settings locale 的 providerEdit 节（quota 文案所在命名空间） */
+function loadProviderEdit(locale: string): LocaleObject {
+  const settings = loadLocaleObject(join(LOCALES_DIR, locale, 'settings.ts'))
+  const providerEdit = (settings as Record<string, LocaleObject>).providerEdit
+  if (!providerEdit) throw new Error(`${locale}/settings.ts 缺 providerEdit 命名空间`)
+  return providerEdit
+}
+
+describe('A2-4 quota 失败态 i18n key 双侧存在且非空', () => {
+  for (const locale of ['zh-CN', 'en-US'] as const) {
+    it(`${locale}: providerEdit 含 ${REQUIRED_QUOTA_FAIL_KEYS.join('/')} 且值非空`, () => {
+      const providerEdit = loadProviderEdit(locale)
+      for (const key of REQUIRED_QUOTA_FAIL_KEYS) {
+        const value = providerEdit[key]
+        expect(typeof value, `${locale}.providerEdit.${key} 应为字符串`).toBe('string')
+        expect((value as string).trim().length, `${locale}.providerEdit.${key} 值应为非空文案`).toBeGreaterThan(0)
+      }
+    })
+  }
+
+  it('zh-CN unauthorized 文案含恢复指引要点（凭证过期 + 发起对话 + 重试）', () => {
+    const text = loadProviderEdit('zh-CN').quotaFetchFailUnauthorized as string
+    expect(text).toContain('凭证可能过期')
+    expect(text).toContain('对话')
+    expect(text).toContain('重试')
+  })
+
+  it('en-US network 与 unauthorized 文案可区分（非同值）', () => {
+    const providerEdit = loadProviderEdit('en-US')
+    expect(providerEdit.quotaFetchFailUnauthorized).not.toBe(providerEdit.quotaFetchFailNetwork)
+  })
+})

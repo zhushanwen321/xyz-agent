@@ -358,6 +358,9 @@ export default {
     quotaTestQuery: 'Test query',
     quotaTestSuccess: 'Query successful',
     quotaTestFail: 'Query failed, please check credentials',
+    // A2-4 failure-state copy (recovery guidance for reason passthrough, rendered in Phase B)
+    quotaFetchFailUnauthorized: 'Quota query failed: the credential may have expired. Start a conversation with this provider to trigger a credential refresh, then click refresh to retry',
+    quotaFetchFailNetwork: 'Quota query failed: network error or service unavailable. Check your network connection and retry',
     quotaCookieSet: 'Configured',
     quotaCookieNotSet: 'Not configured',
     quotaCookiePlaceholder: 'Paste cookie string here',

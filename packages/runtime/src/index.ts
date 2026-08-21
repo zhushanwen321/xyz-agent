@@ -543,6 +543,8 @@ async function main(): Promise<void> {
   // providerExists 聚合层判定（catalog 或 custom 均可配置，不再要求 models.json 有条目）。
   // A1-3 读源切换：quota 经 readExtrasWithFallback 双读（providers.json 优先 + models.json
   // 旧寄生字段兜底）；baseUrl/name 仍是 pi 原生语义字段，继续读 models.json。
+  // A2-2 凭证源：auth.json 通道注入 AuthService.getCredential（api_key.key / oauth.access，
+  // 直读不缓存——pi 侧 refresh 写回后立即读到新值，D6）。
   const quotaService = new QuotaService({
     getProviderInfo: (providerId) => {
       const cfg = getProviderConfig(providerId)
@@ -552,6 +554,7 @@ async function main(): Promise<void> {
     },
     providerExtrasStore,
     providerExists: (providerId) => configService.listProviders().some(p => p.id === providerId),
+    getAuthCredential: (providerId) => authService.getCredential(providerId),
   })
 
   const tServicesReady = performance.now()

@@ -358,6 +358,9 @@ export default {
     quotaTestQuery: '测试查询',
     quotaTestSuccess: '查询成功',
     quotaTestFail: '查询失败，请检查凭证',
+    // A2-4 失败态文案（reason 透传后的恢复指引，Phase B 渲染）
+    quotaFetchFailUnauthorized: '额度查询失败：凭证可能过期。与该供应商发起一次对话触发凭证刷新后，点击刷新重试',
+    quotaFetchFailNetwork: '额度查询失败：网络异常或服务不可用，请检查网络连接后重试',
     quotaCookieSet: '已配置',
     quotaCookieNotSet: '未配置',
     quotaCookiePlaceholder: '在此粘贴 cookie 字符串',
