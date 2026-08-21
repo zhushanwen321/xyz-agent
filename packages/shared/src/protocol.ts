@@ -954,11 +954,12 @@ export interface ServerMessageMapBase {
   'terminal.ack': Record<string, never>
   // config.terminalConfig：reply + broadcast + sendInitialState 三用（复刻 config.systemPrompt 范式）。
   'config.terminalConfig': { config: TerminalConfig; corrupted?: boolean }
-  // Coding Plan 额度查询
-  'quota.fetch:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
-  'quota.getCached:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  // Coding Plan 额度查询。reason（A2-4）：最近一次查询失败原因，data=null 的失败态出现；
+  // getCached 携带内存中最近一次失败 reason（UI 失败态 + 「查看上次成功数据」入口用，Phase B 渲染）。
+  'quota.fetch:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null; reason?: import('./quota-types').QuotaFetchFailureReason }
+  'quota.getCached:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null; reason?: import('./quota-types').QuotaFetchFailureReason }
   'quota.configure:result': { ok: boolean; error?: string }
-  'quota.refresh:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  'quota.refresh:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null; reason?: import('./quota-types').QuotaFetchFailureReason }
   /** worktree.branches：worktree.listBranches 的 reply（本地/远程分支列表 + 默认分支名）。 */
   'worktree.branches': { local: string[]; remote: string[]; defaultBranch: string }
   /** worktree.list:result：worktree.list 的 reply（worktree 条目列表）。 */

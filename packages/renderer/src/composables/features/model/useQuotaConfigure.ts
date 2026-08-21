@@ -91,14 +91,16 @@ export function useQuotaConfigure(
    * isCookieAuth：基于当前选中的 fetcherId 计算（而非 preset.auth）。
    * 用户手动选了 cookie 类 fetcher（mimo/opencode-go）时显示 cookie 输入区。
    * fetcherId 未选择时 fallback 到 preset.auth。
+   * [A2-1] auth 数组化后单值判断改 includes：preset 声明含 cookie 形态即视为 cookie 类
+   * （内置 5 preset 中仅 mimo/opencode-go 声明，行为与单值时代一致）。
    */
   const isCookieAuth = computed(() => {
     const fid = fetcherId.value
     if (fid) {
       const opt = QUOTA_PRESETS.find((p) => p.fetcher === fid)
-      return opt?.auth === 'cookie'
+      return opt?.auth.includes('cookie') ?? false
     }
-    return preset.value?.auth === 'cookie'
+    return preset.value?.auth.includes('cookie') ?? false
   })
 
   /**

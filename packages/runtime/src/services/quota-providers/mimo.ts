@@ -8,8 +8,8 @@
  * 关键点：monthUsage.percent 是 0~1 小数，需 ×100 转为百分比。
  */
 
-import type { NormalizedQuotaRow, ProviderQuotaFetcher } from './types.js'
-import { INFINITE_WIN } from './types.js'
+import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome } from './types.js'
+import { INFINITE_WIN, statusToReason } from './types.js'
 import { logger } from '../../infra/logger.js'
 
 const FETCH_TIMEOUT_MS = 5000
@@ -33,10 +33,10 @@ interface MimoApiResponse {
 
 export const mimoFetcher: ProviderQuotaFetcher = {
   id: 'mimo',
-  authType: 'cookie',
+  auth: ['cookie'],
 
-  async fetchQuota(credential: string): Promise<NormalizedQuotaRow | null> {
-    if (!credential) return null
+  async fetchQuota(credential: string, _kind: QuotaAuthKind): Promise<QuotaFetchOutcome> {
+    if (!credential) return { ok: false, reason: 'unauthorized' }
 
     try {
       const resp = await fetch(
@@ -49,23 +49,33 @@ export const mimoFetcher: ProviderQuotaFetcher = {
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         },
       )
-      if (!resp.ok) return null
+      if (!resp.ok) return { ok: false, reason: statusToReason(resp.status) }
 
-      const data = (await resp.json()) as MimoApiResponse
-      if (data.code !== 0) return null
+      let data: MimoApiResponse
+      try {
+        data = (await resp.json()) as MimoApiResponse
+      } catch {
+        return { ok: false, reason: 'parse' }
+      }
+      // code 非 0 = 响应可解析但无订阅数据（含 cookie 失效由平台返回的业务码场景）
+      if (data.code !== 0) return { ok: false, reason: 'no-subscription' }
 
       // percent 是 0~1 小数，转为 0~100
       const monthPct = (data.data?.monthUsage?.percent ?? 0) * PERCENT_SCALE
 
+      // [A2-3] monthUsage.items 含 used/limit 但字段语义未实测核对，本波不编造绝对量
       return {
-        label: 'MiMo Coding',
-        wins: [INFINITE_WIN, INFINITE_WIN, { pct: monthPct, resetSec: null }],
+        ok: true,
+        data: {
+          label: 'MiMo Coding',
+          wins: [INFINITE_WIN, INFINITE_WIN, { pct: monthPct, resetSec: null }],
+        },
       }
     } catch (err) {
-      // 查询失败降级返回 null（调用方返回旧缓存），但必须 log（架构约定 #4 落盘，禁止静默 catch）
+      // fetch 网络异常 / 超时 → network（架构约定 #4 落盘，禁止静默 catch）
       const msg = err instanceof Error ? err.message : String(err)
       logger.debug('[quota:mimo] fetch failed', { error: msg })
-      return null
+      return { ok: false, reason: 'network' }
     }
   },
 }

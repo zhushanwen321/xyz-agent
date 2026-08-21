@@ -6,8 +6,8 @@
  * 窗口：仅 5h（week/month = ∞）
  */
 
-import type { NormalizedQuotaRow, ProviderQuotaFetcher } from './types.js'
-import { INFINITE_WIN } from './types.js'
+import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome } from './types.js'
+import { INFINITE_WIN, statusToReason } from './types.js'
 
 const FETCH_TIMEOUT_MS = 5000
 const SEC_PER_DAY = 86400
@@ -54,10 +54,11 @@ function resetSecFromEpoch(epochMsStr: string): number | null {
 
 export const zhipuFetcher: ProviderQuotaFetcher = {
   id: 'zhipu',
-  authType: 'api-key',
+  // 智谱额度 API 为裸 authorization 头（无 Bearer 前缀），oauth 通道暂不声明（§3.4）
+  auth: ['api-key'],
 
-  async fetchQuota(credential: string): Promise<NormalizedQuotaRow | null> {
-    if (!credential) return null
+  async fetchQuota(credential: string, _kind: QuotaAuthKind): Promise<QuotaFetchOutcome> {
+    if (!credential) return { ok: false, reason: 'unauthorized' }
 
     try {
       // 仅需 Authorization header 即可查询 Coding Plan 额度（参考 glm-quota-line 开源实现 +
@@ -69,10 +70,15 @@ export const zhipuFetcher: ProviderQuotaFetcher = {
         },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       })
-      if (!resp.ok) return null
+      if (!resp.ok) return { ok: false, reason: statusToReason(resp.status) }
 
-      const json = (await resp.json()) as ZhipuApiResponse
-      if (!json?.success || !json.data) return null
+      let json: ZhipuApiResponse
+      try {
+        json = (await resp.json()) as ZhipuApiResponse
+      } catch {
+        return { ok: false, reason: 'parse' }
+      }
+      if (!json?.success || !json.data) return { ok: false, reason: 'no-subscription' }
 
       const { data } = json
       const label = data.level ? `Z.ai-${data.level}` : 'Z.ai'
@@ -90,16 +96,22 @@ export const zhipuFetcher: ProviderQuotaFetcher = {
         }
       }
 
+      // [A2-3] 平台 API 仅提供 percentage+currentValue（5h 窗口），总量字段未实测可得，
+      // 不编造 used/limit/unit（待验证检查点 4，Phase A2 前置实测后跟进）
       return {
-        label,
-        wins: [
-          { pct: tokensPct, resetSec },
-          INFINITE_WIN,
-          INFINITE_WIN,
-        ],
+        ok: true,
+        data: {
+          label,
+          wins: [
+            { pct: tokensPct, resetSec },
+            INFINITE_WIN,
+            INFINITE_WIN,
+          ],
+        },
       }
     } catch {
-      return null
+      // fetch 网络异常 / 超时（AbortSignal.timeout）→ network
+      return { ok: false, reason: 'network' }
     }
   },
 }

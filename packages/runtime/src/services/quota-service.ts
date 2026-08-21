@@ -13,7 +13,7 @@
 
 import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
-import type { NormalizedQuotaRow, ProviderQuotaFetcher } from '@xyz-agent/shared'
+import type { NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
 import { matchQuotaPreset } from '@xyz-agent/shared'
 import { QUOTA_FETCHERS } from './quota-providers/index.js'
 import { QuotaCache } from './quota-cache.js'
@@ -21,6 +21,7 @@ import { getApiKeyForProvider, getProviderConfig } from '../infra/pi/pi-provider
 import { logger } from '../infra/logger.js'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import type { XyzProviderStore, ProviderExtras } from './provider-extras-store.js'
+import type { Credential } from './auth/auth-storage.js'
 
 /** 最小查询间隔（毫秒） */
 const THROTTLE_MS = 10_000
@@ -46,6 +47,12 @@ export type ProviderInfoResolver = (providerId: string) => ProviderInfoLike | un
 export interface QuotaFetchResult {
   data: NormalizedQuotaRow | null
   lastFetchAt: number | null
+  /**
+   * 最近一次查询失败原因（A2-4）。查询失败（data=null 失败态）或内存中记录着上次
+   * 失败（getCached，供 UI 失败态 + 「查看上次成功数据」入口）时出现；成功后清除。
+   * 展示语义（§3.4）：失败时 UI 整体替换为失败态，旧缓存数据保留内存不展示。
+   */
+  reason?: QuotaFetchFailureReason
 }
 
 export interface QuotaConfigureResult {
@@ -73,6 +80,13 @@ export interface QuotaServiceOptions {
    * provider 聚合。默认回退 models.json 条目判定（保守，向后兼容未注入场景）。
    */
   providerExists?: (providerId: string) => boolean
+  /**
+   * auth.json 凭证读取通道（A2-2）：api-key 形态的第二优先级来源
+   * （credential(api_key).key）与 oauth 形态的唯一来源（credential(oauth).access）。
+   * 生产注入 AuthService.getCredential（直读不缓存——pi 侧 refresh 写回后必须能立即
+   * 读到新值，D6）。未注入时跳过 auth.json 来源（保守，向后兼容）。
+   */
+  getAuthCredential?: (providerId: string) => Promise<Credential | undefined>
 }
 
 export class QuotaService {
@@ -89,6 +103,10 @@ export class QuotaService {
   private extrasStore: XyzProviderStore | undefined
   /** provider 聚合层存在性判定 */
   private providerExists: (providerId: string) => boolean
+  /** auth.json 凭证读取通道（A2-2，生产注入 AuthService.getCredential） */
+  private getAuthCredential: ((providerId: string) => Promise<Credential | undefined>) | undefined
+  /** providerId → 最近一次查询失败原因（A2-4：getCached 透传；成功清除；不落盘） */
+  private lastFailure: Map<string, QuotaFetchFailureReason> = new Map()
 
   constructor(options: QuotaServiceOptions | string = {}) {
     // 兼容旧签名：直接传 dataDir 字符串
@@ -103,6 +121,7 @@ export class QuotaService {
       ? options.providerExists
       // 保守默认：维持旧限制语义（models.json 有条目才可配置），生产恒注入聚合判定
       : (providerId) => getProviderConfig(providerId) !== undefined
+    this.getAuthCredential = typeof options === 'object' ? options.getAuthCredential : undefined
   }
 
   /**
@@ -167,11 +186,20 @@ export class QuotaService {
 
   /**
    * 读缓存不发起请求（浮层首屏即时填充）。
+   * [A2-4] 携带内存中最近一次失败 reason（无失败记录时无 reason 字段）：缓存数据
+   * 保留供「查看上次成功数据」入口（lastFetchAt 标注），失败态渲染归 Phase B。
    */
   getCached(providerId: string): QuotaFetchResult {
     const entry = this.cache.getEntry(providerId)
-    if (!entry) return { data: null, lastFetchAt: null }
-    return { data: entry.data, lastFetchAt: entry.lastFetchAt }
+    const reason = this.lastFailure.get(providerId)
+    if (!entry) {
+      return reason !== undefined
+        ? { data: null, lastFetchAt: null, reason }
+        : { data: null, lastFetchAt: null }
+    }
+    return reason !== undefined
+      ? { data: entry.data, lastFetchAt: entry.lastFetchAt, reason }
+      : { data: entry.data, lastFetchAt: entry.lastFetchAt }
   }
 
   /**
@@ -335,29 +363,36 @@ export class QuotaService {
     const fetcher = this.getFetcherForProvider(providerId)
     if (!fetcher) return this.getCached(providerId)
 
-    const credential = this.getCredential(providerId, fetcher.authType)
-    if (!credential) {
-      // 凭证缺失，返回缓存（不发请求）
+    const resolved = await this.resolveCredential(providerId, fetcher.auth)
+    if (!resolved) {
+      // 凭证缺失（fetcher.auth 数组序全形态都未解析到凭证），返回缓存（不发请求）
       return this.getCached(providerId)
     }
 
     try {
-      const result = await fetcher.fetchQuota(credential)
+      const outcome = await fetcher.fetchQuota(resolved.credential, resolved.kind)
 
-      if (result) {
-        // 成功：更新缓存
-        this.cache.update(providerId, result)
-        return { data: result, lastFetchAt: Date.now() }
+      if (outcome.ok) {
+        // 成功：更新缓存，清除失败标记
+        this.lastFailure.delete(providerId)
+        this.cache.update(providerId, outcome.data)
+        return { data: outcome.data, lastFetchAt: Date.now() }
       }
 
-      // 查询失败（返回 null），降级返回旧缓存
-      logger.warn('[quota] fetch returned null', { providerId })
-      return this.getCached(providerId)
+      // 查询失败（ok:false，reason 可区分）：记录失败原因，返回失败态——data 置 null
+      // 不再降级展示旧缓存（§3.4 失败态语义：旧缓存保留内存，可经 getCached 查看并
+      // 标注 lastFetchAt）；401 恢复指引文案归 Phase B（i18n key 已就绪）。
+      this.lastFailure.set(providerId, outcome.reason)
+      logger.warn('[quota] fetch failed', { providerId, reason: outcome.reason })
+      const lastSuccessAt = this.cache.getEntry(providerId)?.lastFetchAt ?? null
+      return { data: null, lastFetchAt: lastSuccessAt, reason: outcome.reason }
     } catch (err) {
-      // 异常降级：返回旧缓存 + log
+      // 异常防御（fetcher 契约不 throw，此处兜底逃逸异常）：按 network 失败态处理 + log
       const msg = err instanceof Error ? err.message : String(err)
-      logger.warn('[quota] fetch failed', { providerId, error: msg })
-      return this.getCached(providerId)
+      this.lastFailure.set(providerId, 'network')
+      logger.warn('[quota] fetch threw', { providerId, error: msg })
+      const lastSuccessAt = this.cache.getEntry(providerId)?.lastFetchAt ?? null
+      return { data: null, lastFetchAt: lastSuccessAt, reason: 'network' }
     }
   }
 
@@ -394,26 +429,64 @@ export class QuotaService {
   }
 
   /**
-   * 获取凭证。
-   * - api-key：优先读 Coding Plan 专属 API Key（secrets 目录），未设置时 fallback 到 provider.apiKey
-   * - cookie：从 secrets 目录读取文件
+   * 按 fetcher.auth 能力声明数组序解析凭证（A2-2 三形态解析链）。
+   * 首个解析到凭证的形态即生效，并以该形态作为 kind 传给 fetchQuota（凭证语义可区分）。
+   * 全形态 miss → null（调用方不发请求，返回缓存）。
+   */
+  private async resolveCredential(
+    providerId: string,
+    auth: readonly QuotaAuthKind[],
+  ): Promise<{ credential: string; kind: QuotaAuthKind } | null> {
+    for (const kind of auth) {
+      const credential = await this.getCredential(providerId, kind)
+      if (credential) return { credential, kind }
+    }
+    return null
+  }
+
+  /**
+   * 获取凭证（单形态，来源链固定）。
+   * - api-key：secrets 专属额度 key → auth.json `credential(api_key).key`（经注入的
+   *   AuthService.getCredential 通道）→ models.json `providers[id].apiKey`（§3.5 终态链）
+   * - oauth：auth.json `credential(oauth).access`（直读现值，不自行 refresh——D6）
+   * - cookie：secrets cookie 文件
    *
    * 支持自定义 API Key 是为了适配 router/反代场景：provider 的 baseUrl 指向本地 router，
    * 但 provider.apiKey 是 router 的 key，而 Coding Plan 平台（如 bigmodel.cn）需要平台专属 key。
    * 用户可为 Coding Plan 单独配置一个 API Key，不填则默认用上方的 provider API Key。
    */
-  private getCredential(providerId: string, authType: 'api-key' | 'cookie'): string | null {
-    if (authType === 'api-key') {
+  private async getCredential(providerId: string, kind: QuotaAuthKind): Promise<string | null> {
+    if (kind === 'api-key') {
       // 优先读 Coding Plan 专属 API Key（secrets 目录）
       const quotaKey = this.readSecret(this.getApiKeyPath(providerId))
       if (quotaKey) return quotaKey
-      // fallback：复用 provider 的 API Key
+      // auth.json api_key（catalog provider 凭证的目标位置，M5-01——修复场景 A 断点的关键来源）
+      const authCred = await this.readAuthCredential(providerId)
+      if (authCred?.type === 'api_key' && authCred.key) return authCred.key
+      // fallback：复用 provider 的 API Key（models.json）
       const providerKey = getApiKeyForProvider(providerId)
       return providerKey ?? null
     }
 
+    if (kind === 'oauth') {
+      const authCred = await this.readAuthCredential(providerId)
+      return authCred?.type === 'oauth' && authCred.access ? authCred.access : null
+    }
+
     // cookie 类型：从 secrets 目录读取
     return this.readSecret(this.getCookiePath(providerId))
+  }
+
+  /** auth.json 凭证读取（未注入通道 / 读取异常 → undefined，不阻断后续来源链）。 */
+  private async readAuthCredential(providerId: string): Promise<Credential | undefined> {
+    if (!this.getAuthCredential) return undefined
+    try {
+      return await this.getAuthCredential(providerId)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.debug('[quota] failed to read auth.json credential', { providerId, error: msg })
+      return undefined
+    }
   }
 
   /** 读 secret 文件（去空白），文件不存在/读取失败返回 null */

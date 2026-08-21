@@ -6,8 +6,8 @@
  * 窗口：5h + week（month = ∞）
  */
 
-import type { NormalizedQuotaRow, ProviderQuotaFetcher } from './types.js'
-import { INFINITE_WIN } from './types.js'
+import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome } from './types.js'
+import { INFINITE_WIN, statusToReason } from './types.js'
 import { logger } from '../../infra/logger.js'
 
 const FETCH_TIMEOUT_MS = 5000
@@ -43,10 +43,12 @@ function isoResetRemaining(iso: string): number {
 
 export const kimiFetcher: ProviderQuotaFetcher = {
   id: 'kimi-coding',
-  authType: 'api-key',
+  // usages API 与 oauth 同域同 Bearer（pi 侧 kimi oauth 的 toAuth 即 Bearer access），
+  // 故声明双形态，优先 api-key（§3.4）
+  auth: ['api-key', 'oauth'],
 
-  async fetchQuota(credential: string): Promise<NormalizedQuotaRow | null> {
-    if (!credential) return null
+  async fetchQuota(credential: string, _kind: QuotaAuthKind): Promise<QuotaFetchOutcome> {
+    if (!credential) return { ok: false, reason: 'unauthorized' }
 
     try {
       const resp = await fetch('https://api.kimi.com/coding/v1/usages', {
@@ -56,40 +58,56 @@ export const kimiFetcher: ProviderQuotaFetcher = {
         },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       })
-      if (!resp.ok) return null
+      if (!resp.ok) return { ok: false, reason: statusToReason(resp.status) }
 
-      const data = (await resp.json()) as KimiApiResponse
+      let data: KimiApiResponse
+      try {
+        data = (await resp.json()) as KimiApiResponse
+      } catch {
+        return { ok: false, reason: 'parse' }
+      }
+      // limits 与 usage 均缺失 = 响应可解析但无订阅数据
+      if (!data?.limits?.length && !data?.usage) return { ok: false, reason: 'no-subscription' }
 
-      // 5h 滚动窗口
+      // 5h 滚动窗口（A2-3：limit/remaining 已从 API 拿到，绝对量不再折算 pct 后丢弃）
       const winDetail = data?.limits?.[0]?.detail
       const winLimit = Number(winDetail?.limit ?? 0)
       const winRemaining = Number(winDetail?.remaining ?? 0)
       const win5h = winLimit > 0
         ? {
           pct: Math.round(((winLimit - winRemaining) / winLimit) * PERCENT_SCALE),
+          used: winLimit - winRemaining,
+          limit: winLimit,
+          unit: 'requests' as const,
           resetSec: winDetail?.resetTime ? isoResetRemaining(winDetail.resetTime) : null,
         }
         : INFINITE_WIN
 
-      // 每日/周窗口（usage 字段）
+      // 每日/周窗口（usage 字段，绝对量直出）
       const dailyLimit = Number(data?.usage?.limit ?? 0)
       const dailyUsed = Number(data?.usage?.used ?? 0)
       const winWk = dailyLimit > 0
         ? {
           pct: Math.round((dailyUsed / dailyLimit) * PERCENT_SCALE),
+          used: dailyUsed,
+          limit: dailyLimit,
+          unit: 'requests' as const,
           resetSec: data?.usage?.resetTime ? isoResetRemaining(data.usage.resetTime) : null,
         }
         : INFINITE_WIN
 
       return {
-        label: 'Kimi Coding',
-        wins: [win5h, winWk, INFINITE_WIN],
+        ok: true,
+        data: {
+          label: 'Kimi Coding',
+          wins: [win5h, winWk, INFINITE_WIN],
+        },
       }
     } catch (err) {
-      // 查询失败降级返回 null（调用方返回旧缓存），但必须 log（架构约定 #4 落盘，禁止静默 catch）
+      // fetch 网络异常 / 超时 → network（架构约定 #4 落盘，禁止静默 catch）
       const msg = err instanceof Error ? err.message : String(err)
       logger.debug('[quota:kimi] fetch failed', { error: msg })
-      return null
+      return { ok: false, reason: 'network' }
     }
   },
 }
