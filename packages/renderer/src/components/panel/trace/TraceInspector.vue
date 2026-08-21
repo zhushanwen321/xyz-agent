@@ -124,7 +124,7 @@
             :data-testid="`trace-inspector-block-${b.index}`"
             @click="selectTraceEntry(props.sessionId, b.key)"
           >
-            <span class="w-14 flex-shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide" :class="b.badgeClass">{{ b.label }}</span>
+            <span class="flex-shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide" :class="b.badgeClass">{{ b.label }}</span>
             <span class="min-w-0 flex-1 truncate" :class="b.thinking ? 'text-reasoning' : ''">{{ b.preview || b.label }}</span>
           </div>
         </div>

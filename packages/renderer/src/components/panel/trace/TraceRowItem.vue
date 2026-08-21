@@ -23,8 +23,10 @@
     :title="rowTitle"
     @click="emit('select', row)"
   >
-    <!-- assistant 聚合行展开开关（chevron；stopPropagation 不触发行选中）；
-         非可展开行占位对齐 -->
+    <!-- seq 全行对齐（不引入占位 gutter——普通行保持原左边界）；assistant 聚合行的
+         展开开关（chevron，stopPropagation 不触发行选中）置于 seq 与 badge 之间，
+         仅 assistant 行 badge 右移（badge 宽度本随 kind 文字变化，无对齐损失） -->
+    <span class="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-neutral-faint">#{{ row.seq }}</span>
     <Button
       v-if="expandable"
       variant="ghost"
@@ -37,8 +39,6 @@
       <ChevronDown v-if="expanded" class="size-3" />
       <ChevronRight v-else class="size-3" />
     </Button>
-    <span v-else class="w-4 shrink-0" aria-hidden="true" />
-    <span class="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-neutral-faint">#{{ row.seq }}</span>
     <span
       class="shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide"
       :class="KIND_BADGE_CLASS[row.kind]"

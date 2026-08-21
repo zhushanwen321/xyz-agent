@@ -482,6 +482,18 @@ describe('assistant 聚合行子 block 内联展开（chevron + block 子行 + �
     view.unmount()
   })
 
+  it('toolCall 子行尾缀配对结果态（ok/error），与 TOOL 结果行区分「调用 vs 结果」', async () => {
+    const view = await mountTraceView()
+    await view.find('[data-testid="trace-expand-toggle-5"]').trigger('click')
+    // a1 的 toolCall（tc1）与 tr1（isError:false）配对 → 子行尾缀 ok
+    const sub = view.find('[data-testid="trace-block-row-5-1"]')
+    expect(sub.text()).toContain('read')
+    expect(sub.text().endsWith('ok')).toBe(true)
+    // thinking 子行无结果态尾缀
+    expect(view.find('[data-testid="trace-block-row-5-0"]').text().endsWith('ok')).toBe(false)
+    view.unmount()
+  })
+
   it('子行跟随父行过滤：assistant 被过滤掉时展开的子行不出现', async () => {
     const view = await mountTraceView()
     await view.find('[data-testid="trace-expand-toggle-5"]').trigger('click')

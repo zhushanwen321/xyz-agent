@@ -20,6 +20,7 @@
     :block="item.block"
     :headline="item.headline"
     :selected="!!selected"
+    :result-state="item.resultState"
     @select="(key) => emit('select-block', key)"
   />
   <!-- context 分界行（demo .tr-divider：info 色两侧渐变线 + 说明文案；contextOnly 态由父级隐藏） -->
