@@ -3,7 +3,8 @@
  *
  * 职责：session trace 台账的**读取与归一化**——
  *   - 路径 A（活跃 session）：RPC get_entries 权威解析（pi 原生，entry 结构演进跟随 pi
- *     升级）+ 文件首行补 header（pi getEntries() 明确不含 header，session-manager docstring）。
+ *     升级）+ 文件首行补 header（pi getEntries() 明确不含 header，session-manager docstring）
+ *     + 文件解析补 malformed（pi 静默跳坏行，G1 占位可见）。
  *   - 路径 B（非活跃/降级）：JSONL 直读（复用 core parse-jsonl——损坏行占位可见，不静默
  *     丢失，design §3.1 失败路径）+ sidecar `.meta.json` 合并（session_end BOUNDARY 行）。
  *   - 空态：session 未落盘（pi 延迟写入窗口，规则 6）→ source='empty' 标记，前端显示
@@ -49,7 +50,7 @@ export interface SessionTraceSnapshot {
   header?: SessionTraceHeaderPayload
   /** entry 全集（不含 header）。RPC 权威解析或文件解析（含 handoff_marker 等自定义行）。 */
   entries: unknown[]
-  /** 损坏行占位（仅文件路径产出；RPC 路径 pi 已静默跳坏行，恒空数组）。 */
+  /** 损坏行占位（两路径均产出：文件解析提取行号与原文；RPC 路径补齐 pi 静默跳过的坏行）。 */
   malformed: SessionTraceMalformedLine[]
   /** sidecar session_end 终态（两路径都读 sidecar——终态与活跃性正交）。 */
   sessionEnd?: SessionTraceSessionEndPayload
@@ -75,6 +76,24 @@ export function parseTraceHeaderLine(line: string | null): SessionTraceHeaderPay
     void 0 /* 首行损坏 → header 缺省（trace 容错语义） */
   }
   return undefined
+}
+
+/**
+ * 文件文本 → 损坏行占位（路径 A RPC 补齐专用：pi get_entries 静默跳坏行，本函数从文件
+ * 文本提取坏行行号与原文）。路径 B 文件直读在 buildTraceSnapshotFromFile 单趟解析中
+ * 内联提取（免二次解析），不经过本函数。
+ *
+ * G1（design「损坏行必须以占位行可见、不静默丢失」）：RPC 路径若不补齐则活跃 session
+ * 的坏行对 Trace 视图彻底不可见（GUI 实测回归：非活跃时注入的坏行在 session 重新激活后
+ * MALFORMED 行消失）。文本 null（未落盘/读失败）→ 空数组。
+ */
+export function collectMalformedLines(text: string | null): SessionTraceMalformedLine[] {
+  if (text === null) return []
+  const malformed: SessionTraceMalformedLine[] = []
+  for (const line of parseSessionTraceJsonl(text)) {
+    if (!line.ok) malformed.push({ lineNumber: line.lineNumber, raw: line.raw })
+  }
+  return malformed
 }
 
 /**

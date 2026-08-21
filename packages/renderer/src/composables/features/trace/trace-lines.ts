@@ -4,9 +4,10 @@
  * runtime 全量回包（session.traceEntries）把 JSONL 拆成 header / entries / malformed 三段
  * （entries 保持文件行序但跳过坏行；malformed 带绝对行号）。core 的 mapSessionTraceRows
  * 消费逐行产物（ParsedSessionTraceLine[]，坏行在原位）。本模块把三段归并回逐行产物，
- * 归并锚点 = malformed 的绝对行号（文件直读路径 runtime 保证行号合法；entry 行号不可知，
+ * 归并锚点 = malformed 的绝对行号（两路径均保证行号合法；entry 行号不可知，
  * 用「计数推进 + 坏行行号 ≤ 当前行号即插前」近似——空行跳号时坏行最多延后到尾部，不丢）。
- * RPC 路径 malformed 恒空（pi 已静默跳坏行），归并退化为直拼，无精度损失。
+ * RPC 路径 malformed 由 runtime 补文件解析产出（pi get_entries 静默跳坏行），无坏行时
+ * 归并退化为直拼，无精度损失。
  */
 import type { ParsedSessionTraceLine, TraceFileEntry } from '@xyz-agent/core/domain/session-trace'
 import type { SessionTraceMalformedLine } from '@xyz-agent/shared'

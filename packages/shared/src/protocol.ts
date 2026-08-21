@@ -904,7 +904,8 @@ export interface ServerMessageMapBase {
   // header 是 JSONL 首行 type=session 的完整 entry（字段镜像 core TraceSessionHeader——
   // shared 不依赖 core，结构兼容即协议兼容；parentSession 两形态（源文件路径/源 sessionId
   // fallback）原样透传，溯源解析归消费端）。entries 是 pi entry JSON 逐条（消费端按 core
-  // TraceSessionEntry 收窄）；malformed 仅文件路径产出（RPC 路径 pi 已静默跳坏行，恒空数组）。
+  // TraceSessionEntry 收窄）；malformed 两路径均产出（文件解析提取坏行行号与原文——RPC 路径
+  // pi get_entries 静默跳坏行，由 runtime 补文件解析占位，G1 损坏行不静默丢失）。
   'session.traceEntries': {
     sessionId: string
     source: 'rpc' | 'file' | 'empty'

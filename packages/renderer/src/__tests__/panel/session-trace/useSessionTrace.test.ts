@@ -205,4 +205,28 @@ describe('A41 per-session trace store（ADR-0049 useSessionScopedState 分区）
     expect(resolveTraceRowKind({ type: 'message', message: { role: 'bashExecution', command: 'ls' } })).toBe('BASH')
     expect(resolveTraceRowKind({ type: 'model_change', provider: 'p', modelId: 'm' })).toBe('LIFECYCLE')
   })
+
+  it('文件尾坏行：直读快照 → rows 尾部 MALFORMED 占位可见，后续增量追加不吞占位（GUI 回归 pin）', () => {
+    // GUI 实测形态（dsh调研 session）：文件尾部注入坏行后，直读路径快照 malformed 带
+    // 尾部行号；后续增量腿（如现取 DATA xyz:current-system-prompt）往 entries 尾部追加
+    // 新 entry。两者交互下 MALFORMED 占位必须仍可见且位于追加行之前（坏行行号锚点归并）。
+    const header = { type: 'session', version: 1, id: 'h0', cwd: '/w' }
+    const fileEntries = [
+      { type: 'message', id: 'e1', parentId: 'h0', message: { role: 'user', content: 'q' } },
+      { type: 'session_info', name: 'repro' },
+    ]
+    const tailMalformed = [{ lineNumber: 4, raw: '{invalid json!!!' }]
+
+    // 阶段 1：快照直出 → MALFORMED 是尾行
+    const rows1 = mapSessionTraceRows({ lines: mergeTraceLines(header, fileEntries, tailMalformed) })
+    expect(rows1.map((r) => r.kind)).toEqual(['SESSION', 'USER', 'LIFECYCLE', 'MALFORMED'])
+    expect(rows1[3]).toMatchObject({ key: 'malformed:4', lineNumber: 4, raw: '{invalid json!!!' })
+
+    // 阶段 2：增量追加后（现取 DATA 行 append 到 entries 尾部）→ MALFORMED 归并在追加行之前
+    const appended = [...fileEntries, { type: 'custom', customType: 'xyz:current-system-prompt', data: {} }]
+    const rows2 = mapSessionTraceRows({ lines: mergeTraceLines(header, appended, tailMalformed) })
+    expect(rows2.map((r) => r.kind)).toEqual(['SESSION', 'USER', 'LIFECYCLE', 'MALFORMED', 'DATA'])
+    expect(rows2[3]).toMatchObject({ key: 'malformed:4' })
+    expect(rows2[4]).toMatchObject({ kind: 'DATA' })
+  })
 })

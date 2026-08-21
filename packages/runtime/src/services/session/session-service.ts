@@ -32,7 +32,7 @@ import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-histo
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
-import { buildTraceSnapshotFromFile, parseTraceHeaderLine, nextTracePushId, CURRENT_SYSTEM_PROMPT_CUSTOM_TYPE } from './session-trace.js'
+import { buildTraceSnapshotFromFile, parseTraceHeaderLine, nextTracePushId, collectMalformedLines, CURRENT_SYSTEM_PROMPT_CUSTOM_TYPE } from './session-trace.js'
 import type { SessionTraceSnapshot } from './session-trace.js'
 import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import { applyOrphanToolResults } from '../../infra/pi/message-converter.js'
@@ -754,7 +754,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * session-trace 台账全量拉取（design D4 数据通路 A1，A31/A32）。
    *
    * 路由：① 活跃（pm 有 client）→ RPC get_entries（pi 权威解析）+ 文件首行补 header
-   * （getEntries() 不含 header）+ sidecar session_end；成功后写 traceLeafCache（增量腿
+   * （getEntries() 不含 header）+ 文件解析补 malformed（pi 静默跳坏行，G1 占位可见）
+   * + sidecar session_end；成功后写 traceLeafCache（增量腿
    * since 基线）。② RPC 失败（pi 进程异常）或无 client → 路径 B 文件直读（core parse-jsonl
    * 坏行容错 + sidecar 合并；design §3.1 降级路径：前端 banner「来自磁盘文件」）。
    * ③ 未落盘（pi 延迟写入窗口）→ source='empty' 空态标记。
@@ -772,6 +773,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         if (leafId) this.traceLeafCache.set(sessionId, leafId)
         const filePath = this.resolveTraceFilePath(sessionId)
         const header = parseTraceHeaderLine(filePath !== null ? this.sessionStore.readSessionHeaderLine(filePath) : null)
+        // G1 坏行可见性：pi get_entries 静默跳坏行，RPC 路径必须补文件解析占位（否则活跃
+        // session 的坏行对 Trace 视图彻底不可见）；读失败（未落盘窗口）→ 恒空数组降级
+        const malformed = collectMalformedLines(
+          filePath !== null ? this.sessionStore.readSessionJsonlText(filePath) : null,
+        )
         const sessionEnd = filePath !== null ? (this.sessionStore.readSessionEndMeta(filePath) ?? undefined) : undefined
         return {
           sessionId,
@@ -779,7 +785,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
           filePath,
           ...(header !== undefined ? { header } : {}),
           entries,
-          malformed: [],
+          malformed,
           ...(sessionEnd !== undefined ? { sessionEnd } : {}),
           leafId,
         }

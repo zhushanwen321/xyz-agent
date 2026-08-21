@@ -174,8 +174,38 @@ describe('A31 session.getTraceEntries 活跃路径（RPC get_entries + header �
     expect(snapshot.header).toBeDefined()
     expect(snapshot.header?.id).toBe(sid)
     expect(snapshot.header?.version).toBe(3)
-    // RPC 路径 pi 已静默跳过坏行 → malformed 恒空
+    // RPC 路径 malformed 由文件解析补齐（pi get_entries 静默跳坏行；fixture 无坏行 → 空）
     expect(snapshot.malformed).toEqual([])
+  })
+
+  it('RPC 路径补齐文件坏行（G1 损坏行占位可见）：pi get_entries 静默跳过的坏行由文件解析占位，文件尾坏行不丢失', async () => {
+    // GUI 实测回归：非活跃 session JSONL 尾部注入坏行后 session 又被激活（pi client 存在）→
+    // RPC 路径曾硬编码 malformed=[]，坏行对 Trace 视图彻底不可见（design G1「损坏行必须以
+    // 占位行可见、不静默丢失」在活跃路径失效）。复现形态 = 真实文件尾部坏行 + pi 语义
+    // （get_entries 跳坏行返回全部 ok entry）。
+    const tmp = mkdtempSync(join(tmpdir(), 'trace-rpc-malformed-'))
+    const sid = 'rpc-tail-malformed-session'
+    const okEntries = [
+      { type: 'message', id: 'm1', parentId: null, message: { role: 'user', content: 'hello' } },
+      { type: 'session_info', name: 'repro' },
+    ]
+    writeFileSync(
+      join(tmp, 's.jsonl'),
+      `${JSON.stringify({ type: 'session', version: 3, id: sid, cwd: tmp })}\n${JSON.stringify(okEntries[0])}\n${JSON.stringify(okEntries[1])}\n{invalid json!!!\n`,
+    )
+    const { svc, client } = makeEnv({
+      metas: [{ ...metaFor('get-entries-1-mixed-kinds'), id: sid, filePath: join(tmp, 's.jsonl') }],
+      active: true,
+    })
+    client.getEntries.mockResolvedValue({ data: { entries: okEntries, leafId: 'm1' } })
+
+    const snapshot = await svc.getTraceEntries(sid)
+
+    expect(snapshot.source).toBe('rpc')
+    // entries 仍是 RPC 权威解析（pi 语义：跳坏行）
+    expect(snapshot.entries).toEqual(okEntries)
+    // 坏行由文件直读补齐（行号锚点供 renderer 归并穿插）
+    expect(snapshot.malformed).toEqual([{ lineNumber: 4, raw: '{invalid json!!!' }])
   })
 
   it('fork header 的 parentSession sessionId-fallback 形态原样透传（runtime 不解析，溯源归消费端）', async () => {
