@@ -10,13 +10,15 @@ export interface TraceDetailKv {
   v: string
   tone?: 'ok' | 'bad'
   action?: 'jump-parent'
+  /** 行尾右侧弱标注（usage 桶语义等解释；「不进 context」同款视觉档位）。 */
+  hint?: string
 }
 
 export function buildTraceDetailKv(row: TraceRow, t: (key: string) => string): TraceDetailKv[] {
   const out: TraceDetailKv[] = []
   const m = row.meta
-  const push = (k: string, v: unknown, tone?: 'ok' | 'bad') => {
-    if (v !== undefined && v !== '') out.push({ k, v: String(v), tone })
+  const push = (k: string, v: unknown, tone?: 'ok' | 'bad', hint?: string) => {
+    if (v !== undefined && v !== '') out.push({ k, v: String(v), tone, hint })
   }
   push('id', row.entry && 'id' in row.entry ? (row.entry as { id?: unknown }).id : undefined)
   push('parentId', row.entry && 'parentId' in row.entry ? (row.entry as { parentId?: unknown }).parentId : undefined)
@@ -25,9 +27,14 @@ export function buildTraceDetailKv(row: TraceRow, t: (key: string) => string): T
       push('model', m.model)
       push('provider', m.provider)
       push('stopReason', m.stopReason)
-      push('inputTokens', m.inputTokens)
+      // usage 行尾弱标注解释互斥桶语义（cacheRead > input 是常态而非异常）：
+      // pi-ai 跨协议归一化后 input = 未缓存，输入侧合计 = 未缓存 + 命中 + 写入
+      push('inputTokens', m.inputTokens, undefined, t('panel.trace.usageUncached'))
       push('outputTokens', m.outputTokens)
-      push('cacheRead', m.cacheReadTokens)
+      push('cacheRead', m.cacheReadTokens, undefined, t('panel.trace.usageCacheRead'))
+      if (m.cacheWriteTokens) push('cacheWrite', m.cacheWriteTokens, undefined, t('panel.trace.usageCacheWrite'))
+      push('inputTotal', m.inputTotal, undefined, t('panel.trace.usageInputTotal'))
+      if (m.reasoningTokens) push('reasoning', m.reasoningTokens, undefined, t('panel.trace.usageReasoning'))
       push('cost', m.costTotal)
       break
     case 'TOOL':

@@ -306,10 +306,15 @@ describe('assistant 子 block 详情（聚合态清单 + block 态全文 + TOOL 
     expect(items[1]!.text()).toContain('read')
     expect(items[1]!.text()).toContain('a.ts')
     expect(items[2]!.text()).toContain('读取完成')
-    // usage 标量进 kv（meta SSOT）
+    // usage 标量进 kv（meta SSOT）+ 行尾右侧弱标注（互斥桶语义解释）
     expect(body.text()).toContain('inputTokens')
     expect(body.text()).toContain('21318')
     expect(body.text()).toContain('192')
+    expect(body.text()).toContain('未缓存')
+    expect(body.text()).toContain('缓存命中')
+    // 输入侧合计行：21318 + 192
+    expect(body.text()).toContain('inputTotal')
+    expect(body.text()).toContain('21510')
     view.unmount()
   })
 

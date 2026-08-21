@@ -443,6 +443,12 @@ export default {
     inspectorNoEntry: '（无 entry 数据）',
     // assistant 子 block（chevron 展开 / inspector block 态）
     toggleBlocks: '展开 / 收起内容块',
+    // usage 行尾弱标注（互斥桶语义：cacheRead > input 是缓存命中的常态）
+    usageUncached: '未缓存',
+    usageCacheRead: '缓存命中',
+    usageCacheWrite: '缓存写入',
+    usageInputTotal: '= 未缓存 + 命中 + 写入',
+    usageReasoning: '含于 output',
     blockRedacted: '（thinking 已脱敏，原文不可见）',
     jumpToolResult: '跳到对应 TOOL 行',
   },

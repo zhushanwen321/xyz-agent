@@ -168,11 +168,19 @@ function summarizeRow(entry: TraceFileEntry | TraceSessionEndMeta, kind: TraceRo
       meta.provider = str(m.provider) || undefined
       meta.model = str(m.model) || undefined
       meta.stopReason = str(m.stopReason) || undefined
-      // usage 标量（pi AssistantMessage 必带；字段可选防御——corpus 有 4 种键集变体）
+      // usage 标量（pi AssistantMessage 必带；字段可选防御——corpus 有 4 种键集变体）。
+      // input/cacheRead/cacheWrite 是互斥桶（pi-ai 跨协议归一化：anthropic 原生互斥，
+      // openai chat/responses 的总量含缓存、pi 已减除）——输入侧合计 = 三者之和。
       const u = typeof m.usage === 'object' && m.usage !== null ? (m.usage as Record<string, unknown>) : {}
       meta.inputTokens = num(u.input)
       meta.outputTokens = num(u.output)
       meta.cacheReadTokens = num(u.cacheRead)
+      meta.cacheWriteTokens = num(u.cacheWrite)
+      const cacheWrite = num(u.cacheWrite) ?? 0
+      const inputTotal =
+        (num(u.input) ?? 0) + (num(u.cacheRead) ?? 0) + cacheWrite
+      if (inputTotal > 0) meta.inputTotal = inputTotal
+      meta.reasoningTokens = num(u.reasoning)
       const cost = typeof u.cost === 'object' && u.cost !== null ? (u.cost as Record<string, unknown>) : {}
       meta.costTotal = num(cost.total)
       let thinking = 0

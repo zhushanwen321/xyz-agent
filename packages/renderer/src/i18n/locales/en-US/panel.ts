@@ -445,6 +445,12 @@ export default {
     inspectorNoEntry: '(no entry data)',
     // assistant sub-blocks (chevron expansion / inspector block mode)
     toggleBlocks: 'Expand / collapse content blocks',
+    // usage right-side hints (disjoint buckets: cacheRead > input is the norm)
+    usageUncached: 'uncached',
+    usageCacheRead: 'cache hit',
+    usageCacheWrite: 'cache write',
+    usageInputTotal: '= uncached + hit + write',
+    usageReasoning: 'subset of output',
     blockRedacted: '(thinking redacted, original text unavailable)',
     jumpToolResult: 'Jump to the paired TOOL row',
   },

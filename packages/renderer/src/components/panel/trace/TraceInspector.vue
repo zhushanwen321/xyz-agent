@@ -143,6 +143,8 @@
               @click="onJumpParent"
             >{{ kv.v }} <ArrowUpRight class="size-3" /></Button>
             <span v-else class="min-w-0 break-all font-mono text-[11px] text-neutral-mid" :class="kv.tone === 'bad' ? 'text-danger' : kv.tone === 'ok' ? 'text-success' : ''">{{ kv.v }}</span>
+            <!-- 行尾右侧弱标注（usage 桶语义解释；「不进 context」同款视觉档位） -->
+            <span v-if="kv.hint" class="ml-auto shrink-0 font-mono text-[10px] text-neutral-faint">{{ kv.hint }}</span>
           </div>
         </div>
       </template>

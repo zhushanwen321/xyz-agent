@@ -147,13 +147,17 @@ describe('A21 entry→TraceRow kind 映射（12 kind 全覆盖 + 损坏行占位
     expect(rows[0]?.meta.forkEntryId).toBe('a1')
   })
 
-  it('real-mixed-kinds：完整 usage（cacheRead + cost.total）标量进 meta', () => {
+  it('real-mixed-kinds：完整 usage（cacheRead + cost.total）标量进 meta + 输入侧合计', () => {
     const rows = loadRows('real-mixed-kinds.jsonl')
     const row = rows.find((r) => r.key === 'cd0cdf60')
     expect(row?.kind).toBe('ASSISTANT')
     expect(row?.meta.inputTokens).toBe(43549)
     expect(row?.meta.outputTokens).toBe(70)
     expect(row?.meta.cacheReadTokens).toBe(512)
+    expect(row?.meta.cacheWriteTokens).toBe(0)
+    // 互斥桶合计（pi-ai 归一化语义）：43549 + 512 + 0
+    expect(row?.meta.inputTotal).toBe(44061)
+    expect(row?.meta.reasoningTokens).toBe(9)
     expect(row?.meta.costTotal).toBe(0)
   })
 
