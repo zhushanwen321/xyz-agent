@@ -186,12 +186,18 @@ describe('B-1 凭证区：oauth 型 provider 显示 OAuth 状态区', () => {
     expect(wrapper.find('[data-testid="provider-edit-apikey"]').exists()).toBe(false)
   })
 
-  it('退出登录按钮 disabled（logout RPC 不存在，占位待接入——禁止发明 RPC）', async () => {
+  it('logout 按钮可点击（B-1 场景 C：config.oauthLogout RPC 已落地）→ 上抛 oauth-logout', async () => {
     wrapper = mountBody(OAUTH_P, { oauthPresent: true })
     await flushPromises()
 
     const logout = wrapper.find<HTMLButtonElement>('[data-testid="oauth-logout-btn"]')
-    expect(logout.element.disabled).toBe(true)
+    expect(logout.exists()).toBe(true)
+    expect(logout.element.disabled).toBe(false)
+    expect(logout.text()).toContain('退出登录')
+
+    await logout.trigger('click')
+    expect(wrapper.emitted('oauthLogout')).toBeTruthy()
+    expect(wrapper.emitted('oauthLogout')!.length).toBe(1)
   })
 
   it('未登录态（authMethod=oauth 但 auth.json 无凭据）：显示「未登录（OAuth）」+ 登录按钮', async () => {
