@@ -702,6 +702,34 @@ else
 fi
 
 # ============================================================================
+# CSP 能力一致性检查（源码敏感 API vs index.html CSP 指令）
+# ============================================================================
+
+CSP_COMPAT_CHECKER=".githooks/check_csp_compatibility.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSP_COMPAT_CHECK" != "1" ]; then
+    echo -e "${BLUE}[INFO] 运行 CSP 能力一致性检查...${NC}"
+
+    if [ ! -f "$CSP_COMPAT_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $CSP_COMPAT_CHECKER${NC}"
+    else
+        python3 "$CSP_COMPAT_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] CSP 能力一致性检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 源码出现 eval/WebAssembly 用法但 CSP script-src 'self' 未放行——运行时会抛 CompileError${NC}"
+            echo -e "${YELLOW}[INFO] 曾因此致全部 markdown 渲染静默降级纯文本（2026-08 v0.9.3+ 事故），改用无该能力的实现或显式改 CSP + 白名单${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] CSP 能力一致性检查已跳过${NC}"
+fi
+
+# ============================================================================
 # Runtime Bundle 验证（runtime 源码有变更时触发）
 # ============================================================================
 
@@ -949,6 +977,7 @@ echo -e "  ${GREEN}[+]${NC} R1 pi session JSONL 直写检查（data-source-gover
 echo -e "  ${GREEN}[+]${NC} 目录规范检查（禁止 demos/impeccable + 外部 symlink）"
 echo -e "  ${GREEN}[+]${NC} ws-client send 直调检查（D3 统一门面）"
 echo -e "  ${GREEN}[+]${NC} runtime services 循环依赖检查（D6c 防护）"
+echo -e "  ${GREEN}[+]${NC} CSP 能力一致性检查（源码 eval/WebAssembly vs index.html CSP 指令）"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
 echo -e "  ${GREEN}[+]${NC} AC7 extension-host 边界检查（core 变更时触发，禁 domain/stores import）"
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
