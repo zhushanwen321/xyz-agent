@@ -879,6 +879,8 @@ export const config = {
   /**
    * 设置 scoped models 白名单（mock 对齐 runtime config.setScopedModels）。
    * 去重保序 → 更新 mockScopedModels → 广播 providers + scopedModels。
+   * default 联动：列表非空时 default = scoped[0]，经 defaultsSub 广播 "provider/modelId"
+   * 复合串（形态同 setDefaultModel mock；空列表不动 default，对齐 runtime S7 语义）。
    */
   async setScopedModels(models: string[]): Promise<string[]> {
     await sleep(TIMING.ack)
@@ -893,6 +895,7 @@ export const config = {
     }
     mockScopedModels = deduped
     broadcastProviders()
+    if (deduped.length > 0) defaultsSub.broadcast(deduped[0])
     return deduped
   },
   async scanSkills(_sources: string[]) {
@@ -1041,7 +1044,14 @@ function broadcastProviders(): void {
 }
 
 /* ── Model mock ── */
-const modelsSub = makeMockSubscription(() => MOCK_MODELS.map(mockModelToInfo))
+// scoped-model：模型列表按 mockScopedModels 白名单过滤（空 = 不过滤，同 runtime aggregateModels
+// 空白名单语义）。mock 不模拟 scoped 有序重排，也不在 setScopedModels 后重推 modelsSub
+//（与 runtime 一致——model.list 是订阅首推 + 按需拉取，setScopedModels 不主动广播模型列表）。
+const modelsSub = makeMockSubscription(() =>
+  mockScopedModels.length === 0
+    ? MOCK_MODELS.map(mockModelToInfo)
+    : MOCK_MODELS.filter((m) => mockScopedModels.includes(`${m.providerId}/${m.id}`)).map(mockModelToInfo),
+)
 
 export const model = {
   onModels: (h: (models: ModelInfo[]) => void) => modelsSub.subscribe(h),
