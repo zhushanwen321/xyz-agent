@@ -36,23 +36,23 @@ describe('XyzProviderStore scopedModels', () => {
     it('A1 modifyScopedModels 写入 → getScopedModels 读回一致', async () => {
       const models = ['openai/gpt-4o', 'anthropic/claude-opus-4-5', 'deepseek/deepseek-v3']
       await store.modifyScopedModels(() => models)
-      expect(store.getScopedModels()).toEqual(models)
+      expect(store.getScopedModelsSync()).toEqual(models)
     })
 
     it('A1 字段缺失时 getScopedModels 返回 []（文件不存在）', () => {
-      expect(store.getScopedModels()).toEqual([])
+      expect(store.getScopedModelsSync()).toEqual([])
     })
 
     it('A1 字段缺失时 getScopedModels 返回 []（providers.json 存在但无 scopedModels 字段）', async () => {
       await store.modify('a', () => ({ authMethod: 'api_key' }))
-      expect(store.getScopedModels()).toEqual([])
+      expect(store.getScopedModelsSync()).toEqual([])
     })
 
     it('A1 modifyScopedModels 读取闭包参数为当前值', async () => {
       await store.modifyScopedModels(() => ['openai/gpt-4o'])
       const result = await store.modifyScopedModels((cur) => [...cur, 'anthropic/claude-sonnet-4'])
       expect(result).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
-      expect(store.getScopedModels()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
+      expect(store.getScopedModelsSync()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
     })
   })
 
@@ -63,7 +63,7 @@ describe('XyzProviderStore scopedModels', () => {
         providers: { 'openai': { authMethod: 'api_key' } },
         scopedModels: 'not-an-array',
       }, null, 2), 'utf-8')
-      expect(store.getScopedModels()).toEqual([])
+      expect(store.getScopedModelsSync()).toEqual([])
       expect(store.readAllSync()).toEqual({ 'openai': { authMethod: 'api_key' } })
     })
 
@@ -73,7 +73,7 @@ describe('XyzProviderStore scopedModels', () => {
         providers: {},
         scopedModels: 42,
       }, null, 2), 'utf-8')
-      expect(store.getScopedModels()).toEqual([])
+      expect(store.getScopedModelsSync()).toEqual([])
     })
 
     it('A2 含非法条目（不含/分隔符）→ 过滤掉非法条目并 log warning', async () => {
@@ -84,7 +84,7 @@ describe('XyzProviderStore scopedModels', () => {
           providers: {},
           scopedModels: ['openai/gpt-4o', 'invalid-no-slash', 'anthropic/claude-sonnet-4'],
         }, null, 2), 'utf-8')
-        expect(store.getScopedModels()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
+        expect(store.getScopedModelsSync()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
         expect(warnSpy).toHaveBeenCalledWith(
           '[provider-extras-store] scopedModels: invalid entry format (expected provider/modelId):',
           'invalid-no-slash',
@@ -102,7 +102,7 @@ describe('XyzProviderStore scopedModels', () => {
           providers: {},
           scopedModels: ['openai/gpt-4o', 123, null, 'anthropic/claude-sonnet-4'],
         }, null, 2), 'utf-8')
-        expect(store.getScopedModels()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
+        expect(store.getScopedModelsSync()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
         expect(warnSpy).toHaveBeenCalledWith(
           '[provider-extras-store] scopedModels: non-string entry filtered out:',
           123,
@@ -135,10 +135,10 @@ describe('XyzProviderStore scopedModels', () => {
   describe('A3 去重保序（caller 保证，本层不改写）', () => {
     it('A3 写入 [] 后文件中 scopedModels 字段保留为空数组', async () => {
       await store.modifyScopedModels(() => ['openai/gpt-4o'])
-      expect(store.getScopedModels()).toEqual(['openai/gpt-4o'])
+      expect(store.getScopedModelsSync()).toEqual(['openai/gpt-4o'])
 
       await store.modifyScopedModels(() => [])
-      expect(store.getScopedModels()).toEqual([])
+      expect(store.getScopedModelsSync()).toEqual([])
 
       // 验证文件中 scopedModels 字段保留（非 undefined/缺失）
       const raw = JSON.parse(readFileSync(file, 'utf-8'))
@@ -149,7 +149,7 @@ describe('XyzProviderStore scopedModels', () => {
     it('A3 写入含重复条目时原样保留（本层不去重，由调用方保证）', async () => {
       const models = ['openai/gpt-4o', 'openai/gpt-4o', 'anthropic/claude-sonnet-4']
       await store.modifyScopedModels(() => models)
-      expect(store.getScopedModels()).toEqual(models)
+      expect(store.getScopedModelsSync()).toEqual(models)
     })
   })
 
@@ -163,7 +163,7 @@ describe('XyzProviderStore scopedModels', () => {
         store.modify('anthropic', () => ({ authMethod: 'oauth' })),
       ])
 
-      expect(store.getScopedModels()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
+      expect(store.getScopedModelsSync()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
       expect(store.getExtrasSync('openai')).toEqual({ authMethod: 'api_key' })
       expect(store.getExtrasSync('anthropic')).toEqual({ authMethod: 'oauth' })
     })
@@ -178,7 +178,7 @@ describe('XyzProviderStore scopedModels', () => {
         ),
       ])
 
-      const scoped = store.getScopedModels()
+      const scoped = store.getScopedModelsSync()
       expect(scoped).toHaveLength(10)
       expect(scoped.every(m => /^provider-\d+\/model-\d+$/.test(m))).toBe(true)
 
@@ -192,7 +192,7 @@ describe('XyzProviderStore scopedModels', () => {
       await store.modifyScopedModels(() => ['openai/gpt-4o'])
 
       await store.modify('openai', (cur) => ({ ...cur, quota: { enabled: true } }))
-      expect(store.getScopedModels()).toEqual(['openai/gpt-4o'])
+      expect(store.getScopedModelsSync()).toEqual(['openai/gpt-4o'])
       expect(store.getExtrasSync('openai')).toEqual({ authMethod: 'api_key', quota: { enabled: true } })
     })
   })
