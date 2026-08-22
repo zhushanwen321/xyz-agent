@@ -2,7 +2,7 @@
 //
 // 决策 D（修复 M4）：channel handshake 协议升级测试。
 //
-// 测试对象：extensions/subagent-workflow/src/execution/channel-registry-access.ts
+// 测试对象：extensions/universal/subagent-workflow/src/execution/channel-registry-access.ts
 //
 // 协议契约（与 ask-user 侧严格对齐）：
 //   key 字面量：     "@zhushanwen/pi-subagents.channelHandshake"

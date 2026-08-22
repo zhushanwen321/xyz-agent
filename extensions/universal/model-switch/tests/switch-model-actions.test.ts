@@ -11,7 +11,7 @@
  *
  * setup.ts 的文件系统操作（deletePolicyConfig / readPolicyConfigContent）全部 mock，
  * 不触真实磁盘。测试框架：vitest。
- * 运行命令：cd extensions/model-switch && npx vitest run tests/switch-model-actions.test.ts
+ * 运行命令：cd extensions/universal/model-switch && npx vitest run tests/switch-model-actions.test.ts
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";

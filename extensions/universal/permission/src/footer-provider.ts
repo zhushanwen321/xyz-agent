@@ -2,7 +2,7 @@
 //
 // permission 端的 footer line 注册入口（consumer 端握手协议）。
 //
-// 设计动机（沿用 ask-user #M4 修复模式，见 extensions/ask-user/src/channel-registry-register.ts）：
+// 设计动机（沿用 ask-user #M4 修复模式，见 extensions/universal/ask-user/src/channel-registry-register.ts）：
 //  - statusline 是 registry 唯一创建方（canonical owner）—— pi-statusline 独立项目
 //    （~/Code/pi-statusline）的 footer-handshake-access.ts
 //  - permission 是 consumer：永不创建 registry 实例，永不写 slot.registry 字段

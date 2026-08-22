@@ -23,7 +23,7 @@
  * mapping is missing, and xyz-agent degrades to textToSegments (split by plain text).
  * Missing mapping doesn't affect the agent main flow.
  *
- * Same package shape as @zhushanwen/pi-system-prompt (extensions/system-prompt/):
+ * Same package shape as @zhushanwen/pi-system-prompt (extensions/taiji/system-prompt/):
  * TypeScript source with no build step and no runtime deps (peer dep on pi only),
  * bundled as a builtin extension by scripts/bundle-extensions.mjs.
  */

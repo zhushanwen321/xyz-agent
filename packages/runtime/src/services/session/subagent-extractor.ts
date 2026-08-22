@@ -155,7 +155,7 @@ export function scanSubagentEntries(entries: unknown[]): SubagentRecord[] {
 /**
  * 收集自描述 subagent-record entry（W16 v1）。
  *
- * data schema = extensions/subagent-workflow/src/execution/record-entry.ts 的
+ * data schema = extensions/universal/subagent-workflow/src/execution/record-entry.ts 的
  * SubagentRecordEntryData（v1；跨包依赖方向不允许 import extensions/ 源码，此处按
  * 防御式逐字段守卫消费——runtime 只取 shared SubagentRecord 投影需要的字段，
  * eventLog/displayItems 等扩展内部字段不进 runtime 契约）。
@@ -189,7 +189,7 @@ function parseSelfDescribedSubagentRecord(entry: unknown): SubagentRecord | null
     console.warn(
       `[subagent-extractor] subagent-record entry schema version '${String(d.v)}' unsupported (expected 1) — ` +
         `extension/runtime version skew, skip this entry. Fix: align schema with ` +
-        `extensions/subagent-workflow/src/execution/record-entry.ts (W16 v1).`,
+        `extensions/universal/subagent-workflow/src/execution/record-entry.ts (W16 v1).`,
     )
     return null
   }

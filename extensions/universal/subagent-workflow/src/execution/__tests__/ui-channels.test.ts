@@ -2,7 +2,7 @@
 //
 // W1 红灯测试：ui-channels.ts — channel 提取（marker 解析）+ channel 注册表。
 //
-// 测试对象：extensions/subagent-workflow/src/execution/ui-channels.ts（新建）
+// 测试对象：extensions/universal/subagent-workflow/src/execution/ui-channels.ts（新建）
 // 契约来源：.fix-plans/00-master-summary.md §一 冲突 2「维度 2：channel 注册表」
 //
 // parseChannel(req): ExtensionUiRequest → { channel?, channelPayload? }

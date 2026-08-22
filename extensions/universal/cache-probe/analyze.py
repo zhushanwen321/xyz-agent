@@ -10,7 +10,7 @@
 
 entry schema v2：normal entry 只存变化项（增量），本脚本回放合并为全量指纹。
 
-用法：python3 extensions/cache-probe/analyze.py ~/.pi/agent/sessions [--since 2026-08-01]
+用法：python3 extensions/universal/cache-probe/analyze.py ~/.pi/agent/sessions [--since 2026-08-01]
 只读，不修改任何文件。
 """
 import argparse

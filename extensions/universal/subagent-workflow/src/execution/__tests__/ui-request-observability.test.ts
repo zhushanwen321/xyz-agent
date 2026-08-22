@@ -2,7 +2,7 @@
 //
 // M4 测试：ui-request-observability.ts — UiRequestObservability 纯逻辑类。
 //
-// 测试对象：extensions/subagent-workflow/src/execution/ui-request-observability.ts
+// 测试对象：extensions/universal/subagent-workflow/src/execution/ui-request-observability.ts
 // 契约来源：类注释（per-session 去重 + resetMissingHandlerWarnings 清洗 + setMode/getMode 往返）
 //
 // UiRequestObservability 职责：

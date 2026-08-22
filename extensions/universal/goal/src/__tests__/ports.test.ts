@@ -5,7 +5,7 @@
  * - setGuiWidget 经 guiSetWidget 编码 marker 进 ctx.ui.setWidget（RPC 模式）
  * - isGui 反映 ctx.mode（rpc → GUI 渲染通道；tui → 原生文本）
  *
- * 运行：cd extensions/goal && npx vitest run src/__tests__/ports.test.ts
+ * 运行：cd extensions/universal/goal && npx vitest run src/__tests__/ports.test.ts
  */
 import { describe, expect, it } from "vitest";
 import { GUI_WIDGET_MARKER, guiComponent } from "@xyz-agent/extension-protocol";

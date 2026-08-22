@@ -10,7 +10,7 @@
  *   正式验收证据是 RESULTS.md + 各场景独立跑记录（见 README），gate 跑快速集
  *   验证 harness 逻辑与 runner 健康。
  *
- * 用法：cd extensions/rename-session && node e2e/run-all.mjs
+ * 用法：cd extensions/universal/rename-session && node e2e/run-all.mjs
  * 调试保留现场：E2E_KEEP_TMP=1 node e2e/run-all.mjs
  */
 

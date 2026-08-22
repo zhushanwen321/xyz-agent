@@ -19,8 +19,8 @@ dev-link 本地源码（live edit，推荐日常使用）：
 
 ```bash
 # 见 .agents/skills/dev-link/；或直接用 pi 指定入口
-pi --extension <repo>/extensions/cache-probe/index.ts "<prompt>"
-pi --continue --extension <repo>/extensions/cache-probe/index.ts "<prompt>"
+pi --extension <repo>/extensions/universal/cache-probe/index.ts "<prompt>"
+pi --continue --extension <repo>/extensions/universal/cache-probe/index.ts "<prompt>"
 ```
 
 探针经 `--extension` 加载位于 extension 链头（pi 固定顺序），但 spFull/toolsSent 从 `before_provider_request` 的最终请求体提取，是 LLM 实际收到的前缀，不受链位置影响。
@@ -28,7 +28,7 @@ pi --continue --extension <repo>/extensions/cache-probe/index.ts "<prompt>"
 ## 归因分析
 
 ```bash
-python3 extensions/cache-probe/analyze.py ~/.pi/agent/sessions ~/.xyz-agent/pi/sessions
+python3 extensions/universal/cache-probe/analyze.py ~/.pi/agent/sessions ~/.xyz-agent/pi/sessions
 ```
 
 输出五部分：扫描概览 / 命中率基线 / 归因矩阵 / 进程边界漂移 / GO-NO-GO 决策建议。
@@ -41,6 +41,6 @@ python3 extensions/cache-probe/analyze.py ~/.pi/agent/sessions ~/.xyz-agent/pi/s
 
 ## 日常维护
 
-- 校验：`cd extensions/cache-probe && pnpm typecheck && pnpm test`（或仓库级 `pnpm extensions:typecheck && pnpm extensions:test`）
+- 校验：`cd extensions/universal/cache-probe && pnpm typecheck && pnpm test`（或仓库级 `pnpm extensions:typecheck && pnpm extensions:test`）
 - 每日检查：跑一次 analyze.py，确认 `sessions_with_probe` 增长、`error entries` 为 0 或已知原因
 - 采集满 200 turn 后 analyze.py 第 5 部分给出快照方案 GO/NO-GO 倾向；结论与后续动作记录回设计文档

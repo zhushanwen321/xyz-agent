@@ -30,9 +30,9 @@ export const WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set(['workflow'])
  * 权威源在 extensions/subagent-workflow（跨包依赖方向不允许 runtime import extensions/
  * 源码，只能在此复制字面量并保持等值——同 workflow-extractor SNAPSHOT_VERSION 的本地
  * 副本模式）：
- * - `subagent-record`：extensions/subagent-workflow/src/execution/record-entry.ts 的
+ * - `subagent-record`：extensions/universal/subagent-workflow/src/execution/record-entry.ts 的
  *   SUBAGENT_RECORD_CUSTOM_TYPE（record 状态迁移点 append 完整快照，data schema v1）
- * - `workflow-record`：extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts 的
+ * - `workflow-record`：extensions/universal/subagent-workflow/src/orchestration/jsonl-run-store.ts 的
  *   WORKFLOW_RECORD_CUSTOM_TYPE（每次成功 flush append 完整 RunSnapshot，data schema v1）
  *
  * 消费方：event-adapter（entry_appended 失效过滤）、subagent/workflow-extractor（entry

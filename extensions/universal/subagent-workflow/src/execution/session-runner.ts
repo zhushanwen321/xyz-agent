@@ -181,7 +181,7 @@ const STDERR_MAX_CHARS = 65_536;
  *
  * [跨包契约 SSOT] 此字面量是两个独立 npm 包（@zhushanwen/pi-subagent-workflow 与
  * @zhushanwen/pi-structured-output）之间的隐式 env 契约。structured-output 包内同名常量为
- * `ENV_SCHEMA = "PI_WORKFLOW_SCHEMA"`（见 extensions/structured-output/src/index.ts）。
+ * `ENV_SCHEMA = "PI_WORKFLOW_SCHEMA"`（见 extensions/universal/structured-output/src/index.ts）。
  * 两包是独立 npm 包不能直接 import，故各自保留常量但显式标注此契约关系——
  * 任一端改名必须同步另一端，否则权威 schema 注入会静默断桥（子进程不注册 tool/hook）。
  */

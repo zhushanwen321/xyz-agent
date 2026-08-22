@@ -2,7 +2,7 @@
 //
 // W1 红灯测试：ui-interaction-model.ts — method 交互模型分类。
 //
-// 测试对象：extensions/subagent-workflow/src/execution/ui-interaction-model.ts（新建）
+// 测试对象：extensions/universal/subagent-workflow/src/execution/ui-interaction-model.ts（新建）
 // 契约来源：.fix-plans/00-master-summary.md §一 冲突 2「维度 1：透传判定规则」
 //
 // isDialogMethod(method):

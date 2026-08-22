@@ -201,7 +201,7 @@ const results = await parallel(
 );
 ```
 
-> 内置通用编排 workflow（chain / parallel / scatter-gather / map-reduce，可直接 `workflow run`，用 `agent()` 自包含实现）见 `extensions/subagent-workflow/workflows/`。本段教 `workflow()` 嵌套 API，workflows 目录是开箱即用的通用编排工具（用 `agent()` 而非 `workflow()` 嵌套）。
+> 内置通用编排 workflow（chain / parallel / scatter-gather / map-reduce，可直接 `workflow run`，用 `agent()` 自包含实现）见 `extensions/universal/subagent-workflow/workflows/`。本段教 `workflow()` 嵌套 API，workflows 目录是开箱即用的通用编排工具（用 `agent()` 而非 `workflow()` 嵌套）。
 
 ### Other globals
 

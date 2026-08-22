@@ -14,7 +14,7 @@
  * mock 策略（参照 msg-id-mapper 测试模式）：pi SDK import type 零运行时解析，
  * ExtensionAPI 用结构化桩；node:fs mock 后按路径分流（env 指向假目录，不碰真实文件系统）。
  *
- * 运行：cd extensions/system-prompt && npx vitest run
+ * 运行：cd extensions/taiji/system-prompt && npx vitest run
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'

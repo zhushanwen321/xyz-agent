@@ -206,7 +206,11 @@ fi
 #    仅在 staged extensions/ 文件变更时触发，与 2b 共用 SKIP_EXTENSION_LINT 跳过开关。
 # ============================================================================
 
-EXTENSION_PKG_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/[^/]+/package\.json$" || true)
+# [HISTORICAL] 原一层模式 ^extensions/[^/]+/package\.json$ 在 2026-08-22 目录分组
+# （taiji/universal）后恒空匹配——纯 package.json 变更（版本 bump / pi manifest / role
+# 字段）静默跳过本段检查。改为显式分组两层模式，同步排除 shared/（共享库无 pi manifest，
+# 通配两层会误报）。
+EXTENSION_PKG_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/(taiji|universal)/[^/]+/package\.json$" || true)
 
 if [ -n "$EXTENSION_FILES" ] || [ -n "$EXTENSION_PKG_FILES" ]; then
     print_section "[pi extensions manifest & convention 检查]"
@@ -370,6 +374,31 @@ print('OK' if matched else 'MISSING')
         fi
     else
         echo -e "${YELLOW}[SKIP] extensions manifest & convention 检查已跳过${NC}"
+    fi
+fi
+
+# ============================================================================
+# 2d. extension 结构一致性检查（分组目录 / role 字段 / 依赖台账 / 一层路径残留）
+#     scripts/check-extension-dependencies.mjs：①目录 ↔ xyz-agent.role 一致
+#     ②taiji/ ⊆ mandatory 清单 ③extensions/ 一层禁放包 ④extension-dependencies.json
+#     双向一致 ⑤活文件一层路径残留。零第三方依赖，毫秒级。CI 侧同一脚本由
+#     preflight-check.sh 调用，此处提前到提交时拦截。复用 SKIP_EXTENSION_LINT
+#     开关（不新增逃生口）。
+# ============================================================================
+
+EXTENSION_STRUCT_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/|^extension-dependencies\.json$|^packages/shared/src/mandatory-extensions\.json$" || true)
+
+if [ -n "$EXTENSION_STRUCT_FILES" ]; then
+    print_section "[extension 结构一致性检查]"
+
+    if [ "$SKIP_EXTENSION_LINT" != "1" ]; then
+        if ! node scripts/check-extension-dependencies.mjs; then
+            echo -e "${RED}[ERROR] extension 结构一致性检查失败，按上方 ✗ 明细修复后重试${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${YELLOW}[SKIP] extension 结构检查已跳过${NC}"
     fi
 fi
 

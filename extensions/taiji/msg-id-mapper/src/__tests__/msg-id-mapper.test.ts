@@ -11,7 +11,7 @@
  * ExtensionAPI/ExtensionContext 用结构化桩（参照 subagent-workflow mocks/ 的最小桩模式，
  * 本包无 SDK 运行时依赖故不需要 alias 配置）。
  *
- * 运行：cd extensions/msg-id-mapper && npx vitest run
+ * 运行：cd extensions/taiji/msg-id-mapper && npx vitest run
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import createMapper from '../index'

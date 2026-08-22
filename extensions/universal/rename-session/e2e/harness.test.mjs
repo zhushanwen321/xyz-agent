@@ -1,7 +1,7 @@
 /**
  * harness 断言纯函数单测（T1）。
  *
- * 运行：cd extensions/rename-session && npx vitest run e2e/harness.test.mjs
+ * 运行：cd extensions/universal/rename-session && npx vitest run e2e/harness.test.mjs
  * （vitest.config.ts include 是精确文件名 "e2e/harness.test.mjs"，既有 src/__tests__ 不受影响；
  *  场景脚本 run-aN.mjs 不在 CI 内——glob 写法会误导未来把 scenarios.test.mjs 收进 CI）
  */

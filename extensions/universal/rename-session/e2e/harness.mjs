@@ -138,7 +138,7 @@ export function parseJsonlEntries(lines) {
 	return entries;
 }
 
-// previewText 同构常量（extensions/rename-session/src/llm.ts D9 契约，Unicode 码点单位）
+// previewText 同构常量（extensions/universal/rename-session/src/llm.ts D9 契约，Unicode 码点单位）
 const PREVIEW_MAX_CODE_POINTS = 300;
 const PREVIEW_HEAD_CODE_POINTS = 200;
 const PREVIEW_TAIL_CODE_POINTS = 100;

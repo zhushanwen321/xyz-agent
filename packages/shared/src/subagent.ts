@@ -83,7 +83,7 @@ export interface SubagentRecord {
   result?: string
   /**
    * L2 关闭原因（仅 status='closed' 时有意义）。对齐 extension 侧 ClosedReason 六值
-   * （extensions/subagent-workflow/src/execution/types.ts）：
+   * （extensions/universal/subagent-workflow/src/execution/types.ts）：
    * 'parent-shutdown' | 'parent-fork' | 'parent-new' | 'user-close' | 'cancelled' | 'gc'。
    * event-interpreter（bg-notify 实时路径）与 subagent-extractor（JSONL 磁盘路径）投影，
    * UI 侧经 deriveClosedDisplay 派生成功/失败/取消展示语义。用 string 而非字面量联合：
@@ -118,9 +118,9 @@ export interface SubagentRecord {
  * - 其余 → done（自然完成 / parent-fork / parent-new / parent-shutdown / user-close 等级联关闭）
  *
  * 派生规则与 extension 侧两处实现同构（三处一致，改任一处须同步其余两处）：
- * - TUI 渲染：extensions/subagent-workflow/src/interface/bg-notify-render.ts
+ * - TUI 渲染：extensions/universal/subagent-workflow/src/interface/bg-notify-render.ts
  *   renderRecordLines 的 verb 派发（cancelled / gc+error → failed / finished）
- * - LLM 通知文案：extensions/subagent-workflow/src/execution/notifier.ts
+ * - LLM 通知文案：extensions/universal/subagent-workflow/src/execution/notifier.ts
  *   buildLlmContent 的 closed 分支（cancelled / gc+error → failed / completed）
  *
  * 两个关键点（勿回退成「error 有值即 failed」的旧规则）：

@@ -99,7 +99,7 @@ The headless branch physically removes the tool from the session (`setActiveTool
 ## File structure
 
 ```
-extensions/ask-user/
+extensions/universal/ask-user/
 ├── index.ts                  # re-export entry (Pi loads via package.json pi.extensions)
 ├── package.json
 ├── README.md                 # this file — usage contract for LLM callers + overview

@@ -28,7 +28,7 @@ touch $TMP/agent/auto-rename-enabled                    # rename 开关 flag（l
 env PI_CODING_AGENT_DIR=$TMP/agent XYZ_AGENT_DEBUG=1 PI_SKIP_VERSION_CHECK=1 \
   <repo>/node_modules/.bin/pi --mode rpc --session-dir $TMP/sessions \
   --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve \
-  --extension <repo>/extensions/rename-session
+  --extension <repo>/extensions/universal/rename-session
 # stdin: {"id":"p-1","type":"prompt","message":"1+1等于几？只回答数字。"}
 ```
 
@@ -68,7 +68,7 @@ F=<tmp>/sessions/2026-08-15T..._<uuid>.jsonl
 env PI_CODING_AGENT_DIR=$TMP/agent XYZ_AGENT_DEBUG=1 \
   <repo>/node_modules/.bin/pi --mode rpc --session-dir $TMP/sessions \
   --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve \
-  --extension <repo>/extensions/rename-session --session "$F"
+  --extension <repo>/extensions/universal/rename-session --session "$F"
 # get_state → sessionFile===F；prompt 第二条 → turn_end(stop) → stderr: skip: count=2
 ```
 
@@ -137,7 +137,7 @@ env PI_CODING_AGENT_DIR=$TMP/agent XYZ_AGENT_DEBUG=1 \
 - **断言纯函数**（场景脚本与单测共用）：`rebuildPreview` / `parseLogMessages` / `extractLastStopAssistant` / `assertTitleGuards` / `classifyFailure`
 - **清理**：handle 的 `kill()`（按 PID）与 `cleanup()`（kill + 删 tmp；`E2E_KEEP_TMP=1` 保留现场）
 
-单测：`cd extensions/rename-session && npx vitest run e2e/harness.test.mjs`（根 vitest.config.ts 的 include 白名单精确列 `e2e/harness.test.mjs`；scenarios.test.mjs 只在专用 e2e/vitest.e2e.config.ts 的 include 里）。
+单测：`cd extensions/universal/rename-session && npx vitest run e2e/harness.test.mjs`（根 vitest.config.ts 的 include 白名单精确列 `e2e/harness.test.mjs`；scenarios.test.mjs 只在专用 e2e/vitest.e2e.config.ts 的 include 里）。
 
 环境要求：`~/.pi/agent/auth.json` 存在且含 `xiaomi-token-plan-cn` key（缺失时改用 `XIAOMI_TOKEN_PLAN_CN_API_KEY` env，见探针 1）。
 

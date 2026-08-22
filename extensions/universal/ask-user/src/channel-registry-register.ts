@@ -18,7 +18,7 @@ import type { ChannelHandler } from "./channel-handler";
 /**
  * 进程级 channel registry 握手的 globalThis key（Symbol.for 跨模块共享）。
  *
- * ⚠️ 必须与 extensions/subagent-workflow/src/execution/channel-registry-access.ts 的字面量
+ * ⚠️ 必须与 extensions/universal/subagent-workflow/src/execution/channel-registry-access.ts 的字面量
  * 完全一致——两边用同一字符串确保拿到同一 slot 实例。改名必须两侧同步。
  */
 export const CHANNEL_HANDSHAKE_KEY = Symbol.for(

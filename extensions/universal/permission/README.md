@@ -21,8 +21,8 @@ Pi permission 扩展 — 四档权限模式（yolo / auto / approve / strict）+
 pi install npm:@zhushanwen/pi-permission
 
 # 本地开发（symlink）
-ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensions/permission \
-      ~/.pi/agent/extensions/permission
+ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensions/universal/permission \
+      ~/.pi/agent/extensions/universal/permission
 ```
 
 ## 配置

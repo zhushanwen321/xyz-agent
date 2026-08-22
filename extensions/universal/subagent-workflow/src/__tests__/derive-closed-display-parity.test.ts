@@ -3,9 +3,9 @@
 // closed 终态的展示语义派生在三处手写同构（跨包依赖方向不允许互相 import 源码，
 // 只能复制判定逻辑）：
 //   1. packages/shared/src/subagent.ts —— deriveClosedDisplay（renderer 消费的 SSOT）
-//   2. extensions/subagent-workflow/src/interface/bg-notify-render.ts —— renderRecordLines
+//   2. extensions/universal/subagent-workflow/src/interface/bg-notify-render.ts —— renderRecordLines
 //      （TUI 渲染：verb 派发块 + closed case 正文块两轮判定）
-//   3. extensions/subagent-workflow/src/execution/notifier.ts —— buildLlmContent
+//   3. extensions/universal/subagent-workflow/src/execution/notifier.ts —— buildLlmContent
 //      （LLM 通知文案的 closed 分支）
 //
 // 同构契约（顺序敏感，勿回退成「error 有值即 failed」的旧规则）：
@@ -96,7 +96,7 @@ const BASE = ["fallback-gc", "cancelled", "gc-error"];
 /** 失配时的行动指引错误消息（vitest expect 第二参数）。 */
 const MISMATCH_GUIDE =
   "deriveClosedDisplay 三源同构契约失配。期望判定顺序 [closedReason??'gc' 兜底 → cancelled 优先（不参与 error）→ gc+error 次之 → 其余 done]。" +
-  "改任一处必须同步其余两处：packages/shared/src/subagent.ts deriveClosedDisplay / extensions/subagent-workflow/src/interface/bg-notify-render.ts renderRecordLines / extensions/subagent-workflow/src/execution/notifier.ts buildLlmContent。" +
+  "改任一处必须同步其余两处：packages/shared/src/subagent.ts deriveClosedDisplay / extensions/universal/subagent-workflow/src/interface/bg-notify-render.ts renderRecordLines / extensions/universal/subagent-workflow/src/execution/notifier.ts buildLlmContent。" +
   "历史 bug：notifier gc+error 分支曾被 patch 分支遮蔽，gc 失败终态被 LLM 告知 completed。若你是有意重构此处判定，请同步更新本护栏测试（src/__tests__/derive-closed-display-parity.test.ts）的特征提取。";
 
 describe("deriveClosedDisplay 三源同构契约（shared / bg-notify-render / notifier）", () => {

@@ -2,7 +2,7 @@
 //
 // W2 红灯测试：dialog-queue.ts — L2 跨子进程全局 dialog 串行队列。
 //
-// 测试对象：extensions/subagent-workflow/src/execution/dialog-queue.ts（新建）
+// 测试对象：extensions/universal/subagent-workflow/src/execution/dialog-queue.ts（新建）
 // 契约来源：.fix-plans/00-master-summary.md §一 冲突 3（L2 DialogGlobalQueue 设计）
 //
 // DialogGlobalQueue 设计要点：

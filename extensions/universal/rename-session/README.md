@@ -101,7 +101,7 @@ rename 是 best-effort 副作用，任何失败静默跳过、绝不阻断 agent
 E2E 是本地人工触发的验收资产（真实 pi 进程 + 真实模型，不进常规 CI），覆盖五个场景：A1 触发时机证据链（流序/内容匹配/负向/行序/结构五重——结构断言 = 仅一条 LLM request + [user,assistant,user] 三元组）、A2 slug 风格 ×3、A3 防覆盖（静态/竞态/一次性）、A4 error 轮两阶段（`--session` 续跑）、A5 超时兜底（hang provider）。
 
 ```bash
-cd extensions/rename-session
+cd extensions/universal/rename-session
 node e2e/run-a1.mjs    # 单场景独立可跑（run-a1 ~ run-a5）
 node e2e/run-all.mjs   # 顺序全跑：单场景失败不阻断后续，汇总表 + exit code（任一失败（含 KEBAB_NON_COMPLIANT）→ 1）
 ```

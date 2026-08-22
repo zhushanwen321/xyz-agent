@@ -15,7 +15,7 @@
  * - __xyz_get_system_prompt__（Trace 视图「现取当前值」通道）→ pi.appendEntry
  *   写 xyz:current-system-prompt custom entry（fullText/charCount/fetchedAt 形状）
  *
- * 运行：cd extensions/agent-ext && npx vitest run
+ * 运行：cd extensions/taiji/agent-ext && npx vitest run
  */
 import { describe, it, expect, vi } from "vitest";
 

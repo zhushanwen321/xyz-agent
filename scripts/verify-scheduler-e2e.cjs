@@ -72,7 +72,7 @@ function locatePiBinary() {
 
 /**
  * importer.ts getLegacyStorePath 的 CommonJS 端口（R-cleanup 用，推导需清理的路径）。
- * 推导逻辑必须与 extensions/scheduler/src/importer.ts 完全一致。
+ * 推导逻辑必须与 extensions/universal/scheduler/src/importer.ts 完全一致。
  */
 function getLegacyStorePath(cwd) {
   const home = os.homedir()

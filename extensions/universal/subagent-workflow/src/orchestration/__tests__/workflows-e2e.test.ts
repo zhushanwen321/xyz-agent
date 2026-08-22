@@ -20,7 +20,7 @@
  *
  * registry 绕过说明（见末尾 notes）：
  *   WorkflowScriptRegistryImpl(config) 的扫描源是固定约定目录（.pi/workflows 等），
- *   无法指向 extensions/subagent-workflow/workflows/。为不改源码，这里直接读 .js 文件
+ *   无法指向 extensions/universal/subagent-workflow/workflows/。为不改源码，这里直接读 .js 文件
  *   内容 + 手动构造 WorkflowScript 对象，包装为一个满足 WorkflowScriptRegistry 接口
  *   的自定义 registry（loadWorkflowsFromDir）。
  */
@@ -48,7 +48,7 @@ import type { WorkflowScriptRegistry } from "../models/workflow-script-registry.
 import { WorkerHostImpl } from "../worker-host.ts";
 
 // ── 路径：定位真实 workflows 目录 ─────────────────────────────────────────
-// 本测试文件在 src/orchestration/__tests__/，workflows 目录在 extensions/subagent-workflow/workflows/
+// 本测试文件在 src/orchestration/__tests__/，workflows 目录在 extensions/universal/subagent-workflow/workflows/
 // 即 __dirname → ..  (orchestration) → ..  (src) → ..  (subagent-workflow) → workflows
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKFLOWS_DIR = join(__dirname, "..", "..", "..", "workflows");

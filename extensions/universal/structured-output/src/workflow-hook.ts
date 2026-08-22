@@ -67,7 +67,7 @@ export class RetryState {
  * 从 tool 执行结果里提取错误文本。
  *
  * Pi 框架在 tool execute 抛错时，构造 `{ content: [{ type: "text", text }] }`
- * 塞进 result.content[0].text（见 extensions/unified-hooks 的 extractErrorText 及其
+ * 塞进 result.content[0].text（见 extensions/universal/unified-hooks 的 extractErrorText 及其
  * 文档：SDK 事件结构里没有独立 errorMessage 字段，错误文本只能从 result.content 里取）。
  * 这里防御性取多种结构，取不到就返回 undefined（调用方降级为通用提示）。
  */

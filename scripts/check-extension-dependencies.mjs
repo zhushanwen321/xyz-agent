@@ -129,8 +129,67 @@ for (const pkg of diskPackages) {
   }
 }
 
+// ── 5. 一层路径残留：活文件禁止引用 extensions/<pkg>/（分组后必须带 taiji|universal 前缀）──
+// 背景：2026-08-22 目录分组时人工适配了 14 处写死一层路径的引用（脚本/eslint/tsconfig/
+// 文档），本检测防新引用回退。包名清单从磁盘动态构建（新增包自动纳入检测范围）。
+// 检测面 = 活代码/配置/活文档；历史记录与构建产物不检测（保留当时事实，不追溯改写）：
+//   - resources/：staged 构建产物（bundle 时已是新路径，磁盘残留旧 staged 无意义）
+//   - CHANGELOG.md / adr/ / .orchestration/ / 包内 docs/：历史记录（当时路径是事实）
+//   - (?<!\./)：排除包内相对导入 ./extensions/xxx（与仓库顶层 extensions/ 无关）
+const SCAN_ROOTS = ['scripts', 'packages', 'apps', 'extensions', 'docs/extensions', '.agents/skills']
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage', '__pycache__', 'resources'])
+const SKIP_PATH_PARTS = ['/adr/', '/.orchestration/']
+const SCAN_EXT = new Set(['.ts', '.mjs', '.js', '.cjs', '.sh', '.py', '.yml', '.yaml', '.json', '.md'])
+
+// 动态包名清单：分组包 + shared 库（一层引用 shared 库同样非法）
+const knownNames = new Set(diskPackages.map((p) => p.dir))
+for (const dir of readdirSync(SHARED_DIR)) {
+  if (existsSync(join(SHARED_DIR, dir, 'package.json'))) knownNames.add(dir)
+}
+
+const staleRe = new RegExp(`(?<!\\./)extensions/(${[...knownNames].join('|')})(?=[/\\s"'\\\`,)\\]]|$)`)
+// 历史记录判定：CHANGELOG / ADR / 验收报告 / 包内 docs 设计记录 / 历史事故文档
+const HISTORICAL_FILES = new Set([
+  'docs/extensions/tool-schema-openai-compat.md', // 2026-07 OpenAI 兼容事故复盘，路径为当时事实
+])
+function entryIsHistorical(rel) {
+  const norm = `/${rel}`
+  if (HISTORICAL_FILES.has(rel)) return true
+  if (rel === 'CHANGELOG.md' || rel.endsWith('/CHANGELOG.md')) return true
+  if (SKIP_PATH_PARTS.some((part) => norm.includes(part))) return true
+  if (/^extensions\/(taiji|universal)\/[^/]+\/docs\//.test(rel)) return true
+  return false
+}
+function* scanFiles(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_DIRS.has(entry.name)) continue
+    const p = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      yield* scanFiles(p)
+    } else {
+      const dot = entry.name.slice(entry.name.lastIndexOf('.'))
+      if (SCAN_EXT.has(dot)) yield p
+    }
+  }
+}
+let staleScanned = 0
+for (const root of SCAN_ROOTS) {
+  if (!existsSync(join(ROOT, root))) continue
+  for (const file of scanFiles(join(ROOT, root))) {
+    const rel = file.slice(ROOT.length + 1)
+    if (entryIsHistorical(rel)) continue
+    staleScanned++
+    const text = readFileSync(file, 'utf-8')
+    const m = staleRe.exec(text)
+    if (m) {
+      const line = text.slice(0, m.index).split('\n').length
+      fail(`一层路径残留: ${rel}:${line} 引用 "${m[0]}"（分组后应为 extensions/{taiji|universal}/${m[1]}/）`)
+    }
+  }
+}
+
 if (failed === 0) {
-  console.log(`✓ extension-dependencies.json 一致（${entries.length} entries ↔ 磁盘 ${diskPackages.length} 包）`)
+  console.log(`✓ extension-dependencies.json 一致（${entries.length} entries ↔ 磁盘 ${diskPackages.length} 包，分组/role/路径残留 ${staleScanned} 文件扫描通过）`)
   process.exit(0)
 }
 console.error('extension-dependencies.json 与磁盘不一致，修复后重跑（见上方 ✗ 明细）')

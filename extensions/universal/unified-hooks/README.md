@@ -20,7 +20,7 @@
 ```bash
 # symlink 方式（开发推荐）
 ln -s /path/to/xyz-pi-extensions-workspace/main/packages/unified-hooks \
-      ~/.pi/agent/extensions/unified-hooks
+      ~/.pi/agent/extensions/universal/unified-hooks
 
 # npm 方式（正式）
 pi install npm:@zhushanwen/pi-unified-hooks

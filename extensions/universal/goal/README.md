@@ -14,8 +14,8 @@ Codex 风格的 `/goal` 命令 — 持久目标驱动自主循环，支持任务
 
 ```bash
 # symlink 方式（开发推荐）
-ln -s /path/to/xyz-pi-extensions-workspace/<branch>/extensions/goal \
-      ~/.pi/agent/extensions/goal
+ln -s /path/to/xyz-pi-extensions-workspace/<branch>/extensions/universal/goal \
+      ~/.pi/agent/extensions/universal/goal
 
 # npm 方式（正式）
 pi install npm:@zhushanwen/pi-goal

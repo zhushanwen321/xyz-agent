@@ -188,7 +188,7 @@ const RENAME_SESSION_CONFIG_REL = join('config', 'rename-session-ext-config.json
 
 /**
  * 文件缺失/损坏时的回退默认值（与 extension 的 DEFAULT_RENAME_CONFIG 一致：
- * extensions/rename-session/src/pure.ts）。仅 setRenameModel 落盘时用作基底。
+ * extensions/universal/rename-session/src/pure.ts）。仅 setRenameModel 落盘时用作基底。
  */
 const RENAME_MODEL_DEFAULT_CONFIG: Record<string, unknown> = {
   enabled: false,
