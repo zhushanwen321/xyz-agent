@@ -23,6 +23,8 @@ export { default as OAuthDialog } from './provider/OAuthDialog.vue'
 export { default as ProviderTemplatePicker } from './provider/ProviderTemplatePicker.vue'
 export { default as ProviderQuickSetup } from './provider/ProviderQuickSetup.vue'
 export { default as SoundPreviewButton } from './common/SoundPreviewButton.vue'
+export { default as ScopedModelSection } from './common/ScopedModelSection.vue'
+export type { ScopedRenderItem, SelectableModel } from './common/scoped-model-types'
 export { default as SourceImportSection } from './common/SourceImportSection.vue'
 
 export {

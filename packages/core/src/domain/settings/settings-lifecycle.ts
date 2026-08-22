@@ -60,7 +60,10 @@ async function init(): Promise<void> {
   const transport = getSettingsTransport()
   const store = getSettingsStore()
 
-  unsubs.push(transport.onProviders((p) => { store.providers.value = p }))
+  unsubs.push(transport.onProviders((p, scopedModels) => {
+    store.providers.value = p
+    if (scopedModels !== undefined) store.scopedModels.value = scopedModels
+  }))
   // models 与 providers 同源（sendInitialState 同 step 推、provider 增删同广播），故常驻订阅
   unsubs.push(transport.onModels((m) => { store.models.value = m }))
   unsubs.push(transport.onSkills((s) => { store.skills.value = s }))
@@ -97,7 +100,11 @@ async function init(): Promise<void> {
 async function refreshProviders(): Promise<void> {
   const store = getSettingsStore()
   try {
-    store.providers.value = await getSettingsTransport().listProviders()
+    const reply = await getSettingsTransport().listProviders()
+    // listProviders 返回类型为 ProviderInfo[]，但实际从 getProviders RPC 来的数据
+    // 可能含 scopedModels 字段（作为附加数据返回）。此处直赋 providers，
+    // scopedModels 由 onProviders 订阅通道推回。
+    store.providers.value = reply
   // eslint-disable-next-line taste/no-silent-catch -- 拉取失败不阻塞 UI：onProviders 订阅会兜底推回最新数据，无需打扰用户
   } catch (e) {
     console.warn('[settings] listProviders 失败，依赖订阅兜底', e)
