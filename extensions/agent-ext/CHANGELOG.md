@@ -1,5 +1,11 @@
 # @zhushanwen/pi-agent-ext
 
+## 1.1.0
+
+### Minor Changes
+
+- ccd7d2d70: (no changeset body; minor version bump)
+
 ## 1.0.1
 
 ### Patch Changes
