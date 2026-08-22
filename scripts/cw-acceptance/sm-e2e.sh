@@ -93,15 +93,28 @@ if [ "$ID" = "E7" ]; then
     echo "E7 FAIL: base commit $BASE_COMMIT not reachable"
     exit 1
   fi
-  LINT_OUTPUT=$(pnpm run lint 2>&1) || true
-  CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" HEAD -- '*.ts' '*.tsx' '*.vue' '*.mts' 2>/dev/null || true)
+  CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" HEAD -- '*.ts' '*.tsx' '*.vue' '*.mts' '*.mjs' 2>/dev/null || true)
   if [ -n "$CHANGED_FILES" ]; then
-    # 检查改动文件中是否有新增 lint error
+    # 对改动文件逐个执行 eslint --format=json，解析 error 数
     while IFS= read -r f; do
-      if echo "$LINT_OUTPUT" | grep -q "$f.*error"; then
-        echo "[sm-e2e] E7 FAIL: lint error in changed file $f" >&2
-        echo "E7 FAIL"
-        exit 1
+      [ -z "$f" ] && continue
+      [ ! -f "$f" ] && continue
+      LINT_JSON=$(cd "$REPO_ROOT" && npx eslint --format=json "$f" 2>/dev/null) || true
+      if [ -n "$LINT_JSON" ]; then
+        ERROR_COUNT=$(echo "$LINT_JSON" | node -e "
+          let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{
+            try {
+              const arr = JSON.parse(d);
+              const errors = arr.reduce((s,f)=>s+f.errorCount,0);
+              process.stdout.write(String(errors));
+            } catch { process.stdout.write('0'); }
+          });
+        " 2>/dev/null)
+        if [ "$ERROR_COUNT" -gt 0 ] 2>/dev/null; then
+          echo "[sm-e2e] E7 FAIL: $ERROR_COUNT lint error(s) in $f" >&2
+          echo "E7 FAIL"
+          exit 1
+        fi
       fi
     done <<< "$CHANGED_FILES"
   fi

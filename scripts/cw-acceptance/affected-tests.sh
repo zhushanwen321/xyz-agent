@@ -28,7 +28,7 @@ if ! git merge-base --is-ancestor "$BASE_COMMIT" HEAD 2>/dev/null; then
 fi
 
 # 推导 diff 中变更的文件
-CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" HEAD -- '*.ts' '*.tsx' '*.vue' '*.mts' 2>/dev/null || true)
+CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" HEAD -- '*.ts' '*.tsx' '*.vue' '*.mts' '*.mjs' 2>/dev/null || true)
 
 if [ -z "$CHANGED_FILES" ]; then
   echo "[affected-tests] no changed source files, skipping" >&2
