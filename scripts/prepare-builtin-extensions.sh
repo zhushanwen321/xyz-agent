@@ -16,6 +16,7 @@
 # 产物（apps/electron/resources/extensions/@zhushanwen/<pkg>/）：
 #  - index.js + index.js.map（bundle 产物，自包含，无 node_modules）
 #  - package.json（pi.extensions 改指 ./index.js；源码 package.json 不动）
+#  - README.md / ARCHITECTURE.md（有则拷，供产物自描述；bundle-extensions.mjs 拷贝）
 #  - pi-permission 额外含 tree-sitter-bash.wasm + web-tree-sitter.wasm
 #
 # dev/build 加载路径分流（见 docs/architecture/builtin-extension-dev-build-split.md）：
@@ -50,44 +51,24 @@ echo ""
 rm -rf "$STAGED_SCOPED"
 mkdir -p "$STAGED_SCOPED"
 
-# 2. esbuild bundle builtin extension（数量以 mandatory-extensions.json SSOT 为准）成自包含 index.js
+# 2. esbuild bundle builtin extension（数量以 mandatory-extensions.json SSOT 为准）成自包含 index.js；
+#    README/ARCHITECTURE 文档与 manifest 资源由 bundle-extensions.mjs 一并拷入 staged
+#    （「mandatory 包 → 源码目录 → staged 产物」在 bundle 脚本内单一 owner，本脚本不再
+#    重复推导源码目录）
 node "$REPO_ROOT/scripts/bundle-extensions.mjs"
 
-# 3. 补充非源码文档资源（README / ARCHITECTURE）。bundle 已产出运行时核心文件
-#    （index.js / package.json / wasm），此步仅拷文档供产物自描述，严格排除 *.ts /
-#    src/ / node_modules / 测试，防 .ts 入口残留触发 resolver fallback 旁路 bundle。
-for pkg_dir in $PKG_DIRS; do
-	src_dir="${pkg_dir#pi-}"          # pi-ask-user → ask-user（分组下目录名）
-	dest_pkg="$STAGED_SCOPED/$pkg_dir"
-	src_pkg=""
-	for group in taiji universal; do
-		if [[ -d "$REPO_ROOT/extensions/$group/$src_dir" ]]; then
-			src_pkg="$REPO_ROOT/extensions/$group/$src_dir"
-			break
-		fi
-	done
-
-	if [[ -n "$src_pkg" ]]; then
-		rsync -a \
-			--include='README.md' \
-			--include='ARCHITECTURE.md' \
-			--exclude='*' \
-			"$src_pkg/" "$dest_pkg/" 2>/dev/null || true
-	fi
-done
-
-# 4. 校验 staged 无 index.ts / *.ts 残留（R3 关键防护，fail-fast）
+# 3. 校验 staged 无 index.ts / *.ts 残留（R3 关键防护，fail-fast）
 RESIDUAL_TS=$(find "$STAGED_SCOPED" \( -name "index.ts" -o -name "*.ts" \) 2>/dev/null || true)
 if [[ -n "$RESIDUAL_TS" ]]; then
 	echo "" >&2
 	echo "ERROR: staged 残留 .ts 文件，resolver fallback 会旁路 bundle：" >&2
 	echo "$RESIDUAL_TS" >&2
 	echo "" >&2
-	echo "[FIX] bundle-extensions.mjs 是否正确产出 index.js？rsync 是否排除 *.ts？" >&2
+	echo "[FIX] bundle-extensions.mjs 是否正确产出 index.js（manifest 资源拷贝排除 *.ts）？" >&2
 	exit 1
 fi
 
-# 5. 校验每包有 index.js + pi-permission 有 wasm（fail-fast，拦截残缺产物）
+# 4. 校验每包有 index.js + pi-permission 有 wasm（fail-fast，拦截残缺产物）
 FAIL=0
 for pkg_dir in $PKG_DIRS; do
 	dest_pkg="$STAGED_SCOPED/$pkg_dir"
@@ -106,7 +87,7 @@ if [[ $FAIL -ne 0 ]]; then
 	exit 1
 fi
 
-# 6. 成功汇总
+# 5. 成功汇总
 echo ""
 echo "=== staged 产物汇总 ==="
 TOTAL_KB=0
