@@ -32,8 +32,38 @@ function writeModelsJson(providers: Record<string, unknown>): void {
   writeFileSync(join(agentDir, 'models.json'), JSON.stringify({ providers }, null, 2))
 }
 
-function readModelsJson(): Record<string, any> {
-  return JSON.parse(readFileSync(join(agentDir, 'models.json'), 'utf-8'))
+/**
+ * models.json 落盘形态的最小断言窄化（JSON.parse 边界不裸 any，下游字段保持类型检查；
+ * 只声明本测试断言用到的字段，非法值路径经 reject 不落盘、不会读到这些类型之外的数据）。
+ */
+interface WrittenModel {
+  name?: string
+  reasoning?: boolean
+  maxTokens?: number
+  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; tiers?: unknown }
+  headers?: Record<string, string>
+}
+
+interface WrittenProvider {
+  name?: string
+  headers?: Record<string, string>
+  authHeader?: boolean
+  models?: WrittenModel[]
+}
+
+interface WrittenModelsJson {
+  providers: Record<string, WrittenProvider>
+}
+
+function readModelsJson(): WrittenModelsJson {
+  return JSON.parse(readFileSync(join(agentDir, 'models.json'), 'utf-8')) as WrittenModelsJson
+}
+
+/** 读回指定 provider 的首个模型条目（本测试写入路径保证存在，缺失即断言前置失败） */
+function readModel(providerId: string): WrittenModel {
+  const model = readModelsJson().providers[providerId]?.models?.[0]
+  if (!model) throw new Error(`models.json "${providerId}" 缺少模型条目（断言前置失败）`)
+  return model
 }
 
 function modelsJsonRaw(): string {
@@ -146,7 +176,7 @@ describe('B-4b：模型写入白名单 reasoning/maxTokens/cost/headers', () => 
         headers: { 'X-Model-Header': 'v' },
       }],
     })
-    const model = readModelsJson().providers['my-proxy'].models[0]
+    const model = readModel('my-proxy')
     expect(model.reasoning).toBe(true)
     expect(model.maxTokens).toBe(8192)
     expect(model.cost).toEqual({ input: 3, output: 15, cacheRead: 0.6, cacheWrite: 3.75 })
@@ -164,8 +194,9 @@ describe('B-4b：模型写入白名单 reasoning/maxTokens/cost/headers', () => 
         },
       }],
     })
-    const model = readModelsJson().providers['my-proxy'].models[0]
-    expect(model.cost.tiers).toEqual([{ inputTokensAbove: 200000, input: 6, output: 30, cacheRead: 1.2, cacheWrite: 7.5 }])
+    const model = readModel('my-proxy')
+    // cost 未落盘时 ?. 得 undefined ≠ 预期数组，断言语义不变
+    expect(model.cost?.tiers).toEqual([{ inputTokensAbove: 200000, input: 6, output: 30, cacheRead: 1.2, cacheWrite: 7.5 }])
   })
 
   it('未传的字段沿用盘上既有值（base spread 兜底，undefined=不变）', async () => {
@@ -177,7 +208,7 @@ describe('B-4b：模型写入白名单 reasoning/maxTokens/cost/headers', () => 
     await svc.setProvider('my-proxy', {
       models: [{ id: 'my-model', name: 'Renamed Model' }],
     })
-    const model = readModelsJson().providers['my-proxy'].models[0]
+    const model = readModel('my-proxy')
     expect(model.name).toBe('Renamed Model')
     expect(model.maxTokens).toBe(4096)
     expect(model.cost).toEqual({ input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.2 })

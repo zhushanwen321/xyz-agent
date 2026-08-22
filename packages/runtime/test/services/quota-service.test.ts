@@ -16,14 +16,17 @@ import { XyzProviderStore } from '../../src/services/provider-extras-store.js'
 
 // vi.hoisted 提升变量到 vi.mock factory 可访问的位置（factory 会被 hoist 到文件顶部）
 // [A2-1] fetcher 接口数组化：authType 单值 → auth 数组；fetchQuota(credential, kind)
-const { mockFetchQuota, mockFetchers } = vi.hoisted(() => {
+// kimi-coding 用独立 mock 实例：「手动 fetcher 优先于 preset 匹配」用例需要区分
+// 「命中 kimi-coding 而非 zhipu」的可证伪信号（共享同一 mock 时优先级退化无法检出）
+const { mockFetchQuota, kimiMockFetchQuota, mockFetchers } = vi.hoisted(() => {
   const mockFetchQuota = vi.fn()
+  const kimiMockFetchQuota = vi.fn()
   const mockFetchers = new Map([
     ['zhipu', { id: 'zhipu', auth: ['api-key'] as const, fetchQuota: mockFetchQuota }],
-    ['kimi-coding', { id: 'kimi-coding', auth: ['api-key', 'oauth'] as const, fetchQuota: mockFetchQuota }],
+    ['kimi-coding', { id: 'kimi-coding', auth: ['api-key', 'oauth'] as const, fetchQuota: kimiMockFetchQuota }],
     ['mimo', { id: 'mimo', auth: ['cookie'] as const, fetchQuota: mockFetchQuota }],
   ])
-  return { mockFetchQuota, mockFetchers }
+  return { mockFetchQuota, kimiMockFetchQuota, mockFetchers }
 })
 
 // ── mock QUOTA_FETCHERS：注入可控 fetcher，不依赖真实 HTTP ──
@@ -53,6 +56,7 @@ beforeEach(() => {
   vi.mocked(getProviderConfig).mockImplementation(() => undefined)
   vi.mocked(upsertProvider).mockImplementation(() => ({}))
   mockFetchQuota.mockReset()
+  kimiMockFetchQuota.mockReset()
 })
 
 /** 读 providers.json 单 provider 断言用（文件不存在返回 undefined = 无扩展数据）。 */
@@ -161,15 +165,16 @@ describe('QuotaService — 手动选择 fetcher（任务 1）', () => {
         quota: { fetcher: 'kimi-coding' },
       }),
     })
-    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'kimi', wins: [] as never } })
+    kimiMockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'kimi', wins: [] as never } })
 
-    await svc.fetch('my-glm')
+    const result = await svc.fetch('my-glm')
 
-    // 走手动指定的 kimi-coding，而非自动匹配的 zhipu
-    expect(mockFetchQuota).toHaveBeenCalledTimes(1)
-    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-my-glm', 'api-key')
-    // 验证用的是 kimi-coding fetcher（mockFetchers 里 kimi-coding 与 zhipu 共用同一个 mockFetchQuota，
-    // 无法直接区分，但能确认 fetcher 被调用 = 手动指定生效）
+    // 走手动指定的 kimi-coding（独立 mock 实例）而非 baseUrl 匹配的 zhipu；
+    // zhipu 的 mock 未被调用 = 优先级退化回 preset 匹配时可证伪
+    expect(kimiMockFetchQuota).toHaveBeenCalledTimes(1)
+    expect(kimiMockFetchQuota).toHaveBeenCalledWith('key-for-my-glm', 'api-key')
+    expect(mockFetchQuota).not.toHaveBeenCalled()
+    expect(result.data?.label).toBe('kimi')
   })
 
   it('quota.fetcher 指定了一个不存在的 id 时 fallback 到 matchQuotaPreset', async () => {
@@ -533,13 +538,13 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
       }),
     })
     // models.json 通道有 apiKey（getApiKeyForProvider mock）→ api-key 形态应先命中
-    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'kimi', wins: [] as never } })
+    kimiMockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'kimi', wins: [] as never } })
 
     await svc.fetch('kimi-id')
 
     // auth 数组序 ['api-key','oauth']：api-key 形态有凭证（models.json）则用 api-key，
     // oauth 凭证不回灌 api-key 形态（形态语义隔离）
-    expect(mockFetchQuota).toHaveBeenCalledWith('key-for-kimi-id', 'api-key')
+    expect(kimiMockFetchQuota).toHaveBeenCalledWith('key-for-kimi-id', 'api-key')
   })
 
   it('kimi 场景：无 api-key 凭证（secrets/auth.json/models.json 全 miss）但有 oauth 凭证 → 按数组序降级用 oauth', async () => {
@@ -557,13 +562,13 @@ describe('QuotaService — A2-2: oauth 形态与 kimi 双形态降级', () => {
         expires: Date.now() + 3_600_000,
       }),
     })
-    mockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'kimi', wins: [] as never } })
+    kimiMockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'kimi', wins: [] as never } })
 
     await svc.fetch('kimi-id')
 
     // api-key 形态全 miss → 数组序下一形态 oauth，凭证取 access，kind='oauth'
-    expect(mockFetchQuota).toHaveBeenCalledTimes(1)
-    expect(mockFetchQuota).toHaveBeenCalledWith('oauth-access-token', 'oauth')
+    expect(kimiMockFetchQuota).toHaveBeenCalledTimes(1)
+    expect(kimiMockFetchQuota).toHaveBeenCalledWith('oauth-access-token', 'oauth')
   })
 
   it('cookie 类 fetcher：凭证从 secrets cookie 文件读，kind=cookie', async () => {
