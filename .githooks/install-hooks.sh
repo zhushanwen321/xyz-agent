@@ -208,9 +208,10 @@ fi
 
 # [HISTORICAL] 原一层模式 ^extensions/[^/]+/package\.json$ 在 2026-08-22 目录分组
 # （taiji/universal）后恒空匹配——纯 package.json 变更（版本 bump / pi manifest / role
-# 字段）静默跳过本段检查。改为显式分组两层模式，同步排除 shared/（共享库无 pi manifest，
-# 通配两层会误报）。
-EXTENSION_PKG_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/(taiji|universal)/[^/]+/package\.json$" || true)
+# 字段）静默跳过本段检查。改为结构无关的两段式：任意分组两段深 + 排除 shared/
+# （共享库无 pi manifest，通配两层会误报）——新增分组时本模式零维护，不再依赖
+# 与目录结构同步的组名清单（清单式写法正是当年恒空匹配 bug 的形态）。
+EXTENSION_PKG_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/[^/]+/[^/]+/package\.json$" | grep -v "^extensions/shared/" || true)
 
 if [ -n "$EXTENSION_FILES" ] || [ -n "$EXTENSION_PKG_FILES" ]; then
     print_section "[pi extensions manifest & convention 检查]"
@@ -381,14 +382,12 @@ fi
 # 2d. extension 结构一致性检查（分组目录 / role 字段 / 依赖台账 / 一层路径残留）
 #     scripts/check-extension-dependencies.mjs：①目录 ↔ xyz-agent.role 一致
 #     ②taiji/ ⊆ mandatory 清单 ③extensions/ 一层禁放包 ④extension-dependencies.json
-#     双向一致 ⑤活文件一层路径残留。零第三方依赖，毫秒级。CI 侧同一脚本由
-#     preflight-check.sh 调用，此处提前到提交时拦截。复用 SKIP_EXTENSION_LINT
-#     开关（不新增逃生口）。
+#     双向一致 ⑤活文件一层路径残留。零第三方依赖，实测 ~0.3s（~2500 文件全仓扫描，
+#     随仓库线性增长）。CI 侧同一脚本由 preflight-check.sh 调用，此处提前到提交时
+#     拦截。复用 SKIP_EXTENSION_LINT 开关（不新增逃生口）。
 # ============================================================================
 
-EXTENSION_STRUCT_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/|^extension-dependencies\.json$|^packages/shared/src/mandatory-extensions\.json$" || true)
-
-if [ -n "$EXTENSION_STRUCT_FILES" ]; then
+if echo "$STAGED_FILES" | grep -qE "^extensions/|^extension-dependencies\.json$|^packages/shared/src/mandatory-extensions\.json$"; then
     print_section "[extension 结构一致性检查]"
 
     if [ "$SKIP_EXTENSION_LINT" != "1" ]; then
@@ -968,6 +967,7 @@ echo -e "  ${GREEN}[+]${NC} 前端 ESLint 代码检查"
 echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
 echo -e "  ${GREEN}[+]${NC} pi extensions ESLint + tsc 类型检查（extensions/ 目录）"
 echo -e "  ${GREEN}[+]${NC} pi extensions manifest & convention 检查（禁废弃 namespace / 禁 console.log / pi manifest 字段）"
+echo -e "  ${GREEN}[+]${NC} extension 结构一致性检查（分组/role/依赖台账/一层路径残留）"
 echo -e "  ${GREEN}[+]${NC} Vue 组件规范检查（禁止原生 HTML、Emoji、自定义 CSS）"
 echo -e "  ${GREEN}[+]${NC} Sidecar session 隔离检查"
 echo -e "  ${GREEN}[+]${NC} CSS tokens 检查"

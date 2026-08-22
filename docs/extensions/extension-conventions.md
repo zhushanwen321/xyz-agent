@@ -22,7 +22,8 @@
 1. 每个包的 `package.json` 必须声明 `"xyz-agent": { "role": "taiji" | "universal" }`，且与所在分组目录一致；
 2. `extensions/` 一层禁止放 extension 包（`shared/` 共享库与 `tsconfig.json` 除外）；
 3. 判断标准是「离开 xyz-agent 是否仍有功能」，不是「是否随应用打包」——goal/todo 等通用工具虽在 mandatory 清单随应用打包，但归 `universal/`；
-4. 新建/移动包时同步更新：分组目录 + role 字段 + `extension-dependencies.json`（含 directory 路径）+ 根 AGENTS.md 分组列举。
+4. 新建/移动包时同步更新：分组目录 + role 字段 + `extension-dependencies.json`（含 directory 路径）+ 根 AGENTS.md 分组列举；
+5. **新增分组**（新开 `extensions/<group>/` 目录）时需同步登记分组名的代码点：`pnpm-workspace.yaml` glob、`scripts/check-extension-dependencies.mjs` 的 `GROUPS`、`scripts/bundle-extensions.mjs` 的 `srcDirFor`、`.agents/skills/dev-link/dev-link-lib.sh`（skill 自包含，无法共享常量）。其余消费点已 group 无关（runtime `extension-resolver.ts` 扫一层目录、pre-commit 2c/2d 模式不列组名），漏改时结构守卫会拦截 role 不一致。
 
 ## 运行环境
 
