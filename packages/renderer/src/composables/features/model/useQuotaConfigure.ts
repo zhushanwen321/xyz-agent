@@ -10,62 +10,23 @@
 import { ref, computed, watch, type Ref } from 'vue'
 import type { NormalizedQuotaRow, QuotaPreset, ProviderInfo, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
 import { QUOTA_PRESETS } from '@xyz-agent/shared'
+import type { QuotaConfigureState, QuotaTestStatus } from '@xyz-agent/core'
 import * as quotaApi from '@/api/domains/quota'
+import i18n from '@/i18n'
 import { useQuotaStore } from '@/stores/quota'
 
-/** 测试查询状态 */
-export type QuotaTestStatus = 'idle' | 'loading' | 'success' | 'error'
+// i18n.global.t 的类型窄化 cast（对齐 useQuotaQuery 的非 setup composable 模式）：
+// 失败文案走 i18n（en-US locale 不再透出硬编码中文）。
+const t = i18n.global.t as (key: string) => string
 
-/** composable 返回类型 */
-export interface UseQuotaConfigureReturn {
-  /** 当前选中的 fetcher id（未选择 = undefined） */
-  fetcherId: Ref<string | undefined>
-  /** 下拉框选项列表（QUOTA_PRESETS 映射） */
-  fetcherOptions: Array<{ value: string; label: string }>
-  /** 是否启用额度查询（Switch 双向绑定） */
-  enabled: Ref<boolean>
-  /** cookie 输入值（cookie 类 provider 专用） */
-  cookieInput: Ref<string>
-  /** Coding Plan 专属 API Key 输入值（api-key 类，留空 = 复用 provider.apiKey） */
-  apiKeyInput: Ref<string>
-  /** 是否已配置专属 API Key（provider.quota.apiKeySet） */
-  apiKeyConfigured: Ref<boolean>
-  /** 测试查询状态 */
-  testStatus: Ref<QuotaTestStatus>
-  /** 测试查询错误信息（testStatus='error' 时有值） */
-  testError: Ref<string>
-  /** 最近一次成功查询的额度数据 */
-  quotaData: Ref<NormalizedQuotaRow | null>
-  /** 最后查询时间戳（ms） */
-  lastFetchAt: Ref<number | null>
-  /** 当前 preset 是否为 cookie 类认证 */
-  isCookieAuth: Ref<boolean>
-  /** 当前选中 fetcher 的凭证能力声明（B-3：凭证态按 fetcher.auth 渲染） */
-  authKinds: Ref<readonly QuotaAuthKind[]>
-  /** 最近一次查询失败原因（A2-4 reason 透传；null = 无失败）。旧缓存保留在 quotaData */
-  testFailReason: Ref<QuotaFetchFailureReason | null>
-  /** 帮助链接（基于当前选中 fetcher） */
-  helpUrl: Ref<string | undefined>
-  /** 帮助文案（基于当前选中 fetcher） */
-  helpText: Ref<string | undefined>
-  /** 是否正在保存配置 */
-  configuring: Ref<boolean>
-  /** 保存配置错误 */
-  configureError: Ref<string>
+// 状态契约 SSOT 在 core（ui injection-keys 与本 composable 共享，字段语义注释见彼处）
+export type { QuotaTestStatus }
 
-  /** 切换启用状态 */
-  toggleEnabled: () => Promise<void>
-  /** 选择 fetcher 类型（同步到本地 + 持久化 quota.fetcher） */
-  selectFetcher: (id: string) => Promise<void>
-  /** 保存 cookie 并启用 */
-  saveCookie: () => Promise<void>
-  /** 保存专属 API Key（api-key 类，空字符串 = 清除，复用 provider.apiKey） */
-  saveApiKey: () => Promise<void>
-  /** 测试查询（触发 quota.fetch） */
-  testQuery: () => Promise<void>
-  /** 重置状态（provider 切换时调用） */
-  reset: () => void
-}
+/**
+ * composable 返回类型 = core 契约（[BL round1 monorepo S] 原 ui injection-keys 逐字段
+ * 手工镜像本接口，提升 core 后双侧 import 同一类型消除镜像）。
+ */
+export type UseQuotaConfigureReturn = QuotaConfigureState
 
 /**
  * @param preset - 当前匹配的 QuotaPreset（matchQuotaPreset 命中）
@@ -365,7 +326,7 @@ export function useQuotaConfigure(
         testStatus.value = 'error'
         testFailReason.value = result.reason ?? null
         lastFetchAt.value = result.lastFetchAt
-        testError.value = '查询失败，请检查凭证是否有效'
+        testError.value = t('settings.providerEdit.quotaTestFail')
       }
     } catch (e) {
       testStatus.value = 'error'

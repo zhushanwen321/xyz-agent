@@ -95,6 +95,10 @@ function toUserInfoModel(
     baseUrl: m.baseUrl,
     input: m.input,
     compat: m.compat,
+    // model 级 headers 读侧透传（B-4b 与写路径对称）：ModelInfo 无此字段，故不走
+    // pickModelCapabilityFields（双映射共用 picker，加进去会给 ModelInfo 塞未声明字段），
+    // 与 compat/api/baseUrl 同款在此显式透传。undefined 消费方按缺省处理（向后兼容）。
+    headers: m.headers,
     enabled: modelStates?.[m.id]?.enabled ?? (m.enabled !== false),
     ...pickModelCapabilityFields(m),
   }

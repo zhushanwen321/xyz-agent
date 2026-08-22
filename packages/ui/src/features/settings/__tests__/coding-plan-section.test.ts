@@ -208,6 +208,27 @@ describe('B-3 失败态（A2-4 reason 透传）+ 「查看上次成功数据」�
     expect(msg).not.toContain('quotaFetchFailUnauthorized')
   })
 
+  it('reason=no-subscription → 失败条显示订阅专属文案（不回退 testErrorMsg 的「检查凭证」指引）', async () => {
+    // [HISTORICAL] 回归守卫（BL round1 S3）：no-subscription 曾回退 testErrorMsg（useQuotaConfigure
+    // 硬编码「查询失败，请检查凭证是否有效」）——对无订阅给出「检查凭证」的错误指引（不可操作）
+    wrapper = mountSection({ testStatus: 'error', testFailReason: 'no-subscription', testErrorMsg: 'stale-fallback' })
+    await flushPromises()
+
+    const msg = wrapper.find('[data-testid="quota-error-msg"]').text()
+    expect(msg).toContain('settings.providerEdit.quotaFetchFailNoSubscription')
+    expect(msg).not.toContain('stale-fallback')
+    expect(msg).not.toContain('quotaFetchFailUnauthorized')
+  })
+
+  it('reason=parse → 失败条显示解析失败专属文案', async () => {
+    wrapper = mountSection({ testStatus: 'error', testFailReason: 'parse', testErrorMsg: '' })
+    await flushPromises()
+
+    const msg = wrapper.find('[data-testid="quota-error-msg"]').text()
+    expect(msg).toContain('settings.providerEdit.quotaFetchFailParse')
+    expect(msg).not.toContain('quotaFetchFailUnauthorized')
+  })
+
   it('无 reason（配置错误等）→ 回退 testErrorMsg 文案；无旧数据时不渲染展开入口', async () => {
     wrapper = mountSection({ testStatus: 'error', testFailReason: null, testErrorMsg: 'boom' })
     await flushPromises()

@@ -130,6 +130,12 @@ export interface ProviderInfo {
     thinkingLevelMap?: Record<string, string | null>
     cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
     compat?: Record<string, unknown>
+    /**
+     * model 级自定义请求头（读侧透传，与 SetProviderData.models[].headers 写路径对称，
+     * pi ModelDefinitionSchema 内字段）。runtime listProviders 聚合处从 models.json 条目
+     * 透传；无此字段的模型缺省（向后兼容）。
+     */
+    headers?: Record<string, string>
     /** model 级启停（W2）。省略时默认 true，供 aggregateModels 过滤判断。 */
     enabled?: boolean
     /**

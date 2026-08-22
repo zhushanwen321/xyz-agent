@@ -122,7 +122,7 @@ describe('useQuotaConfigure testQuery（A2-4 失败态 reason 透传）', () => 
     vi.mocked(quotaApi.refreshQuota).mockResolvedValue({ data: null, lastFetchAt: 5000, reason: 'network' })
     const providerRef = ref<ProviderInfo | null>(kimiProvider())
 
-    const { testQuery, testStatus, testFailReason, quotaData, lastFetchAt } = useQuotaConfigure(
+    const { testQuery, testStatus, testFailReason, testError, quotaData, lastFetchAt } = useQuotaConfigure(
       ref(KIMI_PRESET),
       providerRef,
     )
@@ -136,6 +136,8 @@ describe('useQuotaConfigure testQuery（A2-4 失败态 reason 透传）', () => 
     expect(quotaData.value).toEqual(mockRow)
     expect(lastFetchAt.value).toBe(5000)
     expect(quotaApi.refreshQuota).toHaveBeenCalledWith('kimi-coding')
+    // 回退文案走 i18n（BL round1 S3：原硬编码中文串在 en-US locale 也会透出）
+    expect(testError.value).toBe('查询失败，请检查凭证')
   })
 
   it('refresh 成功 → testFailReason 复位为 null（上次失败痕迹不残留）', async () => {

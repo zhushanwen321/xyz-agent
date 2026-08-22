@@ -617,3 +617,50 @@ describe('B-2 catalog save payload（builtin 不回传）', () => {
     expect(edit.localModels.value.map((m) => m.id)).toEqual(['o1'])
   })
 })
+
+// ══ S8：OAuth 授权广播 × isDirty 竞态（BL round1 S4）══════════════════════════
+
+describe('S8 OAuth 授权完成广播 × isDirty 竞态（authMethod 单字段强制对齐）', () => {
+  it('dirty（其他字段编辑中）+ 广播 authMethod=oauth（父组件授权完成回推）→ form.authMethod 对齐且不覆盖用户其他编辑；save 不回写 api_key 标注', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ authMethod: 'api_key' }))
+    const edit = mount(providerRef)
+    await nextTick()
+    expect(edit.form.authMethod).toBe('api_key')
+
+    // 用户有其他未保存编辑（如改 name）→ dirty
+    edit.form.name = 'P1-user-edit'
+    expect(edit.isDirty.value).toBe(true)
+
+    // 父组件完成 OAuth 授权 → setProvider authMethod='oauth' → onProviders 广播回推
+    const store = getSettingsStore()
+    store.providers.value = [makeProvider({ authMethod: 'oauth' })]
+    await nextTick()
+
+    // authMethod 强制对齐（dirty 例外），name 保留用户未保存编辑
+    expect(edit.form.authMethod).toBe('oauth')
+    expect(edit.form.name).toBe('P1-user-edit')
+
+    // 快照 authMethod 位已重拍：保存 payload authMethod='oauth'，apiKey 空 → undefined
+    // （不覆写刚登录的 oauth 凭证）
+    const ok = await edit.save()
+    expect(ok).toBe(true)
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(arg.authMethod).toBe('oauth')
+    expect(arg.apiKey).toBeUndefined()
+  })
+
+  it('用户已手动切换形态（pending 未保存）→ 广播不覆写本地切换意图', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ authMethod: 'oauth' }))
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.authMethod = 'api_key' // 用户 pending 切换（dirty 由 authMethod 贡献）
+    expect(edit.isDirty.value).toBe(true)
+
+    const store = getSettingsStore()
+    store.providers.value = [makeProvider({ authMethod: 'oauth' })]
+    await nextTick()
+
+    // 广播携带的 oauth 不强制对齐——本地切换意图优先（保存时按用户选择写 api_key）
+    expect(edit.form.authMethod).toBe('api_key')
+  })
+})

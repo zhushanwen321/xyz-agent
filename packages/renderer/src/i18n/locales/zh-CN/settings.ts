@@ -386,6 +386,8 @@ export default {
     // A2-4 失败态文案（reason 透传后的恢复指引，Phase B 渲染）
     quotaFetchFailUnauthorized: '额度查询失败：凭证可能过期。与该供应商发起一次对话触发凭证刷新后，点击刷新重试',
     quotaFetchFailNetwork: '额度查询失败：网络异常或服务不可用，请检查网络连接后重试',
+    quotaFetchFailNoSubscription: '额度查询失败：未检测到有效订阅，请确认账号已开通对应 Coding Plan 套餐',
+    quotaFetchFailParse: '额度查询失败：额度响应解析失败，请稍后重试；若持续出现请更新应用',
     // B-3 失败态旧缓存折叠入口（design §3.4 展示语义）
     quotaLastSuccessToggle: '查看上次成功数据',
     quotaLastSuccessAt: '数据截至 {time}',

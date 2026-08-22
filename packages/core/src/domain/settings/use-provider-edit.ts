@@ -25,17 +25,29 @@ import { getSettingsTransport } from './transport'
 // ── 类型 ──
 
 /** 本地编辑态模型（ProviderInfo.models 的可编辑副本）。
- *  含 api/baseUrl/enabled 透传位（与 ProviderInfo.models 元素同构，W4）：
- *  编辑保存时这些字段必须回传，否则 model 级配置会在 setProvider 合并时被丢弃。 */
+ *  含 api/baseUrl/enabled 透传位（与 ProviderInfo.models 元素同构，W4）+
+ *  B-4b 透传位（reasoning/maxTokens/cost/headers，对齐 SetProviderData.models 元素）：
+ *  编辑保存时这些字段必须回传，否则 model 级配置会在 setProvider 合并时被丢弃
+ *  （运行时靠 base spread 保数据不丢，但显式回传才让「编辑→保存」链路真实生效）。 */
 export interface LocalModel {
   id: string
   name?: string
   api?: string
   baseUrl?: string
   reasoning?: boolean
+  /** model 级 max output tokens（B-4b 透传位）。 */
+  maxTokens?: number
   contextWindow?: number
   input?: Array<'text' | 'image'>
   thinkingLevelMap?: Record<string, string | null>
+  /**
+   * model 级计费（B-4b 透传位，含可选 tiers 分档定价）。tiers 是运行时透传：
+   * ProviderInfo.models[].cost 类型未声明 tiers，但 spread 链（load → LocalModel → save）
+   * 保留其运行时值，编辑器不构造 cost 时既有 tiers 不丢。
+   */
+  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; tiers?: Array<{ inputTokensAbove: number; input: number; output: number; cacheRead: number; cacheWrite: number }> }
+  /** model 级自定义请求头（B-4b 透传位；当前无行编辑 UI，纯 load→save 保字段）。 */
+  headers?: Record<string, string>
   /** model 级 compat 覆盖（OpenAI/Anthropic 兼容性配置，透传到 runtime setProvider）。 */
   compat?: Record<string, unknown>
   /** model 级启停透传（省略时 runtime 默认 true） */
@@ -51,6 +63,8 @@ export interface LocalModel {
 /**
  * 可编辑模型列表（B-2 混合列表）：catalog provider 过滤掉 builtin 条目（只读展示由
  * ProviderEditBody 直接读 provider.models），custom / kind 缺失（旧数据）全量保留。
+ * 整对象 spread：ProviderInfo.models 元素的 B-4b 透传位（reasoning/maxTokens/cost/headers）
+ * 一并进编辑副本（load 侧接线），save 时显式回传（见 save 的 models map）。
  */
 function toEditableModels(p: ProviderInfo): LocalModel[] {
   const editable = p.kind === 'catalog'
@@ -447,6 +461,14 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
           contextWindow: m.contextWindow,
           input: m.input,
           thinkingLevelMap: m.thinkingLevelMap,
+          // B-4b 透传（round-trip 接通）：reasoning/maxTokens/cost/headers 有值才回传
+          // （undefined 不传键，runtime 语义 undefined=不变、base spread 保留既有值；
+          // 与 provider 级 headers「空对象不传」不同——model 级 {} = 清空是 runtime 的
+          // 两态契约，此处值忠实回传）。reasoning 显式 false 是合法值，须用 !== undefined 判定。
+          ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}),
+          ...(m.maxTokens !== undefined ? { maxTokens: m.maxTokens } : {}),
+          ...(m.cost !== undefined ? { cost: m.cost } : {}),
+          ...(m.headers !== undefined ? { headers: m.headers } : {}),
           compat: m.compat,
           enabled: m.enabled,
         })),
@@ -556,10 +578,21 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
       // 仅编辑态（providerRef 非 null）刷新；新增态无 provider 可对齐。
       const editingId = providerRef.value?.id
       if (!editingId) return
-      // 用户已手动改 → 不刷新（改动优先）
-      if (isDirty.value) return
       const fresh = list.find((p) => p.id === editingId)
       if (!fresh) return
+      if (isDirty.value) {
+        // [BL round1 S4] dirty 单字段例外：用户未手动切换凭证形态（form.authMethod 仍等于
+        // 快照值）而广播携带新形态（编辑体内发起 OAuth 授权 → 父组件 setProvider
+        // authMethod='oauth' 回推）→ 强制对齐该字段并单独重拍快照的 authMethod 位，
+        // 否则后续 save 会用本地旧形态覆写刚写入的 oauth 标注（apiKey 有值还会覆写凭证）。
+        // 用户已手动切换（pending 未保存）则不对齐——本地切换意图优先。
+        const s = snapshot.value
+        if (s && form.authMethod === s.authMethod && form.authMethod !== fresh.authMethod) {
+          form.authMethod = fresh.authMethod
+          s.authMethod = fresh.authMethod
+        }
+        return
+      }
       // 同步基础字段 + headers/authHeader + models
       form.name = fresh.name
       form.api = fresh.api ?? 'anthropic-messages'

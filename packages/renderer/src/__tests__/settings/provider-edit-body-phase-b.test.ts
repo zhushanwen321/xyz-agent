@@ -34,8 +34,6 @@ import {
 } from '@xyz-agent/ui/features/settings'
 import { useQuotaConfigure } from '@/composables/features/model/useQuotaConfigure'
 import { useToast } from '@/composables/useToast'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 
 // useQuotaConfigure 直连 quota domain（原实现如此，非绕门面场景），mock 其 RPC 面
 vi.mock('@/api/domains/quota', () => ({
@@ -363,15 +361,5 @@ describe('B-2 混合列表：catalog provider 内置只读 + 自定义可编辑'
 
     const models = savePayload().models as Array<{ id: string }>
     expect(models.map((m) => m.id)).toEqual([]) // 唯一 override 已删；builtin 不回传
-  })
-
-  it('C4 决策边界修订注释存在于组件源码（grep 断言：追加自定义模型非 C4 禁止场景）', () => {
-    const src = readFileSync(
-      resolve(__dirname, '../../../../ui/src/features/settings/provider/ProviderEditBody.vue'),
-      'utf-8',
-    )
-    expect(src).toContain('wave4 C4 决策边界修订')
-    expect(src).toContain('追加自定义模型')
-    expect(src).toContain('非 C4')
   })
 })

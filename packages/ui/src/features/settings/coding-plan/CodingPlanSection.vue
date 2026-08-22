@@ -384,10 +384,12 @@ const supportsOauth = computed(() => props.authKinds.includes('oauth'))
 /** 「查看上次成功数据」展开态（B-3 / design §3.4：失败态下旧缓存折叠展示） */
 const showLastSuccess = ref(false)
 
-/** 失败态文案：reason 可区分时用带恢复指引的专属文案（A2-4），否则回退 testErrorMsg/通用文案 */
+/** 失败态文案：reason 可区分时用带恢复指引的专属文案（A2-4 全 4 reason），否则回退 testErrorMsg/通用文案 */
 const failMessage = computed(() => {
   if (props.testFailReason === 'unauthorized') return t('settings.providerEdit.quotaFetchFailUnauthorized')
   if (props.testFailReason === 'network') return t('settings.providerEdit.quotaFetchFailNetwork')
+  if (props.testFailReason === 'no-subscription') return t('settings.providerEdit.quotaFetchFailNoSubscription')
+  if (props.testFailReason === 'parse') return t('settings.providerEdit.quotaFetchFailParse')
   return props.testErrorMsg || t('settings.providerEdit.quotaTestFail')
 })
 

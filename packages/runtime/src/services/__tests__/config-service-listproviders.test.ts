@@ -190,3 +190,39 @@ describe('TC7: custom provider 行为兼容（apiKeySet/status/models 兜底，�
     expect(byId(svc)['my-custom'].models).toEqual([])
   })
 })
+
+describe('B-4b 读侧：model 级 headers 经 ProviderInfo.models 透传（读写对称）', () => {
+  it('custom provider 模型带 headers → listProviders 输出含 headers', () => {
+    const svc = makeService({
+      models: {
+        'my-custom': {
+          apiKey: 'sk-x',
+          models: [{ id: 'm1', name: 'M1', headers: { 'X-Model': 'v1' } }],
+        },
+      },
+    })
+    const model = byId(svc)['my-custom'].models.find(m => m.id === 'm1')
+    expect(model?.headers).toEqual({ 'X-Model': 'v1' })
+  })
+
+  it('catalog override 模型带 headers → override 条目同样透传', () => {
+    const svc = makeService({
+      models: {
+        openai: {
+          models: [{ id: 'gpt-4o', name: 'GPT-4o', headers: { 'X-Ovr': 'y' } }],
+        },
+      },
+    })
+    const ovr = byId(svc)['openai'].models.find(m => m.id === 'gpt-4o')
+    expect(ovr?.headers).toEqual({ 'X-Ovr': 'y' })
+    expect(ovr?.source).toBe('override')
+  })
+
+  it('无 headers 的模型 → 字段缺省（行为兼容，不带 headers 键语义不变）', () => {
+    const svc = makeService({
+      models: { 'my-custom': { apiKey: 'sk-x', models: [{ id: 'm1', name: 'M1' }] } },
+    })
+    const model = byId(svc)['my-custom'].models.find(m => m.id === 'm1')
+    expect(model?.headers).toBeUndefined()
+  })
+})

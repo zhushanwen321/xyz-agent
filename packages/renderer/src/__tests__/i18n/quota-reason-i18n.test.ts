@@ -26,10 +26,12 @@ function loadLocaleObject(filePath: string): LocaleObject {
 
 const LOCALES_DIR = resolve(__dirname, '../../i18n/locales')
 
-/** A2-4 新增 key（settings.ts 的 providerEdit 命名空间，quota 失败态恢复指引） */
+/** A2-4 新增 key（settings.ts 的 providerEdit 命名空间，quota 失败态恢复指引；全 4 reason 专属文案） */
 const REQUIRED_QUOTA_FAIL_KEYS = [
   'quotaFetchFailUnauthorized',
   'quotaFetchFailNetwork',
+  'quotaFetchFailNoSubscription',
+  'quotaFetchFailParse',
 ] as const
 
 /** Phase B 新增 key（settings.ts providerEdit 命名空间：B-1 凭证区 / B-3 额度区泛化） */
