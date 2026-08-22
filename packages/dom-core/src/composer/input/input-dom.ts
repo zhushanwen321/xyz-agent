@@ -28,22 +28,42 @@ export const CHIP_SPACER_ZWSP = '\u200B'
 // ── 来自 useContenteditableInput：segments / 文本提取 ──
 
 /**
+ * contenteditable 块级分行元素（粘贴换行还原的 DOM 形态）。
+ *
+ * Chromium `execCommand('insertText')`（onPaste 通路）对含 \n 文本产出的不是 <br>，
+ * 而是块级 div 分行（实测 innerHTML：`line1<div>line2</div><div>line3</div>`）。
+ * 提取时必须把这些块级边界还原为 \n，否则粘贴的多行文本换行全部丢失
+ * （输入框视觉有换行、发送内容与气泡渲染都无换行的静默不一致）。P 一并覆盖
+ * （execCommand 部分场景的块级产出形态）。
+ */
+const BLOCK_LINE_TAGS = new Set(['DIV', 'P'])
+
+/**
  * 把 contenteditable DOM 解析为 Segment[]（W2）。
  *
- * TreeWalker 遍历逻辑与原 getTextFromEl 一致（SHOW_TEXT | SHOW_ELEMENT，跳过 .chip-x），
+ * 递归遍历逻辑与原 getTextFromEl 的 TreeWalker 一致（TEXT_NODE + BR + 跳过 .chip-x），
  * 但产出结构化 segment 而非拍平字符串：
  * - .slash-chip 元素 → 读 dataset.chipType：'skill' 产出 skill segment（有 location 则带上），
  *   其余产出 text segment（读 .chip-label 的 textContent）。遇到 chip 元素后跳过其子树
- *   （icon/label/x 按钮不单独遍历）——用 rejectChipSubtree 集合在 acceptNode 里直接拒绝。
+ *   （icon/label/x 按钮不单独遍历）——用 rejectChipSubtree 集合在 visitNode 里直接拒绝。
  * - 文本节点：累加进当前 text segment（相邻文本节点合并，不每个产一个 segment），
  *   过滤 \u00A0→空格、\u200B→删除（与原 getTextFromEl 一致）。
  * - BR：在当前 text segment 里追加 \n。
+ * - 块级元素（BLOCK_LINE_TAGS）：进入/离开幂等挂起分界，下一个实际内容出现时懒补 \n
+ *   （`</div><div>` 相邻边界合并为一个换行；`<div><br></div>` 空块还原为空行）；
+ *   文档尾未消费的分界自然丢弃（无多余尾换行）。
  */
 export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
   if (!el) return []
   const segments: Segment[] = []
   let pendingText: string | null = null
   const rejectChips = new Set<Element>()
+
+  // ── 块级分行还原状态 ──
+  // pendingBlockBreak：块级元素进入/离开都幂等置位（`</div><div>` 相邻边界合并成一个），
+  // 下一个实际内容（text/br/chip）出现时才消费补 \n（懒补）——文档尾的块级收尾换行
+  // 自然丢弃（粘贴 'a\nb' 产出 `a<div>b</div>`，还原 'a\nb' 无多余尾换行）。
+  let pendingBlockBreak = false
 
   const flushText = (): void => {
     if (pendingText !== null && pendingText !== '') {
@@ -52,22 +72,25 @@ export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
     pendingText = null
   }
 
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
-    acceptNode(node: Node): number {
-      if (node.parentElement?.closest('.chip-x') || (node as Element).closest?.('.chip-x')) {
-        return NodeFilter.FILTER_REJECT
-      }
-      for (const chip of rejectChips) {
-        if (chip.contains(node)) return NodeFilter.FILTER_REJECT
-      }
-      return NodeFilter.FILTER_ACCEPT
-    },
-  })
+  /** 消费挂起的块级分界：已有文本且未以换行结尾时补 \n（首块前/空行 br 后不重复补） */
+  const consumeBlockBreak = (): void => {
+    if (!pendingBlockBreak) return
+    pendingBlockBreak = false
+    if (pendingText && !pendingText.endsWith('\n')) {
+      pendingText += '\n'
+    }
+  }
 
-  while (walker.nextNode()) {
-    const node = walker.currentNode
+  const visitNode = (node: Node): void => {
+    if (node.parentElement?.closest('.chip-x') || (node as Element).closest?.('.chip-x')) {
+      return
+    }
+    for (const chip of rejectChips) {
+      if (chip.contains(node)) return
+    }
 
     if (node.nodeType === Node.ELEMENT_NODE && (node as Element).classList?.contains('slash-chip')) {
+      consumeBlockBreak()
       const chip = node as HTMLElement
       const chipType = chip.dataset.chipType
       if (chipType === 'skill') {
@@ -80,7 +103,7 @@ export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
         pendingText = (pendingText ?? '') + labelText
       }
       rejectChips.add(chip)
-      continue
+      return
     }
 
     if (
@@ -88,12 +111,13 @@ export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
       ((node as Element).classList?.contains('image-chip') ||
         (node as HTMLElement).dataset?.chipType === 'image')
     ) {
+      consumeBlockBreak()
       const chip = node as HTMLElement
       const chipPath = chip.dataset.chipPath ?? ''
       // 占位符（粘贴/拖入 pending）path 无效，留在 DOM 但不进 segments（发送时静默丢弃）
       if (/^__(?:paste|drag)_pending_[0-9a-f-]+__$/.test(chipPath)) {
         rejectChips.add(chip)
-        continue
+        return
       }
       flushText()
       segments.push({
@@ -105,10 +129,11 @@ export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
         needsMigrate: chip.dataset.chipNeedsMigrate === 'true',
       })
       rejectChips.add(chip)
-      continue
+      return
     }
 
     if (node.nodeType === Node.ELEMENT_NODE && (node as Element).classList?.contains('mention-file')) {
+      consumeBlockBreak()
       const chip = node as HTMLElement
       flushText()
       const path = chip.dataset.chipPath ?? ''
@@ -120,18 +145,33 @@ export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
         segments.push({ type: 'file', path })
       }
       rejectChips.add(chip)
-      continue
+      return
     }
 
     if (node.nodeType === Node.TEXT_NODE) {
+      consumeBlockBreak()
       const raw = node.textContent ?? ''
       const filtered = raw.replace(/\u00A0/g, ' ').replace(/\u200B/g, '')
       pendingText = (pendingText ?? '') + filtered
-    } else if (node.nodeName === 'BR') {
+      return
+    }
+    if (node.nodeName === 'BR') {
+      consumeBlockBreak()
       pendingText = (pendingText ?? '') + '\n'
+      return
+    }
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      if (BLOCK_LINE_TAGS.has(node.nodeName)) {
+        pendingBlockBreak = true
+        for (const child of Array.from(node.childNodes)) visitNode(child)
+        pendingBlockBreak = true
+      } else {
+        for (const child of Array.from(node.childNodes)) visitNode(child)
+      }
     }
   }
 
+  for (const child of Array.from(el.childNodes)) visitNode(child)
   flushText()
   return segments
 }
