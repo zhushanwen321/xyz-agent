@@ -35,9 +35,12 @@ import * as events from '../events'
 // ── 请求-响应 ──
 // runtime 请求-响应 reply 均为命名 envelope（settings-message-handler.ts），
 // 此处统一解包对应字段，与 session.list 解包 `.groups` 同构。mock 门面有独立实现不受影响。
-export async function listProviders(): Promise<ProviderInfo[]> {
+// scoped-model D7：reply 与 config.providers 广播同形（protocol.ts 'config.getProviders' 映射
+// ServerMessageMap['config.providers']），scopedModels 透传给 refreshProviders 消费（[] 与 undefined 语义不同：
+// [] = 空白名单，undefined = reply 未携带，由消费方守卫区分）。
+export async function listProviders(): Promise<{ providers: ProviderInfo[]; scopedModels?: string[] }> {
   const reply = await command('config.getProviders', {})
-  return reply.providers
+  return { providers: reply.providers, scopedModels: reply.scopedModels }
 }
 
 export async function scanSkills(sources: string[]): Promise<ScannedSkillInfo[]> {
@@ -140,9 +143,9 @@ export function discoverModels(req: {
 }
 
 // ── 订阅-推送（sendInitialState 主动推 + 运行时广播）──
-export function onProviders(handler: (providers: ProviderInfo[]) => void): () => void {
+export function onProviders(handler: (providers: ProviderInfo[], scopedModels?: string[]) => void): () => void {
   return events.onGlobalType('config.providers', (msg) => {
-    handler(msg.payload.providers)
+    handler(msg.payload.providers, msg.payload.scopedModels)
   })
 }
 
@@ -236,6 +239,12 @@ export function setProvider(providerId: ProviderId, data: SetProviderData): Prom
 // W3 默认模型持久化：动作-ack，状态变更经 onDefaults 订阅推回（runtime 广播 config.defaults）。
 export function setDefaultModel(provider: ProviderId, modelId: string): Promise<void> {
   return command('config.setDefaultModel', { provider, modelId })
+}
+
+// Scoped models 白名单设置（config.setScopedModels）。reply 回写后规范化结果（去重保序）。
+export async function setScopedModels(models: string[]): Promise<string[]> {
+  const reply = await command('config.setScopedModels', { models })
+  return reply.scopedModels
 }
 
 export function deleteProvider(providerId: ProviderId): Promise<void> {
@@ -340,6 +349,12 @@ export function oauthLogin(providerId: string): Promise<{ started: boolean; erro
 /** 中止进行中的 OAuth flow（幂等：无进行中 flow 返回 cancelled:false 不报错）。 */
 export function oauthCancel(providerId: string): Promise<{ cancelled: boolean }> {
   return command('config.oauthCancel', { providerId })
+}
+
+/** 退出 OAuth 登录（B-1 场景 C）：移除 auth.json 中该 provider 的凭证（幂等；有进行中 flow 先中止）。
+ *  ok=false + error 表示移除失败（error 由 runtime 透传，前端不自造文案）。 */
+export function oauthLogout(providerId: string): Promise<{ ok: boolean; error?: string }> {
+  return command('config.oauthLogout', { providerId })
 }
 
 /** 查询 auth.json 是否已有该 provider 的 OAuth 凭据（MF-1：QuickSetup 重开时默认 oauth radio，

@@ -13,6 +13,7 @@ import { ConfigService } from '../config-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { BuiltinProviderTemplate } from '@xyz-agent/shared'
 import type { AuthStorage } from '../auth/auth-storage.js'
+import type { XyzProviderStore } from '../provider-extras-store.js'
 
 // mock isCatalogProvider → false: keep existing test behavior (custom provider path)。
 // wave2：保留 deriveEnabled 真实实现（listProviders 消费），只 override isCatalogProvider。
@@ -185,24 +186,37 @@ describe('ConfigService.checkEnvVars（I3，wave-env-check TC2）', () => {
 })
 
 describe('ConfigService authMethod 透传与推断（I6，wave-quick-setup-c TC7）', () => {
-  it('setProvider 透传 authMethod 到 models.json', () => {
+  it('setProvider authMethod 写 providers.json（A1-5 写侧切换），不再透传 models.json', async () => {
     const mockStore = {
       getProviderConfig: vi.fn(() => ({ name: 'openai' })),
       upsertProvider: vi.fn((_id: string, merged: Record<string, unknown>) => {
-        expect(merged.authMethod).toBe('api_key')
+        // 寄生字段禁复活：models.json 条目不含 authMethod
+        expect(merged.authMethod).toBeUndefined()
         return {}
       }),
     } as unknown as IConfigStore
-    const svc = new ConfigService('/tmp/project', mockStore)
-    svc.setProvider('openai', { apiKey: 'sk-x', authMethod: 'api_key' })
+    const extrasStore = {
+      modify: vi.fn(async (providerId: string, fn: (current: unknown) => unknown) => {
+        expect(providerId).toBe('openai')
+        // RMW 回调收到 undefined（无既有条目），返回带 authMethod 的新条目
+        const next = fn(undefined)
+        expect(next).toEqual({ authMethod: 'api_key' })
+        return next
+      }),
+    }
+    const svc = new ConfigService('/tmp/project', mockStore, undefined, extrasStore as unknown as Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync' | 'delete' | 'getScopedModelsSync' | 'modifyScopedModels' | 'cleanScopedModelsResidue'>)
+    await svc.setProvider('openai', { apiKey: 'sk-x', authMethod: 'api_key' })
     expect(mockStore.upsertProvider).toHaveBeenCalled()
+    expect(extrasStore.modify).toHaveBeenCalledWith('openai', expect.any(Function))
   })
 
-  it('listProviders 回填 authMethod：标注值优先；旧数据 $开头→env_var，非空→api_key，空→undefined', () => {
+  it('listProviders 回填 authMethod：providers.json 标注值优先；无标注 $开头→env_var，非空→api_key，空→undefined', () => {
     const mockStore = {
       readModels: vi.fn(() => ({
         providers: {
-          'with-mark': { name: 'A', apiKey: 'sk-x', authMethod: 'oauth' },
+          // A1-3 读源切换：显式标注从 providers.json 读（models.json authMethod 寄生字段已迁出；
+          // deriveAuthMethod 只做 apiKey 推断，不再读 config.authMethod）
+          'with-mark': { name: 'A', apiKey: 'sk-x' },
           'env-legacy': { name: 'B', apiKey: '$OPENAI_API_KEY' },
           'plain-legacy': { name: 'C', apiKey: 'sk-y' },
           'empty-legacy': { name: 'D' },
@@ -211,7 +225,12 @@ describe('ConfigService authMethod 透传与推断（I6，wave-quick-setup-c TC7
       // wave2：listProviders 读 enabledModels 派生 enabled（DM3），空数组 = 全启用
       getEnabledModels: vi.fn(() => []),
     } as unknown as IConfigStore
-    const svc = new ConfigService('/tmp/project', mockStore)
+    const extrasStore = {
+      modify: vi.fn(),
+      getExtrasSync: vi.fn(() => undefined),
+      readAllSync: vi.fn(() => ({ 'with-mark': { authMethod: 'oauth' } })),
+    } as unknown as Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync' | 'delete' | 'getScopedModelsSync' | 'modifyScopedModels' | 'cleanScopedModelsResidue'>
+    const svc = new ConfigService('/tmp/project', mockStore, undefined, extrasStore)
     const providers = svc.listProviders()
     const byId = Object.fromEntries(providers.map(p => [p.id, p]))
     expect(byId['with-mark'].authMethod).toBe('oauth')

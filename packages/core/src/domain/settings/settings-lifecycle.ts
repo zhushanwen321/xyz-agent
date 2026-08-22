@@ -60,7 +60,10 @@ async function init(): Promise<void> {
   const transport = getSettingsTransport()
   const store = getSettingsStore()
 
-  unsubs.push(transport.onProviders((p) => { store.providers.value = p }))
+  unsubs.push(transport.onProviders((p, scopedModels) => {
+    store.providers.value = p
+    if (scopedModels !== undefined) store.scopedModels.value = scopedModels
+  }))
   // models 与 providers 同源（sendInitialState 同 step 推、provider 增删同广播），故常驻订阅
   unsubs.push(transport.onModels((m) => { store.models.value = m }))
   unsubs.push(transport.onSkills((s) => { store.skills.value = s }))
@@ -97,7 +100,12 @@ async function init(): Promise<void> {
 async function refreshProviders(): Promise<void> {
   const store = getSettingsStore()
   try {
-    store.providers.value = await getSettingsTransport().listProviders()
+    const { providers, scopedModels } = await getSettingsTransport().listProviders()
+    store.providers.value = providers
+    // reply + 广播双通道：getProviders reply 携带 scopedModels 时直接填（与上方 onProviders
+    // 订阅 handler 同一守卫语义）；undefined = reply 未携带（旧 runtime），不覆盖已有值，
+    // 由 config.providers 广播兜底推回。
+    if (scopedModels !== undefined) store.scopedModels.value = scopedModels
   // eslint-disable-next-line taste/no-silent-catch -- 拉取失败不阻塞 UI：onProviders 订阅会兜底推回最新数据，无需打扰用户
   } catch (e) {
     console.warn('[settings] listProviders 失败，依赖订阅兜底', e)

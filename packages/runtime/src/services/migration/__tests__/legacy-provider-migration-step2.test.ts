@@ -21,7 +21,12 @@ import { setSettingsPath, invalidateSettingsCache } from '../../../infra/pi/pi-s
 import { PiConfigStore } from '../../../infra/pi/pi-config-store.js'
 import { deriveEnabled } from '../../provider-catalog.js'
 import { findValidDefaultModel } from '../../../infra/pi/pi-provider-store.js'
-import { AuthStorage } from '../../auth/auth-storage.js'
+import { AuthStorage, type CredentialWriter } from '../../auth/auth-storage.js'
+
+/** 轻量 credentialWriter adapter（与生产等价：AuthService.saveCredential 内部即 authStorage.set）。 */
+function makeCredentialWriter(authStorage: AuthStorage): CredentialWriter {
+  return { saveCredential: (id, cred) => authStorage.set(id, cred) }
+}
 
 let dir: string
 let agentDir: string
@@ -272,7 +277,7 @@ describe('TC7: 编排 migrateProviderConfig（调 step1 + step2）', () => {
     })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateProviderConfig(new PiConfigStore(), authStorage)
+    const report = await migrateProviderConfig(new PiConfigStore(), authStorage, makeCredentialWriter(authStorage))
 
     // step1：openai apiKey 迁 auth.json（hasOverride 分支保留其余字段）
     expect(report.catalog.migrated).toContain('openai')
@@ -305,7 +310,7 @@ describe('TC7: 编排 migrateProviderConfig（调 step1 + step2）', () => {
     // 但不影响 step2 执行）
     const authStorage = new AuthStorage(join(agentDir, 'nonexistent', 'auth.json'))
 
-    const report = await migrateProviderConfig(new PiConfigStore(), authStorage)
+    const report = await migrateProviderConfig(new PiConfigStore(), authStorage, makeCredentialWriter(authStorage))
 
     // step2 仍执行：全 disabled 检测？不是——有一个 enabled (anthropic)
     // → enabledModels = ['anthropic/*']
@@ -319,7 +324,7 @@ describe('TC7: 编排 migrateProviderConfig（调 step1 + step2）', () => {
     })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateProviderConfig(new PiConfigStore(), authStorage)
+    const report = await migrateProviderConfig(new PiConfigStore(), authStorage, makeCredentialWriter(authStorage))
 
     // step1：custom-only 非 catalog → kept，不迁
     expect(report.catalog.migrated).toEqual([])
@@ -340,7 +345,7 @@ describe('TC7: 编排 migrateProviderConfig（调 step1 + step2）', () => {
     })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateProviderConfig(new PiConfigStore(), authStorage)
+    const report = await migrateProviderConfig(new PiConfigStore(), authStorage, makeCredentialWriter(authStorage))
 
     // step2 先迁：有 disabled（openai）→ enabledModels = ['anthropic/*']
     expect(report.enabled.migratedEnabled).toBe(true)

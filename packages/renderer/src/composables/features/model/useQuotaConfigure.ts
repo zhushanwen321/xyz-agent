@@ -8,60 +8,25 @@
  * HANDOFF：.xyz-harness/coding-plan-quota/HANDOFF.md §5 Wave 3
  */
 import { ref, computed, watch, type Ref } from 'vue'
-import type { NormalizedQuotaRow, QuotaPreset, ProviderInfo } from '@xyz-agent/shared'
+import type { NormalizedQuotaRow, QuotaPreset, ProviderInfo, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
 import { QUOTA_PRESETS } from '@xyz-agent/shared'
+import type { QuotaConfigureState, QuotaTestStatus } from '@xyz-agent/core'
 import * as quotaApi from '@/api/domains/quota'
+import i18n from '@/i18n'
 import { useQuotaStore } from '@/stores/quota'
 
-/** 测试查询状态 */
-export type QuotaTestStatus = 'idle' | 'loading' | 'success' | 'error'
+// i18n.global.t 的类型窄化 cast（对齐 useQuotaQuery 的非 setup composable 模式）：
+// 失败文案走 i18n（en-US locale 不再透出硬编码中文）。
+const t = i18n.global.t as (key: string) => string
 
-/** composable 返回类型 */
-export interface UseQuotaConfigureReturn {
-  /** 当前选中的 fetcher id（未选择 = undefined） */
-  fetcherId: Ref<string | undefined>
-  /** 下拉框选项列表（QUOTA_PRESETS 映射） */
-  fetcherOptions: Array<{ value: string; label: string }>
-  /** 是否启用额度查询（Switch 双向绑定） */
-  enabled: Ref<boolean>
-  /** cookie 输入值（cookie 类 provider 专用） */
-  cookieInput: Ref<string>
-  /** Coding Plan 专属 API Key 输入值（api-key 类，留空 = 复用 provider.apiKey） */
-  apiKeyInput: Ref<string>
-  /** 是否已配置专属 API Key（provider.quota.apiKeySet） */
-  apiKeyConfigured: Ref<boolean>
-  /** 测试查询状态 */
-  testStatus: Ref<QuotaTestStatus>
-  /** 测试查询错误信息（testStatus='error' 时有值） */
-  testError: Ref<string>
-  /** 最近一次成功查询的额度数据 */
-  quotaData: Ref<NormalizedQuotaRow | null>
-  /** 最后查询时间戳（ms） */
-  lastFetchAt: Ref<number | null>
-  /** 当前 preset 是否为 cookie 类认证 */
-  isCookieAuth: Ref<boolean>
-  /** 帮助链接（基于当前选中 fetcher） */
-  helpUrl: Ref<string | undefined>
-  /** 帮助文案（基于当前选中 fetcher） */
-  helpText: Ref<string | undefined>
-  /** 是否正在保存配置 */
-  configuring: Ref<boolean>
-  /** 保存配置错误 */
-  configureError: Ref<string>
+// 状态契约 SSOT 在 core（ui injection-keys 与本 composable 共享，字段语义注释见彼处）
+export type { QuotaTestStatus }
 
-  /** 切换启用状态 */
-  toggleEnabled: () => Promise<void>
-  /** 选择 fetcher 类型（同步到本地 + 持久化 quota.fetcher） */
-  selectFetcher: (id: string) => Promise<void>
-  /** 保存 cookie 并启用 */
-  saveCookie: () => Promise<void>
-  /** 保存专属 API Key（api-key 类，空字符串 = 清除，复用 provider.apiKey） */
-  saveApiKey: () => Promise<void>
-  /** 测试查询（触发 quota.fetch） */
-  testQuery: () => Promise<void>
-  /** 重置状态（provider 切换时调用） */
-  reset: () => void
-}
+/**
+ * composable 返回类型 = core 契约（[BL round1 monorepo S] 原 ui injection-keys 逐字段
+ * 手工镜像本接口，提升 core 后双侧 import 同一类型消除镜像）。
+ */
+export type UseQuotaConfigureReturn = QuotaConfigureState
 
 /**
  * @param preset - 当前匹配的 QuotaPreset（matchQuotaPreset 命中）
@@ -91,14 +56,16 @@ export function useQuotaConfigure(
    * isCookieAuth：基于当前选中的 fetcherId 计算（而非 preset.auth）。
    * 用户手动选了 cookie 类 fetcher（mimo/opencode-go）时显示 cookie 输入区。
    * fetcherId 未选择时 fallback 到 preset.auth。
+   * [A2-1] auth 数组化后单值判断改 includes：preset 声明含 cookie 形态即视为 cookie 类
+   * （内置 5 preset 中仅 mimo/opencode-go 声明，行为与单值时代一致）。
    */
   const isCookieAuth = computed(() => {
     const fid = fetcherId.value
     if (fid) {
       const opt = QUOTA_PRESETS.find((p) => p.fetcher === fid)
-      return opt?.auth === 'cookie'
+      return opt?.auth.includes('cookie') ?? false
     }
-    return preset.value?.auth === 'cookie'
+    return preset.value?.auth.includes('cookie') ?? false
   })
 
   /**
@@ -116,6 +83,15 @@ export function useQuotaConfigure(
   /** 帮助文案（基于当前选中 fetcher）。 */
   const helpText = computed<string | undefined>(() => activePreset.value?.helpText)
 
+  /**
+   * 当前选中 fetcher 的凭证能力声明（B-3）：fetcherId 优先、fallback 自动匹配 preset。
+   * CodingPlanSection 据此渲染凭证态（oauth 就绪/缺失、api-key 回退顺序说明）。
+   */
+  const authKinds = computed<readonly QuotaAuthKind[]>(() => activePreset.value?.auth ?? [])
+
+  /** 最近一次查询失败原因（A2-4 reason 透传；null = 无失败）。旧缓存保留在 quotaData（「查看上次成功数据」） */
+  const testFailReason = ref<QuotaFetchFailureReason | null>(null)
+
   // ── 初始化：从 provider.quota 读取已保存的配置 ──
   function syncFromProvider(): void {
     const p = providerRef.value
@@ -128,6 +104,7 @@ export function useQuotaConfigure(
       apiKeyConfigured.value = false
       testStatus.value = 'idle'
       testError.value = ''
+      testFailReason.value = null
       quotaData.value = null
       lastFetchAt.value = null
       return
@@ -155,9 +132,11 @@ export function useQuotaConfigure(
       if (result.data) {
         quotaData.value = result.data
         lastFetchAt.value = result.lastFetchAt
-        // 有缓存视为之前成功过
         if (testStatus.value === 'idle') {
-          testStatus.value = 'success'
+          // 上次查询失败（缓存层透传 reason）：整体呈失败态，旧数据经「查看上次成功数据」
+          // 展开可见（design §3.4 失败态与旧缓存并存的展示语义）
+          testStatus.value = result.reason ? 'error' : 'success'
+          testFailReason.value = result.reason ?? null
         }
       }
     } catch (e) {
@@ -332,6 +311,7 @@ export function useQuotaConfigure(
 
     testStatus.value = 'loading'
     testError.value = ''
+    testFailReason.value = null
 
     try {
       // 用 refresh 绕过 10s throttle，确保测试查询每次都发真实请求（设计 §2.2.5）
@@ -341,9 +321,12 @@ export function useQuotaConfigure(
         lastFetchAt.value = result.lastFetchAt
         testStatus.value = 'success'
       } else {
-        // refresh 返回 null data = 凭证缺失或查询失败
+        // 失败态（A2-4）：reason 透传给 UI（恢复指引文案按 reason 渲染）；旧缓存保留在
+        // quotaData 不展示（「查看上次成功数据」展开可见）；lastFetchAt = 最近一次成功时间
         testStatus.value = 'error'
-        testError.value = '查询失败，请检查凭证是否有效'
+        testFailReason.value = result.reason ?? null
+        lastFetchAt.value = result.lastFetchAt
+        testError.value = t('settings.providerEdit.quotaTestFail')
       }
     } catch (e) {
       testStatus.value = 'error'
@@ -360,6 +343,7 @@ export function useQuotaConfigure(
     apiKeyConfigured.value = false
     testStatus.value = 'idle'
     testError.value = ''
+    testFailReason.value = null
     quotaData.value = null
     lastFetchAt.value = null
     configuring.value = false
@@ -375,9 +359,11 @@ export function useQuotaConfigure(
     apiKeyConfigured,
     testStatus,
     testError,
+    testFailReason,
     quotaData,
     lastFetchAt,
     isCookieAuth,
+    authKinds,
     helpUrl,
     helpText,
     configuring,

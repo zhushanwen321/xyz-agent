@@ -69,7 +69,7 @@ export type ClientMessageType =
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'message.bash' | 'message.abortBash'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
-  | 'config.discoverModels' | 'config.setDefaultModel'
+  | 'config.discoverModels' | 'config.setDefaultModel' | 'config.setScopedModels'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
   | 'config.scanSessionSkills'
   | 'config.getGlobalSkills' | 'config.getProjectSkills'
@@ -139,10 +139,14 @@ export type ClientMessageType =
   | 'config.checkEnvVars'
   // OAuth 凭据查询（MF-1）：auth.json 是否已有该 provider 的 oauth 凭据（只返回布尔，token 不出协议）。reply config.hasOAuthReply。
   | 'config.hasOAuth'
+  // OAuth 退出登录（B-1 场景 C）：移除 auth.json 中该 provider 的凭证（有进行中 flow 先中止）。reply config.oauthLogoutReply。
+  | 'config.oauthLogout'
   // wave4：provider 启用切换（写 enabledModels 白名单，reply config.providerUpdated）。替代旧 setProvider({enabled})。
   | 'config.toggleProviderEnabled'
   // wave4：按体系移除 provider（catalog 清凭据/custom 删条目，reply config.providerUpdated）。
   | 'config.removeProviderByKind'
+  // scoped model：配置模型白名单 + 有序列表（reply config.scopedModels）。
+  | 'config.setScopedModels'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -174,12 +178,18 @@ export interface SetProviderData {
     contextWindow?: number
     maxTokens?: number
     thinkingLevelMap?: Record<string, string | null>
+    /** model 级自定义请求头（B-4b 白名单，pi ModelDefinitionSchema 内字段）。 */
+    headers?: Record<string, string>
+    /**
+     * model 级计费（B-4b 白名单，pi ModelDefinitionSchema 内字段）。pi schema 要求
+     * input/output/cacheRead/cacheWrite 四字段必填 number，runtime setProvider 校验后落盘。
+     * tiers 可选透传（请求级分档定价，最高匹配阈值整单生效）。
+     */
+    cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; tiers?: Array<{ inputTokensAbove: number; input: number; output: number; cacheRead: number; cacheWrite: number }> }
     /** model 级启停（W2）。省略时默认 true，与 PiModelDefinition 同构。 */
     enabled?: boolean
   }>
   enabled?: boolean
-  /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
-  quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean; apiKeySet?: boolean }
 }
 
 /** 系统提示词配置（FR-6）。文件：<dataDir>/system-prompt.json。
@@ -574,6 +584,10 @@ export interface ClientMessageMap {
   'config.oauthCancel': { providerId: string }
   /** config.hasOAuth：查询 auth.json 是否已有该 provider 的 oauth 凭据（只返回布尔）。reply config.hasOAuthReply。 */
   'config.hasOAuth': { providerId: string }
+  /** config.oauthLogout：移除 auth.json 中该 provider 的凭证（退出登录，幂等）。reply config.oauthLogoutReply。 */
+  'config.oauthLogout': { providerId: string }
+  // ── scoped model ──
+  'config.setScopedModels': { models: string[] }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -640,6 +654,7 @@ export type ServerMessageType =
   | 'message.complete' | 'message.error' | 'message.status'
   | 'context.update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
+  | 'config.scopedModels'
   | 'config.scannedSkills' | 'config.skillUpdated' | 'config.skillDeleted'
   | 'config.sessionSkills'
   | 'config.globalSkills' | 'config.projectSkills'
@@ -731,6 +746,8 @@ export type ServerMessageType =
   | 'config.oauthLoginReply' | 'config.oauthCancelReply'
   // OAuth 凭据查询 reply（MF-1）。
   | 'config.hasOAuthReply'
+  // OAuth 退出登录 reply（B-1 场景 C：ok 布尔 + 错误原因）。
+  | 'config.oauthLogoutReply'
   // 环境变量检测 reply（I3）。
   | 'config.envVarsChecked'
 
@@ -790,7 +807,7 @@ export interface SkillCacheInvalidatedPayload {
  */
 export interface ServerMessageMapBase {
   // ── sendInitialState 推送 / domain 订阅（精确）──
-  'config.providers': { providers: ProviderInfo[] }
+  'config.providers': { providers: ProviderInfo[]; scopedModels?: string[] }
   'config.skills': { skills: SkillInfo[] }
   /**
    * skill 缓存失效信号（landing useGlobalSkills/useProjectSkills 失效缓存重拉）。
@@ -809,6 +826,8 @@ export interface ServerMessageMapBase {
     /** 默认模型变更来源，仅 broadcast 携带（reply 不带）。reply/broadcast 共用此类型，故 source 为 optional。 */
     source?: DefaultModelSource
   }
+  /** config.setScopedModels 的 reply（去重保序后的白名单；scoped-model design §4.1 A9）。 */
+  'config.scopedModels': { scopedModels: string[] }
   'config.extensions': { extensions: ExtensionInfo[]; upgradeResult?: { upgraded: boolean; from: string; to: string } }
   /** extension.recommended reply：推荐扩展列表（含已安装状态） */
   'extension.recommended': { recommended: Array<RecommendedExtension & { installed: boolean }> }
@@ -1058,11 +1077,12 @@ export interface ServerMessageMapBase {
   'terminal.ack': Record<string, never>
   // config.terminalConfig：reply + broadcast + sendInitialState 三用（复刻 config.systemPrompt 范式）。
   'config.terminalConfig': { config: TerminalConfig; corrupted?: boolean }
-  // Coding Plan 额度查询
-  'quota.fetch:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
-  'quota.getCached:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  // Coding Plan 额度查询。reason（A2-4）：最近一次查询失败原因，data=null 的失败态出现；
+  // getCached 携带内存中最近一次失败 reason（UI 失败态 + 「查看上次成功数据」入口用，Phase B 渲染）。
+  'quota.fetch:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null; reason?: import('./quota-types').QuotaFetchFailureReason }
+  'quota.getCached:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null; reason?: import('./quota-types').QuotaFetchFailureReason }
   'quota.configure:result': { ok: boolean; error?: string }
-  'quota.refresh:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  'quota.refresh:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null; reason?: import('./quota-types').QuotaFetchFailureReason }
   /** worktree.branches：worktree.listBranches 的 reply（本地/远程分支列表 + 默认分支名）。 */
   'worktree.branches': { local: string[]; remote: string[]; defaultBranch: string }
   /** worktree.list:result：worktree.list 的 reply（worktree 条目列表）。 */
@@ -1249,6 +1269,8 @@ export interface ServerMessageMapBase {
   'config.oauthCancelReply': { cancelled: boolean }
   /** config.hasOAuth reply：auth.json 是否已有该 provider 的 oauth 凭据（布尔，无 token）。 */
   'config.hasOAuthReply': { hasOAuth: boolean }
+  /** config.oauthLogout reply（成功/失败布尔 + 错误原因；token 永不出现在协议中）。 */
+  'config.oauthLogoutReply': { ok: boolean; error?: string }
   /** config.checkEnvVars reply：只含布尔（安全红线：env 值不进前端）。 */
   'config.envVarsChecked': { results: Record<string, boolean> }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
@@ -1413,6 +1435,7 @@ export interface ReplyPayloadMap {
   'config.oauthLogin': ServerMessageMap['config.oauthLoginReply']
   'config.oauthCancel': ServerMessageMap['config.oauthCancelReply']
   'config.hasOAuth': ServerMessageMap['config.hasOAuthReply']
+  'config.oauthLogout': ServerMessageMap['config.oauthLogoutReply']
   'config.checkEnvVars': ServerMessageMap['config.envVarsChecked']
   'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
   'config.getGlobalSkills': ServerMessageMap['config.globalSkills']
@@ -1590,6 +1613,9 @@ export interface ReplyPayloadMap {
   'session.subagentAction': void  // reply session.subagentActionDone
   'session.switch': ServerMessageMap['session.switched'] // reply session.switched（R-11 瘦身：无 messages；前端 register<void> 不读 payload）
   'session.workflowAction': void  // reply session.workflowActionDone
+  // ── scoped model 域──
+  'config.setScopedModels': { scopedModels: string[] }  // reply config.scopedModels（去重保序后结果）
+
   // terminal.* 都是 ack 型，统一 reply 'terminal.ack'（空 payload，前端 command() 按 id 匹配 resolve）
   'terminal.attach': ServerMessageMap['terminal.ack']
   'terminal.kill': ServerMessageMap['terminal.ack']

@@ -138,4 +138,4 @@ agent.md / workflow.js 归位：与 extension 强相关（tools 受限某 extens
 
 ## 跳过检查
 
-cw testRunner 的 monorepo 坑已修复（wave design 填 `plan.testCwd: "<子包目录>"`，gate 数字与本地一致）[HISTORICAL]。默认禁止跳过检查；`SKIP_*` 变量（SKIP_ALL_CHECKS / SKIP_FRONTEND_LINT / SKIP_EXTENSION_LINT / SKIP_CODE_RULES_CHECK / SKIP_ENV_WHITELIST_CHECK / SKIP_PATH_WHITELIST_CHECK / SKIP_DIRECTORY_RULES_CHECK / SKIP_TOOL_SCHEMA_CHECK）仅限线上热修复且须 commit message 说明原因。
+cw testRunner 的 monorepo 坑已修复（wave design 填 `plan.testCwd: "<子包目录>"`，gate 数字与本地一致）[HISTORICAL]。默认禁止跳过检查；`SKIP_*` 变量（SKIP_ALL_CHECKS / SKIP_FRONTEND_LINT / SKIP_EXTENSION_LINT / SKIP_CODE_RULES_CHECK / SKIP_ENV_WHITELIST_CHECK / SKIP_PATH_WHITELIST_CHECK / SKIP_DIRECTORY_RULES_CHECK / SKIP_TOOL_SCHEMA_CHECK / SKIP_CSP_COMPAT_CHECK）仅限线上热修复且须 commit message 说明原因。CSP 能力一致性检查（`check_csp_compatibility.py`）[HISTORICAL]：2026-08 v0.9.3+ CSP `script-src 'self'` 拦截 shiki Oniguruma WASM 致全部 markdown 渲染静默降级纯文本，源码级 eval/WebAssembly 用法与 CSP 指令不一致即拦截；产物级防线在 `postbuild-validate.sh`。

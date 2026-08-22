@@ -11,13 +11,14 @@
  * writeModels 落盘 + refreshModels 刷缓存。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, rm, mkdirSync } from 'node:fs'
+import { mkdtemp, rm, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { ConfigService } from '../src/services/config-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
+import { XyzProviderStore } from '../src/services/provider-extras-store.js'
 import {
   writeModels,
   refreshModels,
@@ -215,8 +216,9 @@ describe('ConfigService.listProviders · model 级 enabled 透传', () => {
 // review 发现：setProvider 的 model 合并循环只写 name/contextWindow/input/thinkingLevelMap，
 // 前端回传的 api/baseUrl/enabled 被丢弃。新模型（base={}）和编辑现有模型场景都会丢字段。
 // 此 describe 走 setProvider 写路径（而非 writeModels 直写），断言字段真落盘。
+// [G3 写侧切换] enabled 的落点改为 providers.json modelStates（models.json 不再写寄生字段）。
 describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 review must_fix #1）', () => {
-  it('新模型经 setProvider 保存后 enabled 字段落盘', () => {
+  it('新模型经 setProvider 保存后 enabled 生效（G3：落 providers.json modelStates，models.json 不落 enabled）', async () => {
     // 先建空 provider
     writeModels({
       providers: {
@@ -228,18 +230,31 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
     })
     refreshModels()
 
-    // setProvider 传入含 enabled 的 model（新模型，base={}）
-    configService.setProvider('p1', {
+    // [G3] enabled 落 providers.json modelStates——注入 extrasStore（生产恒注入）；
+    // 未注入时 enabled 丢弃 + warn（宁丢不写错位，provider-write-side-switch.test.ts 覆盖）
+    const extrasStore = new XyzProviderStore(join(tmpDir, 'pi', 'agent', 'config', 'providers.json'))
+    const svc = new ConfigService(tmpDir, configStore, undefined, extrasStore)
+
+    // setProvider 传入含 enabled 的 model（新模型，base={}）。modelStates 写入经
+    // withFileLock 异步 RMW——必须 await 落盘后再断言
+    await svc.setProvider('p1', {
       models: [
         { id: 'm1', enabled: false },
         { id: 'm2', enabled: true },
       ],
     })
 
-    const providers = configService.listProviders()
+    // 聚合层读 modelStates：enabled 语义保留（编辑保存不丢失）
+    const providers = svc.listProviders()
     const models = providers[0]!.models
     expect(models.find(m => m.id === 'm1')?.enabled).toBe(false)
     expect(models.find(m => m.id === 'm2')?.enabled).toBe(true)
+
+    // models.json 不再序列化 enabled（pi schema 外寄生字段禁复活）
+    const raw = JSON.parse(readFileSync(join(tmpDir, 'pi', 'agent', 'models.json'), 'utf-8'))
+    const rawModels = raw.providers.p1.models as Array<Record<string, unknown>>
+    expect(rawModels.find(m => m.id === 'm1')).not.toHaveProperty('enabled')
+    expect(rawModels.find(m => m.id === 'm2')).not.toHaveProperty('enabled')
   })
 
   it('model 级 api/baseUrl 经 setProvider 保存后落盘（编辑场景）', () => {

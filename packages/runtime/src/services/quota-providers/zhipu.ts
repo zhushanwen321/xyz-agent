@@ -6,8 +6,8 @@
  * 窗口：仅 5h（week/month = ∞）
  */
 
-import type { NormalizedQuotaRow, ProviderQuotaFetcher } from './types.js'
-import { INFINITE_WIN } from './types.js'
+import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome, QuotaWindow } from './types.js'
+import { INFINITE_WIN, statusToReason } from './types.js'
 
 const FETCH_TIMEOUT_MS = 5000
 const SEC_PER_DAY = 86400
@@ -32,6 +32,23 @@ interface ZhipuApiResponse {
   data?: ZhipuApiData
 }
 
+/**
+ * JSON 边界轻量 shape guard：只校验决策分支依赖的字段类型（success truthiness 判定、
+ * data.level / data.limits 解构）。字段缺失是合法业务态（→ no-subscription），
+ * 字段类型漂移归 parse（防 `data: "abc"` 等形态静默产出 INFINITE_WIN 错数据）。
+ */
+function isZhipuResponse(v: unknown): v is ZhipuApiResponse {
+  if (typeof v !== 'object' || v === null) return false
+  const o = v as Record<string, unknown>
+  if (o.success !== undefined && typeof o.success !== 'boolean') return false
+  if (o.data === undefined) return true
+  if (typeof o.data !== 'object' || o.data === null) return false
+  const d = o.data as Record<string, unknown>
+  if (d.level !== undefined && typeof d.level !== 'string') return false
+  if (d.limits !== undefined && !Array.isArray(d.limits)) return false
+  return true
+}
+
 /** 把 ZAI 的 resetTime（如 "4h11m"/"3d20h"）转成剩余秒 */
 function parseResetSec(label: string): number {
   const dM = label.match(/(\d+)d/)
@@ -52,12 +69,32 @@ function resetSecFromEpoch(epochMsStr: string): number | null {
   return remSec > 0 ? remSec : null
 }
 
+/**
+ * 5h 滚动窗口（TOKENS_LIMIT）：pct 直出（API 仅提供 percentage），
+ * resetSec 双格式兜底（epoch ms 优先，"4h11m" 相对 label 兜底）。
+ */
+function buildWin5h(data: ZhipuApiData): QuotaWindow {
+  let tokensPct = 0
+  let resetSec: number | null = null
+  for (const lim of data.limits ?? []) {
+    if (lim.type === 'TOKENS_LIMIT') {
+      tokensPct = lim.percentage ?? 0
+      if (lim.nextResetTime) {
+        resetSec = resetSecFromEpoch(lim.nextResetTime)
+        if (resetSec === null) resetSec = parseResetSec(lim.nextResetTime)
+      }
+    }
+  }
+  return { pct: tokensPct, resetSec }
+}
+
 export const zhipuFetcher: ProviderQuotaFetcher = {
   id: 'zhipu',
-  authType: 'api-key',
+  // 智谱额度 API 为裸 authorization 头（无 Bearer 前缀），oauth 通道暂不声明（§3.4）
+  auth: ['api-key'],
 
-  async fetchQuota(credential: string): Promise<NormalizedQuotaRow | null> {
-    if (!credential) return null
+  async fetchQuota(credential: string, _kind: QuotaAuthKind): Promise<QuotaFetchOutcome> {
+    if (!credential) return { ok: false, reason: 'unauthorized' }
 
     try {
       // 仅需 Authorization header 即可查询 Coding Plan 额度（参考 glm-quota-line 开源实现 +
@@ -69,37 +106,36 @@ export const zhipuFetcher: ProviderQuotaFetcher = {
         },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       })
-      if (!resp.ok) return null
+      if (!resp.ok) return { ok: false, reason: statusToReason(resp.status) }
 
-      const json = (await resp.json()) as ZhipuApiResponse
-      if (!json?.success || !json.data) return null
+      let json: ZhipuApiResponse
+      try {
+        json = (await resp.json()) as ZhipuApiResponse
+      } catch {
+        return { ok: false, reason: 'parse' }
+      }
+      if (!isZhipuResponse(json)) return { ok: false, reason: 'parse' }
+      if (!json?.success || !json.data) return { ok: false, reason: 'no-subscription' }
 
       const { data } = json
       const label = data.level ? `Z.ai-${data.level}` : 'Z.ai'
 
-      let tokensPct = 0
-      let resetSec: number | null = null
-
-      for (const lim of data.limits ?? []) {
-        if (lim.type === 'TOKENS_LIMIT') {
-          tokensPct = lim.percentage ?? 0
-          if (lim.nextResetTime) {
-            resetSec = resetSecFromEpoch(lim.nextResetTime)
-            if (resetSec === null) resetSec = parseResetSec(lim.nextResetTime)
-          }
-        }
-      }
-
+      // [A2-3] 平台 API 仅提供 percentage+currentValue（5h 窗口），总量字段未实测可得，
+      // 不编造 used/limit/unit（待验证检查点 4，Phase A2 前置实测后跟进）
       return {
-        label,
-        wins: [
-          { pct: tokensPct, resetSec },
-          INFINITE_WIN,
-          INFINITE_WIN,
-        ],
+        ok: true,
+        data: {
+          label,
+          wins: [
+            buildWin5h(data),
+            INFINITE_WIN,
+            INFINITE_WIN,
+          ],
+        },
       }
     } catch {
-      return null
+      // fetch 网络异常 / 超时（AbortSignal.timeout）→ network
+      return { ok: false, reason: 'network' }
     }
   },
 }

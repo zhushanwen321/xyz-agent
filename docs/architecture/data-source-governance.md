@@ -103,7 +103,7 @@ pi.setSessionName(title)
 | 11 | session 活跃态 | `get_state.isStreaming` | 5 状态源派生（chat 消息态/pendingSend/queue/retry/forceWorking） | — |
 | 12 | slash 命令列表 | `get_commands` | 广播 + RPC 拉取 + stateSnapshot | broadcast/订阅时序（AGENTS.md 已修） |
 
-覆盖范围说明：plugin sessionData（插件 per-session KV，含 `plugin:statusBarUpdate` 等 WS 推送）是用户可见 GUI 数据但**不在 12 类多源清单**——现状已是单写路径：权威 = runtime `SessionDataStore`（`packages/runtime/src/services/plugin-service/session-data-store.ts`，WriteBackCache + per-write debounce + 定时 flush + 磁盘恢复，消费者经唯一类入口操作），无第二写方、非多源病灶。登记表（§3.6 第 4 层）将其登记为「已 owner 化声明」条目，维持 G2「任何 GUI 数据可查 owner」的完整性。
+覆盖范围说明：plugin sessionData（插件 per-session KV，含 `plugin:statusBarUpdate` 等 WS 推送）是用户可见 GUI 数据但**不在 12 类多源清单**——现状已是单写路径：权威 = runtime `SessionDataStore`（`packages/runtime/src/services/plugin-service/session-data-store.ts`，WriteBackCache + per-write debounce + 定时 flush + 磁盘恢复，消费者经唯一类入口操作），无第二写方、非多源病灶。登记表（§3.6 第 4 层）将其登记为「已 owner 化声明」条目，维持 G2「任何 GUI 数据可查 owner」的完整性。同形态后续追加：provider 扩展配置（quota/authMethod/modelStates，PR #187，登记表 P2——权威 = `<piAgentDir>/config/providers.json`，唯一写方 = runtime `XyzProviderStore`，pi 零引用该子目录）。
 
 ### 2.3 四种多源模式（根因的四种表现）
 
@@ -293,7 +293,7 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 - `broadcast ≡ get_state`：事件风暴后断言 renderer 状态 == pi 快照；
 - 混沌注入：事件乱序/丢失/重放 → owner 状态必须收敛到权威快照（拉取自愈的结构性验证）。
 
-**第 4 层 数据登记表**：`docs/architecture/data-source-registry.md`，12 类数据的 owner / 权威源 / 唯一写入口 / 字段空值语义 / 已知例外（含 legacy 例外的移除期限），是 S1/R2/R3 许可表的依据 + review 时的对照 SSOT（对齐 ADR-0049 checklist 先例）；另含「已 owner 化声明」条目——plugin sessionData：权威 = runtime `SessionDataStore`（`packages/runtime/src/services/plugin-service/session-data-store.ts`，WriteBackCache 单写路径 + per-write debounce + 定时 flush + 磁盘恢复，消费者经唯一类入口操作），非多源病灶、不进 12 类清单，登记以维持 G2「任何 GUI 数据可查 owner」的完整性。P1 起演进为可执行配置（ReplicatedState 配置即登记表条目），markdown 由配置生成或双向校验。
+**第 4 层 数据登记表**：`docs/architecture/data-source-registry.md`，12 类数据的 owner / 权威源 / 唯一写入口 / 字段空值语义 / 已知例外（含 legacy 例外的移除期限），是 S1/R2/R3 许可表的依据 + review 时的对照 SSOT（对齐 ADR-0049 checklist 先例）；另含「已 owner 化声明」条目——plugin sessionData（P1）：权威 = runtime `SessionDataStore`（`packages/runtime/src/services/plugin-service/session-data-store.ts`，WriteBackCache 单写路径 + per-write debounce + 定时 flush + 磁盘恢复，消费者经唯一类入口操作）；provider 扩展配置（P2，PR #187）：权威 = `<piAgentDir>/config/providers.json`、唯一写方 = runtime `XyzProviderStore`（pi 零引用该子目录，锚点 + 契约测试守卫）——均非多源病灶、不进 12 类清单，登记以维持 G2「任何 GUI 数据可查 owner」的完整性。P1 起演进为可执行配置（ReplicatedState 配置即登记表条目），markdown 由配置生成或双向校验。
 
 **第 5 层 ADR + review checklist**：新 ADR（编号顺延，当前最高 0061）「单一数据 owner + 绝对写规则」：判据、事件只做失效、pi JSONL 唯一写方 = pi 进程（含扩展经 pi API）、sidecar 家族是登记在案的 xyz 自有合法形态（D3）、文件创建型（fork）登记在案（D3b）、队列按字段分权威（D6）。pi 升级时跑 pi-protocol 契约测试（ADR-0037 联合类型 exhaustive 检查已有），防止上游事件语义漂移悄悄制造新分叉。
 

@@ -5,14 +5,20 @@
  * 设计文档：docs/page-design/archive/v3/coding-plan-quota/design.md §2.2.1
  */
 
+import type { QuotaAuthKind } from './quota-types'
+
 /** 单个 provider 的额度查询预设。 */
 export interface QuotaPreset {
   /** 匹配 ProviderQuotaFetcher.id（fetcher 注册表的 key）。 */
   fetcher: string
   /** 显示名（如 '智谱 GLM Coding Plan'）。 */
   label: string
-  /** 认证方式：决定 UI 渲染哪种凭证输入。 */
-  auth: 'api-key' | 'cookie'
+  /**
+   * 认证方式能力声明（与 fetcher.auth 对齐，按优先级排序）：决定 UI 渲染哪种凭证输入、
+   * QuotaService 按数组序解析凭证。kimi-coding 声明 ['api-key','oauth']
+   * （usages API 与 oauth 同域同 Bearer）。
+   */
+  auth: readonly QuotaAuthKind[]
   /** Provider 自动关联规则：判断某个 ProviderInfo 是否命中此预设。 */
   match: {
     /** 按 baseUrl 域名匹配（如 'bigmodel.cn'）。归一化大小写后 baseUrl 包含此字符串即命中。 */
@@ -31,7 +37,7 @@ export const QUOTA_PRESETS: QuotaPreset[] = [
   {
     fetcher: 'zhipu',
     label: '智谱 GLM Coding Plan',
-    auth: 'api-key',
+    auth: ['api-key'],
     match: {
       // [HISTORICAL] namePattern 用词边界收紧：避免 'zai' 这类短 token 作为子串误匹配
       // 到用户自建 provider（如 'lazyai' / 'mozaitest'）。matchQuotaPreset 用正则 test，
@@ -45,7 +51,7 @@ export const QUOTA_PRESETS: QuotaPreset[] = [
   {
     fetcher: 'kimi-coding',
     label: 'Kimi Coding Plan',
-    auth: 'api-key',
+    auth: ['api-key', 'oauth'],
     match: {
       baseUrlPattern: 'kimi.com',
       namePattern: '\\bkimi\\b',
@@ -56,7 +62,7 @@ export const QUOTA_PRESETS: QuotaPreset[] = [
   {
     fetcher: 'minimax',
     label: 'MiniMax Coding Plan',
-    auth: 'api-key',
+    auth: ['api-key'],
     match: {
       baseUrlPattern: 'minimaxi.com',
       namePattern: '\\bminimax\\b',
@@ -67,7 +73,7 @@ export const QUOTA_PRESETS: QuotaPreset[] = [
   {
     fetcher: 'mimo',
     label: '小米 MiMo Coding Plan',
-    auth: 'cookie',
+    auth: ['cookie'],
     match: {
       baseUrlPattern: 'xiaomimimo.com',
       namePattern: '\\bmimo\\b',
@@ -78,7 +84,7 @@ export const QUOTA_PRESETS: QuotaPreset[] = [
   {
     fetcher: 'opencode-go',
     label: 'opencode.go',
-    auth: 'cookie',
+    auth: ['cookie'],
     match: {
       namePattern: '\\bopencode\\b',
     },

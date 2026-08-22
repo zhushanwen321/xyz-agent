@@ -30,7 +30,7 @@ const tStub = vi.fn((key: string) => key)
 
 function makeFakeTransport(): SettingsTransport {
   return {
-    listProviders: vi.fn(async () => []),
+    listProviders: vi.fn(async () => ({ providers: [] })),
     listModels: vi.fn(async () => []),
     setProvider: vi.fn(async () => {}),
     discoverModels: vi.fn(async () => ({ success: true, models: [] })),
@@ -480,5 +480,242 @@ describe('headers CRUD', () => {
     ]
     edit.syncHeadersFromRows()
     expect(edit.actionError.value).toBe('composable.duplicateHeaderKey')
+  })
+})
+
+// ══ Phase B：B-1 凭证形态编辑态 + B-2 catalog 混合列表 builtin 过滤 ═════════════════════
+
+describe('B-1 凭证形态（form.authMethod）', () => {
+  it('回填 provider.authMethod；切换 → isDirty；保存 payload 透传 authMethod', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ authMethod: 'api_key' }))
+    const edit = mount(providerRef)
+    await nextTick()
+    expect(edit.form.authMethod).toBe('api_key')
+    expect(edit.isDirty.value).toBe(false)
+
+    edit.form.authMethod = 'oauth'
+    expect(edit.isDirty.value).toBe(true)
+    edit.form.authMethod = 'api_key'
+    expect(edit.isDirty.value).toBe(false)
+
+    edit.form.authMethod = 'oauth'
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(arg.authMethod).toBe('oauth')
+  })
+
+  it('oauth→api_key 切换 + 空 key → 守卫拦截（oauthSwitchNeedsKey，不经 setProvider）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ authMethod: 'oauth' }))
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.authMethod = 'api_key'
+    edit.form.apiKey = '' // 未填新 key
+    const ok = await edit.save()
+    expect(ok).toBe(false)
+    expect(tStub).toHaveBeenCalledWith('composable.oauthSwitchNeedsKey')
+    expect(getTransport().setProvider).not.toHaveBeenCalled()
+  })
+
+  it('oauth→api_key 切换 + 新 key → payload authMethod=api_key + apiKey（catalog 覆写 OAuth 凭证的写路径）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ authMethod: 'oauth' }))
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.authMethod = 'api_key'
+    edit.form.apiKey = 'sk-new'
+    const ok = await edit.save()
+    expect(ok).toBe(true)
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(arg.authMethod).toBe('api_key')
+    expect(arg.apiKey).toBe('sk-new')
+  })
+
+  it('无 authMethod（旧数据/新建）→ payload authMethod=undefined（runtime 跳过不写）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    expect(edit.form.authMethod).toBeUndefined()
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(arg.authMethod).toBeUndefined()
+  })
+})
+
+describe('B-2 catalog 混合列表（localModels 过滤 builtin）', () => {
+  const CATALOG_P = () => makeProvider({
+    kind: 'catalog',
+    authMethod: 'oauth',
+    models: [
+      { id: 'b1', name: 'B1', source: 'builtin' },
+      { id: 'b2', name: 'B2', source: 'builtin' },
+      { id: 'o1', name: 'O1', source: 'override' },
+      { id: 'legacy', name: 'Legacy' }, // 无 source 标注（旧数据）→ 按 override 保留
+    ],
+  })
+
+  it('catalog provider：编辑列表只含 override 条目（builtin 只读展示由组件层直读 provider.models）', async () => {
+    const providerRef = ref<ProviderInfo | null>(CATALOG_P())
+    const edit = mount(providerRef)
+    await nextTick()
+    expect(edit.localModels.value.map((m) => m.id)).toEqual(['o1', 'legacy'])
+  })
+
+  it('custom provider（kind 缺失同）：全量保留不过滤', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({
+      models: [
+        { id: 'm1', name: 'M1', contextWindow: 200_000, enabled: true },
+        { id: 'm2', name: 'M2', source: 'builtin' },
+      ],
+    }))
+    const edit = mount(providerRef)
+    await nextTick()
+    // custom 的 source 标注不存在（聚合层不标），全量保留
+    expect(edit.localModels.value.map((m) => m.id)).toEqual(['m1', 'm2'])
+  })
+
+})
+
+describe('B-2 catalog save payload（builtin 不回传）', () => {
+  it('catalog provider save：models 只含 override（新增条目入列，builtin 不出现）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({
+      kind: 'catalog',
+      models: [
+        { id: 'b1', name: 'B1', source: 'builtin' },
+        { id: 'o1', name: 'O1', source: 'override' },
+      ],
+    }))
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.newModel.name = 'new-model'
+    edit.addModel()
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect((arg.models as Array<{ id: string }>).map((m) => m.id)).toEqual(['o1', 'new-model'])
+  })
+
+  it('D8 广播刷新：catalog provider 未 dirty 时 localModels 同样过滤 builtin', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({
+      kind: 'catalog',
+      models: [
+        { id: 'b1', name: 'B1', source: 'builtin' },
+        { id: 'o1', name: 'O1', source: 'override' },
+      ],
+    }))
+    const edit = mount(providerRef)
+    await nextTick()
+    const store = getSettingsStore()
+    store.providers.value = [makeProvider({
+      kind: 'catalog',
+      name: 'P1-broadcast',
+      models: [
+        { id: 'b1', name: 'B1', source: 'builtin' },
+        { id: 'b2', name: 'B2', source: 'builtin' },
+        { id: 'o1', name: 'O1', source: 'override' },
+      ],
+    })]
+    await nextTick()
+    expect(edit.form.name).toBe('P1-broadcast')
+    expect(edit.localModels.value.map((m) => m.id)).toEqual(['o1'])
+  })
+})
+
+// ══ B-4b：model 级 reasoning/maxTokens/cost/headers 编辑链路 round-trip（S3' 修复）══════
+
+describe('B-4b 模型级字段 round-trip（load 编辑副本 + save payload 回传）', () => {
+  const RICH_MODELS: ProviderInfo['models'] = [
+    {
+      id: 'm-rich', name: 'Rich',
+      reasoning: true, maxTokens: 8192,
+      cost: { input: 3, output: 15, cacheRead: 0.6, cacheWrite: 3.75 },
+      headers: { 'X-Model': 'v1' },
+      contextWindow: 200_000,
+    },
+    { id: 'm-plain', name: 'Plain' },
+  ]
+
+  it('load：ProviderInfo.models 的 B-4b 字段进 localModels 编辑副本（spread 透传）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ models: RICH_MODELS }))
+    const edit = mount(providerRef)
+    await nextTick()
+    const rich = edit.localModels.value[0]
+    expect(rich.reasoning).toBe(true)
+    expect(rich.maxTokens).toBe(8192)
+    expect(rich.cost).toEqual({ input: 3, output: 15, cacheRead: 0.6, cacheWrite: 3.75 })
+    expect(rich.headers).toEqual({ 'X-Model': 'v1' })
+  })
+
+  it('save：有值时回传四字段（B-4b 白名单写入链路接通）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ models: RICH_MODELS }))
+    const edit = mount(providerRef)
+    await nextTick()
+    const ok = await edit.save()
+    expect(ok).toBe(true)
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    const rich = (arg.models as Array<Record<string, unknown>>).find(m => m.id === 'm-rich')
+    expect(rich).toMatchObject({
+      reasoning: true,
+      maxTokens: 8192,
+      cost: { input: 3, output: 15, cacheRead: 0.6, cacheWrite: 3.75 },
+      headers: { 'X-Model': 'v1' },
+    })
+  })
+
+  it('save：无值时不传键（undefined = runtime base spread 保留既有值）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ models: RICH_MODELS }))
+    const edit = mount(providerRef)
+    await nextTick()
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    const plain = (arg.models as Array<Record<string, unknown>>).find(m => m.id === 'm-plain')
+    expect(plain).not.toHaveProperty('reasoning')
+    expect(plain).not.toHaveProperty('maxTokens')
+    expect(plain).not.toHaveProperty('cost')
+    expect(plain).not.toHaveProperty('headers')
+  })
+})
+
+// ══ S8：OAuth 授权广播 × isDirty 竞态（BL round1 S4）══════════════════════════
+
+describe('S8 OAuth 授权完成广播 × isDirty 竞态（authMethod 单字段强制对齐）', () => {
+  it('dirty（其他字段编辑中）+ 广播 authMethod=oauth（父组件授权完成回推）→ form.authMethod 对齐且不覆盖用户其他编辑；save 不回写 api_key 标注', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ authMethod: 'api_key' }))
+    const edit = mount(providerRef)
+    await nextTick()
+    expect(edit.form.authMethod).toBe('api_key')
+
+    // 用户有其他未保存编辑（如改 name）→ dirty
+    edit.form.name = 'P1-user-edit'
+    expect(edit.isDirty.value).toBe(true)
+
+    // 父组件完成 OAuth 授权 → setProvider authMethod='oauth' → onProviders 广播回推
+    const store = getSettingsStore()
+    store.providers.value = [makeProvider({ authMethod: 'oauth' })]
+    await nextTick()
+
+    // authMethod 强制对齐（dirty 例外），name 保留用户未保存编辑
+    expect(edit.form.authMethod).toBe('oauth')
+    expect(edit.form.name).toBe('P1-user-edit')
+
+    // 快照 authMethod 位已重拍：保存 payload authMethod='oauth'，apiKey 空 → undefined
+    // （不覆写刚登录的 oauth 凭证）
+    const ok = await edit.save()
+    expect(ok).toBe(true)
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(arg.authMethod).toBe('oauth')
+    expect(arg.apiKey).toBeUndefined()
+  })
+
+  it('用户已手动切换形态（pending 未保存）→ 广播不覆写本地切换意图', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ authMethod: 'oauth' }))
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.authMethod = 'api_key' // 用户 pending 切换（dirty 由 authMethod 贡献）
+    expect(edit.isDirty.value).toBe(true)
+
+    const store = getSettingsStore()
+    store.providers.value = [makeProvider({ authMethod: 'oauth' })]
+    await nextTick()
+
+    // 广播携带的 oauth 不强制对齐——本地切换意图优先（保存时按用户选择写 api_key）
+    expect(edit.form.authMethod).toBe('api_key')
   })
 })

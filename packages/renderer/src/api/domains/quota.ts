@@ -8,13 +8,18 @@
  * 设计文档：docs/page-design/archive/v3/coding-plan-quota/design.md
  * HANDOFF：.xyz-harness/coding-plan-quota/HANDOFF.md
  */
-import type { NormalizedQuotaRow } from '@xyz-agent/shared'
+import type { NormalizedQuotaRow, QuotaFetchFailureReason } from '@xyz-agent/shared'
 import { command } from '../request'
 
 /** getCached / fetch 的统一返回结构。 */
 export interface QuotaResult {
   data: NormalizedQuotaRow | null
   lastFetchAt: number | null
+  /**
+   * 最近一次查询失败原因（A2-4，runtime reason 透传）：data=null 失败态出现；
+   * getCached 在上次查询失败时携带（失败态渲染 + 「查看上次成功数据」归 Phase B）。
+   */
+  reason?: QuotaFetchFailureReason
 }
 
 /**
@@ -23,28 +28,28 @@ export interface QuotaResult {
  */
 export async function getCached(providerId: string): Promise<QuotaResult> {
   const reply = await command('quota.getCached', { providerId })
-  return { data: reply.data, lastFetchAt: reply.lastFetchAt }
+  return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
 }
 
 /**
  * hover 触发主动查询。成功更新缓存 + 返回最新值。
- * 失败时 runtime 返回旧缓存值（ok=true + 旧 data），不抛错。
+ * 失败时 runtime 返回失败态（ok=true + data=null + reason），不抛错。
  * 并发保护：同 provider pending 期间复用 Promise（runtime 侧）。
  * 注意：带 10s throttle，10s 内重复 fetch 直接返回缓存。测试查询请用 refreshQuota。
  */
 export async function fetchQuota(providerId: string): Promise<QuotaResult> {
   const reply = await command('quota.fetch', { providerId })
-  return { data: reply.data, lastFetchAt: reply.lastFetchAt }
+  return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
 }
 
 /**
  * 强制刷新额度（绕过 throttle）。Settings 测试查询按钮专用。
  * 仍走 pending 并发保护（同 provider pending 期间复用 Promise）。
- * 失败时 runtime 返回旧缓存值（ok=true + 旧 data），不抛错。
+ * 失败时 runtime 返回失败态（ok=true + data=null + reason），不抛错。
  */
 export async function refreshQuota(providerId: string): Promise<QuotaResult> {
   const reply = await command('quota.refresh', { providerId })
-  return { data: reply.data, lastFetchAt: reply.lastFetchAt }
+  return { data: reply.data, lastFetchAt: reply.lastFetchAt, reason: reply.reason }
 }
 
 /**

@@ -8,6 +8,7 @@ name: review-extension-api
 审查变更中 Pi 扩展接口的完整性和向后兼容性。
 
 > **规范参考**：Pi 扩展强制约束见 `docs/extensions/extension-conventions.md`，完整开发模式见 `docs/extensions/development-guide.md`。
+> 原 SKILL.md「Pi Extension 接口契约 Checklist」四节（SDK 接口契约核对 / spec 偏差记录 / schema 描述一致性 / 类型断言）已并入本文执行步骤 2-5（pr-cr-fix 精简改造 D8），内容以本文为 SSOT。
 
 ## 输入
 
@@ -20,12 +21,24 @@ task prompt 中必须包含：
 ## 执行步骤
 
 1. **获取变更范围**：`git diff main...HEAD --stat` + `git diff main...HEAD`。
-2. **Tool/Command Schema 检查**（参考 development-guide §7-8）：
+2. **Tool/Command Schema 与描述一致性检查**（参考 development-guide §7-8；`[MANDATORY]` 逐条核对）：
    - 新增 tool 的参数是否用 `Type.Object()` + `StringEnum()` 定义 schema
    - `execute` 返回值是否符合 `{ content: [...], details: {...} }` 结构
    - `details` 是否有明确类型接口（XxxDetails）
    - 错误是否用 `throw new Error()` 而非返回错误成功模式
-3. **Pi Manifest 检查**（参考 extension-conventions §「安装红线」）：
+   - `registerTool` 的 `parameters` schema 必填字段在所有执行模式下都真的必填；被忽略的参数不应 schema 层必填（否则 LLM 被迫传占位值）
+   - 条件必填场景：schema 设 Optional，`execute()` 内按模式做运行时校验（抛清晰错误）
+   - `description` 中 "Ignores X/Y/Z" 描述与 schema 实际行为一致
+3. **SDK 接口契约核对**（`[MANDATORY]` 逐条核对）：
+   - `pi.on(...)` handler 对照真实 SDK 的 `ExtensionHandler<E> = (event: E, ctx: ExtensionContext)` **两个参数**签名——`modelRegistry`/`cwd`/`ui`/`sessionManager` 在第二个参数 `ctx` 上，不在 event 上
+   - 打开 `node_modules/@earendil-works/pi-coding-agent/dist/` 对照真实类型，不凭记忆写签名
+   - xyz-agent 以 `--mode rpc` 运行 pi（`ctx.mode === "rpc"`），TUI API（`ctx.ui.setWidget` 等）失效；GUI 渲染参阅 `docs/extensions/gui-protocol-guide.md`
+4. **spec 偏差记录**：
+   - 无 spec 的功能不应直接实现；实现与 spec 有偏差必须在 spec 末尾「实现偏差说明」补 D 编号记录——未记录的偏差等于违反 spec
+5. **类型断言（配合 taste/no-unsafe-cast）**：
+   - 每处 warn 的断言确认有不可替代的理由（跨 tsconfig 泛型冲突、SDK 类型 stub 缺失）
+   - 不可替代的断言必须有配套运行时 guard（参数判空抛错）或契约测试兜底——类型断言不能是唯一防线
+6. **Pi Manifest 检查**（参考 extension-conventions §「安装红线」）：
    - `package.json` 的 `pi.extensions` 是否为 `["./index.ts"]`
    - `type: "module"` 和 `keywords: ["pi-package"]` 是否存在
    - 有 skills 目录时 `pi.skills` 是否声明
@@ -45,15 +58,15 @@ task prompt 中必须包含：
    - **禁止** `postinstall` / `pi.migrate` / `scripts/migrate-config.mjs`（已废弃，session_start 取代）
    - 代码是否**只读新路径**（无旧路径 fallback / 双读）
 
-4. **向后兼容性**（参考 extension-conventions §「状态持久化」）：
+7. **向后兼容性**（参考 extension-conventions §「状态持久化」）：
    - 已有 tool 的参数 schema 变更是否兼容（新增字段可选？）
    - details 接口变更是否破坏下游消费者
    - 状态反序列化 (`getEntries`/`appendEntry` 的 GC 兼容）是否向后兼容旧格式
-5. **资源自包含**（参考 extension-conventions §「资源自包含」）：
+8. **资源自包含**（参考 extension-conventions §「资源自包含」）：
    - 扩展是否引用了自身目录外的绝对路径（违反 xyz-agent §16 禁止写死项目绝对路径）
    - `package.json` 的 `files` 字段是否包含所有资源文件（src/、skills/、scripts/ 等）
    - `peerDependencies` 声明的 typebox 版本是否与源码 import 一致（`typebox` v1.3.x vs `@sinclair/typebox` v0.34.x 是两个不兼容的包）
-6. **输出审查报告**到 `output` 路径。
+9. **输出审查报告**到 `output` 路径。
 
 ## Agent-facing 表面 checklist（条件触发）
 
@@ -107,7 +120,7 @@ must_fix: <数字>
 | MUST_FIX | src/index.ts | 25 | missing-schema | tool 缺少参数 schema | 添加 Type.Object() 定义 |
 ```
 
-类别包括：tool-schema / command-schema / pi-manifest / backward-compat / resource-containment / details-type / peerdep-mismatch
+类别包括：tool-schema / command-schema / sdk-contract / spec-deviation / unsafe-cast / pi-manifest / backward-compat / resource-containment / details-type / peerdep-mismatch
 
 优先级：MUST_FIX / SUGGESTION / INFO
 

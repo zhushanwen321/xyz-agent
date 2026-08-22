@@ -8,7 +8,7 @@
  * - 渲染模式：优先 deps.renderMarkdownIncremental（前缀段引用恒等缓存 + tail 段每帧重建 +
  *   streaming-fence 占位，D-5/W23）；未 provide 时回退 deps.renderMarkdown 全量（等价旧版）。
  * - rAF trailing 节流（H2）：每帧多次 content 变化合并为单次渲染；序号守卫防旧覆盖；
- *   失败降级转义纯文本 + 增量缓存作废重建。
+ *   失败降级转义纯文本（console.error 出声，不静默）+ 增量缓存作废重建。
  * - latest-wins 串行（W23）：增量缓存是单个可变对象（W22 原地更新），并发调用会交叉改写
  *   （旧渲染 resume 后按陈旧 boundary 追加 → 前缀段重复，append-only 校验对「重复但文本一致」
  *   无法自愈）→ in-flight 期间新请求合并为待执行项（queuedRender 覆盖），完成后只跑最新一条。
@@ -142,7 +142,11 @@ export function useMarkdownStreaming(
         if (disposed) return
         if (seq === renderSeq) segments.value = segs
       }
-    } catch {
+    } catch (e) {
+      // [HISTORICAL] 降级必须出声（2026-08 CSP 拦截 shiki WASM 事故：此 catch 曾静默吞错，
+      // 全部 markdown 渲染无声退化纯文本，线上多版本无任何日志可查）。降级行为保留
+      // （保证消息可读），但每次失败都打 error，错误可见才可诊断。
+      console.error('[chat/markdown] render failed, fallback to escaped plain text:', e)
       if (!disposed && seq === renderSeq) {
         segments.value = [{ type: 'text', content: escapeHtmlForFallback(text) }]
         // 增量缓存可能已被半途污染（renderIncremental 抛错前原地改写），作废重建保证下帧正确

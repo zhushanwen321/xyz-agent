@@ -192,19 +192,22 @@ describe('TC3: 边界3 空数组守卫——重算空时 clearEnabledModels（de
 describe('TC4: 边界2 defaultModel 守卫——禁用承载 default 的 provider 时重选', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('defaultModel=openai/gpt-4，禁用 openai → 重选为 anthropic 的 model，返回 newDefault', () => {
+  it('defaultModel=openai/gpt-4，禁用 openai → 重选为剩余 provider 的 model，返回 newDefault', () => {
+    // B-2 混合合并后：catalog provider（如 anthropic）的 models 含 builtin 副本条目，
+    // 重选结果随 builtin 目录漂移。候选用 custom id（other-llm）固定 mock 的 models 集，
+    // 本用例聚焦「重选发生 + 写回」本身。
     const { svc, store } = makeService({
       models: {
         openai: { models: [{ id: 'gpt-4' }] },
-        anthropic: { models: [{ id: 'claude-3' }] },
+        'other-llm': { models: [{ id: 'their-m' }] },
       },
-      enabledModels: ['openai/*', 'anthropic/*'],
+      enabledModels: ['openai/*', 'other-llm/*'],
       defaultModel: { provider: 'openai', modelId: 'gpt-4' },
     })
     const ret = svc.toggleProviderEnabled('openai', false)
-    // 重选写入 anthropic/claude-3
-    expect(store.setDefaultModel).toHaveBeenCalledWith('anthropic', 'claude-3')
-    expect(ret.newDefault).toEqual({ provider: 'anthropic', modelId: 'claude-3' })
+    // 重选写入 other-llm/their-m
+    expect(store.setDefaultModel).toHaveBeenCalledWith('other-llm', 'their-m')
+    expect(ret.newDefault).toEqual({ provider: 'other-llm', modelId: 'their-m' })
   })
 
   it('禁用的 provider 不承载 default → 不重选，返回空对象', () => {
@@ -240,21 +243,23 @@ describe('TC4: 边界2 defaultModel 守卫——禁用承载 default 的 provide
   })
 
   it('MF-3：重选 default 时跳过候选 provider 的已禁用 model（model 级 enabled 校验，M5-02 路径）', () => {
-    // 场景：openai 承载 default，禁用 openai 后重选到 anthropic，但 anthropic 的 models[0]
+    // 场景：openai 承载 default，禁用 openai 后重选到候选 provider，但其 models[0]
     // 被用户显式禁用（enabled:false）。旧实现 pickEnabledDefaultModel 只校验 provider 级
     // p.enabled + p.models[0] 存在性，会把已禁用 model 写成新 default。修复后 find 首个启用 model。
+    // 候选用 custom id（B-2 混合合并后 catalog 候选的 models 含 builtin 条目，会掩盖
+    // 「跳过禁用 model」的意图——custom 候选集固定为 mock 的 models）。
     const { svc, store } = makeService({
       models: {
         openai: { models: [{ id: 'gpt-4' }] },
-        anthropic: { models: [{ id: 'disabled-m', enabled: false }, { id: 'enabled-m', enabled: true }] },
+        'other-llm': { models: [{ id: 'disabled-m', enabled: false }, { id: 'enabled-m', enabled: true }] },
       },
-      enabledModels: ['openai/*', 'anthropic/*'],
+      enabledModels: ['openai/*', 'other-llm/*'],
       defaultModel: { provider: 'openai', modelId: 'gpt-4' },
     })
     const ret = svc.toggleProviderEnabled('openai', false)
     // 重选跳过 disabled-m，选 enabled-m（首个启用 model）
-    expect(store.setDefaultModel).toHaveBeenCalledWith('anthropic', 'enabled-m')
-    expect(ret.newDefault).toEqual({ provider: 'anthropic', modelId: 'enabled-m' })
+    expect(store.setDefaultModel).toHaveBeenCalledWith('other-llm', 'enabled-m')
+    expect(ret.newDefault).toEqual({ provider: 'other-llm', modelId: 'enabled-m' })
   })
 })
 
@@ -273,13 +278,16 @@ describe('TC6: setProvider 停用 provider 级 enabled 写入（C5）', () => {
     expect('enabled' in merged).toBe(false)
   })
 
-  it('model 级 enabled（data.models[].enabled）仍正常写', () => {
+  it('model 级 enabled（data.models[].enabled）不写入 models.json（G3 写侧切换，0161efce4）', () => {
+    // model 级启停迁 config/providers.json modelStates（providers.json 侧的写入断言见
+    // provider-write-side-switch.test.ts「model enabled 写 providers.json modelStates」），
+    // models.json 不再落 pi schema 外的寄生 enabled 字段。
     const { svc, store } = makeService({
       models: { openai: { name: 'OpenAI', models: [{ id: 'gpt-4' }] } },
     })
     svc.setProvider('openai', { models: [{ id: 'gpt-4', enabled: false }] })
     const merged = store.upsertProvider.mock.calls[0][1] as { models: Array<{ id: string; enabled?: boolean }> }
-    expect(merged.models[0].enabled).toBe(false)
+    expect('enabled' in merged.models[0]).toBe(false)
   })
 })
 

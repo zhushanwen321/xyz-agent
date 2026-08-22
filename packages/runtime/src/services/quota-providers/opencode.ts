@@ -9,7 +9,8 @@
  * HTTP 302 = cookie 过期。
  */
 
-import type { NormalizedQuotaRow, ProviderQuotaFetcher } from './types.js'
+import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome } from './types.js'
+import { statusToReason } from './types.js'
 import { logger } from '../../infra/logger.js'
 
 const FETCH_TIMEOUT_MS = 8000
@@ -49,10 +50,10 @@ function toWin(u: WindowUsage): { pct: number | null; resetSec: number | null } 
 
 export const opencodeFetcher: ProviderQuotaFetcher = {
   id: 'opencode-go',
-  authType: 'cookie',
+  auth: ['cookie'],
 
-  async fetchQuota(credential: string): Promise<NormalizedQuotaRow | null> {
-    if (!credential) return null
+  async fetchQuota(credential: string, _kind: QuotaAuthKind): Promise<QuotaFetchOutcome> {
+    if (!credential) return { ok: false, reason: 'unauthorized' }
 
     try {
       const resp = await fetch(
@@ -67,33 +68,35 @@ export const opencodeFetcher: ProviderQuotaFetcher = {
           redirect: 'manual',
         },
       )
-      // 302 = cookie 过期
-      if (resp.status !== HTTP_OK) return null
+      // 302 重定向 = cookie 过期（原 isCredentialValid 语义归入 unauthorized，A2-1）
+      if (resp.status === HTTP_REDIRECT) return { ok: false, reason: 'unauthorized' }
+      if (resp.status !== HTTP_OK) return { ok: false, reason: statusToReason(resp.status) }
 
-      const html = await resp.text()
+      let html: string
+      try {
+        html = await resp.text()
+      } catch {
+        return { ok: false, reason: 'parse' }
+      }
 
       const rolling = extractWindow(html, 'rollingUsage')
       const weekly = extractWindow(html, 'weeklyUsage')
       const monthly = extractWindow(html, 'monthlyUsage')
-      if (!rolling || !weekly || !monthly) return null
+      // SSR HTML 中无三窗口数据 = 响应可解析但无订阅数据
+      if (!rolling || !weekly || !monthly) return { ok: false, reason: 'no-subscription' }
 
       return {
-        label: 'opencode.go',
-        wins: [toWin(rolling), toWin(weekly), toWin(monthly)],
+        ok: true,
+        data: {
+          label: 'opencode.go',
+          wins: [toWin(rolling), toWin(weekly), toWin(monthly)],
+        },
       }
     } catch (err) {
-      // 查询失败降级返回 null（调用方返回旧缓存），但必须 log（架构约定 #4 落盘，禁止静默 catch）
+      // fetch 网络异常 / 超时 → network（架构约定 #4 落盘，禁止静默 catch）
       const msg = err instanceof Error ? err.message : String(err)
       logger.debug('[quota:opencode] fetch failed', { error: msg })
-      return null
+      return { ok: false, reason: 'network' }
     }
-  },
-
-  /** 302 重定向 = cookie 过期 */
-  isCredentialValid(response: unknown): boolean {
-    if (response instanceof Response) {
-      return response.status !== HTTP_REDIRECT
-    }
-    return true
   },
 }

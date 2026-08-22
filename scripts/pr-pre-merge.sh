@@ -4,13 +4,24 @@
 # 按顺序执行 typecheck → lint → test → build，任意一步失败立即退出。
 # 覆盖三条代码线：extensions/ + packages/runtime + packages/renderer。
 #
-# 用法:
-#   bash scripts/pr-pre-merge.sh
-#   bash scripts/pr-pre-merge.sh --quiet   # 只输出最终结果
+# 三种模式（无参默认行为与旧版完全一致，向后兼容）:
+#   bash scripts/pr-pre-merge.sh                          # 默认：typecheck(仅 extensions) + lint
+#                                                         #        + 三线测试全跑
+#   bash scripts/pr-pre-merge.sh --skip-tests             # static gate（流程阶段 1.1）：
+#                                                         #   typecheck 三处 + lint；测试步全跳过，
+#                                                         #   result 反映 typecheck + lint
+#   bash scripts/pr-pre-merge.sh --test-result PASS|FAIL  # 终局 gate（流程阶段 3a）：
+#                                                         #   typecheck 三处 + lint + test:runtime 实跑
+#                                                         #   （无插桩、不设 XYZ_SKIP_REAL_PI，real-pi
+#                                                         #   义务原位承接）；test:extensions/renderer
+#                                                         #   不执行，以注入值计入 result
+#
+#   --quiet 可与任一模式组合（只输出最终结果）
 #
 # 退出码:
 #   0 = 全部通过
-#   1 = 任意一步失败（输出失败步骤的 stderr 末 30 行）
+#   1 = 任意一步失败（输出失败步骤的 stderr 末 30 行；含 --test-result 注入 FAIL）
+#   2 = 用法/环境错误（未知参数、--test-result 下 coverage.json 缺失或 base 不一致）
 #
 # 环境变量:
 #   PR_PRE_MERGE_SKIP_BUILD=1   跳过 build 步骤（Electron build 耗时较长）
@@ -19,7 +30,53 @@
 set -euo pipefail
 
 QUIET="${PR_PRE_MERGE_QUIET:-0}"
-[[ "${1:-}" == "--quiet" ]] && QUIET=1
+
+usage() {
+    cat >&2 <<'USAGE'
+用法:
+  bash scripts/pr-pre-merge.sh                          # 默认：typecheck(仅 extensions) + lint + 三线测试全跑
+  bash scripts/pr-pre-merge.sh --skip-tests             # static gate：typecheck 三处 + lint，测试全跳过
+  bash scripts/pr-pre-merge.sh --test-result PASS|FAIL  # 终局 gate：typecheck 三处 + lint + test:runtime 实跑，
+                                                        # 其余测试线以注入值计入 result
+通用参数: --quiet（只输出最终结果，等价 PR_PRE_MERGE_QUIET=1）
+USAGE
+}
+
+# ── 参数解析：模式（default / skip-tests / test-result）+ --quiet ──
+MODE="default"
+TEST_RESULT_INJECT=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --quiet)
+            QUIET=1
+            ;;
+        --skip-tests|--test-result)
+            if [[ "$MODE" != "default" ]]; then
+                echo "ERROR: --skip-tests 与 --test-result 互斥，只能指定一个" >&2
+                usage
+                exit 2
+            fi
+            if [[ "$1" == "--skip-tests" ]]; then
+                MODE="skip-tests"
+            else
+                MODE="test-result"
+                shift
+                if [[ "${1:-}" != "PASS" && "${1:-}" != "FAIL" ]]; then
+                    echo "ERROR: --test-result 需要注入值 PASS 或 FAIL（得到：${1:-<空>}）" >&2
+                    usage
+                    exit 2
+                fi
+                TEST_RESULT_INJECT="$1"
+            fi
+            ;;
+        *)
+            echo "ERROR: 未知参数: $1" >&2
+            usage
+            exit 2
+            ;;
+    esac
+    shift
+done
 
 log() {
     [[ "$QUIET" == "1" ]] || echo "[pr-pre-merge] $*"
@@ -28,6 +85,32 @@ log() {
 # 必须在 git 仓库根目录
 GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || { echo "Not a git repo" >&2; exit 2; })"
 cd "$GIT_ROOT"
+
+# ── --test-result 前置校验（防注入值与 coverage 产物竞态）：
+#    注入值来源是 coverage-gate 的测试判定，产物必须存在且针对同一 base，
+#    否则注入的是过期读数。不一致 → exit 2（工具错误），错误信息指向恢复动作。
+if [[ "$MODE" == "test-result" ]]; then
+    EXPECTED_BASE="main"  # 本脚本无 --base 参数；base 概念与 check_changeset 同源（main）
+    if [[ ! -f .review/coverage.json ]]; then
+        echo "ERROR: --test-result 需要 .review/coverage.json（未找到，注入值缺少来源产物）。" >&2
+        echo "恢复：先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main，" >&2
+        echo "再执行 bash scripts/pr-pre-merge.sh --test-result PASS|FAIL" >&2
+        exit 2
+    fi
+    COV_BASE="$(node -e 'try{const c=require("./.review/coverage.json");process.stdout.write(typeof c.base==="string"?c.base:"")}catch(e){}' 2>/dev/null || true)"
+    if [[ -z "$COV_BASE" ]]; then
+        echo "ERROR: .review/coverage.json 缺少 base 字段（或 JSON 无效）——无法确认产物针对的 base，注入判定不可信。" >&2
+        echo "恢复：先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main，" >&2
+        echo "再执行 bash scripts/pr-pre-merge.sh --test-result PASS|FAIL" >&2
+        exit 2
+    fi
+    if [[ "$COV_BASE" != "$EXPECTED_BASE" ]]; then
+        echo "ERROR: .review/coverage.json 的 base=\"$COV_BASE\" 与本次 base=\"$EXPECTED_BASE\" 不一致——产物过期（来自其他 base），注入判定不可信。" >&2
+        echo "恢复：先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main，" >&2
+        echo "再执行 bash scripts/pr-pre-merge.sh --test-result PASS|FAIL" >&2
+        exit 2
+    fi
+fi
 
 START=$(date +%s)
 RESULTS=()
@@ -41,11 +124,16 @@ run_step() {
     output_file="$(mktemp -t pr-pre-merge.XXXXXX)"
 
     # 同时捕获 stdout+stderr；只对命令本身静默
+    # [HISTORICAL] 非安静分支原裸写 `"$@" | tee` 后取 PIPESTATUS[0]：pipefail 下步骤
+    # 失败时该管道直接触发 set -e 退出 shell，下方 FAIL 分支（✗ 日志 / last-30 dump /
+    # marker FAIL 写入）是死代码——marker 失败时不更新（2026-08-22 --test-result 实测
+    # 暴露：EXIT_CODE=1 但 marker 停留旧值）。改 `|| exit_code=$?` 进条件上下文，失败
+    # 统一走 FAIL 判定，marker 必须反映终态（pr-cr-fix 精简设计 D4/S3）。成功路径零变化
+    # （PIPESTATUS[0] 与管道状态同为 0）。
     if [[ "$QUIET" == "1" ]]; then
         "$@" >"$output_file" 2>&1 || exit_code=$?
     else
-        "$@" 2>&1 | tee "$output_file"
-        exit_code=${PIPESTATUS[0]}
+        "$@" 2>&1 | tee "$output_file" || exit_code=$?
     fi
 
     local step_end=$(date +%s)
@@ -81,18 +169,43 @@ MARKER
 
 # ── Step 1: typecheck（extensions 独立 tsconfig + 项目层）
 # extensions/ 有独立 tsconfig.json（noEmit），项目层暂无全局 typecheck script
+# 默认模式仅 extensions（向后兼容）；--skip-tests / --test-result 扩展为三处
+# （runtime / renderer 的 package.json 均声明 typecheck script：tsc / vue-tsc --noEmit）
 run_step "typecheck:extensions" bash -c 'cd "$0" && npx tsc --noEmit' extensions
+if [[ "$MODE" != "default" ]]; then
+    run_step "typecheck:runtime" bash -c 'cd packages/runtime && pnpm run typecheck'
+    run_step "typecheck:renderer" bash -c 'cd packages/renderer && pnpm run typecheck'
+fi
 
 # ── Step 2: lint（根 eslint 覆盖全局含 extensions）
 run_step "lint" pnpm run lint
 
-# ── Step 3: test（extensions + runtime + renderer 三条线）
-# extensions 测试（pnpm -r --filter @zhushanwen/pi-* test = vitest run）
-run_step "test:extensions" pnpm extensions:test
-# runtime 测试（vitest config 在 packages/runtime/）
-run_step "test:runtime" bash -c 'cd packages/runtime && npx vitest run'
-# renderer 测试（vitest config 在 packages/renderer/，含 @ alias）
-run_step "test:renderer" bash -c 'cd packages/renderer && npx vitest run'
+# ── Step 3: test（extensions + runtime + renderer 三条线；按模式取舍）
+if [[ "$MODE" == "default" ]]; then
+    # extensions 测试（pnpm -r --filter @zhushanwen/pi-* test = vitest run）
+    run_step "test:extensions" pnpm extensions:test
+    # runtime 测试（vitest config 在 packages/runtime/）
+    run_step "test:runtime" bash -c 'cd packages/runtime && npx vitest run'
+    # renderer 测试（vitest config 在 packages/renderer/，含 @ alias）
+    run_step "test:renderer" bash -c 'cd packages/renderer && npx vitest run'
+elif [[ "$MODE" == "test-result" ]]; then
+    # extensions / renderer 线由 coverage-gate 承接（插桩口径），此处不重复执行，
+    # 判定以注入值计入最终 result；runtime 线实跑——无插桩、不设 XYZ_SKIP_REAL_PI，
+    # real-pi 义务原位承接（TEST-STRATEGY.md 阶段 3a 分工）
+    log "  ↷ test:extensions skipped（--test-result 注入: ${TEST_RESULT_INJECT}）"
+    RESULTS+=("SKIP test:extensions 0s (injected=${TEST_RESULT_INJECT})")
+    run_step "test:runtime" bash -c 'cd packages/runtime && npx vitest run'
+    log "  ↷ test:renderer skipped（--test-result 注入: ${TEST_RESULT_INJECT}）"
+    RESULTS+=("SKIP test:renderer 0s (injected=${TEST_RESULT_INJECT})")
+else
+    # --skip-tests：全部测试步跳过（阶段 1.1 static gate，测试由 coverage-gate 承接）
+    log "  ↷ test:extensions skipped (--skip-tests)"
+    RESULTS+=("SKIP test:extensions 0s (--skip-tests)")
+    log "  ↷ test:runtime skipped (--skip-tests)"
+    RESULTS+=("SKIP test:runtime 0s (--skip-tests)")
+    log "  ↷ test:renderer skipped (--skip-tests)"
+    RESULTS+=("SKIP test:renderer 0s (--skip-tests)")
+fi
 
 # ── Step 4: build（可选，Electron build 耗时较长，默认跳过除非显式要求）
 if [[ "${PR_PRE_MERGE_SKIP_BUILD:-1}" == "1" ]]; then
@@ -178,8 +291,23 @@ echo "[pr-pre-merge] === SUMMARY (${TOTAL}s total) ==="
 for r in "${RESULTS[@]}"; do
     echo "  $r"
 done
-echo "[pr-pre-merge] all checks passed ✓"
+# ── 终局 result 判定：注入 FAIL 即使实跑步全过也判 FAIL。
+# （实跑步失败已在 run_step 内直接写 FAIL marker 并中止，不会到达此处）
+FINAL_RESULT="PASS"
+if [[ "$MODE" == "test-result" && "$TEST_RESULT_INJECT" == "FAIL" ]]; then
+    FINAL_RESULT="FAIL"
+fi
 
-write_result_marker "PASS"
+if [[ "$FINAL_RESULT" == "PASS" ]]; then
+    echo "[pr-pre-merge] all checks passed ✓"
+else
+    echo "[pr-pre-merge] FAILED ✗ —— 注入测试判定为 FAIL（test:extensions / test:renderer 未实跑，" >&2
+    echo "判定继承自 coverage-gate；失败明细见 .review/coverage.json 的 packages[].reason）" >&2
+fi
 
-exit 0
+write_result_marker "$FINAL_RESULT"
+
+if [[ "$FINAL_RESULT" == "PASS" ]]; then
+    exit 0
+fi
+exit 1

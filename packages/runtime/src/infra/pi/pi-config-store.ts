@@ -41,6 +41,8 @@ import {
 } from './pi-provider-store.js'
 import { listAgentFiles, writeAgentFile, deleteAgentFile } from './agent-crud.js'
 import { getConfigDir, getPiAgentDir } from './pi-paths.js'
+import { isInvalidProvider } from './pi-provider-repair.js'
+import type { PiProviderConfig } from './pi-provider-store.js'
 import {
   getAgentDirs as getDiscoveryAgentDirs,
   getAgentPathScopes as getDiscoveryAgentPathScopes,
@@ -120,6 +122,15 @@ export class PiConfigStore implements IConfigStore {
 
   removeProvider(providerId: string) {
     return removeProvider(providerId)
+  }
+
+  /**
+   * pi 0.84.1 八字段全缺空壳判定（isInvalidProvider 的 port 委托，round 1 review
+   * arch-boundary S1 port 化）。ConfigProviderConfig 与 PiProviderConfig 结构同构，
+   * 判定只读八字段，port 视图直接传入。
+   */
+  isInvalidProvider(config: ConfigProviderConfig): boolean {
+    return isInvalidProvider(config as unknown as PiProviderConfig)
   }
 
   // ── Skill paths（discovery.json SSOT）──

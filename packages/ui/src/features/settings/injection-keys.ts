@@ -8,13 +8,18 @@
  * 注入方向：renderer 壳（ProviderPage/SettingsResourcePage 等）→ provide 真实实现；
  * ui 组件 → inject 取用。与 core 的 TC4 t 注入模式一致（依赖经边界注入，不越界 import）。
  *
- * 类型来源：QuotaPreset / NormalizedQuotaRow / ProviderInfo 来自 @xyz-agent/shared（ui 已依赖）。
- * QuotaConfigureState 结构对齐 renderer UseQuotaConfigureReturn（逐字段），保证壳侧 provide 的
- * 真实 useQuotaConfigure 返回值与本类型兼容，ProviderEditModal 解构不丢字段。
+ * 类型来源：QuotaPreset / ProviderInfo 来自 @xyz-agent/shared（ui 已依赖）；
+ * QuotaConfigureState / QuotaTestStatus 来自 @xyz-agent/core（[BL round1 monorepo S]
+ * 契约 SSOT——原为本地逐字段镜像 renderer UseQuotaConfigureReturn，提升 core 后
+ * renderer 真实返回类型亦从 core 契约派生，双侧同一类型消除镜像漂移）。
  */
 import { inject, ref } from 'vue'
 import type { ComputedRef, InjectionKey, Ref } from 'vue'
-import type { ProviderInfo, NormalizedQuotaRow, QuotaPreset } from '@xyz-agent/shared'
+import type { ProviderInfo, NormalizedQuotaRow, QuotaPreset, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
+import type { QuotaConfigureState, QuotaTestStatus } from '@xyz-agent/core'
+
+// 状态契约 SSOT re-export（消费方 CodingPlanSection / settings barrel 经本模块取类型）
+export type { QuotaConfigureState, QuotaTestStatus }
 
 // ── ① Toast ──
 
@@ -42,37 +47,8 @@ export function useSettingsToast(): SettingsToast {
 
 // ── ② Quota Configure 工厂 ──
 
-export type QuotaTestStatus = 'idle' | 'loading' | 'success' | 'error'
-
-/**
- * QuotaConfigure 返回态。结构对齐 renderer useQuotaConfigure 的 UseQuotaConfigureReturn
- * （isCookieAuth/helpUrl/helpText 在源实现为 Ref<boolean>/Ref<string|undefined>，这里保持 Ref）。
- */
-export interface QuotaConfigureState {
-  fetcherId: Ref<string | undefined>
-  fetcherOptions: Array<{ value: string; label: string }>
-  enabled: Ref<boolean>
-  cookieInput: Ref<string>
-  apiKeyInput: Ref<string>
-  apiKeyConfigured: Ref<boolean>
-  testStatus: Ref<QuotaTestStatus>
-  testError: Ref<string>
-  quotaData: Ref<NormalizedQuotaRow | null>
-  lastFetchAt: Ref<number | null>
-  isCookieAuth: Ref<boolean>
-  helpUrl: Ref<string | undefined>
-  helpText: Ref<string | undefined>
-  configuring: Ref<boolean>
-  configureError: Ref<string>
-  toggleEnabled: () => Promise<void>
-  selectFetcher: (id: string) => Promise<void>
-  saveCookie: () => Promise<void>
-  saveApiKey: () => Promise<void>
-  testQuery: () => Promise<void>
-  reset: () => void
-}
-
-/** 工厂签名：(preset, providerRef) => QuotaConfigureState。与 renderer useQuotaConfigure 同构。 */
+/** 工厂签名：(preset, providerRef) => QuotaConfigureState。与 renderer useQuotaConfigure 同构
+ *  （返回态契约 QuotaConfigureState 的 SSOT 在 @xyz-agent/core，见文件头注释）。 */
 export type UseQuotaConfigureFactory = (
   preset: Ref<QuotaPreset | undefined>,
   providerRef: Ref<ProviderInfo | null>,
@@ -94,6 +70,8 @@ const NOOP_FACTORY: UseQuotaConfigureFactory = () => ({
   quotaData: ref<NormalizedQuotaRow | null>(null),
   lastFetchAt: ref<number | null>(null),
   isCookieAuth: ref(false),
+  authKinds: ref<readonly QuotaAuthKind[]>([]),
+  testFailReason: ref<QuotaFetchFailureReason | null>(null),
   helpUrl: ref<string | undefined>(undefined),
   helpText: ref<string | undefined>(undefined),
   configuring: ref(false),

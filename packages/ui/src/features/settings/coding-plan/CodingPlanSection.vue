@@ -1,8 +1,10 @@
 <template>
   <!--
-    CodingPlanSection —— ProviderEditModal 内「Coding Plan 额度查询」子组件。
-    从 ProviderEditModal.vue 提取，保持主模板 ≤400 行。
+    CodingPlanSection —— ProviderEditBody 内「Coding Plan 额度查询」子组件（B-3 泛化）。
     4 种 UI 状态：未启用 / API Key 类已配置 / Cookie 类已配置 / 查询失败。
+    B-3 泛化：凭证态按 fetcher.auth 渲染（含 oauth → 就绪/缺失态，api-key → 专属 key 输入 +
+    回退顺序说明）；额度显示 used/limit + pct 双轨；失败态按 reason（A2-4）渲染恢复指引，
+    旧缓存经「查看上次成功数据」折叠展开（design §3.4 展示语义）。
     所有业务逻辑在父组件 useQuotaConfigure 中，本组件纯展示 + 事件转发。
   -->
   <div class="border-t border-border pt-4" data-testid="coding-plan-section">
@@ -51,12 +53,42 @@
     <template v-if="!isCookieAuth">
       <div class="flex items-center justify-between py-1">
         <span class="text-[11px] text-neutral-mid">{{ t('settings.providerEdit.quotaAuthMethod') }}</span>
-        <span v-if="apiKeySet" class="flex items-center gap-1 text-[11px] text-success">
-          <CheckCircle2 class="size-3" />
-          {{ t('settings.providerEdit.quotaCredentialOk') }}
-        </span>
-        <span v-else class="text-[11px] text-danger">{{ t('settings.providerEdit.quotaCredentialMissing') }}</span>
+        <!-- B-3：fetcher.auth 含 oauth → oauth 凭证态优先（就绪绿 / 缺失警示并指向凭证区）；
+             无 oauth 能力 → 现有 apiKeySet 状态行不变 -->
+        <template v-if="supportsOauth">
+          <span
+            v-if="oauthReady"
+            data-testid="quota-oauth-ready"
+            class="flex items-center gap-1 text-[11px] text-success"
+          >
+            <CheckCircle2 class="size-3" />
+            {{ t('settings.providerEdit.quotaCredentialOauthReady') }}
+          </span>
+          <span
+            v-else-if="apiKeySet"
+            class="flex items-center gap-1 text-[11px] text-success"
+          >
+            <CheckCircle2 class="size-3" />
+            {{ t('settings.providerEdit.quotaCredentialOk') }}
+          </span>
+          <span v-else data-testid="quota-oauth-missing" class="text-[11px] text-warn">
+            {{ t('settings.providerEdit.quotaCredentialOauthMissing') }}
+          </span>
+        </template>
+        <template v-else>
+          <span v-if="apiKeySet" class="flex items-center gap-1 text-[11px] text-success">
+            <CheckCircle2 class="size-3" />
+            {{ t('settings.providerEdit.quotaCredentialOk') }}
+          </span>
+          <span v-else class="text-[11px] text-danger">{{ t('settings.providerEdit.quotaCredentialMissing') }}</span>
+        </template>
       </div>
+      <!-- oauth 凭证缺失提示：指向上方凭证区（B-3） -->
+      <p
+        v-if="supportsOauth && !oauthReady && !apiKeySet"
+        class="mt-0.5 text-[10px] text-neutral-dim"
+        data-testid="quota-oauth-missing-hint"
+      >{{ t('settings.providerEdit.quotaCredentialOauthMissingHint') }}</p>
 
       <!--
         专属 API Key（可选）：适配 router/反代场景。
@@ -89,6 +121,8 @@
             {{ t('settings.providerEdit.quotaSaveApiKey') }}
           </Button>
         </div>
+        <!-- 回退顺序说明（B-3）：留空专属 Key 时按序回退 -->
+        <p class="mt-1 text-[10px] text-neutral-dim">{{ t('settings.providerEdit.quotaApiKeyFallbackOrder') }}</p>
       </div>
 
       <!-- 操作按钮（仅启用时显示） -->
@@ -162,21 +196,27 @@
       </div>
     </template>
 
-    <!-- 测试查询成功 + 内联额度预览（3 窗口行） -->
+    <!-- 测试查询成功 + 内联额度预览（3 窗口行；B-3：used/limit 绝对量 + pct 双轨） -->
     <div v-if="testStatus === 'success' && quotaRow" class="mt-2" data-testid="quota-result">
       <div class="flex items-center gap-1.5 text-[11px] text-success">
         <CheckCircle2 class="size-3" />
         {{ t('settings.providerEdit.quotaTestSuccess') }}
         <span v-if="lastFetchAt" class="text-neutral-dim">· {{ formatTimeAgo(lastFetchAt) }}</span>
       </div>
-      <div class="mt-2 rounded-sm border border-border bg-bg-input p-2.5">
+      <div class="mt-2 rounded-sm border border-border bg-bg-input p-2.5" data-testid="quota-result-windows">
         <div
-          v-for="(win, idx) in visibleWindows"
-          :key="idx"
+          v-for="win in visibleWindows"
+          :key="win.idx"
           class="flex items-center justify-between py-0.5 text-[11px]"
         >
-          <span class="font-mono text-[10px] text-neutral-mid">{{ windowLabels[idx] }}</span>
+          <span class="font-mono text-[10px] text-neutral-mid">{{ windowLabels[win.idx] }}</span>
           <span v-if="win.pct !== null" class="font-semibold tabular-nums text-neutral-fg">
+            <!-- 双轨：有绝对量（used/limit）时「已用 N / M 单位 · pct%」，无则维持 pct 单轨 -->
+            <template v-if="win.used != null && win.limit != null">
+              {{ t('settings.providerEdit.quotaUsedOf', { used: formatAmount(win.used), limit: formatAmount(win.limit) }) }}
+              <span v-if="unitLabel(win.unit)" class="font-normal text-neutral-mid">{{ unitLabel(win.unit) }}</span>
+              ·
+            </template>
             {{ Math.round(win.pct) }}%
             <span v-if="win.resetSec !== null" class="ml-1 font-normal text-neutral-dim">· {{ formatResetSec(win.resetSec) }}</span>
           </span>
@@ -185,11 +225,11 @@
       </div>
     </div>
 
-    <!-- 测试查询失败 -->
+    <!-- 测试查询失败（B-3 / A2-4）：失败态整体替换数据展示，旧缓存只经「查看上次成功数据」展开可见 -->
     <div v-if="testStatus === 'error'" class="mt-2" data-testid="quota-error">
-      <div class="flex items-center gap-1.5 text-[11px] text-danger">
+      <div class="flex items-center gap-1.5 text-[11px] text-danger" data-testid="quota-error-msg">
         <AlertCircle class="size-3" />
-        {{ testErrorMsg || t('settings.providerEdit.quotaTestFail') }}
+        {{ failMessage }}
       </div>
       <Button
         v-if="isCookieAuth"
@@ -200,6 +240,38 @@
       >
         {{ t('settings.providerEdit.quotaUpdateCookie') }}
       </Button>
+      <!-- 「查看上次成功数据」入口（design §3.4：旧缓存保留内存不直接展示，防陈旧数据当当前额度） -->
+      <Button
+        v-if="quotaRow"
+        variant="ghost"
+        class="mt-1 h-auto p-0 text-[11px] text-accent hover:bg-transparent hover:underline"
+        data-testid="quota-toggle-last-success"
+        @click="showLastSuccess = !showLastSuccess"
+      >
+        {{ showLastSuccess ? t('settings.providerEdit.collapse') : t('settings.providerEdit.quotaLastSuccessToggle') }}
+      </Button>
+      <div v-if="showLastSuccess && quotaRow" class="mt-2 rounded-sm border border-border bg-bg-input p-2.5" data-testid="quota-last-success">
+        <p v-if="lastFetchAt" class="mb-1 text-[10px] text-neutral-dim">
+          {{ t('settings.providerEdit.quotaLastSuccessAt', { time: formatAbsoluteTime(lastFetchAt) }) }}
+        </p>
+        <div
+          v-for="win in visibleWindows"
+          :key="win.idx"
+          class="flex items-center justify-between py-0.5 text-[11px]"
+        >
+          <span class="font-mono text-[10px] text-neutral-mid">{{ windowLabels[win.idx] }}</span>
+          <span v-if="win.pct !== null" class="font-semibold tabular-nums text-neutral-mid">
+            <template v-if="win.used != null && win.limit != null">
+              {{ t('settings.providerEdit.quotaUsedOf', { used: formatAmount(win.used), limit: formatAmount(win.limit) }) }}
+              <span v-if="unitLabel(win.unit)" class="font-normal text-neutral-dim">{{ unitLabel(win.unit) }}</span>
+              ·
+            </template>
+            {{ Math.round(win.pct) }}%
+            <span v-if="win.resetSec !== null" class="ml-1 font-normal text-neutral-dim">· {{ formatResetSec(win.resetSec) }}</span>
+          </span>
+          <span v-else class="text-neutral-dim">∞</span>
+        </div>
+      </div>
     </div>
 
     <!-- 配置错误 -->
@@ -214,11 +286,11 @@
  * - 事件转发：toggleEnabled / testQuery / saveCookie / update:cookieInput
  */
 import { Button, Switch, Label, Textarea, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@xyz-agent/ui'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Loader2, RefreshCw, CheckCircle2, AlertCircle, ExternalLink } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
-import type { NormalizedQuotaRow } from '@xyz-agent/shared'
+import type { NormalizedQuotaRow, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
 import { QUOTA_PRESETS } from '@xyz-agent/shared'
 import type { QuotaTestStatus } from '../injection-keys'
 
@@ -235,9 +307,15 @@ const props = withDefaults(defineProps<{
   apiKeyConfigured?: boolean
   testStatus: QuotaTestStatus
   testErrorMsg: string
+  /** 最近一次查询失败原因（A2-4 reason 透传；null = 无失败或非 reason 型错误） */
+  testFailReason?: QuotaFetchFailureReason | null
   quotaRow: NormalizedQuotaRow | null
   lastFetchAt: number | null
   isCookieAuth: boolean
+  /** 当前选中 fetcher 的凭证能力声明（B-3：含 'oauth' → 渲染 oauth 凭证态） */
+  authKinds?: readonly QuotaAuthKind[]
+  /** provider 已完成 OAuth 登录（父组件 useProviderOAuth.oauthPresent） */
+  oauthReady?: boolean
   configuring: boolean
   configureErrorMsg: string
   apiKeySet: boolean
@@ -249,6 +327,9 @@ const props = withDefaults(defineProps<{
   fetcherId: undefined,
   apiKeyInput: '',
   apiKeyConfigured: false,
+  testFailReason: null,
+  authKinds: () => [],
+  oauthReady: false,
   // 默认选项 = QUOTA_PRESETS（5 个内置类型），调用方一般无需传
   fetcherOptions: () => QUOTA_PRESETS.map((p) => ({ value: p.fetcher, label: p.label })),
 })
@@ -281,18 +362,60 @@ const windowLabels = [
   t('settings.providerEdit.quotaWindowMonth'),
 ]
 
-/** 可见窗口项（过滤 pct=null 的 ∞ 窗口）。 */
+/** 可见窗口项（过滤 pct=null 的 ∞ 窗口；B-3 双轨携带 used/limit/unit 绝对量）。 */
 interface VisibleWindow {
   idx: number
   pct: number | null
   resetSec: number | null
+  used?: number | null
+  limit?: number | null
+  unit?: 'requests' | 'tokens' | 'credits' | null
 }
 
 const visibleWindows = computed<VisibleWindow[]>(() => {
   const row = props.quotaRow
   if (!row) return []
-  return row.wins.map((w, i) => ({ idx: i, pct: w.pct, resetSec: w.resetSec }))
+  return row.wins.map((w, i) => ({ idx: i, pct: w.pct, resetSec: w.resetSec, used: w.used, limit: w.limit, unit: w.unit }))
 })
+
+/** fetcher.auth 含 oauth 能力（B-3：oauth 凭证态渲染开关） */
+const supportsOauth = computed(() => props.authKinds.includes('oauth'))
+
+/** 「查看上次成功数据」展开态（B-3 / design §3.4：失败态下旧缓存折叠展示） */
+const showLastSuccess = ref(false)
+
+/** 失败态文案：reason 可区分时用带恢复指引的专属文案（A2-4 全 4 reason），否则回退 testErrorMsg/通用文案 */
+const failMessage = computed(() => {
+  if (props.testFailReason === 'unauthorized') return t('settings.providerEdit.quotaFetchFailUnauthorized')
+  if (props.testFailReason === 'network') return t('settings.providerEdit.quotaFetchFailNetwork')
+  if (props.testFailReason === 'no-subscription') {
+    // S5：cookie 类 provider（如 mimo）的业务码不可区分「无订阅 vs Cookie 失效」（fetcher 层已论证
+    // 不可行，commit bfe02bd25），cookie 场景的 no-subscription 可能实为 Cookie 失效 → 提示两可
+    return props.authKinds.includes('cookie')
+      ? t('settings.providerEdit.quotaFetchFailNoSubscriptionCookie')
+      : t('settings.providerEdit.quotaFetchFailNoSubscription')
+  }
+  if (props.testFailReason === 'parse') return t('settings.providerEdit.quotaFetchFailParse')
+  return props.testErrorMsg || t('settings.providerEdit.quotaTestFail')
+})
+
+/** 绝对量数字格式化（千分位，等宽 tabular-nums 下对齐友好） */
+function formatAmount(n: number): string {
+  return n.toLocaleString()
+}
+
+/** 平台计费单位 i18n 标签（无单位 → 空串不渲染） */
+function unitLabel(unit: VisibleWindow['unit']): string {
+  if (unit === 'requests') return t('settings.providerEdit.quotaUnitRequests')
+  if (unit === 'tokens') return t('settings.providerEdit.quotaUnitTokens')
+  if (unit === 'credits') return t('settings.providerEdit.quotaUnitCredits')
+  return ''
+}
+
+/** 绝对时间戳格式化（「数据截至」标注用，locale 感知） */
+function formatAbsoluteTime(ts: number): string {
+  return new Date(ts).toLocaleString()
+}
 
 /** 格式化时间戳为相对时间（i18n 化）。 */
 function formatTimeAgo(ts: number): string {

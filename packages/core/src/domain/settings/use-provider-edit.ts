@@ -25,21 +25,52 @@ import { getSettingsTransport } from './transport'
 // ── 类型 ──
 
 /** 本地编辑态模型（ProviderInfo.models 的可编辑副本）。
- *  含 api/baseUrl/enabled 透传位（与 ProviderInfo.models 元素同构，W4）：
- *  编辑保存时这些字段必须回传，否则 model 级配置会在 setProvider 合并时被丢弃。 */
+ *  含 api/baseUrl/enabled 透传位（与 ProviderInfo.models 元素同构，W4）+
+ *  B-4b 透传位（reasoning/maxTokens/cost/headers，对齐 SetProviderData.models 元素）：
+ *  编辑保存时这些字段必须回传，否则 model 级配置会在 setProvider 合并时被丢弃
+ *  （运行时靠 base spread 保数据不丢，但显式回传才让「编辑→保存」链路真实生效）。 */
 export interface LocalModel {
   id: string
   name?: string
   api?: string
   baseUrl?: string
   reasoning?: boolean
+  /** model 级 max output tokens（B-4b 透传位）。 */
+  maxTokens?: number
   contextWindow?: number
   input?: Array<'text' | 'image'>
   thinkingLevelMap?: Record<string, string | null>
+  /**
+   * model 级计费（B-4b 透传位，含可选 tiers 分档定价）。tiers 是运行时透传：
+   * ProviderInfo.models[].cost 类型未声明 tiers，但 spread 链（load → LocalModel → save）
+   * 保留其运行时值，编辑器不构造 cost 时既有 tiers 不丢。
+   */
+  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; tiers?: Array<{ inputTokensAbove: number; input: number; output: number; cacheRead: number; cacheWrite: number }> }
+  /** model 级自定义请求头（B-4b 透传位；当前无行编辑 UI，纯 load→save 保字段）。 */
+  headers?: Record<string, string>
   /** model 级 compat 覆盖（OpenAI/Anthropic 兼容性配置，透传到 runtime setProvider）。 */
   compat?: Record<string, unknown>
   /** model 级启停透传（省略时 runtime 默认 true） */
   enabled?: boolean
+  /**
+   * 条目来源（B-2 聚合层标注透传）：catalog provider 的编辑列表只含非 builtin 条目
+   * （见 toEditableModels），save 回传 override 条目、builtin 不回传（runtime 合并语义
+   * builtin ∪ override，回传 builtin 会把内置定义冻结成 override）。不参与 setProvider payload。
+   */
+  source?: 'builtin' | 'override'
+}
+
+/**
+ * 可编辑模型列表（B-2 混合列表）：catalog provider 过滤掉 builtin 条目（只读展示由
+ * ProviderEditBody 直接读 provider.models），custom / kind 缺失（旧数据）全量保留。
+ * 整对象 spread：ProviderInfo.models 元素的 B-4b 透传位（reasoning/maxTokens/cost/headers）
+ * 一并进编辑副本（load 侧接线），save 时显式回传（见 save 的 models map）。
+ */
+function toEditableModels(p: ProviderInfo): LocalModel[] {
+  const editable = p.kind === 'catalog'
+    ? p.models.filter((m) => m.source !== 'builtin')
+    : p.models
+  return editable.map((m) => ({ ...m }))
 }
 
 /** 思考策略预设 key（UI Select 值） */
@@ -147,6 +178,11 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     apiKey: '',
     headers: {} as Record<string, string>,
     authHeader: false,
+    /**
+     * 凭证形态（B-1 条件化凭证区）：编辑态副本，切换经确认弹窗（I9 双凭据互斥），
+     * save 时随 payload 回传（runtime 写 providers.json authMethod 标注）。
+     */
+    authMethod: undefined as ProviderInfo['authMethod'],
   })
   const newModel = reactive({
     name: '',
@@ -190,6 +226,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     authHeader: boolean
     /** provider 级 headers 序列化（W3 D7：JSON 串对比，键值任一变更即 dirty） */
     headersJson: string
+    /** 凭证形态（B-1：形态切换即 dirty，save-bar 出现） */
+    authMethod: ProviderInfo['authMethod']
   }
   const snapshot = ref<FormSnapshot | null>(null)
 
@@ -203,6 +241,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
       modelsJson: JSON.stringify(localModels.value),
       authHeader: form.authHeader,
       headersJson: JSON.stringify(form.headers),
+      authMethod: form.authMethod,
     }
   }
 
@@ -226,6 +265,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     // W3 D7：authHeader / headers 变更即 dirty
     if (form.authHeader !== s.authHeader) return true
     if (JSON.stringify(form.headers) !== s.headersJson) return true
+    // B-1：凭证形态切换即 dirty
+    if (form.authMethod !== s.authMethod) return true
     return false
   })
 
@@ -270,12 +311,14 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
         form.headers = p.headers ? { ...p.headers } : {}
         form.authHeader = p.authHeader ?? false
         headerRows.value = rowsFromHeaders(form.headers)
+        // B-1：凭证形态回填（oauth → 凭证区显示 OAuth 状态而非 apiKey 输入）
+        form.authMethod = p.authMethod
         showKey.value = false
         testResult.value = null
         discoverResult.value = ''
         showAddModel.value = false
         actionError.value = ''
-        localModels.value = p.models.map((m) => ({ ...m }))
+        localModels.value = toEditableModels(p)
         expandedCompat.clear()
       } else {
         // 新增模式：重置为初始空状态（providerRef 变 null 时触发，避免残留上次编辑数据）
@@ -285,6 +328,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
         form.apiKey = ''
         form.headers = {}
         form.authHeader = false
+        form.authMethod = undefined
         headerRows.value = []
         showKey.value = false
         testResult.value = null
@@ -383,6 +427,13 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
       actionError.value = t('composable.providerNameRequired')
       return false
     }
+    // B-1 形态切换守卫：oauth → api_key 切换后必须提供新 key——确认弹窗承诺「退出 OAuth
+    // 登录」，空 key 保存会让 auth.json OAuth 凭证残留（catalog 的覆写只发生在携带 apiKey 时）
+    if (snapshot.value?.authMethod === 'oauth' && form.authMethod === 'api_key'
+      && resolveApiKeyForSave(form.apiKey) === undefined) {
+      actionError.value = t('composable.oauthSwitchNeedsKey')
+      return false
+    }
     saving.value = true
     actionError.value = ''
     const providerId = providerRef.value?.id ?? form.name
@@ -393,11 +444,15 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
         baseUrl: form.baseUrl,
         // D18：apiKey 空=不变（undefined）；哨兵=清空（''）；非空=原值
         apiKey: resolveApiKeyForSave(form.apiKey),
+        // B-1：凭证形态回传（undefined = 不变；runtime 写 providers.json authMethod 标注）
+        authMethod: form.authMethod,
         // W3 D7：headers（空对象时不传，避免覆盖 runtime 既有值）+ authHeader 回写。
         headers: Object.keys(form.headers).length > 0 ? form.headers : undefined,
         authHeader: form.authHeader,
         // 透传 model 级 api/baseUrl/enabled：runtime setProvider 用 spread 合并 base，
         // 缺字段会被 base 兜底，但显式回传避免「编辑保存丢字段」（P1 bug #4/#5）。
+        // B-2：catalog provider 的 localModels 只含 override 条目（toEditableModels）——
+        // builtin 不回传，runtime 合并语义 builtin ∪ override 会自动补齐内置模型。
         models: localModels.value.map((m) => ({
           id: m.id,
           name: m.name,
@@ -406,6 +461,14 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
           contextWindow: m.contextWindow,
           input: m.input,
           thinkingLevelMap: m.thinkingLevelMap,
+          // B-4b 透传（round-trip 接通）：reasoning/maxTokens/cost/headers 有值才回传
+          // （undefined 不传键，runtime 语义 undefined=不变、base spread 保留既有值；
+          // 与 provider 级 headers「空对象不传」不同——model 级 {} = 清空是 runtime 的
+          // 两态契约，此处值忠实回传）。reasoning 显式 false 是合法值，须用 !== undefined 判定。
+          ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}),
+          ...(m.maxTokens !== undefined ? { maxTokens: m.maxTokens } : {}),
+          ...(m.cost !== undefined ? { cost: m.cost } : {}),
+          ...(m.headers !== undefined ? { headers: m.headers } : {}),
           compat: m.compat,
           enabled: m.enabled,
         })),
@@ -515,10 +578,21 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
       // 仅编辑态（providerRef 非 null）刷新；新增态无 provider 可对齐。
       const editingId = providerRef.value?.id
       if (!editingId) return
-      // 用户已手动改 → 不刷新（改动优先）
-      if (isDirty.value) return
       const fresh = list.find((p) => p.id === editingId)
       if (!fresh) return
+      if (isDirty.value) {
+        // [BL round1 S4] dirty 单字段例外：用户未手动切换凭证形态（form.authMethod 仍等于
+        // 快照值）而广播携带新形态（编辑体内发起 OAuth 授权 → 父组件 setProvider
+        // authMethod='oauth' 回推）→ 强制对齐该字段并单独重拍快照的 authMethod 位，
+        // 否则后续 save 会用本地旧形态覆写刚写入的 oauth 标注（apiKey 有值还会覆写凭证）。
+        // 用户已手动切换（pending 未保存）则不对齐——本地切换意图优先。
+        const s = snapshot.value
+        if (s && form.authMethod === s.authMethod && form.authMethod !== fresh.authMethod) {
+          form.authMethod = fresh.authMethod
+          s.authMethod = fresh.authMethod
+        }
+        return
+      }
       // 同步基础字段 + headers/authHeader + models
       form.name = fresh.name
       form.api = fresh.api ?? 'anthropic-messages'
@@ -526,7 +600,10 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
       form.headers = fresh.headers ? { ...fresh.headers } : {}
       form.authHeader = fresh.authHeader ?? false
       headerRows.value = rowsFromHeaders(form.headers)
-      localModels.value = fresh.models.map((m) => ({ ...m }))
+      // B-1：凭证形态对齐最新广播（如编辑体内 OAuth 登录成功后 authMethod='oauth' 回推）。
+      // 此处 isDirty 已为 false（上方守卫），用户未手动切形态，直接对齐安全。
+      form.authMethod = fresh.authMethod
+      localModels.value = toEditableModels(fresh)
       // 刷新后重新捕获快照（新基线，避免下次广播触发不必要的「dirty」）
       captureSnapshot()
     },

@@ -26,6 +26,7 @@ import markdownItKatex from 'markdown-it-katex'
 import type Token from 'markdown-it/lib/token.mjs'
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
 import { createHighlighter } from 'shiki'
+import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
 import type { Highlighter } from 'shiki'
 import i18n from '@/i18n'
 
@@ -77,6 +78,12 @@ export function getHighlighter(): Promise<Highlighter> {
     highlighterPromise = createHighlighter({
       themes: [SHIKI_DARK, SHIKI_LIGHT],
       langs: SHIKI_LANGS,
+      // [HISTORICAL] 必须用 JS 正则引擎，禁止回落默认 Oniguruma WASM：index.html CSP 是
+      // script-src 'self'，WebAssembly.instantiate 会被 CSP 拒绝（CompileError）→ createHighlighter
+      // 抛错 → 全部 markdown 渲染静默降级纯文本（2026-08-21 v0.9.3 起线上事故：对话流/气泡/
+      // drawer skill 文档全部无格式 + 换行丢失）。防护：.githooks/check_csp_compatibility.py
+      // 源码级拦 WebAssembly 用法；产物级扫描见 scripts/postbuild-validate.sh [3/6]。
+      engine: createJavaScriptRegexEngine(),
     })
   }
   return highlighterPromise

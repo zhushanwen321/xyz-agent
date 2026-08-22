@@ -89,6 +89,9 @@ export type {
   QuotaWins,
   NormalizedQuotaRow,
   ProviderQuotaFetcher,
+  QuotaAuthKind,
+  QuotaFetchFailureReason,
+  QuotaFetchOutcome,
 } from './quota-types'
 export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'

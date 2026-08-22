@@ -36,6 +36,7 @@ import type {
 } from '@xyz-agent/shared'
 import type { DirScopes } from './services/skill-dir-config.js'
 import type { SessionTraceSnapshot } from './services/session/session-trace.js'
+import type { Credential } from './services/auth/auth-storage.js'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
 /**
@@ -461,6 +462,11 @@ export interface IConfigService {
   setSmartContextThresholds(thresholds: number[]): void
   /** 设置排除模型列表（过滤无 "/" 条目去重后写入 excludedModels 字段）。 */
   setSmartContextExcludedModels(models: string[]): void
+  // ── Scoped Models（scoped-model 设计文档 §3.3 D2）──
+  /** 读取 scoped models 白名单（providers.json 顶层 scopedModels 字段）。空数组 = 未启用。 */
+  getScopedModels(): string[]
+  /** RMW scoped models 白名单（锁内重读 → fn(current) → 原子写回，config.setScopedModels RPC 写入口）。 */
+  modifyScopedModels(fn: (current: string[]) => string[]): Promise<string[]>
 }
 
 // ── IExtensionService ──────────────────────────────────────────────
@@ -503,11 +509,23 @@ export interface IAuthService {
   cancel(providerId: string): { cancelled: boolean }
   /** 读 auth.json：该 provider 是否有 oauth 凭据。 */
   hasOAuth(providerId: string): Promise<boolean>
+  /** 退出登录（B-1 场景 C）：移除 auth.json 中该 provider 的凭证（有进行中 flow 先中止，幂等）。 */
+  logout(providerId: string): Promise<void>
+  /** 读 auth.json 凭证（A1-4 收口读通道，Phase A2 QuotaService 凭证源）。直读不缓存。 */
+  getCredential(providerId: string): Promise<Credential | undefined>
+  /** 写 auth.json 凭证（A1-4 收口写通道）：全 runtime 对 auth.json 写入的唯一入口。 */
+  saveCredential(providerId: string, credential: Credential): Promise<void>
 }
 
 /** Model aggregation, API discovery, and model/thinking-level orchestration. */
 export interface IModelService {
   aggregateModels(providers: ProviderInfo[]): ModelInfo[]
+  /**
+   * 双参版聚合：scopedModels 由调用方传入（单次读盘值复用，保证同一帧内
+   * config.providers.scopedModels 与 model.list 一致）。design D2 否决改
+   * aggregateModels 公开单参签名，故独立命名。
+   */
+  aggregateModelsWithScoped(providers: ProviderInfo[], scopedModels: string[]): ModelInfo[]
   discoverModelsFromApi(
     baseUrl: string,
     apiKey?: string,

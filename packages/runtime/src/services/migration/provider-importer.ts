@@ -40,7 +40,7 @@ import { parseProviders } from './provider-parser.js'
 // 内置 model 由 pi catalog 无条件加载，复制会与内置升级漂移）。
 import builtinData from '../../generated/builtin-providers.json'
 import { isCatalogProvider } from '../provider-catalog.js'
-import type { AuthStorage } from '../auth/auth-storage.js'
+import type { CredentialWriter } from '../auth/auth-storage.js'
 
 /**
  * previewImport 的成功返回（importId 供 Step2 applyImport 用 + 脱敏 preview 供前端渲染）。
@@ -184,9 +184,9 @@ export function previewImport(
 export async function applyImport(
   importId: string,
   selectedIds: string[],
-  // A2：收窄为 Pick<'set'>——applyImport 实际只用 authStorage.set（catalog 分路写凭据）。
-  // configService.authStorage 是 Pick<6 方法>，收窄后可赋值（协变），无需完整 AuthStorage。
-  authStorage?: Pick<AuthStorage, 'set'>,
+  // A1-4 收口：catalog 分路写凭据经 CredentialWriter（AuthService.saveCredential），
+  // 不再直接持有 authStorage.set——auth.json 写入唯一入口在 AuthService。
+  credentialWriter?: CredentialWriter,
 ): Promise<ApplyImportSuccess | ImportError> {
   // W1：输入校验（防 WS 异常 payload 导致 crash）
   if (typeof importId !== 'string' || !importId.trim()) {
@@ -218,10 +218,10 @@ export async function applyImport(
     }
 
     // catalog 分路：pi 内置 provider 定义的秘钥归 auth.json，不建 models.json 条目
-    if (isCatalogProvider(provider._sourceName) && authStorage) {
+    if (isCatalogProvider(provider._sourceName) && credentialWriter) {
       try {
         if (provider.apiKey && provider.apiKey !== '') {
-          await authStorage.set(provider._sourceName, { type: 'api_key', key: provider.apiKey })
+          await credentialWriter.saveCredential(provider._sourceName, { type: 'api_key', key: provider.apiKey })
         }
         // catalog 提供定义——即使无 apiKey 也标记 imported（catalog 定义即可用）
         imported.push({ id: provider._sourceName, name: provider._sourceName, status: 'imported' })
@@ -238,7 +238,7 @@ export async function applyImport(
       }
     }
 
-    // 自定义 provider 或 authStorage 未注入：写 models.json 全配置（现有行为）
+    // 自定义 provider 或 credentialWriter 未注入：写 models.json 全配置（现有行为）
     try {
       // 剥离 _ 前缀元数据（对象解构，剩余即干净的 PiProviderConfig）
       const { _sourceName, _apiKeyExtracted, _credentialType, _envVarName, _warnings, ...piConfig } = provider
@@ -273,10 +273,10 @@ export async function applyImport(
     }
 
     // catalog 分路：孤儿凭据本质是 pi catalog provider 的 auth.json 凭据
-    if (isCatalogProvider(oc.providerId) && authStorage) {
+    if (isCatalogProvider(oc.providerId) && credentialWriter) {
       try {
         if (oc.apiKey !== undefined && oc.apiKey !== '') {
-          await authStorage.set(oc.providerId, { type: 'api_key', key: oc.apiKey })
+          await credentialWriter.saveCredential(oc.providerId, { type: 'api_key', key: oc.apiKey })
         }
         imported.push({ id: oc.providerId, name: oc.providerId, status: 'imported' })
         continue
@@ -292,7 +292,7 @@ export async function applyImport(
       }
     }
 
-    // authStorage 未注入时 fallback：写 models.json 模板（现有行为）
+    // credentialWriter 未注入时 fallback：写 models.json 模板（现有行为）
     try {
       const config: PiProviderConfig = {
         name: tpl.name,

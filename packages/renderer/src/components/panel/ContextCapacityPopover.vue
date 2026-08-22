@@ -165,6 +165,7 @@ import { cn } from '@/lib/utils'
 import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
 import { useQuotaStore } from '@/stores/quota'
 import { useQuotaDisplay } from '@/composables/features/model/useQuotaDisplay'
+import { quotaFailReasonText } from '@/composables/features/model/useQuotaQuery'
 import * as quotaApi from '@/api/domains/quota'
 
 interface ContextStats {
@@ -254,10 +255,15 @@ async function onRefresh(): Promise<void> {
   if (!pid) return
   refreshing.value = true
   try {
-    // refreshQuota 失败时 runtime 返回旧缓存（ok=true + 旧 data），不抛错；
-    // 异常时写 error 让 UI 显失败提示（与 useQuotaQuery 一致）
+    // refreshQuota 失败时 runtime 返回失败态（ok=true + data=null + reason，A2-4 契约），不抛错：
+    // 带 reason → 保留旧 data、写 error 让 UI 显失败提示（与 useQuotaQuery 一致）；
+    // rejected（连接层错误）同样保留旧 data 写 error
     const result = await quotaApi.refreshQuota(pid)
-    quotaStore.setCache(pid, result.data, result.lastFetchAt)
+    if (result.reason) {
+      quotaStore.setError(pid, quotaFailReasonText(result.reason))
+    } else {
+      quotaStore.setCache(pid, result.data, result.lastFetchAt)
+    }
   } catch (e) {
     quotaStore.setError(pid, e instanceof Error ? e.message : String(e))
   } finally {
