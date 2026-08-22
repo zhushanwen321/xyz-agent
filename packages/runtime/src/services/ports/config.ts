@@ -139,6 +139,13 @@ export interface IConfigStore {
   removeProvider(providerId: string): RemoveProviderResult
   /** 透传 provider type → pi api 标识（前端直接发 pi 终值，runtime 不再翻译别名）。 */
   applyTypeTranslation(type: string): string
+  /**
+   * pi 0.84.1 八字段全缺空壳判定（sanitizeInvalidProviders 与 provider-extras-migration
+   * 共用的删除判据，权威实现在 infra/pi/pi-provider-repair）。port 化动机（round 1 review
+   * arch-boundary S1）：migration 原 services → infra 直 import 加重三层泄漏，判定语义
+   * 不应穿透到 services。ConfigProviderConfig 与 PiProviderConfig 结构同构，直接传入。
+   */
+  isInvalidProvider(config: ConfigProviderConfig): boolean
 
   // ── Skill paths（discovery.json v2 SSOT，ADR-0021 §1）──
   /** 读取 skill 合并路径（project ∪ global 去重，项目在前）。供 session-service pi 启动参数等消费。 */

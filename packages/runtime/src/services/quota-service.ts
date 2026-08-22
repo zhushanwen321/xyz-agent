@@ -22,6 +22,7 @@ import { logger } from '../infra/logger.js'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import type { XyzProviderStore, ProviderExtras } from './provider-extras-store.js'
 import type { Credential } from './auth/auth-storage.js'
+import type { ConfigProviderConfig } from './ports/config.js'
 
 /** 最小查询间隔（毫秒） */
 const THROTTLE_MS = 10_000
@@ -87,6 +88,14 @@ export interface QuotaServiceOptions {
    * 读到新值，D6）。未注入时跳过 auth.json 来源（保守，向后兼容）。
    */
   getAuthCredential?: (providerId: string) => Promise<Credential | undefined>
+  /**
+   * models.json 单 provider 条目读取通道（round 1 review arch-boundary S2 port 化）：
+   * providerExists 默认回退与 readQuotaFallback 的 legacy quota 兜底经此读，
+   * 消除新增代码路径的 services → infra 直连。生产注入 configStore.getProviderConfig
+   * （PiConfigStore 委托同一 infra 函数，读同一文件同一解析，行为等价）。
+   * 未注入时回退 infra 模块函数（保持既有单测的模块 mock 体系与未注入行为不变）。
+   */
+  getProviderConfig?: (providerId: string) => ConfigProviderConfig | undefined
 }
 
 export class QuotaService {
@@ -105,6 +114,8 @@ export class QuotaService {
   private providerExists: (providerId: string) => boolean
   /** auth.json 凭证读取通道（A2-2，生产注入 AuthService.getCredential） */
   private getAuthCredential: ((providerId: string) => Promise<Credential | undefined>) | undefined
+  /** models.json 单条目读取通道（arch-boundary S2 port 化，生产注入 configStore.getProviderConfig） */
+  private getProviderConfigOpt: ((providerId: string) => ConfigProviderConfig | undefined) | undefined
   /** providerId → 最近一次查询失败原因（A2-4：getCached 透传；成功清除；不落盘） */
   private lastFailure: Map<string, QuotaFetchFailureReason> = new Map()
 
@@ -117,11 +128,22 @@ export class QuotaService {
       ? options.getProviderInfo
       : () => undefined
     this.extrasStore = typeof options === 'object' ? options.providerExtrasStore : undefined
+    this.getProviderConfigOpt = typeof options === 'object' ? options.getProviderConfig : undefined
     this.providerExists = typeof options === 'object' && options.providerExists
       ? options.providerExists
       // 保守默认：维持旧限制语义（models.json 有条目才可配置），生产恒注入聚合判定
-      : (providerId) => getProviderConfig(providerId) !== undefined
+      : (providerId) => this.readProviderConfig(providerId) !== undefined
     this.getAuthCredential = typeof options === 'object' ? options.getAuthCredential : undefined
+  }
+
+  /**
+   * models.json 单条目读取（注入通道优先，未注入回退 infra 模块函数——同一文件同一
+   * 解析，行为等价；回退仅为兼容既有未注入单测的模块 mock 体系）。
+   */
+  private readProviderConfig(providerId: string): ConfigProviderConfig | undefined {
+    return this.getProviderConfigOpt
+      ? this.getProviderConfigOpt(providerId)
+      : getProviderConfig(providerId) as unknown as ConfigProviderConfig | undefined
   }
 
   /**
@@ -345,7 +367,7 @@ export class QuotaService {
   private readQuotaFallback(providerId: string): NonNullable<ProviderExtras['quota']> | undefined {
     const fromStore = this.extrasStore?.getExtrasSync(providerId)
     if (fromStore !== undefined) return fromStore.quota
-    return getProviderConfig(providerId)?.quota
+    return this.readProviderConfig(providerId)?.quota
   }
 
   /**

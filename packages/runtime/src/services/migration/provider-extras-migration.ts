@@ -31,7 +31,6 @@ import { copyFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { IConfigStore, ConfigProviderConfig } from '../ports/config.js'
 import type { XyzProviderStore, ProviderExtras } from '../provider-extras-store.js'
-import { isInvalidProvider } from '../../infra/pi/pi-provider-repair.js'
 
 /** 单条目剥离结果：extras = 迁出数据，stripped = 剥离后条目，dirty = 是否含寄生字段。 */
 export interface StripResult {
@@ -142,9 +141,10 @@ export async function migrateProviderExtras(
 
   // 第三遍：写回剥离版 models.json（空壳整条删除）
   for (const { providerId, result } of dirtyEntries) {
-    // isInvalidProvider = pi 0.84.1 八字段全缺判定（pi-provider-repair 权威实现；
-    // ConfigProviderConfig 与 PiProviderConfig 结构同构，port 视图可直接传入）
-    if (isInvalidProvider(result.stripped)) {
+    // isInvalidProvider = pi 0.84.1 八字段全缺判定，经 IConfigStore port 委托
+    // （pi-provider-repair 权威实现；round 1 review arch-boundary S1：services 不再直
+    // import infra——本文件其余 models.json 操作已全走 port，此处对齐）
+    if (configStore.isInvalidProvider(result.stripped)) {
       configStore.removeProvider(providerId)
       report.removedShells.push(providerId)
     } else {

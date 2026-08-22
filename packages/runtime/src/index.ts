@@ -540,6 +540,9 @@ async function main(): Promise<void> {
   // 旧寄生字段兜底）；baseUrl/name 仍是 pi 原生语义字段，继续读 models.json。
   // A2-2 凭证源：auth.json 通道注入 AuthService.getCredential（api_key.key / oauth.access，
   // 直读不缓存——pi 侧 refresh 写回后立即读到新值，D6）。
+  // models.json 单条目读通道注入 configStore.getProviderConfig（arch-boundary S2：
+  // providerExists 默认回退与 readQuotaFallback 兜底经 port 读，消除 services → infra
+  // 新增直连；未注入回退仅在单测场景生效）。
   const quotaService = new QuotaService({
     getProviderInfo: (providerId) => {
       const cfg = getProviderConfig(providerId)
@@ -550,6 +553,7 @@ async function main(): Promise<void> {
     providerExtrasStore,
     providerExists: (providerId) => configService.listProviders().some(p => p.id === providerId),
     getAuthCredential: (providerId) => authService.getCredential(providerId),
+    getProviderConfig: (providerId) => configStore.getProviderConfig(providerId),
   })
 
   const tServicesReady = performance.now()
