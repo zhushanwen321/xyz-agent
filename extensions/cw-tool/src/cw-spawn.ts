@@ -45,7 +45,7 @@ export interface CwSpawnResult {
  * @param input  要写入子进程 stdin 的内容；undefined 表示不写（cw 不读 stdin）。
  * @param cwd    子进程工作目录。
  * @param signal 可选 abort signal；实现应在 abort 时 kill 子进程（见 defaultCwSpawner），
- *               避免 abort 后僵尸 cw 子进程继续推进状态机（executeCwAction 把 SDK signal +
+ *               避免 abort 后僵尸 cw 子进程继续运行（executeCwAction 把 SDK signal +
  *               超时合并为此 signal 传入）。
  */
 export type CwSpawner = (
@@ -61,7 +61,7 @@ export type CwSpawner = (
  * - stdout/stderr 设 utf8 编码后全量捕获（data 回调收 string，无需 Buffer 处理）。
  * - input（若提供）写入 stdin 后关闭；未提供则直接 end（cw 不阻塞等待 stdin）。
  * - spawn 自身失败（如 cw 不在 PATH）走 'error' 事件，拼进 stderr、exitCode=-1 标记异常。
- * - signal abort 时 kill 子进程（SIGTERM），避免 abort 后僵尸 cw 继续推进状态机；
+ * - signal abort 时 kill 子进程（SIGTERM），避免 abort 后僵尸 cw 继续运行；
  *   signal 进入时已 aborted 则立即 kill。listener 在 settle 时移除防泄漏。
  */
 export const defaultCwSpawner: CwSpawner = (args, input, cwd, signal) =>
@@ -91,7 +91,7 @@ export const defaultCwSpawner: CwSpawner = (args, input, cwd, signal) =>
 			stderr += chunk;
 		});
 
-		// abort → kill 子进程，防止 cw 状态机被已 abort 的僵尸子进程推进。
+		// abort → kill 子进程，防止已 abort 的调用仍留下运行中的 cw 子进程。
 		const onAbort = (): void => {
 			child.kill("SIGTERM");
 		};

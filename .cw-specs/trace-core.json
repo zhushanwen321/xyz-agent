@@ -1,0 +1,9 @@
+{
+  "acceptance": [
+    { "id": "A21", "title": "entry→TraceRow kind 映射全覆盖(12 kind + 损坏行)", "type": "unit", "core": false, "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/core exec vitest run session-trace" },
+    { "id": "A22", "title": "context 边界计算与 buildContextEntries 语义一致(四场景 fixture, 即 P4, 直接 import pi dist 双边核算)", "type": "unit", "core": false, "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/core exec vitest run session-trace" },
+    { "id": "A23", "title": "影子化标记 + 仅当前context过滤 + kind chips 分组", "type": "unit", "core": false, "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/core exec vitest run session-trace" }
+  ],
+  "contracts": [],
+  "split": []
+}

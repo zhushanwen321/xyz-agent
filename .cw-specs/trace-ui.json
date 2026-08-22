@@ -1,0 +1,41 @@
+{
+  "acceptance": [
+    {
+      "id": "A41",
+      "title": "per-session trace store(ADR-0049 useSessionScopedState 分区): 加载/增量/过滤/选中 per-pane 隔离, 切 session 不串",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/frontend exec vitest run session-trace"
+    },
+    {
+      "id": "A42",
+      "title": "SegmentedTab 对话|Trace per-pane 视图状态: 切换不重建数据、状态保留",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/frontend exec vitest run session-trace"
+    },
+    {
+      "id": "A43",
+      "title": "行组件渲染: 12 kind 行摘要 + 影子化降透明 + 选中态(surface-hover+强调字色,无ring) + >500 虚拟滚动启用 + BASH meta 补 excludeFromContext 提取(core 小改, 断言落 renderer 测试) + fixture README 行号误差修正",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/frontend exec vitest run session-trace"
+    },
+    {
+      "id": "A44",
+      "title": "drawer inspector 联动: 选中切入临时页 / 返回复原前 tab / 未开自动打开(单向 main->drawer, SideDrawerTab 不变)",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/frontend exec vitest run session-trace"
+    },
+    {
+      "id": "A45",
+      "title": "V1/V3/V4/V5/V6 dev app 手工场景(真实 compaction/lifecycle 行/实时追加/2000+ entry/fork 跳转/split 对照, 含 P5 性能基线; 顺带修 core fixture README 行号误差)",
+      "type": "manual",
+      "core": false,
+      "command": "bash scripts/cw/manual-gate.sh trace-ui V1,V3,V4,V5,V6"
+    }
+  ],
+  "contracts": [],
+  "split": []
+}

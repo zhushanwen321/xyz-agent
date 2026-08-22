@@ -47,6 +47,43 @@ const NEWLINE_BYTE = 0x0a
  * 候选文件调一次本函数，节省随文件数线性放大。
  */
 export function parseSessionHeader(filePath: string): SessionHeader | null {
+  const firstLine = readFirstJsonlLine(filePath)
+  if (firstLine === null) return null
+  try {
+    const entry = JSON.parse(firstLine) as Record<string, unknown>
+    if (!isSessionHeaderEntry(entry)) return null
+    // id/cwd/timestamp 与 parentSession/forkEntryId 同款 typeof 守卫条件赋值（缺就不设，
+    // 运行时语义与原裸断言一致——缺失字段读出 undefined）。SessionHeader 必有字段声明是
+    // 「正常 session 均有」的乐观约定（见 isSessionHeaderEntry 注释），宽收窄差在返回
+    // 类型边界单点 as 收口（替代原先 3 处字段级裸断言）；接口放宽会级联 ScannedSessionMeta
+    // 与 port 委托，不做。
+    return {
+      ...(typeof entry.id === 'string' ? { id: entry.id } : {}),
+      ...(typeof entry.cwd === 'string' ? { cwd: entry.cwd } : {}),
+      ...(typeof entry.timestamp === 'string' ? { timestamp: entry.timestamp } : {}),
+      parentSession: typeof entry.parentSession === 'string' ? entry.parentSession : undefined,
+      forkEntryId: typeof entry.forkEntryId === 'string' ? entry.forkEntryId : undefined,
+    } as SessionHeader
+  } catch {
+    return null
+  }
+}
+
+/** type=session 首行的运行时守卫（id/cwd/timestamp 结构字段宽松：旧 session 可缺）。 */
+function isSessionHeaderEntry(entry: unknown): entry is Record<string, unknown> {
+  return typeof entry === 'object' && entry !== null && (entry as Record<string, unknown>).type === 'session'
+}
+
+/**
+ * 读取 session JSONL 首行原文（trace 路径 A 补 header 用，design D4：RPC get_entries 不含 header）。
+ *
+ * 与 parseSessionHeader 共用首行读块（4KB 块 + 超长首行回退全量）；区别在本函数返回**原文**
+ * 而非解析后的窄字段——trace 的 SESSION 行 inspector 需要 header 完整 JSON（含 version
+ * 等未建模字段），解析归调用方（session-trace 模块，用 core parse 容错语义）。
+ *
+ * @returns 首行文本；文件不存在 / 打开读取失败 / 空文件 → null（不抛）
+ */
+export function readFirstJsonlLine(filePath: string): string | null {
   try {
     const fd = openSync(filePath, 'r')
     let head: Buffer
@@ -73,15 +110,38 @@ export function parseSessionHeader(filePath: string): SessionHeader | null {
       // 文件本身 < 4KB 且无换行（单行 JSONL）：head 即全量内容
       firstLine = head.toString('utf-8')
     }
-    if (!firstLine) return null
-    const entry = JSON.parse(firstLine)
-    if (entry.type !== 'session') return null
+    return firstLine || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 读取 sidecar `.meta.json` 的 session_end 完整元数据（trace BOUNDARY 行用，ADR 0042）。
+ *
+ * 与 extractSessionOutcome（只取 outcome 枚举）的区别：返回完整 meta（outcome/reason/
+ * timestamp），供 trace 行展示「原始记录」；同时校验 outcome 合法性（W-Runtime4 同款，
+ * sidecar 可能损坏/被篡改）。sidecar 不存在 / JSON 损坏 / outcome 非法 → null（不抛）。
+ */
+export interface SessionEndSidecarMeta {
+  type: 'session_end'
+  outcome: SessionOutcome
+  reason?: string
+  timestamp?: string
+}
+
+export function readSessionEndMeta(filePath: string): SessionEndSidecarMeta | null {
+  const sidecarPath = filePath + '.meta.json'
+  try {
+    const meta = JSON.parse(readFileSync(sidecarPath, 'utf-8')) as Record<string, unknown>
+    if (!meta || typeof meta.outcome !== 'string' || !VALID_SESSION_OUTCOMES.includes(meta.outcome as SessionOutcome)) {
+      return null
+    }
     return {
-      id: entry.id,
-      cwd: entry.cwd,
-      timestamp: entry.timestamp,
-      parentSession: typeof entry.parentSession === 'string' ? entry.parentSession : undefined,
-      forkEntryId: typeof entry.forkEntryId === 'string' ? entry.forkEntryId : undefined,
+      type: 'session_end',
+      outcome: meta.outcome as SessionOutcome,
+      ...(typeof meta.reason === 'string' ? { reason: meta.reason } : {}),
+      ...(typeof meta.timestamp === 'string' ? { timestamp: meta.timestamp } : {}),
     }
   } catch {
     return null

@@ -1,106 +1,68 @@
 ---
 name: pi-cw
-description: "cw 递归编排大型多 agent 并行开发任务,适用于需多层拆解(epic/feature/slice/wave)的大树任务。触发词:递归编排、多 agent 并行开发、大任务拆解、大树拆分。配套 @zhushanwen/pi-cw-tool。"
+description: "cw 2.0 runner 的 pi 环境实操指南：大型多 agent 并行编码任务用 cw run --spawn pi 全自动调度（designer/developer/独立 reviewer + 机器验证），本 skill 教后台运行、监控、escalation 处置与收尾回流。触发词：递归编排、多 agent 并行开发、大任务拆解、大树拆分。配套 @zhushanwen/pi-cw-tool（cw_query 只读查询工具）。"
 ---
 
 # pi-cw
 
-主 agent 发起递归编排:用 cw 建一棵 <顶层>->...->wave 的任务树(<顶层> 通常 epic,也可 feature/slice),派第一个 planning-agent 自递归展开整棵树,主 agent 空闲等 steer 唤醒,全树完成后报告用户。
+cw 2.0 runner 的 pi 环境实操指南（薄封装）。多 agent 并行开发不再需要主 agent 手动编排——`cw run --spawn pi` 一条命令调度到根 unit closed：runner 按 frontier 并行 spawn 无头 pi 进程（designer 写 spec / developer 实现 / 独立 reviewer 审查），每 unit 独立 worktree，机器验证裁决完成。
 
-> **编排机制**:子 agent 完成时 pi 自动 steer 唤醒父 agent(事件驱动,无轮询)。主 agent 只派第一个(根层) planning-agent,**不自己 descend 到子层**。设计依据见 `design-v4.md`（同目录）。
+> **cw 2.0 适配说明**：本 skill 的 1.x 形态（epic→feature→slice→wave 四层递归树 + planning/wave/dev/review/merge 5 个编排 agent + 4 个角色受限 cw_* 工具）已退役——cw 2.0 把编排智能收进引擎，「层主不能自审」由账本层硬保证（review submit 必须 `--role reviewer`）。适配设计见 xyz-agent 仓 `docs/todo/pi-cw-cw2-adaptation.md`。
+
+**分工边界**：cw 命令面（create / evidence / review / verify 的参数与 gate 规则）、模式分流表、手动流程、spec 格式——以 **cw-cli skill 为唯一权威源**（SSOT），本 skill 不重复，只教 pi 环境的 runner 实操差异。
 
 ## 何时用
 
-核心判据:**任务需要多 subagent 并行推进 + 上下文隔离**(不是树深——一棵 epic 树也能单 agent 线性走,见 cw-cli)。满足以下场景之一才用 pi-cw:
-- 多个 wave 要 worktree 隔离并行开发
-- 多个 slice/feature 子树要并行展开
-- 单 agent 线性走完整棵树会撑爆上下文(设计 + 实现 + 审查 + 合并全栈),需按层隔离上下文
-
-> 单 agent 模式或小任务（改 typo / 单文件 / 明确小 bug）走 `cw-cli` skill,不必建树。
-
-## 何时不该用
-
-- 单文件小改、明确的小 bug:直接 edit,或派单个 worker subagent;或走 `cw-cli` skill 单 agent 模式
-- 线性任务、无需多 agent 并行:走 cw 单层 wave 即可,不必建树
-- 能单 agent 线性走完的任务(哪怕要建 epic 树):走 `cw-cli` skill 单 agent 模式,不必上递归编排
-- 纯分析 / 调研 / 设计文档:不写代码不该进 cw 编排
-
-## 前置：cw-tool
-
-本 skill 与 5 个编排 agent（planning / wave / dev / review / merge）打包在 `@zhushanwen/pi-cw-tool` 内。cw-tool 同时提供 cw_* 工具（cw_planning / cw_wave / cw_dev / cw_review）。安装确认分两层，不能互相反推：
-
-- **skill + 工具层**：能读到本 skill 且 cw_* 工具可用，说明 cw-tool 的 skill + 工具已加载。
-- **agent 层**：5 个编排 agent 走独立发现通路（resource-discovery），**不能由「skill 可读」反推 agent 已发现**。编排 agent 必须通过 npm 把 cw-tool 安装到扫描目录（`<agentDir>/npm/` 或 `<agentDir>/extensions/`）才被发现。
-
-⚠️ **dev-link 限制**：dev-link（`XYZ_EXTENSION_PATHS`）只发现 skill + 工具，**不发现 agent**。用 dev-link live-edit 测 cw-tool 时，skill 可读、cw_* 工具可用，但 step 2 `subagent agent="planning-agent"` 会因 agent 不可发现而失败——需把 cw-tool npm 安装到扫描目录（或把 agent 软链进 `<agentDir>/extensions/`）才可编排。
-
-若 cw_* 工具缺失，说明 cw-tool 的工具未正确安装/加载，编排第一步就会失败（agent 模板的 tools 字段解析为空）。
+- 多 unit 编码任务（≥2 unit 或需并行推进）→ 本 skill，走 runner
+- 单 unit 任务 / 调试验收命令 / 学习流程 → cw-cli skill 的手动路径
+- 纯分析、调研、设计文档（无代码产出）→ 不进 cw
 
 ## 流程
 
-### 1. 建树根
+### 1. 建 root unit + 任务书
 
 ```bash
-cw create <顶层> --slug <kebab-slug> --objective "<一句话目标,含可验收的完成标准>"
+cw create --id <slug> --brief brief.md
 ```
 
-`<顶层>` 通常 epic,但 feature/slice 也能做根——选能覆盖全貌的最小层(选层标准复用 cw-cli skill 的「规模 × 性质」表)。递归编排的额外门槛:**顶层必须会拆出 ≥2 个可并行的下层 unit**;只拆 1 个(无并行价值)或整棵树线性串行即可,走 cw-cli 单 agent 模式更省。
+任务书（brief）内容原样传给 designer。写拆分建议（哪些子 unit、各自验收方向）能显著减少 spec 返工；cw 2.0 树深度上限 2 层（根 + 叶），需要更深的先人工降层。
 
-拿到根 unit 的 unitId(下文记作 `<根Id>`)。
-
-### 2. 派第一个 planning-agent
-
-用 `subagent` 工具**后台**派发(`planning-agent` 是 cw-tool 内置的 agent 模板):
-
-```
-subagent(action="start", agent="planning-agent", slug="<根-slug>-planning", fork=false,
-  task="<背景>这是 cw <根层> <根Id> 的层主 agent,目标:<原 objective>。这是递归编排,你会自递归派下层 planning-agent(<根层> 是 epic 派 feature,是 feature 派 slice,是 slice 派 wave)。<目标>先调 cw handoff --unitId <根Id> 拿上下文与 guidance,按 guidance 的派发指导自递归展开并合并子树。<验收>cw status --unitId <根Id> 显示该 <根层> 子树全部 closed。")
-# 不传 model 参数——默认继承主 agent 模型,递归传给所有下层(见「模型派发」)。
-# 用户特别指定时才传 model="provider/modelId",单个 subagent 生效或作为全树根模型。
-```
-
-task 三要素:
-- **背景**:`<根层>` 的 `<根Id>`、目标、说明这是递归编排(planning-agent 会自递归派下层)
-- **目标**:入口是 `cw handoff --unitId <根Id>`;自递归的每一步按 cw guidance 的派发指导执行
-- **验收**:`cw status --unitId <根Id>` 子树全 `closed`(可查的检查点,禁止"完成""实现该功能"这类不可证伪描述)
-
-派发后主 agent 结束当前 turn,进空闲态(session 保活)。
-
-### 3. 等 steer 唤醒
-
-planning-agent 自递归展开(epic->feature->slice->wave),每层 design -> 审查 -> execute -> 合并。叶子 wave 完成后 steer 逐层回溯,最终唤醒主 agent。**期间主 agent 不轮询、不介入下层**——下层失败由 planning-agent 按 L0-L3 自恢复(定义在 planning-agent 模板与 cw guidance,本 skill 不重复)。
-
-### 4. 被唤醒后查进度
+### 2. 后台跑 runner
 
 ```bash
-cw status                     # 全局
-cw frontier --root <根Id>   # 看根子树 frontier
+cw run --root <slug> --spawn pi
 ```
 
-- 子树全 `closed` -> 进入第 5 步汇报用户
-- 有 `active` / `blocked` -> planning-agent 还在跑,继续等下一次 steer 唤醒
-- 长时间无唤醒(疑似 session 失活) -> 查 `cw status`,若 frontier 有未完成 unit 但无 active agent,按 unitId 重派对应层 planning-agent 续跑(cw 状态持久,不丢)
+- `cw run` 前台阻塞直至收束，多 unit 任务常以小时计——**用 bash-async 的 background 模式跑**，不要同步等待
+- 并行上限 `--max-concurrency`（默认 3）；reviewer 模型 `--reviewer-model <m>` 或环境变量 `CW_REVIEWER_MODEL`
+- developer/designer 模型走环境变量 `CW_AGENT_MODEL`（缺省 `xiaomi-token-plan-cn/mimo-v2.5-pro`）——**不继承当前主 agent 的模型**，与 pi subagent 的模型继承机制无关
 
-### 5. 报告用户
+### 3. 监控
 
-全树 closed 后汇报:完成了哪些 unit、合并了哪些分支、遗留的 followupActions(exec-review 记录的技术债)。**不信 agent 自报,以 `cw status` 为唯一真相**。
+期间定期用 `cw_query` 工具（本包提供）或 bash 调 `cw` 观察：
+
+- `cw_query action="status"`：各 unit 状态概览；`json=true` 拿结构化投影
+- `cw_query action="frontier"`：就绪集合与各维度阻塞情况
+- `cw_query action="tree"`：分解树形态；`action="report" rootId=<slug>`：证据链汇总
+- escalation 走 stderr——后台形态把 stderr 落盘并定期检查
+
+### 4. escalation 处置
+
+死锁形态 runner 不自动重试，exit 1 收束并在 stderr/转人工清单给出处置指引（阈值与处置表见 cw-cli skill「转人工出口」）。人工处置完成后**重跑 `cw run --root <slug> --spawn pi` 从投影续接**，已完成进展不丢失；Ctrl-C 中断后重跑同理。
+
+### 5. 收尾
+
+根 unit closed 后 runner 输出 worktree 回收清单与 merge 回流指引——按清单把各 unit worktree 的分支回流到 root 分支并清理 worktree。汇报用户以 `cw status` / `cw report` 为准，不信 agent 自报。
+
+## cw_query 工具（本包提供）
+
+只读查询的结构化入口（参数面见工具 description；写命令经 bash 调 `cw`）。适合监控轮询与结果核对；一次性探索用 bash 直接调 cw 亦可。
 
 ## 关键约束
 
-- **只派第一个 planning-agent**:主 agent 不自己 descend 到 feature / slice / wave 层。下层派发是 planning-agent 的职责(它调 cw execute 自动建子 unit,并按 guidance 派子 planning-agent / wave-agent)。
-- **靠 cw 查进度,不信自报**:agent 汇报"我做完了"不等于 cw 状态 closed。以 `cw status` / `cw frontier` 为唯一真相。
-- **worktree 隔离**:wave 层用 `worktree: true` 派出(各 wave 独立工作目录,并行不冲突;worktree 与 fork 正交,fork 默认 false);主 agent 派的根层 planning-agent 不需 worktree(它只编排不写码)。worktree 的合并与清理由 slice 层 planning-agent 派 chain workflow(merge-agent)处理,细节见 planning-agent 模板。
-- **失败恢复靠 L0-L3**:cw gate fail / 审查 must-fix / 方案缺陷 / 父层拆错,各有恢复路径(L0 就地改重审 / L1 cw replan / L2 父 replan 级联 / L3 上报人),定义在 planning-agent 模板与 cw guidance,本 skill 不重复。
-
-## 模型派发
-
-**默认不指定 model —— 递归继承主 agent 模型**。pi subagent 的模型解析是三层(显式 `model` 参数 → agent 模板 frontmatter `model` → 父 agent 当前模型兜底直接透传),子进程启动时用 `--model` 固化该解析结果,其再派子时不指定则继续透传。因此**只要派发点不传 `model`(且 agent 模板 frontmatter 不写 `model`),整棵 cw 树所有 agent 自动同模型**——这是唯一能保证「递归传给所有 subagent」的机制,不需要也不应该逐层重复指定。
-
-- **全树同模型**:用户在主 agent 切换模型,或根派发(第一个 planning-agent)时显式传一次 `model="provider/modelId"`,下层全部自动继承。模型在每次派发瞬间固化,中途切换只影响后续派发。
-- **单点覆盖**:用户特别指定某 subagent 用特定模型时,只在该次派发传 `model` 参数。指定但模型不存在 / 鉴权未配置会**抛错不静默降级**(错误信息列出可用模型),不会出现「以为用了 X 实际用 Y」。
-- **cw.config.json 不配置 model**:cw 引擎只读 `testRunner`,不读 model 字段;`perLayer.model` 放进去是无人消费的死字段。
-
-各层职责性质仅作用户自主差异化时的参考(planning 强模型 / dev 便宜模型等),不作为默认行为——默认一律继承主 agent 模型。
+- **不手动编排替代 runner** [MANDATORY]：多 unit 任务禁止主 agent 手动逐 unit 派 subagent——角色分工、worktree 隔离、集成 merge、死锁转人工全是 runner 内建机制，手动编排等于全部放弃。
+- **账本是唯一真相**：unit 状态以 `cw status` / `cw report` 为准。
+- **manual 型验收在 runner 下免机器验证**（自动并入覆盖，无强制人工点）——需要强制人工验收（如 GUI 检查）时，声明 e2e 级 + command 用「检查人工勾选文件」的 gate 脚本，把人工动作变成机器可判的验收前置。
 
 ## 标记说明
 

@@ -321,3 +321,28 @@ export async function writeSegments(payload: {
 }): Promise<void> {
   await command('session.writeSegments', payload)
 }
+
+// ── session-trace（design D4，trace-ui 单元）──
+/**
+ * 拉取 session trace 台账全量快照（session.getTraceEntries 端口，A1 混合路由：
+ * 活跃 session 走 RPC get_entries + 文件首行补 header；非活跃/降级走 JSONL 直读）。
+ * reply payload = ServerMessageMap['session.traceEntries']（source/header/entries/
+ * malformed/sessionEnd/leafId，结构镜像 runtime SessionTraceSnapshot）。增量腿不走本函数
+ * （server-push session.traceEntryAppended，由 useSessionTrace 订阅 events 合并）。
+ */
+export function getTraceEntries(
+  sessionId: string,
+): Promise<import('@xyz-agent/shared').ServerMessageMap['session.traceEntries']> {
+  return command('session.getTraceEntries', { sessionId })
+}
+
+/**
+ * 现取当前 system prompt（session-trace §3.1 失败路径 / D2，C2 前端接线）：仅活跃 session
+ * 可用（非活跃无 pi 进程）。reject 时 Error 带 code：session_not_active / session_busy /
+ * fetch_current_prompt_timeout（pending.ts 从 error envelope 透传 code，文案映射在组件层）。
+ */
+export function fetchCurrentSystemPrompt(
+  sessionId: string,
+): Promise<import('@xyz-agent/shared').ServerMessageMap['session.currentSystemPrompt']> {
+  return command('session.fetchCurrentSystemPrompt', { sessionId })
+}

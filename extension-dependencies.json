@@ -166,6 +166,11 @@
       "dependsOn": []
     },
     {
+      "name": "@zhushanwen/pi-cache-probe",
+      "directory": "extensions/cache-probe",
+      "dependsOn": []
+    },
+    {
       "name": "@zhushanwen/pi-agent-ext",
       "directory": "extensions/agent-ext",
       "dependsOn": []
@@ -178,6 +183,11 @@
     {
       "name": "@zhushanwen/pi-msg-id-mapper",
       "directory": "extensions/msg-id-mapper",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-system-prompt-trace",
+      "directory": "extensions/system-prompt-trace",
       "dependsOn": []
     }
   ]

@@ -47,6 +47,15 @@ export function isPathInAllowedPrefixes(filePath: string, allowedPrefixes: reado
 }
 
 /**
+ * 校验 reveal-in-folder 输入是否为绝对路径（IPC 边界无类型保障，防御非 string 输入）。
+ * 来源是 runtime 快照透传的 session JSONL 绝对路径；相对路径在 main 进程 cwd 下解析
+ * 有歧义，直接拒绝（handler 返回 false，renderer 侧降级）。
+ */
+export function isValidAbsolutePath(filePath: unknown): filePath is string {
+  return typeof filePath === 'string' && filePath.length > 0 && path.isAbsolute(filePath)
+}
+
+/**
  * D2b 导航拦截（integrity-hardening §3.2）：判定主窗口 will-navigate 目标是否应用自身源。
  *
  * 为什么拦截：renderer 一旦被注入（XSS），`window.location = 'https://evil.com'` 整页

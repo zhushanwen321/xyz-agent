@@ -9,8 +9,9 @@
  * [HISTORICAL] persistSessionName / patchSessionCwd 转发已随 W11 删除（绝对写规则：
  * xyz 对 pi session JSONL 的直写归零，分别迁 pi RPC 与 restore tmp 管线）。
  */
-import type { ISessionStore, ScannedSessionMeta, SessionOutcome, SessionHeader, RebuiltHistory, ScanSessionsOptions } from '../../services/ports/session.js'
+import type { ISessionStore, ScannedSessionMeta, SessionOutcome, SessionHeader, SessionEndSidecarMeta, RebuiltHistory, ScanSessionsOptions } from '../../services/ports/session.js'
 import type { Message, SegmentsMetadataFile } from '@xyz-agent/shared'
+import { readFileSync } from 'node:fs'
 import type { PiSessionEntry } from './pi-protocol.js'
 import {
   scanPiSessions,
@@ -21,6 +22,8 @@ import {
   invalidateSessionMetaCache,
   invalidateScanDirCache,
   parseSessionHeader,
+  readFirstJsonlLine,
+  readSessionEndMeta as readSessionEndMetaInfra,
   persistHandoffSidecar,
 } from './session-file-utils.js'
 import { refreshAll } from './pi-provider-store.js'
@@ -75,6 +78,23 @@ export class PiSessionStore implements ISessionStore {
 
   parseSessionHeader(filePath: string): SessionHeader | null {
     return parseSessionHeader(filePath)
+  }
+
+  readSessionHeaderLine(filePath: string): string | null {
+    return readFirstJsonlLine(filePath)
+  }
+
+  readSessionJsonlText(filePath: string): string | null {
+    try {
+      return readFileSync(filePath, 'utf-8')
+    } catch {
+      // 规则 6：pi 延迟写入窗口内文件不存在是常态（非错误），空态判定归调用方
+      return null
+    }
+  }
+
+  readSessionEndMeta(filePath: string): SessionEndSidecarMeta | null {
+    return readSessionEndMetaInfra(filePath)
   }
 
   persistHandoffSidecar(filePath: string, newSessionId: string): void {

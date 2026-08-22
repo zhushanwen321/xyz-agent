@@ -9,6 +9,7 @@ export type {
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,
   TerminalConfig, TerminalErrorCode, TerminalUnknownErrorCode, TerminalEnvelopeCode,
   SkillCacheScope, SkillCacheInvalidatedPayload,
+  SessionTraceHeaderPayload, SessionTraceMalformedLine, SessionTraceSessionEndPayload,
   SessionViewSnapshot,
 } from './protocol'
 export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'

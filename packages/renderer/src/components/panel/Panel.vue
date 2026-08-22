@@ -40,7 +40,11 @@
       </Button>
     </div>
 
-    <MessageStream v-else-if="props.sessionId && messageCount > 0" :session-id="props.sessionId" />
+    <MessageStream v-else-if="props.sessionId && messageCount > 0 && !isTraceView" :session-id="props.sessionId" />
+    <!-- session-trace（D5a/D5c）：Trace 视图替换对话流位置（composer 保留，§3.1「不打断对话能力」）。
+         有 session 即可用（空 session 走 empty 空态）；视图态 per-session 分区（A42），
+         切换仅切渲染分支，store 分区数据不动（不重建）。 -->
+    <TraceView v-else-if="props.sessionId && isTraceView" :session-id="props.sessionId" />
     <Landing
       v-else-if="!isSessionActive && isLandingView"
       :session-id="sessionId"
@@ -99,6 +103,7 @@ import { isAskUserQuestion, type AskUserQuestion } from '@xyz-agent/extension-pr
 import { WidgetArea } from '@xyz-agent/ui'
 import MessageStream from './MessageStream.vue'
 import Composer from './Composer.vue'
+import TraceView from './trace/TraceView.vue'
 import { Button } from '@/components/ui/button'
 import Landing from '@/components/new-task/Landing.vue'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
@@ -108,6 +113,7 @@ import { useSessionStore } from '@/stores/session'
 import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { useToast } from '@/composables/useToast'
 import { useExtensionUI, askUserFilter } from '@/composables/useExtensionUI'
+import { useSessionTrace } from '@/composables/features/trace/useSessionTrace'
 
 const props = defineProps<{
   panelId: string
@@ -130,6 +136,13 @@ const { restoreSession, retryHistory, deleteSession } = useSidebarNew()
 
 /** restore 失败的错误 code（ghost session 判据）：SESSION_NOT_FOUND 时显示删除入口 */
 const restoreErrorCode = ref<string | null>(null)
+
+/**
+ * Trace 视图激活（per-session 分区 view 字段，D5c；SegmentedTab 在 PanelHeader）。
+ * partition 是 store 当前分区（分区键 focusedSessionId，单 panel 下 == props.sessionId）。
+ */
+const { partition: tracePartition } = useSessionTrace()
+const isTraceView = computed(() => tracePartition.value.view === 'trace')
 
 /**
  * 当前 session 的消息数（驱动 MessageStream 渲染分支：有消息显对话流，无消息显 landing/空态）。

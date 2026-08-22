@@ -95,6 +95,13 @@
     </nav>
 
     <div class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+      <!-- session-trace（D5a）：「对话 | Trace」SegmentedTab。视图态 per-session 分区（store
+           view 字段），切换仅切 main 区渲染分支，不重建数据（A42）。sessionId 为空（landing）不渲染。 -->
+      <TraceViewToggle
+        v-if="sessionId"
+        :model-value="tracePartition.view"
+        @update:model-value="(v) => setTraceView(sessionId!, v)"
+      />
       <!-- ExtensionHost panel.header 挂载点（audit §12.1，MountPointRegistry panel.header）。
            plugin 经 views.update 贡献 header action 视图 → ViewHost 渲染。
            empty="hidden"：无贡献时整组件零 DOM，不挤压右侧内置按钮。见 02-extension-host-wiring.md。 -->
@@ -167,6 +174,8 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useSidebarStore } from '@/stores/sidebar'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import { useCopy } from '@/composables/panel/useCopy'
+import { useSessionTrace, setTraceView } from '@/composables/features/trace/useSessionTrace'
+import TraceViewToggle from './trace/TraceViewToggle.vue'
 import { ViewHost } from '@xyz-agent/ui/extension-host'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/file-tree/useGitStatus'
@@ -197,6 +206,8 @@ const { t } = useI18n()
 const navigation = useNavigationStore()
 const sidebar = useSidebarStore()
 const { isFullscreen } = usePlatformChrome()
+// session-trace：视图态读 store 当前分区（分区键 focusedSessionId == props.sessionId，单 panel 恒真）
+const { partition: tracePartition } = useSessionTrace()
 
 /**
  * 折叠态 chrome 落位判据（draft-collapsed-state.html 卡 A/B/C + sidebar/spec §收起态）：

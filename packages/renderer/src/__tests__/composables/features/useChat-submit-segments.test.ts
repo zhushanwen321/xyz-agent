@@ -7,6 +7,7 @@
  * - SS1: send(含 image) → chatApi.send 不含 images（路径模式，路径在 promptText 里）
  * - SS2: editAndResend(含 image) → 委托 submitSegments → 路径进 promptText（不丢）
  * - SS3: editAndResend(text-only) → chatApi.send 第二参数 promptText（行为与 send 对齐）
+ * - SS4: send(text-only) → 无 clientUuid 标记 + 不写 sidecar（最小写入：纯文本降级渲染等价）
  *
  * 图片走路径模式（对齐 pi TUI）：image segment 的裸路径由 segmentsToText 产出进 promptText，
  * LLM 自己调 read 工具读。不再走 base64 message.send.images 通道。
@@ -102,6 +103,20 @@ describe('submitSegments 统一通路：send', () => {
     expect(sidecarCall.entry.segments).toHaveLength(2)
     expect(sidecarCall.entry.timestamp).toBeTypeOf('number')
   })
+
+  it('SS4: send(text-only) → promptText 无 clientUuid 标记 + 不写 sidecar（最小写入）', async () => {
+    const { send } = useChat()
+    await send('ss-send-text', [{ type: 'text', text: '纯文本消息' }])
+
+    expect(apiMock.send).toHaveBeenCalledTimes(1)
+    const call = apiMock.send.mock.calls[0]!
+    expect(call[0]).toBe('ss-send-text')
+    // 纯文本轮不加标记（textToSegments 降级与结构化回填渲染等价，无需映射）
+    expect(call[1]).toBe('纯文本消息')
+    expect(call[1]).not.toMatch(/<!--xyz:msg:/)
+    // 纯文本轮不写 sidecar（不变式：sidecar 条目存在 ⟺ 映射 custom entry 存在）
+    expect(sessionDomainMock.writeSegments).not.toHaveBeenCalled()
+  })
 })
 
 // ── SS2/SS3: editAndResend 委托 submitSegments ──
@@ -141,9 +156,11 @@ describe('submitSegments 统一通路：editAndResend', () => {
     expect(apiMock.send).toHaveBeenCalledTimes(1)
     const call = apiMock.send.mock.calls[0]!
     expect(call[0]).toBe('ss-edit-text')
-    // promptText 含编辑后文本 + clientUuid 标记后缀（与 send 同通路）
+    // promptText 含编辑后文本；纯文本轮不加 clientUuid 标记后缀（最小写入，与 send 同通路）
     expect(call[1]).toContain('edited')
-    expect(call[1]).toMatch(/\n<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/)
+    expect(call[1]).not.toMatch(/<!--xyz:msg:/)
+    // 纯文本轮不写 sidecar（不变式：sidecar 条目存在 ⟺ 映射 custom entry 存在）
+    expect(sessionDomainMock.writeSegments).not.toHaveBeenCalled()
     // 无图 → 第三参数 undefined（行为不变）
     expect(call[2]).toBeUndefined()
   })

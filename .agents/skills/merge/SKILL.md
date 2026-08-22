@@ -282,25 +282,37 @@ done
 bash .agents/skills/merge/scripts/release.sh
 ```
 
-从 conventional commits 自动生成 Release Notes（feat/fix/perf/breaking 分组）并创建/更新 GitHub Release。也可指定 tag 和 notes 文件：`bash .agents/skills/merge/scripts/release.sh v0.6.5 --notes ./my-notes.md`。
+从 conventional commits 自动生成 Release Notes 草稿（双语三节结构：feat → 新增功能、perf → 功能优化、fix → 修复缺陷、breaking → 重大变更；条目为 commit 原文，须按 docs/release-notes.md 定稿）并创建/更新 GitHub Release。也可指定 tag 和 notes 文件：`bash .agents/skills/merge/scripts/release.sh v0.6.5 --notes ./my-notes.md`。
 
-> ⚠️ **release.sh 自动 notes 在 merge 末尾常不准**：脚本用 `git describe HEAD^` 找上一个 tag，但 merge 流程末尾 HEAD 已远超当前 tag（经过 bump + skill 更新 + 4N bump 等 commits），`git describe HEAD^` 会返回**当前 tag**，导致 range = `<当前tag>..HEAD` 几乎为空、自动 notes 退化。实际执行中建议跳过自动生成，直接手写双语 notes 后用 `gh release edit <tag> --notes-file <双语文件>` 覆盖（见下方 [MANDATORY] 双语要求）。
+> ⚠️ **release.sh 自动 notes 在 merge 末尾常不准**：脚本用 `git describe HEAD^` 找上一个 tag，但 merge 流程末尾 HEAD 已远超当前 tag（经过 bump + skill 更新 + 4N bump 等 commits），`git describe HEAD^` 会返回**当前 tag**，导致 range = `<当前tag>..HEAD` 几乎为空、自动 notes 退化。实际执行中建议跳过自动生成，直接按 docs/release-notes.md 手写双语 notes 后用 `gh release edit <tag> --notes-file <双语文件>` 覆盖（见下方 [MANDATORY] 要求）。
+
+**[MANDATORY] 撰写 Release Notes 前必须先读 [docs/release-notes.md](../../../docs/release-notes.md)**
+
+Release note 面向应用使用者（升级按钮 hover 浮层是唯一 UI 展示位），写作规范 SSOT 在该文档，要点：
+
+- 三节结构：新增功能（「新增」开头）/ 功能优化（「优化」开头，含性能）/ 修复缺陷（「修复」开头，按重要程度排序）
+- 每条一行、约 30 字以内，面向用户模糊化；extension / workflow 能力变化也要写（如「优化 review-fix-loop workflow 流程」）
+- 工程细节（测试、CI、内部重构、构建脚本）不进 note，放 PR 描述；修复超过 10 条时第 11 条起合并为「修复其他缺陷」
 
 **[MANDATORY] Release Notes 必须中英双语**
 
 Release Notes 需要同时包含中文和英文版本，使用 `<!-- LANG:zh -->` 和 `<!-- LANG:en -->` 标记分隔。前端会根据用户语言偏好自动提取对应部分。
 
-格式示例：
+格式示例（完整示例见 docs/release-notes.md）：
 ```markdown
 <!-- LANG:en -->
-## What's New
-- Fix bug X
+## New Features
 - Add feature Y
 
+## Bug Fixes
+- Fix bug X
+
 <!-- LANG:zh -->
-## 更新内容
+## 新增功能
+- 新增功能 Y
+
+## 修复缺陷
 - 修复 bug X
-- 添加功能 Y
 ```
 
 注意事项：

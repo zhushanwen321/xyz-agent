@@ -1,0 +1,9 @@
+{
+  "acceptance": [
+    { "id": "A11", "title": "留痕时机与去重: 首个 turn_start 按 SessionStartEvent.reason 写 initial/resume(5 值映射见测试), hash 相同不重写, 变化写 change", "type": "unit", "core": false, "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm -C extensions/system-prompt-trace exec vitest run" },
+    { "id": "A12", "title": "hash 基线跨重启恢复: targetSessionFile 直读 / 自持久化小文件 / 兜底 resume 必写", "type": "unit", "core": false, "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm -C extensions/system-prompt-trace exec vitest run" },
+    { "id": "A13", "title": "探针 P2: pi CLI 实测 resume 链路 reason 映射与落盘时序(含 fork/reload/new 映射断言)", "type": "manual", "core": false, "command": "bash scripts/cw/manual-gate.sh trace-ext P2" }
+  ],
+  "contracts": [],
+  "split": []
+}

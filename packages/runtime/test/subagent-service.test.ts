@@ -43,6 +43,10 @@ function createMockSessionStore(mainSessionFile: string, mainSessionId: string, 
     convertHistory: (raw: unknown[]) => convertPiHistory(raw),
     rebuildHistoryFromEntries: () => ({ messages: [], clientUuidMap: new Map(), orphanToolResults: [] }),
     parseSessionHeader: () => null,
+    // session-trace（A31/A32）：ISessionStore 接口新增 trace 读取成员（本测试不触达 trace 路径）
+    readSessionHeaderLine: () => null,
+    readSessionJsonlText: () => null,
+    readSessionEndMeta: () => null,
     persistHandoffSidecar: () => {},
     trash: () => {},
   }

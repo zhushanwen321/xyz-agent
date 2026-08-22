@@ -1,15 +1,12 @@
 {
   "name": "@zhushanwen/pi-cw-tool",
   "version": "0.4.3",
-  "description": "Pi extension wrapping the `cw` CLI as role-restricted tools (cw_planning / cw_wave / cw_dev / cw_review) with per-tool action whitelists — hard-guarantees no self-review by layer-owner agents.",
+  "description": "Pi extension for cw 2.0: a read-only cw_query tool (status / frontier / tree / report passthrough) + the pi-cw skill (runner practical guide for multi-unit tasks: background run, monitoring, escalation, merge back).",
   "type": "module",
   "main": "index.ts",
   "pi": {
     "extensions": [
       "./index.ts"
-    ],
-    "agents": [
-      "./agents"
     ],
     "skills": [
       "./skills"
@@ -19,15 +16,13 @@
     "pi-package",
     "cw",
     "coding-workflow",
-    "tool",
-    "whitelist",
-    "role-restriction"
+    "runner",
+    "readonly-query"
   ],
   "license": "MIT",
   "files": [
     "index.ts",
     "src/",
-    "agents/",
     "skills/"
   ],
   "scripts": {

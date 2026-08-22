@@ -1,0 +1,27 @@
+{
+  "acceptance": [
+    {
+      "id": "R0",
+      "title": "机器验收抽查锚: 跨模块烟雾 + gate 标记行契约(vitest, 含区分力断言)",
+      "type": "unit",
+      "core": false,
+      "command": "([ -d node_modules ] || pnpm install --prefer-offline --frozen-lockfile >/dev/null) && pnpm --filter @xyz-agent/core exec vitest run src/domain/session-trace/__tests__/trace-root-smoke.test.ts"
+    },
+    {
+      "id": "R1",
+      "title": "全部子单元机器验收套件(core/runtime/frontend/extension 四套 vitest, 单一 install 锚防并发竞态)",
+      "type": "e2e-real",
+      "core": false,
+      "command": "bash scripts/cw/trace-root-r1.sh"
+    },
+    {
+      "id": "R2",
+      "title": "全部手工 gate 勾选(P2/P3/V1-V7) + cw 账本 5 子单元全 closed",
+      "type": "e2e-real",
+      "core": false,
+      "command": "bash scripts/cw/trace-root-gate.sh"
+    }
+  ],
+  "contracts": [],
+  "split": []
+}

@@ -90,8 +90,9 @@ curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJ
 | `pi-agent-ext` | 会话树导航（`/xyz-navigate`）+ 内部 reload（`/__xyz_reload__`） |
 | `pi-system-prompt` | 系统提示词注入（AGENTS.md / settings 追加段） |
 | `pi-msg-id-mapper` | client UUID ↔ user entry ID 映射 |
+| `pi-system-prompt-trace` | system prompt 建立或变化时写入 xyz:system-prompt 留痕 entry |
 
-其中 6 个基础设级（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output` / `pi-agent-ext` / `pi-system-prompt` / `pi-msg-id-mapper`）常驻不可禁用，其余 7 个可在设置中禁用。另有 `pi-cw-tool`（coding-workflow 编排）、`pi-model-switch`（模型推荐切换）、`pi-plan`（轻量 plan 模式）、`pi-unified-hooks`（统一 hooks）4 个包经 npm 发布，可按需安装。
+其中 6 个基础设级（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output` / `pi-agent-ext` / `pi-system-prompt` / `pi-msg-id-mapper`）常驻不可禁用，其余 8 个可在设置中禁用。另有 `pi-cw-tool`（cw 2.0 runner 实操指南 + cw_query 只读查询工具）、`pi-model-switch`（模型推荐切换）、`pi-plan`（轻量 plan 模式）、`pi-unified-hooks`（统一 hooks）4 个包经 npm 发布，可按需安装。
 
 ### 模型与设置
 

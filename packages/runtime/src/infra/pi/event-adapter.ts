@@ -50,8 +50,8 @@ import type {
   PiErrorEvent,
   PiCompactionStartEvent,
   PiCompactionEndEvent,
-  PiEntryAppendedEvent,
   PiAgentSettledEvent,
+  PiEntryAppendedEvent,
 } from './pi-protocol.js'
 
 // ── Sub-handler types ──────────────────────────────────────────────
@@ -948,6 +948,9 @@ function handleAgentSettled(_event: PiAgentSettledEvent, _sid: string): PiTransl
 // [W21] message_end 移出此列——重构 message entry 喂前端 reducer（handleMessageEnd，实时 feed
 // 权威载体）。pi 上游未来若为常规 message append 补发射 entry_appended：只换喂入源头
 // （entry_appended → entry 构造），reducer 不动。
+// [session-trace A33] agent_settled / message_end / entry_appended 同时追加 trace-trigger 输出
+// （interpreter 调 onTraceSync 做追赶式 since 拉取）——与 W1/W18/W21 的 handler 经
+// withTraceTrigger 组合注册，互不取代（见 DISPATCHER）。
 // bash_execution_update：pi 0.84.1 新增 live bash 流事件（dist/core/agent-session.d.ts:103-106
 // {type:"bash_execution_update", id?, delta}，emit 点 agent-session.js:2210 executeBash 的
 // onChunk 回调），复用发起 bash RPC 的 id（docs/rpc.md:26）。rpc-client 的 resolve 守卫修复后
@@ -958,6 +961,31 @@ const NULL_EVENTS = new Set([
   'extension_config', 'extension_ui_response', 'response',
   'bash_execution_update',
 ])
+
+/**
+ * trace 增量腿触发事件（session-trace design D4 / A33）→ trace-trigger 中间事件。
+ *
+ * pi 无「每次 append 都广播」的 entry 事件（entry_appended 全仓唯一 emit 点在 extension
+ * appendEntry 回调，agent-session.ts:2517），message / compaction / bash 的 append 均无
+ * entry 级事件。改用三类现存事件作触发信号：message_end（每条消息 append 后）、
+ * agent_settled（稳态兑底）、entry_appended（extension appendEntry）。payload 不需要——
+ * interpreter 据此调 onTraceSync（get_entries(since) 追赶式拉取，pi 侧才是权威）。
+ *
+ * 这三类事件同时是 main 侧 W21（实时 feed）/ W1（bash flush）/ W18（派生缓存失效）的
+ * 载体——DISPATCHER 单 handler 契约下用 withTraceTrigger 组合注册：原 handler 输出在前、
+ * trace-trigger 追加在后，互不取代（曾因两组 DISPATCHER.set 叠加导致 Map 后写覆盖前写）。
+ */
+function withTraceTrigger(base: Handler): Handler {
+  return (event, sid) => {
+    const out = base(event, sid)
+    // 运行时守卫收窄 trigger 字面量（组合点只注册这三个事件，守卫防未来误用扩大）
+    return TRACE_TRIGGER_SOURCES.has(event.type)
+      ? [...out, { kind: 'trace-trigger', trigger: event.type as 'message_end' | 'agent_settled' | 'entry_appended' }]
+      : out
+  }
+}
+
+const TRACE_TRIGGER_SOURCES = new Set(['message_end', 'agent_settled', 'entry_appended'])
 
 // ── Dispatcher map ─────────────────────────────────────────────────
 // handler 入参是窄类型（PiMessageUpdateEvent 等），DISPATCHER value 是联合入参签名。
@@ -973,8 +1001,9 @@ const DISPATCHER = new Map<string, Handler>()
   DISPATCHER.set('turn_end', handleTurnEndPi as Handler)
   DISPATCHER.set('extension_ui_request', handleExtensionUIRequest as Handler)
   DISPATCHER.set('message_start', handleMessageStart as Handler)
-  // [W21] message_end：移出 NULL_EVENTS 后在此注册——重构 message entry 喂前端 reducer
-  DISPATCHER.set('message_end', handleMessageEnd as Handler)
+  // [W21] message_end：移出 NULL_EVENTS 后在此注册——重构 message entry 喂前端 reducer；
+  // [session-trace A33] 组合追加 trace-trigger（interpreter onTraceSync 补拉）
+  DISPATCHER.set('message_end', withTraceTrigger(handleMessageEnd as Handler))
   DISPATCHER.set('tool_execution_update', handleToolExecutionUpdate as Handler)
   DISPATCHER.set('extension_error', handleExtensionError as Handler)
   DISPATCHER.set('auto_retry_start', handleAutoRetryStart as Handler)
@@ -988,11 +1017,12 @@ const DISPATCHER = new Map<string, Handler>()
   DISPATCHER.set('compaction_start', handleCompactionStart as Handler)
   DISPATCHER.set('compaction_end', handleCompactionEnd as Handler)
   // [W18] entry_appended：移出 NULL_EVENTS 后在此注册——subagent-record / workflow-record
-  // 失效信号（handleEntryAppended），其他 custom type no-op
-  DISPATCHER.set('entry_appended', handleEntryAppended as Handler)
+  // 失效信号（handleEntryAppended），其他 custom type no-op；
+  // [session-trace A33] 组合追加 trace-trigger
+  DISPATCHER.set('entry_appended', withTraceTrigger(handleEntryAppended as Handler))
   // [W1 fix-chat-flow-order] agent_settled：run 级联结束信号（bash 待落列 flush 触发点，
-  // 见 handleAgentSettled 注释）
-  DISPATCHER.set('agent_settled', handleAgentSettled as Handler)
+  // 见 handleAgentSettled 注释）；[session-trace A33] 组合追加 trace-trigger
+  DISPATCHER.set('agent_settled', withTraceTrigger(handleAgentSettled as Handler))
 })()
 
 /**

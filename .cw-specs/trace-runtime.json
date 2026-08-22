@@ -1,0 +1,42 @@
+{
+  "acceptance": [
+    {
+      "id": "A31",
+      "title": "session.getTraceEntries 端口: 活跃路径 RPC get_entries 路由 + header 首行补读 + WS reply session.traceEntries(含 sessionId)",
+      "type": "e2e-mock",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/runtime exec vitest run session-trace",
+      "mockFidelityNote": "仅 mock WS/RPC 传输边界, pi 的 get_entries/事件返回值来自本地 pi CLI 真实录制 fixture, 不 mock pi 内部解析逻辑"
+    },
+    {
+      "id": "A32",
+      "title": "非活跃路径文件直读: JSONL + sidecar 合并 + 损坏行容错 + session 未落盘空态 + WS reply session.traceEntries(含 sessionId)",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/runtime exec vitest run session-trace"
+    },
+    {
+      "id": "A33",
+      "title": "增量腿: 触发事件(message_end/compaction_end/agent_settled/entry_appended) -> get_entries(since) 拉取 -> WS session.traceEntryAppended(含 sessionId); lifecycle RPC 成功后主动补拉",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/runtime exec vitest run session-trace"
+    },
+    {
+      "id": "A24",
+      "title": "探针 P1: RPC 录制 fixture 与文件直读产物对同一 session 的 SessionEntry 序列逐条 diff 为空(3 个真实 session)",
+      "type": "integration",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/runtime exec vitest run trace-parity"
+    },
+    {
+      "id": "A34",
+      "title": "探针 P3: 四类 append 后触发事件到达且 since 拉取完整; get_entries 超大 session 耗时记录",
+      "type": "manual",
+      "core": false,
+      "command": "bash scripts/cw/manual-gate.sh trace-runtime \"P3,P1 附注\""
+    }
+  ],
+  "contracts": [],
+  "split": []
+}

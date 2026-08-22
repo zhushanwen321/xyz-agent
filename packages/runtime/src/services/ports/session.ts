@@ -52,6 +52,14 @@ export interface SessionHeader {
   forkEntryId?: string
 }
 
+/** sidecar `.jsonl.meta.json` 的 session_end 完整元数据（session-trace 用；infra readSessionEndMeta 返回）。 */
+export interface SessionEndSidecarMeta {
+  type: 'session_end'
+  outcome: SessionOutcome
+  reason?: string
+  timestamp?: string
+}
+
 /**
  * entry 树重建历史结果。
  *
@@ -59,6 +67,8 @@ export interface SessionHeader {
  * rebuildHistoryFromEntries 收口到 port 后其返回类型必须 port 可见。
  * 保留 clientUuidMap（userEntryId→clientUuid 映射）——未来增量拉取
  * （getEntries(since=leafId)）/ branch 完整性判断需用，收口不降级原函数能力。
+ * ⚠️ 映射是稀疏的（最小写入）：仅含非纯文本消息（send 端 needsBackfill 谓词门控），
+ * steer/followUp/compact 重放消息历来无映射。上述未来特性不得假设映射覆盖全部 user entry。
  */
 export interface RebuiltHistory {
   messages: Message[]
@@ -135,6 +145,25 @@ export interface ISessionStore {
    * 首行非 session 类型 / 文件不存在 / JSON.parse 失败 → catch 返回 null（不抛）。
    */
   parseSessionHeader(filePath: string): SessionHeader | null
+  /**
+   * 读取 session .jsonl 首行**原文**（session-trace 路径 A 补 header 用，design D4：
+   * RPC get_entries 不含 header，由端口补读文件首行）。
+   *
+   * 返回首行文本；文件不存在 / 空文件 / 读失败 → null（不抛）。解析归调用方
+   * （session-trace 模块——需要 header 完整 JSON，含 version 等未建模字段）。
+   */
+  readSessionHeaderLine(filePath: string): string | null
+  /**
+   * 读取 session .jsonl 全文文本（session-trace 路径 B 文件直读用）。
+   *
+   * 文件不存在（pi 延迟写入窗口，规则 6）/ 读失败 → null（不抛——空态判定依据）。
+   */
+  readSessionJsonlText(filePath: string): string | null
+  /**
+   * 读取 sidecar `.jsonl.meta.json` 的 session_end 完整元数据（session-trace BOUNDARY 行，
+   * ADR 0042）。无 sidecar / JSON 损坏 / outcome 非法 → null（不抛）。
+   */
+  readSessionEndMeta(filePath: string): SessionEndSidecarMeta | null
   /**
    * 将 handoff 标记持久化到 sidecar `.handoff.json`（W11 迁移，scanner 经
    * extractHandedOff 尾读提取 handedOffTo）。
