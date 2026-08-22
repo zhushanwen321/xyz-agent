@@ -2,7 +2,7 @@
 /**
  * scoped-model.e2e.mjs — 端到端探针（node ≥22 内置 WebSocket）
  *
- * 用法：node scoped-model.e2e.mjs <E1|E2|E3|E4|E5|E6|E8> <dataDir>
+ * 用法：node scoped-model.e2e.mjs <E1|E2|E3|E4|E5|E6|E8|E10> <dataDir>
  *       node scoped-model.e2e.mjs smoke            (仅验证 setScopedModels 可用)
  *
  * 每个场景输出 "<id> PASS"/"<id> FAIL" 标记行到 stdout，exit code 与标记一致。
@@ -11,15 +11,15 @@
 
 import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const id = process.argv[2]
 const dataDir = process.argv[3]
 
 if (!id) {
-  console.error('Usage: node scoped-model.e2e.mjs <E1|E2|E3|E4|E5|E6|E8|smoke> [dataDir]')
+  console.error('Usage: node scoped-model.e2e.mjs <E1|E2|E3|E4|E5|E6|E8|E10|smoke> [dataDir]')
   process.exit(1)
 }
 
@@ -71,14 +71,21 @@ function startRuntime(dataDir, token = 'test-token-sm-e2e') {
       XYZ_RUNTIME_TOKEN: token,
       XYZ_AGENT_PORT_OFFSET: '0',
     }
-    // 用 pnpm exec tsx 启动（workspace 依赖正确解析）
+    // tsx 直接跑 workspace 依赖同样正确解析（node_modules symlink 布局由 pnpm install 建好）
     // 不传 --port，让 runtime 用 BASE_PORT + offset，然后从日志解析实际端口
     // 用随机 offset 避免与正在运行的 xyz-agent 实例冲突（dev 常态占用 3210/3310/1420 等，
     // offset 从 200 起避开 dev runtime 的 3310）
     const offset = Math.floor(Math.random() * 900) + 200
     env.XYZ_AGENT_PORT_OFFSET = String(offset)
+
+    // 不经 pnpm exec 直接用 worktree 绝对路径 tsx 启动：pnpm 会给 PATH 前置相对条目
+    // ./node_modules/.bin，runtime 内 findPiExecutable 的 which pi 原样返回该相对路径，
+    // RpcClient 以 session cwd（≠ repoRoot）spawn pi 时 ENOENT（E10 实测）。前置绝对
+    // bin 目录后 which 返回绝对路径，session cwd 可安全指向隔离 dataDir。
+    const binDir = join(repoRoot, 'node_modules', '.bin')
+    env.PATH = `${binDir}:${env.PATH ?? ''}`
     const expectedPort = 3210 + offset
-    const proc = spawn('pnpm', ['exec', 'tsx', 'packages/runtime/src/index.ts'], {
+    const proc = spawn(join(binDir, 'tsx'), ['packages/runtime/src/index.ts'], {
       cwd: repoRoot,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -316,7 +323,7 @@ if (id === 'smoke') {
   }
 }
 
-// ── E1-E6, E8 ─────────────────────────────────────────────────
+// ── E1-E6, E8, E10 ────────────────────────────────────────────
 
 if (!dataDir) {
   console.error('dataDir required for E1-E8')
@@ -688,6 +695,109 @@ async function scenarioE8() {
   })
 }
 
+/**
+ * E10（设计验收 S5）：新会话 modelId 终态 = scoped[0]，catalog 与 custom 两种
+ * provider 源各覆盖一遍（复用 E3 的 provider 布局：openai = catalog 源，
+ * test-provider = models.json 自定义 custom 源）。链路：setScopedModels（同步
+ * default = scoped[0]）→ session.create（spawn 读 getDefaultModel()）→ 断言双终态：
+ * reply session.modelId + session.state_changed（pi get_state 播种快照）。
+ */
+async function scenarioE10() {
+  // 不走 setupBaseProviders：其末尾 `...extra` 兜底 spread 会用原始 extra 覆盖前面
+  // merge 好的 auth/modelsProviders（E10 实测踩坑：openai 条目被覆盖丢失 → default
+  // auto-fix 漂到 test-provider/model-a），直接用 presetProviders 完整构造。
+  // custom 源条目带 api + baseUrl + 凭证：E10 会真实 spawn pi 子进程（E1-E8 只走配置
+  // 链路不 spawn），pi 0.84.1 对自定义 provider 的可用性判定比 xyz runtime 聚合严格，
+  // 缺 api 时 --model 校验报 "Model not found"（隔离探针实测）。baseUrl 指向不监听
+  // 端口即可——本场景不发 LLM turn，永不连接。
+  presetProviders(dataDir, {
+    auth: {
+      [CATALOG_PROVIDER]: { type: 'api_key', key: 'sk-test' },
+      [CUSTOM_PROVIDER]: { type: 'api_key', key: 'sk-test-custom' },
+    },
+    modelsProviders: {
+      [CATALOG_PROVIDER]: {
+        models: [{ id: CATALOG_MODEL }],
+      },
+      [CUSTOM_PROVIDER]: {
+        api: 'openai-completions',
+        baseUrl: 'http://127.0.0.1:9/v1',
+        models: [
+          { id: CUSTOM_MODEL_1 },
+          { id: CUSTOM_MODEL_2 },
+          { id: CUSTOM_MODEL_3 },
+        ],
+      },
+    },
+  })
+  // 隔离性断言：dataDir 由调用方 mktemp 隔离传入，禁止触碰真实 ~/.xyz-agent
+  const realAgentDir = join(homedir(), '.xyz-agent')
+  const resolvedDataDir = resolve(dataDir)
+  if (resolvedDataDir === realAgentDir || resolvedDataDir.startsWith(realAgentDir + sep)) {
+    fail('E10', `dataDir must not touch real ~/.xyz-agent, got: ${dataDir}`)
+  }
+  const workDir = join(dataDir, 'e10-work')
+  mkdirSync(workDir, { recursive: true })
+  await runScenario(async (client) => {
+    const rounds = [
+      { source: 'catalog', scoped: [`${CATALOG_PROVIDER}/${CATALOG_MODEL}`, `${CUSTOM_PROVIDER}/${CUSTOM_MODEL_1}`] },
+      { source: 'custom', scoped: [`${CUSTOM_PROVIDER}/${CUSTOM_MODEL_2}`, `${CATALOG_PROVIDER}/${CATALOG_MODEL}`] },
+    ]
+    for (const { source, scoped } of rounds) {
+      const setReply = await client.rpc('config.setScopedModels', { models: scoped })
+      if (setReply.type === 'error') fail('E10', `[${source}] setScopedModels error reply: ${JSON.stringify(setReply.payload)}`)
+      if (!client.latestBroadcast('model.list')) fail('E10', `[${source}] no model.list after setScopedModels`)
+
+      const createReply = await client.rpc('session.create', { cwd: workDir, label: `e10-${source}` })
+      if (createReply.type === 'error') fail('E10', `[${source}] session.create error reply: ${JSON.stringify(createReply.payload)}`)
+      const session = createReply.payload?.session
+      if (!session?.id) fail('E10', `[${source}] session.created reply missing session: ${JSON.stringify(createReply.payload)}`)
+
+      // 终态 1：reply 的 session.modelId（create 时 modelOverride ?? getDefaultModel()）
+      if (session.modelId !== scoped[0]) {
+        const settingsDump = readFileSync(join(dataDir, 'pi', 'agent', 'settings.json'), 'utf-8')
+        fail('E10', `[${source}] reply session.modelId expected ${scoped[0]}, got ${session.modelId}; settings.json: ${settingsDump}`)
+      }
+
+      // 终态 2：session.state_changed——session 级 topic（messageBus.publish(sessionId)），
+      // 须 session.subscribe 订阅后才推送。subscribe reply 的 stateSnapshot 是 state
+      // topic 的 last-value：播种 fetch（get_state 快照，失败退避 1s/5s/15s 后 fallback
+      // 双写缓存同样发帧）已落定则直接命中，否则轮询等订阅后的 live 帧。按 sessionId
+      // 过滤——上一轮 session 的 state_changed 也在总线上。
+      const subReply = await client.rpc('session.subscribe', { sessionId: session.id })
+      if (subReply.type === 'error') fail('E10', `[${source}] session.subscribe error reply: ${JSON.stringify(subReply.payload)}`)
+      const snapshotted = (subReply.payload?.stateSnapshot ?? []).find(
+        m => m.type === 'session.state_changed' && m.payload?.sessionId === session.id,
+      )
+      const statePush = snapshotted?.payload ?? await waitStateChangedFor(client, session.id)
+      if (statePush.modelId !== scoped[0]) {
+        fail('E10', `[${source}] state_changed.modelId expected ${scoped[0]}, got ${statePush.modelId}`)
+      }
+    }
+
+    pass('E10')
+  })
+}
+
+/**
+ * 轮询等待指定 session 的 session.state_changed 广播（含缓冲中已有的；从尾往前取
+ * 最新一条）。state_changed 由 pi get_state 播种后异步发布，且 pi 子进程刚 spawn，
+ * 就绪时间不定——轮询比一次性 find 稳，20s 上限覆盖慢启动。
+ */
+async function waitStateChangedFor(client, sessionId, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    for (let i = client.broadcasts.length - 1; i >= 0; i--) {
+      const b = client.broadcasts[i]
+      if (b.type === 'session.state_changed' && b.payload?.sessionId === sessionId) {
+        return b.payload
+      }
+    }
+    await delay(200)
+  }
+  throw new Error(`timeout waiting session.state_changed for ${sessionId} (broadcasts: ${JSON.stringify(client.broadcasts.map(b => `${b.type}:${b.payload?.sessionId ?? ''}`))}`)
+}
+
 // ── 路由 ──────────────────────────────────────────────────────
 
 const scenarios = {
@@ -698,6 +808,7 @@ const scenarios = {
   E5: scenarioE5,
   E6: scenarioE6,
   E8: scenarioE8,
+  E10: scenarioE10,
 }
 
 const scenarioFn = scenarios[id]

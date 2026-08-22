@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# sm-e2e.sh — cw acceptance wrapper for sm-e2e unit (E1-E9)
+# sm-e2e.sh — cw acceptance wrapper for sm-e2e unit (E1-E10)
 # e2e-real 型：每个 id 分支输出 "<id> PASS"/"<id> FAIL" 标记行，exit code 与标记一致。
 # e2e 探针为 packages/runtime/test/e2e/scoped-model.e2e.mjs（node ≥22 内置 WebSocket）。
 # E9 unit 型由 vitest 直接执行。
 #
-# 用法：bash scripts/cw-acceptance/sm-e2e.sh <E1|E2|E3|E4|E5|E6|E7|E8|E9|all>
+# 用法：bash scripts/cw-acceptance/sm-e2e.sh <E1|E2|E3|E4|E5|E6|E7|E8|E9|E10|all>
 
 set -o pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT" || { echo "FAIL: cannot cd to repo root"; exit 1; }
 
-ID="${1:?Usage: $0 <E1|E2|...|E9|all>}"
+ID="${1:?Usage: $0 <E1|E2|...|E10|all>}"
 
 # ── 公共前置 ────────────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ if [ "$ID" = "all" ]; then
   FAIL_COUNT=0
   FAILED_IDS=""
   # E7 内联回归，E9 单测，其余走 e2e 探针
-  for eid in E1 E2 E3 E4 E5 E6 E7 E8 E9; do
+  for eid in E1 E2 E3 E4 E5 E6 E7 E8 E9 E10; do
     echo "[sm-e2e] all: running $eid..." >&2
     if bash "$0" "$eid" 2>&1; then
       PASS_COUNT=$((PASS_COUNT + 1))
@@ -93,7 +93,9 @@ if [ "$ID" = "E7" ]; then
     echo "E7 FAIL: base commit $BASE_COMMIT not reachable"
     exit 1
   fi
-  CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" HEAD -- '*.ts' '*.tsx' '*.vue' '*.mts' '*.mjs' 2>/dev/null || true)
+  # 不带 HEAD：diff 到工作树，覆盖已提交 + 未提交改动（与 affected-tests.sh 同理由：
+  # cw 场景 worker 修复完未提交即跑验收是常态）。untracked 新文件仍不可见（已知边界）。
+  CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" -- '*.ts' '*.tsx' '*.vue' '*.mts' '*.mjs' 2>/dev/null || true)
   if [ -n "$CHANGED_FILES" ]; then
     # 对改动文件逐个执行 eslint --format=json，解析 error 数
     while IFS= read -r f; do
@@ -119,32 +121,23 @@ if [ "$ID" = "E7" ]; then
     done <<< "$CHANGED_FILES"
   fi
 
-  # (3) 各包 vitest
-  # XYZ_SKIP_REAL_PI=1：real-pi 等价组（真实 pi 子进程 + 真实 LLM turn，单文件 300-600s）
-  # 走项目内建双轨机制（TEST-STRATEGY.md §4 / pi-fixture.ts detectRealPiSkipReason）——
-  # 凭证无关子集在此跑，完整基线（含 real-pi）跑开发机。该组在 verify 干净 checkout
-  # 高负载环境下时序随机翻转（三轮 verify 挂的文件各不相同，3588 过个位数翻转），
-  # 与本功能改动无关。
-  export XYZ_SKIP_REAL_PI=1
-  echo "[sm-e2e] E7: running vitest in each package..." >&2
-  for pkg in shared core ui renderer runtime; do
-    pkg_name="@xyz-agent/$pkg"
-    if [ "$pkg" = "renderer" ]; then
-      pkg_name="@xyz-agent/frontend"
-    fi
-    echo "[sm-e2e] E7: vitest in packages/$pkg..." >&2
-    if ! (cd "$REPO_ROOT/packages/$pkg" && npx vitest run 2>&1); then
-      echo "[sm-e2e] E7 FAIL: vitest failed in packages/$pkg" >&2
-      echo "E7 FAIL"
-      exit 1
-    fi
-  done
+  # (3) 受影响测试集（增量推导 + 逐包串行 vitest，见 affected-tests.sh）
+  # 曾每包全量 vitest——并行验收时打满 CPU（用户明确要求每层只跑自己改动涉及的 test）。
+  # XYZ_SKIP_REAL_PI=1（real-pi 等价组走 TEST-STRATEGY.md §4 / pi-fixture.ts 双轨机制）
+  # 由 affected-tests.sh 自身 export，无需在此重复；real-pi 完整基线（300-600s/文件，
+  # verify 高负载环境下时序随机翻转）仍跑开发机。
+  echo "[sm-e2e] E7: running affected tests since $BASE_COMMIT..." >&2
+  if ! bash "$REPO_ROOT/scripts/cw-acceptance/affected-tests.sh" "$BASE_COMMIT" --run 2>&1; then
+    echo "[sm-e2e] E7 FAIL: affected-tests failed" >&2
+    echo "E7 FAIL"
+    exit 1
+  fi
 
   echo "E7 PASS"
   exit 0
 fi
 
-# ── E1-E6, E8: e2e 探针 ────────────────────────────────────────
+# ── E1-E6, E8, E10: e2e 探针 ──────────────────────────────────
 E2E_PROBE="$REPO_ROOT/packages/runtime/test/e2e/scoped-model.e2e.mjs"
 
 if [ ! -f "$E2E_PROBE" ]; then

@@ -28,7 +28,10 @@ if ! git merge-base --is-ancestor "$BASE_COMMIT" HEAD 2>/dev/null; then
 fi
 
 # 推导 diff 中变更的文件
-CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" HEAD -- '*.ts' '*.tsx' '*.vue' '*.mts' '*.mjs' 2>/dev/null || true)
+# 不带 HEAD：diff 到工作树（覆盖已提交 + 未提交改动）——cw 场景 worker 修复完未提交
+# 即跑验收是常态，`BASE_COMMIT HEAD` 会漏掉工作区改动导致漏测。
+# 已知残留边界：untracked 新文件 git diff 不可见（不扩大修复，接受该缺口）。
+CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" -- '*.ts' '*.tsx' '*.vue' '*.mts' '*.mjs' 2>/dev/null || true)
 
 if [ -z "$CHANGED_FILES" ]; then
   echo "[affected-tests] no changed source files, skipping" >&2
@@ -37,14 +40,22 @@ if [ -z "$CHANGED_FILES" ]; then
 fi
 
 # 推导受影响测试集
+# declare -A（关联数组）需要 bash >= 4；macOS 系统 /bin/bash 是 3.2 会直接挂
+if [ "${BASH_VERSINFO:-0}" -lt 4 ]; then
+  echo "[affected-tests] FAIL: bash >= 4 required, current is ${BASH_VERSION:-unknown}." >&2
+  echo "[affected-tests] fix: brew install bash && rerun with \"\$(brew --prefix)/bin/bash $0 $*\"" >&2
+  echo "R1 FAIL"
+  exit 1
+fi
+
 declare -A AFFECTED_TESTS
 
 while IFS= read -r file; do
   [ -z "$file" ] && continue
 
-  # 规则 1：diff 中本身就是测试文件 → 直接纳入
+  # 规则 1：diff 中本身就是测试文件 → 直接纳入（须仍存在：diff 可能含已删除文件）
   if echo "$file" | grep -qE '\.(test|spec)\.(ts|tsx|mts)$'; then
-    AFFECTED_TESTS["$file"]=1
+    [ -f "$file" ] && AFFECTED_TESTS["$file"]=1
     continue
   fi
 
@@ -53,7 +64,12 @@ while IFS= read -r file; do
   # 2b: src/services/bar.ts → test/services/bar.test.ts / src/services/__tests__/bar.test.ts
   # 2c: src/foo.ts → test/foo.spec.ts
   dir=$(dirname "$file")
-  base=$(basename "$file" | sed 's/\.\(ts\|tsx\|mts\)$//')
+  # 扩展名剥离用参数扩展而非 sed：BSD sed（macOS /usr/bin/sed）BRE 不支持 \|，
+  # 实测 `sed 's/\.\(ts\|tsx\|mts\)$//'` 剥离失败（base 保留扩展名 → 候选全错）。
+  # CHANGED_FILES 已被 git pathspec 限定为 ts/tsx/vue/mts/mjs，${fname%.*} 通用覆盖
+  # （.vue 剥扩展后可命中同名测试，如 Foo.vue → __tests__/Foo.test.ts）。
+  fname=$(basename "$file")
+  base="${fname%.*}"
 
   # 所在包根目录
   pkg_dir=""
@@ -96,6 +112,16 @@ while IFS= read -r file; do
       )
     fi
   fi
+
+  # 平铺 / 包根 __tests__ 布局（shared：src/foo.ts → __tests__/foo.test.ts；
+  # 平铺 vitest：src/foo.ts → test/foo.test.ts）。无条件补两个模式——上面 rel_dir
+  # 分支只生成「同目录 / test 镜像」候选，包根 __tests__ 与平铺 test 在部分 rel_dir
+  # 形态下（rel_dir=src 剥前缀得空串，拼不出有效路径）不会生成，曾实际漏测
+  # packages/shared/__tests__/protocol.test.ts。
+  candidates+=(
+    "$pkg_dir/test/$base.test.ts"
+    "$pkg_dir/__tests__/$base.test.ts"
+  )
 
   for c in "${candidates[@]}"; do
     if [ -f "$c" ]; then

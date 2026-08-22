@@ -133,6 +133,7 @@
 - **优先级语义：provider 级 disabled 压过 scoped**——用户 toggle OFF 某 provider，即使 scoped 含其模型也不显示。语义组合清晰：toggle = provider 总开关，scoped = 可见范围
 - 排序：scopedModels 非空时，输出按 scopedModels 数组序（跨 provider 交错序保留；renderer 分组后组序 = 该组首个模型的全局位置）；scopedModels 为空时保持现状双源聚合序
 - scoped 条目解析不到实际模型（provider/模型已被删除）时静默跳过该条目，不报错；凭证状态不影响可见性（凭证只影响可用性）
+- **取舍记录（2026-08-22，实现期补充）：广播构造对 scopedModels 单次读取**——`broadcastProviderList` 构造 payload 时 providers 与 scopedModels 若各自独立读盘，两读之间存在一帧不一致窗口（新 providers 配旧 scopedModels）。取舍：单次读取后构造消除窗口即可，不为此引入跨 store 的一致性快照机制——广播本就是最终一致通道，renderer 侧有 `refreshProviders` 主动拉取兜底（AGENTS.md 广播时序竞争教训），机制复杂度不匹配收益
 - **被否**：renderer 过滤（方案 C）；pi 侧消费（方案 B）；aggregateModels 签名加参（迫使 message-broker 与 handler 两个调用方改签名，破坏「广播零改动」）
 
 #### 决策 D3：默认模型 —— 写 scopedModels 时同步 `setDefaultModel(scoped[0])`，并修复 findValidDefaultModel 存量缺陷
@@ -224,6 +225,7 @@
 - **自动化（主）**：runtime 单测覆盖 aggregateModels 过滤/排序/优先级/残留跳过、handler 校验与广播触发、residue 清理、findValidDefaultModel catalog 源校验（扩展 + 回归锁定现有行为）；renderer 组件测试覆盖 ScopedModelSection 渲染与事件。三视角（构建者白盒 + 使用者黑盒 DOM 断言 + 观察者形态）。测试放置**按被测对象现有基线**：aggregateModels/handler 测试扩展 `packages/runtime/test/`（model-service.test.ts、settings-message-handler.test.ts），extras-store 测试在 `packages/runtime/src/services/__tests__/`
 - **S5 断言手段**：session 创建后断言 session 级 modelId（`session-service.ts:530-558` 切模型链已直写 `session.modelId` 并广播快照；spawn 成功即终态）——不依赖 pi stdout 探针
 - **GUI 探针（补充）**：`pnpm dev` 后 Playwright 连 9222，走 S1/S2/S4 真实点击路径断言选择器 DOM
+- **[债务记录 2026-08-22] S4 的 GUI 探针未实现，defer 至 PR 阶段**：S4（GUI 即时生效）当前由 E2 的广播链路断言**等价覆盖**（写操作 → `model.list` 广播 → renderer 常驻订阅，该广播即 `ModelSelectPopover` 的唯一数据源，广播到达 = 选择器更新）；组件级行为另由 renderer 测试（ProviderPage.test.ts 等）覆盖。真实 GUI 探针（`pnpm dev` + Playwright 连 9222 走 S1/S2/S4 点击路径）deferred 理由：cw 验收阶段多 unit 并行，全量 dev 启动 + Playwright 抢占 9222 调试端口会与并行 worker 冲突且不可重入；PR 阶段单人环境可稳定执行，届时补齐
 - **不可用探针（明确排除）**：pi `--list-models` 不受任何白名单影响（0.84.1 dist 实测），不能作为本功能验收手段
 
 ---
@@ -256,17 +258,25 @@ packages/
 │   │   ├── config-service.ts                        ← 修改：getScopedModels 实现
 │   │   ├── model-service.ts                         ← 修改：aggregateModels 按 scoped 过滤 + 重排
 │   │   ├── provider-config-helper.ts                ← 修改：cleanScopedModelsResidue 挂 deleteProvider/removeProviderByKind
+│   │   ├── ports/config.ts                          ← 实现期发现的必要延伸：IConfigService 端口注释同步（仅注释，无行为变更）
+│   │   ├── migration/provider-extras-migration.ts   ← 实现期发现的必要延伸：ProviderExtrasReader 补 cleanScopedModelsResidue 读域能力（删除 provider 清残留复用）
+│   │   ├── worktree/worktree-service.test.ts        ← 实现期发现的必要延伸：接口 ripple 的测试 stub 适配
 │   │   └── __tests__/（extras-store 测试扩展）
 │   ├── infra/pi/pi-provider-store.ts                ← 修改：findValidDefaultModel catalog 源校验扩展
 │   ├── transport/
 │   │   ├── settings-message-handler.ts              ← 修改：config.setScopedModels case + 广播 + getProviders reply + default 同步
 │   │   └── message-broker.ts                        ← 修改：broadcastProviderList payload 构造扩展
 │   └── test/（model-service / settings-message-handler / pi-provider-store 测试扩展）
-├── ui/src/features/settings/common/
-│   └── ScopedModelSection.vue                       ← 新增：配置组件（props/emits 接线）
+├── ui/src/features/settings/
+│   ├── common/
+│   │   ├── ScopedModelSection.vue                   ← 新增：配置组件（props/emits 接线）
+│   │   └── scoped-model-types.ts                    ← 实现期发现的必要延伸：scoped 模型条目共享类型（组件 props 与渲染数据复用）
+│   └── index.ts                                     ← 实现期发现的必要延伸：新增组件/类型的导出接线
 ├── renderer/src/
 │   ├── api/domains/config.ts                        ← 修改：onProviders 透传 + setScopedModels 门面
 │   ├── api/mock/index.ts                            ← 修改：onProviders/setScopedModels mock
+│   ├── composables/shell/
+│   │   └── settings-transport-adapter.ts            ← 实现期发现的必要延伸：onProviders 链 scopedModels 字段透传适配
 │   ├── composables/features/settings/
 │   │   └── useScopedModels.ts                       ← 新增：状态 + RPC 调用
 │   └── components/settings/provider/
