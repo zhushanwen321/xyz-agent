@@ -51,6 +51,8 @@ const PROVIDER_ENV_VARS = {
   'opencode-go': ['OPENCODE_API_KEY'],
   'qwen-token-plan': ['QWEN_TOKEN_PLAN_API_KEY'],
   'qwen-token-plan-cn': ['QWEN_TOKEN_PLAN_CN_API_KEY'],
+  'qwen-token-plan-individual': ['QWEN_TOKEN_PLAN_API_KEY'],
+  baseten: ['BASETEN_API_KEY'],
   xiaomi: ['XIAOMI_API_KEY'],
   'xiaomi-token-plan-cn': ['XIAOMI_TOKEN_PLAN_CN_API_KEY'],
   'xiaomi-token-plan-ams': ['XIAOMI_TOKEN_PLAN_AMS_API_KEY'],
@@ -399,7 +401,7 @@ function main() {
   }
   const payload = {
     generatedAt: new Date().toISOString(),
-    piAiVersion: '0.82.1',
+    piAiVersion: '0.84.1',
     providers,
   }
   const outPath = fileURLToPath(new URL('../src/generated/builtin-providers.json', import.meta.url))

@@ -95,7 +95,7 @@ describe('B-2：catalog provider 有 override models → 混合列表逐条标�
     // 其余 builtin 条目标 'builtin'（混合列表：override 存在时未被覆盖的内置条目仍在，
     // 对齐 pi 真实行为 design D1 探针——旧「override 非空即整体替换」与 pi 漂移）
     expect(bySource('builtin')).not.toContain('glm-5.2')
-    expect(bySource('builtin')).toContain('glm-5.1')
+    expect(bySource('builtin')).toContain('glm-5-turbo')
     expect(bySource('builtin')).toContain('glm-4.7')
     // 同 id 不重复出现（覆盖而非并列）
     expect(models.filter(m => m.id === 'glm-5.2')).toHaveLength(1)

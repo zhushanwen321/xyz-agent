@@ -20,7 +20,7 @@ interface SystemPromptConfig {
   append: { enabled: boolean; prompt: string }
 }
 
-const PLUGIN_PATH = new URL('../../../extensions/system-prompt/index.ts', import.meta.url).pathname
+const PLUGIN_PATH = new URL('../../../extensions/taiji/system-prompt/index.ts', import.meta.url).pathname
 
 function writeConfig(dataDir: string, config: SystemPromptConfig): void {
   writeFileSync(join(dataDir, 'system-prompt.json'), JSON.stringify(config), 'utf-8')

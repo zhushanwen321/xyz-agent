@@ -28,8 +28,8 @@ const service = new ConfigService('/tmp/project', {} as unknown as IConfigStore)
 describe('ConfigService.listBuiltinProviders', () => {
   const providers: BuiltinProviderTemplate[] = service.listBuiltinProviders()
 
-  it('t1: 返回 37 个内置 provider', () => {
-    expect(providers).toHaveLength(37)
+  it('t1: 返回 39 个内置 provider', () => {
+    expect(providers).toHaveLength(39)
   })
 
   it('t2: openai authMode===api_key 且 envVars 含 OPENAI_API_KEY', () => {
@@ -133,7 +133,7 @@ describe('ConfigService auth 清理（I9 清理① + I8，T6）', () => {
   it('deleteProvider → 清 auth.json（I8：OAuth token 强绑定凭据，删除时同步清）', async () => {
     const authStorage = { remove: vi.fn(async () => undefined), hasOAuth: vi.fn(async () => false) }
     const { svc } = makeSvc(authStorage as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>)
-    svc.deleteProvider('anthropic')
+    await svc.deleteProvider('anthropic')
     expect(authStorage.remove).toHaveBeenCalledWith('anthropic')
   })
 
