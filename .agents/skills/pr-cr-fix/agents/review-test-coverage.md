@@ -1,11 +1,21 @@
 ---
-description: "测试覆盖审查。检查新增逻辑是否有对应测试、边缘情况是否覆盖。"
+description: "测试覆盖审查。消费 Gate 机器产物定点核查覆盖率盲区，检查断言强度、边缘情况覆盖、测试框架合规。"
 name: review-test-coverage
 ---
 
 # 测试覆盖审查 Agent
 
-审查变更代码的测试覆盖情况：新增逻辑是否有对应测试、边缘情况是否覆盖。
+审查变更代码的测试覆盖情况：消费 Gate-1.5/1.6 机器产物定点核查（含机器覆盖率盲区兜底）、断言强度、边缘情况覆盖、测试框架合规。
+
+## 职责边界
+
+「哪里没测到」的开放人工排查已收缩——增量覆盖缺口由 Gate-1.6 机器判定（`uncovered_files` 按可执行新增行缺口排序），本 agent 不再全量扫描「识别可测逻辑 → 查找对应测试」。保留的定点核查与质量职责：
+
+1. 机器覆盖率盲区兜底（`files_without_lcov`，见执行步骤 3）
+2. 断言强度（覆盖了但断言弱，见执行步骤 4）
+3. 边缘情况选择（见执行步骤 5）
+4. 测试框架合规（vitest / fake timers，见执行步骤 6）
+5. xyz-agent 领域特定测试点（见执行步骤 7）
 
 ## 输入
 
@@ -18,19 +28,14 @@ task prompt 中必须包含：
 
 阶段 1.6 产物 `<repo>/.review/coverage.json` 存在时必须消费：
 - 各包 `uncovered_files` 清单（增量可执行行未覆盖文件 + 命中数/总数）：这些是**实测**（跑过测试）的增量覆盖缺口，比静态估算更权威——清单内文件的新增分支逻辑无测试 → MUST_FIX；补测试建议直接引用该清单的行缺口数字
+- 各包 `files_without_lcov` 清单（新增文件但无 lcov 记录 = 未被任何测试加载）：**机器覆盖率盲区**——此类文件不入覆盖率分母，Gate-1.6 判 100% PASS，机器看不见，由执行步骤 3 定点核查兜底
 
 ## 执行步骤
 
 1. **获取变更范围**：`git diff main...HEAD --stat` + `git diff main...HEAD`。
-2. **消费度量靶子**（`.review/metrics.json` 存在时）：对 `targets.high_crap` 清单中的函数逐一核对——完全无测试且含分支逻辑 → MUST_FIX；有测试但断言软弱（只调用、断言不验证行为）→ SUGGESTION。清单之外的新增逻辑仍按步骤 3-4 排查。
-3. **识别可测逻辑**：
-   - 新增的函数/方法/类（尤其是 exported 的）
-   - 新增的分支逻辑（if/else、switch、try/catch）
-   - 新增的状态转换和边界条件
-4. **查找对应测试**：
-   - 检查 `__tests__/` 目录或 `*.test.ts` / `*.spec.ts` 文件是否有对应测试
-   - 检查测试是否覆盖新逻辑（不只是 import 但未测试）
-   - 测试断言质量：断言是否验证行为而非仅调用（防“凑行数覆盖率”）
+2. **消费度量靶子**（`.review/metrics.json` 存在时）：对 `targets.high_crap` 清单中的函数逐一核对——完全无测试且含分支逻辑 → MUST_FIX；有测试但断言软弱（只调用、断言不验证行为）→ SUGGESTION。清单之外的增量覆盖缺口由 Gate-1.6 机器清单（`uncovered_files` / `files_without_lcov`）兜底，本 agent 不做开放人工排查。
+3. **核查机器覆盖率盲区（`files_without_lcov` 定点核查）**：消费 `.review/coverage.json` 各包的 `files_without_lcov` 清单——清单内文件是**未被任何测试加载的新文件**，不入覆盖率分母、机器判 100% PASS，是 Gate-1.6 的已知盲区。逐文件判定是否含可测逻辑（函数/方法/分支/状态转换），含可测逻辑而无任何测试加载 → MUST_FIX；纯类型/常量/纯导出聚合文件（无可执行分支）→ INFO 或跳过。注意：该清单**截前 10 条**，超出截断时用「git diff 新增文件清单（`git diff main...HEAD --name-only --diff-filter=A`）× 该清单」交叉核对，找出未进入清单的无测试新文件。
+4. **断言强度审查**（对已被测试覆盖的 diff 变更逻辑）：断言是否验证行为而非仅调用（只调用不验证 = 凑行数覆盖率，覆盖率满分也抓不住回归）→ SUGGESTION；弱断言模式（只断言不抛错、滥用 toMatchSnapshot、断言常量而非行为输出）逐条指出并给补强方向。
 5. **边缘情况覆盖**：
    - 空输入、null/undefined 输入
    - 边界值（0、-1、MAX_SAFE_INTEGER）
@@ -93,3 +98,4 @@ agent 必须通过 `structured-output` tool 返回 JSON：
 - 禁止使用 subagent 工具
 - 禁止调用外部 API
 - 仅关注测试覆盖，不涉及业务逻辑正确性、类型安全、代码风格
+- 不重跑 coverage-gate / vitest --coverage（机器产物由 Gate-1.6 产出，本 agent 只消费）

@@ -35,7 +35,14 @@
 各包启用条件：package.json devDependencies 声明 @vitest/coverage-v8（按声明而非
 node 解析，原因见上 [HISTORICAL] #3）。未声明的包记 SKIP 并给出启用指引。
 
-用法：python3 coverage-gate.py [--base main] [--min-incremental 80] [--packages a,b] [--debug]
+用法：python3 coverage-gate.py [--base main] [--min-incremental 80] [--packages a,b]
+      [--extra-packages a,b] [--debug]
+      --packages：交集过滤器，只收窄 changed_packages() 结果（无 src/ 改动的包不在
+      集合内，任何参数值都加不进去）。
+      --extra-packages：追加器，无条件并入包集合（不要求该包有 src/ 改动；典型用途：
+      diff 含 packages/shared/src 时传 --extra-packages packages/runtime,packages/renderer
+      承接下游兜底，见 pr-cr-fix 精简设计 D12）。追加包无新增行时走 total=0 → 100% 记
+      OK 的现有路径；路径无效或缺 vitest.config.ts 记 FAIL 条目，不静默跳过。
 退出码：0 = pass；1 = fail（增量不足或测试失败）；2 = 工具错误（git 异常 / 记账不闭合 /
       all-SKIP 配置错误）
 产出：.review/coverage.json（packages 增量口径 + files 全文件级真实覆盖率，
@@ -228,13 +235,31 @@ def main() -> None:
     args = sys.argv[1:]
     base = args[args.index("--base") + 1] if "--base" in args else "main"
     min_pct = float(args[args.index("--min-incremental") + 1]) if "--min-incremental" in args else MIN_INCREMENTAL_DEFAULT
+    # --packages 与 --extra-packages 语义不同、可共存：前者是交集过滤器（只收窄
+    # changed_packages() 结果，无 src/ 改动的包加不进去）；后者是追加器（无条件并入
+    # 包集合，见文件头 docstring）
     only = args[args.index("--packages") + 1].split(",") if "--packages" in args else None
+    extra_arg = args[args.index("--extra-packages") + 1] if "--extra-packages" in args else None
     DEBUG = "--debug" in args
 
     repo_root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
     pkgs = changed_packages(repo_root, base)
     if only:
         pkgs = {k: v for k, v in pkgs.items() if k in only}
+    # --extra-packages 追加（在 --packages 过滤之后，追加不受交集过滤器影响）。追加包
+    # 不要求 src/ 改动（setdefault：已在 changed 集合的包保留原 files 列表）。路径无效/
+    # 缺 vitest.config.ts 的同样并入集合（记账闭合守卫要求每个迭代包产出 report 条目），
+    # 由主循环开头记 FAIL——不静默跳过
+    extra_invalid: dict[str, str] = {}
+    if extra_arg:
+        for p in dict.fromkeys(x.strip() for x in extra_arg.split(",") if x.strip()):
+            pkgs.setdefault(p, [])
+            if not (repo_root / p / "package.json").is_file():
+                extra_invalid[p] = (f"--extra-packages 追加包无效：{p} 缺 package.json"
+                                    "（目录不存在或非 workspace 包）；恢复：修正路径后重跑")
+            elif not (repo_root / p / "vitest.config.ts").is_file():
+                extra_invalid[p] = (f"--extra-packages 追加包 {p} 缺 vitest.config.ts，"
+                                    "无法跑 coverage；恢复：补齐 config 或从 --extra-packages 移除该包")
     if not pkgs:
         # git_diff_names 已在源头拦截瞬态空 diff；到达此处 = diff 非空但没有
         # src/ 改动的 vitest 包（纯 docs/scripts 改动），合法 pass
@@ -252,6 +277,14 @@ def main() -> None:
     for pkg, files in sorted(pkgs.items()):
         pkg_dir = repo_root / pkg
         entry: dict = {"changed_src_files": len(files)}
+        # --extra-packages 追加包合法性失败（路径无效/缺 config）：记 FAIL 条目，
+        # 参照下方 SKIP/FAIL 记账风格，不静默跳过
+        if pkg in extra_invalid:
+            entry.update({"status": "FAIL", "reason": extra_invalid[pkg]})
+            report[pkg] = entry
+            verdict = "fail"
+            print(f"  FAIL {pkg}: {extra_invalid[pkg]}")
+            continue
         if not coverage_declared(pkg_dir):
             entry["status"] = "SKIP"
             entry["note"] = "未声明 @vitest/coverage-v8；启用：cd %s && pnpm add -D @vitest/coverage-v8" % pkg
