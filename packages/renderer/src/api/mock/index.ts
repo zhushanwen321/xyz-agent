@@ -693,9 +693,13 @@ export const chat = {
 /* ── Config mock（请求 + 订阅 + 动作）── */
 
 // 订阅型 sub（注册即触发初始值）；请求型直接返 fixture 深拷贝
+// fixture 快照深拷贝（provider 与 model 层各自展开）——mock 快照隔离策略单点
+function cloneFixtureProviders() {
+  return fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
+}
 // 带 scopedModels 的 providers 广播（config.providers payload 扩展）
 const providersSubWithScoped = makeMockSubscription(() => ({
-  providers: fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) })),
+  providers: cloneFixtureProviders(),
   scopedModels: [] as string[],
 }))
 const skillsSub = makeMockSubscription(() => fixtureSkills.map((s) => ({ ...s })))
@@ -785,7 +789,7 @@ export const config = {
   async listProviders() {
     await sleep(TIMING.ack)
     return {
-      providers: fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) })),
+      providers: cloneFixtureProviders(),
       scopedModels: [...mockScopedModels],
     }
   },
@@ -902,15 +906,8 @@ export const config = {
    */
   async setScopedModels(models: string[]): Promise<string[]> {
     await sleep(TIMING.ack)
-    // 去重保序
-    const seen = new Set<string>()
-    const deduped: string[] = []
-    for (const m of models) {
-      if (!seen.has(m)) {
-        seen.add(m)
-        deduped.push(m)
-      }
-    }
+    // 去重保序（Set 迭代序 = 插入序）
+    const deduped = [...new Set(models)]
     mockScopedModels = deduped
     broadcastProviders()
     if (deduped.length > 0) defaultsSub.broadcast(deduped[0])
@@ -1057,7 +1054,7 @@ export const config = {
 /** 向 providers 订阅者广播最新 fixture 快照（模拟 runtime 动作后广播） */
 let mockScopedModels: string[] = []
 function broadcastProviders(): void {
-  const snapshot = fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
+  const snapshot = cloneFixtureProviders()
   providersSubWithScoped.broadcast({ providers: snapshot, scopedModels: mockScopedModels })
 }
 

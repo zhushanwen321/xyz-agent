@@ -149,8 +149,8 @@ const availableValues = computed(() => new Set(modelGroups.value.flatMap((g) => 
 
 /** 当前 ref 不在可选列表时返回该 ref（渲染 disabled 兜底项），否则 null。 */
 const staleRef = computed(() => {
-  const ref = compactModel.value
-  return ref !== '' && !availableValues.value.has(ref) ? ref : null
+  const current = compactModel.value
+  return current !== '' && !availableValues.value.has(current) ? current : null
 })
 
 /**

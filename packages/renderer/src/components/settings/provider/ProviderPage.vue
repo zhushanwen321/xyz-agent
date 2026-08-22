@@ -50,13 +50,19 @@
       <p class="text-[12px] text-neutral-mid">{{ t('settings.provider.emptyDesc') }}</p>
     </div>
 
-    <!-- 实体列表（含新建态合成行） -->
-    <div
-      v-for="p in renderList"
-      :key="p.id"
-      data-testid="provider-card"
-      class="overflow-hidden rounded-card bg-card"
-    >
+    <!-- 实体列表（含新建态合成行）。组头对齐 ExtensionList 分组模式（小节标题 + count）：
+         scoped-model 卡片与本列表同为 bg-card 卡片、仅 gap-3 分隔会视觉连片，组头拉开语义分界。 -->
+    <section v-if="renderList.length" class="flex flex-col gap-3">
+      <div data-testid="provider-list-header" class="flex items-center gap-2 pt-2">
+        <h3 class="text-[12px] font-medium text-neutral-fg">{{ t('settings.provider.listTitle') }}</h3>
+        <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-neutral-dim">{{ providers.length }}</span>
+      </div>
+      <div
+        v-for="p in renderList"
+        :key="p.id"
+        data-testid="provider-card"
+        class="overflow-hidden rounded-card bg-card"
+      >
       <!-- 行头 -->
       <div class="flex min-w-0 items-center gap-3 px-4 py-3">
         <span
@@ -152,6 +158,7 @@
         />
       </div>
     </div>
+    </section>
 
     <!-- dirty 守卫确认弹窗（切换/收起/新建时拦截未保存改动） -->
     <ConfirmDialog
@@ -201,7 +208,7 @@
       :template="selectedTemplate"
       :open="showQuickSetup"
       :env-check="oauth.envCheck.value"
-      :oauth-authorized="selectedTemplate ? oauth.authorized.value.has(selectedTemplate.id) || oauth.oauthPresent.value.has(selectedTemplate.id) : false"
+      :oauth-authorized="quickSetupOauthAuthorized"
       :existing-auth-method="existingAuthMethod"
       @save="onQuickSetupSave"
       @cancel="onQuickSetupCancel"
@@ -394,24 +401,19 @@ const {
 // ── OAuth 编排（B-1：QuickSetup 与编辑体凭证区共用单实例状态机，提取见 useProviderPageOauth）──
 const {
   oauth,
-  oauthDialogProvider: editOauthDialogProvider,
   isOauthSupported,
   hasOauthPresence,
+  quickSetupOauthAuthorized,
+  oauthDialogInfo,
   onEditOauthLogin,
   onEditOauthLogout,
   onQuickSetupOauthLogin: startQuickSetupOauth,
 } = useProviderPageOauth({
   builtinProviders,
   providers: computed(() => props.providers),
+  selectedTemplate,
   expandedId,
   newId: NEW_ID,
-})
-
-/** OAuthDialog 显示用 provider 信息：QuickSetup 模板优先，编辑体目标兜底 */
-const oauthDialogInfo = computed(() => {
-  const tpl = selectedTemplate.value
-  if (tpl) return { id: tpl.id, name: tpl.name, oauthName: tpl.oauthName }
-  return editOauthDialogProvider.value
 })
 
 /** 删除目标 + 删除中 */

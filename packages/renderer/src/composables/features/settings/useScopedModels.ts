@@ -2,7 +2,7 @@
  * useScopedModels —— Scoped Model 配置业务编排。
  *
  * 读 settingsStore.scopedModels + providers 派生渲染数据；操作函数调 RPC
- * （乐观更新 + 失败回滚，参照 ProviderPage.vue:432-456 onToggleEnabled 范式）。
+ * （乐观更新 + 失败回滚，参照 ProviderPage onToggleEnabled 范式）。
  *
  * 数据流：
  *   settingsStore.scopedModels → scopedRenderItems（渲染列表）
@@ -75,18 +75,14 @@ export function useScopedModels() {
   // ── 操作函数（乐观更新 + 失败回滚 + rethrow）──
   // 回滚后 rethrow：调用方（ProviderPage）统一反馈 inline error + toast，此处不做 UI 副作用。
 
-  /** 添加模型到 scoped 列表（去重保序）。 */
-  async function addScopedModels(models: string[]): Promise<void> {
+  /** 公共 mutation 管线：busy 守卫 → 乐观写 next → RPC → 写回权威值 / 回滚 rethrow。 */
+  async function mutateScoped(next: string[]): Promise<void> {
     if (scopedMutationInFlight) return
     const old = [...settingsStore.scopedModels.value]
-    const existing = new Set(old)
-    const additions = models.filter((m) => !existing.has(m))
-    if (additions.length === 0) return
-
     scopedMutationInFlight = true
-    settingsStore.scopedModels.value = [...old, ...additions]
+    settingsStore.scopedModels.value = next
     try {
-      const result = await config.setScopedModels(settingsStore.scopedModels.value)
+      const result = await config.setScopedModels(next)
       settingsStore.scopedModels.value = result
     } catch (e) {
       settingsStore.scopedModels.value = old
@@ -94,47 +90,31 @@ export function useScopedModels() {
     } finally {
       scopedMutationInFlight = false
     }
+  }
+
+  /** 添加模型到 scoped 列表（去重保序）。 */
+  async function addScopedModels(models: string[]): Promise<void> {
+    const existing = new Set(settingsStore.scopedModels.value)
+    const additions = models.filter((m) => !existing.has(m))
+    if (additions.length === 0) return
+    await mutateScoped([...settingsStore.scopedModels.value, ...additions])
   }
 
   /** 从 scoped 列表移除单个模型。 */
   async function removeScopedModel(scoped: string): Promise<void> {
-    if (scopedMutationInFlight) return
-    const old = [...settingsStore.scopedModels.value]
-    settingsStore.scopedModels.value = old.filter((s) => s !== scoped)
-    scopedMutationInFlight = true
-    try {
-      const result = await config.setScopedModels(settingsStore.scopedModels.value)
-      settingsStore.scopedModels.value = result
-    } catch (e) {
-      settingsStore.scopedModels.value = old
-      throw e
-    } finally {
-      scopedMutationInFlight = false
-    }
+    await mutateScoped(settingsStore.scopedModels.value.filter((s) => s !== scoped))
   }
 
   /** 上移/下移 scoped 模型。 */
   async function moveScopedModel(scoped: string, dir: 'up' | 'down'): Promise<void> {
-    if (scopedMutationInFlight) return
-    const old = [...settingsStore.scopedModels.value]
-    const idx = old.indexOf(scoped)
+    const current = settingsStore.scopedModels.value
+    const idx = current.indexOf(scoped)
     if (idx === -1) return
     const targetIdx = dir === 'up' ? idx - 1 : idx + 1
-    if (targetIdx < 0 || targetIdx >= old.length) return
-
-    const next = [...old]
+    if (targetIdx < 0 || targetIdx >= current.length) return
+    const next = [...current]
     ;[next[idx], next[targetIdx]] = [next[targetIdx], next[idx]]
-    scopedMutationInFlight = true
-    settingsStore.scopedModels.value = next
-    try {
-      const result = await config.setScopedModels(settingsStore.scopedModels.value)
-      settingsStore.scopedModels.value = result
-    } catch (e) {
-      settingsStore.scopedModels.value = old
-      throw e
-    } finally {
-      scopedMutationInFlight = false
-    }
+    await mutateScoped(next)
   }
 
   return {

@@ -8,11 +8,13 @@
  * - 登录来源路由：quicksetup（auth.success 保持 QuickSetup 打开，保存时落 authMethod）/
  *   edit（auth.success 立即 setProvider 持久化 authMethod='oauth' → broadcast 回推编辑体）
  * - OAuthDialog 的 provider 信息派生（QuickSetup 模板优先，编辑体目标兜底）
+ * - QuickSetup 的 OAuth 授权态派生（authorized 与 oauthPresence 任一命中）
  * - 编辑体展开时刷新 OAuth presence（has ? add : delete，MF-3 语义）
  * - 编辑体「退出登录」→ config.oauthLogout 移除凭证 + presence 刷新（B-1 场景 C）
  *
  * 依赖注入：builtinProviders（模板表，判 oauthSupported / oauthName）/ providers（props ref）/
- * expandedId + newId（手风琴守卫，presence 刷新触发时机）。
+ * selectedTemplate（QuickSetup 当前模板，授权态派生用）/ expandedId + newId（手风琴守卫，
+ * presence 刷新触发时机）。
  */
 import { computed, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -26,6 +28,8 @@ type OAuthLoginSource = 'quicksetup' | 'edit'
 export function useProviderPageOauth(options: {
   builtinProviders: Ref<BuiltinProviderTemplate[]>
   providers: Ref<ProviderInfo[]>
+  /** QuickSetup 当前选中模板（null = 未选中，授权态为 false） */
+  selectedTemplate: Ref<BuiltinProviderTemplate | null>
   /** 手风琴展开 id（presence 刷新触发时机）。useAccordionGuard 的 expandedId 为宽松 string */
   expandedId: Ref<string | null>
   /** 新建态 sentinel id（不参与 presence 刷新） */
@@ -33,16 +37,29 @@ export function useProviderPageOauth(options: {
 }) {
   const { t } = useI18n()
   const toast = useToast()
-  const { builtinProviders, providers, expandedId, newId } = options
+  const { builtinProviders, providers, selectedTemplate, expandedId, newId } = options
 
   const oauth = useProviderOAuth((providerId) => { void onOAuthAuthorized(providerId) })
+
+  /** QuickSetup 的 OAuth 授权态（无模板 = 未授权；authorized 与 oauthPresent 任一命中即可）。 */
+  const quickSetupOauthAuthorized = computed(() => {
+    const id = selectedTemplate.value?.id
+    return id !== undefined && (oauth.authorized.value.has(id) || oauth.oauthPresent.value.has(id))
+  })
+
+  /** OAuthDialog 显示用 provider 信息：QuickSetup 模板优先，编辑体目标兜底。 */
+  const oauthDialogInfo = computed(() => {
+    const tpl = selectedTemplate.value
+    if (tpl) return { id: tpl.id, name: tpl.name, oauthName: tpl.oauthName }
+    return oauthDialogProvider.value
+  })
 
   const oauthLoginSource = ref<OAuthLoginSource>('quicksetup')
   /** 编辑体凭证区发起登录的目标 provider（null = 无；驱动 OAuthDialog 的 provider 信息） */
   const editOauthTarget = ref<ProviderInfo | null>(null)
 
-  /** OAuthDialog 显示用 provider 信息：QuickSetup 模板（由调用方经 selectedTemplate 判定）优先，
-   *  编辑体目标兜底（oauthName 从 builtinProviders 模板取，custom provider 无模板时缺省） */
+  /** 编辑体目标的 OAuthDialog 显示信息（oauthName 从 builtinProviders 模板取，custom
+   *  provider 无模板时缺省）。 */
   const oauthDialogProvider = computed(() => {
     const target = editOauthTarget.value
     if (target) {
@@ -128,8 +145,10 @@ export function useProviderPageOauth(options: {
   return {
     oauth,
     oauthDialogProvider,
+    oauthDialogInfo,
     isOauthSupported,
     hasOauthPresence,
+    quickSetupOauthAuthorized,
     onEditOauthLogin,
     onEditOauthLogout,
     onQuickSetupOauthLogin,

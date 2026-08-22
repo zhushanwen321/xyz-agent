@@ -142,6 +142,16 @@ export function createSettingsStore() {
   }
 
   /**
+   * 写入 providers 权威快照（广播 / getProviders reply 推回）。
+   * scoped 守卫（reply + 广播双通道同一语义）：undefined = 通道未携带（旧 runtime），
+   * 不覆盖已有值，由 config.providers 广播兜底推回。
+   */
+  function setProviders(next: ProviderInfo[], scoped?: string[]): void {
+    providers.value = next
+    if (scoped !== undefined) scopedModels.value = scoped
+  }
+
+  /**
    * 乐观切换 model 级 enabled（D6）。
    * 立即改本地 providers 中目标 provider 下目标 model 的 enabled，组件随后调 API 持久化、失败回滚。
    * @returns 旧值（供回滚用），找不到时返回 true（默认启用）
@@ -202,6 +212,7 @@ export function createSettingsStore() {
     setSkillDirs,
     setAgentDirs,
     setExtensionDirs,
+    setProviders,
     setProviderEnabled,
     setModelEnabled,
     setExtensionEnabled,

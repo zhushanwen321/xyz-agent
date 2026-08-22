@@ -187,7 +187,6 @@ import { useI18n } from 'vue-i18n'
 import { Plus, ChevronUp, ChevronDown, Trash2 } from '@lucide/vue'
 import { Button, Input, Checkbox } from '@xyz-agent/ui'
 import type { ScopedRenderItem, SelectableModel } from './scoped-model-types'
-export type { ScopedRenderItem, SelectableModel } from './scoped-model-types'
 
 // 签名保持单行紧凑形态：root unit 集成契约（C4/C5）对此做逐字文本匹配
 const props = defineProps<{ scopedList: ScopedRenderItem[]; selectableModels: SelectableModel[] }>()
@@ -227,17 +226,20 @@ function toggleSelection(fullId: string): void {
   selectedToAdd.value = next
 }
 
-function confirmAdd(): void {
-  if (selectedToAdd.value.size === 0) return
-  emit('add', Array.from(selectedToAdd.value))
+/** 添加面板重置（清空多选 + 关面板 + 清搜索词）。 */
+function resetAddPanel(): void {
   selectedToAdd.value = new Set()
   showAddPanel.value = false
   searchQuery.value = ''
 }
 
+function confirmAdd(): void {
+  if (selectedToAdd.value.size === 0) return
+  emit('add', Array.from(selectedToAdd.value))
+  resetAddPanel()
+}
+
 function cancelAdd(): void {
-  selectedToAdd.value = new Set()
-  showAddPanel.value = false
-  searchQuery.value = ''
+  resetAddPanel()
 }
 </script>
