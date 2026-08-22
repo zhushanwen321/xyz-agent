@@ -41,7 +41,7 @@ export interface BeforeCompactLikeEvent {
 	type: "session_before_compact";
 	preparation: {
 		firstKeptEntryId: string;
-		messagesToSummarize: ReadonlyArray<{ role: string }>;
+		messagesToSummarize: ReadonlyArray<{ role: string; content?: unknown }>;
 		turnPrefixMessages: ReadonlyArray<{ role: string }>;
 		isSplitTurn: boolean;
 		tokensBefore: number;
@@ -177,13 +177,13 @@ function assembleSummary(
 
 /** 被压段 token 估算（收缩校验分母：仅 messagesToSummarize；turnPrefixMessages 是保留段前缀，不属于被压段，不计入）。 */
 function estimateShadowedTokens(
-	messagesToSummarize: ReadonlyArray<{ role: string }>,
+	messagesToSummarize: ReadonlyArray<{ role: string; content?: unknown }>,
 ): number {
 	// pi 的 estimateTokens 按 message 内容估算；此处 chars/4 的保守替代：
 	// serialize 后长度 / 4（与 pi 同口径量级，用于"摘要 >= 原文"的粗判已足）
 	let chars = 0;
 	for (const m of messagesToSummarize) {
-		const content = (m as { content?: unknown }).content;
+		const content = m.content;
 		if (typeof content === "string") {
 			chars += content.length;
 		} else if (Array.isArray(content)) {
@@ -315,7 +315,7 @@ export function createBeforeCompactHandler(
 ): (event: BeforeCompactLikeEvent, ctx: ExtensionContext) => Promise<BeforeCompactDecision> {
 	return async (event, ctx) => {
 		const config = loadConfigFn();
-		const currentModelId = getCurrentModelId(ctx.model as { provider?: string; id?: string } | undefined);
+		const currentModelId = getCurrentModelId(ctx.model);
 
 		// D5 门控：禁用/排除 → 空返回（pi 原生生成）
 		if (config.enabled !== true || currentModelId === "" || config.excludedModels.includes(currentModelId)) {

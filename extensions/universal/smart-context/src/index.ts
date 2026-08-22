@@ -60,6 +60,11 @@ interface SessionState {
 	firedThresholds: Set<number>;
 }
 
+/** session 级状态唯一构造点（初始态与 session_start 重建同源，新增字段不落两处）。 */
+function createSessionState(): SessionState {
+	return { takeover: createTakeoverState(), firedThresholds: new Set() };
+}
+
 /**
  * pi-smart-context extension 工厂函数。
  *
@@ -77,16 +82,10 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 	}
 
 	// session 级状态（session_start 重建闭包；模块级引用仅指向当前 session 的容器）
-	let state: SessionState = {
-		takeover: createTakeoverState(),
-		firedThresholds: new Set(),
-	};
+	let state: SessionState = createSessionState();
 
 	pi.on("session_start", (_event: unknown, _ctx: ExtensionContext) => {
-		state = {
-			takeover: createTakeoverState(),
-			firedThresholds: new Set(),
-		};
+		state = createSessionState();
 	});
 
 	// ── 压缩生成接管（D1/D12）──
@@ -109,7 +108,7 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 	// ── 阈值提醒（D3/D4）：agent_settled 越档检查 + followUp 一次性投递 ──
 	pi.on("agent_settled", (_event: AgentSettledLikeEvent, ctx: ExtensionContext) => {
 		const config = loadSmartContextConfig();
-		const modelId = getCurrentModelId(ctx.model as { provider?: string; id?: string } | undefined);
+		const modelId = getCurrentModelId(ctx.model);
 		if (!isGatingActive(config, modelId)) return;
 
 		const usage = ctx.getContextUsage();

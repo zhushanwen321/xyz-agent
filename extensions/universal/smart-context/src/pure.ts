@@ -62,7 +62,7 @@ export function normalizeSmartContextConfig(raw: unknown): SmartContextConfig {
 	const rawThresholds = Array.isArray(r.reminderThresholds)
 		? r.reminderThresholds
 		: [];
-	const thresholds = [...rawThresholds]
+	const thresholds = rawThresholds
 		.filter((t): t is number => typeof t === "number" && Number.isFinite(t) && t > 0)
 		.sort((a, b) => a - b)
 		.slice(0, MAX_THRESHOLD_TIERS);

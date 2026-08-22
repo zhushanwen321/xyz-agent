@@ -78,20 +78,22 @@ function toCompactionResultLike(result: unknown): CompactionResultLike {
 	const r = result as { tokensBefore?: unknown; estimatedTokensAfter?: unknown; usage?: unknown; details?: unknown };
 	const usage = (r.usage ?? null) as { input?: unknown; output?: unknown; cacheRead?: unknown } | null;
 	const details = (r.details ?? null) as { engine?: unknown; mode?: unknown } | null;
+	const num = (v: unknown) => (typeof v === "number" ? v : undefined);
+	const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 	return {
-		tokensBefore: typeof r.tokensBefore === "number" ? r.tokensBefore : undefined,
-		estimatedTokensAfter: typeof r.estimatedTokensAfter === "number" ? r.estimatedTokensAfter : undefined,
+		tokensBefore: num(r.tokensBefore),
+		estimatedTokensAfter: num(r.estimatedTokensAfter),
 		usage: usage
 			? {
-				input: typeof usage.input === "number" ? usage.input : undefined,
-				output: typeof usage.output === "number" ? usage.output : undefined,
-				cacheRead: typeof usage.cacheRead === "number" ? usage.cacheRead : undefined,
+				input: num(usage.input),
+				output: num(usage.output),
+				cacheRead: num(usage.cacheRead),
 			}
 			: undefined,
 		details: details && typeof details === "object"
 			? {
-				engine: typeof details.engine === "string" ? details.engine : undefined,
-				mode: typeof details.mode === "string" ? details.mode : undefined,
+				engine: str(details.engine),
+				mode: str(details.mode),
 			}
 			: undefined,
 	};
@@ -116,7 +118,7 @@ export function registerCompactContextTool(
 		deps?.gatingProbe ??
 		((ctx: ExtensionContext) => {
 			const config = loadSmartContextConfig();
-			const modelId = getCurrentModelId(ctx.model as { provider?: string; id?: string } | undefined);
+			const modelId = getCurrentModelId(ctx.model);
 			return { active: isGatingActive(config, modelId), modelId };
 		});
 	const probeUsage =
@@ -140,8 +142,8 @@ export function registerCompactContextTool(
 		execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
 			// D5 门控现场校验（配置热改即时生效，不依赖注册时机）
 			const gating = probeGating(ctx);
+			const config = loadSmartContextConfig();
 			if (!gating.active) {
-				const config = loadSmartContextConfig();
 				const reason = config.enabled
 					? `当前模型 ${gating.modelId} 已配置为排除（smart-context excludedModels），压缩工具不可用。可在 xyz-agent 设置页或 smart-context-ext-config skill 中调整。`
 					: `smart-context 已禁用。可在 xyz-agent 设置页开启，或经 smart-context-ext-config skill 修改配置。`;
@@ -150,7 +152,6 @@ export function registerCompactContextTool(
 
 			// D6 阈值保护（含 null 分支）
 			const usage = probeUsage(ctx);
-			const config = loadSmartContextConfig();
 			const guardMessage = checkToolThresholdGuard(config.reminderThresholds, usage.tokens);
 			if (guardMessage !== null) {
 				throw new Error(guardMessage);
