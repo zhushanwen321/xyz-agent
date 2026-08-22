@@ -37,6 +37,19 @@ interface MinimaxApiResponse {
   model_remains?: MinimaxModelRemains[]
 }
 
+/**
+ * JSON 边界轻量 shape guard：只校验决策分支依赖的字段类型（base_resp.status_code 判定、
+ * model_remains 数组迭代）。字段缺失是合法业务态（→ no-subscription），
+ * 字段类型漂移归 parse（防 `base_resp: "err"` 等形态在 string 上取属性静默走错分支）。
+ */
+function isMinimaxResponse(v: unknown): v is MinimaxApiResponse {
+  if (typeof v !== 'object' || v === null) return false
+  const o = v as Record<string, unknown>
+  if (o.base_resp !== undefined && (typeof o.base_resp !== 'object' || o.base_resp === null)) return false
+  if (o.model_remains !== undefined && !Array.isArray(o.model_remains)) return false
+  return true
+}
+
 /** status 字段语义：1=正常订阅；其他值当无限 */
 const isActive = (s: number | undefined): boolean => s === 1
 
@@ -82,6 +95,7 @@ export const minimaxFetcher: ProviderQuotaFetcher = {
       } catch {
         return { ok: false, reason: 'parse' }
       }
+      if (!isMinimaxResponse(data)) return { ok: false, reason: 'parse' }
       // base_resp 非 0 / 无模型数据 / 无 general 条目 = 响应可解析但无订阅数据
       if (data?.base_resp?.status_code !== 0) return { ok: false, reason: 'no-subscription' }
 

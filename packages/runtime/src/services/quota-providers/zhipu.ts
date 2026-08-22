@@ -32,6 +32,23 @@ interface ZhipuApiResponse {
   data?: ZhipuApiData
 }
 
+/**
+ * JSON 边界轻量 shape guard：只校验决策分支依赖的字段类型（success truthiness 判定、
+ * data.level / data.limits 解构）。字段缺失是合法业务态（→ no-subscription），
+ * 字段类型漂移归 parse（防 `data: "abc"` 等形态静默产出 INFINITE_WIN 错数据）。
+ */
+function isZhipuResponse(v: unknown): v is ZhipuApiResponse {
+  if (typeof v !== 'object' || v === null) return false
+  const o = v as Record<string, unknown>
+  if (o.success !== undefined && typeof o.success !== 'boolean') return false
+  if (o.data === undefined) return true
+  if (typeof o.data !== 'object' || o.data === null) return false
+  const d = o.data as Record<string, unknown>
+  if (d.level !== undefined && typeof d.level !== 'string') return false
+  if (d.limits !== undefined && !Array.isArray(d.limits)) return false
+  return true
+}
+
 /** 把 ZAI 的 resetTime（如 "4h11m"/"3d20h"）转成剩余秒 */
 function parseResetSec(label: string): number {
   const dM = label.match(/(\d+)d/)
@@ -78,6 +95,7 @@ export const zhipuFetcher: ProviderQuotaFetcher = {
       } catch {
         return { ok: false, reason: 'parse' }
       }
+      if (!isZhipuResponse(json)) return { ok: false, reason: 'parse' }
       if (!json?.success || !json.data) return { ok: false, reason: 'no-subscription' }
 
       const { data } = json

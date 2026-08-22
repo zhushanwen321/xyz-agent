@@ -35,6 +35,19 @@ interface KimiApiResponse {
   usage?: KimiUsage
 }
 
+/**
+ * JSON 边界轻量 shape guard：只校验决策分支依赖的字段类型（limits 数组迭代判定、
+ * usage 对象解构）。字段缺失是合法业务态（→ no-subscription），字段类型漂移归 parse
+ * （防 `{"limits":"abc"}` 时 string.length truthy 绕过 no-subscription 检查产出错数据）。
+ */
+function isKimiResponse(v: unknown): v is KimiApiResponse {
+  if (typeof v !== 'object' || v === null) return false
+  const o = v as Record<string, unknown>
+  if (o.limits !== undefined && !Array.isArray(o.limits)) return false
+  if (o.usage !== undefined && (typeof o.usage !== 'object' || o.usage === null)) return false
+  return true
+}
+
 /** ISO 时间戳 → 剩余秒 */
 function isoResetRemaining(iso: string): number {
   const ms = new Date(iso).getTime() - Date.now()
@@ -97,6 +110,7 @@ export const kimiFetcher: ProviderQuotaFetcher = {
       } catch {
         return { ok: false, reason: 'parse' }
       }
+      if (!isKimiResponse(data)) return { ok: false, reason: 'parse' }
       // limits 与 usage 均缺失 = 响应可解析但无订阅数据
       if (!data?.limits?.length && !data?.usage) return { ok: false, reason: 'no-subscription' }
 

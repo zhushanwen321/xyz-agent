@@ -71,6 +71,18 @@ describe('zhipuFetcher — A2-1 错误通道', () => {
     expect(outcome).toEqual({ ok: false, reason: 'parse' })
   })
 
+  it('200 响应可解析但决策字段形态漂移（data 非 object）→ reason=parse（shape guard）', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ success: true, data: 'oops' }))
+    const outcome = await zhipuFetcher.fetchQuota('cred', 'api-key')
+    expect(outcome).toEqual({ ok: false, reason: 'parse' })
+  })
+
+  it('200 响应 limits 形态漂移（string 而非数组）→ reason=parse（shape guard）', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ success: true, data: { limits: 'abc' } }))
+    const outcome = await zhipuFetcher.fetchQuota('cred', 'api-key')
+    expect(outcome).toEqual({ ok: false, reason: 'parse' })
+  })
+
   it('200 响应可解析但无订阅数据（success=false）→ reason=no-subscription', async () => {
     mockFetch.mockResolvedValue(jsonResponse({ success: false }))
     const outcome = await zhipuFetcher.fetchQuota('cred', 'api-key')
@@ -122,6 +134,12 @@ describe('kimiFetcher — A2-1 错误通道 + A2-3 绝对量', () => {
 
   it('200 但响应体非法 JSON → reason=parse', async () => {
     mockFetch.mockResolvedValue(new Response('<html>oops', { status: 200 }))
+    const outcome = await kimiFetcher.fetchQuota('cred', 'api-key')
+    expect(outcome).toEqual({ ok: false, reason: 'parse' })
+  })
+
+  it('200 响应 limits 形态漂移（string 而非数组，string.length truthy）→ reason=parse（shape guard）', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ limits: 'abc' }))
     const outcome = await kimiFetcher.fetchQuota('cred', 'api-key')
     expect(outcome).toEqual({ ok: false, reason: 'parse' })
   })
@@ -211,6 +229,12 @@ describe('minimaxFetcher — A2-1 错误通道', () => {
     expect(outcome).toEqual({ ok: false, reason: 'parse' })
   })
 
+  it('200 响应 base_resp 形态漂移（string 而非 object）→ reason=parse（shape guard）', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ base_resp: 'err' }))
+    const outcome = await minimaxFetcher.fetchQuota('cred', 'api-key')
+    expect(outcome).toEqual({ ok: false, reason: 'parse' })
+  })
+
   it('status_code 非 0（响应可解析但无订阅数据）→ reason=no-subscription', async () => {
     mockFetch.mockResolvedValue(jsonResponse({ base_resp: { status_code: 1004 } }))
     const outcome = await minimaxFetcher.fetchQuota('cred', 'api-key')
@@ -252,6 +276,12 @@ describe('mimoFetcher — A2-1 错误通道', () => {
 
   it('200 但响应体非法 JSON → reason=parse', async () => {
     mockFetch.mockResolvedValue(new Response('gateway', { status: 200 }))
+    const outcome = await mimoFetcher.fetchQuota('cookie-val', 'cookie')
+    expect(outcome).toEqual({ ok: false, reason: 'parse' })
+  })
+
+  it('200 响应决策字段形态漂移（code 为 string 而非 number）→ reason=parse（shape guard）', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ code: '401', message: 'unauthorized' }))
     const outcome = await mimoFetcher.fetchQuota('cookie-val', 'cookie')
     expect(outcome).toEqual({ ok: false, reason: 'parse' })
   })

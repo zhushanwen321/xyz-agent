@@ -31,6 +31,22 @@ interface MimoApiResponse {
   }
 }
 
+/**
+ * JSON 边界轻量 shape guard：只校验决策分支依赖的字段类型（code 判定、
+ * data.monthUsage.percent 解构）。字段缺失是合法业务态（→ no-subscription），
+ * 字段类型漂移归 parse（防 `"401"` 等字符串 code 绕过 `!== 0` 判定产出错数据）。
+ */
+function isMimoResponse(v: unknown): v is MimoApiResponse {
+  if (typeof v !== 'object' || v === null) return false
+  const o = v as Record<string, unknown>
+  if (typeof o.code !== 'number') return false
+  if (o.data === undefined) return true
+  if (typeof o.data !== 'object' || o.data === null) return false
+  const d = o.data as Record<string, unknown>
+  if (d.monthUsage !== undefined && (typeof d.monthUsage !== 'object' || d.monthUsage === null)) return false
+  return true
+}
+
 export const mimoFetcher: ProviderQuotaFetcher = {
   id: 'mimo',
   auth: ['cookie'],
@@ -57,7 +73,11 @@ export const mimoFetcher: ProviderQuotaFetcher = {
       } catch {
         return { ok: false, reason: 'parse' }
       }
-      // code 非 0 = 响应可解析但无订阅数据（含 cookie 失效由平台返回的业务码场景）
+      if (!isMimoResponse(data)) return { ok: false, reason: 'parse' }
+      // code 非 0 = 响应可解析但无订阅数据。刻意保持 no-subscription 不细分为 unauthorized：
+      // 平台无公开业务码文档（旧 extensions/shared 实现同样统一处理），cookie 失效也可能是非 0
+      // code，fetcher 层无证据可区分——恢复指引由 UI 文案对 cookie 类 provider 同时提示
+      // 「检查 Cookie 或订阅状态」兜底（cookie 失效返回 HTTP 401 的场景已由 statusToReason 覆盖）
       if (data.code !== 0) return { ok: false, reason: 'no-subscription' }
 
       // percent 是 0~1 小数，转为 0~100
