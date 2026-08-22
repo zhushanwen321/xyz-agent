@@ -123,7 +123,8 @@ function makeE2ePipeline(sessionService: ISessionService): E2ePipeline {
   const onExtensionUIRequest = vi.fn()
   const handler = new SessionManagerHandler({
     sessionService,
-    sendExtensionUiResponse: (id, response, method) => pi.sendExtensionUiResponse(id, response, method),
+    sendExtensionUiResponse: (sessionId, requestId, response, method) =>
+      pi.sendExtensionUiResponse(requestId, response, method),
     broadcastSessionList: () => {},
   })
   let handling: Promise<void> = Promise.resolve()

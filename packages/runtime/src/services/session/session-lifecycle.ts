@@ -382,6 +382,11 @@ export class SessionLifecycle {
     if (options?.parentAgentSessionId) {
       ;(session as { parentAgentSessionId?: string }).parentAgentSessionId = options.parentAgentSessionId
     }
+    // .agent.json sidecar 落盘（重启恢复链路，G-1）——与 preset/project 同模式：
+    // pi 延迟写入窗口（sessionFilePath 未落盘）时 existsSync 守卫跳过，内存态兑底。
+    if (options?.spawnSource && options?.parentAgentSessionId && session.sessionFilePath) {
+      this.sessionStore.persistAgentBinding(session.sessionFilePath, options.spawnSource, options.parentAgentSessionId)
+    }
     // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
     // homedir 过滤（含降级 homedir）由 WorkspaceService.record 统一负责（方案A，一处堵死全部路径），
     // lifecycle 层不再关心 cwd 是否降级。

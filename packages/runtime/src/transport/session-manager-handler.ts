@@ -29,8 +29,8 @@ import type {
 /** SessionManagerHandler 构造选项 */
 export interface SessionManagerHandlerOptions {
   sessionService: ISessionService
-  /** 向 pi 发送 extension_ui_response */
-  sendExtensionUiResponse: (requestId: string, response: unknown, method?: string) => void
+  /** 向 pi 发送 extension_ui_response（sessionId = 发起方 session，requestId 只在其 pending 表有效） */
+  sendExtensionUiResponse: (sessionId: string, requestId: string, response: unknown, method?: string) => void
   /** 广播 session 列表变更（create 成功后触发） */
   broadcastSessionList: (opts?: { spawnSource?: 'user' | 'agent'; parentAgentSessionId?: string }) => void
 }
@@ -59,7 +59,7 @@ export class SessionManagerHandler {
   ): Promise<void> {
     // malformed 兜底：action 为 __malformed__ 时直接回 cancelled
     if (action === '__malformed__') {
-      this.opts.sendExtensionUiResponse(requestId, null, 'select')
+      this.opts.sendExtensionUiResponse(parentSessionId, requestId, null, 'select')
       return
     }
 
@@ -70,37 +70,37 @@ export class SessionManagerHandler {
         case 'create': {
           const result = await this.handleCreate(parentSessionId, params as unknown as SessionManagerCreateParams)
           createdId = result.sessionId
-          this.respond(requestId, result)
+          this.respond(parentSessionId, requestId, result)
           break
         }
         case 'send': {
           const result = await this.handleSend(params as unknown as SessionManagerSendParams)
-          this.respond(requestId, result)
+          this.respond(parentSessionId, requestId, result)
           break
         }
         case 'history': {
           const result = await this.handleHistory(params as unknown as SessionManagerHistoryParams)
-          this.respond(requestId, result)
+          this.respond(parentSessionId, requestId, result)
           break
         }
         case 'status': {
           const result = await this.handleStatus(params as unknown as SessionManagerStatusParams)
-          this.respond(requestId, result)
+          this.respond(parentSessionId, requestId, result)
           break
         }
         case 'list': {
           const result = await this.handleList(params as unknown as SessionManagerListParams)
-          this.respond(requestId, result)
+          this.respond(parentSessionId, requestId, result)
           break
         }
         case 'abort': {
           const result = await this.handleAbort(params as unknown as SessionManagerAbortParams)
-          this.respond(requestId, result)
+          this.respond(parentSessionId, requestId, result)
           break
         }
         default: {
           // 未知 action → 回 cancelled
-          this.opts.sendExtensionUiResponse(requestId, null, 'select')
+          this.opts.sendExtensionUiResponse(parentSessionId, requestId, null, 'select')
           break
         }
       }
@@ -114,13 +114,13 @@ export class SessionManagerHandler {
         errorResult.sessionId = createdId
         errorResult.hint = 'use send_to_session to retry'
       }
-      this.respond(requestId, errorResult)
+      this.respond(parentSessionId, requestId, errorResult)
     }
   }
 
-  /** respond 通过 select value 通道回写 pi */
-  private respond(requestId: string, data: unknown): void {
-    this.opts.sendExtensionUiResponse(requestId, JSON.stringify(data), 'select')
+  /** respond 通过 select value 通道回写 pi（发起方 session） */
+  private respond(parentSessionId: string, requestId: string, data: unknown): void {
+    this.opts.sendExtensionUiResponse(parentSessionId, requestId, JSON.stringify(data), 'select')
   }
 
   /** create 分支：四步串行时序 */

@@ -293,17 +293,10 @@ export class RuntimeServer implements IMessageBroker {
     // 不走 WS 路由表——由 EventInterpreter.onSessionManagerRequest fire-and-forget 调用。
     this.sessionManagerHandler = new SessionManagerHandler({
       sessionService: this.sessionService,
-      sendExtensionUiResponse: (requestId, response, method) => {
-        // 找到持有该 requestId 的 pi client 并回写 response
-        // sessionManager 请求来自 pi extension，sessionId 在 requestId 关联的 session 上
-        // 简化实现：遍历所有活跃 session 找到能发 response 的 client
-        for (const sid of this.sessionService.getActiveSessionIds()) {
-          const client = this.sessionService.getRpcClient(sid)
-          if (client) {
-            client.sendExtensionUiResponse(requestId, response, method)
-            return
-          }
-        }
+      sendExtensionUiResponse: (sessionId, requestId, response, method) => {
+        // requestId 只在发起方 pi 进程的 pending 表有效——按 sessionId 直发，
+        // 不能遍历找「第一个可用 client」（多 active session 会错发 → 发起方 select 挂到超时）
+        this.sessionService.getRpcClient(sessionId)?.sendExtensionUiResponse(requestId, response, method)
       },
       broadcastSessionList: (_opts) => {
         this.broker.broadcastSessionList()
