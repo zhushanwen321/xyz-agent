@@ -19,9 +19,11 @@ beforeEach(() => {
   setActivePinia(createPinia())
 })
 
-// ── D2: SubagentList 去掉 slug 列 ──────────────────────────
-describe('D2: SubagentList slug 降级', () => {
-  it('卡片不再渲染独立的 slug span（slug 信息降级为 tooltip）', () => {
+// ── D2: SubagentList slug 首行展示 ──────────────────────────
+// [HISTORICAL] 2026-08-05 曾降级为 tooltip（不渲染独立 span）；135295d0d（2026-08-22）
+// 恢复首行 slug 展示（与 WorkflowList 第一行对齐），测试同步反转。
+describe('D2: SubagentList slug 首行展示', () => {
+  it('slug 以独立 mono 小字渲染在 agent name 右侧，卡片 title 仍带完整 tooltip', () => {
     const records: SubagentRecord[] = [{
       subagentId: 'sub-abc123def456',
       agent: 'code-reviewer',
@@ -30,11 +32,12 @@ describe('D2: SubagentList slug 降级', () => {
       task: 'Review the auth module',
     } as SubagentRecord]
     const wrapper = mount(SubagentList, { props: { subagents: records } })
-    // slug 曾以独立 span 渲染在 agent name 右侧（font-mono text-[10px] text-neutral-mid）
-    // 改后 slug 不再独立展示（降级为卡片 title tooltip）
-    const allMonoSpans = wrapper.findAll('span.font-mono')
-    const slugSpans = allMonoSpans.filter((s) => s.text().includes('cr-abc123'))
-    expect(slugSpans.length).toBe(0)
+    const slugSpan = wrapper.find('[data-testid=subagent-card-slug]')
+    expect(slugSpan.exists()).toBe(true)
+    expect(slugSpan.text()).toBe('cr-abc123')
+    expect(slugSpan.classes()).toContain('font-mono')
+    const card = wrapper.find('[data-testid=subagent-card]')
+    expect(card.attributes('title')).toBe('code-reviewer · cr-abc123')
   })
 
   it('agent name 完整展示（不再被 slug 挤占）', () => {
