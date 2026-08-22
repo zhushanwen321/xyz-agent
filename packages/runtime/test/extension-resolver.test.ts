@@ -250,8 +250,11 @@ describe('ExtensionResolver', () => {
   describe('scanBundledExtensions', () => {
     // dev 模式 projectRoot = apps/electron，源码目录 = repoRoot/extensions。
     // join mock 为字符串拼接（不解析 ..），dev 源码路径 = '/project/../../extensions'。
-    // dev 扫描源码后按 mandatory SSOT 过滤：mock 3 个包（2 mandatory + 1 非 mandatory）验证过滤。
+    // mock 布局对齐分组两层磁盘事实（taiji/universal 分组下放包；05d64e48e 目录分组
+    // 后 mock 未同步曾致 2 用例存量失败）。dev 扫描源码后按 mandatory SSOT 过滤：
+    // mock 3 个包（2 mandatory + 1 非 mandatory）验证过滤。
     const devSourceDir = '/project/../../extensions'
+    const devGroupDir = `${devSourceDir}/universal`
     const nameByDir: Record<string, string> = {
       goal: '@zhushanwen/pi-goal',
       todo: '@zhushanwen/pi-todo',
@@ -262,7 +265,7 @@ describe('ExtensionResolver', () => {
     function mockDevSource(): void {
       mockedExistsSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') return false
-        if (p === devSourceDir) return true
+        if (p === devSourceDir || p === devGroupDir) return true
         if (p.endsWith('/package.json')) {
           const dir = p.replace(/\/package\.json$/, '').split('/').pop() ?? ''
           return dir in nameByDir
@@ -270,18 +273,19 @@ describe('ExtensionResolver', () => {
         return p.startsWith(devSourceDir + '/')
       })
       mockedReaddirSync.mockImplementation(((p: unknown) => {
-        if (p === devSourceDir) return Object.keys(nameByDir)
+        if (p === devSourceDir) return ['taiji', 'universal']
+        if (p === devGroupDir) return Object.keys(nameByDir)
         return []
       }) as unknown as typeof readdirSync)
       mockedStatSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') throw new Error('not found')
         const base = p.split('/').pop() ?? ''
-        if (!(base in nameByDir)) {
-          const err = new Error('not found') as NodeJS.ErrnoException
-          err.code = 'ENOENT'
-          throw err
+        if (base in nameByDir || p === `${devSourceDir}/taiji` || p === devGroupDir) {
+          return { isDirectory: () => true } as import('node:fs').Stats
         }
-        return { isDirectory: () => true } as import('node:fs').Stats
+        const err = new Error('not found') as NodeJS.ErrnoException
+        err.code = 'ENOENT'
+        throw err
       })
       mockedReadFileSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') throw new Error('not found')
@@ -303,8 +307,8 @@ describe('ExtensionResolver', () => {
       expect(result.has('@zhushanwen/pi-goal')).toBe(true)
       expect(result.has('@zhushanwen/pi-todo')).toBe(true)
       expect(result.has('@zhushanwen/pi-context-engineering')).toBe(false)
-      // 路径指向源码目录（join mock 不解析 ..）
-      expect(result.get('@zhushanwen/pi-goal')).toBe(devSourceDir + '/goal')
+      // 路径指向源码目录（join mock 不解析 ..；包在分组层下）
+      expect(result.get('@zhushanwen/pi-goal')).toBe(devGroupDir + '/goal')
     })
 
     it('packaged 读 staged bundle 目录（@zhushanwen scope，路径不变）', () => {
@@ -516,7 +520,9 @@ describe('ExtensionResolver', () => {
       })
 
       mockedReaddirSync.mockImplementation(((p: unknown) => {
-        if (p === bundledDir) return ['goal', 'shared'] as string[]
+        // dev 源码目录一层是分组目录（对齐分组两层磁盘布局），goal 在 universal/ 下
+        if (p === bundledDir) return ['taiji', 'universal'] as string[]
+        if (p === `${bundledDir}/universal`) return ['goal'] as string[]
         if (p === `${home}/.xyz-agent/pi/agent/extensions`) return ['ext-c'] as string[]
         return [] as string[]
       }) as unknown as typeof readdirSync)
@@ -557,8 +563,8 @@ describe('ExtensionResolver', () => {
       resolver = new ExtensionResolver({ settingsDir, thirdPartyDir: `${settingsDir}/extensions`, npmDir: join(settingsDir, 'npm') })
       const result = resolver.resolve('/project', false, ['/custom/my-ext'])
 
-      // bundled goal（dev 走源码，经 mandatory 过滤后保留）
-      expect(result.extensionDirs.some(d => d.path === bundledDir + '/goal')).toBe(true)
+      // bundled goal（dev 走源码，经 mandatory 过滤后保留；包在分组层下）
+      expect(result.extensionDirs.some(d => d.path === bundledDir + '/universal/goal')).toBe(true)
       // third-party ext-c
       expect(result.extensionDirs.some(d => d.path.includes('ext-c'))).toBe(true)
       // user extension
