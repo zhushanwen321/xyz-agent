@@ -53,6 +53,8 @@ vi.mock('@/api/domains/quota', () => ({
 
 vi.mock('@/i18n', () => ({
   setLocale: vi.fn(),
+  // useQuotaQuery 的 quotaFailReasonText 经 i18n.global.t 映射 reason 文案（mock 返回 key 本身）
+  default: { global: { t: (key: string) => key } },
 }))
 
 import ContextCapacityPopover from '@/components/panel/ContextCapacityPopover.vue'
@@ -292,6 +294,31 @@ describe('ContextCapacityPopover coding-plan 区', () => {
       const entry = quotaStore.getEntry('zhipu')
       expect(entry).toBeDefined()
       expect(entry!.data).toEqual(mockQuotaRow)
+    })
+
+    it('fetch fulfilled 带 reason（A2-4 失败态）→ 保留旧 data + 写 reason 文案，不覆写为 null', async () => {
+      // [HISTORICAL] 回归守卫（BL round1 #3）：runtime 失败契约是 data=null + reason
+      // （非旧缓存 data），消费侧曾把旧缓存覆写为 null 且清空 error——失败既不显提示也不留旧值
+      setupProviders([zhipuProvider])
+      const quotaStore = useQuotaStore()
+      quotaStore.setCache('zhipu', mockQuotaRow, 500)
+
+      vi.mocked(quotaApi.getCached).mockResolvedValue({ data: mockQuotaRow, lastFetchAt: 500 })
+      vi.mocked(quotaApi.fetchQuota).mockResolvedValue({ data: null, lastFetchAt: 500, reason: 'unauthorized' })
+
+      const wrapper = mount(ContextCapacityPopover, {
+        props: { modelId: 'zhipu/glm-4' },
+      })
+      await flushPromises()
+
+      const btn = wrapper.find('[title="上下文容量"]')
+      await btn.trigger('mouseenter')
+      await flushPromises()
+
+      const entry = quotaStore.getEntry('zhipu')
+      expect(entry).toBeDefined()
+      expect(entry!.data).toEqual(mockQuotaRow)
+      expect(entry!.error).toBe('panel.context.quotaFailUnauthorized')
     })
   })
 

@@ -72,6 +72,22 @@ function loadProviderEdit(locale: string): LocaleObject {
   return providerEdit
 }
 
+/** panel.context 的 quota 失败 reason 简短文案（A2-4 BL round1 #3：quotaFailReasonText 映射） */
+const REQUIRED_PANEL_QUOTA_FAIL_KEYS = [
+  'quotaFailUnauthorized',
+  'quotaFailNetwork',
+  'quotaFailNoSubscription',
+  'quotaFailParse',
+] as const
+
+/** panel locale 的 context 节 */
+function loadPanelContext(locale: string): LocaleObject {
+  const panel = loadLocaleObject(join(LOCALES_DIR, locale, 'panel.ts'))
+  const context = (panel as Record<string, LocaleObject>).context
+  if (!context) throw new Error(`${locale}/panel.ts 缺 context 命名空间`)
+  return context
+}
+
 describe('A2-4 quota 失败态 i18n key 双侧存在且非空', () => {
   for (const locale of ['zh-CN', 'en-US'] as const) {
     it(`${locale}: providerEdit 含 ${REQUIRED_QUOTA_FAIL_KEYS.join('/')} 且值非空`, () => {
@@ -95,6 +111,19 @@ describe('A2-4 quota 失败态 i18n key 双侧存在且非空', () => {
     const providerEdit = loadProviderEdit('en-US')
     expect(providerEdit.quotaFetchFailUnauthorized).not.toBe(providerEdit.quotaFetchFailNetwork)
   })
+})
+
+describe('panel.context quota 失败 reason 简短文案双侧存在且非空（A2-4 BL round1 #3 消费侧）', () => {
+  for (const locale of ['zh-CN', 'en-US'] as const) {
+    it(`${locale}: panel.context 含 ${REQUIRED_PANEL_QUOTA_FAIL_KEYS.join('/')} 且值非空`, () => {
+      const context = loadPanelContext(locale)
+      for (const key of REQUIRED_PANEL_QUOTA_FAIL_KEYS) {
+        const value = context[key]
+        expect(typeof value, `${locale}.panel.context.${key} 应为字符串`).toBe('string')
+        expect((value as string).trim().length, `${locale}.panel.context.${key} 值应为非空文案`).toBeGreaterThan(0)
+      }
+    })
+  }
 })
 
 describe('Phase B 新增 i18n key 双侧存在且非空（B-1 凭证区 / B-2 混合列表 / B-3 额度区）', () => {
