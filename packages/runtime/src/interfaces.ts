@@ -485,6 +485,12 @@ export interface IAuthService {
 /** Model aggregation, API discovery, and model/thinking-level orchestration. */
 export interface IModelService {
   aggregateModels(providers: ProviderInfo[]): ModelInfo[]
+  /**
+   * 双参版聚合：scopedModels 由调用方传入（单次读盘值复用，保证同一帧内
+   * config.providers.scopedModels 与 model.list 一致）。design D2 否决改
+   * aggregateModels 公开单参签名，故独立命名。
+   */
+  aggregateModelsWithScoped(providers: ProviderInfo[], scopedModels: string[]): ModelInfo[]
   discoverModelsFromApi(
     baseUrl: string,
     apiKey?: string,

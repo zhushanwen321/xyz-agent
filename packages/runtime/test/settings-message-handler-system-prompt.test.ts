@@ -54,6 +54,7 @@ function makeHandler() {
 
   const modelService: IModelService = {
     aggregateModels: vi.fn().mockReturnValue([]),
+    aggregateModelsWithScoped: vi.fn().mockReturnValue([]),
     switchModel: vi.fn().mockResolvedValue(undefined),
     setThinkingLevel: vi.fn().mockResolvedValue(undefined),
     discoverModelsFromApi: vi.fn().mockResolvedValue([]),

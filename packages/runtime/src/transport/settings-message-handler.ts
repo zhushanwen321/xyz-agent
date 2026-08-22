@@ -60,7 +60,11 @@ export class SettingsMessageHandler {
   async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
     switch (msg.type) {
       case 'config.getProviders':
-        this.ctx.reply(ws, msg.id, 'config.providers', { providers: this.ctx.configService.listProviders() })
+        // scoped-model design §3.3 D7：reply 与广播（message-broker.buildProviderListMsgs）均含 scopedModels
+        this.ctx.reply(ws, msg.id, 'config.providers', {
+          providers: this.ctx.configService.listProviders(),
+          scopedModels: this.ctx.configService.getScopedModels(),
+        })
         return true
       case 'config.setProvider': {
         const { providerId, ...data } = msg.payload

@@ -7,7 +7,7 @@
  * 覆盖（验收 A1-A4）：
  * - A1 读写往返：modifyScopedModels 写入 → getScopedModels 读回一致；字段缺失时读返回 []
  * - A2 非法容错：手写 providers.json 含非数组 scopedModels / 含非法条目 → 读侧过滤/置空不抛错、providers 域数据不受影响
- * - A3 去重保序由调用方保证（本层不改写），但写入 [] 后文件中字段应保留
+ * - A3 读侧去重保序（写侧不改写），写入 [] 后文件中字段应保留
  * - A4 与 per-provider modify 串行安全：交错调用 modifyScopedModels 与 modify 同一文件，无丢更新
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -132,7 +132,7 @@ describe('XyzProviderStore scopedModels', () => {
     })
   })
 
-  describe('A3 去重保序（caller 保证，本层不改写）', () => {
+  describe('A3 去重保序（读侧 sanitize 收敛，写侧不改写）', () => {
     it('A3 写入 [] 后文件中 scopedModels 字段保留为空数组', async () => {
       await store.modifyScopedModels(() => ['openai/gpt-4o'])
       expect(store.getScopedModelsSync()).toEqual(['openai/gpt-4o'])
@@ -146,10 +146,12 @@ describe('XyzProviderStore scopedModels', () => {
       expect('scopedModels' in raw).toBe(true)
     })
 
-    it('A3 写入含重复条目时原样保留（本层不去重，由调用方保证）', async () => {
+    it('A3 写入含重复条目时读取去重保序（读侧 sanitize 首见保留，防 aggregateModels 输出重复模型）', async () => {
       const models = ['openai/gpt-4o', 'openai/gpt-4o', 'anthropic/claude-sonnet-4']
       await store.modifyScopedModels(() => models)
-      expect(store.getScopedModelsSync()).toEqual(models)
+      // 写侧不去重（文件原样保留写入值），读侧唯一入口 sanitizeScopedModels 去重——
+      // 手改 providers.json 写入重复条目（design §1.3 合法输入路径）也不会渲染重复模型
+      expect(store.getScopedModelsSync()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
     })
   })
 

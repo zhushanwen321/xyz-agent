@@ -103,6 +103,10 @@ const SCOPED_MODEL_REGEX = /^[^/]+\/.+$/
  * readInternal 的整文件隔离判定）：scopedModels 是独立新增顶层字段，损坏时连坐
  * quota/modelStates 一起按空配置继续会扩大爆炸半径——白名单失效但 provider 配置全丢。
  * 非数组（过滤无从谈起）→ 返回 []。
+ *
+ * 去重保序（首见保留）：手改 providers.json 写入重复条目是合法输入路径（design §1.3），
+ * 读侧唯一入口在此收敛去重——否则重复条目直达 aggregateModels 输出重复模型，模型选择器
+ * 渲染重复项。写侧去重（settings-message-handler）只是第一道防线，读侧兜底不可省。
  */
 function sanitizeScopedModels(value: unknown): string[] {
   if (value === undefined) return []
@@ -111,6 +115,7 @@ function sanitizeScopedModels(value: unknown): string[] {
     return []
   }
   const result: string[] = []
+  const seen = new Set<string>()
   for (const entry of value) {
     if (typeof entry !== 'string') {
       console.warn('[provider-extras-store] scopedModels: non-string entry filtered out:', entry)
@@ -120,6 +125,11 @@ function sanitizeScopedModels(value: unknown): string[] {
       console.warn('[provider-extras-store] scopedModels: invalid entry format (expected provider/modelId):', entry)
       continue
     }
+    if (seen.has(entry)) {
+      console.warn('[provider-extras-store] scopedModels: duplicate entry dropped (first occurrence kept):', entry)
+      continue
+    }
+    seen.add(entry)
     result.push(entry)
   }
   return result

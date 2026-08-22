@@ -154,10 +154,12 @@ describe('SettingsMessageHandler', () => {
   })
 
   describe('基础路由', () => {
-    it('config.getProviders → reply config.providers', async () => {
-      const { replies, handler } = makeHandler()
+    it('config.getProviders → reply config.providers（含 scopedModels 透传，design §3.3 D7）', async () => {
+      const { ctx, replies, handler } = makeHandler()
+      // mock 非空数组验证透传（默认 mock 返回 []，空值断言无区分力）
+      ;(ctx.configService.getScopedModels as ReturnType<typeof vi.fn>).mockReturnValue(['p1/m1', 'p2/m2'])
       await handler.handleSettingsMessage(msg('config.getProviders', {}), WS)
-      expect(replies[0]).toMatchObject({ type: 'config.providers', payload: { providers: [{ id: 'p1' }] } })
+      expect(replies[0]).toMatchObject({ type: 'config.providers', payload: { providers: [{ id: 'p1' }], scopedModels: ['p1/m1', 'p2/m2'] } })
     })
     it('model.list → aggregateModels + reply', async () => {
       const { replies, handler } = makeHandler()
@@ -549,6 +551,27 @@ describe('SettingsMessageHandler', () => {
       await handler.handleSettingsMessage(msg('config.setScopedModels', { models: ['p/m1'] }), WS)
 
       expect(ctx.configService.setDefaultModel).not.toHaveBeenCalled()
+    })
+
+    it('S7 空列表 → default 不变（不调 setDefaultModel、不广播 config.defaults），reply scopedModels:[]，broadcastProviderList 仍触发', async () => {
+      // 设计 §4.1 S7：清空白名单不动默认模型。实现依据 handler 的 `if (result.length > 0)` 守卫
+      //（settings-message-handler.ts）——空列表两段（写 default / 广播 defaults）都跳过，
+      // provider 列表广播仍触发（前端需刷新 scopedModels 视图）。
+      const { ctx, replies, broadcasts, handler } = makeHandler({
+        modifyScopedModels: vi.fn(async () => []),
+      })
+
+      await handler.handleSettingsMessage(msg('config.setScopedModels', { models: [] }), WS)
+
+      // ① 不调 setDefaultModel（连带 getDefaultModel 也不读——守卫短路）
+      expect(ctx.configService.setDefaultModel).not.toHaveBeenCalled()
+      expect(ctx.configService.getDefaultModel).not.toHaveBeenCalled()
+      // ② 不广播 config.defaults
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(0)
+      // ③ reply 含写入结果 scopedModels: []
+      expect(replies[0]).toMatchObject({ type: 'config.scopedModels', payload: { scopedModels: [] } })
+      // ④ broadcastProviderList 仍触发
+      expect(ctx.broadcastProviderList).toHaveBeenCalledOnce()
     })
   })
 

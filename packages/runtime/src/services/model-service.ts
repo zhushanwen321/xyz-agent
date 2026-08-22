@@ -113,7 +113,18 @@ export class ModelService implements IModelService {
   }
 
   aggregateModels(providers: ProviderInfo[]): ModelInfo[] {
-    const scopedModels = this.configService.getScopedModels()
+    // 对齐 switchModel/setThinkingLevel 既有范式：访问注入依赖前先检查已初始化
+    this.ensureInitialized()
+    return this.aggregateModelsWithScoped(providers, this.configService.getScopedModels())
+  }
+
+  /**
+   * 双参版聚合：scopedModels 由调用方传入（读盘值跨 config.providers / model.list
+   * 两条消息复用，消除 buildProviderListMsgs 双读盘间写者落盘导致的一帧不一致）。
+   * 独立命名而非给公开 aggregateModels 加参——design D2 否决改其签名（单参语义
+   * 「内部读白名单」已有多调用方依赖）。纯数据变换，不访问注入依赖。
+   */
+  aggregateModelsWithScoped(providers: ProviderInfo[], scopedModels: string[]): ModelInfo[] {
     // W2：runtime enabled 过滤——provider.enabled===false 时其下所有 model 不进结果；
     // model.enabled===false 时该 model 不进结果。缺省/true 视为启用（向上兼容存量）。
     // 过滤在 listProviders 读出 ProviderInfo 之后做，config.enabled !== false 语义统一在此处收敛。

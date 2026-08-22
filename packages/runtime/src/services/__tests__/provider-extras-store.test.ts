@@ -280,7 +280,7 @@ describe('XyzProviderStore', () => {
     })
   })
 
-  describe('A3 去重保序（caller 保证，本层不改写）', () => {
+  describe('A3 去重保序（读侧 sanitize 收敛，写侧不改写）', () => {
     it('写入 [] 后文件中 scopedModels 字段保留为空数组', async () => {
       await store.modifyScopedModels(() => ['openai/gpt-4o'])
       expect(store.getScopedModelsSync()).toEqual(['openai/gpt-4o'])
@@ -296,10 +296,11 @@ describe('XyzProviderStore', () => {
       expect('scopedModels' in raw).toBe(true)
     })
 
-    it('写入含重复条目时原样保留（本层不去重，由调用方保证）', async () => {
+    it('写入含重复条目时读取去重保序（读侧 sanitize 首见保留，防 aggregateModels 输出重复模型）', async () => {
       const models = ['openai/gpt-4o', 'openai/gpt-4o', 'anthropic/claude-sonnet-4']
       await store.modifyScopedModels(() => models)
-      expect(store.getScopedModelsSync()).toEqual(models)
+      // 写侧不去重（文件原样保留写入值），读侧唯一入口 sanitizeScopedModels 去重
+      expect(store.getScopedModelsSync()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
     })
   })
 
