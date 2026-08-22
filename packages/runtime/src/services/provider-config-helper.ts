@@ -20,8 +20,14 @@ import { pickModelCapabilityFields } from './model-mapper.js'
  * 不含 'set'——写入唯一经 credentialWriter（A1-4 收口，AuthService.saveCredential）。 */
 type AuthStorageAccessors = Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'hasCredentialSync' | 'listCredentialIds'>
 
-/** providers.json 存储能力（ConfigService 注入，A1-5 写侧切换）。 */
-export type ProviderExtrasAccessors = Pick<XyzProviderStore, 'modify'>
+/**
+ * providers.json 存储能力（ConfigService 注入，A1-5 写侧切换）。
+ * getExtrasSync：modelStates 清理的写入守卫先读（避免无谓写盘/空条目）。
+ */
+export type ProviderExtrasAccessors = Pick<XyzProviderStore, 'modify' | 'getExtrasSync'>
+
+/** providers.json 删除能力（删除链「清残留」用，M5-05 不变式扩展到 extras）。 */
+export type ProviderExtrasDeleter = Pick<XyzProviderStore, 'delete'>
 
 /** setProvider 的入参形状（原 ConfigService.setProvider 内联类型提取，逐字一致）。 */
 export type SetProviderInput = {
@@ -172,6 +178,25 @@ function sanitizeModelCost(v: unknown, ctx: string): Record<string, unknown> {
     result.tiers = raw.tiers
   }
   return result
+}
+
+/**
+ * modelStates 按保留集合重建（S2，round 1 review suggestion）：retainIds 外的键剔除
+ * （已删除模型的启停残留），retainIds 内 updates 优先、current 兜底（未显式传 enabled
+ * 的模型保留既有状态）。结果为空（保留集合内无任何状态）返回 undefined——调用方据此
+ * 不落 modelStates 字段。
+ */
+function mergeModelStates(
+  current: Record<string, { enabled: boolean }> | undefined,
+  updates: Record<string, { enabled: boolean }>,
+  retainIds: ReadonlySet<string>,
+): Record<string, { enabled: boolean }> | undefined {
+  const merged: Record<string, { enabled: boolean }> = {}
+  for (const id of retainIds) {
+    const state = updates[id] ?? current?.[id]
+    if (state !== undefined) merged[id] = state
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined
 }
 
 // ── 默认模型 ──
@@ -517,19 +542,40 @@ export async function setProvider(
       }
       return model as unknown as ConfigModelDefinition
     })
-    // G3 写侧切换：model 级 enabled 落 providers.json modelStates（RMW 合并，只覆写本次
-    // 回传的 model 条目，其余 modelStates 保留）。await 对齐 authMethod 的 MF-1 语义：
-    // modify 失败 reject 上抛（handler try-catch 转 sendError），不静默吞。extrasStore
-    // 未注入时丢弃 + warn（宁丢不写错位——生产恒注入）。
-    if (Object.keys(modelStatesUpdates).length > 0) {
-      if (extrasStore) {
-        await extrasStore.modify(providerId, current => ({
-          ...current,
-          modelStates: { ...current?.modelStates, ...modelStatesUpdates },
-        }))
-      } else {
-        console.warn(`[config-service] model enabled states dropped for ${providerId}: providerExtrasStore not injected (G3 写侧切换)`)
+    // G3 写侧切换：model 级 enabled 落 providers.json modelStates。await 对齐 authMethod
+    // 的 MF-1 语义：modify 失败 reject 上抛（handler try-catch 转 sendError），不静默吞。
+    // extrasStore 未注入时丢弃 + warn（宁丢不写错位——生产恒注入）。
+    //
+    // S2（round 1 review suggestion）：旧实现只合并不清理（{...current, ...updates}）——
+    // 编辑体删除某自定义模型后其 modelStates 条目残留，同 id 重新添加时旧 disabled 复活。
+    // 改按保留集合（retainIds）重建：
+    // - custom provider：payload 即全集（编辑体全量回传），retainIds = payload 模型 id 集；
+    // - catalog provider：builtin 模型启停是合法状态（B-2 后 payload 只含 override 条目，
+    //   builtin id 不在其中），retainIds = payload ∪ builtin 模板模型 id——既非 payload 也
+    //   非 builtin 的键（已删除的 override 模型）剔除。
+    // 保留集合内：本次显式 enabled 优先，未显式传的保留既有状态（不丢未标注模型的状态）。
+    if (extrasStore) {
+      const payloadIds = new Set((merged.models as ConfigModelDefinition[]).map(m => m.id))
+      const retainIds = isCatalogProvider(providerId)
+        ? new Set([...payloadIds, ...(builtinProvidersById.get(providerId)?.models ?? []).map(m => m.id)])
+        : payloadIds
+      // 写入守卫（避免无谓写盘与空条目）：有显式启停更新，或已有 modelStates 需按保留
+      // 集合清理时才 modify。先读（getExtrasSync）与 modify 锁内重读有微小 TOCTOU 窗口
+      //（同 provider 并发写），最坏情况跳过一次清理，不损坏数据。
+      const currentExtras = extrasStore.getExtrasSync(providerId)
+      const hasUpdates = Object.keys(modelStatesUpdates).length > 0
+      const hasExistingStates = currentExtras?.modelStates !== undefined
+        && Object.keys(currentExtras.modelStates).length > 0
+      if (hasUpdates || hasExistingStates) {
+        await extrasStore.modify(providerId, current => {
+          const next = mergeModelStates(current?.modelStates, modelStatesUpdates, retainIds)
+          // next=undefined（保留集合内无任何状态）时显式置 undefined——序列化丢该键，
+          // 条目降级为仅含其余字段（authMethod/quota）；不落空 modelStates 字段。
+          return { ...current, modelStates: next }
+        })
       }
+    } else if (Object.keys(modelStatesUpdates).length > 0) {
+      console.warn(`[config-service] model enabled states dropped for ${providerId}: providerExtrasStore not injected (G3 写侧切换)`)
     }
   }
   const result = configStore.upsertProvider(providerId, merged)
@@ -664,12 +710,39 @@ async function cleanAuthCredential(
 }
 
 /**
+ * 清 providers.json extras 条目（round 1 review suggestion：删除链不清理 extras →
+ * custom provider 删除后 quota 绑定/modelStates/authMethod 永久残留、catalog「移除」
+ * 后 quota.enabled 仍 true、同 id 重建静默继承旧配置）。M5-05「清残留」不变式扩展：
+ * 与 cleanEnabledModelsResidue / cleanAuthCredential 同属删除链卫生操作。
+ *
+ * - 必须 await（而非 fire-and-forget）：XyzProviderStore.delete 内部 withFileLock 是
+ *   真异步，紧随其后的 broadcastProviderList → listProviders 双读 providers.json 会
+ *   读到旧 extras（quota.enabled 仍 true）→ 广播 stale。
+ * - 失败仅 warn 不阻断（与 cleanAuthCredential 同语义：条目删除是主语义）。
+ * - 幂等：条目不存在时跳过写、文件不存在不物化（XyzProviderStore.delete 保证）。
+ */
+async function cleanProviderExtras(
+  extrasStore: ProviderExtrasDeleter | undefined,
+  providerId: string,
+  ctx: string,
+): Promise<void> {
+  if (!extrasStore) return
+  try {
+    await extrasStore.delete(providerId)
+  // eslint-disable-next-line taste/no-silent-catch -- extras 清理失败不阻断删除主流程（同 cleanAuthCredential 语义），warn 记录便于诊断
+  } catch (err) {
+    console.warn(`[config-service] providers.json extras cleanup failed ${ctx}:`, err)
+  }
+}
+
+/**
  * 删除 provider（I8：await 清 auth.json 凭据）。
- * 纯函数：configStore / authStorage 经参数注入（原 ConfigService.deleteProvider 逐字搬迁）。
+ * 纯函数：configStore / authStorage / extrasStore 经参数注入。
  */
 export async function deleteProvider(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
+  extrasStore: ProviderExtrasDeleter | undefined,
   providerId: string,
 ): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
   // I8：删 provider 后 await 清 auth.json 凭据（OAuth token 强绑定，不能残留）。
@@ -681,20 +754,26 @@ export async function deleteProvider(
   // 死引用（legacy RPC config.deleteProvider 路径）。
   configStore.cleanEnabledModelsResidue(providerId)
   await cleanAuthCredential(authStorage, providerId, `(I8) ${providerId}`)
+  // extras 同步清理（review suggestion）：quota/modelStates/authMethod 不残留，同 id 重建
+  // 不静默继承旧配置。幂等（无条目 no-op）。
+  await cleanProviderExtras(extrasStore, providerId, `(deleteProvider) ${providerId}`)
   return result
 }
 
 /**
  * 按体系移除 provider（wave4 IF3 / C2）——catalog 与 custom 分体系处理。
- * 纯函数：configStore / authStorage 经参数注入（原 ConfigService.removeProviderByKind 逐字搬迁）。
+ * 纯函数：configStore / authStorage / extrasStore 经参数注入。
  *
  * 与 deleteProvider 的区别：deleteProvider 不分体系直接 configStore.removeProvider（向后兼容
  * 保留）；removeProviderByKind 按 ProviderInfo.kind 收窄，避免误删 catalog 定义。
  *
  * - catalog：定义来自 pi 二进制内置（不可删），只清用户侧状态——auth.json 凭据
  *   （authStorage.remove）+ models.json override 条目（configStore.removeProvider 若有 override）
- *   + enabledModels 残留。清后该 catalog provider 凭据全无，listProviders 双源聚合不再显示。
- * - custom：定义全在 models.json，删条目即删定义——configStore.removeProvider + 清残留。
+ *   + enabledModels 残留 + providers.json extras 条目（「移除=清用户状态」语义：quota 绑定/
+ *   modelStates/authMethod 一并清，否则额度链路继续对无凭证 provider 发查询）。清后该
+ *   catalog provider 凭据全无，listProviders 双源聚合不再显示。
+ * - custom：定义全在 models.json，删条目即删定义——configStore.removeProvider + 清残留
+ *   + extras 清理（同 id 重建不静默继承旧 quota/启停配置）。
  *
  * newDefault：configStore.removeProvider 内部在 default 承载被删 provider 时重选并返回
  * （wave3 既有行为），透传给 transport 层广播 config.defaults。
@@ -704,7 +783,7 @@ export async function deleteProvider(
 export async function removeProviderByKind(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
-  extrasStore: ProviderExtrasReader | undefined,
+  extrasStore: (ProviderExtrasReader & ProviderExtrasDeleter) | undefined,
   providerId: string,
   kind: 'catalog' | 'custom',
 ): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
@@ -743,6 +822,9 @@ export async function removeProviderByKind(
     // withFileLock 是真异步，fire-and-forget 会导致 broadcastProviderList 读到旧凭据 → 广播
     // stale 列表（catalog provider 删除后首次广播仍含该 provider 的根因）。失败仅 warn 不阻断。
     await cleanAuthCredential(authStorage, providerId, `for catalog provider ${providerId}`)
+    // 清 providers.json extras（review suggestion）：catalog「移除」语义=清用户侧状态，
+    // quota.enabled=true 残留会让额度链路继续对无凭证 provider 发查询。幂等无风险。
+    await cleanProviderExtras(extrasStore, providerId, `for catalog provider ${providerId}`)
     // catalog 定义不可删（pi 二进制内置），「移除」= 清凭据/override/残留。removed=true 表示
     // 用户侧状态已清，listProviders 双源聚合（凭据 ∪ override）将不再显示该 provider。
     return { removed: true, newDefault: overrideResult.newDefault }
@@ -751,5 +833,7 @@ export async function removeProviderByKind(
   // custom 凭据随条目存在 models.json（apiKey 字段），删条目即清；auth.json 无需单独清理。
   const result = configStore.removeProvider(providerId)
   configStore.cleanEnabledModelsResidue(providerId)
+  // extras 同步清理（review suggestion）：同 deleteProvider，防同 id 重建继承旧配置。
+  await cleanProviderExtras(extrasStore, providerId, `for custom provider ${providerId}`)
   return result
 }

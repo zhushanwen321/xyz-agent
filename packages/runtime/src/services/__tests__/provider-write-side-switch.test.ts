@@ -126,6 +126,28 @@ describe('QuotaService.configure 写侧切换（A1-5 路径 1）', () => {
     })
   })
 
+  it('注入 getProviderConfig 通道（arch-boundary S2 port 化）时 legacy quota 兜底经注入读，不碰 infra 模块函数', async () => {
+    // models.json 物理写入一个 legacy quota；注入通道返回哨兵 fetcher——若兜底读的是
+    // 注入通道，继承 from-injection；若仍直读 infra（getProviderConfig 模块函数，
+    // 读真实 models.json），继承 from-models-json。断言锁定生产装配路径走注入。
+    writeModelsJson({
+      p1: { baseUrl: 'https://x.example.com', quota: { fetcher: 'from-models-json', enabled: false } },
+    })
+    const svc = new QuotaService({
+      dataDir: dir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+      getProviderConfig: (id) =>
+        id === 'p1' ? { quota: { fetcher: 'from-injection', enabled: false } } : undefined,
+    })
+
+    await svc.configure('p1', true) // fetcher 未传 → readQuotaFallback 兜底
+
+    expect(readExtrasRaw()['p1']).toEqual({
+      quota: { fetcher: 'from-injection', enabled: true },
+    })
+  })
+
   it('未注入 providerExtrasStore → 持久化失败返回（宁失败不写错位）', async () => {
     writeModelsJson({ p1: { baseUrl: 'https://x.example.com' } })
     const svc = new QuotaService({ dataDir: dir, providerExists: () => true })
@@ -263,20 +285,21 @@ describe('setProvider 写侧切换（G3 残留：models[].enabled → providers.
     expect(readExtrasRaw().p1).toBeUndefined()
   })
 
-  it('modelStates RMW 合并：既有条目（如 authMethod/quota）与未回传的 model 条目保留', async () => {
+  it('modelStates RMW 合并（S2 语义）：authMethod 等其他字段保留；custom provider 的 payload 即全集，未回传的 model 条目剔除', async () => {
     writeModelsJson({ p1: { baseUrl: 'https://x.example.com' } })
     await extrasStore.modify('p1', () => ({
       authMethod: 'api_key',
-      modelStates: { 'kept-model': { enabled: false }, m1: { enabled: true } },
+      modelStates: { 'deleted-model': { enabled: false }, m1: { enabled: true } },
     }))
     const svc = makeSvc()
 
+    // 回传不含 deleted-model（编辑体已删该模型）→ 其 modelStates 残留须剔除（S2 修复，
+    // 旧实现 {...current, ...updates} 合并导致残留、同 id 重加旧 disabled 复活）
     await svc.setProvider('p1', { models: [{ id: 'm1', name: 'M1', enabled: false }] })
 
-    // authMethod 与未在本次回传中的 kept-model 保留；m1 被覆写
     expect(readExtrasRaw().p1).toEqual({
       authMethod: 'api_key',
-      modelStates: { 'kept-model': { enabled: false }, m1: { enabled: false } },
+      modelStates: { m1: { enabled: false } },
     })
     expect(readModelsRaw().p1?.authMethod).toBeUndefined()
   })

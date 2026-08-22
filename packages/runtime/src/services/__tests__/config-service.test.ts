@@ -204,7 +204,7 @@ describe('ConfigService authMethod 透传与推断（I6，wave-quick-setup-c TC7
         return next
       }),
     }
-    const svc = new ConfigService('/tmp/project', mockStore, undefined, extrasStore as unknown as Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync'>)
+    const svc = new ConfigService('/tmp/project', mockStore, undefined, extrasStore as unknown as Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync' | 'delete'>)
     await svc.setProvider('openai', { apiKey: 'sk-x', authMethod: 'api_key' })
     expect(mockStore.upsertProvider).toHaveBeenCalled()
     expect(extrasStore.modify).toHaveBeenCalledWith('openai', expect.any(Function))
@@ -229,7 +229,7 @@ describe('ConfigService authMethod 透传与推断（I6，wave-quick-setup-c TC7
       modify: vi.fn(),
       getExtrasSync: vi.fn(() => undefined),
       readAllSync: vi.fn(() => ({ 'with-mark': { authMethod: 'oauth' } })),
-    } as unknown as Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync'>
+    } as unknown as Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync' | 'delete'>
     const svc = new ConfigService('/tmp/project', mockStore, undefined, extrasStore)
     const providers = svc.listProviders()
     const byId = Object.fromEntries(providers.map(p => [p.id, p]))

@@ -107,10 +107,13 @@ export class ConfigService implements IConfigService {
      * providers.json 存储（A1-5 写侧切换 + A1-3 读源切换）：setProvider 的 authMethod
      * 经此写 config/providers.json；listProviders 聚合经此读 authMethod/quota/modelStates
      * （双读回退：providers.json 优先 + models.json 旧寄生字段兜底）。
+     * delete 能力（round 1 review suggestion）：deleteProvider / removeProviderByKind
+     * 删除链清 extras 残留（M5-05「清残留」不变式扩展——quota/modelStates/authMethod
+     * 不残留，同 id 重建不静默继承旧配置）。
      * 可选注入：未注入时 authMethod 丢弃 + warn（宁丢不写错位），聚合层 extras 恒空
-     * （authMethod 退回推断、quota undefined），生产恒注入。
+     * （authMethod 退回推断、quota undefined），删除链 extras 清理 no-op，生产恒注入。
      */
-    private providerExtrasStore?: Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync'>,
+    private providerExtrasStore?: Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync' | 'delete'>,
   ) {}
 
   /**
@@ -158,7 +161,7 @@ export class ConfigService implements IConfigService {
   }
 
   async deleteProvider(providerId: string): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
-    return deleteProviderImpl(this.configStore, this.authStorage, providerId)
+    return deleteProviderImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId)
   }
 
   async removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
