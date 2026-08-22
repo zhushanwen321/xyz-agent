@@ -4,14 +4,14 @@
 # e2e 探针为 packages/runtime/test/e2e/scoped-model.e2e.mjs（node ≥22 内置 WebSocket）。
 # E9 unit 型由 vitest 直接执行。
 #
-# 用法：bash scripts/cw-acceptance/sm-e2e.sh <E1|E2|E3|E4|E5|E6|E7|E8|E9>
+# 用法：bash scripts/cw-acceptance/sm-e2e.sh <E1|E2|E3|E4|E5|E6|E7|E8|E9|all>
 
 set -o pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT" || { echo "FAIL: cannot cd to repo root"; exit 1; }
 
-ID="${1:?Usage: $0 <E1|E2|...|E9>}"
+ID="${1:?Usage: $0 <E1|E2|...|E9|all>}"
 
 # ── 公共前置 ────────────────────────────────────────────────────
 
@@ -34,6 +34,32 @@ fi
 
 export XYZ_AGENT_DATA_DIR="$DATA_DIR"
 export XYZ_RUNTIME_TOKEN="test-token-sm-e2e"
+
+# ── all: 聚合模式（循环 E1-E9，汇总输出 R2 标记行）───────────────
+if [ "$ID" = "all" ]; then
+  PASS_COUNT=0
+  FAIL_COUNT=0
+  FAILED_IDS=""
+  # E7 内联回归，E9 单测，其余走 e2e 探针
+  for eid in E1 E2 E3 E4 E5 E6 E7 E8 E9; do
+    echo "[sm-e2e] all: running $eid..." >&2
+    if bash "$0" "$eid" 2>&1; then
+      PASS_COUNT=$((PASS_COUNT + 1))
+    else
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+      FAILED_IDS="$FAILED_IDS $eid"
+    fi
+  done
+  echo "[sm-e2e] all summary: $PASS_COUNT passed, $FAIL_COUNT failed" >&2
+  if [ -z "$FAILED_IDS" ]; then
+    echo "R2 PASS"
+    exit 0
+  else
+    echo "[sm-e2e] failed:$FAILED_IDS" >&2
+    echo "R2 FAIL"
+    exit 1
+  fi
+fi
 
 # ── E9: 单测（vitest 直接执行，不需要 e2e 探针）─────────────────
 if [ "$ID" = "E9" ]; then

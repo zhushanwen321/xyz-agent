@@ -1,74 +1,46 @@
 {
   "acceptance": [
     {
-      "id": "A1",
-      "core": false,
-      "title": "modifyScopedModels 写入 -> getScopedModels 读回一致；字段缺失时返回 []",
+      "id": "R1",
+      "title": "集成回归（增量口径）：lint + 受影响测试集通过",
       "type": "unit",
-      "command": "bash -lc 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run src/services/__tests__/provider-extras-scoped-models.test.ts -t \"A1\"'",
-      "scenario": "modifyScopedModels(['openai/gpt-4o', 'anthropic/claude-opus-4-5']) 写入后，getScopedModels() 读回相同数组；providers.json 不含 scopedModels 字段时，getScopedModels() 返回空数组 []。测试 fullName 须含验收 id（测试 describe+it 拼接须含 'A1'）。"
+      "core": false,
+      "command": "bash -c 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && pnpm run lint && bash scripts/cw-acceptance/affected-tests.sh 75f596069 --run'",
+      "scenario": "所有子 unit 代码合并后：全仓 lint（exit 0 即过，容忍存量 warning，改动文件零新增 error）+ affected-tests.sh 从基线 75f596069 推导受影响测试集（diff 中测试文件 ∪ 改动源文件同名测试，逐包串行，vitest 不自带 --reporter——gate 规则⑨）并跑通。脚本 stdout 末尾产出 'R1 PASS'/'R1 FAIL' 标记行（词边界匹配）。增量口径决策（2026-08-22 CPU 打满复盘）：cw 集成层不跑四包全量 vitest（runtime 3500+ 用例在并行环境下打满 CPU 且诱发 real-pi 时序翻转），全量回归由 PR pre-merge 管线（pr-cr-fix pre-push）兜底。XYZ_SKIP_REAL_PI 双轨机制在 affected-tests.sh 内已保留"
     },
     {
-      "id": "A2",
-      "core": false,
-      "title": "非法值容错：非数组 scopedModels / 非法条目 -> 过滤或置空不抛错、providers 域不受影响",
-      "type": "unit",
-      "command": "bash -lc 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run src/services/__tests__/provider-extras-scoped-models.test.ts -t \"A2\"'",
-      "scenario": "手写 providers.json 含非数组 scopedModels（如 string/number/object）-> getScopedModels() 返回 [] 不抛错；含非法条目（不匹配 ^[^/]+/.+$ 格式）-> 该条目被过滤，合法条目保留；providers 域数据（version/providers/modelStates）不受影响。测试 fullName 须含验收 id（测试 describe+it 拼接须含 'A2'）。"
-    },
-    {
-      "id": "A3",
-      "core": false,
-      "title": "写入 [] 后文件行为明确（字段保留或删除，与实现注释一致）",
-      "type": "unit",
-      "command": "bash -lc 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run src/services/__tests__/provider-extras-scoped-models.test.ts -t \"A3\"'",
-      "scenario": "modifyScopedModels 写入非空数组后，再写入 []，读取文件确认 scopedModels 字段行为（保留空数组或删除字段，二选一且与实现注释一致）。本层不保证去重保序（由调用方负责），但写入 [] 后行为必须可断言。测试 fullName 须含验收 id（测试 describe+it 拼接须含 'A3'）。"
-    },
-    {
-      "id": "A4",
-      "core": false,
-      "title": "与 per-provider modify 串行安全：交错调用无丢更新",
-      "type": "unit",
-      "command": "bash -lc 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run src/services/__tests__/provider-extras-scoped-models.test.ts -t \"A4\"'",
-      "scenario": "交错调用 modifyScopedModels 与 modify（同一文件）：modifyScopedModels 写入 scopedModels 后，modify 写入 provider 条目，再次 modifyScopedModels 追加条目——最终 getScopedModels() 包含全部追加条目，getExtras() 也保留 provider 数据。锁序列验证：Promise.all 并发调用 10 次 modifyScopedModels（各追加一个条目）+ 10 次 modify（各写一个 provider），最终所有数据完整保留。测试 fullName 须含验收 id（测试 describe+it 拼接须含 'A4'）。"
-    },
-    {
-      "id": "A5",
-      "core": true,
-      "title": "shared 与 runtime 包 typecheck 通过",
+      "id": "R2",
+      "title": "端到端验收：真实 runtime WS 链路验证 S1-S8 + E9 单测",
       "type": "e2e-real",
-      "command": "bash -lc 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && pnpm --filter @xyz-agent/shared typecheck && pnpm --filter @xyz-agent/runtime typecheck && echo A5 PASS || echo A5 FAIL'",
-      "scenario": "packages/shared 与 packages/runtime 的 TypeScript 类型检查均通过（tsc --noEmit），确认 protocol.ts 新增的 setScopedModels 命令类型定义与 provider-extras-store.ts 新增的 modifyScopedModels/getScopedModels 方法签名无类型错误。"
+      "core": true,
+      "command": "bash scripts/cw-acceptance/sm-e2e.sh all",
+      "scenario": "真实 runtime WebSocket 链路端到端验收（all 模式循环 E1-E9，各子项输出 E-id 标记行，末尾汇总输出 'R2 PASS'/'R2 FAIL' 并对齐 exit code），覆盖设计文档 §4 全部场景：S1 固定模型集（E1，model.list 只含白名单模型）、S2 自定义顺序 + defaultModel 同步（E2，上移后顺序变化 + settings.json defaultModel 写入断言）、S3 OAuth catalog provider（E3，findValidDefaultModel 不冲掉 auth.json-only provider 默认模型）、S4 广播即时生效（E4，广播 model.list 响应式更新）、S5 新会话默认（E5，session.modelId = scoped[0]）、S6 toggle 共存（E6，provider 级 OFF 压过 scoped）、S7 清空恢复（E7，增量回归口径——受影响测试集 + smoke，与 R1 同源）、S8 残留清理（E8，删除 provider 后 scoped 自动清理）、E9 provider-extras-store 单测（vitest 直跑，覆盖 store 层读写/容错/并发）。脚本路径 scripts/cw-acceptance/sm-e2e.sh，与 sm-e2e 子 unit spec 互锁"
     }
   ],
-  "contracts": [
+  "contracts": [],
+  "split": [
     {
-      "id": "C1",
-      "kind": "function",
-      "provider": "protocol",
-      "consumer": "settings-message-handler",
-      "signature": "'config.setScopedModels': { request: { models: string[] }, response: { scopedModels: string[] } }",
-      "file": "packages/shared/src/protocol.ts",
-      "description": "config.setScopedModels RPC 命令声明：request 接收 modelId 数组（provider/modelId 复合串），response 返回规范化后的 scopedModels 数组。"
+      "unitId": "sm-contract-store",
+      "dependsOn": []
     },
     {
-      "id": "C2",
-      "kind": "function",
-      "provider": "protocol",
-      "consumer": "settings-message-handler",
-      "signature": "'config.getProviders': { response: { providers: ProviderInfo[], scopedModels?: string[] } }",
-      "file": "packages/shared/src/protocol.ts",
-      "description": "config.getProviders reply 类型扩展：新增可选 scopedModels 字段，与 config.providers 广播 payload 同构。"
+      "unitId": "sm-runtime-filter",
+      "dependsOn": [
+        "sm-contract-store"
+      ]
     },
     {
-      "id": "C3",
-      "kind": "class",
-      "provider": "provider-extras-store",
-      "consumer": "config-service",
-      "signature": "class XyzProviderStore { getScopedModels(): string[]; modifyScopedModels(fn: (cur: string[]) => string[]): void }",
-      "file": "packages/runtime/src/services/provider-extras-store.ts",
-      "description": "XyzProviderStore 新增顶层 scopedModels 读写 API。getScopedModels 同步读取（非法值容错，非 string[] 返回 []，非法条目过滤并 log warning）。modifyScopedModels 同步 RMW（同一 withFileLock 锁，与 per-provider modify 串行）。与 brief 规定一致：返回值无消费方，同步 void 最小化 API 面。"
+      "unitId": "sm-ui-chain",
+      "dependsOn": [
+        "sm-runtime-filter"
+      ]
+    },
+    {
+      "unitId": "sm-e2e",
+      "dependsOn": [
+        "sm-ui-chain"
+      ],
+      "note": "sm-e2e 子 unit spec 须声明脚本路径为 scripts/cw-acceptance/sm-e2e.sh，与本 spec R2 command 互锁；脚本 all 分支循环 E1-E9"
     }
-  ],
-  "split": []
+  ]
 }
