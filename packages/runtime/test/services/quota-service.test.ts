@@ -246,6 +246,28 @@ describe('QuotaService — configure 持久化（任务 4，A1-5 写侧切换：
     expect(existsSync(extrasPath)).toBe(false)
   })
 
+  it('persist 失败（extrasStore.modify reject）→ ok=false + "failed to persist quota config"，secrets 副作用不回滚', async () => {
+    // round-1 review MUST_FIX #2：persistQuotaConfig 的 modify catch 分支——
+    // cookie 文件已写（副作用发生在 persist 之前）但 providers.json 持久化失败，
+    // configure 必须报错而不是静默吞掉
+    vi.mocked(getProviderConfig).mockImplementation(() => ({
+      name: 'test',
+      baseUrl: 'https://xiaomimimo.com',
+    }))
+    const modifySpy = vi.spyOn(extrasStore, 'modify').mockRejectedValue(new Error('EACCES: disk full'))
+    const svc = new QuotaService({ dataDir: tmpDir, providerExtrasStore: extrasStore })
+
+    const result = await svc.configure('mimo-id', true, 'session=abc123', 'mimo')
+
+    expect(result).toEqual({ ok: false, error: 'failed to persist quota config' })
+    expect(modifySpy).toHaveBeenCalledTimes(1)
+    // secrets 副作用已发生：cookie 文件已落盘（持久化失败不回滚已写 secret）
+    expect(readFileSync(join(tmpDir, 'secrets', 'mimo-id-cookie.txt'), 'utf-8')).toBe('session=abc123')
+    // providers.json 未物化，models.json 也不写（寄生字段禁复活）
+    expect(existsSync(extrasPath)).toBe(false)
+    expect(upsertProvider).not.toHaveBeenCalled()
+  })
+
   it('configure cookie 类写入 cookie 文件 + 标记 cookieSet', async () => {
     vi.mocked(getProviderConfig).mockImplementation(() => ({
       name: 'test',

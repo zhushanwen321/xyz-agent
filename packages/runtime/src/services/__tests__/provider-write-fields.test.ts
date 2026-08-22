@@ -203,6 +203,14 @@ describe('B-4b：模型写入白名单 reasoning/maxTokens/cost/headers', () => 
       // pi ModelCostSchema 四字段必填：缺字段写入会让 pi 拒载整个 models.json
       models: [{ id: 'm1', cost: { input: 1 } }],
     })).rejects.toThrow(/Invalid cost for model "m1".*"output"/)
+    // round-1 review MUST_FIX #3：sanitizeModelCost 两个 throw 守卫——
+    // cost 非对象（传入整体非法形状）/ tiers 非数组（可选字段存在时类型错）
+    await expect(svc.setProvider('my-proxy', {
+      models: [{ id: 'm1', cost: 'x' as unknown as Record<string, unknown> }],
+    })).rejects.toThrow(/Invalid cost for model "m1": expected an object with input\/output\/cacheRead\/cacheWrite numbers/)
+    await expect(svc.setProvider('my-proxy', {
+      models: [{ id: 'm1', cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.2, tiers: 'no' as unknown as Array<{ inputTokensAbove: number; input: number; output: number; cacheRead: number; cacheWrite: number }> } }],
+    })).rejects.toThrow(/Invalid cost for model "m1": "tiers" must be an array/)
     await expect(svc.setProvider('my-proxy', {
       models: [{ id: 'm1', headers: ['bad'] as unknown as Record<string, string> }],
     })).rejects.toThrow(/Invalid headers for model "m1"/)

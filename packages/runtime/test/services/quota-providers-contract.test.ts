@@ -199,6 +199,12 @@ describe('minimaxFetcher — A2-1 错误通道', () => {
     expect(outcome).toEqual({ ok: false, reason: 'unauthorized' })
   })
 
+  it('fetch 网络异常（reject）→ reason=network', async () => {
+    mockFetch.mockRejectedValue(new TypeError('fetch failed'))
+    const outcome = await minimaxFetcher.fetchQuota('cred', 'api-key')
+    expect(outcome).toEqual({ ok: false, reason: 'network' })
+  })
+
   it('200 但响应体非法 JSON → reason=parse', async () => {
     mockFetch.mockResolvedValue(new Response('nope', { status: 200 }))
     const outcome = await minimaxFetcher.fetchQuota('cred', 'api-key')
@@ -236,6 +242,12 @@ describe('mimoFetcher — A2-1 错误通道', () => {
     mockFetch.mockResolvedValue(jsonResponse({}, 401))
     const outcome = await mimoFetcher.fetchQuota('cookie-val', 'cookie')
     expect(outcome).toEqual({ ok: false, reason: 'unauthorized' })
+  })
+
+  it('fetch 网络异常（reject）→ reason=network', async () => {
+    mockFetch.mockRejectedValue(new TypeError('fetch failed'))
+    const outcome = await mimoFetcher.fetchQuota('cookie-val', 'cookie')
+    expect(outcome).toEqual({ ok: false, reason: 'network' })
   })
 
   it('200 但响应体非法 JSON → reason=parse', async () => {
