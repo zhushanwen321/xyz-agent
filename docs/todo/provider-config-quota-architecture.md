@@ -391,6 +391,14 @@ Provider 行展开体（ProviderEditBody 泛化，唯一编辑入口；QuickSetu
 
 kimi oauth token 实测 usages → openai-codex / anthropic（Claude Pro/Max）用量端点对第三方 oauth token 的兼容性实测 → 按结果新增 fetcher。实测不通过则该平台降级或放弃，如实记录。
 
+同步任务（PR #187 review R1/R2 带出，2026-08-22 登记）：`extensions/shared/quota-providers`（服务 pi CLI model-switch 的独立额度实现，§1 Out scope 的「两套 fetcher 合并」短期不做）与 runtime `packages/runtime/src/services/quota-providers` 的 kimi 能力已漂移三件，需按件评估同步：
+
+1. **kimi oauth 凭证源**：runtime 侧 `auth: ['api-key','oauth']`（kimi.ts，凭证链含 auth.json oauth access token）；extension 侧 `kimi-coding.ts` 仅读 `KIMI_API_KEY` env + `secrets/kimi-coding-api-key.txt`，无 oauth 通道。
+2. **reason 失败通道**：runtime 侧 `QuotaFetchOutcome` `{ ok:false, reason }` 失败可区分（unauthorized/network/no-subscription/parse）；extension 侧失败一律返回 `null` 无原因。
+3. **QuotaWindow 绝对量**：runtime 侧窗口含 `used/limit/unit` 绝对量（A2-3，不再折算 pct 丢弃）；extension 侧 `KimiCodingWindow` 仍是 `usedPct` 百分比形态。
+
+影响面：oauth-only 凭证的 kimi 用户在 pi CLI model-switch 额度缺位（extension 侧拿不到凭证直接 null）；同步前该缺口持续存在。同步实施时注意两侧凭证文件路径约定一致（runtime secrets 目录 vs extension `getAgentDir()/secrets`），并同步补齐两侧契约测试。
+
 ### 文件改动地图
 
 - 新增：`<agentDir>/config/providers.json`（运行时生成）；`packages/runtime/src/services/provider-extras-store.ts`（XyzProviderStore）

@@ -82,7 +82,7 @@ export function getHighlighter(): Promise<Highlighter> {
       // script-src 'self'，WebAssembly.instantiate 会被 CSP 拒绝（CompileError）→ createHighlighter
       // 抛错 → 全部 markdown 渲染静默降级纯文本（2026-08-21 v0.9.3 起线上事故：对话流/气泡/
       // drawer skill 文档全部无格式 + 换行丢失）。防护：.githooks/check_csp_compatibility.py
-      // 源码级拦 WebAssembly 用法；产物级扫描见 scripts/validate-runtime-bundle.sh。
+      // 源码级拦 WebAssembly 用法；产物级扫描见 scripts/postbuild-validate.sh [3/6]。
       engine: createJavaScriptRegexEngine(),
     })
   }
