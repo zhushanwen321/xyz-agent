@@ -13,7 +13,7 @@ const ROOT_DIR = resolve(PKG_DIR, '../..')
  * 验证：
  * 1. tsc --noEmit 编译通过
  * 2. index.ts 导出 SESSION_MANAGER_MARKER
- * 3. index.ts 导出 SessionManagerIntent
+ * 3. index.ts 导出 SessionManagerRequest
  */
 describe('U1-A1 marker 常量 + 请求/结果 schema 类型 + 审计 entry schema 单一 SSOT', () => {
   it('U1-A1 tsc --noEmit 编译通过', () => {
@@ -30,9 +30,9 @@ describe('U1-A1 marker 常量 + 请求/结果 schema 类型 + 审计 entry schem
     expect(content).toContain('SESSION_MANAGER_MARKER')
   })
 
-  it('U1-A1 index.ts 导出 SessionManagerIntent', () => {
+  it('U1-A1 index.ts 导出 SessionManagerRequest', () => {
     const content = readFileSync(INDEX_TS, 'utf-8')
-    expect(content).toContain('SessionManagerIntent')
+    expect(content).toContain('SessionManagerRequest')
   })
 })
 
