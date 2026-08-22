@@ -92,8 +92,9 @@ function ensureFileExists(filePath: string): void {
   }
 }
 
-/** scopedModels 条目格式：provider/modelId（与 settings-message-handler 的 RPC 写侧校验同款）。 */
-const SCOPED_MODEL_REGEX = /^[^/]+\/.+$/
+/** scopedModels 条目格式契约（provider/modelId）：写侧校验（settings-message-handler
+ * config.setScopedModels）与读侧 sanitize（sanitizeScopedModels）共用同一正则。 */
+export const SCOPED_MODEL_REGEX = /^[^/]+\/.+$/
 
 /**
  * scopedModels 读侧独立容错（design §3.2 兼容性 / §风险矩阵）：非 string[] 或条目非

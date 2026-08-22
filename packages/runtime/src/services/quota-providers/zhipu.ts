@@ -7,7 +7,7 @@
  */
 
 import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome, QuotaWindow } from './types.js'
-import { INFINITE_WIN, statusToReason } from './types.js'
+import { INFINITE_WIN, isRecord, statusToReason } from './types.js'
 
 const FETCH_TIMEOUT_MS = 5000
 const SEC_PER_DAY = 86400
@@ -38,12 +38,12 @@ interface ZhipuApiResponse {
  * 字段类型漂移归 parse（防 `data: "abc"` 等形态静默产出 INFINITE_WIN 错数据）。
  */
 function isZhipuResponse(v: unknown): v is ZhipuApiResponse {
-  if (typeof v !== 'object' || v === null) return false
-  const o = v as Record<string, unknown>
+  if (!isRecord(v)) return false
+  const o = v
   if (o.success !== undefined && typeof o.success !== 'boolean') return false
   if (o.data === undefined) return true
-  if (typeof o.data !== 'object' || o.data === null) return false
-  const d = o.data as Record<string, unknown>
+  if (!isRecord(o.data)) return false
+  const d = o.data
   if (d.level !== undefined && typeof d.level !== 'string') return false
   if (d.limits !== undefined && !Array.isArray(d.limits)) return false
   return true

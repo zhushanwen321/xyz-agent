@@ -7,7 +7,7 @@
  */
 
 import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome, QuotaWindow } from './types.js'
-import { INFINITE_WIN, statusToReason } from './types.js'
+import { INFINITE_WIN, isRecord, statusToReason } from './types.js'
 import { logger } from '../../infra/logger.js'
 
 const FETCH_TIMEOUT_MS = 5000
@@ -41,8 +41,8 @@ interface KimiApiResponse {
  * （防 `{"limits":"abc"}` 时 string.length truthy 绕过 no-subscription 检查产出错数据）。
  */
 function isKimiResponse(v: unknown): v is KimiApiResponse {
-  if (typeof v !== 'object' || v === null) return false
-  const o = v as Record<string, unknown>
+  if (!isRecord(v)) return false
+  const o = v
   if (o.limits !== undefined && !Array.isArray(o.limits)) return false
   if (o.usage !== undefined && (typeof o.usage !== 'object' || o.usage === null)) return false
   return true
@@ -54,35 +54,40 @@ function isoResetRemaining(iso: string): number {
   return Math.max(0, Math.floor(ms / MS_PER_SEC))
 }
 
-/** 5h 滚动窗口（A2-3：limit/remaining 已从 API 拿到，绝对量不再折算 pct 后丢弃） */
+/** requests 类窗口构造（A2-3：绝对量直出，limit/remaining 已从 API 拿到；limit≤0 视为无限）。 */
+function requestsWindow(limit: number, used: number, resetSec: number | null): QuotaWindow {
+  return limit > 0
+    ? {
+      pct: Math.round((used / limit) * PERCENT_SCALE),
+      used,
+      limit,
+      unit: 'requests' as const,
+      resetSec,
+    }
+    : INFINITE_WIN
+}
+
+/** 5h 滚动窗口（limit − remaining 折算 used） */
 function buildWin5h(data: KimiApiResponse): QuotaWindow {
   const winDetail = data?.limits?.[0]?.detail
   const winLimit = Number(winDetail?.limit ?? 0)
   const winRemaining = Number(winDetail?.remaining ?? 0)
-  return winLimit > 0
-    ? {
-      pct: Math.round(((winLimit - winRemaining) / winLimit) * PERCENT_SCALE),
-      used: winLimit - winRemaining,
-      limit: winLimit,
-      unit: 'requests' as const,
-      resetSec: winDetail?.resetTime ? isoResetRemaining(winDetail.resetTime) : null,
-    }
-    : INFINITE_WIN
+  return requestsWindow(
+    winLimit,
+    winLimit - winRemaining,
+    winDetail?.resetTime ? isoResetRemaining(winDetail.resetTime) : null,
+  )
 }
 
 /** 每日/周窗口（usage 字段，绝对量直出） */
 function buildWinWk(data: KimiApiResponse): QuotaWindow {
   const dailyLimit = Number(data?.usage?.limit ?? 0)
   const dailyUsed = Number(data?.usage?.used ?? 0)
-  return dailyLimit > 0
-    ? {
-      pct: Math.round((dailyUsed / dailyLimit) * PERCENT_SCALE),
-      used: dailyUsed,
-      limit: dailyLimit,
-      unit: 'requests' as const,
-      resetSec: data?.usage?.resetTime ? isoResetRemaining(data.usage.resetTime) : null,
-    }
-    : INFINITE_WIN
+  return requestsWindow(
+    dailyLimit,
+    dailyUsed,
+    data?.usage?.resetTime ? isoResetRemaining(data.usage.resetTime) : null,
+  )
 }
 
 export const kimiFetcher: ProviderQuotaFetcher = {

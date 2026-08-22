@@ -10,7 +10,7 @@
  */
 
 import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome } from './types.js'
-import { INFINITE_WIN, statusToReason } from './types.js'
+import { INFINITE_WIN, isRecord, statusToReason } from './types.js'
 import { logger } from '../../infra/logger.js'
 
 const FETCH_TIMEOUT_MS = 5000
@@ -43,8 +43,8 @@ interface MinimaxApiResponse {
  * 字段类型漂移归 parse（防 `base_resp: "err"` 等形态在 string 上取属性静默走错分支）。
  */
 function isMinimaxResponse(v: unknown): v is MinimaxApiResponse {
-  if (typeof v !== 'object' || v === null) return false
-  const o = v as Record<string, unknown>
+  if (!isRecord(v)) return false
+  const o = v
   if (o.base_resp !== undefined && (typeof o.base_resp !== 'object' || o.base_resp === null)) return false
   if (o.model_remains !== undefined && !Array.isArray(o.model_remains)) return false
   return true

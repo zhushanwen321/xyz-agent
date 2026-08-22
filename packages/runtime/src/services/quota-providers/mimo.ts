@@ -9,7 +9,7 @@
  */
 
 import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome } from './types.js'
-import { INFINITE_WIN, statusToReason } from './types.js'
+import { INFINITE_WIN, isRecord, statusToReason } from './types.js'
 import { logger } from '../../infra/logger.js'
 
 const FETCH_TIMEOUT_MS = 5000
@@ -37,12 +37,12 @@ interface MimoApiResponse {
  * 字段类型漂移归 parse（防 `"401"` 等字符串 code 绕过 `!== 0` 判定产出错数据）。
  */
 function isMimoResponse(v: unknown): v is MimoApiResponse {
-  if (typeof v !== 'object' || v === null) return false
-  const o = v as Record<string, unknown>
+  if (!isRecord(v)) return false
+  const o = v
   if (typeof o.code !== 'number') return false
   if (o.data === undefined) return true
-  if (typeof o.data !== 'object' || o.data === null) return false
-  const d = o.data as Record<string, unknown>
+  if (!isRecord(o.data)) return false
+  const d = o.data
   if (d.monthUsage !== undefined && (typeof d.monthUsage !== 'object' || d.monthUsage === null)) return false
   return true
 }

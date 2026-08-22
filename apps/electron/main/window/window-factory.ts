@@ -67,11 +67,7 @@ async function loadWindowContent(
 ): Promise<void> {
   const isE2E = process.env.XYZ_E2E === '1'
   try {
-    if (isE2E) {
-      const query: Record<string, string> = { windowId }
-      if (options?.sessionId) query.sessionId = options.sessionId
-      win.loadFile(path.join(app.getAppPath(), 'renderer/dist/index.html'), { query })
-    } else if (deps.isDev) {
+    if (!isE2E && deps.isDev) {
       const params = new URLSearchParams({ windowId })
       if (options?.sessionId) params.set('sessionId', options.sessionId)
       // W7 幽灵窗口清理：BrowserWindow 已在 show:false 状态下创建，若 Vite dev server
@@ -83,6 +79,7 @@ async function loadWindowContent(
         win.webContents.openDevTools()
       }
     } else {
+      // E2E 与 prod 共用：加载构建产物（E2E 仅跳过 dev server 轮询，见函数 docstring）
       const query: Record<string, string> = { windowId }
       if (options?.sessionId) query.sessionId = options.sessionId
       win.loadFile(path.join(app.getAppPath(), 'renderer/dist/index.html'), { query })

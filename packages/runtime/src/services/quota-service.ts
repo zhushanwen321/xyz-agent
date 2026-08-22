@@ -121,19 +121,17 @@ export class QuotaService {
 
   constructor(options: QuotaServiceOptions | string = {}) {
     // 兼容旧签名：直接传 dataDir 字符串
-    const dir = typeof options === 'string' ? options : (options.dataDir ?? getDataDir())
+    const opts: QuotaServiceOptions = typeof options === 'string' ? {} : options
+    const dir = typeof options === 'string' ? options : (opts.dataDir ?? getDataDir())
     this.cache = new QuotaCache(dir)
     this.secretsDir = join(dir, 'secrets')
-    this.getProviderInfo = typeof options === 'object' && options.getProviderInfo
-      ? options.getProviderInfo
-      : () => undefined
-    this.extrasStore = typeof options === 'object' ? options.providerExtrasStore : undefined
-    this.getProviderConfigOpt = typeof options === 'object' ? options.getProviderConfig : undefined
-    this.providerExists = typeof options === 'object' && options.providerExists
-      ? options.providerExists
+    this.getProviderInfo = opts.getProviderInfo ?? (() => undefined)
+    this.extrasStore = opts.providerExtrasStore
+    this.getProviderConfigOpt = opts.getProviderConfig
+    this.providerExists = opts.providerExists
       // 保守默认：维持旧限制语义（models.json 有条目才可配置），生产恒注入聚合判定
-      : (providerId) => this.readProviderConfig(providerId) !== undefined
-    this.getAuthCredential = typeof options === 'object' ? options.getAuthCredential : undefined
+      ?? ((providerId) => this.readProviderConfig(providerId) !== undefined)
+    this.getAuthCredential = opts.getAuthCredential
   }
 
   /**
@@ -214,14 +212,10 @@ export class QuotaService {
   getCached(providerId: string): QuotaFetchResult {
     const entry = this.cache.getEntry(providerId)
     const reason = this.lastFailure.get(providerId)
-    if (!entry) {
-      return reason !== undefined
-        ? { data: null, lastFetchAt: null, reason }
-        : { data: null, lastFetchAt: null }
-    }
-    return reason !== undefined
-      ? { data: entry.data, lastFetchAt: entry.lastFetchAt, reason }
-      : { data: entry.data, lastFetchAt: entry.lastFetchAt }
+    const base = entry
+      ? { data: entry.data, lastFetchAt: entry.lastFetchAt }
+      : { data: null, lastFetchAt: null }
+    return reason !== undefined ? { ...base, reason } : base
   }
 
   /**
@@ -401,21 +395,24 @@ export class QuotaService {
         return { data: outcome.data, lastFetchAt: Date.now() }
       }
 
-      // 查询失败（ok:false，reason 可区分）：记录失败原因，返回失败态——data 置 null
+      // 查询失败（ok:false，reason 可区分）：返回失败态——data 置 null
       // 不再降级展示旧缓存（§3.4 失败态语义：旧缓存保留内存，可经 getCached 查看并
       // 标注 lastFetchAt）；401 恢复指引文案归 Phase B（i18n key 已就绪）。
-      this.lastFailure.set(providerId, outcome.reason)
       logger.warn('[quota] fetch failed', { providerId, reason: outcome.reason })
-      const lastSuccessAt = this.cache.getEntry(providerId)?.lastFetchAt ?? null
-      return { data: null, lastFetchAt: lastSuccessAt, reason: outcome.reason }
+      return this.fetchFailed(providerId, outcome.reason)
     } catch (err) {
       // 异常防御（fetcher 契约不 throw，此处兜底逃逸异常）：按 network 失败态处理 + log
       const msg = err instanceof Error ? err.message : String(err)
-      this.lastFailure.set(providerId, 'network')
       logger.warn('[quota] fetch threw', { providerId, error: msg })
-      const lastSuccessAt = this.cache.getEntry(providerId)?.lastFetchAt ?? null
-      return { data: null, lastFetchAt: lastSuccessAt, reason: 'network' }
+      return this.fetchFailed(providerId, 'network')
     }
+  }
+
+  /** 失败态构造（A2-4）：记录失败原因；lastFetchAt 标注上次成功时间（§3.4 旧缓存标注语义）。 */
+  private fetchFailed(providerId: string, reason: QuotaFetchFailureReason): QuotaFetchResult {
+    this.lastFailure.set(providerId, reason)
+    const lastSuccessAt = this.cache.getEntry(providerId)?.lastFetchAt ?? null
+    return { data: null, lastFetchAt: lastSuccessAt, reason }
   }
 
   /**

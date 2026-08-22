@@ -25,3 +25,8 @@ const HTTP_FORBIDDEN = 403
 export function statusToReason(status: number): QuotaFetchFailureReason {
   return status === HTTP_UNAUTHORIZED || status === HTTP_FORBIDDEN ? 'unauthorized' : 'network'
 }
+
+/** shape guard 公共前置：v 是非 null 对象（各平台 guard 首行统一用）。 */
+export function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null
+}

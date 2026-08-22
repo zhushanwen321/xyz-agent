@@ -157,9 +157,9 @@ export async function migrateProviderExtras(
 
 /**
  * providers.json 读能力（双读回退的最小接口，A1-3 读侧切换）。XyzProviderStore 结构匹配。
- * 含 cleanScopedModelsResidue：removeProviderByKind（消费本类型）删 provider 后需清 scoped 残留。
+ * 纯读：删除链方法（cleanScopedModelsResidue）由消费方另注 ProviderExtrasDeleter。
  */
-export type ProviderExtrasReader = Pick<XyzProviderStore, 'getExtrasSync' | 'readAllSync' | 'cleanScopedModelsResidue'>
+export type ProviderExtrasReader = Pick<XyzProviderStore, 'getExtrasSync' | 'readAllSync'>
 
 /**
  * 双读回退（A1-3 读侧切换）：providers.json 优先，无条目时回退读 models.json 旧寄生

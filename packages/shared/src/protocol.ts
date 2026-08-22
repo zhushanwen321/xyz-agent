@@ -69,7 +69,7 @@ export type ClientMessageType =
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'message.bash' | 'message.abortBash'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
-  | 'config.discoverModels' | 'config.setDefaultModel' | 'config.setScopedModels'
+  | 'config.discoverModels' | 'config.setDefaultModel'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
   | 'config.scanSessionSkills'
   | 'config.getGlobalSkills' | 'config.getProjectSkills'
@@ -149,6 +149,15 @@ export type ClientMessageType =
   | 'config.setScopedModels'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
+
+/** quota fetch/getCached/refresh 三 reply 的共享 payload（A2-4）：
+ *  data=null 失败态时携带 reason（getCached 为内存中最近一次失败原因，
+ *  UI 失败态 + 「查看上次成功数据」入口用，Phase B 渲染）。 */
+export interface QuotaFetchResultPayload {
+  data: import('./quota-types').NormalizedQuotaRow | null
+  lastFetchAt: number | null
+  reason?: import('./quota-types').QuotaFetchFailureReason
+}
 
 /** config.setProvider 除 providerId 外的透传字段，与 IConfigService.setProvider 参数对齐。
  *  models 元素字段与 runtime ConfigModelDefinition 对齐（含 api/baseUrl/enabled 透传位，
@@ -1077,12 +1086,11 @@ export interface ServerMessageMapBase {
   'terminal.ack': Record<string, never>
   // config.terminalConfig：reply + broadcast + sendInitialState 三用（复刻 config.systemPrompt 范式）。
   'config.terminalConfig': { config: TerminalConfig; corrupted?: boolean }
-  // Coding Plan 额度查询。reason（A2-4）：最近一次查询失败原因，data=null 的失败态出现；
-  // getCached 携带内存中最近一次失败 reason（UI 失败态 + 「查看上次成功数据」入口用，Phase B 渲染）。
-  'quota.fetch:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null; reason?: import('./quota-types').QuotaFetchFailureReason }
-  'quota.getCached:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null; reason?: import('./quota-types').QuotaFetchFailureReason }
+  // Coding Plan 额度查询（payload 见 QuotaFetchResultPayload）。
+  'quota.fetch:result': QuotaFetchResultPayload
+  'quota.getCached:result': QuotaFetchResultPayload
   'quota.configure:result': { ok: boolean; error?: string }
-  'quota.refresh:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null; reason?: import('./quota-types').QuotaFetchFailureReason }
+  'quota.refresh:result': QuotaFetchResultPayload
   /** worktree.branches：worktree.listBranches 的 reply（本地/远程分支列表 + 默认分支名）。 */
   'worktree.branches': { local: string[]; remote: string[]; defaultBranch: string }
   /** worktree.list:result：worktree.list 的 reply（worktree 条目列表）。 */
