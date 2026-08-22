@@ -203,6 +203,16 @@ npx stryker run
 
 `.review/metrics.json`（阶段 1.5 必然产出）与 `.review/coverage.json`（阶段 1.6）由以下维度按各自 agent 定义的输入约定消费：review-test-coverage 消费 `targets.high_crap` 靶子清单（优先核对这些函数的测试覆盖）+ coverage.json 的 `uncovered_files` 清单（增量未覆盖文件优先补测试）；review-monorepo-impact 消费 `fail`/`warn` 中的循环依赖条目（不再手工 grep import 链）。其余 6 维不变。
 
+### 阶段 2 前置：约束动态加载（`.review/constraints.md` 产物）
+
+进入阶段 2 前主 agent 先跑（两路径共用，workflow 派的 review agent 与手工派的 subagent 都按 agent 定义内的消费约定自读）：
+
+```bash
+node scripts/select-constraints.mjs --base main
+```
+
+按 diff 范围从 `docs/constraints.json`（架构约束登记 SSOT，69 条）选择命中约束，落盘 `.review/constraints.md`：scope 为 `global` 的核心不变量每次必载，其余按改动路径前缀命中（只改 renderer 不载 extension 约束）。8 个 review agent 定义均含消费约定——清单中 dimensions 含本维度的条目必须逐条核对，`enforcement: review` 的条目是本维度重点；需要完整表述时 Read「权威源」列指向的文档原文（清单里的 summary 仅导航）。
+
 ### [MANDATORY] 双路径选择
 
 #### 路径 1：pi 环境（有 pi workflow 能力）
@@ -243,6 +253,7 @@ pi workflow run review-fix-loop --args '{
 **Step 1 — 确认变更范围**（主 agent 自己跑）：
 ```bash
 git diff main...HEAD --stat
+node scripts/select-constraints.mjs --base main   # 产出 .review/constraints.md（命中约束清单，reviewer 消费）
 ```
 
 **Step 2 — 并行派 reviewer subagent**：8 个维度按「维度 → Agent 映射」表全派。**并行上限 ≤5**（全局 AGENTS.md subagent 约束）：分两批派发（batch1: arch-boundary / business-logic / type-safety / electron-build / test-coverage，batch2: extension-api / monorepo-impact / data-governance），或按全局规则「一般用 3 个」分三批。每个 subagent 的 task 必须包含：
@@ -250,6 +261,7 @@ git diff main...HEAD --stat
 - worktree cwd（绝对路径，避免 multi-worktree cwd 陷阱）
 - focus（见下方「维度 → Agent 映射」表对应审查焦点）
 - agent 定义文件路径（`<repo>/.agents/skills/pr-cr-fix/agents/review-<维度>.md`，subagent 须复读原文获得完整 checklist）
+- `.review/constraints.md` 命中约束清单（存在时必须消费：dimensions 含本维度的条目逐条核对，`enforcement: review` 的条目是重点；权威源文档按需 Read 原文）
 - `output 路径：<绝对路径>` + `Write report to: <绝对路径>`（双措辞兼容 agent 约定）
 - 「审查 `git diff main...HEAD` 的全部变更」
 - 「输出格式：YAML frontmatter（verdict/must_fix）+ Findings 表格（优先级 | 文件 | 行号 | 类别 | 描述 | 修复方向），优先级用 MUST_FIX/SUGGESTION/INFO」

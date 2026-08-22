@@ -19,6 +19,9 @@ task prompt 中必须包含：
 阶段 1.6 产物 `<repo>/.review/coverage.json` 存在时必须消费：
 - 各包 `uncovered_files` 清单（增量可执行行未覆盖文件 + 命中数/总数）：这些是**实测**（跑过测试）的增量覆盖缺口，比静态估算更权威——清单内文件的新增分支逻辑无测试 → MUST_FIX；补测试建议直接引用该清单的行缺口数字
 
+
+阶段 2 前置产物 `<repo>/.review/constraints.md`（`node scripts/select-constraints.mjs --base main` 产出，存在时必须消费）：命中约束清单中 dimensions 含本维度（test-coverage）的条目必须逐条核对——enforcement 为 review 的条目是本维度重点；需要完整表述时 Read「权威源」列指向的文档原文（清单中的 summary 仅导航）。
+
 ## 执行步骤
 
 1. **获取变更范围**：`git diff main...HEAD --stat` + `git diff main...HEAD`。

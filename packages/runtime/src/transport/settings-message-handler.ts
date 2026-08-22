@@ -446,6 +446,30 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.renameModel', { model: this.ctx.configService.getRenameModel() })
         return true
       }
+      case 'config.getSmartContextConfig': {
+        this.ctx.reply(ws, msg.id, 'config.smartContextConfig', this.ctx.configService.getSmartContextConfig())
+        return true
+      }
+      case 'config.setSmartContextEnabled': {
+        this.ctx.configService.setSmartContextEnabled(msg.payload.enabled)
+        this.ctx.reply(ws, msg.id, 'config.smartContextEnabled', { enabled: this.ctx.configService.getSmartContextConfig().enabled })
+        return true
+      }
+      case 'config.setSmartContextCompactModel': {
+        this.ctx.configService.setSmartContextCompactModel(msg.payload.model)
+        this.ctx.reply(ws, msg.id, 'config.smartContextCompactModel', { model: this.ctx.configService.getSmartContextConfig().compactModel })
+        return true
+      }
+      case 'config.setSmartContextThresholds': {
+        this.ctx.configService.setSmartContextThresholds(msg.payload.thresholds)
+        this.ctx.reply(ws, msg.id, 'config.smartContextThresholds', { thresholds: this.ctx.configService.getSmartContextConfig().reminderThresholds })
+        return true
+      }
+      case 'config.setSmartContextExcludedModels': {
+        this.ctx.configService.setSmartContextExcludedModels(msg.payload.models)
+        this.ctx.reply(ws, msg.id, 'config.smartContextExcludedModels', { models: this.ctx.configService.getSmartContextConfig().excludedModels })
+        return true
+      }
       // tool.approve / tool.deny / tool.always_allow：已删除的 no-op 占位。
       // 这些 type 此前只是 `return true` 以避免 unknown_type，但工具审批的实际路径是
       // pi 的 extension_ui_request（method:'confirm'）→ extension.ui_request/ui_response 流

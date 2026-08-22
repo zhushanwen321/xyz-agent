@@ -12,6 +12,7 @@ Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构分层�
 
 | 主题 | 文档 |
 |------|------|
+| **架构约束登记表（SSOT）** | [docs/constraints.json](docs/constraints.json)（机器权威）· [docs/constraints.md](docs/constraints.md)（生成式人读视图）——全部架构级约束的 id/scope/权威源/执行方式登记处；新增约束先登记再写代码，改 json 后跑 `node scripts/render-constraints.mjs` 重新生成 md；CR 动态加载：`node scripts/select-constraints.mjs --base main` |
 | 完整编码规范 / UI 设计演变 / 术语表 | [docs/standards.md](docs/standards.md) · [design-evolution.md](docs/design-evolution.md) · [architecture/context.md](docs/architecture/context.md) |
 | 设计系统（tokens / 原语层 / v6 SSOT / 视觉规格） | [docs/page-design/](docs/page-design/)（design-tokens.md · design-system.md · v6-master-spec.md · v6-spec-*.html；能力设计 spec 在 `archive/v3/`。禁止创建 `demos/`、`impeccable/` 目录） |
 | 窗口顶部 traffic light 布局数值 SSOT | [traffic-light-layout.md](docs/page-design/traffic-light-layout.md)（v3 刻意调整形态，不遵循 v6 demo） |
@@ -20,15 +21,15 @@ Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构分层�
 | 测试策略 SSOT | [TEST-STRATEGY.md](TEST-STRATEGY.md) + [docs/testing/](docs/testing/)（00 总览入口；testid 清单/调用链/已知坑） |
 | Release Notes 写作规范 | [docs/release-notes.md](docs/release-notes.md)（merge 阶段 5 撰写 notes 前必读：三节结构 / 30 字模糊化 / 工程细节不进 note） |
 | 问题排查（日志/诊断/常见问题/历史排查规则） | [docs/troubleshooting.md](docs/troubleshooting.md) |
-| Pi Extension 开发 | [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（指南）· [extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）· [glossary.md](docs/extensions/glossary.md) · [local-dev-guide.md](docs/extensions/local-dev-guide.md) |
+| Pi Extension 开发 | [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（指南）· [extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）· [logging-conventions.md](docs/extensions/logging-conventions.md)（日志现行 SSOT）· [glossary.md](docs/extensions/glossary.md) · [local-dev-guide.md](docs/extensions/local-dev-guide.md) |
 | 待执行架构任务 | [docs/todo/remote-use-merge-architecture.md](docs/todo/remote-use-merge-architecture.md)（合并 remote-use 后删除） |
 
 **外部依赖 pi**：[badlogic/pi-mono](https://github.com/badlogic/pi-mono) 上游（npm `@earendil-works/pi-coding-agent@0.84.1`，曾用 fork xyz-pi 已切回）。**[MANDATORY] 不修改 pi 源码、不提 PR、不 fork**——pi 没有的能力由 xyz-agent 自实现。**pi 语义断言的权威源 = node_modules 实装版**（断言前 `npm ls @earendil-works/pi-coding-agent` 核对版本，以 dist 编译 JS 为准）；clone `~/Code/git-fork/pi-mono-workspace/main/packages/`（coding-agent/src 核心逻辑、ai/src/providers provider 层）仅作可读 TS 参照，引用前须核对 clone 版本与实装一致（clone 领先/落后实装均属常态——曾因按 0.80.3 clone 断言 0.84.1 行为连产 4 条漂移 bug，审计 C #6）。不靠网络搜索。
 
-**Pi Extension 源码（本项目维护）**：`extensions/` 下 19 个 `@zhushanwen/pi-*` 包，按职责分两组（约定见 [extension-conventions.md](docs/extensions/extension-conventions.md)「目录分组」）+ `extensions/shared/` 共享库（quota-providers / llm-shared / extension-logger / file-lock），统一在本仓开发发布（旧仓 xyz-pi-extensions-workspace 已废弃，以本仓为准）。分组（package.json `xyz-agent.role` 字段必须与所在分组一致，`scripts/check-extension-dependencies.mjs` 校验）：
+**Pi Extension 源码（本项目维护）**：`extensions/` 下 20 个 `@zhushanwen/pi-*` 包，按职责分两组（约定见 [extension-conventions.md](docs/extensions/extension-conventions.md)「目录分组」）+ `extensions/shared/` 共享库（quota-providers / llm-shared / extension-logger / file-lock），统一在本仓开发发布（旧仓 xyz-pi-extensions-workspace 已废弃，以本仓为准）。分组（package.json `xyz-agent.role` 字段必须与所在分组一致，`scripts/check-extension-dependencies.mjs` 校验）：
 
 - **`extensions/taiji/`**（role=taiji，xyz-agent 集成包——契约两端在 xyz-agent 体系内，离开 xyz-agent 无功能，必在 mandatory 清单）：agent-ext / msg-id-mapper / system-prompt / system-prompt-trace（builtin feature-tier，xyz:system-prompt 留痕）
-- **`extensions/universal/`**（role=universal，独立通用包——功能自足，独立 pi 用户可单独安装）：ask-user / cache-probe（前缀指纹采集 + analyze.py 归因） / cw-tool / goal / model-switch / pending-notifications / permission / plan / rename-session / scheduler / session-reader / structured-output / subagent-workflow / todo / unified-hooks
+- **`extensions/universal/`**（role=universal，独立通用包——功能自足，独立 pi 用户可单独安装）：ask-user / cache-probe（前缀指纹采集 + analyze.py 归因） / cw-tool / goal / model-switch / pending-notifications / permission / plan / rename-session / scheduler / session-reader / smart-context（agent 自决上下文压缩：compact_context 工具 + 双模式摘要接管 + 分档提醒） / structured-output / subagent-workflow / todo / unified-hooks
 
 新增/删包时更新此列举与所在分组。校验：`pnpm extensions:typecheck` / `extensions:lint` / `extensions:test`。
 

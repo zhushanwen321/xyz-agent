@@ -189,6 +189,22 @@
       "name": "@zhushanwen/pi-system-prompt-trace",
       "directory": "extensions/taiji/system-prompt-trace",
       "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-smart-context",
+      "directory": "extensions/universal/smart-context",
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-llm-shared",
+          "type": "package",
+          "reason": "top-level 静态 import resolveModel/loadConfig（src/pure.ts、src/compact-handler.ts），缺失即模块加载抛 Cannot find module"
+        },
+        {
+          "package": "@zhushanwen/pi-extension-logger",
+          "type": "package",
+          "reason": "top-level 静态 import createLogger/setPiHandle（src/compact-handler.ts、src/index.ts），缺失即模块加载抛 Cannot find module"
+        }
+      ]
     }
   ]
 }

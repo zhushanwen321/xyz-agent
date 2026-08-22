@@ -19,6 +19,11 @@
  *    extension 每次 turn_end 读时刷新（mtime+size 缓存），本侧写入后下一 turn 自动生效。
  *    只改 model 字段，保留文件内其他字段（enabled/maxTitleLength/thinkingLevel 及未来新增）。
  *
+ * 4. smart-context 配置（getSmartContextConfig / setSmartContext*）：读改写
+ *    ${PI_CODING_AGENT_DIR}/config/smart-context-ext-config.json（与 pi-smart-context
+ *    extension 的 llm-shared getConfigPath('smart-context') 路径契约对齐）。锁协议与
+ *    setRenameModel 逐字对齐（该文件同样被 runtime 与 extension 双方 RMW）。
+ *
  * 抽出原因：config-service.ts 因本次 PR 新增 migration 委托方法触顶 max-lines(500)。
  * worktree 偏好是 config-service 内最内聚、对外接口稳定（IConfigService 已声明）的块，
  * 移到本模块后 ConfigService 仅保留单行委托，行为 / 签名 / import 路径零变化。
@@ -216,12 +221,48 @@ export function setRenameConfigLockTimingForTest(opts: SyncFileLockOptions): voi
 /** JSON 序列化缩进格数（与 extension 侧 llm-shared saveConfig 的 JSON_INDENT 一致）。 */
 const JSON_INDENT = 2
 
-/** 从原始 JSON 对象提取 model.ref（仅认 {type:"ref", ref:string} 形态，其余返回空串）。 */
-function extractModelRef(raw: Record<string, unknown>): string {
-  const model = raw['model']
+/** 并发唯一 tmp 后缀：pid + 36 进制随机段（rename-session / smart-context 两个 RMW 写点共用）。 */
+function extConfigTmpSuffix(): string {
+  // 36 进制、跳过 "0." 前缀取 6 位，与 llm-shared uniqueTmpPath 同形态
+  // eslint-disable-next-line no-magic-numbers -- tmp 随机段形态契约，见上行注释
+  return `${process.pid}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+/** 从原始 JSON 对象提取指定字段的 ref（仅认 {type:"ref", ref:string} 形态，其余返回空串）。 */
+function extractRefString(raw: Record<string, unknown>, field: string): string {
+  const model = raw[field]
   if (typeof model !== 'object' || model === null || Array.isArray(model)) return ''
   const ref = (model as Record<string, unknown>)['ref']
   return typeof ref === 'string' ? ref : ''
+}
+
+/**
+ * ext-config 文件 RMW 只覆盖指定字段（rename / smart-context 两个写点共用）：读文件 → 展开基底 →
+ * apply 覆盖 → 原子写（2 空格缩进 + 尾换行，与 extension llm-shared saveConfig 序列化格式一致）。
+ * 文件不存在/坏 JSON → defaultBase()（与 extension 读取侧的回退语义一致：坏文件本来就无效）。
+ */
+function rmwExtConfigField(
+  configPath: string,
+  lockOptions: SyncFileLockOptions,
+  defaultBase: () => Record<string, unknown>,
+  apply: (base: Record<string, unknown>) => void,
+): void {
+  withFileLockSync(configPath, () => {
+    let base: Record<string, unknown>
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf-8'))
+      base = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        ? { ...(parsed as Record<string, unknown>) }
+        : defaultBase()
+    } catch {
+      base = defaultBase()
+    }
+    apply(base)
+    mkdirSync(dirname(configPath), { recursive: true })
+    // tmp 唯一化：对端（extension llm-shared saveConfig）写同一文件，其 tmp 已带 pid+随机段；
+    // 本侧留固定 .tmp 会与旧版对端碰撞（锁互斥下无害但脏残留），对齐同形态。
+    atomicWrite(configPath, `${JSON.stringify(base, null, JSON_INDENT)}\n`, extConfigTmpSuffix())
+  }, lockOptions)
 }
 
 /**
@@ -233,7 +274,7 @@ export function getRenameModel(): string {
   try {
     const parsed: unknown = JSON.parse(readFileSync(getRenameConfigPath(), 'utf-8'))
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return ''
-    return extractModelRef(parsed as Record<string, unknown>)
+    return extractRefString(parsed as Record<string, unknown>, 'model')
   } catch {
     return ''
   }
@@ -255,22 +296,159 @@ export function getRenameModel(): string {
  */
 export function setRenameModel(model: string): void {
   const normalized = model.includes('/') ? model : ''
-  const configPath = getRenameConfigPath()
-  withFileLockSync(configPath, () => {
-    let base: Record<string, unknown>
-    try {
-      const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf-8'))
-      base = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-        ? { ...(parsed as Record<string, unknown>) }
-        : { ...RENAME_MODEL_DEFAULT_CONFIG }
-    } catch {
-      // 文件不存在/坏 JSON → 默认基底（与 extension 读取侧的回退语义一致：坏文件本来就无效）
-      base = { ...RENAME_MODEL_DEFAULT_CONFIG }
+  rmwExtConfigField(
+    getRenameConfigPath(),
+    renameConfigLockOptions,
+    () => ({ ...RENAME_MODEL_DEFAULT_CONFIG }),
+    (base) => {
+      base['model'] = { type: 'ref', ref: normalized }
+    },
+  )
+}
+
+// ── smart-context 配置（config/smart-context-ext-config.json）──
+
+/**
+ * GUI 侧的 smart-context 配置快照（extension 侧 SmartContextConfig 的扁平视图：
+ * compactModel 折叠为 "provider/modelId" 复合串，空串 = 未设置/跟随当前会话模型）。
+ */
+export interface SmartContextConfigSnapshot {
+  enabled: boolean
+  /** 压缩模型 ref（"provider/modelId"，空串 = 未设置）。 */
+  compactModel: string
+  /** 3 档提醒阈值（token 绝对数，升序）。 */
+  reminderThresholds: number[]
+  /** 排除模型列表（完整 provider/modelId 精准匹配）。 */
+  excludedModels: string[]
+}
+
+/** 配置文件相对路径（与 pi-smart-context 的 llm-shared getConfigPath('smart-context') 契约一致）。 */
+const SMART_CONTEXT_CONFIG_REL = join('config', 'smart-context-ext-config.json')
+
+/** 3 档提醒阈值默认值工厂（token 绝对数，与 extension 的 DEFAULT_REMINDER_THRESHOLDS 一致）。 */
+function defaultThresholds(): number[] {
+  // eslint-disable-next-line no-magic-numbers -- 200K/400K/600K 是与 pi-smart-context extension 契约对齐的默认档位
+  return [200_000, 400_000, 600_000]
+}
+
+/** 提醒阈值最大档数（与 extension 的 MAX_THRESHOLD_TIERS 一致）。 */
+const SMART_CONTEXT_MAX_THRESHOLD_TIERS = 3
+
+/**
+ * 落盘默认基底工厂（文件缺失/损坏时用，与 extension 的 DEFAULT_SMART_CONTEXT_CONFIG 一致：
+ * extensions/universal/smart-context/src/pure.ts）。工厂形态保证每次全新对象/数组，
+ * 各 RMW 写点不共享嵌套引用。
+ */
+function smartContextDefaultBase(): Record<string, unknown> {
+  return {
+    enabled: true,
+    compactModel: { type: 'ref', ref: '' },
+    reminderThresholds: defaultThresholds(),
+    excludedModels: [],
+  }
+}
+
+/** smart-context 配置文件完整路径（${PI_CODING_AGENT_DIR}/config/smart-context-ext-config.json）。 */
+export function getSmartContextConfigPath(): string {
+  return join(getPiAgentDir(), SMART_CONTEXT_CONFIG_REL)
+}
+
+/**
+ * 锁参数覆盖（仅测试用）。生产保持 file-lock.ts 默认值，与 setRenameModel 同协议。
+ */
+let smartContextLockOptions: SyncFileLockOptions = {}
+
+/** 覆盖 smart-context-ext-config.json 写锁参数（仅测试用）。传 {} 恢复默认。 */
+export function setSmartContextLockTimingForTest(opts: SyncFileLockOptions): void {
+  smartContextLockOptions = opts
+}
+
+/**
+ * 阈值归一（与 extension normalizeSmartContextConfig 同款纪律）：过滤非正数/非有限数
+ * → 升序 → 截 3 档；空数组回退默认。
+ */
+function normalizeThresholds(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return defaultThresholds()
+  const thresholds = [...raw]
+    .filter((t): t is number => typeof t === 'number' && Number.isFinite(t) && t > 0)
+    .sort((a, b) => a - b)
+    .slice(0, SMART_CONTEXT_MAX_THRESHOLD_TIERS)
+  return thresholds.length > 0 ? thresholds : defaultThresholds()
+}
+
+/** 排除模型归一（与 extension 同款）：过滤非字符串与不含 "/" 的条目 → 去重（保序）。 */
+function normalizeExcludedModels(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return [...new Set(raw.filter((m): m is string => typeof m === 'string' && m.includes('/')))]
+}
+
+/**
+ * 读取 smart-context 配置快照。文件不存在/坏 JSON/字段非法 → 默认值
+ * （与 extension normalizeSmartContextConfig 的回退语义一致）。不抛错（防御性设计，与 getRenameModel 一致）。
+ */
+export function getSmartContextConfig(): SmartContextConfigSnapshot {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(getSmartContextConfigPath(), 'utf-8'))
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return smartContextDefaults()
     }
-    base['model'] = { type: 'ref', ref: normalized }
-    mkdirSync(dirname(configPath), { recursive: true })
-    // tmp 唯一化：对端（rename-session 扩展 llm-shared saveConfig）写同一文件，其 tmp 已带
-    // pid+随机段；本侧留固定 .tmp 会与旧版对端碰撞（锁互斥下无害但脏残留），对齐同形态。
-    atomicWrite(configPath, `${JSON.stringify(base, null, JSON_INDENT)}\n`, `${process.pid}_${Math.random().toString(36).slice(2, 8)}`)
-  }, renameConfigLockOptions)
+    const r = parsed as Record<string, unknown>
+    return {
+      enabled: typeof r['enabled'] === 'boolean' ? r['enabled'] : true,
+      compactModel: extractRefString(r, 'compactModel'),
+      reminderThresholds: normalizeThresholds(r['reminderThresholds']),
+      excludedModels: normalizeExcludedModels(r['excludedModels']),
+    }
+  } catch {
+    return smartContextDefaults()
+  }
+}
+
+/** 默认快照（与 smartContextDefaultBase 对应的扁平视图）。 */
+function smartContextDefaults(): SmartContextConfigSnapshot {
+  return {
+    enabled: true,
+    compactModel: '',
+    reminderThresholds: defaultThresholds(),
+    excludedModels: [],
+  }
+}
+
+/** RMW 只覆盖指定字段（锁协议走共享 rmwExtConfigField，与 setRenameModel 结构性对齐）。 */
+function writeSmartContextField(apply: (base: Record<string, unknown>) => void): void {
+  rmwExtConfigField(getSmartContextConfigPath(), smartContextLockOptions, smartContextDefaultBase, apply)
+}
+
+/** 设置智能上下文压缩开关（只覆盖 enabled 字段，保留其他字段）。 */
+export function setSmartContextEnabled(enabled: boolean): void {
+  writeSmartContextField((base) => {
+    base['enabled'] = enabled
+  })
+}
+
+/**
+ * 设置压缩模型（只覆盖 compactModel 字段）。空串 = 跟随当前会话模型（same-model 模式）；
+ * 非空但不含 "/" 归一为空串（extension pickMode 只认 ref 串，无 "/" 的 ref 等于未设置，不如归一）。
+ */
+export function setSmartContextCompactModel(model: string): void {
+  const normalized = model.includes('/') ? model : ''
+  writeSmartContextField((base) => {
+    base['compactModel'] = { type: 'ref', ref: normalized }
+  })
+}
+
+/** 设置 3 档提醒阈值（token 绝对数；clamp：过滤正数 → 升序 → 截 3 档，空回退默认）。 */
+export function setSmartContextThresholds(thresholds: number[]): void {
+  const normalized = normalizeThresholds(thresholds)
+  writeSmartContextField((base) => {
+    base['reminderThresholds'] = normalized
+  })
+}
+
+/** 设置排除模型列表（过滤无 "/" 条目 + 去重，只覆盖 excludedModels 字段）。 */
+export function setSmartContextExcludedModels(models: string[]): void {
+  const normalized = normalizeExcludedModels(models)
+  writeSmartContextField((base) => {
+    base['excludedModels'] = normalized
+  })
 }

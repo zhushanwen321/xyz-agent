@@ -730,6 +730,62 @@ else
 fi
 
 # ============================================================================
+# 架构约束登记检查（docs/constraints.json SSOT 的 machine enforcement 前置拦截）
+#   - check_pi_type_leak.py         C-comm-02：services/transport 禁 PiXxx 类型（allowlist=存量待治理）
+#   - check_services_infra_import.py C-comm-03：services 禁白名单外 infra value import
+#   - check_shared_node_builtin.py  C-state-05：shared 禁 node: 内置 import
+#   - check_runtime_meta_url.py     C-build-01：runtime 禁无 guard 的 import.meta.url / globalThis.__dirname
+#   - check_staged_forbidden_lines.py C-ext-07/C-proc-04：staged 新增行禁 extensions console.warn/error
+#                                    与无说明的 eslint-disable（行级增量，存量不拦）
+#   注：与 R1 同例不设独立跳过开关，仅受 SKIP_ALL_CHECKS 总闸管辖。
+# ============================================================================
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    print_section "[架构约束登记检查]"
+
+    for CONSTRAINT_CHECKER in check_pi_type_leak.py check_services_infra_import.py check_shared_node_builtin.py check_runtime_meta_url.py check_staged_forbidden_lines.py; do
+        CHECKER_PATH=".githooks/$CONSTRAINT_CHECKER"
+        if [ ! -f "$CHECKER_PATH" ]; then
+            echo -e "${YELLOW}[WARN] 找不到检查脚本 $CHECKER_PATH${NC}"
+            continue
+        fi
+        echo -e "${BLUE}[INFO] 运行 $CONSTRAINT_CHECKER ...${NC}"
+        python3 "$CHECKER_PATH"
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] $CONSTRAINT_CHECKER 检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 约束登记见 docs/constraints.json / docs/constraints.md（机器 SSOT + 人读视图）${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    done
+    echo -e "${GREEN}[OK] 架构约束登记检查通过${NC}"
+else
+    echo -e "${YELLOW}[SKIP] 架构约束登记检查已跳过${NC}"
+fi
+
+# ============================================================================
+# 约束登记 SSOT 一致性（constraints.json 改动时触发）
+#   改 docs/constraints.json 后必须重跑 node scripts/render-constraints.mjs
+#   生成 docs/constraints.md，防止 json/md 双份漂移。
+# ============================================================================
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    if echo "$STAGED_FILES" | grep -q "^docs/constraints\.json$"; then
+        echo -e "${BLUE}[INFO] constraints.json 有变更，校验 md 同步...${NC}"
+        node scripts/render-constraints.mjs --check
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] docs/constraints.md 与 constraints.json 不同步${NC}"
+            echo -e "${YELLOW}[INFO] 运行 node scripts/render-constraints.mjs 重新生成后提交${NC}"
+            exit 1
+        fi
+    fi
+fi
+
+# ============================================================================
 # Runtime Bundle 验证（runtime 源码有变更时触发）
 # ============================================================================
 

@@ -136,6 +136,9 @@ for (const pkg of diskPackages) {
 //     与仓库分组路径无关；README 安装命令的合法目标）
 //   - (?<!packages/extensions/)：排除外部 monorepo 的 packages/extensions/ 布局
 //     （如 oh-pi 调研引用，非本仓路径）
+//   - (?<!\w)：排除 abcextensions/xxx 之类的子串前缀误匹配
+//   - (?<!docs/)：排除 docs/extensions/<name>/... 文档目录路径（topic 目录与包名
+//     同名时——如 smart-context 设计文档目录——不是包路径引用）
 //   - (?![\w-]) 终止黑名单：包名边界 = 后面不是字母数字/连字符。不用白名单枚举
 //     （[/\s"'\`,)\]]|$）——白名单漏全角标点/英文句点，中文文档全角括号包路径的
 //     高频写法会逃逸（2026-08-22 审查实证，扩大后即抓出 6 处漏网）
@@ -150,7 +153,7 @@ for (const dir of readdirSync(SHARED_DIR)) {
   if (existsSync(join(SHARED_DIR, dir, 'package.json'))) knownNames.add(dir)
 }
 
-const staleRe = new RegExp(`(?<!\\./)(?<!agent/)(?<!packages/extensions/)extensions/(${[...knownNames].join('|')})(?![\\w-])`)
+const staleRe = new RegExp(`(?<!\\w)(?<!\\./)(?<!agent/)(?<!packages/extensions/)(?<!docs/)extensions/(${[...knownNames].join('|')})(?![\\w-])`)
 // 历史记录判定：CHANGELOG / ADR / 验收报告 / 包内 docs 设计记录 / 历史事故文档
 // （包内 docs 的分组名用 GROUPS 构建，新增分组单点同步）
 const groupDocsRe = new RegExp(`^extensions/(${GROUPS.join('|')})/[^/]+/docs/`)

@@ -1,7 +1,7 @@
 <template>
   <!--
     Settings · System 菜单页（v6 §6.4 + §5.8）。
-    容器：header + 4 Section 纵向编排。业务逻辑在各 Section 内。
+    容器：header + 5 Section 纵向编排。业务逻辑在各 Section 内。
     （v6 demo 回填：版本检查区块已移至 UpdatePage 自动更新卡，本页不再渲染。）
   -->
   <div class="flex flex-col gap-4">
@@ -16,6 +16,7 @@
     <SystemSoundSection :system="system" @update="emit('update', $event)" />
     <SystemShortcutSection :system="system" @update="emit('update', $event)" />
     <SystemAutoRenameSection :system="system" @update="emit('update', $event)" />
+    <SystemSmartContextSection :system="system" @update="emit('update', $event)" />
   </div>
 </template>
 
@@ -25,6 +26,7 @@ import SystemAppearanceSection from './SystemAppearanceSection.vue'
 import SystemSoundSection from './SystemSoundSection.vue'
 import SystemShortcutSection from './SystemShortcutSection.vue'
 import SystemAutoRenameSection from './SystemAutoRenameSection.vue'
+import SystemSmartContextSection from './SystemSmartContextSection.vue'
 import type { SystemSettings } from '@xyz-agent/core'
 
 defineProps<{

@@ -49,6 +49,12 @@ import {
   setAutoRenameEnabled as setAutoRenameEnabledImpl,
   getRenameModel as getRenameModelImpl,
   setRenameModel as setRenameModelImpl,
+  getSmartContextConfig as getSmartContextConfigImpl,
+  setSmartContextEnabled as setSmartContextEnabledImpl,
+  setSmartContextCompactModel as setSmartContextCompactModelImpl,
+  setSmartContextThresholds as setSmartContextThresholdsImpl,
+  setSmartContextExcludedModels as setSmartContextExcludedModelsImpl,
+  type SmartContextConfigSnapshot,
 } from './worktree-config-helper.js'
 import { loadAppConfig as loadAppConfigImpl, saveAppConfig as saveAppConfigImpl } from './app-config-store.js'
 import {
@@ -237,6 +243,31 @@ export class ConfigService implements IConfigService {
   /** 设置 rename 标题生成模型（读改写 extension 配置文件的 model 字段，保留其他字段）。 */
   setRenameModel(model: string): void {
     setRenameModelImpl(model)
+  }
+
+  /** 读取智能上下文压缩配置快照（extension 配置文件，字段非法回退默认值）。 */
+  getSmartContextConfig(): SmartContextConfigSnapshot {
+    return getSmartContextConfigImpl()
+  }
+
+  /** 设置智能上下文压缩开关（读改写 extension 配置文件的 enabled 字段，保留其他字段）。 */
+  setSmartContextEnabled(enabled: boolean): void {
+    setSmartContextEnabledImpl(enabled)
+  }
+
+  /** 设置压缩模型（读改写 compactModel 字段；空串 = 跟随当前会话模型）。 */
+  setSmartContextCompactModel(model: string): void {
+    setSmartContextCompactModelImpl(model)
+  }
+
+  /** 设置 3 档提醒阈值（token 绝对数；clamp 升序 3 档，空回退默认）。 */
+  setSmartContextThresholds(thresholds: number[]): void {
+    setSmartContextThresholdsImpl(thresholds)
+  }
+
+  /** 设置排除模型列表（过滤无 "/" 条目去重后写入 excludedModels 字段）。 */
+  setSmartContextExcludedModels(models: string[]): void {
+    setSmartContextExcludedModelsImpl(models)
   }
 
   // ── Skill CRUD（委托 skill-config-helper）─────────────────────────

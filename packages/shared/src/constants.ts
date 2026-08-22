@@ -27,7 +27,7 @@ export const WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set(['workflow'])
 /**
  * W16/W17 [D4]：subagent/workflow 自描述持久化 entry 的 customType（runtime 侧消费值）。
  *
- * 权威源在 extensions/subagent-workflow（跨包依赖方向不允许 runtime import extensions/
+ * 权威源在 extensions/universal/subagent-workflow（跨包依赖方向不允许 runtime import extensions/
  * 源码，只能在此复制字面量并保持等值——同 workflow-extractor SNAPSHOT_VERSION 的本地
  * 副本模式）：
  * - `subagent-record`：extensions/universal/subagent-workflow/src/execution/record-entry.ts 的
