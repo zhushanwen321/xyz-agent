@@ -264,6 +264,11 @@ async function main(): Promise<void> {
       onExtensionUIRequest: (requestId, sid, method, payload) => {
         server.registerExtensionTimeout(sid, requestId, method, payload)
       },
+      // session-manager 请求路由：fire-and-forget 调 server.handleSessionManagerRequest
+      //（由 SessionManagerHandler 异步处理并回写 pi response）。
+      onSessionManagerRequest: (requestId, sessionId, action, params) => {
+        server.handleSessionManagerRequest(requestId, sessionId, action, params)
+      },
       onBridgeUIRequest: (requestId, sid, method, data) => {
         server.handleBridgeRequest(sid, requestId, method, data)
       },

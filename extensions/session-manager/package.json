@@ -1,0 +1,34 @@
+{
+  "name": "@zhushanwen/pi-session-manager",
+  "version": "0.1.0",
+  "description": "Session manager extension for agent-managed sessions",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "devDependencies": {
+    "vitest": "^4.1.9"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "extension",
+    "session-manager",
+    "agent-managed-session"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "README.md"
+  ]
+}

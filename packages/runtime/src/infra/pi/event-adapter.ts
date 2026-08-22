@@ -24,7 +24,7 @@
  */
 import type { ServerMessage, ServerMessageType, ExtensionInteractMethod, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
-import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
+import { GUI_WIDGET_MARKER, ASK_USER_MARKER, SESSION_MANAGER_MARKER, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
@@ -507,6 +507,38 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
   if (method && INTERACTIVE_UI_METHODS.has(method as ExtensionInteractMethod)) {
     const dialogMethod = method as ExtensionInteractMethod
     const requestId = String(event.id ?? '')
+
+    // session-manager 请求检测：select title 为 SESSION_MANAGER_MARKER → options[0] 是 JSON payload
+    // （session-manager extension 序列化的 { action, params }）。
+    // 检测成功后不走前端 UI，由 runtime SessionManagerHandler 直接处理并回写 response。
+    if (method === 'select' && event.title === SESSION_MANAGER_MARKER) {
+      const rawOptions = Array.isArray(event.options) ? event.options : []
+      let sessionManagerData: { action?: string; params?: Record<string, unknown> } | undefined
+      try {
+        sessionManagerData = rawOptions.length > 0 ? JSON.parse(String(rawOptions[0])) : undefined
+      } catch {
+        // options[0] 不是合法 JSON → 标记 __malformed__
+      }
+
+      const requestPayload = {
+        sessionId: sid,
+        requestId,
+        method: 'select',
+        sessionManager: true,
+        sessionManagerAction: sessionManagerData?.action ?? '__malformed__',
+        sessionManagerParams: sessionManagerData?.params ?? {},
+      }
+      return [
+        { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod, payload: requestPayload },
+        {
+          kind: 'message',
+          message: {
+            type: 'extension.ui_request' as ServerMessageType,
+            payload: requestPayload,
+          },
+        },
+      ]
+    }
 
     // ask-user 富交互请求检测：select title 为 ASK_USER_MARKER → options[0] 是 JSON payload
     // （askUserInteract helper 序列化的 { questions, allowCancel }）。
