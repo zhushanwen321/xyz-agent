@@ -88,11 +88,8 @@ export function loadSmartContextConfig(): SmartContextConfig {
 
 // ──────────────────────── 门控判定（D5 矩阵） ────────────────────────
 
-/** 当前模型 ID（provider/modelId 复合串；ctx.model 缺失返回空串）。 */
-export function getCurrentModelId(model: { provider?: string; id?: string } | undefined | null): string {
-	if (!model) return "";
-	return `${model.provider ?? ""}/${model.id ?? ""}`;
-}
+// 当前模型 ID 拼接口径单点在 llm-shared（model-switch 同源消费）
+export { getCurrentModelId } from "@zhushanwen/pi-llm-shared";
 
 /**
  * 门控是否放行（D5 矩阵第一列）：enabled 且当前模型未精准命中排除列表。
@@ -252,4 +249,63 @@ export function buildReinjectSection(contents: ReadonlyArray<{ path: string; con
  */
 export function isSubagentProcess(env: NodeJS.ProcessEnv = process.env): boolean {
 	return env.PI_SUBAGENT_ROOT_SESSION_ID !== undefined;
+}
+
+// ──────────────────────── session entries 统计（D13 纯函数） ────────────────────────
+
+/** sessionManager entries 的宽松形状（降智计数）。 */
+export interface EntryLike {
+	type: string;
+}
+
+/** 累计 compaction 次数（D13-12 判据）。 */
+export function countCompactions(entries: ReadonlyArray<EntryLike>): number {
+	return entries.filter((e) => e.type === "compaction").length;
+}
+
+/**
+ * 保留段已 Read 的文件集合（D13-11 去重：重注入跳过保留段已有的 Read 结果）。
+ * 保留段 = branchEntries 中 firstKeptEntryId 之后的 message entries；从其 toolCall 参数提取 path。
+ */
+export function collectKeptReadFiles(branchEntries: ReadonlyArray<unknown>, firstKeptEntryId: string): Set<string> {
+	const kept = new Set<string>();
+	let found = false;
+	for (const entry of branchEntries) {
+		const e = entry as { id?: string; message?: { role?: string; content?: unknown } };
+		if (!found) {
+			if (e.id === firstKeptEntryId) found = true;
+			continue;
+		}
+		const msg = e.message;
+		if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+		for (const block of msg.content as ReadonlyArray<{ type?: string; name?: string; arguments?: { path?: unknown } }>) {
+			if (block.type === "toolCall" && block.name === "read" &&
+				block.arguments && typeof block.arguments.path === "string") {
+				kept.add(block.arguments.path);
+			}
+		}
+	}
+	return kept;
+}
+
+/**
+ * 被压段 token 估算（收缩校验分母：仅 messagesToSummarize；turnPrefixMessages 是保留段前缀，
+ * 不属于被压段，不计入）。pi 的 estimateTokens 按 message 内容估算；此处 chars/4 的保守替代：
+ * serialize 后长度 / 4（与 pi 同口径量级，用于"摘要 >= 原文"的粗判已足）。
+ */
+export function estimateShadowedTokens(
+	messagesToSummarize: ReadonlyArray<{ role: string; content?: unknown }>,
+): number {
+	let chars = 0;
+	for (const m of messagesToSummarize) {
+		const content = m.content;
+		if (typeof content === "string") {
+			chars += content.length;
+		} else if (Array.isArray(content)) {
+			for (const b of content as ReadonlyArray<{ type?: string; text?: string }>) {
+				if (typeof b.text === "string") chars += b.text.length;
+			}
+		}
+	}
+	return Math.ceil(chars / CHARS_PER_TOKEN_ESTIMATE);
 }

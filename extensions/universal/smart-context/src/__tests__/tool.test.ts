@@ -10,7 +10,8 @@ vi.mock("../pure.js", async (importOriginal) => {
 });
 
 import { DEFAULT_SMART_CONTEXT_CONFIG, loadSmartContextConfig } from "../pure.js";
-import { countCompactions, registerCompactContextTool } from "../tool.js";
+import { registerCompactContextTool } from "../tool.js";
+import { countCompactions } from "../pure.js";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 interface RegisteredTool {

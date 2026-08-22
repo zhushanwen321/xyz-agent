@@ -4,8 +4,6 @@
  * 所有跨文件的类型、常量集中管理。
  */
 
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-
 // ── 模型条目（v2：内嵌在 ProviderConfig 中）─────────────
 
 export interface ModelEntry {
@@ -103,14 +101,7 @@ export interface SetupResult {
 
 // ── 工具函数 ───────────────────────────────────────────
 
-/**
- * 从 ctx 中提取当前模型的 "provider/modelId" 字符串。
- */
-export function getCurrentModelId(ctx: ExtensionContext): string {
-	const model = ctx.model as { provider?: string; id?: string } | undefined;
-	if (!model) return "";
-	return `${model.provider ?? ""}/${model.id ?? ""}`;
-}
+// getCurrentModelId 已上提到 @zhushanwen/pi-llm-shared（model 对象签名），从 index.ts 导入使用。
 
 /** session entries 的通用类型（getBranch() 返回值） */
 export type SessionEntries = Array<{ type: string; [key: string]: unknown }>;

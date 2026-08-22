@@ -21,13 +21,15 @@ import {
 	type TakeoverState,
 } from "./compact-handler.js";
 import { buildDownshiftNotice, buildSwitchNotice, buildThresholdReminder } from "./reminder.js";
-import { countCompactions, registerCompactContextTool } from "./tool.js";
+import { registerCompactContextTool } from "./tool.js";
 import {
+	countCompactions,
 	findCrossedThresholds,
 	getCurrentModelId,
 	isGatingActive,
 	isSubagentProcess,
 	loadSmartContextConfig,
+	type EntryLike,
 } from "./pure.js";
 
 /** agent_settled 事件形状（无 payload）。 */
@@ -117,7 +119,7 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 		if (crossed.length === 0) return;
 
 		for (const t of crossed) state.firedThresholds.add(t);
-		const compactionCount = countCompactions(ctx.sessionManager.getEntries() as ReadonlyArray<{ type: string }>);
+		const compactionCount = countCompactions(ctx.sessionManager.getEntries() as ReadonlyArray<EntryLike>);
 		const message = buildThresholdReminder(crossed, usage.tokens ?? 0, usage.contextWindow, compactionCount);
 		debugLog(`reminder fired: tiers=${crossed.join(",")} tokens=${usage.tokens}`);
 		// D4：followUp（agent 空闲后投递并触发一个 turn，可立即决定压缩）；

@@ -24,8 +24,9 @@ import {
 } from "./prompts.js";
 import {
 	buildReinjectSection,
-	CHARS_PER_TOKEN_ESTIMATE,
+	collectKeptReadFiles,
 	computeFileListsLike,
+	estimateShadowedTokens,
 	estimateTextTokens,
 	formatFileOperationsLike,
 	getCurrentModelId,
@@ -92,8 +93,6 @@ function warnLog(message: string, data?: unknown): void {
 export interface SmartContextDetails {
 	engine: "smart-context";
 	mode: "same-model" | "cross-model";
-	/** D7 回退发生时为 true（此时 details 不落盘——仅工具结果反馈用）。 */
-	fellBack?: boolean;
 }
 
 /**
@@ -110,31 +109,6 @@ function getSessionFilePath(ctx: ExtensionContext): string {
 	} catch {
 		return "";
 	}
-}
-
-/**
- * 保留段已 Read 的文件集合（D13-11 去重：重注入跳过保留段已有的 Read 结果）。
- * 保留段 = branchEntries 中 firstKeptEntryId 之后的 message entries；从其 toolCall 参数提取 path。
- */
-function collectKeptReadFiles(branchEntries: ReadonlyArray<unknown>, firstKeptEntryId: string): Set<string> {
-	const kept = new Set<string>();
-	let found = false;
-	for (const entry of branchEntries) {
-		const e = entry as { id?: string; message?: { role?: string; content?: unknown } };
-		if (!found) {
-			if (e.id === firstKeptEntryId) found = true;
-			continue;
-		}
-		const msg = e.message;
-		if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
-		for (const block of msg.content as ReadonlyArray<{ type?: string; name?: string; arguments?: { path?: unknown } }>) {
-			if (block.type === "toolCall" && block.name === "read" &&
-				block.arguments && typeof block.arguments.path === "string") {
-				kept.add(block.arguments.path);
-			}
-		}
-	}
-	return kept;
 }
 
 /** 读文件做重注入（D13-11）：读失败/空内容返回空串（逐文件降级）。 */
@@ -173,26 +147,6 @@ function assembleSummary(
 		summary += buildTranscriptPointer(sessionFilePath);
 	}
 	return summary;
-}
-
-/** 被压段 token 估算（收缩校验分母：仅 messagesToSummarize；turnPrefixMessages 是保留段前缀，不属于被压段，不计入）。 */
-function estimateShadowedTokens(
-	messagesToSummarize: ReadonlyArray<{ role: string; content?: unknown }>,
-): number {
-	// pi 的 estimateTokens 按 message 内容估算；此处 chars/4 的保守替代：
-	// serialize 后长度 / 4（与 pi 同口径量级，用于"摘要 >= 原文"的粗判已足）
-	let chars = 0;
-	for (const m of messagesToSummarize) {
-		const content = m.content;
-		if (typeof content === "string") {
-			chars += content.length;
-		} else if (Array.isArray(content)) {
-			for (const b of content as ReadonlyArray<{ type?: string; text?: string }>) {
-				if (typeof b.text === "string") chars += b.text.length;
-			}
-		}
-	}
-	return Math.ceil(chars / CHARS_PER_TOKEN_ESTIMATE);
 }
 
 /**
@@ -277,14 +231,12 @@ async function generateCrossMode(
 		return null;
 	}
 	// ProviderHeaders 值可为 null；nativeCompact 的 headers 参数是 Record<string, string>——
-	// 逐项过滤 null 值（运行时清洗而非 cast）
-	let headers: Record<string, string> | undefined;
-	if (auth.headers) {
-		headers = {};
-		for (const [k, v] of Object.entries(auth.headers)) {
-			if (typeof v === "string") headers[k] = v;
-		}
-	}
+	// 过滤 null 值（运行时清洗而非 cast）
+	const headers = auth.headers
+		? Object.fromEntries(
+			Object.entries(auth.headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+		)
+		: undefined;
 	const result = await nativeCompact(
 		event.preparation as never,
 		model as never,

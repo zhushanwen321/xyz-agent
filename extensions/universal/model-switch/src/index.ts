@@ -19,7 +19,8 @@ import { computePeakRecommend, computeQuotaSnapshot, computeStickiness } from ".
 import { loadConfig } from "./config";
 import { formatContextPrompt, formatSessionModels } from "./prompt";
 import { deletePolicyConfig, generatePolicyConfig, getConfigPath, readEnabledModels, readPolicyConfigContent } from "./setup";
-import { asSessionEntries, getCurrentModelId, type ModelPolicy } from "./types";
+import { asSessionEntries, type ModelPolicy } from "./types";
+import { getCurrentModelId } from "@zhushanwen/pi-llm-shared";
 
 // ── Tool 返回值 helper ──────────────────────────────────
 
@@ -158,7 +159,7 @@ function handleList(state: SessionState, ctx: ExtensionContext): ToolRes {
 		return res("No model policy configured. Run /setup-model-policy to generate one.");
 	}
 
-	const currentModel = getCurrentModelId(ctx);
+	const currentModel = getCurrentModelId(ctx.model);
 	const lines: string[] = [];
 
 	for (const [provider, pcfg] of Object.entries(state.config.models)) {
@@ -241,7 +242,7 @@ function handleRecommend(state: SessionState, ctx: ExtensionContext): ToolRes {
 	if (!state.config) return res("No model policy configured.");
 
 	try {
-		const currentModel = getCurrentModelId(ctx);
+		const currentModel = getCurrentModelId(ctx.model);
 		const { snapshot, stickiness, recommend } = computeSnapshotAndRecommend(ctx, state.config);
 
 		const formatted = formatContextPrompt({

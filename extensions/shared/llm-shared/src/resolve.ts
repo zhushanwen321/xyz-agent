@@ -44,3 +44,9 @@ function resolveRef(ctx: ExtensionContext, ref: string): Model<Api> | null {
 export function resolveModel(ctx: ExtensionContext, selector: ModelSelector): Model<Api> | null {
 	return resolveRef(ctx, selector.ref);
 }
+
+/** 当前模型的 "provider/modelId" 复合串（model 缺失返回空串）——smart-context / model-switch 共用口径。 */
+export function getCurrentModelId(model: { provider?: string; id?: string } | undefined | null): string {
+	if (!model) return "";
+	return `${model.provider ?? ""}/${model.id ?? ""}`;
+}

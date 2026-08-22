@@ -17,11 +17,13 @@ import { buildDegradationHintLine } from "./reminder.js";
 import {
 	DEGRADATION_HINT_MIN_COMPACTIONS,
 	checkToolThresholdGuard,
+	countCompactions,
 	formatK,
 	getCurrentModelId,
 	isGatingActive,
 	loadSmartContextConfig,
 	pickMode,
+	type EntryLike,
 } from "./pure.js";
 
 /** 工具参数 schema（顶层 Type.Object，OpenAI 兼容红线）。 */
@@ -54,16 +56,6 @@ export interface CompactContextDetails {
 	/** 压缩已触发（结果经注入消息送达，不在工具结果里）。 */
 	launched: boolean;
 	fellBack: boolean;
-}
-
-/** sessionManager entries 的宽松形状（降智计数）。 */
-interface EntryLike {
-	type: string;
-}
-
-/** 累计 compaction 次数（D13-12 判据）。 */
-export function countCompactions(entries: ReadonlyArray<EntryLike>): number {
-	return entries.filter((e) => e.type === "compaction").length;
 }
 
 /** 工具描述（§3.5：三条件自查引导）。 */

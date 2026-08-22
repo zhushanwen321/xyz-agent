@@ -58,7 +58,8 @@ vi.mock("@zhushanwen/pi-quota-providers", () => ({
 	readCache: mockReadCache,
 }));
 
-vi.mock("@zhushanwen/pi-llm-shared", () => ({
+vi.mock("@zhushanwen/pi-llm-shared", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@zhushanwen/pi-llm-shared")>()),
 	migrateLegacyConfig: mockMigrateLegacyConfig,
 }));
 

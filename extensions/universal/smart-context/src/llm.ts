@@ -47,17 +47,25 @@ interface SimpleResponseLike {
 	content: ReadonlyArray<{ type: string; text?: string }>;
 }
 
-/** same-model 调用结果。 */
-export interface SameModelCallResult {
-	ok: boolean;
-	/** 摘要文本（content 内全部 text block 拼接，D13-10 只取 text）。 */
-	text: string;
-	/** provider usage（cacheRead 供 R8 探针验证缓存命中）。 */
-	usage?: SimpleResponseLike["usage"];
-	/** stopReason（length = max-tokens 截断，D13-2 fail-closed 判据）。 */
-	stopReason?: string;
-	error?: string;
-}
+/**
+ * same-model 调用结果（判别联合）：成功携带摘要文本与 usage；失败仅携带 error
+ * （调用方走 D7 回退），stopReason 两态均可携带（length 截断 fail-closed / 排查用）。
+ */
+export type SameModelCallResult =
+	| {
+		ok: true;
+		/** 摘要文本（content 内全部 text block 拼接，D13-10 只取 text）。 */
+		text: string;
+		/** provider usage（cacheRead 供 R8 探针验证缓存命中）。 */
+		usage?: SimpleResponseLike["usage"];
+		/** stopReason（length = max-tokens 截断，D13-2 fail-closed 判据）。 */
+		stopReason?: string;
+	}
+	| {
+		ok: false;
+		error: string;
+		stopReason?: string;
+	};
 
 export interface SameModelCallOptions {
 	model: Model<never> | Model<string> | undefined;
@@ -76,7 +84,11 @@ export interface SameModelCallOptions {
 	};
 }
 
-/** content block 的 text 提取（in-guard：联合中 ThinkingContent/ToolCall 无 text 字段）。 */
+/**
+ * content block 的 text 提取（in-guard：联合中 ThinkingContent/ToolCall 无 text 字段）。
+ * 与 llm-shared extractText 刻意不同：不过滤 block type、join 用 "\n"——摘要需保留
+ * 多段换行结构（extractText 过滤 type==="text" 且 join 空格，语义是单段纯文本）。
+ */
 function blockText(block: { type: string; text?: unknown }): string {
 	return typeof block.text === "string" ? block.text : "";
 }
@@ -94,11 +106,11 @@ export async function callSameModelCompaction(
 	const call = deps.call ?? ((m: unknown, c: LlmContext, o: SimpleStreamOptions) => completeSimple(m as never, c, o));
 	try {
 		if (!opts.model) {
-			return { ok: false, text: "", error: "no current model" };
+			return { ok: false, error: "no current model" };
 		}
 		const auth = await getAuth(opts.model);
 		if (!auth.ok) {
-			return { ok: false, text: "", error: auth.error };
+			return { ok: false, error: auth.error };
 		}
 		const context: LlmContext = {
 			systemPrompt: opts.systemPrompt,
@@ -117,11 +129,11 @@ export async function callSameModelCompaction(
 		const resp = await call(opts.model, context, options);
 		if (resp.stopReason === "error" || resp.stopReason === "aborted") {
 			const errorText = resp.content.map(blockText).join(" ").trim();
-			return { ok: false, text: "", error: errorText || `stopReason=${resp.stopReason}`, stopReason: resp.stopReason };
+			return { ok: false, error: errorText || `stopReason=${resp.stopReason}`, stopReason: resp.stopReason };
 		}
 		const text = resp.content.map(blockText).join("\n").trim();
 		return { ok: true, text, usage: resp.usage, stopReason: resp.stopReason };
 	} catch (error) {
-		return { ok: false, text: "", error: error instanceof Error ? error.message : String(error) };
+		return { ok: false, error: error instanceof Error ? error.message : String(error) };
 	}
 }
