@@ -152,7 +152,12 @@ describe('S1: deleteProvider / removeProviderByKind 清 providers.json extras（
 
   it('extras 清理失败不阻断删除主流程（cleanProviderExtras try-catch warn，与 cleanAuthCredential 同语义）', async () => {
     writeModelsJson({ 'my-custom': { apiKey: 'sk-old' } })
-    const failingExtras = { delete: vi.fn().mockRejectedValue(new Error('disk full')) }
+    // cleanScopedModelsResidue 也 resolve：本用例聚焦 extras.delete 失败路径
+    // （scoped 清理（scoped-model）不 mock reject，避免两个失败源混淆断言）
+    const failingExtras = {
+      delete: vi.fn().mockRejectedValue(new Error('disk full')),
+      cleanScopedModelsResidue: vi.fn().mockResolvedValue(undefined),
+    }
 
     const ret = await deleteProvider(configStore, undefined, failingExtras, 'my-custom')
 

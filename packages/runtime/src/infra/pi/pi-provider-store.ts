@@ -324,6 +324,21 @@ export function findValidDefaultModel(): {
       return { result: { provider: defaultProvider as ProviderId, modelId: providerConfig.models[0].id }, wasFixed: true }
     }
     if (!providerConfig?.models?.length) {
+      // D3 修复：auth.json-only catalog provider（OAuth 形态）无 models.json 条目时，
+      // 校验 defaultModel ∈ 该 provider 的 builtin 模型集，通过则不 fallback 不写回
+      const builtinProvider = builtinModelsById.get(defaultProvider)
+      if (builtinProvider && builtinProvider.length > 0) {
+        const authCredentials = readAuthCredentials()
+        const hasCredential = defaultProvider in authCredentials || !!models.providers[defaultProvider]?.apiKey
+        if (hasCredential && isEnabled) {
+          const foundInBuiltin = builtinProvider.find(m => m.id === defaultModel)
+          if (foundInBuiltin) {
+            return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
+          }
+          // defaultModel 不在 builtin 集，用 builtin 第一个
+          return { result: { provider: defaultProvider as ProviderId, modelId: builtinProvider[0].id }, wasFixed: true }
+        }
+      }
       console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
     }
     // isEnabled===false：default provider 被禁用，静默 fall through 到 fallback（不 warn 误导）

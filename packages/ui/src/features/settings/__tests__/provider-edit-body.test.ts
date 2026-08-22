@@ -148,8 +148,9 @@ const discoverModelsSpy = vi.fn(async () => ({ success: true, models: [] }))
 function makeTransport(): SettingsTransport {
   const noop = (): void => {}
   return {
-    listProviders: vi.fn(async () => []),
+    listProviders: vi.fn(async () => ({ providers: [] })),
     listModels: vi.fn(async () => []),
+    setScopedModels: vi.fn(async () => [] as string[]),
     setProvider: setProviderSpy,
     discoverModels: discoverModelsSpy,
     setSkillDirs: vi.fn(async () => undefined),

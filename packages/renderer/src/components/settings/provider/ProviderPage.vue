@@ -22,6 +22,15 @@
       </div>
     </header>
 
+    <!-- Scoped Model 配置区（模型白名单 + 有序列表） -->
+    <ScopedModelSection
+      :scoped-list="scopedRenderItems"
+      :selectable-models="selectableModels"
+      @add="onScopedAdd"
+      @remove="onScopedRemove"
+      @move="onScopedMove"
+    />
+
     <!-- 常驻 inline error：toggle enabled / 设默认 / 删除 等动作失败时报错可见 -->
     <div
       v-if="actionError"
@@ -238,17 +247,22 @@ import {
   ProviderTemplatePicker,
   ProviderQuickSetup,
   OAuthDialog,
+  ScopedModelSection,
   SETTINGS_TOAST_KEY,
   USE_QUOTA_CONFIGURE_KEY,
 } from '@xyz-agent/ui/features/settings'
 import { useProviderPageOauth } from '@/composables/features/settings/useProviderPageOauth'
 import { useAccordionGuard } from '@/composables/features/settings/useAccordionGuard'
+import { useScopedModels } from '@/composables/features/settings/useScopedModels'
 import { authBadgeClass, authBadgeTextKey } from './provider-badge'
 
 // ui 包组件 renderer 侧依赖经 provide/inject 注入（ui 零 renderer import 铁律）
 provide(USE_QUOTA_CONFIGURE_KEY, useQuotaConfigure)
 const toast = useToast()
 provide(SETTINGS_TOAST_KEY, toast)
+
+// Scoped Models 白名单（乐观更新 + 失败回滚；RPC 失败 rethrow 由下方包装 handler 统一反馈）
+const { scopedRenderItems, selectableModels, addScopedModels, removeScopedModel, moveScopedModel } = useScopedModels()
 
 const props = defineProps<{ providers: ProviderInfo[] }>()
 
@@ -412,6 +426,32 @@ const deleteDialogOpen = computed({
 
 /** 动作错误（删除/启用失败时显示，非静默吞） */
 const actionError = ref('')
+
+// ── scoped 模型操作接线（失败反馈：模型选择类操作，对齐 onSetDefaultModel 惯例 = 常驻 inline error + toast）──
+// useScopedModels 乐观更新 + 回滚后 rethrow，此处统一捕获展示，不让 RPC 失败静默吞掉。
+
+async function runScopedAction(action: () => Promise<void>): Promise<void> {
+  actionError.value = ''
+  try {
+    await action()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    actionError.value = msg
+    toast.error(msg)
+  }
+}
+
+function onScopedAdd(models: string[]): void {
+  void runScopedAction(() => addScopedModels(models))
+}
+
+function onScopedRemove(scoped: string): void {
+  void runScopedAction(() => removeScopedModel(scoped))
+}
+
+function onScopedMove({ scoped, dir }: { scoped: string; dir: 'up' | 'down' }): void {
+  void runScopedAction(() => moveScopedModel(scoped, dir))
+}
 
 // ── 渲染列表：真实 providers + 新建态合成行 ──
 

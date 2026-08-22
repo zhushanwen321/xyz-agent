@@ -18,6 +18,7 @@ import { useSettings } from '../settings-lifecycle'
 import { InMemoryStorage } from './helpers/in-memory-storage'
 import { SYSTEM_KEY } from '../system-storage'
 import type { ProviderInfo, SkillInfo, AgentInfo, ExtensionInfo } from '@xyz-agent/shared'
+import { SCOPED_MODEL_CORE_TOKEN } from './impl-token'
 
 /**
  * fake transport：记录 on* 订阅注册（handler 存表，测试手动触发）。
@@ -37,6 +38,7 @@ function makeRecordingTransport() {
     listProviders: vi.fn(async () => []),
     listModels: vi.fn(async () => []),
     setProvider: vi.fn(async () => {}),
+    setScopedModels: vi.fn(async () => [] as string[]),
     discoverModels: vi.fn(async () => ({ success: true })),
     setSkillDirs: vi.fn(async () => {}),
     setAgentDirs: vi.fn(async () => {}),
@@ -112,8 +114,9 @@ describe('11 条订阅注册 + handler 写 store', () => {
     const store = getSettingsStore()
 
     const p: ProviderInfo = { id: 'p1', name: 'P1', apiKeySet: false, status: 'connected', models: [] }
-    handlers.providers([p])
+    handlers.providers([p], ['openai/gpt-4o', 'deepseek/v3'])
     expect(store.providers.value).toEqual([p])
+    expect(store.scopedModels.value).toEqual(['openai/gpt-4o', 'deepseek/v3'])
 
     handlers.models([{ id: 'm1', name: 'M1', providerId: 'p1', providerName: 'P1' }])
     expect(store.models.value).toHaveLength(1)
@@ -183,15 +186,44 @@ describe('refreshProviders 分支', () => {
   it('成功：listProviders 结果写 store.providers', async () => {
     provideBase()
     const { transport } = makeRecordingTransport()
-    ;(transport.listProviders as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
-      { id: 'p1', name: 'P1', apiKeySet: false, status: 'connected', models: [] },
-    ])
+    ;(transport.listProviders as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [{ id: 'p1', name: 'P1', apiKeySet: false, status: 'connected', models: [] }],
+    })
     provideSettingsTransport(transport)
     const { refreshProviders } = useSettings()
     await refreshProviders()
     const store = getSettingsStore()
     expect(store.providers.value).toHaveLength(1)
     expect(store.providers.value[0].id).toBe('p1')
+  })
+
+  it('D7: reply 含 scopedModels → store.scopedModels 同步填充', async () => {
+    provideBase()
+    const { transport } = makeRecordingTransport()
+    ;(transport.listProviders as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [{ id: 'p1', name: 'P1', apiKeySet: false, status: 'connected', models: [] }],
+      scopedModels: ['openai/gpt-4o', 'deepseek/v3'],
+    })
+    provideSettingsTransport(transport)
+    const { refreshProviders } = useSettings()
+    await refreshProviders()
+    const store = getSettingsStore()
+    expect(store.scopedModels.value).toEqual(['openai/gpt-4o', 'deepseek/v3'])
+  })
+
+  it('D7: reply 不含 scopedModels（undefined）→ store 已有值不被覆盖', async () => {
+    provideBase()
+    const { transport } = makeRecordingTransport()
+    ;(transport.listProviders as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [{ id: 'p1', name: 'P1', apiKeySet: false, status: 'connected', models: [] }],
+    })
+    provideSettingsTransport(transport)
+    const store = getSettingsStore()
+    store.scopedModels.value = ['openai/gpt-4o']
+    const { refreshProviders } = useSettings()
+    await refreshProviders()
+    // undefined 不覆盖（对齐 onProviders handler 的守卫语义），由广播通道兜底推回
+    expect(store.scopedModels.value).toEqual(['openai/gpt-4o'])
   })
 
   it('失败：不抛错（console.warn 兜底）', async () => {
@@ -253,5 +285,47 @@ describe('transport 未注入 fail-fast', () => {
     provideBase()
     const { init } = useSettings()
     await expect(init()).rejects.toThrow('getSettingsTransport')
+  })
+})
+
+describe('A4: onProviders 推送 scopedModels 时 store 更新', () => {
+  it('A4: impl-token 存在（红阶段区分力守卫）', () => {
+    expect(SCOPED_MODEL_CORE_TOKEN).toBe('scoped-model-core-v1')
+  })
+
+  it('A4: onProviders handler 含 scopedModels → store.scopedModels 更新', async () => {
+    provideBase()
+    const { transport, handlers } = makeRecordingTransport()
+    provideSettingsTransport(transport)
+    const { init } = useSettings()
+    await init()
+    const store = getSettingsStore()
+    expect(store.scopedModels.value).toEqual([])
+
+    // 触发 onProviders handler 带 scopedModels → store 更新
+    const p: ProviderInfo = { id: 'openai', name: 'OpenAI', apiKeySet: true, status: 'connected', models: [] }
+    handlers.providers([p], ['openai/gpt-4o', 'openai/gpt-4o-mini'])
+    expect(store.scopedModels.value).toEqual(['openai/gpt-4o', 'openai/gpt-4o-mini'])
+
+    // 不含 scopedModels（undefined）时 store 保持原值
+    handlers.providers([p])
+    expect(store.scopedModels.value).toEqual(['openai/gpt-4o', 'openai/gpt-4o-mini'])
+  })
+
+  it('A4: onProviders handler scopedModels=undefined 不覆盖已有值', async () => {
+    provideBase()
+    const { transport, handlers } = makeRecordingTransport()
+    provideSettingsTransport(transport)
+    const { init } = useSettings()
+    await init()
+    const store = getSettingsStore()
+
+    // 先推一次带 scopedModels
+    handlers.providers([], ['openai/gpt-4o'])
+    expect(store.scopedModels.value).toEqual(['openai/gpt-4o'])
+
+    // 再推一次不带 scopedModels（undefined）→ 不覆盖
+    handlers.providers([], undefined)
+    expect(store.scopedModels.value).toEqual(['openai/gpt-4o'])
   })
 })

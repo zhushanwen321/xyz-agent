@@ -50,7 +50,7 @@ import type { PluginInfo } from '@xyz-agent/shared'
 vi.mock('@/api', () => ({
   project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   config: {
-    listProviders: vi.fn(async () => []),
+    listProviders: vi.fn(async () => ({ providers: [] })),
     setProvider: vi.fn(async () => undefined),
     setSkillDirs: vi.fn(async () => undefined),
     setAgentDirs: vi.fn(async () => undefined),
@@ -85,7 +85,7 @@ vi.mock('@/api', () => ({
     cancelInstall: vi.fn(async () => undefined),
   },
   settings: {
-    listProviders: vi.fn(async () => []),
+    listProviders: vi.fn(async () => ({ providers: [] })),
     onProviders: vi.fn(() => () => {}),
     onExtensions: vi.fn(() => () => {}),
     getAutoRenameEnabled: vi.fn(async () => ({ enabled: false })),
@@ -111,7 +111,7 @@ import { toContributionInfos } from '@/composables/shell/useExtensionHostBridge'
 function stubTransport(): SettingsTransport {
   const noopUnsub = (): void => {}
   return {
-    listProviders: async () => [],
+    listProviders: async () => ({ providers: [] }),
     listModels: async () => [],
     setProvider: async () => undefined,
     discoverModels: async () => ({ success: true, models: [] }),

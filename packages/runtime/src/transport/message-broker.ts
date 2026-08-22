@@ -142,9 +142,13 @@ export class ServerMessageBroker implements IMessageBroker {
   }
   private buildProviderListMsgs(): ServerMessage[] {
     const providers = this.services.configService.listProviders()
+    // scopedModels 只读一次盘、两条消息复用同一值：aggregateModels 内部再读盘的话，
+    // 两次读之间有写者落盘会让 config.providers.scopedModels 与 model.list 过滤结果
+    // 互相矛盾一帧（review #4）。双参版聚合方法即为此引入（design D2 否决改单参签名）。
+    const scopedModels = this.services.configService.getScopedModels()
     return [
-      { type: 'config.providers', id: this.nextPushId(), payload: { providers } },
-      { type: 'model.list', id: this.nextPushId(), payload: { models: this.services.modelService.aggregateModels(providers) } },
+      { type: 'config.providers', id: this.nextPushId(), payload: { providers, scopedModels } },
+      { type: 'model.list', id: this.nextPushId(), payload: { models: this.services.modelService.aggregateModelsWithScoped(providers, scopedModels) } },
     ]
   }
   private buildSkillListMsg(): ServerMessage {

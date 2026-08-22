@@ -24,6 +24,10 @@ export function createSettingsTransport(): SettingsTransport {
     listProviders: () => configApi.listProviders(),
     listModels: () => modelApi.listModels(),
     setProvider: (id, data) => configApi.setProvider(id as ProviderId, data),
+    setScopedModels: async (models) => {
+      const reply = await configApi.setScopedModels(models)
+      return reply
+    },
     discoverModels: async (req: DiscoverModelsRequest): Promise<DiscoverModelsResponse> => {
       // core DiscoverModelsRequest（baseUrl? / providerType 必）与 @/api config.discoverModels
       // （baseUrl 必 / providerType?）形状互补；实际调用方（use-provider-edit runDiscover）

@@ -23,11 +23,17 @@ type AuthStorageAccessors = Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthS
 /**
  * providers.json 存储能力（ConfigService 注入，A1-5 写侧切换）。
  * getExtrasSync：modelStates 清理的写入守卫先读（避免无谓写盘/空条目）。
+ * cleanScopedModelsResidue：scoped-model——删除链清顶层 scopedModels 中该 provider 条目。
  */
-export type ProviderExtrasAccessors = Pick<XyzProviderStore, 'modify' | 'getExtrasSync'>
+export type ProviderExtrasAccessors = Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'cleanScopedModelsResidue'>
 
-/** providers.json 删除能力（删除链「清残留」用，M5-05 不变式扩展到 extras）。 */
-export type ProviderExtrasDeleter = Pick<XyzProviderStore, 'delete'>
+/**
+ * providers.json 删除链清理能力（deleteProvider / removeProviderByKind 消费）。
+ * M5-05「清残留」不变式扩展到 extras：delete 清 per-provider extras 条目
+ * （quota/modelStates/authMethod 不残留，同 id 重建不静默继承旧配置）；
+ * cleanScopedModelsResidue（scoped-model）清顶层 scopedModels 的 `providerId/` 前缀条目。
+ */
+export type ProviderExtrasDeleter = Pick<XyzProviderStore, 'delete' | 'cleanScopedModelsResidue'>
 
 /** setProvider 的入参形状（原 ConfigService.setProvider 内联类型提取，逐字一致）。 */
 export type SetProviderInput = {
@@ -810,6 +816,10 @@ export async function deleteProvider(
   // enabledModels 残留 <id>/* 与 <id>/<model> pattern，否则列表/白名单残留已删 provider 的
   // 死引用（legacy RPC config.deleteProvider 路径）。
   configStore.cleanEnabledModelsResidue(providerId)
+  // 清理 scopedModels 中该 provider 的残留条目（经 XyzProviderStore）
+  if (extrasStore) {
+    await extrasStore.cleanScopedModelsResidue(providerId)
+  }
   await cleanAuthCredential(authStorage, providerId, `(I8) ${providerId}`)
   // extras 同步清理（review suggestion）：quota/modelStates/authMethod 不残留，同 id 重建
   // 不静默继承旧配置。幂等（无条目 no-op）。
@@ -861,6 +871,10 @@ export async function removeProviderByKind(
     // （与 custom 分支 + deleteProvider 对称，否则 renderer 收不到重选通知）。
     let overrideResult = configStore.removeProvider(providerId)
     configStore.cleanEnabledModelsResidue(providerId)
+    // 清理 scopedModels 中该 provider 的残留条目（经 XyzProviderStore）
+    if (extrasStore) {
+      await extrasStore.cleanScopedModelsResidue(providerId)
+    }
     // M5-03（G2 增删入口自动维护 defaultModel）：catalog provider 无 models.json override 时
     // removeProvider 提前 return { removed:false }，跳过 defaultProvider/defaultModel 清理重选
     //（「导入后无 override 的 catalog provider 承载 default」正是 G4 移除流程的常态形态，
@@ -890,6 +904,10 @@ export async function removeProviderByKind(
   // custom 凭据随条目存在 models.json（apiKey 字段），删条目即清；auth.json 无需单独清理。
   const result = configStore.removeProvider(providerId)
   configStore.cleanEnabledModelsResidue(providerId)
+  // 清理 scopedModels 中该 provider 的残留条目（经 XyzProviderStore）
+  if (extrasStore) {
+    await extrasStore.cleanScopedModelsResidue(providerId)
+  }
   // extras 同步清理（review suggestion）：同 deleteProvider，防同 id 重建继承旧配置。
   await cleanProviderExtras(extrasStore, providerId, `for custom provider ${providerId}`)
   return result

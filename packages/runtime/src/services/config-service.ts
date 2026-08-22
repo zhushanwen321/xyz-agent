@@ -110,10 +110,13 @@ export class ConfigService implements IConfigService {
      * delete 能力（round 1 review suggestion）：deleteProvider / removeProviderByKind
      * 删除链清 extras 残留（M5-05「清残留」不变式扩展——quota/modelStates/authMethod
      * 不残留，同 id 重建不静默继承旧配置）。
+     * scoped-model 能力：getScopedModelsSync/modifyScopedModels 支撑顶层 scopedModels
+     * 读写（getScopedModels / modifyScopedModels RPC）；cleanScopedModelsResidue 在删除链
+     * 清 scopedModels 中该 provider 的 `id/` 前缀条目。
      * 可选注入：未注入时 authMethod 丢弃 + warn（宁丢不写错位），聚合层 extras 恒空
      * （authMethod 退回推断、quota undefined），删除链 extras 清理 no-op，生产恒注入。
      */
-    private providerExtrasStore?: Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync' | 'delete'>,
+    private providerExtrasStore?: Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync' | 'delete' | 'getScopedModelsSync' | 'modifyScopedModels' | 'cleanScopedModelsResidue'>,
   ) {}
 
   /**
@@ -264,6 +267,19 @@ export class ConfigService implements IConfigService {
   /** 设置 rename 标题生成模型（读改写 extension 配置文件的 model 字段，保留其他字段）。 */
   setRenameModel(model: string): void {
     setRenameModelImpl(model)
+  }
+
+  // ── Scoped Models（委托 provider-extras-store）──
+
+  getScopedModels(): string[] {
+    return this.providerExtrasStore?.getScopedModelsSync() ?? []
+  }
+
+  async modifyScopedModels(fn: (current: string[]) => string[]): Promise<string[]> {
+    if (!this.providerExtrasStore) {
+      throw new Error('[config-service] providerExtrasStore not available (scoped models write)')
+    }
+    return this.providerExtrasStore.modifyScopedModels(fn)
   }
 
   // ── Skill CRUD（委托 skill-config-helper）─────────────────────────

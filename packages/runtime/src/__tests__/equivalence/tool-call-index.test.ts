@@ -104,13 +104,22 @@ describe.skipIf(!REAL_PI_READY)(
   // [HISTORICAL] 2026-08-20 PR #185：hook 显式超时——beforeAll 内跑真实 LLM 轮次（内部
   // waitForEvent 预算 120s），vitest 默认 hookTimeout 10s 在全量并发负载下先杀 hook
   // （隔离跑通过，纯环境饿死）。预算 = 冷启动 + 轮次等待 + 余量，对齐 attach-lifecycle 口径。
+  // [HISTORICAL] 2026-08-22 sm-e2e cw verify 连续红：真实 LLM 偶尔纯文本回复不调工具
+  //（toolcall_end 数为 0，下游 3 用例连锁假失败）——轮次间检测，无 toolcall 再推一轮，
+  // 3 轮全无才交由用例断言失败（不弱化断言；语料守卫仍要求 toolcall 事件存在）。
   beforeAll(async () => {
     fixture = await spawnPiFixture()
-    await fixture.sendCommand('prompt', {
-      message: 'Use the bash tool to run exactly: echo W3-TOOLCALL-ANCHOR . After the tool finishes, reply with the tool output text.',
-    })
-    await fixture.waitForEvent((e) => e.type === 'agent_end', 120_000)
-  }, 180_000)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await fixture.sendCommand('prompt', {
+        message: 'Use the bash tool to run exactly: echo W3-TOOLCALL-ANCHOR . You must call the bash tool before replying; after the tool finishes, reply with the tool output text.',
+      })
+      await fixture.waitForEvent((e) => e.type === 'agent_end', 120_000)
+      const hasToolcallEnd = fixture
+        .collectEvents((e) => e.type === 'message_update')
+        .some((e) => (e as { assistantMessageEvent?: { type?: string } }).assistantMessageEvent?.type === 'toolcall_end')
+      if (hasToolcallEnd) break
+    }
+  }, 420_000)
 
   afterAll(async () => {
     await fixture?.dispose()

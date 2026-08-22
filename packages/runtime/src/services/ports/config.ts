@@ -131,6 +131,8 @@ export interface IConfigStore {
    * 边界3(a) 重算空 → clearEnabledModels（delete 字段，CL2）。
    */
   cleanEnabledModelsResidue(providerId: string): void
+  // 注：scopedModels 残留清理不经 IConfigStore——scopedModels 属 providers.json（XyzProviderStore 域），
+  // deleteProvider/removeProviderByKind 直接调 extrasStore.cleanScopedModelsResidue（scoped-model design §3.2）。
 
   // ── Provider CRUD ──
   readModels(): ConfigModelsConfig

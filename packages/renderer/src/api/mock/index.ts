@@ -675,9 +675,11 @@ export const chat = {
 /* ── Config mock（请求 + 订阅 + 动作）── */
 
 // 订阅型 sub（注册即触发初始值）；请求型直接返 fixture 深拷贝
-const providersSub = makeMockSubscription(() =>
-  fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) })),
-)
+// 带 scopedModels 的 providers 广播（config.providers payload 扩展）
+const providersSubWithScoped = makeMockSubscription(() => ({
+  providers: fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) })),
+  scopedModels: [] as string[],
+}))
 const skillsSub = makeMockSubscription(() => fixtureSkills.map((s) => ({ ...s })))
 const agentsSub = makeMockSubscription(() => fixtureAgents.map((a) => ({ ...a })))
 const defaultsSub = makeMockSubscription(() => 'Anthropic/claude-sonnet-4.5')
@@ -759,10 +761,15 @@ function defaultTerminalConfig(): TerminalConfig {
 const terminalSub = makeMockSubscription(() => ({ config: defaultTerminalConfig(), corrupted: false }))
 
 export const config = {
-  // 请求型：直接返 fixture 深拷贝（不依赖 sub）
+  // 请求型：直接返 fixture 深拷贝（不依赖 sub）。
+  // scoped-model D7：与真实门面同形返回 { providers, scopedModels }，scopedModels 与
+  // broadcastProviders 同源（mockScopedModels，setScopedModels 后保持一致）。
   async listProviders() {
     await sleep(TIMING.ack)
-    return fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
+    return {
+      providers: fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) })),
+      scopedModels: [...mockScopedModels],
+    }
   },
   // wave 3：内置 provider 模板。mock 模式不接 runtime generated JSON，返空数组保持签名同构（facade 三元）。
   async listBuiltinProviders(): Promise<BuiltinProviderTemplate[]> {
@@ -810,7 +817,7 @@ export const config = {
     return { success: true, models: [], error: undefined }
   },
   // 订阅型（handler 类型与 real domains 对齐：facade 三元要求两侧同构）
-  onProviders: (h: (providers: ProviderInfo[]) => void) => providersSub.subscribe(h),
+  onProviders: (h: (providers: ProviderInfo[], scopedModels?: string[]) => void) => providersSubWithScoped.subscribe((p) => h(p.providers, p.scopedModels)),
   onSkills: (h: (skills: SkillInfo[]) => void) => skillsSub.subscribe(h),
   onAgents: (h: (agents: AgentInfo[]) => void) => agentsSub.subscribe(h),
   onDefaults: (h: (defaultModel: string) => void) => defaultsSub.subscribe(h),
@@ -868,6 +875,28 @@ export const config = {
   async setDefaultModel(provider: ProviderId, modelId: string) {
     await sleep(TIMING.ack)
     defaultsSub.broadcast(`${provider}/${modelId}`)
+  },
+  /**
+   * 设置 scoped models 白名单（mock 对齐 runtime config.setScopedModels）。
+   * 去重保序 → 更新 mockScopedModels → 广播 providers + scopedModels。
+   * default 联动：列表非空时 default = scoped[0]，经 defaultsSub 广播 "provider/modelId"
+   * 复合串（形态同 setDefaultModel mock；空列表不动 default，对齐 runtime S7 语义）。
+   */
+  async setScopedModels(models: string[]): Promise<string[]> {
+    await sleep(TIMING.ack)
+    // 去重保序
+    const seen = new Set<string>()
+    const deduped: string[] = []
+    for (const m of models) {
+      if (!seen.has(m)) {
+        seen.add(m)
+        deduped.push(m)
+      }
+    }
+    mockScopedModels = deduped
+    broadcastProviders()
+    if (deduped.length > 0) defaultsSub.broadcast(deduped[0])
+    return deduped
   },
   async scanSkills(_sources: string[]) {
     await sleep(TIMING.ack)
@@ -1008,13 +1037,21 @@ export const config = {
 }
 
 /** 向 providers 订阅者广播最新 fixture 快照（模拟 runtime 动作后广播） */
+let mockScopedModels: string[] = []
 function broadcastProviders(): void {
   const snapshot = fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
-  providersSub.broadcast(snapshot)
+  providersSubWithScoped.broadcast({ providers: snapshot, scopedModels: mockScopedModels })
 }
 
 /* ── Model mock ── */
-const modelsSub = makeMockSubscription(() => MOCK_MODELS.map(mockModelToInfo))
+// scoped-model：模型列表按 mockScopedModels 白名单过滤（空 = 不过滤，同 runtime aggregateModels
+// 空白名单语义）。mock 不模拟 scoped 有序重排，也不在 setScopedModels 后重推 modelsSub
+//（与 runtime 一致——model.list 是订阅首推 + 按需拉取，setScopedModels 不主动广播模型列表）。
+const modelsSub = makeMockSubscription(() =>
+  mockScopedModels.length === 0
+    ? MOCK_MODELS.map(mockModelToInfo)
+    : MOCK_MODELS.filter((m) => mockScopedModels.includes(`${m.providerId}/${m.id}`)).map(mockModelToInfo),
+)
 
 export const model = {
   onModels: (h: (models: ModelInfo[]) => void) => modelsSub.subscribe(h),

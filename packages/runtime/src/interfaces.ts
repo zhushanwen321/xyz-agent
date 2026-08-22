@@ -427,6 +427,11 @@ export interface IConfigService {
   getRenameModel(): string
   /** 设置 rename 标题生成模型（读改写 extension 配置文件的 model 字段，保留其他字段）。 */
   setRenameModel(model: string): void
+  // ── Scoped Models（scoped-model 设计文档 §3.3 D2）──
+  /** 读取 scoped models 白名单（providers.json 顶层 scopedModels 字段）。空数组 = 未启用。 */
+  getScopedModels(): string[]
+  /** RMW scoped models 白名单（锁内重读 → fn(current) → 原子写回，config.setScopedModels RPC 写入口）。 */
+  modifyScopedModels(fn: (current: string[]) => string[]): Promise<string[]>
 }
 
 // ── IExtensionService ──────────────────────────────────────────────
@@ -480,6 +485,12 @@ export interface IAuthService {
 /** Model aggregation, API discovery, and model/thinking-level orchestration. */
 export interface IModelService {
   aggregateModels(providers: ProviderInfo[]): ModelInfo[]
+  /**
+   * 双参版聚合：scopedModels 由调用方传入（单次读盘值复用，保证同一帧内
+   * config.providers.scopedModels 与 model.list 一致）。design D2 否决改
+   * aggregateModels 公开单参签名，故独立命名。
+   */
+  aggregateModelsWithScoped(providers: ProviderInfo[], scopedModels: string[]): ModelInfo[]
   discoverModelsFromApi(
     baseUrl: string,
     apiKey?: string,

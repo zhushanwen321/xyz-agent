@@ -29,6 +29,7 @@ const configMock = vi.hoisted(() => ({
   testProvider: vi.fn(async () => ({ ok: true })),
   discoverModels: vi.fn(async () => ({ success: true, models: [] })),
   setDefaultModel: vi.fn(async () => {}),
+  setScopedModels: vi.fn(async () => [] as string[]),
   // P2：ProviderPage 默认 pill + 默认修复 toast（缺则 TypeError 崩 mount）
   onDefaultsWithSource: vi.fn(() => () => {}),
   // wave-quick-setup-c/wave-list-badge：OAuth + env 检测（useProviderOAuth onMounted 订阅）
@@ -361,5 +362,106 @@ describe('ProviderPage QuickSetup OAuth 登录链路（B-1）', () => {
     // OAuthDialog 打开 pending 态（portal 到 body；与 QuickSetup 共用同一状态机实例）
     expect(document.body.querySelector('[data-testid="oauth-dialog"]')).toBeTruthy()
     expect(document.body.querySelector('[data-testid="oauth-pending"]')).toBeTruthy()
+  })
+})
+
+describe('ProviderPage A6 e2e-mock: ScopedModelSection 挂载与交互链路', () => {
+  it('A6: ProviderPage 渲染 ScopedModelSection 区域（组件挂载链路通）', async () => {
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    // ScopedModelSection 区域存在（mock 模式下 settingsStore.scopedModels 默认空数组）
+    expect(wrapper.find('[data-testid="scoped-model-section"]').exists()).toBe(true)
+    // 空状态提示可见
+    expect(wrapper.find('[data-testid="scoped-empty"]').exists()).toBe(true)
+    // 添加按钮存在
+    expect(wrapper.find('[data-testid="scoped-add-btn"]').exists()).toBe(true)
+  })
+
+  it('A6: 预填 scopedModels → 行序渲染 → 上移 → config.setScopedModels 收到交换后的完整有序数组', async () => {
+    const store = getSettingsStore()
+    // useScopedModels 从 store（非 props）派生渲染项：预填 providers + scopedModels
+    store.providers.value = PROVIDERS
+    store.scopedModels.value = ['anthropic/claude-sonnet-4', 'openai/gpt-4o']
+    configMock.setScopedModels.mockClear()
+
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    // 行渲染顺序 = scopedModels 数组序
+    const names = wrapper.findAll('[data-testid="scoped-model-name"]')
+    expect(names.map((n) => n.text())).toEqual(['Claude Sonnet 4', 'GPT-4o'])
+    expect(wrapper.find('[data-testid="scoped-empty"]').exists()).toBe(false)
+
+    // 触发第二行（openai/gpt-4o）上移
+    const rows = wrapper.findAll('[data-testid="scoped-row"]')
+    await rows[1].find('[data-testid="scoped-move-up"]').trigger('click')
+    await flushPromises()
+
+    // RPC 收到交换后的完整有序数组（乐观更新直传 store 值）
+    expect(configMock.setScopedModels).toHaveBeenCalledTimes(1)
+    expect(configMock.setScopedModels).toHaveBeenCalledWith(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
+  })
+
+  it('A6: scoped 操作 RPC 失败 → 回滚 + 常驻 inline error 可见（非静默）', async () => {
+    const store = getSettingsStore()
+    store.providers.value = PROVIDERS
+    store.scopedModels.value = ['anthropic/claude-sonnet-4', 'openai/gpt-4o']
+    configMock.setScopedModels.mockClear()
+    configMock.setScopedModels.mockRejectedValueOnce(new Error('rpc down'))
+
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="scoped-row"]')
+    await rows[1].find('[data-testid="scoped-move-up"]').trigger('click')
+    await flushPromises()
+
+    // 常驻 inline error 区域显示错误信息
+    const err = wrapper.find('[data-testid="provider-action-error"]')
+    expect(err.exists()).toBe(true)
+    expect(err.text()).toContain('rpc down')
+    // 乐观顺序已回滚
+    const names = wrapper.findAll('[data-testid="scoped-model-name"]')
+    expect(names.map((n) => n.text())).toEqual(['Claude Sonnet 4', 'GPT-4o'])
+  })
+
+  it('A6: 连点两次下移 → in-flight 期间第二次被忽略（防重入守卫，单次 RPC）', async () => {
+    const store = getSettingsStore()
+    store.providers.value = PROVIDERS
+    // 3 项列表：同一元素（首行）连点两次 down，第二次时该行已处 idx1、down 本有效
+    store.scopedModels.value = ['anthropic/claude-sonnet-4', 'anthropic/claude-opus-4', 'openai/gpt-4o']
+    configMock.setScopedModels.mockClear()
+    // 第一次 RPC 挂起（deferred），锁定 in-flight 窗口
+    let resolveRpc: (v: string[]) => void = () => {}
+    configMock.setScopedModels.mockImplementationOnce(
+      () => new Promise<string[]>((resolve) => { resolveRpc = resolve }),
+    )
+
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="scoped-row"]')
+    const downBtn = rows[0].find('[data-testid="scoped-move-down"]')
+    await downBtn.trigger('click') // claude-sonnet-4 idx0 → idx1（RPC pending，模块级 busy 置位）
+    await downBtn.trigger('click') // 连点：无守卫会以含乐观值的快照二次 RPC；守卫 → 忽略
+    resolveRpc(['anthropic/claude-opus-4', 'anthropic/claude-sonnet-4', 'openai/gpt-4o'])
+    await flushPromises()
+
+    // 仅第一次触发到达 RPC
+    expect(configMock.setScopedModels).toHaveBeenCalledTimes(1)
+    expect(configMock.setScopedModels).toHaveBeenCalledWith(['anthropic/claude-opus-4', 'anthropic/claude-sonnet-4', 'openai/gpt-4o'])
   })
 })

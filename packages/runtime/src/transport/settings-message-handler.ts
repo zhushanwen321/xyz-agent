@@ -60,7 +60,11 @@ export class SettingsMessageHandler {
   async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
     switch (msg.type) {
       case 'config.getProviders':
-        this.ctx.reply(ws, msg.id, 'config.providers', { providers: this.ctx.configService.listProviders() })
+        // scoped-model design §3.3 D7：reply 与广播（message-broker.buildProviderListMsgs）均含 scopedModels
+        this.ctx.reply(ws, msg.id, 'config.providers', {
+          providers: this.ctx.configService.listProviders(),
+          scopedModels: this.ctx.configService.getScopedModels(),
+        })
         return true
       case 'config.setProvider': {
         const { providerId, ...data } = msg.payload
@@ -458,6 +462,71 @@ export class SettingsMessageHandler {
       }
       case 'config.getRenameModel': {
         this.ctx.reply(ws, msg.id, 'config.renameModel', { model: this.ctx.configService.getRenameModel() })
+        return true
+      }
+      case 'config.setScopedModels': {
+        const { models } = msg.payload
+        // 格式校验：每条 ^[^/]+/.+$，非法整单拒绝
+        if (!Array.isArray(models) || models.some(m => typeof m !== 'string')) {
+          this.ctx.sendError(ws, 'invalid_payload', 'models 必须是字符串数组', msg.id)
+          return true
+        }
+        const MODEL_REGEX = /^[^\/]+\/.+$/
+        const invalid = (models as string[]).filter(m => !MODEL_REGEX.test(m))
+        if (invalid.length > 0) {
+          this.ctx.sendError(ws, 'invalid_scoped_models', `以下模型格式非法（需 provider/modelId）：${invalid.join(', ')}`, msg.id)
+          return true
+        }
+        // 去重保序
+        const seen = new Set<string>()
+        const deduped: string[] = []
+        for (const m of models as string[]) {
+          if (!seen.has(m)) {
+            seen.add(m)
+            deduped.push(m)
+          }
+        }
+        // 写入（IConfigService.modifyScopedModels → XyzProviderStore RMW）
+        const result = await this.ctx.configService.modifyScopedModels(() => deduped)
+        // 列表非空且 scoped[0] ≠ 当前 default 时同步 default = scoped[0]。
+        // defaultSynced：同步生效（含已是 default 的幂等情形）才广播 config.defaults；
+        // 同步被跳过/失败时保留现有 default，不广播未落盘的假默认。
+        let defaultSynced = false
+        if (result.length > 0) {
+          const firstModel = result[0]
+          try {
+            const [provider, ...modelParts] = firstModel.split('/')
+            const modelId = modelParts.join('/')
+            // scoped[0] 的 provider 须在当前列表且未禁用：把禁用 provider 的模型写成
+            // default 会被 getDefaultModel 内 findValidDefaultModel 随后冲掉（静默破坏
+            // 「第一位即默认」），跳过同步、保留现有 default
+            const providerInfo = this.ctx.configService.listProviders().find(p => p.id === provider)
+            if (!providerInfo || providerInfo.enabled === false) {
+              console.warn(`[settings-handler] setScopedModels: scoped[0] "${firstModel}" 的 provider 不可用（${providerInfo ? '已禁用' : '不在 providers 列表'}），跳过 default 同步，保留现有 default`)
+            } else {
+              const currentDefault = this.ctx.configService.getDefaultModel()
+              if (!currentDefault || `${currentDefault.provider}/${currentDefault.modelId}` !== firstModel) {
+                this.ctx.configService.setDefaultModel(provider, modelId)
+              }
+              defaultSynced = true
+            }
+          } catch (err) {
+            // best-effort 降级：scoped 白名单写入是主语义，default 同步失败（读 default/
+            // 写 default 抛错）只 warn 不上抛——上抛会跳过广播与 reply，造成磁盘/前端/
+            // 选择器三方状态撕裂（对齐 provider-config-helper cleanAuthCredential 惯例）
+            console.warn(`[settings-handler] setScopedModels: default 同步到 "${firstModel}" 失败（scopedModels 已写入 ${result.length} 条），保留现有 default：`, err)
+          }
+        }
+        // 广播
+        this.ctx.broadcastProviderList()
+        if (defaultSynced) {
+          this.ctx.broadcast({
+            type: 'config.defaults',
+            id: this.ctx.nextPushId(),
+            payload: { defaultModel: result[0], source: 'default-set' },
+          })
+        }
+        this.ctx.reply(ws, msg.id, 'config.scopedModels', { scopedModels: result })
         return true
       }
       // tool.approve / tool.deny / tool.always_allow：已删除的 no-op 占位。

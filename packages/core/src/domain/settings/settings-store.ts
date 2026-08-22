@@ -68,6 +68,12 @@ export function createSettingsStore() {
   const systemPromptConfig = ref<{ config: SystemPromptConfig; corrupted: boolean } | null>(null)
   /** 终端配置（Phase 6，config.terminalConfig 广播同步）。null=尚未加载。 */
   const terminalConfig = ref<{ config: TerminalConfig; corrupted: boolean } | null>(null)
+  /**
+   * Scoped models 白名单（provider/modelId 复合串数组，序=显示序）。
+   * 非空时模型选择器只显示其中模型；空数组/缺失=未启用（显示全部）。
+   * 数据来自 config.providers 广播 / config.getProviders reply 的 scopedModels 字段。
+   */
+  const scopedModels = ref<string[]>([])
 
   // ── Actions（纯写入；订阅生命周期在 settings-lifecycle）──
 
@@ -190,6 +196,7 @@ export function createSettingsStore() {
     defaultModel,
     systemPromptConfig,
     terminalConfig,
+    scopedModels,
     // actions（纯写入）
     setSystem,
     setSkillDirs,

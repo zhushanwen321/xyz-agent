@@ -39,7 +39,7 @@ const configMock = vi.hoisted(() => ({
   setProvider: vi.fn(async () => {}),
   checkEnvVars: vi.fn(async () => ({})),
   onProviders: vi.fn(() => () => {}),
-  listProviders: vi.fn(async () => []),
+  listProviders: vi.fn(async () => ({ providers: [] })),
   deleteProvider: vi.fn(async () => {}),
   listBuiltinProviders: vi.fn(async () => []),
   onDefaultsWithSource: vi.fn(() => () => {}),

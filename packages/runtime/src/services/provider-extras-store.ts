@@ -24,6 +24,8 @@ import { quarantineCorruptFile } from '../utils/json-store.js'
 export interface ProviderExtrasFile {
   version: 1
   providers: Record<string, ProviderExtras>
+  /** 顶层 scopedModels（模型白名单 + 有序列表，scoped-model design §3.2）。可选：缺失 = 空。 */
+  scopedModels?: string[]
 }
 
 /** 单 provider 的 xyz 扩展数据（全部字段自 models.json 寄生字段迁出，语义不变）。 */
@@ -88,6 +90,49 @@ function ensureFileExists(filePath: string): void {
   if (!existsSync(filePath)) {
     writeFileSync(filePath, JSON.stringify(EMPTY_FILE, null, JSON_INDENT), 'utf-8')
   }
+}
+
+/** scopedModels 条目格式：provider/modelId（与 settings-message-handler 的 RPC 写侧校验同款）。 */
+const SCOPED_MODEL_REGEX = /^[^/]+\/.+$/
+
+/**
+ * scopedModels 读侧独立容错（design §3.2 兼容性 / §风险矩阵）：非 string[] 或条目非
+ * `x/y` 格式 → 过滤非法条目 + log warning，**不隔离文件、providers 域不受影响**。
+ *
+ * 与 providers 域「形态不符 → 整文件 quarantine」刻意不同（scopedModels 不参与
+ * readInternal 的整文件隔离判定）：scopedModels 是独立新增顶层字段，损坏时连坐
+ * quota/modelStates 一起按空配置继续会扩大爆炸半径——白名单失效但 provider 配置全丢。
+ * 非数组（过滤无从谈起）→ 返回 []。
+ *
+ * 去重保序（首见保留）：手改 providers.json 写入重复条目是合法输入路径（design §1.3），
+ * 读侧唯一入口在此收敛去重——否则重复条目直达 aggregateModels 输出重复模型，模型选择器
+ * 渲染重复项。写侧去重（settings-message-handler）只是第一道防线，读侧兜底不可省。
+ */
+function sanitizeScopedModels(value: unknown): string[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) {
+    console.warn('[provider-extras-store] scopedModels: not an array, ignoring:', JSON.stringify(value)?.slice(0, SCHEMA_SNIPPET_MAX))
+    return []
+  }
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (const entry of value) {
+    if (typeof entry !== 'string') {
+      console.warn('[provider-extras-store] scopedModels: non-string entry filtered out:', entry)
+      continue
+    }
+    if (!SCOPED_MODEL_REGEX.test(entry)) {
+      console.warn('[provider-extras-store] scopedModels: invalid entry format (expected provider/modelId):', entry)
+      continue
+    }
+    if (seen.has(entry)) {
+      console.warn('[provider-extras-store] scopedModels: duplicate entry dropped (first occurrence kept):', entry)
+      continue
+    }
+    seen.add(entry)
+    result.push(entry)
+  }
+  return result
 }
 
 /**
@@ -196,6 +241,51 @@ export class XyzProviderStore {
       const file = readInternal(this.filePath)
       if (!(providerId in file.providers)) return
       delete file.providers[providerId]
+      writeInternal(this.filePath, file)
+    })
+  }
+
+  /**
+   * 读取顶层 scopedModels 字段（模型白名单 + 有序列表）。
+   * 文件不存在或字段缺失返回空数组（读路径不物化文件）。
+   * 损坏值（非 string[] / 条目非 x/y 格式）独立容错：过滤 + warn，不隔离文件
+   * （providers 域不受影响），返回合法子集——aggregateModels 消费方永不接触损坏值。
+   */
+  getScopedModelsSync(): string[] {
+    return sanitizeScopedModels(readInternal(this.filePath).scopedModels)
+  }
+
+  /**
+   * RMW 顶层 scopedModels 字段：锁内重读 → fn(current) → 原子写回。
+   * current 是当前 scopedModels（无字段/损坏时 []——sanitize 后 caller 永不接触
+   * 损坏值）；返回值整条替换。
+   */
+  async modifyScopedModels(
+    fn: (current: string[]) => string[],
+  ): Promise<string[]> {
+    let result: string[] | undefined
+    await withFileLock(this.filePath, async () => {
+      const file = readInternal(this.filePath)
+      result = fn(sanitizeScopedModels(file.scopedModels))
+      file.scopedModels = result
+      writeInternal(this.filePath, file)
+    })
+    return result!
+  }
+
+  /**
+   * 清理 scopedModels 中某 provider 的残留条目（deleteProvider/removeProviderByKind 后调用）。
+   * 过滤掉 `providerId/` 前缀条目；无变化时跳过写。
+   */
+  async cleanScopedModelsResidue(providerId: string): Promise<void> {
+    if (!existsSync(this.filePath)) return
+    const prefix = `${providerId}/`
+    await withFileLock(this.filePath, async () => {
+      const file = readInternal(this.filePath)
+      const current = sanitizeScopedModels(file.scopedModels)
+      const remaining = current.filter(m => !m.startsWith(prefix))
+      if (remaining.length === current.length) return // 幂等
+      file.scopedModels = remaining
       writeInternal(this.filePath, file)
     })
   }

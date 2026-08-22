@@ -1,0 +1,121 @@
+{
+  "unit": "scoped-model",
+  "acceptance": [
+    {
+      "id": "R1",
+      "type": "e2e-real",
+      "title": "增量回归守卫",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && bash scripts/cw-acceptance/affected-tests.sh 75f596069 --run",
+      "timeout": 900,
+      "core": false,
+      "scenario": "从基线 commit 75f596069 推导受本次改动影响的测试文件集，逐包 vitest 执行。覆盖设计文档 §4 六场景的受影响子集（非全量——R2/E7 步骤 3 复用同一 affected-tests.sh 增量口径）。受影响文件口径：git diff 过滤 *.ts/*.tsx/*.vue/*.mts/*.mjs。affected-tests.sh 四个出口（cd 失败/基线不可达/无变更/汇总）均产出 R1 标记行或 exit≠0。lint 覆盖由 R2/E7 预检承担（sm-e2e.sh E7 对改动文件逐个 eslint --format=json 解析 error 数，eslint 崩溃/输出不可解析按 FAIL）。XYZ_SKIP_REAL_PI=1 双轨机制保留（real-pi 组时序不稳定，与本功能无关）。增量口径固有盲区（非同名映射的既有测试被破坏不进 R1 视野）由 PR pre-merge 单兜底（R2 已切换为同一增量口径，不再承担全量）。"
+    },
+    {
+      "id": "R2",
+      "type": "e2e-real",
+      "title": "全量端到端验收",
+      "command": "bash scripts/cw-acceptance/sm-e2e.sh all",
+      "timeout": 1800,
+      "core": true,
+      "scenario": "sm-e2e.sh all 聚合 E1-E10 全部验收探针，串行执行，末尾输出 R2 标记行 + exit 对齐。覆盖设计文档 §4 八场景中的七个直接断言 + 一个等价覆盖（S4），E1-E10 与场景的实际映射如下：\n- S1 固定模型集 → E1：setScopedModels 写入后 model.list 广播只含白名单模型且保序\n- S2 自定义顺序 + 新会话默认 → E2：重排后广播顺序变化 + settings.json defaultModel 同步为 scoped[0]\n- S3 OAuth catalog provider 模型 + 默认模型持久化 → E3：auth.json-only catalog provider 模型可添加、显示、spawn 读回 default 不被 findValidDefaultModel 冲掉（含重启后 config.defaults 持久化）\n- S4 GUI 即时生效 → E2 广播等价论证：model.list 广播已覆盖 GUI 选择后模型列表实时更新的行为\n- S5 新会话默认终态 → E10：直接断言新会话 session.modelId === scoped[0]（catalog + custom 双 provider 源各覆盖一轮，reply session.modelId 与 session.state_changed 双终态）\n- S6 toggle 共存（前置 enabledModels 白名单模式）→ E4：toggle OFF 后 CUSTOM 模型从 model.list 消失但 scopedModels 条目保留，toggle ON 恢复显示\n- S7 清空恢复 → E5：setScopedModels [] → restoredCount===fullCount 全量恢复 + defaultModel 不变\n- S8 残留清理 → E6：deleteProvider → 广播侧 + 文件侧 scopedModels 清除 CUSTOM 条目且保留 CATALOG 条目\n- S2 持久化维度（重启后 reorder/defaultModel）→ E8：重启后 scopedModels 排序 + defaultModel 仍为 scoped[0]\nE7 为回归守卫分支（scoped smoke + lint 预检 + affected-tests.sh 增量回归：dry-run 实测 35 个受影响测试，规则1 diff 测试文件直取 + 规则2 同名映射；XYZ_SKIP_REAL_PI=1），非单一场景映射——功能区分力由 core:true 的 E1-E6/E8/E10 承担。E9 为 aggregateModels scoped 行为锁定单测（R3 独立验收）。S4 等价覆盖的边界：S4 无独立 GUI 探针（等价于 E2 广播链路），defer 至 PR 阶段 Playwright 探针补充——唯一剩余的 GUI 探针缺口。"
+    },
+    {
+      "id": "R3",
+      "type": "unit",
+      "title": "E9 单测聚合",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/scoped-model-e9.test.ts",
+      "timeout": 300,
+      "core": false,
+      "scenario": "vitest 直接运行 packages/runtime/test/scoped-model-e9.test.ts，外层 describe('R3: ...') 确保 fullName 以 R3 开头（词边界匹配）。E9-1~E9-4 覆盖 aggregateModels scoped 过滤/排序/优先级/读侧容错四个维度：E9-1 白名单过滤且保序、E9-2 provider 级 disabled 优先于 scoped、E9-3 空 scopedModels 回归锁定全量输出、E9-4 providers.json scopedModels 损坏时独立容错不隔离文件。与 sm-e2e 子 unit E9 验收（-t \"E9\" 过滤内层 describe）同源测试文件但独立执行路径——R3 为 root unit 验收，E9 为 sm-e2e 子 unit 验收，两者 fullName 均含各自 id 且互不干扰。"
+    }
+  ],
+  "contracts": [
+    {
+      "id": "C1",
+      "kind": "function",
+      "provider": "scoped-model",
+      "consumer": "settings-message-handler",
+      "file": "packages/shared/src/protocol.ts",
+      "signature": "'config.setScopedModels': { models: string[] }",
+      "description": "config.setScopedModels RPC 命令 request payload：接收 modelId 数组（provider/modelId 复合串）。reply 类型为 config.scopedModels: { scopedModels: string[] }（去重保序后结果）。实际签名见 protocol.ts ClientMessageMap L566。self-provider 形态：root 集成契约由 owner unit 自声明。"
+    },
+    {
+      "id": "C2",
+      "kind": "event",
+      "provider": "scoped-model",
+      "consumer": "settings-message-handler",
+      "file": "packages/shared/src/protocol.ts",
+      "signature": "'config.providers': { providers: ProviderInfo[]; scopedModels?: string[] }",
+      "description": "config.providers 广播 payload 扩展：新增可选 scopedModels 字段。config.getProviders reply 共用同一类型定义（ServerMessageMapBase L748）。self-provider 形态。"
+    },
+    {
+      "id": "C3",
+      "kind": "function",
+      "provider": "scoped-model",
+      "consumer": "config-service",
+      "file": "packages/runtime/src/services/provider-extras-store.ts",
+      "signature": "getScopedModelsSync(): string[]",
+      "description": "XyzProviderStore 新增顶层 scopedModels 读写 API（L244）。getScopedModelsSync 同步读取（非法值容错，非 string[] 返回 []，非法条目过滤并 log warning）。modifyScopedModels 异步 RMW（同一 withFileLock 锁，与 per-provider modify 串行，L253）。self-provider 形态。注：实现期与子 unit 冻结契约命名漂移（sm-contract-store 冻结 C3 签名为 getScopedModels），以代码终态为准。"
+    },
+    {
+      "id": "C4",
+      "kind": "function",
+      "provider": "scoped-model",
+      "consumer": "sm-ui-chain",
+      "file": "packages/shared/src/protocol.ts",
+      "signature": "'config.setScopedModels': { models: string[] }",
+      "description": "config.setScopedModels RPC 命令（与 C1 同签名，consumer 为 sm-ui-chain）。reply config.scopedModels: { scopedModels: string[] }。self-provider 形态。"
+    },
+    {
+      "id": "C5",
+      "kind": "event",
+      "provider": "scoped-model",
+      "consumer": "sm-ui-chain",
+      "file": "packages/shared/src/protocol.ts",
+      "signature": "'config.providers': { providers: ProviderInfo[]; scopedModels?: string[] }",
+      "description": "config.providers 广播 payload 扩展（与 C2 同签名，consumer 为 sm-ui-chain）。self-provider 形态。"
+    },
+    {
+      "id": "C6",
+      "kind": "function",
+      "provider": "scoped-model",
+      "consumer": "sm-ui-chain",
+      "file": "packages/ui/src/features/settings/common/ScopedModelSection.vue",
+      "signature": "const props = defineProps<{ scopedList: ScopedRenderItem[]; selectableModels: SelectableModel[] }>()",
+      "description": "ScopedModelSection 组件 props 接线契约（L193，单行紧凑形态逐字匹配）。self-provider 形态。"
+    },
+    {
+      "id": "C7",
+      "kind": "function",
+      "provider": "scoped-model",
+      "consumer": "sm-ui-chain",
+      "file": "packages/ui/src/features/settings/common/ScopedModelSection.vue",
+      "signature": "const emit = defineEmits<{ add: [models: string[]]; remove: [scoped: string]; move: [{ scoped: string; dir: 'up' | 'down' }] }>()",
+      "description": "ScopedModelSection 组件 emits 接线契约（L195，单行紧凑形态逐字匹配）。self-provider 形态。"
+    }
+  ],
+  "split": [
+    {
+      "unitId": "sm-contract-store",
+      "dependsOn": []
+    },
+    {
+      "unitId": "sm-runtime-filter",
+      "dependsOn": [
+        "sm-contract-store"
+      ]
+    },
+    {
+      "unitId": "sm-ui-chain",
+      "dependsOn": [
+        "sm-runtime-filter"
+      ]
+    },
+    {
+      "unitId": "sm-e2e",
+      "dependsOn": [
+        "sm-ui-chain"
+      ]
+    }
+  ]
+}
