@@ -26,7 +26,7 @@ import { setSettingsPath, readSettings } from '../src/infra/pi/pi-settings-store
 const mkdtempP = promisify(mkdtemp)
 const rmP = promisify(rm)
 
-function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; toggleProviderEnabled?: ReturnType<typeof vi.fn>; removeProviderByKind?: ReturnType<typeof vi.fn>; getDefaultModel?: ReturnType<typeof vi.fn>; applyImportProviders?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn>; oauthLogout?: ReturnType<typeof vi.fn> } = {}) {
+function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; toggleProviderEnabled?: ReturnType<typeof vi.fn>; removeProviderByKind?: ReturnType<typeof vi.fn>; getDefaultModel?: ReturnType<typeof vi.fn>; applyImportProviders?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn>; oauthLogout?: ReturnType<typeof vi.fn>; modifyScopedModels?: ReturnType<typeof vi.fn> } = {}) {
   const broadcasts: ServerMessage[] = []
   const replies: { id: string; type: string; payload: Record<string, unknown> }[] = []
   const sendErrorCalls: { code: string; message: string }[] = []
@@ -39,6 +39,9 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     removeProviderByKind: overrides.removeProviderByKind ?? vi.fn().mockResolvedValue({}),
     setDefaultModel: vi.fn(),
     getDefaultModel: overrides.getDefaultModel ?? vi.fn().mockReturnValue(null),
+    getScopedModels: vi.fn(() => []),
+    // config.setScopedModels 写入口（scoped-model design）：默认执行 handler 传入的写入函数
+    modifyScopedModels: overrides.modifyScopedModels ?? vi.fn(async (fn: (current: string[]) => string[]) => fn([])),
     applyImportProviders: overrides.applyImportProviders ?? vi.fn().mockResolvedValue({ result: {} }),
     getProvider: vi.fn().mockReturnValue(undefined),
     updateToolPermissions: vi.fn(),
@@ -516,6 +519,103 @@ describe('SettingsMessageHandler', () => {
       expect(settings.defaultModel).toBe('m1')
       // 且 reconcile 广播了 config.defaults（收口后统一入口）
       expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(1)
+    })
+  })
+
+  // ── scoped model（design §4.1 A5/A7/A9）：config.setScopedModels 路由 ──
+  // 校验（非法整单拒绝）→ 去重保序写入 → defaultModel 同步 scoped[0] → 广播 + reply。
+  describe('A5: config.setScopedModels 默认模型联动（scoped[0] 写 default）', () => {
+    it('A5 setScopedModels 后 defaultModel 同步写为 scoped[0] + 广播 config.defaults (source=default-set)', async () => {
+      const { ctx, replies, broadcasts, handler } = makeHandler({
+        modifyScopedModels: vi.fn(async () => ['p/m1', 'p/m2']),
+        getDefaultModel: vi.fn().mockReturnValue(null),
+      })
+
+      await handler.handleSettingsMessage(msg('config.setScopedModels', { models: ['p/m1', 'p/m2'] }), WS)
+
+      // 列表非空且 scoped[0] ≠ 当前 default → 写 default 为 scoped[0]
+      expect(ctx.configService.setDefaultModel).toHaveBeenCalledWith('p', 'm1')
+      const d = broadcasts.find(b => b.type === 'config.defaults')
+      expect(d?.payload).toMatchObject({ defaultModel: 'p/m1', source: 'default-set' })
+      expect(replies[0]).toMatchObject({ type: 'config.scopedModels', payload: { scopedModels: ['p/m1', 'p/m2'] } })
+    })
+
+    it('scoped[0] 已是当前 default 时不重写 setDefaultModel', async () => {
+      const { ctx, handler } = makeHandler({
+        modifyScopedModels: vi.fn(async () => ['p/m1']),
+        getDefaultModel: vi.fn().mockReturnValue({ provider: 'p', modelId: 'm1' }),
+      })
+
+      await handler.handleSettingsMessage(msg('config.setScopedModels', { models: ['p/m1'] }), WS)
+
+      expect(ctx.configService.setDefaultModel).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('A7: setScopedModels 广播后模型列表只含 scoped 且有序', () => {
+    it('A7 setScopedModels 触发 broadcastProviderList + reply 按写入序；随后 model.list reply aggregateModels 结果', async () => {
+      // aggregateModels 的 scoped 过滤/排序在 model-service.test.ts（A1/A3）覆盖，
+      // 此处验证 handler 链路：setScopedModels 后广播 provider 列表（含 scopedModels），
+      // model.list 的 reply 透传 aggregateModels（scoped 过滤后）结果。
+      const aggregate = vi.fn().mockReturnValue([{ id: 'C' }, { id: 'A' }])
+      const { ctx, replies, handler } = makeHandler({
+        modifyScopedModels: vi.fn(async () => ['p/C', 'p/A']),
+        aggregate,
+      })
+
+      await handler.handleSettingsMessage(msg('config.setScopedModels', { models: ['p/C', 'p/A'] }), WS)
+      expect(ctx.broadcastProviderList).toHaveBeenCalledOnce()
+      expect(replies[0]).toMatchObject({ type: 'config.scopedModels', payload: { scopedModels: ['p/C', 'p/A'] } })
+
+      await handler.handleSettingsMessage(msg('model.list', {}), WS)
+      expect(aggregate).toHaveBeenCalledOnce()
+      expect(replies[1]).toMatchObject({ type: 'model.list', payload: { models: [{ id: 'C' }, { id: 'A' }] } })
+    })
+  })
+
+  describe('A9: config.setScopedModels 格式校验与去重', () => {
+    it('A9 非法条目（无斜杠）→ sendError invalid_scoped_models，整单拒绝（不写入不广播不 reply）', async () => {
+      const modifyScopedModels = vi.fn(async (fn: (c: string[]) => string[]) => fn([]))
+      const { ctx, replies, broadcasts, sendErrorCalls, handler } = makeHandler({ modifyScopedModels })
+
+      await handler.handleSettingsMessage(msg('config.setScopedModels', { models: ['p/m1', 'gpt-4'] }), WS)
+
+      expect(sendErrorCalls[0]).toMatchObject({ code: 'invalid_scoped_models' })
+      expect(modifyScopedModels).not.toHaveBeenCalled()
+      expect(ctx.broadcastProviderList).not.toHaveBeenCalled()
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(0)
+      expect(replies).toHaveLength(0)
+    })
+
+    it('A9 空 provider 前缀（/gpt-4）同样整单拒绝', async () => {
+      const { sendErrorCalls, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('config.setScopedModels', { models: ['/gpt-4'] }), WS)
+      expect(sendErrorCalls[0]).toMatchObject({ code: 'invalid_scoped_models' })
+    })
+
+    it('A9 models 非数组 / 元素非字符串 → sendError invalid_payload', async () => {
+      const { sendErrorCalls, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('config.setScopedModels', { models: 'not-array' }), WS)
+      expect(sendErrorCalls[0]).toMatchObject({ code: 'invalid_payload' })
+    })
+
+    it('A9 合法条目去重保序写入（写入函数整单替换为去重序，reply 同步返回）', async () => {
+      // handler 传 () => deduped：忽略 current（整单替换），写入值为去重保序结果
+      const written: string[][] = []
+      const modifyScopedModels = vi.fn(async (fn: (c: string[]) => string[]) => {
+        const out = fn(['old/x'])
+        written.push(out)
+        return out
+      })
+      const { replies, handler } = makeHandler({ modifyScopedModels })
+
+      await handler.handleSettingsMessage(
+        msg('config.setScopedModels', { models: ['p/m1', 'p/m2', 'p/m1', 'p/m3', 'p/m2'] }),
+        WS,
+      )
+
+      expect(written[0]).toEqual(['p/m1', 'p/m2', 'p/m3'])
+      expect(replies[0]).toMatchObject({ type: 'config.scopedModels', payload: { scopedModels: ['p/m1', 'p/m2', 'p/m3'] } })
     })
   })
 })

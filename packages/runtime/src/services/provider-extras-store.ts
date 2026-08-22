@@ -24,7 +24,7 @@ import { quarantineCorruptFile } from '../utils/json-store.js'
 export interface ProviderExtrasFile {
   version: 1
   providers: Record<string, ProviderExtras>
-  /** 模型白名单（scopedModels），条目为 provider/modelId 复合串。空/缺失 = 未启用（显示全部）。 */
+  /** 顶层 scopedModels（模型白名单 + 有序列表，scoped-model design §3.2）。可选：缺失 = 空。 */
   scopedModels?: string[]
 }
 
@@ -92,6 +92,11 @@ function ensureFileExists(filePath: string): void {
   }
 }
 
+/** scopedModels 字段形态校验：undefined（缺失）或 string[] 才合法。 */
+function isValidScopedModels(value: unknown): value is string[] | undefined {
+  return value === undefined || (Array.isArray(value) && value.every(m => typeof m === 'string'))
+}
+
 /**
  * 读并解析 providers.json。文件不存在返回空结构（读路径不物化文件）。
  * 损坏（非法 JSON / version 非 1）→ quarantineCorruptFile 隔离为
@@ -123,7 +128,10 @@ function readInternal(filePath: string): ProviderExtrasFile {
     // （round 2 review suggestion）
     || !Object.values((parsed as ProviderExtrasFile).providers).every(
       entry => entry !== null && typeof entry === 'object' && !Array.isArray(entry),
-    )) {
+    )
+    // scopedModels 形态：存在时必须是 string[]（非数组穿透后 getScopedModelsSync 返回损坏值，
+    // aggregateModels 遍历时 TypeError 炸掉 listProviders/broadcast 链路）
+    || !isValidScopedModels((parsed as ProviderExtrasFile).scopedModels)) {
     quarantineCorruptFile(filePath, {
       tag: 'provider-extras-store',
       reason: 'schema mismatch (expect { version: 1, providers: {} })',
@@ -203,42 +211,44 @@ export class XyzProviderStore {
   }
 
   /**
-   * 读取模型白名单（scopedModels）。非法值容错：非 string[] 整体视为空、
-   * 条目不匹配 `^[^/]+/.+$` 的过滤掉并 log warning。
+   * 读取顶层 scopedModels 字段（模型白名单 + 有序列表）。
+   * 文件不存在或字段缺失返回空数组（读路径不物化文件）。
    */
-  getScopedModels(): string[] {
-    const file = readInternal(this.filePath)
-    const raw = file.scopedModels
-    if (!Array.isArray(raw)) return []
-    const VALID_MODEL_RE = /^[^/]+\/.+$/
-    const result: string[] = []
-    for (const entry of raw) {
-      if (typeof entry !== 'string') {
-        console.warn('[provider-extras-store] scopedModels: non-string entry filtered out:', entry)
-        continue
-      }
-      if (!VALID_MODEL_RE.test(entry)) {
-        console.warn('[provider-extras-store] scopedModels: invalid entry format (expected provider/modelId):', entry)
-        continue
-      }
-      result.push(entry)
-    }
-    return result
+  getScopedModelsSync(): string[] {
+    return readInternal(this.filePath).scopedModels ?? []
   }
 
   /**
-   * RMW 模型白名单：锁内重读 → fn(current) → 原子写回。
-   * 与 modify 同一 withFileLock 锁，天然与 per-provider 写串行。
+   * RMW 顶层 scopedModels 字段：锁内重读 → fn(current) → 原子写回。
+   * current 是当前 scopedModels（无字段时 []）；返回值整条替换。
    */
-  async modifyScopedModels(fn: (cur: string[]) => string[]): Promise<string[]> {
+  async modifyScopedModels(
+    fn: (current: string[]) => string[],
+  ): Promise<string[]> {
     let result: string[] | undefined
     await withFileLock(this.filePath, async () => {
       const file = readInternal(this.filePath)
-      const current = Array.isArray(file.scopedModels) ? file.scopedModels : []
-      result = fn(current)
+      result = fn(file.scopedModels ?? [])
       file.scopedModels = result
       writeInternal(this.filePath, file)
     })
     return result!
+  }
+
+  /**
+   * 清理 scopedModels 中某 provider 的残留条目（deleteProvider/removeProviderByKind 后调用）。
+   * 过滤掉 `providerId/` 前缀条目；无变化时跳过写。
+   */
+  async cleanScopedModelsResidue(providerId: string): Promise<void> {
+    if (!existsSync(this.filePath)) return
+    const prefix = `${providerId}/`
+    await withFileLock(this.filePath, async () => {
+      const file = readInternal(this.filePath)
+      const current = file.scopedModels ?? []
+      const remaining = current.filter(m => !m.startsWith(prefix))
+      if (remaining.length === current.length) return // 幂等
+      file.scopedModels = remaining
+      writeInternal(this.filePath, file)
+    })
   }
 }

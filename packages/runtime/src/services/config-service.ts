@@ -110,7 +110,7 @@ export class ConfigService implements IConfigService {
      * 可选注入：未注入时 authMethod 丢弃 + warn（宁丢不写错位），聚合层 extras 恒空
      * （authMethod 退回推断、quota undefined），生产恒注入。
      */
-    private providerExtrasStore?: Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync'>,
+    private providerExtrasStore?: Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync' | 'getScopedModelsSync' | 'modifyScopedModels' | 'cleanScopedModelsResidue'>,
   ) {}
 
   /**
@@ -158,7 +158,7 @@ export class ConfigService implements IConfigService {
   }
 
   async deleteProvider(providerId: string): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
-    return deleteProviderImpl(this.configStore, this.authStorage, providerId)
+    return deleteProviderImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId)
   }
 
   async removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
@@ -261,6 +261,19 @@ export class ConfigService implements IConfigService {
   /** 设置 rename 标题生成模型（读改写 extension 配置文件的 model 字段，保留其他字段）。 */
   setRenameModel(model: string): void {
     setRenameModelImpl(model)
+  }
+
+  // ── Scoped Models（委托 provider-extras-store）──
+
+  getScopedModels(): string[] {
+    return this.providerExtrasStore?.getScopedModelsSync() ?? []
+  }
+
+  async modifyScopedModels(fn: (current: string[]) => string[]): Promise<string[]> {
+    if (!this.providerExtrasStore) {
+      throw new Error('[config-service] providerExtrasStore not available (scoped models write)')
+    }
+    return this.providerExtrasStore.modifyScopedModels(fn)
   }
 
   // ── Skill CRUD（委托 skill-config-helper）─────────────────────────

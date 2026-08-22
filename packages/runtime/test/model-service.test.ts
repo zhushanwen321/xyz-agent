@@ -37,6 +37,7 @@ function makeMockConfigService(providers: ProviderInfo[], overrides: Partial<ICo
     listProviders: vi.fn(() => providers),
     setDefaultModel: vi.fn(),
     getDefaultModel: vi.fn(() => null),
+    getScopedModels: vi.fn(() => []),
     ...overrides,
   } as unknown as IConfigService
 }
@@ -51,6 +52,18 @@ function makeMockBroker(): { broker: IMessageBroker; broadcasts: ServerMessage[]
 
 function makeMockModelSource(overrides: Partial<IModelSource> = {}): IModelSource {
   return { discoverFromApi: vi.fn(async () => []), ...overrides }
+}
+
+/** scoped-model 验收（A1-A4）用：构造带 N 个模型的 ProviderInfo。 */
+function makeProvider(id: string, name: string, modelIds: string[], enabled = true): ProviderInfo {
+  return {
+    id: id as ProviderId,
+    name,
+    apiKeySet: true,
+    status: 'connected',
+    enabled,
+    models: modelIds.map(mid => ({ id: mid, name: mid })),
+  }
 }
 
 // ── 测试 ──────────────────────────────────────────────────────
@@ -252,6 +265,7 @@ describe('ModelService.aggregateModels · enabled 过滤（W2 / U3）', () => {
     ]
 
     const svc = new ModelService(makeMockModelSource())
+    svc.setServices(makeMockSessionService(), makeMockConfigService([]), makeMockBroker().broker)
     const result = svc.aggregateModels(providers)
 
     // p1 整体被禁用，其 m1/m2 不进结果；只留 p2/m3
@@ -274,6 +288,7 @@ describe('ModelService.aggregateModels · enabled 过滤（W2 / U3）', () => {
     ]
 
     const svc = new ModelService(makeMockModelSource())
+    svc.setServices(makeMockSessionService(), makeMockConfigService([]), makeMockBroker().broker)
     const result = svc.aggregateModels(providers)
 
     // 只留 m2，m1 被 model 级 enabled=false 过滤
@@ -295,6 +310,7 @@ describe('ModelService.aggregateModels · enabled 过滤（W2 / U3）', () => {
     ]
 
     const svc = new ModelService(makeMockModelSource())
+    svc.setServices(makeMockSessionService(), makeMockConfigService([]), makeMockBroker().broker)
     const result = svc.aggregateModels(providers)
 
     // 缺省 / true 都视为启用，全保留
@@ -318,9 +334,156 @@ describe('ModelService.aggregateModels · enabled 过滤（W2 / U3）', () => {
     ]
 
     const svc = new ModelService(makeMockModelSource())
+    svc.setServices(makeMockSessionService(), makeMockConfigService([]), makeMockBroker().broker)
     const result = svc.aggregateModels(providers)
 
     expect(result.map(m => m.id)).toEqual(['m2'])
     expect(result.find(m => m.id === 'm1')).toBeUndefined()
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// aggregateModels · scoped models 过滤/排序（scoped-model design §4.1 A1-A4）
+//
+// scopedModels 非空时按白名单过滤 + 按 scopedModels 序重排（跨 provider 交错保留）；
+// 解析不到模型的 scoped 条目静默跳过。enabled 过滤优先于 scoped（被禁 provider/model
+// 即使在 scoped 中也不显示）。scoped 为空/缺失 → 输出与原路径完全一致（回归 A2）。
+// ══════════════════════════════════════════════════════════════════
+
+describe('A1: scoped 非空 → 只输出白名单内模型', () => {
+  it('A1 只返回 scopedModels 中列出的模型', () => {
+    const providers: ProviderInfo[] = [
+      makeProvider('openai', 'OpenAI', ['gpt-4', 'gpt-3.5-turbo']),
+      makeProvider('anthropic', 'Anthropic', ['claude-opus', 'claude-sonnet']),
+    ]
+    const configService = makeMockConfigService([], {
+      getScopedModels: vi.fn(() => ['openai/gpt-4', 'anthropic/claude-opus']),
+    })
+    const svc = new ModelService(makeMockModelSource())
+    svc.setServices(makeMockSessionService(), configService, makeMockBroker().broker)
+
+    const result = svc.aggregateModels(providers)
+
+    expect(result.map(m => `${m.providerId}/${m.id}`)).toEqual([
+      'openai/gpt-4',
+      'anthropic/claude-opus',
+    ])
+  })
+
+  it('scoped 条目解析不到模型时静默跳过', () => {
+    const providers: ProviderInfo[] = [
+      makeProvider('p', 'P', ['m1']),
+    ]
+    const configService = makeMockConfigService([], {
+      getScopedModels: vi.fn(() => ['p/m1', 'p/nonexistent']),
+    })
+    const svc = new ModelService(makeMockModelSource())
+    svc.setServices(makeMockSessionService(), configService, makeMockBroker().broker)
+
+    const result = svc.aggregateModels(providers)
+
+    // nonexistent 被跳过
+    expect(result.map(m => m.id)).toEqual(['m1'])
+  })
+})
+
+describe('A2: scoped 为空 → 输出与现状完全一致', () => {
+  it('A2 scopedModels=[] 时返回全部模型（原路径）+ 守卫分支存在（scoped 配置被读取）', () => {
+    const providers: ProviderInfo[] = [
+      makeProvider('openai', 'OpenAI', ['gpt-4', 'gpt-3.5-turbo']),
+      makeProvider('anthropic', 'Anthropic', ['claude-opus']),
+    ]
+    const getScopedModels = vi.fn((): string[] => [])
+    const configService = makeMockConfigService([], { getScopedModels })
+    const svc = new ModelService(makeMockModelSource())
+    svc.setServices(makeMockSessionService(), configService, makeMockBroker().broker)
+
+    const result = svc.aggregateModels(providers)
+
+    expect(result.map(m => m.id)).toEqual(['gpt-4', 'gpt-3.5-turbo', 'claude-opus'])
+    // A2 区分力锚点：空列表也必须读 scoped 配置——无此守卫读取的旧实现（scoped 引入前）
+    // 输出同样全量，仅靠结果断言无法区分，守卫调用是 scoped 分支存在的直接证据
+    expect(getScopedModels).toHaveBeenCalledOnce()
+  })
+})
+
+describe('A3: 输出序按 scopedModels 序', () => {
+  it('A3 scopedModels=[B,A,C] → 输出序 B,A,C', () => {
+    const providers: ProviderInfo[] = [
+      makeProvider('p', 'P', ['A', 'B', 'C']),
+    ]
+    const configService = makeMockConfigService([], {
+      getScopedModels: vi.fn(() => ['p/B', 'p/A', 'p/C']),
+    })
+    const svc = new ModelService(makeMockModelSource())
+    svc.setServices(makeMockSessionService(), configService, makeMockBroker().broker)
+
+    const result = svc.aggregateModels(providers)
+
+    expect(result.map(m => m.id)).toEqual(['B', 'A', 'C'])
+  })
+
+  it('跨 provider 交错序保留', () => {
+    const providers: ProviderInfo[] = [
+      makeProvider('a', 'A', ['m1', 'm2']),
+      makeProvider('b', 'B', ['m3', 'm4']),
+    ]
+    const configService = makeMockConfigService([], {
+      getScopedModels: vi.fn(() => ['b/m3', 'a/m1', 'b/m4', 'a/m2']),
+    })
+    const svc = new ModelService(makeMockModelSource())
+    svc.setServices(makeMockSessionService(), configService, makeMockBroker().broker)
+
+    const result = svc.aggregateModels(providers)
+
+    expect(result.map(m => `${m.providerId}/${m.id}`)).toEqual([
+      'b/m3', 'a/m1', 'b/m4', 'a/m2',
+    ])
+  })
+})
+
+describe('A4: provider disabled 优先压过 scoped', () => {
+  it('A4 provider.enabled=false 时其模型不显示（即使在 scoped 中），enabled 且在 scoped 的模型显示、enabled 但不在 scoped 的被过滤', () => {
+    const providers: ProviderInfo[] = [
+      makeProvider('openai', 'OpenAI', ['gpt-4'], false), // disabled
+      // claude-sonnet 是 enabled 模型但不在 scoped 中——仅靠 enabled 过滤的旧实现会放行它，
+      // scoped 过滤是本实现新语义（A4 区分力锚点）
+      makeProvider('anthropic', 'Anthropic', ['claude-opus', 'claude-sonnet'], true),
+    ]
+    const configService = makeMockConfigService([], {
+      getScopedModels: vi.fn(() => ['openai/gpt-4', 'anthropic/claude-opus']),
+    })
+    const svc = new ModelService(makeMockModelSource())
+    svc.setServices(makeMockSessionService(), configService, makeMockBroker().broker)
+
+    const result = svc.aggregateModels(providers)
+
+    // openai 被禁用，其 gpt-4 不进结果（即使在 scoped 中）；claude-sonnet enabled 但不在 scoped，同样不进
+    expect(result.map(m => m.id)).toEqual(['claude-opus'])
+  })
+
+  it('model.enabled=false 时该模型不显示（即使在 scoped 中）', () => {
+    const providers: ProviderInfo[] = [
+      {
+        id: 'p' as ProviderId,
+        name: 'P',
+        apiKeySet: true,
+        status: 'connected',
+        enabled: true,
+        models: [
+          { id: 'm1', name: 'M1', enabled: false },
+          { id: 'm2', name: 'M2' },
+        ],
+      },
+    ]
+    const configService = makeMockConfigService([], {
+      getScopedModels: vi.fn(() => ['p/m1', 'p/m2']),
+    })
+    const svc = new ModelService(makeMockModelSource())
+    svc.setServices(makeMockSessionService(), configService, makeMockBroker().broker)
+
+    const result = svc.aggregateModels(providers)
+
+    expect(result.map(m => m.id)).toEqual(['m2'])
   })
 })
