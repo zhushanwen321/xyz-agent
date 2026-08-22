@@ -18,9 +18,9 @@
 ## 安装
 
 ```bash
-# symlink 方式（开发推荐）
+# symlink 方式（开发推荐；globalExtDir 平铺布局，目标不带分组层）
 ln -s /path/to/xyz-pi-extensions-workspace/main/packages/unified-hooks \
-      ~/.pi/agent/extensions/universal/unified-hooks
+      ~/.pi/agent/extensions/unified-hooks
 
 # npm 方式（正式）
 pi install npm:@zhushanwen/pi-unified-hooks

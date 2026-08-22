@@ -20,7 +20,7 @@
  * 零第三方依赖（node:fs/node:path）。退出码：0 = 通过；1 = 违规。
  */
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -36,6 +36,21 @@ const fail = (msg) => {
   console.error(`  ✗ ${msg}`)
   failed = 1
 }
+
+/** 读 base 下一层各子目录的 package.json（无该文件的子目录跳过），返回 [{ dir, name, pkg }] */
+function scanPackageDirs(baseDir) {
+  const found = []
+  if (!existsSync(baseDir)) return found
+  for (const dir of readdirSync(baseDir)) {
+    const pkgFile = join(baseDir, dir, 'package.json')
+    if (!existsSync(pkgFile)) continue
+    const pkg = JSON.parse(readFileSync(pkgFile, 'utf-8'))
+    found.push({ dir, name: pkg.name, pkg })
+  }
+  return found
+}
+
+const isPiPackage = (name) => name?.startsWith('@zhushanwen/pi-')
 
 const deps = JSON.parse(readFileSync(DEPS_FILE, 'utf-8'))
 const entries = deps.extensions ?? []
@@ -60,25 +75,16 @@ for (const entry of entries) {
 // ── 2. 反向：分组目录下 pi-* 包必须在文件中 ────────────────────────
 const diskPackages = []
 for (const group of GROUPS) {
-  const groupDir = join(EXT_DIR, group)
-  if (!existsSync(groupDir)) continue
-  for (const dir of readdirSync(groupDir)) {
-    const pkgFile = join(groupDir, dir, 'package.json')
-    if (!existsSync(pkgFile)) continue
-    const pkg = JSON.parse(readFileSync(pkgFile, 'utf-8'))
-    if (pkg.name?.startsWith('@zhushanwen/pi-')) {
-      diskPackages.push({ name: pkg.name, directory: `extensions/${group}/${dir}`, group, dir, pkg })
-    }
+  for (const { dir, name, pkg } of scanPackageDirs(join(EXT_DIR, group))) {
+    if (!isPiPackage(name)) continue
+    diskPackages.push({ name, directory: `extensions/${group}/${dir}`, group, dir, pkg })
   }
 }
-// extensions/ 一层不允许散装 pi-* 包（分组后残留 = 路径适配漏改）
-for (const dir of readdirSync(EXT_DIR)) {
-  if (GROUPS.includes(dir) || dir === 'shared' || dir === 'tsconfig.json') continue
-  if (existsSync(join(EXT_DIR, dir, 'package.json'))) {
-    const pkg = JSON.parse(readFileSync(join(EXT_DIR, dir, 'package.json'), 'utf-8'))
-    if (pkg.name?.startsWith('@zhushanwen/pi-')) {
-      fail(`包 ${pkg.name} 位于 extensions/ 一层（${dir}/），必须移入 taiji/ 或 universal/ 分组`)
-    }
+// extensions/ 一层不允许散装 pi-* 包（分组后残留 = 路径适配漏改）；
+// 分组目录与 shared/ 一层无 package.json，scanPackageDirs 天然跳过
+for (const { dir, name } of scanPackageDirs(EXT_DIR)) {
+  if (isPiPackage(name)) {
+    fail(`包 ${name} 位于 extensions/ 一层（${dir}/），必须移入 taiji/ 或 universal/ 分组`)
   }
 }
 for (const pkg of diskPackages) {
@@ -92,18 +98,8 @@ for (const pkg of diskPackages) {
 
 // ── 3. 引用：dependsOn 的 workspace 内包必须可解析 ──────────────────
 const entryNames = new Set(entries.map((e) => e.name))
-const sharedNames = new Set()
-for (const dir of readdirSync(SHARED_DIR)) {
-  const pkgFile = join(SHARED_DIR, dir, 'package.json')
-  if (!existsSync(pkgFile)) continue
-  sharedNames.add(JSON.parse(readFileSync(pkgFile, 'utf-8')).name)
-}
-const packageNames = new Set()
-for (const dir of readdirSync(join(ROOT, 'packages'))) {
-  const pkgFile = join(ROOT, 'packages', dir, 'package.json')
-  if (!existsSync(pkgFile)) continue
-  packageNames.add(JSON.parse(readFileSync(pkgFile, 'utf-8')).name)
-}
+const sharedNames = new Set(scanPackageDirs(SHARED_DIR).map((p) => p.name))
+const packageNames = new Set(scanPackageDirs(join(ROOT, 'packages')).map((p) => p.name))
 for (const entry of entries) {
   for (const dep of entry.dependsOn ?? []) {
     const name = dep.package
@@ -135,7 +131,14 @@ for (const pkg of diskPackages) {
 // 检测面 = 活代码/配置/活文档；历史记录与构建产物不检测（保留当时事实，不追溯改写）：
 //   - resources/：staged 构建产物（bundle 时已是新路径，磁盘残留旧 staged 无意义）
 //   - CHANGELOG.md / adr/ / .orchestration/ / 包内 docs/：历史记录（当时路径是事实）
-//   - (?<!\./)：排除包内相对导入 ./extensions/xxx（与仓库顶层 extensions/ 无关）
+//   - (?<!\./)：排除包内相对导入 ./extensions/<pkg>（与仓库顶层 extensions/ 无关）
+//   - (?<!agent/)：排除 pi 全局安装目录 ~/.pi/agent/extensions/<pkg>（平铺布局，
+//     与仓库分组路径无关；README 安装命令的合法目标）
+//   - (?<!packages/extensions/)：排除外部 monorepo 的 packages/extensions/ 布局
+//     （如 oh-pi 调研引用，非本仓路径）
+//   - (?![\w-]) 终止黑名单：包名边界 = 后面不是字母数字/连字符。不用白名单枚举
+//     （[/\s"'\`,)\]]|$）——白名单漏全角标点/英文句点，中文文档全角括号包路径的
+//     高频写法会逃逸（2026-08-22 审查实证，扩大后即抓出 6 处漏网）
 const SCAN_ROOTS = ['scripts', 'packages', 'apps', 'extensions', 'docs/extensions', '.agents/skills']
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage', '__pycache__', 'resources'])
 const SKIP_PATH_PARTS = ['/adr/', '/.orchestration/']
@@ -147,8 +150,10 @@ for (const dir of readdirSync(SHARED_DIR)) {
   if (existsSync(join(SHARED_DIR, dir, 'package.json'))) knownNames.add(dir)
 }
 
-const staleRe = new RegExp(`(?<!\\./)extensions/(${[...knownNames].join('|')})(?=[/\\s"'\\\`,)\\]]|$)`)
+const staleRe = new RegExp(`(?<!\\./)(?<!agent/)(?<!packages/extensions/)extensions/(${[...knownNames].join('|')})(?![\\w-])`)
 // 历史记录判定：CHANGELOG / ADR / 验收报告 / 包内 docs 设计记录 / 历史事故文档
+// （包内 docs 的分组名用 GROUPS 构建，新增分组单点同步）
+const groupDocsRe = new RegExp(`^extensions/(${GROUPS.join('|')})/[^/]+/docs/`)
 const HISTORICAL_FILES = new Set([
   'docs/extensions/tool-schema-openai-compat.md', // 2026-07 OpenAI 兼容事故复盘，路径为当时事实
 ])
@@ -157,7 +162,7 @@ function entryIsHistorical(rel) {
   if (HISTORICAL_FILES.has(rel)) return true
   if (rel === 'CHANGELOG.md' || rel.endsWith('/CHANGELOG.md')) return true
   if (SKIP_PATH_PARTS.some((part) => norm.includes(part))) return true
-  if (/^extensions\/(taiji|universal)\/[^/]+\/docs\//.test(rel)) return true
+  if (groupDocsRe.test(rel)) return true
   return false
 }
 function* scanFiles(dir) {
@@ -167,8 +172,7 @@ function* scanFiles(dir) {
     if (entry.isDirectory()) {
       yield* scanFiles(p)
     } else {
-      const dot = entry.name.slice(entry.name.lastIndexOf('.'))
-      if (SCAN_EXT.has(dot)) yield p
+      if (SCAN_EXT.has(extname(entry.name))) yield p
     }
   }
 }
