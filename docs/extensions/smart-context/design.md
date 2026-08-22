@@ -164,10 +164,10 @@ xyz-agent 设置页新增 "智能上下文压缩" Section：总开关、压缩�
 - 借道 `ctx.compact()`（**选定**）：切点计算（`prepareCompaction`）、落盘（`appendCompaction`）、上下文重建（`agent.state.messages`）复用 pi 原生实现；**压缩生成**（含 cross-model 模式的摘要组装复刻，见 D11/D12）由接管 handler 负责。单点接管、处处生效（用户 `/compact`、内建自动、agent 工具三条路径统一）。
 - 手动组装：需要自己复刻 appendCompaction + 上下文重建（`agent.state.messages` 重建在 AgentSession 内部，extension 无法触达），不可行。
 
-**工具结果时序契约（fire-and-forget 约束）**：`ctx.compact()` 实装为 `void (async () => { ...; options?.onComplete?.(result) })()`（`agent-session.js:1911-1925`），**不返回 Promise**——工具 execute 无法直接 await 压缩完成。两态策略：
+**工具结果时序契约（fire-and-forget 约束）**：`ctx.compact()` 实装为 `void (async () => { ...; options?.onComplete?.(result) })()`（`agent-session.js:1911-1925`），**不返回 Promise**——工具 execute 无法直接 await 压缩完成。
 
-- **最优态**：execute 内 `new Promise`，onComplete/onError 时 resolve/reject，工具调用阻塞至压缩完成、结果直接返回给 agent（是否可行受 R2 探针约束：`this.compact()` 开头 `await this.abort()` 对等待中的工具执行的影响、pi 工具执行有无超时）。
-- **降级态**（R2 失败时启用）：execute 立即返回"压缩已启动"，onComplete 后经 `pi.sendMessage` 注入结果消息（deliverAs 选取见 D4 同款权衡），agent 下一轮看到结果。
+- **~~最优态~~（R2 实测否决，2026-08-22）**：execute 内挂起 Promise 等 onComplete——本地 pi CLI 探针（`--mode rpc` + 测试 extension）实测：`AgentSession.compact()` 开头的 `await this.abort()` 中止了当前 agent 循环，挂起的工具 Promise 永不兑现，session 文件中 toolCall 之后无 toolResult、无后续 turn（agent 停摆）。
+- **降级态（唯一实现形态，已落地）**：execute 立即返回"压缩已启动"（含模式信息），onComplete/onError 后经 `pi.sendUserMessage` 注入结果消息（steer）——此时无进行中回合，compact 内部的 abort 为 no-op。agent 下一轮看到结果。
 
 ### 3.3 关键决策与权衡
 
@@ -303,7 +303,9 @@ xyz-agent 设置页新增 "智能上下文压缩" Section：总开关、压缩�
 - **D13-8 先验 checkpoint 合并规则**：输入中已含上次摘要（same-model 天然、cross-model 透传）时，指令明确"不逐字复制旧摘要：保留仍真事实、丢弃过时事实、与新信息合并为单一 summary"——两模式共用增量语义。deepseek-harness `summarizer.ts:65` 同款。
 - **D13-9 落回包裹语**：summary 文本开头加一段引导（"这是对更早对话的自动压缩检查点，视为既定背景，直接从其后消息继续任务，无需确认已收到本摘要"）——消除压缩后模型第一反应"好的我已了解摘要"的浪费回合。deepseek-harness CHECKPOINT_PREAMBLE、Codex SUMMARY_PREFIX 同款。
 - **D13-10 输出解析只取 text**：same-model 模式下模型可能输出 reasoning/工具调用，只取 text 块作为 summary（deepseek `summarizer.ts:216-224` 思路，取文本而非 fail 拒绝）。
-- **被否**：压缩后"最近文件内容重注入"（Claude Code ≤5 文件/50K 预算）——实现中等复杂（预算 + 与保留段去重），标记为后续可选优化不进本期；时间型 microcompact / partial compact / session memory 等复杂机制——见附录 B 不吸收清单。
+- **D13-11 压缩后最近文件内容重注入**：从 `preparation` 的 fileOps.readFiles 取最近读取的文件（≤5 个、每文件截 5K、总预算 50K tokens），读文件内容附加到 summary 尾部的「Recently read files」节；已在保留段出现过的 Read 结果跳过（避免重复占上下文，Claude Code `compact.ts:1415-1534` 同款预算与去重规则；文件读取经 Node fs，extension 允许）。读不到（文件已删/超预算）逐文件降级跳过，不失败。
+- **D13-12 多轮压缩降智提示**：工具结果 content 尾部与提醒消息附一句"上下文已经过多次压缩，细节可能有损；如任务允许，建议适时开启新会话"（检测 entry 累计 compaction 次数 ≥2 时才显示，Codex `compact.rs:383-386` 同款）。
+- **被否**：时间型 microcompact / partial compact / session memory 等复杂机制——见附录 B 不吸收清单。
 
 ### 3.4 架构与数据流
 
@@ -386,15 +388,17 @@ execute 返回 details：`{ tokensBefore, estimatedTokensAfter, mode: "same-mode
 | # | 断言 | 依据状态 | 探针失败时的降级路径 |
 |---|---|---|---|
 | R1 | `session_before_compact` 返回 `{compaction}` 后，pi 跳过原生生成、落盘 entry `fromExtension=true` + extension 写入的 details、usage 为生成模型的实际消耗 | ✅ 已读实装代码（`agent-session.js:1402-1417/1624-1655`）；端到端行为实施期用本地 pi CLI 探针复验 | 探针失败（版本行为漂移）→ 放弃接管，extension 退化为「工具 + 提醒」两功能，压缩模型配置项标注不可用 |
-| R2 | `ctx.compact()` 在 tool execute 上下文内可用且挂起 Promise 等 `onComplete` 可行（`AgentSession.compact` 开头 `await this.abort()` 对等待中工具执行的影响、工具执行有无超时） | ⛔ 实施期门：本地 pi CLI `--mode rpc` 实测（plan extension 有同类先例但上下文不同，不可直接外推） | 挂起不可行 → 工具走**降级态**（§3.2）：立即返回"压缩已启动"，onComplete 后经 `pi.sendMessage` 注入结果 |
-| R3 | cross-model：`generateSummaryWithUsage(messages, 压缩Model, ...)` + `ctx.modelRegistry` 解析 auth（apiKey/baseUrl）跨 provider 可用 | ⛔ 实施期门：mimo 压缩 glm 会话实测；`modelRegistry.getAuth` 返回形状精确核对 | 跨 provider 解析不可用 → 走 **D7 回退**：压缩用当前模型完成（cross-model 价值缺失，same-model 模式不受影响） |
-| R4 | cross-model 接管路径对 **split-turn**（切点落在 turn 中间）的 turnPrefix 摘要覆盖完整（原生路径有 `TURN_PREFIX_SUMMARIZATION_PROMPT` 二次摘要） | ⛔ 实施期门：构造 turn 中间触发压缩的 session 对比接管前后摘要质量 | 存在损失确认 → **D11-3 降级**：split-turn 场景不接管、放行原生生成 |
+| R2 | `ctx.compact()` 在 tool execute 上下文内挂起 Promise 等 `onComplete` 可行性 | ✅ **实测否决最优态（2026-08-22）**：探针 session 证实 abort 中止当前 agent 循环、工具 Promise 挂死无 toolResult。**降级态为唯一实现**（已落地：fire-and-forget + sendUserMessage 注入结果） | 已按降级态实现（§3.2） |
+| R3 | cross-model：跨 provider 的模型解析 + auth 注入 | ✅ **静态已核（2026-08-22 开发期）**：`@zhushanwen/pi-llm-shared` 的 `callLLM`/`resolveModel` 封装了 `ctx.modelRegistry.getApiKeyAndHeaders` + `completeSimple`（`extensions/shared/llm-shared/src/call.ts:94-138`），rename-session 跨模型调用生产先例 | — |
+| R4 | cross-model 接管对 split-turn 的覆盖 | ✅ **静态已核，问题消失**：`compact(preparation, model, ...)` 是包根导出（`dist/index.js:8`），cross-model 直接调它——split-turn 双段合并、fileOps、previousSummary 全走原生组装，**D11 复刻清单整体降级为「直接调用导出的 compact() 换 model 参数」** | — |
 | R5 | ~~setActiveTools 白名单语义~~（**已作废**：D5 改为工具常驻 + 切换注入通知，不再依赖 setActiveTools 动态启停） | — | — |
-| R6 | subagent 子进程的识别手段（环境变量 / spawn 标记；`--mode rpc` 与主进程相同，无法靠 mode 区分） | ⛔ 实施期门：读 subagent-workflow `runSpawn` 协议（`session-runner.ts:650` 一带） | 无识别手段 → subagent 进程**默认不注册工具、不提醒**（宁缺勿污），主进程不受影响；留 WARN 日志待上游提供识别标记后启用 |
-| R7 | `getContextUsage()` 压缩后首响应前返回 `tokens: null`（提醒检查需容错跳过，不误判为低用量） | ✅ 实装注释明示（`types.d.ts:193-199`） | — |
-| R8 | **same-model 模式 kv-cache 实际命中**：完整上下文 + 会话原 system prompt + 末尾追加压缩指令的调用，usage 的 `cacheRead` 覆盖绝大部分 input（前缀缓存命中），且摘要质量不低于摘要化模式 | ⛔ 实施期门：真实长 session（≥100K）上触发 same-model 压缩，检查 usage.cacheRead / (cacheRead+input) 占比 + 摘要抽查 | 命中率显著低于预期（如 provider 对该模型关闭前缀缓存）→ GUI 设置页 same-model 提示文案如实标注成本特征，机制保留（质量红利仍在）；摘要质量劣于摘要化 → 回退统一摘要化模式并记录原因 |
-| R9 | same-model 模式的完整上下文数据源：`session_before_compact` 事件 payload（`branchEntries`）或 `ctx.sessionManager` 能取到与 `agent.state.messages` 等价的完整 messages 投影 | ⛔ 实施期门：核对事件 payload 与 sessionManager API 的投影等价性 | payload 不可得 → 经 `ctx.sessionManager.getEntries()` 自行投影（与 pi `buildContextEntries` 对齐） |
-| R10 | pi 原生 cross-model 路径的 `messagesToSummarize` 是否已排除上次 compactionSummary 投影（决定 D11-1 透传 previousSummary 时会不会双份摘要） | ⛔ 实施期门：读 `prepareCompaction` 组装 + 构造二次压缩 session 验证 | 已排除 → 直接透传；未排除 → handler 组装输入时剔除旧 compaction 投影（opencode `compaction.ts:335-338` 同款 hidden 剔除） |
+| R6 | subagent 子进程识别 | ✅ **静态已核**：subagent-workflow 无条件注入 `PI_SUBAGENT_ROOT_SESSION_ID`/`PI_SUBAGENT_SELF_RECORD_ID`/`PI_SUBAGENT_DEPTH` 环境变量（`session-runner.ts:941-943`）——extension 检测 `PI_SUBAGENT_ROOT_SESSION_ID !== undefined` 即 subagent | — |
+| R7 | `getContextUsage()` 压缩后首响应前返回 `tokens: null` | ✅ 实装注释明示（`types.d.ts:193-199`） | — |
+| R8 | **same-model 模式 kv-cache 实际命中**：完整上下文 + 会话原 system prompt + tools + 末尾追加压缩指令的调用，usage 的 `cacheRead` 覆盖绝大部分 input | ⛔ 补充证据（2026-08-22 探针顺带）：mimo 会话 24.7K 前缀 `cacheRead: 24704 / input: 34`——前缀缓存按 messages 命中实证。same-model 压缩实测待 U9 验收 | 命中率低 → GUI 文案如实标注成本特征，机制保留（质量红利仍在） |
+| R9 | same-model 完整上下文数据源 | ✅ **静态已核**：`buildSessionContext`/`buildContextEntries`/`sessionEntryToContextMessages` 均为包根导出（`dist/index.js:23`），`ctx.sessionManager` 上也有方法版（`session-manager.js:958`）——`buildSessionContext(branchEntries).messages` 即完整上下文（含旧 compactionSummary 投影） | — |
+| R10 | pi 原生 cross-model 路径是否已排除被压段中的旧 compactionSummary 投影 | ✅ **静态已核，无双份风险**：`prepareCompaction` 的 `boundaryStart` = 上次 compaction 的 `firstKeptEntryId` 索引（`compaction.js:513-518`），`messagesToSummarize` 不含上次 compaction entry；旧摘要仅经 `preparation.previousSummary` 通道进入——接管直接透传即可 | — |
+
+> **开发期探针补充结论（2026-08-22）**：R2 动态实测已否决"挂起 Promise"最优态（abort 中止 agent 循环），降级态为唯一实现。same-model 的 LLM 调用**不走 llm-shared callLLM**（其 `tools:[]` 硬编码会破坏 cache-key 一致性，`call.ts:113`），改在 extension 内直接用 `completeSimple` + `getApiKeyAndHeaders` + 完整 tools schema（对齐 deepseek-harness summarizer 的缓存对齐做法）。
 
 ---
 
@@ -504,6 +508,8 @@ docs/extensions/smart-context/design.md       # 本文档
 | 接管连续失败熔断（3 次停止，防每轮空转烧钱） | Claude Code `autoCompact.ts:62-70`（3272 次连续失败教训） | D13-3 |
 | transcript 回查指针（summary 末尾附 session 文件路径） | Claude Code `prompt.ts:349-351` | D13-4 |
 | 输出解析只取 text 块（防 reasoning/工具调用混入 summary） | deepseek-harness `summarizer.ts:216-224` | D13-10 |
+| 压缩后最近文件内容重注入（≤5 文件/每文件 5K/总 50K + 跳过保留段已有 Read） | Claude Code `compact.ts:1415-1534` | D13-11 |
+| 多轮压缩降智提示（compaction 次数 ≥2 时提示开新会话） | Codex `compact.rs:383-386` | D13-12 |
 | cross-model 输入瘦身：tool result 头部 2000 字符截断 + 图片/文档占位化 | opencode `compaction.ts:351-354` / Claude Code `compact.ts:145-200` | D11 输入瘦身 |
 | previousSummary 双份防御（透传同时剔除被压段中旧 compaction 投影，或确认原生已排除） | opencode `compaction.ts:335-338` | D11-1 + 探针 R10 |
 | 模型切换 downshift 检测（切小窗模型且将超线时提醒先压缩） | Codex `turn.rs:1097-1142` 的小型化 | D5 |
@@ -511,10 +517,7 @@ docs/extensions/smart-context/design.md       # 本文档
 
 **已评估、暂不吸收**（后续可选）：
 
-| 机制 | 来源 | 原因 |
-|---|---|---|
-| 压缩后"最近文件内容"重注入（≤5 文件/50K 预算/去重） | Claude Code `compact.ts:1415-1534` | 实现中等复杂（预算 + 与保留段去重）；fileOps 清单 + transcript 指针已覆盖主要恢复路径，先观察够不够 |
-| 压缩后多轮降智警告 UX 文案 | Codex `compact.rs:383-386` | 一行文案，实施期顺手加，不构成决策 |
+*（无——原标记可选的两项已按复审决定全部纳入 D13-11/12）*
 
 **不吸收**（复杂度与"小优化"定位冲突，明确排除）：
 

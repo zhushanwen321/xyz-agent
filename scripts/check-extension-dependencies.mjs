@@ -147,7 +147,10 @@ for (const dir of readdirSync(SHARED_DIR)) {
   if (existsSync(join(SHARED_DIR, dir, 'package.json'))) knownNames.add(dir)
 }
 
-const staleRe = new RegExp(`(?<!\\./)extensions/(${[...knownNames].join('|')})(?=[/\\s"'\\\`,)\\]]|$)`)
+// (?<!docs\/)：docs/extensions/<name>/... 是文档目录路径（docs/extensions/ 下的 topic 目录），
+// 不是 extension 包路径引用——与包名同名时（如 smart-context 的设计文档目录）不算一层残留。
+// (?<!\w)：排除 abcextensions/xxx 之类的子串误匹配。
+const staleRe = new RegExp(`(?<!\\w)(?<!\\./)(?<!docs/)extensions/(${[...knownNames].join('|')})(?=[/\\s"'\\\`,)\\]]|$)`)
 // 历史记录判定：CHANGELOG / ADR / 验收报告 / 包内 docs 设计记录 / 历史事故文档
 const HISTORICAL_FILES = new Set([
   'docs/extensions/tool-schema-openai-compat.md', // 2026-07 OpenAI 兼容事故复盘，路径为当时事实

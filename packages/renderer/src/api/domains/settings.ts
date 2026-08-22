@@ -52,6 +52,16 @@ type DefaultBaseBranchReply = ServerMessageMap['config.defaultBaseBranch']
 type AutoRenameEnabledReply = ServerMessageMap['config.autoRenameEnabled']
 /** rename 标题生成模型配置 reply 类型。 */
 type RenameModelReply = ServerMessageMap['config.renameModel']
+/** 智能上下文压缩配置（get 全量）reply 类型。 */
+type SmartContextConfigReply = ServerMessageMap['config.smartContextConfig']
+/** 智能上下文压缩开关配置 reply 类型。 */
+type SmartContextEnabledReply = ServerMessageMap['config.smartContextEnabled']
+/** 智能上下文压缩模型配置 reply 类型。 */
+type SmartContextCompactModelReply = ServerMessageMap['config.smartContextCompactModel']
+/** 智能上下文提醒阈值配置 reply 类型。 */
+type SmartContextThresholdsReply = ServerMessageMap['config.smartContextThresholds']
+/** 智能上下文排除模型配置 reply 类型。 */
+type SmartContextExcludedModelsReply = ServerMessageMap['config.smartContextExcludedModels']
 
 /** 设置 worktree 专用目录（持久化到 settings.json）。 */
 export async function setWorktreeRootDir(dir: string): Promise<WorktreeRootDirReply> {
@@ -121,6 +131,31 @@ export async function setRenameModel(model: string): Promise<RenameModelReply> {
 /** 读取 rename 标题生成模型（"provider/modelId"，空串 = 未设置）。 */
 export async function getRenameModel(): Promise<RenameModelReply> {
   return command('config.getRenameModel', {})
+}
+
+/** 读取智能上下文压缩配置全量（compactModel 空串 = 未设置；thresholds 为 token 绝对数）。 */
+export async function getSmartContextConfig(): Promise<SmartContextConfigReply> {
+  return command('config.getSmartContextConfig', {})
+}
+
+/** 设置智能上下文压缩开关。 */
+export async function setSmartContextEnabled(enabled: boolean): Promise<SmartContextEnabledReply> {
+  return command('config.setSmartContextEnabled', { enabled })
+}
+
+/** 设置压缩模型（"provider/modelId"，空串 = 跟随当前会话模型）。 */
+export async function setSmartContextCompactModel(model: string): Promise<SmartContextCompactModelReply> {
+  return command('config.setSmartContextCompactModel', { model })
+}
+
+/** 设置 3 档提醒阈值（token 绝对数，runtime 侧 clamp 升序 3 档）。 */
+export async function setSmartContextThresholds(thresholds: number[]): Promise<SmartContextThresholdsReply> {
+  return command('config.setSmartContextThresholds', { thresholds })
+}
+
+/** 设置排除模型列表（每条完整 provider/modelId，runtime 侧过滤无 "/" 条目去重）。 */
+export async function setSmartContextExcludedModels(models: string[]): Promise<SmartContextExcludedModelsReply> {
+  return command('config.setSmartContextExcludedModels', { models })
 }
 
 // ── 代理配置（update:getProxyConfig / update:setProxyConfig / update:testProxy）──

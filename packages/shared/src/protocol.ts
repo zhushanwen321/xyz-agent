@@ -114,6 +114,11 @@ export type ClientMessageType =
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
   | 'config.setAutoRenameEnabled' | 'config.getAutoRenameEnabled'
   | 'config.setRenameModel' | 'config.getRenameModel'
+  | 'config.getSmartContextConfig'
+  | 'config.setSmartContextEnabled'
+  | 'config.setSmartContextCompactModel'
+  | 'config.setSmartContextThresholds'
+  | 'config.setSmartContextExcludedModels'
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
   | 'preset.recordUsage' | 'preset.getUsage'
@@ -513,6 +518,16 @@ export interface ClientMessageMap {
   'config.setRenameModel': { model: string }
   /** config.getRenameModel：读取自动重命名标题生成模型（前端读取）。 */
   'config.getRenameModel': Record<string, never>
+  /** config.getSmartContextConfig：读取智能上下文压缩配置（前端读取）。 */
+  'config.getSmartContextConfig': Record<string, never>
+  /** config.setSmartContextEnabled：设置智能上下文压缩开关（前端写入）。 */
+  'config.setSmartContextEnabled': { enabled: boolean }
+  /** config.setSmartContextCompactModel：设置压缩模型（"provider/modelId" 复合串，空串 = 跟随当前会话模型）。 */
+  'config.setSmartContextCompactModel': { model: string }
+  /** config.setSmartContextThresholds：设置 3 档提醒阈值（token 绝对数，runtime 侧 clamp 升序 3 档）。 */
+  'config.setSmartContextThresholds': { thresholds: number[] }
+  /** config.setSmartContextExcludedModels：设置排除模型列表（每条完整 provider/modelId，runtime 侧过滤去重）。 */
+  'config.setSmartContextExcludedModels': { models: string[] }
   // pi 启动预设域（设计文档 pi-launch-presets.md）。
   // preset.list：列出全部预设（内置 + 自定义）；preset.getDefault：读全局默认预设 id；
   // preset.setDefault：设全局默认预设（写入 pi-presets.json）。均按需 RPC，无 server-push 广播。
@@ -694,6 +709,11 @@ export type ServerMessageType =
   | 'config.defaultBaseBranch'
   | 'config.autoRenameEnabled'
   | 'config.renameModel'
+  | 'config.smartContextConfig'
+  | 'config.smartContextEnabled'
+  | 'config.smartContextCompactModel'
+  | 'config.smartContextThresholds'
+  | 'config.smartContextExcludedModels'
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
   | 'preset.recordUsage' | 'preset.getUsage'
@@ -1061,6 +1081,21 @@ export interface ServerMessageMapBase {
   'config.autoRenameEnabled': { enabled: boolean }
   /** config.renameModel：config.getRenameModel / config.setRenameModel 的 reply（"provider/modelId"，空串 = 未设置）。 */
   'config.renameModel': { model: string }
+  /** config.smartContextConfig：config.getSmartContextConfig 的 reply（compactModel 为 "provider/modelId" 复合串，空串 = 未设置；thresholds 为 token 绝对数）。 */
+  'config.smartContextConfig': {
+    enabled: boolean
+    compactModel: string
+    reminderThresholds: number[]
+    excludedModels: string[]
+  }
+  /** config.smartContextEnabled：config.setSmartContextEnabled 的 reply。 */
+  'config.smartContextEnabled': { enabled: boolean }
+  /** config.smartContextCompactModel：config.setSmartContextCompactModel 的 reply（"provider/modelId"，空串 = 跟随当前会话模型）。 */
+  'config.smartContextCompactModel': { model: string }
+  /** config.smartContextThresholds：config.setSmartContextThresholds 的 reply（clamp 后的 token 绝对数，升序 3 档）。 */
+  'config.smartContextThresholds': { thresholds: number[] }
+  /** config.smartContextExcludedModels：config.setSmartContextExcludedModels 的 reply（过滤去重后）。 */
+  'config.smartContextExcludedModels': { models: string[] }
 
   // ── preset 域 reply（设计文档 pi-launch-presets.md，runtime PresetMessageHandler reply）──
   // 仅登记 payload 消费型 reply（domain 读 reply 字段）。
@@ -1466,6 +1501,11 @@ export interface ReplyPayloadMap {
   'config.getAutoRenameEnabled': ServerMessageMap['config.autoRenameEnabled']
   'config.setRenameModel': ServerMessageMap['config.renameModel']
   'config.getRenameModel': ServerMessageMap['config.renameModel']
+  'config.getSmartContextConfig': ServerMessageMap['config.smartContextConfig']
+  'config.setSmartContextEnabled': ServerMessageMap['config.smartContextEnabled']
+  'config.setSmartContextCompactModel': ServerMessageMap['config.smartContextCompactModel']
+  'config.setSmartContextThresholds': ServerMessageMap['config.smartContextThresholds']
+  'config.setSmartContextExcludedModels': ServerMessageMap['config.smartContextExcludedModels']
   // preset 域（设计文档 pi-launch-presets.md）：runtime PresetMessageHandler reply。
   // 全部引用 ServerMessageMapBase 中登记的精确 payload 形状（W-SH-1 收紧，SSOT）。
   //  - preset.list / getDefault / getUsage / getCwdDefault / getCwdDefaults / export / import
