@@ -20,7 +20,7 @@ import {
   renameSync,
   writeFileSync,
 } from 'node:fs'
-import lockfile from 'proper-lockfile'
+import { withFileLockAsync } from '../../utils/file-lock.js'
 
 /** auth.json 凭据文件权限：0600 = 仅 owner 可读写（文件内容是 OAuth token，见文件头安全约束） */
 const OWNER_READ_WRITE_MODE = 0o600
@@ -53,40 +53,14 @@ export interface CredentialWriter {
 }
 
 /**
- * 跨进程写锁：proper-lockfile 锁 auth.json，参数对齐 pi FileAuthStorageBackend.withLockAsync
- * （retries 10/factor 2/minTimeout 100/maxTimeout 10s/randomize + stale 30s），与 pi 侧
- * 刷新写回互斥同一把锁（<auth.json>.lock）。
+ * 跨进程写锁：锁协议（proper-lockfile 参数 + compromised 语义）单点在
+ * utils/file-lock.ts 的 withFileLockAsync，与 pi FileAuthStorageBackend.withLockAsync
+ * 互斥同一把锁（<auth.json>.lock）。
  * proper-lockfile realpath 默认 true，目标文件不存在时 realpath ENOENT 拿不到锁——
  * 先按 pi 同款 ensureFileExists 建空文件（0600）再锁。
  */
 async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
-  ensureFileExists(filePath)
-  // onCompromised：锁被判定 stale 抢占（进程卡死超时等）时标记，fn 执行前抛错，
-  // 防止在失去互斥保证的锁下写盘（对齐 pi throwIfCompromised 语义）。
-  let compromised: Error | undefined
-  const release = await lockfile.lock(filePath, {
-    retries: {
-      retries: 10,
-      factor: 2,
-      minTimeout: 100,
-      maxTimeout: 10_000,
-      randomize: true,
-    },
-    stale: 30_000,
-    onCompromised: (err) => { compromised = err },
-  })
-  try {
-    if (compromised) throw compromised
-    return await fn()
-  } finally {
-    try {
-      await release()
-    } catch (error) {
-      // 锁已 compromised 时 unlock 失败可忽略（对齐 pi finally 的 catch 语义）——
-      // 记 warn 而非静默：compromised 之外的原因（lock 文件被外部删等）需要可观测
-      console.warn('[auth-storage] release lock failed (continuing, lock may be compromised):', error)
-    }
-  }
+  return withFileLockAsync(filePath, { ensure: () => ensureFileExists(filePath), logTag: 'auth-storage' }, fn)
 }
 
 /** 与 pi FileAuthStorageBackend.ensureFileExists 同款：锁前保证文件存在（proper-lockfile realpath 需要） */

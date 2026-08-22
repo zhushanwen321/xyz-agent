@@ -35,12 +35,12 @@ afterEach(() => {
 
 describe('XyzProviderStore', () => {
   it('文件不存在时 readAll 返回空对象且不物化文件（读路径无副作用）', async () => {
-    expect(await store.readAll()).toEqual({})
+    expect(store.readAllSync()).toEqual({})
     expect(existsSync(file)).toBe(false)
   })
 
   it('文件不存在时 getExtras 返回 undefined', async () => {
-    expect(await store.getExtras('zai-coding-cn')).toBeUndefined()
+    expect(store.getExtrasSync('zai-coding-cn')).toBeUndefined()
   })
 
   it('modify 写入后 getExtras/readAll 读回完整数据（含 cookieSet/apiKeySet/modelStates）', async () => {
@@ -49,20 +49,20 @@ describe('XyzProviderStore', () => {
       quota: { fetcher: 'zhipu', enabled: true, cookieSet: false, apiKeySet: true },
       modelStates: { 'glm-5.2': { enabled: false } },
     }))
-    expect(await store.getExtras('zai-coding-cn')).toEqual({
+    expect(store.getExtrasSync('zai-coding-cn')).toEqual({
       authMethod: 'api_key',
       quota: { fetcher: 'zhipu', enabled: true, cookieSet: false, apiKeySet: true },
       modelStates: { 'glm-5.2': { enabled: false } },
     })
-    const all = await store.readAll()
+    const all = store.readAllSync()
     expect(Object.keys(all)).toEqual(['zai-coding-cn'])
   })
 
   it('modify 不同 provider 互不覆盖', async () => {
     await store.modify('a', () => ({ authMethod: 'api_key' }))
     await store.modify('b', () => ({ authMethod: 'oauth' }))
-    expect((await store.getExtras('a'))?.authMethod).toBe('api_key')
-    expect((await store.getExtras('b'))?.authMethod).toBe('oauth')
+    expect((store.getExtrasSync('a'))?.authMethod).toBe('api_key')
+    expect((store.getExtrasSync('b'))?.authMethod).toBe('oauth')
   })
 
   it('并发 modify 同 provider：最终状态一致无交错（proper-lockfile 串行化 RMW）', async () => {
@@ -72,7 +72,7 @@ describe('XyzProviderStore', () => {
       store.modify('shared', current => ({ ...current, authMethod: 'api_key' })),
       store.modify('shared', current => ({ ...current, quota: { enabled: true } })),
     ])
-    expect(await store.getExtras('shared')).toEqual({
+    expect(store.getExtrasSync('shared')).toEqual({
       authMethod: 'api_key',
       quota: { enabled: true },
     })
@@ -85,7 +85,7 @@ describe('XyzProviderStore', () => {
         })),
       ),
     )
-    expect(Object.keys((await store.getExtras('chaos'))?.modelStates ?? {})).toHaveLength(10)
+    expect(Object.keys((store.getExtrasSync('chaos'))?.modelStates ?? {})).toHaveLength(10)
   })
 
   it('并发 modify 不同 provider：全部保留', async () => {
@@ -94,7 +94,7 @@ describe('XyzProviderStore', () => {
         store.modify(`p${i}`, () => ({ quota: { enabled: true, fetcher: `f${i}` } })),
       ),
     )
-    const all = await store.readAll()
+    const all = store.readAllSync()
     expect(Object.keys(all)).toHaveLength(10)
     expect(all.p3?.quota?.fetcher).toBe('f3')
   })
@@ -102,12 +102,12 @@ describe('XyzProviderStore', () => {
   it('delete 删除条目且幂等；文件不存在时不物化 providers.json', async () => {
     await store.modify('a', () => ({ authMethod: 'api_key' }))
     await store.delete('a')
-    expect(await store.getExtras('a')).toBeUndefined()
+    expect(store.getExtrasSync('a')).toBeUndefined()
 
     // 幂等：条目已不存在再删不抛错、不写盘
     await store.delete('a')
     await store.delete('never-existed')
-    expect(await store.getExtras('a')).toBeUndefined()
+    expect(store.getExtrasSync('a')).toBeUndefined()
 
     // 文件不存在时 delete 不物化（对齐 AuthStorage.remove 语义）
     const freshDir = mkdtempSync(join(tmpdir(), 'provider-extras-store-fresh-'))
@@ -122,25 +122,25 @@ describe('XyzProviderStore', () => {
 
   it('损坏容错：非法 JSON → readAll 返回空 + 备份为 providers.json.corrupt-<ts>', async () => {
     writeFileSync(file, '{ not valid json', 'utf-8')
-    expect(await store.readAll()).toEqual({})
+    expect(store.readAllSync()).toEqual({})
     // 备份文件生成（quarantine 是 rename 语义：坏文件移走，原位置恢复可写）
     const corruptions = readdirSync(join(dir, 'config')).filter(f => f.startsWith('providers.json.corrupt-'))
     expect(corruptions).toHaveLength(1)
     // 隔离后原文件已移走，后续 modify 正常重建
     await store.modify('a', () => ({ authMethod: 'api_key' }))
-    expect(await store.getExtras('a')).toMatchObject({ authMethod: 'api_key' })
+    expect(store.getExtrasSync('a')).toMatchObject({ authMethod: 'api_key' })
   })
 
   it('损坏容错：version 非 1（未来格式）→ 按空配置 + 隔离备份', async () => {
     writeFileSync(file, JSON.stringify({ version: 2, providers: { x: { authMethod: 'api_key' } } }), 'utf-8')
-    expect(await store.readAll()).toEqual({})
+    expect(store.readAllSync()).toEqual({})
     const corruptions = readdirSync(join(dir, 'config')).filter(f => f.startsWith('providers.json.corrupt-'))
     expect(corruptions).toHaveLength(1)
   })
 
   it('损坏容错：结构不匹配（providers 非对象）→ 按空配置 + 隔离备份', async () => {
     writeFileSync(file, JSON.stringify({ version: 1, providers: 'not-an-object' }), 'utf-8')
-    expect(await store.readAll()).toEqual({})
+    expect(store.readAllSync()).toEqual({})
     expect(readdirSync(join(dir, 'config')).filter(f => f.startsWith('providers.json.corrupt-'))).toHaveLength(1)
   })
 
@@ -148,7 +148,7 @@ describe('XyzProviderStore', () => {
     // round 1 review must-fix #5：null 穿透校验会让 readAll 返回 providers:null，
     // 消费方对 null 赋值直接 TypeError 且无隔离自愈
     writeFileSync(file, JSON.stringify({ version: 1, providers: null }), 'utf-8')
-    expect(await store.readAll()).toEqual({})
+    expect(store.readAllSync()).toEqual({})
     expect(readdirSync(join(dir, 'config')).filter(f => f.startsWith('providers.json.corrupt-'))).toHaveLength(1)
   })
 
@@ -160,7 +160,7 @@ describe('XyzProviderStore', () => {
     expect(readdirSync(join(dir, 'config')).filter(f => f.startsWith('providers.json.corrupt-'))).toHaveLength(1)
     // 隔离（rename）后原位置恢复可写，modify 正常重建且读回一致
     await store.modify('a', () => ({ authMethod: 'api_key' }))
-    expect(await store.getExtras('a')).toMatchObject({ authMethod: 'api_key' })
+    expect(store.getExtrasSync('a')).toMatchObject({ authMethod: 'api_key' })
   })
 
   it('损坏容错：条目级 null（providers 含 null 值）→ 按空配置 + 隔离备份', async () => {
@@ -176,7 +176,7 @@ describe('XyzProviderStore', () => {
     // 空串 JSON.parse 抛错 → 走隔离路径？——JSON.parse('') throws → 隔离 + 空。
     // 语义上空文件等同未初始化，隔离后按空继续（与 AuthStorage 空文件按空不同：
     // providers.json 是 xyz 自有文件（原子写保证非空），空文件只可能来自外部干预，隔离留证）
-    expect(await store.readAll()).toEqual({})
+    expect(store.readAllSync()).toEqual({})
   })
 
   describe('A1 读写往返（scopedModels）', () => {
@@ -373,13 +373,13 @@ describe('XyzProviderStore', () => {
       utimesSync(`${file}.lock`, staleTime, staleTime)
 
       // 读路径不持锁：既有数据完好（tmp 半写内容未泄漏进正式文件）
-      expect(await store.readAll()).toEqual({ legacy: { authMethod: 'api_key' } })
+      expect(store.readAllSync()).toEqual({ legacy: { authMethod: 'api_key' } })
 
       // 写路径：过期锁被接管删除后正常 RMW
       await store.modify('new-entry', () => ({ quota: { enabled: true } }))
 
-      expect(await store.getExtras('legacy')).toEqual({ authMethod: 'api_key' })
-      expect(await store.getExtras('new-entry')).toEqual({ quota: { enabled: true } })
+      expect(store.getExtrasSync('legacy')).toEqual({ authMethod: 'api_key' })
+      expect(store.getExtrasSync('new-entry')).toEqual({ quota: { enabled: true } })
       // 残留物清理：.lock 目录被 unlock rmdir；.tmp 被本次 atomicWrite rename 消费
       expect(existsSync(`${file}.lock`)).toBe(false)
       expect(existsSync(`${file}.tmp`)).toBe(false)

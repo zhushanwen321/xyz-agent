@@ -21,6 +21,7 @@ import { getApiKeyForProvider, getProviderConfig } from '../infra/pi/pi-provider
 import { logger } from '../infra/logger.js'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import type { XyzProviderStore, ProviderExtras } from './provider-extras-store.js'
+import { readExtrasWithFallback } from './migration/provider-extras-migration.js'
 import type { Credential } from './auth/auth-storage.js'
 import type { ConfigProviderConfig } from './ports/config.js'
 
@@ -358,10 +359,14 @@ export class QuotaService {
    * 读）优先，无条目时回退 models.json 旧寄生 quota。providers.json 有条目时与 modify
    * 回调的 current.quota 同值（兜底链中 current 优先，此处值仅补充无条目场景）。
    */
+  /** A1-3 双读回退（providers.json 优先 + models.json 旧寄生 quota 兜底），复用 migration 的 readExtrasWithFallback。 */
   private readQuotaFallback(providerId: string): NonNullable<ProviderExtras['quota']> | undefined {
-    const fromStore = this.extrasStore?.getExtrasSync(providerId)
-    if (fromStore !== undefined) return fromStore.quota
-    return this.readProviderConfig(providerId)?.quota
+    if (!this.extrasStore) return this.readProviderConfig(providerId)?.quota
+    return readExtrasWithFallback(
+      this.extrasStore,
+      { getProviderConfig: (id) => this.readProviderConfig(id) },
+      providerId,
+    )?.quota
   }
 
   /**

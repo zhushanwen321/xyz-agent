@@ -16,7 +16,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import lockfile from 'proper-lockfile'
+import { withFileLockAsync } from '../utils/file-lock.js'
 import { atomicWrite } from '../utils/fs-utils.js'
 import { quarantineCorruptFile } from '../utils/json-store.js'
 
@@ -51,36 +51,17 @@ const JSON_INDENT = 2
 const SCHEMA_SNIPPET_MAX = 120
 
 /**
- * 跨进程写锁：参数对齐 AuthStorage.withFileLock（retries 10/factor 2/minTimeout 100/
- * maxTimeout 10s/randomize + stale 30s + onCompromised throw），锁文件为
- * `<providers.json>.lock`。proper-lockfile realpath 需要目标文件存在——锁前
- * ensureFileExists 建空结构（写路径专用；读路径不持锁不物化文件）。
+ * 跨进程写锁：锁协议（proper-lockfile 参数 + compromised 语义）单点在 utils/file-lock.ts
+ * 的 withFileLockAsync（与 AuthStorage 同模式）——pi 侧/多实例并发写 providers.json 时
+ * RMW 后写者基于陈旧读覆盖先写者。锁前 ensureFileExists 建空结构（写路径专用；
+ * 读路径不持锁不物化文件）。
  */
 async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
-  ensureFileExists(filePath)
-  let compromised: Error | undefined
-  const release = await lockfile.lock(filePath, {
-    retries: {
-      retries: 10,
-      factor: 2,
-      minTimeout: 100,
-      maxTimeout: 10_000,
-      randomize: true,
-    },
-    stale: 30_000,
-    onCompromised: (err) => { compromised = err },
-  })
-  try {
-    if (compromised) throw compromised
-    return await fn()
-  } finally {
-    try {
-      await release()
-    } catch (error) {
-      // 对齐 AuthStorage：compromised 之外的 unlock 失败需可观测（锁可能被外部删）
-      console.warn('[provider-extras-store] release lock failed (continuing, lock may be compromised):', error)
-    }
-  }
+  return withFileLockAsync(
+    filePath,
+    { ensure: () => ensureFileExists(filePath), logTag: 'provider-extras-store' },
+    fn,
+  )
 }
 
 /** 锁前保证文件存在（proper-lockfile realpath 需要）。同时确保 config/ 父目录存在。 */
@@ -151,21 +132,22 @@ function readInternal(filePath: string): ProviderExtrasFile {
     quarantineCorruptFile(filePath, { tag: 'provider-extras-store', reason: 'parse failed', cause })
     return { version: 1, providers: {} }
   }
+  const file = parsed as ProviderExtrasFile
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
-    || (parsed as ProviderExtrasFile).version !== 1
+    || file.version !== 1
     // providers: null 必须显式排除：typeof null === 'object' 会让下方类型检查穿透，
     // null 原样返回后消费方（readAllExtrasWithFallback 的 merged[key] 赋值）TypeError
     // 且不触发隔离自愈（round 1 review must-fix #5）
-    || (parsed as ProviderExtrasFile).providers === null
+    || file.providers === null
     // providers: [] 同理穿透：typeof [] === 'object'，数组形态原样返回后 modify 对其
     // 赋字符串键属性，JSON.stringify 序列化数组只留索引项 → 写盘静默丢弃、文件永久
     // 停留损坏形态无自愈（round 2 review must-fix）
-    || Array.isArray((parsed as ProviderExtrasFile).providers)
-    || typeof (parsed as ProviderExtrasFile).providers !== 'object'
+    || Array.isArray(file.providers)
+    || typeof file.providers !== 'object'
     // 条目级形态：providers: {"foo": null} 穿透后 getExtrasSync('foo') 返回 null 与
     // 签名 ProviderExtras | undefined 失实，消费方 !== undefined 判定被 null 欺骗
     // （round 2 review suggestion）
-    || !Object.values((parsed as ProviderExtrasFile).providers).every(
+    || !Object.values(file.providers).every(
       entry => entry !== null && typeof entry === 'object' && !Array.isArray(entry),
     )) {
     quarantineCorruptFile(filePath, {
@@ -175,7 +157,7 @@ function readInternal(filePath: string): ProviderExtrasFile {
     })
     return { version: 1, providers: {} }
   }
-  return parsed as ProviderExtrasFile
+  return file
 }
 
 /** 原子写（tmp + rename）+ 确保父目录。恒写 version: 1。 */
@@ -189,20 +171,10 @@ function writeInternal(filePath: string, file: ProviderExtrasFile): void {
 export class XyzProviderStore {
   constructor(private readonly filePath: string) {}
 
-  /** 读全部 provider 扩展数据。文件不存在/损坏 → 空对象（不抛错）。 */
-  async readAll(): Promise<Record<string, ProviderExtras>> {
-    return readInternal(this.filePath).providers
-  }
-
-  /** 读单 provider 扩展数据。无条目 → undefined。 */
-  async getExtras(providerId: string): Promise<ProviderExtras | undefined> {
-    return readInternal(this.filePath).providers[providerId]
-  }
-
   /**
-   * 同步读全部扩展数据（readAll 的同步版）。同步契约的消费方（listProviders 聚合层，
-   * IConfigService 同步接口）用；与 async 版同一 readInternal（读路径不持锁、不缓存，
-   * 每次调用读盘）——先例：AuthStorage.hasCredentialSync / listCredentialIds。
+   * 同步读全部扩展数据。同步契约的消费方（listProviders 聚合层，
+   * IConfigService 同步接口）用；读路径不持锁、不缓存，每次调用读盘
+   * ——先例：AuthStorage.hasCredentialSync / listCredentialIds。
    */
   readAllSync(): Record<string, ProviderExtras> {
     return readInternal(this.filePath).providers

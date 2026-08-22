@@ -97,6 +97,55 @@ function isElocked(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ELOCKED'
 }
 
+// ──────────────────────── async 版（auth.json / providers.json 写锁共用） ────────────────────────
+
+export interface AsyncFileLockOptions {
+  /** 锁前保证目标文件存在（proper-lockfile realpath 需要）——调用方声明各自的初始化语义。 */
+  ensure: () => void
+  /** release 失败 warn 的日志前缀（如 'auth-storage' / 'provider-extras-store'）。 */
+  logTag: string
+}
+
+/**
+ * 跨进程异步文件锁：proper-lockfile lock（retries 10/factor 2/minTimeout 100/
+ * maxTimeout 10s/randomize + stale 30s + onCompromised 延迟抛出），参数对齐
+ * pi FileAuthStorageBackend.withLockAsync（与 pi 侧刷新写回互斥同一把锁）。
+ * 锁协议单点维护——auth-storage 与 provider-extras-store 共用，勿在调用方复制参数。
+ */
+export async function withFileLockAsync<T>(
+  filePath: string,
+  opts: AsyncFileLockOptions,
+  fn: () => Promise<T>,
+): Promise<T> {
+  opts.ensure()
+  // onCompromised：锁被判定 stale 抢占（进程卡死超时等）时标记，fn 执行前抛错，
+  // 防止在失去互斥保证的锁下写盘（对齐 pi throwIfCompromised 语义）。
+  let compromised: Error | undefined
+  const release = await lockfile.lock(filePath, {
+    retries: {
+      retries: 10,
+      factor: 2,
+      minTimeout: 100,
+      maxTimeout: 10_000,
+      randomize: true,
+    },
+    stale: 30_000,
+    onCompromised: (err) => { compromised = err },
+  })
+  try {
+    if (compromised) throw compromised
+    return await fn()
+  } finally {
+    try {
+      await release()
+    } catch (error) {
+      // 锁已 compromised 时 unlock 失败可忽略（对齐 pi finally 的 catch 语义）——
+      // 记 warn 而非静默：compromised 之外的原因（lock 文件被外部删等）需要可观测
+      console.warn(`[${opts.logTag}] release lock failed (continuing, lock may be compromised):`, error)
+    }
+  }
+}
+
 /** Atomics.wait 需要一个共享内存对象作等待目标；4 字节 = 一个 Int32 元素，仅占位不被写入。 */
 const SLEEP_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT))
 

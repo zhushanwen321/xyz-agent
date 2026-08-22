@@ -171,7 +171,7 @@ export type ProviderExtrasReader = Pick<XyzProviderStore, 'getExtrasSync' | 'rea
  */
 export function readExtrasWithFallback(
   extrasStore: ProviderExtrasReader,
-  configStore: IConfigStore,
+  configStore: Pick<IConfigStore, 'getProviderConfig'>,
   providerId: string,
 ): ProviderExtras | undefined {
   const fromStore = extrasStore.getExtrasSync(providerId)
