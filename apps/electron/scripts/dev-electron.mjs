@@ -12,7 +12,8 @@
  * 做法（仅 macOS）：
  *   1. cp -Rc（APFS clonefile COW，秒级、不占额外空间）复制源 Electron.app
  *      到 .dev-electron/Taiji.app
- *   2. PlistBuddy 改 CFBundleIconFile → taiji.icns、CFBundleName/DisplayName → 太极
+ *   2. PlistBuddy 改 CFBundleIconFile → taiji.icns、CFBundleName/DisplayName → 太极 dev
+ *      （显示名带 dev 后缀：与打包版「太极」在 Dock/菜单栏/Cmd-Tab 切换器中可区分）
  *   3. 拷 build/icon.icns → Contents/Resources/taiji.icns
  *   4. 删 _CodeSignature（Info.plist 改动后主签名失效，本地直接 spawn 二进制不走
  *      Gatekeeper，frameworks 未改签名仍有效）
@@ -24,7 +25,7 @@
  * 缓存：.dev-electron/.stamp 记录源 app version + mtime + icns mtime，命中则跳过重建。
  */
 
-import { spawn, execSync } from 'node:child_process'
+import { spawn, execSync, execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -58,11 +59,13 @@ function resolveDevBinary() {
     return SOURCE_BINARY
   }
 
-  // stamp：源 app version + 源 app mtime + icns mtime
+  // stamp：源 app version + 源 app mtime + icns mtime。
+  // v2 = 显示名加 dev 后缀（CFBundleName/DisplayName → 太极 dev）。stamp 不含脚本自身逻辑，
+  // 不 bump 版本号则缓存命中时复用旧 bundle（plist 仍是「太极」），改名不生效。
   const srcVersion = readPlist(SOURCE_APP, 'CFBundleVersion') || ''
   const srcMtime = safeMtime(SOURCE_APP)
   const icnsMtime = safeMtime(ICNS_SRC)
-  const stamp = `v1|${srcVersion}|${srcMtime}|${icnsMtime}|${path.basename(SOURCE_APP)}`
+  const stamp = `v2|${srcVersion}|${srcMtime}|${icnsMtime}|${path.basename(SOURCE_APP)}`
 
   if (fs.existsSync(DEV_BINARY) && fs.existsSync(STAMP_FILE) &&
       fs.readFileSync(STAMP_FILE, 'utf8') === stamp) {
@@ -82,8 +85,8 @@ function resolveDevBinary() {
 
     // 2. 改 plist（图标 + 显示名）
     setPlist(plist, 'CFBundleIconFile', 'taiji.icns')
-    setPlist(plist, 'CFBundleName', '太极')
-    setPlist(plist, 'CFBundleDisplayName', '太极')
+    setPlist(plist, 'CFBundleName', '太极 dev')
+    setPlist(plist, 'CFBundleDisplayName', '太极 dev')
 
     // 3. 拷 icns
     fs.copyFileSync(ICNS_SRC, path.join(resourcesDir, 'taiji.icns'))
@@ -139,11 +142,14 @@ function readPlist(appBundle, key) {
 }
 
 function setPlist(plistPath, key, value) {
-  // 先尝试 Set（key 已存在），失败则 Add（key 不存在）
+  // 先尝试 Set（key 已存在），失败则 Add（key 不存在）。
+  // execFileSync 数组传参（无 shell 解析层）：shellQuote 的引号直达 PlistBuddy 由其解析。
+  // 原先 execSync 双引号嵌套会把内层引号吃掉，值含空格（如「太极 dev」）时被 shell
+  // 拆成多个 argv 导致 Set/Add 双失败 → bundle 生成 fallback，plist 显示名不生效。
   try {
-    execSync(`${PLIST_BUDDY} -c "Set :${key} ${shellQuote(value)}" "${plistPath}"`, { stdio: 'pipe' })
+    execFileSync(PLIST_BUDDY, ['-c', `Set :${key} ${shellQuote(value)}`, plistPath], { stdio: 'pipe' })
   } catch {
-    execSync(`${PLIST_BUDDY} -c "Add :${key} string ${shellQuote(value)}" "${plistPath}"`, { stdio: 'pipe' })
+    execFileSync(PLIST_BUDDY, ['-c', `Add :${key} string ${shellQuote(value)}`, plistPath], { stdio: 'pipe' })
   }
 }
 

@@ -71,7 +71,7 @@ export async function createWindow(
     minWidth: 800,
     minHeight: 600,
     show: false,
-    title: 'TaiJi',
+    title: deps.isDev ? 'TaiJi dev' : 'TaiJi',
     // 跨平台窗口装饰（shell spec §五方案 X）。
     // mac：hidden + trafficLightPosition 把红黄绿放到 macOS 原生左上角位置 {8,8}（圆点中线理论 y=14，实测 ≈y15.75）。
     //   不用 hiddenInset：inset 模式强制红黄绿水平内缩，trafficLightPosition.x 被系统忽略。
