@@ -1,0 +1,74 @@
+{
+  "acceptance": [
+    {
+      "id": "A1",
+      "core": false,
+      "title": "modifyScopedModels 写入 -> getScopedModels 读回一致；字段缺失时返回 []",
+      "type": "unit",
+      "command": "bash -lc 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run src/services/__tests__/provider-extras-scoped-models.test.ts -t \"A1\"'",
+      "scenario": "modifyScopedModels(['openai/gpt-4o', 'anthropic/claude-opus-4-5']) 写入后，getScopedModels() 读回相同数组；providers.json 不含 scopedModels 字段时，getScopedModels() 返回空数组 []。测试 fullName 须含验收 id（测试 describe+it 拼接须含 'A1'）。"
+    },
+    {
+      "id": "A2",
+      "core": false,
+      "title": "非法值容错：非数组 scopedModels / 非法条目 -> 过滤或置空不抛错、providers 域不受影响",
+      "type": "unit",
+      "command": "bash -lc 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run src/services/__tests__/provider-extras-scoped-models.test.ts -t \"A2\"'",
+      "scenario": "手写 providers.json 含非数组 scopedModels（如 string/number/object）-> getScopedModels() 返回 [] 不抛错；含非法条目（不匹配 ^[^/]+/.+$ 格式）-> 该条目被过滤，合法条目保留；providers 域数据（version/providers/modelStates）不受影响。测试 fullName 须含验收 id（测试 describe+it 拼接须含 'A2'）。"
+    },
+    {
+      "id": "A3",
+      "core": false,
+      "title": "写入 [] 后文件行为明确（字段保留或删除，与实现注释一致）",
+      "type": "unit",
+      "command": "bash -lc 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run src/services/__tests__/provider-extras-scoped-models.test.ts -t \"A3\"'",
+      "scenario": "modifyScopedModels 写入非空数组后，再写入 []，读取文件确认 scopedModels 字段行为（保留空数组或删除字段，二选一且与实现注释一致）。本层不保证去重保序（由调用方负责），但写入 [] 后行为必须可断言。测试 fullName 须含验收 id（测试 describe+it 拼接须含 'A3'）。"
+    },
+    {
+      "id": "A4",
+      "core": false,
+      "title": "与 per-provider modify 串行安全：交错调用无丢更新",
+      "type": "unit",
+      "command": "bash -lc 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run src/services/__tests__/provider-extras-scoped-models.test.ts -t \"A4\"'",
+      "scenario": "交错调用 modifyScopedModels 与 modify（同一文件）：modifyScopedModels 写入 scopedModels 后，modify 写入 provider 条目，再次 modifyScopedModels 追加条目——最终 getScopedModels() 包含全部追加条目，getExtras() 也保留 provider 数据。锁序列验证：Promise.all 并发调用 10 次 modifyScopedModels（各追加一个条目）+ 10 次 modify（各写一个 provider），最终所有数据完整保留。测试 fullName 须含验收 id（测试 describe+it 拼接须含 'A4'）。"
+    },
+    {
+      "id": "A5",
+      "core": true,
+      "title": "shared 与 runtime 包 typecheck 通过",
+      "type": "e2e-real",
+      "command": "bash -lc 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && pnpm --filter @xyz-agent/shared typecheck && pnpm --filter @xyz-agent/runtime typecheck && echo A5 PASS || echo A5 FAIL'",
+      "scenario": "packages/shared 与 packages/runtime 的 TypeScript 类型检查均通过（tsc --noEmit），确认 protocol.ts 新增的 setScopedModels 命令类型定义与 provider-extras-store.ts 新增的 modifyScopedModels/getScopedModels 方法签名无类型错误。"
+    }
+  ],
+  "contracts": [
+    {
+      "id": "C1",
+      "kind": "function",
+      "provider": "protocol",
+      "consumer": "settings-message-handler",
+      "signature": "'config.setScopedModels': { request: { models: string[] }, response: { scopedModels: string[] } }",
+      "file": "packages/shared/src/protocol.ts",
+      "description": "config.setScopedModels RPC 命令声明：request 接收 modelId 数组（provider/modelId 复合串），response 返回规范化后的 scopedModels 数组。"
+    },
+    {
+      "id": "C2",
+      "kind": "function",
+      "provider": "protocol",
+      "consumer": "settings-message-handler",
+      "signature": "'config.getProviders': { response: { providers: ProviderInfo[], scopedModels?: string[] } }",
+      "file": "packages/shared/src/protocol.ts",
+      "description": "config.getProviders reply 类型扩展：新增可选 scopedModels 字段，与 config.providers 广播 payload 同构。"
+    },
+    {
+      "id": "C3",
+      "kind": "class",
+      "provider": "provider-extras-store",
+      "consumer": "config-service",
+      "signature": "class XyzProviderStore { getScopedModels(): string[]; modifyScopedModels(fn: (cur: string[]) => string[]): void }",
+      "file": "packages/runtime/src/services/provider-extras-store.ts",
+      "description": "XyzProviderStore 新增顶层 scopedModels 读写 API。getScopedModels 同步读取（非法值容错，非 string[] 返回 []，非法条目过滤并 log warning）。modifyScopedModels 同步 RMW（同一 withFileLock 锁，与 per-provider modify 串行）。与 brief 规定一致：返回值无消费方，同步 void 最小化 API 面。"
+    }
+  ],
+  "split": []
+}
