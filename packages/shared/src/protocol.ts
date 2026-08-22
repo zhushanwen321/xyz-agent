@@ -133,6 +133,9 @@ export type ClientMessageType =
   | 'config.toggleProviderEnabled'
   // wave4：按体系移除 provider（catalog 清凭据/custom 删条目，reply config.providerUpdated）。
   | 'config.removeProviderByKind'
+  // Scoped Model：设置模型白名单（providers.json 顶层 scopedModels 字段）。
+  // models 为 provider/modelId 复合串数组，序 = 显示序；[] = 清除白名单。
+  | 'config.setScopedModels'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -357,6 +360,9 @@ export interface ClientMessageMap {
   // message.abortBash：取消进行中的 bash 执行（调 pi abort_bash）。
   'message.abortBash': { sessionId: string }
   'config.getProviders': Record<string, never>
+  // Scoped Model：设置模型白名单。request.models 为 provider/modelId 数组；
+  // reply 回写后规范化结果（去重保序）。
+  'config.setScopedModels': { models: string[] }
   'config.setProvider': { providerId: ProviderId } & SetProviderData
   'config.deleteProvider': { providerId: ProviderId }
   // wave4：provider 启用切换（wave3 RPC 链路在 wave4 补全）。enabled=false 时 runtime 移除白名单 pattern，
@@ -740,7 +746,7 @@ export interface SkillCacheInvalidatedPayload {
  */
 export interface ServerMessageMapBase {
   // ── sendInitialState 推送 / domain 订阅（精确）──
-  'config.providers': { providers: ProviderInfo[] }
+  'config.providers': { providers: ProviderInfo[]; /** 模型白名单（scopedModels 为空/缺失 = 未启用，显示全部） */ scopedModels?: string[] }
   'config.skills': { skills: SkillInfo[] }
   /**
    * skill 缓存失效信号（landing useGlobalSkills/useProjectSkills 失效缓存重拉）。
@@ -1149,6 +1155,8 @@ export interface ServerMessageMapBase {
   'config.oauthLogoutReply': { ok: boolean; error?: string }
   /** config.checkEnvVars reply：只含布尔（安全红线：env 值不进前端）。 */
   'config.envVarsChecked': { results: Record<string, boolean> }
+  // config.setScopedModels reply：回写后的规范化结果（去重保序）。
+  'config.setScopedModels': { scopedModels: string[] }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
   // 成功 { models, success: true }；失败 { models: [], success: false, error }（D10 降级响应，非 error envelope）。
   // models 元素形状对齐前端 config.ts:49 DiscoveredModelsResult（id + 可选 name/contextWindow）。
@@ -1300,6 +1308,7 @@ export interface ReplyPayloadMap {
   // ── payload 消费型（value 引用 ServerMessageMap[<reply type>]）──
   'config.discoverModels': ServerMessageMap['config.discoveredModels']
   'config.getProviders': ServerMessageMap['config.providers']
+  'config.setScopedModels': ServerMessageMap['config.setScopedModels']
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
   'config.detectSources': ServerMessageMap['config.sourcesDetected']

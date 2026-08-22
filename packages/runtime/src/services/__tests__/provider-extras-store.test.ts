@@ -179,6 +179,181 @@ describe('XyzProviderStore', () => {
     expect(await store.readAll()).toEqual({})
   })
 
+  describe('A1 读写往返（scopedModels）', () => {
+    it('modifyScopedModels 写入 → getScopedModels 读回一致', async () => {
+      const models = ['openai/gpt-4o', 'anthropic/claude-opus-4-5', 'deepseek/deepseek-v3']
+      await store.modifyScopedModels(() => models)
+      expect(store.getScopedModels()).toEqual(models)
+    })
+
+    it('字段缺失时 getScopedModels 返回 []（文件不存在）', () => {
+      expect(store.getScopedModels()).toEqual([])
+    })
+
+    it('字段缺失时 getScopedModels 返回 []（providers.json 存在但无 scopedModels 字段）', async () => {
+      await store.modify('a', () => ({ authMethod: 'api_key' }))
+      expect(store.getScopedModels()).toEqual([])
+    })
+
+    it('modifyScopedModels 读取闭包参数为当前值', async () => {
+      await store.modifyScopedModels(() => ['openai/gpt-4o'])
+      const result = await store.modifyScopedModels((cur) => [...cur, 'anthropic/claude-sonnet-4'])
+      expect(result).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
+      expect(store.getScopedModels()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
+    })
+  })
+
+  describe('A2 非法容错（scopedModels）', () => {
+    it('非数组 scopedModels → getScopedModels 返回 []、providers 域不受影响', async () => {
+      // 手写 providers.json：scopedModels 为字符串（非法），providers 有有效数据
+      writeFileSync(file, JSON.stringify({
+        version: 1,
+        providers: { 'openai': { authMethod: 'api_key' } },
+        scopedModels: 'not-an-array',
+      }, null, 2), 'utf-8')
+      expect(store.getScopedModels()).toEqual([])
+      expect(store.readAllSync()).toEqual({ 'openai': { authMethod: 'api_key' } })
+    })
+
+    it('非数组 scopedModels（number）→ getScopedModels 返回 []', async () => {
+      writeFileSync(file, JSON.stringify({
+        version: 1,
+        providers: {},
+        scopedModels: 42,
+      }, null, 2), 'utf-8')
+      expect(store.getScopedModels()).toEqual([])
+    })
+
+    it('含非法条目（不含/分隔符）→ 过滤掉非法条目并 log warning', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        writeFileSync(file, JSON.stringify({
+          version: 1,
+          providers: {},
+          scopedModels: ['openai/gpt-4o', 'invalid-no-slash', 'anthropic/claude-sonnet-4'],
+        }, null, 2), 'utf-8')
+        expect(store.getScopedModels()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
+        expect(warnSpy).toHaveBeenCalledWith(
+          '[provider-extras-store] scopedModels: invalid entry format (expected provider/modelId):',
+          'invalid-no-slash',
+        )
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
+    it('含非 string 条目 → 过滤掉并 log warning', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        writeFileSync(file, JSON.stringify({
+          version: 1,
+          providers: {},
+          scopedModels: ['openai/gpt-4o', 123, null, 'anthropic/claude-sonnet-4'],
+        }, null, 2), 'utf-8')
+        expect(store.getScopedModels()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
+        expect(warnSpy).toHaveBeenCalledWith(
+          '[provider-extras-store] scopedModels: non-string entry filtered out:',
+          123,
+        )
+        expect(warnSpy).toHaveBeenCalledWith(
+          '[provider-extras-store] scopedModels: non-string entry filtered out:',
+          null,
+        )
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
+    it('scopedModels 非法时 providers 域数据完全不受影响', async () => {
+      writeFileSync(file, JSON.stringify({
+        version: 1,
+        providers: {
+          'openai': { authMethod: 'api_key', modelStates: { 'gpt-4o': { enabled: true } } },
+          'anthropic': { authMethod: 'oauth' },
+        },
+        scopedModels: { not: 'array' },
+      }, null, 2), 'utf-8')
+      expect(store.readAllSync()).toEqual({
+        'openai': { authMethod: 'api_key', modelStates: { 'gpt-4o': { enabled: true } } },
+        'anthropic': { authMethod: 'oauth' },
+      })
+    })
+  })
+
+  describe('A3 去重保序（caller 保证，本层不改写）', () => {
+    it('写入 [] 后文件中 scopedModels 字段保留为空数组', async () => {
+      await store.modifyScopedModels(() => ['openai/gpt-4o'])
+      expect(store.getScopedModels()).toEqual(['openai/gpt-4o'])
+
+      await store.modifyScopedModels(() => [])
+      expect(store.getScopedModels()).toEqual([])
+
+      // 验证文件中 scopedModels 字段保留（非 undefined/缺失）
+      const { readFileSync: rf } = await import('node:fs')
+      const raw = JSON.parse(rf(file, 'utf-8'))
+      expect(raw.scopedModels).toEqual([])
+      // key 存在于 JSON 中
+      expect('scopedModels' in raw).toBe(true)
+    })
+
+    it('写入含重复条目时原样保留（本层不去重，由调用方保证）', async () => {
+      const models = ['openai/gpt-4o', 'openai/gpt-4o', 'anthropic/claude-sonnet-4']
+      await store.modifyScopedModels(() => models)
+      expect(store.getScopedModels()).toEqual(models)
+    })
+  })
+
+  describe('A4 与 per-provider modify 串行安全', () => {
+    it('交错调用 modifyScopedModels 与 modify 同一文件，无丢更新', async () => {
+      // 先写入初始数据
+      await store.modifyScopedModels(() => ['openai/gpt-4o'])
+      await store.modify('openai', () => ({ authMethod: 'api_key' }))
+
+      // 并发交错调用：scopedModels 写入 + per-provider 写入
+      await Promise.all([
+        store.modifyScopedModels((cur) => [...cur, 'anthropic/claude-sonnet-4']),
+        store.modify('anthropic', () => ({ authMethod: 'oauth' })),
+      ])
+
+      // 两者都成功保留
+      expect(store.getScopedModels()).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4'])
+      expect(store.getExtrasSync('openai')).toEqual({ authMethod: 'api_key' })
+      expect(store.getExtrasSync('anthropic')).toEqual({ authMethod: 'oauth' })
+    })
+
+    it('高并发交错：多次 modifyScopedModels + 多次 modify，最终状态一致', async () => {
+      // 10 个并发操作：5 个 modifyScopedModels 追加 + 5 个 modify 写入不同 provider
+      await Promise.all([
+        ...Array.from({ length: 5 }, (_, i) =>
+          store.modifyScopedModels((cur) => [...cur, `provider-${i}/model-${i}`]),
+        ),
+        ...Array.from({ length: 5 }, (_, i) =>
+          store.modify(`provider-${i}`, () => ({ authMethod: 'api_key' as const })),
+        ),
+      ])
+
+      // scopedModels 有 5 个条目（顺序可能因并发而变，但数量正确）
+      const scoped = store.getScopedModels()
+      expect(scoped).toHaveLength(5)
+      expect(scoped.every(m => /^provider-\d+\/model-\d+$/.test(m))).toBe(true)
+
+      // 5 个 provider 的 extras 都保留
+      for (let i = 0; i < 5; i++) {
+        expect(store.getExtrasSync(`provider-${i}`)).toEqual({ authMethod: 'api_key' })
+      }
+    })
+
+    it('先 modify 后 modifyScopedModels 基于最新文件读取', async () => {
+      await store.modify('openai', () => ({ authMethod: 'api_key' }))
+      await store.modifyScopedModels(() => ['openai/gpt-4o'])
+
+      // 再次 modify 不会丢失 scopedModels
+      await store.modify('openai', (cur) => ({ ...cur, quota: { enabled: true } }))
+      expect(store.getScopedModels()).toEqual(['openai/gpt-4o'])
+      expect(store.getExtrasSync('openai')).toEqual({ authMethod: 'api_key', quota: { enabled: true } })
+    })
+  })
+
   describe('crash 残留自愈（round 1 review SUGGESTION）', () => {
     // 残留形态依据 proper-lockfile 4.1.2 实装（node_modules/proper-lockfile/lib/lockfile.js）：
     // - 锁「文件」实为 mkdir 创建的目录，持有进程 crash 未 release 时残留 `.lock` 目录；

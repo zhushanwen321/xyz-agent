@@ -24,6 +24,8 @@ import { quarantineCorruptFile } from '../utils/json-store.js'
 export interface ProviderExtrasFile {
   version: 1
   providers: Record<string, ProviderExtras>
+  /** 模型白名单（scopedModels），条目为 provider/modelId 复合串。空/缺失 = 未启用（显示全部）。 */
+  scopedModels?: string[]
 }
 
 /** 单 provider 的 xyz 扩展数据（全部字段自 models.json 寄生字段迁出，语义不变）。 */
@@ -198,5 +200,45 @@ export class XyzProviderStore {
       delete file.providers[providerId]
       writeInternal(this.filePath, file)
     })
+  }
+
+  /**
+   * 读取模型白名单（scopedModels）。非法值容错：非 string[] 整体视为空、
+   * 条目不匹配 `^[^/]+/.+$` 的过滤掉并 log warning。
+   */
+  getScopedModels(): string[] {
+    const file = readInternal(this.filePath)
+    const raw = file.scopedModels
+    if (!Array.isArray(raw)) return []
+    const VALID_MODEL_RE = /^[^/]+\/.+$/
+    const result: string[] = []
+    for (const entry of raw) {
+      if (typeof entry !== 'string') {
+        console.warn('[provider-extras-store] scopedModels: non-string entry filtered out:', entry)
+        continue
+      }
+      if (!VALID_MODEL_RE.test(entry)) {
+        console.warn('[provider-extras-store] scopedModels: invalid entry format (expected provider/modelId):', entry)
+        continue
+      }
+      result.push(entry)
+    }
+    return result
+  }
+
+  /**
+   * RMW 模型白名单：锁内重读 → fn(current) → 原子写回。
+   * 与 modify 同一 withFileLock 锁，天然与 per-provider 写串行。
+   */
+  async modifyScopedModels(fn: (cur: string[]) => string[]): Promise<string[]> {
+    let result: string[] | undefined
+    await withFileLock(this.filePath, async () => {
+      const file = readInternal(this.filePath)
+      const current = Array.isArray(file.scopedModels) ? file.scopedModels : []
+      result = fn(current)
+      file.scopedModels = result
+      writeInternal(this.filePath, file)
+    })
+    return result!
   }
 }
