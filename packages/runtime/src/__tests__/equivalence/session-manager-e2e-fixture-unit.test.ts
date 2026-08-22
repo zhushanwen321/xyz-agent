@@ -10,7 +10,7 @@ import { resolve } from 'node:path'
 
 describe('U9-U1 full-e2e 探针基建单元校验', () => {
   it('REAL_PI_TESTS 分池注册：session-manager-full-e2e.test.ts 在配置数组中', () => {
-    const config = readFileSync(resolve(__dirname, '../../vitest.config.ts'), 'utf-8')
+    const config = readFileSync(resolve(__dirname, '../../../vitest.config.ts'), 'utf-8')
     // 解析静态文本即可（配置 import 会拉起 globalSetup，超出 unit 校验边界）
     expect(config).toContain("'src/__tests__/equivalence/session-manager-full-e2e.test.ts'")
   })
