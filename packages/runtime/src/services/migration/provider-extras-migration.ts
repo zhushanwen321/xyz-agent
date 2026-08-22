@@ -11,8 +11,11 @@
  * 2. 剥离后条目若 pi 八字段（models/baseUrl/headers/compat/modelOverrides/apiKey/oauth/
  *    authHeader）全缺 → 整条删除（pi applyModelsJson 对此 throw 的空壳，典型来源：
  *    setProvider 仅传 quota/name 的历史形态）——寄生数据已先保入 providers.json。
- * 3. 合并策略：providers.json 已有该 providerId 条目则不覆盖（丢弃 models.json 旧值）——
- *    防止迁移失败窗口内的用户新写入被 stale 旧值覆盖（设计文档 §3.4 错误规格）。
+ * 3. 合并策略（字段级合并，round 1 review 修正）：providers.json 已有该 providerId
+ *    条目时，条目内已有字段域（authMethod/quota/modelStates 各自独立）保留不覆盖
+ *    （防迁移失败窗口内的用户新写入被 stale 旧值覆盖），条目缺失的字段域仍从
+ *    models.json legacy 迁入——运行期写侧会创建部分字段条目（setProvider 只写
+ *    authMethod / configure 只写 quota），条目级整条跳过会把其余字段域永久丢弃。
  * 4. 成功后写回剥离版 models.json，写回前备份原文件为 models.json.bak-migrate-<ts>。
  *
  * 幂等：无任何条目含寄生字段时完全 no-op（不备份、不写盘、mtime 不变）。
@@ -80,7 +83,7 @@ export interface ProviderExtrasMigrationReport {
   removedShells: string[]
   /** 完全 no-op（无寄生字段，未写任何文件）。 */
   noOp: boolean
-  /** providers.json 写入时被合并策略跳过的条目（已有条目，旧值丢弃）。 */
+  /** providers.json 写入时已有条目、走字段级合并的 providerId（已有字段域保留，缺失字段域自 legacy 补入）。 */
   skippedExisting: string[]
 }
 
@@ -117,7 +120,7 @@ export async function migrateProviderExtras(
     copyFileSync(modelsPath, `${modelsPath}.bak-migrate-${ts}`)
   }
 
-  // 第二遍：寄生数据入 providers.json（合并策略：已有条目不覆盖）。
+  // 第二遍：寄生数据入 providers.json（合并策略：字段级合并——已有字段域保留，缺失字段域补入）。
   // 只有 enabled 死字段的条目（extras 空）不落 providers.json——空条目无信息量，
   // 还会阻断 readExtrasWithFallback 的 models.json 回退路径。
   for (const { providerId, result } of dirtyEntries) {
@@ -125,7 +128,12 @@ export async function migrateProviderExtras(
     await extrasStore.modify(providerId, current => {
       if (current !== undefined) {
         report.skippedExisting.push(providerId)
-        return current
+        // 字段级合并（round 1 review 修正，DG#2）：条目已存在的字段域以 providers.json 为准
+        //（防失败窗口内的新写入被 stale 旧值覆盖），legacy 中其余字段域仍迁入——部分字段
+        // 条目（运行期 setProvider/configure 在 current=undefined 时创建的单字段条目）
+        // 不再导致 models.json 侧其余字段域被整条丢弃。current 来自 JSON 文件读，
+        // 无 undefined 值键，spread 不会误伤 legacy 字段。
+        return { ...result.extras, ...current }
       }
       return result.extras
     })

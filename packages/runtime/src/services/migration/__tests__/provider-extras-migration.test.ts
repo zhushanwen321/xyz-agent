@@ -189,8 +189,8 @@ describe('A1-2 幂等（验收 1 后半）', () => {
 })
 
 describe('A1-2 合并策略（验收 2）', () => {
-  it('providers.json 已有该 providerId 条目 → 不覆盖（丢弃 models.json 旧值），models.json 仍剥离', async () => {
-    // 模拟迁移失败窗口后用户重新配置：providers.json 已有新值
+  it('providers.json 已有条目 → 字段级合并：已有字段域保留新值，缺失字段域自 legacy 补入，models.json 仍剥离', async () => {
+    // 模拟迁移失败窗口后用户重新配置：providers.json 已有部分字段条目（仅 quota 新值）
     await extrasStore.modify('zai-coding-cn', () => ({
       quota: { fetcher: 'user-new-choice', enabled: false },
     }))
@@ -204,8 +204,10 @@ describe('A1-2 合并策略（验收 2）', () => {
 
     const report = await migrateProviderExtras(configStore, extrasStore)
 
-    // providers.json 保留新值，旧值丢弃
+    // 字段级合并（round 1 review DG#2）：quota 已存在 → 保留新值（stale 不覆盖）；
+    // authMethod 条目内缺失 → 自 legacy 补入（否则部分字段条目会让其余字段域永久丢失）
     expect(readExtrasRaw()['zai-coding-cn']).toEqual({
+      authMethod: 'oauth',
       quota: { fetcher: 'user-new-choice', enabled: false },
     })
     expect(report.skippedExisting).toEqual(['zai-coding-cn'])

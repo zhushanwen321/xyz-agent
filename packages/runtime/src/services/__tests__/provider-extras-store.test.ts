@@ -143,6 +143,14 @@ describe('XyzProviderStore', () => {
     expect(readdirSync(join(dir, 'config')).filter(f => f.startsWith('providers.json.corrupt-'))).toHaveLength(1)
   })
 
+  it('损坏容错：providers 为 null → 按空配置 + 隔离备份（typeof null === "object" 不得穿透校验）', async () => {
+    // round 1 review must-fix #5：null 穿透校验会让 readAll 返回 providers:null，
+    // 消费方对 null 赋值直接 TypeError 且无隔离自愈
+    writeFileSync(file, JSON.stringify({ version: 1, providers: null }), 'utf-8')
+    expect(await store.readAll()).toEqual({})
+    expect(readdirSync(join(dir, 'config')).filter(f => f.startsWith('providers.json.corrupt-'))).toHaveLength(1)
+  })
+
   it('空文件内容按空配置处理（不触发隔离）', async () => {
     writeFileSync(file, '', 'utf-8')
     // 空串 JSON.parse 抛错 → 走隔离路径？——JSON.parse('') throws → 隔离 + 空。

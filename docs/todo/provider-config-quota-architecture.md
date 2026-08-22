@@ -273,7 +273,7 @@ Renderer 永不感知文件名（WS RPC → ConfigService facade → 三 Store�
 |---|---|---|
 | oauth 额度 401 | `reason:'unauthorized'` 失败态，不自动 refresh、不重试风暴 | 「与该供应商发起一次对话触发 token 刷新后，点击刷新重试」（D6） |
 | providers.json 迁移失败 | 不阻塞启动，双读回退 models.json 旧字段，日志告警 | 下次启动自动重试迁移（幂等）；持续失败查看 `<dataDir>/logs/` |
-| 迁移失败窗口内的双源合并 | 双读优先级：providers.json 优先、models.json 旧字段兜底；重试迁移只搬入 providers.json 中尚无条目的 provider，已有条目以 providers.json 为准并丢弃 models.json 旧字段（防止失败窗口内的用户新写入被 stale 旧值覆盖）；搬运成功后写回剥离版 models.json，即完成剥离判定 | 无需人工恢复：窗口自动收敛（下一次成功迁移即消除双源） |
+| 迁移失败窗口内的双源合并 | 双读优先级：providers.json 优先、models.json 旧字段兜底；重试迁移对 providers.json 已有条目的 provider 做**字段级合并**——条目内已有字段域（authMethod/quota/modelStates 各自独立）以 providers.json 为准（防止失败窗口内的用户新写入被 stale 旧值覆盖），条目缺失的字段域仍从 models.json 旧字段迁入（round 1 review 修正：运行期写侧会创建部分字段条目——setProvider 只写 authMethod、configure 只写 quota，原「整条跳过丢弃旧字段」会让其余字段域永久丢失）；搬运成功后写回剥离版 models.json，即完成剥离判定 | 无需人工恢复：窗口自动收敛（下一次成功迁移即消除双源） |
 | 迁移产生 pi 校验空壳条目 | 剥离寄生字段后若条目不满足 pi 八字段校验（models/baseUrl/headers/compat/modelOverrides/apiKey/oauth/authHeader 全缺——pi `applyModelsJson` 对此 throw），**整条删除**（典型来源：`setProvider` 仅传 quota/name 时 `merged = {...existing(空), name, quota}` 落盘，`provider-config-helper.ts:349`；`persistQuotaConfig` 经 upsertProvider 也会产生近空条目，但因其要求 existing 非空而至少继承原有字段） | 无需恢复（该条目在 pi 侧本就无定义语义，xyz 扩展信息已保入 providers.json） |
 | models.json 写入锁冲突/超时 | save-bar 报错，保持旧值 | 「重试保存；持续失败检查磁盘后重启」（§3.1 场景 A 失败路径） |
 | providers.json 损坏（非法 JSON） | 按空配置启动，备份坏文件 | 从 `<config>/providers.json.corrupt-<ts>` 人工恢复 |

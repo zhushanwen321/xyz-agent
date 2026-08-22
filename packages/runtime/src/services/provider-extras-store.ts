@@ -107,6 +107,10 @@ function readInternal(filePath: string): ProviderExtrasFile {
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
     || (parsed as ProviderExtrasFile).version !== 1
+    // providers: null 必须显式排除：typeof null === 'object' 会让下方类型检查穿透，
+    // null 原样返回后消费方（readAllExtrasWithFallback 的 merged[key] 赋值）TypeError
+    // 且不触发隔离自愈（round 1 review must-fix #5）
+    || (parsed as ProviderExtrasFile).providers === null
     || typeof (parsed as ProviderExtrasFile).providers !== 'object') {
     quarantineCorruptFile(filePath, {
       tag: 'provider-extras-store',

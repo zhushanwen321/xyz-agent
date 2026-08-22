@@ -211,7 +211,18 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
     if (config.models === undefined) { outcome = {}; return }
 
     const newModelList = config.models
-    if (newModelList.length === 0) {
+    // catalog provider 的 models.json 条目只承载用户 override（B-2 前端保存只回传
+    // override 条目，无 override 时为 []），builtin 模型不在列表内——default 校验必须以
+    // 「override ∪ builtin catalog」为有效模型列表，否则 catalog 默认 provider 保存
+    // override-only 条目时 builtin 默认模型被误判失效：models:[] 会删除 default 回退到
+    // 其他 provider、models:[override] 会把 defaultModel 静默改写为 override 首项
+    //（round 1 review must-fix #1）。非 catalog provider builtin 集为空，行为不变。
+    const builtinModels = builtinModelsById.get(providerId) ?? []
+    const effectiveModelList = [
+      ...newModelList,
+      ...builtinModels.filter(bm => !newModelList.some(m => m.id === bm.id)),
+    ]
+    if (effectiveModelList.length === 0) {
       delete s.defaultProvider
       delete s.defaultModel
       const fallback = pickFirstModelProvider(models.providers)
@@ -226,9 +237,9 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
     }
 
     const currentModelId = s.defaultModel
-    if (currentModelId && !newModelList.find(m => m.id === currentModelId)) {
-      s.defaultModel = newModelList[0].id
-      console.warn(`[provider-store] defaultModel "${currentModelId}" no longer in provider "${providerId}", falling back to "${newModelList[0].id}"`)
+    if (currentModelId && !effectiveModelList.find(m => m.id === currentModelId)) {
+      s.defaultModel = effectiveModelList[0].id
+      console.warn(`[provider-store] defaultModel "${currentModelId}" no longer in provider "${providerId}" (overrides ∪ builtin), falling back to "${effectiveModelList[0].id}"`)
     }
     outcome = { newDefault: { provider: providerId as ProviderId, modelId: s.defaultModel! } }
   })
