@@ -1,34 +1,42 @@
 {
   "name": "@zhushanwen/pi-session-manager",
   "version": "0.1.0",
-  "description": "Session manager extension for agent-managed sessions",
+  "description": "Pi extension for managing agent-managed sessions — create, send, read history, list, status, abort via ctx.ui.select channel.",
   "type": "module",
-  "main": "src/index.ts",
-  "scripts": {
-    "test": "vitest run"
-  },
+  "main": "index.ts",
   "pi": {
     "extensions": [
       "./index.ts"
     ]
-  },
-  "devDependencies": {
-    "vitest": "^4.1.9"
   },
   "keywords": [
     "pi-package",
     "pi",
     "pi-coding-agent",
     "extension",
-    "session-manager",
-    "agent-managed-session"
+    "session-manager"
   ],
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
-  },
+  "license": "MIT",
   "files": [
     "index.ts",
     "src/",
     "README.md"
-  ]
+  ],
+  "scripts": {
+    "typecheck": "npx tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@xyz-agent/extension-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^4.1.9",
+    "typebox": "*",
+    "vitest": "^4.1.8"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
 }

@@ -26,6 +26,7 @@ const REAL_PI_TESTS = [
   'src/__tests__/equivalence/live-reload.test.ts',
   'src/__tests__/equivalence/pi-protocol-contract.test.ts',
   'src/__tests__/equivalence/scalar-state-invalidation.test.ts',
+  'src/__tests__/equivalence/session-manager-full-e2e.test.ts',
   'src/__tests__/equivalence/tool-call-index.test.ts',
   'src/__tests__/equivalence/usage-queue-commands-invalidation.test.ts',
 ] as const

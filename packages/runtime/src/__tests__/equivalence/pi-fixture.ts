@@ -82,6 +82,17 @@ export interface PiFixtureOptions {
   model?: string | null
   coldStartTimeoutMs?: number
   commandTimeoutMs?: number
+  /**
+   * 显式注入的 extension 路径（生产 RpcClientOptions.extensionPaths 同款）：
+   * 每个路径一个 --extension 参数。省略 = 不注入。
+   */
+  extensions?: string[]
+  /**
+   * 显式 session-dir（默认 mkdtemp 临时目录）。U9 全链路 e2e 用：session-dir 须落在
+   * XYZ_AGENT_DATA_DIR/pi/sessions 下（名字带 u9-smoke）供 scanPiSessions 复扫断言；
+   * dispose 仍会删除该目录（含自定义路径）。
+   */
+  sessionDir?: string
 }
 
 export interface PiFixture {
@@ -91,6 +102,8 @@ export interface PiFixture {
   readonly exited: boolean
   /** stdin 写 JSONL 命令并等待配对 id 的响应；success === false 时 reject */
   sendCommand(type: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<PiRpcResponse>
+  /** stdin 写原始 JSONL 行（extension_ui_response 等 sendCommand 不覆盖的命令形态）。 */
+  writeLine(line: string): void
   /** 收集至今的事件流快照（可选谓词过滤）；实时累积快照的唯一来源 */
   collectEvents(predicate?: (event: PiStreamEvent) => boolean): PiStreamEvent[]
   /** 轮询等待首条命中谓词的事件（进程提前退出时 reject） */
@@ -269,10 +282,13 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
   const coldStartTimeoutMs = options.coldStartTimeoutMs ?? DEFAULT_COLD_START_TIMEOUT_MS
   const commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
 
-  const sessionDir = mkdtempSync(join(tmpdir(), 'pi-equiv-'))
+  const sessionDir = options.sessionDir ?? mkdtempSync(join(tmpdir(), 'pi-equiv-'))
   const args = ['--mode', 'rpc', '--session-dir', sessionDir]
   if (model) args.push('--model', model)
   args.push('--approve')
+  for (const extPath of options.extensions ?? []) {
+    args.push('--extension', extPath)
+  }
   const proc: ChildProcess = spawn(PI_PATH, args, {
     cwd: sessionDir,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -369,6 +385,10 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
   const collectEvents = (predicate?: (event: PiStreamEvent) => boolean): PiStreamEvent[] =>
     predicate ? events.filter(predicate) : [...events]
 
+  const writeLine = (line: string): void => {
+    proc.stdin!.write(line + '\n')
+  }
+
   const waitForEvent = (
     predicate: (event: PiStreamEvent) => boolean,
     timeoutMs: number = commandTimeoutMs,
@@ -434,6 +454,7 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
       return exited
     },
     sendCommand,
+    writeLine,
     collectEvents,
     waitForEvent,
     dispose,
