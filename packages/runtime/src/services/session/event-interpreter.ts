@@ -105,6 +105,12 @@ export interface EventInterpreterOptions {
   thinkingLevelState?: () => { markDirty: () => void } | undefined
   /** extension 交互式 UI 请求（注册前端超时 + 缓存 pending 请求）。组合根注入 server.registerExtensionTimeout。 */
   onExtensionUIRequest?: (requestId: string, sessionId: string, method: string, payload: Record<string, unknown>) => void
+  /**
+   * session-manager 请求（agent-managed session）。select 通道 + SESSION_MANAGER_MARKER。
+   * fire-and-forget（不 await），由 SessionManagerHandler 异步处理并回写 response。
+   * 组合根注入 server.handleSessionManagerRequest。
+   */
+  onSessionManagerRequest?: (requestId: string, sessionId: string, action: string, params: Record<string, unknown>) => void
   /** bridge:* 前缀请求（直接路由不经前端超时）。组合根注入 server.handleBridgeRequest。 */
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
   /** extension setStatus（路由到 statusline builtin 插件，status-bar-registry 广播）。组合根注入 server.handleStatusSetUpdate。 */
@@ -332,6 +338,17 @@ export class EventInterpreter {
         this.opts.onBridgeUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.data)
         return
       case 'extension-ui':
+        // session-manager 请求路由：payload.sessionManager=true 时走 onSessionManagerRequest
+        //（fire-and-forget），不走前端 UI 超时流程。
+        if (ev.payload.sessionManager && this.opts.onSessionManagerRequest) {
+          this.opts.onSessionManagerRequest(
+            ev.requestId,
+            ev.sessionId,
+            ev.payload.sessionManagerAction as string,
+            ev.payload.sessionManagerParams as Record<string, unknown>,
+          )
+          return
+        }
         this.opts.onExtensionUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.payload)
         return
       case 'thinking-level':

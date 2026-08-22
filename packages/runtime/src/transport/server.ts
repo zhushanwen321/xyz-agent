@@ -11,6 +11,7 @@
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage, SkillCacheScope } from '@xyz-agent/shared'
+import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService, IAuthService } from '../interfaces.js'
 
 /** authService 未注入时的兜底（组合根必传；防御性空实现防 handler 空指针） */
@@ -41,6 +42,7 @@ import { WorktreeMessageHandler } from './worktree-message-handler.js'
 import { TerminalMessageHandler } from './terminal-message-handler.js'
 import { QuotaMessageHandler } from './quota-message-handler.js'
 import { PresetMessageHandler } from './preset-message-handler.js'
+import { SessionManagerHandler } from './session-manager-handler.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
 import type { ProjectStore } from '../services/project/project-store.js'
@@ -92,6 +94,7 @@ export class RuntimeServer implements IMessageBroker {
   private terminalMessageHandler?: TerminalMessageHandler
   private quotaMessageHandler!: QuotaMessageHandler
   private presetMessageHandler!: PresetMessageHandler
+  private sessionManagerHandler!: SessionManagerHandler
 
   /**
    * D1: 中央分发表。此前是 55 行 switch，每个 case 纯转发、零逻辑。
@@ -286,6 +289,27 @@ export class RuntimeServer implements IMessageBroker {
       })
     }
 
+    // SessionManagerHandler：agent-managed session 请求处理（select 通道 + SESSION_MANAGER_MARKER）。
+    // 不走 WS 路由表——由 EventInterpreter.onSessionManagerRequest fire-and-forget 调用。
+    this.sessionManagerHandler = new SessionManagerHandler({
+      sessionService: this.sessionService,
+      sendExtensionUiResponse: (requestId, response, method) => {
+        // 找到持有该 requestId 的 pi client 并回写 response
+        // sessionManager 请求来自 pi extension，sessionId 在 requestId 关联的 session 上
+        // 简化实现：遍历所有活跃 session 找到能发 response 的 client
+        for (const sid of this.sessionService.getActiveSessionIds()) {
+          const client = this.sessionService.getRpcClient(sid)
+          if (client) {
+            client.sendExtensionUiResponse(requestId, response, method)
+            return
+          }
+        }
+      },
+      broadcastSessionList: (_opts) => {
+        this.broker.broadcastSessionList()
+      },
+    })
+
     // ── Build the central dispatch table (D1) ───────────────────────
     // ping 内联（无对应 handler）；file.read 已迁入 fileMessageHandler（W2）；settings 走兜底（见 handleMessage）。
     // git/file handler 可选（取决于 setServices 是否注入对应 service）：捕获到局部变量后判空，
@@ -393,6 +417,17 @@ export class RuntimeServer implements IMessageBroker {
 
   handleStatusSetUpdate(payload: { sessionId: string; key: string; text: string; textRaw?: string }): void {
     this.bridgeHandler.handleStatusSetUpdate(payload)
+  }
+
+  /**
+   * session-manager 请求处理入口。由 EventInterpreter.onSessionManagerRequest fire-and-forget 调用。
+   * 委托给 SessionManagerHandler.handle() 异步处理。
+   */
+  handleSessionManagerRequest(requestId: string, sessionId: string, action: string, params: Record<string, unknown>): void {
+    this.sessionManagerHandler.handle(requestId, sessionId, action as SessionManagerAction | '__malformed__', params)
+      .catch((e) => {
+        console.error('[server] session-manager request failed:', toErrorMessage(e))
+      })
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────

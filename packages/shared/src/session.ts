@@ -94,6 +94,16 @@ export interface SessionSummary {
    * restoreSession 时从此 sidecar 读取，用此 preset 重新构建 pi args。
    */
   launchPresetId?: string
+  /**
+   * 发起来源：'user' = 用户手动创建（默认），'agent' = agent 通过 session-manager 创建。
+   * 用于 session-manager list 过滤和前端展示区分。
+   */
+  spawnSource?: 'user' | 'agent'
+  /**
+   * 父 agent session id。spawnSource='agent' 时由创建方传入，标识发起创建的 agent session。
+   * 用于 session-manager list 按 parentAgentSessionId 过滤子 session。
+   */
+  parentAgentSessionId?: string
 }
 
 export interface SessionGroup {
