@@ -9,6 +9,8 @@
  * - auth.success（edit 来源）setProvider 失败路径：toast.error 展示错误信息
  *  （恢复动作=重试保存），presence 仍刷新（凭据已写 auth.json）
  * - oauthDialogProvider：编辑体登录目标派生（含 builtin 模板 oauthName）
+ * - onEditOauthLogout（B-1 场景 C）：config.oauthLogout 移除凭证 → 成功 toast +
+ *  presence 刷新；ok:false → 透传 reply.error（勿自造）；transport reject → 错误上屏
  *
  * mock 策略：vi.mock('@/api') 捕获 auth.* 订阅回调（composable 内 useProviderOAuth
  * onMounted 注册——经 harness 组件在 setup 中调用获得组件上下文）；vue-i18n 由
@@ -32,6 +34,7 @@ const configMock = vi.hoisted(() => ({
   // OAuth flow 启动（login）：默认成功
   oauthLogin: vi.fn(async () => ({ started: true })),
   oauthCancel: vi.fn(async () => ({ cancelled: false })),
+  oauthLogout: vi.fn(async () => ({ ok: true })),
   hasOAuth: vi.fn(async () => false),
   setProvider: vi.fn(async () => {}),
   checkEnvVars: vi.fn(async () => ({})),
@@ -218,5 +221,49 @@ describe('useProviderPageOauth oauthDialogProvider（Dialog 信息派生）', ()
       name: 'Kimi Coding',
       oauthName: 'Kimi 账号',
     })
+  })
+})
+
+describe('useProviderPageOauth onEditOauthLogout（B-1 场景 C 退出登录）', () => {
+  it('成功路径：config.oauthLogout(id) + toast.info 已退出 + presence 刷新（凭证区回未登录态）', async () => {
+    // 预置已登录 presence（退出后应被刷新移除）
+    configMock.hasOAuth.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    const page = mountOauth()
+    await page.oauth.refreshOAuthPresence('kimi-coding')
+    expect(page.oauth.oauthPresent.value.has('kimi-coding')).toBe(true)
+    configMock.hasOAuth.mockClear()
+
+    await page.onEditOauthLogout(KIMI_PROVIDER)
+    await flushPromises()
+
+    expect(configMock.oauthLogout).toHaveBeenCalledTimes(1)
+    expect(configMock.oauthLogout).toHaveBeenCalledWith('kimi-coding')
+    // 用户可见反馈：退出成功 toast（zh-CN locale：已退出登录（{name}））
+    expect(toastMessages().some((m) => m.includes('已退出登录') && m.includes('Kimi Coding'))).toBe(true)
+    // presence 刷新（hasOAuth 重查 → false → 移除，凭证区回「未登录」态）
+    expect(configMock.hasOAuth).toHaveBeenCalledWith('kimi-coding')
+    expect(page.oauth.oauthPresent.value.has('kimi-coding')).toBe(false)
+  })
+
+  it('失败路径：ok=false → 透传 reply.error（勿自造文案）+ 不刷新 presence', async () => {
+    configMock.oauthLogout.mockResolvedValueOnce({ ok: false, error: 'auth.json 写入失败' })
+    const page = mountOauth()
+
+    await page.onEditOauthLogout(KIMI_PROVIDER)
+    await flushPromises()
+
+    expect(toastMessages().some((m) => m.includes('auth.json 写入失败'))).toBe(true)
+    expect(configMock.hasOAuth).not.toHaveBeenCalled()
+  })
+
+  it('transport reject（断连/超时）→ 错误上屏 + 不刷新 presence（不静默吞）', async () => {
+    configMock.oauthLogout.mockRejectedValueOnce(new Error('WebSocket 断连'))
+    const page = mountOauth()
+
+    await page.onEditOauthLogout(KIMI_PROVIDER)
+    await flushPromises()
+
+    expect(toastMessages().some((m) => m.includes('WebSocket 断连'))).toBe(true)
+    expect(configMock.hasOAuth).not.toHaveBeenCalled()
   })
 })

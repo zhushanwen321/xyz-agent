@@ -139,6 +139,7 @@
           @saved="onBodySaved"
           @cancel="onBodyCancel"
           @oauth-login="onEditOauthLogin(p)"
+          @oauth-logout="onEditOauthLogout(p)"
         />
       </div>
     </div>
@@ -383,6 +384,7 @@ const {
   isOauthSupported,
   hasOauthPresence,
   onEditOauthLogin,
+  onEditOauthLogout,
   onQuickSetupOauthLogin: startQuickSetupOauth,
 } = useProviderPageOauth({
   builtinProviders,

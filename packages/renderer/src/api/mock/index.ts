@@ -789,6 +789,11 @@ export const config = {
     await sleep(TIMING.ack)
     return { cancelled: false }
   },
+  // B-1 场景 C：退出登录。mock 模式无真实 auth.json，幂等直接成功（签名同构）。
+  async oauthLogout(_providerId: string): Promise<{ ok: boolean; error?: string }> {
+    await sleep(TIMING.ack)
+    return { ok: true }
+  },
   // MF-1：mock 模式无真实 auth.json，恒 false（不默认 oauth radio）。
   async hasOAuth(_providerId: string): Promise<boolean> {
     return false

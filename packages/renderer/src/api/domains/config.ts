@@ -342,6 +342,12 @@ export function oauthCancel(providerId: string): Promise<{ cancelled: boolean }>
   return command('config.oauthCancel', { providerId })
 }
 
+/** 退出 OAuth 登录（B-1 场景 C）：移除 auth.json 中该 provider 的凭证（幂等；有进行中 flow 先中止）。
+ *  ok=false + error 表示移除失败（error 由 runtime 透传，前端不自造文案）。 */
+export function oauthLogout(providerId: string): Promise<{ ok: boolean; error?: string }> {
+  return command('config.oauthLogout', { providerId })
+}
+
 /** 查询 auth.json 是否已有该 provider 的 OAuth 凭据（MF-1：QuickSetup 重开时默认 oauth radio，
  *  防 env 盲保存触发 I9 清理静默删凭据）。只返回布尔——token 永不出现在协议中。 */
 export async function hasOAuth(providerId: string): Promise<boolean> {

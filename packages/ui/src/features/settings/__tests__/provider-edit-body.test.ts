@@ -2,7 +2,7 @@
  * ProviderEditBody 组件级单测（ui 包 · PR #187 Gate-1.6 增量覆盖）。
  *
  * 覆盖验收标准（B-1 凭证区条件化 + B-2 模型区混合列表 + save payload）：
- * ① oauth 型 catalog provider：已登录状态区（relogin / sign-out 按钮、sign-out disabled），
+ * ① oauth 型 catalog provider：已登录状态区（relogin / logout 按钮、logout 点击上抛），
  *    隐藏 API key 输入；未登录态渲染登录入口
  * ② api_key 型：渲染 API key 输入，不渲染 OAuth 状态区
  * ③ 形态切换确认弹窗：oauth→api_key 与 api_key→oauth 双向（确认执行切换、取消不动凭证）；
@@ -252,13 +252,18 @@ describe('凭证区条件化：oauth 型 provider', () => {
     expect(quotaFactoryStub).toHaveBeenCalledTimes(1)
   })
 
-  it('logout 按钮 disabled（logout RPC 未落地，占位禁用——禁止发明 RPC）', async () => {
+  it('logout 按钮可点击（B-1 场景 C：config.oauthLogout RPC 已落地）→ 上抛 oauth-logout', async () => {
     wrapper = mountBody(OAUTH_P, { oauthPresent: true })
     await flushPromises()
 
     const logout = wrapper.find<HTMLButtonElement>('[data-testid="oauth-logout-btn"]')
     expect(logout.exists()).toBe(true)
-    expect(logout.element.disabled).toBe(true)
+    expect(logout.element.disabled).toBe(false)
+    expect(logout.text().trim()).toBe('settings.providerEdit.credentialOauthLogout')
+
+    await logout.trigger('click')
+    expect(wrapper.emitted('oauthLogout')).toBeTruthy()
+    expect(wrapper.emitted('oauthLogout')!.length).toBe(1)
   })
 
   it('未登录态（authMethod=oauth 但无凭据）：显示未登录状态 + 登录按钮（非 relogin）', async () => {

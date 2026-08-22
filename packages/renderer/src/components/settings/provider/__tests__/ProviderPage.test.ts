@@ -56,6 +56,7 @@ const configMock = vi.hoisted(() => ({
   setProvider: vi.fn(() => Promise.resolve()),
   oauthLogin: vi.fn(() => Promise.resolve({ started: false })),
   oauthCancel: vi.fn(() => Promise.resolve({ cancelled: false })),
+  oauthLogout: vi.fn(() => Promise.resolve({ ok: true })),
   hasOAuth: vi.fn(() => Promise.resolve(false)),
   // 防止 useProviderOAuth onMounted 订阅 4 个 auth.* 事件缺方法报错
   onAuthDeviceCode: vi.fn(() => () => {}),
@@ -100,11 +101,12 @@ function mountPage(providers: ProviderInfo[]): ReturnType<typeof mount> {
         ProviderEditBody: {
           name: 'ProviderEditBody',
           props: ['provider', 'oauthPresent', 'oauthSupported'],
-          emits: ['oauthLogin'],
+          emits: ['oauthLogin', 'oauthLogout'],
           template: `<div data-testid="provider-edit-body-stub">
             <span data-testid="stub-kind">{{ provider?.kind ?? "new" }}</span>
             <span data-testid="stub-oauth-present">{{ oauthPresent ? 'present' : 'absent' }}</span>
             <button data-testid="stub-oauth-login-btn" @click="$emit('oauthLogin')">login</button>
+            <button data-testid="stub-oauth-logout-btn" @click="$emit('oauthLogout')">logout</button>
           </div>`,
         },
         ProviderImportMenu: { template: '<div />' },
@@ -479,6 +481,25 @@ describe('B-1: 编辑体凭证区 OAuth 事件接线', () => {
     }))
     // presence 刷新（authMethod 切 oauth 后 hasOAuth 至少再查一次）
     expect(configMock.hasOAuth.mock.calls.filter((c) => c[0] === 'openai').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('编辑体 @oauth-logout（B-1 场景 C）→ config.oauthLogout 移除凭证 + presence 刷新（hasOAuth 重查）', async () => {
+    wrapper = mountPage([CATALOG_P])
+    await flushPromises()
+    configMock.oauthLogout.mockClear()
+    configMock.hasOAuth.mockClear()
+
+    // 展开编辑体 → 点退出登录按钮（stub emit oauthLogout）
+    const nameBtn = wrapper.find('[role="button"][aria-expanded="false"]')
+    await nameBtn.trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="stub-oauth-logout-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(configMock.oauthLogout).toHaveBeenCalledTimes(1)
+    expect(configMock.oauthLogout).toHaveBeenCalledWith('openai')
+    // presence 刷新（凭证区回「未登录」态的数据源）
+    expect(configMock.hasOAuth).toHaveBeenCalledWith('openai')
   })
 
   it('QuickSetup 来源的 auth.success 不触发 authMethod 持久化（保持 QuickSetup 打开语义）', async () => {

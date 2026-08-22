@@ -9,6 +9,7 @@
  *   edit（auth.success 立即 setProvider 持久化 authMethod='oauth' → broadcast 回推编辑体）
  * - OAuthDialog 的 provider 信息派生（QuickSetup 模板优先，编辑体目标兜底）
  * - 编辑体展开时刷新 OAuth presence（has ? add : delete，MF-3 语义）
+ * - 编辑体「退出登录」→ config.oauthLogout 移除凭证 + presence 刷新（B-1 场景 C）
  *
  * 依赖注入：builtinProviders（模板表，判 oauthSupported / oauthName）/ providers（props ref）/
  * expandedId + newId（手风琴守卫，presence 刷新触发时机）。
@@ -68,6 +69,25 @@ export function useProviderPageOauth(options: {
     void oauth.login(p.id)
   }
 
+  /** 编辑体凭证区「退出登录」（B-1 场景 C）→ config.oauthLogout 移除 auth.json 凭证。
+   *  成功刷新 presence（凭证区回到「未登录」态 + 额度区 oauthReady 联动）；
+   *  ok:false 时 error 由 runtime 透传展示（勿自造）。 */
+  async function onEditOauthLogout(p: ProviderInfo): Promise<void> {
+    try {
+      const reply = await config.oauthLogout(p.id)
+      if (!reply.ok) {
+        toast.error(reply.error ?? t('settings.providerEdit.credentialOauthLogoutFailed'))
+        return
+      }
+      toast.info(t('settings.providerEdit.credentialOauthLoggedOut', { name: p.name }))
+    } catch (e) {
+      // transport reject（断连/超时）：错误上屏（错误必须可见，不静默吞）
+      toast.error(e instanceof Error ? e.message : String(e))
+      return
+    }
+    await oauth.refreshOAuthPresence(p.id)
+  }
+
   /** QuickSetup「登录」按钮 → quicksetup 来源（auth.success 保持打开，保存时落 authMethod） */
   function onQuickSetupOauthLogin(template: BuiltinProviderTemplate): void {
     oauthLoginSource.value = 'quicksetup'
@@ -111,6 +131,7 @@ export function useProviderPageOauth(options: {
     isOauthSupported,
     hasOauthPresence,
     onEditOauthLogin,
+    onEditOauthLogout,
     onQuickSetupOauthLogin,
   }
 }

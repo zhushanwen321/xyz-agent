@@ -76,15 +76,13 @@
           >
             {{ oauthPresent ? t('settings.providerEdit.credentialOauthRelogin') : t('settings.providerEdit.credentialOauthLogin') }}
           </Button>
-          <!-- TODO(B-1 退出登录)：需要 logout RPC——协议面（shared protocol.ts）auth 域只有
-               config.oauthLogin / oauthCancel / hasOAuth，runtime authStorage.remove 未暴露为 RPC。
-               RPC 落地前按钮禁用，禁止发明不存在的 RPC。切换到 API Key 是当前唯一的退出路径。 -->
+          <!-- B-1 场景 C：退出登录（runtime config.oauthLogout 移除 auth.json 凭证）。
+               RPC 编排在父组件（ui 零 renderer import），经 @oauth-logout 上抛。 -->
           <Button
             variant="ghost"
             class="h-7 px-2.5 text-[11px] text-neutral-dim"
-            disabled
-            :title="t('settings.providerEdit.credentialOauthLogoutUnavailable')"
             data-testid="oauth-logout-btn"
+            @click="emit('oauthLogout')"
           >
             {{ t('settings.providerEdit.credentialOauthLogout') }}
           </Button>
@@ -398,6 +396,8 @@ const emit = defineEmits<{
   dirtyChange: [value: boolean]
   /** OAuth 登录/重新登录（B-1：父组件驱动共享 useProviderOAuth 状态机 + OAuthDialog，单实例无双 listener） */
   oauthLogin: []
+  /** OAuth 退出登录（B-1 场景 C：父组件调 config.oauthLogout 移除 auth.json 凭证并刷新 presence） */
+  oauthLogout: []
 }>()
 
 const { t } = useI18n()
