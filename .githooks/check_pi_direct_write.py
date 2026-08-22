@@ -121,8 +121,8 @@ TARGET_ARG_RE = re.compile(
 # ---------------------------------------------------------------------------
 # 条件 B①：sidecar 家族四后缀（登记表 §4 ⑤，豁免清单与本条一一对应）
 # ---------------------------------------------------------------------------
-SIDECAR_SUFFIX_RE = re.compile(r"['\"]\.(?:meta|preset|project|handoff)\.json['\"]")
-SIDECAR_HELPER_RE = re.compile(r"\b(?:project|preset)SidecarPath\s*\(")
+SIDECAR_SUFFIX_RE = re.compile(r"['\"]\.(?:meta|preset|project|handoff|agent)\.json['\"]")
+SIDECAR_HELPER_RE = re.compile(r"\b(?:project|preset|agent)SidecarPath\s*\(")
 
 # ---------------------------------------------------------------------------
 # 条件 B③：restore-time 归一化临时名（登记表 §4 ⑨，restore-fork-attach-fix W1 F3）。

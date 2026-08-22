@@ -94,6 +94,16 @@ export interface SessionSummary {
    * restoreSession 时从此 sidecar 读取，用此 preset 重新构建 pi args。
    */
   launchPresetId?: string
+  /**
+   * session 来源标记（从 .agent.json sidecar 读，agent-managed-session）。
+   * 例如 'agent' 表示由 agent spawn 创建。undefined = 非 agent 管理的普通 session。
+   */
+  spawnSource?: string
+  /**
+   * 父 agent session id（从 .agent.json sidecar 读，agent-managed-session）。
+   * 记录 spawn 该 session 的父 agent session。undefined = 非 agent 管理的普通 session。
+   */
+  parentAgentSessionId?: string
 }
 
 export interface SessionGroup {
