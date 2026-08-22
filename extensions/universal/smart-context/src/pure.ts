@@ -18,7 +18,7 @@ export const CHARS_PER_TOKEN_ESTIMATE = 4;
 const MAX_THRESHOLD_TIERS = 3;
 
 /** 3 档提醒阈值默认值（token 绝对数）：200K / 400K / 600K。 */
-export const DEFAULT_REMINDER_THRESHOLDS: readonly number[] = [200_000, 400_000, 600_000];
+const DEFAULT_REMINDER_THRESHOLDS: readonly number[] = [200_000, 400_000, 600_000];
 
 /** smart-context 磁盘配置（<agentDir>/config/smart-context-ext-config.json）。 */
 export interface SmartContextConfig {
@@ -51,11 +51,12 @@ export function normalizeSmartContextConfig(raw: unknown): SmartContextConfig {
 
 	const enabled = typeof r.enabled === "boolean" ? r.enabled : base.enabled;
 
+	const rawModel = typeof r.compactModel === "object" && r.compactModel !== null
+		? (r.compactModel as Record<string, unknown>)
+		: null;
 	const compactModel: ModelSelector =
-		typeof r.compactModel === "object" && r.compactModel !== null &&
-			(r.compactModel as Record<string, unknown>).type === "ref" &&
-			typeof (r.compactModel as Record<string, unknown>).ref === "string"
-			? { type: "ref", ref: (r.compactModel as Record<string, unknown>).ref as string }
+		rawModel?.type === "ref" && typeof rawModel.ref === "string"
+			? { type: "ref", ref: rawModel.ref }
 			: { type: "ref", ref: "" };
 
 	const rawThresholds = Array.isArray(r.reminderThresholds)
@@ -207,9 +208,9 @@ export function formatFileOperationsLike(readFiles: readonly string[], modifiedF
 }
 
 /** 文件重注入预算（D13-11）：≤5 文件 / 每文件 5K 字符 / 总 50K 字符。 */
-export const REINJECT_MAX_FILES = 5;
-export const REINJECT_PER_FILE_CHARS = 5_000;
-export const REINJECT_TOTAL_CHARS = 50_000;
+const REINJECT_MAX_FILES = 5;
+const REINJECT_PER_FILE_CHARS = 5_000;
+const REINJECT_TOTAL_CHARS = 50_000;
 
 /**
  * 文件重注入选择（D13-11）：从只读文件列表取最近 ≤5 个（Set 保序 = 插入序 ≈ 时间序，

@@ -43,12 +43,15 @@ function makeEvent(overrides?: Partial<BeforeCompactLikeEvent["preparation"]>): 
 	};
 }
 
-function makeCtx(model = { provider: "zai", id: "glm" }): ExtensionContext {
+function makeCtx(): ExtensionContext {
 	return {
-		model,
+		model: { provider: "zai", id: "glm" },
 		getSystemPrompt: () => "sys",
 		sessionManager: { getSessionId: () => "s1", getSessionFile: () => "/tmp/s1.jsonl" },
-		modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k" }) },
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k" }),
+			find: () => null,
+		},
 	} as unknown as ExtensionContext;
 }
 
@@ -106,7 +109,7 @@ describe("session_before_compact 接管 handler", () => {
 		const { handler } = makeHandler(
 			normalizeSmartContextConfig({ compactModel: { type: "ref", ref: "xiaomi/mimo" } }),
 		);
-		// ctx.modelRegistry mock 不含 mimo（resolveModel 走 hasConfiguredAuth 过滤）
+		// modelRegistry.find 未命中 mimo → resolveModel 返回 null → generateCrossMode D7 静默回退
 		const ctx = makeCtx();
 		await expect(handler(makeEvent(), ctx)).resolves.toEqual({});
 		expect(mockedNative).not.toHaveBeenCalled();

@@ -21,7 +21,7 @@ import {
 	type TakeoverState,
 } from "./compact-handler.js";
 import { buildDownshiftNotice, buildSwitchNotice, buildThresholdReminder } from "./reminder.js";
-import { registerCompactContextTool } from "./tool.js";
+import { countCompactions, registerCompactContextTool } from "./tool.js";
 import {
 	findCrossedThresholds,
 	getCurrentModelId,
@@ -118,8 +118,7 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 		if (crossed.length === 0) return;
 
 		for (const t of crossed) state.firedThresholds.add(t);
-		const compactionCount = (ctx.sessionManager.getEntries() as ReadonlyArray<{ type: string }>)
-			.filter((e) => e.type === "compaction").length;
+		const compactionCount = countCompactions(ctx.sessionManager.getEntries() as ReadonlyArray<{ type: string }>);
 		const message = buildThresholdReminder(crossed, usage.tokens ?? 0, usage.contextWindow, compactionCount);
 		debugLog(`reminder fired: tiers=${crossed.join(",")} tokens=${usage.tokens}`);
 		// D4：followUp（agent 空闲后投递并触发一个 turn，可立即决定压缩）；
@@ -138,7 +137,7 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 		const wasExcluded = config.excludedModels.includes(previousModelId);
 
 		// 跨越排除边界：注入一条可用性变化通知（同边界内切换静默）
-		if (config.enabled && nowExcluded !== wasExcluded && (nowExcluded || wasExcluded)) {
+		if (config.enabled && nowExcluded !== wasExcluded) {
 			const notice = buildSwitchNotice(nowExcluded ? "unavailable" : "available", modelId);
 			debugLog(`switch notice: ${nowExcluded ? "unavailable" : "available"} (${modelId})`);
 			pi.sendUserMessage(notice, { deliverAs: "steer" });

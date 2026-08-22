@@ -34,8 +34,9 @@ describe("buildThresholdReminder（D3/D4：数据投递不强制）", () => {
 
 describe("buildSwitchNotice（D5 跨界通知）", () => {
 	it("不可用/恢复两态文案含模型 ID 与原因", () => {
-		expect(buildSwitchNotice("unavailable", "deepseek/deepseek-chat")).toContain("deepseek/deepseek-chat");
-		expect(buildSwitchNotice("unavailable", "deepseek/deepseek-chat")).toContain("暂时不可用");
+		const unavailableNotice = buildSwitchNotice("unavailable", "deepseek/deepseek-chat");
+		expect(unavailableNotice).toContain("deepseek/deepseek-chat");
+		expect(unavailableNotice).toContain("暂时不可用");
 		expect(buildSwitchNotice("available", "zai/glm")).toContain("恢复可用");
 	});
 });
@@ -67,8 +68,9 @@ describe("prompts（D13-6/7/8/9 + D12）", () => {
 	});
 
 	it("custom_instructions 追加 focus 段", () => {
-		expect(buildSameModelInstruction("保留验证结果")).toContain('Additional focus from the calling agent');
-		expect(buildSameModelInstruction("保留验证结果")).toContain("保留验证结果");
+		const instruction = buildSameModelInstruction("保留验证结果");
+		expect(instruction).toContain('Additional focus from the calling agent');
+		expect(instruction).toContain("保留验证结果");
 	});
 
 	it("transcript 指针含路径", () => {

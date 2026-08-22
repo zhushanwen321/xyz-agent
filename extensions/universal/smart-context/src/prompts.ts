@@ -68,8 +68,3 @@ export function buildSameModelInstruction(customInstructions?: string): string {
 export function buildTranscriptPointer(sessionFilePath: string): string {
 	return `\n\n<transcript-ref>Need details from before this compaction? Read the full session transcript at: ${sessionFilePath}</transcript-ref>`;
 }
-
-/** 降智提示（D13-12）：累计压缩 ≥2 次时附在工具结果/提醒里。 */
-export function buildDegradationHint(): string {
-	return `Note: this session has been compacted multiple times; fine-grained details may be lost. If the task allows, consider starting a new session.`;
-}

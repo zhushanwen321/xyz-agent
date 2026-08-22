@@ -23,7 +23,7 @@ export function buildThresholdReminder(
 ): string {
 	const percent = contextWindow > 0 ? ((tokens / contextWindow) * 100).toFixed(1) : "?";
 	const tiers = crossedThresholds
-		.map((t) => `${formatK(t)}（第 ${crossedThresholds.indexOf(t) + 1} 档）`)
+		.map((t, index) => `${formatK(t)}（第 ${index + 1} 档）`)
 		.join("、");
 	const lines = [
 		`[smart-context 提示] 上下文当前 ${formatK(tokens)} / ${formatK(contextWindow)} tokens（${percent}%），已超过提醒阈值 ${tiers}。`,

@@ -28,7 +28,9 @@ import {
 	computeFileListsLike,
 	estimateTextTokens,
 	formatFileOperationsLike,
+	getCurrentModelId,
 	isSummaryInflated,
+	pickMode,
 	pickReinjectFiles,
 	type FileOpsLike,
 	type SmartContextConfig,
@@ -67,7 +69,7 @@ export interface TakeoverState {
 	inflatedSegments: Set<string>;
 }
 
-export const TAKEOVER_FAILURE_LIMIT = 3;
+const TAKEOVER_FAILURE_LIMIT = 3;
 
 export function createTakeoverState(): TakeoverState {
 	return { failStreak: 0, inflatedSegments: new Set() };
@@ -82,7 +84,7 @@ export function debugLog(message: string): void {
 }
 
 /** 内部降级/失败（事后排查价值，appendEntry 持久化不进 LLM 上下文）。 */
-export function warnLog(message: string, data?: unknown): void {
+function warnLog(message: string, data?: unknown): void {
 	logger.warn(message, data);
 }
 
@@ -148,7 +150,7 @@ function readFileForReinject(path: string): string {
  * 组装 summary 后处理（两模式共用，D13-1/4/9/11 + D11-2）：
  * preamble + 模型摘要 + fileOps 清单 + 文件重注入节 + transcript 指针。
  */
-export function assembleSummary(
+function assembleSummary(
 	summaryText: string,
 	fileOps: FileOpsLike,
 	branchEntries: ReadonlyArray<unknown>,
@@ -173,8 +175,8 @@ export function assembleSummary(
 	return summary;
 }
 
-/** 被压段 token 估算（收缩校验分母：messagesToSummarize + turnPrefix）。 */
-export function estimateShadowedTokens(
+/** 被压段 token 估算（收缩校验分母：仅 messagesToSummarize；turnPrefixMessages 是保留段前缀，不属于被压段，不计入）。 */
+function estimateShadowedTokens(
 	messagesToSummarize: ReadonlyArray<{ role: string }>,
 ): number {
 	// pi 的 estimateTokens 按 message 内容估算；此处 chars/4 的保守替代：
@@ -313,8 +315,7 @@ export function createBeforeCompactHandler(
 ): (event: BeforeCompactLikeEvent, ctx: ExtensionContext) => Promise<BeforeCompactDecision> {
 	return async (event, ctx) => {
 		const config = loadConfigFn();
-		const currentModelId =
-			ctx.model ? `${ctx.model.provider ?? ""}/${ctx.model.id ?? ""}` : "";
+		const currentModelId = getCurrentModelId(ctx.model as { provider?: string; id?: string } | undefined);
 
 		// D5 门控：禁用/排除 → 空返回（pi 原生生成）
 		if (config.enabled !== true || currentModelId === "" || config.excludedModels.includes(currentModelId)) {
@@ -334,9 +335,7 @@ export function createBeforeCompactHandler(
 		}
 
 		// D12 模式判定（现场热判，切模型/改配置后下次压缩即生效）
-		const mode = config.compactModel.ref === "" || config.compactModel.ref === currentModelId
-			? "same-model"
-			: "cross-model";
+		const mode = pickMode(config, currentModelId);
 
 		try {
 			const result = mode === "same-model"

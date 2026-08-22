@@ -9,7 +9,7 @@ vi.mock("../pure.js", async (importOriginal) => {
 	};
 });
 
-import { loadSmartContextConfig } from "../pure.js";
+import { DEFAULT_SMART_CONTEXT_CONFIG, loadSmartContextConfig } from "../pure.js";
 import { countCompactions, registerCompactContextTool } from "../tool.js";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -34,16 +34,12 @@ function makePi(): { pi: ExtensionAPI & { sendUserMessage: ReturnType<typeof vi.
 	return { pi, tools };
 }
 
-function makeCtx(overrides?: {
-	usage?: { tokens: number | null; contextWindow: number };
-	entries?: Array<{ type: string }>;
-	compactImpl?: (options: CompactOpts) => void;
-}): ExtensionContext {
+function makeCtx(compactImpl?: (options: CompactOpts) => void): ExtensionContext {
 	return {
 		model: { provider: "zai", id: "glm" },
-		getContextUsage: () => ({ tokens: overrides?.usage?.tokens ?? 250_000, contextWindow: overrides?.usage?.contextWindow ?? 1_000_000, percent: 25 }),
-		sessionManager: { getEntries: () => overrides?.entries ?? [] },
-		compact: overrides?.compactImpl ?? ((options: CompactOpts) => {
+		getContextUsage: () => ({ tokens: 250_000, contextWindow: 1_000_000 }),
+		sessionManager: { getEntries: () => [] },
+		compact: compactImpl ?? ((options: CompactOpts) => {
 			options.onComplete({
 				tokensBefore: 500_000,
 				estimatedTokensAfter: 24_000,
@@ -58,12 +54,7 @@ const mockedLoad = vi.mocked(loadSmartContextConfig);
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	mockedLoad.mockReturnValue({
-		enabled: true,
-		compactModel: { type: "ref", ref: "" },
-		reminderThresholds: [200_000, 400_000, 600_000],
-		excludedModels: [],
-	});
+	mockedLoad.mockReturnValue(DEFAULT_SMART_CONTEXT_CONFIG);
 });
 
 describe("compact_context 工具（R2 降级态：fire-and-forget + 结果注入）", () => {
@@ -75,12 +66,7 @@ describe("compact_context 工具（R2 降级态：fire-and-forget + 结果注入
 	});
 
 	it("门控拒绝（排除命中）→ throw 带原因与恢复指引（D5）", async () => {
-		mockedLoad.mockReturnValue({
-			enabled: true,
-			compactModel: { type: "ref", ref: "" },
-			reminderThresholds: [200_000],
-			excludedModels: ["zai/glm"],
-		});
+		mockedLoad.mockReturnValue({ ...DEFAULT_SMART_CONTEXT_CONFIG, excludedModels: ["zai/glm"] });
 		const { pi, tools } = makePi();
 		registerCompactContextTool(pi, { gatingProbe: () => ({ active: false, modelId: "zai/glm" }) });
 		await expect(tools[0].execute("t1", {}, undefined, undefined, makeCtx())).rejects.toThrow(/已配置为排除/);
@@ -124,7 +110,7 @@ describe("compact_context 工具（R2 降级态：fire-and-forget + 结果注入
 	it("onComplete 无 engine 标记 → 注入消息含回退说明与修复指引（D7）", async () => {
 		const { pi, tools } = makePi();
 		registerCompactContextTool(pi);
-		const ctx = makeCtx({ compactImpl: (options) => options.onComplete({ tokensBefore: 1, estimatedTokensAfter: 1 }) });
+		const ctx = makeCtx((options) => options.onComplete({ tokensBefore: 1, estimatedTokensAfter: 1 }));
 		await tools[0].execute("t1", {}, undefined, undefined, ctx);
 		expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
 		expect(pi.sendUserMessage.mock.calls[0][0]).toContain("回退");
@@ -133,7 +119,7 @@ describe("compact_context 工具（R2 降级态：fire-and-forget + 结果注入
 	it("onError → 注入失败消息带重试指引", async () => {
 		const { pi, tools } = makePi();
 		registerCompactContextTool(pi);
-		const ctx = makeCtx({ compactImpl: (options) => options.onError(new Error("Nothing to compact")) });
+		const ctx = makeCtx((options) => options.onError(new Error("Nothing to compact")));
 		await tools[0].execute("t1", {}, undefined, undefined, ctx);
 		expect(pi.sendUserMessage.mock.calls[0][0]).toContain("压缩失败");
 		expect(pi.sendUserMessage.mock.calls[0][0]).toContain("Nothing to compact");
@@ -143,10 +129,10 @@ describe("compact_context 工具（R2 降级态：fire-and-forget + 结果注入
 		let received: string | undefined;
 		const { pi, tools } = makePi();
 		registerCompactContextTool(pi);
-		const ctx = makeCtx({ compactImpl: (options) => {
+		const ctx = makeCtx((options) => {
 			received = options.customInstructions;
 			options.onComplete({ details: { engine: "smart-context", mode: "cross-model" } });
-		} });
+		});
 		await tools[0].execute("t1", { custom_instructions: "保留验证结果" }, undefined, undefined, ctx);
 		expect(received).toBe("保留验证结果");
 	});

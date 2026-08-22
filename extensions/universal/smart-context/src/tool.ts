@@ -169,7 +169,7 @@ export function registerCompactContextTool(
 						: undefined,
 				onComplete: (r: unknown) => {
 					const result = toCompactionResultLike(r);
-					const resultMode = typeof result.details?.mode === "string" ? result.details.mode : "native-fallback";
+					const resultMode = result.details?.mode ?? "native-fallback";
 					const fellBack = resultMode === "native-fallback";
 					if (fellBack) debugLog("compact_context: takeover fell back to native generation");
 					const cacheRead = result.usage?.cacheRead;

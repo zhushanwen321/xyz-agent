@@ -85,8 +85,9 @@ describe("阈值检查（D3/D6）", () => {
 
 	it("checkToolThresholdGuard：低于最低档拒绝并带用量数据；null 拒绝", () => {
 		const tiers = [200_000, 400_000, 600_000];
-		expect(checkToolThresholdGuard(tiers, 38_000)).toMatch(/38K/);
-		expect(checkToolThresholdGuard(tiers, 38_000)).toMatch(/200K/);
+		const guardMessage = checkToolThresholdGuard(tiers, 38_000);
+		expect(guardMessage).toMatch(/38K/);
+		expect(guardMessage).toMatch(/200K/);
 		expect(checkToolThresholdGuard(tiers, 250_000)).toBeNull();
 		expect(checkToolThresholdGuard(tiers, null)).toMatch(/用量未知/);
 	});
