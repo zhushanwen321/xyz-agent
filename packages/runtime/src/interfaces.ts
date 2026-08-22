@@ -469,6 +469,8 @@ export interface IAuthService {
   cancel(providerId: string): { cancelled: boolean }
   /** 读 auth.json：该 provider 是否有 oauth 凭据。 */
   hasOAuth(providerId: string): Promise<boolean>
+  /** 退出登录（B-1 场景 C）：移除 auth.json 中该 provider 的凭证（有进行中 flow 先中止，幂等）。 */
+  logout(providerId: string): Promise<void>
   /** 读 auth.json 凭证（A1-4 收口读通道，Phase A2 QuotaService 凭证源）。直读不缓存。 */
   getCredential(providerId: string): Promise<Credential | undefined>
   /** 写 auth.json 凭证（A1-4 收口写通道）：全 runtime 对 auth.json 写入的唯一入口。 */

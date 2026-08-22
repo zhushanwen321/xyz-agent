@@ -3,7 +3,8 @@
  *
  * 覆盖：login 无 oauthConfig → started:false / 已有 flow 幂等拒绝 / 正常启动 →
  * 事件序列（deviceCode → success）+ clearApiKey（I9 both 清理②）/ 失败 → auth.error /
- * cancel（无 flow 幂等 + 有 flow abort 且不发 error）/ hasOAuth 委托。
+ * cancel（无 flow 幂等 + 有 flow abort 且不发 error）/ hasOAuth 委托 /
+ * logout（委托 authStorage.remove + 先中止进行中 flow，B-1 场景 C）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ServerMessage } from '@xyz-agent/shared'

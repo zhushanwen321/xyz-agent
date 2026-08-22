@@ -6,6 +6,7 @@
  *   推 auth.deviceCode / auth.authUrl，终态 auth.success / auth.error
  * - cancel(providerId)：abort 进行中的 flow（停轮询 / 关 callback server / 清 state）
  * - hasOAuth(providerId)：读 auth.json 是否有 oauth 凭据（provider 列表徽章数据源）
+ * - logout(providerId)：退出登录——移除 auth.json 凭证（B-1 场景 C，先中止进行中 flow）
  * - getCredential/saveCredential(providerId)：auth.json 凭证的收口读/写通道（A1-4）
  *   ——全 runtime 对 auth.json 的写入唯一入口（三 Store 收口，架构 §3.4）
  * - both 清理②（I9）：login 成功后清 models.json apiKey——authMode='both' 的 provider
@@ -78,6 +79,16 @@ export class AuthService implements IAuthService {
   /** 读 auth.json：该 provider 是否有 oauth 凭据（列表徽章 / OAuthDialog 已授权态） */
   async hasOAuth(providerId: string): Promise<boolean> {
     return this.deps.authStorage.hasOAuth(providerId)
+  }
+
+  /**
+   * 退出登录（B-1 场景 C）：移除 auth.json 中该 provider 的凭证。
+   * 先 cancel 进行中 flow（防 remove 后 flow 完成把新凭证写回）。幂等：无凭证时
+   * authStorage.remove 本身 no-op（且不物化空 auth.json）。
+   */
+  async logout(providerId: string): Promise<void> {
+    this.cancel(providerId)
+    await this.deps.authStorage.remove(providerId)
   }
 
   /**

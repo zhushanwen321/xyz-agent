@@ -18,6 +18,7 @@ const noopAuthService: IAuthService = {
   login: () => ({ started: false, error: 'OAuth 不可用（authService 未装配）' }),
   cancel: () => ({ cancelled: false }),
   hasOAuth: async () => false,
+  logout: async () => { throw new Error('OAuth 不可用（authService 未装配）') },
   getCredential: async () => undefined,
   saveCredential: async () => { throw new Error('OAuth 不可用（authService 未装配）') },
 }

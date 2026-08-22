@@ -127,6 +127,8 @@ export type ClientMessageType =
   | 'config.checkEnvVars'
   // OAuth 凭据查询（MF-1）：auth.json 是否已有该 provider 的 oauth 凭据（只返回布尔，token 不出协议）。reply config.hasOAuthReply。
   | 'config.hasOAuth'
+  // OAuth 退出登录（B-1 场景 C）：移除 auth.json 中该 provider 的凭证（有进行中 flow 先中止）。reply config.oauthLogoutReply。
+  | 'config.oauthLogout'
   // wave4：provider 启用切换（写 enabledModels 白名单，reply config.providerUpdated）。替代旧 setProvider({enabled})。
   | 'config.toggleProviderEnabled'
   // wave4：按体系移除 provider（catalog 清凭据/custom 删条目，reply config.providerUpdated）。
@@ -556,6 +558,8 @@ export interface ClientMessageMap {
   'config.oauthCancel': { providerId: string }
   /** config.hasOAuth：查询 auth.json 是否已有该 provider 的 oauth 凭据（只返回布尔）。reply config.hasOAuthReply。 */
   'config.hasOAuth': { providerId: string }
+  /** config.oauthLogout：移除 auth.json 中该 provider 的凭证（退出登录，幂等）。reply config.oauthLogoutReply。 */
+  'config.oauthLogout': { providerId: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -704,6 +708,8 @@ export type ServerMessageType =
   | 'config.oauthLoginReply' | 'config.oauthCancelReply'
   // OAuth 凭据查询 reply（MF-1）。
   | 'config.hasOAuthReply'
+  // OAuth 退出登录 reply（B-1 场景 C：ok 布尔 + 错误原因）。
+  | 'config.oauthLogoutReply'
   // 环境变量检测 reply（I3）。
   | 'config.envVarsChecked'
 
@@ -1139,6 +1145,8 @@ export interface ServerMessageMapBase {
   'config.oauthCancelReply': { cancelled: boolean }
   /** config.hasOAuth reply：auth.json 是否已有该 provider 的 oauth 凭据（布尔，无 token）。 */
   'config.hasOAuthReply': { hasOAuth: boolean }
+  /** config.oauthLogout reply（成功/失败布尔 + 错误原因；token 永不出现在协议中）。 */
+  'config.oauthLogoutReply': { ok: boolean; error?: string }
   /** config.checkEnvVars reply：只含布尔（安全红线：env 值不进前端）。 */
   'config.envVarsChecked': { results: Record<string, boolean> }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
@@ -1303,6 +1311,7 @@ export interface ReplyPayloadMap {
   'config.oauthLogin': ServerMessageMap['config.oauthLoginReply']
   'config.oauthCancel': ServerMessageMap['config.oauthCancelReply']
   'config.hasOAuth': ServerMessageMap['config.hasOAuthReply']
+  'config.oauthLogout': ServerMessageMap['config.oauthLogoutReply']
   'config.checkEnvVars': ServerMessageMap['config.envVarsChecked']
   'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
   'config.getGlobalSkills': ServerMessageMap['config.globalSkills']

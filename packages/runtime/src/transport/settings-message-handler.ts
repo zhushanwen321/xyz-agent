@@ -118,6 +118,20 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.hasOAuthReply', { hasOAuth })
         return true
       }
+      case 'config.oauthLogout': {
+        // B-1 场景 C：退出登录——移除 auth.json 中该 provider 的凭证（先中止进行中 flow）。
+        // 幂等（无凭证 no-op）；失败转 ok:false + error（错误消息指向重试动作）。
+        try {
+          await this.ctx.authService.logout(msg.payload.providerId)
+          this.ctx.reply(ws, msg.id, 'config.oauthLogoutReply', { ok: true })
+        } catch (error) {
+          this.ctx.reply(ws, msg.id, 'config.oauthLogoutReply', {
+            ok: false,
+            error: `退出登录失败（凭证可能仍在）：${toErrorMessage(error)}。请重试；持续失败请检查磁盘后重启应用`,
+          })
+        }
+        return true
+      }
       case 'config.checkEnvVars': {
         // I3 契约：names 必须是字符串数组，非法 payload → sendError invalid_payload（对齐 D10 错误 envelope）
         const names = msg.payload.names
