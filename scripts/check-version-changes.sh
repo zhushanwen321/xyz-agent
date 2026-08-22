@@ -90,9 +90,11 @@ function readPkgIfExists(rel) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
 }
 const pkgJsons = [];
-for (const base of ['extensions', 'packages', 'apps']) {
+// extensions 分组布局（taiji/universal，2026-08-22 目录重组）：分组目录 + shared 库 + 顶层
+// 兜底（未来新增分组单点追加）。旧一层扫描在重组后漏掉全部分组包（cw-tool 死警告根因）。
+for (const base of ['extensions/taiji', 'extensions/universal', 'extensions', 'packages', 'apps']) {
   for (const name of listDirs(base)) {
-    if (base === 'extensions' && name === 'shared') continue; // extensions/shared 单独扫
+    if (base === 'extensions' && ['shared', 'taiji', 'universal'].includes(name)) continue; // 分组目录/shared 单独扫
     if (fs.existsSync(path.join(ROOT, base, name, 'package.json'))) {
       pkgJsons.push(`${base}/${name}/package.json`);
     }

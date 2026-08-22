@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-agent-ext",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "xyz-agent extension for Pi — session tree navigation and internal reload command",
   "type": "module",
   "main": "src/index.ts",
