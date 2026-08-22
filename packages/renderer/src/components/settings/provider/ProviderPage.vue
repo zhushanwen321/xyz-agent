@@ -449,7 +449,7 @@ function onScopedRemove(scoped: string): void {
   void runScopedAction(() => removeScopedModel(scoped))
 }
 
-function onScopedMove(scoped: string, dir: 'up' | 'down'): void {
+function onScopedMove({ scoped, dir }: { scoped: string; dir: 'up' | 'down' }): void {
   void runScopedAction(() => moveScopedModel(scoped, dir))
 }
 

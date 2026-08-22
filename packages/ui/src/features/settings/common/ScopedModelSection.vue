@@ -74,7 +74,7 @@
             class="size-7 rounded-sm p-0 text-neutral-dim hover:text-neutral-fg"
             :disabled="idx === 0"
             :aria-label="t('settings.scopedModel.moveUp')"
-            @click="emit('move', item.scoped, 'up')"
+            @click="emit('move', { scoped: item.scoped, dir: 'up' })"
           >
             <ChevronUp />
           </Button>
@@ -85,7 +85,7 @@
             class="size-7 rounded-sm p-0 text-neutral-dim hover:text-neutral-fg"
             :disabled="idx === scopedList.length - 1"
             :aria-label="t('settings.scopedModel.moveDown')"
-            @click="emit('move', item.scoped, 'down')"
+            @click="emit('move', { scoped: item.scoped, dir: 'down' })"
           >
             <ChevronDown />
           </Button>
@@ -174,7 +174,7 @@
           data-testid="scoped-confirm-add"
           @click="confirmAdd"
         >
-          {{ t('settings.scopedModel.confirmAdd', { count: selectedToAdd.size }) }}
+          {{ t('settings.scopedModel.confirmAdd', selectedToAdd.size, { named: { count: selectedToAdd.size } }) }}
         </Button>
       </div>
     </div>
@@ -192,7 +192,7 @@ export type { ScopedRenderItem, SelectableModel } from './scoped-model-types'
 // 签名保持单行紧凑形态：root unit 集成契约（C4/C5）对此做逐字文本匹配
 const props = defineProps<{ scopedList: ScopedRenderItem[]; selectableModels: SelectableModel[] }>()
 
-const emit = defineEmits<{ add: [models: string[]]; remove: [scoped: string]; move: [scoped: string, dir: 'up' | 'down'] }>()
+const emit = defineEmits<{ add: [models: string[]]; remove: [scoped: string]; move: [{ scoped: string; dir: 'up' | 'down' }] }>()
 
 const { t } = useI18n()
 

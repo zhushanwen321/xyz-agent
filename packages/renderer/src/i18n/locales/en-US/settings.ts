@@ -427,7 +427,7 @@ export default {
     searchPlaceholder: 'Search models or providers…',
     noResults: 'No matching models',
     added: 'Added',
-    confirmAdd: 'Add {count} models',
+    confirmAdd: 'Add {count} model | Add {count} models',
   },
   // ── Extension page (ExtensionPage) ──
   extension: {
@@ -435,7 +435,7 @@ export default {
     installed: 'Installed',
     install: 'Install',
     discoverBtn: 'Discover',
-    discoverResultTitle: 'Found {count} candidates',
+    discoverResultTitle: 'Found {count} candidate | Found {count} candidates',
     noCandidates: 'No installable extensions found for this source',
     selectedCount: '{selected} / {total} selected',
     selectAll: 'Select all',

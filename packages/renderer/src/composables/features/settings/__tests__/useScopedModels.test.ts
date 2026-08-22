@@ -180,6 +180,34 @@ describe('useScopedModels', () => {
     expect(store.scopedModels.value).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4.5'])
   })
 
+  it('A3: move in-flight 时连点第二次触发被忽略（模块级防重入守卫）', async () => {
+    const store = getSettingsStore()
+    store.providers.value = MOCK_PROVIDERS as any
+    store.scopedModels.value = ['openai/gpt-4o', 'anthropic/claude-sonnet-4.5']
+
+    // 第一次 RPC 挂起（deferred），锁定 in-flight 窗口
+    let resolveFirst: (v: string[]) => void = () => {}
+    configMock.setScopedModels.mockImplementationOnce(
+      () => new Promise<string[]>((resolve) => { resolveFirst = resolve }),
+    )
+
+    const { moveScopedModel } = useScopedModels()
+    const first = moveScopedModel('openai/gpt-4o', 'down')
+    // 连点：第一次乐观交换后 anthropic 位于 idx0，其 down 本有效（无守卫会二次 RPC），
+    // 守卫生效 → 直接忽略，不排队、不改快照
+    await moveScopedModel('anthropic/claude-sonnet-4.5', 'down')
+
+    // 乐观状态 = 仅第一次交换结果
+    expect(store.scopedModels.value).toEqual(['anthropic/claude-sonnet-4.5', 'openai/gpt-4o'])
+
+    resolveFirst(['anthropic/claude-sonnet-4.5', 'openai/gpt-4o'])
+    await first
+
+    expect(configMock.setScopedModels).toHaveBeenCalledTimes(1)
+    expect(configMock.setScopedModels).toHaveBeenCalledWith(['anthropic/claude-sonnet-4.5', 'openai/gpt-4o'])
+    expect(store.scopedModels.value).toEqual(['anthropic/claude-sonnet-4.5', 'openai/gpt-4o'])
+  })
+
   it('A3: addScopedModels 跳过已存在的重复项', async () => {
     const store = getSettingsStore()
     store.providers.value = MOCK_PROVIDERS as any

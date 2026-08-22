@@ -434,4 +434,34 @@ describe('ProviderPage A6 e2e-mock: ScopedModelSection 挂载与交互链路', (
     const names = wrapper.findAll('[data-testid="scoped-model-name"]')
     expect(names.map((n) => n.text())).toEqual(['Claude Sonnet 4', 'GPT-4o'])
   })
+
+  it('A6: 连点两次下移 → in-flight 期间第二次被忽略（防重入守卫，单次 RPC）', async () => {
+    const store = getSettingsStore()
+    store.providers.value = PROVIDERS
+    // 3 项列表：同一元素（首行）连点两次 down，第二次时该行已处 idx1、down 本有效
+    store.scopedModels.value = ['anthropic/claude-sonnet-4', 'anthropic/claude-opus-4', 'openai/gpt-4o']
+    configMock.setScopedModels.mockClear()
+    // 第一次 RPC 挂起（deferred），锁定 in-flight 窗口
+    let resolveRpc: (v: string[]) => void = () => {}
+    configMock.setScopedModels.mockImplementationOnce(
+      () => new Promise<string[]>((resolve) => { resolveRpc = resolve }),
+    )
+
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="scoped-row"]')
+    const downBtn = rows[0].find('[data-testid="scoped-move-down"]')
+    await downBtn.trigger('click') // claude-sonnet-4 idx0 → idx1（RPC pending，模块级 busy 置位）
+    await downBtn.trigger('click') // 连点：无守卫会以含乐观值的快照二次 RPC；守卫 → 忽略
+    resolveRpc(['anthropic/claude-opus-4', 'anthropic/claude-sonnet-4', 'openai/gpt-4o'])
+    await flushPromises()
+
+    // 仅第一次触发到达 RPC
+    expect(configMock.setScopedModels).toHaveBeenCalledTimes(1)
+    expect(configMock.setScopedModels).toHaveBeenCalledWith(['anthropic/claude-opus-4', 'anthropic/claude-sonnet-4', 'openai/gpt-4o'])
+  })
 })

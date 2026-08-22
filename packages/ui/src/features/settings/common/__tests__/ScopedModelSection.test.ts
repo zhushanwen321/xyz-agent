@@ -31,8 +31,22 @@ const SCOPED_MESSAGES = vi.hoisted(() => ({
 }))
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
-    t: (key: string, named?: Record<string, unknown>) => {
-      let result = SCOPED_MESSAGES[key as keyof typeof SCOPED_MESSAGES] ?? key
+    // 兼容两种调用形态（镜像 __tests__/vitest-i18n-setup.ts）：
+    //   t(key, named) 与复数 t(key, count, { named })（confirmAdd 等）
+    t: (key: string, ...rest: unknown[]) => {
+      let result: string = SCOPED_MESSAGES[key as keyof typeof SCOPED_MESSAGES] ?? key
+      let named: Record<string, unknown> | undefined
+      let count: number | undefined
+      if (typeof rest[0] === 'number') {
+        count = rest[0]
+        named = (rest[1] as { named?: Record<string, unknown> } | undefined)?.named
+      } else if (rest[0] && typeof rest[0] === 'object') {
+        named = rest[0] as Record<string, unknown>
+      }
+      if (result.includes('|') && count !== undefined) {
+        const parts = result.split('|')
+        result = (count === 1 ? parts[0] : (parts[1] ?? parts[0])).trim()
+      }
       if (named) {
         for (const [k, v] of Object.entries(named)) {
           result = result.replaceAll(`{${k}}`, String(v))
@@ -112,7 +126,7 @@ describe('ScopedModelSection', () => {
     // 点击第二行的上移按钮
     await rows[1].find('[data-testid="scoped-move-up"]').trigger('click')
     expect(wrapper.emitted('move')).toBeTruthy()
-    expect(wrapper.emitted('move')![0]).toEqual(['anthropic/claude-sonnet-4.5', 'up'])
+    expect(wrapper.emitted('move')![0]).toEqual([{ scoped: 'anthropic/claude-sonnet-4.5', dir: 'up' }])
   })
 
   it('A1: 点击下移按钮触发 move emit，payload 正确', async () => {
@@ -121,7 +135,7 @@ describe('ScopedModelSection', () => {
     // 点击第一行的下移按钮
     await rows[0].find('[data-testid="scoped-move-down"]').trigger('click')
     expect(wrapper.emitted('move')).toBeTruthy()
-    expect(wrapper.emitted('move')![0]).toEqual(['openai/gpt-4o', 'down'])
+    expect(wrapper.emitted('move')![0]).toEqual([{ scoped: 'openai/gpt-4o', dir: 'down' }])
   })
 
   it('A1: 点击移除按钮触发 remove emit，payload 正确', async () => {
@@ -193,6 +207,9 @@ describe('ScopedModelSection', () => {
     const gpt4oMiniItem = items.find((item) => item.text().includes('GPT-4o Mini'))
     expect(gpt4oMiniItem).toBeTruthy()
     await gpt4oMiniItem!.find('button[role="checkbox"]').trigger('click')
+
+    // 确认按钮文案带选中数（复数调用形态 t(key, count, { named })，zh-CN 无单复数之分）
+    expect(wrapper.find('[data-testid="scoped-confirm-add"]').text()).toContain('添加 1 个模型')
 
     // 确认
     await wrapper.find('[data-testid="scoped-confirm-add"]').trigger('click')

@@ -16,6 +16,11 @@ import { getSettingsStore } from '@xyz-agent/core'
 import { config } from '@/api'
 import type { ScopedRenderItem, SelectableModel } from '@xyz-agent/ui/features/settings'
 
+// 防重入：setScopedModels 是整列表覆写，in-flight 期间的新触发会拿含乐观值的快照当 old，
+// 双失败时回滚互相错位 → 模块级 busy 守卫，操作进行中忽略新触发（对齐 ProviderPage.vue
+// toggling Set 的「in-flight 忽略」范式；不做按钮禁用态，避免 busy 状态穿透 ui 组件 props）。
+let scopedMutationInFlight = false
+
 export function useScopedModels() {
   const settingsStore = getSettingsStore()
 
@@ -72,11 +77,13 @@ export function useScopedModels() {
 
   /** 添加模型到 scoped 列表（去重保序）。 */
   async function addScopedModels(models: string[]): Promise<void> {
+    if (scopedMutationInFlight) return
     const old = [...settingsStore.scopedModels.value]
     const existing = new Set(old)
     const additions = models.filter((m) => !existing.has(m))
     if (additions.length === 0) return
 
+    scopedMutationInFlight = true
     settingsStore.scopedModels.value = [...old, ...additions]
     try {
       const result = await config.setScopedModels(settingsStore.scopedModels.value)
@@ -84,24 +91,31 @@ export function useScopedModels() {
     } catch (e) {
       settingsStore.scopedModels.value = old
       throw e
+    } finally {
+      scopedMutationInFlight = false
     }
   }
 
   /** 从 scoped 列表移除单个模型。 */
   async function removeScopedModel(scoped: string): Promise<void> {
+    if (scopedMutationInFlight) return
     const old = [...settingsStore.scopedModels.value]
     settingsStore.scopedModels.value = old.filter((s) => s !== scoped)
+    scopedMutationInFlight = true
     try {
       const result = await config.setScopedModels(settingsStore.scopedModels.value)
       settingsStore.scopedModels.value = result
     } catch (e) {
       settingsStore.scopedModels.value = old
       throw e
+    } finally {
+      scopedMutationInFlight = false
     }
   }
 
   /** 上移/下移 scoped 模型。 */
   async function moveScopedModel(scoped: string, dir: 'up' | 'down'): Promise<void> {
+    if (scopedMutationInFlight) return
     const old = [...settingsStore.scopedModels.value]
     const idx = old.indexOf(scoped)
     if (idx === -1) return
@@ -110,6 +124,7 @@ export function useScopedModels() {
 
     const next = [...old]
     ;[next[idx], next[targetIdx]] = [next[targetIdx], next[idx]]
+    scopedMutationInFlight = true
     settingsStore.scopedModels.value = next
     try {
       const result = await config.setScopedModels(settingsStore.scopedModels.value)
@@ -117,6 +132,8 @@ export function useScopedModels() {
     } catch (e) {
       settingsStore.scopedModels.value = old
       throw e
+    } finally {
+      scopedMutationInFlight = false
     }
   }
 
