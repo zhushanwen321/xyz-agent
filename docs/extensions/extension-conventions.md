@@ -2,9 +2,10 @@
 
 > 本文档整合自 xyz-pi-extensions 项目的 CLAUDE.md，收录 pi extension 开发的**强约束和关键约定**。
 > 完整开发指南（规范红线 + 进阶模式范例）见 [development-guide.md](./development-guide.md)。
+> 日志现行口径（三层通道）见 [logging-conventions.md](./logging-conventions.md)——development-guide §10 的旧 console 口径已由其收敛。
 > TUI 渲染细节见 [pi-tui-development-guide.md](./pi-tui-development-guide.md)。
 
-本文档只收录「违反必出 bug」或「[MANDATORY]」级别的约束。通用工程规范（TS 禁 any、错误处理等）不在此重复，见项目根 [AGENTS.md](../../AGENTS.md)。
+本文档只收录「违反必出 bug」或「[MANDATORY]」级别的约束。通用工程规范（TS 禁 any 等）不在此重复，见项目根 [AGENTS.md](../../AGENTS.md)。本文档所载约束登记于 [docs/constraints.json](../constraints.json)（架构约束登记 SSOT）。
 
 ---
 
@@ -80,7 +81,7 @@
 
 - `execute` 返回 `{ content: [...], details: {...} }` 结构
 - `details` 是 renderResult 的数据来源，不要依赖 content 文本解析
-- 错误用 `throw new Error()`，不要返回 `{ content: [{ text: "错误: ..." }] }` 的**错误成功模式**（调用方无法区分成功与失败）
+- 错误处理分两层：内部实现函数可以 `throw`；`execute` 是 API 边界，**必须 catch 并返回 `{ isError: true }` + 错误消息**。错误消息用 `err.message`（不含堆栈），禁止把 `err.stack` 拼进 content（堆栈外泄到 LLM 上下文/持久化记录）。同时禁止 `{ content: [{ text: "错误: ..." }] }` 不带 `isError` 的**错误成功模式**（调用方无法区分成功与失败）
 
 ## TUI 渲染
 

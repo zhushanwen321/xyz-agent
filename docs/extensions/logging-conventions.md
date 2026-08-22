@@ -2,6 +2,8 @@
 
 > 适用于：`@zhushanwen/pi-*` 全部 extension 包。
 > 约束：不改 pi 宿主源码。所有日志行为在 extension 层完成。
+>
+> **定位声明（现行 SSOT）**：本文档是 extension 日志的唯一权威源。[development-guide.md](./development-guide.md) §10 历史版本允许的「`console.warn`/`console.error` 带前缀」方案已由本文档收敛为禁止（见「关键约束」与迁移指南）。本文档所载约束登记于 [docs/constraints.json](../constraints.json)（架构约束登记 SSOT）。
 
 ## 问题背景
 
