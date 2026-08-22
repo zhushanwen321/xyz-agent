@@ -1,0 +1,112 @@
+{
+  "acceptance": [
+    {
+      "id": "F1",
+      "title": "session 创建失败降级: cwd 不存在时降级 homedir + toast 通知用户",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/runtime exec vitest run test/session-lifecycle.test.ts",
+      "testRequirement": "import 真实 SessionLifecycle 模块，mock existsSync 返回 false，验证降级到 homedir 的行为"
+    },
+    {
+      "id": "F2",
+      "title": "session 创建失败降级: cwd 为空字符串/非法字符时 service 层拦截 + store 层兜底",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/runtime exec vitest run test/session-lifecycle.test.ts",
+      "testRequirement": "import 真实 SessionLifecycle 模块，传入空字符串/非法字符 cwd，验证 service 层拦截和 store 层兜底行为"
+    },
+    {
+      "id": "F3",
+      "title": "pi 进程崩溃恢复: ProcessManager.onSessionExit 回调触发 + session 清理",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/runtime exec vitest run test/pi-engine.test.ts",
+      "testRequirement": "import 真实 ProcessManager（packages/runtime/src/infra/pi/process-manager.ts），mock RpcClient（packages/runtime/src/infra/pi/rpc-client.ts）的 start/kill/onExit 方法，验证：1) createSession 后 client.onExit 触发时 ProcessManager.exitCallbacks 被调用且 sessionId/code/stderr 参数正确；2) onSessionExit 注册的回调在进程意外退出时被调用，destroySession 清理后不触发；3) 多个回调全部触发。禁止在测试中重新定义 COOLDOWN_MS/MAX_REBUILD_ATTEMPTS 等常量或局部变量做恒真测试——ProcessManager 无此常量，原测试测的是自定义变量非真实代码"
+    },
+    {
+      "id": "F4",
+      "title": "WS 断连重连: 真实退避延迟 + 状态机转换 + auth 超时 + pre-auth 队列",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/core exec vitest run src/transport/__tests__/ws-client.invariants.test.ts",
+      "testRequirement": "import 真实 WsClient 模块级函数（packages/core/src/transport/ws-client.ts），mock getPlatform().webSocket.create 返回可控 WebSocketLike，验证：1) 退避延迟计算：RECONNECT_BASE_DELAY_MS(1000) * Math.pow(RECONNECT_BACKOFF_EXPONENT(2), n)，上限 MAX_RECONNECT_DELAY_MS(30000)——验证 setTimeout 实际调用参数而非重算公式；2) ConnectionState 状态机：disconnected→connecting→connected→reconnecting 转换来自真实类型导出；3) auth 超时 AUTH_TIMEOUT_MS(5000)：connect(url, token) 后 5s 内无 auth.result 触发断开重连；4) preAuthQueue：auth 前 send() 入队，auth.result ok 后 flush。禁止重新定义退避公式或状态变量做恒真测试"
+    },
+    {
+      "id": "F5",
+      "title": "命令超时善后: 30s 超时 reject + 删 pending Map + 迟到响应静默丢弃",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/runtime exec vitest run test/pending.test.ts",
+      "testRequirement": "import 真实 PendingTracker（packages/runtime/src/utils/async/pending-tracker.ts），验证超时 reject、pending Map 清理、迟到响应静默丢弃行为"
+    },
+    {
+      "id": "F6",
+      "title": "文件操作超时: FileService.withTimeout 真实超时逻辑抛 FileError('timeout')",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/runtime exec vitest run test/file-service.test.ts",
+      "testRequirement": "import 真实 FileService 类（packages/runtime/src/services/file-service.ts），获取其 withTimeout 私有方法（通过 prototype 或构造实例后访问），同时 import 真实 FileError（packages/runtime/src/services/file-error.ts）和 READ_TIMEOUT_MS(10000) 常量。mock fs 操作制造慢响应（延迟超过 READ_TIMEOUT_MS），验证：1) 真实 withTimeout 抛出 FileError('timeout')；2) 超时后无 unhandledRejection。禁止在测试文件中重新定义 withTimeout 函数或 READ_TIMEOUT_MS 常量"
+    },
+    {
+      "id": "F7",
+      "title": "错误不变量集中: chatStore.markSessionError 单一入口重置 isGenerating + streamingMessage",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/frontend exec vitest run src/__tests__/stores/chat-store.test.ts",
+      "testRequirement": "import 真实 useChatStore（Pinia store），验证 markSessionError 重置 isGenerating 和 streamingMessage"
+    },
+    {
+      "id": "F8",
+      "title": "持久化文件损坏降级: JsonStore.readFromDisk ENOENT/非法JSON → 降级默认值 + quarantine",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/runtime exec vitest run test/persistence.test.ts",
+      "testRequirement": "import 真实 JsonStore 类（packages/runtime/src/utils/json-store.ts），mock readFileSync 制造 ENOENT（抛 {code:'ENOENT'}）/非法JSON（返回 '{invalid'）/空文件（返回 ''）场景，验证：1) readFromDisk 返回构造时的 defaultValue；2) ENOENT 不触发 quarantine；3) 非法JSON 触发 quarantineCorruptFile（验证 renameSync 被调用将文件 rename 为 .corrupt-*）。禁止在测试文件中重新定义 loadPersistedData 函数"
+    },
+    {
+      "id": "F9",
+      "title": "原子写入保护: atomicWrite 真实函数 + rename 失败时临时文件清理",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/runtime exec vitest run test/persistence.test.ts",
+      "testRequirement": "import 真实 atomicWrite 函数（packages/runtime/src/utils/fs-utils.ts），mock writeFileSync 和 renameSync（从 node:fs mock），验证：1) atomicWrite 先写 tmp 文件再 rename 到目标路径（调用顺序和参数）；2) rename 失败（抛 EACCES）时 tmp 文件已写入但目标文件未被覆盖。禁止直接操作 fs writeFileSync/renameSync 测试文件系统自身语义——必须测 atomicWrite 函数本身的行为"
+    },
+    {
+      "id": "F10",
+      "title": "WS 源超时 race: useSearch.withWsTimeout 真实超时行为 + loading 重置",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/frontend exec vitest run src/__tests__/stores/search.test.ts",
+      "testRequirement": "import 真实 useSearch composable（packages/renderer/src/composables/features/search/useSearch.ts），mock WS 响应（composerApi.getFileCandidates / sessionApi.list 返回永不 resolve 的 Promise），验证：1) query() 在 WS_SOURCE_TIMEOUT_MS(10000) 后返回（Promise.race 超时生效）；2) 超时后结果为空数组（allSettled settled）；3) 超时错误被静默处理（不抛出）。禁止只测 Promise.race + setTimeout 原语而不涉及真实 useSearch"
+    },
+    {
+      "id": "F11",
+      "title": "查询乱序守卫: useSearch loadSeq 序列号防旧响应晚到覆盖新结果",
+      "type": "unit",
+      "core": false,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && pnpm --filter @xyz-agent/frontend exec vitest run src/__tests__/stores/search.test.ts",
+      "testRequirement": "import 真实 useSearch composable（packages/renderer/src/composables/features/search/useSearch.ts），mock WS 源返回可控 Promise（可手动 resolve），验证：1) 连续两次 query() 调用，第一次的 Promise 晚于第二次 resolve 时，第一次的结果被丢弃（loadSeq 守卫 seq !== loadSeq）；2) store 返回的是最新查询的结果。禁止只测 ++currentSeq 递增和 if 比较原语"
+    },
+    {
+      "id": "A12",
+      "title": "e2e cwd 降级: cwd 不存在 → 降级 homedir → session 创建成功 → toast 通知",
+      "type": "e2e-mock",
+      "core": true,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && npx playwright install chromium --with-deps 2>/dev/null; npx playwright test e2e/failure-paths.spec.ts --reporter=./e2e/fixtures/cw-acceptance-markers-reporter.ts",
+      "mockFidelityNote": "mock cwd 检查返回不存在，真实 runtime 降级逻辑执行，toast 在 renderer 渲染。保真到：降级路径与真实环境一致，仅 pi 交互层 mock。",
+      "testRequirement": "必须 mock cwd 检查返回不存在 → 验证 session.cwd === homedir → 验证 toast 文案出现。仅验证 app 加载/sidebar 可见/composer 可见无区分力"
+    },
+    {
+      "id": "A13",
+      "title": "e2e pi 崩溃重建: pi 崩溃 → runtime 检测 → 重建 → session 状态恢复",
+      "type": "e2e-mock",
+      "core": true,
+      "command": "pnpm install --prefer-offline --frozen-lockfile > /dev/null 2>&1 && npx playwright install chromium --with-deps 2>/dev/null; npx playwright test e2e/failure-paths.spec.ts --reporter=./e2e/fixtures/cw-acceptance-markers-reporter.ts",
+      "mockFidelityNote": "mock pi 进程崩溃信号，真实 runtime 重建逻辑执行，session 状态在 renderer 可见。保真到：重建流程与真实环境一致，仅 pi 进程生命周期 mock。",
+      "testRequirement": "必须 mock pi 进程崩溃信号 → 验证 runtime 检测到崩溃 → 验证重建发生 → 验证 session 状态恢复到可用。仅验证 app 加载/session 选择/composer 可输入无区分力"
+    }
+  ],
+  "contracts": [],
+  "split": []
+}
