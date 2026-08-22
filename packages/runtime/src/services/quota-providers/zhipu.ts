@@ -7,7 +7,7 @@
  */
 
 import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome, QuotaWindow } from './types.js'
-import { INFINITE_WIN, isRecord, statusToReason } from './types.js'
+import { INFINITE_WIN, fetchQuotaJson, isRecord } from './types.js'
 
 const FETCH_TIMEOUT_MS = 5000
 const SEC_PER_DAY = 86400
@@ -96,46 +96,39 @@ export const zhipuFetcher: ProviderQuotaFetcher = {
   async fetchQuota(credential: string, _kind: QuotaAuthKind): Promise<QuotaFetchOutcome> {
     if (!credential) return { ok: false, reason: 'unauthorized' }
 
-    try {
-      // 仅需 Authorization header 即可查询 Coding Plan 额度（参考 glm-quota-line 开源实现 +
-      // quotio issue #75）。无需 org/project header——额度归属由 API key 本身绑定。
-      const resp = await fetch('https://bigmodel.cn/api/monitor/usage/quota/limit', {
-        headers: {
-          accept: 'application/json, text/plain, */*',
-          authorization: credential,
-        },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-      if (!resp.ok) return { ok: false, reason: statusToReason(resp.status) }
+    // 仅需 Authorization header 即可查询 Coding Plan 额度（参考 glm-quota-line 开源实现 +
+    // quotio issue #75）。无需 org/project header——额度归属由 API key 本身绑定。
+    const result = await fetchQuotaJson(
+      'quota:zhipu',
+      () =>
+        fetch('https://bigmodel.cn/api/monitor/usage/quota/limit', {
+          headers: {
+            accept: 'application/json, text/plain, */*',
+            authorization: credential,
+          },
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        }),
+      isZhipuResponse,
+    )
+    if (!result.ok) return result
+    const json = result.data
+    if (!json?.success || !json.data) return { ok: false, reason: 'no-subscription' }
 
-      let json: ZhipuApiResponse
-      try {
-        json = (await resp.json()) as ZhipuApiResponse
-      } catch {
-        return { ok: false, reason: 'parse' }
-      }
-      if (!isZhipuResponse(json)) return { ok: false, reason: 'parse' }
-      if (!json?.success || !json.data) return { ok: false, reason: 'no-subscription' }
+    const { data } = json
+    const label = data.level ? `Z.ai-${data.level}` : 'Z.ai'
 
-      const { data } = json
-      const label = data.level ? `Z.ai-${data.level}` : 'Z.ai'
-
-      // [A2-3] 平台 API 仅提供 percentage+currentValue（5h 窗口），总量字段未实测可得，
-      // 不编造 used/limit/unit（待验证检查点 4，Phase A2 前置实测后跟进）
-      return {
-        ok: true,
-        data: {
-          label,
-          wins: [
-            buildWin5h(data),
-            INFINITE_WIN,
-            INFINITE_WIN,
-          ],
-        },
-      }
-    } catch {
-      // fetch 网络异常 / 超时（AbortSignal.timeout）→ network
-      return { ok: false, reason: 'network' }
+    // [A2-3] 平台 API 仅提供 percentage+currentValue（5h 窗口），总量字段未实测可得，
+    // 不编造 used/limit/unit（待验证检查点 4，Phase A2 前置实测后跟进）
+    return {
+      ok: true,
+      data: {
+        label,
+        wins: [
+          buildWin5h(data),
+          INFINITE_WIN,
+          INFINITE_WIN,
+        ],
+      },
     }
   },
 }

@@ -7,8 +7,7 @@
  */
 
 import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome, QuotaWindow } from './types.js'
-import { INFINITE_WIN, isRecord, statusToReason } from './types.js'
-import { logger } from '../../infra/logger.js'
+import { INFINITE_WIN, fetchQuotaJson, isRecord } from './types.js'
 
 const FETCH_TIMEOUT_MS = 5000
 const PERCENT_SCALE = 100
@@ -99,38 +98,26 @@ export const kimiFetcher: ProviderQuotaFetcher = {
   async fetchQuota(credential: string, _kind: QuotaAuthKind): Promise<QuotaFetchOutcome> {
     if (!credential) return { ok: false, reason: 'unauthorized' }
 
-    try {
-      const resp = await fetch('https://api.kimi.com/coding/v1/usages', {
+    const result = await fetchQuotaJson('quota:kimi', () =>
+      fetch('https://api.kimi.com/coding/v1/usages', {
         headers: {
           authorization: `Bearer ${credential}`,
           'content-type': 'application/json',
         },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-      if (!resp.ok) return { ok: false, reason: statusToReason(resp.status) }
+      }),
+    isKimiResponse)
+    if (!result.ok) return result
+    const data = result.data
+    // limits 与 usage 均缺失 = 响应可解析但无订阅数据
+    if (!data?.limits?.length && !data?.usage) return { ok: false, reason: 'no-subscription' }
 
-      let data: KimiApiResponse
-      try {
-        data = (await resp.json()) as KimiApiResponse
-      } catch {
-        return { ok: false, reason: 'parse' }
-      }
-      if (!isKimiResponse(data)) return { ok: false, reason: 'parse' }
-      // limits 与 usage 均缺失 = 响应可解析但无订阅数据
-      if (!data?.limits?.length && !data?.usage) return { ok: false, reason: 'no-subscription' }
-
-      return {
-        ok: true,
-        data: {
-          label: 'Kimi Coding',
-          wins: [buildWin5h(data), buildWinWk(data), INFINITE_WIN],
-        },
-      }
-    } catch (err) {
-      // fetch 网络异常 / 超时 → network（架构约定 #4 落盘，禁止静默 catch）
-      const msg = err instanceof Error ? err.message : String(err)
-      logger.debug('[quota:kimi] fetch failed', { error: msg })
-      return { ok: false, reason: 'network' }
+    return {
+      ok: true,
+      data: {
+        label: 'Kimi Coding',
+        wins: [buildWin5h(data), buildWinWk(data), INFINITE_WIN],
+      },
     }
   },
 }

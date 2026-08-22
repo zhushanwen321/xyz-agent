@@ -10,8 +10,7 @@
  */
 
 import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome } from './types.js'
-import { INFINITE_WIN, isRecord, statusToReason } from './types.js'
-import { logger } from '../../infra/logger.js'
+import { INFINITE_WIN, fetchQuotaJson, isRecord } from './types.js'
 
 const FETCH_TIMEOUT_MS = 5000
 const PERCENT_SCALE = 100
@@ -75,62 +74,50 @@ export const minimaxFetcher: ProviderQuotaFetcher = {
   async fetchQuota(credential: string, _kind: QuotaAuthKind): Promise<QuotaFetchOutcome> {
     if (!credential) return { ok: false, reason: 'unauthorized' }
 
-    try {
-      const resp = await fetch(
-        'https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains',
-        {
+    const result = await fetchQuotaJson(
+      'quota:minimax',
+      () =>
+        fetch('https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains', {
           headers: {
             authorization: `Bearer ${credential}`,
             'content-type': 'application/json',
             accept: 'application/json',
           },
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        },
-      )
-      if (!resp.ok) return { ok: false, reason: statusToReason(resp.status) }
+        }),
+      isMinimaxResponse,
+    )
+    if (!result.ok) return result
+    const data = result.data
+    // base_resp 非 0 / 无模型数据 / 无 general 条目 = 响应可解析但无订阅数据
+    if (data?.base_resp?.status_code !== 0) return { ok: false, reason: 'no-subscription' }
 
-      let data: MinimaxApiResponse
-      try {
-        data = (await resp.json()) as MinimaxApiResponse
-      } catch {
-        return { ok: false, reason: 'parse' }
-      }
-      if (!isMinimaxResponse(data)) return { ok: false, reason: 'parse' }
-      // base_resp 非 0 / 无模型数据 / 无 general 条目 = 响应可解析但无订阅数据
-      if (data?.base_resp?.status_code !== 0) return { ok: false, reason: 'no-subscription' }
+    const models = data.model_remains ?? []
+    if (models.length === 0) return { ok: false, reason: 'no-subscription' }
 
-      const models = data.model_remains ?? []
-      if (models.length === 0) return { ok: false, reason: 'no-subscription' }
+    // 只关注 model_name === "general"（文本/LLM 用量）
+    const general = models.find((m) => m.model_name === 'general')
+    if (!general) return { ok: false, reason: 'no-subscription' }
 
-      // 只关注 model_name === "general"（文本/LLM 用量）
-      const general = models.find((m) => m.model_name === 'general')
-      if (!general) return { ok: false, reason: 'no-subscription' }
+    const win5h = toWindow(
+      general.current_interval_remaining_percent,
+      general.current_interval_status,
+      general.remains_time,
+    )
+    const winWk = toWindow(
+      general.current_weekly_remaining_percent,
+      general.current_weekly_status,
+      general.weekly_remains_time,
+    )
 
-      const win5h = toWindow(
-        general.current_interval_remaining_percent,
-        general.current_interval_status,
-        general.remains_time,
-      )
-      const winWk = toWindow(
-        general.current_weekly_remaining_percent,
-        general.current_weekly_status,
-        general.weekly_remains_time,
-      )
-
-      // [A2-3] 平台 API 仅提供剩余百分比 + 时间（无总量字段），不编造 used/limit/unit
-      // （待验证检查点 4 实测后跟进）
-      return {
-        ok: true,
-        data: {
-          label: 'MiniMax Coding',
-          wins: [win5h, winWk, INFINITE_WIN],
-        },
-      }
-    } catch (err) {
-      // fetch 网络异常 / 超时 → network（架构约定 #4 落盘，禁止静默 catch）
-      const msg = err instanceof Error ? err.message : String(err)
-      logger.debug('[quota:minimax] fetch failed', { error: msg })
-      return { ok: false, reason: 'network' }
+    // [A2-3] 平台 API 仅提供剩余百分比 + 时间（无总量字段），不编造 used/limit/unit
+    // （待验证检查点 4 实测后跟进）
+    return {
+      ok: true,
+      data: {
+        label: 'MiniMax Coding',
+        wins: [win5h, winWk, INFINITE_WIN],
+      },
     }
   },
 }
