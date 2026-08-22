@@ -6,7 +6,7 @@
  * 窗口：5h + week（month = ∞）
  */
 
-import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome } from './types.js'
+import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome, QuotaWindow } from './types.js'
 import { INFINITE_WIN, statusToReason } from './types.js'
 import { logger } from '../../infra/logger.js'
 
@@ -41,6 +41,37 @@ function isoResetRemaining(iso: string): number {
   return Math.max(0, Math.floor(ms / MS_PER_SEC))
 }
 
+/** 5h 滚动窗口（A2-3：limit/remaining 已从 API 拿到，绝对量不再折算 pct 后丢弃） */
+function buildWin5h(data: KimiApiResponse): QuotaWindow {
+  const winDetail = data?.limits?.[0]?.detail
+  const winLimit = Number(winDetail?.limit ?? 0)
+  const winRemaining = Number(winDetail?.remaining ?? 0)
+  return winLimit > 0
+    ? {
+      pct: Math.round(((winLimit - winRemaining) / winLimit) * PERCENT_SCALE),
+      used: winLimit - winRemaining,
+      limit: winLimit,
+      unit: 'requests' as const,
+      resetSec: winDetail?.resetTime ? isoResetRemaining(winDetail.resetTime) : null,
+    }
+    : INFINITE_WIN
+}
+
+/** 每日/周窗口（usage 字段，绝对量直出） */
+function buildWinWk(data: KimiApiResponse): QuotaWindow {
+  const dailyLimit = Number(data?.usage?.limit ?? 0)
+  const dailyUsed = Number(data?.usage?.used ?? 0)
+  return dailyLimit > 0
+    ? {
+      pct: Math.round((dailyUsed / dailyLimit) * PERCENT_SCALE),
+      used: dailyUsed,
+      limit: dailyLimit,
+      unit: 'requests' as const,
+      resetSec: data?.usage?.resetTime ? isoResetRemaining(data.usage.resetTime) : null,
+    }
+    : INFINITE_WIN
+}
+
 export const kimiFetcher: ProviderQuotaFetcher = {
   id: 'kimi-coding',
   // usages API 与 oauth 同域同 Bearer（pi 侧 kimi oauth 的 toAuth 即 Bearer access），
@@ -69,38 +100,11 @@ export const kimiFetcher: ProviderQuotaFetcher = {
       // limits 与 usage 均缺失 = 响应可解析但无订阅数据
       if (!data?.limits?.length && !data?.usage) return { ok: false, reason: 'no-subscription' }
 
-      // 5h 滚动窗口（A2-3：limit/remaining 已从 API 拿到，绝对量不再折算 pct 后丢弃）
-      const winDetail = data?.limits?.[0]?.detail
-      const winLimit = Number(winDetail?.limit ?? 0)
-      const winRemaining = Number(winDetail?.remaining ?? 0)
-      const win5h = winLimit > 0
-        ? {
-          pct: Math.round(((winLimit - winRemaining) / winLimit) * PERCENT_SCALE),
-          used: winLimit - winRemaining,
-          limit: winLimit,
-          unit: 'requests' as const,
-          resetSec: winDetail?.resetTime ? isoResetRemaining(winDetail.resetTime) : null,
-        }
-        : INFINITE_WIN
-
-      // 每日/周窗口（usage 字段，绝对量直出）
-      const dailyLimit = Number(data?.usage?.limit ?? 0)
-      const dailyUsed = Number(data?.usage?.used ?? 0)
-      const winWk = dailyLimit > 0
-        ? {
-          pct: Math.round((dailyUsed / dailyLimit) * PERCENT_SCALE),
-          used: dailyUsed,
-          limit: dailyLimit,
-          unit: 'requests' as const,
-          resetSec: data?.usage?.resetTime ? isoResetRemaining(data.usage.resetTime) : null,
-        }
-        : INFINITE_WIN
-
       return {
         ok: true,
         data: {
           label: 'Kimi Coding',
-          wins: [win5h, winWk, INFINITE_WIN],
+          wins: [buildWin5h(data), buildWinWk(data), INFINITE_WIN],
         },
       }
     } catch (err) {
