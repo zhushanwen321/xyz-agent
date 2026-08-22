@@ -199,6 +199,46 @@ function mergeModelStates(
   return Object.keys(merged).length > 0 ? merged : undefined
 }
 
+/**
+ * modelStates 按保留集合重建后落 providers.json（S2 + G3 写侧切换，从 setProvider 提取）。
+ * 保留集合（retainIds）计算：
+ * - custom provider：payload 即全集（编辑体全量回传），retainIds = payload 模型 id 集；
+ * - catalog provider：builtin 模型启停是合法状态（B-2 后 payload 只含 override 条目，
+ *   builtin id 不在其中），retainIds = payload ∪ builtin 模板模型 id——既非 payload 也
+ *   非 builtin 的键（已删除的 override 模型）剔除。
+ * 写入守卫（避免无谓写盘与空条目）：有显式启停更新，或已有 modelStates 需按保留
+ * 集合清理时才 modify。先读（getExtrasSync）与 modify 锁内重读有微小 TOCTOU 窗口
+ * （同 provider 并发写），最坏情况跳过一次清理，不损坏数据。
+ * await 对齐 authMethod 的 MF-1 语义：modify 失败 reject 上抛（handler try-catch
+ * 转 sendError），不静默吞。返回 modify promise（结果 ProviderExtras 被丢弃，故
+ * Promise<unknown>）供调用方条件 await（守卫不通过时返回 undefined，不产生微任务
+ * 边界——同 applyProviderCredentials 的时序契约）。
+ */
+function persistModelStates(
+  extrasStore: ProviderExtrasAccessors,
+  providerId: string,
+  mergedModels: ConfigModelDefinition[],
+  statesUpdates: Record<string, { enabled: boolean }>,
+): Promise<unknown> | undefined {
+  const payloadIds = new Set(mergedModels.map(m => m.id))
+  const retainIds = isCatalogProvider(providerId)
+    ? new Set([...payloadIds, ...(builtinProvidersById.get(providerId)?.models ?? []).map(m => m.id)])
+    : payloadIds
+  const currentExtras = extrasStore.getExtrasSync(providerId)
+  const hasUpdates = Object.keys(statesUpdates).length > 0
+  const hasExistingStates = currentExtras?.modelStates !== undefined
+    && Object.keys(currentExtras.modelStates).length > 0
+  if (hasUpdates || hasExistingStates) {
+    return extrasStore.modify(providerId, current => {
+      const next = mergeModelStates(current?.modelStates, statesUpdates, retainIds)
+      // next=undefined（保留集合内无任何状态）时显式置 undefined——序列化丢该键，
+      // 条目降级为仅含其余字段（authMethod/quota）；不落空 modelStates 字段。
+      return { ...current, modelStates: next }
+    })
+  }
+  return undefined
+}
+
 // ── 默认模型 ──
 
 export function getDefaultModel(configStore: IConfigStore): { provider: ProviderId; modelId: string } | null {
@@ -367,6 +407,86 @@ export function getProvider(configStore: IConfigStore, providerId: string): { ap
 // ── Provider 增删改 ──
 
 /**
+ * apiKey 写入的分体系处理（I9 清理① + catalog 分体系，从 setProvider 提取）：
+ * - catalog provider：apiKey 归 auth.json (api_key overwrites oauth natively)
+ * - custom provider：apiKey 写 models.json，清 auth.json oauth (I9 cleanup)
+ *
+ * 返回 catalog 落盘 flush promise 供调用方 await（无落盘路径返回 undefined——调用方
+ * 条件 await 保持「无实际 await 分支时 setProvider 同步执行到底」的时序契约，
+ * 同步调用方依赖此性质在调用后立即读到 upsert 结果）。
+ */
+function applyProviderCredentials(
+  merged: Record<string, unknown>,
+  authStorage: AuthStorageAccessors | undefined,
+  credentialWriter: CredentialWriter | undefined,
+  providerId: string,
+  data: SetProviderInput,
+): Promise<void> | undefined {
+  if (data.apiKey !== undefined && data.apiKey !== '') {
+    if (isCatalogProvider(providerId) && credentialWriter) {
+      // catalog provider: apiKey → auth.json (0600), strip from models.json
+      // A1-4 收口：写入经 credentialWriter（AuthService.saveCredential），authStorage.set
+      // 的直接调用全 runtime 只剩 auth-service.ts 内部。
+      // MF-1（stale 广播 + 静默丢 key）：await 落盘后再 delete merged.apiKey +
+      // upsertProvider。fire-and-forget 时 withFileLock 未落盘 → handler 同步返回后
+      // broadcastProviderList 裸读 auth.json 拿到 stale（catalog 显示 not_configured）；
+      // 且写失败只 warn，apiKey 既未进 auth.json 又已从 models.json 删 → 凭据静默丢失。
+      // 落盘失败 promise reject 上抛（调用方 await，handler try-catch 转 sendError），
+      // 不静默吞、不 stale 广播。与 deleteProvider/removeProviderByKind 的
+      // cleanAuthCredential await 对称（写入路径对齐删除路径）。
+      return credentialWriter.saveCredential(providerId, { type: 'api_key', key: data.apiKey })
+        .then(() => {
+          // Don't write apiKey to models.json for catalog providers
+          // （await 点后执行：落盘成功才 strip，语义同内联 await + delete）
+          delete merged.apiKey
+        })
+    }
+    // custom provider or no authStorage: keep existing behavior (apiKey in models.json)
+    // I9: clear oauth credential before writing apiKey (fire-and-forget)
+    void authStorage?.remove(providerId).catch(err => {
+      console.warn(`[config-service] auth.json oauth cleanup failed for ${providerId} (I9 清理①):`, err)
+    })
+  }
+  // M5-01（P0，pi-alignment 决策 1）：catalog provider 的 apiKey 只归 auth.json——上面
+  // delete merged.apiKey 后若此处无条件 re-add，apiKey 会双写进 models.json（G5 迁移
+  // 的安全动机被此路径持续回填）。仅非 catalog 分支写回；catalog + 无 credentialWriter 时
+  // apiKey 无处安放（凭据只允许落 auth.json 0600），宁丢不写错位（生产恒注入）。
+  if (data.apiKey !== undefined && !isCatalogProvider(providerId)) merged.apiKey = data.apiKey as string
+  return undefined
+}
+
+/**
+ * provider 级字段白名单写入 merged（从 setProvider 提取）：baseUrl/api/name 直写 +
+ * B-4a headers/authHeader 校验写。undefined = 不变（base spread 保留既有值），
+ * 显式传值才覆盖；非法值 throw 上抛（handler try-catch 转 sendError）。
+ */
+function applyProviderLevelFields(
+  merged: Record<string, unknown>,
+  configStore: IConfigStore,
+  providerId: string,
+  data: SetProviderInput,
+): void {
+  if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
+  if (data.type !== undefined) merged.api = configStore.applyTypeTranslation(data.type as string)
+  if (data.name !== undefined) merged.name = data.name as string
+  // B-4a 断链修复（design §2.1 场景 D）：headers/authHeader 是 pi ProviderConfigSchema 内
+  // 字段，写入 models.json provider 条目。跟随 baseUrl/name 的 merged 赋值模式：undefined =
+  // 不变（base spread 保留既有值），显式传值才覆盖——headers 传空对象 {} 即清空（pi schema
+  // Type.Record 允许空对象；null 不在契约内，由 sanitizeHeaders 拒绝）。不做 apiKey 式
+  // __CLEAR__ 哨兵：apiKey 需要 '' 哨兵是因 string 空串已被复用，对象 {} 天然可作清空值。
+  if (data.headers !== undefined) {
+    merged.headers = sanitizeHeaders(data.headers, `headers for provider "${providerId}"`)
+  }
+  if (data.authHeader !== undefined) {
+    if (typeof data.authHeader !== 'boolean') {
+      throw new Error(`Invalid authHeader for provider "${providerId}": must be a boolean`)
+    }
+    // boolean 不能用 truthiness 判定：显式 false 是合法值（关闭 Authorization header 注入）
+    merged.authHeader = data.authHeader
+  }
+}
+
+/**
  * 新建 / 更新 provider（wave3 边界1 白名单守卫 + I9 auth.json 清理 + catalog 分体系）。
  * 纯函数：configStore / authStorage / extrasStore / credentialWriter 经参数注入
  * （原 ConfigService.setProvider 逐字搬迁）。
@@ -391,36 +511,10 @@ export async function setProvider(
   // A1：merged 提前声明——catalog 分支 delete merged.apiKey 需在声明之后（原顺序触发 TDZ TS2448/2454）
   // TODO: 当 pi models.json 支持 schema 后收窄类型（现有 Record<string, unknown> 是架构限制）
   const merged: Record<string, unknown> = { ...existing }
-  // I9 清理① + catalog 分体系：
-  // - catalog provider：apiKey 归 auth.json (api_key overwrites oauth natively)
-  // - custom provider：apiKey 写 models.json，清 auth.json oauth (I9 cleanup)
-  if (data.apiKey !== undefined && data.apiKey !== '') {
-    if (isCatalogProvider(providerId) && credentialWriter) {
-      // catalog provider: apiKey → auth.json (0600), strip from models.json
-      // A1-4 收口：写入经 credentialWriter（AuthService.saveCredential），authStorage.set
-      // 的直接调用全 runtime 只剩 auth-service.ts 内部。
-      // MF-1（stale 广播 + 静默丢 key）：await 落盘后再 delete merged.apiKey +
-      // upsertProvider。fire-and-forget 时 withFileLock 未落盘 → handler 同步返回后
-      // broadcastProviderList 裸读 auth.json 拿到 stale（catalog 显示 not_configured）；
-      // 且写失败只 warn，apiKey 既未进 auth.json 又已从 models.json 删 → 凭据静默丢失。
-      // await 后失败直接 reject 上抛（handler try-catch 转 sendError），不静默吞、不 stale 广播。
-      // 与 deleteProvider/removeProviderByKind 的 cleanAuthCredential await 对称（写入路径对齐删除路径）。
-      await credentialWriter.saveCredential(providerId, { type: 'api_key', key: data.apiKey })
-      // Don't write apiKey to models.json for catalog providers
-      delete merged.apiKey
-    } else {
-      // custom provider or no authStorage: keep existing behavior (apiKey in models.json)
-      // I9: clear oauth credential before writing apiKey (fire-and-forget)
-      void authStorage?.remove(providerId).catch(err => {
-        console.warn(`[config-service] auth.json oauth cleanup failed for ${providerId} (I9 清理①):`, err)
-      })
-    }
-  }
-  // M5-01（P0，pi-alignment 决策 1）：catalog provider 的 apiKey 只归 auth.json——上面
-  // delete merged.apiKey 后若此处无条件 re-add，apiKey 会双写进 models.json（G5 迁移
-  // 的安全动机被此路径持续回填）。仅非 catalog 分支写回；catalog + 无 credentialWriter 时
-  // apiKey 无处安放（凭据只允许落 auth.json 0600），宁丢不写错位（生产恒注入）。
-  if (data.apiKey !== undefined && !isCatalogProvider(providerId)) merged.apiKey = data.apiKey as string
+  // I9 清理① + catalog 分体系 + M5-01 只归 auth.json 决策：见 applyProviderCredentials。
+  // 条件 await：无落盘路径（undefined）不产生微任务边界，保持同步前缀时序契约。
+  const credentialsFlush = applyProviderCredentials(merged, authStorage, credentialWriter, providerId, data)
+  if (credentialsFlush) await credentialsFlush
   // I6 + A1-5 写侧切换：authMethod 写 config/providers.json（不再寄生 models.json）。
   // await（对齐上方 catalog apiKey 的 MF-1 语义）：modify 失败直接 reject 上抛，handler
   // try-catch 转 sendError，不静默吞、不 stale 广播。extrasStore 未注入时丢弃 + warn
@@ -433,24 +527,8 @@ export async function setProvider(
       console.warn(`[config-service] authMethod dropped for ${providerId}: providerExtrasStore not injected (A1-5)`)
     }
   }
-  if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
-  if (data.type !== undefined) merged.api = configStore.applyTypeTranslation(data.type as string)
-  if (data.name !== undefined) merged.name = data.name as string
-  // B-4a 断链修复（design §2.1 场景 D）：headers/authHeader 是 pi ProviderConfigSchema 内
-  // 字段，写入 models.json provider 条目。跟随 baseUrl/name 的 merged 赋值模式：undefined =
-  // 不变（base spread 保留既有值），显式传值才覆盖——headers 传空对象 {} 即清空（pi schema
-  // Type.Record 允许空对象；null 不在契约内，由 sanitizeHeaders 拒绝）。不做 apiKey 式
-  // __CLEAR__ 哨兵：apiKey 需要 '' 哨兵是因 string 空串已被复用，对象 {} 天然可作清空值。
-  if (data.headers !== undefined) {
-    merged.headers = sanitizeHeaders(data.headers, `headers for provider "${providerId}"`)
-  }
-  if (data.authHeader !== undefined) {
-    if (typeof data.authHeader !== 'boolean') {
-      throw new Error(`Invalid authHeader for provider "${providerId}": must be a boolean`)
-    }
-    // boolean 不能用 truthiness 判定：显式 false 是合法值（关闭 Authorization header 注入）
-    merged.authHeader = data.authHeader
-  }
+  // baseUrl/api/name/headers/authHeader 白名单写入：见 applyProviderLevelFields
+  applyProviderLevelFields(merged, configStore, providerId, data)
   // wave3 C5/TC6：停用 provider 级 enabled 写入——provider 启用改由 enabledModels 白名单承载
   // （wave2 listProviders 已不读 models.json provider.enabled）。前端 onToggleEnabled 改走
   // toggleProviderEnabled（wave4），不再传 data.enabled 给 setProvider。data.enabled 参数声明保留
@@ -548,32 +626,11 @@ export async function setProvider(
     //
     // S2（round 1 review suggestion）：旧实现只合并不清理（{...current, ...updates}）——
     // 编辑体删除某自定义模型后其 modelStates 条目残留，同 id 重新添加时旧 disabled 复活。
-    // 改按保留集合（retainIds）重建：
-    // - custom provider：payload 即全集（编辑体全量回传），retainIds = payload 模型 id 集；
-    // - catalog provider：builtin 模型启停是合法状态（B-2 后 payload 只含 override 条目，
-    //   builtin id 不在其中），retainIds = payload ∪ builtin 模板模型 id——既非 payload 也
-    //   非 builtin 的键（已删除的 override 模型）剔除。
+    // 改按保留集合（retainIds）重建（保留集合计算与写入守卫见 persistModelStates）。
     // 保留集合内：本次显式 enabled 优先，未显式传的保留既有状态（不丢未标注模型的状态）。
     if (extrasStore) {
-      const payloadIds = new Set((merged.models as ConfigModelDefinition[]).map(m => m.id))
-      const retainIds = isCatalogProvider(providerId)
-        ? new Set([...payloadIds, ...(builtinProvidersById.get(providerId)?.models ?? []).map(m => m.id)])
-        : payloadIds
-      // 写入守卫（避免无谓写盘与空条目）：有显式启停更新，或已有 modelStates 需按保留
-      // 集合清理时才 modify。先读（getExtrasSync）与 modify 锁内重读有微小 TOCTOU 窗口
-      //（同 provider 并发写），最坏情况跳过一次清理，不损坏数据。
-      const currentExtras = extrasStore.getExtrasSync(providerId)
-      const hasUpdates = Object.keys(modelStatesUpdates).length > 0
-      const hasExistingStates = currentExtras?.modelStates !== undefined
-        && Object.keys(currentExtras.modelStates).length > 0
-      if (hasUpdates || hasExistingStates) {
-        await extrasStore.modify(providerId, current => {
-          const next = mergeModelStates(current?.modelStates, modelStatesUpdates, retainIds)
-          // next=undefined（保留集合内无任何状态）时显式置 undefined——序列化丢该键，
-          // 条目降级为仅含其余字段（authMethod/quota）；不落空 modelStates 字段。
-          return { ...current, modelStates: next }
-        })
-      }
+      const modelStatesFlush = persistModelStates(extrasStore, providerId, merged.models as ConfigModelDefinition[], modelStatesUpdates)
+      if (modelStatesFlush) await modelStatesFlush
     } else if (Object.keys(modelStatesUpdates).length > 0) {
       console.warn(`[config-service] model enabled states dropped for ${providerId}: providerExtrasStore not injected (G3 写侧切换)`)
     }

@@ -6,7 +6,7 @@
  * 窗口：仅 5h（week/month = ∞）
  */
 
-import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome } from './types.js'
+import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome, QuotaWindow } from './types.js'
 import { INFINITE_WIN, statusToReason } from './types.js'
 
 const FETCH_TIMEOUT_MS = 5000
@@ -69,6 +69,25 @@ function resetSecFromEpoch(epochMsStr: string): number | null {
   return remSec > 0 ? remSec : null
 }
 
+/**
+ * 5h 滚动窗口（TOKENS_LIMIT）：pct 直出（API 仅提供 percentage），
+ * resetSec 双格式兜底（epoch ms 优先，"4h11m" 相对 label 兜底）。
+ */
+function buildWin5h(data: ZhipuApiData): QuotaWindow {
+  let tokensPct = 0
+  let resetSec: number | null = null
+  for (const lim of data.limits ?? []) {
+    if (lim.type === 'TOKENS_LIMIT') {
+      tokensPct = lim.percentage ?? 0
+      if (lim.nextResetTime) {
+        resetSec = resetSecFromEpoch(lim.nextResetTime)
+        if (resetSec === null) resetSec = parseResetSec(lim.nextResetTime)
+      }
+    }
+  }
+  return { pct: tokensPct, resetSec }
+}
+
 export const zhipuFetcher: ProviderQuotaFetcher = {
   id: 'zhipu',
   // 智谱额度 API 为裸 authorization 头（无 Bearer 前缀），oauth 通道暂不声明（§3.4）
@@ -101,19 +120,6 @@ export const zhipuFetcher: ProviderQuotaFetcher = {
       const { data } = json
       const label = data.level ? `Z.ai-${data.level}` : 'Z.ai'
 
-      let tokensPct = 0
-      let resetSec: number | null = null
-
-      for (const lim of data.limits ?? []) {
-        if (lim.type === 'TOKENS_LIMIT') {
-          tokensPct = lim.percentage ?? 0
-          if (lim.nextResetTime) {
-            resetSec = resetSecFromEpoch(lim.nextResetTime)
-            if (resetSec === null) resetSec = parseResetSec(lim.nextResetTime)
-          }
-        }
-      }
-
       // [A2-3] 平台 API 仅提供 percentage+currentValue（5h 窗口），总量字段未实测可得，
       // 不编造 used/limit/unit（待验证检查点 4，Phase A2 前置实测后跟进）
       return {
@@ -121,7 +127,7 @@ export const zhipuFetcher: ProviderQuotaFetcher = {
         data: {
           label,
           wins: [
-            { pct: tokensPct, resetSec },
+            buildWin5h(data),
             INFINITE_WIN,
             INFINITE_WIN,
           ],
