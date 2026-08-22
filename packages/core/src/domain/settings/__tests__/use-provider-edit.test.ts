@@ -618,6 +618,61 @@ describe('B-2 catalog save payload（builtin 不回传）', () => {
   })
 })
 
+// ══ B-4b：model 级 reasoning/maxTokens/cost/headers 编辑链路 round-trip（S3' 修复）══════
+
+describe('B-4b 模型级字段 round-trip（load 编辑副本 + save payload 回传）', () => {
+  const RICH_MODELS: ProviderInfo['models'] = [
+    {
+      id: 'm-rich', name: 'Rich',
+      reasoning: true, maxTokens: 8192,
+      cost: { input: 3, output: 15, cacheRead: 0.6, cacheWrite: 3.75 },
+      headers: { 'X-Model': 'v1' },
+      contextWindow: 200_000,
+    },
+    { id: 'm-plain', name: 'Plain' },
+  ]
+
+  it('load：ProviderInfo.models 的 B-4b 字段进 localModels 编辑副本（spread 透传）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ models: RICH_MODELS }))
+    const edit = mount(providerRef)
+    await nextTick()
+    const rich = edit.localModels.value[0]
+    expect(rich.reasoning).toBe(true)
+    expect(rich.maxTokens).toBe(8192)
+    expect(rich.cost).toEqual({ input: 3, output: 15, cacheRead: 0.6, cacheWrite: 3.75 })
+    expect(rich.headers).toEqual({ 'X-Model': 'v1' })
+  })
+
+  it('save：有值时回传四字段（B-4b 白名单写入链路接通）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ models: RICH_MODELS }))
+    const edit = mount(providerRef)
+    await nextTick()
+    const ok = await edit.save()
+    expect(ok).toBe(true)
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    const rich = (arg.models as Array<Record<string, unknown>>).find(m => m.id === 'm-rich')
+    expect(rich).toMatchObject({
+      reasoning: true,
+      maxTokens: 8192,
+      cost: { input: 3, output: 15, cacheRead: 0.6, cacheWrite: 3.75 },
+      headers: { 'X-Model': 'v1' },
+    })
+  })
+
+  it('save：无值时不传键（undefined = runtime base spread 保留既有值）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ models: RICH_MODELS }))
+    const edit = mount(providerRef)
+    await nextTick()
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    const plain = (arg.models as Array<Record<string, unknown>>).find(m => m.id === 'm-plain')
+    expect(plain).not.toHaveProperty('reasoning')
+    expect(plain).not.toHaveProperty('maxTokens')
+    expect(plain).not.toHaveProperty('cost')
+    expect(plain).not.toHaveProperty('headers')
+  })
+})
+
 // ══ S8：OAuth 授权广播 × isDirty 竞态（BL round1 S4）══════════════════════════
 
 describe('S8 OAuth 授权完成广播 × isDirty 竞态（authMethod 单字段强制对齐）', () => {
