@@ -97,26 +97,42 @@ if [ "$ID" = "E7" ]; then
   # cw 场景 worker 修复完未提交即跑验收是常态）。untracked 新文件仍不可见（已知边界）。
   CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" -- '*.ts' '*.tsx' '*.vue' '*.mts' '*.mjs' 2>/dev/null || true)
   if [ -n "$CHANGED_FILES" ]; then
-    # 对改动文件逐个执行 eslint --format=json，解析 error 数
+    # 对改动文件逐个执行 eslint --format=json，解析 error 数。
+    # eslint exit code 语义：0=干净 1=有 lint 结果 ≥2=崩溃。崩溃/输出为空/JSON
+    # 不可解析一律按 FAIL（否则 catch 归零会静默绕过 lint 门）。
     while IFS= read -r f; do
       [ -z "$f" ] && continue
       [ ! -f "$f" ] && continue
-      LINT_JSON=$(cd "$REPO_ROOT" && npx eslint --format=json "$f" 2>/dev/null) || true
-      if [ -n "$LINT_JSON" ]; then
-        ERROR_COUNT=$(echo "$LINT_JSON" | node -e "
-          let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{
-            try {
-              const arr = JSON.parse(d);
-              const errors = arr.reduce((s,f)=>s+f.errorCount,0);
-              process.stdout.write(String(errors));
-            } catch { process.stdout.write('0'); }
-          });
-        " 2>/dev/null)
-        if [ "$ERROR_COUNT" -gt 0 ] 2>/dev/null; then
-          echo "[sm-e2e] E7 FAIL: $ERROR_COUNT lint error(s) in $f" >&2
-          echo "E7 FAIL"
-          exit 1
-        fi
+      LINT_JSON=$(cd "$REPO_ROOT" && npx eslint --format=json "$f" 2>/dev/null)
+      LINT_EXIT=$?
+      if [ "$LINT_EXIT" -ge 2 ]; then
+        echo "[sm-e2e] E7 FAIL: eslint crashed on $f (exit=$LINT_EXIT)" >&2
+        echo "E7 FAIL"
+        exit 1
+      fi
+      if [ -z "$LINT_JSON" ]; then
+        echo "[sm-e2e] E7 FAIL: eslint crashed on $f (empty output, exit=$LINT_EXIT)" >&2
+        echo "E7 FAIL"
+        exit 1
+      fi
+      ERROR_COUNT=$(echo "$LINT_JSON" | node -e "
+        let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{
+          try {
+            const arr = JSON.parse(d);
+            if (!Array.isArray(arr)) throw new Error('not an array');
+            process.stdout.write(String(arr.reduce((s,f)=>s+f.errorCount,0)));
+          } catch { process.stdout.write('CRASH'); }
+        });
+      " 2>/dev/null)
+      if [ -z "$ERROR_COUNT" ] || [ "$ERROR_COUNT" = "CRASH" ]; then
+        echo "[sm-e2e] E7 FAIL: eslint crashed on $f (unparseable lint output)" >&2
+        echo "E7 FAIL"
+        exit 1
+      fi
+      if [ "$ERROR_COUNT" -gt 0 ] 2>/dev/null; then
+        echo "[sm-e2e] E7 FAIL: $ERROR_COUNT lint error(s) in $f" >&2
+        echo "E7 FAIL"
+        exit 1
       fi
     done <<< "$CHANGED_FILES"
   fi
@@ -154,6 +170,12 @@ if [ "$PROBE_STATUS" -ne 0 ]; then
   if ! grep -q "^${ID} FAIL" <<< "$PROBE_OUTPUT"; then
     echo "$ID FAIL"
   fi
+  exit 1
+fi
+# 探针 exit 0：标记行与 exit code 必须一致（缺 PASS 标记 = 探针契约破坏，按 FAIL 处理）
+if ! grep -q "^${ID} PASS" <<< "$PROBE_OUTPUT"; then
+  echo "[sm-e2e] probe exited 0 but no '${ID} PASS' marker line in output" >&2
+  echo "$ID FAIL"
   exit 1
 fi
 exit 0

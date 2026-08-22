@@ -304,23 +304,29 @@ if (id === 'smoke') {
       'openai': { models: [{ id: 'gpt-4o' }] },
     },
   })
+  // process.exit 会跳过 finally（见顶部 PassSignal 注释），exit 前必须先完成
+  // killProc——connect/rpc 抛错路径同样不泄漏 runtime 进程组。
+  let smokeExit = 1
   try {
     const { proc, port, token } = await startRuntime(smokeDir)
     const client = new WsClient(port, token)
-    await client.connect()
-    const reply = await client.rpc('config.setScopedModels', { models: ['openai/gpt-4o'] })
-    client.close()
-    killProc(proc)
-    if (reply.type === 'config.scopedModels') {
-      process.exit(0)
-    } else {
-      console.error(`[smoke] unexpected reply type: ${reply.type}`)
-      process.exit(1)
+    try {
+      await client.connect()
+      const reply = await client.rpc('config.setScopedModels', { models: ['openai/gpt-4o'] })
+      if (reply.type === 'config.scopedModels') {
+        smokeExit = 0
+      } else {
+        console.error(`[smoke] unexpected reply type: ${reply.type}`)
+      }
+    } finally {
+      client.close()
+      killProc(proc)
     }
   } catch (err) {
+    // startRuntime 失败：超时路径已自清理，spawn error/异常退出无存活进程组
     console.error(`[smoke] ${err.message}`)
-    process.exit(1)
   }
+  process.exit(smokeExit)
 }
 
 // ── E1-E6, E8, E10 ────────────────────────────────────────────
@@ -443,10 +449,12 @@ async function scenarioE2() {
     ]
     const reply = await client.rpc('config.setScopedModels', { models: models2 })
     if (reply.type === 'error') fail('E2', `setScopedModels error reply: ${JSON.stringify(reply.payload)}`)
-    // 广播先于 reply，从尾找本轮 model.list
+    // 广播先于 reply，从尾找本轮 model.list；全序断言（不只首位——中后位错乱同样要抓）
     const modelListBroadcast = client.latestBroadcast('model.list')
     const broadcastedIds = modelListBroadcast.payload.models.map(m => `${m.providerId}/${m.id}`)
-    if (broadcastedIds[0] !== models2[0]) fail('E2', `expected first model ${models2[0]}, got ${broadcastedIds[0]}`)
+    if (JSON.stringify(broadcastedIds) !== JSON.stringify(models2)) {
+      fail('E2', `broadcast order mismatch: expected ${JSON.stringify(models2)}, got ${JSON.stringify(broadcastedIds)}`)
+    }
 
     // 断言 settings.json defaultModel
     const settingsPath = join(dataDir, 'pi', 'agent', 'settings.json')
@@ -569,12 +577,16 @@ async function scenarioE5() {
     const scopedCount = scopedBroadcast.payload.models.length
     if (scopedCount >= fullCount) fail('E5', `scoped count (${scopedCount}) should be < full count (${fullCount})`)
 
-    // 记录 defaultModel
+    // 记录 defaultModel。前置 setScopedModels（非空）已触发 default 同步链，
+    // defaultBefore 为 null = 同步链断裂（S2 契约：default = scoped[0]），显式 FAIL 不静默跳过
     const settingsPath = join(dataDir, 'pi', 'agent', 'settings.json')
     const settingsBefore = JSON.parse(readFileSync(settingsPath, 'utf-8'))
     const defaultBefore = settingsBefore.defaultProvider && settingsBefore.defaultModel
       ? `${settingsBefore.defaultProvider}/${settingsBefore.defaultModel}`
       : null
+    if (defaultBefore === null) {
+      fail('E5', `defaultModel is null after setScopedModels — default sync chain should have produced scoped[0]=${scopedModels[0]}, settings: ${JSON.stringify(settingsBefore)}`)
+    }
 
     // 清空
     const clearReply = await client.rpc('config.setScopedModels', { models: [] })
@@ -588,7 +600,7 @@ async function scenarioE5() {
     const defaultAfter = settingsAfter.defaultProvider && settingsAfter.defaultModel
       ? `${settingsAfter.defaultProvider}/${settingsAfter.defaultModel}`
       : null
-    if (defaultBefore && defaultAfter !== defaultBefore) fail('E5', `defaultModel changed from ${defaultBefore} to ${defaultAfter}`)
+    if (defaultAfter !== defaultBefore) fail('E5', `defaultModel changed from ${defaultBefore} to ${defaultAfter}`)
 
     pass('E5')
   })
