@@ -33,65 +33,65 @@
     {
       "id": "C1",
       "kind": "function",
-      "provider": "protocol",
+      "provider": "scoped-model",
       "consumer": "settings-message-handler",
       "file": "packages/shared/src/protocol.ts",
       "signature": "'config.setScopedModels': { models: string[] }",
-      "description": "config.setScopedModels RPC 命令 request payload：接收 modelId 数组（provider/modelId 复合串）。reply 类型为 config.scopedModels: { scopedModels: string[] }（去重保序后结果）。实际签名见 protocol.ts ClientMessageMap。"
+      "description": "config.setScopedModels RPC 命令 request payload：接收 modelId 数组（provider/modelId 复合串）。reply 类型为 config.scopedModels: { scopedModels: string[] }（去重保序后结果）。实际签名见 protocol.ts ClientMessageMap L566。self-provider 形态：root 集成契约由 owner unit 自声明。"
     },
     {
       "id": "C2",
       "kind": "event",
-      "provider": "protocol",
+      "provider": "scoped-model",
       "consumer": "settings-message-handler",
       "file": "packages/shared/src/protocol.ts",
       "signature": "'config.providers': { providers: ProviderInfo[]; scopedModels?: string[] }",
-      "description": "config.providers 广播 payload 扩展：新增可选 scopedModels 字段。config.getProviders reply 共用同一类型定义（ServerMessageMapBase）。实际签名见 protocol.ts ServerMessageMapBase。"
+      "description": "config.providers 广播 payload 扩展：新增可选 scopedModels 字段。config.getProviders reply 共用同一类型定义（ServerMessageMapBase L748）。self-provider 形态。"
     },
     {
       "id": "C3",
-      "kind": "class",
-      "provider": "provider-extras-store",
+      "kind": "function",
+      "provider": "scoped-model",
       "consumer": "config-service",
       "file": "packages/runtime/src/services/provider-extras-store.ts",
       "signature": "getScopedModelsSync(): string[]",
-      "description": "XyzProviderStore 新增顶层 scopedModels 读写 API。getScopedModelsSync 同步读取（非法值容错，非 string[] 返回 []，非法条目过滤并 log warning）。modifyScopedModels 异步 RMW（同一 withFileLock 锁，与 per-provider modify 串行）。实际签名见 provider-extras-store.ts XyzProviderStore 类。 契约签名为 getScopedModelsSync 方法签名（逐字命中）；modifyScopedModels 形态为 async modifyScopedModels(fn: (current: string[]) => string[]): Promise<string[]>（跨行定义，语义在描述中声明）。"
+      "description": "XyzProviderStore 新增顶层 scopedModels 读写 API（L244）。getScopedModelsSync 同步读取（非法值容错，非 string[] 返回 []，非法条目过滤并 log warning）。modifyScopedModels 异步 RMW（同一 withFileLock 锁，与 per-provider modify 串行，L253）。self-provider 形态。注：实现期与子 unit 冻结契约命名漂移（sm-contract-store 冻结 C3 签名为 getScopedModels），以代码终态为准。"
     },
     {
       "id": "C4",
       "kind": "function",
-      "provider": "sm-runtime-filter",
+      "provider": "scoped-model",
       "consumer": "sm-ui-chain",
       "file": "packages/shared/src/protocol.ts",
       "signature": "'config.setScopedModels': { models: string[] }",
-      "description": "config.setScopedModels RPC 命令（与 C1 同源，consumer 为 sm-ui-chain）。reply config.scopedModels: { scopedModels: string[] }。"
+      "description": "config.setScopedModels RPC 命令（与 C1 同签名，consumer 为 sm-ui-chain）。reply config.scopedModels: { scopedModels: string[] }。self-provider 形态。"
     },
     {
       "id": "C5",
       "kind": "event",
-      "provider": "sm-runtime-filter",
+      "provider": "scoped-model",
       "consumer": "sm-ui-chain",
       "file": "packages/shared/src/protocol.ts",
       "signature": "'config.providers': { providers: ProviderInfo[]; scopedModels?: string[] }",
-      "description": "config.providers 广播 payload 扩展（与 C2 同源，consumer 为 sm-ui-chain）。config.getProviders reply 共用同一类型。"
+      "description": "config.providers 广播 payload 扩展（与 C2 同签名，consumer 为 sm-ui-chain）。self-provider 形态。"
     },
     {
       "id": "C6",
       "kind": "function",
-      "provider": "sm-ui-chain",
+      "provider": "scoped-model",
       "consumer": "sm-ui-chain",
       "file": "packages/ui/src/features/settings/common/ScopedModelSection.vue",
-      "signature": "defineProps<{ scopedList: ScopedRenderItem[]; selectableModels: SelectableModel[] }>()",
-      "description": "ScopedModelSection 组件 props 接线契约（单行紧凑形态，集成契约逐字匹配）。ScopedRenderItem/SelectableModel 类型见 scoped-model-types.ts。"
+      "signature": "const props = defineProps<{ scopedList: ScopedRenderItem[]; selectableModels: SelectableModel[] }>()",
+      "description": "ScopedModelSection 组件 props 接线契约（L193，单行紧凑形态逐字匹配）。self-provider 形态。"
     },
     {
       "id": "C7",
       "kind": "function",
-      "provider": "sm-ui-chain",
+      "provider": "scoped-model",
       "consumer": "sm-ui-chain",
       "file": "packages/ui/src/features/settings/common/ScopedModelSection.vue",
-      "signature": "defineEmits<{ add: [models: string[]]; remove: [scoped: string]; move: [scoped: string, dir: 'up' | 'down'] }>()",
-      "description": "ScopedModelSection 组件 emits 接线契约（单行紧凑形态）：add 多选确认 / remove 移除 / move 上移下移。"
+      "signature": "const emit = defineEmits<{ add: [models: string[]]; remove: [scoped: string]; move: [scoped: string, dir: 'up' | 'down'] }>()",
+      "description": "ScopedModelSection 组件 emits 接线契约（L195，单行紧凑形态逐字匹配）。self-provider 形态。"
     }
   ],
   "split": [
