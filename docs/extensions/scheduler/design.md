@@ -31,7 +31,7 @@ pi-scheduler 为 Pi 添加定时任务能力：通过 cron 表达式或间隔时
 ## 2. 文件结构
 
 ```
-extensions/scheduler/
+extensions/universal/scheduler/
   index.ts              # 入口，re-export src/index.ts
   package.json          # name: @zhushanwen/pi-scheduler
   src/

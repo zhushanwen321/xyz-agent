@@ -16,7 +16,16 @@ import { migrateLegacyProviderConfig } from '../legacy-provider-migration.js'
 import { setModelsPath } from '../../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../../infra/pi/pi-settings-store.js'
 import { PiConfigStore } from '../../../infra/pi/pi-config-store.js'
-import { AuthStorage } from '../../auth/auth-storage.js'
+import { AuthStorage, type CredentialWriter } from '../../auth/auth-storage.js'
+
+/**
+ * 轻量 credentialWriter adapter：与生产等价（AuthService.saveCredential 内部就是
+ * authStorage.set，A1-4 收口只收调用点不改锁语义）。测试文件内直调 authStorage.set
+ * 不违反收口 grep（验收排除测试文件）。
+ */
+function makeCredentialWriter(authStorage: AuthStorage): CredentialWriter {
+  return { saveCredential: (id, cred) => authStorage.set(id, cred) }
+}
 
 let dir: string
 let agentDir: string
@@ -56,7 +65,7 @@ describe('M5-04: step1 hasOverride 判定含 models/quota（catalog 条目保留
     })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateLegacyProviderConfig(new PiConfigStore(), authStorage)
+    const report = await migrateLegacyProviderConfig(new PiConfigStore(), authStorage, makeCredentialWriter(authStorage))
 
     expect(report.migrated).toContain('openai')
     // models.json：条目保留（hasOverride——models 属用户配置，删除即丢 model 级 enabled），
@@ -76,7 +85,7 @@ describe('M5-04: step1 hasOverride 判定含 models/quota（catalog 条目保留
     })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateLegacyProviderConfig(new PiConfigStore(), authStorage)
+    const report = await migrateLegacyProviderConfig(new PiConfigStore(), authStorage, makeCredentialWriter(authStorage))
 
     expect(report.migrated).toContain('anthropic')
     const anthropic = (readModelsRaw().providers as Record<string, Record<string, unknown>>).anthropic
@@ -89,7 +98,7 @@ describe('M5-04: step1 hasOverride 判定含 models/quota（catalog 条目保留
     writeModels({ openai: { apiKey: 'sk-test' } })
     const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
 
-    const report = await migrateLegacyProviderConfig(new PiConfigStore(), authStorage)
+    const report = await migrateLegacyProviderConfig(new PiConfigStore(), authStorage, makeCredentialWriter(authStorage))
 
     expect(report.migrated).toContain('openai')
     // A7：removeProvider 删整个条目，catalog provider 回退 builtin template

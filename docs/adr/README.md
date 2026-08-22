@@ -89,3 +89,5 @@ xyz-agent 的架构决策记录。每条 ADR 记录一个不可逆的架构/技�
 | 0059 | 2026-08-06 | core factory 与 pinia store 集成范式（方法访问 + cast 接缝）（Proposed） |
 | 0060 | 2026-08-06 | route-inbound crossSession 通道（全局消费者订阅带 sid 消息）（Proposed） |
 | 0061 | 2026-08-06 | cw store 键控基准改为 repo 级（git common dir）（Superseded，被引擎层方案 A 取代） |
+| 0062 | 2026-08-19 | 单一数据 owner + 绝对写规则（Accepted） |
+| 0063 | 2026-08-19 | session 附着不变量 I1-I5（Accepted） |

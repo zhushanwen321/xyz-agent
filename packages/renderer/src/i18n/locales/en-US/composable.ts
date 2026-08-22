@@ -8,6 +8,7 @@ export default {
   queueFlushFailed: 'Failed to resend queued messages, messages kept',
   bashFailed: 'Failed to run bash: {msg}',
   providerNameRequired: 'Provider name is required',
+  oauthSwitchNeedsKey: 'Switching to API Key requires a new API Key (it replaces the OAuth credential on save)',
   duplicateHeaderKey: 'Duplicate header key detected, the last value will be used',
   modelNameRequired: 'Model name is required',
   modelAlreadyExists: 'Model "{name}" already exists',

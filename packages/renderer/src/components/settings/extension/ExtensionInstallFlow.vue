@@ -70,7 +70,7 @@
     <!-- 候选内联展开（dir/git 多步第二步，§6.3 点3：安装区下方直接展开） -->
     <section v-if="discovered" data-testid="install-candidates" class="rounded-card bg-card">
       <div class="flex items-center justify-between border-b border-border px-3 py-2">
-        <h3 class="text-[12px] font-medium text-neutral-fg">{{ t('settings.extension.discoverResultTitle', { count: discovered.candidates.length }) }}</h3>
+        <h3 class="text-[12px] font-medium text-neutral-fg">{{ t('settings.extension.discoverResultTitle', discovered.candidates.length, { named: { count: discovered.candidates.length } }) }}</h3>
         <Button variant="ghost" class="h-auto px-2 py-0.5 text-[11px] text-neutral-dim" @click="onCancelInstall">{{ t('settings.extension.cancel') }}</Button>
       </div>
       <div v-if="!discovered.candidates.length" class="py-4 text-center text-[11px] text-neutral-mid">{{ t('settings.extension.noCandidates') }}</div>

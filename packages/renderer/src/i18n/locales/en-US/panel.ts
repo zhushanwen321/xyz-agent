@@ -142,6 +142,11 @@ export default {
     refresh: 'Refresh',
     refreshing: '…',
     queryFailed: 'Query failed: {error}',
+    // quota failure reason short messages (A2-4, quotaFailReasonText mapping; recovery guidance lives in settings.providerEdit)
+    quotaFailUnauthorized: 'credential may have expired',
+    quotaFailNetwork: 'network error or service unavailable',
+    quotaFailNoSubscription: 'no active subscription detected',
+    quotaFailParse: 'failed to parse quota response',
     window5h: '5h',
     windowWeek: 'This week',
     windowMonth: 'This month',

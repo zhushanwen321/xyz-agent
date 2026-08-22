@@ -17,6 +17,7 @@
  *         models.json                ← Provider & Model 定义
  *         settings.json              ← xyz-pi 设置（pi 原生配置，不迁出）
  *         disabled-packages.json     ← extension 启停状态（不迁出）
+ *         config/providers.json      ← xyz 扩展域（quota/authMethod/modelStates，pi 不扫描）
  *       sessions/                    ← Session jsonl 文件
  */
 
@@ -73,6 +74,32 @@ export function getModelsPath(): string {
 
 export function getSettingsPath(): string {
   return join(getPiAgentDir(), 'settings.json')
+}
+
+/**
+ * xyz 扩展域 providers.json 路径：`<piAgentDir>/config/providers.json`。
+ *
+ * 承载自 pi models.json 迁出的 xyz 私有字段（provider 级 quota/authMethod、
+ * models[].enabled 转化的 modelStates），models.json 只留 pi schema 内字段
+ *（provider-config-quota 架构 D4）。同目录已有先例 config/rename-session-ext-config.json
+ *（worktree-config-helper），pi 不扫描 agent/config/ 子目录，无冲突。
+ *
+ * 「pi 不扫描 agent/config/ 子目录」断言锚点（ADR-0063 I4，pi 行为断言须带源码依据）：
+ * - 权威源 = 实装 0.84.1（node_modules/@earendil-works/pi-coding-agent/dist）：
+ *   dist 全部 JS 中 `join(getAgentDir(), ...)` 家族全集 11 项（auth.json / bin /
+ *   keybindings.json / models-store.json / models.json / prompts / sessions /
+ *   settings.json / themes / tools / `<APP_NAME>-debug.log`，定义于 dist/config.js）
+ *   无 config 子目录；`join(getAgentDir(), "config")` 全 dist 零命中；唯一 readdir
+ *   agentDir 的 dist/migrations.js migrateSessionsFromAgentRoot 仅 filter 顶层
+ *   `.jsonl`（不进子目录）。
+ * - clone TS 参照（~/Code/git-fork/pi-mono-workspace 496185f6，2026-08-19）：
+ *   coding-agent/src/config.ts getAgentDir 家族 + migrations.ts
+ *   migrateSessionsFromAgentRoot 同语义（clone 与实装的 join 调用点全集核对一致）。
+ * 机器防线：`__tests__/pi-paths-config-dir-contract.test.ts`——pi 升级引入 config/
+ * 占用时该测试先行红，提示复核本锚点。
+ */
+export function getProviderExtrasPath(): string {
+  return join(getPiAgentDir(), 'config', 'providers.json')
 }
 
 export function getSessionsDir(): string {

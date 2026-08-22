@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findValidDefaultModel, setModelsPath } from '../pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../pi-settings-store.js'
+import builtinData from '../../../generated/builtin-providers.json'
 
 let dir: string
 let agentDir: string
@@ -184,5 +185,51 @@ describe('A8: findValidDefaultModel 主路径 enabledModels 过滤', () => {
     writeAuth({})
     const r = findValidDefaultModel()
     expect(r.result).toBeNull()
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// A6（S3，scoped-model design D3 修复）：findValidDefaultModel 对 auth.json-only
+// catalog provider（OAuth 形态常态：models.json 无条目、auth.json 有凭据）。
+// D3 修复前主路径查 models.json 失败即 fallback 重选/写回，污染用户配置。
+// ══════════════════════════════════════════════════════════════════
+describe('A6: findValidDefaultModel 对 auth.json-only catalog provider（D3 修复）', () => {
+  // builtin 模型集从 generated JSON 动态取（不 hardcode 具体 model id，随 catalog 演进稳定）
+  const zaiModels = (builtinData.providers ?? []).find(p => p.id === 'zai-coding-cn')?.models ?? []
+  const firstZaiModelId = zaiModels[0]?.id as string
+
+  it('A6 default 指向 auth.json-only catalog provider 且 defaultModel ∈ builtin 集 → 直接返回不 fallback，wasFixed=false', () => {
+    // models.json 放无关 custom provider 作 fallback 诱饵：D3 生效时不应被选中
+    writeModels({ 'custom-x': { models: [{ id: 'm-x' }] } })
+    writeSettings({ defaultProvider: 'zai-coding-cn', defaultModel: firstZaiModelId, enabledModels: [] })
+    writeAuth({ 'zai-coding-cn': { type: 'api_key', key: 'kz' } })
+
+    const r = findValidDefaultModel()
+
+    expect(r.result).toEqual({ provider: 'zai-coding-cn', modelId: firstZaiModelId })
+    expect(r.wasFixed).toBe(false)
+  })
+
+  it('A6 defaultModel 不在 builtin 集 → 重选 builtin 第一个，wasFixed=true', () => {
+    writeModels({ 'custom-x': { models: [{ id: 'm-x' }] } })
+    writeSettings({ defaultProvider: 'zai-coding-cn', defaultModel: 'nonexistent-model', enabledModels: [] })
+    writeAuth({ 'zai-coding-cn': { type: 'api_key', key: 'kz' } })
+
+    const r = findValidDefaultModel()
+
+    expect(r.result).toEqual({ provider: 'zai-coding-cn', modelId: firstZaiModelId })
+    expect(r.wasFixed).toBe(true)
+  })
+
+  it('A6 对照：无凭据时 D3 不生效 → fallback 到 models.json 其他 provider', () => {
+    writeModels({ 'custom-x': { models: [{ id: 'm-x' }] } })
+    writeSettings({ defaultProvider: 'zai-coding-cn', defaultModel: firstZaiModelId, enabledModels: [] })
+    // auth.json 无 zai 凭据：D3 的 hasCredential 不满足 → 走 fallback 重选
+    writeAuth({})
+
+    const r = findValidDefaultModel()
+
+    expect(r.result).toEqual({ provider: 'custom-x', modelId: 'm-x' })
+    expect(r.wasFixed).toBe(true)
   })
 })

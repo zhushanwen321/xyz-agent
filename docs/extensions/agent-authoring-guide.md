@@ -87,9 +87,9 @@ builtin（包内 agents/）< npm global < user .pi/agent < user .agents
 
 ## 参考实现
 
-- `extensions/subagent-workflow/agents/doc-reviewer.md` — schema-only review agent 范例（四遍方法论 + 完成定义 + 防注入 + schema 契约声明）
-- `extensions/subagent-workflow/agents/reviewer.md` — write 型 review agent 范例
-- `extensions/subagent-workflow/workflows/review-fix-loop.js` — 编排 workflow + 配套 utils.cjs
+- `extensions/universal/subagent-workflow/agents/doc-reviewer.md` — schema-only review agent 范例（四遍方法论 + 完成定义 + 防注入 + schema 契约声明）
+- `extensions/universal/subagent-workflow/agents/reviewer.md` — write 型 review agent 范例
+- `extensions/universal/subagent-workflow/workflows/review-fix-loop.js` — 编排 workflow + 配套 utils.cjs
 
 ## 审查
 

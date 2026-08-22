@@ -8,6 +8,7 @@ export default {
   queueFlushFailed: '排队消息重放失败，消息已保留',
   bashFailed: 'Bash 执行失败：{msg}',
   providerNameRequired: '供应商名称不能为空',
+  oauthSwitchNeedsKey: '改用 API Key 需要输入新的 API Key（保存后将替换 OAuth 凭证）',
   duplicateHeaderKey: '存在重复的 header key，将以最后出现的值为准',
   modelNameRequired: '模型名称不能为空',
   modelAlreadyExists: '模型「{name}」已存在',

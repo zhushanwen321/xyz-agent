@@ -15,37 +15,34 @@ description: >-
 
 ## 前置条件 [MANDATORY]
 
-- xyz-agent git worktree 中
-- 当前分支相对 main 有 commits（`git log main..HEAD` 非空）
+- xyz-agent git worktree 中，当前分支相对 main 有 commits（`git log main..HEAD` 非空）
 - 有 GitHub CLI（`gh`）认证
 - 全局安装 fallow（`npm i -g fallow`，实测 2.88.2）——阶段 1.5 度量门禁依赖
 
 ## 调用约定
 
 - `cwd`：git 根目录绝对路径（`git rev-parse --show-toplevel`）
-- 阶段 1 / 3a 派 subagent 执行；阶段 1.5（确定性度量脚本）主 agent 直接跑；阶段 2 由主 agent 直接派 workflow（不经 subagent 封装）
-- 主 agent 全程只做编排 + Gate 校验 + push 前用户授权确认
+- 确定性脚本主 agent 直接跑，不派 subagent：阶段 1.1 static gate、1.5 / 1.6 两道 gate、阶段 3a 终局三道 gate
+- 阶段 2 由主 agent 直接派 workflow（路径 1）或 reviewer subagent（路径 2），不经 subagent 封装；修复 / 补测试派 worker subagent。主 agent 全程只做编排 + Gate 校验 + push 前用户授权确认
 
 ---
 
 ## 阶段 1：开 PR
 
-### 1.1 Pre-merge 硬 gate
+### 1.1 static gate（typecheck + lint，不跑测试）
 
-在当前 feature worktree 内执行（不是 main worktree），验证待 PR 的代码。
+主 agent 在当前 feature worktree 内直接跑（不是 main worktree）：
 
-```text
-agent: "general-purpose"
-cwd:   <git 根>
-task:  "跑 bash scripts/pr-pre-merge.sh --quiet
-        （按序 typecheck → lint → test：extensions + runtime + renderer；全绿写 .review/premerge-result marker result=PASS；任意 FAIL 写 result=FAIL 非零退出）。
-        禁止 --no-verify / SKIP_LINT=1 / SKIP_EXTENSION_LINT=1。
-        完成后返回 JSON { result: 'PASS'|'FAIL', failed_step?, changeset_missing? }"
+```bash
+bash scripts/pr-pre-merge.sh --skip-tests --quiet
 ```
 
-**Gate-1a**（硬 gate）：`result === 'PASS'` 才继续。FAIL 按 `failed_step` 对应工种重派 worker 修复后重跑。build 默认跳过（`PR_PRE_MERGE_SKIP_BUILD=1`），全量打包由 CI 跑。
+- 模式语义：typecheck **三处**（extensions + runtime + renderer）+ lint 全仓；测试步全跳过——review 前不以无插桩口径跑测试（review/修复后读数全过期），测试统一由阶段 1.6 coverage-gate 承接（插桩口径）。marker 照写，`result` 反映 typecheck + lint
+- 禁止 `--no-verify` / `SKIP_LINT=1` / `SKIP_EXTENSION_LINT=1`；build 默认跳过（`PR_PRE_MERGE_SKIP_BUILD=1`），全量打包由 CI 跑
 
-**Gate-1a.5**（changeset 软提醒）：`changeset_missing` 非空（改了 `extensions/*/src/` 但无 changeset，WARN 不 FAIL）→ AskUserQuestion：需要发布则 `pnpm changeset` 创建声明（推荐）；纯文档/测试改动可跳过（建议 `pnpm changeset add --empty` 防 merge 误报）。缺失 changeset 的后果：merge 时 `changeset version` 不 bump → publish 不发 → bug fix 静默丢失。
+**Gate-1a**（硬 gate）：exit 0（marker `result=PASS`）才继续。FAIL 按输出中失败步骤派对应工种 worker 修复后重跑（`typecheck:extensions` / `typecheck:runtime` / `typecheck:renderer` / `lint`）。
+
+**Gate-1a.5**（changeset 软提醒）：summary 出现 `WARN changeset-check`（改了 `extensions/*/src/` 但无 changeset，WARN 不 FAIL）→ AskUserQuestion：需要发布则 `pnpm changeset` 创建声明（推荐）；纯文档/测试改动可跳过（建议 `pnpm changeset add --empty` 防 merge 误报）。缺失 changeset 的后果：merge 时 `changeset version` 不 bump → publish 不发 → bug fix 静默丢失。
 
 ### 1.2 自动生成 PR title 和 body
 
@@ -84,11 +81,9 @@ python3 .agents/skills/pr-cr-fix/scripts/validate-skill-yaml.py <skill-paths>
 python3 .agents/skills/pr-cr-fix/scripts/validate-extensions-yaml.py <extension-dirs>
 ```
 
----
-
 ## 阶段 1.5：度量快照 + Gate-1.5（硬门禁）[MANDATORY]
 
-确定性代码度量（圈复杂度 / 循环依赖 / 重复 / 死代码），机器计算、脚本判定，不经 LLM。**未过 Gate-1.5 禁止进入阶段 2。**
+确定性代码度量（圈复杂度 / 循环依赖 / 重复 / 死代码），机器计算、脚本判定，不经 LLM。**未过 Gate-1.5 禁止进入阶段 2。**与 1.6 的执行顺序：**coverage-gate 先跑、metrics-gate 后跑**（理由见 1.6）。
 
 ### 执行（主 agent 直接跑）
 
@@ -96,9 +91,8 @@ python3 .agents/skills/pr-cr-fix/scripts/validate-extensions-yaml.py <extension-
 python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main
 ```
 
-- 产出 `.review/metrics.json`（fail/warn 清单 + 高 CRAP 靶子清单）；exit 1 = fail，exit 2 = 工具错误（中止）
+- 产出 `.review/metrics.json`（fail/warn 清单 + 高 CRAP 靶子清单）；exit 1 = fail，exit 2 = 工具错误（中止；fallow 缺失时同样 exit 2 并给出安装命令）
 - 阈值 SSOT = 仓库根 `.fallowrc.json` 的 `health` 节；脚本读取该文件，禁止在命令行另传阈值
-- fallow 缺失时脚本 exit 2 并给出安装命令
 
 ### Gate-1.5 判定
 
@@ -110,20 +104,10 @@ python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main
 
 ### 门禁项分级
 
-| 级别 | 项 | 阈值 |
-|------|----|------|
-| **fail** | introduced 函数圈复杂度 | > 15 |
-| **fail** | 新增循环依赖 | 全部 |
-| **fail** | 新增无法解析的 import | 全部 |
-| **warn** | introduced 认知复杂度 > 15 / CRAP ≥ 30 | 注入阶段 2 review |
-| **warn** | introduced 死代码（未用文件/导出/类型/依赖等） | 注入阶段 2 review |
-| **warn** | 新增重复块 | 注入阶段 2 review |
+- **fail**：introduced 函数圈复杂度 > 15；新增循环依赖；新增无法解析的 import（全部）
+- **warn**（注入阶段 2 review）：introduced 认知复杂度 > 15 / CRAP ≥ 30 / 死代码（未用文件/导出/类型/依赖）；新增重复块
 
-### 设计理由（为什么不直接用 fallow verdict 门禁）
-
-fallow audit 的 complexity findings 超阈值即 fail、无 warn 档；且无 `--coverage` 数据时覆盖率是静态估算（无测试路径的文件按 cov≈0，CC≥5 即 CRAP≥30），认知复杂度/CRAP 放 fail 档会被估算噪声误杀。metrics-gate.py 用同一份 audit JSON 做显式双轨判定：结构性硬指标（CC / cycle / unresolved import）fail；覆盖率相关指标（认知 / CRAP / 死代码 / 重复）warn 给阶段 2 消费。接入真实覆盖率（vitest coverage-final.json + `fallow audit --coverage`）后 CRAP 可升级为 fail 档。
-
----
+设计理由：fallow audit 无 warn 档、无真实覆盖率时 CRAP 是静态估算（噪声大），metrics-gate 用同一份 audit JSON 显式双轨判定——结构性硬指标 fail，覆盖率相关指标 warn 给阶段 2 消费。
 
 ## 阶段 1.6：增量覆盖率门禁（Gate-1.6）[MANDATORY]
 
@@ -137,71 +121,50 @@ fallow audit 的 complexity findings 超阈值即 fail、无 warn 档；且无 `
 
 **口径 [MANDATORY]**：**增量覆盖率 ≥ 80% 才达标。**（2026-08-21 用户决策：从 50% 起步值 ratchet 至业界事实标准 80%——Sonar Way 默认「coverage on new code ≥80%」门禁，调研见 `references/coverage-industry-research.md`）与 Gate-1.5 互补：Gate-1.5 是静态结构度量（不跑测试），Gate-1.6 跑测试量「新代码有没有被测到」。与 renderer 全量 thresholds gate（vitest.config 内、CI 强制）互补：全量阈值防整体退化，增量阈值防「新代码不写测试」。TEST-STRATEGY.md §7「以增量覆盖率为准」的工具化落地。
 
-### 执行顺序：coverage-gate 先跑，metrics-gate 后跑
-
-coverage-gate 产出 `.review/coverage.json` 的 `files` 节（全文件级真实 lcov 覆盖率），metrics-gate（Gate-1.5）消费它把 complexity warn 中**真实文件覆盖 ≥80%** 的条目移入 covered 列表（出 warn、保留证据链），替换 fallow 静态估算。阶段 1 初跑与 3a 复跑均按 **coverage → metrics** 顺序；coverage.json 缺失或 base 不匹配时 metrics-gate 自动降级静态估算（不阻塞，报告标注 `fallow-static`）。
+**执行顺序：coverage-gate 先跑，metrics-gate 后跑。** coverage-gate 产出 `.review/coverage.json` 的 `files` 节（全文件级真实 lcov 覆盖率），metrics-gate 消费它把 complexity warn 中**真实文件覆盖 ≥80%** 的条目移入 covered 列表（出 warn、保留证据链），替换 fallow 静态估算。阶段 1 初跑与 3a 复跑均按 **coverage → metrics** 顺序；coverage.json 缺失或 base 不匹配时 metrics-gate 自动降级静态估算（不阻塞，报告标注 `fallow-static`）。
 
 ### 执行（主 agent 直接跑）
 
 ```bash
 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main
+# diff 含 packages/shared/**/src/** 时传下游追加（见下方 shared 下游传播）：
+python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main --extra-packages packages/runtime,packages/renderer
 ```
 
 - 自动检测 base...HEAD 改动过 `src/` 的 vitest 包（含 `extensions/shared/<lib>` 三层目录），逐包跑 `vitest run --coverage`（lcov），解析 lcov DA 行命中 × git diff 新增行号（精确路径匹配），算**可执行新增行覆盖率**
-- **判定**：任一被 gate 包增量 < 80%（默认）或测试失败 → `verdict=fail` exit 1；记账不闭合 / all-SKIP / git 瞬态异常 → exit 2（工具错误，修复后重跑）；产出 `.review/coverage.json`（packages 增量口径 + files 全文件级真实覆盖率）
-- SKIP 语义：按 package.json **声明**判定（非 node 解析——node-linker=hoisted 下解析恒真）；24 个 vitest 包已全部声明，出现 SKIP 即配置漂移，按报告内指引补声明
-- **注意**：修复 worker 在途时本地读数会被污染——Gate-1.6 必须在干净工作区（全部改动已 commit）跑；`--packages <pkg>` 探针运行会覆盖 `.review/coverage.json`（单包产物），探针后需重跑全量恢复
+- **判定**：任一被 gate 包增量 < 80%（默认）或测试失败 → `verdict=fail` exit 1；记账不闭合 / all-SKIP / git 瞬态异常 → exit 2（工具错误，修复后重跑）；产出 `.review/coverage.json`（packages 增量口径 + files 全文件级真实覆盖率 + files_without_lcov 盲区清单）。SKIP 语义：按 package.json **声明**判定（非 node 解析），出现 SKIP 即配置漂移，按报告内指引补声明
+- **shared 下游传播**：包选择只收自身有 `src/` 改动的包，shared 改动不传播下游；diff 含 `packages/shared/**/src/**` 时传 `--extra-packages packages/runtime,packages/renderer`——实跑两包全量插桩测试，承接「1.1 不再跑全量测试」后的下游兜底。**连带效应**：renderer vitest.config 内的全量 thresholds（CI 强制口径）随之生效，thresholds breach 视同测试失败走 FAIL 路径（与本次改动无关的全量退化同样拦截；该失败输出与 uncovered_files 增量口径不同源，排障注意区分）
+- `--packages <pkg>` 是交集过滤器（单包探针用，会以单包产物覆盖 coverage.json，探针后重跑全量恢复）；`--extra-packages` 是追加器，两者语义不同、可共存。**注意**：修复 worker 在途时本地读数会被污染——Gate-1.6 必须在干净工作区（全部改动已 commit）跑
 
 **Gate-1.6 判定**：fail → 派测试专项 subagent 补测试 → 重跑（上限 3 轮）。补测试优先级看 `.review/coverage.json` 的 uncovered_files 清单（按可执行新增行缺口排序）。
 
 ### 怎么看覆盖率（人工排查）
 
-```bash
-# 单包全量 + HTML 报告（产物 <pkg>/coverage/index.html，浏览器打开逐行看）
-cd packages/renderer && npx vitest run --coverage        # 已配 thresholds，跌破 exit 非0
-cd packages/core && npx vitest run --coverage            # 未配 thresholds，仅出报告
-
-# 增量口径（本 PR 新增可执行行的覆盖率）
-python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main
-
-# CI 产物：PR checks 页 Test (renderer) job → artifact "coverage-report"（lcov + html）
-```
+- 单包全量 + HTML 报告：`cd <pkg> && npx vitest run --coverage`（renderer 已配 thresholds，跌破 exit 非 0；产物 `<pkg>/coverage/index.html` 浏览器逐行看）
+- 增量口径（本 PR 新增可执行行的覆盖率）：`python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main`
+- CI 产物：PR checks 页 Test (renderer) job → artifact "coverage-report"（lcov + html）
 
 renderer 全量阈值（S3-W1 基线-2~3% 重校准：lines 68 / stmts 66 / branches 56 / functions 60）由 CI 强制；其余包 provider 已全部声明（增量口径由 Gate-1.6 覆盖），全量 thresholds 先测量后设阈（见 TEST-STRATEGY §7）。
 
----
+## [OPTIONAL] Mutation testing 深检
 
-## [OPTIONAL] Mutation testing 深检（StrykerJS）
-
-覆盖率证明「代码被跑过」，**mutation score 证明「断言真能抓 bug」**——覆盖率高但断言弱的测试（无断言/toMatchSnapshot 滥用/只断言不抛错）覆盖率满分也抓不住回归。对高风险模块的测试质量存疑时用。
-
-**工具**：StrykerJS（`@stryker-mutator/core` + `@stryker-mutator/vitest-runner` ≥ 9.3，2025-11 起官方支持 vitest 4；perTest coverage 分析、只跑与被突变文件相关的测试；不支持 vitest Browser Mode——本项目 happy-dom/node 环境不受影响）。
-
-**何时跑**（不进默认 gate——全量 mutation 太慢，一个中型包 10-30 分钟）：
-1. Gate-1.5 `targets.high_crap` 靶子的函数已补测试后，验证断言强度
-2. review-test-coverage 报告「弱断言」疑点（覆盖了但可疑）
-3. 修复 bug 后验证回归测试真能拦住（mutant = 人为重引入 bug，测试必须杀掉）
-
-**定向跑法**（只突变指定文件，非全包）：
-
-```bash
-cd <pkg> && pnpm add -D @stryker-mutator/core @stryker-mutator/vitest-runner
-cat > stryker.config.json << 'EOF'
-{ "testRunner": "vitest", "coverageAnalysis": "perTest",
-  "mutate": ["src/<target-file>.ts"], "reporters": ["clear-text", "progress"] }
-EOF
-npx stryker run
-```
-
-判定参考：mutation score ≥ 60% 可接受、≥ 80% 良好；存活的 mutant 逐个看——要么断言缺（补），要么等价变异（记录豁免）。产出不进 `.review/`（临时深检，结论写进 test-coverage 维度报告即可）。
-
----
+覆盖率证明「代码被跑过」，mutation score 证明「断言真能抓 bug」——覆盖率高但断言弱的测试抓不住回归。**触发条件**：Gate-1.5 靶子函数补测后验证断言强度 / review-test-coverage 报「弱断言」疑点 / 修 bug 后验证回归测试真能拦截。工具选型、定向跑法与判定参考见 `references/mutation-testing.md`。
 
 ## 阶段 2：review + fix
 
 ### 阶段 1.5 / 1.6 产物消费约定
 
-`.review/metrics.json`（阶段 1.5 必然产出）与 `.review/coverage.json`（阶段 1.6）由以下维度按各自 agent 定义的输入约定消费：review-test-coverage 消费 `targets.high_crap` 靶子清单（优先核对这些函数的测试覆盖）+ coverage.json 的 `uncovered_files` 清单（增量未覆盖文件优先补测试）；review-monorepo-impact 消费 `fail`/`warn` 中的循环依赖条目（不再手工 grep import 链）。其余 6 维不变。
+`.review/metrics.json`（阶段 1.5 必然产出）与 `.review/coverage.json`（阶段 1.6）由以下维度按各自 agent 定义的输入约定消费：review-test-coverage 消费 `targets.high_crap` 靶子清单 + coverage.json 的 `uncovered_files`（实测增量覆盖缺口，优先补测试）+ `files_without_lcov`（未被任何测试加载的新文件——机器盲区定点核查）；review-monorepo-impact 消费 `fail`/`warn` 中的循环依赖条目（不再手工 grep import 链）。其余 6 维不变。
+
+### 阶段 2 前置：约束动态加载（`.review/constraints.md` 产物）
+
+进入阶段 2 前主 agent 先跑（两路径共用，workflow 派的 review agent 与手工派的 subagent 都按 agent 定义内的消费约定自读）：
+
+```bash
+node scripts/select-constraints.mjs --base main
+```
+
+按 diff 范围从 `docs/constraints.json`（架构约束登记 SSOT，69 条）选择命中约束，落盘 `.review/constraints.md`：scope 为 `global` 的核心不变量每次必载，其余按改动路径前缀命中（只改 renderer 不载 extension 约束）。8 个 review agent 定义均含消费约定——清单中 dimensions 含本维度的条目必须逐条核对，`enforcement: review` 的条目是本维度重点；需要完整表述时 Read「权威源」列指向的文档原文（清单里的 summary 仅导航）。
 
 ### [MANDATORY] 双路径选择
 
@@ -230,49 +193,56 @@ pi workflow run review-fix-loop --args '{
 }'
 ```
 
-内置行为要点：某 agent `must_fix === 0` 判 clean；连续 3 轮 must_fix 不降 → `terminated=stuck`；问题经 2 次修复未收敛 → `terminated=needs-redesign`；聚合器内置（合并去重为 `aggregated.md` + must_fix 计数，不依赖 `review-aggregator.md`）。
+内置行为要点：某 agent `must_fix === 0` 判 clean；连续 3 轮 must_fix 不降 → `terminated=stuck`；问题经 2 次修复未收敛 → `terminated=needs-redesign`；聚合器内置（合并去重为 `aggregated.md` + must_fix 计数）。
 
 **Gate-2**：workflow `terminated` ∈ {`clean`, `converged`, `stuck`} → 进阶段 3。`terminated=needs-redesign` = 结构性问题需人工介入，**停手上报用户**。
 
-#### 路径 2：非 pi 环境（手工编排，固定 2 轮）
+#### 路径 2：非 pi 环境（手工编排，上限 2 轮）
 
 **适用条件**：无 pi workflow 能力（ZCode / 其他 agent 框架）。这是最常见路径。
+
+##### 派发前：按 diff 选维度（主 agent 自己跑）
+
+按**路径匹配**（不做语义判断——不可审计、漏派无解释），`git diff main...HEAD --name-only` 对照下表。**默认全集、只写明确排除条件**：
+
+| 排除条件（路径匹配，全部不满足才跳过） | 跳过的维度 |
+|---|---|
+| 不含 `packages/runtime/**`、`apps/electron/**`、runtime `package.json` 依赖变更 | electron-build |
+| 不含 `extensions/**` | extension-api |
+
+其余 6 维（arch-boundary / business-logic / type-safety / test-coverage / monorepo-impact / data-governance）恒派。electron-build 排除条件刻意收得很紧：`packages/runtime/**` 任何改动（不只打包配置）都保留该维度——runtime 源码的 CJS 兼容违规（`import.meta.url`）是其重要检查项（AGENTS.md 关键规则 12「事故最高发」）。映射表保守取向：宁可多派不漏派。
 
 ##### 第 1 轮
 
 **Step 1 — 确认变更范围**（主 agent 自己跑）：
 ```bash
 git diff main...HEAD --stat
+node scripts/select-constraints.mjs --base main   # 产出 .review/constraints.md（命中约束清单，reviewer 消费）
 ```
 
-**Step 2 — 并行派 reviewer subagent**：8 个维度按「维度 → Agent 映射」表全派。**并行上限 ≤5**（全局 AGENTS.md subagent 约束）：分两批派发（batch1: arch-boundary / business-logic / type-safety / electron-build / test-coverage，batch2: extension-api / monorepo-impact / data-governance），或按全局规则「一般用 3 个」分三批。每个 subagent 的 task 必须包含：
+**Step 2 — 并行派 reviewer subagent**：选中维度全派。**并行上限 ≤5**（全局 AGENTS.md subagent 约束），按维度子集数分批（8 维分两批 5+3；不足 5 个一批派完；或按全局规则「一般用 3 个」分三批）。每个 subagent 的 task 必须包含：
 
-- worktree cwd（绝对路径，避免 multi-worktree cwd 陷阱）
+- worktree cwd（绝对路径，避免 multi-worktree cwd 陷阱）+ 审查 `git diff main...HEAD` 的全部变更
 - focus（见下方「维度 → Agent 映射」表对应审查焦点）
 - agent 定义文件路径（`<repo>/.agents/skills/pr-cr-fix/agents/review-<维度>.md`，subagent 须复读原文获得完整 checklist）
+- `.review/constraints.md` 命中约束清单（存在时必须消费：dimensions 含本维度的条目逐条核对，`enforcement: review` 的条目是重点；权威源文档按需 Read 原文）
 - `output 路径：<绝对路径>` + `Write report to: <绝对路径>`（双措辞兼容 agent 约定）
-- 「审查 `git diff main...HEAD` 的全部变更」
 - 「输出格式：YAML frontmatter（verdict/must_fix）+ Findings 表格（优先级 | 文件 | 行号 | 类别 | 描述 | 修复方向），优先级用 MUST_FIX/SUGGESTION/INFO」
 - 「完成后用 structured-output 返回 `{report_file, must_fix, suggestion}`」
 
-**Step 3 — 主 agent 手工聚合**：
-- 收集各 subagent 的结构化结果
-- 按 (file, line, description) 三元组去重
-- 按优先级排序（MUST_FIX → SUGGESTION → INFO）
-- 写 `aggregated.md`（含 `## Summary` + `- Must-fix: N` + `- Suggestions: N` 行，便于核对）
+**Step 3 — 主 agent 手工聚合**：收集各 subagent 结构化结果 → 按 (file, line, description) 三元组去重 → 按优先级排序（MUST_FIX → SUGGESTION → INFO）→ 写 `aggregated.md`（含 `## Summary` + `- Must-fix: N` + `- Suggestions: N` 行，便于核对）
 
 **Step 4 — 修复 MUST_FIX**（条件触发，`must_fix > 0` 时）：
-- 按文件归属分组，每组派 1 个 `worker` subagent 并行修复（≤5）
-- worker task 含：review 报告原文路径（worker 必须复读）+ 本组问题清单 + 「全部修复，不挑 level」+ 「修复后 `pnpm -r typecheck` 通过」
+
+- 按文件归属分组，每组派 1 个 `worker` subagent 并行修复（≤5）。worker task 含：review 报告原文路径（worker 必须复读）+ 本组问题清单 + 「全部修复，不挑 level」+ 「修复后 `pnpm -r typecheck` 通过」；完成后 commit `fix: review round 1 — N must-fix`
 - **每条先验证真实性再修**：worker 逐条读代码证实 review 断言；不成立的（误报）在报告列「已验证不成立 + 证据（file:line + 逻辑）」，不盲改
 - **测试类问题派独立测试 subagent**，与修复 worker 分离：补测试 / 验证修复有效性（bug 类修复要求「修前红修后绿」——回归测试在旧代码上必须 fail、新代码上 pass，证明测试真能抓 bug 而非凑数）
-- 修复后 commit：`fix: review round 1 — N must-fix`
 
-##### 第 2 轮（强制）
+##### 第 2 轮（条件触发）
 
-**不管第 1 轮是否 clean，第 2 轮都必须跑**——验证修复未引入回归。重复第 1 轮的 Step 2-4。第 2 轮结束即终止；残留 MUST_FIX 报告给用户决策。
+**全部选中维度 clean（`must_fix=0`）且无 fix commit → 跳过第 2 轮，直接进阶段 3**（代码零改动，复验无对象）。否则**只重派「上轮 `must_fix > 0` 的维度」**，上轮 clean 的维度不重审——对齐路径 1 `skipCleanAgents: true` 语义，两路径行为一致；重派维度天然复验自己报的问题已修。重复第 1 轮 Step 2-4。第 2 轮结束即终止；残留 MUST_FIX 上报用户决策。
 
-> 为什么固定 2 轮：第 1 轮发现问题，第 2 轮验证修复，是回归防护的最小完整单元。更多轮需要自动化编排支撑（即路径 1 的 workflow），手工派发边际收益递减。
+> 为什么上限 2 轮 + 条件跳过：第 1 轮发现问题、第 2 轮验证修复，是手工编排下回归防护的最小完整单元；全 clean 零修复时该动机不成立，条件跳过。更多轮需要自动化编排支撑（即路径 1 的 workflow）。用户对某次修复不放心时可手动要求重派全部维度（等价路径 1 `recheckAfterFix=true`），不进默认流程。
 
 ### 维度 → Agent 映射（两路径共用）
 
@@ -289,125 +259,45 @@ Agent 定义位于本 skill 目录 `agents/review-<维度>.md`（不全局暴露
 | Monorepo 影响 | `agents/review-monorepo-impact.md` | workspace 包间依赖（packages/* + apps/* + extensions/* + extensions/shared/*）、循环依赖、公共 API 变更对下游影响 |
 | 数据治理 | `agents/review-data-governance.md` | pi 文件直写（绝对写规则）、第二写入者、事件直写状态、renderer 零派生、未登记缓存、扩展数据通道（appendEntry/get_entries）、登记表同步。准绳：docs/architecture/data-source-governance.md + data-source-registry.md |
 
+Pi Extension 接口契约 checklist（SDK 签名核对 / spec 偏差记录 / schema 一致性 / 类型断言守卫）已并入 `agents/review-extension-api.md`，该 agent 审查时自动覆盖，主 agent 不另行逐条核对。
+
 ### 严重度分级
 
 - **MUST_FIX** — 必须修复，阻塞合并。对应架构约束违规、会导致 bug、违反 [HISTORICAL] 规则的问题
 - **SUGGESTION** — 强烈建议修复。不阻塞但影响代码质量、可维护性
-- **INFO** — 可选改进。代码风格、文档、轻微品味问题
-
-每条条目格式：`[SEVERITY] file:line — 问题描述` + `→ 建议修复方式`
-
-### [OPTIONAL] 降级 checklist（无 subagent 能力时主 agent 自查）
-
-改动极小或不值得编排时，主 agent 按以下 checklist 自行审查。覆盖深度不如双路径编排。
-
-**1. Vue 3 组件规范**
-- [ ] Composition API + `<script setup>`（禁止 Options API）
-- [ ] 模板中禁止直接调用方法做副作用，用 `computed` / `watch` 替代
-- [ ] props 用 `defineProps<T>()`，不用无类型版
-- [ ] 无内联 styles，用 scoped CSS（仅 Transition/伪元素等 escape hatch）或 Tailwind 类
-- [ ] `<template>` ≤ 400 行，`<script setup>` ≤ 300 行
-
-**2. TypeScript 类型安全**
-- [ ] 禁止 `any`，用 `unknown` 或具体类型
-- [ ] 事件回调参数有明确类型注解
-- [ ] 接口定义完整，不在运行时拼凑类型
-
-**3. Event Bus 防重复注册**
-- [ ] listener 注册使用 refCount 保护（`addEventListener` / `on` 配对）
-- [ ] 组件 unmount 时清理所有 listener；无遗漏的 `removeEventListener` / `off`
-
-**4. Emit 规范**
-- [ ] `emit` 只传单个 payload 对象：`emit('update', { id, value })`
-- [ ] 禁止 `emit('event', arg1, arg2)` 多参数模式
-- [ ] payload 类型用 interface 定义
-
-**5. UI 状态错误重置**
-- [ ] 错误路径必须重置 `isGenerating` / `streamingMessage` 等加载状态
-- [ ] `finally` 块或显式 error handler 中清理状态；无可能的无限加载态
-
-**6. 代码质量（确定性度量）**
-- [ ] 跑阶段 1.5 同一门禁：`python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main`，fail 项必须修复
-- [ ] `.review/metrics.json` 的 warn 项人工过一遍：认知复杂度 / CRAP 热点、重复块、死代码
-- [ ] 无 console.log 残留、无硬编码 magic numbers / strings
-
-**7. Electron IPC 安全**
-- [ ] 通过 preload 桥接，渲染进程不直接 `require('electron')`
-- [ ] contextBridge 暴露的 API 最小化；无 IPC 通道暴露敏感操作
-
-**8. 测试覆盖**
-- [ ] 新增功能有对应测试；关键路径有边界条件测试
-- [ ] 测试描述清晰，不依赖顺序执行
+- **INFO** — 可选改进。代码风格、文档、轻微品味问题。每条条目格式：`[SEVERITY] file:line — 问题描述` + `→ 建议修复方式`
 
 ### [OPTIONAL] 文档/prompt 质量审查（CoT Leakage）
 
-审查范围：`.agents/skills/`、`.agents/agents/`、AGENTS.md、`docs/`、`.cw/` 中的 prompt 文本（排除 node_modules/构建产物/记录的模型输出与 fixture）。
-
-**唯一测试**：对每段可疑文字问——**一个只读 HEAD、没有任何会话记录/PR 线程/未提交草稿的读者，能否解析每个引用、验证每个断言？** 不能 → 从仓库视角重述幸存事实，删其余。
-
-**八类 taxonomy**（命中后按处理指导修复）：
-1. **死设计会话引用** — `(decision 7)`、`(audit C2)`、`设计 §4.7`、阶段标签（T4、W3、P-I）。决定有已提交的主人时按名字和路径引用，否则删引用、事实条款重述到能独立成立
-2. **stack/PR 视角** — 「这个 PR 加了」「本分支之后」「上一个 commit」。改为陈述已落地的机制；推迟的工作移到 TODO 或 issue
-3. **改动叙述与版本戳** — 「以前」「不再」「旧的 X」、索引性戳（v1、本版、这次 cut）。陈述当前行为；已修复的回归写成现在时反事实（「没有 X 时会发生 Y」）
-4. **review 编排** — 「评审时被否」「reviewer 确认了」。保留幸存的决定与理由作为事实，删掉谁在何时说了什么
-5. **面向 reviewer 的自辩** — 「这个转换是安全的——它只是…」。陈述使代码安全的不变量；代码本身可见时删注释
-6. **复述与推导记录** — 控制流叙述（「先 X 再 Y」）、显然分支的证明。删；只留不显然的契约或不变量
-7. **模糊与规划残留** — 「暂时应该没问题」「应该够了」。升级为 TODO/FIXME，或重述为实际边界
-8. **创作语言残留** — 中文正文里的英文草稿片段（或反向），「---- 私有 ----」分隔线。翻译或删除
-
-**什么不是 leakage（保留，禁止误删）**：issue 引用（`#1470`、`TODO(name):`）；抑制理由（`eslint-disable -- reason`、空 catch 解释）；反事实现在时回归钉（「没有 X 时会发生 Y」）；实测边界（「实测：512 层嵌套 ≈ 0.15s」的「实测」承重）；运行时新旧状态（「旧连接排空后新连接才接受」）；外部引用（RFC 章节号）；设计文档的备选方案章节。
-
-**过度修剪陷阱**（删任何东西前枚举该句所有命题，逐条对照）：
-1. **义务翻转成背书** — 「待迁移到 slots」删成「受认可的例外」，把义务变成祝福现状；删法不能改变句子的情态
-2. **假想提升为已发布功能** — 删掉「未来的」变成声称已发布；明确标记假想，不是只去掉未来标记
-3. **连叙述带真事实一起删** — 半句叙述半句承重耦合时，删子句不删整句
-4. **保留数字丢了出处** — 「4 MiB 上限是实测的」删成「上限 4 MiB」，数字从观察变成定义
-
-### Pi Extension 接口契约 Checklist
-
-审查 `extensions/` 目录下的 pi extension 代码时 `[MANDATORY]` 逐条核对。
-
-**1. SDK 接口契约核对**
-- [ ] `pi.on(...)` handler 对照真实 SDK 的 `ExtensionHandler<E> = (event: E, ctx: ExtensionContext)` **两个参数**签名——`modelRegistry`/`cwd`/`ui`/`sessionManager` 在第二个参数 `ctx` 上，不在 event 上
-- [ ] 打开 `node_modules/@earendil-works/pi-coding-agent/dist/` 对照真实类型，不凭记忆写签名
-- [ ] xyz-agent 以 `--mode rpc` 运行 pi（`ctx.mode === "rpc"`），TUI API（`ctx.ui.setWidget` 等）失效；GUI 渲染参阅 `docs/extensions/gui-protocol-guide.md`
-
-**2. spec 偏差记录**
-- [ ] 无 spec 的功能不应直接实现；实现与 spec 有偏差必须在 spec 末尾「实现偏差说明」补 D 编号记录——未记录的偏差等于违反 spec
-
-**3. schema / 描述一致性**
-- [ ] `registerTool` 的 `parameters` schema 必填字段在所有执行模式下都真的必填；被忽略的参数不应 schema 层必填（否则 LLM 被迫传占位值）
-- [ ] 条件必填场景：schema 设 Optional，`execute()` 内按模式做运行时校验（抛清晰错误）
-- [ ] `description` 中 "Ignores X/Y/Z" 描述与 schema 实际行为一致
-
-**4. 类型断言（配合 taste/no-unsafe-cast）**
-- [ ] 每处 warn 的断言确认有不可替代的理由（跨 tsconfig 泛型冲突、SDK 类型 stub 缺失）
-- [ ] 不可替代的断言必须有配套运行时 guard（参数判空抛错）或契约测试兜底——类型断言不能是唯一防线
+**触发条件**：diff 触及 `.agents/skills/`、`.agents/agents/`、AGENTS.md、`docs/`、`.cw/` 中的 prompt 文本（排除 node_modules/构建产物/记录的模型输出与 fixture）。唯一测试（只读 HEAD、无会话记录的读者能否解析每个引用、验证每个断言）、泄漏分类法、非 leakage 白名单与过度修剪陷阱见 `references/cot-leakage.md`。
 
 ---
 
 ## 阶段 3：pre-merge + push
 
-### 3a — pre-merge 验证
+### 3a — 终局三道 gate（主 agent 直接按序跑）
 
-先复跑两道结构/覆盖率门禁（阶段 2 修复会改代码，1.5/1.6 初跑读数已过期）。**顺序固定 coverage → metrics**（coverage-gate 的 files 节供 metrics-gate 替换 fallow 静态估算）：
+阶段 2 修复会改代码，1.5/1.6 初跑读数已过期。**顺序固定 coverage → metrics → pre-merge**（coverage 的 files 节供 metrics 分流，见 1.6；pre-merge 注入值来自 coverage-gate 测试判定）：
 
 ```bash
-python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main    # 增量 <80% 补测试
-python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main     # fail 必须修复
+# ① coverage-gate：测试第 2 遍（插桩口径）+ 覆盖率终值；diff 含 shared src 时同样传 --extra-packages（见 1.6）
+python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main
+# ② metrics-gate：结构度量终值
+python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main
+# ③ pre-merge 终局：typecheck 三处 + lint 实跑；test:runtime 实跑；test:extensions/renderer 以注入值计
+bash scripts/pr-pre-merge.sh --test-result <PASS|FAIL> --quiet
 ```
 
-```text
-agent: "general-purpose"
-cwd:   <git 根>
-task:  "跑 bash scripts/pr-pre-merge.sh --quiet
-        禁止 --no-verify / SKIP_LINT=1 / SKIP_EXTENSION_LINT=1。
-        完成后返回 JSON { result: 'PASS'|'FAIL', failed_step?, changeset_missing? }"
-```
+- ③ 注入值 = ① 的测试判定（任一被 gate 包测试失败 → 注入 FAIL）。脚本校验 `.review/coverage.json` 存在且 base 与当前一致（防注入过期读数），不一致 exit 2 → 恢复：重跑 ① 后再 ③
+- **任一 gate FAIL 仍走完 ③ 写 marker**（pr-status.sh 可见终态），Gate-3a 拦截不 push；按失败输出派 worker / 测试 subagent 修复后**从 ① 头部重跑**
 
-**Gate-3a**（硬 gate）：`result === 'PASS'` 才继续。FAIL 按 `failed_step` 对应工种重派 worker 修复后重跑。
+**Gate-3a**（硬 gate）：三道 gate 全部 exit 0 且 marker `result=PASS` 才继续。coverage-gate exit 1 → 增量不足派测试 subagent 补测试 / 测试失败按失败用例派 worker；metrics-gate fail → 派 worker 修复；pre-merge FAIL → 按失败步骤对应工种修复。
 
-**real-pi 测试分工 [MANDATORY]**：CI 不跑 real-pi 测试（ci.yml test-runtime 显式设 `XYZ_SKIP_REAL_PI=1`，只跑凭证无关子集）；**开发验收必须跑 real-pi**——本阶段 pr-pre-merge.sh 的 `test:runtime` 步骤（`cd packages/runtime && npx vitest run`）不设 skip，双池全量含 real-pi 等价性测试（live ≡ reload 基线，SSOT 见 TEST-STRATEGY.md「等价性测试双轨」）。凭证缺失时用例以显式理由 skip——**输出中出现 real-pi skip 即视为开发验收不完整**，须补凭证（`~/.pi` 三源探测，见 `pi-fixture.ts` `REAL_PI_READY`）后重跑，不得凭 skip 输出宣布 PASS。
+**real-pi 测试分工 [MANDATORY]**：CI 不跑 real-pi 测试（ci.yml test-runtime 显式设 `XYZ_SKIP_REAL_PI=1`，只跑凭证无关子集）；**开发验收必须跑 real-pi**——义务由 ③ `--test-result` 模式内实跑的 `test:runtime` 步骤（`cd packages/runtime && npx vitest run`）原位承接：不设 `XYZ_SKIP_REAL_PI`，双池全量含 real-pi 等价性测试（live ≡ reload 基线，SSOT 见 TEST-STRATEGY.md「等价性测试双轨」；步骤名 / 命令 / 不设 skip 均未变，与该 SSOT 表述一致）。凭证缺失时用例以显式理由 skip——**输出中出现 real-pi skip 即视为开发验收不完整**，须补凭证（`~/.pi` 三源探测，见 `pi-fixture.ts` `REAL_PI_READY`）后重跑，不得凭 skip 输出宣布 PASS。
+
+### 本地验证缩窄声明（CI 承接）
+
+本流程下**未被 diff 触及的包本地测试 0 遍**（原「1.1/3a 无条件三线全量」已取消）。承接证据：CI 四个 test job 覆盖全部测试线——test-runtime / test-renderer（含全量 thresholds）/ test-main / test-extensions（`pnpm extensions:test` 跑全部 pi-* 包）。**real-pi 例外**：CI 显式 skip，仅由本地 3a `test:runtime` 实跑承接（见上）。被 diff 触及的包测试恰 2 遍（1.6 插桩 + 3a 插桩终值；runtime 线 = 1.6 插桩 + 3a 无插桩专项，物理不可合并）。
 
 ### 3b — push（需用户授权）
 
@@ -447,12 +337,12 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 
 ## 关键约束 [MANDATORY]
 
-1. **阶段顺序不可调换**：1 (PR) → 1.5 (度量门禁) → 1.6 (增量覆盖率门禁) → 2 (review+fix) → 3 (pre-merge + push)；Gate-1.5 fail 时禁止进入阶段 2，Gate-1.6 fail 时补测试后重跑（上限 3 轮）
-2. **主 agent 不跑 review/fix 实现命令**：review 委托 workflow（路径 1）或 subagent（路径 2）。PR 生命周期操作（commit / push / pr-status.sh / pr-pre-merge.sh）主 agent 可直接跑
+1. **阶段顺序不可调换**：1（PR + static gate）→ 1.5（度量门禁）→ 1.6（增量覆盖率门禁；执行时 coverage 先于 metrics）→ 2（review+fix）→ 3（pre-merge + push）；Gate-1.5 fail 时禁止进入阶段 2，Gate-1.6 fail 时补测试后重跑（上限 3 轮）
+2. **主 agent 不跑 review/fix 实现命令**：review 委托 workflow（路径 1）或 subagent（路径 2）。确定性脚本（gate 脚本 / commit / push / pr-status.sh / pr-submit.sh）主 agent 可直接跑
 3. **push 必须用户授权**：任何 push 操作前必须告知用户结果并获得确认
 4. **force-push 决策传递**：阶段 1 `force_push=true` → 阶段 3b 必须用 `--force-with-lease`；裸 `--force` 禁止
 5. **禁止 skip 开关**：`SKIP_LINT=1` / `SKIP_EXTENSION_LINT=1` / `--no-verify` / `eslint-disable` 静默。检查不通过 = 流程中止，唯一出路是修复代码让检查通过
-6. **pr-pre-merge.sh 是 stage marker 唯一写入方**：阶段 3a 必须调它，不能直接跑 `npx vitest run` 替代（marker 不写则 Gate-3 恒 not_run）
+6. **pr-pre-merge.sh 是 stage marker 唯一写入方**：阶段 1.1（`--skip-tests`）与 3a（`--test-result PASS|FAIL`，注入值取自刚跑的 coverage-gate 测试判定）必须调它，不能直接跑 `npx vitest run` 替代（marker 不写则 Gate-3 恒 not_run）。无参全量模式仅供手动预演，流程内禁用——1.1 应 `--skip-tests`、3a 应 `--test-result`（两模式互斥，传错 exit 2）
 
 ## 反模式
 
@@ -461,6 +351,10 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 | 主 agent 自己跑 review 代码 | 越权，review 应委托 |
 | pi 环境下阶段 2 手写 review subagent 并行/分批（绕过 workflow） | 复现 review-fix-loop 已有能力，漂移风险 |
 | 阶段 2 派 subagent 封装 workflow | 多一层无增益中转 |
+| 阶段 1.1 跑无参全量 pre-merge（应 `--skip-tests`） | review 前空跑一遍无插桩全量测试，review/修复后读数全部过期作废 |
+| 阶段 3a 跑无参全量 pre-merge（应 `--test-result`） | extensions/renderer 线与 coverage-gate 同批测试背靠背重复执行 |
+| 第 1 轮全 clean 且无 fix commit 仍派第 2 轮 | 纯空转 subagent（新规则：条件跳过） |
+| 派发前凭语义判断跳过维度（不查路径映射表） | 不可审计、漏派无解释 |
 | 阶段 3a 直接跑 vitest 替代 pr-pre-merge.sh | marker 不写 |
 | 未获用户授权就 push | 违反 push 授权约束 |
 | 删/改 pr-cr-fix/agents/ 下的 review agent | 破坏 review 维度完整性 |
@@ -470,11 +364,14 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 | 失败 | 动作 |
 |------|------|
 | Gate-1 拿不到 URL | 重试阶段 1；gh 认证问题先 `gh auth login` |
+| Gate-1a static gate FAIL | 按失败步骤（typecheck 三处 / lint）派对应工种 worker 修复后重跑 |
 | Gate-1.5 fail 超 3 轮 | 上报用户决策（不自动继续，不进阶段 2） |
 | Gate-1.6 增量覆盖率 <80% | 派测试专项 subagent 按 coverage.json uncovered_files 补测试 → 重跑（上限 3 轮；超限上报用户） |
 | Gate-2 `terminated=needs-redesign` | 结构性问题，上报用户决策（不自动重试） |
 | Gate-2 `terminated=stuck` | 看 aggregated.md 判断是 reviewer 误报还是真问题；误报可人工 ack 后进阶段 3，真问题上报用户 |
-| Gate-3a pre-merge FAIL | 按 `failed_step` 重派 worker 修复后重跑 |
+| 3a coverage-gate exit 1 | 注入 `--test-result FAIL` 写 marker 后拦截：增量不足派测试 subagent 补测试、测试失败按失败用例派 worker；从 3a ① 重跑 |
+| 3a pre-merge exit 2（coverage.json 缺失 / base 不一致） | 工具错误：重跑 3a ① coverage-gate 后再 ③ |
+| Gate-3a pre-merge FAIL | 按 `failed_step` 重派 worker 修复后从 3a ① 重跑 |
 | 阶段 3b push 冲突 | `git fetch && git rebase` 后重试；重写历史后重审未解决的 review 线程 |
 
 ## 本 skill 目录结构
@@ -482,23 +379,9 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 ```
 .agents/skills/pr-cr-fix/
 ├── SKILL.md              # 本文件
-├── agents/               # review agent 定义（不全局暴露，仅本 skill 内部引用）
-│   ├── review-arch-boundary.md
-│   ├── review-business-logic.md
-│   ├── review-type-safety.md
-│   ├── review-electron-build.md
-│   ├── review-test-coverage.md
-│   ├── review-extension-api.md
-│   ├── review-monorepo-impact.md
-│   ├── review-data-governance.md
-│   └── review-aggregator.md
-├── references/            # 调研参考（git 跟踪）
-│   └── coverage-industry-research.md   # 增量覆盖率门禁业界调研（vitest 原生能力/diff-cover/阈值惯例/采纳决策）
-└── scripts/              # 校验脚本
-    ├── metrics-gate.py   # 阶段 1.5 度量门禁（fallow audit 包装 + 显式双轨判定 + 真实覆盖率分流）
-    ├── coverage-gate.py  # 阶段 1.6 增量覆盖率门禁（vitest --coverage lcov × git diff，≥80%；产出 files 节供 metrics-gate 消费）
-    ├── validate-skill-yaml.py
-    └── validate-extensions-yaml.py
+├── agents/               # 8 个 review agent 定义 review-<维度>.md（不全局暴露；review-extension-api.md 含 Pi Extension 契约 checklist）
+├── references/           # 触发场景才 read：coverage-industry-research.md（覆盖率调研）/ cot-leakage.md（CoT Leakage）/ mutation-testing.md（Mutation 深检）
+└── scripts/              # metrics-gate.py / coverage-gate.py（含 --extra-packages）/ validate-skill-yaml.py / validate-extensions-yaml.py
 ```
 
 ---

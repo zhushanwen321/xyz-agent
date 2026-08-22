@@ -2,11 +2,29 @@
 
 > 本文档整合自 xyz-pi-extensions 项目的 CLAUDE.md，收录 pi extension 开发的**强约束和关键约定**。
 > 完整开发指南（规范红线 + 进阶模式范例）见 [development-guide.md](./development-guide.md)。
+> 日志现行口径（三层通道）见 [logging-conventions.md](./logging-conventions.md)——development-guide §10 的旧 console 口径已由其收敛。
 > TUI 渲染细节见 [pi-tui-development-guide.md](./pi-tui-development-guide.md)。
 
-本文档只收录「违反必出 bug」或「[MANDATORY]」级别的约束。通用工程规范（TS 禁 any、错误处理等）不在此重复，见项目根 [AGENTS.md](../../AGENTS.md)。
+本文档只收录「违反必出 bug」或「[MANDATORY]」级别的约束。通用工程规范（TS 禁 any 等）不在此重复，见项目根 [AGENTS.md](../../AGENTS.md)。本文档所载约束登记于 [docs/constraints.json](../constraints.json)（架构约束登记 SSOT）。
 
 ---
+
+## 目录分组与 role 字段 [MANDATORY]
+
+`extensions/` 下的包按**职责**分两组，目录位置、package.json 元数据、builtin 清单三者必须一致（`scripts/check-extension-dependencies.mjs` 校验，preflight/CI 拦截）：
+
+| 分组 | 目录 | role 字段值 | 语义 | 与 mandatory 清单关系 |
+|------|------|------------|------|---------------------|
+| xyz 集成 | `extensions/taiji/` | `"taiji"` | 契约两端在 xyz-agent 体系内，离开 xyz-agent 无功能（如 msg-id 映射、system prompt 注入） | **必须在** `mandatory-extensions.json`（随应用打包） |
+| 独立通用 | `extensions/universal/` | `"universal"` | 功能自足，独立 pi 用户可单独安装（如 goal、todo、structured-output） | 可在（builtin 打包的通用工具）可不在（npm 独立发布） |
+
+约束：
+
+1. 每个包的 `package.json` 必须声明 `"xyz-agent": { "role": "taiji" | "universal" }`，且与所在分组目录一致；
+2. `extensions/` 一层禁止放 extension 包（`shared/` 共享库与 `tsconfig.json` 除外）；
+3. 判断标准是「离开 xyz-agent 是否仍有功能」，不是「是否随应用打包」——goal/todo 等通用工具虽在 mandatory 清单随应用打包，但归 `universal/`；
+4. 新建/移动包时同步更新：分组目录 + role 字段 + `extension-dependencies.json`（含 directory 路径）+ 根 AGENTS.md 分组列举；
+5. **新增分组**（新开 `extensions/<group>/` 目录）时需同步登记分组名的代码点：`pnpm-workspace.yaml` glob、`scripts/check-extension-dependencies.mjs` 的 `GROUPS`、`scripts/bundle-extensions.mjs` 的 `srcDirFor`、`.agents/skills/dev-link/dev-link-lib.sh`（skill 自包含，无法共享常量）。其余消费点已 group 无关（runtime `extension-resolver.ts` 扫一层目录、pre-commit 2c/2d 模式不列组名），漏改时结构守卫会拦截 role 不一致。
 
 ## 运行环境
 
@@ -53,7 +71,7 @@
 
 参数用 typebox `Type.Object()` + `StringEnum()` 定义 schema。
 
-**多 action tool 标准范式**（参考 `extensions/scheduler/src/tool.ts` 的 `ScheduleControlParams`）：
+**多 action tool 标准范式**（参考 `extensions/universal/scheduler/src/tool.ts` 的 `ScheduleControlParams`）：
 
 1. **运行时 schema**：扁平 `Type.Object`，`action` 字段用 `Type.Union([Type.Literal(...)])`（字段级，等价 enum，序列化为嵌套 anyOf 合规），各分支字段全部 `Type.Optional`；
 2. **类型层**：用 `Static<typeof Schema>` 派生扁平类型（单一来源，禁止手工另写 discriminated union——会导致类型与 schema 两处同步漂移，且双形陷阱检测需跨分支访问字段，严格 union 下编译报错）；
@@ -64,7 +82,7 @@
 
 - `execute` 返回 `{ content: [...], details: {...} }` 结构
 - `details` 是 renderResult 的数据来源，不要依赖 content 文本解析
-- 错误用 `throw new Error()`，不要返回 `{ content: [{ text: "错误: ..." }] }` 的**错误成功模式**（调用方无法区分成功与失败）
+- 错误处理分两层：内部实现函数可以 `throw`；`execute` 是 API 边界，**必须 catch 并返回 `{ isError: true }` + 错误消息**。错误消息用 `err.message`（不含堆栈），禁止把 `err.stack` 拼进 content（堆栈外泄到 LLM 上下文/持久化记录）。同时禁止 `{ content: [{ text: "错误: ..." }] }` 不带 `isError` 的**错误成功模式**（调用方无法区分成功与失败）
 
 ## TUI 渲染
 
@@ -103,7 +121,7 @@ streamSink: ctx.mode === "rpc"
 凡调用 `pi.on(...)`、`pi.registerTool(...)`、`pi.registerCommand(...)`、读 `ctx.*` 的代码：
 
 - **ExtensionHandler 签名是 `(event, ctx) => ...`（两个参数）**。`modelRegistry`/`cwd`/`ui`/`sessionManager` 在第二个参数 `ExtensionContext` 上，不在 event 上。核对时打开真实 SDK 的 `types.d.ts`
-- 新增/修改 SDK 调用必须有契约测试覆盖（模板：`extensions/subagent-workflow/src/execution/__tests__/sdk-contract.test.ts`）
+- 新增/修改 SDK 调用必须有契约测试覆盖（模板：`extensions/universal/subagent-workflow/src/execution/__tests__/sdk-contract.test.ts`）
 - `registerTool` 的 schema 必填字段在所有执行模式下都必须真的必填；条件必填用 Optional + 运行时校验，避免 schema 与描述矛盾
 
 > 本项目已将 `@earendil-works/pi-coding-agent@0.84.1` 作为根 devDependency 安装（真实 SDK 类型），不再使用类型桩。extensions 的 tsconfig 直接从 node_modules 解析 SDK 类型。
@@ -176,7 +194,7 @@ event handler（如 `tool_execution_end`）中注入消息**必须用 `pi.sendUs
   - 有磁盘配置文件 → 配置路径（getAgentDir 派生）+ schema + 默认值 + 配置示例
   - 无配置文件但有命令交互/复杂存储 → 使用方式 + 存储机制（不硬套配置 schema 模板）
 
-**范例**：`extensions/{rename-session,permission,model-switch,scheduler}/skills/*-ext-config/`
+**范例**：`extensions/universal/{rename-session,permission,model-switch,scheduler}/skills/*-ext-config/`
 
 ### 配置路径约定 [强制]
 

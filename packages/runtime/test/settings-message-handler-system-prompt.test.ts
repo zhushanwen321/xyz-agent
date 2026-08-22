@@ -54,6 +54,7 @@ function makeHandler() {
 
   const modelService: IModelService = {
     aggregateModels: vi.fn().mockReturnValue([]),
+    aggregateModelsWithScoped: vi.fn().mockReturnValue([]),
     switchModel: vi.fn().mockResolvedValue(undefined),
     setThinkingLevel: vi.fn().mockResolvedValue(undefined),
     discoverModelsFromApi: vi.fn().mockResolvedValue([]),
@@ -74,7 +75,7 @@ function makeHandler() {
     configService: configService as unknown as IConfigService,
     sessionService: {} as unknown as ISessionService,
     modelService,
-    authService: { login: vi.fn(), cancel: vi.fn(), hasOAuth: vi.fn() },
+    authService: { login: vi.fn(), cancel: vi.fn(), hasOAuth: vi.fn(), getCredential: vi.fn(), saveCredential: vi.fn(), logout: vi.fn() },
     skillRegistry: { getGlobalSkills: () => [], getProjectSkills: vi.fn().mockResolvedValue([]) } as unknown as SettingsHandlerContext['skillRegistry'],
     projectRoot: '/proj',
     nextPushId: vi.fn().mockReturnValue('push-1'),

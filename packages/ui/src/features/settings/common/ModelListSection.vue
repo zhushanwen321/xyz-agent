@@ -7,7 +7,7 @@
   -->
   <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
     <div class="flex items-center justify-between border-b border-border px-5 py-3">
-      <span class="text-[13px] font-semibold text-neutral-fg">{{ t('settings.providerEdit.modelList') }}</span>
+      <span class="text-[13px] font-semibold text-neutral-fg">{{ t(props.titleKey) }}</span>
       <Button variant="ghost" class="h-auto p-0 text-[11px] text-accent hover:bg-transparent hover:underline" @click="$emit('update:showAddModel', !showAddModel)">
         {{ showAddModel ? t('settings.providerEdit.collapse') : t('settings.providerEdit.manualAdd') }}
       </Button>
@@ -87,7 +87,15 @@
       >
         <!-- 横向行（原列内容）-->
         <div class="flex items-center px-5 py-2 text-[12px]">
-          <span class="flex-1 truncate font-mono text-neutral-fg">{{ m.id }}</span>
+          <span class="flex flex-1 min-w-0 items-center gap-1.5">
+            <span class="truncate font-mono text-neutral-fg">{{ m.id }}</span>
+            <!-- 来源徽章（B-2：catalog 复用时标「自定义」；custom 不传不渲染） -->
+            <span
+              v-if="props.badgeText"
+              data-testid="model-badge-custom"
+              class="shrink-0 rounded-sm bg-surface-hover px-1.5 py-0.5 text-[9px] font-medium text-neutral-mid"
+            >{{ props.badgeText }}</span>
+          </span>
           <!-- 输入类型 icon 按钮 -->
           <div class="flex w-14 items-center justify-center gap-1">
             <Button
@@ -188,10 +196,21 @@ import {
  * newModel / localModels / CRUD 方法经 provide('modelListDeps') 注入（父组件 useProviderEdit 单例）。
  * 用 inject 而非 prop 传 newModel：v-model 改 newModel.name 会触发 vue/no-mutating-props lint；
  * inject 拿到的是同一 reactive 引用，运行时改同一对象，lint 不报。
+ *
+ * B-2 混合列表复用：catalog provider 复用本组件编辑 override 条目——titleKey 换区标题
+ * （「自定义模型」）、badgeText 在每行 id 旁渲染来源徽章（「自定义」），custom provider
+ * 不传时行为与原先完全一致。
  */
-defineProps<{
+const props = withDefaults(defineProps<{
   showAddModel: boolean
-}>()
+  /** 区标题 i18n key（B-2：catalog 复用时传「自定义模型」；缺省 = 模型清单） */
+  titleKey?: string
+  /** 行级来源徽章文案（B-2：catalog 复用时传「自定义」；缺省不渲染徽章） */
+  badgeText?: string
+}>(), {
+  titleKey: 'settings.providerEdit.modelList',
+  badgeText: '',
+})
 
 defineEmits<{
   'update:showAddModel': [value: boolean]

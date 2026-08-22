@@ -42,8 +42,8 @@ describe('isLeakedPackage', () => {
   })
 
   it('TC2: 泄漏路径正确识别', () => {
-    expect(isLeakedPackage('../../../.pi/agent/extensions/pending-notifications')).toBe(true)
-    expect(isLeakedPackage('../../../.pi/agent/extensions/goal')).toBe(true)
+    expect(isLeakedPackage('../../../.pi/agent/extensions/universal/pending-notifications')).toBe(true)
+    expect(isLeakedPackage('../../../.pi/agent/extensions/universal/goal')).toBe(true)
   })
 
   it('TC3: 指向非 pi 全局的相对路径不误杀', () => {

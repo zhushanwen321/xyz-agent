@@ -1,5 +1,6 @@
 packages:
   - 'packages/*'
   - 'apps/*'
-  - 'extensions/*'
+  - 'extensions/taiji/*'
+  - 'extensions/universal/*'
   - 'extensions/shared/*'

@@ -1,7 +1,7 @@
 /**
- * @zhushanwen/pi-system-prompt（extensions/system-prompt/）before_agent_start hook 单测。
+ * @zhushanwen/pi-system-prompt（extensions/taiji/system-prompt/）before_agent_start hook 单测。
  *
- * 动态 import extensions/system-prompt/index.ts（npm 包源码），验证 hook 行为：
+ * 动态 import extensions/taiji/system-prompt/index.ts（npm 包源码），验证 hook 行为：
  * - append 开启且 prompt 非空 → 追加到 event.systemPrompt
  * - append 关闭 / 配置缺失 / 配置损坏 / append.prompt 空白 → 返回 undefined
  * - 支持 XYZ_AGENT_DATA_DIR 与 PI_CODING_AGENT_DIR 回退两种目录解析
@@ -20,7 +20,7 @@ interface SystemPromptConfig {
   append: { enabled: boolean; prompt: string }
 }
 
-const PLUGIN_PATH = new URL('../../../extensions/system-prompt/index.ts', import.meta.url).pathname
+const PLUGIN_PATH = new URL('../../../extensions/taiji/system-prompt/index.ts', import.meta.url).pathname
 
 function writeConfig(dataDir: string, config: SystemPromptConfig): void {
   writeFileSync(join(dataDir, 'system-prompt.json'), JSON.stringify(config), 'utf-8')

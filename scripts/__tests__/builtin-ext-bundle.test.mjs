@@ -34,7 +34,7 @@ describe("builtin-ext-bundle (wave:builtin-ext-bundle)", () => {
 		expect(existsSync(idx)).toBe(true);
 		const src = readFileSync(idx, "utf8");
 		// countActiveFromEntries 是 goal 从 @zhushanwen/pi-pending-notifications 的 value import
-		// （extensions/goal/src/adapters/event-handlers/agent-end.ts），esbuild 应 inline。
+		// （extensions/universal/goal/src/adapters/event-handlers/agent-end.ts），esbuild 应 inline。
 		// 这正是本 bug 的根因形态（workspace value import 旧机制拷不到），bundle 从结构上消除。
 		expect(src, "countActiveFromEntries 被 inline").toMatch(/countActiveFromEntries/);
 		// 反证：pi-pending-notifications 不应作为 external import 残留

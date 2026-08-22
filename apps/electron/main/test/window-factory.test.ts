@@ -6,7 +6,7 @@
  * readFileSync 模式）：断言配置常量存在且数值正确，防止回填被后续改动静默退化。
  *
  * 覆盖：
- *  - title 'TaiJi'（打包窗口标题）
+ *  - title：prod 'TaiJi' / dev 'TaiJi dev'（dev 实例区分，见 window-factory createWindow）
  *  - mac titleBarStyle 'hidden' + trafficLightPosition {x:8,y:8}（红黄绿原生左上角，
  *    圆点中线 ≈y15.75，与 AppNavControls / PanelHeader 22px 行共线对齐——刻意调整形态，非 v6 demo）
  *  - win/linux frame:false（renderer TrafficLight 自绘圆点 mimic mac）
@@ -20,8 +20,8 @@ const sourcePath = new URL('../window/window-factory.ts', import.meta.url)
 const source = readFileSync(sourcePath, 'utf-8')
 
 describe('window-factory: D-6 窗口级拓扑配置', () => {
-  it('title 为 TaiJi', () => {
-    expect(source).toContain("title: 'TaiJi'")
+  it('title：prod 为 TaiJi，dev 为 TaiJi dev（dev 实例区分）', () => {
+    expect(source).toContain("title: deps.isDev ? 'TaiJi dev' : 'TaiJi'")
   })
 
   it('mac：titleBarStyle hidden + trafficLightPosition {x:8,y:8}（红黄绿与 22px header 行共线）', () => {

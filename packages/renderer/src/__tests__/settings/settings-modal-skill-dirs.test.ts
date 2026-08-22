@@ -49,7 +49,7 @@ vi.mock('@/lib/ipc', () => ({
 function makeTransport(): SettingsTransport {
   const noop = (): void => {}
   return {
-    listProviders: vi.fn(async () => []),
+    listProviders: vi.fn(async () => ({ providers: [] })),
     listModels: vi.fn(async () => []),
     setProvider: vi.fn(async () => undefined),
     discoverModels: vi.fn(async () => ({ success: true, models: [] })),

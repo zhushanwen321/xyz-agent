@@ -410,7 +410,7 @@ describe('extractWorkflowsFromSessionFile', () => {
   //   腿对新 run 静默丢全部 calls sessionFile、workflow overview 对新 run 返 null
   it('三源一致性：runtime SNAPSHOT_VERSION 副本 + session-reader 两处版本判定与 extension jsonl-run-store.ts 同步', () => {
     const extSrc = readFileSync(
-      join(__dirname, '..', '..', '..', 'extensions', 'subagent-workflow', 'src', 'orchestration', 'jsonl-run-store.ts'),
+      join(__dirname, '..', '..', '..', 'extensions', 'universal', 'subagent-workflow', 'src', 'orchestration', 'jsonl-run-store.ts'),
       'utf-8',
     )
     const extMatch = extSrc.match(/export const SNAPSHOT_VERSION = "([^"]+)"/)
@@ -428,7 +428,7 @@ describe('extractWorkflowsFromSessionFile', () => {
 
     // 源 3a：session-reader discovery/workflows.ts 的 isNew 判定接受当前版本
     const srDiscoverySrc = readFileSync(
-      join(__dirname, '..', '..', '..', 'extensions', 'session-reader', 'src', 'discovery', 'workflows.ts'),
+      join(__dirname, '..', '..', '..', 'extensions', 'universal', 'session-reader', 'src', 'discovery', 'workflows.ts'),
       'utf-8',
     )
     const isNewLine = srDiscoverySrc.match(/const isNew = s\.v === '([^']+)[^\n]*/)
@@ -443,7 +443,7 @@ describe('extractWorkflowsFromSessionFile', () => {
 
     // 源 3b：session-reader core/workflow.ts 的 NEW 分支判定接受当前版本
     const srCoreSrc = readFileSync(
-      join(__dirname, '..', '..', '..', 'extensions', 'session-reader', 'src', 'core', 'workflow.ts'),
+      join(__dirname, '..', '..', '..', 'extensions', 'universal', 'session-reader', 'src', 'core', 'workflow.ts'),
       'utf-8',
     )
     const newBranchLine = srCoreSrc.match(/if \(v === '([^']+)[^\n]*/)

@@ -12,6 +12,9 @@ name: review-type-safety
 task prompt 中必须包含：
 - `output`：审查报告输出路径（绝对路径）
 
+
+阶段 2 前置产物 `<repo>/.review/constraints.md`（`node scripts/select-constraints.mjs --base main` 产出，存在时必须消费）：命中约束清单中 dimensions 含本维度（type-safety）的条目必须逐条核对——enforcement 为 review 的条目是本维度重点；需要完整表述时 Read「权威源」列指向的文档原文（清单中的 summary 仅导航）。
+
 ## 执行步骤
 
 1. **获取变更范围**：`git diff main...HEAD --stat` + `git diff main...HEAD`。
@@ -25,12 +28,12 @@ task prompt 中必须包含：
 4. **类型守卫**：
    - `(entry as any).customType` 模式应替换为类型守卫函数
    - 类型断言是否安全（as unknown as X 是坏味道）
-5. **运行类型检查**（xyz-agent 是 multi-workspace，根目录无统一 typecheck script）。各 workspace 对应的 npm package name：
+5. **类型检查：读 static gate 输出，不重复执行 tsc**。流程阶段 1.1 的 `bash scripts/pr-pre-merge.sh --skip-tests` 已跑三处 typecheck（extensions + runtime + renderer），本 agent 不再重复执行——直接读其输出，定位 **diff 引入**的类型错误，标注 TS 错误码（TS7006 / TS2345 等）；存量错误（非本次 diff 引入）标 INFO。若运行环境未跑过阶段 1.1（本 agent 被独立调用），退回自行执行：xyz-agent 是 multi-workspace，根目录无统一 typecheck script，各 workspace 对应的 npm package name：
    - `packages/renderer` → `@xyz-agent/frontend`（`vue-tsc --noEmit`）
    - `packages/runtime` → `@xyz-agent/runtime`（`tsc --noEmit`）
    - `packages/shared` → `@xyz-agent/shared`（`tsc --noEmit`）
    - main/preload 不在 workspaces 里（随 electron 构建），无需独立 typecheck
-   - 在各 workspace 目录跑 `pnpm run typecheck`（或 `npx tsc --noEmit`）。报告**新增**的类型错误（diff 引入的），标注 TS 错误码（TS7006 / TS2345 等）
+   - 在各 workspace 目录跑 `pnpm run typecheck`（或 `npx tsc --noEmit`）
 6. **PiXxx 类型分层约束（runtime-three-layer-design.md）**：
    - runtime 内部 `Pi*` 协议类型（PiMessage/PiModelDefinition/PiHistoryMessage 等）应仅出现在 `infra/` 层（设计目标：`infra/pi/pi-protocol.ts`）
    - `services/` 和 `transport/` **不应出现** `Pi*` 类型——应经 ports 接口（IPiEngine/IConfigStore 等）或内部类型（Message/Provider/Session，来自 shared 或 services/types.ts）

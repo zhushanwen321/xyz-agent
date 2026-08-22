@@ -162,9 +162,13 @@ describe('pi-provider-store — models.json', () => {
       expect(getProviderConfig('anthropic')?.models?.map(m => m.id)).toEqual(['claude-new'])
     })
 
-    it('fixes defaultModel when provider removed has no models', () => {
-      setDefaultModel('anthropic' as ProviderId, 'claude-sonnet')
-      upsertProvider('anthropic', { models: [] })
+    it('非 catalog provider 显式 models:[] 清空模型 → default 删除且无回退（无其他有 models 的 provider）', () => {
+      // 用非 catalog id：catalog provider 的 models:[] 只代表清 override，builtin 模型仍有效
+      //（见下方 catalog union 用例），「清空 = provider 无模型」语义只对非 catalog provider 成立
+      writeModels({ providers: { 'my-custom-llm': { apiKey: 'sk-x', models: [{ id: 'm1' }] } } })
+      refreshModels()
+      setDefaultModel('my-custom-llm' as ProviderId, 'm1')
+      upsertProvider('my-custom-llm', { apiKey: 'sk-x', models: [] })
       // defaultModel 失效应被修复
       const def = getDefaultModel()
       expect(def).toBeNull() // 无其他有 model 的 provider
@@ -191,23 +195,68 @@ describe('pi-provider-store — models.json', () => {
       expect(settings.defaultModel).toBe('claude-sonnet')
     })
 
-    it('显式 models: [] 删除默认并回退到第一个有 models 的 provider', () => {
+    it('非 catalog provider 显式 models: [] 删除默认并回退到第一个有 models 的 provider', () => {
       writeModels({
         providers: {
-          anthropic: { apiKey: 'sk-test' },
+          'my-custom-llm': { apiKey: 'sk-x', models: [{ id: 'm1' }] },
           openai: { models: [{ id: 'gpt-4' }] },
         },
       })
       refreshModels()
-      setDefaultModel('anthropic' as ProviderId, 'claude-sonnet')
+      setDefaultModel('my-custom-llm' as ProviderId, 'm1')
 
-      const outcome = upsertProvider('anthropic', { name: 'Anthropic', apiKey: 'sk-test-2', models: [] })
+      const outcome = upsertProvider('my-custom-llm', { name: 'Custom', apiKey: 'sk-x-2', models: [] })
 
       // 显式空数组 ≠ undefined：仍走默认校验 → 删除失效默认 → 回退第一个有 models 的 provider
       expect(outcome).toEqual({ newDefault: { provider: 'openai', modelId: 'gpt-4' } })
       const settings = readSettings()
       expect(settings.defaultProvider).toBe('openai')
       expect(settings.defaultModel).toBe('gpt-4')
+    })
+
+    it('catalog provider 保存 override-only 条目（B-2）：builtin 默认模型仍是有效 default，不被改写/删除', () => {
+      // round 1 review must-fix #1：B-2 前端保存 catalog provider 只回传 override 条目
+      //（无 override 时为 []），builtin 模型不在回传列表——default 校验须以
+      // 「override ∪ builtin catalog」判定有效性，否则 builtin 默认模型被静默重置。
+      // anthropic 是 catalog provider（builtin-providers.json，含 claude-sonnet-4-6）。
+      writeModels({
+        providers: {
+          anthropic: { apiKey: 'sk-test' }, // catalog provider 条目：无 override models
+          openai: { models: [{ id: 'gpt-4' }] },
+        },
+      })
+      refreshModels()
+      // 默认模型取 builtin 列表内的模型（models.json 条目中不存在）
+      setDefaultModel('anthropic' as ProviderId, 'claude-sonnet-4-6')
+
+      // 场景 ②：保存含 override 条目（用户新加自定义模型）→ defaultModel 不被改为 override 首项
+      const outcomeA = upsertProvider('anthropic', { apiKey: 'sk-test', models: [{ id: 'my-override-model' }] })
+      expect(outcomeA).toEqual({ newDefault: { provider: 'anthropic', modelId: 'claude-sonnet-4-6' } })
+      let settings = readSettings()
+      expect(settings.defaultProvider).toBe('anthropic')
+      expect(settings.defaultModel).toBe('claude-sonnet-4-6')
+
+      // 场景 ①：保存无 override（models: []）→ 不删除 default（builtin 模型仍有效）
+      const outcomeB = upsertProvider('anthropic', { apiKey: 'sk-test', models: [] })
+      expect(outcomeB).toEqual({ newDefault: { provider: 'anthropic', modelId: 'claude-sonnet-4-6' } })
+      settings = readSettings()
+      expect(settings.defaultProvider).toBe('anthropic')
+      expect(settings.defaultModel).toBe('claude-sonnet-4-6')
+    })
+
+    it('catalog provider 默认模型真失效（不在 override ∪ builtin 并集）→ 仍回退到有效列表首项', () => {
+      writeModels({
+        providers: { anthropic: { apiKey: 'sk-test', models: [{ id: 'my-override-model' }] } },
+      })
+      refreshModels()
+      // defaultModel 既不在 override 也不在 builtin anthropic 模型列表 → 应回退
+      setDefaultModel('anthropic' as ProviderId, 'claude-sonnet')
+
+      const outcome = upsertProvider('anthropic', { apiKey: 'sk-test', models: [{ id: 'my-override-model' }] })
+
+      expect(outcome).toEqual({ newDefault: { provider: 'anthropic', modelId: 'my-override-model' } })
+      const settings = readSettings()
+      expect(settings.defaultModel).toBe('my-override-model')
     })
   })
 

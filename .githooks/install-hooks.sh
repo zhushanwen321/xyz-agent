@@ -206,7 +206,12 @@ fi
 #    仅在 staged extensions/ 文件变更时触发，与 2b 共用 SKIP_EXTENSION_LINT 跳过开关。
 # ============================================================================
 
-EXTENSION_PKG_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/[^/]+/package\.json$" || true)
+# [HISTORICAL] 原一层模式 ^extensions/[^/]+/package\.json$ 在 2026-08-22 目录分组
+# （taiji/universal）后恒空匹配——纯 package.json 变更（版本 bump / pi manifest / role
+# 字段）静默跳过本段检查。改为结构无关的两段式：任意分组两段深 + 排除 shared/
+# （共享库无 pi manifest，通配两层会误报）——新增分组时本模式零维护，不再依赖
+# 与目录结构同步的组名清单（清单式写法正是当年恒空匹配 bug 的形态）。
+EXTENSION_PKG_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/[^/]+/[^/]+/package\.json$" | grep -v "^extensions/shared/" || true)
 
 if [ -n "$EXTENSION_FILES" ] || [ -n "$EXTENSION_PKG_FILES" ]; then
     print_section "[pi extensions manifest & convention 检查]"
@@ -370,6 +375,29 @@ print('OK' if matched else 'MISSING')
         fi
     else
         echo -e "${YELLOW}[SKIP] extensions manifest & convention 检查已跳过${NC}"
+    fi
+fi
+
+# ============================================================================
+# 2d. extension 结构一致性检查（分组目录 / role 字段 / 依赖台账 / 一层路径残留）
+#     scripts/check-extension-dependencies.mjs：①目录 ↔ xyz-agent.role 一致
+#     ②taiji/ ⊆ mandatory 清单 ③extensions/ 一层禁放包 ④extension-dependencies.json
+#     双向一致 ⑤活文件一层路径残留。零第三方依赖，实测 ~0.3s（~2500 文件全仓扫描，
+#     随仓库线性增长）。CI 侧同一脚本由 preflight-check.sh 调用，此处提前到提交时
+#     拦截。复用 SKIP_EXTENSION_LINT 开关（不新增逃生口）。
+# ============================================================================
+
+if echo "$STAGED_FILES" | grep -qE "^extensions/|^extension-dependencies\.json$|^packages/shared/src/mandatory-extensions\.json$"; then
+    print_section "[extension 结构一致性检查]"
+
+    if [ "$SKIP_EXTENSION_LINT" != "1" ]; then
+        if ! node scripts/check-extension-dependencies.mjs; then
+            echo -e "${RED}[ERROR] extension 结构一致性检查失败，按上方 ✗ 明细修复后重试${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${YELLOW}[SKIP] extension 结构检查已跳过${NC}"
     fi
 fi
 
@@ -702,6 +730,91 @@ else
 fi
 
 # ============================================================================
+# ============================================================================
+# 架构约束登记检查（docs/constraints.json SSOT 的 machine enforcement 前置拦截）
+#   - check_pi_type_leak.py         C-comm-02：services/transport 禁 PiXxx 类型（allowlist=存量待治理）
+#   - check_services_infra_import.py C-comm-03：services 禁白名单外 infra value import
+#   - check_shared_node_builtin.py  C-state-05：shared 禁 node: 内置 import
+#   - check_runtime_meta_url.py     C-build-01：runtime 禁无 guard 的 import.meta.url / globalThis.__dirname
+#   - check_staged_forbidden_lines.py C-ext-07/C-proc-04：staged 新增行禁 extensions console.warn/error
+#                                    与无说明的 eslint-disable（行级增量，存量不拦）
+#   注：与 R1 同例不设独立跳过开关，仅受 SKIP_ALL_CHECKS 总闸管辖。
+# ============================================================================
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    print_section "[架构约束登记检查]"
+
+    for CONSTRAINT_CHECKER in check_pi_type_leak.py check_services_infra_import.py check_shared_node_builtin.py check_runtime_meta_url.py check_staged_forbidden_lines.py; do
+        CHECKER_PATH=".githooks/$CONSTRAINT_CHECKER"
+        if [ ! -f "$CHECKER_PATH" ]; then
+            echo -e "${YELLOW}[WARN] 找不到检查脚本 $CHECKER_PATH${NC}"
+            continue
+        fi
+        echo -e "${BLUE}[INFO] 运行 $CONSTRAINT_CHECKER ...${NC}"
+        python3 "$CHECKER_PATH"
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] $CONSTRAINT_CHECKER 检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 约束登记见 docs/constraints.json / docs/constraints.md（机器 SSOT + 人读视图）${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    done
+    echo -e "${GREEN}[OK] 架构约束登记检查通过${NC}"
+else
+    echo -e "${YELLOW}[SKIP] 架构约束登记检查已跳过${NC}"
+fi
+
+# ============================================================================
+# 约束登记 SSOT 一致性（constraints.json 改动时触发）
+#   改 docs/constraints.json 后必须重跑 node scripts/render-constraints.mjs
+#   生成 docs/constraints.md，防止 json/md 双份漂移。
+# ============================================================================
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    if echo "$STAGED_FILES" | grep -q "^docs/constraints\.json$"; then
+        echo -e "${BLUE}[INFO] constraints.json 有变更，校验 md 同步...${NC}"
+        node scripts/render-constraints.mjs --check
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] docs/constraints.md 与 constraints.json 不同步${NC}"
+            echo -e "${YELLOW}[INFO] 运行 node scripts/render-constraints.mjs 重新生成后提交${NC}"
+            exit 1
+        fi
+    fi
+fi
+
+# ============================================================================
+# CSP 能力一致性检查（源码敏感 API vs index.html CSP 指令）
+# ============================================================================
+
+CSP_COMPAT_CHECKER=".githooks/check_csp_compatibility.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSP_COMPAT_CHECK" != "1" ]; then
+    echo -e "${BLUE}[INFO] 运行 CSP 能力一致性检查...${NC}"
+
+    if [ ! -f "$CSP_COMPAT_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $CSP_COMPAT_CHECKER${NC}"
+    else
+        python3 "$CSP_COMPAT_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] CSP 能力一致性检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 源码出现 eval/WebAssembly 用法但 CSP script-src 'self' 未放行——运行时会抛 CompileError${NC}"
+            echo -e "${YELLOW}[INFO] 曾因此致全部 markdown 渲染静默降级纯文本（2026-08 v0.9.3+ 事故），改用无该能力的实现或显式改 CSP + 白名单${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] CSP 能力一致性检查已跳过${NC}"
+fi
+
+# ============================================================================
 # Runtime Bundle 验证（runtime 源码有变更时触发）
 # ============================================================================
 
@@ -939,6 +1052,7 @@ echo -e "  ${GREEN}[+]${NC} 前端 ESLint 代码检查"
 echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
 echo -e "  ${GREEN}[+]${NC} pi extensions ESLint + tsc 类型检查（extensions/ 目录）"
 echo -e "  ${GREEN}[+]${NC} pi extensions manifest & convention 检查（禁废弃 namespace / 禁 console.log / pi manifest 字段）"
+echo -e "  ${GREEN}[+]${NC} extension 结构一致性检查（分组/role/依赖台账/一层路径残留）"
 echo -e "  ${GREEN}[+]${NC} Vue 组件规范检查（禁止原生 HTML、Emoji、自定义 CSS）"
 echo -e "  ${GREEN}[+]${NC} Sidecar session 隔离检查"
 echo -e "  ${GREEN}[+]${NC} CSS tokens 检查"
@@ -949,6 +1063,7 @@ echo -e "  ${GREEN}[+]${NC} R1 pi session JSONL 直写检查（data-source-gover
 echo -e "  ${GREEN}[+]${NC} 目录规范检查（禁止 demos/impeccable + 外部 symlink）"
 echo -e "  ${GREEN}[+]${NC} ws-client send 直调检查（D3 统一门面）"
 echo -e "  ${GREEN}[+]${NC} runtime services 循环依赖检查（D6c 防护）"
+echo -e "  ${GREEN}[+]${NC} CSP 能力一致性检查（源码 eval/WebAssembly vs index.html CSP 指令）"
 echo -e "  ${GREEN}[+]${NC} Runtime Bundle 验证（依赖打包 + CJS 兼容 + 健康检查）"
 echo -e "  ${GREEN}[+]${NC} AC7 extension-host 边界检查（core 变更时触发，禁 domain/stores import）"
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"

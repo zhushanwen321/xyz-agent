@@ -45,7 +45,7 @@ dl_resolve_short_name() {
 	fi
 }
 
-# ── 构建映射：一次 node 扫描 extensions/ + extensions/shared/ ────────
+# ── 构建映射：一次 node 扫描 extensions/{taiji,universal}/ + extensions/shared/ ──
 # 输出行格式：short|npm_name|src_dir|is_extension（is_extension = package.json 有 pi.extensions）
 dl_build_mapping() {
 	dl_git_root || return 1
@@ -54,7 +54,7 @@ dl_build_mapping() {
 		const fs = require("fs"), path = require("path");
 		const base = process.argv[1];
 		const out = [];
-		for (const sub of ["", "shared/"]) {
+		for (const sub of ["taiji/", "universal/", "shared/"]) {
 			const dir = path.join(base, sub);
 			if (!fs.existsSync(dir)) continue;
 			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

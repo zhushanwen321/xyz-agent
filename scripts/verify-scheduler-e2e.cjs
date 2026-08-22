@@ -4,7 +4,7 @@
  *
  * 设计依据：.xyz-harness/2026-08-12-scheduler-session-scope/design.md §4 S1-S17 + §5 V1-V5。
  *
- * 本 wave 是端到端验证 wave，不写产品代码。脚本 spawn 真实 pi CLI（加载 extensions/scheduler），
+ * 本 wave 是端到端验证 wave，不写产品代码。脚本 spawn 真实 pi CLI（加载 extensions/universal/scheduler），
  * 经 RPC stdin/stdout 驱动 LLM 调用 schedule/schedule_control 工具，断言 design 契约：
  *   - customType='pi-scheduler:task' entry（op ∈ upsert/advance/toggle/delete）
  *   - once 回显仅 1 条 run 行、不含 "Next 5 runs:"；recurring 含 5 条
@@ -72,7 +72,7 @@ function locatePiBinary() {
 
 /**
  * importer.ts getLegacyStorePath 的 CommonJS 端口（R-cleanup 用，推导需清理的路径）。
- * 推导逻辑必须与 extensions/scheduler/src/importer.ts 完全一致。
+ * 推导逻辑必须与 extensions/universal/scheduler/src/importer.ts 完全一致。
  */
 function getLegacyStorePath(cwd) {
   const home = os.homedir()
