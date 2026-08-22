@@ -29,6 +29,10 @@ export interface ScannedSessionMeta {
   launchPresetId?: string
   /** 归属 project id（从 .project.json sidecar 读，D14 语义修正 2026-08-04）。 */
   projectId?: string
+  /** session 来源标记（从 .agent.json sidecar 读，agent-managed-session，与 infra/pi/session-file-utils 版本对齐）。 */
+  spawnSource?: string
+  /** 父 agent session id（从 .agent.json sidecar 读，agent-managed-session，与 infra/pi/session-file-utils 版本对齐）。 */
+  parentAgentSessionId?: string
 }
 
 /** session 终态类型（W4，ADR 0042）。与 infra/pi/session-file-utils 的 SessionOutcome 结构对齐。 */

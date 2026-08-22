@@ -96,11 +96,13 @@ export interface SessionSummary {
   launchPresetId?: string
   /**
    * 发起来源：'user' = 用户手动创建（默认），'agent' = agent 通过 session-manager 创建。
+   * 运行期为内存态（handler 注入），重启后从 .agent.json sidecar 恢复。
    * 用于 session-manager list 过滤和前端展示区分。
    */
   spawnSource?: 'user' | 'agent'
   /**
-   * 父 agent session id。spawnSource='agent' 时由创建方传入，标识发起创建的 agent session。
+   * 父 agent session id。spawnSource='agent' 时由 handler 服务端注入（interpreter 路由的
+   * sessionId），持久化于 .agent.json sidecar，重启后从 sidecar 恢复。
    * 用于 session-manager list 按 parentAgentSessionId 过滤子 session。
    */
   parentAgentSessionId?: string
