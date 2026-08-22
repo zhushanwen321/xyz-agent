@@ -1,46 +1,33 @@
 {
+  "unit": "scoped-model",
   "acceptance": [
     {
       "id": "R1",
-      "title": "集成回归（增量口径）：lint + 受影响测试集通过",
-      "type": "unit",
-      "core": false,
-      "command": "bash -c 'ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && pnpm run lint && bash scripts/cw-acceptance/affected-tests.sh 75f596069 --run'",
-      "scenario": "所有子 unit 代码合并后：全仓 lint（exit 0 即过，容忍存量 warning，改动文件零新增 error）+ affected-tests.sh 从基线 75f596069 推导受影响测试集（diff 中测试文件 ∪ 改动源文件同名测试，逐包串行，vitest 不自带 --reporter——gate 规则⑨）并跑通。脚本 stdout 末尾产出 'R1 PASS'/'R1 FAIL' 标记行（词边界匹配）。增量口径决策（2026-08-22 CPU 打满复盘）：cw 集成层不跑四包全量 vitest（runtime 3500+ 用例在并行环境下打满 CPU 且诱发 real-pi 时序翻转），全量回归由 PR pre-merge 管线（pr-cr-fix pre-push）兜底。XYZ_SKIP_REAL_PI 双轨机制在 affected-tests.sh 内已保留"
+      "type": "e2e-real",
+      "name": "增量回归守卫",
+      "command": "bash scripts/cw-acceptance/affected-tests.sh 75f596069 --run",
+      "timeout": 600,
+      "scenario": "从基线 commit 75f596069 推导受本次改动影响的测试文件集，逐包 vitest 执行。覆盖设计文档 §4 八场景的受影响子集（非全量——全量由 R2 承担）。affected-tests.sh 三个出口（cd 失败/基线不可达/汇总）均产出 R1 标记行或 exit≠0；lint 失败路径 bash -c && 链断 → 无标记行 + exit≠0 整体 fail。XYZ_SKIP_REAL_PI=1 双轨机制保留（real-pi 组时序不稳定，与本功能无关）。增量口径固有盲区（非同名映射的既有测试被破坏不进 R1 视野）由 R2 全量 + PR pre-merge 双兜底。",
+      "core": false
     },
     {
       "id": "R2",
-      "title": "端到端验收：真实 runtime WS 链路验证 S1-S8 + E9 单测",
       "type": "e2e-real",
-      "core": true,
+      "name": "全量端到端验收",
       "command": "bash scripts/cw-acceptance/sm-e2e.sh all",
-      "scenario": "真实 runtime WebSocket 链路端到端验收（all 模式循环 E1-E9，各子项输出 E-id 标记行，末尾汇总输出 'R2 PASS'/'R2 FAIL' 并对齐 exit code），覆盖设计文档 §4 全部场景：S1 固定模型集（E1，model.list 只含白名单模型）、S2 自定义顺序 + defaultModel 同步（E2，上移后顺序变化 + settings.json defaultModel 写入断言）、S3 OAuth catalog provider（E3，findValidDefaultModel 不冲掉 auth.json-only provider 默认模型）、S4 广播即时生效（E4，广播 model.list 响应式更新）、S5 新会话默认（E5，session.modelId = scoped[0]）、S6 toggle 共存（E6，provider 级 OFF 压过 scoped）、S7 清空恢复（E7，增量回归口径——受影响测试集 + smoke，与 R1 同源）、S8 残留清理（E8，删除 provider 后 scoped 自动清理）、E9 provider-extras-store 单测（vitest 直跑，覆盖 store 层读写/容错/并发）。脚本路径 scripts/cw-acceptance/sm-e2e.sh，与 sm-e2e 子 unit spec 互锁"
+      "timeout": 1800,
+      "scenario": "sm-e2e.sh all 聚合 E1-E9 全部验收探针，串行执行，末尾输出 R2 标记行 + exit 对齐。覆盖设计文档 §4 全部八个场景，E1-E9 与场景的实际映射如下：\n- S1 固定模型集 → E1：setScopedModels 写入后 model.list 广播只含白名单模型且保序\n- S2 自定义顺序 + 新会话默认 → E2：重排后广播顺序变化 + settings.json defaultModel 同步为 scoped[0]\n- S3 OAuth catalog provider 模型 + 默认模型持久化 → E3：auth.json-only catalog provider 模型可添加、显示、spawn 读回 default 不被 findValidDefaultModel 冲掉（含重启后 config.defaults 持久化）\n- S6 toggle 共存（前置 enabledModels 白名单模式）→ E4：toggle OFF 后 CUSTOM 模型从 model.list 消失但 scopedModels 条目保留，toggle ON 恢复显示\n- S7 清空恢复 → E5：setScopedModels [] → restoredCount===fullCount 全量恢复 + defaultModel 不变\n- S8 残留清理 → E6：deleteProvider → 广播侧 + 文件侧 scopedModels 清除 CUSTOM 条目且保留 CATALOG 条目\n- S2 持久化维度（重启后 reorder/defaultModel）→ E8：重启后 scopedModels 排序 + defaultModel 仍为 scoped[0]\nE7 为全量回归守卫分支（scoped smoke + lint 预检 + 五包全量 vitest，XYZ_SKIP_REAL_PI=1），非单一场景映射——功能区分力由 core:true 的 E1-E6/E8 承担。E9 为 aggregateModels scoped 行为锁定单测（R3 独立验收）。E7 全量 vitest（runtime 3500+ 用例）+ E1-E8 e2e 探针串行，总时长约 15-25 分钟。",
+      "core": true
+    },
+    {
+      "id": "R3",
+      "type": "e2e-real",
+      "name": "E9 单测聚合",
+      "command": "bash scripts/cw-acceptance/full-regression.sh",
+      "timeout": 300,
+      "scenario": "full-regression.sh wrapper 运行 E9 单测（packages/runtime/test/scoped-model-e9.test.ts），输出 R3 PASS/R3 FAIL 标记行。E9-1~E9-4 覆盖 aggregateModels scoped 过滤/排序/优先级/读侧容错四个维度：E9-1 白名单过滤且保序、E9-2 provider 级 disabled 优先于 scoped、E9-3 空 scopedModels 回归锁定全量输出、E9-4 providers.json scopedModels 损坏时独立容错不隔离文件。与 sm-e2e E9 分支（-t \"E9\" 词边界）同源测试文件但独立执行路径——R3 为 root unit 验收，E9 为 sm-e2e 子 unit 验收，两者互不干扰。",
+      "core": false
     }
   ],
-  "contracts": [],
-  "split": [
-    {
-      "unitId": "sm-contract-store",
-      "dependsOn": []
-    },
-    {
-      "unitId": "sm-runtime-filter",
-      "dependsOn": [
-        "sm-contract-store"
-      ]
-    },
-    {
-      "unitId": "sm-ui-chain",
-      "dependsOn": [
-        "sm-runtime-filter"
-      ]
-    },
-    {
-      "unitId": "sm-e2e",
-      "dependsOn": [
-        "sm-ui-chain"
-      ],
-      "note": "sm-e2e 子 unit spec 须声明脚本路径为 scripts/cw-acceptance/sm-e2e.sh，与本 spec R2 command 互锁；脚本 all 分支循环 E1-E9"
-    }
-  ]
+  "contracts": []
 }
