@@ -49,3 +49,26 @@ export {
   getAskUserOther,
   isAskUserQuestion,
 } from './extensions/ask-user/helpers'
+
+// ── extensions/session-manager：agent-managed session（select 通道 + marker）──
+export type {
+  SessionManagerAction,
+  SessionManagerRequest,
+  SessionManagerParams,
+  SessionManagerCreateParams,
+  SessionManagerSendParams,
+  SessionManagerHistoryParams,
+  SessionManagerStatusParams,
+  SessionManagerListParams,
+  SessionManagerAbortParams,
+  SessionManagerResults,
+  SessionManagerCreateResult,
+  SessionManagerSendResult,
+  SessionManagerHistoryResult,
+  SessionManagerStatusResult,
+  SessionManagerListResult,
+  SessionManagerSessionSummary,
+  SessionManagerAbortResult,
+  SessionManagerErrorResult,
+} from './extensions/session-manager/types'
+export { SESSION_MANAGER_MARKER } from './extensions/session-manager/marker'

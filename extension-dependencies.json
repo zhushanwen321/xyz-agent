@@ -189,6 +189,17 @@
       "name": "@zhushanwen/pi-system-prompt-trace",
       "directory": "extensions/system-prompt-trace",
       "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-session-manager",
+      "directory": "extensions/session-manager",
+      "dependsOn": [
+        {
+          "package": "@xyz-agent/extension-protocol",
+          "type": "package",
+          "reason": "代码层静态 import SESSION_MANAGER_MARKER（src/index.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
+        }
+      ]
     }
   ]
 }

@@ -261,6 +261,10 @@ export class SessionLifecycle {
     modelOverride?: string
     /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（C-RL-6 优先级）。 */
     thinkingOverride?: string
+    /** 发起来源：'user' | 'agent'。agent-managed session 标记。 */
+    spawnSource?: 'user' | 'agent'
+    /** 父 agent session id（spawnSource='agent' 时必填）。 */
+    parentAgentSessionId?: string
   }): Promise<SessionSummary> {
     const tempId = crypto.randomUUID()
     const requestedCwd = cwd ?? process.cwd()
@@ -369,6 +373,14 @@ export class SessionLifecycle {
       if (session.sessionFilePath) {
         this.sessionStore.persistProjectBinding(session.sessionFilePath, options.projectId)
       }
+    }
+    // agent-managed session 标记：spawnSource / parentAgentSessionId。
+    // 内存态 patch 到 session 对象（toSummary 透传），供 session-manager list 过滤。
+    if (options?.spawnSource) {
+      ;(session as { spawnSource?: 'user' | 'agent' }).spawnSource = options.spawnSource
+    }
+    if (options?.parentAgentSessionId) {
+      ;(session as { parentAgentSessionId?: string }).parentAgentSessionId = options.parentAgentSessionId
     }
     // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
     // homedir 过滤（含降级 homedir）由 WorkspaceService.record 统一负责（方案A，一处堵死全部路径），

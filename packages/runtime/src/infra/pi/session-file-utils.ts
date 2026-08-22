@@ -235,6 +235,15 @@ export function presetSidecarPath(filePath: string): string {
 }
 
 /**
+ * 计算 session agent binding sidecar 路径（agent-managed-session）。
+ * `<sessionFile>.agent.json`：session 的 agent 绑定信息（spawnSource + parentAgentSessionId）。
+ * 与 preset/meta/project/handoff sidecar 并列独立，由专用 helper 管理。
+ */
+export function agentSidecarPath(filePath: string): string {
+  return filePath + '.agent.json'
+}
+
+/**
  * 计算 session project 归属 sidecar 路径（D14 语义修正，2026-08-04）。
  * `<sessionFile>.project.json`：session 归属的 project id（与 preset/meta sidecar 并列独立）。
  */
@@ -308,6 +317,70 @@ export function readProjectBinding(filePath: string): string | undefined {
     // 类型守卫：projectId 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
     if (binding && typeof binding.projectId === 'string') {
       return binding.projectId
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 将 agent binding 持久化到 sidecar `.agent.json`（agent-managed-session）。
+ *
+ * session 由 agent spawn 时记录 spawnSource（如 'agent'）和 parentAgentSessionId。
+ * 与 `.preset.json` / `.project.json` 同模式：独立 sidecar 文件，不污染 JSONL。
+ *
+ * [规则 #6] session JSONL 文件不存在时**绝不创建 sidecar**（与 persistPresetBinding 同守则）：
+ * pi 延迟写入窗口内 existsSync=false → 静默跳过。
+ *
+ * @param filePath session JSONL 绝对路径（sidecar = agentSidecarPath(filePath)）
+ * @param spawnSource session 来源标记（如 'agent'）
+ * @param parentAgentSessionId 父 agent session id
+ */
+export function persistAgentBinding(filePath: string, spawnSource: string, parentAgentSessionId: string): void {
+  if (!filePath) return
+  if (!existsSync(filePath)) {
+    // 文件不存在（pi 延迟写入窗口 / 首 turn 前崩溃）：绝不创建文件，直接跳过（规则 #6）。
+    return
+  }
+  const binding = { spawnSource, parentAgentSessionId, version: 1 as const }
+  try {
+    atomicWrite(agentSidecarPath(filePath), JSON.stringify(binding), `agent-${Date.now()}`)
+    // sidecar 写入后主动失效 sessionMetaCache（与 persistPresetBinding 同处理）：
+    // 缓存键只含 JSONL 的 (mtimeMs, size)，sidecar 变更不变 JSONL stat → 命中缓存返回旧值。
+    sessionMetaCache.delete(filePath)
+    // 再失效目录级 TTL 快照（scanDirCache）：spawnSource 的消费方是列表扫描
+    // （SessionScanner.listAll → scanPiSessions force:false），binding 写入紧跟 session
+    // 创建后的列表广播刷新，1s TTL 窗口内命中 pre-binding 快照会让 agent 标记迟到
+    // 一个窗口。delete/fork/rename 同理由 runtime 自写后显式失效（invalidateScanDirCache
+    // 注释），此处对齐。
+    invalidateScanDirCache()
+  } catch (e) {
+    console.error(`[session-file-utils] persistAgentBinding failed: ${filePath}`, e)
+  }
+}
+
+/**
+ * 从 `.agent.json` sidecar 读取 agent binding。
+ *
+ * scanSessionMeta 第六读：与 project/preset 同批次提取，结果合并进
+ * ScannedSessionMeta.spawnSource / parentAgentSessionId，享受 sessionMetaCache 缓存。
+ *
+ * 降级路径（A4 验收）：
+ * - sidecar 不存在 → undefined
+ * - JSON 损坏 → undefined
+ * - spawnSource 非法（非字符串）→ undefined
+ *
+ * @returns { spawnSource, parentAgentSessionId }；sidecar 不存在/损坏/字段非法 → undefined
+ */
+export function readAgentBinding(filePath: string): { spawnSource: string; parentAgentSessionId: string } | undefined {
+  const sidecarPath = agentSidecarPath(filePath)
+  try {
+    const raw = readFileSync(sidecarPath, 'utf-8')
+    const binding = JSON.parse(raw)
+    // 类型守卫：spawnSource 和 parentAgentSessionId 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
+    if (binding && typeof binding.spawnSource === 'string' && typeof binding.parentAgentSessionId === 'string') {
+      return { spawnSource: binding.spawnSource, parentAgentSessionId: binding.parentAgentSessionId }
     }
     return undefined
   } catch {
@@ -746,6 +819,16 @@ export interface ScannedSessionMeta {
    * undefined = 未归类（展示层归入默认项目 proj-default 兑底）。
    */
   projectId?: string
+  /**
+   * session 来源标记（从 .agent.json sidecar 读，agent-managed-session）。
+   * 例如 'agent' 表示由 agent spawn 创建。undefined = 非 agent 管理的普通 session。
+   */
+  spawnSource?: string
+  /**
+   * 父 agent session id（从 .agent.json sidecar 读，agent-managed-session）。
+   * 记录 spawn 该 session 的父 agent session。undefined = 非 agent 管理的普通 session。
+   */
+  parentAgentSessionId?: string
 }
 
 /**
@@ -823,6 +906,8 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
   const launchPresetId = readPresetBinding(filePath)
   // 第五读：project binding sidecar（D14 语义修正），同批次提取进 meta.projectId。
   const projectId = readProjectBinding(filePath)
+  // 第六读：agent binding sidecar（agent-managed-session），同批次提取进 meta.spawnSource / parentAgentSessionId。
+  const agentBinding = readAgentBinding(filePath)
   const meta: ScannedSessionMeta = {
     id: header.id,
     filePath,
@@ -837,6 +922,8 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
     handedOffTo,
     launchPresetId,
     projectId,
+    spawnSource: agentBinding?.spawnSource,
+    parentAgentSessionId: agentBinding?.parentAgentSessionId,
   }
   sessionMetaCache.set(filePath, { mtimeMs: fstat.mtimeMs, size: fstat.size, meta })
   return meta

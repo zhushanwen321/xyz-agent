@@ -108,6 +108,10 @@ export interface SessionCreateOptions {
   thinkingOverride?: string
   /** 归属 project id（D14 语义修正 2026-08-04）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
   projectId?: string
+  /** 发起来源：'user' | 'agent'。agent-managed session 标记（session-manager create 链路传入）。 */
+  spawnSource?: 'user' | 'agent'
+  /** 父 agent session id（spawnSource='agent' 时传入，session-manager list 按此过滤子 session）。 */
+  parentAgentSessionId?: string
 }
 
 /** Session lifecycle: creation, deletion, messaging, history. */

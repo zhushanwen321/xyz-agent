@@ -93,6 +93,9 @@ export class SessionScanner {
       launchPresetId: s.launchPresetId,
       // D14 语义修正：归属 project（scanSessionMeta 第五读，同缓存契约）。
       projectId: s.projectId,
+      // 透传 agent binding（scanSessionMeta 第六读，同缓存契约）。
+      spawnSource: s.spawnSource,
+      parentAgentSessionId: s.parentAgentSessionId,
     }
   }
 }
