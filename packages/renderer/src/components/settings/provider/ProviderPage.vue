@@ -22,6 +22,15 @@
       </div>
     </header>
 
+    <!-- Scoped Model 配置区（模型白名单 + 有序列表） -->
+    <ScopedModelSection
+      :scoped-list="scopedRenderItems"
+      :selectable-models="selectableModels"
+      @add="addScopedModels"
+      @remove="removeScopedModel"
+      @move="moveScopedModel"
+    />
+
     <!-- 常驻 inline error：toggle enabled / 设默认 / 删除 等动作失败时报错可见 -->
     <div
       v-if="actionError"
@@ -238,17 +247,22 @@ import {
   ProviderTemplatePicker,
   ProviderQuickSetup,
   OAuthDialog,
+  ScopedModelSection,
   SETTINGS_TOAST_KEY,
   USE_QUOTA_CONFIGURE_KEY,
 } from '@xyz-agent/ui/features/settings'
 import { useProviderPageOauth } from '@/composables/features/settings/useProviderPageOauth'
 import { useAccordionGuard } from '@/composables/features/settings/useAccordionGuard'
+import { useScopedModels } from '@/composables/features/settings/useScopedModels'
 import { authBadgeClass, authBadgeTextKey } from './provider-badge'
 
 // ui 包组件 renderer 侧依赖经 provide/inject 注入（ui 零 renderer import 铁律）
 provide(USE_QUOTA_CONFIGURE_KEY, useQuotaConfigure)
 const toast = useToast()
 provide(SETTINGS_TOAST_KEY, toast)
+
+// Scoped Models 白名单（乐观更新 + 失败回滚）
+const { scopedRenderItems, selectableModels, addScopedModels, removeScopedModel, moveScopedModel } = useScopedModels()
 
 const props = defineProps<{ providers: ProviderInfo[] }>()
 

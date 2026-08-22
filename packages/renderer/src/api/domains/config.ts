@@ -140,9 +140,9 @@ export function discoverModels(req: {
 }
 
 // ── 订阅-推送（sendInitialState 主动推 + 运行时广播）──
-export function onProviders(handler: (providers: ProviderInfo[]) => void): () => void {
+export function onProviders(handler: (providers: ProviderInfo[], scopedModels?: string[]) => void): () => void {
   return events.onGlobalType('config.providers', (msg) => {
-    handler(msg.payload.providers)
+    handler(msg.payload.providers, msg.payload.scopedModels)
   })
 }
 
@@ -236,6 +236,12 @@ export function setProvider(providerId: ProviderId, data: SetProviderData): Prom
 // W3 默认模型持久化：动作-ack，状态变更经 onDefaults 订阅推回（runtime 广播 config.defaults）。
 export function setDefaultModel(provider: ProviderId, modelId: string): Promise<void> {
   return command('config.setDefaultModel', { provider, modelId })
+}
+
+// Scoped models 白名单设置（config.setScopedModels）。reply 回写后规范化结果（去重保序）。
+export async function setScopedModels(models: string[]): Promise<string[]> {
+  const reply = await command('config.setScopedModels', { models })
+  return reply.scopedModels
 }
 
 export function deleteProvider(providerId: ProviderId): Promise<void> {

@@ -29,6 +29,7 @@ const configMock = vi.hoisted(() => ({
   testProvider: vi.fn(async () => ({ ok: true })),
   discoverModels: vi.fn(async () => ({ success: true, models: [] })),
   setDefaultModel: vi.fn(async () => {}),
+  setScopedModels: vi.fn(async () => [] as string[]),
   // P2：ProviderPage 默认 pill + 默认修复 toast（缺则 TypeError 崩 mount）
   onDefaultsWithSource: vi.fn(() => () => {}),
   // wave-quick-setup-c/wave-list-badge：OAuth + env 检测（useProviderOAuth onMounted 订阅）
@@ -361,5 +362,22 @@ describe('ProviderPage QuickSetup OAuth 登录链路（B-1）', () => {
     // OAuthDialog 打开 pending 态（portal 到 body；与 QuickSetup 共用同一状态机实例）
     expect(document.body.querySelector('[data-testid="oauth-dialog"]')).toBeTruthy()
     expect(document.body.querySelector('[data-testid="oauth-pending"]')).toBeTruthy()
+  })
+})
+
+describe('ProviderPage A6 e2e-mock: ScopedModelSection 挂载', () => {
+  it('A6: ProviderPage 渲染 ScopedModelSection 区域（组件挂载链路通）', async () => {
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    // ScopedModelSection 区域存在（mock 模式下 settingsStore.scopedModels 默认空数组）
+    expect(wrapper.find('[data-testid="scoped-model-section"]').exists()).toBe(true)
+    // 空状态提示可见
+    expect(wrapper.find('[data-testid="scoped-empty"]').exists()).toBe(true)
+    // 添加按钮存在
+    expect(wrapper.find('[data-testid="scoped-add-btn"]').exists()).toBe(true)
   })
 })

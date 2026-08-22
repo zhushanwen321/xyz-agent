@@ -675,9 +675,11 @@ export const chat = {
 /* ── Config mock（请求 + 订阅 + 动作）── */
 
 // 订阅型 sub（注册即触发初始值）；请求型直接返 fixture 深拷贝
-const providersSub = makeMockSubscription(() =>
-  fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) })),
-)
+// 带 scopedModels 的 providers 广播（config.providers payload 扩展）
+const providersSubWithScoped = makeMockSubscription(() => ({
+  providers: fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) })),
+  scopedModels: [] as string[],
+}))
 const skillsSub = makeMockSubscription(() => fixtureSkills.map((s) => ({ ...s })))
 const agentsSub = makeMockSubscription(() => fixtureAgents.map((a) => ({ ...a })))
 const defaultsSub = makeMockSubscription(() => 'Anthropic/claude-sonnet-4.5')
@@ -810,7 +812,7 @@ export const config = {
     return { success: true, models: [], error: undefined }
   },
   // 订阅型（handler 类型与 real domains 对齐：facade 三元要求两侧同构）
-  onProviders: (h: (providers: ProviderInfo[]) => void) => providersSub.subscribe(h),
+  onProviders: (h: (providers: ProviderInfo[], scopedModels?: string[]) => void) => providersSubWithScoped.subscribe((p) => h(p.providers, p.scopedModels)),
   onSkills: (h: (skills: SkillInfo[]) => void) => skillsSub.subscribe(h),
   onAgents: (h: (agents: AgentInfo[]) => void) => agentsSub.subscribe(h),
   onDefaults: (h: (defaultModel: string) => void) => defaultsSub.subscribe(h),
@@ -868,6 +870,25 @@ export const config = {
   async setDefaultModel(provider: ProviderId, modelId: string) {
     await sleep(TIMING.ack)
     defaultsSub.broadcast(`${provider}/${modelId}`)
+  },
+  /**
+   * 设置 scoped models 白名单（mock 对齐 runtime config.setScopedModels）。
+   * 去重保序 → 更新 mockScopedModels → 广播 providers + scopedModels。
+   */
+  async setScopedModels(models: string[]): Promise<string[]> {
+    await sleep(TIMING.ack)
+    // 去重保序
+    const seen = new Set<string>()
+    const deduped: string[] = []
+    for (const m of models) {
+      if (!seen.has(m)) {
+        seen.add(m)
+        deduped.push(m)
+      }
+    }
+    mockScopedModels = deduped
+    broadcastProviders()
+    return deduped
   },
   async scanSkills(_sources: string[]) {
     await sleep(TIMING.ack)
@@ -1008,9 +1029,10 @@ export const config = {
 }
 
 /** 向 providers 订阅者广播最新 fixture 快照（模拟 runtime 动作后广播） */
+let mockScopedModels: string[] = []
 function broadcastProviders(): void {
   const snapshot = fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
-  providersSub.broadcast(snapshot)
+  providersSubWithScoped.broadcast({ providers: snapshot, scopedModels: mockScopedModels })
 }
 
 /* ── Model mock ── */
