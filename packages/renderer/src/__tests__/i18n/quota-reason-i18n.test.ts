@@ -26,11 +26,14 @@ function loadLocaleObject(filePath: string): LocaleObject {
 
 const LOCALES_DIR = resolve(__dirname, '../../i18n/locales')
 
-/** A2-4 新增 key（settings.ts 的 providerEdit 命名空间，quota 失败态恢复指引；全 4 reason 专属文案） */
+/** A2-4 新增 key（settings.ts 的 providerEdit 命名空间，quota 失败态恢复指引；全 4 reason 专属文案）。
+ *  S5 收尾：quotaFetchFailNoSubscriptionCookie = cookie 类 provider 的 no-subscription 两可文案
+ *  （业务码不可区分无订阅 vs Cookie 失效，CodingPlanSection 按 authKinds 分支）。 */
 const REQUIRED_QUOTA_FAIL_KEYS = [
   'quotaFetchFailUnauthorized',
   'quotaFetchFailNetwork',
   'quotaFetchFailNoSubscription',
+  'quotaFetchFailNoSubscriptionCookie',
   'quotaFetchFailParse',
 ] as const
 

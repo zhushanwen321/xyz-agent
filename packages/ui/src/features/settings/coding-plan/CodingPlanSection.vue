@@ -388,7 +388,13 @@ const showLastSuccess = ref(false)
 const failMessage = computed(() => {
   if (props.testFailReason === 'unauthorized') return t('settings.providerEdit.quotaFetchFailUnauthorized')
   if (props.testFailReason === 'network') return t('settings.providerEdit.quotaFetchFailNetwork')
-  if (props.testFailReason === 'no-subscription') return t('settings.providerEdit.quotaFetchFailNoSubscription')
+  if (props.testFailReason === 'no-subscription') {
+    // S5：cookie 类 provider（如 mimo）的业务码不可区分「无订阅 vs Cookie 失效」（fetcher 层已论证
+    // 不可行，commit bfe02bd25），cookie 场景的 no-subscription 可能实为 Cookie 失效 → 提示两可
+    return props.authKinds.includes('cookie')
+      ? t('settings.providerEdit.quotaFetchFailNoSubscriptionCookie')
+      : t('settings.providerEdit.quotaFetchFailNoSubscription')
+  }
   if (props.testFailReason === 'parse') return t('settings.providerEdit.quotaFetchFailParse')
   return props.testErrorMsg || t('settings.providerEdit.quotaTestFail')
 })

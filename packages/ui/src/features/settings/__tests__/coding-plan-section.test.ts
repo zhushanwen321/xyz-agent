@@ -220,6 +220,41 @@ describe('B-3 失败态（A2-4 reason 透传）+ 「查看上次成功数据」�
     expect(msg).not.toContain('quotaFetchFailUnauthorized')
   })
 
+  // S5 收尾：cookie 类 provider 的 no-subscription 业务码不可区分「无订阅 vs Cookie 失效」
+  // （fetcher 层已论证不可行，commit bfe02bd25），UI 按 authKinds 分流文案。
+  // 断言注意：NoSubscriptionCookie 以 NoSubscription 为前缀，i18n mock 返回 key 本身 →
+  // 含 Cookie 后缀的完整 key 才是区分断言依据，禁用 not.toContain('...NoSubscription')。
+  it('reason=no-subscription + authKinds 含 cookie → 失败条显示 Cookie 两可文案', async () => {
+    wrapper = mountSection({
+      testStatus: 'error',
+      testFailReason: 'no-subscription',
+      testErrorMsg: 'stale-fallback',
+      authKinds: ['cookie'],
+      isCookieAuth: true,
+    })
+    await flushPromises()
+
+    const msg = wrapper.find('[data-testid="quota-error-msg"]').text()
+    // 带 Cookie 后缀的完整 key（唯一区分依据：前缀 NoSubscription 是其子串）
+    expect(msg).toContain('settings.providerEdit.quotaFetchFailNoSubscriptionCookie')
+    expect(msg).not.toContain('stale-fallback')
+  })
+
+  it('reason=no-subscription + authKinds 不含 cookie（api-key）→ 维持原订阅文案', async () => {
+    wrapper = mountSection({
+      testStatus: 'error',
+      testFailReason: 'no-subscription',
+      testErrorMsg: '',
+      authKinds: ['api-key'],
+    })
+    await flushPromises()
+
+    const msg = wrapper.find('[data-testid="quota-error-msg"]').text()
+    expect(msg).toContain('settings.providerEdit.quotaFetchFailNoSubscription')
+    // 区分断言：不出现 Cookie 变体 key
+    expect(msg).not.toContain('settings.providerEdit.quotaFetchFailNoSubscriptionCookie')
+  })
+
   it('reason=parse → 失败条显示解析失败专属文案', async () => {
     wrapper = mountSection({ testStatus: 'error', testFailReason: 'parse', testErrorMsg: '' })
     await flushPromises()

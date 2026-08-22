@@ -387,6 +387,8 @@ export default {
     quotaFetchFailUnauthorized: '额度查询失败：凭证可能过期。与该供应商发起一次对话触发凭证刷新后，点击刷新重试',
     quotaFetchFailNetwork: '额度查询失败：网络异常或服务不可用，请检查网络连接后重试',
     quotaFetchFailNoSubscription: '额度查询失败：未检测到有效订阅，请确认账号已开通对应 Coding Plan 套餐',
+    // S5：cookie 类 provider 的 no-subscription 业务码不可区分「无订阅 vs Cookie 失效」（fetcher 层论证不可行），两可提示
+    quotaFetchFailNoSubscriptionCookie: '额度查询失败：未检测到有效订阅或 Cookie 已失效，请检查订阅状态或更新 Cookie',
     quotaFetchFailParse: '额度查询失败：额度响应解析失败，请稍后重试；若持续出现请更新应用',
     // B-3 失败态旧缓存折叠入口（design §3.4 展示语义）
     quotaLastSuccessToggle: '查看上次成功数据',

@@ -387,6 +387,8 @@ export default {
     quotaFetchFailUnauthorized: 'Quota query failed: the credential may have expired. Start a conversation with this provider to trigger a credential refresh, then click refresh to retry',
     quotaFetchFailNetwork: 'Quota query failed: network error or service unavailable. Check your network connection and retry',
     quotaFetchFailNoSubscription: 'Quota query failed: no active subscription detected. Confirm your account has the corresponding coding plan subscription',
+    // S5: for cookie-based providers the no-subscription business code cannot distinguish "no subscription" from "expired cookie" (proven infeasible at fetcher layer), so hint both
+    quotaFetchFailNoSubscriptionCookie: 'Quota query failed: no active subscription detected, or the Cookie may have expired. Check your subscription status or update the Cookie',
     quotaFetchFailParse: 'Quota query failed: could not parse the quota response. Retry later; if it persists, update the app',
     // B-3 stale-cache collapse entry in failure state (design §3.4 display semantics)
     quotaLastSuccessToggle: 'View last successful data',
