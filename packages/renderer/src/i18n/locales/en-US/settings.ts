@@ -85,6 +85,7 @@ export default {
   // ── Provider page (ProviderPage) ──
   provider: {
     add: 'Add Provider',
+    listTitle: 'Providers',
     emptyTitle: 'No providers yet',
     emptyDesc: 'Add your first provider to connect AI models and start chatting.',
     defaultPill: 'Default',

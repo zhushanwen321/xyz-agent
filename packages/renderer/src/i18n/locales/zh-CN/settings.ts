@@ -85,6 +85,7 @@ export default {
   // ── Provider 页（ProviderPage）──
   provider: {
     add: '添加供应商',
+    listTitle: '供应商列表',
     emptyTitle: '还没有供应商',
     emptyDesc: '添加第一个供应商，连接 AI 模型开始对话。',
     defaultPill: '默认供应商',
