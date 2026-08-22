@@ -124,10 +124,10 @@ async function runFullChain(): Promise<{ result: FullChainResult; fx: PiFixture;
     const handler = new SessionManagerHandler({
       sessionService,
       // wire 映射对齐真实 rpc-client.sendExtensionUiResponse 的 select 分支（String → value）
-      sendExtensionUiResponse: (id, response) => {
+      sendExtensionUiResponse: (_sessionId, requestId, response) => {
         const payload = response === null
-          ? { type: 'extension_ui_response' as const, id, cancelled: true }
-          : { type: 'extension_ui_response' as const, id, value: String(response) }
+          ? { type: 'extension_ui_response' as const, id: requestId, cancelled: true }
+          : { type: 'extension_ui_response' as const, id: requestId, value: String(response) }
         fx.writeLine(JSON.stringify(payload))
       },
       broadcastSessionList: () => {},
@@ -138,7 +138,7 @@ async function runFullChain(): Promise<{ result: FullChainResult; fx: PiFixture;
       onExtensionUIRequest: () => {},
       onSessionManagerRequest: (requestId, _sid, action, params) => {
         // fire-and-forget（与组合根一致）；promise 暴露给测试 await
-        handling = handler.handle(requestId, parentSessionId, action as never, params)
+        handling = handler.handle(requestId, parentSessionId, action, params)
       },
     })
 

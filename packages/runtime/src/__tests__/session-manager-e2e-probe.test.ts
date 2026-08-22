@@ -185,17 +185,16 @@ describe('U4-E1 create e2e probe', () => {
 })
 
 describe('U4-E2 manage e2e probe', () => {
-  it('marker 翻译：select+SESSION_MANAGER_MARKER → extension-ui kind 且 payload.sessionManager=true', () => {
+  it('marker 翻译：select+SESSION_MANAGER_MARKER → session-manager-ui kind（强类型 action/params）', () => {
     const events = translate(
       JSON.parse(buildUiRequestLine('req-send', 'send', { sessionId: 's1', prompt: 'hello' })) as PiEvent,
       'sid-parent',
     )
-    const uiEvent = events.find((e) => e.kind === 'extension-ui')
+    const uiEvent = events.find((e) => e.kind === 'session-manager-ui')
     expect(uiEvent).toBeDefined()
-    if (uiEvent?.kind !== 'extension-ui') return
-    expect(uiEvent.payload.sessionManager).toBe(true)
-    expect(uiEvent.payload.sessionManagerAction).toBe('send')
-    expect(uiEvent.payload.sessionManagerParams).toEqual({ sessionId: 's1', prompt: 'hello' })
+    if (uiEvent?.kind !== 'session-manager-ui') return
+    expect(uiEvent.action).toBe('send')
+    expect(uiEvent.params).toEqual({ sessionId: 's1', prompt: 'hello' })
   })
 
   it.each([
@@ -305,13 +304,12 @@ describe('U4-E3 malformed e2e probe', () => {
     expect(pipeline.onExtensionUIRequest).not.toHaveBeenCalled()
   })
 
-  it('marker 翻译：options[0] 非法 JSON 时 sessionManagerAction 仍为 __malformed__（不 fall-through 普通分支）', () => {
+  it('marker 翻译：options[0] 非法 JSON 时 action 仍为 __malformed__（不 fall-through 普通分支）', () => {
     const events = translate(JSON.parse(buildMalformedUiRequestLine('req-m')) as PiEvent, 'sid-parent')
-    const uiEvent = events.find((e) => e.kind === 'extension-ui')
+    const uiEvent = events.find((e) => e.kind === 'session-manager-ui')
     expect(uiEvent).toBeDefined()
-    if (uiEvent?.kind !== 'extension-ui') return
-    expect(uiEvent.payload.sessionManager).toBe(true)
-    expect(uiEvent.payload.sessionManagerAction).toBe('__malformed__')
-    expect(uiEvent.payload.sessionManagerParams).toEqual({})
+    if (uiEvent?.kind !== 'session-manager-ui') return
+    expect(uiEvent.action).toBe('__malformed__')
+    expect(uiEvent.params).toEqual({})
   })
 })

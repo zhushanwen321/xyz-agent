@@ -61,7 +61,6 @@ export type {
   SessionManagerStatusParams,
   SessionManagerListParams,
   SessionManagerAbortParams,
-  SessionManagerResults,
   SessionManagerCreateResult,
   SessionManagerSendResult,
   SessionManagerHistoryResult,
@@ -71,4 +70,4 @@ export type {
   SessionManagerAbortResult,
   SessionManagerErrorResult,
 } from './extensions/session-manager/types'
-export { SESSION_MANAGER_MARKER } from './extensions/session-manager/marker'
+export { SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS } from './extensions/session-manager/marker'

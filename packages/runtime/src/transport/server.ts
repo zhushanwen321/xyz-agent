@@ -298,7 +298,7 @@ export class RuntimeServer implements IMessageBroker {
         // 不能遍历找「第一个可用 client」（多 active session 会错发 → 发起方 select 挂到超时）
         this.sessionService.getRpcClient(sessionId)?.sendExtensionUiResponse(requestId, response, method)
       },
-      broadcastSessionList: (_opts) => {
+      broadcastSessionList: () => {
         this.broker.broadcastSessionList()
       },
     })
@@ -416,8 +416,8 @@ export class RuntimeServer implements IMessageBroker {
    * session-manager 请求处理入口。由 EventInterpreter.onSessionManagerRequest fire-and-forget 调用。
    * 委托给 SessionManagerHandler.handle() 异步处理。
    */
-  handleSessionManagerRequest(requestId: string, sessionId: string, action: string, params: Record<string, unknown>): void {
-    this.sessionManagerHandler.handle(requestId, sessionId, action as SessionManagerAction | '__malformed__', params)
+  handleSessionManagerRequest(requestId: string, sessionId: string, action: SessionManagerAction | '__malformed__', params: Record<string, unknown>): void {
+    this.sessionManagerHandler.handle(requestId, sessionId, action, params)
       .catch((e) => {
         console.error('[server] session-manager request failed:', toErrorMessage(e))
       })

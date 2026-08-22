@@ -252,6 +252,52 @@ export function projectSidecarPath(filePath: string): string {
 }
 
 /**
+ * sidecar 家族公共写入（preset/project/agent binding 共用骨架）：
+ * 空路径守卫 + JSONL 未落盘守卫（规则 #6：绝不创建 sidecar）+ 原子写 + sessionMetaCache 失效。
+ * 差异点参数化：sidecar 路径 helper、tmpfile 前缀、是否失效目录级扫描缓存
+ * （agent 版需要——spawnSource 的消费方是列表扫描，1s TTL 窗口会让标记迟到一个窗口）。
+ */
+function persistBindingSidecar(
+  filePath: string,
+  sidecarPathOf: (fp: string) => string,
+  binding: object,
+  tmpPrefix: string,
+  opts?: { invalidateScanDir?: boolean },
+): void {
+  if (!filePath) return
+  if (!existsSync(filePath)) {
+    // 文件不存在（pi 延迟写入窗口 / 首 turn 前崩溃）：绝不创建文件，直接跳过（规则 #6 / ES-RL-1）。
+    return
+  }
+  try {
+    // 原子写（tmpfile + rename）：与 persistSessionEnd 一致，防止并发读读到半写的 sidecar。
+    atomicWrite(sidecarPathOf(filePath), JSON.stringify(binding), `${tmpPrefix}-${Date.now()}`)
+    // sidecar 写入后主动失效 sessionMetaCache：缓存键只含 JSONL 的 (mtimeMs, size)，
+    // sidecar 变更不变 JSONL stat → 命中缓存返回旧值。
+    sessionMetaCache.delete(filePath)
+    if (opts?.invalidateScanDir) {
+      invalidateScanDirCache()
+    }
+  // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
+  } catch (e) {
+    console.error(`[session-file-utils] ${tmpPrefix} binding persist failed: ${filePath}`, e)
+  }
+}
+
+/**
+ * sidecar 家族公共读取：读文件 + JSON.parse + 调用方字段守卫回调。
+ * sidecar 不存在/损坏/守卫不过 → undefined（降级不抛错）。
+ */
+function readBindingSidecar<T>(sidecarPath: string, decode: (binding: unknown) => T | undefined): T | undefined {
+  try {
+    const raw = readFileSync(sidecarPath, 'utf-8')
+    return decode(JSON.parse(raw))
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * 将 session 归属 project 持久化到 sidecar `.project.json`（D14：Project 直接关联 Session）。
  *
  * session create 成功 / 手动归类（session.setProject）时调用。归属是 session 级数据，
@@ -269,7 +315,7 @@ export function persistProjectBinding(filePath: string, projectId: string): void
   // 空 projectId（归回默认项目）= 删除绑定 sidecar。readProjectBinding 以 sidecar 为权威（无 sidecar
   // 兑底 undefined → 展示层归入默认项目），若只 return 不删，已存在的 .project.json 会继续生效——
   // 重启后 session 归属回退到旧命名项目（review MF-2 回归）。删除不创建文件，不违反规则 #6，
-  // 因此不依赖 JSONL 存在性，放在 existsSync 检查之前执行。
+  // 因此不依赖 JSONL 存在性，放在公共写入（其 existsSync 守卫）之前执行。
   if (!projectId) {
     const sidecarPath = projectSidecarPath(filePath)
     try {
@@ -285,20 +331,7 @@ export function persistProjectBinding(filePath: string, projectId: string): void
     }
     return
   }
-  if (!existsSync(filePath)) {
-    // 文件不存在（pi 延迟写入窗口）：绝不创建文件，直接跳过（ES-RL-1 同款）。
-    return
-  }
-  const binding = { projectId, version: 1 as const }
-  try {
-    atomicWrite(projectSidecarPath(filePath), JSON.stringify(binding), `project-${Date.now()}`)
-    // sidecar 写入后主动失效 sessionMetaCache（缓存键只含 JSONL 的 (mtimeMs, size)，
-    // sidecar 变更不变 JSONL stat → 命中缓存返回旧值，与 persistPresetBinding 同处理）。
-    sessionMetaCache.delete(filePath)
-  // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
-  } catch (e) {
-    console.error(`[session-file-utils] persistProjectBinding failed: ${filePath}`, e)
-  }
+  persistBindingSidecar(filePath, projectSidecarPath, { projectId, version: 1 as const }, 'project')
 }
 
 /**
@@ -310,18 +343,11 @@ export function persistProjectBinding(filePath: string, projectId: string): void
  * @returns projectId 字符串；sidecar 不存在/损坏/projectId 非字符串 → undefined
  */
 export function readProjectBinding(filePath: string): string | undefined {
-  const sidecarPath = projectSidecarPath(filePath)
-  try {
-    const raw = readFileSync(sidecarPath, 'utf-8')
-    const binding = JSON.parse(raw)
+  return readBindingSidecar(projectSidecarPath(filePath), (binding) => {
     // 类型守卫：projectId 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
-    if (binding && typeof binding.projectId === 'string') {
-      return binding.projectId
-    }
-    return undefined
-  } catch {
-    return undefined
-  }
+    const b = binding as Record<string, unknown> | undefined
+    return b && typeof b.projectId === 'string' ? b.projectId : undefined
+  })
 }
 
 /**
@@ -338,26 +364,17 @@ export function readProjectBinding(filePath: string): string | undefined {
  * @param parentAgentSessionId 父 agent session id
  */
 export function persistAgentBinding(filePath: string, spawnSource: string, parentAgentSessionId: string): void {
-  if (!filePath) return
-  if (!existsSync(filePath)) {
-    // 文件不存在（pi 延迟写入窗口 / 首 turn 前崩溃）：绝不创建文件，直接跳过（规则 #6）。
-    return
-  }
-  const binding = { spawnSource, parentAgentSessionId, version: 1 as const }
-  try {
-    atomicWrite(agentSidecarPath(filePath), JSON.stringify(binding), `agent-${Date.now()}`)
-    // sidecar 写入后主动失效 sessionMetaCache（与 persistPresetBinding 同处理）：
-    // 缓存键只含 JSONL 的 (mtimeMs, size)，sidecar 变更不变 JSONL stat → 命中缓存返回旧值。
-    sessionMetaCache.delete(filePath)
-    // 再失效目录级 TTL 快照（scanDirCache）：spawnSource 的消费方是列表扫描
-    // （SessionScanner.listAll → scanPiSessions force:false），binding 写入紧跟 session
-    // 创建后的列表广播刷新，1s TTL 窗口内命中 pre-binding 快照会让 agent 标记迟到
-    // 一个窗口。delete/fork/rename 同理由 runtime 自写后显式失效（invalidateScanDirCache
-    // 注释），此处对齐。
-    invalidateScanDirCache()
-  } catch (e) {
-    console.error(`[session-file-utils] persistAgentBinding failed: ${filePath}`, e)
-  }
+  // invalidateScanDir：spawnSource 的消费方是列表扫描（SessionScanner.listAll →
+  // scanPiSessions force:false），binding 写入紧跟 session 创建后的列表广播刷新，
+  // 1s TTL 窗口内命中 pre-binding 快照会让 agent 标记迟到一个窗口。delete/fork/rename
+  // 同理由 runtime 自写后显式失效（invalidateScanDirCache 注释），此处对齐。
+  persistBindingSidecar(
+    filePath,
+    agentSidecarPath,
+    { spawnSource, parentAgentSessionId, version: 1 as const },
+    'agent',
+    { invalidateScanDir: true },
+  )
 }
 
 /**
@@ -374,18 +391,14 @@ export function persistAgentBinding(filePath: string, spawnSource: string, paren
  * @returns { spawnSource, parentAgentSessionId }；sidecar 不存在/损坏/字段非法 → undefined
  */
 export function readAgentBinding(filePath: string): { spawnSource: string; parentAgentSessionId: string } | undefined {
-  const sidecarPath = agentSidecarPath(filePath)
-  try {
-    const raw = readFileSync(sidecarPath, 'utf-8')
-    const binding = JSON.parse(raw)
+  return readBindingSidecar(agentSidecarPath(filePath), (binding) => {
     // 类型守卫：spawnSource 和 parentAgentSessionId 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
-    if (binding && typeof binding.spawnSource === 'string' && typeof binding.parentAgentSessionId === 'string') {
-      return { spawnSource: binding.spawnSource, parentAgentSessionId: binding.parentAgentSessionId }
+    const b = binding as Record<string, unknown> | undefined
+    if (b && typeof b.spawnSource === 'string' && typeof b.parentAgentSessionId === 'string') {
+      return { spawnSource: b.spawnSource, parentAgentSessionId: b.parentAgentSessionId }
     }
     return undefined
-  } catch {
-    return undefined
-  }
+  })
 }
 
 /**
@@ -404,23 +417,7 @@ export function readAgentBinding(filePath: string): { spawnSource: string; paren
  * @param presetId launch preset id（如 'builtin:full'）
  */
 export function persistPresetBinding(filePath: string, presetId: string): void {
-  if (!filePath) return
-  if (!existsSync(filePath)) {
-    // 文件不存在（pi 延迟写入窗口 / 首 turn 前崩溃）：绝不创建文件，直接跳过（ES-RL-1）。
-    return
-  }
-  const binding = { presetId, version: 1 as const }
-  try {
-    // 原子写（tmpfile + rename）：与 persistSessionEnd 一致，防止并发读读到半写的 sidecar。
-    // S-RT-3：路径经 presetSidecarPath helper 统一拼接。
-    atomicWrite(presetSidecarPath(filePath), JSON.stringify(binding), `preset-${Date.now()}`)
-    // sidecar 写入后主动失效 sessionMetaCache（与 persistSessionEnd L108 一致）：
-    // 缓存键只含 JSONL 的 (mtimeMs, size)，sidecar 变更不变 JSONL stat → 命中缓存返回旧值。
-    sessionMetaCache.delete(filePath)
-  // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
-  } catch (e) {
-    console.error(`[session-file-utils] persistPresetBinding failed: ${filePath}`, e)
-  }
+  persistBindingSidecar(filePath, presetSidecarPath, { presetId, version: 1 as const }, 'preset')
 }
 
 /**
@@ -433,19 +430,11 @@ export function persistPresetBinding(filePath: string, presetId: string): void {
  * @returns presetId 字符串；sidecar 不存在/损坏/presetId 非字符串 → undefined
  */
 export function readPresetBinding(filePath: string): string | undefined {
-  // S-RT-3：路径经 presetSidecarPath helper 统一拼接。
-  const sidecarPath = presetSidecarPath(filePath)
-  try {
-    const raw = readFileSync(sidecarPath, 'utf-8')
-    const binding = JSON.parse(raw)
+  return readBindingSidecar(presetSidecarPath(filePath), (binding) => {
     // 类型守卫：presetId 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
-    if (binding && typeof binding.presetId === 'string') {
-      return binding.presetId
-    }
-    return undefined
-  } catch {
-    return undefined
-  }
+    const b = binding as Record<string, unknown> | undefined
+    return b && typeof b.presetId === 'string' ? b.presetId : undefined
+  })
 }
 
 /**

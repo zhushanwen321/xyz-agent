@@ -4,9 +4,10 @@
  * 6 个 action 的请求 params 和结果类型，供 handler 和 extension 共用。
  * marker 检测后按 action 分发到对应 handler 分支。
  */
+import type { SESSION_MANAGER_ACTIONS } from './marker.js'
 
-/** session-manager 支持的 6 个 action */
-export type SessionManagerAction = 'create' | 'send' | 'history' | 'status' | 'list' | 'abort'
+/** session-manager 支持的 6 个 action（从 SESSION_MANAGER_ACTIONS 集合派生，值与类型同源） */
+export type SessionManagerAction = (typeof SESSION_MANAGER_ACTIONS)[number]
 
 /** session-manager 请求的统一形状（extension → runtime via select 通道） */
 export interface SessionManagerRequest {
@@ -67,16 +68,6 @@ export interface SessionManagerListParams {
 /** abort action 参数 */
 export interface SessionManagerAbortParams {
   sessionId: string
-}
-
-/** 各 action 的响应结果映射 */
-export interface SessionManagerResults {
-  create: SessionManagerCreateResult
-  send: SessionManagerSendResult
-  history: SessionManagerHistoryResult
-  status: SessionManagerStatusResult
-  list: SessionManagerListResult
-  abort: SessionManagerAbortResult
 }
 
 /** create 结果 */

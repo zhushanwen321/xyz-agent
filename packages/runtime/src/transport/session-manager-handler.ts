@@ -9,6 +9,7 @@
  */
 import type { ISessionService } from '../interfaces.js'
 import { toErrorMessage } from '../utils/errors.js'
+import { SESSION_MANAGER_ACTIONS } from '@xyz-agent/extension-protocol'
 import type {
   SessionManagerAction,
   SessionManagerCreateParams,
@@ -32,24 +33,26 @@ export interface SessionManagerHandlerOptions {
   /** 向 pi 发送 extension_ui_response（sessionId = 发起方 session，requestId 只在其 pending 表有效） */
   sendExtensionUiResponse: (sessionId: string, requestId: string, response: unknown, method?: string) => void
   /** 广播 session 列表变更（create 成功后触发） */
-  broadcastSessionList: (opts?: { spawnSource?: 'user' | 'agent'; parentAgentSessionId?: string }) => void
+  broadcastSessionList: () => void
 }
 
 /**
  * SessionManagerHandler — 处理 agent-managed session 的 6 个 action。
  *
- * handle() 是唯一入口，由 EventInterpreter.onExtensionUIRequest 调用。
- * 每个 action 独立 try-catch，错误走统一 respond({error}) 通道。
+ * handle() 是唯一入口，由 EventInterpreter.onSessionManagerRequest 调用。
+ * dispatch() 纯分发（各分支只 return 结果），回写统一由 respond() 收口；
+ * 错误走同一通道 respond({error})。
  */
 export class SessionManagerHandler {
   constructor(private readonly opts: SessionManagerHandlerOptions) {}
 
   /**
-   * 处理 session manager 请求。action 按 switch 分发。
+   * 处理 session manager 请求。
    *
-   * @param requestId pi extension_ui_request id（回写 response 用）
-   * @param action    6 个 action 之一
-   * @param params    action 对应的参数（已由 event-adapter 解析）
+   * @param requestId       pi extension_ui_request id（回写 response 用）
+   * @param parentSessionId 发起方 session id（response 直发其 pi 进程；create 时注入为父 id）
+   * @param action          6 个 action 之一，或 marker 解析失败哨兵 '__malformed__'
+   * @param params          action 对应的参数（已由 event-adapter 解析）
    */
   async handle(
     requestId: string,
@@ -57,59 +60,22 @@ export class SessionManagerHandler {
     action: SessionManagerAction | '__malformed__',
     params: Record<string, unknown>,
   ): Promise<void> {
-    // malformed 兜底：action 为 __malformed__ 时直接回 cancelled
-    if (action === '__malformed__') {
+    // 无法识别的 action（'__malformed__' = marker 解析失败；集合外值 = 协议外 action）
+    // 统一回 cancelled（select value null），不走正常分发。
+    if (action === '__malformed__' || !(SESSION_MANAGER_ACTIONS as readonly string[]).includes(action)) {
       this.opts.sendExtensionUiResponse(parentSessionId, requestId, null, 'select')
       return
     }
 
-    let createdId: string | undefined
-
     try {
-      switch (action) {
-        case 'create': {
-          const result = await this.handleCreate(parentSessionId, params as unknown as SessionManagerCreateParams)
-          createdId = result.sessionId
-          this.respond(parentSessionId, requestId, result)
-          break
-        }
-        case 'send': {
-          const result = await this.handleSend(params as unknown as SessionManagerSendParams)
-          this.respond(parentSessionId, requestId, result)
-          break
-        }
-        case 'history': {
-          const result = await this.handleHistory(params as unknown as SessionManagerHistoryParams)
-          this.respond(parentSessionId, requestId, result)
-          break
-        }
-        case 'status': {
-          const result = await this.handleStatus(params as unknown as SessionManagerStatusParams)
-          this.respond(parentSessionId, requestId, result)
-          break
-        }
-        case 'list': {
-          const result = await this.handleList(params as unknown as SessionManagerListParams)
-          this.respond(parentSessionId, requestId, result)
-          break
-        }
-        case 'abort': {
-          const result = await this.handleAbort(params as unknown as SessionManagerAbortParams)
-          this.respond(parentSessionId, requestId, result)
-          break
-        }
-        default: {
-          // 未知 action → 回 cancelled
-          this.opts.sendExtensionUiResponse(parentSessionId, requestId, null, 'select')
-          break
-        }
-      }
+      const result = await this.dispatch(action, parentSessionId, params)
+      this.respond(parentSessionId, requestId, result)
     } catch (e) {
-      // 错误闭环：respond({error}) 走同一 select value 通道
-      const errorResult: SessionManagerErrorResult = {
-        error: toErrorMessage(e),
-      }
-      // create 已成功（createdId 有值）时附 sessionId + hint
+      // 错误闭环：respond({error}) 走同一 select value 通道。
+      // create 已成功但后续步骤失败时，handleCreate 在错误对象上携带 sessionId
+      // → 附 sessionId + hint 恢复路径（设计文档 §5.2 原子性 catch 面）。
+      const errorResult: SessionManagerErrorResult = { error: toErrorMessage(e) }
+      const createdId = (e as { sessionId?: string }).sessionId
       if (createdId) {
         errorResult.sessionId = createdId
         errorResult.hint = 'use send_to_session to retry'
@@ -123,6 +89,28 @@ export class SessionManagerHandler {
     this.opts.sendExtensionUiResponse(parentSessionId, requestId, JSON.stringify(data), 'select')
   }
 
+  /** action 分发：各分支只 return 结果，回写统一由 handle/respond 收口 */
+  private async dispatch(
+    action: SessionManagerAction,
+    parentSessionId: string,
+    params: Record<string, unknown>,
+  ): Promise<SessionManagerCreateResult | SessionManagerSendResult | SessionManagerHistoryResult | SessionManagerStatusResult | SessionManagerListResult | SessionManagerAbortResult> {
+    switch (action) {
+      case 'create':
+        return this.handleCreate(parentSessionId, params as unknown as SessionManagerCreateParams)
+      case 'send':
+        return this.handleSend(params as unknown as SessionManagerSendParams)
+      case 'history':
+        return this.handleHistory(params as unknown as SessionManagerHistoryParams)
+      case 'status':
+        return this.handleStatus(params as unknown as SessionManagerStatusParams)
+      case 'list':
+        return this.handleList(params as unknown as SessionManagerListParams)
+      case 'abort':
+        return this.handleAbort(params as unknown as SessionManagerAbortParams)
+    }
+  }
+
   /** create 分支：四步串行时序 */
   private async handleCreate(parentSessionId: string, params: SessionManagerCreateParams): Promise<SessionManagerCreateResult> {
     const { cwd, label, prompt, model, thinkingLevel } = params
@@ -132,14 +120,14 @@ export class SessionManagerHandler {
     const session = await this.opts.sessionService.create(cwd, label, {
       spawnSource: 'agent',
       parentAgentSessionId: parentSessionId,
-      ...(model !== undefined ? { modelOverride: model } : {}),
-      ...(thinkingLevel !== undefined ? { thinkingOverride: thinkingLevel } : {}),
+      modelOverride: model,
+      thinkingOverride: thinkingLevel,
     })
 
     // 2. broadcastSessionList（先于 sendMessage，opts 注入回调）
     // broadcast 失败不阻断 create 结果（解耦：已广播的侧栏可见性不受 sendMessage 影响）
     try {
-      this.opts.broadcastSessionList({ spawnSource: 'agent', parentAgentSessionId: parentSessionId })
+      this.opts.broadcastSessionList()
     } catch (e) {
       // broadcast 失败只 warn，不阻断 create 的 respond
       console.warn('[session-manager] broadcastSessionList failed:', toErrorMessage(e))
@@ -147,9 +135,13 @@ export class SessionManagerHandler {
 
     // 3. sendMessage：初始 prompt 同一 handler 调用内注入（设计文档 §5.2——
     // create+send 原子完成，避免"已创建无内容"中间态；broadcast 先于此步，
-    // prompt 注入失败走 catch 的 error 附 sessionId 恢复路径）
+    // prompt 注入失败时错误对象携带 sessionId，走外层 catch 的恢复路径）
     if (prompt !== undefined && prompt !== '') {
-      await this.opts.sessionService.sendMessage(session.id, prompt)
+      try {
+        await this.opts.sessionService.sendMessage(session.id, prompt)
+      } catch (e) {
+        throw Object.assign(new Error(toErrorMessage(e)), { sessionId: session.id })
+      }
     }
 
     // 4. respond
@@ -195,7 +187,7 @@ export class SessionManagerHandler {
     return { messages, truncated }
   }
 
-  /** status 分支：modelId 从 state.model 组装 */
+  /** status 分支：从 getSummary 组装（session 不存在时 status='not_found'） */
   private async handleStatus(params: SessionManagerStatusParams): Promise<SessionManagerStatusResult> {
     const { sessionId } = params
     const summary = this.opts.sessionService.getSummary(sessionId)

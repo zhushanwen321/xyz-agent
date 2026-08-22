@@ -41,6 +41,7 @@ export const PING_FAIL_THRESHOLD = 3
 export const PING_WARN_FAIL_COUNT = 2
 import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
+import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
 import type { IFileChangeDiff } from '../ports/file-change-diff.js'
 import type { PiTranslatedEvent } from './types.js'
 
@@ -110,7 +111,7 @@ export interface EventInterpreterOptions {
    * fire-and-forget（不 await），由 SessionManagerHandler 异步处理并回写 response。
    * 组合根注入 server.handleSessionManagerRequest。
    */
-  onSessionManagerRequest?: (requestId: string, sessionId: string, action: string, params: Record<string, unknown>) => void
+  onSessionManagerRequest?: (requestId: string, sessionId: string, action: SessionManagerAction | '__malformed__', params: Record<string, unknown>) => void
   /** bridge:* 前缀请求（直接路由不经前端超时）。组合根注入 server.handleBridgeRequest。 */
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
   /** extension setStatus（路由到 statusline builtin 插件，status-bar-registry 广播）。组合根注入 server.handleStatusSetUpdate。 */
@@ -337,18 +338,12 @@ export class EventInterpreter {
       case 'bridge-ui':
         this.opts.onBridgeUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.data)
         return
+      case 'session-manager-ui':
+        // fire-and-forget（不 await），由 SessionManagerHandler 异步处理并回写 response，
+        // 不走前端 UI 超时流程。
+        this.opts.onSessionManagerRequest?.(ev.requestId, ev.sessionId, ev.action, ev.params)
+        return
       case 'extension-ui':
-        // session-manager 请求路由：payload.sessionManager=true 时走 onSessionManagerRequest
-        //（fire-and-forget），不走前端 UI 超时流程。
-        if (ev.payload.sessionManager && this.opts.onSessionManagerRequest) {
-          this.opts.onSessionManagerRequest(
-            ev.requestId,
-            ev.sessionId,
-            ev.payload.sessionManagerAction as string,
-            ev.payload.sessionManagerParams as Record<string, unknown>,
-          )
-          return
-        }
         this.opts.onExtensionUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.payload)
         return
       case 'thinking-level':

@@ -29,16 +29,18 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEST_FILE="src/__tests__/equivalence/session-manager-full-e2e.test.ts"
 TOTAL_TIMEOUT_SECS=180
 
+# shellcheck source=scripts/cw/lib/red-phase-guard.sh
+source "$SCRIPT_DIR/lib/red-phase-guard.sh"
+
 # ── 红阶段守卫：实现产物存在（区分力检查——基线代码树无这些产物会 fail）──
-HANDLER_IMPL="$PROJECT_ROOT/packages/runtime/src/transport/session-manager-handler.ts"
+red_phase_guard
 EXTENSION_IMPL="$PROJECT_ROOT/extensions/session-manager/src/index.ts"
-for guard_file in "$HANDLER_IMPL" "$EXTENSION_IMPL" "$PROJECT_ROOT/packages/runtime/$TEST_FILE"; do
+for guard_file in "$EXTENSION_IMPL" "$PROJECT_ROOT/packages/runtime/$TEST_FILE"; do
   if [ ! -f "$guard_file" ]; then
     echo "ERROR: implementation missing (red phase guard): $guard_file" >&2
     exit 1
   fi
 done
-grep -q 'class SessionManagerHandler' "$HANDLER_IMPL" || { echo "ERROR: SessionManagerHandler class not found" >&2; exit 1; }
 grep -q 'create_managed_session' "$EXTENSION_IMPL" || { echo "ERROR: create_managed_session tool not found in extension" >&2; exit 1; }
 # 真 pi 用例必须已加入 REAL_PI_TESTS 分池（漏加会落回 main 满并行组饿死，见 vitest.config.ts 维护契约）
 grep -q 'session-manager-full-e2e.test.ts' "$PROJECT_ROOT/packages/runtime/vitest.config.ts" \
@@ -127,5 +129,5 @@ if [ -n "$(pgrep -f -- '--session-dir .*u9-smoke' 2>/dev/null || true)" ]; then
   exit 1
 fi
 
-[ "${VITEST_EXIT:-1}" -eq 0 ] && [ "${MARKER_EXIT:-1}" -eq 0 ] || exit 1
+[ "$VITEST_EXIT" -eq 0 ] && [ "$MARKER_EXIT" -eq 0 ] || exit 1
 exit 0
