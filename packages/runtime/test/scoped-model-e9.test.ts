@@ -67,11 +67,8 @@ function makeProvider(id: string, name: string, modelIds: string[], enabled = tr
   }
 }
 
-// ── R3 / E9 测试 ────────────────────────────────────────────────
-// R3 为 root unit 验收 id（词边界命中外层 describe），E9 为 sm-e2e 子 unit 验收 id
-//（-t "E9" 过滤内层 describe）。两层共存互不干扰。
+// ── E9 测试 ─────────────────────────────────────────────────
 
-describe('R3: aggregateModels scoped 行为锁定', () => {
 describe('E9: aggregateModels scoped 行为锁定', () => {
   it('E9-1 scopedModels 非空 → 只输出白名单内模型且保序', () => {
     const providers: ProviderInfo[] = [
@@ -159,4 +156,3 @@ describe('E9: aggregateModels scoped 行为锁定', () => {
     }
   })
 })
-}) // R3 outer describe

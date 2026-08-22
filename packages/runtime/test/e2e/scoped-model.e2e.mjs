@@ -10,7 +10,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -61,7 +61,7 @@ function killProc(proc) {
 }
 
 /** 启动 runtime 子进程，返回 { proc, port, token } */
-function startRuntime(dataDir, token = 'test-token-sm-e2e') {
+function startRuntime(dataDir, token = 'test-token-sm-e2e', port = 0) {
   return new Promise((resolve, reject) => {
     // cwd 必须是 worktree 根目录（.git file 指向 worktree）
     const repoRoot = process.cwd()
@@ -358,7 +358,7 @@ function setupBaseProviders(extra = {}) {
 }
 
 // builtin-providers.json 中 kimi-coding 模型集
-
+const KIMI_BUILTIN_MODELS = ['k3-256k', 'k2.5']
 
 async function runScenario(scenarioFn) {
   const { proc, port, token } = await startRuntime(dataDir)
