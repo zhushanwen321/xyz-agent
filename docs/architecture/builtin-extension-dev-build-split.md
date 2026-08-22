@@ -30,7 +30,7 @@ dev 与 build 的 builtin extension 加载路径分流：
 
 同源的好处是「修一处即修两处」（所见即所得），但**让 dev 替 build 背了 bundle 成本**：
 
-- 改任意 mandatory 源码（如 `extensions/goal/src/index.ts`）后，dev 不会感知——dev 读的是 staged 的 `index.js` bundle，不是源码。
+- 改任意 mandatory 源码（如 `extensions/universal/goal/src/index.ts`）后，dev 不会感知——dev 读的是 staged 的 `index.js` bundle，不是源码。
 - 必须先跑 `prepare-builtin-extensions.sh`（esbuild 全量 bundle 13 个包）才能让改动生效，再重启 dev（~40s/次）。
 - 无 watch、无单包增量、无 live edit。开发 builtin 扩展的 inner loop 极差。
 
@@ -45,7 +45,7 @@ dev 与 build 的 builtin extension 加载路径分流：
 pi 原生支持加载 `.ts` extension（内置 ts loader）。源码包的 `package.json` 已声明 `.ts` 入口：
 
 ```jsonc
-// extensions/goal/package.json
+// extensions/universal/goal/package.json
 { "name": "@zhushanwen/pi-goal", "main": "src/index.ts", "pi": { "extensions": ["./index.ts"] } }
 ```
 
@@ -62,7 +62,7 @@ dev-link 的 pi 模式（把源码 symlink 到 `~/.pi/agent/extensions/`）已�
 
 ### 2.3 dev 源码扫描只保留 mandatory 集合
 
-源码目录 `extensions/` 是**扁平结构**（`goal/`、`todo/`、`ask-user/` …，共 17 个 `@zhushanwen/pi-*` 包），而 build 的 staged 目录只含 **13 个 mandatory 包**（`prepare-builtin-extensions.sh` 按 `mandatory-extensions.json` SSOT bundle）。若 dev 全量加载源码目录，会多出 4 个非 mandatory 包：
+源码目录 `extensions/` [HISTORICAL] 设计当时是**扁平结构**（`goal/`、`todo/`、`ask-user/` …；2026-08-22 起改为 `taiji/`/`universal/` 两层分组，见 extension-conventions.md「目录分组」——本节的 mandatory 过滤机制不变，dev 扫描改为逐组进行），而 build 的 staged 目录只含 **13 个 mandatory 包**（`prepare-builtin-extensions.sh` 按 `mandatory-extensions.json` SSOT bundle）。若 dev 全量加载源码目录，会多出 4 个非 mandatory 包：
 
 | 非 mandatory 源码包 | 误加载副作用 |
 |---------------------|-------------|
@@ -182,7 +182,7 @@ scanBundledExtensions(projectRoot: string, packaged: boolean): ExtensionMap {
 | # | 场景 | 期望 | 验证方式 |
 |---|------|------|---------|
 | A1 | dev 模式启动，未跑 prepare 脚本 | 13 个 mandatory 包从源码加载，ExtensionPage 列出 13 个 | dev 启动后看 `[extension-resolver] resolved N extensions` 日志 + ExtensionPage |
-| A2 | dev 模式改 `extensions/goal/src/` 某文件 | 新建 session 即生效（无需 bundle/重启） | 改源码 → 新 session → 观察行为变化 |
+| A2 | dev 模式改 `extensions/universal/goal/src/` 某文件 | 新建 session 即生效（无需 bundle/重启） | 改源码 → 新 session → 观察行为变化 |
 | A3 | dev 模式源码目录含非 mandatory 包（`evolve-daily` 等） | 不被加载（filtered out） | dev 启动日志 resolved 数 = mandatory 集合，不含非 mandatory |
 | A4 | packaged 模式（build 产物） | 13 个 mandatory 包从 `Resources/extensions/@zhushanwen/` 加载（staged bundle） | 打包后启动，行为同改前 |
 | A5 | mandatory 守卫 | infrastructure 不可禁、feature 可禁不可卸（dev/build 皆然） | ExtensionPage 操作开关/卸载按钮 |

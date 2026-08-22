@@ -1,0 +1,39 @@
+{
+  "name": "@zhushanwen/pi-system-prompt-trace",
+  "version": "0.1.0",
+  "description": "System prompt trace extension: appends xyz:system-prompt entries to the session JSONL whenever the effective system prompt is established or changes",
+  "type": "module",
+  "main": "index.ts",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "extension",
+    "trace"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "src/**/*.ts",
+    "README.md"
+  ],
+  "xyz-agent": {
+    "role": "taiji"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "npx tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
+    "vitest": "^4.1.8"
+  }
+}

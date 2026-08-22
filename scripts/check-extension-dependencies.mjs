@@ -9,10 +9,13 @@
  * 检查项：
  * 1. 正向：每个条目 name + directory 必须对应真实 extensions/<dir>/package.json
  *    （name 字段与 package.json.name 精确一致，防改名/误删/错目录）
- * 2. 反向：extensions/ 下每个 @zhushanwen/pi-* 包（排除 extensions/shared/ 共享库）
+ * 2. 反向：extensions/{taiji,universal}/ 下每个 @zhushanwen/pi-* 包
  *    必须出现在文件中，directory 与磁盘目录一致
  * 3. 引用：dependsOn.package 为 workspace 内包（@zhushanwen/pi-* / @xyz-agent/*）
  *    时必须可解析（条目、extensions/shared/ 下包、或 packages/ 下包），防悬空引用
+ * 4. 分组：包必须在 taiji/（xyz 集成）或 universal/（独立通用）分组下；
+ *    package.json 的 xyz-agent.role 必须与所在分组一致；role=taiji 的包必须在
+ *    mandatory-extensions.json（xyz 集成包随应用打包，见 docs/extensions/extension-conventions.md）
  *
  * 零第三方依赖（node:fs/node:path）。退出码：0 = 通过；1 = 违规。
  */
@@ -24,7 +27,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
 const EXT_DIR = join(ROOT, 'extensions')
 const SHARED_DIR = join(EXT_DIR, 'shared')
+const GROUPS = ['taiji', 'universal']
 const DEPS_FILE = join(ROOT, 'extension-dependencies.json')
+const MANDATORY_FILE = join(ROOT, 'packages/shared/src/mandatory-extensions.json')
 
 let failed = 0
 const fail = (msg) => {
@@ -52,15 +57,28 @@ for (const entry of entries) {
   }
 }
 
-// ── 2. 反向：extensions/ 下 pi-* 包必须在文件中 ─────────────────────
+// ── 2. 反向：分组目录下 pi-* 包必须在文件中 ────────────────────────
 const diskPackages = []
+for (const group of GROUPS) {
+  const groupDir = join(EXT_DIR, group)
+  if (!existsSync(groupDir)) continue
+  for (const dir of readdirSync(groupDir)) {
+    const pkgFile = join(groupDir, dir, 'package.json')
+    if (!existsSync(pkgFile)) continue
+    const pkg = JSON.parse(readFileSync(pkgFile, 'utf-8'))
+    if (pkg.name?.startsWith('@zhushanwen/pi-')) {
+      diskPackages.push({ name: pkg.name, directory: `extensions/${group}/${dir}`, group, dir, pkg })
+    }
+  }
+}
+// extensions/ 一层不允许散装 pi-* 包（分组后残留 = 路径适配漏改）
 for (const dir of readdirSync(EXT_DIR)) {
-  if (dir === 'shared') continue
-  const pkgFile = join(EXT_DIR, dir, 'package.json')
-  if (!existsSync(pkgFile)) continue
-  const pkg = JSON.parse(readFileSync(pkgFile, 'utf-8'))
-  if (pkg.name?.startsWith('@zhushanwen/pi-')) {
-    diskPackages.push({ name: pkg.name, directory: `extensions/${dir}` })
+  if (GROUPS.includes(dir) || dir === 'shared' || dir === 'tsconfig.json') continue
+  if (existsSync(join(EXT_DIR, dir, 'package.json'))) {
+    const pkg = JSON.parse(readFileSync(join(EXT_DIR, dir, 'package.json'), 'utf-8'))
+    if (pkg.name?.startsWith('@zhushanwen/pi-')) {
+      fail(`包 ${pkg.name} 位于 extensions/ 一层（${dir}/），必须移入 taiji/ 或 universal/ 分组`)
+    }
   }
 }
 for (const pkg of diskPackages) {
@@ -94,6 +112,20 @@ for (const entry of entries) {
         fail(`条目 ${entry.name} 的 dependsOn 引用无法解析: ${name}`)
       }
     }
+  }
+}
+
+// ── 4. 分组：目录位置 ↔ xyz-agent.role ↔ mandatory 清单 ───────────
+const mandatoryNames = new Set(
+  JSON.parse(readFileSync(MANDATORY_FILE, 'utf-8')).map((e) => e.name),
+)
+for (const pkg of diskPackages) {
+  const role = pkg.pkg['xyz-agent']?.role
+  if (role !== pkg.group) {
+    fail(`包 ${pkg.name} 的 xyz-agent.role=${role ?? '(缺失)'} 与所在分组目录 ${pkg.group}/ 不一致`)
+  }
+  if (pkg.group === 'taiji' && !mandatoryNames.has(pkg.name)) {
+    fail(`包 ${pkg.name} 在 taiji/ 分组（xyz 集成）但不在 mandatory-extensions.json，builtin 集合与职责分组矛盾`)
   }
 }
 

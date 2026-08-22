@@ -76,13 +76,26 @@
 
 ## 1. 包结构与项目架构 **[规范]**
 
-### 1.1 npm 包名
+### 1.1 npm 包名与目录分组
+
+npm 包名格式：
 
 ```
 @scope/pi-<name>
 ```
 
 示例：`@zhushanwen/pi-goal`、`@zhushanwen/pi-todo`
+
+仓库内源码按职责分两组（分组约定与 role 字段校验详见 [extension-conventions.md](extension-conventions.md)「目录分组与 role 字段」）：
+
+```
+extensions/
+├── taiji/       # role=taiji：xyz-agent 集成包（契约两端在 xyz-agent 体系内，离开 xyz-agent 无功能，必在 mandatory 清单）
+├── universal/   # role=universal：独立通用包（功能自足，独立 pi 用户可单独安装）
+└── shared/      # 共享库（不是 extension 包，不属于任何分组）
+```
+
+新建包必须放入对应分组目录并在 package.json 声明 `"xyz-agent": { "role": "taiji" | "universal" }`，同时登记 `extension-dependencies.json`。
 
 ### 1.2 扩展加载位置
 
@@ -547,7 +560,7 @@ pi.registerTool({
 registerMyCommand(pi, () => runtime);  // command 也传 getter
 ```
 
-参考实现：`extensions/ask-user/src/index.ts`（execute 内联 + 闭包变量延迟读）、`extensions/scheduler/src/index.ts`（getter 模式）。
+参考实现：`extensions/universal/ask-user/src/index.ts`（execute 内联 + 闭包变量延迟读）、`extensions/universal/scheduler/src/index.ts`（getter 模式）。
 
 ### 4.6 execute 返回值规范 🔵
 

@@ -92,286 +92,6 @@ importers:
         specifier: ^4.1.6
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
 
-  extensions/agent-ext:
-    dependencies:
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
-    devDependencies:
-      '@types/node':
-        specifier: ^24.0.0
-        version: 24.13.2
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/ask-user:
-    dependencies:
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@xyz-agent/extension-protocol':
-        specifier: workspace:*
-        version: link:../../packages/extension-protocol
-    devDependencies:
-      '@earendil-works/pi-tui':
-        specifier: '*'
-        version: 0.82.1
-      '@types/node':
-        specifier: ^24.0.0
-        version: 24.13.2
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      fast-check:
-        specifier: ^4.9.0
-        version: 4.9.0
-      typebox:
-        specifier: '*'
-        version: 1.1.38
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/cache-probe:
-    dependencies:
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
-    devDependencies:
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/cw-tool:
-    dependencies:
-      '@earendil-works/pi-ai':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      typebox:
-        specifier: '*'
-        version: 1.1.38
-    devDependencies:
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/goal:
-    dependencies:
-      '@earendil-works/pi-ai':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-tui':
-        specifier: '*'
-        version: 0.82.1
-      '@xyz-agent/extension-protocol':
-        specifier: workspace:*
-        version: link:../../packages/extension-protocol
-      '@zhushanwen/pi-pending-notifications':
-        specifier: workspace:*
-        version: link:../pending-notifications
-      typebox:
-        specifier: '*'
-        version: 1.1.38
-    devDependencies:
-      '@fast-check/vitest':
-        specifier: ^0.4.1
-        version: 0.4.1(vitest@4.1.9)
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      fast-check:
-        specifier: ^4.9.0
-        version: 4.9.0
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/model-switch:
-    dependencies:
-      '@earendil-works/pi-ai':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-tui':
-        specifier: '*'
-        version: 0.82.1
-      '@zhushanwen/pi-llm-shared':
-        specifier: workspace:*
-        version: link:../shared/llm-shared
-      '@zhushanwen/pi-quota-providers':
-        specifier: workspace:*
-        version: link:../shared/quota-providers
-      typebox:
-        specifier: '*'
-        version: 1.1.38
-    devDependencies:
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/msg-id-mapper:
-    dependencies:
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
-    devDependencies:
-      '@types/node':
-        specifier: ^24.0.0
-        version: 24.13.2
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/pending-notifications:
-    dependencies:
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      typebox:
-        specifier: '*'
-        version: 1.1.38
-    devDependencies:
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/permission:
-    dependencies:
-      '@zhushanwen/pi-llm-shared':
-        specifier: workspace:*
-        version: link:../shared/llm-shared
-      tree-sitter-bash:
-        specifier: ^0.25.1
-        version: 0.25.1
-      web-tree-sitter:
-        specifier: ^0.26.11
-        version: 0.26.11
-    devDependencies:
-      '@earendil-works/pi-ai':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-tui':
-        specifier: '*'
-        version: 0.82.1
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/plan:
-    dependencies:
-      '@earendil-works/pi-ai':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-coding-agent':
-        specifier: '>=0.73.0'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@zhushanwen/pi-goal':
-        specifier: workspace:*
-        version: link:../goal
-      typebox:
-        specifier: '*'
-        version: 1.1.38
-    devDependencies:
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/rename-session:
-    dependencies:
-      '@earendil-works/pi-ai':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@zhushanwen/pi-llm-shared':
-        specifier: workspace:*
-        version: link:../shared/llm-shared
-      typebox:
-        specifier: '*'
-        version: 1.1.38
-    devDependencies:
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/scheduler:
-    dependencies:
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      croner:
-        specifier: ^9.0.0
-        version: 9.1.0
-      typebox:
-        specifier: '*'
-        version: 1.1.38
-    devDependencies:
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      fast-check:
-        specifier: ^4.9.0
-        version: 4.9.0
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/session-reader:
-    dependencies:
-      '@earendil-works/pi-ai':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-tui':
-        specifier: '*'
-        version: 0.82.1
-      typebox:
-        specifier: '*'
-        version: 1.1.38
-    devDependencies:
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
   extensions/shared/extension-logger:
     dependencies:
       '@earendil-works/pi-coding-agent':
@@ -433,17 +153,323 @@ importers:
         specifier: ^4.1.8
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
 
-  extensions/structured-output:
+  extensions/taiji/agent-ext:
     dependencies:
       '@earendil-works/pi-coding-agent':
         specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.2
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/taiji/msg-id-mapper:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.2
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/taiji/system-prompt:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.2
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/taiji/system-prompt-trace:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/ask-user:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+      '@xyz-agent/extension-protocol':
+        specifier: workspace:*
+        version: link:../../../packages/extension-protocol
+    devDependencies:
+      '@earendil-works/pi-tui':
+        specifier: '*'
+        version: 0.82.1
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.2
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      fast-check:
+        specifier: ^4.9.0
+        version: 4.9.0
+      typebox:
+        specifier: '*'
+        version: 1.3.7
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/cache-probe:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/cw-tool:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: '*'
         version: 0.82.1(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+      typebox:
+        specifier: '*'
+        version: 1.3.7
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/goal:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: '*'
+        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-tui':
+        specifier: '*'
+        version: 0.82.1
+      '@xyz-agent/extension-protocol':
+        specifier: workspace:*
+        version: link:../../../packages/extension-protocol
+      '@zhushanwen/pi-pending-notifications':
+        specifier: workspace:*
+        version: link:../pending-notifications
+      typebox:
+        specifier: '*'
+        version: 1.3.7
+    devDependencies:
+      '@fast-check/vitest':
+        specifier: ^0.4.1
+        version: 0.4.1(vitest@4.1.9)
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      fast-check:
+        specifier: ^4.9.0
+        version: 4.9.0
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/model-switch:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: '*'
+        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-tui':
+        specifier: '*'
+        version: 0.82.1
+      '@zhushanwen/pi-llm-shared':
+        specifier: workspace:*
+        version: link:../../shared/llm-shared
+      '@zhushanwen/pi-quota-providers':
+        specifier: workspace:*
+        version: link:../../shared/quota-providers
+      typebox:
+        specifier: '*'
+        version: 1.3.7
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/pending-notifications:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+      typebox:
+        specifier: '*'
+        version: 1.3.7
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/permission:
+    dependencies:
+      '@zhushanwen/pi-llm-shared':
+        specifier: workspace:*
+        version: link:../../shared/llm-shared
+      tree-sitter-bash:
+        specifier: ^0.25.1
+        version: 0.25.1
+      web-tree-sitter:
+        specifier: ^0.26.11
+        version: 0.26.11
+    devDependencies:
+      '@earendil-works/pi-ai':
+        specifier: '*'
+        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-tui':
+        specifier: '*'
+        version: 0.82.1
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/plan:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: '*'
+        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-coding-agent':
+        specifier: '>=0.73.0'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+      '@zhushanwen/pi-goal':
+        specifier: workspace:*
+        version: link:../goal
+      typebox:
+        specifier: '*'
+        version: 1.3.7
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/rename-session:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: '*'
+        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+      '@zhushanwen/pi-llm-shared':
+        specifier: workspace:*
+        version: link:../../shared/llm-shared
+      typebox:
+        specifier: '*'
+        version: 1.3.7
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/scheduler:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+      croner:
+        specifier: ^9.0.0
+        version: 9.1.0
+      typebox:
+        specifier: '*'
+        version: 1.3.7
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      fast-check:
+        specifier: ^4.9.0
+        version: 4.9.0
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/session-reader:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: '*'
+        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-tui':
+        specifier: '*'
+        version: 0.82.1
+      typebox:
+        specifier: '*'
+        version: 1.3.7
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  extensions/universal/structured-output:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
       ajv:
         specifier: ^8.17.0
         version: 8.20.0
       typebox:
         specifier: '*'
-        version: 1.1.38
+        version: 1.3.7
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -455,26 +481,26 @@ importers:
         specifier: ^4.1.8
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
 
-  extensions/subagent-workflow:
+  extensions/universal/subagent-workflow:
     dependencies:
       '@earendil-works/pi-ai':
         specifier: '*'
         version: 0.82.1(ws@8.21.0)(zod@3.25.76)
       '@earendil-works/pi-coding-agent':
         specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
       '@earendil-works/pi-tui':
         specifier: '*'
         version: 0.82.1
       '@xyz-agent/extension-protocol':
         specifier: workspace:*
-        version: link:../../packages/extension-protocol
+        version: link:../../../packages/extension-protocol
       '@zhushanwen/pi-extension-logger':
         specifier: workspace:*
-        version: link:../shared/extension-logger
+        version: link:../../shared/extension-logger
       '@zhushanwen/pi-file-lock':
         specifier: workspace:*
-        version: link:../shared/file-lock
+        version: link:../../shared/file-lock
       '@zhushanwen/pi-pending-notifications':
         specifier: workspace:*
         version: link:../pending-notifications
@@ -486,7 +512,7 @@ importers:
         version: 8.20.0
       typebox:
         specifier: '*'
-        version: 1.1.38
+        version: 1.3.7
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -501,49 +527,23 @@ importers:
         specifier: ^4.1.8
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
 
-  extensions/system-prompt:
-    dependencies:
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
-    devDependencies:
-      '@types/node':
-        specifier: ^24.0.0
-        version: 24.13.2
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/system-prompt-trace:
-    dependencies:
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
-    devDependencies:
-      '@vitest/coverage-v8':
-        specifier: ^4.1.9
-        version: 4.1.9(vitest@4.1.9)
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/todo:
+  extensions/universal/todo:
     dependencies:
       '@earendil-works/pi-ai':
         specifier: '*'
         version: 0.82.1(ws@8.21.0)(zod@3.25.76)
       '@earendil-works/pi-coding-agent':
         specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
       '@earendil-works/pi-tui':
         specifier: '*'
         version: 0.82.1
       '@xyz-agent/extension-protocol':
         specifier: workspace:*
-        version: link:../../packages/extension-protocol
+        version: link:../../../packages/extension-protocol
       typebox:
         specifier: '*'
-        version: 1.1.38
+        version: 1.3.7
     devDependencies:
       '@vitest/coverage-v8':
         specifier: ^4.1.9
@@ -552,14 +552,14 @@ importers:
         specifier: ^4.1.8
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
 
-  extensions/unified-hooks:
+  extensions/universal/unified-hooks:
     dependencies:
       '@earendil-works/pi-coding-agent':
         specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
+        version: 0.84.1(ws@8.21.0)(zod@3.25.76)
       '@zhushanwen/pi-extension-logger':
         specifier: workspace:*
-        version: link:../shared/extension-logger
+        version: link:../../shared/extension-logger
     devDependencies:
       '@vitest/coverage-v8':
         specifier: ^4.1.9

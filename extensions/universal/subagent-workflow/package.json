@@ -1,0 +1,79 @@
+{
+  "name": "@zhushanwen/pi-subagent-workflow",
+  "version": "8.1.0",
+  "type": "module",
+  "main": "index.ts",
+  "description": "Unified subagent execution and multi-agent workflow orchestration for Pi — spawned-process agent runtime with sync/background modes, stateful workflow management with persistence, state machine, and execution tracing.",
+  "keywords": [
+    "pi-package",
+    "extension",
+    "subagent",
+    "agent-runtime",
+    "workflow",
+    "orchestration",
+    "multi-agent"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "index.ts",
+    "agents/",
+    "skills/",
+    "workflows/",
+    "scripts/",
+    "src/index.ts",
+    "src/execution/",
+    "src/injectors/",
+    "src/orchestration/",
+    "src/interface/",
+    "src/shared/"
+  ],
+  "xyz-agent": {
+    "role": "universal"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "agents": [
+      "./agents"
+    ]
+  },
+  "scripts": {
+    "typecheck": "npx tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@xyz-agent/extension-protocol": "workspace:*",
+    "@zhushanwen/pi-extension-logger": "workspace:*",
+    "@zhushanwen/pi-file-lock": "workspace:*",
+    "ajv": "^8.20.0",
+    "yaml": "^2.9.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "@zhushanwen/pi-pending-notifications": "workspace:*",
+    "@zhushanwen/pi-structured-output": "workspace:*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@zhushanwen/pi-structured-output": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^4.1.9",
+    "vitest": "^4.1.8"
+  }
+}

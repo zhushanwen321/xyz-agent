@@ -58,10 +58,16 @@ const EXTERNAL = [
 	"@sinclair/typebox/*",
 ];
 
-/** 包名 @zhushanwen/pi-<x> → 源码目录 extensions/<x>/ */
+/** 包名 @zhushanwen/pi-<x> → 源码目录 extensions/<group>/<x>/（group = taiji | universal，见 docs/extensions/extension-conventions.md 分组约定） */
 function srcDirFor(pkgName) {
 	const short = pkgName.replace(/^@zhushanwen\/pi-/, "");
-	return join(EXTENSIONS_DIR, short);
+	for (const group of ["taiji", "universal"]) {
+		const dir = join(EXTENSIONS_DIR, group, short);
+		if (existsSync(dir)) return dir;
+	}
+	throw new Error(
+		`source dir not found for ${pkgName}: tried extensions/{taiji,universal}/${short}`,
+	);
 }
 
 function fmtSize(bytes) {

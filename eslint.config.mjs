@@ -30,10 +30,12 @@ export default [
       'test-results/**',
       // vitest coverage 产物（工具生成的 JS，已被 .gitignore）
       '**/coverage/**',
-      // pi extension 运行时脚本/示例（非 TS 源码，不参与 lint）
-      'extensions/*/workflows/**',
-      'extensions/*/.pi/workflows/**',
-      'extensions/*/examples/**',
+      // pi extension 运行时脚本/示例（非 TS 源码，不参与 lint）。
+      // ** 匹配分组层（extensions/taiji|universal/<pkg>/workflows/**，2026-08-22 分组
+      // 后一层 * 不再命中，workflows/*.js 被误 lint 报 25 个 no-require-imports error）
+      'extensions/**/workflows/**',
+      'extensions/**/.pi/workflows/**',
+      'extensions/**/examples/**',
     ],
   },
   // [HISTORICAL] mock 门面文件是所有 domain 的聚合中心（session/chat/config/model/extension/plugin/
@@ -192,7 +194,7 @@ export default [
   // 依赖 agent/parallel/pipeline/$ARGS/$BUDGET 等注入契约），不可为凑行数随意合并/拆分行。
   // returnMeta 透传补全后函数体超 300（303），属同质唯一聚合中心，override 避免误报。
   {
-    files: ['extensions/subagent-workflow/src/orchestration/worker-script-builder.ts'],
+    files: ['extensions/universal/subagent-workflow/src/orchestration/worker-script-builder.ts'],
     rules: {
       'max-lines-per-function': 'off',
     },
@@ -254,7 +256,7 @@ export default [
   // 模块级（需透传 pi/sessionState/registry 等大量闭包变量），属独立重构任务。
   // 短期 max-lines-per-function override 避免阻塞（HEAD 版已 321 行超限，属存量）。
   {
-    files: ['extensions/subagent-workflow/src/index.ts'],
+    files: ['extensions/universal/subagent-workflow/src/index.ts'],
     rules: {
       'max-lines-per-function': 'off',
     },

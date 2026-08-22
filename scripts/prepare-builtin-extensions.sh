@@ -57,11 +57,17 @@ node "$REPO_ROOT/scripts/bundle-extensions.mjs"
 #    （index.js / package.json / wasm），此步仅拷文档供产物自描述，严格排除 *.ts /
 #    src/ / node_modules / 测试，防 .ts 入口残留触发 resolver fallback 旁路 bundle。
 for pkg_dir in $PKG_DIRS; do
-	src_dir="${pkg_dir#pi-}"          # pi-ask-user → ask-user（extensions/ 下目录名）
+	src_dir="${pkg_dir#pi-}"          # pi-ask-user → ask-user（分组下目录名）
 	dest_pkg="$STAGED_SCOPED/$pkg_dir"
-	src_pkg="$REPO_ROOT/extensions/$src_dir"
+	src_pkg=""
+	for group in taiji universal; do
+		if [[ -d "$REPO_ROOT/extensions/$group/$src_dir" ]]; then
+			src_pkg="$REPO_ROOT/extensions/$group/$src_dir"
+			break
+		fi
+	done
 
-	if [[ -d "$src_pkg" ]]; then
+	if [[ -n "$src_pkg" ]]; then
 		rsync -a \
 			--include='README.md' \
 			--include='ARCHITECTURE.md' \
