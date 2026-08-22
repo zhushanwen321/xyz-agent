@@ -280,6 +280,8 @@ export class RuntimeServer implements IMessageBroker {
       this.quotaMessageHandler = new QuotaMessageHandler({
         ...messaging,
         quotaService: quota,
+        // quota.configure 成功后广播 provider 列表（renderer providers 快照即时刷新）
+        broadcastProviderList: () => this.broker.broadcastProviderList(),
       })
     }
     if (preset) {

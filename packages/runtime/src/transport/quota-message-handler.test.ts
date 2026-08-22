@@ -22,6 +22,7 @@ function mockContext(quotaService: Partial<QuotaService>): QuotaHandlerContext {
     sendError: vi.fn(),
     reply: vi.fn(),
     quotaService: quotaService as QuotaService,
+    broadcastProviderList: vi.fn(),
   }
 }
 
@@ -65,6 +66,18 @@ describe('QuotaMessageHandler · quota.configure await 竞态（A1-5）', () => 
       msg('quota.configure', { providerId: 'zai-coding-cn', enabled: false }), WS,
     )
     expect(ctx.reply).toHaveBeenCalledWith(WS, 'm1', 'quota.configure:result', { ok: false, error: 'boom' })
+    // 失败未落盘，providers.json 无变化 → 不广播（广播旧列表无意义）
+    expect(ctx.broadcastProviderList).not.toHaveBeenCalled()
+  })
+
+  it('configure 成功 → 广播 provider 列表（renderer providers 快照即时刷新，不依赖重启）', async () => {
+    const ctx = mockContext({ configure: vi.fn().mockResolvedValue({ ok: true }) })
+    const handler = new QuotaMessageHandler(ctx)
+
+    await handler.handleQuotaMessage(
+      msg('quota.configure', { providerId: 'zai-coding-cn', enabled: true }), WS,
+    )
+    expect(ctx.broadcastProviderList).toHaveBeenCalledTimes(1)
   })
 })
 
