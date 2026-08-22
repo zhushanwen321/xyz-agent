@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import type { ProviderInfo } from '@xyz-agent/shared'
+import type { BuiltinProviderTemplate, ProviderInfo } from '@xyz-agent/shared'
 import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
 
 const configMock = vi.hoisted(() => ({
@@ -300,5 +300,66 @@ describe('ProviderPage 认证徽章（wave-list-badge TC3）', () => {
     expect(badges[1]!.textContent).toBe('API Key（未设置）')
     // 中性色
     expect(badges[0]!.className).toContain('bg-surface-hover')
+  })
+})
+
+/** oauth 能力的内置模板（B-1 QuickSetup OAuth 登录链路 fixture） */
+const OAUTH_TEMPLATE: BuiltinProviderTemplate = {
+  id: 'anthropic',
+  name: 'Anthropic',
+  api: 'anthropic-messages',
+  baseUrl: 'https://api.anthropic.com',
+  authMode: 'both',
+  envVars: ['ANTHROPIC_API_KEY'],
+  oauthSupported: true,
+  modelCount: 3,
+  models: [],
+}
+
+/** body 内 portal 元素点击（reka Portal teleport 到 body，Vue @click 原生冒泡生效） */
+function clickBody(selector: string): void {
+  const el = document.body.querySelector<HTMLElement>(selector)
+  if (!el) throw new Error(`body 元素未找到: ${selector}`)
+  el.click()
+}
+
+describe('ProviderPage QuickSetup OAuth 登录链路（B-1）', () => {
+  it('选 oauth 模板 → QuickSetup 登录 → config.oauthLogin 启动 flow + OAuthDialog 打开 pending 态', async () => {
+    configMock.listBuiltinProviders.mockResolvedValueOnce([OAUTH_TEMPLATE])
+    configMock.oauthLogin.mockResolvedValueOnce({ started: true })
+    wrapper = mount(ProviderPage, {
+      props: { providers: [] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    // 入口：添加供应商 → 从内置模板 → 选 anthropic（portal 内容经 document.body 查询）
+    const addBtn = wrapper.findAll('button').find((b) => b.text().includes('添加供应商'))!
+    await addBtn.trigger('click')
+    await flushPromises()
+    clickBody('[data-testid="add-menu-builtin"]')
+    await flushPromises()
+    clickBody('[data-testid="provider-template-anthropic"]')
+    await flushPromises()
+
+    // QuickSetup 打开（anthropic 元信息可见）
+    const quickSetup = document.body.querySelector('[data-testid="provider-quick-setup"]')
+    expect(quickSetup).toBeTruthy()
+    expect(quickSetup!.textContent).toContain('Anthropic')
+
+    // 切 OAuth 凭据选项 → 登录按钮出现 → 点击（onQuickSetupOAuthLogin → startQuickSetupOauth）
+    clickBody('[data-testid="auth-option-oauth"]')
+    await flushPromises()
+    const loginBtn = document.body.querySelector<HTMLElement>('[data-testid="oauth-login-button"]')
+    expect(loginBtn).toBeTruthy()
+    loginBtn!.click()
+    await flushPromises()
+
+    // 共享 oauth 状态机启动 flow（provider id = 模板 id）
+    expect(configMock.oauthLogin).toHaveBeenCalledTimes(1)
+    expect(configMock.oauthLogin).toHaveBeenCalledWith('anthropic')
+    // OAuthDialog 打开 pending 态（portal 到 body；与 QuickSetup 共用同一状态机实例）
+    expect(document.body.querySelector('[data-testid="oauth-dialog"]')).toBeTruthy()
+    expect(document.body.querySelector('[data-testid="oauth-pending"]')).toBeTruthy()
   })
 })

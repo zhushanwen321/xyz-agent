@@ -141,6 +141,30 @@ describe('B-3 额度显示双轨（used/limit + pct）', () => {
     expect(windows.text()).toContain('55%')
     expect(windows.text()).not.toContain('quotaUsedOf')
   })
+
+  it('计费单位三分支：tokens / credits 渲染各自 i18n 标签，unit=null 有绝对量时不渲染单位', async () => {
+    wrapper = mountSection({
+      testStatus: 'success',
+      quotaRow: {
+        label: 'Mixed Plans',
+        wins: [
+          { pct: 24, used: 1204, limit: 5000, unit: 'tokens', resetSec: null },
+          { pct: 41, used: 30, limit: 100, unit: 'credits', resetSec: null },
+          { pct: 55, used: 1, limit: 2, unit: null, resetSec: null },
+        ],
+      },
+    })
+    await flushPromises()
+
+    const text = wrapper.find('[data-testid="quota-result-windows"]').text()
+    // tokens / credits 单位标签各自渲染（i18n mock 返回 key）
+    expect(text).toContain('settings.providerEdit.quotaUnitTokens')
+    expect(text).toContain('settings.providerEdit.quotaUnitCredits')
+    // 无单位窗口：绝对量仍渲染，但不出现任何单位标签
+    expect(text).toContain('1')
+    expect(text).toContain('2')
+    expect(text).not.toContain('settings.providerEdit.quotaUnitRequests')
+  })
 })
 
 describe('B-3 失败态（A2-4 reason 透传）+ 「查看上次成功数据」折叠', () => {
