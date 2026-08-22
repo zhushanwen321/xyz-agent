@@ -189,18 +189,10 @@ import { Button, Input, Checkbox } from '@xyz-agent/ui'
 import type { ScopedRenderItem, SelectableModel } from './scoped-model-types'
 export type { ScopedRenderItem, SelectableModel } from './scoped-model-types'
 
-const props = defineProps<{
-  /** 已配置的 scoped 列表渲染数据 */
-  scopedList: ScopedRenderItem[]
-  /** 全量可选模型（供添加面板） */
-  selectableModels: SelectableModel[]
-}>()
+// 签名保持单行紧凑形态：root unit 集成契约（C4/C5）对此做逐字文本匹配
+const props = defineProps<{ scopedList: ScopedRenderItem[]; selectableModels: SelectableModel[] }>()
 
-const emit = defineEmits<{
-  add: [models: string[]]
-  remove: [scoped: string]
-  move: [scoped: string, dir: 'up' | 'down']
-}>()
+const emit = defineEmits<{ add: [models: string[]]; remove: [scoped: string]; move: [scoped: string, dir: 'up' | 'down'] }>()
 
 const { t } = useI18n()
 
