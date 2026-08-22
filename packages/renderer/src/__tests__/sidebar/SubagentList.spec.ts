@@ -191,14 +191,24 @@ describe('SubagentList', () => {
 
   // ── slug 替换 hash（W3 新增）──
 
-  it('卡片右侧显示 slug 而非 subagentId hash', () => {
+  it('第一行 agent 名称右侧显示 slug（可见文本，非仅 hover title）', () => {
     const records = [makeRecord({ subagentId: 'bg-abc-1-1234567890', slug: 'review-changes', agent: 'reviewer' })]
     const wrapper = mount(SubagentList, { props: { subagents: records } })
     const card = wrapper.find('[data-testid="subagent-card"]')
-    // slug 显示在卡片 title 属性（组件 :title="agent + ' · ' + slug"）
+    // slug 渲染为第一行可见元素（agent 名右侧，与 WorkflowList 对齐）
+    const slugEl = wrapper.find('[data-testid="subagent-card-slug"]')
+    expect(slugEl.exists()).toBe(true)
+    expect(slugEl.text()).toBe('review-changes')
+    // title 保留 agent + slug 全称
     expect(card.attributes('title')).toBe('reviewer · review-changes')
-    // 完整 hash 不显示在卡片可见区域（已截断或移到 title）
+    // 完整 hash 不显示在卡片可见区域
     expect(card.text()).not.toContain('bg-abc-1-1234567890')
+  })
+
+  it('slug 空串（旧 session 无 slug 兜底）不渲染 slug 元素', () => {
+    const records = [makeRecord({ slug: '' })]
+    const wrapper = mount(SubagentList, { props: { subagents: records } })
+    expect(wrapper.find('[data-testid="subagent-card-slug"]').exists()).toBe(false)
   })
 })
 

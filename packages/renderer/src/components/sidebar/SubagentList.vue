@@ -52,6 +52,14 @@
             <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-neutral-fg">
               {{ record.agent }}
             </span>
+            <!-- slug 短标签（与 WorkflowList 第一行对齐：名称右侧 mono 小字；旧 session 兜底空串不渲染） -->
+            <span
+              v-if="record.slug"
+              class="shrink-0 font-mono text-[10px] text-neutral-mid"
+              data-testid="subagent-card-slug"
+            >
+              {{ record.slug }}
+            </span>
             <!-- cancel 按钮（streaming 态显示，inline 两段式确认；waiting/done 投影无进程可取消，不显示） -->
             <Button
               v-if="isStreaming(record)"
