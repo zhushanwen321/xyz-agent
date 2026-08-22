@@ -118,7 +118,22 @@ function fixtureStateClient(fx: PiFixture): { getState(): Promise<Record<string,
  * 复制到 workDir 并把 header cwd 归一到 workDir（fixture sessionDir 即将被 dispose 删除，
  * 死 cwd 会使下一次附着 throw MissingSessionCwdError——变换用生产纯函数
  * applyHeaderCwdFallback，与 restoreSession F3 管线同款）→ dispose。
+ *
+ * header 落盘竞态兜底（2026-08-22 sm-e2e cw verify 连续红定位）：agent_end 后立即
+ * readFileSync(srcFile)，冷缓存/高负载环境（verify 干净 checkout 的 tmp 目录）下 pi 的
+ * session header entry 可能晚于 message entry flush——首条读到 message entry，下游
+ * header?.type === 'session' 断言假失败。copy 前轮询等待 header 落盘；超时仍无
+ * header 按现状继续，交由调用方断言给出可诊断失败（不弱化断言）。
  */
+function waitSessionHeaderFlushed(filePath: string, timeoutMs = 15_000): void {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const entries = readSessionEntries(filePath)
+    if (entries.length > 0 && entries[0]?.type === 'session') return
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200)
+  }
+}
+
 async function seedSessionFile(workDir: string, fileName: string, marker: string): Promise<string> {
   let fx = await spawnPiFixture()
   try {
@@ -127,6 +142,7 @@ async function seedSessionFile(workDir: string, fileName: string, marker: string
     const state = await fx.sendCommand('get_state')
     const srcFile = state.data?.sessionFile
     if (typeof srcFile !== 'string') throw new Error(`get_state.sessionFile missing after seeded turn (marker: ${marker})`)
+    waitSessionHeaderFlushed(srcFile)
     const target = join(workDir, fileName)
     const raw = readFileSync(srcFile, 'utf-8')
     writeFileSync(target, applyHeaderCwdFallback(raw, workDir))

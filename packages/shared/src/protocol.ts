@@ -370,7 +370,6 @@ export interface ClientMessageMap {
   'config.discoverModels': { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
   // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
   'config.setDefaultModel': { provider: ProviderId; modelId: string }
-  'config.setScopedModels': { models: string[] }
   'config.scanSkills': { sources: string[] }
   // W2（cw-2026-07-21-scan-project-agents-skills）：按 session cwd 拉 project skill（.agents/skills + .xyz-agent/skills）。
   // 与 config.scanSkills 区分：scanSkills 扫 sources 数组候选加入 discovery；scanSessionSkills 扫某 cwd 已生效目录。
@@ -1328,7 +1327,6 @@ export interface ReplyPayloadMap {
   //   形状 `{ config, corrupted? }`。
   'config.getSystemPrompt': ServerMessageMap['config.systemPrompt']
   'config.setSystemPrompt': ServerMessageMap['config.systemPrompt']
-  'config.setScopedModels': { scopedModels: string[] }
   'extension.getPendingRequests': ServerMessageMap['extension.pendingRequests']
   'extension.installDir': ServerMessageMap['extension.discovered']
   'extension.installGit': ServerMessageMap['extension.discovered']
