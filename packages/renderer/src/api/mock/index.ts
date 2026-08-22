@@ -700,7 +700,8 @@ function cloneFixtureProviders() {
 // 带 scopedModels 的 providers 广播（config.providers payload 扩展）
 const providersSubWithScoped = makeMockSubscription(() => ({
   providers: cloneFixtureProviders(),
-  scopedModels: [] as string[],
+  // 与 listProviders / broadcastProviders 同源（setScopedModels 后订阅初始推送一致）
+  scopedModels: [...mockScopedModels],
 }))
 const skillsSub = makeMockSubscription(() => fixtureSkills.map((s) => ({ ...s })))
 const agentsSub = makeMockSubscription(() => fixtureAgents.map((a) => ({ ...a })))

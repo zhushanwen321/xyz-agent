@@ -19,7 +19,7 @@
             <SelectValue :placeholder="t('settings.system.smartContextModelFollow')" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem :value="COMPACT_MODEL_UNSET">{{ t('settings.system.smartContextModelFollow') }}</SelectItem>
+            <SelectItem :value="MODEL_UNSET_SENTINEL">{{ t('settings.system.smartContextModelFollow') }}</SelectItem>
             <SelectGroup v-for="group in modelGroups" :key="group.providerId">
               <SelectLabel>{{ group.providerName }}</SelectLabel>
               <SelectItem v-for="m in group.models" :key="m.value" :value="m.value">
@@ -104,7 +104,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { GroupCard } from '@xyz-agent/ui/features/settings'
 import SettingRow from '../SettingRow.vue'
-import { getSettingsStore, type SystemSettings } from '@xyz-agent/core'
+import { type SystemSettings } from '@xyz-agent/core'
 import {
   getSmartContextConfig,
   setSmartContextCompactModel,
@@ -113,6 +113,14 @@ import {
   setSmartContextThresholds,
 } from '@/api/domains/settings'
 import { useToast } from '@/composables/useToast'
+import {
+  MODEL_UNSET_SENTINEL,
+  fromSelectValue,
+  staleModelRef,
+  toSelectValue,
+  useAuthedModelGroups,
+  type AuthedModelGroup,
+} from '@/composables/features/settings/useAuthedModelGroups'
 
 // 统一 Section 契约（未使用 system：smart-context 走独立 API；不 emit：变更经各自 API 持久化）
 defineProps<{
@@ -140,51 +148,13 @@ const toggling = ref(false)
 const compactModel = ref('')
 const savingCompactModel = ref(false)
 
-/** 「跟随当前会话模型」sentinel（reka-ui 禁止 SelectItem value=""，与 AutoRenameSection 同款处理）。 */
-const COMPACT_MODEL_UNSET = '__unset__'
+// 可选模型分组 / sentinel / stale 判定共享实现（与 SystemAutoRenameSection 同源）
+const { modelGroups, availableValues } = useAuthedModelGroups()
 
-const selectedValue = computed(() => (compactModel.value === '' ? COMPACT_MODEL_UNSET : compactModel.value))
-
-const availableValues = computed(() => new Set(modelGroups.value.flatMap((g) => g.models.map((m) => m.value))))
+const selectedValue = computed(() => toSelectValue(compactModel.value))
 
 /** 当前 ref 不在可选列表时返回该 ref（渲染 disabled 兜底项），否则 null。 */
-const staleRef = computed(() => {
-  const current = compactModel.value
-  return current !== '' && !availableValues.value.has(current) ? current : null
-})
-
-/**
- * 按 provider 分组的可选模型（只列已配凭证 provider 的模型，与 AutoRenameSection 的
- * modelGroups 同款）。数据源：settings store（runtime aggregateModels 常驻订阅）。
- */
-const settingsStore = getSettingsStore()
-
-interface ModelOption {
-  value: string
-  label: string
-}
-interface ModelGroup {
-  providerId: string
-  providerName: string
-  models: ModelOption[]
-}
-
-const modelGroups = computed<ModelGroup[]>(() => {
-  const authedProviderIds = new Set(settingsStore.providers.value.filter((p) => p.apiKeySet).map((p) => p.id))
-  const groups: ModelGroup[] = []
-  const byProviderId = new Map<string, ModelGroup>()
-  for (const m of settingsStore.models.value) {
-    if (!authedProviderIds.has(m.providerId)) continue
-    let group = byProviderId.get(m.providerId)
-    if (!group) {
-      group = { providerId: m.providerId, providerName: m.providerName, models: [] }
-      byProviderId.set(m.providerId, group)
-      groups.push(group)
-    }
-    group.models.push({ value: `${m.providerId}/${m.id}`, label: m.name || m.id })
-  }
-  return groups
-})
+const staleRef = computed(() => staleModelRef(compactModel.value, availableValues.value))
 
 // ── 3 档提醒阈值（GUI 显示 K，保存 ×1000 转绝对数）──
 const thresholdsK = ref<number[]>([...DEFAULT_THRESHOLDS_K])
@@ -200,7 +170,7 @@ const savingExcluded = ref(false)
 const EXCLUDED_ADD_PLACEHOLDER = '__add__'
 
 /** 可添加候选 = 已配凭证模型 − 已排除项（已排除的不再出现在添加下拉）。 */
-const addableGroups = computed<ModelGroup[]>(() => {
+const addableGroups = computed<AuthedModelGroup[]>(() => {
   const excluded = new Set(excludedModels.value)
   return modelGroups.value
     .map((g) => ({ ...g, models: g.models.filter((m) => !excluded.has(m.value)) }))
@@ -240,7 +210,7 @@ async function onSaveEnabled(next: boolean): Promise<void> {
 /** Select change：sentinel → 空串（跟随当前会话模型）；乐观更新 + 失败回滚。 */
 async function onCompactModelChange(value: unknown): Promise<void> {
   if (savingCompactModel.value) return
-  const next = typeof value === 'string' && value !== COMPACT_MODEL_UNSET ? value : ''
+  const next = fromSelectValue(value)
   savingCompactModel.value = true
   const prev = compactModel.value
   compactModel.value = next

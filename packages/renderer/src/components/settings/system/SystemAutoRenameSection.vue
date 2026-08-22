@@ -19,7 +19,7 @@
             <SelectValue :placeholder="t('settings.system.renameModelNotSet')" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem :value="RENAME_MODEL_UNSET">{{ t('settings.system.renameModelNotSet') }}</SelectItem>
+            <SelectItem :value="MODEL_UNSET_SENTINEL">{{ t('settings.system.renameModelNotSet') }}</SelectItem>
             <SelectGroup v-for="group in modelGroups" :key="group.providerId">
               <SelectLabel>{{ group.providerName }}</SelectLabel>
               <SelectItem v-for="m in group.models" :key="m.value" :value="m.value">
@@ -44,9 +44,16 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { GroupCard } from '@xyz-agent/ui/features/settings'
 import SettingRow from '../SettingRow.vue'
-import { getSettingsStore, type SystemSettings } from '@xyz-agent/core'
+import { type SystemSettings } from '@xyz-agent/core'
 import { getAutoRenameEnabled, getRenameModel, setAutoRenameEnabled, setRenameModel } from '@/api/domains/settings'
 import { useToast } from '@/composables/useToast'
+import {
+  MODEL_UNSET_SENTINEL,
+  fromSelectValue,
+  staleModelRef,
+  toSelectValue,
+  useAuthedModelGroups,
+} from '@/composables/features/settings/useAuthedModelGroups'
 
 // 统一 Section 契约（未使用 system：autoRename 走独立 API；不 emit：变更经各自 API 持久化）
 defineProps<{
@@ -68,60 +75,14 @@ const togglingAutoRename = ref(false)
 const renameModel = ref('')
 const savingRenameModel = ref(false)
 
-/**
- * 「未设置」项 sentinel value。reka-ui 禁止 SelectItem value=""（空串是 Select
- * 清空选择的保留值），与 SystemPage 提示音 SOUND_DEFAULT='__default__' 同款处理：
- * change 时映射回空串持久化（空串 = extension 的 model.ref 默认值）。
- * 不会与真实模型 ref 冲突（ref 必含 '/'，'__unset__' 不含）。
- */
-const RENAME_MODEL_UNSET = '__unset__'
+// 可选模型分组 / sentinel / stale 判定共享实现（与 SystemSmartContextSection 同源）
+const { modelGroups, availableValues } = useAuthedModelGroups()
 
 /** Select 受控值：空串 → sentinel；否则原样 ref（不在列表时由 staleRef 项兜底显示）。 */
-const selectedValue = computed(() => (renameModel.value === '' ? RENAME_MODEL_UNSET : renameModel.value))
-
-/** 可选模型值集合（判断当前 ref 是否 stale）。 */
-const availableValues = computed(() => new Set(modelGroups.value.flatMap((g) => g.models.map((m) => m.value))))
+const selectedValue = computed(() => toSelectValue(renameModel.value))
 
 /** 当前 ref 不在可选列表时返回该 ref（渲染 disabled 兜底项），否则 null。 */
-const staleRef = computed(() => {
-  const ref = renameModel.value
-  return ref !== '' && !availableValues.value.has(ref) ? ref : null
-})
-
-/**
- * 按 provider 分组的可选模型（只列已配凭证 provider 的模型——extension 的
- * resolveModel 对无凭证模型 hasConfiguredAuth 不通过，选了也不工作，不如不列）。
- * 数据源：settings store（runtime aggregateModels 常驻订阅，与
- * ModelSelectPopover 同源）；凭证过滤用 providers 的 apiKeySet。
- */
-const settingsStore = getSettingsStore()
-
-interface RenameModelOption {
-  value: string
-  label: string
-}
-interface RenameModelGroup {
-  providerId: string
-  providerName: string
-  models: RenameModelOption[]
-}
-
-const modelGroups = computed<RenameModelGroup[]>(() => {
-  const authedProviderIds = new Set(settingsStore.providers.value.filter((p) => p.apiKeySet).map((p) => p.id))
-  const groups: RenameModelGroup[] = []
-  const byProviderId = new Map<string, RenameModelGroup>()
-  for (const m of settingsStore.models.value) {
-    if (!authedProviderIds.has(m.providerId)) continue
-    let group = byProviderId.get(m.providerId)
-    if (!group) {
-      group = { providerId: m.providerId, providerName: m.providerName, models: [] }
-      byProviderId.set(m.providerId, group)
-      groups.push(group)
-    }
-    group.models.push({ value: `${m.providerId}/${m.id}`, label: m.name || m.id })
-  }
-  return groups
-})
+const staleRef = computed(() => staleModelRef(renameModel.value, availableValues.value))
 
 onMounted(async () => {
   try {
@@ -159,7 +120,7 @@ async function onSaveAutoRename(enabled: boolean): Promise<void> {
 /** Select change：sentinel → 空串（extension 默认未设置语义）；乐观更新 + 失败回滚。 */
 async function onRenameModelChange(value: unknown): Promise<void> {
   if (savingRenameModel.value) return
-  const next = typeof value === 'string' && value !== RENAME_MODEL_UNSET ? value : ''
+  const next = fromSelectValue(value)
   savingRenameModel.value = true
   const prev = renameModel.value
   renameModel.value = next

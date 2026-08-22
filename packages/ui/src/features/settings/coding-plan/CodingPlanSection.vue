@@ -204,24 +204,7 @@
         <span v-if="lastFetchAt" class="text-neutral-dim">· {{ formatTimeAgo(lastFetchAt) }}</span>
       </div>
       <div class="mt-2 rounded-sm border border-border bg-bg-input p-2.5" data-testid="quota-result-windows">
-        <div
-          v-for="win in visibleWindows"
-          :key="win.idx"
-          class="flex items-center justify-between py-0.5 text-[11px]"
-        >
-          <span class="font-mono text-[10px] text-neutral-mid">{{ windowLabels[win.idx] }}</span>
-          <span v-if="win.pct !== null" class="font-semibold tabular-nums text-neutral-fg">
-            <!-- 双轨：有绝对量（used/limit）时「已用 N / M 单位 · pct%」，无则维持 pct 单轨 -->
-            <template v-if="win.used != null && win.limit != null">
-              {{ t('settings.providerEdit.quotaUsedOf', { used: formatAmount(win.used), limit: formatAmount(win.limit) }) }}
-              <span v-if="unitLabel(win.unit)" class="font-normal text-neutral-mid">{{ unitLabel(win.unit) }}</span>
-              ·
-            </template>
-            {{ Math.round(win.pct) }}%
-            <span v-if="win.resetSec !== null" class="ml-1 font-normal text-neutral-dim">· {{ formatResetSec(win.resetSec) }}</span>
-          </span>
-          <span v-else class="text-neutral-dim">∞</span>
-        </div>
+        <QuotaWindowList :windows="visibleWindows" :labels="windowLabels" tone="current" />
       </div>
     </div>
 
@@ -254,23 +237,7 @@
         <p v-if="lastFetchAt" class="mb-1 text-[10px] text-neutral-dim">
           {{ t('settings.providerEdit.quotaLastSuccessAt', { time: formatAbsoluteTime(lastFetchAt) }) }}
         </p>
-        <div
-          v-for="win in visibleWindows"
-          :key="win.idx"
-          class="flex items-center justify-between py-0.5 text-[11px]"
-        >
-          <span class="font-mono text-[10px] text-neutral-mid">{{ windowLabels[win.idx] }}</span>
-          <span v-if="win.pct !== null" class="font-semibold tabular-nums text-neutral-mid">
-            <template v-if="win.used != null && win.limit != null">
-              {{ t('settings.providerEdit.quotaUsedOf', { used: formatAmount(win.used), limit: formatAmount(win.limit) }) }}
-              <span v-if="unitLabel(win.unit)" class="font-normal text-neutral-dim">{{ unitLabel(win.unit) }}</span>
-              ·
-            </template>
-            {{ Math.round(win.pct) }}%
-            <span v-if="win.resetSec !== null" class="ml-1 font-normal text-neutral-dim">· {{ formatResetSec(win.resetSec) }}</span>
-          </span>
-          <span v-else class="text-neutral-dim">∞</span>
-        </div>
+        <QuotaWindowList :windows="visibleWindows" :labels="windowLabels" tone="muted" />
       </div>
     </div>
 
@@ -293,6 +260,7 @@ import { useI18n } from 'vue-i18n'
 import type { NormalizedQuotaRow, QuotaAuthKind, QuotaFetchFailureReason } from '@xyz-agent/shared'
 import { QUOTA_PRESETS } from '@xyz-agent/shared'
 import type { QuotaTestStatus } from '../injection-keys'
+import QuotaWindowList from './QuotaWindowList.vue'
 
 const props = withDefaults(defineProps<{
   /** 当前选中的 fetcher id（未选择 = undefined） */
@@ -353,7 +321,6 @@ const MS_PER_SEC = 1000
 const SEC_PER_MIN = 60
 const MIN_PER_HOUR = 60
 const HOUR_PER_DAY = 24
-const SEC_PER_HOUR = SEC_PER_MIN * MIN_PER_HOUR
 
 /** 三窗口标签（i18n 化，与 QuotaWins 顺序对齐：5h / 本周 / 本月）。 */
 const windowLabels = [
@@ -399,19 +366,6 @@ const failMessage = computed(() => {
   return props.testErrorMsg || t('settings.providerEdit.quotaTestFail')
 })
 
-/** 绝对量数字格式化（千分位，等宽 tabular-nums 下对齐友好） */
-function formatAmount(n: number): string {
-  return n.toLocaleString()
-}
-
-/** 平台计费单位 i18n 标签（无单位 → 空串不渲染） */
-function unitLabel(unit: VisibleWindow['unit']): string {
-  if (unit === 'requests') return t('settings.providerEdit.quotaUnitRequests')
-  if (unit === 'tokens') return t('settings.providerEdit.quotaUnitTokens')
-  if (unit === 'credits') return t('settings.providerEdit.quotaUnitCredits')
-  return ''
-}
-
 /** 绝对时间戳格式化（「数据截至」标注用，locale 感知） */
 function formatAbsoluteTime(ts: number): string {
   return new Date(ts).toLocaleString()
@@ -428,22 +382,5 @@ function formatTimeAgo(ts: number): string {
   if (hr < HOUR_PER_DAY) return t('settings.providerEdit.quotaTimeAgoHours', { n: hr })
   const day = Math.floor(hr / HOUR_PER_DAY)
   return t('settings.providerEdit.quotaTimeAgoDays', { n: day })
-}
-
-/** 格式化剩余秒数为紧凑时间（i18n 化，如 '1h23m' / '3d12h'）。 */
-function formatResetSec(sec: number): string {
-  if (sec <= 0) return t('settings.providerEdit.quotaResetEmpty')
-  const h = Math.floor(sec / SEC_PER_HOUR)
-  if (h >= HOUR_PER_DAY) {
-    const d = Math.floor(h / HOUR_PER_DAY)
-    const rh = h % HOUR_PER_DAY
-    return rh > 0
-      ? t('settings.providerEdit.quotaResetDays', { d, h: rh })
-      : t('settings.providerEdit.quotaResetDays', { d, h: 0 })
-  }
-  const m = Math.floor((sec % SEC_PER_HOUR) / SEC_PER_MIN)
-  return m > 0
-    ? t('settings.providerEdit.quotaResetHours', { h, m })
-    : t('settings.providerEdit.quotaResetHours', { h, m: 0 })
 }
 </script>

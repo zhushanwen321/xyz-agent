@@ -298,6 +298,16 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
 
   // ── provider 同步：打开/切换 provider 时重置编辑态 ──
 
+  /** 瞬态态重置（编辑/新增两分支共用）：测试/发现结果、面板展开、错误提示。 */
+  function resetTransientState(): void {
+    showKey.value = false
+    testResult.value = null
+    discoverResult.value = ''
+    showAddModel.value = false
+    actionError.value = ''
+    expandedCompat.clear()
+  }
+
   watch(
     () => providerRef.value,
     (p) => {
@@ -313,13 +323,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
         headerRows.value = rowsFromHeaders(form.headers)
         // B-1：凭证形态回填（oauth → 凭证区显示 OAuth 状态而非 apiKey 输入）
         form.authMethod = p.authMethod
-        showKey.value = false
-        testResult.value = null
-        discoverResult.value = ''
-        showAddModel.value = false
-        actionError.value = ''
+        resetTransientState()
         localModels.value = toEditableModels(p)
-        expandedCompat.clear()
       } else {
         // 新增模式：重置为初始空状态（providerRef 变 null 时触发，避免残留上次编辑数据）
         form.name = ''
@@ -330,13 +335,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
         form.authHeader = false
         form.authMethod = undefined
         headerRows.value = []
-        showKey.value = false
-        testResult.value = null
-        discoverResult.value = ''
-        showAddModel.value = false
-        actionError.value = ''
+        resetTransientState()
         localModels.value = []
-        expandedCompat.clear()
       }
       // 记录初始快照（isDirty 对比基线）。重置后立即捕获，确保用户首次输入才变 dirty。
       captureSnapshot()
