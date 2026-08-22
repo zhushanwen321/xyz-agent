@@ -20,7 +20,7 @@
  * 零第三方依赖（node:fs/node:path）。退出码：0 = 通过；1 = 违规。
  */
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
-import { dirname, join, extname } from 'node:path'
+import { dirname, join, extname, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -183,7 +183,11 @@ let staleScanned = 0
 for (const root of SCAN_ROOTS) {
   if (!existsSync(join(ROOT, root))) continue
   for (const file of scanFiles(join(ROOT, root))) {
-    const rel = file.slice(ROOT.length + 1)
+    // Windows 兼容：readdirSync 产出 OS 分隔符（win 为 \），而下方历史豁免判断
+    // （endsWith('/CHANGELOG.md') / SKIP_PATH_PARTS / groupDocsRe）全按 POSIX 正斜杠书写——
+    // 不归一化则 Windows CI 上豁免全部失配，CHANGELOG/验收报告等历史文件被误报一层路径残留
+    // （2026-08-23 main CI Build win 挂掉的根因）。统一归一化为正斜杠再判断。
+    const rel = file.slice(ROOT.length + 1).split(sep).join('/')
     if (entryIsHistorical(rel)) continue
     staleScanned++
     const text = readFileSync(file, 'utf-8')
