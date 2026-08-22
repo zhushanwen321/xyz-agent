@@ -111,7 +111,17 @@ function readInternal(filePath: string): ProviderExtrasFile {
     // null 原样返回后消费方（readAllExtrasWithFallback 的 merged[key] 赋值）TypeError
     // 且不触发隔离自愈（round 1 review must-fix #5）
     || (parsed as ProviderExtrasFile).providers === null
-    || typeof (parsed as ProviderExtrasFile).providers !== 'object') {
+    // providers: [] 同理穿透：typeof [] === 'object'，数组形态原样返回后 modify 对其
+    // 赋字符串键属性，JSON.stringify 序列化数组只留索引项 → 写盘静默丢弃、文件永久
+    // 停留损坏形态无自愈（round 2 review must-fix）
+    || Array.isArray((parsed as ProviderExtrasFile).providers)
+    || typeof (parsed as ProviderExtrasFile).providers !== 'object'
+    // 条目级形态：providers: {"foo": null} 穿透后 getExtrasSync('foo') 返回 null 与
+    // 签名 ProviderExtras | undefined 失实，消费方 !== undefined 判定被 null 欺骗
+    // （round 2 review suggestion）
+    || !Object.values((parsed as ProviderExtrasFile).providers).every(
+      entry => entry !== null && typeof entry === 'object' && !Array.isArray(entry),
+    )) {
     quarantineCorruptFile(filePath, {
       tag: 'provider-extras-store',
       reason: 'schema mismatch (expect { version: 1, providers: {} })',

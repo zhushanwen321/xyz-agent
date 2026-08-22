@@ -151,6 +151,25 @@ describe('XyzProviderStore', () => {
     expect(readdirSync(join(dir, 'config')).filter(f => f.startsWith('providers.json.corrupt-'))).toHaveLength(1)
   })
 
+  it('损坏容错：providers 为数组 → 按空配置 + 隔离备份 + 后续 modify 可写回（typeof [] === "object" 不得穿透校验）', async () => {
+    // round 2 review must-fix：数组形态穿透校验后 readAllSync 返回数组，modify 表面成功
+    // 但 JSON.stringify 丢弃数组上的字符串键属性 → 写盘静默丢失、文件永久停留损坏形态
+    writeFileSync(file, JSON.stringify({ version: 1, providers: [] }), 'utf-8')
+    expect(store.readAllSync()).toEqual({})
+    expect(readdirSync(join(dir, 'config')).filter(f => f.startsWith('providers.json.corrupt-'))).toHaveLength(1)
+    // 隔离（rename）后原位置恢复可写，modify 正常重建且读回一致
+    await store.modify('a', () => ({ authMethod: 'api_key' }))
+    expect(await store.getExtras('a')).toMatchObject({ authMethod: 'api_key' })
+  })
+
+  it('损坏容错：条目级 null（providers 含 null 值）→ 按空配置 + 隔离备份', async () => {
+    // round 2 review suggestion：{"foo": null} 穿透后 getExtrasSync('foo') 返回 null，
+    // 与签名 ProviderExtras | undefined 失实，消费方 !== undefined 判定被 null 欺骗
+    writeFileSync(file, JSON.stringify({ version: 1, providers: { foo: null, bar: { authMethod: 'api_key' } } }), 'utf-8')
+    expect(store.readAllSync()).toEqual({})
+    expect(readdirSync(join(dir, 'config')).filter(f => f.startsWith('providers.json.corrupt-'))).toHaveLength(1)
+  })
+
   it('空文件内容按空配置处理（不触发隔离）', async () => {
     writeFileSync(file, '', 'utf-8')
     // 空串 JSON.parse 抛错 → 走隔离路径？——JSON.parse('') throws → 隔离 + 空。
