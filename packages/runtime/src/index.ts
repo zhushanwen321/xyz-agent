@@ -61,7 +61,10 @@ import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 // autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
 import { runStartupBackgroundInit } from './services/startup-background-init.js'
 // A1-2（provider-config-quota 架构）：models.json 寄生字段 → config/providers.json 迁移。
-import { migrateProviderExtras, readExtrasWithFallback } from './services/migration/provider-extras-migration.js'
+// 挂载薄包装在独立小模块 run-extras-migration.ts（失败语义 + 返回值契约可单测，
+// 组合根 import 即执行 main() 不可直测）；此处 readExtrasWithFallback 供 QuotaService 双读。
+import { readExtrasWithFallback } from './services/migration/provider-extras-migration.js'
+import { runProviderExtrasMigration } from './services/migration/run-extras-migration.js'
 import { migrateProviderEnabledToWhitelist } from './services/migration/legacy-provider-migration.js'
 import { XyzProviderStore } from './services/provider-extras-store.js'
 
@@ -175,29 +178,15 @@ async function main(): Promise<void> {
   // A1-2：models.json 寄生字段（quota/authMethod/models[].enabled）剥离迁入 providers.json。
   // 顺序约束：必须在 sanitizeInvalidProviders 之前——sanitize 对非 catalog 空壳条目（八字段
   // 全缺，如 setProvider 仅传 quota/name 的历史形态）直接删除，先迁移才能把其寄生数据保入
-  // providers.json。迁移失败不阻塞启动（warn + 下次重试，幂等）。
-  let extrasMigrationOk = false
-  try {
-    const extrasReport = await migrateProviderExtras(configStore, providerExtrasStore)
-    extrasMigrationOk = true
-    if (!extrasReport.noOp) {
-      console.log('[runtime] provider extras migration:', JSON.stringify({
-        migrated: extrasReport.migrated.length,
-        removedShells: extrasReport.removedShells,
-        skippedExisting: extrasReport.skippedExisting.length,
-      }))
-    }
-  } catch (e) {
-    // 启动期迁移 best-effort：失败不阻塞启动（warn + 下次启动幂等重试）。此时寄生数据
-    // 仍在 models.json（迁移未完成），sanitize 必须跳过——否则空壳条目被物理删除、
-    // 其承载的寄生数据未保入 providers.json 即永久丢失（round 1 review DG#3）
-    console.warn('[runtime] provider extras migration failed (will retry on next startup):', e)
-  }
+  // providers.json。迁移失败不阻塞启动（warn + 下次重试，幂等），失败语义收在
+  // run-extras-migration.ts 薄包装（返回值契约由其单测守卫）。
+  const extrasMigration = await runProviderExtrasMigration(configStore, providerExtrasStore)
   // 剔除 models.json 里的空壳 provider（五字段全缺）：空壳导致 bundled pi 0.80.3 严格校验时
   // 整个 models.json 加载失败（Model not found）。系统 pi 0.83 容错但 bundled 不容错，
   // 重装后必现。sanitize 让 xyz-agent 自愈这种脏数据（如外部脚本写入的测试 fixture）。
-  // 仅迁移成功后执行（失败时寄生数据未出 models.json，见上 catch 注释）。
-  if (extrasMigrationOk) {
+  // 仅迁移成功后执行（失败时寄生数据未出 models.json，sanitize 会物理删除空壳条目致
+  // 寄生数据永久丢失，round 1 review DG#3；门控返回值语义由 run-extras-migration.test.ts 守卫）。
+  if (extrasMigration.ok) {
     sanitizeInvalidProviders()
   }
 

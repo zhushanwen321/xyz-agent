@@ -26,7 +26,7 @@ import { setSettingsPath, readSettings } from '../src/infra/pi/pi-settings-store
 const mkdtempP = promisify(mkdtemp)
 const rmP = promisify(rm)
 
-function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; toggleProviderEnabled?: ReturnType<typeof vi.fn>; removeProviderByKind?: ReturnType<typeof vi.fn>; getDefaultModel?: ReturnType<typeof vi.fn>; applyImportProviders?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn> } = {}) {
+function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; toggleProviderEnabled?: ReturnType<typeof vi.fn>; removeProviderByKind?: ReturnType<typeof vi.fn>; getDefaultModel?: ReturnType<typeof vi.fn>; applyImportProviders?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn>; oauthLogout?: ReturnType<typeof vi.fn> } = {}) {
   const broadcasts: ServerMessage[] = []
   const replies: { id: string; type: string; payload: Record<string, unknown> }[] = []
   const sendErrorCalls: { code: string; message: string }[] = []
@@ -79,6 +79,9 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
       login: overrides.oauthLogin ?? vi.fn().mockReturnValue({ started: true }),
       cancel: overrides.oauthCancel ?? vi.fn().mockReturnValue({ cancelled: false }),
       hasOAuth: vi.fn().mockResolvedValue(false),
+      logout: overrides.oauthLogout ?? vi.fn().mockResolvedValue(undefined),
+      getCredential: vi.fn().mockResolvedValue(undefined),
+      saveCredential: vi.fn().mockResolvedValue(undefined),
     },
     skillRegistry,
     projectRoot: '/proj',
@@ -300,6 +303,31 @@ describe('SettingsMessageHandler', () => {
       const handled = await handler.handleSettingsMessage(msg('config.oauthCancel', { providerId: 'xai' }), WS)
       expect(handled).toBe(true)
       expect(replies[0]).toMatchObject({ type: 'config.oauthCancelReply', payload: { cancelled: false } })
+    })
+  })
+
+  // ── B-1 场景 C：config.oauthLogout 路由（try/catch 双分支）──
+  describe('config.oauthLogout（B-1 场景 C RPC）', () => {
+    it('oauthLogout 成功 → reply config.oauthLogoutReply { ok: true }，logout 以 providerId 调用一次', async () => {
+      const oauthLogout = vi.fn().mockResolvedValue(undefined)
+      const { replies, handler } = makeHandler({ oauthLogout })
+      const handled = await handler.handleSettingsMessage(msg('config.oauthLogout', { providerId: 'anthropic' }), WS)
+      expect(handled).toBe(true)
+      expect(oauthLogout).toHaveBeenCalledTimes(1)
+      expect(oauthLogout).toHaveBeenCalledWith('anthropic')
+      expect(replies[0]).toMatchObject({ id: 'm1', type: 'config.oauthLogoutReply', payload: { ok: true } })
+    })
+
+    it('oauthLogout reject → reply { ok: false, error 含「退出登录失败」与底层原因 }，不上抛', async () => {
+      const oauthLogout = vi.fn().mockRejectedValue(new Error('EACCES: permission denied, open auth.json'))
+      const { replies, handler } = makeHandler({ oauthLogout })
+      const handled = await handler.handleSettingsMessage(msg('config.oauthLogout', { providerId: 'anthropic' }), WS)
+      expect(handled).toBe(true)
+      expect(replies[0]).toMatchObject({ type: 'config.oauthLogoutReply', payload: { ok: false } })
+      // 错误文案可操作：含失败语义 + 底层原因 + 重试指引
+      expect(replies[0].payload.error).toEqual(expect.stringContaining('退出登录失败'))
+      expect(replies[0].payload.error).toEqual(expect.stringContaining('EACCES: permission denied'))
+      expect(replies[0].payload.error).toEqual(expect.stringContaining('请重试'))
     })
   })
 

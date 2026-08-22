@@ -7,10 +7,13 @@
  * logout（委托 authStorage.remove + 先中止进行中 flow，B-1 场景 C）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { BuiltinOAuthConfig } from '@xyz-agent/shared'
 import { AuthService, type AuthServiceDeps } from '../auth-service.js'
-import type { OAuthCredential } from '../auth-storage.js'
+import { AuthStorage, type OAuthCredential } from '../auth-storage.js'
 import type { DeviceCodeInfo } from '../oauth-flow.js'
 
 // mock oauth-flow：让测试聚焦 AuthService 编排，不触发真实网络
@@ -286,5 +289,73 @@ describe('AuthService.cancel', () => {
     vi.mocked(deps.authStorage.hasOAuth as ReturnType<typeof vi.fn>).mockResolvedValue(true)
     expect(await svc.hasOAuth('anthropic')).toBe(true)
     expect(deps.authStorage.hasOAuth).toHaveBeenCalledWith('anthropic')
+  })
+})
+
+describe('AuthService.logout', () => {
+  it('有进行中 flow → 先 cancel（abort 已生效）再 remove：调用序 cancel < authStorage.remove', async () => {
+    const deps = makeDeps()
+    const svc = new AuthService(deps)
+    let signal: AbortSignal | undefined
+    vi.mocked(runOAuthLogin).mockImplementation((_id, _cfg, _hooks, sig) => {
+      signal = sig
+      return new Promise(() => {}) // 挂起模拟进行中 flow
+    })
+    svc.login('xai')
+    await vi.waitFor(() => expect(signal).toBeDefined())
+
+    // remove 执行瞬间记录 abort 状态——「先 cancel 再 remove」的行为证据
+    //（logout 的核心语义：防 remove 后 flow 完成把新凭证写回，见方法头注释 B-1 场景 C）
+    let abortedAtRemove: boolean | undefined
+    vi.mocked(deps.authStorage.remove).mockImplementation(async () => {
+      abortedAtRemove = signal?.aborted
+    })
+
+    const cancelSpy = vi.spyOn(svc, 'cancel')
+    await svc.logout('xai')
+
+    expect(deps.authStorage.remove).toHaveBeenCalledTimes(1)
+    expect(deps.authStorage.remove).toHaveBeenCalledWith('xai')
+    expect(signal?.aborted).toBe(true)
+    // 顺序断言（invocationCallOrder）：cancel 必须先于 authStorage.remove
+    expect(cancelSpy.mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(deps.authStorage.remove).mock.invocationCallOrder[0])
+    // remove 被调用时 abort 已生效（真正挡住「remove 后 flow 完成写回新凭证」的时序）
+    expect(abortedAtRemove).toBe(true)
+  })
+
+  it('无 flow 无凭证 → 幂等委托：cancel 不报错（cancelled:false）+ remove 照调一次', async () => {
+    const deps = makeDeps()
+    const svc = new AuthService(deps)
+    const cancelSpy = vi.spyOn(svc, 'cancel')
+    await svc.logout('xai')
+    expect(cancelSpy).toHaveBeenCalledTimes(1)
+    expect(deps.authStorage.remove).toHaveBeenCalledTimes(1)
+    expect(deps.authStorage.remove).toHaveBeenCalledWith('xai')
+  })
+
+  it('真实 AuthStorage：无凭证 logout 幂等且不物化空 auth.json；预置凭证后 logout 移除', async () => {
+    // 用真实 AuthStorage（tmp 目录）断言 remove 自身 no-op 形态：auth.json 不存在时
+    // 直接返回，不经 withFileLock 的 ensureFileExists 物化空文件（auth-storage.ts remove 注释）
+    const dir = mkdtempSync(join(tmpdir(), 'auth-service-logout-'))
+    try {
+      const storage = new AuthStorage(join(dir, 'auth.json'))
+      const deps = makeDeps({ authStorage: storage })
+      const svc = new AuthService(deps)
+
+      // 无凭证（auth.json 从未存在）：logout 不上抛、不物化文件，重复调用仍幂等
+      await svc.logout('xai')
+      await svc.logout('xai')
+      expect(existsSync(join(dir, 'auth.json'))).toBe(false)
+
+      // 预置凭证 → logout 后真被移除（get 回 undefined），其余 provider 不受影响
+      await storage.set('xai', oauthCred())
+      await storage.set('other', oauthCred())
+      await svc.logout('xai')
+      expect(await storage.get('xai')).toBeUndefined()
+      expect(await storage.get('other')).toMatchObject({ type: 'oauth', access: 'at' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
