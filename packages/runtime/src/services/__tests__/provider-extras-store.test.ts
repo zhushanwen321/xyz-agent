@@ -10,9 +10,10 @@
  * - 并发 modify 同 provider：锁串行化，两字段的增量更新无交错丢失
  * - delete 幂等
  * - 损坏 JSON（非法 JSON / version 非 1）：readAll 返回空 + .corrupt-<ts> 备份生成
+ * - crash 残留自愈：过期 .lock 目录 + 残留 .tmp 后读写正常（round 1 review SUGGESTION）
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync, mkdirSync, rmdirSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { XyzProviderStore } from '../provider-extras-store.js'
@@ -176,5 +177,56 @@ describe('XyzProviderStore', () => {
     // 语义上空文件等同未初始化，隔离后按空继续（与 AuthStorage 空文件按空不同：
     // providers.json 是 xyz 自有文件（原子写保证非空），空文件只可能来自外部干预，隔离留证）
     expect(await store.readAll()).toEqual({})
+  })
+
+  describe('crash 残留自愈（round 1 review SUGGESTION）', () => {
+    // 残留形态依据 proper-lockfile 4.1.2 实装（node_modules/proper-lockfile/lib/lockfile.js）：
+    // - 锁「文件」实为 mkdir 创建的目录，持有进程 crash 未 release 时残留 `.lock` 目录；
+    //   stale 判定 = 锁目录 mtime 早于 now - stale(30s) → 后来者接管（rmdir 后重新 mkdir），
+    //   不触发 onCompromised（该回调仅在「自己持锁期间」update 定时器（stale/2=15s）发现
+    //   mtime 失效时触发——单测的锁持有窗口是同步代码，无法插入 15s 定时器推进，
+    //   模拟需 15s 真实等待或重构注入 lockfile 依赖，性价比不成立，故不覆盖该分支）。
+    // - atomicWrite 的 tmp 是定长 `<path>.tmp`，rename 前崩溃即残留；后续写入覆写式自愈。
+    it('残留 .tmp + 过期 .lock 目录 → readAll 数据完好、modify 自愈正常、残留物清理', async () => {
+      writeFileSync(file, JSON.stringify({ version: 1, providers: { legacy: { authMethod: 'api_key' } } }, null, 2), 'utf-8')
+      // atomicWrite 崩溃在 rename 前：半写 tmp 残留（内容必须是外部半写垃圾，不得污染正式文件）
+      writeFileSync(`${file}.tmp`, '{"version":1,"providers":{"half-written":{}}}', 'utf-8')
+      // proper-lockfile 持有进程 crash：.lock 目录残留，mtime 回拨 60s（> stale 30s 阈值）
+      mkdirSync(`${file}.lock`)
+      const staleTime = new Date(Date.now() - 60_000)
+      utimesSync(`${file}.lock`, staleTime, staleTime)
+
+      // 读路径不持锁：既有数据完好（tmp 半写内容未泄漏进正式文件）
+      expect(await store.readAll()).toEqual({ legacy: { authMethod: 'api_key' } })
+
+      // 写路径：过期锁被接管删除后正常 RMW
+      await store.modify('new-entry', () => ({ quota: { enabled: true } }))
+
+      expect(await store.getExtras('legacy')).toEqual({ authMethod: 'api_key' })
+      expect(await store.getExtras('new-entry')).toEqual({ quota: { enabled: true } })
+      // 残留物清理：.lock 目录被 unlock rmdir；.tmp 被本次 atomicWrite rename 消费
+      expect(existsSync(`${file}.lock`)).toBe(false)
+      expect(existsSync(`${file}.tmp`)).toBe(false)
+    })
+
+    it('unlock 失败（持锁期间 .lock 目录被外部替换为普通文件）→ warn 可观测、modify 结果仍返回', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const result = await store.modify('a', () => {
+          // fn 在锁内同步执行：此处模拟外部篡改，release 的 rmdir 将以 ENOTDIR 失败
+          //（rmdir 只忽略 ENOENT，其余错误上抛 → withFileLock 的 catch → warn 分支）
+          rmdirSync(`${file}.lock`)
+          writeFileSync(`${file}.lock`, 'tampered', 'utf-8')
+          return { authMethod: 'api_key' }
+        })
+        expect(result).toEqual({ authMethod: 'api_key' })
+        expect(warnSpy).toHaveBeenCalledWith(
+          '[provider-extras-store] release lock failed (continuing, lock may be compromised):',
+          expect.any(Error),
+        )
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
   })
 })

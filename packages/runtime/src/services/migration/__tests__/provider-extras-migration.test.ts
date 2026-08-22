@@ -13,14 +13,17 @@
  * - 幂等：二次迁移 no-op（文件 mtime 与备份文件数量均不变）
  * - 合并策略：providers.json 已有条目不覆盖（丢弃 models.json 旧值）
  * - readExtrasWithFallback 双读回退
+ * - 迁移级 defaultModel 保全：catalog + builtin 默认模型 + override 条目共存时
+ *   pass-3 重写 dirty 条目不重置 defaultModel（round 2 review SUGGESTION）
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { ProviderId } from '@xyz-agent/shared'
 import { migrateProviderExtras, readExtrasWithFallback } from '../provider-extras-migration.js'
 import { XyzProviderStore } from '../../provider-extras-store.js'
-import { setModelsPath } from '../../../infra/pi/pi-provider-store.js'
+import { setModelsPath, setDefaultModel, readSettings } from '../../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../../infra/pi/pi-settings-store.js'
 import { PiConfigStore } from '../../../infra/pi/pi-config-store.js'
 
@@ -227,6 +230,43 @@ describe('A1-2 合并策略（验收 2）', () => {
     expect(report.noOp).toBe(false)     // 但发生了 models.json 剥离
     expect((readModelsRaw()['enabled-only'] as Record<string, unknown>).enabled).toBeUndefined()
     expect(readExtrasRaw()['enabled-only']).toBeUndefined()
+  })
+})
+
+describe('迁移级 defaultModel 保全（round 2 review SUGGESTION，R1 must-fix #2 遗留）', () => {
+  it('catalog + builtin 默认模型 + override 条目共存：pass-3 重写 dirty 条目不重置 defaultModel', async () => {
+    // 迁移入口级守卫 migrateProviderExtras → PiConfigStore.upsertProvider →
+    // pi-provider-store.upsertProvider 全链路（union 语义此前只在 pi-provider-store
+    // 单测层覆盖——若未来迁移改走不触发 default 校验/无 union 的独立写路径，本用例红）。
+    // anthropic 是 catalog provider（builtin-providers.json 含 claude-sonnet-4-6）。
+    writeModelsJson({
+      anthropic: {
+        apiKey: 'sk-test',
+        quota: { fetcher: 'kimi', enabled: true, cookieSet: true },
+        models: [{ id: 'my-override-model', enabled: false }],
+      },
+    })
+    // 默认模型取 builtin id（不在 models.json 条目的 override 列表内）
+    setDefaultModel('anthropic' as ProviderId, 'claude-sonnet-4-6')
+
+    const report = await migrateProviderExtras(configStore, extrasStore)
+
+    // anthropic 确实被 pass-3 重写（寄生字段剥离、override 保留），非 no-op
+    expect(report.migrated).toContain('anthropic')
+    const entry = readModelsRaw()['anthropic'] as Record<string, unknown>
+    expect(entry.quota).toBeUndefined()
+    expect(entry.models).toEqual([{ id: 'my-override-model' }])
+    // 寄生数据完整落入 providers.json
+    expect(readExtrasRaw()['anthropic']).toEqual({
+      quota: { fetcher: 'kimi', enabled: true, cookieSet: true },
+      modelStates: { 'my-override-model': { enabled: false } },
+    })
+
+    // defaultModel 不被重置：upsertProvider 以「override ∪ builtin catalog」校验有效性，
+    // builtin 默认模型仍有效（回归形态 = union 丢失 → defaultModel 被改写为 override 首项）
+    const settings = readSettings()
+    expect(settings.defaultProvider).toBe('anthropic')
+    expect(settings.defaultModel).toBe('claude-sonnet-4-6')
   })
 })
 
