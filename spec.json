@@ -77,7 +77,7 @@
     },
     {
       "id": "C6",
-      "kind": "component",
+      "kind": "function",
       "provider": "sm-ui-chain",
       "consumer": "sm-ui-chain",
       "file": "packages/ui/src/features/settings/common/ScopedModelSection.vue",
