@@ -98,7 +98,7 @@ describe('useScopedModels', () => {
     expect(store.scopedModels.value).toEqual(['openai/gpt-4o', 'openai/gpt-4o-mini'])
   })
 
-  it('A3: addScopedModels RPC 失败 → 回滚到旧值', async () => {
+  it('A3: addScopedModels RPC 失败 → 回滚到旧值 + rethrow（调用方反馈）', async () => {
     const store = getSettingsStore()
     store.providers.value = MOCK_PROVIDERS as any
     store.scopedModels.value = ['openai/gpt-4o']
@@ -106,7 +106,7 @@ describe('useScopedModels', () => {
     configMock.setScopedModels.mockRejectedValueOnce(new Error('network error'))
 
     const { addScopedModels } = useScopedModels()
-    await addScopedModels(['openai/gpt-4o-mini'])
+    await expect(addScopedModels(['openai/gpt-4o-mini'])).rejects.toThrow('network error')
 
     // 回滚
     expect(store.scopedModels.value).toEqual(['openai/gpt-4o'])
@@ -126,7 +126,7 @@ describe('useScopedModels', () => {
     expect(store.scopedModels.value).toEqual(['openai/gpt-4o-mini'])
   })
 
-  it('A3: removeScopedModel RPC 失败 → 回滚', async () => {
+  it('A3: removeScopedModel RPC 失败 → 回滚 + rethrow', async () => {
     const store = getSettingsStore()
     store.providers.value = MOCK_PROVIDERS as any
     store.scopedModels.value = ['openai/gpt-4o', 'openai/gpt-4o-mini']
@@ -134,7 +134,7 @@ describe('useScopedModels', () => {
     configMock.setScopedModels.mockRejectedValueOnce(new Error('fail'))
 
     const { removeScopedModel } = useScopedModels()
-    await removeScopedModel('openai/gpt-4o')
+    await expect(removeScopedModel('openai/gpt-4o')).rejects.toThrow('fail')
 
     expect(store.scopedModels.value).toEqual(['openai/gpt-4o', 'openai/gpt-4o-mini'])
   })
@@ -167,7 +167,7 @@ describe('useScopedModels', () => {
     expect(store.scopedModels.value).toEqual(['anthropic/claude-sonnet-4.5', 'openai/gpt-4o'])
   })
 
-  it('A3: moveScopedModel RPC 失败 → 回滚顺序', async () => {
+  it('A3: moveScopedModel RPC 失败 → 回滚顺序 + rethrow', async () => {
     const store = getSettingsStore()
     store.providers.value = MOCK_PROVIDERS as any
     store.scopedModels.value = ['openai/gpt-4o', 'anthropic/claude-sonnet-4.5']
@@ -175,7 +175,7 @@ describe('useScopedModels', () => {
     configMock.setScopedModels.mockRejectedValueOnce(new Error('fail'))
 
     const { moveScopedModel } = useScopedModels()
-    await moveScopedModel('openai/gpt-4o', 'down')
+    await expect(moveScopedModel('openai/gpt-4o', 'down')).rejects.toThrow('fail')
 
     expect(store.scopedModels.value).toEqual(['openai/gpt-4o', 'anthropic/claude-sonnet-4.5'])
   })

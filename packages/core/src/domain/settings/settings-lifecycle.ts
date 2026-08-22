@@ -100,11 +100,12 @@ async function init(): Promise<void> {
 async function refreshProviders(): Promise<void> {
   const store = getSettingsStore()
   try {
-    const reply = await getSettingsTransport().listProviders()
-    // listProviders 返回类型为 ProviderInfo[]，但实际从 getProviders RPC 来的数据
-    // 可能含 scopedModels 字段（作为附加数据返回）。此处直赋 providers，
-    // scopedModels 由 onProviders 订阅通道推回。
-    store.providers.value = reply
+    const { providers, scopedModels } = await getSettingsTransport().listProviders()
+    store.providers.value = providers
+    // reply + 广播双通道：getProviders reply 携带 scopedModels 时直接填（与上方 onProviders
+    // 订阅 handler 同一守卫语义）；undefined = reply 未携带（旧 runtime），不覆盖已有值，
+    // 由 config.providers 广播兜底推回。
+    if (scopedModels !== undefined) store.scopedModels.value = scopedModels
   // eslint-disable-next-line taste/no-silent-catch -- 拉取失败不阻塞 UI：onProviders 订阅会兜底推回最新数据，无需打扰用户
   } catch (e) {
     console.warn('[settings] listProviders 失败，依赖订阅兜底', e)

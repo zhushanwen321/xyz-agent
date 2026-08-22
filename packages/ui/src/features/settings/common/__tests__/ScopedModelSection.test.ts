@@ -5,11 +5,44 @@
  * A2: 添加面板——分组渲染全量模型、搜索过滤、多选确认 emit add、重复禁选
  * A6: 空列表空状态提示（纯渲染，无 mock 依赖）
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ScopedModelSection from '../ScopedModelSection.vue'
 import type { ScopedRenderItem, SelectableModel } from '../scoped-model-types'
 import { SCOPED_MODEL_IMPLEMENTATION_TOKEN } from './impl-token'
+
+// 断言真实文案（非 key 回显）：按 vitest.setup.ts 注释指引在测试内 override vue-i18n mock。
+// 下方 SCOPED_MESSAGES 是手写字面量，镜像 zh-CN/settings.ts scopedModel 块的当前文案——
+// i18n 文案变更时需同步维护此处，否则断言与真实 UI 脱节（查不到回退 key，其余用例仍可断言 DOM 结构）。
+const SCOPED_MESSAGES = vi.hoisted(() => ({
+  'settings.scopedModel.added': '已添加',
+  'settings.scopedModel.title': '模型白名单',
+  'settings.scopedModel.desc': '限定会话可用的模型范围，靠前优先级更高',
+  'settings.scopedModel.emptyHint': '未配置白名单，全部已启用模型可用',
+  'settings.scopedModel.noKey': '未配置密钥',
+  'settings.scopedModel.missing': '已不存在',
+  'settings.scopedModel.add': '添加模型',
+  'settings.scopedModel.confirmAdd': '添加 {count} 个模型',
+  'settings.scopedModel.searchPlaceholder': '搜索模型或供应商…',
+  'settings.scopedModel.noResults': '没有匹配的模型',
+  'settings.scopedModel.moveUp': '上移',
+  'settings.scopedModel.moveDown': '下移',
+  'settings.scopedModel.remove': '移除',
+}))
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({
+    t: (key: string, named?: Record<string, unknown>) => {
+      let result = SCOPED_MESSAGES[key as keyof typeof SCOPED_MESSAGES] ?? key
+      if (named) {
+        for (const [k, v] of Object.entries(named)) {
+          result = result.replaceAll(`{${k}}`, String(v))
+        }
+      }
+      return result
+    },
+    locale: { value: 'zh-CN' },
+  }),
+}))
 
 function makeScopedList(): ScopedRenderItem[] {
   return [
@@ -132,7 +165,9 @@ describe('ScopedModelSection', () => {
     // gpt-4o 已在 scopedList 中，应有 alreadyAdded 标记且 checkbox disabled
     const gpt4oItem = items.find((item) => item.text().includes('GPT-4o') && !item.text().includes('Mini'))
     expect(gpt4oItem).toBeTruthy()
-    expect(gpt4oItem!.text()).toContain('settings.scopedModel.added')
+    // 已添加标记渲染真实文案（zh-CN locale），非 key 回显
+    expect(gpt4oItem!.text()).toContain('已添加')
+    expect(gpt4oItem!.text()).not.toContain('settings.scopedModel.added')
     expect(gpt4oItem!.find('button[role="checkbox"]').attributes('disabled')).toBeDefined()
   })
 

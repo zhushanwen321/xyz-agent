@@ -31,7 +31,7 @@ const configMock = vi.hoisted(() => ({
   listBuiltinProviders: vi.fn(async () => [] as BuiltinProviderTemplate[]),
   setProvider: vi.fn(async () => {}),
   onProviders: vi.fn(() => () => {}),
-  listProviders: vi.fn(async () => []),
+  listProviders: vi.fn(async () => ({ providers: [] })),
   deleteProvider: vi.fn(async () => {}),
   // wave-oauth：ProviderPage → useProviderOAuth onMounted 订阅 4 个 auth.* 事件（缺则 TypeError 崩 mount）
   onAuthDeviceCode: vi.fn(() => () => {}),

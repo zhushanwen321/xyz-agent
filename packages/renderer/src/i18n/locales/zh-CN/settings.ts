@@ -413,6 +413,22 @@ export default {
     quotaUnitTokens: 'tokens',
     quotaUnitCredits: 'credits',
   },
+  // ── Scoped Model 模型白名单（ScopedModelSection，挂 ProviderPage 顶部）──
+  scopedModel: {
+    title: '模型白名单',
+    desc: '限定会话可用的模型范围，靠前优先级更高',
+    add: '添加模型',
+    emptyHint: '未配置白名单，全部已启用模型可用',
+    noKey: '未配置密钥',
+    missing: '已不存在',
+    moveUp: '上移',
+    moveDown: '下移',
+    remove: '移除',
+    searchPlaceholder: '搜索模型或供应商…',
+    noResults: '没有匹配的模型',
+    added: '已添加',
+    confirmAdd: '添加 {count} 个模型',
+  },
   // ── Extension 页（ExtensionPage）──
   extension: {
     recommendedTitle: '推荐扩展',

@@ -25,7 +25,7 @@ const configMock = vi.hoisted(() => ({
   getSystemPrompt: vi.fn(() => Promise.resolve({ config: defaultConfig(), corrupted: false })),
   setSystemPrompt: vi.fn((cfg: SystemPromptConfig) => Promise.resolve({ config: cfg, corrupted: false })),
   getSystemPromptSnapshot: vi.fn(() => Promise.resolve({ exists: false })),
-  listProviders: vi.fn(() => Promise.resolve([])),
+  listProviders: vi.fn(() => Promise.resolve({ providers: [] })),
   setSkillDirs: vi.fn(() => Promise.resolve()),
   setAgentDirs: vi.fn(() => Promise.resolve()),
   // wave-oauth：SettingsModal → ProviderPage → useProviderOAuth onMounted 订阅 4 个 auth.* 事件（缺则 TypeError 崩 mount）

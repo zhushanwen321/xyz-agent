@@ -42,7 +42,8 @@ export interface DiscoverModelsResponse {
  */
 export interface SettingsTransport {
   // ── 请求 ──
-  listProviders(): Promise<ProviderInfo[]>
+  /** providers 快照 + scoped models 白名单（reply 未携带 scopedModels 时为 undefined，消费方守卫不覆盖） */
+  listProviders(): Promise<{ providers: ProviderInfo[]; scopedModels?: string[] }>
   /** 聚合模型列表主动拉取（对齐 listProviders，连接后兜底防订阅时序竞态） */
   listModels(): Promise<ModelInfo[]>
   setProvider(id: string, data: SetProviderData): Promise<void>

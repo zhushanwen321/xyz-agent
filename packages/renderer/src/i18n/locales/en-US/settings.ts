@@ -413,6 +413,22 @@ export default {
     quotaUnitTokens: 'tokens',
     quotaUnitCredits: 'credits',
   },
+  // ── Scoped Model allowlist (ScopedModelSection, mounted atop ProviderPage) ──
+  scopedModel: {
+    title: 'Model Allowlist',
+    desc: 'Restrict models available to sessions; earlier entries rank higher',
+    add: 'Add models',
+    emptyHint: 'No allowlist configured; all enabled models are available',
+    noKey: 'No key',
+    missing: 'Missing',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
+    remove: 'Remove',
+    searchPlaceholder: 'Search models or providers…',
+    noResults: 'No matching models',
+    added: 'Added',
+    confirmAdd: 'Add {count} models',
+  },
   // ── Extension page (ExtensionPage) ──
   extension: {
     recommendedTitle: 'Recommended',

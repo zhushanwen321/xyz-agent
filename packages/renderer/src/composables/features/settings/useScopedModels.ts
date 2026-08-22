@@ -67,7 +67,8 @@ export function useScopedModels() {
     return result
   })
 
-  // ── 操作函数（乐观更新 + 失败回滚） ──
+  // ── 操作函数（乐观更新 + 失败回滚 + rethrow）──
+  // 回滚后 rethrow：调用方（ProviderPage）统一反馈 inline error + toast，此处不做 UI 副作用。
 
   /** 添加模型到 scoped 列表（去重保序）。 */
   async function addScopedModels(models: string[]): Promise<void> {
@@ -80,8 +81,9 @@ export function useScopedModels() {
     try {
       const result = await config.setScopedModels(settingsStore.scopedModels.value)
       settingsStore.scopedModels.value = result
-    } catch {
+    } catch (e) {
       settingsStore.scopedModels.value = old
+      throw e
     }
   }
 
@@ -92,8 +94,9 @@ export function useScopedModels() {
     try {
       const result = await config.setScopedModels(settingsStore.scopedModels.value)
       settingsStore.scopedModels.value = result
-    } catch {
+    } catch (e) {
       settingsStore.scopedModels.value = old
+      throw e
     }
   }
 
@@ -111,8 +114,9 @@ export function useScopedModels() {
     try {
       const result = await config.setScopedModels(settingsStore.scopedModels.value)
       settingsStore.scopedModels.value = result
-    } catch {
+    } catch (e) {
       settingsStore.scopedModels.value = old
+      throw e
     }
   }
 

@@ -186,15 +186,44 @@ describe('refreshProviders 分支', () => {
   it('成功：listProviders 结果写 store.providers', async () => {
     provideBase()
     const { transport } = makeRecordingTransport()
-    ;(transport.listProviders as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
-      { id: 'p1', name: 'P1', apiKeySet: false, status: 'connected', models: [] },
-    ])
+    ;(transport.listProviders as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [{ id: 'p1', name: 'P1', apiKeySet: false, status: 'connected', models: [] }],
+    })
     provideSettingsTransport(transport)
     const { refreshProviders } = useSettings()
     await refreshProviders()
     const store = getSettingsStore()
     expect(store.providers.value).toHaveLength(1)
     expect(store.providers.value[0].id).toBe('p1')
+  })
+
+  it('D7: reply 含 scopedModels → store.scopedModels 同步填充', async () => {
+    provideBase()
+    const { transport } = makeRecordingTransport()
+    ;(transport.listProviders as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [{ id: 'p1', name: 'P1', apiKeySet: false, status: 'connected', models: [] }],
+      scopedModels: ['openai/gpt-4o', 'deepseek/v3'],
+    })
+    provideSettingsTransport(transport)
+    const { refreshProviders } = useSettings()
+    await refreshProviders()
+    const store = getSettingsStore()
+    expect(store.scopedModels.value).toEqual(['openai/gpt-4o', 'deepseek/v3'])
+  })
+
+  it('D7: reply 不含 scopedModels（undefined）→ store 已有值不被覆盖', async () => {
+    provideBase()
+    const { transport } = makeRecordingTransport()
+    ;(transport.listProviders as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      providers: [{ id: 'p1', name: 'P1', apiKeySet: false, status: 'connected', models: [] }],
+    })
+    provideSettingsTransport(transport)
+    const store = getSettingsStore()
+    store.scopedModels.value = ['openai/gpt-4o']
+    const { refreshProviders } = useSettings()
+    await refreshProviders()
+    // undefined 不覆盖（对齐 onProviders handler 的守卫语义），由广播通道兜底推回
+    expect(store.scopedModels.value).toEqual(['openai/gpt-4o'])
   })
 
   it('失败：不抛错（console.warn 兜底）', async () => {

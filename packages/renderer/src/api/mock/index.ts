@@ -761,10 +761,15 @@ function defaultTerminalConfig(): TerminalConfig {
 const terminalSub = makeMockSubscription(() => ({ config: defaultTerminalConfig(), corrupted: false }))
 
 export const config = {
-  // 请求型：直接返 fixture 深拷贝（不依赖 sub）
+  // 请求型：直接返 fixture 深拷贝（不依赖 sub）。
+  // scoped-model D7：与真实门面同形返回 { providers, scopedModels }，scopedModels 与
+  // broadcastProviders 同源（mockScopedModels，setScopedModels 后保持一致）。
   async listProviders() {
     await sleep(TIMING.ack)
-    return fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
+    return {
+      providers: fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) })),
+      scopedModels: [...mockScopedModels],
+    }
   },
   // wave 3：内置 provider 模板。mock 模式不接 runtime generated JSON，返空数组保持签名同构（facade 三元）。
   async listBuiltinProviders(): Promise<BuiltinProviderTemplate[]> {
