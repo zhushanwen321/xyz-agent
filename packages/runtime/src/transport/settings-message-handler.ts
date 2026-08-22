@@ -460,6 +460,52 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.renameModel', { model: this.ctx.configService.getRenameModel() })
         return true
       }
+      case 'config.setScopedModels': {
+        const { models } = msg.payload
+        // 格式校验：每条 ^[^/]+/.+$，非法整单拒绝
+        if (!Array.isArray(models) || models.some(m => typeof m !== 'string')) {
+          this.ctx.sendError(ws, 'invalid_payload', 'models 必须是字符串数组', msg.id)
+          return true
+        }
+        const MODEL_REGEX = /^[^\/]+\/.+$/
+        const invalid = (models as string[]).filter(m => !MODEL_REGEX.test(m))
+        if (invalid.length > 0) {
+          this.ctx.sendError(ws, 'invalid_scoped_models', `以下模型格式非法（需 provider/modelId）：${invalid.join(', ')}`, msg.id)
+          return true
+        }
+        // 去重保序
+        const seen = new Set<string>()
+        const deduped: string[] = []
+        for (const m of models as string[]) {
+          if (!seen.has(m)) {
+            seen.add(m)
+            deduped.push(m)
+          }
+        }
+        // 写入（IConfigService.modifyScopedModels → XyzProviderStore RMW）
+        const result = await this.ctx.configService.modifyScopedModels(() => deduped)
+        // 列表非空且 scoped[0] ≠ 当前 default 时调 configService.setDefaultModel
+        if (result.length > 0) {
+          const currentDefault = this.ctx.configService.getDefaultModel()
+          const firstModel = result[0]
+          const [provider, ...modelParts] = firstModel.split('/')
+          const modelId = modelParts.join('/')
+          if (!currentDefault || `${currentDefault.provider}/${currentDefault.modelId}` !== firstModel) {
+            this.ctx.configService.setDefaultModel(provider, modelId)
+          }
+        }
+        // 广播
+        this.ctx.broadcastProviderList()
+        if (result.length > 0) {
+          this.ctx.broadcast({
+            type: 'config.defaults',
+            id: this.ctx.nextPushId(),
+            payload: { defaultModel: result[0], source: 'default-set' },
+          })
+        }
+        this.ctx.reply(ws, msg.id, 'config.scopedModels', { scopedModels: result })
+        return true
+      }
       // tool.approve / tool.deny / tool.always_allow：已删除的 no-op 占位。
       // 这些 type 此前只是 `return true` 以避免 unknown_type，但工具审批的实际路径是
       // pi 的 extension_ui_request（method:'confirm'）→ extension.ui_request/ui_response 流

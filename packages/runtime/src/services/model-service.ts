@@ -113,16 +113,34 @@ export class ModelService implements IModelService {
   }
 
   aggregateModels(providers: ProviderInfo[]): ModelInfo[] {
+    const scopedModels = this.configService.getScopedModels()
     // W2：runtime enabled 过滤——provider.enabled===false 时其下所有 model 不进结果；
     // model.enabled===false 时该 model 不进结果。缺省/true 视为启用（向上兼容存量）。
     // 过滤在 listProviders 读出 ProviderInfo 之后做，config.enabled !== false 语义统一在此处收敛。
-    return providers
+    const allModels = providers
       .filter(p => p.enabled !== false)
       .flatMap(p =>
         p.models
           .filter(m => m.enabled !== false)
           .map(m => toModelInfo(p.id, p.name, p.api, m)),
       )
+
+    // scoped model 过滤/排序（design §3.3 D2）：scopedModels 非空时按白名单过滤 + 按序重排
+    if (scopedModels.length === 0) return allModels
+
+    // 建立 model 索引（provider/modelId → ModelInfo）
+    const modelIndex = new Map<string, ModelInfo>()
+    for (const m of allModels) {
+      modelIndex.set(`${m.providerId}/${m.id}`, m)
+    }
+
+    // 按 scopedModels 序输出（跨 provider 交错序保留）
+    const result: ModelInfo[] = []
+    for (const scoped of scopedModels) {
+      const m = modelIndex.get(scoped)
+      if (m) result.push(m) // 解析不到模型的 scoped 条目静默跳过
+    }
+    return result
   }
 
   async discoverModelsFromApi(

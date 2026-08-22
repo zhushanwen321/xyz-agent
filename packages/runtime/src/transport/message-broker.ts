@@ -142,8 +142,9 @@ export class ServerMessageBroker implements IMessageBroker {
   }
   private buildProviderListMsgs(): ServerMessage[] {
     const providers = this.services.configService.listProviders()
+    const scopedModels = this.services.configService.getScopedModels()
     return [
-      { type: 'config.providers', id: this.nextPushId(), payload: { providers } },
+      { type: 'config.providers', id: this.nextPushId(), payload: { providers, scopedModels } },
       { type: 'model.list', id: this.nextPushId(), payload: { models: this.services.modelService.aggregateModels(providers) } },
     ]
   }

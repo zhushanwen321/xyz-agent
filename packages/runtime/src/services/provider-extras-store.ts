@@ -24,6 +24,8 @@ import { quarantineCorruptFile } from '../utils/json-store.js'
 export interface ProviderExtrasFile {
   version: 1
   providers: Record<string, ProviderExtras>
+  /** 顶层 scopedModels（模型白名单 + 有序列表，scoped-model design §3.2）。可选：缺失 = 空。 */
+  scopedModels?: string[]
 }
 
 /** 单 provider 的 xyz 扩展数据（全部字段自 models.json 寄生字段迁出，语义不变）。 */
@@ -90,6 +92,11 @@ function ensureFileExists(filePath: string): void {
   }
 }
 
+/** scopedModels 字段形态校验：undefined（缺失）或 string[] 才合法。 */
+function isValidScopedModels(value: unknown): value is string[] | undefined {
+  return value === undefined || (Array.isArray(value) && value.every(m => typeof m === 'string'))
+}
+
 /**
  * 读并解析 providers.json。文件不存在返回空结构（读路径不物化文件）。
  * 损坏（非法 JSON / version 非 1）→ quarantineCorruptFile 隔离为
@@ -121,7 +128,10 @@ function readInternal(filePath: string): ProviderExtrasFile {
     // （round 2 review suggestion）
     || !Object.values((parsed as ProviderExtrasFile).providers).every(
       entry => entry !== null && typeof entry === 'object' && !Array.isArray(entry),
-    )) {
+    )
+    // scopedModels 形态：存在时必须是 string[]（非数组穿透后 getScopedModelsSync 返回损坏值，
+    // aggregateModels 遍历时 TypeError 炸掉 listProviders/broadcast 链路）
+    || !isValidScopedModels((parsed as ProviderExtrasFile).scopedModels)) {
     quarantineCorruptFile(filePath, {
       tag: 'provider-extras-store',
       reason: 'schema mismatch (expect { version: 1, providers: {} })',
@@ -196,6 +206,48 @@ export class XyzProviderStore {
       const file = readInternal(this.filePath)
       if (!(providerId in file.providers)) return
       delete file.providers[providerId]
+      writeInternal(this.filePath, file)
+    })
+  }
+
+  /**
+   * 读取顶层 scopedModels 字段（模型白名单 + 有序列表）。
+   * 文件不存在或字段缺失返回空数组（读路径不物化文件）。
+   */
+  getScopedModelsSync(): string[] {
+    return readInternal(this.filePath).scopedModels ?? []
+  }
+
+  /**
+   * RMW 顶层 scopedModels 字段：锁内重读 → fn(current) → 原子写回。
+   * current 是当前 scopedModels（无字段时 []）；返回值整条替换。
+   */
+  async modifyScopedModels(
+    fn: (current: string[]) => string[],
+  ): Promise<string[]> {
+    let result: string[] | undefined
+    await withFileLock(this.filePath, async () => {
+      const file = readInternal(this.filePath)
+      result = fn(file.scopedModels ?? [])
+      file.scopedModels = result
+      writeInternal(this.filePath, file)
+    })
+    return result!
+  }
+
+  /**
+   * 清理 scopedModels 中某 provider 的残留条目（deleteProvider/removeProviderByKind 后调用）。
+   * 过滤掉 `providerId/` 前缀条目；无变化时跳过写。
+   */
+  async cleanScopedModelsResidue(providerId: string): Promise<void> {
+    if (!existsSync(this.filePath)) return
+    const prefix = `${providerId}/`
+    await withFileLock(this.filePath, async () => {
+      const file = readInternal(this.filePath)
+      const current = file.scopedModels ?? []
+      const remaining = current.filter(m => !m.startsWith(prefix))
+      if (remaining.length === current.length) return // 幂等
+      file.scopedModels = remaining
       writeInternal(this.filePath, file)
     })
   }
