@@ -37,7 +37,7 @@ function captureNotificationContent(record: BgNotifyRecord): string {
   return capturedContent;
 }
 
-describe("notifier golden snapshots (pre-migration freeze)", () => {
+describe("U3_UNIT notifier golden snapshots (pre-migration freeze)", () => {
   it("single closed success — one-shot completed notification", () => {
     const content = captureNotificationContent({
       id: "sa-ptr-7",
