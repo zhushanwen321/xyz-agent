@@ -1,5 +1,15 @@
 /* eslint-disable taste/no-unsafe-cast */
 
+// Mock 共享 logger，让 logger.warn/error 可被 spy（源码已从 console 改为 logger）
+const { loggerMock } = vi.hoisted(() => ({
+	loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+	getLogger: () => loggerMock,
+	createLogger: () => loggerMock,
+	setPiHandle: vi.fn(),
+}));
+
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -135,19 +145,20 @@ function fire(setup: MockSetup, ctx: ExtensionContext, message?: unknown): Promi
 	) as Promise<void>;
 }
 
-/** 开 debug 开关 + 静音 warn，返回 spy 供日志断言（还原由顶层 afterEach 统一负责）。 */
-function debugWarnSpy(): ReturnType<typeof vi.spyOn> {
+/** 开 debug 开关 + 清空 warn mock，返回 loggerMock.warn 供日志断言（还原由顶层 afterEach 统一负责）。 */
+function debugWarnSpy(): ReturnType<typeof vi.fn> {
 	vi.stubEnv("XYZ_AGENT_DEBUG", "1");
-	return vi.spyOn(console, "warn").mockImplementation(() => {});
+	loggerMock.warn.mockClear();
+	return loggerMock.warn;
 }
 
 /** warn spy 的全部调用文本行（debug 日志断言用）。 */
-function warnLines(warnSpy: ReturnType<typeof vi.spyOn>): string[] {
+function warnLines(warnSpy: ReturnType<typeof vi.fn>): string[] {
 	return warnSpy.mock.calls.map((c) => String(c[0]));
 }
 
 /** 拼接 warn spy 的全部调用为单行文本（debug 日志断言用）。 */
-function warnText(warnSpy: ReturnType<typeof vi.spyOn>): string {
+function warnText(warnSpy: ReturnType<typeof vi.fn>): string {
 	return warnLines(warnSpy).join("\n");
 }
 
@@ -183,9 +194,9 @@ describe("renameSessionExtension", () => {
 		expect(setup.setSessionNameMock).not.toHaveBeenCalled();
 	});
 
-	it("TC15: getEntries 抛错时 handler 不抛（catch console.error）", async () => {
+	it("TC15: getEntries 抛错时 handler 不抛（catch logger.error）", async () => {
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		loggerMock.error.mockClear();
 		const ctx = {
 			sessionManager: {
 				getEntries: () => {
@@ -199,9 +210,8 @@ describe("renameSessionExtension", () => {
 
 		await expect(fire(setup, ctx)).resolves.toBeUndefined();
 
-		expect(errorSpy).toHaveBeenCalled();
+		expect(loggerMock.error).toHaveBeenCalled();
 		expect(setup.setSessionNameMock).not.toHaveBeenCalled();
-		errorSpy.mockRestore();
 	});
 
 	// ────────────────────────────────────────────────────
@@ -221,7 +231,7 @@ describe("renameSessionExtension", () => {
 			const expected = `turnIndex=${FIRE_TURN_INDEX} skip: stopReason=${String(r)}`;
 			expect(warnText(warnSpy)).toContain(expected);
 			const line = warnLines(warnSpy).find((l) => l.includes(`skip: stopReason=${String(r)}`));
-			expect(line).toMatch(/^\[rename-session\] t=\d{4}-\d{2}-\d{2}T/);
+			expect(line).toMatch(/^t=\d{4}-\d{2}-\d{2}T/);
 		}
 
 		expect(resolveModel).not.toHaveBeenCalled();
@@ -360,13 +370,12 @@ describe("renameSessionExtension", () => {
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockRejectedValue(new Error("llm down"));
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		loggerMock.error.mockClear();
 
 		await expect(fire(setup, createMockCtx())).resolves.toBeUndefined();
 		await vi.waitFor(() => expect(callLLM).toHaveBeenCalledTimes(1));
 
 		expect(setup.setSessionNameMock).not.toHaveBeenCalled();
-		errorSpy.mockRestore();
 	});
 
 	it("LTC13: 首 turn 判定（成功 assistant 回复数 !== 1）→ 不调 resolveModel", async () => {
@@ -419,9 +428,9 @@ describe("renameSessionExtension", () => {
 
 		const renamedIdx = warnLines(warnSpy).findIndex((l) => l.includes('renamed to "自动生成的标题"'));
 		expect(renamedIdx).toBeGreaterThanOrEqual(0);
-		// handler 侧日志契约（C3）：[rename-session] + t=<ISO> + turnIndex=<n> + renamed to "<title>"
+		// handler 侧日志契约（C3）：t=<ISO> + turnIndex=<n> + renamed to "<title>"（[rename-session] 前缀由共享 logger 自动补）
 		expect(String(warnSpy.mock.calls[renamedIdx][0])).toMatch(
-			new RegExp(`^\\[rename-session\\] t=\\d{4}-\\d{2}-\\d{2}T.* turnIndex=${FIRE_TURN_INDEX} renamed to "自动生成的标题"$`),
+			new RegExp(`^t=\\d{4}-\\d{2}-\\d{2}T.* turnIndex=${FIRE_TURN_INDEX} renamed to "自动生成的标题"$`),
 		);
 		// 移位契约（时序）：日志调用序晚于 setSessionName——先落库后报捷
 		expect(warnSpy.mock.invocationCallOrder[renamedIdx]).toBeGreaterThan(
@@ -436,7 +445,8 @@ describe("renameSessionExtension", () => {
 	it("TC9: XYZ_AGENT_DEBUG 未设 → 全流程 7 条 debug 契约文案零输出（既有 A1 日志除外）", async () => {
 		// 显式清除（防宿主环境泄漏 XYZ_AGENT_DEBUG 影响判定）
 		vi.stubEnv("XYZ_AGENT_DEBUG", undefined);
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		loggerMock.warn.mockClear();
+		const warnSpy = loggerMock.warn;
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 

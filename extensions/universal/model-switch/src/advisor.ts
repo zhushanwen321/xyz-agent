@@ -7,8 +7,11 @@
 
 import type { CacheData } from "@zhushanwen/pi-quota-providers";
 import { readCache } from "@zhushanwen/pi-quota-providers";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { loadConfig } from "./config";
+
+const logger = getLogger("model-switch");
 import type {
 	ModelPolicy,
 	PlanConfig,
@@ -182,13 +185,13 @@ interface Candidate {
 export function resolveModelForScene(scene: string, now?: Date): string | undefined {
 	const config = loadConfig();
 	if (!config) {
-		console.warn(`[model-switch] resolveModelForScene: no config loaded`);
+		logger.warn("resolveModelForScene: no config loaded");
 		return undefined;
 	}
 
 	const aliases = config.scenes[scene];
 	if (!aliases || aliases.length === 0) {
-		console.warn(`[model-switch] resolveModelForScene: scene "${scene}" not found`);
+		logger.warn("resolveModelForScene: scene not found", { scene });
 		return undefined;
 	}
 
@@ -228,7 +231,7 @@ export function resolveModelForScene(scene: string, now?: Date): string | undefi
 	}
 
 	if (candidates.length === 0) {
-		console.warn(`[model-switch] resolveModelForScene: no candidates found for scene "${scene}"`);
+		logger.warn("resolveModelForScene: no candidates found", { scene });
 		return undefined;
 	}
 

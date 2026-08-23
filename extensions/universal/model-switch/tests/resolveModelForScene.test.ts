@@ -6,6 +6,7 @@
  */
 
 import type { CacheData } from "@zhushanwen/pi-quota-providers";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { beforeEach,describe, expect, it, vi } from "vitest";
 
 import type { ModelPolicy } from "../../src/types";
@@ -143,19 +144,19 @@ describe("resolveModelForScene", () => {
 
 	it("TC-1-03: scene not found → returns undefined + warn", () => {
 		mockLoadConfig.mockReturnValue(mockConfig);
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warnSpy = vi.spyOn(getLogger("model-switch"), "warn").mockImplementation(() => {});
 
 		const result = resolveModelForScene("nonexistent");
 
 		expect(result).toBeUndefined();
-		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("nonexistent"));
+		expect(warnSpy).toHaveBeenCalledWith("resolveModelForScene: scene not found", { scene: "nonexistent" });
 
 		warnSpy.mockRestore();
 	});
 
 	it("TC-1-04: no config → returns undefined + warn", () => {
 		mockLoadConfig.mockReturnValue(null);
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warnSpy = vi.spyOn(getLogger("model-switch"), "warn").mockImplementation(() => {});
 
 		const result = resolveModelForScene("coding");
 

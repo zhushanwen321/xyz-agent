@@ -1,8 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { registerAutoRenameCommand } from "./commands.js";
 import { callRenameLLM, debugLog as llmDebugLog, isSubagentSession } from "./llm.js";
 import { countSuccessfulAssistantReplies, loadRenameConfig } from "./pure.js";
+
+const logger = getLogger("rename-session");
 
 /**
  * turn_end 事件的宽松类型（参考 pi extensions/types.ts 的 TurnEndEvent）。
@@ -73,13 +76,13 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 					// 防覆盖 return 在前，竞态命中时本日志不出现，避免「日志称 renamed 但未落库」）
 					debugLog(`renamed to "${title}"`);
 				})
-				.catch((e) => console.error("[pi-rename-session] rename LLM failed:", e));
+				.catch((e) => logger.error("rename LLM failed", { error: String(e) }));
 			// rename 是 best-effort，任何 LLM 失败（网络/提取/auth/model 不可用）都静默跳过保留原 label，
 			// 不进 session history。
 		} catch (e) {
 			// best-effort 降级：turn_end handler 同步部分（开关/subagent/判定）抛错时记录但不阻断
 			// agent 循环——rename 是非关键副作用，任何失败不得干扰主对话。
-			console.error("[pi-rename-session] failed:", e);
+			logger.error("failed", { error: String(e) });
 		}
 	});
 }

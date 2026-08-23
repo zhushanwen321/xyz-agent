@@ -4,12 +4,15 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import {
 	migrateTodo,
 	type TodoDetails,
 } from "./model";
 import type { TodoSessionState } from "./state";
+
+const logger = getLogger("todo");
 
 // ── 常量 ────────────────────────────────────────────
 
@@ -78,7 +81,7 @@ export function reconstructState(state: TodoSessionState, ctx: ExtensionContext)
 					migrated.push(migrateTodo(t));
 				} catch (e) {
 					// best-effort 降级：脏数据（null/primitive）跳过该条，不中断会话回放
-					console.debug("[todo] reconstructState: skipping dirty todo entry:", e);
+					logger.debug("reconstructState: skipping dirty todo entry", { error: String(e) });
 				}
 			}
 			if (migrated.length > 0) {
@@ -155,7 +158,7 @@ export function registerTodoEventHandlers(
 
 			return buildBeforeAgentStartMessage(state);
 		} catch (e) {
-			console.debug("[todo] before_agent_start error:", e);
+			logger.debug("before_agent_start error", { error: String(e) });
 			return undefined;
 		}
 	});
@@ -175,7 +178,7 @@ export function registerTodoEventHandlers(
 			}
 		} catch (e) {
 			// best-effort：agent_end 事件处理器出错不阻断会话主流程，仅记录调试日志
-			console.debug("[todo] agent_end error:", e);
+			logger.debug("agent_end error", { error: String(e) });
 		}
 	});
 }

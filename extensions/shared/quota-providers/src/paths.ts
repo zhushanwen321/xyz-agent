@@ -9,6 +9,10 @@
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("quota-providers");
+
 /** quota-providers 配置根目录（<agentDir>/config/） */
 export function getConfigDir(): string {
 	return join(getAgentDir(), "config");
@@ -45,7 +49,7 @@ export function resolveEnvRef(value: string): string {
 	const envVal = process.env[name];
 	if (envVal === undefined) {
 		if (!warnedEnvVars.has(name)) {
-			console.warn(`[quota-providers] env var ${name} is not set`);
+			logger.warn("env var not set", { detail: { envVar: name } });
 			warnedEnvVars.add(name);
 		}
 		return "";

@@ -12,6 +12,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Hoisted mocks ──────────────────────────────────────
 
+const { loggerMock } = vi.hoisted(() => ({
+    loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+    getLogger: () => loggerMock,
+}));
+
 const {
   mockReadFileSync,
   mockWriteFileSync,
@@ -91,9 +98,9 @@ describe("legacy cache migration", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(console, "info").mockImplementation(() => {});
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    loggerMock.warn.mockReset();
+    loggerMock.error.mockReset();
+    loggerMock.debug.mockReset();
   });
 
   // 迁移测试设置 fs mock 实现（existsSync 按路径判定等），
@@ -250,8 +257,8 @@ describe("triggerUpdate", () => {
     mockMkdirSync.mockImplementation(() => undefined);
     mockWriteFileSync.mockImplementation(() => undefined);
     mockRenameSync.mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+    loggerMock.warn.mockReset();
+    loggerMock.error.mockReset();
   });
 
   afterEach(() => {
@@ -470,8 +477,8 @@ describe("prune removed provider entries (D8d)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    loggerMock.warn.mockReset();
+    loggerMock.error.mockReset();
   });
 
   afterEach(() => {
@@ -546,8 +553,8 @@ describe("corrupt file quarantine (D1c)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+    loggerMock.error.mockReset();
+    loggerMock.warn.mockReset();
     mockMkdirSync.mockImplementation(() => undefined);
     mockWriteFileSync.mockImplementation(() => undefined);
     mockRenameSync.mockImplementation(() => undefined);
@@ -581,7 +588,10 @@ describe("corrupt file quarantine (D1c)", () => {
       SPEED_FILE,
       expect.stringMatching(/\.corrupt-\d{4}-\d{2}-\d{2}T\d{9}Z$/),
     );
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("quarantined"));
+    expect(loggerMock.error).toHaveBeenCalledWith(
+      "corrupt file quarantined",
+      expect.objectContaining({ detail: expect.objectContaining({ quarantinePath: expect.stringContaining(".corrupt-") }) }),
+    );
     // 继续工作：今日记录正常追加写回（非静默清空后无产出）。
     // 原子写后 writeFileSync 落在唯一 tmp 路径（`<file>.tmp_<pid>_<rand>`），按前缀筛
     const written = mockWriteFileSync.mock.calls.find(

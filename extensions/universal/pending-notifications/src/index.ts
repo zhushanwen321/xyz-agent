@@ -23,6 +23,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { Type } from "typebox";
 
 import {
@@ -55,6 +56,8 @@ export {
 	register,
 	unregister,
 } from "./state.ts";
+
+const logger = getLogger("pending-notifications");
 
 /** 工具参数 schema */
 const PendingNotificationsParams = Type.Object({
@@ -94,7 +97,7 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 			unsub();
 		} catch (err) {
 			// unsubscribe 失败不阻断初始化（监听器可能已被 EventBus 内部清理）
-			console.debug("[pending-notifications] unsubscribe failed during cleanup", err);
+			logger.debug("unsubscribe failed during cleanup", { error: String(err) });
 		}
 	}
 	unsubscribers = [];
@@ -116,14 +119,14 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	// debug 日志：环境变量 XYZ_AGENT_DEBUG=1 时输出到 console.debug。
+	// debug 日志：环境变量 XYZ_AGENT_DEBUG=1 时经共享 logger 写文件日志（默认 no-op）。
 	// 不再写入 session entry（pending:log）——session entries 是 append-only 无法 GC，
 	// 12 处 debug 日志会让长 session 的 entries 线性膨胀，而 goal before-agent-start
 	// 每 turn 全量扫描 getEntries()。状态数据（pending:register/unregister）仍写 entry。
 	const debugEnabled = process.env.XYZ_AGENT_DEBUG === "1";
 	function debugLog(level: string, message: string, data?: unknown): void {
 		if (!debugEnabled) return;
-		console.debug(`[pending-notifications:${level}] ${message}`, data ?? "");
+		logger.debug(`${level}: ${message}`, data ?? "");
 	}
 
 	// ── EventBus 监听：pending:register ─────────────────────

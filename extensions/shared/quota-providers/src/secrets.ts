@@ -6,7 +6,12 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import { getSecretsPath, resolveEnvRef } from "./paths.js";
+
+const logger = getLogger("quota-providers");
 
 export type Secrets = Record<string, Record<string, string>>;
 
@@ -17,7 +22,7 @@ export function loadSecrets(): Secrets {
 		const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
 		return resolveSecrets(raw);
 	} catch (e) {
-		console.warn(`[quota-providers] failed to parse ${path}:`, e);
+		logger.warn("failed to parse", { detail: { path, err: String(e) } });
 		return {};
 	}
 }

@@ -13,9 +13,12 @@
 import { existsSync, readFileSync } from "node:fs";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { getConfigPath } from "@zhushanwen/pi-llm-shared";
 
 import type { ModelPolicy, PlanConfig,ProviderConfig } from "./types";
+
+const logger = getLogger("model-switch");
 
 /** agentDir（pi 的 settings.json 等仍用 agentDir 根，保留导出） */
 const CONFIG_DIR = getAgentDir();
@@ -40,12 +43,12 @@ export function loadConfig(): ModelPolicy | null {
 		const content = readFileSync(CONFIG_PATH, "utf-8");
 		raw = JSON.parse(content);
 	} catch (err) {
-		console.warn(`[model-switch] Failed to parse ${CONFIG_PATH}:`, err);
+		logger.warn("Failed to parse config", { path: CONFIG_PATH, error: String(err) });
 		return null;
 	}
 
 	if (typeof raw !== "object" || raw === null) {
-		console.warn("[model-switch] Invalid config: expected object");
+		logger.warn("Invalid config: expected object");
 		return null;
 	}
 
@@ -56,46 +59,46 @@ export function loadConfig(): ModelPolicy | null {
 	}
 
 	if (config.version !== SUPPORTED_CONFIG_VERSION) {
-		console.warn(`[model-switch] Unsupported config version: ${String(config.version)}`);
+		logger.warn("Unsupported config version", { version: String(config.version) });
 		return null;
 	}
 
 	// models — provider-keyed
 	if (!config.models || typeof config.models !== "object") {
-		console.warn('[model-switch] Config missing "models"');
+		logger.warn('Config missing "models"');
 		return null;
 	}
 	for (const [provider, pcfg] of Object.entries(config.models as Record<string, unknown>)) {
 		if (typeof pcfg !== "object" || pcfg === null) {
-			console.warn(`[model-switch] Invalid provider config for "${provider}"`);
+			logger.warn("Invalid provider config", { provider });
 			return null;
 		}
 		const pc = pcfg as Record<string, unknown>;
 		if (typeof pc.plan !== "string") {
-			console.warn(`[model-switch] Provider "${provider}" missing "plan"`);
+			logger.warn('Provider missing "plan"', { provider });
 			return null;
 		}
 		if (!pc.models || typeof pc.models !== "object") {
-			console.warn(`[model-switch] Provider "${provider}" missing "models"`);
+			logger.warn('Provider missing "models"', { provider });
 			return null;
 		}
 	}
 
 	// scenes
 	if (!config.scenes || typeof config.scenes !== "object") {
-		console.warn('[model-switch] Config missing "scenes"');
+		logger.warn('Config missing "scenes"');
 		return null;
 	}
 
 	// plans
 	if (!config.plans || typeof config.plans !== "object") {
-		console.warn('[model-switch] Config missing "plans"');
+		logger.warn('Config missing "plans"');
 		return null;
 	}
 
 	// stickiness
 	if (!config.stickiness || typeof config.stickiness !== "object") {
-		console.warn('[model-switch] Config missing "stickiness"');
+		logger.warn('Config missing "stickiness"');
 		return null;
 	}
 
@@ -133,7 +136,7 @@ interface V1PlanEntry {
 function migrateV1(raw: Record<string, unknown>): ModelPolicy | null {
 	const models = raw.models as Record<string, V1ModelEntry> | undefined;
 	if (!models || typeof models !== "object") {
-		console.warn("[model-switch] v1 config missing \"models\"");
+		logger.warn('v1 config missing "models"');
 		return null;
 	}
 

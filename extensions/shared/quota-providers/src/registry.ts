@@ -14,7 +14,12 @@
  */
 
 import { existsSync, statSync } from "node:fs";
+
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import type { QuotaProvider } from "./providers/types.js";
+
+const logger = getLogger("quota-providers");
 import { PROVIDERS } from "./providers/index.js";
 import { loadProvidersConfig } from "./config.js";
 import { getProvidersConfigPath } from "./paths.js";
@@ -47,7 +52,7 @@ export function buildRuntimeProviders(): QuotaProvider[] {
 		const impl = PROVIDER_BY_FETCHER.get(decl.fetcher);
 		if (!impl) {
 			if (!warnedFetchers.has(decl.fetcher)) {
-				console.warn(`[quota-providers] unknown fetcher: ${decl.fetcher} (provider ${decl.id})`);
+				logger.warn("unknown fetcher", { detail: { fetcher: decl.fetcher, providerId: decl.id } });
 				warnedFetchers.add(decl.fetcher);
 			}
 			continue;

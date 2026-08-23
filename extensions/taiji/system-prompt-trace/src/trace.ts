@@ -12,6 +12,9 @@
 
 import { createHash } from "node:crypto";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("pi-system-prompt-trace");
 import { summarizePromptDiff } from "./diff.js";
 import {
 	mapReasonForFirstWrite,
@@ -145,8 +148,8 @@ export function createSystemPromptTrace(env: TraceEnv, stash: SwitchStash): Syst
 				write(ctx, text, hash, reason, version, parentFullText);
 				current = { version, hash, fullText: text };
 			} catch (e) {
-				// 留痕是诊断性旁路：任何失败都不允许影响 agent 主流程（错误进 pi stdout，随日志落盘）
-				console.error("[pi-system-prompt-trace] turn_start handler failed:", e);
+				// 留痕是诊断性旁路：任何失败都不允许影响 agent 主流程（logger.error → appendEntry 持久化）
+				logger.error("turn_start handler failed", { detail: String(e) });
 			}
 		},
 	};

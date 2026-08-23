@@ -1,9 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { registerPlanCommand, startPlanMode } from "./command.js";
 import { type PlanSessionMap, reconstructPlanState } from "./state.js";
 import { registerPlanTool } from "./tool.js";
 import { updatePlanWidget } from "./widget.js";
+
+const logger = getLogger("pi-plan");
 
 export default function planExtension(pi: ExtensionAPI) {
   // Per-session state cache — keyed by sessionId
@@ -24,7 +27,7 @@ export default function planExtension(pi: ExtensionAPI) {
   import("./compact.js").then(({ registerPlanEventHandlers }) => {
     registerPlanEventHandlers(pi, sessions);
   }).catch((_e: unknown) => {
-    console.warn("[pi-plan] compact handlers load failed:", _e);
+    logger.warn('compact handlers load failed', { error: String(_e) });
   });
 
   // Reconstruct state on session start

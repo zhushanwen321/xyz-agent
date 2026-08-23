@@ -25,6 +25,7 @@ import {
 	loadConfig,
 	saveConfig as saveLlmConfig,
 } from "@zhushanwen/pi-llm-shared";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import {
 	DEFAULT_CLASSIFIER_CONFIG,
@@ -37,6 +38,8 @@ import {
 
 /** llm-shared 泛型 config 的包名（决定文件名 permission-ext-config.json，llm-shared getConfigPath 追加 -ext-config.json 后缀）。 */
 const CONFIG_PKG = "permission";
+
+const logger = getLogger("pi-permission");
 
 // ──────────────────────── 路径解析 ────────────────────────
 
@@ -71,7 +74,7 @@ function normalizeClassifierConfig(raw: unknown): ClassifierConfig {
 	// C3b：classifier.model 只接受 string（'auto' 或 'provider/model-id'）。对象形式（如
 	// `{ "type": "available" }`）不受支持，此前会被静默忽略回落默认——现在显式 warn 消除静默。
 	if (record.model !== undefined && !(typeof record.model === "string" && record.model.length > 0)) {
-		console.warn("[pi-permission] Ignoring invalid classifier.model (expected string 'auto' or 'provider/model-id'), using default auto");
+		logger.warn("Ignoring invalid classifier.model (expected string 'auto' or 'provider/model-id'), using default auto");
 	}
 	// thinkingLevel 校验：合法值为 'off'|'minimal'|'low'|'medium'|'high'|'xhigh'|'max'
 	const thinkingLevel = isModelThinkingLevel(record.thinkingLevel)
@@ -140,8 +143,8 @@ function warnLegacyConfigIfExists(): void {
 	const legacyPath = join(getAgentDir(), "permission-config.json");
 	if (!existsSync(legacyPath)) return;
 	const newPath = join(getAgentDir(), "config", "permission-ext-config.json");
-	console.warn(
-		`[pi-permission] Legacy config detected at '${legacyPath}' but new config '${newPath}' is missing. ` +
+	logger.warn(
+		`Legacy config detected at '${legacyPath}' but new config '${newPath}' is missing. ` +
 			`Migration did not run — defaulting to yolo mode, which may downgrade your previous strict/auto setting. ` +
 			`Remove the legacy file or move it to the new path after migrating.`,
 	);

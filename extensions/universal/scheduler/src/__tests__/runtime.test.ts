@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+vi.mock('@zhushanwen/pi-extension-logger', () => ({
+  getLogger: () => loggerMock,
+  createLogger: () => loggerMock,
+  setPiHandle: vi.fn(),
+}))
+
 import { MockSchedulerBackend } from '../backend.js'
 import { SchedulerRuntime } from '../runtime.js'
 
@@ -178,7 +188,7 @@ describe('SchedulerRuntime', () => {
     })
 
     it('sendMessage 挂起期间下一 tick 同任务被跳过：不双注入、warn in-flight、完成后 runCount=1', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      loggerMock.warn.mockClear()
       let resolveSend: (() => void) | undefined
       const sendPromise = new Promise<void>(resolve => { resolveSend = resolve })
       backend.sendMessage = vi.fn(() => sendPromise)
@@ -195,7 +205,7 @@ describe('SchedulerRuntime', () => {
       // in-flight 守卫 → skip + warn（修复前：同一 prompt 双注入）
       await runtime.tickScheduler()
       expect(backend.sendMessage).toHaveBeenCalledTimes(1)
-      const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+      const warnText = loggerMock.warn.mock.calls.map(c => String(c[0])).join('\n')
       expect(warnText).toContain('already in flight')
 
       // 放行挂起的 sendMessage：tick1 正常收尾（状态推进恰好一次）
@@ -204,7 +214,6 @@ describe('SchedulerRuntime', () => {
       expect(backend.sendMessage).toHaveBeenCalledTimes(1)
       expect(task.runCount).toBe(1)
       expect(task.pending).toBe(false)
-      warnSpy.mockRestore()
     })
 
     it('挂起 dispatch 只挡同任务：其他任务在下一 tick 正常 dispatch 不受影响', async () => {
@@ -353,7 +362,7 @@ describe('SchedulerRuntime', () => {
 
     // ── TC-W-APPEND-FAIL：appendEntry 失败捕获（ER-APPEND-FAIL）──
     it('TC-W-APPEND-FAIL: appendEntry 失败不抛、保留内存态、不污染 lastError', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      loggerMock.warn.mockClear()
       backend.appendError = new Error('pi internal')
 
       // addTask 内 appendEntry 抛错 → 被捕获（console.warn），不 rethrow；内存态已更新（task 仍在）
@@ -362,7 +371,7 @@ describe('SchedulerRuntime', () => {
       expect(task.enabled).toBe(true)
       // appendEntrySafe 不污染业务态（append 失败是 transient，不设 lastError）
       expect(task.lastError).toBeUndefined()
-      expect(warnSpy).toHaveBeenCalled()
+      expect(loggerMock.warn).toHaveBeenCalled()
 
       // tickScheduler 同样不抛：dispatch 成功后 append advance 抛错被捕获，nextRunAt 已推进（内存态正确）
       task.nextRunAt = Date.now() - 1000
@@ -373,7 +382,6 @@ describe('SchedulerRuntime', () => {
       // nextRunAt 已推进到未来（内存态正确，append 失败只丢持久化）
       expect(updated.nextRunAt).toBe(Date.now() + 60000)
       expect(updated.lastError).toBeUndefined() // 不被 append 失败污染
-      warnSpy.mockRestore()
     })
 
     // ── TC-W-ON-AFTER-TICK：onAfterTick 回调（W2）──
@@ -554,7 +562,7 @@ describe('SchedulerRuntime', () => {
     })
 
     it('U1: stale 错误 → warn "tick stopped" + timer 自停，后续 tick 不再发生', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      loggerMock.warn.mockClear()
       const nowSpy = vi.spyOn(backend, 'now')
       runtime.onAfterTick(() => {
         throw new Error('This extension ctx is stale after session replacement or reload.')
@@ -563,7 +571,7 @@ describe('SchedulerRuntime', () => {
       runtime.startScheduler()
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS) // tick1：stale 抛 → catch 分诊 → 自停
 
-      const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+      const warnText = loggerMock.warn.mock.calls.map(c => String(c[0])).join('\n')
       expect(warnText).toContain('tick stopped')
       expect(warnText).not.toContain('tick error')
 
@@ -572,12 +580,11 @@ describe('SchedulerRuntime', () => {
 
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS * 2) // 60s：timer 已停，无新 tick
       expect(nowSpy.mock.calls.length).toBe(countAfterSelfStop) // now 计数不再增长
-      warnSpy.mockRestore()
       nowSpy.mockRestore()
     })
 
     it('U2: 非 stale 错误 → warn "tick error" 且调度继续（advance 两次 now 计数 +2）', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      loggerMock.warn.mockClear()
       const nowSpy = vi.spyOn(backend, 'now')
       runtime.onAfterTick(() => {
         throw new Error('boom')
@@ -586,7 +593,7 @@ describe('SchedulerRuntime', () => {
       runtime.startScheduler()
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS) // tick1：warn 但不停
 
-      const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+      const warnText = loggerMock.warn.mock.calls.map(c => String(c[0])).join('\n')
       expect(warnText).toContain('tick error')
       expect(warnText).not.toContain('tick stopped')
 
@@ -595,7 +602,6 @@ describe('SchedulerRuntime', () => {
 
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS * 2) // 2 个后续 tick 照常
       expect(nowSpy.mock.calls.length).toBe(countAfterFirstTick + 2)
-      warnSpy.mockRestore()
       nowSpy.mockRestore()
     })
 
@@ -634,7 +640,7 @@ describe('SchedulerRuntime', () => {
     })
 
     it('G1-a: in-flight tick 期间代际翻转 + 非文案错误 → warn "tick stopped" + 自停（不依赖 pi 错误文案）', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      loggerMock.warn.mockClear()
       const nowSpy = vi.spyOn(backend, 'now')
       // tick 内先翻世代（模拟 session 替换交错发生在 dispatch await 窗口），再抛与
       // pi 文案完全无关的错误——旧实现按文案分诊会误判为普通错误继续调度（若 pi 改文案）
@@ -646,7 +652,7 @@ describe('SchedulerRuntime', () => {
       genRuntime.startScheduler()
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS) // tick1：catch 分诊走 G1 代际 → 自停
 
-      const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+      const warnText = loggerMock.warn.mock.calls.map(c => String(c[0])).join('\n')
       expect(warnText).toContain('tick stopped')
       expect(warnText).not.toContain('tick error')
 
@@ -655,12 +661,11 @@ describe('SchedulerRuntime', () => {
 
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS * 2) // timer 已停，无新 tick
       expect(nowSpy.mock.calls.length).toBe(countAfterSelfStop)
-      warnSpy.mockRestore()
       nowSpy.mockRestore()
     })
 
     it('G1-b: 代际翻转后泄漏 timer 在下个 tick 前置检查自停——不进入 tick（backend.now 零调用）', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      loggerMock.warn.mockClear()
       const nowSpy = vi.spyOn(backend, 'now')
       genRuntime.startScheduler()
       // session 替换：代际翻转（F1 未能触达的泄漏 timer 场景；无任何错误发生）
@@ -668,7 +673,7 @@ describe('SchedulerRuntime', () => {
 
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS) // tick1：前置检查命中 → 自停
 
-      const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+      const warnText = loggerMock.warn.mock.calls.map(c => String(c[0])).join('\n')
       expect(warnText).toContain('tick stopped')
       expect(warnText).not.toContain('tick error')
       // 前置检查在 tickScheduler 之前拦截：tick 本体未执行（now 零调用，无 dispatch/append）
@@ -676,12 +681,11 @@ describe('SchedulerRuntime', () => {
 
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS * 2) // timer 已停，仍零调用
       expect(nowSpy).not.toHaveBeenCalled()
-      warnSpy.mockRestore()
       nowSpy.mockRestore()
     })
 
     it('G1-c: isCtxStale 注入但返回 false + 非 stale 错误 → warn "tick error" 且调度继续', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      loggerMock.warn.mockClear()
       const nowSpy = vi.spyOn(backend, 'now')
       // staleFlag 恒 false（beforeEach 初始化）：代际未翻转，注入存在不改变分诊结果
       genRuntime.onAfterTick(() => {
@@ -691,7 +695,7 @@ describe('SchedulerRuntime', () => {
       genRuntime.startScheduler()
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS) // tick1：非 stale → warn 继续调度
 
-      const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+      const warnText = loggerMock.warn.mock.calls.map(c => String(c[0])).join('\n')
       expect(warnText).toContain('tick error')
       expect(warnText).not.toContain('tick stopped')
 
@@ -700,12 +704,11 @@ describe('SchedulerRuntime', () => {
 
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS * 2) // 2 个后续 tick 照常
       expect(nowSpy.mock.calls.length).toBe(countAfterFirstTick + 2)
-      warnSpy.mockRestore()
       nowSpy.mockRestore()
     })
 
     it('G1-d: isCtxStale 返回 false 但错误文案含 stale 片段 → 文案兜底仍自停（覆盖 reload 盲区）', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      loggerMock.warn.mockClear()
       const nowSpy = vi.spyOn(backend, 'now')
       // reload 场景模拟：factory 重跑后旧闭包代际计数不再递增（staleFlag 恒 false），
       // 只有错误文案能识别 stale——兜底支必须独立于代际检测生效
@@ -716,7 +719,7 @@ describe('SchedulerRuntime', () => {
       genRuntime.startScheduler()
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS) // tick1：文案兜底 → 自停
 
-      const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+      const warnText = loggerMock.warn.mock.calls.map(c => String(c[0])).join('\n')
       expect(warnText).toContain('tick stopped')
       expect(warnText).not.toContain('tick error')
 
@@ -725,7 +728,6 @@ describe('SchedulerRuntime', () => {
 
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS * 2)
       expect(nowSpy.mock.calls.length).toBe(countAfterSelfStop)
-      warnSpy.mockRestore()
       nowSpy.mockRestore()
     })
   })

@@ -8,7 +8,7 @@
  *   swap 注入顺序两行的 mutant 会被顺序用例 kill）
  * - -nc / --no-context-files 守卫：global 注入跳过、append 不受影响
  * - global 候选选择：候选序优先、空白内容跳过继续找、目录缺失降级
- * - fail-safe：handler 全程 throw → return undefined + stderr 可观测；stderr 写失败的
+ * - fail-safe：handler 全程 throw → return undefined + logger.error 可观测；logger 自身抛错的
  *   终极兜底 console.debug；systemPrompt 非法类型的旧 quirk 锚定
  *
  * mock 策略（参照 msg-id-mapper 测试模式）：pi SDK import type 零运行时解析，
@@ -17,6 +17,14 @@
  * 运行：cd extensions/taiji/system-prompt && npx vitest run
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+vi.mock('@zhushanwen/pi-extension-logger', () => ({
+  getLogger: () => loggerMock,
+  createLogger: () => loggerMock,
+}))
+
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import createExtension from '../index'
@@ -259,8 +267,25 @@ describe('global 候选文件选择（readGlobalAgentsFile）', () => {
 })
 
 describe('fail-safe（外层 catch return undefined，永不阻断 agent loop）', () => {
-  it('handler 全程 throw（systemPrompt getter 抛错）→ return undefined + stderr 落盘可观测', () => {
+  it('handler 全程 throw（systemPrompt getter 抛错）→ return undefined + logger.error 落盘可观测', () => {
+    const h = createHarness()
+    const event = { type: 'before_agent_start', prompt: 'hi' } as unknown as BeforeAgentStartEvent
+    Object.defineProperty(event, 'systemPrompt', {
+      get() {
+        throw new Error('getter boom')
+      },
+    })
+    expect(h.beforeAgentStart(event)).toBeUndefined()
+    expect(loggerMock.error).toHaveBeenCalledWith(
+      'before_agent_start hook failed: Error: getter boom',
+    )
+  })
+
+  it('logger 自身抛错的终极兜底 → stderr 兜底，仍 return undefined', () => {
     const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    loggerMock.error.mockImplementation(() => {
+      throw new Error('logger gone')
+    })
     const h = createHarness()
     const event = { type: 'before_agent_start', prompt: 'hi' } as unknown as BeforeAgentStartEvent
     Object.defineProperty(event, 'systemPrompt', {
@@ -270,26 +295,7 @@ describe('fail-safe（外层 catch return undefined，永不阻断 agent loop）
     })
     expect(h.beforeAgentStart(event)).toBeUndefined()
     expect(stderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[xyz-system-prompt-extension] before_agent_start hook failed: Error: getter boom'),
-    )
-  })
-
-  it('stderr 写失败的终极兜底 → console.debug 吞掉，仍 return undefined', () => {
-    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => {
-      throw new Error('stderr gone')
-    })
-    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {})
-    const h = createHarness()
-    const event = { type: 'before_agent_start', prompt: 'hi' } as unknown as BeforeAgentStartEvent
-    Object.defineProperty(event, 'systemPrompt', {
-      get() {
-        throw new Error('getter boom')
-      },
-    })
-    expect(h.beforeAgentStart(event)).toBeUndefined()
-    expect(debugSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[xyz-system-prompt-extension] stderr write also failed:'),
-      expect.any(Error),
+      expect.stringContaining('logHookFailure also failed'),
     )
   })
 

@@ -6,7 +6,12 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import { getProvidersConfigPath } from "./paths.js";
+
+const logger = getLogger("quota-providers");
 
 export interface ProviderDecl {
 	id: string;
@@ -33,7 +38,7 @@ export function loadProvidersConfig(): ProvidersConfig {
 			"search-tools": normalizeList((raw as Record<string, unknown>)["search-tools"]),
 		};
 	} catch (e) {
-		console.warn(`[quota-providers] failed to parse ${path}:`, e);
+		logger.warn("failed to parse", { detail: { path, err: String(e) } });
 		return EMPTY;
 	}
 }

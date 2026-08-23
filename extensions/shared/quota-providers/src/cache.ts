@@ -12,7 +12,11 @@ import { dirname, join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import { getCachePath, getProvidersConfigPath, getSpeedDir } from "./paths.js";
+
+const logger = getLogger("quota-cache");
 // 架构修复：doUpdate 用 buildRuntimeProviders() 替代静态 PROVIDERS，
 // 使 providers.json 中 enabled=false 的 provider 不会被 fetch。
 // registry.ts 内部 import PROVIDERS，此处不直接引用。
@@ -70,7 +74,7 @@ function atomicWriteJson(filePath: string, data: unknown): void {
 			if (existsSync(tmpPath)) unlinkSync(tmpPath);
 		} catch (cleanupErr) {
 			// tmp 清理失败不掩盖原错误，仅记录
-			console.warn(`[quota-cache] tmp cleanup failed:`, cleanupErr);
+			logger.warn("tmp cleanup failed", { detail: { err: String(cleanupErr) } });
 		}
 		throw err;
 	}
@@ -93,14 +97,14 @@ function ensureCacheMigrated(): void {
 		if (existsSync(CACHE_PATH)) {
 			// 新路径已有内容（已迁移或用户手动放置）→ 不覆盖，仅删旧
 			unlinkSync(legacyPath);
-			console.warn(`[quota-cache] legacy cache superseded, removed ${legacyPath}`);
+			logger.warn("legacy cache superseded, removed legacy file", { detail: { legacyPath } });
 		} else {
 			renameSync(legacyPath, CACHE_PATH);
-			console.warn(`[quota-cache] migrated legacy cache: ${legacyPath} → ${CACHE_PATH}`);
+			logger.warn("migrated legacy cache", { detail: { legacyPath, cachePath: CACHE_PATH } });
 		}
 	} catch (e) {
 		// 迁移失败属容错路径（best-effort）：保留旧文件待下次进程启动重试；缓存是易失数据（TTL 2 分钟），不阻断读取
-		console.warn(`[quota-cache] legacy cache migration failed (keeping old file):`, e);
+		logger.warn("legacy cache migration failed (keeping old file)", { detail: { err: String(e) } });
 	}
 }
 
@@ -157,10 +161,10 @@ function pruneRemovedProviderEntries(): void {
 	try {
 		mkdirSync(dirname(CACHE_PATH), { recursive: true });
 		atomicWriteJson(CACHE_PATH, cached);
-		console.warn("[quota-cache] pruned entries of removed providers");
+		logger.warn("pruned entries of removed providers");
 	} catch (e) {
 		// best-effort：写失败保留旧缓存，下次 mtime 变化重试；消费方按 plan key 取，残留不产生错误数据
-		console.warn("[quota-cache] prune write failed (keeping old):", e);
+		logger.warn("prune write failed (keeping old)", { detail: { err: String(e) } });
 	}
 }
 
@@ -184,7 +188,7 @@ export function triggerUpdate(): void {
 			updating = false;
 		})
 		.catch((e) => {
-			console.warn("[quota-cache] doUpdate failed:", e);
+			logger.warn("doUpdate failed", { detail: { err: String(e) } });
 		});
 }
 
@@ -199,8 +203,8 @@ async function doUpdate(): Promise<void> {
 		const r = results[i]!;
 		const oldVal = (old as Record<string, unknown>)[p.id] ?? null;
 		if (r.status === "rejected") {
-			// 记录到 stderr 方便排查，不持久化
-			console.error(`[quota-cache] ${p.id} fetch failed:`, r.reason?.message ?? r.reason);
+			// logger.error → appendEntry 持久化 + XYZ_AGENT_DEBUG=1 文件日志，方便排查
+			logger.error("fetch failed", { detail: { providerId: p.id, err: String(r.reason?.message ?? r.reason) } });
 		}
 		cache[p.id] =
 			r.status === "fulfilled" && r.value !== null ? r.value : oldVal;
@@ -212,7 +216,7 @@ async function doUpdate(): Promise<void> {
 		atomicWriteJson(CACHE_PATH, cache);
 	} catch (e) {
 		// 磁盘写失败属于容错路径：保留旧缓存，下次 triggerUpdate 会重试
-		console.warn(`[quota-cache] cache write failed (keeping old):`, e);
+		logger.warn("cache write failed (keeping old)", { detail: { err: String(e) } });
 	}
 }
 
@@ -227,7 +231,7 @@ function readCacheSync(): CacheData {
 		// D1c quarantine：文件存在但读/parse 失败 → 隔离开现场再降级
 		//（ENOENT = 尚无缓存，正常态不隔离）
 		if (existsSync(CACHE_PATH)) quarantineCorrupt(CACHE_PATH, e);
-		console.warn(`[quota-cache] cache read failed (using empty):`, e);
+		logger.warn("cache read failed (using empty)", { detail: { err: String(e) } });
 		return { ...EMPTY_CACHE };
 	}
 }
@@ -246,16 +250,10 @@ function quarantineCorrupt(path: string, cause: unknown): void {
 	const msg = cause instanceof Error ? cause.message : String(cause);
 	try {
 		renameSync(path, quarantinePath);
-		console.error(
-			`[quota-cache] corrupt file quarantined to ${quarantinePath}; continuing with empty. ` +
-			`Recovery: compare the .corrupt copy to restore history. Cause: ${msg}`,
-		);
+		logger.error("corrupt file quarantined", { detail: { quarantinePath, cause: msg } });
 	} catch (renameErr) {
 		// 隔离失败不阻断读流程（调用方仍降级继续），只升级日志提示人工介入
-		console.error(
-			`[quota-cache] quarantine rename failed for ${path} (original kept in place, please inspect manually). ` +
-			`Cause: ${msg}; rename error: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
-		);
+		logger.error("quarantine rename failed", { detail: { path, cause: msg, renameError: renameErr instanceof Error ? renameErr.message : String(renameErr) } });
 	}
 }
 
@@ -291,7 +289,7 @@ function persistDailyRecord<T extends unknown[]>(
 		// D1c quarantine：文件损坏属于容错路径——先隔离开现场（防下方写回把半截文件
 		// 合法化为空），再 fallback 到空 records
 		if (existsSync(filePath)) quarantineCorrupt(filePath, e);
-		console.warn(`[quota-cache] ${recordName} record read failed (using empty):`, e);
+		logger.warn("record read failed (using empty)", { detail: { recordName, err: String(e) } });
 	}
 
 	// 追加今日记录
@@ -312,7 +310,7 @@ function persistDailyRecord<T extends unknown[]>(
 		atomicWriteJson(filePath, records);
 	} catch (e) {
 		// 写入失败属于容错路径：记录后继续（records 已返回，下次写入重试）
-		console.warn(`[quota-cache] ${recordName} record write failed:`, e);
+		logger.warn("record write failed", { detail: { recordName, err: String(e) } });
 	}
 
 	return records;

@@ -19,9 +19,12 @@
  */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { callLLM, resolveModel as resolveModelShared, type ModelSelector } from "@zhushanwen/pi-llm-shared";
 
 import { type ApprovalContext, requestUserApproval } from "./approval.js";
+
+const logger = getLogger("pi-permission");
 import { analyzeBashStructure } from "./ast/index.js";
 import { createClassifier } from "./classifier/index.js";
 import type { CheckPermissionDeps } from "./pipeline.js";
@@ -65,7 +68,7 @@ export function createProductionClassifier(ctx: ExtensionContext): {
 			return resolveModelShared(ctx, toSelector(config.model));
 		},
 		callLLM: (opts) => callLLM(ctx, opts),
-		onLog: (msg: string) => console.warn(msg),
+		onLog: (msg: string) => logger.warn(msg),
 	});
 }
 
