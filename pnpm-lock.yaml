@@ -431,6 +431,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.84.1
         version: 0.84.1(ws@8.21.0)(zod@3.25.76)
+      '@xyz-agent/session-delivery':
+        specifier: workspace:*
+        version: link:../../../packages/session-delivery
       croner:
         specifier: ^9.0.0
         version: 9.1.0

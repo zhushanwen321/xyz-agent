@@ -1,0 +1,11 @@
+npm warn Unknown project config "node-linker". This will stop working in the next major version of npm.
+npm warn Unknown project config "strict-peer-dependencies". This will stop working in the next major version of npm.
+
+ RUN  v4.1.9 /Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration
+
+
+ Test Files  19 passed (19)
+      Tests  227 passed (227)
+   Start at  18:03:13
+   Duration  668ms (transform 561ms, setup 0ms, import 1.73s, tests 226ms, environment 1ms)
+

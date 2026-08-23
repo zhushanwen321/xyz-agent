@@ -1,0 +1,235 @@
+
+> xyz-agent@0.9.5 extensions:lint /Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration
+> npx eslint extensions/
+
+npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+npm warn Unknown env config "node-linker". This will stop working in the next major version of npm.
+npm warn Unknown env config "store-dir". This will stop working in the next major version of npm.
+npm warn Unknown project config "node-linker". This will stop working in the next major version of npm.
+npm warn Unknown project config "strict-peer-dependencies". This will stop working in the next major version of npm.
+npm warn Unknown global config "store-dir". This will stop working in the next major version of npm.
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/taiji/system-prompt-trace/src/baseline.ts
+  148:6  warning  空 catch 块吞掉了错误，至少需要记录日志。  taste/no-silent-catch
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/ask-user/src/__tests__/e2e-harness.ts
+  58:10  warning  `as never` 抹除了所有类型信息，TypeScript 无法校验。若不可避免（如跨 tsconfig 泛型冲突），必须加运行时 guard 或 SDK 契约测试。  taste/no-unsafe-cast
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/ask-user/src/question-view.ts
+  241:76  warning  No magic number: 8  no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/goal/src/adapters/ports.ts
+  56:17  warning  `as unknown as T` 双重断言绕过结构兼容性检查。确认源类型与目标类型确实不兼容，否则用直接断言或类型守卫。  taste/no-unsafe-cast
+  69:24  warning  `as unknown as T` 双重断言绕过结构兼容性检查。确认源类型与目标类型确实不兼容，否则用直接断言或类型守卫。  taste/no-unsafe-cast
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/model-switch/src/config.ts
+  102:16  warning  `as unknown as T` 双重断言绕过结构兼容性检查。确认源类型与目标类型确实不兼容，否则用直接断言或类型守卫。  taste/no-unsafe-cast
+  163:37  warning  No magic number: 99                                            no-magic-numbers
+  188:38  warning  No magic number: 3                                             no-magic-numbers
+  189:50  warning  No magic number: 20_000                                        no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/permission/src/ast/analyzer.ts
+  76:64  warning  No magic number: 2  no-magic-numbers
+  92:64  warning  No magic number: 2  no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/permission/src/commands.ts
+  65:41  warning  No magic number: 8  no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/permission/src/config.ts
+  117:49  warning  No magic number: 2  no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/permission/src/index.ts
+  136:91  warning  No magic number: 2  no-magic-numbers
+  146:97  warning  No magic number: 2  no-magic-numbers
+  173:91  warning  No magic number: 2  no-magic-numbers
+  182:97  warning  No magic number: 2  no-magic-numbers
+  316:87  warning  No magic number: 2  no-magic-numbers
+  325:93  warning  No magic number: 2  no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/permission/src/model-picker.ts
+  131:44  warning  No magic number: 2  no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/permission/src/rule-editor-component.ts
+  127:44  warning  No magic number: 2                                             no-magic-numbers
+  175:70  warning  No magic number: 2                                             no-magic-numbers
+  176:23  warning  No magic number: 2                                             no-magic-numbers
+  471:43  warning  No magic number: 2                                             no-magic-numbers
+  677:50  warning  No magic number: 3                                             no-magic-numbers
+  712:50  warning  No magic number: 2                                             no-magic-numbers
+  879:6   warning  `as unknown as T` 双重断言绕过结构兼容性检查。确认源类型与目标类型确实不兼容，否则用直接断言或类型守卫。  taste/no-unsafe-cast
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/permission/src/rules/builtins.ts
+  132:67  warning  No magic number: 2  no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/rename-session/src/pure.ts
+  87:24  warning  No magic number: 2  no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/scheduler/src/format.ts
+  28:24  warning  No magic number: 5000        no-magic-numbers
+  32:11  warning  No magic number: 86_400_000  no-magic-numbers
+  33:11  warning  No magic number: 3_600_000   no-magic-numbers
+  34:11  warning  No magic number: 60_000      no-magic-numbers
+  35:11  warning  No magic number: 1000        no-magic-numbers
+  48:41  warning  No magic number: 1000        no-magic-numbers
+  59:17  warning  No magic number: 3           no-magic-numbers
+  60:33  warning  No magic number: 3           no-magic-numbers
+  67:32  warning  No magic number: 4           no-magic-numbers
+  69:44  warning  No magic number: 16          no-magic-numbers
+  69:57  warning  No magic number: 2           no-magic-numbers
+  77:25  warning  No magic number: 30          no-magic-numbers
+  78:27  warning  No magic number: 27          no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/scheduler/src/parsing.ts
+   37:11  warning  No magic number: 86_400_000  no-magic-numbers
+   38:11  warning  No magic number: 3_600_000   no-magic-numbers
+   39:11  warning  No magic number: 60_000      no-magic-numbers
+   40:11  warning  No magic number: 1000        no-magic-numbers
+   50:29  warning  No magic number: 1000        no-magic-numbers
+   79:24  warning  No magic number: 6           no-magic-numbers
+   84:24  warning  No magic number: 5           no-magic-numbers
+  124:11  warning  No magic number: 5           no-magic-numbers
+  218:11  warning  No magic number: 5           no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/scheduler/src/runtime.ts
+   19:27  warning  No magic number: 7       no-magic-numbers
+   19:31  warning  No magic number: 24      no-magic-numbers
+   19:36  warning  No magic number: 60      no-magic-numbers
+   19:41  warning  No magic number: 60      no-magic-numbers
+   19:46  warning  No magic number: 1000    no-magic-numbers
+  435:32  warning  No magic number: 60_000  no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/scheduler/src/widget.ts
+  26:39  warning  No magic number: 20  no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/session-reader/src/core/render.ts
+  166:63  warning  No magic number: 1024  no-magic-numbers
+  219:56  warning  No magic number: 60    no-magic-numbers
+  228:36  warning  No magic number: 60    no-magic-numbers
+  236:45  warning  No magic number: 80    no-magic-numbers
+  261:15  warning  No magic number: 1024  no-magic-numbers
+  262:33  warning  No magic number: 1024  no-magic-numbers
+  271:50  warning  No magic number: 2     no-magic-numbers
+  273:45  warning  No magic number: 3     no-magic-numbers
+  309:37  warning  No magic number: 2000  no-magic-numbers
+  347:55  warning  No magic number: 4     no-magic-numbers
+  360:30  warning  No magic number: 2     no-magic-numbers
+  369:20  warning  No magic number: 4     no-magic-numbers
+  371:37  warning  No magic number: 4     no-magic-numbers
+  380:48  warning  No magic number: 4     no-magic-numbers
+  408:35  warning  No magic number: 60    no-magic-numbers
+  423:20  warning  No magic number: 4     no-magic-numbers
+  425:37  warning  No magic number: 4     no-magic-numbers
+  436:43  warning  No magic number: 4     no-magic-numbers
+  462:49  warning  No magic number: 100   no-magic-numbers
+  472:24  warning  No magic number: 100   no-magic-numbers
+  482:48  warning  No magic number: 3     no-magic-numbers
+  562:44  warning  No magic number: 3     no-magic-numbers
+  562:70  warning  No magic number: 80    no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/session-reader/src/core/toolcall.ts
+   48:7   warning  空 catch 块吞掉了错误，至少需要记录日志。  taste/no-silent-catch
+  106:57  warning  No magic number: 60       no-magic-numbers
+  125:72  warning  No magic number: 1024     no-magic-numbers
+  130:63  warning  No magic number: 40       no-magic-numbers
+  162:59  warning  No magic number: 50       no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/session-reader/src/discovery/roots.ts
+  65:11  warning  空 catch 块吞掉了错误，至少需要记录日志。  taste/no-silent-catch
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/session-reader/src/tool-handler.ts
+    94:55   warning  No magic number: 3                                       no-magic-numbers
+   109:66   warning  No magic number: 2                                       no-magic-numbers
+   111:14   warning  No magic number: 2                                       no-magic-numbers
+   117:22   warning  No magic number: -2                                      no-magic-numbers
+   122:15   warning  No magic number: 1024                                    no-magic-numbers
+   123:33   warning  No magic number: 1024                                    no-magic-numbers
+   160:24   warning  No magic number: 2                                       no-magic-numbers
+   355:64   warning  No magic number: 8                                       no-magic-numbers
+   371:48   warning  No magic number: 12                                      no-magic-numbers
+   403:54   warning  No magic number: 8                                       no-magic-numbers
+   507:57   warning  No magic number: 8                                       no-magic-numbers
+   510:54   warning  No magic number: 8                                       no-magic-numbers
+   520:70   warning  No magic number: 8                                       no-magic-numbers
+   522:66   warning  No magic number: 8                                       no-magic-numbers
+   528:39   warning  No magic number: 8                                       no-magic-numbers
+   528:75   warning  No magic number: 8                                       no-magic-numbers
+   604:35   warning  No magic number: 20                                      no-magic-numbers
+   605:49   warning  No magic number: 20                                      no-magic-numbers
+   622:28   warning  No magic number: 20                                      no-magic-numbers
+   758:33   warning  No magic number: 20                                      no-magic-numbers
+   833:32   warning  No magic number: 40                                      no-magic-numbers
+   833:73   warning  No magic number: 8                                       no-magic-numbers
+   835:30   warning  No magic number: 40                                      no-magic-numbers
+   835:103  warning  No magic number: 8                                       no-magic-numbers
+   932:31   warning  No magic number: 5                                       no-magic-numbers
+   933:33   warning  No magic number: 5                                       no-magic-numbers
+   933:56   warning  No magic number: 5                                       no-magic-numbers
+   960:56   warning  No magic number: 10                                      no-magic-numbers
+  1002:54   warning  No magic number: 3                                       no-magic-numbers
+  1034:69   warning  No magic number: 4                                       no-magic-numbers
+  1187:36   warning  No magic number: 30                                      no-magic-numbers
+  1187:61   warning  No magic number: 30                                      no-magic-numbers
+  1234:72   warning  No magic number: 500                                     no-magic-numbers
+  1299:1    warning  File has too many lines (1118). Maximum allowed is 1000  max-lines
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/smart-context/src/compact-handler.ts
+  103:13  warning  `as unknown as T` 双重断言绕过结构兼容性检查。确认源类型与目标类型确实不兼容，否则用直接断言或类型守卫。                          taste/no-unsafe-cast
+  168:56  warning  `as never` 抹除了所有类型信息，TypeScript 无法校验。若不可避免（如跨 tsconfig 泛型冲突），必须加运行时 guard 或 SDK 契约测试。  taste/no-unsafe-cast
+  241:3   warning  `as never` 抹除了所有类型信息，TypeScript 无法校验。若不可避免（如跨 tsconfig 泛型冲突），必须加运行时 guard 或 SDK 契约测试。  taste/no-unsafe-cast
+  242:3   warning  `as never` 抹除了所有类型信息，TypeScript 无法校验。若不可避免（如跨 tsconfig 泛型冲突），必须加运行时 guard 或 SDK 契约测试。  taste/no-unsafe-cast
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/smart-context/src/llm.ts
+  105:101  warning  `as never` 抹除了所有类型信息，TypeScript 无法校验。若不可避免（如跨 tsconfig 泛型冲突），必须加运行时 guard 或 SDK 契约测试。  taste/no-unsafe-cast
+  106:99   warning  `as never` 抹除了所有类型信息，TypeScript 无法校验。若不可避免（如跨 tsconfig 泛型冲突），必须加运行时 guard 或 SDK 契约测试。  taste/no-unsafe-cast
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/smart-context/src/pure.ts
+   21:57  warning  No magic number: 200_000                                               no-magic-numbers
+   21:66  warning  No magic number: 400_000                                               no-magic-numbers
+   21:75  warning  No magic number: 600_000                                               no-magic-numbers
+  274:13  warning  结构断言到全可选属性类型（`as { x?: ... }`）——任何对象都能通过，等于无校验。改用类型守卫函数，或确保目标类型有必填字段。  taste/no-unsafe-cast
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/smart-context/src/reminder.ts
+  24:66  warning  No magic number: 100     no-magic-numbers
+  70:34  warning  No magic number: 16_384  no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/smart-context/src/tool.ts
+  70:12  warning  结构断言到全可选属性类型（`as { x?: ... }`）——任何对象都能通过，等于无校验。改用类型守卫函数，或确保目标类型有必填字段。  taste/no-unsafe-cast
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/subagent-workflow/mocks/pi-tui.ts
+   25:4   warning  No magic number: 0x1100   no-magic-numbers
+   25:12  warning  No magic number: 0x115f   no-magic-numbers
+   26:4   warning  No magic number: 0x2e80   no-magic-numbers
+   26:12  warning  No magic number: 0xa4cf   no-magic-numbers
+   27:4   warning  No magic number: 0xac00   no-magic-numbers
+   27:12  warning  No magic number: 0xd7a3   no-magic-numbers
+   28:4   warning  No magic number: 0xf900   no-magic-numbers
+   28:12  warning  No magic number: 0xfaff   no-magic-numbers
+   29:4   warning  No magic number: 0xfe10   no-magic-numbers
+   29:12  warning  No magic number: 0xfe19   no-magic-numbers
+   30:4   warning  No magic number: 0xfe30   no-magic-numbers
+   30:12  warning  No magic number: 0xfe6f   no-magic-numbers
+   31:4   warning  No magic number: 0xff00   no-magic-numbers
+   31:12  warning  No magic number: 0xff60   no-magic-numbers
+   32:4   warning  No magic number: 0xffe0   no-magic-numbers
+   32:12  warning  No magic number: 0xffe6   no-magic-numbers
+   33:4   warning  No magic number: 0x1f300  no-magic-numbers
+   33:13  warning  No magic number: 0x1f64f  no-magic-numbers
+   34:4   warning  No magic number: 0x1f900  no-magic-numbers
+   34:13  warning  No magic number: 0x1f9ff  no-magic-numbers
+  116:56  warning  No magic number: 2        no-magic-numbers
+  162:56  warning  No magic number: 2        no-magic-numbers
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/subagent-workflow/src/shared/resource-discovery.ts
+  388:26  warning  Promise.all 一个失败全部失败。如果是独立数据源，改用 Promise.allSettled 允许部分降级。  taste/prefer-allsettled
+  400:33  warning  Promise.all 一个失败全部失败。如果是独立数据源，改用 Promise.allSettled 允许部分降级。  taste/prefer-allsettled
+  510:97  warning  Promise.all 一个失败全部失败。如果是独立数据源，改用 Promise.allSettled 允许部分降级。  taste/prefer-allsettled
+
+/Users/zhushanwen/.cw-worktrees/__Users__zhushanwen__Code__xyz-agent-workspace__feat-firstmate-new-session-72159923/sd-u4-scheduler-migration/extensions/universal/todo/src/index.ts
+  50:30  warning  `as unknown as T` 双重断言绕过结构兼容性检查。确认源类型与目标类型确实不兼容，否则用直接断言或类型守卫。  taste/no-unsafe-cast
+  53:18  warning  `as unknown as T` 双重断言绕过结构兼容性检查。确认源类型与目标类型确实不兼容，否则用直接断言或类型守卫。  taste/no-unsafe-cast
+  58:17  warning  `as unknown as T` 双重断言绕过结构兼容性检查。确认源类型与目标类型确实不兼容，否则用直接断言或类型守卫。  taste/no-unsafe-cast
+
+✖ 162 problems (0 errors, 162 warnings)
+

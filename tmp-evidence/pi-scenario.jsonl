@@ -1,0 +1,3 @@
+{"id":"state1","type":"get_state"}
+{"id":"prompt1","type":"prompt","message":"Create a one-shot scheduled task that fires in 5 seconds with marker S4-5s-marker. Then stop after creating it."}
+{"id":"state2","type":"get_state"}
