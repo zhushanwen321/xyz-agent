@@ -73,7 +73,7 @@ describe('A5-merge 合批拼接格式', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
-  it('多条以 "\\n\\n---\\n\\n" join，details 包装为 {batch: true, items}', () => {
+  it('多条 text 以 "\\n\\n---\\n\\n" join（text 无 details 出口，不包装 batch）', () => {
     const port = makeMockPort()
     const handle = createDelivery(port, {
       mergeWindowMs: 5000,
@@ -89,6 +89,76 @@ describe('A5-merge 合批拼接格式', () => {
     expect(port.sendCalls).toHaveLength(1)
     const sent = port.sendCalls[0]!.msg
     expect(sent.payload.content).toBe('msg1\n\n---\n\nmsg2\n\n---\n\nmsg3')
+
+    handle.dispose()
+  })
+
+  it('#6 custom 合批 items 装载各消息 details（record 顶层字段直达 bg-notify-render）', () => {
+    const port = makeMockPort()
+    const handle = createDelivery(port, {
+      mergeWindowMs: 5000,
+      mergeHoldActive: () => true,
+    })
+
+    handle.send({
+      payload: {
+        kind: 'custom',
+        customType: 'subagent-bg-notify',
+        content: 'n1',
+        display: true,
+        details: { agent: 'a1', status: 'done' },
+      },
+    })
+    handle.send({
+      payload: {
+        kind: 'custom',
+        customType: 'subagent-bg-notify',
+        content: 'n2',
+        display: true,
+        details: { agent: 'a2', status: 'running' },
+      },
+    })
+
+    vi.advanceTimersByTime(5000)
+
+    expect(port.sendCalls).toHaveLength(1)
+    const sent = port.sendCalls[0]!.msg.payload
+    expect(sent.kind).toBe('custom')
+    expect(sent.content).toBe('n1\n\n---\n\nn2')
+    // items 元素 = 消息的 details（record 本体），不再是把 record 藏在
+    // payload.details 下的嵌套结构
+    expect(sent.details).toEqual({
+      batch: true,
+      items: [
+        { agent: 'a1', status: 'done' },
+        { agent: 'a2', status: 'running' },
+      ],
+    })
+
+    handle.dispose()
+  })
+
+  it('#6 custom 无 details 的消息在 items 中装载 payload 本身', () => {
+    const port = makeMockPort()
+    const handle = createDelivery(port, {
+      mergeWindowMs: 5000,
+      mergeHoldActive: () => true,
+    })
+
+    handle.send({
+      payload: { kind: 'custom', customType: 't', content: 'with', display: true, details: { k: 1 } },
+    })
+    handle.send({
+      payload: { kind: 'custom', customType: 't', content: 'without', display: true },
+    })
+
+    vi.advanceTimersByTime(5000)
+
+    const sent = port.sendCalls[0]!.msg.payload
+    expect(sent.details).toEqual({
+      batch: true,
+      items: [{ k: 1 }, { kind: 'custom', customType: 't', content: 'without', display: true }],
+    })
 
     handle.dispose()
   })

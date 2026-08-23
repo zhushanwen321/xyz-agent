@@ -46,6 +46,24 @@ describe('A1-migration 搬迁: gate 拒绝→退避重试→达上限强发', ()
 
     handle.dispose()
   })
+
+  it('#10 isIdle=true + hasPendingMessages=true → 视为 busy 不立即投（G4 等价 gate）', () => {
+    const port = makeMockPort()
+    port.pendingMessages = true
+    const handle = createDelivery(port, {
+      busyPolicy: 'retry-force',
+      backoff: { ms: 100, max: 5 },
+    })
+
+    handle.send(textMsg('hello'))
+    expect(port.sendCalls).toHaveLength(0) // idle 但 pi 队列未排空 → 等边沿/退避
+
+    port.pendingMessages = false
+    vi.advanceTimersByTime(100) // 无订阅装配退避一拍，复核通过后投
+    expect(port.sendCalls).toHaveLength(1)
+
+    handle.dispose()
+  })
 })
 
 describe('A1-migration 搬迁: 合批窗口滑动重置', () => {
@@ -179,7 +197,8 @@ describe('A1-migration dedupe', () => {
     handle.dispose()
   })
 
-  it('无 dedupeKey 时不参与去重', () => {
+  it('无 dedupeKey 时不参与去重（#12：warn 一次性提示 + 照常投递）', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const port = makeMockPort()
     const handle = createDelivery(port, { dedupe: { maxKeys: 100 } })
 
@@ -187,7 +206,15 @@ describe('A1-migration dedupe', () => {
     handle.send(textMsg('msg1'))
 
     expect(port.sendCalls).toHaveLength(2)
+    // #12 缺 key 提示：一次性（handle 级），不刷屏、不 throw
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(String(warnSpy.mock.calls[0]![0])).toContain('dedupeKey')
 
+    handle.send(textMsg('msg2'))
+    expect(port.sendCalls).toHaveLength(3)
+    expect(warnSpy).toHaveBeenCalledTimes(1) // 后续缺 key 消息不再重复 warn
+
+    warnSpy.mockRestore()
     handle.dispose()
   })
 

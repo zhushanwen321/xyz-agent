@@ -43,8 +43,6 @@ export interface DeliveryMessage {
   dedupeKey?: string
   /** 持久性预留（一期仅 'in-memory'）。 */
   durability?: 'in-memory'
-  /** 是否走合批窗口（默认跟随 mergeWindowMs > 0）。 */
-  merge?: boolean
 }
 
 // ─── 端口（注入运行时能力） ──────────────────────────────────
