@@ -66,6 +66,13 @@ export interface NotifierHost {
   hasRunningBackground(): boolean;
   /** 主 agent 是否空闲（非 streaming）。可选：未注入时 flush 不 gate。 */
   isIdle?: () => boolean;
+  /**
+   * 原生 settled 事件订阅能力（D8）：注册 handler 监听主 agent settled 边沿。
+   * 无退订语义（pi 0.84.1 的 pi.on 返回 void 且无 off）——退订由本模块的 disposed
+   * 标志包装兑现（见下方 port 装配）。可选：未注入时内核退化退避轮询（busy 消息
+   * 靠退避达上限强发，不走 settled 边沿驱动）。
+   */
+  onAgentSettled?(handler: () => void): void;
 }
 
 /** 发送给主对话的 customType（bg-notify-render 消费）。 */
@@ -163,6 +170,21 @@ export function createNotifier(host: NotifierHost): BgNotifier {
       return true;
     },
     hasPendingMessages: () => false, // notifier 不关心 hasPendingMessages
+    // D8（must-fix #4）：settled 边沿驱动装配——内核 busy 入队后由 settled 事件唤醒
+    // flush（watch-dog 兜底事件丢失），替代无订阅时的退避轮询。host 只注入原生订阅
+    // 能力；disposed 标志包装（兑现退订语义——pi.on 返回 void 且无 off）在此完成。
+    subscribeSettled:
+      host.onAgentSettled === undefined
+        ? undefined
+        : (cb) => {
+            let disposed = false;
+            host.onAgentSettled?.(() => {
+              if (!disposed) cb();
+            });
+            return () => {
+              disposed = true;
+            };
+          },
     send: (msg, intent) => {
       host.sendMessage(
         {
@@ -178,14 +200,19 @@ export function createNotifier(host: NotifierHost): BgNotifier {
     },
   };
 
-  const handle: DeliveryHandle = createDelivery(port, {
-    intent: "interrupt-at-turn-boundary",    // D3：turn 边界抢占（F1 教训内化）
-    mergeWindowMs: 60_000,                   // 滑动窗口合批（继承 MERGE_WINDOW_MS=60s）
-    mergeHoldActive: () => host.hasRunningBackground(), // D4 must-fix #1：禁止用 isIdle 代替
-    busyPolicy: "retry-force",               // settled 边沿驱动 + 退避达上限强发
-    backoff: { ms: 100, max: 50 },           // 继承 FLUSH_BACKOFF_MS/MAX
-    dedupe: { maxKeys: 1000 },               // dedup LRU（继承 DEDUP_TTL_MS 语义，按条数）
-  });
+  // #5（must-fix）：内核 handle 的 disposed 不可逆——dispose 后 revive 必须重建 handle，
+  // 否则 revive 后所有 notify() 被内核静默吞（外层标志复位救不回已销毁的内核）。
+  // revive = 新生命周期：合批窗口 / 在途批次 / dedup LRU 随重建自然复位（可接受）。
+  const createHandle = (): DeliveryHandle =>
+    createDelivery(port, {
+      intent: "interrupt-at-turn-boundary",    // D3：turn 边界抢占（F1 教训内化）
+      mergeWindowMs: 60_000,                   // 滑动窗口合批（继承 MERGE_WINDOW_MS=60s）
+      mergeHoldActive: () => host.hasRunningBackground(), // D4 must-fix #1：禁止用 isIdle 代替
+      busyPolicy: "retry-force",               // settled 边沿驱动 + 退避达上限强发
+      backoff: { ms: 100, max: 50 },           // 继承 FLUSH_BACKOFF_MS/MAX
+      dedupe: { maxKeys: 1000 },               // dedup LRU（继承 DEDUP_TTL_MS 语义，按条数）
+    });
+  let handle: DeliveryHandle = createHandle();
 
   return {
     notify(record: BgNotifyRecord): void {
@@ -218,6 +245,11 @@ export function createNotifier(host: NotifierHost): BgNotifier {
 
     revive(): void {
       disposed = false;
+      // #5：内核 disposed 不可逆——revive 必须重建 handle（/resume /fork /new 后的
+      // session_start 时序：disposeAll → initSession → revive）。旧 handle 若仍存活
+      // （首次 session_start 的 revive）dispose 为幂等清理，无副作用。
+      handle.dispose();
+      handle = createHandle();
     },
   };
 }

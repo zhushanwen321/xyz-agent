@@ -6,8 +6,21 @@
  * 这些测试直接测试 BgNotifier 的输出内容，不涉及 send/handle 机制，
  * 因此迁移后应通过内核装配 + 同一 buildLlmContent 产生相同输出。
  */
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { createNotifier, type BgNotifyRecord, type NotifierHost, buildLlmContent } from "../notifier.ts";
+import { renderBgNotifyMessage } from "../../interface/bg-notify-render.ts";
+
+/** 渲染锁用 mock theme（与 bg-notify-render.test.ts 同款：透传文本，记录色 token）。 */
+function makeRenderTheme(): { theme: Theme } {
+  return {
+    theme: {
+      fg: (_tag: string, text: string) => text,
+      bold: (text: string) => text,
+      bg: (_color: string, text: string) => text,
+    } as unknown as Theme,
+  };
+}
 
 /** 创建 mock host，notifier 会立即 flush（hasRunningBackground=false）。 */
 function makeMockHost(): NotifierHost {
@@ -210,9 +223,38 @@ describe("notifier golden — batch merge (60s window, two records)", () => {
     expect(capturedContent).toBe(
       'Subagent "w1" (batch-1) completed. Result:\nresult1\n\n---\n\nSubagent "w2" (batch-2) completed. Result:\nresult2',
     );
-    // details 结构
-    expect(capturedDetails).toMatchObject({ batch: true });
-    expect(Array.isArray((capturedDetails as { items: unknown[] }).items)).toBe(true);
+    // details 结构（must-fix #13 / #6 锁死）：items 元素必须是 record 本体（顶层
+    // status/agent/id/result——bg-notify-render 的 extractBgNotifyRecord 按此读取），
+    // 拦截内核 items 规则回归（曾错装 payload 导致渲染降级默认样式）。
+    const details = capturedDetails as { batch: boolean; items: unknown[] };
+    expect(details.batch).toBe(true);
+    expect(details.items).toHaveLength(2);
+    expect(details.items[0]).toMatchObject({
+      id: "batch-1",
+      status: "closed",
+      agent: "w1",
+      result: "result1",
+      startedAt: 1,
+      endedAt: 2,
+    });
+    expect(details.items[1]).toMatchObject({
+      id: "batch-2",
+      status: "closed",
+      agent: "w2",
+      result: "result2",
+    });
+    // 端到端渲染锁（#6）：合批 details 直接喂 bg-notify-render 必须走批量分支成功渲染
+    // （非 undefined 兜底），两条 agent 均可见。
+    const { theme } = makeRenderTheme();
+    const comp = renderBgNotifyMessage(
+      { details: capturedDetails },
+      { expanded: false },
+      theme,
+    );
+    expect(comp).toBeDefined();
+    const joined = comp!.render(80).join("\n");
+    expect(joined).toContain("w1");
+    expect(joined).toContain("w2");
 
     notifier.dispose();
   });

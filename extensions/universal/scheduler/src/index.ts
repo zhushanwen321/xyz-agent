@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
-import { createDelivery, type DeliveryHandle } from '@xyz-agent/session-delivery'
+import { createDelivery, type DeliveryHandle, type DeliveryMessage } from '@xyz-agent/session-delivery'
 
 import { PiSchedulerBackend } from './backend.js'
 import { registerScheduleCommand } from './commands.js'
@@ -80,7 +80,8 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
     // busyPolicy: 'park'（busy 入队不重试，等 tick 外部 flush）
     // intent: 'after-run'（保持 followUp 语义）
     // onSettled：延迟绑定——runtime 创建后填充（闭包变量）
-    const settledHandlerRef: { current: ((content: string, outcome: 'delivered' | 'rejected') => void) | undefined } = { current: undefined }
+    // #11：整条 msg 透传（runtime 按 msg.dedupeKey=task.id 精确反查，不再 content 匹配）
+    const settledHandlerRef: { current: ((msg: DeliveryMessage, outcome: 'delivered' | 'rejected') => void) | undefined } = { current: undefined }
     deliveryHandle = createDelivery({
       supportedPayloads: ['custom'],
       isIdle: () => ctx.isIdle(),
@@ -105,8 +106,7 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
       busyPolicy: 'park',
       onSettled: (msg, outcome) => {
         // 委托给 runtime 的 settledHandler（延迟绑定）
-        const content = msg.payload.kind === 'custom' ? msg.payload.content : ''
-        settledHandlerRef.current?.(content, outcome)
+        settledHandlerRef.current?.(msg, outcome)
       },
     })
     backend.setDeliveryHandle(deliveryHandle)
@@ -115,7 +115,7 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
     // F2 catch 分诊判定 stale——不依赖 pi 错误文案。
     const runtime = new SchedulerRuntime(backend, ctx, () => sessionGeneration !== myGeneration)
     // 延迟绑定：runtime 的 handleSettled 绑定到 delivery onSettled 回调
-    settledHandlerRef.current = (content, outcome) => runtime.handleSettledByContent(content, outcome)
+    settledHandlerRef.current = (msg, outcome) => runtime.handleSettled(msg, outcome)
     runtime.loadTasks(backend.loadTasks())
     // W2：tick 后回调刷新 widget（替代独立 widgetTimer + setInterval，节奏对齐 TICK_INTERVAL_MS）
     runtime.onAfterTick(() => refreshWidget(ctx))

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DeliveryMessage } from '@xyz-agent/session-delivery'
 
 import { MockSchedulerBackend } from '../backend.js'
 import { SchedulerRuntime } from '../runtime.js'
@@ -6,6 +7,20 @@ import { SchedulerRuntime } from '../runtime.js'
 // MockSchedulerBackend 零 FS 副作用：runtime 不再触碰 store，无需 mock store.js。
 
 const mockCtx = { isIdle: () => true, hasPendingMessages: () => false }
+
+/** 构造 delivery onSettled 回调入参消息（dispatchViaDelivery 挂 dedupeKey=task.id）。 */
+function settledMsg(content: string, taskId: string): DeliveryMessage {
+  return {
+    payload: {
+      kind: 'custom',
+      customType: 'pi-scheduler:dispatched',
+      content,
+      display: true,
+    },
+    intent: 'after-run',
+    dedupeKey: taskId,
+  }
+}
 
 describe('SchedulerRuntime', () => {
   let backend: MockSchedulerBackend
@@ -649,11 +664,11 @@ describe('SchedulerRuntime', () => {
       expect(mockDelivery.flush).toHaveBeenCalledTimes(1)
     })
 
-    it('handleSettledByContent delivered → 成功记账', async () => {
+    it('handleSettled delivered（dedupeKey=task.id 反查）→ 成功记账', async () => {
       const task = await runtime.addTask('settle-test', { mode: 'interval', intervalMs: 60000 })
 
-      // 模拟 delivery onSettled 回调
-      runtime.handleSettledByContent('settle-test', 'delivered')
+      // 模拟 delivery onSettled 回调（dispatchViaDelivery 挂 dedupeKey=task.id）
+      runtime.handleSettled(settledMsg('settle-test', task.id), 'delivered')
 
       // onDispatchSuccess 是异步的，等待完成
       await vi.waitFor(() => {
@@ -663,17 +678,56 @@ describe('SchedulerRuntime', () => {
       expect(task.lastError).toBeUndefined()
     })
 
-    it('handleSettledByContent rejected → 失败记账（once 不删持久化）', async () => {
+    it('handleSettled rejected → 失败记账（once 不删持久化）', async () => {
       const task = await runtime.addTask('settle-fail', { mode: 'interval', intervalMs: 60000 }, { kind: 'once' })
 
       // 模拟 delivery onSettled 回调
-      runtime.handleSettledByContent('settle-fail', 'rejected')
+      runtime.handleSettled(settledMsg('settle-fail', task.id), 'rejected')
 
       // 失败记账
       expect(task.lastStatus).toBe('failed')
       expect(task.history[task.history.length - 1]!.status).toBe('failed')
       // once 任务失败不删持久化（任务仍在）
       expect(runtime.getTask(task.id)).toBeDefined()
+    })
+
+    it('#11 同 prompt 两任务：各自 onSettled 按 dedupeKey 精确记账（不互相错配）', async () => {
+      const taskA = await runtime.addTask('same-prompt', { mode: 'interval', intervalMs: 60000 })
+      const taskB = await runtime.addTask('same-prompt', { mode: 'interval', intervalMs: 60000 })
+      expect(taskA.id).not.toBe(taskB.id)
+
+      // A 的投递终态：只记 A 的账（旧 content 反查 find 取首个命中，B 先入 Map 时错记 B）
+      runtime.handleSettled(settledMsg('same-prompt', taskA.id), 'delivered')
+
+      await vi.waitFor(() => {
+        expect(taskA.runCount).toBe(1)
+      })
+      expect(taskA.lastStatus).toBe('success')
+      expect(taskB.runCount).toBe(0)
+      expect(taskB.lastStatus).toBeUndefined()
+
+      // B 的投递终态：记 B 的账
+      runtime.handleSettled(settledMsg('same-prompt', taskB.id), 'delivered')
+
+      await vi.waitFor(() => {
+        expect(taskB.runCount).toBe(1)
+      })
+      expect(taskB.lastStatus).toBe('success')
+    })
+
+    it('#11 任务先删后 delivered → 不炸不误记其他任务', async () => {
+      const taskA = await runtime.addTask('deleted-task', { mode: 'interval', intervalMs: 60000 })
+      const taskB = await runtime.addTask('other-task', { mode: 'interval', intervalMs: 60000 })
+
+      // once 成功 / 手动删除后 delivered 迟到：dedupeKey 反查未命中 → no-op
+      runtime.deleteTask(taskA.id)
+      expect(() => {
+        runtime.handleSettled(settledMsg('deleted-task', taskA.id), 'delivered')
+      }).not.toThrow()
+
+      // 不误记其他任务的账
+      expect(taskB.runCount).toBe(0)
+      expect(taskB.lastStatus).toBeUndefined()
     })
   })
 

@@ -387,6 +387,142 @@ describe("BgNotifier buildLlmContent 指针行（wave2：chatMode sessionFile �
 	});
 });
 
+describe("BgNotifier — subscribeSettled 装配（must-fix #4 / D8 settled 边沿驱动）", () => {
+	let host: ReturnType<typeof makeMockHost>;
+	let notifier: BgNotifier;
+	/** 内核经 port.subscribeSettled 注册的 settled 边沿回调（测试手动触发模拟 pi 事件）。 */
+	let settledEdges: Array<() => void>;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		host = makeMockHost();
+		settledEdges = [];
+		// host 注入原生订阅能力；notifier port 内部用 disposed 标志包装（D8 适配）
+		host.onAgentSettled = (handler) => {
+			settledEdges.push(handler);
+		};
+		notifier = createNotifier(host);
+	});
+
+	afterEach(() => {
+		notifier.dispose();
+		vi.useRealTimers();
+	});
+
+	it("busy 入队 → settled 事件触发 → flush 送达（不依赖退避轮询）", () => {
+		host.isIdle.mockReturnValue(false);
+		notifier.notify({
+			id: "bg-settled-1",
+			status: "closed",
+			agent: "worker",
+			result: "ok",
+			startedAt: Date.now(),
+			endedAt: Date.now(),
+		});
+
+		// busy 入队：内核装配了 subscribeSettled → settled 边沿驱动，注册过订阅
+		expect(host.sendMessageCalls).toHaveLength(0);
+		expect(settledEdges.length).toBeGreaterThanOrEqual(1);
+
+		// 有订阅装配下内核不走退避强发——推进远超退避上限（50 × 100ms）仍不发送
+		vi.advanceTimersByTime(10_000);
+		expect(host.sendMessageCalls).toHaveLength(0);
+
+		// settled 边沿（isIdle 已先于事件复位，agent-session.js:327-336）→ flush 送达
+		host.isIdle.mockReturnValue(true);
+		settledEdges[0]!();
+
+		expect(host.sendMessageCalls).toHaveLength(1);
+		expect(host.sendMessageCalls[0]!.options).toMatchObject({
+			triggerTurn: true,
+			deliverAs: "steer",
+		});
+	});
+
+	it("dispose 后 settled 边沿不再触发发送（内核 disposed 拦截）", () => {
+		host.isIdle.mockReturnValue(false);
+		notifier.notify({
+			id: "bg-settled-2",
+			status: "closed",
+			agent: "worker",
+			result: "ok",
+			startedAt: Date.now(),
+			endedAt: Date.now(),
+		});
+		notifier.dispose();
+
+		host.isIdle.mockReturnValue(true);
+		settledEdges[0]!();
+
+		expect(host.sendMessageCalls).toHaveLength(0);
+	});
+});
+
+describe("BgNotifier — revive 重建内核 handle（must-fix #5）", () => {
+	let host: ReturnType<typeof makeMockHost>;
+	let notifier: BgNotifier;
+
+	beforeEach(() => {
+		host = makeMockHost();
+		notifier = createNotifier(host);
+	});
+
+	afterEach(() => {
+		notifier.dispose();
+	});
+
+	it("dispose → notify 静默丢弃 → revive → notify 恢复送达", () => {
+		notifier.notify({
+			id: "bg-revive-1",
+			status: "closed",
+			agent: "worker",
+			result: "ok",
+			startedAt: 1,
+			endedAt: 2,
+		});
+		expect(host.sendMessageCalls).toHaveLength(1);
+
+		// session_shutdown：dispose（内核 handle 销毁，disposed 不可逆）
+		notifier.dispose();
+
+		// dispose 窗口内的 notify：外层 disposed 短路，静默丢弃（旧有语义）
+		notifier.notify({
+			id: "bg-revive-2",
+			status: "closed",
+			agent: "worker",
+			result: "dropped",
+			startedAt: 3,
+			endedAt: 4,
+		});
+		expect(host.sendMessageCalls).toHaveLength(1);
+
+		// /resume /fork /new 后的 revive：必须重建内核 handle——旧实现仅复位外层标志，
+		// 内核已 dispose，此后所有 notify 被内核静默吞（通知永久丢失）
+		notifier.revive();
+		notifier.notify({
+			id: "bg-revive-3",
+			status: "closed",
+			agent: "worker",
+			result: "alive again",
+			startedAt: 5,
+			endedAt: 6,
+		});
+
+		expect(host.sendMessageCalls).toHaveLength(2);
+		const msg = host.sendMessageCalls[1]!.message as { content: string };
+		expect(msg.content).toContain("bg-revive-3");
+	});
+
+	it("revive 后同 id 重复通知不被旧生命周期的 dedup LRU 吞（新 handle 状态复位）", () => {
+		notifier.notify({ id: "bg-revive-dup", status: "closed", agent: "w", result: "r1", startedAt: 1, endedAt: 2 });
+		notifier.dispose();
+		notifier.revive();
+		// 同 id 第二次：旧 handle 的 dedup LRU 已随 dispose 清空 + 重建，不被吞
+		notifier.notify({ id: "bg-revive-dup", status: "closed", agent: "w", result: "r2", startedAt: 3, endedAt: 4 });
+		expect(host.sendMessageCalls).toHaveLength(2);
+	});
+});
+
 describe("U3_UNIT: createNotifier unit verification", () => {
 	it("createNotifier returns object with notify/flush/dispose/revive", () => {
 		const host = makeMockHost();

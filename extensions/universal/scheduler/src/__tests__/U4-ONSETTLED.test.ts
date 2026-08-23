@@ -11,7 +11,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MockSchedulerBackend } from '../backend.js'
+import type { DeliveryMessage } from '@xyz-agent/session-delivery'
+
 import { SchedulerRuntime } from '../runtime.js'
+
+/** 构造 delivery onSettled 回调入参消息（dispatchViaDelivery 挂 dedupeKey=task.id）。 */
+function settledMsg(content: string, taskId: string): DeliveryMessage {
+  return {
+    payload: {
+      kind: 'custom',
+      customType: 'pi-scheduler:dispatched',
+      content,
+      display: true,
+    },
+    intent: 'after-run',
+    dedupeKey: taskId,
+  }
+}
 
 describe('U4_ONSETTLED: onSettled 失败记账', () => {
   beforeEach(() => {
@@ -29,8 +45,8 @@ describe('U4_ONSETTLED: onSettled 失败记账', () => {
 
     const task = await runtime.addTask('rejected-test', { mode: 'interval', intervalMs: 60_000 })
 
-    // 模拟 delivery onSettled rejected 回调
-    runtime.handleSettledByContent('rejected-test', 'rejected')
+    // 模拟 delivery onSettled rejected 回调（dedupeKey=task.id 反查）
+    runtime.handleSettled(settledMsg('rejected-test', task.id), 'rejected')
 
     expect(task.lastStatus).toBe('failed')
     expect(task.history[task.history.length - 1]!.status).toBe('failed')
@@ -51,7 +67,7 @@ describe('U4_ONSETTLED: onSettled 失败记账', () => {
     const taskId = task.id
 
     // 模拟 delivery onSettled rejected
-    runtime.handleSettledByContent('once-rejected', 'rejected')
+    runtime.handleSettled(settledMsg('once-rejected', taskId), 'rejected')
 
     // once 任务失败不删——任务仍在 Map 中
     expect(runtime.getTask(taskId)).toBeDefined()
@@ -63,7 +79,7 @@ describe('U4_ONSETTLED: onSettled 失败记账', () => {
     expect(deleteOps).toHaveLength(0)
   })
 
-  it('(2b) 通过 handleSettledByContent rejected 触发时，任务不删除且保留失败历史', async () => {
+  it('(2b) 通过 handleSettled rejected 触发时，任务不删除且保留失败历史', async () => {
     const backend = new MockSchedulerBackend()
     const runtime = new SchedulerRuntime(backend, { isIdle: () => true, hasPendingMessages: () => false })
 
@@ -73,7 +89,7 @@ describe('U4_ONSETTLED: onSettled 失败记账', () => {
       { kind: 'once' },
     )
 
-    runtime.handleSettledByContent('once-rejected-via-handler', 'rejected')
+    runtime.handleSettled(settledMsg('once-rejected-via-handler', task.id), 'rejected')
 
     expect(task.lastStatus).toBe('failed')
     expect(task.history[task.history.length - 1]!.status).toBe('failed')
@@ -90,7 +106,7 @@ describe('U4_ONSETTLED: onSettled 失败记账', () => {
     vi.setSystemTime(new Date('2026-01-01T00:01:01Z'))
 
     // 模拟 delivery onSettled delivered
-    runtime.handleSettledByContent('delivered-test', 'delivered')
+    runtime.handleSettled(settledMsg('delivered-test', task.id), 'delivered')
 
     // onDispatchSuccess 是 async，等一个 microtask
     await vi.waitFor(() => {

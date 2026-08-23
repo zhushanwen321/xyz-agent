@@ -1,6 +1,6 @@
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent'
 
-import type { DeliveryHandle } from '@xyz-agent/session-delivery'
+import type { DeliveryHandle, DeliveryMessage } from '@xyz-agent/session-delivery'
 
 import type { SchedulerBackend } from './backend.js'
 import { autoName, generateTaskId } from './format.js'
@@ -361,6 +361,9 @@ export class SchedulerRuntime {
         display: true,
       },
       intent: 'after-run',
+      // #11：task.id 作为 onSettled 反查键（本 handle 未开 dedupe，dedupeKey 不驱动
+      // 去重，仅随消息透传给 onSettled 回调）。content 反查在同 prompt 多任务下错配。
+      dedupeKey: task.id,
     })
 
     // send() 不 throw（park 模式下入队即返回）。
@@ -412,11 +415,17 @@ export class SchedulerRuntime {
    * onSettled 回调入口（index.ts 装配点绑定）：delivery 内核投递终态时调用。
    * delivered → 成功记账（onDispatchSuccess）；rejected → 失败记账。
    * once 任务失败不删持久化（at-least-once 语义）。
-   * 通过 content 匹配最近 dispatch 的任务（pending 已在 dispatchViaDelivery 中清除）。
+   * #11：按 msg.dedupeKey（dispatch 时挂的 task.id，见 dispatchViaDelivery）精确反查
+   * tasks Map——旧 content 反查在「同 prompt 多任务」下错配（find 取首个命中），
+   * 任务已删除时静默丢弃不误记。反查未命中（once 成功已删 / 批量合投非首条 /
+   * 非 scheduler 消息）直接返回。
+   * 已知限制：内核 busy 期间多条消息合投为一批时（doSend splice 全队列），onSettled
+   * 只收到保留首条 dedupeKey 的 composed 消息——非首条任务不记账，靠下个 tick 的
+   * nextRunAt 未推进重投（at-least-once 兜底），与旧 content 反查行为等价不劣化。
    */
-  handleSettledByContent(content: string, outcome: 'delivered' | 'rejected'): void {
-    // 按 content 匹配 task（同一 prompt 可能有多个任务，取 runCount 最大或最近 dispatch 的）
-    const task = [...this.tasks.values()].find(t => t.prompt === content)
+  handleSettled(msg: DeliveryMessage, outcome: 'delivered' | 'rejected'): void {
+    const taskId = msg.dedupeKey
+    const task = taskId !== undefined ? this.tasks.get(taskId) : undefined
     if (!task) return // 任务已被删除（once 成功后删）或非 scheduler 发出的消息
 
     if (outcome === 'delivered') {
