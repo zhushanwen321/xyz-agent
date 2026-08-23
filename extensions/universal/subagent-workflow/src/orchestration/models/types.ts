@@ -92,7 +92,7 @@ export interface AgentCallOpts {
  * When omitted, agent .md frontmatter thinkingLevel is used (via resolveIdentity/getAgentConfig).
  */
   thinkingLevel?: string;
- /** Scene name for model-switch advisor recommendation. */
+ /** Scene name passed through to the worker for model-selection hints. */
   scene?: string;
  /**
  * Wall-clock timeout in milliseconds. When > 0, aborts the subprocess

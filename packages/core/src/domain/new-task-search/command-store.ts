@@ -94,7 +94,6 @@ export const BUILTIN_COMMAND_ICON_KEYS = [
   'plan',
   'context-engineering',
   'context-stats',
-  'setup-model-policy',
   'setup-statusline',
   'commit', // skill 命令但 demo 赋予专属 Wand，单独列出
 ] as const

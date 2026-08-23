@@ -29,7 +29,6 @@ import {
   NotebookPen,
   SlidersHorizontal,
   Gauge,
-  Grid3x3,
   PanelTop,
   Wand2,
 } from '@lucide/vue'
@@ -62,7 +61,6 @@ const BUILTIN_COMMAND_ICONS: Record<string, Component> = {
   plan: markRaw(NotebookPen),
   'context-engineering': markRaw(SlidersHorizontal),
   'context-stats': markRaw(Gauge),
-  'setup-model-policy': markRaw(Grid3x3),
   'setup-statusline': markRaw(PanelTop),
   commit: markRaw(Wand2), // skill 命令但 demo 赋予专属 Wand，覆盖默认 Star
 }
