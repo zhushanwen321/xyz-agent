@@ -21,6 +21,7 @@ import {
 } from '@xyz-agent/extension-protocol'
 import type {
   SessionManagerAction,
+  SessionManagerParams,
   SessionManagerCreateParams,
   SessionManagerSendParams,
   SessionManagerHistoryParams,
@@ -39,6 +40,26 @@ import type {
 /** send 失败时附带的恢复指引（target 不可达：先查状态再重试投递） */
 const SEND_UNREACHABLE_HINT =
   'target session unreachable; retry send_to_session after checking get_session_status'
+
+/** dispatch 的统一返回形状：6 个 action 结果 + 错误闭环（send 同步失败 / create 后置失败） */
+type SessionManagerDispatchResult =
+  | SessionManagerCreateResult
+  | SessionManagerSendResult
+  | SessionManagerHistoryResult
+  | SessionManagerStatusResult
+  | SessionManagerListResult
+  | SessionManagerAbortResult
+  | SessionManagerErrorResult
+
+/**
+ * 单个 action 的分发路由：params 类型守卫与执行体成对登记。
+ * 守卫是类型谓词——通过后 params 在类型层即收窄为 P，免除旧 switch
+ * 每分支一次的 as unknown as 断言（守卫与执行体同表登记，天然不会漂移）。
+ */
+interface SessionManagerRoute<P> {
+  isParams: (v: unknown) => v is P
+  run: (parentSessionId: string, params: P) => Promise<SessionManagerDispatchResult>
+}
 
 /** SessionManagerHandler 构造选项 */
 export interface SessionManagerHandlerOptions {
@@ -107,40 +128,59 @@ export class SessionManagerHandler {
     this.opts.sendExtensionUiResponse(parentSessionId, requestId, JSON.stringify(data), 'select')
   }
 
-  /** action 分发：各分支只 return 结果，回写统一由 handle/respond 收口 */
-  private async dispatch(
-    action: SessionManagerAction,
+  /**
+   * action 路由表（查表分发）：params 守卫与 handler 成对登记，新增 action
+   * 只加一行，不再以 6 路 &&/|| 守卫链 + switch 推高 dispatch 圈复杂度
+   * （metrics-gate maxCyclomatic=15 守卫）。
+   */
+  private readonly routes: {
+    readonly [K in SessionManagerAction]: SessionManagerRoute<SessionManagerParams[K]>
+  } = {
+      create: {
+        isParams: isSessionManagerCreateParams,
+        run: (parentSessionId, params) => this.handleCreate(parentSessionId, params),
+      },
+      send: {
+        isParams: isSessionManagerSendParams,
+        run: (parentSessionId, params) => this.handleSend(parentSessionId, params),
+      },
+      history: {
+        isParams: isSessionManagerHistoryParams,
+        run: (parentSessionId, params) => this.handleHistory(parentSessionId, params),
+      },
+      status: {
+        isParams: isSessionManagerStatusParams,
+        run: (parentSessionId, params) => this.handleStatus(parentSessionId, params),
+      },
+      list: {
+        isParams: isSessionManagerListParams,
+        run: (parentSessionId, params) => this.handleList(parentSessionId, params),
+      },
+      abort: {
+        isParams: isSessionManagerAbortParams,
+        run: (parentSessionId, params) => this.handleAbort(parentSessionId, params),
+      },
+    }
+
+  /**
+   * action 分发：查表执行（守卫 → handler），回写统一由 handle/respond 收口。
+   *
+   * 信任边界守卫（与 action 侧 '__malformed__' narrowing 同等防线）：params 来自
+   * extension_ui_request（LLM 可控 JSON），逐 action 校验，非法即 throw 走 handle
+   * 的 respond({error}) 错误闭环——禁止把畸形字段以 undefined 静默流入 sessionService。
+   * 泛型 K 使映射表索引化简为 SessionManagerRoute<SessionManagerParams[K]>，
+   * 守卫通过后 params 类型自动收窄，无需断言（关联联合的标准写法）。
+   */
+  private async dispatch<K extends SessionManagerAction>(
+    action: K,
     parentSessionId: string,
     params: Record<string, unknown>,
-  ): Promise<SessionManagerCreateResult | SessionManagerSendResult | SessionManagerErrorResult | SessionManagerHistoryResult | SessionManagerStatusResult | SessionManagerListResult | SessionManagerAbortResult> {
-    // 信任边界守卫（与 action 侧 '__malformed__' narrowing 同等防线）：params 来自
-    // extension_ui_request（LLM 可控 JSON），dispatch 前逐 action 校验，非法即 throw
-    // 走 handle 的 respond({error}) 错误闭环——禁止 as 断言把畸形字段以 undefined 静默流入。
-    const guardFailed = !(
-      (action === 'create' && isSessionManagerCreateParams(params)) ||
-      (action === 'send' && isSessionManagerSendParams(params)) ||
-      (action === 'history' && isSessionManagerHistoryParams(params)) ||
-      (action === 'status' && isSessionManagerStatusParams(params)) ||
-      (action === 'list' && isSessionManagerListParams(params)) ||
-      (action === 'abort' && isSessionManagerAbortParams(params))
-    )
-    if (guardFailed) {
+  ): Promise<SessionManagerDispatchResult> {
+    const route: SessionManagerRoute<SessionManagerParams[K]> = this.routes[action]
+    if (!route.isParams(params)) {
       throw new Error(`invalid params for session-manager action '${action}'`)
     }
-    switch (action) {
-      case 'create':
-        return this.handleCreate(parentSessionId, params as unknown as SessionManagerCreateParams)
-      case 'send':
-        return this.handleSend(parentSessionId, params as unknown as SessionManagerSendParams)
-      case 'history':
-        return this.handleHistory(parentSessionId, params as unknown as SessionManagerHistoryParams)
-      case 'status':
-        return this.handleStatus(parentSessionId, params as unknown as SessionManagerStatusParams)
-      case 'list':
-        return this.handleList(parentSessionId, params as unknown as SessionManagerListParams)
-      case 'abort':
-        return this.handleAbort(parentSessionId, params as unknown as SessionManagerAbortParams)
-    }
+    return route.run(parentSessionId, params)
   }
 
   /**
