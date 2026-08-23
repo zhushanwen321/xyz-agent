@@ -20,7 +20,7 @@
         <!-- 摘要行：flex 布局，min-h 锁定高度避免展开时跳动 -->
         <div class="flex items-center gap-1.5 min-h-[1.5rem]">
           <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-3.5 shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
-          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-mid">{{ t('panel.message.thinkingBlock') }}</span>
+          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-dim">{{ t('panel.message.thinkingBlock') }}</span>
           <span v-if="!working" class="text-neutral-faint" :class="thinkingExpanded ? 'invisible' : ''">·</span>
           <span class="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-neutral-dim" :class="thinkingExpanded ? 'invisible' : ''">{{ previewText }}</span>
         </div>
@@ -80,13 +80,13 @@
       <div v-else-if="isWorkflow" class="trace-workflow pb-2.5 mb-0.5" data-testid="workflow-block">
         <div
           data-testid="tool-block-header"
-          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-base)] font-medium text-neutral-mid transition-opacity hover:opacity-80"
+          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-base)] font-medium text-neutral-dim transition-opacity hover:opacity-80"
           @click="openWorkflowDrawer"
         >
           <!-- running 态 loader（双环 + accent），其余走 list-checks ICON -->
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="BLOCK_ICON_LUCIDE.workflow" v-else class="size-3.5 shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
-          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold tracking-[0.08em] text-neutral-mid">{{ t('panel.message.workflow') }}</span>
+          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold tracking-[0.08em] text-neutral-dim">{{ t('panel.message.workflow') }}</span>
           <span v-if="workflowFields.name" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ workflowFields.name }}</span>
           <template v-if="workflowFields.slug">
             <span class="text-neutral-faint">·</span>
@@ -337,13 +337,14 @@ const headerBlockIcon = computed(() => {
 })
 
 /** 普通 tool header 状态色：running 染 accent，failed 染 danger（错误醒目），
- *  unfinished 中性灰（abort/中断非失败，不标红），completed 降一档置灰（feat-chat-flow-dim：
- *  过程块完成后从 neutral-fg 降到 neutral-mid，与 running accent 形成亮暗对比，视觉焦点
- *  留在正在执行的块上；mid 6.78:1 过 AA，不用 dim——3.56:1 不过 AA，critique 第 3 轮裁决）。 */
+ *  completed 置灰降两档（feat-chat-flow-dim）：neutral-fg → mid → dim（#74747a）。
+ *  dim 3.56:1 不过 AA（critique 第 3 轮曾据此禁用），用户实测 mid 档置灰感不足、
+ *  明确裁决再降一档——可读性让位于「完成块扫视即灰」的层级对比，此裁决仅限
+ *  过程块折叠 header（正文/输出内容不适用）。unfinished 与 completed 同档中性灰。 */
 const toolStatusClass = computed(() => {
   if (isRunning.value) return 'text-accent'
   if (isFailed.value) return 'text-danger'
-  return 'text-neutral-mid'
+  return 'text-neutral-dim'
 })
 
 /** workflow 顶层 input 安全读取（拍平 schema：action/name/slug/args/runId 都在顶层） */
