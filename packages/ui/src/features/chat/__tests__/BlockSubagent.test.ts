@@ -243,7 +243,7 @@ describe('BlockSubagent: running / failed / unfinished 态', () => {
     expect(wrapper.find('.animate-loader-spin').exists()).toBe(true)
   })
 
-  it('failed 态整行降 neutral-mid（不切 icon，颜色表达）', () => {
+  it('failed 态整行降 neutral-dim（不切 icon，颜色表达）', () => {
     const wrapper = mount(BlockSubagent, {
       props: {
         tool: makeSubagent({
@@ -252,8 +252,8 @@ describe('BlockSubagent: running / failed / unfinished 态', () => {
         }),
       },
     })
-    // 整行 header 中性灰
-    expect(wrapper.find('[data-testid="subagent-block"] > div').classes()).toContain('text-neutral-mid')
+    // 整行 header 中性灰（feat-chat-flow-dim：恒 dim 置灰）
+    expect(wrapper.find('[data-testid="subagent-block"] > div').classes()).toContain('text-neutral-dim')
     // 仍展示 agent（不因 failed 隐藏）
     expect(wrapper.text()).toContain('researcher')
   })

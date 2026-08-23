@@ -98,7 +98,7 @@ describe('error-visibility M2: Block text 分支 error 形态判定（TC1/TC3）
 
 /* ── error-visibility M1：failed tool header danger 色 + 终态默认展开（TC1-3）──
  * SSOT: docs/architecture/conversation-error-visibility.md §3.3.1
- * - T1: toolStatusClass failed 分支 text-neutral-mid → text-danger（unfinished 保持中性）
+ * - T1: toolStatusClass failed 分支 → text-danger（unfinished 保持中性灰）
  * - T2: toolCollapsed 终态分化——failed(error) 初值 false（展开），其余 true（收起）
  * - CQ1: streaming 中失败不展开（mount 快照，running→error 不 remount），本测试覆盖终态挂载分支 */
 const GuiStub = {
@@ -157,7 +157,7 @@ describe('error-visibility M1: failed tool header danger + 终态展开（TC1-3�
     const header = wrapper.find('[data-testid="tool-block-header"]')
     expect(header.classes()).toContain('text-danger')
     // 不再是中性灰
-    expect(header.classes()).not.toContain('text-neutral-mid')
+    expect(header.classes()).not.toContain('text-neutral-dim')
   })
 
   it('TC2: failed(error) tool 终态挂载默认展开（错误输出可见，无需点击）', () => {
@@ -171,9 +171,29 @@ describe('error-visibility M1: failed tool header danger + 终态展开（TC1-3�
   it('TC3: unfinished(end_not_received) tool header 保持中性灰（abort/中断非失败，不标红）', () => {
     const wrapper = mountTool({ status: 'end_not_received' })
     const header = wrapper.find('[data-testid="tool-block-header"]')
-    expect(header.classes()).toContain('text-neutral-mid')
+    expect(header.classes()).toContain('text-neutral-dim')
     // unfinished 不标红（区别于 failed）
     expect(header.classes()).not.toContain('text-danger')
+  })
+})
+
+/* ── feat-chat-flow-dim：已完成过程块置灰（完成态降两档，与 running accent 形成亮暗对比）──
+ * - completed tool header 从 neutral-fg 经 mid 降到 neutral-dim（用户实测 mid 档置灰感不足
+ *   后明确裁决再降一档；dim 3.56:1 不过 AA，此裁决仅限过程块折叠 header）
+ * - running 保持 accent 不回归 */
+describe('feat-chat-flow-dim: completed tool header 置灰', () => {
+  it('completed tool header 染 text-neutral-dim（不再是最亮 neutral-fg）', () => {
+    const wrapper = mountTool({ status: 'completed' })
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    expect(header.classes()).toContain('text-neutral-dim')
+    expect(header.classes()).not.toContain('text-neutral-fg')
+  })
+
+  it('running tool header 保持 text-accent（进行中不置灰）', () => {
+    const wrapper = mountTool({ status: 'running' })
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    expect(header.classes()).toContain('text-accent')
+    expect(header.classes()).not.toContain('text-neutral-dim')
   })
 })
 
