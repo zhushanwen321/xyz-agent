@@ -545,7 +545,11 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
       const action = typeof rawAction === 'string' && (SESSION_MANAGER_ACTIONS as readonly string[]).includes(rawAction)
         ? (rawAction as SessionManagerAction)
         : '__malformed__'
-      const params = (sessionManagerData?.params ?? {}) as Record<string, unknown>
+      // params 收窄（与 action 侧集合守卫同款防线；handler 侧另有逐 action 类型守卫）
+      const rawParams = sessionManagerData?.params
+      const params = typeof rawParams === 'object' && rawParams !== null
+        ? (rawParams as Record<string, unknown>)
+        : {}
 
       return [{ kind: 'session-manager-ui', requestId, sessionId: sid, action, params }]
     }

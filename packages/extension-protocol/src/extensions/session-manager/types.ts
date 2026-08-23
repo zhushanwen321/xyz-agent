@@ -70,6 +70,66 @@ export interface SessionManagerAbortParams {
   sessionId: string
 }
 
+// ── params 运行时守卫（信任边界：params 来自 extension_ui_request，LLM 可控 JSON）──
+// handler 侧 dispatch 前校验；非法 params 不再经 `as unknown as` 断言静默流入
+// sessionService（曾以 undefined 流入 create 的 cwd/label/prompt/model）。
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null
+}
+
+function isOptionalString(v: unknown): boolean {
+  return v === undefined || typeof v === 'string'
+}
+
+function isSessionIdParams(v: unknown): boolean {
+  return isRecord(v) && typeof v.sessionId === 'string'
+}
+
+/** create：全字段可选 string */
+export function isSessionManagerCreateParams(v: unknown): v is SessionManagerCreateParams {
+  return (
+    isRecord(v) &&
+    isOptionalString(v.cwd) &&
+    isOptionalString(v.label) &&
+    isOptionalString(v.prompt) &&
+    isOptionalString(v.model) &&
+    isOptionalString(v.thinkingLevel)
+  )
+}
+
+/** send：sessionId + prompt 必填 */
+export function isSessionManagerSendParams(v: unknown): v is SessionManagerSendParams {
+  return isRecord(v) && typeof v.sessionId === 'string' && typeof v.prompt === 'string'
+}
+
+/** history：sessionId 必填、tailTurns 可选 number */
+export function isSessionManagerHistoryParams(v: unknown): v is SessionManagerHistoryParams {
+  return (
+    isRecord(v) &&
+    typeof v.sessionId === 'string' &&
+    (v.tailTurns === undefined || typeof v.tailTurns === 'number')
+  )
+}
+
+/** status / abort：sessionId 必填 */
+export function isSessionManagerStatusParams(v: unknown): v is SessionManagerStatusParams {
+  return isSessionIdParams(v)
+}
+
+export function isSessionManagerAbortParams(v: unknown): v is SessionManagerAbortParams {
+  return isSessionIdParams(v)
+}
+
+/** list：两过滤字段可选（spawnSource 限枚举） */
+export function isSessionManagerListParams(v: unknown): v is SessionManagerListParams {
+  return (
+    isRecord(v) &&
+    (v.spawnSource === undefined || v.spawnSource === 'user' || v.spawnSource === 'agent') &&
+    isOptionalString(v.parentAgentSessionId)
+  )
+}
+
 /** create 结果 */
 export interface SessionManagerCreateResult {
   sessionId: string

@@ -34,7 +34,6 @@
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.1",
-    "@xyz-agent/session-delivery": "workspace:*",
     "croner": "^9.0.0",
     "typebox": "*"
   },
@@ -48,5 +47,8 @@
     "croner": {
       "optional": true
     }
+  },
+  "dependencies": {
+    "@xyz-agent/session-delivery": "workspace:*"
   }
 }

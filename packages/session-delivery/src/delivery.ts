@@ -131,6 +131,9 @@ export function createDelivery(
   }
 
   // ─── 内部状态 ─────────────────────────────────────────────
+  // @data-owner #15（docs/architecture/data-source-registry.md）：本队列是「已向发起方
+  // 确认 queued 的待投递消息」的内存 outbox——非持久，runtime 重启即丢、错误重试耗尽
+  // reject 仅在有 onSettled 记账腿的调用方（scheduler）可见。
   const queue: DeliveryMessage[] = []
   /** sendChecked 等待受理确认的挂账（消息在 queue 或 inflightBatch 中）。 */
   const checkedPending: CheckedWaiter[] = []
@@ -482,6 +485,11 @@ export function createDelivery(
     return queue.length + inflightBatch.length
   }
 
+  /**
+   * 终态回调契约：dispose 丢弃 queue/inflight 消息但**不**触发 onSettled(_, 'rejected')
+   * （sendChecked 挂账除外——显式 reject 兜底）。依赖 onSettled 做清理/对账的调用方须
+   * 自行在 dispose 路径补记账（scheduler 场景由 resume 重放兜底）。
+   */
   function dispose(): void {
     disposed = true
 

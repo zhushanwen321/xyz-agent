@@ -126,7 +126,13 @@
     {
       "name": "@zhushanwen/pi-scheduler",
       "directory": "extensions/universal/scheduler",
-      "dependsOn": []
+      "dependsOn": [
+        {
+          "package": "@xyz-agent/session-delivery",
+          "type": "package",
+          "reason": "代码层静态 import createDelivery/DeliveryHandle/DeliveryMessage（src/index.ts top-level），缺失时模块加载即抛 Cannot find module，是强依赖"
+        }
+      ]
     },
     {
       "name": "@zhushanwen/pi-rename-session",

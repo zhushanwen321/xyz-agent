@@ -11,6 +11,14 @@ import type { ISessionService } from '../interfaces.js'
 import type { SessionDeliveryRegistry } from '../services/session/session-delivery-registry.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { SESSION_MANAGER_ACTIONS } from '@xyz-agent/extension-protocol'
+import {
+  isSessionManagerCreateParams,
+  isSessionManagerSendParams,
+  isSessionManagerHistoryParams,
+  isSessionManagerStatusParams,
+  isSessionManagerListParams,
+  isSessionManagerAbortParams,
+} from '@xyz-agent/extension-protocol'
 import type {
   SessionManagerAction,
   SessionManagerCreateParams,
@@ -105,6 +113,20 @@ export class SessionManagerHandler {
     parentSessionId: string,
     params: Record<string, unknown>,
   ): Promise<SessionManagerCreateResult | SessionManagerSendResult | SessionManagerErrorResult | SessionManagerHistoryResult | SessionManagerStatusResult | SessionManagerListResult | SessionManagerAbortResult> {
+    // 信任边界守卫（与 action 侧 '__malformed__' narrowing 同等防线）：params 来自
+    // extension_ui_request（LLM 可控 JSON），dispatch 前逐 action 校验，非法即 throw
+    // 走 handle 的 respond({error}) 错误闭环——禁止 as 断言把畸形字段以 undefined 静默流入。
+    const guardFailed = !(
+      (action === 'create' && isSessionManagerCreateParams(params)) ||
+      (action === 'send' && isSessionManagerSendParams(params)) ||
+      (action === 'history' && isSessionManagerHistoryParams(params)) ||
+      (action === 'status' && isSessionManagerStatusParams(params)) ||
+      (action === 'list' && isSessionManagerListParams(params)) ||
+      (action === 'abort' && isSessionManagerAbortParams(params))
+    )
+    if (guardFailed) {
+      throw new Error(`invalid params for session-manager action '${action}'`)
+    }
     switch (action) {
       case 'create':
         return this.handleCreate(parentSessionId, params as unknown as SessionManagerCreateParams)
@@ -205,6 +227,8 @@ export class SessionManagerHandler {
           }
         }
       }
+      // user turn 数不足 tailTurns 时回退返回全部历史（而非 messages.length 处截断成空列表）
+      if (userCount < tailTurns) cutIndex = 0
       return {
         messages: messages.slice(cutIndex),
         truncated: cutIndex > 0 || truncated,

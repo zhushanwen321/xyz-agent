@@ -241,6 +241,38 @@ describe('SessionManagerHandler', () => {
       expect(response.truncated).toBe(true)
     })
 
+    it('history tailTurns 超过实际 user turn 数 → 返回全部历史而非空列表（回归：凑不满曾返回 []）', async () => {
+      const messages = [
+        { role: 'user', content: 'msg1' },
+        { role: 'assistant', content: 'reply1' },
+        { role: 'user', content: 'msg2' },
+        { role: 'assistant', content: 'reply2' },
+      ]
+      const opts = makeMockOptions({
+        sessionService: makeMockSessionService({
+          getHistory: vi.fn().mockResolvedValue({ messages, truncated: false }),
+        }),
+      })
+      const handler = new SessionManagerHandler(opts)
+
+      await handler.handle('req-1', 'sid-parent', 'history', { sessionId: 's1', tailTurns: 5 })
+
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+      expect(response.messages).toEqual(messages)
+      expect(response.truncated).toBe(false)
+    })
+
+    it('畸形 params（send.prompt 非法）→ respond({error})，不流入 sessionService（params 信任边界守卫）', async () => {
+      const opts = makeMockOptions()
+      const handler = new SessionManagerHandler(opts)
+
+      await handler.handle('req-1', 'sid-parent', 'send', { sessionId: 's1', prompt: 42 })
+
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+      expect(response.error).toMatch(/invalid params/)
+      expect(opts.delivery.getOrCreateDelivery).not.toHaveBeenCalled()
+    })
+
     it('status → {status, modelId}', async () => {
       const summary = makeSessionSummary({ status: 'active', modelId: 'openai/gpt-4' })
       const opts = makeMockOptions({

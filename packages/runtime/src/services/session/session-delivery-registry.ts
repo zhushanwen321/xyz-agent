@@ -49,6 +49,8 @@ function toStreamingBehavior(intent: 'interrupt-at-turn-boundary' | 'after-run')
 }
 
 export function createSessionDeliveryRegistry(deps: SessionDeliveryDeps): SessionDeliveryRegistry {
+  // @data-owner #15（docs/architecture/data-source-registry.md）：sessionId → handle 注册表，
+  // handle 内的投递队列 = delivery outbox（内存、非持久，session 删除时 dispose 清空）
   const handles = new Map<string, DeliveryHandle>()
 
   /**
@@ -63,7 +65,10 @@ export function createSessionDeliveryRegistry(deps: SessionDeliveryDeps): Sessio
   ): Promise<void> => {
     const client = await deps.ensureActive(sessionId)
     await client.prompt(content, undefined, streamingBehavior)
-    // D7 保留副作用：prompt 受理成功后一并置位（侧栏 working 显示 + lastActiveAt 排序新鲜度）
+    // D7 保留副作用：prompt 受理成功后一并置位（侧栏 working 显示 + lastActiveAt 排序新鲜度）。
+    // isGenerating/lastActiveAt 双写形态登记（登记表 #11 修订，2026-08-24）：写方全集 =
+    // message-dispatcher（先置位后 prompt）+ 本 deliverText（受理后置位）；失效源 =
+    // message_start 事件流 / agent_settled 多播。
     const session = deps.getSession(sessionId)
     if (session) {
       session.lastActiveAt = Date.now()
@@ -85,7 +90,9 @@ export function createSessionDeliveryRegistry(deps: SessionDeliveryDeps): Sessio
           const s = deps.getSession(sessionId)
           return !!s && !s.isGenerating && !s.isCompacting && !s.isBashRunning
         },
-        // 一期保守（design.md §5 待验证 1）：同步签名拿不到 get_state 的 pendingMessageCount
+        // 一期保守（design.md §5 待验证 1，登记表 #15 known-limitation）：同步签名拿不到
+        // get_state 的 pendingMessageCount——恒判空使 gate 只剩 isIdle 单条件，依赖 TOCTOU
+        // 宽度 + pi 队列兜底；补齐路径 = get_state.pendingMessageCount 异步拉取或 settled 复核
         hasPendingMessages: () => false,
         subscribeSettled: (cb) =>
           deps.subscribeAgentSettled((sid) => {
