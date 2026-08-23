@@ -35,6 +35,7 @@ export default {
     handoffHint: '输入内容将作为新 session 的首条消息发送给 AI（可选）…（⏎ 交接并发送，Esc 退出）',
     handoffChip: '交接到新 session · 当前输入将发送到新会话',
     handoffSend: '交接并发送到新 session',
+    handoffBusy: '正在回复中，请等待当前回复完成或先停止后再交接',
     handoffExit: '退出交接模式',
     bashPlaceholder: '运行 bash 命令…（!! 前缀排除出上下文）',
   },

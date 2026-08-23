@@ -234,6 +234,7 @@ export function useComposerShell(params: ComposerShellParams) {
     handoffChipIcon: Upload,
     toastError,
     isHandingOff: (sid: string) => chatStore.isHandingOff(sid),
+    isSessionActive: (sid: string) => !!sid && chatStore.isActive(sid),
     handoffEnterSignal,
   })
 
@@ -269,14 +270,18 @@ export function useComposerShell(params: ComposerShellParams) {
     abort,
   })
 
-  /** 忙时（流式/派发/发送中）—— canSend 共用守卫（不含 isCompacting：压缩期允许排队） */
+  /** 忙时（流式/派发/发送中）—— canSend 共用守卫（不含 isCompacting：压缩期允许排队）。
+   *  仅约束普通 send；staging 发送不受 isActive 拦（fork-ask 对源只读，streaming 中合法） */
   const isBusy = computed(() => isActive.value || isSending.value)
   const canSend = computed(() => hasInput.value && !isBusy.value)
-  /** 可提交：有输入，或当前 staging 允许空发送（fork/handoff 空 composer 直接提交 ≈ 后台操作）。
-   *  canSend 只看 hasInput；staging allowsEmptySend=true 时即使 draft 为空也放行发送按钮。 */
-  const canSubmit = computed(() =>
-    canSend.value || (!!staging.activeStaging.value?.allowsEmptySend && !isBusy.value),
-  )
+  /** 可提交：staging 活跃时只看本地双发锁（isSending）——streaming 中 fork 提交合法，
+   *  handoff 的 streaming 拦截在入口（enterHandoffMode）+ 兑底（handleHandoffSend）。
+   *  非 staging 态维持原 canSend（hasInput ∧ ¬isBusy）。 */
+  const canSubmit = computed(() => {
+    const active = staging.activeStaging.value
+    if (active) return (hasInput.value || active.allowsEmptySend) && !isSending.value
+    return canSend.value
+  })
 
   // ── 视觉派生（原 useComposerBoxClass + useComposerModeVisual 合并，D1 留壳）──
   const stagingBoxClass = computed(() => staging.activeStaging.value?.visual.boxClass.value ?? '')
@@ -311,7 +316,6 @@ export function useComposerShell(params: ComposerShellParams) {
     staging: { hasActiveStaging: staging.hasActiveStaging, send: staging.send, activeStaging: staging.activeStaging },
     getStagingConfig,
     canSend,
-    isBusy,
     isCompacting,
     draft,
     inputRef,

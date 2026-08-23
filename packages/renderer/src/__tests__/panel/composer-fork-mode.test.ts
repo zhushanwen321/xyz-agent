@@ -17,6 +17,7 @@ import { mount } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { textToSegments } from '@xyz-agent/shared'
+import { useChatStore } from '@/stores/chat'
 
 // ── mock useChat（send 等 spy）──
 const chatApiMock = {
@@ -217,5 +218,83 @@ describe('U14：Esc 退出 + 切 session 自动退出 forkMode', () => {
     await wrapper.vm.$nextTick()
 
     expect(vm.forkMode?.value).toBe(false)
+  })
+})
+
+// ── U15：streaming 中 fork 模式（staging 优先于 steer，本次修复核心）────────
+describe('U15：streaming 中 fork 模式：Enter 提交 fork 而非 steer，发送位替换 stop', () => {
+  /** 制造 streaming：真实 chat store 写入 message_start → isGenerating=true → isActive=true */
+  function makeStreaming(sid: string): void {
+    const chat = useChatStore()
+    chat.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'a1' },
+    })
+  }
+
+  it('streaming + fork 模式 Enter → forkSessionAsk 被调，steer 不被调（草稿不注入当前对话）', async () => {
+    const sid = 's-stream-fork'
+    makeStreaming(sid)
+    const wrapper = mountComposer({ sessionId: sid })
+    expect(useChatStore().isActive(sid)).toBe(true) // 前置：session 确在 streaming
+
+    const vm = wrapper.vm as unknown as { enterForkMode?: (sessionId: string, messageId: string) => void }
+    vm.enterForkMode!('s1', 'm1')
+    await wrapper.vm.$nextTick()
+
+    wrapper.findComponent(ComposerInputMock).vm.$emit('input', 'fork 那条回复去问')
+    await wrapper.vm.$nextTick()
+    wrapper.findComponent(ComposerInputMock).vm.$emit('keydown', keyEvent('Enter'))
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(forkSessionAskMock).toHaveBeenCalledWith(
+      's1', 'm1', 'fork 那条回复去问', expect.anything(),
+    )
+    expect(chatApiMock.steer).not.toHaveBeenCalled()
+    expect(chatApiMock.send).not.toHaveBeenCalled()
+  })
+
+  it('streaming + fork 模式 → 发送位显示 fork 发送按钮，stop 按钮被替换', async () => {
+    const sid = 's-stream-btn'
+    makeStreaming(sid)
+    const wrapper = mountComposer({ sessionId: sid })
+    const vm = wrapper.vm as unknown as { enterForkMode?: (sessionId: string, messageId: string) => void }
+    vm.enterForkMode!('s1', 'm1')
+    await wrapper.vm.$nextTick()
+
+    // staging 完全替换：fork 发送按钮存在，stop 消失（用户决策：需停止时先 Esc 退出 staging）
+    expect(wrapper.find('[data-testid="fork-send-btn"]').exists()).toBe(true)
+    expect(wrapper.find('.stop-btn').exists()).toBe(false)
+  })
+
+  it('streaming 无 staging → stop 按钮行为不变（回归守卫）', () => {
+    const sid = 's-stream-plain'
+    makeStreaming(sid)
+    const wrapper = mountComposer({ sessionId: sid })
+
+    expect(wrapper.find('.stop-btn').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="fork-send-btn"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="handoff-send-btn"]').exists()).toBe(false)
+  })
+
+  it('streaming + fork 模式 Alt+Enter → 仍提交 fork（不走 followUp）', async () => {
+    const sid = 's-stream-alt'
+    makeStreaming(sid)
+    const wrapper = mountComposer({ sessionId: sid })
+    const vm = wrapper.vm as unknown as { enterForkMode?: (sessionId: string, messageId: string) => void }
+    vm.enterForkMode!('s1', 'm1')
+    await wrapper.vm.$nextTick()
+
+    wrapper.findComponent(ComposerInputMock).vm.$emit('input', 'alt 提交')
+    await wrapper.vm.$nextTick()
+    wrapper.findComponent(ComposerInputMock).vm.$emit(
+      'keydown', new KeyboardEvent('keydown', { key: 'Enter', altKey: true, bubbles: true, cancelable: true }),
+    )
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(forkSessionAskMock).toHaveBeenCalled()
+    expect(chatApiMock.followUp).not.toHaveBeenCalled()
   })
 })
