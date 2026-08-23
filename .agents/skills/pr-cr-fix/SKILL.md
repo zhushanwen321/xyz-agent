@@ -43,7 +43,13 @@ bash scripts/pr-pre-merge.sh --skip-tests --quiet
 
 **Gate-1a**（硬 gate）：exit 0（marker `result=PASS`）才继续。FAIL 按输出中失败步骤派对应工种 worker 修复后重跑（`typecheck:extensions` / `typecheck:runtime` / `typecheck:renderer` / `lint`）。
 
-**Gate-1a.5**（changeset 软提醒）：summary 出现 `WARN changeset-check`（改了 `extensions/*/src/` 但无 changeset，WARN 不 FAIL）→ AskUserQuestion：需要发布则 `pnpm changeset` 创建声明（推荐）；纯文档/测试改动可跳过（建议 `pnpm changeset add --empty` 防 merge 误报）。缺失 changeset 的后果：merge 时 `changeset version` 不 bump → publish 不发 → bug fix 静默丢失。
+**Gate-1a.5**（changeset 自动补全）：summary 出现 `WARN changeset-check`（改了 `extensions/**/src/` 但无 changeset，WARN 不 FAIL）→ **主 agent 按 diff 逐包分类后自动处理，不 AskUserQuestion**（判断所需信息全在 diff 里，弹窗把判断推给人的代价高于 PR 内审查；[HISTORICAL] 曾为弹窗模式，用户反馈每次执行都被打断、多数 WARN 是纯注释类噪声，2026-08-23 改为自动分类）：
+
+- **实质行为改动**（逻辑/接口/行为变化）→ 自动起草 `.changeset/<slug>.md`：type 初判按分支 conventional commits（feat→minor / fix→patch / BREAKING→major），body 英文写用户可感变化（进 CHANGELOG，遵守根 AGENTS.md changeset 准则）
+- **非发布改动**（纯注释/类型注解/测试/零行为差重构）→ 跳过，在阶段汇报中列明「包名 + 跳过原因 + 证据」
+- 已删除的包 checker 自动跳过（package.json 读不到）；WARN 本身不清除（事实记录），只 FAIL 才阻塞
+
+changeset 文件随 PR diff 可审可改；type 终判仍在 merge 阶段人工定（与「PR 阶段初判、merge 人工定」SSOT 一致）。缺失 changeset 的后果：merge 时 `changeset version` 不 bump → publish 不发 → bug fix 静默丢失。已知堆积问题：dev-merge（feature→dev）不跑本检查，负担堆积到 dev→main 最终 PR——前移到 dev-merge 是待办优化。
 
 ### 1.2 自动生成 PR title 和 body
 
