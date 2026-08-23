@@ -2,18 +2,20 @@
   <TransitionGroup
     tag="div"
     name="toast"
-    class="fixed bottom-6 right-6 z-[9999] flex flex-col gap-2 pointer-events-none"
+    class="fixed bottom-6 right-6 z-[9999] flex flex-col gap-2.5 pointer-events-none"
   >
     <div
       v-for="t in toasts"
       :key="t.id"
-      class="pointer-events-auto flex items-center gap-2 rounded-lg border px-4 py-3 text-sm shadow-lg select-text"
+      class="pointer-events-auto flex w-fit max-w-[min(360px,calc(100vw-3rem))] items-start gap-2.5 rounded-lg border border-border bg-surface py-2.5 pl-3 pr-2 shadow-lg"
       :class="toastClass(t.type)"
+      @mouseenter="pause(t.id)"
+      @mouseleave="resume(t.id)"
     >
-      <!-- error icon: lucide alert-circle -->
+      <!-- type icon（对齐 body 首行）：error lucide alert-circle -->
       <svg
         v-if="t.type === 'error'"
-        class="mt-px h-4 w-4 shrink-0 text-danger"
+        class="mt-0.5 h-4 w-4 shrink-0 text-danger"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -24,7 +26,7 @@
       <!-- warning icon: lucide alert-triangle -->
       <svg
         v-else-if="t.type === 'warning'"
-        class="mt-px h-4 w-4 shrink-0 text-warn"
+        class="mt-0.5 h-4 w-4 shrink-0 text-warn"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -35,7 +37,7 @@
       <!-- info icon: lucide info -->
       <svg
         v-else
-        class="mt-px h-4 w-4 shrink-0 text-info"
+        class="mt-0.5 h-4 w-4 shrink-0 text-info"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -43,10 +45,38 @@
         stroke-linecap="round"
         stroke-linejoin="round"
       ><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></svg>
-      <span>{{ t.message }}</span>
+
+      <div class="flex min-w-0 flex-1 flex-col gap-1">
+        <!-- session 定位行：点击跳转该 session（后台通知的行动闭环） -->
+        <button
+          v-if="t.sessionLabel && t.sessionId"
+          :data-testid="`toast-session-${t.id}`"
+          class="flex max-w-full items-center gap-1 self-start rounded-sm text-left text-[11px] leading-4 text-neutral-dim transition-colors hover:text-neutral-fg focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
+          @click.stop="onJump(t.sessionId, t.id)"
+        >
+          <span class="truncate">{{ t.sessionLabel }}</span>
+          <!-- lucide arrow-up-right：可跳转的暗示 -->
+          <svg
+            class="h-3 w-3 shrink-0 opacity-70"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><line x1="7" y1="17" x2="17" y2="7" /><polyline points="7 7 17 7 17 17" /></svg>
+        </button>
+        <!-- 消息体：pre-line 渲染 \n，最多 5 行 -->
+        <p
+          :data-testid="`toast-message-${t.id}`"
+          class="whitespace-pre-line break-words text-[12.5px] leading-[1.55] line-clamp-5 select-text"
+          :class="textClass(t.type)"
+        >{{ t.message }}</p>
+      </div>
+
       <Button
         variant="ghost"
-        class="ml-2 size-6 rounded-sm p-0 opacity-60 hover:opacity-100"
+        class="ml-1 size-6 shrink-0 rounded-sm p-0 opacity-60 hover:opacity-100"
         @click="remove(t.id)"
       >
         <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
@@ -58,14 +88,29 @@
 <script setup lang="ts">
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/composables/useToast'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 
-const { toasts, remove } = useToast()
+const { toasts, remove, pause, resume } = useToast()
+const { selectSession } = useSidebarNew()
 
-/** toast 类型 → 颜色 class */
+/** toast 类型 → 边框强调色（背景统一 bg-surface，克制：色彩只落在 icon 与正文） */
 function toastClass(type: 'error' | 'info' | 'warning'): string {
-  if (type === 'error') return 'border-border bg-surface text-danger'
-  if (type === 'warning') return 'border-border bg-surface text-warn'
-  return 'border-border bg-surface text-neutral-fg'
+  if (type === 'error') return 'border-danger/40'
+  if (type === 'warning') return 'border-warn/40'
+  return 'border-border'
+}
+
+/** toast 类型 → 正文颜色（error/warning 语义着色，info 中性） */
+function textClass(type: 'error' | 'info' | 'warning'): string {
+  if (type === 'error') return 'text-danger'
+  if (type === 'warning') return 'text-warn'
+  return 'text-neutral-fg'
+}
+
+/** 定位行点击 → 跳转来源 session 并关掉 toast（通知 → 行动闭环） */
+async function onJump(sessionId: string, toastId: number): Promise<void> {
+  remove(toastId)
+  await selectSession(sessionId)
 }
 </script>
 

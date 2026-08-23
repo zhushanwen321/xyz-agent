@@ -21,8 +21,13 @@ import type { NotificationPayload } from './types'
 export interface NotificationHostControllerDeps {
   bus: InternalEventBus
   deps: {
-    /** 弹 toast。level 映射由壳实现（error/warning/info），core 只透传字符串。 */
-    showToast: (message: string, level?: string) => void
+    /**
+     * 弹 toast。level 映射由壳实现（error/warning/info），core 只透传字符串。
+     * sessionId（extension-notify / plugin-notification 事件携带）一并透传——壳用它组装
+     * session 定位信息（label/目录）与前台/后台过滤；无 session 语义的事件（如 plugin-crashed）
+     * 不传。core 不解释 sessionId，仅搬运。
+     */
+    showToast: (message: string, level?: string, sessionId?: string) => void
     /** 日志降级通道（默认 console.warn）。最小消费的几类事件用它记录，不弹 UI。 */
     log?: (...args: unknown[]) => void
   }
@@ -40,8 +45,8 @@ export class NotificationHostController {
   subscribe(): () => void {
     if (this.unsubscribe.length > 0) return this.dispose.bind(this)
     this.unsubscribe.push(this.deps.bus.on('plugin-crashed', (e) => this.handlePluginCrashed(e)))
-    this.unsubscribe.push(this.deps.bus.on('plugin-notification', (e) => this.handleNotification(e.notification)))
-    this.unsubscribe.push(this.deps.bus.on('extension-notify', (e) => this.handleNotification(e.notification)))
+    this.unsubscribe.push(this.deps.bus.on('plugin-notification', (e) => this.handleNotification(e.sessionId, e.notification)))
+    this.unsubscribe.push(this.deps.bus.on('extension-notify', (e) => this.handleNotification(e.sessionId, e.notification)))
     this.unsubscribe.push(this.deps.bus.on('plugin-config-changed', (e) => this.handleConfigChanged(e)))
     this.unsubscribe.push(this.deps.bus.on('plugin-message-decoration', (e) => this.handleMessageDecoration(e)))
     this.unsubscribe.push(this.deps.bus.on('plugin-status-change', (e) => this.handleStatusChange(e)))
@@ -63,11 +68,11 @@ export class NotificationHostController {
     this.deps.deps.showToast(`插件 ${e.pluginId} 崩溃: ${e.error}`, 'error')
   }
 
-  /** plugin-notification 与 extension-notify 同形（NotificationPayload），统一处理。 */
-  private handleNotification(notification: NotificationPayload): void {
+  /** plugin-notification 与 extension-notify 同形（NotificationPayload），统一处理。sessionId 透传给壳组装定位行。 */
+  private handleNotification(sessionId: string | undefined, notification: NotificationPayload): void {
     // NotificationPayload.level 经 index signature 为 unknown，收窄成 string 再透传
     const level = typeof notification.level === 'string' ? notification.level : undefined
-    this.deps.deps.showToast(notification.message, level)
+    this.deps.deps.showToast(notification.message, level, sessionId)
   }
 
   private handleConfigChanged(e: { pluginId: string; config: unknown }): void {
