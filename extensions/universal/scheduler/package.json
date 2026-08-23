@@ -47,5 +47,8 @@
     "croner": {
       "optional": true
     }
+  },
+  "dependencies": {
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   }
 }

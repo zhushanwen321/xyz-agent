@@ -32,6 +32,7 @@
     ]
   },
   "dependencies": {
+    "@zhushanwen/pi-extension-logger": "workspace:*",
     "@zhushanwen/pi-llm-shared": "workspace:*",
     "@zhushanwen/pi-quota-providers": "workspace:*"
   },

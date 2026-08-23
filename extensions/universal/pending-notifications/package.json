@@ -35,5 +35,8 @@
   "scripts": {
     "typecheck": "npx tsc --noEmit",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   }
 }

@@ -29,7 +29,8 @@
     "vitest": "^4.1.8"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:*"
+    "@xyz-agent/extension-protocol": "workspace:*",
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.1",
