@@ -21,6 +21,22 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 // 模块级 logger（setPiHandle 注入后自动走 appendEntry，未注入时 console 兜底）
 const logger = getLogger("subagents");
 
+// [D8d] warn 路径进程内去重集合：key=(kind, stem, shadowedPath, keptPath)，
+// cap 1024 超限先清空再 add（对齐 ui-request-observability 的 MAX_WARNED_SESSIONS 范式）。
+// debug 路径不去重（默认 no-op，无成本）。
+const shadowWarnDedup = new Set<string>();
+const MAX_SHADOW_WARN_DEDUP = 1024;
+
+/** @internal 测试辅助：重置 warn 去重集合（cap 测试用，生产代码不调用）。 */
+export function __testResetShadowDedup(): void {
+  shadowWarnDedup.clear();
+}
+
+/** @internal 测试辅助：向 warn 去重集合注入 key（cap 测试用）。 */
+export function __testInjectShadowDedupKey(key: string): void {
+  shadowWarnDedup.add(key);
+}
+
 // ── 类型 ─────────────────────────────────────────────────────
 
 /** 资源种类：agent 或 workflow */
@@ -52,6 +68,23 @@ export interface ScanConfig {
 }
 
 // ── 常量 ─────────────────────────────────────────────────────
+
+/** 机器源集合：包管理/工程配置产物，其同名重复是安装拓扑常态（非用户配置错误）。
+ *  用户个人源（user-pi / user-agents）不在此列——双个人源同名重复保留 warn。 */
+const MACHINE_SOURCES: ReadonlySet<ResourceSource> = new Set<ResourceSource>([
+  "npm",
+  "npm-dev",
+  "user-extension-paths",
+  "project-pi",
+  "project-pi-tmp",
+  "project-agents",
+]);
+
+/** 判断 source 是否属于机器源（安装拓扑常态，同名重复降 debug）。
+ *  导出仅为测试穷举断言用（封闭 8 值枚举 × 分级边界）。 */
+export function isMachineSource(source: ResourceSource): boolean {
+  return MACHINE_SOURCES.has(source);
+}
 
 /** workspace root 向上查找的最大深度 */
 const WORKSPACE_ROOT_MAX_DEPTH = 20;
@@ -541,13 +574,29 @@ export async function discoverResources(config: ScanConfig): Promise<DiscoveredR
       if (!r.available && existing) {
         continue;
       }
-      // [D8d] 同名遮蔽可观测：高优先级源覆盖低优先级同名资源时 warn——此前
-      // 「有检测无报告」，用户自定义 agent/workflow 被静默遮蔽后排查无从下手。
+      // [D8d] 同名遮蔽可观测：高优先级源覆盖低优先级同名资源时分级报告——
+      // 机器源重复是安装拓扑常态（npm 包与用户目录结构性同名），降 debug 默认静默
+      // （XYZ_AGENT_DEBUG=1 文件日志可查）；双用户源重复是配置错误，保留 warn 首报。
+      // warn 路径进程内去重（Set cap 1024，对齐 ui-request-observability 范式）：
+      // 每 session 独立进程（process-manager.ts L142-143），进程级去重 ≈ session 级首报。
       if (existing && existing.path !== r.path) {
-        logger.warn(
-          `[resource-discovery] duplicate ${config.kind} "${key}" from ${r.source} shadows ${existing.source}`,
-          { shadowed: existing.path, kept: r.path },
-        );
+        const msg =
+          `[resource-discovery] duplicate ${config.kind} "${key}" from ${r.source} shadows ${existing.source}`;
+        const data = { shadowed: existing.path, kept: r.path };
+        if (isMachineSource(existing.source) || isMachineSource(r.source)) {
+          // 任一侧为机器源 → 降级 debug（安装拓扑常态，排查走 XYZ_AGENT_DEBUG=1）
+          logger.debug(msg, data);
+        } else {
+          // 双侧均为用户源 → 保持 warn，进程内去重（同 key 只报首次）
+          const dedupKey = `${config.kind}|${key}|${existing.path}|${r.path}`;
+          if (!shadowWarnDedup.has(dedupKey)) {
+            if (shadowWarnDedup.size >= MAX_SHADOW_WARN_DEDUP) {
+              shadowWarnDedup.clear();
+            }
+            shadowWarnDedup.add(dedupKey);
+            logger.warn(msg, data);
+          }
+        }
       }
       merged.set(key, r);
     }
