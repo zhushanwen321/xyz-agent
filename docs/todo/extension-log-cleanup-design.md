@@ -303,13 +303,13 @@ notifyType 需要 run-time 收窄（`UiRequest.notifyType` 是 `string`，`ctx.u
 | P-ui-sig | 主 agent ctx.ui 五方法签名与 UiRequest 字段一一对应 | 已读 types.d.ts L68-131 + dialog-queue.ts UiRequest 定义 | ✅ 设计期已验证 | — |
 | P-consume | 无下游消费 `unified-hooks:log` / `subagents:log`；gui_widget 无生产注册方 | packages/ apps/ 全 grep 零命中（后者唯一 register 在 ui-channels.test.ts） | ✅ 设计期已验证 | — |
 | P-process | 每 session 一个独立 pi 进程（进程级状态不跨 session） | process-manager.ts L142-143 注释「Each session gets its own isolated pi process」 | ✅ 设计期已验证 | — |
-| P-fwd-notify | notify 转发后主 agent（rpc 模式）stdout 产出 `extension_ui_request {method:"notify"}` | 本地 pi CLI：主 agent `--mode rpc` + 子 agent 场景，观察 stdout | ⛔ U2 实施后 | 失败 → 检查 defaultDialogForward 分支是否被 channel 抢先；仍失败 → GUI 转发降级为仅 ack + warn（保 G1 弃 G2，G2 转独立 issue） |
-| P-widget-gate | channel-miss 的 setWidget：channel==="gui_widget" 回 ack 不转发；channel===undefined 全量转发且 widgetLines 干净 | 单测：构造两种 setWidget 请求走 defaultDialogForward，断言主 agent ui.setWidget 调用与入参 | ⛔ U2 实施中 | 若语义与 gui_widget 协议约定冲突（如 [1:] 有真实渲染内容）→ 改为转发前剥离 marker 行（对齐 channel 解析产物） |
-| P-noise-zero | npm↔user 结构性重复不再产生 warn entry | 本地 pi CLI 起 session（机器上存在 7 个 npm↔user 重复名），jq 统计 duplicate warn = 0 条 | ⛔ U1 实施后 | 失败 → source 分级判断错误，检查 ResourceSource 标签映射 |
-| P-user-warn-once | 纯用户源重复每进程首报 1 条（fallback 重扫不重复） | 单测：同进程内连续两次调 discoverResources，断言第二次 0 条；真实场景：手工构造双用户目录同名 agent 后起 session，jq 统计 ≤ 1 条 | ⛔ U1 实施后 | 失败 → 去重 Set 生命周期判定错误，改 globalThis Symbol.for 桥接单例（对齐 observability 范例——防 extension 模块重加载重置模块级 Set） |
-| P-limit | 10 条后抑制 + 窗口末尾聚合 1 条 | vitest fake timers + 注入 100 条同 msg | ⛔ U5 实施中 | 失败 → 回退方案 C（调用方修复已覆盖已知热点），限流独立 issue |
-| P-limit-real | 限流在真实 session 生效（非仅单测） | 临时测试 extension 挂 `--extension` 制造高频 warn，跑真实 session，jq 验证 JSONL 含 `[+M suppressed]` 聚合 entry | ⛔ U5 实施后 | 失败 → 检查 appendEntry 路径是否绕过限流封装；仍失败 → 同 P-limit 降级 |
-| P-ratio | 常规 session `subagents:log` 占比 < 5% | 重放审计统计脚本（同口径对比基线 60%） | ⛔ 全部实施后 | 未达标 → 按占比分解剩余源逐个处理 |
+| P-fwd-notify | notify 转发后主 agent（rpc 模式）stdout 产出 `extension_ui_request {method:"notify"}` | 本地 pi CLI：主 agent `--mode rpc` + 子 agent 场景，观察 stdout | ✅ 终验通过（真实子 agent spawn 全链路：主进程 stdout 出现转发 notify，pid 不同于主进程） | 失败 → 检查 defaultDialogForward 分支是否被 channel 抢先；仍失败 → GUI 转发降级为仅 ack + warn（保 G1 弃 G2，G2 转独立 issue） |
+| P-widget-gate | channel-miss 的 setWidget：channel==="gui_widget" 回 ack 不转发；channel===undefined 全量转发且 widgetLines 干净 | 单测：构造两种 setWidget 请求走 defaultDialogForward，断言主 agent ui.setWidget 调用与入参 | ✅ 单测通过（两种 setWidget 请求断言转发/ack 行为） | 若语义与 gui_widget 协议约定冲突（如 [1:] 有真实渲染内容）→ 改为转发前剥离 marker 行（对齐 channel 解析产物） |
+| P-noise-zero | npm↔user 结构性重复不再产生 warn entry | 本地 pi CLI 起 session（机器上存在 7 个 npm↔user 重复名），jq 统计 duplicate warn = 0 条 | ✅ 终验通过（双 session 0 条 + XYZ_AGENT_DEBUG=1 复验 debug 落文件） | 失败 → source 分级判断错误，检查 ResourceSource 标签映射 |
+| P-user-warn-once | 纯用户源重复每进程首报 1 条（fallback 重扫不重复） | 单测：同进程内连续两次调 discoverResources，断言第二次 0 条；真实场景：手工构造双用户目录同名 agent 后起 session，jq 统计 ≤ 1 条 | ✅ 终验通过（HOME 重定向双用户源每进程恰 1 条）+ 单测 fallback 重扫 0 条 | 失败 → 去重 Set 生命周期判定错误，改 globalThis Symbol.for 桥接单例（对齐 observability 范例——防 extension 模块重加载重置模块级 Set） |
+| P-limit | 10 条后抑制 + 窗口末尾聚合 1 条 | vitest fake timers + 注入 100 条同 msg | ✅ 单测通过（fake timers 全语义） | 失败 → 回退方案 C（调用方修复已覆盖已知热点），限流独立 issue |
+| P-limit-real | 限流在真实 session 生效（非仅单测） | 临时测试 extension 挂 `--extension` 制造高频 warn，跑真实 session，jq 验证 JSONL 含 `[+M suppressed]` 聚合 entry | ✅ 终验通过（flood 探针 100 条 → 10 直写 + [+90 suppressed] 聚合 + 1 新窗口条） | 失败 → 检查 appendEntry 路径是否绕过限流封装；仍失败 → 同 P-limit 降级 |
+| P-ratio | 常规 session `subagents:log` 占比 < 5% | 重放审计统计脚本（同口径对比基线 60%） | ✅ 终验通过（0.0% < 5%，基线 60%） | 未达标 → 按占比分解剩余源逐个处理 |
 
 ## 4. 验收
 
@@ -320,6 +320,7 @@ notifyType 需要 run-time 收窄（`UiRequest.notifyType` 是 `string`，`ctx.u
 - **V3（回溯 G3，P3）**：单测（fake timers）验证限流状态机语义：同 msg 第 1-10 条直写、11-100 抑制、窗口滚动后首条附 `+90 suppressed`；`XYZ_AGENT_DEBUG=1` 下文件日志全量 100 条（限流只作用 appendEntry）。**真实场景补充**：临时测试 extension 挂 `--extension` 制造高频 warn 跑真实 session，`jq` 验证 JSONL 实际出现 `[+M suppressed]` 聚合 entry（即探针 P-limit-real）。
 - **V4（回溯 G4，P5）**：`grep -rn "console\.\(warn\|error\|log\|debug\|info\)(" extensions/ --include="*.ts"` 排除测试/注释/字符串字面量后 0 命中；`pnpm extensions:lint`（含新 no-console 规则）通过；TUI 冒烟跑一个带 quota 查询的 session，输入区无 raw stderr 污染。
 - **V5（负面验证，P2/P4/P7 不误伤）**：(a) 手工构造双用户目录同名 agent（`~/.pi/agent/agents/` 与 `~/.agents/agents/` 同名）后起 session，duplicate warn 首报可见（分级只降机器源，纯用户源保留）且同进程内 fallback 重扫不重复报；(b) 触发一个真实 tool error，`unified-hooks:tool-error` 专属 entry 仍存在且含 errorText（P4 只删泛化）；(c) kill 一个子 agent 进程，error-recovery 的 fallback warn 仍正常出现（P7 未被限流误伤——进程内仅首条 + 摘要）。
+- **V5c 实施后勘误（errata）**：终验 2 次真实 kill 子进程实测发现，kill 路径实装上不走 logger.warn（子 agent 死亡经 record 状态上报 `closed due to parent-shutdown`，error-recovery.ts 的 deps.log 调用全部为 debug 级）——本设计 V5c「kill 触发 error-recovery fallback warn」的预设与实装有偏差（审计的 14 条来源应为其他 msg）。P7 实质未误伤的判据修正为：U1-U5 diff 未触及 error-recovery/lifecycle/record-store 故障路径文件 + 限流保同 msg 前 10 条直写。
 - **V6（回归，P1 channel 链路不被短路）**：本地临时测试 extension 注册 gui_widget channel（或复用 ask-user 扩展的 ask_user 注册链），跑子 agent 场景断言 channel handler 仍被调用（registry resolve 优先于 defaultDialogForward，方案 A 不改优先级）；另断言 channel miss 的 gui_widget-marker setWidget 回 ack 不转发（D1 语义）。注：gui_widget 当前无生产注册方（全仓唯一 register 在 ui-channels.test.ts），故本项用本地临时注册而非 xyz-agent 桌面环境。
 - 单测（typecheck/lint/test 三连 + 上述 vitest）作为回归辅助，不计入验收本体。
 
