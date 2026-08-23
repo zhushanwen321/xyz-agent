@@ -108,6 +108,8 @@ streaming 语义的 pi 侧权威定义（`agent-session.js:826-838`）：`prompt
 2. **RPC `steer` 对 idle session 是「下次活动才注入」**——消息躺队列直到下一个 prompt/turn 来 drain。单独使用就是 zcode mailbox 的边界（见 §3.2 方案 D），是已知陷阱不是能力。
 3. **runtime 侧拿不到 custom message 形态**——回流通知若要结构化渲染（customType + details 走前端渲染器），须借道 extension（§3.3 D5）。
 
+**实测注记（2026-08-23 真机探针，脚本与原始事件流归档 `probes/`，详见 §3.3 实测记录）**：推论 1/2 的 **RPC 半边**及 steer 队列 drain 行为已从「代码核实」升级为「真机实测」（extension 侧 `sendMessage` 维持代码核实，U3 迁移期 e2e 覆盖）。另有一条新事实：pi 默认 `steeringMode: 'one-at-a-time'`——**多条排队消息逐 turn 注入（每 turn 一条，FIFO），非一次性全部注入**（注：steeringMode/followUpMode 属 pi 全局设置、用户可改，默认值方为本推演前提；S1 的单条排队场景在任一模式下行为相同）。对 U5 的含义：agent 连发多条 send 时，消息在目标 session 的连续多个 turn 开头逐条出现；对内核合批（merge 成一条消息）无影响。
+
 ### 2.3 真实失败模式（历史事故，均有代码注释存证）
 
 - **F1 followUp 永远排不上**：主 agent 处于「轮询 subagent_list 的 processing 状态」时 followUp 排不出（W2 修复：followUp → steer，notifier.ts:228-231）。
@@ -196,7 +198,7 @@ const delivery = getOrCreateDelivery(sessionId, () => createDelivery({
                   return !!s && !s.isGenerating && !s.isCompacting && !s.isBashRunning },
   hasPendingMessages: () => false,               // RPC get_state 有 pendingMessageCount（rpc-mode.js:358），
                                                   // 但端口是同步签名拿不到异步 RPC 结果——一期保守 false，见 §5 待验证
-  subscribeSettled: (cb) => subscribePiEvent(sessionId, 'agent_settled', cb),  // D8：RPC 转发事件（rpc-mode.js:266-269）
+  subscribeSettled: (cb) => subscribePiEvent(sessionId, 'agent_settled', cb),  // D8：装配走组合根 interpreter onAgentSettled 多播（index.ts:372，§5 已核实）或 rpc-client.onEvent（:520）；pi 事件经 rpc-mode.js:266-269 转发
   send: async (msg, intent) => { await client.prompt(msg.payload.content, {
     streamingBehavior: intent === 'interrupt-at-turn-boundary' ? 'steer' : 'followUp' }) },
     // 注：streamingBehavior 同时是 runtime 通路的安全网——gate 的 isIdle 读的是 runtime 侧
@@ -233,7 +235,7 @@ parentDelivery.send({
 | 失败 | 现象 | 恢复 |
 |------|------|------|
 | 目标 pi 进程已死 | `port.send` 内 ensureActive 抛错 | 入口即拦：`sendChecked` 同步抛给调用方（U5 的 agent 立即看到错误 + hint）；已入队消息由内核 send 重试（达上限 settle rejected，经 onSettled 上报） |
-| 退避达上限仍 busy | 强制发送（fallthrough 到 pi 队列） | **预期**（⛔ 实施期探针门，见 §3.3 探针表末行）：pi 的 steer 队列在 run 循环内 drain；探针若证伪按降级路径收紧为丢弃+计数 |
+| 退避达上限仍 busy | 强制发送（fallthrough 到 pi 队列） | **预期**（已实测，2026-08-23 探针 P3'：steer 队列在 run 循环内 turn 边界 drain，见 §3.3 实测记录）；降级路径（丢弃+计数）保留为防御备案 |
 | 目标正在 compaction（TOCTOU：gate 判 idle 后 compaction 恰开始） | pi `prompt` 无条件 throw（agent-session.js:808-810，**先于** streaming 分支，streamingBehavior 不救） | gate 的 `!isCompacting` 拦主路径；残余由内核错误重试自愈（backoff 窗口内 compaction 通常完成）；真机探针（row 3）附带覆盖该窗口 |
 | port.send 持续抛错（pi 卡死） | send 重试达上限 | settle rejected + onSettled 回调；U5 场景经回流通道（U6）告知父 agent，U6 未落地窗口期 console.warn（§5 待验证第 3 条） |
 | session 关闭中 isIdle 抛 | 内核捕获 → 丢弃队列 | 语义与 notifier 现状一致（dispose 短路）；调用方无需动作 |
@@ -267,7 +269,7 @@ parentDelivery.send({
 
 | 策略 | 默认值 | 继承自 | 作用 |
 |------|--------|--------|------|
-| busy 策略 `busyPolicy` | `'retry-force'`：settled 边沿驱动 flush + watch-dog 30s 复核（D8 主路径）；无订阅装配退化退避 `{backoffMs: 100, max: 50}`（≈5s 上限）后强制发送 | notifier FLUSH_BACKOFF + D8 | F2 窗口不错过唤醒点；达上限强发（pi 队列兜底，⛔ 探针门验证） |
+| busy 策略 `busyPolicy` | `'retry-force'`：settled 边沿驱动 flush + watch-dog 30s 复核（D8 主路径）；无订阅装配退化退避 `{backoffMs: 100, max: 50}`（≈5s 上限）后强制发送 | notifier FLUSH_BACKOFF + D8 | F2 窗口不错过唤醒点；达上限强发（pi 队列兜底，已实测 drain，§3.3 实测记录 P3'） |
 | | 备选 `'park'`：busy 时入队不重试，等下一次 `send()`/`flush()` 外部触发 | scheduler tick 模式（busy 跳过延迟到下个 30s tick） | scheduler 迁移用它保行为等价（避免 5s 强发提前注入正在进行的 run） |
 | 合批窗口 | `mergeWindowMs: 0`（关）；notifier 场景显式 `60_000` **滑动窗口**（每次 notify 重置计时） | notifier MERGE_WINDOW_MS=60_000（notifier.ts:76） | 多条通知合并为一条消息 |
 | 合批格式归属 | **调用方预格式化**：每条消息的 content 已是终态文案（notifier 的 buildLlmContent 在调用方）；内核只拼接——多条以 `"\n\n---\n\n"` join，details 包装为 `{batch: true, items}` | notifier doSend（notifier.ts:215-221） | 内容锚定测试锁定的输出由「调用方格式化 + 内核固定拼接规则」共同决定，归属清晰 |
@@ -300,7 +302,7 @@ pending-notifications 是记账层（register/unregister 差集 = 谁在等）�
 另：plugin-service 的两处会话消息路径（session-api.ts:209 / plugin-rpc-setup.ts:131）同样走 dispatcher——U5 只改 session-manager 的 `handleSend` 调用点，plugin 路径保持 dispatcher 现状（含 busy 拒绝语义）不变，特此声明防误认遗漏。
 
 **D8 冲突解决：agent_settled 事件驱动为主，watch-dog 与退避轮询双层兜底**
-选择：port 增加可选 `subscribeSettled?(cb: () => void): () => void`（返回退订函数；extension 侧 `pi.on('agent_settled', handler)` 存在（types.d.ts:884）但**返回 void、无 off**——适配器用 disposed 标志包装兑现退订语义（见 §3.1 调用方 A 示例），handler 本身随 extension 卸载由 pi 清理）。busy 入队后内核订阅 settled 边沿：事件触发 → `isIdle()` 复核 → 通过即 flush。依据（实装核实）：`_emitAgentSettled` **先把 `_isAgentRunActive = false` 再发事件**（agent-session.js:327-336）——订阅者收到 settled 时 `isIdle()` 已为 true，复核无竞态；事件在 `_runAgentPrompt` 的 finally、最后一次队列 drain 检查之后发出（agent-session.js:744-757），extension 事件与 RPC 转发两层同有（rpc-mode.js:265-270）。settled 边沿正是 F2 死区的关闭点：「退避压概率」升级为「结构上不错过唤醒点」。残余窗口（settled 已发、消息恰在其后由其他写入者 steer 入队）由 pi 队列在下次活动时 drain 兜底（§2.2 推论 2 的反向利用：延迟注入而非丢失）。
+选择：port 增加可选 `subscribeSettled?(cb: () => void): () => void`（返回退订函数；extension 侧 `pi.on('agent_settled', handler)` 存在（types.d.ts:884）但**返回 void、无 off**——适配器用 disposed 标志包装兑现退订语义（见 §3.1 调用方 A 示例），handler 本身随 extension 卸载由 pi 清理）。busy 入队后内核订阅 settled 边沿：事件触发 → `isIdle()` 复核 → 通过即 flush。依据（实装核实）：`_emitAgentSettled` **先把 `_isAgentRunActive = false` 再发事件**（agent-session.js:327-336）——订阅者收到 settled 时 `isIdle()` 已为 true，复核无竞态；事件在 `_runAgentPrompt` 的 finally、最后一次队列 drain 检查之后发出（agent-session.js:744-757），extension 事件与 RPC 转发两层同有（rpc-mode.js:265-270）。settled 边沿正是 F2 死区的关闭点：「退避压概率」升级为「结构上不错过唤醒点」。残余窗口（settled 已发、消息恰在其后由其他写入者 steer 入队）由 pi 队列在下次活动时 drain 兜底（§2.2 推论 2 的反向利用：延迟注入而非丢失——已实测，见下方实测记录 P2）。
 **兜底两层**：①有订阅装配仍保留低频 watch-dog（`watchdogMs` 默认 30s 一次 isIdle 复核 flush）——RPC 断线重连期间 settled 事件丢失（pi 事件流不重放）时队列滞留的恢复路径（审查 should-fix #3）；②无订阅装配退化为 D4 退避轮询。被否：纯退避轮询（初稿方案——不利用 pi 已给出的事件信号，引入无谓延迟上限 ≈5s）与纯事件驱动（事件丢失无恢复路径）。
 
 **D9 消息模型分离 envelope 与 payload，适配器声明 payload 能力**
@@ -312,10 +314,20 @@ pending-notifications 是记账层（register/unregister 差集 = 谁在等）�
 |------|------|------|
 | RPC `prompt` 响应时机 = preflight 受理即回（queued 与立即处理均算 success），**不等 turn 跑完** | rpc-mode.js:298-316（preflightResult 回调内 output success）+ agent-session.js:913-918（preflight 先于 _runAgentPrompt） | ✅ 代码核实（`sendChecked`「同步确认可达性」语义成立的前提） |
 | `agent_settled` 事件两层可用（extension 事件 + RPC 转发），且 `_isAgentRunActive=false` 先于事件发出（订阅时 isIdle 已 true） | agent-session.js:327-336, 744-757 + rpc-mode.js:265-270 | ✅ 代码核实（D8 事件驱动的前提） |
-| RPC `prompt(streamingBehavior)` streaming 时不抛错且入队 | pi CLI `--mode rpc` 手发 streaming 期间 prompt+streamingBehavior | ✅ 代码核实（agent-session.js:836-840 入队分支 + rpc-mode.js:302 透传）+ ⛔ 真机探针（U1 实施期，附带覆盖 compaction 窗口场景） |
-| RPC `steer` 对 idle session 纯入队不唤醒 | 同上，idle 时发 steer 观察 turn 不启动 | ✅ 代码核实（agent-session.js:984-993 只 `_queueSteer`，无 idle 分支）+ ⛔ 真机探针（U1 实施期） |
+| RPC `prompt(streamingBehavior)` streaming 时不抛错且入队 | pi CLI `--mode rpc` 手发 streaming 期间 prompt+streamingBehavior | ✅ **已实测**（2026-08-23 探针 P1：`isStreaming=true` 时发 `prompt + streamingBehavior:'steer'` → response `success=true`、rtt=1ms、消息入队、turn 边界注入）；compaction 窗口场景仍留实施期附带 |
+| RPC `steer` 对 idle session 纯入队不唤醒 | 同上，idle 时发 steer 观察 turn 不启动 | ✅ **已实测**（2026-08-23 探针 P2：idle 发 steer 后 12s 零 `agent_start`、`pendingMessageCount` 累积；下次 prompt 活动时 FIFO drain，逐 turn 注入） |
 | extension `sendMessage({triggerTurn:true})` idle 时立即开 turn | subagent-workflow 现有 e2e | ✅ 代码核实（sendCustomMessage :1083-1087）+ 现有 e2e 覆盖（用例未逐一核对） |
-| 内核退避后强发经 pi steer 队列被 `_handlePostAgentRun` drain | 实施期单测 + 本地 pi 真机 | ⛔ 实施期门（U2/U6）；降级路径：探针失败（强发后无人 drain）→ 收紧为「退避永不强发 + 达上限丢弃并计数」，丢弃面由 U6 回流通知兜底告知（宁可靠知丢失，不可静默积压） |
+| 内核退避后强发经 pi steer 队列被 `_handlePostAgentRun` drain | 实施期单测 + 本地 pi 真机 | ✅ **已实测·门已过**（2026-08-23 探针 P3'：streaming 中裸 steer 入队 `pending 0→1`，第一 turn `turn_end` 后 3ms `turn_start` 注入，settled 后 `pending=0`；settled 后入队场景由 P2 实证「下次活动 drain，延迟非丢失」）；降级路径（收紧为丢弃+计数）保留为 pi 升级行为变化时的防御备案 |
+
+**实测记录（2026-08-23，环境：本地 pi 0.84.1 `--mode rpc`、模型 `xiaomi-token-plan-cn/mimo-v2.5-pro`、脚本 `probes/probe-delivery.mjs` + `probes/probe-p3.mjs`，原始事件流 `probes/events*.json`）**：
+
+| 探针 | 操作 | 观测（相对时间线） |
+|------|------|-------------------|
+| P1 | 长任务 run 中（`get_state` 确认 `isStreaming=true`）发 `prompt + streamingBehavior:'steer'` | 响应 `success=true` **rtt=1ms**（run 总时长 ~6s，受理即回实证，`sendChecked` 前提成立）；第一 turn `turn_end`(7257ms) → `turn_start`(7259ms) PROBE 消息作为 user message 注入 → 同一 turn 内 assistant 回 P1-ACK → settled 后 `pending=0` |
+| P3' | assistant 流式中（message_start 后）发裸 `steer` | 入队 `pending 0→1`；turn_end(6934ms) → turn_start(6937ms) 注入 → 回 P3B-ACK → settled `pending=0`。**强发路径（入 steer 队列）在 run 循环内被 drain——U2 动工前大门通过** |
+| P2 | settled 后 idle 发裸 `steer`，静置 12s，再发 prompt | 静置期 0 个 `agent_start`（不唤醒）、`pending=2`（含前序滞留 1 条）；prompt 后 FIFO drain：第 1 turn 注入滞留消息、第 2 turn 注入 P2 消息（`one-at-a-time` 逐 turn 注入实证），settled 后 `pending=0` |
+
+> **作废记录（诚实交代）**：P3 首跑（probe-delivery.mjs 内）因固定 `sleep(2500)` 晚于 run 结束作废——mimo 数 25 实测仅 2.19s，steer 发出时 `get_state` 已 `isStreaming=false`（events.json t=11751 铁证），实际测的是 idle steer（非目标场景）；P3'（probe-p3.mjs）改用 `waitUntil(assistantStreaming)` 事件同步重跑。P2 行的「前序滞留 1 条」即该次作废探针的 idle steer 滞留。教训已反映在验收驱动约定（§4）：streaming 前提必须事件同步 + 结构化断言，不可固定 sleep 等待。
 
 ### 3.4 内核接口草案（下一层实现的对齐基线）
 
@@ -370,9 +382,9 @@ export function createDelivery(port: DeliveryPort, config?: DeliveryConfig): Del
 
 ## 4. 验收（真实场景）
 
-**结论：6 个真实场景验收（本地 pi CLI 为主 + 桌面实机一个），覆盖全部 4 个目标；单测只作回归锁不算验收。**
+**结论：6 个真实场景验收（本地 pi CLI 为主 + 桌面实机一个），覆盖全部 4 个目标；单测只作回归锁不算验收。设计阶段已预跑 §3.3 真机探针（pi 侧 RPC 投递原语行为已实测确认；extension 侧 `sendMessage` 维持代码核实，由 S3 迁移 e2e 覆盖），验收阶段风险集中在内核与装配自身，不在 pi 语义。**
 
-> 验证方式遵守项目规约：extension 改动优先本地 pi CLI 实测（`pi --mode rpc --session-dir <dir> --approve --extension <path>` + stdin JSONL），桌面侧在 `pnpm dev` 实机确认。单测只作回归锁，不算验收。
+> 验证方式遵守项目规约：extension 改动优先本地 pi CLI 实测（`pi --mode rpc --session-dir <dir> --approve --extension <path>` + stdin JSONL），桌面侧在 `pnpm dev` 实机确认。单测只作回归锁，不算验收。S1/S2/S5 的真机驱动**采 `probes/probe-p3.mjs` 的事件同步模式**（spawn pi rpc 子进程 + stdin JSONL 命令 + stdout 事件流带时间戳收集 + `waitUntil(事件边沿)` 而非固定 sleep），验收时换成挂载 session-manager extension 的父 session。两条驱动纪律：① **streaming/busy 前提必须结构化断言**（`get_state` 确认或事件边沿触发后再操作，禁止只打印不 assert）——S1 的「下一 turn 开头出现第二条」在目标 idle 时同样满足，前提不断言则 busy 排队路径（G1 核心）可能假通过；② `probe-delivery.mjs` 的 P3 段（固定 sleep）已作废，不可照抄（作废记录见 §3.3）。
 
 | # | 场景（谁/上下文/做什么/看到什么） | 步骤 | 通过标准 | 回溯目标 |
 |---|------|------|--------|---------|
@@ -398,7 +410,7 @@ export function createDelivery(port: DeliveryPort, config?: DeliveryConfig): Del
 | U3 | subagent-workflow notifier 切换内核（装配 + 删私有逻辑，现有锚定测试不动） | 第一个消费者，验证内核抽象对最复杂场景的覆盖度 | U2 | S3 |
 | U4 | scheduler 切换内核（gate 交内核 + `busyPolicy: 'park'`（tick 重触发）+ `intent: 'after-run'` 保持现状 followUp 语义 + `onSettled` 承接失败记账；dispatchesInFlight 保留） | 第二消费者，验证 park 模式 + after-run 意图形态与 at-least-once 语义等价 | U2 | S4 |
 | U5 | session-manager send 排队（SessionManagerHandler 装配 runtime Delivery + `handleSend` 改 `sendChecked`；工具返回 `{queued: true}`；`handleCreate` 初始 prompt 按 D7 末行直投） | G1 主体；同时补 create 带 prompt 的工具 schema 暴露（前序分析的独立缺口，一并落地） | U1, U2 | S1, S6 |
-| U6 | session-manager 完成回流（session-lifecycle 终态检测 `spawnSource==='agent' && parentAgentSessionId` + parentDelivery 投递通知文案；runtime 侧 sessionId 单例 handle 注册表） | G2 主体；无父 id 的 agent session 完成不回流（跳过）；单例约束防 U5/U6 并发竞态 | U1, U2 | S2 |
+| U6 | session-manager 完成回流（检测点已核实：组合根 `onAgentSettled` 多播（index.ts:372）→ 查 session `spawnSource==='agent' && parentAgentSessionId`（session-lifecycle 内存态）→ parentDelivery 投递通知文案；进程 exit（onSessionExit）走失败回流；runtime 侧 sessionId 单例 handle 注册表） | G2 主体；无父 id 的 agent session 完成不回流（跳过）；单例约束防 U5/U6 并发竞态 | U1, U2 | S2 |
 | U7（评估项） | workflow helpers 切换内核 / compact 队列并入 / **goal sendContextMessage 迁移评估**（command-adapter.ts:307 的 idle「append 不唤醒」形态 intent 二值无法表达——迁移需第三意图 `'append-no-turn'` 或永久留在 goal 内） | 非本设计目标必需；U3/U4 落地后评估迁移成本 | U2 | — |
 
 顺序建议：U1、U2 并行 → U3+U5 并行 → U4、U6。U3 完成前不动 U5/U6 的装配代码（避免两个未验证消费方同时压新内核）。
@@ -407,6 +419,7 @@ export function createDelivery(port: DeliveryPort, config?: DeliveryConfig): Del
 
 - 新增：`packages/session-delivery/`（包骨架 + src/index.ts + tests）
 - `packages/runtime/src/services/ports/pi-engine.ts` + `src/infra/pi/rpc-client.ts`（U1）
+- `packages/runtime/src/index.ts`（U5/U6 组合根：interpreter `onAgentSettled` 注入点扩展多播——U5 的 `subscribeSettled` 装配与 U6 的回流检测挂同一处，见 §5 待验证第 2/4 条核实结论）
 - `extensions/universal/subagent-workflow/src/execution/notifier.ts`（U3，大幅瘦身）
 - `extensions/universal/scheduler/src/runtime.ts`（U4，gate 段删）
 - `packages/runtime/src/transport/session-manager-handler.ts` + `extensions/universal/session-manager/src/index.ts` + `packages/extension-protocol/src/extensions/session-manager/types.ts`（U5：SendResult `{blocked, rejected}` → `{queued: true}` + 错误形状；工具 schema/description 同步改「asynchronously queued」语义）
@@ -415,14 +428,14 @@ export function createDelivery(port: DeliveryPort, config?: DeliveryConfig): Del
 **待验证检查点**（设计阶段无法确定，诚实标注）：
 
 - ⛔ runtime 装配的 `hasPendingMessages` 一期固定 `false`：`get_state` 虽有 `pendingMessageCount`（rpc-mode.js:358）但端口同步签名拿不到异步 RPC 结果。残余影响：runtime 侧 F2 窗口判定少一个信号（isIdle gate 已覆盖主路径）——S5 真机观察后再评估 get_state 预询。
-- ⛔ U6 终态检测的事件源精确位置（session-lifecycle 的状态转移钩子 vs pi exit 回调）——U6 实施时以代码现状为准。
+- ✅（已代码核实，2026-08-23）U6 终态检测的事件源：**「任务完成」信号 = `agent_settled`**（run 级联结束；子 session 跑完任务后 pi 进程仍常驻 idle，「完成」不是进程退出）。检测点挂组合根 interpreter 注入点 `packages/runtime/src/index.ts:372`（`onAgentSettled: (sid) => sessionService.flushPendingBashResults(sid)` 现成单播，U6 在此扩展多播）；`spawnSource` / `parentAgentSessionId` 从 session 内存态查（session-lifecycle.ts:379-383 打标）。进程 exit（process-manager.ts:367 `onSessionExit(sessionId, code, stderr)`，返回 unsubscribe）是另一信号——子 session 异常死亡走**失败回流**（同一通知文案换 status）。多条 run 多次回流 = 每次投递任务完成各回流一次，语义正确。
 - ⛔ 内核合批的合并文案格式（`"\n\n---\n\n"` 分隔沿用 notifier）在回流场景是否需要按通知类型区分。
-- ⛔ runtime 侧 `subscribeSettled` 的事件源接线：runtime event-adapter 已消费 pi 事件流（`agent_settled` 经 rpc-mode.js:266-269 转发为 JSON event），U5 实施时确认从 event-adapter 到装配层的订阅通路；若通路不存在则一期退化退避轮询（D8 兑底路径），在 PR 描述声明。
+- ✅（已代码核实，2026-08-23）runtime 侧 `subscribeSettled` 的事件源接线：**通路存在，两层现成**——① 底层 `rpc-client.ts:520` `onEvent(listener): () => void`（Set 多播、返回 unsubscribe，原始 pi 事件流含 `agent_settled`）；② 组合根 `index.ts:372` interpreter `opts.onAgentSettled`（pi 事件经 event-adapter.ts:943-994 translate 为 `{kind:'agent-settled'}`，event-interpreter.ts:378-381 消费后回调）。U5 推荐走 ②：与 `flushPendingBashResults` 同一注入点扩展多播，runtime 装配层无需触达 rpc-client。原「通路不存在则退化退避轮询」的降级路径不再需要；D8 的 watch-dog（30s 复核）仍保留（防 RPC 断线丢事件，与通路存在性无关）。
 - ⛔ U5 的异步失败可见性依赖 U6 回流通道：U6 落地前，queued 后 port.send 持续失败仅 console.warn + onSettled 计数（agent 不可见）。U5/U6 若分批合入，此窗口期须在 PR 描述显式声明。
 
 **残余风险**（修复审查 must-fix 后仍存，实施期须警惕）：
 
-- F2 死区在 pi 侧物理存在（run 循环最后一次 `hasQueuedMessages` 检查之后入队的消息无人 drain）——D8 的 settled 边沿 + isIdle 复核把「不错过唤醒点」结构化（settled 发出时 `_isAgentRunActive` 已 false，agent-session.js:327-336）；残余窗口（settled 后由其他写入者 steer 入队的消息）由 pi 队列下次活动 drain 兑底（延迟非丢失）。⛔ 探针（强发后 drain）仍是唯一大门，**必须在 U2 动工前先跑**。
+- F2 死区在 pi 侧物理存在（run 循环最后一次 `hasQueuedMessages` 检查之后入队的消息无人 drain）——D8 的 settled 边沿 + isIdle 复核把「不错过唤醒点」结构化（settled 发出时 `_isAgentRunActive` 已 false，agent-session.js:327-336）；残余窗口（settled 后由其他写入者 steer 入队的消息）由 pi 队列下次活动 drain 兑底（延迟非丢失）。原「强发后 drain」探针门（U2 动工前必须先跑）**已于 2026-08-23 实测通过**（探针 P3'：streaming 中入队 → turn 边界 drain；P2：settled 后入队 → 下次活动 drain），「收紧为丢弃+计数」的降级路径保留为 pi 升级行为变化时的防御备案。
 - 内核单 handle 的 in-flight 防重不跨 handle 实例——同 session 必须单例装配（§3.4 约束），U6 的 sessionId 注册表是第一处强制点，code review 按此 checklist 核。
 
 ---
@@ -443,3 +456,13 @@ export function createDelivery(port: DeliveryPort, config?: DeliveryConfig): Del
 | INFO | compaction 进行中 prompt 无条件 throw（agent-session.js:808-810，先于 streaming 分支） | 失败路径表补一行：gate `!isCompacting` 拦主路径 + 错误重试自愈 + 真机探针附带覆盖 |
 
 审查同时确认：§2.2 能力矩阵 9 行与 §3.3 断言 6 行逐行核实**全部属实无虚构**；intent 二值对 in-scope 7 场景覆盖完整；D8 主时序自洽（settled 后另一写入者置 busy 的场景下轮 settled 自愈 + streamingBehavior 双向兑底）；D7 六步骤与 dispatcher 实装逐项吻合。
+
+**第二轮对抗式审查**（tech-design-review，验证信息补充版，报告全文：[review-report-2.md](review-report-2.md)）：**0 must-fix** + 1 should-fix + 2 suggestion + 1 nit + 1 INFO，总判定**可进入实施**。实测记录与 `probes/` 原始事件流逐毫秒核对全部吻合、六个代码锚点精确命中、上轮 11 项处置零回退。发现项全部正面修复：
+
+| 级别 | 问题 | 处置 |
+|------|------|------|
+| should-fix #1 | §4「复用 probe-delivery.mjs 驱动模式」有假通过风险——S1 通过标准在目标 idle 时同样满足，且该脚本 P3 段已作废、streaming 前提只打印不断言 | §4 改为采 probe-p3.mjs 事件同步模式 + 两条驱动纪律（streaming/busy 前提必须结构化断言；probe-delivery.mjs P3 段不可照抄） |
+| suggestion #2 | 第一次 P3 作废（固定 sleep 晚于 run 结束）未交代，P2「前序滞留 1 条」来历不明 | §3.3 实测记录表后补「作废记录」段 |
+| suggestion #3 | 「推论 1/2 已实测」「pi 原语全部实测确认」过强——extension 侧 sendMessage 仍为代码核实 | §2.2/§4 限定为「RPC 半边已实测；extension 侧 U3 迁移 e2e 覆盖」 |
+| nit | P1 时间线「下一 turn 回 P1-ACK」与事件流不符（实为同 turn 内回复） | 已改「同一 turn 内」 |
+| INFO | steeringMode/followUpMode 属 pi 全局设置可配置，默认值方为推演前提 | §2.2 实测注记补注 |
