@@ -11,6 +11,8 @@
  *
  * 五态状态机（内部自管）：form → progress → success / error / exists
  * T5：Git 仓库选择器 + base branch 可搜索 combobox + 创建位置 radio + workspaceHint/locationMode 透传。
+ * form 态用 <form @submit.prevent> 包裹（对齐 CreateBranchModal）：分支名输入框按 Enter
+ * 原生触发创建（base 搜索框经 PopoverPortal teleport 在 form DOM 外，Enter 不会误触提交）。
  */
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -205,8 +207,8 @@ onBeforeUnmount(() => { cancelled.value = true; clearSuccessTimer() })
         <DialogDescription>{{ t('newTask.createWorktree.desc') }}</DialogDescription>
       </DialogHeader>
 
-      <!-- ── form 态 ── -->
-      <div v-if="phase === 'form'" class="mt-2 space-y-4">
+      <!-- ── form 态（<form> 包裹：Enter 提交走原生隐式提交链路） ── -->
+      <form v-if="phase === 'form'" class="mt-2 space-y-4" @submit.prevent="submitCreate">
         <!-- Git 仓库选择器 -->
         <div class="space-y-1.5">
           <Label>{{ t('newTask.createWorktree.repoLabel') }}</Label>
@@ -323,9 +325,9 @@ onBeforeUnmount(() => { cancelled.value = true; clearSuccessTimer() })
 
         <div class="flex justify-end gap-2 pt-1">
           <Button type="button" variant="secondary" data-testid="worktree-cancel-btn" @click="onCancel">{{ t('newTask.createWorktree.cancelBtn') }}</Button>
-          <Button type="button" data-testid="worktree-create-btn" :disabled="!canSubmit" @click="submitCreate">{{ t('newTask.createWorktree.createBtn') }}</Button>
+          <Button type="submit" data-testid="worktree-create-btn" :disabled="!canSubmit">{{ t('newTask.createWorktree.createBtn') }}</Button>
         </div>
-      </div>
+      </form>
 
       <!-- ── progress 态 ── -->
       <div v-else-if="phase === 'progress'" class="mt-2 space-y-3">
