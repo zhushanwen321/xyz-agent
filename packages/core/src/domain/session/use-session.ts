@@ -57,6 +57,9 @@ export interface ChatHydratePort {
   isHydrated(sessionId: string): boolean
   /** 注入历史消息（chat store hydrate） */
   hydrate(sessionId: string, messages: Message[]): void
+  /** 切入 reconcile：entry 历史为基线 + 分区尾部 streaming 实体保留（后台 session 切入刷新，
+   *  防 pi entries 不含进行中消息导致的 delta 断链——见 chat store reconcileHistory 注释） */
+  reconcileHistory(sessionId: string, messages: Message[]): void
   /** 记录截断标记（N1：截断标记供 MessageStream 显隐） */
   setHistoryTruncated(sessionId: string, historyTruncated: boolean): void
   /** 清历史加载失败态（retryHistory 先清再拉） */
@@ -222,14 +225,25 @@ export function createUseSession(deps: UseSessionDeps) {
     await api.switchSession(id)
     store.setActiveId(id)
     // 历史回填：features 层跨 api+stores，是 hydrate 的正确编排点
+    // 切入刷新（后台 session reconcile）：首次等价 hydrate；已 hydrate 则增量刷新到最新
+    // entries（turn 可能在前端不在场时完成）+ 保留尾部 streaming 实体（进行中轮次不断链）。
     if (!chat.isHydrated(id)) {
       try {
         const { messages, historyTruncated } = await chat.getHistory(id)
-        chat.hydrate(id, messages)
+        chat.reconcileHistory(id, messages)
         chat.setHistoryTruncated(id, historyTruncated) // N1: 截断标记供 MessageStream 显隐
         chat.clearHistoryError(id)
       } catch {
         chat.markHistoryFailed(id)
+      }
+    } else {
+      // 已 hydrate：静默刷新（失败不阻断——旧数据仍在，下次切入重试）
+      try {
+        const { messages } = await chat.getHistory(id)
+        chat.reconcileHistory(id, messages)
+      } catch (e) {
+        // 已 hydrate 刷新失败不阻断切入——旧数据仍在，下次切入重试；warn 留排查痕迹
+        console.warn(`[use-session] background reconcile refresh failed for ${id}:`, e)
       }
     }
     syncSessionToPanel(id)
@@ -243,7 +257,7 @@ export function createUseSession(deps: UseSessionDeps) {
     chat.clearHistoryError(sessionId)
     try {
       const { messages, historyTruncated } = await chat.getHistory(sessionId)
-      chat.hydrate(sessionId, messages)
+      chat.reconcileHistory(sessionId, messages)
       chat.setHistoryTruncated(sessionId, historyTruncated)
     } catch {
       chat.markHistoryFailed(sessionId)

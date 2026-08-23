@@ -26,6 +26,10 @@ vi.mock("../../shared/resource-discovery.ts", () => ({
 	discoverResources: spies.discoverResources,
 	findWorkspaceRoot: () => "/ws",
 	getCachedFileContent: spies.getCachedFileContent,
+	// passthrough mock：真实 getCachedParsed 走 mtime 缓存（需真文件），测试里
+	// 委托给 getCachedFileContent 的 mock 返回值——保持「content → parse」语义。
+	getCachedParsed: (path: string, parse: (c: string) => unknown) =>
+		parse(spies.getCachedFileContent(path) ?? ""),
 }));
 
 vi.mock("@zhushanwen/pi-extension-logger", () => ({
@@ -342,5 +346,54 @@ describe("subagent-list-injector session 级缓存", () => {
 		const r = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
 		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
 		expect(r?.systemPrompt).toContain("<name>worker</name>");
+	});
+});
+
+// ──────────────────────────────────────────────────────────────
+// KV-cache 顺序契约：输出按 name 码点序，重建（两次发现）逐字节一致
+// ──────────────────────────────────────────────────────────────
+
+describe("discoverAllAgents 顺序契约（KV-cache）", () => {
+	it("输出按 name 码点序排序，与发现层返回顺序（readdir 枚举序）无关", async () => {
+		const byPath: Record<string, string> = {
+			"/ws/.agents/agents/zeta.md": agentMd("zeta", "z"),
+			"/ws/.agents/agents/worker.md": agentMd("worker", "w"),
+			"/ws/.agents/agents/alpha.md": agentMd("alpha", "a"),
+		};
+		// 刻意以非字母序返回（模拟 readdir 无契约枚举序）
+		spies.discoverResources.mockResolvedValue([
+			agentResource("/ws/.agents/agents/zeta.md"),
+			agentResource("/ws/.agents/agents/worker.md"),
+			agentResource("/ws/.agents/agents/alpha.md"),
+		]);
+		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
+
+		const { discoverAllAgents } = await import("../subagent-list-injector");
+		const agents = await discoverAllAgents("/ws", "/agent");
+		expect(agents.map((a) => a.name)).toEqual(["alpha", "worker", "zeta"]);
+	});
+
+	it("重建（两次发现）输出与渲染结果逐字节一致——目录不变时 session_start/fallback/resume 任意重建等价", async () => {
+		const byPath: Record<string, string> = {
+			"/ws/.agents/agents/b.md": agentMd("beta", "b"),
+			"/ws/.agents/agents/a.md": agentMd("alpha", "a"),
+		};
+		// 两次发现返回顺序不同（模拟跨进程 readdir 漂移）
+		spies.discoverResources
+			.mockResolvedValueOnce([
+				agentResource("/ws/.agents/agents/b.md"),
+				agentResource("/ws/.agents/agents/a.md"),
+			])
+			.mockResolvedValueOnce([
+				agentResource("/ws/.agents/agents/a.md"),
+				agentResource("/ws/.agents/agents/b.md"),
+			]);
+		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
+
+		const { discoverAllAgents, formatAgentList } = await import("../subagent-list-injector");
+		const first = await discoverAllAgents("/ws", "/agent");
+		const second = await discoverAllAgents("/ws", "/agent");
+		expect(second).toEqual(first);
+		expect(formatAgentList(second)).toBe(formatAgentList(first));
 	});
 });

@@ -174,11 +174,35 @@ export function getCachedFileContent(filePath: string): string | null {
   return getCachedFile(filePath)?.content ?? null;
 }
 
+// [perf] 解析结果缓存（KV-cache 稳定性改造）：key = path，value = { mtimeMs, parsed }。
+// 复用 getCachedFile 的 mtime 判变——mtime 未变时跳过 parse（frontmatter YAML 解析是
+// 重建发现时最大的可省 CPU 项）。parse 的确定性结果（含 null，如 frontmatter 非法）
+// 均可缓存：同一 content 必然解析出同一结果。失效与 mtimeCache 同步（clearFileCache）。
+const parsedCache = new Map<string, { mtimeMs: number; parsed: unknown }>();
+
+/**
+ * mtime 级解析结果缓存：mtime 未变返回缓存 parsed，变则经 getCachedFile 取 content
+ * 重新 parse 并缓存。文件不存在/不可读 → null（并驱逐条目）。
+ */
+export function getCachedParsed<T>(filePath: string, parse: (content: string) => T): T | null {
+  const file = getCachedFile(filePath);
+  if (!file) {
+    parsedCache.delete(filePath);
+    return null;
+  }
+  const entry = parsedCache.get(filePath);
+  if (entry && entry.mtimeMs === file.mtimeMs) return entry.parsed as T;
+  const parsed = parse(file.content);
+  parsedCache.set(filePath, { mtimeMs: file.mtimeMs, parsed });
+  return parsed;
+}
+
 /** 清空（invalidateCache 语义——测试隔离 + mtime 漏判场景手动刷新兜底）。 */
 export function clearFileCache(): void {
   mtimeCache.clear();
   workspaceRootCache.clear();
   manifestCache.clear();
+  parsedCache.clear();
 }
 
 export function findWorkspaceRoot(cwd?: string): string {

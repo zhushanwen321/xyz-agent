@@ -49,3 +49,25 @@ export {
   getAskUserOther,
   isAskUserQuestion,
 } from './extensions/ask-user/helpers'
+
+// ── session-manager 协议（agent-managed session：select 通道 + marker；实现在 extensions/universal/session-manager）──
+export type {
+  SessionManagerAction,
+  SessionManagerRequest,
+  SessionManagerParams,
+  SessionManagerCreateParams,
+  SessionManagerSendParams,
+  SessionManagerHistoryParams,
+  SessionManagerStatusParams,
+  SessionManagerListParams,
+  SessionManagerAbortParams,
+  SessionManagerCreateResult,
+  SessionManagerSendResult,
+  SessionManagerHistoryResult,
+  SessionManagerStatusResult,
+  SessionManagerListResult,
+  SessionManagerSessionSummary,
+  SessionManagerAbortResult,
+  SessionManagerErrorResult,
+} from './extensions/session-manager/types'
+export { SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS } from './extensions/session-manager/marker'

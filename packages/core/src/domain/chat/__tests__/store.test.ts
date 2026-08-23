@@ -81,6 +81,52 @@ describe('createChatStore factory', () => {
       expect(msgs[0].id).toBe('m2')
     })
 
+    describe('reconcileHistory（后台 session 切入 reconcile，2026-08-22）', () => {
+      it('未 hydrate → 等价 hydrate（全量替换 + isHydrated 标记）', () => {
+        const sid = 's1'
+        sut.store.reconcileHistory(sid, [userMsg('m1'), userMsg('m2')])
+        expect(sut.store.isHydrated(sid)).toBe(true)
+        expect(sut.store.getMessages(sid)).toHaveLength(2)
+      })
+
+      it('已 hydrate + 无 streaming → 纯刷新到最新 entries（后台完成的 turn 可见）', () => {
+        const sid = 's1'
+        sut.store.hydrate(sid, [userMsg('m1', '旧')])
+        // 后台 turn 完成后 pi entries 新增 m2（getHistory 全量返回）
+        sut.store.reconcileHistory(sid, [userMsg('m1', '旧'), userMsg('m2', 'ls 输出')])
+        const msgs = sut.store.getMessages(sid)
+        expect(msgs).toHaveLength(2)
+        expect(msgs[1].content).toBe('ls 输出')
+      })
+
+      it('已 hydrate + 尾部 streaming 实体 → entry 基线 + streaming 追加其后（delta 不断链）', () => {
+        const sid = 's1'
+        // 分区：完成 user + live streaming assistant（进行中，pi 无对应 entry）
+        sut.store.hydrate(sid, [userMsg('m1', 'q')])
+        sut.store.setMessages(sid, [userMsg('m1', 'q'), streamingAssistant('a-live', { content: '部分' })])
+        // getHistory 全量（pi entries 只到 m1，不含进行中消息）
+        sut.store.reconcileHistory(sid, [userMsg('m1', 'q')])
+        const msgs = sut.store.getMessages(sid)
+        expect(msgs).toHaveLength(2)
+        expect(msgs[1]).toMatchObject({ id: 'a-live', status: 'streaming', content: '部分' })
+        // isGenerating 保持 true（后续 text_delta 守卫不丢流）
+        expect(sut.store.isGenerating(sid)).toBe(true)
+      })
+
+      it('已 hydrate + streaming 实体不在尾部（后面有完成消息）→ 不保留', () => {
+        const sid = 's1'
+        sut.store.hydrate(sid, [userMsg('m1')])
+        sut.store.setMessages(sid, [
+          streamingAssistant('a-stale'),
+          userMsg('m2', '后到的完成消息'),
+        ])
+        sut.store.reconcileHistory(sid, [userMsg('m1'), userMsg('m2', '后到的完成消息')])
+        // 非尾部 streaming（历史中间态）不保留——entry 基线为准确相
+        expect(sut.store.getMessages(sid)).toHaveLength(2)
+        expect(sut.store.getMessages(sid)[0].id).toBe('m1')
+      })
+    })
+
     it('appendUser 返回 id（u- 前缀）+ 注入 complete user 消息（segments 保留）', () => {
       const sid = 's1'
       const segs: Segment[] = [{ type: 'skill', name: 'code-review' }, { type: 'text', text: 'please review' }]

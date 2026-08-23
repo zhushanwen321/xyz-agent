@@ -23,6 +23,8 @@ import {
   processPackageSync,
   getCachedFile,
   getCachedFileContent,
+  getCachedParsed,
+  clearFileCache,
 } from "../resource-discovery.ts";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
@@ -458,6 +460,61 @@ describe("m5: 统一 mtime 缓存层", () => {
       // 删除 → 驱逐（不再返回旧内容）
       fs.rmSync(f);
       expect(getCachedFileContent(f)).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── KV-cache 稳定性改造：解析结果缓存 getCachedParsed ──
+
+describe("getCachedParsed（mtime 级解析缓存）", () => {
+  beforeEach(() => {
+    clearFileCache();
+  });
+
+  it("mtime 未变时 parse 只跑一次（缓存解析结果）", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "parsed-cache-"));
+    const f = path.join(dir, "a.md");
+    fs.writeFileSync(f, "---\nname: x\ndescription: y\n---", "utf-8");
+    try {
+      const parse = vi.fn((content: string) => (content.includes("name: x") ? "OK" : "BAD"));
+      const first = getCachedParsed(f, parse);
+      const second = getCachedParsed(f, parse);
+      expect(first).toBe("OK");
+      expect(second).toBe("OK");
+      expect(parse).toHaveBeenCalledTimes(1); // 第二次命中缓存，不重 parse
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("mtime 变后重新 parse；文件删除后返回 null 并驱逐", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "parsed-cache2-"));
+    const f = path.join(dir, "a.md");
+    fs.writeFileSync(f, "v1", "utf-8");
+    try {
+      const parse = (content: string) => content;
+      expect(getCachedParsed(f, parse)).toBe("v1");
+      fs.writeFileSync(f, "v2", "utf-8");
+      expect(getCachedParsed(f, parse)).toBe("v2"); // mtime 变 → 重新 parse
+      fs.rmSync(f);
+      expect(getCachedParsed(f, parse)).toBeNull(); // 删除 → null
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("clearFileCache 同时清空解析缓存", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "parsed-cache3-"));
+    const f = path.join(dir, "a.md");
+    fs.writeFileSync(f, "content", "utf-8");
+    try {
+      const parse = vi.fn(() => "OK");
+      getCachedParsed(f, parse);
+      clearFileCache();
+      getCachedParsed(f, parse);
+      expect(parse).toHaveBeenCalledTimes(2); // 缓存被清 → 重新 parse
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

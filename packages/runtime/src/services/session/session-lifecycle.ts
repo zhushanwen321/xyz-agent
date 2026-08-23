@@ -261,6 +261,10 @@ export class SessionLifecycle {
     modelOverride?: string
     /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（C-RL-6 优先级）。 */
     thinkingOverride?: string
+    /** 发起来源：'user' | 'agent'。agent-managed session 标记。 */
+    spawnSource?: 'user' | 'agent'
+    /** 父 agent session id（spawnSource='agent' 时必填）。 */
+    parentAgentSessionId?: string
   }): Promise<SessionSummary> {
     const tempId = crypto.randomUUID()
     const requestedCwd = cwd ?? process.cwd()
@@ -370,6 +374,20 @@ export class SessionLifecycle {
         this.sessionStore.persistProjectBinding(session.sessionFilePath, options.projectId)
       }
     }
+    // agent-managed session 标记：spawnSource / parentAgentSessionId。
+    // 内存态 patch 到 session 对象（toSummary 透传），供 session-manager list 过滤。
+    if (options?.spawnSource) {
+      ;(session as { spawnSource?: 'user' | 'agent' }).spawnSource = options.spawnSource
+    }
+    if (options?.parentAgentSessionId) {
+      ;(session as { parentAgentSessionId?: string }).parentAgentSessionId = options.parentAgentSessionId
+    }
+    // .agent.json sidecar 落盘（重启恢复链路，G-1）——与 preset/project 同模式：
+    // pi 延迟写入窗口（sessionFilePath 未落盘）时 existsSync 守卫跳过，内存态兑底。
+    if (options?.spawnSource && session.sessionFilePath) {
+      // parentAgentSessionId 可选（#15）：spawnSource 单独成立即持久化，防异常路径下 badge 重启丢失
+      this.sessionStore.persistAgentBinding(session.sessionFilePath, options.spawnSource, options.parentAgentSessionId)
+    }
     // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
     // homedir 过滤（含降级 homedir）由 WorkspaceService.record 统一负责（方案A，一处堵死全部路径），
     // lifecycle 层不再关心 cwd 是否降级。
@@ -461,6 +479,8 @@ export class SessionLifecycle {
         try { unlinkSync(session.sessionFilePath + '.preset.json') } catch { void 0 }
         try { unlinkSync(session.sessionFilePath + '.project.json') } catch { void 0 }
         try { unlinkSync(session.sessionFilePath + '.handoff.json') } catch { void 0 }
+        // 清理 agent binding sidecar（agent-managed-session；delete 是唯一清理点，防孤儿 sidecar）
+        try { unlinkSync(session.sessionFilePath + '.agent.json') } catch { void 0 }
         // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
         cleanupMigrateResidues(session.sessionFilePath)
         // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
@@ -477,6 +497,8 @@ export class SessionLifecycle {
       try { unlinkSync(target.filePath + '.preset.json') } catch { void 0 }
       try { unlinkSync(target.filePath + '.project.json') } catch { void 0 }
       try { unlinkSync(target.filePath + '.handoff.json') } catch { void 0 }
+      // 清理 agent binding sidecar（同上，scanned 分支）
+      try { unlinkSync(target.filePath + '.agent.json') } catch { void 0 }
       // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
       cleanupMigrateResidues(target.filePath)
       // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
@@ -810,6 +832,8 @@ export class SessionLifecycle {
       // 原顺序是 switchSession 之前 unlink，若 switchSession 抛错，session 的终态 sidecar
       //（done/stopped）已被删 → 终态永久丢失。现在只在切换成功后才删，失败时保留旧终态。
       try { unlinkSync(forkedFilePath + '.meta.json') } catch { void 0 }
+      // fork 不继承 agent binding（binding 是创建时语义）——防御性清理同名残留 sidecar
+      try { unlinkSync(forkedFilePath + '.agent.json') } catch { void 0 }
       // 写 preset 绑定到 forkedFilePath 的 sidecar（设计文档 §4.5）。
       // fork 继承源 preset，forkedFilePath 是新文件（已写出），existsSync 守卫会通过。
       this.sessionStore.persistPresetBinding(forkedFilePath, forkPresetId)

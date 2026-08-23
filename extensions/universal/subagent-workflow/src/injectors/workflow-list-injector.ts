@@ -31,7 +31,7 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import {
 	discoverResources,
 	findWorkspaceRoot,
-	getCachedFileContent,
+	getCachedParsed,
 } from "../shared/resource-discovery.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
 
@@ -107,6 +107,8 @@ export function parseWorkflowMeta(content: string): WorkflowEntry | null {
 
 /**
  * 用统一资源发现发现所有可用 workflow（includeTmp 覆盖 generate 产物）。
+ * 解析经 getCachedParsed mtime 级缓存；输出按 name 码点序排序（KV-cache 契约，
+ * 见 subagent-list-injector.ts discoverAllAgents 注释）。
  * 永不抛错——单文件读失败仅记日志。
  */
 export async function discoverAllWorkflows(
@@ -124,8 +126,7 @@ export async function discoverAllWorkflows(
 	for (const resource of resources) {
 		if (!resource.available) continue;
 		try {
-			const content = getCachedFileContent(resource.path) ?? "";
-			const wf = parseWorkflowMeta(content);
+			const wf = getCachedParsed(resource.path, parseWorkflowMeta);
 			if (wf) map.set(wf.name, { ...wf, path: resource.path });
 		} catch (err) {
 			logger.error(
@@ -134,7 +135,9 @@ export async function discoverAllWorkflows(
 			);
 		}
 	}
-	return [...map.values()];
+	return [...map.values()].sort((a, b) =>
+		a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+	);
 }
 
 /** 转义 XML 特殊字符 */

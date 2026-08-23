@@ -24,6 +24,9 @@ vi.mock("../../shared/resource-discovery.ts", () => ({
 	discoverResources: spies.discoverResources,
 	findWorkspaceRoot: () => "/ws",
 	getCachedFileContent: spies.getCachedFileContent,
+	// passthrough mock（真实实现走 mtime 缓存需真文件）：委托 getCachedFileContent
+	getCachedParsed: (path: string, parse: (c: string) => unknown) =>
+		parse(spies.getCachedFileContent(path) ?? ""),
 }));
 
 vi.mock("@zhushanwen/pi-extension-logger", () => ({
@@ -328,5 +331,52 @@ describe("workflow-list-injector session 级缓存", () => {
 		const r = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
 		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
 		expect(r?.systemPrompt).toContain("<name>chain</name>");
+	});
+});
+
+// ──────────────────────────────────────────────────────────────
+// KV-cache 顺序契约：输出按 name 码点序，重建（两次发现）逐字节一致
+// ──────────────────────────────────────────────────────────────
+
+describe("discoverAllWorkflows 顺序契约（KV-cache）", () => {
+	it("输出按 name 码点序排序，与发现层返回顺序（readdir 枚举序）无关", async () => {
+		const byPath: Record<string, string> = {
+			"/ws/.pi/workflows/zeta.js": workflowJs("zeta", "z"),
+			"/ws/.pi/workflows/chain.js": workflowJs("chain", "c"),
+			"/ws/.pi/workflows/alpha.js": workflowJs("alpha", "a"),
+		};
+		spies.discoverResources.mockResolvedValue([
+			workflowResource("/ws/.pi/workflows/zeta.js"),
+			workflowResource("/ws/.pi/workflows/chain.js"),
+			workflowResource("/ws/.pi/workflows/alpha.js"),
+		]);
+		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
+
+		const { discoverAllWorkflows } = await import("../workflow-list-injector");
+		const workflows = await discoverAllWorkflows("/ws", "/agent");
+		expect(workflows.map((w) => w.name)).toEqual(["alpha", "chain", "zeta"]);
+	});
+
+	it("重建（两次发现顺序不同）输出与渲染结果逐字节一致", async () => {
+		const byPath: Record<string, string> = {
+			"/ws/.pi/workflows/b.js": workflowJs("beta", "b"),
+			"/ws/.pi/workflows/a.js": workflowJs("alpha", "a"),
+		};
+		spies.discoverResources
+			.mockResolvedValueOnce([
+				workflowResource("/ws/.pi/workflows/b.js"),
+				workflowResource("/ws/.pi/workflows/a.js"),
+			])
+			.mockResolvedValueOnce([
+				workflowResource("/ws/.pi/workflows/a.js"),
+				workflowResource("/ws/.pi/workflows/b.js"),
+			]);
+		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
+
+		const { discoverAllWorkflows, formatWorkflowList } = await import("../workflow-list-injector");
+		const first = await discoverAllWorkflows("/ws", "/agent");
+		const second = await discoverAllWorkflows("/ws", "/agent");
+		expect(second).toEqual(first);
+		expect(formatWorkflowList(second)).toBe(formatWorkflowList(first));
 	});
 });

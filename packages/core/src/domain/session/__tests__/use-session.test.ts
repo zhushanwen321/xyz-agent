@@ -97,6 +97,7 @@ function makeFixture(opts: { withFlow?: boolean } = {}): Fixture {
     getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
     isHydrated: vi.fn(() => false),
     hydrate: vi.fn(),
+    reconcileHistory: vi.fn(),
     setHistoryTruncated: vi.fn(),
     clearHistoryError: vi.fn(),
     markHistoryFailed: vi.fn(),
@@ -126,10 +127,10 @@ describe('selectSession', () => {
     expect(f.api.switchSession).toHaveBeenCalledTimes(1)
     expect(f.api.switchSession).toHaveBeenCalledWith('sid-1')
     expect(f.store.activeId.value).toBe('sid-1')
-    // hydrate 链路
+    // hydrate 链路（后台 session reconcile：未 hydrate 分支走 reconcileHistory，等价 hydrate）
     expect(f.chat.isHydrated).toHaveBeenCalledWith('sid-1')
     expect(f.chat.getHistory).toHaveBeenCalledTimes(1)
-    expect(f.chat.hydrate).toHaveBeenCalledWith('sid-1', msgs)
+    expect(f.chat.reconcileHistory).toHaveBeenCalledWith('sid-1', msgs)
     expect(f.chat.setHistoryTruncated).toHaveBeenCalledWith('sid-1', true)
     expect(f.chat.clearHistoryError).toHaveBeenCalledWith('sid-1')
     // panel 载入（经 activePanelId 端口）
@@ -148,7 +149,7 @@ describe('selectSession', () => {
 
     await expect(f.session.selectSession('ghost')).rejects.toThrow('not found')
     expect(f.store.activeId.value).toBe('other')
-    expect(f.chat.hydrate).not.toHaveBeenCalled()
+    expect(f.chat.reconcileHistory).not.toHaveBeenCalled()
     expect(f.panel.loadSession).not.toHaveBeenCalled()
     expect(f.navigation.push).not.toHaveBeenCalled()
     f.dispose()
@@ -165,11 +166,17 @@ describe('selectSession', () => {
     f.dispose()
   })
 
-  it('已 hydrate 的 session 不重复拉取历史（幂等守卫）', async () => {
+  it('已 hydrate 的 session 切入时静默刷新（后台 session reconcile，2026-08-22）', async () => {
     const f = makeFixture()
+    const msgs = [{ id: 'm2' } as never]
     f.chat.isHydrated.mockReturnValue(true)
+    f.chat.getHistory.mockResolvedValue({ messages: msgs, historyTruncated: false })
     await f.session.selectSession('sid-1')
-    expect(f.chat.getHistory).not.toHaveBeenCalled()
+    // 旧幂等守卫已废：后台（agent-managed）session 的 turn 可能在前端不在场时完成，
+    // 切入必须刷新到最新 entries；失败静默（旧数据仍在，下次切入重试）
+    expect(f.chat.getHistory).toHaveBeenCalledTimes(1)
+    expect(f.chat.reconcileHistory).toHaveBeenCalledWith('sid-1', msgs)
+    expect(f.chat.markHistoryFailed).not.toHaveBeenCalled()
     expect(f.store.activeId.value).toBe('sid-1')
     f.dispose()
   })
@@ -308,7 +315,7 @@ describe('loadSessions / retryHistory / renameSession / syncSessionToPanel', () 
     await f.session.retryHistory('s1')
     expect(f.chat.clearHistoryError).toHaveBeenCalledWith('s1')
     expect(f.chat.getHistory).toHaveBeenCalledWith('s1')
-    expect(f.chat.hydrate).toHaveBeenCalledWith('s1', msgs)
+    expect(f.chat.reconcileHistory).toHaveBeenCalledWith('s1', msgs)
     expect(f.chat.setHistoryTruncated).toHaveBeenCalledWith('s1', false)
     expect(f.chat.markHistoryFailed).not.toHaveBeenCalled()
     f.dispose()
@@ -445,6 +452,7 @@ function makeChat(): ChatHydratePort {
     getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
     isHydrated: vi.fn(() => false),
     hydrate: vi.fn(),
+    reconcileHistory: vi.fn(),
     setHistoryTruncated: vi.fn(),
     clearHistoryError: vi.fn(),
     markHistoryFailed: vi.fn(),

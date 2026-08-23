@@ -11,6 +11,7 @@
  * 但拿到的是 ManagedSession 实例,可读写字段(lastActiveAt / isGenerating)。
  */
 import type { ServerMessage, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'
+import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
 import type { ScannedSessionMeta } from '../ports/session.js'
 
 /**
@@ -220,6 +221,8 @@ export type PiTranslatedEvent =
   | { kind: 'bridge-ui'; requestId: string; sessionId: string; method: string; data: Record<string, unknown> }
   /** 交互式 extension_ui_request（confirm/select/input/notify/editor）—— interpreter 注册超时。 */
   | { kind: 'extension-ui'; requestId: string; sessionId: string; method: string; payload: Record<string, unknown> }
+  /** session-manager 请求（select + SESSION_MANAGER_MARKER）—— interpreter fire-and-forget 路由到 SessionManagerHandler。 */
+  | { kind: 'session-manager-ui'; requestId: string; sessionId: string; action: SessionManagerAction | '__malformed__'; params: Record<string, unknown> }
   /** thinking_level_changed —— interpreter 回写 session 缓存（与 session.thinkingLevelSet WS 帧成对）。 */
   | { kind: 'thinking-level'; level: string | undefined }
   /** session_info_changed —— interpreter 回写 session label 缓存（与 session.renamed WS 帧成对）。 */
