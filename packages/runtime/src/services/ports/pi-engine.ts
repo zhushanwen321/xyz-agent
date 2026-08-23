@@ -139,7 +139,17 @@ export interface IPiEngine {
    * 类型组装（补 type:'image'）下沉到 RpcClient 实现内部，本接口只暴露 shared 形状，
    * 保持 pi 私有字段不出 infra 层（AGENTS.md 规则 #5）。undefined/空数组归一化为不传。
    */
-  prompt(content: string, images?: Array<{ data: string; mimeType: string }>): Promise<PiMessage>
+  /**
+   * 发送用户消息。
+   *
+   * streamingBehavior 控制 streaming 期间的投递语义：
+   * - undefined（默认）：streaming 时抛错（旧行为，MessageDispatcher 等调用方依赖此守卫）
+   * - 'steer'：streaming 时入队，turn 边界注入（等价于 pi steer）
+   * - 'followUp'：streaming 时入队，run 结束后注入（等价于 pi followUp）
+   *
+   * U1 仅开通能力，不改现有调用方行为；U5 session-manager send 排队时消费。
+   */
+  prompt(content: string, images?: Array<{ data: string; mimeType: string }>, streamingBehavior?: 'steer' | 'followUp'): Promise<PiMessage>
   abort(): Promise<PiMessage>
   steer(content: string): Promise<PiMessage>
   followUp(content: string): Promise<PiMessage>
