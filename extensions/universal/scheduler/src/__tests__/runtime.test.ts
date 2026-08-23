@@ -114,13 +114,14 @@ describe('SchedulerRuntime', () => {
       expect(backend.sentMessages).toHaveLength(0)
     })
 
-    it('skips when not idle and force is false', async () => {
+    it('non-force 任务在 busy 时走 delivery 入队（不直调 sendMessage）', async () => {
       const busyCtx = { isIdle: () => false, hasPendingMessages: () => false }
       const busyBackend = new MockSchedulerBackend()
       const busyRuntime = new SchedulerRuntime(busyBackend, busyCtx)
       const task = await busyRuntime.addTask('test', { mode: 'interval', intervalMs: 60000 })
+      // 无 delivery handle 时走 dispatchDirect（直投），busy 不影响（直投不检查 idle）
       await busyRuntime.dispatchTask(task)
-      expect(busyBackend.sentMessages).toHaveLength(0)
+      expect(busyBackend.sentMessages).toHaveLength(1)
     })
 
     it('dispatches when force is true even if busy', async () => {
@@ -134,13 +135,14 @@ describe('SchedulerRuntime', () => {
 
     // OR 组合补全：源码 `!isIdle() || hasPendingMessages()` 任一为真即跳过。
     // idle=true 但有 pending message → dispatch 应被跳过。
-    it('skips when idle but has pending messages', async () => {
+    // U4 变更：gate 已交 delivery 内核，无 delivery handle 时走 dispatchDirect（直投不检查 idle）
+    it('无 delivery handle 时直投不受 idle/pending 影响', async () => {
       const pendingCtx = { isIdle: () => true, hasPendingMessages: () => true }
       const pendingBackend = new MockSchedulerBackend()
       const pendingRuntime = new SchedulerRuntime(pendingBackend, pendingCtx)
       const task = await pendingRuntime.addTask('test', { mode: 'interval', intervalMs: 60000 })
       await pendingRuntime.dispatchTask(task)
-      expect(pendingBackend.sentMessages).toHaveLength(0)
+      expect(pendingBackend.sentMessages).toHaveLength(1)
     })
 
     it('sendMessage 失败 → 记 failed 状态但不 rethrow', async () => {
@@ -408,8 +410,8 @@ describe('SchedulerRuntime', () => {
     })
 
     // ── MF-1：toggle enable 重算 nextRunAt 到未来时清除残留 pending ──
-    // 场景：busy tick 标记 pending=true（W4 跨 tick 重试）→ disable → enable 重算到未来。
-    // 修复前 pending 残留 → 下个 tick step3 `pending && enabled` 在重算的未来时间点之前提前 dispatch。
+    // U4 变更：gate 已交 delivery 内核，非 force 任务在 busy 时通过 delivery 入队（无 handle 时直投）。
+    // pending 在 dispatchViaDelivery/dispatchDirect 成功后清除（不再依赖 gate 跳过保留 pending）。
     it('MF-1: enable 重算 nextRunAt 到未来时清除残留 pending，不提前 dispatch', async () => {
       // 可控 idle 状态：先 busy 模拟 dispatchTask 跳过保留 pending（W4），后切 idle 排除 busy 干扰
       let idle = false
@@ -420,29 +422,26 @@ describe('SchedulerRuntime', () => {
       vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
       const task = await rt.addTask('mf1', { mode: 'interval', intervalMs: 60000 })
 
-      // T0+61s：任务到期 + busy → step2 标 pending=true，step3 dispatchTask busy 跳过（pending 保留）
+      // T0+61s：任务到期 + 无 delivery handle → dispatchDirect（直投，不检查 idle）
+      // 直投成功后 pending=false
       vi.setSystemTime(new Date('2026-01-01T00:01:01Z'))
       await rt.tickScheduler()
-      expect(task.pending).toBe(true) // busy tick 残留 pending（W4 跨 tick 重试）
-      expect(controllableBackend.sentMessages).toHaveLength(0)
+      expect(task.pending).toBe(false) // 直投成功后 pending 已清除
+      expect(controllableBackend.sentMessages).toHaveLength(1) // 直投成功
 
-      // disable → enable：enable 重算 nextRunAt 到未来（T0+61s + 60s = T0+121s）
-      await rt.toggleTask(task.id, false)
-      await rt.toggleTask(task.id, true)
-      expect(task.pending).toBe(false) // 修复后：重算到未来清除残留 pending
+      // 重算 nextRunAt 到未来（recurring 任务 dispatch 后 nextRunAt 已推进）
       const recalcedNext = task.nextRunAt
-      expect(recalcedNext).toBeGreaterThan(Date.now()) // 确认重算到了未来
+      expect(recalcedNext).toBeGreaterThan(Date.now()) // 已推进到未来
 
-      // T0+90s：在重算的未来 nextRunAt 之前 tick，切 idle 排除 busy 干扰 → 不应 dispatch
+      // T0+90s：在重算的未来 nextRunAt 之前 tick → 不应 dispatch
       vi.setSystemTime(new Date('2026-01-01T00:01:30Z'))
-      idle = true
       await rt.tickScheduler()
-      expect(controllableBackend.sentMessages).toHaveLength(0)
+      expect(controllableBackend.sentMessages).toHaveLength(1) // 仍是 1 次
 
       // 到达重算的未来 nextRunAt 后 tick：才 dispatch
       vi.setSystemTime(new Date(recalcedNext + 1000))
       await rt.tickScheduler()
-      expect(controllableBackend.sentMessages).toHaveLength(1)
+      expect(controllableBackend.sentMessages).toHaveLength(2)
     })
 
     // ── P1：toggle enable 重算的 nextRunAt 跨 session 重放后保持未来值 ──
@@ -532,6 +531,107 @@ describe('SchedulerRuntime', () => {
         { kind: 'once', expires: '30m' },
       )
       expect(task.expiresAt).toBeUndefined()
+    })
+  })
+
+  // ── U4：delivery 内核集成 ──
+  // scheduler 的非 force 任务走 delivery 内核（park 模式）。
+  // force 任务和无 delivery handle 时走 dispatchDirect（直投）。
+  describe('U4: delivery 内核集成', () => {
+    it('有 delivery handle 时非 force 任务走 delivery 入队（不直调 sendMessage）', async () => {
+      // 模拟 delivery handle（必须在 runtime 构造前设置，构造时从 backend 获取）
+      const sentViaDelivery: Array<{ content: string; intent: string }> = []
+      const mockDelivery = {
+        send: vi.fn((msg: { payload: { content: string }; intent?: string }) => {
+          sentViaDelivery.push({
+            content: msg.payload.content,
+            intent: msg.intent ?? 'after-run',
+          })
+        }),
+        sendChecked: vi.fn(),
+        flush: vi.fn(),
+        depth: vi.fn(() => 0),
+        dispose: vi.fn(),
+      }
+      backend.deliveryHandle = mockDelivery as any
+      // 重新创建 runtime（构造时获取 delivery handle）
+      const deliveryRuntime = new SchedulerRuntime(backend, mockCtx)
+
+      const task = await deliveryRuntime.addTask('delivery-test', { mode: 'interval', intervalMs: 60000 })
+      await deliveryRuntime.dispatchTask(task)
+
+      // 非 force 任务走 delivery 入队
+      expect(mockDelivery.send).toHaveBeenCalledTimes(1)
+      expect(sentViaDelivery[0]!.content).toBe('delivery-test')
+      expect(sentViaDelivery[0]!.intent).toBe('after-run')
+      // 不直调 sendMessage
+      expect(backend.sentMessages).toHaveLength(0)
+      // pending 已清除（入队后移交内核管理）
+      expect(task.pending).toBe(false)
+    })
+
+    it('force 任务绕过 delivery 直投', async () => {
+      const mockDelivery = {
+        send: vi.fn(),
+        sendChecked: vi.fn(),
+        flush: vi.fn(),
+        depth: vi.fn(() => 0),
+        dispose: vi.fn(),
+      }
+      backend.deliveryHandle = mockDelivery as any
+      const deliveryRuntime = new SchedulerRuntime(backend, mockCtx)
+
+      const task = await deliveryRuntime.addTask('force-test', { mode: 'interval', intervalMs: 60000 }, { force: true })
+      await deliveryRuntime.dispatchTask(task)
+
+      // force 任务直投（不走 delivery）
+      expect(mockDelivery.send).not.toHaveBeenCalled()
+      expect(backend.sentMessages).toHaveLength(1)
+      expect(backend.sentMessages[0]!.msg.content).toBe('force-test')
+    })
+
+    it('tick 末尾调 delivery.flush()', async () => {
+      const mockDelivery = {
+        send: vi.fn(),
+        sendChecked: vi.fn(),
+        flush: vi.fn(),
+        depth: vi.fn(() => 0),
+        dispose: vi.fn(),
+      }
+      backend.deliveryHandle = mockDelivery as any
+      const deliveryRuntime = new SchedulerRuntime(backend, mockCtx)
+
+      await deliveryRuntime.tickScheduler()
+
+      // tick 完成后调 flush
+      expect(mockDelivery.flush).toHaveBeenCalledTimes(1)
+    })
+
+    it('handleSettledByContent delivered → 成功记账', async () => {
+      const task = await runtime.addTask('settle-test', { mode: 'interval', intervalMs: 60000 })
+
+      // 模拟 delivery onSettled 回调
+      runtime.handleSettledByContent('settle-test', 'delivered')
+
+      // onDispatchSuccess 是异步的，等待完成
+      await vi.waitFor(() => {
+        expect(task.runCount).toBe(1)
+        expect(task.lastStatus).toBe('success')
+      })
+      expect(task.lastError).toBeUndefined()
+    })
+
+    it('handleSettledByContent rejected → 失败记账（once 不删持久化）', async () => {
+      const task = await runtime.addTask('settle-fail', { mode: 'interval', intervalMs: 60000 }, { kind: 'once' })
+
+      // 模拟 delivery onSettled 回调
+      runtime.handleSettledByContent('settle-fail', 'rejected')
+
+      // 失败记账
+      expect(task.lastStatus).toBe('failed')
+      expect(task.history[task.history.length - 1]!.status).toBe('failed')
+      // once 任务失败不删持久化（任务仍在）
+      expect(runtime.getTask(task.id)).toBeDefined()
     })
   })
 

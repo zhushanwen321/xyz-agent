@@ -1,5 +1,7 @@
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent'
 
+import type { DeliveryHandle } from '@xyz-agent/session-delivery'
+
 import type { SchedulerBackend } from './backend.js'
 import { autoName, generateTaskId } from './format.js'
 import { computeNextRunAt, parseDuration } from './parsing.js'
@@ -30,13 +32,14 @@ const STALE_CTX_MARKER = 'stale after session replacement'
 export class SchedulerRuntime {
   private tasks: Map<string, ScheduledTask> = new Map()
   private backend: SchedulerBackend
-  private ctx: Pick<ExtensionContext, 'isIdle' | 'hasPendingMessages'>
   private tickTimer: ReturnType<typeof setInterval> | null = null
   private dispatchTimestamps: number[] = []
   private onAfterTickCallback: (() => void) | null = null
   private readonly isCtxStale: (() => boolean) | undefined
   // R3-S1：同任务 dispatch 在途标记（Set<taskId>），见 dispatchTask 注释
   private readonly dispatchesInFlight = new Set<string>()
+  // delivery handle（装配点注入；非 force 任务走内核队列）
+  private delivery: DeliveryHandle | undefined
 
   /**
    * 依赖反转构造：backend 承担 appendEntry/pi.sendMessage/时间源，runtime 只持有内存态。
@@ -48,12 +51,15 @@ export class SchedulerRuntime {
    */
   constructor(
     backend: SchedulerBackend,
-    ctx: Pick<ExtensionContext, 'isIdle' | 'hasPendingMessages'>,
+    ctx?: Pick<ExtensionContext, 'isIdle' | 'hasPendingMessages'>,
     isCtxStale?: () => boolean,
   ) {
     this.backend = backend
-    this.ctx = ctx
+    // ctx 不再存实例变量（gate 已交内核）；isCtxStale 保留用于代际检测
+    void ctx
     this.isCtxStale = isCtxStale
+    // 从 backend 获取 delivery handle（装配点注入）
+    this.delivery = backend.getDeliveryHandle?.()
   }
 
   // ── 任务 CRUD ──
@@ -264,6 +270,10 @@ export class SchedulerRuntime {
 
     // W2：tick 完成后刷新 widget（index.ts 注册 refreshWidget）
     this.onAfterTickCallback?.()
+
+    // delivery flush：park 模式下内核不主动重试，由 scheduler tick 外部触发 flush
+    // 让积压在队列中的消息在每个 tick 尝试投递
+    this.delivery?.flush()
   }
 
   // ── dispatch ──
@@ -302,17 +312,23 @@ export class SchedulerRuntime {
    * once 成功 → append delete。失败 dispatch 不 append（CL7 重试语义，transient 失败 nextRunAt 未推进）。
    */
   private async dispatchTaskInner(task: ScheduledTask): Promise<boolean> {
-    // 检查 force 或 idle
-    if (!task.force) {
-      if (!this.ctx.isIdle() || this.ctx.hasPendingMessages()) {
-        return false // 延迟到下次 tick
-      }
-    }
-
     // 检查速率限制
     if (!this.hasDispatchCapacity(this.backend.now())) return false
 
-    // 注入 message（await：async 错误必须被捕获，fire-and-forget 会漏）
+    if (task.force || !this.delivery) {
+      // force 任务或无 delivery handle 时直投（绕过内核队列）
+      return this.dispatchDirect(task)
+    }
+
+    // 非 force 任务走 delivery 内核（park 模式：busy 入队等下次 tick flush）
+    return this.dispatchViaDelivery(task)
+  }
+
+  /**
+   * force 任务直投：绕过 delivery 内核队列，直接调 backend.sendMessage。
+   * 无 delivery handle 时也走此路径（向后兼容）。
+   */
+  private async dispatchDirect(task: ScheduledTask): Promise<boolean> {
     try {
       await this.backend.sendMessage(
         { content: task.prompt, customType: 'pi-scheduler:dispatched', display: true },
@@ -325,47 +341,94 @@ export class SchedulerRuntime {
       if (task.history.length > HISTORY_LIMIT) task.history.shift()
       return false
     }
+    return this.onDispatchSuccess(task)
+  }
 
-    // 更新状态（收敛到一个 now 值，避免多次 backend.now() 在真实时钟下漂移）
+  /**
+   * 非 force 任务走 delivery 内核：入队后由内核 flush 时投递。
+   * gate（isIdle/hasPendingMessages）由内核管理，busy 时入队不重试（park 模式）。
+   * onSettled 回调处理成功/失败记账。
+   * 返回 true 表示已入队（非实际发送）。
+   */
+  private dispatchViaDelivery(task: ScheduledTask): boolean {
+    const delivery = this.delivery!
+
+    delivery.send({
+      payload: {
+        kind: 'custom',
+        customType: 'pi-scheduler:dispatched',
+        content: task.prompt,
+        display: true,
+      },
+      intent: 'after-run',
+    })
+
+    // send() 不 throw（park 模式下入队即返回）。
+    // 入队后立即清除 pending（已移交 delivery 内核管理，下个 tick 不再重复 dispatch）。
+    // 成功/失败记账由 onSettled 回调异步处理。
+    task.pending = false
+    return true
+  }
+
+  /**
+   * dispatch 成功后的状态更新与持久化（dispatchDirect 成功后、onSettled delivered 后共用）。
+   */
+  private async onDispatchSuccess(task: ScheduledTask): Promise<boolean> {
     const now = this.backend.now()
     task.runCount++
     task.lastRunAt = now
     task.lastStatus = 'success'
     task.pending = false
-    task.lastError = undefined // 成功 dispatch 后清除历史错误
+    task.lastError = undefined
     task.history.push({ at: now, status: 'success' })
     if (task.history.length > HISTORY_LIMIT) task.history.shift()
 
-    // 计算下次执行 + 持久化（append-only）
     if (task.kind === 'once') {
       this.tasks.delete(task.id)
-      // once 成功 → append delete（CL7：抵消 upsert，防 resume 复活已执行的 once 任务）
       this.appendEntrySafe({ op: 'delete', taskId: task.id })
     } else {
       const next = await computeNextRunAt(task.schedule, now)
       if (next === undefined) {
-        // ERR-2 fallback：cron 表达式失效 → 停用任务，避免 `?? now()` 死循环。
-        // 不 append advance（nextRunAt 未推进，CL7 重试语义）；cron 失效停用的 enabled=false
-        // 持久化缺口属 at-least-once 已知窗口（首个 tick 会再停用），非 must-fix
         task.enabled = false
         task.lastStatus = 'failed'
         task.lastError = 'cron expression invalid'
-        // nextRunAt 保留原值（enabled=false 后 tick 不再触发）
       } else {
         task.nextRunAt = next
-        // recurring 成功推进 nextRunAt → append advance（D1 核心：持久化新 nextRunAt，防 resume 回退重放）
         this.appendEntrySafe({
           op: 'advance',
           taskId: task.id,
           nextRunAt: next,
           at: now,
-          status: 'success', // CL8：对齐 TaskStatus，非 'ok'
+          status: 'success',
         })
       }
     }
 
     this.dispatchTimestamps.push(now)
     return true
+  }
+
+  /**
+   * onSettled 回调入口（index.ts 装配点绑定）：delivery 内核投递终态时调用。
+   * delivered → 成功记账（onDispatchSuccess）；rejected → 失败记账。
+   * once 任务失败不删持久化（at-least-once 语义）。
+   * 通过 content 匹配最近 dispatch 的任务（pending 已在 dispatchViaDelivery 中清除）。
+   */
+  handleSettledByContent(content: string, outcome: 'delivered' | 'rejected'): void {
+    // 按 content 匹配 task（同一 prompt 可能有多个任务，取 runCount 最大或最近 dispatch 的）
+    const task = [...this.tasks.values()].find(t => t.prompt === content)
+    if (!task) return // 任务已被删除（once 成功后删）或非 scheduler 发出的消息
+
+    if (outcome === 'delivered') {
+      // fire-and-forget：onDispatchSuccess 内部 catch 不 rethrow
+      void this.onDispatchSuccess(task).catch(() => {})
+    } else {
+      // 失败记账
+      task.lastStatus = 'failed'
+      task.history.push({ at: this.backend.now(), status: 'failed' })
+      if (task.history.length > HISTORY_LIMIT) task.history.shift()
+      // once 任务失败不删持久化（at-least-once 语义）
+    }
   }
 
   private hasDispatchCapacity(now: number): boolean {
