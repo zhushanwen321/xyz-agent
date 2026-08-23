@@ -179,11 +179,20 @@ export function useSidebar() {
     if (!chat.isHydrated(id)) {
       try {
         const { messages, historyTruncated } = await chatApi.getHistory(id)
-        chat.hydrate(id, messages)
+        chat.reconcileHistory(id, messages)
         useChat().setHistoryTruncated(id, historyTruncated) // N1: 截断标记供 MessageStream 显隐
         chat.clearHistoryError(id)
       } catch {
         chat.markHistoryFailed(id)
+      }
+    } else {
+      // 已 hydrate：静默刷新（后台 session reconcile，同 useSidebarNew.postLoadSession）
+      try {
+        const { messages } = await chatApi.getHistory(id)
+        chat.reconcileHistory(id, messages)
+      } catch (e) {
+        // 已 hydrate 刷新失败不阻断切入——旧数据仍在，下次切入重试；warn 留排查痕迹
+        console.warn('[useSidebar] background reconcile refresh failed for', id, e)
       }
     }
 

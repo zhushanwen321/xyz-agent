@@ -195,6 +195,9 @@ describe('U4-E2 manage e2e probe', () => {
     if (uiEvent?.kind !== 'session-manager-ui') return
     expect(uiEvent.action).toBe('send')
     expect(uiEvent.params).toEqual({ sessionId: 's1', prompt: 'hello' })
+    // 不发前端广播：session-manager 请求由 handler 内部消化，extension.ui_request 广播
+    // 会被前端 CompanionBand 渲染成无 options 的空壳对话框（2026-08-22 修复回归锁）
+    expect(events.some((e) => e.kind === 'message')).toBe(false)
   })
 
   it.each([

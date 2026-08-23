@@ -157,10 +157,12 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
     // panel 载入后 focusedSessionId 派生为 s2
     expect(sidebar.focusedSessionId.value).toBe('s2')
 
-    // 二次 selectSession 同 sid：isHydrated 守卫→getHistory 不重复调
+    // 二次 selectSession 同 sid：切入刷新（后台 session reconcile，2026-08-22）——
+    // 旧 isHydrated 一次性守卫已废，已 hydrate 的 session 切入时静默重拉（agent-managed
+    // 子 session 的 turn 可能在前端不在场时完成）
     mocks.getHistory.mockClear()
     await sidebar.selectSession('s2')
-    expect(mocks.getHistory).not.toHaveBeenCalled()
+    expect(mocks.getHistory).toHaveBeenCalledWith('s2')
   })
 
   it('TC-1b flow 活跃时切 session → cancelFlow（AC-3.10）', async () => {

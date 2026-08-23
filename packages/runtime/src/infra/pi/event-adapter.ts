@@ -534,6 +534,9 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
     // session-manager 请求检测：select title 为 SESSION_MANAGER_MARKER → options[0] 是 JSON payload
     // （session-manager extension 序列化的 { action, params }）。
     // 检测成功后不走前端 UI，由 runtime SessionManagerHandler 直接处理并回写 response。
+    // [HISTORICAL] 不发前端广播：曾照抄 ask-user/普通 select 模板附带 extension.ui_request
+    // 广播，前端 CompanionBand 按 select 渲染出无 options 的空壳对话框且 pending 泄漏
+    // （session-manager 请求由 handler 应答，前端永远无人 respond）——本通道纯 runtime 内部消化。
     if (method === 'select' && event.title === SESSION_MANAGER_MARKER) {
       const sessionManagerData = parseSelectOptionsPayload(event) as { action?: unknown; params?: unknown } | undefined
       // 集合守卫把解析出的 action 收窄为协议联合；非法/缺失值折叠为 '__malformed__'
@@ -544,18 +547,7 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
         : '__malformed__'
       const params = (sessionManagerData?.params ?? {}) as Record<string, unknown>
 
-      const requestPayload = {
-        sessionId: sid,
-        requestId,
-        method: 'select',
-        sessionManager: true,
-        sessionManagerAction: action,
-        sessionManagerParams: params,
-      }
-      return [
-        { kind: 'session-manager-ui', requestId, sessionId: sid, action, params },
-        extensionUiRequestBroadcast(requestPayload),
-      ]
+      return [{ kind: 'session-manager-ui', requestId, sessionId: sid, action, params }]
     }
 
     // ask-user 富交互请求检测：select title 为 ASK_USER_MARKER → options[0] 是 JSON payload

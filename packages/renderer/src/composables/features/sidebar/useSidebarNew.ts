@@ -123,6 +123,7 @@ export function useSidebarNew() {
     getHistory: (sid) => chatApi.getHistory(sid),
     isHydrated: (sid) => chat.isHydrated(sid),
     hydrate: (sid, messages) => chat.hydrate(sid, messages),
+    reconcileHistory: (sid, messages) => chat.reconcileHistory(sid, messages),
     setHistoryTruncated: (sid, truncated) => useChat().setHistoryTruncated(sid, truncated),
     clearHistoryError: (sid) => chat.clearHistoryError(sid),
     markHistoryFailed: (sid) => chat.markHistoryFailed(sid),
@@ -212,15 +213,26 @@ export function useSidebarNew() {
     chat.touchLru(id)
     syncSessionToPanel(id)
     navigationPort.push({ view: 'chat', sessionId: id })
-    // 历史回填：首次进入该 session 拉取历史注入 chat store（getHistory 失败消化不阻断）
+    // 历史回填/刷新（后台 session reconcile）：首次等价 hydrate；已 hydrate 则增量刷新到
+    // 最新 entries（agent-managed 子 session 的 turn 可能在前端不在场时完成，一次性守卫会让
+    // 最后输出永不出现）+ 保留尾部 streaming 实体（进行中轮次不断链，见 store reconcileHistory）。
     if (!chat.isHydrated(id)) {
       try {
         const { messages, historyTruncated } = await chatApi.getHistory(id)
-        chat.hydrate(id, messages)
+        chat.reconcileHistory(id, messages)
         useChat().setHistoryTruncated(id, historyTruncated)
         chat.clearHistoryError(id)
       } catch {
         chat.markHistoryFailed(id)
+      }
+    } else {
+      // 已 hydrate：静默刷新（失败不阻断——旧数据仍在，下次切入重试）
+      try {
+        const { messages } = await chatApi.getHistory(id)
+        chat.reconcileHistory(id, messages)
+      } catch (e) {
+        // 已 hydrate 刷新失败不阻断切入——旧数据仍在，下次切入重试；warn 留排查痕迹
+        console.warn('[useSidebarNew] background reconcile refresh failed for', id, e)
       }
     }
     // 文件树预加载：切 session 即拉取，侧栏「文件」tab 计数立即更新。fire-and-forget 失败不阻断。
