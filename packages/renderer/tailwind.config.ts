@@ -1,4 +1,5 @@
 import type { Config } from 'tailwindcss'
+import plugin from 'tailwindcss/plugin'
 
 /**
  * xyz-agent Tailwind 配置 · v3 冷蓝暗色（ADR-0019）
@@ -120,5 +121,21 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // 对话流内容列布局原语 .content-col（收敛 mx-auto + w-full + max-w-[var(--content-max-w)]
+    // 三件套，8 组件消费：Turn/Composer/AskUserOverlay/SystemNotice/BashOutputBlock/
+    // ForkNotice/WidgetArea/compacting 行）。宽度数值 SSOT 仍是 style.css 的 --content-max-w
+    // token，本 plugin 只生成「居中 + 封顶」布局类；display/gap 等由使用处 Tailwind 工具类
+    // 叠加。不满足 check_css_tokens 白名单「Tailwind 无法表达」判据，故不落 style.css，
+    // 经 Tailwind plugin 生成为正统 utility（与 mobile-renderer config 同步维护）。
+    plugin(({ addUtilities }) => {
+      addUtilities({
+        '.content-col': {
+          'margin-inline': 'auto',
+          width: '100%',
+          'max-width': 'var(--content-max-w)',
+        },
+      })
+    }),
+  ],
 } satisfies Config

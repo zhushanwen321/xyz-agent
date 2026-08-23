@@ -1,4 +1,5 @@
 import type { Config } from 'tailwindcss'
+import plugin from 'tailwindcss/plugin'
 
 /**
  * xyz-agent Tailwind 配置 · v3 冷蓝暗色（ADR-0019）
@@ -158,5 +159,17 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // 对话流内容列布局原语 .content-col——与 renderer tailwind.config 同款（两 config
+    // 均扫 ../ui/src，各自生成；改宽度只动 style.css --content-max-w token）。
+    plugin(({ addUtilities }) => {
+      addUtilities({
+        '.content-col': {
+          'margin-inline': 'auto',
+          width: '100%',
+          'max-width': 'var(--content-max-w)',
+        },
+      })
+    }),
+  ],
 } satisfies Config

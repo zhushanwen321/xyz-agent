@@ -31,7 +31,7 @@ class CwAcceptanceMarkersReporter implements Reporter {
     }
   }
 
-  onEnd(result: FullResult): void {
+  onEnd(_result: FullResult): void {
     // 输出标记行（stdout 契约）
     for (const [id, failed] of this.failById) {
       process.stdout.write(`${id} ${failed ? 'FAIL' : 'PASS'}\n`)
