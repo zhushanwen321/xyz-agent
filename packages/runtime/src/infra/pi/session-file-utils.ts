@@ -363,7 +363,7 @@ export function readProjectBinding(filePath: string): string | undefined {
  * @param spawnSource session 来源标记（如 'agent'）
  * @param parentAgentSessionId 父 agent session id
  */
-export function persistAgentBinding(filePath: string, spawnSource: string, parentAgentSessionId: string): void {
+export function persistAgentBinding(filePath: string, spawnSource: 'user' | 'agent', parentAgentSessionId: string | undefined): void {
   // invalidateScanDir：spawnSource 的消费方是列表扫描（SessionScanner.listAll →
   // scanPiSessions force:false），binding 写入紧跟 session 创建后的列表广播刷新，
   // 1s TTL 窗口内命中 pre-binding 快照会让 agent 标记迟到一个窗口。delete/fork/rename
@@ -390,12 +390,17 @@ export function persistAgentBinding(filePath: string, spawnSource: string, paren
  *
  * @returns { spawnSource, parentAgentSessionId }；sidecar 不存在/损坏/字段非法 → undefined
  */
-export function readAgentBinding(filePath: string): { spawnSource: string; parentAgentSessionId: string } | undefined {
+export function readAgentBinding(filePath: string): { spawnSource: 'user' | 'agent'; parentAgentSessionId: string | undefined } | undefined {
   return readBindingSidecar(agentSidecarPath(filePath), (binding) => {
-    // 类型守卫：spawnSource 和 parentAgentSessionId 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
+    // 类型守卫：spawnSource 必须是合法枚举值（sidecar 是文件，内容可能损坏/被篡改——
+    // 非法值降级 undefined，A4 语义）；parentAgentSessionId 可选（异常路径下 spawnSource
+    // 单独成立即持久化——#15，badge 只依赖 spawnSource）
     const b = binding as Record<string, unknown> | undefined
-    if (b && typeof b.spawnSource === 'string' && typeof b.parentAgentSessionId === 'string') {
-      return { spawnSource: b.spawnSource, parentAgentSessionId: b.parentAgentSessionId }
+    if (b && (b.spawnSource === 'user' || b.spawnSource === 'agent')) {
+      return {
+        spawnSource: b.spawnSource,
+        parentAgentSessionId: typeof b.parentAgentSessionId === 'string' ? b.parentAgentSessionId : undefined,
+      }
     }
     return undefined
   })
@@ -810,9 +815,10 @@ export interface ScannedSessionMeta {
   projectId?: string
   /**
    * session 来源标记（从 .agent.json sidecar 读，agent-managed-session）。
-   * 例如 'agent' 表示由 agent spawn 创建。undefined = 非 agent 管理的普通 session。
+   * 'agent' 表示由 agent spawn 创建；readAgentBinding 守卫收窄枚举（非法值降级 undefined）。
+   * undefined = 非 agent 管理的普通 session。
    */
-  spawnSource?: string
+  spawnSource?: 'user' | 'agent'
   /**
    * 父 agent session id（从 .agent.json sidecar 读，agent-managed-session）。
    * 记录 spawn 该 session 的父 agent session。undefined = 非 agent 管理的普通 session。

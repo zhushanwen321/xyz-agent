@@ -26,10 +26,10 @@ Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构分层�
 
 **外部依赖 pi**：[badlogic/pi-mono](https://github.com/badlogic/pi-mono) 上游（npm `@earendil-works/pi-coding-agent@0.84.1`，曾用 fork xyz-pi 已切回）。**[MANDATORY] 不修改 pi 源码、不提 PR、不 fork**——pi 没有的能力由 xyz-agent 自实现。**pi 语义断言的权威源 = node_modules 实装版**（断言前 `npm ls @earendil-works/pi-coding-agent` 核对版本，以 dist 编译 JS 为准）；clone `~/Code/git-fork/pi-mono-workspace/main/packages/`（coding-agent/src 核心逻辑、ai/src/providers provider 层）仅作可读 TS 参照，引用前须核对 clone 版本与实装一致（clone 领先/落后实装均属常态——曾因按 0.80.3 clone 断言 0.84.1 行为连产 4 条漂移 bug，审计 C #6）。不靠网络搜索。
 
-**Pi Extension 源码（本项目维护）**：`extensions/` 下 20 个 `@zhushanwen/pi-*` 包，按职责分两组（约定见 [extension-conventions.md](docs/extensions/extension-conventions.md)「目录分组」）+ `extensions/shared/` 共享库（quota-providers / llm-shared / extension-logger / file-lock），统一在本仓开发发布（旧仓 xyz-pi-extensions-workspace 已废弃，以本仓为准）。分组（package.json `xyz-agent.role` 字段必须与所在分组一致，`scripts/check-extension-dependencies.mjs` 校验）：
+**Pi Extension 源码（本项目维护）**：`extensions/` 下 21 个 `@zhushanwen/pi-*` 包，按职责分两组（约定见 [extension-conventions.md](docs/extensions/extension-conventions.md)「目录分组」）+ `extensions/shared/` 共享库（quota-providers / llm-shared / extension-logger / file-lock），统一在本仓开发发布（旧仓 xyz-pi-extensions-workspace 已废弃，以本仓为准）。分组（package.json `xyz-agent.role` 字段必须与所在分组一致，`scripts/check-extension-dependencies.mjs` 校验）：
 
 - **`extensions/taiji/`**（role=taiji，xyz-agent 集成包——契约两端在 xyz-agent 体系内，离开 xyz-agent 无功能，必在 mandatory 清单）：agent-ext / msg-id-mapper / system-prompt / system-prompt-trace（builtin feature-tier，xyz:system-prompt 留痕）
-- **`extensions/universal/`**（role=universal，独立通用包——功能自足，独立 pi 用户可单独安装）：ask-user / cache-probe（前缀指纹采集 + analyze.py 归因） / cw-tool / goal / model-switch / pending-notifications / permission / plan / rename-session / scheduler / session-reader / smart-context（agent 自决上下文压缩：compact_context 工具 + 双模式摘要接管 + 分档提醒） / structured-output / subagent-workflow / todo / unified-hooks
+- **`extensions/universal/`**（role=universal，独立通用包——功能自足，独立 pi 用户可单独安装）：ask-user / cache-probe（前缀指纹采集 + analyze.py 归因） / cw-tool / goal / model-switch / pending-notifications / permission / plan / rename-session / scheduler / session-manager（agent-managed session：6 个 session 管理工具经 select+SESSION_MANAGER_MARKER 通道对接 xyz-agent runtime 的 SessionManagerHandler；嵌套 {action,params} 契约 SSOT 在 @xyz-agent/extension-protocol） / session-reader / smart-context（agent 自决上下文压缩：compact_context 工具 + 双模式摘要接管 + 分档提醒） / structured-output / subagent-workflow / todo / unified-hooks
 
 新增/删包时更新此列举与所在分组。校验：`pnpm extensions:typecheck` / `extensions:lint` / `extensions:test`。
 
@@ -85,7 +85,7 @@ bash scripts/validate-runtime-bundle.sh    # runtime bundle 深度验证
 **Plugin / Builtin extensions**：
 
 16. **Plugin System**：PluginService 是唯一适配层（WS → server.ts → PluginService）；trusted 插件跑 Worker Thread、sandbox 跑独立 fork 子进程；hook 按 priority 串行（单 handler 5s 超时放行）；sessionData 写入 debounce 缓存 + shutdown flushAll；WS 命名 Client→Server 点号（`plugin.xxx`）/ Server→Client 冒号 camelCase（`plugin:statusBarUpdate`）
-17. **Builtin pi-extensions 打包内置（现行）**：14 个 `@zhushanwen/pi-*` 包 esbuild bundle 后 staged 到 `apps/electron/resources/extensions/` 随应用打包（不走 npm 安装；数量以 `packages/shared/src/mandatory-extensions.json` SSOT 为准，不在此写死）。清单 SSOT = `packages/shared/src/mandatory-extensions.json`（infrastructure 6 包不可禁、feature 8 包可禁、都不可卸；守卫抛 `builtin_cannot_*`）。[HISTORICAL] 演化：builtin 依赖 → 推荐安装 → mandatory npm → 打包内置（2026-08-12）；「删除打包所需依赖致产物缺失」教训始终适用（pi binary、builtin 扩展包如 `@zhushanwen/pi-system-prompt` 同理）
+17. **Builtin pi-extensions 打包内置（现行）**： `@zhushanwen/pi-*` 包 esbuild bundle 后 staged 到 `apps/electron/resources/extensions/` 随应用打包（不走 npm 安装；数量以 `packages/shared/src/mandatory-extensions.json` SSOT 为准，不在此写死）。清单 SSOT = `packages/shared/src/mandatory-extensions.json`（infrastructure 组不可禁、feature 组可禁、都不可卸，组内包数以该 JSON 为准；守卫抛 `builtin_cannot_*`）。[HISTORICAL] 演化：builtin 依赖 → 推荐安装 → mandatory npm → 打包内置（2026-08-12）；「删除打包所需依赖致产物缺失」教训始终适用（pi binary、builtin 扩展包如 `@zhushanwen/pi-system-prompt` 同理）
 
 ## 测试
 

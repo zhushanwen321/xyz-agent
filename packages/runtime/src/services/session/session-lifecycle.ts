@@ -384,7 +384,8 @@ export class SessionLifecycle {
     }
     // .agent.json sidecar 落盘（重启恢复链路，G-1）——与 preset/project 同模式：
     // pi 延迟写入窗口（sessionFilePath 未落盘）时 existsSync 守卫跳过，内存态兑底。
-    if (options?.spawnSource && options?.parentAgentSessionId && session.sessionFilePath) {
+    if (options?.spawnSource && session.sessionFilePath) {
+      // parentAgentSessionId 可选（#15）：spawnSource 单独成立即持久化，防异常路径下 badge 重启丢失
       this.sessionStore.persistAgentBinding(session.sessionFilePath, options.spawnSource, options.parentAgentSessionId)
     }
     // hidden session（公共 session）不记工作区历史——cwd 是数据目录，不应污染最近工作区列表。
@@ -478,6 +479,8 @@ export class SessionLifecycle {
         try { unlinkSync(session.sessionFilePath + '.preset.json') } catch { void 0 }
         try { unlinkSync(session.sessionFilePath + '.project.json') } catch { void 0 }
         try { unlinkSync(session.sessionFilePath + '.handoff.json') } catch { void 0 }
+        // 清理 agent binding sidecar（agent-managed-session；delete 是唯一清理点，防孤儿 sidecar）
+        try { unlinkSync(session.sessionFilePath + '.agent.json') } catch { void 0 }
         // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
         cleanupMigrateResidues(session.sessionFilePath)
         // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
@@ -494,6 +497,8 @@ export class SessionLifecycle {
       try { unlinkSync(target.filePath + '.preset.json') } catch { void 0 }
       try { unlinkSync(target.filePath + '.project.json') } catch { void 0 }
       try { unlinkSync(target.filePath + '.handoff.json') } catch { void 0 }
+      // 清理 agent binding sidecar（同上，scanned 分支）
+      try { unlinkSync(target.filePath + '.agent.json') } catch { void 0 }
       // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
       cleanupMigrateResidues(target.filePath)
       // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
@@ -827,6 +832,8 @@ export class SessionLifecycle {
       // 原顺序是 switchSession 之前 unlink，若 switchSession 抛错，session 的终态 sidecar
       //（done/stopped）已被删 → 终态永久丢失。现在只在切换成功后才删，失败时保留旧终态。
       try { unlinkSync(forkedFilePath + '.meta.json') } catch { void 0 }
+      // fork 不继承 agent binding（binding 是创建时语义）——防御性清理同名残留 sidecar
+      try { unlinkSync(forkedFilePath + '.agent.json') } catch { void 0 }
       // 写 preset 绑定到 forkedFilePath 的 sidecar（设计文档 §4.5）。
       // fork 继承源 preset，forkedFilePath 是新文件（已写出），existsSync 守卫会通过。
       this.sessionStore.persistPresetBinding(forkedFilePath, forkPresetId)

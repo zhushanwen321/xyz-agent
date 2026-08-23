@@ -107,7 +107,7 @@ async function runFullChain(): Promise<{ result: FullChainResult; fx: PiFixture;
           childJsonl,
           JSON.stringify({ type: 'session', id: childId, cwd: String(cwd ?? sessionDir), timestamp: new Date().toISOString() }) + '\n',
         )
-        persistAgentBinding(childJsonl, String(opts.spawnSource), String(opts.parentAgentSessionId))
+        persistAgentBinding(childJsonl, 'agent', String(opts.parentAgentSessionId))
         return {
           id: childId,
           label: String(label ?? FIXED_LABEL),

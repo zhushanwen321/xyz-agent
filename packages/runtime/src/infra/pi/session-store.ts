@@ -57,7 +57,7 @@ export class PiSessionStore implements ISessionStore {
     persistProjectBinding(filePath, projectId)
   }
 
-  persistAgentBinding(filePath: string, spawnSource: 'user' | 'agent', parentAgentSessionId: string): void {
+  persistAgentBinding(filePath: string, spawnSource: 'user' | 'agent', parentAgentSessionId: string | undefined): void {
     persistAgentBinding(filePath, spawnSource, parentAgentSessionId)
   }
 

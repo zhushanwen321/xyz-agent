@@ -46,8 +46,8 @@ async function callSessionManager(
 	action: SessionManagerAction,
 	params: Record<string, unknown>,
 ): Promise<string | null> {
-	// 契约 SSOT：SessionManagerRequest = { action, params }（@xyz-agent/extension-protocol
-	// extensions/taiji/session-manager/types.ts，嵌套 params）。runtime event-adapter 的 marker
+	// 契约 SSOT：SessionManagerRequest = { action, params }（协议包 extension-protocol 的
+	// session-manager 模块 types.ts，嵌套 params）。runtime event-adapter 的 marker
 	// 分支按 data.params 提取——若扁平化展开（{action, ...params}）params 会丢失变 {}。
 	const payload = JSON.stringify({ action, params });
 	try {
@@ -64,16 +64,19 @@ async function callSessionManager(
 
 /**
  * 统一的 execute 包装：调用 select 通道并解析结果。
- * 返回标准 AgentToolResult 形状（details 为原始 JSON 字符串或错误描述）。
+ * 返回标准 AgentToolResult 形状；select 取消/超时/异常是错误路径，
+ * 必须带 isError: true（extension-conventions「禁止错误成功模式」——
+ * 调用方 agent 需能区分成功与失败以决定重试/放弃）。
  */
 async function executeTool(
 	ctx: ExtensionContext,
 	action: SessionManagerAction,
 	params: Record<string, unknown>,
-): Promise<{ content: Array<{ type: "text"; text: string }>; details: unknown }> {
+): Promise<{ isError?: boolean; content: Array<{ type: "text"; text: string }>; details: unknown }> {
 	const raw = await callSessionManager(ctx, action, params);
 	if (raw === null) {
 		return {
+			isError: true,
 			content: [{ type: "text" as const, text: `Session manager ${action}: cancelled or timed out.` }],
 			details: { cancelled: true },
 		};
@@ -120,7 +123,7 @@ function registerSessionTool<S extends TObject>(pi: ExtensionAPI, cfg: SessionTo
 	});
 }
 
-export default function (pi: ExtensionAPI): void {
+export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	registerSessionTool(pi, {
 		name: "create_managed_session",
 		label: "Create Managed Session",

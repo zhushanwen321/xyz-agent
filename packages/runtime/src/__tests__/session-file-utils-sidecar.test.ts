@@ -181,7 +181,7 @@ describe('readAgentBinding', () => {
     }
   })
 
-  it('A4 case4: parentAgentSessionId 非法返回 undefined', () => {
+  it('A4 case4: parentAgentSessionId 非法 → 仅该字段 undefined，spawnSource 保留（#15 语义）', () => {
     const dir = makeTmpDir('u7-a4-4-')
     try {
       const fp = join(dir, 'test.jsonl')
@@ -192,7 +192,8 @@ describe('readAgentBinding', () => {
       writeFileSync(sidecarPath, JSON.stringify({ spawnSource: 'agent', parentAgentSessionId: null, version: 1 }))
 
       const result = readAgentBinding(fp)
-      expect(result).toBeUndefined()
+      expect(result?.spawnSource).toBe('agent')
+      expect(result?.parentAgentSessionId).toBeUndefined()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
