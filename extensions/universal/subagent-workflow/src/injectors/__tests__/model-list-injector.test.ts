@@ -72,6 +72,18 @@ describe("formatModelList", () => {
 		expect(ids).toEqual(["a-prov/x-model", "a-prov/y-model", "b-prov/z-model"]);
 	});
 
+	it("排序为码点序而非 locale 序（跨环境字节一致契约，禁 localeCompare）", async () => {
+		const { formatModelList } = await import("../model-list-injector");
+		// 判别样本：码点序 "B"(0x42) < "a"(0x61)，而多数 locale 的 localeCompare
+		// 会把 "a-model" 排在 "B-model" 前——本断言在 localeCompare 实现下必挂
+		const out = formatModelList([
+			entry({ provider: "p", id: "a-model" }),
+			entry({ provider: "p", id: "B-model" }),
+		]);
+		const ids = [...out.matchAll(/<id>([^<]+)<\/id>/g)].map((m) => m[1]);
+		expect(ids).toEqual(["p/B-model", "p/a-model"]);
+	});
+
 	it("name 含 XML 特殊字符时转义（防注入段结构破坏）", async () => {
 		const { formatModelList } = await import("../model-list-injector");
 		const out = formatModelList([

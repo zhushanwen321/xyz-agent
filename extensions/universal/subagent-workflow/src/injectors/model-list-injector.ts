@@ -14,9 +14,10 @@
  * （pi 权威的 auth 可用模型快照，纯内存同步调用），因此：
  * - 不需要 session_start 预热 / 渲染缓存 / session_shutdown 清理（无模块级
  *   状态——结构上规避了缓存生命周期问题）
- * - 每 turn 直接渲染；排序（provider, id）保证输出字节稳定（turn 间
- *   systemPrompt 前缀稳定 = KV cache 友好）。数据真实变化（用户中途配置了
- *   新 provider）时下一 turn 自然反映。
+ * - 每 turn 直接渲染；排序 (provider, id) 码点序保证输出字节稳定（turn 间
+ *   systemPrompt 前缀稳定 = KV cache 友好；跨环境逐字节可复现，与另两个
+ *   injector 的码点序契约对齐）。数据真实变化（用户中途配置了新 provider）
+ *   时下一 turn 自然反映。
  *
  * 立场：本注入段只服务「派发时选模型」，明确告知模型不要在会话中切换主模型
  * （KV cache 不友好）；用户明确要求换模型时走 pi 原生 /model 命令（人手动触发）。
@@ -58,6 +59,11 @@ export function toModelEntry(model: Model<Api>): ModelEntry {
 	};
 }
 
+/** 码点序比较（显式契约，禁 localeCompare——宿主 locale 差异会破坏跨环境字节一致）。 */
+function compareByCodepoint(a: string, b: string): number {
+	return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** 能力标记：reasoning → "reasoning"，input 含 image → "vision"（空则省略 caps 段） */
 function formatCaps(entry: ModelEntry): string {
 	const caps: string[] = [];
@@ -79,16 +85,19 @@ function escapeXml(str: string): string {
 /**
  * 将模型列表格式化为 XML 注入段。
  *
- * 输入按 (provider, id) 排序——registry 返回顺序不作保证，排序后同一数据集
- * 输出字节稳定。空列表返回空串（不注入）。
+ * 输入按 (provider, id) 码点序排序——registry 返回顺序不作保证，排序后同一
+ * 数据集输出字节稳定。码点序是显式契约（禁 localeCompare——宿主 locale 差异
+ * 会破坏跨环境字节一致，见 subagent-list-injector.ts sortByCodepoint 注释），
+ * 保证注入段进每 turn system prompt 时跨环境逐字节可复现（cache-probe 前缀
+ * 指纹归因 / 换机器 resume 场景依赖此性质）。空列表返回空串（不注入）。
  */
 export function formatModelList(models: ModelEntry[]): string {
 	if (models.length === 0) return "";
 
 	const sorted = [...models].sort((a, b) =>
 		a.provider === b.provider
-			? a.id.localeCompare(b.id)
-			: a.provider.localeCompare(b.provider),
+			? compareByCodepoint(a.id, b.id)
+			: compareByCodepoint(a.provider, b.provider),
 	);
 
 	const lines = [
