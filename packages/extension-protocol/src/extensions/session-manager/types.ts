@@ -77,10 +77,12 @@ export interface SessionManagerCreateResult {
   modelId?: string
 }
 
-/** send 结果 */
+/**
+ * send 结果（sd-u5 起）：消息已入队/已投递——目标 busy 时在下一 turn 边界注入。
+ * 失败形状走 SessionManagerErrorResult（error + hint），不再出现旧的 {blocked, rejected}。
+ */
 export interface SessionManagerSendResult {
-  blocked: boolean
-  rejected?: boolean
+  queued: true
 }
 
 /** history 结果 */
@@ -115,7 +117,7 @@ export interface SessionManagerAbortResult {
   success: boolean
 }
 
-/** 错误响应形状 */
+/** 错误响应形状（send 同步失败时 = { error, hint }；create 已成功时另附 sessionId） */
 export interface SessionManagerErrorResult {
   error: string
   /** create 已成功时附 sessionId + hint */

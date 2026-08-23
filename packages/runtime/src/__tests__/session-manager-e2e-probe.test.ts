@@ -18,6 +18,7 @@ import { describe, it, expect, vi } from 'vitest'
 // ↓ 真实实现 import（红阶段区分力锚点，勿改成动态 import / try-catch）
 import { translate } from '../infra/pi/event-adapter.js'
 import { EventInterpreter } from '../services/session/event-interpreter.js'
+import { createSessionDeliveryRegistry } from '../services/session/session-delivery-registry.js'
 import { SessionManagerHandler } from '../transport/session-manager-handler.js'
 import { SESSION_MANAGER_MARKER, type SessionManagerAction } from '@xyz-agent/extension-protocol'
 import type { PiEvent } from '../infra/pi/pi-protocol.js'
@@ -60,11 +61,34 @@ function makeSummary(overrides: Record<string, unknown> = {}): Record<string, un
   }
 }
 
+/** fake pi client：delivery port.send 的终点（ensureActive 返回值） */
+function makeFakeClient(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    prompt: vi.fn().mockResolvedValue({}),
+    ...overrides,
+  }
+}
+
+/** fake session 运行时视图：delivery isIdle 判定 + D7 置位副作用的落点 */
+function makeFakeSessionView(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 's1',
+    cwd: '/test/cwd',
+    isGenerating: false,
+    isCompacting: false,
+    isBashRunning: false,
+    lastActiveAt: 1_755_000_000_000,
+    ...overrides,
+  }
+}
+
 /** SessionService 数据层 fake：5 个管理 action 的默认返回值（形状对齐 ISessionService 契约） */
 function makeFakeSessionService(overrides: Partial<ISessionService> = {}): ISessionService {
   return {
     create: vi.fn(),
     sendMessage: vi.fn().mockResolvedValue({ blocked: false, rejected: false }),
+    ensureActive: vi.fn().mockResolvedValue(makeFakeClient()),
+    getSession: vi.fn().mockReturnValue(makeFakeSessionView()),
     getHistory: vi.fn().mockResolvedValue({
       messages: [
         { role: 'user', content: 'hello' },
@@ -116,13 +140,21 @@ interface E2ePipeline {
 /**
  * 组装 e2e 链路。接线与组合根一致（server.ts 的 SessionManagerHandler 构造 +
  * handleSessionManagerRequest fire-and-forget 委托 + EventInterpreter opts 注入），
- * 只把 pi 子进程 IO 与 SessionService 换成 fake。
+ * 只把 pi 子进程 IO 与 SessionService 换成 fake。sd-u5 起 delivery 用真实 registry
+ * 装配（fake sessionService 提供 getSession/ensureActive 材料层）。
  */
 function makeE2ePipeline(sessionService: ISessionService): E2ePipeline {
   const pi = new FakePiProcessIo()
   const onExtensionUIRequest = vi.fn()
+  const delivery = createSessionDeliveryRegistry({
+    getSession: (sid) => sessionService.getSession(sid),
+    ensureActive: (sid) => sessionService.ensureActive(sid),
+    subscribeAgentSettled: () => () => {},
+    recordWorkspace: vi.fn(),
+  })
   const handler = new SessionManagerHandler({
     sessionService,
+    delivery,
     sendExtensionUiResponse: (sessionId, requestId, response, method) =>
       pi.sendExtensionUiResponse(requestId, response, method),
     broadcastSessionList: () => {},
@@ -156,9 +188,11 @@ function readSingleResponse(pi: FakePiProcessIo): UiResponseWireLine {
 }
 
 describe('U4-E1 create e2e probe', () => {
-  it('create 全链路：marker request → 真实 handler 创建 session + 注入 prompt + 回写 sessionId', async () => {
+  it('create 全链路：marker request → 真实 handler 创建 session + 直投初始 prompt + 回写 sessionId', async () => {
+    const client = makeFakeClient()
     const sessionService = makeFakeSessionService({
       create: vi.fn().mockResolvedValue(makeSummary({ id: 'child-1', spawnSource: 'agent' })),
+      ensureActive: vi.fn().mockResolvedValue(client),
     })
     const pipeline = makeE2ePipeline(sessionService)
 
@@ -173,8 +207,9 @@ describe('U4-E1 create e2e probe', () => {
       modelOverride: 'm/x',
       thinkingOverride: 'max',
     }))
-    // 初始 prompt 注入到新 session
-    expect(sessionService.sendMessage).toHaveBeenCalledWith('child-1', 'run the suite')
+    // 初始 prompt 直投到新 session（sd-u5：delivery.sendDirect → ensureActive + prompt，不走内核队列）
+    expect(sessionService.ensureActive).toHaveBeenCalledWith('child-1')
+    expect(client.prompt).toHaveBeenCalledWith('run the suite', undefined, undefined)
     // 回写 select value 通道，结果 JSON 含 sessionId/status
     const resp = readSingleResponse(pipeline.pi)
     expect(resp.cancelled).toBeUndefined()
@@ -204,7 +239,8 @@ describe('U4-E2 manage e2e probe', () => {
     {
       action: 'send',
       params: { sessionId: 's1', prompt: 'hello' },
-      expected: { blocked: false, rejected: false },
+      // sd-u5：send 走 delivery.sendChecked——idle 直投受理即回，busy 入队也回 queued
+      expected: { queued: true },
     },
     {
       action: 'history',

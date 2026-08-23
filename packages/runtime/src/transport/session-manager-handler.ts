@@ -8,6 +8,7 @@
  * 响应通过 sendExtensionUiResponse 回写 pi（select value 通道）。
  */
 import type { ISessionService } from '../interfaces.js'
+import type { SessionDeliveryRegistry } from '../services/session/session-delivery-registry.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { SESSION_MANAGER_ACTIONS } from '@xyz-agent/extension-protocol'
 import type {
@@ -27,9 +28,18 @@ import type {
   SessionManagerErrorResult,
 } from '@xyz-agent/extension-protocol'
 
+/** send 失败时附带的恢复指引（target 不可达：先查状态再重试投递） */
+const SEND_UNREACHABLE_HINT =
+  'target session unreachable; retry send_to_session after checking get_session_status'
+
 /** SessionManagerHandler 构造选项 */
 export interface SessionManagerHandlerOptions {
   sessionService: ISessionService
+  /**
+   * sd-u5：delivery 装配（send 排队投递 + create 初始 prompt 直投）。
+   * 组合根注入 sessionId 单例注册表（design.md §3.1 调用方 B / §3.4 单例约束）。
+   */
+  delivery: SessionDeliveryRegistry
   /** 向 pi 发送 extension_ui_response（sessionId = 发起方 session，requestId 只在其 pending 表有效） */
   sendExtensionUiResponse: (sessionId: string, requestId: string, response: unknown, method?: string) => void
   /** 广播 session 列表变更（create 成功后触发） */
@@ -94,7 +104,7 @@ export class SessionManagerHandler {
     action: SessionManagerAction,
     parentSessionId: string,
     params: Record<string, unknown>,
-  ): Promise<SessionManagerCreateResult | SessionManagerSendResult | SessionManagerHistoryResult | SessionManagerStatusResult | SessionManagerListResult | SessionManagerAbortResult> {
+  ): Promise<SessionManagerCreateResult | SessionManagerSendResult | SessionManagerErrorResult | SessionManagerHistoryResult | SessionManagerStatusResult | SessionManagerListResult | SessionManagerAbortResult> {
     switch (action) {
       case 'create':
         return this.handleCreate(parentSessionId, params as unknown as SessionManagerCreateParams)
@@ -136,9 +146,11 @@ export class SessionManagerHandler {
     // 3. sendMessage：初始 prompt 同一 handler 调用内注入（设计文档 §5.2——
     // create+send 原子完成，避免"已创建无内容"中间态；broadcast 先于此步，
     // prompt 注入失败时错误对象携带 sessionId，走外层 catch 的恢复路径）
+    // sd-u5：直投不走内核队列（D7 末行——新 session 必 idle 无竞态，port 层同款
+    // ensureActive+prompt 直发），失败照旧 throw 维持 create+send 原子性契约。
     if (prompt !== undefined && prompt !== '') {
       try {
-        await this.opts.sessionService.sendMessage(session.id, prompt)
+        await this.opts.delivery.sendDirect(session.id, prompt)
       } catch (e) {
         throw Object.assign(new Error(toErrorMessage(e)), { sessionId: session.id })
       }
@@ -152,11 +164,26 @@ export class SessionManagerHandler {
     }
   }
 
-  /** send 分支 */
-  private async handleSend(params: SessionManagerSendParams): Promise<SessionManagerSendResult> {
+  /**
+   * send 分支（sd-u5：busy 直接拒绝 → 排队投递）。
+   *
+   * 走 delivery 内核的 sendChecked：目标 idle 立即投递、busy 入队在下一 turn
+   * 边界注入（agent 立即收到 {queued: true}，不再出现 {blocked, rejected}）。
+   * 失败（目标 pi 进程不可达等同步失败）不 throw、不走前端 banner（D7 错误广播
+   * 替换项）——同步返回 error + hint 给 select 通道，agent 立即可见。
+   */
+  private async handleSend(
+    params: SessionManagerSendParams,
+  ): Promise<SessionManagerSendResult | SessionManagerErrorResult> {
     const { sessionId, prompt } = params
-    const result = await this.opts.sessionService.sendMessage(sessionId, prompt)
-    return { blocked: result.blocked, rejected: result.rejected }
+    try {
+      await this.opts.delivery
+        .getOrCreateDelivery(sessionId)
+        .sendChecked({ payload: { kind: 'text', content: prompt } })
+      return { queued: true }
+    } catch (e) {
+      return { error: toErrorMessage(e), hint: SEND_UNREACHABLE_HINT }
+    }
   }
 
   /** history 分支：含 tailTurns 截断 */

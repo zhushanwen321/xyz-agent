@@ -50,6 +50,7 @@
   },
   "dependencies": {
     "@xyz-agent/extension-protocol": "workspace:*",
+    "@xyz-agent/session-delivery": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*",
     "@zhushanwen/pi-file-lock": "workspace:*",
     "ajv": "^8.20.0",

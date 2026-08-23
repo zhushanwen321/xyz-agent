@@ -36,6 +36,14 @@ describe("U5-A3 tool-schema", () => {
 			const required = schemas.create_managed_session.required as string[];
 			expect(required).not.toContain("label");
 		});
+
+		it("has optional prompt (string) — sd-u5: create 带 prompt 的工具 schema 暴露", () => {
+			const props = schemas.create_managed_session.properties as Record<string, unknown>;
+			expect(props.prompt).toBeDefined();
+			expect((props.prompt as Record<string, unknown>).type).toBe("string");
+			const required = schemas.create_managed_session.required as string[];
+			expect(required).not.toContain("prompt");
+		});
 	});
 
 	describe("send_to_session", () => {

@@ -68,7 +68,7 @@ describe("U5-A2 tool-execute", () => {
 
 	it("send_to_session includes sessionId and prompt in payload.params", async () => {
 		const tool = harness.registered.find((t) => t.name === "send_to_session")!;
-		harness.selectMock.mockResolvedValue('{"blocked":false}');
+		harness.selectMock.mockResolvedValue('{"queued":true}');
 		await tool.execute("call-1", { sessionId: "s1", prompt: "hi" }, undefined, undefined, harness.ctx);
 		const payload = JSON.parse(harness.selectMock.mock.calls[0][1][0]);
 		expect(payload.params.sessionId).toBe("s1");
