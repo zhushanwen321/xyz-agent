@@ -32,8 +32,8 @@ import { doFinalizeRecord, doFinalizeRoundToIdle } from "./finalize-record.ts";
 import { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import type { AgentConfig, ModelInfo, ResolvedModel } from "./model-resolver.ts";
-import type { BgNotifyRecord, NotifierHost } from "./notifier.ts";
-import { BgNotifier } from "./notifier.ts";
+import type { BgNotifyRecord, BgNotifier, NotifierHost } from "./notifier.ts";
+import { createNotifier } from "./notifier.ts";
 import { getSubagentRecordsDir, getSubagentSessionDir } from "./path-encoding.ts";
 import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
@@ -299,7 +299,7 @@ export class SubagentService {
     const recordsDir = getSubagentRecordsDir(this.modelService.getAgentDir(), this.rootCwd);
     this.manifestStore = new ManifestStore(recordsDir);
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined);
-    this.notifier = new BgNotifier(this.piAdapter());
+    this.notifier = createNotifier(this.piAdapter());
     // #11：注册进程级 observability 单例——ui-request-queue.handleUiRequest 经
     // globalThis 桥接（notifyMissingHandlerGlobal）调到同一实例，共享
     // warnedMissingHandlerSessions 去重集合。未注册时 queue 走 fallback warn（不去重）。

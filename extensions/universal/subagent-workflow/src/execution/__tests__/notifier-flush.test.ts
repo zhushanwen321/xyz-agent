@@ -12,7 +12,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { BgNotifier, type NotifierHost } from "../notifier.ts";
+import { createNotifier, type BgNotifier, type NotifierHost } from "../notifier.ts";
 
 /** mock host：捕获所有 sendMessage 调用 + 控制 hasRunningBackground + isIdle。 */
 function makeMockHost(): NotifierHost & {
@@ -35,11 +35,11 @@ function makeMockHost(): NotifierHost & {
 
 describe("BgNotifier.flushPendingNotifications — deliverAs 契约", () => {
 	let host: ReturnType<typeof makeMockHost>;
-	let notifier: BgNotifier;
+		let notifier: BgNotifier;
 
 	beforeEach(() => {
 		host = makeMockHost();
-		notifier = new BgNotifier(host);
+		notifier = createNotifier(host);
 	});
 
 	afterEach(() => {
@@ -87,7 +87,7 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		host = makeMockHost();
-		notifier = new BgNotifier(host);
+		notifier = createNotifier(host);
 	});
 
 	afterEach(() => {
@@ -152,7 +152,7 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 			sendMessage: (message, options) => host.sendMessage(message, options),
 			hasRunningBackground: () => false,
 		};
-		const legacyNotifier = new BgNotifier(legacyHost);
+		const legacyNotifier = createNotifier(legacyHost);
 		legacyNotifier.notify({
 			id: "bg-legacy-1",
 			status: "closed",
@@ -192,7 +192,7 @@ describe("BgNotifier dedup 按轮次（G1 决策 9：对话模式豁免 60s dedu
 	beforeEach(() => {
 		host = makeMockHost();
 		// hasRunningBackground=false → notify 立即 flush（不排队）；dedup 仍在 push 前生效
-		notifier = new BgNotifier(host);
+		notifier = createNotifier(host);
 	});
 
 	afterEach(() => {
@@ -250,7 +250,7 @@ describe("BgNotifier buildLlmContent 指针行（wave2：chatMode sessionFile �
 	beforeEach(() => {
 		host = makeMockHost();
 		// hasRunningBackground=false → notify 立即 flush，sendMessageCalls 恰 1 条
-		notifier = new BgNotifier(host);
+		notifier = createNotifier(host);
 	});
 
 	afterEach(() => {
@@ -384,5 +384,55 @@ describe("BgNotifier buildLlmContent 指针行（wave2：chatMode sessionFile �
 			'Subagent "w" (sa-rounds-2) completed. Result:\ndone' +
 			"\n\nFull transcript: /tmp/sessions/child-oneshot.jsonl",
 		);
+	});
+});
+
+describe("U3_UNIT: createNotifier unit verification", () => {
+	it("createNotifier returns object with notify/flush/dispose/revive", () => {
+		const host = makeMockHost();
+		const notifier = createNotifier(host);
+		expect(typeof notifier.notify).toBe("function");
+		expect(typeof notifier.flushPendingNotifications).toBe("function");
+		expect(typeof notifier.dispose).toBe("function");
+		expect(typeof notifier.revive).toBe("function");
+		notifier.dispose();
+	});
+
+	it("notify calls host.sendMessage with customType=subagent-bg-notify", () => {
+		const host = makeMockHost();
+		const notifier = createNotifier(host);
+		notifier.notify({
+			id: "u3-test-1", status: "closed", agent: "worker", result: "ok",
+			startedAt: 1, endedAt: 2,
+		});
+		expect(host.sendMessageCalls).toHaveLength(1);
+		const msg = host.sendMessageCalls[0]!.message as { customType: string };
+		expect(msg.customType).toBe("subagent-bg-notify");
+		notifier.dispose();
+	});
+
+	it("notify with mergeHoldActive=true defers flush until explicit call", () => {
+		const sendMessageCalls: unknown[] = [];
+		const host: NotifierHost = {
+			sendMessage: (msg) => { sendMessageCalls.push(msg); },
+			hasRunningBackground: () => true,
+			isIdle: () => true,
+		};
+		const notifier = createNotifier(host);
+		notifier.notify({
+			id: "u3-merge-1", status: "closed", agent: "w", result: "r1",
+			startedAt: 1, endedAt: 2,
+		});
+		notifier.notify({
+			id: "u3-merge-2", status: "closed", agent: "w", result: "r2",
+			startedAt: 3, endedAt: 4,
+		});
+		// mergeHoldActive=true → messages queued, not sent yet
+		expect(sendMessageCalls).toHaveLength(0);
+		notifier.flushPendingNotifications();
+		expect(sendMessageCalls).toHaveLength(1);
+		const content = (sendMessageCalls[0] as { content: string }).content;
+		expect(content).toContain("\n\n---\n\n");
+		notifier.dispose();
 	});
 });
