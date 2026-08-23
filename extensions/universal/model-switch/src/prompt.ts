@@ -1,7 +1,7 @@
 /**
  * Model Switch — Prompt formatting
  *
- * formatSessionModels: session_start 时注入的精简模型表（systemPrompt，仅首次）
+ * formatSessionModels: 每 turn 注入的精简模型表（systemPrompt，字节恒定保 KV cache）
  * formatContextPrompt: recommend action 按需调用时的完整上下文（quota/snapshot/stickiness）
  */
 

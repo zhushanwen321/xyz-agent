@@ -43,8 +43,6 @@ function res(text: string): ToolRes {
 
 interface SessionState {
 	config: ModelPolicy | null;
-	/** 首次 before_agent_start 时注入 [Available Models] 到 systemPrompt */
-	injectedModelTable: boolean;
 }
 
 // ── Local interfaces (avoid `any` on Pi callback/event signatures) ────
@@ -58,7 +56,7 @@ interface BeforeAgentStartLikeEvent {
 // ── 扩展入口 ────────────────────────────────────────────
 
 export default function modelSwitchExtension(pi: ExtensionAPI) {
-	const state: SessionState = { config: null, injectedModelTable: false };
+	const state: SessionState = { config: null };
 
 	// [MIGRATION] Added in v0.6.0. Remove after v1.0.0 (one major past).
 	// session_start 迁移：model-policy.json → config/model-switch-ext-config.json（幂等，过渡性）
@@ -70,21 +68,19 @@ export default function modelSwitchExtension(pi: ExtensionAPI) {
 			migrateLegacyConfig(getAgentDir(), "model-policy.json", "config/model-switch-ext-config.json");
 		}
 		state.config = loadConfig();
-		state.injectedModelTable = false;
 	});
 
 	pi.on("before_agent_start", async (event: BeforeAgentStartLikeEvent, _ctx: ExtensionContext) => {
 		if (!state.config) return;
 
-		// 首次注入精简的 [Available Models] 到 systemPrompt（字节稳定 → KV cache 友好）
-		if (!state.injectedModelTable) {
-			const staticBlock = formatSessionModels(state.config);
-			state.injectedModelTable = true;
-			return {
-				systemPrompt: `${event.systemPrompt}\n\n${staticBlock}\n`,
-			};
-		}
-		return;
+		// 每轮注入精简的 [Available Models] 到 systemPrompt。曾为「仅首轮注入」，但
+		// pi 语义下不返回的轮次 systemPrompt 回退 base（agent-session else 分支）——
+		// turn 1 与 turn 2 的 prompt 必然不同，恰好破坏 KV cache 前缀稳定。改为每轮
+		// 注入（config 在 session_start 固化，块内容字节恒定），全部 turn 一致。
+		const staticBlock = formatSessionModels(state.config);
+		return {
+			systemPrompt: `${event.systemPrompt}\n\n${staticBlock}\n`,
+		};
 	});
 
 	pi.registerCommand("setup-model-policy", {

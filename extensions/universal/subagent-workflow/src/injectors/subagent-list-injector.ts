@@ -35,6 +35,7 @@ import {
 	discoverResources,
 	findWorkspaceRoot,
 	getCachedFileContent,
+	getCachedParsed,
 } from "../shared/resource-discovery.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
 
@@ -97,9 +98,14 @@ export function parseAgentFrontmatter(content: string): AgentEntry | null {
  * 用统一资源发现（ADR-031）发现所有可用 agent。
  *
  * discoverResources 返回按文件名 stem 去重、优先级合并后的 DiscoveredResource[]
- * （project > user > builtin）。此处逐个解析 frontmatter 提取 name+description，
- * 再按 agent name 去重（discoverResources 返回顺序为低→高优先级，高优先级靠后，
- * Map.set 后者覆盖前者，故最终保留最高优先级同名 agent）。
+ * （project > user > builtin，返回顺序低→高优先级——Map 后写覆盖依赖此序，不可在
+ * 发现层重排）。此处逐个解析 frontmatter 提取 name+description（经 getCachedParsed
+ * mtime 级缓存），再按 agent name 去重（高优先级靠后，Map.set 后者覆盖前者，故最终
+ * 保留最高优先级同名 agent）。
+ *
+ * 输出按 name 码点序排序（KV-cache 契约）：注入段进每 turn system prompt，顺序必须
+ * 与文件系统枚举序（readdir 无契约）解耦——目录内容不变时，session_start / fallback /
+ * resume 任意重建的渲染结果逐字节一致；仅条目增减时文本才变化。
  *
  * 永不抛错——发现本身 fail-safe，单个文件读失败仅记日志。
  */
@@ -117,11 +123,10 @@ export async function discoverAllAgents(
 	for (const resource of resources) {
 		if (!resource.available) continue;
 		try {
-			const content = getCachedFileContent(resource.path) ?? "";
-			const agent = parseAgentFrontmatter(content);
+			const agent = getCachedParsed(resource.path, parseAgentFrontmatter);
 			if (agent) {
 				agentMap.set(agent.name, { ...agent, path: resource.path });
-			} else if (content.trimStart().startsWith("---")) {
+			} else if (startsWithFrontmatter(resource.path)) {
 				// m5（评审 M3/F2 + minor-5）：仅「有 frontmatter 但解析失败」才 warn
 				// （缺 name/description/examples 单条非法致整体 reject）——README 等
 				// 无 frontmatter 的 .md 不刷 warn（每 turn 扫描）。
@@ -137,7 +142,21 @@ export async function discoverAllAgents(
 			);
 		}
 	}
-	return [...agentMap.values()];
+	return sortByCodepoint([...agentMap.values()], (a) => a.name);
+}
+
+/** 码点序排序（显式契约，禁 localeCompare——宿主 locale 差异会破坏跨环境字节一致）。 */
+function sortByCodepoint<T>(items: T[], key: (item: T) => string): T[] {
+	return items.sort((a, b) => {
+		const ka = key(a);
+		const kb = key(b);
+		return ka < kb ? -1 : ka > kb ? 1 : 0;
+	});
+}
+
+/** 内容以 frontmatter 分隔符开头（解析失败才值得 warn 的判据）。 */
+function startsWithFrontmatter(filePath: string): boolean {
+	return (getCachedFileContent(filePath) ?? "").trimStart().startsWith("---");
 }
 
 /** 转义 XML 特殊字符 */
