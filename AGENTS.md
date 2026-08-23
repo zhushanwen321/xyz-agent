@@ -29,7 +29,7 @@ Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构分层�
 **Pi Extension 源码（本项目维护）**：`extensions/` 下 20 个 `@zhushanwen/pi-*` 包，按职责分两组（约定见 [extension-conventions.md](docs/extensions/extension-conventions.md)「目录分组」）+ `extensions/shared/` 共享库（quota-providers / llm-shared / extension-logger / file-lock），统一在本仓开发发布（旧仓 xyz-pi-extensions-workspace 已废弃，以本仓为准）。分组（package.json `xyz-agent.role` 字段必须与所在分组一致，`scripts/check-extension-dependencies.mjs` 校验）：
 
 - **`extensions/taiji/`**（role=taiji，xyz-agent 集成包——契约两端在 xyz-agent 体系内，离开 xyz-agent 无功能，必在 mandatory 清单）：agent-ext / msg-id-mapper / system-prompt / system-prompt-trace（builtin feature-tier，xyz:system-prompt 留痕）
-- **`extensions/universal/`**（role=universal，独立通用包——功能自足，独立 pi 用户可单独安装）：ask-user / cache-probe（前缀指纹采集 + analyze.py 归因） / cw-tool / goal / model-switch / pending-notifications / permission / plan / rename-session / scheduler / session-reader / smart-context（agent 自决上下文压缩：compact_context 工具 + 双模式摘要接管 + 分档提醒） / structured-output / subagent-workflow / todo / unified-hooks
+- **`extensions/universal/`**（role=universal，独立通用包——功能自足，独立 pi 用户可单独安装）：ask-user / cache-probe（前缀指纹采集 + analyze.py 归因） / cw-tool / goal / pending-notifications / permission / plan / rename-session / scheduler / session-reader / smart-context（agent 自决上下文压缩：compact_context 工具 + 双模式摘要接管 + 分档提醒） / structured-output / subagent-workflow / todo / unified-hooks
 
 新增/删包时更新此列举与所在分组。校验：`pnpm extensions:typecheck` / `extensions:lint` / `extensions:test`。
 
