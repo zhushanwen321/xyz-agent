@@ -1,121 +1,125 @@
 {
-  "unit": "scoped-model",
+  "unit": "sd-u5-send-queue",
   "acceptance": [
     {
-      "id": "R1",
-      "type": "e2e-real",
-      "title": "增量回归守卫",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && bash scripts/cw-acceptance/affected-tests.sh 75f596069 --run",
-      "timeout": 900,
-      "core": false,
-      "scenario": "从基线 commit 75f596069 推导受本次改动影响的测试文件集，逐包 vitest 执行。覆盖设计文档 §4 六场景的受影响子集（非全量——R2/E7 步骤 3 复用同一 affected-tests.sh 增量口径）。受影响文件口径：git diff 过滤 *.ts/*.tsx/*.vue/*.mts/*.mjs。affected-tests.sh 四个出口（cd 失败/基线不可达/无变更/汇总）均产出 R1 标记行或 exit≠0。lint 覆盖由 R2/E7 预检承担（sm-e2e.sh E7 对改动文件逐个 eslint --format=json 解析 error 数，eslint 崩溃/输出不可解析按 FAIL）。XYZ_SKIP_REAL_PI=1 双轨机制保留（real-pi 组时序不稳定，与本功能无关）。增量口径固有盲区（非同名映射的既有测试被破坏不进 R1 视野）由 PR pre-merge 单兜底（R2 已切换为同一增量口径，不再承担全量）。"
-    },
-    {
-      "id": "R2",
-      "type": "e2e-real",
-      "title": "全量端到端验收",
-      "command": "bash scripts/cw-acceptance/sm-e2e.sh all",
-      "timeout": 1800,
-      "core": true,
-      "scenario": "sm-e2e.sh all 聚合 E1-E10 全部验收探针，串行执行，末尾输出 R2 标记行 + exit 对齐。覆盖设计文档 §4 八场景中的七个直接断言 + 一个等价覆盖（S4），E1-E10 与场景的实际映射如下：\n- S1 固定模型集 → E1：setScopedModels 写入后 model.list 广播只含白名单模型且保序\n- S2 自定义顺序 + 新会话默认 → E2：重排后广播顺序变化 + settings.json defaultModel 同步为 scoped[0]\n- S3 OAuth catalog provider 模型 + 默认模型持久化 → E3：auth.json-only catalog provider 模型可添加、显示、spawn 读回 default 不被 findValidDefaultModel 冲掉（含重启后 config.defaults 持久化）\n- S4 GUI 即时生效 → E2 广播等价论证：model.list 广播已覆盖 GUI 选择后模型列表实时更新的行为\n- S5 新会话默认终态 → E10：直接断言新会话 session.modelId === scoped[0]（catalog + custom 双 provider 源各覆盖一轮，reply session.modelId 与 session.state_changed 双终态）\n- S6 toggle 共存（前置 enabledModels 白名单模式）→ E4：toggle OFF 后 CUSTOM 模型从 model.list 消失但 scopedModels 条目保留，toggle ON 恢复显示\n- S7 清空恢复 → E5：setScopedModels [] → restoredCount===fullCount 全量恢复 + defaultModel 不变\n- S8 残留清理 → E6：deleteProvider → 广播侧 + 文件侧 scopedModels 清除 CUSTOM 条目且保留 CATALOG 条目\n- S2 持久化维度（重启后 reorder/defaultModel）→ E8：重启后 scopedModels 排序 + defaultModel 仍为 scoped[0]\nE7 为回归守卫分支（scoped smoke + lint 预检 + affected-tests.sh 增量回归：dry-run 实测 35 个受影响测试，规则1 diff 测试文件直取 + 规则2 同名映射；XYZ_SKIP_REAL_PI=1），非单一场景映射——功能区分力由 core:true 的 E1-E6/E8/E10 承担。E9 为 aggregateModels scoped 行为锁定单测（R3 独立验收）。S4 等价覆盖的边界：S4 无独立 GUI 探针（等价于 E2 广播链路），defer 至 PR 阶段 Playwright 探针补充——唯一剩余的 GUI 探针缺口。"
-    },
-    {
-      "id": "R3",
+      "id": "A1-busy-queue-vitest",
       "type": "unit",
-      "title": "E9 单测聚合",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/scoped-model-e9.test.ts",
+      "title": "handleSend busy 排队路径：delivery.sendChecked 返回 queued:true",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A1'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "构造 mock kernel port（isIdle=false 模拟 busy）+ mock delivery（sendChecked resolve）+ mock sessionService，调用 handleSend({sessionId, prompt})，断言返回 {queued: true}（非 {blocked, rejected}）。delivery.sendChecked 被调用一次且传入正确 payload（kind:'text', content:prompt）。"
+    },
+    {
+      "id": "A2-error-hint-vitest",
+      "type": "unit",
+      "title": "handleSend 错误路径返回 error + hint",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A2'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "构造 mock delivery（sendChecked reject 模拟 pi 进程不可达），调用 handleSend，断言返回对象含 error 字段（非空字符串）和 hint 字段（含 'retry send_to_session' 或 'get_session_status' 子串）。验证错误不走前端 banner（无 send.rejected 广播）。"
+    },
+    {
+      "id": "A3-singleton-registry-vitest",
+      "type": "unit",
+      "title": "单例注册表：同 sessionId 复用 handle",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A3'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "连续两次 handleSend 同一 sessionId，断言 getOrCreateDelivery 只调用一次 factory（delivery 实例是同一引用）。第三次 handleSend 不同 sessionId，断言 factory 第二次调用（新实例）。验证单例约束（§3.4 同 session 单例装配）。"
+    },
+    {
+      "id": "A4-create-prompt-vitest",
+      "type": "unit",
+      "title": "handleCreate 初始 prompt 直投（不走内核队列）",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A4'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "调用 handleCreate({prompt: 'init'})，断言 sessionService.sendMessage 直接被调用（不经 delivery.sendChecked/send），新 session 必 idle 无竞态。prompt 为空或 undefined 时 sendMessage 不被调用。失败时 throw 含 sessionId + hint（恢复路径）。"
+    },
+    {
+      "id": "A5-d7-sideeffects-vitest",
+      "type": "unit",
+      "title": "D7 置位副作用：isGenerating/lastActiveAt/workspaceService.record 在 port.send 成功后发生",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A5'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "构造 mock port（send 成功），调用 handleSend，断言：(1) port.send 调用前 isGenerating 为 false（排除初始值已是 true 的假通过）；(2) port.send 调用后 isGenerating 被置为 true；(3) lastActiveAt 被更新（Date.now 差值 < 100ms）；(4) workspaceService.record 被调用（best-effort，try/catch warn 模式）。"
+    },
+    {
+      "id": "A6-plugin-paths-vitest",
+      "type": "unit",
+      "title": "plugin-service 两处路径保持 dispatcher 现状不变",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A6'",
       "timeout": 300,
       "core": false,
-      "scenario": "vitest 直接运行 packages/runtime/test/scoped-model-e9.test.ts，外层 describe('R3: ...') 确保 fullName 以 R3 开头（词边界匹配）。E9-1~E9-4 覆盖 aggregateModels scoped 过滤/排序/优先级/读侧容错四个维度：E9-1 白名单过滤且保序、E9-2 provider 级 disabled 优先于 scoped、E9-3 空 scopedModels 回归锁定全量输出、E9-4 providers.json scopedModels 损坏时独立容错不隔离文件。与 sm-e2e 子 unit E9 验收（-t \"E9\" 过滤内层 describe）同源测试文件但独立执行路径——R3 为 root unit 验收，E9 为 sm-e2e 子 unit 验收，两者 fullName 均含各自 id 且互不干扰。"
+      "scenario": "grep 验证 session-api.ts:209 和 plugin-rpc-setup.ts:131 仍调用 deps.sendMessage（未改走 delivery）。vitest 断言 mock dispatcher 的 sendPrompt 仍被调用（plugin 路径 busy 时仍拒绝，返回 {blocked:true, rejected:true}）。"
+    },
+    {
+      "id": "A7-type-guard-tsc",
+      "type": "unit",
+      "title": "类型守卫：旧 SendResult 形状 {blocked,rejected} 在新类型下 @ts-expect-error 生效",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/extension-protocol && npx tsc --noEmit && echo 'A7 PASS'",
+      "timeout": 300,
+      "core": false,
+      "scenario": "构造类型守卫测试文件：(1) 验证 SessionManagerSendResult 类型只有 {queued: true} 形状；(2) 用 // @ts-expect-error 标记旧形状 {blocked:true, rejected:true} 的赋值行；tsc --noEmit 确认 @ts-expect-error 生效（编译通过 = 旧形状确实不可赋值，@ts-expect-error 消除了预期的类型错误）。若旧形状仍可赋值则 @ts-expect-error 变为多余注释，tsc 报错 exit≠0。"
+    },
+    {
+      "id": "A8-protocol-types-vitest",
+      "type": "unit",
+      "title": "extension-protocol types.ts 签名变更同步：SendResult + 工具 schema",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/extension-protocol && npx vitest run test/session-manager-send-queue.test.ts -t 'A8'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "vitest 验证：(1) SessionManagerSendResult 类型可赋值 {queued: true}；(2) 旧形状 {blocked: true, rejected: true} 不可赋值（@ts-expect-error）；(3) grep 验证 session-manager extension 的工具 description 含 'asynchronously queued' 或 'queued' 语义（工具 schema/description 同步改）。"
+    },
+    {
+      "id": "A9-extension-three-check",
+      "type": "e2e-real",
+      "title": "extension 三连全绿（typecheck + lint + test）",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test && echo 'A9 PASS'",
+      "timeout": 600,
+      "core": true,
+      "scenario": "extensions/ 目录全量 typecheck + lint + test。protocol types 变更影响两端（runtime + extension），三连确保无编译错误、lint 违规、测试回归。覆盖 extension-protocol 包的 vitest.config.ts 存在性（suggestion #2：若不存在则本验收首跑暴露）。"
+    },
+    {
+      "id": "A10-runtime-vitest",
+      "type": "e2e-real",
+      "title": "runtime vitest 全绿（含新增 send-queue 测试 + 存量 session-manager-handler 测试不回归）",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run && echo 'A10 PASS'",
+      "timeout": 600,
+      "core": true,
+      "scenario": "runtime 子包 vitest 全量运行，新增 session-manager-send-queue 测试全部通过，存量 session-manager-handler.test.ts / event-adapter marker 分支测试不回归。"
     }
   ],
   "contracts": [
     {
       "id": "C1",
-      "kind": "function",
-      "provider": "scoped-model",
-      "consumer": "settings-message-handler",
-      "file": "packages/shared/src/protocol.ts",
-      "signature": "'config.setScopedModels': { models: string[] }",
-      "description": "config.setScopedModels RPC 命令 request payload：接收 modelId 数组（provider/modelId 复合串）。reply 类型为 config.scopedModels: { scopedModels: string[] }（去重保序后结果）。实际签名见 protocol.ts ClientMessageMap L566。self-provider 形态：root 集成契约由 owner unit 自声明。"
+      "kind": "schema",
+      "provider": "sd-u5-send-queue",
+      "consumer": "session-manager-extension",
+      "file": "packages/extension-protocol/src/extensions/session-manager/types.ts",
+      "signature": "SessionManagerSendResult = { queued: true }",
+      "description": "send action 结果类型变更：旧 {blocked: boolean, rejected?: boolean} → 新 {queued: true}。错误走 SessionManagerErrorResult（error + hint）。extension 工具 schema/description 同步改「asynchronously queued」语义。"
     },
     {
       "id": "C2",
-      "kind": "event",
-      "provider": "scoped-model",
-      "consumer": "settings-message-handler",
-      "file": "packages/shared/src/protocol.ts",
-      "signature": "'config.providers': { providers: ProviderInfo[]; scopedModels?: string[] }",
-      "description": "config.providers 广播 payload 扩展：新增可选 scopedModels 字段。config.getProviders reply 共用同一类型定义（ServerMessageMapBase L748）。self-provider 形态。"
+      "kind": "function",
+      "provider": "sd-u5-send-queue",
+      "consumer": "runtime",
+      "file": "packages/runtime/src/transport/session-manager-handler.ts",
+      "signature": "handleSend(params): Promise<SessionManagerSendResult>",
+      "description": "handleSend 改造：改走 delivery 的 sendChecked；成功返回 {queued:true}；失败同步返回 error + hint（'target session unreachable; retry send_to_session after checking get_session_status'）。handleCreate 初始 prompt 直投（不走内核队列）。"
     },
     {
       "id": "C3",
       "kind": "function",
-      "provider": "scoped-model",
-      "consumer": "config-service",
-      "file": "packages/runtime/src/services/provider-extras-store.ts",
-      "signature": "getScopedModelsSync(): string[]",
-      "description": "XyzProviderStore 新增顶层 scopedModels 读写 API（L244）。getScopedModelsSync 同步读取（非法值容错，非 string[] 返回 []，非法条目过滤并 log warning）。modifyScopedModels 异步 RMW（同一 withFileLock 锁，与 per-provider modify 串行，L253）。self-provider 形态。注：实现期与子 unit 冻结契约命名漂移（sm-contract-store 冻结 C3 签名为 getScopedModels），以代码终态为准。"
-    },
-    {
-      "id": "C4",
-      "kind": "function",
-      "provider": "scoped-model",
-      "consumer": "sm-ui-chain",
-      "file": "packages/shared/src/protocol.ts",
-      "signature": "'config.setScopedModels': { models: string[] }",
-      "description": "config.setScopedModels RPC 命令（与 C1 同签名，consumer 为 sm-ui-chain）。reply config.scopedModels: { scopedModels: string[] }。self-provider 形态。"
-    },
-    {
-      "id": "C5",
-      "kind": "event",
-      "provider": "scoped-model",
-      "consumer": "sm-ui-chain",
-      "file": "packages/shared/src/protocol.ts",
-      "signature": "'config.providers': { providers: ProviderInfo[]; scopedModels?: string[] }",
-      "description": "config.providers 广播 payload 扩展（与 C2 同签名，consumer 为 sm-ui-chain）。self-provider 形态。"
-    },
-    {
-      "id": "C6",
-      "kind": "function",
-      "provider": "scoped-model",
-      "consumer": "sm-ui-chain",
-      "file": "packages/ui/src/features/settings/common/ScopedModelSection.vue",
-      "signature": "const props = defineProps<{ scopedList: ScopedRenderItem[]; selectableModels: SelectableModel[] }>()",
-      "description": "ScopedModelSection 组件 props 接线契约（L193，单行紧凑形态逐字匹配）。self-provider 形态。"
-    },
-    {
-      "id": "C7",
-      "kind": "function",
-      "provider": "scoped-model",
-      "consumer": "sm-ui-chain",
-      "file": "packages/ui/src/features/settings/common/ScopedModelSection.vue",
-      "signature": "const emit = defineEmits<{ add: [models: string[]]; remove: [scoped: string]; move: [{ scoped: string; dir: 'up' | 'down' }] }>()",
-      "description": "ScopedModelSection 组件 emits 接线契约（L195，单行紧凑形态逐字匹配）。self-provider 形态。"
+      "provider": "sd-u5-send-queue",
+      "consumer": "runtime",
+      "file": "packages/runtime/src/transport/session-manager-handler.ts",
+      "signature": "getOrCreateDelivery(sessionId, factory): DeliveryHandle",
+      "description": "sessionId 单例注册表：以 sessionId 为键惰性装配 delivery handle（本 unit 建立注册表，sd-u6 复用）。同 sessionId 多次调用返回同一实例。factory 签名 () => DeliveryHandle。"
     }
   ],
-  "split": [
-    {
-      "unitId": "sm-contract-store",
-      "dependsOn": []
-    },
-    {
-      "unitId": "sm-runtime-filter",
-      "dependsOn": [
-        "sm-contract-store"
-      ]
-    },
-    {
-      "unitId": "sm-ui-chain",
-      "dependsOn": [
-        "sm-runtime-filter"
-      ]
-    },
-    {
-      "unitId": "sm-e2e",
-      "dependsOn": [
-        "sm-ui-chain"
-      ]
-    }
-  ]
+  "split": []
 }

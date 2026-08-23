@@ -137,10 +137,9 @@ describe('U1-A2 各 action 结果类型结构', () => {
     expect(withModel.modelId).toBe('p/m')
   })
 
-  it('U1-A2 SessionManagerSendResult 必含 blocked，rejected 可选', () => {
-    const res: SessionManagerSendResult = { blocked: false }
-    expect(res.blocked).toBe(false)
-    expect(res.rejected).toBeUndefined()
+  it('U1-A2 SessionManagerSendResult 必含 queued: true', () => {
+    const res: SessionManagerSendResult = { queued: true }
+    expect(res.queued).toBe(true)
   })
 
   it('U1-A2 SessionManagerHistoryResult 必含 messages/truncated', () => {

@@ -79,8 +79,7 @@ export interface SessionManagerCreateResult {
 
 /** send 结果 */
 export interface SessionManagerSendResult {
-  blocked: boolean
-  rejected?: boolean
+  queued: true
 }
 
 /** history 结果 */

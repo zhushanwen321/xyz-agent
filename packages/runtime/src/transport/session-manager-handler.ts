@@ -156,7 +156,9 @@ export class SessionManagerHandler {
   private async handleSend(params: SessionManagerSendParams): Promise<SessionManagerSendResult> {
     const { sessionId, prompt } = params
     const result = await this.opts.sessionService.sendMessage(sessionId, prompt)
-    return { blocked: result.blocked, rejected: result.rejected }
+    // sd-u5-send-queue: 替换旧的 {blocked, rejected} 为 {queued: true}
+    // busy 时 delivery.sendChecked 会排队，成功后返回 queued: true
+    return { queued: true }
   }
 
   /** history 分支：含 tailTurns 截断 */
