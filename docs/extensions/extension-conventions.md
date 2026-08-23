@@ -230,7 +230,6 @@ event handler（如 `tool_execution_end`）中注入消息**必须用 `pi.sendUs
 | 包 | 旧路径 | 新路径 |
 |---|---|---|
 | `pi-permission` | `<agentDir>/permission-config.json` | `<agentDir>/config/permission-ext-config.json` |
-| `pi-quota-providers`（cache） | `<agentDir>/statusline_cache.json`（statusline 遗留孤儿名） | `<agentDir>/config/quota-cache.json`（首次加载迁移） |
 | `pi-rename-session` | 已合规 | `<agentDir>/config/rename-session-ext-config.json`（llm-shared 派生，无迁移脚本） |
 
 ## Extension 依赖管理 [MANDATORY]
