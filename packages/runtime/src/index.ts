@@ -1,6 +1,7 @@
 import { RuntimeServer } from './transport/server.js'
 import { SessionService } from './services/session/session-service.js'
 import { createSessionDeliveryRegistry } from './services/session/session-delivery-registry.js'
+import { createCompletionBackflow } from './services/session/completion-backflow.js'
 import { ConfigService } from './services/config-service.js'
 import { AuthService } from './services/auth/auth-service.js'
 import { AuthStorage } from './services/auth/auth-storage.js'
@@ -126,6 +127,19 @@ function resolveRuntimeToken(): string | null {
   }
   console.warn('[runtime] WS auth token unavailable (XYZ_RUNTIME_TOKEN env / <dataDir>/runtime-token both missing) — fail-closed: ALL WebSocket connections will be rejected')
   return null
+}
+
+/**
+ * sd-u5/u6 共用：组合根 agentSettledListeners 多播列表的订阅装配（add + 返回退订函数）。
+ * sessionDelivery（U5 send 排队）与 completionBackflow（U6 完成回流）同一列表、同一语义。
+ */
+function subscribeAgentSettledIn(
+  listeners: Set<(sessionId: string) => void>,
+): (cb: (sessionId: string) => void) => () => void {
+  return (cb) => {
+    listeners.add(cb)
+    return () => { listeners.delete(cb) }
+  }
 }
 
 async function main(): Promise<void> {
@@ -285,6 +299,18 @@ async function main(): Promise<void> {
   // 声明须在 createAdapter 之前（闭包捕获；订阅发生在 sessionService 构造之后，无时序耦合）。
   const agentSettledListeners = new Set<(sessionId: string) => void>()
 
+  // sd-u6（session-delivery）：完成回流编排（design.md §3.1 调用方 C）。子 session（agent-managed）
+  // settled / exit → 查 spawnSource+parentAgentSessionId → 经 sd-u5 注册表投父（单例 handle）。
+  // 顺序约束：exit 订阅须先于 `new SessionService` 内的 exit 清理腿（removeSessionEntry 删内存态，
+  // 按订阅序分发，本腿排前才能读到打标）；getSession/getDelivery 前向引用（createAdapter 同款模式）。
+  const completionBackflow = createCompletionBackflow({
+    getSession: (sid) => sessionService.getSession(sid),
+    subscribeAgentSettled: subscribeAgentSettledIn(agentSettledListeners),
+    subscribeSessionExit: (cb) => pm.onSessionExit(cb),
+    getSessionOutcome: (filePath) => sessionStore.extractSessionOutcome(filePath),
+    getDelivery: (parentSid) => sessionDelivery.getOrCreateDelivery(parentSid),
+  })
+
   const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
     // EventInterpreter 持有业务态（currentMessageId/writeContents/diffChain 帧序三件套）+ 业务回调，
     // 消费 EventAdapter 翻译出的 PiTranslatedEvent[]，执行 hook / diff / 回写 / 路由副作用。
@@ -387,6 +413,8 @@ async function main(): Promise<void> {
           try {
             listener(sid)
           } catch (e) {
+            // 降级策略（best-effort）：单订阅者异常仅 warn 隔离，不阻断其余腿（bash flush / delivery
+            // 唤醒 / 回流检测各自独立）也不让 interpret 批次崩溃（事件流主链优先）
             console.warn('[runtime] agentSettled listener failed:', e)
           }
         }
@@ -421,10 +449,7 @@ async function main(): Promise<void> {
   const sessionDelivery = createSessionDeliveryRegistry({
     getSession: (sid) => sessionService.getSession(sid),
     ensureActive: (sid) => sessionService.ensureActive(sid),
-    subscribeAgentSettled: (cb) => {
-      agentSettledListeners.add(cb)
-      return () => agentSettledListeners.delete(cb)
-    },
+    subscribeAgentSettled: subscribeAgentSettledIn(agentSettledListeners),
     recordWorkspace: (cwd) => workspaceService.record(cwd),
   })
   // session 销毁（主动删 / 进程退出 / restore 清场全部路径）→ 丢弃该 session 的 delivery
@@ -619,6 +644,8 @@ async function main(): Promise<void> {
       projectStore.flushAll()
       // R1：关闭 SkillRegistry 的 chokidar watcher（global + project），防句柄泄漏阻塞退出。
       skillRegistry.dispose()
+      // sd-u6：退订完成回流（settled / exit 两腿）
+      completionBackflow.dispose()
       await server.stop()
     // eslint-disable-next-line taste/no-silent-catch -- shutdown: best-effort stop, process exits regardless
     } catch (e) {
