@@ -177,6 +177,25 @@ describe('error-visibility M1: failed tool header danger + 终态展开（TC1-3�
   })
 })
 
+/* ── feat-chat-flow-dim：已完成过程块置灰（完成态暗一档，与 running accent 形成亮暗对比）──
+ * - completed tool header 从 neutral-fg 降到 neutral-mid（mid 6.78:1 过 AA，不用 dim）
+ * - running 保持 accent 不回归 */
+describe('feat-chat-flow-dim: completed tool header 置灰', () => {
+  it('completed tool header 染 text-neutral-mid（不再是最亮 neutral-fg）', () => {
+    const wrapper = mountTool({ status: 'completed' })
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    expect(header.classes()).toContain('text-neutral-mid')
+    expect(header.classes()).not.toContain('text-neutral-fg')
+  })
+
+  it('running tool header 保持 text-accent（进行中不置灰）', () => {
+    const wrapper = mountTool({ status: 'running' })
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    expect(header.classes()).toContain('text-accent')
+    expect(header.classes()).not.toContain('text-neutral-mid')
+  })
+})
+
 /* ── error-visibility M3：thinking 可收起 + 完成态回落（TC1-3）──
  * SSOT: docs/architecture/conversation-error-visibility.md §3.3.3
  * - T1: thinkingExpanded 去 props.working 短路（working 默认展开改由 collapsed 初值承担）

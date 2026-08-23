@@ -8,8 +8,7 @@
   -->
   <div class="trace-subagent pb-2.5 mb-0.5" data-testid="subagent-block">
     <div
-      class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-base)] font-medium transition-opacity hover:opacity-80"
-      :class="subagentHeaderColor"
+      class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-base)] font-medium text-neutral-mid transition-opacity hover:opacity-80"
       @click="openSubagentDrawer"
     >
       <!-- running 态 loader（双环 + accent），其余走 users ICON -->
@@ -20,7 +19,7 @@
         class="size-3.5 shrink-0 text-neutral-ico hover:text-neutral-ico-hover"
         :class="isFailed ? 'hover:text-warn' : ''"
       />
-      <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold tracking-[0.08em] text-neutral-fg">Subagent</span>
+      <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold tracking-[0.08em] text-neutral-mid">Subagent</span>
       <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ subagentAgent }}</span>
       <template v-if="subagentSlug">
         <span class="text-neutral-faint">·</span>
@@ -52,9 +51,8 @@ const props = defineProps<{
 const isFailed = computed(() => props.tool.status === 'error')
 const isRunning = computed(() => props.tool.status === 'running')
 
-/** Demo H：subagent header 色——failed 中性灰，其余中性 fg（去 reasoning 紫）。
- *  running 由 loader + accent 文案表达，header 整体仍中性。 */
-const subagentHeaderColor = computed(() => (isFailed.value ? 'text-neutral-mid' : 'text-neutral-fg'))
+/* header 色（feat-chat-flow-dim）：恒 neutral-mid 置灰（原 failed mid / 其余 fg 两态已合并——
+ * 过程块完成后降一档与 running accent 形成亮暗对比；running 由 loader + accent 文案表达）。 */
 
 /** 顶层 input 安全读取。
  *  拍平 schema：action / agent / slug / model / thinkingLevel / task 都在顶层（非 startParam 嵌套）。 */
