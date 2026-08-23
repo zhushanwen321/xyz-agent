@@ -23,6 +23,7 @@ const REAL_PI_TESTS = [
   'src/__tests__/equivalence/attach-lifecycle.test.ts',
   'src/__tests__/equivalence/broadcast-getstate.test.ts',
   'src/__tests__/equivalence/chaos.test.ts',
+  'src/__tests__/equivalence/completion-backflow-e2e.test.ts',
   'src/__tests__/equivalence/live-reload.test.ts',
   'src/__tests__/equivalence/pi-protocol-contract.test.ts',
   'src/__tests__/equivalence/scalar-state-invalidation.test.ts',

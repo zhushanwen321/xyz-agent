@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url'
 import { translate } from '../../infra/pi/event-adapter.js'
 import { EventInterpreter } from '../../services/session/event-interpreter.js'
 import { SessionManagerHandler } from '../../transport/session-manager-handler.js'
+import type { SessionManagerHandlerOptions } from '../../transport/session-manager-handler.js'
 import {
   agentSidecarPath,
   invalidateScanDirCache,
@@ -121,8 +122,18 @@ async function runFullChain(): Promise<{ result: FullChainResult; fx: PiFixture;
     } as unknown as ISessionService
 
     // ── 3. runtime 真实链路接线（与组合根 server.ts 同款；IO 层换成 pi fixture）──
+    // delivery：最小 stub——本 e2e 的 create 不带 prompt（sendDirect 不触发）、
+    // send action 不被驱动；真实排队链路由 session-manager-send-queue.test.ts 覆盖。
     const handler = new SessionManagerHandler({
       sessionService,
+      delivery: {
+        getOrCreateDelivery: () => {
+          throw new Error('send not exercised in this e2e')
+        },
+        sendDirect: async () => {},
+        dispose: () => {},
+        disposeAll: () => {},
+      } as unknown as SessionManagerHandlerOptions['delivery'],
       // wire 映射对齐真实 rpc-client.sendExtensionUiResponse 的 select 分支（String → value）
       sendExtensionUiResponse: (_sessionId, requestId, response) => {
         const payload = response === null

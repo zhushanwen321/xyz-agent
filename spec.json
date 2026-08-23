@@ -1,79 +1,124 @@
 {
-  "unit": "sd-u3-notifier-migration",
+  "unit": "sd-u5-send-queue",
   "acceptance": [
     {
-      "id": "U3_GOLDEN",
-      "title": "golden 快照逐字节比对（pre-migration freeze）",
+      "id": "A1-busy-queue-vitest",
       "type": "e2e-real",
-      "command": "cd \"$WORKDIR/extensions/universal/subagent-workflow\" && npx vitest run --config vitest.config.ts src/execution/__tests__/notifier-golden-snapshot.test.ts --bail=1 && echo \"U3_GOLDEN PASS\"",
-      "timeout": 120,
-      "core": true,
-      "scenario": "固化迁移前 notifier 输出全文快照（单条 + 60s 窗口内两条合批各一），迁移后 diff 逐字节一致。"
-    },
-    {
-      "id": "U3_EXISTING_TESTS",
-      "title": "notifier 现有测试全绿（回归锁）",
-      "type": "e2e-real",
-      "command": "cd \"$WORKDIR/extensions/universal/subagent-workflow\" && npx vitest run --config vitest.config.ts --bail=1 -- src/execution/__tests__/notifier-flush.test.ts && echo \"U3_EXISTING_TESTS PASS\"",
-      "timeout": 120,
-      "core": true,
-      "scenario": "现有锚定测试（toContain/endsWith 关键行）不动、全绿。覆盖全部 4 个 describe：deliverAs 契约、isIdle gate 竞态修复、dedup 按轮次、buildLlmContent 指针行。"
-    },
-    {
-      "id": "U3_MULTI_MERGE",
-      "title": "多任务合并场景（60s 窗口内两个后台 subagent 合批）",
-      "type": "e2e-real",
-      "command": "cd \"$WORKDIR/extensions/universal/subagent-workflow\" && npx vitest run --config vitest.config.ts src/execution/__tests__/notifier-golden-snapshot.test.ts -t 'batch merge' --bail=1 && echo \"U3_MULTI_MERGE PASS\"",
-      "timeout": 120,
-      "core": true,
-      "scenario": "两个后台 subagent 60s 窗口内先后完成 → 一条合并消息，`---` 分隔、details 为 batch 结构。"
-    },
-    {
-      "id": "U3_ASSEMBLY",
-      "title": "装配映射测试（intent → pi 参数、mergeHoldActive 谓词接线）",
-      "type": "e2e-real",
-      "command": "cd \"$WORKDIR/extensions/universal/subagent-workflow\" && npx vitest run --config vitest.config.ts --bail=1 -- src/execution/__tests__/notifier-flush.test.ts -t 'deliverAs' && echo \"U3_ASSEMBLY PASS\"",
-      "timeout": 120,
-      "core": true,
-      "scenario": "装配映射测试：intent → pi 参数（deliverAs='steer'、triggerTurn=true）、mergeHoldActive 谓词接线。"
-    },
-    {
-      "id": "U3_TYPECHECK_LINT",
-      "title": "扩展类型检查 + lint",
-      "type": "e2e-real",
-      "command": "cd \"$WORKDIR\" && pnpm install --silent && pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test && echo \"U3_TYPECHECK_LINT PASS\"",
+      "title": "handleSend busy 排队路径：delivery.sendChecked 返回 queued:true",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A1'",
       "timeout": 300,
       "core": true,
-      "scenario": "subagent-workflow extension 装配处类型检查 + lint + 测试全绿。"
+      "scenario": "构造 mock kernel port（isIdle=false 模拟 busy）+ mock delivery（sendChecked resolve）+ mock sessionService，调用 handleSend({sessionId, prompt})，断言返回 {queued: true}（非 {blocked, rejected}）。delivery.sendChecked 被调用一次且传入正确 payload（kind:'text', content:prompt）。"
     },
     {
-      "id": "U3_UNIT",
-      "title": "单元测试验证",
+      "id": "A2-error-hint-vitest",
+      "type": "e2e-real",
+      "title": "handleSend 错误路径返回 error + hint",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A2'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "构造 mock delivery（sendChecked reject 模拟 pi 进程不可达），调用 handleSend，断言返回对象含 error 字段（非空字符串）和 hint 字段（含 'retry send_to_session' 或 'get_session_status' 子串）。验证错误不走前端 banner（无 send.rejected 广播）。"
+    },
+    {
+      "id": "A3-singleton-registry-vitest",
+      "type": "e2e-real",
+      "title": "单例注册表：同 sessionId 复用 handle",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A3'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "连续两次 handleSend 同一 sessionId，断言 getOrCreateDelivery 只调用一次 factory（delivery 实例是同一引用）。第三次 handleSend 不同 sessionId，断言 factory 第二次调用（新实例）。验证单例约束（§3.4 同 session 单例装配）。"
+    },
+    {
+      "id": "A4-create-prompt-vitest",
+      "type": "e2e-real",
+      "title": "handleCreate 初始 prompt 直投（不走内核队列）",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A4'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "调用 handleCreate({prompt: 'init'})，断言 sessionService.sendMessage 直接被调用（不经 delivery.sendChecked/send），新 session 必 idle 无竞态。prompt 为空或 undefined 时 sendMessage 不被调用。失败时 throw 含 sessionId + hint（恢复路径）。"
+    },
+    {
+      "id": "A5-d7-sideeffects-vitest",
+      "type": "e2e-real",
+      "title": "D7 置位副作用：isGenerating/lastActiveAt/workspaceService.record 在 port.send 成功后发生",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A5'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "构造 mock port（send 成功），调用 handleSend，断言：(1) port.send 调用前 isGenerating 为 false（排除初始值已是 true 的假通过）；(2) port.send 调用后 isGenerating 被置为 true；(3) lastActiveAt 被更新（Date.now 差值 < 100ms）；(4) workspaceService.record 被调用（best-effort，try/catch warn 模式）。"
+    },
+    {
+      "id": "A6-plugin-paths-vitest",
       "type": "unit",
-      "command": "cd \"$WORKDIR/extensions/universal/subagent-workflow\" && npx vitest run --config vitest.config.ts --bail=1 && echo \"U3_UNIT PASS\"",
-      "timeout": 120,
+      "title": "plugin-service 两处路径保持 dispatcher 现状不变",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A6'",
+      "timeout": 300,
       "core": false,
-      "scenario": "单元测试验证：notifier 现有测试全绿（回归锁），覆盖 deliverAs 契约、isIdle gate 竞态修复、dedup 按轮次、buildLlmContent 指针行。"
+      "scenario": "grep 验证 session-api.ts:209 和 plugin-rpc-setup.ts:131 仍调用 deps.sendMessage（未改走 delivery）。vitest 断言 mock dispatcher 的 sendPrompt 仍被调用（plugin 路径 busy 时仍拒绝，返回 {blocked:true, rejected:true}）。"
+    },
+    {
+      "id": "A7-type-guard-tsc",
+      "type": "unit",
+      "title": "类型守卫：旧 SendResult 形状 {blocked,rejected} 在新类型下 @ts-expect-error 生效",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/extension-protocol && npx tsc --noEmit && echo 'A7 PASS'",
+      "timeout": 300,
+      "core": false,
+      "scenario": "构造类型守卫测试文件：(1) 验证 SessionManagerSendResult 类型只有 {queued: true} 形状；(2) 用 // @ts-expect-error 标记旧形状 {blocked:true, rejected:true} 的赋值行；tsc --noEmit 确认 @ts-expect-error 生效（编译通过 = 旧形状确实不可赋值，@ts-expect-error 消除了预期的类型错误）。若旧形状仍可赋值则 @ts-expect-error 变为多余注释，tsc 报错 exit≠0。"
+    },
+    {
+      "id": "A8-protocol-types-vitest",
+      "type": "e2e-real",
+      "title": "extension-protocol types.ts 签名变更同步：SendResult + 工具 schema",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/extension-protocol && npx vitest run test/session-manager-send-queue.test.ts -t 'A8'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "vitest 验证：(1) SessionManagerSendResult 类型可赋值 {queued: true}；(2) 旧形状 {blocked: true, rejected: true} 不可赋值（@ts-expect-error）；(3) grep 验证 session-manager extension 的工具 description 含 'asynchronously queued' 或 'queued' 语义（工具 schema/description 同步改）。"
+    },
+    {
+      "id": "A9-extension-three-check",
+      "type": "e2e-real",
+      "title": "extension 三连全绿（typecheck + lint + test）",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test && echo 'A9 PASS'",
+      "timeout": 600,
+      "core": true,
+      "scenario": "extensions/ 目录全量 typecheck + lint + test。protocol types 变更影响两端（runtime + extension），三连确保无编译错误、lint 违规、测试回归。覆盖 extension-protocol 包的 vitest.config.ts 存在性（suggestion #2：若不存在则本验收首跑暴露）。"
+    },
+    {
+      "id": "A10-runtime-vitest",
+      "type": "e2e-real",
+      "title": "runtime vitest 全绿（含新增 send-queue 测试 + 存量 session-manager-handler 测试不回归）",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run && echo 'A10 PASS'",
+      "timeout": 600,
+      "core": true,
+      "scenario": "runtime 子包 vitest 全量运行，新增 session-manager-send-queue 测试全部通过，存量 session-manager-handler.test.ts / event-adapter marker 分支测试不回归。"
     }
   ],
   "contracts": [
     {
       "id": "C1",
-      "kind": "function",
-      "provider": "sd-u2-delivery-kernel",
-      "consumer": "sd-u3-notifier-migration",
-      "file": "packages/shared/src/delivery/index.ts",
-      "signature": "createDelivery(port: DeliveryPort, config?: DeliveryConfig): DeliveryHandle",
-      "description": "sd-u2 交付的内核 API。DeliveryPort: { supportedPayloads, isIdle, hasPendingMessages, subscribeSettled, send }。DeliveryConfig: { intent, mergeWindowMs, mergeHoldActive }。"
+      "kind": "schema",
+      "provider": "sd-u5-send-queue",
+      "consumer": "session-manager-extension",
+      "file": "packages/extension-protocol/src/extensions/session-manager/types.ts",
+      "signature": "SessionManagerSendResult = { queued: true }",
+      "description": "send action 结果类型变更：旧 {blocked: boolean, rejected?: boolean} → 新 {queued: true}。错误走 SessionManagerErrorResult（error + hint）。extension 工具 schema/description 同步改「asynchronously queued」语义。"
     },
     {
       "id": "C2",
       "kind": "function",
-      "provider": "sd-u3-notifier-migration",
-      "consumer": "subagent-workflow",
-      "file": "extensions/universal/subagent-workflow/src/execution/notifier.ts",
-      "signature": "BgNotifier { notify(record), flushPendingNotifications(), dispose(), revive() }",
-      "description": "BgNotifier 公开 API 签名不变，buildLlmContent 保留在调用方。"
+      "provider": "sd-u5-send-queue",
+      "consumer": "runtime",
+      "file": "packages/runtime/src/transport/session-manager-handler.ts",
+      "signature": "handleSend(params): Promise<SessionManagerSendResult>",
+      "description": "handleSend 改造：改走 delivery 的 sendChecked；成功返回 {queued:true}；失败同步返回 error + hint（'target session unreachable; retry send_to_session after checking get_session_status'）。handleCreate 初始 prompt 直投（不走内核队列）。"
+    },
+    {
+      "id": "C3",
+      "kind": "function",
+      "provider": "sd-u5-send-queue",
+      "consumer": "runtime",
+      "file": "packages/runtime/src/transport/session-manager-handler.ts",
+      "signature": "getOrCreateDelivery(sessionId, factory): DeliveryHandle",
+      "description": "sessionId 单例注册表：以 sessionId 为键惰性装配 delivery handle（本 unit 建立注册表，sd-u6 复用）。同 sessionId 多次调用返回同一实例。factory 签名 () => DeliveryHandle。"
     }
   ],
   "split": []
