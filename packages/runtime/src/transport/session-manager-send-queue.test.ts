@@ -136,7 +136,7 @@ afterEach(() => {
 // ─── A1: busy 排队路径 ────────────────────────────────────────────────────
 
 describe('A1-busy-queue-vitest: handleSend busy 时入队而非拒绝', () => {
-  it('目标 busy → respond {queued: true} 且消息不立即投递（depth=1，prompt 未调）', async () => {
+  it('目标 busy → respond {queued: true} 且立即经 steer 受理入 pi 队列（受理即可达确认）', async () => {
     const h = makeHarness({ view: { isGenerating: true } })
 
     await h.handler.handle('req-1', 'parent-1', 'send', { sessionId: 's1', prompt: 'hello' })
@@ -146,19 +146,23 @@ describe('A1-busy-queue-vitest: handleSend busy 时入队而非拒绝', () => {
     // 不再出现旧拒绝形状
     expect(respond.blocked).toBeUndefined()
     expect(respond.rejected).toBeUndefined()
-    // 消息入队（内核队列深度 1），未触发 pi prompt
-    expect(h.registry.getOrCreateDelivery('s1').depth()).toBe(1)
-    expect(h.client.prompt).not.toHaveBeenCalled()
+    // busy 分支也触达 port.send（内核 #8：受理即可达性确认，pi streaming 受理即回），
+    // intent 默认 interrupt-at-turn-boundary → streamingBehavior='steer'，消息入 pi 队列
+    expect(h.client.prompt).toHaveBeenCalledWith('hello', undefined, 'steer')
+    expect(h.registry.getOrCreateDelivery('s1').depth()).toBe(0)
     // 不再走 dispatcher 的 busy 预检拒绝路径
     expect(h.sessionService.sendMessage).not.toHaveBeenCalled()
   })
 
-  it('busy 入队后 settled 边沿 + idle 复核 → flush 以 steer 注入 turn 边界', async () => {
+  it('普通 send busy 入队后 settled 边沿 + idle 复核 → flush 以 steer 注入 turn 边界', async () => {
     const h = makeHarness({ view: { isGenerating: true } })
-    await h.handler.handle('req-1', 'parent-1', 'send', { sessionId: 's1', prompt: 'steered' })
+    // 普通 send()（非 sendChecked）：busy 时入内核队列，由 settled 边沿驱动（D8 主路径）
+    const handle = h.registry.getOrCreateDelivery('s1')
+    handle.send({ payload: { kind: 'text', content: 'steered' } })
     expect(h.client.prompt).not.toHaveBeenCalled()
+    expect(handle.depth()).toBe(1)
 
-    // run 结束：settled 事件到达 + isIdle 复核通过（同一写者先复位标志）
+    // run 结束：settled 事件到达 + busy 复核通过（同一写者先复位标志）
     setBusy(h, false)
     h.emitSettled()
     await flushMicrotasks()
@@ -171,8 +175,10 @@ describe('A1-busy-queue-vitest: handleSend busy 时入队而非拒绝', () => {
   it('isCompacting / isBashRunning 同样视为 busy（三者互斥判定）', async () => {
     for (const flag of ['isCompacting', 'isBashRunning'] as const) {
       const h = makeHarness({ view: { [flag]: true } as Partial<HarnessView> })
-      await h.handler.handle('req-1', 'parent-1', 'send', { sessionId: 's1', prompt: 'm' })
-      expect(readRespond(h)).toEqual({ queued: true })
+      // 普通 send() 验证内核 gate：三种标志任一为 true 都判 busy，不立即投
+      const handle = h.registry.getOrCreateDelivery('s1')
+      handle.send({ payload: { kind: 'text', content: 'm' } })
+      expect(handle.depth()).toBe(1)
       expect(h.client.prompt).not.toHaveBeenCalled()
     }
   })
@@ -301,7 +307,9 @@ describe('A5-d7-sideeffects-vitest: D7 保留的置位副作用在 port.send 成
 
   it('busy 投递（settled flush 路径）成功后同样置位', async () => {
     const h = makeHarness({ view: { isGenerating: true } })
-    await h.handler.handle('req-1', 'parent-1', 'send', { sessionId: 's1', prompt: 'q' })
+    // 普通 send() 走内核 busy 排队 → settled 边沿 flush（settled 路径的置位守卫）
+    const handle = h.registry.getOrCreateDelivery('s1')
+    handle.send({ payload: { kind: 'text', content: 'q' } })
     expect(h.view.isGenerating).toBe(true) // busy 本态
 
     // settled → idle 复核（写者复位标志）→ flush 投递 → 重新置位

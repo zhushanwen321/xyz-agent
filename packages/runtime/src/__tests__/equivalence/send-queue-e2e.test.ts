@@ -151,13 +151,21 @@ describe.skipIf(!REAL_PI_READY)(`send queue e2e real pi${REAL_PI_READY ? '' : `�
       const mid = midState.data as { isStreaming?: boolean; pendingMessageCount?: number }
       expect(mid.isStreaming, `streaming 中 get_state.isStreaming 应为 true，实际：${JSON.stringify(mid)}`).toBe(true)
 
-      // ── 6. 经 registry 投递第二条（真实 delivery.sendChecked）：resolve = 投递入口不拒绝（{queued:true} 语义）──
+      // ── 6. 经 registry 投递第二条（真实 delivery.sendChecked）：resolve = pi streaming 队列受理（{queued:true} 语义）──
       const handle = registry.getOrCreateDelivery(targetSessionId!)
+      const beforePending = mid.pendingMessageCount ?? 0
       await expect(
         handle.sendChecked({ payload: { kind: 'text', content: `${PROBE_MARK} The counting task is over now. Reply with exactly: ${ACK_MARK} and nothing else.` } }),
-        'busy 期间 sendChecked 应 resolve（入队成功 + 异步终态），不得 reject',
+        'busy 期间 sendChecked 应受理 resolve（pi streaming 受理即回，内核 #8），不得 reject',
       ).resolves.toBeUndefined()
-      expect(handle.depth(), 'sendChecked resolve 后消息应在队列（busy 未投出）').toBe(1)
+      expect(handle.depth(), 'sendChecked 受理后消息应已出内核队列（入 pi streaming 队列，非内核滞留）').toBe(0)
+      // pi 侧受理结构化断言（纪律①：结果必须结构化断言，不只依赖 resolve）：steer 队列 pending +1
+      const afterState = await targetFx.sendCommand('get_state')
+      const after = afterState.data as { isStreaming?: boolean; pendingMessageCount?: number }
+      expect(
+        (after.pendingMessageCount ?? 0) > beforePending,
+        `直投受理后 pi pendingMessageCount 应增加（before=${beforePending}, after=${JSON.stringify(after)}）`,
+      ).toBe(true)
 
       // ── 7. turn 边界注入：第二个 turn_start + PROBE 作为 user message 出现 ──
       await targetFx.waitForEvent(
