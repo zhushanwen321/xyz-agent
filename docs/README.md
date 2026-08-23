@@ -35,6 +35,7 @@ docs/
 
 ## 关键文档入口
 
+- [constraints.md](./constraints.md) — **架构约束登记表人读视图**（机器权威 = constraints.json；CR 动态加载经 `node scripts/select-constraints.mjs --base main`）
 - [architecture.md](./architecture.md) — 系统架构总览
 - [standards.md](./standards.md) — 前端编码规范
 - [troubleshooting.md](./troubleshooting.md) — 问题排查指南

@@ -60,7 +60,9 @@ async function init(): Promise<void> {
   const transport = getSettingsTransport()
   const store = getSettingsStore()
 
-  unsubs.push(transport.onProviders((p) => { store.providers.value = p }))
+  unsubs.push(transport.onProviders((p, scopedModels) => {
+    store.setProviders(p, scopedModels)
+  }))
   // models 与 providers 同源（sendInitialState 同 step 推、provider 增删同广播），故常驻订阅
   unsubs.push(transport.onModels((m) => { store.models.value = m }))
   unsubs.push(transport.onSkills((s) => { store.skills.value = s }))
@@ -97,7 +99,8 @@ async function init(): Promise<void> {
 async function refreshProviders(): Promise<void> {
   const store = getSettingsStore()
   try {
-    store.providers.value = await getSettingsTransport().listProviders()
+    const { providers, scopedModels } = await getSettingsTransport().listProviders()
+    store.setProviders(providers, scopedModels)
   // eslint-disable-next-line taste/no-silent-catch -- 拉取失败不阻塞 UI：onProviders 订阅会兜底推回最新数据，无需打扰用户
   } catch (e) {
     console.warn('[settings] listProviders 失败，依赖订阅兜底', e)

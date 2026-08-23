@@ -10,7 +10,12 @@ describe('QUOTA_PRESETS', () => {
     for (const preset of QUOTA_PRESETS) {
       expect(preset.fetcher).toBeTruthy()
       expect(preset.label).toBeTruthy()
-      expect(['api-key', 'cookie']).toContain(preset.auth)
+      // [A2-1] auth 数组化：非空数组且元素均为合法形态
+      expect(Array.isArray(preset.auth)).toBe(true)
+      expect(preset.auth.length).toBeGreaterThan(0)
+      for (const kind of preset.auth) {
+        expect(['api-key', 'oauth', 'cookie']).toContain(kind)
+      }
       expect(preset.match.baseUrlPattern || preset.match.namePattern).toBeTruthy()
     }
   })

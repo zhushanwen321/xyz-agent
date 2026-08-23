@@ -59,7 +59,7 @@ function makeSessionSummary(overrides: Partial<SessionSummary> = {}): SessionSum
 describe('SessionManagerHandler', () => {
   // 红阶段守卫：验证 session-manager extension 存在（区分力检查）
   it('session-manager extension 存在（红阶段守卫）', () => {
-    const extensionPath = resolve(process.cwd(), '../../extensions/session-manager/package.json')
+    const extensionPath = resolve(process.cwd(), '../../extensions/universal/session-manager/package.json')
     expect(existsSync(extensionPath), `session-manager extension should exist at ${extensionPath}`).toBe(true)
   })
 
@@ -86,6 +86,7 @@ describe('SessionManagerHandler', () => {
 
       // 3. respond 包含 sessionId, status, modelId
       expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith(
+        'sid-parent',
         'req-1',
         JSON.stringify({ sessionId: 'new-session', status: 'created', modelId: 'openai/gpt-4' }),
         'select',
@@ -114,11 +115,8 @@ describe('SessionManagerHandler', () => {
         parentAgentSessionId: 'sid-parent',
       })
 
-      // broadcastSessionList 带 opts（同样为服务端注入值）
-      expect(opts.broadcastSessionList).toHaveBeenCalledWith({
-        spawnSource: 'agent',
-        parentAgentSessionId: 'sid-parent',
-      })
+      // broadcastSessionList 无参调用（签名已收窄为 ()，上下文由 server 侧组装）
+      expect(opts.broadcastSessionList).toHaveBeenCalledWith()
     })
   })
 
@@ -135,6 +133,7 @@ describe('SessionManagerHandler', () => {
 
       expect(opts.sessionService.sendMessage).toHaveBeenCalledWith('s1', 'hello')
       expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith(
+        'sid-parent',
         'req-1',
         JSON.stringify({ blocked: true }),
         'select',
@@ -153,6 +152,7 @@ describe('SessionManagerHandler', () => {
       await handler.handle('req-1', 'sid-parent', 'history', { sessionId: 's1' })
 
       expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith(
+        'sid-parent',
         'req-1',
         JSON.stringify({ messages, truncated: false }),
         'select',
@@ -176,7 +176,7 @@ describe('SessionManagerHandler', () => {
       await handler.handle('req-1', 'sid-parent', 'history', { sessionId: 's1', tailTurns: 1 })
 
       // 应该只保留最后一个 user turn 及之后的消息
-      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][1])
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
       expect(response.messages).toEqual([
         { role: 'user', content: 'msg2' },
         { role: 'assistant', content: 'reply2' },
@@ -196,6 +196,7 @@ describe('SessionManagerHandler', () => {
       await handler.handle('req-1', 'sid-parent', 'status', { sessionId: 's1' })
 
       expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith(
+        'sid-parent',
         'req-1',
         JSON.stringify({ status: 'active', modelId: 'openai/gpt-4' }),
         'select',
@@ -213,6 +214,7 @@ describe('SessionManagerHandler', () => {
       await handler.handle('req-1', 'sid-parent', 'status', { sessionId: 'nonexistent' })
 
       expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith(
+        'sid-parent',
         'req-1',
         JSON.stringify({ status: 'not_found' }),
         'select',
@@ -234,7 +236,7 @@ describe('SessionManagerHandler', () => {
 
       await handler.handle('req-1', 'sid-parent', 'list', { spawnSource: 'agent' })
 
-      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][1])
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
       expect(response.sessions).toHaveLength(2)
       expect(response.sessions[0].id).toBe('s2')
       expect(response.sessions[1].id).toBe('s3')
@@ -254,7 +256,7 @@ describe('SessionManagerHandler', () => {
 
       await handler.handle('req-1', 'sid-parent', 'list', { parentAgentSessionId: 'parent-b' })
 
-      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][1])
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
       expect(response.sessions).toHaveLength(1)
       expect(response.sessions[0].id).toBe('s2')
     })
@@ -271,6 +273,7 @@ describe('SessionManagerHandler', () => {
 
       expect(opts.sessionService.abort).toHaveBeenCalledWith('s1')
       expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith(
+        'sid-parent',
         'req-1',
         JSON.stringify({ success: true }),
         'select',
@@ -285,7 +288,7 @@ describe('SessionManagerHandler', () => {
 
       await handler.handle('req-1', 'sid-parent', '__malformed__', {})
 
-      expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith('req-1', null, 'select')
+      expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith('sid-parent', 'req-1', null, 'select')
     })
 
     it('未知 action → sendExtensionUiResponse(null, "select")', async () => {
@@ -294,7 +297,7 @@ describe('SessionManagerHandler', () => {
 
       await handler.handle('req-1', 'sid-parent', 'unknown_action' as any, {})
 
-      expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith('req-1', null, 'select')
+      expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith('sid-parent', 'req-1', null, 'select')
     })
   })
 
@@ -309,7 +312,7 @@ describe('SessionManagerHandler', () => {
 
       await handler.handle('req-1', 'sid-parent', 'create', { cwd: '/test' })
 
-      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][1])
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
       expect(response.error).toBe('create failed')
       expect(response.sessionId).toBeUndefined()
       expect(response.hint).toBeUndefined()
@@ -343,6 +346,7 @@ describe('SessionManagerHandler', () => {
 
       // create 成功的 respond 已发出
       expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith(
+        'sid-parent',
         'req-1',
         expect.stringContaining('created-session'),
         'select',
@@ -376,7 +380,7 @@ describe('SessionManagerHandler', () => {
 
       await handler.handle('req-1', 'sid-parent', 'status', { sessionId: 's1' })
 
-      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][1])
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
       expect(response.modelId).toBe('anthropic/claude-3')
     })
 
@@ -391,13 +395,13 @@ describe('SessionManagerHandler', () => {
 
       await handler.handle('req-1', 'sid-parent', 'status', { sessionId: 's1' })
 
-      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][1])
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
       expect(response.modelId).toBeUndefined()
     })
   })
 
   describe('U4-A6: broadcastSessionList opts 注入与解耦', () => {
-    it('create 成功后 broadcastSessionList 带 opts', async () => {
+    it('create 成功后 broadcastSessionList 被调用（无参，签名收窄）', async () => {
       const session = makeSessionSummary()
       const opts = makeMockOptions({
         sessionService: makeMockSessionService({
@@ -412,10 +416,7 @@ describe('SessionManagerHandler', () => {
         parentAgentSessionId: 'parent',
       })
 
-      expect(opts.broadcastSessionList).toHaveBeenCalledWith({
-        spawnSource: 'agent',
-        parentAgentSessionId: 'sid-parent',
-      })
+      expect(opts.broadcastSessionList).toHaveBeenCalledWith()
     })
 
     it('broadcast 失败不影响 create 的 respond', async () => {

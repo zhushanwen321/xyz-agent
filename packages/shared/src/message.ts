@@ -122,7 +122,7 @@ export interface BashExecutionData {
  * 的 CustomMessage details 传递。扩展在主对话流注入此通知，triggerTurn:true 唤醒
  * 父 agent 接力处理结果。
  *
- * 来源：extensions/subagent-workflow/src/execution/notifier.ts（本仓源码；
+ * 来源：extensions/universal/subagent-workflow/src/execution/notifier.ts（本仓源码；
  * 运行时安装在 ~/.xyz-agent/npm/node_modules/@zhushanwen/pi-subagent-workflow/）
  */
 export interface BgNotifyRecord {

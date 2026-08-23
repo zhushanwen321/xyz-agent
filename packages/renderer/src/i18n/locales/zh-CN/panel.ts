@@ -142,6 +142,11 @@ export default {
     refresh: '刷新',
     refreshing: '…',
     queryFailed: '查询失败：{error}',
+    // quota 失败 reason 简短文案（A2-4，quotaFailReasonText 映射；恢复指引长文案在 settings.providerEdit）
+    quotaFailUnauthorized: '凭证可能已过期',
+    quotaFailNetwork: '网络异常或服务不可用',
+    quotaFailNoSubscription: '未检测到有效订阅',
+    quotaFailParse: '额度响应解析失败',
     window5h: '5h',
     windowWeek: '本周',
     windowMonth: '本月',

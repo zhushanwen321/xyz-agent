@@ -1,0 +1,53 @@
+{
+  "name": "@zhushanwen/pi-rename-session",
+  "version": "0.5.2",
+  "type": "module",
+  "main": "index.ts",
+  "xyz-agent": {
+    "role": "universal"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "keywords": [
+    "pi-package"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@zhushanwen/pi-llm-shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
+    "vitest": "^4.1.8"
+  },
+  "files": [
+    "index.ts",
+    "src/**/*.ts",
+    "skills/",
+    "vitest.config.ts"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-ai": "^0.84.1",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  }
+}

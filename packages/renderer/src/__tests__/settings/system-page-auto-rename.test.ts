@@ -28,12 +28,20 @@ import SystemAppearanceSection from '@/components/settings/system/SystemAppearan
 import SystemSoundSection from '@/components/settings/system/SystemSoundSection.vue'
 import SystemShortcutSection from '@/components/settings/system/SystemShortcutSection.vue'
 
-/** mock 捕获 auto-rename / rename-model API 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
+/** mock 捕获 auto-rename / rename-model / smart-context API 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
 const settingsMock = vi.hoisted(() => ({
   getAutoRenameEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
   setAutoRenameEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
   getRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
   setRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
+  // SystemPage 现挂 SystemSmartContextSection（onMounted 读全量配置）——缺导出会告警
+  getSmartContextConfig: vi.fn(() =>
+    Promise.resolve({ enabled: true, compactModel: '', reminderThresholds: [200_000, 400_000, 600_000], excludedModels: [] }),
+  ),
+  setSmartContextEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
+  setSmartContextCompactModel: vi.fn(() => Promise.resolve({ model: '' })),
+  setSmartContextThresholds: vi.fn(() => Promise.resolve({ thresholds: [200_000, 400_000, 600_000] })),
+  setSmartContextExcludedModels: vi.fn(() => Promise.resolve({ models: [] })),
 }))
 
 vi.mock('@/api/domains/settings', () => ({
@@ -41,6 +49,11 @@ vi.mock('@/api/domains/settings', () => ({
   setAutoRenameEnabled: settingsMock.setAutoRenameEnabled,
   getRenameModel: settingsMock.getRenameModel,
   setRenameModel: settingsMock.setRenameModel,
+  getSmartContextConfig: settingsMock.getSmartContextConfig,
+  setSmartContextEnabled: settingsMock.setSmartContextEnabled,
+  setSmartContextCompactModel: settingsMock.setSmartContextCompactModel,
+  setSmartContextThresholds: settingsMock.setSmartContextThresholds,
+  setSmartContextExcludedModels: settingsMock.setSmartContextExcludedModels,
   // stores/settings → '@/api' → mock/index 转发引用 real 域的 getSystem/updateSystem，
   // 工厂缺导出会在模块加载时抛 "No export defined"；本测试不消费，给空实现即可
   getSystem: vi.fn(() => Promise.resolve({})),

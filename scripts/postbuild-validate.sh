@@ -5,7 +5,8 @@
 # 1. 产物存在性（dmg/zip/exe/AppImage）
 # 2. macOS/Windows unpacked app 结构（main executable, asar, runtime, native resources）
 # 3. asar 内容正确性
-# 4. 产物大小合理性
+# 4. renderer WASM chunk 检查（CSP 能力防线：产物级拦截依赖暗藏的可执行 WASM）
+# 5. 产物大小合理性
 #
 # 用法: ./scripts/postbuild-validate.sh [--ci] [--dir-only]（参数顺序无关）
 
@@ -45,7 +46,7 @@ FAILED=0
 
 # ── 1. 产物存在性 ──────────────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[1/5] Build artifacts...${NC}"
+echo -e "${BLUE}[1/6] Build artifacts...${NC}"
 
 if [ "$DIR_ONLY" = true ]; then
     # dir-only 模式：跳过安装器产物检查，只验证 unpacked 目录存在
@@ -72,7 +73,7 @@ fi
 # ── 2. macOS app 结构 ──────────────────────────────────────────────
 if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
     echo ""
-    echo -e "${BLUE}[2/5] macOS app structure...${NC}"
+    echo -e "${BLUE}[2/6] macOS app structure...${NC}"
 
     APP_PATH=$(find "$OUTPUT_DIR/mac-arm64" -name "*.app" -maxdepth 1 | head -1)
 
@@ -252,13 +253,13 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
     fi
 else
     echo ""
-    echo -e "${YELLOW}[2/5] macOS 结构跳过（非 macOS 构建）${NC}"
+    echo -e "${YELLOW}[2/6] macOS 结构跳过（非 macOS 构建）${NC}"
 fi
 
 # ── Windows unpacked app structure ───────────────────────────────────
 if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
     echo ""
-    echo -e "${BLUE}[2/5] Windows unpacked app structure...${NC}"
+    echo -e "${BLUE}[2/6] Windows unpacked app structure...${NC}"
     WIN_ROOT="$OUTPUT_DIR/win-unpacked"
     WIN_RESOURCES="$WIN_ROOT/resources"
     WIN_UNPACKED="$WIN_RESOURCES/app.asar.unpacked"
@@ -341,7 +342,7 @@ fi
 # BINARY_NAME="pi-linux-${PI_ARCH}"（linux target arch x64）。
 if [ -d "$OUTPUT_DIR/linux-unpacked" ]; then
     echo ""
-    echo -e "${BLUE}[2/5] Linux unpacked app structure...${NC}"
+    echo -e "${BLUE}[2/6] Linux unpacked app structure...${NC}"
     LINUX_ROOT="$OUTPUT_DIR/linux-unpacked"
     LINUX_RESOURCES="$LINUX_ROOT/resources"
     LINUX_UNPACKED="$LINUX_RESOURCES/app.asar.unpacked"
@@ -385,7 +386,48 @@ fi
 
 # ── 3. 产物大小合理性 ───────────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[3/5] Artifact sizes...${NC}"
+# ── 3. renderer WASM chunk 检查（CSP 能力防线，产物级）───────────────
+# 背景：renderer CSP script-src 'self' 不放行 WASM。shiki 已换 createJavaScriptRegexEngine
+# （markdown.ts），但 bundle-full 入口仍静态携带 oniguruma loader（dead code，tree-shake
+# 边界）——白名单放行其 chunk 基名。新增依赖若把可执行 WASM 带进 renderer 产物（基名
+# 不在白名单），在此拦截，防止「依赖暗藏 WASM → CSP CompileError → 功能静默降级」复发
+# （2026-08 v0.9.3+ 事故：全部 markdown 渲染退化为纯文本、换行丢失）。
+# 白名单维护原则：确认该 chunk 的 WASM 路径运行时不可达（如显式传入 JS engine 后的
+# dead loader）才可加入；真正需要 WASM 时改 index.html CSP（加 'wasm-unsafe-eval'）并
+# 同步本检查与 .githooks/check_csp_compatibility.py（源码级防线）。
+echo ""
+echo -e "${BLUE}[3/6] renderer WASM chunk check (CSP guard)...${NC}"
+RENDERER_DIST_ASSETS="$PROJECT_ROOT/apps/electron/renderer/dist/assets"
+INDEX_HTML_CSP="$PROJECT_ROOT/packages/renderer/index.html"
+if [ ! -d "$RENDERER_DIST_ASSETS" ]; then
+    echo -e "  ${RED}✗${NC} renderer 产物缺失: $RENDERER_DIST_ASSETS（先 pnpm --filter @xyz-agent/frontend run build）"
+    FAILED=1
+elif grep -q "wasm-unsafe-eval\|unsafe-eval" "$INDEX_HTML_CSP"; then
+    echo -e "  ${YELLOW}⚠ CSP 已放行 eval/wasm，WASM 是被允许的能力，跳过本检查${NC}"
+else
+    # 基名 = chunk 文件名去掉末段 8 位 hash（如 shiki-DeyQNefO → shiki）
+    WASM_CHUNK_ALLOWLIST='^(shiki|wasm|wit|onig|markdown)$'
+    WASM_VIOLATIONS=""
+    WASM_TOTAL=0
+    for js in "$RENDERER_DIST_ASSETS"/*.js; do
+        grep -q "WebAssembly" "$js" 2>/dev/null || continue
+        WASM_TOTAL=$((WASM_TOTAL + 1))
+        base=$(basename "$js" .js | sed -E 's/-[A-Za-z0-9_-]{8}$//')
+        echo "$base" | grep -qE "$WASM_CHUNK_ALLOWLIST" && continue
+        WASM_VIOLATIONS="$WASM_VIOLATIONS $base($(basename "$js"))"
+    done
+    if [ -n "$WASM_VIOLATIONS" ]; then
+        echo -e "  ${RED}✗${NC} renderer 产物新增含 WebAssembly 的 chunk（不在白名单）:$WASM_VIOLATIONS"
+        echo -e "        CSP script-src 'self' 下 WebAssembly.instantiate 运行时抛 CompileError → 功能静默降级"
+        echo -e "        修复：改用无 WASM 实现（参考 markdown.ts 的 createJavaScriptRegexEngine）；"
+        echo -e "        或确认必需后改 index.html CSP 加 'wasm-unsafe-eval' 并同步更新本脚本白名单"
+        FAILED=1
+    else
+        echo -e "  ${GREEN}✓${NC} renderer WASM chunk 检查通过（$WASM_TOTAL 个白名单 chunk 含 WebAssembly dead-code 残留）"
+    fi
+fi
+
+echo -e "${BLUE}[4/6] Artifact sizes...${NC}"
 
 for f in "$OUTPUT_DIR"/*.dmg "$OUTPUT_DIR"/*.zip "$OUTPUT_DIR"/*.exe "$OUTPUT_DIR"/*.AppImage; do
     if [ -f "$f" ]; then
@@ -400,7 +442,7 @@ done
 
 # ── 4. Smoke test ──────────────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[4/5] Smoke test (optional)...${NC}"
+echo -e "${BLUE}[5/6] Smoke test (optional)...${NC}"
 
 if [ "$(uname)" = "Darwin" ]; then
     APP_BUNDLE=$(find "$OUTPUT_DIR/mac-arm64" -name "*.app" -maxdepth 1 2>/dev/null | head -1)
@@ -411,7 +453,7 @@ fi
 
 # ── 5. 代码签名状态 ────────────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[5/5] Code signature...${NC}"
+echo -e "${BLUE}[6/6] Code signature...${NC}"
 
 if [ "$(uname)" = "Darwin" ] && [ -n "${APP_BUNDLE:-}" ]; then
     if command -v codesign &>/dev/null; then

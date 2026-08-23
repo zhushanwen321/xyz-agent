@@ -141,9 +141,10 @@ function readPkg(rel) {
   return JSON.parse(fs.readFileSync(p, 'utf8'));
 }
 const pkgJsons = [];
-for (const base of ['extensions', 'packages', 'apps']) {
+// extensions 分组布局（taiji/universal）：分组目录 + 顶层兜底（与 check-version-changes.sh 同修）
+for (const base of ['extensions/taiji', 'extensions/universal', 'extensions', 'packages', 'apps']) {
   for (const name of listDirs(base)) {
-    if (base === 'extensions' && name === 'shared') continue;
+    if (base === 'extensions' && ['shared', 'taiji', 'universal'].includes(name)) continue;
     if (fs.existsSync(path.join(ROOT, base, name, 'package.json'))) pkgJsons.push(`${base}/${name}/package.json`);
   }
 }

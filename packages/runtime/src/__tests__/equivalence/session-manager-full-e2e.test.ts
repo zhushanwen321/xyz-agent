@@ -2,7 +2,7 @@
  * session-manager 真 pi 全链路 e2e（U9-S1 / U9-S2）— 设计文档 §7.2 场景 1 + §7.3 重启恢复的机器化。
  *
  * 与 session-manager-e2e-probe.test.ts（FakePiProcessIO，无真 pi 进程）的区别：本文件 spawn
- * **真实 pi**（--mode rpc + --extension extensions/session-manager，真实 LLM turn 驱动 agent
+ * **真实 pi**（--mode rpc + --extension extensions/universal/session-manager，真实 LLM turn 驱动 agent
  * 调用 create_managed_session），runtime 侧走仓库真实代码——event-adapter translate（marker
  * 检测）→ EventInterpreter（session-manager 路由）→ SessionManagerHandler（create 分发）→
  * extension_ui_response 回写 pi stdin——只有 SessionService 是最小 fake（create 返回固定
@@ -42,8 +42,8 @@ import type { PiEvent } from '../../infra/pi/pi-protocol.js'
 import type { ISessionService } from '../../interfaces.js'
 import { spawnPiFixture, REAL_PI_READY, REAL_PI_SKIP_REASON, type PiFixture, type PiStreamEvent } from './pi-fixture.js'
 
-/** 真 extension 源码路径（worktree 内 extensions/session-manager，pi 原生 loader 加载 TS 源） */
-const EXTENSION_PATH = fileURLToPath(new URL('../../../../../extensions/session-manager', import.meta.url))
+/** 真 extension 源码路径（worktree 内 extensions/universal/session-manager，pi 原生 loader 加载 TS 源） */
+const EXTENSION_PATH = fileURLToPath(new URL('../../../../../extensions/universal/session-manager', import.meta.url))
 /** 单步等待上限（任务护栏：每步最多 60s） */
 const STEP_TIMEOUT_MS = 60_000
 /** 固定 create 参数（prompt 写死指令，防 agent 自由发挥） */

@@ -68,6 +68,12 @@ export function createSettingsStore() {
   const systemPromptConfig = ref<{ config: SystemPromptConfig; corrupted: boolean } | null>(null)
   /** 终端配置（Phase 6，config.terminalConfig 广播同步）。null=尚未加载。 */
   const terminalConfig = ref<{ config: TerminalConfig; corrupted: boolean } | null>(null)
+  /**
+   * Scoped models 白名单（provider/modelId 复合串数组，序=显示序）。
+   * 非空时模型选择器只显示其中模型；空数组/缺失=未启用（显示全部）。
+   * 数据来自 config.providers 广播 / config.getProviders reply 的 scopedModels 字段。
+   */
+  const scopedModels = ref<string[]>([])
 
   // ── Actions（纯写入；订阅生命周期在 settings-lifecycle）──
 
@@ -136,6 +142,16 @@ export function createSettingsStore() {
   }
 
   /**
+   * 写入 providers 权威快照（广播 / getProviders reply 推回）。
+   * scoped 守卫（reply + 广播双通道同一语义）：undefined = 通道未携带（旧 runtime），
+   * 不覆盖已有值，由 config.providers 广播兜底推回。
+   */
+  function setProviders(next: ProviderInfo[], scoped?: string[]): void {
+    providers.value = next
+    if (scoped !== undefined) scopedModels.value = scoped
+  }
+
+  /**
    * 乐观切换 model 级 enabled（D6）。
    * 立即改本地 providers 中目标 provider 下目标 model 的 enabled，组件随后调 API 持久化、失败回滚。
    * @returns 旧值（供回滚用），找不到时返回 true（默认启用）
@@ -190,11 +206,13 @@ export function createSettingsStore() {
     defaultModel,
     systemPromptConfig,
     terminalConfig,
+    scopedModels,
     // actions（纯写入）
     setSystem,
     setSkillDirs,
     setAgentDirs,
     setExtensionDirs,
+    setProviders,
     setProviderEnabled,
     setModelEnabled,
     setExtensionEnabled,

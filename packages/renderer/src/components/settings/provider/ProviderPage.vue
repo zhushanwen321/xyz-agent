@@ -22,6 +22,15 @@
       </div>
     </header>
 
+    <!-- Scoped Model 配置区（模型白名单 + 有序列表） -->
+    <ScopedModelSection
+      :scoped-list="scopedRenderItems"
+      :selectable-models="selectableModels"
+      @add="onScopedAdd"
+      @remove="onScopedRemove"
+      @move="onScopedMove"
+    />
+
     <!-- 常驻 inline error：toggle enabled / 设默认 / 删除 等动作失败时报错可见 -->
     <div
       v-if="actionError"
@@ -41,13 +50,19 @@
       <p class="text-[12px] text-neutral-mid">{{ t('settings.provider.emptyDesc') }}</p>
     </div>
 
-    <!-- 实体列表（含新建态合成行） -->
-    <div
-      v-for="p in renderList"
-      :key="p.id"
-      data-testid="provider-card"
-      class="overflow-hidden rounded-card bg-card"
-    >
+    <!-- 实体列表（含新建态合成行）。组头对齐 ExtensionList 分组模式（小节标题 + count）：
+         scoped-model 卡片与本列表同为 bg-card 卡片、仅 gap-3 分隔会视觉连片，组头拉开语义分界。 -->
+    <section v-if="renderList.length" class="flex flex-col gap-3">
+      <div data-testid="provider-list-header" class="flex items-center gap-2 pt-2">
+        <h3 class="text-[12px] font-medium text-neutral-fg">{{ t('settings.provider.listTitle') }}</h3>
+        <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-neutral-dim">{{ providers.length }}</span>
+      </div>
+      <div
+        v-for="p in renderList"
+        :key="p.id"
+        data-testid="provider-card"
+        class="overflow-hidden rounded-card bg-card"
+      >
       <!-- 行头 -->
       <div class="flex min-w-0 items-center gap-3 px-4 py-3">
         <span
@@ -129,16 +144,21 @@
         </Button>
       </div>
 
-      <!-- 展开就地编辑体（R4） -->
+      <!-- 展开就地编辑体（R4）。B-1：OAuth 态经 props/事件接线（composable 内共享单实例 useProviderOAuth，无双 listener） -->
       <div v-if="expandedId === p.id" class="border-t border-border" data-testid="provider-expand-body">
         <ProviderEditBody
           :provider="p.id === NEW_ID ? null : p"
+          :oauth-present="hasOauthPresence(p.id)"
+          :oauth-supported="isOauthSupported(p.id)"
           @dirty-change="onBodyDirtyChange"
           @saved="onBodySaved"
           @cancel="onBodyCancel"
+          @oauth-login="onEditOauthLogin(p)"
+          @oauth-logout="onEditOauthLogout(p)"
         />
       </div>
     </div>
+    </section>
 
     <!-- dirty 守卫确认弹窗（切换/收起/新建时拦截未保存改动） -->
     <ConfirmDialog
@@ -188,17 +208,18 @@
       :template="selectedTemplate"
       :open="showQuickSetup"
       :env-check="oauth.envCheck.value"
-      :oauth-authorized="selectedTemplate ? oauth.authorized.value.has(selectedTemplate.id) || oauth.oauthPresent.value.has(selectedTemplate.id) : false"
+      :oauth-authorized="quickSetupOauthAuthorized"
       :existing-auth-method="existingAuthMethod"
       @save="onQuickSetupSave"
       @cancel="onQuickSetupCancel"
       @oauth-login="onQuickSetupOAuthLogin"
     />
-    <!-- OAuth 授权对话框（wave-oauth-infra T7 产出，四态） -->
+    <!-- OAuth 授权对话框（wave-oauth-infra T7 产出，四态）。QuickSetup 与编辑体凭证区共用
+         同一 useProviderOAuth 状态机（useProviderPageOauth 内单实例 → auth.* listener 不重复注册） -->
     <OAuthDialog
-      v-if="selectedTemplate"
+      v-if="oauthDialogInfo"
       :open="oauth.state.value.open"
-      :provider="{ id: selectedTemplate.id, name: selectedTemplate.name, oauthName: selectedTemplate.oauthName }"
+      :provider="oauthDialogInfo"
       :status="oauth.state.value.status"
       :device-info="oauth.state.value.deviceInfo"
       :auth-url="oauth.state.value.authUrl"
@@ -233,17 +254,22 @@ import {
   ProviderTemplatePicker,
   ProviderQuickSetup,
   OAuthDialog,
+  ScopedModelSection,
   SETTINGS_TOAST_KEY,
   USE_QUOTA_CONFIGURE_KEY,
 } from '@xyz-agent/ui/features/settings'
-import { useProviderOAuth } from '@/composables/features/settings/useProviderOAuth'
+import { useProviderPageOauth } from '@/composables/features/settings/useProviderPageOauth'
 import { useAccordionGuard } from '@/composables/features/settings/useAccordionGuard'
+import { useScopedModels } from '@/composables/features/settings/useScopedModels'
 import { authBadgeClass, authBadgeTextKey } from './provider-badge'
 
 // ui 包组件 renderer 侧依赖经 provide/inject 注入（ui 零 renderer import 铁律）
 provide(USE_QUOTA_CONFIGURE_KEY, useQuotaConfigure)
 const toast = useToast()
 provide(SETTINGS_TOAST_KEY, toast)
+
+// Scoped Models 白名单（乐观更新 + 失败回滚；RPC 失败 rethrow 由下方包装 handler 统一反馈）
+const { scopedRenderItems, selectableModels, addScopedModels, removeScopedModel, moveScopedModel } = useScopedModels()
 
 const props = defineProps<{ providers: ProviderInfo[] }>()
 
@@ -262,11 +288,6 @@ const {
 const builtinProviders = ref<BuiltinProviderTemplate[]>([])
 const selectedTemplate = ref<BuiltinProviderTemplate | null>(null)
 const showQuickSetup = ref(false)
-
-/** OAuth 授权状态机（composable：OAuthDialog 驱动 + auth.* 事件订阅）。
- *  auth.success 后保持 QuickSetup 打开（demo §8.3）——用户完成「保存并启用」落
- *  models.json（authMethod='oauth'）→ broadcastProviderList 刷新列表。 */
-const oauth = useProviderOAuth(() => { void 0 })
 
 onMounted(async () => {
   try {
@@ -327,7 +348,7 @@ function onQuickSetupCancel(): void {
 
 function onQuickSetupOAuthLogin(): void {
   if (!selectedTemplate.value) return
-  void oauth.login(selectedTemplate.value.id)
+  startQuickSetupOauth(selectedTemplate.value)
 }
 
 /** toggle 中的 provider id 集合（防双击） */
@@ -377,6 +398,24 @@ const {
   onBodyCancel,
 } = useAccordionGuard(NEW_ID)
 
+// ── OAuth 编排（B-1：QuickSetup 与编辑体凭证区共用单实例状态机，提取见 useProviderPageOauth）──
+const {
+  oauth,
+  isOauthSupported,
+  hasOauthPresence,
+  quickSetupOauthAuthorized,
+  oauthDialogInfo,
+  onEditOauthLogin,
+  onEditOauthLogout,
+  onQuickSetupOauthLogin: startQuickSetupOauth,
+} = useProviderPageOauth({
+  builtinProviders,
+  providers: computed(() => props.providers),
+  selectedTemplate,
+  expandedId,
+  newId: NEW_ID,
+})
+
 /** 删除目标 + 删除中 */
 const deleteTarget = ref<ProviderInfo | null>(null)
 const deleting = ref(false)
@@ -389,6 +428,32 @@ const deleteDialogOpen = computed({
 
 /** 动作错误（删除/启用失败时显示，非静默吞） */
 const actionError = ref('')
+
+// ── scoped 模型操作接线（失败反馈：模型选择类操作，对齐 onSetDefaultModel 惯例 = 常驻 inline error + toast）──
+// useScopedModels 乐观更新 + 回滚后 rethrow，此处统一捕获展示，不让 RPC 失败静默吞掉。
+
+async function runScopedAction(action: () => Promise<void>): Promise<void> {
+  actionError.value = ''
+  try {
+    await action()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    actionError.value = msg
+    toast.error(msg)
+  }
+}
+
+function onScopedAdd(models: string[]): void {
+  void runScopedAction(() => addScopedModels(models))
+}
+
+function onScopedRemove(scoped: string): void {
+  void runScopedAction(() => removeScopedModel(scoped))
+}
+
+function onScopedMove({ scoped, dir }: { scoped: string; dir: 'up' | 'down' }): void {
+  void runScopedAction(() => moveScopedModel(scoped, dir))
+}
 
 // ── 渲染列表：真实 providers + 新建态合成行 ──
 

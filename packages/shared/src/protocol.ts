@@ -114,6 +114,11 @@ export type ClientMessageType =
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
   | 'config.setAutoRenameEnabled' | 'config.getAutoRenameEnabled'
   | 'config.setRenameModel' | 'config.getRenameModel'
+  | 'config.getSmartContextConfig'
+  | 'config.setSmartContextEnabled'
+  | 'config.setSmartContextCompactModel'
+  | 'config.setSmartContextThresholds'
+  | 'config.setSmartContextExcludedModels'
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
   | 'preset.recordUsage' | 'preset.getUsage'
@@ -134,12 +139,25 @@ export type ClientMessageType =
   | 'config.checkEnvVars'
   // OAuth 凭据查询（MF-1）：auth.json 是否已有该 provider 的 oauth 凭据（只返回布尔，token 不出协议）。reply config.hasOAuthReply。
   | 'config.hasOAuth'
+  // OAuth 退出登录（B-1 场景 C）：移除 auth.json 中该 provider 的凭证（有进行中 flow 先中止）。reply config.oauthLogoutReply。
+  | 'config.oauthLogout'
   // wave4：provider 启用切换（写 enabledModels 白名单，reply config.providerUpdated）。替代旧 setProvider({enabled})。
   | 'config.toggleProviderEnabled'
   // wave4：按体系移除 provider（catalog 清凭据/custom 删条目，reply config.providerUpdated）。
   | 'config.removeProviderByKind'
+  // scoped model：配置模型白名单 + 有序列表（reply config.scopedModels）。
+  | 'config.setScopedModels'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
+
+/** quota fetch/getCached/refresh 三 reply 的共享 payload（A2-4）：
+ *  data=null 失败态时携带 reason（getCached 为内存中最近一次失败原因，
+ *  UI 失败态 + 「查看上次成功数据」入口用，Phase B 渲染）。 */
+export interface QuotaFetchResultPayload {
+  data: import('./quota-types').NormalizedQuotaRow | null
+  lastFetchAt: number | null
+  reason?: import('./quota-types').QuotaFetchFailureReason
+}
 
 /** config.setProvider 除 providerId 外的透传字段，与 IConfigService.setProvider 参数对齐。
  *  models 元素字段与 runtime ConfigModelDefinition 对齐（含 api/baseUrl/enabled 透传位，
@@ -169,12 +187,18 @@ export interface SetProviderData {
     contextWindow?: number
     maxTokens?: number
     thinkingLevelMap?: Record<string, string | null>
+    /** model 级自定义请求头（B-4b 白名单，pi ModelDefinitionSchema 内字段）。 */
+    headers?: Record<string, string>
+    /**
+     * model 级计费（B-4b 白名单，pi ModelDefinitionSchema 内字段）。pi schema 要求
+     * input/output/cacheRead/cacheWrite 四字段必填 number，runtime setProvider 校验后落盘。
+     * tiers 可选透传（请求级分档定价，最高匹配阈值整单生效）。
+     */
+    cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; tiers?: Array<{ inputTokensAbove: number; input: number; output: number; cacheRead: number; cacheWrite: number }> }
     /** model 级启停（W2）。省略时默认 true，与 PiModelDefinition 同构。 */
     enabled?: boolean
   }>
   enabled?: boolean
-  /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
-  quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean; apiKeySet?: boolean }
 }
 
 /** 系统提示词配置（FR-6）。文件：<dataDir>/system-prompt.json。
@@ -513,6 +537,16 @@ export interface ClientMessageMap {
   'config.setRenameModel': { model: string }
   /** config.getRenameModel：读取自动重命名标题生成模型（前端读取）。 */
   'config.getRenameModel': Record<string, never>
+  /** config.getSmartContextConfig：读取智能上下文压缩配置（前端读取）。 */
+  'config.getSmartContextConfig': Record<string, never>
+  /** config.setSmartContextEnabled：设置智能上下文压缩开关（前端写入）。 */
+  'config.setSmartContextEnabled': { enabled: boolean }
+  /** config.setSmartContextCompactModel：设置压缩模型（"provider/modelId" 复合串，空串 = 跟随当前会话模型）。 */
+  'config.setSmartContextCompactModel': { model: string }
+  /** config.setSmartContextThresholds：设置 3 档提醒阈值（token 绝对数，runtime 侧 clamp 升序 3 档）。 */
+  'config.setSmartContextThresholds': { thresholds: number[] }
+  /** config.setSmartContextExcludedModels：设置排除模型列表（每条完整 provider/modelId，runtime 侧过滤去重）。 */
+  'config.setSmartContextExcludedModels': { models: string[] }
   // pi 启动预设域（设计文档 pi-launch-presets.md）。
   // preset.list：列出全部预设（内置 + 自定义）；preset.getDefault：读全局默认预设 id；
   // preset.setDefault：设全局默认预设（写入 pi-presets.json）。均按需 RPC，无 server-push 广播。
@@ -559,6 +593,10 @@ export interface ClientMessageMap {
   'config.oauthCancel': { providerId: string }
   /** config.hasOAuth：查询 auth.json 是否已有该 provider 的 oauth 凭据（只返回布尔）。reply config.hasOAuthReply。 */
   'config.hasOAuth': { providerId: string }
+  /** config.oauthLogout：移除 auth.json 中该 provider 的凭证（退出登录，幂等）。reply config.oauthLogoutReply。 */
+  'config.oauthLogout': { providerId: string }
+  // ── scoped model ──
+  'config.setScopedModels': { models: string[] }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -625,6 +663,7 @@ export type ServerMessageType =
   | 'message.complete' | 'message.error' | 'message.status'
   | 'context.update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
+  | 'config.scopedModels'
   | 'config.scannedSkills' | 'config.skillUpdated' | 'config.skillDeleted'
   | 'config.sessionSkills'
   | 'config.globalSkills' | 'config.projectSkills'
@@ -694,6 +733,11 @@ export type ServerMessageType =
   | 'config.defaultBaseBranch'
   | 'config.autoRenameEnabled'
   | 'config.renameModel'
+  | 'config.smartContextConfig'
+  | 'config.smartContextEnabled'
+  | 'config.smartContextCompactModel'
+  | 'config.smartContextThresholds'
+  | 'config.smartContextExcludedModels'
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
   | 'preset.recordUsage' | 'preset.getUsage'
@@ -711,6 +755,8 @@ export type ServerMessageType =
   | 'config.oauthLoginReply' | 'config.oauthCancelReply'
   // OAuth 凭据查询 reply（MF-1）。
   | 'config.hasOAuthReply'
+  // OAuth 退出登录 reply（B-1 场景 C：ok 布尔 + 错误原因）。
+  | 'config.oauthLogoutReply'
   // 环境变量检测 reply（I3）。
   | 'config.envVarsChecked'
 
@@ -770,7 +816,7 @@ export interface SkillCacheInvalidatedPayload {
  */
 export interface ServerMessageMapBase {
   // ── sendInitialState 推送 / domain 订阅（精确）──
-  'config.providers': { providers: ProviderInfo[] }
+  'config.providers': { providers: ProviderInfo[]; scopedModels?: string[] }
   'config.skills': { skills: SkillInfo[] }
   /**
    * skill 缓存失效信号（landing useGlobalSkills/useProjectSkills 失效缓存重拉）。
@@ -789,6 +835,8 @@ export interface ServerMessageMapBase {
     /** 默认模型变更来源，仅 broadcast 携带（reply 不带）。reply/broadcast 共用此类型，故 source 为 optional。 */
     source?: DefaultModelSource
   }
+  /** config.setScopedModels 的 reply（去重保序后的白名单；scoped-model design §4.1 A9）。 */
+  'config.scopedModels': { scopedModels: string[] }
   'config.extensions': { extensions: ExtensionInfo[]; upgradeResult?: { upgraded: boolean; from: string; to: string } }
   /** extension.recommended reply：推荐扩展列表（含已安装状态） */
   'extension.recommended': { recommended: Array<RecommendedExtension & { installed: boolean }> }
@@ -1038,11 +1086,11 @@ export interface ServerMessageMapBase {
   'terminal.ack': Record<string, never>
   // config.terminalConfig：reply + broadcast + sendInitialState 三用（复刻 config.systemPrompt 范式）。
   'config.terminalConfig': { config: TerminalConfig; corrupted?: boolean }
-  // Coding Plan 额度查询
-  'quota.fetch:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
-  'quota.getCached:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  // Coding Plan 额度查询（payload 见 QuotaFetchResultPayload）。
+  'quota.fetch:result': QuotaFetchResultPayload
+  'quota.getCached:result': QuotaFetchResultPayload
   'quota.configure:result': { ok: boolean; error?: string }
-  'quota.refresh:result': { data: import('./quota-types').NormalizedQuotaRow | null; lastFetchAt: number | null }
+  'quota.refresh:result': QuotaFetchResultPayload
   /** worktree.branches：worktree.listBranches 的 reply（本地/远程分支列表 + 默认分支名）。 */
   'worktree.branches': { local: string[]; remote: string[]; defaultBranch: string }
   /** worktree.list:result：worktree.list 的 reply（worktree 条目列表）。 */
@@ -1061,6 +1109,21 @@ export interface ServerMessageMapBase {
   'config.autoRenameEnabled': { enabled: boolean }
   /** config.renameModel：config.getRenameModel / config.setRenameModel 的 reply（"provider/modelId"，空串 = 未设置）。 */
   'config.renameModel': { model: string }
+  /** config.smartContextConfig：config.getSmartContextConfig 的 reply（compactModel 为 "provider/modelId" 复合串，空串 = 未设置；thresholds 为 token 绝对数）。 */
+  'config.smartContextConfig': {
+    enabled: boolean
+    compactModel: string
+    reminderThresholds: number[]
+    excludedModels: string[]
+  }
+  /** config.smartContextEnabled：config.setSmartContextEnabled 的 reply。 */
+  'config.smartContextEnabled': { enabled: boolean }
+  /** config.smartContextCompactModel：config.setSmartContextCompactModel 的 reply（"provider/modelId"，空串 = 跟随当前会话模型）。 */
+  'config.smartContextCompactModel': { model: string }
+  /** config.smartContextThresholds：config.setSmartContextThresholds 的 reply（clamp 后的 token 绝对数，升序 3 档）。 */
+  'config.smartContextThresholds': { thresholds: number[] }
+  /** config.smartContextExcludedModels：config.setSmartContextExcludedModels 的 reply（过滤去重后）。 */
+  'config.smartContextExcludedModels': { models: string[] }
 
   // ── preset 域 reply（设计文档 pi-launch-presets.md，runtime PresetMessageHandler reply）──
   // 仅登记 payload 消费型 reply（domain 读 reply 字段）。
@@ -1214,6 +1277,8 @@ export interface ServerMessageMapBase {
   'config.oauthCancelReply': { cancelled: boolean }
   /** config.hasOAuth reply：auth.json 是否已有该 provider 的 oauth 凭据（布尔，无 token）。 */
   'config.hasOAuthReply': { hasOAuth: boolean }
+  /** config.oauthLogout reply（成功/失败布尔 + 错误原因；token 永不出现在协议中）。 */
+  'config.oauthLogoutReply': { ok: boolean; error?: string }
   /** config.checkEnvVars reply：只含布尔（安全红线：env 值不进前端）。 */
   'config.envVarsChecked': { results: Record<string, boolean> }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
@@ -1378,6 +1443,7 @@ export interface ReplyPayloadMap {
   'config.oauthLogin': ServerMessageMap['config.oauthLoginReply']
   'config.oauthCancel': ServerMessageMap['config.oauthCancelReply']
   'config.hasOAuth': ServerMessageMap['config.hasOAuthReply']
+  'config.oauthLogout': ServerMessageMap['config.oauthLogoutReply']
   'config.checkEnvVars': ServerMessageMap['config.envVarsChecked']
   'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
   'config.getGlobalSkills': ServerMessageMap['config.globalSkills']
@@ -1466,6 +1532,11 @@ export interface ReplyPayloadMap {
   'config.getAutoRenameEnabled': ServerMessageMap['config.autoRenameEnabled']
   'config.setRenameModel': ServerMessageMap['config.renameModel']
   'config.getRenameModel': ServerMessageMap['config.renameModel']
+  'config.getSmartContextConfig': ServerMessageMap['config.smartContextConfig']
+  'config.setSmartContextEnabled': ServerMessageMap['config.smartContextEnabled']
+  'config.setSmartContextCompactModel': ServerMessageMap['config.smartContextCompactModel']
+  'config.setSmartContextThresholds': ServerMessageMap['config.smartContextThresholds']
+  'config.setSmartContextExcludedModels': ServerMessageMap['config.smartContextExcludedModels']
   // preset 域（设计文档 pi-launch-presets.md）：runtime PresetMessageHandler reply。
   // 全部引用 ServerMessageMapBase 中登记的精确 payload 形状（W-SH-1 收紧，SSOT）。
   //  - preset.list / getDefault / getUsage / getCwdDefault / getCwdDefaults / export / import
@@ -1550,6 +1621,9 @@ export interface ReplyPayloadMap {
   'session.subagentAction': void  // reply session.subagentActionDone
   'session.switch': ServerMessageMap['session.switched'] // reply session.switched（R-11 瘦身：无 messages；前端 register<void> 不读 payload）
   'session.workflowAction': void  // reply session.workflowActionDone
+  // ── scoped model 域──
+  'config.setScopedModels': { scopedModels: string[] }  // reply config.scopedModels（去重保序后结果）
+
   // terminal.* 都是 ack 型，统一 reply 'terminal.ack'（空 payload，前端 command() 按 id 匹配 resolve）
   'terminal.attach': ServerMessageMap['terminal.ack']
   'terminal.kill': ServerMessageMap['terminal.ack']

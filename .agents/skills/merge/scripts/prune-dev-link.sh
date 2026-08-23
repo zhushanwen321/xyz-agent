@@ -92,7 +92,7 @@ for wt in "${WT_LIST[@]}"; do
 			const kept = [];
 			for (const p of val.split(":")) {
 				if (!p) continue;
-				// p 形如 /abs/feat-xxx/extensions/goal；fw 形如 /abs/feat-xxx/
+				// p 形如 /abs/feat-xxx/extensions/universal/goal；fw 形如 /abs/feat-xxx/
 				if (p.startsWith(fw) || p === process.env.FEATURE_WT) {
 					removed.push(p);
 				} else {

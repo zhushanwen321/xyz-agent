@@ -61,6 +61,32 @@ describe('getSegmentsFromEl', () => {
     expect(getSegmentsFromEl(el)).toEqual([{ type: 'text', text: 'line1\nline2' }])
   })
 
+  it('块级 div 分行产出 \\n（粘贴 insertText 的 Chromium 形态，换行不丢）', () => {
+    // execCommand('insertText') 含 \n 文本在 Chromium 的实际产出形态（实测 innerHTML）
+    const el = setupEl('line1<div>line2</div><div>line3</div>')
+    expect(getSegmentsFromEl(el)).toEqual([{ type: 'text', text: 'line1\nline2\nline3' }])
+  })
+
+  it('首行即块级 div：首块前不产出多余换行', () => {
+    const el = setupEl('<div>a</div><div>b</div>')
+    expect(getSegmentsFromEl(el)).toEqual([{ type: 'text', text: 'a\nb' }])
+  })
+
+  it('块级 div 内 <br> 空行：与块级边界换行去重（一个空行一个 \\n）', () => {
+    const el = setupEl('a<div><br></div>b')
+    expect(getSegmentsFromEl(el)).toEqual([{ type: 'text', text: 'a\n\nb' }])
+  })
+
+  it('块级 div 后跟顶层文本：块结束也补 \\n（视觉在下一行）', () => {
+    const el = setupEl('abcx<div>y</div>def')
+    expect(getSegmentsFromEl(el)).toEqual([{ type: 'text', text: 'abcx\ny\ndef' }])
+  })
+
+  it('块级 p 分行同样产出 \\n', () => {
+    const el = setupEl('<p>one</p><p>two</p>')
+    expect(getSegmentsFromEl(el)).toEqual([{ type: 'text', text: 'one\ntwo' }])
+  })
+
   it('slash-chip（skill 类型）产出 skill segment（带 name + location）', () => {
     const el = setupEl(
       '<span class="slash-chip" data-chip-type="skill" data-chip-name="cw-cli" data-chip-location="/path"><span class="chip-label">cw-cli</span></span>',

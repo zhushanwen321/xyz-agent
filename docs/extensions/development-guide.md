@@ -2,9 +2,11 @@
 
 > **文档来源说明**：本文档由原 `docs/extensions/standards.md`（Pi Extension 开发规范，规范红线视角）与 `docs/extensions/research/pi-extension-production-guide.md`（Pi Extension 生产级开发指南，完整模式范例视角）合并而成，是 Pi Extension 开发的单一权威源。
 >
+> 配套文档（冲突时以下列文档为准，本文档相应章节为其摘要）：强约束红线清单见 [extension-conventions.md](./extension-conventions.md)；日志现行口径（三层通道，禁裸 `console.*`）见 [logging-conventions.md](./logging-conventions.md)。本文档所载约束登记于 [docs/constraints.json](../constraints.json)（架构约束登记 SSOT）。
+>
 > 合并策略：以「规范红线」为骨架（第一部分，必须遵守的硬约束），以「完整模式范例」为血肉（第二部分，生产级扩展的进阶模式）。重叠主题（Tool 注册、事件生命周期、入口模式、项目结构）已融合去重，不再分两处讲述。
 >
-> 最后更新：2026-07-30
+> 最后更新：2026-08-22
 
 ---
 
@@ -76,13 +78,26 @@
 
 ## 1. 包结构与项目架构 **[规范]**
 
-### 1.1 npm 包名
+### 1.1 npm 包名与目录分组
+
+npm 包名格式：
 
 ```
 @scope/pi-<name>
 ```
 
 示例：`@zhushanwen/pi-goal`、`@zhushanwen/pi-todo`
+
+仓库内源码按职责分两组（分组约定与 role 字段校验详见 [extension-conventions.md](extension-conventions.md)「目录分组与 role 字段」）：
+
+```
+extensions/
+├── taiji/       # role=taiji：xyz-agent 集成包（契约两端在 xyz-agent 体系内，离开 xyz-agent 无功能，必在 mandatory 清单）
+├── universal/   # role=universal：独立通用包（功能自足，独立 pi 用户可单独安装）
+└── shared/      # 共享库（不是 extension 包，不属于任何分组）
+```
+
+新建包必须放入对应分组目录并在 package.json 声明 `"xyz-agent": { "role": "taiji" | "universal" }`，同时登记 `extension-dependencies.json`。
 
 ### 1.2 扩展加载位置
 
@@ -547,7 +562,7 @@ pi.registerTool({
 registerMyCommand(pi, () => runtime);  // command 也传 getter
 ```
 
-参考实现：`extensions/ask-user/src/index.ts`（execute 内联 + 闭包变量延迟读）、`extensions/scheduler/src/index.ts`（getter 模式）。
+参考实现：`extensions/universal/ask-user/src/index.ts`（execute 内联 + 闭包变量延迟读）、`extensions/universal/scheduler/src/index.ts`（getter 模式）。
 
 ### 4.6 execute 返回值规范 🔵
 
@@ -561,11 +576,15 @@ registerMyCommand(pi, () => runtime);  // command 也传 getter
 }
 ```
 
-**[规范]** 错误必须返回结构化 `{ isError: true }`，**禁止抛异常**。
+**[规范]** 错误处理分两层：**内部实现可以 throw，`execute` 边界必须 catch**，对外返回结构化 `{ isError: true }`。
+
+- 内部辅助函数（`handleExecution` 等）可以 `throw new Error(...)` 表达失败；
+- `execute` 是 API/契约边界，不允许异常逃逸——必须 catch 并转为 `{ isError: true }` 返回；
+- 错误消息只用 `err.message`（或 `String(err)`），**禁止把 `err.stack` 拼进 content**——堆栈不得外泄到 LLM 上下文与持久化记录，防止错误信息蔓延。
 
 ```typescript
 async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-  // 正确
+  // 正确：内部 throw，execute 边界 catch 转 isError，消息不含堆栈
   try {
     const result = await riskyOperation();
     return { content: [{ type: "text", text: `Success: ${result}` }] };
@@ -576,12 +595,10 @@ async execute(_toolCallId, params, signal, _onUpdate, ctx) {
     };
   }
 
-  // 错误
-  try {
-    const result = await riskyOperation();
+  // 错误：异常从 execute 逃逸（未 catch），Tool 中断且 Pi 可能崩溃
+  async execute(_toolCallId, params) {
+    const result = await riskyOperation(); // throw 未捕获
     return { content: [{ type: "text", text: `Success: ${result}` }] };
-  } catch (err) {
-    throw new Error(`Failed: ${err}`); // 抛异常导致 Tool 中断，Pi 可能崩溃
   }
 }
 ```
@@ -811,23 +828,26 @@ export function setHub(hub: Hub): void {
 ### 8.1 配置路径
 
 ```
-~/.pi/agent/extensions/<extension-name>/config.json
+<agentDir>/config/<extension简名>-ext-config.json
 ```
 
-**[规范]** 配置路径使用 `~/.pi/agent/extensions/` 子目录，不与 Pi 本身的配置文件混杂。
+**[规范]** 配置路径的权威约定见 [extension-conventions.md「配置路径约定 [强制]」](./extension-conventions.md#配置路径约定强制)，要点：
+
+- 统一放 `<agentDir>/config/`，文件名 `<extension简名>-ext-config.json`；
+- `<agentDir>` = pi 的 `getAgentDir()`（`PI_CODING_AGENT_DIR` 覆盖，默认 `~/.pi/agent`；xyz-agent 隔离环境 `~/.xyz-agent/pi/agent`）；
+- 路径必须经 `@zhushanwen/pi-llm-shared` 的 `getConfigPath(pkgName)` 生成，调用方不自拼文件名，禁止语义名/无后缀简写/`<名>-config.json` 变体。
 
 ### 8.2 加载模式 🔵
 
 ```typescript
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
+import { getConfigPath } from "@zhushanwen/pi-llm-shared";
 
 export function loadConfig<T extends Record<string, unknown>>(
   defaults: T,
-  name: string,  // 扩展名
+  pkgName: string,  // 扩展包名（如 @zhushanwen/pi-my-extension）
 ): T {
-  const path = join(homedir(), ".pi", "agent", "extensions", name, "config.json");
+  const path = getConfigPath(pkgName); // <agentDir>/config/<简名>-ext-config.json
   if (!existsSync(path)) return { ...defaults };
 
   try {
@@ -836,7 +856,7 @@ export function loadConfig<T extends Record<string, unknown>>(
     return { ...defaults, ...parsed };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to load config for ${name}: ${message}`);
+    throw new Error(`Failed to load config for ${pkgName}: ${message}`);
   }
 }
 ```
@@ -846,7 +866,7 @@ export function loadConfig<T extends Record<string, unknown>>(
 ### 8.3 配置项示例 🟠
 
 ```jsonc
-// ~/.pi/agent/extensions/my-extension/config.json
+// <agentDir>/config/my-extension-ext-config.json
 {
   "asyncByDefault": false,
   "forceTopLevelAsync": false,
@@ -931,43 +951,33 @@ Pi 的 extension loader 使用 [jiti](https://github.com/unjs/jiti) 加载 TypeS
 
 ## 10. 日志与诊断输出 **[规范]**
 
-Pi Interactive 模式下，extension 的 `console.log` 输出直接写入终端 stdout，会干扰 TUI 渲染并泄漏到用户输入区域。**必须严格遵守以下规范。**
+Pi Interactive 模式下，extension 的 `console.*` 输出直接写入 pi 主进程 stdout/stderr，会干扰 TUI 渲染并泄漏到用户输入区域，且 pi 既不捕获也不落盘 extension 的 console 输出。**必须严格遵守以下规范。**
 
-### 10.1 输出通道选择
+> **现行口径 SSOT = [logging-conventions.md](./logging-conventions.md)**（三层通道分类 + `@zhushanwen/pi-extension-logger`）。本节为其摘要——历史版本允许的 `console.warn`/`console.error` 带前缀输出已被收敛为禁止，见该文档迁移指南。
+
+### 10.1 输出通道选择（三层通道）
+
+每条日志按**受众**路由，选择唯一正确的通道：
 
 | 场景 | 正确做法 | 错误做法 |
 |------|---------|----------|
-| 用户需要看到的状态/错误 | `ctx.ui.notify(msg, "info"/"warning"/"error")` | `console.log(msg)` |
-| 内部诊断（配置加载、模型选择等） | `console.warn("[ext-name] ...")` 或静默 | `console.log("[ext-name] ...")` |
-| 不可恢复错误 | `throw new Error(msg)` | `console.error(msg)` + 继续执行 |
-| 调试开发 | `if (process.env.<EXT>_DEBUG) console.error(...)` | 生产代码中的 `console.log` |
+| AI 需实时感知（hook block、tool 执行错误） | tool result / `return { block: true, reason }`（pi 原生链路） | 经 logger 转发 |
+| 事后排查（内部降级、竞态、IO 清理失败） | `logger.warn` / `logger.error` → `pi.appendEntry` custom entry | `console.warn("[ext] ...")`、`ctx.ui.notify` |
+| 开发者调试 | `logger.debug` → 文件日志（`XYZ_AGENT_DEBUG=1` 开启） | 自造 `PI_*_DEBUG` 环境变量 + console |
+| 用户操作反馈（用户主动触发命令的结果） | `ctx.ui.notify(msg, "info"/"warning"/"error")` | 诊断信息用 notify（刷屏） |
 | Worker 线程 | 拦截 console.* → 收集数组 → postMessage 回传 | 直接 console.* 输出 |
 
 ### 10.2 console 方法使用规则
 
-**[规范]** 以下规则不允许跳过，无论是否是本次引入的，必须正面修复：
+**[规范]** 禁止一切裸 `console.*`（`log` / `info` / `warn` / `error`），无论是否是本次引入的，必须正面修复，统一接 `@zhushanwen/pi-extension-logger`：
 
-1. **禁止 `console.log`** — 输出到 stdout，Interactive 模式下泄漏到用户输入区域，干扰 TUI 渲染
-2. **禁止 `console.info`** — 行为与 `console.log` 相同，路由不明确，同样泄漏
-3. **内部诊断用 `console.warn` 或 `console.error`** — 输出到 stderr，不干扰 stdout，但必须带统一前缀（见 10.3）
-4. **不可恢复错误用 `throw`** — 由 Pi 框架的 `ExtensionRunner.onError()` 捕获并渲染到 TUI，比手动 `console.error` 更规范
-5. **生产默认静默** — 正常运行时不输出诊断信息；需要时通过环境变量开启
-6. **重复警告去重** — 可能反复触发的警告用 `Set` 去重，防止刷屏
+1. **禁止 `console.log` / `console.info`** — 输出到 stdout，Interactive 模式下泄漏到用户输入区域，干扰 TUI 渲染
+2. **禁止 `console.warn` / `console.error`** — raw stderr 在 TUI alternate-screen 下越过渲染层污染 input 区，且不落盘。历史「带 `[ext-name]` 前缀的 warn/error」方案已废弃（前缀只解决来源区分，不解决污染与不落盘）
+3. **不可恢复错误用 `throw`** — 由 Pi 框架的 `ExtensionRunner.onError()` 捕获并渲染到 TUI，比手动 console 输出更规范
+4. **生产默认静默** — 正常运行时不输出诊断信息；调试经统一开关 `XYZ_AGENT_DEBUG=1` 开文件日志，禁止新增 per-extension 的 `PI_*_DEBUG` / `<EXT>_DEBUG` 变量
+5. **重复警告去重** — 可能反复触发的警告用 `Set` 去重，防止刷屏
 
-### 10.3 统一前缀
-
-所有 `console.warn` / `console.error` 必须带 `[extension-name]` 前缀，多扩展混杂输出时可区分来源：
-
-```typescript
-// CORRECT
-console.warn("[workflow] scene resolution failed, using default model");
-console.error("[goal] state machine invalid transition", err);
-
-// WRONG: 无前缀
-console.warn("scene resolution failed");
-```
-
-### 10.4 ctx.ui.notify() 使用
+### 10.3 ctx.ui.notify() 使用
 
 `ctx.ui.notify(msg, type?)` 是 Pi SDK 提供的唯一正规用户通知 API：
 
@@ -981,7 +991,7 @@ ctx.ui.notify("Token budget 90% used — start wrapping up.", "warning");
 - Interactive 模式渲染到 TUI chat 区域
 - 跨 session 异步使用时，用 `safeNotify()` 包装防止 stale context 错误（参见 [§11.1](#111-stale-context-检测)）
 
-### 10.5 Worker 线程日志拦截
+### 10.4 Worker 线程日志拦截
 
 Worker 线程（`worker_threads` / `child_process`）中的 `console.*` 输出直接写 stderr，不受 Pi 管理。必须拦截并回传主线程：
 
@@ -1172,7 +1182,7 @@ export function expandTilde(p: string): string {
 
 | 要求 | 说明 |
 |------|------|
-| 不允许未捕获异常 | 所有 Tool execute 返回 `{ isError: true }` |
+| 不允许未捕获异常 | 内部可 throw，execute 边界必须 catch 并返回 `{ isError: true }` |
 | 不允许模块加载时报错 | 配置加载失败在 session_start 中处理，不在模块顶层 |
 | 不允许 process.exit | 扩展无权结束进程 |
 | 不允许无限循环 | while(true) 必须有迭代上限 |
@@ -2147,7 +2157,7 @@ src/
 |--------|------|---------|
 | 模块级全局变量 | 多 session 共享状态，数据错乱 | 工厂闭包变量（会话级）/ `globalThis[Symbol.for]`（进程级单例，见 §7.5） |
 | 未保护的 ctx 访问 | session 关闭后崩溃 | `isStaleContextError()` 检查 |
-| Tool execute 抛异常 | 未处理异常带崩 Pi | 返回 `{ isError: true }` |
+| Tool execute 异常逃逸 | 未处理异常带崩 Pi | 内部可 throw，execute 边界 catch 返回 `{ isError: true }` |
 | 异步操作无信号 | 无法取消，残留资源 | 透传 `signal` |
 | 不设防重入 | 并发操作破坏状态 | `isProcessing` 标志 |
 | agent_end 中启动 LLM 调用 | 上下文已过期 | 只做同步清理 |
@@ -2211,7 +2221,7 @@ src/
 
 ### 健壮性阶段（必须通过）
 
-- [ ] 所有 execute 返回 `{ isError: true }` 而非抛异常
+- [ ] 所有 execute 边界 catch 异常并返回 `{ isError: true }`（内部可 throw，错误消息不含堆栈）
 - [ ] 异步操作支持 `signal` 取消
 - [ ] Stale context 检测 + `safeNotify` 保护
 - [ ] 防重入标志保护并发操作

@@ -25,7 +25,7 @@ run_suite() { # name, cmd...
 run_suite core   pnpm --filter @xyz-agent/core exec vitest run session-trace
 run_suite runtime pnpm --filter @xyz-agent/runtime exec vitest run session-trace trace-parity
 run_suite frontend pnpm --filter @xyz-agent/frontend exec vitest run session-trace trace-i18n
-run_suite ext    pnpm -C extensions/system-prompt-trace exec vitest run
+run_suite ext    pnpm -C extensions/taiji/system-prompt-trace exec vitest run
 
 if [ $fail -eq 0 ]; then echo "R1 PASS"; else echo "R1 FAIL"; fi
 exit $fail

@@ -82,6 +82,20 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     // rename 模型 stub（worktree 测试不涉及，默认未设置）
     getRenameModel: vi.fn(() => ''),
     setRenameModel: vi.fn(),
+    // smart-context 配置 stub（worktree 测试不涉及，默认全量默认值）
+    getSmartContextConfig: vi.fn(() => ({
+      enabled: true,
+      compactModel: '',
+      reminderThresholds: [200_000, 400_000, 600_000],
+      excludedModels: [],
+    })),
+    setSmartContextEnabled: vi.fn(),
+    setSmartContextCompactModel: vi.fn(),
+    setSmartContextThresholds: vi.fn(),
+    setSmartContextExcludedModels: vi.fn(),
+    // scoped models stub（scoped-model unit 新增 IConfigService 方法，worktree 测试不涉及）
+    getScopedModels: vi.fn(() => []),
+    modifyScopedModels: vi.fn(async (fn: (current: string[]) => string[]) => fn([])),
     // 其他方法 stub
     listProviders: vi.fn(() => []),
     listBuiltinProviders: vi.fn(() => []),

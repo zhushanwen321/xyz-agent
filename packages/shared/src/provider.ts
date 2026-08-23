@@ -130,8 +130,21 @@ export interface ProviderInfo {
     thinkingLevelMap?: Record<string, string | null>
     cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
     compat?: Record<string, unknown>
+    /**
+     * model 级自定义请求头（读侧透传，与 SetProviderData.models[].headers 写路径对称，
+     * pi ModelDefinitionSchema 内字段）。runtime listProviders 聚合处从 models.json 条目
+     * 透传；无此字段的模型缺省（向后兼容）。
+     */
+    headers?: Record<string, string>
     /** model 级启停（W2）。省略时默认 true，供 aggregateModels 过滤判断。 */
     enabled?: boolean
+    /**
+     * 条目来源标注（B-2 聚合层配合，design §3.6）：catalog provider 的混合模型列表区分
+     * builtin catalog 副本条目与 models.json override 条目（同 id 被 override 覆盖的也标
+     * 'override'——它已被用户定义覆盖）。custom provider 的模型全部是用户定义，不标（省略）。
+     * optional 向后兼容（旧消费方无此字段行为不变）。
+     */
+    source?: 'builtin' | 'override'
   }>
   enabled?: boolean
   /** 体系来源，聚合层（listProviders）标注。renderer 据此收窄操作（移除文案/编辑限制）。见 DM2。 */

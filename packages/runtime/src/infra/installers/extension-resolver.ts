@@ -243,10 +243,22 @@ export class ExtensionResolver implements IExtensionResolver {
     }
 
     // dev：读源码目录（projectRoot = apps/electron，repoRoot = projectRoot/../..）。
-    // join(projectRoot, '..', '..', 'extensions') 运行时解析为 <repoRoot>/extensions。
+    // join(projectRoot, '..', '..', 'extensions') 运行时解析为 <repoRoot>/extensions；
+    // 包按职责分组在一层分组目录下（taiji/universal 等，约定见
+    // docs/extensions/extension-conventions.md），scanDirectory 只扫一层，故对一层
+    // 每个分组目录各扫一次（跳过 shared/ 共享库与文件）——不硬编码分组名，新增分组零维护。
     const sourceExtDir = join(projectRoot, '..', '..', 'extensions')
     if (!existsSync(sourceExtDir)) return result
-    this.scanDirectory(sourceExtDir, result, 'bundled')
+    for (const entry of readdirSync(sourceExtDir)) {
+      if (entry === 'shared') continue
+      const groupDir = join(sourceExtDir, entry)
+      try {
+        if (!statSync(groupDir).isDirectory()) continue
+      } catch {
+        continue
+      }
+      this.scanDirectory(groupDir, result, 'bundled')
+    }
     // 只保留 mandatory 包，对齐 build staged 集合（见方法注释 + 设计文档 §2.3）
     const mandatoryNames = new Set(mandatoryExtensions.map(e => e.name))
     for (const name of [...result.keys()]) {

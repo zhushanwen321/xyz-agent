@@ -47,7 +47,7 @@ import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { bootstrapSettingsCore } from '@/composables/shell/useSettingsShell'
 import { usePermissionRequest } from '@/composables/shell/usePermissionRequest'
 import { PermissionRequestDialog } from '@xyz-agent/ui/extension-host'
-import { useSettings } from '@xyz-agent/core'
+import { useSettings, isDevMode } from '@xyz-agent/core'
 import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
 import { bindHandoffEffect } from '@/composables/effects/useHandoffEffect'
 import { bindSessionStreamSync } from '@/composables/effects/useSessionStreamSync'
@@ -62,7 +62,11 @@ bootstrapSettingsCore()
 
 const { t, locale } = useI18n()
 // 窗口标题随语言切换：太极（zh）/ TaiJi（en）。index.html 的 <title> 是渲染前的 fallback。
-watch(locale, () => { document.title = t('app.title') }, { immediate: true })
+// dev 模式加「 - dev」后缀，与打包版并存时窗口标题可区分（renderer 加载前的初始 title
+// 由 window-factory 设 'TaiJi dev'，此处接管后保持一致后缀）。
+watch(locale, () => {
+  document.title = t('app.title') + (isDevMode() ? ' - dev' : '')
+}, { immediate: true })
 const { state: connectionState, init, teardown, retryRuntime } = useConnection()
 // 启动编排（#1/#3）：连接建立后自动进 new-task landing（首次）或恢复最近 session。
 // useConnection.init 是 fire-and-forget（connect 异步），return 时连接未握手指；state==='connected'

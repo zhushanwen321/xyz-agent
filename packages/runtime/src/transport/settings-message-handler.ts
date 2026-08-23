@@ -6,6 +6,7 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ProviderSource, SkillCacheScope, ProviderId } from '@xyz-agent/shared'
 import type { IConfigService, ISessionService, IModelService, IAuthService } from '../interfaces.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
+import { SCOPED_MODEL_REGEX } from '../services/provider-extras-store.js'
 import { toErrorMessage } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 
@@ -60,7 +61,11 @@ export class SettingsMessageHandler {
   async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
     switch (msg.type) {
       case 'config.getProviders':
-        this.ctx.reply(ws, msg.id, 'config.providers', { providers: this.ctx.configService.listProviders() })
+        // scoped-model design §3.3 D7：reply 与广播（message-broker.buildProviderListMsgs）均含 scopedModels
+        this.ctx.reply(ws, msg.id, 'config.providers', {
+          providers: this.ctx.configService.listProviders(),
+          scopedModels: this.ctx.configService.getScopedModels(),
+        })
         return true
       case 'config.setProvider': {
         const { providerId, ...data } = msg.payload
@@ -116,6 +121,20 @@ export class SettingsMessageHandler {
         // oauth radio，防 env 盲保存触发 I9 清理①静默删凭据）。只返回布尔——token 永不出现在协议中。
         const hasOAuth = await this.ctx.authService.hasOAuth(msg.payload.providerId)
         this.ctx.reply(ws, msg.id, 'config.hasOAuthReply', { hasOAuth })
+        return true
+      }
+      case 'config.oauthLogout': {
+        // B-1 场景 C：退出登录——移除 auth.json 中该 provider 的凭证（先中止进行中 flow）。
+        // 幂等（无凭证 no-op）；失败转 ok:false + error（错误消息指向重试动作）。
+        try {
+          await this.ctx.authService.logout(msg.payload.providerId)
+          this.ctx.reply(ws, msg.id, 'config.oauthLogoutReply', { ok: true })
+        } catch (error) {
+          this.ctx.reply(ws, msg.id, 'config.oauthLogoutReply', {
+            ok: false,
+            error: `退出登录失败（凭证可能仍在）：${toErrorMessage(error)}。请重试；持续失败请检查磁盘后重启应用`,
+          })
+        }
         return true
       }
       case 'config.checkEnvVars': {
@@ -446,6 +465,60 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.renameModel', { model: this.ctx.configService.getRenameModel() })
         return true
       }
+      case 'config.getSmartContextConfig': {
+        this.ctx.reply(ws, msg.id, 'config.smartContextConfig', this.ctx.configService.getSmartContextConfig())
+        return true
+      }
+      case 'config.setSmartContextEnabled': {
+        this.ctx.configService.setSmartContextEnabled(msg.payload.enabled)
+        this.ctx.reply(ws, msg.id, 'config.smartContextEnabled', { enabled: this.ctx.configService.getSmartContextConfig().enabled })
+        return true
+      }
+      case 'config.setSmartContextCompactModel': {
+        this.ctx.configService.setSmartContextCompactModel(msg.payload.model)
+        this.ctx.reply(ws, msg.id, 'config.smartContextCompactModel', { model: this.ctx.configService.getSmartContextConfig().compactModel })
+        return true
+      }
+      case 'config.setSmartContextThresholds': {
+        this.ctx.configService.setSmartContextThresholds(msg.payload.thresholds)
+        this.ctx.reply(ws, msg.id, 'config.smartContextThresholds', { thresholds: this.ctx.configService.getSmartContextConfig().reminderThresholds })
+        return true
+      }
+      case 'config.setSmartContextExcludedModels': {
+        this.ctx.configService.setSmartContextExcludedModels(msg.payload.models)
+        this.ctx.reply(ws, msg.id, 'config.smartContextExcludedModels', { models: this.ctx.configService.getSmartContextConfig().excludedModels })
+        return true
+      }
+      case 'config.setScopedModels': {
+        const { models } = msg.payload
+        // 格式校验：每条 ^[^/]+/.+$，非法整单拒绝
+        if (!Array.isArray(models) || models.some(m => typeof m !== 'string')) {
+          this.ctx.sendError(ws, 'invalid_payload', 'models 必须是字符串数组', msg.id)
+          return true
+        }
+        // 格式契约与读侧 sanitize 单点（provider-extras-store SCOPED_MODEL_REGEX）
+        const invalid = (models as string[]).filter(m => !SCOPED_MODEL_REGEX.test(m))
+        if (invalid.length > 0) {
+          this.ctx.sendError(ws, 'invalid_scoped_models', `以下模型格式非法（需 provider/modelId）：${invalid.join(', ')}`, msg.id)
+          return true
+        }
+        // 去重保序（Set 迭代序 = 插入序）
+        const deduped = [...new Set(models as string[])]
+        // 写入（IConfigService.modifyScopedModels → XyzProviderStore RMW）
+        const result = await this.ctx.configService.modifyScopedModels(() => deduped)
+        const defaultSynced = this.syncDefaultToScopedModels(result)
+        // 广播
+        this.ctx.broadcastProviderList()
+        if (defaultSynced) {
+          this.ctx.broadcast({
+            type: 'config.defaults',
+            id: this.ctx.nextPushId(),
+            payload: { defaultModel: result[0], source: 'default-set' },
+          })
+        }
+        this.ctx.reply(ws, msg.id, 'config.scopedModels', { scopedModels: result })
+        return true
+      }
       // tool.approve / tool.deny / tool.always_allow：已删除的 no-op 占位。
       // 这些 type 此前只是 `return true` 以避免 unknown_type，但工具审批的实际路径是
       // pi 的 extension_ui_request（method:'confirm'）→ extension.ui_request/ui_response 流
@@ -454,6 +527,39 @@ export class SettingsMessageHandler {
       // 无真实 handler。现在这些消息会落入 default → return false → server 发 unknown_type，
       // 即对真正未知 type 的正确兜底行为。
       default: return false
+    }
+  }
+
+  /**
+   * 列表非空且 scoped[0] ≠ 当前 default 时同步 default = scoped[0]（config.setScopedModels 编排步骤）。
+   * 返回 defaultSynced：同步生效（含已是 default 的幂等情形）才广播 config.defaults；
+   * 同步被跳过/失败时保留现有 default，不广播未落盘的假默认。
+   */
+  private syncDefaultToScopedModels(result: string[]): boolean {
+    if (result.length === 0) return false
+    const firstModel = result[0]
+    try {
+      const [provider, ...modelParts] = firstModel.split('/')
+      const modelId = modelParts.join('/')
+      // scoped[0] 的 provider 须在当前列表且未禁用：把禁用 provider 的模型写成
+      // default 会被 getDefaultModel 内 findValidDefaultModel 随后冲掉（静默破坏
+      // 「第一位即默认」），跳过同步、保留现有 default
+      const providerInfo = this.ctx.configService.listProviders().find(p => p.id === provider)
+      if (!providerInfo || providerInfo.enabled === false) {
+        console.warn(`[settings-handler] setScopedModels: scoped[0] "${firstModel}" 的 provider 不可用（${providerInfo ? '已禁用' : '不在 providers 列表'}），跳过 default 同步，保留现有 default`)
+        return false
+      }
+      const currentDefault = this.ctx.configService.getDefaultModel()
+      if (!currentDefault || `${currentDefault.provider}/${currentDefault.modelId}` !== firstModel) {
+        this.ctx.configService.setDefaultModel(provider, modelId)
+      }
+      return true
+    } catch (err) {
+      // best-effort 降级：scoped 白名单写入是主语义，default 同步失败（读 default/
+      // 写 default 抛错）只 warn 不上抛——上抛会跳过广播与 reply，造成磁盘/前端/
+      // 选择器三方状态撕裂（对齐 provider-config-helper cleanAuthCredential 惯例）
+      console.warn(`[settings-handler] setScopedModels: default 同步到 "${firstModel}" 失败（scopedModels 已写入 ${result.length} 条），保留现有 default：`, err)
+      return false
     }
   }
 

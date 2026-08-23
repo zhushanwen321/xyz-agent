@@ -19,6 +19,9 @@ const noopAuthService: IAuthService = {
   login: () => ({ started: false, error: 'OAuth 不可用（authService 未装配）' }),
   cancel: () => ({ cancelled: false }),
   hasOAuth: async () => false,
+  logout: async () => { throw new Error('OAuth 不可用（authService 未装配）') },
+  getCredential: async () => undefined,
+  saveCredential: async () => { throw new Error('OAuth 不可用（authService 未装配）') },
 }
 import type { GitService } from '../services/git-service.js'
 import type { FileService } from '../services/file-service.js'
@@ -280,6 +283,8 @@ export class RuntimeServer implements IMessageBroker {
       this.quotaMessageHandler = new QuotaMessageHandler({
         ...messaging,
         quotaService: quota,
+        // quota.configure 成功后广播 provider 列表（renderer providers 快照即时刷新）
+        broadcastProviderList: () => this.broker.broadcastProviderList(),
       })
     }
     if (preset) {

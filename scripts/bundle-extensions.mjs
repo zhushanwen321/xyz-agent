@@ -58,10 +58,16 @@ const EXTERNAL = [
 	"@sinclair/typebox/*",
 ];
 
-/** 包名 @zhushanwen/pi-<x> → 源码目录 extensions/<x>/ */
+/** 包名 @zhushanwen/pi-<x> → 源码目录 extensions/<group>/<x>/（group = taiji | universal，见 docs/extensions/extension-conventions.md 分组约定） */
 function srcDirFor(pkgName) {
 	const short = pkgName.replace(/^@zhushanwen\/pi-/, "");
-	return join(EXTENSIONS_DIR, short);
+	for (const group of ["taiji", "universal"]) {
+		const dir = join(EXTENSIONS_DIR, group, short);
+		if (existsSync(dir)) return dir;
+	}
+	throw new Error(
+		`source dir not found for ${pkgName}: tried extensions/{taiji,universal}/${short}`,
+	);
 }
 
 function fmtSize(bytes) {
@@ -140,6 +146,17 @@ async function bundleOne(pkgName) {
 	}
 	await writeFile(join(outDir, "package.json"), JSON.stringify(pkg, null, 2) + "\n", "utf8");
 
+	// 文档随 staged 产物自描述（有则拷无则跳过；原 prepare-builtin-extensions.sh 的
+	// rsync 步骤下沉至此，bundle 管线内「mandatory 包 → 源码目录 → staged 产物」单一 owner）
+	const docAssets = [];
+	for (const doc of ["README.md", "ARCHITECTURE.md"]) {
+		const src = join(srcDir, doc);
+		if (existsSync(src)) {
+			await copyFile(src, join(outDir, doc));
+			docAssets.push(doc);
+		}
+	}
+
 	// M6a-04：pi.{agents,skills,workflows} 引用的资源目录随 bundle 拷贝。
 	// 引用值是相对路径（如 "./agents"），解析到源码目录后整目录拷贝（filter 排除
 	// node_modules）。缺失即 fail-fast（manifest 声明了但源码缺 = 打包配置回归）。
@@ -173,6 +190,7 @@ async function bundleOne(pkgName) {
 		warnings: result.warnings || [],
 		extraAssets,
 		manifestDirs: copiedManifestDirs,
+		docAssets,
 	};
 }
 
@@ -198,7 +216,8 @@ async function main() {
 			const warn = r.warnings.length ? ` (${r.warnings.length} warnings)` : "";
 			const assets = r.extraAssets.length ? ` + ${r.extraAssets.join(", ")}` : "";
 			const dirs = r.manifestDirs.length ? ` + manifest[${r.manifestDirs.join(", ")}]` : "";
-			console.log(` ${fmtSize(r.size)}${assets}${dirs}${warn}`);
+			const docs = r.docAssets.length ? ` + docs[${r.docAssets.join(", ")}]` : "";
+			console.log(` ${fmtSize(r.size)}${assets}${dirs}${docs}${warn}`);
 		} catch (err) {
 			console.log(" FAILED");
 			console.error(`\n[bundle-extensions] ${name} 打包失败:`);
@@ -212,7 +231,8 @@ async function main() {
 	for (const r of results) {
 		const assets = r.extraAssets.length ? ` + ${r.extraAssets.join(", ")}` : "";
 		const dirs = r.manifestDirs.length ? ` + manifest[${r.manifestDirs.join(", ")}]` : "";
-		console.log(`  ${r.pkgName}: index.js ${fmtSize(r.size)}${assets}${dirs}`);
+		const docs = r.docAssets.length ? ` + docs[${r.docAssets.join(", ")}]` : "";
+		console.log(`  ${r.pkgName}: index.js ${fmtSize(r.size)}${assets}${dirs}${docs}`);
 	}
 	const total = results.reduce((s, r) => s + r.size, 0);
 	console.log(`  ────────────`);

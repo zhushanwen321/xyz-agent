@@ -1,0 +1,41 @@
+{
+  "name": "@zhushanwen/pi-unified-hooks",
+  "version": "0.2.4",
+  "description": "Unified hooks extension - collect scattered hooks in one place for easy maintenance",
+  "main": "index.ts",
+  "type": "module",
+  "xyz-agent": {
+    "role": "universal"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "npx tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "pi-package",
+    "extension",
+    "hooks"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@zhushanwen/pi-extension-logger": "workspace:*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1"
+  },
+  "peerDependenciesMeta": {},
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
+    "vitest": "^4.1.8"
+  },
+  "files": [
+    "src/",
+    "index.ts"
+  ]
+}

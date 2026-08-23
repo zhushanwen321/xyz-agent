@@ -14,7 +14,7 @@
  * 这里只见 ConfigProviderConfig service 视图。
  */
 import { isCatalogProvider } from '../provider-catalog.js'
-import { AuthStorage } from '../auth/auth-storage.js'
+import type { AuthStorage, CredentialWriter } from '../auth/auth-storage.js'
 import type { IConfigStore, ConfigProviderConfig } from '../ports/config.js'
 
 export interface MigrationReport {
@@ -48,10 +48,15 @@ export interface ProviderConfigMigrationReport {
 
 /**
  * 启动期幂等迁移：catalog provider 错位 apiKey → auth.json。
- * @param authStorage AuthStorage 实例（操作 auth.json）
+ * @param authStorage AuthStorage 实例（读 OAuth 冲突检查用；写入不走它——A1-4 收口）
+ * @param credentialWriter auth.json 凭据写通道（A1-4 收口：经 AuthService.saveCredential 写入）
  * @returns MigrationReport
  */
-export async function migrateLegacyProviderConfig(configStore: IConfigStore, authStorage: AuthStorage): Promise<MigrationReport> {
+export async function migrateLegacyProviderConfig(
+  configStore: IConfigStore,
+  authStorage: Pick<AuthStorage, 'get'>,
+  credentialWriter: CredentialWriter,
+): Promise<MigrationReport> {
   const report: MigrationReport = { migrated: [], kept: [], failed: [], skipped: [], errors: [] }
 
   try {
@@ -85,8 +90,8 @@ export async function migrateLegacyProviderConfig(configStore: IConfigStore, aut
       }
 
       try {
-        // 写 apiKey 到 auth.json
-        await authStorage.set(providerId, { type: 'api_key', key: config.apiKey as string })
+        // 写 apiKey 到 auth.json（A1-4 收口：经 credentialWriter，不再直接持有 authStorage.set）
+        await credentialWriter.saveCredential(providerId, { type: 'api_key', key: config.apiKey as string })
 
         // 删 models.json 条目（重建不含 apiKey 的配置）
         const { apiKey: _apiKey, ...rest } = config as Record<string, unknown>
@@ -211,10 +216,15 @@ export async function migrateProviderEnabledToWhitelist(configStore: IConfigStor
  * 迁 enabledModels + 删字段，再 step1 处理 apiKey（操作 models.json，settings.json 的 enabledModels
  * 不受影响），确保 G5 覆盖。两步各自 try/catch，互不阻断。
  *
- * @param authStorage AuthStorage 实例（step1 操作 auth.json）
+ * @param authStorage AuthStorage 实例（读侧；写入经 credentialWriter）
+ * @param credentialWriter auth.json 凭据写通道（A1-4 收口）
  */
-export async function migrateProviderConfig(configStore: IConfigStore, authStorage: AuthStorage): Promise<ProviderConfigMigrationReport> {
+export async function migrateProviderConfig(
+  configStore: IConfigStore,
+  authStorage: Pick<AuthStorage, 'get'>,
+  credentialWriter: CredentialWriter,
+): Promise<ProviderConfigMigrationReport> {
   const enabled = await migrateProviderEnabledToWhitelist(configStore)
-  const catalog = await migrateLegacyProviderConfig(configStore, authStorage)
+  const catalog = await migrateLegacyProviderConfig(configStore, authStorage, credentialWriter)
   return { catalog, enabled }
 }

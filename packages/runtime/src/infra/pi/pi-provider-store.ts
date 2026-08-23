@@ -55,7 +55,7 @@ export interface PiProviderConfig {
   baseUrl?: string
   apiKey?: string
   api?: string
-  /** 认证方式（I6）：ProviderQuickSetup.onSave 标注。旧数据缺失时按 apiKey 格式推断。 */
+  /** 认证方式（寄生字段，仅存量数据兼容读）。A1 后权威存 config/providers.json（XyzProviderStore）。 */
   authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
   /** provider 级启停（W1）。省略时默认 true，向上兼容存量数据。 */
   enabled?: boolean
@@ -64,8 +64,9 @@ export interface PiProviderConfig {
   models?: PiModelDefinition[]
   modelOverrides?: Record<string, Record<string, unknown>>
   /**
-   * Coding Plan 额度查询配置（可选）。
-   * 持久化在 models.json 的 provider 级，listProviders 映射到 ProviderInfo.quota。
+   * Coding Plan 额度查询配置（寄生字段，仅存量数据兼容读）。
+   * A1 后权威存 config/providers.json（XyzProviderStore），models.json 不再写入；
+   * 此字段仅供迁移（stripParasiticFields）与迁移失败窗口的双读回退读取。
    */
   quota?: {
     /** 用户手动指定的 fetcher id（省略时 QuotaService 自动按 baseUrl/name 匹配）。 */
@@ -210,7 +211,18 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
     if (config.models === undefined) { outcome = {}; return }
 
     const newModelList = config.models
-    if (newModelList.length === 0) {
+    // catalog provider 的 models.json 条目只承载用户 override（B-2 前端保存只回传
+    // override 条目，无 override 时为 []），builtin 模型不在列表内——default 校验必须以
+    // 「override ∪ builtin catalog」为有效模型列表，否则 catalog 默认 provider 保存
+    // override-only 条目时 builtin 默认模型被误判失效：models:[] 会删除 default 回退到
+    // 其他 provider、models:[override] 会把 defaultModel 静默改写为 override 首项
+    //（round 1 review must-fix #1）。非 catalog provider builtin 集为空，行为不变。
+    const builtinModels = builtinModelsById.get(providerId) ?? []
+    const effectiveModelList = [
+      ...newModelList,
+      ...builtinModels.filter(bm => !newModelList.some(m => m.id === bm.id)),
+    ]
+    if (effectiveModelList.length === 0) {
       delete s.defaultProvider
       delete s.defaultModel
       const fallback = pickFirstModelProvider(models.providers)
@@ -225,9 +237,9 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
     }
 
     const currentModelId = s.defaultModel
-    if (currentModelId && !newModelList.find(m => m.id === currentModelId)) {
-      s.defaultModel = newModelList[0].id
-      console.warn(`[provider-store] defaultModel "${currentModelId}" no longer in provider "${providerId}", falling back to "${newModelList[0].id}"`)
+    if (currentModelId && !effectiveModelList.find(m => m.id === currentModelId)) {
+      s.defaultModel = effectiveModelList[0].id
+      console.warn(`[provider-store] defaultModel "${currentModelId}" no longer in provider "${providerId}" (overrides ∪ builtin), falling back to "${effectiveModelList[0].id}"`)
     }
     outcome = { newDefault: { provider: providerId as ProviderId, modelId: s.defaultModel! } }
   })
@@ -312,6 +324,21 @@ export function findValidDefaultModel(): {
       return { result: { provider: defaultProvider as ProviderId, modelId: providerConfig.models[0].id }, wasFixed: true }
     }
     if (!providerConfig?.models?.length) {
+      // D3 修复：auth.json-only catalog provider（OAuth 形态）无 models.json 条目时，
+      // 校验 defaultModel ∈ 该 provider 的 builtin 模型集，通过则不 fallback 不写回
+      const builtinProvider = builtinModelsById.get(defaultProvider)
+      if (builtinProvider && builtinProvider.length > 0) {
+        const authCredentials = readAuthCredentials()
+        const hasCredential = defaultProvider in authCredentials || !!models.providers[defaultProvider]?.apiKey
+        if (hasCredential && isEnabled) {
+          const foundInBuiltin = builtinProvider.find(m => m.id === defaultModel)
+          if (foundInBuiltin) {
+            return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
+          }
+          // defaultModel 不在 builtin 集，用 builtin 第一个
+          return { result: { provider: defaultProvider as ProviderId, modelId: builtinProvider[0].id }, wasFixed: true }
+        }
+      }
       console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
     }
     // isEnabled===false：default provider 被禁用，静默 fall through 到 fallback（不 warn 误导）

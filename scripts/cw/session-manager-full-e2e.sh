@@ -4,7 +4,7 @@
 # 用法：bash scripts/cw/session-manager-full-e2e.sh
 #
 # 测试链路（一次 vitest 运行覆盖两个验收场景）：
-#   spawn 真 pi（--mode rpc + --extension extensions/session-manager，model
+#   spawn 真 pi（--mode rpc + --extension extensions/universal/session-manager，model
 #   xiaomi-token-plan-cn/mimo-v2.5-pro，--session-dir 用 mktmp 目录、名字带 u9-smoke）
 #   → stdin JSONL prompt 写死指令驱动 agent 调 create_managed_session
 #   → pi stdout extension_ui_request（SESSION_MANAGER_MARKER）
@@ -34,7 +34,7 @@ source "$SCRIPT_DIR/lib/red-phase-guard.sh"
 
 # ── 红阶段守卫：实现产物存在（区分力检查——基线代码树无这些产物会 fail）──
 red_phase_guard
-EXTENSION_IMPL="$PROJECT_ROOT/extensions/session-manager/src/index.ts"
+EXTENSION_IMPL="$PROJECT_ROOT/extensions/universal/session-manager/src/index.ts"
 for guard_file in "$EXTENSION_IMPL" "$PROJECT_ROOT/packages/runtime/$TEST_FILE"; do
   if [ ! -f "$guard_file" ]; then
     echo "ERROR: implementation missing (red phase guard): $guard_file" >&2

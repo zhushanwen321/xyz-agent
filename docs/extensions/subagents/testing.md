@@ -117,7 +117,7 @@ runAndWait → runWorkflow 链路
 
 ### 为什么 registry 要绕过
 
-`WorkflowScriptRegistryImpl` 扫描固定约定目录（`.pi/workflows/`、`~/.pi/agent/workflows/`），无法指向 `extensions/subagent-workflow/workflows/`。测试用 `loadWorkflowsFromDir()` 直接读 `.js` 文件 + 手动构造 `WorkflowScript` 对象，包装为满足 `WorkflowScriptRegistry` 接口的自定义 registry。**不修改源码。**
+`WorkflowScriptRegistryImpl` 扫描固定约定目录（`.pi/workflows/`、`~/.pi/agent/workflows/`），无法指向 `extensions/universal/subagent-workflow/workflows/`。测试用 `loadWorkflowsFromDir()` 直接读 `.js` 文件 + 手动构造 `WorkflowScript` 对象，包装为满足 `WorkflowScriptRegistry` 接口的自定义 registry。**不修改源码。**
 
 ### mock runner 的 schema 驱动数据生成
 
@@ -141,7 +141,7 @@ runAndWait → runWorkflow 链路
 
 ```bash
 # 单独跑三层测试
-cd extensions/subagent-workflow
+cd extensions/universal/subagent-workflow
 npx vitest run src/orchestration/__tests__/worker-script-builder.test.ts           # L1
 npx vitest run src/orchestration/__tests__/worker-script-builder-runtime.test.ts   # L2
 npx vitest run src/orchestration/__tests__/workflows-e2e.test.ts                   # L3

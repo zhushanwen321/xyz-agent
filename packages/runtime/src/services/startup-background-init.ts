@@ -27,7 +27,7 @@ import { getSessionsDir } from '../infra/pi/pi-paths.js'
 import { ensureAutoRenameDefault } from './worktree-config-helper.js'
 import { ORPHAN_REAP_DELAY_MS, reapOrphanPiProcesses } from './reap-orphan-pi.js'
 import type { PiConfigStore } from '../infra/pi/pi-config-store.js'
-import type { AuthStorage } from './auth/auth-storage.js'
+import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
 import type { ExtensionService } from './extension-service.js'
 import type { ProcessManager } from '../infra/pi/process-manager.js'
 import type { SkillRegistry } from './skill-registry.js'
@@ -36,6 +36,8 @@ import type { PluginService } from './plugin-service/plugin-service.js'
 export interface StartupBackgroundDeps {
   configStore: PiConfigStore
   authStorage: AuthStorage
+  /** auth.json 凭据写通道（A1-4 收口）：legacy step1 迁移的 apiKey 写入经 AuthService。 */
+  credentialWriter: CredentialWriter
   extensionService: ExtensionService
   pm: ProcessManager
   /** appInfo 同对象（组合根 setServices 注入 broker 的引用）——本模块 mutate piVersion 后补发。 */
@@ -51,7 +53,7 @@ export interface StartupBackgroundDeps {
  * （每步自带 catch，不 reject）。测试可直接调用本函数 + spy 断言调用序。
  */
 export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Promise<void> {
-  const { configStore, authStorage, extensionService, pm, appInfo, broadcastAppInfo, skillRegistry, pluginService } = deps
+  const { configStore, authStorage, credentialWriter, extensionService, pm, appInfo, broadcastAppInfo, skillRegistry, pluginService } = deps
   const tBg = performance.now()
 
   // ⑨ 孤儿 pi 收殓（integrity-hardening §3.4 D4a）：上一代 runtime 被 SIGKILL/OOM 后
@@ -75,7 +77,7 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
   // 迁移失败也 resolve（best-effort：warn + 下次重试，不阻塞任何功能）。
   // 必须先于 setMigrationGate 启动（同步前缀立即执行），gate 在任何 WS 消息（macrotask）
   // 被处理前已就位——listen 后首个 session RPC 必然等到 gate。
-  const migrationReady = migrateProviderConfig(configStore, authStorage).then(
+  const migrationReady = migrateProviderConfig(configStore, authStorage, credentialWriter).then(
     (migrationReport) => {
       const { catalog, enabled } = migrationReport
       if (catalog.migrated.length > 0 || catalog.errors.length > 0 || enabled.migratedEnabled || enabled.fullDisabledWarn) {

@@ -52,6 +52,49 @@ export async function waitForVite(url: string, timeoutMs = VITE_READY_TIMEOUT_MS
 }
 
 /**
+ * 按运行形态加载窗口内容（E2E / dev / prod 三分支），任一步失败时 destroy 已创建的窗口。
+ *
+ * E2E 是一类部署形态（已构建产物 + mock 注入），架构正确归位是独立分支而非 hack isDev：
+ *   - 跳过 Vite dev server 轮询（E2E 不起 dev server，否则 waitForVite 30s 超时）
+ *   - 加载构建产物 index.html（与 prod 同源，验证真实渲染链路）
+ *   - mock 数据由 renderer 侧 import.meta.env.VITE_E2E 注入（main 不参与）
+ */
+async function loadWindowContent(
+  win: BrowserWindow,
+  windowId: string,
+  options: WindowOptions | undefined,
+  deps: { isDev: boolean },
+): Promise<void> {
+  const isE2E = process.env.XYZ_E2E === '1'
+  try {
+    if (!isE2E && deps.isDev) {
+      const params = new URLSearchParams({ windowId })
+      if (options?.sessionId) params.set('sessionId', options.sessionId)
+      // W7 幽灵窗口清理：BrowserWindow 已在 show:false 状态下创建，若 Vite dev server
+      // 在超时内未就绪（waitForVite 抛错），必须 destroy 已创建的窗口，否则泄漏一个隐藏窗口。
+      await waitForVite(VITE_DEV_URL)
+      win.loadURL(`${VITE_DEV_URL}?${params.toString()}`)
+      // DevTools 默认关闭：需要时显式 XYZ_DEVTOOLS=1 npm run dev 打开
+      if (process.env.XYZ_DEVTOOLS === '1') {
+        win.webContents.openDevTools()
+      }
+    } else {
+      // E2E 与 prod 共用：加载构建产物（E2E 仅跳过 dev server 轮询，见函数 docstring）
+      const query: Record<string, string> = { windowId }
+      if (options?.sessionId) query.sessionId = options.sessionId
+      win.loadFile(path.join(app.getAppPath(), 'renderer/dist/index.html'), { query })
+    }
+  } catch (err) {
+    // W7 E3 幽灵窗口清理：waitForVite 超时或加载阶段抛错时，destroy 已创建的 BrowserWindow，
+    // 避免泄漏隐藏窗口（show:false 的窗口用户感知不到，资源却已占用）。
+    if (!win.isDestroyed()) {
+      win.destroy()
+    }
+    throw err
+  }
+}
+
+/**
  * 创建 BrowserWindow 并加载内容（dev: Vite URL / prod: index.html）。
  *
  * @param options.windowId 指定窗口 id（不传由调用方生成）
@@ -71,7 +114,7 @@ export async function createWindow(
     minWidth: 800,
     minHeight: 600,
     show: false,
-    title: 'TaiJi',
+    title: deps.isDev ? 'TaiJi dev' : 'TaiJi',
     // 跨平台窗口装饰（shell spec §五方案 X）。
     // mac：hidden + trafficLightPosition 把红黄绿放到 macOS 原生左上角位置 {8,8}（圆点中线理论 y=14，实测 ≈y15.75）。
     //   不用 hiddenInset：inset 模式强制红黄绿水平内缩，trafficLightPosition.x 被系统忽略。
@@ -169,40 +212,7 @@ export async function createWindow(
     }
   })
 
-  // E2E 是一类部署形态（已构建产物 + mock 注入），架构正确归位是独立分支而非 hack isDev：
-  //   - 跳过 Vite dev server 轮询（E2E 不起 dev server，否则 waitForVite 30s 超时）
-  //   - 加载构建产物 index.html（与 prod 同源，验证真实渲染链路）
-  //   - mock 数据由 renderer 侧 import.meta.env.VITE_E2E 注入（main 不参与）
-  const isE2E = process.env.XYZ_E2E === '1'
-  try {
-    if (isE2E) {
-      const query: Record<string, string> = { windowId }
-      if (options?.sessionId) query.sessionId = options.sessionId
-      win.loadFile(path.join(app.getAppPath(), 'renderer/dist/index.html'), { query })
-    } else if (deps.isDev) {
-      const params = new URLSearchParams({ windowId })
-      if (options?.sessionId) params.set('sessionId', options.sessionId)
-      // W7 幽灵窗口清理：BrowserWindow 已在 show:false 状态下创建，若 Vite dev server
-      // 在超时内未就绪（waitForVite 抛错），必须 destroy 已创建的窗口，否则泄漏一个隐藏窗口。
-      await waitForVite(VITE_DEV_URL)
-      win.loadURL(`${VITE_DEV_URL}?${params.toString()}`)
-      // DevTools 默认关闭：需要时显式 XYZ_DEVTOOLS=1 npm run dev 打开
-      if (process.env.XYZ_DEVTOOLS === '1') {
-        win.webContents.openDevTools()
-      }
-    } else {
-      const query: Record<string, string> = { windowId }
-      if (options?.sessionId) query.sessionId = options.sessionId
-      win.loadFile(path.join(app.getAppPath(), 'renderer/dist/index.html'), { query })
-    }
-  } catch (err) {
-    // W7 E3 幽灵窗口清理：waitForVite 超时或加载阶段抛错时，destroy 已创建的 BrowserWindow，
-    // 避免泄漏隐藏窗口（show:false 的窗口用户感知不到，资源却已占用）。
-    if (!win.isDestroyed()) {
-      win.destroy()
-    }
-    throw err
-  }
+  await loadWindowContent(win, windowId, options, deps)
 
   return { win, windowId }
 }

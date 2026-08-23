@@ -156,19 +156,21 @@ describe('TC2: removeProviderByKind(catalog) 清 auth.json 凭据 + override + e
   it('M5-03：catalog 无 override（removeProvider 返回 removed:false）且 default 承载该 provider → 显式重选并持久化', async () => {
     // 场景：catalog provider openai 无 models.json override（导入后常态形态），但 settings.json
     // default 承载它。removeProvider 提前 return {removed:false} 跳过默认清理（旧实现残留
-    // 指向无凭据 provider 的 default）。修复：显式 pickEnabledDefaultModel 重选（anthropic）
+    // 指向无凭据 provider 的 default）。修复：显式 pickEnabledDefaultModel 重选
     // + setDefaultModel 持久化 + 透传 newDefault 供广播。
+    // 候选用 custom id（B-2 混合合并后 catalog 候选的 models 含 builtin 条目，重选结果随
+    // builtin 目录漂移——custom 候选集固定为 mock 的 models，聚焦重选触发本身）。
     const { svc, store } = makeService({
-      models: { anthropic: { models: [{ id: 'claude-3' }] } },
-      enabledModels: ['openai/*', 'anthropic/*'],
+      models: { 'other-llm': { models: [{ id: 'their-m' }] } },
+      enabledModels: ['openai/*', 'other-llm/*'],
     })
     ;(store.removeProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({ removed: false })
     ;(store.getDefaultModel as ReturnType<typeof vi.fn>).mockReturnValueOnce({ provider: 'openai', modelId: 'gpt-4' })
 
     const ret = await svc.removeProviderByKind('openai', 'catalog')
 
-    expect(store.setDefaultModel).toHaveBeenCalledWith('anthropic', 'claude-3')
-    expect(ret).toEqual({ removed: true, newDefault: { provider: 'anthropic', modelId: 'claude-3' } })
+    expect(store.setDefaultModel).toHaveBeenCalledWith('other-llm', 'their-m')
+    expect(ret).toEqual({ removed: true, newDefault: { provider: 'other-llm', modelId: 'their-m' } })
   })
 
   it('M5-03：catalog 无 override + default 承载该 provider + 无其他启用 provider → 不重选（无候选）', async () => {
@@ -202,15 +204,17 @@ describe('TC2: removeProviderByKind(catalog) 清 auth.json 凭据 + override + e
     // oldDefault.provider 已被 auto-fix 成别的 provider，oldDefault.provider === providerId
     // 恒 false，M5-03 显式 B1 凭据优先重选不可达。
     // 状态化 mock：getDefaultModel 在 cleanEnabledModelsResidue 前返 openai（真旧 default），
-    // 之后返 anthropic（auto-fix 重选值）。修复（预读）后 getDefaultModel 在 clean 前被调用 →
+    // 之后返 other-llm（auto-fix 重选值）。修复（预读）后 getDefaultModel 在 clean 前被调用 →
     // oldDefault=openai，重选触发。旧实现该断言失败（setDefaultModel 未调用）。
+    // 候选用 custom id（B-2 混合合并后 catalog 候选的 models 含 builtin 条目，重选结果随
+    // builtin 目录漂移——custom 候选集固定为 mock 的 models）。
     const { svc, store } = makeService({
-      models: { anthropic: { models: [{ id: 'claude-3' }] } },
-      enabledModels: ['openai/*', 'anthropic/*'],
+      models: { 'other-llm': { models: [{ id: 'their-m' }] } },
+      enabledModels: ['openai/*', 'other-llm/*'],
     })
     let cleanCalled = false
     ;(store.getDefaultModel as ReturnType<typeof vi.fn>).mockImplementation(() =>
-      cleanCalled ? { provider: 'anthropic', modelId: 'claude-3' } : { provider: 'openai', modelId: 'gpt-4' },
+      cleanCalled ? { provider: 'other-llm', modelId: 'their-m' } : { provider: 'openai', modelId: 'gpt-4' },
     )
     ;(store.cleanEnabledModelsResidue as ReturnType<typeof vi.fn>).mockImplementation(() => { cleanCalled = true })
     ;(store.removeProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({ removed: false })
@@ -218,25 +222,27 @@ describe('TC2: removeProviderByKind(catalog) 清 auth.json 凭据 + override + e
     const ret = await svc.removeProviderByKind('openai', 'catalog')
 
     // 修复后：预读 oldDefault=openai（clean 前），重选触发，setDefaultModel 被调
-    expect(store.setDefaultModel).toHaveBeenCalledWith('anthropic', 'claude-3')
-    expect(ret).toEqual({ removed: true, newDefault: { provider: 'anthropic', modelId: 'claude-3' } })
+    expect(store.setDefaultModel).toHaveBeenCalledWith('other-llm', 'their-m')
+    expect(ret).toEqual({ removed: true, newDefault: { provider: 'other-llm', modelId: 'their-m' } })
   })
 
   it('MF-3：重选 default 时跳过候选 provider 的已禁用 model（model 级 enabled 校验，M5-03 路径）', async () => {
-    // 场景：catalog provider openai 无 override 承载 default，移除后重选到 anthropic，
-    // 但 anthropic 的 models[0] 被用户显式禁用（enabled:false）。旧实现 pickEnabledDefaultModel
+    // 场景：catalog provider openai 无 override 承载 default，移除后重选到候选 provider，
+    // 但其 models[0] 被用户显式禁用（enabled:false）。旧实现 pickEnabledDefaultModel
     // 只校验 provider 级 p.enabled + p.models[0] 存在性，会把已禁用 model 写成新 default。
+    // 候选用 custom id（B-2 混合合并后 catalog 候选的 models 含 builtin 条目，会掩盖
+    // 「跳过禁用 model」的意图——custom 候选集固定为 mock 的 models）。
     const { svc, store } = makeService({
-      models: { anthropic: { models: [{ id: 'disabled-m', enabled: false }, { id: 'enabled-m', enabled: true }] } },
-      enabledModels: ['openai/*', 'anthropic/*'],
+      models: { 'other-llm': { models: [{ id: 'disabled-m', enabled: false }, { id: 'enabled-m', enabled: true }] } },
+      enabledModels: ['openai/*', 'other-llm/*'],
     })
     ;(store.removeProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({ removed: false })
     ;(store.getDefaultModel as ReturnType<typeof vi.fn>).mockReturnValueOnce({ provider: 'openai', modelId: 'gpt-4' })
 
     const ret = await svc.removeProviderByKind('openai', 'catalog')
 
-    expect(store.setDefaultModel).toHaveBeenCalledWith('anthropic', 'enabled-m')
-    expect(ret).toEqual({ removed: true, newDefault: { provider: 'anthropic', modelId: 'enabled-m' } })
+    expect(store.setDefaultModel).toHaveBeenCalledWith('other-llm', 'enabled-m')
+    expect(ret).toEqual({ removed: true, newDefault: { provider: 'other-llm', modelId: 'enabled-m' } })
   })
 })
 

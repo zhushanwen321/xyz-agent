@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-extension-logger",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Shared logging helper for Pi extensions — three-channel routing (AI realtime / audit / debug) (shared library, not a Pi extension - no install.mjs needed)",
   "type": "module",
   "main": "src/index.ts",
@@ -17,7 +17,7 @@
     "index.ts"
   ],
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "^0.84.1"
   },
   "scripts": {
     "typecheck": "npx tsc --noEmit",

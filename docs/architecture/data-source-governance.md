@@ -103,7 +103,7 @@ pi.setSessionName(title)
 | 11 | session 活跃态 | `get_state.isStreaming` | 5 状态源派生（chat 消息态/pendingSend/queue/retry/forceWorking） | — |
 | 12 | slash 命令列表 | `get_commands` | 广播 + RPC 拉取 + stateSnapshot | broadcast/订阅时序（AGENTS.md 已修） |
 
-覆盖范围说明：plugin sessionData（插件 per-session KV，含 `plugin:statusBarUpdate` 等 WS 推送）是用户可见 GUI 数据但**不在 12 类多源清单**——现状已是单写路径：权威 = runtime `SessionDataStore`（`packages/runtime/src/services/plugin-service/session-data-store.ts`，WriteBackCache + per-write debounce + 定时 flush + 磁盘恢复，消费者经唯一类入口操作），无第二写方、非多源病灶。登记表（§3.6 第 4 层）将其登记为「已 owner 化声明」条目，维持 G2「任何 GUI 数据可查 owner」的完整性。
+覆盖范围说明：plugin sessionData（插件 per-session KV，含 `plugin:statusBarUpdate` 等 WS 推送）是用户可见 GUI 数据但**不在 12 类多源清单**——现状已是单写路径：权威 = runtime `SessionDataStore`（`packages/runtime/src/services/plugin-service/session-data-store.ts`，WriteBackCache + per-write debounce + 定时 flush + 磁盘恢复，消费者经唯一类入口操作），无第二写方、非多源病灶。登记表（§3.6 第 4 层）将其登记为「已 owner 化声明」条目，维持 G2「任何 GUI 数据可查 owner」的完整性。同形态后续追加：provider 扩展配置（quota/authMethod/modelStates，PR #187，登记表 P2——权威 = `<piAgentDir>/config/providers.json`，唯一写方 = runtime `XyzProviderStore`，pi 零引用该子目录）。
 
 ### 2.3 四种多源模式（根因的四种表现）
 
@@ -244,7 +244,8 @@ xyz 指向 pi JSONL 的写点全集共 6 处（r3 审查补漏 handoff / patchCw
 **D7 投影一次——renderer 零派生**：runtime 是唯一投影宿主（长寿命进程：后台 subagent/workflow 在窗口关闭后继续存活，副本必须活在这里；session 目录扫描横跨无 pi 进程的历史文件；多 pane 扇出需要去重）。落地形态：
 
 - 所有派生逻辑（merge / normalizeSubagentStatus 类状态归一 / 计数 FIFO / 空值守卫）从 renderer 上移到 runtime 或 core 包唯一实现；renderer stores 退化为视图模型容器，唯一写入口 `applySnapshot`，WS 消息必须是 view-ready DTO；
-- `ReplicatedState<T>` 通用原语承载六类标量 session 状态（label/thinkingLevel/modelId/usage/queue 深度/commands）：配置三元组 = `(快照 RPC, 失效触发源, 合并策略含字段空值语义)`。六类同构，不允许各写各的缓存——**新数据 = 新配置条目，不存在「顺手加个缓存」的物理路径**。登记表因此从 markdown 演进为可执行配置（人读文档由配置生成/双向校验）；
+- `ReplicatedState<T>` 通用原语承载六类标量 session 状态（label/thinkingLevel/modelId/usage/queue 深度/commands）：配置三元组 = `(快照 RPC, 失效触发源, 合并策略含字段空值语义)`。六类同构，不允许各写各的缓存——**新数据 = 新配置条目，不存在「顺手加个缓存」的物理路径**。登记表因此从 markdown 演进为可执行配置（人读文档由配置生成/双向校验）。
+  **[2026-08-20 修订消歧]** 本段「六类」是 P1 规划口径；登记表后续修订（PR #185/#186）已撤销 label 与 queue 深度两处 ReplicatedState 实例（`.get()` 生产零消费、属无效 RPC，改事件直达/帧直达形态）。**现行实例口径以 [data-source-registry.md](./data-source-registry.md)「读法消歧」及其「目标」段为准**，勿按本段理解现状；
 - modelId 无 pi 事件可依赖（精确核实：pi 有 `model_select` 扩展事件，agent-session.ts:1458-1470 `_emitModelSelect`，但只经 `_extensionRunner.emit` 发给扩展、不经 `session.subscribe` 转发——rpc-mode.ts:354 的订阅转发通道无任何 model 事件，RPC 客户端不可见，即「RPC 层无 model 事件」），其失效源 = switchModel RPC 响应后主动拉快照（RPC 响应驱动）——这是「事件只做失效」的补充合法形态，登记在配置里。
 - **现有 subscribe / ring / stateSnapshot 快照通道的去留（对抗审查补漏）**：**复用为推送通道，不退役重写**。这套机制（`session.subscribe` RPC + ring snapshot + state 类 last-value stateSnapshot + gap→全量重拉，session-message-handler.ts:314-326）是 WS 传输层的重连补偿基础设施，与数据源治理正交。改造点只有一个：**5 个 state 类话题（`session.commands` / `context.update` / `session.subagents` / `session.workflowUpdate` / `session.state_changed`，message-bus.ts TOPIC_TABLE:55 起 / STATE_TYPE_KEY_MAP:131）的数据源从「事件直写 runtime 缓存再转发」切换为「runtime 侧 ReplicatedState 实例发布」**——stateSnapshot 回放的 last-value 从影子缓存快照变为 owner 快照，「投影一次」原则不被现有通道架空；stream 类话题（消息流 message.*、`queue_update` 等）维持 ring 语义不动。迁移顺序见 P1.5。
 - 被否的更激进选项「runtime 彻底无状态化变纯 WS↔RPC 桥」：不成立——runtime 寿命长于 renderer，必须持有副本；但它的副本从手写缓存变成通用原语的实例。
@@ -268,7 +269,7 @@ auto-rename:    rename-session 扩展在 pi 内 ──► pi.setSessionName（�
 
 ### 3.5 分阶段迁移（概览，详见 §5）
 
-P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + review agent 与 R1/R3 机器检查同期上线）→ P1 runtime owner 收敛（ReplicatedState 原语落地六类 + 非活跃 rename 切换短命 pi，绝对写规则全线生效）→ P2 renderer 零派生收敛 → P3 扩展数据单源（自描述 entry）+ 消息流 reducer → P4 等价性测试全量化 + ADR 落档。**护栏在 P0 与止血同期上线**——先立守护再动大刀，重构过程本身被守护。
+P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + review agent 与 R1/R3 机器检查同期上线）→ P1 runtime owner 收敛（ReplicatedState 原语落地六类（后修订为四类，见 §3.3 D7 消歧标注，现行口径以 [data-source-registry.md](./data-source-registry.md) 为准） + 非活跃 rename 切换短命 pi，绝对写规则全线生效）→ P2 renderer 零派生收敛 → P3 扩展数据单源（自描述 entry）+ 消息流 reducer → P4 等价性测试全量化 + ADR 落档。**护栏在 P0 与止血同期上线**——先立守护再动大刀，重构过程本身被守护。
 
 ### 3.6 预防机制双层（对应 G4，本方案的核心增量）
 
@@ -292,7 +293,7 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 - `broadcast ≡ get_state`：事件风暴后断言 renderer 状态 == pi 快照；
 - 混沌注入：事件乱序/丢失/重放 → owner 状态必须收敛到权威快照（拉取自愈的结构性验证）。
 
-**第 4 层 数据登记表**：`docs/architecture/data-source-registry.md`，12 类数据的 owner / 权威源 / 唯一写入口 / 字段空值语义 / 已知例外（含 legacy 例外的移除期限），是 S1/R2/R3 许可表的依据 + review 时的对照 SSOT（对齐 ADR-0049 checklist 先例）；另含「已 owner 化声明」条目——plugin sessionData：权威 = runtime `SessionDataStore`（`packages/runtime/src/services/plugin-service/session-data-store.ts`，WriteBackCache 单写路径 + per-write debounce + 定时 flush + 磁盘恢复，消费者经唯一类入口操作），非多源病灶、不进 12 类清单，登记以维持 G2「任何 GUI 数据可查 owner」的完整性。P1 起演进为可执行配置（ReplicatedState 配置即登记表条目），markdown 由配置生成或双向校验。
+**第 4 层 数据登记表**：`docs/architecture/data-source-registry.md`，12 类数据的 owner / 权威源 / 唯一写入口 / 字段空值语义 / 已知例外（含 legacy 例外的移除期限），是 S1/R2/R3 许可表的依据 + review 时的对照 SSOT（对齐 ADR-0049 checklist 先例）；另含「已 owner 化声明」条目——plugin sessionData（P1）：权威 = runtime `SessionDataStore`（`packages/runtime/src/services/plugin-service/session-data-store.ts`，WriteBackCache 单写路径 + per-write debounce + 定时 flush + 磁盘恢复，消费者经唯一类入口操作）；provider 扩展配置（P2，PR #187）：权威 = `<piAgentDir>/config/providers.json`、唯一写方 = runtime `XyzProviderStore`（pi 零引用该子目录，锚点 + 契约测试守卫）——均非多源病灶、不进 12 类清单，登记以维持 G2「任何 GUI 数据可查 owner」的完整性。P1 起演进为可执行配置（ReplicatedState 配置即登记表条目），markdown 由配置生成或双向校验。
 
 **第 5 层 ADR + review checklist**：新 ADR（编号顺延，当前最高 0061）「单一数据 owner + 绝对写规则」：判据、事件只做失效、pi JSONL 唯一写方 = pi 进程（含扩展经 pi API）、sidecar 家族是登记在案的 xyz 自有合法形态（D3）、文件创建型（fork）登记在案（D3b）、队列按字段分权威（D6）。pi 升级时跑 pi-protocol 契约测试（ADR-0037 联合类型 exhaustive 检查已有），防止上游事件语义漂移悄悄制造新分叉。
 
@@ -353,7 +354,7 @@ P0 止血 + 护栏先行（活跃 rename 接 RPC 修覆盖 bug + 登记表 + rev
 
 | 单元 | 内容 | justification |
 |---|---|---|
-| P1.1 | `ReplicatedState<T>` 原语 + label/thinkingLevel/modelId/usage/queue 深度/commands 六个配置实例（合并策略含字段空值语义，规则见 D1b）；登记表条目演进为配置 | §2 模式 3 的收敛点，六类数据同构；配置即登记表 |
+| P1.1 | `ReplicatedState<T>` 原语 + label/thinkingLevel/modelId/usage/queue 深度/commands 六个配置实例（合并策略含字段空值语义，规则见 D1b）——[后修订：label/queue 深度两实例撤销，见 §3.3 D7 消歧，现行以 data-source-registry.md 为准]；登记表条目演进为配置 | §2 模式 3 的收敛点，六类数据同构；配置即登记表 |
 | P1.2 | 事件改失效信号：session_info_changed/thinking_level_changed/queue_update/context 相关事件 → dirty + 防抖重拉。modelId 失效源 = switchModel RPC 响应后主动拉快照（已核实 RPC 层无 model 事件，见 D7） | 「事件只做失效」落地的第一步 |
 | P1.3 | 删除 sessionMetaCache（= `packages/runtime/src/services/session/session-meta-cache.ts`，sessionId 键；`infra/pi/session-file-utils.ts` 内同名 filePath 键纯派生缓存不在删除范围——已核实）；applyContextUpdate 五写点收编为单入口；switchModel 重算移入 owner | 影子状态库退场 |
 | P1.4 | 非活跃 rename 切换短命 pi 进程——形态已定「逐次冷起」（P0.5 冷启动探针已核实 ~500ms 中位数可接受；与 RPC 频率探针为软依赖，不阻塞本单元）；删除 persistSessionName 全部直写代码；persistHandedOff 迁 sidecar 与 patchSessionCwd 迁 restore tmp 读改写管线（r3 补漏的两条直写链路，同为绝对写规则全线生效的条件）；fork 文件创建型零代码改动（登记确认）；R1 allowlist 清空 | 绝对写规则全线生效 |

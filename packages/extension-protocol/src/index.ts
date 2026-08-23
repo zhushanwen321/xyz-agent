@@ -40,7 +40,7 @@ export {
 // ── core：ctx 接口 ──
 export type { GuiContext } from './core/gui-context'
 
-// ── extensions/ask-user：富交互（select 通道 + marker）──
+// ── ./extensions/ask-user：富交互（select 通道 + marker，本包内子目录）──
 export type { AskUserQuestion, AskUserOption, AskUserAnswers } from './extensions/ask-user/types'
 export { ASK_USER_MARKER } from './extensions/ask-user/marker'
 export {
@@ -50,7 +50,7 @@ export {
   isAskUserQuestion,
 } from './extensions/ask-user/helpers'
 
-// ── extensions/session-manager：agent-managed session（select 通道 + marker）──
+// ── session-manager 协议（agent-managed session：select 通道 + marker；实现在 extensions/universal/session-manager）──
 export type {
   SessionManagerAction,
   SessionManagerRequest,

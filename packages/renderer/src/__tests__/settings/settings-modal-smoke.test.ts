@@ -31,7 +31,7 @@ import {
 // @/api 门面 mock：所有 config/extension/model/settings 域返回空/resolved，避免 WS 调用。
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   config: {
-    listProviders: vi.fn(async () => []),
+    listProviders: vi.fn(async () => ({ providers: [] })),
     setProvider: vi.fn(async () => undefined),
     setSkillDirs: vi.fn(async () => undefined),
     setAgentDirs: vi.fn(async () => undefined),
@@ -60,7 +60,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
   model: { onModels: vi.fn(() => () => {}) },
   extension: { onExtensions: vi.fn(() => () => {}) },
   settings: {
-    listProviders: vi.fn(async () => []),
+    listProviders: vi.fn(async () => ({ providers: [] })),
     onProviders: vi.fn(() => () => {}),
     onExtensions: vi.fn(() => () => {}),
     getAutoRenameEnabled: vi.fn(async () => ({ enabled: false })),
@@ -82,7 +82,7 @@ import SettingsModal from '@/components/settings/SettingsModal.vue'
 function stubTransport(): SettingsTransport {
   const noopUnsub = (): void => {}
   return {
-    listProviders: async () => [],
+    listProviders: async () => ({ providers: [] }),
     listModels: async () => [],
     setProvider: async () => undefined,
     discoverModels: async () => ({ success: true, models: [] }),
@@ -173,7 +173,7 @@ describe('SettingsModal 懒加载挂载即 open 的 open 语义（W31 review maj
       ipc: null,
     })
     // refreshProviders → getSettingsTransport().listProviders()（模块级单例）→ spy 在此
-    const listProvidersSpy = vi.fn(async () => [])
+    const listProvidersSpy = vi.fn(async () => ({ providers: [] }))
     provideSettingsTransport({ ...stubTransport(), listProviders: listProvidersSpy })
 
     // 模拟 AppShell 懒加载场景：settingsOpen=true 与组件挂载同帧，props.open 初始即 true。

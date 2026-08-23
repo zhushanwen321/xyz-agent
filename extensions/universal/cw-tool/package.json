@@ -1,0 +1,53 @@
+{
+  "name": "@zhushanwen/pi-cw-tool",
+  "version": "0.5.0",
+  "description": "Pi extension for cw 2.0: a read-only cw_query tool (status / frontier / tree / report passthrough) + the pi-cw skill (runner practical guide for multi-unit tasks: background run, monitoring, escalation, merge back).",
+  "type": "module",
+  "main": "index.ts",
+  "xyz-agent": {
+    "role": "universal"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "keywords": [
+    "pi-package",
+    "cw",
+    "coding-workflow",
+    "runner",
+    "readonly-query"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "src/",
+    "skills/"
+  ],
+  "scripts": {
+    "typecheck": "npx tsc --noEmit && npx tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-ai": "^0.84.1",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
+    "vitest": "^4.1.8"
+  }
+}

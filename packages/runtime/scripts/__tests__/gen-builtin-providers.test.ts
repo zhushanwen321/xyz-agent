@@ -1,4 +1,4 @@
-// 8 用例 vitest 测试：校验 generateBuiltinProviders 提取的 37 provider 元数据结构。
+// 8 用例 vitest 测试：校验 generateBuiltinProviders 提取的 39 provider 元数据结构。
 // 测试框架 vitest（禁 node:test / tsx --test）。
 import { describe, it, expect } from 'vitest'
 import { generateBuiltinProviders } from '../gen-builtin-providers.mjs'
@@ -6,8 +6,8 @@ import { generateBuiltinProviders } from '../gen-builtin-providers.mjs'
 describe('gen-builtin-providers', () => {
   const providers = generateBuiltinProviders()
 
-  it('t1: 生成 37 个内置 provider', () => {
-    expect(providers).toHaveLength(37)
+  it('t1: 生成 39 个内置 provider', () => {
+    expect(providers).toHaveLength(39)
   })
 
   it('t2: openai envVars 含 OPENAI_API_KEY 且 authMode===api_key', () => {
@@ -52,8 +52,8 @@ describe('gen-builtin-providers', () => {
   it('t7: 非 ambient provider models 非空（排除 google-vertex/amazon-bedrock）', () => {
     const ambient = new Set(['google-vertex', 'amazon-bedrock'])
     const nonAmbient = providers.filter((p) => !ambient.has(p.id))
-    // 37 - 2 ambient = 35 个，每个 modelCount > 0
-    expect(nonAmbient).toHaveLength(35)
+    // 39 - 2 ambient = 37 个，每个 modelCount > 0
+    expect(nonAmbient).toHaveLength(37)
     for (const p of nonAmbient) {
       expect(p.modelCount, `${p.id} modelCount 应 > 0`).toBeGreaterThan(0)
       expect(p.models.length, `${p.id} models 数组应非空`).toBeGreaterThan(0)
@@ -102,14 +102,14 @@ describe('gen-builtin-providers', () => {
     expect(typeof claude.maxTokens).toBe('number')
   })
 
-  it('t10: catalog 指纹（pi-ai 升级 model 级内容漂移守卫）——37 provider + models 总和 + 代表 provider model id 集合', () => {
+  it('t10: catalog 指纹（pi-ai 升级 model 级内容漂移守卫）——39 provider + models 总和 + 代表 provider model id 集合', () => {
     // 内容守卫（非 git 快照比对）：pi-ai 升级后 model 增删/改名会破坏以下断言，提示人工核对生成物。
-    // 基线值取自 builtin-providers.json（pi-ai 0.82.1，generatedAt 2026-08-07）。
+    // 基线值取自 builtin-providers.json（pi-ai 0.84.1，generatedAt 2026-08-23）。
     // provider 总数
-    expect(providers).toHaveLength(37)
+    expect(providers).toHaveLength(39)
     // 所有 provider 的 models 总和（模型库整体规模漂移守卫）
     const totalModels = providers.reduce((s, p) => s + p.models.length, 0)
-    expect(totalModels).toBe(1109)
+    expect(totalModels).toBe(1220)
     // 代表 provider 的 model id 集合（删/改名即破坏；新增模型用 arrayContaining 容忍）
     const openai = providers.find((p) => p.id === 'openai')!
     expect(openai.models.map((m) => m.id)).toEqual(

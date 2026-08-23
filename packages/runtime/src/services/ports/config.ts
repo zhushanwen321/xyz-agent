@@ -15,14 +15,15 @@ export interface ConfigProviderConfig {
   baseUrl?: string
   /** pi 的 api 标识（前端直接发送 pi 终值，runtime 透传，见 applyTypeTranslation）。 */
   api?: string
-  /** 认证方式（I6）：ProviderQuickSetup.onSave 标注。与 infra PiProviderConfig.authMethod 同构。 */
+  /** 认证方式（寄生字段，仅存量数据兼容读）。A1 后权威存 config/providers.json（XyzProviderStore）。 */
   authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
   /** provider 级启停（W1）。省略时默认 true，与 infra PiProviderConfig 同构。 */
   enabled?: boolean
   models?: ConfigModelDefinition[]
   /**
-   * Coding Plan 额度查询配置（手动选择 fetcher + 启用状态 + cookie 标记）。
-   * 与 infra PiProviderConfig.quota 同构，listProviders 透传到 ProviderInfo.quota。
+   * Coding Plan 额度查询配置（寄生字段，仅存量数据兼容读）。
+   * A1 后权威存 config/providers.json（XyzProviderStore），listProviders 经双读回退
+   * 映射到 ProviderInfo.quota。
    */
   quota?: {
     /** 用户手动指定的 fetcher id（省略时 QuotaService 自动按 baseUrl/name 匹配）。 */
@@ -50,6 +51,8 @@ export interface ConfigModelDefinition {
   maxTokens?: number
   thinkingLevelMap?: Record<string, string | null>
   cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+  /** model 级自定义请求头（pi ModelDefinitionSchema 内字段，B-4b 白名单）。 */
+  headers?: Record<string, string>
   compat?: Record<string, unknown>
 }
 
@@ -128,6 +131,8 @@ export interface IConfigStore {
    * 边界3(a) 重算空 → clearEnabledModels（delete 字段，CL2）。
    */
   cleanEnabledModelsResidue(providerId: string): void
+  // 注：scopedModels 残留清理不经 IConfigStore——scopedModels 属 providers.json（XyzProviderStore 域），
+  // deleteProvider/removeProviderByKind 直接调 extrasStore.cleanScopedModelsResidue（scoped-model design §3.2）。
 
   // ── Provider CRUD ──
   readModels(): ConfigModelsConfig
@@ -136,6 +141,13 @@ export interface IConfigStore {
   removeProvider(providerId: string): RemoveProviderResult
   /** 透传 provider type → pi api 标识（前端直接发 pi 终值，runtime 不再翻译别名）。 */
   applyTypeTranslation(type: string): string
+  /**
+   * pi 0.84.1 八字段全缺空壳判定（sanitizeInvalidProviders 与 provider-extras-migration
+   * 共用的删除判据，权威实现在 infra/pi/pi-provider-repair）。port 化动机（round 1 review
+   * arch-boundary S1）：migration 原 services → infra 直 import 加重三层泄漏，判定语义
+   * 不应穿透到 services。ConfigProviderConfig 与 PiProviderConfig 结构同构，直接传入。
+   */
+  isInvalidProvider(config: ConfigProviderConfig): boolean
 
   // ── Skill paths（discovery.json v2 SSOT，ADR-0021 §1）──
   /** 读取 skill 合并路径（project ∪ global 去重，项目在前）。供 session-service pi 启动参数等消费。 */

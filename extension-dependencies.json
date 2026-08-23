@@ -3,7 +3,7 @@
   "extensions": [
     {
       "name": "@zhushanwen/pi-subagent-workflow",
-      "directory": "extensions/subagent-workflow",
+      "directory": "extensions/universal/subagent-workflow",
       "dependsOn": [
         {
           "package": "@zhushanwen/pi-extension-logger",
@@ -34,12 +34,12 @@
     },
     {
       "name": "@zhushanwen/pi-structured-output",
-      "directory": "extensions/structured-output",
+      "directory": "extensions/universal/structured-output",
       "dependsOn": []
     },
     {
       "name": "@zhushanwen/pi-model-switch",
-      "directory": "extensions/model-switch",
+      "directory": "extensions/universal/model-switch",
       "dependsOn": [
         {
           "package": "@zhushanwen/pi-quota-providers",
@@ -55,7 +55,7 @@
     },
     {
       "name": "@zhushanwen/pi-goal",
-      "directory": "extensions/goal",
+      "directory": "extensions/universal/goal",
       "dependsOn": [
         {
           "package": "@xyz-agent/extension-protocol",
@@ -76,7 +76,7 @@
     },
     {
       "name": "@zhushanwen/pi-todo",
-      "directory": "extensions/todo",
+      "directory": "extensions/universal/todo",
       "dependsOn": [
         {
           "package": "@xyz-agent/extension-protocol",
@@ -87,7 +87,7 @@
     },
     {
       "name": "@zhushanwen/pi-unified-hooks",
-      "directory": "extensions/unified-hooks",
+      "directory": "extensions/universal/unified-hooks",
       "dependsOn": [
         {
           "package": "@zhushanwen/pi-extension-logger",
@@ -98,7 +98,7 @@
     },
     {
       "name": "@zhushanwen/pi-plan",
-      "directory": "extensions/plan",
+      "directory": "extensions/universal/plan",
       "dependsOn": [
         {
           "package": "@zhushanwen/pi-goal",
@@ -109,7 +109,7 @@
     },
     {
       "name": "@zhushanwen/pi-ask-user",
-      "directory": "extensions/ask-user",
+      "directory": "extensions/universal/ask-user",
       "dependsOn": [
         {
           "package": "@xyz-agent/extension-protocol",
@@ -125,12 +125,12 @@
     },
     {
       "name": "@zhushanwen/pi-pending-notifications",
-      "directory": "extensions/pending-notifications",
+      "directory": "extensions/universal/pending-notifications",
       "dependsOn": []
     },
     {
       "name": "@zhushanwen/pi-permission",
-      "directory": "extensions/permission",
+      "directory": "extensions/universal/permission",
       "dependsOn": [
         {
           "package": "@zhushanwen/pi-llm-shared",
@@ -141,12 +141,12 @@
     },
     {
       "name": "@zhushanwen/pi-scheduler",
-      "directory": "extensions/scheduler",
+      "directory": "extensions/universal/scheduler",
       "dependsOn": []
     },
     {
       "name": "@zhushanwen/pi-rename-session",
-      "directory": "extensions/rename-session",
+      "directory": "extensions/universal/rename-session",
       "dependsOn": [
         {
           "package": "@zhushanwen/pi-llm-shared",
@@ -157,42 +157,58 @@
     },
     {
       "name": "@zhushanwen/pi-cw-tool",
-      "directory": "extensions/cw-tool",
+      "directory": "extensions/universal/cw-tool",
       "dependsOn": []
     },
     {
       "name": "@zhushanwen/pi-session-reader",
-      "directory": "extensions/session-reader",
+      "directory": "extensions/universal/session-reader",
       "dependsOn": []
     },
     {
       "name": "@zhushanwen/pi-cache-probe",
-      "directory": "extensions/cache-probe",
+      "directory": "extensions/universal/cache-probe",
       "dependsOn": []
     },
     {
       "name": "@zhushanwen/pi-agent-ext",
-      "directory": "extensions/agent-ext",
+      "directory": "extensions/taiji/agent-ext",
       "dependsOn": []
     },
     {
       "name": "@zhushanwen/pi-system-prompt",
-      "directory": "extensions/system-prompt",
+      "directory": "extensions/taiji/system-prompt",
       "dependsOn": []
     },
     {
       "name": "@zhushanwen/pi-msg-id-mapper",
-      "directory": "extensions/msg-id-mapper",
+      "directory": "extensions/taiji/msg-id-mapper",
       "dependsOn": []
     },
     {
       "name": "@zhushanwen/pi-system-prompt-trace",
-      "directory": "extensions/system-prompt-trace",
+      "directory": "extensions/taiji/system-prompt-trace",
       "dependsOn": []
     },
     {
+      "name": "@zhushanwen/pi-smart-context",
+      "directory": "extensions/universal/smart-context",
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-llm-shared",
+          "type": "package",
+          "reason": "top-level 静态 import resolveModel/loadConfig（src/pure.ts、src/compact-handler.ts），缺失即模块加载抛 Cannot find module"
+        },
+        {
+          "package": "@zhushanwen/pi-extension-logger",
+          "type": "package",
+          "reason": "top-level 静态 import createLogger/setPiHandle（src/compact-handler.ts、src/index.ts），缺失即模块加载抛 Cannot find module"
+        }
+      ]
+    },
+    {
       "name": "@zhushanwen/pi-session-manager",
-      "directory": "extensions/session-manager",
+      "directory": "extensions/universal/session-manager",
       "dependsOn": [
         {
           "package": "@xyz-agent/extension-protocol",

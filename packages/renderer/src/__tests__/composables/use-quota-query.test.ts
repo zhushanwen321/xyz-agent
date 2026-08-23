@@ -46,6 +46,8 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
 
 vi.mock('@/i18n', () => ({
   setLocale: vi.fn(),
+  // useQuotaQuery 的 quotaFailReasonText 经 i18n.global.t 映射 reason 文案（mock 返回 key 本身，断言用）
+  default: { global: { t: (key: string) => key } },
 }))
 
 import * as quotaApi from '@/api/domains/quota'
@@ -110,6 +112,49 @@ describe('useQuotaQuery', () => {
     // getCached 成功写入
     expect(data.value).toEqual(mockRow)
     expect(lastFetchAt.value).toBe(1000)
+  })
+
+  it('onHoverEnter：fetch fulfilled 但带 reason（A2-4 失败态契约）→ 保留旧 data + 写 error 文案', async () => {
+    // 场景：store 已有旧缓存（此前成功过），本次 fetch 失败返回 data=null + reason（runtime 不抛错）
+    vi.mocked(quotaApi.getCached).mockResolvedValue({ data: mockRow, lastFetchAt: 1000, reason: 'unauthorized' })
+    vi.mocked(quotaApi.fetchQuota).mockResolvedValue({ data: null, lastFetchAt: 1000, reason: 'unauthorized' })
+
+    const providerIdRef = ref<string | null>('zhipu')
+    const { data, error, onHoverEnter } = useQuotaQuery(providerIdRef)
+
+    await onHoverEnter()
+
+    // 旧 data 不被 null 覆写（回归守卫：BL round1 #3）
+    expect(data.value).toEqual(mockRow)
+    // error 写入 reason 映射文案（i18n mock 返回 key 本身）
+    expect(error.value).toBe('panel.context.quotaFailUnauthorized')
+  })
+
+  it('onHoverEnter：fetch fulfilled 无 reason → 成功路径写 data 清 error', async () => {
+    vi.mocked(quotaApi.getCached).mockResolvedValue(mockCachedResult)
+    vi.mocked(quotaApi.fetchQuota).mockResolvedValue(mockFetchResult)
+
+    const providerIdRef = ref<string | null>('zhipu')
+    const { data, error, onHoverEnter } = useQuotaQuery(providerIdRef)
+
+    await onHoverEnter()
+
+    expect(data.value).toEqual(mockFetchResult.data)
+    expect(error.value).toBeNull()
+  })
+
+  it('onHoverEnter：getCached 初始填充带 reason（runtime 内存失败标记）→ 首屏即失败态而非空白', async () => {
+    // 场景：store 无条目（renderer 重载），runtime 内存有失败标记且无缓存数据
+    vi.mocked(quotaApi.getCached).mockResolvedValue({ data: null, lastFetchAt: null, reason: 'network' })
+    vi.mocked(quotaApi.fetchQuota).mockResolvedValue({ data: null, lastFetchAt: null, reason: 'network' })
+
+    const providerIdRef = ref<string | null>('zhipu')
+    const { data, error, onHoverEnter } = useQuotaQuery(providerIdRef)
+
+    await onHoverEnter()
+
+    expect(data.value).toBeNull()
+    expect(error.value).toBe('panel.context.quotaFailNetwork')
   })
 
   it('onHoverEnter：并发保护——pending 期间重复调用被跳过', async () => {

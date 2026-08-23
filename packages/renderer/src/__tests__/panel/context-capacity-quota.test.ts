@@ -16,7 +16,7 @@
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/context-capacity-quota.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { NormalizedQuotaRow, ProviderInfo } from '@xyz-agent/shared'
@@ -48,11 +48,14 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
 vi.mock('@/api/domains/quota', () => ({
   getCached: vi.fn(),
   fetchQuota: vi.fn(),
+  refreshQuota: vi.fn(),
   configure: vi.fn(),
 }))
 
 vi.mock('@/i18n', () => ({
   setLocale: vi.fn(),
+  // useQuotaQuery 的 quotaFailReasonText 经 i18n.global.t 映射 reason 文案（mock 返回 key 本身）
+  default: { global: { t: (key: string) => key } },
 }))
 
 import ContextCapacityPopover from '@/components/panel/ContextCapacityPopover.vue'
@@ -292,6 +295,104 @@ describe('ContextCapacityPopover coding-plan 区', () => {
       const entry = quotaStore.getEntry('zhipu')
       expect(entry).toBeDefined()
       expect(entry!.data).toEqual(mockQuotaRow)
+    })
+
+    it('fetch fulfilled 带 reason（A2-4 失败态）→ 保留旧 data + 写 reason 文案，不覆写为 null', async () => {
+      // [HISTORICAL] 回归守卫（BL round1 #3）：runtime 失败契约是 data=null + reason
+      // （非旧缓存 data），消费侧曾把旧缓存覆写为 null 且清空 error——失败既不显提示也不留旧值
+      setupProviders([zhipuProvider])
+      const quotaStore = useQuotaStore()
+      quotaStore.setCache('zhipu', mockQuotaRow, 500)
+
+      vi.mocked(quotaApi.getCached).mockResolvedValue({ data: mockQuotaRow, lastFetchAt: 500 })
+      vi.mocked(quotaApi.fetchQuota).mockResolvedValue({ data: null, lastFetchAt: 500, reason: 'unauthorized' })
+
+      const wrapper = mount(ContextCapacityPopover, {
+        props: { modelId: 'zhipu/glm-4' },
+      })
+      await flushPromises()
+
+      const btn = wrapper.find('[title="上下文容量"]')
+      await btn.trigger('mouseenter')
+      await flushPromises()
+
+      const entry = quotaStore.getEntry('zhipu')
+      expect(entry).toBeDefined()
+      expect(entry!.data).toEqual(mockQuotaRow)
+      expect(entry!.error).toBe('panel.context.quotaFailUnauthorized')
+    })
+  })
+
+  describe('refresh 路径失败态（A2-4 reason 消费 + DOM 渲染）', () => {
+    /**
+     * 打开 popover：HoverCardContent 渲染在 reka-ui HoverCardPortal（document.body）。
+     * trigger('focus') → reka onFocus → onOpen（openDelay 700ms 后 open=true）。
+     * 只 fake setTimeout/clearTimeout（reka open 计时器），microtask 不受影响。
+     */
+    async function openPopover(): Promise<ReturnType<typeof mount>> {
+      const wrapper = mount(ContextCapacityPopover, {
+        props: { modelId: 'zhipu/glm-4' },
+        attachTo: document.body,
+      })
+      await flushPromises()
+      await wrapper.find('[title="上下文容量"]').trigger('focus')
+      await vi.advanceTimersByTimeAsync(700)
+      await flushPromises()
+      return wrapper
+    }
+
+    /** body 内全部按钮中找文本等于指定值的（portal 内容不在 wrapper 内） */
+    function findBodyButton(text: string): HTMLButtonElement | undefined {
+      return Array.from(document.body.querySelectorAll('button')).find(
+        (b) => b.textContent?.trim() === text,
+      )
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+      document.body.innerHTML = ''
+    })
+
+    it('refresh 按钮 → refreshQuota fulfilled 带 reason → 保留旧 data + 写 reason 文案（onRefresh reason 分支）', async () => {
+      setupProviders([zhipuProvider])
+      const quotaStore = useQuotaStore()
+      quotaStore.setCache('zhipu', mockQuotaRow, 500)
+      vi.mocked(quotaApi.refreshQuota).mockResolvedValue({ data: null, lastFetchAt: 500, reason: 'unauthorized' })
+
+      const wrapper = await openPopover()
+
+      const refreshBtn = findBodyButton('刷新')
+      expect(refreshBtn).toBeTruthy()
+      refreshBtn!.click()
+      await flushPromises()
+
+      // 失败态（R2-S）：保留旧 data 不覆写为 null，error 写 reason 文案
+      const entry = quotaStore.getEntry('zhipu')
+      expect(entry).toBeDefined()
+      expect(entry!.data).toEqual(mockQuotaRow)
+      expect(entry!.error).toBe('panel.context.quotaFailUnauthorized')
+      wrapper.unmount()
+    })
+
+    it('失败态 popover 渲染「查询失败：{error}」（queryFailed DOM 断言，全库首例）', async () => {
+      setupProviders([zhipuProvider])
+      const quotaStore = useQuotaStore()
+      quotaStore.setCache('zhipu', mockQuotaRow, 500)
+      // 模拟上一次查询失败（store 失败态：旧 data + error）
+      quotaStore.setError('zhipu', 'panel.context.quotaFailNetwork')
+
+      const wrapper = await openPopover()
+      await flushPromises()
+
+      // coding-plan 区失败提示渲染（v-if="error" 分支）：「查询失败：{error}」，
+      // error 经 '@/i18n' mock 返回 key 本身（vitest-i18n-setup 插值 {error}）
+      const bodyText = document.body.textContent ?? ''
+      expect(bodyText).toContain('查询失败：panel.context.quotaFailNetwork')
+      wrapper.unmount()
     })
   })
 

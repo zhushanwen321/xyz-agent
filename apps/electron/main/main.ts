@@ -242,6 +242,8 @@ app.whenReady().then(async () => {
       app.dock?.setIcon(dockIcon)
     }
   }
+  // dev 实例 Dock 角标：与 prod 并存时一眼可辨（app.dock 非 mac 为 undefined）
+  if (isDev) app.dock?.setBadge('dev')
   // 注册 local-file:// 协议，用于渲染进程加载本地文件（如图片）
   protocol.handle('local-file', (request) => {
     const rawPath = decodeURIComponent(new URL(request.url).pathname)
