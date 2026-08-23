@@ -3,7 +3,7 @@
   "acceptance": [
     {
       "id": "A1-busy-queue-vitest",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "handleSend busy 排队路径：delivery.sendChecked 返回 queued:true",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A1'",
       "timeout": 300,
@@ -12,7 +12,7 @@
     },
     {
       "id": "A2-error-hint-vitest",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "handleSend 错误路径返回 error + hint",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A2'",
       "timeout": 300,
@@ -21,7 +21,7 @@
     },
     {
       "id": "A3-singleton-registry-vitest",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "单例注册表：同 sessionId 复用 handle",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A3'",
       "timeout": 300,
@@ -30,7 +30,7 @@
     },
     {
       "id": "A4-create-prompt-vitest",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "handleCreate 初始 prompt 直投（不走内核队列）",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A4'",
       "timeout": 300,
@@ -39,7 +39,7 @@
     },
     {
       "id": "A5-d7-sideeffects-vitest",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "D7 置位副作用：isGenerating/lastActiveAt/workspaceService.record 在 port.send 成功后发生",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A5'",
       "timeout": 300,
@@ -66,7 +66,7 @@
     },
     {
       "id": "A8-protocol-types-vitest",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "extension-protocol types.ts 签名变更同步：SendResult + 工具 schema",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/extension-protocol && npx vitest run test/session-manager-send-queue.test.ts -t 'A8'",
       "timeout": 300,
