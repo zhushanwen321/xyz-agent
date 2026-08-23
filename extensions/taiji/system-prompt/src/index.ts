@@ -34,15 +34,16 @@ const CONFIG_FILE = 'system-prompt.json'
  * 注入文本进每 turn system prompt，读盘路径上不引入额外开销。进程级缓存，per-process
  * = per-session，生命周期对齐。stat/read 失败 → 驱逐条目返回 null。
  */
-const fileContentCache = new Map<string, { mtimeMs: number; content: string }>()
+const fileContentCache = new Map<string, { mtimeMs: number; size: number; content: string }>()
 
 function cachedReadFileSync(filePath: string): string | null {
   try {
-    const mtimeMs = statSync(filePath).mtimeMs
+    const stat = statSync(filePath)
     const entry = fileContentCache.get(filePath)
-    if (entry && entry.mtimeMs === mtimeMs) return entry.content
+    // 双键判变：mtimeMs 相同粒度内被外部编辑器/脚本覆写且长度变化时 size 仍能命中
+    if (entry && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) return entry.content
     const content = readFileSync(filePath, 'utf-8')
-    fileContentCache.set(filePath, { mtimeMs, content })
+    fileContentCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, content })
     return content
   } catch {
     fileContentCache.delete(filePath)

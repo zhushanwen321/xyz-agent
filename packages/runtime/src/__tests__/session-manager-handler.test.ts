@@ -26,7 +26,10 @@ function makeMockSessionService(overrides: Partial<ISessionService> = {}): ISess
     create: vi.fn(),
     sendMessage: vi.fn(),
     getHistory: vi.fn(),
-    getSummary: vi.fn(),
+    // 归属校验默认材料：任意 sessionId 返回发起方 sid-parent 的 managed child summary
+    getSummary: vi.fn().mockImplementation(() =>
+      makeSessionSummary({ id: 's1', spawnSource: 'agent', parentAgentSessionId: 'sid-parent' }),
+    ),
     listPersistedSessions: vi.fn(),
     abort: vi.fn(),
     getRpcClient: vi.fn(),
@@ -71,6 +74,9 @@ function makeSessionSummary(overrides: Partial<SessionSummary> = {}): SessionSum
     lastActiveAt: Date.now(),
     modelId: 'openai/gpt-4',
     tokenCount: 0,
+    // 归属校验默认材料：测试中发起方一律 'sid-parent'，目标 s1 默认是其 managed child
+    spawnSource: 'agent',
+    parentAgentSessionId: 'sid-parent',
     ...overrides,
   }
 }
@@ -178,6 +184,118 @@ describe('SessionManagerHandler', () => {
       const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
       expect(response.error).toBe('target session unreachable')
       expect(response.hint).toBe('target session unreachable; retry send_to_session after checking get_session_status')
+    })
+
+    // 归属校验回归（review round 3 must-fix）：目标不属于发起方（用户自己的 session /
+    // 其他 agent 的 child）时拒绝，防 prompt injection 借 send/history/status/abort
+    // 接管非 managed session。逐 action 断言：不触碰 delivery / getHistory / abort。
+    describe('归属校验：send/history/status/abort 目标必须是发起方的 managed child', () => {
+      const FOREIGN_ERROR = 'target session is not managed by this agent'
+
+      function makeOwnedFactory(summary: SessionSummary) {
+        return vi.fn().mockImplementation((sid: string) => (sid === summary.id ? summary : undefined))
+      }
+
+      it('send 目标为用户 session（spawnSource=user）→ error，delivery 不被触碰', async () => {
+        const delivery = makeMockDelivery()
+        const userSummary = makeSessionSummary({ id: 'user-s1', spawnSource: 'user', parentAgentSessionId: undefined })
+        const opts = makeMockOptions({
+          delivery,
+          sessionService: makeMockSessionService({ getSummary: makeOwnedFactory(userSummary) }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'send', { sessionId: 'user-s1', prompt: 'inject' })
+
+        const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+        expect(response.error).toBe(FOREIGN_ERROR)
+        expect(delivery.getOrCreateDelivery).not.toHaveBeenCalled()
+      })
+
+      it('send 目标为其他 agent 的 child（parentAgentSessionId 不匹配）→ error', async () => {
+        const delivery = makeMockDelivery()
+        const otherChild = makeSessionSummary({ id: 'other-child', parentAgentSessionId: 'another-agent' })
+        const opts = makeMockOptions({
+          delivery,
+          sessionService: makeMockSessionService({ getSummary: makeOwnedFactory(otherChild) }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'send', { sessionId: 'other-child', prompt: 'inject' })
+
+        const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+        expect(response.error).toBe(FOREIGN_ERROR)
+        expect(delivery.getOrCreateDelivery).not.toHaveBeenCalled()
+      })
+
+      it('history 目标不属于发起方 → error，getHistory 不被调用', async () => {
+        const otherChild = makeSessionSummary({ id: 'other-child', parentAgentSessionId: 'another-agent' })
+        const getHistory = vi.fn()
+        const opts = makeMockOptions({
+          sessionService: makeMockSessionService({
+            getSummary: makeOwnedFactory(otherChild),
+            getHistory,
+          }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'history', { sessionId: 'other-child' })
+
+        const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+        expect(response.error).toBe(FOREIGN_ERROR)
+        expect(getHistory).not.toHaveBeenCalled()
+      })
+
+      it('status 目标存在但不归属 → error（非 not_found，与 list 过滤条件对称）', async () => {
+        const userSummary = makeSessionSummary({ id: 'user-s1', spawnSource: 'user' })
+        const opts = makeMockOptions({
+          sessionService: makeMockSessionService({ getSummary: makeOwnedFactory(userSummary) }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'status', { sessionId: 'user-s1' })
+
+        const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+        expect(response.error).toBe(FOREIGN_ERROR)
+      })
+
+      it('abort 目标不属于发起方 → error，abort 不被调用', async () => {
+        const otherChild = makeSessionSummary({ id: 'other-child', parentAgentSessionId: 'another-agent' })
+        const abort = vi.fn()
+        const opts = makeMockOptions({
+          sessionService: makeMockSessionService({
+            getSummary: makeOwnedFactory(otherChild),
+            abort,
+          }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'abort', { sessionId: 'other-child' })
+
+        const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+        expect(response.error).toBe(FOREIGN_ERROR)
+        expect(abort).not.toHaveBeenCalled()
+      })
+
+      it('归属正确的 managed child 正常放行（send → queued）', async () => {
+        const delivery = makeMockDelivery()
+        const ownChild = makeSessionSummary({ id: 's1' })
+        const opts = makeMockOptions({
+          delivery,
+          sessionService: makeMockSessionService({ getSummary: makeOwnedFactory(ownChild) }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'send', { sessionId: 's1', prompt: 'hello' })
+
+        expect(delivery.getOrCreateDelivery).toHaveBeenCalledWith('s1')
+        expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith(
+          'sid-parent',
+          'req-1',
+          JSON.stringify({ queued: true }),
+          'select',
+        )
+      })
     })
 
     it('create 带 prompt → delivery.sendDirect 直投（不走 dispatcher sendMessage）', async () => {

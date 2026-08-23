@@ -57,6 +57,9 @@ function makeSummary(overrides: Record<string, unknown> = {}): Record<string, un
     lastActiveAt: 1_755_000_000_000,
     modelId: 'openai/gpt-4',
     tokenCount: 0,
+    // 归属校验默认材料：发起方一律 'sid-parent'，目标 s1 默认是其 managed child
+    spawnSource: 'agent',
+    parentAgentSessionId: 'sid-parent',
     ...overrides,
   }
 }
@@ -98,7 +101,7 @@ function makeFakeSessionService(overrides: Partial<ISessionService> = {}): ISess
     }),
     getSummary: vi.fn().mockReturnValue(makeSummary()),
     listPersistedSessions: vi.fn().mockReturnValue([
-      { cwd: '/test/cwd', sessions: [makeSummary({ id: 'agent-1', spawnSource: 'agent', parentAgentSessionId: 'parent' }), makeSummary({ id: 'user-1', spawnSource: 'user' })] },
+      { cwd: '/test/cwd', sessions: [makeSummary({ id: 'agent-1', spawnSource: 'agent', parentAgentSessionId: 'sid-parent' }), makeSummary({ id: 'user-1', spawnSource: 'user' })] },
     ]),
     abort: vi.fn().mockResolvedValue(undefined),
     getRpcClient: vi.fn(),
@@ -269,7 +272,7 @@ describe('U4-E2 manage e2e probe', () => {
             cwd: '/test/cwd',
             status: 'active',
             spawnSource: 'agent',
-            parentAgentSessionId: 'parent',
+            parentAgentSessionId: 'sid-parent',
           },
         ],
       },

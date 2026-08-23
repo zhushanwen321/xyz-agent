@@ -131,16 +131,28 @@ export class SessionManagerHandler {
       case 'create':
         return this.handleCreate(parentSessionId, params as unknown as SessionManagerCreateParams)
       case 'send':
-        return this.handleSend(params as unknown as SessionManagerSendParams)
+        return this.handleSend(parentSessionId, params as unknown as SessionManagerSendParams)
       case 'history':
-        return this.handleHistory(params as unknown as SessionManagerHistoryParams)
+        return this.handleHistory(parentSessionId, params as unknown as SessionManagerHistoryParams)
       case 'status':
-        return this.handleStatus(params as unknown as SessionManagerStatusParams)
+        return this.handleStatus(parentSessionId, params as unknown as SessionManagerStatusParams)
       case 'list':
         return this.handleList(parentSessionId, params as unknown as SessionManagerListParams)
       case 'abort':
-        return this.handleAbort(params as unknown as SessionManagerAbortParams)
+        return this.handleAbort(parentSessionId, params as unknown as SessionManagerAbortParams)
     }
+  }
+
+  /**
+   * 目标归属校验（send/history/status/abort 与 list 的过滤条件对称）：
+   * 目标必须是 spawnSource='agent' 且 parentAgentSessionId = 发起方（路由上下文）
+   * 的 managed session。否则被注入的 agent 可 steer/读历史/abort 用户或其他
+   * agent 的任意活跃 session，绕过 permission 审批链（design.md §392 仅定义了
+   * list 过滤，此处将同一条件施加到全部按 sessionId 寻址的 action）。
+   */
+  private isOwnedBy(parentSessionId: string, sessionId: string): boolean {
+    const summary = this.opts.sessionService.getSummary(sessionId)
+    return summary?.spawnSource === 'agent' && summary?.parentAgentSessionId === parentSessionId
   }
 
   /** create 分支：四步串行时序 */
@@ -195,9 +207,13 @@ export class SessionManagerHandler {
    * 替换项）——同步返回 error + hint 给 select 通道，agent 立即可见。
    */
   private async handleSend(
+    parentSessionId: string,
     params: SessionManagerSendParams,
   ): Promise<SessionManagerSendResult | SessionManagerErrorResult> {
     const { sessionId, prompt } = params
+    if (!this.isOwnedBy(parentSessionId, sessionId)) {
+      return { error: 'target session is not managed by this agent' }
+    }
     try {
       await this.opts.delivery
         .getOrCreateDelivery(sessionId)
@@ -209,8 +225,11 @@ export class SessionManagerHandler {
   }
 
   /** history 分支：含 tailTurns 截断 */
-  private async handleHistory(params: SessionManagerHistoryParams): Promise<SessionManagerHistoryResult> {
+  private async handleHistory(parentSessionId: string, params: SessionManagerHistoryParams): Promise<SessionManagerHistoryResult> {
     const { sessionId, tailTurns } = params
+    if (!this.isOwnedBy(parentSessionId, sessionId)) {
+      throw new Error('target session is not managed by this agent')
+    }
     const { messages, truncated } = await this.opts.sessionService.getHistory(sessionId)
 
     // tailTurns 截断：从末尾保留指定 turn 数
@@ -239,12 +258,17 @@ export class SessionManagerHandler {
   }
 
   /** status 分支：从 getSummary 组装（session 不存在时 status='not_found'） */
-  private async handleStatus(params: SessionManagerStatusParams): Promise<SessionManagerStatusResult> {
+  private async handleStatus(parentSessionId: string, params: SessionManagerStatusParams): Promise<SessionManagerStatusResult> {
     const { sessionId } = params
     const summary = this.opts.sessionService.getSummary(sessionId)
 
     if (!summary) {
       return { status: 'not_found' }
+    }
+    // 归属校验放在 not_found 判定之后：目标存在但不归属发起方时报错而非 not_found，
+    // 与 list 的过滤条件对称（防跨 session 探测/接管）
+    if (!this.isOwnedBy(parentSessionId, sessionId)) {
+      throw new Error('target session is not managed by this agent')
     }
 
     return {
@@ -289,8 +313,11 @@ export class SessionManagerHandler {
   }
 
   /** abort 分支 */
-  private async handleAbort(params: SessionManagerAbortParams): Promise<SessionManagerAbortResult> {
+  private async handleAbort(parentSessionId: string, params: SessionManagerAbortParams): Promise<SessionManagerAbortResult> {
     const { sessionId } = params
+    if (!this.isOwnedBy(parentSessionId, sessionId)) {
+      throw new Error('target session is not managed by this agent')
+    }
     await this.opts.sessionService.abort(sessionId)
     return { success: true }
   }
