@@ -882,6 +882,9 @@ importers:
       '@xyz-agent/extension-protocol':
         specifier: workspace:*
         version: link:../extension-protocol
+      '@xyz-agent/session-delivery':
+        specifier: workspace:*
+        version: link:../session-delivery
       '@xyz-agent/shared':
         specifier: workspace:*
         version: link:../shared

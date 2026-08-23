@@ -38,6 +38,7 @@ import type { DirScopes } from './services/skill-dir-config.js'
 import type { SessionTraceSnapshot } from './services/session/session-trace.js'
 import type { Credential } from './services/auth/auth-storage.js'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
+import type { IManagedSessionView } from './services/session/types.js'
 
 /**
  * pi 引擎 / 进程池 port 的权威定义在 services/ports/pi-engine.ts（D24 收口）。
@@ -242,6 +243,12 @@ export interface ISessionService {
   ): Promise<SessionSummary>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
+  /**
+   * 取活跃 session 的运行时状态视图（isGenerating / isCompacting / isBashRunning /
+   * lastActiveAt 等可写字段；未激活/不存在返回 undefined）。sd-u5 起 delivery 装配
+   * 经此读 isIdle 判定标志；字段可写语义见 IManagedSessionView 注释。
+   */
+  getSession(sessionId: string): IManagedSessionView | undefined
   /** W10：取最近 inputTokens——usage 实例快照派生（唯一数据源 = get_session_stats，旧缓存直写已删）。 */
   getInputTokens(sessionId: string): number
   /**

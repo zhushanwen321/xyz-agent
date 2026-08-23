@@ -10,6 +10,7 @@ import { Type, type Static, type TObject } from "typebox";
 const CreateManagedSessionParams = Type.Object({
 	cwd: Type.String({ description: "Working directory for the new session" }),
 	label: Type.Optional(Type.String({ description: "Human-readable label for the session" })),
+	prompt: Type.Optional(Type.String({ description: "Initial prompt injected right after creation (atomic create+send)" })),
 });
 
 const SendToSessionParams = Type.Object({
@@ -127,16 +128,16 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	registerSessionTool(pi, {
 		name: "create_managed_session",
 		label: "Create Managed Session",
-		description: "Create a new agent-managed session in the specified working directory. Returns a session ID and initial status.",
+		description: "Create a new agent-managed session in the specified working directory. Optionally provide an initial prompt, which is sent immediately (new sessions are always idle, so it is delivered directly). Returns a session ID and initial status.",
 		parameters: CreateManagedSessionParams,
 		action: "create",
-		toParams: (p) => ({ cwd: p.cwd, label: p.label }),
+		toParams: (p) => ({ cwd: p.cwd, label: p.label, prompt: p.prompt }),
 	});
 
 	registerSessionTool(pi, {
 		name: "send_to_session",
 		label: "Send to Session",
-		description: "Send a prompt/message to an existing managed session. The session will process the message asynchronously.",
+		description: "Send a prompt/message to an existing managed session. The message is asynchronously queued: if the target session is busy (generating/compacting/running bash) it is delivered at its next turn boundary, and {queued: true} is returned immediately. On synchronous failure the result contains an error and a hint (check get_session_status, then retry).",
 		parameters: SendToSessionParams,
 		action: "send",
 		toParams: (p) => ({ sessionId: p.sessionId, prompt: p.prompt }),

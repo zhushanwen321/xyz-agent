@@ -17,6 +17,7 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { SessionManagerHandler } from '../transport/session-manager-handler.js'
 import type { SessionManagerHandlerOptions } from '../transport/session-manager-handler.js'
+import type { SessionDeliveryRegistry } from '../services/session/session-delivery-registry.js'
 import type { ISessionService } from '../interfaces.js'
 import type { SessionSummary } from '@xyz-agent/shared'
 
@@ -34,9 +35,27 @@ function makeMockSessionService(overrides: Partial<ISessionService> = {}): ISess
   } as unknown as ISessionService
 }
 
+/** delivery registry mock：默认 handle.sendChecked 受理（resolve = queued） */
+function makeMockDelivery(overrides: Partial<SessionDeliveryRegistry> = {}): SessionDeliveryRegistry {
+  return {
+    getOrCreateDelivery: vi.fn().mockReturnValue({
+      sendChecked: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn(),
+      flush: vi.fn(),
+      depth: vi.fn().mockReturnValue(0),
+      dispose: vi.fn(),
+    }),
+    sendDirect: vi.fn().mockResolvedValue(undefined),
+    dispose: vi.fn(),
+    disposeAll: vi.fn(),
+    ...overrides,
+  } as unknown as SessionDeliveryRegistry
+}
+
 function makeMockOptions(overrides: Partial<SessionManagerHandlerOptions> = {}): SessionManagerHandlerOptions {
   return {
     sessionService: makeMockSessionService(),
+    delivery: makeMockDelivery(),
     sendExtensionUiResponse: vi.fn(),
     broadcastSessionList: vi.fn(),
     ...overrides,
@@ -121,23 +140,61 @@ describe('SessionManagerHandler', () => {
   })
 
   describe('U4-A2: send/history/status/list/abort 五个 action 分支', () => {
-    it('send → {blocked}', async () => {
-      const opts = makeMockOptions({
-        sessionService: makeMockSessionService({
-          sendMessage: vi.fn().mockResolvedValue({ blocked: true }),
-        }),
-      })
+    it('send → {queued: true}（delivery.sendChecked 受理，busy 入队不拒绝）', async () => {
+      const delivery = makeMockDelivery()
+      const opts = makeMockOptions({ delivery })
       const handler = new SessionManagerHandler(opts)
 
       await handler.handle('req-1', 'sid-parent', 'send', { sessionId: 's1', prompt: 'hello' })
 
-      expect(opts.sessionService.sendMessage).toHaveBeenCalledWith('s1', 'hello')
+      // 走 sessionId 单例注册表取 handle，sendChecked 收到 text payload
+      expect(delivery.getOrCreateDelivery).toHaveBeenCalledWith('s1')
+      const handle = (delivery.getOrCreateDelivery as ReturnType<typeof vi.fn>).mock.results[0].value as { sendChecked: ReturnType<typeof vi.fn> }
+      expect(handle.sendChecked).toHaveBeenCalledWith({ payload: { kind: 'text', content: 'hello' } })
+      // respond {queued: true}（sd-u5：不再出现 {blocked, rejected}）
       expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith(
         'sid-parent',
         'req-1',
-        JSON.stringify({ blocked: true }),
+        JSON.stringify({ queued: true }),
         'select',
       )
+    })
+
+    it('send 失败 → respond({error, hint})，同步可见不走前端 banner', async () => {
+      const delivery = makeMockDelivery({
+        getOrCreateDelivery: vi.fn().mockReturnValue({
+          sendChecked: vi.fn().mockRejectedValue(new Error('target session unreachable')),
+          send: vi.fn(),
+          flush: vi.fn(),
+          depth: vi.fn().mockReturnValue(0),
+          dispose: vi.fn(),
+        }),
+      })
+      const opts = makeMockOptions({ delivery })
+      const handler = new SessionManagerHandler(opts)
+
+      await handler.handle('req-1', 'sid-parent', 'send', { sessionId: 's1', prompt: 'hello' })
+
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+      expect(response.error).toBe('target session unreachable')
+      expect(response.hint).toBe('target session unreachable; retry send_to_session after checking get_session_status')
+    })
+
+    it('create 带 prompt → delivery.sendDirect 直投（不走 dispatcher sendMessage）', async () => {
+      const session = makeSessionSummary({ id: 'created-1' })
+      const delivery = makeMockDelivery()
+      const opts = makeMockOptions({
+        delivery,
+        sessionService: makeMockSessionService({
+          create: vi.fn().mockResolvedValue(session),
+        }),
+      })
+      const handler = new SessionManagerHandler(opts)
+
+      await handler.handle('req-1', 'sid-parent', 'create', { cwd: '/test', prompt: 'init' })
+
+      expect(delivery.sendDirect).toHaveBeenCalledWith('created-1', 'init')
+      expect(opts.sessionService.sendMessage).not.toHaveBeenCalled()
     })
 
     it('history → {messages, truncated}', async () => {

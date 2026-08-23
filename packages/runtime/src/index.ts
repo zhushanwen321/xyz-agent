@@ -1,5 +1,6 @@
 import { RuntimeServer } from './transport/server.js'
 import { SessionService } from './services/session/session-service.js'
+import { createSessionDeliveryRegistry } from './services/session/session-delivery-registry.js'
 import { ConfigService } from './services/config-service.js'
 import { AuthService } from './services/auth/auth-service.js'
 import { AuthStorage } from './services/auth/auth-storage.js'
@@ -276,6 +277,14 @@ async function main(): Promise<void> {
   const gitStateService = new GitStateService({ executor: gitExecutor })
 
   const fileChangeDiff = new FileChangeDiffAdapter(gitStateService)
+
+  // sd-u5（session-delivery）：agent_settled 多播订阅列表。原 onAgentSettled 注入点是
+  // flushPendingBashResults 单播（下方 createAdapter 闭包内）；扩展为多播形态——interpreter
+  // 注入点仍保持单回调，回调体内先执行原单播腿再分发到本列表（delivery 内核的 settled
+  // 边沿唤醒经 sessionDelivery 装配订阅；sd-u6 完成回流检测将挂更多订阅者）。
+  // 声明须在 createAdapter 之前（闭包捕获；订阅发生在 sessionService 构造之后，无时序耦合）。
+  const agentSettledListeners = new Set<(sessionId: string) => void>()
+
   const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
     // EventInterpreter 持有业务态（currentMessageId/writeContents/diffChain 帧序三件套）+ 业务回调，
     // 消费 EventAdapter 翻译出的 PiTranslatedEvent[]，执行 hook / diff / 回写 / 路由副作用。
@@ -369,8 +378,18 @@ async function main(): Promise<void> {
       },
       // W1（fix-chat-flow-order 探针 ②）：agent_settled（run 级联结束，晚于 pi finally 的
       // bash 落盘 flush）→ dispatcher 按序发布 per-session bash 待落列（D2 双分支延迟）。
+      // sd-u5 起多播化：bash flush 是第一条腿（原单播语义不变），其后分发 agentSettledListeners
+      // （delivery 内核 settled 边沿唤醒 + sd-u6 回流检测）；逐订阅者隔离 try/catch——单个
+      // 订阅者异常不阻断其余腿，也不让 interpret 批次崩溃。
       onAgentSettled: (sid) => {
         sessionService.flushPendingBashResults(sid)
+        for (const listener of agentSettledListeners) {
+          try {
+            listener(sid)
+          } catch (e) {
+            console.warn('[runtime] agentSettled listener failed:', e)
+          }
+        }
       },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
@@ -393,6 +412,24 @@ async function main(): Promise<void> {
     // dispatcher 只依赖 publish 抽象，bus.publish 是唯一出口，broker 依赖已随接口收敛删除）。
     messageBus,
   )
+
+  // sd-u5（session-delivery）：delivery 内核的 runtime 装配（design.md §3.1 调用方 B）。
+  // sessionId 单例注册表——session-manager 的 send 排队（U5）与完成回流（U6 复用）共用；
+  // subscribeSettled 经上方 agentSettledListeners 多播（interpreter onAgentSettled 注入点的
+  // 分发腿）；port.send 的 ensureActive → prompt(streamingBehavior) → D7 置位副作用见
+  // session-delivery-registry.ts。
+  const sessionDelivery = createSessionDeliveryRegistry({
+    getSession: (sid) => sessionService.getSession(sid),
+    ensureActive: (sid) => sessionService.ensureActive(sid),
+    subscribeAgentSettled: (cb) => {
+      agentSettledListeners.add(cb)
+      return () => agentSettledListeners.delete(cb)
+    },
+    recordWorkspace: (cwd) => workspaceService.record(cwd),
+  })
+  // session 销毁（主动删 / 进程退出 / restore 清场全部路径）→ 丢弃该 session 的 delivery
+  // 队列与订阅（setOnSessionDestroyed 追加式注册，与 server 的 extension timeout 清理腿并存）。
+  sessionService.setOnSessionDestroyed((summary) => sessionDelivery.dispose(summary.id))
 
   // HandoffService：fast-handoff 编排层。依赖 sessionService（create/sendMessage/abort/getHistory/getSession）
   // + server（IMessageBroker 广播）+ pm（getClient 取源 session pi 句柄）。与 GitService/FileService 同模式
@@ -568,7 +605,7 @@ async function main(): Promise<void> {
   })
 
   const tServicesReady = performance.now()
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService, authService, projectStore)
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService, authService, projectStore, sessionDelivery)
 
   // Graceful shutdown on signals
   let shuttingDown = false
