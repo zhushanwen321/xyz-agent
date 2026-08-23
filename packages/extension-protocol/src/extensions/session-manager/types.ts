@@ -61,7 +61,7 @@ export interface SessionManagerStatusParams {
 export interface SessionManagerListParams {
   /** 按 spawnSource 过滤 */
   spawnSource?: 'user' | 'agent'
-  /** 按 parentAgentSessionId 过滤 */
+  /** 按 parentAgentSessionId 过滤（handler 一律以路由上下文父 id 为准，此字段仅作显式收窄提示） */
   parentAgentSessionId?: string
 }
 

@@ -137,7 +137,7 @@ export class SessionManagerHandler {
       case 'status':
         return this.handleStatus(params as unknown as SessionManagerStatusParams)
       case 'list':
-        return this.handleList(params as unknown as SessionManagerListParams)
+        return this.handleList(parentSessionId, params as unknown as SessionManagerListParams)
       case 'abort':
         return this.handleAbort(params as unknown as SessionManagerAbortParams)
     }
@@ -253,9 +253,17 @@ export class SessionManagerHandler {
     }
   }
 
-  /** list 分支：过滤 spawnSource + parentAgentSessionId */
-  private async handleList(params: SessionManagerListParams): Promise<SessionManagerListResult> {
-    const { spawnSource, parentAgentSessionId } = params
+  /**
+   * list 分支：过滤 spawnSource + parentAgentSessionId（agent-managed-session/design.md §392）。
+   *
+   * 缺省注入路由上下文（LLM 可控 params 不得放宽过滤）：spawnSource 缺省 'agent'；
+   * parentAgentSessionId 一律以路由上下文（发起方 session）为准，params 显式指定的
+   * 其他父 id 不生效——否则 agent 可枚举其他 agent 的子 session（label/cwd 泄露）。
+   */
+  private async handleList(parentSessionId: string, params: SessionManagerListParams): Promise<SessionManagerListResult> {
+    const { spawnSource } = params
+    const wantSpawn = spawnSource ?? 'agent'
+    const wantParent = parentSessionId
     const groups = this.opts.sessionService.listPersistedSessions()
 
     // 展平 groups 为 sessions 数组
@@ -263,8 +271,8 @@ export class SessionManagerHandler {
 
     // 过滤
     const filtered = allSessions.filter((s) => {
-      if (spawnSource && s.spawnSource !== spawnSource) return false
-      if (parentAgentSessionId && s.parentAgentSessionId !== parentAgentSessionId) return false
+      if (s.spawnSource !== wantSpawn) return false
+      if (s.parentAgentSessionId !== wantParent) return false
       return true
     })
 

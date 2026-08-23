@@ -313,8 +313,8 @@ describe('SessionManagerHandler', () => {
     it('list → {sessions} 过滤 spawnSource', async () => {
       const sessions = [
         makeSessionSummary({ id: 's1', spawnSource: 'user' }),
-        makeSessionSummary({ id: 's2', spawnSource: 'agent', parentAgentSessionId: 'parent' }),
-        makeSessionSummary({ id: 's3', spawnSource: 'agent', parentAgentSessionId: 'parent' }),
+        makeSessionSummary({ id: 's2', spawnSource: 'agent', parentAgentSessionId: 'sid-parent' }),
+        makeSessionSummary({ id: 's3', spawnSource: 'agent', parentAgentSessionId: 'sid-parent' }),
       ]
       const opts = makeMockOptions({
         sessionService: makeMockSessionService({
@@ -331,9 +331,30 @@ describe('SessionManagerHandler', () => {
       expect(response.sessions[1].id).toBe('s3')
     })
 
-    it('list → {sessions} 过滤 parentAgentSessionId', async () => {
+    it('list → 缺省注入路由上下文：只返回本父的 agent 子 session（params 不得放宽）', async () => {
       const sessions = [
-        makeSessionSummary({ id: 's1', spawnSource: 'agent', parentAgentSessionId: 'parent-a' }),
+        makeSessionSummary({ id: 's1', spawnSource: 'user' }),
+        makeSessionSummary({ id: 's2', spawnSource: 'agent', parentAgentSessionId: 'sid-parent' }),
+        makeSessionSummary({ id: 's3', spawnSource: 'agent', parentAgentSessionId: 'parent-b' }),
+      ]
+      const opts = makeMockOptions({
+        sessionService: makeMockSessionService({
+          listPersistedSessions: vi.fn().mockReturnValue([{ cwd: '/test', sessions }]),
+        }),
+      })
+      const handler = new SessionManagerHandler(opts)
+
+      // 空 params（extension 端 list_my_sessions 实际发送的形状）
+      await handler.handle('req-1', 'sid-parent', 'list', {})
+
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+      expect(response.sessions).toHaveLength(1)
+      expect(response.sessions[0].id).toBe('s2')
+    })
+
+    it('list → params 显式指定其他 parentAgentSessionId 不生效（防跨父枚举）', async () => {
+      const sessions = [
+        makeSessionSummary({ id: 's1', spawnSource: 'agent', parentAgentSessionId: 'sid-parent' }),
         makeSessionSummary({ id: 's2', spawnSource: 'agent', parentAgentSessionId: 'parent-b' }),
       ]
       const opts = makeMockOptions({
@@ -347,7 +368,7 @@ describe('SessionManagerHandler', () => {
 
       const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
       expect(response.sessions).toHaveLength(1)
-      expect(response.sessions[0].id).toBe('s2')
+      expect(response.sessions[0].id).toBe('s1')
     })
 
     it('abort → {success}', async () => {
