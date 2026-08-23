@@ -78,4 +78,30 @@ describe('U4_DISPATCH_INFLIGHT: 调用方 in-flight 守卫', () => {
     // send 被调 2 次（串行完成）
     expect(backend.sentMessages).toHaveLength(2)
   })
+
+  it('(3) 非 force + 有 delivery handle 时，in-flight 守卫同样拦截并发 dispatch', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const backend = new MockSchedulerBackend()
+    backend.deliveryHandle = {
+      send: vi.fn(),
+      sendChecked: vi.fn(),
+      flush: vi.fn(),
+      depth: vi.fn(() => 0),
+      dispose: vi.fn(),
+    } as any
+    const runtime = new SchedulerRuntime(backend, { isIdle: () => true, hasPendingMessages: () => false })
+
+    const task = await runtime.addTask('delivery-inflight', { mode: 'interval', intervalMs: 60_000 })
+
+    const first = runtime.dispatchTask(task)
+    const second = await runtime.dispatchTask(task)
+
+    expect(await first).toBe(true)
+    expect(second).toBe(false)
+    expect(backend.deliveryHandle.send).toHaveBeenCalledTimes(1)
+
+    const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+    expect(warnText).toContain('already in flight')
+    warnSpy.mockRestore()
+  })
 })

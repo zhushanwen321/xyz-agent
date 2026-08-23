@@ -76,4 +76,24 @@ describe('U4_AFTER_RUN_INTENT: intent 映射', () => {
       triggerTurn: true,
     })
   })
+
+  it('(3) 有 delivery handle 时非 force 任务不直投 backend.sendMessage', async () => {
+    const mockDelivery = {
+      send: vi.fn(),
+      sendChecked: vi.fn(),
+      flush: vi.fn(),
+      depth: vi.fn(() => 0),
+      dispose: vi.fn(),
+    }
+    const backend = new MockSchedulerBackend()
+    backend.deliveryHandle = mockDelivery as any
+    const runtime = new SchedulerRuntime(backend, { isIdle: () => true, hasPendingMessages: () => false })
+
+    const task = await runtime.addTask('delivery-only-test', { mode: 'interval', intervalMs: 60_000 })
+    const dispatched = await runtime.dispatchTask(task)
+
+    expect(dispatched).toBe(true)
+    expect(mockDelivery.send).toHaveBeenCalledTimes(1)
+    expect(backend.sentMessages).toHaveLength(0)
+  })
 })

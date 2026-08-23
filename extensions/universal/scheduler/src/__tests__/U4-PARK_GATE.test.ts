@@ -81,6 +81,31 @@ describe('U4_PARK_GATE: park 模式 gate 行为', () => {
     expect(flushed).toBe(true)
   })
 
+  it('(4) busy ctx 下 flush 由 tick 显式触发，而非内核自动重试', async () => {
+    const busyCtx = { isIdle: () => false, hasPendingMessages: () => true }
+    const mockDelivery = {
+      send: vi.fn(),
+      sendChecked: vi.fn(),
+      flush: vi.fn(),
+      depth: vi.fn(() => 1),
+      dispose: vi.fn(),
+    }
+    const backend = new MockSchedulerBackend()
+    backend.deliveryHandle = mockDelivery as any
+    const runtime = new SchedulerRuntime(backend, busyCtx)
+
+    const task = await runtime.addTask('tick-flush', { mode: 'interval', intervalMs: 60_000 })
+    await runtime.dispatchTask(task)
+
+    expect(mockDelivery.send).toHaveBeenCalledTimes(1)
+    expect(mockDelivery.flush).not.toHaveBeenCalled()
+
+    await runtime.tickScheduler()
+
+    expect(mockDelivery.flush).toHaveBeenCalledTimes(1)
+    expect(backend.sentMessages).toHaveLength(0)
+  })
+
   it('(3) force=true 时绕过 delivery 直投（即使 isIdle=false 也 sendMessage）', async () => {
     const busyCtx = { isIdle: () => false, hasPendingMessages: () => true }
     const mockDelivery = {

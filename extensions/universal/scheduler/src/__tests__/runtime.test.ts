@@ -145,6 +145,48 @@ describe('SchedulerRuntime', () => {
       expect(pendingBackend.sentMessages).toHaveLength(1)
     })
 
+    // U4 区分力补强：有 delivery handle 时非 force 任务走 delivery 入队而非直投
+    it('有 delivery handle 时非 force 任务走 delivery 入队', async () => {
+      const pendingCtx = { isIdle: () => true, hasPendingMessages: () => true }
+      const pendingBackend = new MockSchedulerBackend()
+      pendingBackend.deliveryHandle = {
+        send: vi.fn(),
+        sendChecked: vi.fn(),
+        flush: vi.fn(),
+        depth: vi.fn(() => 0),
+        dispose: vi.fn(),
+      } as any
+      const pendingRuntime = new SchedulerRuntime(pendingBackend, pendingCtx)
+      const task = await pendingRuntime.addTask('test', { mode: 'interval', intervalMs: 60000 })
+      const dispatched = await pendingRuntime.dispatchTask(task)
+
+      expect(dispatched).toBe(true)
+      expect(pendingBackend.deliveryHandle.send).toHaveBeenCalledTimes(1)
+      expect(pendingBackend.sentMessages).toHaveLength(0)
+      expect(task.pending).toBe(false)
+    })
+
+    // U4 区分力补强：busy 时 delivery 入队成功，不触发直投
+    it('busy 时 delivery 入队成功，不触发直投', async () => {
+      const busyCtx = { isIdle: () => false, hasPendingMessages: () => true }
+      const busyBackend = new MockSchedulerBackend()
+      busyBackend.deliveryHandle = {
+        send: vi.fn(),
+        sendChecked: vi.fn(),
+        flush: vi.fn(),
+        depth: vi.fn(() => 0),
+        dispose: vi.fn(),
+      } as any
+      const busyRuntime = new SchedulerRuntime(busyBackend, busyCtx)
+      const task = await busyRuntime.addTask('test', { mode: 'interval', intervalMs: 60000 })
+      const dispatched = await busyRuntime.dispatchTask(task)
+
+      expect(dispatched).toBe(true)
+      expect(busyBackend.deliveryHandle.send).toHaveBeenCalledTimes(1)
+      expect(busyBackend.sentMessages).toHaveLength(0)
+      expect(task.pending).toBe(false)
+    })
+
     it('sendMessage 失败 → 记 failed 状态但不 rethrow', async () => {
       const task = await runtime.addTask('test', { mode: 'interval', intervalMs: 60000 })
       // backend.sendMessage 抛错模拟注入失败

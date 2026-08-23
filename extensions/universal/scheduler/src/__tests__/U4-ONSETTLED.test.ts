@@ -63,6 +63,23 @@ describe('U4_ONSETTLED: onSettled 失败记账', () => {
     expect(deleteOps).toHaveLength(0)
   })
 
+  it('(2b) 通过 handleSettledByContent rejected 触发时，任务不删除且保留失败历史', async () => {
+    const backend = new MockSchedulerBackend()
+    const runtime = new SchedulerRuntime(backend, { isIdle: () => true, hasPendingMessages: () => false })
+
+    const task = await runtime.addTask(
+      'once-rejected-via-handler',
+      { mode: 'interval', intervalMs: 60_000 },
+      { kind: 'once' },
+    )
+
+    runtime.handleSettledByContent('once-rejected-via-handler', 'rejected')
+
+    expect(task.lastStatus).toBe('failed')
+    expect(task.history[task.history.length - 1]!.status).toBe('failed')
+    expect(runtime.getTask(task.id)).toBeDefined()
+  })
+
   it('(3) recurring 任务 delivered → lastStatus=success + nextRunAt 推进 + append advance', async () => {
     const backend = new MockSchedulerBackend()
     const runtime = new SchedulerRuntime(backend, { isIdle: () => true, hasPendingMessages: () => false })
