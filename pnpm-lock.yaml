@@ -553,6 +553,9 @@ importers:
       '@xyz-agent/extension-protocol':
         specifier: workspace:*
         version: link:../../../packages/extension-protocol
+      '@xyz-agent/session-delivery':
+        specifier: workspace:*
+        version: link:../../../packages/session-delivery
       '@zhushanwen/pi-extension-logger':
         specifier: workspace:*
         version: link:../../shared/extension-logger

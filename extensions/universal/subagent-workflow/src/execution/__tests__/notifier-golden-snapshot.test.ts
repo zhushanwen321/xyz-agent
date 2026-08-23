@@ -7,7 +7,7 @@
  * 因此迁移后应通过内核装配 + 同一 buildLlmContent 产生相同输出。
  */
 import { describe, expect, it } from "vitest";
-import { BgNotifier, type BgNotifyRecord, type NotifierHost } from "../notifier.ts";
+import { createNotifier, type BgNotifyRecord, type NotifierHost, buildLlmContent } from "../notifier.ts";
 
 /** 创建 mock host，notifier 会立即 flush（hasRunningBackground=false）。 */
 function makeMockHost(): NotifierHost {
@@ -31,7 +31,7 @@ function captureNotificationContent(record: BgNotifyRecord): string {
     hasRunningBackground: () => false,
     isIdle: () => true,
   };
-  const notifier = new BgNotifier(host);
+  const notifier = createNotifier(host);
   notifier.notify(record);
   notifier.dispose();
   return capturedContent;
@@ -192,7 +192,7 @@ describe("notifier golden — batch merge (60s window, two records)", () => {
       hasRunningBackground: () => true, // true → 合批窗口激活
       isIdle: () => true,
     };
-    const notifier = new BgNotifier(host);
+    const notifier = createNotifier(host);
 
     // 两条通知入队（不立即 flush——hasRunningBackground=true）
     notifier.notify({

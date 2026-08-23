@@ -2,11 +2,15 @@
 //
 // Background 完成回注主对话。sync 不用（调用方还在 await，结果直接返回）。
 //
-// 职责：
-//   - 合并窗口：MERGE_WINDOW_MS 内多个完成合并为一条通知
-//   - 去重 TTL：同 id 在 TTL 内不重复通知
-//   - 通过 pi.sendMessage({ deliverAs:"followUp", triggerTurn:true }) 注入——
-//     当前 turn 结束后唤醒父 agent 处理结果（followUp 不打断 streaming、不锁滚动）
+// 职责（迁移后，U3）：
+//   - buildLlmContent：格式化通知文案（本文件唯一逻辑职责）
+//   - createNotifier：薄工厂，装配 @xyz-agent/session-delivery 内核
+//   - 合并窗口 / 去重 / 退避 / flush 全部委托内核
+//
+// 投递通道：内核 → pi.sendMessage({ deliverAs:"steer", triggerTurn:true }) 注入——
+//   当前 turn 结束后唤醒父 agent 处理结果（steer 不打断 streaming、不锁滚动）
+
+import { createDelivery, type DeliveryHandle, type DeliveryPort } from "@xyz-agent/session-delivery";
 
 /**
  * 一条待发送的完成通知记录。
@@ -50,251 +54,170 @@ export interface BgNotifyRecord {
   totalRounds?: number;
 }
 
-/** notifier 依赖的 pi 最小接口（解耦，便于测试）。 */
+/** notifier 依赖的宿主最小接口（解耦，便于测试）。
+ *  迁移后：仅用于构造 DeliveryPort 的底层依赖。 */
 export interface NotifierHost {
-  /** 注入消息到主对话。
-   *  triggerTurn:true + deliverAs:"steer" → 空闲时立即 prompt 新 turn；streaming 时
-   *  进 steer 队列等下个 turn 边界 drain。
-   *
-   *  ⚠️ 竞态注意：triggerTurn 分支只在主 agent isStreaming===false 时生效。若调用时
-   *  主 agent 处于 agent_end → finishRun 的窄窗口（isStreaming 仍 true），消息会被
-   *  错误走 steer 分支入队，而 runLoop 已结束无人 drain → 通知静默丢失。flushPendingNotifications
-   *  通过 isIdle() 退避保证在 idle 后同步送达，规避此窗口。 */
+  /** 注入消息到主对话。 */
   sendMessage(
     message: { customType: string; content: string; display: boolean; details?: unknown },
     options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
   ): void;
   /** 是否还有 running 的 background 任务（用于滑动窗口立即 flush 判断）。 */
   hasRunningBackground(): boolean;
-  /** 主 agent 是否空闲（非 streaming）。flush 前 gate 用——避免在 agent_end→finishRun
-   *  竞态窗口里 sendMessage 走错分支（steer 入队无人 drain）。
-   *  可选：未注入（旧测试 host）时 flush 不 gate，保持原行为。 */
+  /** 主 agent 是否空闲（非 streaming）。可选：未注入时 flush 不 gate。 */
   isIdle?: () => boolean;
 }
-
-/** 合并窗口（ms）。窗口内多个完成合并为一条消息。 */
-const MERGE_WINDOW_MS = 60_000;
-/** 去重 TTL（ms）。同 id 在此窗口内不重复通知。 */
-const DEDUP_TTL_MS = 60_000;
-/** [竞态修复] flush 时若主 agent 仍 streaming，短退避重试间隔（ms）。
- *  场景：subagent 完成的 detached microtask 与主 agent agent_end→finishRun 竞态，
- *  isIdle()=false 时退避，等 idle 后再 sendMessage(triggerTurn)，避免走 steer 分支丢失。 */
-const FLUSH_BACKOFF_MS = 100;
-/** [竞态修复] flush 退避上限次数。防止主 agent 永久 busy 时无限重试——
- *  达上限后强制发送（fallthrough 到 pi 的 steer/triggerTurn 分支，至少不丢消息）。 */
-const FLUSH_BACKOFF_MAX = 50; // 50 × 100ms = 5s
 
 /** 发送给主对话的 customType（bg-notify-render 消费）。 */
 const NOTIFY_CUSTOM_TYPE = "subagent-bg-notify";
 
 /**
- * Background 完成通知器（滑动窗口合并）。
+ * 将 BgNotifyRecord 格式化为 LLM 可读的 notification content。
  *
- *   notify(record):
- *     1. dedup TTL 检查：同 id 在 TTL 内 → 跳过
- *     2. 入 pending 队列
- *     3. 清除旧 timer（滑动窗口重置）
- *     4. 已无 running background → 立即 flush（最后一批）
- *     5. 否则重启 MERGE_WINDOW_MS timer（等后续完成合并）
- *
- *   flushPendingNotifications():  timer 到期 / 无 running / shutdown 触发
- *     1. isIdle gate：主 agent 仍 streaming → 退避重试（scheduleFlush），等 idle 后再发
- *     2. doSend：取出 pending 全部 record
- *     3. 合并为一条消息（多条时列 bullet list）
- *     4. sendMessage({ customType:"subagent-bg-notify",
- *                     content, display:true,
- *                     triggerTurn:true, deliverAs:"steer" })
- *     5. 清空 pending + timer
- *
- * 滑动窗口：每次有新完成都重置 60s 计时器，密集完成的任务尽量合并到一条通知。
- * 无 running 时立即 flush——避免最后一条等满窗口。
+ * 独立导出——调用方（subagent-service）预格式化后传给 delivery.send，
+ * 内核只做拼接（多条以 "\n\n---\n\n" join）。
  */
-export class BgNotifier {
-  private readonly pending: BgNotifyRecord[] = [];
-  /** dedup：id → 上次通知时间戳。 */
-  private readonly dedup = new Map<string, number>();
-  private timer: ReturnType<typeof setTimeout> | undefined;
-  private _disposed = false;
-  /** flush 重试计数（isIdle gate 退避用）。每次成功发送后清零。 */
-  private flushAttempts = 0;
-
-  constructor(private readonly host: NotifierHost) {}
-
-  /**
-   * 入队一条完成通知（去重 + 滑动窗口合并）。dispose 后短路。
-   */
-  notify(record: BgNotifyRecord): void {
-    if (this._disposed) return;
-
-    const now = Date.now();
-    // sweep 过期 dedup 条目（防 Map 无限增长）
-    if (this.dedup.size > 0) {
-      for (const [id, ts] of this.dedup) {
-        if (now - ts >= DEDUP_TTL_MS) this.dedup.delete(id);
+export function buildLlmContent(record: BgNotifyRecord): string {
+  const agent = record.agent;
+  const id = record.id;
+  // [wave2 指针行] 增量语义下轮次通知只携带本轮增量，异步 flush 窗口丢失时不可重发
+  //（见 subagent-service.ts onRoundSettled 注释），恢复通道是 session 文件全文。
+  // 仅 chatMode 透传 sessionFile，one-shot 通知不含该行；cancelled/gc-failed 不追加
+  //（无成功结果可读，指针无意义）；缺失时省略整行（追加空串 = 输出逐字节不变）。
+  const transcriptPointer = record.sessionFile
+    ? `\n\nFull transcript: ${record.sessionFile}`
+    : "";
+  switch (record.status) {
+    case "closed": {
+      // v4 B-1: closed 统一终态（含 cancelled）。按 closedReason 派生通知文案。
+      const reason = record.closedReason ?? "gc";
+      if (reason === "cancelled") {
+        return `Subagent "${agent}" (${id}) cancelled.`;
       }
-    }
-    // dedup key：idle（对话模式每轮完成）按 id:round 去重——不同轮次不互相掩蔽；
-    // 非 idle（closed/cancelled）round 恒定 undefined，key 同旧行为不变。
-    const dedupKey = record.round != null ? `${record.id}:${record.round}` : record.id;
-    const lastSeen = this.dedup.get(dedupKey);
-    if (lastSeen !== undefined && now - lastSeen < DEDUP_TTL_MS) return;
-    this.dedup.set(dedupKey, now);
-
-    this.pending.push(record);
-
-    if (this.timer !== undefined) {
-      clearTimeout(this.timer);
-      this.timer = undefined;
-    }
-
-    if (!this.host.hasRunningBackground()) {
-      this.flushPendingNotifications();
-      return;
-    }
-
-    this.timer = setTimeout(() => this.flushPendingNotifications(), MERGE_WINDOW_MS);
-  }
-
-  /** 立即 flush（session_shutdown 调用，防丢失）。
-   *  外部入口（notify 立即触发 / shutdown）。内部实际发送在 doSend 中，
-   *  外部入口不传 attempt，走 isIdle gate 退避逻辑。 */
-  flushPendingNotifications(): void {
-    this.scheduleFlush(0);
-  }
-
-  /**
-   * [竞态修复] 调度 flush：isIdle gate + 退避重试。
-   *
-   * 核心问题：sendMessage({triggerTurn:true}) 只在主 agent isStreaming===false 时
-   * 启动新 turn。若 flush 在 agent_end → finishRun 的窄窗口触发（isStreaming 仍 true），
-   * 消息走 steer 分支入队，runLoop 已结束无人 drain → 通知丢失（非必现，时序竞态）。
-   *
-   * 修复：isIdle() 可用时，busy 退避到 idle 后再发送。isIdle() 与 sendMessage 同步链
-   * （均读 agent.state.isStreaming，host.sendMessage 不 await），故一旦 isIdle=true，
-   * 同步调 sendMessage 必走 triggerTurn 分支。isIdle 未注入（旧 host）时不 gate，原行为。
-   *
-   * 退避上限：FLUSH_BACKOFF_MAX 次后强制发送——防主 agent 永久 busy（长 turn）时通知饿死，
-   * fallthrough 到 pi 的 steer/triggerTurn 分支，至少不丢消息（busy 时走 steer 会在该
-   * turn 结束后由 _handlePostAgentRun drain）。
-   */
-  private scheduleFlush(attempt: number): void {
-    if (this._disposed) return;
-    if (this.pending.length === 0) return;
-
-    // isIdle gate：注入了 isIdle 且当前 busy → 退避重试（未达上限）
-    if (this.host.isIdle) {
-      let idle = true;
-      try {
-        idle = this.host.isIdle();
-      } catch {
-        // isIdle 内部 assertActive 可能抛（session 已关闭）——视为不可发送，丢弃。
-        // dispose 后本函数首行已短路，此处 catch 兜底极端时序。
-        this.pending.length = 0;
-        this.flushAttempts = 0;
-        return;
+      // 失败场景（gc + 有 error）：展示错误。判定必须先于 patchFile——失败轮也会写
+      // patchFile（doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch），若
+      // patch 分支在前，gc 失败 + worktree 并存时 LLM 被告知 completed。顺序与三处
+      // 同构契约的另外两处一致（shared/subagent.ts deriveClosedDisplay、
+      // bg-notify-render.ts renderRecordLines：cancelled → gc+error → patch/result）。
+      if (record.error && reason === "gc") {
+        return `Subagent "${agent}" (${id}) failed: ${record.error}`;
       }
-      if (!idle && attempt < FLUSH_BACKOFF_MAX) {
-        this.timer = setTimeout(() => this.scheduleFlush(attempt + 1), FLUSH_BACKOFF_MS);
-        return;
+      // 成功完成（user-close）或通用结束（gc/parent-shutdown 等）：展示结果。
+      // [C-2] chatMode close 终态通知附轮次统计（设计 D2 路径①"completed after N rounds"）。
+      // totalRounds 仅 close 语义携带（notifyClosed）；one-shot 完成通知不设置（round 无轮次
+      // 语义），文案保持 "completed. Result:" 逐字节（G4 硬约束，one-shot 字节锁测试锚定）。
+      const roundsSuffix =
+        record.totalRounds != null && record.totalRounds > 0
+          ? ` after ${record.totalRounds} round${record.totalRounds === 1 ? "" : "s"}`
+          : "";
+      const base = `Subagent "${agent}" (${id}) completed${roundsSuffix}. Result:\n${record.result ?? "(empty)"}`;
+      if (record.patchFile) {
+        // [wave2 review] 长 return 拆行：模板串内不可直接换行（会改变输出内容），提取 patchHint 中转变量
+        const patchHint = `\n\nThis subagent ran in an isolated worktree; its file changes were captured as a patch:\n  ${record.patchFile}\nTo bring these changes into the current repo, run: \`git apply ${record.patchFile}\``;
+        return `${base}${patchHint}${transcriptPointer}`;
       }
-      // idle 或达上限 → 继续发送
+      return `${base}${transcriptPointer}`;
     }
-
-    this.doSend();
+    case "running":
+      // v4 B-1: 对话模式轮次完成（旧 idle 折入 running）：携带本轮结果送回主 agent，等待下一轮 message。
+      return `Subagent "${agent}" (${id}) finished a round. Reply:\n${record.result ?? "(empty)"}${transcriptPointer}`;
   }
+}
 
-  /** 实际发送（取出 pending + 合并 + sendMessage）。清 timer + 重试计数。 */
-  private doSend(): void {
-    if (this.timer !== undefined) {
-      clearTimeout(this.timer);
-      this.timer = undefined;
-    }
-    if (this.pending.length === 0) return;
-    this.flushAttempts = 0;
-
-    const records = this.pending.splice(0);
-    const content = records.length === 1
-      ? this.buildLlmContent(records[0])
-      : records.map((r) => this.buildLlmContent(r)).join("\n\n---\n\n");
-    const details = records.length === 1
-      ? records[0]
-      : { batch: true, items: records };
-
-    this.host.sendMessage({
-      customType: NOTIFY_CUSTOM_TYPE,
-      content,
-      display: true,
-      details,
-      // [W2 修复] followUp → steer：subagent 完成通知需立即抢占主 agent 下一个 turn，
-      // 即使主 agent 处于轮询 subagent_list 的 processing 状态（followUp 永远排不上）。
-      // 与 workflow helpers.ts:151 同语义对齐（commit d214d0d83 验证 steer 能避免
-      // 'Agent is already processing' 错误）。
-      // [竞态修复] 配合 scheduleFlush 的 isIdle gate：此时主 agent 已确认 idle，
-      // triggerTurn 必走 _runAgentPrompt 启动新 turn，不会撞 steer 分支丢失。
-    }, { triggerTurn: true, deliverAs: "steer" });
-  }
-
-  private buildLlmContent(record: BgNotifyRecord): string {
-    const agent = record.agent;
-    const id = record.id;
-    // [wave2 指针行] 增量语义下轮次通知只携带本轮增量，异步 flush 窗口丢失时不可重发
-    //（见 subagent-service.ts onRoundSettled 注释），恢复通道是 session 文件全文。
-    // 仅 chatMode 透传 sessionFile，one-shot 通知不含该行；cancelled/gc-failed 不追加
-    //（无成功结果可读，指针无意义）；缺失时省略整行（追加空串 = 输出逐字节不变）。
-    const transcriptPointer = record.sessionFile
-      ? `\n\nFull transcript: ${record.sessionFile}`
-      : "";
-    switch (record.status) {
-      case "closed": {
-        // v4 B-1: closed 统一终态（含 cancelled）。按 closedReason 派生通知文案。
-        const reason = record.closedReason ?? "gc";
-        if (reason === "cancelled") {
-          return `Subagent "${agent}" (${id}) cancelled.`;
-        }
-        // 失败场景（gc + 有 error）：展示错误。判定必须先于 patchFile——失败轮也会写
-        // patchFile（doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch），若
-        // patch 分支在前，gc 失败 + worktree 并存时 LLM 被告知 completed。顺序与三处
-        // 同构契约的另外两处一致（shared/subagent.ts deriveClosedDisplay、
-        // bg-notify-render.ts renderRecordLines：cancelled → gc+error → patch/result）。
-        if (record.error && reason === "gc") {
-          return `Subagent "${agent}" (${id}) failed: ${record.error}`;
-        }
-        // 成功完成（user-close）或通用结束（gc/parent-shutdown 等）：展示结果。
-        // [C-2] chatMode close 终态通知附轮次统计（设计 D2 路径①"completed after N rounds"）。
-        // totalRounds 仅 close 语义携带（notifyClosed）；one-shot 完成通知不设置（round 无轮次
-        // 语义），文案保持 "completed. Result:" 逐字节（G4 硬约束，one-shot 字节锁测试锚定）。
-        const roundsSuffix =
-          record.totalRounds != null && record.totalRounds > 0
-            ? ` after ${record.totalRounds} round${record.totalRounds === 1 ? "" : "s"}`
-            : "";
-        const base = `Subagent "${agent}" (${id}) completed${roundsSuffix}. Result:\n${record.result ?? "(empty)"}`;
-        if (record.patchFile) {
-          // [wave2 review] 长 return 拆行：模板串内不可直接换行（会改变输出内容），提取 patchHint 中转变量
-          const patchHint = `\n\nThis subagent ran in an isolated worktree; its file changes were captured as a patch:\n  ${record.patchFile}\nTo bring these changes into the current repo, run: \`git apply ${record.patchFile}\``;
-          return `${base}${patchHint}${transcriptPointer}`;
-        }
-        return `${base}${transcriptPointer}`;
-      }
-      case "running":
-        // v4 B-1: 对话模式轮次完成（旧 idle 折入 running）：携带本轮结果送回主 agent，等待下一轮 message。
-        return `Subagent "${agent}" (${id}) finished a round. Reply:\n${record.result ?? "(empty)"}${transcriptPointer}`;
-    }
-  }
-
-  /** session 结束：清 timer，丢弃 pending。 */
-  dispose(): void {
-    this._disposed = true;
-    if (this.timer !== undefined) {
-      clearTimeout(this.timer);
-      this.timer = undefined;
-    }
-    this.pending.length = 0;
-    this.dedup.clear();
-    this.flushAttempts = 0;
-  }
-
+/**
+ * Background 完成通知器接口（迁移后由内核实现）。
+ *
+ * 保持与旧 BgNotifier 类相同的公共 API，避免消费方（subagent-service）改动面过大。
+ */
+export interface BgNotifier {
+  /** 入队一条完成通知（去重 + 合批窗口合并）。dispose 后短路。 */
+  notify(record: BgNotifyRecord): void;
+  /** 立即 flush（session_shutdown 调用，防丢失）。 */
+  flushPendingNotifications(): void;
+  /** session 结束：清队列，dispose 内核 handle。 */
+  dispose(): void;
   /** /resume /fork /new 后复活。 */
-  revive(): void {
-    this._disposed = false;
-  }
+  revive(): void;
+}
+
+/**
+ * 创建 Background 完成通知器（薄工厂，装配 @xyz-agent/session-delivery 内核）。
+ *
+ * 内核接管：gate（isIdle 退避）/ 合批窗口（滑动 60s）/ dedup（按 id:round）/ flush / shutdown flush。
+ * 本函数职责：将 BgNotifyRecord → DeliveryMessage 映射 + buildLlmContent 预格式化。
+ *
+ * @param host 宿主能力注入（pi.sendMessage + hasRunningBackground + isIdle）
+ * @returns BgNotifier 接口（与旧类同形）
+ */
+export function createNotifier(host: NotifierHost): BgNotifier {
+  let disposed = false;
+
+  // 构造 DeliveryPort：intent → pi 参数翻译在适配器内（D3）
+  const port: DeliveryPort = {
+    supportedPayloads: ["custom"],
+    isIdle: () => {
+      if (host.isIdle) {
+        return host.isIdle();
+      }
+      // 未注入 isIdle → 视为 idle（不 gate，向后兼容旧 host）
+      return true;
+    },
+    hasPendingMessages: () => false, // notifier 不关心 hasPendingMessages
+    send: (msg, intent) => {
+      host.sendMessage(
+        {
+          customType: NOTIFY_CUSTOM_TYPE,
+          content: msg.payload.content,
+          display: true,
+          details: msg.payload.kind === "custom" ? msg.payload.details : undefined,
+        },
+        intent === "interrupt-at-turn-boundary"
+          ? { triggerTurn: true, deliverAs: "steer" }
+          : { triggerTurn: true, deliverAs: "followUp" },
+      );
+    },
+  };
+
+  const handle: DeliveryHandle = createDelivery(port, {
+    intent: "interrupt-at-turn-boundary",    // D3：turn 边界抢占（F1 教训内化）
+    mergeWindowMs: 60_000,                   // 滑动窗口合批（继承 MERGE_WINDOW_MS=60s）
+    mergeHoldActive: () => host.hasRunningBackground(), // D4 must-fix #1：禁止用 isIdle 代替
+    busyPolicy: "retry-force",               // settled 边沿驱动 + 退避达上限强发
+    backoff: { ms: 100, max: 50 },           // 继承 FLUSH_BACKOFF_MS/MAX
+    dedupe: { maxKeys: 1000 },               // dedup LRU（继承 DEDUP_TTL_MS 语义，按条数）
+  });
+
+  return {
+    notify(record: BgNotifyRecord): void {
+      if (disposed) return;
+
+      // dedup key：idle（对话模式每轮完成）按 id:round 去重——不同轮次不互相掩蔽；
+      // 非 idle（closed/cancelled）round 恒定 undefined，key 同旧行为不变。
+      const dedupeKey = record.round != null ? `${record.id}:${record.round}` : record.id;
+
+      handle.send({
+        payload: {
+          kind: "custom",
+          customType: NOTIFY_CUSTOM_TYPE,
+          content: buildLlmContent(record),
+          display: true,
+          details: record,
+        },
+        dedupeKey,
+      });
+    },
+
+    flushPendingNotifications(): void {
+      handle.flush();
+    },
+
+    dispose(): void {
+      disposed = true;
+      handle.dispose();
+    },
+
+    revive(): void {
+      disposed = false;
+    },
+  };
 }
