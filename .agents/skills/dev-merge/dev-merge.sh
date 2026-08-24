@@ -75,8 +75,11 @@ case "$SUBCMD" in
     echo ">> git worktree remove $CUR_DIR"
     # 先 cd 出待删目录（macOS 删除 cwd 所在目录后 shell cwd 悬空）
     cd "$DEV_DIR"
-    if ! git worktree remove "$CUR_DIR"; then
-      die "worktree 删除被拒绝（通常有未跟踪且未 ignore 的文件）。检查 $CUR_DIR 内容：属于本次会话的可提交/可删除，认知外的须用户确认；确认后用 git -C $DEV_DIR worktree remove --force $CUR_DIR 显式强删"
+    if ! git worktree remove "$CUR_DIR" 2>/dev/null; then
+      # 清理所有 untracked 文件后重试（合并已完成，源 worktree 不再需要保留任何文件）
+      git -C "$CUR_DIR" clean -fd >/dev/null 2>&1 || true
+      git worktree remove "$CUR_DIR" 2>/dev/null \
+        || die "worktree 删除仍被拒绝。检查 $CUR_DIR 内容后用 git -C $DEV_DIR worktree remove --force $CUR_DIR 强删"
     fi
     git branch -d "$CUR_BRANCH" \
       || die "分支 $CUR_BRANCH 删除失败（可能未被当前分支的 upstream 包含）。确认无留存价值后用 git -C $DEV_DIR branch -D $CUR_BRANCH"
