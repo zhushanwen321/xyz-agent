@@ -45,17 +45,40 @@ const props = withDefaults(
     disabled?: boolean
     /** 当前会话 id（决定图片持久化目录）；landing 态为 null → IPC 内降级 tmpdir */
     sessionId?: string | null
+    /**
+     * [bash 豁免短路]（设计 D6）：true 时 dom-core onInput 跳过全部符号触发检测，
+     * 四路 trigger 回调统一发 null（关闭浮层语义）。bash 态（!/!! 前缀）下 $ 是变量、
+     * # 是注释、@ 是语法成分，一致豁免比按符号豁免简单且无歧义。由 Composer.vue 从
+     * isBashMode（draft.trimStart().startsWith('!')）传入。
+     */
+    suppressTriggers?: boolean
   }>(),
-  { placeholder: '', disabled: false, sessionId: null },
+  { placeholder: '', disabled: false, sessionId: null, suppressTriggers: false },
 )
 
 const emit = defineEmits<{
   input: [text: string]
   keydown: [e: KeyboardEvent]
-  /** slash 命令触发检测：{query} 表示 / 在最左且无 chip；null 表示应关闭触发浮层 */
+  /** slash 命令触发检测：{query} 表示 / 在行首且无 chip；null 表示应关闭触发浮层 */
   'slash-trigger': [payload: { query: string } | null]
-  /** # 文件触发检测：{query} 表示光标前有「空格/行首 + # + 非空白」序列；null 表示应关闭触发浮层 */
+  /**
+   * $ 文件触发检测（四符号体系，文件语义换绑到 $）：{query} 表示光标前有
+   * 「空格/行首 + $ + 非空白」序列；null 表示应关闭触发浮层。
+   * emit 名保持 'file-trigger'（file 浮层链路复用，只换触发符号）。
+   */
   'file-trigger': [payload: { query: string } | null]
+  /**
+   * # session 触发检测（四符号体系，# 对齐 TUI 换绑为 session 引用）：{query} 表示
+   * 光标前有「空格/行首 + # + 非空白」序列；null 表示应关闭触发浮层。
+   * 注：dom-core 的 onFileTrigger 回调仍绑 # 检测（contenteditable.ts 内部绑定），
+   * 本组件转发层把该 payload 路由到本 emit（session 语义）。
+   */
+  'session-trigger': [payload: { query: string } | null]
+  /**
+   * @ subagent 触发检测（四符号体系新增）：{query} 表示光标前有
+   * 「空格/行首 + @ + 非空白」序列；null 表示应关闭触发浮层。
+   */
+  'subagent-trigger': [payload: { query: string } | null]
   /** 聚焦/失焦：驱动父 Composer 的 .composer-box 聚焦态（v6 §6.1 .focused 3px ring） */
   focus: []
   blur: []
@@ -90,6 +113,8 @@ const {
   restoreSelection,
   clearSlashQueryText,
   clearHashQueryText,
+  clearDollarFileQueryText,
+  clearSubagentQueryText,
   clear,
   setText,
   insertTextAtCursor,
@@ -97,7 +122,14 @@ const {
 } = useContenteditableInput(elRef, {
   onInput: (text) => emit('input', text),
   onSlashTrigger: (payload) => emit('slash-trigger', payload),
-  onFileTrigger: (payload) => emit('file-trigger', payload),
+  // 四符号换绑（设计 §3.3.1）：dom-core 的 onFileTrigger 回调绑的是 # 检测
+  // （contenteditable.ts 内部 onFileTrigger(detectHashTrigger())），# 已换绑 session 语义 →
+  // 转发到 session-trigger；$ 检测走 onDollarFileTrigger → file-trigger（浮层链路复用）。
+  onFileTrigger: (payload) => emit('session-trigger', payload),
+  onDollarFileTrigger: (payload) => emit('file-trigger', payload),
+  onSubagentTrigger: (payload) => emit('subagent-trigger', payload),
+  // bash 豁免短路（D6）：bash 态短路全部符号触发检测（判定源 = Composer isBashMode）
+  shouldSuppressTriggers: () => props.suppressTriggers === true,
   onEnterKeydown: (e) => emit('keydown', e),
   onKeydown: (e) => emit('keydown', e),
   handleBackspaceOnChip: () => handleBackspaceOnChip(),
@@ -120,6 +152,8 @@ const insertSlashChip = chipCommands.insertSlashChip
 const insertMentionChip = chipCommands.insertMentionChip
 const insertFileChip = chipCommands.insertFileChip
 const insertImageBadge = chipCommands.insertImageBadge
+const insertSessionChip = chipCommands.insertSessionChip
+const insertSubagentChip = chipCommands.insertSubagentChip
 // 后赋值：补回上面 forward 占位（setup 同步执行完毕，onPaste 运行期读到真实实现）
 handleBackspaceOnChip = chipCommands.handleBackspaceOnChip
 insertImageBadgeFn = chipCommands.insertImageBadge
@@ -174,10 +208,16 @@ defineExpose({
   insertSlashChip,
   insertMentionChip,
   insertFileChip,
+  insertSessionChip,
+  insertSubagentChip,
   insertImageBadge,
   removeImageChip,
   clearSlashQueryText,
   clearHashQueryText,
+  /** # query 段清除（session 语义，dom-core 实现名保持 clearHashQueryText） */
+  clearSessionQueryText: clearHashQueryText,
+  clearDollarFileQueryText,
+  clearSubagentQueryText,
   saveSelection,
   restoreSelection,
   moveCaretVertical,
@@ -256,6 +296,11 @@ onMounted(() => {
 }
 .composer-input :deep(.mention-chip.mention-file) {
   color: var(--success);
+}
+/* session 引用 chip（四符号体系 # session 语义）：--warn 金色——与 skill/reasoning 紫、
+   file 绿、@ accent 蓝灰四色互斥，靠语义色区分 chip 类型（v6 §9B 无底无边范式）。 */
+.composer-input :deep(.mention-chip.mention-session) {
+  color: var(--warn);
 }
 /* 图片 badge（Cmd+V 富呈现通路）：复用 .mention-chip 基础样式 + .image-chip 紫色修饰，
    覆盖 mention-file 的绿色，与 ContextChipsBar image chip（text-reasoning）视觉一致（TO2）。 */
