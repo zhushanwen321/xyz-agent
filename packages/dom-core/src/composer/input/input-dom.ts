@@ -148,6 +148,34 @@ export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
       return
     }
 
+    // session/subagent chip 用 dataset.chipType 判定而非 class：mention-at 是新旧共用 class
+    // （insertMentionChip 产的旧 @ chip 无 dataset，须继续走文本拍平保持历史兼容，设计 F3）
+    if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).dataset?.chipType === 'session') {
+      consumeBlockBreak()
+      const chip = node as HTMLElement
+      flushText()
+      segments.push({
+        type: 'session',
+        sessionId: chip.dataset.chipSessionId ?? '',
+        label: chip.dataset.chipLabel ?? '',
+      })
+      rejectChips.add(chip)
+      return
+    }
+
+    if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).dataset?.chipType === 'subagent') {
+      consumeBlockBreak()
+      const chip = node as HTMLElement
+      flushText()
+      segments.push({
+        type: 'subagent',
+        subagentId: chip.dataset.chipSubagentId ?? '',
+        slug: chip.dataset.chipSlug ?? '',
+      })
+      rejectChips.add(chip)
+      return
+    }
+
     if (node.nodeType === Node.TEXT_NODE) {
       consumeBlockBreak()
       const raw = node.textContent ?? ''
@@ -183,8 +211,16 @@ export function getTextFromEl(el: HTMLDivElement | null): string {
 
 // ── 来自 useContenteditableInput：触发检测 ──
 
-/** # 文件触发检测：基于光标位置，任意位置触发 */
-export function detectHashTriggerFromEl(el: HTMLDivElement | null): { query: string } | null {
+/**
+ * 符号触发检测共用前置：取光标（折叠选区）所在文本节点的光标前文本，用 pattern 匹配。
+ * 四个检测函数（# / $ / @ / 行首 slash）共享同一前置（选区折叠 / 光标在 el 内 / 文本节点），
+ * 差异只在 pattern——收敛一处避免四份漂移。
+ * 返回 null 的两种含义由调用方语境区分：无光标（不可判定）与明确不命中。
+ */
+function matchTriggerBeforeCursor(
+  el: HTMLDivElement | null,
+  pattern: RegExp,
+): { query: string } | null {
   if (!el) return null
   const sel = window.getSelection()
   if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return null
@@ -193,8 +229,38 @@ export function detectHashTriggerFromEl(el: HTMLDivElement | null): { query: str
   const offset = sel.anchorOffset
   if (node.nodeType !== Node.TEXT_NODE) return null
   const beforeCursor = (node.textContent ?? '').slice(0, offset)
-  const m = /(?:^|\s)#(\S*)$/.exec(beforeCursor)
+  const m = pattern.exec(beforeCursor)
   return m ? { query: m[1] } : null
+}
+
+/** # 触发检测（现行语义：文件引用，行为不变——符号语义切换由后续 wave 在 UI 层做绑定） */
+export function detectHashTriggerFromEl(el: HTMLDivElement | null): { query: string } | null {
+  // 行首或 \s（含全角空格）后跟 # 再到光标非空白——「任意位置」触发
+  return matchTriggerBeforeCursor(el, /(?:^|\s)#(\S*)$/)
+}
+
+/**
+ * $ 文件触发检测（四符号体系新符号，与 # 同正则形态）。
+ * 已登记取舍（设计 D6）：非 bash 态下 ` $HOME` / ` ${var}` 等自然文本会触发——
+ * `$` 在代码语境出现频率高是符号选择的固有噪声，由空候选不渲染浮层内建缓解。
+ */
+export function detectFileDollarTriggerFromEl(el: HTMLDivElement | null): { query: string } | null {
+  return matchTriggerBeforeCursor(el, /(?:^|\s)\$(\S*)$/)
+}
+
+/** @ subagent 触发检测（与 # 同正则形态：行首或空格后跟 @） */
+export function detectSubagentTriggerFromEl(el: HTMLDivElement | null): { query: string } | null {
+  return matchTriggerBeforeCursor(el, /(?:^|\s)@(\S*)$/)
+}
+
+/**
+ * 行首 slash 触发检测（D5 正则化，替代全文 startsWith 判定）。
+ * 「行首」= 光标所在文本节点开头（跨节点换行由 <br>/块级边界产生，节点开头即行首）
+ * 或节点内 \n 之后（防御：粘贴还原的罕见单节点含 \n 形态）。
+ * 仅行首限定——空格后 `/` 不触发（「帮我看看 /usr/local/bin」高频路径文本，D5 否决项）。
+ */
+export function detectSlashTriggerFromEl(el: HTMLDivElement | null): { query: string } | null {
+  return matchTriggerBeforeCursor(el, /(?:^|\n)\/(\S*)$/)
 }
 
 // ── 来自 useContenteditableInput：光标 / 视觉行 ──

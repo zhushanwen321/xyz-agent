@@ -42,6 +42,23 @@ export interface ContenteditableCallbacks {
   onSlashTrigger: (payload: { query: string } | null) => void
   /** # 文件触发检测：{query} 表示光标前有「空格/行首 + # + 非空白」序列；null 表示应关闭浮层 */
   onFileTrigger: (payload: { query: string } | null) => void
+  /**
+   * $ 文件触发检测（四符号新符号，与 # 同「行首或空格后」规则）。
+   * 可选：壳层（ui ComposerInput）接线前不传，dom-core 用 ?. 调用——必填会破坏
+   * 未接线的壳层类型契约（本 wave 只建底座，浮层绑定由后续 wave 做）。
+   */
+  onDollarFileTrigger?: (payload: { query: string } | null) => void
+  /**
+   * @ subagent 触发检测（四符号新符号，与 # 同「行首或空格后」规则）。可选，同上。
+   */
+  onSubagentTrigger?: (payload: { query: string } | null) => void
+  /**
+   * [bash 豁免短路]（设计 D6）：返回 true 时 onInput 跳过全部符号触发检测并给所有
+   * trigger 回调发 null（关闭浮层语义）——bash 模式（! / !! 前缀）下 $ 是变量、# 是注释、
+   * @ 是语法成分，一致豁免比按符号豁免简单且无歧义。
+   * 可选：未注入时行为与旧版完全一致（bash 态照常检测）。
+   */
+  shouldSuppressTriggers?: () => boolean
   /** Enter（无 shift）委派：交给 Composer 决定发送/steer/followup */
   onEnterKeydown: (e: KeyboardEvent) => void
   /** 非 Enter 的其他键（Backspace chip 删除以外的）向上转发 */

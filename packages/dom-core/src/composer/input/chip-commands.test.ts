@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { ref } from 'vue'
 import { useComposerChipCommands } from './chip-commands'
+import { getSegmentsFromEl } from './input-dom'
 import type { ChipCallbacks } from './types'
 
 /** mock ChipCallbacks 工厂（renderIcon 默认返回 true = 挂载图标） */
@@ -249,6 +250,103 @@ describe('useComposerChipCommands insertMentionChip', () => {
   })
 })
 
+describe('useComposerChipCommands insertSessionChip', () => {
+  let cleanup: () => void
+  beforeEach(() => {
+    window.getSelection()?.removeAllRanges()
+  })
+  afterEach(() => {
+    cleanup?.()
+  })
+
+  it('class=mention-session + dataset 三件套 + label 文本 + × 按钮 + spacer', () => {
+    const c = setup()
+    c.insertSessionChip('019e-abc-123', 'fix-com 设计讨论')
+    const chip = c.el.querySelector('.mention-session') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(chip.dataset.chipType).toBe('session')
+    expect(chip.dataset.chipSessionId).toBe('019e-abc-123')
+    expect(chip.dataset.chipLabel).toBe('fix-com 设计讨论')
+    expect(chip.contentEditable).toBe('false')
+    expect(chip.querySelector('.chip-label')?.textContent).toBe('fix-com 设计讨论')
+    // × 删除按钮（对齐 insertFileChip 结构惯例）
+    expect(chip.querySelector('.chip-x')).not.toBeNull()
+    // ZWSP spacer + 光标定位
+    expect(c.el.lastChild?.nodeType).toBe(Node.TEXT_NODE)
+    expect(c.el.lastChild?.textContent).toBe('\u200B')
+    expect(c.callbacks.onChanged).toHaveBeenCalled()
+    cleanup = c.cleanup
+  })
+
+  it('有选区：chip 落在光标处（range.insertNode）', () => {
+    const c = setup('hello')
+    const textNode = c.el.firstChild as Text
+    setCursor(textNode, 5)
+    c.insertSessionChip('s1', '会话 A')
+    const chip = c.el.querySelector('.mention-session') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(c.el.contains(chip)).toBe(true)
+    cleanup = c.cleanup
+  })
+
+  it('往返：insertSessionChip → getSegmentsFromEl 产出 session segment', () => {
+    const c = setup()
+    c.insertSessionChip('019e-abc-123', '设计讨论')
+    expect(getSegmentsFromEl(c.el)).toEqual([
+      { type: 'session', sessionId: '019e-abc-123', label: '设计讨论' },
+    ])
+    cleanup = c.cleanup
+  })
+})
+
+describe('useComposerChipCommands insertSubagentChip', () => {
+  let cleanup: () => void
+  beforeEach(() => {
+    window.getSelection()?.removeAllRanges()
+  })
+  afterEach(() => {
+    cleanup?.()
+  })
+
+  it('class=mention-at（复用蓝色样式）+ dataset 三件套 + label=@slug + × 按钮（F3 修复）', () => {
+    const c = setup()
+    c.insertSubagentChip('sub-1', 'build-api')
+    const chip = c.el.querySelector('.mention-at') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(chip.dataset.chipType).toBe('subagent')
+    expect(chip.dataset.chipSubagentId).toBe('sub-1')
+    expect(chip.dataset.chipSlug).toBe('build-api')
+    expect(chip.contentEditable).toBe('false')
+    expect(chip.querySelector('.chip-label')?.textContent).toBe('@build-api')
+    // 旧 mention-at 无 × 按钮的问题（F3）在新 chip 修复
+    expect(chip.querySelector('.chip-x')).not.toBeNull()
+    expect(c.callbacks.onChanged).toHaveBeenCalled()
+    cleanup = c.cleanup
+  })
+
+  it('往返：insertSubagentChip → getSegmentsFromEl 产出 subagent segment', () => {
+    const c = setup()
+    c.insertSubagentChip('sub-1', 'build-api')
+    expect(getSegmentsFromEl(c.el)).toEqual([
+      { type: 'subagent', subagentId: 'sub-1', slug: 'build-api' },
+    ])
+    cleanup = c.cleanup
+  })
+
+  it('往返：subagent chip + 文本混合 → segment 顺序正确', () => {
+    const c = setup()
+    c.insertSubagentChip('sub-1', 'build-api')
+    // 在 spacer 后追加文本（模拟用户 chip 后继续输入）
+    const spacer = c.el.lastChild as Text
+    spacer.after(document.createTextNode('汇报进度'))
+    expect(getSegmentsFromEl(c.el)).toEqual([
+      { type: 'subagent', subagentId: 'sub-1', slug: 'build-api' },
+      { type: 'text', text: '汇报进度' },
+    ])
+    cleanup = c.cleanup
+  })
+})
+
 describe('useComposerChipCommands handleBackspaceOnChip', () => {
   let cleanup: () => void
   beforeEach(() => {
@@ -317,6 +415,22 @@ describe('useComposerChipCommands handleBackspaceOnChip', () => {
     range.collapse(true)
     sel?.addRange(range)
     expect(c.handleBackspaceOnChip()).toBe(false)
+    cleanup = c.cleanup
+  })
+
+  it('新 session / subagent chip 被 .mention-chip 选择器天然覆盖（Backspace 整删验证）', () => {
+    // insertSessionChip/insertSubagentChip 的 class 都含 mention-chip → 整删分支命中
+    const c = setup()
+    c.insertSessionChip('s1', '会话 A')
+    c.insertSubagentChip('sub-1', 'build-api')
+    expect(c.el.querySelectorAll('.mention-chip').length).toBe(2)
+    // 光标移到末尾 spacer 后，Backspace 整删最后一个 chip（subagent chip）
+    const lastSpacer = c.el.lastChild as Text // insertChipAtSelection 的 ZWSP
+    setCursor(lastSpacer, 1)
+    expect(c.handleBackspaceOnChip()).toBe(true)
+    const remaining = c.el.querySelectorAll<HTMLElement>('.mention-chip')
+    expect(remaining.length).toBe(1)
+    expect(remaining[0].dataset.chipType).toBe('session')
     cleanup = c.cleanup
   })
 
