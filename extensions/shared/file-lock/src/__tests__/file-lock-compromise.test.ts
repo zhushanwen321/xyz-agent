@@ -59,5 +59,6 @@ describe("withFileLock 锁妥协路径（compromise）", () => {
 		expect(loggerMock.debug).toHaveBeenCalledTimes(1);
 		expect(String(loggerMock.debug.mock.calls[0]![0])).toContain("unlock failed after compromise");
 		expect(JSON.stringify(loggerMock.debug.mock.calls[0]![1])).toContain("Lock is already released");
-	});
+		// 真实 proper-lockfile 计时（staleMs 2000 + 1300ms 等待）+ CI 慢盘，放宽预算防 flaky
+	}, 15000);
 });

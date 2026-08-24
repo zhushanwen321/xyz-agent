@@ -66,7 +66,9 @@ describe("withFileLock (async)", () => {
 			});
 		await Promise.all(Array.from({ length: 100 }, bump));
 		expect((JSON.parse(fs.readFileSync(target, "utf-8")) as { n: number }).n).toBe(100);
-	});
+		// 100 次并发锁 RMW 是真实文件系统 IO 密集测试，CI 慢盘上逼近 vitest 默认 5s，
+		// 放宽时间预算不改变断言强度（终值必须精确 100）
+	}, 20000);
 });
 
 describe("withFileLockSync", () => {
