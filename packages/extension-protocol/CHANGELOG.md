@@ -1,5 +1,11 @@
 # @xyz-agent/extension-protocol
 
+## 0.6.0
+
+### Minor Changes
+
+- df69a18fc: Add session-manager public API: SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS, 16 session-manager types and 6 param guards (consumed by @zhushanwen/pi-session-manager 0.1.0)
+
 ## 0.5.1
 
 ### Patch Changes

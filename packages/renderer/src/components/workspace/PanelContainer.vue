@@ -38,34 +38,57 @@
       @open-git="openDrawerTab('git')"
       @toggle-drawer="toggleDrawer()"
     />
-    <SplitterGroup
-      direction="horizontal"
-      auto-save-id="workspace-drawer-split"
-      class="relative min-h-0 flex-1 overflow-hidden"
-      @layout="onSplitterLayout"
-    >
-      <SplitterPanel id="main-panel" :order="1" :min-size="40" :default-size="50">
+    <!-- 对话流 + drawer 动态宽度区（feat-chat-flow-width，手写 flex 替换 reka-ui Splitter）。
+         替换原因：① Splitter 单 panel 时强制 flexGrow:1（computePanelFlexBoxStyle），无法实现
+         「无 drawer 对话流限宽 3/4」；② SplitterPanel 挂载/卸载瞬时完成 layout 重算，无法做
+         开合宽度动画。手写布局三点能力：无 drawer 时 main 占 75%（留白呼吸感）；drawer 打开时
+         main/drawer 双侧 width transition 动画到拆分比例；handle 拖动（pointer capture 跟手，
+         拖动期间 transition:none）+ 键盘微调 + localStorage 持久化。
+         drawer wrapper 常驻（width 0 ↔ drawerPct%）承载 width 动画；DrawerPanel 内部 aside
+         Transition（淡入右移）与 wrapper width 动画同时长（--duration-slow），叠加和谐。
+         BrowserPane rect 同步：原 Splitter @layout 事件改为 notifyLayout()（拖动/键盘时直发 +
+         开合动画期间 rAF 循环逐帧派发 xyz:splitter-layout）。 -->
+    <div ref="splitAreaEl" data-testid="split-area" class="relative flex min-h-0 flex-1 overflow-hidden">
+      <div
+        class="relative h-full min-w-0 overflow-hidden"
+        :class="splitTransitionClass"
+        :style="{ width: drawerOpen ? `calc(100% - ${drawerPct}% - 1px)` : `${MAIN_STANDALONE_PCT}%` }"
+        data-testid="main-area"
+      >
         <Panel
           :panel-id="leaf.id"
           :session-id="leaf.sessionId"
           :session-dir="sessionDirOf(leaf)"
           :git-branch="gitBranchOf(leaf)"
         />
-      </SplitterPanel>
+      </div>
 
-    <!-- Drawer：workspace-body 级辅助视图容器。单实例，跟随 panel。
-         作为 SplitterPanel 子项，宽度可拖动调整（ResizeHandle），autoSaveId 持久化。
-         drawer 关闭时连同 ResizeHandle 一起卸载（v-if），Splitter 自动回单 panel。
-         DrawerPanel 内部仍有自己的 aside v-if（Transition 动画），与外层 v-if 不冲突
-         （外层先判断，关闭时内层根本不挂载）。git 数据由本容器 provide，GitPanel inject。
-         内容区按 activeTab 经默认 slot 注入桌面独占面板（C2 contract：该 tab 无桌面面板时
-         不注入 → DrawerPanel 空态 fallback 渲染）。 -->
-    <template v-if="drawerOpen">
-      <SplitterResizeHandle
-        id="drawer-handle"
-        class="workspace-resize-handle relative w-px shrink-0 bg-transparent transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:bg-border-strong data-[state=drag]:bg-accent"
+      <!-- Drawer：workspace-body 级辅助视图容器。单实例，跟随 panel。
+         handle 拖动调整 drawer 宽度（drawerPct 持久化 localStorage）；键盘 ArrowLeft/Right
+         微调（separator 角色，对齐原 Splitter 键盘交互）。drawer wrapper 常驻承载 width 动画，
+         内容显隐由 DrawerPanel 内部 aside v-if（Transition）承接。git 数据由本容器 provide，
+         GitPanel inject。内容区按 activeTab 经默认 slot 注入桌面独占面板（C2 contract：该 tab
+         无桌面面板时不注入 → DrawerPanel 空态 fallback 渲染）。 -->
+      <div
+        v-if="drawerOpen"
+        role="separator"
+        aria-orientation="vertical"
+        tabindex="0"
+        class="workspace-resize-handle relative w-px shrink-0 cursor-col-resize touch-none select-none bg-transparent transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:bg-border-strong data-[state=drag]:bg-accent"
+        :data-state="isDragging ? 'drag' : undefined"
+        data-testid="drawer-resize-handle"
+        @pointerdown="onHandlePointerDown"
+        @pointermove="onHandlePointerMove"
+        @pointerup="onHandlePointerUp"
+        @pointercancel="onHandlePointerUp"
+        @keydown="onHandleKeydown"
       />
-      <SplitterPanel id="drawer-panel" :order="2" :min-size="20" :max-size="60" :default-size="50">
+      <div
+        class="h-full min-w-0 overflow-hidden"
+        :class="splitTransitionClass"
+        :style="{ width: drawerOpen ? `${drawerPct}%` : '0%' }"
+        data-testid="drawer-area"
+      >
         <DrawerPanel
           :is-open="drawerOpen"
           :active-tab="drawerTab"
@@ -122,9 +145,8 @@
             </div>
           </template>
         </DrawerPanel>
-      </SplitterPanel>
-    </template>
-    </SplitterGroup>
+      </div>
+    </div>
     <!-- ExtensionHost 状态栏（audit §12.1）：数据经 app.provide STATUS_BAR_SOURCE_KEY 注入（useExtensionHostBridge），
          无数据时自隐藏；sessionId 绑定当前 leaf（per-session 项） -->
     <StatusBar :session-id="leaf.sessionId ?? null" />
@@ -152,6 +174,7 @@ import { useSessionStore } from '@/stores/session'
 import { useSessionDerivations } from '@/composables/features/chat/useSessionDerivations'
 import { provideGitStatus } from '@/composables/features/file-tree/useGitStatus'
 import type { GitIndicator } from '@/composables/features/file-tree/useGitStatus'
+import { useDrawerSplitWidth, MAIN_STANDALONE_PCT } from '@/composables/features/drawer/useDrawerSplitWidth'
 import { useChatStore } from '@/stores/chat'
 import { useSessionTrace, clearTraceSelection } from '@/composables/features/trace/useSessionTrace'
 import TraceInspector from '@/components/panel/trace/TraceInspector.vue'
@@ -163,7 +186,6 @@ import BrowserPane from '@/components/panel/BrowserPane.vue'
 import SubagentTab from '@/components/panel/SubagentTab.vue'
 import WorkflowTab from '@/components/panel/WorkflowTab.vue'
 import AsyncErrorFallback, { LAZY_RETRY_KEY } from '@/components/ui/AsyncErrorFallback.vue'
-import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 
 // D-8 抽屉面板懒加载（§3.3 边界判据：首屏不渲染 + 重依赖）：
 // DetailPane（DiffView 等专属依赖）/ TerminalView（xterm + 4 addon）是 drawerTab 的 v-else-if
@@ -348,13 +370,17 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown)
 })
 
-/**
- * Splitter layout 变化（拖动 ResizeHandle / panel 条件渲染挂卸 / group 尺寸变化）时，
- * 经 window CustomEvent 通知 BrowserPane 重算 viewport rect 并推给主进程 WebContentsView setBounds。
- * 补充 BrowserPane 内 ResizeObserver 在 SplitterPanel overflow:hidden 容器 + reka-ui 高频拖动下
- * 触发不可靠的缺口（RO 双保险，不替换）。事件名带 xyz 前缀防冲突。
- */
-function onSplitterLayout() {
-  window.dispatchEvent(new CustomEvent('xyz:splitter-layout'))
-}
+// ── 动态宽度（feat-chat-flow-width）：drawer 开合动画 + 可拖动宽度 ──
+// 宽度模型/拖动/键盘/持久化/BrowserPane rect 同步均在 useDrawerSplitWidth（含替换
+// reka-ui Splitter 的原因）；模板绑定 splitAreaEl + 双侧 width style + handle 事件。
+const splitAreaEl = ref<HTMLElement | null>(null)
+const {
+  drawerPct,
+  isDragging,
+  splitTransitionClass,
+  onHandlePointerDown,
+  onHandlePointerMove,
+  onHandlePointerUp,
+  onHandleKeydown,
+} = useDrawerSplitWidth(splitAreaEl, drawerOpen)
 </script>

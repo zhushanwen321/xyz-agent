@@ -228,10 +228,12 @@ function onSubmit(): void {
 <template>
   <!-- v3 无边框一体化：单容器靠间距分区，head 行含脉冲点+标题/tab。
        选项 inline（indicator + label + desc 同行流式），无边框 hover/selected 用 bg。
-       Other 卡片化：最后一个选项，选中后 label 下方展开输入框。 -->
+       Other 卡片化：最后一个选项，选中后 label 下方展开输入框。
+       宽度：content-col（居中 + 封顶 --content-max-w），与 Composer 同一内容列——
+       overlay 与 composer 互斥替换时宽度不跳变。 -->
   <div
     data-testid="ask-user-overlay"
-    class="relative flex flex-col animate-ask-user-slide-up overflow-hidden rounded-lg bg-bg-input motion-reduce:animate-none"
+    class="content-col relative flex flex-col animate-ask-user-slide-up overflow-hidden rounded-lg bg-bg-input motion-reduce:animate-none"
     @keydown.tab="onTabKey"
   >
     <!-- head 行：脉冲点 + (单问题标题 | 多问题 tab) -->

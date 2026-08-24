@@ -61,6 +61,7 @@ function makeSessionStore(metas: ScannedSessionMeta[]): ISessionStore {
     persistSessionEnd: () => {},
     persistPresetBinding: () => {},
     persistProjectBinding: () => {},
+    persistAgentBinding: () => {},
     extractSessionOutcome: () => null,
     invalidateMetaCache: () => {},
     convertHistory: () => [],

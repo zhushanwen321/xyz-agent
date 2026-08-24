@@ -66,7 +66,11 @@ interface FsSetup {
   globalFiles?: Record<string, string | Error>
 }
 
+/** mtime 纪元：每次 setupFs 递增，模拟「文件被改写后 mtime 变化」。 */
+let mtimeEpoch = 0
+
 function setupFs(setup: FsSetup = {}): void {
+  mtimeEpoch += 1
   const { config = new Error("ENOENT: no such file or directory, open '" + CONFIG_PATH + "'") } = setup
   const { globalEntries = [], globalFiles = {} } = setup
   vi.mocked(readdirSync).mockImplementation(() => {
@@ -74,10 +78,18 @@ function setupFs(setup: FsSetup = {}): void {
     return globalEntries as unknown as string[]
   })
   vi.mocked(statSync).mockImplementation((p: unknown) => {
+    // config 文件可 stat（内容存在时）——cachedReadFileSync 先 stat 判 mtime 再读，
+    // config 缺失（Error）时 stat 同步 throw（等价 ENOENT）
+    if (String(p) === CONFIG_PATH) {
+      if (config instanceof Error) throw config
+      return { isFile: () => true, mtimeMs: mtimeEpoch } as unknown as ReturnType<typeof statSync>
+    }
     const name = path.basename(String(p))
     if (!(name in globalFiles)) throw new Error('ENOENT stat ' + String(p))
     if (globalFiles[name] instanceof Error) throw globalFiles[name]
-    return { isFile: () => true } as unknown as ReturnType<typeof statSync>
+    // mtimeMs 模拟真实 mtime：每次 setupFs 递增一次纪元——同一 setup 内稳定（缓存命中），
+    // 重新 setupFs（等价改文件）后变化（缓存失效重读），与 cachedReadFileSync 判变语义对齐。
+    return { isFile: () => true, mtimeMs: mtimeEpoch } as unknown as ReturnType<typeof statSync>
   })
   vi.mocked(readFileSync).mockImplementation((p: unknown) => {
     const fp = String(p)
@@ -307,5 +319,35 @@ describe('fail-safe（外层 catch return undefined，永不阻断 agent loop）
     const event = { type: 'before_agent_start', prompt: 'hi' } as unknown as BeforeAgentStartEvent
     // base 收敛 ''，拼接形态固定为 '' + '\n\n' + append（分隔符保留，与合法 base 一致）
     expect(h.beforeAgentStart(event)).toEqual({ systemPrompt: '\n\nAPPEND-TEXT' })
+  })
+})
+
+describe('cachedReadFileSync（mtime 级内容缓存，KV-cache 稳定性改造）', () => {
+  it('文件未变时二次 hook 不再重复 readFileSync（缓存命中）', () => {
+    setupFs({
+      config: '{"append": {"enabled": true, "prompt": "P1"}}',
+      globalEntries: ['AGENTS.md'],
+      globalFiles: { 'AGENTS.md': '# GLOBAL' },
+    })
+    const r1 = runHook('base')
+    const reads1 = vi.mocked(readFileSync).mock.calls.length
+    const r2 = runHook('base')
+    expect(r2).toEqual(r1) // 两次注入结果逐字节一致
+    expect(vi.mocked(readFileSync).mock.calls.length).toBe(reads1) // 第二次全命中缓存，零重读
+  })
+
+  it('文件改写（mtime 变）后下一轮 hook 读到新内容（变更即生效语义保留）', () => {
+    setupFs({ config: '{"append": {"enabled": true, "prompt": "P1"}}' })
+    expect(runHook('base')).toEqual({ systemPrompt: 'base\n\nP1' })
+    // 模拟用户改写 append.prompt（setupFs 递增 mtime 纪元）
+    setupFs({ config: '{"append": {"enabled": true, "prompt": "P2"}}' })
+    expect(runHook('base')).toEqual({ systemPrompt: 'base\n\nP2' })
+  })
+
+  it('文件删除（stat throw）后缓存驱逐，注入降级为无 append', () => {
+    setupFs({ config: '{"append": {"enabled": true, "prompt": "P1"}}' })
+    expect(runHook('base')).toEqual({ systemPrompt: 'base\n\nP1' })
+    setupFs() // config 恢复默认 ENOENT
+    expect(runHook('base')).toBeUndefined()
   })
 })

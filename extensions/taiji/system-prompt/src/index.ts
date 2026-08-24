@@ -2,7 +2,8 @@
  * System prompt injection extension for Pi.
  *
  * Registers a `before_agent_start` hook that:
- *  1. Reads <dataDir>/system-prompt.json every turn (never cached).
+ *  1. Reads <dataDir>/system-prompt.json every turn (mtime-cached, see
+ *     `cachedReadFileSync`).
  *  2. When `append.enabled === true` and `append.prompt` is non-blank,
  *     appends the user's text to the event's systemPrompt.
  *  3. Reads the global instructions file `~/.agents/AGENTS.md` (candidates
@@ -26,6 +27,31 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import type { ExtensionAPI, BeforeAgentStartEvent } from '@earendil-works/pi-coding-agent'
 
 const CONFIG_FILE = 'system-prompt.json'
+
+/**
+ * mtime 级文件内容缓存（KV-cache 稳定性改造）：每 turn 仍 stat 判变（文件被编辑后
+ * 下一轮即读到新内容，语义与逐 turn 重读一致），但 mtime 未变时跳过 readFileSync——
+ * 注入文本进每 turn system prompt，读盘路径上不引入额外开销。进程级缓存，per-process
+ * = per-session，生命周期对齐。stat/read 失败 → 驱逐条目返回 null。
+ *
+ * @data-owner 文件本身（mtime+size 判变读缓存，非派生权威，无第二写入者）
+ */
+const fileContentCache = new Map<string, { mtimeMs: number; size: number; content: string }>()
+
+function cachedReadFileSync(filePath: string): string | null {
+  try {
+    const stat = statSync(filePath)
+    const entry = fileContentCache.get(filePath)
+    // 双键判变：mtimeMs 相同粒度内被外部编辑器/脚本覆写且长度变化时 size 仍能命中
+    if (entry && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) return entry.content
+    const content = readFileSync(filePath, 'utf-8')
+    fileContentCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, content })
+    return content
+  } catch {
+    fileContentCache.delete(filePath)
+    return null
+  }
+}
 
 /** Global instruction candidates, mirroring pi's loadContextFileFromDir. */
 const GLOBAL_AGENTS_CANDIDATES = ['AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE.MD']
@@ -88,8 +114,8 @@ function readGlobalAgentsFile(): { path: string; content: string } | null {
     const filePath = path.join(dir, name)
     try {
       if (statSync(filePath).isFile()) {
-        const content = readFileSync(filePath, 'utf-8')
-        if (content.trim()) {
+        const content = cachedReadFileSync(filePath)
+        if (content !== null && content.trim()) {
           return { path: filePath, content }
         }
       }
@@ -131,7 +157,9 @@ function readConfig(dataDir: string): {
 /** Read a JSON file and return it as an object; missing / malformed / non-object → null. */
 function readJsonIfValid(filePath: string): Record<string, unknown> | null {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(filePath, 'utf-8'))
+    const raw = cachedReadFileSync(filePath)
+    if (raw === null) return null
+    const parsed: unknown = JSON.parse(raw)
     return isJsonObject(parsed) ? parsed : null
   } catch {
     return null

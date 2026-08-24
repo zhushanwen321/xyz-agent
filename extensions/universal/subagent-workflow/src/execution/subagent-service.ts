@@ -32,8 +32,8 @@ import { doFinalizeRecord, doFinalizeRoundToIdle } from "./finalize-record.ts";
 import { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import type { AgentConfig, ModelInfo, ResolvedModel } from "./model-resolver.ts";
-import type { BgNotifyRecord, NotifierHost } from "./notifier.ts";
-import { BgNotifier } from "./notifier.ts";
+import type { BgNotifyRecord, BgNotifier, NotifierHost } from "./notifier.ts";
+import { createNotifier } from "./notifier.ts";
 import { getSubagentRecordsDir, getSubagentSessionDir } from "./path-encoding.ts";
 import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
@@ -104,6 +104,10 @@ interface PiLike {
     message: { customType: string; content: string; display: boolean; details?: unknown },
     options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
   ): void;
+  /** 订阅 pi 事件（D8：notifier 的 settled 边沿订阅用 'agent_settled'）。
+   *  pi 0.84.1 的 on 返回 void 且无 off——退订语义由调用侧 disposed 标志包装兑现。
+   *  可选：旧测试 mock pi 可能未实现 on，缺省时 notifier 退化为内核退避路径。 */
+  on?(event: "agent_settled", handler: () => void): void;
 }
 
 /** UI streaming sink 的最小接口（ctx.ui.setWidget 的 duck-typed 子集）。
@@ -299,7 +303,7 @@ export class SubagentService {
     const recordsDir = getSubagentRecordsDir(this.modelService.getAgentDir(), this.rootCwd);
     this.manifestStore = new ManifestStore(recordsDir);
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined);
-    this.notifier = new BgNotifier(this.piAdapter());
+    this.notifier = createNotifier(this.piAdapter());
     // #11：注册进程级 observability 单例——ui-request-queue.handleUiRequest 经
     // globalThis 桥接（notifyMissingHandlerGlobal）调到同一实例，共享
     // warnedMissingHandlerSessions 去重集合。未注册时 queue 走 fallback warn（不去重）。
@@ -586,7 +590,10 @@ export class SubagentService {
           (r) => r.mode === "background" && hasLiveProcessHandle(r.id) && !hasIdleTimer(r.id),
         );
       },
-      isIdle: this.isIdleFn,
+      isIdle: () => this.isIdleFn?.() ?? true,
+      // [must-fix #4 / D8] settled 边沿订阅，与 isIdle 同源（session_start 注入的 pi）。
+      // 只注入原生订阅能力；disposed 标志包装（退订语义）在 notifier 的 port 装配完成。
+      onAgentSettled: (handler) => { this.pi?.on?.("agent_settled", handler); },
     };
   }
 
