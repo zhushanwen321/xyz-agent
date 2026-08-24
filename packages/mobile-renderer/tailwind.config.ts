@@ -1,94 +1,20 @@
 import type { Config } from 'tailwindcss'
+import sharedPreset from '@xyz-agent/shared/tailwind-preset'
 
 /**
- * xyz-agent Tailwind 配置 · v3 冷蓝暗色（ADR-0019）
- * 色值映射到 style.css 的 CSS 变量（SSOT: docs/page-design/design-tokens.md）。
- * shadcn-vue 装机会在此基础上扩展，此处只落 design-tokens 对齐项。
+ * xyz-agent Tailwind 配置 · v3 冷蓝暗色（ADR-0019）。
+ * colors 主体 / fontFamily / borderRadius / boxShadow / .content-col plugin 经
+ * @xyz-agent/shared/tailwind-preset 共享（与 renderer 单一 SSOT，防两包漂移；
+ * 等价性守卫见 preset 文件头注释）。本文件只落 mobile-renderer 专属差异：
+ *  - keyframes SSOT 尚未迁移 style.css 全局（renderer 已迁，见其 config 注释；迁移后此块可删）
+ *  - pulse-warn / steer-breathe / working-pulse / wiggle 等专属 animation
  */
 export default {
+  presets: [sharedPreset],
   content: ['./src/**/*.{vue,ts,tsx}', '../ui/src/**/*.{vue,ts}'],
   darkMode: 'class',
   theme: {
     extend: {
-      colors: {
-        bg: {
-          DEFAULT: 'var(--bg)',
-          elevated: 'var(--bg-elevated)',
-          input: 'var(--bg-input)',
-          card: 'var(--bg-card)', // v6 新增：设置分组卡片
-        },
-        surface: {
-          DEFAULT: 'var(--surface)',
-          hover: 'var(--surface-hover)',
-          2: 'var(--surface-2)',
-        },
-        neutral: {
-          fg: 'var(--neutral-fg)',
-          mid: 'var(--neutral-mid)',
-          dim: 'var(--neutral-dim)',
-          faint: 'var(--neutral-faint)',
-          ico: 'var(--neutral-ico)',
-          'ico-hover': 'var(--neutral-ico-hover)',
-        },
-        border: 'var(--border)',
-        'border-strong': 'var(--border-strong)',
-        accent: {
-          DEFAULT: 'var(--accent)',
-          hover: 'var(--accent-hover)',
-          soft: 'var(--accent-soft)',
-          ring: 'var(--accent-ring)', // inset 内描边（Card-Active/Input focus/SessionItem 激活）
-          fg: 'var(--accent-fg)', // accent 实色上的前景（M1b-02：Button default variant 深字，与 renderer tailwind.config 对齐）
-          foreground: 'var(--accent-foreground)', // shadcn text-accent-foreground
-        },
-        success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
-        warn: { DEFAULT: 'var(--warn)', soft: 'var(--warn-soft)' },
-        danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
-        info: { DEFAULT: 'var(--info)', soft: 'var(--info-soft)' },
-        // reasoning 紫（draft-message-stream 思考块 / composer 思考等级专属色相）
-        reasoning: { DEFAULT: 'var(--reasoning)', soft: 'var(--reasoning-soft)' },
-        // ── diff 行/字符级背景（引用 style.css 新增 token，v6 §4.5 柔化 12%）──
-        // 行背景中饱和(12%) + 字符级高饱和(45%)，双层亮度差锁定肉眼可辨。
-        // 真值源在 style.css（--diff-* token），config 只做映射不重复定义色值。
-        // canvas 用 bg-bg-input（暗 #17171a / 亮 #f1f3f6 自动跟随主题），色块叠加其上。
-        diff: {
-          'add-bg': 'var(--diff-add-bg)',
-          'add-strong': 'var(--diff-add-strong)',
-          'del-bg': 'var(--diff-del-bg)',
-          'del-strong': 'var(--diff-del-strong)',
-        },
-
-        // ── shadcn-vue 命名空间（别名映射到 v3 值，不引入新色）──────────
-        // 本地 components/ui（shadcn copy）依赖 shadcn 命名约定，补全 utility
-        // 映射。同名冲突项维持 v3 语义不覆盖：
-        //   • accent.DEFAULT = v3 主色蓝（shadcn hover 软底语义降级，ghost hover 蓝）
-        //   • muted = v3 次级文字色（shadcn 背景色语义降级，bg-muted 仅用于 1px 分隔线，视觉正确）
-        // 见 design-tokens.md「shadcn 命名映射」节。
-        primary: { DEFAULT: 'var(--primary)', foreground: 'var(--primary-foreground)' },
-        secondary: { DEFAULT: 'var(--secondary)', foreground: 'var(--secondary-foreground)' },
-        destructive: { DEFAULT: 'var(--destructive)', foreground: 'var(--destructive-foreground)' },
-        'muted-foreground': 'var(--muted-foreground)',
-        popover: { DEFAULT: 'var(--popover)', foreground: 'var(--popover-foreground)' },
-        background: 'var(--background)',
-        foreground: 'var(--foreground)',
-        input: 'var(--input)',
-        ring: 'var(--ring)',
-      },
-      fontFamily: {
-        sans: ['Inter', 'SF Pro Display', 'PingFang SC', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'IBM Plex Mono', 'ui-monospace', 'Menlo', 'monospace'],
-      },
-      borderRadius: {
-        sm: '6px', // v6 升档（对应 --radius-sm）
-        DEFAULT: '8px', // 按钮/卡片默认档（对应 --radius）
-        md: '8px',
-        lg: '12px', // 面板/弹层（对应 --radius-lg）
-        card: '10px', // v6 新增：卡片容器（对应 --radius-card）
-      },
-      boxShadow: {
-        1: 'var(--shadow-1)',
-        2: 'var(--shadow-2)',
-        glow: 'var(--shadow-glow)',
-      },
       // 状态点脉冲（SessionItem / SessionCard 共享，running=accent / waiting=warn）。
       // 原两组件各自 scoped 定义同一份 keyframes，收敛到 SSOT 避免漂移。
       keyframes: {
@@ -158,5 +84,4 @@ export default {
       },
     },
   },
-  plugins: [],
 } satisfies Config

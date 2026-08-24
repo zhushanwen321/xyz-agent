@@ -14,10 +14,9 @@
  * 运行：cd packages/ui && npx vitest run src/features/chat/__tests__/BlockWorkflow.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { h } from 'vue'
 import { Block } from '@xyz-agent/ui'
 import type { ToolCall } from '@xyz-agent/shared'
+import { makeToolCall, mountToolBlock } from './helpers'
 
 // mock drawer 协同层：断言点击 workflow 块时 openWorkflow(name) 被调
 const { openWorkflowMock } = vi.hoisted(() => ({ openWorkflowMock: vi.fn() }))
@@ -25,24 +24,8 @@ vi.mock('@xyz-agent/core/domain/drawer', () => ({
   openWorkflow: openWorkflowMock,
 }))
 
-// stub GuiComponentRenderer / AnsiText，若组件仍尝试内联渲染详情区则 stub 会挂载（可检测回归）
-const GuiStub = {
-  name: 'GuiComponentRenderer',
-  props: { component: { type: Object, default: undefined } },
-  setup() {
-    return () => h('div', { 'data-testid': 'gui-renderer-stub' })
-  },
-}
-const AnsiStub = {
-  name: 'AnsiText',
-  props: { content: { type: String, default: '' } },
-  setup() {
-    return () => h('div', { 'data-testid': 'ansi-text-stub' })
-  },
-}
-
 function makeWorkflow(over: Partial<ToolCall> = {}): ToolCall {
-  return {
+  return makeToolCall({
     id: 'tc-wf-1',
     toolName: 'workflow',
     input: {
@@ -51,22 +34,7 @@ function makeWorkflow(over: Partial<ToolCall> = {}): ToolCall {
       slug: 'email-refactor',
       args: { task: '扫描 validator 并替换 regex' },
     },
-    status: 'completed',
-    startTime: 1000,
-    endTime: 5000,
     ...over,
-  }
-}
-
-function mountBlock(tool: ToolCall) {
-  return mount(Block, {
-    props: { type: 'tool', tool },
-    global: {
-      stubs: {
-        GuiComponentRenderer: GuiStub,
-        AnsiText: AnsiStub,
-      },
-    },
   })
 }
 
@@ -76,7 +44,7 @@ beforeEach(() => {
 
 describe('BlockWorkflow: 标题行字段（v6 §11：prefix + name · slug）', () => {
   it('run action：header 含 workflow prefix + name + · + slug', () => {
-    const wrapper = mountBlock(makeWorkflow({ status: 'completed' }))
+    const wrapper = mountToolBlock(makeWorkflow({ status: 'completed' }))
     const wfBlock = wrapper.find('[data-testid="workflow-block"]')
     expect(wfBlock.exists()).toBe(true)
     // workflow prefix tag
@@ -92,7 +60,7 @@ describe('BlockWorkflow: 标题行字段（v6 §11：prefix + name · slug）', 
   })
 
   it('status action：只渲染 prefix + name（无 action 动词）', () => {
-    const wrapper = mountBlock(
+    const wrapper = mountToolBlock(
       makeWorkflow({
         status: 'completed',
         input: { action: 'status', name: 'wf-check' },
@@ -104,7 +72,7 @@ describe('BlockWorkflow: 标题行字段（v6 §11：prefix + name · slug）', 
   })
 
   it('无 name 时只渲染 prefix（slug 也没有时不显示分隔符）', () => {
-    const wrapper = mountBlock(
+    const wrapper = mountToolBlock(
       makeWorkflow({
         status: 'completed',
         input: { action: 'pause', runId: 'wf-abcd1234-efgh-5678' },
@@ -120,7 +88,7 @@ describe('BlockWorkflow: 标题行字段（v6 §11：prefix + name · slug）', 
 
   it('args.task 不展示（长 task 也无截断 …）', () => {
     const longTask = '扫描'.repeat(40) // 80 字符
-    const wrapper = mountBlock(
+    const wrapper = mountToolBlock(
       makeWorkflow({
         status: 'completed',
         input: { action: 'run', name: 'wf-x', args: { task: longTask } },
@@ -133,7 +101,7 @@ describe('BlockWorkflow: 标题行字段（v6 §11：prefix + name · slug）', 
   })
 
   it('running 态 header 含双环 loader（animate-loader-spin + accent）', () => {
-    const wrapper = mountBlock(makeWorkflow({ status: 'running' }))
+    const wrapper = mountToolBlock(makeWorkflow({ status: 'running' }))
     // running 态双环 loader
     expect(wrapper.find('.animate-loader-spin').exists()).toBe(true)
     // 字段仍可见（name）
@@ -141,7 +109,7 @@ describe('BlockWorkflow: 标题行字段（v6 §11：prefix + name · slug）', 
   })
 
   it('不再渲染旧的状态动词（已完成/运行中/失败）', () => {
-    const wrapper = mountBlock(makeWorkflow({ status: 'completed' }))
+    const wrapper = mountToolBlock(makeWorkflow({ status: 'completed' }))
     // 旧 workflowStatusText 已删除，不再出现状态动词
     expect(wrapper.text()).not.toContain('已完成')
     expect(wrapper.text()).not.toContain('运行中')
@@ -150,7 +118,7 @@ describe('BlockWorkflow: 标题行字段（v6 §11：prefix + name · slug）', 
 
 describe('BlockWorkflow: collapsed only（§11：无内联详情展开，GUI 迁至 drawer）', () => {
   it('details.__gui__ 存在也不渲染 GuiComponentRenderer（GUI 渲染迁出 workflow 块）', async () => {
-    const wrapper = mountBlock(
+    const wrapper = mountToolBlock(
       makeWorkflow({
         output: 'workflow running',
         details: {
@@ -181,14 +149,14 @@ describe('BlockWorkflow: collapsed only（§11：无内联详情展开，GUI 迁
   })
 
   it('点击整行 → openWorkflow(name)（drawer 开 workflow tab）', async () => {
-    const wrapper = mountBlock(makeWorkflow({ status: 'completed' }))
+    const wrapper = mountToolBlock(makeWorkflow({ status: 'completed' }))
     await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
     expect(openWorkflowMock).toHaveBeenCalledTimes(1)
     expect(openWorkflowMock).toHaveBeenCalledWith('email-validation-refactor')
   })
 
   it('无 name 时点击 → openWorkflow(空串)（仅切 tab，不记录选中名）', async () => {
-    const wrapper = mountBlock(
+    const wrapper = mountToolBlock(
       makeWorkflow({
         status: 'completed',
         input: { action: 'status' },

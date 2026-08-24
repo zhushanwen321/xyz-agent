@@ -86,7 +86,6 @@
         v-if="hasAskUserRequest"
         :questions="askUserQuestions"
         :allow-cancel="currentAskUserRequest?.allowCancel"
-        :started-at="askUserStartedAt"
         @submit="onAskUserSubmit"
         @cancel="onAskUserCancel"
       />
@@ -210,12 +209,6 @@ const askUserQuestions = computed<AskUserQuestion[]>(() => {
   if (!req?.askUser || !req.askUserQuestions) return []
   return req.askUserQuestions.filter(isAskUserQuestion)
 })
-/** 倒计时起点：请求入队时刻（useExtensionUI push 时打 receivedAt 戳）。
- *  用入队时刻而非渲染时刻——Panel 可能在请求已挂起后才 mount（切 panel/视图切回），
- *  此时渲染时刻 ≠ 请求到达时刻，用 Date.now() 会导致倒计时重置、与 runtime 5min 超时不同步。 */
-const askUserStartedAt = computed(() =>
-  currentAskUserRequest.value?.receivedAt ?? Date.now(),
-)
 /** ask-user Submit：answers JSON string 回传给 pi（select method）。 */
 function onAskUserSubmit(answers: string): void {
   const req = currentAskUserRequest.value

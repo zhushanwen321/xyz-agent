@@ -31,9 +31,10 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import {
 	discoverResources,
 	findWorkspaceRoot,
-	getCachedFileContent,
+	getCachedParsed,
 } from "../shared/resource-discovery.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
+import { escapeXml, renderXmlSection } from "../shared/xml-injection.ts";
 
 const logger = getLogger("injector");
 
@@ -107,6 +108,8 @@ export function parseWorkflowMeta(content: string): WorkflowEntry | null {
 
 /**
  * 用统一资源发现发现所有可用 workflow（includeTmp 覆盖 generate 产物）。
+ * 解析经 getCachedParsed mtime 级缓存；输出按 name 码点序排序（KV-cache 契约，
+ * 见 subagent-list-injector.ts discoverAllAgents 注释）。
  * 永不抛错——单文件读失败仅记日志。
  */
 export async function discoverAllWorkflows(
@@ -124,8 +127,7 @@ export async function discoverAllWorkflows(
 	for (const resource of resources) {
 		if (!resource.available) continue;
 		try {
-			const content = getCachedFileContent(resource.path) ?? "";
-			const wf = parseWorkflowMeta(content);
+			const wf = getCachedParsed(resource.path, parseWorkflowMeta);
 			if (wf) map.set(wf.name, { ...wf, path: resource.path });
 		} catch (err) {
 			logger.error(
@@ -134,17 +136,9 @@ export async function discoverAllWorkflows(
 			);
 		}
 	}
-	return [...map.values()];
-}
-
-/** 转义 XML 特殊字符 */
-function escapeXml(str: string): string {
-	return str
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&apos;");
+	return [...map.values()].sort((a, b) =>
+		a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+	);
 }
 
 /**
@@ -157,19 +151,16 @@ function escapeXml(str: string): string {
 export function formatWorkflowList(workflows: WorkflowEntry[]): string {
 	if (workflows.length === 0) return "";
 
-	const lines = [
-		"\n\n<available_workflows>",
+	const items = workflows.map((wf) =>
+		`  <workflow><name>${escapeXml(wf.name)}</name><description>${escapeXml(wf.description)}</description><location>${escapeXml(wf.path)}</location></workflow>`,
+	);
+	return renderXmlSection({
+		tag: "available_workflows",
 		// 引导语与具体 workflow 解耦：不写死内置名（列表本身已含全部 workflow，
 		// 名字/描述每 turn 由 @pi-meta 动态注入），只给通用路由指引 + read location 参数指针。
-		'The following workflows are available. Do NOT call list to discover available workflows — they are listed below; use list only for running state. All listed workflows run directly via action:run — do NOT use workflow-script generate for any listed workflow. For parameter details, read the <location> script file (script header has @pi-meta parameters + usage).',
-	];
-	for (const wf of workflows) {
-		lines.push(
-			`  <workflow><name>${escapeXml(wf.name)}</name><description>${escapeXml(wf.description)}</description><location>${escapeXml(wf.path)}</location></workflow>`,
-		);
-	}
-	lines.push("</available_workflows>");
-	return lines.join("\n");
+		guide: "The following workflows are available. Do NOT call list to discover available workflows — they are listed below; use list only for running state. All listed workflows run directly via action:run — do NOT use workflow-script generate for any listed workflow. For parameter details, read the <location> script file (script header has @pi-meta parameters + usage).",
+		items,
+	});
 }
 
 /**

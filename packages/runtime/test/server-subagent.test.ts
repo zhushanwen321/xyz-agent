@@ -118,7 +118,7 @@ describe('RuntimeServer message.send with subagent field', () => {
       new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, { readGitInfo: () => undefined, pruneStaleCache: () => {} } as never, {} as never),
       new ConfigService('/tmp', new PiConfigStore()),
       new ModelService(new ModelApiDiscoverer()),
-      {} as never,
+      { extension: {} as never },
     )
     return s
   })

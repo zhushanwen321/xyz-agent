@@ -36,6 +36,7 @@ const store: ISessionStore = {
   persistSessionEnd: () => {},
   persistPresetBinding: () => {},
   persistProjectBinding: () => {},
+  persistAgentBinding: () => {},
   extractSessionOutcome: () => null,
   invalidateMetaCache: () => {},
   convertHistory: () => [],

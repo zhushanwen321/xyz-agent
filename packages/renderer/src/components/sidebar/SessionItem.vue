@@ -4,161 +4,201 @@
     状态信号集中在左侧 7px 单一 icon（旋转箭头/空心圆/实心圆/空白），
     右侧仅保留时间文字。未读标记 7px accent 圆点叠在 icon 右上角。
     active=bg-surface+text-accent；hover ghost 操作（bottom-right）。
+    agent-spawned session（U8）：标题旁 [AI] badge + 右键「查看父 session」菜单。
   -->
-  <div
-    ref="rootEl"
-    class="session-item group/item relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 transition-colors"
-    :class="[
-      active ? 'bg-surface' : 'hover:bg-surface-hover',
-      isDead ? 'opacity-50' : '',
-    ]"
-    :aria-label="ariaLabel"
-    @click="emit('select', session.id)"
-    @mouseleave="confirming = false"
-  >
-    <!-- 左侧 7px 状态 icon：spinning(旋转箭头) / hollow(空心圆) / waiting / error / done / stopped / dead / 空。
-         未读标记 7px accent 圆点叠在 icon 右上角（absolute + box-shadow 镂空）。 -->
-    <div class="relative mt-[6px] size-[7px] shrink-0" data-testid="session-icon">
-      <!-- spinning: streaming / compacting / working / retrying → 旋转箭头（accent 边框 + 透明顶边） -->
-      <span v-if="iconKind === 'spinning'" class="block size-[7px] animate-spin rounded-full border-[1.5px] border-accent border-t-transparent" />
-      <!-- hollow: pending → accent 空心圆 -->
-      <span v-else-if="iconKind === 'hollow'" class="block size-[7px] rounded-full border-[1.5px] border-accent" />
-      <!-- hollow-dim: stopped → dim 空心圆 -->
-      <span v-else-if="iconKind === 'hollow-dim'" class="block size-[7px] rounded-full border-[1.5px] border-neutral-dim opacity-60" />
-      <!-- waiting → warn 实心圆 -->
-      <span v-else-if="iconKind === 'waiting'" class="block size-[7px] rounded-full bg-warn" />
-      <!-- error → danger 实心圆 -->
-      <span v-else-if="iconKind === 'error'" class="block size-[7px] rounded-full bg-danger" />
-      <!-- done → success 实心圆 90% -->
-      <span v-else-if="iconKind === 'done'" class="block size-[7px] rounded-full bg-success opacity-90" />
-      <!-- dead → neutral-dim 实心圆 50% -->
-      <span v-else-if="iconKind === 'dead'" class="block size-[7px] rounded-full bg-neutral-dim opacity-50" />
-      <!-- 已归档+已读 → 空（无 icon） -->
-      <span v-else aria-hidden="true" />
-      <!-- 未读标记：叠在 icon 右上角 -->
-      <span
-        v-if="unread"
-        data-testid="session-unread-dot"
-        class="absolute -right-0.5 -top-0.5 size-[7px] rounded-full bg-accent"
-        style="box-shadow: 0 0 0 2px var(--bg)"
-      />
-    </div>
-
-    <!-- 主体：label + sub（fork 血缘 / branch） -->
-    <div class="min-w-0 flex-1">
+  <!-- 右键菜单用 reka ContextMenu 原语（光标定位原语级支持，PanelContainer 同为直接引 reka-ui 先例）；
+       Trigger as-child 合并到根 div，不引入额外包裹层破坏既有 flex/绝对定位。 -->
+  <ContextMenuRoot>
+    <ContextMenuTrigger as-child>
       <div
-        class="truncate text-[12px] leading-[1.35]"
+        ref="rootEl"
+        class="session-item group/item relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 transition-colors"
         :class="[
-          active ? 'text-accent' : 'text-neutral-fg',
-          markedDone ? 'opacity-60' : '',
+          active ? 'bg-surface' : 'hover:bg-surface-hover',
+          isDead ? 'opacity-50' : '',
         ]"
+        :aria-label="ariaLabel"
+        @click="emit('select', session.id)"
+        @mouseleave="confirming = false"
       >
-        {{ session.label }}
+      <!-- 左侧 7px 状态 icon：spinning(旋转箭头) / hollow(空心圆) / waiting / error / done / stopped / dead / 空。
+           未读标记 7px accent 圆点叠在 icon 右上角（absolute + box-shadow 镂空）。 -->
+      <div class="relative mt-[6px] size-[7px] shrink-0" data-testid="session-icon">
+        <!-- spinning: streaming / compacting / working / retrying → 旋转箭头（accent 边框 + 透明顶边） -->
+        <span v-if="iconKind === 'spinning'" class="block size-[7px] animate-spin rounded-full border-[1.5px] border-accent border-t-transparent" />
+        <!-- hollow: pending → accent 空心圆 -->
+        <span v-else-if="iconKind === 'hollow'" class="block size-[7px] rounded-full border-[1.5px] border-accent" />
+        <!-- hollow-dim: stopped → dim 空心圆 -->
+        <span v-else-if="iconKind === 'hollow-dim'" class="block size-[7px] rounded-full border-[1.5px] border-neutral-dim opacity-60" />
+        <!-- waiting → warn 实心圆 -->
+        <span v-else-if="iconKind === 'waiting'" class="block size-[7px] rounded-full bg-warn" />
+        <!-- error → danger 实心圆 -->
+        <span v-else-if="iconKind === 'error'" class="block size-[7px] rounded-full bg-danger" />
+        <!-- done → success 实心圆 90% -->
+        <span v-else-if="iconKind === 'done'" class="block size-[7px] rounded-full bg-success opacity-90" />
+        <!-- dead → neutral-dim 实心圆 50% -->
+        <span v-else-if="iconKind === 'dead'" class="block size-[7px] rounded-full bg-neutral-dim opacity-50" />
+        <!-- 已归档+已读 → 空（无 icon） -->
+        <span v-else aria-hidden="true" />
+        <!-- 未读标记：叠在 icon 右上角 -->
+        <span
+          v-if="unread"
+          data-testid="session-unread-dot"
+          class="absolute -right-0.5 -top-0.5 size-[7px] rounded-full bg-accent"
+          style="box-shadow: 0 0 0 2px var(--bg)"
+        />
       </div>
+
+      <!-- 主体：label + sub（fork 血缘 / branch） -->
+      <div class="min-w-0 flex-1">
+        <div
+          class="flex min-w-0 items-center gap-1 text-[12px] leading-[1.35]"
+          :class="[
+            active ? 'text-accent' : 'text-neutral-fg',
+            markedDone ? 'opacity-60' : '',
+          ]"
+        >
+          <span class="min-w-0 flex-1 truncate">{{ session.label }}</span>
+          <!-- agent-spawned badge（U8）：accent 低饱和形态（bg-accent-soft + text-accent，
+               对齐 popover-styles SELECTED_ITEM_CLASS 配对）；尺寸/圆角对齐同目录
+               FileTreeRow badge（rounded-sm px-1 py-0.5 text-[10px]），不抢左侧状态 icon 焦点 -->
+          <span
+            v-if="isAgentSpawned"
+            data-testid="session-agent-badge"
+            class="shrink-0 rounded-sm bg-accent-soft px-1 py-0.5 font-mono text-[10px] leading-none text-accent"
+          >{{ t('sidebar.sessionItem.agentBadge') }}</span>
+        </div>
+        <div
+          class="mt-0.5 truncate font-mono text-[10px] leading-[1.3] text-neutral-dim"
+          data-testid="sidebar-session-sub"
+        >
+          <!-- 分支血缘元信息（spec §8.5：分支 session 自身显示「↑ fork 自 <父名>」）优先；
+               无血缘则显 branch（git 分支）；都无则回退 cwd 末段，避免空行。 -->
+          <template v-if="session.parentSession">
+            <span class="fork-lineage text-accent/80">{{ t('sidebar.sessionItem.forkFrom') }} {{ session.parentLabel || session.parentSession }}</span>
+          </template>
+          <template v-else-if="session.gitBranch">{{ session.gitBranch }}</template>
+          <template v-else>{{ dirName }}</template>
+        </div>
+      </div>
+
+      <!-- 右侧：仅时间文字（状态信号已移至左侧 7px icon） -->
+      <span
+        class="mt-1 shrink-0 font-mono text-[10px] leading-[1.35] text-neutral-dim"
+      >{{ timeLabel }}</span>
+
+      <!-- hover ghost 操作（spec §3 SessionItem hover 帧）。
+           位置 bottom-right（遮 meta 而非 dirName，与 demo 对齐）；删除走两段式确认。 -->
       <div
-        class="mt-0.5 truncate font-mono text-[10px] leading-[1.3] text-neutral-dim"
-        data-testid="sidebar-session-sub"
+        class="absolute bottom-0.5 right-1 gap-0.5"
+        :class="confirming ? 'flex' : 'flex opacity-0 group-hover/item:opacity-100 group-focus-within/item:opacity-100'"
       >
-        <!-- 分支血缘元信息（spec §8.5：分支 session 自身显示「↑ fork 自 <父名>」）优先；
-             无血缘则显 branch（git 分支）；都无则回退 cwd 末段，避免空行。 -->
-        <template v-if="session.parentSession">
-          <span class="fork-lineage text-accent/80">{{ t('sidebar.sessionItem.forkFrom') }} {{ session.parentLabel || session.parentSession }}</span>
-        </template>
-        <template v-else-if="session.gitBranch">{{ session.gitBranch }}</template>
-        <template v-else>{{ dirName }}</template>
-      </div>
-    </div>
-
-    <!-- 右侧：仅时间文字（状态信号已移至左侧 7px icon） -->
-    <span
-      class="mt-1 shrink-0 font-mono text-[10px] leading-[1.35] text-neutral-dim"
-    >{{ timeLabel }}</span>
-
-    <!-- hover ghost 操作（spec §3 SessionItem hover 帧）。
-         位置 bottom-right（遮 meta 而非 dirName，与 demo 对齐）；删除走两段式确认。 -->
-    <div
-      class="absolute bottom-0.5 right-1 gap-0.5"
-      :class="confirming ? 'flex' : 'flex opacity-0 group-hover/item:opacity-100 group-focus-within/item:opacity-100'"
-    >
-      <Button
-        v-if="!confirming"
-        variant="ghost"
-        size="icon"
-        data-testid="mark-done-btn"
-        class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
-        :class="markedDone ? 'text-success' : ''"
-        :title="markedDone ? t('sidebar.sessionItem.unmarkDone') : t('sidebar.sessionItem.markDone')"
-        @click.stop="onMarkDone"
-      >
-        <Archive class="size-[13px]" :class="markedDone ? 'fill-current' : ''" />
-      </Button>
-      <Button
-        v-if="!confirming"
-        variant="ghost"
-        size="icon"
-        class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
-        :title="t('sidebar.sessionItem.rename')"
-        @click.stop="emit('rename', session.id)"
-      >
-        <Pencil class="size-[13px]" />
-      </Button>
-      <!-- 归入项目（D14 语义修正 2026-08-04）：Popover 菜单列全部 project，点击即归类。
-           归类可逆（可再点其他 project / 默认项目），无需两段确认。 -->
-      <Popover v-if="!confirming" :open="assignOpen" @update:open="assignOpen = $event">
-        <PopoverTrigger as-child>
-          <Button
-            variant="ghost"
-            size="icon"
-            data-testid="assign-project-btn"
-            class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
-            :title="t('sidebar.sessionItem.assignToProject')"
-            @click.stop="assignOpen = true"
-          >
-            <FolderKanban class="size-[13px]" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent side="right" align="start" :collision-padding="8" class="w-44 p-1">
-          <div class="flex flex-col gap-px">
-            <!-- 默认项目项 id=''：未归类 session 的 projectId 是 undefined，必须归一为空串才能命中高亮（review S-2） -->
+        <Button
+          v-if="!confirming"
+          variant="ghost"
+          size="icon"
+          data-testid="mark-done-btn"
+          class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+          :class="markedDone ? 'text-success' : ''"
+          :title="markedDone ? t('sidebar.sessionItem.unmarkDone') : t('sidebar.sessionItem.markDone')"
+          @click.stop="onMarkDone"
+        >
+          <Archive class="size-[13px]" :class="markedDone ? 'fill-current' : ''" />
+        </Button>
+        <Button
+          v-if="!confirming"
+          variant="ghost"
+          size="icon"
+          class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+          :title="t('sidebar.sessionItem.rename')"
+          @click.stop="emit('rename', session.id)"
+        >
+          <Pencil class="size-[13px]" />
+        </Button>
+        <!-- 归入项目（D14 语义修正 2026-08-04）：Popover 菜单列全部 project，点击即归类。
+             归类可逆（可再点其他 project / 默认项目），无需两段确认。 -->
+        <Popover v-if="!confirming" :open="assignOpen" @update:open="assignOpen = $event">
+          <PopoverTrigger as-child>
             <Button
-              v-for="p in assignTargets"
-              :key="p.id"
               variant="ghost"
-              data-testid="assign-project-option"
-              class="h-auto w-full justify-start gap-2 rounded-sm px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
-              :class="(session.projectId || '') === p.id ? 'text-accent' : ''"
-              @click="onAssign(p.id)"
+              size="icon"
+              data-testid="assign-project-btn"
+              class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+              :title="t('sidebar.sessionItem.assignToProject')"
+              @click.stop="assignOpen = true"
             >
-              <span
-                class="size-2 shrink-0 rounded-full"
-                :class="(session.projectId || '') === p.id ? 'bg-accent' : 'bg-transparent'"
-              />
-              <span class="truncate">{{ p.name || t('sidebar.projectSwitcher.defaultName') }}</span>
+              <FolderKanban class="size-[13px]" />
             </Button>
-          </div>
-        </PopoverContent>
-      </Popover>
-      <Button
-        variant="ghost"
-        size="icon"
-        :class="confirming
-          ? 'size-[22px] rounded-sm bg-danger text-neutral-fg'
-          : 'size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-danger'"
-        :title="confirming ? t('sidebar.sessionItem.deleteConfirm') : t('sidebar.sessionItem.delete')"
-        @click.stop="onRemoveClick"
+          </PopoverTrigger>
+          <PopoverContent side="right" align="start" :collision-padding="8" class="w-44 p-1">
+            <div class="flex flex-col gap-px">
+              <!-- 默认项目项 id=''：未归类 session 的 projectId 是 undefined，必须归一为空串才能命中高亮（review S-2） -->
+              <Button
+                v-for="p in assignTargets"
+                :key="p.id"
+                variant="ghost"
+                data-testid="assign-project-option"
+                class="h-auto w-full justify-start gap-2 rounded-sm px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+                :class="(session.projectId || '') === p.id ? 'text-accent' : ''"
+                @click="onAssign(p.id)"
+              >
+                <span
+                  class="size-2 shrink-0 rounded-full"
+                  :class="(session.projectId || '') === p.id ? 'bg-accent' : 'bg-transparent'"
+                />
+                <span class="truncate">{{ p.name || t('sidebar.projectSwitcher.defaultName') }}</span>
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
+        <Button
+          variant="ghost"
+          size="icon"
+          :class="confirming
+            ? 'size-[22px] rounded-sm bg-danger text-neutral-fg'
+            : 'size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-danger'"
+          :title="confirming ? t('sidebar.sessionItem.deleteConfirm') : t('sidebar.sessionItem.delete')"
+          @click.stop="onRemoveClick"
+        >
+          <Check v-if="confirming" class="size-[13px]" />
+          <Trash2 v-else class="size-[13px]" />
+        </Button>
+      </div>
+      </div>
+    </ContextMenuTrigger>
+    <!-- 「查看父 session」右键菜单项：仅 agent 发起且带父 id 的 session 挂内容
+         （条件渲染整块 Portal——其余 session 右键无任何菜单项，不吞 native menu 之外的语义）。
+         跳转逻辑由上层接线，本组件只保证事件链 emit navigateParent。 -->
+    <ContextMenuPortal v-if="hasAgentParent">
+      <ContextMenuContent
+        data-testid="session-context-menu"
+        class="z-[1100] min-w-[160px] rounded-md border border-border-strong bg-bg-elevated p-1 text-neutral-fg shadow-2 outline-none"
       >
-        <Check v-if="confirming" class="size-[13px]" />
-        <Trash2 v-else class="size-[13px]" />
-      </Button>
-    </div>
-  </div>
+        <ContextMenuItem
+          data-testid="session-view-parent-item"
+          class="flex h-auto w-full cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-[12px] text-neutral-mid outline-none hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[13px]"
+          @select="onViewParent"
+        >
+          <CornerLeftUp />
+          <span>{{ t('sidebar.sessionItem.viewParent') }}</span>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenuPortal>
+  </ContextMenuRoot>
 </template>
 
 <script setup lang="ts">
 import { computed, inject, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onClickOutside } from '@vueuse/core'
-import { Check, Pencil, Trash2, Archive, FolderKanban } from '@lucide/vue'
+import { Check, Pencil, Trash2, Archive, FolderKanban, CornerLeftUp } from '@lucide/vue'
+import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  ContextMenuPortal,
+  ContextMenuContent,
+  ContextMenuItem,
+} from 'reka-ui'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { useProjectStore } from '@/stores/project'
@@ -190,6 +230,10 @@ const props = defineProps<{
     parentLabel?: string
     /** 归属 project id（D14 语义修正；空/undefined = 未归类，归入默认项目聚合）。 */
     projectId?: string
+    /** 发起来源（agent-managed-session U8）：'agent' = agent 经 session-manager 创建，标题旁显 [AI] badge。 */
+    spawnSource?: 'user' | 'agent'
+    /** 父 agent session id（U8）：spawnSource='agent' 时由 runtime 注入，右键「查看父 session」用。 */
+    parentAgentSessionId?: string
   }
   active: boolean
   status: DerivedStatus
@@ -201,6 +245,9 @@ const emit = defineEmits<{
   delete: [sessionId: string]
   /** 归入项目（D14 语义修正）：payload 单对象（规则 #1）。projectId 空串 = 归回默认项目。 */
   setProject: [{ sessionId: string; projectId: string }]
+  /** 查看父 session（U8）：payload 单字符串 = parentAgentSessionId（与 select 同形）。
+   *  跳转本身由上层（Sidebar/store）接线，本组件只发事件。 */
+  navigateParent: [parentAgentSessionId: string]
 }>()
 
 // ── 归入项目菜单（D14 语义修正 2026-08-04）──
@@ -219,6 +266,21 @@ function onAssign(projectId: string): void {
 
 /** dead session（进程已退出）置灰，仍可点击（点击触发 restore 重开） */
 const isDead = computed(() => props.session.status === 'dead')
+
+// ── agent-spawned 标记（U8）──
+/** agent 经 session-manager 创建的 session：标题旁 [AI] badge。 */
+const isAgentSpawned = computed(() => props.session.spawnSource === 'agent')
+/** badge 只标来源；右键菜单还需父 id 才有可导航目标（menu item 与 Portal 同条件渲染）。 */
+const hasAgentParent = computed(
+  () => isAgentSpawned.value && !!props.session.parentAgentSessionId,
+)
+/** 菜单项点击：向上 emit 父 session id。守卫除防御外还承担 TS 窄化
+ *  （props 字段 string|undefined → emit 要求 string），不可删。 */
+function onViewParent(): void {
+  const parent = props.session.parentAgentSessionId
+  if (!parent) return
+  emit('navigateParent', parent)
+}
 
 /**
  * 删除两段式确认态。首次点击进入红底确认态（不 emit），再次点击才 emit delete。

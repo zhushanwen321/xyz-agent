@@ -346,6 +346,40 @@ export function createChatStore() {
     return hydrateAnchors.get(sessionId)
   }
 
+  /**
+   * 切入 reconcile：entry 历史（服务端 getHistory 全量）与 live 分区合并。
+   *
+   * [背景 session-reconcile 2026-08-22] 后台 session（agent-managed 子 session）在
+   * 前端不在场时推进/完成 turn——hydrate 的一次性守卫会让切入后的新 entry 永不出现
+   * （最后输出看不到）；且 pi entries 不含进行中消息（entry 完成才 append），直接
+   * 替换会抹掉 live streaming 实体 → 后续 text_delta 被 isLastAssistantStreaming
+   * 守卫丢弃 → 流永久停滞。合并方向（登记表 #7 切入 reconcile 规则）：
+   * **entry 历史为基线，分区尾部 streaming 实体追加其后**（live 真相优先于 entry 快照）。
+   *
+   * - 未 hydrate → 等价 hydrate（原语义：全量替换 + 锚 + 标记）
+   * - 已 hydrate → 基线替换 + 保留尾部 streaming assistant（进行中轮次不断链）；
+   *   turn 已结束（无 streaming 实体）则纯刷新到最新 entries
+   */
+  function reconcileHistory(sessionId: string, history: Message[]): void {
+    if (!hydrated.value.has(sessionId)) {
+      hydrate(sessionId, history)
+      return
+    }
+    const cur = messages.value.get(sessionId)?.value ?? []
+    // 尾部连续 streaming assistant（live 进行中实体，pi 无对应 entry）。一个 turn 至多
+    // 一条 streaming assistant；从尾向前截，遇非 streaming 即止。
+    let cut = cur.length
+    while (cut > 0 && cur[cut - 1].role === 'assistant' && cur[cut - 1].status === 'streaming') {
+      cut--
+    }
+    const trailing = cur.slice(cut)
+    const merged = trailing.length > 0
+      ? [...history.map((m) => ({ ...m })), ...trailing]
+      : history.map((m) => ({ ...m }))
+    commitMessages(messages, sessionId, truncateToolOutputBatch(merged))
+    lruTouch(sessionId) // W3: LRU recency（切入刷新视同活跃访问）
+  }
+
   /** 直接覆盖某 session 的消息（subagent 虚拟 session 用，不受 hydrated 守卫；回流路径截断 AC-10/D9）。 */
   function setMessages(sessionId: string, history: Message[]): void {
     const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
@@ -740,7 +774,7 @@ export function createChatStore() {
     getChangeSetStatus, setChangeSetStatus,
     markChangeSetsSuperseded,
     isHydrated, markHistoryFailed, clearHistoryError,
-    hydrate, setMessages,
+    hydrate, setMessages, reconcileHistory,
     getHydrateAnchor,
     prependHistory,
     applySubagentStreamDelta: (virtualId: string, lines: string[]) => streamingStateMachine.applySubagentStreamDelta(virtualId, lines),
