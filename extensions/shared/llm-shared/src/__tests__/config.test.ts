@@ -7,15 +7,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearConfigCache, getConfigPath, loadConfig, saveConfig } from "../config.ts";
 import * as fileLock from "@zhushanwen/pi-file-lock";
 
+// mock 掉共享 logger，使 loggerMock.warn 可被断言（saveConfig 非致命降级路径的留痕）
+const { loggerMock } = vi.hoisted(() => ({
+	loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+	getLogger: () => loggerMock,
+	createLogger: () => loggerMock,
+	setPiHandle: vi.fn(),
+}));
+
 // node:fs 的 ESM namespace 不可配置，vi.spyOn 对具名导出失效（vitest 限制）。
-// 用 vi.mock 包装 readFileSync/renameSync（默认走 actual，个别 test override），
-// 其他 fs 操作（writeFileSync/existsSync/statSync/mkdirSync...）原样透传 actual。
+// 用 vi.mock 包装 readFileSync/renameSync/statSync/unlinkSync（默认走 actual，
+// 个别 test override），其他 fs 操作（writeFileSync/existsSync/mkdirSync...）原样
+// 透传 actual。statSync/unlinkSync 供 U4 logger.warn 留痕用例 override。
+// 注意：proper-lockfile（withFileLockSync 内部）走 graceful-fs，不受本 mock 影响。
 vi.mock("node:fs", async (importOriginal) => {
 	const actual = await importOriginal() as typeof import("node:fs");
 	return {
 		...actual,
 		readFileSync: vi.fn(actual.readFileSync),
 		renameSync: vi.fn(actual.renameSync),
+		statSync: vi.fn(actual.statSync),
+		unlinkSync: vi.fn(actual.unlinkSync),
 	};
 });
 
@@ -33,6 +47,9 @@ beforeEach(() => {
 afterEach(() => {
 	vi.mocked(fs.readFileSync).mockClear();
 	vi.mocked(fs.renameSync).mockClear();
+	vi.mocked(fs.statSync).mockClear();
+	vi.mocked(fs.unlinkSync).mockClear();
+	loggerMock.warn.mockClear();
 	rmSync(dir, { recursive: true, force: true });
 	vi.unstubAllEnvs();
 });
@@ -215,6 +232,55 @@ describe("saveConfig", () => {
 		// tmp 清理（Windows 目标占用场景 rename 失败后 tmp 残留被清理；前缀断言）
 		expect(tmpResidues("eperm")).toEqual([]);
 		expect(existsSync(join(dir, "config", "eperm-ext-config.json"))).toBe(false);
+	});
+
+	it("U4: rename 成功但写后 stat 失败 → logger.warn 留痕 + 保存仍成功（缓存未更新，下次 load 重读）", () => {
+		// saveConfig 流程内 node:fs 的 statSync 只有写后更新缓存这一次调用
+		// （withFileLockSync 走 graceful-fs，不经过本 mock），once 必命中
+		vi.mocked(fs.statSync).mockImplementationOnce(() => {
+			throw new Error("EACCES: permission denied, stat");
+		});
+
+		const result = saveConfig("statfail", { x: 1 });
+
+		// stat 失败不影响保存成功语义（缓存下次 load 时会重读）
+		expect(result.success).toBe(true);
+		expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+		expect(String(loggerMock.warn.mock.calls[0]![0])).toContain("saveConfig stat after write failed");
+		expect(JSON.stringify(loggerMock.warn.mock.calls[0]![1])).toContain("EACCES");
+		// 文件已落盘（rename 已成功）
+		expect(JSON.parse(readFileSync(join(dir, "config", "statfail-ext-config.json"), "utf-8"))).toEqual({ x: 1 });
+		// 缓存未更新（stat 失败跳过 set）→ 下次 load 重读盘而非命中缓存
+		vi.mocked(fs.readFileSync).mockClear();
+		const loaded = loadConfig("statfail", { a: 0 }, normalize);
+		expect(loaded).toEqual({ a: 0 }); // normalize({x:1}) 不含 a → defaults
+		expect(vi.mocked(fs.readFileSync)).toHaveBeenCalledTimes(1);
+	});
+
+	it("U4: rename 失败且 tmp 清理也失败 → logger.warn 留痕 + {success:false}（清理失败不吞保存失败）", () => {
+		vi.mocked(fs.renameSync).mockImplementationOnce(() => {
+			throw new Error("EPERM: operation not permitted, rename");
+		});
+		// unlinkSync 在本流程内只有 catch 路径的 tmp 清理这一次调用，once 必命中
+		vi.mocked(fs.unlinkSync).mockImplementationOnce(() => {
+			throw new Error("EBUSY: resource busy or locked, unlink");
+		});
+		const onWarning = vi.fn();
+
+		const result = saveConfig("cleanupfail", { x: 1 }, onWarning);
+
+		// 保存失败的返回不被清理失败吞掉
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("EPERM");
+		expect(onWarning).toHaveBeenCalledTimes(1);
+		// tmp 清理失败留痕
+		expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+		expect(String(loggerMock.warn.mock.calls[0]![0])).toContain("saveConfig tmp cleanup failed");
+		expect(JSON.stringify(loggerMock.warn.mock.calls[0]![1])).toContain("EBUSY");
+		// unlink 失败 → tmp 残留（反向证明清理路径确实失败）
+		expect(tmpResidues("cleanupfail")).toHaveLength(1);
+		// 目标文件未被创建（rename 失败）
+		expect(existsSync(join(dir, "config", "cleanupfail-ext-config.json"))).toBe(false);
 	});
 
 	it("saveConfig 多次写同文件 → 每次成功 + 最新内容", () => {
