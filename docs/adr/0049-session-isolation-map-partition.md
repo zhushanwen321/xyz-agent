@@ -84,6 +84,14 @@ ESLint 规则放弃后，per-session 范式靠 **code-review 强制检查项** �
 3. **WS handler 是否用 `updateFor(sid, ...)` 而非 `update(...)`？** WS handler 闭包捕获订阅时 sid，须用 `updateFor(capturedSid, ...)` 显式指定分区，不读 `sid.value` 实时值（防 session 切换退订异步期间的竞态，M1 修复）。
 4. **session 销毁时分区是否 cleanup？** 正常路径由 `useSidebar.deleteSession` → `triggerSessionCleanups(id)` 自动触发（工厂 setup 时自动注册，scope dispose 时反注册）。若 composable 有特殊生命周期，确认 cleanup 已挂钩。
 
+#### 覆盖边界：含持 sessionId prop 的组件（2026-08-24 扩，context-consistency G3）
+
+上述 checklist 的措辞是「新增/修改 composable 时」，但**组件在实例 ref 里持有 session 级状态同样是本 ADR 的覆盖对象**——生命周期错位与 composable 同构：组件实例生命周期 ≠ session 生命周期，sessionId prop 变化只触发重订阅（`useSessionEvents` 的 watch 重订），不触发 remount，实例 ref 跨 session 存活、切走被别的 session 帧合法覆盖、切回无人重喂（`ContextCapacityPopover` 的 `stats` ref 实证，见 [context-consistency-design.md](../todo/context-consistency-design.md) §2.2 层 3），故不另立范式。自本修订起：
+
+- **reviewer 按上述 checklist 检查的范围 = composable + 持 sessionId prop 的组件**：四条判据对组件同样适用（组件内 `ref`/`let` 持有「当前 session 的 X」即命中第 1 条；整改方向 = 状态上移到经 `useSessionScopedState` 分区的 composable、组件纯读——`useContextUsage` 范式，设计文档 D2）。
+- 检查触发场景与判定口径沿用约束 C-state-08「session 级 renderer 状态三问」：新增 `ServerMessageType` 的 renderer 消费方 / 新增 `useSessionEvents` 调用点时必查**存哪里（分区 store/composable）？切走谁清（cleanup 编排）？切回谁喂（恢复腿）？**——三问都有明确归属才放行。
+- 机器防线 = taste-lint 规则 `no-instance-level-session-state`（error 级，pre-commit 拦截，注册于 `taste-lint/base.mjs`）：只检测收窄反模式「onMessage handler 直写组件实例级 ref」（检测模式与误报面见 [context-consistency-lint-rule.md](../todo/context-consistency-lint-rule.md)）。与上文 D4 放弃的 ESLint 规则不矛盾——D4 放弃的是「AST 判定 ref/let 是否 per-session 语义」的全量检测（铺天盖地误报），本规则收窄到可静态判定的写入形状。
+
 ### 例外清单（显式审批记录）
 
 以下 composable **经审批**不采用 `useSessionScopedState` 工厂，记录原因供 review 参考：
