@@ -1001,7 +1001,8 @@ export interface ServerMessageMapBase {
   // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）。
   'app.info': { appVersion: string; piVersion: string }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）。
-  // usage 三字段 optional：字段缺失 = 无值（pi tokens=null，compact 后无新 turn / 新 session 未跑 turn）。
+  // usage 三字段 optional：字段缺失 = 无值（pi tokens=null，compact 后无新 turn / 新 session 未跑 turn；
+  // pi 源码锚点见 docs/todo/context-consistency-design.md「系统是什么」§1：extensions/types.ts:289 + rpc-mode.ts:591）。
   // [HISTORICAL] D1 协议收敛（context-consistency Phase 1）：无值以「字段缺失」表达，禁止 ?? 0 编码
   // （0 物理上不可能是真值——任何模型 contextWindow > 0）；仅含 sessionId 的帧 = 无值占位帧。
   'context.update': { sessionId: string; usagePercent?: number; inputTokens?: number; contextLimit?: number }

@@ -27,7 +27,7 @@
 
 被设计的对象是 **session 级状态从 pi 进程到用户眼前的复制链路**，只涉及 context 用量这一种状态（其他状态仅作背景）：
 
-1. **pi 进程**（每 session 一个）：真正的权威源。`get_session_stats()` RPC 返回 `contextUsage = { tokens, contextWindow, percent }`。tokens 可为 null——**新 session 未跑过 turn、或 compact 后无新 turn 时，pi 自己也不知道用量**（合法「无值」态）。
+1. **pi 进程**（每 session 一个）：真正的权威源。`get_session_stats()` RPC 返回 `contextUsage = { tokens, contextWindow, percent }`。tokens 可为 null——**新 session 未跑过 turn、或 compact 后无新 turn 时，pi 自己也不知道用量**（合法「无值」态）。pi 源码锚点（ADR-0063 I4）：`coding-agent/src/core/extensions/types.ts:289-290`（`ContextUsage.tokens: number | null`，注释 "null if unknown (e.g. right after compaction, before next LLM response)"）；`coding-agent/src/modes/rpc/rpc-mode.ts:591-594`（get_session_stats 透传）。已核对实装 0.84.1 dist 同语义（`dist/core/extensions/types.d.ts:194`）。本链路代码注释中该断言均以本锚点为准，不逐注释重复。
 2. **runtime 的 ReplicatedState 实例**（`packages/runtime/src/services/session/replicated-state.ts`）：per-session 的快照缓存，事件（turn_end/agent_end/compaction）只做失效，防抖后重新拉取。实例随 session 创建而注册播种、随 session 销毁（含 pi 进程退出）而销毁。
 3. **MessageBus**（`packages/runtime/src/services/message-bus/message-bus.ts`）：runtime 内的发布订阅中枢。state 类消息写入 per-session 的 `stateSnapshot`（last-value 语义），renderer 首次 `session.subscribe` 时随 reply 回放一次。
 4. **renderer 订阅链**：`ensureStreamSubscription`（幂等：每 session 只 subscribe 一次）→ stateSnapshot 回放 → `events.on(sid)` 通道分发到组件。

@@ -93,7 +93,8 @@ export interface HandoffDeps {
   isHandingOff: (sessionId: string) => boolean
   /** 源 session 是否活跃（streaming/派发中）。handoff 入口/发送双重守卫：runtime handoff
    *  需要源 session 空闲跑一个 handoff turn，pi 的 prompt 在 turn 进行中会拒绝
-   *  （"Agent is already processing"），streaming 中 handoff 必然失败——入口直接拦截 +
+   *  （"Agent is already processing"，pi 源码锚点 agent-session.ts:1181，已核对实装
+   *  0.84.1 dist/core/agent-session.js:833 同语义），streaming 中 handoff 必然失败——入口直接拦截 +
    *  发送时兑底（兑入口后 session 才变 active 的竞态窗口），toast 友好提示而非英文 RPC 错 */
   isSessionActive: (sessionId: string) => boolean
   /** 跨组件触发通道 signal（原 useHandoffModeChannel signal；Sidebar ⌘J 请求） */
