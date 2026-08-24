@@ -42,6 +42,7 @@ export default {
     unmarkDone: '取消标记',
     archived: '已归档',
     assignToProject: '归入项目',
+    quoteToComposer: '引用到输入区',
   },
   sessionList: {
     empty: '暂无会话',

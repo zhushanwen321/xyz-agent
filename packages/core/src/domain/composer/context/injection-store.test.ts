@@ -123,3 +123,67 @@ describe('composer-injection text 扩展（Phase 4 联动 1）', () => {
     expect(store.pendingInjection.value!.ts).toBeGreaterThanOrEqual(originalTs)
   })
 })
+
+describe('composer-injection session 引用扩展（四符号体系 §3.3.4 sidebar 直引）', () => {
+  it('requestInjection({ refSessionId, label }) 写入 pendingInjection 含两字段', () => {
+    const store = createComposerInjectionStore()
+    store.requestInjection({
+      target: 'current',
+      sessionId: 's-target',
+      refSessionId: 's-ref',
+      label: 'fix-com 设计讨论',
+    })
+    expect(store.pendingInjection.value!.refSessionId).toBe('s-ref')
+    expect(store.pendingInjection.value!.label).toBe('fix-com 设计讨论')
+    // 目标路由 sessionId 与被引用 refSessionId 独立（两个不同 session）
+    expect(store.pendingInjection.value!.sessionId).toBe('s-target')
+    expect(store.pendingInjection.value!.ts).toBeGreaterThan(0)
+  })
+
+  it('互斥归一化：refSessionId 存在时丢弃 path/text/行范围', () => {
+    const store = createComposerInjectionStore()
+    store.requestInjection({
+      target: 'current',
+      sessionId: 's-target',
+      path: 'a.ts',
+      lineStart: 1,
+      lineEnd: 5,
+      text: 'stale text',
+      refSessionId: 's-ref',
+      label: '引用',
+    })
+    expect(store.pendingInjection.value!.refSessionId).toBe('s-ref')
+    expect(store.pendingInjection.value!.path).toBeUndefined()
+    expect(store.pendingInjection.value!.lineStart).toBeUndefined()
+    expect(store.pendingInjection.value!.lineEnd).toBeUndefined()
+    expect(store.pendingInjection.value!.text).toBeUndefined()
+  })
+
+  it('不传 refSessionId 时 path 注入不受影响（互斥归一化零副作用）', () => {
+    const store = createComposerInjectionStore()
+    store.requestInjection({ target: 'current', path: 'a.ts', lineStart: 1, lineEnd: 5, sessionId: 's1' })
+    expect(store.pendingInjection.value!.path).toBe('a.ts')
+    expect(store.pendingInjection.value!.refSessionId).toBeUndefined()
+    expect(store.pendingInjection.value!.label).toBeUndefined()
+  })
+
+  it('target=new 时 sessionId 强制 null 但 refSessionId/label 保留（landing 注入）', () => {
+    const store = createComposerInjectionStore()
+    store.requestInjection({
+      target: 'new',
+      sessionId: 'ignored',
+      refSessionId: 's-ref',
+      label: 'landing 引用',
+    })
+    expect(store.pendingInjection.value!.sessionId).toBeNull()
+    expect(store.pendingInjection.value!.refSessionId).toBe('s-ref')
+    expect(store.pendingInjection.value!.label).toBe('landing 引用')
+  })
+
+  it('clearInjection 清空 session 引用请求', () => {
+    const store = createComposerInjectionStore()
+    store.requestInjection({ target: 'current', sessionId: 's1', refSessionId: 's-ref', label: 'x' })
+    store.clearInjection()
+    expect(store.pendingInjection.value).toBeNull()
+  })
+})

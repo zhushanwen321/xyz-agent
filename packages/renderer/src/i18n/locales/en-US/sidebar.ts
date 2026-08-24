@@ -43,6 +43,7 @@ export default {
     unmarkDone: 'Unmark done',
     archived: 'Archived',
     assignToProject: 'Assign to project',
+    quoteToComposer: 'Quote to composer',
   },
   sessionList: {
     empty: 'No sessions',
