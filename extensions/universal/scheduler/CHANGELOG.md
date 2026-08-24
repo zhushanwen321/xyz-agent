@@ -1,5 +1,11 @@
 # @zhushanwen/pi-scheduler
 
+## 0.4.0
+
+### Minor Changes
+
+- df69a18fc: Migrate scheduler dispatch to the unified session delivery kernel: park mode + after-run intent replace the ad-hoc dispatch path, with behavior parity verified against frozen golden snapshots.
+
 ## 0.3.4
 
 ### Patch Changes
