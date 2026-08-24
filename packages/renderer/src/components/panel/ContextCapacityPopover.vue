@@ -206,14 +206,17 @@ const quotaStore = useQuotaStore()
 // 未配置态「配置 Coding Plan」按钮跳转 Settings → Provider 页（偏差 #D）。
 const openSettings = inject<() => void>('openSettings', () => {})
 
-// ── session 事件订阅（context.update + session.state_changed）──
+// ── session 事件订阅（context.update）──
 // 字段映射（D9）：used←inputTokens / total←contextLimit / percent←usagePercent。
 // cacheHit / modelId 无来源，保持占位。sessionId 变化时重订。
+// [Phase 1 最小适配，D1 协议收敛] session.state_changed 已不携带 usage 三字段——本订阅
+// 退订 state_changed，只订 context.update；三字段 optional（字段缺失 = 无值，如 compact 后
+// 占位帧），缺失时跳过更新保持旧值。完整重构（useContextUsage 分区 composable）是 Phase 2。
 const onMessage = useSessionEvents(toRef(props, 'sessionId'))
-onMessage(['context.update', 'session.state_changed'], (msg) => {
-  const { inputTokens, contextLimit, usagePercent } = msg.payload as {
-    sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number
-  }
+onMessage('context.update', (msg) => {
+  const { inputTokens, contextLimit, usagePercent } = msg.payload
+  if (inputTokens === undefined || contextLimit === undefined || usagePercent === undefined) return
+  // taste:allow-instance-level-session-state 理由：Phase 2 useContextUsage 重构迁移中，见 docs/todo/context-consistency-design.md D2
   stats.value = {
     ...stats.value,
     used: inputTokens,

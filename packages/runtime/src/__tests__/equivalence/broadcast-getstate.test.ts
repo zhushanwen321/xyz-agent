@@ -222,16 +222,14 @@ describe.skipIf(!REAL_PI_READY)(
         type: 'session.commands',
         payload: { sessionId: sid, commands: await fetchCommands() },
       })
-      // session.state_changed（broadcastSessionState 口径：modelId 'provider/model' 组合字符串）
+      // session.state_changed（publish 口径：modelId 'provider/model' 组合字符串；D1 协议收敛后
+      // 不携带 usage 三字段——usage 只经 context.update 帧）
       bus.publish(sid, {
         type: 'session.state_changed',
         payload: {
           sessionId: sid,
           modelId: `${provider}/${modelIdRaw}`,
           thinkingLevel: publishThinking,
-          usagePercent: Math.round(cuPercent),
-          inputTokens: cuTokens,
-          contextLimit: cuWindow,
         },
       })
 
@@ -288,9 +286,6 @@ describe.skipIf(!REAL_PI_READY)(
         sessionId: sid,
         modelId: authModelId,
         thinkingLevel: typeof authState.thinkingLevel === 'string' ? authState.thinkingLevel : undefined,
-        usagePercent: Math.round(authPercent),
-        inputTokens: authCu.tokens,
-        contextLimit: typeof authCu.contextWindow === 'number' ? authCu.contextWindow : 0,
       })
 
       // 清理
