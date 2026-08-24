@@ -284,6 +284,19 @@ export default [
       'taste/no-unsafe-object-entries': 'warn',
     },
   },
+  // [HISTORICAL] extensions 源码禁裸 console（2026-08 日志清理 U4/D6，与迁移同批落地）：
+  // raw stderr 在 TUI alternate-screen 下越过渲染层污染输入区（logging-conventions SSOT
+  // 关键约束 1）。诊断日志统一走 @zhushanwen/pi-extension-logger（warn/error → appendEntry，
+  // debug → XYZ_AGENT_DEBUG=1 文件日志）。范围限 src 源码：测试文件的 spyOn/monkey-patch
+  // 与 teardown 兜底属测试基建，不在守卫目标内（worker-script-builder 的 console.* 在生成
+  // 脚本字符串字面量内，AST 不命中，无需豁免）。
+  {
+    files: ['extensions/**/src/**/*.ts'],
+    ignores: ['extensions/**/src/__tests__/**', 'extensions/**/__tests__/**', 'extensions/**/*.test.ts'],
+    rules: {
+      'no-console': 'error',
+    },
+  },
   // [HISTORICAL] resource-discovery.ts 的 3 处 Promise.all（源级/包级/scoped 子包级）触发
   // taste/prefer-allsettled 属规则误报，per-file override 关闭。规则设计针对「独立数据源
   // 可部分降级」场景；本文件三处是 swf-perf-impl cleanup slice（TC2/IF2，见

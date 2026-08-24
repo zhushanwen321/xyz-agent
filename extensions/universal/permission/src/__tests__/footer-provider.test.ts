@@ -16,6 +16,16 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+	loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+	getLogger: () => loggerMock,
+	createLogger: () => loggerMock,
+	setPiHandle: vi.fn(),
+}));
+
 import {
 	FOOTER_HANDSHAKE_KEY,
 	type FooterLineRenderer,
@@ -211,8 +221,8 @@ describe("TC6/TC7：requestFooterRender", () => {
 // ──────────────────────── TC8：version mismatch → 重建 slot ────────────────────────
 
 describe("TC8：version mismatch → readSlot 丢弃 + ensureSlot 重建", () => {
-	it("slot.version !== 1 → 注册时建新 slot（丢弃旧的），并 console.warn", () => {
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+	it("slot.version !== 1 → 注册时建新 slot（丢弃旧的），并 logger.warn", () => {
+		loggerMock.warn.mockClear();
 		// 污染槽位：version=99
 		Reflect.set(globalThis, FOOTER_HANDSHAKE_KEY, {
 			version: 99,
@@ -222,10 +232,10 @@ describe("TC8：version mismatch → readSlot 丢弃 + ensureSlot 重建", () =>
 		const slot = getRawSlot() as { version: number; pending: unknown[] };
 		expect(slot.version).toBe(1); // 重建为 version=1
 		expect(slot.pending).toHaveLength(1);
-		expect(warnSpy).toHaveBeenCalledWith(
+		expect(loggerMock.warn).toHaveBeenCalledWith(
 			expect.stringContaining("version mismatch"),
+			expect.any(Object),
 		);
-		warnSpy.mockRestore();
 	});
 
 	it("pending 非 Array → 视为无 slot，重建", () => {

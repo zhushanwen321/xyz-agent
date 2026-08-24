@@ -249,8 +249,13 @@ function areaWidth(wrapper: Awaited<ReturnType<typeof mountContainer>>, testid: 
   return /width:\s*([^;]+);/.exec(style)?.[1] ?? ''
 }
 
+/** 读取 style 属性原文（margin / CSS 变量断言用） */
+function areaStyle(wrapper: Awaited<ReturnType<typeof mountContainer>>, testid: string): string {
+  return wrapper.find(`[data-testid="${testid}"]`).attributes('style') ?? ''
+}
+
 describe('PanelContainer 动态宽度（feat-chat-flow-width）', () => {
-  it('无 drawer：main-area 75%，drawer-area 0%，无 resize handle', async () => {
+  it('无 drawer：main-area 75% + margin 居中 + 内容封顶解除，drawer-area 0%，无 resize handle', async () => {
     const panel = usePanelStore()
     panel.loadSession(ROOT_PANEL_ID, 's-width-closed')
 
@@ -258,11 +263,17 @@ describe('PanelContainer 动态宽度（feat-chat-flow-width）', () => {
     await nextTick()
 
     expect(areaWidth(wrapper, 'main-area')).toBe('75%')
+    const mainStyle = areaStyle(wrapper, 'main-area')
+    // standalone 居中：75% 容器两侧各 (100%-75%)/2 留白（显式 calc 而非 auto，保证开合动画可插值）
+    expect(mainStyle).toContain('margin-left: 12.5%')
+    expect(mainStyle).toContain('margin-right: 12.5%')
+    // 内容列封顶解除（.content-col 消费 --content-max-w；覆盖全局 720px → 内容占满 75% 区域）
+    expect(mainStyle).toContain('--content-max-w: 100%')
     expect(areaWidth(wrapper, 'drawer-area')).toBe('0%')
     expect(wrapper.find('[data-testid="drawer-resize-handle"]').exists()).toBe(false)
   }, 60_000)
 
-  it('有 drawer（默认）：main = calc(100% - 50% - 1px)，drawer = 50%，handle 挂载', async () => {
+  it('有 drawer（默认）：main = calc(100% - 50% - 1px) + margin 0 贴左 + 封顶解除不变，drawer = 50%，handle 挂载', async () => {
     const panel = usePanelStore()
     panel.loadSession(ROOT_PANEL_ID, 's-width-open')
     openDrawerTab('git')
@@ -271,6 +282,10 @@ describe('PanelContainer 动态宽度（feat-chat-flow-width）', () => {
     await nextTick()
 
     expect(areaWidth(wrapper, 'main-area')).toBe('calc(100% - 50% - 1px)')
+    // split：main 贴左（drawer 贴右），margin 0；--content-max-w 两态恒 100%（开合无值切换跳变）
+    const mainStyle = areaStyle(wrapper, 'main-area')
+    expect(mainStyle).toContain('margin-left: 0')
+    expect(mainStyle).toContain('--content-max-w: 100%')
     expect(areaWidth(wrapper, 'drawer-area')).toBe('50%')
     const handle = wrapper.find('[data-testid="drawer-resize-handle"]')
     expect(handle.exists()).toBe(true)
@@ -292,7 +307,7 @@ describe('PanelContainer 动态宽度（feat-chat-flow-width）', () => {
     await handle.trigger('pointerdown', { pointerId: 1 })
     await nextTick()
     // 拖动期间 transition 移除（跟手，不滞后）+ data-state=drag（高亮反馈）
-    expect(wrapper.find('[data-testid="main-area"]').classes().join(' ')).not.toContain('transition-[width]')
+    expect(wrapper.find('[data-testid="main-area"]').classes().join(' ')).not.toContain('transition-[width,margin]')
     expect(handle.attributes('data-state')).toBe('drag')
 
     // 指针移到 x=700 → drawer 宽 = (1000-700)/1000 = 30%
@@ -312,7 +327,7 @@ describe('PanelContainer 动态宽度（feat-chat-flow-width）', () => {
     await handle.trigger('pointerup', { pointerId: 1 })
     await nextTick()
     expect(localStorage.getItem('xyz-agent:drawer-width')).toBe('20')
-    expect(wrapper.find('[data-testid="main-area"]').classes().join(' ')).toContain('transition-[width]')
+    expect(wrapper.find('[data-testid="main-area"]').classes().join(' ')).toContain('transition-[width,margin]')
     expect(handle.attributes('data-state')).toBeUndefined()
   }, 60_000)
 
@@ -386,11 +401,14 @@ describe('PanelContainer 动态宽度（feat-chat-flow-width）', () => {
     const wrapper = await mountContainer()
     await nextTick()
     expect(areaWidth(wrapper, 'main-area')).toBe('75%')
+    expect(areaStyle(wrapper, 'main-area')).toContain('margin-left: 12.5%')
+    expect(areaStyle(wrapper, 'main-area')).toContain('margin-right: 12.5%')
 
-    // 打开 drawer：main 收缩到 50% 拆分 + rAF 循环派发 layout 事件（BrowserPane rect 同步）
+    // 打开 drawer：main 收缩到 50% 拆分（居中 margin 归 0 贴左）+ rAF 循环派发 layout 事件（BrowserPane rect 同步）
     openDrawerTab('git')
     await nextTick()
     expect(areaWidth(wrapper, 'main-area')).toBe('calc(100% - 50% - 1px)')
+    expect(areaStyle(wrapper, 'main-area')).toContain('margin-left: 0')
     expect(areaWidth(wrapper, 'drawer-area')).toBe('50%')
 
     // rAF 循环逐帧派发（至少一帧）——等待两帧后断言

@@ -41,9 +41,11 @@
     <!-- 对话流 + drawer 动态宽度区（feat-chat-flow-width，手写 flex 替换 reka-ui Splitter）。
          替换原因：① Splitter 单 panel 时强制 flexGrow:1（computePanelFlexBoxStyle），无法实现
          「无 drawer 对话流限宽 3/4」；② SplitterPanel 挂载/卸载瞬时完成 layout 重算，无法做
-         开合宽度动画。手写布局三点能力：无 drawer 时 main 占 75%（留白呼吸感）；drawer 打开时
-         main/drawer 双侧 width transition 动画到拆分比例；handle 拖动（pointer capture 跟手，
-         拖动期间 transition:none）+ 键盘微调 + localStorage 持久化。
+         开合宽度动画。手写布局三点能力：无 drawer 时 main 占 75% 且 margin-inline calc 居中
+         （对话流整体在工作区视觉居中，两侧各 12.5% 留白），main 层 --content-max-w:100% 解除
+         720px 封顶（内容列占满 75% 区域）；drawer 打开时 main/drawer 双侧 width + margin-inline
+         transition 动画到拆分比例；handle 拖动（pointer capture 跟手，拖动期间 transition:none）
+         + 键盘微调 + localStorage 持久化。
          drawer wrapper 常驻（width 0 ↔ drawerPct%）承载 width 动画；DrawerPanel 内部 aside
          Transition（淡入右移）与 wrapper width 动画同时长（--duration-slow），叠加和谐。
          BrowserPane rect 同步：原 Splitter @layout 事件改为 notifyLayout()（拖动/键盘时直发 +
@@ -52,7 +54,7 @@
       <div
         class="relative h-full min-w-0 overflow-hidden"
         :class="splitTransitionClass"
-        :style="{ width: drawerOpen ? `calc(100% - ${drawerPct}% - 1px)` : `${MAIN_STANDALONE_PCT}%` }"
+        :style="mainAreaStyle"
         data-testid="main-area"
       >
         <Panel
@@ -174,7 +176,7 @@ import { useSessionStore } from '@/stores/session'
 import { useSessionDerivations } from '@/composables/features/chat/useSessionDerivations'
 import { provideGitStatus } from '@/composables/features/file-tree/useGitStatus'
 import type { GitIndicator } from '@/composables/features/file-tree/useGitStatus'
-import { useDrawerSplitWidth, MAIN_STANDALONE_PCT } from '@/composables/features/drawer/useDrawerSplitWidth'
+import { useDrawerSplitWidth } from '@/composables/features/drawer/useDrawerSplitWidth'
 import { useChatStore } from '@/stores/chat'
 import { useSessionTrace, clearTraceSelection } from '@/composables/features/trace/useSessionTrace'
 import TraceInspector from '@/components/panel/trace/TraceInspector.vue'
@@ -372,12 +374,14 @@ onBeforeUnmount(() => {
 
 // ── 动态宽度（feat-chat-flow-width）：drawer 开合动画 + 可拖动宽度 ──
 // 宽度模型/拖动/键盘/持久化/BrowserPane rect 同步均在 useDrawerSplitWidth（含替换
-// reka-ui Splitter 的原因）；模板绑定 splitAreaEl + 双侧 width style + handle 事件。
+// reka-ui Splitter 的原因）；模板绑定 splitAreaEl + mainAreaStyle（width + margin-inline
+// 居中 + --content-max-w 封顶解除）+ drawer 侧 width style + handle 事件。
 const splitAreaEl = ref<HTMLElement | null>(null)
 const {
   drawerPct,
   isDragging,
   splitTransitionClass,
+  mainAreaStyle,
   onHandlePointerDown,
   onHandlePointerMove,
   onHandlePointerUp,

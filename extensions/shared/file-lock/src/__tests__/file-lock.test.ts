@@ -13,9 +13,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { withFileLock, withFileLockSync } from "../file-lock.ts";
+
+// 本文件全部用例都是真实文件系统 IO（跨进程锁、子进程 RMW），CI 慢盘上单次用例
+// 可达 7s+，统一放宽文件级预算（vitest 默认 5s）——断言强度不受影响
+vi.setConfig({ testTimeout: 20000 });
 
 const PKG_DIR = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -66,7 +70,9 @@ describe("withFileLock (async)", () => {
 			});
 		await Promise.all(Array.from({ length: 100 }, bump));
 		expect((JSON.parse(fs.readFileSync(target, "utf-8")) as { n: number }).n).toBe(100);
-	});
+		// 100 次并发锁 RMW 是真实文件系统 IO 密集测试，CI 慢盘上逼近 vitest 默认 5s，
+		// 放宽时间预算不改变断言强度（终值必须精确 100）
+	}, 20000);
 });
 
 describe("withFileLockSync", () => {

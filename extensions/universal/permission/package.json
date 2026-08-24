@@ -35,6 +35,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@zhushanwen/pi-extension-logger": "workspace:*",
     "@zhushanwen/pi-llm-shared": "workspace:*",
     "tree-sitter-bash": "^0.25.1",
     "web-tree-sitter": "^0.26.11"

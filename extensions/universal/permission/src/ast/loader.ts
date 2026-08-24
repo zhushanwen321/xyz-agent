@@ -6,7 +6,7 @@
  *  - 初始化 Parser 运行时（locateFile 指向 wasm 目录）
  *  - 加载 bash grammar，构造并缓存 Parser 单例（promise memoization，天然并发互斥）
  *
- * 失败策略（fail-closed）：任一步抛错 → console.warn + 返回 null，永不 throw。
+ * 失败策略（fail-closed）：任一步抛错 → logger.warn + 返回 null，永不 throw。
  * analyzer 拿到 null 时降级为 { clean:false, parseError:true }。
  *
  * 注意（实测 web-tree-sitter 0.26.11 的事实，与 pi-lens 用的 0.24.5 有差异）：
@@ -25,6 +25,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Language, Parser } from "web-tree-sitter";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("pi-permission/ast");
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -119,7 +122,7 @@ export function getBashParser(): Promise<Parser | null> {
 			// fail-closed：清空缓存让下次调用重试，warn 后返回 null。
 			parserPromise = null;
 			const msg = err instanceof Error ? err.message : String(err);
-			console.warn(`[pi-permission/ast] getBashParser init failed: ${msg}`);
+			logger.warn("getBashParser init failed", { error: msg });
 			return null;
 		}
 	})();

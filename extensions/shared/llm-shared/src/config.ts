@@ -23,7 +23,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, 
 import { dirname, join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { withFileLockSync } from "@zhushanwen/pi-file-lock";
+
+const logger = getLogger("llm-shared");
 
 /** JSON 序列化缩进格数（permission/config.ts 同款）。 */
 const JSON_INDENT = 2;
@@ -179,10 +182,7 @@ export function saveConfig(
 				});
 			} catch (statErr) {
 				// stat 失败不影响保存成功；缓存下次 load 时会重读
-				console.warn(
-					`[llm-shared] saveConfig stat after write failed:`,
-					statErr instanceof Error ? statErr.message : String(statErr),
-				);
+				logger.warn("saveConfig stat after write failed", { detail: { err: statErr instanceof Error ? statErr.message : String(statErr) } });
 			}
 
 			return { success: true };
@@ -192,10 +192,7 @@ export function saveConfig(
 				if (existsSync(tmpPath)) unlinkSync(tmpPath);
 			} catch (cleanupErr) {
 				// tmp 清理失败不能阻塞保存失败的返回；记录原因
-				console.warn(
-					`[llm-shared] saveConfig tmp cleanup failed:`,
-					cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
-				);
+				logger.warn("saveConfig tmp cleanup failed", { detail: { err: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) } });
 			}
 			const message = error instanceof Error ? error.message : String(error);
 			onWarning?.(`[llm-shared] Failed to save config at '${configPath}': ${message}`);

@@ -19,9 +19,12 @@
  */
 
 import type { Node, Tree } from "web-tree-sitter";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import type { BashAnalysis } from "../types.js";
 import { getBashParser } from "./loader.js";
+
+const logger = getLogger("pi-permission/ast");
 
 /** 超过此长度的输入直接拒（防止 wasm 解析巨型 payload DoS）。 */
 const MAX_COMMAND_LENGTH = 65536;
@@ -230,7 +233,7 @@ export async function analyzeBashStructure(command: string): Promise<BashAnalysi
 	} catch (err) {
 		// 任何意外异常 → fail-closed
 		const msg = err instanceof Error ? err.message : String(err);
-		console.warn(`[pi-permission/ast] analyzeBashStructure exception: ${msg}`);
+		logger.warn("analyzeBashStructure exception", { error: msg });
 		return failClosed(msg || "EXCEPTION");
 	} finally {
 		// G1 critical: Tree 是 wasm 堆对象，不受 V8 GC 管，必须显式 delete 释放。

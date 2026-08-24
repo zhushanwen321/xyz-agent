@@ -124,10 +124,11 @@ export function getCommands(
 /**
  * 拉取 session 的当前上下文用量（pi get_session_stats.contextUsage）。
  * 修复 broadcast 与订阅时序竞争：restoreSession 内部兜底 broadcast 早于前端订阅，renderer 主动拉取。
+ * usage 三字段 optional：字段缺失 = 无值（pi tokens=null，compact 后无新 turn；D1 协议收敛）。
  */
 export function getContext(
   sessionId: string,
-): Promise<{ sessionId: string; inputTokens: number; contextLimit: number; usagePercent: number }> {
+): Promise<{ sessionId: string; inputTokens?: number; contextLimit?: number; usagePercent?: number }> {
   return command('session.getContext', { sessionId })
 }
 

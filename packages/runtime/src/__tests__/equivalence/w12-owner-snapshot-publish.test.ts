@@ -135,7 +135,7 @@ describe('W12 阶段 2：context.update publish 数据源 = usage 实例快照�
     })
   })
 
-  it('无值态（compact 后空快照）：事件失效重拉得到空投影时不发布，last-value 保持旧值', async () => {
+  it('无值态（compact 后空投影）：fetch 成功且 tokens=null → 发无值占位帧，last-value 被占位帧覆盖（D1）', async () => {
     const fx = makeFixture()
     const sid = 'w12-ctx-null'
     await fx.svc.initializeManagedSession(sid, {} as unknown as IPiEngine, '/tmp', 'test')
@@ -144,22 +144,24 @@ describe('W12 阶段 2：context.update publish 数据源 = usage 实例快照�
     const seeded = fx.bus.subscribe(sid, createMockWs())
     expect(findStateMsg(seeded.stateSnapshot, 'context.update')?.payload).toMatchObject({ inputTokens: 5000 })
 
-    // compact 后 tokens=null：fetch 投影空快照（保持旧值），挂钩读到无值态不发布
+    // compact 后 tokens=null：fetch 成功但投影为空快照 {}——D1 协议收敛后发「无值占位帧」
+    //（仅含 sessionId，last-value 显式登记无值态，切回回放可区分「无值」与「从未收到帧」）。
+    // 实例快照经 ownerSnapshotMerge 保持旧值（空快照不覆盖——无值态值要等新 turn）。
     fx.client.getSessionStats.mockResolvedValue({ contextUsage: { tokens: null, contextWindow: 128000, percent: null } })
     fx.svc.applyContextUpdate(sid, 0, 0)
     await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 50)
 
     const late = fx.bus.subscribe(sid, createMockWs())
     const snapshotMsg = findStateMsg(late.stateSnapshot, 'context.update')
-    expect(snapshotMsg?.payload).toMatchObject({ inputTokens: 5000, usagePercent: 4 }) // 旧值保持
-    // usage 快照同样保持旧值（无值态不覆盖，W8 语义）
+    expect(snapshotMsg?.payload).toEqual({ sessionId: sid }) // 占位帧：仅 sessionId，字段缺失 = 无值
+    // usage 实例快照保持旧值（无值态不覆盖，W8 语义不变）
     expect(fx.svc.getScalarReplicatedStates(sid)?.usage.get()).toEqual({
       inputTokens: 5000, contextLimit: 128000, usagePercent: 4,
     })
   })
 })
 
-describe('W12 阶段 3：session.state_changed payload 全字段来自三实例快照（mock RPC 层）', () => {
+describe('W12 阶段 3：session.state_changed payload 全字段来自实例快照（mock RPC 层；D1 后仅 modelId/thinkingLevel 两实例）', () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -167,7 +169,7 @@ describe('W12 阶段 3：session.state_changed payload 全字段来自三实例�
     vi.useRealTimers()
   })
 
-  it('等价层：switchModel 收敛后 state_changed payload == 旧口径（新模型 + pi 新窗口用量）同值', async () => {
+  it('等价层：switchModel 收敛后 state_changed payload == 旧口径（新模型）同值；usage 只在 context.update 帧（D1）', async () => {
     const fx = makeFixture()
     const sid = 'w12-state-eq'
     await fx.svc.initializeManagedSession(sid, {} as unknown as IPiEngine, '/tmp', 'test')
@@ -188,40 +190,44 @@ describe('W12 阶段 3：session.state_changed payload 全字段来自三实例�
     await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 50)
 
     const late = fx.bus.subscribe(sid, createMockWs())
-    const snapshotMsg = findStateMsg(late.stateSnapshot, 'session.state_changed')
-    // 旧口径（broadcastSessionState：modelId 直写 + get_state thinking + 新窗口重算）同值：
-    // modelId 'p/model-b'、contextLimit 100k、usagePercent round(20%) = 20、tokens 20000
-    expect(snapshotMsg?.payload).toEqual({
+    // D1 协议收敛：state_changed payload 仅 sessionId/modelId/thinkingLevel（usage 三字段已删）。
+    // 等价层：modelId 'p/model-b'、thinkingLevel 'medium' 与旧口径同值。
+    expect(findStateMsg(late.stateSnapshot, 'session.state_changed')?.payload).toEqual({
       sessionId: sid,
       modelId: 'p/model-b',
       thinkingLevel: 'medium',
-      usagePercent: 20,
-      inputTokens: 20000,
-      contextLimit: 100000,
     })
-    // 数据源 = 三实例快照组合
+    // usage 终态仍收敛（switchModel 失效 → 防抖重拉）：快照与 context.update last-value 同值
     const states = fx.svc.getScalarReplicatedStates(sid)
     expect(states?.modelId.get()).toEqual({ modelId: 'p/model-b' })
     expect(states?.thinkingLevel.get()).toEqual({ thinkingLevel: 'medium' })
     expect(states?.usage.get()).toEqual({ inputTokens: 20000, contextLimit: 100000, usagePercent: 20 })
+    expect(findStateMsg(late.stateSnapshot, 'context.update')?.payload).toEqual({
+      sessionId: sid,
+      inputTokens: 20000,
+      contextLimit: 100000,
+      usagePercent: 20,
+    })
   })
 
-  it('数据源层：payload.contextLimit == pi 快照窗口（W18 起 resolver 注入链已删，快照唯一数据源）', async () => {
+  it('数据源层：usage 快照窗口只进 context.update 帧（state_changed 无 usage 字段；W18 起 resolver 注入链已删，快照唯一数据源）', async () => {
     const fx = makeFixture({ stats: { contextUsage: { tokens: 5000, contextWindow: 64000, percent: 7.8 } } })
     // W12 曾注入窗口 ≠ pi 的 resolver 证伪「resolver 影子」；W18 死代码移交删除注入链后
-    // 结构上不可能有 resolver 参与路径——payload 读 pi 快照（64000 / round(7.8) = 8）
+    // 结构上不可能有 resolver 参与路径——快照读 pi（64000 / round(7.8) = 8）。
+    // D1：contextLimit 只出现在 context.update 帧（state_changed 协议层已删 usage 三字段）。
     const sid = 'w12-state-src'
     await fx.svc.initializeManagedSession(sid, {} as unknown as IPiEngine, '/tmp', 'test')
     await vi.advanceTimersByTimeAsync(1)
 
     const late = fx.bus.subscribe(sid, createMockWs())
-    const snapshotMsg = findStateMsg(late.stateSnapshot, 'session.state_changed')
-    expect(snapshotMsg?.payload).toMatchObject({
+    expect(findStateMsg(late.stateSnapshot, 'session.state_changed')?.payload).toMatchObject({
       sessionId: sid,
       modelId: 'p/model-a',
-      usagePercent: 8,
+    })
+    expect(findStateMsg(late.stateSnapshot, 'context.update')?.payload).toMatchObject({
       inputTokens: 5000,
       contextLimit: 64000,
+      usagePercent: 8,
     })
   })
 

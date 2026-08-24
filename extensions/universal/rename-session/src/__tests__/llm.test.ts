@@ -1,5 +1,15 @@
 /* eslint-disable taste/no-unsafe-cast */
 
+// Mock 共享 logger，让 logger.warn/error 可被 spy（源码已从 console 改为 logger）
+const { loggerMock } = vi.hoisted(() => ({
+	loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+	getLogger: () => loggerMock,
+	createLogger: () => loggerMock,
+	setPiHandle: vi.fn(),
+}));
+
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -245,14 +255,15 @@ describe("RENAME_SYSTEM_PROMPT / RENAME_INSTRUCTION", () => {
 // callRenameLLM（mock resolveModel + callLLM @ llm-shared 边界）
 // ────────────────────────────────────────────────────
 
-/** 开 debug 开关 + 静音 warn，返回 spy 供日志断言（还原由顶层 afterEach 统一负责）。 */
-function debugWarnSpy(): ReturnType<typeof vi.spyOn> {
+/** 开 debug 开关 + 清空 warn mock，返回 loggerMock.warn 供日志断言（还原由顶层 afterEach 统一负责）。 */
+function debugWarnSpy(): ReturnType<typeof vi.fn> {
 	vi.stubEnv("XYZ_AGENT_DEBUG", "1");
-	return vi.spyOn(console, "warn").mockImplementation(() => {});
+	loggerMock.warn.mockClear();
+	return loggerMock.warn;
 }
 
 /** warn spy 的全部调用文本行（debug 日志断言用）。 */
-function warnLines(warnSpy: ReturnType<typeof vi.spyOn>): string[] {
+function warnLines(warnSpy: ReturnType<typeof vi.fn>): string[] {
 	return warnSpy.mock.calls.map((c) => String(c[0]));
 }
 
@@ -480,9 +491,9 @@ describe("callRenameLLM", () => {
 
 		expect(result).toBeNull();
 		expect(callLLM).not.toHaveBeenCalled();
-		// C3 契约：[rename-session] + t=<ISO>（llm.ts 侧不含 turnIndex）
+		// C3 契约：t=<ISO>（llm.ts 侧不含 turnIndex；[rename-session] 前缀由共享 logger prefixMsg 自动补，spy 捕获原始入参）
 		const line = warnLines(warnSpy).find((l) => l.includes("skip: no user prompt"));
-		expect(line).toMatch(/^\[rename-session\] t=\d{4}-\d{2}-\d{2}T/);
+		expect(line).toMatch(/^t=\d{4}-\d{2}-\d{2}T/);
 	});
 
 	it("TC7: callLLM ok:false（超时/模型错误）→ 返回 null 不抛错（失败归一静默跳过）", async () => {
@@ -501,7 +512,7 @@ describe("callRenameLLM", () => {
 		expect(result).toBeNull();
 		// 该日志在 cleanTitle 清洗为空、返回 null 前打出（7 条契约文案之一）
 		const line = warnLines(warnSpy).find((l) => l.includes("skip: title empty"));
-		expect(line).toMatch(/^\[rename-session\] t=\d{4}-\d{2}-\d{2}T/);
+		expect(line).toMatch(/^t=\d{4}-\d{2}-\d{2}T/);
 	});
 
 	it("maxTitleLength 截断生效（config.maxTitleLength 透传给 cleanTitle）", async () => {
@@ -548,65 +559,50 @@ describe("callRenameLLM A1 日志", () => {
 	});
 
 	it("TC1: resolveModel null → console 输出 '[rename-session] model not available, skipping'，返回 null", async () => {
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		try {
-			vi.mocked(resolveModel).mockReturnValue(null);
-			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
-			expect(result).toBeNull();
-			expect(warnSpy).toHaveBeenCalledWith("[rename-session] model not available, skipping");
-		} finally {
-			warnSpy.mockRestore();
-		}
+		loggerMock.warn.mockClear();
+		vi.mocked(resolveModel).mockReturnValue(null);
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
+		expect(result).toBeNull();
+		expect(loggerMock.warn).toHaveBeenCalledWith("model not available, skipping");
 	});
 
 	it("TC2: callLLM {ok:false} → console 输出 '[rename-session] rename LLM call failed: <error>'，返回 null", async () => {
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		try {
-			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
-			vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
-			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
-			expect(result).toBeNull();
-			expect(warnSpy).toHaveBeenCalledWith("[rename-session] rename LLM call failed: boom");
-		} finally {
-			warnSpy.mockRestore();
-		}
+		loggerMock.warn.mockClear();
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
+		expect(result).toBeNull();
+		expect(loggerMock.warn).toHaveBeenCalledWith("rename LLM call failed", { error: "boom" });
 	});
 
 	it("TC2b: callLLM {ok:false} → 不输出 'rename with model' 成功日志（B2 位置修正：成功日志已移到 result.ok 分支后），但仍输出 failed 日志", async () => {
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		try {
-			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
-			vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
-			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
-			expect(result).toBeNull();
-			// 失败分支仍输出 failed 日志
-			expect(warnSpy).toHaveBeenCalledWith(
-				"[rename-session] rename LLM call failed: boom",
-			);
-			// 失败分支不应输出成功日志（B2：成功日志移到 result.ok=true 之后）
-			const successLogCalls = warnSpy.mock.calls.filter((c) =>
-				String(c[0]).includes("rename with model"),
-			);
-			expect(successLogCalls).toHaveLength(0);
-		} finally {
-			warnSpy.mockRestore();
-		}
+		loggerMock.warn.mockClear();
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
+		expect(result).toBeNull();
+		// 失败分支仍输出 failed 日志
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			"rename LLM call failed",
+			{ error: "boom" },
+		);
+		// 失败分支不应输出成功日志（B2：成功日志移到 result.ok=true 之后）
+		const successLogCalls = loggerMock.warn.mock.calls.filter((c) =>
+			String(c[0]).includes("rename with model"),
+		);
+		expect(successLogCalls).toHaveLength(0);
 	});
 
 	it("TC3: callLLM 成功 → 默认不输出 'rename with model'（避免常开日志污染 Pi 输入框），返回标题", async () => {
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		try {
-			vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
-			vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug" });
-			const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
-			expect(result).toBe("修复登录bug");
-			const successLogCalls = warnSpy.mock.calls.filter((c) =>
-				String(c[0]).includes("rename with model"),
-			);
-			expect(successLogCalls).toHaveLength(0);
-		} finally {
-			warnSpy.mockRestore();
-		}
+		loggerMock.warn.mockClear();
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug" });
+		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
+		expect(result).toBe("修复登录bug");
+		const successLogCalls = loggerMock.warn.mock.calls.filter((c) =>
+			String(c[0]).includes("rename with model"),
+		);
+		expect(successLogCalls).toHaveLength(0);
 	});
 
 	it("TC3b: debug 开启 + callLLM 成功 → 输出 'rename with model <provider>/<modelId>'（B3 带 provider 前缀），返回标题", async () => {
@@ -617,7 +613,7 @@ describe("callRenameLLM A1 日志", () => {
 		expect(result).toBe("修复登录bug");
 		const line = warnLines(warnSpy).find((l) => l.includes("rename with model"));
 		expect(line).toMatch(
-			/^\[rename-session\] t=\d{4}-\d{2}-\d{2}T.*rename with model stub\/stub-model/,
+			/^t=\d{4}-\d{2}-\d{2}T.*rename with model stub\/stub-model/,
 		);
 	});
 });

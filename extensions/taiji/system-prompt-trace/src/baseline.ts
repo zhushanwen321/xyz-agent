@@ -6,13 +6,16 @@
  * - readPersistedBaseline / writePersistedBaseline：dataDir 自持久化小文件
  *   （app 重启直 spawn resume 时唯一可用的基线来源），原子写入。
  *
- * 所有函数不抛错：读失败返回 null、写失败 console.error 后静默——基线丢失的代价只是
+ * 所有函数不抛错：读失败返回 null、写失败 logger.error 后静默——基线丢失的代价只是
  * 下次 resume 多写一条留痕（设计 D2 已接受），不允许影响 agent 主流程。
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("pi-system-prompt-trace");
 import { isRecord, isSystemPromptTraceEntryData, SYSTEM_PROMPT_CUSTOM_TYPE } from "./types.js";
 import type { PromptBaseline } from "./types.js";
 
@@ -152,8 +155,8 @@ export function writePersistedBaseline(
 		}
 	} catch (e) {
 		// best-effort 降级：基线写失败只影响下次 app 重启 resume 的去重（多写一条留痕，
-		// 设计 D2 已接受），不阻断 agent 主流程；错误进 pi stdout 随日志落盘供排查
-		console.error("[pi-system-prompt-trace] write baseline failed:", e);
+		// 设计 D2 已接受），不阻断 agent 主流程；logger.error → appendEntry 持久化供排查
+		logger.error("write baseline failed", { detail: String(e) });
 	}
 }
 

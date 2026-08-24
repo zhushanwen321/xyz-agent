@@ -91,6 +91,12 @@ export interface HandoffDeps {
   toastError: (msg: string) => void
   /** 源 session 是否正在 handoff（原 useChatStore().isHandingOff；StagingAction.isInProgress 派生用） */
   isHandingOff: (sessionId: string) => boolean
+  /** 源 session 是否活跃（streaming/派发中）。handoff 入口/发送双重守卫：runtime handoff
+   *  需要源 session 空闲跑一个 handoff turn，pi 的 prompt 在 turn 进行中会拒绝
+   *  （"Agent is already processing"，pi 源码锚点 agent-session.ts:1181，已核对实装
+   *  0.84.1 dist/core/agent-session.js:833 同语义），streaming 中 handoff 必然失败——入口直接拦截 +
+   *  发送时兑底（兑入口后 session 才变 active 的竞态窗口），toast 友好提示而非英文 RPC 错 */
+  isSessionActive: (sessionId: string) => boolean
   /** 跨组件触发通道 signal（原 useHandoffModeChannel signal；Sidebar ⌘J 请求） */
   handoffEnterSignal: Ref<{ srcSessionId: string } | null>
 }
@@ -114,6 +120,12 @@ export function useComposerHandoffMode(
   const handoffSource = ref<{ srcSessionId: string } | null>(null)
 
   function enterHandoffMode(srcSessionId: string): void {
+    // 源 session streaming 中拦截：handoff turn 需要源 session 空闲，此时进入模式必然
+    // 发送失败（pi 拒绝 prompt），不如入口就拦 + toast（含直接调 enterHandoffMode 的所有路径）。
+    if (deps.isSessionActive(srcSessionId)) {
+      deps.toastError(deps.t('panel.composer.handoffBusy'))
+      return
+    }
     // 互斥：进 handoff 前退出 fork 模式（避免 forkSource 残留 + 两个模式同时活跃）
     deps.exitForkMode()
     // Staging Mode（ADR-0056）：快照当前模型/thinking，进入暂存态
@@ -133,6 +145,7 @@ export function useComposerHandoffMode(
 
   // 跨组件触发通道：Sidebar 全局快捷键（⌘J → enterHandoffModeFromLastAssistant）经 signal
   // 请求 Composer 进 handoff 模式。Composer 仍是 handoffMode 状态真源。
+  // streaming 拦截在 enterHandoffMode 内部（单点覆盖 signal / expose 直调 / staging.enter 全部入口）。
   watch(deps.handoffEnterSignal, (req) => {
     if (!req) return
     // signal 只对当前 panel composer 生效：srcSessionId 必须是本 composer 的 session，
@@ -174,6 +187,12 @@ export function useComposerHandoffMode(
   async function handleHandoffSend(text: string): Promise<boolean> {
     if (!handoffMode.value || !handoffSource.value) return false
     const { srcSessionId } = handoffSource.value
+    // 兑底守卫（入口拦截后的竞态窗口：进入模式后 session 才变 streaming）。返回 true 已消费
+    // （不走普通 send），不清草稿不退模式——回复结束后可直接重发。
+    if (deps.isSessionActive(srcSessionId)) {
+      deps.toastError(deps.t('panel.composer.handoffBusy'))
+      return true
+    }
     // reply 备注可选：空文本也允许（runtime handoff turn 无 reply 时只发 template）。空则 undefined 不传 reply。
     const reply = text.trim() || undefined
     deps.clearInput()

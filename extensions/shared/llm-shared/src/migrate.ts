@@ -15,6 +15,10 @@
 import { existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("migrate-config");
+
 export interface MigrationResult {
 	migrated: boolean;
 	/** 新路径已存在时已删除旧文件（清理残留副本），true 表示旧文件被删。 */
@@ -39,14 +43,14 @@ export function migrateLegacyConfig(agentDir: string, oldRel: string, newRel: st
 			// pi 运行时只读新路径，旧文件无用。安全前提：session_start 迁移在 pi 进程内、
 			// 用户主动启动时触发（非 postinstall 开发环境误触发；e112a14fc 场景随 session_start 消除）。
 			unlinkSync(oldPath);
-			console.warn(`[migrate-config] new config already exists, removed legacy file: ${oldPath}`);
+			logger.warn("new config already exists, removed legacy file", { detail: { oldPath } });
 			return { migrated: false, removedLegacy: true };
 		}
 		renameSync(oldPath, newPath);
-		console.warn(`[migrate-config] migrated: ${oldPath} -> ${newPath}`);
+		logger.warn("migrated", { detail: { oldPath, newPath } });
 		return { migrated: true };
 	} catch (e) {
-		console.warn(`[migrate-config] migration failed for ${oldPath} -> ${newPath}:`, e);
+		logger.warn("migration failed", { detail: { oldPath, newPath, err: String(e) } });
 		return { migrated: false, error: e };
 	}
 }

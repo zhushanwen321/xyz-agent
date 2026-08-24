@@ -122,8 +122,14 @@ export function useChatViewDeps(sessionId: Ref<string>): ChatViewDeps {
       if (!msg) return
       triggerEnterForkMode(sid, msg.id)
     },
-    /** handoff 后台：runtime 从末条 assistant 提取文档到新 session。失败 toast 反馈。 */
+    /** handoff 后台：runtime 从末条 assistant 提取文档到新 session。失败 toast 反馈。
+     *  streaming 中拦截（与 handoff 模式入口同策略）：源 session 忙时 pi 会拒绝 handoff
+     *  prompt（"Agent is already processing"），提前拦下换友好提示，不打 RPC。 */
     onHandoff: (sid: string): void => {
+      if (chat.isActive(sid)) {
+        toastError(t('panel.composer.handoffBusy'))
+        return
+      }
       void handoff(sid).catch((e: unknown) => {
         const error = e instanceof Error ? e.message : String(e)
         toastError(t('panel.message.handoffFailed', { error }))

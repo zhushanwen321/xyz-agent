@@ -16,8 +16,11 @@
 // 纯 globalThis 反射实现：不静态 import pi-statusline（permission 的可选 peerDep，
 // 未安装时静态 import 会致整个 permission 加载失败），运行时结构兼容即可。
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { MODE_LABELS, type PermissionMode } from "./types.js";
 import type { PermissionPalette } from "./statusline-palette.js";
+
+const logger = getLogger("pi-permission");
 
 // ── 协议契约字面量（必须与 pi-statusline 的 footer-handshake-access.ts 完全一致）──
 // Symbol.for 字符串是跨包稳定契约：pi-statusline(owner) 与 permission(consumer) 通过同一
@@ -81,9 +84,10 @@ function readSlot(): FooterHandshakeSlot | undefined {
 	if (!("version" in slot) || !("pending" in slot)) return undefined;
 	const loose = slot as { version: unknown; pending: unknown };
 	if (loose.version !== HANDSHAKE_VERSION) {
-		console.warn(
-			`[pi-permission] footer handshake version mismatch (got ${String(loose.version)}, expected ${HANDSHAKE_VERSION}); discarding and recreating.`,
-		);
+		logger.warn("footer handshake version mismatch, discarding and recreating", {
+			got: String(loose.version),
+			expected: HANDSHAKE_VERSION,
+		});
 		return undefined;
 	}
 	if (!Array.isArray(loose.pending)) return undefined;

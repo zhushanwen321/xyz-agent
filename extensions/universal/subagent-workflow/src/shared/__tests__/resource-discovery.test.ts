@@ -11,9 +11,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // 隔离真实用户全局目录：resource-discovery 用 homedir() 推导 user-agents 源
 // （~/.agents/agents/），测试环境可能存在真实 agent 文件（如 tech-design-review.md），
 // 不 mock 会导致「期望空列表/精确列表」用例被环境污染（2026-08 实测 4 个失败）。
+// 用真实 tmpdir 下的子目录作 mock homedir（macOS SIP 禁止 mkdir /nonexistent-*）。
+const mockHomeDir = vi.hoisted(() => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "res-disc-home-"));
+  return dir;
+});
+
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:os")>();
-  return { ...actual, homedir: () => "/nonexistent-home-for-tests" };
+  return { ...actual, homedir: () => mockHomeDir };
 });
 
 import {
@@ -23,6 +32,9 @@ import {
   processPackageSync,
   getCachedFile,
   getCachedFileContent,
+  __testResetShadowDedup,
+  __testInjectShadowDedupKey,
+  isMachineSource,
   getCachedParsed,
   clearFileCache,
 } from "../resource-discovery.ts";
@@ -218,6 +230,7 @@ describe("discoverResources (async)", () => {
   });
   afterEach(() => {
     fs.rmSync(ws, { recursive: true, force: true });
+    __testResetShadowDedup();
   });
 
   it("discovers agents from project .pi/agents/ (async)", async () => {
@@ -262,6 +275,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     if (savedEnv === undefined) delete process.env.XYZ_EXTENSION_PATHS;
     else process.env.XYZ_EXTENSION_PATHS = savedEnv;
     fs.rmSync(ws, { recursive: true, force: true });
+    __testResetShadowDedup();
   });
 
   it("discovers agents from XYZ_EXTENSION_PATHS via pi.agents manifest", () => {
@@ -392,26 +406,204 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     expect(asyncResult).toEqual(discoverResourcesSync(config));
   });
 
-  it("async: 同名遮蔽时输出 warn（D8d 有检测必有报告）", async () => {
+  it("async: 同名遮蔽时机器源×机器源降 debug 不产生 warn（D8d 分级）", async () => {
     const npmPkg = path.join(agentDir, "npm", "node_modules", "test-pkg");
     writePackageJson(npmPkg, { agents: ["./agents"] });
     const npmFile = writeFile(path.join(npmPkg, "agents"), "dup.md", "npm-body");
     const projFile = writeFile(path.join(ws, ".agents", "agents"), "dup.md", "project-body");
     const warnSpy = vi.spyOn(getLogger("subagents"), "warn");
+    const debugSpy = vi.spyOn(getLogger("subagents"), "debug");
 
     try {
       const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
 
       // 遮蔽仍生效（last-writer-wins 语义不变）
       expect(result.find((r) => path.basename(r.path) === "dup.md")?.source).toBe("project-agents");
-      // 但不再静默：warn 报告被遮蔽方与保留方路径（D8d「有检测无报告」修复）
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      const [msg, data] = warnSpy.mock.calls[0];
+      // npm 与 project-agents 均为机器源 → 降级 debug，不产生 warn
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(debugSpy).toHaveBeenCalledTimes(1);
+      const [msg, data] = debugSpy.mock.calls[0];
       expect(String(msg)).toContain('duplicate agents "dup"');
       expect(String(msg)).toContain("project-agents shadows npm");
       expect(data).toMatchObject({ shadowed: npmFile, kept: projFile });
     } finally {
       warnSpy.mockRestore();
+      debugSpy.mockRestore();
+    }
+  });
+
+  it("(a) 机器源×用户源降 debug：npm vs user-pi 不产生 warn", async () => {
+    // npm 源（机器源）与 user-pi 源（用户源）——任一侧为机器源即降 debug
+    const npmPkg = path.join(agentDir, "npm", "node_modules", "test-pkg");
+    writePackageJson(npmPkg, { agents: ["./agents"] });
+    writeFile(path.join(npmPkg, "agents"), "dup.md", "npm-body");
+    // user-pi 源 = agentDir/<kind>/（agentDir 是独立于 homedir mock 的入参，
+    // mockHomeDir 由 vi.hoisted mkdtempSync 创建真实 tmpdir）
+    writeFile(path.join(agentDir, "agents"), "dup.md", "user-pi-body");
+    const warnSpy = vi.spyOn(getLogger("subagents"), "warn");
+    const debugSpy = vi.spyOn(getLogger("subagents"), "debug");
+
+    try {
+      await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(debugSpy).toHaveBeenCalled();
+      const [msg] = debugSpy.mock.calls[0];
+      expect(String(msg)).toContain('duplicate agents "dup"');
+    } finally {
+      warnSpy.mockRestore();
+      debugSpy.mockRestore();
+    }
+  });
+
+  it("(a) npm vs user-extension-paths 机器源×机器源降 debug", async () => {
+    // 两个机器源同名（npm 包 vs XYZ_EXTENSION_PATHS 注入的 dev 包，后者 source 标签为 user-extension-paths）
+    const npmPkg = path.join(agentDir, "npm", "node_modules", "test-pkg");
+    writePackageJson(npmPkg, { agents: ["./agents"] });
+    writeFile(path.join(npmPkg, "agents"), "shared.md", "npm-body");
+    const devPkg = path.join(ws, "dev-ext");
+    writePackageJson(devPkg, { agents: ["./agents"] });
+    writeFile(path.join(devPkg, "agents"), "shared.md", "dev-body");
+    process.env.XYZ_EXTENSION_PATHS = devPkg;
+    const warnSpy = vi.spyOn(getLogger("subagents"), "warn");
+    const debugSpy = vi.spyOn(getLogger("subagents"), "debug");
+
+    try {
+      await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(debugSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+      debugSpy.mockRestore();
+    }
+  });
+
+  it("(b) 双用户源重复产生 warn 且同进程第二次 discoverResources 不重复（去重生效）", async () => {
+    // user-pi 与 user-agents 都是用户源——需要构造两个源都有同名文件
+    // user-pi = agentDir/agents/（buildScanTargets 第一个 target）
+    // user-agents = mockHomeDir/.agents/agents/（vi.hoisted 创建的真实 tmpdir）
+    const userAgentsDir = path.join(mockHomeDir, ".agents", "agents");
+    fs.mkdirSync(userAgentsDir, { recursive: true });
+    try {
+      // user-pi: agentDir/agents/dup.md
+      writeFile(path.join(agentDir, "agents"), "dup.md", "user-pi-body");
+      // user-agents: mockHomeDir/.agents/agents/dup.md
+      fs.writeFileSync(path.join(userAgentsDir, "dup.md"), "user-agents-body", "utf-8");
+
+      const warnSpy = vi.spyOn(getLogger("subagents"), "warn");
+
+      try {
+        // 第一次调用——应产生 warn（双用户源）
+        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        const [msg] = warnSpy.mock.calls[0];
+        expect(String(msg)).toContain('duplicate agents "dup"');
+
+        // 第二次调用——同进程去重，不再报
+        warnSpy.mockClear();
+        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    } finally {
+      fs.rmSync(userAgentsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("(c) path 变化（新 key）重新报 warn", async () => {
+    const userAgentsDir = path.join(mockHomeDir, ".agents", "agents");
+    fs.mkdirSync(userAgentsDir, { recursive: true });
+    try {
+      writeFile(path.join(agentDir, "agents"), "dup.md", "user-pi-body");
+      fs.writeFileSync(path.join(userAgentsDir, "dup.md"), "user-agents-body", "utf-8");
+
+      const warnSpy = vi.spyOn(getLogger("subagents"), "warn");
+
+      try {
+        // 第一次调用——报 warn
+        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+
+        // 第二次调用——同 key 去重，不报
+        warnSpy.mockClear();
+        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        expect(warnSpy).not.toHaveBeenCalled();
+
+        // 真实 path 变化产生新 key：双用户目录各加一个不同 stem（dup2.md）
+        // → 新遮蔽对（新 stem 新 path）→ 新 key → 重新报
+        writeFile(path.join(agentDir, "agents"), "dup2.md", "user-pi-body-2");
+        fs.writeFileSync(path.join(userAgentsDir, "dup2.md"), "user-agents-body-2", "utf-8");
+        warnSpy.mockClear();
+        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        const [newMsg] = warnSpy.mock.calls[0];
+        expect(String(newMsg)).toContain('duplicate agents "dup2"');
+      } finally {
+        warnSpy.mockRestore();
+      }
+    } finally {
+      fs.rmSync(userAgentsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("分级穷举：全部 8 个 ResourceSource 的机器/用户归属与 D3 一致", () => {
+    // 封闭枚举逐值断言，防止未来新增/修改枚举值时分级边界漂移
+    const machine: ResourceSource[] = ["npm", "npm-dev", "user-extension-paths", "project-pi", "project-pi-tmp", "project-agents"];
+    const user: ResourceSource[] = ["user-pi", "user-agents"];
+    for (const s of machine) expect(isMachineSource(s), `${s} 应为机器源`).toBe(true);
+    for (const s of user) expect(isMachineSource(s), `${s} 应为用户源`).toBe(false);
+  });
+
+  it("(d) cap 清空行为：超限后 clear 再 add，之前报过的 key 可重新报", async () => {
+    const userAgentsDir = path.join(mockHomeDir, ".agents", "agents");
+    fs.mkdirSync(userAgentsDir, { recursive: true });
+    try {
+      writeFile(path.join(agentDir, "agents"), "dup.md", "user-pi-body");
+      fs.writeFileSync(path.join(userAgentsDir, "dup.md"), "user-agents-body", "utf-8");
+
+      const warnSpy = vi.spyOn(getLogger("subagents"), "warn");
+
+      try {
+        // 步骤 1：首次调用——报 warn，dedup key 加入 set
+        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        warnSpy.mockClear();
+
+        // 步骤 2：重置 set，注入 1024 个虚拟 key（不含 dedup key）
+        // 使 set.size = MAX，dedup key 不在 set 中
+        __testResetShadowDedup();
+        for (let i = 0; i < 1024; i++) {
+          __testInjectShadowDedupKey(`fake|key${i}|/a|/b`);
+        }
+
+        // 步骤 3：第二次调用——dedup key 不在 set → 进 else 分支 →
+        // size(1024) >= MAX(1024) → clear() → set 空 → add dedup key → warn
+        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        warnSpy.mockClear();
+
+        // 步骤 4：第三次调用——dedup key 在 set 中 → 去重跳过 warn
+        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        expect(warnSpy).not.toHaveBeenCalled();
+
+        // 步骤 5：再次填充到 cap——重置 + 注入 1024 个虚拟 key
+        // dedup key（步骤 3 add 的）已被 reset 清除
+        __testResetShadowDedup();
+        for (let i = 0; i < 1024; i++) {
+          __testInjectShadowDedupKey(`fake2|key${i}|/a|/b`);
+        }
+
+        // 步骤 6：第四次调用——cap 再次触发 clear → dedup key 重新报
+        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        warnSpy.mockRestore();
+        __testResetShadowDedup();
+      }
+    } finally {
+      fs.rmSync(userAgentsDir, { recursive: true, force: true });
     }
   });
 });
