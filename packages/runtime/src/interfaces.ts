@@ -127,7 +127,8 @@ export interface ISessionService {
    * undefined 时不传 images，走原路径。
    */
   sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }>
-  sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }>
+  // [HISTORICAL] sendSubagentMessage 已删除（composer 四符号设计 D2，marker 半成品通道废弃）：
+  // 定向消息改走 subagentAction(message/start) 直达 subagent。
   abort(sessionId: string): Promise<void>
   /**
    * 直接执行 bash 命令（pi bash RPC，不经 LLM turn）。
@@ -197,8 +198,12 @@ export interface ISessionService {
    * sessionId）；无基线（trace 未打开过）/无活跃 client 时 no-op。fire-and-forget 安全。
    */
   syncTraceEntries(sessionId: string, trigger: string): void
-  /** 取消 running subagent（经扩展 /subagents cancel，不经 LLM；对称 workflowAction） */
-  subagentAction(sessionId: string, action: 'cancel', subagentId: string): Promise<void>
+  /**
+   * subagent 生命周期/定向消息操作（经扩展 /subagents 命令，不经 LLM；对称 workflowAction）。
+   * 字段按 action 取用：cancel 用 subagentId，message 用 subagentId+text，start 用 slug+task。
+   * text/task 的换行经 encodeDirectiveText 编码为字面 \n（extension 侧 decodeNewlineEscapes 互逆还原）。
+   */
+  subagentAction(sessionId: string, action: 'cancel' | 'message' | 'start', params: { subagentId?: string; text?: string; slug?: string; task?: string }): Promise<void>
   /** W5：session 是否空闲（进程存活且非生成中），供 ReloadOrchestrator 判断立即/排队 reload。 */
   isSessionIdle(sessionId: string): boolean
   /** W5：session 是否仍存活（未被 delete），供 ReloadOrchestrator 检测排队期删除。 */

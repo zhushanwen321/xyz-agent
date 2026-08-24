@@ -52,15 +52,17 @@ function isRemovedLifecycleVerb(verb: string): verb is "pause" | "resume" {
 }
 
 /**
- * 字面 `\n`（反斜杠 + n 两字符）还原为真实换行。
+ * 还原转义协议（设计 §3.3.3 / 探针 P3）：字面 `\n`（反斜杠 + n 两字符）→ 真实换行、
+ * 字面 `\\`（两反斜杠）→ 单反斜杠。
  *
- * 转义协议（设计 §3.3.3 / 探针 P3）：composer 多行输入在 client.prompt 传输前把
- * 换行编码为字面 \n 两字符（命令保持单行），extension 解析侧在此还原。协议只定义
- * 换行一种转义——文本中原生的反斜杠+n 序列会被同样还原，这是协议层接受的权衡
- * （降级方案 base64 编码未启用）。
+ * 与 runtime encodeDirectiveText（session-service.ts）互逆：composer 多行输入在
+ * client.prompt 传输前把真实换行编码为字面 \n、原生反斜杠编码为 \\（命令保持单行），
+ * extension 解析侧在此还原。反斜杠转义必须与换行转义在**单次遍历**里成对处理
+ * （交替分支 `\\\\|\\n`，两反斜杠优先匹配）——若只处理 \n，原文里的字面反斜杠+n
+ * （如路径 `C:\new`）会被误解码为换行，往返歧义。
  */
 function decodeNewlineEscapes(s: string): string {
-  return s.replaceAll("\\n", "\n");
+  return s.replace(/\\\\|\\n/g, (m) => (m === "\\\\" ? "\\" : "\n"));
 }
 
 /**
@@ -86,8 +88,8 @@ function splitFirstToken(s: string): { token: string; rest: string } | null {
  * - `cancel <id>` → { action: "cancel", recordId }
  * - `cancel`（无 id）→ { action: "cancel-missing-id" }
  * - `message <recordId> <text...>` → { action: "message", recordId, text }
- *   text 为第二 token 后的剩余全量（含空格/引号原样；字面 \n 还原为换行——composer
- *   定向消息经此协议编码，设计 §3.3.3）
+ *   text 为第二 token 后的剩余全量（含空格/引号原样；字面 \n 还原为换行、字面 \\ 还原为
+ *   反斜杠——composer 定向消息经此协议编码，与 runtime encodeDirectiveText 互逆，设计 §3.3.3）
  * - `message`（缺 recordId 或 text 为空白）→ { action: "message-missing-args", missing }
  * - `start <slug> <task...>` → { action: "start", slug, task }（task 同 text 转义协议）
  * - `start`（缺 slug 或 task 为空白）→ { action: "start-missing-args", missing }

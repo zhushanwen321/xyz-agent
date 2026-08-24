@@ -16,27 +16,26 @@ import {
 import { startOnFreePort } from './helpers/free-port.js'
 
 /**
- * Boundary & error path tests for RuntimeServer message.send with subagent.
+ * message.send marker 通道废弃 — 边界 / 敌意 payload 回归（composer 四符号设计 D2）。
  *
  * Supplements server-subagent.test.ts which covers normal paths.
- * These tests verify edge-case behavior at the runtime/server layer:
- * XML injection, sanitization, empty fields, structural integrity.
+ * [HISTORICAL] 本文件曾断言 subagent 字段的 marker 编码边界（XML 注入/空字段/超长字段）。
+ * marker 通道删除后，边界职责反转：验证各种残缺 / 敌意形态的 legacy `subagent` 键
+ * 在 WS 入口被安全忽略——不崩溃、sendMessage 收到原文（全文相等，强于「不含 marker」）。
  */
 
 // ── Mock SessionService ───────────────────────────────────────────
 //
-// controlSubagent=true：sendSubagentMessage 模拟真实编码（base64 marker → 调 sendMessage），
-// 测试需要持有 sendMessageMock / sendSubagentMessageMock ref 做断言，因此在 vi.mock
-// 之外用 createMockSessionServiceInstance 创建，再把 instance 字段铺到 class 上。
+// 测试需要持有 sendMessageMock ref 断言转发原文，因此在 vi.mock 之外用
+// createMockSessionServiceInstance 创建，再把 instance 字段铺到 class 上。
 
-const { instance: sessionServiceInstance, sendMessageMock, sendSubagentMessageMock } =
-  createMockSessionServiceInstance({ controlSubagent: true })
+const { instance: sessionServiceInstance, sendMessageMock } =
+  createMockSessionServiceInstance()
 
 vi.mock('../src/services/session/session-service.js', () => {
   return {
     SessionService: class MockSessionService {
       sendMessage = sessionServiceInstance.sendMessage
-      sendSubagentMessage = sessionServiceInstance.sendSubagentMessage
       listPersistedSessions = sessionServiceInstance.listPersistedSessions
       getSummary = sessionServiceInstance.getSummary
       getHistory = sessionServiceInstance.getHistory
@@ -100,14 +99,13 @@ import { ModelService } from '../src/services/model-service.js'
 /** S1-W1：真实 WS 测试统一 token（ConnectionManager auth 握手，见 ws-listen-hardening.test.ts） */
 const TEST_WS_TOKEN = 'test-ws-token-subagent-boundary'
 
-describe('RuntimeServer message.send subagent — boundary & error paths', () => {
+describe('RuntimeServer message.send marker 通道废弃 — boundary & hostile payloads', () => {
   let server: RuntimeServer
   let port: number
   let ws: WebSocket
 
   beforeEach(async () => {
   sendMessageMock.mockClear()
-  sendSubagentMessageMock.mockClear()
   // EADDRINUSE 韧性：端口在 RuntimeServer 构造函数绑定，重试需整体重建（startOnFreePort 语义）
   const started = await startOnFreePort((p) => {
     const s = new RuntimeServer(p, '/tmp/test-project', TEST_WS_TOKEN)
@@ -154,194 +152,83 @@ describe('RuntimeServer message.send subagent — boundary & error paths', () =>
   })
   }
 
-  // ── Boundary: XML-dangerous chars in agent name ────────────────
+  // ── Boundary: legacy subagent 键的各种残缺形态都被安全忽略 ──────
 
-  it('should preserve special characters in agent name via JSON escaping', async () => {
+  it('subagent 为 null → 不崩溃，原文直发（全文相等，无任何包装）', async () => {
   const client = await connectClient()
-
-  await sendAndCollect(client, {
-  type: 'message.send',
-  id: 'test-xml-agent',
-  payload: {
-  sessionId: 'sess-xml-agent',
-  content: 'unused',
-  subagent: { agent: 'a<b>c"d&e', task: 'normal task' },
-  },
-  })
-
-  expect(sendMessageMock).toHaveBeenCalledTimes(1)
-  const sent = sendMessageMock.mock.calls[0][1] as string
-  // JSON.stringify escapes special chars — original values preserved when parsed
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
-  expect(markerMatch).not.toBeNull()
-  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
-  const parsed = JSON.parse(decoded)
-  expect(parsed.agent).toBe('a<b>c"d&e')
-  expect(parsed.task).toBe('normal task')
-  })
-
-  // ── Boundary: XML-dangerous chars in task ──────────────────────
-
-  it('should preserve special characters in task via JSON escaping', async () => {
-  const client = await connectClient()
-
-  await sendAndCollect(client, {
-  type: 'message.send',
-  id: 'test-xml-task',
-  payload: {
-  sessionId: 'sess-xml-task',
-  content: 'unused',
-  subagent: { agent: 'clean-agent', task: '<script>alert("xss")</script>&done' },
-  },
-  })
-
-  expect(sendMessageMock).toHaveBeenCalledTimes(1)
-  const sent = sendMessageMock.mock.calls[0][1] as string
-  // JSON.stringify escapes special chars — original values preserved when parsed
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
-  expect(markerMatch).not.toBeNull()
-  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
-  const parsed = JSON.parse(decoded)
-  expect(parsed.task).toBe('<script>alert("xss")</script>&done')
-  })
-
-  // ── Boundary: newlines in task ─────────────────────────────────
-
-  it('should preserve newlines in task text within the XML prompt', async () => {
-  const client = await connectClient()
-
-  const multilineTask = 'step 1: read code\nstep 2: find bugs\nstep 3: report'
 
   await sendAndCollect(client, {
     type: 'message.send',
-    id: 'test-newlines',
+    id: 'test-null-subagent',
+    payload: {
+    sessionId: 'sess-null',
+    content: 'raw body',
+    subagent: null,
+    },
+  })
+
+  expect(sendMessageMock).toHaveBeenCalledTimes(1)
+  const sent = sendMessageMock.mock.calls[0][1] as string
+  expect(sent).toBe('raw body')
+  expect(sent).not.toContain('<!--')
+  })
+
+  it('subagent 为非对象标量 → 同样被忽略，原文直发', async () => {
+  const client = await connectClient()
+
+  await sendAndCollect(client, {
+    type: 'message.send',
+    id: 'test-scalar-subagent',
+    payload: {
+    sessionId: 'sess-scalar',
+    content: 'raw body',
+    subagent: 'do-the-thing',
+    },
+  })
+
+  expect(sendMessageMock).toHaveBeenCalledTimes(1)
+  const sent = sendMessageMock.mock.calls[0][1] as string
+  expect(sent).toBe('raw body')
+  expect(sent).not.toContain('<!--')
+  })
+
+  it('subagent 字段含 XML 危险字符 / 超长值 → 忽略后不产生任何注入面（值不进发送文本）', async () => {
+  const client = await connectClient()
+  const longTask = 'y'.repeat(1000)
+
+  await sendAndCollect(client, {
+    type: 'message.send',
+    id: 'test-hostile-subagent',
+    payload: {
+    sessionId: 'sess-hostile',
+    content: 'raw body',
+    subagent: { agent: 'a<b>c"d&e', task: `<script>alert(1)</script>${longTask}` },
+    },
+  })
+
+  expect(sendMessageMock).toHaveBeenCalledTimes(1)
+  const sent = sendMessageMock.mock.calls[0][1] as string
+  // 通道已删：subagent 的值完全不进发送文本，无 marker / 无 XML 包装 / 无超长注入
+  expect(sent).toBe('raw body')
+  expect(sent).not.toContain('<script>')
+  expect(sent).not.toContain(longTask)
+  })
+
+  it('多行 content（真实换行）原样透传——多行属于主 agent 正常文本，无需转义', async () => {
+  const client = await connectClient()
+
+  const multiline = 'step 1: read code\nstep 2: find bugs\nstep 3: report'
+  await sendAndCollect(client, {
+    type: 'message.send',
+    id: 'test-multiline-content',
     payload: {
     sessionId: 'sess-newlines',
-    content: 'unused',
-    subagent: { agent: 'reviewer', task: multilineTask },
+    content: multiline,
     },
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sent = sendMessageMock.mock.calls[0][1] as string
-  // Newlines are JSON-escaped in the marker, but preserved when parsed
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
-  expect(markerMatch).not.toBeNull()
-  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
-  const parsed = JSON.parse(decoded)
-  expect(parsed.task).toBe(multilineTask)
-  })
-
-  // ── Error: empty agent name ────────────────────────────────────
-
-  it('should still construct XML prompt when agent name is empty string', async () => {
-  const client = await connectClient()
-
-  await sendAndCollect(client, {
-  type: 'message.send',
-  id: 'test-empty-agent',
-  payload: {
-  sessionId: 'sess-empty-agent',
-  content: 'unused',
-  subagent: { agent: '', task: 'do something' },
-  },
-  })
-
-  expect(sendMessageMock).toHaveBeenCalledTimes(1)
-  const sent = sendMessageMock.mock.calls[0][1] as string
-  // Should still produce valid marker structure with empty agent
-  expect(sent).toContain('xyz-agent-force-subagent')
-  expect(sent).not.toContain('<tool_call')
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
-  expect(markerMatch).not.toBeNull()
-  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
-  const parsed = JSON.parse(decoded)
-  expect(parsed.agent).toBe('')
-  expect(parsed.task).toBe('do something')
-  })
-
-  // ── Error: empty task ──────────────────────────────────────────
-
-  it('should still construct XML prompt when task is empty string', async () => {
-  const client = await connectClient()
-
-  await sendAndCollect(client, {
-  type: 'message.send',
-  id: 'test-empty-task',
-  payload: {
-  sessionId: 'sess-empty-task',
-  content: 'unused',
-  subagent: { agent: 'agent-name', task: '' },
-  },
-  })
-
-  expect(sendMessageMock).toHaveBeenCalledTimes(1)
-  const sent = sendMessageMock.mock.calls[0][1] as string
-  expect(sent).toContain('xyz-agent-force-subagent')
-  expect(sent).not.toContain('<tool_call')
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
-  expect(markerMatch).not.toBeNull()
-  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
-  const parsed = JSON.parse(decoded)
-  expect(parsed.agent).toBe('agent-name')
-  expect(parsed.task).toBe('')
-  })
-
-  // ── Boundary: very long agent name + task ──────────────────────
-
-  it('should produce structurally valid XML prompt with long agent name and task', async () => {
-  const client = await connectClient()
-  const longAgent = 'agent-' + 'x'.repeat(500)
-  const longTask = 'task: ' + 'y'.repeat(1000)
-
-  await sendAndCollect(client, {
-    type: 'message.send',
-    id: 'test-long-fields',
-    payload: {
-    sessionId: 'sess-long',
-    content: 'unused',
-    subagent: { agent: longAgent, task: longTask },
-    },
-  })
-
-  expect(sendMessageMock).toHaveBeenCalledTimes(1)
-  const sent = sendMessageMock.mock.calls[0][1] as string
-
-  // Verify structural integrity — hidden marker format
-  expect(sent).toContain('xyz-agent-force-subagent')
-  expect(sent).not.toContain('<tool_call')
-  // Verify the JSON inside the marker is parseable
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
-  expect(markerMatch).not.toBeNull()
-  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
-  const parsed = JSON.parse(decoded)
-  expect(parsed.agent).toBe(longAgent)
-  expect(parsed.task).toBe(longTask)
-  })
-
-  // ── Boundary: single-quote in agent/task (not stripped by regex) ─
-
-  it('should preserve single quotes in agent and task (not in sanitize regex)', async () => {
-  const client = await connectClient()
-
-  await sendAndCollect(client, {
-  type: 'message.send',
-  id: 'test-single-quote',
-  payload: {
-  sessionId: 'sess-quote',
-  content: 'unused',
-  subagent: { agent: "agent's-name", task: "it's O'Reilly's book" },
-  },
-  })
-
-  expect(sendMessageMock).toHaveBeenCalledTimes(1)
-  const sent = sendMessageMock.mock.calls[0][1] as string
-  // Single quotes are preserved through base64 encode/decode round-trip
-  const markerMatch = sent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
-  expect(markerMatch).not.toBeNull()
-  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
-  const parsed = JSON.parse(decoded)
-  expect(parsed.agent).toBe("agent's-name")
-  expect(parsed.task).toBe("it's O'Reilly's book")
+  expect(sent).toBe(multiline)
   })
 })

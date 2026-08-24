@@ -433,8 +433,12 @@ export const session = {
     await sleep(TIMING.ack)
   },
 
-  /** Mock subagent cancel（对称 workflowAction，stub resolve 即可） */
-  async subagentAction(_sessionId: string, _action: string, _subagentId: string): Promise<void> {
+  /** Mock subagent 生命周期/定向消息操作（对称 workflowAction，stub resolve 即可） */
+  async subagentAction(
+    _sessionId: string,
+    _action: 'cancel' | 'message' | 'start',
+    _params: { subagentId?: string; text?: string; slug?: string; task?: string },
+  ): Promise<void> {
     await sleep(TIMING.ack)
   },
 

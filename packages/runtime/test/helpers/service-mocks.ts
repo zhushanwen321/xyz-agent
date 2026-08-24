@@ -19,9 +19,8 @@
  *    ```
  *
  * 2. `createMockSessionServiceInstance(options)`：返回 mock instance（字段集合）+
- *    需要测试断言的 mock ref。仅 SessionService 的 subagent 测试用——因为
- *    sendSubagentMessage 要模拟真实编码（调 sendMessage），测试需持有
- *    sendMessageMock ref 做断言。用法见 server-subagent.test.ts：
+ *    需要测试断言的 mock ref。仅 SessionService 的 message.send 转发测试用——因为
+ *    测试需持有 sendMessageMock ref 断言转发原文。用法见 server-subagent.test.ts：
  *    在 vi.mock 外创建 instance，再把字段铺到手写的 class 上。
  *
  * [vitest hoisting 约束 —— 重要]
@@ -39,7 +38,7 @@
  *     `vi.mock(p, async (o) => mockXxxModule(await o()))`  ✅
  *     （不能写 `vi.mock(p, createFactory())` —— 会 TDZ）
  *
- * SessionService 的 controlSubagent/getRpcClientImpl options 引用文件级变量是安全的：
+ * SessionService 的 sessionId/getRpcClientImpl options 引用文件级变量是安全的：
  * class 字段在 `new` 时才求值（运行期），此时文件级变量已初始化。
  */
 import { vi } from 'vitest'
@@ -47,21 +46,13 @@ import { vi } from 'vitest'
 // ── SessionService ────────────────────────────────────────────────
 
 /**
- * 创建 mock sendMessage + sendSubagentMessage。
- *
- * subagent 相关测试需要 sendSubagentMessage 模拟真实编码逻辑（base64 marker），
- * 其他测试只需 mockResolvedValue(undefined)。通过 options.controlSubagent 区分：
- * - true: 返回与生产编码等价的实现（与 server-subagent.test.ts 原逻辑一致）
- * - false/undefined: 简单 mockResolvedValue(undefined)
+ * 创建 mock sendMessage（测试经返回的 ref 断言 message.send 的转发原文）。
  *
  * 返回的 mock 函数同时挂在 instance 字段上，测试可通过返回的 refs 做断言。
+ * [HISTORICAL] sendSubagentMessage / controlSubagent 选项已随 marker 通道废弃删除
+ * （composer 四符号设计 D2）——message.send 现在是纯主 agent 转发。
  */
 export interface SessionServiceMockOptions {
-  /**
-   * 若为 true，sendSubagentMessage 会模拟真实编码（构造 base64 marker 后调用 sendMessage）。
-   * 用于 subagent 相关测试。默认 false（简单 resolve undefined）。
-   */
-  controlSubagent?: boolean
   /**
    * create / restoreSession 返回的 session id。默认 'test-session-id'。
    * 不同文件用不同 id 便于区分（如 'bridge-test-session'）。
@@ -81,38 +72,18 @@ function defaultSession(sessionId: string) {
 }
 
 /**
- * 构造 sendSubagentMessage 的「真实编码」mock：把 {agent, task} JSON → base64 → marker，
- * 然后调用 sendMessage(sessionId, `${marker}\n${promptText}`)。
- * 与生产 src/services/session/session-service.ts 的编码逻辑等价。
- */
-function createSubagentEncodingImpl(sendMessageMock: (...args: unknown[]) => Promise<unknown>) {
-  return async (sessionId: string, agent: string, task: string, content?: string) => {
-    const payload = JSON.stringify({ agent, task })
-    const encoded = Buffer.from(payload, 'utf-8').toString('base64')
-    const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
-    const promptText = content || `Execute task using agent '${agent}'`
-    await sendMessageMock(sessionId, `${marker}\n${promptText}`)
-  }
-}
-
-/**
  * 创建一个 SessionService mock instance（字段集合）。
  *
  * 返回的对象每个字段都是 vi.fn()，可直接作为 class 字段。
  * 同时把需要测试断言的 mock 函数挂到 `_refs` 上返回，方便测试引用。
  */
 export function createMockSessionServiceInstance(options: SessionServiceMockOptions = {}) {
-  const { controlSubagent = false, sessionId = 'test-session-id', getRpcClientImpl } = options
+  const { sessionId = 'test-session-id', getRpcClientImpl } = options
 
   const sendMessageMock = vi.fn().mockResolvedValue(undefined)
 
-  const sendSubagentMessageMock = controlSubagent
-    ? vi.fn().mockImplementation(createSubagentEncodingImpl(sendMessageMock))
-    : vi.fn().mockResolvedValue(undefined)
-
   const instance = {
     sendMessage: sendMessageMock,
-    sendSubagentMessage: sendSubagentMessageMock,
     listPersistedSessions: vi.fn().mockReturnValue([]),
     getSummary: vi.fn().mockReturnValue(undefined),
     getHistory: vi.fn().mockResolvedValue([]),
@@ -132,36 +103,23 @@ export function createMockSessionServiceInstance(options: SessionServiceMockOpti
     setOnSessionDestroyed: vi.fn(),
   }
 
-  return { instance, sendMessageMock, sendSubagentMessageMock }
+  return { instance, sendMessageMock }
 }
 
 /**
  * 创建 SessionService mock class（用于 vi.mock factory）。
  *
- * 注意：controlSubagent 模式下，sendMessage / sendSubagentMessage 的 mock ref
- * 无法从 class 外部获取（hoisting 限制）。subagent 测试需要断言这两个 mock，
- * 因此 controlSubagent=true 的测试文件应改用 createMockSessionServiceInstance +
- * 手写 class（见 server-subagent.test.ts 的用法）。
+ * 注意：需要断言 sendMessage 的测试（message.send 转发）无法从 class 外部获取
+ * mock ref（hoisting 限制），应改用 createMockSessionServiceInstance + 手写 class
+ * （见 server-subagent.test.ts 的用法）。
  *
- * 非 subagent 测试（bridge/extension/data-flow）不需要断言 sendMessage，
- * 可直接用本函数生成的 class。
+ * 不需要断言 sendMessage 的测试（bridge/extension/data-flow）可直接用本函数生成的 class。
  */
 export function createMockSessionServiceClass(options: SessionServiceMockOptions = {}) {
-  const { controlSubagent = false, sessionId = 'test-session-id', getRpcClientImpl } = options
-
-  // controlSubagent 模式下需要在构造时就建立 sendMessage ↔ sendSubagentMessage 的联动，
-  // 但 class 字段初始化顺序无法保证 sendSubagentMessage 引用到 sendMessage。
-  // 因此 controlSubagent=true 时，请测试文件自行用 createMockSessionServiceInstance。
-  if (controlSubagent) {
-    throw new Error(
-      '[service-mocks] controlSubagent=true 需要测试文件直接使用 createMockSessionServiceInstance ' +
-        '(需要在 class 外持有 sendMessageMock ref)，不要用 createMockSessionServiceClass',
-    )
-  }
+  const { sessionId = 'test-session-id', getRpcClientImpl } = options
 
   return class MockSessionService {
     sendMessage = vi.fn().mockResolvedValue(undefined)
-    sendSubagentMessage = vi.fn().mockResolvedValue(undefined)
     listPersistedSessions = vi.fn().mockReturnValue([])
     getSummary = vi.fn().mockReturnValue(undefined)
     getHistory = vi.fn().mockResolvedValue([])

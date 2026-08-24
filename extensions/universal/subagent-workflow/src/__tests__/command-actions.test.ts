@@ -161,6 +161,52 @@ describe("parseSubagentRpcCommand message/start（定向消息通道）", () => 
 });
 
 // ============================================================
+// 转义协议互逆（runtime encodeDirectiveText ↔ decodeNewlineEscapes）
+// ============================================================
+
+describe("转义协议互逆（message/start 文本往返不变）", () => {
+  // runtime 侧 encodeDirectiveText（session-service.ts）的本地镜像：extension 不依赖
+  // runtime 包（依赖边界 F7），互逆性靠两侧测试对同一 wire 协议双向钉死。
+  // 编码规则：原生反斜杠 → \\（先）、真实换行 → 字面 \n（后），命令保持单行。
+  const encodeMirror = (s: string) => s.replace(/\\/g, "\\\\").replace(/\n/g, "\\n");
+
+  it("原文含字面 \\n（反斜杠+n，如路径 C:\\new）→ 往返不变（不被误解码为换行）", () => {
+    const original = "路径 C:\\new folder 的说明";
+    const parsed = parseSubagentRpcCommand(`message sa-1 ${encodeMirror(original)}`);
+    expect(parsed).toEqual({ action: "message", recordId: "sa-1", text: original });
+  });
+
+  it("原文含反斜杠（非 n 前缀，如正则 \\d+ 与 UNC 路径）→ 往返不变", () => {
+    const original = "正则 \\d+ 与 \\\\server\\share";
+    const parsed = parseSubagentRpcCommand(`message sa-1 ${encodeMirror(original)}`);
+    expect(parsed).toEqual({ action: "message", recordId: "sa-1", text: original });
+  });
+
+  it("原文含真实换行 → 往返不变（编码为字面 \\n 后还原）", () => {
+    const original = "第一行\n第二行";
+    const parsed = parseSubagentRpcCommand(`message sa-1 ${encodeMirror(original)}`);
+    expect(parsed).toEqual({ action: "message", recordId: "sa-1", text: original });
+  });
+
+  it("混合：反斜杠 + 真实换行 + 字面 \\n 同文 → 往返不变", () => {
+    const original = "C:\\new\n正则 \\d+\n收尾";
+    const parsed = parseSubagentRpcCommand(`message sa-1 ${encodeMirror(original)}`);
+    expect(parsed).toEqual({ action: "message", recordId: "sa-1", text: original });
+  });
+
+  it("start task 同样满足互逆（task 与 text 共用同一转义协议）", () => {
+    const original = "任务 C:\\new\n第二行";
+    const parsed = parseSubagentRpcCommand(`start my-slug ${encodeMirror(original)}`);
+    expect(parsed).toEqual({ action: "start", slug: "my-slug", task: original });
+  });
+
+  it("wire 上编码后的文本不含真实换行（命令单行不变式）", () => {
+    const original = "a\nb\nc\\d";
+    expect(encodeMirror(original).includes("\n")).toBe(false);
+  });
+});
+
+// ============================================================
 // parseWorkflowRpcCommand
 // ============================================================
 

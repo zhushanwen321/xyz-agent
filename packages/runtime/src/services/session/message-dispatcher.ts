@@ -1,12 +1,12 @@
 /**
  * MessageDispatcher — 从 session-service 巨石拆出的消息派发职责。
  *
- * 负责:sendMessage / sendSubagentMessage / abort / steerMessage /
- * followUpMessage / compact + sendMessageHook 注册。
+ * 负责:sendMessage / abort / steerMessage / followUpMessage / compact +
+ * sendMessageHook 注册。
  *
- * sendMessage 与 sendSubagentMessage 共享 sendPrompt 骨架(hook 拦截 →
- * ensureActive → 标记活跃 → prompt),消除重复;两者仅注入不同的
- * 「实际发给 pi 的文本」构造方式(subagent 注入 base64 marker)。
+ * sendMessage 经 sendPrompt 骨架(hook 拦截 → ensureActive → 标记活跃 → prompt)。
+ * [HISTORICAL] sendSubagentMessage(marker 拼装分支)已删除(composer 四符号设计 D2)——
+ * 定向消息改走 session-service.subagentAction 直发 client.prompt,不经本骨架。
  *
  * 依赖经构造注入:svc(Facade 内部协议,访问 sessions/共享 helper)、
  * pm(getClient / 进程操作)、messageBus(发布,wave:perf-w09 接口收敛——
@@ -65,30 +65,19 @@ export class MessageDispatcher {
    * pending.reject，不得 reply success（round7 must-fix #3：避免「composer 清空 + 错误气泡」矛盾态）。
    */
   async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> {
-    return this.sendPrompt(sessionId, content, (content) => content, images)
-  }
-
-  /** 构造 subagent 隐藏标记并发送 prompt(hook 审核用户原文,marker 仅发给 pi)。 */
-  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean }> {
-    const payload = JSON.stringify({ agent, task })
-    const encoded = Buffer.from(payload, 'utf-8').toString('base64')
-    const marker = `<!-- xyz-agent-force-subagent:${encoded} -->`
-    const promptText = content || `Execute task using agent '${agent}'`
-    return this.sendPrompt(sessionId, promptText, (promptBody) => `${marker}\n${promptBody}`)
+    return this.sendPrompt(sessionId, content, images)
   }
 
   /**
-   * sendMessage / sendSubagentMessage 共享骨架。
+   * sendMessage 的发送骨架。
    * @param sessionId    会话 id
-   * @param hookContent  hook 审核的文本(用户原文,不含 marker)
-   * @param buildPrompt  输入(hook 改写后的)文本,返回实际发给 pi 的文本(subagent 时含 marker 前缀)
+   * @param hookContent  hook 审核的文本(用户原文)
    * @param images       shared 形状图片附件（{data;mimeType}），透传给 client.prompt。
-   *                     仅 sendMessage 主路径传入；sendSubagentMessage 不传（范围外）。
+   *                     undefined 时不传 images，走原路径。
    */
   private async sendPrompt(
     sessionId: string,
     hookContent: string,
-    buildPrompt: (content: string) => string,
     images?: Array<{ data: string; mimeType: string }>,
   ): Promise<{ blocked: boolean; rejected?: boolean }> {
     // ── BeforeSend hook ──
@@ -142,7 +131,7 @@ export class MessageDispatcher {
       }
     }
     // ── 发送 prompt + 错误广播 ──
-    const promptText = buildPrompt(hookOutcome.modifiedContent ?? hookContent)
+    const promptText = hookOutcome.modifiedContent ?? hookContent
     try {
       await client.prompt(promptText, images)
     } catch (e) {
