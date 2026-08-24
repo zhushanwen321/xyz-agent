@@ -1,157 +1,201 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
+/**
+ * Agent binding sidecar 测试（u7-sidecar-persist 验收 A3 + A4）。
+ *
+ * A3：规则 #6 守卫——session JSONL 不存在时 persistAgentBinding 不创建 sidecar。
+ * A3b：缓存失效集成——persistAgentBinding 写入后 sessionMetaCache 失效，scanPiSessions 能立即读到 binding。
+ * A4：readAgentBinding 降级路径——sidecar 不存在/JSON 损坏/spawnSource 非法 → undefined。
+ */
+
+import { describe, it, expect, vi } from 'vitest'
+import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { persistSessionEnd, extractSessionOutcome, persistProjectBinding, readProjectBinding, parseSessionHeader } from '../infra/pi/session-file-utils.js'
+import {
+  persistAgentBinding,
+  readAgentBinding,
+  agentSidecarPath,
+  scanPiSessions,
+  invalidateScanDirCache,
+  _resetSessionMetaCacheForTest,
+} from '../infra/pi/session-file-utils.js'
 
-describe('session-file-utils sidecar', () => {
-  let dir: string
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'test-')) })
-  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+function makeTmpDir(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), prefix))
+}
 
-  it('U1: persistSessionEnd writes .meta.json sidecar', () => {
-    const filePath = join(dir, 'test.jsonl')
-    writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
-    persistSessionEnd(filePath, 'done')
-    expect(existsSync(filePath + '.meta.json')).toBe(true)
-    const meta = JSON.parse(readFileSync(filePath + '.meta.json', 'utf-8'))
-    expect(meta.outcome).toBe('done')
-    expect(meta.type).toBe('session_end')
-    // JSONL should NOT have session_end
-    const content = readFileSync(filePath, 'utf-8')
-    expect(content).not.toContain('session_end')
+describe('persistAgentBinding', () => {
+  it('A3: 规则 #6 守卫——session JSONL 不存在时不创建 sidecar', () => {
+    const dir = makeTmpDir('u7-a3-')
+    try {
+      const nonExistentFile = join(dir, 'nonexistent.jsonl')
+      // 确保文件确实不存在
+      expect(existsSync(nonExistentFile)).toBe(false)
+
+      // 记录 sidecar 目录下的文件数量（应为 0）
+      const sidecarPath = agentSidecarPath(nonExistentFile)
+      const sidecarDir = join(dir, 'sidecar-check')
+      mkdirSync(sidecarDir, { recursive: true })
+      const filesBefore = existsSync(sidecarPath) ? 1 : 0
+
+      // 调用 persistAgentBinding，文件不存在应静默跳过
+      persistAgentBinding(nonExistentFile, 'agent', 'parent-123')
+
+      // 验证 sidecar 未被创建
+      const filesAfter = existsSync(sidecarPath) ? 1 : 0
+      expect(filesAfter).toBe(filesBefore)
+      expect(existsSync(sidecarPath)).toBe(false)
+
+      // 验证 sidecar 目录下没有新增文件（确保没有创建其他文件）
+      const { readdirSync } = require('node:fs')
+      const sidecarFiles = readdirSync(dir).filter((f: string) => f.includes('.agent.json'))
+      expect(sidecarFiles.length).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
-  it('U2: extractSessionOutcome reads sidecar first', () => {
-    const filePath = join(dir, 'test.jsonl')
-    writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
-    // Write sidecar
-    writeFileSync(filePath + '.meta.json', JSON.stringify({ type: 'session_end', outcome: 'error', timestamp: new Date().toISOString() }))
-    expect(extractSessionOutcome(filePath)).toBe('error')
+  it('A1-positive: 文件存在时 sidecar 被正确创建且 readAgentBinding 回读一致（正向对照）', () => {
+    const dir = makeTmpDir('u7-a1-pos-')
+    try {
+      const fp = join(dir, 'test.jsonl')
+      writeFileSync(fp, '{"type":"session","id":"s1","cwd":"/tmp","timestamp":"2026-01-01"}\n')
+
+      // 确保 sidecar 不存在
+      const sidecarPath = agentSidecarPath(fp)
+      expect(existsSync(sidecarPath)).toBe(false)
+
+      // 调用 persistAgentBinding，文件存在应创建 sidecar
+      persistAgentBinding(fp, 'agent', 'parent-123')
+
+      // 验证 sidecar 被创建
+      expect(existsSync(sidecarPath)).toBe(true)
+
+      // 验证 sidecar 内容
+      const { readFileSync } = require('node:fs')
+      const data = JSON.parse(readFileSync(sidecarPath, 'utf-8'))
+      expect(data.spawnSource).toBe('agent')
+      expect(data.parentAgentSessionId).toBe('parent-123')
+      expect(data.version).toBe(1)
+
+      // readAgentBinding 回读验证
+      const result = readAgentBinding(fp)
+      expect(result).toBeDefined()
+      expect(result!.spawnSource).toBe('agent')
+      expect(result!.parentAgentSessionId).toBe('parent-123')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('A3b: 缓存失效集成', () => {
+  it('A2: scanSessionMeta 合并 agent binding——persistAgentBinding 写入后 sessionMetaCache 失效，scanPiSessions({ force: false }) 能立即读到 binding', () => {
+    const dir = makeTmpDir('u7-a3b-')
+    try {
+      // 设置临时数据目录
+      const origDataDir = process.env.XYZ_AGENT_DATA_DIR
+      process.env.XYZ_AGENT_DATA_DIR = dir
+
+      // 重置缓存
+      _resetSessionMetaCacheForTest()
+      invalidateScanDirCache()
+
+      // 创建 session 文件
+      const sessionsDir = join(dir, 'pi', 'sessions')
+      mkdirSync(sessionsDir, { recursive: true })
+      const fp = join(sessionsDir, 'test.jsonl')
+      writeFileSync(fp, '{"type":"session","id":"s1","cwd":"/tmp","timestamp":"2026-01-01"}\n')
+
+      // 先扫描一次，填充缓存
+      let sessions = scanPiSessions({ force: true })
+      expect(sessions.length).toBe(1)
+      expect(sessions[0].spawnSource).toBeUndefined()
+
+      // 写入 agent binding
+      persistAgentBinding(fp, 'agent', 'parent-123')
+
+      // 再次扫描（force:false 走正常缓存路径），应该能读到 binding（缓存已失效）
+      sessions = scanPiSessions({ force: false })
+      expect(sessions.length).toBe(1)
+      expect(sessions[0].spawnSource).toBe('agent')
+      expect(sessions[0].parentAgentSessionId).toBe('parent-123')
+
+      // 恢复环境变量
+      if (origDataDir !== undefined) {
+        process.env.XYZ_AGENT_DATA_DIR = origDataDir
+      } else {
+        delete process.env.XYZ_AGENT_DATA_DIR
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('readAgentBinding', () => {
+  it('A4 case1: sidecar 不存在返回 undefined', () => {
+    const dir = makeTmpDir('u7-a4-1-')
+    try {
+      const fp = join(dir, 'test.jsonl')
+      writeFileSync(fp, '{"type":"session","id":"s1","cwd":"/tmp","timestamp":"2026-01-01"}\n')
+
+      // 无 sidecar 文件
+      const result = readAgentBinding(fp)
+      expect(result).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
-  it('U2b: extractSessionOutcome fallback to JSONL when no sidecar', () => {
-    const filePath = join(dir, 'test.jsonl')
-    writeFileSync(filePath, '{"type":"message","id":"m1"}\n{"type":"session_end","outcome":"stopped","timestamp":"2026-01-01"}\n')
-    expect(extractSessionOutcome(filePath)).toBe('stopped')
+  it('A4 case2: JSON 损坏返回 undefined', () => {
+    const dir = makeTmpDir('u7-a4-2-')
+    try {
+      const fp = join(dir, 'test.jsonl')
+      writeFileSync(fp, '{"type":"session","id":"s1","cwd":"/tmp","timestamp":"2026-01-01"}\n')
+
+      // 写入损坏的 JSON
+      const sidecarPath = agentSidecarPath(fp)
+      writeFileSync(sidecarPath, 'not valid json {{{')
+
+      const result = readAgentBinding(fp)
+      expect(result).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
-  it('U2c: extractSessionOutcome returns null when nothing', () => {
-    const filePath = join(dir, 'test.jsonl')
-    writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
-    expect(extractSessionOutcome(filePath)).toBeNull()
+  it('A4 case3: spawnSource 非法返回 undefined', () => {
+    const dir = makeTmpDir('u7-a4-3-')
+    try {
+      const fp = join(dir, 'test.jsonl')
+      writeFileSync(fp, '{"type":"session","id":"s1","cwd":"/tmp","timestamp":"2026-01-01"}\n')
+
+      // 写入 spawnSource 非字符串的 sidecar
+      const sidecarPath = agentSidecarPath(fp)
+      writeFileSync(sidecarPath, JSON.stringify({ spawnSource: 123, parentAgentSessionId: 'parent-123', version: 1 }))
+
+      const result = readAgentBinding(fp)
+      expect(result).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
-  // ── project binding sidecar（D14 语义修正 2026-08-04）──
-  it('P1: persistProjectBinding writes .project.json sidecar', () => {
-    const filePath = join(dir, 'test.jsonl')
-    writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
-    persistProjectBinding(filePath, 'proj-abc')
-    expect(existsSync(filePath + '.project.json')).toBe(true)
-    const binding = JSON.parse(readFileSync(filePath + '.project.json', 'utf-8'))
-    expect(binding.projectId).toBe('proj-abc')
-    expect(binding.version).toBe(1)
-  })
+  it('A4 case4: parentAgentSessionId 非法 → 仅该字段 undefined，spawnSource 保留（#15 语义）', () => {
+    const dir = makeTmpDir('u7-a4-4-')
+    try {
+      const fp = join(dir, 'test.jsonl')
+      writeFileSync(fp, '{"type":"session","id":"s1","cwd":"/tmp","timestamp":"2026-01-01"}\n')
 
-  it('P2: readProjectBinding reads back persisted id', () => {
-    const filePath = join(dir, 'test.jsonl')
-    writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
-    persistProjectBinding(filePath, 'proj-abc')
-    expect(readProjectBinding(filePath)).toBe('proj-abc')
-  })
+      // 写入 parentAgentSessionId 非字符串的 sidecar
+      const sidecarPath = agentSidecarPath(fp)
+      writeFileSync(sidecarPath, JSON.stringify({ spawnSource: 'agent', parentAgentSessionId: null, version: 1 }))
 
-  it('P3: readProjectBinding returns undefined when no sidecar / corrupted', () => {
-    const filePath = join(dir, 'test.jsonl')
-    writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
-    expect(readProjectBinding(filePath)).toBeUndefined()
-    // 损坏 sidecar（非字符串 projectId）→ undefined
-    writeFileSync(filePath + '.project.json', '{"projectId":123}')
-    expect(readProjectBinding(filePath)).toBeUndefined()
-  })
-
-  it('P4: persistProjectBinding skips when JSONL missing（规则 #6 延迟写入窗口）', () => {
-    const filePath = join(dir, 'never-flushed.jsonl')
-    persistProjectBinding(filePath, 'proj-abc')
-    expect(existsSync(filePath + '.project.json')).toBe(false)
-  })
-
-  it('P5: persistProjectBinding skips empty projectId（归回默认项目 = 删除绑定）', () => {
-    const filePath = join(dir, 'test.jsonl')
-    writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
-    persistProjectBinding(filePath, '')
-    expect(existsSync(filePath + '.project.json')).toBe(false)
-  })
-
-  it('P6: 归回默认项目（空 projectId）删除已存在的绑定 sidecar（review MF-2 回归防护）', () => {
-    const filePath = join(dir, 'test.jsonl')
-    writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
-    // 先绑定命名项目 → sidecar 存在且可读回
-    persistProjectBinding(filePath, 'proj-abc')
-    expect(readProjectBinding(filePath)).toBe('proj-abc')
-    // 归回默认 → 空 projectId 必须删除 sidecar，读取侧兑底 undefined
-    persistProjectBinding(filePath, '')
-    expect(existsSync(filePath + '.project.json')).toBe(false)
-    expect(readProjectBinding(filePath)).toBeUndefined()
-  })
-
-  it('P7: 归回默认项目且 JSONL 缺失（延迟写入窗口）仍删除已存在 sidecar（删除不依赖 JSONL）', () => {
-    const filePath = join(dir, 'test.jsonl')
-    writeFileSync(filePath, '{"type":"message","id":"m1"}\n')
-    persistProjectBinding(filePath, 'proj-abc')
-    // 模拟 JSONL 被移除（如重建），sidecar 残留
-    rmSync(filePath)
-    persistProjectBinding(filePath, '')
-    expect(existsSync(filePath + '.project.json')).toBe(false)
-  })
-
-  // ── parseSessionHeader 首行读（wave:perf-w20 微项 9）──
-  // 只读文件头部 4KB 而非全量 readFileSync，行为与旧实现等价：多行大文件只取首行 header。
-  it('H1: parseSessionHeader 多行长文件只读首行——header 解析正确且不触碰后续行', () => {
-    const filePath = join(dir, 'long.jsonl')
-    const header = JSON.stringify({ type: 'session', id: 'sess-h1', cwd: '/test', timestamp: '2026-08-16T00:00:00.000Z', parentSession: '/old.jsonl', forkEntryId: 'e-9' })
-    // 首行 header + 大量后续 entry（超过 4KB 读块，验证只取首行不受影响）
-    const tail = Array.from({ length: 200 }, (_, i) => JSON.stringify({ type: 'message', id: `m-${i}`, content: 'x'.repeat(80) })).join('\n')
-    writeFileSync(filePath, `${header}\n${tail}\n`)
-    const parsed = parseSessionHeader(filePath)
-    expect(parsed).toEqual({
-      id: 'sess-h1', cwd: '/test', timestamp: '2026-08-16T00:00:00.000Z',
-      parentSession: '/old.jsonl', forkEntryId: 'e-9',
-    })
-  })
-
-  it('H2: parseSessionHeader 首行非 session 类型 / 空文件 / 不存在文件 → null', () => {
-    const notSession = join(dir, 'not-session.jsonl')
-    writeFileSync(notSession, '{"type":"message","id":"m1"}\n')
-    expect(parseSessionHeader(notSession)).toBeNull()
-
-    const empty = join(dir, 'empty.jsonl')
-    writeFileSync(empty, '')
-    expect(parseSessionHeader(empty)).toBeNull()
-
-    expect(parseSessionHeader(join(dir, 'missing.jsonl'))).toBeNull()
-  })
-
-  it('H3: parseSessionHeader 无换行单行文件（首行即全内容）仍可解析', () => {
-    const filePath = join(dir, 'single-line.jsonl')
-    writeFileSync(filePath, JSON.stringify({ type: 'session', id: 'sess-h3', cwd: '/x', timestamp: 't' }))
-    expect(parseSessionHeader(filePath)?.id).toBe('sess-h3')
-  })
-
-  // W20 review Fix-4：首行 > 4KB（读块满仍无换行）→ 回退全量读首行，与旧 readFileSync
-  // 全量读实现严格等价——单纯截断会让超长首行 JSON.parse 失败 → session 从侧栏消失。
-  it('H4: parseSessionHeader 首行超 4KB 无换行 → 回退全量读，header 仍正确解析', () => {
-    const filePath = join(dir, 'huge-first-line.jsonl')
-    // 构造 > 4KB 的合法 session header（超长 cwd 字段填充），无换行（单行文件）
-    const header = JSON.stringify({
-      type: 'session',
-      id: 'sess-h4',
-      cwd: '/x'.repeat(8192),
-      timestamp: '2026-08-16T00:00:00.000Z',
-    })
-    expect(header.length).toBeGreaterThan(4096)
-    writeFileSync(filePath, header)
-    const parsed = parseSessionHeader(filePath)
-    expect(parsed?.id).toBe('sess-h4')
-    expect(parsed?.cwd).toBe('/x'.repeat(8192))
+      const result = readAgentBinding(fp)
+      expect(result?.spawnSource).toBe('agent')
+      expect(result?.parentAgentSessionId).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

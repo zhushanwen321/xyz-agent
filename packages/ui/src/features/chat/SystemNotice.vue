@@ -11,7 +11,7 @@
        Message（store.appendSubagentDirective 注释），本组件是唯一渲染点。 -->
   <div
     v-if="directive"
-    class="mx-auto flex w-full max-w-[var(--content-max-w)] min-w-0 items-start gap-1.5 py-1"
+    class="content-col flex min-w-0 items-start gap-1.5 py-1"
     data-testid="subagent-directive-bubble"
   >
     <ArrowRight class="mt-0.5 size-3 shrink-0 text-accent" />
@@ -21,7 +21,7 @@
     </p>
   </div>
   <!-- 现有 system 提示行（compaction / branch / 兜底文本） -->
-  <div v-else class="system-notice mx-auto flex w-full max-w-[var(--content-max-w)] min-w-0 animate-notice-in items-center gap-2 py-1">
+  <div v-else class="system-notice content-col flex min-w-0 animate-notice-in items-center gap-2 py-1">
     <span class="h-px flex-1 bg-border" />
     <component :is="icon" class="size-3 shrink-0 text-neutral-mid" />
     <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ text }}</span>

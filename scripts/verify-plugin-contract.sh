@@ -61,7 +61,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ── 0.1 依赖自含（幂等；cw verify 在干净 clone 里跑，必须可自举）─────────────
 (cd "$REPO_ROOT" && pnpm install --prefer-offline --silent) \
-  || fail "pnpm install 失败（cwd=$REPO_ROOT；检查 registry 可达性或手动 pnpm install 后重试）"
+  || fail "pnpm install 失败（cwd=${REPO_ROOT}；检查 registry 可达性或手动 pnpm install 后重试）"
 
 # ── 0. 环境前置 ─────────────────────────────────────────────────
 NODE_MAJOR="$(node -e 'console.log(process.versions.node.split(".")[0])')"

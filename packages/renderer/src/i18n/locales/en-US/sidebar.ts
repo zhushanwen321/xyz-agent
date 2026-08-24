@@ -44,6 +44,9 @@ export default {
     archived: 'Archived',
     assignToProject: 'Assign to project',
     quoteToComposer: 'Quote to composer',
+    // agent-managed-session U8：agent 创建的 session 标记 badge（语言无关 token，两侧同文案）
+    agentBadge: 'AI',
+    viewParent: 'View parent session',
   },
   sessionList: {
     empty: 'No sessions',

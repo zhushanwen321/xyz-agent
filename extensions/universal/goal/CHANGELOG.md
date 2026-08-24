@@ -1,5 +1,11 @@
 # @zhushanwen/pi-goal
 
+## 0.9.3
+
+### Patch Changes
+
+- df69a18fc: chore: refresh dependency range (triggered by @xyz-agent/extension-protocol@0.5.1 → @xyz-agent/extension-protocol@0.6.0)
+
 ## 0.9.2
 
 ### Patch Changes

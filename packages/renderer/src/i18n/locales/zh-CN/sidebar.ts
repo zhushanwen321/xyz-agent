@@ -43,6 +43,9 @@ export default {
     archived: '已归档',
     assignToProject: '归入项目',
     quoteToComposer: '引用到输入区',
+    // agent-managed-session U8：agent 创建的 session 标记 badge（语言无关 token，两侧同文案）
+    agentBadge: 'AI',
+    viewParent: '查看父 session',
   },
   sessionList: {
     empty: '暂无会话',

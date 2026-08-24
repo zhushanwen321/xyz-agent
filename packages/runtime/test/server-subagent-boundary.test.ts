@@ -113,7 +113,7 @@ describe('RuntimeServer message.send marker 通道废弃 — boundary & hostile 
       new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, { readGitInfo: () => undefined, pruneStaleCache: () => {} } as never, {} as never),
       new ConfigService('/tmp', new PiConfigStore()),
       new ModelService(new ModelApiDiscoverer()),
-      {} as never,
+      { extension: {} as never },
     )
     return s
   })

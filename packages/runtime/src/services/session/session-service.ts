@@ -89,6 +89,16 @@ interface ManagedSession extends IManagedSessionView {
    * 供 forkSession 继承 / toSummary 透传 / setProject 同步。
    */
   projectId?: string
+  /**
+   * agent-managed session 标记的内存态持有（B-2）。
+   *
+   * 与 launchPresetId/projectId 同模式：.agent.json sidecar 可能因 pi 延迟写入未 flush
+   * 而无法写入（persistAgentBinding 的 existsSync 守卫跳过），内存态兑底持有，
+   * 供 session-manager list 按 spawnSource 过滤 / toSummary 透传（前端 AI badge）。
+   */
+  spawnSource?: 'user' | 'agent'
+  /** agent-managed session 的父 session id（内存态持有，语义同上 spawnSource） */
+  parentAgentSessionId?: string
 }
 
 /**
@@ -1617,6 +1627,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       launchPresetId: (s as ManagedSession).launchPresetId,
       // D14 语义修正：归属 project 透传到 summary（内存态兑底，sidecar 扫描路径在 scanner）。
       projectId: (s as ManagedSession).projectId,
+      // B-2：agent-managed 标记透传——list 按 spawnSource/parentAgentSessionId 过滤时
+      // active session 走本路径（scanned 路径被 activeFilePaths 排除），漏透传 = 过滤失效。
+      spawnSource: (s as ManagedSession).spawnSource,
+      parentAgentSessionId: (s as ManagedSession).parentAgentSessionId,
     }
   }
 

@@ -30,7 +30,7 @@ PLUGINS_DIR="$REPO_ROOT/resources/plugins"
 ESBUILD="$REPO_ROOT/node_modules/.bin/esbuild"
 
 if [[ ! -x "$ESBUILD" ]]; then
-	echo "ERROR: esbuild 未找到（$ESBUILD），先 pnpm install" >&2
+	echo "ERROR: esbuild 未找到（${ESBUILD}），先 pnpm install" >&2
 	exit 1
 fi
 
@@ -68,7 +68,7 @@ for plugin_dir in "$PLUGINS_DIR"/*/; do
 	name="$(basename "$plugin_dir")"
 	main=$(node -e "const p=require(process.argv[1]);process.stdout.write(p.xyzAgent?.main ?? 'index.js')" "${plugin_dir}package.json")
 	if [[ ! -f "${plugin_dir}${main}" ]]; then
-		echo "ERROR: $name 缺入口文件 $main（manifest main 指向的文件不存在，prepare 是否覆盖该插件？）" >&2
+		echo "ERROR: $name 缺入口文件 ${main}（manifest main 指向的文件不存在，prepare 是否覆盖该插件？）" >&2
 		FAIL=1
 	fi
 done

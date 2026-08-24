@@ -64,7 +64,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # S1-W3：脚本必须自含 install——全新 checkout / CI 无 node_modules 时 tsx 与
 # runtime 依赖不可解析，脚本在环境前置一步就挂。
 (cd "$REPO_ROOT" && pnpm install --prefer-offline --silent) \
-  || fail "pnpm install 失败（cwd=$REPO_ROOT；检查 registry 可达性或手动 pnpm install 后重试）"
+  || fail "pnpm install 失败（cwd=${REPO_ROOT}；检查 registry 可达性或手动 pnpm install 后重试）"
+# 注：REPO_ROOT 必须加大括号——后随全角"；"的多字节首字节会被 bash 并入参数名，
+# set -u 下报 'REPO_ROOT…: unbound variable' 硬崩，掩盖真实 install 失败原因
 
 # ── 0. 环境前置 ─────────────────────────────────────────────────
 NODE_MAJOR="$(node -e 'console.log(process.versions.node.split(".")[0])')"

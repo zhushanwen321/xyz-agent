@@ -1,5 +1,8 @@
 import { RuntimeServer } from './transport/server.js'
 import { SessionService } from './services/session/session-service.js'
+import { createSessionDeliveryRegistry } from './services/session/session-delivery-registry.js'
+import { createCompletionBackflow } from './services/session/completion-backflow.js'
+import { fanOutSettled } from './services/session/agent-settled-fanout.js'
 import { ConfigService } from './services/config-service.js'
 import { AuthService } from './services/auth/auth-service.js'
 import { AuthStorage } from './services/auth/auth-storage.js'
@@ -125,6 +128,19 @@ function resolveRuntimeToken(): string | null {
   }
   console.warn('[runtime] WS auth token unavailable (XYZ_RUNTIME_TOKEN env / <dataDir>/runtime-token both missing) — fail-closed: ALL WebSocket connections will be rejected')
   return null
+}
+
+/**
+ * sd-u5/u6 共用：组合根 agentSettledListeners 多播列表的订阅装配（add + 返回退订函数）。
+ * sessionDelivery（U5 send 排队）与 completionBackflow（U6 完成回流）同一列表、同一语义。
+ */
+function subscribeAgentSettledIn(
+  listeners: Set<(sessionId: string) => void>,
+): (cb: (sessionId: string) => void) => () => void {
+  return (cb) => {
+    listeners.add(cb)
+    return () => { listeners.delete(cb) }
+  }
 }
 
 async function main(): Promise<void> {
@@ -276,6 +292,26 @@ async function main(): Promise<void> {
   const gitStateService = new GitStateService({ executor: gitExecutor })
 
   const fileChangeDiff = new FileChangeDiffAdapter(gitStateService)
+
+  // sd-u5（session-delivery）：agent_settled 多播订阅列表。原 onAgentSettled 注入点是
+  // flushPendingBashResults 单播（下方 createAdapter 闭包内）；扩展为多播形态——interpreter
+  // 注入点仍保持单回调，回调体内先执行原单播腿再分发到本列表（delivery 内核的 settled
+  // 边沿唤醒经 sessionDelivery 装配订阅；sd-u6 完成回流检测将挂更多订阅者）。
+  // 声明须在 createAdapter 之前（闭包捕获；订阅发生在 sessionService 构造之后，无时序耦合）。
+  const agentSettledListeners = new Set<(sessionId: string) => void>()
+
+  // sd-u6（session-delivery）：完成回流编排（design.md §3.1 调用方 C）。子 session（agent-managed）
+  // settled / exit → 查 spawnSource+parentAgentSessionId → 经 sd-u5 注册表投父（单例 handle）。
+  // 顺序约束：exit 订阅须先于 `new SessionService` 内的 exit 清理腿（removeSessionEntry 删内存态，
+  // 按订阅序分发，本腿排前才能读到打标）；getSession/getDelivery 前向引用（createAdapter 同款模式）。
+  const completionBackflow = createCompletionBackflow({
+    getSession: (sid) => sessionService.getSession(sid),
+    subscribeAgentSettled: subscribeAgentSettledIn(agentSettledListeners),
+    subscribeSessionExit: (cb) => pm.onSessionExit(cb),
+    getSessionOutcome: (filePath) => sessionStore.extractSessionOutcome(filePath),
+    getDelivery: (parentSid) => sessionDelivery.getOrCreateDelivery(parentSid),
+  })
+
   const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
     // EventInterpreter 持有业务态（currentMessageId/writeContents/diffChain 帧序三件套）+ 业务回调，
     // 消费 EventAdapter 翻译出的 PiTranslatedEvent[]，执行 hook / diff / 回写 / 路由副作用。
@@ -287,6 +323,11 @@ async function main(): Promise<void> {
       fileChangeDiff,
       onExtensionUIRequest: (requestId, sid, method, payload) => {
         server.registerExtensionTimeout(sid, requestId, method, payload)
+      },
+      // session-manager 请求路由：fire-and-forget 调 server.handleSessionManagerRequest
+      //（由 SessionManagerHandler 异步处理并回写 pi response）。
+      onSessionManagerRequest: (requestId, sessionId, action, params) => {
+        server.handleSessionManagerRequest(requestId, sessionId, action, params)
       },
       onBridgeUIRequest: (requestId, sid, method, data) => {
         server.handleBridgeRequest(sid, requestId, method, data)
@@ -364,8 +405,12 @@ async function main(): Promise<void> {
       },
       // W1（fix-chat-flow-order 探针 ②）：agent_settled（run 级联结束，晚于 pi finally 的
       // bash 落盘 flush）→ dispatcher 按序发布 per-session bash 待落列（D2 双分支延迟）。
+      // sd-u5 起多播化：bash flush 是第一条腿（原单播语义不变），其后分发 agentSettledListeners
+      // （delivery 内核 settled 边沿唤醒 + sd-u6 回流检测）；逐订阅者隔离 try/catch 收敛在
+      // fanOutSettled（agent-settled-fanout.ts，可单测——本文件 import 即执行 main() 不可直测）。
       onAgentSettled: (sid) => {
         sessionService.flushPendingBashResults(sid)
+        fanOutSettled(agentSettledListeners, sid)
       },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
@@ -388,6 +433,21 @@ async function main(): Promise<void> {
     // dispatcher 只依赖 publish 抽象，bus.publish 是唯一出口，broker 依赖已随接口收敛删除）。
     messageBus,
   )
+
+  // sd-u5（session-delivery）：delivery 内核的 runtime 装配（design.md §3.1 调用方 B）。
+  // sessionId 单例注册表——session-manager 的 send 排队（U5）与完成回流（U6 复用）共用；
+  // subscribeSettled 经上方 agentSettledListeners 多播（interpreter onAgentSettled 注入点的
+  // 分发腿）；port.send 的 ensureActive → prompt(streamingBehavior) → D7 置位副作用见
+  // session-delivery-registry.ts。
+  const sessionDelivery = createSessionDeliveryRegistry({
+    getSession: (sid) => sessionService.getSession(sid),
+    ensureActive: (sid) => sessionService.ensureActive(sid),
+    subscribeAgentSettled: subscribeAgentSettledIn(agentSettledListeners),
+    recordWorkspace: (cwd) => workspaceService.record(cwd),
+  })
+  // session 销毁（主动删 / 进程退出 / restore 清场全部路径）→ 丢弃该 session 的 delivery
+  // 队列与订阅（setOnSessionDestroyed 追加式注册，与 server 的 extension timeout 清理腿并存）。
+  sessionService.setOnSessionDestroyed((summary) => sessionDelivery.dispose(summary.id))
 
   // HandoffService：fast-handoff 编排层。依赖 sessionService（create/sendMessage/abort/getHistory/getSession）
   // + server（IMessageBroker 广播）+ pm（getClient 取源 session pi 句柄）。与 GitService/FileService 同模式
@@ -563,7 +623,25 @@ async function main(): Promise<void> {
   })
 
   const tServicesReady = performance.now()
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService, authService, projectStore)
+  server.setServices(sessionService, configService, modelService, {
+    extension: extensionService,
+    plugin: pluginService,
+    git: gitService,
+    file: fileService,
+    workspace: workspaceService,
+    appInfo,
+    skillRegistry,
+    worktree: worktreeService,
+    terminal: terminalService,
+    quota: quotaService,
+    handoff: handoffService,
+    preset: presetService,
+    auth: authService,
+    project: projectStore,
+    // sd-u5：sessionId 单例注册表（上方 createSessionDeliveryRegistry 装配）。
+    // 缺席时 server 构造退化实例并 warn（违反单例约束，仅测试装配遗漏场景）。
+    delivery: sessionDelivery,
+  })
 
   // Graceful shutdown on signals
   let shuttingDown = false
@@ -577,6 +655,8 @@ async function main(): Promise<void> {
       projectStore.flushAll()
       // R1：关闭 SkillRegistry 的 chokidar watcher（global + project），防句柄泄漏阻塞退出。
       skillRegistry.dispose()
+      // sd-u6：退订完成回流（settled / exit 两腿）
+      completionBackflow.dispose()
       await server.stop()
     // eslint-disable-next-line taste/no-silent-catch -- shutdown: best-effort stop, process exits regardless
     } catch (e) {

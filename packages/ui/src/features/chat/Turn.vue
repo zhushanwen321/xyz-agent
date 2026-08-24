@@ -7,8 +7,8 @@
     收编区（compacted/failed）由 TraceCompactorRow 承载（零 chrome，双态，D5）。
     折叠作用域（showTrace）仍由 scope wave D1 控制（isWorkingTurn || isExpanded）。
   -->
-  <!-- 根元素 max-w-[var(--content-max-w)] mx-auto：整 turn 居中 720px（spec §6.1 R4）。 -->
-  <div class="mx-auto flex w-full max-w-[var(--content-max-w)] flex-col gap-3.5 pb-5" :data-testid="`turn-${turn.index}`">
+  <!-- 根元素 content-col（居中 + 封顶 --content-max-w，720px 内容列原语）：整 turn 居中（spec §6.1 R4）。 -->
+  <div class="content-col flex flex-col gap-3.5 pb-5" :data-testid="`turn-${turn.index}`">
     <!-- user 区：UserBubble 子组件 -->
     <UserBubble
       v-if="turn.user"

@@ -15,8 +15,8 @@
 import { describe, expect, it } from "vitest";
 
 import { completeRecord, createRecord, tryTransition } from "../execution-record.ts";
-import { BgNotifier } from "../notifier.ts";
-import type { BgNotifyRecord, NotifierHost } from "../notifier.ts";
+import { createNotifier } from "../notifier.ts";
+import type { BgNotifyRecord, BgNotifier, NotifierHost } from "../notifier.ts";
 import { mapExternalState } from "../../interface/subagent-actions.ts";
 import { statusGlyph } from "../../interface/format.ts";
 import type { ClosedReason, ExecutionRecord, ExecutionStatus } from "../types.ts";
@@ -205,7 +205,7 @@ describe("BgNotifier dedupKey", () => {
 
   it("同 id 不同 round 不被去重（round 参与 dedup key）", () => {
     const host = createMockHost(false);
-    const notifier = new BgNotifier(host);
+    const notifier = createNotifier(host);
     const sent: unknown[] = [];
     // 重写 sendMessage 捕获
     (host as { sendMessage: NotifierHost["sendMessage"] }).sendMessage = (msg) => { sent.push(msg); };
@@ -238,7 +238,7 @@ describe("BgNotifier dedupKey", () => {
 
   it("不同 id 不被去重", () => {
     const host = createMockHost(false);
-    const notifier = new BgNotifier(host);
+    const notifier = createNotifier(host);
     const sent: unknown[] = [];
     (host as { sendMessage: NotifierHost["sendMessage"] }).sendMessage = (msg) => { sent.push(msg); };
 
@@ -267,7 +267,7 @@ describe("BgNotifier dedupKey", () => {
 
   it("closed status 被正确入队", () => {
     const host = createMockHost(false);
-    const notifier = new BgNotifier(host);
+    const notifier = createNotifier(host);
     const sent: unknown[] = [];
     (host as { sendMessage: NotifierHost["sendMessage"] }).sendMessage = (msg) => { sent.push(msg); };
 

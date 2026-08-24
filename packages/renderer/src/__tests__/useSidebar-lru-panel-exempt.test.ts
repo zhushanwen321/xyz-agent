@@ -8,6 +8,11 @@
  * 锁定的 AC：
  * - AC-2：单 panel 下切 9 个 session，最旧的 session 被驱逐（LRU 基线不退化）
  *
+ * [session-reconcile 对齐] b97147c7e 后 selectSession 对已 hydrate 的 session 也会
+ * getHistory + reconcileHistory 静默刷新（entry 历史为基线）。测试 harness 必须让
+ * getHistory mock 与 hydrateSession 注入的消息一致（fake backend Map），否则切入刷新
+ * 会把注入消息替换成空基线——s0「被驱逐」断言空洞通过、s8「保留」断言必红。
+ *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/useSidebar-lru-panel-exempt.test.ts
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
@@ -86,10 +91,17 @@ function seedSessions(_sidebar: ReturnType<typeof useSidebarNew>, ids: string[])
   useSessionStore().applySnapshot({ groups: [group] })
 }
 
-/** hydrate 指定 session（绕过 selectSession 的 api 拉取，直接注入消息） */
+/** fake backend：sessionId → 服务端可返回的历史。getHistory mock 由此取数（对齐真实后端）。 */
+const historyBackend = new Map<string, Message[]>()
+
+/**
+ * hydrate 指定 session（直接注入消息）。
+ * 须同步写 historyBackend：切入 reconcile（b97147c7e）以 getHistory 结果为基线，
+ * backend 与注入不一致时刷新会把注入消息替换掉，LRU 断言失去检验对象。
+ */
 function hydrateSession(id: string, msgs: Message[]): void {
-  const chat = useChatStore()
-  chat.hydrate(id, msgs)
+  historyBackend.set(id, msgs)
+  useChatStore().hydrate(id, msgs)
 }
 
 describe('lru-panel-exempt-fix 方案 C：panel 绑定 session 不被 LRU 误驱逐', () => {
@@ -98,8 +110,11 @@ describe('lru-panel-exempt-fix 方案 C：panel 绑定 session 不被 LRU 误驱
     _resetLruForTest()
     vi.clearAllMocks()
     vi.useFakeTimers()
+    historyBackend.clear()
     switchSessionMock.mockResolvedValue(undefined)
-    getHistoryMock.mockResolvedValue({ messages: [], historyTruncated: false })
+    getHistoryMock.mockImplementation((sid: string) =>
+      Promise.resolve({ messages: historyBackend.get(sid) ?? [], historyTruncated: false }),
+    )
     getCommandsMock.mockResolvedValue({ commands: [] })
     getContextMock.mockResolvedValue({})
   })

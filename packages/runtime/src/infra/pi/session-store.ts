@@ -18,6 +18,7 @@ import {
   persistSessionEnd,
   persistPresetBinding,
   persistProjectBinding,
+  persistAgentBinding,
   extractSessionOutcome,
   invalidateSessionMetaCache,
   invalidateScanDirCache,
@@ -54,6 +55,10 @@ export class PiSessionStore implements ISessionStore {
 
   persistProjectBinding(filePath: string, projectId: string): void {
     persistProjectBinding(filePath, projectId)
+  }
+
+  persistAgentBinding(filePath: string, spawnSource: 'user' | 'agent', parentAgentSessionId: string | undefined): void {
+    persistAgentBinding(filePath, spawnSource, parentAgentSessionId)
   }
 
   extractSessionOutcome(filePath: string): SessionOutcome | null {
