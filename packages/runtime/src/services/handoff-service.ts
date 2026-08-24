@@ -276,7 +276,10 @@ export class HandoffService {
     // 9. 新建空白 session（复用源 cwd）
     // Staging Mode（ADR-0056）：透传 modelOverride/thinkingOverride 让承接 session 用用户当前选定模型/思考等级，
     // 而非全局默认。源 session 的 handoff turn 已用自身模型跑完，不受此 override 影响。
+    // A'（2026-08-24）：persistLabel=true —— "handoff from X" 是语义性承接名，持久化到
+    // session_info 且防 auto-rename 覆盖（承接会话名不应被 LLM 标题改写）。
     const newSession = await this.opts.sessionService.create(srcCwd, `handoff from ${srcLabel}`, {
+      persistLabel: true,
       modelOverride: options?.modelOverride,
       thinkingOverride: options?.thinkingOverride,
     })

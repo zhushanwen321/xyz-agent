@@ -175,14 +175,21 @@ export class SessionLifecycle {
   }
 
   /**
-   * W1（数据源治理）：create / forkSession 的**显式**初始 label 经 pi set_session_name RPC
-   * 持久化（取代原 turn_end/agent_end 兜底直写机制），调用点在 client 就绪后
-   *（create 流程 getState 成功即证 RPC 可用）。
+   * W1（数据源治理）→ A' 修正（2026-08-24 rename-session 回归）：**语义性命名**的初始 label
+   * 经 pi set_session_name RPC 持久化（取代原 turn_end/agent_end 兜底直写机制），调用点在
+   * client 就绪后（create 流程 getState 成功即证 RPC 可用）。
    *
-   * 派生 label（basename(cwd)）**不调 RPC**——不再持久化：显示由内存 session.label +
-   * 既有 scanner fallback（extractSessionName 返回 null → basename(cwd)）承担，重启后
-   * 显示值不变；pi 内存 sessionName 保持空，auto-rename 守卫照常通过（行为与现状等价：
-   * 现状直写也不进 pi 内存）。
+   * 「语义性命名」= 调用方明确期望跨重启保留且**不该被 auto-rename 覆盖**的名字，
+   * 现有三处：handoff 承接名（"handoff from X"）、agent-managed session 的 agent 显式
+   * 命名、fork 显式 label（当前前端恒不传，协议保留）——均经 options.persistLabel=true
+   * 显式声明。
+   *
+   * 派生 label **不调 RPC**——display-only：含 basename(cwd) 与前端 prompt 预览名
+   *（createSessionFlow 派生的首条 prompt 前 10 码点，2026-08-24 前曾被误当显式名持久化，
+   * 踩死 pi-rename-session 防覆盖守卫 getSessionName() 非空即 skip → auto-rename 全量
+   * 失效，v0.9.3 起）。显示由内存 session.label + 既有 scanner fallback（extractSessionName
+   * 返回 null → basename(cwd)）承担；pi 内存 sessionName 保持空，auto-rename 守卫照常通过。
+   * 代价：auto-rename 未跑（禁用/失败）时重启，侧边栏从预览名回退 basename（窗口极小）。
    *
    * RPC 失败**不阻断** create/fork：label 留内存显示 + console.error 上报，
    * 恢复动作 = 手动 rename（renameSession 的 RPC 路径）重试。
@@ -265,6 +272,12 @@ export class SessionLifecycle {
     spawnSource?: 'user' | 'agent'
     /** 父 agent session id（spawnSource='agent' 时必填）。 */
     parentAgentSessionId?: string
+    /**
+     * label 是否为语义性命名（需持久化到 pi session_info 且防 auto-rename 覆盖）。
+     * true：handoff 承接名 / agent-managed 显式命名。false（默认）：前端派生 prompt
+     * 预览名 display-only（见 persistExplicitLabel docstring 的 A' 修正）。
+     */
+    persistLabel?: boolean
   }): Promise<SessionSummary> {
     const tempId = crypto.randomUUID()
     const requestedCwd = cwd ?? process.cwd()
@@ -341,8 +354,11 @@ export class SessionLifecycle {
       throw initErr
     }
 
-    // W1：显式初始 label 经 pi RPC 持久化（派生 basename 值不持久化，见 helper 注释）
-    await this.persistExplicitLabel(client, id, label, 'create')
+    // W1 → A'：仅语义性命名（options.persistLabel=true：handoff/agent-managed）持久化；
+    // 前端派生 prompt 预览名 display-only（防覆盖守卫恢复，详见 persistExplicitLabel docstring）
+    if (options?.persistLabel) {
+      await this.persistExplicitLabel(client, id, label, 'create')
+    }
 
     // [HISTORICAL] 不再调 ensureSessionFile 提前创建 session 文件。
     // 之前的实现在此处用 openSync(wx) 创建含 session+session_info 两行的最小文件，理由是
@@ -895,7 +911,8 @@ export class SessionLifecycle {
       throw initErr
     }
 
-    // W1：显式初始 label 经 pi RPC 持久化（派生 basename 值不持久化，见 helper 注释）
+    // W1 → A'：fork 显式 label（用户显式命名，语义性）持久化；当前前端恒不传 label
+    //（undefined no-op），WS 协议保留该字段，传入时持久化（见 persistExplicitLabel docstring）
     await this.persistExplicitLabel(client, forkedId, label, 'forkSession')
 
     void this.svc.fetchAndBroadcastContext(forkedId)
