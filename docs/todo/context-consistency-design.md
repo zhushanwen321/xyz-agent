@@ -37,7 +37,7 @@
 
 | # | 目标 | 使用者体验表述 |
 |---|---|---|
-| G1 | 切走再切回，用量显示保持 | 用户在 session A 看到「6.9万 · 6.9%」，切到 B 再切回 A，仍显示「6.9万 · 6.9%」（或更新的真值），不退化成「—」 |
+| G1 | 切走再切回，用量显示保持 | 用户在 session A 看到「69K · 6.9%」，切到 B 再切回 A，仍显示「69K · 6.9%」（或更新的真值），不退化成「—」 |
 | G2 | 无值是合法且诚实的显示 | 新建 session / 刚 compact 完，显示「—」是**正确**行为；此时切走再切回，仍是「—」（不闪真值也不报错） |
 | G3 | 不串台 | 切到 B 期间无论 B 发生什么，A 的显示数据不被 B 的帧污染 |
 | G4 | 回归防护 | 未来任何改动让「切回后显示 ≠ owner 快照」时，CI（等价测试）或 pre-commit（lint）在合入前拦截；已合入的漂移在 dev 模式控制台立刻冒头 |
@@ -61,9 +61,9 @@
 
 ### 2.1 使用者视角的现状（真实场景）
 
-**场景 1（丢失 → 横线）**：用户在 session A 对话中，Composer 工具条显示 `6.9万 · 6.9%`。点侧栏切到 session B（B 是刚新建的，还没跑过 turn），再切回 A。工具条显示 `—`。没有任何报错；用户在 A 里再发一条消息、等 turn 跑完，数字才回来。
+**场景 1（丢失 → 横线）**：用户在 session A 对话中，Composer 工具条显示 `69K · 6.9%`。点侧栏切到 session B（B 是刚新建的，还没跑过 turn），再切回 A。工具条显示 `—`。没有任何报错；用户在 A 里再发一条消息、等 turn 跑完，数字才回来。
 
-**场景 2（串台）**：切到 session B（B 已有对话，占用 12 万 tokens）再切回 A，工具条短暂或持续显示 B 的 `12万 · 40%`。
+**场景 2（串台）**：切到 session B（B 已有对话，占用 12 万 tokens）再切回 A，工具条短暂或持续显示 B 的 `120K · 40%`。
 
 **场景 3（合法无值被误读为故障）**：新建 session 从未跑 turn，显示 `—` 是正确的——但当前实现里，「合法无值」和「状态丢失」显示成同一个 `—`，用户（和开发者）无法区分。
 
@@ -149,7 +149,7 @@ runtime ReplicatedState「usage」实例（per-session，事件只做失效+防�
 
 ### 3.1 终态（使用者视角）
 
-**场景 1 修复后**：A 显示 `6.9万 · 6.9%` → 切到 B → 切回 A → 仍显示 `6.9万 · 6.9%`。若 A 在切走期间跑了新 turn，显示新值。全程无横线闪现。
+**场景 1 修复后**：A 显示 `69K · 6.9%` → 切到 B → 切回 A → 仍显示 `69K · 6.9%`。若 A 在切走期间跑了新 turn，显示新值。全程无横线闪现。（示例值按 UI 实际格式化形态 K 制；原设计稿「万」制示例系虚构形态，实施时 journey 断言按实际输出锚定）
 
 **场景 2 修复后**：切到 B 再切回 A，A 显示的始终是 A 的数据。B 的任何帧（含 0 基线残帧）写不进 A 的分区。
 
@@ -183,14 +183,14 @@ runtime ReplicatedState「usage」实例（per-session，事件只做失效+防�
   3. runtime `session.getContext` reply（`session-message-handler.ts` L416-421）：`fetchContext()` 返回 null 时 reply `{ sessionId }`（删除 0 fallback）。
   4. `publishContextFromSnapshot` 补「无值占位帧」：**仅在 fetch 成功且投影为空快照 `{}`**（pi tokens=null 的合法无值）时，发布一条仅含 sessionId 的 context.update 帧（typeKey='context' 的 last-value 显式登记「无值」态），使切回的 stateSnapshot 回放能区分「该 session 无值」与「从未收到帧」。**「从未 fetch 成功」（`.get()` 为 undefined，退避重试窗口）不发占位帧**——此刻值可能马上就来，发占位帧会让消费方误写 no-value。此帧 renderer 侧写入分区 no-value。
   5. 登记 `docs/architecture/data-source-registry.md`：组合投影/发布层与 fetch/merge 层 obey 相同空值语义（「字段缺失 = 无值」，禁止 ?? 0 编码），#3 行同步改写。
-  6. 连带清理（D1 完整性边界，均为「来源已删但形态残留」的协议债）：① renderer mock 层 `api/mock/index.ts` 的 getContext / state_changed mock 同步新形状；② `SessionViewSnapshot`（protocol.ts）的 `usagePercent/inputTokens/contextLimit` 三字段删除——session store 注释明证其不落盘、全库无生产写方（仅 mock），留着即本设计批判的「类型存在、来源已删」形态；③ protocol.ts 的 state_changed 注释（「前端据 usage 三字段刷新 ContextCapacityPopover」已过时）与 useChat state_changed handler 的「含按新 contextWindow 重算的用量」注释同步改。
+  6. 连带清理（D1 完整性边界，均为「来源已删但形态残留」的协议债）：① renderer mock 层 `api/mock/index.ts` 的 getContext 返回类型同步新形状（实施核实：mock 层无 state_changed 产生点，无需同步）；② `SessionViewSnapshot`（protocol.ts）的 `usagePercent/inputTokens/contextLimit` 三字段删除——session store 注释明证其不落盘、全库无生产写方（仅 mock），留着即本设计批判的「类型存在、来源已删」形态；③ protocol.ts 的 state_changed 注释（「前端据 usage 三字段刷新 ContextCapacityPopover」已过时）与 useChat state_changed handler 的「含按新 contextWindow 重算的用量」注释同步改。③ 的同类清偿实施时另覆盖 `model-service.ts` switchModel docstring、`session-service.ts` fetchAndBroadcastContext docstring、`session-lifecycle.ts` restore 兜底注释、core session store applySnapshot docstring 四处（均残留「state_changed 含 usage / selectSession 主动拉 getContext」旧表述）。
 - **被否**：
   - 「保留双帧 + optional」（方案 B）：冗余腿保留，optional 字段形态是协议债。
   - 「renderer 忽略全 0 帧就够了」（方案 A 的层 1 止血）：0 帧在物理上恒为假值，正确语义是源头不发，不是消费方猜。
 - **证据**（消费方影响面，HEAD 798967133 已核实）：
   - `session.state_changed` 的 usage 字段消费方全代码库仅 `ContextCapacityPopover.vue`（本次重构对象）；
   - `packages/core/src/domain/chat/useChat.ts` L269 的 handler 只读 modelId/thinkingLevel，已有 `!== undefined` 展开守卫，零影响；
-  - runtime 测试需适配：`session-trace.test.ts`（L512 注释提到的补拉链断言）、`w10-usage-switchmodel-race.test.ts`（等价测试，改断言 context.update 帧）、`message-bus.test.ts` 的 state_changed 相关 fixture。
+  - 测试适配面（实施后核实）：`w10-usage-switchmodel-race.test.ts`（改断言 context.update 帧）、`w12-owner-snapshot-publish.test.ts`（无值态改占位帧断言）、`broadcast-getstate.test.ts`、runtime `test/session-service.test.ts`（switchModel 用例 usage 断言迁移）；`session-trace.test.ts` / `message-bus.test.ts` 经核实无 usage 字段引用，零改动（原设计稿预估失准）。
 - **效果**：G2（无值诚实显示）、G3（单帧单数据消除双帧不一致窗口）成立；「未知≠0」成为类型层不变量。
 
 #### D2：renderer 分区——新建 `useContextUsage` composable，组件纯读（选定）
@@ -214,7 +214,7 @@ runtime ReplicatedState「usage」实例（per-session，事件只做失效+防�
 
 #### D3：切回恢复腿——composable 自治拉取，切回无条件拉（非 selectSession 编排点）（选定）
 
-- **采用**：composable 内 `watch(sessionIdRef, { immediate: true })`：**每次进入该 sid 视图都调一次** `session.getContext(sid)`：reply 有 usage 字段 → 写 ok；无字段 → 写 no-value。RPC 往返期间 UI 先显示分区缓存值（无缓存显 `—`）；RPC 失败保留缓存值不降级。live `context.update` 帧到达时直接覆盖分区（帧即真相）。**in-flight 去重机制**：模块级 Map，条目 = Promise 本体（多实例 await 同一 Promise 后各写各分区——per-instance 的 useSessionScopedState 契约下若存回调则第二实例分区永不更新）；resolve 即清条目（下次切入重拉），组件 remount 触发的重复拉取接受（幂等查询）。
+- **采用**：composable 内 `watch(sessionIdRef, { immediate: true })`：**每次进入该 sid 视图都调一次** `session.getContext(sid)`：reply 有 usage 字段 → 写 ok；无字段 → 写 no-value。RPC 往返期间 UI 先显示分区缓存值（无缓存显 `—`）；RPC 失败保留缓存值不降级。live `context.update` 帧到达时直接覆盖分区（帧即真相）；RPC resolve 写入前若发起后已有更新的合法帧落地则跳过写入（seqAtIssue recency 判定，防陈旧采样回滚新帧）。**in-flight 去重机制**：模块级 Map，条目 = Promise 本体 + 发起时该 sid 的 live 帧序号 seqAtIssue（多实例 await 同一 Promise 后各写各分区——per-instance 的 useSessionScopedState 契约下若存回调则第二实例分区永不更新；seqAtIssue 必须随条目而非 attach 时捕获，否则复用条目的第二实例会以陈旧 recency 基准误跳合法写入）；resolve 即清条目（下次切入重拉），组件 remount 触发的重复拉取接受（幂等查询）。模块级簿记 Map 按 W24-EX-C 机制在 data-source-registry #3 例外列登记（非 GUI 数据技术结构）。
 - **为什么 no-value 也要重拉（不能做「无值缓存住不拉」的优化）**：切走期间该 session 的后台 turn 可能完成——bus 级订阅虽在（`ensureStreamSubscription` 幂等保留，useChat 的 handler 照常写 chat store），但 `useContextUsage` 的**组件级订阅**（useSessionEvents）已随视图切换退订，后台 turn 的 context.update 帧进不了组件分区；切回时若 no-value 不拉，分区永远停在陈旧的 no-value → 显示 `—` 而实际已有值。恢复腿无条件拉是把「切回一致性」建立在 RPC（必然可达）而非「切走期间没错过帧」（不可保证）上——这正是「必须主动拉取，不可依赖 broadcast」约定在本状态的落实。
 - **成本论证**：getContext 是毫秒级廉价 RPC（pi get_session_stats）；触发频率 = 用户切换 session 的频率（人工操作级），无风暴风险。
 - **被否**：
@@ -237,9 +237,11 @@ runtime ReplicatedState「usage」实例（per-session，事件只做失效+防�
 | G1 lint 规则 | 新消费方再写「onMessage 直写组件本地 ref」反模式 | taste-lint 新规则 `no-instance-level-session-state`，error 级，pre-commit 拦截 | [子文档 1](./context-consistency-lint-rule.md) |
 | G2 等价测试 | 任何写法导致「切回显示 ≠ owner 快照」 | renderer 包属性测试（随机交错序列，与 useContextUsage 同包）+ journey 断言 + runtime w10 等价测试族扩展 | [子文档 2](./context-consistency-equivalence-test.md) |
 | G3 约束登记 | CR 时无人提醒检查 session 级状态三问 | constraints.json 新增约束（enforcement=review+machine）+ ADR-0049 checklist 边界从「composable」扩到「持 sessionId prop 的组件」 | 本节 |
-| G4 dev 漂移检测器 | 已合入的漂移静默到用户眼前 | `XYZ_AGENT_DEBUG=1` 时恢复腿 resolve 后对账（复用 in-flight Promise，不额外发 RPC）：分区值 ≠ reply 值则 console.warn 带两值与 sid | 本节 |
+| G4 dev 漂移检测器 | 已合入的漂移静默到用户眼前 | `XYZ_AGENT_DEBUG=1` 时恢复腿 resolve 后对账（复用 in-flight Promise，不额外发 RPC）：分区值 ≠ reply 值则 console.warn 带两值与 sid（精确口径见下） | 本节 |
 
 G3 约束登记内容（「session 级 renderer 状态三问」，新增 `ServerMessageType` 的 renderer 消费方 / 新增 `useSessionEvents` 调用点时 CR 必查）：**存哪里（分区 store/composable）？切走谁清（cleanup 编排）？切回谁喂（恢复腿）？** 三问都有明确归属才放行。
+
+G4 检测器精确口径（实施后修订——原文「分区值 ≠ reply 则 warn」会误报，按序四判）：①发起后该分区已有更新的合法 live 帧落地（seqAtIssue recency 判定，帧即真相）→ 跳过对账**并跳过写入**（陈旧 reply 不得回滚新帧）；②分区 status = unknown（首拉未完成）→ 跳过对账；③仅对当前视图 sid 对账（非视图分区无 UI 意义且无读取 API）；④其余情形分区值 ≠ reply 值则 warn（带两值与 sid），warn 后照常写 reply 自愈。已知理论窗口（自愈、接受不修）：发起后落地 no-value 占位帧而 resolve 携带更新真值 → 真值被跳过写入，分区停 no-value 至下次切入（「—」是诚实态）；split panel 双实例时第二实例 attach 复用条目以其自身帧序号为 recency 基准，特定时序下判定可能相反于第一实例（短暂陈旧显示，下次切入自愈）。
 
 - **被否**（护栏整体）：「只靠 CR review 不加机器护栏」——constraints.json 现有 69 条约束中 45 条 enforcement 仅有 review、无机器兜底，纯 review 覆盖率有限（本 bug 恰是 review 盲区产物）；「只加 lint 不加等价测试」——lint 只挡已知反模式，挡不住未知写法。
 - **效果**：G4 成立；「矩阵格子缺腿」从用户发现前移为 CI/pre-commit/控制台三级拦截。
@@ -259,22 +261,22 @@ G3 约束登记内容（「session 级 renderer 状态三问」，新增 `Server
 
 ### A1：切走再切回，显示保持（回溯 G1）
 
-1. `pnpm dev` 启动真实应用；在 session A 发一条消息，等 turn 完成，确认工具条显示真值（如 `2.1万 · 3.5%`）。
+1. `pnpm dev` 启动真实应用；在 session A 发一条消息，等 turn 完成，确认工具条显示真值（如 `21K · 3.5%`）。
 2. 切到另一个 session B（任意已有历史的会话；「新建但不发言」构不成 session 实体，见 A2 注），再切回 A。
-3. **通过标准**：工具条立即显示 `2.1万 · 3.5%`（或 A 若有后台更新则新值），全程无 `—` 闪现；等待 2s 后仍是真值。
+3. **通过标准**：工具条立即显示 `21K · 3.5%`（或 A 若有后台更新则新值），全程无 `—` 闪现；等待 2s 后仍是真值。
 
 ### A2：合法无值诚实显示（回溯 G2，负面-合法态）
 
 > 构造方式注意：「新建 session 不发言」构不成有效场景——NewTaskFlow 是延迟 create（首发消息才建 session 实体，`useSidebarNew.ts` newSession 的 `if (!created)` 分支），无实体则无 sessionId、无 RPC 可验。合法 no-value 的稳定构造路径是 **compact 后无新 turn**（pi `contextUsage.tokens = null` → fetchContext 返回 null）。
 
 1. 选一个有历史的 session C，执行手动 compact（等压缩完成），不发言，进入 C 视图。
-2. **通过标准**：工具条显示 `—`（非「闪旧值后归零」）；devtools Network 面板确认切到 C 时 `session.getContext` 恰好一次（in-flight 去重生效，G4 检测器复用同一次 RPC 不额外发），reply payload 无 usage 字段（仅 sessionId）。
+2. **通过标准**：工具条显示 `—`（非「闪旧值后归零」）；devtools Network → WS → Messages 按 `session.getContext` 过滤计数（getContext 是 WS 命令帧，不在 HTTP 列表——原稿「Network 面板」措辞会找错地方），切到 C 时恰好一次（in-flight 去重生效，G4 检测器复用同一次 RPC 不额外发），reply payload 无 usage 字段（仅 sessionId）。
 3. 在 C 发一条消息完成 turn → 显示真值；再切走切回 → 保持真值。
 
 ### A3：不串台（回溯 G3）
 
 1. session A（真值 2 万）与 session B（真值 12 万）交替切换 3 轮。
-2. **通过标准**：每次显示的都是当前 session 自己的值；Network 面板无对同 sid 的重复 getContext 风暴（in-flight 去重生效）。
+2. **通过标准**：每次显示的都是当前 session 自己的值；WS Messages 按 `session.getContext` 过滤（同 A2）无对同 sid 的重复 getContext 风暴（in-flight 去重生效）。
 
 ### A4：0 帧防御哨兵（回溯 G1/G2 的防御纵深）
 
@@ -308,7 +310,7 @@ G3 约束登记内容（「session 级 renderer 状态三问」，新增 `Server
 | 1.1 shared 协议 | `protocol.ts`：state_changed 删 usage 三字段；context.update 三字段 optional | 类型先行，编译器驱动后续迁移（准则：接口先行） |
 | 1.2 runtime 投影 | `session-service.ts`：buildStateChangedPayload 删 usage；Baseline/diff 缩两字段；publishContextFromSnapshot 补「无值占位帧」 | D1 主体 |
 | 1.3 runtime RPC | `session-message-handler.ts` L417-421：getContext reply 删 0 fallback | D1 主体 |
-| 1.4 runtime 测试适配 | session-trace / w10-usage-switchmodel-race / message-bus 等测试改断言；新增「state_changed 永不含 usage 字段」「context.update 无值时只含 sessionId」两条不变量断言 | 先修测试护栏再动 renderer |
+| 1.4 runtime 测试适配 | w10 / w12 / broadcast-getstate / session-service 等测试改断言（session-trace / message-bus 经核实零改动）；W1-W4 不变量断言落新文件 `d1-usage-protocol-invariants.test.ts`（见子文档 2 层 2） | 先修测试护栏再动 renderer |
 
 **Phase 2 — renderer 修复（D2/D3/D4）**：
 
@@ -316,37 +318,46 @@ G3 约束登记内容（「session 级 renderer 状态三问」，新增 `Server
 |---|---|---|
 | 2.1 新建 composable | `composables/features/model/useContextUsage.ts`：分区 + 订阅 + 恢复腿 + in-flight 去重 + cleanup 注册 + 0 帧哨兵 | D2/D3/D4 主体，单文件可独立单测 |
 | 2.2 组件改造 | `ContextCapacityPopover.vue`：删内部 stats/onMessage，改 `useContextUsage` 纯读 | 消费面唯一，改造封闭 |
-| 2.3 单测 | composable 分区写入/切 sid/无值/去重/哨兵行为单测（vitest，fake timers 覆盖 in-flight） | 分层测试策略（纯逻辑先行） |
+| 2.3 单测 | composable 分区写入/切 sid/无值/去重/哨兵行为单测（vitest；实施核实：实现内无 timer——去重靠 Promise 原语，in-flight 窗口以受控 deferred + macrotask 排空覆盖，fake timers 无对象可 fake） | 分层测试策略（纯逻辑先行） |
 
 **Phase 3 — 护栏（D5）**：
 
 | 单元 | 改动 | justification |
 |---|---|---|
 | 3.1 lint 规则 | taste-lint `no-instance-level-session-state` + 规则单测 + base.mjs 注册（error 级）；存量豁免登记 | 子文档 1 |
-| 3.2 等价测试 | w10 测试族扩展「switch ≡ snapshot」属性测试 + journey 断言 | 子文档 2 |
+| 3.2 等价测试 | w10 族适配 + `d1-usage-protocol-invariants.test.ts`（W1-W4）+ renderer 层 1 属性测试 + journey 断言（J1/J2 新文件，fast-fork harness 不支持 selectSession 流程故未并入） | 子文档 2 |
 | 3.3 约束登记 | constraints.json 新增「session 级 renderer 状态三问」约束（machine=3.1 规则，review=pr-cr-fix data-governance 维度）+ `node scripts/render-constraints.mjs` 重生成 md；ADR-0049 checklist 扩边界段落 | G3 |
 | 3.4 dev 检测器 | `XYZ_AGENT_DEBUG=1` 时 selectSession 后异步对账 warn（挂在 useContextUsage 内，不新建文件） | G4 |
 
-### 文件改动地图
+### 文件改动地图（实施后修订 2026-08-24，原设计稿预估与实际差异：原列 `services/session/__tests__/*.test.ts` 实际零改动删除；W1-W4 落新文件而非并入 w10；补列实际涟漪文件）
 
 ```
-packages/shared/src/protocol.ts                                      改（D1 类型）
-packages/runtime/src/services/session/session-service.ts             改（D1 投影/发布）
-packages/runtime/src/transport/session-message-handler.ts            改（D1 reply）
-packages/runtime/src/services/session/__tests__/*.test.ts            改（1.4 适配）
-packages/runtime/src/__tests__/equivalence/w10-*.test.ts             改（1.4 + 3.2）
-packages/renderer/src/composables/features/model/useContextUsage.ts  新（2.1）
-packages/renderer/src/components/panel/ContextCapacityPopover.vue    改（2.2）
-packages/renderer/src/__tests__/panel/context-capacity-*.test.ts     改（2.3）
-packages/renderer/src/api/mock/index.ts                                改（D1.6 mock 形状同步）
-taste-lint/rules/no-instance-level-session-state.mjs                 新（3.1）
-taste-lint/rules/no-instance-level-session-state.test.mjs            新（3.1）
-taste-lint/base.mjs                                                  改（3.1 注册）
-packages/renderer/src/__tests__/composables/use-context-usage.test.ts 新（3.2 屋1属性+定向）
-packages/renderer/src/__tests__/panel/context-usage-journeys.test.ts 新（3.2 journey，J1/J2）
-docs/constraints.json + docs/constraints.md                          改（3.3）
-docs/architecture/data-source-registry.md                            改（D1.5 登记）
-docs/adr/0049-session-isolation-map-partition.md                     改（3.3 扩边界）
+packages/shared/src/protocol.ts                                       改（D1 类型）
+packages/runtime/src/services/session/session-service.ts              改（D1 投影/发布 + D1.6③ 注释）
+packages/runtime/src/services/session/session-lifecycle.ts            改（D1.6③ 注释同步）
+packages/runtime/src/services/model-service.ts                        改（D1.6③ 注释同步）
+packages/runtime/src/transport/session-message-handler.ts             改（D1 reply）
+packages/runtime/test/session-service.test.ts                         改（1.4 适配）
+packages/runtime/src/__tests__/equivalence/w10-*.test.ts              改（1.4 适配）
+packages/runtime/src/__tests__/equivalence/w12-owner-snapshot-publish.test.ts  改（1.4 适配——无值态改占位帧断言）
+packages/runtime/src/__tests__/equivalence/broadcast-getstate.test.ts 改（1.4 适配）
+packages/runtime/src/__tests__/equivalence/d1-usage-protocol-invariants.test.ts 新（W1-W4 不变量）
+packages/renderer/src/composables/features/model/useContextUsage.ts   新（2.1）
+packages/renderer/src/components/panel/ContextCapacityPopover.vue     改（2.2；3.1 落地期曾加 taste:allow 过渡豁免，重构后消失）
+packages/renderer/src/__tests__/panel/context-capacity-*.test.ts      改（2.2 适配：popover 断言迁移 + quota 补 session mock）
+packages/renderer/src/__tests__/panel/context-usage-journeys.test.ts  新（3.2 journey，J1/J2）
+packages/renderer/src/__tests__/composables/use-context-usage.test.ts 新（2.3 定向 + 3.2 层1属性）
+packages/renderer/src/__tests__/session-state-changed-sync.test.ts    改（D1.6 fixture 删 usage 字段）
+packages/renderer/src/api/domains/session.ts                          改（D1.6 getContext 返回类型 optional）
+packages/renderer/src/api/mock/index.ts                               改（D1.6 getContext mock 形状；mock 层无 state_changed 产生点）
+packages/core/src/domain/chat/useChat.ts                              改（D1.6③ 注释同步）
+packages/core/src/domain/session/store.ts                             改（D1.6③ 注释同步）
+taste-lint/rules/no-instance-level-session-state.mjs                  新（3.1）
+taste-lint/rules/no-instance-level-session-state.test.mjs             新（3.1）
+taste-lint/base.mjs                                                   改（3.1 注册）
+docs/constraints.json + docs/constraints.md                           改（3.3）
+docs/architecture/data-source-registry.md                             改（D1.5 登记 + W24-EX-C in-flight 簿记例外）
+docs/adr/0049-session-isolation-map-partition.md                      改（3.3 扩边界）
 ```
 
 ### A7：后台 turn 场景（回溯 G1 的 D3 论证）

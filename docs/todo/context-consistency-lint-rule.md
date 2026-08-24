@@ -37,6 +37,8 @@ taste:allow-instance-level-session-state 登记注释。
 - handler 内调用 `store.xxx(...)` / `composableApi.xxx(...)`（写入外部 owner 的合法形态——store 本身有分区）
 - handler 内只读不写（如仅触发 emit）
 - 非 `useSessionEvents` 的裸 `events.on(sid, ...)` 订阅——裸订阅已违反「api 调用只在 features 层」既有约束，归那条约束管（不重复立法）
+- handler 调用的**命名 helper 函数**（FunctionDeclaration）体内的赋值（实施口径：函数边界保守放行——宁可漏报不误报，pre-commit 不打断；属已知绕过面，后续收紧项）
+- S1 的 `defineProps<Props>()` **接口引用**形态（TSTypeReference）与 `withDefaults(defineProps<T>(), ...)` 包装（仅检测类型/对象字面量直书形态）；S2 的解构接收名（`const { on } = useSessionEvents`）不追——现仓零影响（唯一 useSessionEvents 组件为字面形态），未来出现时再评估收紧
 
 ## 3. 误报面分析与豁免
 

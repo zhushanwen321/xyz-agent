@@ -27,7 +27,7 @@ messages 状态的「live ≡ reload」是本项目已验证的等价范式（li
 
 ### 层 1：composable 单元属性测试（`useContextUsage` 纯逻辑）
 
-**位置**：`packages/renderer/src/__tests__/composables/use-context-usage.test.ts`（vitest，与 composable 同包；fake timers 覆盖 in-flight 窗口）。
+**位置**：`packages/renderer/src/__tests__/composables/use-context-usage.test.ts`（vitest，与 composable 同包；实施核实：实现内无 timer——去重靠 Promise 原语，in-flight 窗口以受控 deferred + macrotask 排空覆盖，fake timers 无对象可 fake）。
 
 **形态**：model-based 属性测试。把被测系统抽象为状态机，用伪随机序列驱动（种子固定可复现，不引入 fast-cross 依赖——项目测试策略以定向用例为主，属性测试此处仅一条）：
 
@@ -39,11 +39,11 @@ messages 状态的「live ≡ reload」是本项目已验证的等价范式（li
   E4 切换当前视图 sid（A↔B，含快速来回）
   E5 getContext RPC resolve(ok 值|无值|失败, sid)
   E6 session 清理(deleteSession → triggerSessionCleanups)
-  E7 断连重连（清订阅簿记 → resubscribeAll 重放 stateSnapshot）
+  E7 断连重连（清订阅簿记 → resubscribeAll 重放 stateSnapshot；renderer 层 1 以「stateSnapshot last-value 经真实通道重派（仅当前订阅 sid 可达）」近似——ws 重连编排超出本层 mock 边界，真实链路归 A8 手工验收）
 
 不变量断言（每步后全查）：
   I1 对每个未清理的 sid：分区值 == 该 sid 最后一次「合法帧/RPC resolve」确定的值
-  I2 当前视图 sid 的分区 status ≠ 'unknown'（恢复腿必已触发或 in-flight）
+  I2 当前视图 sid 的分区 status ≠ 'unknown'（实施口径收紧：非清理抑制、无在途 RPC、且该 sid 自上次清理起曾有成功写入时才断言——in-flight 中与 RPC 失败后合法保持 unknown，原字面口径与 P2「失败不降级」自相矛盾）
   I3 全 0 帧后：所有分区值不变（E3 是 no-op）
   I4 清理后的 sid：分区不存在（无泄漏）
 ```
@@ -62,7 +62,7 @@ messages 状态的「live ≡ reload」是本项目已验证的等价范式（li
 
 ### 层 2：runtime↔renderer 契约等价（扩展 w10 测试族）
 
-**位置**：`packages/runtime/src/__tests__/equivalence/w10-usage-switchmodel-race.test.ts`（现有文件，测 switchModel 竞态下 usage 投影一致性——Phase 1 协议改动需先适配它）。
+**位置**：`packages/runtime/src/__tests__/equivalence/w10-usage-switchmodel-race.test.ts`（现有文件，测 switchModel 竞态下 usage 投影一致性——Phase 1 协议改动需先适配它）。W1-W4 新断言实际落**新文件** `d1-usage-protocol-invariants.test.ts`（同 equivalence 目录，复用 w12 fixture 形态——比并入 w10 更整洁，仍在既有目录约定内）；w10/w12/broadcast-getstate 仅做适配。
 
 **扩展断言**（Phase 1 的 1.4 单元一并落）：
 
@@ -70,8 +70,8 @@ messages 状态的「live ≡ reload」是本项目已验证的等价范式（li
 |---|---|---|
 | W1 | 任意触发路径（播种/失效重拉/switchModel/30s poll）产出的 `session.state_changed` 帧永不包含 usage 三字段（协议不变量，序列化后断言 key 不存在） | P3 源头 |
 | W2 | `context.update` 帧要么含全部三字段（真值），要么只含 sessionId（无值占位）——不存在部分字段或全 0 | P3 |
-| W3 | `session.getContext` reply 与最近一次 `context.update` 帧的 usage 字段一致（reply ≡ last-value，投影一次原则） | P2 恢复腿数据源 |
-| W4 | pi 重启重建（removeSessionEntry → restore 重播种）后，stateSnapshot 的 context last-value 与新实例快照一致 | P2 的 pi 重启场景 |
+| W3 | `session.getContext` reply 与最近一次 `context.update` 帧的 usage 字段一致（reply ≡ last-value，投影一次原则；限定在**静态期/收敛后**断言——fetchContext 是活查询，动态期 reply 可合法新于 last-value，随后 markDirty 收敛） | P2 恢复腿数据源 |
+| W4 | pi 重启重建（removeSessionEntry → restore 重播种）后，stateSnapshot 的 context last-value 与新实例快照一致（单测层降级口径：mock 基建无法 spawn 真实 pi 重启，以「removeSessionEntry（bus clearSession + 实例销毁 + 基线清除）→ mock 权威翻新 → 重播种」单元断言覆盖；真实 pi 重启链路归 A8 手工验收） | P2 的 pi 重启场景 |
 
 ### 层 3：journey 断言（真实链路端到端）
 
@@ -81,10 +81,10 @@ messages 状态的「live ≡ reload」是本项目已验证的等价范式（li
 
 ```
 J1: mount Composer(sessionId=A) → 喂 stateSnapshot(context.update ok 值)
-    → 断言按钮显示 "2.1万 · 3.5%"
+    → 断言按钮显示 "21K · 3.5%"（示例值按 UI 实际格式化 K 制锚定，非「万」制）
     → selectSession(B)（B 的 stateSnapshot 含无值占位帧）→ 断言显示 "—"
-    → selectSession(A) → RPC 往返期间即显示 "2.1万 · 3.5%"（分区缓存初值，无闪横线）
-    → getContext(A) resolve 新值后更新为 "3.0万 · 5.0%"（后台 turn 产生的增量，父文档 A7）
+    → selectSession(A) → RPC 往返期间即显示 "21K · 3.5%"（分区缓存初值，无闪横线）
+    → getContext(A) resolve 新值后更新为 "30K · 5.0%"（后台 turn 产生的增量，父文档 A7）
 J2: A 视图下喂全 0 帧 → 断言显示不变 + warn（D4 的 journey 级验证）
 ```
 
@@ -100,4 +100,4 @@ J2: A 视图下喂全 0 帧 → 断言显示不变 + warn（D4 的 journey 级�
 
 1. 红蓝验证：把 `updateFor(sid, ...)` 临时改成 `update(...)`（注入切 sid 竞态）→ 层 1 属性测试 I1 红灯；把 D4 哨兵删掉 → U4/J2 红灯；恢复后全绿。
 2. `pnpm --filter @xyz-agent/renderer test` 与 `pnpm --filter @xyz-agent/runtime test` 全绿（含新用例）。
-3. CI 全量跑一次无 flake（fake timers 用例不真等时间）。
+3. CI 全量跑一次无 flake（时序用例不真等时间——受控 deferred + macrotask 排空，确定性驱动）。
