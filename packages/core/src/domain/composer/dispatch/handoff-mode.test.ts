@@ -54,6 +54,8 @@ interface DepsSpies {
   handoffChipIcon: object
   toastError: ReturnType<typeof vi.fn>
   isHandingOff: ReturnType<typeof vi.fn>
+  /** 源 session 是否活跃（streaming/派发中）——handoff 入口/发送守卫，默认 false */
+  isSessionActive: ReturnType<typeof vi.fn>
   /** 跨组件触发通道 signal（每测试独立 ref，天然隔离，无需 beforeEach reset） */
   handoffEnterSignal: Ref<{ srcSessionId: string } | null>
 }
@@ -82,6 +84,7 @@ function makeDeps(): DepsSpies {
     handoffChipIcon: {} as never,
     toastError: vi.fn(),
     isHandingOff: vi.fn(() => false),
+    isSessionActive: vi.fn(() => false),
     handoffEnterSignal,
   }
 }
@@ -528,5 +531,56 @@ describe('asStagingAction', () => {
     api.enterHandoffMode('src-1')
     expect(v.boxClass.value).toContain('handoff-mode')
     expect(v.placeholder.value).toBe('panel.composer.handoffHint')
+  })
+})
+
+// ── streaming 守卫（isSessionActive：入口拦截 + 发送兑底）─────────────────
+describe('streaming 守卫（isSessionActive）', () => {
+  it('源 session streaming 中 enterHandoffMode 拦截：toast + 不进入模式', () => {
+    const { deps, api } = setup()
+    deps.isSessionActive.mockReturnValue(true)
+
+    api.enterHandoffMode('src-1')
+
+    expect(api.handoffMode.value).toBe(false)
+    expect(deps.toastError).toHaveBeenCalledWith('panel.composer.handoffBusy')
+    expect(deps.enterStagingMode).not.toHaveBeenCalled()
+    expect(deps.exitForkMode).not.toHaveBeenCalled()
+  })
+
+  it('signal 入口同样被拦截（streaming 中 ⌘J / 消息工具栏不进模式）', async () => {
+    const { deps, api } = setup('s1')
+    deps.isSessionActive.mockReturnValue(true)
+
+    deps.handoffEnterSignal.value = { srcSessionId: 's1' }
+    await nextTick()
+
+    expect(api.handoffMode.value).toBe(false)
+    expect(deps.toastError).toHaveBeenCalledWith('panel.composer.handoffBusy')
+  })
+
+  it('非 streaming 时入口正常进入（isSessionActive=false 不影响）', () => {
+    const { deps, api } = setup()
+    deps.isSessionActive.mockReturnValue(false)
+
+    api.enterHandoffMode('src-1')
+
+    expect(api.handoffMode.value).toBe(true)
+    expect(deps.toastError).not.toHaveBeenCalled()
+  })
+
+  it('发送兑底：进入模式后 session 变 streaming → handleHandoffSend 拦截，不清草稿不退模式不打 handoff', async () => {
+    const { deps, api } = setup()
+    api.enterHandoffMode('src-1')
+    // 进入后才变 streaming（竞态窗口）
+    deps.isSessionActive.mockReturnValue(true)
+
+    const consumed = await api.handleHandoffSend('备注')
+
+    expect(consumed).toBe(true) // 已消费（不走普通 send）
+    expect(deps.handoff).not.toHaveBeenCalled()
+    expect(deps.clearInput).not.toHaveBeenCalled() // 草稿保留，回复结束后可重发
+    expect(deps.toastError).toHaveBeenCalledWith('panel.composer.handoffBusy')
+    expect(api.handoffMode.value).toBe(true) // 不退模式
   })
 })

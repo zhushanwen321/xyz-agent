@@ -20,7 +20,6 @@ import type { Segment } from '@xyz-agent/shared'
 
 interface DepsControl {
   canSend: boolean
-  isBusy: boolean
   isCompacting: boolean
   hasActiveStaging: boolean
   activeStagingAllowsEmpty: boolean
@@ -53,7 +52,6 @@ const SEGMENTS: Segment[] = [{ type: 'text', text: 'hello' }] as unknown as Segm
 function setup(initial?: Partial<DepsControl>): { deps: ComposerSendDeps; spies: Spies; ctrl: DepsControl } {
   const ctrl: DepsControl = {
     canSend: true,
-    isBusy: false,
     isCompacting: false,
     hasActiveStaging: false,
     activeStagingAllowsEmpty: false,
@@ -94,7 +92,6 @@ function setup(initial?: Partial<DepsControl>): { deps: ComposerSendDeps; spies:
     getStagingConfig: spies.getStagingConfig,
     canSend: computed(() => ctrl.canSend),
     isCompacting: computed(() => ctrl.isCompacting),
-    isBusy: computed(() => ctrl.isBusy),
     draft: computed(() => ctrl.draft),
     inputRef: computed(() => ({ getSegments: spies.getSegments })),
     sessionIdRef: computed(() => ctrl.sessionId),
@@ -131,6 +128,22 @@ describe('useComposerSend.onSend', () => {
     await useComposerSend(deps).onSend()
     expect(spies.stagingSend).toHaveBeenCalledWith('hello', {})
     expect(spies.send).not.toHaveBeenCalled()
+  })
+
+  it('②b staging 活跃 + isSending=true（双发锁）→ 拦截，不调 staging.send', async () => {
+    // isSending 是 staging 发送唯一忙锁：fork/handoff 发送自身置位期间禁止重入。
+    // 真实链路 isSending=true → canSend 必为 false（canSend=hasInput∧¬isBusy），mock 同组合。
+    const { deps, spies } = setup({ canSend: false, hasActiveStaging: true, stagingSendReturn: true })
+    ;(deps.isSending as unknown as { value: boolean }).value = true
+    await useComposerSend(deps).onSend()
+    expect(spies.stagingSend).not.toHaveBeenCalled()
+    expect(spies.send).not.toHaveBeenCalled()
+  })
+
+  it('②c staging 活跃 + canSend=false + allowsEmptySend=false → 拦截（fork 空文本不允许）', async () => {
+    const { deps, spies } = setup({ canSend: false, hasActiveStaging: true, activeStagingAllowsEmpty: false })
+    await useComposerSend(deps).onSend()
+    expect(spies.stagingSend).not.toHaveBeenCalled()
   })
 
   it('③ isCompacting + `/` 前缀命令 → toastError 拒绝，不入队', async () => {
