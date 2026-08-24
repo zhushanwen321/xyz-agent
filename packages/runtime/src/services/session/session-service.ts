@@ -2041,7 +2041,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 失效」（fetchContext 内 markDirty → 防抖重拉 → 快照应用后挂钩发布）。fetchContext 返回
    * null（compact 后无值）时不失效，快照保持旧值——对齐旧「null 不广播」语义。
    * 注意：挂钩发布的广播可能早于前端订阅新 sessionId 通道（时序竞争，见架构约定 #7），
-   * 前端 useSidebar.selectSession 会主动调 session.getContext 再拉一次保证到达。
+   * 前端 useContextUsage composable 的恢复腿（每次切入视图拉 session.getContext）保证到达。
    * fire-and-forget 语义：失败不阻塞 session 恢复。
    */
   async fetchAndBroadcastContext(sessionId: string): Promise<void> {
