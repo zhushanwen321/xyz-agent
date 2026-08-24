@@ -348,9 +348,13 @@ export interface ClientMessageMap {
   'session.getAgentCallHistory': { sessionId: string; agentCallSessionId: string }
   'session.getAgentCallFilePath': { sessionId: string; agentCallSessionId: string }
   'session.workflowAction': { sessionId: string; action: 'pause' | 'resume' | 'abort'; runId: string }
-  // session.subagentAction：subagent 生命周期操作（当前只 cancel，对称 workflowAction 的扩展 slash command 转发）。
-  // runtime 经 client.prompt("/subagents <action> <subagentId>") 调扩展（不经 LLM）。
-  'session.subagentAction': { sessionId: string; action: 'cancel'; subagentId: string }
+  // session.subagentAction：subagent 生命周期/定向消息操作（cancel/message/start，对称 workflowAction
+  // 的扩展 slash command 转发）。runtime 经 client.prompt("/subagents <action> ...") 调扩展（不经 LLM）。
+  // 字段按 action 取用：cancel 用 subagentId，message 用 subagentId+text，start 用 slug+task
+  // （composer 四符号设计 §3.3.4——@ 定向消息直达 subagent，不走主 agent prompt 通道）。
+  // text/task 的换行由 runtime encodeDirectiveText 编码为字面 \n、反斜杠编码为 \\（命令保持单行），
+  // extension 侧 decodeNewlineEscapes 互逆还原（设计 §3.3.3 / 探针 P3）。
+  'session.subagentAction': { sessionId: string; action: 'cancel' | 'message' | 'start'; subagentId?: string; text?: string; slug?: string; task?: string }
   // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 WS 请求 payload（从 main IPC 原样搬，零字段变更）。
   // writeImage：base64 解码后写 attachments（sessionId 空降级 tmpdir，persisted 反映落地位置）。
   // migrateImage：landing 落 tmpdir 的图，session 创建后 move 到 attachments（fromPath 白名单守门）。
@@ -372,7 +376,10 @@ export interface ClientMessageMap {
   // message.send：images 是 Cmd+V 富呈现通路的图片数据（base64，不含 data: 前缀）。
   // runtime 适配层（rpc-client）补 type:'image' 组装成 pi 的 ImageContent。
   // 不带 type 字段（type 是 pi 私有，runtime 适配层负责补）。
-  'message.send': { sessionId: string; content: string; subagent?: { agent: string; task: string }; images?: Array<{ data: string; mimeType: string }> }
+  // [HISTORICAL] subagent 可选字段已删除（composer 四符号设计 D2）：曾经的 marker 半成品通道
+  // （base64 隐藏注释前缀拼进主 agent prompt，extension 侧零消费方，且经主 agent 转发违背
+  // 「直达 subagent」目标）——定向消息改走 session.subagentAction(message/start)。
+  'message.send': { sessionId: string; content: string; images?: Array<{ data: string; mimeType: string }> }
   'message.abort': { sessionId: string }
   'message.steer': { sessionId: string; content: string }
   'message.follow_up': { sessionId: string; content: string }
@@ -655,7 +662,7 @@ export type ServerMessageType =
   | 'session.traceEntries' | 'session.traceEntryAppended'
   // session-trace（design §3.1 失败路径）：现取当前 system prompt 的 reply（当前值非历史）。
   | 'session.currentSystemPrompt'
-  | 'subagent.stream_delta'
+  | 'subagent.stream_delta' | 'subagent.directive'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
   | 'message.tool_call_start' | 'message.tool_call_end'
@@ -992,12 +999,21 @@ export interface ServerMessageMapBase {
   }
   // session.workflowActionDone：workflow 操作完成确认（session.workflowAction RPC reply）
   'session.workflowActionDone': { sessionId: string; action: 'pause' | 'resume' | 'abort'; runId: string }
-  // session.subagentActionDone：subagent 操作完成确认（session.subagentAction RPC reply）
-  'session.subagentActionDone': { sessionId: string; action: 'cancel'; subagentId: string }
+  // session.subagentActionDone：subagent 操作完成确认（session.subagentAction RPC reply）。
+  // 字段按 action 回显目标标识：cancel/message 回 subagentId，start 回 slug（text/task 不回显——
+  // ack 型 payload，回显长文本无消费方）。
+  'session.subagentActionDone': { sessionId: string; action: 'cancel' | 'message' | 'start'; subagentId?: string; slug?: string }
   // subagent.stream_delta：running subagent 的逐字 streaming（路径 A-1）。
   // pi 扩展层合并 text_delta 后经 ctx.ui.setWidget("subagent-stream-<recordId>", lines) 转发，
   // runtime EventAdapter 捕获后转为此 WS 帧。lines 是累积全文（split('\n')），undefined = 终态清除。
   'subagent.stream_delta': { sessionId: string; recordId: string; lines: string[] | undefined }
+  // subagent.directive：用户定向消息的 live 广播（@ subagent chip 发送 → extension 留痕
+  // custom_message entry → pi message_end{role:'custom'} → 本广播，设计 §3.3.3a live 链路）。
+  // 带 sessionId（架构约定 #7 session 隔离）；renderer（U2b）聊天流据此插定向气泡
+  // （「→ @slug：text」特殊样式，非 user/assistant 气泡）。reload 链路（mapSessionEntries
+  // 对该 customType 覆写 display:true）产出同字段的 custom system message，字段解析 SSOT =
+  // shared.parseSubagentDirective（live ≡ reload，关键规则 9）。
+  'subagent.directive': { sessionId: string; subagentId: string; slug: string; direction: 'user'; text: string }
   // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）。
   'app.info': { appVersion: string; piVersion: string }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）

@@ -39,6 +39,25 @@ export function useComposerChipCommands(
   }
 
   /**
+   * chip 落位共用段：无选区 appendChild 到末尾，有选区删选区内容后插到光标处，
+   * chip 后补 ZWSP spacer（光标锚点 + 删除 chip 时一并清理）并把光标定位其后。
+   * file/image/mention/session/subagent 五种内联 chip 共用（结构惯例收敛，防五份漂移）。
+   */
+  function insertChipAtSelection(el: HTMLDivElement, chip: HTMLElement): void {
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount) {
+      el.appendChild(chip)
+    } else {
+      const range = sel.getRangeAt(0)
+      range.deleteContents()
+      range.insertNode(chip)
+    }
+    const spacer = document.createTextNode('\u200B')
+    chip.after(spacer)
+    placeCursorAfter(spacer)
+  }
+
+  /**
    * 把 lucide 图标渲染进容器元素（contenteditable chip 走手动 DOM，无法用 <component>）。
    * 渲染经 callbacks.renderIcon 注入（壳层用 createVNode/render 实现），dom-core 只负责
    * DOM 编排：创建 host span → 调 renderIcon → 渲染成功才挂载。
@@ -107,17 +126,7 @@ export function useComposerChipCommands(
     label.textContent = labelText
     chip.appendChild(label)
     chip.appendChild(makeXButton(chip))
-    const sel = window.getSelection()
-    if (!sel || !sel.rangeCount) {
-      el.appendChild(chip)
-    } else {
-      const range = sel.getRangeAt(0)
-      range.deleteContents()
-      range.insertNode(chip)
-    }
-    const spacer = document.createTextNode('\u200B')
-    chip.after(spacer)
-    placeCursorAfter(spacer)
+    insertChipAtSelection(el, chip)
     onChanged()
   }
 
@@ -141,17 +150,7 @@ export function useComposerChipCommands(
     label.textContent = displayName
     chip.appendChild(label)
     chip.appendChild(makeXButton(chip))
-    const sel = window.getSelection()
-    if (!sel || !sel.rangeCount) {
-      el.appendChild(chip)
-    } else {
-      const range = sel.getRangeAt(0)
-      range.deleteContents()
-      range.insertNode(chip)
-    }
-    const spacer = document.createTextNode('\u200B')
-    chip.after(spacer)
-    placeCursorAfter(spacer)
+    insertChipAtSelection(el, chip)
     onChanged()
   }
 
@@ -169,17 +168,59 @@ export function useComposerChipCommands(
     chip.className = 'mention-chip mention-at'
     chip.contentEditable = 'false'
     chip.textContent = `@${name}`
-    const sel = window.getSelection()
-    if (!sel || !sel.rangeCount) {
-      el.appendChild(chip)
-    } else {
-      const range = sel.getRangeAt(0)
-      range.deleteContents()
-      range.insertNode(chip)
-    }
-    const spacer = document.createTextNode('\u200B')
-    chip.after(spacer)
-    placeCursorAfter(spacer)
+    insertChipAtSelection(el, chip)
+    onChanged()
+  }
+
+  /**
+   * 插入 session 引用 chip（四符号体系 # session 新语义）。
+   * 结构照 insertFileChip 惯例（chip-label + × 按钮 + dataset + ZWSP spacer）：
+   * label 用于展示（人可读标题），sessionId 存 dataset 供 getSegmentsFromEl 产出
+   * session segment（序列化为 #<sessionId>，对齐 TUI session_read 协议）。
+   */
+  function insertSessionChip(sessionId: string, label: string): void {
+    const el = getEl()
+    if (!el) return
+    restoreSelection()
+    el.focus()
+    const chip = document.createElement('span')
+    chip.className = 'mention-chip mention-session'
+    chip.contentEditable = 'false'
+    chip.dataset.chipType = 'session'
+    chip.dataset.chipSessionId = sessionId
+    chip.dataset.chipLabel = label
+    const labelEl = document.createElement('span')
+    labelEl.className = 'chip-label'
+    labelEl.textContent = label
+    chip.appendChild(labelEl)
+    chip.appendChild(makeXButton(chip))
+    insertChipAtSelection(el, chip)
+    onChanged()
+  }
+
+  /**
+   * 插入 subagent 定向 chip（四符号体系 @ 新语义，修复 F3：现 mention-at 无 dataset）。
+   * 复用 mention-at 蓝色样式（insertMentionChip 的视觉惯例），但结构升级：
+   * dataset（chipType/chipSubagentId/chipSlug）+ chip-label + × 按钮——
+   * 旧 insertMentionChip 产的无 dataset chip 保持不动（历史消息编辑兼容）。
+   */
+  function insertSubagentChip(subagentId: string, slug: string): void {
+    const el = getEl()
+    if (!el) return
+    restoreSelection()
+    el.focus()
+    const chip = document.createElement('span')
+    chip.className = 'mention-chip mention-at'
+    chip.contentEditable = 'false'
+    chip.dataset.chipType = 'subagent'
+    chip.dataset.chipSubagentId = subagentId
+    chip.dataset.chipSlug = slug
+    const labelEl = document.createElement('span')
+    labelEl.className = 'chip-label'
+    labelEl.textContent = `@${slug}`
+    chip.appendChild(labelEl)
+    chip.appendChild(makeXButton(chip))
+    insertChipAtSelection(el, chip)
     onChanged()
   }
 
@@ -216,5 +257,13 @@ export function useComposerChipCommands(
     return false
   }
 
-  return { insertSlashChip, insertMentionChip, insertFileChip, insertImageBadge, handleBackspaceOnChip }
+  return {
+    insertSlashChip,
+    insertMentionChip,
+    insertFileChip,
+    insertImageBadge,
+    insertSessionChip,
+    insertSubagentChip,
+    handleBackspaceOnChip,
+  }
 }

@@ -17,7 +17,8 @@ import type { ComposerRestoreDeps } from './types'
 import type { ComposerInputInstance } from '@xyz-agent/core/domain/composer'
 import type { Segment } from '@xyz-agent/shared'
 
-/** mock ComposerInputInstance（clear/setText/insertImageBadge/insertSlashChip/insertFileChip） */
+/** mock ComposerInputInstance（clear/setText/insertImageBadge/insertSlashChip/insertFileChip
+ * + U2b session/subagent chip 插入） */
 function makeInputInstance(overrides: Partial<ComposerInputInstance> = {}): ComposerInputInstance {
   return {
     clear: vi.fn(),
@@ -25,6 +26,8 @@ function makeInputInstance(overrides: Partial<ComposerInputInstance> = {}): Comp
     insertImageBadge: vi.fn(),
     insertSlashChip: vi.fn(),
     insertFileChip: vi.fn(),
+    insertSessionChip: vi.fn(),
+    insertSubagentChip: vi.fn(),
     focus: vi.fn(),
     insertTextAtCursor: vi.fn(),
     ...overrides,
@@ -160,5 +163,29 @@ describe('useComposerRestore restoreSegments', () => {
     expect(c.inputRef.value?.insertImageBadge).toHaveBeenCalledWith('/i.png', 'i.png', 'i.png', false)
     expect(c.inputRef.value?.insertSlashChip).toHaveBeenCalledWith('/skill:s')
     expect(c.inputRef.value?.insertFileChip).toHaveBeenCalledWith('/f.ts', [1, 2])
+  })
+
+  // ── U2b：session / subagent chip 恢复（发送失败回滚两类新 chip）──
+
+  it('session 段 → insertSessionChip(sessionId, label) 回填（两类段序列化为 #uuid / 空串，不进 textOnly）', () => {
+    const c = setup('s1')
+    const segments: Segment[] = [
+      { type: 'text', text: '参考 ' },
+      { type: 'session', sessionId: '019e-abc', label: '设计讨论' },
+    ]
+    c.restoreSegments(segments)
+    expect(c.inputRef.value?.setText).toHaveBeenCalledWith('参考 ')
+    expect(c.inputRef.value?.insertSessionChip).toHaveBeenCalledWith('019e-abc', '设计讨论')
+  })
+
+  it('subagent 段（含新建占位形态）→ insertSubagentChip(subagentId, slug) 原样回填', () => {
+    const c = setup('s1')
+    const segments: Segment[] = [
+      { type: 'subagent', subagentId: '', slug: '新任务' },
+      { type: 'text', text: '帮我修 bug' },
+    ]
+    c.restoreSegments(segments)
+    expect(c.inputRef.value?.setText).toHaveBeenCalledWith('帮我修 bug')
+    expect(c.inputRef.value?.insertSubagentChip).toHaveBeenCalledWith('', '新任务')
   })
 })

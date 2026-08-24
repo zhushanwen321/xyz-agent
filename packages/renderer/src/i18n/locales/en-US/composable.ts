@@ -7,6 +7,9 @@ export default {
   compactFailed: 'Failed to compact: {msg}',
   queueFlushFailed: 'Failed to resend queued messages, messages kept',
   bashFailed: 'Failed to run bash: {msg}',
+  // `@` directive messages (U2b): empty-text guard + RPC failure (readable error, S8)
+  subagentDirectiveEmpty: 'Directive message is empty, please type content for the subagent',
+  subagentDirectiveFailed: 'Failed to send directive message: {msg}',
   providerNameRequired: 'Provider name is required',
   oauthSwitchNeedsKey: 'Switching to API Key requires a new API Key (it replaces the OAuth credential on save)',
   duplicateHeaderKey: 'Duplicate header key detected, the last value will be used',

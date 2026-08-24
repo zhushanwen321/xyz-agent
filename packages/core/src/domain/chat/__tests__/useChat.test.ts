@@ -28,6 +28,7 @@ interface Fixture {
   useChat: ReturnType<typeof createUseChat>
   chatApi: {
     send: ReturnType<typeof vi.fn>
+    subagentAction: ReturnType<typeof vi.fn>
     steer: ReturnType<typeof vi.fn>
     followUp: ReturnType<typeof vi.fn>
     abort: ReturnType<typeof vi.fn>
@@ -52,6 +53,7 @@ function makeFixture(): Fixture {
   const chatStore = scope.run(() => createChatStore())!
   const chatApi = {
     send: vi.fn().mockResolvedValue(undefined),
+    subagentAction: vi.fn().mockResolvedValue(undefined),
     steer: vi.fn().mockResolvedValue(undefined),
     followUp: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn().mockResolvedValue(undefined),
@@ -340,6 +342,190 @@ describe('createUseChat factory 行为', () => {
     const after = f.chatStore.getMessages('s22').at(-1)
     expect(after?.content).toBe('final') // sealed：content 不变
     expect(after?.status).toBe('complete')
+    f.dispose()
+  })
+})
+
+// ── `@` 定向发送分流（U2b，composer-symbol-system §3.3.4/§3.3.7）──────────────────────
+
+describe('send 定向分流（含 subagent 段）', () => {
+  beforeEach(() => {
+    resetChatModuleStateForTest()
+  })
+
+  it('subagentId 非空 → subagentAction(message) 被调且 text 序列化含 file/session 段；send 不被调', async () => {
+    const f = makeFixture()
+    await f.useChat.send('d1', [
+      { type: 'subagent', subagentId: 'rec-1', slug: 'build-api' },
+      { type: 'session', sessionId: 'sess-9', label: '设计讨论' },
+      { type: 'file', path: '/a.ts', lineRange: [1, 5] },
+      { type: 'text', text: '展开讲讲' },
+    ])
+    expect(f.chatApi.subagentAction).toHaveBeenCalledTimes(1)
+    expect(f.chatApi.subagentAction).toHaveBeenCalledWith('d1', 'message', {
+      subagentId: 'rec-1',
+      // 定向文本 = 其余段序列化：session → #sessionId、file → path:L 范围、subagent 段空串不进
+      text: '#sess-9 /a.ts:L1-L5 展开讲讲',
+    })
+    // 不走主 agent 通道（§3.3.8 命题 1：无主 agent turn）
+    expect(f.chatApi.send).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('subagentId 非空：不 appendUser（无 user 气泡，live ≡ reload——pi 只落 custom entry）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('d1b', [
+      { type: 'subagent', subagentId: 'rec-1', slug: 'build-api' },
+      { type: 'text', text: '汇报进度' },
+    ])
+    const messages = f.chatStore.getMessages('d1b')
+    expect(messages.some((m) => m.role === 'user')).toBe(false)
+    // 定向气泡由 subagent.directive 广播驱动（见下一 describe），send 路径自身不插
+    expect(messages.length).toBe(0)
+    f.dispose()
+  })
+
+  it('subagentId 空串（新建占位 chip）→ subagentAction(start)，slug 自动生成 chat- 前缀，占位 slug 被覆盖', async () => {
+    const f = makeFixture()
+    await f.useChat.send('d2', [
+      // U2a 新建项：subagentId 空串 + slug 为 i18n 占位文案（不可作 id）
+      { type: 'subagent', subagentId: '', slug: '新任务' },
+      { type: 'text', text: '帮我修 bug' },
+    ])
+    expect(f.chatApi.subagentAction).toHaveBeenCalledTimes(1)
+    const [sid, action, params] = f.chatApi.subagentAction.mock.calls[0] as unknown as [
+      string, string, { slug?: string; task?: string },
+    ]
+    expect(sid).toBe('d2')
+    expect(action).toBe('start')
+    expect(params.slug).toMatch(/^chat-/) // 自动 slug 生成规则
+    expect(params.slug).not.toBe('新任务') // 占位 slug 不可作 id，被覆盖
+    expect(params.task).toBe('帮我修 bug')
+    expect(f.chatApi.send).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('纯 chip 无文本 → 空文本挡：不调 subagentAction，toast 可读错误（不静默）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('d3', [{ type: 'subagent', subagentId: 'rec-1', slug: 'build-api' }])
+    expect(f.chatApi.subagentAction).not.toHaveBeenCalled()
+    expect(f.chatApi.send).not.toHaveBeenCalled()
+    expect(f.toast.error).toHaveBeenCalledWith('composable.subagentDirectiveEmpty')
+    f.dispose()
+  })
+
+  it('RPC 失败 → toast 错误可见（不 throw、不静默丢失）', async () => {
+    const f = makeFixture()
+    f.chatApi.subagentAction.mockRejectedValueOnce(new Error('subagent 已结束'))
+    await expect(
+      f.useChat.send('d4', [
+        { type: 'subagent', subagentId: 'rec-x', slug: 'closed-one' },
+        { type: 'text', text: '继续' },
+      ]),
+    ).resolves.toBeUndefined()
+    expect(f.toast.error).toHaveBeenCalledWith(
+      'composable.subagentDirectiveFailed:{"msg":"subagent 已结束"}',
+    )
+    f.dispose()
+  })
+
+  it('定向发送仍 ensureStreamSubscription（消费 subagent.directive 广播的前提）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('d5', [
+      { type: 'subagent', subagentId: 'rec-1', slug: 'build-api' },
+      { type: 'text', text: 'hi' },
+    ])
+    expect(f.chatApi.streamSubscribe).toHaveBeenCalledTimes(1)
+    f.dispose()
+  })
+
+  it('主 agent busy 时定向消息不转 steer（与主 agent turn 正交）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('d6', textToSegments('首发'))
+    f.emit('d6', msg('d6', 'message.message_start', { messageId: 'a1' }))
+    expect(f.chatStore.isActive('d6')).toBe(true)
+    await f.useChat.send('d6', [
+      { type: 'subagent', subagentId: 'rec-1', slug: 'build-api' },
+      { type: 'text', text: 'busy 时追问' },
+    ])
+    expect(f.chatApi.steer).not.toHaveBeenCalled()
+    expect(f.chatApi.subagentAction).toHaveBeenCalledTimes(1)
+    f.dispose()
+  })
+
+  it('session 段（无 subagent 段）照常走 message.send，#sessionId 序列化进 prompt（U1 验证）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('d7', [
+      { type: 'session', sessionId: 'sess-1', label: '旧会话' },
+      { type: 'text', text: '看看这个' },
+    ])
+    expect(f.chatApi.send).toHaveBeenCalledTimes(1)
+    // send 参数：prompt = 序列化文本 + clientUuid 标记（非纯文本消息 needsBackfill 拼标记，
+    // 标记被 pi extension input hook 剥离，这里只断言用户可见正文部分）
+    const [calledSid, calledPrompt] = f.chatApi.send.mock.calls[0] as unknown as [string, string]
+    expect(calledSid).toBe('d7')
+    expect(calledPrompt.startsWith('#sess-1 看看这个')).toBe(true)
+    expect(calledPrompt).toMatch(/<!--xyz:msg:u-[0-9a-fA-F-]{36}-->$/)
+    expect(f.chatApi.subagentAction).not.toHaveBeenCalled()
+    f.dispose()
+  })
+})
+
+// ── subagent.directive live 广播消费（U2b，§3.3.3a live 链路）──────────────────────
+
+describe('subagent.directive 广播消费', () => {
+  beforeEach(() => {
+    resetChatModuleStateForTest()
+  })
+
+  /** 构造 subagent.directive ServerMessage（payload 对齐 ServerMessageMap 契约） */
+  function directiveMsg(sid: string, subagentId: string, slug: string, text: string): ServerMessage {
+    return {
+      type: 'subagent.directive',
+      payload: { sessionId: sid, subagentId, slug, direction: 'user', text },
+    } as ServerMessage
+  }
+
+  it('payload.sessionId 匹配订阅 sid → 聊天流插入定向消息（reload 形态逐字段一致）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('e1', [
+      { type: 'subagent', subagentId: 'rec-1', slug: 'build-api' },
+      { type: 'text', text: '汇报进度' },
+    ])
+    f.emit('e1', directiveMsg('e1', 'rec-1', 'build-api', '汇报进度'))
+    const inserted = f.chatStore.getMessages('e1').at(-1)
+    // U2c 契约：role system + customType + content + details + display:true（live ≡ reload）
+    expect(inserted).toMatchObject({
+      role: 'system',
+      customType: 'subagent-directive',
+      content: '汇报进度',
+      details: { subagentId: 'rec-1', slug: 'build-api', direction: 'user' },
+      display: true,
+      status: 'complete',
+    })
+    expect(inserted?.id).toMatch(/^cm-/) // customStart 先例：客户端生成 id
+    f.dispose()
+  })
+
+  it('payload.sessionId 不匹配订阅 sid → 丢弃（ADR-0049 per-session 隔离，架构约定 7）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('e2', [
+      { type: 'subagent', subagentId: 'rec-1', slug: 'build-api' },
+      { type: 'text', text: 'hi' },
+    ])
+    const before = f.chatStore.getMessages('e2').length
+    // 伪造异 session 广播到达 e2 的 handler（防御层校验 payload.sessionId === 订阅 sid）
+    f.emit('e2', directiveMsg('other-session', 'rec-1', 'build-api', '串台消息'))
+    expect(f.chatStore.getMessages('e2').length).toBe(before)
+    expect(f.chatStore.getMessages('e2').some((m) => m.content === '串台消息')).toBe(false)
+    f.dispose()
+  })
+
+  it('未订阅的 session 收不到广播（per-sid 通道路由，无 handler 可触发）', async () => {
+    const f = makeFixture()
+    // e3 从未 send（未 ensureStreamSubscription）→ streamHandlers 无条目，emit 天然 no-op
+    f.emit('e3', directiveMsg('e3', 'rec-1', 'build-api', '未订阅'))
+    expect(f.chatStore.getMessages('e3').length).toBe(0)
     f.dispose()
   })
 })

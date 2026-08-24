@@ -26,7 +26,7 @@
       :variant="variant"
       :project-skills="landingProjectSkills"
       :global-skills="landingGlobalSkills"
-      :query="cmdType === 'file' ? fileQuery : slashQuery"
+      :query="popoverQuery"
       @select="onCmdSelect"
     >
       <div
@@ -71,10 +71,13 @@
           :placeholder="placeholder"
           :disabled="isSending"
           :session-id="sessionId"
+          :suppress-triggers="isBashMode"
           @input="onInputChange"
           @keydown="onKeydown"
           @slash-trigger="onSlashTrigger"
           @file-trigger="onFileTrigger"
+          @session-trigger="onSessionTrigger"
+          @subagent-trigger="onSubagentTrigger"
           @focus="onBoxFocusIn"
           @blur="onBoxFocusOut"
         />
@@ -208,12 +211,24 @@ const {
   cmdType,
   slashQuery,
   fileQuery,
+  sessionQuery,
+  subagentQuery,
   commandPopoverRef,
   onSlashTrigger,
   onFileTrigger,
+  onSessionTrigger,
+  onSubagentTrigger,
   onAddSelect,
   onCmdSelect,
 } = useCommandPopoverTrigger(inputRef, sessionIdRef)
+
+/** 命令浮层过滤 query 四路映射（四符号体系：$ file / # session / @ subagent / / slash） */
+const popoverQuery = computed(() => {
+  if (cmdType.value === 'file') return fileQuery.value
+  if (cmdType.value === 'session') return sessionQuery.value
+  if (cmdType.value === 'subagent') return subagentQuery.value
+  return slashQuery.value
+})
 
 const isSending = ref(false)
 /** composer-box 聚焦态（v6 §6.1 .focused：border-accent + 3px accent 外环 --accent-ring）。
@@ -304,6 +319,9 @@ const {
   canSubmit,
   boxClass,
   placeholder,
+  // bash 态（draft.trimStart().startsWith('!')，core dispatch/bash.ts isBashMode 同源判定）：
+  // 传 ComposerInput suppressTriggers——bash 模式下 $/#/@/ 全部不触发浮层（设计 D6 豁免）
+  isBashMode,
 } = shell
 
 watch(

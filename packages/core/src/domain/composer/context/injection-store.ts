@@ -21,10 +21,16 @@
  *   故 target=new 的匹配不依赖 sessionId=null，改用 Composer variant=landing 判定
  *   （见 useComposerInjection）。store 只做传输 + routeToLanding 改写。
  *
- * ## payload schema（FR-2/FR-8 + Phase 4 联动 1）
+ * ## payload schema（FR-2/FR-8 + Phase 4 联动 1 + 四符号体系 §3.3.4 sidebar 直引）
  * - path + lineStart/lineEnd：file chip 注入（DetailPane/DiffView 选区/文件引用）
  * - text：纯文本注入（Phase 4 联动 1：TerminalView 选区「发给 AI」）
- * path 和 text 互斥：有 path 走 insertFileChip，有 text 走 insertTextAtCursor（消费端 useComposerInjection 判断）。
+ * - refSessionId + label：session chip 注入（四符号体系 §3.3.4 sidebar SessionItem「引用到输入区」）
+ * path / text / refSessionId 三互斥：有 refSessionId 走 insertSessionChip，有 path 走
+ * insertFileChip，有 text 走 insertTextAtCursor（消费端 useComposerInjection 判断）。
+ * 互斥在 requestInjection 归一化强制（refSessionId 存在时丢弃 path/text/行范围）。
+ * 注：设计文档 §3.3.4 原文扩展字段名为 sessionId，但 InjectionRequest.sessionId 已被
+ * 「注入目标路由」语义（current 时具体目标 id / new 时强制 null）占用——sidebar 直引场景
+ * 目标 session 与被引用 session 是两个独立 id，不能同名，故被引用方命名 refSessionId。
  *
  * [W3 迁移] 迁自 renderer stores/composer-injection.ts。改为 createComposerInjectionStore()
  * factory 范式（对齐 chat store w4 的 createChatStore factory）：不调 defineStore（store id
@@ -39,16 +45,25 @@ export type InjectionTarget = 'current' | 'new'
 
 /**
  * 一次性注入请求 payload（消费侧读）。
- * path 与 text 互斥：有 path 走 file chip，有 text 走纯文本插入。
+ * path / text / refSessionId 三互斥：有 refSessionId 走 session chip，有 path 走 file chip，
+ * 有 text 走纯文本插入。
  */
 export interface PendingInjection {
   target: InjectionTarget
-  /** file chip 路径（与 text 互斥）。有 path 走 insertFileChip。 */
+  /** file chip 路径（与 text/refSessionId 互斥）。有 path 走 insertFileChip。 */
   path?: string
   lineStart?: number
   lineEnd?: number
-  /** 纯文本注入（Phase 4 联动 1：TerminalView 选区「发给 AI」）。与 path 互斥，有 text 走 insertTextAtCursor。 */
+  /** 纯文本注入（Phase 4 联动 1：TerminalView 选区「发给 AI」）。与 path/refSessionId 互斥，有 text 走 insertTextAtCursor。 */
   text?: string
+  /**
+   * 被引用 session id（四符号体系 §3.3.4 sidebar 直引：sidebar SessionItem「引用到输入区」）。
+   * 与 path/text 互斥，存在 = session 注入语义，消费端走 insertSessionChip。
+   * 命名说明见文件头（设计原文 sessionId，与既有目标路由 sessionId 同名冲突，改 refSessionId）。
+   */
+  refSessionId?: string
+  /** session chip 显示名（人可读 label，与 refSessionId 配对，非 uuid） */
+  label?: string
   /** 过滤用 sessionId：current 时具体 id，new 时强制 null（落地 landing composer） */
   sessionId: string | null
   /** 时间戳：同内容重复注入靠 ts 变化触发 watch 引用变化 */
@@ -58,12 +73,16 @@ export interface PendingInjection {
 /** 写入侧 payload（不含 ts/sessionId 归一化，内部补） */
 export interface InjectionRequest {
   target: InjectionTarget
-  /** file chip 路径（与 text 互斥） */
+  /** file chip 路径（与 text/refSessionId 互斥） */
   path?: string
   lineStart?: number
   lineEnd?: number
-  /** 纯文本注入（与 path 互斥） */
+  /** 纯文本注入（与 path/refSessionId 互斥） */
   text?: string
+  /** 被引用 session id（与 path/text 互斥；四符号体系 §3.3.4 sidebar 直引） */
+  refSessionId?: string
+  /** session chip 显示名（与 refSessionId 配对） */
+  label?: string
   /** current 时传具体 sessionId；new 时忽略（强制 null） */
   sessionId?: string | null
 }
@@ -81,10 +100,15 @@ export function createComposerInjectionStore() {
   /**
    * 写入注入请求（幂等覆盖：连续调用以最后一次为准）。
    * ts 内部补；target=new 时 sessionId 强制 null（新对话落地 landing composer）。
+   * refSessionId 与 path/text 互斥在此归一化强制：refSessionId 存在时丢弃 path/text/行范围
+   * （写入侧误传也不产生歧义 payload，消费端只需按 refSessionId → text → path 优先级判断）。
    */
   function requestInjection(payload: InjectionRequest): void {
     const sessionId = payload.target === 'new' ? null : (payload.sessionId ?? null)
-    pendingInjection.value = { ...payload, sessionId, ts: Date.now() }
+    const normalized = payload.refSessionId !== undefined
+      ? { path: undefined, lineStart: undefined, lineEnd: undefined, text: undefined }
+      : {}
+    pendingInjection.value = { ...payload, ...normalized, sessionId, ts: Date.now() }
   }
 
   /** 消费清除（Composer 消费后立即调用，防重复注入 + 防 watch 残留触发） */

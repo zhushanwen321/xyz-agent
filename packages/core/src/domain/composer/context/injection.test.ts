@@ -22,6 +22,7 @@ interface MockInput {
   focus: Spy
   insertFileChip: Spy
   insertTextAtCursor: Spy
+  insertSessionChip: Spy
 }
 
 interface SetupCtx {
@@ -46,6 +47,7 @@ function setup(opts: {
     focus: vi.fn(),
     insertFileChip: vi.fn(),
     insertTextAtCursor: vi.fn(),
+    insertSessionChip: vi.fn(),
   }
   const sessionId = ref<string | null>(opts.sessionId ?? 's1')
   const variant = ref<'panel' | 'landing'>(opts.variant ?? 'panel')
@@ -151,6 +153,38 @@ describe('useComposerInjection · chipType 分发（file/text）', () => {
     })
     await nextTick()
     expect(ctx.input.insertFileChip).toHaveBeenCalledWith('/d.ts', [10, 20])
+    ctx.scope.stop()
+  })
+
+  it('refSessionId 请求 → insertSessionChip(refSessionId, label) + focus（§3.3.4 sidebar 直引）', async () => {
+    const ctx = setup({ sessionId: 's-target', variant: 'panel' })
+    ctx.store.requestInjection({
+      target: 'current', sessionId: 's-target', refSessionId: 's-ref', label: 'fix-com 设计讨论',
+    })
+    await nextTick()
+    expect(ctx.input.insertSessionChip).toHaveBeenCalledWith('s-ref', 'fix-com 设计讨论')
+    expect(ctx.input.focus).toHaveBeenCalled()
+    expect(ctx.input.insertFileChip).not.toHaveBeenCalled()
+    expect(ctx.input.insertTextAtCursor).not.toHaveBeenCalled()
+    expect(ctx.store.pendingInjection.value).toBeNull()
+    ctx.scope.stop()
+  })
+
+  it('refSessionId 请求 label 缺省 → chip label 兜底 refSessionId', async () => {
+    const ctx = setup({ sessionId: 's1', variant: 'panel' })
+    ctx.store.requestInjection({ target: 'current', sessionId: 's1', refSessionId: 's-ref' })
+    await nextTick()
+    expect(ctx.input.insertSessionChip).toHaveBeenCalledWith('s-ref', 's-ref')
+    ctx.scope.stop()
+  })
+
+  it('target=new 的 refSessionId 请求 → landing variant 直接消费 insertSessionChip', async () => {
+    const ctx = setup({ variant: 'landing' })
+    ctx.store.requestInjection({ target: 'new', refSessionId: 's-ref', label: 'landing 引用' })
+    await nextTick()
+    expect(ctx.startFlow).not.toHaveBeenCalled()
+    expect(ctx.input.insertSessionChip).toHaveBeenCalledWith('s-ref', 'landing 引用')
+    expect(ctx.store.pendingInjection.value).toBeNull()
     ctx.scope.stop()
   })
 })

@@ -139,6 +139,22 @@ const FETCH_CURRENT_PROMPT_POLL_MS = 250
 const FETCH_CURRENT_PROMPT_TIMEOUT_MS = 8000
 
 /**
+ * 定向消息文本的换行编码（composer 四符号 §3.3.3 / 探针 P3 转义协议）。
+ *
+ * 为什么编码：`/subagents message <id> <text>` 经 client.prompt 单行传输（pi 以首个
+ * 空格拆命令名后取剩余全文，真实换行会破坏命令的单行性），故发送前把真实换行编码为
+ * 字面 `\n` 两字符、原生反斜杠编码为 `\\`。
+ *
+ * 为什么连反斜杠一起转义：extension 侧 decodeNewlineEscapes（command-actions.ts）
+ * 与本函数互逆——若只编码换行不编码反斜杠，原文里的字面反斜杠+n（如路径 `C:\new`）
+ * 会被误解码成换行（歧义）。反斜杠先转义消除该歧义，两侧测试对三种原文
+ * （字面 \n / 反斜杠 / 真实换行）钉死往返不变。
+ */
+export function encodeDirectiveText(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/\n/g, '\\n')
+}
+
+/**
  * fork 点 entryId 按 timestamp 匹配时的容差（W7）。
  *
  * 来源：前端 messageTimestamp 是 Unix ms（Date.now()），JSONL 中 pi 写入的 timestamp 是
@@ -521,9 +537,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content, images) }
-  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
-    return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
-  }
+  // [HISTORICAL] sendSubagentMessage（marker 半成品通道）已删除（composer 四符号设计 D2）：
+  // base64 隐藏注释前缀在 extension 侧零消费方，且经主 agent 转发违背
+  // 「直达 subagent」目标——定向消息改走 subagentAction(message/start)。
   async abort(sessionId: string): Promise<void> { return this.dispatcher.abort(sessionId) }
   async sendBash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.dispatcher.sendBash(sessionId, command, excludeFromContext)
@@ -1292,14 +1308,42 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
-   * 取消 running subagent（经扩展 slash command，不经 LLM）。
-   * 对称 workflowAction 的转发模式：client.prompt("/subagents cancel <subagentId>")。
-   * 扩展侧 RPC 分支已实现（subagents.ts ctx.mode==='rpc' → service.cancel → SIGTERM kill 子进程）。
+   * subagent 生命周期/定向消息操作（经扩展 slash command，不经 LLM）。
+   * 对称 workflowAction 的转发模式：client.prompt("/subagents <action> ...")。
+   * 扩展侧 RPC 分支解析（command-actions.ts parseSubagentRpcCommand）：
+   * - cancel：<subagentId>（service.cancel → SIGTERM kill 子进程）
+   * - message：<subagentId> <text>（subagent 续聊，热路径 stdin 直写 prompt）
+   * - start：<slug> <task>（conversation:true 可续聊的新 subagent）
+   * text/task 经 encodeDirectiveText 编码（换行 → 字面 \n，命令保持单行）。
+   *
+   * 刻意直接 client.prompt 绕过 dispatcher busy 预检 / BeforeSend hook（对称
+   * promptReload 的绕过模式）：定向消息必须「主 agent 生成中也能发」（设计 §3.3.4
+   * 直达目标），且 hook 审核的是主 agent prompt，不适用于 subagent 定向文本。
    */
-  async subagentAction(sessionId: string, action: 'cancel', subagentId: string): Promise<void> {
+  async subagentAction(
+    sessionId: string,
+    action: 'cancel' | 'message' | 'start',
+    params: { subagentId?: string; text?: string; slug?: string; task?: string },
+  ): Promise<void> {
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not active`)
-    await client.prompt(`/subagents ${action} ${subagentId}`)
+    if (action === 'cancel') {
+      // 错误指向恢复动作：字段缺失是调用方协议错误，fail-fast 让 WS error envelope 暴露
+      if (!params.subagentId) throw new Error('[session-service] subagentAction cancel: subagentId is required')
+      await client.prompt(`/subagents cancel ${params.subagentId}`)
+      return
+    }
+    if (action === 'message') {
+      if (!params.subagentId || !params.text) {
+        throw new Error('[session-service] subagentAction message: subagentId and text are required')
+      }
+      await client.prompt(`/subagents message ${params.subagentId} ${encodeDirectiveText(params.text)}`)
+      return
+    }
+    if (!params.slug || !params.task) {
+      throw new Error('[session-service] subagentAction start: slug and task are required')
+    }
+    await client.prompt(`/subagents start ${params.slug} ${encodeDirectiveText(params.task)}`)
   }
 
   /**
@@ -1329,6 +1373,22 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const client = this.pm.getClient(sessionId)
     if (!client) throw new Error(`Session ${sessionId} not active`)
     await client.prompt('/__xyz_reload__')
+  }
+
+  /**
+   * U3（composer 四符号 §3.3.5）：reload 完成后失效 commands 快照（slash 列表动态刷新
+   * 链路闭合点）。失效点挂在这里的时机依据（设计 F8）：pi 对 extension 命令
+   * `await _tryExecuteExtensionCommand`（agent-session.js:800），promptReload resolve 即
+   * reload 已完成；而 `session_start(reason='reload')` 事件是 extension-only 不出 stdout
+   * （agent-session.js:2072），runtime 侧不存在可订阅的 reload 完成事件。
+   *
+   * 事件只做失效（对齐 applyContextUpdate 范式）——markDirty 置 dirty + 防抖重拉
+   * get_commands（commands 实例唯一数据写路径），重拉成功后经既有挂钩
+   * fetchCommandsSnapshot 内的 publishCommandsSnapshot 自动广播 session.commands，
+   * 本方法无需额外广播。
+   */
+  handleSessionReloaded(sessionId: string): void {
+    this.replicatedStates.get(sessionId)?.commands.markDirty()
   }
 
   getSummary(sessionId: string): SessionSummary | undefined {

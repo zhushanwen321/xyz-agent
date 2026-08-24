@@ -220,15 +220,18 @@ export function workflowAction(
 }
 
 /**
- * 取消 running subagent（经扩展 /subagents cancel，不经 LLM）。
+ * subagent 生命周期/定向消息操作（经扩展 /subagents 命令，不经 LLM）。
  * 对称 workflowAction，reply session.subagentActionDone。
+ * 字段按 action 取用：cancel 用 subagentId，message 用 subagentId+text，start 用 slug+task。
+ * text/task 的换行由 runtime 编码为字面 \n（命令保持单行，extension 侧互逆还原）。
  */
 export function subagentAction(
   sessionId: string,
-  action: 'cancel',
-  subagentId: string,
+  action: 'cancel' | 'message' | 'start',
+  params: { subagentId?: string; text?: string; slug?: string; task?: string },
 ): Promise<void> {
-  return command('session.subagentAction', { sessionId, action, subagentId })
+  // undefined 键经 JSON 序列化自然丢弃（与 send 的 images 空数组归一模式对称）
+  return command('session.subagentAction', { sessionId, action, ...params })
 }
 
 /**

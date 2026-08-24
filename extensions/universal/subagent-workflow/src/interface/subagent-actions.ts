@@ -329,10 +329,13 @@ export interface MessageHandlerInput {
   interrupt?: boolean;
 }
 
-/** message 领域对象（adapter 包成 messageResponse）。 */
+/** message 领域对象（adapter 包成 messageResponse）。
+ *  slug 来自 record（GUI /subagents message 通道的留痕 details 需要，设计 §3.3.3），
+ *  避免调用方二次 getRecordForAction 查询。 */
 export type MessageHandlerResult = {
   kind: "message";
   subagentId: string;
+  slug: string;
   response: MessageResponse;
 };
 
@@ -393,7 +396,7 @@ export async function messageHandler(
       `Recovery: use action:'close' to clean up, then action:'start' a new subagent.`,
     );
   }
-  return { kind: "message", subagentId: id, response: { delivered: true } };
+  return { kind: "message", subagentId: id, slug: record.slug, response: { delivered: true } };
 }
 
 // ============================================================

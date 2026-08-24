@@ -42,6 +42,11 @@ import { useCompactQueue } from '@/composables/panel/useCompactQueue'
  */
 const chatApiPort: ChatApiPort = {
   send: chatApi.send,
+  // `@` 定向消息分流（U2b）：实现在 session 域（session.subagentAction RPC），经端口
+  // 暴露给 core useChat 发送链路（ChatApiPort 注释）；mock 层 stub 已随 U5 就位。
+  // 懒解引用（调用时才读 sessionApi.subagentAction）：部分测试 vi.mock session 域时
+  // 未导出该方法，模块加载期解引用会炸 mock 的导出检查；定向发送才会真正触达。
+  subagentAction: (sid, action, params) => sessionApi.subagentAction(sid, action, params),
   steer: chatApi.steer,
   followUp: chatApi.followUp,
   abort: chatApi.abort,

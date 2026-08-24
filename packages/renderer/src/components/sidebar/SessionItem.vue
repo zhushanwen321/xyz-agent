@@ -109,6 +109,17 @@
           v-if="!confirming"
           variant="ghost"
           size="icon"
+          data-testid="quote-to-composer-btn"
+          class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+          :title="t('sidebar.sessionItem.quoteToComposer')"
+          @click.stop="onQuoteToComposer"
+        >
+          <Quote class="size-[13px]" />
+        </Button>
+        <Button
+          v-if="!confirming"
+          variant="ghost"
+          size="icon"
           class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
           :title="t('sidebar.sessionItem.rename')"
           @click.stop="emit('rename', session.id)"
@@ -191,7 +202,7 @@
 import { computed, inject, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onClickOutside } from '@vueuse/core'
-import { Check, Pencil, Trash2, Archive, FolderKanban, CornerLeftUp } from '@lucide/vue'
+import { Check, Pencil, Trash2, Archive, FolderKanban, CornerLeftUp, Quote } from '@lucide/vue'
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -202,6 +213,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { useProjectStore } from '@/stores/project'
+import { useSessionStore } from '@/stores/session'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 import { dirNameOf } from '@xyz-agent/ui'
@@ -375,6 +388,25 @@ const ariaLabel = computed(() =>
 
 function onMarkDone(): void {
   toggleMarkedDone(props.session.id)
+}
+
+// ── 引用到输入区（四符号体系 §3.1.2 侧边栏直引，G2 入口）──
+const sessionStore = useSessionStore()
+
+/**
+ * 把本 session 作为 # 引用注入当前 composer（被引用 = 本条 session，目标 = 当前活跃
+ * session 的 composer，两者独立）。经既有 composerInjectionStore 一次性通道，消费端
+ * （useComposerInjection watch）匹配后 insertSessionChip 产出紫 session chip。
+ * landing 态（无活跃 session）走 target=new：landing composer 已挂载时直接消费
+ * （injection.ts target=new 的 landing 分支），语义同 drawer「注入到新对话」。
+ */
+function onQuoteToComposer(): void {
+  const activeId = sessionStore.active?.id ?? null
+  composerInjectionStore.requestInjection(
+    activeId
+      ? { target: 'current', sessionId: activeId, refSessionId: props.session.id, label: props.session.label }
+      : { target: 'new', refSessionId: props.session.id, label: props.session.label },
+  )
 }
 </script>
 

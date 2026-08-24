@@ -19,7 +19,6 @@ function makeHandler(sessionOverrides: Record<string, ReturnType<typeof vi.fn>> 
   const cap: Captured = { replies: [], errors: [] }
   const sessionService = {
     sendMessage: vi.fn().mockResolvedValue({ blocked: false }),
-    sendSubagentMessage: vi.fn().mockResolvedValue({ blocked: false }),
     steerMessage: vi.fn().mockResolvedValue(undefined),
     followUpMessage: vi.fn().mockResolvedValue(undefined),
     ensureActive: vi.fn().mockResolvedValue(undefined),

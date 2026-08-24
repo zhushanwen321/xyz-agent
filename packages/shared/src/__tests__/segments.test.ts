@@ -221,3 +221,46 @@ describe('handoff segment', () => {
     expect(segmentsToText(segs)).toBe('[handoff from old-session] /skill:review')
   })
 })
+
+describe('session / subagent segment（composer 四符号 U1）', () => {
+  const SESSION_ID = '019e6c96-1111-4222-8333-444455556666'
+
+  it('session segment 序列化为 #<sessionId>（TUI session_read 协议），label 不进文本', () => {
+    const segs: Segment[] = [{ type: 'session', sessionId: SESSION_ID, label: 'fix-com 设计讨论' }]
+    expect(segmentsToText(segs)).toBe(`#${SESSION_ID}`)
+  })
+
+  it('subagent segment 序列化为空串（路由标记不进 prompt 文本）', () => {
+    const segs: Segment[] = [{ type: 'subagent', subagentId: 'sub-1', slug: 'build-api' }]
+    expect(segmentsToText(segs)).toBe('')
+  })
+
+  it('subagent + text：text 紧随 subagent（chip→text 边界补一个空格，subagent 本体不产出文本）', () => {
+    const segs: Segment[] = [
+      { type: 'subagent', subagentId: 'sub-1', slug: 'build-api' },
+      { type: 'text', text: '汇报当前进度' },
+    ]
+    // subagent 是 chip 类（DOM 中占位可见），text 分支按 chip→text 规则补空格，
+    // prompt trim 后为「汇报当前进度」——@slug 不残留（「不经主 agent LLM」的结构性保证）
+    expect(segmentsToText(segs)).toBe(' 汇报当前进度')
+    expect(segmentsToPrompt(segs)).toBe('汇报当前进度')
+  })
+
+  it('session 与 file chip 边界补空格（chip→chip 规则不变）', () => {
+    const segs: Segment[] = [
+      { type: 'session', sessionId: SESSION_ID, label: '会话 A' },
+      { type: 'file', path: 'src/a.ts' },
+    ]
+    expect(segmentsToText(segs)).toBe(`#${SESSION_ID} src/a.ts`)
+  })
+
+  it('text + session + text：边界规则与 file 一致（text→chip 不补，chip→text 补）', () => {
+    const segs: Segment[] = [
+      { type: 'text', text: '看看' },
+      { type: 'session', sessionId: SESSION_ID, label: '会话 A' },
+      { type: 'text', text: '的讨论' },
+    ]
+    // text→chip 方向不补空格（与 file/skill 一致——用户文本以空格结尾时自行分隔）
+    expect(segmentsToText(segs)).toBe(`看看#${SESSION_ID} 的讨论`)
+  })
+})

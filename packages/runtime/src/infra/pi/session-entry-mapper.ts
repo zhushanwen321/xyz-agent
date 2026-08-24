@@ -15,7 +15,7 @@
  * ② 完成通知 custom_message 的 display 覆写引用 shared COMPLETE_NOTIFY_CUSTOM_TYPES SSOT。
  */
 import type { PiSessionEntry, PiSessionCustomEntry } from './pi-protocol.js'
-import { COMPLETE_NOTIFY_CUSTOM_TYPES } from '@xyz-agent/shared'
+import { COMPLETE_NOTIFY_CUSTOM_TYPES, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective } from '@xyz-agent/shared'
 
 /** mapSessionEntries 返回类型。 */
 export interface MappedSessionEntries {
@@ -41,7 +41,9 @@ function toMs(timestamp: unknown): number {
  * - custom_message → { role:'custom', customType, content, details, display, timestamp }；
  *   完成通知 customType（COMPLETE_NOTIFY_CUSTOM_TYPES）display 覆写为 false
  *   （pi 可能持久化 display:true，xyz-agent 统一隐藏——agent 收到后 triggerTurn 唤醒处理，
- *   结果由后续 turn 体现，通知本身对用户是噪声）
+ *   结果由后续 turn 体现，通知本身对用户是噪声）；
+ *   subagent-directive customType display 覆写为 true（extension 落 false 是 pi TUI 语义，
+ *   xyz 聊天流定向气泡统一显示，见 case 内注释）
  * - branch_summary → { role:'branchSummary', summary, fromId, timestamp }
  * - custom → 进 customDataEntries（不进 messages）
  * - 其余（label/session_info 等未建模类型）→ 跳过
@@ -74,13 +76,22 @@ export function mapSessionEntries(entries: PiSessionEntry[]): MappedSessionEntri
       case 'custom_message': {
         // 完成通知类 customType：display 覆写为 false（pi 可能持久化 true，xyz-agent 统一隐藏）
         const isCompleteNotify = COMPLETE_NOTIFY_CUSTOM_TYPES.has(entry.customType)
+        // subagent-directive：display 覆写为 true（composer-symbol-system §3.3.3a reload 链路）。
+        // 为什么覆写：extension 落 display:false 是 pi TUI 渲染语义；xyz-agent 聊天流的定向
+        // 气泡必须「重开后仍在」（关键规则 9），display:false 会被前端 display 过滤隐藏。
+        // 仅 details 可解析时覆写（parse 与 live 广播同一解析器）——畸形时保持透传
+        // （false → 隐藏），与 live 侧 parse 失败不广播的降级行为对称。
+        // 本 mapper 是 RPC（entry-tree-builder）与文件（session-history）两条 reload 路径的
+        // 共享单点，覆写在此做即覆盖全部 reload 链路。
+        const isDirectiveVisible = entry.customType === SUBAGENT_DIRECTIVE_CUSTOM_TYPE
+          && parseSubagentDirective(entry.content, entry.details) !== null
         messages.push({
           role: 'custom',
           customType: entry.customType,
           // 畸形降级：content 非字符串时默认空串（session JSONL 截断/损坏不抛错）
           content: typeof entry.content === 'string' ? entry.content : '',
           details: entry.details,
-          display: isCompleteNotify ? false : entry.display,
+          display: isCompleteNotify ? false : isDirectiveVisible ? true : entry.display,
           timestamp: toMs(entry.timestamp),
         })
         entryIds.push(entry.id)

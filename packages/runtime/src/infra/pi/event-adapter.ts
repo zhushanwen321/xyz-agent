@@ -23,7 +23,7 @@
  * 产出一组中间事件），可变态由 EventInterpreter 持有。
  */
 import type { ServerMessage, ServerMessageType, ExtensionInteractMethod, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'
-import { EXTENSION_EVENTS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
+import { EXTENSION_EVENTS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective } from '@xyz-agent/shared'
 import { GUI_WIDGET_MARKER, ASK_USER_MARKER, SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
 import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
@@ -649,6 +649,9 @@ function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslat
   // custom message from pi.sendMessage（扩展注入的结构化通知，如 subagent-bg-notify）。
   // 用独立 type 'message.customStart'，与 assistant turn 的 message_start 区分——
   // 前端 message_start handler 默认建 role:'assistant' 气泡，custom 不应走那条路径。
+  // subagent-directive 类 custom 消息在此仍走 generic 通路（display:false → 前端不可见），
+  // 可见的定向气泡由 message_end 侧附加的 subagent.directive 广播驱动（见 handleMessageEnd），
+  // 此处不特判——特判会产生第二条可见通路导致双气泡。
   // customType 字段经 typeof 收窄（type-safety review：来源是 extension 第三方代码，
   // 畸形值不得以谎报类型进 wire 帧）；content/details/display 同款守卫缺省。
   if (typeof msg.customType === 'string') {
@@ -712,6 +715,10 @@ const MESSAGE_END_ALLOWED_ROLES = new Set(['user', 'assistant', 'toolResult'])
  * 全量下发不过滤——user 消息与 appendUser 的乐观插入、toolResult 与 tool_execution_end 的
  * 回填，去重/合并归 core store 的 reducer 接入层编排。未建模 role（bashExecution 等）由
  * 白名单防线跳过（双计防线）。
+ *
+ * subagent-directive custom message 在本 handler 附加 subagent.directive 定向广播
+ * （composer-symbol-system §3.3.3a live 链路）——挂 message_end 不挂 message_start 的
+ * 原因见下方内联注释。
  */
 function handleMessageEnd(event: PiMessageEndEvent, sid: string): PiTranslatedEvent[] {
   const msg = event.message as unknown as Record<string, unknown> | undefined
@@ -736,13 +743,40 @@ function handleMessageEnd(event: PiMessageEndEvent, sid: string): PiTranslatedEv
     timestamp: new Date(tsMs).toISOString(),
     message: msg as PiMessageEntry['message'],
   }
-  return [{
+  const events: PiTranslatedEvent[] = [{
     kind: 'message',
     message: {
       type: 'message.message_end' as ServerMessageType,
       payload: { sessionId: sid, entry },
     },
   }]
+  // subagent-directive：附加定向广播（renderer U2b 聊天流插定向气泡的 live 信号）。
+  // 为什么挂 message_end 而非 message_start：pi sendMessage（无 triggerTurn）对同一 custom
+  // message 双发 message_start + message_end（0.84.1 dist agent-session.js:1093-1096，append
+  // 后连发两事件），挂 start 会双广播；message_end 是持久化锚定事件（上方 W21 注释：live ≡
+  // reload 的协议层依据），定向广播数据源即持久化 entry。payload 字段经
+  // shared.parseSubagentDirective 单点解析（与 reload 链路 mapSessionEntries 同一解析器，
+  // 字段一致性构造性成立）；details 畸形 → 不广播（降级为不可见 generic custom 消息，
+  // 与 reload 侧 display 透传不覆写的降级行为对称）。
+  if (isCustom && msg.customType === SUBAGENT_DIRECTIVE_CUSTOM_TYPE) {
+    const directive = parseSubagentDirective(msg.content, msg.details)
+    if (directive) {
+      events.push({
+        kind: 'message',
+        message: {
+          type: 'subagent.directive',
+          payload: {
+            sessionId: sid,
+            subagentId: directive.subagentId,
+            slug: directive.slug,
+            direction: directive.direction,
+            text: directive.text,
+          },
+        },
+      })
+    }
+  }
+  return events
 }
 
 /** tool_execution_update — forward detail (partialResult is unknown: string or object, extract details if present) */
