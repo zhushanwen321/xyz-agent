@@ -154,18 +154,29 @@ export function createDelivery(
   // 去重
   const dedupSet = config?.dedupe ? new LruSet(config.dedupe.maxKeys) : null
 
-  // ─── 合批窗口重置 ──────────────────────────────────────────
-  function resetMergeTimer(): void {
+  // ─── 合批窗口 timer ─────────────────────────────────────────
+  // 拆 clear/arm 两半：合批路径用 resetMergeTimer（清旧 + 重设窗口）；非合批路径
+  // 只 clear——立即投递无窗口语义，重设会留下一个到期触发 flush 的孤儿 timer
+  // （park 策略下成为意外的「外部触发」，把本应等待的消息冲出）。
+  function clearMergeTimer(): void {
     if (mergeTimer !== undefined) {
       clearTimeout(mergeTimer)
       mergeTimer = undefined
     }
-    if (cfg.mergeWindowMs > 0) {
-      mergeTimer = setTimeout(() => {
-        mergeTimer = undefined
-        flush()
-      }, cfg.mergeWindowMs)
-    }
+  }
+
+  function armMergeTimer(): void {
+    if (cfg.mergeWindowMs <= 0) return
+    mergeTimer = setTimeout(() => {
+      mergeTimer = undefined
+      flush()
+    }, cfg.mergeWindowMs)
+  }
+
+  /** 合批窗口重置：清旧 timer + 重设窗口（useMerge 路径专用）。 */
+  function resetMergeTimer(): void {
+    clearMergeTimer()
+    armMergeTimer()
   }
 
   // ─── busy 判定（isIdle + hasPendingMessages 双条件，G4）────
@@ -432,8 +443,8 @@ export function createDelivery(
       return
     }
 
-    // 5. 立即投：无合批依赖
-    resetMergeTimer() // 清残留 timer
+    // 5. 立即投：无合批依赖。只清残留合批 timer（不重设——见 clearMergeTimer 注释）
+    clearMergeTimer()
     ensureSettledSub() // 确保 settled 订阅
     scheduleFlush(0)
   }
