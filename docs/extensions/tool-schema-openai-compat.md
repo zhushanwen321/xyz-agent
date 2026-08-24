@@ -106,7 +106,7 @@ JSON Schema of 'type: "object"', got 'type: null'.
 | cw-tool | 内联 `Type.Object({ action: StringEnum(...) })`（4 个 tool 共用 buildTool） | `Type.Object` | ✓ |
 | ask-user | `InputSchema` | `Type.Object` | ✓ |
 | pending-notifications | `PendingNotificationsParams` | `Type.Object` | ✓ |
-| plan / model-switch | 内联 | `Type.Object` | ✓ |
+| plan | 内联 | `Type.Object` | ✓ |
 | vision | `AnalyzeImageParams` | `Type.Object` | ✓ |
 
 **只有 goal + todo 中招**（已逐个核实）。其余 extension 的 `Type.Union`/`StringEnum` 都在字段级（如 `action: Type.Union([...])`，等价 enum），合规。

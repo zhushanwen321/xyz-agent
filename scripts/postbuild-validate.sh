@@ -30,7 +30,7 @@ for arg in "$@"; do
     case "$arg" in
         --dir-only) DIR_ONLY=true ;;
         --ci) ;; # no-op（原 CI_MODE 死变量已删）
-        *) echo "未知参数: $arg（支持: --ci --dir-only），已忽略" >&2 ;;
+        *) echo "未知参数: ${arg}（支持: --ci --dir-only），已忽略" >&2 ;;
     esac
 done
 
@@ -219,7 +219,7 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
                 FAILED=1
             fi
         else
-            echo -e "  ${RED}✗${NC} builtin ext 目录缺失: $BUILTIN_EXT_DIR（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
+            echo -e "  ${RED}✗${NC} builtin ext 目录缺失: ${BUILTIN_EXT_DIR}（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
             FAILED=1
         fi
         # builtin xyz plugins 完整性校验（resources/plugins/<name>，如 statusline）
@@ -379,7 +379,7 @@ if [ -d "$OUTPUT_DIR/linux-unpacked" ]; then
             FAILED=1
         fi
     else
-        echo -e "  ${RED}✗${NC} builtin ext 目录缺失: $LINUX_BUILTIN（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
+        echo -e "  ${RED}✗${NC} builtin ext 目录缺失: ${LINUX_BUILTIN}（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
         FAILED=1
     fi
 fi
@@ -400,7 +400,7 @@ echo -e "${BLUE}[3/6] renderer WASM chunk check (CSP guard)...${NC}"
 RENDERER_DIST_ASSETS="$PROJECT_ROOT/apps/electron/renderer/dist/assets"
 INDEX_HTML_CSP="$PROJECT_ROOT/packages/renderer/index.html"
 if [ ! -d "$RENDERER_DIST_ASSETS" ]; then
-    echo -e "  ${RED}✗${NC} renderer 产物缺失: $RENDERER_DIST_ASSETS（先 pnpm --filter @xyz-agent/frontend run build）"
+    echo -e "  ${RED}✗${NC} renderer 产物缺失: ${RENDERER_DIST_ASSETS}（先 pnpm --filter @xyz-agent/frontend run build）"
     FAILED=1
 elif grep -q "wasm-unsafe-eval\|unsafe-eval" "$INDEX_HTML_CSP"; then
     echo -e "  ${YELLOW}⚠ CSP 已放行 eval/wasm，WASM 是被允许的能力，跳过本检查${NC}"

@@ -230,13 +230,17 @@ check_changeset() {
     # 找出改了 src/ 的 extension 包（只改 docs/test/examples 的不算）
     local changed_pkgs=()
     while IFS= read -r file; do
-        # 提取包目录（extensions/<name>/src/ 或 extensions/shared/<name>/src/）
+        # 提取包目录。三种布局：旧扁平 extensions/<name>/、2026-08-22 分组后的
+        # extensions/<group>/<name>/（group ∈ shared|taiji|universal）。
+        # [HISTORICAL] 曾只特判 shared/ 一个分组，universal/ taiji/ 下的包全被
+        # 漏检（extensions/universal/ 无 package.json 整组被跳过，WARN 少报 6 包）
         local pkg_dir
-        pkg_dir=$(echo "$file" | grep -oE '^extensions/(shared/)?[^/]+/' | sed 's:/$::' || true)
+        pkg_dir=$(echo "$file" | grep -oE '^extensions/((shared|taiji|universal)/[^/]+|[^/]+)/' | sed 's:/$::' || true)
         [ -z "$pkg_dir" ] && continue
 
-        # 只关心改了 src/ 的（排除 README、docs、examples、workflows）
-        echo "$file" | grep -qE '^extensions/(shared/)?[^/]+/src/' || continue
+        # 只关心改了 src/ 的（排除 README、docs、examples、workflows）；已删除的
+        # 包（如 quota-providers 移除）读不到 package.json 会在下方自然跳过
+        echo "$file" | grep -qE '^extensions/((shared|taiji|universal)/[^/]+|[^/]+)/src/' || continue
 
         # 读 package.json 的 name 字段
         local pkg_name

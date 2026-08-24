@@ -5,7 +5,7 @@
     不冒充 user/assistant：弱化样式（居中、小字、图标 + 一行摘要），
     作流转过程的元信息提示（压缩 / 分支）。
   -->
-  <div class="system-notice mx-auto flex w-full max-w-[var(--content-max-w)] min-w-0 animate-notice-in items-center gap-2 py-1">
+  <div class="system-notice content-col flex min-w-0 animate-notice-in items-center gap-2 py-1">
     <span class="h-px flex-1 bg-border" />
     <component :is="icon" class="size-3 shrink-0 text-neutral-mid" />
     <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ text }}</span>

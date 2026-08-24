@@ -233,7 +233,11 @@ export async function discoverWorkflows(
     mergedMap.set(cachedMeta.name, cachedMeta);
   }
 
-  const merged = Array.from(mergedMap.values());
+  // 按 name 码点序输出（KV-cache 契约，与 injector 层一致）：不依赖发现层
+  // 优先级迭代序 / readdir 枚举序，重建结果顺序稳定。
+  const merged = Array.from(mergedMap.values()).sort((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+  );
 
   // Update cache (scoped to current workspace root)
   const bucket = getCacheBucket(workspaceRoot);

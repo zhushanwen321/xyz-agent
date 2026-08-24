@@ -47,5 +47,8 @@
     "croner": {
       "optional": true
     }
+  },
+  "dependencies": {
+    "@xyz-agent/session-delivery": "workspace:*"
   }
 }

@@ -15,7 +15,7 @@
     降级：sessionDeleted=true 时分支已删，「查看」降级为纯文本不可点（spec §4 Key States）。
     用 xyz-ui Button 组件，禁止原生 HTML 表单元素（关闭/查看均走 Button）。
   -->
-  <div class="fork-notice mx-auto flex w-full max-w-[var(--content-max-w)] items-center gap-2 rounded-[var(--radius)] bg-info-soft px-3 py-1.5 animate-notice-in motion-reduce:animate-none">
+  <div class="fork-notice content-col flex items-center gap-2 rounded-[var(--radius)] bg-info-soft px-3 py-1.5 animate-notice-in motion-reduce:animate-none">
     <GitFork class="size-3.5 shrink-0 text-info" />
     <span class="min-w-0 flex-1 truncate text-[length:var(--text-sm)] leading-snug text-neutral-fg">
       {{ prefix }}<span v-if="label" class="font-[550]">{{ label }}</span>

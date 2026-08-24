@@ -4,9 +4,15 @@
  * 消费方：SystemAutoRenameSection（renameModel）/ SystemSmartContextSection（compactModel），
  * 两处此前各自维护逐字同构的 modelGroups/availableValues/sentinel 逻辑。
  *
- * 数据源：settings store（runtime aggregateModels 常驻订阅，与 ModelSelectPopover 同源）；
- * 只列已配凭证 provider 的模型——extension 的 resolveModel 对无凭证模型
- * hasConfiguredAuth 不通过，选了也不工作，不如不列。凭证过滤用 providers 的 apiKeySet。
+ * 数据源：settingsStore.providers（全量广播）派生，**不用 settingsStore.models**——
+ * 后者是 runtime aggregateModelsWithScoped 产出，被 scopedModels 白名单过滤+重排，
+ * 语义是「Composer 切换器候选」（settings-store models ref 注释为契约）。
+ * extension 模型配置（rename/compact）的解析走 pi 全量 modelRegistry，与 scoped
+ * 无关，候选也必须是全量（scoped 外可选，design scoped-model-extension-candidates）。
+ *
+ * 只列已配凭证且未禁用的模型——extension 的 resolveModel 对无凭证模型
+ * hasConfiguredAuth 不通过，选了也不工作，不如不列；禁用口径与 Composer 候选
+ * （runtime W2 enabled 过滤）一致。凭证过滤用 providers 的 apiKeySet。
  */
 import { computed } from 'vue'
 import { getSettingsStore } from '@xyz-agent/core'
@@ -25,18 +31,16 @@ export function useAuthedModelGroups() {
   const settingsStore = getSettingsStore()
 
   const modelGroups = computed<AuthedModelGroup[]>(() => {
-    const authedProviderIds = new Set(settingsStore.providers.value.filter((p) => p.apiKeySet).map((p) => p.id))
     const groups: AuthedModelGroup[] = []
-    const byProviderId = new Map<string, AuthedModelGroup>()
-    for (const m of settingsStore.models.value) {
-      if (!authedProviderIds.has(m.providerId)) continue
-      let group = byProviderId.get(m.providerId)
-      if (!group) {
-        group = { providerId: m.providerId, providerName: m.providerName, models: [] }
-        byProviderId.set(m.providerId, group)
-        groups.push(group)
-      }
-      group.models.push({ value: `${m.providerId}/${m.id}`, label: m.name || m.id })
+    for (const p of settingsStore.providers.value) {
+      // 过滤口径 D1：禁用 provider（enabled===false）整体不列；未配凭证不列
+      if (p.enabled === false) continue
+      if (!p.apiKeySet) continue
+      const models = p.models
+        .filter((m) => m.enabled !== false)
+        .map((m) => ({ value: `${p.id}/${m.id}`, label: m.name || m.id }))
+      if (models.length === 0) continue // 空分组不渲染（与原实现一致：无可选模型的 provider 不占分组）
+      groups.push({ providerId: p.id, providerName: p.name, models })
     }
     return groups
   })

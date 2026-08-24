@@ -8,8 +8,10 @@
  * 壳路径（mount PanelContainer，test-strategy 集成章节要求）：
  * - PanelContainer 渲染跨端共享容器 DrawerPanel（@xyz-agent/ui/features/drawer，W3），
  *   断言 drawer-tab-* 五 tab 按钮 + drawer-panel + drawer-content DOM 存在（AC9/AC12 壳层载体）
- * - drawerOpen=true：DrawerPanel 作 SplitterPanel 子项挂载（split 布局）
- * - drawerOpen=false：连同 ResizeHandle 一起卸载，退化为单 panel（v-if 门控）
+ * - drawerOpen=true：DrawerPanel 在 drawer-area wrapper 内挂载（feat-chat-flow-width 手写
+ *   flex 布局，替换 reka-ui Splitter：无 drawer main 占 75%、有 drawer 双侧 width 动画、
+ *   handle 拖动/键盘调整 + localStorage 持久化，见下方「动态宽度」describe）
+ * - drawerOpen=false：DrawerPanel aside 卸载，drawer-area 收缩为 0%（width 动画承载者常驻）
  * - ESC 关闭（window keydown）+ close 按钮关闭 → drawer 卸载（旧 side-drawer.test.ts 行为迁移）
  * - 内容区 fallback：browser tab 无 URL 不注入 BrowserPane → DrawerPanel 空态（drawer-widget-empty）
  *   （旧 widget 缓冲通路已删，[P4 s5 drawer-widget-removal] 由 PluginViewContainer 承接）
@@ -107,6 +109,7 @@ beforeEach(() => {
   bindDrawerSessionId(computed(() => usePanelStore().focusedSessionId))
   _resetDrawerForTest()
   reactiveMessages.clear()
+  localStorage.clear() // 动态宽度持久化隔离（xyz-agent:drawer-width）
 })
 
 // [HISTORICAL] 用例间 wrapper 必须自动 unmount：PanelContainer 未卸载时其内部 watch（unread
@@ -135,7 +138,7 @@ describe('PanelContainer 单 panel + Drawer 壳路径（AC9/AC12 冒烟载体）
     expect(wrapper.find('[data-testid="git-panel"]').exists()).toBe(true)
   }, 60_000)
 
-  it('drawerOpen=false：无 drawer-panel，退化为单 panel（v-if 卸载）', async () => {
+  it('drawerOpen=false：无 drawer-panel aside，drawer-area 收缩 0%（内容卸载、宽度承载者常驻）', async () => {
     const panel = usePanelStore()
     panel.loadSession(ROOT_PANEL_ID, 'sess-closed')
 
@@ -228,5 +231,171 @@ describe('PanelContainer unread badge 壳侧补回（AC-13，旧 SideDrawer 逻�
     await wrapper.find('[data-testid="drawer-close"]').trigger('click')
     await nextTick()
     expect(wrapper.find('[data-testid="drawer-unread-badge"]').exists()).toBe(false)
+  }, 60_000)
+})
+
+// ── 动态宽度（feat-chat-flow-width）：无 drawer main 75% / 有 drawer 拆分 + 拖动/键盘/持久化 ──
+
+/** jsdom 无布局：mock splitArea rect（宽 1000px，右缘 x=1000），drawer 宽 = (right - clientX)/width */
+function mockSplitAreaRect(wrapper: Awaited<ReturnType<typeof mountContainer>>): void {
+  const area = wrapper.find('[data-testid="split-area"]').element
+  area.getBoundingClientRect = () =>
+    ({ width: 1000, right: 1000, left: 0, top: 0, bottom: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+}
+
+/** 读取区域宽度 style（jsdom 不执行 CSS transition，style.width 即终态） */
+function areaWidth(wrapper: Awaited<ReturnType<typeof mountContainer>>, testid: string): string {
+  const style = wrapper.find(`[data-testid="${testid}"]`).attributes('style') ?? ''
+  return /width:\s*([^;]+);/.exec(style)?.[1] ?? ''
+}
+
+describe('PanelContainer 动态宽度（feat-chat-flow-width）', () => {
+  it('无 drawer：main-area 75%，drawer-area 0%，无 resize handle', async () => {
+    const panel = usePanelStore()
+    panel.loadSession(ROOT_PANEL_ID, 's-width-closed')
+
+    const wrapper = await mountContainer()
+    await nextTick()
+
+    expect(areaWidth(wrapper, 'main-area')).toBe('75%')
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('0%')
+    expect(wrapper.find('[data-testid="drawer-resize-handle"]').exists()).toBe(false)
+  }, 60_000)
+
+  it('有 drawer（默认）：main = calc(100% - 50% - 1px)，drawer = 50%，handle 挂载', async () => {
+    const panel = usePanelStore()
+    panel.loadSession(ROOT_PANEL_ID, 's-width-open')
+    openDrawerTab('git')
+
+    const wrapper = await mountContainer()
+    await nextTick()
+
+    expect(areaWidth(wrapper, 'main-area')).toBe('calc(100% - 50% - 1px)')
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('50%')
+    const handle = wrapper.find('[data-testid="drawer-resize-handle"]')
+    expect(handle.exists()).toBe(true)
+    // separator 可达性（键盘微调入口，对齐原 Splitter 键盘交互）
+    expect(handle.attributes('role')).toBe('separator')
+    expect(handle.attributes('tabindex')).toBe('0')
+  }, 60_000)
+
+  it('拖动：pointerdown+move 更新宽度并 clamp 到 [20,60]，pointerup 持久化 localStorage；拖动期间 transition 移除', async () => {
+    const panel = usePanelStore()
+    panel.loadSession(ROOT_PANEL_ID, 's-width-drag')
+    openDrawerTab('git')
+
+    const wrapper = await mountContainer()
+    await nextTick()
+    mockSplitAreaRect(wrapper)
+
+    const handle = wrapper.find('[data-testid="drawer-resize-handle"]')
+    await handle.trigger('pointerdown', { pointerId: 1 })
+    await nextTick()
+    // 拖动期间 transition 移除（跟手，不滞后）+ data-state=drag（高亮反馈）
+    expect(wrapper.find('[data-testid="main-area"]').classes().join(' ')).not.toContain('transition-[width]')
+    expect(handle.attributes('data-state')).toBe('drag')
+
+    // 指针移到 x=700 → drawer 宽 = (1000-700)/1000 = 30%
+    await handle.trigger('pointermove', { pointerId: 1, clientX: 700 })
+    await nextTick()
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('30%')
+
+    // 越界拖动（x=100 → 名义 90%）→ clamp 到 max 60%；低于 min 同理 clamp
+    await handle.trigger('pointermove', { pointerId: 1, clientX: 100 })
+    await nextTick()
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('60%')
+    await handle.trigger('pointermove', { pointerId: 1, clientX: 950 })
+    await nextTick()
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('20%')
+
+    // pointerup → 持久化最后一次拖动值 + transition 恢复
+    await handle.trigger('pointerup', { pointerId: 1 })
+    await nextTick()
+    expect(localStorage.getItem('xyz-agent:drawer-width')).toBe('20')
+    expect(wrapper.find('[data-testid="main-area"]').classes().join(' ')).toContain('transition-[width]')
+    expect(handle.attributes('data-state')).toBeUndefined()
+  }, 60_000)
+
+  it('键盘微调：ArrowLeft/Right ±2% 并 clamp，同步持久化', async () => {
+    const panel = usePanelStore()
+    panel.loadSession(ROOT_PANEL_ID, 's-width-key')
+    openDrawerTab('git')
+
+    const wrapper = await mountContainer()
+    await nextTick()
+
+    const handle = wrapper.find('[data-testid="drawer-resize-handle"]')
+    await handle.trigger('keydown', { key: 'ArrowLeft' })
+    await nextTick()
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('48%')
+
+    // 连续 ArrowRight 越界 → clamp 60
+    for (let i = 0; i < 8; i++) await handle.trigger('keydown', { key: 'ArrowRight' })
+    await nextTick()
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('60%')
+    expect(localStorage.getItem('xyz-agent:drawer-width')).toBe('60')
+
+    // 非方向键不处理（宽度不变）
+    await handle.trigger('keydown', { key: 'Enter' })
+    await nextTick()
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('60%')
+  }, 60_000)
+
+  it('持久化恢复：localStorage 预置 35 → mount 后 drawer 35%；非法值回退 50；越界值 clamp', async () => {
+    localStorage.setItem('xyz-agent:drawer-width', '35')
+    const panel = usePanelStore()
+    panel.loadSession(ROOT_PANEL_ID, 's-width-restore')
+    openDrawerTab('git')
+
+    let wrapper = await mountContainer()
+    await nextTick()
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('35%')
+    expect(areaWidth(wrapper, 'main-area')).toBe('calc(100% - 35% - 1px)')
+    wrapper.unmount()
+
+    // 非法（NaN）→ 默认 50
+    localStorage.setItem('xyz-agent:drawer-width', 'abc')
+    _resetDrawerForTest()
+    const panel2 = usePanelStore()
+    panel2.loadSession(ROOT_PANEL_ID, 's-width-restore2')
+    openDrawerTab('git')
+    wrapper = await mountContainer()
+    await nextTick()
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('50%')
+    wrapper.unmount()
+
+    // 越界（95）→ clamp 60
+    localStorage.setItem('xyz-agent:drawer-width', '95')
+    _resetDrawerForTest()
+    const panel3 = usePanelStore()
+    panel3.loadSession(ROOT_PANEL_ID, 's-width-restore3')
+    openDrawerTab('git')
+    wrapper = await mountContainer()
+    await nextTick()
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('60%')
+  }, 60_000)
+
+  it('开合切换：drawer 打开后 main 从 75% 动画到拆分比例（style 逐帧驱动，断言终态）+ layout 事件派发', async () => {
+    const events: string[] = []
+    const onLayout = () => events.push('layout')
+    window.addEventListener('xyz:splitter-layout', onLayout)
+
+    const panel = usePanelStore()
+    panel.loadSession(ROOT_PANEL_ID, 's-width-toggle')
+
+    const wrapper = await mountContainer()
+    await nextTick()
+    expect(areaWidth(wrapper, 'main-area')).toBe('75%')
+
+    // 打开 drawer：main 收缩到 50% 拆分 + rAF 循环派发 layout 事件（BrowserPane rect 同步）
+    openDrawerTab('git')
+    await nextTick()
+    expect(areaWidth(wrapper, 'main-area')).toBe('calc(100% - 50% - 1px)')
+    expect(areaWidth(wrapper, 'drawer-area')).toBe('50%')
+
+    // rAF 循环逐帧派发（至少一帧）——等待两帧后断言
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+    expect(events.length).toBeGreaterThan(0)
+    window.removeEventListener('xyz:splitter-layout', onLayout)
   }, 60_000)
 })
