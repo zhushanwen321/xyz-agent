@@ -630,7 +630,25 @@ async function main(): Promise<void> {
   })
 
   const tServicesReady = performance.now()
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService, authService, projectStore, sessionDelivery)
+  server.setServices(sessionService, configService, modelService, {
+    extension: extensionService,
+    plugin: pluginService,
+    git: gitService,
+    file: fileService,
+    workspace: workspaceService,
+    appInfo,
+    skillRegistry,
+    worktree: worktreeService,
+    terminal: terminalService,
+    quota: quotaService,
+    handoff: handoffService,
+    preset: presetService,
+    auth: authService,
+    project: projectStore,
+    // sd-u5：sessionId 单例注册表（上方 createSessionDeliveryRegistry 装配）。
+    // 缺席时 server 构造退化实例并 warn（违反单例约束，仅测试装配遗漏场景）。
+    delivery: sessionDelivery,
+  })
 
   // Graceful shutdown on signals
   let shuttingDown = false
