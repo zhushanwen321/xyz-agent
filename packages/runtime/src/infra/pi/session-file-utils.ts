@@ -342,7 +342,9 @@ export function persistProjectBinding(filePath: string, projectId: string): void
  *
  * @returns projectId 字符串；sidecar 不存在/损坏/projectId 非字符串 → undefined
  */
-export function readProjectBinding(filePath: string): string | undefined {
+// 非 export：仅 scanSessionMeta（本文件）消费，无外部调用方（PR #189 metrics-gate
+// unused_exports 清理——保留函数本体，去 export 防误用为公共 API）。
+function readProjectBinding(filePath: string): string | undefined {
   return readBindingSidecar(projectSidecarPath(filePath), (binding) => {
     // 类型守卫：projectId 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
     const b = binding as Record<string, unknown> | undefined

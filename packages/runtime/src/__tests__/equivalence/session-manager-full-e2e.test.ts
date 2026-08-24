@@ -44,6 +44,8 @@ import type { ISessionService } from '../../interfaces.js'
 import { spawnPiFixture, REAL_PI_READY, REAL_PI_SKIP_REASON, type PiFixture, type PiStreamEvent } from './pi-fixture.js'
 
 /** 真 extension 源码路径（worktree 内 extensions/universal/session-manager，pi 原生 loader 加载 TS 源） */
+// import.meta.url 仅测试可用（vitest ESM 环境）；禁止复制进 runtime src——CJS bundle 下
+// import.meta.url 失效（架构约定 #12），check_runtime_meta_url.py 只扫 src 不拦测试。
 const EXTENSION_PATH = fileURLToPath(new URL('../../../../../extensions/universal/session-manager', import.meta.url))
 /** 单步等待上限（任务护栏：每步最多 60s） */
 const STEP_TIMEOUT_MS = 60_000
