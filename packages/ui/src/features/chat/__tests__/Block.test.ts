@@ -10,9 +10,9 @@
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { h } from 'vue'
 import { Block } from '@xyz-agent/ui'
-import type { MessageStatus, ToolCall } from '@xyz-agent/shared'
+import type { MessageStatus } from '@xyz-agent/shared'
+import { MdStub, makeToolCall, mountToolBlock } from './helpers'
 
 function mountTextBlock(over: { streaming?: boolean; status?: MessageStatus; error?: string; content?: string } = {}) {
   return mount(Block, {
@@ -98,70 +98,22 @@ describe('error-visibility M2: Block text 分支 error 形态判定（TC1/TC3）
 
 /* ── error-visibility M1：failed tool header danger 色 + 终态默认展开（TC1-3）──
  * SSOT: docs/architecture/conversation-error-visibility.md §3.3.1
- * - T1: toolStatusClass failed 分支 text-neutral-mid → text-danger（unfinished 保持中性）
+ * - T1: toolStatusClass failed 分支 → text-danger（unfinished 保持中性灰）
  * - T2: toolCollapsed 终态分化——failed(error) 初值 false（展开），其余 true（收起）
- * - CQ1: streaming 中失败不展开（mount 快照，running→error 不 remount），本测试覆盖终态挂载分支 */
-const GuiStub = {
-  name: 'GuiComponentRenderer',
-  props: { component: { type: Object, default: undefined } },
-  setup() {
-    return () => h('div', { 'data-testid': 'gui-renderer-stub' })
-  },
-}
-const AnsiStub = {
-  name: 'AnsiText',
-  props: { content: { type: String, default: '' } },
-  setup() {
-    return () => h('div', { 'data-testid': 'ansi-text-stub' })
-  },
-}
-const MdStub = {
-  name: 'MarkdownRenderer',
-  props: { content: { type: String, default: '' }, variant: { type: String, default: undefined } },
-  setup() {
-    return () => h('div', { class: 'stub-md-render' })
-  },
-}
-
-function makeTool(over: Partial<ToolCall> = {}): ToolCall {
-  return {
-    id: 'tc-1',
-    toolName: 'read',
-    input: { path: '/tmp/foo.txt' },
-    status: 'completed',
-    startTime: 1000,
-    endTime: 5000,
-    ...over,
-  }
-}
-
-function mountTool(toolOver: Partial<ToolCall>) {
-  return mount(Block, {
-    props: {
-      type: 'tool',
-      tool: makeTool(toolOver),
-    },
-    global: {
-      stubs: {
-        GuiComponentRenderer: GuiStub,
-        AnsiText: AnsiStub,
-        MarkdownRenderer: MdStub,
-      },
-    },
-  })
-}
+ * - CQ1: streaming 中失败不展开（mount 快照，running→error 不 remount），本测试覆盖终态挂载分支
+ * stub / makeToolCall / mountToolBlock 经 ./helpers 共享（与 BlockWorkflow.test.ts 公共样板提取） */
 
 describe('error-visibility M1: failed tool header danger + 终态展开（TC1-3）', () => {
   it('TC1: failed(error) tool header 染 text-danger（非中性灰）', () => {
-    const wrapper = mountTool({ status: 'error', output: 'ENOENT: no such file' })
+    const wrapper = mountToolBlock(makeToolCall({ status: 'error', output: 'ENOENT: no such file' }))
     const header = wrapper.find('[data-testid="tool-block-header"]')
     expect(header.classes()).toContain('text-danger')
     // 不再是中性灰
-    expect(header.classes()).not.toContain('text-neutral-mid')
+    expect(header.classes()).not.toContain('text-neutral-dim')
   })
 
   it('TC2: failed(error) tool 终态挂载默认展开（错误输出可见，无需点击）', () => {
-    const wrapper = mountTool({ status: 'error', output: 'ENOENT: no such file' })
+    const wrapper = mountToolBlock(makeToolCall({ status: 'error', output: 'ENOENT: no such file' }))
     // toolCollapsed 初值 false → toolExpanded true → 详情区默认渲染（无需点击 header）
     expect(wrapper.find('.tool-result').exists()).toBe(true)
     // 错误输出文本可见
@@ -169,11 +121,31 @@ describe('error-visibility M1: failed tool header danger + 终态展开（TC1-3�
   })
 
   it('TC3: unfinished(end_not_received) tool header 保持中性灰（abort/中断非失败，不标红）', () => {
-    const wrapper = mountTool({ status: 'end_not_received' })
+    const wrapper = mountToolBlock(makeToolCall({ status: 'end_not_received' }))
     const header = wrapper.find('[data-testid="tool-block-header"]')
-    expect(header.classes()).toContain('text-neutral-mid')
+    expect(header.classes()).toContain('text-neutral-dim')
     // unfinished 不标红（区别于 failed）
     expect(header.classes()).not.toContain('text-danger')
+  })
+})
+
+/* ── feat-chat-flow-dim：已完成过程块置灰（完成态降两档，与 running accent 形成亮暗对比）──
+ * - completed tool header 从 neutral-fg 经 mid 降到 neutral-dim（用户实测 mid 档置灰感不足
+ *   后明确裁决再降一档；dim 3.56:1 不过 AA，此裁决仅限过程块折叠 header）
+ * - running 保持 accent 不回归 */
+describe('feat-chat-flow-dim: completed tool header 置灰', () => {
+  it('completed tool header 染 text-neutral-dim（不再是最亮 neutral-fg）', () => {
+    const wrapper = mountToolBlock(makeToolCall({ status: 'completed' }))
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    expect(header.classes()).toContain('text-neutral-dim')
+    expect(header.classes()).not.toContain('text-neutral-fg')
+  })
+
+  it('running tool header 保持 text-accent（进行中不置灰）', () => {
+    const wrapper = mountToolBlock(makeToolCall({ status: 'running' }))
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    expect(header.classes()).toContain('text-accent')
+    expect(header.classes()).not.toContain('text-neutral-dim')
   })
 })
 
@@ -240,11 +212,11 @@ describe('error-visibility M3: thinking 可收起 + 完成态回落（TC1-3）',
  * 通用：非 bash 工具的 JSON output 同样适用（不绑定 cw）。 */
 describe('Block tool output: JSON 格式化（cw 等命令的结构化输出）', () => {
   it('JSON 对象 output 渲染为 <pre> 格式化缩进（非原样压缩单行）', async () => {
-    const wrapper = mountTool({
+    const wrapper = mountToolBlock(makeToolCall({
       toolName: 'bash',
       input: { command: 'cw execute feat-x' },
       output: '{"status":"ok","nextAction":"design","unitId":"feat-x"}',
-    })
+    }))
     await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
     const pre = wrapper.find('.tool-result pre')
     expect(pre.exists()).toBe(true)
@@ -254,10 +226,10 @@ describe('Block tool output: JSON 格式化（cw 等命令的结构化输出）'
   })
 
   it('JSON 数组 output 同样格式化', async () => {
-    const wrapper = mountTool({
+    const wrapper = mountToolBlock(makeToolCall({
       toolName: 'bash',
       output: '[{"id":1,"name":"a"},{"id":2,"name":"b"}]',
-    })
+    }))
     await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
     const pre = wrapper.find('.tool-result pre')
     expect(pre.exists()).toBe(true)
@@ -265,37 +237,37 @@ describe('Block tool output: JSON 格式化（cw 等命令的结构化输出）'
   })
 
   it('非 JSON output（普通命令文本）回退原样 span，无 <pre>', async () => {
-    const wrapper = mountTool({
+    const wrapper = mountToolBlock(makeToolCall({
       toolName: 'bash',
       input: { command: 'ls -la' },
       output: 'total 0\ndrwxr-xr-x  3 user staff  96',
-    })
+    }))
     await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
     expect(wrapper.find('.tool-result pre').exists()).toBe(false)
     expect(wrapper.find('.tool-result').text()).toContain('total 0')
   })
 
   it('首字符为 { 但非法 JSON 回退原样（不误判）', async () => {
-    const wrapper = mountTool({
+    const wrapper = mountToolBlock(makeToolCall({
       toolName: 'bash',
       output: '{ not valid json at all',
-    })
+    }))
     await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
     expect(wrapper.find('.tool-result pre').exists()).toBe(false)
     expect(wrapper.find('.tool-result').text()).toContain('{ not valid json')
   })
 
   it('空 output 不触发 JSON 渲染（无 <pre>，无异常）', async () => {
-    const wrapper = mountTool({ toolName: 'bash', output: '' })
+    const wrapper = mountToolBlock(makeToolCall({ toolName: 'bash', output: '' }))
     await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
     expect(wrapper.find('.tool-result pre').exists()).toBe(false)
   })
 
   it('非 bash 工具的 JSON output 同样格式化（通用，不限于 bash）', async () => {
-    const wrapper = mountTool({
+    const wrapper = mountToolBlock(makeToolCall({
       toolName: 'cw_planning',
       output: '{"layer":"wave","status":"created","waves":3}',
-    })
+    }))
     await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
     const pre = wrapper.find('.tool-result pre')
     expect(pre.exists()).toBe(true)

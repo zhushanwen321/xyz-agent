@@ -209,5 +209,8 @@ Plan Mode 的需求探索阶段。包含 Quick Overview、渐进式提问、方�
 **"压缩"同时存在于 Pi 原生（Compaction）和 Context Engineering（L0/L1/L2）**
 Compaction 在 agent loop 外做 token 级 LLM 摘要（不可逆），Context Engineering 在 agent loop 内做消息级规则化处理（可逆 Recall）。两者互补不冲突。
 
+**"ManagedSession"（pi-subagent-workflow）≠ "agent-managed session"（pi-session-manager）**
+前者是 AgentRuntime 进程内可控 session（subagent-workflow 的内存管理对象）；后者是经 runtime SessionManagerHandler 创建的**独立 pi 进程 session**（spawnSource='agent'，血缘记 .agent.json sidecar）。两者都归"agent 管理的 session"语义域，但生命周期、进程模型、持久化完全不同。
+
 **"任务"统一到 Todo**
 Goal 不内嵌任务系统，任务管理统一到 Todo 扩展。Goal 通过只读快照接口读取 Todo 进度，验证任务通过提示词引导由 AI 以独立 todo 承载（无结构化标记字段）。

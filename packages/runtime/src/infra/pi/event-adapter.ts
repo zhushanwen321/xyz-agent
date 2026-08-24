@@ -24,7 +24,8 @@
  */
 import type { ServerMessage, ServerMessageType, ExtensionInteractMethod, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
-import { GUI_WIDGET_MARKER, ASK_USER_MARKER, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
+import { GUI_WIDGET_MARKER, ASK_USER_MARKER, SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
+import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
 import { randomUUID } from 'node:crypto'
@@ -365,6 +366,28 @@ function handleTurnEndPi(event: PiTurnEndEvent, sid: string): PiTranslatedEvent[
   }]
 }
 
+/**
+ * 从 select 的 options[0] 提取 JSON payload（marker 通道约定：options 单元素、
+ * 序列化 JSON）。非合法 JSON 或空 options 返回 undefined，由调用方决定降级路径
+ * （session-manager 折叠 __malformed__ 哨兵 / ask-user 降级普通 select）。
+ */
+function parseSelectOptionsPayload(event: PiExtensionUiRequestEvent): unknown {
+  const rawOptions = Array.isArray(event.options) ? event.options : []
+  try {
+    return rawOptions.length > 0 ? JSON.parse(String(rawOptions[0])) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** extension.ui_request 的前端 WS 广播消息事件（与内部路由事件成对发出）。 */
+function extensionUiRequestBroadcast(payload: Record<string, unknown>): PiTranslatedEvent {
+  return {
+    kind: 'message',
+    message: { type: 'extension.ui_request' as ServerMessageType, payload },
+  }
+}
+
 /** extension_ui_request — route by method (setStatus, setWidget, editor, etc.) */
 function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string): PiTranslatedEvent[] {
   const method = event.method as string
@@ -508,19 +531,35 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
     const dialogMethod = method as ExtensionInteractMethod
     const requestId = String(event.id ?? '')
 
+    // session-manager 请求检测：select title 为 SESSION_MANAGER_MARKER → options[0] 是 JSON payload
+    // （session-manager extension 序列化的 { action, params }）。
+    // 检测成功后不走前端 UI，由 runtime SessionManagerHandler 直接处理并回写 response。
+    // [HISTORICAL] 不发前端广播：曾照抄 ask-user/普通 select 模板附带 extension.ui_request
+    // 广播，前端 CompanionBand 按 select 渲染出无 options 的空壳对话框且 pending 泄漏
+    // （session-manager 请求由 handler 应答，前端永远无人 respond）——本通道纯 runtime 内部消化。
+    if (method === 'select' && event.title === SESSION_MANAGER_MARKER) {
+      const sessionManagerData = parseSelectOptionsPayload(event) as { action?: unknown; params?: unknown } | undefined
+      // 集合守卫把解析出的 action 收窄为协议联合；非法/缺失值折叠为 '__malformed__'
+      // 哨兵（handler 的 malformed 与 default 分支同走 cancelled 回 null）。
+      const rawAction = sessionManagerData?.action
+      const action = typeof rawAction === 'string' && (SESSION_MANAGER_ACTIONS as readonly string[]).includes(rawAction)
+        ? (rawAction as SessionManagerAction)
+        : '__malformed__'
+      // params 收窄（与 action 侧集合守卫同款防线；handler 侧另有逐 action 类型守卫）
+      const rawParams = sessionManagerData?.params
+      const params = typeof rawParams === 'object' && rawParams !== null
+        ? (rawParams as Record<string, unknown>)
+        : {}
+
+      return [{ kind: 'session-manager-ui', requestId, sessionId: sid, action, params }]
+    }
+
     // ask-user 富交互请求检测：select title 为 ASK_USER_MARKER → options[0] 是 JSON payload
     // （askUserInteract helper 序列化的 { questions, allowCancel }）。
     // 检测成功后透传 questions 等字段，前端路由到 AskUserOverlay；检测失败（非合法 JSON）
     // 降级为普通 select（下方分支）。
     if (method === 'select' && event.title === ASK_USER_MARKER) {
-      const rawOptions = Array.isArray(event.options) ? event.options : []
-      let askUserData: { questions?: unknown; allowCancel?: boolean } | undefined
-      try {
-        askUserData = rawOptions.length > 0 ? JSON.parse(String(rawOptions[0])) : undefined
-      // eslint-disable-next-line taste/no-silent-catch -- console.warn 经 logger.patchConsole tee 到 runtime 日志文件（架构约定 #4），降级为普通 select 不中断
-      } catch {
-        // options[0] 不是合法 JSON → 降级为普通 select（下方统一 return）
-      }
+      const askUserData = parseSelectOptionsPayload(event) as { questions?: unknown; allowCancel?: boolean } | undefined
 
       if (Array.isArray(askUserData?.questions) && askUserData.questions.length > 0) {
         const requestPayload = {
@@ -535,13 +574,7 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
           // ★ extension-ui kind 事件：EventInterpreter 据此暂停 watchdog，并通知 server 跟踪请求 + 缓存 pending 请求。
           // 2026-07-16 后 extension UI 不超时，block 等待用户响应。
           { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod, payload: requestPayload },
-          {
-            kind: 'message',
-            message: {
-              type: 'extension.ui_request' as ServerMessageType,
-              payload: requestPayload,
-            },
-          },
+          extensionUiRequestBroadcast(requestPayload),
         ]
       }
     }
@@ -564,13 +597,7 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
     }
     return [
       { kind: 'extension-ui', requestId, sessionId: sid, method: dialogMethod, payload: requestPayload },
-      {
-        kind: 'message',
-        message: {
-          type: 'extension.ui_request',
-          payload: requestPayload,
-        },
-      },
+      extensionUiRequestBroadcast(requestPayload),
     ]
   }
 

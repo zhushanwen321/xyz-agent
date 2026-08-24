@@ -187,20 +187,20 @@ event handler（如 `tool_execution_end`）中注入消息**必须用 `pi.sendUs
 - 扩展有命令交互 / 复杂存储机制（如 event sourcing），agent 可能需要协助使用或排查
 
 **要求**：
-- **命名**：`skills/<extension简名>-ext-config/SKILL.md`（如 `permission` → `permission-ext-config`、`model-switch` → `model-switch-ext-config`）
+- **命名**：`skills/<extension简名>-ext-config/SKILL.md`（如 `permission` → `permission-ext-config`、`scheduler` → `scheduler-ext-config`）
 - **声明**：`package.json` 的 `pi.skills: ["./skills"]` + `files` 含 `"skills/"`（否则 npm publish 丢 skill）
 - **frontmatter**：`name` = 目录名 + `description` 双引号含触发词（决定 agent 能否正确匹配 read）
 - **内容**：
   - 有磁盘配置文件 → 配置路径（getAgentDir 派生）+ schema + 默认值 + 配置示例
   - 无配置文件但有命令交互/复杂存储 → 使用方式 + 存储机制（不硬套配置 schema 模板）
 
-**范例**：`extensions/universal/{rename-session,permission,model-switch,scheduler}/skills/*-ext-config/`
+**范例**：`extensions/universal/{rename-session,permission,scheduler}/skills/*-ext-config/`
 
 ### 配置路径约定 [强制]
 
 所有扩展的磁盘配置文件统一放 `<agentDir>/config/<extension简名>-ext-config.json`。
 
-- **命名 = `<extension简名>-ext-config.json`**（从 extension 名直接推导）：`permission-ext-config.json` / `model-switch-ext-config.json` / `rename-session-ext-config.json`
+- **命名 = `<extension简名>-ext-config.json`**（从 extension 名直接推导）：`permission-ext-config.json` / `scheduler-ext-config.json` / `rename-session-ext-config.json`
   - 后缀 `-ext-config` 与 config skill 名 `<简名>-ext-config` 对齐：skill（SKILL.md 指导文档）与它指导的配置文件（.json 数据）同名配对，agent 按 skill 名即可定位到配置文件，反之亦然
   - 禁止语义名（`model-policy.json`）、无后缀简写（`permission.json`）与 `<名>-config.json`（`permission-config.json`）——统一经 `@zhushanwen/pi-llm-shared` 的 `getConfigPath(pkgName)` 生成路径，调用方不自拼文件名
 - `<agentDir>` = pi 的 `getAgentDir()`（`PI_CODING_AGENT_DIR` 覆盖，默认 `~/.pi/agent`；xyz-agent 隔离环境 `~/.xyz-agent/pi/agent`）
@@ -230,8 +230,6 @@ event handler（如 `tool_execution_end`）中注入消息**必须用 `pi.sendUs
 | 包 | 旧路径 | 新路径 |
 |---|---|---|
 | `pi-permission` | `<agentDir>/permission-config.json` | `<agentDir>/config/permission-ext-config.json` |
-| `pi-model-switch` | `<agentDir>/model-policy.json` | `<agentDir>/config/model-switch-ext-config.json` |
-| `pi-quota-providers`（cache） | `<agentDir>/statusline_cache.json`（statusline 遗留孤儿名） | `<agentDir>/config/quota-cache.json`（首次加载迁移） |
 | `pi-rename-session` | 已合规 | `<agentDir>/config/rename-session-ext-config.json`（llm-shared 派生，无迁移脚本） |
 
 ## Extension 依赖管理 [MANDATORY]

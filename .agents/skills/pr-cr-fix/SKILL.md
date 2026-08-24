@@ -18,12 +18,13 @@ description: >-
 - xyz-agent git worktree 中，当前分支相对 main 有 commits（`git log main..HEAD` 非空）
 - 有 GitHub CLI（`gh`）认证
 - 全局安装 fallow（`npm i -g fallow`，实测 2.88.2）——阶段 1.5 度量门禁依赖
+- zcode 环境走路径 2 需 z-subagent-workflow 插件（`zflow` MCP 工具）；workflow 脚本 `.agents/workflows/pr-review-fix.js` 本仓自带（随 git 分发，提交前 `zflow(action="lint")` 校验）
 
 ## 调用约定
 
 - `cwd`：git 根目录绝对路径（`git rev-parse --show-toplevel`）
 - 确定性脚本主 agent 直接跑，不派 subagent：阶段 1.1 static gate、1.5 / 1.6 两道 gate、阶段 3a 终局三道 gate
-- 阶段 2 由主 agent 直接派 workflow（路径 1）或 reviewer subagent（路径 2），不经 subagent 封装；修复 / 补测试派 worker subagent。主 agent 全程只做编排 + Gate 校验 + push 前用户授权确认
+- 阶段 2 由主 agent 直接派 workflow（路径 1 pi / 路径 2 zcode）或 reviewer subagent（路径 3 手工兜底），不经 subagent 封装；修复 / 补测试派 worker subagent。主 agent 全程只做编排 + Gate 校验 + push 前用户授权确认
 
 ---
 
@@ -42,7 +43,13 @@ bash scripts/pr-pre-merge.sh --skip-tests --quiet
 
 **Gate-1a**（硬 gate）：exit 0（marker `result=PASS`）才继续。FAIL 按输出中失败步骤派对应工种 worker 修复后重跑（`typecheck:extensions` / `typecheck:runtime` / `typecheck:renderer` / `lint`）。
 
-**Gate-1a.5**（changeset 软提醒）：summary 出现 `WARN changeset-check`（改了 `extensions/*/src/` 但无 changeset，WARN 不 FAIL）→ AskUserQuestion：需要发布则 `pnpm changeset` 创建声明（推荐）；纯文档/测试改动可跳过（建议 `pnpm changeset add --empty` 防 merge 误报）。缺失 changeset 的后果：merge 时 `changeset version` 不 bump → publish 不发 → bug fix 静默丢失。
+**Gate-1a.5**（changeset 自动补全）：summary 出现 `WARN changeset-check`（改了 `extensions/**/src/` 但无 changeset，WARN 不 FAIL）→ **主 agent 按 diff 逐包分类后自动处理，不 AskUserQuestion**（判断所需信息全在 diff 里，弹窗把判断推给人的代价高于 PR 内审查；[HISTORICAL] 曾为弹窗模式，用户反馈每次执行都被打断、多数 WARN 是纯注释类噪声，2026-08-23 改为自动分类）：
+
+- **实质行为改动**（逻辑/接口/行为变化）→ 自动起草 `.changeset/<slug>.md`：type 初判按分支 conventional commits（feat→minor / fix→patch / BREAKING→major），body 英文写用户可感变化（进 CHANGELOG，遵守根 AGENTS.md changeset 准则）
+- **非发布改动**（纯注释/类型注解/测试/零行为差重构）→ 跳过，在阶段汇报中列明「包名 + 跳过原因 + 证据」
+- 已删除的包 checker 自动跳过（package.json 读不到）；WARN 本身不清除（事实记录），只 FAIL 才阻塞
+
+changeset 文件随 PR diff 可审可改；type 终判仍在 merge 阶段人工定（与「PR 阶段初判、merge 人工定」SSOT 一致）。缺失 changeset 的后果：merge 时 `changeset version` 不 bump → publish 不发 → bug fix 静默丢失。已知堆积问题：dev-merge（feature→dev）不跑本检查，负担堆积到 dev→main 最终 PR——前移到 dev-merge 是待办优化。
 
 ### 1.2 自动生成 PR title 和 body
 
@@ -158,7 +165,7 @@ renderer 全量阈值（S3-W1 基线-2~3% 重校准：lines 68 / stmts 66 / bran
 
 ### 阶段 2 前置：约束动态加载（`.review/constraints.md` 产物）
 
-进入阶段 2 前主 agent 先跑（两路径共用，workflow 派的 review agent 与手工派的 subagent 都按 agent 定义内的消费约定自读）：
+进入阶段 2 前主 agent 先跑（三路径共用，workflow 派的 review agent 与手工派的 subagent 都按 agent 定义内的消费约定自读）：
 
 ```bash
 node scripts/select-constraints.mjs --base main
@@ -166,7 +173,7 @@ node scripts/select-constraints.mjs --base main
 
 按 diff 范围从 `docs/constraints.json`（架构约束登记 SSOT，69 条）选择命中约束，落盘 `.review/constraints.md`：scope 为 `global` 的核心不变量每次必载，其余按改动路径前缀命中（只改 renderer 不载 extension 约束）。8 个 review agent 定义均含消费约定——清单中 dimensions 含本维度的条目必须逐条核对，`enforcement: review` 的条目是本维度重点；需要完整表述时 Read「权威源」列指向的文档原文（清单里的 summary 仅导航）。
 
-### [MANDATORY] 双路径选择
+### [MANDATORY] 三路径选择
 
 #### 路径 1：pi 环境（有 pi workflow 能力）
 
@@ -197,9 +204,40 @@ pi workflow run review-fix-loop --args '{
 
 **Gate-2**：workflow `terminated` ∈ {`clean`, `converged`, `stuck`} → 进阶段 3。`terminated=needs-redesign` = 结构性问题需人工介入，**停手上报用户**。
 
-#### 路径 2：非 pi 环境（手工编排，上限 2 轮）
+#### 路径 2：zcode 环境（z-subagent-workflow 插件，zflow workflow）
 
-**适用条件**：无 pi workflow 能力（ZCode / 其他 agent 框架）。这是最常见路径。
+**适用条件**：当前主 agent 是 zcode，且有 `zflow` MCP 工具（z-subagent-workflow 插件）。
+
+主 agent 直接用 zflow 跑本仓自带的 `script:pr-review-fix` workflow（`.agents/workflows/pr-review-fix.js`——pi review-fix-loop 的忠实移植：8 个 review agent .md 原文内嵌进各 review 阶段 prompt、fix 阶段 autoCommit、clean 维度跳过重审、must_fix 连续 2 轮不降判 stuck）：
+
+> **[MANDATORY] 主 agent 直接派，禁止 subagent 封装**（同路径 1 理由：zflow run 是后台任务，完成通知自动回流，封装只多一层中转）。
+
+```
+zflow(action="run", workflow="script:pr-review-fix", workdir="<repo 绝对路径>",
+  task="<PR 背景：分支目的 + 主要改动面 + gates 结果，自包含>",
+  reviewers=["<repo>/.agents/skills/pr-cr-fix/agents/review-arch-boundary.md",
+             "<repo>/.agents/skills/pr-cr-fix/agents/review-business-logic.md",
+             "<repo>/.agents/skills/pr-cr-fix/agents/review-extension-api.md",
+             "<repo>/.agents/skills/pr-cr-fix/agents/review-monorepo-impact.md",
+             "<repo>/.agents/skills/pr-cr-fix/agents/review-type-safety.md",
+             "<repo>/.agents/skills/pr-cr-fix/agents/review-electron-build.md",
+             "<repo>/.agents/skills/pr-cr-fix/agents/review-test-coverage.md",
+             "<repo>/.agents/skills/pr-cr-fix/agents/review-data-governance.md"],
+  reviewTarget="main",          # base ref，脚本启动时锁 hash 防 ref 漂移
+  maxRounds=10,
+  timeoutMsPerPhase=1200000,    # 大 diff 建议 ≥20min（默认 10min 可能不够读完 diff）
+  timeoutMs=7200000)            # 整体预算：8 维 × 多轮 + fix，远超默认 30min
+```
+
+- **内置 `review-fix-loop` 不适用**：其审查者是「焦点名」prompt 模板（自带 JSON-only 输出契约），承载不了 8 维 agent 定义的专属 checklist 与 [HISTORICAL] 教训，输出契约也冲突——必须走 `script:pr-review-fix`
+- reviewers 缺省时脚本自动扫 `<repo>/.agents/skills/pr-cr-fix/agents/review-*.md` 全集（按文件名排序）；显式传数组可裁剪维度（裁剪依据同路径 3 的排除条件表）
+- run 是后台任务：立即返回 runId，完成通知自动回流；**禁止轮询**（反复 status/list 违反插件纪律，等通知即可）
+- 产物：`.review/review-<维度>.md`（各维报告，YAML frontmatter + Findings 表）+ `.review/aggregated.md`（每轮更新的聚合索引，含 `- Must-fix: N` 核对行）；fix commit 由 workflow 内 autoCommit 落盘（`fix: review round N — M must-fix`）
+- **Gate-2（zcode）`terminated` 映射**：`clean` → 进阶段 3；`fixed-unverified`（轮数耗尽且最后一步是修复）→ 读 aggregated.md + 最后一轮修复说明，人工确认后进阶段 3；`stuck` / `max-rounds` → 读 aggregated.md 逐条判定：误报可 ack 后进阶段 3，真问题派 worker 修复（重跑 workflow 上限 1 次，残留上报用户）；`review-failed` / `fix-failed` → 环境问题（CLI 崩溃/超时/输出不可解析），调大 `timeoutMsPerPhase` 重跑一次，再败上报用户
+
+#### 路径 3：无 workflow 能力环境（手工编排，上限 2 轮）
+
+**适用条件**：既无 pi workflow 也无 zflow（其他 agent 框架 / 插件不可用时的兜底）。
 
 ##### 派发前：按 diff 选维度（主 agent 自己跑）
 
@@ -244,7 +282,7 @@ node scripts/select-constraints.mjs --base main   # 产出 .review/constraints.m
 
 > 为什么上限 2 轮 + 条件跳过：第 1 轮发现问题、第 2 轮验证修复，是手工编排下回归防护的最小完整单元；全 clean 零修复时该动机不成立，条件跳过。更多轮需要自动化编排支撑（即路径 1 的 workflow）。用户对某次修复不放心时可手动要求重派全部维度（等价路径 1 `recheckAfterFix=true`），不进默认流程。
 
-### 维度 → Agent 映射（两路径共用）
+### 维度 → Agent 映射（三路径共用）
 
 Agent 定义位于本 skill 目录 `agents/review-<维度>.md`（不全局暴露，仅本 skill 内部引用）。
 
@@ -338,7 +376,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 ## 关键约束 [MANDATORY]
 
 1. **阶段顺序不可调换**：1（PR + static gate）→ 1.5（度量门禁）→ 1.6（增量覆盖率门禁；执行时 coverage 先于 metrics）→ 2（review+fix）→ 3（pre-merge + push）；Gate-1.5 fail 时禁止进入阶段 2，Gate-1.6 fail 时补测试后重跑（上限 3 轮）
-2. **主 agent 不跑 review/fix 实现命令**：review 委托 workflow（路径 1）或 subagent（路径 2）。确定性脚本（gate 脚本 / commit / push / pr-status.sh / pr-submit.sh）主 agent 可直接跑
+2. **主 agent 不跑 review/fix 实现命令**：review 委托 workflow（路径 1 pi / 路径 2 zcode）或 subagent（路径 3）。确定性脚本（gate 脚本 / commit / push / pr-status.sh / pr-submit.sh）主 agent 可直接跑
 3. **push 必须用户授权**：任何 push 操作前必须告知用户结果并获得确认
 4. **force-push 决策传递**：阶段 1 `force_push=true` → 阶段 3b 必须用 `--force-with-lease`；裸 `--force` 禁止
 5. **禁止 skip 开关**：`SKIP_LINT=1` / `SKIP_EXTENSION_LINT=1` / `--no-verify` / `eslint-disable` 静默。检查不通过 = 流程中止，唯一出路是修复代码让检查通过
@@ -350,7 +388,10 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 |--------|------|
 | 主 agent 自己跑 review 代码 | 越权，review 应委托 |
 | pi 环境下阶段 2 手写 review subagent 并行/分批（绕过 workflow） | 复现 review-fix-loop 已有能力，漂移风险 |
+| zcode 有 zflow 却手工编排 review subagent 分批（应走 `script:pr-review-fix`） | 复现 workflow 已有能力，聚合/轮次/熔断全靠手写，漂移风险 |
+| zcode 阶段 2 用内置 `review-fix-loop`（焦点名模型） | 丢 8 维 agent 定义的专属 checklist，输出契约冲突 |
 | 阶段 2 派 subagent 封装 workflow | 多一层无增益中转 |
+| zflow run 后轮询 status/list 等结果 | 违反插件纪律，通知自动回流 |
 | 阶段 1.1 跑无参全量 pre-merge（应 `--skip-tests`） | review 前空跑一遍无插桩全量测试，review/修复后读数全部过期作废 |
 | 阶段 3a 跑无参全量 pre-merge（应 `--test-result`） | extensions/renderer 线与 coverage-gate 同批测试背靠背重复执行 |
 | 第 1 轮全 clean 且无 fix commit 仍派第 2 轮 | 纯空转 subagent（新规则：条件跳过） |
@@ -369,6 +410,8 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 | Gate-1.6 增量覆盖率 <80% | 派测试专项 subagent 按 coverage.json uncovered_files 补测试 → 重跑（上限 3 轮；超限上报用户） |
 | Gate-2 `terminated=needs-redesign` | 结构性问题，上报用户决策（不自动重试） |
 | Gate-2 `terminated=stuck` | 看 aggregated.md 判断是 reviewer 误报还是真问题；误报可人工 ack 后进阶段 3，真问题上报用户 |
+| Gate-2（zcode）`terminated ∈ {review-failed, fix-failed}` | 环境问题：调大 `timeoutMsPerPhase` 重跑一次；再败上报用户 |
+| Gate-2（zcode）`terminated ∈ {stuck, max-rounds, fixed-unverified}` | 按 terminated 映射处置（见路径 2 Gate-2）；`fixed-unverified` 需读最后一轮修复说明人工确认 |
 | 3a coverage-gate exit 1 | 注入 `--test-result FAIL` 写 marker 后拦截：增量不足派测试 subagent 补测试、测试失败按失败用例派 worker；从 3a ① 重跑 |
 | 3a pre-merge exit 2（coverage.json 缺失 / base 不一致） | 工具错误：重跑 3a ① coverage-gate 后再 ③ |
 | Gate-3a pre-merge FAIL | 按 `failed_step` 重派 worker 修复后从 3a ① 重跑 |
@@ -382,6 +425,10 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 ├── agents/               # 8 个 review agent 定义 review-<维度>.md（不全局暴露；review-extension-api.md 含 Pi Extension 契约 checklist）
 ├── references/           # 触发场景才 read：coverage-industry-research.md（覆盖率调研）/ cot-leakage.md（CoT Leakage）/ mutation-testing.md（Mutation 深检）
 └── scripts/              # metrics-gate.py / coverage-gate.py（含 --extra-packages）/ validate-skill-yaml.py / validate-extensions-yaml.py
+
+.agents/workflows/
+└── pr-review-fix.js      # 路径 2（zcode）workflow 脚本（+ package.json 标记 CJS：仓库根 type:module 下 .js 默认 ESM）
+                          # 改动后 zflow(action="lint", file=...) 校验 + scripts 确认被发现
 ```
 
 ---

@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
+import type { DeliveryHandle } from '@xyz-agent/session-delivery'
 
 import { replayFoldEntries, type SchedulerEntryLike } from './replay.js'
 import type { ScheduledTask, SchedulerEntryOp } from './types.js'
@@ -33,6 +34,8 @@ export interface SchedulerBackend {
   appendEntry(op: SchedulerEntryOp): void
   getSessionFile(): string | undefined
   now(): number
+  /** 获取 delivery handle（装配点注入；未注入时 force 路径仍用 sendMessage 直投）。 */
+  getDeliveryHandle?(): DeliveryHandle | undefined
 }
 
 /**
@@ -59,6 +62,7 @@ export interface SchedulerBackendCtx {
 export class PiSchedulerBackend implements SchedulerBackend {
   private ctx: SchedulerBackendCtx
   private pi: Pick<ExtensionAPI, 'sendMessage' | 'appendEntry'>
+  private deliveryHandle: DeliveryHandle | undefined
 
   constructor(ctx: SchedulerBackendCtx, pi: Pick<ExtensionAPI, 'sendMessage' | 'appendEntry'>) {
     this.ctx = ctx
@@ -93,6 +97,18 @@ export class PiSchedulerBackend implements SchedulerBackend {
   now(): number {
     return Date.now()
   }
+
+  /**
+   * 注入 delivery handle（装配点创建后调用）。
+   * runtime 通过 getDeliveryHandle() 获取，非 force 任务走内核队列。
+   */
+  setDeliveryHandle(handle: DeliveryHandle): void {
+    this.deliveryHandle = handle
+  }
+
+  getDeliveryHandle(): DeliveryHandle | undefined {
+    return this.deliveryHandle
+  }
 }
 
 // ── 测试实现 ──
@@ -120,6 +136,7 @@ export class MockSchedulerBackend implements SchedulerBackend {
   fakeSessionFile: string | undefined = '/test/session.json'
   nowValue: number | undefined
   appendError: Error | null = null
+  deliveryHandle: DeliveryHandle | undefined
 
   async sendMessage(
     msg: { content: string; customType: string; display: boolean },
@@ -139,6 +156,10 @@ export class MockSchedulerBackend implements SchedulerBackend {
 
   now(): number {
     return this.nowValue ?? Date.now()
+  }
+
+  getDeliveryHandle(): DeliveryHandle | undefined {
+    return this.deliveryHandle
   }
 
   /**

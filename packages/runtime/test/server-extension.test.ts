@@ -183,12 +183,14 @@ describe('RuntimeServer: extension message routing', () => {
         sessionService,
         new ConfigService('/tmp', new PiConfigStore()),
         new ModelService(new ModelApiDiscoverer()),
-        new ExtensionService({
-          settingsDir: new PiConfigStore().getPiAgentDir(),
-          installer: new NpmGitInstaller(),
-          resolver: new ExtensionResolver({ settingsDir: new PiConfigStore().getPiAgentDir() }),
-          extensionSettings: new PiExtensionSettings(new PiConfigStore().getPiAgentDir()),
-        }),
+        {
+          extension: new ExtensionService({
+            settingsDir: new PiConfigStore().getPiAgentDir(),
+            installer: new NpmGitInstaller(),
+            resolver: new ExtensionResolver({ settingsDir: new PiConfigStore().getPiAgentDir() }),
+            extensionSettings: new PiExtensionSettings(new PiConfigStore().getPiAgentDir()),
+          }),
+        },
       )
       return s
     })
@@ -633,12 +635,14 @@ describe('RuntimeServer: extension timeout mechanism', () => {
       sessionService,
       new ConfigService('/tmp', new PiConfigStore()),
       new ModelService(new ModelApiDiscoverer()),
-      new ExtensionService({
-        settingsDir: new PiConfigStore().getPiAgentDir(),
-        installer: new NpmGitInstaller(),
-        resolver: new ExtensionResolver({ settingsDir: new PiConfigStore().getPiAgentDir() }),
-        extensionSettings: new PiExtensionSettings(new PiConfigStore().getPiAgentDir()),
-      }),
+      {
+        extension: new ExtensionService({
+          settingsDir: new PiConfigStore().getPiAgentDir(),
+          installer: new NpmGitInstaller(),
+          resolver: new ExtensionResolver({ settingsDir: new PiConfigStore().getPiAgentDir() }),
+          extensionSettings: new PiExtensionSettings(new PiConfigStore().getPiAgentDir()),
+        }),
+      },
     )
   })
 

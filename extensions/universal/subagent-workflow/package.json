@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-subagent-workflow",
-  "version": "8.1.1",
+  "version": "8.2.0",
   "type": "module",
   "main": "index.ts",
   "description": "Unified subagent execution and multi-agent workflow orchestration for Pi — spawned-process agent runtime with sync/background modes, stateful workflow management with persistence, state machine, and execution tracing.",
@@ -50,6 +50,7 @@
   },
   "dependencies": {
     "@xyz-agent/extension-protocol": "workspace:*",
+    "@xyz-agent/session-delivery": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*",
     "@zhushanwen/pi-file-lock": "workspace:*",
     "ajv": "^8.20.0",
