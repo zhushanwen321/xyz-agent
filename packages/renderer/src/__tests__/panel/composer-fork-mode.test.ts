@@ -298,3 +298,80 @@ describe('U15：streaming 中 fork 模式：Enter 提交 fork 而非 steer，发
     expect(chatApiMock.followUp).not.toHaveBeenCalled()
   })
 })
+
+// ── U16：canSubmit 派生守卫（staging 双发锁 / streaming 放行 / 空稿规则）────────
+describe('U16：canSubmit 派生值——staging 只看 isSending，非 staging 看 isBusy', () => {
+  function makeStreaming(sid: string): void {
+    const chat = useChatStore()
+    chat.applyMessageEvent(sid, {
+      type: 'message.message_start',
+      payload: { sessionId: sid, messageId: 'a1' },
+    })
+  }
+
+  it('staging 活跃 + streaming（isActive）+ 有输入 → true（fork 提交不受流式拦截）', async () => {
+    const sid = 's-can-submit-1'
+    makeStreaming(sid)
+    const wrapper = mountComposer({ sessionId: sid })
+    const vm = wrapper.vm as unknown as {
+      enterForkMode: (sid: string, messageId: string) => void
+      canSubmit?: boolean
+    }
+    vm.enterForkMode('s1', 'm1')
+    wrapper.findComponent(ComposerInputMock).vm.$emit('input', 'fork 提问')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(vm.canSubmit).toBe(true)
+    expect(wrapper.find('[data-testid="fork-send-btn"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('staging 活跃 + isSending（双发锁）→ false', async () => {
+    // forkSessionAsk 挂起 → handleForkSend 置 isSending=true 未回落
+    forkSessionAskMock.mockImplementationOnce(() => new Promise(() => {}))
+    const sid = 's-can-submit-2'
+    const wrapper = mountComposer({ sessionId: sid })
+    const vm = wrapper.vm as unknown as {
+      enterForkMode: (sid: string, messageId: string) => void
+      canSubmit?: boolean
+    }
+    vm.enterForkMode('s1', 'm1')
+    wrapper.findComponent(ComposerInputMock).vm.$emit('input', 'in-flight 内容')
+    await wrapper.vm.$nextTick()
+    wrapper.findComponent(ComposerInputMock).vm.$emit('keydown', keyEvent('Enter'))
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    expect(vm.canSubmit).toBe(false)
+    // isSending 分支接管发送位：staging 发送按钮消失（换 spinner）
+    expect(wrapper.find('[data-testid="fork-send-btn"]').exists()).toBe(false)
+  })
+
+  it('非 staging + isBusy（streaming）+ 有输入 → false（canSend 原守卫不回归）', async () => {
+    const sid = 's-can-submit-3'
+    makeStreaming(sid)
+    const wrapper = mountComposer({ sessionId: sid })
+    wrapper.findComponent(ComposerInputMock).vm.$emit('input', '普通输入')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    const vm = wrapper.vm as unknown as { canSubmit?: boolean }
+    expect(vm.canSubmit).toBe(false)
+  })
+
+  it('fork / handoff staging（allowsEmptySend=true）空稿 → true', async () => {
+    const wrapper = mountComposer({ sessionId: 's-can-submit-4' })
+    const vm = wrapper.vm as unknown as {
+      enterForkMode: (sid: string, messageId: string) => void
+      exitForkMode: () => void
+      enterHandoffMode: () => void
+      canSubmit?: boolean
+    }
+    // fork 允许空提交（空 content 退化为纯 fork，不发送首条 user）——见 fork-mode.ts allowsEmptySend
+    vm.enterForkMode('s1', 'm1')
+    await wrapper.vm.$nextTick()
+    expect(vm.canSubmit).toBe(true)
+    vm.exitForkMode()
+    await wrapper.vm.$nextTick()
+    vm.enterHandoffMode()
+    await wrapper.vm.$nextTick()
+    expect(vm.canSubmit).toBe(true) // handoff 允许空 reply
+  })
+})

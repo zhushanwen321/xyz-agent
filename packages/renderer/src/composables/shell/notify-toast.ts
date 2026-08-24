@@ -24,6 +24,7 @@ import { normalizeContent } from '@xyz-agent/shared'
 import { useSessionStore } from '@/stores/session'
 import { useChatStore } from '@/stores/chat'
 import { usePanelStore } from '@/stores/panel'
+import { useToast } from '@/composables/useToast'
 
 /** prompt 兜底 label 长度（字符）。用户裁决值：足以定位、不至于撑爆定位行。 */
 const PROMPT_FALLBACK_LEN = 15
@@ -77,4 +78,23 @@ export function shouldShowSessionNotify(sessionId: string | undefined, level: st
   if (!sessionId) return true
   if (level === 'error' || level === 'warning' || level === 'warn') return true
   return sessionId === usePanelStore().focusedSessionId
+}
+
+/**
+ * NotificationHostController deps.showToast 装配（bridge 消费）：过滤 → 定位行 → level 映射
+ * （error→error / warn|warning→warning / 其余→info，对齐旧线 useExtensionNotify）。
+ * 定位行双条件（ToastContainer：sessionLabel && sessionId）——sessionId 必须透传，
+ * 非字符串归一 undefined；抽为工厂供壳层与装配测试共用（真实入口走 useToast 模块单例）。
+ */
+export function createNotifyToastHandler(): (message: string, level: string | undefined, sessionId?: unknown) => void {
+  const { error, info, warning } = useToast()
+  return (message, level, sessionId) => {
+    const sid = typeof sessionId === 'string' ? sessionId : undefined
+    if (!shouldShowSessionNotify(sid, level)) return
+    const sessionLabel = buildSessionLocator(sid) ?? undefined
+    const options = { sessionLabel, sessionId: sid }
+    if (level === 'error') error(message, options)
+    else if (level === 'warning' || level === 'warn') warning(message, options)
+    else info(message, options)
+  }
 }

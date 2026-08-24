@@ -23,7 +23,8 @@ import type { Message, SessionGroup } from '@xyz-agent/shared'
 import { useSessionStore } from '@/stores/session'
 import { useChatStore } from '@/stores/chat'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
-import { buildSessionLocator, shouldShowSessionNotify } from '../notify-toast'
+import { useToast } from '@/composables/useToast'
+import { buildSessionLocator, shouldShowSessionNotify, createNotifyToastHandler } from '../notify-toast'
 
 /** 最小 SessionSummary（buildSessionLocator 只读 id/label/cwd） */
 function summary(id: string, label: string, cwd: string): SessionGroup['sessions'][number] {
@@ -125,5 +126,50 @@ describe('shouldShowSessionNotify 前台/后台分级', () => {
 
   it('info + 后台 → 丢弃（goal start/budget70 等过程噪音）', () => {
     expect(shouldShowSessionNotify('bg', 'info')).toBe(false)
+  })
+})
+
+describe('createNotifyToastHandler 装配（真实 useToast 入口）', () => {
+  /** toast 模块单例是跨用例共享状态，取末条断言 + 用后清空 */
+  const { toasts, remove } = useToast()
+
+  function lastToast() {
+    return toasts.value[toasts.value.length - 1]
+  }
+
+  beforeEach(() => {
+    seedSessions([summary('bg', '修通知', '/tmp/repo'), summary('fg', '修通知', '/tmp/repo')])
+    usePanelStore().loadSession(ROOT_PANEL_ID, 'fg')
+    while (toasts.value.length > 0) remove(toasts.value[0].id)
+  })
+
+  it('error → toast type=error，sessionLabel + sessionId 双透传（定位行可渲染可跳转）', () => {
+    createNotifyToastHandler()('goal blocked', 'error', 'bg')
+    const t = lastToast()
+    expect(t.type).toBe('error')
+    expect(t.sessionLabel).toBe('修通知 · repo')
+    expect(t.sessionId).toBe('bg') // 回归：曾漏传致定位行永不渲染
+  })
+
+  it('warn / warning → 归一为 warning；其余 → info', () => {
+    const show = createNotifyToastHandler()
+    show('w1', 'warn', 'bg')
+    expect(lastToast().type).toBe('warning')
+    show('w2', 'info', 'fg')
+    expect(lastToast().type).toBe('info')
+  })
+
+  it('info + 后台 session → 不入列（过滤生效）', () => {
+    const before = toasts.value.length
+    createNotifyToastHandler()('budget 70%', 'info', 'bg')
+    expect(toasts.value.length).toBe(before)
+  })
+
+  it('sessionId 非字符串 → 归一 undefined，不设 sessionId 字段（无定位行纯消息）', () => {
+    createNotifyToastHandler()('plugin crashed', 'error', null)
+    const t = lastToast()
+    expect(t.type).toBe('error')
+    expect(t.sessionId).toBeUndefined()
+    expect(t.sessionLabel).toBeUndefined()
   })
 })

@@ -428,5 +428,7 @@ defineExpose({
   handoffMode: handoff.handoffModeRef,
   enterHandoffMode: handoff.enterHandoffMode,
   exitHandoffMode: handoff.exitHandoffMode,
+  // 派生提交守卫（ref 解包为 boolean）：测试断言 staging 双发锁 / streaming 放行分支用
+  canSubmit,
 })
 </script>
