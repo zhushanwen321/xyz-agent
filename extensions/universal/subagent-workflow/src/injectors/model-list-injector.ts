@@ -35,6 +35,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
+import { escapeXml, renderXmlSection } from "../shared/xml-injection.ts";
+
 const logger = getLogger("injector");
 
 /** 注入段的最小模型投影（从 Model<Api> 收窄，测试无需构造完整 Model） */
@@ -47,8 +49,8 @@ export interface ModelEntry {
 	contextWindow: number;
 }
 
-/** Model<Api> → ModelEntry 投影（只留注入段消费的字段） */
-export function toModelEntry(model: Model<Api>): ModelEntry {
+/** Model<Api> → ModelEntry 投影（只留注入段消费的字段；模块内唯一消费方 setupModelListInjector） */
+function toModelEntry(model: Model<Api>): ModelEntry {
 	return {
 		provider: model.provider,
 		id: model.id,
@@ -72,16 +74,6 @@ function formatCaps(entry: ModelEntry): string {
 	return caps.join(",");
 }
 
-/** 转义 XML 特殊字符（与 subagent/workflow injector 同款） */
-function escapeXml(str: string): string {
-	return str
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&apos;");
-}
-
 /**
  * 将模型列表格式化为 XML 注入段。
  *
@@ -100,21 +92,20 @@ export function formatModelList(models: ModelEntry[]): string {
 			: compareByCodepoint(a.provider, b.provider),
 	);
 
-	const lines = [
-		"\n\n<available_provider_models>",
-		"The following models are available (auth-configured). Use these ids when delegating via the subagent/workflow `model` param (\"provider/modelId\" format) to match the task (e.g. vision models for screenshots, strong reasoners for architecture). Do NOT switch the main conversation model mid-session — per-call model override on delegates only (switching the main model is cache-hostile); use the /model command only when the user explicitly asks to change it.",
-	];
-	for (const m of sorted) {
+	const items = sorted.map((m) => {
 		const caps = formatCaps(m);
-		lines.push(
+		return (
 			`  <model><id>${escapeXml(`${m.provider}/${m.id}`)}</id>`
 				+ `<name>${escapeXml(m.name)}</name>`
 				+ (caps ? `<caps>${caps}</caps>` : "")
-				+ `<contextWindow>${m.contextWindow}</contextWindow></model>`,
+				+ `<contextWindow>${m.contextWindow}</contextWindow></model>`
 		);
-	}
-	lines.push("</available_provider_models>");
-	return lines.join("\n");
+	});
+	return renderXmlSection({
+		tag: "available_provider_models",
+		guide: "The following models are available (auth-configured). Use these ids when delegating via the subagent/workflow `model` param (\"provider/modelId\" format) to match the task (e.g. vision models for screenshots, strong reasoners for architecture). Do NOT switch the main conversation model mid-session — per-call model override on delegates only (switching the main model is cache-hostile); use the /model command only when the user explicitly asks to change it.",
+		items,
+	});
 }
 
 /**

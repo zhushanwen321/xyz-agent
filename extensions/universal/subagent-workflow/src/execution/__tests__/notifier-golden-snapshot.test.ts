@@ -8,7 +8,7 @@
  */
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { createNotifier, type BgNotifyRecord, type NotifierHost, buildLlmContent } from "../notifier.ts";
+import { createNotifier, type BgNotifyRecord, type NotifierHost } from "../notifier.ts";
 import { renderBgNotifyMessage } from "../../interface/bg-notify-render.ts";
 
 /** 渲染锁用 mock theme（与 bg-notify-render.test.ts 同款：透传文本，记录色 token）。 */

@@ -83,10 +83,10 @@ const NOTIFY_CUSTOM_TYPE = "subagent-bg-notify";
 /**
  * 将 BgNotifyRecord 格式化为 LLM 可读的 notification content。
  *
- * 独立导出——调用方（subagent-service）预格式化后传给 delivery.send，
- * 内核只做拼接（多条以 "\n\n---\n\n" join）。
+ * 模块内唯一消费方是下方 createNotifier 的 notify()（预格式化后传 delivery.send，
+ * 内核只做拼接——多条以 "\n\n---\n\n" join）。
  */
-export function buildLlmContent(record: BgNotifyRecord): string {
+function buildLlmContent(record: BgNotifyRecord): string {
   const agent = record.agent;
   const id = record.id;
   // [wave2 指针行] 增量语义下轮次通知只携带本轮增量，异步 flush 窗口丢失时不可重发

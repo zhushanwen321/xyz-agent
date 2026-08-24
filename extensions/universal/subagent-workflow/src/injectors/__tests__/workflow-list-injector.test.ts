@@ -10,44 +10,17 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
 import type { DiscoveredResource } from "../../shared/resource-discovery.ts";
+// 共享 mock 基建（vi.mock 工厂 / mock pi / mock ctx）：helpers/injector-test-mocks.ts
+import { createDiscoveryModuleMock, createLoggerModuleMock, createMockCtx, createMockPi, type CapturedHandlers } from "./helpers/injector-test-mocks.ts";
 
 // ── 稳定 spy（vi.hoisted 保证 resetModules 后引用不变，见 subagent 测试同款注释） ──
-const spies = vi.hoisted(() => ({
-	discoverResources: vi.fn(),
-	getCachedFileContent: vi.fn(),
-}));
+const spies = vi.hoisted(() => ({ discoverResources: vi.fn(), getCachedFileContent: vi.fn() }));
 
-vi.mock("../../shared/resource-discovery.ts", () => ({
-	discoverResources: spies.discoverResources,
-	findWorkspaceRoot: () => "/ws",
-	getCachedFileContent: spies.getCachedFileContent,
-	// passthrough mock（真实实现走 mtime 缓存需真文件）：委托 getCachedFileContent
-	getCachedParsed: (path: string, parse: (c: string) => unknown) =>
-		parse(spies.getCachedFileContent(path) ?? ""),
-}));
+vi.mock("../../shared/resource-discovery.ts", () => createDiscoveryModuleMock(spies));
 
-vi.mock("@zhushanwen/pi-extension-logger", () => ({
-	getLogger: () => ({
-		debug: () => {
-			/* no-op */
-		},
-		info: () => {
-			/* no-op */
-		},
-		warn: () => {
-			/* no-op */
-		},
-		error: () => {
-			/* no-op */
-		},
-	}),
-	setPiHandle: () => {
-		/* no-op */
-	},
-}));
+// 工厂必须写成箭头惰性形式（vi.mock 提升后直接传引用会 TDZ，见 helper 文件头注释）
+vi.mock("@zhushanwen/pi-extension-logger", () => createLoggerModuleMock());
 
 // ── 纯函数测试：静态 import（模块级缓存状态不影响纯函数） ──
 import {
@@ -181,42 +154,9 @@ describe("formatWorkflowList", () => {
 });
 
 // ──────────────────────────────────────────────────────────────
-// session 级缓存行为（TC1-TC4，与 subagent 对称）
+// session 级缓存行为（TC1-TC4，与 subagent 对称；mock pi/ctx 构造在
+// helpers/injector-test-mocks.ts）
 // ──────────────────────────────────────────────────────────────
-
-/** before_agent_start handler 的返回结构（取 systemPrompt 断言）。 */
-interface BeforeAgentResult {
-	systemPrompt: string;
-}
-
-/** 三 handler 捕获引用（setupWorkflowListInjector 注册后填充）。 */
-interface CapturedHandlers {
-	sessionStart?: (event: unknown, ctx: unknown) => Promise<void> | void;
-	beforeAgentStart?: (event: { systemPrompt: string }, ctx: unknown) => Promise<BeforeAgentResult | void> | BeforeAgentResult | void;
-	sessionShutdown?: (event: unknown, ctx: unknown) => void;
-}
-
-/** 构造 mock pi：捕获三 handler 引用，其余 prop 走 noop（仅 on 被调用）。 */
-function createMockPi(handlers: CapturedHandlers): ExtensionAPI {
-	const on = (event: string, handler: (...args: unknown[]) => unknown): void => {
-		if (event === "session_start") {
-			handlers.sessionStart = handler as CapturedHandlers["sessionStart"];
-		} else if (event === "before_agent_start") {
-			handlers.beforeAgentStart = handler as CapturedHandlers["beforeAgentStart"];
-		} else if (event === "session_shutdown") {
-			handlers.sessionShutdown = handler as CapturedHandlers["sessionShutdown"];
-		}
-	};
-	const noop = (): void => {
-		/* mock */
-	};
-	return { on, appendEntry: noop, registerTool: noop, registerCommand: noop, registerMessageRenderer: noop, events: { emit: noop, on: noop } } as unknown as ExtensionAPI;
-}
-
-/** 最小 ctx mock（注入器只读 ctx.cwd）。 */
-function createMockCtx(): Record<string, unknown> {
-	return { cwd: "/ws", mode: "tui" };
-}
 
 /** fixture：单个 workflow 的 DiscoveredResource。 */
 function workflowResource(path: string): DiscoveredResource {

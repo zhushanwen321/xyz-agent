@@ -38,6 +38,7 @@ import {
 	getCachedParsed,
 } from "../shared/resource-discovery.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
+import { escapeXml, renderXmlSection } from "../shared/xml-injection.ts";
 
 const logger = getLogger("injector");
 
@@ -159,16 +160,6 @@ function startsWithFrontmatter(filePath: string): boolean {
 	return (getCachedFileContent(filePath) ?? "").trimStart().startsWith("---");
 }
 
-/** 转义 XML 特殊字符 */
-function escapeXml(str: string): string {
-	return str
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&apos;");
-}
-
 /**
  * 将 agent 列表格式化为 XML 注入段。
  *
@@ -178,11 +169,7 @@ function escapeXml(str: string): string {
 export function formatAgentList(agents: AgentEntry[]): string {
 	if (agents.length === 0) return "";
 
-	const lines = [
-		"\n\n<available_subagents>",
-		"The following subagents are available. PRIORITY: when a task involves reading 3+ files, writing 100+ lines, parallel research, or specialized review, delegate to a matching subagent FIRST instead of doing it yourself — this keeps your context focused on orchestration. Do NOT call list to discover available subagents; use list only for running state. When using the subagent tool, ONLY use agent names from this list. If no agent matches your task, pass systemPrompt alongside the agent name to create a dynamic agent.",
-	];
-	for (const agent of agents) {
+	const items = agents.map((agent) => {
 		let block = `  <agent><name>${escapeXml(agent.name)}</name><description>${escapeXml(agent.description)}</description>`;
 		// m5：路由样本（when + examples 正反原样渲染——negative 的 action 由作者写
 		// 「不调用（原因）」，渲染器不硬编码；全部内容 escapeXml 防 XML 注入段破坏）
@@ -198,10 +185,13 @@ export function formatAgentList(agents: AgentEntry[]): string {
 			block += `\n    <examples>\n${exampleLines.join("\n")}\n    </examples>`;
 		}
 		block += `<location>${escapeXml(agent.path)}</location></agent>`;
-		lines.push(block);
-	}
-	lines.push("</available_subagents>");
-	return lines.join("\n");
+		return block;
+	});
+	return renderXmlSection({
+		tag: "available_subagents",
+		guide: "The following subagents are available. PRIORITY: when a task involves reading 3+ files, writing 100+ lines, parallel research, or specialized review, delegate to a matching subagent FIRST instead of doing it yourself — this keeps your context focused on orchestration. Do NOT call list to discover available subagents; use list only for running state. When using the subagent tool, ONLY use agent names from this list. If no agent matches your task, pass systemPrompt alongside the agent name to create a dynamic agent.",
+		items,
+	});
 }
 
 /**
