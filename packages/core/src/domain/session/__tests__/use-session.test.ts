@@ -180,6 +180,29 @@ describe('selectSession', () => {
     expect(f.store.activeId.value).toBe('sid-1')
     f.dispose()
   })
+
+  it('已 hydrate 切入的尾读 reconcile 同步刷新 truncated 标记（load-more 可恢复）', async () => {
+    const f = makeFixture()
+    f.chat.isHydrated.mockReturnValue(true)
+    // 场景：hydrate（尾读 truncated=true）→ load-more 前插全量并清标记 → 切走切回，
+    // getHistory 又返回 20-turn 尾读（RPC 失败 fallback）——reconcile 整量替换分区把
+    // 前插历史截回尾窗。truncated 必须重新置 true：load-more 按钮（hasMoreHistory 驱动）
+    // 重显，用户可再次触发恢复；hydrate 锚不被 reconcile 触碰，锚定切分仍定位全量。
+    f.chat.getHistory.mockResolvedValue({ messages: [{ id: 'm2' } as never], historyTruncated: true })
+    await f.session.selectSession('sid-1')
+    expect(f.chat.setHistoryTruncated).toHaveBeenCalledWith('sid-1', true)
+    f.dispose()
+  })
+
+  it('已 hydrate 切入的 RPC 全量成功（truncated=false）清除 truncated 标记', async () => {
+    const f = makeFixture()
+    f.chat.isHydrated.mockReturnValue(true)
+    f.chat.getHistory.mockResolvedValue({ messages: [{ id: 'm2' } as never], historyTruncated: false })
+    await f.session.selectSession('sid-1')
+    // 分区已被 reconcile 整量替换为全量 → 无更早历史可加载，标记同步清除
+    expect(f.chat.setHistoryTruncated).toHaveBeenCalledWith('sid-1', false)
+    f.dispose()
+  })
 })
 
 describe('deleteSession', () => {
