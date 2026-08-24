@@ -23,7 +23,7 @@
         <span class="tabular-nums">{{ hasUsage ? usedDisplay : '—' }}</span>
         <template v-if="hasPercent">
           <span aria-hidden="true">·</span>
-          <span class="tabular-nums">{{ stats.percent }}%</span>
+          <span class="tabular-nums">{{ usage.percent }}%</span>
         </template>
       </Button>
     </HoverCardTrigger>
@@ -36,13 +36,14 @@
         class="flex items-center justify-between border-b border-border bg-white/[0.015] px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-neutral-dim"
       >
         <span>{{ t('panel.context.capacity') }}</span>
-        <span>{{ stats.modelId ?? '—' }}</span>
+        <!-- modelId 无 runtime 来源（D9）：占位「—」 -->
+        <span>—</span>
       </div>
       <!-- bar（仅 contextWindow 已知时显示） -->
       <div v-if="hasPercent" class="mx-2.5 mt-2.5 h-1.5 overflow-hidden rounded-full bg-surface-2">
         <div
           :class="cn('h-full rounded-full transition-[width,background-color]', barClass)"
-          :style="{ width: `${stats.percent}%` }"
+          :style="{ width: `${usage.percent}%` }"
         />
       </div>
       <!-- stats -->
@@ -57,13 +58,12 @@
         </div>
         <div class="flex flex-col gap-0.5">
           <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-neutral-dim">{{ t('panel.context.usageRate') }}</span>
-          <span class="font-sans text-[14px] font-semibold tabular-nums text-neutral-fg">{{ hasPercent ? `${stats.percent}%` : '—' }}</span>
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-neutral-fg">{{ hasPercent ? `${usage.percent}%` : '—' }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
           <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-neutral-dim">{{ t('panel.context.cacheHit') }}</span>
-          <span
-            :class="cn('font-sans text-[14px] font-semibold tabular-nums', cacheHitClass)"
-          >{{ stats.cacheHit != null ? `${stats.cacheHit}%` : '—' }}</span>
+          <!-- cacheHit 无 runtime 来源（D9）：占位「—」 -->
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-neutral-dim">—</span>
         </div>
       </div>
 
@@ -162,34 +162,16 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
-import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
+import { useContextUsage } from '@/composables/features/model/useContextUsage'
 import { useQuotaStore } from '@/stores/quota'
 import { useQuotaDisplay } from '@/composables/features/model/useQuotaDisplay'
 import { quotaFailReasonText } from '@/composables/features/model/useQuotaQuery'
 import * as quotaApi from '@/api/domains/quota'
 
-interface ContextStats {
-  used: number
-  total: number
-  percent: number
-  cacheHit: number | null
-  modelId: string | null
-}
-
-// 初始全 0/null：未收到 context.update 推送前不显示假数字（hasData=false 时关键数字显「—」）。
-// cacheHit / modelId 无 runtime 来源（D9）：保持 null，UI 显「—」。
-const stats = ref<ContextStats>({
-  used: 0,
-  total: 0,
-  percent: 0,
-  cacheHit: null,
-  modelId: null,
-})
-
 const { t } = useI18n()
 
 const props = defineProps<{
-  /** session 通道订阅键（context.update 带 sessionId，走 events.on(sessionId)） */
+  /** session 分区键 + 恢复腿触发源（context-consistency D2：用量状态在 useContextUsage 分区，组件纯读） */
   sessionId?: string
   /**
    * 当前复合 modelId（"provider/modelId"），受控 prop，由 Composer 下发。
@@ -206,24 +188,11 @@ const quotaStore = useQuotaStore()
 // 未配置态「配置 Coding Plan」按钮跳转 Settings → Provider 页（偏差 #D）。
 const openSettings = inject<() => void>('openSettings', () => {})
 
-// ── session 事件订阅（context.update）──
-// 字段映射（D9）：used←inputTokens / total←contextLimit / percent←usagePercent。
-// cacheHit / modelId 无来源，保持占位。sessionId 变化时重订。
-// [Phase 1 最小适配，D1 协议收敛] session.state_changed 已不携带 usage 三字段——本订阅
-// 退订 state_changed，只订 context.update；三字段 optional（字段缺失 = 无值，如 compact 后
-// 占位帧），缺失时跳过更新保持旧值。完整重构（useContextUsage 分区 composable）是 Phase 2。
-const onMessage = useSessionEvents(toRef(props, 'sessionId'))
-onMessage('context.update', (msg) => {
-  const { inputTokens, contextLimit, usagePercent } = msg.payload
-  if (inputTokens === undefined || contextLimit === undefined || usagePercent === undefined) return
-  // taste:allow-instance-level-session-state 理由：Phase 2 useContextUsage 重构迁移中，见 docs/todo/context-consistency-design.md D2
-  stats.value = {
-    ...stats.value,
-    used: inputTokens,
-    total: contextLimit,
-    percent: usagePercent,
-  }
-})
+// ── 上下文用量（context-consistency D2 终态）：per-session 分区纯读 ──
+// 订阅（context.update）/ 切回恢复腿（session.getContext）/ 0 帧哨兵全在 composable 内，
+// 组件只做 status → 显示映射：ok → 真值；no-value（合法无值，如 compact 后无新 turn）与
+// unknown（首拉在途且无缓存）→ 「—」。切走再切回显示分区缓存值，不闪横线不串台。
+const { current: usage } = useContextUsage(toRef(props, 'sessionId'))
 
 // ── coding-plan 额度展示（逻辑抽到 useQuotaDisplay）──
 const {
@@ -276,7 +245,6 @@ async function onRefresh(): Promise<void> {
 
 // ── 现有容量区计算（保持不变）──
 
-const CACHE_LOW_THRESHOLD = 50 // <50% 缓存命中转 warning
 const K_THRESHOLD = 1000
 const M_THRESHOLD = 1_000_000
 
@@ -293,25 +261,21 @@ function formatTokens(n: number): string {
   return `${m.toFixed(1).replace(/\.0$/, '')}M`
 }
 
-const usedDisplay = computed(() => formatTokens(stats.value.used))
-const totalDisplay = computed(() => formatTokens(stats.value.total))
+const usedDisplay = computed(() => formatTokens(usage.value.used))
+const totalDisplay = computed(() => formatTokens(usage.value.total))
 
-const hasUsage = computed(() => stats.value.used > 0)
-const hasPercent = computed(() => stats.value.total > 0)
+/** 有真值（分区 status='ok'）；no-value/unknown → 关键数字显「—」 */
+const hasUsage = computed(() => usage.value.status === 'ok')
+/** contextWindow 已知（provider 未配 contextWindow 时 total=0：只显用量不显百分比） */
+const hasPercent = computed(() => usage.value.status === 'ok' && usage.value.total > 0)
 
-const isHigh = computed(() => stats.value.percent > HIGH_THRESHOLD)
-const isDanger = computed(() => stats.value.percent > DANGER_THRESHOLD)
+const isHigh = computed(() => usage.value.percent > HIGH_THRESHOLD)
+const isDanger = computed(() => usage.value.percent > DANGER_THRESHOLD)
 
 const barClass = computed(() => {
   if (isDanger.value) return 'bg-danger'
   if (isHigh.value) return 'bg-warn'
   return 'bg-gradient-to-r from-accent to-accent-hover'
-})
-
-const cacheHitClass = computed(() => {
-  const hit = stats.value.cacheHit
-  if (hit == null) return 'text-neutral-dim'
-  return hit < CACHE_LOW_THRESHOLD ? 'text-warn' : 'text-success'
 })
 
 </script>
