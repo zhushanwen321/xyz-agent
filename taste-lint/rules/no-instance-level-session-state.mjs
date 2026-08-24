@@ -158,51 +158,74 @@ export default {
       return INLINE_ALLOW_RE.test(texts.join('\n'))
     }
 
+    /**
+     * 收集 <script setup> 顶层语句里的直接调用表达式（两种来源：
+     * ExpressionStatement.expression / VariableDeclaration 各 declarator 的 init）。
+     * ExpressionStatement.expression 未必是调用（await foo() 是 AwaitExpression）。
+     */
+    function collectTopLevelCalls(program) {
+      const calls = []
+      for (const stmt of program.body) {
+        if (
+          stmt.type === 'ExpressionStatement' &&
+          stmt.expression.type === 'CallExpression'
+        ) {
+          calls.push(stmt.expression)
+        }
+        if (stmt.type === 'VariableDeclaration') {
+          for (const d of stmt.declarations) {
+            if (d.init?.type === 'CallExpression') calls.push(d.init)
+          }
+        }
+      }
+      return calls
+    }
+
+    /** 单个 defineProps 调用是否声明 sessionId：运行时实参 + 泛型类型实参任一命中 */
+    function definePropsDeclaresSessionId(expr) {
+      // defineProps<{...}>() 泛型形态（ContextCapacityPopover 同款）——类型实参
+      // 在 typeArguments.params，不在运行时 arguments
+      const typeArg = expr.typeArguments ?? expr.typeParameters
+      return (
+        propsDeclareSessionId(expr.arguments[0]) ||
+        propsDeclareSessionId(typeArg?.params?.[0] ?? null)
+      )
+    }
+
+    /**
+     * 按 callee 名分类单个顶层调用，汇入三信号收集：defineProps → S1 props 信号；
+     * useSessionEvents → S2 信号 + receiverNames（S3 按接收名追调用）；
+     * ref/shallowRef 初始化 → localRefNames 白名单。
+     */
+    function classifyTopLevelCall(expr, signals) {
+      if (expr.callee.type !== 'Identifier') return
+      const name = expr.callee.name
+      if (name === 'defineProps') {
+        signals.hasSessionIdProp ||= definePropsDeclaresSessionId(expr)
+      } else if (name === 'useSessionEvents') {
+        signals.callsUseSessionEvents = true
+        // S3 只追 Identifier 接收名；解构/未接收形态无以定位调用方，信号不齐即不报
+        const decl = expr.parent?.type === 'VariableDeclarator' ? expr.parent : null
+        if (decl?.id.type === 'Identifier') receiverNames.add(decl.id.name)
+      } else if (
+        REF_INIT_FNS.has(name) &&
+        expr.parent?.type === 'VariableDeclarator' &&
+        expr.parent.id.type === 'Identifier'
+      ) {
+        localRefNames.add(expr.parent.id.name)
+      }
+    }
+
     return {
       // S1/S2/S3 白名单收集都在 <script setup> 顶层（Program.body 即 vue-eslint-parser 的
       // script 顶层语句——已探针验证），一次性静态扫顶层即可，不递归整树。
       Program(program) {
-        let hasSessionIdProp = false
-        let callsUseSessionEvents = false
-        for (const stmt of program.body) {
-          const exprs = []
-          // ExpressionStatement.expression 未必是调用（await foo() 是 AwaitExpression）
-          if (
-            stmt.type === 'ExpressionStatement' &&
-            stmt.expression.type === 'CallExpression'
-          ) {
-            exprs.push(stmt.expression)
-          }
-          if (stmt.type === 'VariableDeclaration') {
-            for (const d of stmt.declarations) {
-              if (d.init?.type === 'CallExpression') exprs.push(d.init)
-            }
-          }
-          for (const expr of exprs) {
-            if (expr.callee.type !== 'Identifier') continue
-            const name = expr.callee.name
-            if (name === 'defineProps') {
-              hasSessionIdProp ||= propsDeclareSessionId(expr.arguments[0])
-              // defineProps<{...}>() 泛型形态（ContextCapacityPopover 同款）——类型实参
-              // 在 typeArguments.params，不在运行时 arguments
-              const typeArg = expr.typeArguments ?? expr.typeParameters
-              hasSessionIdProp ||= propsDeclareSessionId(typeArg?.params?.[0] ?? null)
-            } else if (name === 'useSessionEvents') {
-              callsUseSessionEvents = true
-              // S3 只追 Identifier 接收名；解构/未接收形态无以定位调用方，信号不齐即不报
-              const decl = expr.parent?.type === 'VariableDeclarator' ? expr.parent : null
-              if (decl?.id.type === 'Identifier') receiverNames.add(decl.id.name)
-            } else if (
-              REF_INIT_FNS.has(name) &&
-              expr.parent?.type === 'VariableDeclarator' &&
-              expr.parent.id.type === 'Identifier'
-            ) {
-              localRefNames.add(expr.parent.id.name)
-            }
-          }
+        const signals = { hasSessionIdProp: false, callsUseSessionEvents: false }
+        for (const expr of collectTopLevelCalls(program)) {
+          classifyTopLevelCall(expr, signals)
         }
         threeSignalsReady =
-          hasSessionIdProp && callsUseSessionEvents && receiverNames.size > 0
+          signals.hasSessionIdProp && signals.callsUseSessionEvents && receiverNames.size > 0
       },
 
       CallExpression(node) {
