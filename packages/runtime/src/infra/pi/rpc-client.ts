@@ -554,11 +554,14 @@ export class RpcClient implements IPiEngine {
    * images 为 undefined 或空数组时归一化为不传 images 键（避免 pi 收到空数组），
    * 走与改动前完全一致的路径，零回归。
    */
-  prompt(content: string, images?: Array<{ data: string; mimeType: string }>): Promise<PiMessage> {
+  prompt(content: string, images?: Array<{ data: string; mimeType: string }>, streamingBehavior?: 'steer' | 'followUp'): Promise<PiMessage> {
     const piImages = images && images.length > 0
       ? images.map(i => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))
       : undefined
-    return this.sendCommand('prompt', piImages ? { message: content, images: piImages } : { message: content })
+    const params: Record<string, unknown> = { message: content }
+    if (piImages) params.images = piImages
+    if (streamingBehavior) params.streamingBehavior = streamingBehavior
+    return this.sendCommand('prompt', params)
   }
 
   abort(): Promise<PiMessage> {

@@ -1,5 +1,11 @@
 # @zhushanwen/pi-system-prompt
 
+## 1.1.0
+
+### Minor Changes
+
+- df69a18fc: KV-cache stable system-prompt construction: deterministic ordering of injected sections plus mtime-based cache invalidation, keeping prompt bytes stable across restarts to maximize prompt-cache hits.
+
 ## 1.0.2
 
 ### Patch Changes

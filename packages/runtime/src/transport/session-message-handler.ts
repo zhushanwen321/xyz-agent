@@ -414,11 +414,13 @@ export class SessionMessageHandler {
       }
       case 'session.getContext': {
         // renderer 切 session 后主动拉取上下文用量（修复 broadcast 与订阅时序竞争）。
-        // reply context.update payload，renderer 收到后 events.dispatchSession 本地投递给 ContextCapacityPopover。
-        // fetchContext 返回 null（pi 算不出，如 compaction 后未跑新 turn）时 reply 空对象，前端按无数据处理。
+        // reply context.update payload（与广播/stateSnapshot 同形）。fetchContext 返回 null
+        // （pi tokens=null 算不出，如 compaction 后未跑新 turn）时 reply 仅含 sessionId——
+        // 字段缺失 = 无值（D1 协议收敛，context-consistency Phase 1；旧 0 fallback 已删：
+        // 「未知」不得编码为 0）。
         const { sessionId } = msg.payload
         const payload = await this.ctx.sessionService.fetchContext(sessionId)
-        return this.ctx.reply(ws, msg.id, 'context.update', { sessionId, ...(payload ?? { inputTokens: 0, contextLimit: 0, usagePercent: 0 }) })
+        return this.ctx.reply(ws, msg.id, 'context.update', payload ? { sessionId, ...payload } : { sessionId })
       }
       case 'session.rename': {
         await this.ctx.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)

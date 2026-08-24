@@ -35,8 +35,10 @@ import {
 	discoverResources,
 	findWorkspaceRoot,
 	getCachedFileContent,
+	getCachedParsed,
 } from "../shared/resource-discovery.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
+import { escapeXml, renderXmlSection } from "../shared/xml-injection.ts";
 
 const logger = getLogger("injector");
 
@@ -97,9 +99,14 @@ export function parseAgentFrontmatter(content: string): AgentEntry | null {
  * 用统一资源发现（ADR-031）发现所有可用 agent。
  *
  * discoverResources 返回按文件名 stem 去重、优先级合并后的 DiscoveredResource[]
- * （project > user > builtin）。此处逐个解析 frontmatter 提取 name+description，
- * 再按 agent name 去重（discoverResources 返回顺序为低→高优先级，高优先级靠后，
- * Map.set 后者覆盖前者，故最终保留最高优先级同名 agent）。
+ * （project > user > builtin，返回顺序低→高优先级——Map 后写覆盖依赖此序，不可在
+ * 发现层重排）。此处逐个解析 frontmatter 提取 name+description（经 getCachedParsed
+ * mtime 级缓存），再按 agent name 去重（高优先级靠后，Map.set 后者覆盖前者，故最终
+ * 保留最高优先级同名 agent）。
+ *
+ * 输出按 name 码点序排序（KV-cache 契约）：注入段进每 turn system prompt，顺序必须
+ * 与文件系统枚举序（readdir 无契约）解耦——目录内容不变时，session_start / fallback /
+ * resume 任意重建的渲染结果逐字节一致；仅条目增减时文本才变化。
  *
  * 永不抛错——发现本身 fail-safe，单个文件读失败仅记日志。
  */
@@ -117,11 +124,10 @@ export async function discoverAllAgents(
 	for (const resource of resources) {
 		if (!resource.available) continue;
 		try {
-			const content = getCachedFileContent(resource.path) ?? "";
-			const agent = parseAgentFrontmatter(content);
+			const agent = getCachedParsed(resource.path, parseAgentFrontmatter);
 			if (agent) {
 				agentMap.set(agent.name, { ...agent, path: resource.path });
-			} else if (content.trimStart().startsWith("---")) {
+			} else if (startsWithFrontmatter(resource.path)) {
 				// m5（评审 M3/F2 + minor-5）：仅「有 frontmatter 但解析失败」才 warn
 				// （缺 name/description/examples 单条非法致整体 reject）——README 等
 				// 无 frontmatter 的 .md 不刷 warn（每 turn 扫描）。
@@ -137,17 +143,21 @@ export async function discoverAllAgents(
 			);
 		}
 	}
-	return [...agentMap.values()];
+	return sortByCodepoint([...agentMap.values()], (a) => a.name);
 }
 
-/** 转义 XML 特殊字符 */
-function escapeXml(str: string): string {
-	return str
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&apos;");
+/** 码点序排序（显式契约，禁 localeCompare——宿主 locale 差异会破坏跨环境字节一致）。 */
+function sortByCodepoint<T>(items: T[], key: (item: T) => string): T[] {
+	return items.sort((a, b) => {
+		const ka = key(a);
+		const kb = key(b);
+		return ka < kb ? -1 : ka > kb ? 1 : 0;
+	});
+}
+
+/** 内容以 frontmatter 分隔符开头（解析失败才值得 warn 的判据）。 */
+function startsWithFrontmatter(filePath: string): boolean {
+	return (getCachedFileContent(filePath) ?? "").trimStart().startsWith("---");
 }
 
 /**
@@ -159,11 +169,7 @@ function escapeXml(str: string): string {
 export function formatAgentList(agents: AgentEntry[]): string {
 	if (agents.length === 0) return "";
 
-	const lines = [
-		"\n\n<available_subagents>",
-		"The following subagents are available. PRIORITY: when a task involves reading 3+ files, writing 100+ lines, parallel research, or specialized review, delegate to a matching subagent FIRST instead of doing it yourself — this keeps your context focused on orchestration. Do NOT call list to discover available subagents; use list only for running state. When using the subagent tool, ONLY use agent names from this list. If no agent matches your task, pass systemPrompt alongside the agent name to create a dynamic agent.",
-	];
-	for (const agent of agents) {
+	const items = agents.map((agent) => {
 		let block = `  <agent><name>${escapeXml(agent.name)}</name><description>${escapeXml(agent.description)}</description>`;
 		// m5：路由样本（when + examples 正反原样渲染——negative 的 action 由作者写
 		// 「不调用（原因）」，渲染器不硬编码；全部内容 escapeXml 防 XML 注入段破坏）
@@ -179,10 +185,13 @@ export function formatAgentList(agents: AgentEntry[]): string {
 			block += `\n    <examples>\n${exampleLines.join("\n")}\n    </examples>`;
 		}
 		block += `<location>${escapeXml(agent.path)}</location></agent>`;
-		lines.push(block);
-	}
-	lines.push("</available_subagents>");
-	return lines.join("\n");
+		return block;
+	});
+	return renderXmlSection({
+		tag: "available_subagents",
+		guide: "The following subagents are available. PRIORITY: when a task involves reading 3+ files, writing 100+ lines, parallel research, or specialized review, delegate to a matching subagent FIRST instead of doing it yourself — this keeps your context focused on orchestration. Do NOT call list to discover available subagents; use list only for running state. When using the subagent tool, ONLY use agent names from this list. If no agent matches your task, pass systemPrompt alongside the agent name to create a dynamic agent.",
+		items,
+	});
 }
 
 /**

@@ -88,7 +88,7 @@ export function loadSmartContextConfig(): SmartContextConfig {
 
 // ──────────────────────── 门控判定（D5 矩阵） ────────────────────────
 
-// 当前模型 ID 拼接口径单点在 llm-shared（model-switch 同源消费）
+// 当前模型 ID 拼接口径单点在 llm-shared
 export { getCurrentModelId } from "@zhushanwen/pi-llm-shared";
 
 /**

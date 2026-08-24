@@ -41,6 +41,7 @@ import {
 import { killAllSpawnedChildren } from "./execution/session-runner.ts";
 import { SubprocessAgentRunner } from "./execution/subprocess-agent-runner.ts";
 import { WorktreeManager } from "./execution/worktree-manager.ts";
+import { setupModelListInjector } from "./injectors/model-list-injector.ts";
 import { setupSubagentListInjector } from "./injectors/subagent-list-injector.ts";
 import { setupWorkflowListInjector } from "./injectors/workflow-list-injector.ts";
 import { renderBgNotifyMessage } from "./interface/bg-notify-render.ts";
@@ -168,6 +169,7 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
 
   // ════════════════════════════════════════════════════════════
   //  injectors：before_agent_start 注入 <available_subagents> + <available_workflows>
+  //  + <available_provider_models>（模型列表供派发时指定 model 参数；与 subagent/workflow 清单对称）
   //
   //  归位自 unified-hooks（subagent-list-injector）+ 新增 workflow-list-injector。
   //  injector 是 subagent-workflow 的内聚功能（让 LLM 知道有哪些 agent/workflow
@@ -176,6 +178,7 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // ════════════════════════════════════════════════════════════
   setupSubagentListInjector(pi);
   setupWorkflowListInjector(pi);
+  setupModelListInjector(pi);
 
   // 模块级缓存：主 session 的 sessionFile（fork source 解析用）。
   let cachedMainSessionFile: string | undefined;

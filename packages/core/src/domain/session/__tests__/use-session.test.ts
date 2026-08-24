@@ -97,6 +97,7 @@ function makeFixture(opts: { withFlow?: boolean } = {}): Fixture {
     getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
     isHydrated: vi.fn(() => false),
     hydrate: vi.fn(),
+    reconcileHistory: vi.fn(),
     setHistoryTruncated: vi.fn(),
     clearHistoryError: vi.fn(),
     markHistoryFailed: vi.fn(),
@@ -126,10 +127,10 @@ describe('selectSession', () => {
     expect(f.api.switchSession).toHaveBeenCalledTimes(1)
     expect(f.api.switchSession).toHaveBeenCalledWith('sid-1')
     expect(f.store.activeId.value).toBe('sid-1')
-    // hydrate 链路
+    // hydrate 链路（后台 session reconcile：未 hydrate 分支走 reconcileHistory，等价 hydrate）
     expect(f.chat.isHydrated).toHaveBeenCalledWith('sid-1')
     expect(f.chat.getHistory).toHaveBeenCalledTimes(1)
-    expect(f.chat.hydrate).toHaveBeenCalledWith('sid-1', msgs)
+    expect(f.chat.reconcileHistory).toHaveBeenCalledWith('sid-1', msgs)
     expect(f.chat.setHistoryTruncated).toHaveBeenCalledWith('sid-1', true)
     expect(f.chat.clearHistoryError).toHaveBeenCalledWith('sid-1')
     // panel 载入（经 activePanelId 端口）
@@ -148,7 +149,7 @@ describe('selectSession', () => {
 
     await expect(f.session.selectSession('ghost')).rejects.toThrow('not found')
     expect(f.store.activeId.value).toBe('other')
-    expect(f.chat.hydrate).not.toHaveBeenCalled()
+    expect(f.chat.reconcileHistory).not.toHaveBeenCalled()
     expect(f.panel.loadSession).not.toHaveBeenCalled()
     expect(f.navigation.push).not.toHaveBeenCalled()
     f.dispose()
@@ -165,12 +166,41 @@ describe('selectSession', () => {
     f.dispose()
   })
 
-  it('已 hydrate 的 session 不重复拉取历史（幂等守卫）', async () => {
+  it('已 hydrate 的 session 切入时静默刷新（后台 session reconcile，2026-08-22）', async () => {
+    const f = makeFixture()
+    const msgs = [{ id: 'm2' } as never]
+    f.chat.isHydrated.mockReturnValue(true)
+    f.chat.getHistory.mockResolvedValue({ messages: msgs, historyTruncated: false })
+    await f.session.selectSession('sid-1')
+    // 旧幂等守卫已废：后台（agent-managed）session 的 turn 可能在前端不在场时完成，
+    // 切入必须刷新到最新 entries；失败静默（旧数据仍在，下次切入重试）
+    expect(f.chat.getHistory).toHaveBeenCalledTimes(1)
+    expect(f.chat.reconcileHistory).toHaveBeenCalledWith('sid-1', msgs)
+    expect(f.chat.markHistoryFailed).not.toHaveBeenCalled()
+    expect(f.store.activeId.value).toBe('sid-1')
+    f.dispose()
+  })
+
+  it('已 hydrate 切入的尾读 reconcile 同步刷新 truncated 标记（load-more 可恢复）', async () => {
     const f = makeFixture()
     f.chat.isHydrated.mockReturnValue(true)
+    // 场景：hydrate（尾读 truncated=true）→ load-more 前插全量并清标记 → 切走切回，
+    // getHistory 又返回 20-turn 尾读（RPC 失败 fallback）——reconcile 整量替换分区把
+    // 前插历史截回尾窗。truncated 必须重新置 true：load-more 按钮（hasMoreHistory 驱动）
+    // 重显，用户可再次触发恢复；hydrate 锚不被 reconcile 触碰，锚定切分仍定位全量。
+    f.chat.getHistory.mockResolvedValue({ messages: [{ id: 'm2' } as never], historyTruncated: true })
     await f.session.selectSession('sid-1')
-    expect(f.chat.getHistory).not.toHaveBeenCalled()
-    expect(f.store.activeId.value).toBe('sid-1')
+    expect(f.chat.setHistoryTruncated).toHaveBeenCalledWith('sid-1', true)
+    f.dispose()
+  })
+
+  it('已 hydrate 切入的 RPC 全量成功（truncated=false）清除 truncated 标记', async () => {
+    const f = makeFixture()
+    f.chat.isHydrated.mockReturnValue(true)
+    f.chat.getHistory.mockResolvedValue({ messages: [{ id: 'm2' } as never], historyTruncated: false })
+    await f.session.selectSession('sid-1')
+    // 分区已被 reconcile 整量替换为全量 → 无更早历史可加载，标记同步清除
+    expect(f.chat.setHistoryTruncated).toHaveBeenCalledWith('sid-1', false)
     f.dispose()
   })
 })
@@ -308,7 +338,7 @@ describe('loadSessions / retryHistory / renameSession / syncSessionToPanel', () 
     await f.session.retryHistory('s1')
     expect(f.chat.clearHistoryError).toHaveBeenCalledWith('s1')
     expect(f.chat.getHistory).toHaveBeenCalledWith('s1')
-    expect(f.chat.hydrate).toHaveBeenCalledWith('s1', msgs)
+    expect(f.chat.reconcileHistory).toHaveBeenCalledWith('s1', msgs)
     expect(f.chat.setHistoryTruncated).toHaveBeenCalledWith('s1', false)
     expect(f.chat.markHistoryFailed).not.toHaveBeenCalled()
     f.dispose()
@@ -445,6 +475,7 @@ function makeChat(): ChatHydratePort {
     getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
     isHydrated: vi.fn(() => false),
     hydrate: vi.fn(),
+    reconcileHistory: vi.fn(),
     setHistoryTruncated: vi.fn(),
     clearHistoryError: vi.fn(),
     markHistoryFailed: vi.fn(),

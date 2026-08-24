@@ -200,7 +200,7 @@ async function createWSFixture(extensionService?: object): Promise<WSFixture> {
       svc,
       new ConfigService('/tmp', new PiConfigStore()),
       new ModelService(new ModelApiDiscoverer()),
-      extensionService as never | undefined,
+      { extension: extensionService as never | undefined },
     )
     return server
   })
@@ -600,7 +600,7 @@ describe('DF-4: Extension 列表管理', () => {
         new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never),
         new ConfigService('/tmp', new PiConfigStore()),
         new ModelService(new ModelApiDiscoverer()),
-        mockExtensionService as never,
+        { extension: mockExtensionService as never },
       )
       return s
     })
@@ -708,7 +708,7 @@ describe('DF-5: Extension 启用/禁用', () => {
         new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never),
         new ConfigService('/tmp', new PiConfigStore()),
         new ModelService(new ModelApiDiscoverer()),
-        mockExtensionService as never,
+        { extension: mockExtensionService as never },
       )
       return s
     })

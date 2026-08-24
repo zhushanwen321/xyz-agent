@@ -249,8 +249,7 @@ describe('RuntimeServer: bridge request routing', () => {
       sessionService,
       {} as never,
       {} as never,
-      {} as never,
-      pluginService,
+      { extension: {} as never, plugin: pluginService },
     )
   })
 
@@ -291,7 +290,7 @@ describe('RuntimeServer: bridge request routing', () => {
 
       // Re-set services to use the overridden mock
       const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
-      server.setServices(sessionService, {} as never, {} as never, {} as never, pluginService)
+      server.setServices(sessionService, {} as never, {} as never, { extension: {} as never, plugin: pluginService })
       mockSendExtensionUiResponse.mockClear()
 
       await server.handleBridgeRequest('sess-1', 'bridge-req-2', 'bridge:sync', {})
@@ -374,9 +373,7 @@ describe('RuntimeServer: bridge timeout exclusion', () => {
       ss,
       {} as never,
       {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
+      { extension: {} as never, plugin: {} as never },
     )
   })
 

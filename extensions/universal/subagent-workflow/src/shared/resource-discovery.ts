@@ -174,11 +174,49 @@ export function getCachedFileContent(filePath: string): string | null {
   return getCachedFile(filePath)?.content ?? null;
 }
 
+// [perf] 解析结果缓存（KV-cache 稳定性改造）：外层 key = parse 函数身份，内层 key =
+// path，value = { mtimeMs, parsed }。key 含 parse 身份是正确性要求——同一 path 可能被
+// 不同 parse（agent frontmatter vs workflow meta）解析，单层 path key 会跨 parse 类型
+// 互相污染缓存（先 parse 的结果被 as T 断言返回）。用普通 Map 而非 WeakMap：
+// clearFileCache 需全量清空（测试隔离），WeakMap 不可遍历；parse 函数均为模块级
+// 常量，强引用无泄漏。复用 getCachedFile 的 mtime 判变——mtime 未变时跳过 parse
+// （frontmatter YAML 解析是重建发现时最大的可省 CPU 项）。parse 的确定性结果（含
+// null，如 frontmatter 非法）均可缓存：同一 content 必然解析出同一结果。失效与
+// mtimeCache 同步（clearFileCache）。
+const parsedCache = new Map<
+  (content: string) => unknown,
+  Map<string, { mtimeMs: number; parsed: unknown }>
+>();
+
+/**
+ * mtime 级解析结果缓存：mtime 未变返回缓存 parsed，变则经 getCachedFile 取 content
+ * 重新 parse 并缓存。文件不存在/不可读 → null（并驱逐条目）。缓存按 parse 函数隔离
+ * ——同一 path 的不同 parse 互不污染。
+ */
+export function getCachedParsed<T>(filePath: string, parse: (content: string) => T): T | null {
+  const file = getCachedFile(filePath);
+  let perParse = parsedCache.get(parse);
+  if (!file) {
+    perParse?.delete(filePath);
+    return null;
+  }
+  if (!perParse) {
+    perParse = new Map();
+    parsedCache.set(parse, perParse);
+  }
+  const entry = perParse.get(filePath);
+  if (entry && entry.mtimeMs === file.mtimeMs) return entry.parsed as T;
+  const parsed = parse(file.content);
+  perParse.set(filePath, { mtimeMs: file.mtimeMs, parsed });
+  return parsed;
+}
+
 /** 清空（invalidateCache 语义——测试隔离 + mtime 漏判场景手动刷新兜底）。 */
 export function clearFileCache(): void {
   mtimeCache.clear();
   workspaceRootCache.clear();
   manifestCache.clear();
+  for (const perParse of parsedCache.values()) perParse.clear();
 }
 
 export function findWorkspaceRoot(cwd?: string): string {

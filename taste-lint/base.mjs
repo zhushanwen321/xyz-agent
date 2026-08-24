@@ -23,6 +23,7 @@ import noEslintDisable from './rules/no-eslint-disable.mjs';
 import noUnsafeCast from './rules/no-unsafe-cast.mjs';
 import requireDataOwnerAnnotation from './rules/require-data-owner-annotation.mjs';
 import noNonOwnerStoreMutation from './rules/no-non-owner-store-mutation.mjs';
+import noInstanceLevelSessionState from './rules/no-instance-level-session-state.mjs';
 
 export const tastePlugin = {
   meta: { name: 'eslint-plugin-taste' },
@@ -48,6 +49,9 @@ export const tastePlugin = {
     // 误报豁免走登记表 + 行内豁免注释闭环，见各规则 docstring。
     'require-data-owner-annotation': requireDataOwnerAnnotation,
     'no-non-owner-store-mutation': noNonOwnerStoreMutation,
+    // ADR-0049 范式盲区护栏（context-consistency-design D5/G1）：session 事件 handler
+    // 直写组件实例级 ref = 生命周期错位，error 级阻断；豁免走行内登记注释（规则 docstring）。
+    'no-instance-level-session-state': noInstanceLevelSessionState,
   },
 };
 
@@ -97,6 +101,10 @@ export const tasteRules = {
   // R2 store mutation 许可文件直呼。error 级 = 阻断（规则内部自带范围/豁免裁定）。
   'taste/require-data-owner-annotation': 'error',
   'taste/no-non-owner-store-mutation': 'error',
+
+  // ADR-0049 范式盲区护栏（context-consistency-design D5/G1）：session 事件 handler
+  // 直写组件实例级 ref（切 session 丢值/串台）。仅 .vue 生效（规则内自守卫），error 级。
+  'taste/no-instance-level-session-state': 'error',
 };
 
 export default [
@@ -107,6 +115,11 @@ export default [
     rules: tasteRules,
   },
   {
-    ignores: ['node_modules/**', 'dist/**', 'frontend-dist/**', 'frontend/dist/**', 'frontend/node_modules/**', 'frontend/.vite/**', '*.d.ts', '**/*.generated.*', '**/*.test.ts', '**/*.spec.ts'],
+    // [HISTORICAL] `**/__tests__/**/*.ts`（2026-08-23 补）：__tests__ 下的非 *.test.ts
+    // 文件（fixture/helper/setup/impl-token）与 *.test.ts 同属测试代码，测试数据中的
+    // 领域数值（如 smart-context 阈值 200_000）对 no-magic-numbers 是误报——测试豁免
+    // 按文件名维度漏掉了测试基建文件。.vue 测试壳组件（__tests__/**/*.vue）不豁免，
+    // 仍受 no-native-html-elements 等渲染层规则约束。
+    ignores: ['node_modules/**', 'dist/**', 'frontend-dist/**', 'frontend/dist/**', 'frontend/node_modules/**', 'frontend/.vite/**', '*.d.ts', '**/*.generated.*', '**/*.test.ts', '**/*.spec.ts', '**/__tests__/**/*.ts'],
   },
 ];

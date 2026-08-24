@@ -83,8 +83,9 @@ export class ModelService implements IModelService {
    * 到 settings.json）——xyz 不再冗余写一次（D1d）：configService.setDefaultModel 的
    * 全量覆盖写会在 pi 并发写其他字段时把它们回滚，且每次切模型都开双写窗口。
    *
-   * session.state_changed 的广播由 SessionService.switchModel 内部负责（含按新 contextWindow
-   * 重算的用量 + thinkingLevel），本方法不再自己 broadcastSessionState。
+   * session.state_changed 的广播由 SessionService.switchModel 内部负责（含新 modelId +
+   * thinkingLevel；usage 已随 D1 协议收敛移出该帧，经 context.update 单帧贯穿），
+   * 本方法不再自己 broadcastSessionState。
    */
   async switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<void> {
     this.ensureInitialized()

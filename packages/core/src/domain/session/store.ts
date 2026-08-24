@@ -113,8 +113,9 @@ export function createSessionStore() {
    * D1b 合并：view 快照字段整字段覆盖到 SessionSummary 条目——显式提供的字段（值 !==
    * undefined）直接覆盖，含显式空值（owner 声明空即空，''/0 与真值一视同仁）；undefined =
    * 快照未涉及，保留现值。SessionViewSnapshot 的 view-ready 字段中 session store 只托管
-   * 列表展示字段（label/status/modelId/thinkingLevel/tokenCount）；usagePercent/
-   * pendingMessageCount/commands 等归各自消费 store（W15+ 收敛对象），不在本 store 落盘。
+   * 列表展示字段（label/status/modelId/thinkingLevel/tokenCount）；
+   * pendingMessageCount/commands 等归各自消费 store（W15+ 收敛对象），不在本 store 落盘
+   *（usagePercent/inputTokens/contextLimit 已随 D1 协议收敛从 SessionViewSnapshot 删除）。
    *
    * [W15 守卫] 磁盘占位值守卫（#2 空串覆盖事故最后防线）：仅 source === 'scan' 的快照生效——
    * 扫描读不出 modelId/tokenCount，其 ''/0 是占位值而非权威空值，target 已有非空真值时跳过
