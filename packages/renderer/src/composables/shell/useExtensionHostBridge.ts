@@ -66,6 +66,7 @@ import { onCrossSession, onGlobal } from '@/api/events'
 import { onPlugins } from '@/api/domains/plugin'
 import * as transport from '@/api/transport'
 import { useToast } from '@/composables/useToast'
+import { buildSessionLocator, shouldShowSessionNotify } from './notify-toast'
 import type { ContributionRecord } from '@xyz-agent/core'
 
 /** 把 renderer 的 WS 消息流（events 通道的 plugin:/extension: 下行）适配成 PluginMessageSource。 */
@@ -366,15 +367,19 @@ export function initExtensionHostBridge(app: App): {
 
   // NotificationHostController（DM3 消费端补齐）：订阅同一 bus 的 6 类通知/生命周期事件。
   // toast 经 deps 注入——core 零 UI 依赖，壳用 useToast（模块级单例，命令式 API）实现 showToast。
-  // level 映射对齐旧线 useExtensionNotify（error→error / warn|warning→warning / 其余→info）。
+  // level 映射对齐旧线 useExtensionNotify（error→error / warn|warning→warning / 其余→info）；
+  // sessionId 经 notify-toast 组装定位行 + 前台/后台分级过滤（store 惰性解析：bridge 装配
+  // 先于 app.use(createPinia)，回调触发时 pinia 已激活）。
   const { error: toastError, info: toastInfo, warning: toastWarning } = useToast()
   const notificationController = new NotificationHostController({
     bus,
     deps: {
-      showToast: (message, level) => {
-        if (level === 'error') toastError(message)
-        else if (level === 'warning' || level === 'warn') toastWarning(message)
-        else toastInfo(message)
+      showToast: (message, level, sessionId) => {
+        if (!shouldShowSessionNotify(sessionId, level)) return
+        const sessionLabel = buildSessionLocator(sessionId) ?? undefined
+        if (level === 'error') toastError(message, { sessionLabel })
+        else if (level === 'warning' || level === 'warn') toastWarning(message, { sessionLabel })
+        else toastInfo(message, { sessionLabel })
       },
       log: console.warn,
     },
