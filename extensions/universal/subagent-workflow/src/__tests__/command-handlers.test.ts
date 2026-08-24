@@ -41,8 +41,8 @@ import { abortRun } from "../orchestration/lifecycle.ts";
 /** 最小 ctx mock：只需 mode/hasUI/ui.notify（handler RPC 分支唯一依赖）。 */
 type CtxMock = Pick<ExtensionCommandContext, "mode" | "hasUI" | "ui">;
 
-/** ExtensionAPI 的最小子集：仅需 registerCommand 捕获 handler。 */
-type PiMock = Pick<ExtensionAPI, "registerCommand">;
+/** ExtensionAPI 的最小子集：registerCommand 捕获 handler + sendMessage 捕获留痕调用。 */
+type PiMock = Pick<ExtensionAPI, "registerCommand" | "sendMessage">;
 
 /** registerCommand 第二参数形状（{ description, handler }）。 */
 interface CommandDef {
@@ -147,6 +147,184 @@ describe("registerSubagentsCommand — RPC 分支 dispatch", () => {
       "subagents execution runtime not ready (session not started)",
       "error",
     );
+  });
+});
+
+// ============================================================
+// /subagents handler — message/start 分支（GUI 定向消息通道，设计 §3.3.3）
+// ============================================================
+
+describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () => {
+  let captured: Record<string, CommandDef>;
+  let pi: PiMock;
+  let ctx: CtxMock;
+  let sendMessageMock: ReturnType<typeof vi.fn>;
+  const mockedGetService = vi.mocked(getSubagentService);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    captured = {};
+    sendMessageMock = vi.fn();
+    pi = {
+      registerCommand: vi.fn((name: string, def: CommandDef) => {
+        captured[name] = def;
+      }),
+      sendMessage: sendMessageMock,
+    } as unknown as PiMock;
+    ctx = {
+      mode: "rpc",
+      hasUI: true,
+      ui: { notify: vi.fn() } as unknown as CtxMock["ui"],
+    };
+  });
+
+  async function runHandler(argsStr: string): Promise<void> {
+    registerSubagentsCommand(pi as ExtensionAPI);
+    const def = captured["subagents"];
+    expect(def).toBeDefined();
+    await def.handler(argsStr, ctx as ExtensionCommandContext);
+  }
+
+  /** chatMode record mock（messageHandler 经 getRecordForAction 取到）。 */
+  function makeRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: "sa-1",
+      slug: "build-api",
+      chatMode: true,
+      status: "running",
+      ...overrides,
+    };
+  }
+
+  it("message 正常 → messageHandler 接线（deliverMessage 收到还原后文本）+ 留痕 entry", async () => {
+    const record = makeRecord();
+    const deliverMessage = vi.fn();
+    mockedGetService.mockReturnValue({
+      getRecordForAction: vi.fn(() => record),
+      deliverMessage,
+    } as never);
+
+    // 转义协议：字面 \n 传输，解析侧还原（P3）
+    await runHandler("message sa-1 第一条消息\\n带换行");
+
+    // 真实 messageHandler 跑通：deliverMessage(record, 还原后文本, interrupt=false)
+    expect(deliverMessage).toHaveBeenCalledWith(record, "第一条消息\n带换行", false);
+    // 留痕：subagent-directive custom_message（§3.3.3——customType/content/details 契约）
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    const [msg, options] = sendMessageMock.mock.calls[0] as [
+      { customType: string; content: string; display: boolean; details: unknown },
+      unknown,
+    ];
+    expect(msg.customType).toBe("subagent-directive");
+    expect(msg.content).toBe("第一条消息\n带换行");
+    expect(msg.display).toBe(false);
+    expect(msg.details).toEqual({ subagentId: "sa-1", slug: "build-api", direction: "user" });
+    // 不传 triggerTurn（留痕不唤醒，§3.3.8）——options 整体缺席而非 { triggerTurn: false }
+    expect(options).toBeUndefined();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Message delivered to subagent build-api (sa-1)",
+      "info",
+    );
+  });
+
+  it("message 目标不存在（getRecordForAction throw）→ warning 文案，不留痕", async () => {
+    mockedGetService.mockReturnValue({
+      getRecordForAction: vi.fn(() => {
+        throw new Error('No subagent record with id "sa-x"');
+      }),
+      deliverMessage: vi.fn(),
+    } as never);
+
+    await runHandler("message sa-x hi");
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      'Failed to message subagent sa-x: No subagent record with id "sa-x"',
+      "warning",
+    );
+    // 失败不留痕（GUI 按 toast 错误处理，不产生假成功 entry）
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("message 缺 recordId → Usage warning 指明缺什么，不触 service", async () => {
+    const deliverMessage = vi.fn();
+    mockedGetService.mockReturnValue({ deliverMessage } as never);
+
+    await runHandler("message");
+
+    expect(deliverMessage).not.toHaveBeenCalled();
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Usage: /subagents message <recordId> <text> — recordId is missing",
+      "warning",
+    );
+  });
+
+  it("message 缺 text → Usage warning 指明缺 text", async () => {
+    await runHandler("message sa-1");
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Usage: /subagents message <recordId> <text> — text is missing",
+      "warning",
+    );
+  });
+
+  it("start 正常 → startHandler 接线（conversation:true 固定）+ 留痕 entry 带 subagentId/slug", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      subagentId: "sa-new",
+      sessionFile: "/tmp/s.jsonl",
+      details: { slug: "fix-login" },
+    });
+    mockedGetService.mockReturnValue({ execute } as never);
+
+    await runHandler("start fix-login 修复登录页\\n并写测试");
+
+    // conversation:true 是 GUI 定向对话场景的固定参数（§3.3.3，可续聊）
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task: "修复登录页\n并写测试",
+        slug: "fix-login",
+        conversation: true,
+      }),
+    );
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    const [msg, options] = sendMessageMock.mock.calls[0] as [
+      { customType: string; content: string; details: unknown },
+      unknown,
+    ];
+    expect(msg.customType).toBe("subagent-directive");
+    expect(msg.content).toBe("修复登录页\n并写测试");
+    // start 的 subagentId 来自 startHandler 返回（StartHandlerResult.subagentId）
+    expect(msg.details).toEqual({ subagentId: "sa-new", slug: "fix-login", direction: "user" });
+    expect(options).toBeUndefined();
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Started subagent fix-login (sa-new)", "info");
+  });
+
+  it("start 缺 task → Usage warning 指明缺 task，不触 service", async () => {
+    const execute = vi.fn();
+    mockedGetService.mockReturnValue({ execute } as never);
+
+    await runHandler("start fix-login");
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Usage: /subagents start <slug> <task> — task is missing",
+      "warning",
+    );
+  });
+
+  it("start service.execute 抛错（slug 超长等）→ warning 文案，不留痕", async () => {
+    mockedGetService.mockReturnValue({
+      execute: vi.fn().mockRejectedValue(new Error("slug must be ≤35 chars")),
+    } as never);
+
+    await runHandler("start x task text");
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Failed to start subagent x: slug must be ≤35 chars",
+      "warning",
+    );
+    expect(sendMessageMock).not.toHaveBeenCalled();
   });
 });
 

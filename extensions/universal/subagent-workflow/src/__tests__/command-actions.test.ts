@@ -58,6 +58,109 @@ describe("parseSubagentRpcCommand", () => {
 });
 
 // ============================================================
+// parseSubagentRpcCommand — message/start（GUI 定向消息通道，设计 §3.3.3）
+// ============================================================
+
+describe("parseSubagentRpcCommand message/start（定向消息通道）", () => {
+  it("message + recordId + text（含空格）→ 剩余全量保留空格", () => {
+    expect(parseSubagentRpcCommand("message sa-1 展开讲讲 这个方案")).toEqual({
+      action: "message",
+      recordId: "sa-1",
+      text: "展开讲讲 这个方案",
+    });
+  });
+
+  it("message text 含引号 → 原样保留（不解析引号语义）", () => {
+    expect(parseSubagentRpcCommand('message sa-1 引用 "so called" 原文')).toEqual({
+      action: "message",
+      recordId: "sa-1",
+      text: '引用 "so called" 原文',
+    });
+  });
+
+  it("message 换行转义：字面 \\n（两字符）还原为真实换行（P3 转义协议）", () => {
+    // 源码里 "\\n" = 字面反斜杠+n；解析产物含真实换行 "\n"
+    expect(parseSubagentRpcCommand("message sa-1 第一行\\n第二行")).toEqual({
+      action: "message",
+      recordId: "sa-1",
+      text: "第一行\n第二行",
+    });
+  });
+
+  it("message 多个换行转义 + 空格混合 → 还原为多行文本", () => {
+    expect(parseSubagentRpcCommand("message sa-1 标题\\n\\n正文 内容")).toEqual({
+      action: "message",
+      recordId: "sa-1",
+      text: "标题\n\n正文 内容",
+    });
+  });
+
+  it("message 缺 recordId → message-missing-args (missing: recordId)", () => {
+    expect(parseSubagentRpcCommand("message")).toEqual({
+      action: "message-missing-args",
+      missing: "recordId",
+    });
+  });
+
+  it("message 缺 text（recordId 后无内容）→ message-missing-args (missing: text)", () => {
+    expect(parseSubagentRpcCommand("message sa-1")).toEqual({
+      action: "message-missing-args",
+      missing: "text",
+    });
+  });
+
+  it("message text 纯字面换行（还原后为空白）→ missing text（先还原再判空）", () => {
+    expect(parseSubagentRpcCommand("message sa-1 \\n")).toEqual({
+      action: "message-missing-args",
+      missing: "text",
+    });
+  });
+
+  it("message verb 后多空格再 recordId → trim 后正确解析", () => {
+    expect(parseSubagentRpcCommand("message   sa-x   hello world")).toEqual({
+      action: "message",
+      recordId: "sa-x",
+      text: "hello world",
+    });
+  });
+
+  it("start + slug + task（含空格）→ 剩余全量", () => {
+    expect(parseSubagentRpcCommand("start fix-login 修复登录页 并写测试")).toEqual({
+      action: "start",
+      slug: "fix-login",
+      task: "修复登录页 并写测试",
+    });
+  });
+
+  it("start task 换行转义 → 还原为真实换行", () => {
+    expect(parseSubagentRpcCommand("start my-slug 任务一\\n任务二")).toEqual({
+      action: "start",
+      slug: "my-slug",
+      task: "任务一\n任务二",
+    });
+  });
+
+  it("start 缺 slug → start-missing-args (missing: slug)", () => {
+    expect(parseSubagentRpcCommand("start")).toEqual({
+      action: "start-missing-args",
+      missing: "slug",
+    });
+  });
+
+  it("start 缺 task → start-missing-args (missing: task)", () => {
+    expect(parseSubagentRpcCommand("start fix-login")).toEqual({
+      action: "start-missing-args",
+      missing: "task",
+    });
+  });
+
+  it("message/start 与 cancel 共存：未知 verb 仍落 noop（回归保护）", () => {
+    expect(parseSubagentRpcCommand("pause sa-1")).toEqual({ action: "noop" });
+    expect(parseSubagentRpcCommand("restart sa-1")).toEqual({ action: "noop" });
+  });
+});
+
+// ============================================================
 // parseWorkflowRpcCommand
 // ============================================================
 

@@ -8,10 +8,15 @@
  * 设计为纯函数（无 ctx / service 依赖），便于独立单测，handler 只做薄分发。
  */
 
-/** /subagents RPC action 判别联合。 */
+/** /subagents RPC action 判别联合。message/start 为 GUI 定向消息通道（设计 §3.3.3，
+ *  仅 RPC 分支消费；missing-args 携带 missing 字段供 handler 输出指明缺什么的 usage）。 */
 export type SubagentRpcAction =
   | { action: "cancel"; recordId: string }
   | { action: "cancel-missing-id" }
+  | { action: "message"; recordId: string; text: string }
+  | { action: "message-missing-args"; missing: "recordId" | "text" }
+  | { action: "start"; slug: string; task: string }
+  | { action: "start-missing-args"; missing: "slug" | "task" }
   | { action: "noop" };
 
 /** /workflows RPC action 判别联合。 */
@@ -47,24 +52,79 @@ function isRemovedLifecycleVerb(verb: string): verb is "pause" | "resume" {
 }
 
 /**
+ * 字面 `\n`（反斜杠 + n 两字符）还原为真实换行。
+ *
+ * 转义协议（设计 §3.3.3 / 探针 P3）：composer 多行输入在 client.prompt 传输前把
+ * 换行编码为字面 \n 两字符（命令保持单行），extension 解析侧在此还原。协议只定义
+ * 换行一种转义——文本中原生的反斜杠+n 序列会被同样还原，这是协议层接受的权衡
+ * （降级方案 base64 编码未启用）。
+ */
+function decodeNewlineEscapes(s: string): string {
+  return s.replaceAll("\\n", "\n");
+}
+
+/**
+ * 提取首个非空白 token 与其后剩余原文。
+ *
+ * 与 split(/\s+/) 不同：rest 保留 token 之后的全部原文（含空格/引号/换行转义），
+ * 供 message text / start task 的「剩余全量到字符串末尾」语义使用（设计 §3.3.3——
+ * pi 以首个空格拆命令名后 args 为其后全文，文本内的空格/引号必须原样保留）。
+ * rest 跳过 token 后的分隔空白（分隔符不属文本），但保留其后全部内容原样。
+ */
+function splitFirstToken(s: string): { token: string; rest: string } | null {
+  const head = s.trimStart();
+  if (!head) return null;
+  const idx = head.search(/\s/);
+  if (idx === -1) return { token: head, rest: "" };
+  return { token: head.slice(0, idx), rest: head.slice(idx + 1).trimStart() };
+}
+
+/**
  * 解析 /subagents RPC 命令字符串。
  *
  * 支持格式：
  * - `cancel <id>` → { action: "cancel", recordId }
  * - `cancel`（无 id）→ { action: "cancel-missing-id" }
+ * - `message <recordId> <text...>` → { action: "message", recordId, text }
+ *   text 为第二 token 后的剩余全量（含空格/引号原样；字面 \n 还原为换行——composer
+ *   定向消息经此协议编码，设计 §3.3.3）
+ * - `message`（缺 recordId 或 text 为空白）→ { action: "message-missing-args", missing }
+ * - `start <slug> <task...>` → { action: "start", slug, task }（task 同 text 转义协议）
+ * - `start`（缺 slug 或 task 为空白）→ { action: "start-missing-args", missing }
  * - 其他（空 / 未知 action / 无参）→ { action: "noop" }
  *
- * noop 表示 GUI 端无对应程序化操作（GUI 已在 CommandPopover 屏蔽 /subagents 入口，
- * 此分支仅兜底手动 prompt）。
+ * missing-args 携带 missing 字段（缺哪个参数），handler 据此输出可操作的 usage
+ * 错误（全局规则：错误信息指向恢复动作）。noop 表示 GUI 端无对应程序化操作（GUI
+ * 已在 CommandPopover 屏蔽 /subagents 入口，此分支仅兜底手动 prompt）。
  */
 export function parseSubagentRpcCommand(argsStr: string): SubagentRpcAction {
-  const args = argsStr.trim().split(/\s+/).filter(Boolean);
-  if (args.length === 0) return { action: "noop" };
+  const first = splitFirstToken(argsStr);
+  if (!first) return { action: "noop" };
 
-  const [verb, recordId] = args;
+  const { token: verb, rest } = first;
   if (verb === "cancel") {
-    if (!recordId) return { action: "cancel-missing-id" };
-    return { action: "cancel", recordId };
+    const idToken = splitFirstToken(rest);
+    if (!idToken) return { action: "cancel-missing-id" };
+    return { action: "cancel", recordId: idToken.token };
+  }
+  if (verb === "message" || verb === "start") {
+    // 第二 token：message→recordId / start→slug；其后剩余全量（还原换行转义）为 text/task
+    const second = splitFirstToken(rest);
+    if (!second) {
+      return verb === "message"
+        ? { action: "message-missing-args", missing: "recordId" }
+        : { action: "start-missing-args", missing: "slug" };
+    }
+    // 先还原再判空：纯字面 \n 还原后是真实换行（whitespace），应在解析层拦截为缺参
+    const payload = decodeNewlineEscapes(second.rest);
+    if (!payload.trim()) {
+      return verb === "message"
+        ? { action: "message-missing-args", missing: "text" }
+        : { action: "start-missing-args", missing: "task" };
+    }
+    return verb === "message"
+      ? { action: "message", recordId: second.token, text: payload }
+      : { action: "start", slug: second.token, task: payload };
   }
   return { action: "noop" };
 }
