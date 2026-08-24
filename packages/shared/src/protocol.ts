@@ -662,7 +662,7 @@ export type ServerMessageType =
   | 'session.traceEntries' | 'session.traceEntryAppended'
   // session-trace（design §3.1 失败路径）：现取当前 system prompt 的 reply（当前值非历史）。
   | 'session.currentSystemPrompt'
-  | 'subagent.stream_delta'
+  | 'subagent.stream_delta' | 'subagent.directive'
   | 'message.message_start' | 'message.text_delta' | 'message.thinking_delta'
   | 'message.thinking_start' | 'message.thinking_end'
   | 'message.tool_call_start' | 'message.tool_call_end'
@@ -1007,6 +1007,13 @@ export interface ServerMessageMapBase {
   // pi 扩展层合并 text_delta 后经 ctx.ui.setWidget("subagent-stream-<recordId>", lines) 转发，
   // runtime EventAdapter 捕获后转为此 WS 帧。lines 是累积全文（split('\n')），undefined = 终态清除。
   'subagent.stream_delta': { sessionId: string; recordId: string; lines: string[] | undefined }
+  // subagent.directive：用户定向消息的 live 广播（@ subagent chip 发送 → extension 留痕
+  // custom_message entry → pi message_end{role:'custom'} → 本广播，设计 §3.3.3a live 链路）。
+  // 带 sessionId（架构约定 #7 session 隔离）；renderer（U2b）聊天流据此插定向气泡
+  // （「→ @slug：text」特殊样式，非 user/assistant 气泡）。reload 链路（mapSessionEntries
+  // 对该 customType 覆写 display:true）产出同字段的 custom system message，字段解析 SSOT =
+  // shared.parseSubagentDirective（live ≡ reload，关键规则 9）。
+  'subagent.directive': { sessionId: string; subagentId: string; slug: string; direction: 'user'; text: string }
   // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）。
   'app.info': { appVersion: string; piVersion: string }
   // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
