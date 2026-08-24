@@ -6,6 +6,11 @@
  *
  * 6 个 action：create / send / history / status / list / abort。
  * 响应通过 sendExtensionUiResponse 回写 pi（select value 通道）。
+ *
+ * [架构备注，PR #189 review] 本 handler 承载业务编排（归属校验 / list 过滤 / history
+ * tailTurns 截断），与 transport「纯路由」定义有偏差；迁移 services/session/（interface
+ * 经 ports 暴露）是既定方向、待后续 wave。当前留在 transport 与 Quota/Preset handler
+ * 先例一致。
  */
 import type { ISessionService } from '../interfaces.js'
 import type { SessionDeliveryRegistry } from '../services/session/session-delivery-registry.js'
@@ -297,18 +302,18 @@ export class SessionManagerHandler {
     return { messages, truncated }
   }
 
-  /** status 分支：从 getSummary 组装（session 不存在时 status='not_found'） */
+  /**
+   * status 分支：从 getSummary 组装。目标不存在**或存在但不归属发起方**一律
+   * `{status:'not_found'}`——「不可见 = 不存在」（PR #189 review 探测面折叠：
+   * 对不归属目标 throw error 会向非属主泄露该 sessionId 的存在性，与 list 的
+   * 过滤语义（不可见 = 不出现在结果里）不对称，非属主可借此探测任意 sessionId）。
+   */
   private async handleStatus(parentSessionId: string, params: SessionManagerStatusParams): Promise<SessionManagerStatusResult> {
     const { sessionId } = params
     const summary = this.opts.sessionService.getSummary(sessionId)
 
-    if (!summary) {
+    if (!summary || !this.isOwnedBy(parentSessionId, sessionId)) {
       return { status: 'not_found' }
-    }
-    // 归属校验放在 not_found 判定之后：目标存在但不归属发起方时报错而非 not_found，
-    // 与 list 的过滤条件对称（防跨 session 探测/接管）
-    if (!this.isOwnedBy(parentSessionId, sessionId)) {
-      throw new Error('target session is not managed by this agent')
     }
 
     return {

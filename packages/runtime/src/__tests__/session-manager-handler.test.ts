@@ -246,7 +246,7 @@ describe('SessionManagerHandler', () => {
         expect(getHistory).not.toHaveBeenCalled()
       })
 
-      it('status 目标存在但不归属 → error（非 not_found，与 list 过滤条件对称）', async () => {
+      it('status 目标存在但不归属 → not_found（探测面折叠：不泄露存在性，与 list「不可见=不存在」对齐）', async () => {
         const userSummary = makeSessionSummary({ id: 'user-s1', spawnSource: 'user' })
         const opts = makeMockOptions({
           sessionService: makeMockSessionService({ getSummary: makeOwnedFactory(userSummary) }),
@@ -256,7 +256,8 @@ describe('SessionManagerHandler', () => {
         await handler.handle('req-1', 'sid-parent', 'status', { sessionId: 'user-s1' })
 
         const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
-        expect(response.error).toBe(FOREIGN_ERROR)
+        expect(response.status).toBe('not_found')
+        expect(response.error).toBeUndefined()
       })
 
       it('abort 目标不属于发起方 → error，abort 不被调用', async () => {
@@ -523,7 +524,7 @@ describe('SessionManagerHandler', () => {
       const opts = makeMockOptions()
       const handler = new SessionManagerHandler(opts)
 
-      await handler.handle('req-1', 'sid-parent', 'unknown_action' as any, {})
+      await handler.handle('req-1', 'sid-parent', 'unknown_action' as never, {})
 
       expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith('sid-parent', 'req-1', null, 'select')
     })
