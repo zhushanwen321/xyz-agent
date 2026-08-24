@@ -92,7 +92,13 @@ function makeHarness(overrides: {
     }),
     sendMessage: vi.fn(),
     getHistory: vi.fn(),
-    getSummary: vi.fn(),
+    // 归属校验材料：s1 是发起方 parent-1 的 managed child（真实路径 getSummary 返回
+    // toSummary 透传的 spawnSource/parentAgentSessionId）
+    getSummary: vi.fn().mockImplementation((sid: string) =>
+      sid === 's1'
+        ? { id: 's1', status: 'active', spawnSource: 'agent', parentAgentSessionId: 'parent-1' }
+        : undefined,
+    ),
     listPersistedSessions: vi.fn().mockReturnValue([]),
     abort: vi.fn(),
   } as unknown as ISessionService

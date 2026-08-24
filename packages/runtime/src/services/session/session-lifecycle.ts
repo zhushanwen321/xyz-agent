@@ -465,45 +465,65 @@ export class SessionLifecycle {
     this.sessionStore.refreshAll()
   }
 
+  /**
+   * active session 删除路径的主文件清理。
+   *
+   * 为什么单独成方法：原 delete 内联此块时，与 scanned 分支的 sidecar 清理逻辑重复，
+   * 使 delete 圈复杂度 16 超阈值 15（metrics-gate FAIL）。提取后两分支共用
+   * purgeSessionSidecars，delete 回归纯编排。
+   *
+   * 语义（与提取前 `sessionFilePath && existsSync` 整块守卫等价）：主文件存在时
+   * trash + 清理全部关联产物；主文件不存在（外部已删）时**整体零动作**——
+   * 与 scanned 分支「无条件清孤儿 sidecar」的行为差异见 delete 的 else 分支注释。
+   */
+  private async purgeActiveSessionFile(filePath: string): Promise<void> {
+    if (!existsSync(filePath)) return
+    await this.sessionStore.trash(filePath)
+    this.purgeSessionSidecars(filePath)
+  }
+
+  /**
+   * 清理 session 主文件的全部关联产物（delete 是唯一清理点）。
+   *
+   * active / scanned 两分支共用：原先两处各内联一份完全相同的清理序列，
+   * 是 delete 圈复杂度超阈的主要来源。
+   *
+   * best-effort 语义：sidecar unlink 失败不阻塞主流程（孤儿 sidecar 无害，
+   * 强失败会掩盖删除本身的成功）。
+   */
+  private purgeSessionSidecars(filePath: string): void {
+    // 清理 sidecar（删除失败不阻塞主流程）
+    try { unlinkSync(filePath + '.meta.json') } catch { void 0 }
+    // 清理 preset 绑定 sidecar（设计文档 §4，delete 是唯一清理点）
+    try { unlinkSync(filePath + '.preset.json') } catch { void 0 }
+    try { unlinkSync(filePath + '.project.json') } catch { void 0 }
+    try { unlinkSync(filePath + '.handoff.json') } catch { void 0 }
+    // 清理 agent binding sidecar（agent-managed-session；delete 是唯一清理点，防孤儿 sidecar）
+    try { unlinkSync(filePath + '.agent.json') } catch { void 0 }
+    // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
+    cleanupMigrateResidues(filePath)
+    // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
+    // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
+    this.sessionStore.invalidateMetaCache(filePath)
+  }
+
   async delete(sessionId: string): Promise<void> {
     const session = this.svc.getSession(sessionId)
     if (session) {
       this.svc.detachSession(sessionId)
       await this.pm.destroySession(sessionId)
       this.svc.removeSessionEntry(sessionId)
-      if (session.sessionFilePath && existsSync(session.sessionFilePath)) {
-        await this.sessionStore.trash(session.sessionFilePath)
-        // 清理 sidecar（删除失败不阻塞主流程）
-        try { unlinkSync(session.sessionFilePath + '.meta.json') } catch { void 0 }
-        // 清理 preset 绑定 sidecar（设计文档 §4，delete 是唯一清理点）
-        try { unlinkSync(session.sessionFilePath + '.preset.json') } catch { void 0 }
-        try { unlinkSync(session.sessionFilePath + '.project.json') } catch { void 0 }
-        try { unlinkSync(session.sessionFilePath + '.handoff.json') } catch { void 0 }
-        // 清理 agent binding sidecar（agent-managed-session；delete 是唯一清理点，防孤儿 sidecar）
-        try { unlinkSync(session.sessionFilePath + '.agent.json') } catch { void 0 }
-        // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
-        cleanupMigrateResidues(session.sessionFilePath)
-        // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
-        // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
-        this.sessionStore.invalidateMetaCache(session.sessionFilePath)
+      if (session.sessionFilePath) {
+        await this.purgeActiveSessionFile(session.sessionFilePath)
       }
     } else {
       const target = this.svc.findScannedSession(sessionId)
       if (!target) throw new Error(`Session ${sessionId} not found`)
+      // 与 active 分支的行为差异（既有语义，保持）：主文件不存在（扫描 stale）时仅跳过
+      // trash，孤儿 sidecar 仍无条件清理——不把 existsSync 折进 purgeSessionSidecars，
+      // 否则 active 分支「文件不存在则整体零动作」的语义会被顺带改掉。
       if (existsSync(target.filePath)) await this.sessionStore.trash(target.filePath)
-      // 清理 sidecar（删除失败不阻塞主流程）
-      try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
-      // 清理 preset 绑定 sidecar（设计文档 §4，delete 是唯一清理点）
-      try { unlinkSync(target.filePath + '.preset.json') } catch { void 0 }
-      try { unlinkSync(target.filePath + '.project.json') } catch { void 0 }
-      try { unlinkSync(target.filePath + '.handoff.json') } catch { void 0 }
-      // 清理 agent binding sidecar（同上，scanned 分支）
-      try { unlinkSync(target.filePath + '.agent.json') } catch { void 0 }
-      // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
-      cleanupMigrateResidues(target.filePath)
-      // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
-      // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
-      this.sessionStore.invalidateMetaCache(target.filePath)
+      this.purgeSessionSidecars(target.filePath)
     }
     // wave:perf-w26（D9-1 delete 失效点）：session 文件已 trash，目录 TTL 快照 1s 内仍含
     // 已删条目——显式失效，删除后立即从侧栏列表消失（05 文档 V5 验收）。

@@ -115,6 +115,11 @@ export default [
     rules: tasteRules,
   },
   {
-    ignores: ['node_modules/**', 'dist/**', 'frontend-dist/**', 'frontend/dist/**', 'frontend/node_modules/**', 'frontend/.vite/**', '*.d.ts', '**/*.generated.*', '**/*.test.ts', '**/*.spec.ts'],
+    // [HISTORICAL] `**/__tests__/**/*.ts`（2026-08-23 补）：__tests__ 下的非 *.test.ts
+    // 文件（fixture/helper/setup/impl-token）与 *.test.ts 同属测试代码，测试数据中的
+    // 领域数值（如 smart-context 阈值 200_000）对 no-magic-numbers 是误报——测试豁免
+    // 按文件名维度漏掉了测试基建文件。.vue 测试壳组件（__tests__/**/*.vue）不豁免，
+    // 仍受 no-native-html-elements 等渲染层规则约束。
+    ignores: ['node_modules/**', 'dist/**', 'frontend-dist/**', 'frontend/dist/**', 'frontend/node_modules/**', 'frontend/.vite/**', '*.d.ts', '**/*.generated.*', '**/*.test.ts', '**/*.spec.ts', '**/__tests__/**/*.ts'],
   },
 ];

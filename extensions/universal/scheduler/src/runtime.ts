@@ -14,6 +14,8 @@ import type {
 } from './types.js'
 
 const MAX_TASKS = 50
+// 入队防重标记 TTL（合批非首条任务无终态回调，过期后放行重投；10 min >> 合批窗口）
+const QUEUE_DEDUPE_TTL_MS = 10 * 60 * 1000
 const RATE_LIMIT_PER_MINUTE = 6
 const TICK_INTERVAL_MS = 30_000
 const DEFAULT_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
@@ -38,6 +40,13 @@ export class SchedulerRuntime {
   private readonly isCtxStale: (() => boolean) | undefined
   // R3-S1：同任务 dispatch 在途标记（Set<taskId>），见 dispatchTask 注释
   private readonly dispatchesInFlight = new Set<string>()
+  // 入队防重标记（Map<taskId, enqueuedAt>）：非 force 任务 send 进 delivery 内核后、
+  // 终态回调（handleSettled）前，nextRunAt 未推进——tick step2 会按 `now >= nextRunAt`
+  // 重新置 pending，若无此标记，agent busy 的每个 tick 都会再压一份同 prompt 副本进队列
+  // （合批后重复注入）。入队置位、delivered/rejected 清除；任务删除（delete/过期）同步清除。
+  // TTL 兜底：合批投递时 onSettled 只带首条 dedupeKey，非首条任务收不到终态回调——
+  // 标记过期后允许重投，保持 at-least-once（与旧「nextRunAt 未推进下 tick 重投」等价）。
+  private readonly queuedInDeliveryAt = new Map<string, number>()
   // delivery handle（装配点注入；非 force 任务走内核队列）
   private delivery: DeliveryHandle | undefined
 
@@ -167,6 +176,7 @@ export class SchedulerRuntime {
 
   deleteTask(id: string): boolean {
     const deleted = this.tasks.delete(id)
+    if (deleted) this.queuedInDeliveryAt.delete(id)
     if (deleted) {
       this.appendEntrySafe({ op: 'delete', taskId: id })
     }
@@ -245,6 +255,7 @@ export class SchedulerRuntime {
     for (const [id, task] of this.tasks) {
       if (task.expiresAt && now >= task.expiresAt) {
         this.tasks.delete(id)
+        this.queuedInDeliveryAt.delete(id)
         this.appendEntrySafe({ op: 'delete', taskId: id })
       }
     }
@@ -320,6 +331,11 @@ export class SchedulerRuntime {
       return this.dispatchDirect(task)
     }
 
+    // 已在内核队列中（入队后未终态且未过 TTL）——step2 会按未推进的 nextRunAt 重新置
+    // pending，此处拦截防重复入队（见 queuedInDeliveryAt 字段注释）
+    const queuedAt = this.queuedInDeliveryAt.get(task.id)
+    if (queuedAt !== undefined && this.backend.now() - queuedAt < QUEUE_DEDUPE_TTL_MS) return false
+
     // 非 force 任务走 delivery 内核（park 模式：busy 入队等下次 tick flush）
     return this.dispatchViaDelivery(task)
   }
@@ -367,16 +383,20 @@ export class SchedulerRuntime {
     })
 
     // send() 不 throw（park 模式下入队即返回）。
-    // 入队后立即清除 pending（已移交 delivery 内核管理，下个 tick 不再重复 dispatch）。
+    // 入队即挂防重标记 + 计入速率限制（nextRunAt 要等 delivered 后才推进，期间 step2
+    // 会持续重标 pending——防重标记拦截重复入队，速率记账覆盖入队侧消耗）。
     // 成功/失败记账由 onSettled 回调异步处理。
+    this.queuedInDeliveryAt.set(task.id, this.backend.now())
+    this.dispatchTimestamps.push(this.backend.now())
     task.pending = false
     return true
   }
 
   /**
    * dispatch 成功后的状态更新与持久化（dispatchDirect 成功后、onSettled delivered 后共用）。
+   * countRate=false 时不再计速率（delivery 路径入队时已计入，delivered 再计会双算）。
    */
-  private async onDispatchSuccess(task: ScheduledTask): Promise<boolean> {
+  private async onDispatchSuccess(task: ScheduledTask, countRate = true): Promise<boolean> {
     const now = this.backend.now()
     task.runCount++
     task.lastRunAt = now
@@ -407,7 +427,7 @@ export class SchedulerRuntime {
       }
     }
 
-    this.dispatchTimestamps.push(now)
+    if (countRate) this.dispatchTimestamps.push(now)
     return true
   }
 
@@ -425,12 +445,14 @@ export class SchedulerRuntime {
    */
   handleSettled(msg: DeliveryMessage, outcome: 'delivered' | 'rejected'): void {
     const taskId = msg.dedupeKey
+    // 防重标记先清（任务可能已被删除，反查未命中也要清）
+    if (taskId !== undefined) this.queuedInDeliveryAt.delete(taskId)
     const task = taskId !== undefined ? this.tasks.get(taskId) : undefined
     if (!task) return // 任务已被删除（once 成功后删）或非 scheduler 发出的消息
 
     if (outcome === 'delivered') {
-      // fire-and-forget：onDispatchSuccess 内部 catch 不 rethrow
-      void this.onDispatchSuccess(task).catch(() => {})
+      // fire-and-forget：onDispatchSuccess 内部 catch 不 rethrow（countRate=false：入队时已计速率）
+      void this.onDispatchSuccess(task, false).catch(() => {})
     } else {
       // 失败记账
       task.lastStatus = 'failed'

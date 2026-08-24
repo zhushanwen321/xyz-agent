@@ -3,7 +3,12 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SESSION_MANAGER_MARKER, type SessionManagerAction } from "@xyz-agent/extension-protocol";
+import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 import { Type, type Static, type TObject } from "typebox";
+
+// 模块级 logger（default export 首行 setPiHandle 注入后自动走 appendEntry 持久化，
+// 注入前/失败降级文件日志——见 extension-logger 三层通道设计）
+const logger = getLogger("session-manager");
 
 // ── 参数 Schema ──
 
@@ -35,8 +40,28 @@ const AbortSessionParams = Type.Object({
 
 // ── select 通道辅助 ──
 
-/** select 超时（ms）：工具等待 runtime handler respond 的最大时间。 */
-const SELECT_TIMEOUT_MS = 30_000;
+/** select 超时（ms）：工具等待 runtime handler respond 的最大时间（read/create 走长链路放宽） */
+const SELECT_TIMEOUT_MS: Record<SessionManagerAction, number> = {
+	create: 60_000,
+	send: 30_000,
+	history: 60_000,
+	status: 30_000,
+	list: 30_000,
+	abort: 30_000,
+};
+
+/** runtime handler respond 的 JSON 形状（错误闭环：{ error, hint?, sessionId? }） */
+interface SessionManagerRawError {
+	error: string;
+	hint?: string;
+	sessionId?: string;
+}
+
+/** 工具 details 的可消费形状（下游消费不再 any） */
+type SessionManagerToolDetails =
+	| { kind: "error"; error: SessionManagerRawError }
+	| { kind: "ok"; result: unknown }
+	| { kind: "cancelled" };
 
 /**
  * 通过 select 通道向 runtime handler 发送 session 管理请求。
@@ -55,10 +80,15 @@ async function callSessionManager(
 		const value = await ctx.ui.select(
 			SESSION_MANAGER_MARKER,
 			[payload],
-			{ timeout: SELECT_TIMEOUT_MS },
+			{ timeout: SELECT_TIMEOUT_MS[action] },
 		);
 		return value ?? null;
-	} catch {
+	} catch (err) {
+		// select 通道异常（非用户取消/超时——那两类是 resolve null）：折叠为 null 供
+		// executeTool 统一转 isError，但必须留痕（静默吞 = runtime handler 故障不可排查）
+		logger.error(`[session-manager] select channel threw for action="${action}"`, {
+			reason: err instanceof Error ? err.message : String(err),
+		});
 		return null;
 	}
 }
@@ -73,18 +103,36 @@ async function executeTool(
 	ctx: ExtensionContext,
 	action: SessionManagerAction,
 	params: Record<string, unknown>,
-): Promise<{ isError?: boolean; content: Array<{ type: "text"; text: string }>; details: unknown }> {
+): Promise<{ isError?: boolean; content: Array<{ type: "text"; text: string }>; details: SessionManagerToolDetails }> {
 	const raw = await callSessionManager(ctx, action, params);
 	if (raw === null) {
 		return {
 			isError: true,
 			content: [{ type: "text" as const, text: `Session manager ${action}: cancelled or timed out.` }],
-			details: { cancelled: true },
+			details: { kind: "cancelled" },
+		};
+	}
+	// runtime 错误闭环（respond({error}) 走同一 select 通道）——解析后检测 error 字段，
+	// 命中即 isError: true（extension-conventions「禁止错误成功模式」：agent 需能区分
+	// 成功与同步失败以决定重试/放弃，不能靠读 content 文本自行判错）。
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		parsed = undefined;
+	}
+	if (parsed !== null && typeof parsed === "object" && typeof (parsed as SessionManagerRawError).error === "string") {
+		const err = parsed as SessionManagerRawError;
+		const text = err.hint ? `${err.error}\nhint: ${err.hint}` : err.error;
+		return {
+			isError: true,
+			content: [{ type: "text" as const, text }],
+			details: { kind: "error", error: err },
 		};
 	}
 	return {
 		content: [{ type: "text" as const, text: raw }],
-		details: { raw },
+		details: { kind: "ok", result: parsed },
 	};
 }
 
@@ -125,6 +173,9 @@ function registerSessionTool<S extends TObject>(pi: ExtensionAPI, cfg: SessionTo
 }
 
 export default function sessionManagerExtension(pi: ExtensionAPI): void {
+	// logger 持久化通道接入（appendEntry custom entry，不进 LLM 上下文）
+	setPiHandle(pi);
+
 	registerSessionTool(pi, {
 		name: "create_managed_session",
 		label: "Create Managed Session",
@@ -137,7 +188,7 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	registerSessionTool(pi, {
 		name: "send_to_session",
 		label: "Send to Session",
-		description: "Send a prompt/message to an existing managed session. The message is asynchronously queued: if the target session is busy (generating/compacting/running bash) it is delivered at its next turn boundary, and {queued: true} is returned immediately. On synchronous failure the result contains an error and a hint (check get_session_status, then retry).",
+		description: "Send a prompt/message to an existing managed session. The message is asynchronously queued: if the target session is busy (generating/compacting/running bash) it is delivered at its next turn boundary, and {queued: true} is returned immediately. On synchronous failure the tool returns an error result (isError) with a hint (check get_session_status, then retry).",
 		parameters: SendToSessionParams,
 		action: "send",
 		toParams: (p) => ({ sessionId: p.sessionId, prompt: p.prompt }),

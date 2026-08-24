@@ -2,6 +2,7 @@ import { RuntimeServer } from './transport/server.js'
 import { SessionService } from './services/session/session-service.js'
 import { createSessionDeliveryRegistry } from './services/session/session-delivery-registry.js'
 import { createCompletionBackflow } from './services/session/completion-backflow.js'
+import { fanOutSettled } from './services/session/agent-settled-fanout.js'
 import { ConfigService } from './services/config-service.js'
 import { AuthService } from './services/auth/auth-service.js'
 import { AuthStorage } from './services/auth/auth-storage.js'
@@ -405,19 +406,11 @@ async function main(): Promise<void> {
       // W1（fix-chat-flow-order 探针 ②）：agent_settled（run 级联结束，晚于 pi finally 的
       // bash 落盘 flush）→ dispatcher 按序发布 per-session bash 待落列（D2 双分支延迟）。
       // sd-u5 起多播化：bash flush 是第一条腿（原单播语义不变），其后分发 agentSettledListeners
-      // （delivery 内核 settled 边沿唤醒 + sd-u6 回流检测）；逐订阅者隔离 try/catch——单个
-      // 订阅者异常不阻断其余腿，也不让 interpret 批次崩溃。
+      // （delivery 内核 settled 边沿唤醒 + sd-u6 回流检测）；逐订阅者隔离 try/catch 收敛在
+      // fanOutSettled（agent-settled-fanout.ts，可单测——本文件 import 即执行 main() 不可直测）。
       onAgentSettled: (sid) => {
         sessionService.flushPendingBashResults(sid)
-        for (const listener of agentSettledListeners) {
-          try {
-            listener(sid)
-          } catch (e) {
-            // 降级策略（best-effort）：单订阅者异常仅 warn 隔离，不阻断其余腿（bash flush / delivery
-            // 唤醒 / 回流检测各自独立）也不让 interpret 批次崩溃（事件流主链优先）
-            console.warn('[runtime] agentSettled listener failed:', e)
-          }
-        }
+        fanOutSettled(agentSettledListeners, sid)
       },
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
@@ -630,7 +623,25 @@ async function main(): Promise<void> {
   })
 
   const tServicesReady = performance.now()
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService, authService, projectStore, sessionDelivery)
+  server.setServices(sessionService, configService, modelService, {
+    extension: extensionService,
+    plugin: pluginService,
+    git: gitService,
+    file: fileService,
+    workspace: workspaceService,
+    appInfo,
+    skillRegistry,
+    worktree: worktreeService,
+    terminal: terminalService,
+    quota: quotaService,
+    handoff: handoffService,
+    preset: presetService,
+    auth: authService,
+    project: projectStore,
+    // sd-u5：sessionId 单例注册表（上方 createSessionDeliveryRegistry 装配）。
+    // 缺席时 server 构造退化实例并 warn（违反单例约束，仅测试装配遗漏场景）。
+    delivery: sessionDelivery,
+  })
 
   // Graceful shutdown on signals
   let shuttingDown = false

@@ -68,7 +68,9 @@ export interface NotifierHost {
   isIdle?: () => boolean;
   /**
    * 原生 settled 事件订阅能力（D8）：注册 handler 监听主 agent settled 边沿。
-   * 无退订语义（pi 0.84.1 的 pi.on 返回 void 且无 off）——退订由本模块的 disposed
+   * 无退订语义（pi 0.84.1 的 `pi.on(...)` 全部重载返回 void、无 off——实装锚点：
+   * node_modules `@earendil-works/pi-coding-agent` dist/core/extensions/types.d.ts
+   * `on()` 系列重载，0.84.1 实测）——退订由本模块的 disposed
    * 标志包装兑现（见下方 port 装配）。可选：未注入时内核退化退避轮询（busy 消息
    * 靠退避达上限强发，不走 settled 边沿驱动）。
    */
@@ -81,10 +83,10 @@ const NOTIFY_CUSTOM_TYPE = "subagent-bg-notify";
 /**
  * 将 BgNotifyRecord 格式化为 LLM 可读的 notification content。
  *
- * 独立导出——调用方（subagent-service）预格式化后传给 delivery.send，
- * 内核只做拼接（多条以 "\n\n---\n\n" join）。
+ * 模块内唯一消费方是下方 createNotifier 的 notify()（预格式化后传 delivery.send，
+ * 内核只做拼接——多条以 "\n\n---\n\n" join）。
  */
-export function buildLlmContent(record: BgNotifyRecord): string {
+function buildLlmContent(record: BgNotifyRecord): string {
   const agent = record.agent;
   const id = record.id;
   // [wave2 指针行] 增量语义下轮次通知只携带本轮增量，异步 flush 窗口丢失时不可重发
@@ -210,7 +212,10 @@ export function createNotifier(host: NotifierHost): BgNotifier {
       mergeHoldActive: () => host.hasRunningBackground(), // D4 must-fix #1：禁止用 isIdle 代替
       busyPolicy: "retry-force",               // settled 边沿驱动 + 退避达上限强发
       backoff: { ms: 100, max: 50 },           // 继承 FLUSH_BACKOFF_MS/MAX
-      dedupe: { maxKeys: 1000 },               // dedup LRU（继承 DEDUP_TTL_MS 语义，按条数）
+      // dedup LRU：语义与旧 DEDUP_TTL_MS=60s **不同**——按 key 永久去重（仅 LRU 逐出后
+      // 同 key 可再入）。当前 key 空间（id / id:round，id 每 spawn 唯一）无实际差异；
+      // 后续复用方勿按「60s 内不重复」假设接入（同 key 通知会被永久吞）。
+      dedupe: { maxKeys: 1000 },
     });
   let handle: DeliveryHandle = createHandle();
 

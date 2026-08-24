@@ -29,6 +29,11 @@
           "package": "@zhushanwen/pi-file-lock",
           "type": "package",
           "reason": "代码层静态 import withFileLock（src/execution/worktree-registry.ts top-level import，registry 读写盘互斥用），缺失时模块加载即抛 Cannot find module，是强依赖"
+        },
+        {
+          "package": "@xyz-agent/session-delivery",
+          "type": "package",
+          "reason": "代码层静态 import createDelivery/DeliveryHandle/DeliveryPort（src/execution/notifier.ts top-level import，投递内核装配），缺失时模块加载即抛 Cannot find module，是强依赖"
         }
       ]
     },
@@ -126,7 +131,13 @@
     {
       "name": "@zhushanwen/pi-scheduler",
       "directory": "extensions/universal/scheduler",
-      "dependsOn": []
+      "dependsOn": [
+        {
+          "package": "@xyz-agent/session-delivery",
+          "type": "package",
+          "reason": "代码层静态 import createDelivery/DeliveryHandle/DeliveryMessage（src/index.ts top-level），缺失时模块加载即抛 Cannot find module，是强依赖"
+        }
+      ]
     },
     {
       "name": "@zhushanwen/pi-rename-session",
@@ -198,6 +209,11 @@
           "package": "@xyz-agent/extension-protocol",
           "type": "package",
           "reason": "代码层静态 import SESSION_MANAGER_MARKER（src/index.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
+        },
+        {
+          "package": "@zhushanwen/pi-extension-logger",
+          "type": "package",
+          "reason": "代码层静态 import getLogger/setPiHandle（src/index.ts top-level import，select 通道 catch 留痕 + appendEntry 日志通道），缺失时模块加载即抛 Cannot find module，是强依赖"
         }
       ]
     }

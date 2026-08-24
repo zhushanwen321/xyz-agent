@@ -62,7 +62,9 @@ describe('FileService · F6 文件操作超时', () => {
     function withTimeout<T>(promise: Promise<T>, ms: number, errorMessage: string): Promise<T> {
       return new Promise<T>((resolve, reject) => {
         const timer = setTimeout(() => {
-          reject(new FileError(errorMessage, 'timeout'))
+          // FileError(code, message)：源码 FileErrorCode 联合已含小写 'timeout'（file-error.ts），
+          // 此前参数顺序颠倒把 message 传给了 code 形参，属测试侧笔误，修正测试而非源码
+          reject(new FileError('timeout', errorMessage))
         }, ms)
 
         promise.then(

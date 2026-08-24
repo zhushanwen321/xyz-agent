@@ -9,6 +9,9 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
+/** 与 onSessionExit 注册的 exit 回调签名一致，用于绕开 TS 闭包赋值窄化限制 */
+type ExitCallback = (sessionId: string, code: number | null, stderr: string) => void
+
 describe('PiEngine · F3 pi 进程崩溃恢复', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -32,8 +35,11 @@ describe('PiEngine · F3 pi 进程崩溃恢复', () => {
     onSessionExit(callback)
 
     // 模拟 pi 崩溃
-    if (exitCallback) {
-      exitCallback('session-1', 1, 'Error: pi crashed')
+    // TS 闭包赋值窄化限制：vi.fn 回调内的赋值不参与控制流分析，直接调用 exitCallback 会被
+    // 窄化为 never（非空断言也无效）；先断言回声明联合再守卫调用，运行时 vi.fn 已保证赋值
+    const invokeExit = exitCallback as ExitCallback | null
+    if (invokeExit) {
+      invokeExit('session-1', 1, 'Error: pi crashed')
     }
 
     expect(callback).toHaveBeenCalledWith('session-1', 1, 'Error: pi crashed')
@@ -51,8 +57,9 @@ describe('PiEngine · F3 pi 进程崩溃恢复', () => {
     onSessionExit(callback)
 
     // 模拟正常退出
-    if (exitCallback) {
-      exitCallback('session-2', 0, '')
+    const invokeExit = exitCallback as ExitCallback | null
+    if (invokeExit) {
+      invokeExit('session-2', 0, '')
     }
 
     expect(callback).toHaveBeenCalledWith('session-2', 0, '')
@@ -70,10 +77,11 @@ describe('PiEngine · F3 pi 进程崩溃恢复', () => {
     onSessionExit(callback)
 
     // 模拟 3 次崩溃
-    if (exitCallback) {
-      exitCallback('session-1', 1, 'crash 1')
-      exitCallback('session-2', 1, 'crash 2')
-      exitCallback('session-3', 1, 'crash 3')
+    const invokeExit = exitCallback as ExitCallback | null
+    if (invokeExit) {
+      invokeExit('session-1', 1, 'crash 1')
+      invokeExit('session-2', 1, 'crash 2')
+      invokeExit('session-3', 1, 'crash 3')
     }
 
     expect(callback).toHaveBeenCalledTimes(3)

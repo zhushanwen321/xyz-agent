@@ -169,7 +169,7 @@ else console.log('');
     fi
     if [ -n "$MISSING" ]; then
         echo -e "  ${RED}✗ noExternal 缺少依赖:$MISSING${NC}"
-        echo -e "  ${YELLOW}FIX: 编辑 $RUNTIME_TSUP，noExternal 追加:$MISSING${NC}"
+        echo -e "  ${YELLOW}FIX: 编辑 ${RUNTIME_TSUP}，noExternal 追加:$MISSING${NC}"
         FAILED=1
     elif [ -z "$NATIVE_SKIPPED" ]; then
         echo -e "  ${GREEN}✓ noExternal 覆盖所有 runtime dependencies${NC}"

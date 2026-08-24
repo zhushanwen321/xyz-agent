@@ -137,4 +137,70 @@ describe('U4_PARK_GATE: park 模式 gate 行为', () => {
       expect.objectContaining({ deliverAs: 'followUp', triggerTurn: true }),
     )
   })
+
+  it('(5) 到期任务 + 持续 busy 多 tick 不重复入队；settled 后可再入队（回归：nextRunAt 未推进期曾每 tick 重压副本）', async () => {
+    const busyCtx = { isIdle: () => false, hasPendingMessages: () => true }
+    const mockDelivery = {
+      send: vi.fn(),
+      sendChecked: vi.fn(),
+      flush: vi.fn(),
+      depth: vi.fn(() => 1),
+      dispose: vi.fn(),
+    }
+    const backend = new MockSchedulerBackend()
+    backend.deliveryHandle = mockDelivery as any
+    const runtime = new SchedulerRuntime(backend, busyCtx)
+
+    const task = await runtime.addTask('dup-test', { mode: 'interval', intervalMs: 60_000 })
+    // 任务到期（nextRunAt 已过）
+    task.nextRunAt = backend.now() - 1
+
+    // 3 个连续 tick：每次 step2 都会重标 pending，防重标记应拦截重复入队
+    await runtime.tickScheduler()
+    await runtime.tickScheduler()
+    await runtime.tickScheduler()
+    expect(mockDelivery.send).toHaveBeenCalledTimes(1)
+
+    // 终态回调（delivered）清除标记 + 记账推进 nextRunAt → 下轮到期可再入队
+    runtime.handleSettled(
+      { payload: { kind: 'custom', customType: 'pi-scheduler:dispatched', content: 'dup-test', display: true }, dedupeKey: task.id },
+      'delivered',
+    )
+    // onDispatchSuccess 为 fire-and-forget async，等微任务落定后再断言
+    await new Promise((r) => setTimeout(r, 0))
+    expect(task.lastStatus).toBe('success')
+    expect(task.nextRunAt).toBeGreaterThan(backend.now())
+
+    task.nextRunAt = backend.now() - 1
+    await runtime.tickScheduler()
+    expect(mockDelivery.send).toHaveBeenCalledTimes(2)
+  })
+
+  it('(6) rejected 终态同样清除防重标记', async () => {
+    const busyCtx = { isIdle: () => false, hasPendingMessages: () => true }
+    const mockDelivery = {
+      send: vi.fn(),
+      sendChecked: vi.fn(),
+      flush: vi.fn(),
+      depth: vi.fn(() => 1),
+      dispose: vi.fn(),
+    }
+    const backend = new MockSchedulerBackend()
+    backend.deliveryHandle = mockDelivery as any
+    const runtime = new SchedulerRuntime(backend, busyCtx)
+
+    const task = await runtime.addTask('reject-test', { mode: 'interval', intervalMs: 60_000 })
+    task.nextRunAt = backend.now() - 1
+    await runtime.tickScheduler()
+    expect(mockDelivery.send).toHaveBeenCalledTimes(1)
+
+    runtime.handleSettled(
+      { payload: { kind: 'custom', customType: 'pi-scheduler:dispatched', content: 'reject-test', display: true }, dedupeKey: task.id },
+      'rejected',
+    )
+    expect(task.lastStatus).toBe('failed')
+
+    await runtime.tickScheduler()
+    expect(mockDelivery.send).toHaveBeenCalledTimes(2)
+  })
 })

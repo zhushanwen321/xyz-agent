@@ -54,6 +54,31 @@ describe("U5-A4 tool-error-handling", () => {
 		expect(result.content[0].text).toContain("cancelled");
 	});
 
+	it("runtime respond 携带 {error} JSON → isError: true（禁止错误成功模式）", async () => {
+		const { registered, ctx } = createHarness(
+			vi.fn().mockResolvedValue(JSON.stringify({ error: "session unreachable", hint: "check get_session_status" })),
+		);
+		const tool = registered.find((t) => t.name === "send_to_session")!;
+		const result = await tool.execute("call-1", { sessionId: "s1", prompt: "hi" }, undefined, undefined, ctx);
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("session unreachable");
+		expect(result.content[0].text).toContain("hint");
+		expect(result.details).toEqual({
+			kind: "error",
+			error: { error: "session unreachable", hint: "check get_session_status" },
+		});
+	});
+
+	it("runtime respond 正常 JSON → 无 isError，details kind=ok", async () => {
+		const { registered, ctx } = createHarness(
+			vi.fn().mockResolvedValue(JSON.stringify({ queued: true })),
+		);
+		const tool = registered.find((t) => t.name === "send_to_session")!;
+		const result = await tool.execute("call-1", { sessionId: "s1", prompt: "hi" }, undefined, undefined, ctx);
+		expect(result.isError).toBeUndefined();
+		expect(result.details).toEqual({ kind: "ok", result: { queued: true } });
+	});
+
 	it("all 6 tools handle null gracefully", async () => {
 		const { registered, ctx } = createHarness(vi.fn().mockResolvedValue(null));
 		for (const tool of registered) {

@@ -163,8 +163,7 @@ describe('Bridge reconnect lifecycle', () => {
       sessionService,
       {} as never,
       {} as never,
-      {} as never,
-      pluginService,
+      { extension: {} as never, plugin: pluginService },
     )
   })
 
@@ -324,7 +323,7 @@ describe('Bridge reconnect lifecycle', () => {
       const serverWithoutPlugin = new RuntimeServer(0, '/tmp/test-project')
       const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
       // No plugin service set
-      serverWithoutPlugin.setServices(sessionService, {} as never, {} as never, {} as never, {} as never)
+      serverWithoutPlugin.setServices(sessionService, {} as never, {} as never, { extension: {} as never, plugin: {} as never })
 
       await serverWithoutPlugin.handleBridgeRequest(SESSION_ID, 'req-exec3', 'bridge:tool_execute', {
         toolName: 'hello',
@@ -456,7 +455,7 @@ describe('Bridge reconnect lifecycle', () => {
     it('returns empty intercept when plugin service is not available', async () => {
       const serverWithoutPlugin = new RuntimeServer(0, '/tmp/test-project')
       const sessionService = new SessionService({} as never, {} as never, {} as never, '/tmp', {} as never, {} as never, {} as never, noopGitInfoReader, {} as never)
-      serverWithoutPlugin.setServices(sessionService, {} as never, {} as never, {} as never, {} as never)
+      serverWithoutPlugin.setServices(sessionService, {} as never, {} as never, { extension: {} as never, plugin: {} as never })
 
       mockSendExtensionUiResponse.mockClear()
       await serverWithoutPlugin.handleBridgeRequest(SESSION_ID, 'req-int2', 'bridge:intercept', {

@@ -26,7 +26,10 @@ function makeMockSessionService(overrides: Partial<ISessionService> = {}): ISess
     create: vi.fn(),
     sendMessage: vi.fn(),
     getHistory: vi.fn(),
-    getSummary: vi.fn(),
+    // 归属校验默认材料：任意 sessionId 返回发起方 sid-parent 的 managed child summary
+    getSummary: vi.fn().mockImplementation(() =>
+      makeSessionSummary({ id: 's1', spawnSource: 'agent', parentAgentSessionId: 'sid-parent' }),
+    ),
     listPersistedSessions: vi.fn(),
     abort: vi.fn(),
     getRpcClient: vi.fn(),
@@ -71,6 +74,9 @@ function makeSessionSummary(overrides: Partial<SessionSummary> = {}): SessionSum
     lastActiveAt: Date.now(),
     modelId: 'openai/gpt-4',
     tokenCount: 0,
+    // 归属校验默认材料：测试中发起方一律 'sid-parent'，目标 s1 默认是其 managed child
+    spawnSource: 'agent',
+    parentAgentSessionId: 'sid-parent',
     ...overrides,
   }
 }
@@ -180,6 +186,119 @@ describe('SessionManagerHandler', () => {
       expect(response.hint).toBe('target session unreachable; retry send_to_session after checking get_session_status')
     })
 
+    // 归属校验回归（review round 3 must-fix）：目标不属于发起方（用户自己的 session /
+    // 其他 agent 的 child）时拒绝，防 prompt injection 借 send/history/status/abort
+    // 接管非 managed session。逐 action 断言：不触碰 delivery / getHistory / abort。
+    describe('归属校验：send/history/status/abort 目标必须是发起方的 managed child', () => {
+      const FOREIGN_ERROR = 'target session is not managed by this agent'
+
+      function makeOwnedFactory(summary: SessionSummary) {
+        return vi.fn().mockImplementation((sid: string) => (sid === summary.id ? summary : undefined))
+      }
+
+      it('send 目标为用户 session（spawnSource=user）→ error，delivery 不被触碰', async () => {
+        const delivery = makeMockDelivery()
+        const userSummary = makeSessionSummary({ id: 'user-s1', spawnSource: 'user', parentAgentSessionId: undefined })
+        const opts = makeMockOptions({
+          delivery,
+          sessionService: makeMockSessionService({ getSummary: makeOwnedFactory(userSummary) }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'send', { sessionId: 'user-s1', prompt: 'inject' })
+
+        const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+        expect(response.error).toBe(FOREIGN_ERROR)
+        expect(delivery.getOrCreateDelivery).not.toHaveBeenCalled()
+      })
+
+      it('send 目标为其他 agent 的 child（parentAgentSessionId 不匹配）→ error', async () => {
+        const delivery = makeMockDelivery()
+        const otherChild = makeSessionSummary({ id: 'other-child', parentAgentSessionId: 'another-agent' })
+        const opts = makeMockOptions({
+          delivery,
+          sessionService: makeMockSessionService({ getSummary: makeOwnedFactory(otherChild) }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'send', { sessionId: 'other-child', prompt: 'inject' })
+
+        const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+        expect(response.error).toBe(FOREIGN_ERROR)
+        expect(delivery.getOrCreateDelivery).not.toHaveBeenCalled()
+      })
+
+      it('history 目标不属于发起方 → error，getHistory 不被调用', async () => {
+        const otherChild = makeSessionSummary({ id: 'other-child', parentAgentSessionId: 'another-agent' })
+        const getHistory = vi.fn()
+        const opts = makeMockOptions({
+          sessionService: makeMockSessionService({
+            getSummary: makeOwnedFactory(otherChild),
+            getHistory,
+          }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'history', { sessionId: 'other-child' })
+
+        const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+        expect(response.error).toBe(FOREIGN_ERROR)
+        expect(getHistory).not.toHaveBeenCalled()
+      })
+
+      it('status 目标存在但不归属 → not_found（探测面折叠：不泄露存在性，与 list「不可见=不存在」对齐）', async () => {
+        const userSummary = makeSessionSummary({ id: 'user-s1', spawnSource: 'user' })
+        const opts = makeMockOptions({
+          sessionService: makeMockSessionService({ getSummary: makeOwnedFactory(userSummary) }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'status', { sessionId: 'user-s1' })
+
+        const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+        expect(response.status).toBe('not_found')
+        expect(response.error).toBeUndefined()
+      })
+
+      it('abort 目标不属于发起方 → error，abort 不被调用', async () => {
+        const otherChild = makeSessionSummary({ id: 'other-child', parentAgentSessionId: 'another-agent' })
+        const abort = vi.fn()
+        const opts = makeMockOptions({
+          sessionService: makeMockSessionService({
+            getSummary: makeOwnedFactory(otherChild),
+            abort,
+          }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'abort', { sessionId: 'other-child' })
+
+        const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+        expect(response.error).toBe(FOREIGN_ERROR)
+        expect(abort).not.toHaveBeenCalled()
+      })
+
+      it('归属正确的 managed child 正常放行（send → queued）', async () => {
+        const delivery = makeMockDelivery()
+        const ownChild = makeSessionSummary({ id: 's1' })
+        const opts = makeMockOptions({
+          delivery,
+          sessionService: makeMockSessionService({ getSummary: makeOwnedFactory(ownChild) }),
+        })
+        const handler = new SessionManagerHandler(opts)
+
+        await handler.handle('req-1', 'sid-parent', 'send', { sessionId: 's1', prompt: 'hello' })
+
+        expect(delivery.getOrCreateDelivery).toHaveBeenCalledWith('s1')
+        expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith(
+          'sid-parent',
+          'req-1',
+          JSON.stringify({ queued: true }),
+          'select',
+        )
+      })
+    })
+
     it('create 带 prompt → delivery.sendDirect 直投（不走 dispatcher sendMessage）', async () => {
       const session = makeSessionSummary({ id: 'created-1' })
       const delivery = makeMockDelivery()
@@ -241,6 +360,38 @@ describe('SessionManagerHandler', () => {
       expect(response.truncated).toBe(true)
     })
 
+    it('history tailTurns 超过实际 user turn 数 → 返回全部历史而非空列表（回归：凑不满曾返回 []）', async () => {
+      const messages = [
+        { role: 'user', content: 'msg1' },
+        { role: 'assistant', content: 'reply1' },
+        { role: 'user', content: 'msg2' },
+        { role: 'assistant', content: 'reply2' },
+      ]
+      const opts = makeMockOptions({
+        sessionService: makeMockSessionService({
+          getHistory: vi.fn().mockResolvedValue({ messages, truncated: false }),
+        }),
+      })
+      const handler = new SessionManagerHandler(opts)
+
+      await handler.handle('req-1', 'sid-parent', 'history', { sessionId: 's1', tailTurns: 5 })
+
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+      expect(response.messages).toEqual(messages)
+      expect(response.truncated).toBe(false)
+    })
+
+    it('畸形 params（send.prompt 非法）→ respond({error})，不流入 sessionService（params 信任边界守卫）', async () => {
+      const opts = makeMockOptions()
+      const handler = new SessionManagerHandler(opts)
+
+      await handler.handle('req-1', 'sid-parent', 'send', { sessionId: 's1', prompt: 42 })
+
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+      expect(response.error).toMatch(/invalid params/)
+      expect(opts.delivery.getOrCreateDelivery).not.toHaveBeenCalled()
+    })
+
     it('status → {status, modelId}', async () => {
       const summary = makeSessionSummary({ status: 'active', modelId: 'openai/gpt-4' })
       const opts = makeMockOptions({
@@ -281,8 +432,8 @@ describe('SessionManagerHandler', () => {
     it('list → {sessions} 过滤 spawnSource', async () => {
       const sessions = [
         makeSessionSummary({ id: 's1', spawnSource: 'user' }),
-        makeSessionSummary({ id: 's2', spawnSource: 'agent', parentAgentSessionId: 'parent' }),
-        makeSessionSummary({ id: 's3', spawnSource: 'agent', parentAgentSessionId: 'parent' }),
+        makeSessionSummary({ id: 's2', spawnSource: 'agent', parentAgentSessionId: 'sid-parent' }),
+        makeSessionSummary({ id: 's3', spawnSource: 'agent', parentAgentSessionId: 'sid-parent' }),
       ]
       const opts = makeMockOptions({
         sessionService: makeMockSessionService({
@@ -299,9 +450,30 @@ describe('SessionManagerHandler', () => {
       expect(response.sessions[1].id).toBe('s3')
     })
 
-    it('list → {sessions} 过滤 parentAgentSessionId', async () => {
+    it('list → 缺省注入路由上下文：只返回本父的 agent 子 session（params 不得放宽）', async () => {
       const sessions = [
-        makeSessionSummary({ id: 's1', spawnSource: 'agent', parentAgentSessionId: 'parent-a' }),
+        makeSessionSummary({ id: 's1', spawnSource: 'user' }),
+        makeSessionSummary({ id: 's2', spawnSource: 'agent', parentAgentSessionId: 'sid-parent' }),
+        makeSessionSummary({ id: 's3', spawnSource: 'agent', parentAgentSessionId: 'parent-b' }),
+      ]
+      const opts = makeMockOptions({
+        sessionService: makeMockSessionService({
+          listPersistedSessions: vi.fn().mockReturnValue([{ cwd: '/test', sessions }]),
+        }),
+      })
+      const handler = new SessionManagerHandler(opts)
+
+      // 空 params（extension 端 list_my_sessions 实际发送的形状）
+      await handler.handle('req-1', 'sid-parent', 'list', {})
+
+      const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
+      expect(response.sessions).toHaveLength(1)
+      expect(response.sessions[0].id).toBe('s2')
+    })
+
+    it('list → params 显式指定其他 parentAgentSessionId 不生效（防跨父枚举）', async () => {
+      const sessions = [
+        makeSessionSummary({ id: 's1', spawnSource: 'agent', parentAgentSessionId: 'sid-parent' }),
         makeSessionSummary({ id: 's2', spawnSource: 'agent', parentAgentSessionId: 'parent-b' }),
       ]
       const opts = makeMockOptions({
@@ -315,7 +487,7 @@ describe('SessionManagerHandler', () => {
 
       const response = JSON.parse((opts.sendExtensionUiResponse as ReturnType<typeof vi.fn>).mock.calls[0][2])
       expect(response.sessions).toHaveLength(1)
-      expect(response.sessions[0].id).toBe('s2')
+      expect(response.sessions[0].id).toBe('s1')
     })
 
     it('abort → {success}', async () => {
@@ -352,7 +524,7 @@ describe('SessionManagerHandler', () => {
       const opts = makeMockOptions()
       const handler = new SessionManagerHandler(opts)
 
-      await handler.handle('req-1', 'sid-parent', 'unknown_action' as any, {})
+      await handler.handle('req-1', 'sid-parent', 'unknown_action' as never, {})
 
       expect(opts.sendExtensionUiResponse).toHaveBeenCalledWith('sid-parent', 'req-1', null, 'select')
     })

@@ -1,7 +1,6 @@
 {
   "name": "@xyz-agent/session-delivery",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.2.0",
   "description": "Session message delivery kernel: zero-pi-dependency strategy layer for queueing, batching, dedup, and gated flush of messages into pi sessions",
   "main": "src/index.ts",
   "module": "src/index.ts",
@@ -34,6 +33,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",
     "vitest": "^4.1.6"

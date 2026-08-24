@@ -203,6 +203,37 @@ describe('A5-merge park 策略', () => {
 
     handle.dispose()
   })
+
+  it('非合批 send 只清残留合批 timer，不重设（无孤儿 flush timer 被武装）', () => {
+    const port = makeMockPort()
+    port.idle = false
+    const handle = createDelivery(port, {
+      mergeWindowMs: 60_000,
+      mergeHoldActive: () => true,
+      busyPolicy: 'park',
+    })
+
+    // 1. 合批 send 武装窗口 timer A；2. 非合批 send 清 A 且不得重设 B
+    handle.send(textMsg('m1'), { merge: true })
+    handle.send(textMsg('m2'), { merge: false })
+    // busy + park + 无订阅装配：消息滞留 queue（backoff 首轮后 park 停手）
+    vi.advanceTimersByTime(100)
+    expect(port.sendCalls).toHaveLength(0)
+
+    // 3. 转空闲后推进整个 mergeWindow：若非合批路径重设了 timer，孤儿 timer 到期
+    //    flush 会把 parked 消息冲出（旧缺陷）；只清不设 → 消息仍等真正的外部触发
+    port.idle = true
+    vi.advanceTimersByTime(61_000)
+    expect(port.sendCalls).toHaveLength(0)
+
+    // 对照：外部 flush 仍可正常触发投递（消息可达，非卡死）
+    handle.flush()
+    vi.advanceTimersByTime(0)
+    expect(port.sendCalls).toHaveLength(1)
+    expect(port.sendCalls[0]!.msg.payload.content).toBe('m1\n\n---\n\nm2')
+
+    handle.dispose()
+  })
 })
 
 describe('depth 诊断', () => {

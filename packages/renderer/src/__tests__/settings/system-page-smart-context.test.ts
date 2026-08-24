@@ -10,157 +10,51 @@
  *  - 阈值换算：input 改为 300（K）→ change → setSmartContextThresholds 收到绝对数 300000。
  *  - 排除 tag：getSmartContextConfig 返回 excludedModels → tag 文本渲染；点 × → 列表移除项被传。
  *
- * mock 策略（对齐 system-page-rename-model.test.ts）：
- *  - vi.mock('@/api/domains/settings') 捕获 smart-context 5 函数 + auto-rename 4 函数
- *    （SystemPage 同时挂 SystemAutoRenameSection）。
- *  - vi.mock('@/composables/useToast') 隔离 toast 全局副作用。
- *  - vi.mock('@/composables/features/command/useCommandStore') 避免真实 command store 初始化报错。
- *  - vi.mock('@/lib/ipc') mock listSystemSounds 及 onUpdateProgress/onUpdateError。
- *  - settings store 用 @xyz-agent/core 的 getSettingsStore() 单例，beforeEach 经
- *    __resetSettingsStoreForTesting 重置避免跨用例残留。
+ * mock 策略：mock 工厂 / fixtures / mount 编排经 __tests__/helpers/system-page-mount
+ *  共享（与 system-page-rename-model.test.ts 的公共样板提取）；vi.mock 注册留在本文件
+ *  （hoisting 约束），用例断言与特定覆写保留在各自 describe。
+ *  settings store 用 @xyz-agent/core 的 getSettingsStore() 单例，beforeEach 经
+ *  __resetSettingsStoreForTesting 重置避免跨用例残留。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/settings/system-page-smart-context.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import type { ProviderInfo, ModelInfo } from '@xyz-agent/shared'
-import { __resetSettingsStoreForTesting, getSettingsStore, type SystemSettings } from '@xyz-agent/core'
+import { __resetSettingsStoreForTesting } from '@xyz-agent/core'
+import {
+  settingsApiMocks,
+  settingsApiModule,
+  toastModule,
+  commandStoreModule,
+  ipcModule,
+  resetSettingsApiMocks,
+  mountSystemPage,
+  seedStore,
+  smartContextFixture,
+} from '../helpers/system-page-mount'
 
-/** mock 捕获 smart-context / auto-rename API 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
-const settingsMock = vi.hoisted(() => ({
-  getAutoRenameEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
-  setAutoRenameEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
-  getRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
-  setRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
-  getSmartContextConfig: vi.fn(() => Promise.resolve({})),
-  setSmartContextEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
-  setSmartContextCompactModel: vi.fn(() => Promise.resolve({ model: '' })),
-  setSmartContextThresholds: vi.fn(() => Promise.resolve({ thresholds: [] })),
-  setSmartContextExcludedModels: vi.fn(() => Promise.resolve({ models: [] })),
-}))
+vi.mock('@/api/domains/settings', () => settingsApiModule())
+vi.mock('@/composables/useToast', () => toastModule())
+vi.mock('@/composables/features/command/useCommandStore', () => commandStoreModule())
+vi.mock('@/lib/ipc', () => ipcModule())
 
-vi.mock('@/api/domains/settings', () => ({
-  getAutoRenameEnabled: settingsMock.getAutoRenameEnabled,
-  setAutoRenameEnabled: settingsMock.setAutoRenameEnabled,
-  getRenameModel: settingsMock.getRenameModel,
-  setRenameModel: settingsMock.setRenameModel,
-  getSmartContextConfig: settingsMock.getSmartContextConfig,
-  setSmartContextEnabled: settingsMock.setSmartContextEnabled,
-  setSmartContextCompactModel: settingsMock.setSmartContextCompactModel,
-  setSmartContextThresholds: settingsMock.setSmartContextThresholds,
-  setSmartContextExcludedModels: settingsMock.setSmartContextExcludedModels,
-  // stores/settings → '@/api' → mock/index 转发引用 real 域的 getSystem/updateSystem，
-  // 工厂缺导出会在模块加载时抛 "No export defined"；本测试不消费，给空实现即可
-  getSystem: vi.fn(() => Promise.resolve({})),
-  updateSystem: vi.fn(() => Promise.resolve()),
-}))
+// 工厂引用 helper 单例（mock 模块与断言共享同一 mock fn 实例）
+const settingsMock = settingsApiMocks
 
-vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ info: vi.fn(), error: vi.fn(), warning: vi.fn() }),
-}))
-
-// SystemShortcutSection 需要 command store；用 ref 暴露响应式属性（storeToRefs 兼容）
-vi.mock('@/composables/features/command/useCommandStore', () => {
-  const { ref } = require('vue') as typeof import('vue')
-  return {
-    useCommandStore: () => ({
-      appCommands: ref([]),
-      shortcutOverrides: ref({}),
-      setShortcutOverride: vi.fn(),
-      registerApp: vi.fn(),
-    }),
-  }
-})
-
-vi.mock('@/lib/ipc', () => ({
-  listSystemSounds: vi.fn(() => Promise.resolve({ sounds: [] })),
-  // UpdateCheckCard → useAppUpdate 订阅 onUpdateProgress/onUpdateError；缺导出 mount 崩
-  onUpdateProgress: vi.fn(() => () => {}),
-  onUpdateError: vi.fn(() => () => {}),
-}))
-
-import SystemPage from '@/components/settings/system/SystemPage.vue'
-
-/** 最小 SystemSettings fixture。 */
-function systemFixture(): SystemSettings {
-  return {
-    locale: 'zh-CN',
-    theme: 'dark',
-    themePreset: 'cold-blue',
-    fontSize: 'medium',
-    completionSound: true,
-  }
-}
-
-/** 有凭证 provider fixture（模型挂在 providers[].models —— extension 模型配置候选的正确数据源）。 */
-function authedProvider(): ProviderInfo {
-  return { id: 'p1', name: 'Prov One', apiKeySet: true, status: 'connected', models: [{ id: 'm1', name: 'Model One' }] }
-}
-
-/** 无凭证 provider fixture（apiKeySet=false，其模型不应出现在下拉）。 */
-function unauthedProvider(): ProviderInfo {
-  return { id: 'p2', name: 'Prov Two', apiKeySet: false, status: 'not_configured', models: [{ id: 'm2', name: 'Model Two' }] }
-}
-
-/** 聚合模型 fixture（scoped 过滤后形态，仅含白名单内 m1）。注入用于守卫：
- *  useAuthedModelGroups 改为 providers 派生后，下拉候选必须不受 store.models 内容影响。 */
-function modelFixtures(): ModelInfo[] {
-  return [
-    { id: 'm1', name: 'Model One', providerId: 'p1', providerName: 'Prov One' },
-  ]
-}
-
-/** smart-context 默认配置 fixture（与 extension 默认值一致）。 */
-function smartContextFixture(excludedModels: string[] = []): {
-  enabled: boolean
-  compactModel: string
-  reminderThresholds: number[]
-  excludedModels: string[]
-} {
-  return { enabled: true, compactModel: '', reminderThresholds: [200_000, 400_000, 600_000], excludedModels }
-}
-
-/** 注入非空 providers/models 到 settings store 单例（模块级 store 的 ref，直接写 .value）。 */
-function seedStore(): void {
-  const store = getSettingsStore()
-  store.providers.value = [authedProvider(), unauthedProvider()]
-  store.models.value = modelFixtures()
-}
-
-let wrapper: ReturnType<typeof mount> | null = null
+let wrapper: Awaited<ReturnType<typeof mountSystemPage>> | null = null
 
 /** mount SystemPage（集成入口）并完成异步加载。 */
 async function mountPage(): Promise<void> {
-  wrapper = mount(SystemPage, {
-    props: { system: systemFixture() },
-    attachTo: document.body,
-  })
-  await flushPromises()
+  wrapper = await mountSystemPage()
 }
 
 beforeEach(() => {
   setActivePinia(createPinia())
   __resetSettingsStoreForTesting()
-  settingsMock.getAutoRenameEnabled.mockReset()
-  settingsMock.setAutoRenameEnabled.mockReset()
-  settingsMock.getRenameModel.mockReset()
-  settingsMock.setRenameModel.mockReset()
-  settingsMock.getSmartContextConfig.mockReset()
-  settingsMock.setSmartContextEnabled.mockReset()
-  settingsMock.setSmartContextCompactModel.mockReset()
-  settingsMock.setSmartContextThresholds.mockReset()
-  settingsMock.setSmartContextExcludedModels.mockReset()
-  // 默认解析值：auto-rename 开 + rename model 未设置 + smart-context 全默认
-  settingsMock.getAutoRenameEnabled.mockResolvedValue({ enabled: true })
-  settingsMock.setAutoRenameEnabled.mockResolvedValue({ enabled: true })
-  settingsMock.getRenameModel.mockResolvedValue({ model: '' })
-  settingsMock.setRenameModel.mockResolvedValue({ model: '' })
-  settingsMock.getSmartContextConfig.mockResolvedValue(smartContextFixture())
+  resetSettingsApiMocks(settingsMock)
+  // 本文件默认值覆写：切 Switch 用例断言传参 false，响应也用 false 保持一致形态
   settingsMock.setSmartContextEnabled.mockResolvedValue({ enabled: false })
-  settingsMock.setSmartContextCompactModel.mockResolvedValue({ model: '' })
-  settingsMock.setSmartContextThresholds.mockResolvedValue({ thresholds: [200_000, 400_000, 600_000] })
-  settingsMock.setSmartContextExcludedModels.mockResolvedValue({ models: [] })
 })
 
 afterEach(() => {

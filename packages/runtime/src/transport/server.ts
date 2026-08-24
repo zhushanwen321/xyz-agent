@@ -58,6 +58,28 @@ import type { QuotaService } from '../services/quota-service.js'
 import type { PresetService } from '../services/preset-service.js'
 import { toErrorMessage } from '../utils/errors.js'
 
+/**
+ * setServices 的全部可选依赖（PR #189 review：签名从 18 个位置参数收敛为聚合对象，
+ * 成员可省略语义与原可选参数一致——漏传不再是「错位静默」，装配面一目了然）。
+ */
+export interface RuntimeServerOptionalServices {
+  extension?: IExtensionService
+  plugin?: IPluginService
+  git?: GitService
+  file?: FileService
+  workspace?: WorkspaceService
+  appInfo?: { appVersion: string; piVersion: string }
+  skillRegistry?: SkillRegistry
+  worktree?: IWorktreeService
+  terminal?: ITerminalService
+  quota?: QuotaService
+  handoff?: HandoffService
+  preset?: PresetService
+  auth?: IAuthService
+  project?: ProjectStore
+  delivery?: SessionDeliveryRegistry
+}
+
 export class RuntimeServer implements IMessageBroker {
   private projectRoot: string
   private conn: ConnectionManager
@@ -134,7 +156,8 @@ export class RuntimeServer implements IMessageBroker {
     this.messageBus = bus
   }
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService, quota?: QuotaService, handoff?: HandoffService, preset?: PresetService, auth?: IAuthService, project?: ProjectStore, delivery?: SessionDeliveryRegistry): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, optional: RuntimeServerOptionalServices = {}): void {
+    const { extension, plugin, git, file, workspace, appInfo, skillRegistry, worktree, terminal, quota, handoff, preset, auth, project, delivery } = optional
     this.gitService = git
     this.fileService = file
     this.handoffService = handoff
@@ -300,6 +323,11 @@ export class RuntimeServer implements IMessageBroker {
     // 不走 WS 路由表——由 EventInterpreter.onSessionManagerRequest fire-and-forget 调用。
     // sd-u5：delivery（send 排队投递 + create 直投）必注入——组合根装配 sessionId 单例注册表；
     // 缺省时现场构造无 settled 订阅的退化实例（内核自动退化为退避轮询，D8 兜底），仅兜测试装配遗漏。
+    // PR #189 review（arch/data-gov）：退化构造必须留痕——静默构造第二个无 settled 订阅的
+    // 注册表违反 sessionId 单例约束（design.md §3.4），组合根漏注入时靠本 warn 显形。
+    if (!delivery) {
+      console.warn('[server] degenerate delivery registry constructed — missing injection?')
+    }
     this.sessionManagerHandler = new SessionManagerHandler({
       sessionService: this.sessionService,
       delivery:

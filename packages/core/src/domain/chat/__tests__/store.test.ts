@@ -125,6 +125,22 @@ describe('createChatStore factory', () => {
         expect(sut.store.getMessages(sid)).toHaveLength(2)
         expect(sut.store.getMessages(sid)[0].id).toBe('m1')
       })
+
+      it('尾读 reconcile 截回尾窗后 hydrate 锚不变（load-more 恢复定位依据）', () => {
+        const sid = 's1'
+        // 1. hydrate 尾窗（getHistory 尾读首条 = 锚）
+        sut.store.hydrate(sid, [userMsg('m1'), userMsg('m2')])
+        expect(sut.store.getHydrateAnchor(sid)).toBe('m1')
+        // 2. load-more 前插更早历史（getFullHistory 锚定切分产物 = 锚之前的段）
+        sut.store.prependHistory(sid, [userMsg('m0', '更早')])
+        expect(sut.store.getMessages(sid)).toHaveLength(3)
+        // 3. 切走切回：reconcile 尾读（getHistory 又返回 20-turn 尾窗）整量替换——
+        //    前插的 m0 被抹掉（已知取舍），但锚必须原样保留：load-more 按钮重显后
+        //    （truncated 标记由调用方刷新）再次 getFullHistory 仍按此锚切分恢复全量。
+        sut.store.reconcileHistory(sid, [userMsg('m1'), userMsg('m2')])
+        expect(sut.store.getMessages(sid)).toHaveLength(2)
+        expect(sut.store.getHydrateAnchor(sid)).toBe('m1')
+      })
     })
 
     it('appendUser 返回 id（u- 前缀）+ 注入 complete user 消息（segments 保留）', () => {

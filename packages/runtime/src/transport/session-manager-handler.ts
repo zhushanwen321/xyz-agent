@@ -6,13 +6,27 @@
  *
  * 6 个 action：create / send / history / status / list / abort。
  * 响应通过 sendExtensionUiResponse 回写 pi（select value 通道）。
+ *
+ * [架构备注，PR #189 review] 本 handler 承载业务编排（归属校验 / list 过滤 / history
+ * tailTurns 截断），与 transport「纯路由」定义有偏差；迁移 services/session/（interface
+ * 经 ports 暴露）是既定方向、待后续 wave。当前留在 transport 与 Quota/Preset handler
+ * 先例一致。
  */
 import type { ISessionService } from '../interfaces.js'
 import type { SessionDeliveryRegistry } from '../services/session/session-delivery-registry.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { SESSION_MANAGER_ACTIONS } from '@xyz-agent/extension-protocol'
+import {
+  isSessionManagerCreateParams,
+  isSessionManagerSendParams,
+  isSessionManagerHistoryParams,
+  isSessionManagerStatusParams,
+  isSessionManagerListParams,
+  isSessionManagerAbortParams,
+} from '@xyz-agent/extension-protocol'
 import type {
   SessionManagerAction,
+  SessionManagerParams,
   SessionManagerCreateParams,
   SessionManagerSendParams,
   SessionManagerHistoryParams,
@@ -31,6 +45,26 @@ import type {
 /** send 失败时附带的恢复指引（target 不可达：先查状态再重试投递） */
 const SEND_UNREACHABLE_HINT =
   'target session unreachable; retry send_to_session after checking get_session_status'
+
+/** dispatch 的统一返回形状：6 个 action 结果 + 错误闭环（send 同步失败 / create 后置失败） */
+type SessionManagerDispatchResult =
+  | SessionManagerCreateResult
+  | SessionManagerSendResult
+  | SessionManagerHistoryResult
+  | SessionManagerStatusResult
+  | SessionManagerListResult
+  | SessionManagerAbortResult
+  | SessionManagerErrorResult
+
+/**
+ * 单个 action 的分发路由：params 类型守卫与执行体成对登记。
+ * 守卫是类型谓词——通过后 params 在类型层即收窄为 P，免除旧 switch
+ * 每分支一次的 as unknown as 断言（守卫与执行体同表登记，天然不会漂移）。
+ */
+interface SessionManagerRoute<P> {
+  isParams: (v: unknown) => v is P
+  run: (parentSessionId: string, params: P) => Promise<SessionManagerDispatchResult>
+}
 
 /** SessionManagerHandler 构造选项 */
 export interface SessionManagerHandlerOptions {
@@ -99,26 +133,71 @@ export class SessionManagerHandler {
     this.opts.sendExtensionUiResponse(parentSessionId, requestId, JSON.stringify(data), 'select')
   }
 
-  /** action 分发：各分支只 return 结果，回写统一由 handle/respond 收口 */
-  private async dispatch(
-    action: SessionManagerAction,
+  /**
+   * action 路由表（查表分发）：params 守卫与 handler 成对登记，新增 action
+   * 只加一行，不再以 6 路 &&/|| 守卫链 + switch 推高 dispatch 圈复杂度
+   * （metrics-gate maxCyclomatic=15 守卫）。
+   */
+  private readonly routes: {
+    readonly [K in SessionManagerAction]: SessionManagerRoute<SessionManagerParams[K]>
+  } = {
+      create: {
+        isParams: isSessionManagerCreateParams,
+        run: (parentSessionId, params) => this.handleCreate(parentSessionId, params),
+      },
+      send: {
+        isParams: isSessionManagerSendParams,
+        run: (parentSessionId, params) => this.handleSend(parentSessionId, params),
+      },
+      history: {
+        isParams: isSessionManagerHistoryParams,
+        run: (parentSessionId, params) => this.handleHistory(parentSessionId, params),
+      },
+      status: {
+        isParams: isSessionManagerStatusParams,
+        run: (parentSessionId, params) => this.handleStatus(parentSessionId, params),
+      },
+      list: {
+        isParams: isSessionManagerListParams,
+        run: (parentSessionId, params) => this.handleList(parentSessionId, params),
+      },
+      abort: {
+        isParams: isSessionManagerAbortParams,
+        run: (parentSessionId, params) => this.handleAbort(parentSessionId, params),
+      },
+    }
+
+  /**
+   * action 分发：查表执行（守卫 → handler），回写统一由 handle/respond 收口。
+   *
+   * 信任边界守卫（与 action 侧 '__malformed__' narrowing 同等防线）：params 来自
+   * extension_ui_request（LLM 可控 JSON），逐 action 校验，非法即 throw 走 handle
+   * 的 respond({error}) 错误闭环——禁止把畸形字段以 undefined 静默流入 sessionService。
+   * 泛型 K 使映射表索引化简为 SessionManagerRoute<SessionManagerParams[K]>，
+   * 守卫通过后 params 类型自动收窄，无需断言（关联联合的标准写法）。
+   */
+  private async dispatch<K extends SessionManagerAction>(
+    action: K,
     parentSessionId: string,
     params: Record<string, unknown>,
-  ): Promise<SessionManagerCreateResult | SessionManagerSendResult | SessionManagerErrorResult | SessionManagerHistoryResult | SessionManagerStatusResult | SessionManagerListResult | SessionManagerAbortResult> {
-    switch (action) {
-      case 'create':
-        return this.handleCreate(parentSessionId, params as unknown as SessionManagerCreateParams)
-      case 'send':
-        return this.handleSend(params as unknown as SessionManagerSendParams)
-      case 'history':
-        return this.handleHistory(params as unknown as SessionManagerHistoryParams)
-      case 'status':
-        return this.handleStatus(params as unknown as SessionManagerStatusParams)
-      case 'list':
-        return this.handleList(params as unknown as SessionManagerListParams)
-      case 'abort':
-        return this.handleAbort(params as unknown as SessionManagerAbortParams)
+  ): Promise<SessionManagerDispatchResult> {
+    const route: SessionManagerRoute<SessionManagerParams[K]> = this.routes[action]
+    if (!route.isParams(params)) {
+      throw new Error(`invalid params for session-manager action '${action}'`)
     }
+    return route.run(parentSessionId, params)
+  }
+
+  /**
+   * 目标归属校验（send/history/status/abort 与 list 的过滤条件对称）：
+   * 目标必须是 spawnSource='agent' 且 parentAgentSessionId = 发起方（路由上下文）
+   * 的 managed session。否则被注入的 agent 可 steer/读历史/abort 用户或其他
+   * agent 的任意活跃 session，绕过 permission 审批链（design.md §392 仅定义了
+   * list 过滤，此处将同一条件施加到全部按 sessionId 寻址的 action）。
+   */
+  private isOwnedBy(parentSessionId: string, sessionId: string): boolean {
+    const summary = this.opts.sessionService.getSummary(sessionId)
+    return summary?.spawnSource === 'agent' && summary?.parentAgentSessionId === parentSessionId
   }
 
   /** create 分支：四步串行时序 */
@@ -173,9 +252,13 @@ export class SessionManagerHandler {
    * 替换项）——同步返回 error + hint 给 select 通道，agent 立即可见。
    */
   private async handleSend(
+    parentSessionId: string,
     params: SessionManagerSendParams,
   ): Promise<SessionManagerSendResult | SessionManagerErrorResult> {
     const { sessionId, prompt } = params
+    if (!this.isOwnedBy(parentSessionId, sessionId)) {
+      return { error: 'target session is not managed by this agent' }
+    }
     try {
       await this.opts.delivery
         .getOrCreateDelivery(sessionId)
@@ -187,8 +270,11 @@ export class SessionManagerHandler {
   }
 
   /** history 分支：含 tailTurns 截断 */
-  private async handleHistory(params: SessionManagerHistoryParams): Promise<SessionManagerHistoryResult> {
+  private async handleHistory(parentSessionId: string, params: SessionManagerHistoryParams): Promise<SessionManagerHistoryResult> {
     const { sessionId, tailTurns } = params
+    if (!this.isOwnedBy(parentSessionId, sessionId)) {
+      throw new Error('target session is not managed by this agent')
+    }
     const { messages, truncated } = await this.opts.sessionService.getHistory(sessionId)
 
     // tailTurns 截断：从末尾保留指定 turn 数
@@ -205,6 +291,8 @@ export class SessionManagerHandler {
           }
         }
       }
+      // user turn 数不足 tailTurns 时回退返回全部历史（而非 messages.length 处截断成空列表）
+      if (userCount < tailTurns) cutIndex = 0
       return {
         messages: messages.slice(cutIndex),
         truncated: cutIndex > 0 || truncated,
@@ -214,12 +302,17 @@ export class SessionManagerHandler {
     return { messages, truncated }
   }
 
-  /** status 分支：从 getSummary 组装（session 不存在时 status='not_found'） */
-  private async handleStatus(params: SessionManagerStatusParams): Promise<SessionManagerStatusResult> {
+  /**
+   * status 分支：从 getSummary 组装。目标不存在**或存在但不归属发起方**一律
+   * `{status:'not_found'}`——「不可见 = 不存在」（PR #189 review 探测面折叠：
+   * 对不归属目标 throw error 会向非属主泄露该 sessionId 的存在性，与 list 的
+   * 过滤语义（不可见 = 不出现在结果里）不对称，非属主可借此探测任意 sessionId）。
+   */
+  private async handleStatus(parentSessionId: string, params: SessionManagerStatusParams): Promise<SessionManagerStatusResult> {
     const { sessionId } = params
     const summary = this.opts.sessionService.getSummary(sessionId)
 
-    if (!summary) {
+    if (!summary || !this.isOwnedBy(parentSessionId, sessionId)) {
       return { status: 'not_found' }
     }
 
@@ -229,9 +322,17 @@ export class SessionManagerHandler {
     }
   }
 
-  /** list 分支：过滤 spawnSource + parentAgentSessionId */
-  private async handleList(params: SessionManagerListParams): Promise<SessionManagerListResult> {
-    const { spawnSource, parentAgentSessionId } = params
+  /**
+   * list 分支：过滤 spawnSource + parentAgentSessionId（agent-managed-session/design.md §392）。
+   *
+   * 缺省注入路由上下文（LLM 可控 params 不得放宽过滤）：spawnSource 缺省 'agent'；
+   * parentAgentSessionId 一律以路由上下文（发起方 session）为准，params 显式指定的
+   * 其他父 id 不生效——否则 agent 可枚举其他 agent 的子 session（label/cwd 泄露）。
+   */
+  private async handleList(parentSessionId: string, params: SessionManagerListParams): Promise<SessionManagerListResult> {
+    const { spawnSource } = params
+    const wantSpawn = spawnSource ?? 'agent'
+    const wantParent = parentSessionId
     const groups = this.opts.sessionService.listPersistedSessions()
 
     // 展平 groups 为 sessions 数组
@@ -239,8 +340,8 @@ export class SessionManagerHandler {
 
     // 过滤
     const filtered = allSessions.filter((s) => {
-      if (spawnSource && s.spawnSource !== spawnSource) return false
-      if (parentAgentSessionId && s.parentAgentSessionId !== parentAgentSessionId) return false
+      if (s.spawnSource !== wantSpawn) return false
+      if (s.parentAgentSessionId !== wantParent) return false
       return true
     })
 
@@ -257,8 +358,11 @@ export class SessionManagerHandler {
   }
 
   /** abort 分支 */
-  private async handleAbort(params: SessionManagerAbortParams): Promise<SessionManagerAbortResult> {
+  private async handleAbort(parentSessionId: string, params: SessionManagerAbortParams): Promise<SessionManagerAbortResult> {
     const { sessionId } = params
+    if (!this.isOwnedBy(parentSessionId, sessionId)) {
+      throw new Error('target session is not managed by this agent')
+    }
     await this.opts.sessionService.abort(sessionId)
     return { success: true }
   }

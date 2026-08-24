@@ -87,6 +87,9 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
       isIdle: () => ctx.isIdle(),
       hasPendingMessages: () => ctx.hasPendingMessages(),
       subscribeSettled: (cb) => {
+        // 无退订语义（pi 0.84.1 `pi.on(...)` 全重载返回 void、无 off——实装锚点：
+        // node_modules @earendil-works/pi-coding-agent dist/core/extensions/types.d.ts
+        // `on()` 系列，0.84.1 实测）；disposed 标志包装兑现退订（notifier.ts 同款）
         let disposed = false
         pi.on('agent_settled', () => { if (!disposed) cb() })
         return () => { disposed = true }
@@ -95,7 +98,8 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
         const piOpts = intent === 'interrupt-at-turn-boundary'
           ? { triggerTurn: true, deliverAs: 'steer' as const }
           : { triggerTurn: true, deliverAs: 'followUp' as const }
-        const content = msg.payload.kind === 'custom' ? msg.payload.content : msg.payload.content
+        // supportedPayloads 已收窄到 'custom'，payload.kind 恒为 'custom'
+        const content = msg.payload.content
         return pi.sendMessage(
           { content, customType: 'pi-scheduler:dispatched', display: true },
           piOpts,
