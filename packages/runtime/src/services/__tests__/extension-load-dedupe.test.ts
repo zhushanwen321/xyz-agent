@@ -171,10 +171,10 @@ describe('ExtensionService.getExtensionPaths 同名去重（P7）', () => {
       disabled: [],
     })
     writeDiscoveryExtension(discoveryDirs[0], 'pi-session-reader', EXT_NAME)
-    const otherDiscoveryEntry = join(writeDiscoveryExtension(discoveryDirs[0], 'pi-model-switch', '@zhushanwen/pi-model-switch'), 'index.ts')
+    const otherDiscoveryEntry = join(writeDiscoveryExtension(discoveryDirs[0], 'pi-model-info', '@zhushanwen/pi-model-info'), 'index.ts')
 
     const paths = await service.getExtensionPaths()
-    // resolver 按包名字母序输出（pi-model-switch < pi-vision → discovery 版在前），
+    // resolver 按包名字母序输出（pi-model-info < pi-vision → discovery 版在前），
     // 去重不改变源顺序——断言顺序无关（两条都在、不误杀）
     expect(paths).toHaveLength(2)
     expect([...paths].sort()).toEqual([npmPkgDir, otherDiscoveryEntry].sort())

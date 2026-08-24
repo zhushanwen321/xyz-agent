@@ -114,7 +114,7 @@ describe("deriveClosedDisplay 三源同构契约（shared / bg-notify-render / n
 
   it("notifier buildLlmContent 的 closed 分支判定顺序与 shared 同构", () => {
     const src = readFileSync(SOURCES.notifier, "utf-8");
-    const body = functionBody(src, /private buildLlmContent\s*\(/, "notifier buildLlmContent");
+    const body = functionBody(src, /function buildLlmContent\s*\(/, "notifier buildLlmContent");
     // buildLlmContent 整个方法体内只有 closed case 一轮判定
     expect(extractSignature(body), MISMATCH_GUIDE).toEqual(BASE);
   });

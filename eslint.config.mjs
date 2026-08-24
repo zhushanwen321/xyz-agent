@@ -36,6 +36,11 @@ export default [
       'extensions/**/workflows/**',
       'extensions/**/.pi/workflows/**',
       'extensions/**/examples/**',
+      // zsub/zflow workflow 脚本（.agents/workflows/*.js）：CJS 是 zflow 加载器契约
+      // （module.exports + require，.cjs 后缀不被其发现层扫描），与根 package.json
+      // type:module 的冲突由同目录 package.json {"type":"commonjs"} 解决；
+      // no-require-imports 对其是误报（同 extensions/**/workflows/** 先例）
+      '.agents/workflows/**',
     ],
   },
   // [HISTORICAL] mock 门面文件是所有 domain 的聚合中心（session/chat/config/model/extension/plugin/

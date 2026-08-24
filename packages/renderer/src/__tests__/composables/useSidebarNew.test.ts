@@ -16,6 +16,7 @@ import { useSidebarStore } from '@/stores/sidebar'
 import { useSessionStore } from '@/stores/session'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSubagentStore } from '@/stores/subagent'
+import { useChatStore } from '@/stores/chat'
 
 // vi.hoisted 保证 mock fn 在 vi.mock factory（hoisted 到顶部）执行时已初始化
 const mocks = vi.hoisted(() => ({
@@ -27,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   loadTree: vi.fn(),
   cancelFlow: vi.fn(),
   startFlow: vi.fn().mockResolvedValue(undefined),
+  // selectSession 首进/切入刷新均调 useChat().setHistoryTruncated——可断言 spy
+  setHistoryTruncated: vi.fn(),
   // TC-5 重连重拉：extension scan / workspace listRecent 走 fire-and-forget，需可控 spy
   extensionScan: vi.fn().mockResolvedValue(undefined),
   workspaceListRecent: vi.fn().mockResolvedValue([]),
@@ -83,7 +86,7 @@ vi.mock('@/api', async (importActual) => {
 // ── useChat composable mock（ensureStreamSubscription spy + useChat stubs）──
 vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: vi.fn(() => ({
-    setHistoryTruncated: vi.fn(),
+    setHistoryTruncated: mocks.setHistoryTruncated,
     disposeSession: vi.fn(),
   })),
   ensureStreamSubscription: mocks.ensureStreamSub,
@@ -157,10 +160,37 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
     // panel 载入后 focusedSessionId 派生为 s2
     expect(sidebar.focusedSessionId.value).toBe('s2')
 
-    // 二次 selectSession 同 sid：isHydrated 守卫→getHistory 不重复调
+    // 二次 selectSession 同 sid：切入刷新（后台 session reconcile，2026-08-22）——
+    // 旧 isHydrated 一次性守卫已废，已 hydrate 的 session 切入时静默重拉（agent-managed
+    // 子 session 的 turn 可能在前端不在场时完成）
     mocks.getHistory.mockClear()
     await sidebar.selectSession('s2')
-    expect(mocks.getHistory).not.toHaveBeenCalled()
+    expect(mocks.getHistory).toHaveBeenCalledWith('s2')
+  })
+
+  it('TC-1c 已 hydrate 切入的尾读 reconcile 同步刷新 truncated 标记（load-more 可恢复）', async () => {
+    const sidebar = useSidebarNew()
+    useSessionStore().applySnapshot({ groups: [group([summary('s1')])] })
+
+    // 首次切入 hydrate（try 分支，truncated=false）
+    mocks.getHistory.mockResolvedValue({ messages: [], historyTruncated: false })
+    await sidebar.selectSession('s1')
+    expect(useChatStore().isHydrated('s1')).toBe(true)
+
+    // 场景：hydrate（尾读 truncated=true 场景）→ load-more 前插全量并清标记 → 切走切回，
+    // getHistory 又返回 20-turn 尾读（RPC 失败 fallback）——reconcile 整量替换分区把前插
+    // 历史截回尾窗。truncated 必须重新置 true：load-more 按钮（hasMoreHistory 驱动）重显
+    // （hydrate 锚不被 reconcile 触碰，锚定切分仍可恢复全量）。对齐 core use-session 修复。
+    mocks.setHistoryTruncated.mockClear()
+    mocks.getHistory.mockResolvedValue({ messages: [], historyTruncated: true })
+    await sidebar.selectSession('s1')
+    expect(mocks.setHistoryTruncated).toHaveBeenCalledWith('s1', true)
+
+    // RPC 全量成功（truncated=false）→ 标记清除，与「分区已替换为全量」一致
+    mocks.setHistoryTruncated.mockClear()
+    mocks.getHistory.mockResolvedValue({ messages: [], historyTruncated: false })
+    await sidebar.selectSession('s1')
+    expect(mocks.setHistoryTruncated).toHaveBeenCalledWith('s1', false)
   })
 
   it('TC-1b flow 活跃时切 session → cancelFlow（AC-3.10）', async () => {

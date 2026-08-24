@@ -5,7 +5,7 @@
  *  - TC1 首屏冒烟：list-tree 型 guiTree 经 GuiComponentRenderer 渲染原语 DOM + 卡头 widgetKey 标签
  *  - TC2 文本 widget：ansi-text 原语渲染 lines 内容
  *  - TC3 多 widgetKey 分栏：两卡并排 + grid 容器 flex/flex-wrap 布局
- *  - TC7 宽度对齐：band px-5 + grid mx-auto max-w-[var(--content-max-w)]（单卡/多卡联合宽 ≤ composer）
+ *  - TC7 宽度对齐：band px-5 + grid content-col（单卡/多卡联合宽 ≤ composer）
  *  - TC8 折叠交互：点击卡头 → 卡体隐藏 + data-collapsed；再点 → 恢复展开
  *  - TC4 清除语义：mock 容器清空 → 同实例 computed 重算 → 整体零 DOM（无残留空容器）
  *  - TC5 无数据隐藏 + 无 provide 环境兜底（inject(key, null) 不崩，ES1）
@@ -128,7 +128,7 @@ describe('WidgetArea（M17 对话流 widget 面板）', () => {
     expect(cards[1].text()).toContain('goal')
   })
 
-  it('TC7 宽度对齐：band px-5 + grid mx-auto max-w-[var(--content-max-w)]（联合宽 ≤ composer）', async () => {
+  it('TC7 宽度对齐：band px-5 + grid content-col（联合宽 ≤ composer）', async () => {
     const { source } = makeSource({
       todo: makeEntry('todo', [{ type: 'ansi-text', props: { lines: ['todo line'] } }]),
     })
@@ -139,11 +139,10 @@ describe('WidgetArea（M17 对话流 widget 面板）', () => {
     const areaClasses = wrapper.find('[data-testid="widget-area"]').classes()
     expect(areaClasses).toContain('px-5')
 
-    // 内层 grid：与 Composer 相同的宽度约束三件套（mx-auto + w-full + max-w content 列）
+    // 内层 grid：与 Composer 相同的内容列原语（.content-col = mx-auto + w-full + max-w token，
+    // 定义在 renderer style.css @layer utilities；改宽度只动 --content-max-w）
     const gridClasses = wrapper.find('[data-testid="widget-area-grid"]').classes()
-    expect(gridClasses).toContain('mx-auto')
-    expect(gridClasses).toContain('w-full')
-    expect(gridClasses).toContain('max-w-[var(--content-max-w)]')
+    expect(gridClasses).toContain('content-col')
   })
 
   it('TC8 折叠交互：点击卡头收起卡体（v-show 隐藏 + data-collapsed），再点恢复', async () => {

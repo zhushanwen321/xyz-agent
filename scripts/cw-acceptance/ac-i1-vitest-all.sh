@@ -11,7 +11,7 @@
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 if ! (cd "$REPO_ROOT" && pnpm install --prefer-offline --silent); then
-  echo "[AC-I1] pnpm install 失败（cwd=$REPO_ROOT）" >&2
+  echo "[AC-I1] pnpm install 失败（cwd=${REPO_ROOT}）" >&2
   echo "AC-I1 FAIL"
   exit 1
 fi

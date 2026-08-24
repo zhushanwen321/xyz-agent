@@ -164,7 +164,7 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
     expect(result).toHaveLength(0)
   })
 
-  it('AC-merge-1: 3 文件冷缓存 → readFileSync 总数 ≤ 6（四读合一，非 12；尾读命中则 ≤4）', () => {
+  it('AC-merge-1: 3 文件冷缓存 → readFileSync 总数 ≤ 6（五读合一，非 12；尾读命中则 ≤4）', () => {
     pathsMock.getSessionsDir.mockReturnValue(tmpSessionsDir)
     makeSessionFile('s1', 'n1', 'done', new Date(1000))
     makeSessionFile('s2', 'n2', 'error', new Date(2000))
@@ -176,8 +176,10 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
     // parseSessionHeader(1) + extractSessionName 尾读(0) + extractSessionOutcome sidecar(1)
     // + extractHandedOff 仅尾读(0) + readPresetBinding(1) = 3 真实读/文件（计数 6）。
     // D14 语义修正（2026-08-04）project sidecar 第五读：+ readProjectBinding(1) 真实读
-    // → 4 真实读/文件（计数 8）。基线（无 project 读）3 文件计数 18 = 3 × 6。
+    // → 4 真实读/文件（计数 8）。
+    // agent-managed-session agent sidecar 第六读：+ readAgentBinding(1) 真实读
+    // → 5 真实读/文件（计数 10）。基线（无 project/agent 读）3 文件计数 18 = 3 × 6。
     // 关键约束：缓存命中时（下一个用例）readFileSync 不增加。
-    expect(fsState.readCount).toBeLessThanOrEqual(24) // 3 文件 × 4 真实读 × 2 计数
+    expect(fsState.readCount).toBeLessThanOrEqual(30) // 3 文件 × 5 真实读 × 2 计数
   })
 })

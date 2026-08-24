@@ -38,6 +38,7 @@ import type { DirScopes } from './services/skill-dir-config.js'
 import type { SessionTraceSnapshot } from './services/session/session-trace.js'
 import type { Credential } from './services/auth/auth-storage.js'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
+import type { IManagedSessionView } from './services/session/types.js'
 
 /**
  * pi 引擎 / 进程池 port 的权威定义在 services/ports/pi-engine.ts（D24 收口）。
@@ -109,6 +110,10 @@ export interface SessionCreateOptions {
   thinkingOverride?: string
   /** 归属 project id（D14 语义修正 2026-08-04）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
   projectId?: string
+  /** 发起来源：'user' | 'agent'。agent-managed session 标记（session-manager create 链路传入）。 */
+  spawnSource?: 'user' | 'agent'
+  /** 父 agent session id（spawnSource='agent' 时传入，session-manager list 按此过滤子 session）。 */
+  parentAgentSessionId?: string
 }
 
 /** Session lifecycle: creation, deletion, messaging, history. */
@@ -238,6 +243,12 @@ export interface ISessionService {
   ): Promise<SessionSummary>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined
+  /**
+   * 取活跃 session 的运行时状态视图（isGenerating / isCompacting / isBashRunning /
+   * lastActiveAt 等可写字段；未激活/不存在返回 undefined）。sd-u5 起 delivery 装配
+   * 经此读 isIdle 判定标志；字段可写语义见 IManagedSessionView 注释。
+   */
+  getSession(sessionId: string): IManagedSessionView | undefined
   /** W10：取最近 inputTokens——usage 实例快照派生（唯一数据源 = get_session_stats，旧缓存直写已删）。 */
   getInputTokens(sessionId: string): number
   /**

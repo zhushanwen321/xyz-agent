@@ -48,6 +48,12 @@ export function createSettingsStore() {
    * 聚合模型列表（runtime aggregateModels 产出，config.providers 解析后的扁平模型）。
    * 与 providers 同源（sendInitialState 同 step 推、broadcastProviderList 同步广播），
    * 故同样走常驻订阅（settings-lifecycle.init 注册，应用生命周期不断开）。
+   *
+   * 【契约】scoped 过滤后列表，仅供 Composer 模型切换器（ModelSelectPopover）消费——
+   * scopedModels 白名单非空时此处仅含白名单内模型（runtime aggregateModelsWithScoped）。
+   * 其他「需要选模型」的场景（如 extension 模型配置，extension 解析走 pi 全量
+   * modelRegistry 与 scoped 无关）应从 providers 派生全量候选，禁止借用本列表
+   * （useAuthedModelGroups 即为此范式，守卫测试见其 __tests__）。
    */
   const models = ref<ModelInfo[]>([])
   const skills = ref<SkillInfo[]>([])

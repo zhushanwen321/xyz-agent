@@ -41,6 +41,7 @@ export const PING_FAIL_THRESHOLD = 3
 export const PING_WARN_FAIL_COUNT = 2
 import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
+import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
 import type { IFileChangeDiff } from '../ports/file-change-diff.js'
 import type { PiTranslatedEvent } from './types.js'
 
@@ -105,6 +106,12 @@ export interface EventInterpreterOptions {
   thinkingLevelState?: () => { markDirty: () => void } | undefined
   /** extension 交互式 UI 请求（注册前端超时 + 缓存 pending 请求）。组合根注入 server.registerExtensionTimeout。 */
   onExtensionUIRequest?: (requestId: string, sessionId: string, method: string, payload: Record<string, unknown>) => void
+  /**
+   * session-manager 请求（agent-managed session）。select 通道 + SESSION_MANAGER_MARKER。
+   * fire-and-forget（不 await），由 SessionManagerHandler 异步处理并回写 response。
+   * 组合根注入 server.handleSessionManagerRequest。
+   */
+  onSessionManagerRequest?: (requestId: string, sessionId: string, action: SessionManagerAction | '__malformed__', params: Record<string, unknown>) => void
   /** bridge:* 前缀请求（直接路由不经前端超时）。组合根注入 server.handleBridgeRequest。 */
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
   /** extension setStatus（路由到 statusline builtin 插件，status-bar-registry 广播）。组合根注入 server.handleStatusSetUpdate。 */
@@ -330,6 +337,11 @@ export class EventInterpreter {
         return
       case 'bridge-ui':
         this.opts.onBridgeUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.data)
+        return
+      case 'session-manager-ui':
+        // fire-and-forget（不 await），由 SessionManagerHandler 异步处理并回写 response，
+        // 不走前端 UI 超时流程。
+        this.opts.onSessionManagerRequest?.(ev.requestId, ev.sessionId, ev.action, ev.params)
         return
       case 'extension-ui':
         this.opts.onExtensionUIRequest?.(ev.requestId, ev.sessionId, ev.method, ev.payload)

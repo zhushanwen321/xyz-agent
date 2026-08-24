@@ -179,11 +179,25 @@ export function useSidebar() {
     if (!chat.isHydrated(id)) {
       try {
         const { messages, historyTruncated } = await chatApi.getHistory(id)
-        chat.hydrate(id, messages)
+        chat.reconcileHistory(id, messages)
         useChat().setHistoryTruncated(id, historyTruncated) // N1: 截断标记供 MessageStream 显隐
         chat.clearHistoryError(id)
       } catch {
         chat.markHistoryFailed(id)
+      }
+    } else {
+      // 已 hydrate：静默刷新（后台 session reconcile，同 useSidebarNew.postLoadSession）
+      try {
+        const { messages, historyTruncated } = await chatApi.getHistory(id)
+        chat.reconcileHistory(id, messages)
+        // reconcile 整量替换分区：尾读（RPC 失败 fallback 20-turn）会把 load-more 前插的
+        // 更早历史截回尾窗——truncated 标记必须同步刷新（对齐 core use-session 同款修复）：
+        // true 时 load-more 按钮重显（hydrate 锚不被 reconcile 触碰，锚定切分仍可恢复全量）；
+        // false 时清标记，与「分区已替换为全量」一致。
+        useChat().setHistoryTruncated(id, historyTruncated)
+      } catch (e) {
+        // 已 hydrate 刷新失败不阻断切入——旧数据仍在，下次切入重试；warn 留排查痕迹
+        console.warn('[useSidebar] background reconcile refresh failed for', id, e)
       }
     }
 

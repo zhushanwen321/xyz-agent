@@ -21,7 +21,7 @@
  * gui:null 清除后条目消失（entries 为空时整体零 DOM，不残留空容器）。
  *
  * 宽度对齐 composer：外层 band px-5（同 composer-band），内层 grid
- * mx-auto max-w-[var(--content-max-w)]（同 Composer）——单卡/多卡联合宽度恒 ≤ composer。
+ * content-col（同 Composer 内容列原语）——单卡/多卡联合宽度恒 ≤ composer。
  *
  * 数据源经 inject 注入（VIEW_HOST_SOURCE_KEY），壳层 provide 真实实现，单测
  * global.provide mock；无注入时静默空态不崩（inject(key, null) 兜底）。
@@ -98,11 +98,14 @@ function progressLabel(meta: WidgetMeta | undefined): string {
   return p.label ?? `${p.current}/${p.total}`
 }
 
+/** 百分比换算因子（no-magic-numbers，同 useDrawerSplitWidth PCT_SCALE 模式） */
+const PCT_SCALE = 100
+
 /** 进度 fill 宽度（0-100 clamp，total<=0 防除零） */
 function progressWidth(meta: WidgetMeta | undefined): string {
   const p = meta?.progress
   if (!p || p.total <= 0) return '0%'
-  return `${Math.min(100, Math.max(0, (p.current / p.total) * 100))}%`
+  return `${Math.min(PCT_SCALE, Math.max(0, (p.current / p.total) * PCT_SCALE))}%`
 }
 </script>
 
@@ -111,7 +114,7 @@ function progressWidth(meta: WidgetMeta | undefined): string {
   <div v-if="entries.length > 0" data-testid="widget-area" class="flex-shrink-0 px-5 py-2">
     <div
       data-testid="widget-area-grid"
-      class="mx-auto flex w-full max-w-[var(--content-max-w)] flex-wrap items-stretch gap-2.5"
+      class="content-col flex flex-wrap items-stretch gap-2.5"
     >
       <!-- 卡壳：head(surface-2 浮起) + body(bg-input 凹陷) 两级 bg 层次，无 border（v6 裁决） -->
       <div

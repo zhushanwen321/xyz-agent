@@ -10,43 +10,20 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
 import type { DiscoveredResource } from "../../shared/resource-discovery.ts";
+// 共享 mock 基建（vi.mock 工厂 / mock pi / mock ctx）：helpers/injector-test-mocks.ts
+import { createDiscoveryModuleMock, createLoggerModuleMock, createMockCtx, createMockPi, type CapturedHandlers } from "./helpers/injector-test-mocks.ts";
 
 // ── 稳定 spy：vi.hoisted 保证 resetModules 后引用不变（vi.mock 工厂闭包捕获同一 fn，
 //    故 fresh import 的注入器拿到的 discoverResources === spies.discoverResources，跨
 //    resetModules 调用计数连续，mockClear 控制每用例重置） ──
-const spies = vi.hoisted(() => ({
-	discoverResources: vi.fn(),
-	getCachedFileContent: vi.fn(),
-}));
+const spies = vi.hoisted(() => ({ discoverResources: vi.fn(), getCachedFileContent: vi.fn() }));
 
-vi.mock("../../shared/resource-discovery.ts", () => ({
-	discoverResources: spies.discoverResources,
-	findWorkspaceRoot: () => "/ws",
-	getCachedFileContent: spies.getCachedFileContent,
-}));
+vi.mock("../../shared/resource-discovery.ts", () => createDiscoveryModuleMock(spies));
 
-vi.mock("@zhushanwen/pi-extension-logger", () => ({
-	getLogger: () => ({
-		debug: () => {
-			/* no-op */
-		},
-		info: () => {
-			/* no-op */
-		},
-		warn: () => {
-			/* no-op */
-		},
-		error: () => {
-			/* no-op */
-		},
-	}),
-	setPiHandle: () => {
-		/* no-op */
-	},
-}));
+// 工厂必须写成箭头惰性形式：vi.mock 被提升到 import 之前执行，直接传
+// createLoggerModuleMock 引用会在提升位置立即求值 import 绑定 → TDZ ReferenceError
+vi.mock("@zhushanwen/pi-extension-logger", () => createLoggerModuleMock());
 
 // ── 纯函数测试：静态 import（模块级缓存状态不影响纯函数；与下方缓存 describe 隔离） ──
 import { formatAgentList, parseAgentFrontmatter } from "../subagent-list-injector";
@@ -173,44 +150,8 @@ describe("formatAgentList", () => {
 });
 
 // ──────────────────────────────────────────────────────────────
-// session 级缓存行为（TC1-TC4）
+// session 级缓存行为（TC1-TC4；mock pi/ctx 构造在 helpers/injector-test-mocks.ts）
 // ──────────────────────────────────────────────────────────────
-
-/** before_agent_start handler 的返回结构（取 systemPrompt 断言）。 */
-interface BeforeAgentResult {
-	systemPrompt: string;
-}
-
-/** 三 handler 捕获引用（setupSubagentListInjector 注册后填充）。 */
-interface CapturedHandlers {
-	sessionStart?: (event: unknown, ctx: unknown) => Promise<void> | void;
-	beforeAgentStart?: (event: { systemPrompt: string }, ctx: unknown) => Promise<BeforeAgentResult | void> | BeforeAgentResult | void;
-	sessionShutdown?: (event: unknown, ctx: unknown) => void;
-}
-
-/** 构造 mock pi：捕获三 handler 引用，其余 prop 走 noop（仅 on 被调用）。 */
-function createMockPi(handlers: CapturedHandlers): ExtensionAPI {
-	const on = (event: string, handler: (...args: unknown[]) => unknown): void => {
-		if (event === "session_start") {
-			handlers.sessionStart = handler as CapturedHandlers["sessionStart"];
-		} else if (event === "before_agent_start") {
-			handlers.beforeAgentStart = handler as CapturedHandlers["beforeAgentStart"];
-		} else if (event === "session_shutdown") {
-			handlers.sessionShutdown = handler as CapturedHandlers["sessionShutdown"];
-		}
-	};
-	const noop = (): void => {
-		/* mock */
-	};
-	// setupSubagentListInjector 仅调 pi.on；用最小对象 + 双重断言满足 ExtensionAPI 契约
-	// （测试 mock 约定，见 crash-recovery.test.ts 的 Proxy 模式）
-	return { on, appendEntry: noop, registerTool: noop, registerCommand: noop, registerMessageRenderer: noop, events: { emit: noop, on: noop } } as unknown as ExtensionAPI;
-}
-
-/** 最小 ctx mock（注入器只读 ctx.cwd）。 */
-function createMockCtx(): Record<string, unknown> {
-	return { cwd: "/ws", mode: "tui" };
-}
 
 /** fixture：单个 worker agent 的 DiscoveredResource。 */
 function agentResource(path: string): DiscoveredResource {
@@ -342,5 +283,54 @@ describe("subagent-list-injector session 级缓存", () => {
 		const r = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
 		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
 		expect(r?.systemPrompt).toContain("<name>worker</name>");
+	});
+});
+
+// ──────────────────────────────────────────────────────────────
+// KV-cache 顺序契约：输出按 name 码点序，重建（两次发现）逐字节一致
+// ──────────────────────────────────────────────────────────────
+
+describe("discoverAllAgents 顺序契约（KV-cache）", () => {
+	it("输出按 name 码点序排序，与发现层返回顺序（readdir 枚举序）无关", async () => {
+		const byPath: Record<string, string> = {
+			"/ws/.agents/agents/zeta.md": agentMd("zeta", "z"),
+			"/ws/.agents/agents/worker.md": agentMd("worker", "w"),
+			"/ws/.agents/agents/alpha.md": agentMd("alpha", "a"),
+		};
+		// 刻意以非字母序返回（模拟 readdir 无契约枚举序）
+		spies.discoverResources.mockResolvedValue([
+			agentResource("/ws/.agents/agents/zeta.md"),
+			agentResource("/ws/.agents/agents/worker.md"),
+			agentResource("/ws/.agents/agents/alpha.md"),
+		]);
+		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
+
+		const { discoverAllAgents } = await import("../subagent-list-injector");
+		const agents = await discoverAllAgents("/ws", "/agent");
+		expect(agents.map((a) => a.name)).toEqual(["alpha", "worker", "zeta"]);
+	});
+
+	it("重建（两次发现）输出与渲染结果逐字节一致——目录不变时 session_start/fallback/resume 任意重建等价", async () => {
+		const byPath: Record<string, string> = {
+			"/ws/.agents/agents/b.md": agentMd("beta", "b"),
+			"/ws/.agents/agents/a.md": agentMd("alpha", "a"),
+		};
+		// 两次发现返回顺序不同（模拟跨进程 readdir 漂移）
+		spies.discoverResources
+			.mockResolvedValueOnce([
+				agentResource("/ws/.agents/agents/b.md"),
+				agentResource("/ws/.agents/agents/a.md"),
+			])
+			.mockResolvedValueOnce([
+				agentResource("/ws/.agents/agents/a.md"),
+				agentResource("/ws/.agents/agents/b.md"),
+			]);
+		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
+
+		const { discoverAllAgents, formatAgentList } = await import("../subagent-list-injector");
+		const first = await discoverAllAgents("/ws", "/agent");
+		const second = await discoverAllAgents("/ws", "/agent");
+		expect(second).toEqual(first);
+		expect(formatAgentList(second)).toBe(formatAgentList(first));
 	});
 });
