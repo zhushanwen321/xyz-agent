@@ -19,6 +19,19 @@ import type { Message, Segment, ServerMessageUnion } from '@xyz-agent/shared'
 export interface ChatApiPort {
   /** 发送消息（message.send RPC）*/
   send(sessionId: string, promptText: string): Promise<void>
+  /**
+   * subagent 定向消息 / 生命周期操作（session.subagentAction RPC，composer 四符号 `@` 发送分流）。
+   * 契约对齐 renderer api/domains/session.subagentAction（U5 扩签名）：action='message' 带
+   * subagentId+text（已开 subagent 追问），'start' 带 slug+task（新建占位 chip），'cancel' 本域
+   * 不消费（stores/subagent.ts 直调，此处不省略联合成员以保持 wire 协议单点）。
+   * 实现在 session 域（语义归属 session.subagentAction），经本端口暴露给 chat 域发送链路
+   * （useChat 分流点），与 writeSegments 的跨域注入同理。
+   */
+  subagentAction(
+    sessionId: string,
+    action: 'cancel' | 'message' | 'start',
+    params: { subagentId?: string; text?: string; slug?: string; task?: string },
+  ): Promise<void>
   /** 追加 steer（message.steer，AI 执行中追加上下文）*/
   steer(sessionId: string, promptText: string): Promise<void>
   /** 追加 follow-up（message.follow_up，当前回合结束后另起一轮）*/

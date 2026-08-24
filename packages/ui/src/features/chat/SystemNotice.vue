@@ -1,11 +1,27 @@
 <template>
   <!--
     展示组件 · system 提示行（W07-C）。
-    渲染 compactionSummary / branchSummary 两类 system 消息。
+    渲染 compactionSummary / branchSummary 两类 system 消息 + subagent 定向气泡（U2b）。
     不冒充 user/assistant：弱化样式（居中、小字、图标 + 一行摘要），
     作流转过程的元信息提示（压缩 / 分支）。
   -->
-  <div class="system-notice mx-auto flex w-full max-w-[var(--content-max-w)] min-w-0 animate-notice-in items-center gap-2 py-1">
+  <!-- subagent 定向气泡（U2b）：`@` 定向消息的「可见去向」形态（composer-symbol-system
+       §3.3.3a「→ @slug：text」）。左对齐轻量样式区别于 user/assistant 气泡——定向消息
+       不是对话回合（无主 agent turn），是元信息记录；live / reload 两链路产出同形态
+       Message（store.appendSubagentDirective 注释），本组件是唯一渲染点。 -->
+  <div
+    v-if="directive"
+    class="mx-auto flex w-full max-w-[var(--content-max-w)] min-w-0 items-start gap-1.5 py-1"
+    data-testid="subagent-directive-bubble"
+  >
+    <ArrowRight class="mt-0.5 size-3 shrink-0 text-accent" />
+    <p class="min-w-0 break-words text-[length:var(--text-xs)] leading-snug text-neutral-mid">
+      <span class="font-mono font-medium text-accent" data-testid="subagent-directive-slug">@{{ directive.slug }}</span>
+      <span>：{{ directive.text }}</span>
+    </p>
+  </div>
+  <!-- 现有 system 提示行（compaction / branch / 兜底文本） -->
+  <div v-else class="system-notice mx-auto flex w-full max-w-[var(--content-max-w)] min-w-0 animate-notice-in items-center gap-2 py-1">
     <span class="h-px flex-1 bg-border" />
     <component :is="icon" class="size-3 shrink-0 text-neutral-mid" />
     <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ text }}</span>
@@ -14,17 +30,28 @@
 </template>
 
 <script setup lang="ts">
-import { GitBranch, Archive } from '@lucide/vue'
+import { GitBranch, Archive, ArrowRight } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
-import { normalizeContent } from '@xyz-agent/shared'
-import type { Message } from '@xyz-agent/shared'
+import { normalizeContent, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective } from '@xyz-agent/shared'
+import type { Message, SubagentDirectiveData } from '@xyz-agent/shared'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   message: Message
 }>()
+
+/**
+ * subagent 定向数据：customType 匹配且 details 可解析时非 null。
+ * 解析失败（details 畸形）→ null → 不渲染定向气泡，降级走下方兜底 system 行
+ * （消息 display:true 仍在流中，不静默消失——「渲染过滤不丢消息」规则 9）。
+ * 一次性求值（对齐 resolveNotice 先例）：消息对象不可变，props.message 不会原地变更。
+ */
+const directive: SubagentDirectiveData | null =
+  props.message.customType === SUBAGENT_DIRECTIVE_CUSTOM_TYPE
+    ? parseSubagentDirective(props.message.content, props.message.details)
+    : null
 
 /** 按消息类型选图标 + 摘要文案（纯函数，props 不变则结果不变） */
 const { icon, text } = resolveNotice(props.message)
@@ -49,7 +76,7 @@ const K_THRESHOLD = 1000
 /** token 数 → K 格式：237186 → 237.2K，13400 → 13.4K，<1000 原数 */
 function formatTokens(n: number): string {
   if (n < K_THRESHOLD) return String(n)
-  const k = n / K_THRESHOLD
+  const k = n / 1000
   return `${k.toFixed(1).replace(/\.0$/, '')}K`
 }
 </script>
