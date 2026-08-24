@@ -1,5 +1,11 @@
 # @zhushanwen/pi-extension-logger
 
+## 0.3.0
+
+### Minor Changes
+
+- d4f466667: Add per-message fixed-window rate limiting for appendEntry writes so a hot loop of log entries can no longer flood the session file; excess entries within a window are summarized instead of written one by one
+
 ## 0.2.2
 
 ### Patch Changes

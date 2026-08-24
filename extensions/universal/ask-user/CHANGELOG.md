@@ -1,5 +1,11 @@
 # @zhushanwen/pi-ask-user
 
+## 7.0.14
+
+### Patch Changes
+
+- d4f466667: Migrate bare console calls to the shared extension logger (pi-extension-logger) so diagnostic logs flow through the unified logging channel with structured fields instead of raw stdout, and drop the redundant generalized log entry emitted on tool errors
+
 ## 7.0.13
 
 ### Patch Changes
