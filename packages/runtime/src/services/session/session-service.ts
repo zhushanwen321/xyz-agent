@@ -1321,6 +1321,22 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     await client.prompt('/__xyz_reload__')
   }
 
+  /**
+   * U3（composer 四符号 §3.3.5）：reload 完成后失效 commands 快照（slash 列表动态刷新
+   * 链路闭合点）。失效点挂在这里的时机依据（设计 F8）：pi 对 extension 命令
+   * `await _tryExecuteExtensionCommand`（agent-session.js:800），promptReload resolve 即
+   * reload 已完成；而 `session_start(reason='reload')` 事件是 extension-only 不出 stdout
+   * （agent-session.js:2072），runtime 侧不存在可订阅的 reload 完成事件。
+   *
+   * 事件只做失效（对齐 applyContextUpdate 范式）——markDirty 置 dirty + 防抖重拉
+   * get_commands（commands 实例唯一数据写路径），重拉成功后经既有挂钩
+   * fetchCommandsSnapshot 内的 publishCommandsSnapshot 自动广播 session.commands，
+   * 本方法无需额外广播。
+   */
+  handleSessionReloaded(sessionId: string): void {
+    this.replicatedStates.get(sessionId)?.commands.markDirty()
+  }
+
   getSummary(sessionId: string): SessionSummary | undefined {
     const session = this.sessions.get(sessionId)
     return session ? this.toSummary(session) : undefined
