@@ -32,7 +32,10 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import lockfile from "proper-lockfile";
+
+const logger = getLogger("file-lock");
 
 /** 锁参数（默认值对齐 auth-storage.ts 范本；测试可覆盖以缩短等待）。 */
 export interface FileLockOptions {
@@ -99,10 +102,7 @@ export async function withFileLock<T>(
 		} catch (unlockErr) {
 			// 锁已 compromised（被 stale 夺取）时 unlock 必然失败且可忽略——
 			// 记录留痕（对齐 pi finally 的 catch 语义：不外抛、不静默）。
-			console.debug(
-				"[file-lock] unlock failed after compromise (ignorable):",
-				unlockErr instanceof Error ? unlockErr.message : String(unlockErr),
-			);
+			logger.debug("unlock failed after compromise (ignorable)", { detail: { err: unlockErr instanceof Error ? unlockErr.message : String(unlockErr) } });
 		}
 	}
 }

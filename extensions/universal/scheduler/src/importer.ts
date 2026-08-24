@@ -4,8 +4,11 @@ import * as path from 'node:path'
 
 import { getAgentDir } from '@earendil-works/pi-coding-agent'
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
+import { getLogger } from '@zhushanwen/pi-extension-logger'
 
 import type { ScheduledTask, SchedulerEntryOp, SchedulerStore, TaskSnapshot } from './types.js'
+
+const logger = getLogger('scheduler')
 
 /**
  * 获取旧 store 文件路径：scheduler/<root>/<segments>/scheduler.json，双候选探测。
@@ -143,9 +146,9 @@ function importFromFile(
   // 空 store（0 任务）无持久化依赖，直接删；resumed session（sessionFile 已存在）已即时落盘，删
   if (tasks.length === 0 || fs.existsSync(currentSessionFile)) {
     fs.unlinkSync(importedPath)
-    // 内部诊断日志（非用户可见消息）：用 console.warn 而非 console.log（项目 convention：
-    // extensions 禁 console.log/info 防泄漏到 TUI；诊断输出统一 console.warn）
-    console.warn(`[scheduler] imported ${tasks.length} legacy tasks from ${importedPath}`)
+    // 内部诊断日志（非用户可见消息）：经共享 logger.warn → appendEntry 持久化为 custom entry，
+    // 不污染 TUI（logging-conventions SSOT：诊断走 logger.warn，禁裸 console）。
+    logger.warn('imported legacy tasks', { count: tasks.length, path: importedPath })
     return undefined
   }
 
@@ -155,9 +158,10 @@ function importFromFile(
   // 出现 → 删；仍未 flush → 静默保留 .imported 供下次 session_start 的 handleImportedResidue
   // 崩溃恢复重导入。跨 session 重导入窗口 = session_start → 首个 turn_end（秒级）：turn_end 后
   // .imported 已删，后续 session 启动看不到残留 → 双导入窗口闭合（R-CONCURRENT-IMPORT 已更新）
-  console.warn(
-    `[scheduler] imported ${tasks.length} legacy tasks (session not flushed; deferring ${importedPath} removal)`,
-  )
+  logger.warn('imported legacy tasks (session not flushed; deferring removal)', {
+    count: tasks.length,
+    path: importedPath,
+  })
   return () => {
     // 幂等：已删（本进程或并发另一进程已处理）→ no-op。cleanup 在每次 turn_end 都会调用，重复调用安全
     if (!fs.existsSync(importedPath)) return
@@ -216,7 +220,7 @@ function handleImportedResidue(
  * 内存 fileEntries，紧接的 loadTasks replay 统一重放读到导入任务（pi _appendEntry 同步 push
  * fileEntries，design-review 已实测验证）。
  *
- * 整体降级（C1）：read/parse/appendEntry 任一异常 → console.warn + 不 rethrow，不让
+ * 整体降级（C1）：read/parse/appendEntry 任一异常 → logger.warn + 不 rethrow，不让
  * session_start 崩溃（与 replay gap4 / ER-APPEND-FAIL 同款降级语义）。append 中途失败时
  * .imported 保留（不 unlink）——下次 session 的 handleImportedResidue 会重导入全部任务，
  * 已成功 append 的子集可能跨 session 双触发；取舍：删除则失败任务永久丢失（更糟），
@@ -255,9 +259,7 @@ export function importLegacyStore(
     return importFromFile(importedPath, pi, currentSessionFile)
   } catch (err) {
     // C1 整体降级：read/parse/appendEntry 任一异常不崩 session_start
-    console.warn(
-      `[scheduler] import failed: ${err instanceof Error ? err.message : String(err)}`,
-    )
+    logger.warn('import failed', { error: err instanceof Error ? err.message : String(err) })
     return undefined
   }
 }

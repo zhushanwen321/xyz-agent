@@ -2,19 +2,21 @@
  * U4_DISPATCH_INFLIGHT：调用方 in-flight 守卫验收
  *
  * 两个子用例：
- * (1) 同一 taskId 的 dispatchTask 并发调用 → 第二次立即返回 false + console.warn
+ * (1) 同一 taskId 的 dispatchTask 并发调用 → 第二次立即返回 false + logger.warn
  * (2) 第一次 dispatchTask 完成后（finally 清除）→ 第二次正常执行
  *
  * 断言 delivery send 调用总次数为 1（拦截场景）或 2（串行场景）。
  */
 import { describe, expect, it, vi } from 'vitest'
 
+import { getLogger } from '@zhushanwen/pi-extension-logger'
+
 import { MockSchedulerBackend } from '../backend.js'
 import { SchedulerRuntime } from '../runtime.js'
 
 describe('U4_DISPATCH_INFLIGHT: 调用方 in-flight 守卫', () => {
   it('(1) 同一 taskId 并发 dispatch → 第二次被拦截（send 只调 1 次 + warn）', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(getLogger('scheduler'), 'warn').mockImplementation(() => {})
 
     // 可控延迟的 sendMessage：让第一次 dispatch 挂起
     let resolveSend: (() => void) | undefined
@@ -80,7 +82,7 @@ describe('U4_DISPATCH_INFLIGHT: 调用方 in-flight 守卫', () => {
   })
 
   it('(3) 非 force + 有 delivery handle 时，in-flight 守卫同样拦截并发 dispatch', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(getLogger('scheduler'), 'warn').mockImplementation(() => {})
     const backend = new MockSchedulerBackend()
     backend.deliveryHandle = {
       send: vi.fn(),

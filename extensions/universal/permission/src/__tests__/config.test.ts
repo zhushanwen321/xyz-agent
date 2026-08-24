@@ -9,6 +9,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+	loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+	getLogger: () => loggerMock,
+	createLogger: () => loggerMock,
+	setPiHandle: vi.fn(),
+}));
+
 import { DEFAULT_CONFIG } from "../types.js";
 import {
 	clearConfigCache,
@@ -127,42 +137,36 @@ describe("WT3: 配置解析容错（malformed JSON）", () => {
 		// 用户照旧设计文档配对象形式 selector（不受支持）
 		writeFileSync(configPath, JSON.stringify({ classifier: { model: { type: "available" } } }), "utf-8");
 
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		try {
-			const config = loadAndWatchConfig();
-			// 回落默认 auto（不再静默）
-			expect(config.classifier.model).toBe("auto");
-			// warn 提示忽略无效 classifier.model
-			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Ignoring invalid classifier.model"));
-		} finally {
-			warnSpy.mockRestore();
-		}
+	loggerMock.warn.mockClear();
+		const config = loadAndWatchConfig();
+		// 回落默认 auto（不再静默）
+		expect(config.classifier.model).toBe("auto");
+		// warn 提示忽略无效 classifier.model
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			expect.stringContaining("Ignoring invalid classifier.model"),
+		);
 	});
 
-	it("classifier.model 传数字 → console.warn + 回落默认 auto", () => {
+	it("classifier.model 传数字 → logger.warn + 回落默认 auto", () => {
 		writeFileSync(configPath, JSON.stringify({ classifier: { model: 42 } }), "utf-8");
 
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		try {
-			const config = loadAndWatchConfig();
-			expect(config.classifier.model).toBe("auto");
-			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Ignoring invalid classifier.model"));
-		} finally {
-			warnSpy.mockRestore();
-		}
+		loggerMock.warn.mockClear();
+		const config = loadAndWatchConfig();
+		expect(config.classifier.model).toBe("auto");
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			expect.stringContaining("Ignoring invalid classifier.model"),
+		);
 	});
 
 	it("classifier.model 合法 string（'auto' / 'provider/model-id'）→ 不 warn", () => {
 		writeFileSync(configPath, JSON.stringify({ classifier: { model: "zhipu/glm-4-flash" } }), "utf-8");
 
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		try {
-			const config = loadAndWatchConfig();
-			expect(config.classifier.model).toBe("zhipu/glm-4-flash");
-			expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("Ignoring invalid classifier.model"));
-		} finally {
-			warnSpy.mockRestore();
-		}
+	loggerMock.warn.mockClear();
+		const config = loadAndWatchConfig();
+		expect(config.classifier.model).toBe("zhipu/glm-4-flash");
+		expect(loggerMock.warn).not.toHaveBeenCalledWith(
+			expect.stringContaining("Ignoring invalid classifier.model"),
+		);
 	});
 
 	it("userRules 含非法条目时过滤掉", () => {
@@ -275,23 +279,21 @@ describe("[MIGRATION] legacy config 降级告警（ensureConfigFile 兜底）", 
 		const legacyPath = join(tempDir, "permission-config.json");
 		writeFileSync(legacyPath, JSON.stringify({ mode: "strict" }), "utf-8");
 
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		try {
-			loadAndWatchConfig();
-			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Legacy config detected"));
-			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("downgrade"));
-		} finally {
-			warnSpy.mockRestore();
-		}
+	loggerMock.warn.mockClear();
+		loadAndWatchConfig();
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			expect.stringContaining("Legacy config detected"),
+		);
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			expect.stringContaining("downgrade"),
+		);
 	});
 
 	it("旧路径不存在 → 不触发 legacy 告警", () => {
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		try {
-			loadAndWatchConfig();
-			expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("Legacy config detected"));
-		} finally {
-			warnSpy.mockRestore();
-		}
+		loggerMock.warn.mockClear();
+		loadAndWatchConfig();
+		expect(loggerMock.warn).not.toHaveBeenCalledWith(
+			expect.stringContaining("Legacy config detected"),
+		);
 	});
 });

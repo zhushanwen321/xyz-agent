@@ -18,8 +18,10 @@ import {
 	type ExtensionContext,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { migrateLegacyConfig } from "@zhushanwen/pi-llm-shared";
+
+const logger = getLogger("pi-permission");
 
 import { listAvailableModels } from "./classifier/model-resolver.js";
 import { handlePermissionCommand, handlePermissionModelCommand, handlePermissionRuleCommand } from "./commands.js";
@@ -45,8 +47,8 @@ import { paletteFromTheme, type PermissionPalette } from "./statusline-palette.j
 // 模块级 once flag 防同进程重复触发；agentDir 由 getAgentDir() 推导（尊重 PI_CODING_AGENT_DIR）。
 let configMigrationChecked = false;
 
-/** 默认配置 warning 回调（loadAndWatchConfig 共用，透传 console.warn）。 */
-const defaultConfigWarn = (msg: string): void => console.warn(msg);
+/** 默认配置 warning 回调（loadAndWatchConfig 共用，透传 logger.warn）。 */
+const defaultConfigWarn = (msg: string): void => logger.warn(msg);
 
 // ──────────────────────── tool_call event 最小子集 ────────────────────────
 
@@ -185,7 +187,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 					},
 					config,
 					{
-						listModels: (pickerCtx) => listAvailableModels(pickerCtx, (m) => console.warn(m)),
+						listModels: (pickerCtx) => listAvailableModels(pickerCtx, (m) => logger.warn(m)),
 						save: (newConfig) => {
 							const r = saveConfig(newConfig);
 							if (r.success) requestFooterRender();
@@ -352,7 +354,7 @@ async function processToolCall(
 	} catch (error) {
 		// fail-closed：异常 → block + reason（绝不放行）
 		const msg = error instanceof Error ? error.message : String(error);
-		console.warn(`[pi-permission] tool_call handler exception for ${toolName}: ${msg}`);
+		logger.warn("tool_call handler exception", { toolName, error: msg });
 		return {
 			block: true,
 			reason: `[pi-permission] internal error (fail-closed): ${msg}`,

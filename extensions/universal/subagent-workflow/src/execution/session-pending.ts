@@ -16,6 +16,9 @@
 import * as fs from "node:fs";
 
 import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("subagents");
 
 /** 后代刚完成（unregister）后，notify 唤醒父 agent 可能仍在路上（triggerTurn 的
  *  steer/followUp 经 sendMessage → agent 队列排空（agent-session.js:1081-1087），
@@ -147,7 +150,7 @@ export function readActivePendingFromSessionFile(
       }
     } catch {
       // 截断行/坏行跳过——不影响其余 entry 的差集判定（罕见：append 中途崩溃）
-      console.debug("[session-pending] skipped malformed pending line in", sessionFile);
+      logger.debug("skipped malformed pending line", { sessionFile });
     }
   }
 

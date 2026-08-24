@@ -16,6 +16,7 @@
  * checkPermission 永不 throw（caller index.ts 的 tool_call handler 依赖此契约）。
  */
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { matchRules } from "./rules/matcher.js";
 import { wildcardToRegExp } from "./rules/wildcard.js";
 import type {
@@ -38,6 +39,8 @@ import type {
 // 此处 re-export 保持 public API 不变（下游 approval.ts / production.ts / 测试仍从
 // pipeline.js import 这些类型，不破坏现有 import 路径）。
 export type { ApprovalRequest, CheckPermissionDeps } from "./types.js";
+
+const logger = getLogger("pi-permission");
 
 // ──────────────────────── buildApprovalRequest ────────────────────────
 
@@ -533,9 +536,9 @@ function extractCommand(toolName: string, input: Record<string, unknown>): strin
 	if (typeof cmd === "string") return cmd;
 	// m3：bash + command 非字符串（异常输入）→ 记录警告，fail-closed 送下游
 	// （不静默跳过 AST，避免危险命令因类型异常绕过检查）。
-	console.warn(
-		`[pi-permission] bash tool received non-string command (type=${typeof cmd}); ` +
-			`skipping AST analysis (fail-closed: forwarded to downstream layers)`,
+	logger.warn(
+		"bash tool received non-string command (skipping AST analysis, fail-closed: forwarded to downstream layers)",
+		{ type: typeof cmd },
 	);
 	return undefined;
 }

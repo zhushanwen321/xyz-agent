@@ -14,6 +14,9 @@
 // registry 实例——仅往 slot 写 pending 或调 slot.registry.register。
 
 import type { ChannelHandler } from "./channel-handler";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("ask-user");
 
 /**
  * 进程级 channel registry 握手的 globalThis key（Symbol.for 跨模块共享）。
@@ -69,9 +72,10 @@ function readSlot(): ChannelRegistryHandshake | undefined {
 		| undefined;
 	if (slot === undefined) return undefined;
 	if (slot.version !== HANDSHAKE_VERSION) {
-		console.warn(
-			`[ask-user] channel handshake slot version mismatch: expected ${HANDSHAKE_VERSION}, got ${slot.version}; discarding and rebuilding slot`,
-		);
+		logger.warn('channel handshake slot version mismatch, discarding and rebuilding', {
+			expected: HANDSHAKE_VERSION,
+			got: slot.version,
+		});
 		return undefined;
 	}
 	return slot;

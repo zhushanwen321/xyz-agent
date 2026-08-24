@@ -35,5 +35,8 @@
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^4.1.9",
     "vitest": "^4.1.8"
+  },
+  "dependencies": {
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   }
 }

@@ -33,7 +33,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:*"
+    "@xyz-agent/extension-protocol": "workspace:*",
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   },
   "devDependencies": {
     "@earendil-works/pi-tui": "^0.84.2",

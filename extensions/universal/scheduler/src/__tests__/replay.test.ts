@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+vi.mock('@zhushanwen/pi-extension-logger', () => ({
+  getLogger: () => loggerMock,
+  createLogger: () => loggerMock,
+  setPiHandle: vi.fn(),
+}))
+
 import { replayFoldEntries, type SchedulerEntryLike } from '../replay.js'
 import type { SchedulerEntryOp, TaskSnapshot } from '../types.js'
 
@@ -141,8 +151,8 @@ describe('replayFoldEntries', () => {
   })
 
   // ── TC-W-GETENTRIES-FALLBACK：getEntries 异常兜底（gap4）──
-  it('TC-W-GETENTRIES-FALLBACK: 迭代器抛错时 console.warn + 返回空 Map，不崩溃', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  it('TC-W-GETENTRIES-FALLBACK: 迭代器抛错时 logger.warn + 返回空 Map，不崩溃', () => {
+    loggerMock.warn.mockClear()
     // 构造迭代时抛错的 iterable（模拟 session JSONL 损坏）
     const throwingIterable: Iterable<SchedulerEntryLike> = {
       [Symbol.iterator]() {
@@ -158,11 +168,10 @@ describe('replayFoldEntries', () => {
 
     const result = replayFoldEntries(throwingIterable, '/s.json')
     expect(result.size).toBe(0)
-    expect(warnSpy).toHaveBeenCalled()
-    const msg = warnSpy.mock.calls[0]![0] as string
+    expect(loggerMock.warn).toHaveBeenCalled()
+    const msg = loggerMock.warn.mock.calls[0]![0] as string
     expect(msg).toContain('replayFoldEntries failed')
-    expect(msg).toContain('JSONL corrupted')
-    warnSpy.mockRestore()
+    expect(loggerMock.warn.mock.calls[0]![1]).toEqual(expect.objectContaining({ error: expect.stringContaining('JSONL corrupted') }))
   })
 
   // ── gap2 补强：advance 后 lastStatus/lastRunAt/runCount/history 全恢复 ──
@@ -258,7 +267,7 @@ describe('replayFoldEntries', () => {
   // ── MF-2：守卫按变体校验必填字段——损坏 entry 只跳过该条，不清空全部任务 ──
   it('MF-2: op 合法但缺必填字段的损坏 entry 被跳过，其余任务保留', () => {
     const session = '/s.json'
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    loggerMock.warn.mockClear()
     const entries: SchedulerEntryLike[] = [
       { type: 'custom', customType: 'pi-scheduler:task', data: { op: 'upsert' } }, // 缺 taskId+task
       { type: 'custom', customType: 'pi-scheduler:task', data: { op: 'upsert', taskId: 'A' } }, // 缺 task
@@ -272,12 +281,11 @@ describe('replayFoldEntries', () => {
     const result = replayFoldEntries(entries, session)
     expect(result.size).toBe(1)
     expect(result.get('A')).toBeDefined()
-    warnSpy.mockRestore()
   })
 
   it('MF-2: upsert task 嵌套数据损坏（history 非数组）→ 逐条跳过该 entry，其余任务保留', () => {
     const session = '/s.json'
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    loggerMock.warn.mockClear()
     const entries: SchedulerEntryLike[] = [
       {
         type: 'custom',
@@ -297,10 +305,9 @@ describe('replayFoldEntries', () => {
     expect(result.get('GOOD')).toBeDefined()
     expect(result.has('BAD')).toBe(false)
     // 逐条跳过 warn（非外层整体 catch 的 replayFoldEntries failed warn）
-    expect(warnSpy).toHaveBeenCalled()
-    const msg = warnSpy.mock.calls[0]![0] as string
+    expect(loggerMock.warn).toHaveBeenCalled()
+    const msg = loggerMock.warn.mock.calls[0]![0] as string
     expect(msg).toContain('skipping corrupted scheduler entry')
-    warnSpy.mockRestore()
   })
 
   afterEach(() => {

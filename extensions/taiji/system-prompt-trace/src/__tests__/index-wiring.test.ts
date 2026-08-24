@@ -25,6 +25,15 @@ import type { SystemPromptTraceEntryData } from "../types.js";
 const P1 = "wiring prompt\nline-1";
 const P2 = "wiring prompt\nline-1\nline-2-added";
 
+const { loggerMock } = vi.hoisted(() => {
+	const mock = { debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
+	return { loggerMock: mock };
+})
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+	getLogger: () => loggerMock,
+	createLogger: () => loggerMock,
+}))
+
 const agentDirRef = vi.hoisted(() => ({ current: "" }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
@@ -277,17 +286,15 @@ describe("index.ts wiring SDK 契约", () => {
 			throw new Error("prompt boom");
 		}, "sess-w7");
 
-		let logged = 0;
-		const errSpy = vi.spyOn(console, "error").mockImplementation(() => {
-			logged++;
-		});
+		loggerMock.error.mockClear();
 		try {
 			await emit(h, "session_start", { type: "session_start", reason: "startup" }, boomCtx);
 			await emit(h, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, boomCtx);
 		} finally {
-			errSpy.mockRestore();
+			// no-op: cleanup handled after assertions
 		}
 		expect(h.entries).toHaveLength(0);
-		expect(logged).toBe(1);
+		expect(loggerMock.error).toHaveBeenCalledTimes(1);
+		loggerMock.error.mockClear();
 	});
 });

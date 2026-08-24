@@ -29,6 +29,9 @@
  */
 
 import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, MessageStartEvent, TurnEndEvent, AgentEndEvent } from '@earendil-works/pi-coding-agent'
+import { getLogger } from '@zhushanwen/pi-extension-logger'
+
+const logger = getLogger('xyz-client-msg-id-mapper')
 
 // uuid = appendUser 生成的 user message id（`u-` + 36 字符 hex uuid，共 38 字符）。
 // 与 shared SegmentsMetadataEntry.clientUuid 严格一致（同 appendUser 返回值）：
@@ -67,7 +70,7 @@ export default function (pi: ExtensionAPI): void {
       return { action: 'transform' as const, text: event.text.replace(TAG_STRIP, '').trimEnd() }
     } catch (err) {
       // 吞错，不阻断主流程（pi runner 也会 try/catch，但显式兜底避免意外 return）。
-      console.error('[xyz-client-msg-id-mapper] input hook error:', err)
+      logger.error('input hook error', { detail: String(err) })
       return undefined
     }
   })
@@ -81,7 +84,7 @@ export default function (pi: ExtensionAPI): void {
       }
     } catch (err) {
       // best-effort：置 flag 失败不阻断消息流——仅丢失该条 clientUuid↔entryId 映射，对话不受影响。
-      console.error('[xyz-client-msg-id-mapper] message_end hook error:', err)
+      logger.error('message_end hook error', { detail: String(err) })
     }
     return undefined
   })
@@ -109,7 +112,7 @@ export default function (pi: ExtensionAPI): void {
       writeMapping(ctx)
     } catch (err) {
       // best-effort：映射写入失败不阻断消息流——丢的是本条映射，下次 hook 会因 flag 未清而幂等重试。
-      console.error('[xyz-client-msg-id-mapper] flush error:', err)
+      logger.error('flush error', { detail: String(err) })
     }
   }
 

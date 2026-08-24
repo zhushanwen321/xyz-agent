@@ -20,6 +20,16 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+vi.mock('@zhushanwen/pi-extension-logger', () => ({
+  getLogger: () => loggerMock,
+  createLogger: () => loggerMock,
+  setPiHandle: vi.fn(),
+}))
+
 // 与 index-session-start.test.ts 同款（MF-3）：mock 掉 importer，装配路径仍被调用、FS 副作用为零。
 vi.mock('../importer.js', () => ({ importLegacyStore: vi.fn(() => vi.fn()) }))
 
@@ -127,7 +137,7 @@ describe('G1: index.ts 代际接线（S9）', () => {
   it('factory 重跑：第二次 factory 执行 + session_start 后，第一代 runtime isCtxStale 为 true 且 tick 前置自停', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    loggerMock.warn.mockClear()
     try {
       // 第一代：独立 factory 执行 + session_start 装配（runtime1 真实 startScheduler）
       const first = createMockPi()
@@ -156,15 +166,14 @@ describe('G1: index.ts 代际接线（S9）', () => {
       // tick 前置自停：第一代 runtime 的泄漏 timer 在下个 tick 被代际前置检查拦截
       // （G1-b 的生产路径验证：warn "tick stopped" + timer 自停，后续 tick 不再发生）
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS)
-      const warnText = warnSpy.mock.calls.map(c => String(c[0])).join('\n')
+      const warnText = loggerMock.warn.mock.calls.map(c => String(c[0])).join('\n')
       expect(warnText).toContain('tick stopped')
       expect(warnText).not.toContain('tick error')
 
-      const warnCountAfterSelfStop = warnSpy.mock.calls.length
+      const warnCountAfterSelfStop = loggerMock.warn.mock.calls.length
       await vi.advanceTimersByTimeAsync(TICK_INTERVAL_MS * 2) // timer 已停，无新 warn
-      expect(warnSpy.mock.calls.length).toBe(warnCountAfterSelfStop)
+      expect(loggerMock.warn.mock.calls.length).toBe(warnCountAfterSelfStop)
     } finally {
-      warnSpy.mockRestore()
       vi.useRealTimers()
     }
   })

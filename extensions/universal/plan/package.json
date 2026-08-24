@@ -40,5 +40,8 @@
     "index.ts",
     "src/",
     "templates/"
-  ]
+  ],
+  "dependencies": {
+    "@zhushanwen/pi-extension-logger": "workspace:*"
+  }
 }

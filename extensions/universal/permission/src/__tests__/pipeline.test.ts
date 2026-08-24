@@ -7,6 +7,16 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+	loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+	getLogger: () => loggerMock,
+	createLogger: () => loggerMock,
+	setPiHandle: vi.fn(),
+}));
+
 import {
 	applyAutoApproveOverrides,
 	buildApprovalRequest,
@@ -708,9 +718,9 @@ describe("M5b: runLayer3WithRacing headless 模式（纯等 AI，不启动 user 
 
 // ──────────────────────── m3: extractCommand 非字符串 bash command 告警 ────────────────────────
 
-describe("m3: bash 工具收到非字符串 command 时 console.warn（不静默）", () => {
+describe("m3: bash 工具收到非字符串 command 时 logger.warn（不静默）", () => {
 	it("command 为数字 → warn 被调用 + fail-closed（不 throw，送下游）", async () => {
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		loggerMock.warn.mockClear();
 		const deps = makeDeps({
 			classify: () => Promise.resolve(allowClassifier("low")),
 			approve: () => new Promise<UserDecision>(() => undefined),
@@ -718,21 +728,19 @@ describe("m3: bash 工具收到非字符串 command 时 console.warn（不静默
 		// command 为数字（异常输入）
 		const decision = await checkPermission("bash", { command: 123 }, "auto", DEFAULT_CFG, [], deps, ctxBase);
 		// warn 被调用（记录异常）
-		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("non-string command"));
-		warnSpy.mockRestore();
+		expect(loggerMock.warn).toHaveBeenCalledWith(expect.stringContaining("non-string command"), expect.any(Object));
 		// fail-closed：不 throw，正常返回决策（AI allow low → allow）
 		expect(decision.action).toBe("allow");
 	});
 
 	it("command 为合法字符串 → 不 warn", async () => {
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		loggerMock.warn.mockClear();
 		const deps = makeDeps({
 			analyze: () => Promise.resolve(cleanAnalysis([["ls"]])),
 			matchArgv: () => ({ action: "allow", matchedRule: undefined }),
 		});
 		await checkPermission("bash", { command: "ls" }, "approve", DEFAULT_CFG, [], deps, ctxBase);
-		expect(warnSpy).not.toHaveBeenCalled();
-		warnSpy.mockRestore();
+		expect(loggerMock.warn).not.toHaveBeenCalled();
 	});
 });
 

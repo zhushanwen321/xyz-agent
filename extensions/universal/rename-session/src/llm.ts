@@ -2,9 +2,12 @@ import path from "node:path";
 
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { callLLM, resolveModel } from "@zhushanwen/pi-llm-shared";
 
 import { type RenameSessionConfig, cleanTitle } from "./pure.js";
+
+const logger = getLogger("rename-session");
 
 // ──────────────────────── prompt 常量 ────────────────────────
 
@@ -161,7 +164,7 @@ export function isRenameDebugEnabled(): boolean {
  */
 export function debugLog(message: string): void {
 	if (isRenameDebugEnabled()) {
-		console.warn(`[rename-session] t=${new Date().toISOString()} ${message}`);
+		logger.warn(`t=${new Date().toISOString()} ${message}`);
 	}
 }
 
@@ -221,7 +224,7 @@ export async function callRenameLLM(
 	const model = resolveModel(ctx, config.model);
 	if (!model) {
 		// A1 日志：不可用不静默（可排查）
-		console.warn("[rename-session] model not available, skipping");
+		logger.warn("model not available, skipping");
 		return null;
 	}
 
@@ -266,7 +269,7 @@ export async function callRenameLLM(
 	});
 	if (!result.ok) {
 		// A1 失败路径日志：调用失败不静默（不抛错，靠日志留痕）。
-		console.warn(`[rename-session] rename LLM call failed: ${result.error ?? "unknown error"}`);
+		logger.warn("rename LLM call failed", { error: result.error ?? "unknown error" });
 		return null;
 	}
 
