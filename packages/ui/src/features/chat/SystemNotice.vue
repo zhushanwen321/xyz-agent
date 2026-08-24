@@ -76,7 +76,7 @@ const K_THRESHOLD = 1000
 /** token 数 → K 格式：237186 → 237.2K，13400 → 13.4K，<1000 原数 */
 function formatTokens(n: number): string {
   if (n < K_THRESHOLD) return String(n)
-  const k = n / 1000
+  const k = n / K_THRESHOLD
   return `${k.toFixed(1).replace(/\.0$/, '')}K`
 }
 </script>
