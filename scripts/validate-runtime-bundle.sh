@@ -178,7 +178,7 @@ for dep in $DEPS; do
         continue
     fi
     if ! grep -q "$dep" "$BUNDLE_PATH"; then
-        echo -e "${RED}[ERROR] 产物缺少依赖 $dep（noExternal 可能遗漏）${NC}"
+        echo -e "${RED}[ERROR] 产物缺少依赖 ${dep}（noExternal 可能遗漏）${NC}"
         exit 1
     fi
 done

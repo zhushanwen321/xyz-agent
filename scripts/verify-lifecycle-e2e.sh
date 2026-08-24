@@ -53,7 +53,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ── 0.1 依赖自含（幂等；cw verify 在干净 clone 里跑，必须可自举）─────────────
 (cd "$REPO_ROOT" && pnpm install --prefer-offline --silent) \
-  || fail "pnpm install 失败（cwd=$REPO_ROOT；检查 registry 可达性或手动 pnpm install 后重试）"
+  || fail "pnpm install 失败（cwd=${REPO_ROOT}；检查 registry 可达性或手动 pnpm install 后重试）"
 
 # ── 0. 环境前置 ─────────────────────────────────────────────────
 NODE_MAJOR="$(node -e 'console.log(process.versions.node.split(".")[0])')"
@@ -404,7 +404,7 @@ for _ in $(seq 1 120); do
   sleep 0.5
 done
 grep -q 'SHUTDOWN_SENT' "$WORK_DIR/ws-lcc2.log" 2>/dev/null \
-  || fail "LC-C2 编排未发出 SIGTERM（见 $WORK_DIR/ws-lcc2.log 与 $LOG_C2）"
+  || fail "LC-C2 编排未发出 SIGTERM（见 $WORK_DIR/ws-lcc2.log 与 ${LOG_C2}）"
 
 # 关停刚发起：记录 runtime 的子进程清单（sandbox fork 子进程），退出后逐一核对
 CHILDREN_C2="$(pgrep -P "$RUNTIME_CHILD" 2>/dev/null || true)"
@@ -475,7 +475,7 @@ LOG_C4_2="$WORK_DIR/runtime-c4-run2.log"
 
 launch_runtime "$LOG_C4_1" "$DATA_DIR_C4" "$BUILTIN_EMPTY_DIR"
 node "$WORK_DIR/ws-wait-active.mjs" "$PORT" "$WS_AUTH_TOKEN" lc-c4 30000 > "$WORK_DIR/ws-c4-1.log" 2>&1 \
-  || fail "LC-C4 run1: lc-c4 未激活（见 $WORK_DIR/ws-c4-1.log 与 $LOG_C4_1）"
+  || fail "LC-C4 run1: lc-c4 未激活（见 $WORK_DIR/ws-c4-1.log 与 ${LOG_C4_1}）"
 echo -e "${GREEN}[OK] LC-C4 run1 lc-c4 已激活${NC}"
 
 # 优雅关停（SIGTERM → shutdown 链：deactivateAll → sessionData flush+dispose → ...）
@@ -505,7 +505,7 @@ fi
 # 同 dataDir 重启：activate 读回 deactivate 写入的值
 launch_runtime "$LOG_C4_2" "$DATA_DIR_C4" "$BUILTIN_EMPTY_DIR"
 node "$WORK_DIR/ws-wait-active.mjs" "$PORT" "$WS_AUTH_TOKEN" lc-c4 30000 > "$WORK_DIR/ws-c4-2.log" 2>&1 \
-  || fail "LC-C4 run2: lc-c4 未激活（见 $WORK_DIR/ws-c4-2.log 与 $LOG_C4_2）"
+  || fail "LC-C4 run2: lc-c4 未激活（见 $WORK_DIR/ws-c4-2.log 与 ${LOG_C4_2}）"
 echo -e "${GREEN}[OK] LC-C4 run2 lc-c4 已激活（同 dataDir 重启）${NC}"
 
 sleep 1  # 读回日志落盘窗口
