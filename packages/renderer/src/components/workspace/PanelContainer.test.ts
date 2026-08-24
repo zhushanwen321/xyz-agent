@@ -111,9 +111,13 @@ describe('PanelContainer 首屏冒烟：动态宽度布局渲染（TC1）', () =
 
     const wrapper = await mountContainer()
 
-    // drawer 关闭时 handle 卸载（v-if），main 占 75%（无 drawer 对话流限宽）
+    // drawer 关闭时 handle 卸载（v-if），main 占 75% 且 margin 居中（无 drawer 对话流限宽 3/4
+    // 且工作区视觉居中）；--content-max-w 覆盖解除 720px 封顶（内容列占满 75% 区域）
     expect(wrapper.find('[data-testid="drawer-resize-handle"]').exists()).toBe(false)
     const style = wrapper.find('[data-testid="main-area"]').attributes('style') ?? ''
-    expect(style).toContain('75%')
+    expect(style).toContain('width: 75%')
+    expect(style).toContain('margin-left: 12.5%')
+    expect(style).toContain('margin-right: 12.5%')
+    expect(style).toContain('--content-max-w: 100%')
   }, 60_000)
 })
