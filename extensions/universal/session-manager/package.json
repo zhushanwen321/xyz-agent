@@ -30,12 +30,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:*"
+    "@xyz-agent/extension-protocol": "workspace:*",
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^4.1.9",
-    "typebox": "*",
     "vitest": "^4.1.8"
   },
   "peerDependencies": {

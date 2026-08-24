@@ -33,6 +33,8 @@ const CONFIG_FILE = 'system-prompt.json'
  * 下一轮即读到新内容，语义与逐 turn 重读一致），但 mtime 未变时跳过 readFileSync——
  * 注入文本进每 turn system prompt，读盘路径上不引入额外开销。进程级缓存，per-process
  * = per-session，生命周期对齐。stat/read 失败 → 驱逐条目返回 null。
+ *
+ * @data-owner 文件本身（mtime+size 判变读缓存，非派生权威，无第二写入者）
  */
 const fileContentCache = new Map<string, { mtimeMs: number; size: number; content: string }>()
 

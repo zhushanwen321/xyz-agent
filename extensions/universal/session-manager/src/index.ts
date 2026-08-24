@@ -3,7 +3,12 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SESSION_MANAGER_MARKER, type SessionManagerAction } from "@xyz-agent/extension-protocol";
+import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 import { Type, type Static, type TObject } from "typebox";
+
+// 模块级 logger（default export 首行 setPiHandle 注入后自动走 appendEntry 持久化，
+// 注入前/失败降级文件日志——见 extension-logger 三层通道设计）
+const logger = getLogger("session-manager");
 
 // ── 参数 Schema ──
 
@@ -78,7 +83,12 @@ async function callSessionManager(
 			{ timeout: SELECT_TIMEOUT_MS[action] },
 		);
 		return value ?? null;
-	} catch {
+	} catch (err) {
+		// select 通道异常（非用户取消/超时——那两类是 resolve null）：折叠为 null 供
+		// executeTool 统一转 isError，但必须留痕（静默吞 = runtime handler 故障不可排查）
+		logger.error(`[session-manager] select channel threw for action="${action}"`, {
+			reason: err instanceof Error ? err.message : String(err),
+		});
 		return null;
 	}
 }
@@ -163,6 +173,9 @@ function registerSessionTool<S extends TObject>(pi: ExtensionAPI, cfg: SessionTo
 }
 
 export default function sessionManagerExtension(pi: ExtensionAPI): void {
+	// logger 持久化通道接入（appendEntry custom entry，不进 LLM 上下文）
+	setPiHandle(pi);
+
 	registerSessionTool(pi, {
 		name: "create_managed_session",
 		label: "Create Managed Session",
