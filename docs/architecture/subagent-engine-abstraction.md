@@ -4,7 +4,7 @@
 >
 > 调研输入：六引擎能力调研（zcode/pi 见 `~/Code/zcode-plugin-workspace/main/docs/research/zcode-vs-pi-extension-capabilities.md` 与本仓现状；claude-code / codex / opencode / kimi-code 见 `docs/research/agent-engine-*.md` 四份，2026-08-24）。
 >
-> 状态：已过对抗式审查（2026-08-24，tech-design-review：修后合格——3 must-fix 已修复：①EnginePort 补 interact 交互控制面（chatMode 语义映射）②schema native/emulated 硬分流（护 structured-output 方案 A 唯一权威）③隔离目录池化保留与 record 生命周期挂钩）。分支 `feat-support-zcode`。
+> 状态：已过第一轮对抗式审查（2026-08-24，tech-design-review：修后合格——3 must-fix 已修复：①EnginePort 补 interact 交互控制面（chatMode 语义映射）②schema native/emulated 硬分流（护 structured-output 方案 A 唯一权威）③隔离目录池化保留与 record 生命周期挂钩）。2026-08-24 二轮修订：新增 D11 能力缺陷四级处置、D12 conformance 契约套件；D6 第②级改为宿主 event journal（明确 runtime 依赖方向）；D9 补 fallback 路由与 model/engine 正交；D1 补 handle 契约与 abort 分级；D3 capabilities 补 interrupt/permissionMode；错误规格 +4 条；验收 +A9/A10/A11。第二轮对抗式审查（2026-08-24，报告 `.review/design-review-engine-abstraction-r2.md`）：4 must-fix 已修复——①GUI 历史通路级别归属（reader 划为双端复用的共享只读模块，D6/§3.3.1/P5 改写；pi 直读下沉为 pi reader 保 A1）②fallback 三守卫（显式指定/独有能力依赖/model 不可解析时不兜底，A9 改对照组）③补 `engine_run_failed` 运行中失败规格，D11 规则②如实声明封死边界 ④A12 conformance 验收场景；6 suggestion 全部采纳（steer 口径统一/AgentResult 消歧细化/A13 死 handle 场景/池清理降池粒度/env 登记与 journal 定位/存量 record 零迁移）。第三轮复审通过（2026-08-24，报告 `.review/design-review-engine-abstraction-r3.md`：0 must-fix——二轮 4 must-fix 全部闭合、一轮修复无回退；6 suggestion + 1 INFO 已随文处理：fallback 注对齐守卫/守卫 b 声明载体/A14 运行中失败场景/journal 不随池删/reader 双 bundle 打包登记/两表 steer 口径/engines 根锚定 getDataDir()）。**达到可实施门槛**。分支 `feat-support-zcode`。
 
 ## 1. 背景目标
 
@@ -25,13 +25,13 @@ pi-subagent-workflow 是 xyz-agent 的一个 pi extension，跑在 pi 主会话�
 
 1. **模型/用户不感知引擎**：`subagent`/`workflow` 工具的入参、返回、GUI 展示在引擎切换后完全不变（同一份 agent 清单、同一种 record、同一个 schema 校验结果）。
 2. **配置自由切换**：全局默认引擎、per-agent 指定引擎（agent .md frontmatter `engine:` 字段）、单次调用覆盖，三层优先级。
-3. **能力差异显式化**：某引擎不支持的能力（如 zcode 无 schema 强制）以 capabilities 声明 + 预定降级策略消化，而不是运行时神秘失败。
+3. **能力差异显式化**：某引擎不支持的能力（如 zcode 无 schema 强制）以 capabilities 声明 + 预定降级策略消化，而不是运行时神秘失败。缺陷处置按四级分流（自动仿真/显示降级/调用前拒绝/入口拦截，D11），全部发生在 spawn 之前。
 4. **抗版本漂移**：引擎 CLI 升级破坏契约时，探针在入口拦截并给出可操作错误，而不是运行中静默挂死。
-5. **新引擎接入成本递减**：接入第 N 个引擎不改上层与既有引擎，只新增一个适配器模块。
+5. **新引擎接入成本递减**：接入第 N 个引擎不改上层与既有引擎，只新增一个适配器模块；「递减」由 engine conformance 契约套件 + golden 样本库验证（D12），不靠口号。
 
 ### in / out of scope
 
-**in**：subagent 执行层（extensions/universal/subagent-workflow 的 execution 链 + 其 spawn/读取基建）的引擎抽象；pi 回填；zcode 新引擎（spawn 单轮模式）；公共降级层；配置路由；探针体系；xyz-agent runtime 侧 subagent-extractor 的分协议读取（小改动）。
+**in**：subagent 执行层（extensions/universal/subagent-workflow 的 execution 链 + 其 spawn/读取基建）的引擎抽象；pi 回填；zcode 新引擎（spawn 单轮模式）；公共降级层；配置路由；探针体系；xyz-agent runtime 侧 subagent-extractor 的分协议读取（中改动，见 P5）。
 
 **out**：xyz-agent 主会话引擎切换（主链路仍 pi，见 `feat-support-zcode` 分支早前全量评估，另行决策）；conversation 模式（chatMode/idle 续聊）在 zcode 引擎下的支持（降级声明不支持，`--resume` 冷路径留作后续演进）；zcode app-server 常驻模式（引擎内部优化项，不进首期接口实现）；除 pi/zcode 外引擎的实际实现（只做抽象适配性验证）。
 
@@ -52,7 +52,7 @@ AgentRunner port（orchestration/models/ports.ts）
                  └─ get-state-handshake   ← pi get_state 握手
 ```
 
-好消息：四个核心类型**事实上已经中立**——`ExecuteOptions`（task/slug/agent/model/schema/maxTurns/worktree/cwd，语义全是「agent 调用」）、`AgentEvent`（tool_start/tool_end/text_delta/thinking_delta/turn_end/message_end/compaction/error 8 种）、`AgentResult`（content/parsedOutput/usage/error/toolCalls，指 orchestration 层 workflow 消费的那份；execution 层另有同名类型主字段为 text/turns/sessionId，泛化时须锚定前者并消歧命名）、`AgentRunner` port。zcode 引擎只要产出同样的 AgentEvent 流与 AgentResult，workflow 引擎、工具层、GUI 全部零改动。
+好消息：四个核心类型**事实上已经中立**——`ExecuteOptions`（task/slug/agent/model/schema/maxTurns/worktree/cwd，语义全是「agent 调用」）、`AgentEvent`（tool_start/tool_end/text_delta/thinking_delta/turn_end/message_end/compaction/error 8 种）、`AgentResult`（orchestration 层 workflow 消费的那份，主字段 content/parsedOutput/usage/error；execution 层另有同名类型，主字段 text/turns/sessionId/toolCalls——泛化时须锚定前者并消歧命名）、`AgentRunner` port。zcode 引擎只要产出同样的 AgentEvent 流与 AgentResult，workflow 引擎、工具层、GUI 全部零改动。
 
 坏消息：中立是**碰巧的，不是设计的**——`(1)` `ExecuteOptions.thinkingLevel` 是 pi 的 7 档枚举语义；`(2)` `skillPath` 假设引擎有 `--skill` flag；`(3)` `ExecuteOptions.conversation/idleTimeoutMs` 是 pi chatMode 专属形态（conversation 模式下子代理轮终进 idle 保留进程与 worktree，等待 tool 面 `message`/`close`/`cancel` action 续聊或收尾，subagent-service.ts:1552-1556、types.ts:556-565）——这是一组 **fire-to-completion 之外的交互控制面**，接口若不覆盖它，pi 回填时要么绕过抽象要么改行为；`(4)` spawn 细节（rpc 握手、stdin 协议、事件适配）全部内联在 session-runner 里，没有「引擎」这个概念；`(5)` record 重建（session-reconstructor）锚定 pi JSONL schema；`(6)` 模型解析（model-resolver）走 pi 的 provider 体系。这些点在「只支持 pi」时无妨，在多引擎下就是污染源。
 
@@ -66,16 +66,23 @@ AgentRunner port（orchestration/models/ports.ts）
 | prompt 投递通道 | stdin RPC | argv only | argv / stdin 双向流 | argv / stdin | argv / HTTP POST | argv only |
 | agent 人设注入 | prompt 拼接 + flag | prompt 拼接（无 flag） | `--system-prompt` / `--append-system-prompt` / agent .md | config 叠加层 / prompt | agent .md（兼容 CC 风格）/ server `system` 字段 | `--agent-file`（临时文件） |
 | schema 结构化输出 | env 注入 + 工具强制 | ❌ | ✅ `--json-schema` | ✅ `--output-schema` | ❌ | ❌ |
-| 运行中插话（steer） | ✅ steer | ❌（未验证） | ✅ stream-json 双向 | ✅ `turn/steer` | ✅ 再 POST | ✅ `:btw`（server） |
+| 运行中插话（steer） | ✅ steer RPC | ❌（未验证） | ✅ stream-json 双向 | ◐ `turn/steer`（仅 app-server） | ◐ 再 POST（仅 server） | ◐ `:btw`（仅 server） |
 | resume 续聊 | switch_session | `--resume`（冷启动） | `--resume` + fork | `exec resume` / fork | `-s` + fork | `--session` / `-c` |
 | 事件流粒度 | 30+ 事件（最细） | delta / turn 终态（粗） | stream-json 全量（schema 化） | turn/item 两级 | part 级 + SSE | role 序列（粗） |
 | usage 回传 | ✅ | ✅（stdout JSON） | ✅（result 消息） | ✅（turn.completed） | ✅ | 部分（meta） |
 | OS sandbox | ❌ | ❌ | ❌（权限规则语法） | ✅（seatbelt/landlock） | ❌（权限 ruleset） | ❌ |
 | 环境隔离手段 | `PI_CODING_AGENT_DIR` | **HOME 整体覆盖** | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` | `OPENCODE_CONFIG_DIR` | `KIMI_CODE_HOME` |
 | 凭据注入 | models.json（隔离目录） | 隔离 HOME 写 config.json | env（`ANTHROPIC_API_KEY`/`BASE_URL`） | env（config env_key） | auth.json / config | **config.toml（不走 env！）** |
+| interrupt 优雅中断 | ✅ abort | ❌ | ✅ 一等控制请求 | ✅ `turn/interrupt` | ✅ POST abort | ◐ 仅 server（`:abort`） |
+| conversation 同进程多轮 | ✅ chatMode idle 复用 | ❌ | ❌ | ❌ | ❌ | ❌ |
+| 权限模式 | ✅ | ✅ `--mode` | ✅ 6 档 | ✅ sandbox+approval | ✅ ruleset+`--auto` | ❌ headless 固定 auto 不可调 |
+| CLI 超时 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| cost 回传 | ❌ | ❌ | ✅ result 自带 | ❌ | ❌ | ❌ |
 | 契约稳定性 | rpc.md 官方 | 逆向，无契约 | 官方文档 + Zod schema | `generate-json-schema` 机器契约 | openapi 3.1 入库 | 文档化 |
 
 三个结构性观察（设计的直接依据）：
+
+注：§2.2 表为**引擎能力口径**（引擎某形态下是否存在该能力）；「本仓 subagent 链路是否接通」以 capabilities 声明（D3）为准——如 pi RPC 有 steer 但 spawn 链路未接通，首期声明 unsupported。
 
 **观察一：六引擎都有「一次性 headless spawn」这个最小公约数**——argv 传 prompt、stdout 解析结果、exit code、resume session id。首期抽象锚定这个形态即可全覆盖；常驻 server（zcode app-server / codex app-server / opencode serve / kimi web）是引擎内部的性能/能力优化，不是接口语义。
 
@@ -122,7 +129,7 @@ AgentRunner port（orchestration/models/ports.ts）
 
 **终态三：能力差异在调用前可见。** 用户在 GUI/设置里给某 agent 指定 `engine: zcode` 时，系统提示「zcode 引擎：schema 输出为仿真降级（prompt 约定 + 解析校验）、不支持运行中插话、事件流为粗粒度」——来源于该引擎的 capabilities 声明，不是散落的 if。
 
-**终态四：引擎坏了给出可操作错误。** zcode CLI 升级导致 stdout 格式变化时，探针在引擎初始化时失败，错误信息形如「zcode 引擎探针失败：stdout 无 sessionId 字段（zcode 0.17.x 格式漂移嫌疑）。恢复：`zcode --version` 确认版本后跑 `pnpm test:engine-probe zcode`，参照 docs/research/agent-engine-zcode.md 更新解析器」。任务被路由到降级引擎（缺省 pi）或在明确报错中终止，不静默挂死。
+**终态四：引擎坏了给出可操作错误。** zcode CLI 升级导致 stdout 格式变化时，探针在引擎初始化时失败，错误信息形如「zcode 引擎探针失败：stdout 无 sessionId 字段（zcode 0.17.x 格式漂移嫌疑）。恢复：`zcode --version` 确认版本后跑 `pnpm test:engine-probe zcode`，参照 docs/research/agent-engine-zcode.md 更新解析器」。任务默认路由回全局默认引擎（缺省 pi）并留痕（D9①）——引擎是任务前提时（显式指定/独有能力依赖/模型不可解析）不兜底、直接明确报错终止；strict 模式下一切 probe 失败都报错。不静默挂死。
 
 **终态五：新增引擎是一个模块。** 接入 claude-code = 新增 `engines/claude-code/` 目录（launcher + parser + prepare + reader 四件，预计 ≤500 行）+ 注册表登记一行，不改 workflow 引擎、不改工具面、不改其他引擎。
 
@@ -160,19 +167,29 @@ AgentRunner port（orchestration/models/ports.ts）
         ↓ 每引擎内部
 [Adapter 四件套] launcher（spawn 命令组装）/ parser（stdout→事件流+终态）
                  preparer（env/隔离目录/凭据生成）/ reader（session 历史读取）
+   其中 reader 是**共享只读模块**（无状态纯函数，无 spawn/进程依赖）：
+   extension 的 EnginePort.read() 与 runtime extractor 复用同一份
         ↑ 复用
 [公共降级层]（引擎无关，写一次全引擎用）
-   schema 仿真（prompt 注入 + 三级容错 JSON 提取 + ajv 校验）
-   超时与杀链（SIGTERM → grace → SIGKILL；终态合成）
-   persona 路由（文件落盘 / flag 直传 / prompt 拼接，按 capabilities 选择）
+   schema 仿真（prompt 注入 + 三级容错 JSON 提取 + ajv 校验，仅 emulated 引擎）
+   abort 两级中断（引擎原生 interrupt → 公共杀链兜底）与超时杀链（SIGTERM → grace → SIGKILL；终态合成）
+   event journal（host 消费 onEvent 统一落盘，SessionView 第②级数据源，全引擎免费获得）
+   persona 路由（文件落盘 / flag 直传 / prompt 拼接，按 capabilities 选择；兼作 argv 长度分流）
    嵌套防护（统一 NESTED 标记 + 清理各引擎原生标记）
    worktree 隔离（复用现有 worktree-manager）
+[（未来）driver host] server-mode 引擎常驻进程管理（spawn-or-connect / 端口分配 / 健康检查 /
+   crash 重启 / idle 回收）：registry 持 per-engine 单例，pool-key 与隔离目录池对齐。
+   接口不变（onEvent/AbortSignal 已常驻友好），此处命名预留，首个 server-mode 引擎接入时落地
 ```
+
+**贯穿纪律（全部决策的前提）**：①**宿主编排**——引擎只当单 agent 执行器，六家原生多 agent 机制（CC Task / codex ThreadSpawn / opencode task / kimi AgentSwarm）一律禁用不依赖，编排权、并行、record、worktree 全在宿主（D8 是其推论；codex multiAgentMode 进入变动期印证此判断）；②capabilities 声明「链路接通能力」而非引擎理论能力；③降级写一次、native/仿真硬分流（schema 是样板，其余能力同理）；④依赖方向单向——上层 → 中立类型/port，adapter → 公共层；runtime 永不 import adapter 的运行时件（launcher/preparer/parser）与 EnginePort 实例，例外仅两个：双端复用的无状态 reader 模块与中立制品（record + journal）。
 
 #### 3.3.2 关键决策（每条：选择 + 被否 + 证据）
 
 **D1 接口主语义锚定「一次性任务」，交互控制面单列可选方法。**
 `run(task) → outcome` 是 fire-to-completion 语义。pi 现有的 conversation 交互面（chatMode 的 message/close/cancel + idle timer + 进程保留，见 §2.1 坏消息(3)）不折叠进 run——折叠成「run + resume 序列」会改 pi 行为（每轮冷启动 vs 现有同进程 idle 复用），违反 A1。EnginePort 补第四个面 `interact(handle, action: {kind:'message'|'close'|'cancel', payload?})`：pi 首期原生实现（现有 chatMode 行为直通）；zcode 首期 `unsupported`（capabilities 声明，调用前拒绝并提示）；未来低交互引擎可由公共层用「run + resume + 宿主 idle timer」仿真（`resume:'cold'` 路径），但 pi 不走仿真。被否：按「session 型 + run 型」双语义重构整个接口（codex 调研建议方向）——那是主链路 GUI 集成的需求形态，subagent 场景一次性任务占绝对多数，双语义让首期复杂度翻倍；常驻 server 形态（zcode app-server 等）留作引擎内部优化：接口的 `onEvent` 回调 + `AbortSignal` 已按常驻友好设计，引擎内部换常驻实现时接口不动。
+
+**handle 契约三条**（run/interact/read 三面的连接件）：不透明（上层不解构）、可持久化（内嵌 SubagentRecord，主会话 reload 后 `read` 仍可用）、自描述（含 engineId + 引擎 session 定位符 + pool key + adapter 版本）。推论：对进程已死的 handle 调 `interact` 必须返回 `engine_session_not_resumable`（指向 cold resume 路径），而非笼统失败。**abort 分级**：`run` 的 AbortSignal → ①引擎原生优雅中断（CC `interrupt` / codex `turn/interrupt` / opencode POST abort / kimi `:abort`）→ ②公共杀链兜底；CLI-only 引擎（zcode/kimi headless）直接走②，杀死后由宿主合成终态，record 正常收尾不留僵尸。
 
 **D2 中立类型从现有类型泛化，不另起炉灶。**
 `AgentTaskSpec` = 现有 `ExecuteOptions` 泛化：剥离 pi 专有语义（`thinkingLevel` 7 档改为引擎无关的 `effort?: string` 由引擎映射或忽略；`skillPath` 改为 `persona` 的一部分；`conversation/idleTimeoutMs` 归 `interact` 控制面的 task 标志，保留原名透传）。`AgentEvent` 8 种、`AgentResult` 字段原样保留（锚定 orchestration 层 workflow 消费的那份，与 execution 层同名类型消歧，见 §2.1）。被否：全新设计一套更「完美」的类型——现有类型被 workflow 引擎/GUI/测试广泛消费，推倒重来是纯迁移成本。
@@ -189,6 +206,8 @@ interface EngineCapabilities {
   sandbox: 'native' | 'emulated' | 'none';          // emulated = worktree 隔离
   sessionRead: 'full' | 'partial' | 'outcome-only'; // 重建历史的能力
   resume: 'native' | 'cold' | 'unsupported';
+  interrupt: 'native' | 'kill-only';                // 优雅中断 or 只能杀进程（公共杀链兜底，见 D1 abort 分级）
+  permissionMode: 'native' | 'fixed' | 'ignored';   // kimi headless 固定 auto = ignored；GUI 据此隐藏/提示
 }
 ```
 
@@ -200,10 +219,10 @@ schema 仿真、超时杀链、persona 路由、嵌套防护、worktree 隔离�
 **schema 的边界必须显式**：capabilities 为 `emulated` 的引擎（zcode/opencode/kimi-code）走公共仿真层（prompt 注入 + 三级容错提取 + 宿主侧 ajv）；capabilities 为 `native` 的引擎（pi 的 `PI_WORKFLOW_SCHEMA` env 注入链路、claude-code 的 `--json-schema`、codex 的 `--output-schema`）保持各自原生链路，公共层**不做二次校验、不改写其结果**。理由：pi 的 structured-output 方案 A [HISTORICAL]（workflow 模式 env 注入的权威 schema 是唯一校验权威）——宿主侧再叠一层 ajv 会制造第二校验权威，恰是历史上「校验自报 schema 致修复静默丢失」事故的形态。仿真层的 ajv 只在 emulated 路径出现。
 
 **D5 环境隔离与凭据注入走 per-engine preparer 钩子；隔离目录池化保留，随 record 生命周期回收。**
-`prepare(task)` 在 spawn 前调用，返回 `{ env, cwd, spawnedFiles[] }`。证据：六家六种隔离手段（观察三），且 kimi 凭据必须写 config.toml、zcode 必须 HOME 覆盖——参数化无法覆盖，只能代码化。隔离目录（`<dataDir>/engines/<engineId>/<pool-key>/`，zcode 按引擎+agent/model 池化，与 zsub HOME 池同构）**跨任务保留复用**，不随单次任务清理——理由：①目录内 db.sqlite 是 D6 降级链第①级（原生读取）的数据源，任务结束即清理会让该级永不可达；②config.json/凭据引导是确定性成本，池化复用摊薄（zsub 经验：源 config mtime 比对 + 按需重建）。清理时序与 record 生命周期挂钩：record 被 GC/删除时同步清理池内对应 session 数据，池整体在引擎配置移除时删除。`spawnedFiles[]`（临时 prompt 文件等单次性产物）任务结束即清理，resume 场景保留。
+`prepare(task)` 在 spawn 前调用，返回 `{ env, cwd, spawnedFiles[] }`。证据：六家六种隔离手段（观察三），且 kimi 凭据必须写 config.toml、zcode 必须 HOME 覆盖——参数化无法覆盖，只能代码化。隔离目录（`<dataDir>/engines/<engineId>/<pool-key>/`，zcode 按引擎+agent/model 池化，与 zsub HOME 池同构）**跨任务保留复用**，不随单次任务清理——理由：①目录内 db.sqlite 是 D6 降级链第①级（原生读取）的数据源，任务结束即清理会让该级永不可达；②config.json/凭据引导是确定性成本，池化复用摊薄（zsub 经验：源 config mtime 比对 + 按需重建）。清理时序与 record 生命周期挂钩，但**只做到池粒度**：record 被 GC/删除时递减池引用计数（并删该 record 对应 journal），计数归零或引擎配置移除时整池删除——不对共享 db.sqlite 做单 session 手术式删行（逆向 schema 删行与 D6「原生读取必然周期性失效」同构地脆弱）；整池删除仅删引擎原生状态（隔离 HOME/config/db.sqlite，均可由 preparer 重建），**journal 不随池删**——其生命周期跟随 record，避免「配置移除导致仍存 record 的历史从②级静默跌③级」；清理失败置可观测标记而非静默。`spawnedFiles[]`（临时 prompt 文件等单次性产物）任务结束即清理，resume 场景保留。preparer 同时在 spawn 前估算 argv 总长度：仅 argv 投递的引擎（zcode/kimi）超长时在 prepare 期报 `prompt_too_large`（建议缩短 task / persona 移 file 通道 / 换 stdin 引擎），禁止 spawn 后撞 E2BIG 才失败——persona 路由优先 file/flag 已为超长场景分流大头，task 文本通常较短。
 
-**D6 session 读取独立 SessionView 接口 + 三级降级链。**
-`read(handle)` 返回 `SessionView`（turns[] 派生数据），降级链：①引擎原生读取（pi/CC/codex 的 jsonl、zcode/opencode 的 sqlite、kimi 的 wire.jsonl）②spawn 期缓存（adapter 在运行中已收到的 AgentEvent 流重放）③outcome-only（只有 prompt/result/usage——GUI 显示降级为摘要卡）。被否：只支持原生读取——zcode sqlite schema 随版本迁移、kimi wire.jsonl 官方警告勿手改，原生读取必然周期性失效，必须有一级保底。
+**D6 session 读取独立 SessionView 接口 + 三级降级链；第②级归属宿主 event journal（引擎无关）。**
+`read(handle)` 返回 `SessionView`（turns[] 派生数据），降级链：①引擎原生读取（pi/CC/codex 的 jsonl、zcode/opencode 的 sqlite、kimi 的 wire.jsonl）②宿主 event journal（execution host 消费 `onEvent` 时统一落盘 `<getDataDir()>/engines/<engineId>/<pool-key>/journal-<taskId>.jsonl`——engines 根锚定 getDataDir() 顶层，extension 写侧与 runtime 校验侧同源推导；中立格式，重放即得 AgentEvent 流）③outcome-only（只有 prompt/result/usage——GUI 显示降级为摘要卡）。第②级归属宿主而非 adapter 的理由：adapter 各自缓存会演变出六种格式；host 统一落盘则全引擎免费获得、格式唯一。journal 同时是探针「已知样本回归」与 golden 语料（D12）的来源。**读取通路的双端归属**：①级 reader 做成无状态只读模块（`engines/<id>/reader`），extension 的 `read()`（session_read 工具）与 runtime 的 GUI 历史链路（getSubagentHistory）复用同一份——GUI 详情页常态走①级拿引擎原生全量；②③级双端皆可用，journal 路径由 handle 自描述绝对路径携带、runtime 校验前缀白名单后读取（路径从 getDataDir() 动态推导，不写死）；pi 的 runtime 直读 JSONL 现状下沉为 pi reader 模块，行为不变（A1 守护）。被否：①只支持原生读取——zcode sqlite schema 随版本迁移、kimi wire.jsonl 官方警告勿手改，原生读取必然周期性失效，必须有一级保底；②runtime 只走 journal 投影（①级仅服务 session_read 工具）——journal 是 AgentEvent 序列（粗粒度引擎仅合成 message_end/turn_end），保真度低于 sqlite 的 session/message/part 全量，且 pi 会成为「纪律约束不了自家引擎」的例外。
 
 **D7 探针体系按契约稳定性分级。**
 每引擎 `probe()`：二进制存在 + 版本解析 + 一次「干跑校验」（不调 LLM：zcode 探 `--version` + 解析器对已知样本的回归；codex/CC 用官方 schema 机器校验，探针最轻）。探针在引擎 factory 初始化与「版本变化检测」时触发，失败走终态四的错误形态。证据：zcode 无契约（help flag 漂移实锤：`--max-turns` 列出但拒收）与 codex（generate-json-schema 锁版本）是稳定性光谱两端，统一强探针浪费、统一弱探针危险。
@@ -212,10 +231,25 @@ schema 仿真、超时杀链、persona 路由、嵌套防护、worktree 隔离�
 统一 `XYZ_AGENT_SUBAGENT=1` 标记（所有引擎 spawn 都注入，引擎 adapter 检测到即拒绝递归派发）+ 各引擎清理/利用其原生标记（CC 的 `CLAUDECODE`、zsub 的 `ZSW_NESTED`、pi 现有 `PI_SUBAGENT_*`）。被否：只靠「隔离目录里不装扩展」（zsub 第二重门禁）——那依赖配置洁癖，且 opencode/CC 会吃项目级 `.opencode/`/`CLAUDE.md` 配置，env 标记是唯一跨引擎可靠手段。
 
 **D9 配置路由三层，agent .md frontmatter `engine` 字段为 per-agent 主通道。**
-与 zsub 的 `frontmatter.model` 先例、六家 agent .md 体系（CC/opencode/kimi frontmatter 字段互有兼容）一致；缺省引擎 = `pi`（回填期零风险默认）。校验：注册表里不存在的 engine id 在 agent 解析期报错（配置错误前置暴露，不留到运行时）。
+与 zsub 的 `frontmatter.model` 先例、六家 agent .md 体系（CC/opencode/kimi frontmatter 字段互有兼容）一致；缺省引擎 = `pi`（回填期零风险默认）。校验：注册表里不存在的 engine id 在 agent 解析期报错（配置错误前置暴露，不留到运行时）。配套三条：①**故障 fallback（有守卫的兜底）**——probe 失败时任务可路由回全局默认引擎（缺省 pi），record 记 `engineFallback: {from, reason}` + GUI 警告条（留痕防配置腐坏被静默掩盖）；但三个守卫任一命中则**不 fallback、按 strict 语义报 `engine_probe_failed`**：a) engine 来自调用参数/step 级显式指定（显式选择 = 能力依赖，静默换引擎违反意图——沙箱类任务被静默卸除安全能力正是要防的形态）；b) task 声明依赖该引擎独有能力（capabilities 对照，如 sandbox: native；首期声明载体 = step/调用级显式 engine，与守卫 a 合流，AgentTaskSpec 下钻时补 `requires?: Partial<EngineCapabilities>` 后独立生效）；c) 显式 model 在默认引擎上不可解析（不静默换模型，报 `model_not_available`）。`engineRouting.strict` 全开则一切 probe 失败直接报错。②**model 与 engine 正交**——不做「按模型名隐式推引擎」；model 在解析出的引擎上解释，不可解析时 prepare 期报 `model_not_available`（列该引擎可用模型）；引擎可用模型受各引擎 provider 体系硬约束（codex 仅 Responses API、kimi 凭据必须 config.toml），「任意引擎」≠「任意模型任意引擎」。③**workflow 脚本不写死 engine**——环境差异由 frontmatter/全局默认承载，step 级 `engine:` 仅限「必须某引擎独有能力」并注释原因。
 
 **D10 MVP 引擎集 = { pi, zcode }；zcode 首期只做 spawn 单轮。**
 zcode app-server、conversation 模式、其他四引擎都不进首期。理由见 in/out scope；抽象按六引擎全集设计（防返工），实现按最小可验收集推进（防过度工程）。第二验证引擎建议选 claude-code（契约最清晰、`--json-schema` 原生、能验证 native schema 直传路径）——但明确标注为「后续 Phase，非首期承诺」。
+
+**D11 能力缺陷按四级处置，capabilities 声明是唯一分发依据。**
+「对不齐」的能力在使用中的形态（护目标 3/4，明细矩阵见附录 A）：
+
+| 处置 | 适用 | 行为 | 体感 |
+|------|------|------|------|
+| 自动仿真 | schema（emulated 引擎） | 公共层 prompt 约定 + 三级容错提取 + ajv，产出与 native 同形 | 执行无打扰；引擎配置处常驻「仿真降级」标记 |
+| 显示降级 | 粗粒度事件流（zcode/kimi）、kimi 部分 usage、五家 cost 缺失 | 照常执行，信息缺席（引擎侧根本不存在） | GUI 阶段态卡片 / 字段显示不可用，永不弹错 |
+| 调用前拒绝 | steer/interact/conversation（声明 unsupported）、嵌套 spawn、argv 超长 | 同步结构化错误，不创建进程 | 模型收到可操作文案（换参数/换引擎）；GUI 隐藏对应入口 |
+| 入口拦截 | 探针失败（strict 模式）、凭据缺失、未注册 engine id | 引擎初始化期 / agent 解析期失败 | 错误含恢复指引（见 §3.3.3） |
+
+三条分发规则：①处置方式由能力类别决定，不由引擎 id 决定——新引擎填好 capabilities 声明即继承全部处置逻辑；②错误尽量先于进程创建——配置错误前置 agent 解析期、契约漂移前置探针、argv 超限前置 prepare 期；**封死边界如实声明**：探针只做已知样本回归，运行中漂移（新版本改了探针未覆盖的输出路径）仍会漏网，由 `engine_run_failed` 错误规格与宿主终态合成兜底，不静默挂死；③模型与用户的错误通道分开——模型收到「能改变下一次调用」的文案，用户侧由 GUI 能力标记与入口隐藏让错误尽量没有机会发生。仿真路径自身失败（三级容错 + 重试一次仍不过）才升级为 `schema_emulation_failed`。
+
+**D12 新引擎接入以 engine conformance 契约套件 + golden 样本库为验收门。**
+「接入成本递减」（目标 5）由可验证机制承载：一套任何 adapter 必须通过的契约测试（probe 形状 / run 简单任务 / AgentEvent 不变量——终态唯一且必含 usage 或显式 null / abort 行为 / read 降级行为），外加每引擎真实流量录制的 golden 样本（喂 parser 回归 + 探针运行时校验复用；首个样本来自验收前置门的 zcode 实录）。新引擎接入清单 = adapter 四件套 + 注册表一行 + golden 样本 + 契约套件转绿。第三验证引擎建议 opencode（在 claude-code 之后）：它最早迫使 server-mode 通道与 driver host（§3.3.1）从理论变现实，趁早压测接口常驻兼容性，比晚发现接口假设错误便宜。
 
 #### 3.3.3 错误规格（每类配恢复指引）
 
@@ -227,6 +261,13 @@ zcode app-server、conversation 模式、其他四引擎都不进首期。理由
 | `nested_spawn_rejected` | 嵌套 spawn 尝试 | 说明防护规则，指向 task 内自行完成 |
 | `schema_emulation_failed` | 仿真降级下输出经三级容错仍解析不出 JSON / ajv 不通过 | 重试一次（强化 prompt）后报错，错误含原始输出尾部——与现有 structured-output 重试语义对齐 |
 | `engine_timeout` | 宿主超时杀链走完 | 含 stdout 尾部 2000 字 + 「可用 engine: pi 重跑」建议 |
+| `engine_capability_unsupported` | 对声明 unsupported 的能力发起调用（interact/conversation/steer） | 同步拒绝不创建进程；模型可操作文案（换单次调用 / `engine: pi`）；GUI 侧入口隐藏使该错误尽量不触发 |
+| `engine_session_not_resumable` | 主会话 reload 后对进程已死的 handle 调 interact | 指向 cold resume（`--resume` 系）路径，说明 idle 复用不可跨 reload |
+| `model_not_available` | model 在解析出引擎的 provider 体系中不可解释 | prepare 期报，列该引擎可用模型清单；不做隐式换引擎（D9②） |
+| `prompt_too_large` | argv 长度估算超限且引擎无 stdin/file 通道 | prepare 期报，建议缩短 task / persona 移 file / 换通道引擎 |
+| `engine_run_failed` | 进程已创建后引擎失败：stdout 解析失败 / 非零退出 / 契约漂移越过探针在运行中爆发 | 宿主合成错误终态、record 正常收尾；错误含 stdout 尾部 2000 字 + exit code；恢复：版本确认 + 探针重跑（同时将新样本补录进 golden 库），或 `engine: pi` 重跑 |
+
+注：引擎故障 fallback（D9①）不是错误——record 记 `engineFallback` 字段 + GUI 警告条；三守卫命中（显式指定/独有能力依赖/model 不可解析）或 strict 模式下才以 `engine_probe_failed` / `model_not_available` 终止。
 
 #### 3.3.4 物理数据流（终态，以 reviewer@zcode 为例）
 
@@ -241,9 +282,10 @@ zcode app-server、conversation 模式、其他四引擎都不进首期。理由
       (env: HOME=隔离目录, XYZ_AGENT_SUBAGENT=1; stdin=/dev/null)
   → parser: stdout 有界收集（头4K+尾64K）→ 单 JSON {sessionId,response,usage}
       → 合成 AgentEvent 流（coarse: message_end + turn_end）→ AgentOutcome
-  → record: SUBAGENT_RECORD appendEntry（主会话 pi 通道，不变）
+  → journal: host 消费 onEvent 落 <dataDir>/engines/zcode/<pool>/journal-<taskId>.jsonl（中立格式）
+  → record: SUBAGENT_RECORD appendEntry（主会话 pi 通道，不变；内嵌可持久化 handle）
   → read(handle): sqlite 读 session/message/part 三级 JOIN → SessionView
-      （失败降级 → spawn 期缓存 → outcome-only）
+      （失败降级 → 宿主 event journal 重放 → outcome-only）
 ```
 
 ## 4. 验收
@@ -256,28 +298,65 @@ zcode app-server、conversation 模式、其他四引擎都不进首期。理由
 | A2 | zcode 引擎真实任务 | reviewer agent frontmatter 加 `engine: zcode`，模型派「审查 packages/shared/src/paths.ts 最近改动，按 schema 输出 {issues[],verdict}」 | 子代理真跑在 zcode（隔离 HOME 的 db.sqlite 出现新 session）；schema 结果 ajv 校验通过；GUI 对话流/工具面板正常显示（允许粗粒度） | 目标 1/2/3 |
 | A3 | schema 仿真降级可见 | 同 A2 但查 GUI 引擎提示 | 调用前可见「schema 为仿真降级」提示，不是运行时报错 | 目标 3 |
 | A4 | 嵌套防护 | 让 zcode 子代理尝试调用 subagent 工具 | 被拒并给出防护说明，无二级 zcode 进程产生 | 目标 4（防护属错误规格） |
-| A5 | 探针拦截 | 临时改 zcode 解析器的版本断言（模拟漂移）后派 zcode subagent | 入口即 `engine_probe_failed`，错误含恢复指引（版本命令/探针命令/文档路径），任务不静默挂死 | 目标 4 |
+| A5 | 探针拦截（strict 模式） | 开 `engineRouting.strict` + 临时改 zcode 解析器的版本断言（模拟漂移）后派 zcode subagent | 入口即 `engine_probe_failed`，错误含恢复指引（版本命令/探针命令/文档路径），任务不静默挂死 | 目标 4 |
 | A6 | 混编 workflow | 一个 workflow 前两步用默认 pi、第三步 step 级指定 zcode | 两引擎 record 结构一致，workflow 汇总正常，GUI 无引擎字段泄漏 | 目标 1/2 |
 | A7 | 单次调用覆盖 | 调用参数显式 `engine: pi` 覆盖 reviewer 的 zcode 设置 | 该次跑 pi（隔离目录无新增 zcode session） | 目标 2 |
-| A8 | 读取降级链 | 前置确认：该 zcode 任务的隔离池目录与 db.sqlite 正常保留且 `read(handle)` 走第①级（sqlite 原生读取）成功。然后 rename 掉 db.sqlite 再打开该 subagent 详情 | 详情页降级显示 spawn 期缓存重建（第②级）；再清空缓存后降级为 outcome-only 摘要卡（第③级），不白屏不报错弹窗 | 目标 3（sessionRead 降级） |
+| A8 | 读取降级链 | 前置确认：该 zcode 任务的隔离池目录与 db.sqlite 正常保留且 `read(handle)` 走第①级（sqlite 原生读取）成功。然后 rename 掉 db.sqlite 再打开该 subagent 详情 | 详情页降级为宿主 event journal 重放重建（第②级）；再清空 journal 后降级为 outcome-only 摘要卡（第③级），不白屏不报错弹窗 | 目标 3（sessionRead 降级） |
+| A9 | 引擎故障 fallback 与守卫 | 不开 strict：①engine 来自 frontmatter 的 reviewer@zcode 探针失败（临时移走二进制）→ 派任务；②对照组：调用参数显式 `engine: zcode` + 同样探针失败 | ①路由回默认引擎 pi 完成，record 含 `engineFallback{from:'zcode',reason:'probe_failed'}`，GUI 警告条可见；②**不降级**，报 `engine_probe_failed`，无 pi 进程创建 | 目标 4 |
+| A10 | abort 两级中断 | zcode 任务运行中用户 cancel；另派 pi 任务 cancel 对比 | zcode 走公共杀链兜底、宿主合成终态、record 正常收尾无僵尸进程；pi 走原生中断优雅收尾 | 目标 1/4 |
+| A11 | 调用前拒绝 | 对 `engine: zcode` 的 agent 发起 conversation 模式与 message 续聊 | 同步返回 `engine_capability_unsupported`（含可操作建议），无 zcode 进程创建；GUI 对应入口隐藏 | 目标 3 |
+| A12 | conformance 契约套件 | 本机真实环境（已装 pi/zcode + 有效凭据）跑契约套件：golden 回放层（parser 对实录样本回归，免 LLM）+ run 层（真实 spawn 简单任务，需真实模型调用，作手动门不进 CI 默认）；负例：故意破坏 zcode parser 一个不变量断言 | pi/zcode 双引擎全绿；负例转红并指出失败的不变量——证明套件有牙 | 目标 5 |
+| A13 | 死 handle 续聊拒绝 | pi conversation 子代理轮终进 idle 后关闭并重开主会话（子进程死亡），对原 handle 发 message | 同步返回 `engine_session_not_resumable`（含 cold resume 指引），无挂死、无新进程 | 目标 3 |
+| A14 | 运行中引擎失败兜底 | 注入损坏的 zcode parser（或喂 golden 样本外的新格式 stdout）模拟运行中解析失败 | 结构化 `engine_run_failed`（含 stdout 尾部 + exit code + 恢复指引）、record 正常收尾、无僵尸进程；新样本补录 golden 库 | 目标 4 |
 
 验收前置门（实施期完成）：A2 前先用真实 zcode CLI 手工跑一次驱动脚本核对 stdout JSON 字段（sessionId/response/usage）与本机 0.16.3 一致——探针的已知样本即来自这次实录。
 
 ## 5. 下一层拆分
 
-实施路径五阶段，每阶段可独立验收（A1-A8 分配到阶段门）：
+实施路径五阶段，每阶段可独立验收（A1-A14 分配到阶段门）：
 
 | 阶段 | 单元 | 内容 | justification / 验收挂钩 |
 |------|------|------|--------------------------|
-| P1 | 中立类型 + EnginePort + PiEngine 回填 | `execution/engine/` 新目录：types.ts（AgentTaskSpec 等泛化）、port.ts、registry.ts；现有 runSpawn 链移入 `engines/pi/`，ExecuteOptions→AgentTaskSpec 映射层 | 行为零变化靠现有测试守护（session-runner.test 等）；验收 A1。先回填后新增，隔离回归风险 |
-| P2 | 公共降级层 | schema 仿真（prompt 拼装 + 三级容错提取 + ajv，**仅服务 emulated 引擎**，见 D4 硬分流）、超时杀链、persona 路由、嵌套防护、preparer 目录池管理 | 纯新增无回归面；pi 的 native schema 链路（env 注入）不动 |
-| P3 | ZcodeEngine | adapter 四件套（launcher/parser/preparer/reader），吸收 zsub driver.js/bootstrapIsolatedHome/model-router 的 TS 重写；sqlite reader | zsub 已真机验证，风险集中在移植保真；验收 A2/A3/A4/A8 |
-| P4 | 配置路由 + capabilities + 探针 | frontmatter engine 字段解析（agent-ref/meta-parser 扩展）、三层优先级、probe 体系、错误规格落地 | 验收 A5/A6/A7 |
-| P5 | runtime 侧 subagent-extractor 分协议 | xyz-agent runtime（subagent-extractor.ts 约 660 行，锚定 pi subagents 目录扫描）改造：按 record 内 engine 字段路由到对应引擎的 SessionView 投影、per-engine session 定位、隔离池清理时序协调 | **中改动**（非小改动）：extractor 需要新依赖 EnginePort 的 read 能力或其投影子集，改动面集中在 session 定位与投影两段；单独 commit。验收 A2 的 GUI 派生列表部分 |
+| P1 | 中立类型 + EnginePort + PiEngine 回填 | `execution/engine/` 新目录：types.ts（AgentTaskSpec 等泛化）、port.ts、registry.ts；现有 runSpawn 链移入 `engines/pi/`，ExecuteOptions→AgentTaskSpec 映射层 | 行为零变化靠现有测试守护（session-runner.test 等）；验收 A1/A13。先回填后新增，隔离回归风险 |
+| P2 | 公共降级层 | schema 仿真（prompt 拼装 + 三级容错提取 + ajv，**仅服务 emulated 引擎**，见 D4 硬分流）、超时杀链与 abort 两级中断、event journal 落盘、persona 路由（含 argv 长度估算前置拦截）、嵌套防护、preparer 目录池管理 | 纯新增无回归面；pi 的 native schema 链路（env 注入）不动；验收 A10 |
+| P3 | ZcodeEngine | adapter 四件套（launcher/parser/preparer/reader），吸收 zsub driver.js/bootstrapIsolatedHome/model-router 的 TS 重写；sqlite reader | zsub 已真机验证，风险集中在移植保真；验收 A2/A3/A4/A8/A14 |
+| P4 | 配置路由 + capabilities + 探针 + conformance | frontmatter engine 字段解析（agent-ref/meta-parser 扩展）、三层优先级与 fallback 路由（D9）、probe 体系、错误规格落地、engine conformance 契约套件骨架 + golden 样本库（D12，pi/zcode 先行各一份） | 验收 A5/A9/A11/A12/A6/A7；契约套件转绿是后续新引擎验收门 |
+| P5 | runtime 侧 subagent-extractor 分协议 | xyz-agent runtime（subagent-extractor.ts 约 660 行，锚定 pi subagents 目录扫描）改造：按 record 内 engine 字段路由到该引擎**共享 reader 模块**（①级原生读取，extension/runtime 双端复用）→ journal（②级）→ record outcome（③级）；pi 既有直读 JSONL 逻辑下沉为 pi reader，行为不变（A1 守护）；存量 record 无 engine 字段一律按 pi 投影（零迁移）；journal 定位 = handle 自描述绝对路径 + runtime 前缀白名单校验；reader 复用经 workspace 依赖引入，runtime 侧同步登记 tsup `noExternal` 并跑 `validate-runtime-bundle.sh` 验证双 bundle（打包纪律见项目关键规则 12②）；隔离池清理时序协调 | **中改动**（非小改动）：extractor 改为 record + 共享 reader + journal 三段，改动面集中在 session 定位与投影；单独 commit。验收 A2 的 GUI 派生列表部分 + A8 |
 
-文件改动地图（P1-P4 主要落点）：`extensions/universal/subagent-workflow/src/execution/`（engine/ 新增 + session-runner/subagent-service 改造点收口）、`src/shared/`（meta-parser 的 engine 字段）；P5：`packages/runtime/src/services/session/subagent-extractor.ts`。精确逐文件清单属下一层（实现计划）产物，此处不越层。
+文件改动地图（P1-P4 主要落点）：`extensions/universal/subagent-workflow/src/execution/`（engine/ 新增 + journal.ts + session-runner/subagent-service 改造点收口）、`src/shared/`（meta-parser 的 engine 字段）、conformance 套件与 golden 样本目录（落点遵仓内测试目录约定）；新增 `XYZ_AGENT_SUBAGENT` 等 env 须登记 `packages/shared/src/constants.ts` 的 ENV_WHITELIST_PREFIXES SSOT（pre-commit 检查）。P5：`packages/runtime/src/services/session/subagent-extractor.ts`。精确逐文件清单属下一层（实现计划）产物，此处不越层。
 
-待验证检查点（实施期必须实证，不预设结论）：①zcode 0.16.3 spawn 模式 stdout JSON 字段名实录；②隔离 HOME 下 db.sqlite 的并发读行为（WAL）与 message/part schema 细节；③`--disallowed-tools` 对 zcode 内置工具名的实际匹配语义；④argv 超长 prompt 的实际限额（zsub 经验约可用，但需在目标模型场景复核）。
+待验证检查点（实施期必须实证，不预设结论）：①zcode 0.16.3 spawn 模式 stdout JSON 字段名实录；②隔离 HOME 下 db.sqlite 的并发读行为（WAL）与 message/part schema 细节；③`--disallowed-tools` 对 zcode 内置工具名的实际匹配语义；④argv 超长 prompt 的实际限额（zsub 经验约可用，但需在目标模型场景复核；`prompt_too_large` 的阈值取自本次实录）；⑤zcode 子进程对 SIGTERM 的响应时序（A10 杀链 grace 窗口取值的依据）。
+
+## 附录 A：六引擎能力 × 引擎层补齐矩阵
+
+§2.2 表的完整版，含「xyz-agent 引擎层能否补齐」列（D11 四级处置的依据）。符号：✅ 原生满足 / ◐ 部分或有条件 / ❌ 缺失；补齐列 ✅=公共层真补齐、◐=降级或部分补齐、❌=补不了仅显示降级。口径同 §2.2：引擎能力口径，链路接通状态以 capabilities 声明（D3）为准。
+
+| 能力 | pi | zcode | claude-code | codex | opencode | kimi-code | 引擎层补齐 |
+|------|----|----|----|----|----|----|------|
+| 一次性 headless spawn | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 不需要（最小公约数） |
+| prompt 超长应对 | stdin 无虞 | 仅 argv | argv/stdin | argv/stdin | argv/HTTP | 仅 argv | ◐ prepare 期估算拦截 + persona file/flag 分流 |
+| persona 注入 | prompt+flag | prompt | 一等 flag/file | config 叠加 | agent.md/system | `--agent-file` | ✅ 公共 persona 路由三策略 |
+| 指定模型 | ✅ | ✅ | ✅ | ✅ | ✅ | ◐ 别名映射 config.toml | ✅ preparer 翻译；可用范围受引擎 provider 体系硬约束（D9②） |
+| effort 档位 | 7 档 | ◐ | 5 档 | ✅ | ✅ `--variant` | ❌ | ✅ 中立 effort + 映射或忽略 |
+| schema 强制 | ✅ env 注入 | ❌ | ✅ `--json-schema` | ✅ `--output-schema` | ❌ | ❌ | ◐ emulated 走公共仿真层（best-effort）；native 硬分流（D4） |
+| 事件流粒度 | 30+ 最细 | 粗 | 全量 Zod | turn/item | part 级 | role 粗 | ❌ 信息不存在，GUI 阶段态降级 |
+| usage 回传 | ✅ | ✅ | ✅ | ✅ | ✅ | ◐ 部分（meta） | ❌ 缺的部分显示降级 |
+| cost 回传 | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| steer 插话 | ✅ RPC（链路未接通，首期 unsupported——见 D3） | ❌ | ✅ | ◐ 仅 app-server | ◐ 仅 server | ◐ 仅 server | ◐ 首期 unsupported；未来 run+resume 冷仿真 |
+| interrupt 中断 | ✅ | ❌ | ✅ 一等 | ✅ | ✅ | ◐ 仅 server | ✅ 公共杀链兜底 + 终态合成（D1） |
+| conversation 多轮 | ✅ idle 复用 | ❌ | ❌ | ❌ | ❌ | ❌ | ◐ 宿主 idle timer + cold resume 仿真（体验降级） |
+| resume 续聊 | ✅ | ✅ 冷 | ✅+fork | ✅+fork | ✅+fork | ✅ | 不需要（冷热之别） |
+| OS sandbox | ❌ | ❌ | ❌ | ✅ 跨平台不齐 | ❌ | ❌ | ◐ worktree 仅文件写维度，无网络/进程隔离 |
+| 环境隔离 | ✅ | ✅ HOME | ✅ | ✅ | ✅ | ✅ | ✅ per-engine preparer（D5） |
+| 凭据注入 | models.json | config.json | env | env_key | auth.json | config.toml 不走 env | ✅ preparer 生成 |
+| 权限模式 | ✅ | ✅ | ✅ 6 档 | ✅ | ✅ ruleset | ❌ 固定 auto | ◐ kimi 声明 ignored，其余映射 |
+| 工具 denylist | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 中立 denylist + 语法映射 |
+| 嵌套防护 | PI_SUBAGENT_* | ❌ | CLAUDECODE | 机制变动期 | ❌ | ✅ 内置完善 | ✅ 统一 env 标记 + 清理原生标记（D8） |
+| CLI 超时 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ 公共杀链，6/6 全缺全补 |
+| session 读取 | jsonl | sqlite 逆向 | 官方 API | thread/read | REST | wire.jsonl 勿手改 | ✅ D6 三级降级链 |
+| 契约稳定性 | rpc.md | 逆向无契约 | Zod | 机器 schema | openapi | 文档化 | ✅ 分级探针 + golden 回归（D7/D12） |
+
+补不了的硬差异仅四条，全部是「信息/能力在引擎侧根本不存在」：粗粒度引擎的实时事件流、kimi 完整 usage 与五家 cost、kimi headless 权限模式、引擎可用模型范围（受 provider 体系约束）。其余缺失（schema 4/6 缺、超时 6/6 缺、sandbox 5/6 缺）由公共层写一次全引擎复用——这是 D4「降级归属公共层」的回报。
 
 ## 附：与早前「全量 zcode 适配」评估的关系
 
