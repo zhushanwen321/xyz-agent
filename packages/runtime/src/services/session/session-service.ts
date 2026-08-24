@@ -23,7 +23,7 @@ import { BUILTIN_PRESET_IDS, IMAGE_LIMITS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
 import type { PiSessionEntry } from '../../infra/pi/pi-protocol.js'
 import type {
-  ISessionService, IMessageBroker,
+  ISessionService, IMessageBroker, SessionCreateOptions,
   IEventAdapter, IExtensionService, IConfigService,
 } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
@@ -411,16 +411,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
 
-  async create(cwd?: string, label?: string, options?: {
-    hidden?: boolean
-    presetId?: string
-    /** 归属 project id（D14 语义修正，2026-08-04）。 */
-    projectId?: string
-    /** Landing Model Chip 传入值，覆盖 preset.modelOverride（设计文档 §5.2 优先级）。 */
-    modelOverride?: string
-    /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（设计文档 §5.2 优先级）。 */
-    thinkingOverride?: string
-  }): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
+  async create(cwd?: string, label?: string, options?: SessionCreateOptions): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
   async deleteByCwd(cwd: string): Promise<BatchDeleteResult> { return this.lifecycle.deleteByCwd(cwd) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }

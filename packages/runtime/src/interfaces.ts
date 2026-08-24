@@ -114,6 +114,12 @@ export interface SessionCreateOptions {
   spawnSource?: 'user' | 'agent'
   /** 父 agent session id（spawnSource='agent' 时传入，session-manager list 按此过滤子 session）。 */
   parentAgentSessionId?: string
+  /**
+   * label 是否为语义性命名（需持久化到 pi session_info 且防 auto-rename 覆盖）。
+   * true：handoff 承接名 / agent-managed 显式命名。false（默认）：前端派生 prompt
+   * 预览名 display-only（2026-08-24 A' 修正，见 session-lifecycle persistExplicitLabel）。
+   */
+  persistLabel?: boolean
 }
 
 /** Session lifecycle: creation, deletion, messaging, history. */

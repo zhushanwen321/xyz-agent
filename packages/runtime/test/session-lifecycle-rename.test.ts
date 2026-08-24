@@ -217,22 +217,36 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
     })
   })
 
-  // ── 断言组 2：create / fork 显式 label 走 RPC ────────────────────
-  describe('断言组 2：create / forkSession 显式 label → set_session_name RPC', () => {
-    it('create(显式 label) → client 就绪后调 setSessionName(label)', async () => {
+  // ── 断言组 2：create / fork 语义性 label 走 RPC（A' 分流）────────────
+  describe('断言组 2：create / forkSession 语义性 label → set_session_name RPC（A\'）', () => {
+    it("create(派生预览名，默认无 persistLabel) → setSessionName 不被调（A' display-only，防覆盖守卫恢复）", async () => {
       const client = makeClient({
         getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>()
           .mockResolvedValue({ sessionId: 'pi-1', sessionFile: join(tmpDir, 'pi-1.jsonl') }),
       })
       vi.mocked(env.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
 
-      await env.lifecycle.create(tmpDir, '显式名')
+      await env.lifecycle.create(tmpDir, '修复登录bu…')
 
-      expect(client.setSessionName).toHaveBeenCalledTimes(1)
-      expect(client.setSessionName).toHaveBeenCalledWith('显式名')
+      // A'（2026-08-24）：前端派生预览名不持久化——pi 内存 sessionName 保持空，
+      // pi-rename-session 防覆盖守卫照常通过（W1 曾持久化预览名致 auto-rename 全量失效）
+      expect(client.setSessionName).not.toHaveBeenCalled()
     })
 
-    it('create 显式 label 的 RPC 失败不阻断 create（summary 正常返回 + console.error 上报）', async () => {
+    it('create(语义性 label + persistLabel=true) → client 就绪后调 setSessionName(label)', async () => {
+      const client = makeClient({
+        getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>()
+          .mockResolvedValue({ sessionId: 'pi-1', sessionFile: join(tmpDir, 'pi-1.jsonl') }),
+      })
+      vi.mocked(env.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
+
+      await env.lifecycle.create(tmpDir, 'handoff from src', { persistLabel: true })
+
+      expect(client.setSessionName).toHaveBeenCalledTimes(1)
+      expect(client.setSessionName).toHaveBeenCalledWith('handoff from src')
+    })
+
+    it('create 语义性 label 的 RPC 失败不阻断 create（summary 正常返回 + console.error 上报）', async () => {
       const client = makeClient({
         getState: vi.fn<() => Promise<Record<string, unknown> | undefined>>()
           .mockResolvedValue({ sessionId: 'pi-2', sessionFile: join(tmpDir, 'pi-2.jsonl') }),
@@ -241,11 +255,11 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
       })
       vi.mocked(env.pm.createSession).mockResolvedValueOnce(client as unknown as IPiEngine)
 
-      const summary = await env.lifecycle.create(tmpDir, '显式名')
+      const summary = await env.lifecycle.create(tmpDir, 'handoff from src', { persistLabel: true })
 
       // 不阻断：session 正常创建，label 留内存显示
       expect(summary.id).toBe('pi-2')
-      expect(summary.label).toBe('显式名')
+      expect(summary.label).toBe('handoff from src')
       // 上报失败（恢复动作 = 手动 rename 重试）
       expect(consoleErrorSpy).toHaveBeenCalled()
     })
