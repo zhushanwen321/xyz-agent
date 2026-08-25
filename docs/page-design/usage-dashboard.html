@@ -46,6 +46,44 @@
   --accent-fg: #1a1a1c;
 }
 
+/* 黛蓝（暗 · 依稀蓝相）—— 真值对齐 style.css :root[data-theme-preset=dailan] */
+[data-theme="dark"][data-theme-preset="dailan"] {
+  --bg: #121319;
+  --surface: #1e1f25;
+  --surface-hover: #2f3039;
+  --surface-2: #262731;
+  --bg-elevated: #2a2b34;
+  --bg-input: #16171d;
+  --bg-card: #1a1b22;
+  --neutral-fg: #dedfe5;
+  --neutral-mid: #9597a1;
+  --neutral-dim: #85888f; /* SSOT #74767f 提亮修正（同玄 dim 审计） */
+  --neutral-faint: #474853;
+  --neutral-ico: #868895;
+  --accent: #9ca9c9;
+  --accent-hover: #b0bcd4;
+  --accent-fg: #151824;
+}
+
+/* 暖墨（暗 · 宣纸暖相）—— 真值对齐 style.css :root[data-theme-preset=nuanmo] */
+[data-theme="dark"][data-theme-preset="nuanmo"] {
+  --bg: #161413;
+  --surface: #221f1d;
+  --surface-hover: #33302c;
+  --surface-2: #2a2724;
+  --bg-elevated: #2e2b27;
+  --bg-input: #1a1816;
+  --bg-card: #1e1c1a;
+  --neutral-fg: #e2dfdb;
+  --neutral-mid: #9a9690;
+  --neutral-dim: #8a857e; /* SSOT #79756f 提亮修正（同玄 dim 审计） */
+  --neutral-faint: #4a4743;
+  --neutral-ico: #8a867f;
+  --accent: #cbc3b3;
+  --accent-hover: #ded7c8;
+  --accent-fg: #201d18;
+}
+
 /* ============================================================
    太极 · 皓（亮色，宣纸墨黑）—— 真值对齐 style.css [data-theme="light"]
    ============================================================ */
@@ -60,7 +98,7 @@
   --bg-card: #f1efec;
   --neutral-fg: #2b2a28;
   /* 审计修正提案：SSOT 亮色 mid #706e6a 对宣纸 4.26:1、dim #9d9b96 2.35:1（均 < AA）。
-     demo 内提深：mid #5d5b56（≈5.6:1）/ dim #6a6862（≈4.6:1），层级保持 mid 深 dim 浅 */
+     demo 内提深：mid #5d5b56（≈5.6:1）/ dim #64625c（≈4.8:1），层级保持 mid 深 dim 浅 */
   --neutral-mid: #5d5b56;
   --neutral-dim: #64625c;
   --neutral-faint: #c7c5c0;
@@ -76,34 +114,61 @@
   --shadow-2: 0 8px 24px rgba(60,50,30,0.14);
 }
 
+/* 青墨（亮 · 宣纸花青）—— 只换 accent 颜料（同 app）；图表墨掺花青色相 */
+[data-theme="light"][data-theme-preset="qingmo"] {
+  --accent: #3d6b6b;
+  --accent-hover: #4e7d7d;
+  --accent-fg: #f2f7f6;
+}
+
+/* 朱印（亮 · 宣纸朱砂）—— 只换 accent 颜料；danger 错开为玫红防撞色（app 同款） */
+[data-theme="light"][data-theme-preset="zhuyin"] {
+  --accent: #9c4335;
+  --accent-hover: #b04f41;
+  --accent-fg: #faf3f0;
+}
+
 /* ============================================================
-   图表派生 tokens —— 不手写色值，从主题中性谱派生（color-mix），
-   玄/皓（及未来黛蓝/青墨等 preset）切换时整套灰阶自动跟随、
-   方向自动反转（暗：墨越亮越浓；亮：墨越深越浓）
+   图表派生 tokens —— 不手写色值，全部从「图表墨」--chart-ink 派生（color-mix）。
+   --chart-ink：图表墨主色相。中性主题（玄/黛蓝/暖墨/皓）= neutral-fg，
+   黛蓝/暖墨中性谱自带色相故派生自动跟随；彩色亮色 preset（青墨/朱印）中性谱
+   与皓相同，掺入 accent 色相使图表可感知换色（app 哲学：大面积中性 + 小面积
+   accent，故只染图表墨、不染背景阶梯）。明度方向自动反转
+   （暗：墨越亮越浓；亮：墨越深越浓）。
    ============================================================ */
 [data-theme="dark"], [data-theme="light"] {
+  --chart-ink: var(--neutral-fg);
   /* provider 序列（堆叠柱/图例/排名条，p1 = 占比最高档） */
-  --chart-p1: color-mix(in oklch, var(--neutral-fg) 92%, var(--bg));
-  --chart-p2: color-mix(in oklch, var(--neutral-fg) 70%, var(--bg));
-  --chart-p3: color-mix(in oklch, var(--neutral-fg) 48%, var(--bg));
-  --chart-p4: color-mix(in oklch, var(--neutral-fg) 30%, var(--bg));
-  --chart-p5: color-mix(in oklch, var(--neutral-fg) 17%, var(--bg));
+  --chart-p1: color-mix(in oklch, var(--chart-ink) 92%, var(--bg));
+  --chart-p2: color-mix(in oklch, var(--chart-ink) 70%, var(--bg));
+  --chart-p3: color-mix(in oklch, var(--chart-ink) 48%, var(--bg));
+  --chart-p4: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --chart-p5: color-mix(in oklch, var(--chart-ink) 17%, var(--bg));
   /* 热力日历墨阶（0 = 无消耗底色，5 = 当日最浓） */
-  --heat-0: color-mix(in oklch, var(--neutral-fg) 5%, var(--bg));
-  --heat-1: color-mix(in oklch, var(--neutral-fg) 12%, var(--bg));
-  --heat-2: color-mix(in oklch, var(--neutral-fg) 24%, var(--bg));
-  --heat-3: color-mix(in oklch, var(--neutral-fg) 40%, var(--bg));
-  --heat-4: color-mix(in oklch, var(--neutral-fg) 60%, var(--bg));
-  --heat-5: color-mix(in oklch, var(--neutral-fg) 82%, var(--bg));
+  --heat-0: color-mix(in oklch, var(--chart-ink) 5%, var(--bg));
+  --heat-1: color-mix(in oklch, var(--chart-ink) 12%, var(--bg));
+  --heat-2: color-mix(in oklch, var(--chart-ink) 24%, var(--bg));
+  --heat-3: color-mix(in oklch, var(--chart-ink) 40%, var(--bg));
+  --heat-4: color-mix(in oklch, var(--chart-ink) 60%, var(--bg));
+  --heat-5: color-mix(in oklch, var(--chart-ink) 82%, var(--bg));
   /* 缓存构成三色（命中/新输入/输出） */
-  --cache-hit: color-mix(in oklch, var(--neutral-fg) 85%, var(--bg));
-  --cache-out: color-mix(in oklch, var(--neutral-fg) 55%, var(--bg));
-  --cache-in: color-mix(in oklch, var(--neutral-fg) 30%, var(--bg));
+  --cache-hit: color-mix(in oklch, var(--chart-ink) 85%, var(--bg));
+  --cache-out: color-mix(in oklch, var(--chart-ink) 55%, var(--bg));
+  --cache-in: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
   /* 交互层（图表 hover 列 / 排名行 hover / 条形底槽 / 热力格描边） */
   --hover-tint: color-mix(in oklch, var(--neutral-fg) 5%, transparent);
   --row-hover: color-mix(in oklch, var(--neutral-fg) 3%, transparent);
   --track: color-mix(in oklch, var(--neutral-fg) 8%, transparent);
   --heat-outline: color-mix(in oklch, var(--neutral-fg) 45%, transparent);
+}
+
+/* 彩色 preset 的图表墨掺色（须在上方派生块之后声明以覆盖 --chart-ink，
+   掺 45% accent：图表整体带上花青/朱砂色相但仍是墨，不淹没中性阶梯） */
+[data-theme="light"][data-theme-preset="qingmo"] {
+  --chart-ink: color-mix(in oklch, var(--accent) 45%, var(--neutral-fg));
+}
+[data-theme="light"][data-theme-preset="zhuyin"] {
+  --chart-ink: color-mix(in oklch, var(--accent) 45%, var(--neutral-fg));
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
@@ -356,9 +421,13 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
     <div class="main-header">
       <span>设置 · 用量</span>
       <span style="display:flex;align-items:center;gap:8px">
-        <div class="seg" role="radiogroup" aria-label="主题预览" id="segTheme" title="模拟系统设置的主题切换（data-theme）">
-          <button data-v="dark" class="on">玄</button>
-          <button data-v="light">皓</button>
+        <div class="seg" role="radiogroup" aria-label="主题预览" id="segTheme" title="模拟系统设置的 6 套主题切换（data-theme + data-theme-preset）">
+          <button data-v="xuan" class="on">玄</button>
+          <button data-v="dailan">黛蓝</button>
+          <button data-v="nuanmo">暖墨</button>
+          <button data-v="hao">皓</button>
+          <button data-v="qingmo">青墨</button>
+          <button data-v="zhuyin">朱印</button>
         </div>
         <button class="x" aria-label="关闭"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </span>
@@ -1082,13 +1151,26 @@ function bindSeg(id, key, parse) {
 bindSeg('#segMetric', 'metric');
 bindSeg('#segRange', 'range', v => +v);
 
-/* 主题切换：CSS 变量全量驱动（含 SVG style fill/stroke 的 var() 引用），
-   切 data-theme 后所有图表色即时重算，无需重渲染 */
+/* 主题切换（6 套）：data-theme（暗/亮族）+ data-theme-preset（族内 preset）。
+   CSS 变量全量驱动（含 SVG style fill/stroke 的 var() 引用），切换后所有
+   图表色经 --chart-ink / 中性谱 / accent 三层自动重算，无需重渲染 */
+const THEMES = {
+  xuan:   { theme: 'dark',  preset: null },
+  dailan: { theme: 'dark',  preset: 'dailan' },
+  nuanmo: { theme: 'dark',  preset: 'nuanmo' },
+  hao:    { theme: 'light', preset: null },
+  qingmo: { theme: 'light', preset: 'qingmo' },
+  zhuyin: { theme: 'light', preset: 'zhuyin' },
+};
 $('#segTheme').querySelectorAll('button').forEach(b => {
   b.onclick = () => {
     $('#segTheme').querySelectorAll('button').forEach(x => x.classList.remove('on'));
     b.classList.add('on');
-    document.documentElement.dataset.theme = b.dataset.v;
+    const t = THEMES[b.dataset.v];
+    const root = document.documentElement;
+    root.dataset.theme = t.theme;
+    if (t.preset) root.dataset.themePreset = t.preset;
+    else delete root.dataset.themePreset;
   };
 });
 

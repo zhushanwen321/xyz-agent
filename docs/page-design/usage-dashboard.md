@@ -61,27 +61,32 @@
 - 优点：最轻。
 - 缺点：不满足「漂亮美观 dashboard」诉求。可作为 A 的未来补充（快捷入口），不作为本体。
 
-## 四、主题自适应（派生 token 化）
+## 四、主题自适应（派生 token 化，6 套全覆盖）
 
-demo 支持玄（暗，默认）/ 皓（亮，宣纸墨黑）双主题，右上角「玄/皓」seg 切换，即时生效无需重渲染。机制：
+demo 支持 app 全部 6 套主题（暗色族：玄/黛蓝/暖墨；亮色族：皓/青墨/朱印），右上角 seg 切换，即时生效无需重渲染。机制：
 
-1. **主题块拆分**：色板分属 `[data-theme="dark"]` / `[data-theme="light"]`，真值逐字对齐 `packages/renderer/src/style.css`（皓：宣纸米白阶梯 `#edebe8` 底 + 暖墨文字 + 墨黑 accent `#36332f`），共用层（字体/圆角/动效）留 `:root`。
-2. **图表色零手写，全部从主题中性谱派生**：provider 序列 `--chart-p1..p5`、热力墨阶 `--heat-0..5`、缓存三色 `--cache-hit/in/out`、交互层（hover/底槽/描边）均用 `color-mix(in oklch, var(--neutral-fg) X%, var(--bg) 或 transparent)` 派生。主题（含未来黛蓝/青墨等 data-theme-preset）切换时整套灰阶自动跟随，明度方向自动反转（暗：墨越亮越浓；亮：墨越深越浓）。
-3. **SVG 零重渲染跟随**：SVG presentation attribute 不支持 `var()`，柱体/网格/轴文字一律 `style="fill:var(--chart-p1)"` / `style="stroke:var(--hairline)"`，CSS 变量变化即时重算，切主题不触发任何 JS 重渲染。
+1. **主题块拆分**：`[data-theme]`（族）+ `[data-theme-preset]`（族内 preset）两级，真值逐字对齐 `packages/renderer/src/style.css`（黛蓝/暖墨中性谱自带色相；青墨/朱印共用宣纸阶梯、只换 accent）。共用层（字体/圆角/动效）留 `:root`。
+2. **图表色零手写，全部从「图表墨」`--chart-ink` 派生**：provider 序列 `--chart-p1..p5`、热力墨阶 `--heat-0..5`、缓存三色 `--cache-hit/in/out` 均 `color-mix(in oklch, var(--chart-ink) X%, var(--bg))`；交互层（hover/底槽/描边）从 neutral 谱派生保持中性。
+3. **--chart-ink 三层语义**：中性主题（玄/黛蓝/暖墨/皓）= `var(--neutral-fg)`，黛蓝/暖墨中性谱自带色相故派生自动带相（实测 bar 色度：玄 C=0.005 < 暖墨 C=0.006 < 黛蓝 C=0.0085）；彩色 preset（青墨/朱印）中性谱与皓相同，另掺 `color-mix(accent 45%, neutral-fg)` 使图表可感知换色（实测：青墨 C=0.023 H=195.6°花青、朱印 C=0.053 H=30.9°朱砂）而不淹没中性阶梯——邁循 app「大面积中性 + 小面积 accent」哲学，只染图表墨不染背景。
+4. **明度方向自动反转**（暗：墨越亮越浓，bar L≈0.85；亮：墨越深越浓，bar L≈0.34-0.43）。
+5. **SVG 零重渲染跟随**：SVG presentation attribute 不支持 `var()`，柱体/网格/轴文字一律 `style="fill:var(--chart-p1)"`，切主题只改 dataset 两属性，全部图表即时重算。
 
-亮色审计修正提案（同暗色 dim 问题，均待回写 SSOT）：
+全部 6 主题通过自动化对比度（AA）+ 截断审计；跨主题数据一致（19,068,662 tokens / 105 柱）。亮色族及暗色 preset 的中性谱对比度修正提案（均待回写 SSOT）：
 
-| token | SSOT 现值 | 对宣纸 bg | demo 提案 | 对应比 |
+| token | SSOT 现值 | 对应背景 | demo 提案 | 对应比 |
 |-------|-----------|-----------|-----------|--------|
-| 暗 `--neutral-dim` | `#74747a` | 3.99:1（对玄 bg） | `#85858c` | ≈5.1:1 |
-| 亮 `--neutral-mid` | `#706e6a` | 4.26:1 | `#5d5b56` | ≈5.6:1 |
-| 亮 `--neutral-dim` | `#9d9b96` | 2.35:1 | `#64625c` | ≈4.8:1（含 bg-input 背景过 AA） |
+| 玄 `--neutral-dim` | `#74747a` | 玄 bg（3.99:1） | `#85858c` | ≈5.1:1 |
+| 黛蓝 `--neutral-dim` | `#74767f` | 黛蓝 bg（≈3.99:1） | `#85888f` | ≈5.1:1（保蓝相） |
+| 暖墨 `--neutral-dim` | `#79756f` | 暖墨 bg（≈3.9:1） | `#8a857e` | ≈5.0:1（保暖相） |
+| 皓 `--neutral-mid` | `#706e6a` | 宣纸（4.26:1） | `#5d5b56` | ≈5.6:1 |
+| 皓 `--neutral-dim` | `#9d9b96` | 宣纸（2.35:1） | `#64625c` | ≈4.8:1 |
 
 ## 五、demo 验证记录（2026-08-24）
 
 - 程序化审计通过：无文字截断、无横向溢出、表格列右对齐一致、图表柱体无越界。
 - 交互验证通过：图例开关（kimi-coding off → 总量 19M→12M 正确联动）、指标/范围切换、模型单看（chip + 全页过滤 + 一键清除）、表格分组折叠。
 - 双主题验证通过（2026-08-25 补）：玄/皓切换即时生效（CSS 变量重算，无重渲染）；亮色下堆叠柱/热力/图例/缓存条/nav active 全部正确跟随且墨阶方向反转；双主题对比度审计 + 截断审计全过；暗色回归一致（数据 19M/105 柱不变）。
+- 6 套主题验证通过（2026-08-25 二补）：玄/黛蓝/暖墨/皓/青墨/朱印逐一验证 —— 变量生效、bar/heat5 实际渲染色带对应色相（黛蓝蓝相、暖墨暖相、青墨花青 H≈196°、朱印朱砂 H≈31°）、6 主题对比度+截断审计全过、跨主题数据一致；截图存档 /tmp/usage-theme-{xuan,dailan,nuanmo,hao,qingmo,zhuyin}.png。
 - 人工视觉复核：本会话无可用的视觉引擎（MiniMax/zai key 均未配置），未做截图人眼复核；建议打开 demo 人工过目一遍。
 - 已知未解之谜：Chrome 冷启动首次读取到与后续不同的聚合值（76/8.6M vs 140/19M），重载后确定性稳定（连续两次 100% 一致），未能复现，疑冷启动时序假象。
 
@@ -94,7 +99,7 @@ demo 支持玄（暗，默认）/ 皓（亮，宣纸墨黑）双主题，右上�
 | shared | `UsageStats` 类型 | demo 内聚合结构与之一一对应 |
 | renderer | SettingsModal nav 增「用量」+ `UsagePage.vue` | demo 的 DOM/CSS 结构即组件拆分蓝图（Ledger / DailyChart / HeatCalendar / ModelRank / ProjectRank / CacheMix / DetailTable 七块）；图表用手写 SVG（与 demo 同构，不引图表库） |
 | 布局注意 | 用量页内容列需突破 `--content-max-w: 720px` | demo 用 max-width 1064px；图表型页面 720 过窄，需在 SettingsModal 对该页放宽 |
-| 主题适配 | 图表派生 token（`--chart-p1..p5` / `--heat-0..5` / `--cache-*` 等 color-mix 派生色）登记进 v6-tokens.css + design-tokens.md | 零手写色值，玄/皓/preset 全自适应；中性谱对比度修正提案（§四表）需同步裁决 |
+| 主题适配 | 图表派生 token（`--chart-ink` + `--chart-p1..p5` / `--heat-0..5` / `--cache-*` 等 color-mix 派生色）登记进 v6-tokens.css + design-tokens.md | 零手写色值，6 套主题全自适应（暗族中性谱自动带相、亮族 preset 掺 accent 45%）；中性谱对比度修正提案（§四表）需同步裁决 |
 | 边界 | 空态（无 session）→ 引导空态；活跃 session 未 flush → 标注「数据截至」；cost 全 0 → 费用列整体降级为 dim | |
 
 二期候选：全局 pi 目录（~/.pi/agent/sessions）聚合（增量缓存）；预算阈值告警（Copilot 式 75/90/100%）；CSV/JSON 导出；5 小时计费窗口视图（ccusage 式，仅对支持该计费模式的 provider 显示）。
