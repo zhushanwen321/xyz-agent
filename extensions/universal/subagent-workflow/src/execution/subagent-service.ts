@@ -29,11 +29,14 @@ import {
   tryTransition,
 } from "./execution-record.ts";
 import { doFinalizeRecord, doFinalizeRoundToIdle } from "./finalize-record.ts";
+import { getEngineDataDir } from "./engine/common/data-dir.ts";
 import { EngineError } from "./engine/common/errors.ts";
+import { JournalWriter } from "./engine/common/event-journal.ts";
+import { resolveJournalPath } from "./engine/paths.ts";
 import { executeOptionsToEngineTaskSpec } from "./engine/host-task-spec.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
-import { DEFAULT_ENGINE_ID, EngineNotFoundError, getEngine, hasEngine, listEngines } from "./engine/registry.ts";
-import { type EngineRouting, resolveEngineRouting } from "./engine/routing.ts";
+import { DEFAULT_ENGINE_ID, getEngine } from "./engine/registry.ts";
+import { type EngineRouteResult, resolveEngineRouting, routeEngine } from "./engine/routing.ts";
 import type { AgentOutcome } from "./engine/types.ts";
 import { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
@@ -690,21 +693,44 @@ export class SubagentService {
     // ── 1. IDENTITY 解析（确认 → agentConfig → resolveModel）──
     const identity = await this.resolveIdentity(opts);
 
-    // ── 1.5 引擎路由（D4 chat 入口分叉）──
-    // 同步纯函数三层解析（调用参数 > agent frontmatter > config.json defaultEngine）。
-    // probe/守卫兜底（routeEngine）由 U2 接入，本单元只解析。pi（含全缺省）→ 下方
-    // 原有代码路径零变化；非 pi → 引擎分支骨架（executeViaEngine）。
-    const routing = resolveEngineRouting({
+    // ── 1.5 引擎路由（D4 chat 入口分叉；U2 升级为 routeEngine 编排）──
+    // 三层解析（调用参数 > agent frontmatter > config.json defaultEngine）仍是同步纯
+    // 函数；解析为非 pi 时升级走 routeEngine（probe 编排 + fallback 三守卫）。时机
+    // 选择：路由（含 probe）在 record 创建前完成——兜底时 record 直接按 pi 语义创建 +
+    // engineFallback 留痕（D5 字节级守护只约束「无 fallback 的纯缺省路径」，兜底路径
+    // 的 entry 允许含 engine/engineFallback 字段）；守卫命中/strict 时 routeEngine 在此
+    // throw，不产生孤儿 record。
+    const routingInput = {
       callEngine: opts.engine,
       agentEngine: identity.agentConfig?.engine,
       globalDefaultEngine: this.modelService.getGlobalConfig().defaultEngine,
-    });
+    };
+    const routing = resolveEngineRouting(routingInput);
+    let route: EngineRouteResult | undefined;
     if (routing.engineId !== DEFAULT_ENGINE_ID) {
-      return this.executeViaEngine(opts, identity, routing);
+      route = await routeEngine({
+        routing: routingInput,
+        // 守卫 c 判据只看调用方显式指定的 model（resolved model 含 ctxModel 兼底，
+        // 恒非空会把一切兜底误判为 model 绑定命中）
+        taskModel: opts.model,
+        strict: this.modelService.getGlobalConfig().engineRouting?.strict === true,
+        probe: (engineId) => getEngine(engineId).probe(),
+      });
+      if (route.engineId !== DEFAULT_ENGINE_ID) {
+        return this.executeViaEngine(opts, identity, route);
+      }
+      // 兜底成功（典型：默认路由 + probe 失败 + 无守卫命中）→ 落回下方 pi 主路径，
+      // record 创建时按 pi 语义 + engine/engineFallback 留痕（engine = 实际执行引擎）
     }
-    // D5 字节级守护：显式 engine:'pi' 路由回 pi 时剥掉 opts.engine——createRecordForMode
+    // D5 字节级守护：无 fallback 的 pi 路由剥掉 opts.engine——createRecordForMode
     // 不盖章（pi record entry 序列化产物不得新增 engine 键，undefined 经 JSON 省略）。
-    const piOpts = opts.engine === undefined ? opts : { ...opts, engine: undefined };
+    // 兜底路径显式盖 engine='pi' + engineFallback（见上方时机注释）。
+    const piOpts =
+      route?.engineFallback !== undefined
+        ? { ...opts, engine: DEFAULT_ENGINE_ID, engineFallback: route.engineFallback }
+        : opts.engine === undefined
+          ? opts
+          : { ...opts, engine: undefined };
 
     // ── 2. RECORD 创建 + 注册 ──
     const record = this.createRecordForMode(identity, piOpts, mode);
@@ -1432,28 +1458,29 @@ export class SubagentService {
   // ── 引擎分支（D4/D10：非 pi 引擎的 chat 域执行骨架，U0）──────────
 
   /**
-   * 路由到非 pi 引擎的执行入口：注册表校验 → unsupported 预检 → record 创建+盖章 →
-   * detached 引擎 run。全部同步拒绝发生在 record 创建前（不产生孤儿 record）。
+   * 路由到非 pi 引擎的执行入口：routeEngine（注册表校验 + probe/守卫）已由 execute
+   * 完成——这里只剩 unsupported 预检 → record 创建+盖章 → detached 引擎 run。
+   * 全部同步拒绝发生在 record 创建前（不产生孤儿 record）。
    */
   private executeViaEngine(
     opts: ExecuteOptions,
     identity: ResolvedIdentity,
-    routing: EngineRouting,
+    route: EngineRouteResult,
   ): ExecutionHandle {
-    // 调用参数层注册表校验（与 routeEngine 同形态：错误含注册清单 + 来源定位；
-    // frontmatter 层未注册 id 已在 agent 解析期抛过，这里兜 tool 参数直传漏网值）
-    if (!hasEngine(routing.engineId)) {
-      throw new EngineNotFoundError(
-        routing.engineId,
-        listEngines(),
-        `subagent start parameter engine='${routing.engineId}'`,
-      );
-    }
-    const engine = getEngine(routing.engineId);
+    const engine = route.engine;
     this.assertEngineParamSupport(engine, opts);
-    // record 盖章路由结果引擎 id（D5 仅 pi 缺省不盖章；非 pi 显式留痕，createRecordForMode
-    // 经 opts.engine 读入 record identity）。engineFallback 恒缺省——probe 兜底是 U2。
-    const record = this.createRecordForMode(identity, { ...opts, engine: routing.engineId }, "background");
+    // record 盖章路由结果（D5 仅 pi 缺省不盖章；非 pi 显式留痕，createRecordForMode
+    // 经 opts.engine/engineFallback 读入 record identity——engine 为实际执行引擎，
+    // fallback 路径 from=请求引擎留痕，probe 通过的常态路径恒缺省）
+    const record = this.createRecordForMode(
+      identity,
+      {
+        ...opts,
+        engine: route.engineId,
+        ...(route.engineFallback !== undefined ? { engineFallback: route.engineFallback } : {}),
+      },
+      "background",
+    );
     emitPendingRegister(this.pi, record.id, record.agent);
     this.kickOffEngineRun(record, opts, engine);
     return { mode: "background", subagentId: record.id, sessionFile: record.sessionFile, details: project(record) };
@@ -1495,9 +1522,11 @@ export class SubagentService {
 
   /**
    * 非 pi 引擎的 detached 执行编排（与 kickOffBackground 同构的 background 语义）：
-   * pool 并发槽（maxConcurrent 对非 pi 引擎同样生效）→ engine.run（signal 接 record
-   * controller，kill-chain 两级生效）→ 终态迁移 → bg notify（chat 域宿主职责，与 pi
-   * 完成通知同语义）。probe/守卫兜底（routeEngine）由 U2 接入。
+   * pool 并发槽（maxConcurrent 对非 pi 引擎同样生效）→ journal 接线（D6 第②级：
+   * taskId=record.id，初始池 key 占位 'shared'，onPoolResolved retarget 到引擎实际
+   * 池 key——路径与 paths.ts 同源推导）→ engine.run（signal 接 record controller，
+   * kill-chain 两级生效）→ engineHandle 回填（终态迁移落 entry 前）→ 终态迁移 →
+   * bg notify（chat 域宿主职责，与 pi 完成通知同语义）。
    */
   private kickOffEngineRun(record: ExecutionRecord, opts: ExecuteOptions, engine: EnginePort): void {
     const signal = record.controller?.signal;
@@ -1514,22 +1543,45 @@ export class SubagentService {
         }
         return;
       }
+      const journal = new JournalWriter({
+        path: resolveJournalPath(getEngineDataDir(), engine.id, "shared", record.id),
+        taskId: record.id,
+        engineId: engine.id,
+      });
+      const retargetJournal = (poolKey: string): void => {
+        journal.retarget(resolveJournalPath(getEngineDataDir(), engine.id, poolKey, record.id));
+      };
+      // 对齐点③：journal 路径权威 = 引擎声明的池 key（writer 初始用占位，retarget 后
+      // 与 handle.poolKey 同源）。模式对齐 SAR 的 journalingOnEvent：先落盘再转发。
+      const runCtx: RunContext = {
+        taskId: record.id,
+        poolKey: "shared",
+        signal,
+        ctxModel: opts.ctxModel,
+        onEvent: (event) => journal.append(event),
+        onPoolResolved: retargetJournal,
+        // D9①：路由层 fallback 留痕投影进 outcome（zcode 无独立 record 通路）
+        ...(record.engineFallback !== undefined ? { engineFallback: record.engineFallback } : {}),
+        // D10 终止链：engine spawn 的子进程注册进 spawnedChildren 记账
+        //（cancelBackground SIGTERM / dispose killAll 收割对非 pi record 生效）
+        onChildSpawned: (child) => registerSpawnedChildForRecord(record.id, child),
+      };
       try {
-        // U2 接入点：JournalWriter(taskId=record.id) + record.engineHandle 回填（含 sessionRef.dbPath+sessionId 与 journalPath）
-        const runCtx: RunContext = {
-          taskId: record.id,
-          // 宿主缺省占位（pi 恒 'shared'）；实际池 key 由引擎 prepare 期经 onPoolResolved 重定向
-          poolKey: "shared",
-          signal,
-          ctxModel: opts.ctxModel,
-          // D10 终止链：engine spawn 的子进程注册进 spawnedChildren 记账
-          //（cancelBackground SIGTERM / dispose killAll 收割对非 pi record 生效）
-          onChildSpawned: (child) => registerSpawnedChildForRecord(record.id, child),
+        const { handle, outcome } = await engine.run(executeOptionsToEngineTaskSpec(opts), runCtx);
+        // engineHandle 完整回填（U2：终态迁移落 entry 前）。sessionRef 整体透传——
+        // 失败终态 sessionId 缺失时也回填已有部分（dbPath/poolKey），读侧①级降②级
+        // 的防御形态；journalPath 取 retarget 后的实际落盘路径（writer 是路径权威）。
+        record.engineHandle = {
+          sessionRef: handle.data.sessionRef,
+          poolKey: handle.data.poolKey,
+          journalPath: journal.path,
         };
-        const { outcome } = await engine.run(executeOptionsToEngineTaskSpec(opts), runCtx);
+        await journal.close();
         await this.finalizeEngineOutcome(record, outcome);
       } catch (err) {
-        // engine.run prepare 期 reject（进程创建前）→ failed 终态（与 runAndFinalize catch 同语义）
+        // engine.run prepare 期 reject（进程创建前）→ failed 终态（与 runAndFinalize catch 同语义）；
+        // journal 尽力而为收口（②级数据源写失败已由 writer 内部 warn 收敛）
+        await journal.close();
         await this.finalizeFailed(record, err);
       }
       // cancel 抢先（closedReason='cancelled'）时 cancelBackground 自己 notify，跳过
@@ -1544,7 +1596,6 @@ export class SubagentService {
    * 否则 done（result=content）。CAS 抢锁（tryTransition）防与 cancelBackground 双收尾。
    */
   private async finalizeEngineOutcome(record: ExecutionRecord, outcome: AgentOutcome): Promise<void> {
-    // U2 接入点：JournalWriter(taskId=record.id) + record.engineHandle 回填（含 sessionRef.dbPath+sessionId 与 journalPath）
     if (outcome.sessionFile !== undefined) {
       record.sessionFile = outcome.sessionFile;
     }

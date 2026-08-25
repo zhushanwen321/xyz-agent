@@ -1227,6 +1227,8 @@ export class RecordStore {
       worktree: r.worktreeHandle !== undefined || r.hadWorktree === true,
       engine: r.engine,
       engineFallback: r.engineFallback,
+      // U2：engineHandle 经 entry 持久化（register/archive 双写点均经本投影），无则 undefined 自然省略
+      engineHandle: r.engineHandle,
     };
   }
 }

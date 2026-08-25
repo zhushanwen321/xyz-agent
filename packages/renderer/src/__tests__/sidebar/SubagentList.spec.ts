@@ -299,3 +299,54 @@ describe('SubagentList statusDotClass 六态映射', () => {
     expect(dot.classes()).not.toContain('bg-danger')
   })
 })
+
+/**
+ * 引擎 icon 三分支（U3 D8/D9）：record.engine → item 最左 icon。
+ * 三视角：使用者 DOM 断言（icon 存在 + viewBox/形状区分三分支 + title 引擎名）。
+ */
+describe('SubagentList 引擎 icon（U3 D8 三分支 / D9 最左位置）', () => {
+  function mountIcon(overrides: Partial<SubagentRecord> = {}) {
+    const wrapper = mount(SubagentList, { props: { subagents: [makeRecord(overrides)] } })
+    return wrapper.find('[data-testid="subagent-engine-icon"]')
+  }
+
+  it('分支1 engine 缺省 → pi icon（viewBox 0 0 800 800 像素几何块），title 显示 pi', () => {
+    const icon = mountIcon()
+    expect(icon.exists()).toBe(true)
+    expect(icon.attributes('viewBox')).toBe('0 0 800 800')
+    expect(icon.attributes('title')).toBe('pi')
+  })
+
+  it('分支1 engine 空串 → 同样落 pi 缺省映射', () => {
+    const icon = mountIcon({ engine: '' })
+    expect(icon.attributes('viewBox')).toBe('0 0 800 800')
+    expect(icon.attributes('title')).toBe('pi')
+  })
+
+  it('分支2 engine=zcode → zcode icon（viewBox 0 0 24 24 path），title 显示 zcode', () => {
+    const icon = mountIcon({ engine: 'zcode' })
+    expect(icon.exists()).toBe(true)
+    expect(icon.attributes('viewBox')).toBe('0 0 24 24')
+    expect(icon.find('path').exists()).toBe(true)
+    expect(icon.attributes('title')).toBe('zcode')
+  })
+
+  it('分支3 engine=未知 id → 中性圆点（Circle，防御分支），title 原样透出 id', () => {
+    const icon = mountIcon({ engine: 'unknown-x' })
+    expect(icon.exists()).toBe(true)
+    expect(icon.find('circle').exists()).toBe(true)
+    expect(icon.find('path').exists()).toBe(false)
+    expect(icon.attributes('title')).toBe('unknown-x')
+  })
+
+  it('icon 是 item 第一元素（状态指示 spinner/statusDot 之前，D9）', () => {
+    const wrapper = mount(SubagentList, {
+      props: { subagents: [makeRecord({ status: 'running' })] },
+    })
+    const card = wrapper.find('[data-testid="subagent-card"]')
+    const first = card.find('.flex.items-center > *')
+    expect(first.attributes('data-testid')).toBe('subagent-engine-icon')
+    // 状态指示（spinner）紧随其后
+    expect(card.find('[data-testid="subagent-card-spinner"]').exists()).toBe(true)
+  })
+})

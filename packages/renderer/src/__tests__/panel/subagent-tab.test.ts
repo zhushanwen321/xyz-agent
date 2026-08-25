@@ -277,6 +277,49 @@ describe('SubagentTab E-4 接入（entry 帧 + 恒订阅）', () => {
     wrapper.unmount()
   })
 
+  it('引擎 badge（U3 D9）：engine 缺省 → 常态 badge 显示 pi', async () => {
+    useSubagentStore().applyRecords(MAIN_SID, [makeRecord({ engine: undefined })])
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    const badge = wrapper.find('[data-testid="subagent-engine-badge"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('pi')
+    expect(badge.classes()).not.toContain('text-warn')
+    wrapper.unmount()
+  })
+
+  it('引擎 badge：engine=zcode → 常态 badge 显示 zcode', async () => {
+    useSubagentStore().applyRecords(MAIN_SID, [makeRecord({ engine: 'zcode' })])
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    const badge = wrapper.find('[data-testid="subagent-engine-badge"]')
+    expect(badge.text()).toBe('zcode')
+    expect(badge.classes()).not.toContain('text-warn')
+    wrapper.unmount()
+  })
+
+  it('引擎 badge：engineFallback → 警告态，文案「请求 zcode → 已回退 pi」+ title 恢复指引', async () => {
+    useSubagentStore().applyRecords(MAIN_SID, [
+      makeRecord({ engine: 'pi', engineFallback: { from: 'zcode', reason: 'engine_probe_failed' } }),
+    ])
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    const badge = wrapper.find('[data-testid="subagent-engine-badge"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toContain('请求 zcode → 已回退 pi')
+    // 警告态样式（--warn 语义色）
+    expect(badge.classes()).toContain('text-warn')
+    // title 展开恢复指引（含回退引擎名）
+    expect(badge.attributes('title')).toContain('zcode')
+    wrapper.unmount()
+  })
+
   it('空态：未选中 subagent 时渲染空态占位（首屏冒烟）', () => {
     const wrapper = mountTab()
     expect(wrapper.find('[data-testid="drawer-subagent-empty"]').exists()).toBe(true)

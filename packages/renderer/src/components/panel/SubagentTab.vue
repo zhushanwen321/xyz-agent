@@ -50,6 +50,13 @@
         <span v-if="subagentMeta?.slug" class="min-w-0 shrink-0 truncate font-mono text-xs text-neutral-dim">
           · {{ subagentMeta.slug }}
         </span>
+        <!-- 引擎 badge（U3 D9）：常态引擎名；engineFallback 存在 → 警告态 + 回退文案 -->
+        <span
+          class="shrink-0 rounded-sm px-1 font-mono text-[10px] leading-4"
+          :class="subagentMeta?.engineFallback ? 'bg-warn-soft text-warn' : 'border border-hairline text-neutral-dim'"
+          :title="engineBadgeTitle"
+          data-testid="subagent-engine-badge"
+        >{{ engineBadgeText }}</span>
         <span v-if="subagentMeta?.meta" class="ml-auto shrink-0 truncate font-mono text-[10px] text-neutral-dim">
           {{ subagentMeta.meta }}
         </span>
@@ -104,6 +111,7 @@ import {
 import { getAgentCallHistory } from '@/api/domains/session'
 import type { WorkflowAgentCall } from '@xyz-agent/shared'
 import MessageStream from './MessageStream.vue'
+import { DEFAULT_ENGINE_ID } from '@/constants/engine-icons'
 
 const { t } = useI18n()
 const panelStore = usePanelStore()
@@ -135,7 +143,7 @@ function findAgentCall(acsId: string): WorkflowAgentCall | undefined {
 }
 
 /** 标题栏元信息（响应式：records 变化时重算） */
-const subagentMeta = computed<{ agent: string; slug?: string; meta?: string } | null>(() => {
+const subagentMeta = computed<{ agent: string; slug?: string; meta?: string; engine?: string; engineFallback?: { from: string; reason: string } } | null>(() => {
   const vid = selectedSubagentId.value
   if (!vid) return null
 
@@ -151,6 +159,8 @@ const subagentMeta = computed<{ agent: string; slug?: string; meta?: string } | 
       agent: record.agent,
       slug: record.slug || undefined,
       meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
+      engine: record.engine || undefined,
+      engineFallback: record.engineFallback,
     }
   }
 
@@ -165,6 +175,25 @@ const subagentMeta = computed<{ agent: string; slug?: string; meta?: string } | 
   }
 
   return null
+})
+
+/** 引擎 badge 文案（U3 D9）：常态引擎名（缺省 pi）；fallback 警告态显示回退链 */
+const engineBadgeText = computed<string>(() => {
+  const meta = subagentMeta.value
+  const engine = meta?.engine || DEFAULT_ENGINE_ID
+  if (meta?.engineFallback) {
+    return t('panel.sideDrawer.engineFallbackBadge', { from: meta.engineFallback.from, to: engine })
+  }
+  return engine
+})
+
+/** 引擎 badge title：常态 = 引擎名；fallback = 恢复指引 */
+const engineBadgeTitle = computed<string>(() => {
+  const meta = subagentMeta.value
+  if (meta?.engineFallback) {
+    return t('panel.sideDrawer.engineFallbackHint', { from: meta.engineFallback.from, to: meta.engine || DEFAULT_ENGINE_ID })
+  }
+  return t('panel.sideDrawer.engineBadgeTitle', { engine: meta?.engine || DEFAULT_ENGINE_ID })
 })
 
 /**

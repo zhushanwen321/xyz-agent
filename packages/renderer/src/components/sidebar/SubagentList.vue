@@ -37,8 +37,14 @@
           @click="emit('select', record.subagentId)"
           @mouseleave="cancellingId = null"
         >
-          <!-- 状态指示 -->
+          <!-- 状态指示（引擎 icon 最左，D9；尺寸与 spinner 同级 13px） -->
           <div class="flex items-center gap-2">
+            <component
+              :is="resolveEngineIcon(record.engine).icon"
+              class="size-[13px] shrink-0 text-neutral-dim"
+              :title="resolveEngineIcon(record.engine).label"
+              data-testid="subagent-engine-icon"
+            />
             <Loader2
               v-if="isStreaming(record)"
               class="size-[13px] shrink-0 animate-spin text-accent"
@@ -78,14 +84,14 @@
           </div>
 
           <!-- 摘要 -->
-          <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-neutral-dim">
+          <div class="mt-1 flex items-center gap-2 pl-[42px] font-mono text-[10px] text-neutral-dim">
             <span v-if="record.turns !== undefined">{{ record.turns }} {{ t('sidebar.subagentList.turnsUnit') }}</span>
             <span v-if="record.totalTokens !== undefined">· {{ formatTokens(record.totalTokens, t('sidebar.subagentList.tokUnit')) }}</span>
             <span v-if="record.elapsedSeconds !== undefined">· {{ formatElapsed(record.elapsedSeconds) }}</span>
           </div>
 
           <!-- 任务描述 -->
-          <div class="mt-0.5 truncate pl-[21px] text-[11px] leading-[1.3] text-neutral-mid">
+          <div class="mt-0.5 truncate pl-[42px] text-[11px] leading-[1.3] text-neutral-mid">
             {{ record.task }}
           </div>
         </div>
@@ -113,6 +119,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { SubagentRecord } from '@xyz-agent/shared'
 import { deriveClosedDisplay } from '@xyz-agent/shared'
+import { resolveEngineIcon } from '@/constants/engine-icons'
 
 /** token 数超过此阈值显示 k 单位 */
 const TOKEN_K_THRESHOLD = 1000

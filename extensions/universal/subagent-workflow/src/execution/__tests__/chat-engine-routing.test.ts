@@ -12,6 +12,8 @@
 //   4. 未注册 engine id → engine_not_found
 //   5. 引擎分支骨架（record 创建+盖章 / taskSpec 字段 / detached run / done+failed
 //      终态迁移 / spawnedChildren 注册 / abort signal 触达引擎 kill-chain）
+//   6. U2：probe 兜底两态（默认路由兜底回 pi / 显式 engine 守卫报错）+ JournalWriter
+//      接线（taskId=record.id + onPoolResolved retarget）+ engineHandle 完整回填
 //
 // mock 策略：只 mock node:child_process.spawn（pi 原路径的 FakeChild，见
 // execute-nesting.test.ts 同款范式）——非 pi 引擎分支用假 EnginePort（registerEngine
@@ -57,8 +59,16 @@ vi.mock("node:child_process", async () => {
 import { spawn } from "node:child_process";
 
 import type { EnginePort, RunContext } from "../engine/port.ts";
+import { resolveJournalPath } from "../engine/paths.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
-import type { AgentOutcome, AgentTaskSpec, EngineCapabilities, EngineHandle } from "../engine/types.ts";
+import type {
+  AgentEvent,
+  AgentOutcome,
+  AgentTaskSpec,
+  EngineCapabilities,
+  EngineHandle,
+  ProbeReport,
+} from "../engine/types.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { toSubagentRecordEntry } from "../record-entry.ts";
@@ -94,6 +104,8 @@ interface CapturedRun {
 class FakeEngine implements EnginePort {
   readonly id: string;
   readonly runs: CapturedRun[] = [];
+  /** U2：probe 结果注入（路由期 routeEngine 消费；缺省 ok——probe 通过的常态）。 */
+  probeFailed = false;
   /** run 实现注入（缺省：挂起不 resolve——record 保持 running 便于内存断言）。 */
   runImpl: (task: AgentTaskSpec, ctx: RunContext) => Promise<{ handle: EngineHandle; outcome: AgentOutcome }>;
 
@@ -106,8 +118,15 @@ class FakeEngine implements EnginePort {
   capabilities(): EngineCapabilities {
     return ZCODE_LIKE_CAPS;
   }
-  async probe(): Promise<{ ok: boolean; engineVersion: string; checks: Array<{ name: string; ok: boolean }> }> {
-    return { ok: true, engineVersion: "fake", checks: [{ name: "bin", ok: true }] };
+  async probe(): Promise<ProbeReport> {
+    return this.probeFailed
+      ? {
+          ok: false,
+          engineVersion: "",
+          checks: [{ name: "bin", ok: false }],
+          error: { code: "engine_probe_failed", recovery: "fix the binary" },
+        }
+      : { ok: true, engineVersion: "fake", checks: [{ name: "bin", ok: true }] };
   }
   async run(task: AgentTaskSpec, ctx: RunContext): Promise<{ handle: EngineHandle; outcome: AgentOutcome }> {
     this.runs.push({ task, ctx });
@@ -418,6 +437,139 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     child.emit("close", 0, null);
     expect(getChildByRecord(handle.subagentId)).toBeUndefined();
   });
+});
+
+// ============================================================
+// U2：probe/守卫兜底 + JournalWriter + engineHandle 回填
+// 设计权威源：docs/architecture/subagent-engine-gui-visibility.md §3.3 D4/D6、§5 U2 行
+// ============================================================
+
+describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
+  let agentDir: string;
+
+  beforeEach(() => {
+    agentDir = makeTmpAgentDir();
+    writeGlobalConfig(agentDir);
+  });
+
+  afterEach(() => {
+    clearEngines();
+    delete process.env.XYZ_AGENT_DATA_DIR;
+    fs.rmSync(agentDir, { recursive: true, force: true });
+    vi.clearAllMocks();
+  });
+
+  it("[兜底] 默认路由 zcode + probe 失败 → 回退 pi runSpawn + engineFallback 留痕", async () => {
+    writeGlobalConfig(agentDir, "zcode");
+    const { service, zcode, piEngine } = setup(agentDir);
+    zcode.probeFailed = true;
+
+    const handle = await service.execute(baseOpts(agentDir));
+    // 兜底 = 走 pi runSpawn 路径（spawn 被调），非 pi EnginePort 未被消费
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+    expect(piEngine.runs.length).toBe(0);
+
+    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    expect(rec?.engine).toBe("pi");
+    expect(rec?.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
+    // entry（register 写点）含 engineFallback——兜底路径允许新增键（D5 只约束纯缺省路径）
+    expect(JSON.stringify(toSubagentRecordEntry(rec!))).toContain("engine_probe_failed");
+  });
+
+  it("[守卫] 显式 engine='zcode' + probe 失败 → engine_probe_failed 报错不兜底", async () => {
+    const { service, zcode } = setup(agentDir);
+    zcode.probeFailed = true;
+
+    await expect(service.execute(baseOpts(agentDir, { engine: "zcode" }))).rejects.toThrow(
+      /engine_probe_failed/,
+    );
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(zcode.runs.length).toBe(0);
+    expect(service.collectRecords(10, "all")).toHaveLength(0);
+  });
+
+  it("[journal] taskId=record.id + onPoolResolved retarget 落 engines/zcode/<poolKey>/，journalPath 同源回填", async () => {
+    process.env.XYZ_AGENT_DATA_DIR = agentDir;
+    const { service, zcode, pi } = setup(agentDir);
+    const POOL = "zcode-p-glm";
+    zcode.runImpl = (task, ctx) => {
+      ctx.onPoolResolved?.(POOL);
+      ctx.onEvent?.({ type: "message_end" } as AgentEvent);
+      return Promise.resolve({
+        handle: {
+          data: {
+            v: 1,
+            engineId: "zcode",
+            sessionRef: { dbPath: "sessions.db", sessionId: "sess-1" },
+            poolKey: POOL,
+            adapterVersion: "test",
+          },
+        },
+        outcome: doneOutcome("ok"),
+      });
+    };
+    const handle = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
+    await vi.waitFor(() => expect(service.findRecord(handle.subagentId)).toBeUndefined());
+
+    // journal 文件名 = journal-<record.id>.jsonl，落在 engines/zcode/<poolKey>/ 下
+    const journalPath = resolveJournalPath(agentDir, "zcode", POOL, handle.subagentId);
+    expect(fs.existsSync(journalPath)).toBe(true);
+    const firstLine = JSON.parse(fs.readFileSync(journalPath, "utf8").split("\n")[0]);
+    expect(firstLine.taskId).toBe(handle.subagentId);
+
+    // archive entry 的 engineHandle：三键齐全，journalPath 与实际落盘路径一致（同源）
+    const entry = lastRecordEntry(pi);
+    expect(entry?.engineHandle).toEqual({
+      sessionRef: { dbPath: "sessions.db", sessionId: "sess-1" },
+      poolKey: POOL,
+      journalPath,
+    });
+  });
+
+  it("[engineHandle] 失败终态 sessionId 缺失 → 仍回填 dbPath/poolKey（①级降②级防御形态）", async () => {
+    process.env.XYZ_AGENT_DATA_DIR = agentDir;
+    const { service, zcode, pi } = setup(agentDir);
+    const POOL = "zcode-p-glm";
+    zcode.runImpl = (task, ctx) => {
+      ctx.onPoolResolved?.(POOL);
+      return Promise.resolve({
+        handle: {
+          data: { v: 1, engineId: "zcode", sessionRef: { dbPath: "sessions.db" }, poolKey: POOL, adapterVersion: "test" },
+        },
+        outcome: { ...doneOutcome(""), error: "engine_run_failed: boom", engineId: "zcode" },
+      });
+    };
+    const handle = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
+    await vi.waitFor(() => expect(service.findRecord(handle.subagentId)).toBeUndefined());
+
+    const h = lastRecordEntry(pi)?.engineHandle;
+    expect(h?.sessionRef).toEqual({ dbPath: "sessions.db" });
+    expect(h?.poolKey).toBe(POOL);
+    expect(h?.journalPath).toBe(resolveJournalPath(agentDir, "zcode", POOL, handle.subagentId));
+  });
+
+  it("[D5 回归] pi 纯缺省路径 entry 不含 engine/engineFallback/engineHandle 键", async () => {
+    const { service, pi } = setup(agentDir);
+    const handle = await service.execute(baseOpts(agentDir));
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    const entryJson = JSON.stringify(toSubagentRecordEntry(rec!));
+    expect(entryJson).not.toContain("engineFallback");
+    expect(entryJson).not.toContain("engineHandle");
+    expect(entryJson).not.toMatch(/"engine"/);
+    // pi.appendEntry 上的 record entry 同形态（register 写点）
+    const entry = lastRecordEntry(pi);
+    expect(entry?.engine).toBeUndefined();
+    expect(entry?.engineFallback).toBeUndefined();
+    expect(entry?.engineHandle).toBeUndefined();
+  });
+
+  /** 最后一条 subagent-record entry（register→archive 双写点取终态侧）。 */
+  function lastRecordEntry(pi: ReturnType<typeof makePi>): Record<string, unknown> | undefined {
+    const calls = pi.appendEntry.mock.calls.filter((c) => c[0] === "subagent-record");
+    return calls.length > 0 ? (calls[calls.length - 1][1] as Record<string, unknown>) : undefined;
+  }
 });
 
 /** 假 EngineHandle（骨架路径不消费 handle 内容——U2 journal/handle 回填才用）。 */
