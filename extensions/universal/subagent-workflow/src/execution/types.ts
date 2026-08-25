@@ -758,6 +758,12 @@ export interface SubagentRecord {
   engine?: string;
   /** 引擎 fallback 留痕（D9①：probe 失败路由回默认引擎）。GUI 警告条数据源。 */
   engineFallback?: { from: string; reason: string };
+  /**
+   * 引擎自描述定位符（U1：EngineHandleData 的持久化消费面子集，引擎无关——
+   * sessionRef 整体透传不枚举内部键）。read 降级链①②级的数据源（runtime
+   * subagent-engine-history）；缺省 = pi（走 JSONL 直读链）。
+   */
+  engineHandle?: { sessionRef: Record<string, string>; journalPath?: string; poolKey: string };
 }
 
 // ============================================================

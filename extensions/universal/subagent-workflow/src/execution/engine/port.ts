@@ -12,6 +12,8 @@
 //   probe      —— 探针（D7：二进制存在/版本解析/干跑校验）。
 // capabilities() 同步无副作用——「调用前拒绝」（D11 处置三级）的判据。
 
+import type { ChildProcess } from "node:child_process";
+
 import type { ModelInfo } from "../model-resolver.ts";
 import type { SubagentStream } from "../stream-sink.ts";
 import type { AgentEvent } from "../types.ts";
@@ -79,6 +81,14 @@ export interface RunContext {
    * 未来流式引擎需在事件出口前调用）。
    */
   onPoolResolved?: (poolKey: string) => void;
+  /**
+   * [U0 D10] 引擎 spawn 的子进程句柄注册钩子（宿主终止链记账）。引擎在 spawn 成功后
+   * 同步回调（与 pi runSpawn 的 spawnedChildren.set 同构时机）；宿主据此把 child 注册进
+   * session-runner 的 spawnedChildren Map（cancel SIGTERM / dispose 收割兜底 / killAll
+   * 全量清理对非 pi 引擎 record 生效）。close/error 后由宿主按句守卫移除。可选：引擎
+   * 内部不 spawn 进程（如未来常驻 driver host 实现）时不调用，宿主记账自然为空。
+   */
+  onChildSpawned?: (child: ChildProcess) => void;
 }
 
 // ============================================================

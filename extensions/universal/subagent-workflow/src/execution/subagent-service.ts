@@ -29,6 +29,12 @@ import {
   tryTransition,
 } from "./execution-record.ts";
 import { doFinalizeRecord, doFinalizeRoundToIdle } from "./finalize-record.ts";
+import { EngineError } from "./engine/common/errors.ts";
+import { executeOptionsToEngineTaskSpec } from "./engine/host-task-spec.ts";
+import type { EnginePort, RunContext } from "./engine/port.ts";
+import { DEFAULT_ENGINE_ID, EngineNotFoundError, getEngine, hasEngine, listEngines } from "./engine/registry.ts";
+import { type EngineRouting, resolveEngineRouting } from "./engine/routing.ts";
+import type { AgentOutcome } from "./engine/types.ts";
 import { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import type { AgentConfig, ModelInfo, ResolvedModel } from "./model-resolver.ts";
@@ -38,7 +44,7 @@ import { getSubagentRecordsDir, getSubagentSessionDir } from "./path-encoding.ts
 import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
-import { getChildByRecord, killAllSpawnedChildren, runSpawn, spawnedChildren, type SessionRunnerContext, type SpawnResumeOpts } from "./session-runner.ts";
+import { getChildByRecord, killAllSpawnedChildren, registerSpawnedChildForRecord, runSpawn, spawnedChildren, type SessionRunnerContext, type SpawnResumeOpts } from "./session-runner.ts";
 import { isIdle, isResumable, hasLiveProcessHandle } from "./lifecycle-predicates.ts";
 import { startIdleGc } from "./idle-gc.ts";
 import {
@@ -684,8 +690,24 @@ export class SubagentService {
     // ── 1. IDENTITY 解析（确认 → agentConfig → resolveModel）──
     const identity = await this.resolveIdentity(opts);
 
+    // ── 1.5 引擎路由（D4 chat 入口分叉）──
+    // 同步纯函数三层解析（调用参数 > agent frontmatter > config.json defaultEngine）。
+    // probe/守卫兜底（routeEngine）由 U2 接入，本单元只解析。pi（含全缺省）→ 下方
+    // 原有代码路径零变化；非 pi → 引擎分支骨架（executeViaEngine）。
+    const routing = resolveEngineRouting({
+      callEngine: opts.engine,
+      agentEngine: identity.agentConfig?.engine,
+      globalDefaultEngine: this.modelService.getGlobalConfig().defaultEngine,
+    });
+    if (routing.engineId !== DEFAULT_ENGINE_ID) {
+      return this.executeViaEngine(opts, identity, routing);
+    }
+    // D5 字节级守护：显式 engine:'pi' 路由回 pi 时剥掉 opts.engine——createRecordForMode
+    // 不盖章（pi record entry 序列化产物不得新增 engine 键，undefined 经 JSON 省略）。
+    const piOpts = opts.engine === undefined ? opts : { ...opts, engine: undefined };
+
     // ── 2. RECORD 创建 + 注册 ──
-    const record = this.createRecordForMode(identity, opts, mode);
+    const record = this.createRecordForMode(identity, piOpts, mode);
     emitPendingRegister(this.pi, record.id, record.agent);
 
     // ── 2.5 worktree 创建（仅 worktree===true 或已传入 handle 时）──
@@ -724,7 +746,7 @@ export class SubagentService {
     // ── 4-7. background 包 detached 立即返回 id ──
     // background detached 运行对 tool 层不可见，完成由 notify 驱动新 turn。
     const bgDetails = project(record);
-    this.kickOffBackground(record, { ...opts, worktree: worktreeHandle }, ctx, identity, signal, priority);
+    this.kickOffBackground(record, { ...piOpts, worktree: worktreeHandle }, ctx, identity, signal, priority);
     return { mode: "background", subagentId: record.id, sessionFile: record.sessionFile, details: bgDetails };
   }
 
@@ -1405,6 +1427,140 @@ export class SubagentService {
   private buildEarlyFailedHandle(record: ExecutionRecord): ExecutionHandle {
     const details = project(record);
     return { mode: "background", subagentId: record.id, sessionFile: record.sessionFile, details };
+  }
+
+  // ── 引擎分支（D4/D10：非 pi 引擎的 chat 域执行骨架，U0）──────────
+
+  /**
+   * 路由到非 pi 引擎的执行入口：注册表校验 → unsupported 预检 → record 创建+盖章 →
+   * detached 引擎 run。全部同步拒绝发生在 record 创建前（不产生孤儿 record）。
+   */
+  private executeViaEngine(
+    opts: ExecuteOptions,
+    identity: ResolvedIdentity,
+    routing: EngineRouting,
+  ): ExecutionHandle {
+    // 调用参数层注册表校验（与 routeEngine 同形态：错误含注册清单 + 来源定位；
+    // frontmatter 层未注册 id 已在 agent 解析期抛过，这里兜 tool 参数直传漏网值）
+    if (!hasEngine(routing.engineId)) {
+      throw new EngineNotFoundError(
+        routing.engineId,
+        listEngines(),
+        `subagent start parameter engine='${routing.engineId}'`,
+      );
+    }
+    const engine = getEngine(routing.engineId);
+    this.assertEngineParamSupport(engine, opts);
+    // record 盖章路由结果引擎 id（D5 仅 pi 缺省不盖章；非 pi 显式留痕，createRecordForMode
+    // 经 opts.engine 读入 record identity）。engineFallback 恒缺省——probe 兜底是 U2。
+    const record = this.createRecordForMode(identity, { ...opts, engine: routing.engineId }, "background");
+    emitPendingRegister(this.pi, record.id, record.agent);
+    this.kickOffEngineRun(record, opts, engine);
+    return { mode: "background", subagentId: record.id, sessionFile: record.sessionFile, details: project(record) };
+  }
+
+  /**
+   * 非 pi 引擎的 unsupported 参数预检（D11 处置「调用前拒绝」的判据 = capabilities）。
+   * conversation / fork / worktree 三参数对首期接入的引擎（zcode）均不可用：
+   * conversation 依赖同进程 idle 复用、fork 依赖父 pi session 上下文继承、worktree 依赖
+   * 文件隔离（capabilities.sandbox='none'）。同步 throw，文案含 capabilities 依据与恢复指引。
+   */
+  private assertEngineParamSupport(engine: EnginePort, opts: ExecuteOptions): void {
+    const caps = engine.capabilities();
+    if (opts.conversation === true && caps.conversation === "unsupported") {
+      throw new EngineError(
+        "engine_capability_unsupported",
+        `engine '${engine.id}' 不支持 conversation（capabilities.conversation = 'unsupported'，` +
+          `spawn 单轮模式无同进程 idle 复用，message/close 交互控制面不可用）`,
+        `改用 engine: pi（支持 conversation 续聊），或不传该参数（一次性任务默认形态）`,
+      );
+    }
+    if (opts.fork === true) {
+      throw new EngineError(
+        "engine_capability_unsupported",
+        `engine '${engine.id}' 不支持 fork（fork 依赖父 pi session 上下文继承，` +
+          `capabilities.steer = '${caps.steer}'——非 pi 引擎无父 session 分叉通道）`,
+        `把所需父上下文写进 task 正文后不传 fork，或改用 engine: pi`,
+      );
+    }
+    if ((opts.worktree === true || typeof opts.worktree === "object") && caps.sandbox === "none") {
+      throw new EngineError(
+        "engine_capability_unsupported",
+        `engine '${engine.id}' 不支持 worktree 隔离（capabilities.sandbox = 'none'，` +
+          `引擎未接文件系统隔离层）`,
+        `改用 engine: pi（worktree 隔离可用），或不传该参数（在 parent cwd 执行）`,
+      );
+    }
+  }
+
+  /**
+   * 非 pi 引擎的 detached 执行编排（与 kickOffBackground 同构的 background 语义）：
+   * pool 并发槽（maxConcurrent 对非 pi 引擎同样生效）→ engine.run（signal 接 record
+   * controller，kill-chain 两级生效）→ 终态迁移 → bg notify（chat 域宿主职责，与 pi
+   * 完成通知同语义）。probe/守卫兜底（routeEngine）由 U2 接入。
+   */
+  private kickOffEngineRun(record: ExecutionRecord, opts: ExecuteOptions, engine: EnginePort): void {
+    const signal = record.controller?.signal;
+    void (async () => {
+      const effectiveMaxConcurrent = Math.max(1, this.pool.maxConcurrent - record.depth);
+      try {
+        await this.pool.acquire(PRIORITY_BACKGROUND, effectiveMaxConcurrent, signal);
+      } catch {
+        // S1: 排队中被 abort（signal.aborted）走 cancelled，与已运行被 abort 一致（runAndFinalize 同款）
+        if (signal?.aborted) {
+          await this.finalizeAborted(record);
+        } else {
+          await this.finalizeFailed(record, new Error("aborted"));
+        }
+        return;
+      }
+      try {
+        // U2 接入点：JournalWriter(taskId=record.id) + record.engineHandle 回填（含 sessionRef.dbPath+sessionId 与 journalPath）
+        const runCtx: RunContext = {
+          taskId: record.id,
+          // 宿主缺省占位（pi 恒 'shared'）；实际池 key 由引擎 prepare 期经 onPoolResolved 重定向
+          poolKey: "shared",
+          signal,
+          ctxModel: opts.ctxModel,
+          // D10 终止链：engine spawn 的子进程注册进 spawnedChildren 记账
+          //（cancelBackground SIGTERM / dispose killAll 收割对非 pi record 生效）
+          onChildSpawned: (child) => registerSpawnedChildForRecord(record.id, child),
+        };
+        const { outcome } = await engine.run(executeOptionsToEngineTaskSpec(opts), runCtx);
+        await this.finalizeEngineOutcome(record, outcome);
+      } catch (err) {
+        // engine.run prepare 期 reject（进程创建前）→ failed 终态（与 runAndFinalize catch 同语义）
+        await this.finalizeFailed(record, err);
+      }
+      // cancel 抢先（closedReason='cancelled'）时 cancelBackground 自己 notify，跳过
+      if (record.closedReason !== "cancelled") {
+        this.notifyComplete(record);
+      }
+    })();
+  }
+
+  /**
+   * engine.run resolve 的终态迁移：outcome.error → failed（success=false + error 文案）；
+   * 否则 done（result=content）。CAS 抢锁（tryTransition）防与 cancelBackground 双收尾。
+   */
+  private async finalizeEngineOutcome(record: ExecutionRecord, outcome: AgentOutcome): Promise<void> {
+    // U2 接入点：JournalWriter(taskId=record.id) + record.engineHandle 回填（含 sessionRef.dbPath+sessionId 与 journalPath）
+    if (outcome.sessionFile !== undefined) {
+      record.sessionFile = outcome.sessionFile;
+    }
+    const result: AgentResult = {
+      text: outcome.content,
+      turns: outcome.usage?.turns ?? 0,
+      durationMs: outcome.durationMs ?? Date.now() - record.startedAt,
+      success: outcome.error === undefined,
+      ...(outcome.error !== undefined ? { error: outcome.error } : {}),
+      sessionId: outcome.sessionId ?? record.id,
+      toolCalls: [],
+      ...(outcome.parsedOutput !== undefined ? { parsedOutput: outcome.parsedOutput } : {}),
+    };
+    if (tryTransition(record, "closed", "gc")) {
+      await this.finalizeRecord(record, result, "closed", "gc");
+    }
   }
 
   // ── 执行内部：run + finalize（sync/bg 共用）──────────────

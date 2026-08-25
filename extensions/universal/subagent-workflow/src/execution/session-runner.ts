@@ -336,6 +336,20 @@ function removeChildRegistration(recordId: string, child: ChildProcess): void {
   }
 }
 
+/**
+ * [U0 D10] 非 pi 引擎路径的子进程记账注册入口（宿主经 RunContext.onChildSpawned 调用）。
+ *
+ * 与 pi runSpawn 内联注册同构：set 进 Map + close/error 按句守卫移除（M4 竞态守卫语义
+ * 复用 removeChildRegistration）。pi 路径保持内联不动（其 close/error handler 还承担
+ * EPIPE 记账等 pi 专属副作用，不适合收敛到本函数）——两入口写同一 Map，dispose 的
+ * killAllSpawnedChildren / cancelBackground 的 getChildByRecord 对两域 record 均生效。
+ */
+export function registerSpawnedChildForRecord(recordId: string, child: ChildProcess): void {
+  spawnedChildren.set(recordId, child);
+  child.once("close", () => removeChildRegistration(recordId, child));
+  child.once("error", () => removeChildRegistration(recordId, child));
+}
+
 // ============================================================
 // 依赖注入容器 + 入参
 // ============================================================

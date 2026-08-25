@@ -80,8 +80,8 @@ function createSvc(tempDir: string): SessionService {
   )
 }
 
-/** 带引擎字段的 record（并行任务写侧契约的镜像构造）。 */
-function zcodeRecord(engineHandle: unknown): SubagentRecord & { engine?: string; engineHandle?: unknown } {
+/** 带引擎字段的 record（U1 后 engine/engineHandle 已进 shared SubagentRecord 正式契约）。 */
+function zcodeRecord(engineHandle: unknown): SubagentRecord {
   return {
     subagentId: 'bg-route-1',
     sessionFile: null,
@@ -93,7 +93,7 @@ function zcodeRecord(engineHandle: unknown): SubagentRecord & { engine?: string;
     endedAt: 1756000005000,
     result: 'routed outcome',
     engine: 'zcode',
-    engineHandle,
+    engineHandle: engineHandle as SubagentRecord['engineHandle'],
   }
 }
 

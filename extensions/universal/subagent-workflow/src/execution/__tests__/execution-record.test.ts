@@ -1224,3 +1224,61 @@ describe("createRecord 引擎留痕字段（P4）", () => {
     expect(toSubagentRecordEntry(base).engine).toBeUndefined();
   });
 });
+
+// ============================================================
+// U1 engine 三字段 entry 往返（engineHandle 贯通）
+// ============================================================
+describe("SubagentRecord ↔ subagent-record entry 往返（U1 engineHandle）", () => {
+  const base: SubagentRecord = {
+    id: "sa-engine-4",
+    agent: "reviewer",
+    task: "t",
+    slug: "s",
+    status: "running",
+    mode: "background",
+    startedAt: 1,
+    rootSessionId: undefined,
+    parentRecordId: undefined,
+    depth: 0,
+    endedAt: undefined,
+    turns: 0,
+    totalTokens: 0,
+    model: "p/m",
+    thinkingLevel: undefined,
+    eventLog: [],
+    displayItems: [],
+  };
+  const handle = { sessionRef: { sessionId: "s-1", dbPath: "pool/zcode.db" }, journalPath: "/abs/journal.jsonl", poolKey: "p1" };
+
+  it("record 含三字段 → entry JSON → 解析回 deep equal（sessionRef 键不枚举整体透传）", () => {
+    const entry = toSubagentRecordEntry({ ...base, engine: "zcode", engineFallback: { from: "zcode", reason: "engine_probe_failed" }, engineHandle: handle });
+    const roundTripped = JSON.parse(JSON.stringify(entry));
+    expect(roundTripped).toEqual({
+      v: 1,
+      id: "sa-engine-4",
+      agent: "reviewer",
+      task: "t",
+      slug: "s",
+      status: "running",
+      mode: "background",
+      startedAt: 1,
+      depth: 0,
+      turns: 0,
+      totalTokens: 0,
+      model: "p/m",
+      eventLog: [],
+      displayItems: [],
+      engine: "zcode",
+      engineFallback: { from: "zcode", reason: "engine_probe_failed" },
+      engineHandle: handle,
+    });
+    expect(toSubagentRecordEntry({ ...base, engineHandle: handle }).engineHandle).toEqual(handle);
+  });
+
+  it("record 无三字段 → entry JSON 不含对应键（undefined 经 JSON.stringify 自然省略，存量零迁移）", () => {
+    const serialized = JSON.parse(JSON.stringify(toSubagentRecordEntry(base))) as Record<string, unknown>;
+    expect("engine" in serialized).toBe(false);
+    expect("engineFallback" in serialized).toBe(false);
+    expect("engineHandle" in serialized).toBe(false);
+  });
+});

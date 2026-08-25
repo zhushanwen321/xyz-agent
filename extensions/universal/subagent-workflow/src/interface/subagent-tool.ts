@@ -127,6 +127,12 @@ const SubagentParams = Type.Object({
       "Default: 300000 (5min). Override for long-interval collaboration where each round is spaced >5min apart. " +
       "Only meaningful with conversation:true; ignored for one-shot subagents.",
   })),
+  engine: Type.Optional(StringEnum(["pi", "zcode"], {
+    description:
+      "Execution engine for this subagent. Omit to inherit the global config. " +
+      "Three-layer priority: this parameter > agent .md frontmatter engine > config.json defaultEngine. " +
+      "Non-pi engines do not support conversation/fork/worktree (rejected before the subagent is created).",
+  })),
   // action:"list" → listParam OPTIONAL (all fields optional, defaults apply). Ignored by other actions.
   listParam: Type.Optional(Type.Object({
     includeFinished: Type.Optional(Type.Boolean({

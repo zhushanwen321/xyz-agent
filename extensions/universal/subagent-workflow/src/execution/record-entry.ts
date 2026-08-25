@@ -88,6 +88,11 @@ export interface SubagentRecordEntryData {
   engine?: string;
   /** 引擎 fallback 留痕（probe 失败路由回默认引擎）。GUI 警告条数据源。 */
   engineFallback?: { from: string; reason: string };
+  /**
+   * 引擎自描述定位符（U1：read 降级链①②级数据源）。引擎无关——sessionRef 整体
+   * 透传不枚举内部键（zcode = { sessionId, dbPath }）；缺省 = pi（存量 entry 零迁移）。
+   */
+  engineHandle?: { sessionRef: Record<string, string>; journalPath?: string; poolKey: string };
 }
 
 /** SubagentRecord → 自描述 entry data（快照投影，不 mutate 源）。 */
@@ -122,5 +127,6 @@ export function toSubagentRecordEntry(record: SubagentRecord): SubagentRecordEnt
     resumable: record.resumable,
     engine: record.engine,
     engineFallback: record.engineFallback,
+    engineHandle: record.engineHandle,
   };
 }
