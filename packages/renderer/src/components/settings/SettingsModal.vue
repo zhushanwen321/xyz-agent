@@ -91,7 +91,8 @@
             <X class="!w-[16px] !h-[16px]" />
           </Button>
         </div>
-        <div class="content-col-inner w-full max-w-[var(--content-max-w)] m-0 pt-[var(--space-6)] px-[24px] pb-[var(--space-8)]">
+        <div class="content-col-inner w-full m-0 pt-[var(--space-6)] px-[24px] pb-[var(--space-8)]"
+             :style="{ maxWidth: activeMenu === 'usage' ? '1064px' : 'var(--content-max-w)' }">
           <!-- 设置页切换保持瞬时（不加过渡动画）：
                Vue <Transition mode="out-in"> + v-if/else-if 链在 Vue 3.5.39 下 leave
                完成后 enter 不触发（调度 bug，内容区永久空白）；concurrent 模式（无 mode）
@@ -123,6 +124,7 @@
           <WorktreePage v-else-if="activeMenu === 'worktree'" :key="activeMenu" />
           <UpdatePage v-else-if="activeMenu === 'update'" :key="activeMenu" />
           <TokenDebugPage v-else-if="activeMenu === 'token-debug'" :key="activeMenu" />
+          <UsagePage v-else-if="activeMenu === 'usage'" :key="activeMenu" />
         </div>
       </div>
     </div>
@@ -133,7 +135,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
-import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Bug, ArrowLeft, ArrowRight, PanelLeftClose } from '@lucide/vue'
+import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Bug, BarChart3, ArrowLeft, ArrowRight, PanelLeftClose } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { getSettingsStore, useSettings, type SystemSettings } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
@@ -149,6 +151,7 @@ import WorktreePage from './worktree/WorktreePage.vue'
 import PiPresetsPage from './preset/PiPresetsPage.vue'
 import UpdatePage from './update/UpdatePage.vue'
 import TokenDebugPage from './system/TokenDebugPage.vue'
+import UsagePage from './usage/UsagePage.vue'
 
 const menus = [
   { id: 'provider', labelKey: 'settings.menu.provider', icon: Settings },
@@ -162,6 +165,7 @@ const menus = [
   { id: 'update', labelKey: 'settings.menu.update', icon: Download },
   { id: 'system', labelKey: 'settings.menu.system', icon: SlidersHorizontal },
   { id: 'token-debug', labelKey: 'settings.menu.tokenDebug', icon: Bug },
+  { id: 'usage', labelKey: 'settings.menu.usage', icon: BarChart3 },
 ] as const
 
 type MenuId = (typeof menus)[number]['id']

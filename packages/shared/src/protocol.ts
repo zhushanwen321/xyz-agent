@@ -22,6 +22,7 @@ import type {
   ProviderImportResult,
 } from './migration'
 import type { SegmentsMetadataEntry } from './message-metadata'
+import type { UsageStatsResult } from './usage-stats'
 
 // ── Client → Runtime message types
 
@@ -109,6 +110,7 @@ export type ClientMessageType =
   | 'terminal.spawn' | 'terminal.write' | 'terminal.resize' | 'terminal.kill' | 'terminal.attach'
   | 'config.getTerminalConfig' | 'config.setTerminalConfig'
   | 'quota.fetch' | 'quota.getCached' | 'quota.configure' | 'quota.refresh'
+  | 'usage.getStats'
   | 'config.setWorktreeRootDir' | 'config.getWorktreeRootDir'
   | 'config.setSetupScript' | 'config.getSetupScript'
   | 'config.setBareSetupScript' | 'config.getBareSetupScript'
@@ -519,6 +521,8 @@ export interface ClientMessageMap {
   'quota.configure': { providerId: string; enabled: boolean; cookie?: string; fetcher?: string; apiKey?: string }
   /** 强制刷新额度（绕过 throttle，Settings 测试查询用）。 */
   'quota.refresh': { providerId: string }
+  /** usage.getStats：拉取用量统计数据（无参数）。 */
+  'usage.getStats': Record<string, never>
   /** config.setWorktreeRootDir：设置 worktree 专用目录配置（前端写入）。 */
   'config.setWorktreeRootDir': { dir: string }
   /** config.getWorktreeRootDir：读取 worktree 专用目录配置（前端读取）。 */
@@ -734,6 +738,7 @@ export type ServerMessageType =
   | 'terminal.data' | 'terminal.exit' | 'terminal.alive' | 'terminal.ack'
   | 'config.terminalConfig'
   | 'quota.fetch:result' | 'quota.getCached:result' | 'quota.configure:result' | 'quota.refresh:result'
+  | 'usage.getStats:result'
   | 'worktree.branches'
   | 'worktree.list:result'
   | 'config.worktreeRootDir'
@@ -1115,6 +1120,7 @@ export interface ServerMessageMapBase {
   'quota.getCached:result': QuotaFetchResultPayload
   'quota.configure:result': { ok: boolean; error?: string }
   'quota.refresh:result': QuotaFetchResultPayload
+  'usage.getStats:result': UsageStatsResult
   /** worktree.branches：worktree.listBranches 的 reply（本地/远程分支列表 + 默认分支名）。 */
   'worktree.branches': { local: string[]; remote: string[]; defaultBranch: string }
   /** worktree.list:result：worktree.list 的 reply（worktree 条目列表）。 */
@@ -1540,6 +1546,7 @@ export interface ReplyPayloadMap {
   'quota.getCached': ServerMessageMap['quota.getCached:result']
   'quota.configure': ServerMessageMap['quota.configure:result']
   'quota.refresh': ServerMessageMap['quota.refresh:result']
+  'usage.getStats': ServerMessageMap['usage.getStats:result']
   'worktree.listBranches': ServerMessageMap['worktree.branches']
   'worktree.list': ServerMessageMap['worktree.list:result']
   'config.setWorktreeRootDir': ServerMessageMap['config.worktreeRootDir']
