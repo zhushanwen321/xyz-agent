@@ -46,6 +46,7 @@ import { ProjectMessageHandler } from './project-message-handler.js'
 import { WorktreeMessageHandler } from './worktree-message-handler.js'
 import { TerminalMessageHandler } from './terminal-message-handler.js'
 import { QuotaMessageHandler } from './quota-message-handler.js'
+import { UsageMessageHandler } from './usage-message-handler.js'
 import { PresetMessageHandler } from './preset-message-handler.js'
 import { SessionManagerHandler } from './session-manager-handler.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
@@ -55,6 +56,7 @@ import type { IWorktreeService } from '../services/ports/worktree-service.js'
 import type { HandoffService } from '../services/handoff-service.js'
 import type { ITerminalService } from '../services/ports/terminal-service.js'
 import type { QuotaService } from '../services/quota-service.js'
+import { UsageStatsService } from '../services/usage/usage-stats-service.js'
 import type { PresetService } from '../services/preset-service.js'
 import { toErrorMessage } from '../utils/errors.js'
 
@@ -120,6 +122,7 @@ export class RuntimeServer implements IMessageBroker {
   private worktreeMessageHandler?: WorktreeMessageHandler
   private terminalMessageHandler?: TerminalMessageHandler
   private quotaMessageHandler!: QuotaMessageHandler
+  private usageMessageHandler!: UsageMessageHandler
   private presetMessageHandler!: PresetMessageHandler
   private sessionManagerHandler!: SessionManagerHandler
 
@@ -312,6 +315,11 @@ export class RuntimeServer implements IMessageBroker {
         broadcastProviderList: () => this.broker.broadcastProviderList(),
       })
     }
+    // UsageStatsService 构造参数有默认值 getSessionsDir()，无需外部注入
+    this.usageMessageHandler = new UsageMessageHandler({
+      ...messaging,
+      usageStatsService: new UsageStatsService(),
+    })
     if (preset) {
       this.presetMessageHandler = new PresetMessageHandler({
         ...messaging,
@@ -359,6 +367,7 @@ export class RuntimeServer implements IMessageBroker {
     const worktreeHandler = this.worktreeMessageHandler
     const terminalHandler = this.terminalMessageHandler
     const quotaHandler = this.quotaMessageHandler
+    const usageHandler = this.usageMessageHandler
     const presetHandler = this.presetMessageHandler
     this.routes = new Map([
       ['ping', (msg, ws) => this.broker.reply(ws, msg.id, 'pong', {})],
@@ -373,6 +382,7 @@ export class RuntimeServer implements IMessageBroker {
       ...(worktreeHandler ? worktreeHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => worktreeHandler.handleWorktreeMessage(msg, ws)] as const) : []),
       ...(terminalHandler ? terminalHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => terminalHandler.handleTerminalMessage(msg, ws)] as const) : []),
       ...(quotaHandler ? quotaHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => quotaHandler.handleQuotaMessage(msg, ws)] as const) : []),
+      ...usageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => usageHandler.handleUsageMessage(msg, ws)] as const),
       ...(presetHandler ? presetHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => presetHandler.handlePresetMessage(msg, ws)] as const) : []),
     ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown]>)
   }
