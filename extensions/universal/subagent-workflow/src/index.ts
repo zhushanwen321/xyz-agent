@@ -179,6 +179,12 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // 实际选用（P4 路由或显式 getEngine('zcode')）才解析 deps。
   registerZcodeEngine();
 
+  // [U7b] 引擎列表在 extension 模块加载时即同步 engines.json（不等 session_start——
+  // 用户体验拍板 2026-08-25：xyz-agent 打开后激活任意 session 的第一时间（含 TUI 等价
+  // 场景）GUI 引擎选择器就该有数据；session_start 处保留幂等重写兜底 jiti 双路径/
+  // 模块重载场景的刷新）。
+  syncEnginesFile(getAgentDir());
+
   // ════════════════════════════════════════════════════════════
   //  subagents 域：tool + command + messageRenderer
   // ════════════════════════════════════════════════════════════

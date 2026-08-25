@@ -12,7 +12,7 @@
  */
 import { existsSync, readdirSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join, isAbsolute, resolve } from 'node:path'
+import { join, isAbsolute, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { expandHome, isStrictlyUnder } from '../../utils/path-utils.js'
@@ -1025,10 +1025,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * [U7] 子代理引擎配置视图：engines.json（extension 权威写入的动态引擎列表）+
    * config.json defaultEngine（extension ModelConfigService 读同一文件）。
    * 纯磁盘读取，Settings 冷启动（无活跃 session）也可用。
+   *
+   * 回退链（U7b 冷启动：app 刚打开、尚无 pi 进程 → engines.json 不存在）：
+   * subagent-workflow 安装目录 package.json 的 `xyz-agent.subagentEngines` 静态声明
+   * （守护测试防与代码注册表漂移）→ 最终兜底 ['pi']。
    */
   async getSubagentEngineConfig(): Promise<SubagentEngineConfigView> {
     const subagentsDir = join(getPiAgentDir(), 'subagents')
-    let engines: string[] = ['pi']
+    let engines: string[] | undefined
     try {
       const raw = readFileSync(join(subagentsDir, SUBAGENTS_ENGINES_FILENAME), 'utf8')
       const parsed = JSON.parse(raw) as Partial<SubagentEnginesFile>
@@ -1036,7 +1040,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         engines = parsed.engines
       }
     } catch {
-      // 缺失/损坏 → 兜底 ['pi']（pi 恒可用；extension 下次 session_start 会重写文件）
+      // 缺失/损坏 → 走静态声明回退
+    }
+    if (engines === undefined) {
+      engines = await this.readDeclaredEnginesFallback()
     }
     let defaultEngine = 'pi'
     try {
@@ -1048,6 +1055,29 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       // 无 config / 坏 JSON → 缺省 pi（extension 侧同缺省语义）
     }
     return { engines, defaultEngine }
+  }
+
+  /**
+   * [U7b] 静态声明回退：经 extensionService 定位 subagent-workflow 安装目录（dev 源码
+   * / packaged staged / live env 三形态统一由 getExtensionPaths 覆盖），读 package.json
+   * 的 xyz-agent.subagentEngines。任何失败返回 ['pi']（pi 恒可用）。
+   */
+  private async readDeclaredEnginesFallback(): Promise<string[]> {
+    try {
+      const paths = await this.extensionService.getExtensionPaths()
+      const swDir = paths.find((p) => p.endsWith('subagent-workflow') || p.includes(`${sep}subagent-workflow`))
+      if (!swDir) return ['pi']
+      const pkg = JSON.parse(readFileSync(join(swDir, 'package.json'), 'utf8')) as {
+        'xyz-agent'?: { subagentEngines?: unknown }
+      }
+      const declared = pkg['xyz-agent']?.subagentEngines
+      if (Array.isArray(declared) && declared.every((e) => typeof e === 'string') && declared.length > 0) {
+        return declared as string[]
+      }
+    } catch {
+      // 回退链的回退——静默到 ['pi']
+    }
+    return ['pi']
   }
 
   /**

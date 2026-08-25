@@ -18,7 +18,7 @@ import type { IMessageBroker } from '../interfaces.js'
 const PREV_DATA_DIR = process.env['XYZ_AGENT_DATA_DIR']
 let tmpDataRoot: string
 
-function makeService(): SessionService {
+function makeService(extOverride?: { getExtensionPaths: () => Promise<string[]> }): SessionService {
   const broker = { broadcast: vi.fn() } as unknown as IMessageBroker
   const pm = {
     onSessionExit: vi.fn(),
@@ -30,7 +30,7 @@ function makeService(): SessionService {
     broker,
     () => ({ attach: vi.fn(), detach: vi.fn() }),
     '/test/project-root',
-    {} as never,
+    (extOverride ?? {}) as never, // extensionService：本测试面仅消费 getExtensionPaths（U7b 回退链）
     { getDefaultModel: () => ({ provider: 'test-provider', modelId: 'test-model' }) } as never,
     { scanSessions: vi.fn(() => []), extractSessionOutcome: vi.fn(() => null), persistSessionEnd: vi.fn() } as never,
     { pruneStaleCache: vi.fn(), readGitInfo: vi.fn(() => undefined) } as never,
@@ -70,6 +70,29 @@ describe('getSubagentEngineConfig', () => {
     expect(await makeService().getSubagentEngineConfig()).toEqual({ engines: ['pi'], defaultEngine: 'pi' })
     writeJson('engines.json', '{ torn')
     expect(await makeService().getSubagentEngineConfig()).toEqual({ engines: ['pi'], defaultEngine: 'pi' })
+  })
+
+  it('[U7b] engines.json 缺失 → 回退 subagent-workflow 包静态声明（冷启动无 pi 场景）', async () => {
+    // 伪造 subagent-workflow 安装目录（package.json 带 xyz-agent.subagentEngines）
+    const swDir = path.join(tmpDataRoot, 'fake-install', 'subagent-workflow')
+    fs.mkdirSync(swDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(swDir, 'package.json'),
+      JSON.stringify({ name: '@zhushanwen/pi-subagent-workflow', 'xyz-agent': { subagentEngines: ['pi', 'zcode'] } }),
+    )
+    const svc = makeService({ getExtensionPaths: async () => [swDir] })
+    writeJson('config.json', { version: 1, defaultEngine: 'zcode' })
+    expect(await svc.getSubagentEngineConfig()).toEqual({ engines: ['pi', 'zcode'], defaultEngine: 'zcode' })
+  })
+
+  it('[U7b] 静态声明也缺失（无 subagent-workflow 目录/无字段/坏 JSON）→ 最终兜底 [pi]', async () => {
+    const noSw = makeService({ getExtensionPaths: async () => [] })
+    expect(await noSw.getSubagentEngineConfig()).toEqual({ engines: ['pi'], defaultEngine: 'pi' })
+    const noFieldDir = path.join(tmpDataRoot, 'no-field', 'subagent-workflow')
+    fs.mkdirSync(noFieldDir, { recursive: true })
+    fs.writeFileSync(path.join(noFieldDir, 'package.json'), JSON.stringify({ name: 'x' }))
+    const noField = makeService({ getExtensionPaths: async () => [noFieldDir] })
+    expect(await noField.getSubagentEngineConfig()).toEqual({ engines: ['pi'], defaultEngine: 'pi' })
   })
 })
 

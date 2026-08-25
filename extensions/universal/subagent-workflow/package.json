@@ -32,7 +32,8 @@
     "src/shared/"
   ],
   "xyz-agent": {
-    "role": "universal"
+    "role": "universal",
+    "subagentEngines": ["pi", "zcode"]
   },
   "pi": {
     "extensions": [
