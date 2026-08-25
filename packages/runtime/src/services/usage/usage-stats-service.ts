@@ -37,6 +37,8 @@ type ScanRowResult = UsageRow | 'skip' | null
 
 export class UsageStatsService {
   private readonly sessionsDir: string
+
+  /** @data-owner #16 派生缓存：per-file 分片，(mtimeMs, size) 双键失效（登记表主表 #16）。 */
   private readonly shards = new Map<string, FileShard>()
 
   constructor(sessionsDir: string = getSessionsDir()) {
