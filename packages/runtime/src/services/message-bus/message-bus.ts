@@ -57,6 +57,12 @@ const TOPIC_TABLE: Readonly<Record<string, TopicKind>> = {
   'session.commands': 'state',
   'context.update': 'state',
   'session.subagents': 'state',
+  // E 方案（subagent-realtime-channel §4.3）：relay tee 产出的 subagent entry 增量帧。
+  // state 类但刻意不进 STATE_TYPE_KEY_MAP——增量 entry 流不是 last-value 语义（快照
+  // 覆盖会丢中间 entry），也不入 ring（subagent 长任务高频帧会冲刷主对话流的可回放
+  // ring，制造主流 gap）。对账路径 = reducer 按 entry id 幂等 + 重开时 fetchAndInject
+  // 快照（设计 §6.1-2「帧先于快照到达，reducer 幂等去重」）。
+  'session.subagentEntriesAppended': 'state',
   'session.workflowUpdate': 'state',
   'session.state_changed': 'state',
   // ── stream 类：分配 seq、入 ring（O(1) 覆盖写）──

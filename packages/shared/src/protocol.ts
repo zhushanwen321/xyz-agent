@@ -649,6 +649,8 @@ export type ServerMessageType =
   | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted' | 'session.setProject'
   | 'project.loaded'
   | 'session.subagents' | 'session.subagentHistory'
+  // E 方案（subagent-realtime-channel §4.3）：runtime relay tee 产出的 subagent entry 增量帧
+  | 'session.subagentEntriesAppended'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
   // session-trace（design D4）：getTraceEntries 的 reply（全量台账）+ 增量腿推送（since 增量 entries）。
@@ -941,6 +943,19 @@ export interface ServerMessageMapBase {
   'session.subagents': { sessionId: string; subagents: SubagentRecord[] }
   // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）
   'session.subagentHistory': { sessionId: string; subagentId: string; messages: import('./message').Message[] }
+  // session.subagentEntriesAppended（E 方案，subagent-realtime-channel §4.3/§6）：runtime relay
+  // tee 翻译层产出的 subagent entry 增量帧——子进程 stdout 事件经 event-adapter 独立实例
+  // 翻译 + entry 化（与主对话流 message.message_end / tool_call_* 帧的 entry 形态同构，
+  // 但路由到虚拟分区）。sessionId 是主 session id（bus 路由键 + 帧归属），subagentId 是
+  // record id（虚拟分区第三段，subagentVirtualId(sessionId, subagentId)）。entries 元素：
+  // message/自定义 entry（PiEntry，前端喂 applyEntry）与 toolCall overlay 形态
+  // （PiToolCallEntryForm，前端挂 running toolCall，同 message.tool_call_start 载体）。
+  // 帧间可能交错 stream_delta（中间态），reducer 按 entry 幂等去重（entry 帧是终态权威）。
+  'session.subagentEntriesAppended': {
+    sessionId: string
+    subagentId: string
+    entries: Array<import('./pi-entry').PiEntry | import('./pi-entry').PiToolCallEntryForm>
+  }
   // session.workflows：当前 session 派生的 workflow 列表（runtime 从主 session JSONL 的 workflow-state-link 提取）
   'session.workflows': { sessionId: string; workflows: WorkflowRunRecord[] }
   // session.agentCallHistory：workflow 内 agent call 的对话流消息（runtime 按 trace[].sessionId 查找 JSONL）

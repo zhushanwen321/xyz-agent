@@ -34,9 +34,10 @@ export default defineConfig({
   // ══════════════════════════════════════════════════════════════
   // @xyz-agent/shared：workspace 包（纯 TS 类型 + 工具函数），必须打包进 bundle，
   // 否则打包后 require('@xyz-agent/shared') 找不到（runtime 子进程无 node_modules）
-  // @zhushanwen/pi-subagent-workflow：只消费双端复用的无状态 reader 模块
-  // （engine/engines/zcode/reader.ts + constants.ts + engine/paths.ts，设计 §3.3.1
-  // 例外条款），运行时闭包 = node:fs + 纯常量；import 链其余均为 type-only（bundle 后
+  // @zhushanwen/pi-subagent-workflow：只消费双端复用的无状态模块
+  // （engine/engines/zcode/reader.ts + constants.ts + engine/paths.ts + execution/relay-env.ts
+  // （E-2 relay env 名/协议版本常量 SSOT，纯常量+纯函数），设计 §3.3.1 例外条款），
+  // 运行时闭包 = node:fs + 纯常量；import 链其余均为 type-only（bundle 后
   // 消失）。禁止扩大消费面到 launcher/preparer/parser/EnginePort（依赖方向纪律）
   noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/pi-subagent-workflow', 'chokidar', '@iarna/toml', 'proper-lockfile'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
