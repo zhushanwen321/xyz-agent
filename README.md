@@ -92,7 +92,7 @@ curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJ
 | `pi-msg-id-mapper` | client UUID ↔ user entry ID 映射 |
 | `pi-system-prompt-trace` | system prompt 建立或变化时写入 xyz:system-prompt 留痕 entry |
 
-其中 6 个基础设级（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output` / `pi-agent-ext` / `pi-system-prompt` / `pi-msg-id-mapper`）常驻不可禁用，其余 8 个可在设置中禁用。另有 `pi-cw-tool`（cw 2.0 runner 实操指南 + cw_query 只读查询工具）、`pi-model-switch`（模型推荐切换）、`pi-plan`（轻量 plan 模式）、`pi-unified-hooks`（统一 hooks）4 个包经 npm 发布，可按需安装。
+其中 6 个基础设级（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output` / `pi-agent-ext` / `pi-system-prompt` / `pi-msg-id-mapper`）常驻不可禁用，其余 8 个可在设置中禁用。另有 `pi-cw-tool`（cw 2.0 runner 实操指南 + cw_query 只读查询工具）、`pi-model-switch`（模型推荐切换）、`pi-plan`（轻量 plan 模式）3 个包经 npm 发布，可按需安装。`pi-unified-hooks` 已废弃（npm 标记 deprecated），其能力由 `pi-base-tool-enhance` 取代（bash 后台模式 + 可配置超时 + 工具错误审计）。
 
 ### 模型与设置
 

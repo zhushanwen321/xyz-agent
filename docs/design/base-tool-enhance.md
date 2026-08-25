@@ -3,7 +3,7 @@
 > 一句话结论：新增 `@zhushanwen/pi-base-tool-enhance` extension，同名 override pi 内置 bash 工具（前台行为委托 pi 官方工厂保持 100% 等价），增量实现 background 模式（强制白名单 + pending-notifications 完成通知（lifecycle 分档接入）+ 轮询接管与孤儿收殓兜底）与双模式可配置超时，随后整包废弃 unified-hooks。
 
 - 层级声明：当前层 = extension 能力设计 → 下一层 = 可实现的接口 / 数据模型 / 技术方案（层敏感准则全适用）
-- 状态：已评审通过（7 轮对抗式审查收敛，must-fix 归零；审查报告见 `.review/design-review-base-tool-enhance-20260825*.md`）
+- 状态：已评审通过（7 轮对抗式审查收敛，must-fix 归零；审查报告见 `.review/design-review-base-tool-enhance-20260825*.md`）；**已实施**——M1-M6 全部落地（feat-background-bash 分支），探针 P1-P6 全部实测关闭（无一回退路径触发），unified-hooks 已标记废弃
 - 关联：废弃 [unified-hooks](../../../extensions/universal/unified-hooks/)；接入 [pending-notifications](../../../extensions/universal/pending-notifications/)
 
 ## 1. 背景目标
