@@ -123,6 +123,7 @@
           <WorktreePage v-else-if="activeMenu === 'worktree'" :key="activeMenu" />
           <UpdatePage v-else-if="activeMenu === 'update'" :key="activeMenu" />
           <TokenDebugPage v-else-if="activeMenu === 'token-debug'" :key="activeMenu" />
+          <UsagePage v-else-if="activeMenu === 'usage'" :key="activeMenu" />
         </div>
       </div>
     </div>
@@ -133,7 +134,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
-import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Bug, ArrowLeft, ArrowRight, PanelLeftClose } from '@lucide/vue'
+import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Bug, BarChart3, ArrowLeft, ArrowRight, PanelLeftClose } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { getSettingsStore, useSettings, type SystemSettings } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
@@ -149,6 +150,7 @@ import WorktreePage from './worktree/WorktreePage.vue'
 import PiPresetsPage from './preset/PiPresetsPage.vue'
 import UpdatePage from './update/UpdatePage.vue'
 import TokenDebugPage from './system/TokenDebugPage.vue'
+import UsagePage from './usage/UsagePage.vue'
 
 const menus = [
   { id: 'provider', labelKey: 'settings.menu.provider', icon: Settings },
@@ -162,6 +164,7 @@ const menus = [
   { id: 'update', labelKey: 'settings.menu.update', icon: Download },
   { id: 'system', labelKey: 'settings.menu.system', icon: SlidersHorizontal },
   { id: 'token-debug', labelKey: 'settings.menu.tokenDebug', icon: Bug },
+  { id: 'usage', labelKey: 'settings.menu.usage', icon: BarChart3 },
 ] as const
 
 type MenuId = (typeof menus)[number]['id']
