@@ -10,9 +10,11 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { getSubagentService } from "../execution/subagent-service.ts";
+import type { SubagentService } from "../execution/subagent-service.ts";
 import { displayAgentName } from "../shared/agent-ref.ts";
 import { messageHandler, startHandler } from "./subagent-actions.ts";
 import { parseSubagentRpcCommand } from "./command-actions.ts";
+import type { SubagentRpcAction } from "./command-actions.ts";
 import { LIST_LIMIT } from "./list-shared.ts";
 import { createSubagentsView } from "./list-view.ts";
 
@@ -53,6 +55,140 @@ function emitSubagentDirective(
     display: false,
     details,
   });
+}
+
+/** RPC cancel 执行体（行为等价拆分自 handler，复杂度治理）。 */
+async function rpcCancel(
+  service: SubagentService,
+  recordId: string,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
+  try {
+    const ok = service.cancel(recordId);
+    ctx.ui.notify(
+      ok ? `Cancelled subagent ${recordId}` : `Subagent ${recordId} not found or already finished`,
+      ok ? "info" : "warning",
+    );
+  } catch (err) {
+    // service.cancel 内部 assertReady 在 session_shutdown 并发 dispose 时会抛
+    const msg = err instanceof Error ? err.message : String(err);
+    ctx.ui.notify(`Failed to cancel subagent ${recordId}: ${msg}`, "warning");
+  }
+}
+
+/** RPC message 执行体（行为等价拆分自 handler，复杂度治理）。 */
+async function rpcMessage(
+  pi: ExtensionAPI,
+  service: SubagentService,
+  recordId: string,
+  text: string,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
+  // GUI 定向消息（设计 §3.3.3）：不经主 agent LLM 直达 subagent。
+  // one-shot 首条 message 自动升级 chatMode 的机制在 messageHandler 内（勿在此重复）。
+  try {
+    const result = await messageHandler(service, {
+      subagentId: recordId,
+      text,
+    });
+    // 留痕（§3.3.3）：成功派发后才落 entry——失败时不留痕，GUI 按 toast 错误重发
+    emitSubagentDirective(
+      pi,
+      { subagentId: result.subagentId, slug: result.slug, direction: "user" },
+      text,
+    );
+    ctx.ui.notify(`Message delivered to subagent ${result.slug} (${result.subagentId})`, "info");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    ctx.ui.notify(`Failed to message subagent ${recordId}: ${msg}`, "warning");
+  }
+}
+
+/** RPC start 执行体（行为等价拆分自 handler，复杂度治理）。 */
+async function rpcStart(
+  pi: ExtensionAPI,
+  service: SubagentService,
+  slug: string,
+  task: string,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
+  // GUI 定向新建（设计 §3.3.3）：conversation 固定 true（GUI 定向对话场景需要可续聊）
+  try {
+    const result = await startHandler(
+      service,
+      {
+        slug,
+        task,
+        conversation: true,
+      },
+      // RPC 命令无外层 AbortSignal（GUI 请求生命周期不映射到 subagent 取消——
+      // start 是 detached 后台语义，取消走 /subagents cancel）
+      undefined,
+    );
+    emitSubagentDirective(
+      pi,
+      { subagentId: result.subagentId, slug: result.slug, direction: "user" },
+      task,
+    );
+    ctx.ui.notify(`Started subagent ${result.slug} (${result.subagentId})`, "info");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    ctx.ui.notify(`Failed to start subagent ${slug}: ${msg}`, "warning");
+  }
+}
+
+/**
+ * RPC 模式（xyz-agent GUI）：解析后的 action 分发执行，不打开 TUI。
+ * 行为等价拆分自 handler（fallow 圈复杂度 21 > 15）：三个执行体
+ * （cancel/message/start）各自成函数，本函数只做 switch 分发 +
+ * usage notify + exhaustiveness 断言。
+ */
+async function executeRpcAction(
+  pi: ExtensionAPI,
+  service: SubagentService,
+  parsed: SubagentRpcAction,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
+  switch (parsed.action) {
+    case "cancel":
+      await rpcCancel(service, parsed.recordId, ctx);
+      return;
+    case "cancel-missing-id":
+      ctx.ui.notify("Usage: /subagents cancel <id>", "warning");
+      return;
+    case "message":
+      await rpcMessage(pi, service, parsed.recordId, parsed.text, ctx);
+      return;
+    case "message-missing-args":
+      // 错误可操作：指明缺什么 + 完整 usage（全局规则 16）
+      ctx.ui.notify(
+        parsed.missing === "recordId"
+          ? "Usage: /subagents message <recordId> <text> — recordId is missing"
+          : "Usage: /subagents message <recordId> <text> — text is missing",
+        "warning",
+      );
+      return;
+    case "start":
+      await rpcStart(pi, service, parsed.slug, parsed.task, ctx);
+      return;
+    case "start-missing-args":
+      ctx.ui.notify(
+        parsed.missing === "slug"
+          ? "Usage: /subagents start <slug> <task> — slug is missing"
+          : "Usage: /subagents start <slug> <task> — task is missing",
+        "warning",
+      );
+      return;
+    case "noop":
+      // 无 action 或未知 action：GUI 端已屏蔽此 command 入口，此处兜底
+      ctx.ui.notify("View subagents in the sidebar Agents tab", "info");
+      return;
+    default: {
+      // exhaustiveness 断言：未来新增 action verb 忘加 case 时 tsc 报错
+      const _exhaustive: never = parsed;
+      throw new Error(`Unhandled subagent RPC action: ${String(_exhaustive)}`);
+    }
+  }
 }
 
 /** 注册 /subagents 命令（= list overlay）。 */
@@ -101,99 +237,8 @@ export function registerSubagentsCommand(pi: ExtensionAPI): void {
       // ── RPC 模式（xyz-agent GUI）：解析 action 直接执行，不打开 TUI ──
       // hasUI 在 TUI 和 RPC 都为 true，不能用于区分；用 ctx.mode === "rpc" 判定 GUI 通道。
       if (ctx.mode === "rpc") {
-        const parsed = parseSubagentRpcCommand(argsStr);
-        switch (parsed.action) {
-          case "cancel": {
-            try {
-              const ok = service.cancel(parsed.recordId);
-              ctx.ui.notify(
-                ok ? `Cancelled subagent ${parsed.recordId}` : `Subagent ${parsed.recordId} not found or already finished`,
-                ok ? "info" : "warning",
-              );
-            } catch (err) {
-              // service.cancel 内部 assertReady 在 session_shutdown 并发 dispose 时会抛
-              const msg = err instanceof Error ? err.message : String(err);
-              ctx.ui.notify(`Failed to cancel subagent ${parsed.recordId}: ${msg}`, "warning");
-            }
-            return;
-          }
-          case "cancel-missing-id":
-            ctx.ui.notify("Usage: /subagents cancel <id>", "warning");
-            return;
-          case "message": {
-            // GUI 定向消息（设计 §3.3.3）：不经主 agent LLM 直达 subagent。
-            // one-shot 首条 message 自动升级 chatMode 的机制在 messageHandler 内（勿在此重复）。
-            try {
-              const result = await messageHandler(service, {
-                subagentId: parsed.recordId,
-                text: parsed.text,
-              });
-              // 留痕（§3.3.3）：成功派发后才落 entry——失败时不留痕，GUI 按 toast 错误重发
-              emitSubagentDirective(
-                pi,
-                { subagentId: result.subagentId, slug: result.slug, direction: "user" },
-                parsed.text,
-              );
-              ctx.ui.notify(`Message delivered to subagent ${result.slug} (${result.subagentId})`, "info");
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              ctx.ui.notify(`Failed to message subagent ${parsed.recordId}: ${msg}`, "warning");
-            }
-            return;
-          }
-          case "message-missing-args":
-            // 错误可操作：指明缺什么 + 完整 usage（全局规则 16）
-            ctx.ui.notify(
-              parsed.missing === "recordId"
-                ? "Usage: /subagents message <recordId> <text> — recordId is missing"
-                : "Usage: /subagents message <recordId> <text> — text is missing",
-              "warning",
-            );
-            return;
-          case "start": {
-            // GUI 定向新建（设计 §3.3.3）：conversation 固定 true（GUI 定向对话场景需要可续聊）
-            try {
-              const result = await startHandler(
-                service,
-                {
-                  slug: parsed.slug,
-                  task: parsed.task,
-                  conversation: true,
-                },
-                // RPC 命令无外层 AbortSignal（GUI 请求生命周期不映射到 subagent 取消——
-                // start 是 detached 后台语义，取消走 /subagents cancel）
-                undefined,
-              );
-              emitSubagentDirective(
-                pi,
-                { subagentId: result.subagentId, slug: result.slug, direction: "user" },
-                parsed.task,
-              );
-              ctx.ui.notify(`Started subagent ${result.slug} (${result.subagentId})`, "info");
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              ctx.ui.notify(`Failed to start subagent ${parsed.slug}: ${msg}`, "warning");
-            }
-            return;
-          }
-          case "start-missing-args":
-            ctx.ui.notify(
-              parsed.missing === "slug"
-                ? "Usage: /subagents start <slug> <task> — slug is missing"
-                : "Usage: /subagents start <slug> <task> — task is missing",
-              "warning",
-            );
-            return;
-          case "noop":
-            // 无 action 或未知 action：GUI 端已屏蔽此 command 入口，此处兜底
-            ctx.ui.notify("View subagents in the sidebar Agents tab", "info");
-            return;
-          default: {
-            // exhaustiveness 断言：未来新增 action verb 忘加 case 时 tsc 报错
-            const _exhaustive: never = parsed;
-            throw new Error(`Unhandled subagent RPC action: ${String(_exhaustive)}`);
-          }
-        }
+        await executeRpcAction(pi, service, parseSubagentRpcCommand(argsStr), ctx);
+        return;
       }
 
       // ── print/json 模式（headless）：不可交互 ──

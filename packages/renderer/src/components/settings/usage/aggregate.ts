@@ -189,6 +189,114 @@ export interface AggregatedData {
 
 /* ── 核心聚合 ── */
 
+/** UsageRow → AggMetrics 字段映射（costUSD → cost） */
+function rowToMetrics(row: UsageRow): AggMetrics {
+  return {
+    input: row.input,
+    output: row.output,
+    cacheRead: row.cacheRead,
+    cacheWrite: row.cacheWrite,
+    cost: row.costUSD,
+    messages: row.messages,
+  }
+}
+
+/** 按 date 分组 */
+function groupByDate(rows: UsageRow[]): Map<string, UsageRow[]> {
+  const byDate = new Map<string, UsageRow[]>()
+  for (const row of rows) {
+    const arr = byDate.get(row.date) ?? []
+    arr.push(row)
+    byDate.set(row.date, arr)
+  }
+  return byDate
+}
+
+/** 以全量 rows 构建全量 provider 指标（provider 色序以此为准，过滤变化不重排） */
+function buildFullPerProv(rows: UsageRow[]): Record<string, AggMetrics> {
+  const fullPerProv: Record<string, AggMetrics> = {}
+  for (const row of rows) {
+    if (!fullPerProv[row.provider]) fullPerProv[row.provider] = newMetrics()
+    accumulate(fullPerProv[row.provider], rowToMetrics(row))
+  }
+  return fullPerProv
+}
+
+/** 确定日期范围：range>0 时今天往回构造完整日历，否则有数日期全集 */
+function buildDateRange(
+  filter: FilterState,
+  sortedDates: string[],
+): { sliceDates: string[]; nDays: number } {
+  if (filter.range > 0) {
+    // 构造完整日历日序列（今天往回 range 天，本地时区）
+    const today = new Date()
+    const dates: string[] = []
+    for (let i = filter.range - 1; i >= 0; i--) {
+      const d = new Date(today)
+      d.setDate(today.getDate() - i)
+      dates.push(fmtISO(d))
+    }
+    return { sliceDates: dates, nDays: filter.range }
+  }
+  // 全部：维持有数日期全集
+  return { sliceDates: sortedDates, nDays: sortedDates.length }
+}
+
+/* aggregate 跨日累加器（aggregateDay 就地累计） */
+interface AggAccumulator {
+  perModel: Record<string, AggMetrics>
+  perProv: Record<string, AggMetrics>
+  tot: AggMetrics
+  msgs: number
+  activeDays: number
+  peak: { v: number; d: string | null }
+}
+
+/** 单日聚合：过滤后累计到 acc，返回该日视图行 */
+function aggregateDay(
+  dateStr: string,
+  dayRows: UsageRow[],
+  filter: FilterState,
+  acc: AggAccumulator,
+): DayView {
+  const date = toLocalDate(dateStr)
+  const provs: Record<string, AggMetrics> = {}
+  const dTot = newMetrics()
+  let has = false
+
+  for (const row of dayRows) {
+    if (filter.offProv.has(row.provider)) continue
+    if (filter.isolate && row.model !== filter.isolate) continue
+
+    has = true
+    acc.msgs += row.messages
+
+    const u = rowToMetrics(row)
+
+    if (!provs[row.provider]) provs[row.provider] = newMetrics()
+    accumulate(provs[row.provider], u)
+    accumulate(dTot, u)
+
+    if (!acc.perModel[row.model]) acc.perModel[row.model] = newMetrics()
+    accumulate(acc.perModel[row.model], u)
+
+    if (!acc.perProv[row.provider]) acc.perProv[row.provider] = newMetrics()
+    accumulate(acc.perProv[row.provider], u)
+  }
+
+  if (has) {
+    acc.activeDays++
+    accumulate(acc.tot, dTot)
+    const v = filter.metric === 'cost' ? dTot.cost : totalTokens(dTot)
+    if (v > acc.peak.v) {
+      acc.peak.v = v
+      acc.peak.d = dateStr
+    }
+  }
+
+  return { date, dateStr, provs, dTot }
+}
+
 /**
  * 从 UsageRow[] 聚合出全部视图数据。
  *
@@ -200,104 +308,36 @@ export function aggregate(
   rows: UsageRow[],
   filter: FilterState,
 ): AggregatedData {
-  // 按 date 分组
-  const byDate = new Map<string, UsageRow[]>()
-  for (const row of rows) {
-    const arr = byDate.get(row.date) ?? []
-    arr.push(row)
-    byDate.set(row.date, arr)
-  }
-
+  const byDate = groupByDate(rows)
   // 以全量 rows 计算 provider 色序（过滤变化不重排）
-  const fullPerProv: Record<string, AggMetrics> = {}
-  for (const row of rows) {
-    if (!fullPerProv[row.provider]) fullPerProv[row.provider] = newMetrics()
-    const u: AggMetrics = {
-      input: row.input, output: row.output,
-      cacheRead: row.cacheRead, cacheWrite: row.cacheWrite,
-      cost: row.costUSD, messages: row.messages,
-    }
-    accumulate(fullPerProv[row.provider], u)
-  }
-  assignProviderColors(fullPerProv)
+  assignProviderColors(buildFullPerProv(rows))
 
-  // 确定日期范围
   const sortedDates = [...byDate.keys()].sort()
-  let sliceDates: string[]
-  let nDays: number
-  if (filter.range > 0) {
-    // 构造完整日历日序列（今天往回 range 天，本地时区）
-    const today = new Date()
-    const dates: string[] = []
-    for (let i = filter.range - 1; i >= 0; i--) {
-      const d = new Date(today)
-      d.setDate(today.getDate() - i)
-      dates.push(fmtISO(d))
-    }
-    sliceDates = dates
-    nDays = filter.range
-  } else {
-    // 全部：维持有数日期全集
-    sliceDates = sortedDates
-    nDays = sortedDates.length
-  }
+  const { sliceDates, nDays } = buildDateRange(filter, sortedDates)
 
+  const acc: AggAccumulator = {
+    perModel: {},
+    perProv: {},
+    tot: newMetrics(),
+    msgs: 0,
+    activeDays: 0,
+    peak: { v: 0, d: null },
+  }
   const perDay: DayView[] = []
-  const perModel: Record<string, AggMetrics> = {}
-  const perProv: Record<string, AggMetrics> = {}
-  const tot = newMetrics()
-  let msgs = 0
-  let activeDays = 0
-  const peak = { v: 0, d: null as string | null }
-
   for (const dateStr of sliceDates) {
-    const date = toLocalDate(dateStr)
-    const dayRows = byDate.get(dateStr) ?? []
-    const provs: Record<string, AggMetrics> = {}
-    const dTot = newMetrics()
-    let has = false
-
-    for (const row of dayRows) {
-      if (filter.offProv.has(row.provider)) continue
-      if (filter.isolate && row.model !== filter.isolate) continue
-
-      has = true
-      msgs += row.messages
-
-      const u: AggMetrics = {
-        input: row.input,
-        output: row.output,
-        cacheRead: row.cacheRead,
-        cacheWrite: row.cacheWrite,
-        cost: row.costUSD,
-        messages: row.messages,
-      }
-
-      if (!provs[row.provider]) provs[row.provider] = newMetrics()
-      accumulate(provs[row.provider], u)
-      accumulate(dTot, u)
-
-      if (!perModel[row.model]) perModel[row.model] = newMetrics()
-      accumulate(perModel[row.model], u)
-
-      if (!perProv[row.provider]) perProv[row.provider] = newMetrics()
-      accumulate(perProv[row.provider], u)
-    }
-
-    if (has) {
-      activeDays++
-      accumulate(tot, dTot)
-      const v = filter.metric === 'cost' ? dTot.cost : totalTokens(dTot)
-      if (v > peak.v) {
-        peak.v = v
-        peak.d = dateStr
-      }
-    }
-
-    perDay.push({ date, dateStr, provs, dTot })
+    perDay.push(aggregateDay(dateStr, byDate.get(dateStr) ?? [], filter, acc))
   }
 
-  return { perDay, perModel, perProv, tot, msgs, activeDays, peak, nDays }
+  return {
+    perDay,
+    perModel: acc.perModel,
+    perProv: acc.perProv,
+    tot: acc.tot,
+    msgs: acc.msgs,
+    activeDays: acc.activeDays,
+    peak: acc.peak,
+    nDays,
+  }
 }
 
 /**

@@ -25,6 +25,14 @@ interface FileShard {
   cwd: string | null
 }
 
+/**
+ * 单行分类结果（scanFile 主循环与分类辅助方法之间的信号契约）：
+ * - UsageRow：命中分类且 timestamp 有效，计入 rows
+ * - 'skip'：命中分类但 timestamp 无效，计入 skippedLines（行级失败）
+ * - null：不命中该分类，继续尝试下一分类
+ */
+type ScanRowResult = UsageRow | 'skip' | null
+
 // ── 服务主体 ─────────────────────────────────────────────────
 
 export class UsageStatsService {
@@ -111,6 +119,10 @@ export class UsageStatsService {
    * ② type==='message' && message.role==='toolResult' && message.usage → compaction 虚拟桶
    * ③ (type==='compaction' || type==='branch_summary') && entry.usage → compaction 虚拟桶
    *
+   * 三类判定互斥（①② 同 type 不同 role，③ 不同 type），拆分到
+   * rowFromAssistant / rowFromToolResult / rowFromCompactionEntry 三个辅助方法；
+   * 本方法只做行读取 + cwd 提取 + 编排。
+   *
    * @returns FileShard 分片（含 rows, skippedLines, cwd）
    */
   private async scanFile(filePath: string, fileStat: { mtimeMs: number; size: number }): Promise<FileShard> {
@@ -142,49 +154,18 @@ export class UsageStatsService {
         foundSessionEntry = true
       }
 
-      const type = entry.type as string | undefined
-      const message = entry.message as Record<string, unknown> | undefined
-      const role = message?.role as string | undefined
+      // 按原顺序尝试三类判定；'skip' 短路（timestamp 无效行不再计入任何桶）
+      const row =
+        this.rowFromAssistant(entry, cwd) ??
+        this.rowFromToolResult(entry, cwd) ??
+        this.rowFromCompactionEntry(entry, cwd)
 
-      // ① assistant 主桶
-      if (type === 'message' && role === 'assistant' && message?.usage) {
-        const usage = message.usage as Record<string, unknown>
-        const provider = message.provider as string | undefined
-        const model = (message.responseModel ?? message.model) as string | undefined
-        const date = toLocalDate(entry.timestamp as string)
-        if (date === null) {
-          skippedLines++
-          continue
-        }
-
-        rows.push(this.makeRow(date, provider ?? '(unknown)', model ?? '(unknown)', cwd, usage))
+      if (row === 'skip') {
+        skippedLines++
         continue
       }
-
-      // ② toolResult-with-usage → compaction 虚拟桶
-      if (type === 'message' && role === 'toolResult' && message?.usage) {
-        const usage = message.usage as Record<string, unknown>
-        const date = toLocalDate(entry.timestamp as string)
-        if (date === null) {
-          skippedLines++
-          continue
-        }
-
-        rows.push(this.makeRow(date, 'compaction', 'compaction', cwd, usage))
-        continue
-      }
-
-      // ③ compaction / branch_summary with entry.usage → compaction 虚拟桶
-      if ((type === 'compaction' || type === 'branch_summary') && entry.usage) {
-        const usage = entry.usage as Record<string, unknown>
-        const date = toLocalDate(entry.timestamp as string)
-        if (date === null) {
-          skippedLines++
-          continue
-        }
-
-        rows.push(this.makeRow(date, 'compaction', 'compaction', cwd, usage))
-        continue
+      if (row) {
+        rows.push(row)
       }
 
       // 其余行 continue
@@ -197,6 +178,54 @@ export class UsageStatsService {
       skippedLines,
       cwd,
     }
+  }
+
+  /**
+   * ① assistant 主桶：type==='message' 且 message.role==='assistant' 且带 usage。
+   * 命中但 timestamp 无效 → 'skip'（计 skippedLines）；不命中 → null。
+   */
+  private rowFromAssistant(entry: Record<string, unknown>, cwd: string | null): ScanRowResult {
+    if (entry.type !== 'message') return null
+    const message = entry.message as Record<string, unknown> | undefined
+    if (message?.role !== 'assistant') return null
+    if (!message?.usage) return null
+
+    const date = toLocalDate(entry.timestamp as string)
+    if (date === null) return 'skip'
+
+    const provider = message.provider as string | undefined
+    const model = (message.responseModel ?? message.model) as string | undefined
+    return this.makeRow(date, provider ?? '(unknown)', model ?? '(unknown)', cwd, message.usage as Record<string, unknown>)
+  }
+
+  /**
+   * ② toolResult-with-usage → compaction 虚拟桶。
+   * 命中但 timestamp 无效 → 'skip'（计 skippedLines）；不命中 → null。
+   */
+  private rowFromToolResult(entry: Record<string, unknown>, cwd: string | null): ScanRowResult {
+    if (entry.type !== 'message') return null
+    const message = entry.message as Record<string, unknown> | undefined
+    if (message?.role !== 'toolResult') return null
+    if (!message?.usage) return null
+
+    const date = toLocalDate(entry.timestamp as string)
+    if (date === null) return 'skip'
+
+    return this.makeRow(date, 'compaction', 'compaction', cwd, message.usage as Record<string, unknown>)
+  }
+
+  /**
+   * ③ compaction / branch_summary with entry.usage → compaction 虚拟桶。
+   * 命中但 timestamp 无效 → 'skip'（计 skippedLines）；不命中 → null。
+   */
+  private rowFromCompactionEntry(entry: Record<string, unknown>, cwd: string | null): ScanRowResult {
+    if (entry.type !== 'compaction' && entry.type !== 'branch_summary') return null
+    if (!entry.usage) return null
+
+    const date = toLocalDate(entry.timestamp as string)
+    if (date === null) return 'skip'
+
+    return this.makeRow(date, 'compaction', 'compaction', cwd, entry.usage as Record<string, unknown>)
   }
 
   /**
