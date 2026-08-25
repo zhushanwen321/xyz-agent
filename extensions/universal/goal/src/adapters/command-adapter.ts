@@ -81,7 +81,7 @@ function handleStatus(session: GoalSession, ctx: ExtensionContext): void {
 	const lines: Array<string | null> = [
 		state.slug ? `Slug: ${state.slug}` : null,
 		`Objective: ${state.objective}`,
-		state.successCriteria ? `Success criteria: ${state.successCriteria}` : null,
+		state.successCriteria && state.successCriteria.length > 0 ? `Success criteria: ${state.successCriteria.join("; ")}` : null,
 		`Status: ${state.status}`,
 		`Turn: ${state.currentTurnIndex}`,
 		`Time elapsed: ${formatDuration(state.timeUsedSeconds)}`,
@@ -294,7 +294,9 @@ function handleUpdate(
 	// 显式传 --criteria 则替换；未传则保留旧值（修复：此前静默清空导致验证标准永久丢失，
 	// 无恢复机制）。objectiveUpdatedPrompt 注入保留的 criteria 并声明按新 objective 判断完成。
 	if (criteria !== undefined && criteria.trim()) {
-		state.successCriteria = criteria.trim();
+		// W1：criteria 转为 string[]（按分号拆分，每项 trim 过滤空串）
+		const items = criteria.split(";").map((s) => s.trim()).filter(Boolean);
+		state.successCriteria = items.length > 0 ? items : [criteria.trim()];
 	}
 	// FR-6.5: 持久化重塑后的状态（persistState 按当前 status tick 累加）+ FR-6.1 widget 刷新
 	const updatePorts = buildPorts(pi, ctx);

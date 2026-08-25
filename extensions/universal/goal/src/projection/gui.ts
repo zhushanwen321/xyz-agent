@@ -69,16 +69,22 @@ function metaStatus(status: GoalStatus): WidgetMeta["status"] {
 
 /**
  * successCriteria 按行拆分为非空 trim 行。
- * 原实现用 toSingleLine 压扁 + 截断后塞进 stats-line 单行 value，多行验收标准
- * 变成一坨长串，是 goal widget 可读性问题的根因——多行数据应改用 list-tree 多行呈现。
+ *
+ * W1：successCriteria 已结构化为 string[]，每项即一行条件。
+ * 向后兼容：旧数据可能为 string（deserialize 已迁移，但防御性保留）。原实现用
+ * toSingleLine 压扁 + 截断后塞进 stats-line 单行 value，多行验收标准变成一坨长串，
+ * 是 goal widget 可读性问题的根因——多行数据应改用 list-tree 多行呈现。
  */
-function splitCriteriaLines(criteria: string | undefined): string[] {
+function splitCriteriaLines(criteria: string[] | string | undefined): string[] {
+	if (!criteria) return [];
+	if (Array.isArray(criteria)) {
+		return criteria.map((s) => s.trim()).filter((s) => s.length > 0);
+	}
+	// 向后兼容旧 string 格式
 	return criteria
-		? criteria
-				.split(/\r?\n/)
-				.map((line) => line.trim())
-				.filter((line) => line.length > 0)
-		: [];
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
 }
 
 /**

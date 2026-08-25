@@ -167,8 +167,8 @@ export function renderWidgetLines(state: GoalRuntimeState, th: ThemeLike): strin
 	const lines: string[] = [header];
 
 	// successCriteria 摘要行（与 objective 成对展示；截断避免挤占 widget）
-	if (state.successCriteria) {
-		const criteria = toSingleLine(state.successCriteria);
+	if (state.successCriteria && state.successCriteria.length > 0) {
+		const criteria = toSingleLine(state.successCriteria.join("; "));
 		const trimmed =
 			criteria.length > OBJECTIVE_DISPLAY_LIMIT
 				? `${criteria.slice(0, OBJECTIVE_TRUNCATE_KEEP)}...`

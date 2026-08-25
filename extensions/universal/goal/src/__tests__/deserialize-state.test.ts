@@ -17,7 +17,7 @@ const STATUS_VALUES: GoalStatus[] = ["active", "paused", "blocked", "complete", 
 const goalStateArb = fc.record({
 	goalId: fc.uuid(),
 	objective: fc.string({ minLength: 1 }),
-	successCriteria: fc.option(fc.string()),
+	successCriteria: fc.oneof(fc.constant(undefined), fc.array(fc.string({ minLength: 1 }))),
 	slug: fc.option(fc.string({ minLength: 1 })),
 	status: fc.constantFrom(...STATUS_VALUES),
 	tokensUsed: fc.nat(),
