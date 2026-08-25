@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { delimiter as pathDelimiter, dirname, join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { RpcClient, type RpcClientOptions } from './rpc-client.js'
+import { getConfigDir } from './pi-paths.js'
 import { assertPiSessionFile } from './session-attach-assert.js'
 import type { IProcessManager } from '../../services/ports/pi-engine.js'
 import { toErrorMessage } from '../../utils/errors.js'
@@ -205,7 +206,13 @@ export class ProcessManager implements IProcessManager {
       pathEnv.PATH = `${piDir}${pathDelimiter}${process.env.PATH ?? ''}`
     }
 
-    const client = new RpcClient({ cwd, sessionId, ...options, env: { ...pathEnv, ...options?.env }, piCommand: piPath !== 'pi' ? piPath : undefined })
+    // XYZ_AGENT_DATA_DIR 显式注入：pi 主会话进程内的 extension（subagent-workflow
+    // engine 层 journal/隔离池）需要与 runtime 同源的 dataDir。dev 模式下 Electron
+    // 已设置该 env、经 XYZ_ 白名单透传成立；prod 默认路径（~/.xyz-agent）下 runtime
+    // 进程 env 没有该变量（shared getDataDir 缺省时不写 env），透传链断——故此处
+    // 用 getConfigDir()（读同一 env + 同一缺省）显式补齐。放 spread 首位，
+    // options?.env 仍可覆盖。
+    const client = new RpcClient({ cwd, sessionId, ...options, env: { XYZ_AGENT_DATA_DIR: getConfigDir(), ...pathEnv, ...options?.env }, piCommand: piPath !== 'pi' ? piPath : undefined })
     try {
       await client.start()
     } catch (e) {

@@ -18,8 +18,11 @@
 import type { AgentRunner } from "../orchestration/models/ports.ts";
 import type { AgentCallOpts, AgentResult } from "../orchestration/models/types.ts";
 import type { AgentEvent } from "../shared/agent-event.ts";
+import { getEngineDataDir } from "./engine/common/data-dir.ts";
+import { JournalWriter } from "./engine/common/event-journal.ts";
 import { createPiEngine, PI_POOL_KEY } from "./engine/engines/pi/registration.ts";
 import { executeOptionsToTaskSpec } from "./engine/engines/pi/task-spec-mapper.ts";
+import { resolveJournalPath } from "./engine/paths.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
 import type { AgentOutcome } from "./engine/types.ts";
 import { mapToExecuteOptions, mergeTimeoutSignal } from "./execute-options-mapper.ts";
@@ -107,6 +110,26 @@ export class SubprocessAgentRunner implements AgentRunner {
   ): Promise<AgentResult> {
     const startedAt = Date.now();
 
+    // ── P2 event journal 接线（设计 D6 第②级）──
+    // host 在 onEvent 回调内统一落盘（全引擎免费获得②级数据源——pi 也写 journal，
+    // 新增产物不改现有行为：session-runner 的 agentEvent 出口里 updateFromEvent /
+    // stream 分流都在 onEvent 转发之前执行，包一层只增加落盘，record/对话流零变化）。
+    // taskId 为宿主侧任务标识（journal 文件名与池引用计数 key）——executeAndAwait
+    // 不外露内部 record id（取真实 id 需 hook record store，非低成本），保持占位
+    //（`sa-` 前缀与 record id 同构）；W3 配置路由落地时换真实 record id。
+    const taskId = `sa-${crypto.randomUUID()}`;
+    const journal = new JournalWriter({
+      path: resolveJournalPath(getEngineDataDir(), this.engine.id, PI_POOL_KEY, taskId),
+      taskId,
+      engineId: this.engine.id,
+    });
+    // 包装：先写 journal 再转发原 onEvent（原 onEvent 未传时也恒传包装版——
+    // 下游 onEvent 通道是事件生成后的纯转发，无行为分支，仅多一次入队）
+    const journalingOnEvent = (event: AgentEvent): void => {
+      journal.append(event);
+      onEvent?.(event);
+    };
+
     try {
       // ── D-A9: timeoutMs 合并 signal ──
       const mergedSignal = mergeTimeoutSignal(signal, opts.timeoutMs);
@@ -114,22 +137,12 @@ export class SubprocessAgentRunner implements AgentRunner {
       // ── D-A2 + D-008: AgentCallOpts → ExecuteOptions 映射 ──
       const mappedOpts: ExecuteOptions = mapToExecuteOptions(opts, this.ctxModel);
 
-      // ── D-A8: onEvent 桥接 ──
-      // executeAndAwait 发强类型 AgentEvent（session-runner handleSdkEvent 出口）。
-      // workflow 的 onEvent 闭包（error-recovery.ts dispatchAgentCall）类型已升级为
-      // (event: AgentEvent) => updateFromEvent(liveRecord, event)（D-005）。
-      // 引擎层直接透传 onEvent——类型对齐后零桥接开销。
-      const bridgedOnEvent = onEvent;
-
       // ── P1 引擎接线：EnginePort.run（缺省 'pi'）──
-      // taskId 为宿主侧任务标识（journal 文件名与池引用计数 key，P2 消费）——P1 无
-      // journal 写入者，executeAndAwait 内部创建的 record.id 不外露，此处生成唯一
-      // 占位（`sa-` 前缀与 record id 同构）；P4 配置路由落地时改为真实 record.id。
       const runCtx: RunContext = {
-        taskId: `sa-${crypto.randomUUID()}`,
+        taskId,
         poolKey: PI_POOL_KEY,
         signal: mergedSignal,
-        ...(bridgedOnEvent !== undefined ? { onEvent: bridgedOnEvent } : {}),
+        onEvent: journalingOnEvent,
         ctxModel: this.ctxModel,
         ...(stream !== undefined ? { stream } : {}),
         // 解耦形态（有 schemaEnv 无 schema）的兜底通道——耦合形态下引擎从 task.schema
@@ -152,6 +165,10 @@ export class SubprocessAgentRunner implements AgentRunner {
         error: message,
         toolCalls: [],
       };
+    } finally {
+      // run 终态后 flush + fsync 一次（§3.3.6 写入纪律）；写失败已由 writer 内部
+      // warn + failed 收口，close 不抛（journal 是②级尽力而为数据源）
+      await journal.close();
     }
   }
 }
