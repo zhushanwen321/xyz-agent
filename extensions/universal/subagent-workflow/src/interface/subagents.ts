@@ -40,21 +40,34 @@ export interface SubagentDirectiveDetails {
 /**
  * 定向消息留痕：向主 session 落 subagent-directive custom_message entry。
  *
- * 不传 options（triggerTurn）——留痕不唤醒主 agent（不产生新 turn，§3.3.8
- * 「留痕 ≠ 处理」的结构性保证）；display:false 使 pi TUI 不渲染该 entry
- * （GUI 侧由 §3.3.3a 定向气泡通路渲染）。
+ * 按主 agent streaming 状态分流 sendMessage options。pi 0.84.1 sendCustomMessage
+ * 实装（agent-session.js）：isStreaming 且无 deliverAs 时默认 agent.steer()——会把
+ * 定向消息注入正在运行的主 agent LLM turn，违反「不经主 agent LLM 直达 subagent」。
+ * 故按调用时刻的权威 streaming 状态（ctx.isIdle()，与 sendCustomMessage 内部
+ * isStreaming 判据精确互补，含 agent_end 后 retry/continuation 窗口）分流：
+ * - streaming（isMainAgentIdle=false）：传 { deliverAs: "nextTurn" }——消息入
+ *   pi 内存 _pendingNextTurnMessages 队列，下个 turn 注入主 agent 上下文；不打断、
+ *   不 steer 当前 turn。注意：该队列不落 entry，留痕延迟到下个 turn
+ * - 非 streaming（isMainAgentIdle=true）：不传 options——立即 append entry 留痕
+ *   + message_start/end 双发（renderer live 链路即时可见，现状行为）
+ * 两者都不传 triggerTurn——不产生新 turn（§3.3.8「留痕 ≠ 处理」的结构性保证）；
+ * display:false 使 pi TUI 不渲染该 entry（GUI 侧由 §3.3.3a 定向气泡通路渲染）。
  */
 function emitSubagentDirective(
   pi: Pick<ExtensionAPI, "sendMessage">,
   details: SubagentDirectiveDetails,
   text: string,
+  isMainAgentIdle: boolean,
 ): void {
-  pi.sendMessage({
-    customType: SUBAGENT_DIRECTIVE_CUSTOM_TYPE,
-    content: text,
-    display: false,
-    details,
-  });
+  pi.sendMessage(
+    {
+      customType: SUBAGENT_DIRECTIVE_CUSTOM_TYPE,
+      content: text,
+      display: false,
+      details,
+    },
+    isMainAgentIdle ? undefined : { deliverAs: "nextTurn" },
+  );
 }
 
 /** RPC cancel 执行体（行为等价拆分自 handler，复杂度治理）。 */
@@ -91,11 +104,14 @@ async function rpcMessage(
       subagentId: recordId,
       text,
     });
-    // 留痕（§3.3.3）：成功派发后才落 entry——失败时不留痕，GUI 按 toast 错误重发
+    // 留痕（§3.3.3）：成功派发后才留痕——失败时不留痕，GUI 按 toast 错误重发。
+    // ctx.isIdle() 按调用时刻分流（streaming → nextTurn 队列延迟留痕，见
+    // emitSubagentDirective JSDoc），保证任何时刻都不 steer 主 agent 当前 turn
     emitSubagentDirective(
       pi,
       { subagentId: result.subagentId, slug: result.slug, direction: "user" },
       text,
+      ctx.isIdle(),
     );
     ctx.ui.notify(`Message delivered to subagent ${result.slug} (${result.subagentId})`, "info");
   } catch (err) {
@@ -129,6 +145,7 @@ async function rpcStart(
       pi,
       { subagentId: result.subagentId, slug: result.slug, direction: "user" },
       task,
+      ctx.isIdle(),
     );
     ctx.ui.notify(`Started subagent ${result.slug} (${result.subagentId})`, "info");
   } catch (err) {

@@ -10,7 +10,7 @@
  * mock 策略：
  * - getSubagentService（subagent-service.ts）用 vi.mock 桩化，控制返回的 service.cancel 行为
  * - abortRun（lifecycle.ts）用 vi.mock 桩化，控制抛错/成功
- * - ExtensionCommandContext 用最小 duck-typed mock（仅 mode/hasUI/ui.notify）
+ * - ExtensionCommandContext 用最小 duck-typed mock（mode/hasUI/ui.notify + isIdle 留痕分流判据）
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -38,8 +38,8 @@ import { abortRun } from "../orchestration/lifecycle.ts";
 
 // ── 类型辅助 ────────────────────────────────────────────────
 
-/** 最小 ctx mock：只需 mode/hasUI/ui.notify（handler RPC 分支唯一依赖）。 */
-type CtxMock = Pick<ExtensionCommandContext, "mode" | "hasUI" | "ui">;
+/** 最小 ctx mock：mode/hasUI/ui.notify（handler RPC 分支依赖）+ isIdle（留痕分流判据）。 */
+type CtxMock = Pick<ExtensionCommandContext, "mode" | "hasUI" | "ui" | "isIdle">;
 
 /** ExtensionAPI 的最小子集：registerCommand 捕获 handler + sendMessage 捕获留痕调用。 */
 type PiMock = Pick<ExtensionAPI, "registerCommand" | "sendMessage">;
@@ -73,6 +73,7 @@ describe("registerSubagentsCommand — RPC 分支 dispatch", () => {
       mode: "rpc",
       hasUI: true,
       ui: { notify: vi.fn() } as unknown as CtxMock["ui"],
+      isIdle: vi.fn(() => true),
     };
     cancelMock = vi.fn();
     // 默认返回一个带 cancel 的 service（由用例覆写 cancelMock 行为）
@@ -171,10 +172,13 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
       }),
       sendMessage: sendMessageMock,
     } as unknown as PiMock;
+    // isIdle 默认 true（非 streaming）——现有用例覆盖非 streaming 分支；
+    // streaming 分支用例内覆写为 false
     ctx = {
       mode: "rpc",
       hasUI: true,
       ui: { notify: vi.fn() } as unknown as CtxMock["ui"],
+      isIdle: vi.fn(() => true),
     };
   });
 
@@ -196,7 +200,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
     };
   }
 
-  it("message 正常 → messageHandler 接线（deliverMessage 收到还原后文本）+ 留痕 entry", async () => {
+  it("message 正常（非 streaming）→ messageHandler 接线 + 留痕 entry 立即落盘", async () => {
     const record = makeRecord();
     const deliverMessage = vi.fn();
     mockedGetService.mockReturnValue({
@@ -219,8 +223,39 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
     expect(msg.content).toBe("第一条消息\n带换行");
     expect(msg.display).toBe(false);
     expect(msg.details).toEqual({ subagentId: "sa-1", slug: "build-api", direction: "user" });
-    // 不传 triggerTurn（留痕不唤醒，§3.3.8）——options 整体缺席而非 { triggerTurn: false }
+    // 非 streaming（ctx.isIdle()=true）→ options 整体缺席：立即 append entry 留痕，
+    // 不 steer、不产生新 turn（§3.3.8）
     expect(options).toBeUndefined();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Message delivered to subagent build-api (sa-1)",
+      "info",
+    );
+  });
+
+  it("message 正常（streaming）→ 留痕走 deliverAs:nextTurn，不 steer 主 agent 当前 turn", async () => {
+    const record = makeRecord();
+    const deliverMessage = vi.fn();
+    mockedGetService.mockReturnValue({
+      getRecordForAction: vi.fn(() => record),
+      deliverMessage,
+    } as never);
+    // 主 agent turn 进行中（ctx.isIdle()=false）
+    ctx.isIdle = vi.fn(() => false);
+
+    await runHandler("message sa-1 turn 进行中的定向消息");
+
+    // pi 0.84.1 sendCustomMessage：isStreaming 且无 deliverAs 时默认 steer 当前
+    // turn——分流契约要求显式 nextTurn（入 _pendingNextTurnMessages 队列，下个
+    // turn 注入，不打断当前 turn）
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    const [msg, options] = sendMessageMock.mock.calls[0] as [
+      { customType: string; content: string; display: boolean; details: unknown },
+      { deliverAs?: string } | undefined,
+    ];
+    expect(msg.customType).toBe("subagent-directive");
+    expect(options).toEqual({ deliverAs: "nextTurn" });
+    // 派发与通知不受 streaming 状态影响
+    expect(deliverMessage).toHaveBeenCalledWith(record, "turn 进行中的定向消息", false);
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       "Message delivered to subagent build-api (sa-1)",
       "info",
@@ -268,7 +303,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
     );
   });
 
-  it("start 正常 → startHandler 接线（conversation:true 固定）+ 留痕 entry 带 subagentId/slug", async () => {
+  it("start 正常（非 streaming）→ startHandler 接线（conversation:true 固定）+ 留痕 entry 带 subagentId/slug", async () => {
     const execute = vi.fn().mockResolvedValue({
       subagentId: "sa-new",
       sessionFile: "/tmp/s.jsonl",
@@ -295,8 +330,33 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
     expect(msg.content).toBe("修复登录页\n并写测试");
     // start 的 subagentId 来自 startHandler 返回（StartHandlerResult.subagentId）
     expect(msg.details).toEqual({ subagentId: "sa-new", slug: "fix-login", direction: "user" });
+    // 非 streaming（ctx.isIdle()=true）→ options 整体缺席（立即留痕，不 steer）
     expect(options).toBeUndefined();
     expect(ctx.ui.notify).toHaveBeenCalledWith("Started subagent fix-login (sa-new)", "info");
+  });
+
+  it("start 正常（streaming）→ 留痕走 deliverAs:nextTurn，不 steer 主 agent 当前 turn", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      subagentId: "sa-run",
+      sessionFile: "/tmp/s2.jsonl",
+      details: { slug: "audit-log" },
+    });
+    mockedGetService.mockReturnValue({ execute } as never);
+    // 主 agent turn 进行中（ctx.isIdle()=false）
+    ctx.isIdle = vi.fn(() => false);
+
+    await runHandler("start audit-log 审计日志模块");
+
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    const [msg, options] = sendMessageMock.mock.calls[0] as [
+      { customType: string; content: string; details: unknown },
+      { deliverAs?: string } | undefined,
+    ];
+    expect(msg.customType).toBe("subagent-directive");
+    expect(msg.details).toEqual({ subagentId: "sa-run", slug: "audit-log", direction: "user" });
+    // streaming 分流契约：显式 nextTurn（默认无 options 会 steer 当前 turn）
+    expect(options).toEqual({ deliverAs: "nextTurn" });
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Started subagent audit-log (sa-run)", "info");
   });
 
   it("start 缺 task → Usage warning 指明缺 task，不触 service", async () => {
@@ -346,10 +406,12 @@ describe("registerWorkflowsCommand — RPC 分支 dispatch", () => {
         captured[name] = def;
       }),
     } as unknown as PiMock;
+    // /workflows handler 不走留痕，isIdle 仅满足 CtxMock 类型形状
     ctx = {
       mode: "rpc",
       hasUI: true,
       ui: { notify: vi.fn() } as unknown as CtxMock["ui"],
+      isIdle: vi.fn(() => true),
     };
   });
 

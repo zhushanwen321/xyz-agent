@@ -83,7 +83,7 @@ export function useThinkingLevelSync(
       const currentKey = resolveThinkingKey(current, map)
       const available = resolveAvailableLevels(map, reasoningOf())
       if (!available.includes(currentKey)) {
-        const highest = highestAvailableLevel(map)
+        const highest = highestAvailableLevel(map, reasoningOf())
         onReset(resolveThinkingValue(highest, map))
       }
       return

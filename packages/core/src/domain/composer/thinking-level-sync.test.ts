@@ -139,6 +139,24 @@ describe('useThinkingLevelSync', () => {
     expect(onReset).toHaveBeenCalledWith('off')
   })
 
+  it('U12: 首次触发（oldMap undefined）+ non-reasoning 模型 + 当前档不可用 → 重置到 off（漏传 reasoning 会落到 high/max）', () => {
+    const currentModelId = ref('p/nonreasoning')
+    const currentThinkingLevel = ref<string | undefined>('h')
+    const onReset = vi.fn()
+    const deps: ThinkingLevelSyncDeps = {
+      getThinkingLevelMap: vi.fn(() => ({ off: 'off', high: 'h', max: 'm' })),
+      getModelReasoning: vi.fn(() => false),
+    }
+    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    // immediate 首次触发：oldMap === undefined，current 'h' 有值
+    // currentKey = resolveThinkingKey('h', map) = 'high'；
+    // available(map, false) = ['off'] 不含 'high' → 重置
+    // 修复前：highestAvailableLevel(map) 漏传 reasoning → 'max' → onReset('m')（不可用档发给 runtime）
+    // 修复后：highestAvailableLevel(map, false) = 'off' → resolveThinkingValue('off', map) = 'off'
+    expect(onReset).toHaveBeenCalledTimes(1)
+    expect(onReset).toHaveBeenCalledWith('off')
+  })
+
   it('U11b: 切到 map 缺失模型（pi 默认五档）→ 当前不可用档重置到 high 而非 max', async () => {
     const currentModelId = ref('p/m1')
     const currentThinkingLevel = ref<string | undefined>('xhigh') // mimo 无此档
