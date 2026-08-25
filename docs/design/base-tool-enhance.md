@@ -3,7 +3,7 @@
 > 一句话结论：新增 `@zhushanwen/pi-base-tool-enhance` extension，同名 override pi 内置 bash 工具（前台行为委托 pi 官方工厂保持 100% 等价），增量实现 background 模式（强制白名单 + pending-notifications 完成通知（lifecycle 分档接入）+ 轮询接管与孤儿收殓兜底）与双模式可配置超时，随后整包废弃 unified-hooks。
 
 - 层级声明：当前层 = extension 能力设计 → 下一层 = 可实现的接口 / 数据模型 / 技术方案（层敏感准则全适用）
-- 状态：已评审通过（7 轮对抗式审查收敛，must-fix 归零；审查报告见 `.review/design-review-base-tool-enhance-20260825*.md`）；**已实施**——M1-M6 全部落地（feat-background-bash 分支），探针 P1-P6 全部实测关闭（无一回退路径触发），unified-hooks 已标记废弃
+- 状态：已评审通过（7 轮对抗式审查收敛，must-fix 归零；审查报告见 `.review/design-review-base-tool-enhance-20260825*.md`）；**已实施**——M1-M6 全部落地（feat-background-bash 分支），探针 P1-P6 全部实测关闭（无一回退路径触发），unified-hooks 已标记废弃；实施后经三路设计-代码一致性对抗审查（42 核对点），全部发现已修复闭环（registry 回落限定终态 + 跨进程 kill 拒绝 + pid 复用防御 + 文档 4 处补登记 + D18 落地 README），验收 S1-S10 场景实测记录齐全（S2/S9 为审查后补录）
 - 关联：废弃 [unified-hooks](../../../extensions/universal/unified-hooks/)；接入 [pending-notifications](../../../extensions/universal/pending-notifications/)
 
 ## 1. 背景目标
@@ -169,7 +169,7 @@ override 后工具的全部行为归新包负责，「前台模式怎么实现�
 | D11 | unified-hooks 废弃方式 | 整包 deprecated（package.json deprecate + AGENTS.md 清单移除 + fixture 脚本弱引用清理），test guard 的正则迁入 force-test 白名单（落点 M4），network guard 的挂死保护语义由「模型显式 timeout + 可配置全局前台默认超时」承接（正则不迁入，理由见 §3.5 正则基线），tool-error-handler 审计行为迁入本包 tool_error hook（落点 M1） | 保留包只删 hook：残留安装会与新包双重拦截（两家都拦 bash），必须整包退场 |
 | D12 | 后台任务生命周期出口 | **绑定 pi 进程，不绑定 session**：出口 = 自然退出 / 到点超时 / `bash_kill` / pi 进程退出（dispose 或 SIGTERM graceful）。此处 session 替换指 **pi 进程内**替换（CLI `/fork`、session 选择器切换（interactive-mode.js:2341）、或同进程 RPC session.* 命令）——不影响任务运行，extension 层接管见 D17；桌面端新建/fork 走 runtime **每-session-独立-pi-进程**模型（process-manager.ts:142-144，fork 出新进程、源进程保留，session-lifecycle.ts:729-733），任务跟随**发起进程**（registry 记 ownerPiPid），新进程不接管、不查询、不误杀（属主判定见 §3.5） | 绑 session：pi 的 session_shutdown 在 fork/switch/new/reload 全部触发（agent-session-runtime.js:102-160 teardownCurrent 调用点），切一次 session 就误杀全部后台任务，直接推翻 G1，reaper 兜底也随之失去意义 |
 | D13 | 强制后台时的 timeout 处置 | 命中白名单强转后台时**忽略 LLM 显式 timeout**，按「配置默认 → 不限」取值并在 result 注明 | 尊重显式值：模型在 unified-hooks 时代被训练出「跑测试带 timeout」习惯，`{pnpm test, timeout:120}` 会在 120s 被杀，精确复刻 §2.2 要解决的失败模式；白名单的存在意义正是「这类命令不该被时限约束」 |
-| D14 | subagent 嵌套 | 子 agent 进程内本包**降级**：禁用强制白名单与 background 参数，保持内置同步语义；以 subagent 注入的环境标记识别（探针 P5）。**暂时性约束**：subagent 长任务需求出现时应演进为 per-agent 显式 opt-in，而非永久继承全局白名单一刀切 | 子 agent 内后台化会破坏 workflow 结构化输出契约（预算耗尽时测试未回）；且子进程死后其 registry 目录永远不会再有 session 启动，孤儿无人 reap |
+| D14 | subagent 嵌套 | 子 agent 进程内本包**降级**：禁用强制白名单与 background 参数，保持内置同步语义；以 subagent 注入的环境标记识别（探针 P5）。降级**不关闭**前台默认超时注入——`foregroundTimeoutSeconds`「对所有前台命令生效」的 G3 语义与后台化能力正交（§3.5 timeout 优先级无 subagent 例外）。**暂时性约束**：subagent 长任务需求出现时应演进为 per-agent 显式 opt-in，而非永久继承全局白名单一刀切 | 子 agent 内后台化会破坏 workflow 结构化输出契约（预算耗尽时测试未回）；且子进程死后其 registry 目录永远不会再有 session 启动，孤儿无人 reap |
 | D15 | 用户中断与后台任务 | abort/interrupt 不传播到已提交的后台任务（execute 已立即返回，abort 仅作用于前台等待路径） | 有意为之；若联动取消，「提交后继续干别的」在中断场景全部作废，与 G1 矛盾 |
 | D16 | pending 生命周期分档 | pending-notifications 引入 `PENDING_LIFECYCLE: Record<PendingType, "session" \| "process">`（subagent/workflow=session，bash=process），register 写入 / normalize 回填 / U3 过期 / U4 跨 session / shutdown cancelled 等行为**按档判定**，不做 type 特判（见 §3.5 接入细则）。独立安装（CLI 通道）的版本耦合：本包对 pending-notifications 声明 peer 门槛——未装则通知链路缺失但 bash 后台功能完整（启动 warn 一次）；装旧版（无 `"bash"` type 与分档）则 bash 会被归一化为 workflow、session 档行为全套复活，启动时 warn 明确不支持 | 逐点豁免（初稿方案）：实际需 6 处 type 特判（TTL 写入侧、TTL 读取侧归一化回填、U4、shutdown、进程退出收尾、id 唯一语义），逐条腐蚀 D9 的通用设施原则；分档一次改动覆盖全部，scheduler 等未来 process 档类型声明即得、零额外改动 |
 | D17 | exit 感知与 session 替换接管 | 任务 exit 感知用**模块级轮询器单例**（约 2s 间隔 `kill(pid,0)` 判活），不依赖 ChildProcess exit 闭包；同进程 session 替换（/fork、选择器切换、RPC session.*）后新 extension 实例 load 时刷新轮询器的「当前 pi 引用」，完成通知投递到新 session（subagent-workflow notifier 的 dispose/revive 配对是同题先例，notifier.ts:244-258） | ChildProcess exit 闭包监听：session 替换会创建全新 ResourceLoader/eventBus 并重新 load extension（pending-notifications index.ts:81-88 实装注释，锚 loader.js:338-341、agent-session-services.js:63-68），闭包里的 bus/pi 引用全部 stale——完成通知在新 session 不可达，D12 在 extension 层不成立。轮询 2s 延迟对分钟级任务无感，换取单一机制跨 session 替换免疫 |
@@ -245,7 +245,7 @@ normalize 校验失败 → 该键回退默认 + logger.warn，**不整体拒载*
 | force-test | 迁自 unified-hooks test-timeout-guard 正则（test-timeout-guard.ts:17-60） | npm/pnpm test、npx vitest/jest/playwright、pytest、go test、cargo test… | 强制后台（D3/D13） |
 | force-longrun | 新增（unified-hooks 无此类） | dev server、`--watch`、`tail -f` 等长驻命令（判定标准 = 命令语义上无自然退出点，按命令名与 flag 组合匹配，不做 `--watch` 字面量子串匹配——`rg --files \| grep watch` 不命中） | 强制后台 |
 
-**匹配语义**：组内正则一律锚定**命令位置**（行首，或 `;` / `&&` / `||` / `|` / 换行之后的命令起始位），不做裸子串匹配——防 `git commit -m "fix: npm test"` 这类参数文本误伤（F2 的往返浪费不得在误伤面回归）。正则近似匹配的固有局限（诚实登记）：引号内换行 / heredoc 内容理论上可构造误伤样例、`$(...)` 命令替换内的命令会漏报——force 命中转后台是非破坏性的（模型可 `bash_output` 查输出，误伤代价一轮查询），漏报由模型显式 `background:true` 兜底。force-longrun 完整清单 M4 期定稿，原则 = 命令语义上无自然退出点。
+**匹配语义**：组内正则一律锚定**命令位置**（行首，或 `;` / `&&` / `||` / `|` / 换行之后的命令起始位），不做裸子串匹配——防 `git commit -m "fix: npm test"` 这类参数文本误伤（F2 的往返浪费不得在误伤面回归）。正则近似匹配的固有局限（诚实登记）：引号内换行 / heredoc 内容理论上可构造误伤样例、`$(...)` 命令替换内的命令会漏报、wrapper 形态（`sudo npm test` / `timeout 300 npm test` / `xargs npm test`——wrapper 名占命令位置、目标命令退到参数位）同样漏报——force 命中转后台是非破坏性的（模型可 `bash_output` 查输出，误伤代价一轮查询），漏报由模型显式 `background:true` 兜底。force-longrun 完整清单 M4 期定稿，原则 = 命令语义上无自然退出点。
 
 网络类命令（install / curl / git push / docker build 等，unified-hooks network-timeout-guard 的拦截对象）**不设 force 正则**：这类命令时长不定且结果常被立即需要，强制后台反而增加取结果往返。其挂死风险的承接方式 = 模型显式 timeout（pi 原生）+ G3 的 `foregroundTimeoutSeconds`（配置后对**所有**前台命令生效，无需正则清单）。network-timeout-guard 的正则不迁入——若正则 gate 注入，`foregroundTimeoutSeconds` 会出现「全局默认」与「仅命中才注入」两种解读（二轮审查发现的规格矛盾），删除该组使配置语义唯一。
 
@@ -332,7 +332,7 @@ pending-notifications 现有语义是 **session-entry 生命周期**（sessionId
 
 **bash_output**：`{task_id?}` → 省略时 list（单例表与 registry 终态条目合并，同 task_id 两处都有时以单例表为准——它的状态更新）：`{tasks: [{task_id, command(前 80 字符), state, exitCode?, reason?, startedAt, durationMs?}]}`；指定时返回 `{state, exitCode?, reason?, durationMs?, output(tail 2000 行/50KB 截断,同内置规则), outputFile, truncated}`。state 枚举：`running | killing | exited | orphaned`；exited 的 `reason`：`natural | timeout | killed | process-exit`（`killing` 是 bash_kill 已发令、轮询边沿未确认的瞬态）。
 
-**bash_kill**：`{task_id}` → `{killed:boolean, reason}`；实现 = 自实现进程树 kill，分支语义对齐 pi 内置（Windows `taskkill /F /T`、POSIX 进程组）——pi 的 killProcessTree 未从主入口导出（exports 仅 `.`/`./rpc-entry`/`./client`），不可 import。
+**bash_kill**：`{task_id}` → `{killed:boolean, reason}`；实现 = 自实现进程树 kill，分支语义对齐 pi 内置（Windows `taskkill /F /T`、POSIX 进程组）——pi 的 killProcessTree 未从主入口导出（exports 仅 `.`/`./rpc-entry`/`./client`），不可 import。**kill 目标限定本进程单例表条目**；registry 回落（含 bash_output 查询回落）**限定终态条目**（exited/orphaned，终态对 kill 直接返回 already exited）——registry 中他进程的 running 条目不可查、不可 kill（跨进程边界：处置权归发起进程，孤儿由 reaper 属主判定收殓）。kill 前校验 pid 判活与 start time 匹配（防 registry 陈旧条目遇 pid 复用误杀无关进程，宁不杀勿误杀）。
 
 ### 3.6 错误规格
 
@@ -345,6 +345,7 @@ pending-notifications 现有语义是 **session-entry 生命周期**（sessionId
 | kill 目标不存在 | bash_kill | `{killed:false, reason:"no such task", hint:"use bash_output to list"}` |
 | registry.json 损坏（写半程/外力编辑） | 读取时 | 写入沿用 temp+rename 原子写（同 llm-shared 范式，正常路径无半程文件）；损坏时重命名 `.corrupt` 保留现场 + 按空表重建 + debug 日志 warn 指向文件路径；running 条目丢失的残余风险（reaper 对其失明）诚实登记；输出 `.log` 文件不受影响，可降级查询 |
 | reaper 误判防御 | pid 被系统复用 | 判活时校验进程 start time（/proc 或 ps），不匹配视为已死不误杀无辜新进程；无法取 start time 的平台保守跳过（宁延迟勿误杀，同 worktree-manager 原则） |
+| bash_kill 误判防御 | registry 陈旧条目遇 pid 复用 | kill 前校验 pid 判活 + start time 匹配（同 reaper 原则）；不匹配视为复用嫌疑拒绝 kill 并说明，宁不杀勿误杀 |
 
 ## 4. 验收（真实场景）
 

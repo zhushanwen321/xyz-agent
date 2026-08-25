@@ -195,7 +195,8 @@ export interface RebuildResult {
  *
  * 算法（对齐 goal before-agent-start.ts 的读取契约）：
  * 1. 收集所有 pending:register entry，按 id 算差集（减去 pending:unregister 的 id）
- *    前提：id 全局唯一（workflow runId=`wf-<ts>-<rand>`、subagent id=`bg-/run-<tag>-<seq>-<ts>`）。
+ *    前提：id 全局唯一（workflow runId=`wf-<ts>-<rand>`、subagent id=`bg-/run-<tag>-<seq>-<ts>`、
+ *    bash 后台任务 id=`bt-<ts>-<rand>`）。
  *    若未来 id 复用（register→unregister→register 同 id），全局 Set 差集会误跳第二次 register。
  * 2. 对每个活跃的 register entry 检查：
  *    - sessionId 不符当前 session → expired（U4 跨 session 残留）

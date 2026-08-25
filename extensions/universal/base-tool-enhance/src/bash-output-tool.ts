@@ -20,7 +20,7 @@ import { readOutputTail } from "./background/output-tail.ts";
 import { getRegistryPath, readRegistry } from "./background/registry.ts";
 import { truncateCommand } from "./background/spawn-background.ts";
 import { getAllTasks } from "./background/task-store.ts";
-import type { BackgroundTask, RegistryEntry } from "./background/types.ts";
+import { isTerminalState, type BackgroundTask, type RegistryEntry } from "./background/types.ts";
 
 const bashOutputSchema = Type.Object({
 	task_id: Type.Optional(Type.String({ description: "Task id returned by the background bash tool. Omit to list all background tasks." })),
@@ -69,18 +69,26 @@ export function createBashOutputToolDefinition() {
 			const registry = readRegistry(getRegistryPath(getAgentDir(), sessionId));
 
 			if (args.task_id === undefined) {
-				// list：单例表优先，registry 终态条目补差（同 id 已在单例表则跳过）
+				// list：单例表优先，registry 终态条目补差（同 id 已在单例表则跳过）。
+				// registry 侧只并入终态（exited/orphaned）——running/killing 条目属他进程
+				// 任务（本进程活跃任务必在单例表），并入会显示幻影 running 行（§3.5
+				// 「单例表与 registry 终态条目合并」）
 				const rows = new Map<string, ReturnType<typeof toListRow>>();
 				for (const task of getAllTasks()) rows.set(task.taskId, toListRow(task));
 				for (const entry of registry.values()) {
+					if (!isTerminalState(entry.state)) continue;
 					if (!rows.has(entry.taskId)) rows.set(entry.taskId, toListRow(entry));
 				}
 				const tasks = [...rows.values()].sort((a, b) => a.startedAt - b.startedAt);
 				return textResult(JSON.stringify({ tasks }, null, JSON_INDENT));
 			}
 
-			// 详情：单例表 → 当前 session registry → 都没有
-			const task = getAllTasks().find((t) => t.taskId === args.task_id) ?? registry.get(args.task_id);
+			// 详情：单例表 → 当前 session registry（回落限定终态条目——他进程 running
+			// 条目不可查，§3.5 跨进程边界）→ 都没有
+			const registryEntry = registry.get(args.task_id);
+			const task =
+				getAllTasks().find((t) => t.taskId === args.task_id) ??
+				(registryEntry !== undefined && isTerminalState(registryEntry.state) ? registryEntry : undefined);
 			if (task === undefined) {
 				throw new Error(
 					`No such task: ${args.task_id}. Use bash_output without task_id to list all background tasks.`,

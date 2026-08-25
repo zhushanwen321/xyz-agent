@@ -115,16 +115,25 @@ export function spawnBackgroundTask(opts: SpawnBackgroundOptions): SpawnBackgrou
 	const maxConcurrent = opts.maxConcurrent ?? DEFAULT_MAX_CONCURRENT_BACKGROUND;
 	if (countActiveTasks() >= maxConcurrent) {
 		const oldest = oldestActiveTask();
-		if (oldest !== undefined) {
-			const cmd = truncateCommand(oldest.command);
+		if (oldest === undefined) {
+			// 防御缺口闭合：上限已满但找不出最老活跃任务 = maxConcurrent <= 0 且 0 活跃
+			// ——同样拒绝，否则上限静默失效。config normalize 保证 >= 1，此处兜底
+			// 绕过配置直传非法值的调用方（错误指向配置键，可操作）
 			return {
 				ok: false,
 				error:
-					`Background task limit reached (max ${maxConcurrent} concurrent). ` +
-					`Oldest task: ${oldest.taskId} (${cmd}). ` +
-					`Kill it with bash_kill {task_id:"${oldest.taskId}"} or wait for it to finish.`,
+					`Background task concurrency limit configuration invalid (maxConcurrent=${maxConcurrent}, must be >= 1). ` +
+				"Fix maxConcurrentBackground in the base-tool-enhance config.",
 			};
 		}
+		const cmd = truncateCommand(oldest.command);
+		return {
+			ok: false,
+			error:
+				`Background task limit reached (max ${maxConcurrent} concurrent). ` +
+				`Oldest task: ${oldest.taskId} (${cmd}). ` +
+				`Kill it with bash_kill {task_id:"${oldest.taskId}"} or wait for it to finish.`,
+		};
 	}
 
 	// cwd 校验对齐 pi 内置文案（bash.js createLocalBashOperations）

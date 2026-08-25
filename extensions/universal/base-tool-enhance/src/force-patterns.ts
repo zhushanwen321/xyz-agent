@@ -2,9 +2,9 @@
  * 强制后台白名单（M4，设计文档 §3.5「内置正则基线」+「匹配语义」段）。
  *
  * 两组内置正则 + 用户配置正则合并：
- *  - force-test：逐条迁自 unified-hooks test-timeout-guard.ts（原 `(^|\s|&&|\|{1,2}|;)`
- *    前缀收紧为命令位置锚定 CMD_ANCHOR——原 `\s` 分支会把 `git commit -m "fix: npm
- *    test"` 这类参数文本误伤，命令匹配语义不变）
+ *  - force-test：逐条迁自 unified-hooks test-timeout-guard.ts（主体逐条迁移；锚定
+ *    前缀从原 `(^|\s|&&|\|{1,2}|;)` 收紧为命令位置锚定 CMD_ANCHOR，匹配语义双向
+ *    翻转——见 FORCE_TEST_PATTERN_ENTRIES 注释）
  *  - force-longrun：M4 定稿清单，原则 = 命令语义上无自然退出点（dev server / watch /
  *    tail -f 等），按命令名与 flag 组合匹配
  *
@@ -26,7 +26,12 @@ export interface BuiltinForcePatternEntry {
 
 /**
  * force-test 组：测试套件命令（迁自 unified-hooks test-timeout-guard.ts:17-60，
- * 除锚定前缀外逐条原样迁移，语义不变）。
+ * 主体逐条迁移；锚定收紧为命令位置本身是语义变化，两个方向翻转——
+ *  - 不再误伤：原 `\s` 前缀会把 `git commit -m "fix: npm test"` 这类参数文本当命令
+ *    命中，锚定后不再命中
+ *  - 新增漏报：wrapper 形态 `sudo npm test` / `timeout 300 npm test` /
+ *    `xargs npm test` 原靠 `\s` 前缀命中，锚定后 wrapper 名占命令位置、目标命令退到
+ *    参数位不再命中（§3.5 匹配语义的 wrapper 局限），由模型显式 background:true 兜底
  */
 export const FORCE_TEST_PATTERN_ENTRIES: readonly BuiltinForcePatternEntry[] = [
 	// === Node.js / JS / TS ===

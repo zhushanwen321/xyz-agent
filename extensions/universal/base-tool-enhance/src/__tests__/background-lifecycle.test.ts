@@ -33,6 +33,7 @@ import { createBashKillToolDefinition } from "../bash-kill-tool.ts";
 import { createBashOutputToolDefinition } from "../bash-output-tool.ts";
 import { pollTickForTest, setOnTaskExit, stopPoller } from "../background/poller.ts";
 import { getRegistryPath, readRegistry, taskToRegistryEntry, writeRegistryEntry } from "../background/registry.ts";
+import type { RegistryEntry } from "../background/types.ts";
 import { DEFAULT_MAX_CONCURRENT_BACKGROUND, spawnBackgroundTask } from "../background/spawn-background.ts";
 import { clearTaskStoreForTest, getActiveTasks, getTask } from "../background/task-store.ts";
 import { reapBackgroundTasksNow, resetProcessExitGuardForTest } from "../background/process-exit-guard.ts";
@@ -46,20 +47,20 @@ dataDirRef.dir = DATA_DIR;
 const SESSION_ID = "sess-lifecycle";
 const REGISTRY_PATH = getRegistryPath(DATA_DIR, SESSION_ID);
 
-function makeCtx(): { cwd: string; sessionManager: { getSessionId: () => string } } {
-	return { cwd: process.cwd(), sessionManager: { getSessionId: () => SESSION_ID } };
+function makeCtx(sessionId: string = SESSION_ID): { cwd: string; sessionManager: { getSessionId: () => string } } {
+	return { cwd: process.cwd(), sessionManager: { getSessionId: () => sessionId } };
 }
 
 const bashOutput = createBashOutputToolDefinition();
 const bashKill = createBashKillToolDefinition();
 
-async function outputTool(args: { task_id?: string }): Promise<string> {
-	const result = await bashOutput.execute("call-1", args, undefined, undefined, makeCtx() as never);
+async function outputTool(args: { task_id?: string }, sessionId: string = SESSION_ID): Promise<string> {
+	const result = await bashOutput.execute("call-1", args, undefined, undefined, makeCtx(sessionId) as never);
 	return result.content[0]?.type === "text" ? result.content[0].text : "";
 }
 
-async function killTool(taskId: string): Promise<string> {
-	const result = await bashKill.execute("call-1", { task_id: taskId }, undefined, undefined, makeCtx() as never);
+async function killTool(taskId: string, sessionId: string = SESSION_ID): Promise<string> {
+	const result = await bashKill.execute("call-1", { task_id: taskId }, undefined, undefined, makeCtx(sessionId) as never);
 	return result.content[0]?.type === "text" ? result.content[0].text : "";
 }
 
@@ -67,7 +68,7 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function spawnBg(command: string, extra: { timeoutSec?: number } = {}) {
+function spawnBg(command: string, extra: { timeoutSec?: number; maxConcurrent?: number } = {}) {
 	return spawnBackgroundTask({
 		command,
 		cwd: process.cwd(),
@@ -75,6 +76,20 @@ function spawnBg(command: string, extra: { timeoutSec?: number } = {}) {
 		sessionId: SESSION_ID,
 		...extra,
 	});
+}
+
+/** 手写 registry 条目（模拟他进程/历史 session 写入的形状）。 */
+function makeRegistryEntry(overrides: Partial<RegistryEntry> & { taskId: string }): RegistryEntry {
+	return {
+		pid: 424242,
+		command: "echo foreign",
+		outputFile: "/tmp/foreign.log",
+		startedAt: 1,
+		state: "running",
+		ownerPiPid: 999999,
+		sessionId: SESSION_ID,
+		...overrides,
+	};
 }
 
 beforeEach(() => {
@@ -215,6 +230,36 @@ describe("bash_output tool", () => {
 		await expect(outputTool({ task_id: "bt-none" })).rejects.toThrow(/No such task/);
 	});
 
+	it("P0-1: list merges only TERMINAL registry entries — running entries stay invisible (§3.5)", async () => {
+		// 独立 session 目录：单例表空 + registry 含 running 与 exited 两条他进程条目
+		// （模拟 resume 被强杀 session：reaper 转终态前的窗口里 registry 残留 running）
+		const sid = "sess-p0-list";
+		writeRegistryEntry(getRegistryPath(DATA_DIR, sid), makeRegistryEntry({ taskId: "bt-xrun", state: "running" }));
+		writeRegistryEntry(
+			getRegistryPath(DATA_DIR, sid),
+			makeRegistryEntry({ taskId: "bt-xdone", state: "exited", exitCode: 0, reason: "natural", endedAt: 2, durationMs: 1 }),
+		);
+
+		const listed = JSON.parse(await outputTool({}, sid)) as { tasks: Array<{ task_id: string; state: string }> };
+		const ids = listed.tasks.map((t) => t.task_id);
+		expect(ids).toContain("bt-xdone"); // 终态条目并入（查历史）
+		expect(ids).not.toContain("bt-xrun"); // running 条目不并入——无幻影 running 行
+	});
+
+	it("P0-1: detail registry fallback is terminal-only — cross-process running entry not queryable (§3.5)", async () => {
+		const sid = "sess-p0-detail";
+		const path = getRegistryPath(DATA_DIR, sid);
+		writeRegistryEntry(path, makeRegistryEntry({ taskId: "bt-xrun2", state: "running" }));
+		writeRegistryEntry(path, makeRegistryEntry({ taskId: "bt-xdone2", state: "exited", exitCode: 3 }));
+
+		// running 条目不可查（等价于本进程不存在该任务）
+		await expect(outputTool({ task_id: "bt-xrun2" }, sid)).rejects.toThrow(/No such task/);
+		// 终态条目可查（历史回落）
+		const detail = JSON.parse(await outputTool({ task_id: "bt-xdone2" }, sid)) as { state: string; exitCode: number };
+		expect(detail.state).toBe("exited");
+		expect(detail.exitCode).toBe(3);
+	});
+
 	it("deleted output file degrades to <lost> without crashing (§3.6)", async () => {
 		const spawned = spawnBg("sleep 0.2 && echo gone");
 		if (!spawned.ok) throw new Error(spawned.error);
@@ -299,6 +344,82 @@ describe("bash_kill tool (killing intent, single-point finalization)", () => {
 		expect(result.killed).toBe(false);
 		expect(result.reason).toBe("already exited (code 0)");
 	});
+
+	it("P0-2.1: registry-only running entry (other pi process) → cross-process rejection, no kill signal", async () => {
+		// 独立 session 目录：registry-only running 条目 = 他进程任务（本进程活跃任务必在单例表）
+		const sid = "sess-p0-kill";
+		const foreignPid = process.pid; // 活进程 pid——若误走 kill 会误杀测试进程自身，同时断言不发生
+		writeRegistryEntry(
+			getRegistryPath(DATA_DIR, sid),
+			makeRegistryEntry({ taskId: "bt-foreign-run", state: "running", pid: foreignPid, sessionId: sid }),
+		);
+
+		const result = JSON.parse(await killTool("bt-foreign-run", sid)) as {
+			killed: boolean;
+			reason: string;
+			hint?: string;
+		};
+		expect(result.killed).toBe(false);
+		expect(result.reason).toBe("cross-process running task owned by another pi process");
+		expect(result.hint).toContain("reaper");
+		expect(killTreeCalls).not.toContain(foreignPid); // 未发 kill 信号
+	});
+
+	it("P0-2.1: registry terminal entry → already exited（回落限定终态，终态不可 kill）", async () => {
+		const sid = "sess-p0-kill";
+		writeRegistryEntry(
+			getRegistryPath(DATA_DIR, sid),
+			makeRegistryEntry({
+				taskId: "bt-foreign-done",
+				state: "orphaned",
+				sessionId: sid,
+				endedAt: 2,
+				durationMs: 1,
+			}),
+		);
+		const result = JSON.parse(await killTool("bt-foreign-done", sid)) as { killed: boolean; reason: string };
+		expect(result.killed).toBe(false);
+		expect(result.reason).toBe("already exited");
+	});
+
+	it("P0-2.2: store entry whose pid already died (poll edge not landed) → already exited style, no kill/intent", async () => {
+		const spawned = spawnBg("sleep 0.2");
+		if (!spawned.ok) throw new Error(spawned.error);
+		const { task } = spawned;
+		await sleep(500); // 进程已死但不 tick——单例表仍 running
+		expect(getTask(task.taskId)?.state).toBe("running");
+
+		const result = JSON.parse(await killTool(task.taskId)) as { killed: boolean; reason: string };
+		expect(result.killed).toBe(false);
+		expect(result.reason).toContain("already exited");
+		expect(killTreeCalls).not.toContain(task.pid); // 死 pid 不发 kill
+		expect(getTask(task.taskId)?.state).toBe("running"); // 未标 killing intent（终态归轮询边沿）
+	});
+
+	it("P0-2.2: pidStartTime mismatch (pid reuse suspected) → refuse kill", async () => {
+		const spawned = spawnBg("sleep 30");
+		if (!spawned.ok) throw new Error(spawned.error);
+		const { task } = spawned;
+		// 构造不匹配的登记值（真实进程 start time 之外的时间）——pid 活但身份不符
+		task.pidStartTime = (task.pidStartTime ?? 0) + 500;
+
+		const result = JSON.parse(await killTool(task.taskId)) as { killed: boolean; reason: string; hint?: string };
+		expect(result.killed).toBe(false);
+		expect(result.reason).toContain("pid reuse suspected");
+		expect(result.hint).toContain("manually");
+		expect(killTreeCalls).not.toContain(task.pid); // 宁不杀勿误杀
+		expect(getTask(task.taskId)?.state).toBe("running"); // 未标 intent
+	});
+
+	it("P0-2.2: matching pidStartTime → kill proceeds（start time 校验不误拦正常 kill）", async () => {
+		const spawned = spawnBg("sleep 30");
+		if (!spawned.ok) throw new Error(spawned.error);
+		const { task } = spawned;
+		// spawn 时读到的真实 start time 原样保留 → 校验通过，正常 kill 路径
+		const result = JSON.parse(await killTool(task.taskId)) as { killed: boolean };
+		expect(result.killed).toBe(true);
+		expect(killTreeCalls).toContain(task.pid);
+	});
 });
 
 describe("concurrency cap (D10, default 8)", () => {
@@ -316,6 +437,17 @@ describe("concurrency cap (D10, default 8)", () => {
 			expect(ninth.error).toContain(`max ${DEFAULT_MAX_CONCURRENT_BACKGROUND} concurrent`);
 			expect(ninth.error).toContain(tasks[0]); // 最老 task_id
 			expect(ninth.error).toContain("bash_kill");
+		}
+	});
+
+	it("P0-3: maxConcurrent=0 with zero active tasks is rejected (no silent pass, limit stays effective)", () => {
+		// 0 活跃 >= 0 上限 → oldestActiveTask() undefined——原实现静默放行，上限失效
+		const result = spawnBg("echo should-fail", { maxConcurrent: 0 });
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain("concurrency limit configuration invalid");
+			expect(result.error).toContain("maxConcurrent=0");
+			expect(result.error).toContain("maxConcurrentBackground");
 		}
 	});
 });

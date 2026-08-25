@@ -470,6 +470,32 @@ describe("timeout injection dual-mode (M4, 优先级 LLM 显式 > 配置默认 >
 		expect(officialExecuteMock).toHaveBeenCalledWith("t1", { command: "ls", timeout: 42 }, undefined, undefined, expect.anything());
 	});
 
+	it("D14 × G3 正交：subagent 降级不关前台超时注入（未填 timeout → 配置默认照常注入前台委托）", async () => {
+		// 锁行为：前台注入路径不检查 subagent（bash-tool.ts G3 语义）——降级只废
+		// background/白名单，subagent 内长命令仍受全局前台默认超时挂死保护
+		setupFactory();
+		isSubagentMock.mockReturnValue(true);
+		useConfig({ foregroundTimeoutSeconds: 42 });
+		officialExecuteMock.mockResolvedValue({ content: [], details: undefined });
+		const tool = createBashOverrideToolDefinition();
+		await tool.execute(
+			"t-sub-fg",
+			{ command: "sleep 30", background: true },
+			undefined,
+			undefined,
+			createCtx() as never,
+		);
+
+		expect(spawnBackgroundTaskMock).not.toHaveBeenCalled();
+		expect(officialExecuteMock).toHaveBeenCalledWith(
+			"t-sub-fg",
+			{ command: "sleep 30", timeout: 42 },
+			undefined,
+			undefined,
+			expect.anything(),
+		);
+	});
+
 	it("前台：显式 7 优先于配置默认 42", async () => {
 		setupFactory();
 		useConfig({ foregroundTimeoutSeconds: 42 });
