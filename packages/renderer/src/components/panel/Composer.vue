@@ -167,7 +167,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, createVNode, onBeforeUnmount, onMounted, provide, ref, render, watch, type Ref } from 'vue'
+import { computed, createVNode, onBeforeUnmount, onMounted, provide, reactive, ref, render, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUp, Loader2, Square, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -187,8 +187,10 @@ import { useProjectSkills, useGlobalSkills } from '@/composables/features/settin
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useCommandPopoverTrigger } from '@/composables/panel/useCommandPopoverTrigger'
 import { useComposerShell, type ShellInputInstance } from '@/composables/panel/composer-shell'
+import type { DraftStore } from '@xyz-agent/dom-core/composer/input'
 import { handleImagePaste } from '@/composables/panel/useImageAttachment'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
+import { useSessionScopedState } from '@/composables/useSessionScopedState'
 
 const props = withDefaults(
   defineProps<{
@@ -282,7 +284,23 @@ const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(pr
 // composer-box 容器 ref（拖拽落位 + 视觉）——先声明，再喂给 shell
 const composerBoxRef = ref<HTMLElement | null>(null)
 // FR4: per-session 草稿存储（内存不持久化）；session 切换时保存旧/恢复新草稿
-const drafts = new Map<string, string>()
+// ADR-0049：裸 Map 迁到 useSessionScopedState 分区——结构化消除 session 泄漏
+const draftsState = useSessionScopedState(sessionIdRef, () => reactive({ text: '' }))
+/** DraftStore 窄接口：消费方（restore.ts）只关心 get/save/delete，不持有 Map 引用 */
+const drafts: DraftStore = {
+  getDraft: (sid: string) => {
+    let text = ''
+    draftsState.updateFor(sid, (s) => { text = s.text })
+    return text
+  },
+  saveDraft: (sid: string, text: string) => {
+    draftsState.updateFor(sid, (s) => { s.text = text })
+  },
+  deleteDraft: (sid: string) => {
+    // cleanup 移除分区（triggerSessionCleanups 也会调，此处是发送成功后即时清理）
+    draftsState.cleanup(sid)
+  },
+}
 
 // ── W4 壳改写：core 模块 deps 组装 + 视觉派生集中在 composer-shell.ts（替代 14 个 useComposer* shim）──
 const shell = useComposerShell({
@@ -329,17 +347,18 @@ watch(
   (newId, oldId) => {
     if (oldId) {
       // browsing 态 getText() 返回历史条目，存用户实际输入
-      drafts.set(oldId, isBrowsing.value ? (draft.value || '') : (inputRef.value?.getText() ?? ''))
+      drafts.saveDraft(oldId, isBrowsing.value ? (draft.value || '') : (inputRef.value?.getText() ?? ''))
     }
     // 切 session 退出活跃 staging 模式（fork/handoff），避免来源残留指向错误 session
     staging.exit()
     resetBrowsing()
     if (newId) {
-      const saved = drafts.get(newId)
+      const saved = drafts.getDraft(newId)
       if (saved) {
         draft.value = saved
         inputRef.value?.setText(saved, 'end')
       } else {
+        // saved 为空串 = 未保存 → 走清空分支（语义与原 Map.get 返回 undefined 一致：falsy）
         draft.value = ''
         inputRef.value?.clear()
       }

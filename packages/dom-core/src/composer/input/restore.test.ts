@@ -13,7 +13,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ref } from 'vue'
 import { useComposerRestore } from './restore'
-import type { ComposerRestoreDeps } from './types'
+import type { ComposerRestoreDeps, DraftStore } from './types'
 import type { ComposerInputInstance } from '@xyz-agent/core/domain/composer'
 import type { Segment } from '@xyz-agent/shared'
 
@@ -31,11 +31,22 @@ function makeInputInstance(overrides: Partial<ComposerInputInstance> = {}): Comp
   } as unknown as ComposerInputInstance
 }
 
-/** setup：构造 ComposerRestoreDeps（draft/inputRef/drafts/sessionId） */
+/** mock DraftStore（ADR-0049：窄接口替代 Map<string,string>，spy 可断言调用） */
+function makeDraftStore(initial?: Map<string, string>): DraftStore & { _store: Map<string, string> } {
+  const store = initial ?? new Map<string, string>()
+  return {
+    _store: store,
+    getDraft: vi.fn((sid: string) => store.get(sid) ?? ''),
+    saveDraft: vi.fn((sid: string, text: string) => store.set(sid, text)),
+    deleteDraft: vi.fn((sid: string) => store.delete(sid)),
+  }
+}
+
+/** setup：构造 ComposerRestoreDeps（draft/inputRef/draftStore/sessionId） */
 function setup(sessionId: string | null = 's1') {
   const draft = ref('')
   const inputRef = ref<ComposerInputInstance | null>(makeInputInstance())
-  const drafts = new Map<string, string>()
+  const drafts = makeDraftStore()
   const deps: ComposerRestoreDeps = {
     draft,
     inputRef,
@@ -47,24 +58,27 @@ function setup(sessionId: string | null = 's1') {
 }
 
 describe('useComposerRestore clearInput', () => {
-  it('sid 非空：draft 置空 + drafts.delete(sid) + inputRef.clear()', () => {
+  it('sid 非空：draft 置空 + drafts.deleteDraft(sid) + inputRef.clear()', () => {
     const c = setup('s1')
-    c.drafts.set('s1', '保留草稿')
+    c.drafts.saveDraft('s1', '保留草稿')
     c.draft.value = '待发送'
     c.clearInput()
     expect(c.draft.value).toBe('')
-    expect(c.drafts.has('s1')).toBe(false)
+    // ADR-0049：deleteDraft 经工厂 cleanup 移除分区（spy 验证调用）
+    expect(c.drafts.deleteDraft).toHaveBeenCalledWith('s1')
+    expect(c.drafts._store.has('s1')).toBe(false)
     expect(c.inputRef.value?.clear).toHaveBeenCalled()
   })
 
-  it('sid=null：draft 置空 + 不删 drafts + 仍调 inputRef.clear()', () => {
+  it('sid=null：draft 置空 + 不调 deleteDraft + 仍调 inputRef.clear()', () => {
     const c = setup(null)
-    c.drafts.set('other', '其他 session 草稿')
+    c.drafts.saveDraft('other', '其他 session 草稿')
     c.draft.value = 'x'
     c.clearInput()
     expect(c.draft.value).toBe('')
-    // sid 为 null 时不调 drafts.delete（边界：landing 态）
-    expect(c.drafts.has('other')).toBe(true)
+    // sid 为 null 时不调 drafts.deleteDraft（边界：landing 态）
+    expect(c.drafts.deleteDraft).not.toHaveBeenCalled()
+    expect(c.drafts._store.has('other')).toBe(true)
     expect(c.inputRef.value?.clear).toHaveBeenCalled()
   })
 
