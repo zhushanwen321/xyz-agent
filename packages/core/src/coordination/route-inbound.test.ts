@@ -54,6 +54,7 @@ function makeEffects(overrides?: Partial<InboundEffects>): InboundEffects {
     onSessionExited: vi.fn(),
     onMessageComplete: vi.fn(),
     onSubagents: vi.fn(),
+    onSubagentEntries: vi.fn(),
     onWorkflowUpdate: vi.fn(),
     onGlobalError: vi.fn(),
     onSessionError: vi.fn(),
@@ -288,6 +289,22 @@ describe('configureRouteInbound — global 通道 + L9 + effects（⑤/⑦）', 
     expect(effects.onSubagents).toHaveBeenCalledTimes(1)
   })
 
+  it('⑦ session.subagentEntriesAppended 条目：dispatchSession 后 onSubagentEntries 回调（坏形状跳过，E-4）', () => {
+    const ports = makePorts()
+    const effects = makeEffects()
+    const dispatcher = configureRouteInbound(ports, effects)
+    const entry = { type: 'message', parentId: null, timestamp: '2026-08-25T00:00:00.000Z', message: { role: 'user', content: [] } }
+    dispatcher(sessionMsg('session.subagentEntriesAppended', { subagentId: 'rec-1', entries: [entry] }))
+    expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1)
+    expect(effects.onSubagentEntries).toHaveBeenCalledWith('s1', 'rec-1', [entry])
+
+    // 坏形状（subagentId 空 / entries 非数组）→ 跳过回调，dispatch 照常
+    dispatcher(sessionMsg('session.subagentEntriesAppended', { subagentId: '', entries: [entry] }))
+    dispatcher(sessionMsg('session.subagentEntriesAppended', { subagentId: 'rec-1', entries: 'not-array' }))
+    expect(effects.onSubagentEntries).toHaveBeenCalledTimes(1)
+    expect(ports.events.dispatchSession).toHaveBeenCalledTimes(3)
+  })
+
   it('⑦ session.workflowUpdate 条目：dispatchSession 后 onWorkflowUpdate 回调（payload 锚定 protocol SSOT）', () => {
     const ports = makePorts()
     const effects = makeEffects()
@@ -367,13 +384,13 @@ describe('configureRouteInbound — ROUTE_TABLE Record 直查等价（Q1-4）', 
   })
 
   it('Q1-4b 全部 4 个注册 type 逐一命中各自条目（无 sid 时全部落 FALLBACK，不误命中）', () => {
-    const registeredTypes = ['session.exited', 'message.complete', 'session.subagents', 'session.workflowUpdate'] as const
+    const registeredTypes = ['session.exited', 'message.complete', 'session.subagents', 'session.subagentEntriesAppended', 'session.workflowUpdate'] as const
     for (const type of registeredTypes) {
       const ports = makePorts()
       const effects = makeEffects()
       const dispatcher = configureRouteInbound(ports, effects)
       // 有 sid → 命中 Record 条目（dispatchSession + 对应 effect 回调）
-      dispatcher(sessionMsg(type, type === 'session.subagents' ? { subagents: [] } : {}))
+      dispatcher(sessionMsg(type, type === 'session.subagents' ? { subagents: [] } : type === 'session.subagentEntriesAppended' ? { subagentId: 'rec-1', entries: [] } : {}))
       expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1)
       // 无 sid → 不命中条目，落 FALLBACK 的 global 分支（行为与 Record 化前一致）
       dispatcher({ type, payload: {} } as unknown as ServerMessage)

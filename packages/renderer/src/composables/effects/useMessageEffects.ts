@@ -2,8 +2,9 @@
  * useMessageEffects —— useConnection 的入站副作用回调实现（架构审计 §11.4）。
  *
  * core use-connection 是 headless（零 store / 零 DOM），入站消息的副作用回调
- * （session.exited / message.complete / session.subagents / session.workflowUpdate /
- * 全局 error）与 runtime 崩溃清理（finalizeAllStreaming / clearAllPending）统一归位到本层。
+ * （session.exited / message.complete / session.subagents / session.subagentEntriesAppended /
+ * session.workflowUpdate / 全局 error）与 runtime 崩溃清理（finalizeAllStreaming /
+ * clearAllPending）统一归位到本层。
  *
  * 本文件是 renderer 层（可 import store），供 useConnection 装配点经
  * setConnectionPorts 注入 core（ConnectionPorts.effects / onRuntimeUnavailable）。
@@ -21,7 +22,8 @@ import { useToast } from '@/composables/useToast'
 import { handleCompletion } from '@/composables/effects/useCompletionNotify'
 import { invalidateStreamSubscription } from '@xyz-agent/core'
 import type { InboundEffects } from '@xyz-agent/core'
-import type { ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
+import { subagentVirtualId } from '@xyz-agent/shared'
+import type { PiEntry, PiToolCallEntryForm, ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
 
 const t = i18n.global.t
 
@@ -84,6 +86,21 @@ function handleSubagents(sessionId: string, subagents: SubagentRecord[]): void {
   useSubagentStore().applyRecords(sessionId, subagents)
 }
 
+/**
+ * 处理 session.subagentEntriesAppended 事件（E-4，relay tee 产出的 entry 帧兜底）。
+ *
+ * 帧先于 drawer 打开到达时也写分区（分区惰性创建，§6.1）——消费不依赖 drawer 生命周期，
+ * virtualId 经 shared 工厂构造（INVAR-1.1），写入 chatStore 虚拟分区（store 不互 import：
+ * 本层是既有跨 store 协调层，同 handleSessionExited 先例）。
+ */
+function handleSubagentEntries(
+  sessionId: string,
+  subagentId: string,
+  entries: Array<PiEntry | PiToolCallEntryForm>,
+): void {
+  useChatStore().applySubagentEntries(subagentVirtualId(sessionId, subagentId), entries)
+}
+
 /** 处理 session.workflowUpdate 事件（workflow 增量信号兜底）。update 锚定 protocol SSOT（MF-4）。 */
 function handleWorkflowUpdate(sessionId: string, update: ServerMessageMap['session.workflowUpdate']['update']): void {
   useWorkflowStore().triggerWorkflowReload(sessionId, update.status ?? 'unknown')
@@ -117,6 +134,7 @@ export function createInboundEffects(): InboundEffects {
     onSessionExited: handleSessionExited,
     onMessageComplete: handleMessageComplete,
     onSubagents: handleSubagents,
+    onSubagentEntries: handleSubagentEntries,
     onWorkflowUpdate: handleWorkflowUpdate,
     onGlobalError: handleGlobalError,
     onSessionError: handleSessionError,

@@ -7,7 +7,8 @@
 
   两类虚拟 id（D4）：
   - subagent:<mainSid>:<subId> 三段式（chat 块 / sidebar 入口）：
-    fetchAndInject 拉历史注入虚拟分区 + running 态 subscribeStream 订阅实时增量
+    fetchAndInject 拉历史注入虚拟分区 + 恒订阅 stream_delta 实时增量（E-4：entry 帧走
+    routeInbound 兜底链消费，不依赖 drawer 打开；此处只管打字机 delta）
   - agentcall:<acsId> 两段式（workflow tab 点 agent call 入口）：
     快照只读，仅拉历史不接实时流式（D4 裁决：agent call 实时性由 workflow tab 列表 status 体现）
 
@@ -168,7 +169,9 @@ const subagentMeta = computed<{ agent: string; slug?: string; meta?: string } | 
 
 /**
  * 按虚拟 id 类型加载对话流数据并注入 chatStore 虚拟分区。
- * - subagent 三段式：fetchAndInject 拉历史 + running 态 subscribeStream 实时增量
+ * - subagent 三段式：fetchAndInject 拉历史 + 恒订阅 stream_delta（E-4 / R3 消解：不再依赖
+ *   isRunning 陈旧缓存判定订阅时机——entry 帧消费走 routeInbound 兜底链不依赖 drawer，
+ *   stream_delta 订阅打开即挂，非 running 时空转零成本）
  * - agentcall 两段式：快照只读，仅拉历史（D4：不接实时流式）
  */
 async function loadSubagentData(vid: string): Promise<void> {
@@ -178,18 +181,15 @@ async function loadSubagentData(vid: string): Promise<void> {
       const mainSessionId = extractMainSessionId(vid)
       const subId = extractSubagentId(vid)
       await subagentStore.fetchAndInject(mainSessionId, subId, (id, msgs) => chatStore.setMessages(id, msgs))
-      // running 态订阅实时增量（U8：scope 用固定 drawer token STREAM_SCOPE）
-      if (subagentStore.isRunning(mainSessionId, subId)) {
-        subagentStore.subscribeStream(
-          STREAM_SCOPE,
-          mainSessionId,
-          subId,
-          vid,
-          (id, lines) => chatStore.applySubagentStreamDelta(id, lines),
-          (id) => chatStore.finalizeSubagentStream(id),
-          (id, msgs) => chatStore.setMessages(id, msgs),
-        )
-      }
+      // 恒订阅（U8 scope token；E-4 R3 消解点：订阅时机与 record 状态机解耦）
+      subagentStore.subscribeStream(
+        STREAM_SCOPE,
+        mainSessionId,
+        subId,
+        vid,
+        (id, lines) => chatStore.applySubagentStreamDelta(id, lines),
+        (id) => chatStore.finalizeSubagentStream(id),
+      )
     } else if (isAgentCallVirtualId(vid)) {
       // D4：agentcall 快照只读。mainSid 从 panelStore 取（虚拟 id 两段式不含 mainSid）。
       const mainSessionId = panelStore.focusedSessionId

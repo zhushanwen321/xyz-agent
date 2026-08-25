@@ -33,9 +33,11 @@ import type {
   Message,
   PiEntry,
   PiMessageEntry,
+  PiToolCallEntryForm,
   Segment,
   ServerMessage,
   SteerFollowUpMode,
+  ToolCall,
 } from '@xyz-agent/shared'
 import { normalizeContent, segmentsToText } from '@xyz-agent/shared'
 import type { RetryState, QueueState, FinalizeReason } from './store-types'
@@ -64,6 +66,40 @@ interface PendingItem {
  * runtime 自身也卡死的极端场景（runtime 主进程卡死时 watchdog 跑不了）。
  */
 export const DEFAULT_STREAMING_TIMEOUT_MS = 600_000 // 10min
+
+/**
+ * [E-4] toolCall overlay 形态挂载到分区最后一条 assistant（subagent entry 帧消费，§6.1）。
+ *
+ * 模块级纯函数（输入输出均不可变构造）：与主对话流 message.tool_call_start effect 同语义，
+ * 但目标分区无 message_start/delta overlay 链——挂载目标是 reducer 基线投影后的末位 assistant
+ * （pi 事件序保证 tool_execution_* 晚于所属 assistant 的 message_end 定稿，基线已含该消息的
+ * toolCalls 提取版 status:'completed'——overlay 改 running 是对「重放视角终态假设」的 live 修正）。
+ * 幂等：同 toolCallId 已存在且已有终态（toolResult 已回填 output / error）→ no-op，防同帧
+ * [toolCall form, toolResult] 交错下把回填终态倒退回 running。
+ */
+function attachRunningToolCall(prev: Message[], form: PiToolCallEntryForm): Message[] {
+  const idx = findLastAssistantIndex(prev)
+  if (idx < 0) return prev
+  const host = prev[idx]!
+  const callId = typeof form.toolCallId === 'string' ? form.toolCallId : `tc-${crypto.randomUUID()}`
+  const existing = host.toolCalls?.find((t) => t.id === callId)
+  if (existing && (existing.output !== undefined || existing.status === 'error')) return prev
+  const toolCalls = existing
+    ? host.toolCalls!.map((t) => (t === existing ? { ...t, status: 'running' as const } : t))
+    : [
+        ...(host.toolCalls ?? []),
+        {
+          id: callId,
+          toolName: typeof form.toolName === 'string' ? form.toolName : 'tool',
+          input: form.arguments ?? {},
+          status: 'running',
+          startTime: Date.now(),
+        } satisfies ToolCall,
+      ]
+  const next = [...prev]
+  next[idx] = { ...host, toolCalls }
+  return next
+}
 
 /**
  * 读 streaming 超时阈值（D-003 阈值可配置 + D-016 IPC）。
@@ -524,6 +560,44 @@ export function createChatStore() {
     entryStates.set(sessionId, applyEntry(cur, entry))
   }
 
+  /**
+   * [E-4] subagent entry 帧消费（subagent-realtime-channel §6.1/§6.2）：虚拟分区喂
+   * applyEntry + 基线投影 + toolCall overlay。
+   *
+   * 输入 = session.subagentEntriesAppended 帧的 entries（PiEntry 与 PiToolCallEntryForm
+   * 混合，形态与主对话流 message.message_end / tool_call_* 帧的 entry 同构）。三步：
+   * 1. PiEntry 逐条喂 reducer（applyEntryFrame，toolResult 的 deliveredToolResultIds
+   *    幂等去重继承；与 reload 腿（getSubagentHistory）喂同一 reducer——live ≡ reload
+   *    构造性成立的 relay 侧锚点，等价性断言见 runtime __tests__/equivalence/relay-live-reload）。
+   * 2. 基线投影：reducer state.messages 整体替换分区 ref（copy + truncate，对齐 setMessages
+   *    形态）。定稿是权威：stream_delta 打字机中间态（applySubagentStreamDelta 建的 sa-*
+   *    streaming 实体）被定稿取代（§6.2 覆盖语义）。已知限制：基线只含本连接存续期间的
+   *    live entry——丢帧后经 fetchAndInject 快照补齐的头部会被下一次投影替换掉，靠重开
+   *    drawer 重新快照自愈（与 W22 对账收敛前的主对话流 ref/reducer 分离同等程度的临时态）。
+   * 3. toolCall overlay：running toolCall 挂末位 assistant（attachRunningToolCall，帧内
+   *    toolResult 先处理时幂等跳过）。
+   *
+   * store 不互 import 铁律：本方法经 routeInbound InboundEffects 回调链消费
+   * （renderer useMessageEffects 注入），subagent 虚拟分区 id 由调用方经 shared 工厂构造。
+   */
+  function applySubagentEntries(virtualId: string, entries: Array<PiEntry | PiToolCallEntryForm>): void {
+    // PiEntry 先喂 reducer（fold 顺序敏感：assistant 定稿 → toolResult 的窗口配对回填依赖顺序）
+    for (const entry of entries) {
+      if (entry.type !== 'toolCall') applyEntryFrame(virtualId, entry)
+    }
+    // 基线投影（无 PiEntry 的纯 toolCall 帧不触发投影——分区保持，overlay 直接操作 ref）
+    const state = entryStates.get(virtualId)
+    if (state) {
+      commitMessages(messages, virtualId, truncateToolOutputBatch(state.messages.map((m) => ({ ...m }))))
+    }
+    // toolCall overlay 后置：基于投影后分区操作，保证挂载目标是基线末位 assistant
+    for (const form of entries) {
+      if (form.type !== 'toolCall') continue
+      const prev = messages.value.get(virtualId)?.value ?? []
+      commitMessages(messages, virtualId, attachRunningToolCall(prev, form))
+    }
+  }
+
   /** message.* 事件单一入口（F2 消除 double-dispatch）：经 dispatchMessageEvent 查 effects/registry.ts 执行全部副作用。非 message.* / 未注册 type no-op。重构等价性见 ./README.md。 */
   function applyMessageEvent(sessionId: string, msg: ServerMessage): void {
     dispatchMessageEvent(
@@ -779,6 +853,7 @@ export function createChatStore() {
     prependHistory,
     applySubagentStreamDelta: (virtualId: string, lines: string[]) => streamingStateMachine.applySubagentStreamDelta(virtualId, lines),
     finalizeSubagentStream: (virtualId: string) => streamingStateMachine.finalizeSubagentStream(virtualId),
+    applySubagentEntries,
     appendUser,
     pushPending,
     drainN,

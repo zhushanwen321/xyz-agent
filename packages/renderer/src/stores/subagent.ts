@@ -260,19 +260,29 @@ export const useSubagentStore = defineStore('subagent', () => {
    * W4：delta / 终态收口均经注入的 chat store 回调（chatApplyDelta / chatFinalizeStream），
    * chat store 成为所有 assistant content mutation 的唯一入口。
    * - lines 非空 → chatApplyDelta（chat.applySubagentStreamDelta）
-   * - lines === undefined → 终态：停 streaming + 收口 + 拉完整历史覆盖（setMessages，含 IO）
+   * - lines === undefined → 单条 assistant 定稿的清除帧：仅收口 streaming 实体
+   *   （chatFinalizeStream），**不停订阅不 refetch**——E-4（subagent-realtime-channel
+   *   §6.3 退役步骤 1 + R1 消解）：tee 侧每条 assistant message_end 都发清除帧（非任务
+   *   终态），停订阅会断 chatMode 续聊轮（R1 复活）；定稿内容由同事件必发的
+   *   session.subagentEntriesAppended entry 帧投影覆盖（routeInbound 兜底链，不经本订阅），
+   *   refetch 变冗余。旧 extension widget 通道（E-3 合入前的过渡窗口）的 delta 为累积全文
+   *   替换式，收口即完整文本，无 entry 帧也不丢定稿。
+   *
+   * 双键订阅（E-4 差异适配）：tee 产出的 stream_delta payload.sessionId 是**虚拟分区 id**
+   * （relay-tee），routeInbound 按 payload.sessionId 路由 → dispatchSession(virtualId)；
+   * 旧 widget 通道 payload.sessionId 是主 sid。过渡期两通道并存（E-3 未合入前 extension
+   * 仍发 widget 帧），两个 key 挂同一 handler——内容同为累积全文替换式，重复到达幂等。
    *
    * U8：第一个参数 `scope` 是 **drawer scope token**（非 panelId）——overlay 移除后唯一消费方是
    * drawer SubagentTab，它传固定常量 STREAM_SCOPE='drawer:subagent'。streamUnsub 按此 token keyed，
    * drawer 单实例同一时刻只订阅一个 subagent（切 subagent 时先 stopStream 清旧再 set 起新）。
    *
    * @param scope drawer scope token（消费方传固定常量，如 SubagentTab 的 STREAM_SCOPE）
-   * @param mainSessionId 主 session ID（WS 事件订阅键）
+   * @param mainSessionId 主 session ID（WS 事件订阅键：旧 widget 通道帧路由 key）
    * @param recordId subagent record id（过滤 stream_delta payload.recordId）
-   * @param virtualId 虚拟 session ID（chatStore.messages 分区 key + streaming delta/finalize 目标）
+   * @param virtualId 虚拟 session ID（tee 帧路由 key + chatStore.messages 分区 key + streaming delta/finalize 目标）
    * @param chatApplyDelta chatStore.applySubagentStreamDelta（注入，W4 streaming delta 收口入口）
    * @param chatFinalizeStream chatStore.finalizeSubagentStream（注入，W4 终态收口入口）
-   * @param setMessages chatStore.setMessages（注入，终态拉完整历史覆盖用，不 import chatStore）
    */
   function subscribeStream(
     scope: string,
@@ -281,28 +291,26 @@ export const useSubagentStore = defineStore('subagent', () => {
     virtualId: string,
     chatApplyDelta: ApplyDeltaFn,
     chatFinalizeStream: FinalizeStreamFn,
-    setMessages: SetMessagesFn,
   ): void {
     stopStream(scope)
-    const unsub = events.on(mainSessionId, (msg) => {
+    const handler = (msg: { type?: string; payload?: unknown }): void => {
       if (msg.type !== 'subagent.stream_delta') return
       const payload = msg.payload as { recordId?: string; lines?: string[] | undefined }
       if (payload.recordId !== recordId) return
 
       if (payload.lines === undefined) {
-        stopStream(scope)
-        // 收口 streaming 实体（chat store sealed 收口），再用权威历史覆盖
+        // 清除帧 = 单条 assistant 定稿：只收口 streaming 实体。订阅保留（chatMode 续聊轮
+        // 的后续 delta 仍可达，R1 构造性消解）；定稿内容由 entry 帧投影链覆盖。
         chatFinalizeStream(virtualId)
-        // 终态拉完整历史覆盖（fire-and-forget）。U7 后无 tombstone：drawer SubagentTab 不 evict
-        // 虚拟分区（D5：tab 切换/关闭不 evict），终态覆盖是正确行为而非「复活」。
-        void sessionApi.getSubagentHistory(mainSessionId, recordId)
-          .then((history) => { setMessages(virtualId, history) })
-          .catch((e) => console.error('[subagent] finalize refetch failed:', e))
         return
       }
       chatApplyDelta(virtualId, payload.lines)
+    }
+    // 双键：旧 widget 通道（payload.sessionId=主 sid）与 tee（payload.sessionId=虚拟分区 id）
+    const unsubs = [events.on(mainSessionId, handler), events.on(virtualId, handler)]
+    streamUnsub.set(scope, () => {
+      for (const unsub of unsubs) unsub()
     })
-    streamUnsub.set(scope, unsub)
   }
 
   /**
