@@ -65,6 +65,15 @@ describe("createGoal — 唯一创建入口", () => {
 		expect(ports.states.length).toBeGreaterThanOrEqual(1);
 	});
 
+	it("U23c: createGoal(..., slug, successCriteria) → state.successCriteria 深等于入参数组", () => {
+		const session = createGoalSession();
+		const ports = makeFakePorts();
+		const ok = createGoal(session, "obj", {}, ports, "slug", ["a", "b"]);
+		expect(ok).toBe(true);
+		// string[] 透传：types/goal/service 类型链的直接断言
+		expect(session.state!.successCriteria).toEqual(["a", "b"]);
+	});
+
 	it("已有 active goal → 拒绝创建（返回 false）", () => {
 		const session = createGoalSession();
 		const ports = makeFakePorts();

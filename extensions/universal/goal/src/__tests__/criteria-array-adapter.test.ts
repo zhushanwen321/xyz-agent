@@ -7,8 +7,9 @@
  * - 完整字段后 state.successCriteria 为 string[]
  */
 import { describe, expect, it } from "vitest";
+import { Value } from "typebox/value";
 
-import { handleCreate, type GoalControlParamsT } from "../adapters/goal-control-adapter";
+import { GoalControlParams, handleCreate, type GoalControlParamsT } from "../adapters/goal-control-adapter";
 import type { GoalRuntimeState } from "../engine/types";
 import type { UiPort } from "../ports";
 import type { ServicePorts } from "../service";
@@ -141,6 +142,57 @@ describe("handleCreate — successCriteria string[]", () => {
 
 		expect(() => handleCreate(dirtyParams, session, ports)).toThrow(/successCriteria[\s\S]*Correct:/);
 		expect(() => handleCreate(dirtyParams, session, ports)).not.toThrow(TypeError);
+	});
+
+	it("U5b: 恰 1 条与恰 8 条（含 emoji/中文）→ schema 与 handleCreate 双层均不 throw，state 长度 1/8", () => {
+		// 恰 8 条，含 emoji/中文（pattern ^[^\r\n]+$ 不误杀多字节字符）
+		const eight = [
+			"通过测试✅",
+			"条件二：构建成功",
+			"tsc --noEmit clean",
+			"文件 X 存在且含内容 Y",
+			"docs updated 📄",
+			"review done",
+			"no regressions",
+			"ship it 🚀",
+		];
+
+		// schema 层：minItems:1 / maxItems:8 边界正值
+		expect(
+			Value.Check(GoalControlParams, {
+				action: "create",
+				objective: "do something",
+				successCriteria: ["single"],
+			}),
+		).toBe(true);
+		expect(
+			Value.Check(GoalControlParams, {
+				action: "create",
+				objective: "do something",
+				successCriteria: eight,
+			}),
+		).toBe(true);
+
+		// handleCreate 直调层：均不 throw，state 数组长度 1/8
+		const session1 = createGoalSession();
+		expect(() =>
+			handleCreate(
+				{ action: "create", objective: "do something", successCriteria: ["single"] },
+				session1,
+				makeFakePorts(),
+			),
+		).not.toThrow();
+		expect(session1.state!.successCriteria).toHaveLength(1);
+
+		const session8 = createGoalSession();
+		expect(() =>
+			handleCreate(
+				{ action: "create", objective: "do something", successCriteria: eight },
+				session8,
+				makeFakePorts(),
+			),
+		).not.toThrow();
+		expect(session8.state!.successCriteria).toHaveLength(8);
 	});
 
 	it("successCriteria undefined → throw", () => {

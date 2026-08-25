@@ -18,6 +18,7 @@ import {
 	budgetLimitPrompt,
 	contextInjectionPrompt,
 	continuationPrompt,
+	escapeXmlText,
 	formatBudget,
 	objectiveUpdatedPrompt,
 } from "../prompts";
@@ -75,6 +76,12 @@ describe("XML escaping in prompts", () => {
 		expect(out).toContain("&lt;b&gt;x&lt;/b&gt;");
 		expect(out).toContain("&lt;i&gt;y&lt;/i&gt;");
 		expect(out).toContain("&amp; z");
+	});
+
+	it("U16b: 已转义输入无条件二次转义（行为锁定，不做实体识别）", () => {
+		expect(escapeXmlText("already escaped: &amp; <tag>")).toBe(
+			"already escaped: &amp;amp; &lt;tag&gt;",
+		);
 	});
 });
 
@@ -249,11 +256,29 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 		expect(out).toContain("meeting every successCriteria above");
 	});
 
+	it("U29: objectiveUpdatedPrompt：有 successCriteria → 注入编号列表（补齐第 4 个 prompt 函数）", () => {
+		const state = makeState({ successCriteria: ["cond A", "cond B"] });
+		const out = objectiveUpdatedPrompt(state, "old obj");
+		expect(out).toContain("<successCriteria>");
+		expect(out).toContain("1. cond A");
+		expect(out).toContain("2. cond B");
+	});
+
 	it("无 successCriteria → 不含 <successCriteria> 段（锁定 fallback）", () => {
 		const state = makeState(); // createGoalState 不带 successCriteria
 		const out = continuationPrompt(state, 0);
 		expect(out).not.toContain("<successCriteria>");
 		expect(out).not.toContain("every condition there must be met");
+	});
+
+	it("U17: successCriteria 空数组 → 与 undefined 同为空态，prompt 不增 <successCriteria> 段", () => {
+		const state = makeState({ successCriteria: [] });
+		expect(continuationPrompt(state, 0)).not.toContain("<successCriteria>");
+		expect(budgetLimitPrompt(state)).not.toContain("<successCriteria>");
+		expect(objectiveUpdatedPrompt(state, "old obj")).not.toContain("<successCriteria>");
+		expect(contextInjectionPrompt(state, 0)).not.toContain("<successCriteria>");
+		// 条件文案同样不出现（continuationPrompt 专属分支）
+		expect(continuationPrompt(state, 0)).not.toContain("every condition there must be met");
 	});
 
 	it("successCriteria 中的 <>& 被转义（防注入）", () => {

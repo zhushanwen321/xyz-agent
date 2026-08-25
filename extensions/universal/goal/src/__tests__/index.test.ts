@@ -86,6 +86,25 @@ describe("pi.__goalInit（NFR-AC-8 / T1.8）", () => {
 		expect(persisted.objective).toBe("build feature X");
 	});
 
+	it("U22b: 5 参签名（slug + successCriteria string[]）→ true 且 state.successCriteria 深等于入参", () => {
+		const { pi, ctx, states } = makeFactoryFixture();
+		goalExtension(pi);
+		// GoalInitFn 签名防漂移：successCriteria 为 string[]（数组入参，非旧 string）
+		const init = pi.__goalInit as (
+			o: string,
+			b: unknown,
+			c: ExtensionContext,
+			slug: string,
+			sc: string[],
+		) => boolean;
+		const ok = init("objective", undefined, ctx, "slug", ["cond A", "cond B"]);
+		expect(ok).toBe(true);
+		// appendState 持久化的 state 深透传 successCriteria 数组
+		const persisted = states[0] as { slug?: string; successCriteria?: string[] };
+		expect(persisted.slug).toBe("slug");
+		expect(persisted.successCriteria).toEqual(["cond A", "cond B"]);
+	});
+
 	it("ctx 缺失 → 返回 false（创建失败，不 throw）", () => {
 		// FR-4.2/D-16: ctx 必填
 		const { pi } = makeFactoryFixture();
