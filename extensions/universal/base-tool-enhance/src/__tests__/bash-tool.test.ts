@@ -1,14 +1,34 @@
-// src/__tests__/bash-tool.test.ts
+// src/__tests__/bash-tool.test.ts —— M1 前台委托回归 + M2 background 分支接入
 import { describe, expect, it, vi } from "vitest";
 
-// mock pi 官方工厂：本模块的前台行为是委托（方案 B），测试断言「透传面」而非真实
-// spawn 行为——真实行为由 pi 上游保证 + 探针 P2 实测。
+// mock pi 官方工厂：前台行为是委托（方案 B），测试断言「透传面」而非真实 spawn
+// 行为——真实行为由 pi 上游保证 + 探针 P2 实测。
 const { createBashToolDefinitionMock, officialExecuteMock } = vi.hoisted(() => ({
 	createBashToolDefinitionMock: vi.fn(),
 	officialExecuteMock: vi.fn(),
 }));
 vi.mock("@earendil-works/pi-coding-agent", () => ({
 	createBashToolDefinition: createBashToolDefinitionMock,
+	getAgentDir: () => "/tmp/bte-fake-agent-dir",
+}));
+
+// mock spawn-background：background 分支的生命周期由 background-lifecycle.test.ts
+// 真实测，这里只断言「分支路由正确 + 参数传递正确」。
+const { spawnBackgroundTaskMock, resolveTimeoutMock, isSubagentMock } = vi.hoisted(() => ({
+	spawnBackgroundTaskMock: vi.fn(),
+	resolveTimeoutMock: vi.fn((sec: number | undefined) => sec),
+	isSubagentMock: vi.fn(() => false),
+}));
+vi.mock("../background/spawn-background.ts", async (importOriginal) => {
+	const orig = await importOriginal<typeof import("../background/spawn-background.ts")>();
+	return {
+		...orig,
+		spawnBackgroundTask: spawnBackgroundTaskMock,
+		resolveBackgroundTimeoutSec: resolveTimeoutMock,
+	};
+});
+vi.mock("../background/subagent-guard.ts", () => ({
+	isSubagentProcess: isSubagentMock,
 }));
 
 import { createBashOverrideToolDefinition } from "../bash-tool.ts";
@@ -28,13 +48,18 @@ function createOfficialFactoryResult(cwd: string) {
 function setupFactory() {
 	createBashToolDefinitionMock.mockReset();
 	officialExecuteMock.mockReset();
-	createBashToolDefinitionMock.mockImplementation((_cwd: string) =>
-		createOfficialFactoryResult(_cwd),
-	);
+	spawnBackgroundTaskMock.mockReset();
+	resolveTimeoutMock.mockClear();
+	isSubagentMock.mockReset();
+	isSubagentMock.mockReturnValue(false);
+	resolveTimeoutMock.mockImplementation((sec: number | undefined) => sec);
+	createBashToolDefinitionMock.mockImplementation((_cwd: string) => createOfficialFactoryResult(_cwd));
 }
 
-function createCtx(cwd: string): { cwd: string } {
-	return { cwd };
+const CWD = "/tmp/bte-workdir";
+
+function createCtx() {
+	return { cwd: CWD, sessionManager: { getSessionId: () => "sess-1" } };
 }
 
 describe("createBashOverrideToolDefinition", () => {
@@ -84,17 +109,17 @@ describe("createBashOverrideToolDefinition", () => {
 
 	it("delegates execute to the official factory execute with recognized fields only (background stripped)", async () => {
 		setupFactory();
-		const expectedResult = { content: [{ type: "text" as const, text: "hi" }] };
+		const expectedResult = { content: [{ type: "text" as const, text: "hi" }], details: undefined };
 		officialExecuteMock.mockResolvedValue(expectedResult);
 
 		const tool = createBashOverrideToolDefinition();
-		const ctx = createCtx(process.cwd());
+		const ctx = createCtx();
 		const signal = new AbortController().signal;
 		const onUpdate = vi.fn();
 
 		const result = await tool.execute(
 			"call-1",
-			{ command: "echo hi", timeout: 30, background: true },
+			{ command: "echo hi", timeout: 30 },
 			signal,
 			onUpdate,
 			ctx as never,
@@ -110,20 +135,15 @@ describe("createBashOverrideToolDefinition", () => {
 			ctx,
 		);
 		expect(result).toBe(expectedResult);
+		expect(spawnBackgroundTaskMock).not.toHaveBeenCalled();
 	});
 
 	it("delegates without timeout when absent (undefined preserved)", async () => {
 		setupFactory();
-		officialExecuteMock.mockResolvedValue({ content: [] });
+		officialExecuteMock.mockResolvedValue({ content: [], details: undefined });
 		const tool = createBashOverrideToolDefinition();
 
-		await tool.execute(
-			"call-2",
-			{ command: "ls" },
-			undefined,
-			undefined,
-			createCtx(process.cwd()) as never,
-		);
+		await tool.execute("call-2", { command: "ls" }, undefined, undefined, createCtx() as never);
 
 		expect(officialExecuteMock).toHaveBeenCalledWith(
 			"call-2",
@@ -136,7 +156,7 @@ describe("createBashOverrideToolDefinition", () => {
 
 	it("builds the delegate with ctx.cwd (authoritative) and caches per cwd", async () => {
 		setupFactory();
-		officialExecuteMock.mockResolvedValue({ content: [] });
+		officialExecuteMock.mockResolvedValue({ content: [], details: undefined });
 		const tool = createBashOverrideToolDefinition();
 
 		// load 时刻初始 delegate 用 process.cwd()
@@ -144,36 +164,93 @@ describe("createBashOverrideToolDefinition", () => {
 		expect(createBashToolDefinitionMock).toHaveBeenCalledWith(process.cwd());
 
 		// execute 的 ctx.cwd 与缓存不一致 → 以 ctx.cwd 重建
-		await tool.execute("c1", { command: "ls" }, undefined, undefined, createCtx("/tmp/alt") as never);
+		await tool.execute("c1", { command: "ls" }, undefined, undefined, { cwd: "/tmp/alt" } as never);
 		expect(createBashToolDefinitionMock).toHaveBeenCalledWith("/tmp/alt");
 		expect(createBashToolDefinitionMock).toHaveBeenCalledTimes(2);
 
 		// 同 cwd 复用缓存（不再新建）
-		await tool.execute("c2", { command: "ls" }, undefined, undefined, createCtx("/tmp/alt") as never);
+		await tool.execute("c2", { command: "ls" }, undefined, undefined, { cwd: "/tmp/alt" } as never);
 		expect(createBashToolDefinitionMock).toHaveBeenCalledTimes(2);
 
 		// cwd 再变 → 重建
-		await tool.execute("c3", { command: "ls" }, undefined, undefined, createCtx("/tmp/alt2") as never);
+		await tool.execute("c3", { command: "ls" }, undefined, undefined, { cwd: "/tmp/alt2" } as never);
 		expect(createBashToolDefinitionMock).toHaveBeenCalledTimes(3);
 	});
+});
 
-	it("M1 parity: background:true still runs foreground (delegated, no task_id response path)", async () => {
+describe("background branch routing (M2)", () => {
+	it("background:true routes to spawnBackgroundTask with ctx-derived paths and returns task_id message", async () => {
 		setupFactory();
-		const foregroundResult = { content: [{ type: "text" as const, text: "stdout of echo hi" }] };
-		officialExecuteMock.mockResolvedValue(foregroundResult);
-		const tool = createBashOverrideToolDefinition();
+		spawnBackgroundTaskMock.mockReturnValue({
+			ok: true,
+			task: {
+				taskId: "bt-1724589012-a3f7",
+				pid: 12345,
+				command: "sleep 5 && echo done",
+				outputFile: "/tmp/bte-fake-agent-dir/base-tool-enhance/sess-1/bt-1724589012-a3f7.log",
+				registryPath: "/tmp/registry.json",
+				startedAt: 1,
+				state: "running",
+				ownerPiPid: process.pid,
+				sessionId: "sess-1",
+			},
+		});
 
+		const tool = createBashOverrideToolDefinition();
 		const result = await tool.execute(
 			"call-bg",
-			{ command: "echo hi", background: true },
+			{ command: "sleep 5 && echo done", background: true, timeout: 60 },
+			new AbortController().signal,
 			undefined,
-			undefined,
-			createCtx(process.cwd()) as never,
+			createCtx() as never,
 		);
 
-		// background 核心是 M2 单元；M1 断言 = 返回官方前台结果（未进入未实现的 task_id 分支）
-		expect(result).toBe(foregroundResult);
-		const text = (result as { content: Array<{ text: string }> }).content[0]?.text;
-		expect(text).not.toContain("task_id");
+		// 不走前台委托
+		expect(officialExecuteMock).not.toHaveBeenCalled();
+		expect(spawnBackgroundTaskMock).toHaveBeenCalledWith({
+			command: "sleep 5 && echo done",
+			cwd: CWD,
+			dataDir: "/tmp/bte-fake-agent-dir",
+			sessionId: "sess-1",
+			timeoutSec: 60,
+		});
+
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+		expect(text).toContain("bt-1724589012-a3f7");
+		expect(text).toContain("pid: 12345");
+		expect(text).toContain("Output file:");
+		expect(text).toContain('bash_output {task_id:"bt-1724589012-a3f7"}');
+	});
+
+	it("background spawn failure surfaces the error", async () => {
+		setupFactory();
+		spawnBackgroundTaskMock.mockReturnValue({
+			ok: false,
+			error: "Background task limit reached (max 8 concurrent).",
+		});
+		const tool = createBashOverrideToolDefinition();
+		await expect(
+			tool.execute("call-bg-err", { command: "x", background: true }, undefined, undefined, createCtx() as never),
+		).rejects.toThrow(/limit reached/);
+	});
+
+	it("D14: subagent process ignores background and delegates to foreground", async () => {
+		setupFactory();
+		isSubagentMock.mockReturnValue(true);
+		officialExecuteMock.mockResolvedValue({ content: [{ type: "text", text: "sync" }], details: undefined });
+
+		const tool = createBashOverrideToolDefinition();
+		const result = await tool.execute(
+			"call-sub",
+			{ command: "echo sync", background: true },
+			undefined,
+			undefined,
+			createCtx() as never,
+		);
+
+		expect(spawnBackgroundTaskMock).not.toHaveBeenCalled();
+		expect(officialExecuteMock).toHaveBeenCalledTimes(1);
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+		expect(text).toBe("sync");
 	});
 });

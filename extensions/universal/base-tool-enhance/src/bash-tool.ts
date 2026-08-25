@@ -4,18 +4,24 @@
  * 前台行为 100% 委托 pi 官方工厂 createBashToolDefinition——override 后工具的全部
  * 行为归本包负责，前台语义必须跟随 pi 版本升级而不是自研复刻（自研 spawn 会与
  * pi 升级双向漂移，截断规则 / shellPath / PI_* env / stdin transport 细节遗漏即回归）。
- * 本模块真正的增量只有两处：
+ * 本模块真正的增量：
  *  1. input schema 新增 background?: boolean（D2：工具名保持 bash，只扩 schema）
  *  2. description 重写——官方文案不含 background 用法，不重写则模型永远发现不了
  *     新参数，「模型主动要求后台」的路径不可达
- *
- * M1 范围：execute 收到 background:true 也先走前台（background 核心是 M2 单元交付，
- * schema 先行是为了冻结接口形态）。白名单强制转后台（D3/D13）同样是后续单元。
+ *  3. background:true 分支（M2）：spawn 后台任务立即返回 task_id（D14：subagent
+ *     进程内降级忽略 background，走前台同步语义）；白名单强制转后台（D3/D13）是 M4
  */
 
 import type { AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+
+import {
+	resolveBackgroundTimeoutSec,
+	spawnBackgroundTask,
+	truncateCommand,
+} from "./background/spawn-background.ts";
+import { isSubagentProcess } from "./background/subagent-guard.ts";
 
 /**
  * override 后的 bash input schema。
@@ -101,10 +107,44 @@ export function createBashOverrideToolDefinition() {
 			onUpdate: AgentToolUpdateCallback<unknown> | undefined,
 			ctx: ExtensionContext,
 		) {
+			// background 分支（M2）：显式 background:true 且非 subagent 降级（D14——
+			// subagent 进程内忽略 background 走前台，保持内置同步语义）。abort/interrupt
+			// 不传播到后台任务（D15）：本分支不接触 signal，立即返回
+			if (args.background === true && !isSubagentProcess()) {
+				// 无效 timeout 沿用 pi 内置文案抛错；有效显式值生效（M4 配置默认值接缝：
+				// resolveBackgroundTimeoutSec 只认显式值，M4 在这里注入配置默认）
+				const timeoutSec = resolveBackgroundTimeoutSec(args.timeout);
+				const spawned = spawnBackgroundTask({
+					command: args.command,
+					cwd: ctx.cwd,
+					dataDir: getAgentDir(),
+					sessionId: ctx.sessionManager.getSessionId(),
+					timeoutSec,
+				});
+				if (!spawned.ok) {
+					throw new Error(spawned.error);
+				}
+				const { task } = spawned;
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: [
+								`Background task started: ${truncateCommand(task.command)}`,
+								`task_id: ${task.taskId}  pid: ${task.pid}`,
+								`Output file: ${task.outputFile}`,
+								`Poll with bash_output {task_id:"${task.taskId}"} or omit task_id to list all tasks; terminate with bash_kill {task_id:"${task.taskId}"}.`,
+							].join("\n"),
+						},
+					],
+					details: undefined,
+				};
+			}
 			const delegate = getDelegate(ctx.cwd);
 			// 前台委托：只转发官方 schema 已识别的字段（command/timeout），background
 			// 是本包增量，官方 execute 不认识（其解构也只取这两个键，显式构造让
-			// 「本层转发面」在代码上自解释）。M1 阶段 background 一律走前台。
+			// 「本层转发面」在代码上自解释）。subagent 降级（D14）与 background 缺省
+			// 都落到这条路径。
 			return delegate.execute(toolCallId, { command: args.command, timeout: args.timeout }, signal, onUpdate, ctx);
 		},
 	};

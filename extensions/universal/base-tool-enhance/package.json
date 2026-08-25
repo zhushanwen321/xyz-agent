@@ -23,6 +23,10 @@
     "src/",
     "index.ts"
   ],
+  "dependencies": {
+    "@zhushanwen/pi-extension-logger": "workspace:*",
+    "@zhushanwen/pi-file-lock": "workspace:*"
+  },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.9",
     "vitest": "^4.1.8"
