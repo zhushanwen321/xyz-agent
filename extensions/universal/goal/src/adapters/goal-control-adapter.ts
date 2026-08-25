@@ -73,10 +73,19 @@ export const GoalControlParams = Type.Object(
 			}),
 		),
 		successCriteria: Type.Optional(
-			Type.String({
-				description:
-				"必填。可检查的完成条件（如「测试通过」「文件 X 存在且含内容 Y」「命令 Z 输出 W」），不是愿景或「能用就行」。这是 complete 前必须逐条满足的门槛。",
-			}),
+			Type.Array(
+				Type.String({ minLength: 1, pattern: "^[^\\r\\n]+$" }),
+				{
+					minItems: 1,
+					maxItems: 8,
+					description:
+						"必填。可检查的完成条件数组（1~8 条、每条单行短条件）。" +
+						"高层终态条件（如「测试通过」「文件 X 存在且含内容 Y」「命令 Z 输出 W」），" +
+						"不是愿景或「能用就行」。细粒度检查清单放 todo/plan，只引用不复制。" +
+						"禁止倾倒完整规格——每条 ≤80 字符，面向用户可感知的终态。" +
+						"这是 complete 前必须逐条满足的门槛。",
+				}
+			),
 		),
 		tokenBudget: Type.Optional(
 			Type.Number({
@@ -133,26 +142,49 @@ export function handleCreate(
 	ports: ServicePorts,
 ): GoalControlDetails {
 	if (params.objective === undefined) {
-		throw new Error("'objective' required for create. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":\"...\"}");
+		throw new Error("'objective' required for create. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":[\"<condition 1>\",\"<condition 2>\"]}");
 	}
 	const objective = params.objective.trim();
 	if (!objective) {
 		// schema 已放行（扁平化后 optional），此处挡空串（LLM 可能传空串）
 		throw new Error(
-			"'objective' must not be empty. Describe the concrete objective to pursue. Correct: {\"action\":\"create\",\"slug\":\"<kebab-case>\",\"objective\":\"<concrete objective>\",\"successCriteria\":\"<checkable conditions>\"}",
+			"'objective' must not be empty. Describe the concrete objective to pursue. Correct: {\"action\":\"create\",\"slug\":\"<kebab-case>\",\"objective\":\"<concrete objective>\",\"successCriteria\":[\"<condition 1>\",\"<condition 2>\"]}",
 		);
 	}
 	// slug 真 optional（TC11）：缺失时 fallback goalId 截断（与 buildGoalGui 口径一致），不强制必填
 	const slugInput = params.slug?.trim();
 
 	if (params.successCriteria === undefined) {
-		throw new Error("'successCriteria' required for create. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":\"...\"}");
+		throw new Error("'successCriteria' required for create. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":[\"<condition 1>\",\"<condition 2>\"]}");
 	}
-	const successCriteria = params.successCriteria.trim();
-	if (!successCriteria) {
+	const successCriteriaRaw = params.successCriteria;
+	if (!Array.isArray(successCriteriaRaw) || successCriteriaRaw.length === 0) {
 		throw new Error(
-			"'successCriteria' must not be empty. Define how you will verify the objective is achieved — concrete checkable conditions. Correct: {\"action\":\"create\",\"slug\":\"refactor-auth\",\"objective\":\"...\",\"successCriteria\":\"pnpm test passes; tsc --noEmit clean; src/auth.ts uses JWT\"}",
+			"'successCriteria' must be a non-empty array of 1~8 checkable conditions. Correct: {\"action\":\"create\",\"slug\":\"refactor-auth\",\"objective\":\"...\",\"successCriteria\":[\"tests pass\",\"tsc clean\",\"src/auth.ts uses JWT\"]}",
 		);
+	}
+	const successCriteria: string[] = [];
+	for (const item of successCriteriaRaw) {
+		// 运行时 typeof 防御（U28②）：测试/直调可能绕过 schema 传脏元素，
+		// 此处给业务错误而非让下方 .trim() 抛 TypeError
+		if (typeof item !== "string") {
+			throw new Error(
+				"'successCriteria' must be an array of strings. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":[\"<condition 1>\",\"<condition 2>\"]}",
+			);
+		}
+		const trimmed = item.trim();
+		if (!trimmed) {
+			throw new Error(
+				"'successCriteria' items must not be empty. Each condition should be a short, single-line, checkable statement. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":[\"tests pass\",\"tsc clean\"]}",
+			);
+		}
+		// 换行校验（U7）：/[\r\n]/ 覆盖 \n / \r\n / \r 三形态，schema pattern ^[^\r\n]+$ 的 handler 兜底
+		if (/[\r\n]/.test(trimmed)) {
+			throw new Error(
+				"'successCriteria' items must be single-line (no line breaks). Split multi-line text into separate array items, one condition per item. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":[\"line 1\",\"line 2\"]}",
+			);
+		}
+		successCriteria.push(trimmed);
 	}
 
 	// D25 严格守卫：非终态旧 goal（active/paused/blocked）→ 拒绝创建（防静默覆盖未完成工作）
@@ -280,7 +312,7 @@ export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession):
 预算策略：默认不设 tokenBudget。仅在用户明确要求（如「控制在 1 万 token 内」）或用户的指令明确暗示了一个限制时才设。若你认为应该设预算但用户从未提及，先询问用户获得明确同意，切勿自行决定。
 
 动作：
-- create：为复杂的多步骤工作（3+ 步骤、多文件改动、或需要完成验证的工作）主动创建目标。用自己的话重述真实目标，定义可检查的 successCriteria（完成条件）。琐碎的单步任务、普通提问、查找类任务不要创建目标。若已有 active/paused/blocked 目标会失败——请让用户运行 /goal resume 或 /goal clear 后再创建。
+- create：为复杂的多步骤工作（3+ 步骤、多文件改动、或需要完成验证的工作）主动创建目标。用自己的话重述真实目标，定义可检查的 successCriteria（完成条件数组，3~8 条高层终态条件）。细粒度检查清单放 todo/plan，只引用不复制。禁止倾倒完整规格。琐碎的单步任务、普通提问、查找类任务不要创建目标。若已有 active/paused/blocked 目标会失败——请让用户运行 /goal resume 或 /goal clear 后再创建。
 - complete：标记当前 active 目标完成。需要 evidence（具体证据：改动的文件、通过的测试、运行的命令），且必须满足每条 successCriteria 条件。若有预算，在总结里报告最终 token 用量。不要基于假设、意图或部分进度标记完成。
 - report_blocked：标记当前 active 目标被真实阻碍阻塞。需要 reason 描述阻塞条件和已尝试的方案。仅在穷尽替代方案后使用——不要用于困难、缓慢或不确定的工作。
 
@@ -297,7 +329,7 @@ export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession):
 		promptGuidelines: [
 			// create：主动用于复杂多步骤任务。翻转原「显式启动」策略——让 goal 真正可用。
 			// 门槛：3+ 步骤 / 多文件 / 需完成验证，避免对琐碎任务滥建 goal 变噪音。
-			"create: proactively start a goal for complex, multi-step work (3+ steps, multi-file, or needs completion verification) — restate the real objective and define checkable successCriteria. Do NOT create for trivial single-step tasks, ordinary lookups, or when a goal is already active. Test: 'is this worth tracking to completion with verification?' — if yes, create a goal.",
+			"create: proactively start a goal for complex, multi-step work (3+ steps, multi-file, or needs completion verification) — restate the real objective and define checkable successCriteria (3~8 high-level terminal conditions as string[]). Fine-grained checklists belong in todo/plan — reference them, do not copy. Do NOT dump full specs into successCriteria. Do NOT create for trivial single-step tasks, ordinary lookups, or when a goal is already active. Test: 'is this worth tracking to completion with verification?' — if yes, create a goal.",
 			// budget：默认不设预算——仅当用户显式要求（或明确同意）时才设。
 			// 对齐 description 的预算策略段 + tokenBudget 参数的 description（三层信号冗余）。
 			"budget: never set tokenBudget on your own initiative — the default is no budget. Set a budget only when the user explicitly requested one (e.g. \"keep it under 10k tokens\") or you obtained explicit user consent first. If you think a budget is warranted but the user never mentioned one, ask the user before creating the goal.",

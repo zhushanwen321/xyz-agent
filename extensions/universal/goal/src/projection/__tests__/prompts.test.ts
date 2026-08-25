@@ -18,6 +18,7 @@ import {
 	budgetLimitPrompt,
 	contextInjectionPrompt,
 	continuationPrompt,
+	escapeXmlText,
 	formatBudget,
 	objectiveUpdatedPrompt,
 } from "../prompts";
@@ -75,6 +76,12 @@ describe("XML escaping in prompts", () => {
 		expect(out).toContain("&lt;b&gt;x&lt;/b&gt;");
 		expect(out).toContain("&lt;i&gt;y&lt;/i&gt;");
 		expect(out).toContain("&amp; z");
+	});
+
+	it("U16b: 已转义输入无条件二次转义（行为锁定，不做实体识别）", () => {
+		expect(escapeXmlText("already escaped: &amp; <tag>")).toBe(
+			"already escaped: &amp;amp; &lt;tag&gt;",
+		);
 	});
 });
 
@@ -173,7 +180,7 @@ describe("contextInjectionPrompt", () => {
 	it("完整 state（含 budget+successCriteria）≤600 chars（TC1 硬指标）", () => {
 		const state = makeState({
 			objective: "Refactor the auth module to use JWT and add integration tests",
-			successCriteria: "src/auth.ts uses JWT; pnpm test auth green; tsc --noEmit clean",
+			successCriteria: ["src/auth.ts uses JWT", "pnpm test auth green", "tsc --noEmit clean"],
 			status: "active",
 			currentTurnIndex: 2,
 			budget: { tokenBudget: 1000 },
@@ -218,18 +225,19 @@ describe("contextInjectionPrompt", () => {
 
 describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () => {
 	it("continuationPrompt：有 successCriteria → 含 <successCriteria> 段 + 条件文案", () => {
-		const state = makeState({ successCriteria: "pnpm test passes; tsc clean" });
+		const state = makeState({ successCriteria: ["pnpm test passes", "tsc clean"] });
 		const out = continuationPrompt(state, 0);
 		expect(out).toContain("<successCriteria>");
 		expect(out).toContain("</successCriteria>");
-		expect(out).toContain("pnpm test passes; tsc clean");
+		expect(out).toContain("1. pnpm test passes");
+		expect(out).toContain("2. tsc clean");
 		// 条件文案（continuationPrompt 专属）
 		expect(out).toContain("every condition there must be met");
 	});
 
 	it("budgetLimitPrompt：有 successCriteria → 含 <successCriteria> 段 + 条件文案", () => {
 		const state = makeState({
-			successCriteria: "all tests green",
+			successCriteria: ["all tests green"],
 			budget: { tokenBudget: 1000 },
 		});
 		const out = budgetLimitPrompt(state);
@@ -240,12 +248,20 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 	});
 
 	it("contextInjectionPrompt：有 successCriteria → 含 <successCriteria> 段 + 条件文案", () => {
-		const state = makeState({ successCriteria: "file X exists" });
+		const state = makeState({ successCriteria: ["file X exists"] });
 		const out = contextInjectionPrompt(state, 0);
 		expect(out).toContain("<successCriteria>");
 		expect(out).toContain("file X exists");
 		// 条件文案（contextInjectionPrompt 专属）
 		expect(out).toContain("meeting every successCriteria above");
+	});
+
+	it("U29: objectiveUpdatedPrompt：有 successCriteria → 注入编号列表（补齐第 4 个 prompt 函数）", () => {
+		const state = makeState({ successCriteria: ["cond A", "cond B"] });
+		const out = objectiveUpdatedPrompt(state, "old obj");
+		expect(out).toContain("<successCriteria>");
+		expect(out).toContain("1. cond A");
+		expect(out).toContain("2. cond B");
 	});
 
 	it("无 successCriteria → 不含 <successCriteria> 段（锁定 fallback）", () => {
@@ -255,8 +271,18 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 		expect(out).not.toContain("every condition there must be met");
 	});
 
+	it("U17: successCriteria 空数组 → 与 undefined 同为空态，prompt 不增 <successCriteria> 段", () => {
+		const state = makeState({ successCriteria: [] });
+		expect(continuationPrompt(state, 0)).not.toContain("<successCriteria>");
+		expect(budgetLimitPrompt(state)).not.toContain("<successCriteria>");
+		expect(objectiveUpdatedPrompt(state, "old obj")).not.toContain("<successCriteria>");
+		expect(contextInjectionPrompt(state, 0)).not.toContain("<successCriteria>");
+		// 条件文案同样不出现（continuationPrompt 专属分支）
+		expect(continuationPrompt(state, 0)).not.toContain("every condition there must be met");
+	});
+
 	it("successCriteria 中的 <>& 被转义（防注入）", () => {
-		const state = makeState({ successCriteria: "<x> & y" });
+		const state = makeState({ successCriteria: ["<x> & y"] });
 		const out = continuationPrompt(state, 0);
 		expect(out).toContain("&lt;x&gt;");
 		expect(out).toContain("&amp; y");

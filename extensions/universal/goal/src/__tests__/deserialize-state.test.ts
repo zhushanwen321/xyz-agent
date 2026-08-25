@@ -13,11 +13,19 @@ import type { GoalRuntimeState, GoalStatus } from "../engine/types";
 
 const STATUS_VALUES: GoalStatus[] = ["active", "paused", "blocked", "complete", "budget_limited", "cancelled"];
 
-// GoalRuntimeState 全字段生成器（optional 字段用 fc.option 覆盖有/无两态）
+// GoalRuntimeState 全字段生成器（optional 字段用 fc.option 覆盖有/无两态）。
+// successCriteria 生成域对齐 schema 语义（review nit 11）：元素非空且不含换行、
+// 数组长度 1~8——避免 property 生成 schema 层非法数据掩盖 round-trip 语义漂移。
 const goalStateArb = fc.record({
 	goalId: fc.uuid(),
 	objective: fc.string({ minLength: 1 }),
-	successCriteria: fc.option(fc.string()),
+	successCriteria: fc.option(
+		fc.array(
+			fc.string({ minLength: 1 }).filter((s) => !/\r|\n/.test(s)),
+			{ minLength: 1, maxLength: 8 },
+		),
+		{ nil: undefined },
+	),
 	slug: fc.option(fc.string({ minLength: 1 })),
 	status: fc.constantFrom(...STATUS_VALUES),
 	tokensUsed: fc.nat(),
@@ -60,6 +68,21 @@ describe("deserializeState — round-trip", () => {
 	it.prop([goalStateArb])("deserializeState(serializeState(s)) 深相等 s", (s) => {
 		const rt = deserializeState(serializeState(s) as unknown as Record<string, unknown>);
 		expect(rt).toEqual(s);
+	});
+});
+
+describe("deserializeState — 旧 string 迁移 property（U15 第二路）", () => {
+	// ⭐ 任意 string（旧格式）迁移后恒为规范形态：undefined（空态归一）或
+	// every(trim 非空、无换行) 的 string[]——锁死按行拆分 + trim + 去空行语义
+	it.prop([fc.string()])("任意 string → undefined 或 every(trim 非空、无换行) 的数组", (s) => {
+		const rt = deserializeState({ ...FULL_DATA, successCriteria: s });
+		if (rt.successCriteria === undefined) return;
+		expect(Array.isArray(rt.successCriteria)).toBe(true);
+		expect(
+			rt.successCriteria.every(
+				(item) => typeof item === "string" && item === item.trim() && item.length > 0 && !/[\r\n]/.test(item),
+			),
+		).toBe(true);
 	});
 });
 

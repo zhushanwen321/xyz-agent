@@ -142,7 +142,7 @@ export function createGoal(
 	budget: Partial<BudgetConfig>,
 	ports: ServicePorts,
 	slug?: string,
-	successCriteria?: string,
+	successCriteria?: string[],
 ): boolean {
 	// 已有 active goal → 拒绝
 	if (session.state && isActiveStatus(session.state.status)) {
