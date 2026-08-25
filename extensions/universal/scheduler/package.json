@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-scheduler",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "main": "index.ts",
   "xyz-agent": {
@@ -49,6 +49,7 @@
     }
   },
   "dependencies": {
-    "@xyz-agent/session-delivery": "workspace:*"
+    "@xyz-agent/session-delivery": "workspace:*",
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   }
 }

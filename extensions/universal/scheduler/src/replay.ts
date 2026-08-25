@@ -1,4 +1,8 @@
+import { getLogger } from '@zhushanwen/pi-extension-logger'
+
 import type { ScheduledTask, SchedulerEntryOp, TaskSnapshot } from './types.js'
+
+const logger = getLogger('scheduler')
 
 /**
  * CustomEntry 的最小可识别形状（duck-typed，不依赖 @earendil-works/pi-coding-agent 的
@@ -33,7 +37,7 @@ const HISTORY_LIMIT = 20
  *
  * append-only 时序保证 nextRunAt 不回退（D1）：advance entry 按写入顺序折叠，自然取到最后推进值。
  *
- * getEntries 解析/迭代异常 → console.warn + 返回空 Map（gap4）：降级为无任务而非崩溃 session_start。
+ * getEntries 解析/迭代异常 → logger.warn + 返回空 Map（gap4）：降级为无任务而非崩溃 session_start。
  */
 export function replayFoldEntries(
   entries: Iterable<SchedulerEntryLike>,
@@ -82,9 +86,7 @@ export function replayFoldEntries(
         // MF-2：守卫已按变体校验必填字段，但嵌套数据损坏（如 upsert task.history 非数组 →
         // snapshotToTask 的 .map 抛）仍可能抛——逐条 try/catch 只跳过该条，
         // 不让外层整体 catch 把全部任务清成空 Map（一条损坏 entry 不得清空全部任务）
-        console.warn(
-          `[scheduler] skipping corrupted scheduler entry: ${err instanceof Error ? err.message : String(err)}`,
-        )
+        logger.warn('skipping corrupted scheduler entry', { error: err instanceof Error ? err.message : String(err) })
         continue
       }
     }
@@ -101,9 +103,7 @@ export function replayFoldEntries(
     return tasks
   } catch (err) {
     // gap4：session JSONL 损坏 / 迭代器抛错时降级为无任务，不让 session_start 崩溃。
-    console.warn(
-      `[scheduler] replayFoldEntries failed: ${err instanceof Error ? err.message : String(err)}`,
-    )
+    logger.warn('replayFoldEntries failed', { error: err instanceof Error ? err.message : String(err) })
     return new Map()
   }
 }

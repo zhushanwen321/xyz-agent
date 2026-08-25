@@ -14,6 +14,14 @@
  * 运行：cd extensions/taiji/msg-id-mapper && npx vitest run
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+vi.mock('@zhushanwen/pi-extension-logger', () => ({
+  getLogger: () => loggerMock,
+  createLogger: () => loggerMock,
+}))
+
 import createMapper from '../index'
 import type {
   ExtensionAPI,
@@ -147,12 +155,12 @@ describe('input hook · clientUuid 提取（extractClientUuid）', () => {
 
   it('畸形 event（handler 内抛错）→ 兜底 return undefined 不外抛（console.error 可观测）', () => {
     const h = createHarness()
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const errSpy = loggerMock.error
     // event 为 null → 取 event.source 即 throw，走 catch 兜底
     expect(h.inputRaw(null)).toBeUndefined()
     expect(errSpy).toHaveBeenCalledWith(
-      '[xyz-client-msg-id-mapper] input hook error:',
-      expect.any(TypeError),
+      'input hook error',
+      { detail: expect.stringContaining('TypeError') },
     )
   })
 })
@@ -240,7 +248,7 @@ describe('flush · 映射写入 / 幂等 / 重试 / 异常兜底（writeMapping�
 
   it('appendEntry 抛错 → flush 吞错不外抛，flag 未清，下次 hook 幂等重试', () => {
     const h = createHarness()
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const errSpy = loggerMock.error
     h.appendEntry.mockImplementation(() => {
       throw new Error('jsonl write failed')
     })
@@ -248,7 +256,7 @@ describe('flush · 映射写入 / 幂等 / 重试 / 异常兜底（writeMapping�
     h.input(`task ${marker(UUID)}`)
     h.messageEnd('user')
     expect(() => h.flush('message_start')).not.toThrow()
-    expect(errSpy).toHaveBeenCalledWith('[xyz-client-msg-id-mapper] flush error:', expect.any(Error))
+    expect(errSpy).toHaveBeenCalledWith('flush error', { detail: expect.stringContaining('jsonl write failed') })
 
     // 重试成功：appendEntry 恢复 → turn_end 补写（flag 未清的幂等重试语义）
     h.appendEntry.mockImplementation(() => {})
@@ -258,7 +266,7 @@ describe('flush · 映射写入 / 幂等 / 重试 / 异常兜底（writeMapping�
 
   it('getLeafId 抛错 → flush 吞错不外抛（catch 兜底覆盖 writeMapping 全程）', () => {
     const h = createHarness()
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const errSpy = loggerMock.error
     h.input(`task ${marker(UUID)}`)
     h.messageEnd('user')
 
@@ -267,7 +275,7 @@ describe('flush · 映射写入 / 幂等 / 重试 / 异常兜底（writeMapping�
         throw new Error('session manager gone')
       }),
     ).not.toThrow()
-    expect(errSpy).toHaveBeenCalledWith('[xyz-client-msg-id-mapper] flush error:', expect.any(Error))
+    expect(errSpy).toHaveBeenCalledWith('flush error', { detail: expect.stringContaining('session manager gone') })
   })
 
   it('无 user message_end（未置 flag）→ 三重安全网全不写', () => {

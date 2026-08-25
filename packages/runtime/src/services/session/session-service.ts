@@ -561,7 +561,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    *
    * 为什么除 config.defaults 外还要发 session.state_changed（原 model-service 注释保留）：
    * config.defaults 是全局默认（不带 sessionId），前端无法据它定位「哪个 session 换了模型」。
-   * session.state_changed 带 sessionId，前端据它同步 Composer 工具条（模型显示 / 用量 / 思考强度）。
+   * session.state_changed 带 sessionId，前端据它同步 Composer 工具条（模型显示 / 思考强度；
+   * 用量刷新走 context.update 帧，D1 协议收敛后 state_changed 不再携带 usage）。
    *
    * W10 owner 结构：inputTokens 唯一数据源 = usage 实例快照（fetch get_session_stats 写入，
    * 事件只 markDirty）。本方法的失效与 context 事件失效任意顺序到达，防抖到点后快照收敛
@@ -1864,6 +1865,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 快照）。播种 refetch / context 事件失效（applyContextUpdate）/ fetchContext 查询失效 /
    * switchModel 失效的每次 fetch 都经本入口 ⇒ stateSnapshot 的 context last-value 恒 ==
    * owner 快照（「投影一次」，D7）。fetch 失败（throw）不发布——快照未变。
+   *
+   * D1（context-consistency Phase 1）：fetch 成功且投影为空快照（pi tokens=null 合法无值）
+   * 时挂钩改发「无值占位帧」（仅含 sessionId，typeKey='context' last-value 显式登记无值态，
+   * 切回的 stateSnapshot 回放可区分「该 session 无值」与「从未收到帧」）。空投影判定在
+   * fetch 返回值上做而非实例 .get()——ownerSnapshotMerge 对空快照保持旧值，.get() 拿到的
+   * 是旧值不是「空」；.get() 为 undefined（从未 fetch 成功 / 退避窗口）时值可能马上就来，
+   * 不发占位帧防消费方误写 no-value。
    */
   private async fetchSessionStatsSnapshot(sessionId: string): Promise<Record<string, unknown> | undefined> {
     const client = this.pm.getClient(sessionId)
@@ -1871,8 +1879,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       throw new Error(`[session-service] get_session_stats unavailable: no active pi client for session ${sessionId}`)
     }
     const stats = await client.getSessionStats() as Record<string, unknown> | undefined
+    const noValue = isUsageNoValueProjection(stats)
     setTimeout(() => {
-      this.publishContextFromSnapshot(sessionId)
+      if (noValue) {
+        this.publishContextNoValuePlaceholder(sessionId)
+      } else {
+        this.publishContextFromSnapshot(sessionId)
+      }
       this.publishStateChangedFromSnapshot(sessionId)
     }, 0)
     return stats
@@ -1880,7 +1893,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
 
   /**
    * W12：读 usage 实例快照发布 context.update（state topic，last-value == owner 快照）。
-   * 无值态（compact 后空快照 / 首拉失败）不发布——对齐 fetchContext「null 不更新」语义。
+   * 三字段任一 undefined 不发布（快照未就绪——fetch 失败退避 / 播种竞速窗口；真无值走
+   * publishContextNoValuePlaceholder 占位帧，见 fetchSessionStatsSnapshot D1 注释）。
    */
   private publishContextFromSnapshot(sessionId: string): void {
     if (!this.sessions.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
@@ -1894,6 +1908,22 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       type: 'context.update',
       id: `ctx_${Date.now()}`,
       payload: { sessionId, inputTokens: snapshot.inputTokens, contextLimit: snapshot.contextLimit, usagePercent: snapshot.usagePercent },
+    }
+    this.messageBus?.publish(sessionId, msg)
+  }
+
+  /**
+   * D1（context-consistency Phase 1）：无值占位帧——仅含 sessionId 的 context.update。
+   * 触发条件 = 本次 fetch 成功且投影为空快照（pi tokens=null；见 fetchSessionStatsSnapshot
+   * 的判定注释）。写入 typeKey='context' 的 last-value 后，stateSnapshot 回放能区分「该
+   * session 无值」与「从未收到帧」。协议层语义：字段缺失 = 无值（0 基线帧已随 D1 消失）。
+   */
+  private publishContextNoValuePlaceholder(sessionId: string): void {
+    if (!this.sessions.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
+    const msg: ServerMessage = {
+      type: 'context.update',
+      id: `ctx_${Date.now()}`,
+      payload: { sessionId },
     }
     this.messageBus?.publish(sessionId, msg)
   }
@@ -1928,17 +1958,18 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
-   * W12：读 modelId / thinkingLevel / usage 三实例快照组合发布 session.state_changed
+   * W12：读 modelId / thinkingLevel 两实例快照组合发布 session.state_changed
    *（state topic，payload 全字段来自实例快照）。
    *
-   * 触发点 = 三实例各自的 fetch 成功挂钩（fetchStateSnapshotWithStatePublish /
+   * 触发点 = 各实例的 fetch 成功挂钩（fetchStateSnapshotWithStatePublish /
    * fetchSessionStatsSnapshot）——任一实例快照应用后刷新组合，全部收敛后 last-value 为
    * 终态组合（中间态帧由下方 diff 抑制去重，renderer 幂等覆盖）。
    * 快照缺失字段 fallback 双写缓存（session.modelId / thinkingLevel）——登记的永久形态
-   * （PR #185 S2 裁决，2026-08-20）：播种 refetch 三实例异步竞速，先落定者即触发本发布，
+   * （PR #185 S2 裁决，2026-08-20）：播种 refetch 实例异步竞速，先落定者即触发本发布，
    * 未落定实例 .get() 为 undefined；get_state 失败退避（1s/5s/15s）窗口同理。缓存由
    * switchModel / setThinkingLevel RPC 成功后直写保持最新，兜底值即 pi 生效值。
-   * usage 无快照时三字段为 0 基线（与旧 broadcastSessionState 的缺省口径一致）。
+   * D1（context-consistency Phase 1）：usage 三字段已从本帧删除——usage 只经 context.update
+   * 一条帧贯穿，本方法不再投影 usage（旧「无快照 ?? 0 基线」随协议删除）。
    * diff 抑制：thinkingLevel 的 30s 周期兜底重拉会高频触发挂钩，同值组合不重复发帧。
    */
   private publishStateChangedFromSnapshot(sessionId: string): void {
@@ -2061,7 +2092,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 失效」（fetchContext 内 markDirty → 防抖重拉 → 快照应用后挂钩发布）。fetchContext 返回
    * null（compact 后无值）时不失效，快照保持旧值——对齐旧「null 不广播」语义。
    * 注意：挂钩发布的广播可能早于前端订阅新 sessionId 通道（时序竞争，见架构约定 #7），
-   * 前端 useSidebar.selectSession 会主动调 session.getContext 再拉一次保证到达。
+   * 前端 useContextUsage composable 的恢复腿（每次切入视图拉 session.getContext）保证到达。
    * fire-and-forget 语义：失败不阻塞 session 恢复。
    */
   async fetchAndBroadcastContext(sessionId: string): Promise<void> {
@@ -2305,50 +2336,57 @@ function subagentRecordEquals(a: SubagentRecord, b: SubagentRecord): boolean {
 }
 
 /**
- * W12：state_changed 组合投影的 diff 基线形状（5 字段；sessionId 是 map key 恒同值，不参与 diff）。
+ * D1（context-consistency Phase 1）：get_session_stats 响应是否为「合法无值」投影。
+ * 与 createUsageStateConfig.fetchSnapshot 的投影口径镜像对齐：
+ * - stats / stats.contextUsage 非对象 = 协议异常（fetchSnapshot 会 throw WireSnapshotSchemaError，
+ *   实例退避重试）——fetch 未成功，不发占位帧，返回 false；
+ * - contextUsage.tokens 非 number（pi tokens=null，compact 后无新 turn）= 空快照 {}——
+ *   合法无值，返回 true。
+ */
+function isUsageNoValueProjection(stats: Record<string, unknown> | undefined): boolean {
+  if (typeof stats !== 'object' || stats === null) return false
+  const cu = stats.contextUsage
+  if (typeof cu !== 'object' || cu === null) return false
+  return typeof (cu as Record<string, unknown>).tokens !== 'number'
+}
+
+/**
+ * W12：state_changed 组合投影的 diff 基线形状（2 字段；sessionId 是 map key 恒同值，不参与 diff）。
  * buildStateChangedPayload 产出的 payload 含 sessionId 字段，结构上是本形状的超集，可直接入基线。
+ * D1：usage 三字段已从基线删除（协议收敛，payload 不再携带 usage）。
  */
 interface SessionStateChangedBaseline {
   modelId: string
   thinkingLevel: string | undefined
-  usagePercent: number
-  inputTokens: number
-  contextLimit: number
 }
 
 /**
- * W12：modelId / thinkingLevel / usage 三实例快照 → session.state_changed 组合投影 payload。
+ * W12：modelId / thinkingLevel 两实例快照 → session.state_changed 组合投影 payload。
  * 快照缺失字段 fallback 双写缓存（session.modelId / thinkingLevel）——登记的永久形态
  * （PR #185 S2 裁决，2026-08-20）：播种 refetch 异步竞速 + 失败退避窗口内 .get() 为
- * undefined，缓存兜底（写方 = switchModel / setThinkingLevel RPC 成功后直写）；
- * usage 无快照时三字段为 0 基线（与旧 broadcastSessionState 的缺省口径一致）。
+ * undefined，缓存兜底（写方 = switchModel / setThinkingLevel RPC 成功后直写）。
+ * D1（context-consistency Phase 1）：usage 三字段不再投影（usage 只经 context.update 帧，
+ * 旧「无快照 ?? 0 基线」编码随协议删除）。
  */
 function buildStateChangedPayload(
   sessionId: string,
   session: ManagedSession,
   states: SessionReplicatedStates,
 ): SessionStateChangedBaseline & { sessionId: string } {
-  const usage = states.usage.get()
   return {
     sessionId,
     modelId: states.modelId.get()?.modelId ?? session.modelId,
     thinkingLevel: states.thinkingLevel.get()?.thinkingLevel ?? session.thinkingLevel,
-    usagePercent: usage?.usagePercent ?? 0,
-    inputTokens: usage?.inputTokens ?? 0,
-    contextLimit: usage?.contextLimit ?? 0,
   }
 }
 
 /**
- * W12：state_changed 组合投影的 diff 判定（5 字段全等 → 同值组合不重复发帧）。
+ * W12：state_changed 组合投影的 diff 判定（2 字段全等 → 同值组合不重复发帧）。
  * thinkingLevel 的 30s 周期兜底重拉会高频触发发布挂钩，靠本判定抑制重复帧。
  */
 function stateChangedPayloadEquals(a: SessionStateChangedBaseline, b: SessionStateChangedBaseline): boolean {
   return a.modelId === b.modelId
     && a.thinkingLevel === b.thinkingLevel
-    && a.usagePercent === b.usagePercent
-    && a.inputTokens === b.inputTokens
-    && a.contextLimit === b.contextLimit
 }
 
 /**

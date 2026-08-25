@@ -940,6 +940,30 @@
       ]
     },
     {
+      "id": "C-state-08",
+      "summary": "session 级 renderer 状态三问——存哪里（分区 store/composable）？切走谁清（cleanup 编排）？切回谁喂（恢复腿）？新增 ServerMessageType 的 renderer 消费方 / useSessionEvents 调用点时 CR 必查，三问有明确归属才放行；「onMessage 直写组件本地 ref」反模式由 taste-lint 规则 no-instance-level-session-state 机器拦截",
+      "scope": [
+        "packages/renderer/src/**"
+      ],
+      "authority": [
+        "todo/context-consistency-design.md",
+        "adr/0049-session-isolation-map-partition.md"
+      ],
+      "dimensions": [
+        "data-governance"
+      ],
+      "enforcement": [
+        {
+          "type": "machine",
+          "hook": "taste-lint/base.mjs"
+        },
+        {
+          "type": "review",
+          "agent": "review-data-governance"
+        }
+      ]
+    },
+    {
       "id": "C-ext-01",
       "summary": "目录分组（taiji/universal）+ package.json xyz-agent.role + mandatory 清单三处一致；extensions/ 顶层禁放 extension 包",
       "scope": [

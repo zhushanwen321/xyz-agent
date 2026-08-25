@@ -61,3 +61,29 @@ describe('ThinkingLevelPopover onSelect 发 value（map 映射后）', () => {
     expect(wrapper.emitted('select')![0][0]).toBe('off')
   })
 })
+
+// ══ U9: pi 新语义（fix-thinking-level-pi-semantics）——mimo 场景档位渲染 ══
+// xiaomi-token-plan-cn/mimo-v2.5-pro 的 thinkingLevelMap 为 undefined（builtin 快照 null
+// 经 toProviderModel 归一）。pi 实装版 getSupportedThinkingLevels 返回默认五档。
+describe('U9: mimo 场景（levelMap undefined）→ 渲染默认五档含 minimal，无 xhigh/max', () => {
+  it('DOM 含 5 个档位项：off/minimal/low/medium/high，不含 xhigh/max', async () => {
+    const wrapper = mount(ThinkingLevelPopover, {
+      props: { level: 'high' }, // levelMap 不传（undefined = pi 默认规则）
+    })
+    // 打开 popover 使档位列表渲染进 DOM
+    await (wrapper.vm as unknown as { open: boolean }).$nextTick()
+    const vm = wrapper.vm as unknown as { availableOptions: Array<{ level: string }> }
+    const renderedLevels = vm.availableOptions.map((o) => o.level)
+    expect(renderedLevels).toEqual(['off', 'minimal', 'low', 'medium', 'high'])
+    expect(renderedLevels).not.toContain('xhigh')
+    expect(renderedLevels).not.toContain('max')
+  })
+
+  it('reasoning=false → availableOptions 只有 off（non-reasoning 模型）', () => {
+    const wrapper = mount(ThinkingLevelPopover, {
+      props: { level: 'off', reasoning: false },
+    })
+    const vm = wrapper.vm as unknown as { availableOptions: Array<{ level: string }> }
+    expect(vm.availableOptions.map((o) => o.level)).toEqual(['off'])
+  })
+})

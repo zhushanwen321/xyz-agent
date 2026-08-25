@@ -11,6 +11,16 @@
 //   - version !== 1 → warn + 重建为新 slot，旧 pending 丢弃
 //
 // 隔离：每个用例前 Reflect.deleteProperty(globalThis, CHANNEL_HANDSHAKE_KEY)。
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+  getLogger: () => loggerMock,
+  createLogger: () => loggerMock,
+  setPiHandle: vi.fn(),
+}));
+
 import { beforeEach,describe, expect, it, vi } from "vitest";
 
 import type { ChannelHandler } from "../channel-handler";
@@ -135,7 +145,7 @@ describe("registerAskUserChannelHandler", () => {
 
 	it("version !== 1 → warn + 重建为新 slot，旧 pending 丢弃", () => {
 		// 塞一个 version=2 的旧 slot（模拟未来协议升级 / 脏数据）
-		const spyWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		loggerMock.warn.mockClear();
 		const legacyPending = [{ channel: "stale", handler: noopHandler }];
 		const legacySlot = {
 			version: 2 as const,
@@ -152,10 +162,8 @@ describe("registerAskUserChannelHandler", () => {
 		expect(slot!.version).toBe(1);
 		expect(slot!.pending).toEqual([{ channel: "ask_user", handler: noopHandler }]);
 		// warn 被调用（包含 version mismatch 提示）
-		expect(spyWarn).toHaveBeenCalledTimes(1);
-		expect(spyWarn.mock.calls[0]![0]).toContain("version mismatch");
-
-		spyWarn.mockRestore();
+		expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+		expect(loggerMock.warn.mock.calls[0]![0]).toContain("version mismatch");
 	});
 
 	it("registry 就绪但 slot 已预置 pending → 仍走 register 路径（pending 不被本函数消费）", () => {

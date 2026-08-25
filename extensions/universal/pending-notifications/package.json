@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-pending-notifications",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Cross-extension async operation registration/query mechanism for Pi — prevents message injection during long-running operations.",
   "type": "module",
   "main": "src/index.ts",
@@ -35,5 +35,8 @@
   "scripts": {
     "typecheck": "npx tsc --noEmit",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   }
 }

@@ -65,9 +65,6 @@ describe('session.state_changed 事件 → store 状态同步', () => {
         sessionId: 's1',
         modelId: 'anthropic/claude-4',
         thinkingLevel: 'high',
-        usagePercent: 6,
-        inputTokens: 12000,
-        contextLimit: 200000,
       },
     })
 
@@ -90,9 +87,6 @@ describe('session.state_changed 事件 → store 状态同步', () => {
         sessionId: 's2',
         modelId: 'openai/gpt-4',
         thinkingLevel: undefined,
-        usagePercent: 0,
-        inputTokens: 0,
-        contextLimit: 128000,
       },
     })
 
@@ -117,9 +111,6 @@ describe('session.state_changed 事件 → store 状态同步', () => {
         sessionId: 'other-session',
         modelId: 'should/not/apply',
         thinkingLevel: 'off',
-        usagePercent: 0,
-        inputTokens: 0,
-        contextLimit: 0,
       },
     })
 

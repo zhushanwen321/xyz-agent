@@ -826,7 +826,7 @@ describe('SessionService · Facade', () => {
       await expect(setup.service.switchModel('ghost', 'p' as ProviderId, 'm')).rejects.toThrow('session not active')
     })
 
-    it('切换后广播 session.state_changed（payload 全字段来自三实例快照，W12）', async () => {
+    it('切换后广播 session.state_changed（payload 来自 modelId/thinkingLevel 快照，W12；usage 走 context.update，D1）', async () => {
       const { id, client } = await setup.seedSession()
       // W18：resolver 注入链已删（W12 后生产零消费）——payload 数值全部来自 pi 快照
       // W10：inputTokens 唯一数据源 = usage 实例快照（播种替代旧 setInputTokens 直写）
@@ -845,29 +845,41 @@ describe('SessionService · Facade', () => {
       // W12：即时广播退役——三实例防抖重拉收敛后经快照挂钩发布
       await waitForSnapshotPublish()
 
+      // D1 协议收敛：state_changed 只携带 sessionId/modelId/thinkingLevel（usage 三字段已删）
       const stateChanged = findLastBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
       expect(stateChanged!.payload).toMatchObject({
         sessionId: id,
         modelId: 'anthropic/claude-x',
         thinkingLevel: 'high',
+      })
+      // usage 快照真值经 context.update 帧贯穿（单帧单数据，D1）
+      const contextUpdate = findLastBroadcast(setup, 'context.update')
+      expect(contextUpdate).toBeDefined()
+      expect(contextUpdate!.payload).toMatchObject({
+        sessionId: id,
         inputTokens: 12000,
         contextLimit: 200000,
         usagePercent: 6,
       })
     })
 
-    it('未注入 resolver 时 payload 仍读快照真值（旧「resolver 缺省 0」口径随 W12 退役）', async () => {
+    it('未注入 resolver 时 usage 帧仍读快照真值（旧「resolver 缺省 0」口径随 W12 退役；断言移至 context.update，D1）', async () => {
       const { id, client } = await setup.seedSession()
-      // 不注入 resolver；快照播种 inputTokens（payload 透出快照三字段真值）
+      // 不注入 resolver；快照播种 inputTokens（usage 真值经 context.update 帧透出）
       await seedUsageSnapshot(setup, id, client, { tokens: 5000, contextWindow: 100000, percent: 5 })
 
       await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
       await waitForSnapshotPublish()
 
+      // state_changed 帧恒不含 usage（D1 协议不变量）
       const stateChanged = findBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
-      expect(stateChanged!.payload).toMatchObject({
+      expect(JSON.stringify(stateChanged!.payload)).not.toContain('usagePercent')
+      // usage 快照三字段真值在 context.update 帧
+      const contextUpdate = findBroadcast(setup, 'context.update')
+      expect(contextUpdate).toBeDefined()
+      expect(contextUpdate!.payload).toMatchObject({
         contextLimit: 100000,
         usagePercent: 5,
         inputTokens: 5000,

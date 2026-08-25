@@ -6,6 +6,9 @@
     DEFERRED：
       S3/S4（@/#// 附件浮层 G2-002）、S7-S9 双队列视图/失败回退/已排队多条。
     steer/followUp：活跃态（isGenerating/派发空窗期）时 ⏎ 追加 steer，Alt+⏎ 追加 followUp，都不打断当前回合。
+    staging 优先（fork/handoff，与视觉层 boxClass/placeholder 优先级对齐）：staging 活跃时 ⏎/Alt+⏎
+      均提交 staging（发送位也替换为 staging 发送按钮，streaming 中同样生效）；handoff 的
+      streaming 拦截在 enterHandoffMode/handleHandoffSend（isSessionActive 守卫）。
 
     [W4 迁移] 壳改写：消费 composer-shell.ts（core dispatch/context/model-thinking deps 组装 +
     视觉派生），ComposerInput 从 ui 包渲染（D5 占位：壳内硬编码渲染，P4 ExtensionHost 前不走
@@ -101,12 +104,27 @@
         <ContextCapacityPopover :session-id="sessionId ?? undefined" :model-id="currentModelId" />
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
         <ModelSelectPopover :selected="currentModelId" @select="onModelSelect" />
-        <!-- 思考等级（spec §2c：click 出 6 级 popover；level 从 session 透传） -->
-        <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" @select="onThinkingSelect" />
+        <!-- 思考等级（spec §2c：click 出档位 popover；level 从 session 透传；reasoning 决定可用档集——non-reasoning 只 off） -->
+        <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" :reasoning="currentModelReasoning" @select="onThinkingSelect" />
 
-        <!-- 发送位三态：S6 streaming/dispatching→stop / S5 sending→spinner / compact→queue-send（可点，入队待重放）/ S1·S2 idle→send -->
+        <!-- 发送位：staging（fork/handoff，含 streaming 中）→staging send / S6 streaming/dispatching→stop /
+             S5 sending→spinner / compact→queue-send（可点，入队待重放）/ S1·S2 idle→send。
+             staging 优先于 stop（用户决策）：streaming 中提交 fork 合法（对源只读）；需停止时
+             先 Esc 退出 staging 再点 stop。staging 发送中（isSending）仍走 spinner。 -->
         <Button
-          v-if="isActive"
+          v-if="staging.activeStaging.value && !isSending"
+          variant="default"
+          size="icon"
+          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
+          :disabled="!canSubmit"
+          :data-testid="staging.activeStaging.value.type === 'fork' ? 'fork-send-btn' : 'handoff-send-btn'"
+          :title="staging.activeStaging.value.type === 'fork' ? t('panel.composer.forkSend') : t('panel.composer.handoffSend')"
+          @click="onSend"
+        >
+          <ArrowUp class="size-[15px]" />
+        </Button>
+        <Button
+          v-else-if="isActive"
           variant="ghost"
           size="icon"
           class="stop-btn ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-surface-hover text-neutral-mid hover:bg-danger-soft hover:text-danger"
@@ -139,7 +157,7 @@
           size="icon"
           class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
           :disabled="!canSubmit"
-          :title="canSubmit ? `${staging.activeStaging.value ? (staging.activeStaging.value.type === 'fork' ? t('panel.composer.forkSend') : t('panel.composer.handoffSend')) : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
+          :title="canSubmit ? `${t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
         >
           <ArrowUp class="size-[15px]" />
@@ -297,6 +315,7 @@ const {
   currentModelId,
   currentThinkingLevel,
   currentThinkingLevelMap,
+  currentModelReasoning,
   onModelSelect,
   onThinkingSelect,
   handleArrowUp,
@@ -355,7 +374,7 @@ function onInputChange(text: string): void {
   resetBrowsing()
 }
 
-/** 键盘：⏎ 发送/steer，Alt+⏎ follow-up，⇧⏎ 换行，↑/↓ 翻历史。命令浮层 open 时优先路由到浮层。 */
+/** 键盘：staging 优先 ⏎ 提交（fork/handoff，含 streaming 中）；无 staging 时 ⏎ 发送/steer，Alt+⏎ follow-up，⇧⏎ 换行，↑/↓ 翻历史。命令浮层 open 时优先路由到浮层。 */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
   if (e.isComposing) return // IME 组合中不拦截（与 useContenteditableInput 守卫一致）
@@ -373,6 +392,13 @@ function onKeydown(e: KeyboardEvent): void {
   }
   if (e.key !== 'Enter' || e.shiftKey) return
   e.preventDefault()
+  // staging（fork/handoff）优先于 steer/followUp：模式 chip 在时 Enter/Alt+Enter 均提交 staging，
+  // 不注入当前对话（streaming 中 fork-ask 合法——对源 session 只读；handoff 的 streaming
+  // 拦截在 enterHandoffMode 入口 + handleHandoffSend 兑底，此处无需区分）。
+  if (staging.activeStaging.value) {
+    onSend()
+    return
+  }
   if (e.altKey) {
     // Alt+⏎：压缩期间重路由到 onSend（入队待重放）——onFollowUp 无 isActive 守卫，
     // 直通会走 pi followUp RPC 留陈旧队列。非压缩态保持 followUp。
@@ -421,5 +447,7 @@ defineExpose({
   handoffMode: handoff.handoffModeRef,
   enterHandoffMode: handoff.enterHandoffMode,
   exitHandoffMode: handoff.exitHandoffMode,
+  // 派生提交守卫（ref 解包为 boolean）：测试断言 staging 双发锁 / streaming 放行分支用
+  canSubmit,
 })
 </script>

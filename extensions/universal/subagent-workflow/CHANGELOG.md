@@ -1,5 +1,11 @@
 # @zhushanwen/pi-subagent-workflow
 
+## 8.3.0
+
+### Minor Changes
+
+- d4f466667: Forward fire-and-forget UI requests (notify / setStatus / setWidget / setTitle / set_editor_text) from rpc-mode subprocesses to the host UI instead of dropping them, and grade resource-shadowing warnings: machine-source duplicates are demoted to debug while true user-source conflicts are reported once per process with dedup
+
 ## 8.2.0
 
 ### Minor Changes

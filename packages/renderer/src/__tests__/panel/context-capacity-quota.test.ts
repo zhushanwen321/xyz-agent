@@ -24,6 +24,10 @@ import type { NormalizedQuotaRow, ProviderInfo } from '@xyz-agent/shared'
 // ── mock ──
 
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
+  // session.getContext：组件经 useContextUsage 恢复腿挂载即调（Phase 2.2 纯读改造）——
+  // mock 为永不 resolve 的 pending（本文件只测 quota 区与帧直驱显示，恢复腿行为在
+  // use-context-usage.test.ts / context-usage-journeys.test.ts 覆盖）
+  session: { getContext: vi.fn(() => new Promise(() => {})) },
   config: {
     onProviders: vi.fn(() => () => {}),
     onSkills: vi.fn(() => () => {}),

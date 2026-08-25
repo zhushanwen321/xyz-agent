@@ -1,3 +1,11 @@
+# @zhushanwen/pi-smart-context
+
+## 0.1.1
+
+### Patch Changes
+
+- d4f466667: chore: refresh dependency range (triggered by @zhushanwen/pi-extension-logger@0.2.2 → @zhushanwen/pi-extension-logger@0.3.0, @zhushanwen/pi-llm-shared@0.4.0 → @zhushanwen/pi-llm-shared@0.4.1)
+
 # Changelog
 
 ## 0.1.0

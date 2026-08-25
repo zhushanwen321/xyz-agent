@@ -4,6 +4,16 @@ import * as path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+vi.mock('@zhushanwen/pi-extension-logger', () => ({
+  getLogger: () => loggerMock,
+  createLogger: () => loggerMock,
+  setPiHandle: vi.fn(),
+}))
+
 import { getLegacyStorePath, importLegacyStore } from '../importer.js'
 import type { ScheduledTask } from '../types.js'
 
@@ -52,9 +62,8 @@ describe('importLegacyStore', () => {
     vi.mocked(fs.existsSync).mockReturnValue(false)
     vi.mocked(fs.readFileSync).mockReturnValue('{}')
     vi.mocked(fs.unlinkSync).mockImplementation(() => {})
-    // 抑制 importer 的 console.log/warn 输出（断言用 spy）
-    vi.spyOn(console, 'log').mockImplementation(() => {})
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // 清理 logger mock（logger 默认 no-op，无需抑制输出）
+    loggerMock.warn.mockClear()
   })
 
   afterEach(() => {
@@ -101,9 +110,10 @@ describe('importLegacyStore', () => {
     expect(fs.unlinkSync).toHaveBeenCalledTimes(1)
     expect(fs.unlinkSync).toHaveBeenCalledWith(importedPath)
 
-    // 5) 进度日志（console.warn，项目 convention 禁 console.log）
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining(`imported 2 legacy tasks from ${importedPath}`),
+    // 5) 进度日志
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.stringContaining('imported legacy tasks'),
+      expect.objectContaining({ count: 2 }),
     )
   })
 
@@ -177,8 +187,9 @@ describe('importLegacyStore', () => {
     const appendEntry = vi.fn()
 
     expect(() => importLegacyStore(cwd, { appendEntry }, sessionFile)).not.toThrow()
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('[scheduler] import failed'),
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.stringContaining('import failed'),
+      expect.objectContaining({ error: expect.stringContaining('not valid JSON') }),
     )
     expect(appendEntry).toHaveBeenCalledTimes(0) // parse 失败，无 append
   })
@@ -215,7 +226,10 @@ describe('importLegacyStore', () => {
     // append 已发生，但 unlink 未执行——数据可能仅内存，销毁源文件 = 永久丢失
     expect(appendEntry).toHaveBeenCalledTimes(1)
     expect(fs.unlinkSync).not.toHaveBeenCalled()
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('deferring'))
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.stringContaining('deferring'),
+      expect.objectContaining({ count: 1 }),
+    )
 
     // 情形1：flush 已发生（sessionFile 出现，.imported 仍在）→ cleanup 删除 .imported
     vi.mocked(fs.existsSync).mockImplementation(p => p === sessionFile || p === importedPath)

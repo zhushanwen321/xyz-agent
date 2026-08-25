@@ -27,27 +27,32 @@ import {
 // 真实预设（从 useProviderEdit.ts THINKING_PRESETS 同步）
 const ON_OFF_MAP = { off: 'off', high: 'high' }
 const HIGH_MAX_MAP = { off: 'off', high: 'high', max: 'xhigh' }
-const ALL_LEVELS = ['off', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+// pi 新语义默认五档（map 缺失/空对象；叠加规则下未列出的普通档默认可用）
+const DEFAULT_FIVE = ['off', 'minimal', 'low', 'medium', 'high']
 
-describe('resolveAvailableLevels（按 key 判定可用档位）', () => {
-  it('map=undefined（all-levels 预设）→ 全 6 档', () => {
-    expect([...resolveAvailableLevels(undefined)].sort()).toEqual([...ALL_LEVELS].sort())
+function sortedLevels(levels: readonly string[]): string[] {
+  return [...levels].sort()
+}
+
+describe('resolveAvailableLevels（pi getSupportedThinkingLevels 叠加禁用语义）', () => {
+  it('map=undefined（all-levels 预设）→ 默认五档 off/minimal/low/medium/high', () => {
+    expect(resolveAvailableLevels(undefined)).toEqual(DEFAULT_FIVE)
   })
 
-  it('high-max 预设 {off,high,max} → 可用 off + high + max（按 key 非 null）', () => {
-    expect(resolveAvailableLevels(HIGH_MAX_MAP)).toEqual(['off', 'high', 'max'])
+  it('high-max 预设 {off,high,max} → 默认五档 + max 共六档（叠加规则非白名单）', () => {
+    expect(resolveAvailableLevels(HIGH_MAX_MAP)).toEqual(['off', 'minimal', 'low', 'medium', 'high', 'max'])
   })
 
-  it('on-off 预设 {off,high} → off + high', () => {
-    expect(resolveAvailableLevels(ON_OFF_MAP)).toEqual(['off', 'high'])
+  it('on-off 预设 {off,high} → 默认五档（minimal/low/medium 未列出默认可用，无 xhigh/max）', () => {
+    expect(resolveAvailableLevels(ON_OFF_MAP)).toEqual(DEFAULT_FIVE)
   })
 
-  it('空对象 {} → 全 6 档（fallback 全可用）', () => {
-    expect([...resolveAvailableLevels({})].sort()).toEqual([...ALL_LEVELS].sort())
+  it('空对象 {} → 等同 map 缺失 → 默认五档', () => {
+    expect(resolveAvailableLevels({})).toEqual(DEFAULT_FIVE)
   })
 
-  it('全 null 值的 map → 全 6 档（无可用 key，fallback）', () => {
-    expect([...resolveAvailableLevels({ off: null, low: null })].sort()).toEqual([...ALL_LEVELS].sort())
+  it('部分 null 的 map → 只剩未被禁用的普通档（{off:null,low:null} → minimal/medium/high）', () => {
+    expect(resolveAvailableLevels({ off: null, low: null })).toEqual(['minimal', 'medium', 'high'])
   })
 })
 
@@ -114,12 +119,12 @@ describe('highestAvailableLevel', () => {
     expect(highestAvailableLevel(ON_OFF_MAP)).toBe('high')
   })
 
-  it('map=undefined → max（全可用时最高档）', () => {
-    expect(highestAvailableLevel(undefined)).toBe('max')
+  it('map=undefined → high（默认五档最高档）', () => {
+    expect(highestAvailableLevel(undefined)).toBe('high')
   })
 
-  it('空对象 {} → max（fallback）', () => {
-    expect(highestAvailableLevel({})).toBe('max')
+  it('空对象 {} → high（等同 map 缺失）', () => {
+    expect(highestAvailableLevel({})).toBe('high')
   })
 
   it('返回值始终是合法 ThinkingLevel', () => {
@@ -151,8 +156,8 @@ describe('isSameThinkingScheme（体系判定：可用 key 集合相同即同体
     expect(isSameThinkingScheme(undefined, undefined)).toBe(true)
   })
 
-  it('all-levels(undefined) vs on-off → 跨体系（全 6 档 ≠ 2 档）', () => {
-    expect(isSameThinkingScheme(undefined, ON_OFF_MAP)).toBe(false)
+  it('all-levels(undefined) vs on-off → 同体系（新叠加语义下两者可用集均为默认五档）', () => {
+    expect(isSameThinkingScheme(undefined, ON_OFF_MAP)).toBe(true)
   })
 
   it('all-levels(undefined) vs high-max → 跨体系', () => {

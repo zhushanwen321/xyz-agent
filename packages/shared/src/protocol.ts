@@ -1016,22 +1016,27 @@ export interface ServerMessageMapBase {
   'subagent.directive': { sessionId: string; subagentId: string; slug: string; direction: 'user'; text: string }
   // app.info：runtime 启动时推送应用 + pi 版本号（全局通道，无 sessionId）。
   'app.info': { appVersion: string; piVersion: string }
-  // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）
-  'context.update': { sessionId: string; usagePercent: number; inputTokens: number; contextLimit: number }
+  // context.update：上下文用量（index.ts onContextUpdate 推；cacheHit/modelId 无来源，D9 保留 UI 占位）。
+  // usage 三字段 optional：字段缺失 = 无值（pi tokens=null，compact 后无新 turn / 新 session 未跑 turn；
+  // pi 源码锚点见 docs/todo/context-consistency-design.md「系统是什么」§1：extensions/types.ts:289 + rpc-mode.ts:591）。
+  // [HISTORICAL] D1 协议收敛（context-consistency Phase 1）：无值以「字段缺失」表达，禁止 ?? 0 编码
+  // （0 物理上不可能是真值——任何模型 contextWindow > 0）；仅含 sessionId 的帧 = 无值占位帧。
+  'context.update': { sessionId: string; usagePercent?: number; inputTokens?: number; contextLimit?: number }
   // message.compactionSummary：上下文压缩摘要（compact 执行后推送，进对话流作 SystemNotice）。
   // runtime message-dispatcher.compact() 从 pi CompactionResult 提取 summary/tokensBefore 广播。
   // 前端 chat-message-effects 把它渲染成 system 消息（SystemNotice.vue「上下文已压缩」）。
   'message.compactionSummary': { sessionId: string; summary?: string; tokensBefore?: number; timestamp?: number }
-  // session.state_changed：session 级状态变更（model.switch 成功后推送，含新 modelId + 按新 contextWindow
-  // 重算的用量 + 当前 thinkingLevel）。前端据 modelId/thinkingLevel 同步 Composer 工具条，据 usage 三字段
-  // 刷新 ContextCapacityPopover。thinkingLevel optional（未设置时省略）。
+  // session.state_changed：session 级状态变更（model.switch 成功后推送，含新 modelId + 当前
+  // thinkingLevel）。前端据 modelId/thinkingLevel 同步 Composer 工具条。thinkingLevel optional
+  // （未设置时省略）。
+  // [HISTORICAL] D1 协议收敛（context-consistency Phase 1）：usage 三字段已从本帧删除——
+  // usage 只经 context.update 一条帧贯穿（广播 / stateSnapshot / getContext reply 同形），
+  // 消除「同一数据两条帧、快照缺失时 ?? 0 发 0 基线帧」的协议债。ContextCapacityPopover
+  // 的用量刷新改订 context.update（Phase 2 useContextUsage composable 全量重构）。
   'session.state_changed': {
     sessionId: string
     modelId: string
     thinkingLevel?: string
-    usagePercent: number
-    inputTokens: number
-    contextLimit: number
   }
   // session.thinkingLevelSet：pi thinking_level_changed → event-adapter 广播 + setThinkingLevel RPC
   // reply（settings-message-handler）双发送点，payload 形状一致（R1 type-safety S4 补登记——
@@ -1718,10 +1723,15 @@ export function isSessionSummary(value: unknown): value is SessionSummary {
  * 字段 → runtime 来源对照（W12 后 publish payload）：
  * - label：session.renamed（pi 改名）/ config.sessions（整表 SessionSummary.label）
  * - status：SessionStatus 六态（session.exited → dead 等）
- * - modelId / thinkingLevel / usagePercent / inputTokens / contextLimit：session.state_changed
+ * - modelId / thinkingLevel：session.state_changed
  * - pendingMessageCount：message.queue_update（帧 = pi 队列深度推送投影，与 get_state 同公式同源，PR #185 MF2 撤销 W8 实例后帧即权威）
  * - commands：session.commands（pi 扩展命令清单，形状与广播 payload 一致）
  * - tokenCount：SessionSummary.tokenCount（磁盘扫描占位值 0，守卫对象）
+ *
+ * [HISTORICAL] usagePercent/inputTokens/contextLimit 三字段已删（D1 协议收敛，context-consistency
+ * Phase 1，2026-08）：state_changed 帧不再携带 usage，context 用量经 context.update 帧直达各自
+ * 消费方。session store 注释明证本三字段从不落盘、全库无生产写方——「类型存在、来源已删」的
+ * 协议债一并清除（详见 docs/todo/context-consistency-design.md §3.3 D1）。
  */
 export interface SessionViewSnapshot {
   /** session 标签（侧栏列表项 / panel 标题）。 */
@@ -1732,12 +1742,6 @@ export interface SessionViewSnapshot {
   modelId?: string
   /** 思考等级（前端 6 级枚举串）。undefined = 未设置，快照省略不覆盖。 */
   thinkingLevel?: string
-  /** 上下文用量百分比 0-100（ContextCapacityPopover）。 */
-  usagePercent?: number
-  /** 当前输入 token 数（与 usagePercent 同源推送）。 */
-  inputTokens?: number
-  /** 上下文窗口上限（与 usagePercent 同源推送）。 */
-  contextLimit?: number
   /** 队列深度（steering + followUp 条数和，QueueBubble 计数）。 */
   pendingMessageCount?: number
   /** slash 命令清单（Composer 补全数据源）。 */

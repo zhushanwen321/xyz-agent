@@ -13,7 +13,7 @@ import type { ScheduledTask, SchedulerEntryOp } from './types.js'
  * - sendMessage: 到期 dispatch 的消息注入（生产实现委托 pi.sendMessage）
  * - appendEntry: 按 op 写 pi-scheduler:task custom entry（event sourcing）。
  *   生产实现委托 pi.appendEntry（同步落盘）。失败必须被调用方 try-catch（ER-APPEND-FAIL：
- *   runtime 捕获后 console.warn + 不 rethrow，内存态已更新，at-least-once 已知恶化窗口）
+ *   runtime 捕获后 logger.warn + 不 rethrow，内存态已更新，at-least-once 已知恶化窗口）
  * - getSessionFile: 当前 session JSONL 路径（addTask 构建 upsert op 的 ownerSessionFile 用；
  *   --no-session 模式返回 undefined，调用方 ?? '' 兜底）
  * - now: 时间源（测试可注入固定值）

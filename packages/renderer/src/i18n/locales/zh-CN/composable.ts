@@ -33,6 +33,7 @@ export default {
   // 思考等级显示（W2）
   thinkingLevel: {
     off: '关',
+    minimal: '极简',
     low: '低',
     medium: '中',
     high: '高',

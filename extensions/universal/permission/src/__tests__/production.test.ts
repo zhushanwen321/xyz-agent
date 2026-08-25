@@ -21,6 +21,16 @@ import type { ApprovalContext } from "../approval.js";
 import type { CheckPermissionDeps } from "../pipeline.js";
 import { createPipelineDeps, createProductionClassifier, toSelector } from "../production.js";
 
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+	loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+	getLogger: () => loggerMock,
+	createLogger: () => loggerMock,
+	setPiHandle: vi.fn(),
+}));
+
 // vi.mock 必须在 import 之前（vitest hoisting）。替换 llm-shared 的 resolveModel + callLLM
 // 为可控 mock，默认透传 actual（真实实现），单测用 mockImplementation/mockResolvedValue 精确控制。
 vi.mock("@zhushanwen/pi-llm-shared", async (importOriginal) => {
@@ -174,14 +184,10 @@ describe("resolveModel 装配（resolveModel + callLLM）", () => {
 		vi.mocked(resolveModelShared).mockReturnValue(MOCK_MODEL_A);
 		vi.mocked(callLLMShared).mockResolvedValue({ ok: true, content: "x" });
 		const classifier = createProductionClassifier(makeMockCtx());
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		try {
-			await classifier.classifyRisk(CTX, CFG_REF);
-			// onLog 实装为 console.warn（production.ts），成功路径日志在 LLM 调用前输出
-			expect(warnSpy).toHaveBeenCalledWith("[pi-permission] classifier: using model model-a");
-		} finally {
-			warnSpy.mockRestore();
-		}
+		loggerMock.warn.mockClear();
+		await classifier.classifyRisk(CTX, CFG_REF);
+		// onLog 实装为 logger.warn（production.ts），成功路径日志在 LLM 调用前输出
+		expect(loggerMock.warn).toHaveBeenCalledWith("[pi-permission] classifier: using model model-a");
 	});
 
 	it("TC5: callLLM 返回 ok:false（LLM 调用失败）→ classifier fail-closed fallback（不 throw）", async () => {

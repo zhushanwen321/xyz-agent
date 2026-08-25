@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-msg-id-mapper",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Client UUID ↔ user entry ID mapping extension for Pi — enables metadata preservation across sessions",
   "type": "module",
   "main": "src/index.ts",
@@ -35,5 +35,8 @@
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^4.1.9",
     "vitest": "^4.1.8"
+  },
+  "dependencies": {
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   }
 }

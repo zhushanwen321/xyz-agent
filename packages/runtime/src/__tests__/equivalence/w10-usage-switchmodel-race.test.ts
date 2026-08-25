@@ -153,17 +153,22 @@ describe('W10 竞态回归：switchModel 与 context.update 乱序到达（结�
     // context.update 后到（新 turn 的 agent_end 事件 → applyContextUpdate 只失效）
     fx.svc.applyContextUpdate(sid, TOKENS, TOKENS)
 
-    // W12：即时广播退役——防抖到点三实例收敛后，快照挂钩发布 session.state_changed
-    //（payload 全字段来自实例快照：mock 权威按当前模型 B 的窗口 100k / percent 20 投影，
-    // 与旧「快照 tokens × resolver 新窗口重算」的 20 同值——切换前后等价）
+    // W12：即时广播退役——防抖到点三实例收敛后，快照挂钩发布帧。D1 协议收敛
+    //（context-consistency Phase 1）后 usage 只在 context.update 帧：mock 权威按当前
+    // 模型 B 的窗口 100k / percent 20 投影（与旧「快照 tokens × resolver 新窗口重算」的
+    // 20 同值——切换前后等价）；state_changed 帧不再携带 usage（协议层已删三字段）。
     await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 50)
+    const contextUpdate = lastPublished(fx, 'context.update')
+    expect(contextUpdate?.payload).toMatchObject({
+      sessionId: sid,
+      inputTokens: TOKENS,
+      contextLimit: MODEL_WINDOWS['model-b'] ?? 0,
+      usagePercent: 20, // Math.round(20000 / 100000 * 100)
+    })
     const stateChanged = lastPublished(fx, 'session.state_changed')
     expect(stateChanged?.payload).toMatchObject({
       sessionId: sid,
       modelId: 'p/model-b',
-      inputTokens: TOKENS,
-      contextLimit: MODEL_WINDOWS['model-b'] ?? 0,
-      usagePercent: 20, // Math.round(20000 / 100000 * 100)
     })
 
     // 快照收敛断言（两次失效聚合一次拉取，不依赖两个信号的先后顺序）

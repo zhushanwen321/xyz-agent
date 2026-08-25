@@ -25,6 +25,9 @@ import path from 'node:path'
 import { homedir } from 'node:os'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import type { ExtensionAPI, BeforeAgentStartEvent } from '@earendil-works/pi-coding-agent'
+import { getLogger } from '@zhushanwen/pi-extension-logger'
+
+const logger = getLogger('xyz-system-prompt-extension')
 
 const CONFIG_FILE = 'system-prompt.json'
 
@@ -121,7 +124,7 @@ function readGlobalAgentsFile(): { path: string; content: string } | null {
       }
     } catch (err) {
       // best-effort：候选文件 stat/read 失败（如权限）→ 试下一个候选，never throw into the agent loop。
-      console.debug('[xyz-system-prompt-extension] candidate file read failed, trying next:', err)
+      logger.debug('candidate file read failed, trying next', { detail: String(err) })
     }
   }
   return null
@@ -220,10 +223,14 @@ function buildSystemPrompt(event: BeforeAgentStartEvent): { systemPrompt: string
 function logHookFailure(err: unknown): void {
   try {
     const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
-    process.stderr.write(`[xyz-system-prompt-extension] before_agent_start hook failed: ${msg}\n`)
+    logger.error(`before_agent_start hook failed: ${msg}`)
   } catch (nestedErr) {
     // best-effort：stderr 写失败的终极兜底——console 内部吞错不会抛，仍不外泄到 agent loop。
-    console.debug('[xyz-system-prompt-extension] stderr write also failed:', nestedErr)
+    try {
+      process.stderr.write(`[xyz-system-prompt-extension] logHookFailure also failed: ${String(nestedErr)}\n`)
+    } catch {
+      /* 完全静默：两层兑底都失败时无处可写 */
+    }
   }
 }
 

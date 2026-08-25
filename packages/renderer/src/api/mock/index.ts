@@ -334,8 +334,8 @@ export const session = {
     return { sessionId: id, commands: MOCK_COMMANDS.map((c) => ({ ...c })) }
   },
 
-  /** 拉取上下文用量（mock 返回固定示例值，与 real domain 同接口） */
-  async getContext(id: string): Promise<{ sessionId: string; inputTokens: number; contextLimit: number; usagePercent: number }> {
+  /** 拉取上下文用量（mock 返回固定示例值，与 real domain 同接口；usage 字段 optional = 无值语义，D1） */
+  async getContext(id: string): Promise<{ sessionId: string; inputTokens?: number; contextLimit?: number; usagePercent?: number }> {
     await sleep(TIMING.ack)
     return { sessionId: id, inputTokens: 12000, contextLimit: 200000, usagePercent: 6 }
   },

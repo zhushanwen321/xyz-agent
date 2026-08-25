@@ -5,6 +5,7 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
+    "skipLibCheck": true,
     "resolveJsonModule": true,
     "paths": {
       "@xyz-agent/shared": ["../shared/src"]

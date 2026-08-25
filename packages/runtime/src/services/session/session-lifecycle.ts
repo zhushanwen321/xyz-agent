@@ -728,7 +728,7 @@ export class SessionLifecycle {
     }
     // 恢复后兜底广播一次上下文用量（pi 从历史估算 contextUsage）。
     // 注意：此广播可能早于前端订阅新 sessionId 通道（时序竞争，见架构约定 #7），
-    // 前端 useSidebar.selectSession 会主动调 session.getContext 再拉一次保证到达。
+    // 前端 useContextUsage composable 的恢复腿（每次切入视图拉 session.getContext）保证到达。
     // fire-and-forget：拉取失败不阻塞 session 恢复。
     void this.svc.fetchAndBroadcastContext(id)
     // W-RT-4：恢复后 session 变 active，patch 内存态 launchPresetId（与 sidecar 并列兜底）。

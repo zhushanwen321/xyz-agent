@@ -75,13 +75,10 @@ export interface ComposerSendDeps {
   /** 取 staging 模型/thinking 暂存配置（ADR-0056，仅 staging 活跃时调） */
   getStagingConfig: () => StagingConfig
   // ── 守卫 ──
-  /** 是否可发送（hasInput && !isBusy）—— 非 staging 态发送守卫 */
+  /** 是否可发送（hasInput && !isBusy）—— 非 staging 态发送守卫（isBusy 语义由调用方烘进 canSend） */
   canSend: ComputedRef<boolean>
   /** 当前 session 是否正在压缩上下文（chatStore.isCompacting，Composer 已计算）—— compact 分支入口守卫 */
   isCompacting: ComputedRef<boolean>
-  /** 忙时（流式/派发/发送中）—— staging 与普通发送共用守卫。
-   *  注意：不包含 isCompacting——压缩期间允许排队动作（canSend = hasInput，onSend 守卫放行到 compact 分支） */
-  isBusy: ComputedRef<boolean>
   // ── 输入 ──
   /** draft ref（纯文本，用于发送判断 + 文本提取） */
   draft: Ref<string>
@@ -101,7 +98,9 @@ export interface ComposerSendDeps {
   /** 失败恢复 text + 各类 chip（useComposerRestore 提供） */
   restoreSegments: (segments: Segment[]) => void
   // ── 状态 ──
-  /** 发送中状态（普通 send / landing 首发期间置 true） */
+  /** 发送中状态（普通 send / landing 首发 / staging 发送期间置 true）——兼作 staging 双发锁
+   *  （不拦 isActive：fork-ask 对源 session 只读，streaming 中合法；handoff 的 streaming
+   *  拦截在 handleHandoffSend 的 isSessionActive 兑底） */
   isSending: Ref<boolean>
   // ── landing 首发依赖 ──
   /** flow（submitFirstMessage —— landing 态首发提交） */
@@ -136,9 +135,11 @@ export function useComposerSend(deps: ComposerSendDeps): { onSend: () => Promise
    */
   async function onSend(): Promise<void> {
     // staging 活跃时由 StagingAction 自管 allowsEmptySend（handoff 允许空，fork 不允许）；
-    // 忙时一律拦截（isBusy 复用 canSend 同守卫）。非 staging 走原 canSend 守卫。
+    // 双发锁只看 isSending（staging 发送自身会置位），不拦 isActive——fork-ask 发给新建
+    // session 对源 session 只读，streaming 中合法（handoff 的 streaming 拦截在
+    // handleHandoffSend 的 isSessionActive 兑底，非此处）。非 staging 走原 canSend 守卫。
     const activeStaging = deps.staging.activeStaging.value
-    const canStagingSend = !!activeStaging && (activeStaging.allowsEmptySend || deps.canSend.value) && !deps.isBusy.value
+    const canStagingSend = !!activeStaging && (activeStaging.allowsEmptySend || deps.canSend.value) && !deps.isSending.value
     if (!deps.canSend.value && !canStagingSend) return
     const text = deps.draft.value
     // staging 路由：经 useComposerStaging.send → activeStaging.send。仅在有活跃 staging 时取 staging config

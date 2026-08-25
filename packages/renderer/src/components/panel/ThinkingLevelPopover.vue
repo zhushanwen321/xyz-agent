@@ -72,13 +72,20 @@ const emit = defineEmits<{
 
 // 外部当前等级（Composer 从 SessionSummary.thinkingLevel 透传，是 runtime 返回的 value）。
 // 需经 resolveThinkingKey 反向映射为 UI 档位 key 才能正确高亮。
-const props = defineProps<{
-  level?: string
-  /** 当前模型的思考档位映射（per-model thinkingLevelMap）。
-   *  key = UI 可选档位（ThinkingLevel 枚举值，含 max），value = 发给 runtime 的实际 level（非 null = 可用）。
-   *  undefined = 全可用（all-levels 预设）。切换模型后 Composer 传入新模型的 map。 */
-  levelMap?: Record<string, string | null>
-}>()
+// [HISTORICAL] reasoning 必须 withDefaults 显式置 undefined：Vue 对 Boolean prop 的 casting
+// 会把「未传」变成 false（而非 undefined），误触发 non-reasoning 分支致只剩 off 档。
+const props = withDefaults(
+  defineProps<{
+    level?: string
+    /** 当前模型的思考档位映射（per-model thinkingLevelMap）。
+     *  key = UI 可选档位（ThinkingLevel 枚举值，含 max），value = 发给 runtime 的实际 level（非 null = 可用）。
+     *  undefined/null/空 = pi 默认规则（off..high 五档，xhigh/max 需显式定义）。切换模型后 Composer 传入新模型的 map。 */
+    levelMap?: Record<string, string | null>
+    /** 当前模型是否支持思考（models[].reasoning）；non-reasoning 只 off。undefined 视为支持。 */
+    reasoning?: boolean
+ }>(),
+  { level: undefined, levelMap: undefined, reasoning: undefined },
+)
 
 const { t } = useI18n()
 const open = ref(false)
@@ -90,9 +97,9 @@ watch(() => props.level, (v) => {
   if (v) level.value = resolveThinkingKey(v, props.levelMap)
 })
 
-/** 当前模型的可用档位选项（只渲染可用的，不灰显不可用档位） */
+/** 当前模型的可用档位选项（只渲染可用的，不灰显不可用档位；reasoning=false 时仅 off） */
 const availableOptions = computed<ThinkingLevelOption[]>(() => {
-  const available = new Set(resolveAvailableLevels(props.levelMap))
+  const available = new Set(resolveAvailableLevels(props.levelMap, props.reasoning))
   return THINKING_LEVELS.filter((opt) => available.has(opt.level))
 })
 

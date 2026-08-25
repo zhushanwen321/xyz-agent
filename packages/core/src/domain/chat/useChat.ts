@@ -278,8 +278,8 @@ export function ensureStreamSubscription(
         break
       }
       case 'session.state_changed': {
-        // 模型切换后 runtime 推送（model-service switchModel 末尾广播，含新 modelId/thinkingLevel
-        // + 按新 contextWindow 重算的用量）。applySnapshot 单 session 快照按 D1b 合并
+        // 模型切换后 runtime 推送（model-service switchModel 末尾广播，含新 modelId/thinkingLevel；
+        // usage 已随 D1 协议收敛移出本帧，只经 context.update 一条帧贯穿）。applySnapshot 单 session 快照按 D1b 合并
         // （undefined 字段 = 快照未涉及，不覆盖），不触发整表替换。
         // thinkingLevel optional：未设置时（undefined）不更新，保留旧值。
         if (msg.payload.sessionId) {

@@ -1,4 +1,5 @@
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent'
+import { getLogger } from '@zhushanwen/pi-extension-logger'
 
 import type { DeliveryHandle, DeliveryMessage } from '@xyz-agent/session-delivery'
 
@@ -12,6 +13,8 @@ import type {
   ScheduleSpec,
   TaskSnapshot,
 } from './types.js'
+
+const logger = getLogger('scheduler')
 
 const MAX_TASKS = 50
 // 入队防重标记 TTL（合批非首条任务无终态回调，过期后放行重投；10 min >> 合批窗口）
@@ -215,7 +218,7 @@ export class SchedulerRuntime {
         if (this.isCtxStale?.() || message.includes(STALE_CTX_MARKER)) {
           this.retireStaleTimer()
         } else {
-          console.warn(`[scheduler] tick error: ${message}`)
+          logger.warn('tick error', { error: message })
         }
       })
     }, TICK_INTERVAL_MS)
@@ -234,7 +237,7 @@ export class SchedulerRuntime {
    * session_start 重建的新一代 runtime 接管。
    */
   private retireStaleTimer(): void {
-    console.warn(`[scheduler] tick stopped: stale extension ctx (session replaced); timer self-retired`)
+    logger.warn('tick stopped: stale extension ctx (session replaced); timer self-retired')
     this.stopScheduler()
   }
 
@@ -303,7 +306,7 @@ export class SchedulerRuntime {
   async dispatchTask(task: ScheduledTask): Promise<boolean> {
     if (!task.enabled) return false
     if (this.dispatchesInFlight.has(task.id)) {
-      console.warn(`[scheduler] dispatch already in flight for task ${task.id}; skipping this tick`)
+      logger.warn('dispatch already in flight, skipping this tick', { taskId: task.id })
       return false
     }
     this.dispatchesInFlight.add(task.id)
@@ -478,7 +481,7 @@ export class SchedulerRuntime {
   // ── append-only 持久化辅助 ──
 
   /**
-   * 委托 backend.appendEntry。失败 → console.warn + 不 rethrow（ER-APPEND-FAIL）。
+   * 委托 backend.appendEntry。失败 → logger.warn + 不 rethrow（ER-APPEND-FAIL）。
    * 内存态已先行更新（at-least-once 已知恶化窗口：append 失败则该 op 丢失，resume 重放回退）。
    * 不再设 task.lastError='persist failed'（append 失败是 transient，不应污染业务态）。
    */
@@ -488,9 +491,7 @@ export class SchedulerRuntime {
     } catch (err) {
       // best-effort 降级（ER-APPEND-FAIL）：append-only 模型下 append 失败仅丢失该 op 的持久化，
       // 内存态已先行更新、不 rethrow，业务流程继续。at-least-once 已知恶化窗口（resume 重放回退）。
-      console.warn(
-        `[scheduler] appendEntry failed: ${err instanceof Error ? err.message : String(err)}`,
-      )
+      logger.warn('appendEntry failed', { error: err instanceof Error ? err.message : String(err) })
     }
   }
 
