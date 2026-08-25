@@ -212,7 +212,7 @@ U3（`f1f6634d8`）在 runtime 侧补「reload 完成后失效快照」，本设
 | 单元 | 内容 | justification | 呼应验收 |
 |---|---|---|---|
 | W1 | `useCommandSync.ts` 新建 + `CommandPopover.vue` 接线（3 触发点 + handler sid 修正）+ 单测 | 渲染端闭环的三个改动点（拉/写分区/handler）共享同一验收面，拆开则任一子单元单独不可验收（拉了不写没意义、写了不拉没数据） | S1-S6 |
-| W2 | changeset（patch，`@xyz-agent/renderer` fix）+ 手动验收记录 | 文档流程项，独立于代码 | — |
+| W2 | ~~changeset~~ → 无需 changeset（`@xyz-agent/frontend` 在 `.changeset/config.json` ignore 名单——changeset 只管发布的 npm 包，应用版本走 merge 流程 bump）+ 手动验收记录 | 文档流程项，独立于代码 | — |
 
 **文件改动地图**：
 
