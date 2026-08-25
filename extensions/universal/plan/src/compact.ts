@@ -90,20 +90,37 @@ function buildPlanSlug(planFilePath: string): string {
   return stem || "plan-execution";
 }
 
-/** successCriteria 条目上限（对齐 goal schema maxItems:8） */
-const CRITERIA_MAX_ITEMS = 8;
+/** step preview 条数上限（1 条总述 + 3 条 preview，合计 ≤4 条，满足 goal schema maxItems:8） */
+const PREVIEW_COUNT = 3;
+/** 单条 preview 最大长度（超出部分截断，以 "..." 结尾） */
+const PREVIEW_MAX_CHARS = 80;
+const ELLIPSIS = "...";
+
+/** 折叠换行为空格：goal 侧 handler 拒绝含 \r\n 的条目 */
+function toSingleLine(text: string): string {
+  return text.replace(/[\r\n]+/g, " ").trim();
+}
+
+function truncatePreview(text: string): string {
+  if (text.length <= PREVIEW_MAX_CHARS) return text;
+  return text.slice(0, PREVIEW_MAX_CHARS - ELLIPSIS.length) + ELLIPSIS;
+}
 
 /**
  * 从 plan 步骤构造可检查的 successCriteria（plan 完成 = 所有步骤执行并验证）。
  * goal 的 complete 判定会对照本字段逐条做证据审计。
  *
- * W1：返回 string[]（结构化条件数组），截断到 CRITERIA_MAX_ITEMS 条。
+ * 形态固定：1 条总述 `All N steps of <basename> executed and verified`
+ * + 前 PREVIEW_COUNT 条 step preview（编号前缀、单条截断 ≤PREVIEW_MAX_CHARS），
+ * 合计 ≤4 条（goal schema maxItems:8），每条单行不含 \r\n。
  */
-function buildPlanSuccessCriteria(planFilePath: string, tasks: string[]): string[] {
-  if (tasks.length <= CRITERIA_MAX_ITEMS) return [...tasks];
-  // 截断：保留前 N-1 条 + 末尾总数提示
-  const items = tasks.slice(0, CRITERIA_MAX_ITEMS - 1);
-  items.push(`… (${tasks.length} steps total in ${basename(planFilePath)})`);
+export function buildPlanSuccessCriteria(planFilePath: string, tasks: string[]): string[] {
+  const planName = toSingleLine(basename(planFilePath).replace(/\.md$/i, ""));
+  const items = [`All ${tasks.length} steps of ${planName} executed and verified`];
+  const previews = tasks
+    .slice(0, PREVIEW_COUNT)
+    .map((step, i) => truncatePreview(toSingleLine(`${i + 1}. ${step}`)));
+  items.push(...previews);
   return items;
 }
 
