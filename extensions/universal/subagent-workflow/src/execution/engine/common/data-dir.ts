@@ -19,6 +19,10 @@
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("subagents");
+
 /** xyz-agent 数据目录 env 名（与 packages/shared/src/paths.ts 的 SSOT 变量同名）。 */
 export const XYZ_DATA_DIR_ENV = "XYZ_AGENT_DATA_DIR";
 
@@ -36,7 +40,7 @@ export function resetDataDirWarnForTests(): void {
  */
 export function getEngineDataDir(
   env: NodeJS.ProcessEnv = process.env,
-  warn: (msg: string) => void = console.warn,
+  warn: (msg: string) => void = defaultWarn,
 ): string {
   const fromEnv = env[XYZ_DATA_DIR_ENV]?.trim();
   if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
@@ -51,4 +55,8 @@ export function getEngineDataDir(
     );
   }
   return fallback;
+}
+
+function defaultWarn(msg: string): void {
+  logger.warn(msg);
 }

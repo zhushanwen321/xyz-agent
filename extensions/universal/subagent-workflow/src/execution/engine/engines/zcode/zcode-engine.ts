@@ -241,6 +241,35 @@ export class ZcodeEngine implements EnginePort {
       final = retry;
     }
 
+    const outcome = this.finalizeOutcome(task, ctx, final, usageAcc, startedAt);
+
+    const handle: EngineHandle = {
+      data: {
+        v: 1,
+        engineId: ZCODE_ENGINE_ID,
+        sessionRef: {
+          // 相对池目录自描述（设计 §3.3.6）——read 时经 resolvePoolDir + 此相对路径重定位
+          dbPath: ZCODE_POOL_DB_RELATIVE_PATH,
+          ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
+        },
+        poolKey: prepared.poolKey,
+        ...(this.probeCache?.engineVersion !== undefined && this.probeCache.engineVersion !== ""
+          ? { engineVersion: this.probeCache.engineVersion }
+          : {}),
+        adapterVersion: ZCODE_ADAPTER_VERSION,
+      },
+    };
+    return { handle, outcome };
+  }
+
+  /** 终态合成（extension-conventions 函数 80 行上限，从 run 提取）：aborted / run-failed / parsed 三分支。 */
+  private finalizeOutcome(
+    task: AgentTaskSpec,
+    ctx: RunContext,
+    final: AttemptResult,
+    usageAcc: { input: number; output: number; cacheRead: number; cacheWrite: number; has: boolean },
+    startedAt: number,
+  ): AgentOutcome {
     const outcome: AgentOutcome = {
       engineId: ZCODE_ENGINE_ID,
       content: "",
@@ -305,24 +334,7 @@ export class ZcodeEngine implements EnginePort {
       // coarse 事件（不变量 5：事件 emit 完成先于 run resolve——journal 完整性）
       for (const ev of synthesizeCoarseEvents(payload.response, payload.usage)) emit(ev);
     }
-
-    const handle: EngineHandle = {
-      data: {
-        v: 1,
-        engineId: ZCODE_ENGINE_ID,
-        sessionRef: {
-          // 相对池目录自描述（设计 §3.3.6）——read 时经 resolvePoolDir + 此相对路径重定位
-          dbPath: ZCODE_POOL_DB_RELATIVE_PATH,
-          ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
-        },
-        poolKey: prepared.poolKey,
-        ...(this.probeCache?.engineVersion !== undefined && this.probeCache.engineVersion !== ""
-          ? { engineVersion: this.probeCache.engineVersion }
-          : {}),
-        adapterVersion: ZCODE_ADAPTER_VERSION,
-      },
-    };
-    return { handle, outcome };
+    return outcome;
   }
 
   /**
@@ -375,6 +387,7 @@ export class ZcodeEngine implements EnginePort {
         kind: "run-failed",
         output,
         message: buildRunFailedMessage({
+          cliPath,
           exitCode: output.exitCode,
           stdoutTail: output.stdoutText,
           stderrTail: output.stderrTail,
@@ -387,6 +400,7 @@ export class ZcodeEngine implements EnginePort {
         kind: "run-failed",
         output,
         message: buildRunFailedMessage({
+          cliPath,
           exitCode: output.exitCode,
           stdoutTail: output.stdoutText,
           stderrTail: output.stderrTail,

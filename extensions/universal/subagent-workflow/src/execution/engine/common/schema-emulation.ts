@@ -34,8 +34,7 @@ export const SCHEMA_EMULATION_TAIL_CHARS = 500;
  * 构造 prompt 注入段：schema 声明 + 输出格式约定（emulated 引擎的 launcher 把它拼进
  * 最终 prompt，替代引擎不存在的 schema 强制通道）。
  *
- * 文案风格对齐 structured-output 的 promptGuidelines（"Do not output JSON in text"
-// 反转义：emulated 引擎没有工具可调，JSON 必须出现在文本里）。
+ * 文案风格对齐 structured-output 的 promptGuidelines（"Do not output JSON in text"：emulated 引擎没有工具可调，JSON 必须出现在文本里）。
  */
 export function buildSchemaEmulationSegment(schema: object): string {
   const schemaJson = JSON.stringify(schema);

@@ -7,8 +7,8 @@
 // 定位是「薄适配层」而非重新实现：不物理移动 session-runner.ts / pi-invocation.ts 等
 // 现有文件（现有 40+ 测试的 import 路径零变化），run 委托 SubagentService.executeAndAwait
 // （其内 runSpawn 即 pi 引擎本体），interact 委托现有 chatMode 交互面
-// （getRecordForAction + deliverMessage / closeSubagent / cancel 直通），read 复用
-// session-reconstructor（pi JSONL 原生读取——P5 下沉为共享 reader 模块的现状本体）。
+// （getRecordForAction + deliverMessage / closeSubagent / cancel 直通），read 第①级委托
+// 共享 reader readPiSessionView（engines/pi/reader.ts——W3B 双端复用面）。
 //
 // pi 专有语义的隔离点在 task-spec-mapper.ts（effort↔thinkingLevel、persona↔skillPath、
 // schemaEnv 派生）——本文件只做委托与形态映射，不出现第二个 pi 语义翻译点。
@@ -23,18 +23,8 @@ import type { AgentResult as WorkflowAgentResult } from "../../../../orchestrati
 import type { PiInvocation } from "../../../pi-invocation.ts";
 import { getPiInvocation } from "../../../pi-invocation.ts";
 import type { StatusFilter } from "../../../record-store.ts";
-import { reconstructFromFile } from "../../../session-reconstructor.ts";
 import type { SubagentStream } from "../../../stream-sink.ts";
-import type {
-  AgentEvent,
-  AgentUsageTotal,
-  ExecutionRecord,
-  ExecuteOptions,
-  InternalToolCall,
-  SubagentRecord,
-  ToolCall,
-  Turn,
-} from "../../../types.ts";
+import type { AgentEvent, ExecutionRecord, ExecuteOptions, SubagentRecord } from "../../../types.ts";
 import type { EnginePort, EngineRunResult, RunContext } from "../../port.ts";
 import { replayJournalToSessionView } from "../../common/journal-replay.ts";
 import type {
@@ -45,10 +35,10 @@ import type {
   InteractAction,
   InteractResult,
   ProbeReport,
-  ReplayedTurn,
   SessionView,
 } from "../../types.ts";
 import { taskSpecToExecuteOptions } from "./task-spec-mapper.ts";
+import { readPiSessionView } from "./reader.ts";
 
 const logger = getLogger("subagents");
 
@@ -267,28 +257,20 @@ export class PiEngine implements EnginePort {
   }
 
   /**
-   * D6 read 三级降级：①pi session JSONL 原生读取（session-reconstructor——完整重建
-   * turns/usage，sessionRead: 'full' 的依据）→ ②宿主 event journal 重放（P4 接线：
+   * D6 read 三级降级：①pi session JSONL 原生读取（readPiSessionView——共享 reader
+   * 单一实现，sessionRead: 'full' 的依据）→ ②宿主 event journal 重放（P4 接线：
    * common/journal-replay 复用 live reducer，重放等价性见 §3.3.6）→ ③outcome-only。
    */
   async read(handle: EngineHandle): Promise<SessionView> {
     const sessionFile = refString(handle.data.sessionRef, "sessionFile");
-    const recon = sessionFile !== undefined ? reconstructFromFile(sessionFile) : undefined;
-    if (!recon) {
+    const native = sessionFile !== undefined ? await readPiSessionView(sessionFile) : undefined;
+    if (!native) {
       // ②级：journal 重放（journalPath 缺省 / 文件不存在 / 无事件 → undefined 落③级）
       const journaled = replayJournalToSessionView(handle, PI_ENGINE_ID);
       if (journaled !== undefined) return journaled;
       return { engineId: PI_ENGINE_ID, turns: [], source: "outcome-only" };
     }
-    return {
-      engineId: PI_ENGINE_ID,
-      // recon.id 是 subagent record id——pi 链路的 sessionId 约定即 header id 兜底
-      // record.id（collectResult 同源），此处沿用同一约定
-      sessionId: recon.id,
-      turns: recon.turns.map(toReplayedTurn),
-      usage: aggregateUsage(recon.turns),
-      source: "native",
-    };
+    return native;
   }
 
   // ── 内部 ──
@@ -430,41 +412,4 @@ function notResumable(handle: EngineHandle): InteractResult {
       `sessionRef ${JSON.stringify(handle.data.sessionRef)}). Idle-process reuse does not survive a main-session ` +
       `reload. Recovery: use a cold resume path (pi --session / --resume with the session file), or start a new subagent.`,
   };
-}
-
-/** Turn → ReplayedTurn：剥离内部态（_status/startedTs），closed 恒 true（§3.3.6）。 */
-function toReplayedTurn(turn: Turn): ReplayedTurn {
-  return {
-    text: turn.text,
-    thinking: turn.thinking,
-    toolCalls: turn.toolCalls.map(stripToolCall),
-    closed: true,
-  };
-}
-
-/** InternalToolCall → ToolCall（导出纯净形状，不泄漏 running/done/failed 内部状态机）。 */
-function stripToolCall(tc: InternalToolCall): ToolCall {
-  return {
-    toolName: tc.toolName,
-    ...(tc.args !== undefined ? { args: tc.args } : {}),
-    ...(tc.result !== undefined ? { result: tc.result } : {}),
-    ...(tc.isError !== undefined ? { isError: tc.isError } : {}),
-  };
-}
-
-/** 各 turn usageDelta 聚合为 AgentUsageTotal（无任何 usage 数据时 undefined）。 */
-function aggregateUsage(turns: Turn[]): AgentUsageTotal | undefined {
-  let acc: AgentUsageTotal | undefined;
-  for (const turn of turns) {
-    const d = turn.usageDelta;
-    if (!d) continue;
-    if (!acc) acc = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, total: 0 };
-    acc.input += d.input;
-    acc.output += d.output;
-    acc.cacheRead += d.cacheRead;
-    acc.cacheWrite += d.cacheWrite;
-    acc.cost += d.cost ?? 0;
-  }
-  if (acc) acc.total = acc.input + acc.output + acc.cacheRead + acc.cacheWrite;
-  return acc;
 }

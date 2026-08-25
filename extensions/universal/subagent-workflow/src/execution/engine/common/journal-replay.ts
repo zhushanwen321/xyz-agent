@@ -9,9 +9,10 @@
 // live reducer 累积 turns → 投影 SessionView）——放引擎各自实现会漂移出两份形状。
 
 import { createRecord, updateFromEvent } from "../../execution-record.ts";
-import type { AgentEvent, AgentUsageTotal, Turn } from "../../types.ts";
-import type { EngineHandle, ReplayedTurn, SessionView } from "../types.ts";
+import type { AgentEvent } from "../../types.ts";
+import type { EngineHandle, SessionView } from "../types.ts";
 import { replayJournal } from "./event-journal.ts";
+import { aggregateUsage, toReplayedTurn } from "./session-view-projection.ts";
 
 /**
  * journal → SessionView（read 第②级）。
@@ -58,36 +59,4 @@ export function eventsToSessionView(
 function sessionIdFromHandle(handle: EngineHandle): string | undefined {
   const v = handle.data.sessionRef["sessionId"];
   return typeof v === "string" ? v : undefined;
-}
-
-/** Turn → ReplayedTurn：剥离内部态（closed 恒 true——重放物无进行时语义）。 */
-function toReplayedTurn(turn: Turn): ReplayedTurn {
-  return {
-    text: turn.text,
-    thinking: turn.thinking,
-    toolCalls: turn.toolCalls.map((tc) => ({
-      toolName: tc.toolName,
-      ...(tc.args !== undefined ? { args: tc.args } : {}),
-      ...(tc.result !== undefined ? { result: tc.result } : {}),
-      ...(tc.isError !== undefined ? { isError: tc.isError } : {}),
-    })),
-    closed: true,
-  };
-}
-
-/** 各 turn usageDelta 聚合为 AgentUsageTotal（无任何 usage 数据时 undefined）。 */
-function aggregateUsage(turns: readonly Turn[]): AgentUsageTotal | undefined {
-  let acc: AgentUsageTotal | undefined;
-  for (const turn of turns) {
-    const d = turn.usageDelta;
-    if (!d) continue;
-    if (!acc) acc = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, total: 0 };
-    acc.input += d.input;
-    acc.output += d.output;
-    acc.cacheRead += d.cacheRead;
-    acc.cacheWrite += d.cacheWrite;
-    acc.cost += d.cost ?? 0;
-  }
-  if (acc) acc.total = acc.input + acc.output + acc.cacheRead + acc.cacheWrite;
-  return acc;
 }

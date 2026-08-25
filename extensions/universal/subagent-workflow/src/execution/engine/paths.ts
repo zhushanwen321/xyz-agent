@@ -11,10 +11,13 @@ import { join } from 'node:path';
  * 隔离池跨任务保留复用；journal 生命周期跟随 record，不随池删除（D5）。
  */
 
+/** 路径段安全编码后的最大字符数（防超长段击穿文件名长度上限；runtime 校验侧同源）。 */
+const MAX_SEG_CHARS = 80;
+
 /** 路径段进入文件系统前的安全编码：路径穿越、分隔符、空白、超长全部归一。 */
 export function sanitizeSeg(input: string): string {
   const s = input.replace(/[^A-Za-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-  return s.length > 0 ? s.slice(0, 80) : 'default';
+  return s.length > 0 ? s.slice(0, MAX_SEG_CHARS) : 'default';
 }
 
 export function resolveEnginesRoot(dataDir: string): string {

@@ -46,12 +46,26 @@ export interface PoolFsDeps {
 // 进程内池注册表（引用计数）
 // ============================================================
 
-/** key = 池目录绝对路径 → 活跃引用计数。 */
-const poolRefs = new Map<string, number>();
+/**
+ * key = 池目录绝对路径 → 活跃引用计数。进程级单例状态，用 globalThis[Symbol.for]
+ * 持有防 jiti 双路径加载分裂（development-guide §7.5），不用模块级 const。
+ */
+const POOL_REFS_SLOT_KEY = Symbol.for("@zhushanwen/pi-subagent-workflow.poolRefs");
+
+function getPoolRefs(): Map<string, number> {
+  // globalThis 无 symbol 索引签名，但运行时支持 symbol 键——用 Reflect 安全读写，
+  // 避免双重断言（同 model-config-service.ts 先例）。
+  let refs = Reflect.get(globalThis, POOL_REFS_SLOT_KEY) as Map<string, number> | undefined;
+  if (!refs) {
+    refs = new Map();
+    Reflect.set(globalThis, POOL_REFS_SLOT_KEY, refs);
+  }
+  return refs;
+}
 
 /** 测试隔离专用：清空进程内注册表（生产禁用——会丢失活跃引用计数）。 */
 export function resetPoolRegistryForTests(): void {
-  poolRefs.clear();
+  getPoolRefs().clear();
 }
 
 // ============================================================
@@ -70,6 +84,7 @@ export async function acquirePool(
 ): Promise<string> {
   const poolDir = resolvePoolDir(dataDir, engineId, poolKey);
   await fs.mkdir(poolDir, { recursive: true });
+  const poolRefs = getPoolRefs();
   poolRefs.set(poolDir, (poolRefs.get(poolDir) ?? 0) + 1);
   return poolDir;
 }
@@ -86,6 +101,7 @@ export async function releasePoolRef(
   fs: PoolFsDeps = nodeFs,
 ): Promise<void> {
   const poolDir = resolvePoolDir(dataDir, engineId, poolKey);
+  const poolRefs = getPoolRefs();
   const current = poolRefs.get(poolDir);
   // 无计数（进程重启后释放 / 未 acquire 的释放）→ 保守不删池：删池决策必须有本进程
   // 内的归零证据，凭空删除可能误删其他进程正在使用的池

@@ -285,7 +285,6 @@ function homeNeedsBootstrap(configPath: string, sourceMtimeMs: number): boolean 
 }
 
 /** 池 config.json 缩进（人读友好——与 zsub 产出的文件形态一致）。 */
- 
 const CONFIG_INDENT_SPACES = 2;
 
 /**

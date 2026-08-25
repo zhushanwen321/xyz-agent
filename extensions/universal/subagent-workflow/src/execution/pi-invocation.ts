@@ -1,4 +1,4 @@
-// src/core/pi-invocation.ts
+// src/execution/pi-invocation.ts
 //
 // 定位 pi 二进制并组装 spawn 调用。Core 叶子原语（仅依赖 node 内置）。
 //

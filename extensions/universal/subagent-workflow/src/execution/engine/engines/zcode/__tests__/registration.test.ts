@@ -39,20 +39,23 @@ describe("registerZcodeEngine", () => {
 
 describe("engineDataDir 默认通道（common/data-dir SSOT）", () => {
   it("缺省经 getEngineDataDir 解析：env 优先，缺失回落 piAgentDir（warn 一次）", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // warn 断言走 getEngineDataDir 自带的 DI warn 参数——缺省 warn 通道是
+    // pi-extension-logger（落文件，不经 console.warn，见 data-dir.ts defaultWarn），
+    // spy console 永远收不到且会让 logger 落文件产生测试副作用。
     const { getEngineDataDir, resetDataDirWarnForTests } = await import("../../../common/data-dir.ts");
+    const warns: string[] = [];
     const prev = process.env["XYZ_AGENT_DATA_DIR"];
     delete process.env["XYZ_AGENT_DATA_DIR"];
     try {
       resetDataDirWarnForTests();
       // 回退分支：无 env → getAgentDir()（vitest alias mock）+ warn 一次
-      expect(getEngineDataDir()).toBe(getAgentDir());
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(warnSpy.mock.calls[0]![0]).toContain("XYZ_AGENT_DATA_DIR");
+      expect(getEngineDataDir(process.env, (m) => warns.push(m))).toBe(getAgentDir());
+      expect(warns).toHaveLength(1);
+      expect(warns[0]).toContain("XYZ_AGENT_DATA_DIR");
       // env 分支：显式注入即取 env 值（透传链证据见 common/data-dir.ts 文件头）
       process.env["XYZ_AGENT_DATA_DIR"] = "/from-host";
-      expect(getEngineDataDir()).toBe("/from-host");
-      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(getEngineDataDir(process.env, (m) => warns.push(m))).toBe("/from-host");
+      expect(warns).toHaveLength(1);
     } finally {
       if (prev !== undefined) process.env["XYZ_AGENT_DATA_DIR"] = prev;
       else delete process.env["XYZ_AGENT_DATA_DIR"];

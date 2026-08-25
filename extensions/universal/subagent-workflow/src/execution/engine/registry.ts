@@ -53,11 +53,29 @@ export class EngineNotFoundError extends Error {
   }
 }
 
-/** id → factory（注册表本体）。进程级单例状态。 */
-const factories = new Map<string, EngineFactory>();
+/**
+ * id → factory（注册表本体）+ id → 惰性单例（getEngine 首次取用创建；registerEngine
+ * 覆盖时丢弃旧实例）。进程级单例状态，用 globalThis[Symbol.for] 持有防 jiti 双路径
+ * 加载分裂（development-guide §7.5），不用模块级 const。
+ */
+const ENGINE_REGISTRY_SLOT_KEY = Symbol.for("@zhushanwen/pi-subagent-workflow.engineRegistry");
 
-/** id → 惰性单例（getEngine 首次取用创建；registerEngine 覆盖时丢弃旧实例）。 */
-const singletons = new Map<string, EnginePort>();
+/** 注册表槽位形状（同文件唯一写入点，运行时保证）。 */
+interface EngineRegistrySlot {
+  factories: Map<string, EngineFactory>;
+  singletons: Map<string, EnginePort>;
+}
+
+function getRegistrySlot(): EngineRegistrySlot {
+  // globalThis 无 symbol 索引签名，但运行时支持 symbol 键——用 Reflect 安全读写，
+  // 避免双重断言（同 model-config-service.ts 先例）。
+  let slot = Reflect.get(globalThis, ENGINE_REGISTRY_SLOT_KEY) as EngineRegistrySlot | undefined;
+  if (!slot) {
+    slot = { factories: new Map(), singletons: new Map() };
+    Reflect.set(globalThis, ENGINE_REGISTRY_SLOT_KEY, slot);
+  }
+  return slot;
+}
 
 /**
  * 登记引擎工厂。重复注册同一 id = 覆盖（组合根可能多次执行，如每次 session_start 重跑
@@ -65,31 +83,33 @@ const singletons = new Map<string, EnginePort>();
  * getEngine 用新工厂重建。
  */
 export function registerEngine(id: string, factory: EngineFactory): void {
-  factories.set(id, factory);
-  singletons.delete(id);
+  const slot = getRegistrySlot();
+  slot.factories.set(id, factory);
+  slot.singletons.delete(id);
 }
 
 /** 未注册 id 抛 EngineNotFoundError（含已注册清单与配置指引）。 */
 export function getEngine(id: string): EnginePort {
-  const cached = singletons.get(id);
+  const slot = getRegistrySlot();
+  const cached = slot.singletons.get(id);
   if (cached) return cached;
-  const factory = factories.get(id);
+  const factory = slot.factories.get(id);
   if (!factory) {
     throw new EngineNotFoundError(id, listEngines());
   }
   const engine = factory();
-  singletons.set(id, engine);
+  slot.singletons.set(id, engine);
   return engine;
 }
 
 /** id 是否已注册（agent 解析期的配置校验入口，D9——不取实例、不触发工厂副作用）。 */
 export function hasEngine(id: string): boolean {
-  return factories.has(id);
+  return getRegistrySlot().factories.has(id);
 }
 
 /** 已注册引擎 id 清单（稳定序 = 注册序；错误文案与 GUI 引擎选择器共用）。 */
 export function listEngines(): string[] {
-  return [...factories.keys()];
+  return [...getRegistrySlot().factories.keys()];
 }
 
 /**
@@ -97,6 +117,7 @@ export function listEngines(): string[] {
  * 生产代码禁用——进程内注册表是全局状态，清空会让已获取的引擎句柄与新注册表脱钩。
  */
 export function clearEngines(): void {
-  factories.clear();
-  singletons.clear();
+  const slot = getRegistrySlot();
+  slot.factories.clear();
+  slot.singletons.clear();
 }

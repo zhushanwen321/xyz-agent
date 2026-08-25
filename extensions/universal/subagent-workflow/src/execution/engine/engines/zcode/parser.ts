@@ -30,7 +30,6 @@ export interface BoundedLineBuffer {
   tail(n: number): string;
 }
 
- 
 const DEFAULT_HEAD_BYTES = 4096;
 // eslint-disable-next-line no-magic-numbers -- 64KB = 64 * 1024 bytes
 const DEFAULT_TAIL_BYTES = 64 * 1024;
@@ -243,7 +242,6 @@ export interface ZcodeCollectedOutput {
  * 会拿到空串。等流终止事件是确定性的「数据已收完」判据；超时兜底防流异常挂起。
  */
 /** 流终止等待超时（兜底挂起流；比杀链 grace 短一个量级即可）。 */
- 
 const DRAIN_TIMEOUT_MS = 1_000;
 
 function drainReadable(stream: Readable): Promise<void> {
@@ -318,10 +316,11 @@ export function synthesizeCoarseEvents(response: string, usage?: ExecutionAgentU
  * （版本确认 + 探针重跑 + 新样本补录 golden + engine: pi 重跑）。
  */
 /** 错误文案里 stderr 尾部回显长度（stdout 有专用 2000 常量，stderr 更短防刷屏）。 */
- 
 const STDERR_TAIL_IN_MSG_CHARS = 500;
 
 export function buildRunFailedMessage(opts: {
+  /** 实际使用的 CLI 路径（用户可经 XYZ_ZCODE_CLI 覆盖——文案必须引用真路径，不硬编码缺省值）。 */
+  cliPath: string;
   exitCode: number | null;
   stdoutTail: string;
   stderrTail?: string;
@@ -337,7 +336,7 @@ export function buildRunFailedMessage(opts: {
   }
   parts.push(`stdout 尾部: ${opts.stdoutTail.slice(-ZCODE_ERROR_TAIL_CHARS)}`);
   parts.push(
-    "恢复指引：跑 `node /Applications/ZCode.app/Contents/Resources/glm/zcode.cjs --version` 确认版本后重跑探针（probe）——" +
+    `恢复指引：跑 \`node ${opts.cliPath} --version\` 确认版本后重跑探针（probe）——` +
       "若为格式漂移，把新 stdout 样本补录进 golden 库（__tests__/__fixtures__/zcode-golden-spawn.json）并更新 parser；" +
       "或改用 engine: pi 重跑本任务。详见 docs/research/agent-engine-zcode.md。",
   );
