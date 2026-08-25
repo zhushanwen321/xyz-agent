@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { handleCreate } from "../adapters/goal-control-adapter";
+import { handleCreate, type GoalControlParamsT } from "../adapters/goal-control-adapter";
 import type { GoalRuntimeState } from "../engine/types";
 import type { UiPort } from "../ports";
 import type { ServicePorts } from "../service";
@@ -90,7 +90,7 @@ describe("handleCreate — successCriteria string[]", () => {
 		).toThrow(/successCriteria/);
 	});
 
-	it("successCriteria 含空串项 → throw", () => {
+	it("successCriteria 含空串项 → throw（U6：文案含 Correct: 恢复正例）", () => {
 		const session = createGoalSession();
 		const ports = makeFakePorts();
 
@@ -104,7 +104,43 @@ describe("handleCreate — successCriteria string[]", () => {
 				session,
 				ports,
 			),
-		).toThrow(/successCriteria/);
+		).toThrow(/successCriteria[\s\S]*Correct:/);
+	});
+
+	it.each([
+		["LF", ["line1\nline2"]],
+		["CRLF", ["a\r\nb"]],
+		["孤立 CR", ["a\rb"]],
+	])("U7: 条目含换行（%s）→ throw 且文案含「单行」提示与 Correct: 正例", (_label, criteria) => {
+		const session = createGoalSession();
+		const ports = makeFakePorts();
+
+		expect(() =>
+			handleCreate(
+				{
+					action: "create",
+					objective: "do something",
+					successCriteria: criteria,
+				},
+				session,
+				ports,
+			),
+		).toThrow(/successCriteria[\s\S]*single-line[\s\S]*Correct:/);
+	});
+
+	it("U28②: 非 string 元素（绕过 schema 直调 handler）→ 业务 throw 含 Correct:，不产生 TypeError", () => {
+		const session = createGoalSession();
+		const ports = makeFakePorts();
+
+		// 直调 handler 绕过 schema 校验（测试/异常路径可能传入脏元素），断言运行时 typeof 防御
+		const dirtyParams = {
+			action: "create",
+			objective: "do something",
+			successCriteria: [1, null, true],
+		} as unknown as GoalControlParamsT;
+
+		expect(() => handleCreate(dirtyParams, session, ports)).toThrow(/successCriteria[\s\S]*Correct:/);
+		expect(() => handleCreate(dirtyParams, session, ports)).not.toThrow(TypeError);
 	});
 
 	it("successCriteria undefined → throw", () => {

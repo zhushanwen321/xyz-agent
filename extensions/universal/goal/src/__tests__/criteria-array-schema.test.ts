@@ -72,6 +72,16 @@ describe("goal_control schema — successCriteria string[]", () => {
 		).toBe(false);
 	});
 
+	it("invalid: successCriteria 项含孤立 \\r（CR）→ 拒绝（pattern ^[^\\r\\n]+$ 拦截）", () => {
+		expect(
+			Value.Check(GoalControlParams, {
+				action: "create",
+				objective: "x",
+				successCriteria: ["a\rb"],
+			}),
+		).toBe(false);
+	});
+
 	it("invalid: successCriteria 为空 string（旧格式）→ 拒绝", () => {
 		expect(
 			Value.Check(GoalControlParams, {

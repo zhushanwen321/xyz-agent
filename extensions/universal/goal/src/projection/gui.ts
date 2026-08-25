@@ -68,26 +68,6 @@ function metaStatus(status: GoalStatus): WidgetMeta["status"] {
 }
 
 /**
- * successCriteria 按行拆分为非空 trim 行。
- *
- * W1：successCriteria 已结构化为 string[]，每项即一行条件。
- * 向后兼容：旧数据可能为 string（deserialize 已迁移，但防御性保留）。原实现用
- * toSingleLine 压扁 + 截断后塞进 stats-line 单行 value，多行验收标准变成一坨长串，
- * 是 goal widget 可读性问题的根因——多行数据应改用 list-tree 多行呈现。
- */
-function splitCriteriaLines(criteria: string[] | string | undefined): string[] {
-	if (!criteria) return [];
-	if (Array.isArray(criteria)) {
-		return criteria.map((s) => s.trim()).filter((s) => s.length > 0);
-	}
-	// 向后兼容旧 string 格式
-	return criteria
-		.split(/\r?\n/)
-		.map((line) => line.trim())
-		.filter((line) => line.length > 0);
-}
-
-/**
  * 构造 goal 的 GUI 渲染描述符（v1.1 meta head 架构）。
  *
  * - meta（标题=slug / 状态点 / token 进度）由宿主壳层渲染成唯一 head；
@@ -119,8 +99,12 @@ export function buildGoalGui(state: GoalRuntimeState): GuiRenderResult {
 		}),
 	);
 
-	// successCriteria 逐行呈现（用户看「怎么算完成」）
-	const criteriaLines = splitCriteriaLines(state.successCriteria);
+	// successCriteria 逐行呈现（用户看「怎么算完成」）。
+	// 直读数组：旧 string 的行拆分迁移已归 persistence.normalizeSuccessCriteria（唯一迁移点），
+	// 此处收到的必为 string[] | undefined；仅做 trim + 空行过滤的展示归一。
+	const criteriaLines = (state.successCriteria ?? [])
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
 	if (criteriaLines.length > 0) {
 		children.push(
 			guiComponent("list-tree", {
