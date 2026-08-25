@@ -99,8 +99,8 @@ describe('useComposerModelThinking · currentThinkingLevel 派生', () => {
 
   it('landing 态 → currentThinkingLevel 跟随 localThinkingLevel（sync 会设初值）', () => {
     const { result, scope } = mount(null)
-    // sync immediate watch 设 localThinkingLevel 为最高可用档（all-levels → 'max'）
-    expect(result.currentThinkingLevel.value).toBe('max')
+    // sync immediate watch 设 localThinkingLevel 为最高可用档（map 缺失新语义默认五档 → 'high'）
+    expect(result.currentThinkingLevel.value).toBe('high')
     // 手动改 localThinkingLevel → currentThinkingLevel 跟随
     result.localThinkingLevel.value = 'medium'
     expect(result.currentThinkingLevel.value).toBe('medium')

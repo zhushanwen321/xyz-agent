@@ -23,8 +23,8 @@ beforeEach(() => {
 })
 
 describe('U3: thinking-levels 数据源 i18n 化', () => {
-  it('THINKING_LEVELS 6 档全部带 labelKey 字段', () => {
-    expect(THINKING_LEVELS).toHaveLength(6)
+  it('THINKING_LEVELS 7 档全部带 labelKey 字段', () => {
+    expect(THINKING_LEVELS).toHaveLength(7)
     for (const opt of THINKING_LEVELS) {
       expect(opt.labelKey).toBeDefined()
       expect(typeof opt.labelKey).toBe('string')
@@ -62,5 +62,14 @@ describe('U4: ProviderEditModal en-US 下显示英文策略名', () => {
     await setLocale('en-US')
     const labels = THINKING_STRATEGIES.map((s) => i18n.global.t(s.labelKey!))
     expect(labels).toEqual(['All Levels', 'On / Off', 'High / Max'])
+  })
+
+  it('U10: zh-CN/en-US 均存在 composable.thinkingLevel.minimal（pi 七档枚举补齐）', async () => {
+    const minimalOpt = THINKING_LEVELS.find((o) => o.level === 'minimal')
+    expect(minimalOpt).toBeDefined()
+    await setLocale('zh-CN')
+    expect(i18n.global.t(minimalOpt!.labelKey)).toBe('极简')
+    await setLocale('en-US')
+    expect(i18n.global.t(minimalOpt!.labelKey)).toBe('Minimal')
   })
 })

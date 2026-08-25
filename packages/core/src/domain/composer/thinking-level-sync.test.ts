@@ -82,10 +82,11 @@ describe('useThinkingLevelSync', () => {
     // 切到跨体系模型
     currentModelId.value = 'p/m3'
     await nextTick()
-    // isSameThinkingScheme(mapA, mapB) = false（['off','high'] vs ['low','medium']）
-    // 跨体系：highestAvailableLevel(mapB) = 'medium'；resolveThinkingValue('medium', mapB) = 'm'
-    // 'm' !== 'h' → onReset('m')
-    expect(onReset).toHaveBeenCalledWith('m')
+    // isSameThinkingScheme(mapA, mapB) = false（新语义可用集：['off','high'] vs 五档）
+    // 跨体系：highestAvailableLevel(mapB) = 'high'（叠加规则 off..high）；
+    // resolveThinkingValue('high', mapB) = 'high'（mapB 无 high key 回退 key 自身）
+    // 'high' !== 'h' → onReset('high')
+    expect(onReset).toHaveBeenCalledWith('high')
   })
 
   it('case4: 无 newMap（getThinkingLevelMap 返回 undefined）+ current 有值 → 不重置', () => {
@@ -120,5 +121,36 @@ describe('useThinkingLevelSync', () => {
     currentModelId.value = 'p/m9'
     expect(currentThinkingLevelMap.value).toBe(mapA) // mock 恒返回 mapA
     expect(deps.getThinkingLevelMap).toHaveBeenCalledWith('p/m9')
+  })
+
+  it('U11: 切到 non-reasoning 模型（getModelReasoning=false）→ 重置到 off', async () => {
+    const currentModelId = ref('p/m1')
+    const currentThinkingLevel = ref<string | undefined>('h')
+    const onReset = vi.fn()
+    const deps: ThinkingLevelSyncDeps = {
+      getThinkingLevelMap: vi.fn((id: string) => (id === 'p/m1' ? mapA : undefined)),
+      getModelReasoning: vi.fn((id: string) => (id === 'p/nonreasoning' ? false : true)),
+    }
+    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    // 切到 non-reasoning 模型：可用档只有 ['off']，当前 'h' 不可用
+    currentModelId.value = 'p/nonreasoning'
+    await nextTick()
+    // highestAvailableLevel(undefined, false) = 'off'；resolveThinkingValue('off', undefined) = 'off'
+    expect(onReset).toHaveBeenCalledWith('off')
+  })
+
+  it('U11b: 切到 map 缺失模型（pi 默认五档）→ 当前不可用档重置到 high 而非 max', async () => {
+    const currentModelId = ref('p/m1')
+    const currentThinkingLevel = ref<string | undefined>('xhigh') // mimo 无此档
+    const onReset = vi.fn()
+    const deps: ThinkingLevelSyncDeps = {
+      getThinkingLevelMap: vi.fn(() => undefined), // xiaomi-token-plan-cn/mimo-v2.5-pro 场景
+      getModelReasoning: vi.fn(() => true),
+    }
+    useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
+    currentModelId.value = 'p/mimo'
+    await nextTick()
+    // 新语义可用集五档（无 max），最高可用档 = high → onReset('high')
+    expect(onReset).toHaveBeenCalledWith('high')
   })
 })

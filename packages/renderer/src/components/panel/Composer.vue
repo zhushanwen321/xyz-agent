@@ -101,8 +101,8 @@
         <ContextCapacityPopover :session-id="sessionId ?? undefined" :model-id="currentModelId" />
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
         <ModelSelectPopover :selected="currentModelId" @select="onModelSelect" />
-        <!-- 思考等级（spec §2c：click 出 6 级 popover；level 从 session 透传） -->
-        <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" @select="onThinkingSelect" />
+        <!-- 思考等级（spec §2c：click 出档位 popover；level 从 session 透传；reasoning 决定可用档集——non-reasoning 只 off） -->
+        <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" :reasoning="currentModelReasoning" @select="onThinkingSelect" />
 
         <!-- 发送位：staging（fork/handoff，含 streaming 中）→staging send / S6 streaming/dispatching→stop /
              S5 sending→spinner / compact→queue-send（可点，入队待重放）/ S1·S2 idle→send。
@@ -300,6 +300,7 @@ const {
   currentModelId,
   currentThinkingLevel,
   currentThinkingLevelMap,
+  currentModelReasoning,
   onModelSelect,
   onThinkingSelect,
   handleArrowUp,

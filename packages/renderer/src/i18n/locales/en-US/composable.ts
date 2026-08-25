@@ -30,6 +30,7 @@ export default {
   // Thinking level labels (W2)
   thinkingLevel: {
     off: 'off',
+    minimal: 'Minimal',
     low: 'low',
     medium: 'medium',
     high: 'high',
