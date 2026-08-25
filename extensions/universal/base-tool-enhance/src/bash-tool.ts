@@ -9,7 +9,10 @@
  *  2. description 重写——官方文案不含 background 用法，不重写则模型永远发现不了
  *     新参数，「模型主动要求后台」的路径不可达
  *  3. background:true 分支（M2）：spawn 后台任务立即返回 task_id（D14：subagent
- *     进程内降级忽略 background，走前台同步语义）；白名单强制转后台（D3/D13）是 M4
+ *     进程内降级忽略 background，走前台同步语义）
+ *  4. 白名单强制后台（M4，D3/D13）：命令命中 force-test/force-longrun/用户正则 →
+ *     无视 background 参数强制后台，忽略 LLM 显式 timeout；双模式 timeout 配置注入
+ *     （前台未填 → foregroundTimeoutSeconds，后台未填 → backgroundTimeoutSeconds）
  */
 
 import type { AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -22,6 +25,8 @@ import {
 	truncateCommand,
 } from "./background/spawn-background.ts";
 import { isSubagentProcess } from "./background/subagent-guard.ts";
+import { loadBaseToolEnhanceConfig } from "./config.ts";
+import { compileForcePatterns, describeForceMatch, matchForceBackground } from "./force-patterns.ts";
 
 /**
  * override 后的 bash input schema。
@@ -107,19 +112,80 @@ export function createBashOverrideToolDefinition() {
 			onUpdate: AgentToolUpdateCallback<unknown> | undefined,
 			ctx: ExtensionContext,
 		) {
+			// 配置每次 execute 读时加载（热重载契约：禁止上层缓存，同进程改配置文件
+			// 不重启即生效）。D14：subagent 降级是全量的——白名单与 background 参数
+			// 同时失效（判定一次，两个分支共用）
+			const config = loadBaseToolEnhanceConfig();
+			const subagent = isSubagentProcess();
+
+			// 白名单强制后台（D3/M4）：判定在 execute 内部、不改写 input——permission
+			// 审批的永远是原始 command/background/timeout（P1 探针结论的前提）。命中 →
+			// 强制走 background，无视 background:false/缺省
+			if (!subagent) {
+				const forceMatch = matchForceBackground(
+					args.command,
+					compileForcePatterns(config.forceBackgroundPatterns, config.disableBuiltinForcePatterns),
+				);
+				if (forceMatch !== undefined) {
+					// D13：忽略 LLM 显式 timeout（unified-hooks 时代「跑测试带 timeout」习惯
+					// 会精确复刻 §2.2 要解决的失败模式），按「配置默认 → 不限」取值
+					const timeoutSec = resolveBackgroundTimeoutSec(
+						undefined,
+						config.backgroundTimeoutSeconds ?? undefined,
+					);
+					const spawned = spawnBackgroundTask({
+						command: args.command,
+						cwd: ctx.cwd,
+						dataDir: getAgentDir(),
+						sessionId: ctx.sessionManager.getSessionId(),
+						timeoutSec,
+						maxConcurrent: config.maxConcurrentBackground,
+					});
+					if (!spawned.ok) {
+						throw new Error(spawned.error);
+					}
+					const { task } = spawned;
+					const notes = [
+						`Forced to background: command matched force-background whitelist ${describeForceMatch(forceMatch)}.`,
+						...(args.timeout !== undefined
+							? [
+									`Ignored explicit timeout ${args.timeout}s for whitelisted command ` +
+										`(background timeout: ${timeoutSec !== undefined ? `${timeoutSec}s (config default)` : "unlimited"}).`,
+								]
+							: []),
+					];
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: [
+									`Background task started: ${truncateCommand(task.command)}`,
+									`task_id: ${task.taskId}  pid: ${task.pid}`,
+									`Output file: ${task.outputFile}`,
+									...notes,
+									`Poll with bash_output {task_id:"${task.taskId}"} or omit task_id to list all tasks; terminate with bash_kill {task_id:"${task.taskId}"}.`,
+								].join("\n"),
+							},
+						],
+						details: undefined,
+					};
+				}
+			}
+
 			// background 分支（M2）：显式 background:true 且非 subagent 降级（D14——
 			// subagent 进程内忽略 background 走前台，保持内置同步语义）。abort/interrupt
 			// 不传播到后台任务（D15）：本分支不接触 signal，立即返回
-			if (args.background === true && !isSubagentProcess()) {
-				// 无效 timeout 沿用 pi 内置文案抛错；有效显式值生效（M4 配置默认值接缝：
-				// resolveBackgroundTimeoutSec 只认显式值，M4 在这里注入配置默认）
-				const timeoutSec = resolveBackgroundTimeoutSec(args.timeout);
+			if (args.background === true && !subagent) {
+				// timeout 优先级（§3.5）：LLM 显式值 > 配置默认 > 不限；无效显式值沿用
+				// pi 内置文案抛错（注入只发生在「LLM 未填 && 配置了默认」，D4）
+				const timeoutSec = resolveBackgroundTimeoutSec(args.timeout, config.backgroundTimeoutSeconds ?? undefined);
 				const spawned = spawnBackgroundTask({
 					command: args.command,
 					cwd: ctx.cwd,
 					dataDir: getAgentDir(),
 					sessionId: ctx.sessionManager.getSessionId(),
 					timeoutSec,
+					maxConcurrent: config.maxConcurrentBackground,
 				});
 				if (!spawned.ok) {
 					throw new Error(spawned.error);
@@ -145,7 +211,19 @@ export function createBashOverrideToolDefinition() {
 			// 是本包增量，官方 execute 不认识（其解构也只取这两个键，显式构造让
 			// 「本层转发面」在代码上自解释）。subagent 降级（D14）与 background 缺省
 			// 都落到这条路径。
-			return delegate.execute(toolCallId, { command: args.command, timeout: args.timeout }, signal, onUpdate, ctx);
+			//
+			// 前台 timeout 注入（M4/G3）：LLM 未填 && foregroundTimeoutSeconds 配置了
+			// 默认 → 注入；默认 null 不注入 = pi 原生不限时语义（D4）。注入与 subagent
+			// 降级正交——D14 只废 background/白名单语义，前台默认超时是全局挂死保护
+			const foregroundTimeout =
+				args.timeout !== undefined ? args.timeout : (config.foregroundTimeoutSeconds ?? undefined);
+			return delegate.execute(
+				toolCallId,
+				{ command: args.command, timeout: foregroundTimeout },
+				signal,
+				onUpdate,
+				ctx,
+			);
 		},
 	};
 }

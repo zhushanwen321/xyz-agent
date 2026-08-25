@@ -28,8 +28,9 @@ const MS_PER_SECOND = 1000;
 const logger = getLogger("base-tool-enhance");
 
 /**
- * 并发上限默认值（D10）。M4 配置接缝：maxConcurrentBackground 配置键注入后替换
- * 此常量的取值来源，函数签名不变。
+ * 并发上限默认值（D10）。M4：取值来源已配置化——bash-tool execute 每次读
+ * maxConcurrentBackground 配置经 opts.maxConcurrent 传入；本常量仅在调用方未传时
+ * 兜底（与 config.ts DEFAULT_BASE_TOOL_ENHANCE_CONFIG.maxConcurrentBackground 同源）。
  */
 export const DEFAULT_MAX_CONCURRENT_BACKGROUND = 8;
 
@@ -61,13 +62,18 @@ function randomRandSegment(): string {
 }
 
 /**
- * 后台显式 timeout 解析（秒）。M4 配置接缝：本函数只认 LLM 显式值；M4 的
- * backgroundTimeoutSeconds 配置默认注入发生在调用侧（bash-tool execute），
- * 本函数签名不变。
- * 无效值（非有限/≤0）沿用 pi 内置文案抛错。
+ * 后台 timeout 解析（秒），优先级 = LLM 显式值 > 配置默认值 > 不限（§3.5）：
+ *  - 显式值有效 → 显式值；显式值无效（非有限/≤0）→ 沿用 pi 内置文案抛错
+ *  - 显式值缺省 && 配置默认提供 → 配置默认（M4 注入接缝：调用侧传
+ *    backgroundTimeoutSeconds；已 normalize，必为正有限数）
+ *  - 双缺省 → undefined（不限）
+ * D13 例外由调用侧实现：白名单强转后台时传 explicitSec=undefined（显式值整体忽略）。
  */
-export function resolveBackgroundTimeoutSec(explicitSec: number | undefined): number | undefined {
-	if (explicitSec === undefined) return undefined;
+export function resolveBackgroundTimeoutSec(
+	explicitSec: number | undefined,
+	defaultSec?: number,
+): number | undefined {
+	if (explicitSec === undefined) return defaultSec;
 	if (!Number.isFinite(explicitSec) || explicitSec <= 0) {
 		throw new Error("Invalid timeout: must be a finite number of seconds");
 	}
@@ -81,9 +87,9 @@ export interface SpawnBackgroundOptions {
 	/** pi getAgentDir() 同源 dataDir */
 	dataDir: string;
 	sessionId: string;
-	/** LLM 显式 timeout（秒）；undefined = 不限时（M4 注入配置默认值） */
+	/** LLM 显式 timeout（秒）；undefined 时若配置默认存在由调用侧注入（M4）。 */
 	timeoutSec?: number;
-	/** 测试接缝：并发上限（生产走 DEFAULT_MAX_CONCURRENT_BACKGROUND）。 */
+	/** 并发上限（M4：bash-tool 从 maxConcurrentBackground 配置传入；缺省走默认常量）。 */
 	maxConcurrent?: number;
 }
 
