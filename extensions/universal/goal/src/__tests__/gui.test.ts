@@ -39,7 +39,7 @@ describe("buildGoalGui（v1.1 meta head 架构）", () => {
 				tokensUsed: 4200,
 				budget: { tokenBudget: 10000 },
 				currentTurnIndex: 3,
-				successCriteria: "all tests green",
+				successCriteria: ["all tests green"],
 			}),
 		);
 		expect(gui.v).toBe(1);
@@ -147,7 +147,7 @@ describe("buildGoalGui（v1.1 meta head 架构）", () => {
 	it("多行 successCriteria → list-tree 每行一条纯文本 item（用户报障场景）", () => {
 		const gui = buildGoalGui(
 			makeState({
-				successCriteria: "1. 输出 Node.js 版本号；\n2. 输出 extensions 目录下的子目录列表",
+				successCriteria: ["输出 Node.js 版本号", "输出 extensions 目录下的子目录列表"],
 				budget: { tokenBudget: 10000 },
 			}),
 		);
@@ -155,17 +155,17 @@ describe("buildGoalGui（v1.1 meta head 架构）", () => {
 		// 无 icon（所有行同 icon 是无信息量装饰）、不编号（criteria 文本常自带编号）
 		expect(tree.props.numbered).toBeUndefined();
 		expect(tree.props.items).toEqual([
-			{ label: "1. 输出 Node.js 版本号；", depth: 0 },
-			{ label: "2. 输出 extensions 目录下的子目录列表", depth: 0 },
+			{ label: "输出 Node.js 版本号", depth: 0 },
+			{ label: "输出 extensions 目录下的子目录列表", depth: 0 },
 		]);
 	});
 
 	it("超 80 字符的 criteria 行不截断；空行过滤；无 criteria → 无 list-tree", () => {
 		const longLine = "x".repeat(120);
-		const longGui = buildGoalGui(makeState({ successCriteria: longLine }));
+		const longGui = buildGoalGui(makeState({ successCriteria: [longLine] }));
 		expect(findChildComp(longGui, "list-tree").props.items).toEqual([{ label: longLine, depth: 0 }]);
 
-		const gapGui = buildGoalGui(makeState({ successCriteria: "a\n\n  \nb" }));
+		const gapGui = buildGoalGui(makeState({ successCriteria: ["a", "b"] }));
 		expect(findChildComp(gapGui, "list-tree").props.items).toHaveLength(2);
 
 		const noneGui = buildGoalGui(makeState({ successCriteria: undefined, budget: { tokenBudget: 10000 } }));

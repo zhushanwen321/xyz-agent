@@ -165,16 +165,24 @@ describe("renderWidgetLines", () => {
 
 	it("有 successCriteria → 含 ✓ 摘要行", () => {
 		const lines = renderWidgetLines(
-			makeState({ status: "active", successCriteria: "all tests green" }),
+			makeState({ status: "active", successCriteria: ["all tests green"] }),
 			theme,
 		);
 		expect(lines.some((l) => l.includes("✓") && l.includes("all tests green"))).toBe(true);
 	});
 
+	it("successCriteria 多项 → 分号连接显示", () => {
+		const lines = renderWidgetLines(
+			makeState({ status: "active", successCriteria: ["tests pass", "tsc clean"] }),
+			theme,
+		);
+		expect(lines.some((l) => l.includes("✓") && l.includes("tests pass; tsc clean"))).toBe(true);
+	});
+
 	it("successCriteria 超长 → 截断为 ...（OBJECTIVE_TRUNCATE_KEEP）", () => {
 		const long = "x".repeat(OBJECTIVE_DISPLAY_LIMIT + 10); // > 80 字符触发截断
 		const lines = renderWidgetLines(
-			makeState({ status: "active", successCriteria: long }),
+			makeState({ status: "active", successCriteria: [long] }),
 			theme,
 		);
 		const criteriaLine = lines.find((l) => l.includes("✓"))!;

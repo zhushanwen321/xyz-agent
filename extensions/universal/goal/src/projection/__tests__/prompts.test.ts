@@ -173,7 +173,7 @@ describe("contextInjectionPrompt", () => {
 	it("完整 state（含 budget+successCriteria）≤600 chars（TC1 硬指标）", () => {
 		const state = makeState({
 			objective: "Refactor the auth module to use JWT and add integration tests",
-			successCriteria: "src/auth.ts uses JWT; pnpm test auth green; tsc --noEmit clean",
+			successCriteria: ["src/auth.ts uses JWT", "pnpm test auth green", "tsc --noEmit clean"],
 			status: "active",
 			currentTurnIndex: 2,
 			budget: { tokenBudget: 1000 },
@@ -218,18 +218,19 @@ describe("contextInjectionPrompt", () => {
 
 describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () => {
 	it("continuationPrompt：有 successCriteria → 含 <successCriteria> 段 + 条件文案", () => {
-		const state = makeState({ successCriteria: "pnpm test passes; tsc clean" });
+		const state = makeState({ successCriteria: ["pnpm test passes", "tsc clean"] });
 		const out = continuationPrompt(state, 0);
 		expect(out).toContain("<successCriteria>");
 		expect(out).toContain("</successCriteria>");
-		expect(out).toContain("pnpm test passes; tsc clean");
+		expect(out).toContain("- pnpm test passes");
+		expect(out).toContain("- tsc clean");
 		// 条件文案（continuationPrompt 专属）
 		expect(out).toContain("every condition there must be met");
 	});
 
 	it("budgetLimitPrompt：有 successCriteria → 含 <successCriteria> 段 + 条件文案", () => {
 		const state = makeState({
-			successCriteria: "all tests green",
+			successCriteria: ["all tests green"],
 			budget: { tokenBudget: 1000 },
 		});
 		const out = budgetLimitPrompt(state);
@@ -240,7 +241,7 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 	});
 
 	it("contextInjectionPrompt：有 successCriteria → 含 <successCriteria> 段 + 条件文案", () => {
-		const state = makeState({ successCriteria: "file X exists" });
+		const state = makeState({ successCriteria: ["file X exists"] });
 		const out = contextInjectionPrompt(state, 0);
 		expect(out).toContain("<successCriteria>");
 		expect(out).toContain("file X exists");
@@ -256,7 +257,7 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 	});
 
 	it("successCriteria 中的 <>& 被转义（防注入）", () => {
-		const state = makeState({ successCriteria: "<x> & y" });
+		const state = makeState({ successCriteria: ["<x> & y"] });
 		const out = continuationPrompt(state, 0);
 		expect(out).toContain("&lt;x&gt;");
 		expect(out).toContain("&amp; y");

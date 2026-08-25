@@ -90,17 +90,21 @@ function buildPlanSlug(planFilePath: string): string {
   return stem || "plan-execution";
 }
 
-/** successCriteria 步骤预览条数上限 */
-const STEP_PREVIEW_LIMIT = 3;
+/** successCriteria 条目上限（对齐 goal schema maxItems:8） */
+const CRITERIA_MAX_ITEMS = 8;
 
 /**
  * 从 plan 步骤构造可检查的 successCriteria（plan 完成 = 所有步骤执行并验证）。
- * goal 的 complete 判定会对照本字段做证据审计。
+ * goal 的 complete 判定会对照本字段逐条做证据审计。
+ *
+ * W1：返回 string[]（结构化条件数组），截断到 CRITERIA_MAX_ITEMS 条。
  */
-function buildPlanSuccessCriteria(planFilePath: string, tasks: string[]): string {
-  const preview = tasks.slice(0, STEP_PREVIEW_LIMIT).join("; ");
-  const ellipsis = tasks.length > STEP_PREVIEW_LIMIT ? "; …" : "";
-  return `All ${tasks.length} steps of ${basename(planFilePath)} executed and verified: ${preview}${ellipsis}`;
+function buildPlanSuccessCriteria(planFilePath: string, tasks: string[]): string[] {
+  if (tasks.length <= CRITERIA_MAX_ITEMS) return [...tasks];
+  // 截断：保留前 N-1 条 + 末尾总数提示
+  const items = tasks.slice(0, CRITERIA_MAX_ITEMS - 1);
+  items.push(`… (${tasks.length} steps total in ${basename(planFilePath)})`);
+  return items;
 }
 
 /** Try to initialize goal via programming interface */

@@ -35,9 +35,10 @@ export function escapeXmlText(input: string): string {
  * 每轮注入让 AI 对照检查进度；complete 的 evidence 必须覆盖本字段。
  */
 function successCriteriaBlock(state: GoalRuntimeState): string {
-	const trimmed = state.successCriteria?.trim();
-	if (!trimmed) return "";
-	return `<successCriteria>\n${escapeXmlText(trimmed)}\n</successCriteria>\n`;
+	const criteria = state.successCriteria;
+	if (!criteria || criteria.length === 0) return "";
+	const items = criteria.map((c) => `- ${escapeXmlText(c)}`).join("\n");
+	return `<successCriteria>\n${items}\n</successCriteria>\n`;
 }
 
 // ── FR-3.4：唯一 budget 格式化收敛出口 ─────────────────

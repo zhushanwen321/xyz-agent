@@ -39,6 +39,24 @@ function normalizeStatus(status: string): GoalStatus {
 }
 
 /**
+ * successCriteria 旧数据迁移（W1：string → string[]）。
+ *
+ * 三种输入形态：
+ * - undefined（旧数据无此字段）→ undefined
+ * - string（旧格式单条自由文本）→ 按分号拆分为 string[]（trim 每项、过滤空串）
+ * - string[]（新格式）→ 直接使用
+ */
+function normalizeSuccessCriteria(raw: unknown): string[] | undefined {
+	if (raw === undefined || raw === null) return undefined;
+	if (Array.isArray(raw)) return raw as string[];
+	if (typeof raw === "string") {
+		const items = raw.split(";").map((s) => s.trim()).filter(Boolean);
+		return items;
+	}
+	return undefined;
+}
+
+/**
  * 反序列化持久化 state。
  *
  * 向后兼容：旧 entry 可能含 `tasks` 字段（task CRUD 删除前的格式），此处忽略不 throw。
@@ -55,9 +73,11 @@ export function deserializeState(data: Record<string, unknown>): GoalRuntimeStat
 	return {
 		goalId: req("goalId"),
 		objective: req("objective"),
-		// successCriteria 用可选解析：旧持久化数据无此字段（与 slug 同模式，GAP-4），
-		// 误用 req() 会丢旧数据整个 state
-		successCriteria: data.successCriteria as string | undefined,
+		// successCriteria：结构化为 string[]（W1）。向后兼容三种旧格式：
+		// 1. undefined（旧数据无此字段）→ undefined
+		// 2. string（单条自由文本）→ 按分号拆分为 string[]
+		// 3. string[]（新格式）→ 直接使用
+		successCriteria: normalizeSuccessCriteria(data.successCriteria),
 		// slug 用可选解析：旧持久化数据无此字段，不能误用 req()（否则旧数据 throw → state 全丢，GAP-4）
 		slug: data.slug as string | undefined,
 		// 旧数据迁移：0.7.x 的 time_limited → budget_limited（见 normalizeStatus）

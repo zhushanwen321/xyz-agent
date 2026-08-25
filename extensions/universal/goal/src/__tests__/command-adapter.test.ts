@@ -291,12 +291,13 @@ describe("handleGoalCommand — update (FR-8.4 G-002)", () => {
 		const session = createGoalSession();
 		session.state = makeActiveState({
 			objective: "old objective",
-			successCriteria: "old criteria",
+			successCriteria: ["old criteria"],
 		});
 		await handleGoalCommand(h.pi, session, "update new obj --criteria new criteria text", h.ctx);
 
 		expect(session.state!.objective).toBe("new obj");
-		expect(session.state!.successCriteria).toBe("new criteria text");
+		// /goal update --criteria 按分号拆分为 string[]
+		expect(session.state!.successCriteria).toEqual(["new criteria text"]);
 	});
 
 	it("不带 --criteria → 保留旧 successCriteria（不静默丢失验证标准）", async () => {
@@ -304,12 +305,12 @@ describe("handleGoalCommand — update (FR-8.4 G-002)", () => {
 		const session = createGoalSession();
 		session.state = makeActiveState({
 			objective: "old objective",
-			successCriteria: "old criteria",
+			successCriteria: ["old criteria"],
 		});
 		await handleGoalCommand(h.pi, session, "update new obj", h.ctx);
 
 		expect(session.state!.objective).toBe("new obj");
-		expect(session.state!.successCriteria).toBe("old criteria");
+		expect(session.state!.successCriteria).toEqual(["old criteria"]);
 	});
 
 	it("active 状态重塑 → 注入 objectiveUpdated steering", async () => {

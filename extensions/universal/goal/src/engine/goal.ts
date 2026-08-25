@@ -37,7 +37,7 @@ export function createGoalState(
 	objective: string,
 	budgetOverrides?: Partial<BudgetConfig>,
 	slug?: string,
-	successCriteria?: string,
+	successCriteria?: string[],
 ): GoalRuntimeState {
 	const now = Date.now();
 	return {
