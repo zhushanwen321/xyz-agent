@@ -61,6 +61,29 @@
           :path="seg.path"
           :display-name="seg.displayName"
         />
+        <!-- session 引用段（四符号 # session，U1）：chip 徽标显示 label（人可读标题），
+             title 悬浮 sessionId。色系 --warn 金（与 composer mention-session chip 同源）。
+             TODO(U2b 后续)：点击跳转该 session——本期最小实现仅显示 label，不加推测功能。 -->
+        <span
+          v-else-if="seg.type === 'session'"
+          class="mr-1 inline-flex items-center gap-0.5 rounded-sm bg-[var(--warn-soft)] px-1.5 py-px font-mono text-[length:var(--text-sm)] font-medium leading-[1.4] text-warn"
+          style="vertical-align: middle"
+          :data-testid="`msg-session-badge-${i}`"
+          :title="seg.sessionId"
+        >
+          <span>#</span><span>{{ seg.label }}</span>
+        </span>
+        <!-- subagent 定向段（四符号 @，U1）：@slug 徽标作「去向标记」（该段序列化为空串，
+             仅在含 subagent 段的用户消息气泡中标示消息去向）。色系 accent（与 composer
+             mention-at chip 同源）。 -->
+        <span
+          v-else-if="seg.type === 'subagent'"
+          class="mr-1 inline-flex items-center gap-0.5 rounded-sm bg-[var(--accent-soft)] px-1.5 py-px font-mono text-[length:var(--text-sm)] font-medium leading-[1.4] text-accent"
+          style="vertical-align: middle"
+          :data-testid="`msg-subagent-badge-${i}`"
+        >
+          <span>@</span><span>{{ seg.slug }}</span>
+        </span>
         <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
       </template>
       <MarkdownRenderer v-if="!userSegments.length && typeof turn.user?.content === 'string'" :content="turn.user!.content" :session-id="sessionId" />

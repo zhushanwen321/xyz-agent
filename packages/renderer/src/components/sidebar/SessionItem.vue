@@ -8,7 +8,7 @@
   -->
   <!-- 右键菜单用 reka ContextMenu 原语（光标定位原语级支持，PanelContainer 同为直接引 reka-ui 先例）；
        Trigger as-child 合并到根 div，不引入额外包裹层破坏既有 flex/绝对定位。 -->
-  <ContextMenuRoot>
+  <ContextMenuRoot @update:open="onMenuOpenChange">
     <ContextMenuTrigger as-child>
       <div
         ref="rootEl"
@@ -109,6 +109,17 @@
           v-if="!confirming"
           variant="ghost"
           size="icon"
+          data-testid="quote-to-composer-btn"
+          class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+          :title="t('sidebar.sessionItem.quoteToComposer')"
+          @click.stop="onQuoteToComposer"
+        >
+          <Quote class="size-[13px]" />
+        </Button>
+        <Button
+          v-if="!confirming"
+          variant="ghost"
+          size="icon"
           class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
           :title="t('sidebar.sessionItem.rename')"
           @click.stop="emit('rename', session.id)"
@@ -166,21 +177,36 @@
       </div>
       </div>
     </ContextMenuTrigger>
-    <!-- 「查看父 session」右键菜单项：仅 agent 发起且带父 id 的 session 挂内容
-         （条件渲染整块 Portal——其余 session 右键无任何菜单项，不吞 native menu 之外的语义）。
-         跳转逻辑由上层接线，本组件只保证事件链 emit navigateParent。 -->
-    <ContextMenuPortal v-if="hasAgentParent">
+    <!-- 右键菜单：agent-spawned 且带父 id → 「查看父 session」；非 dead session → 「强制退出」（两段确认）。
+         条件渲染整块 Portal——两者皆无时右键无任何菜单项，不吞 native menu 之外的语义。
+         跳转/退出逻辑由上层接线，本组件只保证事件链 emit navigateParent / forceQuit。 -->
+    <ContextMenuPortal v-if="hasAgentParent || canForceQuit">
       <ContextMenuContent
         data-testid="session-context-menu"
         class="z-[1100] min-w-[160px] rounded-md border border-border-strong bg-bg-elevated p-1 text-neutral-fg shadow-2 outline-none"
       >
         <ContextMenuItem
+          v-if="hasAgentParent"
           data-testid="session-view-parent-item"
           class="flex h-auto w-full cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-[12px] text-neutral-mid outline-none hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[13px]"
           @select="onViewParent"
         >
           <CornerLeftUp />
           <span>{{ t('sidebar.sessionItem.viewParent') }}</span>
+        </ContextMenuItem>
+        <!-- 强制退出（两段式确认）：首击 preventDefault 保持菜单打开并进入确认态（danger 底），
+             再击才 emit。reka ContextMenuItem 的 select event cancelable，preventDefault 可阻止自动关闭。 -->
+        <ContextMenuItem
+          v-if="canForceQuit"
+          data-testid="session-force-quit-item"
+          class="flex h-auto w-full cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-[12px] outline-none [&_svg]:size-[13px]"
+          :class="confirmingQuit
+            ? 'bg-danger text-neutral-fg'
+            : 'text-danger/90 hover:bg-danger-soft hover:text-danger'"
+          @select="onForceQuitSelect"
+        >
+          <Power />
+          <span>{{ confirmingQuit ? t('sidebar.sessionItem.forceQuitConfirm') : t('sidebar.sessionItem.forceQuit') }}</span>
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenuPortal>
@@ -191,7 +217,7 @@
 import { computed, inject, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onClickOutside } from '@vueuse/core'
-import { Check, Pencil, Trash2, Archive, FolderKanban, CornerLeftUp } from '@lucide/vue'
+import { Check, Pencil, Trash2, Archive, FolderKanban, CornerLeftUp, Quote, Power } from '@lucide/vue'
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -202,6 +228,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { useProjectStore } from '@/stores/project'
+import { useSessionStore } from '@/stores/session'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 import { dirNameOf } from '@xyz-agent/ui'
@@ -248,6 +276,8 @@ const emit = defineEmits<{
   /** 查看父 session（U8）：payload 单字符串 = parentAgentSessionId（与 select 同形）。
    *  跳转本身由上层（Sidebar/store）接线，本组件只发事件。 */
   navigateParent: [parentAgentSessionId: string]
+  /** 强制退出（两段确认后 emit）：杀 pi 进程 + stopped 收敛，上层接 RPC。 */
+  forceQuit: [sessionId: string]
 }>()
 
 // ── 归入项目菜单（D14 语义修正 2026-08-04）──
@@ -274,6 +304,25 @@ const isAgentSpawned = computed(() => props.session.spawnSource === 'agent')
 const hasAgentParent = computed(
   () => isAgentSpawned.value && !!props.session.parentAgentSessionId,
 )
+/** 非 dead session 可强制退出（dead 进程已退出，无需强杀；点击走 restore 重开）。 */
+const canForceQuit = computed(() => !isDead.value)
+
+/** 强制退出两段式确认态（同删除 confirming 模式；菜单内完成，靠 select preventDefault 保持菜单打开）。 */
+const confirmingQuit = ref(false)
+/** 菜单关闭重置确认态，避免下次打开残留确认样式。 */
+function onMenuOpenChange(open: boolean): void {
+  if (!open) confirmingQuit.value = false
+}
+/** 首击进入确认态并阻止菜单关闭（reka select event cancelable）；再击 emit 并复位。 */
+function onForceQuitSelect(e: Event): void {
+  if (!confirmingQuit.value) {
+    e.preventDefault()
+    confirmingQuit.value = true
+    return
+  }
+  confirmingQuit.value = false
+  emit('forceQuit', props.session.id)
+}
 /** 菜单项点击：向上 emit 父 session id。守卫除防御外还承担 TS 窄化
  *  （props 字段 string|undefined → emit 要求 string），不可删。 */
 function onViewParent(): void {
@@ -375,6 +424,25 @@ const ariaLabel = computed(() =>
 
 function onMarkDone(): void {
   toggleMarkedDone(props.session.id)
+}
+
+// ── 引用到输入区（四符号体系 §3.1.2 侧边栏直引，G2 入口）──
+const sessionStore = useSessionStore()
+
+/**
+ * 把本 session 作为 # 引用注入当前 composer（被引用 = 本条 session，目标 = 当前活跃
+ * session 的 composer，两者独立）。经既有 composerInjectionStore 一次性通道，消费端
+ * （useComposerInjection watch）匹配后 insertSessionChip 产出紫 session chip。
+ * landing 态（无活跃 session）走 target=new：landing composer 已挂载时直接消费
+ * （injection.ts target=new 的 landing 分支），语义同 drawer「注入到新对话」。
+ */
+function onQuoteToComposer(): void {
+  const activeId = sessionStore.active?.id ?? null
+  composerInjectionStore.requestInjection(
+    activeId
+      ? { target: 'current', sessionId: activeId, refSessionId: props.session.id, label: props.session.label }
+      : { target: 'new', refSessionId: props.session.id, label: props.session.label },
+  )
 }
 </script>
 

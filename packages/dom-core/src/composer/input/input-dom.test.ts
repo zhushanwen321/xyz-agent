@@ -14,6 +14,9 @@ import {
   getSegmentsFromEl,
   getTextFromEl,
   detectHashTriggerFromEl,
+  detectFileDollarTriggerFromEl,
+  detectSubagentTriggerFromEl,
+  detectSlashTriggerFromEl,
   findImageChipEl,
   findImageChipElById,
   isSpacerNode,
@@ -149,6 +152,41 @@ describe('getSegmentsFromEl', () => {
     expect(getSegmentsFromEl(el)).toEqual([{ type: 'file', path: '/b.ts' }])
   })
 
+  it('session chip（dataset.chipType=session）产出 session segment（sessionId + label）', () => {
+    const el = setupEl(
+      '<span class="mention-chip mention-session" data-chip-type="session" data-chip-session-id="019e-abc" data-chip-label="设计讨论"><span class="chip-label">设计讨论</span><span class="chip-x">×</span></span>',
+    )
+    // × 按钮文本不进 segment（rejectChips 跳过子树）
+    expect(getSegmentsFromEl(el)).toEqual([
+      { type: 'session', sessionId: '019e-abc', label: '设计讨论' },
+    ])
+  })
+
+  it('subagent chip（dataset.chipType=subagent）产出 subagent segment（subagentId + slug）', () => {
+    const el = setupEl(
+      '<span class="mention-chip mention-at" data-chip-type="subagent" data-chip-subagent-id="sub-1" data-chip-slug="build-api"><span class="chip-label">@build-api</span><span class="chip-x">×</span></span>',
+    )
+    expect(getSegmentsFromEl(el)).toEqual([
+      { type: 'subagent', subagentId: 'sub-1', slug: 'build-api' },
+    ])
+  })
+
+  it('旧 mention-at chip（无 dataset）保持文本拍平（历史消息编辑兼容，F3）', () => {
+    const el = setupEl('<span class="mention-chip mention-at">@alice</span>')
+    expect(getSegmentsFromEl(el)).toEqual([{ type: 'text', text: '@alice' }])
+  })
+
+  it('session chip 与文本混合：前后文本正确分段', () => {
+    const el = setupEl(
+      '看看 <span class="mention-chip mention-session" data-chip-type="session" data-chip-session-id="s1" data-chip-label="会话 A"><span class="chip-label">会话 A</span></span> 的内容',
+    )
+    expect(getSegmentsFromEl(el)).toEqual([
+      { type: 'text', text: '看看 ' },
+      { type: 'session', sessionId: 's1', label: '会话 A' },
+      { type: 'text', text: ' 的内容' },
+    ])
+  })
+
   it('mixed：text + slash-chip + image-chip + br 组合正确分段', () => {
     const el = setupEl(
       '前缀 <span class="slash-chip" data-chip-type="skill" data-chip-name="s"><span class="chip-label">s</span></span> 中间<br>' +
@@ -240,6 +278,160 @@ describe('detectHashTriggerFromEl', () => {
 
   it('null el 返回 null', () => {
     expect(detectHashTriggerFromEl(null)).toBeNull()
+  })
+})
+
+describe('detectFileDollarTriggerFromEl（$ 文件触发）', () => {
+  let el: HTMLDivElement | null = null
+  afterEach(() => {
+    if (el && document.body.contains(el)) document.body.removeChild(el)
+    el = null
+  })
+
+  /** 便捷：设 innerHTML + 光标定位到第 idx 个文本节点末尾（默认 0） */
+  function setupWithCursor(html: string): HTMLDivElement {
+    el = setupElInBody(html)
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    const textNode = walker.nextNode() as Text
+    setCursor(textNode, textNode.length)
+    return el
+  }
+
+  it('行首 $foo 触发，query=foo', () => {
+    setupWithCursor('$foo')
+    expect(detectFileDollarTriggerFromEl(el)).toEqual({ query: 'foo' })
+  })
+
+  it('空格后 $foo 触发（look at $foo）', () => {
+    setupWithCursor('look at $foo')
+    expect(detectFileDollarTriggerFromEl(el)).toEqual({ query: 'foo' })
+  })
+
+  it('$HOME 在普通文本触发（登记取舍：非 bash 态 $ 变量文本会弹层，设计 D6）', () => {
+    // 用户输入 ` $HOME` 时光标在 HOME 后——非 bash 态照常触发（无豁免机制的固有噪声）
+    setupWithCursor('看看 $HOME')
+    expect(detectFileDollarTriggerFromEl(el)).toEqual({ query: 'HOME' })
+  })
+
+  it('裸 $ 触发（query 空串，浮层刚弹出态）', () => {
+    setupWithCursor('see $')
+    expect(detectFileDollarTriggerFromEl(el)).toEqual({ query: '' })
+  })
+
+  it('文字中间 a$b 不触发（$ 前非空格/行首）', () => {
+    setupWithCursor('a$b')
+    expect(detectFileDollarTriggerFromEl(el)).toBeNull()
+  })
+
+  it('$ 后遇空格终止（$foo bar → null）', () => {
+    setupWithCursor('$foo bar')
+    expect(detectFileDollarTriggerFromEl(el)).toBeNull()
+  })
+
+  it('null el 返回 null', () => {
+    expect(detectFileDollarTriggerFromEl(null)).toBeNull()
+  })
+})
+
+describe('detectSubagentTriggerFromEl（@ subagent 触发）', () => {
+  let el: HTMLDivElement | null = null
+  afterEach(() => {
+    if (el && document.body.contains(el)) document.body.removeChild(el)
+    el = null
+  })
+
+  it('行首 @build 触发，query=build', () => {
+    el = setupElInBody('@build')
+    const textNode = el.firstChild as Text
+    setCursor(textNode, 6)
+    expect(detectSubagentTriggerFromEl(el)).toEqual({ query: 'build' })
+  })
+
+  it('空格后 @build 触发（hey @build-api）', () => {
+    el = setupElInBody('hey @build-api')
+    const textNode = el.firstChild as Text
+    setCursor(textNode, 14)
+    expect(detectSubagentTriggerFromEl(el)).toEqual({ query: 'build-api' })
+  })
+
+  it('文字中间 a@b 不触发', () => {
+    el = setupElInBody('a@b')
+    const textNode = el.firstChild as Text
+    setCursor(textNode, 3)
+    expect(detectSubagentTriggerFromEl(el)).toBeNull()
+  })
+
+  it('@ 后遇空格终止（@x y → null）', () => {
+    el = setupElInBody('@x y')
+    const textNode = el.firstChild as Text
+    setCursor(textNode, 4)
+    expect(detectSubagentTriggerFromEl(el)).toBeNull()
+  })
+
+  it('null el 返回 null', () => {
+    expect(detectSubagentTriggerFromEl(null)).toBeNull()
+  })
+})
+
+describe('detectSlashTriggerFromEl（行首 slash 触发，D5 正则化）', () => {
+  let el: HTMLDivElement | null = null
+  afterEach(() => {
+    if (el && document.body.contains(el)) document.body.removeChild(el)
+    el = null
+  })
+
+  it('行首 /compact 触发，query=compact', () => {
+    el = setupElInBody('/compact')
+    const textNode = el.firstChild as Text
+    setCursor(textNode, 8)
+    expect(detectSlashTriggerFromEl(el)).toEqual({ query: 'compact' })
+  })
+
+  it('裸 / 触发（query 空串）', () => {
+    el = setupElInBody('/')
+    const textNode = el.firstChild as Text
+    setCursor(textNode, 1)
+    expect(detectSlashTriggerFromEl(el)).toEqual({ query: '' })
+  })
+
+  it('多行第二行行首 / 触发（<br> 分行形态，行为放宽对齐 TUI）', () => {
+    el = setupElInBody('line1<br>/compact')
+    // 第二个文本节点（/compact），光标置其末尾
+    const textNode = el.childNodes[2] as Text
+    setCursor(textNode, 8)
+    expect(detectSlashTriggerFromEl(el)).toEqual({ query: 'compact' })
+  })
+
+  it('文本节点内 \\n 后行首 / 触发（防御：粘贴还原的罕见单节点形态）', () => {
+    el = setupElInBody('line1\n/compact')
+    const textNode = el.firstChild as Text
+    setCursor(textNode, 14)
+    expect(detectSlashTriggerFromEl(el)).toEqual({ query: 'compact' })
+  })
+
+  it('空格后 / 不触发（帮我看看 /usr/local——路径文本高频，D5 否决空格触发）', () => {
+    el = setupElInBody('帮我看看 /usr/local')
+    const textNode = el.firstChild as Text
+    setCursor(textNode, textNode.length)
+    expect(detectSlashTriggerFromEl(el)).toBeNull()
+  })
+
+  it('行中段 foo/ 不触发', () => {
+    el = setupElInBody('foo/')
+    const textNode = el.firstChild as Text
+    setCursor(textNode, 4)
+    expect(detectSlashTriggerFromEl(el)).toBeNull()
+  })
+
+  it('query 后输入空格终止（/compact 详细 → null）', () => {
+    el = setupElInBody('/compact 详细')
+    const textNode = el.firstChild as Text
+    setCursor(textNode, 11)
+    expect(detectSlashTriggerFromEl(el)).toBeNull()
+  })
+
+  it('null el 返回 null', () => {
+    expect(detectSlashTriggerFromEl(null)).toBeNull()
   })
 })
 

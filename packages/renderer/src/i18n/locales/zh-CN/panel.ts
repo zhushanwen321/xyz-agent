@@ -273,6 +273,9 @@ export default {
     copied: '已复制',
     expand: '展开',
     collapse: '收起',
+    // 四符号体系（@ subagent 浮层）
+    newSubagent: '＋ 新建 subagent',
+    newSubagentPlaceholder: '新任务',
   },
   queue: {
     title: '队列',

@@ -320,7 +320,7 @@ export const useSubagentStore = defineStore('subagent', () => {
       ),
     )
     try {
-      await sessionApi.subagentAction(sessionId, 'cancel', subagentId)
+      await sessionApi.subagentAction(sessionId, 'cancel', { subagentId })
     } catch (e) {
       // 回滚乐观更新：整体恢复 prevRecords
       applyRecords(sessionId, prevRecords)

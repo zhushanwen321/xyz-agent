@@ -10,6 +10,9 @@
  *     （agent_end，生成完成）后再 promptReload，清 flag
  *   - best-effort：promptReload 抛错只记日志 + 清 flag，不重试、不阻塞（reload 失败
  *     下次 skill 变更仍可重试，因 flag 已清）
+ *   - reload 成功（promptReload resolve）后触发 commands 快照失效
+ *     handleSessionReloaded → markDirty 防抖重拉 get_commands → 自动广播
+ *     session.commands（slash 列表动态刷新链路闭合点，设计 §3.3.5 / F8）
  *
  * [解耦] 不直接依赖 SkillRegistry / SessionService 具体类型，只依赖注入的窄接口
  * （isSessionIdle / promptReload / hasSession）。组合根 index.ts 绑定：
@@ -27,6 +30,11 @@ export interface ReloadSessionService {
   isSessionIdle(sessionId: string): boolean | Promise<boolean>
   /** 向 session 发 `/__xyz_reload__` 触发 pi reload。失败抛错由 orchestrator 降级处理。 */
   promptReload(sessionId: string): Promise<void>
+  /**
+   * reload 成功后失效 commands 快照（slash 列表动态刷新）。仅在 promptReload resolve
+   * 后调用（resolve = reload 完成时机，设计 F8）；失败路径不调（快照保留旧值）。
+   */
+  handleSessionReloaded(sessionId: string): void
   /** session 是否仍存活（进程未退出 / 未被 delete）。缺省时视为存活（不做删除检测）。 */
   hasSession?(sessionId: string): boolean
 }
@@ -93,9 +101,14 @@ export class ReloadOrchestrator {
   private async doReload(sessionId: string): Promise<void> {
     try {
       await this.options.sessionService.promptReload(sessionId)
+      // promptReload resolve = pi reload 完成（F8：extension 命令被 await 执行；
+      // session_start 事件 extension-only 不出 stdout，无事件可订阅）→ 此时失效
+      // commands 快照才能重拉到 reload 后（含新 skill 命令）的列表。
+      this.options.sessionService.handleSessionReloaded(sessionId)
     } catch (e) {
       console.error(`[reload-orchestrator] promptReload failed: sessionId=${sessionId}`, e)
-      // 清 flag：下次 skill 变更可重新触发（U13 断言）
+      // 清 flag：下次 skill 变更可重新触发（U13 断言）。不失效快照：reload 未完成，
+      // 旧 commands 列表仍有效，等下次 skill 变化重试成功再失效。
       this.pendingReload.delete(sessionId)
     }
   }

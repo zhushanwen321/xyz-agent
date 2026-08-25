@@ -24,7 +24,6 @@ function makeHandler(createImpl: ReturnType<typeof vi.fn>, forkImpl?: ReturnType
     create: createImpl,
     forkSession: forkImpl ?? vi.fn().mockResolvedValue({ id: 'forked' }),
     sendMessage: vi.fn().mockResolvedValue({ blocked: false }),
-    sendSubagentMessage: vi.fn().mockResolvedValue({ blocked: false }),
     steerMessage: vi.fn().mockResolvedValue(undefined),
     followUpMessage: vi.fn().mockResolvedValue(undefined),
     ensureActive: vi.fn().mockResolvedValue(undefined),

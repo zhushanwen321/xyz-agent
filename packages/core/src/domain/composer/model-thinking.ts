@@ -48,6 +48,11 @@ export interface ModelThinkingDeps {
   setThinkingLevel: (sessionId: string, level: string) => Promise<void>
   /** 按 modelId 派生 thinkingLevelMap（透传给 useThinkingLevelSync，壳层从 settingsStore.providers 解析） */
   getThinkingLevelMap: (modelId: string) => Record<string, string | null> | undefined
+  /**
+   * 按 modelId 派生模型是否支持思考（models[].reasoning）。可选。
+   * non-reasoning 模型可用档只有 off；未注入时按 undefined（视为支持）判定，行为同旧版。
+   */
+  getModelReasoning?: (modelId: string) => boolean | undefined
 }
 
 export function useComposerModelThinking(
@@ -57,6 +62,8 @@ export function useComposerModelThinking(
   currentModelId: ComputedRef<string>
   currentThinkingLevel: ComputedRef<string | undefined>
   currentThinkingLevelMap: ComputedRef<Record<string, string | null> | undefined>
+  /** 当前模型 reasoning 标志（non-reasoning 模型可用档只有 off；未注入 deps.getModelReasoning 时恒 undefined） */
+  currentModelReasoning: ComputedRef<boolean | undefined>
   localThinkingLevel: Ref<string | undefined>
   onModelSelect: (payload: { modelId: string; provider: ProviderId }) => Promise<void>
   onThinkingSelect: (level: string) => Promise<void>
@@ -75,6 +82,7 @@ export function useComposerModelThinking(
     switchModel,
     setThinkingLevel: applyThinkingLevel,
     getThinkingLevelMap,
+    getModelReasoning,
   } = deps
 
   /**
@@ -137,8 +145,11 @@ export function useComposerModelThinking(
     currentModelId,
     currentThinkingLevel,
     (level) => { void onThinkingSelect(level) },
-    { getThinkingLevelMap },
+    { getThinkingLevelMap, getModelReasoning },
   )
+
+  /** 当前模型 reasoning 标志（供 popover 判定可用档：non-reasoning 只 off） */
+  const currentModelReasoning = computed(() => getModelReasoning?.(currentModelId.value))
 
   /**
    * 模型切换：staging 活跃时只写快照（不调 RPC，不改源 session）。
@@ -211,6 +222,7 @@ export function useComposerModelThinking(
     currentModelId,
     currentThinkingLevel,
     currentThinkingLevelMap,
+    currentModelReasoning,
     localThinkingLevel,
     onModelSelect,
     onThinkingSelect,

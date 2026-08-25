@@ -94,6 +94,7 @@ it('首屏渲染：<页面> DOM 含关键交互元素', () => {
 | 文件树 | `FileTree` | `file-tree` / `tree-node` |
 | 搜索浮层 | `SearchModal` | `search-modal` / `search-input` |
 | Composer slash 浮层 | `Composer` | `composer-input` / `slash-popover` |
+| Settings · 用量 | `UsagePage` | `usage-ledger` / `usage-metric-toggle` / `usage-range-toggle` / `usage-empty-state` / `usage-error-state` |
 
 > spec 结构条目 = 渲染断言清单（规则#4）。每功能集成/E2E 必含 1 条首屏冒烟，覆盖该页面的关键 testid，防止「测试全绿但功能不可用」。
 >

@@ -206,9 +206,12 @@ export class SessionManagerHandler {
 
     // 1. SessionService.create —— spawnSource/parentAgentSessionId 服务端注入：
     // 父 session 由路由上下文（interpreter sessionId）决定，不信任 extension 请求参数（防伪造父 id）
+    // A'（2026-08-24）：persistLabel=true —— agent 传 label 时是显式命名（语义性），
+    // 持久化且防 auto-rename 覆盖；未传 label 则 no-op（见 session-lifecycle persistExplicitLabel）
     const session = await this.opts.sessionService.create(cwd, label, {
       spawnSource: 'agent',
       parentAgentSessionId: parentSessionId,
+      persistLabel: true,
       modelOverride: model,
       thinkingOverride: thinkingLevel,
     })

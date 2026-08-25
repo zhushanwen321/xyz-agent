@@ -101,9 +101,11 @@ describe('SessionManagerHandler', () => {
       await handler.handle('req-1', 'sid-parent', 'create', { cwd: '/test', label: 'my-session' })
 
       // 1. create 被调用——spawnSource/parentAgentSessionId 服务端注入（不取请求参数）
+      //    A'（2026-08-24）：persistLabel=true —— agent 传 label 时是语义性命名，持久化且防 auto-rename 覆盖
       expect(opts.sessionService.create).toHaveBeenCalledWith('/test', 'my-session', {
         spawnSource: 'agent',
         parentAgentSessionId: 'sid-parent',
+        persistLabel: true,
       })
 
       // 2. broadcastSessionList 被调用（opts 注入）
@@ -138,6 +140,7 @@ describe('SessionManagerHandler', () => {
       expect(opts.sessionService.create).toHaveBeenCalledWith('/test', 'agent-session', {
         spawnSource: 'agent',
         parentAgentSessionId: 'sid-parent',
+        persistLabel: true,
       })
 
       // broadcastSessionList 无参调用（签名已收窄为 ()，上下文由 server 侧组装）

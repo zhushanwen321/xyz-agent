@@ -7,7 +7,7 @@
  * - syncEmpty/detectHashTrigger：空态判定与 # 文件触发检测
  * - scrollCursorIntoView：Shift+Enter 后光标滚动进可见区
  * - saveSelection/restoreSelection：命令浮层夺焦前后保存/恢复光标
- * - clearSlashQueryText/clearHashQueryText：清过滤文本
+ * - clearSlashQueryText/clearHashQueryText/clearDollarFileQueryText/clearSubagentQueryText：清过滤文本
  * - clear/setText/insertTextAtCursor：程序化整框写入
  * - onInput/onKeydown/onCompositionEnd/onPaste：输入事件处理（IME/Shift+Enter/paste 富呈现）
  * - moveCaretVertical：视觉行上下移动（委托 input-dom）
@@ -27,6 +27,9 @@ import {
   getSegmentsFromEl,
   getTextFromEl,
   detectHashTriggerFromEl,
+  detectFileDollarTriggerFromEl,
+  detectSubagentTriggerFromEl,
+  detectSlashTriggerFromEl,
   getCaretLineRect,
   moveCaretVerticalOf,
   pickClipboardImageItem,
@@ -95,6 +98,8 @@ export function useContenteditableInput(
   restoreSelection: () => void
   clearSlashQueryText: () => void
   clearHashQueryText: () => void
+  clearDollarFileQueryText: () => void
+  clearSubagentQueryText: () => void
   clear: () => void
   setText: (text: string, caretPosition?: 'start' | 'end') => void
   insertTextAtCursor: (text: string) => void
@@ -104,6 +109,9 @@ export function useContenteditableInput(
     onInput: emitInput,
     onSlashTrigger,
     onFileTrigger,
+    onDollarFileTrigger,
+    onSubagentTrigger,
+    shouldSuppressTriggers,
     onEnterKeydown,
     onKeydown: forwardKeydown,
     handleBackspaceOnChip,
@@ -137,14 +145,47 @@ export function useContenteditableInput(
     return detectHashTriggerFromEl(getEl())
   }
 
+  /**
+   * slash 触发检测编排（D5 正则化：光标所在行行首 / 才触发，替代全文 startsWith）。
+   *
+   * 双路设计的原因：真实用户输入路径必有光标（走 detectSlashTriggerFromEl 行首正则，
+   * 多行任意行行首可触发——显式行为放宽，对齐 TUI）；程序化 input 事件（测试/辅助技术）
+   * 无光标选区，回退旧 startsWith 判定（单行场景与旧行为等价，锁定既有回归）。
+   * 「有光标但明确不命中」（如「帮我看看 /usr」空格后）不进兜底——否则第二行编辑时
+   * 会被第一行行首 / 误触发。chip 存在时不触发（chip label 的 / 文本不构成新命令），
+   * 沿用旧 hasChip 语义；slash-chip 后光标处的 / 天然不命中（光标前缀有 ZWSP spacer）。
+   */
+  function detectSlashTrigger(): { query: string } | null {
+    const el = getEl()
+    if (!el) return null
+    const hasChip = !!el.querySelector('.slash-chip, .mention-chip')
+    if (hasChip) return null
+    const sel = window.getSelection()
+    if (sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
+      return detectSlashTriggerFromEl(el)
+    }
+    const text = getText()
+    return text.startsWith('/') ? { query: text.slice(1) } : null
+  }
+
   function onInput(): void {
     syncEmpty()
     const text = getText()
     emitInput(text)
     preferredCaretX = null
-    const hasChip = !!getEl()?.querySelector('.slash-chip, .mention-chip')
-    onSlashTrigger(!hasChip && text.startsWith('/') ? { query: text.slice(1) } : null)
+    // bash 豁免短路（设计 D6）：bash 态（!/!! 前缀）下符号全是命令语法成分，
+    // 全部触发回调发 null（关闭浮层语义）且不做检测；draft 同步（emitInput）不受影响
+    if (shouldSuppressTriggers?.()) {
+      onSlashTrigger(null)
+      onFileTrigger(null)
+      onDollarFileTrigger?.(null)
+      onSubagentTrigger?.(null)
+      return
+    }
+    onSlashTrigger(detectSlashTrigger())
     onFileTrigger(detectHashTrigger())
+    onDollarFileTrigger?.(detectFileDollarTriggerFromEl(getEl()))
+    onSubagentTrigger?.(detectSubagentTriggerFromEl(getEl()))
   }
 
   function onCompositionEnd(): void {
@@ -230,43 +271,68 @@ export function useContenteditableInput(
     }
   }
 
-  function clearSlashQueryText(): void {
-    const el = getEl()
-    if (!el) return
-    el.textContent = ''
-    savedRange = null
-    syncEmpty()
-    emitInput('')
-    el.focus()
-    const range = document.createRange()
-    range.selectNodeContents(el)
-    range.collapse(true)
+  /**
+   * 「符号+query 到光标」段删除的共用实现（boundaryLen 模式）。
+   *
+   * pattern 形如 /(?:^|\s)#(\S*)$/：m[0] 含边界（^ 空串 / \s 一字符）+ 符号 + query，
+   * boundaryLen = m[0] 长度 - 1（符号）- query 长度 = 边界宽，删除起点 = m.index +
+   * boundaryLen（符号处），终点 = 光标。绝不仿 slash 旧版的全清——多行草稿中段触发
+   * 浮层后选中，全清会吞掉整框内容（旧 clearSlashQueryText 的已知 bug，D5 修正）。
+   * 返回 true 表示删除了内容（调用方据此同步状态）；false = 无光标/不匹配，什么都不动。
+   */
+  function clearSymbolQueryBeforeCursor(el: HTMLDivElement | null, pattern: RegExp): boolean {
+    if (!el) return false
     const sel = window.getSelection()
-    sel?.removeAllRanges()
-    sel?.addRange(range)
-  }
-
-  function clearHashQueryText(): void {
-    const el = getEl()
-    if (!el) return
-    const sel = window.getSelection()
-    if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return
+    if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return false
     const node = sel.anchorNode
-    if (!node || !el.contains(node)) return
-    if (node.nodeType !== Node.TEXT_NODE) return
+    if (!node || !el.contains(node)) return false
+    if (node.nodeType !== Node.TEXT_NODE) return false
     const offset = sel.anchorOffset
     const text = node.textContent ?? ''
     const beforeCursor = text.slice(0, offset)
-    const m = /(?:^|\s)#(\S*)$/.exec(beforeCursor)
-    if (!m) return
+    const m = pattern.exec(beforeCursor)
+    if (!m) return false
     const boundaryLen = m[0].length - 1 - m[1].length
-    const hashStart = (m.index ?? 0) + boundaryLen
+    const symbolStart = (m.index ?? 0) + boundaryLen
     const range = document.createRange()
-    range.setStart(node, hashStart)
+    range.setStart(node, symbolStart)
     range.setEnd(node, offset)
     range.deleteContents()
     sel.removeAllRanges()
     sel.addRange(range)
+    return true
+  }
+
+  /**
+   * 清除行首 /query 段（D5 修正：从「清空整个输入框」改为 boundaryLen 模式只删
+   * 「/ 到光标」段——中途触发浮层后选中不再吞掉整框草稿；无光标或不匹配时不动作）。
+   * 选中浮层项的完整消费链（onCmdSelect: clearSlashQueryText → insertSlashChip）在
+   * 真实用户流必有光标（contenteditable blur 时浏览器保留 range，refocus 后回到
+   * query 处），与 clearHashQueryText 生产验证过的同一模式。
+   */
+  function clearSlashQueryText(): void {
+    if (!clearSymbolQueryBeforeCursor(getEl(), /(?:^|\n)\/(\S*)$/)) return
+    syncEmpty()
+    emitInput(getText())
+  }
+
+  /** 清除 $query 段（$ 文件触发选中后清过滤文本，boundaryLen 模式，边界空格保留） */
+  function clearDollarFileQueryText(): void {
+    if (!clearSymbolQueryBeforeCursor(getEl(), /(?:^|\s)\$(\S*)$/)) return
+    syncEmpty()
+    emitInput(getText())
+  }
+
+  /** 清除 @query 段（@ subagent 触发选中后清过滤文本，boundaryLen 模式） */
+  function clearSubagentQueryText(): void {
+    if (!clearSymbolQueryBeforeCursor(getEl(), /(?:^|\s)@(\S*)$/)) return
+    syncEmpty()
+    emitInput(getText())
+  }
+
+  /** 清除 #query 段（# 文件触发选中后清过滤文本，行为与旧版一致——逻辑收敛进共用实现） */
+  function clearHashQueryText(): void {
+    if (!clearSymbolQueryBeforeCursor(getEl(), /(?:^|\s)#(\S*)$/)) return
     syncEmpty()
     emitInput(getText())
   }
@@ -345,6 +411,8 @@ export function useContenteditableInput(
     restoreSelection,
     clearSlashQueryText,
     clearHashQueryText,
+    clearDollarFileQueryText,
+    clearSubagentQueryText,
     clear,
     setText,
     insertTextAtCursor,

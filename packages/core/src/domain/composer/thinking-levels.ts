@@ -13,7 +13,7 @@
  * 当前无 core 内消费者，留作 getDisplayLabel 后续以注入 t 方式迁入时复用 + T14 shim
  * 后 renderer 可从 core re-import。
  */
-export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export interface ThinkingLevelOption {
   level: ThinkingLevel
@@ -27,6 +27,7 @@ export interface ThinkingLevelOption {
 
 export const THINKING_LEVELS: ThinkingLevelOption[] = [
   { level: 'off', label: '关', labelKey: 'composable.thinkingLevel.off', en: 'off', available: true },
+  { level: 'minimal', label: '极简', labelKey: 'composable.thinkingLevel.minimal', en: 'minimal', available: true },
   { level: 'low', label: '低', labelKey: 'composable.thinkingLevel.low', en: 'low', available: true },
   { level: 'medium', label: '中', labelKey: 'composable.thinkingLevel.medium', en: 'medium', available: true },
   { level: 'high', label: '高', labelKey: 'composable.thinkingLevel.high', en: 'high', available: true },
@@ -34,9 +35,10 @@ export const THINKING_LEVELS: ThinkingLevelOption[] = [
   { level: 'max', label: '最高', labelKey: 'composable.thinkingLevel.max', en: 'max', available: true },
 ]
 
-/** ThinkingLevel 强度序（数值越大强度越高，用于排序可用档位） */
+/** ThinkingLevel 全枚举表（isThinkingLevel 的判定依据，对齐 pi EXTENDED_THINKING_LEVELS 序；
+ *  数值强度排序职责已由 PI_LEVEL_ORDER 的数组顺序承担，本表不再用于排序） */
 const LEVEL_STRENGTH: Record<ThinkingLevel, number> = {
-  off: 0, low: 1, medium: 2, high: 3, xhigh: 4, max: 5,
+  off: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6,
 }
 
 /** 判断字符串是否为合法 ThinkingLevel 枚举值 */
@@ -45,34 +47,40 @@ export function isThinkingLevel(v: string): v is ThinkingLevel {
 }
 
 /**
- * 解析当前模型的可用思考档位（按 **key** 判定）。
+ * pi EXTENDED_THINKING_LEVELS 全序（pi-ai 0.84.1 dist/models.js 实装值，勿改顺序）。
+ */
+const PI_LEVEL_ORDER: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+/**
+ * 解析当前模型的可用思考档位。
  *
- * thinkingLevelMap 语义（key-based）：
- * - **key** = UI 可选档位（ThinkingLevel 枚举值，含 max）
- * - **value** = 发给 runtime/pi 的实际 level（string = 可用，null = 不可用）
- * - key 存在且 value 非 null → 该档可用
- * - key 存在且 value = null → 该档不可用
- * - map 为 undefined 或空 → 全 6 档可用（all-levels 预设）
+ * 语义基准：pi-ai 0.84.1 getSupportedThinkingLevels（实装版探针实测），**叠加禁用**而非 key 白名单：
+ * - reasoning === false → 只 ['off']（pi !model.reasoning 分支）
+ * - map 缺失/null/空 → 默认五档 off/minimal/low/medium/high（xhigh/max 需 map 显式定义才解锁——
+ *   曾因把快照 thinkingLevelMap=null 当全档开放致 mimo 等模型多显两档）
+ * - map 有值 → 逐档判定：mapped===null 显式禁用；xhigh/max 且 mapped===undefined 不可用；其余可用
+ * - 结果为空 fallback ['off']（对齐 pi clampThinkingLevel 兜底）
  *
- * 展示是展示，传递 value 是 value——key 是前端展示用的，value 是发给 pi 的。
- *
- * @returns 可用的 ThinkingLevel 列表（按强度升序）
+ * @param map    当前模型的思考档位映射（key=UI 档位，value=发 runtime 的值或 null 禁用）
+ * @param reasoning 模型是否支持思考（ProviderInfo.models[].reasoning）；undefined 视为 true
+ *              （向后兼容未传 reasoning 的既有调用方）
+ * @returns 可用的 ThinkingLevel 列表（按强度升序），至少含 off
  */
 export function resolveAvailableLevels(
-  map?: Record<string, string | null>,
+  map?: Record<string, string | null> | null,
+  reasoning?: boolean,
 ): ThinkingLevel[] {
-  if (!map || Object.keys(map).length === 0) {
-    return THINKING_LEVELS.map((o) => o.level)
+  if (reasoning === false) return ['off']
+  const hasMap = map != null && Object.keys(map).length > 0
+  const available: ThinkingLevel[] = []
+  for (const level of PI_LEVEL_ORDER) {
+    const mapped = hasMap ? map[level] : undefined
+    // null = 显式禁用；xhigh/max 需显式定义才解锁（pi 同款规则）
+    if (mapped === null) continue
+    if ((level === 'xhigh' || level === 'max') && mapped === undefined) continue
+    available.push(level)
   }
-  const available = new Set<ThinkingLevel>()
-  for (const key of Object.keys(map)) {
-    if (map[key] !== null && isThinkingLevel(key)) {
-      available.add(key)
-    }
-  }
-  return available.size > 0
-    ? [...available].sort((a, b) => LEVEL_STRENGTH[a] - LEVEL_STRENGTH[b])
-    : THINKING_LEVELS.map((o) => o.level) // 全 null fallback 全可用
+  return available.length > 0 ? available : ['off']
 }
 
 /**
@@ -123,7 +131,7 @@ export function resolveThinkingValue(
 export function resolveThinkingKey(
   value: string,
   map?: Record<string, string | null>,
-  fallback: ThinkingLevel = 'max',
+  fallback?: ThinkingLevel,
 ): ThinkingLevel {
   // 反查 map：value → key
   if (map && Object.keys(map).length > 0) {
@@ -131,22 +139,25 @@ export function resolveThinkingKey(
       if (val === value && isThinkingLevel(key)) return key
     }
   }
-  // all-levels（map 为空）或 value 直接是档位名
+  // value 直接是档位名
   if (isThinkingLevel(value)) return value
-  return fallback
+  // fallback 缺省取最高可用档（新语义下 map 缺失最高是 high 而非 max；
+  // 硬编码 max 会把不可用档回传 runtime，pi 端静默 clamp 造成 UI 抖动）
+  return fallback ?? highestAvailableLevel(map)
 }
 
 /**
  * 取当前模型的最高可用思考档位。
  *
  * 用于切换模型后当前选中档位不可用时，自动重置到最高可用档。
- * map 为 undefined/空 → 'max'（全可用时的最高档）。
+ * resolveAvailableLevels 保证非空（fallback ['off']），`?? 'off'` 仅类型兜底。
  */
 export function highestAvailableLevel(
-  map?: Record<string, string | null>,
+  map?: Record<string, string | null> | null,
+  reasoning?: boolean,
 ): ThinkingLevel {
-  const levels = resolveAvailableLevels(map)
-  return levels[levels.length - 1] ?? 'max'
+  const levels = resolveAvailableLevels(map, reasoning)
+  return levels[levels.length - 1] ?? 'off'
 }
 
 /**
@@ -159,7 +170,8 @@ export function highestAvailableLevel(
  * Record<string,string|null>，用户可在 config 写任意 map；预设枚举只识别三种固定配置，
  * 对自定义 map 会误判。key 集合判定对所有 map 都准确。
  *
- * undefined/空 map（all-levels）视为全档可用，两个全档视为同体系。
+ * undefined/空 map 按默认五档（off..high）判定（resolveAvailableLevels 新语义），
+ * 两个默认五档视为同体系。
  */
 export function isSameThinkingScheme(
   a?: Record<string, string | null>,

@@ -111,6 +111,169 @@ describe('useContenteditableInput onInput 触发检测', () => {
   })
 })
 
+// ── 四符号体系 U1：$ / @ 触发 + bash 短路 + slash 正则化 ──
+
+/** 把光标 collapse 到指定文本节点的 offset 处 */
+function cursorAt(node: Node, offset: number): void {
+  const sel = window.getSelection()
+  sel?.removeAllRanges()
+  const range = document.createRange()
+  range.setStart(node, offset)
+  range.collapse(true)
+  sel?.addRange(range)
+}
+
+describe('useContenteditableInput $ / @ 触发检测（onDollarFileTrigger / onSubagentTrigger）', () => {
+  let cleanup: () => void
+  beforeEach(() => {
+    window.getSelection()?.removeAllRanges()
+  })
+  afterEach(() => {
+    cleanup?.()
+  })
+
+  it('$ 行首触发：光标在 $foo 后 → onDollarFileTrigger({query:"foo"})', () => {
+    const c = setup('$foo', { onDollarFileTrigger: vi.fn() })
+    cursorAt(c.el.firstChild as Text, 4)
+    c.onInput()
+    expect(c.callbacks.onDollarFileTrigger).toHaveBeenCalledWith({ query: 'foo' })
+    cleanup = c.cleanup
+  })
+
+  it('$ 空格后触发：echo $HOME → {query:"HOME"}（登记取舍：非 bash 态照常触发）', () => {
+    const c = setup('echo $HOME', { onDollarFileTrigger: vi.fn() })
+    cursorAt(c.el.firstChild as Text, 10)
+    c.onInput()
+    expect(c.callbacks.onDollarFileTrigger).toHaveBeenCalledWith({ query: 'HOME' })
+    cleanup = c.cleanup
+  })
+
+  it('$ 文字中间不触发：a$b → onDollarFileTrigger(null)', () => {
+    const c = setup('a$b', { onDollarFileTrigger: vi.fn() })
+    cursorAt(c.el.firstChild as Text, 3)
+    c.onInput()
+    expect(c.callbacks.onDollarFileTrigger).toHaveBeenCalledWith(null)
+    cleanup = c.cleanup
+  })
+
+  it('@ 空格后触发：hey @build → onSubagentTrigger({query:"build"})', () => {
+    const c = setup('hey @build', { onSubagentTrigger: vi.fn() })
+    cursorAt(c.el.firstChild as Text, 10)
+    c.onInput()
+    expect(c.callbacks.onSubagentTrigger).toHaveBeenCalledWith({ query: 'build' })
+    cleanup = c.cleanup
+  })
+
+  it('@ 文字中间不触发：a@b → onSubagentTrigger(null)', () => {
+    const c = setup('a@b', { onSubagentTrigger: vi.fn() })
+    cursorAt(c.el.firstChild as Text, 3)
+    c.onInput()
+    expect(c.callbacks.onSubagentTrigger).toHaveBeenCalledWith(null)
+    cleanup = c.cleanup
+  })
+
+  it('壳层未注入新回调（可选）时不抛错（ui ComposerInput 接线前形态）', () => {
+    const c = setup('$foo')
+    cursorAt(c.el.firstChild as Text, 4)
+    expect(() => c.onInput()).not.toThrow()
+    cleanup = c.cleanup
+  })
+})
+
+describe('useContenteditableInput bash 豁免短路（shouldSuppressTriggers）', () => {
+  let cleanup: () => void
+  beforeEach(() => {
+    window.getSelection()?.removeAllRanges()
+  })
+  afterEach(() => {
+    cleanup?.()
+  })
+
+  it('suppress=true：所有 trigger 回调收 null（含可选两路），不做检测', () => {
+    const c = setup('#foo', {
+      shouldSuppressTriggers: () => true,
+      onDollarFileTrigger: vi.fn(),
+      onSubagentTrigger: vi.fn(),
+    })
+    cursorAt(c.el.firstChild as Text, 4) // #foo 光标末尾——非 bash 态本应触发 file
+    c.onInput()
+    expect(c.callbacks.onSlashTrigger).toHaveBeenCalledWith(null)
+    expect(c.callbacks.onFileTrigger).toHaveBeenCalledWith(null)
+    expect(c.callbacks.onDollarFileTrigger).toHaveBeenCalledWith(null)
+    expect(c.callbacks.onSubagentTrigger).toHaveBeenCalledWith(null)
+    cleanup = c.cleanup
+  })
+
+  it('suppress=true：draft 同步不受影响（onInput 照发文本）', () => {
+    const c = setup('!echo $HOME', { shouldSuppressTriggers: () => true })
+    c.onInput()
+    expect(c.callbacks.onInput).toHaveBeenCalledWith('!echo $HOME')
+    cleanup = c.cleanup
+  })
+
+  it('suppress=false：行为与未注入一致（# 触发照常）', () => {
+    const c = setup('#foo', { shouldSuppressTriggers: () => false })
+    cursorAt(c.el.firstChild as Text, 4)
+    c.onInput()
+    expect(c.callbacks.onFileTrigger).toHaveBeenCalledWith({ query: 'foo' })
+    cleanup = c.cleanup
+  })
+})
+
+describe('useContenteditableInput slash 正则化（D5：光标所在行行首）', () => {
+  let cleanup: () => void
+  beforeEach(() => {
+    window.getSelection()?.removeAllRanges()
+  })
+  afterEach(() => {
+    cleanup?.()
+  })
+
+  it('多行第二行行首 / 触发（行为放宽，对齐 TUI）', () => {
+    // Shift+Enter 产 <br> 分行：line1<br>/compact，光标在第二文本节点末尾
+    const c = setup('line1<br>/compact')
+    const secondTextNode = c.el.childNodes[2] as Text
+    cursorAt(secondTextNode, 8)
+    c.onInput()
+    expect(c.callbacks.onSlashTrigger).toHaveBeenCalledWith({ query: 'compact' })
+    cleanup = c.cleanup
+  })
+
+  it('光标在行首但 / 前有文字（帮我 /x）→ null（空格后不触发）', () => {
+    const c = setup('帮我 /x')
+    cursorAt(c.el.firstChild as Text, 5)
+    c.onInput()
+    expect(c.callbacks.onSlashTrigger).toHaveBeenCalledWith(null)
+    cleanup = c.cleanup
+  })
+
+  it('多行第一行行首 /：光标在第二行 → null（不被第一行误触发）', () => {
+    const c = setup('/cmd<br>正文')
+    const secondTextNode = c.el.childNodes[2] as Text
+    cursorAt(secondTextNode, 2)
+    c.onInput()
+    expect(c.callbacks.onSlashTrigger).toHaveBeenCalledWith(null)
+    cleanup = c.cleanup
+  })
+
+  it('无光标兜底：程序化 input（无选区）回退旧 startsWith 行为', () => {
+    // renderer 集成测试形态：设 innerHTML + trigger('input')，无光标选区
+    const c = setup('/commit')
+    window.getSelection()?.removeAllRanges()
+    c.onInput()
+    expect(c.callbacks.onSlashTrigger).toHaveBeenCalledWith({ query: 'commit' })
+    cleanup = c.cleanup
+  })
+
+  it('有 chip 时不触发（hasChip 语义保留，旧回归）', () => {
+    const c = setup('<span class="slash-chip"><span class="chip-label">/old</span></span>/new')
+    cursorAt(c.el.lastChild as Text, 4)
+    c.onInput()
+    expect(c.callbacks.onSlashTrigger).toHaveBeenCalledWith(null)
+    cleanup = c.cleanup
+  })
+})
+
 /** 构造 mock ClipboardEvent（jsdom 无 DataTransfer 全局，用 mock 对象） */
 function makePasteEvent(opts: { imageFile?: File; text?: string }): ClipboardEvent {
   const items = opts.imageFile ? [{ kind: 'file' as const, type: opts.imageFile.type, getAsFile: () => opts.imageFile! }] : []
@@ -263,6 +426,79 @@ describe('useContenteditableInput moveCaretVertical（jsdom 单行 at-edge）', 
     const c = setup('only line')
     const result = c.moveCaretVertical('up')
     expect(result).toBe('at-edge')
+    cleanup = c.cleanup
+  })
+})
+
+describe('useContenteditableInput clear 族（boundaryLen 模式：只删「符号+query 到光标」段）', () => {
+  let cleanup: () => void
+  beforeEach(() => {
+    window.getSelection()?.removeAllRanges()
+  })
+  afterEach(() => {
+    cleanup?.()
+  })
+
+  it('clearSlashQueryText 新行为：只删行首 /query 段，不再全清输入框（D5 修正）', () => {
+    const c = setup('/commit')
+    cursorAt(c.el.firstChild as Text, 7)
+    c.clearSlashQueryText()
+    expect(c.getText()).toBe('')
+    expect(c.callbacks.onInput).toHaveBeenCalledWith('')
+    cleanup = c.cleanup
+  })
+
+  it('clearSlashQueryText：多行草稿只删 /query 行内容，其他行保留', () => {
+    const c = setup('line1<br>/compact')
+    const secondTextNode = c.el.childNodes[2] as Text
+    cursorAt(secondTextNode, 8)
+    c.clearSlashQueryText()
+    // 第一行与 <br> 分行保留，第二行 /compact 被删
+    expect(c.getText()).toBe('line1\n')
+    cleanup = c.cleanup
+  })
+
+  it('clearSlashQueryText：光标不在行首 /query 后（不匹配）→ 不动作', () => {
+    const c = setup('hello')
+    cursorAt(c.el.firstChild as Text, 5)
+    c.clearSlashQueryText()
+    expect(c.getText()).toBe('hello')
+    // 不匹配时不 emitInput（无变更）
+    expect(c.callbacks.onInput).not.toHaveBeenCalled()
+    cleanup = c.cleanup
+  })
+
+  it('clearHashQueryText 行为不变（回归）：只删 #query 段，边界空格保留', () => {
+    const c = setup('see #quer')
+    cursorAt(c.el.firstChild as Text, 9)
+    c.clearHashQueryText()
+    expect(c.getText()).toBe('see ')
+    cleanup = c.cleanup
+  })
+
+  it('clearDollarFileQueryText：只删 $query 段，边界空格保留', () => {
+    const c = setup('see $quer')
+    cursorAt(c.el.firstChild as Text, 9)
+    c.clearDollarFileQueryText()
+    expect(c.getText()).toBe('see ')
+    expect(c.callbacks.onInput).toHaveBeenCalledWith('see ')
+    cleanup = c.cleanup
+  })
+
+  it('clearSubagentQueryText：只删 @query 段，边界空格保留', () => {
+    const c = setup('hey @build')
+    cursorAt(c.el.firstChild as Text, 10)
+    c.clearSubagentQueryText()
+    expect(c.getText()).toBe('hey ')
+    expect(c.callbacks.onInput).toHaveBeenCalledWith('hey ')
+    cleanup = c.cleanup
+  })
+
+  it('clearDollarFileQueryText：无光标时不动作（不抛错）', () => {
+    const c = setup('see $quer')
+    window.getSelection()?.removeAllRanges()
+    expect(() => c.clearDollarFileQueryText()).not.toThrow()
+    expect(c.getText()).toBe('see $quer')
     cleanup = c.cleanup
   })
 })
