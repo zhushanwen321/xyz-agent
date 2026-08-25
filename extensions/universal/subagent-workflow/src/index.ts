@@ -26,6 +26,9 @@ import { getOrCreateChannelRegistry } from "./execution/channel-registry-access.
 import { DialogGlobalQueue } from "./execution/dialog-queue.ts";
 // [P1 引擎接线] 组合根登记 'pi' 引擎进 registry（引擎获取统一经 getEngine，缺省 id 'pi'）
 import { registerPiEngine } from "./execution/engine/engines/pi/registration.ts";
+// [P3 引擎接线] 组合根登记 'zcode' 引擎（spawn 单轮模式；engineDataDir 默认走
+// common/data-dir SSOT，见 engines/zcode/registration.ts）
+import { registerZcodeEngine } from "./execution/engine/engines/zcode/registration.ts";
 import { createUiRequestHandlerForMode } from "./execution/ui-request-handler-factory.ts";
 import {
   getModelConfigService,
@@ -167,6 +170,10 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // 不再硬编码「spawn pi」。幂等（registerEngine 覆盖语义），工厂惰性解析服务单例。
   // P4 配置路由（agent frontmatter engine 字段 + 三层优先级）在本登记之上消费。
   registerPiEngine();
+
+  // [P3 引擎接线] 登记 'zcode'（幂等同上）。惰性工厂：不触发 CLI/凭据探测，引擎被
+  // 实际选用（P4 路由或显式 getEngine('zcode')）才解析 deps。
+  registerZcodeEngine();
 
   // ════════════════════════════════════════════════════════════
   //  subagents 域：tool + command + messageRenderer
