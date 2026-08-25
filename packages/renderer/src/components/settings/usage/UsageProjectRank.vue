@@ -74,15 +74,14 @@ function rowVal(row: RankRow): number {
 const PERCENT_MULTIPLIER = 100
 
 function stackSegments(row: RankRow): StackSeg[] {
-  if (!row.provs) return []
+  const provs = row.provs
+  if (!provs) return []
   const total = rowVal(row)
   if (total <= 0) return []
-  const ALLOWED_KEYS = Object.keys(row.provs)
-  return Object.entries(row.provs)
-    .filter(([k]) => ALLOWED_KEYS.includes(k))
-    .map(([pid, u]) => ({
+  return Object.keys(provs)
+    .map((pid) => ({
       pid,
-      pct: (metricValue(u, props.metric) / total) * PERCENT_MULTIPLIER,
+      pct: (metricValue(provs[pid], props.metric) / total) * PERCENT_MULTIPLIER,
       color: getProviderColor(pid),
     }))
     .sort((a, b) => b.pct - a.pct)

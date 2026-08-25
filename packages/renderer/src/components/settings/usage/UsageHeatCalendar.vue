@@ -37,7 +37,7 @@
           v-for="(cell, ci) in cells"
           :key="ci"
           class="w-[13px] h-[13px] rounded-[2.5px] cursor-default"
-          :class="cell.level"
+          :class="[cell.level, { 'opacity-[0.28]': cell.future }]"
           @mouseenter="onEnter($event, cell)"
           @mouseleave="onLeave"
         />
@@ -111,6 +111,7 @@ interface CalendarCell {
   dateStr: string
   value: number
   level: string
+  future: boolean
 }
 
 const cells = computed<CalendarCell[]>(() => {
@@ -141,6 +142,7 @@ const cells = computed<CalendarCell[]>(() => {
   }
 
   const result: CalendarCell[] = []
+  const todayStr = fmtISO(new Date())
   // CALENDAR_WEEKS × DAYS_PER_WEEK 格，按列排（每列 DAYS_PER_WEEK 行）
   for (let week = 0; week < CALENDAR_WEEKS; week++) {
     for (let day = 0; day < DAYS_PER_WEEK; day++) {
@@ -152,6 +154,7 @@ const cells = computed<CalendarCell[]>(() => {
         dateStr: ds,
         value: val,
         level: getLevel(val),
+        future: ds > todayStr,
       })
     }
   }
@@ -159,7 +162,7 @@ const cells = computed<CalendarCell[]>(() => {
 })
 
 /* ── 星期标签（一/三/五） ── */
-const dayLabels = ['', '\u4e00', '', '\u4e09', '', '\u4e94', '']
+const dayLabels = computed(() => ['', t('settings.usage.heatDayMon'), '', t('settings.usage.heatDayWed'), '', t('settings.usage.heatDayFri'), ''])
 
 /* ── 月份标签 ── */
 const monthLabels = computed(() => {
@@ -175,7 +178,7 @@ const monthLabels = computed(() => {
       lastMonth = m
       labels.push({
         col: week,
-        label: `${m + 1}\u6708`,
+        label: `${m + 1}${t('settings.usage.heatMonthSuffix')}`,
       })
     }
   }
@@ -190,9 +193,14 @@ const tipPos = ref({ left: '0px', top: '0px' })
 
 function onEnter(e: MouseEvent, cell: CalendarCell): void {
   const d = toLocalDate(cell.dateStr)
-  const weekdays = ['\u5468\u65e5', '\u5468\u4e00', '\u5468\u4e8c', '\u5468\u4e09', '\u5468\u56db', '\u5468\u4e94', '\u5468\u516d']
+  const weekdays = [
+    t('settings.usage.heatWeekSun'), t('settings.usage.heatWeekMon'),
+    t('settings.usage.heatWeekTue'), t('settings.usage.heatWeekWed'),
+    t('settings.usage.heatWeekThu'), t('settings.usage.heatWeekFri'),
+    t('settings.usage.heatWeekSat'),
+  ]
   tipDate.value = `${cell.dateStr}  ${weekdays[d.getDay()]}`
-  tipTokens.value = cell.value > 0 ? `${fmtInt(cell.value)} tokens` : '\u2014'
+  tipTokens.value = cell.value > 0 ? `${fmtInt(cell.value)} ${t('settings.usage.heatTokens')}` : t('settings.usage.tooltipNoUsage')
   tipPos.value = {
     left: `${e.clientX + TOOLTIP_OFFSET_X}px`,
     top: `${e.clientY - TOOLTIP_OFFSET_Y}px`,

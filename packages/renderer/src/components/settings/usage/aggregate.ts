@@ -3,6 +3,9 @@
  *
  * 从 UsageRow[] 行集切片聚合出七个子组件所需的视图数据。
  * 移植自 docs/page-design/usage-dashboard.html 的 aggregate() 逻辑。
+ *
+ * totalTokens 口径：input + output + cacheRead + cacheWrite 四项，不含 reasoning。
+ * pi 落盘的 totalTokens 含 reasoning，本模块按四项和计算，与 demo 对齐。
  */
 import type { UsageRow } from '@xyz-agent/shared'
 
@@ -24,9 +27,9 @@ const PROVIDER_COLORS: Record<string, string> = {}
 
 /** 按使用量降序分配 provider 色阶梯（p1 占比最高） */
 function assignProviderColors(perProv: Record<string, AggMetrics>): void {
-  const sorted = Object.entries(perProv)
-    .sort((a, b) => totalTokens(b[1]) - totalTokens(a[1]))
-  sorted.forEach(([pid], i) => {
+  const sorted = Object.keys(perProv)
+    .sort((a, b) => totalTokens(perProv[b]) - totalTokens(perProv[a]))
+  sorted.forEach((pid, i) => {
     PROVIDER_COLORS[pid] = `var(--chart-p${Math.min(i + 1, MAX_PROVIDER_COLORS)})`
   })
 }
@@ -205,10 +208,39 @@ export function aggregate(
     byDate.set(row.date, arr)
   }
 
+  // 以全量 rows 计算 provider 色序（过滤变化不重排）
+  const fullPerProv: Record<string, AggMetrics> = {}
+  for (const row of rows) {
+    if (!fullPerProv[row.provider]) fullPerProv[row.provider] = newMetrics()
+    const u: AggMetrics = {
+      input: row.input, output: row.output,
+      cacheRead: row.cacheRead, cacheWrite: row.cacheWrite,
+      cost: row.costUSD, messages: row.messages,
+    }
+    accumulate(fullPerProv[row.provider], u)
+  }
+  assignProviderColors(fullPerProv)
+
   // 确定日期范围
   const sortedDates = [...byDate.keys()].sort()
-  const nDays = filter.range === 0 ? sortedDates.length : Math.min(filter.range, sortedDates.length)
-  const sliceDates = sortedDates.slice(-nDays)
+  let sliceDates: string[]
+  let nDays: number
+  if (filter.range > 0) {
+    // 构造完整日历日序列（今天往回 range 天，本地时区）
+    const today = new Date()
+    const dates: string[] = []
+    for (let i = filter.range - 1; i >= 0; i--) {
+      const d = new Date(today)
+      d.setDate(today.getDate() - i)
+      dates.push(fmtISO(d))
+    }
+    sliceDates = dates
+    nDays = filter.range
+  } else {
+    // 全部：维持有数日期全集
+    sliceDates = sortedDates
+    nDays = sortedDates.length
+  }
 
   const perDay: DayView[] = []
   const perModel: Record<string, AggMetrics> = {}
@@ -265,9 +297,6 @@ export function aggregate(
     perDay.push({ date, dateStr, provs, dTot })
   }
 
-  // 为 provider 分配颜色阶梯
-  assignProviderColors(perProv)
-
   return { perDay, perModel, perProv, tot, msgs, activeDays, peak, nDays }
 }
 
@@ -305,8 +334,19 @@ export function aggregateProjects(
     byDate.set(row.date, arr)
   }
   const sortedDates = [...byDate.keys()].sort()
-  const nDays = filter.range === 0 ? sortedDates.length : Math.min(filter.range, sortedDates.length)
-  const sliceDates = sortedDates.slice(-nDays)
+  let sliceDates: string[]
+  if (filter.range > 0) {
+    const today = new Date()
+    const dates: string[] = []
+    for (let i = filter.range - 1; i >= 0; i--) {
+      const d = new Date(today)
+      d.setDate(today.getDate() - i)
+      dates.push(fmtISO(d))
+    }
+    sliceDates = dates
+  } else {
+    sliceDates = sortedDates
+  }
 
   const projMap = new Map<string, { provs: Record<string, AggMetrics>; total: AggMetrics }>()
   for (const dateStr of sliceDates) {
@@ -364,7 +404,6 @@ export function aggregateDetailGroups(
   perProv: Record<string, AggMetrics>,
   perModel: Record<string, AggMetrics>,
   rows: UsageRow[],
-  _filter: Pick<FilterState, 'offProv' | 'isolate'>,
 ): { pid: string; u: AggMetrics; models: { model: string; u: AggMetrics }[] }[] {
   // 建立 model -> provider 映射
   const modelProv = new Map<string, string>()
@@ -372,15 +411,13 @@ export function aggregateDetailGroups(
     if (!modelProv.has(row.model)) modelProv.set(row.model, row.provider)
   }
 
-  const ALLOWED_PROV_KEYS = Object.keys(perProv)
-  const provs = Object.entries(perProv)
-    .filter(([k]) => ALLOWED_PROV_KEYS.includes(k))
-    .map(([pid, u]) => {
+  const provs = Object.keys(perProv)
+    .map((pid) => {
       const models = Object.entries(perModel)
         .filter(([m]) => modelProv.get(m) === pid)
         .sort((a, b) => totalTokens(b[1]) - totalTokens(a[1]))
         .map(([model, mu]) => ({ model, u: mu }))
-      return { pid, u, models }
+      return { pid, u: perProv[pid], models }
     })
     .sort((a, b) => totalTokens(b.u) - totalTokens(a.u))
 

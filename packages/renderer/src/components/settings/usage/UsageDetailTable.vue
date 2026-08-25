@@ -94,7 +94,7 @@
       <span />
       <span />
       <span class="text-right font-mono text-xs tabular-nums">{{ fmtInt(totTokens) }}</span>
-      <span class="text-right font-mono text-xs tabular-nums">{{ fmtUSD(tot.cost) }}</span>
+      <span class="text-right font-mono text-xs tabular-nums" :class="tot.cost ? 'text-[var(--neutral-fg)]' : 'text-[var(--neutral-dim)]'">{{ tot.cost ? fmtUSD(tot.cost) : '—' }}</span>
       <span />
     </div>
   </div>
@@ -118,8 +118,6 @@ const { t } = useI18n()
 const props = defineProps<{
   groups: { pid: string; u: AggMetrics; models: { model: string; u: AggMetrics }[] }[]
   tot: AggMetrics
-  metric: 'tokens' | 'cost'
-  range: number
 }>()
 
 const DEFAULT_EXPANDED_COUNT = 2

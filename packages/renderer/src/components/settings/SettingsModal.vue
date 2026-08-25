@@ -91,7 +91,8 @@
             <X class="!w-[16px] !h-[16px]" />
           </Button>
         </div>
-        <div class="content-col-inner w-full max-w-[var(--content-max-w)] m-0 pt-[var(--space-6)] px-[24px] pb-[var(--space-8)]">
+        <div class="content-col-inner w-full m-0 pt-[var(--space-6)] px-[24px] pb-[var(--space-8)]"
+             :style="{ maxWidth: activeMenu === 'usage' ? '1064px' : 'var(--content-max-w)' }">
           <!-- 设置页切换保持瞬时（不加过渡动画）：
                Vue <Transition mode="out-in"> + v-if/else-if 链在 Vue 3.5.39 下 leave
                完成后 enter 不触发（调度 bug，内容区永久空白）；concurrent 模式（无 mode）

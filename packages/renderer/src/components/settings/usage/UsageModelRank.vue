@@ -7,7 +7,7 @@
     <div
       v-for="(row, i) in sortedRows"
       :key="row.model"
-      data-testid="usage-model-row"
+      :data-testid="`usage-model-${row.model}`"
       class="grid cursor-pointer grid-cols-[24px_minmax(0,1fr)_auto_80px_56px] items-center gap-1 rounded-[var(--radius-sm)] px-2 py-1 transition-colors hover:bg-[var(--row-hover)]"
       :class="{ 'bg-[var(--accent-soft)]': isolate === row.model }"
       @click="toggle(row.model)"
@@ -78,16 +78,17 @@ interface ModelRow {
 const TOP_MODELS = 8
 
 const sortedRows = computed<ModelRow[]>(() => {
-  const ALLOWED_KEYS = Object.keys(props.perModel)
-  return Object.entries(props.perModel)
-    .filter(([k]) => ALLOWED_KEYS.includes(k))
-    .map(([model, u]) => ({
-      model,
-      provider: props.modelProviderMap[model] ?? 'unknown',
-      value: metricValue(u, props.metric),
-      tokenVal: totalTokens(u),
-      costVal: u.cost,
-    }))
+  return Object.keys(props.perModel)
+    .map((model) => {
+      const u = props.perModel[model]
+      return {
+        model,
+        provider: props.modelProviderMap[model] ?? 'unknown',
+        value: metricValue(u, props.metric),
+        tokenVal: totalTokens(u),
+        costVal: u.cost,
+      }
+    })
     .sort((a, b) => b.value - a.value)
     .slice(0, TOP_MODELS)
 })

@@ -6,7 +6,7 @@
   <div data-testid="usage-ledger" class="flex flex-wrap gap-y-[18px]">
     <!-- 总 Token（lead 大字） -->
     <div data-testid="usage-ledger-total-tokens" class="pr-7 mr-7 border-r border-[var(--hairline)] last:border-r-0 last:mr-0 last:pr-0">
-      <div class="text-[11px] text-[var(--neutral-dim)]">{{ t('settings.usage.totalTokens') }} &middot; {{ t('settings.usage.recentDays', { n: nDays }) }}</div>
+      <div class="text-[11px] text-[var(--neutral-dim)]">{{ t('settings.usage.totalTokens') }} &middot; {{ range === 0 ? t('settings.usage.rangeAll') : t('settings.usage.recentDays', { n: nDays }) }}</div>
       <div class="font-mono tabular-nums text-[24px] font-medium leading-[1.35] text-[var(--neutral-fg)]">
         {{ fmtInt(totalTokens(tot)) }}
       </div>

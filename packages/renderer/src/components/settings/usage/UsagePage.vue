@@ -48,6 +48,20 @@
       <p class="text-[12px] text-[var(--neutral-mid)]">{{ t('settings.usage.emptyDesc') }}</p>
     </div>
 
+    <!-- 空态：有文件但零 usage 行 -->
+    <div
+      v-else-if="data && data.rows.length === 0 && data.sessionCount > 0"
+      data-testid="usage-empty-state"
+      class="flex flex-col items-center gap-3 py-16 text-center"
+    >
+      <div class="grid size-16 place-items-center rounded-full border-2 border-dashed border-[var(--border-strong)]">
+        <BarChart3 class="size-7 text-[var(--neutral-dim)]" />
+      </div>
+      <p class="text-[14px] font-medium text-[var(--neutral-fg)]">{{ t('settings.usage.emptyTitle') }}</p>
+      <p class="text-[12px] text-[var(--neutral-mid)]">{{ t('settings.usage.emptyDesc') }}</p>
+      <p class="text-[11px] text-[var(--neutral-dim)]">{{ t('settings.usage.emptyScanned', { count: data.sessionCount }) }}</p>
+    </div>
+
     <!-- 数据态 -->
     <template v-else-if="data && agg">
       <!-- 摘要台账行 -->
@@ -70,7 +84,7 @@
             :key="pid"
             variant="ghost"
             size="icon"
-            data-testid="usage-legend-btn"
+            :data-testid="`usage-legend-${pid}`"
             class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] transition-all"
             :class="filter.offProv.has(pid)
               ? 'border-[var(--border)] text-[var(--neutral-dim)] opacity-[0.38]'
@@ -213,8 +227,6 @@
         <UsageDetailTable
           :groups="detailGroups"
           :tot="agg.tot"
-          :metric="filter.metric"
-          :range="filter.range"
         />
       </section>
 
@@ -401,7 +413,7 @@ const cacheMixData = computed(() => {
 
 const detailGroups = computed(() => {
   if (!agg.value || !data.value) return []
-  return aggregateDetailGroups(agg.value.perProv, agg.value.perModel, data.value.rows, filter)
+  return aggregateDetailGroups(agg.value.perProv, agg.value.perModel, data.value.rows)
 })
 
 /* ── 明细台账 meta 文案 ── */
@@ -421,13 +433,5 @@ const detailMeta = computed(() => {
   margin-top: 0;
   border-top: none;
   padding-top: 0;
-}
-
-/* 明细表 grid 布局需覆盖子组件 scoped */
-:deep(.thead),
-:deep(.tgroup),
-:deep(.trow),
-:deep(.tfoot) {
-  tabular-nums: true;
 }
 </style>

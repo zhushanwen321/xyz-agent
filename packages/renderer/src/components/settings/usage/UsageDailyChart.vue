@@ -19,18 +19,18 @@
             :x2="width - padR"
             :y1="yScale(i)"
             :y2="yScale(i)"
-            stroke="var(--hairline)"
+            :style="{ stroke: 'var(--hairline)' }"
             stroke-dasharray="2,3"
           />
           <text
             :x="padL - 8"
             :y="yScale(i) + 4"
             text-anchor="end"
-            fill="var(--neutral-dim)"
+            :style="{ fill: 'var(--neutral-dim)' }"
             font-size="10"
             font-family="var(--font-mono)"
           >
-            {{ fmtCompact(yTicks[i]) }}
+            {{ metric === 'cost' ? '$' + fmtCompact(yTicks[i]) : fmtCompact(yTicks[i]) }}
           </text>
         </template>
 
@@ -40,7 +40,7 @@
           :x2="width - padR"
           :y1="plotBottom"
           :y2="plotBottom"
-          stroke="var(--border)"
+          :style="{ stroke: 'var(--border)' }"
         />
 
         <!-- 月份标签 -->
@@ -50,7 +50,7 @@
           :x="ml.x"
           :y="plotBottom + 18"
           text-anchor="middle"
-          fill="var(--neutral-dim)"
+          :style="{ fill: 'var(--neutral-dim)' }"
           font-size="10"
           font-family="var(--font-mono)"
         >
@@ -65,7 +65,7 @@
           :width="barW + 4"
           :height="plotH"
           class="hover-col"
-          fill="var(--hover-tint)"
+          :style="{ fill: 'var(--hover-tint)' }"
         />
 
         <!-- 堆叠柱 -->
@@ -79,6 +79,25 @@
             :height="seg.h"
             :style="`fill:${seg.color}`"
             rx="1"
+          />
+        </template>
+
+        <!-- 峰值日标注（n>=14 才显示） -->
+        <template v-if="perDay.length >= MIN_DAYS_FOR_PEAK && peakDayIdx >= 0">
+          <text
+            :x="colX(peakDayIdx) + barW / 2"
+            :y="padT - 4"
+            text-anchor="middle"
+            :style="{ fill: 'var(--neutral-dim)' }"
+            font-size="10"
+            font-family="var(--font-mono)"
+          >
+            {{ peakDayLabel }}
+          </text>
+          <polygon
+            :points="peakTriangle"
+            :style="{ fill: 'var(--neutral-dim)' }"
+            opacity="0.6"
           />
         </template>
       </svg>
@@ -142,6 +161,7 @@ import {
   fmtUSD,
   fmtInt,
   fmtISO,
+  fmtMMDD,
   fmtWeekday,
   fmtPct,
 } from './aggregate'
@@ -158,7 +178,7 @@ const props = defineProps<{
 const svgH = 232
 const padL = 48
 const padR = 12
-const padT = 8
+const padT = 26
 const padB = 26
 const plotH = svgH - padT - padB
 const plotBottom = svgH - padB
@@ -242,10 +262,8 @@ interface StackedSeg {
 
 function stackedSegments(di: number): StackedSeg[] {
   const day = props.perDay[di]
-  const ALLOWED_PROV_KEYS = Object.keys(day.provs)
-  const sorted = Object.entries(day.provs)
-    .filter(([k]) => ALLOWED_PROV_KEYS.includes(k))
-    .map(([pid, provMetrics]) => ({ pid, val: metricValue(provMetrics, props.metric) }))
+  const sorted = Object.keys(day.provs)
+    .map((pid) => ({ pid, val: metricValue(day.provs[pid], props.metric) }))
     .sort((a, b) => b.val - a.val)
 
   const result: StackedSeg[] = []
@@ -326,10 +344,8 @@ const tipData = computed<TipData | null>(() => {
   if (hoverIdx.value < 0) return null
   const day = props.perDay[hoverIdx.value]
   const totVal = metricValue(day.dTot, props.metric)
-  const ALLOWED_PROV_KEYS = Object.keys(day.provs)
-  const sorted = Object.entries(day.provs)
-    .filter(([k]) => ALLOWED_PROV_KEYS.includes(k))
-    .map(([pid, provMetrics]) => ({ pid, val: metricValue(provMetrics, props.metric) }))
+  const sorted = Object.keys(day.provs)
+    .map((pid) => ({ pid, val: metricValue(day.provs[pid], props.metric) }))
     .sort((a, b) => b.val - a.val)
 
   const fmt = props.metric === 'cost' ? fmtUSD : fmtInt
@@ -337,9 +353,9 @@ const tipData = computed<TipData | null>(() => {
   return {
     dateLabel: `${fmtISO(day.date)} \u00A0${fmtWeekday(day.date)}`,
     total: fmt(totVal),
-    input: fmtInt(day.dTot.input),
-    cacheRead: fmtInt(day.dTot.cacheRead),
-    output: fmtInt(day.dTot.output),
+    input: fmtCompact(day.dTot.input),
+    cacheRead: fmtCompact(day.dTot.cacheRead),
+    output: fmtCompact(day.dTot.output),
     rows: sorted.map(({ pid, val }) => ({
       pid,
       color: getProviderColor(pid),
@@ -356,5 +372,33 @@ const tipStyle = computed(() => {
     left: flip ? `${mouseX.value - TIP_WIDTH_ESTIMATE}px` : `${x}px`,
     top: `${Math.max(TIP_TOP_MARGIN, mouseY.value - TIP_Y_SHIFT)}px`,
   }
+})
+
+/* ── 峰值日标注 ── */
+const MIN_DAYS_FOR_PEAK = 14
+
+const peakDayIdx = computed(() => {
+  let maxV = 0
+  let maxI = -1
+  for (let i = 0; i < props.perDay.length; i++) {
+    const v = metricValue(props.perDay[i].dTot, props.metric)
+    if (v > maxV) { maxV = v; maxI = i }
+  }
+  return maxI
+})
+
+const peakDayLabel = computed(() => {
+  if (peakDayIdx.value < 0) return ''
+  return fmtMMDD(props.perDay[peakDayIdx.value].date)
+})
+
+const HALF_DIVISOR = 2
+
+const peakTriangle = computed(() => {
+  if (peakDayIdx.value < 0) return ''
+  const cx = colX(peakDayIdx.value) + barW.value / HALF_DIVISOR
+  const TRI_W = 5
+  const TRI_H = 4
+  return `${cx - TRI_W},${padT - 1} ${cx + TRI_W},${padT - 1} ${cx},${padT - 1 + TRI_H}`
 })
 </script>
