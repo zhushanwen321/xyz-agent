@@ -62,6 +62,8 @@ export type ClientMessageType =
   | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
   | 'session.workflowAction' | 'session.subagentAction'
+  // session.forceQuit：强制退出卡死 session（杀 pi 子进程 + stopped 收敛，区别于 message.abort 的协作式中止）。
+  | 'session.forceQuit'
   // wave:runtime-patch ipc-converge-a3 W2：业务持久化写迁 WS（session 数据单一出口归 runtime）。
   // session.writeImage 粘贴截图落地 attachments；session.migrateImage landing tmpdir→attachments 迁移；
   // session.writeSegments 追加/覆盖 segments.json sidecar。原 main IPC handler，现 runtime session-service。
@@ -285,6 +287,7 @@ export interface ClientMessageMap {
   'config.sessions': Record<string, never>
   'session.switch': { sessionId: string }
   'session.restore': { sessionId: string }
+  'session.forceQuit': { sessionId: string }
   'session.history': { sessionId: string }
   'session.getFullHistory': { sessionId: string }
   'session.getCommands': { sessionId: string }
@@ -1625,6 +1628,8 @@ export interface ReplyPayloadMap {
   'session.handoff': void         // reply message.status
   // session.abortHandoff：取消进行中 handoff，reply message.status ack（与 message.abort 同模式）。
   'session.abortHandoff': void    // reply message.status
+  // session.forceQuit：强杀 pi 进程并走 stopped 收敛（终态经 session.exited 广播推回），reply message.status ack。
+  'session.forceQuit': void       // reply message.status
   // session.subscribe（runtime-message-bus wave:protocol-seq）：订阅某 session 的 live 事件流。
   // payload 消费型——renderer 读 snapshot 做 reconcile（订阅时刻 bus ring 内当前事件序列，
   // 元素为带 seq 的 ServerMessage），记 lastSeq 作为后续 gap 检测基线；gap=true 标记本次

@@ -532,6 +532,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   // base64 隐藏注释前缀在 extension 侧零消费方，且经主 agent 转发违背
   // 「直达 subagent」目标——定向消息改走 subagentAction(message/start)。
   async abort(sessionId: string): Promise<void> { return this.dispatcher.abort(sessionId) }
+  /** 强制退出卡死 session（sidebar 右键入口，杀 pi 进程 + stopped 收敛）。 */
+  async forceQuit(sessionId: string): Promise<void> { return this.dispatcher.forceQuit(sessionId) }
   async sendBash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.dispatcher.sendBash(sessionId, command, excludeFromContext)
   }
@@ -1660,7 +1662,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   notifySessionCreated(summary: SessionSummary): void {
     try {
       this.onSessionCreated?.(summary)
-    // eslint-disable-next-line taste/no-silent-catch -- best-effort 降级：插件 didCreate 投递异常不外抛（创建主流程优先），仅落日志供排查
+      // catch 内有 console.error（非 silent catch），无需 no-silent-catch 豁免。
     } catch (e: unknown) {
       // 降级策略（best-effort）：插件回调异常不阻断创建主流程，仅落日志
       console.error(`[session-service] onSessionCreated listener error (sessionId=${summary.id}):`, e)

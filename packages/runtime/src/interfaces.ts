@@ -141,6 +141,8 @@ export interface ISessionService {
   // [HISTORICAL] sendSubagentMessage 已删除（composer 四符号设计 D2，marker 半成品通道废弃）：
   // 定向消息改走 subagentAction(message/start) 直达 subagent。
   abort(sessionId: string): Promise<void>
+  /** 强制退出卡死 session（sidebar 右键入口，杀 pi 进程 + stopped 收敛）。 */
+  forceQuit(sessionId: string): Promise<void>
   /**
    * 直接执行 bash 命令（pi bash RPC，不经 LLM turn）。
    *

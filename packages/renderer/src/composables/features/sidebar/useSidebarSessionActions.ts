@@ -14,6 +14,7 @@
  */
 import type { Ref } from 'vue'
 import { useChat } from '@/composables/features/chat/useChat'
+import { session as sessionApi } from '@/api'
 import { useSearchModalDeps } from '@/composables/features/search/useSearchModalDeps'
 import { useSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import { useSubagentStore } from '@/stores/subagent'
@@ -125,6 +126,21 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
     void abortSession(id)
   }
 
+  /**
+   * 强制退出卡死 session（SessionItem 右键两段确认后）：杀 pi 进程 + stopped 收敛。
+   * 成功后的 UI 收敛不在此处：终态经 session.exited 广播由 useMessageEffects.handleSessionExited
+   * 统一处理（markDead 置灰 + 错误消息入流 + toast），之后点击 dead session 走 restore 重开。
+   * 失败（RPC error envelope）toast；session 不在活跃进程表时 runtime 幂等成功。
+   */
+  async function onForceQuitSession(id: string): Promise<void> {
+    try {
+      await sessionApi.forceQuit(id)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      toastError(t('sidebar.forceQuitFailed', { msg }))
+    }
+  }
+
   async function onConfirmRename(payload: { sessionId: string; label: string }): Promise<void> {
     try {
       await renameSession(payload.sessionId, payload.label)
@@ -180,6 +196,7 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
     onDeleteSession,
     onDeleteFolder,
     onStopBranch,
+    onForceQuitSession,
     onConfirmRename,
     onAssignProject,
     onRetryLoadSessions,

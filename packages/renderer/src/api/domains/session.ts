@@ -79,6 +79,15 @@ export async function restoreSession(sessionId: string): Promise<SessionSummary>
 }
 
 /**
+ * 强制退出指定 session（sidebar 右键入口）：runtime 直接杀 pi 子进程并走 stopped 收敛，
+ * 终态经 session.exited 广播推回（前端标记 dead + 错误气泡）；之后点击 dead session 走
+ * restore 重开。区别于 chat.abort 的协作式中止：不依赖 pi 响应，适用于 pi 卡死场景。
+ */
+export function forceQuit(sessionId: string): Promise<void> {
+  return command('session.forceQuit', { sessionId })
+}
+
+/**
  * Fork session：从 srcSessionId 截断到 fromPiEntryId，创建新 session（独立 pi 进程）。
  * reply 复用 session.created，解包 .session。
  *
