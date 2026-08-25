@@ -152,4 +152,21 @@ describe('SessionMessageHandler — error envelope 回归', () => {
       expect(cap.replies).toHaveLength(0)
     })
   })
+
+  describe('session.forceQuit（强杀 pi 进程）', () => {
+    // reply message.status ack 契约（与 message.abort 对称）：缺失会让 renderer pending.register(msg.id) 永挂。
+    it('成功 → reply message.status {status:"force_quit"} ack', async () => {
+      const { cap, handler, ctx } = makeHandler({ forceQuit: vi.fn().mockResolvedValue(undefined) })
+      await handler.handleSessionMessage(msg('session.forceQuit', { sessionId: 's1' }), WS)
+      expect((ctx.sessionService as Record<string, unknown>).forceQuit).toHaveBeenCalledWith('s1')
+      expect(cap.replies[0]).toMatchObject({ id: 'm1', type: 'message.status', payload: { sessionId: 's1', status: 'force_quit' } })
+      expect(cap.errors).toHaveLength(0)
+    })
+
+    it('forceQuit 抛错 → 异常上抛（由 server.ts 外层 catch 转 sendError），不 reply', async () => {
+      const { cap, handler } = makeHandler({ forceQuit: vi.fn().mockRejectedValue(new Error('kill failed')) })
+      await expect(handler.handleSessionMessage(msg('session.forceQuit', { sessionId: 's1' }), WS)).rejects.toThrow('kill failed')
+      expect(cap.replies).toHaveLength(0)
+    })
+  })
 })
