@@ -74,6 +74,33 @@
 | `--diff-add-strong` | `color-mix(in oklch, var(--success) 45%, transparent)` | diff 字符级背景（新增，高饱和） | 2026-08-02 太极·玄新增 |
 | `--diff-del-strong` | `color-mix(in oklch, var(--danger) 45%, transparent)` | diff 字符级背景（删除，高饱和） | 2026-08-02 太极·玄新增 |
 
+## 图表派生 token（2026-08-25 用量统计页新增）
+
+> 全部从 `--chart-ink` 派生（color-mix oklch），不手写色值；6 主题各自定义（玄=:root 默认，
+> 其余主题块同名覆盖；彩色亮色 preset 青墨/朱印额外覆盖 --chart-ink 掺入 accent 色相）。
+> 明度方向自动反转（暗：墨越亮越浓；亮：墨越深越浓）。定义见 style.css 各主题块；
+> 文档版同步 docs/page-design/v6-tokens.css。dim/mid 对比度修正提案待产品拍板。
+
+| Token | 值（玄 · 暗） | 用途 |
+|-------|--------------|------|
+| `--chart-ink` | `var(--neutral-fg)` | 图表墨色派生源（青墨/朱印 = color-mix 掺 45% accent） |
+| `--chart-p1` | `color-mix(in oklch, var(--chart-ink) 92%, var(--bg))` | provider 序列 p1（占比最高档） |
+| `--chart-p2` | `color-mix(in oklch, var(--chart-ink) 70%, var(--bg))` | provider 序列 p2 |
+| `--chart-p3` | `color-mix(in oklch, var(--chart-ink) 48%, var(--bg))` | provider 序列 p3 |
+| `--chart-p4` | `color-mix(in oklch, var(--chart-ink) 30%, var(--bg))` | provider 序列 p4 |
+| `--chart-p5` | `color-mix(in oklch, var(--chart-ink) 17%, var(--bg))` | provider 序列 p5 |
+| `--heat-0` | `color-mix(in oklch, var(--chart-ink) 5%, var(--bg))` | 热力墨阶 0（无消耗底色） |
+| `--heat-1` | `color-mix(in oklch, var(--chart-ink) 12%, var(--bg))` | 热力墨阶 1 |
+| `--heat-2` | `color-mix(in oklch, var(--chart-ink) 24%, var(--bg))` | 热力墨阶 2 |
+| `--heat-3` | `color-mix(in oklch, var(--chart-ink) 40%, var(--bg))` | 热力墨阶 3 |
+| `--heat-4` | `color-mix(in oklch, var(--chart-ink) 60%, var(--bg))` | 热力墨阶 4 |
+| `--heat-5` | `color-mix(in oklch, var(--chart-ink) 82%, var(--bg))` | 热力墨阶 5（当日最浓） |
+| `--cache-hit` / `--cache-out` / `--cache-in` | `85% / 55% / 30%` 派生 | 缓存构成三色（命中/输出/新输入） |
+| `--hover-tint` | `color-mix(in oklch, var(--neutral-fg) 5%, transparent)` | 图表 hover 列高亮 |
+| `--row-hover` | `color-mix(in oklch, var(--neutral-fg) 3%, transparent)` | 排名行 hover |
+| `--track` | `color-mix(in oklch, var(--neutral-fg) 8%, transparent)` | 排名条底槽 |
+| `--heat-outline` | `color-mix(in oklch, var(--neutral-fg) 45%, transparent)` | 热力格描边 |
+
 ## 字体
 
 ```css

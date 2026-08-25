@@ -153,6 +153,35 @@
   --popover-foreground: var(--neutral-fg);
   --input: var(--border);              /* border-input */
   --ring: var(--accent);               /* ring-ring（focus，主色）*/
+
+  /* ── 图表派生 tokens（玄 · 暗，默认 :root）──────────────
+     不手写色值，全部从 --chart-ink 派生（color-mix）。
+     --chart-ink = neutral-fg；黛蓝/暖墨中性谱自带色相故派生自动跟随；
+     彩色亮色 preset（青墨/朱印）掺入 accent 色相，见下方 preset 块覆盖。
+     明度方向自动反转（暗：墨越亮越浓；亮：墨越深越浓）。 */
+  --chart-ink: var(--neutral-fg);
+  /* provider 序列（堆叠柱/图例/排名条，p1 = 占比最高档） */
+  --chart-p1: color-mix(in oklch, var(--chart-ink) 92%, var(--bg));
+  --chart-p2: color-mix(in oklch, var(--chart-ink) 70%, var(--bg));
+  --chart-p3: color-mix(in oklch, var(--chart-ink) 48%, var(--bg));
+  --chart-p4: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --chart-p5: color-mix(in oklch, var(--chart-ink) 17%, var(--bg));
+  /* 热力日历墨阶（0 = 无消耗底色，5 = 当日最浓） */
+  --heat-0: color-mix(in oklch, var(--chart-ink) 5%, var(--bg));
+  --heat-1: color-mix(in oklch, var(--chart-ink) 12%, var(--bg));
+  --heat-2: color-mix(in oklch, var(--chart-ink) 24%, var(--bg));
+  --heat-3: color-mix(in oklch, var(--chart-ink) 40%, var(--bg));
+  --heat-4: color-mix(in oklch, var(--chart-ink) 60%, var(--bg));
+  --heat-5: color-mix(in oklch, var(--chart-ink) 82%, var(--bg));
+  /* 缓存构成三色（命中/新输入/输出） */
+  --cache-hit: color-mix(in oklch, var(--chart-ink) 85%, var(--bg));
+  --cache-out: color-mix(in oklch, var(--chart-ink) 55%, var(--bg));
+  --cache-in: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  /* 交互层（图表 hover 列 / 排名行 hover / 条形底槽 / 热力格描边） */
+  --hover-tint: color-mix(in oklch, var(--neutral-fg) 5%, transparent);
+  --row-hover: color-mix(in oklch, var(--neutral-fg) 3%, transparent);
+  --track: color-mix(in oklch, var(--neutral-fg) 8%, transparent);
+  --heat-outline: color-mix(in oklch, var(--neutral-fg) 45%, transparent);
 }
 
 /* ============================================================
@@ -204,6 +233,27 @@
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
   --info: #3a7688;
   --reasoning: #71659c;
+
+  /* ── 图表派生 tokens（皓 · 亮色，默认亮色）── 同玄，auto 跟随 neutral-fg + bg */
+  --chart-ink: var(--neutral-fg);
+  --chart-p1: color-mix(in oklch, var(--chart-ink) 92%, var(--bg));
+  --chart-p2: color-mix(in oklch, var(--chart-ink) 70%, var(--bg));
+  --chart-p3: color-mix(in oklch, var(--chart-ink) 48%, var(--bg));
+  --chart-p4: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --chart-p5: color-mix(in oklch, var(--chart-ink) 17%, var(--bg));
+  --heat-0: color-mix(in oklch, var(--chart-ink) 5%, var(--bg));
+  --heat-1: color-mix(in oklch, var(--chart-ink) 12%, var(--bg));
+  --heat-2: color-mix(in oklch, var(--chart-ink) 24%, var(--bg));
+  --heat-3: color-mix(in oklch, var(--chart-ink) 40%, var(--bg));
+  --heat-4: color-mix(in oklch, var(--chart-ink) 60%, var(--bg));
+  --heat-5: color-mix(in oklch, var(--chart-ink) 82%, var(--bg));
+  --cache-hit: color-mix(in oklch, var(--chart-ink) 85%, var(--bg));
+  --cache-out: color-mix(in oklch, var(--chart-ink) 55%, var(--bg));
+  --cache-in: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --hover-tint: color-mix(in oklch, var(--neutral-fg) 5%, transparent);
+  --row-hover: color-mix(in oklch, var(--neutral-fg) 3%, transparent);
+  --track: color-mix(in oklch, var(--neutral-fg) 8%, transparent);
+  --heat-outline: color-mix(in oklch, var(--neutral-fg) 45%, transparent);
 }
 
 /* ============================================================
@@ -233,6 +283,25 @@
   --accent: #9ca9c9;
   --accent-hover: #b0bcd4;
   --accent-fg: #151824;
+  --chart-ink: var(--neutral-fg);
+  --chart-p1: color-mix(in oklch, var(--chart-ink) 92%, var(--bg));
+  --chart-p2: color-mix(in oklch, var(--chart-ink) 70%, var(--bg));
+  --chart-p3: color-mix(in oklch, var(--chart-ink) 48%, var(--bg));
+  --chart-p4: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --chart-p5: color-mix(in oklch, var(--chart-ink) 17%, var(--bg));
+  --heat-0: color-mix(in oklch, var(--chart-ink) 5%, var(--bg));
+  --heat-1: color-mix(in oklch, var(--chart-ink) 12%, var(--bg));
+  --heat-2: color-mix(in oklch, var(--chart-ink) 24%, var(--bg));
+  --heat-3: color-mix(in oklch, var(--chart-ink) 40%, var(--bg));
+  --heat-4: color-mix(in oklch, var(--chart-ink) 60%, var(--bg));
+  --heat-5: color-mix(in oklch, var(--chart-ink) 82%, var(--bg));
+  --cache-hit: color-mix(in oklch, var(--chart-ink) 85%, var(--bg));
+  --cache-out: color-mix(in oklch, var(--chart-ink) 55%, var(--bg));
+  --cache-in: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --hover-tint: color-mix(in oklch, var(--neutral-fg) 5%, transparent);
+  --row-hover: color-mix(in oklch, var(--neutral-fg) 3%, transparent);
+  --track: color-mix(in oklch, var(--neutral-fg) 8%, transparent);
+  --heat-outline: color-mix(in oklch, var(--neutral-fg) 45%, transparent);
 }
 
 /* 暖墨（暗 · 宣纸暖相） */
@@ -254,20 +323,77 @@
   --accent: #cbc3b3;
   --accent-hover: #ded7c8;
   --accent-fg: #201d18;
+  --chart-ink: var(--neutral-fg);
+  --chart-p1: color-mix(in oklch, var(--chart-ink) 92%, var(--bg));
+  --chart-p2: color-mix(in oklch, var(--chart-ink) 70%, var(--bg));
+  --chart-p3: color-mix(in oklch, var(--chart-ink) 48%, var(--bg));
+  --chart-p4: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --chart-p5: color-mix(in oklch, var(--chart-ink) 17%, var(--bg));
+  --heat-0: color-mix(in oklch, var(--chart-ink) 5%, var(--bg));
+  --heat-1: color-mix(in oklch, var(--chart-ink) 12%, var(--bg));
+  --heat-2: color-mix(in oklch, var(--chart-ink) 24%, var(--bg));
+  --heat-3: color-mix(in oklch, var(--chart-ink) 40%, var(--bg));
+  --heat-4: color-mix(in oklch, var(--chart-ink) 60%, var(--bg));
+  --heat-5: color-mix(in oklch, var(--chart-ink) 82%, var(--bg));
+  --cache-hit: color-mix(in oklch, var(--chart-ink) 85%, var(--bg));
+  --cache-out: color-mix(in oklch, var(--chart-ink) 55%, var(--bg));
+  --cache-in: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --hover-tint: color-mix(in oklch, var(--neutral-fg) 5%, transparent);
+  --row-hover: color-mix(in oklch, var(--neutral-fg) 3%, transparent);
+  --track: color-mix(in oklch, var(--neutral-fg) 8%, transparent);
+  --heat-outline: color-mix(in oklch, var(--neutral-fg) 45%, transparent);
 }
 
-/* 青墨（亮 · 宣纸花青）：共用宣纸阶梯，只换 accent 颜料 */
+/* 青墨（亮 · 宣纸花青）：共用宣纸阶梯，只换 accent 颜料 + 图表墨掺花青 */
 [data-theme="light"][data-theme-preset="qingmo"] {
   --accent: #3d6b6b;
   --accent-hover: #4e7d7d;
   --accent-fg: #f2f7f6;
+  --chart-ink: color-mix(in oklch, var(--accent) 45%, var(--neutral-fg));
+  --chart-p1: color-mix(in oklch, var(--chart-ink) 92%, var(--bg));
+  --chart-p2: color-mix(in oklch, var(--chart-ink) 70%, var(--bg));
+  --chart-p3: color-mix(in oklch, var(--chart-ink) 48%, var(--bg));
+  --chart-p4: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --chart-p5: color-mix(in oklch, var(--chart-ink) 17%, var(--bg));
+  --heat-0: color-mix(in oklch, var(--chart-ink) 5%, var(--bg));
+  --heat-1: color-mix(in oklch, var(--chart-ink) 12%, var(--bg));
+  --heat-2: color-mix(in oklch, var(--chart-ink) 24%, var(--bg));
+  --heat-3: color-mix(in oklch, var(--chart-ink) 40%, var(--bg));
+  --heat-4: color-mix(in oklch, var(--chart-ink) 60%, var(--bg));
+  --heat-5: color-mix(in oklch, var(--chart-ink) 82%, var(--bg));
+  --cache-hit: color-mix(in oklch, var(--chart-ink) 85%, var(--bg));
+  --cache-out: color-mix(in oklch, var(--chart-ink) 55%, var(--bg));
+  --cache-in: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --hover-tint: color-mix(in oklch, var(--neutral-fg) 5%, transparent);
+  --row-hover: color-mix(in oklch, var(--neutral-fg) 3%, transparent);
+  --track: color-mix(in oklch, var(--neutral-fg) 8%, transparent);
+  --heat-outline: color-mix(in oklch, var(--neutral-fg) 45%, transparent);
 }
 
-/* 朱印（亮 · 宣纸朱砂）：朱砂压暗压灰，danger 错开为玫红防撞色 */
+/* 朱印（亮 · 宣纸朱砂）：朱砂压暗压灰，danger 错开为玫红防撞色 + 图表墨掺朱砂 */
 [data-theme="light"][data-theme-preset="zhuyin"] {
   --accent: #9c4335;
   --accent-hover: #b04f41;
   --accent-fg: #faf3f0;
+  --chart-ink: color-mix(in oklch, var(--accent) 45%, var(--neutral-fg));
+  --chart-p1: color-mix(in oklch, var(--chart-ink) 92%, var(--bg));
+  --chart-p2: color-mix(in oklch, var(--chart-ink) 70%, var(--bg));
+  --chart-p3: color-mix(in oklch, var(--chart-ink) 48%, var(--bg));
+  --chart-p4: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --chart-p5: color-mix(in oklch, var(--chart-ink) 17%, var(--bg));
+  --heat-0: color-mix(in oklch, var(--chart-ink) 5%, var(--bg));
+  --heat-1: color-mix(in oklch, var(--chart-ink) 12%, var(--bg));
+  --heat-2: color-mix(in oklch, var(--chart-ink) 24%, var(--bg));
+  --heat-3: color-mix(in oklch, var(--chart-ink) 40%, var(--bg));
+  --heat-4: color-mix(in oklch, var(--chart-ink) 60%, var(--bg));
+  --heat-5: color-mix(in oklch, var(--chart-ink) 82%, var(--bg));
+  --cache-hit: color-mix(in oklch, var(--chart-ink) 85%, var(--bg));
+  --cache-out: color-mix(in oklch, var(--chart-ink) 55%, var(--bg));
+  --cache-in: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --hover-tint: color-mix(in oklch, var(--neutral-fg) 5%, transparent);
+  --row-hover: color-mix(in oklch, var(--neutral-fg) 3%, transparent);
+  --track: color-mix(in oklch, var(--neutral-fg) 8%, transparent);
+  --heat-outline: color-mix(in oklch, var(--neutral-fg) 45%, transparent);
   --success: #368047;
   --warn: #977629;
   --danger: #b23855;
