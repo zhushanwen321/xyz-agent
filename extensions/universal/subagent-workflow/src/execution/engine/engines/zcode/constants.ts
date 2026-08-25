@@ -17,16 +17,12 @@ export const ZCODE_ADAPTER_VERSION = "1.0.0";
 export const ZCODE_CLI_DEFAULT_PATH = "/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs";
 
 /**
- * 凭据源 config（桌面端登录态，zsub V2_CONFIG_PATH 同构）。
- * 为什么不是 ~/.zcode/cli/config.json：本机实测（2026-08-25 验收前置门）该文件的
- * provider 可能指向局域网网关（不可达）；桌面端登录凭据落在 v2/config.json，
- * 是 zsub 生产验证过的凭据源。cli/config.json 仍作为第二来源参与 provider 合并
- * （它还携带 model.main 缺省主模型）。
+ * 唯一凭据源 config（桌面端登录态，zsub V2_CONFIG_PATH 同构）。
+ * 为什么绝不读 ~/.zcode/cli/config.json：它不在 ZCode GUI 管理面，可能残留历史
+ * 验证配置（2026-08-25 事故：8/24 zsub 开发残留把默认模型劫持到失效 router 端点，
+ * turn 0 即 401）；桌面端登录凭据落在 v2/config.json，是 zsub 生产验证过的凭据源。
  */
 export const ZCODE_V2_CONFIG_PATH_SUFFIX = [".zcode", "v2", "config.json"] as const;
-
-/** CLI 自身配置（第二凭据源 + model.main 缺省来源）。 */
-export const ZCODE_CLI_CONFIG_PATH_SUFFIX = [".zcode", "cli", "config.json"] as const;
 
 /** 池内 config.json 相对隔离 HOME 的位置（CLI 只读 $HOME/.zcode/cli/config.json）。 */
 export const ZCODE_POOL_CONFIG_SUFFIX = [".zcode", "cli", "config.json"] as const;

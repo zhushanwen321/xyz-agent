@@ -1,5 +1,6 @@
 // preparer.test.ts —— 池目录 SSOT / 原子写 / mtime 免重写 / 无 plugins 块 / 凭据与模型
-// 前置错误（验收 3）。
+// 前置错误（验收 3）。凭据源 = v2 config 单源（2026-08-25 拍板：不读
+// ~/.zcode/cli/config.json——GUI 不管理该文件，可能残留历史验证配置）。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -18,7 +19,6 @@ import {
 let tmpRoot: string;
 let dataDir: string;
 let v2Path: string;
-let cliPath: string;
 
 function writeJson(p: string, v: unknown): void {
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -32,12 +32,6 @@ function seedSources(): void {
   writeJson(v2Path, {
     provider: {
       [PROVIDER_A]: { options: { apiKey: "key-a", baseURL: "https://a.example" }, models: { "GLM-5.3": {}, "GLM-5.2": {} } },
-      "no-key-provider": { options: { baseURL: "https://x.example" }, models: { "M1": {} } },
-    },
-  });
-  writeJson(cliPath, {
-    model: { main: `${PROVIDER_A}/GLM-5.2` },
-    provider: {
       [PROVIDER_B]: { options: { apiKey: "key-b", baseURL: "https://b.example" }, models: { "mimo-v2.5-pro": {} } },
       "no-key-provider": { options: { baseURL: "https://x.example" }, models: { "M1": {} } },
     },
@@ -48,32 +42,31 @@ beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-preparer-"));
   dataDir = path.join(tmpRoot, "data");
   v2Path = path.join(tmpRoot, "v2-config.json");
-  cliPath = path.join(tmpRoot, "cli-config.json");
   seedSources();
 });
 
-describe("resolveZcodeModelRef", () => {
+describe("resolveZcodeModelRef（v2 单源）", () => {
   it("显式全名解析 + 规范化", () => {
-    expect(resolveZcodeModelRef(`${PROVIDER_B}/mimo-v2.5-pro`, { v2ConfigPath: v2Path, cliConfigPath: cliPath })).toBe(
+    expect(resolveZcodeModelRef(`${PROVIDER_B}/mimo-v2.5-pro`, { v2ConfigPath: v2Path })).toBe(
       `${PROVIDER_B}/mimo-v2.5-pro`,
     );
   });
 
   it("短名按默认 provider（builtin:bigmodel-coding-plan）解析", () => {
-    expect(resolveZcodeModelRef("GLM-5.3", { v2ConfigPath: v2Path, cliConfigPath: cliPath })).toBe(
+    expect(resolveZcodeModelRef("GLM-5.3", { v2ConfigPath: v2Path })).toBe(
       `${PROVIDER_A}/GLM-5.3`,
     );
   });
 
-  it("未指定时用 cli config 的 model.main", () => {
-    expect(resolveZcodeModelRef(undefined, { v2ConfigPath: v2Path, cliConfigPath: cliPath })).toBe(
-      `${PROVIDER_A}/GLM-5.2`,
+  it("未指定时落官方兜底（不受任何本机 CLI 配置影响）", () => {
+    expect(resolveZcodeModelRef(undefined, { v2ConfigPath: v2Path })).toBe(
+      `${PROVIDER_A}/GLM-5.3`,
     );
   });
 
   it("未知模型 → model_not_available（列该 provider 可用模型）", () => {
     try {
-      resolveZcodeModelRef(`${PROVIDER_A}/nope`, { v2ConfigPath: v2Path, cliConfigPath: cliPath });
+      resolveZcodeModelRef(`${PROVIDER_A}/nope`, { v2ConfigPath: v2Path });
       expect.unreachable("should throw");
     } catch (err) {
       expect(err).toBeInstanceOf(ZcodePrepareError);
@@ -85,7 +78,7 @@ describe("resolveZcodeModelRef", () => {
 
   it("未知 provider → model_not_available（列带凭据 provider）", () => {
     try {
-      resolveZcodeModelRef("ghost/m", { v2ConfigPath: v2Path, cliConfigPath: cliPath });
+      resolveZcodeModelRef("ghost/m", { v2ConfigPath: v2Path });
       expect.unreachable("should throw");
     } catch (err) {
       expect((err as ZcodePrepareError).code).toBe("model_not_available");
@@ -96,18 +89,17 @@ describe("resolveZcodeModelRef", () => {
 
   it("provider 存在但无 apiKey → engine_credential_missing", () => {
     try {
-      resolveZcodeModelRef("no-key-provider/M1", { v2ConfigPath: v2Path, cliConfigPath: cliPath });
+      resolveZcodeModelRef("no-key-provider/M1", { v2ConfigPath: v2Path });
       expect.unreachable("should throw");
     } catch (err) {
       expect((err as ZcodePrepareError).code).toBe("engine_credential_missing");
     }
   });
 
-  it("两源均无任何带 apiKey 的 provider → engine_credential_missing（指向配置说明）", () => {
+  it("v2 无任何带 apiKey 的 provider → engine_credential_missing（指向配置说明）", () => {
     writeJson(v2Path, { provider: {} });
-    writeJson(cliPath, {});
     try {
-      resolveZcodeModelRef(undefined, { v2ConfigPath: v2Path, cliConfigPath: cliPath });
+      resolveZcodeModelRef(undefined, { v2ConfigPath: v2Path });
       expect.unreachable("should throw");
     } catch (err) {
       const e = err as ZcodePrepareError;
@@ -132,7 +124,7 @@ describe("prepareZcodeHome（验收 3）", () => {
     const prepared = prepareZcodeHome({
       engineDataDir: dataDir,
       modelRef: `${PROVIDER_A}/GLM-5.3`,
-      sources: { v2ConfigPath: v2Path, cliConfigPath: cliPath },
+      sources: { v2ConfigPath: v2Path },
     });
     expect(prepared.wroteConfig).toBe(true);
     // 池目录必须与 paths.ts SSOT 同源（禁自拼）
@@ -156,7 +148,7 @@ describe("prepareZcodeHome（验收 3）", () => {
     const opts = {
       engineDataDir: dataDir,
       modelRef: `${PROVIDER_A}/GLM-5.3`,
-      sources: { v2ConfigPath: v2Path, cliConfigPath: cliPath },
+      sources: { v2ConfigPath: v2Path },
     };
     const first = prepareZcodeHome(opts);
     expect(first.wroteConfig).toBe(true);
@@ -170,7 +162,7 @@ describe("prepareZcodeHome（验收 3）", () => {
     const opts = {
       engineDataDir: dataDir,
       modelRef: `${PROVIDER_A}/GLM-5.3`,
-      sources: { v2ConfigPath: v2Path, cliConfigPath: cliPath },
+      sources: { v2ConfigPath: v2Path },
     };
     prepareZcodeHome(opts);
     // 源 mtime 推到未来（模拟桌面端刷新 apiKey）
@@ -184,7 +176,7 @@ describe("prepareZcodeHome（验收 3）", () => {
     const opts = {
       engineDataDir: dataDir,
       modelRef: `${PROVIDER_A}/GLM-5.3`,
-      sources: { v2ConfigPath: v2Path, cliConfigPath: cliPath },
+      sources: { v2ConfigPath: v2Path },
     };
     const first = prepareZcodeHome(opts);
     fs.writeFileSync(first.configPath, "{ torn", "utf8");
@@ -193,24 +185,11 @@ describe("prepareZcodeHome（验收 3）", () => {
     expect(() => JSON.parse(fs.readFileSync(again.configPath, "utf8"))).not.toThrow();
   });
 
-  it("v2 与 cli 双源：v2 命中 provider 时用 v2 条目", () => {
-    // PROVIDER_A 只在 v2 有 apiKey（cli 里不存在）——命中 v2
-    const prepared = prepareZcodeHome({
-      engineDataDir: dataDir,
-      modelRef: `${PROVIDER_A}/GLM-5.3`,
-      sources: { v2ConfigPath: v2Path, cliConfigPath: cliPath },
-    });
-    const written = JSON.parse(fs.readFileSync(prepared.configPath, "utf8")) as {
-      provider: Record<string, { options?: { apiKey?: string } }>;
-    };
-    expect(written.provider[PROVIDER_A]!.options?.apiKey).toBe("key-a");
-  });
-
-  it("cli 独有 provider（如 router）也能建池", () => {
+  it("v2 注册表内非默认 provider（如自定义 UUID provider）也能建池", () => {
     const prepared = prepareZcodeHome({
       engineDataDir: dataDir,
       modelRef: `${PROVIDER_B}/mimo-v2.5-pro`,
-      sources: { v2ConfigPath: v2Path, cliConfigPath: cliPath },
+      sources: { v2ConfigPath: v2Path },
     });
     const written = JSON.parse(fs.readFileSync(prepared.configPath, "utf8")) as {
       provider: Record<string, { options?: { apiKey?: string } }>;
@@ -218,9 +197,9 @@ describe("prepareZcodeHome（验收 3）", () => {
     expect(written.provider[PROVIDER_B]!.options?.apiKey).toBe("key-b");
   });
 
-  it("模型引用在两源都不存在 → model_not_available", () => {
+  it("模型引用在 v2 不存在 → model_not_available", () => {
     try {
-      prepareZcodeHome({ engineDataDir: dataDir, modelRef: "ghost/m", sources: { v2ConfigPath: v2Path, cliConfigPath: cliPath } });
+      prepareZcodeHome({ engineDataDir: dataDir, modelRef: "ghost/m", sources: { v2ConfigPath: v2Path } });
       expect.unreachable("should throw");
     } catch (err) {
       expect((err as ZcodePrepareError).code).toBe("model_not_available");

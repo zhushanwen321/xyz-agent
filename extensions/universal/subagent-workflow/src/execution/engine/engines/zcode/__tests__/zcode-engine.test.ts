@@ -22,7 +22,6 @@ const PROVIDER = "test-provider";
 let tmpRoot: string;
 let dataDir: string;
 let v2Path: string;
-let cliPath: string;
 
 function writeJson(p: string, v: unknown): void {
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -33,11 +32,9 @@ beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-engine-"));
   dataDir = path.join(tmpRoot, "data");
   v2Path = path.join(tmpRoot, "v2.json");
-  cliPath = path.join(tmpRoot, "cli.json");
   writeJson(v2Path, {
     provider: { [PROVIDER]: { options: { apiKey: "k", baseURL: "https://t.example" }, models: { m1: {} } } },
   });
-  writeJson(cliPath, { provider: {} });
 });
 
 // ── fake launcher ──
@@ -75,7 +72,7 @@ function makeFakeLaunch(fake: FakeLaunchOpts) {
 function makeEngine(overrides?: Partial<ZcodeEngineDeps>): ZcodeEngine {
   return new ZcodeEngine({
     engineDataDir: () => dataDir,
-    sources: { v2ConfigPath: v2Path, cliConfigPath: cliPath },
+    sources: { v2ConfigPath: v2Path },
     processEnv: { PATH: "/usr/bin" },
     ...overrides,
   });

@@ -19,7 +19,6 @@ const PROVIDER = "provider-x";
 let tmpRoot: string;
 let dataDir: string;
 let v2Path: string;
-let cliCfgPath: string;
 
 function writeJson(p: string, v: unknown): void {
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -62,11 +61,9 @@ beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "c4-abort-"));
   dataDir = path.join(tmpRoot, "data");
   v2Path = path.join(tmpRoot, "v2.json");
-  cliCfgPath = path.join(tmpRoot, "cli.json");
   writeJson(v2Path, {
     provider: { [PROVIDER]: { options: { apiKey: "k" }, models: { m1: {} } } },
   });
-  writeJson(cliCfgPath, { provider: {} });
 });
 
 afterEach(() => {
@@ -78,7 +75,7 @@ describe("conformance C4：abort 行为（运行中 cancel → 合成终态、�
     const fake = makeHangingLaunch();
     const engine = new ZcodeEngine({
       engineDataDir: () => dataDir,
-      sources: { v2ConfigPath: v2Path, cliConfigPath: cliCfgPath },
+      sources: { v2ConfigPath: v2Path },
       processEnv: { PATH: "/usr/bin" },
       launch: fake.launch,
     });
