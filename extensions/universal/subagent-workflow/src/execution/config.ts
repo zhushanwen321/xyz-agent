@@ -20,8 +20,10 @@ import type { SubagentsGlobalConfig } from "./types.ts";
  * 但 config.json 被 .gitignore 排除且不应随 npm 包分发用户私有配置——导致
  * npm pack 后读不到文件，catch 兜底用空字段，pi install 后首次执行抛错。
  * 修复：默认值内联在代码里，不依赖任何包内文件。
+ *
+ * export 供守护测试断言 package.json startupConfig 声明与此深相等（防漂移）。
  */
-const DEFAULT_CONFIG: SubagentsGlobalConfig = {
+export const DEFAULT_CONFIG: SubagentsGlobalConfig = {
   version: 1,
   maxConcurrent: 6,
 };

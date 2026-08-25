@@ -50,6 +50,14 @@ vi.mock('./migration/legacy-provider-migration.js', () => ({
 vi.mock('./worktree-config-helper.js', () => ({
   ensureAutoRenameDefault: vi.fn(),
 }))
+// ⑦b startupConfig ensure 挂载测试用 mock：真实实现会写 getPiAgentDir()（测试未隔离
+// 数据目录时可能触真实用户目录），mock 后同时可断言 ⑦b 的调用与顺序。
+const sc = vi.hoisted(() => ({
+  ensureDeclaredStartupConfigs: vi.fn(() => ({ ensured: 0, skipped: 0, failed: 0 })),
+}))
+vi.mock('./extension-startup-config.js', () => ({
+  ensureDeclaredStartupConfigs: sc.ensureDeclaredStartupConfigs,
+}))
 vi.mock('./reap-orphan-pi.js', () => ({
   // 挂载方从该模块 import 常量与函数，mock 需两者都供给（值与真实实现一致）。
   ORPHAN_REAP_DELAY_MS: 5_000,
@@ -70,6 +78,7 @@ function makeDeps() {
   const extensionService = {
     migrateBuiltinExtensions: vi.fn(async () => { calls.push('migrateBuiltinExtensions') }),
     checkAndAutoUpgrade: vi.fn(async () => { calls.push('checkAndAutoUpgrade'); return [] }),
+    getExtensionPaths: vi.fn(async () => { calls.push('getExtensionPaths'); return [] }),
   } as unknown as ExtensionService
   const pm = {
     getPiVersion: vi.fn(async () => { calls.push('getPiVersion'); return '9.9.9' }),
@@ -121,7 +130,17 @@ describe('runStartupBackgroundInit（D8-1 后台初始化序列）', () => {
       'broadcastAppInfo',
       'initGlobal',
       'pluginService.initialize',
+      'getExtensionPaths',
     ])
+  })
+
+  it('⑦b：getExtensionPaths + ensureDeclaredStartupConfigs 在插件初始化之后执行（序列尾部）', async () => {
+    const { deps, extensionService } = makeDeps()
+    await runStartupBackgroundInit(deps)
+    expect(extensionService.getExtensionPaths).toHaveBeenCalledTimes(1)
+    expect(sc.ensureDeclaredStartupConfigs).toHaveBeenCalledTimes(1)
+    // ensure 收到 getExtensionPaths 的返回值（空数组直通，agentDir 为 getPiAgentDir()）
+    expect(sc.ensureDeclaredStartupConfigs).toHaveBeenCalledWith([], expect.any(String))
   })
 
   it('D8-3：gate 在序列最前创建——迁移未完成时后续步骤不执行，完成才放行', async () => {

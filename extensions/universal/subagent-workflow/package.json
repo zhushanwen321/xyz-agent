@@ -33,7 +33,16 @@
   ],
   "xyz-agent": {
     "role": "universal",
-    "subagentEngines": ["pi", "zcode"]
+    "subagentEngines": ["pi", "zcode"],
+    "startupConfig": [
+      {
+        "path": "subagents/config.json",
+        "content": {
+          "version": 1,
+          "maxConcurrent": 6
+        }
+      }
+    ]
   },
   "pi": {
     "extensions": [

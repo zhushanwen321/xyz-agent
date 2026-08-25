@@ -4,7 +4,18 @@
   "type": "module",
   "main": "index.ts",
   "xyz-agent": {
-    "role": "universal"
+    "role": "universal",
+    "startupConfig": [
+      {
+        "path": "config/smart-context-ext-config.json",
+        "content": {
+          "enabled": true,
+          "compactModel": { "type": "ref", "ref": "" },
+          "reminderThresholds": [200000, 400000, 600000],
+          "excludedModels": []
+        }
+      }
+    ]
   },
   "pi": {
     "extensions": [
