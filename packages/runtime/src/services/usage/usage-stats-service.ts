@@ -116,7 +116,8 @@ export class UsageStatsService {
   /**
    * 流式扫描单个 JSONL 文件，按 pi 三分类计入 usage。
    *
-   * 计入规则（对齐 getUsageCostBreakdown，均带 usage 存在性守卫）：
+   * 计入规则（对齐 pi getUsageCostBreakdown，锚点：@earendil-works/pi-coding-agent@0.84.1
+   * dist/core/usage-totals.js:22-33，升级 pi 时须重新核对该锚点）：
    * ① type==='message' && message.role==='assistant' && message.usage → 主桶
    * ② type==='message' && message.role==='toolResult' && message.usage → compaction 虚拟桶
    * ③ (type==='compaction' || type==='branch_summary') && entry.usage → compaction 虚拟桶

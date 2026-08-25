@@ -56,7 +56,7 @@
 
 三个关键事实（已用真实文件验证，非推断；审查轮 2026-08-25 复核修正）：
 
-1. **非 assistant entry 的 usage 计入规则必须带守卫**：compaction entry 带 usage（**在 entry 顶层，非 `message.` 下**）但**无 provider/model 字段**；branch_summary 实测 12/12 **不带 usage**。pi 官方聚合（`getUsageCostBreakdown`）的三分类才是权威口径：① assistant message ② `role==='toolResult' && message.usage`（本机 0 条，但 subagent 场景是 pi 明确支持的形态）③ `{compaction, branch_summary} && entry.usage`——后两类归入 `"Tools/summaries"` 虚拟桶，且都带 usage 存在性守卫。另：model key 用 `responseModel ?? model`（实测 65% 消息两者大小写不同，如 `GLM-5.3` vs `glm-5.3`）。
+1. **非 assistant entry 的 usage 计入规则必须带守卫**：compaction entry 带 usage（**在 entry 顶层，非 `message.` 下**）但**无 provider/model 字段**；branch_summary 实测 12/12 **不带 usage**。pi 官方聚合（`getUsageCostBreakdown`，锚点：@earendil-works/pi-coding-agent@0.84.1 `dist/core/usage-totals.js:22-33`，升级 pi 须重核）的三分类才是权威口径：① assistant message ② `role==='toolResult' && message.usage`（本机 0 条，但 subagent 场景是 pi 明确支持的形态）③ `{compaction, branch_summary} && entry.usage`——后两类归入 `"Tools/summaries"` 虚拟桶，且都带 usage 存在性守卫。另：model key 用 `responseModel ?? model`（实测 65% 消息两者大小写不同，如 `GLM-5.3` vs `glm-5.3`）。
 2. **量级与文件形态**：15 个 `.jsonl` / 16MB，全量逐行解析毫秒级；文件 append-only；但首行不保证是 session entry（3/15 旧文件首行为 `session_info`，session 在第 2 行）；且存在 `.tmp-migrate-*.jsonl` 归一化崩溃残留（内容为合法 session 拷贝，必重复计入，须排除）。
 3. **session 归属项目**：文件内 session entry 带 `cwd`。注意：现有 `scanPiSessions()` 的 `parseSessionHeader` 只读首行，首行非 session 即丢弃文件（3/15 被丢）——**用量统计不可复用它做文件发现**（与 G1 全量矛盾），见 §3.3 D8。
 
