@@ -213,9 +213,14 @@
         {
           "package": "@zhushanwen/pi-extension-logger",
           "type": "package",
-          "reason": "代码层静态 import getLogger/setPiHandle（src/index.ts top-level import，select 通道 catch 留痕 + appendEntry 日志通道），缺失时模块加载即抛 Cannot find module，是强依赖"
+          "reason": "代码层静态 import getLogger/setPiHandle（src/index.ts top-level import），select 通道 catch 留痕 + appendEntry 日志通道），缺失时模块加载即抛 Cannot find module，是强依赖"
         }
       ]
+    },
+    {
+      "name": "@zhushanwen/pi-base-tool-enhance",
+      "directory": "extensions/universal/base-tool-enhance",
+      "dependsOn": []
     }
   ]
 }
