@@ -83,3 +83,13 @@ export function tailLines(text: string, n: number): string[] {
   const lines = text.split('\n')
   return lines.length <= n ? lines : lines.slice(-n)
 }
+
+/**
+ * 去除 ANSI 转义序列（SGR 色码等）。UI 层自包含副本，不依赖 core/runtime 的 stripAnsi
+ * （包依赖方向约束：ui 不依赖 core/runtime）。仅用于折叠头 tail preview 去色，
+ * 正文渲染走 AnsiText 组件。
+ */
+const ANSI_RE = /\x1b\[[0-9;]*m/g
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI_RE, '')
+}

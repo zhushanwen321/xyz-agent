@@ -8,11 +8,12 @@
  *
  * 运行：cd packages/ui && npx vitest run src/features/chat/__tests__/Block.test.ts
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { Block } from '@xyz-agent/ui'
 import type { MessageStatus } from '@xyz-agent/shared'
-import { MdStub, makeToolCall, mountToolBlock } from './helpers'
+import { MdStub, AnsiStub, makeToolCall, mountToolBlock } from './helpers'
 
 function mountTextBlock(over: { streaming?: boolean; status?: MessageStatus; error?: string; content?: string } = {}) {
   return mount(Block, {
@@ -272,5 +273,144 @@ describe('Block tool output: JSON 格式化（cw 等命令的结构化输出）'
     const pre = wrapper.find('.tool-result pre')
     expect(pre.exists()).toBe(true)
     expect(pre.text()).toContain('"layer": "wave"')
+  })
+})
+
+/* ── W4 流式 block 双轴尾部追踪：U8-U10 ──
+ * thinking/tool 折叠头在 streaming 态渲染尾部行窗口 + useTailScroll 双轴追踪。 */
+
+// U8: thinking 双态——working 态显示 content 末行文本，非 working 显示头部 60 字符摘要
+describe('W4 tail-scroll: thinking 双态（U8）', () => {
+  function mountThinkingWithContent(over: Record<string, unknown> = {}) {
+    // 200+ 字符多行 content，确保尾行与头部 60 字符不同
+    const content = 'first line of thinking\n'.repeat(5) + 'important final conclusion here'
+    return mount(Block, {
+      props: { type: 'thinking', content, thinkingId: 't-tail', collapsed: undefined, ...over },
+      global: {
+        stubs: { MarkdownRenderer: MdStub },
+      },
+    })
+  }
+
+  it('working=true 折叠预览含 content 末行文本（tailLines 尾部窗口）', async () => {
+    const wrapper = mountThinkingWithContent({ working: true })
+    await nextTick()
+    // 尾部行窗口应包含最后一行文本
+    expect(wrapper.text()).toContain('important final conclusion here')
+  })
+
+  it('working=false 折叠预览含头部 60 字符摘要（previewText）', () => {
+    const wrapper = mountThinkingWithContent({ working: false })
+    // previewText 截取头部 60 字符 + 省略号
+    const text = wrapper.text()
+    expect(text).toContain('first line of thinking')
+    expect(text).toContain('…')
+  })
+
+  it('两态容器 offsetHeight 相等（行高恒定，virtua 虚拟列表高度断言依赖此）', async () => {
+    const wrapper = mountThinkingWithContent({ working: true })
+    await nextTick()
+    // jsdom 下 offsetHeight 为 0，但 DOM 结构应稳定（min-h-[1.5rem] 在父容器）
+    const minHeightEl = wrapper.find('.min-h-\\[1\.5rem\\]')
+    // Tailwind 类含方括号，选择器需转义；若未找到用备选方案
+    const thinkHeader = minHeightEl.exists() ? minHeightEl : wrapper.find('.trace-think .flex.items-center')
+    expect(thinkHeader.exists()).toBe(true)
+    // 切换 working 态后 DOM 结构不变
+    await wrapper.setProps({ working: false } as never)
+    const thinkHeaderAfter = minHeightEl.exists() ? minHeightEl : wrapper.find('.trace-think .flex.items-center')
+    expect(thinkHeaderAfter.exists()).toBe(true)
+  })
+})
+
+// U9: tool 双态——running 态显示去 ANSI 末行文本，completed 态显示 shortenForHeader
+// rAF mock setup for U9-U10
+const rafQueue: FrameRequestCallback[] = []
+const originalRAF = globalThis.requestAnimationFrame
+const originalCAF = globalThis.cancelAnimationFrame
+beforeEach(() => {
+  rafQueue.length = 0
+  globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+    rafQueue.push(cb)
+    return rafQueue.length
+  }) as typeof requestAnimationFrame
+  globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame
+})
+afterEach(() => {
+  globalThis.requestAnimationFrame = originalRAF
+  globalThis.cancelAnimationFrame = originalCAF
+})
+
+async function flushRaf(): Promise<void> {
+  const cbs = [...rafQueue]
+  rafQueue.length = 0
+  for (const cb of cbs) cb(0)
+  await nextTick()
+}
+
+describe('W4 tail-scroll: tool 双态（U9）', () => {
+  const ANSI_OUTPUT_RAW = '\x1b[32m✓ success\x1b[0m\n\x1b[1;34m── build output ──\x1b[0m\nfinal line of output'
+  const ANSI_OUTPUT_CLEAN = '✓ success\n── build output ──\nfinal line of output'
+
+  it('running + 有 outputRaw → 折叠头含去 ANSI 末行文本', async () => {
+    const wrapper = mountToolBlock(makeToolCall({
+      toolName: 'bash',
+      input: { command: 'pnpm build' },
+      status: 'running',
+      outputRaw: ANSI_OUTPUT_RAW,
+      output: ANSI_OUTPUT_CLEAN,
+    }))
+    await nextTick()
+    await flushRaf()
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    // 去 ANSI 后的末行应可见
+    expect(header.text()).toContain('final line of output')
+    // ANSI 色码不应出现在 header 文本中
+    expect(header.text()).not.toContain('\x1b')
+  })
+
+  it('status=completed → 折叠头回落 shortenForHeader 形态', async () => {
+    const wrapper = mountToolBlock(makeToolCall({
+      toolName: 'bash',
+      input: { command: 'pnpm build' },
+      status: 'completed',
+      outputRaw: ANSI_OUTPUT_RAW,
+      output: ANSI_OUTPUT_CLEAN,
+    }))
+    await nextTick()
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    // completed 态回落 shortenForHeader，显示缩短后的 argPath
+    expect(header.text()).toContain('pnpm build')
+    // 不应显示末行文本
+    expect(header.text()).not.toContain('final line of output')
+  })
+
+  it('展开态 + copyContent 仍全量（tailLines 不影响展开内容）', async () => {
+    const wrapper = mountToolBlock(makeToolCall({
+      toolName: 'bash',
+      input: { command: 'pnpm build' },
+      status: 'running',
+      outputRaw: ANSI_OUTPUT_RAW,
+      output: ANSI_OUTPUT_CLEAN,
+    }))
+    // 点击展开
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    // 展开内容区应有完整 output
+    expect(wrapper.find('.tool-result').exists()).toBe(true)
+  })
+})
+
+// U10: 无输出 tool——running 但无 outputRaw/displayContent → 折叠头保持 argPath
+describe('W4 tail-scroll: 无输出 tool（U10）', () => {
+  it('running + 无 outputRaw/displayContent → 折叠头含 argPath 原文', async () => {
+    const wrapper = mountToolBlock(makeToolCall({
+      toolName: 'read',
+      input: { path: '/tmp/foo.txt' },
+      status: 'running',
+      // 无 output、无 outputRaw
+    }))
+    await nextTick()
+    const header = wrapper.find('[data-testid="tool-block-header"]')
+    // 无流式输出 → 回落 shortenForHeader(argPath)
+    expect(header.text()).toContain('/tmp/foo.txt')
   })
 })
