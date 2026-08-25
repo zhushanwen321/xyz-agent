@@ -16,7 +16,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import pendingNotificationsExtension from "../index";
 import type { PendingEntry } from "../state";
-import { countActiveFromEntries, createRegistry, getActive, rebuildFromEntries, register, unregister } from "../state";
+import {
+	countActiveFromEntries,
+	createRegistry,
+	getActive,
+	PENDING_LIFECYCLE,
+	normalizePendingType,
+	rebuildFromEntries,
+	register,
+	unregister,
+} from "../state";
 
 // ── Mock 工具 ───────────────────────────────────────
 
@@ -509,5 +518,167 @@ describe("countActiveFromEntries（纯差集，供 goal / subagent-workflow 复�
 		const flushed = mkUnregister("parent-bg", "expired");
 		const own = mkRegister("my-bg");
 		expect(countActiveFromEntries([inherited, flushed, own]).ids).toEqual(["my-bg"]);
+	});
+});
+
+// ────────────────────────────────────────────────────
+// D16 lifecycle 分档（M3）：process 档（type=bash）纯函数行为
+// ────────────────────────────────────────────────────
+
+/** bash register entry 的真实落盘形状：无 expiresAt 键（写入侧省略，D16） */
+function makeBashRegisterEntry(id: string, overrides: Record<string, unknown> = {}): MockSessionEntry {
+	return {
+		customType: "pending:register",
+		data: {
+			id,
+			type: "bash",
+			name: `task-${id}`,
+			registeredAt: NOW,
+			sessionId: "sess-current",
+			...overrides,
+		},
+	};
+}
+
+describe("D16 lifecycle 分档：常量与 type 归一化", () => {
+	it("PENDING_LIFECYCLE：subagent/workflow=session，bash=process", () => {
+		expect(PENDING_LIFECYCLE).toEqual({
+			subagent: "session",
+			workflow: "session",
+			bash: "process",
+		});
+	});
+
+	it("normalizePendingType：subagent/bash 直通，其余（缺失/未知/大小写不符）归 workflow", () => {
+		expect(normalizePendingType("subagent")).toBe("subagent");
+		expect(normalizePendingType("bash")).toBe("bash");
+		expect(normalizePendingType("workflow")).toBe("workflow");
+		expect(normalizePendingType(undefined)).toBe("workflow");
+		expect(normalizePendingType("scheduler")).toBe("workflow");
+		expect(normalizePendingType("Bash")).toBe("workflow");
+	});
+});
+
+describe("D16 process 档（type=bash）纯函数行为", () => {
+	it("读取侧不回填 TTL：无 expiresAt 的 bash entry → registry entry.expiresAt=undefined 且 active", () => {
+		const r = createRegistry();
+		const result = rebuildFromEntries(r, [makeBashRegisterEntry("bt-1")], "sess-current", NOW);
+		expect(result.activeIds).toEqual(["bt-1"]);
+		expect(result.expiredToFlush).toEqual([]);
+		expect(r.operations.get("bt-1")!.expiresAt).toBeUndefined();
+	});
+
+	it("U3 不判过期：bash entry 注册超 1h（TTL 之外）→ 仍 active、无 expiredToFlush", () => {
+		const entry = makeBashRegisterEntry("bt-1", { registeredAt: NOW - 3_700_000 });
+		const comp = rebuild([entry], "sess-current", NOW);
+		expect(comp.activeIds).toEqual(["bt-1"]);
+		expect(comp.expiredToFlush).toEqual([]);
+	});
+
+	it("U4 跨 session 不标 expired：bash entry sessionId 不符当前 session → 仍 active（进程级生命周期跨 session 续存）", () => {
+		const comp = rebuild(
+			[makeBashRegisterEntry("bt-1", { sessionId: "sess-other" })],
+			"sess-current",
+			NOW,
+		);
+		expect(comp.activeIds).toEqual(["bt-1"]);
+		expect(comp.expiredToFlush).toEqual([]);
+	});
+
+	it("session 档对照回归：同形状（无 expiresAt 键）的 workflow entry → 回填 TTL 且过期照旧判 expired", () => {
+		// 保证分档判定没有把 session 档的 TTL 路径一并豁免
+		const legacy = {
+			customType: "pending:register",
+			data: { id: "w-1", type: "workflow", name: "w", registeredAt: NOW - 3_700_000, sessionId: "sess-current" },
+		};
+		const comp = rebuild([legacy], "sess-current", NOW);
+		expect(comp.activeIds).toEqual([]);
+		expect(comp.expiredToFlush).toEqual([{ id: "w-1", status: "expired" }]);
+	});
+
+	it("差集路径识别 bash entry：register 计入且 type 保留，unregister 抵消", () => {
+		const bashReg = makeBashRegisterEntry("bt-1");
+		const res = countActiveFromEntries([bashReg] as unknown[]);
+		expect(res.count).toBe(1);
+		expect(res.entries[0].type).toBe("bash");
+		expect(res.entries[0].expiresAt).toBeUndefined();
+
+		expect(
+			countActiveFromEntries([bashReg, makeUnregisterEntry("bt-1")] as unknown[]).count,
+		).toBe(0);
+	});
+
+	it("types 过滤：bash 可作为过滤类型", () => {
+		const entries = [makeBashRegisterEntry("bt-1"), makeRegisterEntry("w-1")] as unknown[];
+		expect(countActiveFromEntries(entries, { types: ["bash"] }).ids).toEqual(["bt-1"]);
+		expect(countActiveFromEntries(entries, { types: ["workflow"] }).ids).toEqual(["w-1"]);
+	});
+});
+
+// ────────────────────────────────────────────────────
+// D16 lifecycle 分档（M3）：process 档（type=bash）工厂行为
+// ────────────────────────────────────────────────────
+
+describe("D16 process 档（type=bash）工厂行为", () => {
+	let setup: MockSetup;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(NOW);
+		setup = createMockPi();
+		pendingNotificationsExtension(setup.pi);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("register 写入：bash → 落盘 data 无 expiresAt 键且 type=bash 直通（不被归并为 workflow）", async () => {
+		fireSessionStart(setup, createMockCtx([]));
+
+		setup.handlers.pendingRegister!({ id: "bt-1", type: "bash", name: "run tests" });
+
+		expect(await getCount(setup)).toBe(1);
+		const regCall = setup.appendEntryMock.mock.calls.find((c) => c[0] === "pending:register");
+		expect(regCall).toBeDefined();
+		const data = regCall![1] as Record<string, unknown>;
+		expect(data.type).toBe("bash");
+		expect("expiresAt" in data).toBe(false);
+	});
+
+	it("session 档对照回归：workflow register → 落盘 data.expiresAt = NOW + TTL", async () => {
+		fireSessionStart(setup, createMockCtx([]));
+
+		setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "run" });
+
+		const regCall = setup.appendEntryMock.mock.calls.find((c) => c[0] === "pending:register");
+		const data = regCall![1] as Record<string, unknown>;
+		expect(data.expiresAt).toBe(NOW + 3_600_000);
+	});
+
+	it("U3 工厂级：bash entry 超 1h 后 session_start rebuild → 仍 active、不补 unregister", async () => {
+		vi.setSystemTime(NOW + 3_700_000);
+		const stale = makeBashRegisterEntry("bt-1", { registeredAt: NOW });
+		fireSessionStart(setup, createMockCtx([stale]));
+
+		expect(await getCount(setup)).toBe(1);
+		const flushCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:unregister");
+		expect(flushCalls).toHaveLength(0);
+	});
+
+	it("session_shutdown：bash 不标 cancelled、不补 unregister entry、内存仍 active", async () => {
+		fireSessionStart(setup, createMockCtx([]));
+		setup.handlers.pendingRegister!({ id: "bt-1", type: "bash", name: "run tests" });
+		// 同时注册一个 session 档条目，对照证明分档只豁免 process 档
+		setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "run" });
+		setup.appendEntryMock.mockClear();
+
+		if (!setup.handlers.sessionShutdown) throw new Error("session_shutdown not registered");
+		void setup.handlers.sessionShutdown({ type: "session_shutdown" }, createMockCtx([]));
+
+		const unregisterCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:unregister");
+		expect(unregisterCalls).toHaveLength(1);
+		expect((unregisterCalls[0][1] as { id: string }).id).toBe("w-1");
+		expect(await getCount(setup)).toBe(1);
 	});
 });

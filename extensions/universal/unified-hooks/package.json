@@ -1,7 +1,8 @@
 {
   "name": "@zhushanwen/pi-unified-hooks",
   "version": "0.2.5",
-  "description": "Unified hooks extension - collect scattered hooks in one place for easy maintenance",
+  "description": "[DEPRECATED] Unified hooks extension - collect scattered hooks in one place for easy maintenance",
+  "deprecated": "Superseded by @zhushanwen/pi-base-tool-enhance — install that instead; test-command guarding, tool-error audit and configurable timeouts are all covered.",
   "main": "index.ts",
   "type": "module",
   "xyz-agent": {

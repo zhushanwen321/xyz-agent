@@ -15,7 +15,8 @@
  * - emit("pending:unregister", { id, reason })
  *
  * entry 契约（与 goal before-agent-start.ts 对齐，读取端按 e.data.id 算差集）：
- * - pending:register → { id, type, name, registeredAt, expiresAt, sessionId }
+ * - pending:register → { id, type, name, registeredAt, expiresAt?, sessionId }
+ *   （expiresAt 仅 session 档写入；process 档（D16）省略该字段）
  * - pending:unregister → { id, reason, status }
  *
  * 监听方式：pi.events.on（Pi 的 EventBus，真实 SDK 为 EventBus.on，非 optional）。
@@ -29,22 +30,26 @@ import { Type } from "typebox";
 import {
 	createRegistry,
 	getActive,
+	PENDING_LIFECYCLE,
 	PENDING_TTL_MS,
 	type PendingEntry,
 	type PendingRegistry,
 	type PendingStatus,
 	type PendingType,
+	normalizePendingType,
 	rebuildFromEntries,
 	register,
 	unregister,
 } from "./state.ts";
 
 // 跨扩展消费 API：goal（continuation 守卫）/ subagent-workflow（agent_end 后代判定）
-// 直接 import 本包的导出，避免各自复制差集逻辑。
+// 直接 import 本包的导出，避免各自复制差集逻辑。PENDING_LIFECYCLE 供消费方（如
+// base-tool-enhance 启动时的 peer 版本检查）读取分档声明。
 export {
 	countActiveFromEntries,
 	createRegistry,
 	getActive,
+	PENDING_LIFECYCLE,
 	PENDING_TTL_MS,
 	type CountActiveOptions,
 	type CountActiveResult,
@@ -141,13 +146,15 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 		debugLog("debug", "listener: pending:register parsed", parsed);
 
 		const now = Date.now();
+		// D16 分档：process 档（bash 后台任务）不计算 expiresAt——进程级生命周期
+		// 无 TTL 概念，任务寿命由其自身超时/reaper 管理，session 档保持 TTL 不变。
 		const entry: PendingEntry = {
 			id: parsed.id,
 			type: parsed.type,
 			name: parsed.name,
 			status: "active",
 			registeredAt: now,
-			expiresAt: now + PENDING_TTL_MS,
+			expiresAt: PENDING_LIFECYCLE[parsed.type] === "session" ? now + PENDING_TTL_MS : undefined,
 			sessionId: currentSessionId,
 		};
 
@@ -158,12 +165,14 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
+		// 落盘与内存 entry 对称：process 档省略 expiresAt 字段（而非写 undefined），
+		// 读取侧 normalizeRegisterEntry 对 process 档同样不回填，两侧共同兑现 TTL 豁免。
 		safeAppendEntry("pending:register", {
 			id: entry.id,
 			type: entry.type,
 			name: entry.name,
 			registeredAt: entry.registeredAt,
-			expiresAt: entry.expiresAt,
+			...(entry.expiresAt !== undefined ? { expiresAt: entry.expiresAt } : {}),
 			sessionId: entry.sessionId,
 		});
 
@@ -226,6 +235,10 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", (_event, _ctx: ExtensionContext) => {
 		const active = getActive(registry);
 		for (const op of active) {
+			// D16 分档：process 档跳过 cancelled 标注——进程级生命周期的任务跨
+			// session 替换继续运行（fork/switch），收尾归任务自身/reaper，
+			// 不由 session 退出裁定。
+			if (PENDING_LIFECYCLE[op.type] === "process") continue;
 			const changed = unregister(registry, op.id, "cancelled");
 			if (changed) {
 				safeAppendEntry("pending:unregister", {
@@ -241,7 +254,7 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 		name: "pending_notifications",
 		label: "Pending Notifications",
 		description:
-			"查询当前活跃的异步操作（workflow/subagent）。action=count 返回数量；action=list 返回列表。状态由 EventBus + session entries 维护，无需手动注册。",
+			"查询当前活跃的异步操作（workflow/subagent/bash 后台任务）。action=count 返回数量；action=list 返回列表。状态由 EventBus + session entries 维护，无需手动注册。",
 		parameters: PendingNotificationsParams,
 		execute: async (_toolCallId: string, params: { action: "count" | "list" }, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: ExtensionContext): Promise<{ content: { type: "text"; text: string }[]; details: PendingToolDetails }> => {
 			const active = getActive(registry);
@@ -279,7 +292,8 @@ function parseRegisterEvent(data: unknown): ParsedRegister | null {
 	if (typeof d.id !== "string") return null;
 	return {
 		id: d.id,
-		type: d.type === "subagent" ? "subagent" : "workflow",
+		// D16：bash 类型直通（归一化映射与 state.ts 读取侧共用同一函数，防两侧漂移）
+		type: normalizePendingType(d.type),
 		name: typeof d.name === "string" ? d.name : d.id,
 	};
 }
