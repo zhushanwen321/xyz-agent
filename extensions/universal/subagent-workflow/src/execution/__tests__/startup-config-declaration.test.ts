@@ -2,7 +2,7 @@
 //
 // startupConfig 声明守护测试：断言 package.json `xyz-agent.startupConfig` 声明的
 // content 与代码 DEFAULT_CONFIG 常量深相等，防止两侧任一改动未同步（漂移）。
-// 机制：runtime 启动序列统一 ensure（extensions-startup-config.ts），声明即首建内容。
+// 机制：runtime 启动序列统一 ensure（extension-startup-config.ts），声明即首建内容。
 //
 // 运行：cd extensions/universal/subagent-workflow && npx vitest run src/execution/__tests__/startup-config-declaration.test.ts
 

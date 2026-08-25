@@ -16,7 +16,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { runStartupBackgroundInit } from './startup-background-init.js'
 import { getMigrationGate } from './session/session-lifecycle.js'
-import { getSessionsDir } from '../infra/pi/pi-paths.js'
+import { getSessionsDir, getPiAgentDir } from '../infra/pi/pi-paths.js'
 import type { ExtensionService } from './extension-service.js'
 import type { ProcessManager } from '../infra/pi/process-manager.js'
 import type { SkillRegistry } from './skill-registry.js'
@@ -139,8 +139,8 @@ describe('runStartupBackgroundInit（D8-1 后台初始化序列）', () => {
     await runStartupBackgroundInit(deps)
     expect(extensionService.getExtensionPaths).toHaveBeenCalledTimes(1)
     expect(sc.ensureDeclaredStartupConfigs).toHaveBeenCalledTimes(1)
-    // ensure 收到 getExtensionPaths 的返回值（空数组直通，agentDir 为 getPiAgentDir()）
-    expect(sc.ensureDeclaredStartupConfigs).toHaveBeenCalledWith([], expect.any(String))
+    // ensure 收到 getExtensionPaths 的返回值（空数组直通）与真实 pi agentDir
+    expect(sc.ensureDeclaredStartupConfigs).toHaveBeenCalledWith([], getPiAgentDir())
   })
 
   it('D8-3：gate 在序列最前创建——迁移未完成时后续步骤不执行，完成才放行', async () => {

@@ -86,16 +86,17 @@ export function readDeclaredStartupConfigs(extensionPaths: string[]): DeclaredSt
       else logger.warn(`[extension-startup-config] invalid startupConfig[${i}], skipped: ${pkgPath}`)
     })
   }
-  // 跨包重复 path 声明：保留首个（与 ensure 迭代序一致——先到者 ensured、后到者
-  // existsSync 短路 skipped），warn 辅助排查配置面误复制。
-  const seen = new Set<string>()
+  // 跨包重复 path 声明：read 阶段去重保留首个（后到者被丢弃，不进 ensure、
+  // 不计 skipped），warn 同时点名先到者（保留生效方）与后到者，辅助排查配置面误复制。
+  const seen = new Map<string, string>()
   const deduped: DeclaredStartupConfigEntry[] = []
   for (const entry of out) {
-    if (seen.has(entry.path)) {
-      logger.warn(`[extension-startup-config] duplicate startupConfig path '${entry.path}' declared by ${entry.source}, keeping first declaration only`)
+    const firstSource = seen.get(entry.path)
+    if (firstSource !== undefined) {
+      logger.warn(`[extension-startup-config] duplicate startupConfig path '${entry.path}': keeping declaration of ${firstSource}, dropping ${entry.source}`)
       continue
     }
-    seen.add(entry.path)
+    seen.set(entry.path, entry.source)
     deduped.push(entry)
   }
   return deduped
