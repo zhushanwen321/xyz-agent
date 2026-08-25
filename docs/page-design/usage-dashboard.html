@@ -6,9 +6,22 @@
 <title>太极 · 用量统计 · 设计稿</title>
 <style>
 /* ============================================================
-   太极 · 玄 tokens（对齐 docs/page-design/v6-tokens.css 定稿值）
+   共用 tokens（字体/圆角/动效/阴影，与主题无关）
    ============================================================ */
 :root {
+  --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --text-2xs: 11px; --text-xs: 12px; --text-sm: 13px; --text-base: 14px; --text-md: 15px;
+  --radius-sm: 6px; --radius: 8px; --radius-card: 10px; --radius-lg: 12px;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms; --duration: 200ms;
+  --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+/* ============================================================
+   太极 · 玄（暗色，默认）—— 真值对齐 packages/renderer/src/style.css :root
+   ============================================================ */
+[data-theme="dark"] {
   --bg-stage: #0a0a0c;
   --bg: #131316;
   --surface: #1f1f22;
@@ -19,8 +32,7 @@
   --bg-card: #1b1b1e;
   --neutral-fg: #dedee2;
   --neutral-mid: #96969c;
-  /* 审计修正提案：SSOT dim #74747a 对 #131316 仅 3.99:1（< AA 4.5），
-     本设计稿内提到 #85858c（≈5.1:1）验证效果；若采纳需回写 design-tokens.md */
+  /* 审计修正提案：SSOT dim #74747a 对 bg 3.99:1（< AA），demo 内提至 #85858c（≈5.1:1）验证 */
   --neutral-dim: #85858c;
   --neutral-faint: #46464c;
   --neutral-ico: #86868c;
@@ -32,13 +44,66 @@
   --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
   --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
   --accent-fg: #1a1a1c;
-  --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
-  --text-2xs: 11px; --text-xs: 12px; --text-sm: 13px; --text-base: 14px; --text-md: 15px;
-  --radius-sm: 6px; --radius: 8px; --radius-card: 10px; --radius-lg: 12px;
-  --ease: cubic-bezier(0.4, 0, 0.2, 1);
-  --duration-fast: 120ms; --duration: 200ms;
-  --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+/* ============================================================
+   太极 · 皓（亮色，宣纸墨黑）—— 真值对齐 style.css [data-theme="light"]
+   ============================================================ */
+[data-theme="light"] {
+  --bg-stage: #dbd9d4;
+  --bg: #edebe8;
+  --surface: #f7f6f3;
+  --surface-hover: #dbd9d4;
+  --surface-2: #e3e1dc;
+  --bg-elevated: #faf9f6;
+  --bg-input: #e5e3df;
+  --bg-card: #f1efec;
+  --neutral-fg: #2b2a28;
+  /* 审计修正提案：SSOT 亮色 mid #706e6a 对宣纸 4.26:1、dim #9d9b96 2.35:1（均 < AA）。
+     demo 内提深：mid #5d5b56（≈5.6:1）/ dim #6a6862（≈4.6:1），层级保持 mid 深 dim 浅 */
+  --neutral-mid: #5d5b56;
+  --neutral-dim: #64625c;
+  --neutral-faint: #c7c5c0;
+  --neutral-ico: #82807b;
+  --border: rgba(0,0,0,0.07);
+  --border-strong: rgba(0,0,0,0.14);
+  --hairline: rgba(0,0,0,0.05);
+  --accent: #36332f;
+  --accent-hover: #494641;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+  --accent-fg: #f5f4f1;
+  --shadow-2: 0 8px 24px rgba(60,50,30,0.14);
+}
+
+/* ============================================================
+   图表派生 tokens —— 不手写色值，从主题中性谱派生（color-mix），
+   玄/皓（及未来黛蓝/青墨等 preset）切换时整套灰阶自动跟随、
+   方向自动反转（暗：墨越亮越浓；亮：墨越深越浓）
+   ============================================================ */
+[data-theme="dark"], [data-theme="light"] {
+  /* provider 序列（堆叠柱/图例/排名条，p1 = 占比最高档） */
+  --chart-p1: color-mix(in oklch, var(--neutral-fg) 92%, var(--bg));
+  --chart-p2: color-mix(in oklch, var(--neutral-fg) 70%, var(--bg));
+  --chart-p3: color-mix(in oklch, var(--neutral-fg) 48%, var(--bg));
+  --chart-p4: color-mix(in oklch, var(--neutral-fg) 30%, var(--bg));
+  --chart-p5: color-mix(in oklch, var(--neutral-fg) 17%, var(--bg));
+  /* 热力日历墨阶（0 = 无消耗底色，5 = 当日最浓） */
+  --heat-0: color-mix(in oklch, var(--neutral-fg) 5%, var(--bg));
+  --heat-1: color-mix(in oklch, var(--neutral-fg) 12%, var(--bg));
+  --heat-2: color-mix(in oklch, var(--neutral-fg) 24%, var(--bg));
+  --heat-3: color-mix(in oklch, var(--neutral-fg) 40%, var(--bg));
+  --heat-4: color-mix(in oklch, var(--neutral-fg) 60%, var(--bg));
+  --heat-5: color-mix(in oklch, var(--neutral-fg) 82%, var(--bg));
+  /* 缓存构成三色（命中/新输入/输出） */
+  --cache-hit: color-mix(in oklch, var(--neutral-fg) 85%, var(--bg));
+  --cache-out: color-mix(in oklch, var(--neutral-fg) 55%, var(--bg));
+  --cache-in: color-mix(in oklch, var(--neutral-fg) 30%, var(--bg));
+  /* 交互层（图表 hover 列 / 排名行 hover / 条形底槽 / 热力格描边） */
+  --hover-tint: color-mix(in oklch, var(--neutral-fg) 5%, transparent);
+  --row-hover: color-mix(in oklch, var(--neutral-fg) 3%, transparent);
+  --track: color-mix(in oklch, var(--neutral-fg) 8%, transparent);
+  --heat-outline: color-mix(in oklch, var(--neutral-fg) 45%, transparent);
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
@@ -149,17 +214,17 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 /* 图表容器 */
 .chart-wrap { position: relative; }
 .chart-wrap svg { display: block; width: 100%; }
-.hover-col { fill: rgba(255,255,255,0.045); }
+.hover-col { fill: var(--hover-tint); }
 
 /* ============ 热力日历 ============ */
 .duo { display: grid; grid-template-columns: auto 1fr; gap: 48px; align-items: start; }
 .heat-scroll { overflow-x: auto; padding-bottom: 2px; }
 .heat-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 13px); gap: 3px; width: max-content; }
-.heat-cell { width: 13px; height: 13px; border-radius: 2.5px; background: #1a1a1e; }
-.heat-cell.l1 { background: #26262b; } .heat-cell.l2 { background: #36363c; }
-.heat-cell.l3 { background: #4a4a52; } .heat-cell.l4 { background: #63636d; }
-.heat-cell.l5 { background: #87878f; }
-.heat-cell:hover { outline: 1px solid rgba(255,255,255,0.3); outline-offset: 0; }
+.heat-cell { width: 13px; height: 13px; border-radius: 2.5px; background: var(--heat-0); }
+.heat-cell.l1 { background: var(--heat-1); } .heat-cell.l2 { background: var(--heat-2); }
+.heat-cell.l3 { background: var(--heat-3); } .heat-cell.l4 { background: var(--heat-4); }
+.heat-cell.l5 { background: var(--heat-5); }
+.heat-cell:hover { outline: 1px solid var(--heat-outline); outline-offset: 0; }
 .heat-months { position: relative; height: 14px; margin-bottom: 6px;
   font-size: 10px; color: var(--neutral-dim); font-family: var(--font-mono); }
 .heat-months span { position: absolute; }
@@ -177,19 +242,19 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 .rank-row:last-child { border-bottom: none; }
 .rank-row.clickable { cursor: pointer; }
-.rank-row.clickable:hover { background: rgba(255,255,255,0.02); }
+.rank-row.clickable:hover { background: var(--row-hover); }
 .rank-row.selected .m-name { color: var(--accent); }
 .rank-idx { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); text-align: right; }
 .m-name { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-name .prov { color: var(--neutral-dim); }
-.m-bar-wrap { height: 6px; background: rgba(255,255,255,0.04); border-radius: 3px; overflow: hidden; }
+.m-bar-wrap { height: 6px; background: var(--track); border-radius: 3px; overflow: hidden; }
 .m-bar { height: 100%; border-radius: 3px; transition: width 320ms var(--ease); }
 .m-val { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-fg); text-align: right; white-space: nowrap; }
 .m-val .cost { color: var(--neutral-dim); margin-left: 6px; }
 .m-pct { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); text-align: right; }
 
 /* 项目谱：微型堆叠条 */
-.p-stack { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: rgba(255,255,255,0.04); }
+.p-stack { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--track); }
 .p-stack i { display: block; height: 100%; }
 
 /* ============ 缓存构成 ============ */
@@ -199,7 +264,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .cache-name { font-family: var(--font-mono); font-size: var(--text-xs); }
 .cache-hit { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-fg); }
 .cache-hit .u { color: var(--neutral-dim); font-size: 10px; margin-right: 4px; }
-.cache-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,0.04); }
+.cache-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--track); }
 .cache-bar i { display: block; height: 100%; }
 .cache-legend { display: flex; gap: 16px; margin-top: 12px; font-size: 10px; color: var(--neutral-dim); font-family: var(--font-mono); }
 .cache-legend span { display: inline-flex; align-items: center; gap: 5px; }
@@ -231,7 +296,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .trow .model { font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .trow .num.dimv { color: var(--neutral-mid); }
 .share-cell { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
-.share-bar { width: 64px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.05); overflow: hidden; }
+.share-bar { width: 64px; height: 4px; border-radius: 2px; background: var(--track); overflow: hidden; }
 .share-bar i { display: block; height: 100%; }
 .share-pct { font-family: var(--font-mono); font-size: 10px; color: var(--neutral-dim); width: 40px; text-align: right; }
 .tfoot { padding: 12px 2px 0; border-top: 1px solid var(--border-strong); margin-top: 4px; color: var(--neutral-fg); font-weight: 500; }
@@ -290,7 +355,13 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   <div class="main">
     <div class="main-header">
       <span>设置 · 用量</span>
-      <button class="x" aria-label="关闭"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <span style="display:flex;align-items:center;gap:8px">
+        <div class="seg" role="radiogroup" aria-label="主题预览" id="segTheme" title="模拟系统设置的主题切换（data-theme）">
+          <button data-v="dark" class="on">玄</button>
+          <button data-v="light">皓</button>
+        </div>
+        <button class="x" aria-label="关闭"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </span>
     </div>
     <div class="content">
       <div class="col">
@@ -350,9 +421,9 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
               </div>
               <div id="cacheList"></div>
               <div class="cache-legend">
-                <span><i class="sw" style="background:#a8a8b0"></i>← 缓存命中</span>
-                <span><i class="sw" style="background:#4e4e55"></i>↑ 新输入</span>
-                <span><i class="sw" style="background:#74747c"></i>↓ 输出</span>
+                <span><i class="sw" style="background:var(--cache-hit)"></i>← 缓存命中</span>
+                <span><i class="sw" style="background:var(--cache-in)"></i>↑ 新输入</span>
+                <span><i class="sw" style="background:var(--cache-out)"></i>↓ 输出</span>
               </div>
             </div>
           </div>
@@ -395,11 +466,11 @@ const rr = (a, b) => a + rnd() * (b - a);
 const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
 
 const PROVIDERS = [
-  { id: 'kimi-coding', color: '#d6d6db', models: ['k3-256k', 'kimi-for-coding'] },
-  { id: 'zai-coding-cn', color: '#a6a6ad', models: ['glm-5.2', 'GLM-5.3'] },
-  { id: 'opencode-go', color: '#7c7c84', models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
-  { id: 'xiaomi-token-plan-cn', color: '#57575e', models: ['mimo-v2.5-pro'] },
-  { id: 'anthropic', color: '#3a3a41', models: ['claude-sonnet-4.5'] },
+  { id: 'kimi-coding', color: 'var(--chart-p1)', models: ['k3-256k', 'kimi-for-coding'] },
+  { id: 'zai-coding-cn', color: 'var(--chart-p2)', models: ['glm-5.2', 'GLM-5.3'] },
+  { id: 'opencode-go', color: 'var(--chart-p3)', models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
+  { id: 'xiaomi-token-plan-cn', color: 'var(--chart-p4)', models: ['mimo-v2.5-pro'] },
+  { id: 'anthropic', color: 'var(--chart-p5)', models: ['claude-sonnet-4.5'] },
 ];
 const P_COLOR = Object.fromEntries(PROVIDERS.map(p => [p.id, p.color]));
 
@@ -688,10 +759,10 @@ function renderChart(a) {
   /* gridlines */
   for (let i = 1; i <= 4; i++) {
     const v = yMax * i / 4, y = yOf(v);
-    g += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="rgba(255,255,255,0.05)"/>`;
-    g += `<text x="${padL - 8}" y="${y + 3}" text-anchor="end" fill="#74747a" font-size="10" font-family="var(--font-mono)">${axisFmt(v)}</text>`;
+    g += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" style="stroke:var(--hairline)"/>`;
+    g += `<text x="${padL - 8}" y="${y + 3}" text-anchor="end" style="fill:var(--neutral-dim)" font-size="10" font-family="var(--font-mono)">${axisFmt(v)}</text>`;
   }
-  g += `<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="rgba(255,255,255,0.09)"/>`;
+  g += `<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" style="stroke:var(--border)"/>`;
 
   /* bars */
   let peakIdx = -1, peakV = 0;
@@ -704,7 +775,7 @@ function renderChart(a) {
       const v = metricV(u);
       if (v <= 0) continue;
       const y1 = yOf(accV + v), h = Math.max(1, yOf(accV) - yOf(accV + v));
-      g += `<rect x="${x.toFixed(1)}" y="${y1.toFixed(1)}" width="${barW}" height="${h.toFixed(1)}" fill="${P_COLOR[pid]}"/>`;
+      g += `<rect x="${x.toFixed(1)}" y="${y1.toFixed(1)}" width="${barW}" height="${h.toFixed(1)}" style="fill:${P_COLOR[pid]}"/>`;
       accV += v; daySum += v;
     }
     if (daySum > peakV) { peakV = daySum; peakIdx = i; }
@@ -717,7 +788,7 @@ function renderChart(a) {
     if (m !== lastM) {
       lastM = m;
       const cx = padL + i * slot + slot / 2;
-      g += `<text x="${cx}" y="${H - 8}" text-anchor="middle" fill="#74747a" font-size="10" font-family="var(--font-mono)">${d.date.getMonth() + 1}月</text>`;
+      g += `<text x="${cx}" y="${H - 8}" text-anchor="middle" style="fill:var(--neutral-dim)" font-size="10" font-family="var(--font-mono)">${d.date.getMonth() + 1}月</text>`;
     }
   });
 
@@ -725,8 +796,8 @@ function renderChart(a) {
   if (peakIdx >= 0 && n >= 14 && peakV > 0) {
     const cx = padL + peakIdx * slot + slot / 2;
     const y = yOf(peakV);
-    g += `<text x="${cx}" y="${y - 8}" text-anchor="middle" fill="#96969c" font-size="10" font-family="var(--font-mono)">峰值 ${MMDD(a.perDay[peakIdx].date)}</text>`;
-    g += `<path d="M${cx} ${y - 4.5} l-3 5 h6 z" fill="#96969c"/>`;
+    g += `<text x="${cx}" y="${y - 8}" text-anchor="middle" style="fill:var(--neutral-mid)" font-size="10" font-family="var(--font-mono)">峰值 ${MMDD(a.perDay[peakIdx].date)}</text>`;
+    g += `<path d="M${cx} ${y - 4.5} l-3 5 h6 z" style="fill:var(--neutral-mid)"/>`;
   }
 
   g += `<rect id="hoverRect" class="hover-col" x="0" y="${padT}" width="${barW + 2}" height="${plotH}" style="display:none"/>`;
@@ -916,9 +987,9 @@ function renderCache(a) {
       <div class="cache-top"><span class="cache-name">${m}</span>
       <span class="cache-hit"><span class="u">命中率</span>${fmtPct(hit)}</span></div>
       <div class="cache-bar">
-        <i style="width:${w(u.cacheRead)}%;background:#a8a8b0"></i>
-        <i style="width:${w(u.input)}%;background:#4e4e55"></i>
-        <i style="width:${w(u.output + u.cacheWrite)}%;background:#74747c"></i>
+        <i style="width:${w(u.cacheRead)}%;background:var(--cache-hit)"></i>
+        <i style="width:${w(u.input)}%;background:var(--cache-in)"></i>
+        <i style="width:${w(u.output + u.cacheWrite)}%;background:var(--cache-out)"></i>
       </div>
     </div>`;
   }).join('');
@@ -1010,6 +1081,16 @@ function bindSeg(id, key, parse) {
 }
 bindSeg('#segMetric', 'metric');
 bindSeg('#segRange', 'range', v => +v);
+
+/* 主题切换：CSS 变量全量驱动（含 SVG style fill/stroke 的 var() 引用），
+   切 data-theme 后所有图表色即时重算，无需重渲染 */
+$('#segTheme').querySelectorAll('button').forEach(b => {
+  b.onclick = () => {
+    $('#segTheme').querySelectorAll('button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    document.documentElement.dataset.theme = b.dataset.v;
+  };
+});
 
 let rsT;
 window.addEventListener('resize', () => {

@@ -61,15 +61,31 @@
 - 优点：最轻。
 - 缺点：不满足「漂亮美观 dashboard」诉求。可作为 A 的未来补充（快捷入口），不作为本体。
 
-## 四、demo 验证记录（2026-08-24）
+## 四、主题自适应（派生 token 化）
+
+demo 支持玄（暗，默认）/ 皓（亮，宣纸墨黑）双主题，右上角「玄/皓」seg 切换，即时生效无需重渲染。机制：
+
+1. **主题块拆分**：色板分属 `[data-theme="dark"]` / `[data-theme="light"]`，真值逐字对齐 `packages/renderer/src/style.css`（皓：宣纸米白阶梯 `#edebe8` 底 + 暖墨文字 + 墨黑 accent `#36332f`），共用层（字体/圆角/动效）留 `:root`。
+2. **图表色零手写，全部从主题中性谱派生**：provider 序列 `--chart-p1..p5`、热力墨阶 `--heat-0..5`、缓存三色 `--cache-hit/in/out`、交互层（hover/底槽/描边）均用 `color-mix(in oklch, var(--neutral-fg) X%, var(--bg) 或 transparent)` 派生。主题（含未来黛蓝/青墨等 data-theme-preset）切换时整套灰阶自动跟随，明度方向自动反转（暗：墨越亮越浓；亮：墨越深越浓）。
+3. **SVG 零重渲染跟随**：SVG presentation attribute 不支持 `var()`，柱体/网格/轴文字一律 `style="fill:var(--chart-p1)"` / `style="stroke:var(--hairline)"`，CSS 变量变化即时重算，切主题不触发任何 JS 重渲染。
+
+亮色审计修正提案（同暗色 dim 问题，均待回写 SSOT）：
+
+| token | SSOT 现值 | 对宣纸 bg | demo 提案 | 对应比 |
+|-------|-----------|-----------|-----------|--------|
+| 暗 `--neutral-dim` | `#74747a` | 3.99:1（对玄 bg） | `#85858c` | ≈5.1:1 |
+| 亮 `--neutral-mid` | `#706e6a` | 4.26:1 | `#5d5b56` | ≈5.6:1 |
+| 亮 `--neutral-dim` | `#9d9b96` | 2.35:1 | `#64625c` | ≈4.8:1（含 bg-input 背景过 AA） |
+
+## 五、demo 验证记录（2026-08-24）
 
 - 程序化审计通过：无文字截断、无横向溢出、表格列右对齐一致、图表柱体无越界。
 - 交互验证通过：图例开关（kimi-coding off → 总量 19M→12M 正确联动）、指标/范围切换、模型单看（chip + 全页过滤 + 一键清除）、表格分组折叠。
-- 对比度审计发现 SSOT 问题：`--neutral-dim #74747a` 对 `--bg #131316` 仅 3.99:1（< AA 4.5），全 app 所有 dim 文字同病。demo 内临时提到 `#85858c`（≈5.1:1）并注释；**若采纳需回写 design-tokens.md**（SSOT 标注的 ~4.4:1 与实测 3.99 也不符）。
+- 双主题验证通过（2026-08-25 补）：玄/皓切换即时生效（CSS 变量重算，无重渲染）；亮色下堆叠柱/热力/图例/缓存条/nav active 全部正确跟随且墨阶方向反转；双主题对比度审计 + 截断审计全过；暗色回归一致（数据 19M/105 柱不变）。
 - 人工视觉复核：本会话无可用的视觉引擎（MiniMax/zai key 均未配置），未做截图人眼复核；建议打开 demo 人工过目一遍。
 - 已知未解之谜：Chrome 冷启动首次读取到与后续不同的聚合值（76/8.6M vs 140/19M），重载后确定性稳定（连续两次 100% 一致），未能复现，疑冷启动时序假象。
 
-## 五、落地实现映射（若进入开发）
+## 六、落地实现映射（若进入开发）
 
 | 层 | 改动 | 说明 |
 |----|------|------|
@@ -78,6 +94,7 @@
 | shared | `UsageStats` 类型 | demo 内聚合结构与之一一对应 |
 | renderer | SettingsModal nav 增「用量」+ `UsagePage.vue` | demo 的 DOM/CSS 结构即组件拆分蓝图（Ledger / DailyChart / HeatCalendar / ModelRank / ProjectRank / CacheMix / DetailTable 七块）；图表用手写 SVG（与 demo 同构，不引图表库） |
 | 布局注意 | 用量页内容列需突破 `--content-max-w: 720px` | demo 用 max-width 1064px；图表型页面 720 过窄，需在 SettingsModal 对该页放宽 |
+| 主题适配 | 图表派生 token（`--chart-p1..p5` / `--heat-0..5` / `--cache-*` 等 color-mix 派生色）登记进 v6-tokens.css + design-tokens.md | 零手写色值，玄/皓/preset 全自适应；中性谱对比度修正提案（§四表）需同步裁决 |
 | 边界 | 空态（无 session）→ 引导空态；活跃 session 未 flush → 标注「数据截至」；cost 全 0 → 费用列整体降级为 dim | |
 
 二期候选：全局 pi 目录（~/.pi/agent/sessions）聚合（增量缓存）；预算阈值告警（Copilot 式 75/90/100%）；CSV/JSON 导出；5 小时计费窗口视图（ccusage 式，仅对支持该计费模式的 provider 显示）。
