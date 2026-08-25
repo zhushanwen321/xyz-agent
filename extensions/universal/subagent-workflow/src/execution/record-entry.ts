@@ -82,6 +82,12 @@ export interface SubagentRecordEntryData {
   chatMode?: boolean;
   /** 执行态信号（residual-fixes）：true = 无活进程驱动的 running（轮终/孤儿兜底）。 */
   resumable?: boolean;
+  /**
+   * 实际执行引擎 id（P4 路由留痕，D9①）。缺省（存量 entry）= pi 投影，消费方零迁移。
+   */
+  engine?: string;
+  /** 引擎 fallback 留痕（probe 失败路由回默认引擎）。GUI 警告条数据源。 */
+  engineFallback?: { from: string; reason: string };
 }
 
 /** SubagentRecord → 自描述 entry data（快照投影，不 mutate 源）。 */
@@ -114,5 +120,7 @@ export function toSubagentRecordEntry(record: SubagentRecord): SubagentRecordEnt
     round: record.round,
     chatMode: record.chatMode,
     resumable: record.resumable,
+    engine: record.engine,
+    engineFallback: record.engineFallback,
   };
 }

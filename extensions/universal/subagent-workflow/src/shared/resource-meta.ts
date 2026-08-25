@@ -54,6 +54,11 @@ export interface AgentMeta extends ResourceMetaBase {
   /** 供 AgentRegistry 执行侧 spawn 时注入，不进 system prompt 注入段。 */
   tools?: string[];
   model?: string;
+  /**
+   * 执行引擎 id（D9 per-agent 主通道：调用参数 engine > 本字段 > 全局默认）。
+   * 与 model 字段同风格——路由字段（不进 system prompt），执行侧（P4 路由层）消费。
+   */
+  engine?: string;
 }
 
 /** 判别联合（kind 判别）。 */

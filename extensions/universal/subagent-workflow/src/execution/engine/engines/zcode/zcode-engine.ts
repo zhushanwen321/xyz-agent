@@ -18,8 +18,8 @@
 //
 // schema 仿真接线（D4 emulated 侧）：common/schema-emulation.ts（并行任务 P2 交付，
 // 2026-08-25 已就绪并接线）——spawn 前拼 prompt 仿真段、终态后三级容错提取 + ajv
-// 校验、失败强化重试一次、仍失败报 schema_emulation_failed。TODO(W3 集成对齐) 仅剩
-// read 第②级 journal 降级（common/event-journal.ts 已就绪待接线）。
+// 校验、失败强化重试一次、仍失败报 schema_emulation_failed。read 第②级 journal 降级
+// 已接线（P4 对齐点①：common/journal-replay 复用 live reducer）。
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
@@ -31,6 +31,9 @@ import {
   buildSchemaEmulationSegment,
   extractAndValidateStructuredOutput,
 } from "../../common/schema-emulation.ts";
+import { HOST_TIMEOUT_ABORT_REASON, synthesizeTimeoutOutcome } from "../../common/kill-chain.ts";
+import { engineTimeoutDetail } from "../../common/errors.ts";
+import { replayJournalToSessionView } from "../../common/journal-replay.ts";
 import type { EnginePort, EngineRunResult, RunContext } from "../../port.ts";
 import type {
   AgentEvent,
@@ -54,9 +57,9 @@ import {
 } from "./constants.ts";
 import { ZCODE_GOLDEN_STDOUT } from "./golden-sample.ts";
 import {
-  assertArgvWithinLimit,
   buildZcodeArgv,
   buildZcodeEnv,
+  assertZcodeArgvBudget,
   launchZcodeProcess,
   type ZcodeLaunchedProcess,
 } from "./launcher.ts";
@@ -210,6 +213,9 @@ export class ZcodeEngine implements EnginePort {
       modelRef,
       sources: this.deps.sources,
     });
+    // 对齐点③：把实际池 key 声明给宿主（journal writer 重定向到 handle.poolKey 同源
+    // 的路径——单一权威，宿主不再两边推导）；须在首个事件 emit 前（终态后合成，天然满足）
+    ctx.onPoolResolved?.(prepared.poolKey);
     logger.debug("[zcode-engine] isolated home prepared", {
       poolKey: prepared.poolKey,
       wroteConfig: prepared.wroteConfig,
@@ -240,17 +246,26 @@ export class ZcodeEngine implements EnginePort {
       content: "",
       durationMs: Date.now() - startedAt,
       ...(typeof task.worktree === "object" && task.worktree !== null ? { worktreePath: task.worktree.path } : {}),
+      // D9① fallback 留痕：路由层经 RunContext 投影（zcode 无 record 通路，outcome 是
+      // 唯一留痕面；pi 引擎另有 record 投影）
+      ...(ctx.engineFallback !== undefined ? { engineFallback: ctx.engineFallback } : {}),
     };
     const emit = (event: AgentEvent): void => {
       ctx.onEvent?.(event);
     };
 
     if (final.kind === "aborted") {
-      // abort 合成终态：exitCode=null + 杀链标记（record 正常收尾，不留僵尸）
+      // abort 合成终态：exitCode=null（record 正常收尾，不留僵尸）
       outcome.exitCode = null;
-      outcome.error =
-        `engine_run_failed: zcode 任务被中止（杀链 SIGTERM→${ZCODE_KILL_GRACE_MS}ms→SIGKILL，宿主合成终态）。` +
-        `stdout 尾部: ${final.output.stdoutText.slice(-ZCODE_ERROR_TAIL_CHARS)}`;
+      // 对齐点④：宿主超时（mergeTimeoutSignal 的 timeout abort）统一走公共合成终态
+      // （common/kill-chain.synthesizeTimeoutOutcome——engine_timeout 文案 SSOT：stdout
+      // 尾部 + 「可用 engine: pi 重跑」建议）；用户主动 cancel 维持 engine_run_failed
+      // 中止标记（非超时语义，不冒充超时）。?? 兜底是类型收窄（合成器恒写 error）
+      outcome.error = isHostTimeoutAbort(ctx)
+        ? synthesizeTimeoutOutcome(task, final.output.stdoutText, ZCODE_ENGINE_ID).error ??
+          engineTimeoutDetail(final.output.stdoutText)
+        : `engine_run_failed: zcode 任务被中止（杀链 SIGTERM→${ZCODE_KILL_GRACE_MS}ms→SIGKILL，宿主合成终态）。` +
+          `stdout 尾部: ${final.output.stdoutText.slice(-ZCODE_ERROR_TAIL_CHARS)}`;
       emit({ type: "error", message: outcome.error });
     } else if (final.kind === "run-failed") {
       outcome.exitCode = final.output.exitCode;
@@ -321,10 +336,10 @@ export class ZcodeEngine implements EnginePort {
     cwd: string,
     prompt: string,
   ): Promise<AttemptResult> {
-    // ② argv 组装 + 字节估算（超限抛 prompt_too_large——进程创建前）
+    // ② argv 组装 + 字节估算（超限抛 prompt_too_large——进程创建前；公共预算权威）
     const args = buildZcodeArgv({ cwd, prompt, denyTools: task.denyTools });
     const cliPath = this.deps.cliPath ?? ZCODE_CLI_DEFAULT_PATH;
-    assertArgvWithinLimit("node", cliPath, args);
+    assertZcodeArgvBudget("node", cliPath, args);
 
     // ③ launch：spawn 单轮（stdin ignore；HOME=池目录；嵌套标记经公共 nesting-guard）
     const launch = this.deps.launch ?? launchZcodeProcess;
@@ -406,11 +421,10 @@ export class ZcodeEngine implements EnginePort {
   }
 
   /**
-   * D6 read 第①级：sqlite 原生读取。降级：sessionId 缺失（解析失败的 run 无法在共享
-   * 池 db 内定位 session）或结构化读取失败 → outcome-only。
-   * TODO(W3 集成对齐): 第②级（宿主 event journal 重放）——common/event-journal 的
-   * JournalWriter/replayJournal 已就绪，待宿主（SubagentService 侧）消费 onEvent 落盘
-   * 并回填 handle.journalPath 后，在本分支之前插入 replayJournal 重放。
+   * D6 read 三级降级：①sqlite 原生读取 → ②宿主 event journal 重放（对齐点①接线：
+   * replayJournalToSessionView 复用 live reducer，重放等价性见 §3.3.6）→ ③outcome-only。
+   * sessionId 缺失（解析失败的 run 无法在共享池 db 内定位 session）跳过①级；②级
+   * 依赖 handle.journalPath（宿主 run 后回填）。
    */
   async read(handle: EngineHandle): Promise<SessionView> {
     if (handle.data.engineId !== ZCODE_ENGINE_ID) {
@@ -418,23 +432,25 @@ export class ZcodeEngine implements EnginePort {
     }
     const sessionId = handle.data.sessionRef["sessionId"];
     const dbPathRaw = handle.data.sessionRef["dbPath"];
-    if (typeof sessionId !== "string" || typeof dbPathRaw !== "string") {
-      return { engineId: ZCODE_ENGINE_ID, turns: [], source: "outcome-only" };
+    if (typeof sessionId === "string" && typeof dbPathRaw === "string") {
+      // 相对路径锚定池目录（handle.poolKey 自描述）；绝对路径（未来形态）直用
+      const dbPath = path.isAbsolute(dbPathRaw)
+        ? dbPathRaw
+        : path.join(resolvePoolDir(this.deps.engineDataDir(), ZCODE_ENGINE_ID, handle.data.poolKey), dbPathRaw);
+      try {
+        return await readZcodeSessionView(dbPath, sessionId);
+      } catch (err) {
+        logger.warn("[zcode-engine] native session read failed, degrade to journal replay", {
+          dbPath,
+          sessionId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
-    // 相对路径锚定池目录（handle.poolKey 自描述）；绝对路径（未来形态）直用
-    const dbPath = path.isAbsolute(dbPathRaw)
-      ? dbPathRaw
-      : path.join(resolvePoolDir(this.deps.engineDataDir(), ZCODE_ENGINE_ID, handle.data.poolKey), dbPathRaw);
-    try {
-      return await readZcodeSessionView(dbPath, sessionId);
-    } catch (err) {
-      logger.warn("[zcode-engine] native session read failed, degrade to outcome-only", {
-        dbPath,
-        sessionId,
-        reason: err instanceof Error ? err.message : String(err),
-      });
-      return { engineId: ZCODE_ENGINE_ID, sessionId, turns: [], source: "outcome-only" };
-    }
+    // ②级：journal 重放（journalPath 缺省 / 文件不存在 / 无事件 → undefined 落③级）
+    const journaled = replayJournalToSessionView(handle, ZCODE_ENGINE_ID);
+    if (journaled !== undefined) return journaled;
+    return { engineId: ZCODE_ENGINE_ID, turns: [], source: "outcome-only" };
   }
 
   // ── 内部 ──
@@ -523,6 +539,11 @@ class ZcodeTaskShapeError extends Error {
     this.name = "ZcodeTaskShapeError";
     this.code = code;
   }
+}
+
+/** 宿主超时 abort 判别（对齐点④）：signal.reason 带超时标记 = 超时杀链合成终态路径。 */
+function isHostTimeoutAbort(ctx: RunContext): boolean {
+  return ctx.signal?.aborted === true && ctx.signal.reason === HOST_TIMEOUT_ABORT_REASON;
 }
 
 /** 默认版本探测：`node <cli> --version`（首行 trim；超时按探针失败处理）。 */

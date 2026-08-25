@@ -18,15 +18,14 @@
 import { spawn } from "node:child_process";
 import { Readable } from "node:stream";
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
-
+import { killChain } from "../../common/kill-chain.ts";
 import { buildNestedSpawnEnv } from "../../common/nesting-guard.ts";
-import { ZCODE_ARGV_LIMIT_BYTES, ZCODE_KILL_GRACE_MS } from "./constants.ts";
-
-const logger = getLogger("subagents");
+import { assertArgvBudget } from "../../common/persona-router.ts";
+import { ZCODE_KILL_GRACE_MS } from "./constants.ts";
 
 // ============================================================
-// argv 组装与字节估算
+// argv 组装与字节预算（对齐点②收口：估算/断言单一权威 = common/persona-router，
+// 本模块只组装；引擎侧在 launch 前调 assertArgvBudget）
 // ============================================================
 
 export interface ZcodeSpawnSpec {
@@ -52,34 +51,12 @@ export function buildZcodeArgv(spec: ZcodeSpawnSpec): string[] {
 }
 
 /**
- * argv 总字节估算：每元素 byteLength + 1（NUL 分隔符近似），前导 node/cliPath 计入。
- * 为什么在 spawn 前估算：超长 prompt 撞 ARG_MAX/E2BIG 是运行时形态（进程半创建、错误
- * 不可分辨），prepare 期拦截给出可操作建议（设计 §3.3.3 prompt_too_large 行）。
+ * argv 预算断言（launch 前调用；对齐点②：公共 persona-router 的单一权威实现，
+ * DEFAULT_ARGV_BUDGET_BYTES 128KB 阈值同源——超限抛 EngineError(prompt_too_large)，
+ * 进程创建前拦截，禁止 spawn 后撞 E2BIG）。
  */
-export function estimateArgvBytes(nodeBin: string, cliPath: string, args: string[]): number {
-  let total = 0;
-  for (const seg of [nodeBin, cliPath, ...args]) total += Buffer.byteLength(String(seg), "utf8") + 1;
-  return total;
-}
-
-/** prompt_too_large（prepare 期——进程创建前抛出）。 */
-export class ZcodeArgvLimitError extends Error {
-  readonly code = "prompt_too_large" as const;
-
-  constructor(estBytes: number, limitBytes: number) {
-    super(
-      `[prompt_too_large] zcode 引擎的 argv 估算 ${estBytes} 字节超限（${limitBytes}）。` +
-        `zcode spawn 单轮模式的 prompt 只走 argv（无 stdin 通道）。` +
-        `恢复指引：缩短 task 文本，或改用 engine: pi（stdin 投递无此限制）。`,
-    );
-    this.name = "ZcodeArgvLimitError";
-  }
-}
-
-/** argv 估算超限断言（launch 前调用；阈值 ZCODE_ARGV_LIMIT_BYTES）。 */
-export function assertArgvWithinLimit(nodeBin: string, cliPath: string, args: string[]): void {
-  const est = estimateArgvBytes(nodeBin, cliPath, args);
-  if (est > ZCODE_ARGV_LIMIT_BYTES) throw new ZcodeArgvLimitError(est, ZCODE_ARGV_LIMIT_BYTES);
+export function assertZcodeArgvBudget(nodeBin: string, cliPath: string, args: string[]): void {
+  assertArgvBudget([nodeBin, cliPath, ...args]);
 }
 
 // ============================================================
@@ -126,6 +103,10 @@ export interface ZcodeLaunchOptions {
 /**
  * 启动 zcode 子进程。spawn 同步失败（如 node 不存在）直接 throw——调用方（引擎 run）
  * 按进程创建前错误处理；启动成功后的一切失败归 parser 终态路径（不 throw）。
+ *
+ * 杀链（对齐点②收口）：SIGTERM → grace → SIGKILL 的实现单一权威 =
+ * common/kill-chain.killChain（ChildProcess 结构满足 KillableChild）——本模块只保留
+ * killedByUs 标志（合成终态判据：「我方介入过」与「引擎自身失败」的区分）与幂等守卫。
  */
 export function launchZcodeProcess(opts: ZcodeLaunchOptions): ZcodeLaunchedProcess {
   const nodeBin = opts.nodeBin ?? "node";
@@ -136,7 +117,6 @@ export function launchZcodeProcess(opts: ZcodeLaunchOptions): ZcodeLaunchedProce
 
   let exited = false;
   let killTriggered = false;
-  let graceTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ENOENT（node 缺失）等 spawn 失败经 'error' 事件异步到达且 stdout/stderr 可能为
   // null——空流兜底，保证消费方（parser）始终拿到可读流
@@ -147,45 +127,23 @@ export function launchZcodeProcess(opts: ZcodeLaunchOptions): ZcodeLaunchedProce
   const exitedPromise = new Promise<{ code: number | null; signal: string | undefined }>((resolve) => {
     child.once("close", (code, signal) => {
       exited = true;
-      if (graceTimer !== null) clearTimeout(graceTimer);
       resolve({ code, signal: signal ?? undefined });
     });
     child.once("error", () => {
       // spawn 失败（ENOENT 等）也会走 error；close 不一定触发，这里兜底 resolve 防
       // exited 永挂——code 取 null（无引擎语义可判）
       exited = true;
-      if (graceTimer !== null) clearTimeout(graceTimer);
       resolve({ code: null, signal: undefined });
     });
   });
 
-  const killChain = (graceMs: number): void => {
-    if (exited || killTriggered) return;
-    killTriggered = true;
-    try {
-      child.kill("SIGTERM");
-    } catch (err) {
-      // 进程恰在 kill 前自退——幂等兜底，debug 留痕
-      logger.debug("[zcode-launcher] SIGTERM on exited process", {
-        reason: err instanceof Error ? err.message : String(err),
-      });
-    }
-    // 宽限后强杀：node CLI 可能在收尾钩子里拖延；用 exited 判断（kill() 后 child.killed 恒 true）
-    graceTimer = setTimeout(() => {
-      if (!exited) {
-        try {
-          child.kill("SIGKILL");
-        } catch (err) {
-          logger.debug("[zcode-launcher] SIGKILL on exited process", {
-            reason: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-    }, graceMs);
-  };
-
   const abort = (graceMs: number = ZCODE_KILL_GRACE_MS): Promise<void> => {
-    killChain(graceMs);
+    if (!killTriggered && !exited) {
+      killTriggered = true;
+      // 公共杀链（不 await：abort 以 exitedPromise 为准；killChain 自身含 grace/
+      // SIGKILL/收尸全时序，fire-and-forget 不改变 abort 的 resolve 语义）
+      void killChain(child, { graceMs });
+    }
     return exitedPromise.then(() => undefined);
   };
 

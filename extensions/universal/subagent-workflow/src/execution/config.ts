@@ -28,7 +28,6 @@ const DEFAULT_CONFIG: SubagentsGlobalConfig = {
 
 /** 默认 maxConcurrent（DEFAULT_CONFIG 的镜像，sanitize 用）。 */
 const DEFAULT_MAX_CONCURRENT = 6;
-
 // ============================================================
 // 路径
 // ============================================================
@@ -56,9 +55,15 @@ export function loadGlobalConfig(agentDir: string): SubagentsGlobalConfig {
   try {
     const raw = fs.readFileSync(configPath, "utf-8");
     const parsed = JSON.parse(raw) as Partial<SubagentsGlobalConfig>;
+    // P4 引擎路由（D9）：全局默认引擎 + strict 模式。非法值静默回缺省（'pi' /
+    // false）——config.json 是用户手编文件，坏值不炸启动（与 maxConcurrent 同判）
+    const defaultEngine = sanitizeDefaultEngine(parsed.defaultEngine);
+    const engineRouting = sanitizeEngineRouting(parsed.engineRouting);
     return {
       version: parsed.version ?? DEFAULT_CONFIG.version,
       maxConcurrent: sanitizeMaxConcurrent(parsed.maxConcurrent),
+      ...(defaultEngine !== undefined ? { defaultEngine } : {}),
+      ...(engineRouting !== undefined ? { engineRouting } : {}),
     };
   } catch {
     return { ...DEFAULT_CONFIG };
@@ -70,4 +75,20 @@ function sanitizeMaxConcurrent(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value > 0
     ? value
     : DEFAULT_MAX_CONCURRENT;
+}
+
+/**
+ * defaultEngine 校验：非空字符串透传，其余 undefined（缺省引擎由路由层落 'pi'）。
+ * 为什么不在加载期对注册表校验 hasEngine：加载早于组合根注册（agentDir 解析在
+ * session_start），注册表此刻可能为空——校验归路由层（getEngine 抛 EngineNotFoundError）。
+ */
+function sanitizeDefaultEngine(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+/** engineRouting 校验：仅认 strict 布尔，其余键忽略（向前兼容追加）。 */
+function sanitizeEngineRouting(value: unknown): { strict: boolean } | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const strict = (value as Record<string, unknown>).strict;
+  return typeof strict === "boolean" ? { strict } : undefined;
 }

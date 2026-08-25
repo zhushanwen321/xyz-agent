@@ -155,6 +155,29 @@ export class JournalWriter {
     return this.failed;
   }
 
+  /**
+   * 重定向落盘路径（对齐点③：journal 路径权威 = 引擎声明的池 key）。
+   * 仅在尚未落盘（wrote=false）时允许——已 flush 过的文件搬家会制造两份半截 journal，
+   * 重放语义破坏；已落盘时 warn 拒绝（不静默）。事件在重定向前到达的场景由调用方
+   * 契约保证（RunContext.onPoolResolved 注释：引擎须在首个事件 emit 前回调）。
+   */
+  retarget(path: string): void {
+    if (this.closed || this.failed) return;
+    if (this.wrote) {
+      this.warn(
+        `[event-journal] retarget ignored for task ${this.opts.taskId}: journal already flushed to ` +
+          `${this.opts.path} (events must not precede onPoolResolved)`,
+      );
+      return;
+    }
+    this.opts.path = path;
+  }
+
+  /** 当前落盘路径（handle.journalPath 回填数据源）。 */
+  get path(): string {
+    return this.opts.path;
+  }
+
   private async writeChunk(chunk: string): Promise<void> {
     try {
       await this.fs.mkdir(dirname(this.opts.path), { recursive: true });

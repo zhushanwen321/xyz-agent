@@ -41,6 +41,13 @@ export const DEFAULT_KILL_GRACE_MS = 5_000;
 const SIGKILL_REAP_TIMEOUT_MS = 10_000;
 
 /**
+ * 宿主超时 abort 的 signal.reason 标记（对齐点④）。mergeTimeoutSignal（SAR 侧超时
+ * 合并链）产出；引擎 abort 合成终态时判别「超时 vs 用户 cancel」——超时统一走
+ * synthesizeTimeoutOutcome（engine_timeout），cancel 维持中止标记（engine_run_failed）。
+ */
+export const HOST_TIMEOUT_ABORT_REASON = "agent-call-timeout";
+
+/**
  * 杀链：SIGTERM → 等待 graceMs → 仍存活则 SIGKILL。
  *
  * @returns 'terminated' = SIGTERM 优雅退出（或进程已自行退出）；'killed' = 走了 SIGKILL。
@@ -53,17 +60,32 @@ export async function killChain(
   if (child.exitCode !== null || child.signalCode !== null) return "terminated";
 
   const exited = waitForExit(child);
-  child.kill("SIGTERM");
+  safeKill(child, "SIGTERM");
 
   const graceful = await raceTimeout(exited, opts.graceMs);
   if (graceful === "settled") return "terminated";
   // grace 超时后进程可能恰好在检查前一刻退出——复核退出态，避免误杀已死进程
   if (child.exitCode !== null || child.signalCode !== null) return "terminated";
 
-  child.kill("SIGKILL");
+  safeKill(child, "SIGKILL");
   // 有界收尸：无论等到与否都返回 'killed'（信号已发出，返回值表达「走了 SIGKILL」）
   await raceTimeout(exited, SIGKILL_REAP_TIMEOUT_MS);
   return "killed";
+}
+
+/**
+ * 发信号兜底包裹：进程恰在退出态检查与 kill 之间自退时，ChildProcess.kill 可能抛
+ * （zsub 实测经验）——幂等吞掉并 debug 留痕，不阻断杀链语义（对已退进程信号本就是
+ * no-op）。收口自 zcode launcher 的内联实现（对齐点②：单一权威）。
+ */
+function safeKill(child: KillableChild, signal: NodeJS.Signals): void {
+  try {
+    child.kill(signal);
+  } catch (err) {
+    logger.debug(
+      `[kill-chain] ${signal} on exited process: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 // ============================================================

@@ -64,6 +64,21 @@ export interface RunContext {
    * 引擎在 task.schema 存在时忽略此值（派生优先，设计 §3.3.5 删字段去向）。
    */
   schemaEnv?: string;
+  /**
+   * [P4 D9①] 引擎 fallback 留痕（probe 失败路由回默认引擎）。路由层（routing.ts）
+   * 产出，引擎投影到 outcome.engineFallback（zcode 等无 record 通路的引擎以此留痕；
+   * pi 引擎另经 ExecuteOptions 投影进 record）。
+   */
+  engineFallback?: { from: string; reason: string };
+  /**
+   * [P4 对齐点③] 引擎声明实际隔离池 key（journal 落盘路径权威）。宿主创建 journal
+   * writer 时只能用缺省占位 poolKey（pi 恒 'shared'），非池化稳定的引擎（zcode 按
+   * provider+model 池化）在 prepare 期确定 poolKey 后回调本方法重定向 writer——
+   * 保证 journal 落盘路径与 handle.poolKey 同源（单一权威，不再两边推导）。
+   * 契约：必须在首个事件 emit 之前调用（zcode coarse 事件在终态后合成，天然满足；
+   * 未来流式引擎需在事件出口前调用）。
+   */
+  onPoolResolved?: (poolKey: string) => void;
 }
 
 // ============================================================

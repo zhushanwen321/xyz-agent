@@ -5,12 +5,11 @@ import { execFileSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
-import { ZCODE_ARGV_LIMIT_BYTES } from "../constants.ts";
+import { DEFAULT_ARGV_BUDGET_BYTES, estimateArgvBytes } from "../../../common/persona-router.ts";
 import {
-  assertArgvWithinLimit,
+  assertZcodeArgvBudget,
   buildZcodeArgv,
   buildZcodeEnv,
-  estimateArgvBytes,
   launchZcodeProcess,
 } from "../launcher.ts";
 
@@ -38,32 +37,29 @@ describe("buildZcodeArgv", () => {
   });
 });
 
-describe("estimateArgvBytes / assertArgvWithinLimit", () => {
-  it("估算 = Σ(byteLength + 1)（NUL 分隔近似），含 node 与 cliPath 前导", () => {
-    const est = estimateArgvBytes("node", "/cli.cjs", ["--json"]);
-    expect(est).toBe("node".length + 1 + "/cli.cjs".length + 1 + "--json".length + 1);
-  });
-
-  it("中文 prompt 按字节计（非字符数）", () => {
-    const est = estimateArgvBytes("n", "c", ["--prompt", "中文"]);
+describe("assertZcodeArgvBudget（对齐点②：公共 persona-router 权威预算的引擎侧消费）", () => {
+  it("估算含 node 与 cliPath 前导（NUL 分隔近似），中文 prompt 按字节计", () => {
+    // 公共 estimateArgvBytes 的口径回归：前导两元素计入 + 多字节按 UTF-8 字节
+    const est = estimateArgvBytes(["n", "c", "--prompt", "中文"]);
     expect(est).toBe(2 + 2 + ("--prompt".length + 1) + Buffer.byteLength("中文") + 1);
   });
 
-  it("超 128KB 阈值抛 prompt_too_large（含恢复指引）", () => {
-    const bigPrompt = "x".repeat(ZCODE_ARGV_LIMIT_BYTES);
-    expect(() => assertArgvWithinLimit("node", "/cli.cjs", ["--prompt", bigPrompt])).toThrowError(
+  it("超 128KB 阈值抛 prompt_too_large（含恢复指引；阈值 = DEFAULT_ARGV_BUDGET_BYTES）", () => {
+    const bigPrompt = "x".repeat(DEFAULT_ARGV_BUDGET_BYTES);
+    expect(() => assertZcodeArgvBudget("node", "/cli.cjs", ["--prompt", bigPrompt])).toThrowError(
       /prompt_too_large/,
     );
     try {
-      assertArgvWithinLimit("node", "/cli.cjs", ["--prompt", bigPrompt]);
+      assertZcodeArgvBudget("node", "/cli.cjs", ["--prompt", bigPrompt]);
     } catch (err) {
+      // 公共 EngineError 形态：message 是 code 前缀 detail，恢复指引在 recovery 字段
       expect((err as { code: string }).code).toBe("prompt_too_large");
-      expect((err as Error).message).toContain("engine: pi");
+      expect((err as { recovery: string }).recovery).toContain("Shorten the task text");
     }
   });
 
   it("阈值内不抛", () => {
-    expect(() => assertArgvWithinLimit("node", "/cli.cjs", ["--prompt", "x".repeat(1024)])).not.toThrow();
+    expect(() => assertZcodeArgvBudget("node", "/cli.cjs", ["--prompt", "x".repeat(1024)])).not.toThrow();
   });
 });
 

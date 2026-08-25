@@ -147,6 +147,13 @@ function defaultCliConfigPath(): string {
 /** 短名（无 provider 前缀）解析的默认 provider（zsub DEFAULT_PROVIDER_ID 同构）。 */
 const DEFAULT_PROVIDER_ID = "builtin:bigmodel-coding-plan";
 
+/**
+ * 短名模型（如 "GLM-5.3"）的默认 provider 决策。让位条件（对齐点⑦）：显式默认引擎
+ * 模型配置引入时（config.json 出现 per-engine model 映射 / engineRouting 级模型缺省），
+ * 本函数的「内置常量优先」须让位为「配置值优先」——引擎路由层（engine/routing.ts 的
+ * taskModel 判定处）是引入该配置时应同步调整的决策点，避免出现「路由按配置模型选了
+ * 引擎、prepare 却按内置常量落池」的分裂。首期无该配置，常量即权威。
+ */
 function defaultProviderForShortName(
   merged: Map<string, ZcodeProviderEntry>,
   withKey: Array<[string, ZcodeProviderEntry]>,

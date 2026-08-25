@@ -110,6 +110,14 @@ export interface AgentTaskSpec {
   denyTools?: string[];
   /** 新增：中立权限模式。映射按 capabilities.permissionMode（kimi fixed auto = ignored）。 */
   permissionMode?: string;
+  /**
+   * [P4 形状预留，D9① 守卫 b 的独立载体] 任务对引擎能力的显式依赖声明。
+   * 首期无生产写入方：守卫 b 与守卫 a 合流（显式 engine 即能力依赖声明）——调用方
+   * 按引擎 id 表达依赖。下钻时机（AgentTaskSpec 泛化成熟后）：调用方改按能力表达
+   * （如 requires: { sandbox: 'native' }），路由层将本字段与各引擎 capabilities()
+   * 对照，无引擎满足时报 engine_capability_unsupported（调用前拒绝，D11 处置三级）。
+   */
+  requires?: Partial<EngineCapabilities>;
 }
 
 // ============================================================

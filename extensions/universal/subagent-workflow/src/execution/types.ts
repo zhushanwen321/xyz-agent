@@ -384,6 +384,16 @@ export interface ExecutionRecord {
    * 向后兼容：旧 record 无此字段，按默认值处理。
    */
   readonly idleTimeoutMs?: number;
+  /**
+   * 实际执行引擎 id（P4 路由留痕，D9①）。创建时确定不可变；缺省（存量 record）
+   * = pi 投影（消费方零迁移）。持久化经 subagent-record entry。
+   */
+  readonly engine?: string;
+  /**
+   * 引擎 fallback 留痕（D9①：probe 失败路由回默认引擎）。GUI 警告条数据源；
+   * 缺省 = 无 fallback。持久化经 subagent-record entry。
+   */
+  readonly engineFallback?: { from: string; reason: string };
 
   // ── 状态（实时更新）──
   status: ExecutionStatus;
@@ -563,6 +573,16 @@ export interface ExecuteOptions {
    * 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
    */
   idleTimeoutMs?: number;
+  /**
+   * 实际执行引擎 id（P4 路由留痕）：pi 引擎由 PiEngine.run 在还原 opts 时写入；
+   * 缺省（历史调用方不设）= pi 投影。createRecordForMode 读入 record identity。
+   */
+  engine?: string;
+  /**
+   * 引擎 fallback 留痕（D9①：probe 失败路由回默认引擎时由路由层写入）。
+   * from = 请求引擎 id，reason 恒 'engine_probe_failed'（GUI 警告条数据源）。
+   */
+  engineFallback?: { from: string; reason: string };
   // 注：fork 深度不从外部传入（曾暴露 parentForkDepth，改用 ALS 后 execute 内部从调用链派生，
   // 公开字段成为死字段误导调用方，已移除）。深度限制检查见 session-runner.ts 内部 RunOptions.parentForkDepth
   // （与历史残留的 types.ts RunOptions 同名不同 interface——后者已删除）。
@@ -731,6 +751,13 @@ export interface SubagentRecord {
   externalInstance?: AliveMarker;
   /** fork 模式下的 worktree handle。 */
   worktreeHandle?: WorktreeHandle;
+  /**
+   * 实际执行引擎 id（P4 路由留痕）。缺省 = pi 投影（存量 record 零迁移）；
+   * GUI 警告条/引擎标记的数据源之一。
+   */
+  engine?: string;
+  /** 引擎 fallback 留痕（D9①：probe 失败路由回默认引擎）。GUI 警告条数据源。 */
+  engineFallback?: { from: string; reason: string };
 }
 
 // ============================================================
@@ -747,6 +774,13 @@ export interface SubagentRecord {
 export interface SubagentsGlobalConfig {
   version: number;
   maxConcurrent: number;
+  /**
+   * 全局默认执行引擎（D9 三层优先级的最底层：调用参数 > agent frontmatter > 本值）。
+   * 缺省 'pi'（P4 路由层 DEFAULT_ENGINE_ID）。加载期只做类型校验，注册表校验归路由层。
+   */
+  defaultEngine?: string;
+  /** 引擎路由策略（D9①）：strict=true 时一切 probe 失败直接报错（不 fallback）。 */
+  engineRouting?: { strict: boolean };
 }
 
 // ============================================================

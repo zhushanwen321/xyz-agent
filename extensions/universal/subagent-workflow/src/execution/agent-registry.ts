@@ -20,6 +20,7 @@ import { parseResourceMeta } from "../shared/meta-parser.ts";
 import { lintAgentMeta } from "../orchestration/script-lint.ts";
 import type { AgentMeta } from "../shared/resource-meta.ts";
 import type { AgentConfig } from "./model-resolver.ts";
+import { hasEngine, listEngines, EngineNotFoundError } from "./engine/registry.ts";
 
 const logger = getLogger("subagents");
 
@@ -100,6 +101,14 @@ export function parseAgentWithMeta(
     );
   }
   const defaultBackgroundRaw = extractYamlField(yamlBlock, "defaultBackground");
+  // engine 字段（D9）：结构化优先（IF1），legacy fallback 与 model/tools 同判——
+  // agentMeta 未通过 IF1 时配置不丢
+  const engine = agentMeta?.engine ?? extractYamlField(yamlBlock, "engine");
+  // 解析期校验（D9：未注册 id 前置暴露，不留到运行时神秘失败）。为什么在解析期而非
+  // 路由期：配置错误的根源在 .md 文件，越早报错定位越准（错误含文件路径 + 注册清单）
+  if (engine !== undefined && !hasEngine(engine)) {
+    throw new EngineNotFoundError(engine, listEngines(), filePath);
+  }
 
   return {
     config: {
@@ -107,6 +116,7 @@ export function parseAgentWithMeta(
       systemPrompt: body,
       model: agentMeta?.model ?? modelFallback ?? undefined,
       thinkingLevel: extractYamlField(yamlBlock, "thinkingLevel") ?? undefined,
+      ...(engine !== undefined ? { engine } : {}),
       tools: agentMeta?.tools && agentMeta.tools.length > 0
         ? agentMeta.tools
         : (toolsFallback && toolsFallback.length > 0 ? toolsFallback : undefined),

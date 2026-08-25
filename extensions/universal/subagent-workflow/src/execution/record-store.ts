@@ -267,7 +267,17 @@ function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRec
     sessionFile: undefined,
     chatMode: d.chatMode === true,
     round: num("round"),
+    engine: str("engine"),
+    engineFallback:
+      isEngineFallbackShape(d.engineFallback) ? d.engineFallback : undefined,
   };
+}
+
+/** engineFallback entry 值的运行时 guard（未知 JSON 不裸收）。 */
+function isEngineFallbackShape(v: unknown): v is { from: string; reason: string } {
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.from === "string" && typeof r.reason === "string";
 }
 
 /** stat 戳（不存在 → null）。 */
@@ -1195,6 +1205,8 @@ export class RecordStore {
       resumable: r.resumable,
       // [review round2] worktree 隔离标志：内存源有 handle 或跨重启重建带 hadWorktree 均为 true。
       worktree: r.worktreeHandle !== undefined || r.hadWorktree === true,
+      engine: r.engine,
+      engineFallback: r.engineFallback,
     };
   }
 }

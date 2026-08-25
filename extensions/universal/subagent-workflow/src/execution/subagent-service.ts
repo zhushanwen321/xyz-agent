@@ -1389,6 +1389,10 @@ export class SubagentService {
       depth,
       chatMode: opts.conversation === true,
       idleTimeoutMs: opts.idleTimeoutMs,
+      // P4 引擎留痕（D9①）：opts.engine/engineFallback 由引擎适配层写入（PiEngine.run
+      // 从 RunContext 回填；缺省 = pi 投影，存量调用方零感知）
+      engine: opts.engine,
+      engineFallback: opts.engineFallback,
       controller,
     });
 

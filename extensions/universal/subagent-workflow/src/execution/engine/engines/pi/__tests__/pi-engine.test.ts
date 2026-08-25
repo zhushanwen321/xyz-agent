@@ -208,6 +208,7 @@ describe("PiEngine.run", () => {
       cwd: "/work",
       conversation: true,
       idleTimeoutMs: 99,
+      engine: "pi", // P4 引擎留痕（D9①）：实际执行引擎 id 进 record 投影链
     });
 
     // outcome 字段全集映射（缺字段在此转红——SAR outcomeToRunnerResult 的完整性依赖）

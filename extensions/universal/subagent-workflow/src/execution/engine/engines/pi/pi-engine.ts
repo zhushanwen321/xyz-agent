@@ -36,6 +36,7 @@ import type {
   Turn,
 } from "../../../types.ts";
 import type { EnginePort, EngineRunResult, RunContext } from "../../port.ts";
+import { replayJournalToSessionView } from "../../common/journal-replay.ts";
 import type {
   AgentOutcome,
   AgentTaskSpec,
@@ -213,12 +214,19 @@ export class PiEngine implements EnginePort {
       // 解耦形态兜底（schema 缺失时才生效，派生优先——见 mapper 注释）
       ...(ctx.schemaEnv !== undefined ? { schemaEnvFallback: ctx.schemaEnv } : {}),
     });
+    // P4 引擎留痕（D9①）：record 侧投影——实际执行引擎 id 恒 pi（本引擎身份）；
+    // engineFallback 由路由层经 RunContext 透传（无 fallback 缺省，record 字段零噪声）
+    opts.engine = PI_ENGINE_ID;
+    if (ctx.engineFallback !== undefined) opts.engineFallback = ctx.engineFallback;
+    // pi 无隔离池（PI_CODING_AGENT_DIR 全局一份，poolKey 恒 'shared'）——恒值声明，
+    // 宿主 journal writer 无需重定向（对齐点③的 pi 侧闭合）
+    ctx.onPoolResolved?.(PI_POOL_KEY);
     // ctx.stream / onEvent / signal 直通——与 SAR 接线前的传参完全一致（双通道互斥设计
     // 保持在 service/session-runner 内，引擎层不二次包装）
     const wfResult = await service.executeAndAwait(opts, ctx.signal, ctx.onEvent, ctx.stream);
     return {
       handle: this.buildHandle(wfResult, ctx),
-      outcome: workflowResultToOutcome(wfResult),
+      outcome: workflowResultToOutcome(wfResult, ctx),
     };
   }
 
@@ -258,14 +266,17 @@ export class PiEngine implements EnginePort {
   }
 
   /**
-   * D6 read 第①级：pi session JSONL 原生读取（session-reconstructor——完整重建
-   * turns/usage，sessionRead: 'full' 的依据）。降级：无 sessionRef / 文件缺失损坏 →
-   * outcome-only（第②级 journal 属 P2，落地后插在本分支之前）。
+   * D6 read 三级降级：①pi session JSONL 原生读取（session-reconstructor——完整重建
+   * turns/usage，sessionRead: 'full' 的依据）→ ②宿主 event journal 重放（P4 接线：
+   * common/journal-replay 复用 live reducer，重放等价性见 §3.3.6）→ ③outcome-only。
    */
   async read(handle: EngineHandle): Promise<SessionView> {
     const sessionFile = refString(handle.data.sessionRef, "sessionFile");
     const recon = sessionFile !== undefined ? reconstructFromFile(sessionFile) : undefined;
     if (!recon) {
+      // ②级：journal 重放（journalPath 缺省 / 文件不存在 / 无事件 → undefined 落③级）
+      const journaled = replayJournalToSessionView(handle, PI_ENGINE_ID);
+      if (journaled !== undefined) return journaled;
       return { engineId: PI_ENGINE_ID, turns: [], source: "outcome-only" };
     }
     return {
@@ -390,8 +401,8 @@ function isInvocationResolvable(invocation: PiInvocation): boolean {
   return false;
 }
 
-/** orchestration AgentResult → AgentOutcome（补 engineId；exitCode/engineFallback P1 无来源）。 */
-function workflowResultToOutcome(wf: WorkflowAgentResult): AgentOutcome {
+/** orchestration AgentResult → AgentOutcome（补 engineId；exitCode 无来源缺省）。 */
+function workflowResultToOutcome(wf: WorkflowAgentResult, ctx?: RunContext): AgentOutcome {
   return {
     content: wf.content,
     parsedOutput: wf.parsedOutput,
@@ -403,6 +414,8 @@ function workflowResultToOutcome(wf: WorkflowAgentResult): AgentOutcome {
     worktreePath: wf.worktreePath,
     toolCalls: wf.toolCalls,
     engineId: PI_ENGINE_ID,
+    // D9① fallback 留痕（路由层经 RunContext 透传；无 fallback 缺省）
+    ...(ctx?.engineFallback !== undefined ? { engineFallback: ctx.engineFallback } : {}),
   };
 }
 

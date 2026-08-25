@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RunContext } from "../../../port.ts";
 import type { AgentEvent, AgentTaskSpec, EngineHandle } from "../../../types.ts";
+import { HOST_TIMEOUT_ABORT_REASON } from "../../../common/kill-chain.ts";
 import { ZCODE_GOLDEN_STDOUT } from "../golden-sample.ts";
 import type { ZcodeLaunchedProcess } from "../launcher.ts";
 import { ZcodeEngine, type ZcodeEngineDeps } from "../zcode-engine.ts";
@@ -420,6 +421,18 @@ describe("run ③ abort：杀链合成终态（exitCode=null + 杀链标记）",
     const { outcome } = await runPromise;
     expect(outcome.exitCode).toBeNull();
     expect(outcome.error).toContain("杀链");
+  });
+
+  it("宿主超时 abort（reason 标记）→ engine_timeout 公共合成终态（对齐点④）", async () => {
+    const fake = makeFakeLaunch({ stdout: "partial output", exitCode: 143 });
+    const engine = makeEngine({ launch: fake.launch });
+    const controller = new AbortController();
+    controller.abort(HOST_TIMEOUT_ABORT_REASON); // mergeTimeoutSignal 超时链的 abort 形态
+    const { outcome } = await engine.run(makeTask(), makeCtx({ signal: controller.signal }));
+    expect(outcome.exitCode).toBeNull();
+    expect(outcome.error).toContain("engine_timeout");
+    expect(outcome.error).toContain("partial output"); // stdout 尾部保留（错误规格第 6 行）
+    expect(outcome.error).toContain("engine: pi"); // 重跑建议
   });
 });
 

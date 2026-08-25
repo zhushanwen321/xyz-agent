@@ -48,6 +48,12 @@ export interface AgentConfig {
   thinkingLevel?: string;
   /** 默认 background 模式（true 时无显式 wait 走 background）。 */
   defaultBackground?: boolean;
+  /**
+   * 执行引擎 id（agent .md frontmatter engine 字段，D9 per-agent 主通道）。
+   * 解析期已对注册表校验（未注册 id 在 agent-registry 抛 EngineNotFoundError）；
+   * 执行侧（P4 路由层）按 调用参数 > 本字段 > 全局默认 三层取值。
+   */
+  engine?: string;
 }
 
 /** 解析结果（model 实例 + 生效的 thinkingLevel）。 */

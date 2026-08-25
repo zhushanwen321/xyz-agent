@@ -34,18 +34,22 @@ export class EngineNotFoundError extends Error {
   readonly engineId: string;
   /** 请求时刻的已注册清单快照（防错误对象跨时间读 Map 的失真）。 */
   readonly registered: readonly string[];
+  /** 错误来源定位（agent .md 文件路径 / 配置键等；运行期 getEngine 无来源不传）。 */
+  readonly source: string | undefined;
 
-  constructor(engineId: string, registered: readonly string[]) {
+  constructor(engineId: string, registered: readonly string[], source?: string) {
     super(
       `engine_not_found: engine '${engineId}' is not registered. ` +
         `Registered engines: ${registered.length > 0 ? registered.join(", ") : "(none)"}. ` +
         `Recovery: check the engine id in the agent .md frontmatter (engine: field) or the global ` +
         `default engine setting, fix the typo, or install/register the engine first ` +
-        `(registered engines are listed above).`,
+        `(registered engines are listed above).` +
+        (source !== undefined ? ` Source: ${source}.` : ""),
     );
     this.name = "EngineNotFoundError";
     this.engineId = engineId;
     this.registered = registered;
+    this.source = source;
   }
 }
 

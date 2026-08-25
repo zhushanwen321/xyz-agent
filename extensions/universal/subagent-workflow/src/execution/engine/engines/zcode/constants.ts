@@ -40,17 +40,6 @@ export const ZCODE_POOL_DB_RELATIVE_PATH = ".zcode/cli/db/db.sqlite";
 /** zsub 同构的兜底缺省模型（v2 config 无 model.main 且 task 未指定时）。 */
 export const ZCODE_FALLBACK_DEFAULT_MODEL = "builtin:bigmodel-coding-plan/GLM-5.3";
 
-/**
- * argv 总字节上限（prompt_too_large 阈值）。spawn 单轮模式 prompt 只走 argv（无 stdin
- * 通道），macOS ARG_MAX 约 1MB 但单参与 env 共享预算，128KB 留足安全边际并在超限
- * 期（进程创建前）报错——不赌 E2BIG 的运行时形态。
- * TODO(W3 集成对齐): 与 common/persona-router 的 DEFAULT_ARGV_BUDGET_BYTES /
- * assertArgvBudget 功能重叠（其负责宿主侧 persona 路由分流，此处是引擎侧终检）。
- * W3 决定收口形态（单一权威阈值 vs 宿主/引擎两级各司其职），去重前两处阈值需同步。
- */
-// eslint-disable-next-line no-magic-numbers -- 128KB = 128 * 1024 bytes argv 预算换算常数
-export const ZCODE_ARGV_LIMIT_BYTES = 128 * 1024;
-
 /** 杀链 grace 窗口：SIGTERM 后等这么久再 SIGKILL（zsub 同构 5s；实测 SIGTERM→exit 仅 103ms）。 */
 export const ZCODE_KILL_GRACE_MS = 5_000;
 
