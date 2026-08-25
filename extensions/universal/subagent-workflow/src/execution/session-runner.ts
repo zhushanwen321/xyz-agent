@@ -25,6 +25,7 @@ import type { AgentConfig, ResolvedModel } from "./model-resolver.ts";
 import { collectResult } from "./output-collector.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
+import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "./relay-env.ts";
 import { stringifySchemaCached } from "../shared/schema-jsonify.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
@@ -963,6 +964,15 @@ function buildChildEnv(
   //（同进程内保留），子进程 identity entry 据此记 worktree:true——跨重启重建时据此拒绝续聊
   //（WorktreeHandle 不可序列化，reattach 不可行，静默回落主 repo 会破坏隔离）。
   childEnv.PI_SUBAGENT_WORKTREE = opts.worktree !== undefined ? "true" : undefined;
+  // [E 方案 §5.2-2] relay 帧归属 env：tee 帧路由键（→ 虚拟分区 subagent:<sid>:<rid>）。
+  // 仅 relay 激活时写入实际值——未激活环境下子 pi 进程携带 record 值 env 是误导噪声
+  //（归属 env 无消费者）；{...process.env} 继承值照旧保持。同源性对齐上方 PI_SUBAGENT_*
+  // 四元组：SESSION_ID = ctx.sessionRootId（嵌套 spawn 时孙进程仍归属真 ROOT 会话），
+  // RECORD_ID = record.id。
+  if (isRelayActive(process.env)) {
+    childEnv[RELAY_ENV_SESSION_ID] = ctx.sessionRootId;
+    childEnv[RELAY_ENV_RECORD_ID] = record.id;
+  }
   // D-A6 bridge: schema 激活 structured-output 扩展注册 tool（workflow 编排层需要）
   applySchemaEnvToChildEnv(childEnv, opts.schemaEnv);
   return childEnv;

@@ -48,8 +48,8 @@ import {
   resetAllEpipeFailures,
   sendPromptCommand,
 } from "./stdin-writer.ts";
-import type { StreamSink } from "./stream-sink.ts";
-import { SubagentStream } from "./stream-sink.ts";
+import type { StreamSink, SubagentStream } from "./stream-sink.ts";
+import { createBackgroundStream } from "./stream-sink.ts";
 import { writeCancelledTombstone } from "./tombstone-store.ts";
 import type { WorktreeHandle } from "./types.ts";
 import type {
@@ -1579,10 +1579,9 @@ export class SubagentService {
     /** resume 选项（M2-B1）：透传 runAndFinalize→runSpawn。undefined = 新 session。 */
     resume?: SpawnResumeOpts,
   ): void {
-    // 创建 streaming 生命周期对象——streamSink 为 null（session_start 未注入）时降级为 undefined。
-    const stream = this.streamSink
-      ? new SubagentStream(record.id, this.streamSink)
-      : undefined;
+    // 创建 streaming 生命周期对象。策略（含 widget 退役步骤 2：GUI + relay 激活时停发
+    // 私货、TUI/未激活原样创建、sink 未注入降级 undefined）集中在 createBackgroundStream。
+    const stream = createBackgroundStream(record.id, this.streamSink, ctx.mode, process.env);
 
     void this.runAndFinalize(
       record, opts, ctx, identity, signal, priority,

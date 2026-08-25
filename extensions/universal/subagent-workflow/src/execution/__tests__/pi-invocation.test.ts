@@ -3,9 +3,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach,describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { getPiInvocation } from "../pi-invocation.ts";
+import { RELAY_ENV_NODE, RELAY_ENV_SCRIPT, RELAY_ENV_SOCKET } from "../relay-env.ts";
 
 describe("getPiInvocation", () => {
   const originalArgv = process.argv;
@@ -69,5 +70,65 @@ describe("getPiInvocation", () => {
     const result = getPiInvocation([]);
     expect(result.command).toBe("pi");
     expect(result.args).toEqual([]);
+  });
+});
+
+describe("getPiInvocation relay 分支（E 方案 §5.1）", () => {
+  const originalArgv = process.argv;
+  const originalExecPath = process.execPath;
+  const RELAY_ENVS = [RELAY_ENV_SOCKET, RELAY_ENV_NODE, RELAY_ENV_SCRIPT] as const;
+  /** 三 env 齐备的基准值（改 argv/execPath 隔离直连分支，只测 relay 判定本身）。 */
+  const RELAY_FULL: Record<string, string> = {
+    [RELAY_ENV_SOCKET]: "/tmp/relay-test.sock",
+    [RELAY_ENV_NODE]: "/usr/bin/relay-node",
+    [RELAY_ENV_SCRIPT]: "/opt/relay/relay.mjs",
+  };
+
+  afterEach(() => {
+    Object.defineProperty(process, "argv", { value: originalArgv, configurable: true });
+    Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
+    for (const key of RELAY_ENVS) delete process.env[key];
+  });
+
+  /** 形态 1：三 env 齐备 + 默认 opts → relay invocation（command=NODE、args[0]=SCRIPT）。 */
+  it("三 env 齐备（无 opts）→ 代理形态 <NODE> <SCRIPT> <userArgs>", () => {
+    Object.assign(process.env, RELAY_FULL);
+    const result = getPiInvocation(["--mode", "rpc"]);
+    expect(result.command).toBe(RELAY_FULL[RELAY_ENV_NODE]);
+    expect(result.args).toEqual([RELAY_FULL[RELAY_ENV_SCRIPT], "--mode", "rpc"]);
+  });
+
+  /** 形态 1 变体：opts.relay === true 显式开启，行为与缺省一致。 */
+  it("三 env 齐备 + opts.relay=true → 同缺省（显式开启非必填）", () => {
+    Object.assign(process.env, RELAY_FULL);
+    const result = getPiInvocation(["--mode", "rpc"], { relay: true });
+    expect(result.command).toBe(RELAY_FULL[RELAY_ENV_NODE]);
+    expect(result.args[0]).toBe(RELAY_FULL[RELAY_ENV_SCRIPT]);
+  });
+
+  /** 形态 2：三缺一逐个枚举 → 回落现状直连（全有或全无，E-TUI 零回归）。 */
+  it("三缺一（逐个枚举）→ 现状直连分支", () => {
+    // 直连分支落到「node + 不存在脚本 → pi-in-PATH」可稳定断言（不依赖测试机 execPath 形态）
+    Object.defineProperty(process, "argv", { value: ["node", "/nonexistent"], configurable: true });
+    Object.defineProperty(process, "execPath", { value: "/usr/bin/node", configurable: true });
+    for (const missing of RELAY_ENVS) {
+      const partial = { ...RELAY_FULL };
+      delete partial[missing];
+      for (const key of RELAY_ENVS) delete process.env[key];
+      Object.assign(process.env, partial);
+      const result = getPiInvocation(["--mode", "rpc"]);
+      expect(result.command).toBe("pi"); // 分支 3：通用 runtime + 脚本不存在 → PATH
+      expect(result.args).toEqual(["--mode", "rpc"]);
+    }
+  });
+
+  /** 形态 3：probe 排除——显式 relay:false 时即便三 env 齐备也直连。 */
+  it("relay:false 强制直连（probe 语义：探 pi 本体，不探 runtime 健康）", () => {
+    Object.assign(process.env, RELAY_FULL);
+    Object.defineProperty(process, "argv", { value: ["node", "/nonexistent"], configurable: true });
+    Object.defineProperty(process, "execPath", { value: "/usr/bin/node", configurable: true });
+    const result = getPiInvocation(["--version"], { relay: false });
+    expect(result.command).toBe("pi");
+    expect(result.args).toEqual(["--version"]);
   });
 });

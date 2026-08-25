@@ -16,12 +16,24 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { isRelayActive, RELAY_ENV_NODE, RELAY_ENV_SCRIPT } from "./relay-env.ts";
+
 /** spawn 调用描述符：command + args（透传给 child_process.spawn）。 */
 export interface PiInvocation {
   /** 可执行文件路径（node/bun/pi 二进制）。 */
   command: string;
   /** 命令行参数（可能含 [scriptPath, ...userArgs] 或直接 [...userArgs]）。 */
   args: string[];
+}
+
+/** getPiInvocation 可选项。 */
+export interface PiInvocationOptions {
+  /**
+   * false = 强制直连 spawn 真实 pi（不经 relay 代理）。唯一现役消费点是 PiEngine.probe
+   * ——探针意图是 pi 本体可解析性，经 relay 探到的是 runtime 健康，语义错位（E 方案 §5.1）。
+   * 缺省（undefined / true）时按 relay env 激活判定走代理。
+   */
+  relay?: boolean;
 }
 
 /**
@@ -43,9 +55,12 @@ function isGenericRuntime(execPath: string): boolean {
  * 组装 pi 子进程的 spawn 调用。
  *
  * @param userArgs pi CLI 参数（如 ["--mode", "rpc", "--session-dir", "..."]）
+ * @param opts 可选项（relay:false 强制直连——probe 用，见 PiInvocationOptions）
  * @returns spawn 描述符（command + 完整 args）
  *
  * 决策链（按优先级）：
+ *   0. relay 激活（三 env 齐备且未显式禁用）→ <RELAY_NODE> <RELAY_SCRIPT> <userArgs>
+ *      （E 方案 §5.1：xyz-agent runtime 存在时经代理 spawn，改的是进程拓扑不是 pi 语义）
  *   1. process.argv[1] 是真实磁盘文件且非 bun 虚拟路径 → <execPath> <argv[1]> <userArgs>
  *      （复现当前 pi 进程的启动方式，确保扩展/配置/版本一致）
  *   2. execPath 非通用运行时（pi standalone binary）→ <execPath> <userArgs>
@@ -71,9 +86,24 @@ function currentScriptExists(): boolean {
   return scriptExistsCache.exists;
 }
 
-export function getPiInvocation(userArgs: string[]): PiInvocation {
+export function getPiInvocation(userArgs: string[], opts?: PiInvocationOptions): PiInvocation {
   const currentScript = process.argv[1];
   const isBunVirtualScript = currentScript?.startsWith(BUN_VIRTUAL_PREFIX);
+
+  // 分支 0（前置）：relay 激活（E 方案 §5.1）——runtime 注入三 env 齐备且未显式禁用时，
+  // spawn 目标切换为 <RELAY_NODE> <RELAY_SCRIPT> <原 pi spawnArgs>，形态与分支 1「node +
+  // script」同构（command 是执行器、args[0] 是脚本）。ELECTRON_RUN_AS_NODE 不在此补：
+  // 打包态执行器为 Electron 时由 runtime 与三 env 同点注入主 pi 进程 env（E-2
+  // getRelaySpawnEnv），本进程 {...process.env} 继承即达代理进程，extension 不重复判定。
+  // isRelayActive 已保证三 env 非空，下方取局部变量仅为 TS 收窄（isRelayActive 的
+  // 收窄不跨函数边界传导）。
+  if (opts?.relay !== false && isRelayActive(process.env)) {
+    const relayNode = process.env[RELAY_ENV_NODE];
+    const relayScript = process.env[RELAY_ENV_SCRIPT];
+    if (relayNode !== undefined && relayScript !== undefined) {
+      return { command: relayNode, args: [relayScript, ...userArgs] };
+    }
+  }
 
   // 分支 1：有真实脚本路径 → 复现启动方式（node <pi-script> <args>）
   if (currentScript && !isBunVirtualScript && currentScriptExists()) {

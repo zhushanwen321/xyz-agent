@@ -160,8 +160,9 @@ export class PiEngine implements EnginePort {
   async probe(opts?: { force?: boolean }): Promise<ProbeReport> {
     if (!opts?.force && this.probeCache) return this.probeCache;
 
-    // check 1：invocation 可解析（node 脚本存在 / standalone binary / PATH 可见）
-    const invocation = getPiInvocation(["--version"]);
+    // check 1：invocation 可解析（node 脚本存在 / standalone binary / PATH 可见）。
+    // relay:false 显式直连——探针测 pi 本体可解析性，经 relay 探到的是 runtime 健康，语义错位（§5.1）。
+    const invocation = getPiInvocation(["--version"], { relay: false });
     const invocationOk = isInvocationResolvable(invocation);
     const checks: ProbeReport["checks"] = [
       {
