@@ -137,6 +137,7 @@ export function taskToRegistryEntry(task: BackgroundTask): RegistryEntry {
 		...(task.endedAt !== undefined ? { endedAt: task.endedAt } : {}),
 		...(task.durationMs !== undefined ? { durationMs: task.durationMs } : {}),
 		...(task.tailSummary !== undefined ? { tailSummary: task.tailSummary } : {}),
+		...(task.pidStartTime !== undefined ? { pidStartTime: task.pidStartTime } : {}),
 	};
 }
 

@@ -16,6 +16,7 @@
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { killProcessTree } from "../kill-tree.ts";
+import { emitPendingUnregister } from "./notify.ts";
 import { stopPoller } from "./poller.ts";
 import { taskToRegistryEntry, writeRegistryEntry } from "./registry.ts";
 import { finalizeTask, getActiveTasks } from "./task-store.ts";
@@ -81,6 +82,12 @@ export function reapBackgroundTasksNow(): void {
 		});
 		if (finalized !== undefined) {
 			writeRegistryEntry(finalized.registryPath, taskToRegistryEntry(finalized));
+			// 尽力补 emit pending:unregister（§3.5「pi API 若仍可用」）：SIGTERM/SIGINT
+			// 信号路径 pi 引用尚活（emit 经模块级 notify 引用，bus 未 dispose 时送达
+			// pending listener 落盘）；process.on("exit") 同步路径 bus 可能已 dispose，
+			// emit throw 被 notify 内部捕获降级——残留由 session_start 对账兜底。
+			// **不 sendMessage**：进程都退了，无投递目标。
+			emitPendingUnregister(finalized.taskId, "process-exit", finalized.exitCode ?? null);
 		}
 	}
 }

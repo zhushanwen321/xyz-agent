@@ -26,13 +26,13 @@
  * 保守跳过整个处置（宁延迟勿误杀，worktree-manager 同原则）。终态收尾分支③
  * 无需校验——kill(pid,0) ESRCH 无歧义，校验只服务「判活防复用」。
  *
- * 已知缺口（诚实登记）：M2 spawn 侧尚未写入 pidStartTime 扩展字段
- * （spawn-background.ts 属并行单元 M4 边界，本单元不改）。条目缺字段时降级用
- * startedAt 秒级校验：actualStartSec <= floor(startedAt/1000) 视为原进程——
- * 登记发生在 spawn 之后（进程先启动、条目后登记），原进程必然满足降级判据
- * （floor 单调性，零误跳）；复用进程的 start time 必然晚于原进程死亡 >= 登记
- * 时刻，只有「登记后同秒内 pid 即被复用」的病态窗口可能混入（概率趋零，方向
- * 已登记）。spawn 侧补写 pidStartTime 后自动启用精确比较（同单位 epoch 秒）。
+ * 已知缺口→已闭合（M3 补写）：spawn 侧现已写入 pidStartTime（spawn-background.ts
+ * spawn 后读 ps start time，读取失败省略），新条目走精确比较（同单位 epoch 秒）。
+ * 存量旧条目（M3 之前登记、缺该字段）仍降级用 startedAt 秒级校验：
+ * actualStartSec <= floor(startedAt/1000) 视为原进程——登记发生在 spawn 之后（进程
+ * 先启动、条目后登记），原进程必然满足降级判据（floor 单调性，零误跳）；复用进程
+ * 的 start time 必然晚于原进程死亡 >= 登记时刻，只有「登记后同秒内 pid 即被复用」
+ * 的病态窗口可能混入（概率趋零，方向已登记）。
  *
  * 多进程并发串行化：扫描/补杀/写 registry 全程持跨进程文件锁（固定名
  * reaper.lock）——防两个 pi 进程同时 reap 同一批条目（kill 幂等无害，但 RMW
@@ -69,10 +69,10 @@ const MS_PER_SECOND = 1000;
 const REAPER_LOCK_TARGET = "reaper";
 
 /**
- * registry 条目扩展字段（M5 reaper 引入）。spawn 侧补写 pidStartTime 是后续
- * 小步（并行单元边界）；补写前条目缺该字段，reaper 走 startedAt 降级校验
- * （见文件头「已知缺口」）。单位 epoch 秒（ps -o lstart= 解析值），补写侧
- * 按此 SSOT 定义，勿混用 /proc tick 毫秒值。
+ * registry 条目扩展字段（M5 reaper 引入；M3 起 spawn 侧已补写——types.ts
+ * RegistryEntry 直接携带 pidStartTime，本接口保留为 reaper 视角的显式声明与
+ * 存量条目（M3 前登记）的读取形状）。单位 epoch 秒（ps -o lstart= 解析值），
+ * 勿混用 /proc tick 毫秒值。
  */
 export interface RegistryEntryStartTime {
 	pidStartTime?: number;
@@ -241,7 +241,7 @@ function reapEntrySync(
 	const matchesRegistered =
 		registeredStartSec !== undefined
 			? actualStartSec === registeredStartSec
-			: // 降级校验（spawn 侧未补写 pidStartTime 的存量条目，见文件头「已知缺口」）
+			: // 降级校验（M3 前登记、缺 pidStartTime 的存量条目，见文件头「已知缺口→已闭合」）
 				actualStartSec <= Math.floor(entry.startedAt / MS_PER_SECOND);
 	if (!matchesRegistered) {
 		// start time 与登记值不匹配 = pid 已被系统复用，当前占用者是无关新进程

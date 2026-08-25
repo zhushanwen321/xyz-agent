@@ -34,7 +34,13 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@zhushanwen/pi-pending-notifications": "workspace:*",
     "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@zhushanwen/pi-pending-notifications": {
+      "optional": true
+    }
   },
   "scripts": {
     "typecheck": "npx tsc --noEmit",

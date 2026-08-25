@@ -15,6 +15,8 @@ import { randomBytes } from "node:crypto";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { killProcessTree } from "../kill-tree.ts";
+import { getProcessStartTimeSec } from "../reaper.ts";
+import { emitPendingRegister } from "./notify.ts";
 import { ensurePollerRunning } from "./poller.ts";
 import { getRegistryPath, taskToRegistryEntry, writeRegistryEntry } from "./registry.ts";
 import { countActiveTasks, markKillingIntent, oldestActiveTask, registerSpawnedTask } from "./task-store.ts";
@@ -176,6 +178,11 @@ export function spawnBackgroundTask(opts: SpawnBackgroundOptions): SpawnBackgrou
 		return { ok: false, error: "Failed to start background command: no pid acquired" };
 	}
 
+	// M3 补写 M5 预告字段：spawn 后立即读子进程 start time（epoch 秒），供 reaper
+	// 精确比较防 pid 复用误杀。读取失败省略（undefined 不进条目）——reaper 降级走
+	// startedAt 秒级校验兜底，不报错不阻断 spawn
+	const pidStartTime = getProcessStartTimeSec(child.pid);
+
 	const task: BackgroundTask = {
 		taskId,
 		pid: child.pid,
@@ -186,6 +193,7 @@ export function spawnBackgroundTask(opts: SpawnBackgroundOptions): SpawnBackgrou
 		state: "running",
 		ownerPiPid: process.pid,
 		sessionId: opts.sessionId,
+		...(pidStartTime !== undefined ? { pidStartTime } : {}),
 		child,
 	};
 
@@ -193,10 +201,13 @@ export function spawnBackgroundTask(opts: SpawnBackgroundOptions): SpawnBackgrou
 		armBackgroundTimeout(task, opts.timeoutSec);
 	}
 
-	// 登记顺序：单例表（运行时权威）→ registry（持久化）→ 轮询器。
-	// registry 写失败不阻断（条目停留 running 由 M5 reaper 兜底，§3.5）
+	// 登记顺序（§3.5 数据流 ③④⑤）：单例表（运行时权威）→ registry（持久化）→
+	// pending:register emit。registry 写失败不阻断（条目停留 running 由 M5 reaper
+	// 兜底，§3.5）；emit 失败同样无害（peer 未加载/引用未注入时无 listener，通知
+	// 链路缺失不影响任务本体）
 	registerSpawnedTask(task);
 	writeRegistryEntry(registryPath, taskToRegistryEntry(task));
+	emitPendingRegister(task);
 	ensurePollerRunning();
 	return { ok: true, task };
 }

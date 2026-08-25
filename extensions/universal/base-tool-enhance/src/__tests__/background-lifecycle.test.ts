@@ -161,6 +161,18 @@ describe("real spawn lifecycle (poll edge finalization)", () => {
 		expect(seen).toHaveLength(1);
 		expect(seen[0]).toBe(`${spawned.task.taskId}:exited:natural`);
 	});
+
+	it("spawned entry carries pidStartTime for reaper precise comparison (M5→M3)", async () => {
+		const spawned = spawnBg("sleep 30");
+		if (!spawned.ok) throw new Error(spawned.error);
+		const { task } = spawned;
+		// 单例表与 registry 两侧均含字段（epoch 秒；ps 可用平台读取成功）
+		expect(typeof task.pidStartTime).toBe("number");
+		const registryEntry = readRegistry(REGISTRY_PATH).get(task.taskId) as
+			| { pidStartTime?: number }
+			| undefined;
+		expect(registryEntry?.pidStartTime).toBe(task.pidStartTime);
+	});
 });
 
 describe("bash_output tool", () => {

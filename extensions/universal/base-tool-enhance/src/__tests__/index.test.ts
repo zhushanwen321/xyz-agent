@@ -1,16 +1,24 @@
-// src/__tests__/index.test.ts —— 入口集成：工具注册（bash / bash_output / bash_kill）+ 审计 hook 挂载
+// src/__tests__/index.test.ts —— 入口集成：工具注册（bash / bash_output / bash_kill）+
+// 审计 hook 挂载 + M3 接线（D17 引用刷新 / exit 边沿通知 / session_start 对账链）
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
-const { createBashToolDefinitionMock } = vi.hoisted(() => ({
+const { createBashToolDefinitionMock, dataDirRef } = vi.hoisted(() => ({
 	createBashToolDefinitionMock: vi.fn(),
+	dataDirRef: { dir: "/tmp/bte-fake-agent-dir" },
 }));
 vi.mock("@earendil-works/pi-coding-agent", () => ({
 	createBashToolDefinition: createBashToolDefinitionMock,
-	getAgentDir: () => "/tmp/bte-fake-agent-dir",
+	getAgentDir: () => dataDirRef.dir,
 }));
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { getRegistryPath, writeRegistryEntry } from "../background/registry.ts";
+import { resetNotifyForTest } from "../background/notify.ts";
 import baseToolEnhanceExtension from "../index.ts";
 
 function createMockPi() {
@@ -18,6 +26,8 @@ function createMockPi() {
 		registerTool: vi.fn(),
 		on: vi.fn(),
 		appendEntry: vi.fn(),
+		events: { emit: vi.fn(), on: vi.fn() },
+		sendMessage: vi.fn(),
 	};
 }
 
@@ -51,5 +61,73 @@ describe("baseToolEnhanceExtension entry", () => {
 		baseToolEnhanceExtension(pi as unknown as ExtensionAPI);
 
 		expect(pi.on).toHaveBeenCalledWith("tool_execution_end", expect.any(Function));
+	});
+
+	it("registers a session_start handler (reaper + reconcile chain, M5/M3)", () => {
+		setupOfficialFactory();
+		const pi = createMockPi();
+
+		baseToolEnhanceExtension(pi as unknown as ExtensionAPI);
+
+		expect(pi.on).toHaveBeenCalledWith("session_start", expect.any(Function));
+	});
+});
+
+describe("session_start chain: reaper first, reconcile after (M3)", () => {
+	it("settles a zombie register via appendEntry on the SAME pi reference after reaper", async () => {
+		setupOfficialFactory();
+		// 独立临时 dataDir：reaper 对空目录 no-op，registry 预置终态僵尸条目
+		const dataDir = mkdtempSync(join(tmpdir(), "bte-index-"));
+		dataDirRef.dir = dataDir;
+		try {
+			const sessionId = "sess-index";
+			writeRegistryEntry(getRegistryPath(dataDir, sessionId), {
+				taskId: "bt-1700000000-idx001",
+				pid: 12345,
+				command: "sleep 3600",
+				outputFile: "/tmp/idx.log",
+				startedAt: 1_700_000_000_000,
+				state: "orphaned",
+				ownerPiPid: 1,
+				sessionId,
+			});
+			const pi = createMockPi();
+			baseToolEnhanceExtension(pi as unknown as ExtensionAPI);
+
+			const handler = pi.on.mock.calls.find((call) => call[0] === "session_start")?.[1] as (
+				event: unknown,
+				ctx: { sessionManager: { getSessionId: () => string; getEntries: () => unknown[] } },
+			) => void;
+			expect(handler).toBeDefined();
+			handler(undefined, {
+				sessionManager: {
+					getSessionId: () => sessionId,
+					getEntries: () => [
+						{
+							customType: "pending:register",
+							data: { id: "bt-1700000000-idx001", type: "bash", name: "sleep 3600" },
+						},
+					],
+				},
+			});
+
+			// handler 是 fire-and-forget（内部 await reaper 后同步对账）——等待落定
+			await vi.waitFor(() =>
+				expect(pi.appendEntry).toHaveBeenCalledWith("pending:unregister", {
+					id: "bt-1700000000-idx001",
+					reason: "cancelled",
+					status: "cancelled",
+				}),
+			);
+			// 对账之外尽力补一次 emit（listener 内存视图同步，失败无害）
+			expect(pi.events.emit).toHaveBeenCalledWith("pending:unregister", {
+				id: "bt-1700000000-idx001",
+				reason: "cancelled",
+			});
+		} finally {
+			rmSync(dataDir, { recursive: true, force: true });
+			dataDirRef.dir = "/tmp/bte-fake-agent-dir";
+			resetNotifyForTest();
+		}
 	});
 });

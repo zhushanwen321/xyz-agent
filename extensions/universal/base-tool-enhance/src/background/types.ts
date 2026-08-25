@@ -64,6 +64,11 @@ export interface BackgroundTask {
 	intent?: KillingIntent;
 	/** 后台显式 timeout 定时器（到点 kill-tree + 标 intent timeout）；终态化时清除 */
 	timeoutTimer?: ReturnType<typeof setTimeout>;
+	/**
+	 * 子进程 start time（epoch 秒，M3 补写 M5 预告字段）：spawn 后立即读取，供 reaper
+	 * 精确比较防 pid 复用误杀；读取失败省略（reaper 降级走 startedAt 秒级校验兜底）。
+	 */
+	pidStartTime?: number;
 	/** spawn 返回的 ChildProcess 引用：仅读 exitCode/signalCode（D17，见接口注释） */
 	child?: ChildProcess;
 }
@@ -83,6 +88,8 @@ export interface RegistryEntry {
 	endedAt?: number;
 	durationMs?: number;
 	tailSummary?: string;
+	/** 子进程 start time（epoch 秒，reaper pid 复用防御精确比较用；缺失走降级校验）。 */
+	pidStartTime?: number;
 }
 
 /** 任务是否处于活跃态（轮询器监护对象）。 */
