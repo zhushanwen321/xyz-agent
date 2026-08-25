@@ -12,6 +12,7 @@ import { resolvePoolDir } from "../../../paths.ts";
 import {
   ZcodePrepareError,
   computeZcodePoolKey,
+  listZcodeModels,
   prepareZcodeHome,
   resolveZcodeModelRef,
 } from "../preparer.ts";
@@ -32,7 +33,7 @@ function seedSources(): void {
   writeJson(v2Path, {
     provider: {
       [PROVIDER_A]: { options: { apiKey: "key-a", baseURL: "https://a.example" }, models: { "GLM-5.3": {}, "GLM-5.2": {} } },
-      [PROVIDER_B]: { options: { apiKey: "key-b", baseURL: "https://b.example" }, models: { "mimo-v2.5-pro": {} } },
+      [PROVIDER_B]: { name: "test-router", options: { apiKey: "key-b", baseURL: "https://b.example" }, models: { "mimo-v2.5-pro": {} } },
       "no-key-provider": { options: { baseURL: "https://x.example" }, models: { "M1": {} } },
     },
   });
@@ -107,6 +108,25 @@ describe("resolveZcodeModelRef（v2 单源）", () => {
       expect(e.message).toContain("ZCode 桌面端");
       expect(e.message).toContain("docs/research/agent-engine-zcode.md");
     }
+  });
+});
+
+describe("listZcodeModels（U7 可发现性）", () => {
+  it("聚合 v2 带凭据 provider × models（含 name 拼接），无凭据/空清单过滤", () => {
+    const models = listZcodeModels({ v2ConfigPath: v2Path });
+    const ids = models.map((m) => m.id);
+    expect(ids).toContain(`${PROVIDER_A}/GLM-5.3`);
+    expect(ids).toContain(`${PROVIDER_A}/GLM-5.2`);
+    expect(ids).toContain(`${PROVIDER_B}/mimo-v2.5-pro`);
+    // 无凭据 provider 不进清单
+    expect(ids.some((id) => id.startsWith("no-key-provider/"))).toBe(false);
+    // name = "<provider.name> · <model>"（v2 有 name 字段时）
+    const withName = models.find((m) => m.id === `${PROVIDER_B}/mimo-v2.5-pro`);
+    expect(withName?.name).toBe("test-router · mimo-v2.5-pro");
+  });
+
+  it("v2 不可读 → 空清单（fail-safe）", () => {
+    expect(listZcodeModels({ v2ConfigPath: path.join(tmpRoot, "absent.json") })).toEqual([]);
   });
 });
 

@@ -140,4 +140,14 @@ export interface EnginePort {
 
   /** D6 三级降级链：①引擎原生读取 → ②宿主 event journal（P2）→ ③outcome-only。 */
   read(handle: EngineHandle): Promise<SessionView>;
+
+  /**
+   * [U7] 可选面：模型可发现性——引擎自带 provider/model 体系时（如 zcode 的 v2 桌面
+   * 登录态），列出当前环境实际可用的模型清单（带凭据校验），供 system prompt 引擎段
+   * 与 GUI 引擎选择器消费。省略/返回 null = 「与主 agent 模型体系一致」（pi 的语义：
+   * system prompt 已有 <available_provider_models> 段，无需引擎再列）。
+   * engine-neutral：未来引擎（AcpEngine 等）实现本方法即自动获得注入与展示，宿主
+   * 侧零改动。
+   */
+  listModels?(): Array<{ id: string; name?: string }> | null;
 }

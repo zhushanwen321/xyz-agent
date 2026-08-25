@@ -18,6 +18,8 @@ import { randomUUID } from 'node:crypto'
 import { expandHome, isStrictlyUnder } from '../../utils/path-utils.js'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, ServerMessageMap, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataFile, SegmentsMetadataEntry, ProviderId } from '@xyz-agent/shared'
 import { BUILTIN_PRESET_IDS, IMAGE_LIMITS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
+import type { SubagentEngineConfigView, SubagentEnginesFile } from '@xyz-agent/extension-protocol'
+import { SUBAGENTS_ENGINES_FILENAME } from '@xyz-agent/extension-protocol'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
 import { getAttachmentsDir, getDataDir } from '@xyz-agent/shared/paths'
@@ -1017,6 +1019,60 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // 直读 subagent JSONL，复用 getHistoryFromFilePath 转换链路（parseJsonl + filter + convertHistory）。
     // subagent JSONL 格式与主 session 一致（pi SessionManager._persist 写入）。
     return getHistoryFromFilePath(record.sessionFile, this.sessionStore)
+  }
+
+  /**
+   * [U7] 子代理引擎配置视图：engines.json（extension 权威写入的动态引擎列表）+
+   * config.json defaultEngine（extension ModelConfigService 读同一文件）。
+   * 纯磁盘读取，Settings 冷启动（无活跃 session）也可用。
+   */
+  async getSubagentEngineConfig(): Promise<SubagentEngineConfigView> {
+    const subagentsDir = join(getPiAgentDir(), 'subagents')
+    let engines: string[] = ['pi']
+    try {
+      const raw = readFileSync(join(subagentsDir, SUBAGENTS_ENGINES_FILENAME), 'utf8')
+      const parsed = JSON.parse(raw) as Partial<SubagentEnginesFile>
+      if (Array.isArray(parsed.engines) && parsed.engines.every((e) => typeof e === 'string') && parsed.engines.length > 0) {
+        engines = parsed.engines
+      }
+    } catch {
+      // 缺失/损坏 → 兜底 ['pi']（pi 恒可用；extension 下次 session_start 会重写文件）
+    }
+    let defaultEngine = 'pi'
+    try {
+      const conf = JSON.parse(readFileSync(join(subagentsDir, 'config.json'), 'utf8')) as { defaultEngine?: unknown }
+      if (typeof conf.defaultEngine === 'string' && conf.defaultEngine.trim() !== '') {
+        defaultEngine = conf.defaultEngine.trim()
+      }
+    } catch {
+      // 无 config / 坏 JSON → 缺省 pi（extension 侧同缺省语义）
+    }
+    return { engines, defaultEngine }
+  }
+
+  /**
+   * [U7] 设置全局默认子代理引擎：读改写 config.json（保留其他字段）+ tmp+rename 原子写。
+   * engineId 校验：engines.json 清单内才允许（防 GUI 端把未知引擎写进配置）。
+   */
+  async setSubagentDefaultEngine(engineId: string): Promise<void> {
+    const view = await this.getSubagentEngineConfig()
+    if (!view.engines.includes(engineId)) {
+      throw new Error(`unknown subagent engine '${engineId}' (available: ${view.engines.join(', ')})`)
+    }
+    const configPath = join(getPiAgentDir(), 'subagents', 'config.json')
+    let conf: Record<string, unknown> = {}
+    try {
+      conf = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>
+    } catch {
+      // 无既有配置 → 新建（extension 读侧对缺字段的容忍与 DEFAULT_CONFIG 对齐）
+      conf = {}
+    }
+    if (conf['defaultEngine'] === engineId) return
+    conf['defaultEngine'] = engineId
+    mkdirSync(join(getPiAgentDir(), 'subagents'), { recursive: true })
+    const tmp = `${configPath}.tmp-${process.pid}-${Date.now()}`
+    writeFileSync(tmp, JSON.stringify(conf, null, 2), 'utf8')
+    renameSync(tmp, configPath)
   }
 
   /**

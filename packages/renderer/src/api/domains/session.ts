@@ -181,6 +181,21 @@ export async function getSubagentHistory(sessionId: string, subagentId: string):
 }
 
 /**
+ * [U7] 子代理引擎配置视图（engines = engines.json 动态清单 + config.json defaultEngine）。
+ * Settings「子代理」页引擎选择器数据源；无 session 依赖（全局配置，冷启动可用）。
+ */
+export async function getSubagentEngineConfig(): Promise<{ engines: string[]; defaultEngine: string }> {
+  return command('session.getSubagentEngineConfig', {})
+}
+
+/**
+ * [U7] 设置全局默认子代理引擎（runtime 读改写 config.json，新 session 生效）。
+ */
+export function setSubagentDefaultEngine(engineId: string): Promise<{ engineId: string }> {
+  return command('session.setSubagentDefaultEngine', { engineId })
+}
+
+/**
  * 获取 session 派生的 workflow 列表（runtime 从主 session JSONL 的 workflow-state-link 提取）。
  * reply payload 是 { sessionId, workflows }，解包 .workflows。
  */

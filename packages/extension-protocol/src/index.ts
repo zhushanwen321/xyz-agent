@@ -79,3 +79,10 @@ export {
   isSessionManagerAbortParams,
 } from './extensions/session-manager/types'
 export { SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS } from './extensions/session-manager/marker'
+
+// ── subagent-engine 协议（引擎可发现性：engines.json 状态文件 + 引擎配置视图；实现在 extensions/universal/subagent-workflow + runtime RPC）──
+export type {
+  SubagentEnginesFile,
+  SubagentEngineConfigView,
+} from './extensions/subagent-engine/contract'
+export { SUBAGENTS_ENGINES_FILENAME } from './extensions/subagent-engine/contract'

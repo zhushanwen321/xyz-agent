@@ -213,6 +213,33 @@ export function resolveZcodeModelRef(requested: string | undefined, sources?: Zc
 }
 
 // ============================================================
+// 模型清单（U7 可发现性——v2 单源聚合，与 resolveZcodeModelRef 的凭据校验同判据）
+// ============================================================
+
+/**
+ * 列出当前环境 zcode 引擎实际可用的模型（v2 config 内带 apiKey 的 provider × 其
+ * models 清单）。消费方：EnginePort.listModels（system prompt 引擎段 / GUI）。
+ * 失败安全：v2 config 不可读 → 空清单（可发现性降级不阻塞主流程）。
+ */
+export function listZcodeModels(sources?: ZcodeSourcePaths): Array<{ id: string; name?: string }> {
+  const v2 = readSourceConfig(sources?.v2ConfigPath ?? defaultV2ConfigPath());
+  const out: Array<{ id: string; name?: string }> = [];
+  for (const [pid, entry] of v2.providers) {
+    if (!hasApiKey(entry)) continue;
+    const providerName =
+      typeof entry["name"] === "string" && entry["name"].trim() !== "" ? entry["name"].trim() : undefined;
+    const models = Object.keys(entry.models ?? {});
+    for (const model of models) {
+      out.push({
+        id: `${pid}/${model}`,
+        ...(providerName !== undefined ? { name: `${providerName} · ${model}` } : {}),
+      });
+    }
+  }
+  return out;
+}
+
+// ============================================================
 // 池 key 与目录
 // ============================================================
 

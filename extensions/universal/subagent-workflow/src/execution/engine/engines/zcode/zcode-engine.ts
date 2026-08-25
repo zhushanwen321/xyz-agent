@@ -71,7 +71,7 @@ import {
   type ZcodeCollectedOutput,
   type ZcodeTerminalPayload,
 } from "./parser.ts";
-import { prepareZcodeHome, resolveZcodeModelRef, type ZcodeSourcePaths } from "./preparer.ts";
+import { listZcodeModels, prepareZcodeHome, resolveZcodeModelRef, type ZcodeSourcePaths } from "./preparer.ts";
 import { readZcodeSessionView } from "./reader.ts";
 
 const logger = getLogger("subagents");
@@ -444,6 +444,11 @@ export class ZcodeEngine implements EnginePort {
    * sessionId 缺失（解析失败的 run 无法在共享池 db 内定位 session）跳过①级；②级
    * 依赖 handle.journalPath（宿主 run 后回填）。
    */
+  /** [U7] 模型可发现性：v2 桌面登录态聚合（带凭据 provider × models），失败安全返回清单本身可能为空。 */
+  listModels(): Array<{ id: string; name?: string }> {
+    return listZcodeModels(this.deps.sources);
+  }
+
   async read(handle: EngineHandle): Promise<SessionView> {
     if (handle.data.engineId !== ZCODE_ENGINE_ID) {
       return { engineId: ZCODE_ENGINE_ID, turns: [], source: "outcome-only" };

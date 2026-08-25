@@ -60,6 +60,8 @@ export type ClientMessageType =
   // wave:runtime-wiring 已在 ClientMessageMap 补登记 request payload 形状（见下方）。
   | 'session.subscribe' | 'session.unsubscribe'
   | 'session.getSubagents' | 'session.getSubagentHistory'
+  // [U7] 子代理引擎配置（Settings 引擎选择器：动态引擎列表 + defaultEngine 读写）
+  | 'session.getSubagentEngineConfig' | 'session.setSubagentDefaultEngine'
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
   | 'session.workflowAction' | 'session.subagentAction'
   // wave:runtime-patch ipc-converge-a3 W2：业务持久化写迁 WS（session 数据单一出口归 runtime）。
@@ -343,6 +345,9 @@ export interface ClientMessageMap {
   // subagent 列表/对话流读取（runtime 直读主 session JSONL + subagent JSONL，不依赖扩展）
   'session.getSubagents': { sessionId: string }
   'session.getSubagentHistory': { sessionId: string; subagentId: string }
+  // [U7] 子代理引擎配置读写（payload：set 带 engineId；get 无参）
+  'session.getSubagentEngineConfig': Record<string, never>
+  'session.setSubagentDefaultEngine': { engineId: string }
   // workflow 列表/agent call 对话流读取（runtime 直读主 session JSONL + workflow-state JSONL，不依赖扩展）
   'session.getWorkflows': { sessionId: string }
   'session.getAgentCallHistory': { sessionId: string; agentCallSessionId: string }
@@ -649,6 +654,8 @@ export type ServerMessageType =
   | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted' | 'session.setProject'
   | 'project.loaded'
   | 'session.subagents' | 'session.subagentHistory'
+  // [U7] 子代理引擎配置（Settings 引擎选择器；形状 = @xyz-agent/extension-protocol SubagentEngineConfigView，契约 SSOT 在彼处）
+  | 'session.subagentEngineConfig' | 'session.subagentDefaultEngineSet'
   // E 方案（subagent-realtime-channel §4.3）：runtime relay tee 产出的 subagent entry 增量帧
   | 'session.subagentEntriesAppended'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
@@ -943,6 +950,10 @@ export interface ServerMessageMapBase {
   'session.subagents': { sessionId: string; subagents: SubagentRecord[] }
   // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）
   'session.subagentHistory': { sessionId: string; subagentId: string; messages: import('./message').Message[] }
+  // [U7] getSubagentEngineConfig 的 reply（engines = extension engines.json 动态清单；形状与 extension-protocol 契约一致）
+  'session.subagentEngineConfig': { engines: string[]; defaultEngine: string }
+  // [U7] setSubagentDefaultEngine 的 reply（写 config.json 后确认；新 session 生效）
+  'session.subagentDefaultEngineSet': { engineId: string }
   // session.subagentEntriesAppended（E 方案，subagent-realtime-channel §4.3/§6）：runtime relay
   // tee 翻译层产出的 subagent entry 增量帧——子进程 stdout 事件经 event-adapter 独立实例
   // 翻译 + entry 化（与主对话流 message.message_end / tool_call_* 帧的 entry 形态同构，
@@ -1499,6 +1510,8 @@ export interface ReplyPayloadMap {
   'session.fetchCurrentSystemPrompt': ServerMessageMap['session.currentSystemPrompt']
   'session.getFullHistory': ServerMessageMap['session.fullHistory']
   'session.getSubagentHistory': ServerMessageMap['session.subagentHistory']
+  'session.getSubagentEngineConfig': ServerMessageMap['session.subagentEngineConfig']
+  'session.setSubagentDefaultEngine': ServerMessageMap['session.subagentDefaultEngineSet']
   'session.getSubagents': ServerMessageMap['session.subagents']
   'session.getWorkflows': ServerMessageMap['session.workflows']
   'session.history': ServerMessageMap['session.history']

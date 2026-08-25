@@ -12,8 +12,8 @@ export default {
     providerDesc: '配置模型供应商与 API Key',
     skill: '技能',
     skillDesc: '管理技能加载路径与来源',
-    agent: '代理',
-    agentDesc: '管理子代理加载路径与来源',
+    agent: '子代理',
+    agentDesc: '管理子代理引擎与加载路径',
     extension: '扩展',
     extensionDesc: '管理 Pi 扩展与工具',
     systemPrompt: '系统提示词',
@@ -38,6 +38,11 @@ export default {
       fontTitle: '字体大小',
       fontHint: '正文当前实际渲染 {size}。自适应已开启：视口 ≥2100px 自动 ×1.08、<1400px 自动 ×0.95，与所选档位相乘、互不屏蔽。',
     },
+  },
+  subagentEngine: {
+    title: '子代理引擎',
+    label: '默认引擎',
+    desc: '派发子代理任务时使用的执行引擎；更改后需重新打开会话生效',
   },
   // ── SystemPrompt 页（SystemPromptPage）──
   systemPrompt: {

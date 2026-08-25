@@ -34,6 +34,7 @@ import type {
   SkillDirConfig,
   ProviderId,
 } from '@xyz-agent/shared'
+import type { SubagentEngineConfigView } from '@xyz-agent/extension-protocol'
 import type { DirScopes } from './services/skill-dir-config.js'
 import type { SessionTraceSnapshot } from './services/session/session-trace.js'
 import type { Credential } from './services/auth/auth-storage.js'
@@ -162,6 +163,17 @@ export interface ISessionService {
    * subagentId 对应 SubagentRecord.subagentId，从 getSubagents 结果中查找 sessionFile 路径。
    */
   getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]>
+  /**
+   * [U7] 子代理引擎配置视图（engines.json 动态引擎列表 + config.json defaultEngine 合成）。
+   * 纯磁盘读取，不依赖 pi 进程活跃；engines.json 缺失/损坏时 engines 兜底 ['pi']。
+   */
+  getSubagentEngineConfig(): Promise<SubagentEngineConfigView>
+  /**
+   * [U7] 设置全局默认子代理引擎（读改写 config.json defaultEngine，保留其他字段，
+   * tmp+rename 原子写）。engineId 不在 engines.json 清单内时 throw（防写坏配置）。
+   * 生效时机：新 session（extension 在 session_start 读 config——与模型配置同节奏）。
+   */
+  setSubagentDefaultEngine(engineId: string): Promise<void>
   /**
    * 获取 session 派生的 workflow 列表（从主 session JSONL 的 workflow-state-link 提取）。
    * 纯磁盘读取，不依赖 pi 进程活跃。文件不存在或无 workflow 调用时返回空数组。

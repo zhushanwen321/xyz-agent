@@ -12,8 +12,8 @@ export default {
     providerDesc: 'Configure model providers and API keys',
     skill: 'Skill',
     skillDesc: 'Manage Skill load paths and sources',
-    agent: 'Agent',
-    agentDesc: 'Manage Agent load paths and sources',
+    agent: 'Subagents',
+    agentDesc: 'Manage subagent engine and load paths',
     extension: 'Extension',
     extensionDesc: 'Manage Pi extensions and tools',
     systemPrompt: 'System Prompt',
@@ -38,6 +38,11 @@ export default {
       fontTitle: 'Font size',
       fontHint: 'Body text currently renders at {size}. Auto-adaptation enabled: viewport ≥2100px scales ×1.08, <1400px scales ×0.95, multiplied with the selected tier, mutually non-blocking.',
     },
+  },
+  subagentEngine: {
+    title: 'Subagent Engine',
+    label: 'Default engine',
+    desc: 'Execution engine for subagent dispatch; takes effect after reopening the session',
   },
   // ── SystemPrompt page (SystemPromptPage) ──
   systemPrompt: {

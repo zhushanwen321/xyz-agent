@@ -16,7 +16,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type { ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
@@ -24,6 +24,10 @@ import { bestEffort } from "./execution/best-effort.ts";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
 import { getOrCreateChannelRegistry } from "./execution/channel-registry-access.ts";
 import { DialogGlobalQueue } from "./execution/dialog-queue.ts";
+// [U7] 引擎列表状态文件（registry → engines.json，GUI 引擎选择器数据源）
+import { syncEnginesFile } from "./execution/engine/engine-discovery.ts";
+// [U7] 引擎模型段注入（defaultEngine 非 pi 时 system prompt 补 <available_<engine>_models>）
+import { buildEngineModelsPromptAppend } from "./execution/engine/model-prompt.ts";
 // [P1 引擎接线] 组合根登记 'pi' 引擎进 registry（引擎获取统一经 getEngine，缺省 id 'pi'）
 import { registerPiEngine } from "./execution/engine/engines/pi/registration.ts";
 // [P3 引擎接线] 组合根登记 'zcode' 引擎（spawn 单轮模式；engineDataDir 默认走
@@ -347,6 +351,10 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     const sessionId = ctx.sessionManager.getSessionId();
     lsRef.lastSessionId = sessionId;
 
+    // [U7] 引擎列表同步 engines.json（幂等零写 + fail-safe；组合根注册已在
+    // extension 工厂体完成，此处 registry 已含全部引擎）
+    syncEnginesFile(agentDir);
+
     // skill 路径两级缓存 session 级失效：pi 同进程可能有多个 session（TUI /new、/fork），
     // 运行中安装的 skill 需对新 session 可见（含曾 miss 缓存的 undefined 条目与 npm 新装
     // 包的候选目录）。session 内复用收益不变（IF8/DM3 消重发生在同 session 的重复调用）。
@@ -572,6 +580,22 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       ctx,
       storeHealthy,
     });
+  });
+
+  // ════════════════════════════════════════════════════════════
+  //  [U7] before_agent_start：引擎模型段注入（defaultEngine 非 pi 且引擎实现
+  //  listModels 时追加 <available_<engine>_models>——每 turn 重判 config，改配置
+  //  后下一 turn 即生效；fail-safe 任何异常不注入不阻塞 agent loop）
+  // ════════════════════════════════════════════════════════════
+  pi.on("before_agent_start", (event: BeforeAgentStartEvent) => {
+    try {
+      const service = getModelConfigService();
+      const append = service === null ? "" : buildEngineModelsPromptAppend(service.getGlobalConfig().defaultEngine);
+      if (append === "" || typeof event.systemPrompt !== "string") return undefined;
+      return { systemPrompt: `${event.systemPrompt}\n\n${append}` };
+    } catch {
+      return undefined;
+    }
   });
 
   // ════════════════════════════════════════════════════════════

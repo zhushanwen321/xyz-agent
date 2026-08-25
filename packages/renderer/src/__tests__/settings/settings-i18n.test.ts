@@ -22,7 +22,7 @@ describe('U10: settings UI 文案经 i18n 渲染', () => {
     // 菜单 tab 名（中文化）
     expect(i18n.global.t('settings.menu.provider')).toBe('供应商')
     expect(i18n.global.t('settings.menu.skill')).toBe('技能')
-    expect(i18n.global.t('settings.menu.agent')).toBe('代理')
+    expect(i18n.global.t('settings.menu.agent')).toBe('子代理')
     expect(i18n.global.t('settings.menu.extension')).toBe('扩展')
     expect(i18n.global.t('settings.menu.system')).toBe('系统')
     // provider 页
