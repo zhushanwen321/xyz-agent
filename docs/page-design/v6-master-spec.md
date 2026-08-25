@@ -269,10 +269,11 @@ demo 阶段功能做到「可见 + 可交互 + 数据 mock」即够。不接 run
 ### 4.6 字体 / 字号 scale（2026-08-02 整体上移一档 + 自适应）
 
 ```css
---font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+--font-sans: system-ui, 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
 --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
 
 /* 字号 scale（base 13→14 上移，calc 自适应）*/
+> 2026-08-25：--font-sans 改系统栈，supersede ADR-0019 的 Inter 字体子决策（chat-visual-font-optimize）
 --font-scale-u: 1;   /* 用户档位（TokenDebugPage 选：紧凑0.92/标准1.0/偏大1.08/大1.16）*/
 --font-scale-mq: 1;  /* 视口档位（媒体查询：≥2100px ×1.08 / <1400px ×0.95）*/
 --text-2xs: calc(11px * var(--font-scale-u) * var(--font-scale-mq));

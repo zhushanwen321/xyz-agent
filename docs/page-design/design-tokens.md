@@ -77,7 +77,8 @@
 ## 字体
 
 ```css
---font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;  /* C */
+--font-sans: system-ui, 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+> 2026-08-25 改系统栈，supersede 本文件原 Inter 决策，权威见 v6-master-spec §4.6
 --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;  /* D 继承 */
 /* display 与 body 同用 --font-sans（tech-utility 取向，开发者工具直觉） */
 ```

@@ -1,6 +1,5 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import '@fontsource-variable/inter' // Inter 字体（design-tokens SSOT，ADR-0019）—— npm 包随 bundle 打包，离线可用
 import 'katex/dist/katex.min.css' // KaTeX 公式样式（第三方库 CSS，随 bundle 打包；math_inline/math_block 渲染产出 .katex/.katex-display 节点依赖此样式）
 import i18n from './i18n'
 import App from './App.vue'
