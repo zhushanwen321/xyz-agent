@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 69 条（生成于 2026-08-22）。
+共 72 条（生成于 2026-08-25）。
 
 ## pi 关系（外部依赖边界）
 
@@ -86,6 +86,9 @@
 | C-ext-10 | 扩展资源自包含（包目录内 + files 字段全量声明）；生产使用只走 pi install npm:（本地目录仅限 dev 调试） | extensions/** | [extension-conventions](extensions/extension-conventions.md) | review: review-extension-api |
 | C-ext-11 | extension 改动优先本地 pi CLI 实测（--mode rpc + stdin JSONL），不是只在 xyz-agent 桌面验证 | extensions/** | [AGENTS.md](../AGENTS.md) | — |
 | C-ext-12 | TUI/GUI 环境区分用 ctx.mode === "rpc"（hasUI 在 TUI/RPC 均为 true 不能区分）；event handler 注入消息只能 pi.sendUserMessage；agent_end 禁启动新 LLM 调用 | extensions/** | [extension-conventions](extensions/extension-conventions.md) · [development-guide](extensions/development-guide.md) | review: review-extension-api |
+| C-ext-13 | subagent 引擎抽象依赖方向单向：上层→中立类型/EnginePort，adapter→公共降级层；runtime 永不 import adapter 运行时件（launcher/preparer/parser 与 EnginePort 实例），例外仅无状态 reader 模块与中立制品（record+journal） | extensions/universal/subagent-workflow/**、packages/runtime/** | [subagent-engine-abstraction](architecture/subagent-engine-abstraction.md#331-分层总图) | review: review-arch-boundary |
+| C-ext-14 | schema 校验 native/emulated 硬分流：capabilities.schemaEnforcement=native 的引擎保持原生链路（pi env 注入为唯一权威），禁止 import schema-emulation 二次校验；ajv 只许出现在 emulated 路径（structured-output 方案 A 历史教训） | extensions/universal/subagent-workflow/src/execution/engine/** | [subagent-engine-abstraction](architecture/subagent-engine-abstraction.md#d4-降级能力归属公共层native-路径与仿真路径硬分流) | review: review-business-logic |
+| C-ext-15 | 引擎数据目录布局（<dataDir>/engines/<engineId>/<poolKey>/）与 journal 路径必须经 engine/paths.ts 同源推导，extension 写侧与 runtime 校验侧禁自拼字符串；record.engine 缺省按 pi 投影（存量 record 零迁移） | extensions/universal/subagent-workflow/src/execution/engine/**、packages/runtime/src/services/session/** | [subagent-engine-abstraction](architecture/subagent-engine-abstraction.md#d5-环境隔离与凭据注入走-per-engine-preparer-钩子隔离目录池化保留随-record-生命周期回收) · [subagent-engine-abstraction](architecture/subagent-engine-abstraction.md#d6-session-读取独立-sessionview-接口--三级降级链第级归属宿主-event-journal引擎无关) | review: review-arch-boundary |
 
 ## 打包与分发
 
