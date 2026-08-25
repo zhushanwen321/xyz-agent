@@ -38,7 +38,7 @@ vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
 }))
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   model: { switchModel: vi.fn() },
-  session: { setThinkingLevel: vi.fn() },
+  session: { setThinkingLevel: vi.fn(), getCommands: vi.fn().mockResolvedValue({ sessionId: '', commands: [] }) },
   composer: {
     getMentionCandidates: vi.fn().mockResolvedValue([]),
     getFileCandidates: vi.fn().mockResolvedValue([]),

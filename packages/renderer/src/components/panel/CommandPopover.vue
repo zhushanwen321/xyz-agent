@@ -87,6 +87,7 @@ import { SLASH_COMMAND_SOURCE_KEY } from './command-popover-source'
 import { useFileSearch } from '@/composables/features/search/useFileSearch'
 import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command-filter'
 import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
+import { useCommandSync } from '@/composables/panel/useCommandSync'
 import { toFileCandidates, filterAndSortFileCandidates } from '@xyz-agent/core'
 import type { SkillInfo } from '@xyz-agent/shared'
 
@@ -127,20 +128,24 @@ const { t } = useI18n()
 const commandStore = useCommandStore()
 const { load: loadFileCandidates } = useFileSearch()
 
+// ADR-0049：fileCandidates 从 watch 清理派迁移到 store 缓存驱动。
+// 原实现用实例级 `loaded` 标志 + `watch(sessionId)` 手动复位（`loaded = false`）——
+// 违反 ADR-0049 checklist #2（watch 清理派反模式：实例 ref + watch 切换时清空）。
+// 现在删除 `loaded` 标志：useFileSearch store 已提供 per-session 缓存（fileSearchStore.get），
+// loadCandidates 幂等（缓存命中直接返回），watch(sessionId) 仅触发拉取（不重置任何状态）。
+// fileCandidates 是短暂 UI 显示态（非 per-session 业务状态），每次 session 切换从 store 缓存
+// 重新填充，不存在跨 session 泄漏问题（store 分区天然隔离）。
 const fileCandidates = ref<ReturnType<typeof toFileCandidates>>([])
 
-// 异步加载 # 文件候选（session 级缓存命中则不重拉；无 session 时不加载）
-let loaded = false
+// 异步加载 # 文件候选（store 缓存命中则不重拉；无 session 时不加载）
 async function loadCandidates(): Promise<void> {
-  if (loaded) return
-  loaded = true
   if (!props.sessionId) return // landing 态无 cwd，不加载文件候选
   const nodes = await loadFileCandidates(props.sessionId)
   fileCandidates.value = toFileCandidates(nodes)
 }
 onMounted(() => { void loadCandidates() })
-// sessionId 变化时重新加载（切 session，loaded 复位触发重拉新 session 缓存）
-watch(() => props.sessionId, () => { loaded = false; void loadCandidates() })
+// sessionId 变化时触发拉取（幂等：store 缓存命中直接返回，不重置任何状态——ADR-0049）
+watch(() => props.sessionId, () => { void loadCandidates() })
 
 /** composer 形态归一化（默认 panel，兼容未透传 variant 的旧调用） */
 const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
@@ -183,12 +188,23 @@ const slashCommands = computed(() => {
   return [compactCmd, ...merged.filter((c) => !isInternalSlashName(c.name))]
 })
 
-/** 订阅 session.commands（D8 走 session 通道）→ 写 commandStore（跨组件重建持久化）。重订归 useSessionEvents。 */
+/** 补拉闭环：挂载 / 切 session / 打开浮层时主动拉取命令列表（修复 skill 消失缺陷）。 */
+const sync = useCommandSync(toRef(props, 'sessionId'))
+
+/** 浮层打开（slash 类型）时触发补拉（D1 第三触发点）。SWR 模式：先渲染 store 旧值，拉取应答回写覆盖。 */
+watch(
+  () => props.open && props.type === 'slash',
+  (v) => { if (v) sync.onOpenPull() },
+)
+
+/** 订阅 session.commands（D8 走 session 通道）→ 写 commandStore（跨组件重建持久化）。
+ *  重订归 useSessionEvents。
+ *  FM4 修复（ADR-0049）：使用 useSessionEvents 注入的第二参数 sid（订阅时捕获，
+ *  不随 props.sessionId 变化），消除切 sid 时序竞态导致的跨分区污染。 */
 const onMessage = useSessionEvents(toRef(props, 'sessionId'))
-onMessage('session.commands', (msg) => {
+onMessage('session.commands', (msg, sid) => {
   const cmds = msg.payload.commands as RawCommand[]
-  const sid = props.sessionId
-  if (sid) commandStore.applyCommands(sid, cmds)
+  commandStore.applyCommands(sid, cmds)
 })
 
 /** 统一候选项视图（file/slash 两路归一为 { id, name, kind, icon, isSkill, description? }） */
