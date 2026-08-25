@@ -38,6 +38,8 @@ export class SessionMessageHandler {
   readonly handles: ClientMessageType[] = [
     'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.restore', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork', 'session.setProject',
     'session.handoff', 'session.abortHandoff',
+    // 强制退出（sidebar 右键）：杀 pi 进程 + stopped 收敛，区别于协作式 message.abort。
+    'session.forceQuit',
     // wave:runtime-wiring：session.subscribe/unsubscribe RPC（IF6/IF7）。
     'session.subscribe', 'session.unsubscribe',
     'session.getSubagents', 'session.getSubagentHistory',
@@ -100,6 +102,13 @@ export class SessionMessageHandler {
           this.ctx.sendError(ws, RESTORE_FAILED, toErrorMessage(e), msg.id)
           return
         }
+      }
+      case 'session.forceQuit': {
+        // 强杀 pi 进程 + stopped 收敛（终态经 session.exited 广播推回，不依赖 reply）。
+        // reply message.status ack（与 message.abort 对称），否则 renderer pending.register(id) 永挂。
+        const fqSid = msg.payload.sessionId
+        await this.ctx.sessionService.forceQuit(fqSid)
+        return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: fqSid, status: 'force_quit' })
       }
       case 'session.fork': {
         // fork：runtime 读源 JSONL 截断 → 新进程 switch_session。reply session.created（复用类型）。

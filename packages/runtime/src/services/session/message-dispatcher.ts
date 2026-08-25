@@ -214,19 +214,7 @@ export class MessageDispatcher {
         // onSessionExit 收敛链。编排与 lifecycle.delete / onSessionExit 回调同构（detach →
         // session.exited → removeSessionEntry），非新发明。
         console.warn(`[message-dispatcher] abort RPC timed out (pi event loop frozen), force-destroying session ${sessionId}`)
-        this.svc.detachSession(sessionId)
-        await this.pm.destroySession(sessionId)
-        // stopped 终态须在 removeSessionEntry 前写（persistSessionOutcome 内部按 id 查
-        // sessions Map，条目删除后静默跳过）。
-        this.svc.persistSessionOutcome(sessionId, 'stopped', `Abort failed (pi unresponsive): ${errMsg}`)
-        // session.exited 须在 removeSessionEntry 前发（其后 messageBus.clearSession 清空
-        // 订阅者集合，再发等于空投，前端一条也收不到）。code=null：强杀场景退出码未知，
-        // 与 shared 协议「被信号杀死无退出码」语义一致。前端 handleSessionExited 会把
-        // reason 作为 error 消息插入聊天流 + toast（与 pi 崩溃路径同一入口），G3 的
-        // 「重发即可恢复」指引并入 reason，不再另发 message.error（避免双报）。
-        const exitedMsg = { type: 'session.exited' as const, payload: { sessionId, code: null, reason: 'pi 无响应（事件循环卡死），进程已强制终止。重发消息即可恢复（自动重启进程，历史完整）' } }
-        this.messageBus?.publish(sessionId, exitedMsg)
-        this.svc.removeSessionEntry(sessionId)
+        await this.forceQuitSession(sessionId, `Abort failed (pi unresponsive): ${errMsg}`, 'pi 无响应（事件循环卡死），进程已强制终止。重发消息即可恢复（自动重启进程，历史完整）')
         return
       }
 
@@ -249,6 +237,52 @@ export class MessageDispatcher {
     this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
     const completeMsg = { type: 'message.complete' as const, payload: { sessionId, stopReason: 'aborted' as const } }
     this.messageBus?.publish(sessionId, completeMsg)
+  }
+
+  /**
+   * forceQuit —— 强制退出 session（session.forceQuit）：跳过协作式 abort RPC，直接杀 pi
+   * 进程并走与 abort 超时相同的收敛编排。
+   *
+   * 场景：pi 卡在 processing（前端 isGenerating 已丢失 / retry 窗口等不一致态），Composer
+   * 无 stop 按钮可用、新 prompt 被 pi 拒绝——用户从 sidebar 右键「强制退出」让进程退出；
+   * session.exited 广播后前端标记 dead，点击 dead session 走 restore 重开（历史完整）。
+   */
+  async forceQuit(sessionId: string): Promise<void> {
+    const client = this.pm.getClient(sessionId)
+    if (!client) {
+      // 不在活跃进程表（已退出 / 未 spawn）：无可杀对象，幂等成功。菜单入口对 dead/idle
+      // 历史 session 隐藏，此分支是「菜单渲染后 session 恰好退出」的竞态兑底。
+      console.log(`[message-dispatcher] forceQuit: session ${sessionId} not active, nothing to kill`)
+      return
+    }
+    console.warn(`[message-dispatcher] force quit requested by user, killing session ${sessionId}`)
+    await this.forceQuitSession(sessionId, 'User forced quit', '用户强制退出，进程已终止。重新打开该 session 即可恢复（历史完整）。')
+  }
+
+  /**
+   * 强杀收敛编排（abort RPC 超时路径与 forceQuit 共用）：detach → destroy → persist stopped →
+   * 广播 session.exited → removeEntry。收敛需手动编排而非依赖 pm.onSessionExit 回调：kill 路径
+   * 的 exit 事件被双层守卫拦截（rpc-client.kill 置 _killing 跳过 exitCallback；process-manager
+   * 的 exit 回调按 processes.has 拦截 intentional destroy），不会传播到 session-service 的
+   * onSessionExit 收敛链。编排与 lifecycle.delete / onSessionExit 回调同构，非新发明。
+   *
+   * outcomeReason 进终态 entry（诊断）；exitReason 经 session.exited 广播给用户（可操作指引）。
+   */
+  private async forceQuitSession(sessionId: string, outcomeReason: string, exitReason: string): Promise<void> {
+    // 先 detach 再 destroy——destroySession 会删 processes/clientToId 条目，
+    // 之后再经 getSessionByClient 反查会拿 undefined。
+    this.svc.detachSession(sessionId)
+    await this.pm.destroySession(sessionId)
+    // stopped 终态须在 removeSessionEntry 前写（persistSessionOutcome 内部按 id 查
+    // sessions Map，条目删除后静默跳过）。
+    this.svc.persistSessionOutcome(sessionId, 'stopped', outcomeReason)
+    // session.exited 须在 removeSessionEntry 前发（其后 messageBus.clearSession 清空
+    // 订阅者集合，再发等于空投，前端一条也收不到）。code=null：强杀场景退出码未知，
+    // 与 shared 协议「被信号杀死无退出码」语义一致。前端 handleSessionExited 会把
+    // reason 作为 error 消息插入聊天流 + toast（与 pi 崩溃路径同一入口）。
+    const exitedMsg = { type: 'session.exited' as const, payload: { sessionId, code: null, reason: exitReason } }
+    this.messageBus?.publish(sessionId, exitedMsg)
+    this.svc.removeSessionEntry(sessionId)
   }
 
   /**

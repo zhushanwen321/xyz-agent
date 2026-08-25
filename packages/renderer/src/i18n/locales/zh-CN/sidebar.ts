@@ -45,6 +45,9 @@ export default {
     // agent-managed-session U8：agent 创建的 session 标记 badge（语言无关 token，两侧同文案）
     agentBadge: 'AI',
     viewParent: '查看父 session',
+    // 强制退出（右键两段确认）：卡死 session 无停止按钮时的逃生入口
+    forceQuit: '强制退出',
+    forceQuitConfirm: '确认强制退出？',
   },
   sessionList: {
     empty: '暂无会话',
@@ -52,6 +55,7 @@ export default {
     deleteFolderConfirm: '确认删除此文件夹下所有会话？',
   },
   assignProjectFailed: '归入项目失败',
+  forceQuitFailed: '强制退出失败：{msg}',
   forkGroup: {
     title: '本会话的分支',
     branchN: '分支 {n}',

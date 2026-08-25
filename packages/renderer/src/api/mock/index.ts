@@ -448,6 +448,11 @@ export const session = {
     await sleep(TIMING.ack)
   },
 
+  /** Mock 强制退出（对称 real domain，stub resolve 即可；mock 无真实 pi 进程可杀） */
+  async forceQuit(_sessionId: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
+
   /**
    * Mock subscribe（runtime-message-bus wave:renderer-subscribe）：与 real session.subscribe 同接口。
    * mock 模式无真实 bus ring，返回空 snapshot + stateSnapshot + lastSeq=0（无历史可回放）。

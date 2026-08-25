@@ -134,6 +134,8 @@ export interface ISessionService {
   sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }>
   sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }>
   abort(sessionId: string): Promise<void>
+  /** 强制退出卡死 session（sidebar 右键入口，杀 pi 进程 + stopped 收敛）。 */
+  forceQuit(sessionId: string): Promise<void>
   /**
    * 直接执行 bash 命令（pi bash RPC，不经 LLM turn）。
    *

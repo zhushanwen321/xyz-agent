@@ -46,6 +46,9 @@ export default {
     // agent-managed-session U8：agent 创建的 session 标记 badge（语言无关 token，两侧同文案）
     agentBadge: 'AI',
     viewParent: 'View parent session',
+    // 强制退出（右键两段确认）：卡死 session 无停止按钮时的逃生入口
+    forceQuit: 'Force quit',
+    forceQuitConfirm: 'Confirm force quit?',
   },
   sessionList: {
     empty: 'No sessions',
@@ -53,6 +56,7 @@ export default {
     deleteFolderConfirm: 'Delete all sessions in this folder?',
   },
   assignProjectFailed: 'Failed to assign to project',
+  forceQuitFailed: 'Failed to force quit: {msg}',
   forkGroup: {
     title: 'Branches',
     branchN: 'Branch {n}',
