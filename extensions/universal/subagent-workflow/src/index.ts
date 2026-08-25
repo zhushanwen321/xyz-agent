@@ -24,6 +24,8 @@ import { bestEffort } from "./execution/best-effort.ts";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
 import { getOrCreateChannelRegistry } from "./execution/channel-registry-access.ts";
 import { DialogGlobalQueue } from "./execution/dialog-queue.ts";
+// [P1 引擎接线] 组合根登记 'pi' 引擎进 registry（引擎获取统一经 getEngine，缺省 id 'pi'）
+import { registerPiEngine } from "./execution/engine/engines/pi/registration.ts";
 import { createUiRequestHandlerForMode } from "./execution/ui-request-handler-factory.ts";
 import {
   getModelConfigService,
@@ -159,6 +161,12 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // 注入 pi handle 给全局 extension-logger，让深层代码（best-effort / error-recovery）
   // 的 getLogger("subagents") 也能走 appendEntry。
   setPiHandle(pi);
+
+  // [P1 引擎接线] 组合根登记缺省引擎：进程级 SubagentService 单例（session_start 注入）
+  // 经 registry 以 'pi' 暴露——引擎获取从此统一走 getEngine(DEFAULT_ENGINE_ID)，上层
+  // 不再硬编码「spawn pi」。幂等（registerEngine 覆盖语义），工厂惰性解析服务单例。
+  // P4 配置路由（agent frontmatter engine 字段 + 三层优先级）在本登记之上消费。
+  registerPiEngine();
 
   // ════════════════════════════════════════════════════════════
   //  subagents 域：tool + command + messageRenderer

@@ -8,7 +8,8 @@
 // 接线层级：
 //   [跨模块 port] implements AgentRunner（orchestration/models/ports.ts）
 //   [模块内直调] mapToExecuteOptions + mergeTimeoutSignal（execute-options-mapper）
-//   [模块内直调] this.subagentService.executeAndAwait
+//   [引擎层]     EnginePort.run（P1 接线：经 engines/pi 适配，缺省引擎 'pi'）
+//   [模块内直调] this.subagentService.executeAndAwait（PiEngine 内部委托目标）
 //
 // 设计基线：
 //   D-A2（映射归 adapter）/ D-A8（onEvent 桥接）/ D-A9（timeoutMs 合并 signal）/
@@ -17,6 +18,10 @@
 import type { AgentRunner } from "../orchestration/models/ports.ts";
 import type { AgentCallOpts, AgentResult } from "../orchestration/models/types.ts";
 import type { AgentEvent } from "../shared/agent-event.ts";
+import { createPiEngine, PI_POOL_KEY } from "./engine/engines/pi/registration.ts";
+import { executeOptionsToTaskSpec } from "./engine/engines/pi/task-spec-mapper.ts";
+import type { EnginePort, RunContext } from "./engine/port.ts";
+import type { AgentOutcome } from "./engine/types.ts";
 import { mapToExecuteOptions, mergeTimeoutSignal } from "./execute-options-mapper.ts";
 import type { ModelInfo } from "./model-resolver.ts";
 import type { SubagentStream } from "./stream-sink.ts";
@@ -51,14 +56,24 @@ export interface SubprocessAgentRunnerDeps {
  *   - result 形状不变（workflow AgentResult: content/parsedOutput/usage/error/toolCalls）
  *   - 不 reject——失败信息入 result.error（与 executeAgentCall 契约一致）
  *   - timeoutMs 合并 signal（D-A9）；onEvent 桥接 AgentEvent→workflow liveRecord（D-A8）
+ *
+ * [P1 引擎接线] 执行经 EnginePort（缺省引擎 'pi'，registry SSOT 见
+ * engine/engines/pi/registration.ts）。PiEngine 是薄适配层：把 ExecuteOptions 泛化为
+ * AgentTaskSpec 再映射回 ExecuteOptions（往返保真，task-spec-mapper 单测锁定），最终
+ * 仍调本类注入的 subagentService.executeAndAwait——下游执行路径与 record 产出零变化。
+ * 引擎实例在构造期绑定本 SAR 的服务引用而非取 registry 全局单例：SAR 是 per-session
+ * DI 构造（单测注入 mock 时全局单例不可见），生产环境两者是同一进程单例对象。
  */
 export class SubprocessAgentRunner implements AgentRunner {
   private readonly subagentService: SubagentService;
   private ctxModel: ModelInfo | undefined;
+  /** 执行引擎（缺省 'pi'；构造期绑定注入服务，见类注释）。 */
+  private readonly engine: EnginePort;
 
   constructor(deps: SubprocessAgentRunnerDeps) {
     this.subagentService = deps.subagentService;
     this.ctxModel = deps.ctxModel;
+    this.engine = createPiEngine(() => this.subagentService);
   }
 
   /**
@@ -72,11 +87,12 @@ export class SubprocessAgentRunner implements AgentRunner {
   }
 
   /**
-   * 执行单次 agent 调用：委托 SubagentService.executeAndAwait。
+   * 执行单次 agent 调用：经 EnginePort 委托 SubagentService.executeAndAwait。
    *
    * 接线链路：
-   *   mergeTimeoutSignal → mapToExecuteOptions →
-   *   this.subagentService.executeAndAwait → 返回 AgentResult
+   *   mergeTimeoutSignal → mapToExecuteOptions → AgentTaskSpec →
+   *   engine.run（PiEngine：spec → ExecuteOptions 还原）→
+   *   this.subagentService.executeAndAwait → AgentOutcome → AgentResult
    *
    * 错误处理：不 reject。
    *   - executeAndAwait 内部失败 → 返回 AgentResult(success:false) → 已映射 error 字段
@@ -102,11 +118,31 @@ export class SubprocessAgentRunner implements AgentRunner {
       // executeAndAwait 发强类型 AgentEvent（session-runner handleSdkEvent 出口）。
       // workflow 的 onEvent 闭包（error-recovery.ts dispatchAgentCall）类型已升级为
       // (event: AgentEvent) => updateFromEvent(liveRecord, event)（D-005）。
-      // SAR 直接透传 onEvent——类型对齐后零桥接开销。
+      // 引擎层直接透传 onEvent——类型对齐后零桥接开销。
       const bridgedOnEvent = onEvent;
 
-      // ── 核心委托 ──
-      return await this.subagentService.executeAndAwait(mappedOpts, mergedSignal, bridgedOnEvent, stream);
+      // ── P1 引擎接线：EnginePort.run（缺省 'pi'）──
+      // taskId 为宿主侧任务标识（journal 文件名与池引用计数 key，P2 消费）——P1 无
+      // journal 写入者，executeAndAwait 内部创建的 record.id 不外露，此处生成唯一
+      // 占位（`sa-` 前缀与 record id 同构）；P4 配置路由落地时改为真实 record.id。
+      const runCtx: RunContext = {
+        taskId: `sa-${crypto.randomUUID()}`,
+        poolKey: PI_POOL_KEY,
+        signal: mergedSignal,
+        ...(bridgedOnEvent !== undefined ? { onEvent: bridgedOnEvent } : {}),
+        ctxModel: this.ctxModel,
+        ...(stream !== undefined ? { stream } : {}),
+        // 解耦形态（有 schemaEnv 无 schema）的兜底通道——耦合形态下引擎从 task.schema
+        // 派生等值，此值被忽略（见 RunContext.schemaEnv 注释）
+        ...(mappedOpts.schemaEnv !== undefined ? { schemaEnv: mappedOpts.schemaEnv } : {}),
+      };
+      const { outcome } = await this.engine.run(
+        // 泛化为中立声明（PiEngine 内部再还原回 ExecuteOptions——往返保真，
+        // 由 engines/pi/__tests__/task-spec-mapper.test.ts 逐字段锁定）
+        executeOptionsToTaskSpec(mappedOpts),
+        runCtx,
+      );
+      return outcomeToRunnerResult(outcome);
     } catch (err) {
       // executeAndAwait throw（嵌套超限 ForkDepthExceededError，BC-12）或未预期异常 → 不 reject，入 error。
       const message = err instanceof Error ? err.message : String(err);
@@ -118,4 +154,24 @@ export class SubprocessAgentRunner implements AgentRunner {
       };
     }
   }
+}
+
+/**
+ * AgentOutcome → workflow AgentResult：剥离引擎层新增字段（engineId/engineFallback/
+ * exitCode——它们投影进 record/GUI 的通道在 P2/P4 接线，workflow 引擎不消费）。
+ * 其余字段由 PiEngine 从 executeAndAwait 的返回值逐字段映射而来，字段全集完整性由
+ * pi-engine 单测锁定（缺字段会在该处转红，不会静默丢失）。
+ */
+function outcomeToRunnerResult(outcome: AgentOutcome): AgentResult {
+  return {
+    content: outcome.content,
+    parsedOutput: outcome.parsedOutput,
+    usage: outcome.usage,
+    durationMs: outcome.durationMs,
+    error: outcome.error,
+    sessionId: outcome.sessionId,
+    sessionFile: outcome.sessionFile,
+    worktreePath: outcome.worktreePath,
+    toolCalls: outcome.toolCalls,
+  };
 }

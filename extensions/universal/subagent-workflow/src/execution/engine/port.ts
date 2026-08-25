@@ -1,0 +1,118 @@
+// src/execution/engine/port.ts
+//
+// EnginePort 接口（P1）。设计权威源：docs/architecture/subagent-engine-abstraction.md
+// §3.3.5「EnginePort 完整签名」——本文件是可编码落地的契约层，后续 wave（公共降级层
+// P2 / zcode 引擎 P3 / 配置路由 P4）以本接口为实现契约，字段级变更须先改设计文档。
+//
+// 四个能力面（D1）：
+//   run        —— 主语义：一次性 fire-to-completion 任务执行；
+//   interact   —— 交互控制面（chatMode 的 message/close/cancel + idle，可选能力面，
+//                 capabilities.conversation 声明接通与否）；
+//   read       —— session 历史读取（D6 三级降级链）；
+//   probe      —— 探针（D7：二进制存在/版本解析/干跑校验）。
+// capabilities() 同步无副作用——「调用前拒绝」（D11 处置三级）的判据。
+
+import type { ModelInfo } from "../model-resolver.ts";
+import type { SubagentStream } from "../stream-sink.ts";
+import type { AgentEvent } from "../types.ts";
+import type {
+  AgentOutcome,
+  AgentTaskSpec,
+  EngineCapabilities,
+  EngineHandle,
+  InteractAction,
+  InteractResult,
+  ProbeReport,
+  SessionView,
+} from "./types.ts";
+
+// ============================================================
+// RunContext（run 的运行期上下文）
+// ============================================================
+
+/**
+ * run 的运行期上下文。任务声明（AgentTaskSpec）与运行期句柄分离——signal/ctxModel/
+ * onComplete 从 ExecuteOptions 移出（设计 §3.3.5 删字段去向），因为它们是宿主注入的
+ * 运行期对象，不属于跨引擎持久化的任务声明。
+ *
+ * 常驻进程友好（D1）：onEvent 回调式（而非迭代器式）+ AbortSignal——引擎内部换常驻
+ * server 实现（未来 driver host）时接口不动。
+ */
+export interface RunContext {
+  /** = record.id（bg-N-xxx / run-N）——journal 文件名与池引用计数 key（P2 消费）。 */
+  taskId: string;
+  /** D5 隔离池（宿主分配，设计 §3.3.9；pi 无池化恒 'shared'）。 */
+  poolKey: string;
+  /** abort 分级入口（D1：引擎原生中断 → 公共杀链兜底）。 */
+  signal?: AbortSignal;
+  /** 事件流出口（host 消费后统一落 journal，D6 第②级）。 */
+  onEvent?: (event: AgentEvent) => void;
+  /** model 解析第三层兼底（现有 D-008 语义不变）。 */
+  ctxModel?: ModelInfo;
+  /**
+   * text_delta streaming 通道（宿主侧 UI widget）。与 onEvent 平行的 text_delta 出口：
+   * background 路径 onEvent=undefined 但流式仍需送达（双通道互斥设计，见 session-runner
+   * agentEvent 出口注释）。pi 回填期承载 AgentRunner port 的 stream 透传（行为零变化），
+   * 语义上是宿主设施而非引擎专有——未来引擎的 text_delta 同样可走此通道。
+   */
+  stream?: SubagentStream;
+  /**
+   * [P1 pi 回填透传] 调用方已持有的 schema 激活预编码值（AgentCallOpts.schemaEnv 直传
+   * 形态）。生产路径中 resolveAgentOpts 恒耦合产出 schema+schemaEnv（值 = JSON.stringify
+   * (schema)），引擎从 task.schema 派生即可逐字节等值；解耦形态（有 schemaEnv 无
+   * schema）生产不可达、仅见于直构调用，派生无源——本字段是其唯一透交通道。
+   * 引擎在 task.schema 存在时忽略此值（派生优先，设计 §3.3.5 删字段去向）。
+   */
+  schemaEnv?: string;
+}
+
+// ============================================================
+// run 返回（handle + outcome）
+// ============================================================
+
+/**
+ * run 的返回：终态 + 可持久化 handle。
+ *
+ * handle 语义（设计 §3.3.5 run 错误语义三条）：prepare 期错误（credential_missing /
+ * model_not_available / prompt_too_large）在进程创建前 reject、不产生 handle；运行中
+ * 失败不 reject——合成 error outcome + 正常 handle 返回（record 必须收尾）；abort 走
+ * 完杀链后同前（exitCode=null + error 含杀链标记）。
+ */
+export interface EngineRunResult {
+  handle: EngineHandle;
+  outcome: AgentOutcome;
+}
+
+// ============================================================
+// EnginePort
+// ============================================================
+
+/**
+ * subagent 执行引擎的唯一契约点（D1）。实现方：PiEngine（回填）/ ZcodeEngine（P3）/
+ * 未来各引擎适配器。上层（工具面/workflow 引擎/GUI）只消费中立类型，不感知引擎。
+ *
+ * 贯穿纪律（设计 §3.3.1）：宿主编排——引擎只当单 agent 执行器，六家原生多 agent 机制
+ * 一律禁用不依赖。
+ */
+export interface EnginePort {
+  /** 注册表 key（'pi' | 'zcode' | ...）。 */
+  readonly id: string;
+
+  /** D3（同步无副作用——调用前拒绝的判据）。 */
+  capabilities(): EngineCapabilities;
+
+  /** D7（factory 初始化 + 版本变化检测触发；opts.force 跳过缓存强探）。 */
+  probe(opts?: { force?: boolean }): Promise<ProbeReport>;
+
+  /** D1 主语义：fire-to-completion。 */
+  run(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult>;
+
+  /**
+   * D1 可选面：交互控制面。pi 首期原生实现（现有 chatMode 行为直通）；不支持
+   * conversation 的引擎返回 engine_capability_unsupported（同步拒绝、不创建进程）。
+   */
+  interact(handle: EngineHandle, action: InteractAction): Promise<InteractResult>;
+
+  /** D6 三级降级链：①引擎原生读取 → ②宿主 event journal（P2）→ ③outcome-only。 */
+  read(handle: EngineHandle): Promise<SessionView>;
+}
