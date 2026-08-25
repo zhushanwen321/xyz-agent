@@ -9,6 +9,7 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { MessageHandlerContext } from './message-context.js'
 import type { UsageStatsService } from '../services/usage/usage-stats-service.js'
+import { toErrorMessage } from '../utils/errors.js'
 
 /** Usage handler 的上下文（共享发消息契约 + UsageStatsService） */
 export interface UsageHandlerContext extends MessageHandlerContext {
@@ -28,7 +29,7 @@ export class UsageMessageHandler {
           const result = await this.ctx.usageStatsService.getStats()
           this.ctx.reply(ws, msg.id, 'usage.getStats:result', result)
         } catch (e) {
-          this.ctx.sendError(ws, 'usage_scan_failed', String(e instanceof Error ? e.message : e), msg.id, {
+          this.ctx.sendError(ws, 'usage_scan_failed', toErrorMessage(e), msg.id, {
             hint: '扫描失败，可重试；详情见 runtime 日志',
           })
         }

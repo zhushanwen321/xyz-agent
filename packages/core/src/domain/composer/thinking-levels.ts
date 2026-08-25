@@ -35,7 +35,8 @@ export const THINKING_LEVELS: ThinkingLevelOption[] = [
   { level: 'max', label: '最高', labelKey: 'composable.thinkingLevel.max', en: 'max', available: true },
 ]
 
-/** ThinkingLevel 强度序（数值越大强度越高，用于排序可用档位；对齐 pi EXTENDED_THINKING_LEVELS 序） */
+/** ThinkingLevel 全枚举表（isThinkingLevel 的判定依据，对齐 pi EXTENDED_THINKING_LEVELS 序；
+ *  数值强度排序职责已由 PI_LEVEL_ORDER 的数组顺序承担，本表不再用于排序） */
 const LEVEL_STRENGTH: Record<ThinkingLevel, number> = {
   off: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6,
 }
@@ -169,7 +170,8 @@ export function highestAvailableLevel(
  * Record<string,string|null>，用户可在 config 写任意 map；预设枚举只识别三种固定配置，
  * 对自定义 map 会误判。key 集合判定对所有 map 都准确。
  *
- * undefined/空 map（all-levels）视为全档可用，两个全档视为同体系。
+ * undefined/空 map 按默认五档（off..high）判定（resolveAvailableLevels 新语义），
+ * 两个默认五档视为同体系。
  */
 export function isSameThinkingScheme(
   a?: Record<string, string | null>,

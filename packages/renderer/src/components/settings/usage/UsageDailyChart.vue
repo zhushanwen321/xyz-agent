@@ -260,11 +260,16 @@ interface StackedSeg {
   h: number
 }
 
-function stackedSegments(di: number): StackedSeg[] {
-  const day = props.perDay[di]
-  const sorted = Object.keys(day.provs)
+/** 按当前 metric 值降序排当日 provider（堆叠段与 tooltip 共用，保证视觉顺序一致） */
+function sortedDayProvs(day: DayView): { pid: string; val: number }[] {
+  return Object.keys(day.provs)
     .map((pid) => ({ pid, val: metricValue(day.provs[pid], props.metric) }))
     .sort((a, b) => b.val - a.val)
+}
+
+function stackedSegments(di: number): StackedSeg[] {
+  const day = props.perDay[di]
+  const sorted = sortedDayProvs(day)
 
   const result: StackedSeg[] = []
   let cumH = 0
@@ -344,9 +349,7 @@ const tipData = computed<TipData | null>(() => {
   if (hoverIdx.value < 0) return null
   const day = props.perDay[hoverIdx.value]
   const totVal = metricValue(day.dTot, props.metric)
-  const sorted = Object.keys(day.provs)
-    .map((pid) => ({ pid, val: metricValue(day.provs[pid], props.metric) }))
-    .sort((a, b) => b.val - a.val)
+  const sorted = sortedDayProvs(day)
 
   const fmt = props.metric === 'cost' ? fmtUSD : fmtInt
 

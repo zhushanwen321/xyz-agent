@@ -10,7 +10,6 @@ import { command } from '../request'
  * 拉取用量统计数据（session JSONL 扫描聚合）。
  * 返回 UsageStatsResult（rows / scannedAt / sessionCount / skippedLines）。
  */
-export async function getUsageStats(): Promise<UsageStatsResult> {
-  const reply = await command('usage.getStats', {})
-  return reply
+export function getUsageStats(): Promise<UsageStatsResult> {
+  return command('usage.getStats', {})
 }

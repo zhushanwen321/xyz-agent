@@ -109,65 +109,36 @@ export function useCommandPopoverTrigger(
     },
   )
 
-  /** 输入区 slash-trigger 事件路由：
-   *  - payload 非 null（/ 在最左且无 chip）→ 打开 slash 浮层，记录 query 透传过滤，标记 slashTriggerActive
-   *  - payload 为 null 且 slashTriggerActive → 关闭浮层（仅输入区触发路径；+菜单路径 slashTriggerActive=false 不受影响） */
-  function onSlashTrigger(payload: { query: string } | null): void {
-    if (payload) {
-      slashTriggerActive.value = true
-      slashQuery.value = payload.query
-      cmdType.value = 'slash'
-      cmdOpen.value = true
-    } else if (slashTriggerActive.value) {
-      cmdOpen.value = false
-      slashTriggerActive.value = false
+  /** 四路输入区触发事件路由的共用态机（$/#/@// 四符号行为一致，只差触发态、query、cmdType 三轴）：
+   *  - payload 非 null（光标前有「空格/行首 + 符号 + 非空白」）→ 打开对应浮层，记录 query 透传过滤，标记触发态
+   *  - payload 为 null 且该路触发态为 true → 关闭浮层（符号后遇空格等终止场景；仅输入区触发
+   *    路径受影响——+菜单路径不设触发态，普通键不会误关） */
+  function makeTriggerHandler(
+    active: Ref<boolean>,
+    query: Ref<string>,
+    type: CommandPopoverType,
+  ): (payload: { query: string } | null) => void {
+    return (payload) => {
+      if (payload) {
+        active.value = true
+        query.value = payload.query
+        cmdType.value = type
+        cmdOpen.value = true
+      } else if (active.value) {
+        cmdOpen.value = false
+        active.value = false
+      }
     }
   }
 
-  /** 输入区 file-trigger 事件路由（同 onSlashTrigger 语义，对应 $ 文件浮层）：
-   *  - payload 非 null（光标前有「空格/行首 + $ + 非空白」）→ 打开 file 浮层，记录 query 透传过滤
-   *  - payload 为 null 且 fileTriggerActive → 关闭浮层（$ 后遇空格等终止场景） */
-  function onFileTrigger(payload: { query: string } | null): void {
-    if (payload) {
-      fileTriggerActive.value = true
-      fileQuery.value = payload.query
-      cmdType.value = 'file'
-      cmdOpen.value = true
-    } else if (fileTriggerActive.value) {
-      cmdOpen.value = false
-      fileTriggerActive.value = false
-    }
-  }
-
-  /** 输入区 session-trigger 事件路由（四符号体系 # session 语义，同 onFileTrigger 模式）：
-   *  - payload 非 null（光标前有「空格/行首 + # + 非空白」）→ 打开 session 浮层
-   *  - payload 为 null 且 sessionTriggerActive → 关闭浮层（# 后遇空格等终止场景） */
-  function onSessionTrigger(payload: { query: string } | null): void {
-    if (payload) {
-      sessionTriggerActive.value = true
-      sessionQuery.value = payload.query
-      cmdType.value = 'session'
-      cmdOpen.value = true
-    } else if (sessionTriggerActive.value) {
-      cmdOpen.value = false
-      sessionTriggerActive.value = false
-    }
-  }
-
-  /** 输入区 subagent-trigger 事件路由（四符号体系 @ subagent 语义，同 onFileTrigger 模式）：
-   *  - payload 非 null（光标前有「空格/行首 + @ + 非空白」）→ 打开 subagent 浮层
-   *  - payload 为 null 且 subagentTriggerActive → 关闭浮层（@ 后遇空格等终止场景） */
-  function onSubagentTrigger(payload: { query: string } | null): void {
-    if (payload) {
-      subagentTriggerActive.value = true
-      subagentQuery.value = payload.query
-      cmdType.value = 'subagent'
-      cmdOpen.value = true
-    } else if (subagentTriggerActive.value) {
-      cmdOpen.value = false
-      subagentTriggerActive.value = false
-    }
-  }
+  /** 输入区 / 触发 → slash 浮层（payload 非 null 条件：/ 在最左且无 chip） */
+  const onSlashTrigger = makeTriggerHandler(slashTriggerActive, slashQuery, 'slash')
+  /** 输入区 $ 触发 → file 浮层 */
+  const onFileTrigger = makeTriggerHandler(fileTriggerActive, fileQuery, 'file')
+  /** 输入区 # 触发 → session 浮层（四符号体系） */
+  const onSessionTrigger = makeTriggerHandler(sessionTriggerActive, sessionQuery, 'session')
+  /** 输入区 @ 触发 → subagent 浮层（四符号体系） */
+  const onSubagentTrigger = makeTriggerHandler(subagentTriggerActive, subagentQuery, 'subagent')
 
   /** + 菜单选择：
    *  - attach（任意文件）：调 pickFile IPC（无 filters），选中后插文本路径到输入区。canceled 静默 return。

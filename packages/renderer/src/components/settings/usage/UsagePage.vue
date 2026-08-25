@@ -35,9 +35,9 @@
       </Button>
     </div>
 
-    <!-- 空态：无任何 session -->
+    <!-- 空态：无任何 session；或有 session 文件但零 usage 行（补扫过数量一行） -->
     <div
-      v-else-if="data && data.rows.length === 0 && data.sessionCount === 0"
+      v-else-if="data && data.rows.length === 0"
       data-testid="usage-empty-state"
       class="flex flex-col items-center gap-3 py-16 text-center"
     >
@@ -46,20 +46,7 @@
       </div>
       <p class="text-[14px] font-medium text-[var(--neutral-fg)]">{{ t('settings.usage.emptyTitle') }}</p>
       <p class="text-[12px] text-[var(--neutral-mid)]">{{ t('settings.usage.emptyDesc') }}</p>
-    </div>
-
-    <!-- 空态：有文件但零 usage 行 -->
-    <div
-      v-else-if="data && data.rows.length === 0 && data.sessionCount > 0"
-      data-testid="usage-empty-state"
-      class="flex flex-col items-center gap-3 py-16 text-center"
-    >
-      <div class="grid size-16 place-items-center rounded-full border-2 border-dashed border-[var(--border-strong)]">
-        <BarChart3 class="size-7 text-[var(--neutral-dim)]" />
-      </div>
-      <p class="text-[14px] font-medium text-[var(--neutral-fg)]">{{ t('settings.usage.emptyTitle') }}</p>
-      <p class="text-[12px] text-[var(--neutral-mid)]">{{ t('settings.usage.emptyDesc') }}</p>
-      <p class="text-[11px] text-[var(--neutral-dim)]">{{ t('settings.usage.emptyScanned', { count: data.sessionCount }) }}</p>
+      <p v-if="data.sessionCount > 0" class="text-[11px] text-[var(--neutral-dim)]">{{ t('settings.usage.emptyScanned', { count: data.sessionCount }) }}</p>
     </div>
 
     <!-- 数据态 -->

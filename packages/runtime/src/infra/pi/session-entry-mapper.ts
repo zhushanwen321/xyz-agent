@@ -85,13 +85,18 @@ export function mapSessionEntries(entries: PiSessionEntry[]): MappedSessionEntri
         // 共享单点，覆写在此做即覆盖全部 reload 链路。
         const isDirectiveVisible = entry.customType === SUBAGENT_DIRECTIVE_CUSTOM_TYPE
           && parseSubagentDirective(entry.content, entry.details) !== null
+        // display 覆写优先级：完成通知 → 隐藏（false）；subagent-directive → 显示（true）；
+        // 其余透传持久化值
+        let display = entry.display
+        if (isCompleteNotify) display = false
+        else if (isDirectiveVisible) display = true
         messages.push({
           role: 'custom',
           customType: entry.customType,
           // 畸形降级：content 非字符串时默认空串（session JSONL 截断/损坏不抛错）
           content: typeof entry.content === 'string' ? entry.content : '',
           details: entry.details,
-          display: isCompleteNotify ? false : isDirectiveVisible ? true : entry.display,
+          display,
           timestamp: toMs(entry.timestamp),
         })
         entryIds.push(entry.id)

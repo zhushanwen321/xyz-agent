@@ -224,7 +224,7 @@ function buildFullPerProv(rows: UsageRow[]): Record<string, AggMetrics> {
 
 /** 确定日期范围：range>0 时今天往回构造完整日历，否则有数日期全集 */
 function buildDateRange(
-  filter: FilterState,
+  filter: Pick<FilterState, 'range'>,
   sortedDates: string[],
 ): { sliceDates: string[]; nDays: number } {
   if (filter.range > 0) {
@@ -287,7 +287,7 @@ function aggregateDay(
   if (has) {
     acc.activeDays++
     accumulate(acc.tot, dTot)
-    const v = filter.metric === 'cost' ? dTot.cost : totalTokens(dTot)
+    const v = metricValue(dTot, filter.metric)
     if (v > acc.peak.v) {
       acc.peak.v = v
       acc.peak.d = dateStr
@@ -367,26 +367,9 @@ export function aggregateProjects(
   rows: UsageRow[],
   filter: Pick<FilterState, 'offProv' | 'isolate' | 'range'>,
 ): RankRow[] {
-  const byDate = new Map<string, UsageRow[]>()
-  for (const row of rows) {
-    const arr = byDate.get(row.date) ?? []
-    arr.push(row)
-    byDate.set(row.date, arr)
-  }
+  const byDate = groupByDate(rows)
   const sortedDates = [...byDate.keys()].sort()
-  let sliceDates: string[]
-  if (filter.range > 0) {
-    const today = new Date()
-    const dates: string[] = []
-    for (let i = filter.range - 1; i >= 0; i--) {
-      const d = new Date(today)
-      d.setDate(today.getDate() - i)
-      dates.push(fmtISO(d))
-    }
-    sliceDates = dates
-  } else {
-    sliceDates = sortedDates
-  }
+  const { sliceDates } = buildDateRange(filter, sortedDates)
 
   const projMap = new Map<string, { provs: Record<string, AggMetrics>; total: AggMetrics }>()
   for (const dateStr of sliceDates) {
@@ -397,11 +380,7 @@ export function aggregateProjects(
       if (!projMap.has(key)) projMap.set(key, { provs: {}, total: newMetrics() })
       const entry = projMap.get(key)!
       if (!entry.provs[row.provider]) entry.provs[row.provider] = newMetrics()
-      const u: AggMetrics = {
-        input: row.input, output: row.output,
-        cacheRead: row.cacheRead, cacheWrite: row.cacheWrite,
-        cost: row.costUSD, messages: row.messages,
-      }
+      const u = rowToMetrics(row)
       accumulate(entry.provs[row.provider], u)
       accumulate(entry.total, u)
     }

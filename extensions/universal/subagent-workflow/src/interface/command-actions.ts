@@ -110,21 +110,23 @@ export function parseSubagentRpcCommand(argsStr: string): SubagentRpcAction {
     return { action: "cancel", recordId: idToken.token };
   }
   if (verb === "message" || verb === "start") {
+    // message 与 start 共用解析骨架，仅结果字段名不同（recordId/text vs slug/task）
+    const isMessage = verb === "message";
     // 第二 token：message→recordId / start→slug；其后剩余全量（还原换行转义）为 text/task
     const second = splitFirstToken(rest);
     if (!second) {
-      return verb === "message"
+      return isMessage
         ? { action: "message-missing-args", missing: "recordId" }
         : { action: "start-missing-args", missing: "slug" };
     }
     // 先还原再判空：纯字面 \n 还原后是真实换行（whitespace），应在解析层拦截为缺参
     const payload = decodeNewlineEscapes(second.rest);
     if (!payload.trim()) {
-      return verb === "message"
+      return isMessage
         ? { action: "message-missing-args", missing: "text" }
         : { action: "start-missing-args", missing: "task" };
     }
-    return verb === "message"
+    return isMessage
       ? { action: "message", recordId: second.token, text: payload }
       : { action: "start", slug: second.token, task: payload };
   }

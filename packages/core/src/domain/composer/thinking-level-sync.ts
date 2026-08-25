@@ -92,9 +92,9 @@ export function useThinkingLevelSync(
     if (isSameThinkingScheme(oldMap, map)) {
       const currentKey = resolveThinkingKey(current, oldMap)
       // 防御：current 既不在 oldMap 的 value 里又非合法 ThinkingLevel 时，
-      // resolveThinkingKey 会 fallback 到 'max'；若新 map 不含 max 档，
-      // resolveThinkingValue('max', map) 会走 v ?? key 回退返回字符串 'max'，
-      // 静默发给 runtime 一个该模型不可用的档位。此时走跨体系重置（重置到最高可用档）。
+      // resolveThinkingKey 缺省 fallback 到 oldMap 最高可用档；该 key 若在新 map
+      // 的可用档（含 reasoning 叠加判定）中不可用，resolveThinkingValue 会走
+      // v ?? key 回退把不可用档原样发给 runtime。此时走跨体系重置（重置到最高可用档）。
       const available = resolveAvailableLevels(map, reasoningOf())
       if (!available.includes(currentKey)) {
         const highest = highestAvailableLevel(map, reasoningOf())

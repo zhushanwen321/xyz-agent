@@ -106,9 +106,9 @@ export class SessionMessageHandler {
       case 'session.forceQuit': {
         // 强杀 pi 进程 + stopped 收敛（终态经 session.exited 广播推回，不依赖 reply）。
         // reply message.status ack（与 message.abort 对称），否则 renderer pending.register(id) 永挂。
-        const fqSid = msg.payload.sessionId
-        await this.ctx.sessionService.forceQuit(fqSid)
-        return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: fqSid, status: 'force_quit' })
+        const sessionId = msg.payload.sessionId
+        await this.ctx.sessionService.forceQuit(sessionId)
+        return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'force_quit' })
       }
       case 'session.fork': {
         // fork：runtime 读源 JSONL 截断 → 新进程 switch_session。reply session.created（复用类型）。
