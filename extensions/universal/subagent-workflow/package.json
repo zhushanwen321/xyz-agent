@@ -23,6 +23,7 @@
     "skills/",
     "workflows/",
     "scripts/",
+    "relay/",
     "src/index.ts",
     "src/execution/",
     "src/injectors/",

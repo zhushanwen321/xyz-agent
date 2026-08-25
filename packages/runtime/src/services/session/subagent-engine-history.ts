@@ -30,11 +30,11 @@ import type { SubagentRecord, Message, ToolCall as SharedToolCall } from '@xyz-a
 import {
   resolveEnginesRoot,
   resolvePoolDir,
-} from '@zhushanwen/pi-subagent-workflow/src/execution/engine/paths.ts'
+} from '@zhushanwen/pi-subagent-workflow/src/execution/engine/paths.js'
 import {
   readZcodeSessionView,
-} from '@zhushanwen/pi-subagent-workflow/src/execution/engine/engines/zcode/reader.ts'
-import { ZCODE_ENGINE_ID } from '@zhushanwen/pi-subagent-workflow/src/execution/engine/engines/zcode/constants.ts'
+} from '@zhushanwen/pi-subagent-workflow/src/execution/engine/engines/zcode/reader.js'
+import { ZCODE_ENGINE_ID } from '@zhushanwen/pi-subagent-workflow/src/execution/engine/engines/zcode/constants.js'
 
 /** record 引擎路由段的缺省引擎：存量 record 无 engine 字段 → 按 pi 投影（零迁移）。 */
 export const DEFAULT_SUBAGENT_ENGINE = 'pi'

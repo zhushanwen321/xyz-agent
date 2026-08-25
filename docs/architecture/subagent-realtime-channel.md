@@ -4,7 +4,7 @@
 >
 > **来源声明**：细化自 `fix-drawer-subagent-render` worktree 初稿 `docs/architecture/subagent-realtime-channel.md`（只读参照，本文自包含，不要求读者先读它）+ 本分支已落地的引擎抽象结构（设计 [subagent-engine-abstraction.md](subagent-engine-abstraction.md)，代码 `extensions/universal/subagent-workflow/src/execution/engine/`，P1-P5 已落地）。初稿的「一期 A 止血 → 二期 E」路径已由主 agent 决策调整为**跳过 A 直接做 E 终态**；A/D 方案内容保留为附录 A（历史记录 + E 受阻退路），不作为实施计划。
 >
-> 状态：待对抗式审查。分支 `feat-support-zcode`。
+> 状态：已实施——E-0..E-4 全部落地（2026-08-25，分支 `feat-support-zcode`：E-0 relay channel env/protocol SSOT `433ca061f` → E-1 代理 CLI `3df593816` → E-2 runtime 基建 `6d5965251` → E-3 extension 接入 `9cfd8635d` → E-4 前端接入 `f4373ab45`；设计文档本体 `7915ac2e4`）。对抗式审查待进行。
 
 ## 1. 背景与根因
 
@@ -224,7 +224,7 @@ runtime relay server 启动（创建 socket + 计算脚本/runtime 路径）
 
 ### 4.2 子进程注册表（连接 → spawn → 断连即杀）
 
-- **注册**：socket 连接 + 合法握手帧 → runtime 解析 argv/env/cwd → 经与 pi-invocation 同款决策链（**runtime 侧复刻 `buildPiSpawnCommand(argv)`**：dev=resources/pi 的 pi 二进制、打包=process.cwd()/pi/，即 process-manager.ts findPiExecutable 既有逻辑抽出复用）spawn 真实 pi → 登记条目 `{conn, mainSessionId, recordId, child, pidFile, tee}`。
+- **注册**：socket 连接 + 合法握手帧 → runtime 解析 argv/env/cwd → 经与 pi-invocation 同款决策链（**runtime 侧复刻 `buildPiSpawnCommand(argv)`**：dev=resources/pi 的 pi 二进制、打包=process.cwd()/pi/，即 process-manager.ts findPiExecutable 既有逻辑抽出复用）spawn 真实 pi → 登记条目 `{conn, mainSessionId, recordId, child, pidFile, tee, log}`（`log` 为 up 方向 stdout 原始字节镜像写入器——落盘 `<getDataDir()>/logs/pi-relay-<date>-<recordId>.jsonl`，对照主 pi 的 `pi-<date>-<sessionId>.jsonl` 模式，架构约定「pi 卡死时唯一证据」对 relay 子进程同款覆盖；写失败降级 warn 不连坐转发主链，cleanupEntry 时 end 流）。
 - **断连即杀**：socket close（任何原因——代理死/主 pi 崩溃/extension kill）→ 对 child 走杀链（SIGTERM → grace 3s → SIGKILL；语义对齐 extension 侧 common/kill-chain 但**独立实现**——依赖方向纪律（引擎抽象 §3.3.1 贯穿纪律④：runtime 不 import adapter 运行时件），runtime 不引 extension 包的 kill-chain）。杀链完成 → 删 pid 文件 → 注销条目。
 - **pid 文件**：`<getDataDir()>/run/relay-children/<recordId>.pid`（内容 pid + spawn 时间戳）——runtime 崩溃重启后的残留进程兜底扫描依据（§3.3-②），扫描时核对时间戳 + /proc 或 kill -0 探活，活的按孤儿收割。
 - **并发**：多 subagent 并行 = 多条 socket 连接多注册条目，天然并发（registry 内 Map，无共享可变态）；背压由 node stream 默认机制处理（tee 与转发共用同一次读取顺序分发，见 §4.3）。
@@ -233,7 +233,7 @@ runtime relay server 启动（创建 socket + 计算脚本/runtime 路径）
 
 - **实例化**：`infra/pi/event-adapter.ts` 是纯翻译器（「Each session gets its own adapter instance」既有先例，文件头注释）——每个注册的子进程流 new 一个 adapter 实例（+ 对应的 entry 化管线实例），**不与主 pi 会话的 adapter/interpreter 共享任何状态**。
 - **帧归属**：握手帧的 `mainSessionId` + `recordId` 是 tee 产物的路由键——所有经 tee 产出的 WS 帧必须带 sessionId（关键规则 7），虚拟分区 ID = `subagentVirtualId(mainSessionId, recordId)`（shared 工厂 SSOT，`packages/shared/src/virtual-session-id.ts`）。
-- **管线形态**：tee 字节流 → event-adapter（PiEvent → PiTranslatedEvent）→ **复用主对话流的 entry 化管线**（翻译事件 → PiEntry 重构，与 event-interpreter 的 GUI 广播产出同构，但不经过 interpreter 的 session 状态回写——tee 是只读旁路）→ 新 WS 帧 `session.subagentEntriesAppended {sessionId: <mainSid>, subagentId: <recordId>, entries: PiEntry[]}` 广播（message-bus topic 表登记为 **state** 类（可回放对账），`packages/runtime/src/services/message-bus/message-bus.ts` topic 表新增一行）。
+- **管线形态**：tee 字节流 → event-adapter（PiEvent → PiTranslatedEvent）→ **复用主对话流的 entry 化管线**（翻译事件 → PiEntry 重构，与 event-interpreter 的 GUI 广播产出同构，但不经过 interpreter 的 session 状态回写——tee 是只读旁路）→ 新 WS 帧 `session.subagentEntriesAppended {sessionId: <mainSid>, subagentId: <recordId>, entries: PiEntry[]}` 广播（message-bus topic 表登记为 **state** 类的 **state-no-key 混合形态**：分配 seq 但刻意**不入 ring、不入快照**——增量 entry 流不是 last-value 语义，快照覆盖会丢中间 entry；subagent 长任务高频帧入 ring 会冲刷主对话流的可回放缓冲制造主流 gap。重连对账不靠快照/ring：renderer reducer 按 entry id 幂等去重 + 重开 session 时经 fetchAndInject 拉全量快照，实装语义见 `message-bus.ts` 的 STATE_TYPE_KEY_MAP「例外登记」段；本节初稿括注「可回放对账」与实装不符，已按实装修订）。
 - **text_delta 中间态**：tee 侧翻译出的 text_delta 增量续用既有 `subagent.stream_delta` 帧（event-interpreter.ts:367 路径 A-1 形态，payload 归属改经握手帧路由）——打字机效果不等待 entry 帧。
 - **翻译失败隔离**：单事件 try-catch（对齐 interpreter W1 per-event 隔离范式）——翻译异常的**单个事件**丢弃 + warn 日志（含 recordId 与原始字节 tail），不连坐后续事件、不影响编排通路（转发分支独立）、不杀进程。连续 N 条失败（如 ≥50）→ 放弃该子进程的 tee 分支（转纯转发），drawer 降级为快照 + reload（§2.4 保底）。
 - **资源纪律**：子进程退出（exit 帧发出）→ 注册表注销时同步销毁 tee 实例（adapter/entry 管线/缓冲全释放）；内存影响评估见 §10-3。

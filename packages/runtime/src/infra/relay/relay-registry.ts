@@ -3,9 +3,10 @@
  *
  * 职责：socket 连接 → 握手帧校验（版本协商 + 归属校验）→ spawn 真实 pi（argv/env/cwd
  * 全从握手帧，env 剥离 XYZ_SUBAGENT_RELAY_* 防孙进程嵌套误导）→ 双向字节泵（down 帧 →
- * child stdin；child stdout → up 帧 + tee 分支同一次读取顺序分发；stderr → up-stderr 帧；
- * exit → exit 帧 → 关连接）→ 断连即杀（SIGTERM → grace → SIGKILL，独立实现——依赖方向
- * 纪律：runtime 不 import extension 的 kill-chain）→ pid 文件 + 重启残留扫描兜底。
+ * child stdin；child stdout → up 帧 + 磁盘镜像 pi-relay-<date>-<recordId>.jsonl + tee 分支
+ * 同一次读取顺序分发；stderr → up-stderr 帧；exit → exit 帧 → 关连接）→ 断连即杀
+ * （SIGTERM → grace → SIGKILL，独立实现——依赖方向纪律：runtime 不 import extension 的
+ * kill-chain）→ pid 文件 + 重启残留扫描兜底。
  *
  * 与 ProcessManager 的关系（设计 §4.4）：relay 子进程的发起方是 extension（经代理转交），
  * runtime 只是受托执行人——不进 RpcClient 体系（无 RPC 会话语义、无 attach 需求），
@@ -26,6 +27,7 @@ import {
   RELAY_ENV_RECORD_ID,
 } from '@zhushanwen/pi-subagent-workflow/src/execution/relay-env.js'
 import { findPiExecutable } from '../pi/find-pi-executable.js'
+import { createPiRelayLog, type PiSessionLog } from '../logger.js'
 import { RelayTee } from './relay-tee.js'
 import { getRelayChildrenDir, getRelayPidFilePath } from './relay-paths.js'
 
@@ -71,6 +73,8 @@ interface RegisteredEntry {
   child: ChildProcess
   pidFile: string
   tee: RelayTee
+  /** up 方向 stdout 字节镜像（pi-relay-<date>-<recordId>.jsonl，架构约定「pi 卡死唯一证据」）。 */
+  log: PiSessionLog
 }
 
 export interface RelayRegistryOptions {
@@ -271,7 +275,10 @@ export class RelayRegistry {
       recordId: frame.recordId,
       publish: this.opts.publish,
     })
-    const entry: RegisteredEntry = { conn, mainSessionId: frame.mainSessionId, recordId: frame.recordId, child, pidFile, tee }
+    // stdout 磁盘镜像（架构约定：pi stdout 落盘是卡死时唯一证据，relay 子进程同款覆盖）。
+    // logger 未初始化（如单测）时是 no-op 写入器，与 rpc-client 的 pi session log 同契约。
+    const log = createPiRelayLog(frame.recordId)
+    const entry: RegisteredEntry = { conn, mainSessionId: frame.mainSessionId, recordId: frame.recordId, child, pidFile, tee, log }
     this.entries.set(conn, entry)
     this.recordIdToConn.set(frame.recordId, conn)
     try {
@@ -290,10 +297,12 @@ export class RelayRegistry {
       console.debug(`[relay] child stdin error recordId=${entry.recordId}:`, err.message)
     })
 
-    // 编排通路优先 + tee 分支同一次读取顺序分发（§4.3：转发是字节级保真主链，
-    // tee 失败绝不连坐转发）
+    // 编排通路优先 + 磁盘镜像 + tee 分支同一次读取顺序分发（§4.3：转发是字节级保真主链，
+    // tee / 镜像落盘失败绝不连坐转发——PiSessionLog.write 内部 best-effort 容错不抛，
+    // 流级写错误降级为 runtime 主日志的 warn）
     child.stdout?.on('data', (chunk: Buffer) => {
       writeFrame(conn, { v: RELAY_PROTOCOL_VERSION, kind: 'data', dir: 'up', b64: chunk.toString('base64') })
+      entry.log.write(chunk)
       if (!tee.abandoned) tee.feed(chunk)
     })
     child.stdout?.on('error', (err) => {
@@ -331,12 +340,13 @@ export class RelayRegistry {
     })
   }
 
-  /** 清理条目（tee 销毁 + pid 文件删除 + 双 Map 注销）。幂等。 */
+  /** 清理条目（tee 销毁 + 镜像日志 end + pid 文件删除 + 双 Map 注销）。幂等。 */
   private cleanupEntry(entry: RegisteredEntry): void {
     if (!this.entries.has(entry.conn)) return
     this.entries.delete(entry.conn)
     this.recordIdToConn.delete(entry.recordId)
     entry.tee.dispose()
+    entry.log.end() // 缓冲异步 flush；closeLogger 退出 flush 仍会兜底等待落盘
     try {
       if (existsSync(entry.pidFile)) unlinkSync(entry.pidFile)
     // eslint-disable-next-line taste/no-silent-catch -- 清理 best-effort：pid 文件残留由下次启动 sweepOrphanChildren 兜底删除

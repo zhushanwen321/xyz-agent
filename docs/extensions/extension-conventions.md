@@ -33,6 +33,7 @@
 - 扩展不能依赖 fs 之外的 Node.js 原生模块（网络、child_process 等由 Pi 核心控制）。已知例外：
   - `@zhushanwen/pi-subagent-workflow` 走单执行链——SubprocessAgentRunner 委托 SubagentService.executeAndAwait（`executeAndAwait` → `runSpawn` → `spawn("pi", ["--mode","json"])` 子进程，进程隔离），`session-runner.runSpawn` 是**唯一**的 Pi 子进程 spawn 点（ADR-030 决策 2）
   - `execFileSync("git", ...)` 等只读子进程调用可使用 child_process
+  - 引擎抽象（[subagent-engine-abstraction.md](../architecture/subagent-engine-abstraction.md)，2026-08-25）新增的使用点：zcode launcher 的引擎 CLI `spawn`、引擎/执行器探针的 `execFile`、zcode reader 的 `node:sqlite` 动态 import。注意 ADR-030「唯一 spawn 点」字面只约束 **Pi 子进程**（subagent 执行链）的 spawn，非 pi 引擎的进程调用与原生模块使用不在该决策约束范围内
 - 旧包 `pi-workflow`/`pi-subagents` 的双 spawn 路径已废弃（见 [pi-ext-030](./adr/pi-ext-030-subagents-workflow-merge.md)）；旧包 `pi-subagents` 曾用的进程内 `createAgentSession()` 路径已回退为 spawn（进程隔离优先，见 pi-ext-030 决策记录）
 
 ## 资源自包含

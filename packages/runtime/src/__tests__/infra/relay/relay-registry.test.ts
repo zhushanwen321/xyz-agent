@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as net from 'node:net'
 import { mkdtemp, mkdir, writeFile, readFile, rm, writeFile as writeFileAsync } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initRelayServer, deinitRelayServer, isRelayServerActive, getActiveRelaySocketPath } from '../../../infra/relay/relay-server.js'
@@ -330,6 +330,36 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
       return joined.includes('text_delta') && joined.includes('message_end')
     }, 8_000, 'up frames with both events')
     agent.destroy()
+  })
+
+  t('stdout 字节镜像落盘：pi-relay-<date>-<recordId>.jsonl 出现且含原始输出字节', async () => {
+    // 镜像写入器走 logger 模块（未 init 时 no-op）——本用例先 initLogger(dataDir)，
+    // finally closeLogger 复位（后续用例恢复无 logger 状态）
+    const { initLogger, closeLogger } = await import('../../../infra/logger.js')
+    initLogger(dataDir)
+    try {
+      await startServer()
+      const agent = new TestAgent(getActiveRelaySocketPath()!)
+      await agent.opened
+      agent.send(validHandshake({ argv: [fakePi, 'events'] }))
+      const logsDir = join(dataDir, 'logs')
+      const mirrorName = () => readdirSync(logsDir).find((f) => /^pi-relay-\d{4}-\d{2}-\d{2}-rec-1\.jsonl$/.test(f))
+      // 文件在首次镜像写入时惰性创建（date 前缀 + recordId 命名对齐 pi-<date>-<sessionId> 模式）
+      await waitFor(() => existsSync(logsDir) && mirrorName() !== undefined, 8_000, 'mirror log file created')
+      // 内容含假 pi 原始输出字节（轮询等 WriteStream 缓冲 flush，不依赖时序）
+      await waitFor(() => {
+        const content = readFileSync(join(logsDir, mirrorName()!), 'utf-8')
+        return content.includes('text_delta') && content.includes('message_end')
+      }, 8_000, 'mirror content flushed')
+      const content = readFileSync(join(logsDir, mirrorName()!), 'utf-8')
+      // 逐字节保真：假 pi 两行 JSONL 各带换行，镜像原样保留（不补/不吞换行）
+      expect(content.match(/text_delta/g)?.length).toBe(1)
+      expect(content.match(/message_end/g)?.length).toBe(1)
+      expect(content.endsWith('\n')).toBe(true)
+      agent.destroy()
+    } finally {
+      await closeLogger()
+    }
   })
 
   t('exit 帧传播：child exit 7 → 代理收 exit {code:7} + pid 文件删除', async () => {

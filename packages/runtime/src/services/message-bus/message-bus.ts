@@ -36,6 +36,8 @@ const DEFAULT_RING_CAPACITY = 1000
  * topic 三分类（02 文档 D5-1）。
  *
  * - state：last-value 状态，新订阅者必须立即拿到当前值（写 stateSnapshot）。
+ *   例外：state-no-key 混合形态——登记为 state 但刻意不入快照（详见 STATE_TYPE_KEY_MAP
+ *   注释块「例外登记」，现仅 session.subagentEntriesAppended 一例）。
  * - stream：可回放的消息型事件（入 streamRing，按 seq 回放）。
  * - transient：高频瞬时流，丢失可接受（不分配 seq、不入 ring、不写快照）。
  */
@@ -133,6 +135,14 @@ export function topicOf(type: string): TopicKind {
  * - 补 `session.state_changed → 'state_changed'`（修 ADR-0055 3b）：重连后 Composer 工具条
  *   从 stateSnapshot 恢复，而非回退 fallback 默认值。
  * - compactionSummary 保持不进快照（3d：靠 JSONL 持久化兜底，符合 AGENTS.md 关键规则 9）。
+ *
+ * 例外登记（state-no-key 混合形态）：`session.subagentEntriesAppended` 在 TOPIC_TABLE
+ * 登记为 state 类，但刻意不在本表——无 typeKey、不入快照、不入 ring。理由：
+ * ①增量 entry 流不是 last-value 语义（快照同 key 覆盖会丢中间 entry）；
+ * ②subagent 长任务的高频帧若入 ring 会冲刷主对话流的可回放缓冲，制造主流 gap；
+ * ③对账不靠快照/ring：renderer reducer 按 entry id 幂等去重 + 重开 session 时经
+ * fetchAndInject 拉全量快照（设计 subagent-realtime-channel §6.1-2「帧先于快照到达，
+ * reducer 幂等去重」）。TOPIC_TABLE 该行上方注释与此同源。
  */
 const STATE_TYPE_KEY_MAP: Readonly<Record<string, string>> = {
   'session.commands': 'commands',

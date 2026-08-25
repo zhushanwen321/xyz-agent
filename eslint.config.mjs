@@ -293,8 +293,10 @@ export default [
   // ↔ 串行版向上抛）。allSettled + 部分失败返回 [] 是设计中明确否决的 alternative
   // （会吞掉未捕获异常的向上传播，改变调用方可观察行为）。故禁用 eslint-disable 行内
   // 注释形态（taste/no-eslint-disable 语义），统一走本配置级 override。
+  // 路径随 extensions 分组重构补 universal/ 段（2026-08-25：原 glob 缺段致 override 失配、
+  // 3 处 warning 漏网）。
   {
-    files: ['extensions/subagent-workflow/src/shared/resource-discovery.ts'],
+    files: ['extensions/universal/subagent-workflow/src/shared/resource-discovery.ts'],
     rules: {
       'taste/prefer-allsettled': 'off',
     },

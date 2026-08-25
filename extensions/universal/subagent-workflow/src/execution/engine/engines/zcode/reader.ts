@@ -23,9 +23,12 @@
 
 import * as fs from "node:fs";
 
-import type { AgentUsage, AgentUsageTotal, ToolCall } from "../../../types.ts";
-import type { ReplayedTurn, SessionView } from "../../types.ts";
-import { ZCODE_ENGINE_ID } from "./constants.ts";
+// 相对 import 用 .js 形态（本文件是双端复用模块，runtime tsconfig 无
+// allowImportingTsExtensions——.ts 形态会 TS5097；jiti 2.7 / vite / esbuild 均支持
+// .js→.ts 解析，pi 直载不受影响）。
+import type { AgentUsage, AgentUsageTotal, ToolCall } from "../../../types.js";
+import type { ReplayedTurn, SessionView } from "../../types.js";
+import { ZCODE_ENGINE_ID } from "./constants.js";
 
 // ============================================================
 // 结构化错误（供调用方降级②③级——不静默）
