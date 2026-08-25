@@ -34,7 +34,11 @@ export default defineConfig({
   // ══════════════════════════════════════════════════════════════
   // @xyz-agent/shared：workspace 包（纯 TS 类型 + 工具函数），必须打包进 bundle，
   // 否则打包后 require('@xyz-agent/shared') 找不到（runtime 子进程无 node_modules）
-  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', 'chokidar', '@iarna/toml', 'proper-lockfile'],
+  // @zhushanwen/pi-subagent-workflow：只消费双端复用的无状态 reader 模块
+  // （engine/engines/zcode/reader.ts + constants.ts + engine/paths.ts，设计 §3.3.1
+  // 例外条款），运行时闭包 = node:fs + 纯常量；import 链其余均为 type-only（bundle 后
+  // 消失）。禁止扩大消费面到 launcher/preparer/parser/EnginePort（依赖方向纪律）
+  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/pi-subagent-workflow', 'chokidar', '@iarna/toml', 'proper-lockfile'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
   // node-pty 是 native module（含 .node 二进制），不能打包进 JS bundle：
   // 其 JS 入口用 node-gyp-build 动态 require prebuilds/<platform>/*.node，
@@ -49,7 +53,7 @@ export default defineConfig({
   },
   // 打包后验证：检查产物存在 + 体积合理（不执行模块，避免启动 runtime）
   onSuccess: async () => {
-    const { existsSync, statSync } = await import('node:fs')
+    const { existsSync, statSync, readFileSync } = await import('node:fs')
     const path = await import('node:path')
 
     // 验证主 bundle（与 outDir 一致：../../apps/electron/dist/runtime）
@@ -63,6 +67,19 @@ export default defineConfig({
     const MIN_BUNDLE_SIZE_KB = 100
     if (sizeKB < MIN_BUNDLE_SIZE_KB) {
       throw new Error(`Runtime bundle too small (${sizeKB}KB), likely missing dependencies`)
+    }
+
+    // esbuild 前缀剥离守卫（P5，2026-08-25）：CJS 输出会把字面量 import("node:sqlite")
+    // 规约成裸名 import("sqlite")——Node 动态 import 裸名不走内置 fallback，zcode
+    // reader①级在打包环境恒降级。reader 已改变量间接规避；此处拦截 esbuild 升级后
+    // 输出形态变化导致的静默回归
+    const bundleSrc = readFileSync(bundlePath, 'utf-8')
+    if (/import\(["']sqlite["']\)/.test(bundleSrc)) {
+      throw new Error(
+        'Runtime bundle contains bare dynamic import("sqlite") — esbuild stripped the node: prefix ' +
+        '(zcode reader tier1 would always fail). Fix: keep the variable-indirected dynamic import in ' +
+        'extensions/universal/subagent-workflow/src/execution/engine/engines/zcode/reader.ts.',
+      )
     }
 
     // 验证 Worker bootstrap（plugin-host.ts 运行时依赖）

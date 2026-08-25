@@ -26,6 +26,9 @@
  * - startParam 新增 slug（短标签），extractor 提取到 SubagentRecord.slug
  * - 移除 sync 模式分支（新版只有 background）
  * - 旧 session JSONL（startParam 无 slug）slug 兜底空串
+ *
+ * 2026-08-25 P5：分协议历史读取链（record.engine 路由 + ①reader ②journal ③outcome
+ * 三级降级）独立到 ./subagent-engine-history.ts——本文件保持纯 entry 扫描器职责。
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'

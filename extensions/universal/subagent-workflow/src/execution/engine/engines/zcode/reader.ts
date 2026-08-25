@@ -311,7 +311,13 @@ export async function readZcodeSessionView(dbPath: string, sessionId?: string): 
   if (!fs.existsSync(dbPath)) {
     throw new ZcodeReaderError(`db 文件不存在：${dbPath}`);
   }
-  const sqliteMod = (await import("node:sqlite").catch(() => undefined)) as
+  // [HISTORICAL] 动态 import 必须经变量间接：esbuild CJS 输出会把字面量
+  // import("node:sqlite") 规约成裸名 import("sqlite")（external 化 node builtin 时的
+  // 前缀剥离），而 Node 动态 import 裸名不走内置模块 fallback → ERR_MODULE_NOT_FOUND
+  // → xyz-agent runtime bundle（tsup CJS）下①级恒降级（2026-08-25 P5 实测）。非字面量
+  // specifier esbuild 无法静态分析，保留原样输出，node: 前缀运行时正确解析。
+  const sqliteModuleId = "node:sqlite";
+  const sqliteMod = (await import(sqliteModuleId).catch(() => undefined)) as
     | { DatabaseSync?: unknown }
     | undefined;
   const DatabaseSyncCtor = sqliteMod?.DatabaseSync;

@@ -20,7 +20,7 @@ import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessag
 import { BUILTIN_PRESET_IDS, IMAGE_LIMITS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
-import { getAttachmentsDir } from '@xyz-agent/shared/paths'
+import { getAttachmentsDir, getDataDir } from '@xyz-agent/shared/paths'
 import type { PiSessionEntry } from '../../infra/pi/pi-protocol.js'
 import type {
   ISessionService, IMessageBroker,
@@ -32,6 +32,11 @@ import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-histo
 import { parseJsonl } from '../../utils/jsonl.js'
 import { quarantineCorruptFile } from '../../utils/json-store.js'
 import { extractSubagentsFromSessionFile, scanSubagentEntries } from './subagent-extractor.js'
+import {
+  extractRecordEngine,
+  readEngineSubagentHistory,
+  DEFAULT_SUBAGENT_ENGINE,
+} from './subagent-engine-history.js'
 import { extractWorkflowsFromSessionFile, scanWorkflowEntries } from './workflow-extractor.js'
 import { buildTraceSnapshotFromFile, parseTraceHeaderLine, nextTracePushId, collectMalformedLines, CURRENT_SYSTEM_PROMPT_CUSTOM_TYPE } from './session-trace.js'
 import type { SessionTraceSnapshot } from './session-trace.js'
@@ -992,7 +997,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // 先从主 session 提取 subagent 列表，找到 sessionFile 路径
     const subagents = await this.getSubagents(sessionId)
     const record = subagents.find((s) => s.subagentId === subagentId)
-    if (!record?.sessionFile) return []
+    if (!record) return []
+
+    // P5 分协议路由：非 pi 引擎（record.engine 字段路由，缺省 pi）走 extractor 的
+    // 三级降级读取链（①引擎原生 reader ②journal ③outcome-only）。pi 的现有直读链
+    // 零变化（A1 守护）
+    const engine = extractRecordEngine(record)
+    if (engine !== DEFAULT_SUBAGENT_ENGINE) {
+      return readEngineSubagentHistory(record, getDataDir())
+    }
+
+    if (!record.sessionFile) return []
 
     // 路径穿越校验：sessionFile 必须严格落在 piAgentDir 下（~/.xyz-agent/pi/agent/）。
     // record.sessionFile 由 subagent-extractor 从 JSONL 文本提取，不可信——攻击者构造的
@@ -1608,9 +1623,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   notifySessionCreated(summary: SessionSummary): void {
     try {
       this.onSessionCreated?.(summary)
-    // eslint-disable-next-line taste/no-silent-catch -- best-effort 降级：插件 didCreate 投递异常不外抛（创建主流程优先），仅落日志供排查
     } catch (e: unknown) {
-      // 降级策略（best-effort）：插件回调异常不阻断创建主流程，仅落日志
+      // 降级策略（best-effort）：插件回调异常不阻断创建主流程，仅落日志供排查
       console.error(`[session-service] onSessionCreated listener error (sessionId=${summary.id}):`, e)
     }
   }
