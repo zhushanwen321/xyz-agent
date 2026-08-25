@@ -37,7 +37,9 @@ export function escapeXmlText(input: string): string {
 function successCriteriaBlock(state: GoalRuntimeState): string {
 	const criteria = state.successCriteria;
 	if (!criteria || criteria.length === 0) return "";
-	const items = criteria.map((c) => `- ${escapeXmlText(c)}`).join("\n");
+	// 编号列表（非 dash bullet）：编号给 complete 证据逐条对照提供稳定索引，
+	// 渲染模式对齐 scheduler/session-reader/plan 的 `${i+1}. ` 约定（goal-criteria-array/plan.md 需求 3）
+	const items = criteria.map((c, i) => `${i + 1}. ${escapeXmlText(c)}`).join("\n");
 	return `<successCriteria>\n${items}\n</successCriteria>\n`;
 }
 

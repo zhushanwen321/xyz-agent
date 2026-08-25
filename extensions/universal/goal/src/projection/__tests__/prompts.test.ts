@@ -222,8 +222,8 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 		const out = continuationPrompt(state, 0);
 		expect(out).toContain("<successCriteria>");
 		expect(out).toContain("</successCriteria>");
-		expect(out).toContain("- pnpm test passes");
-		expect(out).toContain("- tsc clean");
+		expect(out).toContain("1. pnpm test passes");
+		expect(out).toContain("2. tsc clean");
 		// 条件文案（continuationPrompt 专属）
 		expect(out).toContain("every condition there must be met");
 	});
