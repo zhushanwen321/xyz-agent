@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 72 条（生成于 2026-08-25）。
+共 75 条（生成于 2026-08-25）。
 
 ## pi 关系（外部依赖边界）
 
@@ -89,6 +89,9 @@
 | C-ext-13 | subagent 引擎抽象依赖方向单向：上层→中立类型/EnginePort，adapter→公共降级层；runtime 永不 import adapter 运行时件（launcher/preparer/parser 与 EnginePort 实例），例外仅无状态 reader 模块与中立制品（record+journal） | extensions/universal/subagent-workflow/**、packages/runtime/** | [subagent-engine-abstraction](architecture/subagent-engine-abstraction.md#331-分层总图) | review: review-arch-boundary |
 | C-ext-14 | schema 校验 native/emulated 硬分流：capabilities.schemaEnforcement=native 的引擎保持原生链路（pi env 注入为唯一权威），禁止 import schema-emulation 二次校验；ajv 只许出现在 emulated 路径（structured-output 方案 A 历史教训） | extensions/universal/subagent-workflow/src/execution/engine/** | [subagent-engine-abstraction](architecture/subagent-engine-abstraction.md#d4-降级能力归属公共层native-路径与仿真路径硬分流) | review: review-business-logic |
 | C-ext-15 | 引擎数据目录布局（<dataDir>/engines/<engineId>/<poolKey>/）与 journal 路径必须经 engine/paths.ts 同源推导，extension 写侧与 runtime 校验侧禁自拼字符串；record.engine 缺省按 pi 投影（存量 record 零迁移） | extensions/universal/subagent-workflow/src/execution/engine/**、packages/runtime/src/services/session/** | [subagent-engine-abstraction](architecture/subagent-engine-abstraction.md#d5-环境隔离与凭据注入走-per-engine-preparer-钩子隔离目录池化保留随-record-生命周期回收) · [subagent-engine-abstraction](architecture/subagent-engine-abstraction.md#d6-session-读取独立-sessionview-接口--三级降级链第级归属宿主-event-journal引擎无关) | review: review-arch-boundary |
+| C-ext-16 | chat 域缺省引擎路径字节级守护：pi 缺省路由下 record.engine 恒 undefined（entry 序列化不增键），显式 engine:'pi' 亦剥离；引擎归属缺省映射只发生在读侧/渲染侧（D5）；兜底路径（engineFallback）是唯一允许 entry 增 engine 系字段的 pi 形态 | extensions/universal/subagent-workflow/src/execution/subagent-service.ts、extensions/universal/subagent-workflow/src/execution/__tests__/chat-engine-routing.test.ts | [subagent-engine-gui-visibility](architecture/subagent-engine-gui-visibility.md#d1-终态架构--职责分层--协议闭合) | review: review-arch-boundary |
+| C-ext-17 | 非 pi 引擎分支终止链三路径全覆盖：spawn 子进程注册 session-runner spawnedChildren 记账（shutdown 收割兜底）、record AbortController 的 signal wire 到 RunContext.signal（用户 cancel 经 kill-chain 两级）、会话级联挂 dispose() 既有编排（abortRunningControllers → killAllSpawnedChildren）——不留孤儿进程 | extensions/universal/subagent-workflow/src/execution/subagent-service.ts、extensions/universal/subagent-workflow/src/execution/session-runner.ts、extensions/universal/subagent-workflow/src/execution/engine/port.ts | [subagent-engine-gui-visibility](architecture/subagent-engine-gui-visibility.md#d1-终态架构--职责分层--协议闭合) | review: review-business-logic |
+| C-ext-18 | 引擎 icon 资产纪律：品牌 icon 复制入仓 packages/renderer/src/assets/icons/engine/（禁外部路径引用/symlink）、统一 currentColor 单色（禁硬编码品牌色）、引擎→icon 映射只经 ENGINE_ICON_REGISTRY 单点扩展（新引擎加一行，未知 id 防御回中性圆点） | packages/renderer/src/assets/icons/engine/**、packages/renderer/src/constants/engine-icons.ts、packages/renderer/src/components/sidebar/SubagentList.vue、packages/renderer/src/components/panel/SubagentTab.vue | [subagent-engine-gui-visibility](architecture/subagent-engine-gui-visibility.md#d1-终态架构--职责分层--协议闭合) | review: review-electron-build |
 
 ## 打包与分发
 

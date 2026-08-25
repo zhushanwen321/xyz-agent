@@ -88,6 +88,15 @@ export type ExecutionMode = "background";
  *
  * 设计：AgentEvent 携带 updateFromEvent 收口进 record 所需的**全部数据**——
  * tool_end 带 result（供 turn.toolCalls 存完整 ToolCall），无需翻译层旁路累积。
+ *
+ * ACP 词汇对照（D11 注记级校准，零行为变更；新引擎实现者按本表对齐语义，
+ * 详见 docs/architecture/subagent-engine-gui-visibility.md §3.3 D11）：
+ *   text_delta / thinking_delta ↔ ACP content blocks（text / thinking）
+ *   tool_start / tool_end      ↔ ACP tool_call / tool_call_update
+ *   turn_end / message_end     ↔ ACP prompt turn 终态（stop_reason + usage）
+ *   compaction                 ↔ ACP session/compaction
+ * 本协议以 pi 为语义锚点（D3）——命名不迁移，对照表仅保证未来 AcpEngine 适配器
+ * 与跨引擎 trace 映射的翻译成本最低。
  */
 export type AgentEvent =
   | { type: "tool_start"; toolName: string; args?: unknown }
