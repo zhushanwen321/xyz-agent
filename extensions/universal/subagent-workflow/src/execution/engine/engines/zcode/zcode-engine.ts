@@ -391,6 +391,8 @@ export class ZcodeEngine implements EnginePort {
           exitCode: output.exitCode,
           stdoutTail: output.stdoutText,
           stderrTail: output.stderrTail,
+          modelRef: prepared.modelRef,
+          configPath: prepared.configPath,
         }),
       };
     }
@@ -405,6 +407,8 @@ export class ZcodeEngine implements EnginePort {
           stdoutTail: output.stdoutText,
           stderrTail: output.stderrTail,
           parseReason: terminal.reason,
+          modelRef: prepared.modelRef,
+          configPath: prepared.configPath,
         }),
       };
     }

@@ -139,6 +139,54 @@ describe("buildRunFailedMessage：错误规格（stdout 尾部 + exit code + 恢
     const msg = buildRunFailedMessage({ exitCode: null, stdoutTail: "" });
     expect(msg).toContain("null（被信号杀死）");
   });
+
+  it("空 stdout 不产生空 part（防「stdout 尾部: <指引段>」视觉嵌套误读）", () => {
+    const msg = buildRunFailedMessage({ exitCode: 1, stdoutTail: "   " });
+    expect(msg).not.toContain("stdout 尾部");
+  });
+
+  it("LLM API 失败（AI_APICallError）归因到端点/凭据指引，不再给 probe 指引", () => {
+    const msg = buildRunFailedMessage({
+      cliPath: "/fake/zcode.cjs",
+      exitCode: 1,
+      stdoutTail: "",
+      stderrTail: "AI_APICallError: 500 Internal Server Error\nError: Turn execution failed",
+      modelRef: "router/mimo-v2.5-pro",
+      configPath: "/pool/.zcode/cli/config.json",
+    });
+    expect(msg).toContain("LLM API 调用失败");
+    expect(msg).toContain("router/mimo-v2.5-pro");
+    expect(msg).toContain("/pool/.zcode/cli/config.json");
+    expect(msg).toContain("baseURL");
+    expect(msg).toContain("engine: pi");
+    // probe/golden 指引不出现（误导排查方向——2026-08-25 真机教训）
+    expect(msg).not.toContain("--version");
+    expect(msg).not.toContain("golden");
+    expect(msg).not.toContain("stdout 尾部");
+  });
+
+  it("LLM 归因在缺省 modelRef/configPath 时兜底可读", () => {
+    const msg = buildRunFailedMessage({
+      cliPath: "/fake/zcode.cjs",
+      exitCode: 1,
+      stdoutTail: "ok",
+      stderrTail: "Symbol(vercel.ai.error.AI_APICallError): true",
+    });
+    expect(msg).toContain("LLM API 调用失败");
+    expect(msg).toContain("provider 的 baseURL 可达性");
+    expect(msg).not.toContain("undefined");
+  });
+
+  it("stderr 的 [Object] 噪音行折叠为计数", () => {
+    const noisy = [
+      "AIError: fail",
+      ...Array.from({ length: 12 }, () => "  [Object], [Object],"),
+      "    statusCode: undefined,",
+    ].join("\n");
+    const msg = buildRunFailedMessage({ cliPath: "/c", exitCode: 1, stdoutTail: "", stderrTail: noisy });
+    expect(msg).toContain("[Object]×12");
+    expect(msg).not.toContain("[Object], [Object]");
+  });
 });
 
 describe("createBoundedLineBuffer：有界双缓冲", () => {

@@ -312,11 +312,46 @@ export function synthesizeCoarseEvents(response: string, usage?: ExecutionAgentU
 // ============================================================
 
 /**
- * 运行中失败的结构化文案：stdout 尾部 2000 字 + exit code + 恢复指引
- * （版本确认 + 探针重跑 + 新样本补录 golden + engine: pi 重跑）。
+ * 运行中失败的结构化文案：stdout 尾部 2000 字 + exit code + 恢复指引。
+ *
+ * 指引按 stderr 特征归因（2026-08-25 真机教训：LLM 端点不可达导致的
+ * AI_APICallError 曾套用「查版本/重跑探针/补 golden」指引，误导排查方向）：
+ *   - LLM API 调用失败（stderr 含 AI_APICallError）：CLI 本体与输出解析正常，
+ *     指向池内 provider 的 baseURL/apiKey 排查；
+ *   - 其余（spawn 成功但格式漂移/解析失败）：保留 probe/golden 指引。
  */
 /** 错误文案里 stderr 尾部回显长度（stdout 有专用 2000 常量，stderr 更短防刷屏）。 */
 const STDERR_TAIL_IN_MSG_CHARS = 500;
+
+/** vercel.ai SDK 的 API 调用错误类名——zcode CLI 内部 LLM 调用失败的稳定特征。 */
+const LLM_API_FAILURE_SIGNATURE = "AI_APICallError";
+
+/**
+ * 折叠 stderr 里 console.log 浅序列化产生的 "[Object]" 噪音行
+ * （真实堆栈里常出现连续十余行 `[Object], [Object], …`，折叠后保留计数）。
+ */
+function compactStderrObjectNoise(tail: string): string {
+  const OBJECT_LINE = /^(\[Object\][,\s]*)+$/;
+  const lines = tail.split("\n");
+  const out: string[] = [];
+  let run = 0;
+  const flush = (): void => {
+    if (run > 0) {
+      out.push(`[Object]×${run}`);
+      run = 0;
+    }
+  };
+  for (const line of lines) {
+    if (OBJECT_LINE.test(line.trim())) {
+      run++;
+      continue;
+    }
+    flush();
+    out.push(line);
+  }
+  flush();
+  return out.join("\n");
+}
 
 export function buildRunFailedMessage(opts: {
   /** 实际使用的 CLI 路径（用户可经 XYZ_ZCODE_CLI 覆盖——文案必须引用真路径，不硬编码缺省值）。 */
@@ -325,20 +360,48 @@ export function buildRunFailedMessage(opts: {
   stdoutTail: string;
   stderrTail?: string;
   parseReason?: string;
+  /** 本次任务解析出的模型全名（provider/model）——LLM 失败归因时点名排查对象。 */
+  modelRef?: string;
+  /** 池内 config.json 绝对路径——LLM 失败归因时给出 baseURL/apiKey 核对位置。 */
+  configPath?: string;
 }): string {
   const parts: string[] = [];
   if (opts.parseReason !== undefined) {
     parts.push(`解析失败：${opts.parseReason}。`);
   }
   parts.push(`exit code: ${opts.exitCode ?? "null（被信号杀死）"}。`);
-  if (opts.stderrTail && opts.stderrTail.trim() !== "") {
-    parts.push(`stderr 尾部: ${opts.stderrTail.slice(-STDERR_TAIL_IN_MSG_CHARS)}`);
+  if (opts.stderrTail !== undefined && opts.stderrTail.trim() !== "") {
+    const compacted = compactStderrObjectNoise(opts.stderrTail);
+    parts.push(`stderr 尾部: ${compacted.slice(-STDERR_TAIL_IN_MSG_CHARS)}`);
   }
-  parts.push(`stdout 尾部: ${opts.stdoutTail.slice(-ZCODE_ERROR_TAIL_CHARS)}`);
-  parts.push(
-    `恢复指引：跑 \`node ${opts.cliPath} --version\` 确认版本后重跑探针（probe）——` +
-      "若为格式漂移，把新 stdout 样本补录进 golden 库（__tests__/__fixtures__/zcode-golden-spawn.json）并更新 parser；" +
-      "或改用 engine: pi 重跑本任务。详见 docs/research/agent-engine-zcode.md。",
-  );
+  // stdout 空段跳过（与 stderr 同判）——turn 0 即失败时 stdout 恒空，保留空 part
+  // 只会制造「stdout 尾部: <指引段>」的视觉嵌套误读（2026-08-25 真机复盘）
+  if (opts.stdoutTail.trim() !== "") {
+    parts.push(`stdout 尾部: ${opts.stdoutTail.slice(-ZCODE_ERROR_TAIL_CHARS)}`);
+  }
+
+  const isLlmApiFailure =
+    opts.stderrTail !== undefined && opts.stderrTail.includes(LLM_API_FAILURE_SIGNATURE);
+  if (isLlmApiFailure) {
+    const modelHint =
+      opts.modelRef !== undefined ? `（本任务模型 '${opts.modelRef}'）` : "";
+    const configHint =
+      opts.configPath !== undefined
+        ? `① 核对池内 provider 的 baseURL 可达性与 apiKey 有效性（\`${opts.configPath}\`）；`
+        : "① 核对 zcode 池内 provider 的 baseURL 可达性与 apiKey 有效性；";
+    parts.push(
+      `恢复指引：LLM API 调用失败（${LLM_API_FAILURE_SIGNATURE}）——CLI 本体与输出解析正常，问题在模型端点或凭据${modelHint}。` +
+        configHint +
+        "② 修复后直接重跑本任务（probe 缓存不受影响——运行期失败不缓存）；" +
+        "③ 或任务显式指定其他可用模型（provider/model 全名）；" +
+        "④ 或改用 engine: pi 重跑本任务。",
+    );
+  } else {
+    parts.push(
+      `恢复指引：跑 \`node ${opts.cliPath} --version\` 确认版本后重跑探针（probe）——` +
+        "若为格式漂移，把新 stdout 样本补录进 golden 库（\`__tests__/__fixtures__/zcode-golden-spawn.json\`）并更新 parser；" +
+        "或改用 engine: pi 重跑本任务。详见 docs/research/agent-engine-zcode.md。",
+    );
+  }
   return `engine_run_failed: zcode CLI 运行失败。${parts.join(" ")}`;
 }
