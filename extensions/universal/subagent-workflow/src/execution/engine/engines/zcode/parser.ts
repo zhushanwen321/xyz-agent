@@ -324,7 +324,37 @@ export function synthesizeCoarseEvents(response: string, usage?: ExecutionAgentU
 const STDERR_TAIL_IN_MSG_CHARS = 500;
 
 /** vercel.ai SDK 的 API 调用错误类名——zcode CLI 内部 LLM 调用失败的稳定特征。 */
-const LLM_API_FAILURE_SIGNATURE = "AI_APICallError";
+const LLM_API_FAILURE_SIGNATURE = "APICallError";
+
+/**
+ * LLM/turn 级失败判定。两种实测形态（2026-08-25 真机）：
+ *   - 无响应形态（端点不可达）：stderr 含 AI_APICallError 类名 + Symbol 行；
+ *   - 有响应形态（如 HTTP 401）：stderr 打印 response headers + responseStatus/
+ *     statusCode，类名行被截断不在尾部——靠 `Turn execution failed`（zcode CLI
+ *     turn 失败统一尾巴）兜住。
+ */
+function isLlmTurnFailure(stderrTail: string | undefined): boolean {
+  if (stderrTail === undefined) return false;
+  return (
+    stderrTail.includes(LLM_API_FAILURE_SIGNATURE) ||
+    stderrTail.includes("Turn execution failed")
+  );
+}
+
+/** stderr 中提取 HTTP 状态码（有响应形态），用于凭据/限流/上游错误的定向指引。 */
+function extractHttpStatus(stderrTail: string | undefined): string {
+  if (stderrTail === undefined) return "";
+  const m = stderrTail.match(/statusCode:\s*(\d{3})/);
+  if (m === null) return "";
+  const code = m[1]!;
+  const meaning: Record<string, string> = {
+    "401": "——凭据无效或过期（apiKey 被上游拒绝）",
+    "403": "——凭据无权限（apiKey 有效但无该模型/资源权限）",
+    "404": "——模型或路径不存在（核对模型名与 baseURL）",
+    "429": "——限流/配额耗尽",
+  };
+  return `，HTTP ${code}${meaning[code] ?? ""}`;
+}
 
 /**
  * 折叠 stderr 里 console.log 浅序列化产生的 "[Object]" 噪音行
@@ -380,17 +410,16 @@ export function buildRunFailedMessage(opts: {
     parts.push(`stdout 尾部: ${opts.stdoutTail.slice(-ZCODE_ERROR_TAIL_CHARS)}`);
   }
 
-  const isLlmApiFailure =
-    opts.stderrTail !== undefined && opts.stderrTail.includes(LLM_API_FAILURE_SIGNATURE);
-  if (isLlmApiFailure) {
+  if (isLlmTurnFailure(opts.stderrTail)) {
+    const statusHint = extractHttpStatus(opts.stderrTail);
     const modelHint =
       opts.modelRef !== undefined ? `（本任务模型 '${opts.modelRef}'）` : "";
     const configHint =
       opts.configPath !== undefined
-        ? `① 核对池内 provider 的 baseURL 可达性与 apiKey 有效性（\`${opts.configPath}\`）；`
-        : "① 核对 zcode 池内 provider 的 baseURL 可达性与 apiKey 有效性；";
+        ? `① 核对池内 provider 的 baseURL 可达性与 apiKey 有效性（\`${opts.configPath}\`）${statusHint.includes("401") || statusHint.includes("403") ? "——apiKey 大概率无效或过期，需在凭据来源（ZCode 桌面或自建网关）更新" : ""}；`
+        : `① 核对 zcode 池内 provider 的 baseURL 可达性与 apiKey 有效性${statusHint}；`;
     parts.push(
-      `恢复指引：LLM API 调用失败（${LLM_API_FAILURE_SIGNATURE}）——CLI 本体与输出解析正常，问题在模型端点或凭据${modelHint}。` +
+      `恢复指引：模型 API 调用失败${statusHint}——CLI 本体与输出解析正常，问题在模型端点或凭据${modelHint}。` +
         configHint +
         "② 修复后直接重跑本任务（probe 缓存不受影响——运行期失败不缓存）；" +
         "③ 或任务显式指定其他可用模型（provider/model 全名）；" +

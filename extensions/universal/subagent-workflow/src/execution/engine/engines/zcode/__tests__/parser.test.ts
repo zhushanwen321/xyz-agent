@@ -154,7 +154,7 @@ describe("buildRunFailedMessage：错误规格（stdout 尾部 + exit code + 恢
       modelRef: "router/mimo-v2.5-pro",
       configPath: "/pool/.zcode/cli/config.json",
     });
-    expect(msg).toContain("LLM API 调用失败");
+    expect(msg).toContain("模型 API 调用失败");
     expect(msg).toContain("router/mimo-v2.5-pro");
     expect(msg).toContain("/pool/.zcode/cli/config.json");
     expect(msg).toContain("baseURL");
@@ -165,6 +165,31 @@ describe("buildRunFailedMessage：错误规格（stdout 尾部 + exit code + 恢
     expect(msg).not.toContain("stdout 尾部");
   });
 
+  it("401 有响应形态（无 AI_APICallError 类名）也归因，且带 HTTP 状态与凭据定向", () => {
+    const stderr401 = [
+      "  'x-mife-upstream-status': '401'",
+      "  },",
+      "  responseStatus: 401,",
+      "  statusCode: 401",
+      "}",
+      "Error: Turn execution failed (traceId: a487a9b3)",
+    ].join("\n");
+    const msg = buildRunFailedMessage({
+      cliPath: "/fake/zcode.cjs",
+      exitCode: 1,
+      stdoutTail: "",
+      stderrTail: stderr401,
+      modelRef: "router/mimo-v2.5-pro",
+      configPath: "/pool/.zcode/cli/config.json",
+    });
+    expect(msg).toContain("模型 API 调用失败");
+    expect(msg).toContain("HTTP 401");
+    expect(msg).toContain("凭据无效或过期");
+    expect(msg).toContain("apiKey 大概率无效或过期");
+    expect(msg).not.toContain("--version");
+    expect(msg).not.toContain("golden");
+  });
+
   it("LLM 归因在缺省 modelRef/configPath 时兜底可读", () => {
     const msg = buildRunFailedMessage({
       cliPath: "/fake/zcode.cjs",
@@ -172,7 +197,7 @@ describe("buildRunFailedMessage：错误规格（stdout 尾部 + exit code + 恢
       stdoutTail: "ok",
       stderrTail: "Symbol(vercel.ai.error.AI_APICallError): true",
     });
-    expect(msg).toContain("LLM API 调用失败");
+    expect(msg).toContain("模型 API 调用失败");
     expect(msg).toContain("provider 的 baseURL 可达性");
     expect(msg).not.toContain("undefined");
   });
