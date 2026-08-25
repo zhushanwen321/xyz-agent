@@ -18,6 +18,7 @@ import {
 	OBJECTIVE_DISPLAY_LIMIT,
 	OBJECTIVE_TRUNCATE_KEEP,
 } from "../constants";
+import { parseGoalArgs } from "../commands";
 import { createGoalState } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
 import type { GoalHistoryEntry, SessionEntryLike } from "../ports";
@@ -138,6 +139,19 @@ describe("handleGoalCommand — status", () => {
 		const text = notifyText(h).join("\n");
 		expect(text).toContain("test objective");
 		expect(text).toContain("Status: active");
+	});
+
+	it("U23: successCriteria 逐条编号多行显示（不再 join(\"; \") 内联）", async () => {
+		const h = makeHarness();
+		const session = createGoalSession();
+		session.state = makeActiveState({ successCriteria: ["s1", "s2"] });
+		await handleGoalCommand(h.pi, session, "status", h.ctx);
+		const text = notifyText(h).join("\n");
+		expect(text).toContain("Success criteria:");
+		expect(text).toContain("1. s1");
+		expect(text).toContain("2. s2");
+		// 旧形态（分号拼接内联一行）不再出现
+		expect(text).not.toContain("s1; s2");
 	});
 });
 
@@ -300,6 +314,65 @@ describe("handleGoalCommand — update (FR-8.4 G-002)", () => {
 		expect(session.state!.successCriteria).toEqual(["new criteria text"]);
 	});
 
+	it("U22: --criteria 多条（分号分隔）→ 数组直赋值替换", async () => {
+		const h = makeHarness();
+		const session = createGoalSession();
+		session.state = makeActiveState({
+			objective: "old objective",
+			successCriteria: ["old criteria"],
+		});
+		await handleGoalCommand(h.pi, session, "update new obj --criteria new a; new b", h.ctx);
+
+		expect(session.state!.successCriteria).toEqual(["new a", "new b"]);
+	});
+
+	it("U22 决策④: --criteria 拆分后全空（;;）→ 保留旧值（不写入 [\";;\"] 等非法数组）", async () => {
+		const h = makeHarness();
+		const session = createGoalSession();
+		session.state = makeActiveState({
+			objective: "old objective",
+			successCriteria: ["old criteria"],
+		});
+		await handleGoalCommand(h.pi, session, "update new obj --criteria ;;", h.ctx);
+
+		expect(session.state!.objective).toBe("new obj");
+		expect(session.state!.successCriteria).toEqual(["old criteria"]);
+	});
+
+	it("U22 决策④: --criteria 值拆分后全空（空格分号）→ 保留旧值", async () => {
+		const h = makeHarness();
+		const session = createGoalSession();
+		session.state = makeActiveState({
+			objective: "old objective",
+			successCriteria: ["old criteria"],
+		});
+		// 注：纯尾随空白（`--criteria  `）在 parse 层被 trim 后 flag 不匹配、
+		// 并入 objective（既有语义）；此处用「分隔符后仅空白+分号」构造拆分后全空
+		await handleGoalCommand(h.pi, session, "update new obj --criteria  ;", h.ctx);
+
+		expect(session.state!.objective).toBe("new obj");
+		expect(session.state!.successCriteria).toEqual(["old criteria"]);
+	});
+
+	it("U22: 条目含换行 → throw 带 Correct: 正例，且 state 重塑字段不动（校验前置）", async () => {
+		const h = makeHarness();
+		const session = createGoalSession();
+		session.state = makeActiveState({
+			objective: "old objective",
+			slug: "old-slug",
+			successCriteria: ["old criteria"],
+		});
+		// 单段内含换行（无分号）→ parse 拆为一条含 \n 的条目，handleUpdate 校验拒绝
+		await expect(
+			handleGoalCommand(h.pi, session, "update new obj --criteria line1\nline2", h.ctx),
+		).rejects.toThrow(/single-line[\s\S]*Correct:/);
+
+		expect(session.state!.objective).toBe("old objective");
+		expect(session.state!.slug).toBe("old-slug");
+		expect(session.state!.successCriteria).toEqual(["old criteria"]);
+		expect(h.states).toHaveLength(0); // 未 persist
+	});
+
 	it("不带 --criteria → 保留旧 successCriteria（不静默丢失验证标准）", async () => {
 		const h = makeHarness();
 		const session = createGoalSession();
@@ -320,6 +393,32 @@ describe("handleGoalCommand — update (FR-8.4 G-002)", () => {
 		await handleGoalCommand(h.pi, session, "update new obj", h.ctx);
 		// FR-8.4: active 时发送 steering
 		expect(h.piCalls.filter((c) => c.kind === "sendContext")).toHaveLength(1);
+	});
+});
+
+// ── parseGoalArgs — --criteria 分号拆分（U20/U21）──
+
+describe("parseGoalArgs — --criteria 分号拆分（U20/U21）", () => {
+	it("U20: 分号多段 → 逐段 trim + 去空段（\"a; b; c\" → [\"a\",\"b\",\"c\"]）", () => {
+		const parsed = parseGoalArgs("update new obj --criteria a; b; c");
+		expect(parsed.action).toBe("update");
+		expect(parsed.objective).toBe("new obj");
+		expect(parsed.criteria).toEqual(["a", "b", "c"]);
+	});
+
+	it("U20: 单段 → 单元素数组（\"single\" → [\"single\"]）", () => {
+		const parsed = parseGoalArgs("update new obj --criteria single");
+		expect(parsed.criteria).toEqual(["single"]);
+	});
+
+	it("U21: 连续分号 → 空段被过滤（\"a;;b\" → [\"a\",\"b\"]）", () => {
+		const parsed = parseGoalArgs("update new obj --criteria a;;b");
+		expect(parsed.criteria).toEqual(["a", "b"]);
+	});
+
+	it("U21 决策④: 拆分后全空（\";;\"）→ criteria undefined（不产出空数组）", () => {
+		const parsed = parseGoalArgs("update new obj --criteria ;;");
+		expect(parsed.criteria).toBeUndefined();
 	});
 });
 

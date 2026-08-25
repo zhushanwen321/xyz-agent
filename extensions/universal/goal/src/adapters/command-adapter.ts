@@ -81,7 +81,10 @@ function handleStatus(session: GoalSession, ctx: ExtensionContext): void {
 	const lines: Array<string | null> = [
 		state.slug ? `Slug: ${state.slug}` : null,
 		`Objective: ${state.objective}`,
-		state.successCriteria && state.successCriteria.length > 0 ? `Success criteria: ${state.successCriteria.join("; ")}` : null,
+		// U23: 逐条编号多行显示（每条独立一行，可单独核对），不再 join("; ") 内联
+		...(state.successCriteria && state.successCriteria.length > 0
+			? ["Success criteria:", ...state.successCriteria.map((c, i) => `${i + 1}. ${c}`)]
+			: [null]),
 		`Status: ${state.status}`,
 		`Turn: ${state.currentTurnIndex}`,
 		`Time elapsed: ${formatDuration(state.timeUsedSeconds)}`,
@@ -267,7 +270,7 @@ function handleUpdate(
 	pi: ExtensionAPI,
 	session: GoalSession,
 	newObjective: string | undefined,
-	criteria: string | undefined,
+	criteria: string[] | undefined,
 	ctx: ExtensionContext,
 ): void {
 	if (!session.state) {
@@ -277,6 +280,31 @@ function handleUpdate(
 	if (!newObjective) {
 		ctx.ui.notify("Usage: /goal update <new-objective> [--criteria <text>]", "warning");
 		return;
+	}
+	// 校验前置（mutate state 之前）：任一条目非法 → throw，objective 等重塑字段全部不动。
+	// 规则与 handleCreate 一致（typeof string / trim 非空 / 单行），文案带 Correct: 正例。
+	let validatedCriteria: string[] | undefined;
+	if (criteria !== undefined && criteria.length > 0) {
+		validatedCriteria = [];
+		for (const item of criteria) {
+			if (typeof item !== "string") {
+				throw new Error(
+					"'successCriteria' must be an array of strings. Correct: {\"action\":\"update\",\"objective\":\"...\",\"successCriteria\":[\"<condition 1>\",\"<condition 2>\"]}",
+				);
+			}
+			const trimmed = item.trim();
+			if (!trimmed) {
+				throw new Error(
+					"'successCriteria' items must not be empty. Each condition should be a short, single-line, checkable statement. Correct: {\"action\":\"update\",\"objective\":\"...\",\"successCriteria\":[\"tests pass\",\"tsc clean\"]}",
+				);
+			}
+			if (/[\r\n]/.test(trimmed)) {
+				throw new Error(
+					"'successCriteria' items must be single-line (no line breaks). Split multi-line text into separate semicolon-separated items, one condition per item. Correct: /goal update <objective> --criteria \"line 1; line 2\"",
+				);
+			}
+			validatedCriteria.push(trimmed);
+		}
 	}
 	const state = session.state;
 	const oldObjective = state.objective;
@@ -291,12 +319,11 @@ function handleUpdate(
 	// GAP-6: update 是重塑，旧 slug 已不匹配新 objective → 置空（widget fallback objective 截断）
 	state.slug = undefined;
 	// update 重塑后旧 successCriteria 可能不再完全匹配新 objective，但语义内容仍可部分适用。
-	// 显式传 --criteria 则替换；未传则保留旧值（修复：此前静默清空导致验证标准永久丢失，
+	// 显式传 --criteria 则数组直赋值替换（分号拆分在 parse 层完成）；未传或拆分后为空
+	// （决策④：`--criteria "  "`）则保留旧值（修复：此前静默清空导致验证标准永久丢失，
 	// 无恢复机制）。objectiveUpdatedPrompt 注入保留的 criteria 并声明按新 objective 判断完成。
-	if (criteria !== undefined && criteria.trim()) {
-		// W1：criteria 转为 string[]（按分号拆分，每项 trim 过滤空串）
-		const items = criteria.split(";").map((s) => s.trim()).filter(Boolean);
-		state.successCriteria = items.length > 0 ? items : [criteria.trim()];
+	if (validatedCriteria) {
+		state.successCriteria = validatedCriteria;
 	}
 	// FR-6.5: 持久化重塑后的状态（persistState 按当前 status tick 累加）+ FR-6.1 widget 刷新
 	const updatePorts = buildPorts(pi, ctx);
