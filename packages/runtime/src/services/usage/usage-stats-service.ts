@@ -151,7 +151,11 @@ export class UsageStatsService {
         const usage = message.usage as Record<string, unknown>
         const provider = message.provider as string | undefined
         const model = (message.responseModel ?? message.model) as string | undefined
-        const date = this.toLocalDate(entry.timestamp as string)
+        const date = toLocalDate(entry.timestamp as string)
+        if (date === null) {
+          skippedLines++
+          continue
+        }
 
         rows.push(this.makeRow(date, provider ?? '(unknown)', model ?? '(unknown)', cwd, usage))
         continue
@@ -160,18 +164,26 @@ export class UsageStatsService {
       // ② toolResult-with-usage → compaction 虚拟桶
       if (type === 'message' && role === 'toolResult' && message?.usage) {
         const usage = message.usage as Record<string, unknown>
-        const date = this.toLocalDate(entry.timestamp as string)
+        const date = toLocalDate(entry.timestamp as string)
+        if (date === null) {
+          skippedLines++
+          continue
+        }
 
-        rows.push(this.makeRow(date, 'compaction', 'compaction', cwd, usage, true))
+        rows.push(this.makeRow(date, 'compaction', 'compaction', cwd, usage))
         continue
       }
 
       // ③ compaction / branch_summary with entry.usage → compaction 虚拟桶
       if ((type === 'compaction' || type === 'branch_summary') && entry.usage) {
         const usage = entry.usage as Record<string, unknown>
-        const date = this.toLocalDate(entry.timestamp as string)
+        const date = toLocalDate(entry.timestamp as string)
+        if (date === null) {
+          skippedLines++
+          continue
+        }
 
-        rows.push(this.makeRow(date, 'compaction', 'compaction', cwd, usage, true))
+        rows.push(this.makeRow(date, 'compaction', 'compaction', cwd, usage))
         continue
       }
 
@@ -197,30 +209,10 @@ export class UsageStatsService {
     model: string,
     cwd: string | null,
     usage: Record<string, unknown>,
-    isCompaction = false,
   ): UsageRow {
-    const metrics = this.extractMetrics(usage, isCompaction)
+    const metrics = extractMetrics(usage)
     const project = this.extractProject(cwd)
     return { ...metrics, date, provider, model, project }
-  }
-
-  /** 从 usage 对象提取 UsageMetrics 字段，缺失按 0。 */
-  private extractMetrics(usage: Record<string, unknown>, isCompaction: boolean): UsageMetrics {
-    const input = typeof usage.input === 'number' ? usage.input : 0
-    const output = typeof usage.output === 'number' ? usage.output : 0
-    const cacheRead = typeof usage.cacheRead === 'number' ? usage.cacheRead : 0
-    const cacheWrite = typeof usage.cacheWrite === 'number' ? usage.cacheWrite : 0
-
-    let costUSD = 0
-    const cost = usage.cost as Record<string, unknown> | undefined
-    if (cost && typeof cost.total === 'number') {
-      costUSD = cost.total
-    }
-
-    // messages 语义：主桶 = 1（一条消息），compaction 桶 = 1（一个事件）
-    const messages = 1
-
-    return { input, output, cacheRead, cacheWrite, costUSD, messages }
   }
 
   /** 从 cwd 提取 project（basename）。 */
@@ -229,15 +221,37 @@ export class UsageStatsService {
     const name = basename(cwd)
     return name || '(unknown)'
   }
+}
 
-  /**
-   * UTC timestamp → 本地时区 'YYYY-MM-DD'（D6）。
-   *
-   * 用 Intl.DateTimeFormat 'sv-SE' locale 保证 ISO 格式输出，timeZone 缺省 = 本地时区。
-   * 禁止 toISOString().slice(0,10)（UTC 切日会让晚 8 点后的用量算到「明天」）。
-   */
-  private toLocalDate(timestamp: string): string {
-    // Intl.DateTimeFormat 的 timeZone 缺省值 = 运行环境本地时区（Node.js 下 = 系统时区）
-    return new Intl.DateTimeFormat('sv-SE').format(new Date(timestamp))
+/** 从 usage 对象提取 UsageMetrics 字段，缺失按 0。messages 语义：每行恰代表一个计入事件（主桶一条消息 / 虚拟桶一个压缩或摘要事件）。 */
+function extractMetrics(usage: Record<string, unknown>): UsageMetrics {
+  const input = typeof usage.input === 'number' ? usage.input : 0
+  const output = typeof usage.output === 'number' ? usage.output : 0
+  const cacheRead = typeof usage.cacheRead === 'number' ? usage.cacheRead : 0
+  const cacheWrite = typeof usage.cacheWrite === 'number' ? usage.cacheWrite : 0
+
+  let costUSD = 0
+  const cost = usage.cost as Record<string, unknown> | undefined
+  if (cost && typeof cost.total === 'number') {
+    costUSD = cost.total
   }
+
+  const messages = 1
+
+  return { input, output, cacheRead, cacheWrite, costUSD, messages }
+}
+/**
+ * UTC timestamp → 本地时区 'YYYY-MM-DD'（D6）；非法/缺失 timestamp 返回 null（行级失败，计入 skippedLines）。
+ *
+ * 用 Intl.DateTimeFormat 'sv-SE' locale 保证 ISO 格式输出，timeZone 缺省 = 本地时区。
+ * 禁止 toISOString().slice(0,10)（UTC 切日会让晚 8 点后的用量算到「明天」）。
+ * dateFormatter 为模块级复用实例（逐行 new 实测慢 ~37x @60k 行）。
+ */
+const dateFormatter = new Intl.DateTimeFormat('sv-SE')
+function toLocalDate(timestamp: string): string | null {
+  if (!timestamp) return null
+  const d = new Date(timestamp)
+  if (Number.isNaN(d.getTime())) return null
+  // Intl.DateTimeFormat 的 timeZone 缺省值 = 运行环境本地时区（Node.js 下 = 系统时区）
+  return dateFormatter.format(d)
 }

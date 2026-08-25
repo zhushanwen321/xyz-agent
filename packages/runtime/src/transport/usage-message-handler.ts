@@ -29,7 +29,7 @@ export class UsageMessageHandler {
           this.ctx.reply(ws, msg.id, 'usage.getStats:result', result)
         } catch (e) {
           this.ctx.sendError(ws, 'usage_scan_failed', String(e instanceof Error ? e.message : e), msg.id, {
-            hint: '数据目录可能被占用或损坏，可重试或查看 runtime 日志',
+            hint: '扫描失败，可重试；详情见 runtime 日志',
           })
         }
         return

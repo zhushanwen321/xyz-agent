@@ -13,15 +13,40 @@
  * - 空目录空结果
  * - 解析坏行 skippedLines 计数
  * - 双键失效（同 mtime 改 size 触发重扫；追加内容后消息数增加）
+ * - 双键 size 分量确定性验证（mock stat：mtime 相同仅 size 变 → 重扫；均不变 → 走缓存）
+ * - timestamp 缺失/非法行不抛错、计入 skippedLines
+ * - 多文件 skippedLines 分片求和不污染
+ * - 目录不可读返回空结果
  * - 删除文件后分片被丢弃
  * - 真实数据冒烟测试（可跳过条件：目录不存在）
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtemp, writeFile, rm, mkdir, readdir, stat, appendFile, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { UsageStatsService } from './usage-stats-service.js'
+
+// ── stat mock 基建（M6：双键 size 分量确定性场景）───────────
+// macOS/Linux 上 appendFile 必然同时更新 mtime，「mtime 不变仅 size 变」无法用真实文件系统构造，
+// 故用 vi.hoisted + importActual 透传式 mock：override 非空时按测试脚本返回固定 (mtimeMs,size)，否则透传真实 stat。
+const statMock = vi.hoisted(() => ({
+  /** 非空时接管 stat：入参为路径与真实 stat，返回覆写后的 Stats-like 对象。 */
+  override: null as null | ((path: string, realStat: (p: string) => Promise<Awaited<ReturnType<typeof import('node:fs/promises').stat>>>) => Promise<Awaited<ReturnType<typeof import('node:fs/promises').stat>>>) ,
+}))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  const realStat = actual.stat.bind(actual)
+  return {
+    ...actual,
+    stat: (p: string) => (statMock.override ? statMock.override(p, realStat) : realStat(p)),
+  }
+})
+
+/** 克隆 Stats 并覆写部分字段（保原型链，isFile() 等方法可用）。 */
+function withOverrides(s: Awaited<ReturnType<typeof import('node:fs/promises').stat>>, patch: { mtimeMs?: number; size?: number }) {
+  return Object.assign(Object.create(Object.getPrototypeOf(s)), s, patch)
+}
 
 // ── fixture 构造工具 ─────────────────────────────────────────
 
@@ -155,6 +180,7 @@ describe('UsageStatsService', () => {
   })
 
   afterEach(async () => {
+    statMock.override = null
     await rm(tmpDir, { recursive: true, force: true })
   })
 
@@ -436,6 +462,101 @@ describe('UsageStatsService', () => {
 
     const result2 = await svc.getStats()
     expect(result2.rows).toHaveLength(2)
+  })
+
+  // ── 双键 size 分量确定性验证（M6）──────────────────────
+
+  it('双键确定性：mtime 相同仅 size 变触发重扫；mtime+size 均不变走缓存', async () => {
+    // 反向验证推演：若实现删掉 size 比对只看 mtime，本用例 stage2 时 mtime 相同命中缓存 →
+    // result2.rows 仍为 1 → 断言失败（用例变红），即 size 分量被本用例守卫。
+    const line2 = assistantEntry({ timestamp: '2026-08-25T11:00:00.000Z' })
+    const content1 = [sessionEntry('/Users/dev/dk-det'), assistantEntry()].join('\n')
+    const s1 = Buffer.byteLength(content1, 'utf8')
+    const fp = join(tmpDir, 'dk-det.jsonl')
+    await writeFile(fp, content1)
+
+    // 全程接管 stat：首扫与缓存命中阶段返回 (FIXED_MTIME, S1)；重扫判定阶段返回 (FIXED_MTIME, S2)
+    const FIXED_MTIME = 1724582400000
+    let reportedSize = s1
+    let overrideOn = true
+    statMock.override = (p, realStat) => {
+      if (!overrideOn || p !== fp) return realStat(p)
+      return realStat(p).then((s) => withOverrides(s, { mtimeMs: FIXED_MTIME, size: reportedSize }))
+    }
+
+    const svc = new UsageStatsService(tmpDir)
+    const r1 = await svc.getStats()
+    expect(r1.rows).toHaveLength(1)
+
+    // append 真实文件（内容变），同时把上报 size 抬到 S2、mtime 保持 FIXED → 仅 size 变
+    await appendFile(fp, '\n' + line2)
+    reportedSize = s1 + 1 + Buffer.byteLength(line2, 'utf8')
+    const r2 = await svc.getStats()
+    expect(r2.rows).toHaveLength(2) // size 变 → 重扫生效
+
+    // mtime+size 均不变 → 走缓存（行集引用不变可证未重读）
+    const r3 = await svc.getStats()
+    expect(r3.rows).toHaveLength(2)
+    expect(r3.rows[0]).toBe(r2.rows[0]) // 同一对象实例 = 来自缓存分片，未重扫
+  })
+
+  // ── timestamp 行级失败语义（M5）─────────────────────────
+
+  it('timestamp 缺失/空的 entry 不抛错且计入 skippedLines', async () => {
+    const missingTs = JSON.stringify({ type: 'message', message: { role: 'assistant', content: 'x', usage: SAMPLE_USAGE } })
+    const emptyTs = JSON.stringify({ type: 'message', timestamp: '', message: { role: 'assistant', content: 'x', usage: SAMPLE_USAGE } })
+    const content = [
+      sessionEntry('/Users/dev/ts-test'),
+      missingTs,
+      emptyTs,
+      assistantEntry(), // 合法对照行
+    ].join('\n')
+    await writeFile(join(tmpDir, 'ts-missing.jsonl'), content)
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(1) // 仅合法对照行入桶
+    expect(result.skippedLines).toBe(2)
+  })
+
+  it('timestamp 非法字符串的 entry 不抛错且计入 skippedLines', async () => {
+    const badTs = JSON.stringify({ type: 'message', timestamp: 'not-a-date', message: { role: 'assistant', content: 'x', usage: SAMPLE_USAGE } })
+    const content = [sessionEntry('/Users/dev/ts-bad'), badTs, assistantEntry()].join('\n')
+    await writeFile(join(tmpDir, 'ts-bad.jsonl'), content)
+
+    const svc = new UsageStatsService(tmpDir)
+    const result = await svc.getStats()
+
+    expect(result.rows).toHaveLength(1)
+    expect(result.skippedLines).toBe(1)
+  })
+
+  // ── 测试盲区补强（G）──────────────────────────────────
+
+  it('多文件 skippedLines 分片求和不污染（A 缓存 + B 重扫）', async () => {
+    const fileA = join(tmpDir, 'sum-a.jsonl')
+    const fileB = join(tmpDir, 'sum-b.jsonl')
+    // A：1 坏行；先单独扫描让 A 进分片缓存
+    await writeFile(fileA, [sessionEntry('/Users/dev/sum'), 'not-json{{{', assistantEntry()].join('\n'))
+    const svc = new UsageStatsService(tmpDir)
+    const r1 = await svc.getStats()
+    expect(r1.skippedLines).toBe(1)
+
+    // B：2 坏行；追加后第二次扫描 A 走缓存 + B 重扫
+    await writeFile(fileB, [sessionEntry('/Users/dev/sum'), 'bad{{{', 'also-bad}}}'].join('\n'))
+    const r2 = await svc.getStats()
+    expect(r2.sessionCount).toBe(2)
+    expect(r2.skippedLines).toBe(3) // 1(A 缓存分片) + 2(B 新扫)，非旧值污染
+  })
+
+  it('目录不可读（不存在）返回空结果而非抛错', async () => {
+    const svc = new UsageStatsService(join(tmpDir, 'no-such-dir'))
+    const result = await svc.getStats()
+
+    expect(result.rows).toEqual([])
+    expect(result.sessionCount).toBe(0)
+    expect(result.skippedLines).toBe(0)
   })
 
   // ── 删除文件后分片被丢弃 ────────────────────────────────
