@@ -327,3 +327,131 @@ describe('SubagentTab E-4 接入（entry 帧 + 恒订阅）', () => {
     wrapper.unmount()
   })
 })
+
+describe('SubagentTab U4：zcode 终态渲染 + 运行中 coarse 提示', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    _resetDrawerForTest()
+    bindDrawerSessionId(ref(MAIN_SID))
+    vi.stubGlobal('ResizeObserver', NoopResizeObserver)
+    HTMLElement.prototype.scrollTo = vi.fn()
+    useSubagentStore().applyRecords(MAIN_SID, [makeRecord()])
+  })
+
+  it('running + engine=zcode → coarse 提示条渲染（文案含引擎名与「不支持实时流」）', async () => {
+    useSubagentStore().applyRecords(MAIN_SID, [makeRecord({ engine: 'zcode' })])
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    const hint = wrapper.find('[data-testid="subagent-coarse-hint"]')
+    expect(hint.exists()).toBe(true)
+    expect(hint.text()).toContain('zcode')
+    expect(hint.text()).toContain('不支持实时流')
+    wrapper.unmount()
+  })
+
+  it('running + 无 engine（pi）→ 无提示条，恒订阅流式行为不变', async () => {
+    // makeRecord 默认 status running（pi 真在跑场景）
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    expect(wrapper.find('[data-testid="subagent-coarse-hint"]').exists()).toBe(false)
+    // pi 流式通路照旧：stream_delta 双键订阅已注册
+    expect(events.on).toHaveBeenCalledWith(MAIN_SID, expect.any(Function))
+    expect(events.on).toHaveBeenCalledWith(VIRTUAL_ID, expect.any(Function))
+    wrapper.unmount()
+  })
+
+  it('sessionFile=null + engine=zcode → 仍发起 getSubagentHistory RPC，无空态短路', async () => {
+    useSubagentStore().applyRecords(MAIN_SID, [
+      makeRecord({ engine: 'zcode', sessionFile: null, status: 'done', endedAt: 2000 }),
+    ])
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    expect(sessionApi.getSubagentHistory).toHaveBeenCalledWith(MAIN_SID, SUB_ID)
+    // 选中态下不显示「未选中」空态，也无加载错误
+    expect(wrapper.find('[data-testid="drawer-subagent-empty"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="drawer-subagent-error"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('历史返回 zcode Message[]（含 toolCalls 的 assistant turn）→ 正常渲染消息列表', async () => {
+    useSubagentStore().applyRecords(MAIN_SID, [makeRecord({ engine: 'zcode', status: 'done' })])
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([
+      { id: 'zc-u1', role: 'user', content: '分析仓库', status: 'complete', timestamp: 1000 },
+      {
+        id: 'zc-a1',
+        role: 'assistant',
+        content: '已完成分析',
+        status: 'complete',
+        timestamp: 2000,
+        toolCalls: [
+          {
+            id: 'zc-tc1',
+            toolName: 'Read',
+            input: { path: 'a.ts' },
+            output: 'file content',
+            status: 'completed',
+            startTime: 1500,
+            endTime: 1600,
+          },
+        ],
+      },
+    ] as Message[])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    const turns = wrapper.findAll('[data-testid="turn-stub"]')
+    expect(turns.length).toBeGreaterThanOrEqual(1)
+    expect(turns[0]?.text()).toContain('分析仓库')
+    expect(turns[0]?.text()).toContain('已完成分析')
+    wrapper.unmount()
+  })
+
+  it('RPC 失败 + engine=zcode 有 result → 错误面板内展示 outcome 摘要（不白屏）', async () => {
+    useSubagentStore().applyRecords(MAIN_SID, [
+      makeRecord({ engine: 'zcode', status: 'done', result: '最终结论：一切正常', endedAt: 2000 }),
+    ])
+    vi.mocked(sessionApi.getSubagentHistory).mockRejectedValue(new Error('rpc timeout'))
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    expect(wrapper.find('[data-testid="drawer-subagent-error"]').exists()).toBe(true)
+    const summary = wrapper.find('[data-testid="subagent-outcome-summary"]')
+    expect(summary.exists()).toBe(true)
+    expect(summary.text()).toContain('最终结论：一切正常')
+    wrapper.unmount()
+  })
+
+  it('RPC 返回空结果 + engine=zcode 有 result → 客户端 outcome 兜底投影渲染（不白屏）', async () => {
+    useSubagentStore().applyRecords(MAIN_SID, [
+      makeRecord({ engine: 'zcode', status: 'done', result: '兜底摘要文本', endedAt: 2000 }),
+    ])
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    const turns = wrapper.findAll('[data-testid="turn-stub"]')
+    expect(turns.length).toBeGreaterThanOrEqual(1)
+    expect(turns[0]?.text()).toContain('do something')
+    expect(turns[0]?.text()).toContain('兜底摘要文本')
+    expect(wrapper.find('[data-testid="drawer-subagent-error"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('RPC 返回空结果 + pi record → 行为不变（不注入兜底投影，不显错误）', async () => {
+    useSubagentStore().applyRecords(MAIN_SID, [makeRecord({ status: 'done', result: 'pi 轮终结果' })])
+    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([])
+    openSubagent({ virtualId: VIRTUAL_ID, enteredFrom: 'chat' })
+    const wrapper = mountTab()
+    await settle(wrapper)
+    expect(wrapper.findAll('[data-testid="turn-stub"]').length).toBe(0)
+    expect(wrapper.find('[data-testid="subagent-outcome-summary"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})

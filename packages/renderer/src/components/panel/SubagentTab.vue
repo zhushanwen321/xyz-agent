@@ -62,6 +62,17 @@
         </span>
       </div>
 
+      <!-- 运行中 coarse 提示（U4 D7）：非 pi 引擎 running 任务不支持实时流，如实提示不伪造流。
+           pi 任务恒不出现（D5：undefined 缺省映射为 pi）。 -->
+      <div
+        v-if="coarseHintVisible"
+        class="flex shrink-0 items-center gap-1.5 border-b border-hairline bg-surface-2 px-3 py-1.5 text-[10px] text-neutral-dim"
+        data-testid="subagent-coarse-hint"
+      >
+        <Clock class="size-3 shrink-0 opacity-70" />
+        <span>{{ t('panel.sideDrawer.subagentCoarseHint', { engine: coarseHintEngine }) }}</span>
+      </div>
+
       <!-- 错误态：历史加载失败（fail-fast，提供重试入口，不阻塞主对话流） -->
       <div
         v-if="loadError"
@@ -71,6 +82,12 @@
         <AlertCircle class="size-5 text-danger opacity-60" />
         <p class="text-[11px] text-neutral-mid">{{ t('panel.sideDrawer.subagentLoadFailed') }}</p>
         <p class="max-w-full break-all text-[10px] text-neutral-dim opacity-60">{{ loadError }}</p>
+        <!-- 非 pi record 加载失败时的 outcome 摘要兜底（A8：详情页永不白屏） -->
+        <p
+          v-if="outcomeSummaryText"
+          class="max-w-full break-words text-[11px] text-neutral-mid"
+          data-testid="subagent-outcome-summary"
+        >{{ outcomeSummaryText }}</p>
         <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="drawer-subagent-retry" @click="reload">
           {{ t('panel.sideDrawer.subagentRetry') }}
         </Button>
@@ -92,7 +109,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, Bot, ChevronLeft, Lock } from '@lucide/vue'
+import { AlertCircle, Bot, ChevronLeft, Clock, Lock } from '@lucide/vue'
 import { Button } from '@xyz-agent/ui'
 import { useDrawerControl, openWorkflow } from '@xyz-agent/core/domain/drawer'
 import { usePanelStore } from '@/stores/panel'
@@ -109,7 +126,7 @@ import {
   extractAgentCallSessionId,
 } from '@/stores/workflow'
 import { getAgentCallHistory } from '@/api/domains/session'
-import type { WorkflowAgentCall } from '@xyz-agent/shared'
+import type { Message, SubagentRecord, WorkflowAgentCall } from '@xyz-agent/shared'
 import MessageStream from './MessageStream.vue'
 import { DEFAULT_ENGINE_ID } from '@/constants/engine-icons'
 
@@ -196,6 +213,69 @@ const engineBadgeTitle = computed<string>(() => {
   return t('panel.sideDrawer.engineBadgeTitle', { engine: meta?.engine || DEFAULT_ENGINE_ID })
 })
 
+/** 当前选中 subagent 的 record（三段式虚拟 id 才有；agentcall 两段式返回 null） */
+const currentRecord = computed<SubagentRecord | null>(() => {
+  const vid = selectedSubagentId.value
+  if (!vid || !isSubagentVirtualId(vid)) return null
+  const record = subagentStore
+    .getRecordsBySession(extractMainSessionId(vid))
+    .find((r) => r.subagentId === extractSubagentId(vid))
+  return record ?? null
+})
+
+/** record 实际执行引擎（缺省映射 pi，与 runtime extractRecordEngine 同语义，D5） */
+function recordEngine(record: SubagentRecord): string {
+  return record.engine || DEFAULT_ENGINE_ID
+}
+
+/**
+ * 运行中 coarse 提示可见性（U4 D7）：非 pi 引擎 + 任务真在跑（窄口径同
+ * isStreamingSubagent：running 且无轮终 result、非 resumable）。pi 恒 false（D5）。
+ */
+const coarseHintVisible = computed<boolean>(() => {
+  const record = currentRecord.value
+  if (!record || recordEngine(record) === DEFAULT_ENGINE_ID) return false
+  return subagentStore.isStreamingSubagent(extractMainSessionId(selectedSubagentId.value ?? ''), record.subagentId)
+})
+
+/** coarse 提示的引擎名（可见时 record.engine 恒非空非 pi） */
+const coarseHintEngine = computed<string>(() => {
+  const record = currentRecord.value
+  return record ? recordEngine(record) : DEFAULT_ENGINE_ID
+})
+
+/**
+ * 加载失败时的 outcome 摘要文案（A8 不白屏）：非 pi record 且有 result/error 时
+ * 在错误态面板中展示，详情页至少有任务结果可读。
+ */
+const outcomeSummaryText = computed<string | null>(() => {
+  const record = currentRecord.value
+  if (!record || recordEngine(record) === DEFAULT_ENGINE_ID) return null
+  const outcome = record.result ?? record.error
+  return outcome !== undefined ? outcome : null
+})
+
+/**
+ * 客户端 outcome-only 兜底投影（读链空结果时，U4 A8）：形状对齐 runtime
+ * subagent-engine-history 的 ③级 outcomeOnlyMessages（user task + result/error 摘要）。
+ */
+function outcomeFallbackMessages(record: SubagentRecord): Message[] {
+  const base = record.startedAt ?? Date.now()
+  const isErrorOutcome = record.result === undefined && record.error !== undefined
+  const messages: Message[] = []
+  if (record.task.length > 0) {
+    messages.push({ id: `outcome-u-${record.subagentId}`, role: 'user', content: record.task, status: 'complete', timestamp: base })
+  }
+  messages.push({
+    id: `outcome-a-${record.subagentId}`,
+    role: 'assistant',
+    content: record.result ?? record.error ?? t('panel.sideDrawer.subagentNoOutcome'),
+    status: isErrorOutcome ? 'error' : 'complete',
+    timestamp: record.endedAt ?? base,
+  })
+  return messages
+}
+
 /**
  * 按虚拟 id 类型加载对话流数据并注入 chatStore 虚拟分区。
  * - subagent 三段式：fetchAndInject 拉历史 + 恒订阅 stream_delta（E-4 / R3 消解：不再依赖
@@ -210,6 +290,17 @@ async function loadSubagentData(vid: string): Promise<void> {
       const mainSessionId = extractMainSessionId(vid)
       const subId = extractSubagentId(vid)
       await subagentStore.fetchAndInject(mainSessionId, subId, (id, msgs) => chatStore.setMessages(id, msgs))
+      // U4 A8 兜底：非 pi record 读链异常返回空（③级保底失效等异常形态）→ 客户端
+      // outcome 投影顶上，详情页不白屏。pi 空结果行为不变（正常空 session 也可能是空）。
+      const record = currentRecord.value
+      if (
+        record &&
+        recordEngine(record) !== DEFAULT_ENGINE_ID &&
+        chatStore.getMessages(vid).length === 0 &&
+        (record.result !== undefined || record.error !== undefined)
+      ) {
+        chatStore.setMessages(vid, outcomeFallbackMessages(record))
+      }
       // 恒订阅（U8 scope token；E-4 R3 消解点：订阅时机与 record 状态机解耦）
       subagentStore.subscribeStream(
         STREAM_SCOPE,

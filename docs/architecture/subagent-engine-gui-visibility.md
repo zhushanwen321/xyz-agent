@@ -1,6 +1,6 @@
 # Subagent 统一引擎协议与 GUI 可见性设计（engine 统一接管 · 分阶段协议闭合）
 
-> 状态：定稿（tech-design-review 对抗式审查 3 轮：r4-1 报 1 must-fix + 5 suggestions、r4-2 报 4 suggestions，全部修复；r4-3 确认无新问题通过。阶段 1 U0-U6 可进入实现任务拆分，阶段 2 K1-K4 各需独立详设）
+> 状态：定稿（tech-design-review 对抗式审查 3 轮：r4-1 报 1 must-fix + 5 suggestions、r4-2 报 4 suggestions，全部修复；r4-3 确认无新问题通过。**实施状态：阶段 1（U0-U6）已全部落地（2026-08-25）**——U0 路由分叉 + U1 字段贯通 + U5 skill（wave 1）、U2 编排完备 + U3 引擎标识 UI（wave 2）、U4 drawer 终态渲染（wave 3）、U6 约束登记 C-ext-16..18 + ACP 注记；验收 A1-A6 真机场景待 `pnpm dev` 环境执行。阶段 2 K1-K4 各需独立详设。
 > 层声明：当前层 = 功能设计；下一层 = 阶段 1 的实现任务（可实施）+ 阶段 2 的接口级决策（各需独立详设）。
 > 父设计：[subagent-engine-abstraction.md](subagent-engine-abstraction.md)（EnginePort 协议 SSOT；本设计是它在「统一接管 + GUI 可见性」维度的落地路径）。
 
