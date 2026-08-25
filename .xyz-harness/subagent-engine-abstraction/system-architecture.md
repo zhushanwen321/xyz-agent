@@ -179,7 +179,7 @@ classDiagram
 | spawning | launcher spawn | 进程创建；spawn 成功即构造 handle |
 | running | parser 消费 stdout | emit AgentEvent（host 落 journal） |
 | aborting | abort 分级执行 | 原生中断 → 公共杀链（SIGTERM → grace → SIGKILL） |
-| terminal（终态集合，不可逆） | completed（outcome 无 error）/ failed（运行中或前置失败）/ aborted（用户 cancel，宿主合成终态）/ timed-out（engine_timeout，杀链走完） | record 正常收尾，不留僵尸进程 |
+| terminal（终态集合，不可逆） | completed（outcome 无 error）/ failed（运行中或前置失败）/ aborted（用户 cancel，宿主合成终态）/ timed-out（engine_timeout，杀链走完）/ rejected（前置拒绝：engine_not_found / 守卫命中 probe 失败 / capability unsupported / 嵌套防护） | record 正常收尾，不留僵尸进程 |
 
 **record 状态（保持现有 subagent 状态机，不动）**：`ExecutionStatus = running | closed` 两态 + `ClosedReason`（parent-shutdown / parent-fork / parent-new / user-close / cancelled / gc）正交子枚举 + 对外四态投影（active / waiting / ended / error，`mapExternalState`）。引擎任务生命周期是 record 内一次执行的引擎侧阶段，不改变 record 对外状态契约。
 
@@ -189,7 +189,7 @@ classDiagram
 
 | Reason（错误码） | 触发时机/面 | 对应终态或拒绝形态 |
 |------|------|------|
-| engine_not_found | agent 解析期（frontmatter 写了未注册 id） | 前置拒绝（created 前，同步） |
+| engine_not_found | agent 解析期发现未注册 engine id（frontmatter 写了未注册 id） | 前置拒绝（record 创建后、引擎进程创建前，同步） |
 | engine_probe_failed | 引擎 factory 初始化 / 版本变化检测（守卫命中或 strict 模式） | 前置拒绝；无守卫时 fallback 留痕继续（非错误） |
 | engine_credential_missing | prepare 期 | failed（不创建进程） |
 | model_not_available | prepare 期（model 在引擎 provider 体系不可解释，不做隐式换引擎） | failed（不创建进程） |
@@ -355,67 +355,22 @@ pi 引擎路径与此图同构，差异仅在 Route 选中 PiEngine、Prep 无�
 
 ## 10. 挑战与决策
 
-> 以下 D1-D12 与设计文档 §3.3.2 一一对应（账本映射：decisions.md D-001~D-013，其中 D7/D9 合记于 D-007/D-009）。每条均**已被三轮对抗式审查确认**（r1 修 3 must-fix / r2 修 4 must-fix + 6 suggestion / r3 复审 0 must-fix；D11/D12 为二轮修订新增）。
+> D1-D12 的完整决策内容（张力/决策/理由三字段）以设计文档 §3.3.2 与本目录 decisions.md（D-001~D-012；D-013 为实施五阶段拆分非决策本体，D-007 账本行合记 D7 探针与 D9 守卫）为权威源，本文不再复写。12 条全部已被三轮对抗式审查确认（r1 修 3 must-fix / r2 修 4 must-fix + 6 suggestion / r3 复审 0 must-fix；D11/D12 为二轮修订新增），本阶段不重开。下表为决策索引（一句话决策 + 账本定位），细节回权威源查阅：
 
-### D1: 接口主语义锚定「一次性任务」，交互控制面单列可选方法
-**张力**: fire-to-completion 的接口简洁性 vs pi conversation 的交互控制面（chatMode 的 message/close/cancel + idle 续聊 + 进程保留）。
-**决策**: `run(task) → outcome` 是主语义；EnginePort 补第四面 `interact(handle, action)`——pi 首期原生实现（现有 chatMode 行为直通）、zcode 首期 unsupported（调用前拒绝）、未来低交互引擎可由公共层「run + resume + 宿主 idle timer」冷仿真。配套 handle 契约三条（不透明/可持久化/自描述）与 abort 分级（AbortSignal → 原生优雅中断 → 公共杀链兜底；CLI-only 引擎直接走杀链，宿主合成终态）。
-**理由**: 折叠成「run + resume 序列」会改 pi 行为（每轮冷启动 vs 同进程 idle 复用）违反 A1 零回归；「session 型 + run 型」双语义重构让首期复杂度翻倍（subagent 场景一次性任务占绝对多数）；常驻 server 形态留作引擎内部优化（onEvent + AbortSignal 已常驻友好）。**[已被三轮对抗审查确认]**
-
-### D2: 中立类型从现有类型泛化，不另起炉灶
-**张力**: 全新设计一套更「完美」的类型 vs 现有类型被广泛消费的迁移成本。
-**决策**: AgentTaskSpec = 现有 ExecuteOptions 泛化（thinkingLevel 7 档 → 引擎无关 effort；skillPath 收拢进 persona；conversation/idleTimeoutMs 归 interact 控制面的 task 标志保留透传）；AgentEvent 8 种原样保留（唯一权威 execution/types.ts）；AgentOutcome 锚定 orchestration 层 AgentResult（与 execution 层同名类型消歧）。
-**理由**: 现有类型被 workflow 引擎 / GUI / 测试广泛消费，推倒重来是纯迁移成本；四个核心类型事实上已中立（碰巧中立 → 设计中立）。**[已被三轮对抗审查确认]**
-
-### D3: capabilities 三级声明 native / emulated / unsupported
-**张力**: 引擎理论能力 vs 本仓链路接通能力；声明式 vs 运行时探测。
-**决策**: 十维 EngineCapabilities 三级声明；声明口径是**链路接通能力**（pi RPC 有 steer 但 spawn 链路未接通，首期声明 unsupported，接通后升级声明）；上层据声明选择策略（schema emulated 自动走公共仿真层、unsupported UI 隐藏入口并提示），不 try-catch 运行时试错。
-**理由**: 运行时能力探测成本高且不可靠（有的能力要跑到一半才知道）；声明式让「引擎给不了什么」在调用前可见（G3）。**[已被三轮对抗审查确认]**
-
-### D4: 降级能力归属公共层，native 与仿真路径硬分流
-**张力**: 降级逻辑分散各 adapter vs 收口公共层；宿主二次校验的安全感 vs 引擎原生校验的唯一权威。
-**决策**: schema 仿真、超时杀链、persona 路由、嵌套防护、worktree 隔离五件放公共降级层（写一次全引擎复用）；schema 的 native/emulated 是**硬边界**——emulated 引擎走公共仿真（prompt 注入 + 三级容错 + 宿主 ajv），native 引擎保持各自原生链路，公共层不做二次校验、不改写其结果。
-**理由**: 六引擎缺失能力高度重合（schema 4/6 缺、超时 6/6 缺、sandbox 5/6 缺）——公共层是消除重复的正确位置；pi structured-output 方案 A [HISTORICAL]（env 注入的权威 schema 是唯一校验权威）——宿主再叠一层 ajv 会制造第二校验权威，恰是「校验自报 schema 致修复静默丢失」历史事故的形态。**[已被三轮对抗审查确认]**
-
-### D5: 环境隔离与凭据注入走 per-engine preparer；隔离目录池化保留，随 record 生命周期回收
-**张力**: 六家六种互不兼容的隔离手段无法参数化；单任务清理 vs 跨任务复用。
-**决策**: `prepare(task)` 返回 env/cwd/spawnedFiles + argv 估算（超限前置报 prompt_too_large，禁 spawn 后撞 E2BIG）；隔离目录按引擎+poolKey 池化**跨任务保留**；清理时序挂钩 record 生命周期但只做到**池粒度**（refs.json 引用计数，计数归零或引擎配置移除才整池删）；journal 不随池删（生命周期跟随 record）；spawnedFiles 单次性产物任务结束即清理（resume 保留）；清理失败置 `.cleanup-failed` 可观测标记。
-**理由**: 池内 db.sqlite 是读取降级链①级数据源，任务结束即清理该级永不可达；config 引导是确定性成本池化摊薄；对逆向 schema 的 sqlite 做单 session 手术式删行与「原生读取必然周期性失效」同构脆弱。**[已被三轮对抗审查确认]**
-
-### D6: session 读取独立 SessionView 接口 + 三级降级链；第②级归属宿主 event journal
-**张力**: 引擎原生读取保真度最高 vs 必然周期性失效；adapter 各自缓存 vs 宿主统一落盘。
-**决策**: `read(handle)` 返回 SessionView，降级链 ①引擎原生读取（每引擎 reader）→ ②宿主 event journal（host 消费 onEvent 统一落盘中立格式）→ ③outcome-only 摘要卡；**reader 做成无状态共享只读模块双端复用**（extension 的 read() 与 runtime 的 GUI 历史链路同一份）；pi 的 runtime 直读 JSONL 现状下沉为 pi reader，行为不变（A1 守护）；journal 路径由 handle 自描述 + runtime 前缀白名单校验（getDataDir() 动态推导）。
-**理由**: zcode sqlite schema 随版本迁移、kimi wire.jsonl 官方警告勿手改——原生读取必须有一级保底；adapter 各自缓存会演变六种格式；journal 是 AgentEvent 序列（粗粒度引擎仅合成事件）保真度低于原生，故 GUI 常态走①级、pi 不当「纪律约束不了自家引擎」的例外。**[已被三轮对抗审查确认]**
-
-### D7: 探针体系按契约稳定性分级
-**张力**: 统一强探针浪费 vs 统一弱探针危险（zcode 无契约与 codex 机器契约是稳定性光谱两端）。
-**决策**: 每引擎 `probe()`：二进制存在 + 版本解析 + 一次干跑校验（不调 LLM）——zcode 探 `--version` + 解析器对已知样本回归（golden 复用）；CC/codex 用官方 schema 机器校验（探针最轻）。探针在引擎 factory 初始化与版本变化检测时触发；失败走终态四错误形态（含恢复指引）+ 有守卫的 fallback（D9）。
-**理由**: 契约稳定性光谱两端，统一强度要么浪费要么危险；已知样本回归让探针与 golden 库一处采集两处消费。**[已被三轮对抗审查确认]**
-
-### D8: 嵌套防护双层；宿主编排禁用引擎原生多 agent 机制
-**张力**: 依赖「隔离目录不装扩展」的配置洁癖 vs 跨引擎可靠手段。
-**决策**: 统一 `XYZ_AGENT_SUBAGENT` env 标记（所有引擎 spawn 都注入，adapter 检测到即拒绝递归派发）+ 各引擎清理/利用原生标记（CLAUDECODE / ZSW_NESTED / PI_SUBAGENT_*）；六引擎原生多 agent 机制一律禁用（宿主编排纪律）。
-**理由**: opencode/CC 会吃项目级 `.opencode/`/`CLAUDE.md` 配置，隔离目录不装扩展依赖配置洁癖不可靠；env 标记是唯一跨引擎可靠手段。**[已被三轮对抗审查确认]**
-
-### D9: 配置路由三层 + 故障 fallback 三守卫；model 与 engine 正交
-**张力**: 可用性（引擎坏了兜底继续跑）vs 显式意图（静默换引擎卸除能力是安全反模式）。
-**决策**: 三层优先级（调用参数 engine > agent .md frontmatter engine > 全局默认缺省 pi）；未注册 id 在 agent 解析期报错；probe 失败默认路由回全局默认引擎并留痕（record `engineFallback` + GUI 警告条），但**三守卫任一命中不 fallback、按 strict 语义报错**：a) engine 来自显式指定；b) task 声明依赖该引擎独有能力；c) 显式 model 在默认引擎不可解析（报 model_not_available）；strict 模式一切 probe 失败直接报错。model 与 engine 正交（不按模型名隐式推引擎）；workflow 脚本不写死 engine（step 级仅限独有能力并注释原因）。
-**理由**: 沙箱类任务被静默换引擎 = 静默卸除安全能力；zsub frontmatter.model 先例与六家 agent .md 体系兼容。**[已被三轮对抗审查确认]**
-
-### D10: MVP 引擎集 = { pi, zcode }；zcode 首期只做 spawn 单轮
-**张力**: 抽象按六引擎全集设计（防返工）vs 实现按最小集推进（防过度工程）。
-**决策**: 首期落地 pi（回填，行为零变化）+ zcode（spawn 单轮模式）；app-server 常驻、conversation 模式、其他四引擎实现不进首期；第二验证引擎建议 claude-code（契约最清晰、验证 native schema 直传），明确标注为后续 Phase 非首期承诺。
-**理由**: 先回填后新增隔离回归风险；六引擎能力全集已用四份调研约束接口（防设计错返工），实现按最小可验收集推进。**[已被三轮对抗审查确认]**
-
-### D11: 能力缺陷按四级处置，capabilities 声明是唯一分发依据
-**张力**: 缺陷处理散落 if 分支 vs 统一分发；错误暴露越早越好 vs 有的错误只能运行中发现。
-**决策**: 四级处置——自动仿真（schema，公共层产出与 native 同形）/ 显示降级（粗粒度事件流、缺失 usage/cost——信息在引擎侧根本不存在，永不弹错）/ 调用前拒绝（unsupported 能力、嵌套、argv 超长——同步结构化错误不创建进程）/ 入口拦截（探针失败、凭据缺失、未注册 id——含恢复指引）。三条规则：处置由能力类别决定不由引擎 id 决定（新引擎填好声明即继承全部处置）；错误尽量先于进程创建（配置→agent 解析期、漂移→探针、超限→prepare 期），封死边界如实声明——探针只做已知样本回归，运行中漂移由 `engine_run_failed` + 宿主终态合成兜底；模型与用户错误通道分开（模型收「能改变下一次调用」的文案，用户侧 GUI 隐藏入口让错误尽量不发生）。
-**理由**: 「对不齐」的能力必须显式建模降级形态（G3/G4），散落 if 会随引擎数爆炸。**[已被三轮对抗审查确认（二轮修订新增）]**
-
-### D12: 新引擎接入以 conformance 契约套件 + golden 样本库为验收门
-**张力**: 「接入成本递减」作为口号 vs 作为可验证机制。
-**决策**: 一套任何 adapter 必须通过的契约测试（C1-C8：probe 形状 / run 简单任务 / AgentEvent 不变量五条 / abort 行为 / read 降级链 / schema 分流 / 嵌套防护 / prepare 前置错误）+ 每引擎真实流量 golden 样本（parser 回归 + 探针复用）+ 负例元测试（故意破坏不变量断言套件转红，保套件有牙）；两层结构（golden 回放层免 LLM 免二进制进 CI / run 层真实 spawn 手动门）。新引擎接入清单 = adapter 四件套 + 注册表一行 + golden 样本 + 契约套件转绿。第三验证引擎建议 opencode（迫使 driver host 从理论变现实，趁早压测常驻兼容性）。
-**理由**: 递减由可验证机制承载不靠口号；负例守护防止套件退化为橡皮图章。**[已被三轮对抗审查确认（二轮修订新增）]**
+| Dx | 一句话决策 | decisions.md |
+|----|-----------|--------------|
+| D1 | run(task)→outcome 一次性任务为主语义；interact 交互控制面单列可选方法（pi 原生 / zcode unsupported / 未来公共层冷仿真）；handle 契约三条 + abort 分级（原生中断 → 公共杀链兜底） | D-001 |
+| D2 | 中立类型从现有类型泛化（ExecuteOptions→AgentTaskSpec、AgentResult→AgentOutcome 消歧），不另起炉灶 | D-002 |
+| D3 | capabilities 三级声明 native/emulated/unsupported（十维）；口径 = 链路接通能力而非引擎理论能力 | D-003 |
+| D4 | 降级能力归属公共层（schema 仿真/超时杀链/persona 路由/嵌套防护/worktree 五件写一次全引擎复用）；schema native/emulated 硬分流，native 结果不做二次校验（防第二校验权威） | D-004 |
+| D5 | 环境隔离与凭据注入走 per-engine preparer；隔离目录池化跨任务保留（poolKey + refs.json 池粒度回收）；journal 不随池删；spawn 前估算 argv | D-005 |
+| D6 | read 独立 SessionView 接口 + 三级降级链（引擎原生 → 宿主 journal → outcome-only）；reader 为双端复用无状态共享只读模块 | D-006 |
+| D7 | 探针体系按契约稳定性分级（二进制存在 + 版本解析 + 干跑校验；factory 初始化与版本变化检测触发） | D-007 |
+| D8 | 嵌套防护双层（统一 NESTED env 标记 + 各引擎原生标记清理/利用）；六引擎原生多 agent 机制一律禁用（编排权在宿主） | D-008 |
+| D9 | 配置路由三层（frontmatter engine 为 per-agent 主通道）+ 故障 fallback 三守卫（守卫 b 首期与守卫 a 合流——声明载体 = step/调用级显式 engine 指定，AgentTaskSpec 下钻 requires 字段后独立生效）；model 与 engine 正交；脚本不写死 engine | D-009 |
+| D10 | MVP 引擎集 = { pi, zcode }；zcode 首期只做 spawn 单轮；第二验证引擎建议 claude-code（后续 Phase 非首期承诺） | D-010 |
+| D11 | 能力缺陷四级处置（自动仿真/显示降级/调用前拒绝/入口拦截）；capabilities 声明是唯一分发依据（处置由能力类别决定，不由引擎 id 决定） | D-011 |
+| D12 | 新引擎接入以 conformance 契约套件（C1-C8）+ golden 样本库为验收门；负例元测试保套件有牙 | D-012 |
 
 ### 特化决策（违反通用规则的）
 
