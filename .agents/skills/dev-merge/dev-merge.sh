@@ -81,9 +81,10 @@ case "$SUBCMD" in
       git worktree remove "$CUR_DIR" 2>/dev/null \
         || die "worktree 删除仍被拒绝。检查 $CUR_DIR 内容后用 git -C $DEV_DIR worktree remove --force $CUR_DIR 强删"
     fi
-    git branch -d "$CUR_BRANCH" \
-      || die "分支 $CUR_BRANCH 删除失败（可能未被当前分支的 upstream 包含）。确认无留存价值后用 git -C $DEV_DIR branch -D $CUR_BRANCH"
+    # is_merged 闸门已证明合入 dev；feat 分支 upstream 是 origin/main，-d 校验的是 upstream 包含性（已合入 dev 仍必拦），闸门通过后直接 -D
+    git branch -D "$CUR_BRANCH" \
+      || die "分支 $CUR_BRANCH 删除失败。恢复命令：git -C $DEV_DIR branch -D $CUR_BRANCH"
     echo "OK: worktree $CUR_DIR 与分支 $CUR_BRANCH 已清理"
-    echo "NOTE: 原 worktree 目录已删除，后续 bash 命令必须显式 cd 到其他 worktree（如 ${DEV_DIR}），不能依赖 session 默认 cwd"
+    echo "NOTE: 原 worktree 目录已删除，会话默认 cwd 已悬空。手动终端：显式 cd 到 ${DEV_DIR} 继续；agent 会话：见 SKILL.md「bash 会话报废信号解码」，停止 bash 调用直接收尾"
     ;;
 esac
