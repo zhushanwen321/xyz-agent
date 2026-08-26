@@ -26,7 +26,7 @@
  * core 零 import renderer：renderer 的 WS 能力（pending/events/subscribe）经 TransportPorts
  * 注入（TC2/TC3 一次性注入三件套），effect 兜底经 InboundEffects 注入（undefined 跳过）。
  */
-import type { ServerMessage, ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
+import type { PiEntry, PiToolCallEntryForm, ServerMessage, ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
 import { evalSeqGap } from './seq-gap'
 import {
   getSubscriptionState,
@@ -91,6 +91,18 @@ export interface InboundEffects {
   onSessionExited?(sessionId: string, payload: { code: number | null; reason: string }): void
   onMessageComplete?(sessionId: string, payload: { sessionId?: string; stopReason?: string }): void
   onSubagents?(sessionId: string, subagents: SubagentRecord[]): void
+  /**
+   * [E-4] subagent entry 帧兜底消费（session.subagentEntriesAppended，relay tee 产出）。
+   *
+   * 与 onSubagents 同定位：在所有 session（含非活跃）生效——帧先于 drawer 打开到达时
+   * 也要写虚拟分区（§6.1 分区惰性创建），不能依赖 per-focus 订阅。renderer 实现经
+   * subagentVirtualId(sessionId, subagentId) 构造虚拟分区 id 后调 chatStore.applySubagentEntries。
+   */
+  onSubagentEntries?(
+    sessionId: string,
+    subagentId: string,
+    entries: Array<PiEntry | PiToolCallEntryForm>,
+  ): void
   onWorkflowUpdate?(sessionId: string, update: ServerMessageMap['session.workflowUpdate']['update']): void
   onGlobalError?(message: string): void
   /**
@@ -211,6 +223,25 @@ const ROUTE_TABLE: Record<string, RouteTableEntry> = {
       if (Array.isArray(payload.subagents)) {
         effects.onSubagents?.(sid, payload.subagents)
       }
+    },
+  },
+  'session.subagentEntriesAppended': {
+    handle(msg, { ports, effects, sid }) {
+      if (!sid) return
+      if (!applySeqGap(sid, msg)) return
+      ports.events.dispatchSession(sid, msg)
+      // [E-4] subagent entry 帧兜底：写 chatStore 虚拟分区必须在所有 session 生效
+      //（帧先于 drawer 打开——分区惰性创建不依赖订阅，§6.1）。payload 守卫对齐
+      // session.subagents 条目（subagentId 非空 + entries 数组，坏形状跳过 effect 但
+      // dispatch 照常——per-session 订阅者可能自带消费逻辑）。
+      const payload = msg.payload as { subagentId?: unknown; entries?: unknown }
+      if (typeof payload.subagentId !== 'string' || payload.subagentId === '') return
+      if (!Array.isArray(payload.entries)) return
+      effects.onSubagentEntries?.(
+        sid,
+        payload.subagentId,
+        payload.entries as Array<PiEntry | PiToolCallEntryForm>,
+      )
     },
   },
   'session.workflowUpdate': {

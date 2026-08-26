@@ -41,6 +41,8 @@ export class SessionMessageHandler {
     // wave:runtime-wiring：session.subscribe/unsubscribe RPC（IF6/IF7）。
     'session.subscribe', 'session.unsubscribe',
     'session.getSubagents', 'session.getSubagentHistory',
+    // [U7] 子代理引擎配置（Settings 引擎选择器：动态列表 + defaultEngine 读写）
+    'session.getSubagentEngineConfig', 'session.setSubagentDefaultEngine',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
     // session-trace（design D4）：全量 trace 台账拉取（A1 混合路由归 session-service）。
@@ -261,6 +263,15 @@ export class SessionMessageHandler {
       case 'session.getSubagentHistory': {
         const messages = await this.ctx.sessionService.getSubagentHistory(msg.payload.sessionId, msg.payload.subagentId)
         return this.ctx.reply(ws, msg.id, 'session.subagentHistory', { sessionId: msg.payload.sessionId, subagentId: msg.payload.subagentId, messages })
+      }
+      // [U7] 子代理引擎配置：get（engines 动态清单 + defaultEngine）/ set（读改写 config.json，新 session 生效）
+      case 'session.getSubagentEngineConfig': {
+        const config = await this.ctx.sessionService.getSubagentEngineConfig()
+        return this.ctx.reply(ws, msg.id, 'session.subagentEngineConfig', config)
+      }
+      case 'session.setSubagentDefaultEngine': {
+        await this.ctx.sessionService.setSubagentDefaultEngine(msg.payload.engineId)
+        return this.ctx.reply(ws, msg.id, 'session.subagentDefaultEngineSet', { engineId: msg.payload.engineId })
       }
       case 'session.getWorkflows': {
         const workflows = await this.ctx.sessionService.getWorkflows(msg.payload.sessionId)

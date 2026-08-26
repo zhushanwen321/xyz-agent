@@ -106,14 +106,16 @@
             :dirs="skillDirs"
             @update-dirs="onUpdateSkillDirs"
           />
-          <SettingsResourcePage
-            v-else-if="activeMenu === 'agent'"
-            :key="activeMenu"
-            kind="agent"
-            :items="agents"
-            :dirs="agentDirs"
-            @update-dirs="onUpdateAgentDirs"
-          />
+          <div v-else-if="activeMenu === 'agent'" :key="activeMenu" class="flex flex-col gap-4">
+            <!-- [U7] 子代理引擎选择（engines.json 动态清单；置顶为该页第一配置） -->
+            <SubagentEngineSection />
+            <SettingsResourcePage
+              kind="agent"
+              :items="agents"
+              :dirs="agentDirs"
+              @update-dirs="onUpdateAgentDirs"
+            />
+          </div>
           <ExtensionPage v-else-if="activeMenu === 'extension' && extensionView === 'main'" :key="activeMenu" :extensions="extensions" @open-contributions="extensionView = 'contributions'" />
           <PluginContributionsPage v-else-if="activeMenu === 'extension' && extensionView === 'contributions'" :key="'plugin-contributions'" @back="extensionView = 'main'" />
           <SystemPage v-else-if="activeMenu === 'system'" :key="activeMenu" :system="system" @update="onSystemUpdate" />
@@ -140,6 +142,7 @@ import { useToast } from '@/composables/useToast'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 import ProviderPage from './provider/ProviderPage.vue'
 import SettingsResourcePage from './resource/SettingsResourcePage.vue'
+import SubagentEngineSection from './agent/SubagentEngineSection.vue'
 import ExtensionPage from './extension/ExtensionPage.vue'
 import PluginContributionsPage from './extension/PluginContributionsPage.vue'
 import SystemPage from './system/SystemPage.vue'

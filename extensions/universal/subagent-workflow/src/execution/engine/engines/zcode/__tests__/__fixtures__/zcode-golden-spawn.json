@@ -1,0 +1,39 @@
+{
+  "_meta": {
+    "description": "zcode CLI spawn 单轮模式 golden 实录（2026-08-25 验收前置门）",
+    "engineVersion": "0.16.5",
+    "recordedAt": "2026-08-25T01:41:43Z",
+    "recordedOn": "macOS arm64, node v24.11.1",
+    "argv": [
+      "node",
+      "/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs",
+      "--json",
+      "--cwd",
+      "<临时目录>",
+      "--mode",
+      "yolo",
+      "--prompt",
+      "Reply with the single word: ok"
+    ],
+    "envSummary": {
+      "HOME": "<隔离池目录>（config.json = model.main + 目标 provider 条目，无 plugins 块）",
+      "stdin": "/dev/null（stdio ignore——CLI 不读 stdin，否则挂起）",
+      "XYZ_AGENT_SUBAGENT": "实录未注入；引擎实现注入 =1"
+    },
+    "exitCode": 0,
+    "durationMs": 4914,
+    "fieldStructure": {
+      "sessionId": "string，sess_<uuid>",
+      "traceId": "string（诊断用）",
+      "turnId": "string，turn_<uuid>",
+      "response": "string——assistant 全文",
+      "usage": "object：source/modelRequestCount/inputTokens/outputTokens/totalTokens/cacheReadTokens/cacheWriteTokens/reasoningTokens/webFetchRequests/webSearchRequests",
+      "eventCount": "number",
+      "projection": "object：status/turnCount/totalTokenCount/contextUsed/contextWindow"
+    },
+    "usageMapping": "inputTokens→input、outputTokens→output、cacheReadTokens→cacheRead、cacheWriteTokens→cacheWrite；cost 无来源（cost 回传 ❌ 与调研一致）",
+    "credentialNote": "stdout 不含凭据；凭据只存在于池内 config.json（此处不收录）。隔离 HOME 的凭据源用 ~/.zcode/v2/config.json（桌面登录态）——本机 ~/.zcode/cli/config.json 的 router provider 指向局域网网关 192.168.1.202:9981，实录时不可达",
+    "sigtermTiming": "SIGTERM → exit 实测 103ms（exit code 143，stderr \"Turn was cancelled\"）；引擎杀链 grace 取 5000ms（zsub 同构，保守）"
+  },
+  "stdoutRaw": "{\n  \"sessionId\": \"sess_35852a0f-1302-4e20-9e48-87f47527abe3\",\n  \"traceId\": \"9fffaebd-749e-468b-af3f-2a89e3347785\",\n  \"turnId\": \"turn_99879260-1c9b-4e97-afe1-c2e7abeaf5b9\",\n  \"response\": \"ok\",\n  \"usage\": {\n    \"source\": \"provider\",\n    \"modelRequestCount\": 1,\n    \"inputTokens\": 12599,\n    \"outputTokens\": 17,\n    \"totalTokens\": 12616,\n    \"cacheReadTokens\": 512,\n    \"cacheWriteTokens\": 0,\n    \"reasoningTokens\": 0,\n    \"webFetchRequests\": 0,\n    \"webSearchRequests\": 0\n  },\n  \"eventCount\": 17,\n  \"projection\": {\n    \"status\": \"idle\",\n    \"turnCount\": 1,\n    \"totalTokenCount\": 12616,\n    \"contextUsed\": 12616,\n    \"contextWindow\": 1000000\n  }\n}\n"
+}

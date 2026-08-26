@@ -12,7 +12,7 @@ const { parentPort: _parentPort, workerData: _workerData } = require("node:worke
 const _workerLogs = [];
 // IF6(#12): known agent() fields — hoisted to module scope, built once per worker
 // (was rebuilt inside agent() on every call; field set is call-invariant).
-const _KNOWN_FIELDS = new Set(["prompt", "description", "schema", "model", "scene", "label", "task", "agent", "phase", "skill", "timeoutMs", "cwd", "fork", "worktree", "returnMeta", "thinkingLevel"]);
+const _KNOWN_FIELDS = new Set(["prompt", "description", "schema", "model", "scene", "label", "task", "agent", "phase", "skill", "timeoutMs", "cwd", "fork", "worktree", "returnMeta", "thinkingLevel", "engine"]);
 function _pushWorkerLog(level, args) {
   try { _workerLogs.push({ level, message: args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" ") }); } catch (e) { /* swallow */ }
 }
@@ -153,6 +153,8 @@ function _safePost(msg, context) {
         scene: (secondArg && typeof secondArg === "object" && secondArg.scene) || undefined,
         phase: (secondArg && typeof secondArg === "object" && secondArg.phase) || undefined,
         thinkingLevel: (secondArg && typeof secondArg === "object" && secondArg.thinkingLevel) || $THINKING_LEVEL,
+        // P4 D9③：step 级 engine 显式指定（仅限必须某引擎独有能力的场景）
+        engine: (secondArg && typeof secondArg === "object" && secondArg.engine) || undefined,
       };
     } else if (typeof firstArg === "object" && firstArg !== null) {
       if (firstArg.prompt) {
@@ -174,6 +176,7 @@ function _safePost(msg, context) {
           worktree: firstArg.worktree,
           returnMeta: firstArg.returnMeta,
           thinkingLevel: firstArg.thinkingLevel || $THINKING_LEVEL,
+          engine: firstArg.engine,
         };
       } else {
         opts = firstArg;
@@ -190,7 +193,7 @@ function _safePost(msg, context) {
     // Validate known agent() fields to catch API misuse early (_KNOWN_FIELDS at module scope)
     const _unknownFields = Object.keys(opts).filter((k) => !_KNOWN_FIELDS.has(k));
     if (_unknownFields.length > 0) {
-      _pushWorkerLog("warn", ["[workflow] agent() received unknown fields: " + _unknownFields.join(", ") + ". Known fields: prompt, description, schema, model, scene, label, task, agent, phase, skill, timeoutMs, cwd, fork, worktree, returnMeta, thinkingLevel"]);
+      _pushWorkerLog("warn", ["[workflow] agent() received unknown fields: " + _unknownFields.join(", ") + ". Known fields: prompt, description, schema, model, scene, label, task, agent, phase, skill, timeoutMs, cwd, fork, worktree, returnMeta, thinkingLevel, engine"]);
     }
 
     const callId = _callIdCounter;

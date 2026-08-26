@@ -16,6 +16,10 @@
  * - dispose 清除 widget + 清 timer
  */
 
+import type { ExtensionMode } from "./host-mode.ts";
+import { resolveHostMode } from "./host-mode.ts";
+import { isRelayActive } from "./relay-env.ts";
+
 /** UI streaming sink 的最小接口（ctx.ui.setWidget 的 duck-typed 子集）。
  *
  * 当前只有一个 adapter（index.ts session_start 包装 ctx.ui.setWidget）。
@@ -97,4 +101,26 @@ export class SubagentStream {
       ...lines.slice(dropped),
     ]);
   }
+}
+
+/**
+ * background stream 创建策略（widget 私货通道退役步骤 2，E 方案 §6.3）。
+ *
+ * GUI（mode=rpc）+ relay 激活时不创建——drawer 实时改由 runtime tee 供数
+ * （session.subagentEntriesAppended 帧），extension 停发 setWidget 私货，主 pi stdout
+ * 卸载。TUI（widget 行是 TUI 用户的实时预览）与 relay 未激活环境（独立 pi / 无
+ * xyz-agent runtime）原样创建——universal 包自足性不绑架。
+ *
+ * env/mode 显式入参而非内部读 process.env：调用方语义（本 record 的宿主形态）一次
+ * 确定，测试可注入，函数保持纯判定。
+ */
+export function createBackgroundStream(
+  recordId: string,
+  sink: StreamSink | null,
+  mode: ExtensionMode | undefined,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): SubagentStream | undefined {
+  if (sink === null) return undefined;
+  if (isRelayActive(env) && resolveHostMode(mode) === "gui") return undefined;
+  return new SubagentStream(recordId, sink);
 }

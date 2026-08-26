@@ -100,11 +100,11 @@ describe("buildWorkerScript — _KNOWN_FIELDS module scope 提升（IF6）", () 
     expect(agentBody).toContain("_KNOWN_FIELDS.has(k)");
   });
 
-  it("字段集合内容逐字段一致（16 known fields 不丢失）", () => {
+  it("字段集合内容逐字段一致（17 known fields 不丢失——P4 增 engine）", () => {
     expect(script).toContain(
-      'const _KNOWN_FIELDS = new Set(["prompt", "description", "schema", "model", "scene", "label", "task", "agent", "phase", "skill", "timeoutMs", "cwd", "fork", "worktree", "returnMeta", "thinkingLevel"]);',
+      'const _KNOWN_FIELDS = new Set(["prompt", "description", "schema", "model", "scene", "label", "task", "agent", "phase", "skill", "timeoutMs", "cwd", "fork", "worktree", "returnMeta", "thinkingLevel", "engine"]);',
     );
     // unknown-fields 警告文案不变（known 列表仍全量）
-    expect(script).toMatch(/Known fields:.*returnMeta.*thinkingLevel/);
+    expect(script).toMatch(/Known fields:.*returnMeta.*thinkingLevel.*engine/);
   });
 });

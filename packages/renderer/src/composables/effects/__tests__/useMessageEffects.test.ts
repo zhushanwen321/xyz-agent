@@ -7,6 +7,8 @@
  * - onMessageComplete → 算 focusedSid + handleCompletion（aborted 过滤链在
  *   useCompletionNotify.test.ts 覆盖，本层只验证接线）
  * - onSubagents → applyRecords；onWorkflowUpdate → triggerWorkflowReload
+ * - onSubagentEntries → chatStore.applySubagentEntries（虚拟分区 id 经 shared 工厂构造，
+ *   E-4 relay tee entry 帧兜底接线）
  * - onGlobalError → toast
  * - onSessionError → markSessionError + toast（D6b：带 sid error envelope 兜底展示）
  * - handleRuntimeUnavailable → finalizeAllStreaming + clearAllPending（T5）
@@ -14,11 +16,12 @@
  * 运行：cd packages/renderer && npx vitest run src/composables/effects/__tests__/useMessageEffects.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import type { ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
+import type { PiEntry, ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
 
 const storeMocks = vi.hoisted(() => ({
   markSessionError: vi.fn(),
   finalizeAllStreaming: vi.fn(),
+  applySubagentEntries: vi.fn(),
   markDead: vi.fn(),
   clearAllPending: vi.fn(),
   clearSession: vi.fn(),
@@ -35,6 +38,7 @@ vi.mock('@/stores/chat', () => ({
   useChatStore: () => ({
     markSessionError: storeMocks.markSessionError,
     finalizeAllStreaming: storeMocks.finalizeAllStreaming,
+    applySubagentEntries: storeMocks.applySubagentEntries,
   }),
 }))
 vi.mock('@/stores/session', () => ({
@@ -114,6 +118,21 @@ describe('createInboundEffects（§11.4 InboundEffects 接线）', () => {
     effects.onSubagents!('s1', records)
 
     expect(storeMocks.applyRecords).toHaveBeenCalledWith('s1', records)
+  })
+
+  it('onSubagentEntries → chatStore.applySubagentEntries(virtualId, entries)（E-4：虚拟 id 经 shared 工厂三段式构造）', () => {
+    const entries: PiEntry[] = [
+      {
+        type: 'message',
+        parentId: null,
+        timestamp: '2026-08-25T00:00:00.000Z',
+        message: { role: 'user', content: [{ type: 'text', text: '分析这个仓库' }], timestamp: 1000 },
+      },
+    ]
+
+    effects.onSubagentEntries!('s-main', 'rec-9', entries)
+
+    expect(storeMocks.applySubagentEntries).toHaveBeenCalledWith('subagent:s-main:rec-9', entries)
   })
 
   it('onWorkflowUpdate → triggerWorkflowReload(sid, status)；status 缺省按 "unknown"（防御运行时坏形状）', () => {

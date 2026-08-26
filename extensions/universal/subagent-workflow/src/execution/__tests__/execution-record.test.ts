@@ -20,7 +20,8 @@ import {
   tryTransition,
   updateFromEvent,
 } from "../execution-record.ts";
-import type { AgentResult, ExecutionRecord, Turn } from "../types.ts";
+import type { AgentResult, ExecutionRecord, SubagentRecord, Turn } from "../types.ts";
+import { toSubagentRecordEntry } from "../record-entry.ts";
 
 // ── 常量（与源码 module-private 值对齐，测试用字面量）──
 const TURN_SUMMARY_MAX = 80;
@@ -1154,5 +1155,130 @@ describe("tool_end running index [perf]", () => {
 
     expect(record.turns[0]!.toolCalls[0]).toMatchObject({ toolName: "read", result: "r-done", _status: "done" });
     expect(record.turns[1]!.toolCalls[0]).toMatchObject({ toolName: "write", result: "w-done", _status: "done" });
+  });
+});
+
+// ============================================================
+// P4 引擎留痕字段（engine / engineFallback，D9①）
+// ============================================================
+
+describe("createRecord 引擎留痕字段（P4）", () => {
+  it("identity 带 engine/engineFallback 时进 record，JSON 序列化保留（持久化语义）", () => {
+    const record = createRecord("sa-engine-1", {
+      agent: "reviewer",
+      model: "p/m",
+      mode: "background",
+      task: "t",
+      slug: "s",
+      startedAt: 1,
+      engine: "pi",
+      engineFallback: { from: "zcode", reason: "engine_probe_failed" },
+    });
+    expect(record.engine).toBe("pi");
+    expect(record.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
+    const serialized = JSON.parse(JSON.stringify(record)) as Record<string, unknown>;
+    expect(serialized["engine"]).toBe("pi");
+    expect(serialized["engineFallback"]).toEqual({ from: "zcode", reason: "engine_probe_failed" });
+  });
+
+  it("不传时两字段缺省（存量 record 消费方零影响——序列化后无键产生）", () => {
+    const record = createRecord("sa-engine-2", {
+      agent: "worker",
+      model: "p/m",
+      mode: "background",
+      task: "t",
+      slug: "s",
+      startedAt: 1,
+    });
+    expect(record.engine).toBeUndefined();
+    expect(record.engineFallback).toBeUndefined();
+    const serialized = JSON.parse(JSON.stringify(record)) as Record<string, unknown>;
+    expect("engine" in serialized).toBe(false);
+    expect("engineFallback" in serialized).toBe(false);
+  });
+
+  it("SubagentRecord → entry 投影保留两字段（record-entry 持久化链）", () => {
+    const base: SubagentRecord = {
+      id: "sa-engine-3",
+      agent: "reviewer",
+      task: "t",
+      slug: "s",
+      status: "running",
+      mode: "background",
+      startedAt: 1,
+      rootSessionId: undefined,
+      parentRecordId: undefined,
+      depth: 0,
+      endedAt: undefined,
+      turns: 0,
+      totalTokens: 0,
+      model: "p/m",
+      thinkingLevel: undefined,
+      eventLog: [],
+      displayItems: [],
+    };
+    const entry = toSubagentRecordEntry({ ...base, engine: "pi", engineFallback: { from: "zcode", reason: "engine_probe_failed" } });
+    expect(entry.engine).toBe("pi");
+    expect(entry.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
+    // 存量 record（无字段）投影后同样缺省——消费方按 pi 投影，零迁移
+    expect(toSubagentRecordEntry(base).engine).toBeUndefined();
+  });
+});
+
+// ============================================================
+// U1 engine 三字段 entry 往返（engineHandle 贯通）
+// ============================================================
+describe("SubagentRecord ↔ subagent-record entry 往返（U1 engineHandle）", () => {
+  const base: SubagentRecord = {
+    id: "sa-engine-4",
+    agent: "reviewer",
+    task: "t",
+    slug: "s",
+    status: "running",
+    mode: "background",
+    startedAt: 1,
+    rootSessionId: undefined,
+    parentRecordId: undefined,
+    depth: 0,
+    endedAt: undefined,
+    turns: 0,
+    totalTokens: 0,
+    model: "p/m",
+    thinkingLevel: undefined,
+    eventLog: [],
+    displayItems: [],
+  };
+  const handle = { sessionRef: { sessionId: "s-1", dbPath: "pool/zcode.db" }, journalPath: "/abs/journal.jsonl", poolKey: "p1" };
+
+  it("record 含三字段 → entry JSON → 解析回 deep equal（sessionRef 键不枚举整体透传）", () => {
+    const entry = toSubagentRecordEntry({ ...base, engine: "zcode", engineFallback: { from: "zcode", reason: "engine_probe_failed" }, engineHandle: handle });
+    const roundTripped = JSON.parse(JSON.stringify(entry));
+    expect(roundTripped).toEqual({
+      v: 1,
+      id: "sa-engine-4",
+      agent: "reviewer",
+      task: "t",
+      slug: "s",
+      status: "running",
+      mode: "background",
+      startedAt: 1,
+      depth: 0,
+      turns: 0,
+      totalTokens: 0,
+      model: "p/m",
+      eventLog: [],
+      displayItems: [],
+      engine: "zcode",
+      engineFallback: { from: "zcode", reason: "engine_probe_failed" },
+      engineHandle: handle,
+    });
+    expect(toSubagentRecordEntry({ ...base, engineHandle: handle }).engineHandle).toEqual(handle);
+  });
+
+  it("record 无三字段 → entry JSON 不含对应键（undefined 经 JSON.stringify 自然省略，存量零迁移）", () => {
+    const serialized = JSON.parse(JSON.stringify(toSubagentRecordEntry(base))) as Record<string, unknown>;
+    expect("engine" in serialized).toBe(false);
+    expect("engineFallback" in serialized).toBe(false);
+    expect("engineHandle" in serialized).toBe(false);
   });
 });

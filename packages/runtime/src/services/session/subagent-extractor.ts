@@ -26,6 +26,9 @@
  * - startParam 新增 slug（短标签），extractor 提取到 SubagentRecord.slug
  * - 移除 sync 模式分支（新版只有 background）
  * - 旧 session JSONL（startParam 无 slug）slug 兜底空串
+ *
+ * 2026-08-25 P5：分协议历史读取链（record.engine 路由 + ①reader ②journal ③outcome
+ * 三级降级）独立到 ./subagent-engine-history.ts——本文件保持纯 entry 扫描器职责。
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
@@ -111,6 +114,44 @@ function optBoolean(v: unknown): boolean | undefined {
 /** plain object 判定（LLM 可控的 JSON.parse 产物 shape 守卫用） */
 function isPlainRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+/**
+ * entry data.engineFallback → shared engineFallback（U1）。坏形状（非 plain object /
+ * from/reason 非 string）不投影该字段——防御降级不抛，消费端按无 fallback 处理。
+ */
+function projectEngineFallback(v: unknown): { from: string; reason: string } | undefined {
+  if (!isPlainRecord(v)) return undefined
+  const from = optString(v.from)
+  const reason = optString(v.reason)
+  return from !== undefined && reason !== undefined ? { from, reason } : undefined
+}
+
+/**
+ * entry data.engineHandle → shared engineHandle（U1）。守卫形状与读侧
+ * subagent-engine-history 的 extractRecordEngineHandle 对齐：
+ * - poolKey 缺失/非 string/空串 → 整个字段不投影（定位符不完整，读侧降级 outcome-only）
+ * - sessionRef 非 plain object 或含非 string 值 → 整个字段不投影；键不枚举整体透传
+ * - journalPath optString（可选）
+ */
+function projectEngineHandle(
+  v: unknown,
+): { sessionRef: Record<string, string>; journalPath?: string; poolKey: string } | undefined {
+  if (!isPlainRecord(v)) return undefined
+  const poolKey = optString(v.poolKey)
+  if (poolKey === undefined || poolKey.length === 0) return undefined
+  if (!isPlainRecord(v.sessionRef)) return undefined
+  const sessionRef: Record<string, string> = {}
+  for (const [k, val] of Object.entries(v.sessionRef)) {
+    if (typeof val !== 'string') return undefined
+    sessionRef[k] = val
+  }
+  const journalPath = optString(v.journalPath)
+  return {
+    sessionRef,
+    ...(journalPath !== undefined ? { journalPath } : {}),
+    poolKey,
+  }
 }
 
 /** JSONL 中的 message entry 结构（简化） */
@@ -206,6 +247,10 @@ function projectSelfDescribedSubagentRecord(d: Record<string, unknown>): Subagen
   const status = normalizeSubagentStatus(d.status)
   const startedAt = optNumber(d.startedAt)
   const endedAt = optNumber(d.endedAt)
+  const engineRaw = optString(d.engine)
+  const engine = engineRaw !== undefined && engineRaw.length > 0 ? engineRaw : undefined
+  const engineFallback = projectEngineFallback(d.engineFallback)
+  const engineHandle = projectEngineHandle(d.engineHandle)
   return {
     subagentId: d.id,
     sessionFile: optString(d.sessionFile) ?? null,
@@ -236,6 +281,11 @@ function projectSelfDescribedSubagentRecord(d: Record<string, unknown>): Subagen
     // 存量 entry，消费端按保守方向处理）；resumable = 无活进程驱动的 running。
     chatMode: optBoolean(d.chatMode),
     resumable: optBoolean(d.resumable),
+    // U1 engine 三字段：投影层只透传（engine 非空才投影），缺省=pi 由读侧
+    // extractRecordEngine 映射（不在此填默认值）；坏形状字段级降级不抛
+    ...(engine !== undefined ? { engine } : {}),
+    ...(engineFallback !== undefined ? { engineFallback } : {}),
+    ...(engineHandle !== undefined ? { engineHandle } : {}),
   }
 }
 

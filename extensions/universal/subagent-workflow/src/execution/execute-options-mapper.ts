@@ -6,6 +6,7 @@
 // 接线层级：[模块内直调] —— SAR.run 内调。
 
 import type { AgentCallOpts } from "../orchestration/models/types.ts";
+import { HOST_TIMEOUT_ABORT_REASON } from "./engine/common/kill-chain.ts";
 import type { ModelInfo } from "./model-resolver.ts";
 import type { ExecuteOptions } from "./types.ts";
 
@@ -84,7 +85,10 @@ export function mergeTimeoutSignal(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // 超时 abort 带 reason 标记（对齐点④）：引擎合成终态时判别「宿主超时」
+  // （engine_timeout 公共合成）vs「外部 cancel」（中止标记）——pi 链路不读 reason，
+  // 行为不变。外部 signal abort 不带标记（用户/编排层 cancel 语义）。
+  const timer = setTimeout(() => controller.abort(HOST_TIMEOUT_ABORT_REASON), timeoutMs);
   timer.unref();
 
   const onExternalAbort = (): void => controller.abort();

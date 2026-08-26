@@ -5,7 +5,25 @@
   "type": "module",
   "main": "src/index.ts",
   "xyz-agent": {
-    "role": "universal"
+    "role": "universal",
+    "startupConfig": [
+      {
+        "path": "config/permission-ext-config.json",
+        "content": {
+          "mode": "yolo",
+          "enabled": true,
+          "classifier": {
+            "enabled": true,
+            "model": "auto",
+            "timeout": 90,
+            "autoApproveLowRisk": true,
+            "autoDenyHighRisk": true,
+            "thinkingLevel": "off"
+          },
+          "userRules": []
+        }
+      }
+    ]
   },
   "pi": {
     "extensions": [

@@ -920,6 +920,9 @@ importers:
       '@xyz-agent/shared':
         specifier: workspace:*
         version: link:../shared
+      '@zhushanwen/pi-subagent-workflow':
+        specifier: workspace:*
+        version: link:../../extensions/universal/subagent-workflow
       chokidar:
         specifier: ^4.0.1
         version: 4.0.3

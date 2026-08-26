@@ -398,9 +398,11 @@ describe('subagent store — cancelSubagent', () => {
   })
 })
 
-// ── subscribeStream / stopStream（W4 收口机制 + U8 drawer scope token，CRAP 定向）──
+// ── subscribeStream / stopStream（W4 收口机制 + U8 drawer scope token + E-4 双订阅适配）──
 //
 // store 内 import * as events from '@/api/events'，此处 mock events.on 捕获 WS handler。
+// E-4：双键订阅（主 sid = 旧 widget 通道帧路由 key；虚拟分区 id = tee 帧路由 key），
+// 每次 subscribeStream 消耗 events.on 两次。
 vi.mock('@/api/events', () => ({
   on: vi.fn(),
 }))
@@ -408,24 +410,32 @@ vi.mock('@/api/events', () => ({
 import * as events from '@/api/events'
 
 describe('subagent store — subscribeStream / stopStream（streaming 订阅生命周期）', () => {
-  /** 注册并捕获 WS handler：events.on 单次实现 = 捕获 handler + 返回 unsub spy */
-  function captureHandler() {
-    const unsubSpy = vi.fn()
-    let handler: (msg: unknown) => void = () => {}
-    vi.mocked(events.on).mockImplementationOnce(
+  /**
+   * 注册并捕获 WS handler：events.on 顺序实现 = 按调用序捕获 handler + 返回 unsub spy。
+   * subscribeStream 依次订阅 mainSessionId（第一次 on）与 virtualId（第二次 on）。
+   */
+  function captureHandlers() {
+    const unsubSpies: Array<ReturnType<typeof vi.fn>> = []
+    const handlers: Array<(msg: unknown) => void> = []
+    vi.mocked(events.on).mockImplementation(
       ((_sid: string, h: (msg: unknown) => void) => {
-        handler = h
+        handlers.push(h)
+        const unsubSpy = vi.fn()
+        unsubSpies.push(unsubSpy)
         return unsubSpy
       }) as unknown as typeof events.on,
     )
     return {
-      unsubSpy,
-      getHandler: () => handler,
+      unsubSpies,
+      /** tee 帧路由键（virtualId）上的 handler */
+      getVirtualKeyHandler: () => handlers[1],
+      /** 旧 widget 通道路由键（mainSessionId）上的 handler */
+      getMainKeyHandler: () => handlers[0],
     }
   }
 
   function subscribe(store: ReturnType<typeof useSubagentStore>, chat = makeChatMock()) {
-    const cap = captureHandler()
+    const cap = captureHandlers()
     store.subscribeStream(
       'drawer:subagent',
       'session-1',
@@ -433,94 +443,81 @@ describe('subagent store — subscribeStream / stopStream（streaming 订阅生�
       'subagent:session-1:bg-1',
       chat.applySubagentStreamDelta,
       chat.finalizeSubagentStream,
-      chat.setMessages,
     )
     return { ...cap, chat }
   }
 
-  it('订阅注册 events.on（mainSessionId 为键）+ 帧类型/recordId 过滤', () => {
+  it('双键订阅：mainSessionId（旧 widget 通道）+ virtualId（tee 帧 payload.sessionId=虚拟分区 id）', () => {
     const store = useSubagentStore()
-    const { getHandler, chat } = subscribe(store)
+    const { getMainKeyHandler, getVirtualKeyHandler, chat } = subscribe(store)
 
-    expect(events.on).toHaveBeenCalledWith('session-1', expect.any(Function))
+    expect(events.on).toHaveBeenNthCalledWith(1, 'session-1', expect.any(Function))
+    expect(events.on).toHaveBeenNthCalledWith(2, 'subagent:session-1:bg-1', expect.any(Function))
 
-    const handler = getHandler()
-    // 非 subagent.stream_delta 帧 → 忽略
-    handler({ type: 'session.updated', payload: {} })
-    // recordId 不匹配 → 忽略
-    handler({ type: 'subagent.stream_delta', payload: { recordId: 'bg-other', lines: ['x'] } })
-    expect(chat.applySubagentStreamDelta).not.toHaveBeenCalled()
-
-    // 匹配帧 → delta 经 chat 回调收口（W4：assistant content mutation 唯一入口）
-    handler({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: ['line-1', 'line-2'] } })
-    expect(chat.applySubagentStreamDelta).toHaveBeenCalledWith('subagent:session-1:bg-1', ['line-1', 'line-2'])
+    // 两个 key 的 handler 同语义：帧类型 / recordId 过滤 + delta 经 chat 回调收口（W4）。
+    // chat mock 是跨迭代累积的同一 vi.fn，按迭代起点快照计数断言增量（绝对 not-called
+    // 断言在第二迭代必被第一迭代的合法调用击穿）。
+    for (const handler of [getMainKeyHandler(), getVirtualKeyHandler()]) {
+      const before = chat.applySubagentStreamDelta.mock.calls.length
+      handler({ type: 'session.updated', payload: {} })
+      handler({ type: 'subagent.stream_delta', payload: { recordId: 'bg-other', lines: ['x'] } })
+      expect(chat.applySubagentStreamDelta).toHaveBeenCalledTimes(before)
+      handler({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: ['line-1'] } })
+      expect(chat.applySubagentStreamDelta).toHaveBeenCalledTimes(before + 1)
+    }
+    expect(chat.applySubagentStreamDelta).toHaveBeenCalledTimes(2)
+    expect(chat.applySubagentStreamDelta).toHaveBeenCalledWith('subagent:session-1:bg-1', ['line-1'])
   })
 
-  it('lines === undefined（终态帧）→ 停订阅 + finalize 收口 + 权威历史覆盖 setMessages', async () => {
-    vi.mocked(sessionApi.getSubagentHistory).mockResolvedValue([
-      { id: 'm1', role: 'assistant', content: 'final', timestamp: 1 },
-    ])
+  it('lines === undefined（assistant 定稿清除帧）→ finalize 收口，不停订阅不 refetch（E-4 / R1 消解）', async () => {
     const store = useSubagentStore()
-    const { getHandler, unsubSpy, chat } = subscribe(store)
+    const { getVirtualKeyHandler, unsubSpies, chat } = subscribe(store)
 
-    getHandler()({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: undefined } })
+    getVirtualKeyHandler()({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: undefined } })
 
-    expect(unsubSpy).toHaveBeenCalledTimes(1)
+    // 收口 streaming 实体（chat store sealed 收口）
     expect(chat.finalizeSubagentStream).toHaveBeenCalledWith('subagent:session-1:bg-1')
-    // 权威历史覆盖（fire-and-forget，await 微任务 flush）
+    // 订阅保留（chatMode 续聊轮后续 delta 仍可达）+ 无 refetch（定稿由 entry 帧投影链覆盖）
+    for (const unsubSpy of unsubSpies) expect(unsubSpy).not.toHaveBeenCalled()
     await Promise.resolve()
-    await Promise.resolve()
-    expect(sessionApi.getSubagentHistory).toHaveBeenCalledWith('session-1', 'bg-1')
-    expect(chat.setMessages).toHaveBeenCalledWith('subagent:session-1:bg-1', [
-      { id: 'm1', role: 'assistant', content: 'final', timestamp: 1 },
-    ])
-  })
-
-  it('终态 refetch 失败 → console.error 兜底不抛（fire-and-forget 契约）', async () => {
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    vi.mocked(sessionApi.getSubagentHistory).mockRejectedValue(new Error('rpc gone'))
-    const store = useSubagentStore()
-    const { getHandler, chat } = subscribe(store)
-
-    expect(() =>
-      getHandler()({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: undefined } }),
-    ).not.toThrow()
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(errSpy).toHaveBeenCalledWith('[subagent] finalize refetch failed:', expect.any(Error))
+    expect(sessionApi.getSubagentHistory).not.toHaveBeenCalled()
     expect(chat.setMessages).not.toHaveBeenCalled()
-    errSpy.mockRestore()
+
+    // 后续轮 delta 仍可消费（R1 消解证据）
+    getVirtualKeyHandler()({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: ['next-round'] } })
+    expect(chat.applySubagentStreamDelta).toHaveBeenCalledWith('subagent:session-1:bg-1', ['next-round'])
   })
 
-  it('同 scope 重复订阅 → 先 stopStream 清旧（旧 unsub 被调，drawer 单实例单订阅）', () => {
+  it('同 scope 重复订阅 → 先 stopStream 清旧（两键 unsub 均被调，drawer 单实例单订阅）', () => {
     const store = useSubagentStore()
     const first = subscribe(store)
     const second = subscribe(store)
 
-    // 第二次 subscribeStream 先 stop 旧 scope 订阅
-    expect(first.unsubSpy).toHaveBeenCalledTimes(1)
-    expect(events.on).toHaveBeenCalledTimes(2)
+    // 第二次 subscribeStream 先 stop 旧 scope 订阅（双键都拆）
+    expect(first.unsubSpies[0]).toHaveBeenCalledTimes(1)
+    expect(first.unsubSpies[1]).toHaveBeenCalledTimes(1)
+    expect(events.on).toHaveBeenCalledTimes(4)
     // 新订阅的 handler 仍工作
-    second.getHandler()({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: ['n'] } })
+    second.getMainKeyHandler()({ type: 'subagent.stream_delta', payload: { recordId: 'bg-1', lines: ['n'] } })
     expect(second.chat.applySubagentStreamDelta).toHaveBeenCalled()
   })
 
-  it('stopStream(scope) → 调 unsub 并移除；重复 stop / 未知 scope / 空 scope → no-op', () => {
+  it('stopStream(scope) → 双键 unsub 均调并移除；重复 stop / 未知 scope / 空 scope → no-op', () => {
     const store = useSubagentStore()
-    const { unsubSpy } = subscribe(store)
+    const { unsubSpies } = subscribe(store)
 
     store.stopStream('drawer:subagent')
-    expect(unsubSpy).toHaveBeenCalledTimes(1)
+    expect(unsubSpies[0]).toHaveBeenCalledTimes(1)
+    expect(unsubSpies[1]).toHaveBeenCalledTimes(1)
 
     // 重复 stop：unsub 已移除，不再调用
     store.stopStream('drawer:subagent')
-    expect(unsubSpy).toHaveBeenCalledTimes(1)
+    expect(unsubSpies[0]).toHaveBeenCalledTimes(1)
 
     // 未知 scope / 空 scope 不抛不错调
     expect(() => store.stopStream('never')).not.toThrow()
     expect(() => store.stopStream(undefined)).not.toThrow()
-    expect(unsubSpy).toHaveBeenCalledTimes(1)
+    expect(unsubSpies[0]).toHaveBeenCalledTimes(1)
   })
 
   it('作用域销毁兜底（onScopeDispose）：store 作用域销毁（$dispose）→ 在途订阅全部 unsub', () => {
@@ -528,10 +525,11 @@ describe('subagent store — subscribeStream / stopStream（streaming 订阅生�
     // detached scope，外层 scope.stop 不级联）——$dispose 直接触发该作用域销毁路径
     setActivePinia(createPinia())
     const store = useSubagentStore()
-    const { unsubSpy } = subscribe(store)
+    const { unsubSpies } = subscribe(store)
 
     store.$dispose()
-    expect(unsubSpy).toHaveBeenCalledTimes(1)
+    expect(unsubSpies[0]).toHaveBeenCalledTimes(1)
+    expect(unsubSpies[1]).toHaveBeenCalledTimes(1)
   })
 })
 

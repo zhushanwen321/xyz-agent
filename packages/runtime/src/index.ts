@@ -70,6 +70,10 @@ import { readExtrasWithFallback } from './services/migration/provider-extras-mig
 import { runProviderExtrasMigration } from './services/migration/run-extras-migration.js'
 import { migrateProviderEnabledToWhitelist } from './services/migration/legacy-provider-migration.js'
 import { XyzProviderStore } from './services/provider-extras-store.js'
+// E-2（subagent-realtime-channel §4）：relay 基建——socket server + 子进程注册表 +
+// tee 翻译层。纯新增模块，经 messageBus.publish 广播 tee 帧；env 注入在
+// process-manager（getRelaySpawnEnv，与 server 激活状态联动）。
+import { initRelayServer, deinitRelayServer } from './infra/relay/relay-server.js'
 
 function parseArgs(): { port: number; projectRoot?: string; builtinPluginsDir?: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
@@ -657,6 +661,9 @@ async function main(): Promise<void> {
       skillRegistry.dispose()
       // sd-u6：退订完成回流（settled / exit 两腿）
       completionBackflow.dispose()
+      // E-2：relay 优雅关停——全部注册子进程杀链（SIGTERM → 3s grace → SIGKILL）+
+      // 删 socket 文件。先于 server.stop（先收割自己受托的子进程再关传输层）。
+      await deinitRelayServer()
       await server.stop()
     // eslint-disable-next-line taste/no-silent-catch -- shutdown: best-effort stop, process exits regardless
     } catch (e) {
@@ -715,6 +722,20 @@ async function main(): Promise<void> {
     process.exit(1)
   }
   console.log('[runtime] ready')
+
+  // ── E-2：relay socket server（listen 后、后台初始化前）──────────────────
+  // 早建早发现权限问题（设计 §4.1）。fatal 语义：实例冲突（残留 socket 被活实例持有）
+  // 与 listen 失败都退出——覆盖/复用会劫持他人注册表。staged 脚本缺失与执行器探针
+  // 失败不在此层（getRelaySpawnEnv 降级为不注入 env，relay 整体不激活，回落现状）。
+  try {
+    await initRelayServer({
+      projectRoot: effectiveRoot,
+      publish: (sid, msg) => messageBus.publish(sid, msg),
+    })
+  } catch (err) {
+    console.error('[runtime] fatal: relay server init failed:', err)
+    process.exit(1)
+  }
   // 启动耗时分解探针（06 §5 m-7）：listen-ready 各段耗时（baseline 对比见汇报——
   // 改造前 getPiVersion 占 listen 延迟 1.1-1.3s，重排后该段归零）。
   console.log(`[runtime] startup breakdown: syncMigrations=${(tSyncMigrations - tStart).toFixed(1)}ms construction=${(tServicesReady - tSyncMigrations).toFixed(1)}ms listen=${(performance.now() - tListen).toFixed(1)}ms total=${(performance.now() - tStart).toFixed(1)}ms`)

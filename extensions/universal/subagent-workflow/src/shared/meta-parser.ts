@@ -88,7 +88,9 @@ function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
 
   if (kind === "workflow") {
     // minor-2：agent 专属字段不可出现在 workflow（串类 reject）
-    if (o.examples !== undefined || o.tools !== undefined || o.model !== undefined) return null;
+    if (o.examples !== undefined || o.tools !== undefined || o.model !== undefined || o.engine !== undefined) {
+      return null;
+    }
     // phases 必填数组，元素为 string | {title:string, detail?:string}
     if (!Array.isArray(o.phases)) return null;
     const phases: WorkflowMeta["phases"] = [];
@@ -156,6 +158,7 @@ function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
     }
   }
   const model = isString(o.model) ? o.model : undefined;
+  const engine = isString(o.engine) ? o.engine : undefined;
 
   const meta: AgentMeta = {
     kind: "agent",
@@ -164,6 +167,7 @@ function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
     ...(examples !== undefined ? { examples } : {}),
     ...(tools !== undefined ? { tools } : {}),
     ...(model !== undefined ? { model } : {}),
+    ...(engine !== undefined ? { engine } : {}),
     ...(when !== undefined ? { when } : {}),
     ...(notFor !== undefined ? { notFor } : {}),
   };
