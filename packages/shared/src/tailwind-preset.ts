@@ -86,7 +86,7 @@ export default {
         ring: 'var(--ring)',
       },
       fontFamily: {
-        sans: ['Inter', 'SF Pro Display', 'PingFang SC', 'system-ui', 'sans-serif'],
+        sans: ['var(--font-sans)'],
         mono: ['JetBrains Mono', 'IBM Plex Mono', 'ui-monospace', 'Menlo', 'monospace'],
       },
       borderRadius: {

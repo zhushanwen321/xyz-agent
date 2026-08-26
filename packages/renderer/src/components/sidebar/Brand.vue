@@ -33,11 +33,11 @@ withDefaults(defineProps<Props>(), {
       <!-- 产品名 + DEV 徽标内层行：产品名 min-w-0 让 truncate 在窄侧栏生效（flex item
            默认 min-width:auto 会撑住不截断），徽标 shrink-0 保证不被挤掉 -->
       <div class="flex items-center gap-1.5">
-        <span class="min-w-0 truncate text-[13px] font-semibold text-neutral-fg">{{ t('app.title') }}</span>
+        <span class="min-w-0 truncate text-[length:var(--text-sm)] font-semibold text-neutral-fg">{{ t('app.title') }}</span>
         <span v-if="isDevMode()" data-testid="brand-dev-badge"
-          class="shrink-0 rounded-sm bg-info-soft px-1.5 py-0.5 text-[10px] font-semibold text-info">DEV</span>
+          class="shrink-0 rounded-sm bg-info-soft px-1.5 py-0.5 text-[length:var(--text-3xs)] font-semibold text-info">DEV</span>
       </div>
-      <span v-if="versionLabel" class="text-[10px] text-neutral-mid">{{ versionLabel }}</span>
+      <span v-if="versionLabel" class="text-[length:var(--text-3xs)] text-neutral-mid">{{ versionLabel }}</span>
     </div>
     <!-- trailing slot：Sidebar 注入 UpdateButton（ml-auto 推到右侧） -->
     <slot name="trailing" />

@@ -26,7 +26,7 @@
   <!-- context 分界行（demo .tr-divider：info 色两侧渐变线 + 说明文案；contextOnly 态由父级隐藏） -->
   <div
     v-else
-    class="flex items-center gap-2.5 px-2 py-2.5 text-[11px] text-info"
+    class="flex items-center gap-2.5 px-2 py-2.5 text-[length:var(--text-2xs)] text-info"
     data-testid="trace-context-divider"
   >
     <span aria-hidden="true" class="h-px flex-1 bg-gradient-to-r from-transparent via-info-soft to-transparent" />

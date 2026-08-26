@@ -378,18 +378,29 @@ function onClick(e: MouseEvent): void {
 .md-render :deep(.md-table-wrap) {
   overflow-x: auto;
   margin: 0.7em 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 .md-render :deep(table) {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   margin: 0;
   font-size: 0.92em;
 }
 .md-render :deep(th),
 .md-render :deep(td) {
-  border: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   padding: 0.35em 0.6em;
   text-align: left;
+}
+.md-render :deep(th:last-child),
+.md-render :deep(td:last-child) {
+  border-right: 0;
+}
+.md-render :deep(tbody tr:last-child td) {
+  border-bottom: 0;
 }
 .md-render :deep(th) {
   background: var(--surface-2);

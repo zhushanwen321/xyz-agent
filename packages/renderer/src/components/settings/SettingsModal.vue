@@ -3,7 +3,7 @@
   数据来自 settings store（单一真相源：providers/skills/agents/extensions/system）。
   store 由 AppShell 应用级 init（常驻订阅），本组件只读 store + open 时刷新 providers。
   形态：fixed inset-0 z-modal bg-bg 全屏覆盖。左 nav 220px（bg-sunken）+ 右 content flex-1（内容列 max-w-720 左对齐）。
-  nav 11 项（含 token-debug）。header 面包屑「设置 · <page>」+ 右侧 X 关闭。
+  nav 11 项（含 appearance 外观）。header 面包屑「设置 · <page>」+ 右侧 X 关闭。
 -->
 <template>
   <Teleport to="body">
@@ -125,7 +125,7 @@
           <PiPresetsPage v-else-if="activeMenu === 'preset'" :key="activeMenu" />
           <WorktreePage v-else-if="activeMenu === 'worktree'" :key="activeMenu" />
           <UpdatePage v-else-if="activeMenu === 'update'" :key="activeMenu" />
-          <TokenDebugPage v-else-if="activeMenu === 'token-debug'" :key="activeMenu" />
+          <AppearancePage v-else-if="activeMenu === 'appearance'" :key="activeMenu" :system="system" @update="onSystemUpdate" />
           <UsagePage v-else-if="activeMenu === 'usage'" :key="activeMenu" />
         </div>
       </div>
@@ -137,7 +137,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
-import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Bug, BarChart3, ArrowLeft, ArrowRight, PanelLeftClose } from '@lucide/vue'
+import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Palette, BarChart3, ArrowLeft, ArrowRight, PanelLeftClose } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { getSettingsStore, useSettings, type SystemSettings } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
@@ -153,11 +153,12 @@ import TerminalPage from './terminal/TerminalPage.vue'
 import WorktreePage from './worktree/WorktreePage.vue'
 import PiPresetsPage from './preset/PiPresetsPage.vue'
 import UpdatePage from './update/UpdatePage.vue'
-import TokenDebugPage from './system/TokenDebugPage.vue'
 import UsagePage from './usage/UsagePage.vue'
+import AppearancePage from './appearance/AppearancePage.vue'
 
 const menus = [
   { id: 'provider', labelKey: 'settings.menu.provider', icon: Settings },
+  { id: 'appearance', labelKey: 'settings.menu.appearance', icon: Palette },
   { id: 'skill', labelKey: 'settings.menu.skill', icon: Sparkles },
   { id: 'agent', labelKey: 'settings.menu.agent', icon: Bot },
   { id: 'extension', labelKey: 'settings.menu.extension', icon: Blocks },
@@ -167,7 +168,6 @@ const menus = [
   { id: 'worktree', labelKey: 'settings.menu.worktree', icon: GitBranch },
   { id: 'update', labelKey: 'settings.menu.update', icon: Download },
   { id: 'system', labelKey: 'settings.menu.system', icon: SlidersHorizontal },
-  { id: 'token-debug', labelKey: 'settings.menu.tokenDebug', icon: Bug },
   { id: 'usage', labelKey: 'settings.menu.usage', icon: BarChart3 },
 ] as const
 

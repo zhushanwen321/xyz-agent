@@ -14,7 +14,7 @@
         <Button
           variant="ghost"
           size="sm"
-          class="relative h-auto gap-0.5 px-1 py-0 text-[10px] text-accent hover:text-accent"
+          class="relative h-auto gap-0.5 px-1 py-0 text-[length:var(--text-3xs)] text-accent hover:text-accent"
           data-testid="update-available"
           :title="t('sidebar.update.newVersion')"
           @click="onPerformUpdate"
@@ -24,8 +24,8 @@
           <span class="absolute right-0 top-0 size-[7px] rounded-full bg-danger" data-testid="update-badge" />
         </Button>
       </HoverCardTrigger>
-      <HoverCardContent side="top" class="release-notes-content max-h-[360px] w-[360px] overflow-auto p-4 text-[12px] text-neutral-fg">
-        <div class="mb-2 text-[13px] font-semibold text-accent">{{ t('sidebar.update.newVersion') }}</div>
+      <HoverCardContent side="top" class="release-notes-content max-h-[360px] w-[360px] overflow-auto p-4 text-[length:var(--text-xs)] text-neutral-fg">
+        <div class="mb-2 text-[length:var(--text-sm)] font-semibold text-accent">{{ t('sidebar.update.newVersion') }}</div>
         <!--
           不复用 MarkdownRenderer 组件：该组件位于 panel/message-stream 下，强依赖 fileSearch/fileTree/
           sideDrawer/AmbiguousFilePopover/MermaidRenderer 等 panel 上下文（sessionId 在此无值，文件路径识别/
@@ -40,7 +40,7 @@
     <!-- downloading / verifying：spinner + 进度条 + 百分比 -->
     <span
       v-else-if="state.state === 'downloading' || state.state === 'verifying'"
-      class="inline-flex items-center gap-1 text-[10px] text-neutral-mid"
+      class="inline-flex items-center gap-1 text-[length:var(--text-3xs)] text-neutral-mid"
       data-testid="update-progress"
     >
       <Loader2 class="size-3 animate-spin" />
@@ -64,7 +64,7 @@
     <!-- replacing：spinner（替换文件阶段，无百分比） -->
     <span
       v-else-if="state.state === 'replacing'"
-      class="inline-flex items-center gap-1 text-[10px] text-neutral-mid"
+      class="inline-flex items-center gap-1 text-[length:var(--text-3xs)] text-neutral-mid"
       data-testid="update-replacing"
     >
       <Loader2 class="size-3 animate-spin" />
@@ -74,7 +74,7 @@
     <!-- restarting：升级完成、即将重启 -->
     <span
       v-else-if="state.state === 'restarting'"
-      class="inline-flex items-center gap-1 text-[10px] text-success"
+      class="inline-flex items-center gap-1 text-[length:var(--text-3xs)] text-success"
       data-testid="update-restarting"
     >
       <CheckCircle2 class="size-3" />
@@ -84,7 +84,7 @@
     <!-- downloaded：已下载待安装，click 弹确认 Dialog -->
     <span
       v-else-if="state.state === 'downloaded'"
-      class="inline-flex items-center gap-0.5 text-[10px] text-success cursor-pointer"
+      class="inline-flex items-center gap-0.5 text-[length:var(--text-3xs)] text-success cursor-pointer"
       data-testid="update-downloaded"
       :title="t('sidebar.update.downloaded')"
       @click="onInstallClick"
@@ -99,7 +99,7 @@
         <Button
           variant="ghost"
           size="sm"
-          class="h-auto gap-0.5 px-1 py-0 text-[10px] text-danger hover:text-danger"
+          class="h-auto gap-0.5 px-1 py-0 text-[length:var(--text-3xs)] text-danger hover:text-danger"
           data-testid="update-error"
           :title="t('sidebar.update.error')"
         >
@@ -107,7 +107,7 @@
           <span>{{ t('sidebar.update.error') }}</span>
         </Button>
       </HoverCardTrigger>
-      <HoverCardContent side="top" class="w-[280px] p-3 text-[11px] text-neutral-mid">
+      <HoverCardContent side="top" class="w-[280px] p-3 text-[length:var(--text-2xs)] text-neutral-mid">
         {{ state.errorMessage }}
         <Button
           variant="secondary"
@@ -126,7 +126,7 @@
       v-else-if="state.state === 'unsupported'"
       variant="ghost"
       size="sm"
-      class="h-auto gap-0.5 px-1 py-0 text-[10px] text-accent hover:text-accent"
+      class="h-auto gap-0.5 px-1 py-0 text-[length:var(--text-3xs)] text-accent hover:text-accent"
       data-testid="update-unsupported"
       @click="onOpenFallbackUrl"
     >

@@ -18,7 +18,7 @@ describe('U10: settings UI 文案经 i18n 渲染', () => {
     expect(i18n.global.t('settings.title')).toBe('设置')
     expect(i18n.global.t('settings.dialogDescription')).toBe('配置供应商 / 技能 / 子代理 / Pi 扩展 / 系统提示词 / 系统')
     expect(i18n.global.t('settings.menu.providerDesc')).toBe('配置模型供应商与 API Key')
-    expect(i18n.global.t('settings.menu.systemDesc')).toBe('外观、语言与快捷键偏好')
+    expect(i18n.global.t('settings.menu.systemDesc')).toBe('语言、提示音与快捷键偏好')
     // 菜单 tab 名（中文化）
     expect(i18n.global.t('settings.menu.provider')).toBe('供应商')
     expect(i18n.global.t('settings.menu.skill')).toBe('技能')
@@ -54,7 +54,7 @@ describe('U10: settings UI 文案经 i18n 渲染', () => {
     expect(i18n.global.t('settings.title')).toBe('Settings')
     expect(i18n.global.t('settings.dialogDescription')).toBe('Configure Provider / Skill / Agent / Pi Extension / System Prompt / System')
     expect(i18n.global.t('settings.menu.providerDesc')).toBe('Configure model providers and API keys')
-    expect(i18n.global.t('settings.menu.systemDesc')).toBe('Appearance, language and shortcut preferences')
+    expect(i18n.global.t('settings.menu.systemDesc')).toBe('Language, sounds and shortcut preferences')
     // 注：tab 名曾为 Pi Extension（b416f8cdb），后改回 Extension（dialogDescription 仍保留 Pi Extension 措辞）
     expect(i18n.global.t('settings.menu.extension')).toBe('Extension')
     expect(i18n.global.t('settings.provider.add')).toBe('Add Provider')

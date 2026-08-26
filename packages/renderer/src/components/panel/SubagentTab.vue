@@ -25,8 +25,8 @@
       data-testid="drawer-subagent-empty"
     >
       <Bot class="size-6 text-neutral-dim opacity-40" />
-      <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.sideDrawer.noSubagent') }}</p>
-      <p class="text-[11px] text-neutral-dim opacity-50">{{ t('panel.sideDrawer.subagentHint') }}</p>
+      <p class="text-[length:var(--text-xs)] text-neutral-dim opacity-70">{{ t('panel.sideDrawer.noSubagent') }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-50">{{ t('panel.sideDrawer.subagentHint') }}</p>
     </div>
 
     <template v-else>
@@ -52,12 +52,12 @@
         </span>
         <!-- 引擎 badge（U3 D9）：常态引擎名；engineFallback 存在 → 警告态 + 回退文案 -->
         <span
-          class="shrink-0 rounded-sm px-1 font-mono text-[10px] leading-4"
+          class="shrink-0 rounded-sm px-1 font-mono text-[length:var(--text-3xs)] leading-4"
           :class="subagentMeta?.engineFallback ? 'bg-warn-soft text-warn' : 'border border-hairline text-neutral-dim'"
           :title="engineBadgeTitle"
           data-testid="subagent-engine-badge"
         >{{ engineBadgeText }}</span>
-        <span v-if="subagentMeta?.meta" class="ml-auto shrink-0 truncate font-mono text-[10px] text-neutral-dim">
+        <span v-if="subagentMeta?.meta" class="ml-auto shrink-0 truncate font-mono text-[length:var(--text-3xs)] text-neutral-dim">
           {{ subagentMeta.meta }}
         </span>
       </div>
@@ -80,15 +80,15 @@
         data-testid="drawer-subagent-error"
       >
         <AlertCircle class="size-5 text-danger opacity-60" />
-        <p class="text-[11px] text-neutral-mid">{{ t('panel.sideDrawer.subagentLoadFailed') }}</p>
-        <p class="max-w-full break-all text-[10px] text-neutral-dim opacity-60">{{ loadError }}</p>
+        <p class="text-[length:var(--text-2xs)] text-neutral-mid">{{ t('panel.sideDrawer.subagentLoadFailed') }}</p>
+        <p class="max-w-full break-all text-[length:var(--text-3xs)] text-neutral-dim opacity-60">{{ loadError }}</p>
         <!-- 非 pi record 加载失败时的 outcome 摘要兜底（A8：详情页永不白屏） -->
         <p
           v-if="outcomeSummaryText"
-          class="max-w-full break-words text-[11px] text-neutral-mid"
+          class="max-w-full break-words text-[length:var(--text-2xs)] text-neutral-mid"
           data-testid="subagent-outcome-summary"
         >{{ outcomeSummaryText }}</p>
-        <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="drawer-subagent-retry" @click="reload">
+        <Button variant="ghost" class="h-6 text-[length:var(--text-2xs)] text-accent" data-testid="drawer-subagent-retry" @click="reload">
           {{ t('panel.sideDrawer.subagentRetry') }}
         </Button>
       </div>
@@ -98,7 +98,7 @@
       <MessageStream v-else :session-id="selectedSubagentId" />
 
       <!-- 底部只读提示条（差异化层：subagent 为 background 任务，无 composer） -->
-      <div class="flex shrink-0 items-center gap-1.5 border-t border-hairline px-3 py-1.5 text-[10px] text-neutral-dim">
+      <div class="flex shrink-0 items-center gap-1.5 border-t border-hairline px-3 py-1.5 text-[length:var(--text-3xs)] text-neutral-dim">
         <Lock class="size-3 shrink-0 opacity-70" />
         <span>{{ t('panel.sideDrawer.subagentReadonly') }}</span>
       </div>

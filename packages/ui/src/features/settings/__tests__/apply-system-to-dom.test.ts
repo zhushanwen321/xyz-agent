@@ -80,6 +80,24 @@ describe('applySystemToDom', () => {
     expect(doc.documentElement.dataset.fontSize).toBe('medium')
   })
 
+  it('fontScales 写 data-fs-* dataset，逐区域独立档位', () => {
+    const doc: any = (globalThis as any).document
+    applySystemToDom(makeSystem({ fontScales: { sidebar: 'small', chat: 'xlarge', drawer: 'large' } }))
+    expect(doc.documentElement.dataset.fsSidebar).toBe('small')
+    expect(doc.documentElement.dataset.fsChat).toBe('xlarge')
+    expect(doc.documentElement.dataset.fsDrawer).toBe('large')
+  })
+
+  it('fontScales 缺省/部分缺省 → 对应区域回落 medium', () => {
+    const doc: any = (globalThis as any).document
+    applySystemToDom(makeSystem({ fontScales: { chat: 'large' } }))
+    expect(doc.documentElement.dataset.fsSidebar).toBe('medium')
+    expect(doc.documentElement.dataset.fsChat).toBe('large')
+    expect(doc.documentElement.dataset.fsDrawer).toBe('medium')
+    applySystemToDom(makeSystem())
+    expect(doc.documentElement.dataset.fsChat).toBe('medium')
+  })
+
   it('locale 非空 + deps.setLocale 存在 → 调用 setLocale', () => {
     const setLocale = vi.fn()
     applySystemToDom(makeSystem({ locale: 'en-US' }), { setLocale })

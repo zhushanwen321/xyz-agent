@@ -16,14 +16,14 @@
 <template>
   <div
     v-if="count > 0"
-    class="mb-1.5 overflow-hidden rounded-md border border-[color-mix(in_oklch,var(--accent)_45%,transparent)] bg-accent-soft text-[12px]"
+    class="mb-1.5 overflow-hidden rounded-md border border-[color-mix(in_oklch,var(--accent)_45%,transparent)] bg-accent-soft text-[length:var(--text-xs)]"
     data-testid="compact-queue-badge"
   >
     <!-- head：脉冲点 + 标签 + 条数 + 首条预览（truncate） -->
     <div class="flex items-center gap-2 px-3 py-1.5">
       <span class="size-[7px] shrink-0 animate-pulse-accent rounded-full bg-accent" />
-      <span class="shrink-0 font-mono text-[10px] font-semibold tracking-wider text-accent">{{ t('panel.compactQueue.pending') }}</span>
-      <span class="shrink-0 font-mono text-[10px] text-neutral-dim">{{ t('panel.compactQueue.itemCount', { count }) }}</span>
+      <span class="shrink-0 font-mono text-[length:var(--text-3xs)] font-semibold tracking-wider text-accent">{{ t('panel.compactQueue.pending') }}</span>
+      <span class="shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-dim">{{ t('panel.compactQueue.itemCount', { count }) }}</span>
       <span class="min-w-0 flex-1 truncate text-neutral-mid">{{ preview }}</span>
     </div>
 

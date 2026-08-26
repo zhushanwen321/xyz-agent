@@ -18,10 +18,10 @@
       >
         <ChevronLeft class="size-4" />
       </Button>
-      <span class="min-w-0 flex-1 truncate text-[12px] font-medium text-neutral-fg">
+      <span class="min-w-0 flex-1 truncate text-[length:var(--text-xs)] font-medium text-neutral-fg">
         {{ workflow.scriptName }}
       </span>
-      <span v-if="workflow.slug" class="shrink-0 font-mono text-[10px] text-neutral-mid">
+      <span v-if="workflow.slug" class="shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-mid">
         {{ workflow.slug }}
       </span>
       <!-- 操作按钮：running 态 Pause+Abort，paused 态 Resume+Abort。
@@ -74,10 +74,10 @@
               class="size-1.5 shrink-0 rounded-full"
               :class="phaseDotClass(group.phaseStatus)"
             />
-            <span class="text-[10px] font-medium text-neutral-dim">
+            <span class="text-[length:var(--text-3xs)] font-medium text-neutral-dim">
               {{ group.phase }}
             </span>
-            <span class="text-[10px] text-neutral-dim opacity-60">
+            <span class="text-[length:var(--text-3xs)] text-neutral-dim opacity-60">
               {{ t('sidebar.workflowDetail.agentsLabel', { count: group.calls.length }) }}
             </span>
           </div>
@@ -102,13 +102,13 @@
               class="size-1.5 shrink-0 rounded-full"
               :class="callDotClass(call.status)"
             />
-            <span class="min-w-0 flex-1 truncate text-[11px] font-medium leading-[1.3] text-neutral-fg">
+            <span class="min-w-0 flex-1 truncate text-[length:var(--text-2xs)] font-medium leading-[1.3] text-neutral-fg">
               {{ call.agent }}
             </span>
           </div>
 
           <!-- 摘要 -->
-          <div class="mt-0.5 flex items-center gap-1.5 pl-[19px] font-mono text-[10px] text-neutral-dim">
+          <div class="mt-0.5 flex items-center gap-1.5 pl-[19px] font-mono text-[length:var(--text-3xs)] text-neutral-dim">
             <span v-if="call.model">{{ call.model === 'default' ? t('sidebar.workflowDetail.modelDefault') : call.model }}</span>
             <span v-if="call.inputTokens !== undefined">· {{ formatTokens(call.inputTokens, t('sidebar.workflowDetail.tokenInUnit')) }}</span>
             <span v-if="call.outputTokens !== undefined">· {{ formatTokens(call.outputTokens, t('sidebar.workflowDetail.tokenOutUnit')) }}</span>

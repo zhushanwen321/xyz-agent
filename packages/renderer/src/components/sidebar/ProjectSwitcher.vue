@@ -97,7 +97,7 @@ function cancelCreate() {
     <Button
       variant="ghost"
       type="button"
-      class="flex h-auto w-full items-center justify-start gap-1.5 rounded-none px-2 py-1.5 text-[12px] font-medium text-neutral-fg"
+      class="flex h-auto w-full items-center justify-start gap-1.5 rounded-none px-2 py-1.5 text-[length:var(--text-xs)] font-medium text-neutral-fg"
       :aria-expanded="expanded"
       data-testid="project-switcher-current"
       @click="toggle"
@@ -123,7 +123,7 @@ function cancelCreate() {
         data-testid="project-item"
         role="button"
         tabindex="0"
-        class="group flex cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-[5px] text-[11px] transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
+        class="group flex cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-[5px] text-[length:var(--text-2xs)] transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
         :class="p.id === projectStore.activeProjectId
           ? 'bg-surface text-accent'
           : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg'"
@@ -149,7 +149,7 @@ function cancelCreate() {
         <Input
           ref="inputRef"
           v-model="draft"
-          class="mt-px h-[26px] rounded-sm border-border-strong bg-bg-input px-2 text-[11px] text-neutral-fg"
+          class="mt-px h-[26px] rounded-sm border-border-strong bg-bg-input px-2 text-[length:var(--text-2xs)] text-neutral-fg"
           :placeholder="t('sidebar.projectSwitcher.namePlaceholder')"
           @keydown.enter.prevent="commitCreate"
           @keydown.esc.prevent="cancelCreate"
@@ -160,7 +160,7 @@ function cancelCreate() {
         v-else
         variant="ghost"
         type="button"
-        class="mt-px h-auto w-full justify-start gap-1.5 rounded-sm px-1.5 py-[5px] text-[11px] text-neutral-dim"
+        class="mt-px h-auto w-full justify-start gap-1.5 rounded-sm px-1.5 py-[5px] text-[length:var(--text-2xs)] text-neutral-dim"
         @click="startCreate"
       >
         <Plus class="size-3 shrink-0 text-neutral-dim" />

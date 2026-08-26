@@ -20,8 +20,8 @@
       data-testid="drawer-workflow-empty"
     >
       <Workflow class="size-6 text-neutral-dim opacity-40" />
-      <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.sideDrawer.noWorkflow') }}</p>
-      <p class="text-[11px] text-neutral-dim opacity-50">{{ t('panel.sideDrawer.workflowHint') }}</p>
+      <p class="text-[length:var(--text-xs)] text-neutral-dim opacity-70">{{ t('panel.sideDrawer.noWorkflow') }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-50">{{ t('panel.sideDrawer.workflowHint') }}</p>
     </div>
 
     <template v-else>
@@ -31,7 +31,7 @@
         <span class="min-w-0 flex-1 truncate font-mono text-xs font-medium text-neutral-fg">
           {{ workflow.scriptName }}
         </span>
-        <span v-if="workflow.slug" class="shrink-0 font-mono text-[10px] text-neutral-dim">
+        <span v-if="workflow.slug" class="shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-dim">
           {{ workflow.slug }}
         </span>
         <div
@@ -76,8 +76,8 @@
               :class="group.phaseStatus === 'running' ? 'bg-accent/10' : ''"
             >
               <span class="size-1.5 shrink-0 rounded-full" :class="phaseDotClass(group.phaseStatus)" />
-              <span class="text-[10px] font-medium text-neutral-dim">{{ group.phase }}</span>
-              <span class="ml-auto text-[10px] text-neutral-dim opacity-60">
+              <span class="text-[length:var(--text-3xs)] font-medium text-neutral-dim">{{ group.phase }}</span>
+              <span class="ml-auto text-[length:var(--text-3xs)] text-neutral-dim opacity-60">
                 {{ t('sidebar.workflowDetail.agentsLabel', { count: group.calls.length }) }}
               </span>
             </div>
@@ -96,15 +96,15 @@
               <div class="flex items-center gap-2">
                 <Loader2 v-if="call.status === 'running'" class="size-[11px] shrink-0 animate-spin text-accent" />
                 <span v-else class="size-1.5 shrink-0 rounded-full" :class="callDotClass(call.status)" />
-                <span class="min-w-0 flex-1 truncate font-mono text-[11px] font-medium text-neutral-fg">
+                <span class="min-w-0 flex-1 truncate font-mono text-[length:var(--text-2xs)] font-medium text-neutral-fg">
                   {{ call.agent }}
                 </span>
-                <span v-if="call.status === 'running'" class="shrink-0 font-mono text-[10px] text-accent">{{ t('panel.sideDrawer.workflowRunning') }}</span>
-                <span v-else-if="call.status === 'pending'" class="shrink-0 font-mono text-[10px] text-neutral-dim">{{ t('panel.sideDrawer.workflowPending') }}</span>
-                <span v-else-if="call.durationMs !== undefined" class="shrink-0 font-mono text-[10px] text-neutral-dim">{{ formatDuration(call.durationMs) }}</span>
+                <span v-if="call.status === 'running'" class="shrink-0 font-mono text-[length:var(--text-3xs)] text-accent">{{ t('panel.sideDrawer.workflowRunning') }}</span>
+                <span v-else-if="call.status === 'pending'" class="shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-dim">{{ t('panel.sideDrawer.workflowPending') }}</span>
+                <span v-else-if="call.durationMs !== undefined" class="shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-dim">{{ formatDuration(call.durationMs) }}</span>
               </div>
               <!-- 第二行：token 总量 + turns（仅终态 completed/failed，避免 running/pending 多余行） -->
-              <div v-if="isCallDone(call.status) && (callTokenTotal(call) > 0 || call.turns !== undefined)" class="mt-0.5 flex items-center gap-1.5 pl-[19px] font-mono text-[10px] text-neutral-dim">
+              <div v-if="isCallDone(call.status) && (callTokenTotal(call) > 0 || call.turns !== undefined)" class="mt-0.5 flex items-center gap-1.5 pl-[19px] font-mono text-[length:var(--text-3xs)] text-neutral-dim">
                 <span v-if="callTokenTotal(call) > 0">{{ formatTokens(callTokenTotal(call), 'tokens') }}</span>
                 <span v-if="call.turns !== undefined">· {{ call.turns }} {{ t('sidebar.workflowDetail.turnsUnit') }}</span>
               </div>

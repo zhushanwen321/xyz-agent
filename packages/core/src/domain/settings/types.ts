@@ -17,6 +17,11 @@ export interface SystemSettings {
   themePreset: string
   /** 字体大小：small/medium/large，缺省按 medium（D17） */
   fontSize?: 'small' | 'medium' | 'large'
+  /**
+   * 分区字号档位（sidebar/chat/drawer 三区域独立缩放；档位→倍率映射见 style.css data-fs-* 规则）。
+   * 缺省 medium（×1）。区域子树内 --text-* 链乘以对应 --font-scale-<region>。
+   */
+  fontScales?: FontScales
   /** 后台完成提示音开关 */
   completionSound?: boolean
   /**
@@ -32,6 +37,16 @@ export interface SystemSettings {
 
 /** 外观模式：暗色 / 亮色 / 跟随系统（与 SystemSettings.theme 对齐） */
 export type ThemeMode = SystemSettings['theme']
+
+/** 分区字号档位（与 fontSize 档位范式一致，档位→倍率映射在 style.css data-fs-* 规则） */
+export type FontScaleTier = 'small' | 'medium' | 'large' | 'xlarge'
+
+/** 分区字号：key = 区域（sidebar/chat/drawer），value = 档位；setSystem 浅合并，更新须传完整对象 */
+export interface FontScales {
+  sidebar?: FontScaleTier
+  chat?: FontScaleTier
+  drawer?: FontScaleTier
+}
 
 /** 配色主题：由 settings-shell spec §4 System 菜单定义，默认 cold-blue */
 export type ColorTheme = string

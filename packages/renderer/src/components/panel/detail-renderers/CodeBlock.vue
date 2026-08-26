@@ -17,14 +17,14 @@
   <!-- eslint-disable vue/no-v-html -->
   <pre
     v-if="html"
-    class="shiki-codeblock shiki m-0 overflow-x-auto rounded p-2 font-mono text-[12px] leading-[1.5] bg-[var(--bg-input)]"
+    class="shiki-codeblock shiki m-0 overflow-x-auto rounded p-2 font-mono text-[length:var(--text-xs)] leading-[1.5] bg-[var(--bg-input)]"
     v-html="html"
   />
   <!-- eslint-enable vue/no-v-html -->
   <!-- shiki 未就绪/高亮失败降级：纯文本插值（XSS 安全） -->
   <pre
     v-else
-    class="shiki-codeblock whitespace-pre-wrap break-all rounded p-2 font-mono text-[12px] leading-[1.5] text-neutral-fg/90"
+    class="shiki-codeblock whitespace-pre-wrap break-all rounded p-2 font-mono text-[length:var(--text-xs)] leading-[1.5] text-neutral-fg/90"
   >{{ code }}</pre>
 </template>
 

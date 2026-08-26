@@ -27,7 +27,7 @@
   >
     <!-- seq 列（w-12 全行恒宽 → badge 列对齐）：chevron 指示符 + 右对齐数字成组靠右，
          chevron 落在数字左侧的列内留白处；无 chevron 行留白由左侧轨道线锚定 -->
-    <span class="flex w-12 shrink-0 items-center justify-end gap-1 font-mono text-[10px] tabular-nums text-neutral-faint">
+    <span class="flex w-12 shrink-0 items-center justify-end gap-1 font-mono text-[length:var(--text-3xs)] tabular-nums text-neutral-faint">
       <ChevronDown
         v-if="expandable && expanded"
         class="size-3 shrink-0"
@@ -43,21 +43,21 @@
       <span>#{{ row.seq }}</span>
     </span>
     <span
-      class="shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide"
+      class="shrink-0 rounded px-1.5 py-px font-mono text-[length:var(--text-3xs)] tracking-wide"
       :class="KIND_BADGE_CLASS[row.kind]"
     >{{ row.kind }}</span>
-    <span v-if="time" class="shrink-0 font-mono text-[10px] tabular-nums text-neutral-faint">{{ time }}</span>
+    <span v-if="time" class="shrink-0 font-mono text-[length:var(--text-3xs)] tabular-nums text-neutral-faint">{{ time }}</span>
     <span
-      class="min-w-0 flex-1 truncate text-[12px]"
+      class="min-w-0 flex-1 truncate text-[length:var(--text-xs)]"
       :class="selected ? 'text-accent' : row.shadowed ? 'text-neutral-mid' : 'text-neutral-fg'"
     >
       <template v-if="row.kind === 'MALFORMED'">{{ t('panel.trace.malformedLine', { line: row.lineNumber ?? 0 }) }}</template>
       <template v-else>{{ headline }}</template>
-      <span v-if="suffix" data-testid="trace-suffix" class="ml-1.5 font-mono text-[10px] text-neutral-dim">{{ suffix }}</span>
+      <span v-if="suffix" data-testid="trace-suffix" class="ml-1.5 font-mono text-[length:var(--text-3xs)] text-neutral-dim">{{ suffix }}</span>
     </span>
     <span
       v-if="!row.inContext && !row.shadowed"
-      class="shrink-0 font-mono text-[10px] text-neutral-faint"
+      class="shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-faint"
     >{{ t('panel.trace.notInContext') }}</span>
     <!-- SESSION 行溯源链接（§3.1 样例 5）：parentSession 两形态由 useTraceJump 编排解析。
          stopPropagation：链接点击不触发行选中。 -->
@@ -65,7 +65,7 @@
       v-if="row.kind === 'SESSION' && row.meta.parentSession"
       variant="ghost"
       size="sm"
-      class="h-4 shrink-0 gap-0.5 px-1 text-[10px] text-accent hover:bg-surface-2 hover:underline"
+      class="h-4 shrink-0 gap-0.5 px-1 text-[length:var(--text-3xs)] text-accent hover:bg-surface-2 hover:underline"
       data-testid="trace-row-jump-parent"
       :title="t('panel.trace.jumpParentTitle')"
       @click.stop="emit('jump-parent', row)"
