@@ -49,6 +49,24 @@ interface RegistryFileShape {
 	entries: RegistryEntry[];
 }
 
+/**
+ * 最低限度形状校验：核心标识字段缺失即整条丢弃（不因单条脏数据报废全表）。
+ */
+function isValidRegistryEntry(item: unknown): item is RegistryEntry {
+	if (typeof item !== "object" || item === null) return false;
+	const e = item as Record<string, unknown>;
+	return (
+		typeof e.taskId === "string" &&
+		typeof e.pid === "number" &&
+		typeof e.command === "string" &&
+		typeof e.outputFile === "string" &&
+		typeof e.startedAt === "number" &&
+		typeof e.state === "string" &&
+		typeof e.ownerPiPid === "number" &&
+		typeof e.sessionId === "string"
+	);
+}
+
 /** 校验并归一化 registry 文件内容；形状非法返回 undefined（走 corrupt 路径）。 */
 function parseRegistryContent(raw: string): RegistryFileShape | undefined {
 	let parsed: unknown;
@@ -62,22 +80,7 @@ function parseRegistryContent(raw: string): RegistryFileShape | undefined {
 	if (version !== REGISTRY_VERSION || !Array.isArray(entries)) return undefined;
 	const valid: RegistryEntry[] = [];
 	for (const item of entries) {
-		if (typeof item !== "object" || item === null) continue;
-		const e = item as Record<string, unknown>;
-		// 最低限度形状校验：核心标识字段缺失即整条丢弃（不因单条脏数据报废全表）
-		if (
-			typeof e.taskId !== "string" ||
-			typeof e.pid !== "number" ||
-			typeof e.command !== "string" ||
-			typeof e.outputFile !== "string" ||
-			typeof e.startedAt !== "number" ||
-			typeof e.state !== "string" ||
-			typeof e.ownerPiPid !== "number" ||
-			typeof e.sessionId !== "string"
-		) {
-			continue;
-		}
-		valid.push(item as RegistryEntry);
+		if (isValidRegistryEntry(item)) valid.push(item);
 	}
 	return { version: REGISTRY_VERSION, entries: valid };
 }

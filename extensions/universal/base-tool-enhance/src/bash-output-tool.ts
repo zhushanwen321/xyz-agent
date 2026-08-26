@@ -52,6 +52,55 @@ function textResult(text: string): AgentToolResult<unknown> {
 	return { content: [{ type: "text", text }], details: undefined };
 }
 
+/**
+ * list 视图：单例表优先，registry 终态条目补差（同 id 已在单例表则跳过）。
+ * registry 侧只并入终态（exited/orphaned）——running/killing 条目属他进程
+ * 任务（本进程活跃任务必在单例表），并入会显示幻影 running 行（§3.5
+ * 「单例表与 registry 终态条目合并」）。
+ */
+function listTasksText(registry: Map<string, RegistryEntry>): string {
+	const rows = new Map<string, ReturnType<typeof toListRow>>();
+	for (const task of getAllTasks()) rows.set(task.taskId, toListRow(task));
+	for (const entry of registry.values()) {
+		if (!isTerminalState(entry.state)) continue;
+		if (!rows.has(entry.taskId)) rows.set(entry.taskId, toListRow(entry));
+	}
+	const tasks = [...rows.values()].sort((a, b) => a.startedAt - b.startedAt);
+	return JSON.stringify({ tasks }, null, JSON_INDENT);
+}
+
+/**
+ * 按 taskId 定位任务：单例表 → 当前 session registry（回落限定终态条目——
+ * 他进程 running 条目不可查，§3.5 跨进程边界）。
+ */
+function findTask(
+	taskId: string,
+	registry: Map<string, RegistryEntry>,
+): BackgroundTask | RegistryEntry | undefined {
+	const registryEntry = registry.get(taskId);
+	return (
+		getAllTasks().find((t) => t.taskId === taskId) ??
+		(registryEntry !== undefined && isTerminalState(registryEntry.state) ? registryEntry : undefined)
+	);
+}
+
+/** 详情视图：tail 输出（丢失时 "<lost>"，§3.6）+ 终态字段按存在性展开。 */
+function taskDetailText(task: BackgroundTask | RegistryEntry): string {
+	const tail = readOutputTail(task.outputFile);
+	const detail = {
+		task_id: task.taskId,
+		state: task.state,
+		...(task.exitCode !== undefined ? { exitCode: task.exitCode } : {}),
+		...(task.reason !== undefined ? { reason: task.reason } : {}),
+		startedAt: task.startedAt,
+		...(task.durationMs !== undefined ? { durationMs: task.durationMs } : {}),
+		output: tail?.output ?? "<lost>",
+		truncated: tail?.truncated ?? false,
+		outputFile: task.outputFile,
+	};
+	return JSON.stringify(detail, null, JSON_INDENT);
+}
+
 export function createBashOutputToolDefinition() {
 	return {
 		name: "bash_output",
@@ -68,45 +117,15 @@ export function createBashOutputToolDefinition() {
 			const sessionId = ctx.sessionManager.getSessionId();
 			const registry = readRegistry(getRegistryPath(getAgentDir(), sessionId));
 
-			if (args.task_id === undefined) {
-				// list：单例表优先，registry 终态条目补差（同 id 已在单例表则跳过）。
-				// registry 侧只并入终态（exited/orphaned）——running/killing 条目属他进程
-				// 任务（本进程活跃任务必在单例表），并入会显示幻影 running 行（§3.5
-				// 「单例表与 registry 终态条目合并」）
-				const rows = new Map<string, ReturnType<typeof toListRow>>();
-				for (const task of getAllTasks()) rows.set(task.taskId, toListRow(task));
-				for (const entry of registry.values()) {
-					if (!isTerminalState(entry.state)) continue;
-					if (!rows.has(entry.taskId)) rows.set(entry.taskId, toListRow(entry));
-				}
-				const tasks = [...rows.values()].sort((a, b) => a.startedAt - b.startedAt);
-				return textResult(JSON.stringify({ tasks }, null, JSON_INDENT));
-			}
+			if (args.task_id === undefined) return textResult(listTasksText(registry));
 
-			// 详情：单例表 → 当前 session registry（回落限定终态条目——他进程 running
-			// 条目不可查，§3.5 跨进程边界）→ 都没有
-			const registryEntry = registry.get(args.task_id);
-			const task =
-				getAllTasks().find((t) => t.taskId === args.task_id) ??
-				(registryEntry !== undefined && isTerminalState(registryEntry.state) ? registryEntry : undefined);
+			const task = findTask(args.task_id, registry);
 			if (task === undefined) {
 				throw new Error(
 					`No such task: ${args.task_id}. Use bash_output without task_id to list all background tasks.`,
 				);
 			}
-			const tail = readOutputTail(task.outputFile);
-			const detail = {
-				task_id: task.taskId,
-				state: task.state,
-				...(task.exitCode !== undefined ? { exitCode: task.exitCode } : {}),
-				...(task.reason !== undefined ? { reason: task.reason } : {}),
-				startedAt: task.startedAt,
-				...(task.durationMs !== undefined ? { durationMs: task.durationMs } : {}),
-				output: tail?.output ?? "<lost>",
-				truncated: tail?.truncated ?? false,
-				outputFile: task.outputFile,
-			};
-			return textResult(JSON.stringify(detail, null, JSON_INDENT));
+			return textResult(taskDetailText(task));
 		},
 	};
 }
