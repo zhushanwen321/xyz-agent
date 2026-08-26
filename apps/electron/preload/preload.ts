@@ -129,6 +129,11 @@ export interface ElectronAPI {
    * @returns 有效的 { release, filePath }，无预下载产物/损坏返回 null
    */
   getPreloaded(): Promise<{ release: LatestReleaseInfo; filePath: string } | null>
+  /**
+   * 读取启动结果（升级成功/失败/回滚通知）。
+   * main 侧一次性缓存：首次调用返回结果并清空，后续调用返回 null。
+   */
+  getLaunchResult(): Promise<{ status: string; version: string } | null>
   /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数 */
   onUpdateProgress(callback: (payload: { stage: UpdateStage; percent: number }) => void): () => void
   /** 监听升级错误事件（stage + message + errorCode + suggestion），返回取消订阅函数 */
@@ -282,6 +287,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('update:download', { release }),
   updateInstall: () => ipcRenderer.invoke('update:install'),
   getPreloaded: () => ipcRenderer.invoke('update:getPreloaded'),
+  getLaunchResult: () => ipcRenderer.invoke('update:getLaunchResult'),
   onUpdateProgress: (callback: (payload: { stage: UpdateStage; percent: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { stage: UpdateStage; percent: number }) => callback(payload)
     ipcRenderer.on('update:progress', handler)

@@ -290,6 +290,11 @@ export function onUpdateError(cb: (e: UpdateErrorPayload) => void): () => void {
   return api?.onUpdateError(cb) ?? (() => {})
 }
 
+/** 读取启动结果（升级成功/失败/回滚通知）。首次调用返回结果，后续返回 null。无 IPC 返回 null */
+export function getLaunchResult(): Promise<{ status: string; version: string } | null> {
+  return api?.getLaunchResult() ?? Promise.resolve(null)
+}
+
 /** 不支持当前平台时，打开备用下载页（release 页面）。无 IPC 时 no-op */
 export function openUpdateFallbackUrl(url: string): Promise<void> {
   return api?.openUpdateFallbackUrl(url) ?? Promise.resolve()
