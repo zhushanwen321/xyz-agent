@@ -23,35 +23,53 @@ export function findPiExecutable(projectRoot: string): string {
     : `pi-${platform}-${arch}`
 
   // Packaged mode: use bundled pi binary from resources
-  if (isPackaged()) {
-    // Runtime's cwd = process.resourcesPath (set by runtime-manager.ts)
-    const bundledPi = join(process.cwd(), 'pi', binaryName)
-
-    if (!existsSync(bundledPi)) {
-      throw new Error(
-        `Bundled pi binary not found at ${bundledPi}. `
-        + `Expected binary: ${binaryName}. `
-        + 'The application installation may be corrupted.',
-      )
-    }
-
-    console.log(`[process-manager] using bundled pi: ${bundledPi}`)
-    return bundledPi
-  }
+  if (isPackaged()) return findPackagedPi(binaryName)
 
   // Development mode: 优先用 resources/pi 里 prepare 的二进制（与打包版本统一）。
   // projectRoot = apps/electron/（dev 模式 app.getAppPath()，runtime 的 cwd），resources/pi 在其下。
+  const devPi = findDevResourcesPi(projectRoot, binaryName)
+  if (devPi !== undefined) return devPi
+
+  // Development mode fallback: original discovery logic
+  const isWindows = process.platform === 'win32'
+
+  // 1. PATH → 2. nvm managed node installations → 3. common locations → bare 'pi'
+  return findPiOnPath(isWindows)
+    ?? findPiInNvm(isWindows)
+    ?? findPiInCommonLocations(isWindows)
+    // Fallback to bare 'pi' (will fail with clear error)
+    ?? 'pi'
+}
+
+/** Packaged mode：Runtime's cwd = process.resourcesPath (set by runtime-manager.ts)。 */
+function findPackagedPi(binaryName: string): string {
+  const bundledPi = join(process.cwd(), 'pi', binaryName)
+
+  if (!existsSync(bundledPi)) {
+    throw new Error(
+      `Bundled pi binary not found at ${bundledPi}. `
+      + `Expected binary: ${binaryName}. `
+      + 'The application installation may be corrupted.',
+    )
+  }
+
+  console.log(`[process-manager] using bundled pi: ${bundledPi}`)
+  return bundledPi
+}
+
+/** Dev mode：apps/electron/resources/pi 里 prepare 的二进制；缺失时 warn 并返回 undefined。 */
+function findDevResourcesPi(projectRoot: string, binaryName: string): string | undefined {
   const devPi = join(projectRoot, 'resources', 'pi', binaryName)
   if (existsSync(devPi)) {
     console.log(`[process-manager] using dev resources pi: ${devPi}`)
     return devPi
   }
   console.warn(`[process-manager] resources/pi/${binaryName} not found, falling back to system PATH`)
+  return undefined
+}
 
-  // Development mode fallback: original discovery logic
-  const isWindows = process.platform === 'win32'
-
-  // 1. Try PATH
+/** PATH 探测（which/where pi；Windows 'where' may return multiple lines, take first）。 */
+function findPiOnPath(isWindows: boolean): string | undefined {
   try {
     const whichCmd = isWindows ? 'where pi' : 'which pi'
     const which = execSync(whichCmd, { encoding: 'utf-8' }).trim()
@@ -62,8 +80,11 @@ export function findPiExecutable(projectRoot: string): string {
     // expected: pi not in PATH
     void 0
   }
+  return undefined
+}
 
-  // 2. Try nvm managed node installations
+/** nvm managed node installations 探测（nvm-windows 在 %APPDATA%\nvm，unix 在 ~/.nvm）。 */
+function findPiInNvm(isWindows: boolean): string | undefined {
   if (isWindows) {
     // nvm-windows stores versions in %APPDATA%\nvm
     const nvmDir = join(process.env.APPDATA ?? '', 'nvm')
@@ -92,8 +113,11 @@ export function findPiExecutable(projectRoot: string): string {
       void 0
     }
   }
+  return undefined
+}
 
-  // 3. Common locations
+/** Common locations 探测（npm global bin 等）。 */
+function findPiInCommonLocations(isWindows: boolean): string | undefined {
   const commonPaths = isWindows
     ? [
       join(process.env.APPDATA ?? '', 'npm', 'pi.cmd'),
@@ -106,7 +130,5 @@ export function findPiExecutable(projectRoot: string): string {
   for (const p of commonPaths) {
     if (existsSync(p)) return p
   }
-
-  // Fallback to bare 'pi' (will fail with clear error)
-  return 'pi'
+  return undefined
 }

@@ -250,99 +250,128 @@ function replayEngineJournal(path: string): Array<Record<string, unknown>> {
   return lines.map((l) => l.event)
 }
 
-/** journal 事件 → Message[]（重放 reducer）。无任何 assistant 内容 → undefined（降③级）。 */
-function journalEventsToMessages(events: Array<Record<string, unknown>>, record: SubagentRecord): Message[] | undefined {
-  const turns: HistoryTurnView[] = []
-  const pendingTools: EngineToolCallView[] = []
-  let sawAssistantContent = false
+/** ②级重放 reducer 的聚合状态（turn 列表 + tool 配对栈 + assistant 内容标志）。 */
+interface JournalReducerState {
+  turns: HistoryTurnView[]
+  pendingTools: EngineToolCallView[]
+  sawAssistantContent: boolean
+}
 
-  // 当前 turn = 最后一个未闭合项（数组即状态，避免闭包内 let 赋值的 CFA 陷阱）
-  const ensureTurn = (): HistoryTurnView => {
-    const last = turns[turns.length - 1]
-    if (last !== undefined && last.closed !== true) return last
-    const created: HistoryTurnView = { text: '', thinking: '', toolCalls: [], closed: false }
-    turns.push(created)
-    return created
+/** 当前 turn = 最后一个未闭合项（数组即状态，避免闭包内 let 赋值的 CFA 陷阱）。 */
+function ensureReducerTurn(state: JournalReducerState): HistoryTurnView {
+  const last = state.turns[state.turns.length - 1]
+  if (last !== undefined && last.closed !== true) return last
+  const created: HistoryTurnView = { text: '', thinking: '', toolCalls: [], closed: false }
+  state.turns.push(created)
+  return created
+}
+
+function applyTextDelta(ev: Record<string, unknown>, state: JournalReducerState): void {
+  if (typeof ev.delta === 'string' && ev.delta.length > 0) {
+    ensureReducerTurn(state).text += ev.delta
+    state.sawAssistantContent = true
   }
+}
 
-  for (const ev of events) {
-    switch (ev.type) {
-      case 'text_delta': {
-        if (typeof ev.delta === 'string' && ev.delta.length > 0) {
-          ensureTurn().text += ev.delta
-          sawAssistantContent = true
-        }
+function applyThinkingDelta(ev: Record<string, unknown>, state: JournalReducerState): void {
+  if (typeof ev.delta === 'string' && ev.delta.length > 0) {
+    ensureReducerTurn(state).thinking += ev.delta
+    state.sawAssistantContent = true
+  }
+}
+
+function applyToolStart(ev: Record<string, unknown>, state: JournalReducerState): void {
+  if (typeof ev.toolName === 'string') {
+    const turn = ensureReducerTurn(state)
+    const view: EngineToolCallView = { toolName: ev.toolName, ...(ev.args !== undefined ? { args: ev.args } : {}) }
+    turn.toolCalls.push(view)
+    state.pendingTools.push(view)
+    state.sawAssistantContent = true
+  }
+}
+
+function applyToolEnd(ev: Record<string, unknown>, state: JournalReducerState): void {
+  if (typeof ev.toolName === 'string') {
+    // 同名栈式配对（journal 无 toolCallId，与 AgentEvent 形状一致）
+    for (let i = state.pendingTools.length - 1; i >= 0; i--) {
+      const p = state.pendingTools[i]
+      if (p !== undefined && p.toolName === ev.toolName) {
+        p.result = typeof ev.result === 'object' && ev.result !== null
+          ? (ev.result as { content?: unknown[]; details?: unknown })
+          : undefined
+        p.isError = ev.isError === true
+        state.pendingTools.splice(i, 1)
         break
       }
-      case 'thinking_delta': {
-        if (typeof ev.delta === 'string' && ev.delta.length > 0) {
-          ensureTurn().thinking += ev.delta
-          sawAssistantContent = true
-        }
-        break
-      }
-      case 'tool_start': {
-        if (typeof ev.toolName === 'string') {
-          const turn = ensureTurn()
-          const view: EngineToolCallView = { toolName: ev.toolName, ...(ev.args !== undefined ? { args: ev.args } : {}) }
-          turn.toolCalls.push(view)
-          pendingTools.push(view)
-          sawAssistantContent = true
-        }
-        break
-      }
-      case 'tool_end': {
-        if (typeof ev.toolName === 'string') {
-          // 同名栈式配对（journal 无 toolCallId，与 AgentEvent 形状一致）
-          for (let i = pendingTools.length - 1; i >= 0; i--) {
-            const p = pendingTools[i]
-            if (p !== undefined && p.toolName === ev.toolName) {
-              p.result = typeof ev.result === 'object' && ev.result !== null
-                ? (ev.result as { content?: unknown[]; details?: unknown })
-                : undefined
-              p.isError = ev.isError === true
-              pendingTools.splice(i, 1)
-              break
-            }
-          }
-        }
-        break
-      }
-      case 'message_end': {
-        // usage 挂当前 turn（GUI 的 Message 粒度）；无未闭合 turn 时忽略（异常序列防御）
-        const turn = turns[turns.length - 1]
-        if (turn !== undefined && turn.closed !== true && typeof ev.usage === 'object' && ev.usage !== null) {
-          const u = ev.usage as Record<string, unknown>
-          const input = typeof u.input === 'number' ? u.input : 0
-          const output = typeof u.output === 'number' ? u.output : 0
-          if (input > 0 || output > 0) {
-            turn.usage = { input, output }
-            sawAssistantContent = true
-          }
-        }
-        break
-      }
-      case 'turn_end': {
-        // turn 边界：闭合当前 turn（下个内容事件开新 turn）
-        const turn = turns[turns.length - 1]
-        if (turn !== undefined) turn.closed = true
-        break
-      }
-      case 'error': {
-        const turn = ensureTurn()
-        if (typeof ev.message === 'string' && turn.text === '') {
-          turn.text = ev.message
-          sawAssistantContent = true
-        }
-        break
-      }
-      default:
-        break
     }
   }
+}
 
-  if (!sawAssistantContent) return undefined
-  return turnsToMessages(turns, record)
+function applyMessageEnd(ev: Record<string, unknown>, state: JournalReducerState): void {
+  // usage 挂当前 turn（GUI 的 Message 粒度）；无未闭合 turn 时忽略（异常序列防御）
+  const turn = state.turns[state.turns.length - 1]
+  if (turn !== undefined && turn.closed !== true && typeof ev.usage === 'object' && ev.usage !== null) {
+    const u = ev.usage as Record<string, unknown>
+    const input = typeof u.input === 'number' ? u.input : 0
+    const output = typeof u.output === 'number' ? u.output : 0
+    if (input > 0 || output > 0) {
+      turn.usage = { input, output }
+      state.sawAssistantContent = true
+    }
+  }
+}
+
+/** turn 边界：闭合当前 turn（下个内容事件开新 turn）。 */
+function closeReducerTurn(state: JournalReducerState): void {
+  const turn = state.turns[state.turns.length - 1]
+  if (turn !== undefined) turn.closed = true
+}
+
+function applyErrorEvent(ev: Record<string, unknown>, state: JournalReducerState): void {
+  const turn = ensureReducerTurn(state)
+  if (typeof ev.message === 'string' && turn.text === '') {
+    turn.text = ev.message
+    state.sawAssistantContent = true
+  }
+}
+
+/** 单事件分发：按 type 路由到 per-case handler（reducer 的 switch 段）。 */
+function applyJournalEvent(ev: Record<string, unknown>, state: JournalReducerState): void {
+  switch (ev.type) {
+    case 'text_delta':
+      applyTextDelta(ev, state)
+      break
+    case 'thinking_delta':
+      applyThinkingDelta(ev, state)
+      break
+    case 'tool_start':
+      applyToolStart(ev, state)
+      break
+    case 'tool_end':
+      applyToolEnd(ev, state)
+      break
+    case 'message_end':
+      applyMessageEnd(ev, state)
+      break
+    case 'turn_end':
+      closeReducerTurn(state)
+      break
+    case 'error':
+      applyErrorEvent(ev, state)
+      break
+    default:
+      break
+  }
+}
+
+/** journal 事件 → Message[]（重放 reducer）。无任何 assistant 内容 → undefined（降③级）。 */
+function journalEventsToMessages(events: Array<Record<string, unknown>>, record: SubagentRecord): Message[] | undefined {
+  const state: JournalReducerState = { turns: [], pendingTools: [], sawAssistantContent: false }
+  for (const ev of events) {
+    applyJournalEvent(ev, state)
+  }
+  if (!state.sawAssistantContent) return undefined
+  return turnsToMessages(state.turns, record)
 }
 
 /** ①级 SessionView → Message[]（user task + 每 turn 一条 assistant）。 */

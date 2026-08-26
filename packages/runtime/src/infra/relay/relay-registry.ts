@@ -142,6 +142,45 @@ export function killRelayChild(child: ChildProcess, graceMs = RELAY_KILL_GRACE_M
   })
 }
 
+/**
+ * 归属校验第一段（§4.1）：握手帧字段形状守卫——mainSessionId/recordId/cwd 非空
+ * string、argv 全 string、env 是对象。
+ */
+function hasValidHandshakeFrameShape(frame: RelayHandshakeFrame): boolean {
+  return typeof frame.mainSessionId === 'string' && frame.mainSessionId.length > 0
+    && typeof frame.recordId === 'string' && frame.recordId.length > 0
+    && typeof frame.cwd === 'string' && frame.cwd.length > 0
+    && Array.isArray(frame.argv) && !frame.argv.some((a) => typeof a !== 'string')
+    && typeof frame.env === 'object' && frame.env !== null
+}
+
+/**
+ * 归属校验第二段（§4.1）：env 必含 XYZ_SUBAGENT_RELAY_*（缺失拒绝，防任意本地进程
+ * 挂载借道 spawn；归属 env 与帧字段一致排除拼装帧）。需先过形状段（env 非 null）。
+ */
+function isHandshakeEnvOwnershipValid(frame: RelayHandshakeFrame): boolean {
+  const socketEnv = frame.env[RELAY_ENV_SOCKET]
+  return frame.env[RELAY_ENV_SESSION_ID] === frame.mainSessionId
+    && frame.env[RELAY_ENV_RECORD_ID] === frame.recordId
+    && socketEnv !== undefined
+    && socketEnv.length > 0
+}
+
+/**
+ * env 原样使用（身份贯穿/schemaEnv/worktree 标志全在握手帧），仅剥离 relay env——
+ * 孙进程经 pi-invocation 判定三 env 缺失回落直连，防嵌套 relay 时旧值误导。
+ */
+function buildChildEnv(frame: RelayHandshakeFrame): Record<string, string> {
+  const childEnv: Record<string, string> = {}
+  for (const [key, value] of Object.entries(frame.env)) {
+    if (value === undefined) continue
+    if (key === RELAY_ENV_SOCKET || key === RELAY_ENV_NODE || key === RELAY_ENV_SCRIPT
+      || key === RELAY_ENV_SESSION_ID || key === RELAY_ENV_RECORD_ID) continue
+    childEnv[key] = value
+  }
+  return childEnv
+}
+
 export class RelayRegistry {
   private readonly entries = new Map<Socket, RegisteredEntry>()
   private readonly recordIdToConn = new Map<string, Socket>()
@@ -206,7 +245,7 @@ export class RelayRegistry {
     }
   }
 
-  /** 握手校验（§3.1 版本协商 + §4.1 归属校验）+ 注册。 */
+  /** 握手校验（§3.1 版本协商 + §4.1 归属校验）+ 注册 + spawn + 子进程事件挂载。 */
   private registerHandshake(conn: Socket, frame: RelayHandshakeFrame): void {
     // 版本协商：v > runtime 支持版本 → reject(reason:'version') + 断连（代理退出码 10）
     if (typeof frame.v !== 'number' || frame.v > RELAY_PROTOCOL_VERSION) {
@@ -215,18 +254,8 @@ export class RelayRegistry {
       console.warn(`[relay] handshake rejected: version v=${String(frame.v)} > supported ${RELAY_PROTOCOL_VERSION}`)
       return
     }
-    // 归属校验：mainSessionId/recordId 非空 + env 必含 XYZ_SUBAGENT_RELAY_*（缺失拒绝，
-    // 防任意本地进程挂载借道 spawn；归属 env 与帧字段一致排除拼装帧）
-    const invalidIdentity =
-      typeof frame.mainSessionId !== 'string' || frame.mainSessionId.length === 0
-      || typeof frame.recordId !== 'string' || frame.recordId.length === 0
-      || typeof frame.cwd !== 'string' || frame.cwd.length === 0
-      || !Array.isArray(frame.argv) || frame.argv.some((a) => typeof a !== 'string')
-      || typeof frame.env !== 'object' || frame.env === null
-      || frame.env[RELAY_ENV_SESSION_ID] !== frame.mainSessionId
-      || frame.env[RELAY_ENV_RECORD_ID] !== frame.recordId
-      || !frame.env[RELAY_ENV_SOCKET]
-    if (invalidIdentity) {
+    // 归属校验：字段形状 + env 归属键（防任意本地进程挂载借道 spawn，见两谓词注释）
+    if (!hasValidHandshakeFrameShape(frame) || !isHandshakeEnvOwnershipValid(frame)) {
       writeFrame(conn, { kind: 'reject', reason: 'identity', supported: [RELAY_PROTOCOL_VERSION] })
       conn.end()
       console.warn('[relay] handshake rejected: identity/env validation failed')
@@ -240,34 +269,8 @@ export class RelayRegistry {
       return
     }
 
-    // env 原样使用（身份贯穿/schemaEnv/worktree 标志全在握手帧），仅剥离 relay env——
-    // 孙进程经 pi-invocation 判定三 env 缺失回落直连，防嵌套 relay 时旧值误导
-    const childEnv: Record<string, string> = {}
-    for (const [key, value] of Object.entries(frame.env)) {
-      if (value === undefined) continue
-      if (key === RELAY_ENV_SOCKET || key === RELAY_ENV_NODE || key === RELAY_ENV_SCRIPT
-        || key === RELAY_ENV_SESSION_ID || key === RELAY_ENV_RECORD_ID) continue
-      childEnv[key] = value
-    }
-
-    let child: ChildProcess
-    try {
-      child = spawn(this.piCommand, frame.argv, {
-        cwd: frame.cwd,
-        env: childEnv,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        // 不 detached：与 runtime 同进程组，runtime 崩溃时整组收割是双保险的主腿（§3.3-②）
-        detached: false,
-        windowsHide: true,
-      })
-    } catch (e) {
-      // spawn 同步失败（异常 spawn 形态）表现为「子进程非零退出」——exit 帧 127 + 断连，
-      // extension 走既有失败路径（§7 错误表：代理层失败不设独立错误面）
-      console.error(`[relay] spawn failed recordId=${frame.recordId}:`, e)
-      writeFrame(conn, { kind: 'exit', code: SPAWN_FAILURE_EXIT_CODE, signal: null })
-      conn.end()
-      return
-    }
+    const child = this.trySpawnRelayChild(conn, frame)
+    if (child === undefined) return
 
     const pidFile = getRelayPidFilePath(frame.recordId, this.opts.dataDir)
     const tee = new RelayTee({
@@ -293,13 +296,46 @@ export class RelayRegistry {
     // 条目注册完成后发出，此时 down 帧到来时 entries 已有条目可写入 child.stdin
     writeFrame(conn, { v: RELAY_PROTOCOL_VERSION, kind: 'accept' })
 
+    this.attachRelayChildWiring(entry)
+  }
+
+  /**
+   * spawn 真实 pi（argv/env/cwd 全从握手帧；env 经 buildChildEnv 剥离 relay 定位键）。
+   * 返回 undefined = spawn 同步失败已处理（exit 帧 127 + 断连，调用方直接返回）。
+   */
+  private trySpawnRelayChild(conn: Socket, frame: RelayHandshakeFrame): ChildProcess | undefined {
+    try {
+      return spawn(this.piCommand, frame.argv, {
+        cwd: frame.cwd,
+        env: buildChildEnv(frame),
+        stdio: ['pipe', 'pipe', 'pipe'],
+        // 不 detached：与 runtime 同进程组，runtime 崩溃时整组收割是双保险的主腿（§3.3-②）
+        detached: false,
+        windowsHide: true,
+      })
+    } catch (e) {
+      // spawn 同步失败（异常 spawn 形态）表现为「子进程非零退出」——exit 帧 127 + 断连，
+      // extension 走既有失败路径（§7 错误表：代理层失败不设独立错误面）
+      console.error(`[relay] spawn failed recordId=${frame.recordId}:`, e)
+      writeFrame(conn, { kind: 'exit', code: SPAWN_FAILURE_EXIT_CODE, signal: null })
+      conn.end()
+      return undefined
+    }
+  }
+
+  /**
+   * 子进程事件挂载（§4.3 字节泵 + §4.2 断连即杀）。
+   * 编排通路优先 + 磁盘镜像 + tee 分支同一次读取顺序分发（转发是字节级保真主链，
+   * tee / 镜像落盘失败绝不连坐转发——PiSessionLog.write 内部 best-effort 容错不抛，
+   * 流级写错误降级为 runtime 主日志的 warn）
+   */
+  private attachRelayChildWiring(entry: RegisteredEntry): void {
+    const { conn, child, tee } = entry
+
     child.stdin?.on('error', (err) => {
       console.debug(`[relay] child stdin error recordId=${entry.recordId}:`, err.message)
     })
 
-    // 编排通路优先 + 磁盘镜像 + tee 分支同一次读取顺序分发（§4.3：转发是字节级保真主链，
-    // tee / 镜像落盘失败绝不连坐转发——PiSessionLog.write 内部 best-effort 容错不抛，
-    // 流级写错误降级为 runtime 主日志的 warn）
     child.stdout?.on('data', (chunk: Buffer) => {
       writeFrame(conn, { v: RELAY_PROTOCOL_VERSION, kind: 'data', dir: 'up', b64: chunk.toString('base64') })
       entry.log.write(chunk)
