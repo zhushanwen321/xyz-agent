@@ -3,7 +3,7 @@
   "acceptance": [
     {
       "id": "W1-extractNetErrorCode",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "extractNetErrorCode 逐层下钻 err.cause 提取网络错误码",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd apps/electron && npx vitest run main/update/__tests__/update.test.ts -t 'W1-extractNetErrorCode'",
       "timeout": 300,
@@ -12,7 +12,7 @@
     },
     {
       "id": "W1-isPrivateHost",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "isPrivateHost RFC1918/ULA/loopback 矩阵判定",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd apps/electron && npx vitest run main/update/__tests__/update.test.ts -t 'W1-isPrivateHost'",
       "timeout": 300,
@@ -21,7 +21,7 @@
     },
     {
       "id": "W1-classifyProxyUnreachable",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "classifyProxyUnreachable macOS+EHOSTUNREACH+私网三条件组合",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd apps/electron && npx vitest run main/update/__tests__/update.test.ts -t 'W1-classifyProxyUnreachable'",
       "timeout": 300,
@@ -30,7 +30,7 @@
     },
     {
       "id": "W1-error-log",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "update-error.log JSONL 追加 + 512KB×2 轮转",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd apps/electron && npx vitest run main/update/__tests__/update.test.ts -t 'W1-error-log'",
       "timeout": 300,
@@ -39,7 +39,7 @@
     },
     {
       "id": "W3-UpdatePage-testProxy",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "UpdatePage 测试连接结果两行渲染",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/renderer && npx vitest run src/components/settings/__tests__/UpdatePage.test.ts -t 'W3-UpdatePage-testProxy'",
       "timeout": 300,
@@ -48,7 +48,7 @@
     },
     {
       "id": "topic-lint-vitest",
-      "type": "unit",
+      "type": "e2e-real",
       "title": "项目 lint 检查",
       "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && pnpm run lint && echo 'topic-lint-vitest PASS'",
       "timeout": 300,
