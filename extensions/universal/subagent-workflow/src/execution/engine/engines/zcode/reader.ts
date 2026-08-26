@@ -223,12 +223,8 @@ function resolveSessionId(db: SqliteDb, sessionId: string | undefined): string {
   return latest.id;
 }
 
-function buildView(db: SqliteDb, sessionId: string): SessionView {
-  const messages = db
-    .prepare("SELECT id, data FROM message WHERE session_id = ? ORDER BY sequence")
-    .all(sessionId)
-    .map(rowToMessageRow);
-
+/** part JOIN 查询按 message_id 分组（mid 列缺失的行跳过——形状防御）。 */
+function loadGroupedParts(db: SqliteDb, sessionId: string): Map<string, PartRow[]> {
   // part.sequence 是 message 内局部序（实测：user part 0 / assistant parts 0..n）——
   // JOIN message 按 (message.sequence, part.sequence) 还原时序，再按 message_id 分组
   const grouped = new Map<string, PartRow[]>();
@@ -245,9 +241,53 @@ function buildView(db: SqliteDb, sessionId: string): SessionView {
     arr.push(rowToPartRow(raw));
     grouped.set(mid, arr);
   }
+  return grouped;
+}
 
+/** 首段直入、后续段 "\n" 拼接（text / reasoning 共用；text 字段缺失按空串）。 */
+function appendPartText(current: string, part: ParsedPart): string {
+  return current === "" ? String(part.text ?? "") : current + "\n" + String(part.text ?? "");
+}
+
+/**
+ * 单个 part 归入当前 turn（无 turn 则开），返回归入后的累积器（step-finish 闭合后为
+ * null）。step-start 等边界标记：开 turn 交给首个内容 part（空 step-start 段不产空 turn）。
+ */
+function applyPartToTurn(
+  part: ParsedPart,
+  acc: TurnAcc | null,
+  turns: ReplayedTurn[],
+  totals: TotalsAcc,
+): TurnAcc | null {
+  switch (part.type) {
+    case "text":
+      acc = acc ?? { text: "", thinking: "", toolCalls: [] };
+      acc.text = appendPartText(acc.text, part);
+      return acc;
+    case "reasoning":
+      acc = acc ?? { text: "", thinking: "", toolCalls: [] };
+      acc.thinking = appendPartText(acc.thinking, part);
+      return acc;
+    case "tool":
+      acc = acc ?? { text: "", thinking: "", toolCalls: [] };
+      acc.toolCalls.push(toolFromPart(part));
+      return acc;
+    case "step-finish": {
+      const u = usageFromStepFinish(part);
+      const cost = finiteOr(part.cost, 0);
+      if (acc === null) acc = { text: "", thinking: "", toolCalls: [] };
+      if (u !== undefined) acc.usageDelta = cost > 0 ? { ...u, cost } : u;
+      closeTurn(acc, turns, totals);
+      return null;
+    }
+    default:
+      return acc;
+  }
+}
+
+/** assistant 消息流 → turns（usage 累计进 totals）。 */
+function collectTurns(messages: MessageRow[], grouped: Map<string, PartRow[]>, totals: TotalsAcc): ReplayedTurn[] {
   const turns: ReplayedTurn[] = [];
-  const totals = new TotalsAcc();
   for (const msg of messages) {
     const parsedMsg = parseJsonField(msg.data, "message") as ParsedMessage | undefined;
     // SessionView.turns 是 assistant 视角（pi Turn 同构）——user 消息（任务 prompt）不进 turns
@@ -256,37 +296,22 @@ function buildView(db: SqliteDb, sessionId: string): SessionView {
     for (const partRow of grouped.get(msg.id) ?? []) {
       const part = parseJsonField(partRow.data, "part") as ParsedPart | undefined;
       if (part === undefined) continue;
-      switch (part.type) {
-        case "text":
-          acc = acc ?? { text: "", thinking: "", toolCalls: [] };
-          acc.text = acc.text === "" ? String(part.text ?? "") : acc.text + "\n" + String(part.text ?? "");
-          break;
-        case "reasoning":
-          acc = acc ?? { text: "", thinking: "", toolCalls: [] };
-          acc.thinking =
-            acc.thinking === "" ? String(part.text ?? "") : acc.thinking + "\n" + String(part.text ?? "");
-          break;
-        case "tool":
-          acc = acc ?? { text: "", thinking: "", toolCalls: [] };
-          acc.toolCalls.push(toolFromPart(part));
-          break;
-        case "step-finish": {
-          const u = usageFromStepFinish(part);
-          const cost = finiteOr(part.cost, 0);
-          if (acc === null) acc = { text: "", thinking: "", toolCalls: [] };
-          if (u !== undefined) acc.usageDelta = cost > 0 ? { ...u, cost } : u;
-          closeTurn(acc, turns, totals);
-          acc = null;
-          break;
-        }
-        default:
-          // step-start 等边界标记：开 turn 交给首个内容 part（空 step-start 段不产空 turn）
-          break;
-      }
+      acc = applyPartToTurn(part, acc, turns, totals);
     }
     // 消息结束仍无 step-finish（被杀/截断）：已有内容则闭合
     closeTurn(acc, turns, totals);
   }
+  return turns;
+}
+
+function buildView(db: SqliteDb, sessionId: string): SessionView {
+  const messages = db
+    .prepare("SELECT id, data FROM message WHERE session_id = ? ORDER BY sequence")
+    .all(sessionId)
+    .map(rowToMessageRow);
+
+  const totals = new TotalsAcc();
+  const turns = collectTurns(messages, loadGroupedParts(db, sessionId), totals);
 
   const usageTotal = totals.toTotal();
   return {

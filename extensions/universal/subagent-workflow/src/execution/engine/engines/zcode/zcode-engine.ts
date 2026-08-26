@@ -145,60 +145,80 @@ export class ZcodeEngine implements EnginePort {
 
     const cliPath = this.deps.cliPath ?? ZCODE_CLI_DEFAULT_PATH;
     // check 1：二进制存在（不在 PATH，固定绝对路径形态——存在性即可用性的第一道判据）
-    const binaryOk = fs.existsSync(cliPath) && fs.statSync(cliPath).isFile();
-    const checks: ProbeReport["checks"] = [
-      {
-        name: "binary",
-        ok: binaryOk,
-        detail: binaryOk ? cliPath : `zcode CLI 不存在：${cliPath}`,
-      },
-    ];
+    const binary = this.probeBinaryCheck(cliPath);
+    const checks: ProbeReport["checks"] = [binary];
 
     // check 2：版本解析（存在才尝试——必败进程不再 spawn）
     let engineVersion = "";
-    if (binaryOk) {
-      const runVersion = this.deps.probeVersion ?? defaultProbeVersion;
-      const version = await runVersion(cliPath);
-      const versionOk = version !== undefined && version.length > 0;
-      checks.push({
-        name: "version",
-        ok: versionOk,
-        detail: versionOk ? version : "zcode --version 返回空或失败",
-      });
-      engineVersion = version ?? "";
+    if (binary.ok) {
+      const version = await this.probeVersionCheck(cliPath);
+      checks.push(version.check);
+      engineVersion = version.engineVersion;
     }
 
     // check 3：golden 样本干跑回归（parser 对实录样本解析——格式漂移入口拦截）
-    const golden = parseZcodeTerminal(ZCODE_GOLDEN_STDOUT);
-    const goldenOk = golden.ok && golden.payload.sessionId !== undefined && golden.payload.usage !== undefined;
-    checks.push({
-      name: "golden-regression",
-      ok: goldenOk,
-      detail: goldenOk
-        ? "parser 对 0.16.5 实录样本回归通过（sessionId/response/usage 形状完整）"
-        : `解析实录样本失败：${golden.ok ? "字段缺失（sessionId/usage）" : golden.reason}`,
-    });
+    checks.push(this.probeGoldenCheck());
 
     const ok = checks.every((c) => c.ok);
     const report: ProbeReport = {
       ok,
       engineVersion,
       checks,
-      ...(ok
-        ? {}
-        : {
-            // 恢复指引（§3.3.3 终态四）：版本确认命令 + 探针重跑 + 调研文档路径
-            error: {
-              code: "engine_probe_failed",
-              recovery:
-                `Run \`node ${cliPath} --version\` 确认 zcode CLI 可用且版本未漂移，然后重跑探针（重新初始化引擎或 probe({force:true})）。` +
-                `若 stdout 格式已变：把新样本补录进 golden 库（__tests__/__fixtures__/zcode-golden-spawn.json 与 golden-sample.ts）并更新 parser。` +
-                `参照 docs/research/agent-engine-zcode.md。`,
-            },
-          }),
+      ...(ok ? {} : { error: this.probeFailureRecovery(cliPath) }),
     };
     this.probeCache = report;
     return report;
+  }
+
+  /** check 1：二进制存在性（isFile 才算——同名目录不是可执行入口）。 */
+  private probeBinaryCheck(cliPath: string): ProbeReport["checks"][number] {
+    const binaryOk = fs.existsSync(cliPath) && fs.statSync(cliPath).isFile();
+    return {
+      name: "binary",
+      ok: binaryOk,
+      detail: binaryOk ? cliPath : `zcode CLI 不存在：${cliPath}`,
+    };
+  }
+
+  /** check 2：`--version` 解析（probeVersion 可注入——测试 fake 防真实子进程）。 */
+  private async probeVersionCheck(
+    cliPath: string,
+  ): Promise<{ check: ProbeReport["checks"][number]; engineVersion: string }> {
+    const runVersion = this.deps.probeVersion ?? defaultProbeVersion;
+    const version = await runVersion(cliPath);
+    const versionOk = version !== undefined && version.length > 0;
+    return {
+      check: {
+        name: "version",
+        ok: versionOk,
+        detail: versionOk ? version : "zcode --version 返回空或失败",
+      },
+      engineVersion: version ?? "",
+    };
+  }
+
+  /** check 3：golden 样本干跑（parser 对实录样本解析——stdout 格式漂移的入口拦截）。 */
+  private probeGoldenCheck(): ProbeReport["checks"][number] {
+    const golden = parseZcodeTerminal(ZCODE_GOLDEN_STDOUT);
+    const goldenOk = golden.ok && golden.payload.sessionId !== undefined && golden.payload.usage !== undefined;
+    return {
+      name: "golden-regression",
+      ok: goldenOk,
+      detail: goldenOk
+        ? "parser 对 0.16.5 实录样本回归通过（sessionId/response/usage 形状完整）"
+        : `解析实录样本失败：${golden.ok ? "字段缺失（sessionId/usage）" : golden.reason}`,
+    };
+  }
+
+  /** 探针失败的恢复指引（§3.3.3 终态四：版本确认命令 + 探针重跑 + 调研文档路径）。 */
+  private probeFailureRecovery(cliPath: string): NonNullable<ProbeReport["error"]> {
+    return {
+      code: "engine_probe_failed",
+      recovery:
+        `Run \`node ${cliPath} --version\` 确认 zcode CLI 可用且版本未漂移，然后重跑探针（重新初始化引擎或 probe({force:true})）。` +
+        `若 stdout 格式已变：把新样本补录进 golden 库（__tests__/__fixtures__/zcode-golden-spawn.json 与 golden-sample.ts）并更新 parser。` +
+        `参照 docs/research/agent-engine-zcode.md。`,
+    };
   }
 
   /** D1 主语义：preparer → launcher → parser →（schema 仿真校验 + 一次重试）→ outcome/handle。 */
@@ -284,57 +304,86 @@ export class ZcodeEngine implements EnginePort {
     };
 
     if (final.kind === "aborted") {
-      // abort 合成终态：exitCode=null（record 正常收尾，不留僵尸）
-      outcome.exitCode = null;
-      // 对齐点④：宿主超时（mergeTimeoutSignal 的 timeout abort）统一走公共合成终态
-      // （common/kill-chain.synthesizeTimeoutOutcome——engine_timeout 文案 SSOT：stdout
-      // 尾部 + 「可用 engine: pi 重跑」建议）；用户主动 cancel 维持 engine_run_failed
-      // 中止标记（非超时语义，不冒充超时）。?? 兜底是类型收窄（合成器恒写 error）
-      outcome.error = isHostTimeoutAbort(ctx)
-        ? synthesizeTimeoutOutcome(task, final.output.stdoutText, ZCODE_ENGINE_ID).error ??
-          engineTimeoutDetail(final.output.stdoutText)
-        : `engine_run_failed: zcode 任务被中止（杀链 SIGTERM→${ZCODE_KILL_GRACE_MS}ms→SIGKILL，宿主合成终态）。` +
-          `stdout 尾部: ${final.output.stdoutText.slice(-ZCODE_ERROR_TAIL_CHARS)}`;
-      emit({ type: "error", message: outcome.error });
+      this.applyAbortedOutcome(outcome, task, ctx, final, emit);
     } else if (final.kind === "run-failed") {
-      outcome.exitCode = final.output.exitCode;
-      outcome.error = final.message;
-      emit({ type: "error", message: outcome.error });
+      this.applyRunFailedOutcome(outcome, final, emit);
     } else {
-      const payload = final.payload;
-      outcome.content = payload.response;
-      outcome.exitCode = final.output.exitCode;
-      if (payload.sessionId !== undefined) outcome.sessionId = payload.sessionId;
-      // usage：token 四项取两轮之和（重试的 LLM 调用真实发生），contextTokens/turns 取末轮
-      if (usageAcc.has) {
-        const last = payload.outcomeUsage;
-        outcome.usage = {
-          input: usageAcc.input,
-          output: usageAcc.output,
-          cacheRead: usageAcc.cacheRead,
-          cacheWrite: usageAcc.cacheWrite,
-          cost: 0,
-          contextTokens: last?.contextTokens ?? usageAcc.input + usageAcc.output + usageAcc.cacheRead + usageAcc.cacheWrite,
-          turns: last?.turns ?? 1,
-        };
-      }
-      if (final.schemaResult !== undefined) {
-        if (final.schemaResult.ok) {
-          // D4 硬分流的 emulated 侧产出：公共仿真层的 ajv 校验结果即 parsedOutput
-          outcome.parsedOutput = final.schemaResult.parsed;
-        } else {
-          // 两轮（原始 + 强化重试）均未通过三级容错提取/ajv 校验
-          outcome.error =
-            `schema_emulation_failed: zcode 输出经两轮（含强化 prompt 重试）仍未通过 schema 校验。` +
-            `末轮失败原因: ${final.schemaResult.error}。原始输出尾部: ${final.schemaResult.tail}。` +
-            `恢复指引：简化 schema 或拆小任务后重派；需要强 schema 约束时改用 engine: pi（native schema 注入）。`;
-          emit({ type: "error", message: outcome.error });
-        }
-      }
-      // coarse 事件（不变量 5：事件 emit 完成先于 run resolve——journal 完整性）
-      for (const ev of synthesizeCoarseEvents(payload.response, payload.usage)) emit(ev);
+      this.applyParsedOutcome(outcome, final, usageAcc, emit);
     }
     return outcome;
+  }
+
+  /** abort 合成终态：exitCode=null（record 正常收尾，不留僵尸）。 */
+  private applyAbortedOutcome(
+    outcome: AgentOutcome,
+    task: AgentTaskSpec,
+    ctx: RunContext,
+    final: Extract<AttemptResult, { kind: "aborted" }>,
+    emit: (event: AgentEvent) => void,
+  ): void {
+    outcome.exitCode = null;
+    // 对齐点④：宿主超时（mergeTimeoutSignal 的 timeout abort）统一走公共合成终态
+    // （common/kill-chain.synthesizeTimeoutOutcome——engine_timeout 文案 SSOT：stdout
+    // 尾部 + 「可用 engine: pi 重跑」建议）；用户主动 cancel 维持 engine_run_failed
+    // 中止标记（非超时语义，不冒充超时）。?? 兜底是类型收窄（合成器恒写 error）
+    outcome.error = isHostTimeoutAbort(ctx)
+      ? synthesizeTimeoutOutcome(task, final.output.stdoutText, ZCODE_ENGINE_ID).error ??
+        engineTimeoutDetail(final.output.stdoutText)
+      : `engine_run_failed: zcode 任务被中止（杀链 SIGTERM→${ZCODE_KILL_GRACE_MS}ms→SIGKILL，宿主合成终态）。` +
+        `stdout 尾部: ${final.output.stdoutText.slice(-ZCODE_ERROR_TAIL_CHARS)}`;
+    emit({ type: "error", message: outcome.error });
+  }
+
+  /** run-failed 合成终态：错误信息由 buildRunFailedMessage 产出（已含恢复指引），直接透传。 */
+  private applyRunFailedOutcome(
+    outcome: AgentOutcome,
+    final: Extract<AttemptResult, { kind: "run-failed" }>,
+    emit: (event: AgentEvent) => void,
+  ): void {
+    outcome.exitCode = final.output.exitCode;
+    outcome.error = final.message;
+    emit({ type: "error", message: outcome.error });
+  }
+
+  /** parsed 合成终态：content/sessionId/usage 落位 + schema 校验分流 + coarse 事件。 */
+  private applyParsedOutcome(
+    outcome: AgentOutcome,
+    final: Extract<AttemptResult, { kind: "parsed" }>,
+    usageAcc: { input: number; output: number; cacheRead: number; cacheWrite: number; has: boolean },
+    emit: (event: AgentEvent) => void,
+  ): void {
+    const payload = final.payload;
+    outcome.content = payload.response;
+    outcome.exitCode = final.output.exitCode;
+    if (payload.sessionId !== undefined) outcome.sessionId = payload.sessionId;
+    // usage：token 四项取两轮之和（重试的 LLM 调用真实发生），contextTokens/turns 取末轮
+    if (usageAcc.has) {
+      const last = payload.outcomeUsage;
+      outcome.usage = {
+        input: usageAcc.input,
+        output: usageAcc.output,
+        cacheRead: usageAcc.cacheRead,
+        cacheWrite: usageAcc.cacheWrite,
+        cost: 0,
+        contextTokens: last?.contextTokens ?? usageAcc.input + usageAcc.output + usageAcc.cacheRead + usageAcc.cacheWrite,
+        turns: last?.turns ?? 1,
+      };
+    }
+    if (final.schemaResult !== undefined) {
+      if (final.schemaResult.ok) {
+        // D4 硬分流的 emulated 侧产出：公共仿真层的 ajv 校验结果即 parsedOutput
+        outcome.parsedOutput = final.schemaResult.parsed;
+      } else {
+        // 两轮（原始 + 强化重试）均未通过三级容错提取/ajv 校验
+        outcome.error =
+          `schema_emulation_failed: zcode 输出经两轮（含强化 prompt 重试）仍未通过 schema 校验。` +
+          `末轮失败原因: ${final.schemaResult.error}。原始输出尾部: ${final.schemaResult.tail}。` +
+          `恢复指引：简化 schema 或拆小任务后重派；需要强 schema 约束时改用 engine: pi（native schema 注入）。`;
+        emit({ type: "error", message: outcome.error });
+      }
+    }
+    // coarse 事件（不变量 5：事件 emit 完成先于 run resolve——journal 完整性）
+    for (const ev of synthesizeCoarseEvents(payload.response, payload.usage)) emit(ev);
   }
 
   /**
