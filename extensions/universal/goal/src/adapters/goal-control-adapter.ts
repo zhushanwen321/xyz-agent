@@ -135,12 +135,12 @@ export interface GoalControlDetails {
  * 守卫用 D25 严格语义：非终态 active/paused/blocked 全挡，提示用 /goal resume 或
  * /goal clear——防 AI 静默覆盖含未完成工作的 goal。
  * 终态旧 goal 走 createGoal 快速路径覆盖（createGoal 内部 active 守卫，终态可覆盖）。
+ *
+ * 参数校验拆分至 requireCreateObjective / requireCreateSuccessCriteria /
+ * resolveCreateBudget（圈复杂度拆分），校验顺序与错误消息不变。
  */
-export function handleCreate(
-	params: GoalControlParamsT,
-	session: GoalSession,
-	ports: ServicePorts,
-): GoalControlDetails {
+/** create 的 objective 校验（schema optional 兜底）：必填 + 非空串，返回 trim 后值。 */
+function requireCreateObjective(params: GoalControlParamsT): string {
 	if (params.objective === undefined) {
 		throw new Error("'objective' required for create. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":[\"<condition 1>\",\"<condition 2>\"]}");
 	}
@@ -151,9 +151,14 @@ export function handleCreate(
 			"'objective' must not be empty. Describe the concrete objective to pursue. Correct: {\"action\":\"create\",\"slug\":\"<kebab-case>\",\"objective\":\"<concrete objective>\",\"successCriteria\":[\"<condition 1>\",\"<condition 2>\"]}",
 		);
 	}
-	// slug 真 optional（TC11）：缺失时 fallback goalId 截断（与 buildGoalGui 口径一致），不强制必填
-	const slugInput = params.slug?.trim();
+	return objective;
+}
 
+/**
+ * create 的 successCriteria 校验：必填 + 非空数组 + 逐条 string/非空/单行，返回 trim 后数组。
+ * 从 handleCreate 提取（圈复杂度拆分），校验顺序与错误消息不变。
+ */
+function requireCreateSuccessCriteria(params: GoalControlParamsT): string[] {
 	if (params.successCriteria === undefined) {
 		throw new Error("'successCriteria' required for create. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":[\"<condition 1>\",\"<condition 2>\"]}");
 	}
@@ -186,6 +191,31 @@ export function handleCreate(
 		}
 		successCriteria.push(trimmed);
 	}
+	return successCriteria;
+}
+
+/** create 的 budget 解析：非法预算直接拒绝（不静默截断），未提供时返回空配置。 */
+function resolveCreateBudget(params: GoalControlParamsT): Partial<BudgetConfig> {
+	const budget: Partial<BudgetConfig> = {};
+	if (params.tokenBudget === undefined) {
+		return budget;
+	}
+	if (params.tokenBudget <= 0) {
+		throw new Error("'tokenBudget' must be greater than 0.");
+	}
+	budget.tokenBudget = params.tokenBudget;
+	return budget;
+}
+
+export function handleCreate(
+	params: GoalControlParamsT,
+	session: GoalSession,
+	ports: ServicePorts,
+): GoalControlDetails {
+	const objective = requireCreateObjective(params);
+	// slug 真 optional（TC11）：缺失时 fallback goalId 截断（与 buildGoalGui 口径一致），不强制必填
+	const slugInput = params.slug?.trim();
+	const successCriteria = requireCreateSuccessCriteria(params);
 
 	// D25 严格守卫：非终态旧 goal（active/paused/blocked）→ 拒绝创建（防静默覆盖未完成工作）
 	if (session.state && !isTerminalStatus(session.state.status)) {
@@ -195,13 +225,7 @@ export function handleCreate(
 	}
 
 	// budget 校验：非法预算直接拒绝，不静默截断
-	const budget: Partial<BudgetConfig> = {};
-	if (params.tokenBudget !== undefined) {
-		if (params.tokenBudget <= 0) {
-			throw new Error("'tokenBudget' must be greater than 0.");
-		}
-		budget.tokenBudget = params.tokenBudget;
-	}
+	const budget = resolveCreateBudget(params);
 
 	// FR-3.1: 唯一创建入口。终态旧 goal 走覆盖快速路径。
 	const created = createGoal(session, objective, budget, ports, slugInput, successCriteria);

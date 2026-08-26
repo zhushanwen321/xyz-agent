@@ -205,27 +205,61 @@ export interface RebuildResult {
  *
  * 注意：本函数只重建 registry + 计算需补的 entry，不写 entry（副作用归 index.ts）。
  */
+/** rebuildFromEntries 的扫描阶段结果：register 原始 data 列表 + 已注销 id 集合 */
+interface PendingEntryScan {
+	registerEntries: Array<{ data: RegisterEntryData }>;
+	unregisteredIds: Set<string>;
+}
+
+/** 单趟扫描 entries 按 customType 分流（pending:register / pending:unregister）。 */
+function scanPendingEntries(entries: unknown[]): PendingEntryScan {
+	const scan: PendingEntryScan = { registerEntries: [], unregisteredIds: new Set() };
+
+	for (const raw of entries as EntryLike[]) {
+		// S-10：同 countActiveFromEntries——null/undefined 元素先守卫再访问字段。
+		if (!raw || typeof raw !== "object") continue;
+		if (raw.customType === "pending:register") {
+			scan.registerEntries.push({ data: (raw.data ?? {}) as RegisterEntryData });
+		} else if (raw.customType === "pending:unregister") {
+			const data = (raw.data ?? {}) as UnregisterEntryData;
+			if (typeof data.id === "string") {
+				scan.unregisteredIds.add(data.id);
+			}
+		}
+	}
+
+	return scan;
+}
+
+/**
+ * 判定单个 register entry 重建时是否应标 expired：
+ * - 跨 session 残留（U4）→ expired
+ * - TTL 过期（U3）→ expired
+ *
+ * process 档两检全跳过（D16：进程级生命周期跨 session 续存且无 TTL）。
+ */
+function isExpiredEntry(entry: PendingEntry, currentSessionId: string, now: number): boolean {
+	// 跨 session 残留（U4）——process 档跳过（D16：进程级生命周期跨 session 续存，
+	// fork/switch 后任务仍在跑；标 expired 补 unregister 会让差集消费方误判「无活跃任务」）
+	if (PENDING_LIFECYCLE[entry.type] === "session" && entry.sessionId !== currentSessionId) {
+		return true;
+	}
+	// 过期（U3）——process 档跳过（D16：无 TTL，expiresAt 恒 undefined）；
+	// session 档理论上恒有值，防御 undefined 不过期（缺失 = 该条目不过期）
+	return (
+		PENDING_LIFECYCLE[entry.type] === "session" &&
+		entry.expiresAt !== undefined &&
+		entry.expiresAt <= now
+	);
+}
+
 export function rebuildFromEntries(
 	registry: PendingRegistry,
 	entries: unknown[],
 	currentSessionId: string,
 	now: number,
 ): RebuildResult {
-	const registerEntries: Array<{ data: RegisterEntryData }> = [];
-	const unregisteredIds = new Set<string>();
-
-	for (const raw of entries as EntryLike[]) {
-		// S-10：同 countActiveFromEntries——null/undefined 元素先守卫再访问字段。
-		if (!raw || typeof raw !== "object") continue;
-		if (raw.customType === "pending:register") {
-			registerEntries.push({ data: (raw.data ?? {}) as RegisterEntryData });
-		} else if (raw.customType === "pending:unregister") {
-			const data = (raw.data ?? {}) as UnregisterEntryData;
-			if (typeof data.id === "string") {
-				unregisteredIds.add(data.id);
-			}
-		}
-	}
+	const { registerEntries, unregisteredIds } = scanPendingEntries(entries);
 
 	const activeIds: string[] = [];
 	const expiredToFlush: Array<{ id: string; status: PendingStatus }> = [];
@@ -235,15 +269,7 @@ export function rebuildFromEntries(
 		if (unregisteredIds.has(data.id)) continue;
 
 		const entry = normalizeRegisterEntry(data, currentSessionId);
-		// 跨 session 残留（U4）——process 档跳过（D16：进程级生命周期跨 session 续存，
-		// fork/switch 后任务仍在跑；标 expired 补 unregister 会让差集消费方误判「无活跃任务」）
-		if (PENDING_LIFECYCLE[entry.type] === "session" && entry.sessionId !== currentSessionId) {
-			expiredToFlush.push({ id: entry.id, status: "expired" });
-			continue;
-		}
-		// 过期（U3）——process 档跳过（D16：无 TTL，expiresAt 恒 undefined）；
-		// session 档理论上恒有值，防御 undefined 不过期（缺失 = 该条目不过期）
-		if (PENDING_LIFECYCLE[entry.type] === "session" && entry.expiresAt !== undefined && entry.expiresAt <= now) {
+		if (isExpiredEntry(entry, currentSessionId, now)) {
 			expiredToFlush.push({ id: entry.id, status: "expired" });
 			continue;
 		}
