@@ -7,6 +7,7 @@
     File View 内容 G2-003 defer。
   -->
   <div
+    data-fs-scope="sidebar"
     class="sidebar h-full transition-[width,opacity] duration-[var(--duration-slow)] ease-[var(--ease)]"
     :class="{ 'w-0 opacity-0 overflow-hidden': sidebar.collapsed }"
   >
@@ -24,21 +25,21 @@
       <nav class="flex flex-col gap-1 px-1">
         <Button
           variant="ghost"
-          class="group h-8 w-full justify-start gap-2.5 rounded-md bg-accent px-3 text-[12px] font-medium text-accent-fg transition-colors hover:bg-accent-hover hover:text-accent-fg"
+          class="group h-8 w-full justify-start gap-2.5 rounded-md bg-accent px-3 text-[length:var(--text-xs)] font-medium text-accent-fg transition-colors hover:bg-accent-hover hover:text-accent-fg"
           @click="onNewSession"
         >
           <Plus class="size-[15px] text-accent-fg" />
           <span class="flex-1 text-left">{{ t('sidebar.newTask') }}</span>
-          <kbd class="font-mono text-[10px] text-accent-fg opacity-70">{{ formatKbd('n') }}</kbd>
+          <kbd class="font-mono text-[length:var(--text-3xs)] text-accent-fg opacity-70">{{ formatKbd('n') }}</kbd>
         </Button>
         <Button
           variant="ghost"
-          class="group h-8 w-full justify-start gap-2.5 rounded-md px-3 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+          class="group h-8 w-full justify-start gap-2.5 rounded-md px-3 text-[length:var(--text-xs)] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
           @click="searchModal.open()"
         >
           <Search class="size-[15px] text-neutral-dim transition-colors group-hover:text-neutral-mid" />
           <span class="flex-1 text-left">{{ t('sidebar.search') }}</span>
-          <kbd class="rounded-sm border border-border-strong px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('k') }}</kbd>
+          <kbd class="rounded-sm border border-border-strong px-1.5 py-0.5 font-mono text-[length:var(--text-3xs)] text-neutral-dim">{{ formatKbd('k') }}</kbd>
         </Button>
       </nav>
 
@@ -64,8 +65,8 @@
             data-testid="session-list-error"
           >
             <AlertCircle class="size-5 text-danger opacity-60" />
-            <p class="text-[11px] text-neutral-mid">{{ t('sidebar.sessionListLoadFailed', { error: session.listLoadError }) }}</p>
-            <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="session-list-retry" @click="onRetryLoadSessions">{{ t('sidebar.retry') }}</Button>
+            <p class="text-[length:var(--text-2xs)] text-neutral-mid">{{ t('sidebar.sessionListLoadFailed', { error: session.listLoadError }) }}</p>
+            <Button variant="ghost" class="h-6 text-[length:var(--text-2xs)] text-accent" data-testid="session-list-retry" @click="onRetryLoadSessions">{{ t('sidebar.retry') }}</Button>
           </div>
           <SessionList
             v-else
@@ -77,6 +78,7 @@
             @rename="onRenameSession"
             @delete="onDeleteSession"
             @delete-folder="onDeleteFolder"
+            @new-session-in-folder="onNewSessionInFolder"
             @stop-branch="onStopBranch"
             @force-quit="onForceQuitSession"
             @set-project="onAssignProject"
@@ -132,7 +134,7 @@
             data-testid="sidebar-plugin-no-session"
           >
             <Puzzle class="size-5 text-neutral-dim opacity-40" />
-            <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
+            <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
           </div>
         </template>
         <template v-else>
@@ -149,13 +151,13 @@
             data-testid="file-view-no-session"
           >
             <FolderOpen class="size-5 text-neutral-dim opacity-40" />
-            <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
+            <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
           </div>
         </template>
       </div>
 
       <!-- 用户区（footer）· §6.2 UserArea：accent 纯色头像（去装饰渐变）+ 用户名 + 设置齿轮。 -->
-      <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-neutral-mid transition-colors hover:bg-surface-hover">
+      <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[length:var(--text-xs)] text-neutral-mid transition-colors hover:bg-surface-hover">
         <span class="size-5 shrink-0 rounded-full bg-accent" />
         <span class="flex-1 truncate text-neutral-fg">{{ t('sidebar.developer') }}</span>
         <Button
@@ -240,7 +242,7 @@ const targetSessionId = ref('')
 const { subagentRunningCount, subagentList, workflowRunningCount, workflowList, currentWorkflow } = useSidebarCounts(focusedSessionId)
 const { derivedStatus } = useSessionDerivations()
 function statusOf(id: string) { return derivedStatus(id).value }
-const { onSelectSession, onNewSession, onRenameSession, onDeleteSession, onDeleteFolder, onStopBranch, onForceQuitSession, onConfirmRename, onAssignProject, onRetryLoadSessions, onRetryWorkflows, onRetrySubagents, searchDeps, onOpenSearchDrawer } = useSidebarSessionActions({ focusedSessionId, selectSession, restoreSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, assignSessionToProject, renameOpen, targetSessionId })
+const { onSelectSession, onNewSession, onNewSessionInFolder, onRenameSession, onDeleteSession, onDeleteFolder, onStopBranch, onForceQuitSession, onConfirmRename, onAssignProject, onRetryLoadSessions, onRetryWorkflows, onRetrySubagents, searchDeps, onOpenSearchDrawer } = useSidebarSessionActions({ focusedSessionId, selectSession, restoreSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, assignSessionToProject, renameOpen, targetSessionId })
 const { onSelectSubagent, onCancelSubagent, onSelectWorkflow, onWorkflowBack, onSelectAgentCall, onWorkflowAction } = useSidebarSubagentActions(focusedSessionId)
 useGlobalShortcuts({ onNewSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant, navigation: useNavigationStore(), openSettings })
 onMounted(() => {

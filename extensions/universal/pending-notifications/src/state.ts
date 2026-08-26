@@ -14,8 +14,22 @@
  *   不直接写 entry —— 写 entry 是副作用，由 index.ts 负责
  */
 
-/** 异步操作类型（来源：workflow / subagent） */
-export type PendingType = "workflow" | "subagent";
+/** 异步操作类型（来源：workflow / subagent / bash 后台任务） */
+export type PendingType = "workflow" | "subagent" | "bash";
+
+/**
+ * 生命周期分档（D16）：type 级声明，行为按档判定（不做 type 特判）——
+ * 未来 scheduler 等长任务类型声明 process 档即零改动获得同语义。
+ * - "session"：随 session entry 存活——TTL 过期（U3）、跨 session 清理（U4）、
+ *   shutdown 标 cancelled 全套生效。
+ * - "process"：随进程存活——无 TTL（不计算/不回填 expiresAt）、跨 session 续存
+ *   （fork/switch 后任务仍在跑）、shutdown 不标 cancelled（收尾归任务自身/reaper）。
+ */
+export const PENDING_LIFECYCLE: Record<PendingType, "session" | "process"> = {
+	subagent: "session",
+	workflow: "session",
+	bash: "process",
+};
 
 /** 异步操作终态/过渡状态。active = 仍在运行；其他都视为已结束 */
 export type PendingStatus = "active" | "completed" | "failed" | "cancelled" | "expired" | "time_limited" | "aborted";
@@ -32,8 +46,8 @@ export interface PendingEntry {
 	status: PendingStatus;
 	/** 注册时间戳 ms */
 	registeredAt: number;
-	/** 过期时间戳 ms（registeredAt + TTL） */
-	expiresAt: number;
+	/** 过期时间戳 ms（registeredAt + TTL）；process 档恒 undefined（D16：进程级生命周期无 TTL） */
+	expiresAt: number | undefined;
 	/** 注册时的 sessionId（用于跨 session 残留检测） */
 	sessionId: string;
 }
@@ -110,7 +124,7 @@ export function getActive(registry: PendingRegistry): PendingEntry[] {
 
 /** countActiveFromEntries 的过滤选项。 */
 export interface CountActiveOptions {
-	/** 只统计指定类型的活跃 pending；缺省 = 全部类型（subagent + workflow） */
+	/** 只统计指定类型的活跃 pending；缺省 = 全部类型（subagent + workflow + bash） */
 	types?: PendingType[];
 }
 
@@ -181,7 +195,8 @@ export interface RebuildResult {
  *
  * 算法（对齐 goal before-agent-start.ts 的读取契约）：
  * 1. 收集所有 pending:register entry，按 id 算差集（减去 pending:unregister 的 id）
- *    前提：id 全局唯一（workflow runId=`wf-<ts>-<rand>`、subagent id=`bg-/run-<tag>-<seq>-<ts>`）。
+ *    前提：id 全局唯一（workflow runId=`wf-<ts>-<rand>`、subagent id=`bg-/run-<tag>-<seq>-<ts>`、
+ *    bash 后台任务 id=`bt-<ts>-<rand>`）。
  *    若未来 id 复用（register→unregister→register 同 id），全局 Set 差集会误跳第二次 register。
  * 2. 对每个活跃的 register entry 检查：
  *    - sessionId 不符当前 session → expired（U4 跨 session 残留）
@@ -190,27 +205,61 @@ export interface RebuildResult {
  *
  * 注意：本函数只重建 registry + 计算需补的 entry，不写 entry（副作用归 index.ts）。
  */
+/** rebuildFromEntries 的扫描阶段结果：register 原始 data 列表 + 已注销 id 集合 */
+interface PendingEntryScan {
+	registerEntries: Array<{ data: RegisterEntryData }>;
+	unregisteredIds: Set<string>;
+}
+
+/** 单趟扫描 entries 按 customType 分流（pending:register / pending:unregister）。 */
+function scanPendingEntries(entries: unknown[]): PendingEntryScan {
+	const scan: PendingEntryScan = { registerEntries: [], unregisteredIds: new Set() };
+
+	for (const raw of entries as EntryLike[]) {
+		// S-10：同 countActiveFromEntries——null/undefined 元素先守卫再访问字段。
+		if (!raw || typeof raw !== "object") continue;
+		if (raw.customType === "pending:register") {
+			scan.registerEntries.push({ data: (raw.data ?? {}) as RegisterEntryData });
+		} else if (raw.customType === "pending:unregister") {
+			const data = (raw.data ?? {}) as UnregisterEntryData;
+			if (typeof data.id === "string") {
+				scan.unregisteredIds.add(data.id);
+			}
+		}
+	}
+
+	return scan;
+}
+
+/**
+ * 判定单个 register entry 重建时是否应标 expired：
+ * - 跨 session 残留（U4）→ expired
+ * - TTL 过期（U3）→ expired
+ *
+ * process 档两检全跳过（D16：进程级生命周期跨 session 续存且无 TTL）。
+ */
+function isExpiredEntry(entry: PendingEntry, currentSessionId: string, now: number): boolean {
+	// 跨 session 残留（U4）——process 档跳过（D16：进程级生命周期跨 session 续存，
+	// fork/switch 后任务仍在跑；标 expired 补 unregister 会让差集消费方误判「无活跃任务」）
+	if (PENDING_LIFECYCLE[entry.type] === "session" && entry.sessionId !== currentSessionId) {
+		return true;
+	}
+	// 过期（U3）——process 档跳过（D16：无 TTL，expiresAt 恒 undefined）；
+	// session 档理论上恒有值，防御 undefined 不过期（缺失 = 该条目不过期）
+	return (
+		PENDING_LIFECYCLE[entry.type] === "session" &&
+		entry.expiresAt !== undefined &&
+		entry.expiresAt <= now
+	);
+}
+
 export function rebuildFromEntries(
 	registry: PendingRegistry,
 	entries: unknown[],
 	currentSessionId: string,
 	now: number,
 ): RebuildResult {
-	const registerEntries: Array<{ data: RegisterEntryData }> = [];
-	const unregisteredIds = new Set<string>();
-
-	for (const raw of entries as EntryLike[]) {
-		// S-10：同 countActiveFromEntries——null/undefined 元素先守卫再访问字段。
-		if (!raw || typeof raw !== "object") continue;
-		if (raw.customType === "pending:register") {
-			registerEntries.push({ data: (raw.data ?? {}) as RegisterEntryData });
-		} else if (raw.customType === "pending:unregister") {
-			const data = (raw.data ?? {}) as UnregisterEntryData;
-			if (typeof data.id === "string") {
-				unregisteredIds.add(data.id);
-			}
-		}
-	}
+	const { registerEntries, unregisteredIds } = scanPendingEntries(entries);
 
 	const activeIds: string[] = [];
 	const expiredToFlush: Array<{ id: string; status: PendingStatus }> = [];
@@ -220,13 +269,7 @@ export function rebuildFromEntries(
 		if (unregisteredIds.has(data.id)) continue;
 
 		const entry = normalizeRegisterEntry(data, currentSessionId);
-		// 跨 session 残留（U4）
-		if (entry.sessionId !== currentSessionId) {
-			expiredToFlush.push({ id: entry.id, status: "expired" });
-			continue;
-		}
-		// 过期（U3）
-		if (entry.expiresAt <= now) {
+		if (isExpiredEntry(entry, currentSessionId, now)) {
 			expiredToFlush.push({ id: entry.id, status: "expired" });
 			continue;
 		}
@@ -238,16 +281,35 @@ export function rebuildFromEntries(
 	return { activeIds, expiredToFlush };
 }
 
+/**
+ * type 归一化：subagent/bash 原样保留，其余（含缺失/未知值）归 workflow。
+ * state.ts 与 index.ts 两处归一化共用本函数，防止「写入侧直通、读取侧归并」漂移。
+ */
+export function normalizePendingType(raw: unknown): PendingType {
+	if (raw === "subagent") return "subagent";
+	if (raw === "bash") return "bash";
+	return "workflow";
+}
+
 /** 从 entry data 归一化为 PendingEntry（补默认值，容错缺失字段） */
 function normalizeRegisterEntry(data: RegisterEntryData, currentSessionId: string): PendingEntry {
 	const registeredAt = typeof data.registeredAt === "number" ? data.registeredAt : Date.now();
+	const type = normalizePendingType(data.type);
 	return {
 		id: data.id as string,
-		type: (data.type === "subagent" ? "subagent" : "workflow") as PendingType,
+		type,
 		name: typeof data.name === "string" ? data.name : (data.id as string),
 		status: "active",
 		registeredAt,
-		expiresAt: typeof data.expiresAt === "number" ? data.expiresAt : registeredAt + PENDING_TTL_MS,
+		// D16：process 档不回填 TTL——写入侧本就省略 expiresAt，读取侧若回填
+		// registeredAt + TTL 会抵消写入侧的豁免（分档必须两侧同改）。session 档
+		// 缺失时回填 TTL 兼容旧 entry。
+		expiresAt:
+			PENDING_LIFECYCLE[type] === "process"
+				? undefined
+				: typeof data.expiresAt === "number"
+					? data.expiresAt
+					: registeredAt + PENDING_TTL_MS,
 		sessionId: typeof data.sessionId === "string" ? data.sessionId : currentSessionId,
 	};
 }

@@ -22,6 +22,8 @@ vi.mock("node:os", async (importOriginal) => {
 import { lintAgentMeta } from "../../orchestration/script-lint.ts";
 import { parseResourceMeta } from "../../shared/meta-parser.ts";
 import { AgentRegistry, parseAgentFrontmatter, parseAgentWithMeta } from "../agent-registry.ts";
+import type { EnginePort } from "../engine/port.ts";
+import { clearEngines, registerEngine } from "../engine/registry.ts";
 
 // ============================================================
 // helpers
@@ -249,5 +251,113 @@ describe("builtin agents 数据合规", () => {
     expect(reg.loadByPath(path.join(AGENTS_DIR, "debugger.md"))?.tools).toEqual(["read", "write", "edit", "bash", "grep", "find", "structured-output"]);
     expect(reg.loadByPath(path.join(AGENTS_DIR, "analyst.md"))?.tools).toEqual(["read", "bash", "grep", "find", "structured-output"]);
     expect(reg.loadByPath(path.join(AGENTS_DIR, "doc-reviewer.md"))?.tools).toEqual(["read", "grep", "structured-output"]);
+  });
+});
+
+// ============================================================
+// engine 字段（P4 D9：frontmatter 主通道 + 解析期注册表校验）
+// ============================================================
+
+describe("parseAgentWithMeta engine 字段（P4 路由）", () => {
+  beforeEach(() => {
+    // 解析期校验消费注册表——测试内注册假引擎（惰性工厂无副作用）
+    clearEngines();
+    // 工厂恒 throw：解析期校验只查注册表存在性，不实例化（惰性工厂契约）
+    const neverInstantiate = (): EnginePort => {
+      throw new Error("parse-time validation must not instantiate engines");
+    };
+    registerEngine("pi", neverInstantiate);
+    registerEngine("zcode", neverInstantiate);
+  });
+  afterEach(() => {
+    clearEngines();
+  });
+
+  it("frontmatter engine 进 config.engine（结构化路径，IF1）", () => {
+    const { config, meta } = parseAgentWithMeta(
+      "/x/reviewer.md",
+      `---
+name: reviewer
+description: review agent
+engine: zcode
+---
+body`,
+    );
+    expect(config.engine).toBe("zcode");
+    expect(meta?.kind === "agent" && meta.engine).toBe("zcode");
+  });
+
+  it("IF1 未通过（缺 description）时 legacy fallback 取 engine（配置不丢，与 model 同判）", () => {
+    const { config } = parseAgentWithMeta(
+      "/x/reviewer.md",
+      `---
+name: reviewer
+engine: zcode
+---
+body`,
+    );
+    expect(config.engine).toBe("zcode");
+  });
+
+  it("未注册 engine id：解析期抛 EngineNotFoundError，文案含注册清单与文件路径", () => {
+    expect(() =>
+      parseAgentWithMeta(
+        "/x/reviewer.md",
+        `---
+name: reviewer
+description: review agent
+engine: nonexistent-engine
+---
+body`,
+      ),
+    ).toThrowError(/engine_not_found: engine 'nonexistent-engine'/);
+    expect(() =>
+      parseAgentWithMeta(
+        "/x/reviewer.md",
+        `---
+name: reviewer
+description: review agent
+engine: nonexistent-engine
+---
+body`,
+      ),
+    ).toThrowError(/Registered engines: pi, zcode/);
+    expect(() =>
+      parseAgentWithMeta(
+        "/x/my-agent.md",
+        `---
+name: my-agent
+description: d
+engine: nonexistent-engine
+---
+body`,
+      ),
+    ).toThrowError(/Source: \/x\/my-agent\.md/);
+  });
+
+  it("已注册 id（pi/zcode）：解析通过，不抛", () => {
+    expect(() =>
+      parseAgentWithMeta(
+        "/x/reviewer.md",
+        `---
+name: reviewer
+description: review agent
+engine: pi
+---
+body`,
+      ),
+    ).not.toThrow();
+  });
+
+  it("无 engine 字段：config.engine 缺省（走全局默认层）", () => {
+    const { config } = parseAgentWithMeta(
+      "/x/worker.md",
+      `---
+name: worker
+description: d
+---
+body`,
+    );
+    expect(config.engine).toBeUndefined();
   });
 });

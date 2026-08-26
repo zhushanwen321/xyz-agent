@@ -143,6 +143,13 @@ export interface AgentCallOpts {
   cwd?: string;
   /** Inherit parent session context (fork mode). Independent of worktree (file isolation). */
   fork?: boolean;
+  /**
+   * 执行引擎 id（P4 D9 三层优先级的第一层：调用参数级，workflow step 显式指定）。
+   * 仅限「必须某引擎独有能力」的场景使用并注释原因（D9③ workflow 脚本不写死
+   * engine——环境差异由 frontmatter/全局默认承载）；透传链 worker-script-builder
+   * agent() → execute-agent-call → SAR 路由层。
+   */
+  engine?: string;
   /** Filesystem isolation: when true, creates a new git worktree for the agent. Independent of fork. */
   worktree?: boolean;
   /** When true, agent() resolves {value, sessionFile, worktreePath, error} instead of a bare value.

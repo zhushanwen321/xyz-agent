@@ -63,7 +63,7 @@
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
 
   /* ── 字体 ───────────────────────────────────────────────── */
-  --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-sans: system-ui, 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
 
   /* 字号 scale（v6 §4：calc 自适应，2026-08-02 整体上移一档 base 13→14）

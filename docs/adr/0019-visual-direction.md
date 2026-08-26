@@ -4,7 +4,7 @@
 
 ## 决策
 
-以冷蓝 `#4f8ef7`、暗色画布、Inter 作为产品**唯一视觉标准 (single source of truth)**，默认主题基调为**暗色优先，亮色为备选**。
+以冷蓝 `#4f8ef7`、暗色画布、Inter 作为产品**唯一视觉标准 (single source of truth)**（2026-08-25 字体子决策已 supersede，见 docs/page-design/v6-master-spec.md §4.6），默认主题基调为**暗色优先，亮色为备选**。
 
 > **2026-08-02 更新**：原始 `docs/page-design/zcode-demo/` 探索稿已删除，视觉规格见 `../page-design/v6-spec-*.html`（15 份 HTML 标注稿）与 `../page-design/v6-master-spec.md`。本 ADR 的视觉方向裁决（冷蓝暗色优先）不变。
 
@@ -51,13 +51,13 @@
 `style.css` :root（L11-30）：
 - L11-15 `--bg/--surface/--fg/--muted/--border`：暖奶油 → 冷蓝暗色底（见 `../page-design/design-tokens.md` 暗色块）
 - L16-17 `--accent(195°)/--accent-light`：青蓝 → `#4f8ef7` 蓝系
-- L25 `--font-display`：serif (Tiempos/Newsreader) → Inter（display 与 body 同族，tech-utility 取向）
+- L25 `--font-display`：serif (Tiempos/Newsreader) → Inter（display 与 body 同族，tech-utility 取向）（2026-08-25 字体子决策已 supersede，见 docs/page-design/v6-master-spec.md §4.6）
 - L28 `--radius: 1px` → `3px/8px/12px` 三档
 - **新增**：整块 `.dark { ... }` token（当前缺失，`darkMode:'class'` 是空头支票）
 
 `tailwind.config.ts`：
 - L8 `colors`：对齐冷蓝暗色板
-- L37 `fontFamily`：display/body → Inter，mono → JetBrains Mono
+- L37 `fontFamily`：display/body → Inter，mono → JetBrains Mono（2026-08-25 字体子决策已 supersede，见 docs/page-design/v6-master-spec.md §4.6）
 - L42 `borderRadius`：→ 3/8/12px
 
 ## 后续步骤

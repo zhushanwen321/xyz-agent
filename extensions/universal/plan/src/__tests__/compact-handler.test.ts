@@ -79,7 +79,11 @@ describe("handlePlanComplete", () => {
       undefined,
       ctx,
       "plan",
-      "All 2 steps of plan.md executed and verified: Step one; Step two",
+      [
+        "All 2 steps of plan executed and verified",
+        "1. Step one",
+        "2. Step two",
+      ],
     );
   });
 
@@ -111,7 +115,11 @@ describe("handlePlanComplete", () => {
       undefined,
       ctx,
       "plan",
-      "All 2 steps of plan.md executed and verified: Step one; Step two",
+      [
+        "All 2 steps of plan executed and verified",
+        "1. Step one",
+        "2. Step two",
+      ],
     );
   });
 });

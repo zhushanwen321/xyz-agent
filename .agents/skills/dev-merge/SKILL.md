@@ -64,8 +64,21 @@ cd /Users/zhushanwen/Code/xyz-agent-workspace/<dev-branch> && git add <files> &&
 bash .agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>
 ```
 
-脚本内置安全闸：分支未合并进 dev 拒绝清理；worktree 有未跟踪且未 ignore 的文件时 git 拒绝删除——**不要擅自 `--force`**，先看那些文件是什么（认知外的问用户），确认后由用户/显式决策强删。
+脚本内置安全闸：分支未合并进 dev 拒绝清理（`is_merged` 闸门通过后脚本直接 `git branch -D`，不依赖 `git branch -d`——feat 分支 upstream 是 origin/main，`-d` 校验的是 upstream 包含性，即便已合入 dev 也必拦）；worktree 有未跟踪且未 ignore 的文件时 git 拒绝删除——**不要擅自 `--force`**，先看那些文件是什么（认知外的问用户），确认后由用户/显式决策强删。
 
-**[关键] cleanup 成功后**：原 worktree 目录已不存在，而 bash 调用的默认 cwd 可能仍指向它（目录悬空）。后续所有 bash 命令会报 ENOENT / cwd 错误——**这是清理已成功的正常信号，不是错误**。与 merge skill 阶段 7 一致：脚本删掉该目录后，后续 bash 调用的 cwd 指向已删除目录 → ENOENT。此时立即输出合并总结收尾，不要再尝试调 bash 做确认。
+**`OK:` 输出 = 全部完成的权威证明**（worktree 与分支都已删）。此后不要再调用任何 bash——包括 `git worktree list` / `git log` 复核确认。直接输出合并总结收尾。
 
-例外：如果脚本本身因业务原因（如分支未合并、worktree 被占用）**明确 exit 非 0**，那是另一回事，需按脚本输出排查。
+**[MANDATORY] bash 会话报废信号解码**：cleanup 之后（无论脚本输出 `OK:` 还是 `ERROR:`），若 bash 调用返回以下**工具层错误**（没有任何命令输出）：
+
+```
+Working directory does not exist: <feat-worktree 路径>
+Cannot execute bash commands.
+```
+
+1. **命令没有被执行**——工具在 spawn shell 前就因 cwd 目录不存在而拒绝，`cd <别处> &&` 前缀救不了（拒绝发生在命令文本被解释之前）。重试无意义，立即停止一切 bash 调用
+2. 它同时是 **worktree 删除已成功的证明**（目录已从磁盘消失），不是失败信号
+3. 这是**会话级永久状态**：本会话后续所有 bash 调用都会得到同样错误。收尾判断——脚本输出过 `OK:` → 全部完成，正常输出总结；脚本在删 worktree 之后输出过 `ERROR: 分支 ... 删除失败` → 分支是唯一残留，在总结里写明一条待执行命令 `git -C /Users/zhushanwen/Code/xyz-agent-workspace/<dev-branch> branch -D <feat-branch>` 交给用户/下次会话
+
+同类陷阱与反模式的完整记录见 merge skill 阶段 7。
+
+例外：如果脚本在删 worktree **之前** exit 非 0（预检失败 / 分支未合并 / 脏 worktree），目录仍在、bash 正常，按脚本输出排查。

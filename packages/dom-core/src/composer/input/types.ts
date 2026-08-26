@@ -120,11 +120,22 @@ export interface ChipCallbacks {
 import type { ComposerInputInstance } from '@xyz-agent/core/domain/composer'
 export type { ComposerInputInstance }
 
-/** restore 模块依赖（draft/inputRef/drafts/sessionId，原契约保持） */
+/** per-session 草稿存储窄接口（ADR-0049 迁移：Map<string,string> → useSessionScopedState 分区）。
+ *  消费方只关心三个原子操作，不持有 Map 引用——分区容器由 Composer.vue 经工厂管理。 */
+export interface DraftStore {
+  /** 读指定 session 的草稿（分区不存在返回空串 = 未保存语义） */
+  getDraft(sid: string): string
+  /** 写指定 session 的草稿（经 updateFor 操作分区，不读 sid.value 实时值） */
+  saveDraft(sid: string, text: string): void
+  /** 删除指定 session 的草稿分区（发送成功后清理，防 Map 积累已发送 session 条目） */
+  deleteDraft(sid: string): void
+}
+
+/** restore 模块依赖（draft/inputRef/draftStore/sessionId，ADR-0049 窄化） */
 export interface ComposerRestoreDeps {
   draft: Ref<string>
   inputRef: Ref<ComposerInputInstance | null>
-  drafts: Map<string, string>
+  drafts: DraftStore
   sessionId: Ref<string | null>
 }
 

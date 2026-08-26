@@ -13,9 +13,14 @@
 //   T3.18 (NFR): dispose 兜底覆盖（delegate 后子进程进 spawnedChildren）
 //   T3.19 (NFR): AgentCallOpts→ExecuteOptions 映射保真
 
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentCallOpts, AgentResult } from "../../orchestration/models/types.ts";
+import { replayJournal } from "../engine/common/event-journal.ts";
 import type { SubprocessAgentRunnerDeps } from "../subprocess-agent-runner.ts";
 import { SubprocessAgentRunner } from "../subprocess-agent-runner.ts";
 
@@ -284,12 +289,12 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
       });
     });
 
-    it("无 workflow onEvent → 不传 bridgedOnEvent", async () => {
-      let bridgedOnEvent: ((e: Record<string, unknown>) => void) | undefined;
+    it("无 workflow onEvent → 引擎仍收到包装 onEvent（P2 journal 通道恒开）", async () => {
+      let engineOnEvent: ((e: Record<string, unknown>) => void) | undefined;
       const mockService = createMockService(
         vi.fn().mockImplementation(
           (_opts: Record<string, unknown>, _signal?: AbortSignal, onEvent?: (e: Record<string, unknown>) => void) => {
-            bridgedOnEvent = onEvent;
+            engineOnEvent = onEvent;
             return Promise.resolve(makeMockResult());
           },
         ),
@@ -299,8 +304,51 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
 
       await sar.run(makeBaseOpts(), new AbortController().signal);
 
-      // 不传 workflow onEvent → bridgedOnEvent 应为 undefined
-      expect(bridgedOnEvent).toBeUndefined();
+      // P2 接线（设计 D6 第②级）：SAR 包装 onEvent 写 journal 后转发——原 onEvent
+      // 未传时也恒传包装版（全引擎免费获得 journal；P1「undefined 透传」细节已被
+      // 有意变更，本用例锁定新语义：引擎侧 onEvent 通道恒开）
+      expect(typeof engineOnEvent).toBe("function");
+      // 包装版不向外抛（journal append 是同步入队）
+      expect(() => engineOnEvent?.({ type: "turn_end" })).not.toThrow();
+    });
+
+    it("P2 journal 接线：run 期间事件落盘 journal-<taskId>.jsonl（中立格式，可重放）", async () => {
+      vi.useFakeTimers({ toFake: [] }); // 真实 timers：journal 写盘走真实 fs
+      const dataDir = mkdtempSync(join(tmpdir(), "sar-journal-test-"));
+      const prevEnv = process.env.XYZ_AGENT_DATA_DIR;
+      process.env.XYZ_AGENT_DATA_DIR = dataDir;
+      try {
+        const mockService = createMockService(
+          vi.fn().mockImplementation(
+            (_opts: Record<string, unknown>, _signal?: AbortSignal, onEvent?: (e: Record<string, unknown>) => void) => {
+              onEvent?.({ type: "tool_start", toolName: "bash", args: { cmd: "ls" } });
+              onEvent?.({ type: "turn_end" });
+              return Promise.resolve(makeMockResult());
+            },
+          ),
+        );
+        const deps: SubprocessAgentRunnerDeps = { subagentService: mockService };
+        const sar = new SubprocessAgentRunner(deps);
+
+        const workflowOnEvent = vi.fn();
+        await sar.run(makeBaseOpts(), new AbortController().signal, workflowOnEvent);
+
+        // journal 落在 <dataDir>/engines/pi/shared/journal-<taskId>.jsonl
+        const journalFile = join(dataDir, "engines", "pi", "shared");
+        const files = readdirSync(journalFile).filter((f) => f.startsWith("journal-") && f.endsWith(".jsonl"));
+        expect(files.length).toBe(1);
+        const replayed = replayJournal(join(journalFile, files[0] ?? ""));
+        expect(replayed).toEqual([
+          { type: "tool_start", toolName: "bash", args: { cmd: "ls" } },
+          { type: "turn_end" },
+        ]);
+        // workflow onEvent 照常透传（journal 包装不吞事件）
+        expect(workflowOnEvent).toHaveBeenCalledTimes(2);
+      } finally {
+        if (prevEnv === undefined) delete process.env.XYZ_AGENT_DATA_DIR;
+        else process.env.XYZ_AGENT_DATA_DIR = prevEnv;
+        rmSync(dataDir, { recursive: true, force: true });
+      }
     });
   });
 

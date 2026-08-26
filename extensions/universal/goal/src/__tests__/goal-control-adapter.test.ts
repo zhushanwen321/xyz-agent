@@ -124,7 +124,7 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		const ports = makeFakePorts();
 
 		const details = handleCreate(
-			{ action: "create", slug: "ship-feature-x", objective: "ship feature X", successCriteria: "feature X shipped" },
+			{ action: "create", slug: "ship-feature-x", objective: "ship feature X", successCriteria: ["feature X shipped"] },
 			session,
 			ports,
 		);
@@ -135,7 +135,7 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		expect(session.state).not.toBeNull();
 		expect(session.state!.objective).toBe("ship feature X");
 		expect(session.state!.slug).toBe("ship-feature-x");
-		expect(session.state!.successCriteria).toBe("feature X shipped");
+		expect(session.state!.successCriteria).toEqual(["feature X shipped"]);
 		expect(session.state!.status).toBe("active");
 		// createGoal 内部 persistState 写一条 state
 		expect(ports.states).toHaveLength(1);
@@ -146,13 +146,13 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 	it("objective 空 → throw", () => {
 		const session = createGoalSession();
 		expect(() =>
-			handleCreate({ action: "create", slug: "x", objective: "   ", successCriteria: "done" }, session, makeFakePorts()),
+			handleCreate({ action: "create", slug: "x", objective: "   ", successCriteria: ["done"] }, session, makeFakePorts()),
 		).toThrow(/objective/);
 	});
 
 	it("objective undefined → throw（schema 降级后 handler 唯一兜底：'required' 错误）", () => {
 		const session = createGoalSession();
-		expect(() => handleCreate({ action: "create", successCriteria: "y" }, session, makeFakePorts())).toThrow(
+		expect(() => handleCreate({ action: "create", successCriteria: ["y"] }, session, makeFakePorts())).toThrow(
 			/objective.*required/,
 		);
 	});
@@ -161,7 +161,7 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		const session = createGoalSession();
 		expect(() =>
 			handleCreate(
-				{ action: "create", slug: "x", objective: "do thing", successCriteria: "   " },
+				{ action: "create", slug: "x", objective: "do thing", successCriteria: ["   "] },
 				session,
 				makeFakePorts(),
 			),
@@ -181,7 +181,7 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		session.state = activeState({ status });
 		expect(() =>
 			handleCreate(
-				{ action: "create", slug: "new", objective: "new obj", successCriteria: "done" },
+				{ action: "create", slug: "new", objective: "new obj", successCriteria: ["done"] },
 				session,
 				makeFakePorts(),
 			),
@@ -195,7 +195,7 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		const ports = makeFakePorts();
 
 		const details = handleCreate(
-			{ action: "create", slug: "next-obj", objective: "next obj", successCriteria: "next done" },
+			{ action: "create", slug: "next-obj", objective: "next obj", successCriteria: ["next done"] },
 			session,
 			ports,
 		);
@@ -210,7 +210,7 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		const session = createGoalSession();
 		expect(() =>
 			handleCreate(
-				{ action: "create", slug: "x", objective: "x", successCriteria: "done", tokenBudget: 0 },
+				{ action: "create", slug: "x", objective: "x", successCriteria: ["done"], tokenBudget: 0 },
 				session,
 				makeFakePorts(),
 			),
@@ -222,7 +222,7 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		const ports = makeFakePorts();
 
 		handleCreate(
-			{ action: "create", slug: "x", objective: "x", successCriteria: "done", tokenBudget: 8000 },
+			{ action: "create", slug: "x", objective: "x", successCriteria: ["done"], tokenBudget: 8000 },
 			session,
 			ports,
 		);

@@ -12,15 +12,17 @@
  */
 import { existsSync, readdirSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join, isAbsolute, resolve } from 'node:path'
+import { join, isAbsolute, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { expandHome, isStrictlyUnder } from '../../utils/path-utils.js'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, ServerMessageMap, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataFile, SegmentsMetadataEntry, ProviderId } from '@xyz-agent/shared'
 import { BUILTIN_PRESET_IDS, IMAGE_LIMITS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
+import type { SubagentEngineConfigView, SubagentEnginesFile } from '@xyz-agent/extension-protocol'
+import { SUBAGENTS_ENGINES_FILENAME } from '@xyz-agent/extension-protocol'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
-import { getAttachmentsDir } from '@xyz-agent/shared/paths'
+import { getAttachmentsDir, getDataDir } from '@xyz-agent/shared/paths'
 import type { PiSessionEntry } from '../../infra/pi/pi-protocol.js'
 import type {
   ISessionService, IMessageBroker, SessionCreateOptions,
@@ -32,6 +34,11 @@ import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-histo
 import { parseJsonl } from '../../utils/jsonl.js'
 import { quarantineCorruptFile } from '../../utils/json-store.js'
 import { extractSubagentsFromSessionFile, scanSubagentEntries } from './subagent-extractor.js'
+import {
+  extractRecordEngine,
+  readEngineSubagentHistory,
+  DEFAULT_SUBAGENT_ENGINE,
+} from './subagent-engine-history.js'
 import { extractWorkflowsFromSessionFile, scanWorkflowEntries } from './workflow-extractor.js'
 import { buildTraceSnapshotFromFile, parseTraceHeaderLine, nextTracePushId, collectMalformedLines, CURRENT_SYSTEM_PROMPT_CUSTOM_TYPE } from './session-trace.js'
 import type { SessionTraceSnapshot } from './session-trace.js'
@@ -59,6 +66,8 @@ import {
 } from './replicated-states.config.js'
 import { HistoryRebuildCache, mergeIncrementalMessages } from './history-rebuild-cache.js'
 import { toErrorMessage, isEnoent, BUILTIN_EXTENSIONS_MISSING } from '../../utils/errors.js'
+import { withFileLockSync } from '../../utils/file-lock.js'
+import { atomicWrite } from '../../utils/fs-utils.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
 import { PresetService, type PresetResolution } from '../preset-service.js'
 // MessageBus（wave:runtime-wiring）：per-session 消息广播核心。setter 注入（同 setConfigService 模式），
@@ -1002,7 +1011,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // 先从主 session 提取 subagent 列表，找到 sessionFile 路径
     const subagents = await this.getSubagents(sessionId)
     const record = subagents.find((s) => s.subagentId === subagentId)
-    if (!record?.sessionFile) return []
+    if (!record) return []
+
+    // P5 分协议路由：非 pi 引擎（record.engine 字段路由，缺省 pi）走 extractor 的
+    // 三级降级读取链（①引擎原生 reader ②journal ③outcome-only）。pi 的现有直读链
+    // 零变化（A1 守护）
+    const engine = extractRecordEngine(record)
+    if (engine !== DEFAULT_SUBAGENT_ENGINE) {
+      return readEngineSubagentHistory(record, getDataDir())
+    }
+
+    if (!record.sessionFile) return []
 
     // 路径穿越校验：sessionFile 必须严格落在 piAgentDir 下（~/.xyz-agent/pi/agent/）。
     // record.sessionFile 由 subagent-extractor 从 JSONL 文本提取，不可信——攻击者构造的
@@ -1012,6 +1031,99 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // 直读 subagent JSONL，复用 getHistoryFromFilePath 转换链路（parseJsonl + filter + convertHistory）。
     // subagent JSONL 格式与主 session 一致（pi SessionManager._persist 写入）。
     return getHistoryFromFilePath(record.sessionFile, this.sessionStore)
+  }
+
+  /**
+   * [U7] 子代理引擎配置视图：engines.json（extension 权威写入的动态引擎列表）+
+   * config.json defaultEngine（extension ModelConfigService 读同一文件）。
+   * 纯磁盘读取，Settings 冷启动（无活跃 session）也可用。
+   *
+   * 回退链（U7b 冷启动：app 刚打开、尚无 pi 进程 → engines.json 不存在）：
+   * subagent-workflow 安装目录 package.json 的 `xyz-agent.subagentEngines` 静态声明
+   * （守护测试防与代码注册表漂移）→ 最终兜底 ['pi']。
+   */
+  async getSubagentEngineConfig(): Promise<SubagentEngineConfigView> {
+    const subagentsDir = join(getPiAgentDir(), 'subagents')
+    let engines: string[] | undefined
+    try {
+      const raw = readFileSync(join(subagentsDir, SUBAGENTS_ENGINES_FILENAME), 'utf8')
+      const parsed = JSON.parse(raw) as Partial<SubagentEnginesFile>
+      if (Array.isArray(parsed.engines) && parsed.engines.every((e) => typeof e === 'string') && parsed.engines.length > 0) {
+        engines = parsed.engines
+      }
+    } catch {
+      // 缺失/损坏 → 走静态声明回退
+    }
+    if (engines === undefined) {
+      engines = await this.readDeclaredEnginesFallback()
+    }
+    let defaultEngine = 'pi'
+    try {
+      const conf = JSON.parse(readFileSync(join(subagentsDir, 'config.json'), 'utf8')) as { defaultEngine?: unknown }
+      if (typeof conf.defaultEngine === 'string' && conf.defaultEngine.trim() !== '') {
+        defaultEngine = conf.defaultEngine.trim()
+      }
+    } catch {
+      // 无 config / 坏 JSON → 缺省 pi（extension 侧同缺省语义）
+    }
+    return { engines, defaultEngine }
+  }
+
+  /**
+   * [U7b] 静态声明回退：经 extensionService 定位 subagent-workflow 安装目录（dev 源码
+   * / packaged staged / live env 三形态统一由 getExtensionPaths 覆盖），读 package.json
+   * 的 xyz-agent.subagentEngines。任何失败返回 ['pi']（pi 恒可用）。
+   */
+  private async readDeclaredEnginesFallback(): Promise<string[]> {
+    try {
+      const paths = await this.extensionService.getExtensionPaths()
+      const swDir = paths.find((p) => p.endsWith('subagent-workflow') || p.includes(`${sep}subagent-workflow`))
+      if (!swDir) return ['pi']
+      const pkg = JSON.parse(readFileSync(join(swDir, 'package.json'), 'utf8')) as {
+        'xyz-agent'?: { subagentEngines?: unknown }
+      }
+      const declared = pkg['xyz-agent']?.subagentEngines
+      if (Array.isArray(declared) && declared.every((e) => typeof e === 'string') && declared.length > 0) {
+        return declared as string[]
+      }
+    } catch {
+      // 回退链的回退——静默到 ['pi']
+    }
+    return ['pi']
+  }
+
+  /**
+   * [U7] 设置全局默认子代理引擎：读改写 config.json（保留其他字段）+ tmp+rename 原子写。
+   * engineId 校验：engines.json 清单内才允许（防 GUI 端把未知引擎写进配置）。
+   *
+   * 🔒 跨进程锁（C-data-09）：config.json 与 agent bash 写（subagent-ext-config skill
+   * 指导）、用户手编构成多写方——RMW 全程持 withFileLockSync（lockfile = config.json.lock，
+   * 协议对齐 worktree-config-helper ext-config / settings.json 先例）。锁失败 fail-fast
+   * 抛错（ELOCKED，预算 1s），经 RPC 错误通路返回 GUI。不取锁的 bash/手编写方作为
+   * last-write-wins 残余风险由 data-source-registry.md §6 登记。
+   */
+  async setSubagentDefaultEngine(engineId: string): Promise<void> {
+    const view = await this.getSubagentEngineConfig()
+    if (!view.engines.includes(engineId)) {
+      throw new Error(`unknown subagent engine '${engineId}' (available: ${view.engines.join(', ')})`)
+    }
+    const configPath = join(getPiAgentDir(), 'subagents', 'config.json')
+    withFileLockSync(configPath, () => {
+      let conf: Record<string, unknown> = {}
+      try {
+        conf = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>
+      } catch {
+        // 无既有配置 → 新建（extension 读侧对缺字段的容忍与 DEFAULT_CONFIG 对齐）
+        conf = {}
+      }
+      if (conf['defaultEngine'] === engineId) return
+      conf['defaultEngine'] = engineId
+      // subagents 目录无需再建：withFileLockSync 取锁前已兜底 mkdir dirname(configPath)
+      // （无锁时代这行 mkdir 承重，引入锁后成为死代码）。原子写单点走 fs-utils.atomicWrite
+      // （tmp+rename）；写失败时 .tmp 残留不被清理——与 worktree-config-helper ext-config
+      // 先例同款取舍，磁盘孤儿文件无害，不在此另复制一份清理逻辑
+      atomicWrite(configPath, JSON.stringify(conf, null, 2), `${process.pid}-${Date.now()}`)
+    })
   }
 
   /**
@@ -1664,7 +1776,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       this.onSessionCreated?.(summary)
       // catch 内有 console.error（非 silent catch），无需 no-silent-catch 豁免。
     } catch (e: unknown) {
-      // 降级策略（best-effort）：插件回调异常不阻断创建主流程，仅落日志
+      // 降级策略（best-effort）：插件回调异常不阻断创建主流程，仅落日志供排查
       console.error(`[session-service] onSessionCreated listener error (sessionId=${summary.id}):`, e)
     }
   }

@@ -13,7 +13,7 @@
       data-testid="subagent-list-loading"
     >
       <Loader2 class="size-4 animate-spin text-neutral-dim opacity-60" />
-      <p class="text-[11px] text-neutral-dim opacity-60">{{ t('sidebar.subagentList.loading') }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-60">{{ t('sidebar.subagentList.loading') }}</p>
     </div>
     <!-- 错误态（M1：loadSubagents 失败，可重试） -->
     <div
@@ -22,8 +22,8 @@
       data-testid="subagent-list-error"
     >
       <AlertCircle class="size-5 text-danger opacity-60" />
-      <p class="text-[11px] text-neutral-mid">{{ t('sidebar.subagentList.loadFailed', { error: loadError }) }}</p>
-      <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="subagent-list-retry" @click="emit('retry')">{{ t('sidebar.subagentList.retry') }}</Button>
+      <p class="text-[length:var(--text-2xs)] text-neutral-mid">{{ t('sidebar.subagentList.loadFailed', { error: loadError }) }}</p>
+      <Button variant="ghost" class="h-6 text-[length:var(--text-2xs)] text-accent" data-testid="subagent-list-retry" @click="emit('retry')">{{ t('sidebar.subagentList.retry') }}</Button>
     </div>
     <!-- 列表 -->
     <ScrollArea v-else-if="subagents.length > 0" class="min-h-0 flex-1">
@@ -37,8 +37,14 @@
           @click="emit('select', record.subagentId)"
           @mouseleave="cancellingId = null"
         >
-          <!-- 状态指示 -->
+          <!-- 状态指示（引擎 icon 最左，D9；尺寸与 spinner 同级 13px） -->
           <div class="flex items-center gap-2">
+            <component
+              :is="resolveEngineIcon(record.engine).icon"
+              class="size-[13px] shrink-0 text-neutral-dim"
+              :title="resolveEngineIcon(record.engine).label"
+              data-testid="subagent-engine-icon"
+            />
             <Loader2
               v-if="isStreaming(record)"
               class="size-[13px] shrink-0 animate-spin text-accent"
@@ -49,13 +55,13 @@
               class="size-2 shrink-0 rounded-full"
               :class="statusDotClass(record)"
             />
-            <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-neutral-fg">
+            <span class="min-w-0 flex-1 truncate text-[length:var(--text-xs)] font-medium leading-[1.35] text-neutral-fg">
               {{ record.agent }}
             </span>
             <!-- slug 短标签（与 WorkflowList 第一行对齐：名称右侧 mono 小字；旧 session 兜底空串不渲染） -->
             <span
               v-if="record.slug"
-              class="shrink-0 font-mono text-[10px] text-neutral-mid"
+              class="shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-mid"
               data-testid="subagent-card-slug"
             >
               {{ record.slug }}
@@ -78,14 +84,14 @@
           </div>
 
           <!-- 摘要 -->
-          <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-neutral-dim">
+          <div class="mt-1 flex items-center gap-2 pl-[42px] font-mono text-[length:var(--text-3xs)] text-neutral-dim">
             <span v-if="record.turns !== undefined">{{ record.turns }} {{ t('sidebar.subagentList.turnsUnit') }}</span>
             <span v-if="record.totalTokens !== undefined">· {{ formatTokens(record.totalTokens, t('sidebar.subagentList.tokUnit')) }}</span>
             <span v-if="record.elapsedSeconds !== undefined">· {{ formatElapsed(record.elapsedSeconds) }}</span>
           </div>
 
           <!-- 任务描述 -->
-          <div class="mt-0.5 truncate pl-[21px] text-[11px] leading-[1.3] text-neutral-mid">
+          <div class="mt-0.5 truncate pl-[42px] text-[length:var(--text-2xs)] leading-[1.3] text-neutral-mid">
             {{ record.task }}
           </div>
         </div>
@@ -99,8 +105,8 @@
       data-testid="subagent-list-empty"
     >
       <Bot class="size-7 text-neutral-dim opacity-40" />
-      <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.subagentList.empty') }}</p>
-      <p class="text-[10px] text-neutral-dim opacity-40">{{ t('sidebar.subagentList.emptyHint') }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-55">{{ t('sidebar.subagentList.empty') }}</p>
+      <p class="text-[length:var(--text-3xs)] text-neutral-dim opacity-40">{{ t('sidebar.subagentList.emptyHint') }}</p>
     </div>
   </div>
 </template>
@@ -113,6 +119,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { SubagentRecord } from '@xyz-agent/shared'
 import { deriveClosedDisplay } from '@xyz-agent/shared'
+import { resolveEngineIcon } from '@/constants/engine-icons'
 
 /** token 数超过此阈值显示 k 单位 */
 const TOKEN_K_THRESHOLD = 1000

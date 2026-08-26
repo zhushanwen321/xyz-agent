@@ -81,6 +81,8 @@ export interface StartHandlerInput {
   conversation?: boolean;
   /** 空闲超时毫秒数（仅 conversation 模式有意义，覆盖默认 5min）。 */
   idleTimeoutMs?: number;
+  /** 执行引擎（D4 三层路由第一层：本参数 > agent frontmatter engine > config defaultEngine）。 */
+  engine?: string;
 }
 
 /** start 领域对象（adapter 包成 bgResponse）。 */
@@ -219,6 +221,7 @@ export async function startHandler(
     cwd: input.cwd,
     conversation: input.conversation,
     idleTimeoutMs: input.idleTimeoutMs,
+    engine: input.engine,
     ctxModel,
     signal,
     // background detached 运行，完成由 notify 驱动新 turn。

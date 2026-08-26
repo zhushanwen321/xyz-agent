@@ -28,10 +28,10 @@
         class="size-[11px] shrink-0 text-accent"
       />
       <GitFork class="size-[11px] shrink-0 text-accent" />
-      <span class="text-[11px] font-medium text-accent">
+      <span class="text-[length:var(--text-2xs)] font-medium text-accent">
         {{ t('sidebar.forkGroup.title') }}
       </span>
-      <span class="font-mono text-[10px] text-accent opacity-70">{{ branches.length }}</span>
+      <span class="font-mono text-[length:var(--text-3xs)] text-accent opacity-70">{{ branches.length }}</span>
     </Button>
 
     <!-- 分支列表（展开态） -->
@@ -61,7 +61,7 @@
           />
         </span>
         <div class="min-w-0 flex-1">
-          <div class="truncate text-[12px] leading-[1.3] text-neutral-fg">{{ b.label }}</div>
+          <div class="truncate text-[length:var(--text-xs)] leading-[1.3] text-neutral-fg">{{ b.label }}</div>
           <!-- 分支 N pill（reasoning-soft 底 + 9px mono，spec §3.5.7/§5.6C branch-pill git 分支维度） -->
           <div class="mt-0.5 flex items-center gap-1">
             <span
@@ -69,7 +69,7 @@
             >
               {{ t('sidebar.forkGroup.branchN', { n: idx + 1 }) }}
             </span>
-            <span class="truncate font-mono text-[10px] text-neutral-dim">{{ timeLabelOf(b) }}</span>
+            <span class="truncate font-mono text-[length:var(--text-3xs)] text-neutral-dim">{{ timeLabelOf(b) }}</span>
           </div>
         </div>
 

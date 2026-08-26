@@ -16,7 +16,7 @@
       data-testid="trace-loading"
     >
       <Loader2 class="size-5 animate-spin text-neutral-dim opacity-60" />
-      <p class="text-[12px] text-neutral-dim">{{ t('panel.trace.loading') }}</p>
+      <p class="text-[length:var(--text-xs)] text-neutral-dim">{{ t('panel.trace.loading') }}</p>
     </div>
     <!-- 失败路径：加载失败（§3.1 失败路径，文案 t() 占位收口 trace-i18n） -->
     <div
@@ -25,9 +25,9 @@
       data-testid="trace-error"
     >
       <AlertCircle class="size-6 text-danger opacity-60" />
-      <p class="text-[12px] text-neutral-fg">{{ t('panel.trace.loadFailed') }}</p>
-      <p class="max-w-[420px] text-[11px] leading-relaxed text-neutral-dim">{{ t('panel.trace.loadFailedHint') }}</p>
-      <p class="font-mono text-[10px] text-neutral-faint">{{ partition.errorCode }}</p>
+      <p class="text-[length:var(--text-xs)] text-neutral-fg">{{ t('panel.trace.loadFailed') }}</p>
+      <p class="max-w-[420px] text-[length:var(--text-2xs)] leading-relaxed text-neutral-dim">{{ t('panel.trace.loadFailedHint') }}</p>
+      <p class="font-mono text-[length:var(--text-3xs)] text-neutral-faint">{{ partition.errorCode }}</p>
       <Button variant="ghost" size="sm" data-testid="trace-retry" @click="retry(props.sessionId)">
         <RotateCcw class="mr-1 size-3" />
         {{ t('panel.trace.retry') }}
@@ -40,7 +40,7 @@
       data-testid="trace-empty-not-persisted"
     >
       <Hourglass class="size-6 text-neutral-dim opacity-40" />
-      <p class="text-[12px] text-neutral-dim">{{ t('panel.trace.emptyNotPersisted') }}</p>
+      <p class="text-[length:var(--text-xs)] text-neutral-dim">{{ t('panel.trace.emptyNotPersisted') }}</p>
       <Button variant="ghost" size="sm" data-testid="trace-retry" @click="retry(props.sessionId)">
         <RotateCcw class="mr-1 size-3" />
         {{ t('panel.trace.retry') }}
@@ -52,7 +52,7 @@
            source='file' 涵盖两种情形，语义统一：凡文件路径均无实时更新（增量腿只随 RPC 建立）。 -->
       <div
         v-if="partition.source === 'file'"
-        class="flex flex-shrink-0 items-center gap-1.5 border-b border-hairline px-3.5 py-1 text-[11px] text-neutral-dim"
+        class="flex flex-shrink-0 items-center gap-1.5 border-b border-hairline px-3.5 py-1 text-[length:var(--text-2xs)] text-neutral-dim"
         data-testid="trace-degraded-banner"
       >
         <FileWarning class="size-3 shrink-0 opacity-70" />
@@ -86,7 +86,7 @@
           data-testid="trace-empty"
         >
           <ListTree class="size-6 text-neutral-dim opacity-40" />
-          <p class="text-[12px] text-neutral-dim">
+          <p class="text-[length:var(--text-xs)] text-neutral-dim">
             {{ rows.length === 0 ? t('panel.trace.emptyNoRows') : t('panel.trace.emptyFiltered') }}
           </p>
         </div>

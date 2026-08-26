@@ -94,6 +94,17 @@ const PERMISSION_WASM = [
 	["web-tree-sitter/web-tree-sitter.wasm", "web-tree-sitter.wasm"],
 ];
 
+/**
+ * subagent-workflow 的 relay/ 目录（E-1 代理 CLI relay.mjs）：不参与 esbuild bundle——
+ * 它是被 XYZ_SUBAGENT_RELAY_NODE（打包版 = Electron 内嵌 node + ELECTRON_RUN_AS_NODE，
+ * dev = node）独立执行的零依赖脚本，必须保持源文件形态（禁 import 非 node-builtin，
+ * esbuild bundle 无意义且引入 workspace 解析依赖）。整目录拷贝到 staged，运行时经
+ * XYZ_SUBAGENT_RELAY_SCRIPT env 指向 staged 副本。
+ * 分发链：bundle staged（此处）→ electron-builder extraResources
+ * （resources/extensions → extensions，已有规则整目录携带，无需改 yml）。
+ */
+const RELAY_DIR_PACKAGES = new Set(["subagent-workflow"]);
+
 async function bundleOne(pkgName) {
 	const short = pkgName.replace(/^@zhushanwen\/pi-/, "");
 	const srcDir = srcDirFor(pkgName);
@@ -137,6 +148,18 @@ async function bundleOne(pkgName) {
 			await copyFile(src, dest);
 			extraAssets.push(outName);
 		}
+	}
+
+	// relay 代理 CLI（E-1）：零依赖脚本保持源形态整目录拷贝（不 bundle，见常量注释）
+	if (RELAY_DIR_PACKAGES.has(short)) {
+		const src = join(srcDir, "relay");
+		if (!existsSync(src)) {
+			throw new Error(
+				`relay dir missing: ${src}（E-1 资产已登记但源码目录缺失 = 打包配置回归）`,
+			);
+		}
+		await cp(src, join(outDir, "relay"), { recursive: true });
+		extraAssets.push("relay/");
 	}
 
 	// 改写 staged 副本 package.json：pi.extensions 指向 ./index.js（不改源码 package.json）

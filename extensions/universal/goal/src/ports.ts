@@ -14,8 +14,8 @@ import type { GuiRenderResult } from "@xyz-agent/extension-protocol";
 export interface GoalHistoryEntry {
 	goalId: string;
 	objective: string;
-	/** 成功标准（与 objective 成对存档）。旧 entry 无此字段，向后兼容。 */
-	successCriteria?: string;
+	/** 成功标准（与 objective 成对存档）。结构化为 string[]。旧 entry 无此字段，向后兼容。 */
+	successCriteria?: string[];
 	/** widget/history 标题用（fallback objective 截断）。旧 entry 无此字段。 */
 	slug?: string;
 	status: string;

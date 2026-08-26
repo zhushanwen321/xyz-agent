@@ -41,6 +41,7 @@ import {
   useComposerHistory,
   useComposerDragDrop,
   useComposerRestore,
+  type DraftStore,
 } from '@xyz-agent/dom-core/composer/input'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
@@ -93,8 +94,8 @@ export interface ComposerShellParams {
   draft: Ref<string>
   /** 发送中标志位（普通 send / landing 首发 / staging 发送共用） */
   isSending: Ref<boolean>
-  /** per-session 草稿存储 Map（session 切换保存旧/恢复新） */
-  drafts: Map<string, string>
+  /** per-session 草稿存储窄接口（ADR-0049：经 useSessionScopedState 分区，不暴露 Map 引用） */
+  drafts: DraftStore
   /** session 是否活跃（流式/派发）—— canSend/visual 守卫 */
   isActive: ComputedRef<boolean>
   /** session 是否正在压缩上下文（compact 分支守卫） */

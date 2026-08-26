@@ -47,6 +47,7 @@ export type {
   ChipCallbacks,
   ComposerInputInstance,
   ComposerRestoreDeps,
+  DraftStore,
   HistoryDeps,
   DragDropDeps,
   ComposerNavState,

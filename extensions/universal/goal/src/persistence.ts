@@ -39,6 +39,33 @@ function normalizeStatus(status: string): GoalStatus {
 }
 
 /**
+ * successCriteria 旧数据迁移（W1：string → string[]）。
+ *
+ * 输入形态与归一规则（plan 决策①②③⑤）：
+ * - undefined/null → undefined
+ * - string（旧格式自由文本）→ 按行拆分（/\r\n|\r|\n/ 覆盖 LF/CR/CRLF 三形态）+ 逐条 trim + 去空行；
+ *   拆分结果为空（全空白、纯分隔符）→ undefined（空态归一）；超 8 条不截断（迁移容忍旧数据）
+ * - string[]（新格式）→ every-string 则原样保留（不二次拆分、不 trim，round-trip 一致）；
+ *   非 every-string（嵌套数组/null/数值元素）→ undefined（防御性丢弃——criteria 是 optional 字段，
+ *   降级优于下游 escapeXmlText/.trim 的 TypeError throw）
+ * - 其他类型（number/boolean）→ undefined
+ */
+function normalizeSuccessCriteria(raw: unknown): string[] | undefined {
+	if (raw === undefined || raw === null) return undefined;
+	if (Array.isArray(raw)) {
+		return raw.every((item) => typeof item === "string") ? (raw as string[]) : undefined;
+	}
+	if (typeof raw === "string") {
+		const items = raw
+			.split(/\r\n|\r|\n/)
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0);
+		return items.length > 0 ? items : undefined;
+	}
+	return undefined;
+}
+
+/**
  * 反序列化持久化 state。
  *
  * 向后兼容：旧 entry 可能含 `tasks` 字段（task CRUD 删除前的格式），此处忽略不 throw。
@@ -55,9 +82,11 @@ export function deserializeState(data: Record<string, unknown>): GoalRuntimeStat
 	return {
 		goalId: req("goalId"),
 		objective: req("objective"),
-		// successCriteria 用可选解析：旧持久化数据无此字段（与 slug 同模式，GAP-4），
-		// 误用 req() 会丢旧数据整个 state
-		successCriteria: data.successCriteria as string | undefined,
+		// successCriteria：结构化为 string[]（W1）。向后兼容三种旧格式：
+		// 1. undefined（旧数据无此字段）→ undefined
+		// 2. string（单条自由文本）→ 按行拆分为 string[]（空态归一 undefined，见 normalizeSuccessCriteria）
+		// 3. string[]（新格式）→ every-string 原样保留；脏元素防御性丢弃为 undefined
+		successCriteria: normalizeSuccessCriteria(data.successCriteria),
 		// slug 用可选解析：旧持久化数据无此字段，不能误用 req()（否则旧数据 throw → state 全丢，GAP-4）
 		slug: data.slug as string | undefined,
 		// 旧数据迁移：0.7.x 的 time_limited → budget_limited（见 normalizeStatus）

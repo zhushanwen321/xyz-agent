@@ -413,8 +413,13 @@ export const logger = {
 // ── pi session 日志（pi stdout JSONL 原始流落盘）────────────────────
 
 export interface PiSessionLog {
-  /** 写一行 pi stdout（原始 JSONL，不格式化——保留协议原貌供事后分析）。 */
-  write(line: string): void
+  /**
+   * 写入 pi stdout 原始内容（不格式化——保留协议原貌供事后分析）。
+   * string = 行级写入（readline 消费方契约，缺尾换行补齐）；Uint8Array = 原始字节镜像
+   * （relay up 方向 chunk，流自带换行边界，逐字节保真、不补 \n——chunk 可能切断多字节
+   * 字符，按 Buffer 写避免按 chunk 解码的 UTF-8 截断）。
+   */
+  write(line: string | Uint8Array): void
   /** 结束写入（session 销毁 / pi exit 时调）。end 后 write 为 no-op。 */
   end(): void
 }
@@ -442,14 +447,42 @@ export function createPiSessionLog(sessionId: string): PiSessionLog {
   const date = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
   // 文件名：pi-<date>-<sessionId>.jsonl（date 防跨天 session 冲突）
   const safeSid = sessionId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, SESSION_ID_MAX_LENGTH)
-  const file = join(logsDir, `pi-${date}-${safeSid}.jsonl`)
+  return createPiStreamWriter(join(logsDir, `pi-${date}-${safeSid}.jsonl`))
+}
+
+/**
+ * 为一个 relay 托管的 subagent 子进程创建 stdout 原始字节镜像写入器（E 方案，
+ * relay-registry 的 up 方向落盘；架构约定「pi stdout tee 落盘 = pi 卡死时唯一证据」
+ * 对 relay 子进程的同款覆盖）。
+ *
+ * 文件名 `pi-relay-<date>-<recordId>.jsonl`（pi- 前缀对齐既有命名，cleanExpiredLogs
+ * 的保留期清理同样覆盖；date 前缀防跨天冲突）。recordId 来自握手帧（extension 注入），
+ * 按文件名安全字符集清洗。logger 未初始化时返回 no-op 写入器（与 createPiSessionLog
+ * 同契约，单元测试无副作用）。
+ */
+export function createPiRelayLog(recordId: string): PiSessionLog {
+  if (!logsDir || !currentLevel) {
+    return { write: () => {}, end: () => {} }
+  }
+  const date = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
+  const safeRecordId = recordId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, SESSION_ID_MAX_LENGTH)
+  return createPiStreamWriter(join(logsDir, `pi-relay-${date}-${safeRecordId}.jsonl`))
+}
+
+/**
+ * pi 原始流写入器的共享实现（createPiSessionLog / createPiRelayLog 共用）：
+ * WriteStream 缓冲写 + 惰性打开 + destroyed 自愈重建，条目注册进 openPiStreams 由
+ * closeLogger 统一等待退出 flush。失败语义 best-effort：同步异常静默吞、异步流错误由
+ * attachStreamErrorHandler 记一次 warn——绝不向上抛（调用方是数据转发热路径）。
+ */
+function createPiStreamWriter(file: string): PiSessionLog {
   const state: PiStreamState = { stream: undefined, ended: false, file }
   openPiStreams.add(state)
   return {
-    write: (line: string) => {
+    write: (line) => {
       if (state.ended) return // end 后 no-op
       if (!currentLevel || !logsDir) return // closeLogger 后 no-op（与 writeLogEntry 一致，审查 W30 Fix-8）
-      const data = line.endsWith('\n') ? line : line + '\n'
+      const data = typeof line === 'string' ? (line.endsWith('\n') ? line : line + '\n') : line
       try {
         // 写入前守卫（审查 W30 Fix-9）：writableEnded = end() 已调、flush 未完（正常被
         // state.ended 拦截，此处防御外部直接调 stream.end() 的场景）——等同 end 语义，no-op。

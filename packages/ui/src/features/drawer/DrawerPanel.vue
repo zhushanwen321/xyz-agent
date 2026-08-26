@@ -89,8 +89,8 @@
           data-testid="drawer-widget-empty"
         >
           <component :is="activeTabMeta.icon" class="size-6 text-neutral-dim opacity-40" />
-          <p class="text-[12px] text-neutral-dim opacity-70">{{ activeTabMeta.emptyText }}</p>
-          <p class="text-[11px] text-neutral-dim opacity-50">{{ activeTabMeta.emptyHint }}</p>
+          <p class="text-[length:var(--text-xs)] text-neutral-dim opacity-70">{{ activeTabMeta.emptyText }}</p>
+          <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-50">{{ activeTabMeta.emptyHint }}</p>
         </div>
       </div>
     </aside>

@@ -20,7 +20,8 @@ export function useComposerRestore(deps: ComposerRestoreDeps) {
   function clearInput(): void {
     deps.draft.value = ''
     const sid = deps.sessionId.value
-    if (sid) deps.drafts.delete(sid)
+    // ADR-0049：drafts 窄化为 DraftStore（不再持有 Map 引用），deleteDraft 经工厂 cleanup 移除分区
+    if (sid) deps.drafts.deleteDraft(sid)
     deps.inputRef.value?.clear()
   }
 

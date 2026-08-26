@@ -149,6 +149,34 @@ lsof -i :1420 -P | grep node
 # 检查进程 cwd 是否指向当前 worktree 的 renderer 目录
 ```
 
+### 6. subagent 没走 relay 通道：先查首启执行器探针（2026-08-25 relay 通道）
+
+relay 激活前有一个执行器探针（spawn 执行器跑 `--eval "process.exit(0)"`，验证能以纯 node 语义执行 JS）。**探针失败会被缓存到 runtime 重启为止**（模块级 Map，key = 执行器路径），之后每次 spawn 主 pi 都直接回落现状直连、不再重试——所以「subagent 为什么没走 relay」第一件事是翻 runtime 启动后**首次**主 pi spawn 的日志：
+
+```bash
+grep "node executor probe failed" ~/.xyz-agent/logs/runtime-*.log   # dev 用 ~/.xyz-agent-dev
+# 命中即：[relay] node executor probe failed for <execPath> (isElectron=...) — relay deactivated, spawning direct
+```
+
+另两个静默不激活的常态路径：staged 代理脚本缺失（`resources/extensions/@zhushanwen/pi-subagent-workflow/relay/relay.mjs`，bundle 登记未就绪属预期）、socket server 未监听。三者都不报错，只表现为回落直连。
+
+### 7. bash 工具里启动 Electron 二进制被静默降级纯 node 模式（ELECTRON_RUN_AS_NODE=1）
+
+打包模式下 relay 激活时会给**主 pi 进程 env 注入 `ELECTRON_RUN_AS_NODE=1`**（与 `XYZ_SUBAGENT_RELAY_*` 三 env 同点注入——代理 CLI 复用 Electron 二进制当纯 node 跑必需此变量）。该变量经握手帧原样透传给 relay 子进程及其后代，于是 **subagent 的 bash 工具里启动任何 Electron 二进制**（如 `npx electron .`、直接执行 .app 内的二进制）会被 Electron 静默切到纯 node 模式——无窗口、无报错，看起来像「命令没反应」。
+
+定位：在 bash 工具里 `env | grep ELECTRON` 确认；这是 relay 通道的刻意设计（dev 模式执行器是独立 node、不注入）。终端服务不受影响（TerminalService 独立构造 env，已剥离该变量）。
+
+### 8. runtime 启动即退出："fatal: relay server init failed"
+
+relay socket server 在 runtime listen 后同步初始化，失败是 **fatal**（`console.error('[runtime] fatal: relay server init failed')` + exit 1，fail-fast 语义对齐 initLogger 先例）——覆盖/复用 socket 会劫持他人注册表，宁可不起。常见原因：
+
+```bash
+# <dataDir>/run 不可写（registry mkdirSync 抛错会走到这）
+ls -la ~/.xyz-agent/run/          # dev 用 ~/.xyz-agent-dev
+# 残留 socket 文件被活实例持有（实例冲突）
+lsof | grep relay-.*\.sock
+```
+
 ## 环境变量速查
 
 | 变量 | 用途 | 生产默认值 | 开发默认值 |

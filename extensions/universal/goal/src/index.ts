@@ -163,7 +163,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 		budget: GoalInitBudget | undefined,
 		ctx: ExtensionContext,
 		slug?: string,
-		successCriteria?: string,
+		successCriteria?: string[],
 	): boolean => {
 		if (!ctx) return false;
 		return createGoal(session, objective, budget ?? {}, buildPorts(pi, ctx), slug, successCriteria);
@@ -202,5 +202,5 @@ export type GoalInitFn = (
 	budget: GoalInitBudget | undefined,
 	ctx: ExtensionContext,
 	slug?: string,
-	successCriteria?: string,
+	successCriteria?: string[],
 ) => boolean;

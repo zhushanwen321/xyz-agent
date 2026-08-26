@@ -1,5 +1,17 @@
 # unified-hooks
 
+> **[DEPRECATED] 本包已废弃，被 [`@zhushanwen/pi-base-tool-enhance`](https://www.npmjs.com/package/@zhushanwen/pi-base-tool-enhance) 取代，不再维护。**
+>
+> 能力承接落点：
+>
+> | 原 hook | 承接方式 |
+> |---------|---------|
+> | `test-timeout-guard` | base-tool-enhance 可配置 force-test 白名单：测试类命令**自动转后台执行**并返回 task_id（不再 block 打回补 timeout 参数） |
+> | `network-timeout-guard` | 正则不迁入（这类命令时长不定且结果常被立即需要）；挂死保护由模型显式 timeout + base-tool-enhance 可配置前台默认超时承接 |
+> | `tool-error-handler` | base-tool-enhance 的 tool_error 审计（customType 保持 `unified-hooks:tool-error`，历史 entry 不断链） |
+>
+> 迁移指引：`pi uninstall npm:@zhushanwen/pi-unified-hooks` 后 `pi install npm:@zhushanwen/pi-base-tool-enhance`。两者同时安装会对 bash 产生双重拦截，务必先卸载本包。
+
 统一 hooks 管理器 — 将散落的 hooks 收集到一个扩展中统一维护，每个 hook 可独立启用/禁用。
 
 ## 功能

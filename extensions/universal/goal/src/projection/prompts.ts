@@ -35,9 +35,12 @@ export function escapeXmlText(input: string): string {
  * 每轮注入让 AI 对照检查进度；complete 的 evidence 必须覆盖本字段。
  */
 function successCriteriaBlock(state: GoalRuntimeState): string {
-	const trimmed = state.successCriteria?.trim();
-	if (!trimmed) return "";
-	return `<successCriteria>\n${escapeXmlText(trimmed)}\n</successCriteria>\n`;
+	const criteria = state.successCriteria;
+	if (!criteria || criteria.length === 0) return "";
+	// 编号列表（非 dash bullet）：编号给 complete 证据逐条对照提供稳定索引，
+	// 渲染模式对齐 scheduler/session-reader/plan 的 `${i+1}. ` 约定（goal-criteria-array/plan.md 需求 3）
+	const items = criteria.map((c, i) => `${i + 1}. ${escapeXmlText(c)}`).join("\n");
+	return `<successCriteria>\n${items}\n</successCriteria>\n`;
 }
 
 // ── FR-3.4：唯一 budget 格式化收敛出口 ─────────────────

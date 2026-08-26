@@ -18,18 +18,18 @@
          落在父行 kind badge 正下方 -->
     <span class="w-12 shrink-0" aria-hidden="true" />
     <span
-      class="shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide"
+      class="shrink-0 rounded px-1.5 py-px font-mono text-[length:var(--text-3xs)] tracking-wide"
       :class="BLOCK_BADGE_CLASS[block.kind]"
     >{{ blockBadgeLabel(block) }}</span>
     <span
-      class="min-w-0 flex-1 truncate text-[12px]"
+      class="min-w-0 flex-1 truncate text-[length:var(--text-xs)]"
       :class="[
         selected ? 'text-accent' : block.kind === 'thinking' ? 'text-neutral-mid' : 'text-neutral-fg',
       ]"
     >{{ headline || blockBadgeLabel(block) }}</span>
     <span
       v-if="resultState"
-      class="shrink-0 font-mono text-[10px]"
+      class="shrink-0 font-mono text-[length:var(--text-3xs)]"
       :class="resultState === 'error' ? 'text-danger' : 'text-neutral-faint'"
     >{{ resultState }}</span>
   </div>

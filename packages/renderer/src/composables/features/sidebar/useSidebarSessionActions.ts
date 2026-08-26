@@ -103,6 +103,16 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
     }
   }
 
+  /** 目录行「+」：以该目录为预选 cwd 进 landing（延迟 create，session 由首发提交创建） */
+  async function onNewSessionInFolder(cwd: string): Promise<void> {
+    try {
+      await newSession(cwd)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      toastError(t('sidebar.newTaskFailed', { msg }))
+    }
+  }
+
   /** 删除指定 cwd 下所有 session（folder 批量删除）。部分失败 toast 带 error；全成功不提示。 */
   async function onDeleteFolder(cwd: string): Promise<void> {
     try {
@@ -192,6 +202,7 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
   return {
     onSelectSession,
     onNewSession,
+    onNewSessionInFolder,
     onRenameSession,
     onDeleteSession,
     onDeleteFolder,

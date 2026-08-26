@@ -13,8 +13,8 @@
     <!-- 元信息头：icon + 命令名 + source 标签 + skill 命令的 sourcePath -->
     <header class="flex items-center gap-2 border-b border-border px-3 py-2.5">
       <component :is="iconComponent" class="size-4 shrink-0 text-reasoning" />
-      <span class="font-mono text-[13px] font-medium text-neutral-fg">{{ command.name }}</span>
-      <span class="ml-auto rounded-sm bg-surface-hover px-1.5 py-0.5 text-[10px] text-neutral-mid">{{ sourceLabel }}</span>
+      <span class="font-mono text-[length:var(--text-sm)] font-medium text-neutral-fg">{{ command.name }}</span>
+      <span class="ml-auto rounded-sm bg-surface-hover px-1.5 py-0.5 text-[length:var(--text-3xs)] text-neutral-mid">{{ sourceLabel }}</span>
     </header>
     <!-- 文档体：skill 命令渲染完整 SKILL.md；非 skill 渲染 description 信息卡 -->
     <div class="min-h-0 flex-1 overflow-auto p-3">
@@ -24,11 +24,11 @@
         <div class="mb-4 overflow-hidden rounded-md border border-border bg-surface">
           <!-- 卡片头：标题 + 复制 frontmatter -->
           <div class="flex items-center border-b border-border bg-surface-hover px-3 py-1.5">
-            <span class="text-[10px] font-medium uppercase tracking-wider text-neutral-dim">{{ t('panel.command.meta') }}</span>
+            <span class="text-[length:var(--text-3xs)] font-medium uppercase tracking-wider text-neutral-dim">{{ t('panel.command.meta') }}</span>
             <Button
               v-if="skill.frontmatter"
               variant="ghost"
-              class="ml-auto h-6 gap-1 px-1.5 text-[11px] text-neutral-mid"
+              class="ml-auto h-6 gap-1 px-1.5 text-[length:var(--text-2xs)] text-neutral-mid"
               :title="t('panel.command.copyFrontmatter')"
               @click="copy(skill.frontmatter, 'frontmatter')"
             >
@@ -39,8 +39,8 @@
           </div>
           <!-- 名称 -->
           <div v-if="skill.name" class="group flex items-start gap-2.5 border-b border-border px-3 py-1.5">
-            <span class="w-7 shrink-0 pt-0.5 text-[11px] text-neutral-dim">{{ t('panel.command.metaName') }}</span>
-            <span class="min-w-0 flex-1 break-all font-mono text-[12px] text-neutral-fg">{{ skill.name }}</span>
+            <span class="w-7 shrink-0 pt-0.5 text-[length:var(--text-2xs)] text-neutral-dim">{{ t('panel.command.metaName') }}</span>
+            <span class="min-w-0 flex-1 break-all font-mono text-[length:var(--text-xs)] text-neutral-fg">{{ skill.name }}</span>
             <Button
               variant="ghost"
               class="size-6 shrink-0 p-0 opacity-0 group-hover:opacity-100"
@@ -54,7 +54,7 @@
           </div>
           <!-- 路径 -->
           <div v-if="skill.sourcePath" class="group flex items-start gap-2.5 border-b border-border px-3 py-1.5">
-            <span class="w-7 shrink-0 pt-0.5 text-[11px] text-neutral-dim">{{ t('panel.command.path') }}</span>
+            <span class="w-7 shrink-0 pt-0.5 text-[length:var(--text-2xs)] text-neutral-dim">{{ t('panel.command.path') }}</span>
             <span class="min-w-0 flex-1 break-all font-mono text-[11.5px] text-neutral-mid">{{ skill.sourcePath }}</span>
             <Button
               variant="ghost"
@@ -69,13 +69,13 @@
           </div>
           <!-- 描述（长描述折叠/展开） -->
           <div v-if="skill.description" class="group flex items-start gap-2.5 px-3 py-1.5">
-            <span class="w-7 shrink-0 pt-0.5 text-[11px] text-neutral-dim">{{ t('panel.command.metaDesc') }}</span>
+            <span class="w-7 shrink-0 pt-0.5 text-[length:var(--text-2xs)] text-neutral-dim">{{ t('panel.command.metaDesc') }}</span>
             <div class="min-w-0 flex-1">
-              <p class="break-words text-[12px] leading-[1.55] text-neutral-mid" :class="{ 'line-clamp-2': !descExpanded }">{{ skill.description }}</p>
+              <p class="break-words text-[length:var(--text-xs)] leading-[1.55] text-neutral-mid" :class="{ 'line-clamp-2': !descExpanded }">{{ skill.description }}</p>
               <Button
                 v-if="descNeedsClamp"
                 variant="ghost"
-                class="h-5 px-0 text-[11px] text-neutral-mid"
+                class="h-5 px-0 text-[length:var(--text-2xs)] text-neutral-mid"
                 @click="descExpanded = !descExpanded"
               >{{ descExpanded ? t('panel.command.collapse') : t('panel.command.expand') }}</Button>
             </div>
@@ -93,13 +93,13 @@
         </div>
         <!-- 正文：剥掉 frontmatter 后的 SKILL.md，正常 markdown 渲染 -->
         <MarkdownRenderer v-if="skill.content" key="skill-content" :content="skill.content" :session-id="sessionId ?? undefined" />
-        <div v-else class="py-6 text-center text-[12px] text-neutral-dim">{{ t('panel.command.noDocBody') }}</div>
+        <div v-else class="py-6 text-center text-[length:var(--text-xs)] text-neutral-dim">{{ t('panel.command.noDocBody') }}</div>
       </template>
       <!-- 非 skill 命令：信息卡 -->
       <div v-else class="flex h-full flex-col items-start gap-2 py-2">
-        <p v-if="command.description" class="text-[13px] leading-[1.6] text-neutral-fg">{{ command.description }}</p>
-        <p v-else class="text-[12px] text-neutral-dim">{{ t('panel.command.noDescription') }}</p>
-        <p class="mt-1 text-[11px] text-neutral-dim">
+        <p v-if="command.description" class="text-[length:var(--text-sm)] leading-[1.6] text-neutral-fg">{{ command.description }}</p>
+        <p v-else class="text-[length:var(--text-xs)] text-neutral-dim">{{ t('panel.command.noDescription') }}</p>
+        <p class="mt-1 text-[length:var(--text-2xs)] text-neutral-dim">
           {{ command.kind === 'extension' ? t('panel.command.commandType') : command.kind === 'builtin' ? t('panel.command.builtinCommand') : t('panel.command.title') }}，
           {{ t('panel.command.noFullDoc') }}。
         </p>
@@ -108,8 +108,8 @@
   </section>
   <!-- 无选中命令 → 空态（SideDrawer v-else 兜底，此处理论上不达，但防御性保留） -->
   <div v-else class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
-    <p class="text-[12px] text-neutral-dim">{{ t('panel.sideDrawer.noDoc') }}</p>
-    <p class="text-[11px] text-neutral-dim opacity-50">{{ t('panel.sideDrawer.docHint') }}</p>
+    <p class="text-[length:var(--text-xs)] text-neutral-dim">{{ t('panel.sideDrawer.noDoc') }}</p>
+    <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-50">{{ t('panel.sideDrawer.docHint') }}</p>
   </div>
 </template>
 

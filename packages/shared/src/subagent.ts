@@ -105,6 +105,25 @@ export interface SubagentRecord {
    * （SubagentList spinner / isStreamingSubagent 虚拟 session）据此排除轮终/孤儿 running。
    */
   resumable?: boolean
+  /**
+   * 实际执行引擎 id（P4 路由留痕，设计 D9①/D3：engine 三字段贯通）。缺省 = pi，
+   * 由读侧映射（runtime subagent-engine-history 的 extractRecordEngine：undefined/
+   * 空串 → 'pi'，非空透传）——投影层只透传不填默认值，存量 record 零迁移。
+   * string 而非字面量联合：新引擎接入时 shared 契约不因类型收窄丢字段。
+   */
+  engine?: string
+  /**
+   * 引擎 fallback 留痕（D9①：probe 失败路由回默认引擎）。from = 请求引擎 id，
+   * reason 恒 'engine_probe_failed'。GUI 警告条数据源；缺省 = 无 fallback。
+   */
+  engineFallback?: { from: string; reason: string }
+  /**
+   * 引擎自描述定位符（非 pi 引擎的历史详情读取键，读侧守卫语义见 runtime
+   * subagent-engine-history 的 SubagentEngineHandle）。sessionRef 为引擎自定义键值
+   * （zcode = { sessionId, dbPath }），整体透传不枚举内部键；journalPath 绝对路径
+   * （读前校验前缀白名单）；poolKey 隔离池定位。缺省 = pi（走 JSONL 直读链）。
+   */
+  engineHandle?: { sessionRef: Record<string, string>; journalPath?: string; poolKey: string }
 }
 
 /**

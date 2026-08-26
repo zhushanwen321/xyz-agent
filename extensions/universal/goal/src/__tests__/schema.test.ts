@@ -26,9 +26,9 @@ describe("GoalControlParams — 扁平 Object（OpenAI 兼容）", () => {
 
 	// valid：各 action 完整 + optional 字段 → 通过
 	it.each([
-		["create 完整", { action: "create", objective: "x", successCriteria: "y" }],
-		["create + slug", { action: "create", slug: "refactor-auth", objective: "x", successCriteria: "y" }],
-		["create + tokenBudget", { action: "create", objective: "x", successCriteria: "y", tokenBudget: 8000 }],
+		["create 完整", { action: "create", objective: "x", successCriteria: ["y"] }],
+		["create + slug", { action: "create", slug: "refactor-auth", objective: "x", successCriteria: ["y"] }],
+		["create + tokenBudget", { action: "create", objective: "x", successCriteria: ["y"], tokenBudget: 8000 }],
 		["complete 完整", { action: "complete", evidence: "tests green" }],
 		["report_blocked 完整", { action: "report_blocked", reason: "stuck" }],
 	])("valid: %s → 通过", (_name, params) => {
@@ -45,9 +45,9 @@ describe("GoalControlParams — 扁平 Object（OpenAI 兼容）", () => {
 
 	// invalid：缺 action / 未知 action / 额外字段（additionalProperties:false）
 	it.each([
-		["缺 action", { objective: "x", successCriteria: "y" }],
+		["缺 action", { objective: "x", successCriteria: ["y"] }],
 		["未知 action（不在 union 内）", { action: "unknown" }],
-		["create 含额外字段（additionalProperties:false）", { action: "create", objective: "x", successCriteria: "y", foo: 1 }],
+		["create 含额外字段（additionalProperties:false）", { action: "create", objective: "x", successCriteria: ["y"], foo: 1 }],
 	])("invalid: %s → 拒绝", (_name, params) => {
 		expect(Value.Check(GoalControlParams, params)).toBe(false);
 	});

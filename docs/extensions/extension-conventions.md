@@ -33,6 +33,7 @@
 - 扩展不能依赖 fs 之外的 Node.js 原生模块（网络、child_process 等由 Pi 核心控制）。已知例外：
   - `@zhushanwen/pi-subagent-workflow` 走单执行链——SubprocessAgentRunner 委托 SubagentService.executeAndAwait（`executeAndAwait` → `runSpawn` → `spawn("pi", ["--mode","json"])` 子进程，进程隔离），`session-runner.runSpawn` 是**唯一**的 Pi 子进程 spawn 点（ADR-030 决策 2）
   - `execFileSync("git", ...)` 等只读子进程调用可使用 child_process
+  - 引擎抽象（[subagent-engine-abstraction.md](../architecture/subagent-engine-abstraction.md)，2026-08-25）新增的使用点：zcode launcher 的引擎 CLI `spawn`、引擎/执行器探针的 `execFile`、zcode reader 的 `node:sqlite` 动态 import。注意 ADR-030「唯一 spawn 点」字面只约束 **Pi 子进程**（subagent 执行链）的 spawn，非 pi 引擎的进程调用与原生模块使用不在该决策约束范围内
 - 旧包 `pi-workflow`/`pi-subagents` 的双 spawn 路径已废弃（见 [pi-ext-030](./adr/pi-ext-030-subagents-workflow-merge.md)）；旧包 `pi-subagents` 曾用的进程内 `createAgentSession()` 路径已回退为 spawn（进程隔离优先，见 pi-ext-030 决策记录）
 
 ## 资源自包含
@@ -231,6 +232,19 @@ event handler（如 `tool_execution_end`）中注入消息**必须用 `pi.sendUs
 |---|---|---|
 | `pi-permission` | `<agentDir>/permission-config.json` | `<agentDir>/config/permission-ext-config.json` |
 | `pi-rename-session` | 已合规 | `<agentDir>/config/rename-session-ext-config.json`（llm-shared 派生，无迁移脚本） |
+
+#### 启动配置声明 [强制]
+
+**新增配置面必须二选一**：
+
+- **package.json `xyz-agent.startupConfig` 声明**（推荐，装好即就绪）：声明 `{ "path": "<相对 agentDir 的路径>", "content": { ...默认内容... } }`，宿主 runtime 启动序列统一 ensure（机制实现：`packages/runtime/src/services/extension-startup-config.ts`）——应用装好打开、一个 session 都没建时配置文件即存在、可发现、可手编
+- **「不建文件 + load 侧缺失回落默认」形态**：extension 加载时文件不存在不报错，回落代码内默认值（如 subagent-workflow 改造前的形态）
+
+**声明 content 必须与代码 DEFAULT 常量深相等**：package.json 手改漂移 / DEFAULT 常量变更未同步声明，都会导致「宿主首建内容 ≠ extension 回落内容」分叉。由各包守护测试 `src/__tests__/startup-config-declaration.test.ts`（subagent-workflow 在 `src/execution/__tests__/`）锁死——改任一侧必须同步另一侧，否则测试红。
+
+**已存在文件一律跳过，绝不覆盖**（用户配置神圣）：ensure 仅在目标文件不存在时首建（2 空格缩进 + 尾换行 + 0600）；含用户改过/改坏的文件——坏文件的回落是各 extension load 侧 normalize 的职责，不是本机制职责。
+
+**内容由代码派生的声明不适用本机制**：如 engines.json（来自 registry `listEngines()` 运行时枚举）走各自的双层机制（`xyz-agent.subagentEngines` 静态声明兜底 + extension 工厂体到场覆写权威版），不迁入 startupConfig。一次性语义 marker（如 auto-rename-enabled）同理不适用——无脑 ensure 会把用户显式关闭的开关重新建回来。
 
 ## Extension 依赖管理 [MANDATORY]
 

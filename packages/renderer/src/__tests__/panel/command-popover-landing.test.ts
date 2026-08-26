@@ -33,6 +33,9 @@ import CommandPopover from '@/components/panel/CommandPopover.vue'
 // onSkillCacheInvalidated 接真实 events.onGlobalType，使广播能端到端触达 composable。
 // getGlobalSkills 为可控 mock（TC5 中途改返回值模拟 runtime 重扫后缓存更新）。
 const getGlobalSkillsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]))
+// useCommandSync 依赖 session.getCommands，landing 态 sessionId 为 undefined 时不触发拉取，
+// 但 mock 须声明 session 导出防 vi.mock 的严格校验。
+const getCommandsMock = vi.hoisted(() => vi.fn().mockResolvedValue({ sessionId: '', commands: [] }))
 vi.mock('@/api', async () => {
   const realEvents = await import('@/api/events')
   return {
@@ -42,6 +45,9 @@ vi.mock('@/api', async () => {
         realEvents.onGlobalType('config.skillCacheInvalidated', (msg) => {
           handler(msg.payload as { scope: 'global' | 'project'; cwd?: string })
         }),
+    },
+    session: {
+      getCommands: getCommandsMock,
     },
   }
 })

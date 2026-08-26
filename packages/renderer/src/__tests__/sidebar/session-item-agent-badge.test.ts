@@ -100,7 +100,7 @@ describe('U8-B1 agent badge 渲染（SessionItem）', () => {
     expect(badge.classes()).toContain('bg-accent-soft')
     expect(badge.classes()).toContain('text-accent')
     // 克制尺寸：10px 小标签，与标题 12px 拉开层级
-    expect(badge.classes()).toContain('text-[10px]')
+    expect(badge.classes()).toContain('text-[length:var(--text-3xs)]')
     // 状态信号焦点仍在左侧 7px 单一 icon（badge 不替代它）
     expect(wrapper.find('[data-testid="session-icon"]').exists()).toBe(true)
   })

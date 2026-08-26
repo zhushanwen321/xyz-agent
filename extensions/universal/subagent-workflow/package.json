@@ -23,6 +23,7 @@
     "skills/",
     "workflows/",
     "scripts/",
+    "relay/",
     "src/index.ts",
     "src/execution/",
     "src/injectors/",
@@ -31,7 +32,17 @@
     "src/shared/"
   ],
   "xyz-agent": {
-    "role": "universal"
+    "role": "universal",
+    "subagentEngines": ["pi", "zcode"],
+    "startupConfig": [
+      {
+        "path": "subagents/config.json",
+        "content": {
+          "version": 1,
+          "maxConcurrent": 6
+        }
+      }
+    ]
   },
   "pi": {
     "extensions": [

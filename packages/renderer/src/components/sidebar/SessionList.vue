@@ -22,20 +22,31 @@
              folder 按钮，破坏单行独立 hover 语义）。 -->
         <div class="group/folder sticky top-0 z-[1] flex items-center gap-1.5 bg-bg px-2 pb-0.5 pt-1">
           <Folder class="size-[11px] shrink-0 text-neutral-dim" />
-          <span class="truncate text-[10px] font-medium text-neutral-dim">
+          <span class="truncate text-[length:var(--text-3xs)] font-medium text-neutral-dim">
             {{ dirNameOf(g.cwd) }}
           </span>
-          <span class="font-mono text-[10px] text-neutral-dim opacity-60">{{ g.sessions.length }}</span>
-          <!-- folder 维度批量删除按钮（两段式确认，与 SessionItem.delete 一致）。
-               [review MF-2] 仅当组内可见数 = 该 cwd 全量数时渲染：removeByCwd 是 cwd 全量删除（项目无关），
-               项目过滤隐藏了部分 session 时点删除会误删用户不可见的其他 project session。 -->
+          <span class="font-mono text-[length:var(--text-3xs)] text-neutral-dim opacity-60">{{ g.sessions.length }}</span>
+          <!-- folder 行操作区：+ 新建（非破坏性，恒渲染）与批量删除（两段式确认）。
+               容器 ml-auto 右贴 + hover 显隐；[review MF-2] 删除按钮仅当组内可见数 = 该 cwd 全量数时渲染：
+               removeByCwd 是 cwd 全量删除（项目无关），项目过滤隐藏了部分 session 时点删除会误删
+               用户不可见的其他 project session；+ 按钮无此守卫（新建不受过滤影响）。 -->
           <div
-            v-if="isFolderDeleteAvailable(g.cwd)"
-            class="ml-auto"
-            :class="folderConfirmingCwd === g.cwd ? 'flex' : 'flex opacity-0 group-hover/folder:opacity-100'"
+            class="ml-auto flex items-center gap-1"
+            :class="folderConfirmingCwd === g.cwd ? '' : 'opacity-0 group-hover/folder:opacity-100'"
             @mouseleave="onFolderMouseLeave(g.cwd)"
           >
             <Button
+              variant="ghost"
+              size="icon"
+              data-testid="folder-new-session-btn"
+              class="size-[22px] rounded-sm border border-border-strong bg-surface text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+              :title="t('sidebar.sessionList.newSessionInFolder')"
+              @click.stop="emit('newSessionInFolder', g.cwd)"
+            >
+              <Plus class="size-[13px]" />
+            </Button>
+            <Button
+              v-if="isFolderDeleteAvailable(g.cwd)"
               variant="ghost"
               size="icon"
               data-testid="folder-delete-btn"
@@ -84,11 +95,11 @@
       v-if="totalCount === 0"
       class="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center"
     >
-      <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.sessionList.empty') }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-55">{{ t('sidebar.sessionList.empty') }}</p>
       <Button
         variant="ghost"
         size="sm"
-        class="h-7 gap-1.5 rounded-md px-2 text-[11px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+        class="h-7 gap-1.5 rounded-md px-2 text-[length:var(--text-2xs)] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
         @click="emit('newSession')"
       >
         <Plus class="size-[14px]" />
@@ -128,6 +139,8 @@ const emit = defineEmits<{
   rename: [sessionId: string]
   delete: [sessionId: string]
   newSession: []
+  /** 目录行「+」：以该 cwd 为预选目录进 landing 新建（延迟 create，由 Sidebar 调 newSession(cwd)） */
+  newSessionInFolder: [cwd: string]
   /** 停止后台分支 session（FR-19，ForkGroup 两段式确认后调 abort） */
   stopBranch: [sessionId: string]
   /** 删除指定 cwd 下所有 session（folder 维度批量删除，两段式确认后由 Sidebar 调 deleteFolder） */

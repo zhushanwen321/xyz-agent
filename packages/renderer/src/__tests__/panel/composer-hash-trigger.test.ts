@@ -487,15 +487,18 @@ describe('slash 浮层打开主动拉（SL 组）', () => {
   }
 
   it('SL1 open false→true 且 type=slash 且有 sessionId → getCommands 被调 + 回填后 DOM 出现命令', async () => {
-    getCommandsMock.mockResolvedValueOnce({ sessionId: 's1', commands: [{ name: '/demo-skill', source: 'skill', description: '演示' }] })
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
       props: { open: false, type: 'slash', sessionId: 's1', query: '' },
     })
     await nextTick()
-    expect(getCommandsMock).not.toHaveBeenCalled()
+    // 合并语义：useCommandSync 挂载即拉（dev-0.9.9 帧丢失兜底），先让它完成并清计数
+    await flushPromises()
+    getCommandsMock.mockReset()
+    getCommandsMock.mockResolvedValueOnce({ sessionId: 's1', commands: [{ name: '/demo-skill', source: 'skill', description: '演示' }] })
     await wrapper.setProps({ open: true })
     await flushPromises()
+    expect(getCommandsMock).toHaveBeenCalledTimes(1)
     expect(getCommandsMock).toHaveBeenCalledWith('s1')
     // 回填 commandStore 后浮层渲染新命令（用户可见 DOM）
     const rows = bodyRows()
@@ -519,6 +522,10 @@ describe('slash 浮层打开主动拉（SL 组）', () => {
       props: { open: false, type: 'slash', sessionId: 's1', query: '' },
     })
     await nextTick()
+    // 挂载即拉（useCommandSync）完成并清计数，聚焦验证 open-fetch 节流
+    await flushPromises()
+    getCommandsMock.mockReset()
+    getCommandsMock.mockResolvedValue({ sessionId: 's1', commands: [] })
     await wrapper.setProps({ open: true })
     await flushPromises()
     expect(getCommandsMock).toHaveBeenCalledTimes(1)
@@ -530,12 +537,15 @@ describe('slash 浮层打开主动拉（SL 组）', () => {
   })
 
   it('SL4 getCommands 失败 → 静默保留旧快照（不 throw、浮层不空转报错）', async () => {
-    getCommandsMock.mockRejectedValueOnce(new Error('ws down'))
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
       props: { open: false, type: 'slash', sessionId: 's1', query: '' },
     })
     await nextTick()
+    // 挂载即拉（useCommandSync）完成并清计数，让 open 拉取消耗 rejected 值
+    await flushPromises()
+    getCommandsMock.mockReset()
+    getCommandsMock.mockRejectedValueOnce(new Error('ws down'))
     await wrapper.setProps({ open: true })
     await flushPromises()
     expect(getCommandsMock).toHaveBeenCalledTimes(1)

@@ -161,6 +161,10 @@ export function createRecord(
     chatMode?: boolean;
     /** 空闲超时毫秒数（仅 chatMode 有意义）。覆盖默认 5min。 */
     idleTimeoutMs?: number;
+    /** 实际执行引擎 id（P4 路由留痕，D9①）。缺省 = pi 投影（存量零迁移）。 */
+    engine?: string;
+    /** 引擎 fallback 留痕（probe 失败路由回默认引擎）。GUI 警告条数据源。 */
+    engineFallback?: { from: string; reason: string };
     controller?: AbortController;
   },
 ): ExecutionRecord {
@@ -178,6 +182,8 @@ export function createRecord(
     depth: identity.depth ?? 0,
     chatMode: identity.chatMode,
     idleTimeoutMs: identity.idleTimeoutMs,
+    engine: identity.engine,
+    engineFallback: identity.engineFallback,
 
     // 状态（实时更新）
     status: "running",

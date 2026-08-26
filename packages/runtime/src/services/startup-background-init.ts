@@ -23,8 +23,9 @@
 import { migrateProviderConfig } from './migration/legacy-provider-migration.js'
 import { setMigrationGate } from './session/session-lifecycle.js'
 import { cleanupTmpMigrateResidue } from '../infra/pi/session-file-utils.js'
-import { getSessionsDir } from '../infra/pi/pi-paths.js'
+import { getSessionsDir, getPiAgentDir } from '../infra/pi/pi-paths.js'
 import { ensureAutoRenameDefault } from './worktree-config-helper.js'
+import { ensureDeclaredStartupConfigs } from './extension-startup-config.js'
 import { ORPHAN_REAP_DELAY_MS, reapOrphanPiProcesses } from './reap-orphan-pi.js'
 import type { PiConfigStore } from '../infra/pi/pi-config-store.js'
 import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
@@ -172,6 +173,20 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
   } catch (e) {
     // best-effort：初始化失败不影响主流程（下次启动重试），仅记录诊断信息
     console.warn('[runtime] auto-rename default initialization failed:', e)
+  }
+
+  // ⑦b extension 声明的启动配置统一 ensure（startup-config 机制）：各 extension 在
+  // package.json `xyz-agent.startupConfig` 声明「启动即就绪」的配置文件，此处统一
+  // 首建（已存在一律跳过，绝不覆盖用户配置）。详见 extension-startup-config.ts 文件头。
+  try {
+    const extPaths = await extensionService.getExtensionPaths()
+    const report = ensureDeclaredStartupConfigs(extPaths, getPiAgentDir())
+    const line = `[runtime] extension startup config ensured=${report.ensured} skipped=${report.skipped} failed=${report.failed}`
+    if (report.failed > 0) console.warn(line)
+    else if (report.ensured > 0) console.log(line)
+  } catch (e) {
+    // best-effort：声明读失败不阻塞启动（各 extension 惰性 ensure 仍在，功能不受损）
+    console.warn('[runtime] extension startup config ensure failed:', e)
   }
 
   // ⑧ sessions 目录 `.tmp-migrate-*.jsonl` 崩溃残留清扫（W3 残留清理）：目录级兜底，

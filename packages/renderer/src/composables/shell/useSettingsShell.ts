@@ -114,6 +114,8 @@ export function useSettingsShell(): void {
       store.system.value.theme,
       store.system.value.themePreset,
       store.system.value.fontSize,
+      // fontScales 是对象引用：setSystem 每次 spread 出新对象，引用变化即触发
+      store.system.value.fontScales,
       store.system.value.locale,
     ] as const,
     () => applyCurrent(),

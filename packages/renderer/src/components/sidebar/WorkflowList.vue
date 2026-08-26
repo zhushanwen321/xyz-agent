@@ -13,7 +13,7 @@
       data-testid="workflow-list-loading"
     >
       <Loader2 class="size-4 animate-spin text-neutral-dim opacity-60" />
-      <p class="text-[11px] text-neutral-dim opacity-60">{{ t('sidebar.workflowList.loading') }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-60">{{ t('sidebar.workflowList.loading') }}</p>
     </div>
     <!-- 错误态（M1：loadWorkflows 失败，可重试） -->
     <div
@@ -22,8 +22,8 @@
       data-testid="workflow-list-error"
     >
       <AlertCircle class="size-5 text-danger opacity-60" />
-      <p class="text-[11px] text-neutral-mid">{{ t('sidebar.workflowList.loadFailed', { error: loadError }) }}</p>
-      <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="workflow-list-retry" @click="emit('retry')">{{ t('sidebar.workflowList.retry') }}</Button>
+      <p class="text-[length:var(--text-2xs)] text-neutral-mid">{{ t('sidebar.workflowList.loadFailed', { error: loadError }) }}</p>
+      <Button variant="ghost" class="h-6 text-[length:var(--text-2xs)] text-accent" data-testid="workflow-list-retry" @click="emit('retry')">{{ t('sidebar.workflowList.retry') }}</Button>
     </div>
     <!-- 列表 -->
     <ScrollArea v-else-if="workflows.length > 0" class="min-h-0 flex-1">
@@ -48,16 +48,16 @@
               class="size-2 shrink-0 rounded-full"
               :class="statusDotClass(record.status, record.reason)"
             />
-            <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-neutral-fg">
+            <span class="min-w-0 flex-1 truncate text-[length:var(--text-xs)] font-medium leading-[1.35] text-neutral-fg">
               {{ record.scriptName }}
             </span>
-            <span v-if="record.slug" class="mr-1 shrink-0 font-mono text-[10px] text-neutral-mid">
+            <span v-if="record.slug" class="mr-1 shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-mid">
               {{ record.slug }}
             </span>
           </div>
 
           <!-- 第二行：进度条 + 完成比例 + 耗时（合并原行2/3，token 移至详情视图） -->
-          <div class="mt-1 flex items-center gap-1.5 pl-[21px] font-mono text-[10px] text-neutral-dim">
+          <div class="mt-1 flex items-center gap-1.5 pl-[21px] font-mono text-[length:var(--text-3xs)] text-neutral-dim">
             <div class="h-[3px] min-w-[40px] flex-1 overflow-hidden rounded-full bg-border">
               <div
                 class="h-full rounded-full transition-[width,background-color]"
@@ -114,8 +114,8 @@
       data-testid="workflow-list-empty"
     >
       <Workflow class="size-7 text-neutral-dim opacity-40" />
-      <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.workflowList.empty') }}</p>
-      <p class="max-w-[220px] text-[10px] leading-[1.4] text-neutral-dim opacity-40">{{ t('sidebar.workflowList.emptyHint') }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-55">{{ t('sidebar.workflowList.empty') }}</p>
+      <p class="max-w-[220px] text-[length:var(--text-3xs)] leading-[1.4] text-neutral-dim opacity-40">{{ t('sidebar.workflowList.emptyHint') }}</p>
     </div>
   </div>
 </template>

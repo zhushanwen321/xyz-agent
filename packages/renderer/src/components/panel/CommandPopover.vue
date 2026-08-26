@@ -84,18 +84,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
-import { iconKeyForCommand, toFileCandidates, filterAndSortFileCandidates, type RawCommand } from '@xyz-agent/core'
+import { iconKeyForCommand, filterAndSortFileCandidates } from '@xyz-agent/core'
 import { SLASH_COMMAND_SOURCE_KEY } from './command-popover-source'
 import { buildSessionCandidates, buildSubagentCandidates } from './command-popover-symbols'
 import { useCommandPopoverOpenFetch } from './command-popover-open-fetch'
-import { useFileSearch } from '@/composables/features/search/useFileSearch'
+import { useCommandPopoverDelivery } from './command-popover-delivery'
+import { useCommandPopoverFileCandidates } from './command-popover-file-candidates'
 import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command-filter'
-import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
 import type { SkillInfo } from '@xyz-agent/shared'
 import { useSessionStore } from '@/stores/session'
 import { useSubagentStore } from '@/stores/subagent'
@@ -146,25 +146,11 @@ const activeIndex = ref(0)
 
 const { t } = useI18n()
 const commandStore = useCommandStore()
-const { load: loadFileCandidates } = useFileSearch()
+/** file 候选加载（挂载 / 切 session 拉取，store 缓存幂等——ADR-0049；见 command-popover-file-candidates.ts） */
+const { fileCandidates } = useCommandPopoverFileCandidates(toRef(props, 'sessionId'))
 // 四符号体系候选源：# sessionStore（sidebar 同款跨 cwd 全量）/ @ subagentStore（per-session 分区）
 const sessionStore = useSessionStore()
 const subagentStore = useSubagentStore()
-
-const fileCandidates = ref<ReturnType<typeof toFileCandidates>>([])
-
-// 异步加载 # 文件候选（session 级缓存命中则不重拉；无 session 时不加载）
-let loaded = false
-async function loadCandidates(): Promise<void> {
-  if (loaded) return
-  loaded = true
-  if (!props.sessionId) return // landing 态无 cwd，不加载文件候选
-  const nodes = await loadFileCandidates(props.sessionId)
-  fileCandidates.value = toFileCandidates(nodes)
-}
-onMounted(() => { void loadCandidates() })
-// sessionId 变化时重新加载（切 session，loaded 复位触发重拉新 session 缓存）
-watch(() => props.sessionId, () => { loaded = false; void loadCandidates() })
 
 /** composer 形态归一化（默认 panel，兼容未透传 variant 的旧调用） */
 const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
@@ -207,13 +193,9 @@ const slashCommands = computed(() => {
   return [compactCmd, ...merged.filter((c) => !isInternalSlashName(c.name))]
 })
 
-/** 订阅 session.commands（D8 走 session 通道）→ 写 commandStore（跨组件重建持久化）。重订归 useSessionEvents。 */
-const onMessage = useSessionEvents(toRef(props, 'sessionId'))
-onMessage('session.commands', (msg) => {
-  const cmds = msg.payload.commands as RawCommand[]
-  const sid = props.sessionId
-  if (sid) commandStore.applyCommands(sid, cmds)
-})
+/** slash 命令投递闭环（挂载/切 session 补拉 + session.commands 订阅；open 边沿拉取归
+ *  useCommandPopoverOpenFetch，双路并存会重复 RPC——详见 command-popover-delivery.ts） */
+useCommandPopoverDelivery(toRef(props, 'sessionId'))
 
 /** 统一候选项视图（四路归一；file/slash 在此派生，session/subagent 委托 command-popover-symbols） */
 interface CmdItem {

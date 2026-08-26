@@ -9,8 +9,8 @@ export interface GoalCommandArgs {
 	action: "set" | "status" | "pause" | "resume" | "clear" | "update" | "history";
 	objective?: string;
 	budget?: Partial<BudgetConfig>;
-	/** update 的可选新 successCriteria（`/goal update <obj> --criteria <text>`）；undefined = 未提供，保留旧值 */
-	criteria?: string;
+	/** update 的可选新 successCriteria（`/goal update <obj> --criteria <a;b;c>`）；undefined = 未提供，保留旧值 */
+	criteria?: string[];
 }
 
 export function parseGoalArgs(raw: string): GoalCommandArgs {
@@ -34,7 +34,7 @@ export function parseGoalArgs(raw: string): GoalCommandArgs {
 		return { action: "history" };
 	}
 
-	// /goal update <new objective> [--criteria <text>]
+	// /goal update <new objective> [--criteria <a;b;c>]
 	if (trimmed.startsWith("update ")) {
 		const rest = fullRaw.slice(UPDATE_PREFIX_LENGTH).trim();
 		// --criteria 作分隔标记（要求两侧空白，避免误切 objective 内文本）
@@ -42,8 +42,11 @@ export function parseGoalArgs(raw: string): GoalCommandArgs {
 		if (criteriaSep) {
 			const sepStart = criteriaSep.index ?? 0;
 			const objective = rest.slice(0, sepStart).trim();
-			const criteria = rest.slice(sepStart + criteriaSep[0].length).trim();
-			return { action: "update", objective, criteria: criteria || undefined };
+			const criteriaText = rest.slice(sepStart + criteriaSep[0].length).trim();
+			// 分号拆分 + 逐段 trim + 去空段（"a;;b" → ["a","b"]）；全空段 → undefined
+			// （决策④：`--criteria "  "` / `";;"` 不产出空数组，handleUpdate 保留旧值）
+			const criteria = criteriaText.split(";").map((s) => s.trim()).filter(Boolean);
+			return { action: "update", objective, criteria: criteria.length > 0 ? criteria : undefined };
 		}
 		return { action: "update", objective: rest };
 	}

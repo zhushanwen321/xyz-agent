@@ -16,7 +16,7 @@
   <!-- 冲突态 danger 左竖条（原 FR-12 item 2，draft-companion-zones §2） -->
   <section
     v-if="result?.isRepo"
-    class="relative flex h-full flex-col gap-1.5 overflow-hidden p-2 text-[12px]"
+    class="relative flex h-full flex-col gap-1.5 overflow-hidden p-2 text-[length:var(--text-xs)]"
     :class="result.hasConflict ? 'bg-danger-soft' : ''"
   >
     <div
@@ -27,12 +27,12 @@
     <!-- 头部：分支 + 四态 pill + stats -->
     <div class="flex items-center gap-2">
       <GitBranch class="size-3 shrink-0 text-neutral-dim" />
-      <span class="truncate font-mono text-[11px] text-neutral-dim">{{ result.branch ?? 'detached' }}</span>
+      <span class="truncate font-mono text-[length:var(--text-2xs)] text-neutral-dim">{{ result.branch ?? 'detached' }}</span>
       <span
-        class="ml-auto rounded-sm px-1.5 py-0.5 text-[10px] font-medium"
+        class="ml-auto rounded-sm px-1.5 py-0.5 text-[length:var(--text-3xs)] font-medium"
         :class="pillClass"
       >{{ pillLabel }}</span>
-      <span class="font-mono text-[10px]">
+      <span class="font-mono text-[length:var(--text-3xs)]">
         <span class="text-success">+{{ result.stats.add }}</span>
         <span class="text-danger">−{{ result.stats.del }}</span>
       </span>
@@ -48,7 +48,7 @@
     </div>
 
     <!-- 错误提示（操作失败 inline 回显） -->
-    <p v-if="error" class="rounded-sm bg-danger-soft px-2 py-1 text-[11px] text-danger">{{ error }}</p>
+    <p v-if="error" class="rounded-sm bg-danger-soft px-2 py-1 text-[length:var(--text-2xs)] text-danger">{{ error }}</p>
 
     <!-- 文件列表（点击跳转 detail tab 查看 diff：selectFile 设 selectedPath + drawer 切 detail） -->
     <ul v-if="result.files.length" class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
@@ -60,7 +60,7 @@
         @click="onFileClick(f.path)"
       >
         <span
-          class="w-4 shrink-0 text-center font-mono text-[10px] font-semibold"
+          class="w-4 shrink-0 text-center font-mono text-[length:var(--text-3xs)] font-semibold"
           :class="statusBadgeClass(f.status)"
         >{{ statusBadge(f.status) }}</span>
         <span class="min-w-0 flex-1 truncate text-neutral-dim">{{ f.path }}</span>
@@ -80,7 +80,7 @@
     <div class="flex flex-col gap-1.5">
       <Input
         v-model="commitMsg"
-        class="h-7 text-[11px]"
+        class="h-7 text-[length:var(--text-2xs)]"
           :placeholder="t('panel.git.commitPlaceholder')"
         :disabled="pending"
         @keydown.enter="onCommit"
@@ -88,20 +88,20 @@
       <div class="flex items-center gap-1.5">
         <Button
           variant="ghost"
-          class="h-7 flex-1 shrink-0 rounded-sm px-2 text-[11px]"
+          class="h-7 flex-1 shrink-0 rounded-sm px-2 text-[length:var(--text-2xs)]"
           :disabled="pending || result.unstagedCount === 0"
           :title="t('panel.git.stageAll')"
           @click="stageAll"
         >{{ t('panel.git.stage') }}</Button>
         <Button
           variant="ghost"
-          class="h-7 flex-1 shrink-0 rounded-sm px-2 text-[11px]"
+          class="h-7 flex-1 shrink-0 rounded-sm px-2 text-[length:var(--text-2xs)]"
           :disabled="pending || result.stagedCount === 0"
           :title="t('panel.git.unstageAll')"
           @click="unstageAll"
         >{{ t('panel.git.unstage') }}</Button>
         <Button
-          class="h-7 flex-1 shrink-0 rounded-sm px-2 text-[11px]"
+          class="h-7 flex-1 shrink-0 rounded-sm px-2 text-[length:var(--text-2xs)]"
           :disabled="!canCommit"
           :title="result.hasConflict ? t('panel.git.conflictBlock') : t('panel.git.commitStaged')"
           @click="onCommit"

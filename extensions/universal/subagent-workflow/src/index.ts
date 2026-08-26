@@ -16,7 +16,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type { ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
@@ -24,6 +24,15 @@ import { bestEffort } from "./execution/best-effort.ts";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
 import { getOrCreateChannelRegistry } from "./execution/channel-registry-access.ts";
 import { DialogGlobalQueue } from "./execution/dialog-queue.ts";
+// [U7] 引擎列表状态文件（registry → engines.json，GUI 引擎选择器数据源）
+import { syncEnginesFile } from "./execution/engine/engine-discovery.ts";
+// [U7] 引擎模型段注入（defaultEngine 非 pi 时 system prompt 补 <available_<engine>_models>）
+import { buildEngineModelsPromptAppend } from "./execution/engine/model-prompt.ts";
+// [P1 引擎接线] 组合根登记 'pi' 引擎进 registry（引擎获取统一经 getEngine，缺省 id 'pi'）
+import { registerPiEngine } from "./execution/engine/engines/pi/registration.ts";
+// [P3 引擎接线] 组合根登记 'zcode' 引擎（spawn 单轮模式；engineDataDir 默认走
+// common/data-dir SSOT，见 engines/zcode/registration.ts）
+import { registerZcodeEngine } from "./execution/engine/engines/zcode/registration.ts";
 import { createUiRequestHandlerForMode } from "./execution/ui-request-handler-factory.ts";
 import {
   getModelConfigService,
@@ -159,6 +168,22 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // 注入 pi handle 给全局 extension-logger，让深层代码（best-effort / error-recovery）
   // 的 getLogger("subagents") 也能走 appendEntry。
   setPiHandle(pi);
+
+  // [P1 引擎接线] 组合根登记缺省引擎：进程级 SubagentService 单例（session_start 注入）
+  // 经 registry 以 'pi' 暴露——引擎获取从此统一走 getEngine(DEFAULT_ENGINE_ID)，上层
+  // 不再硬编码「spawn pi」。幂等（registerEngine 覆盖语义），工厂惰性解析服务单例。
+  // P4 配置路由（agent frontmatter engine 字段 + 三层优先级）在本登记之上消费。
+  registerPiEngine();
+
+  // [P3 引擎接线] 登记 'zcode'（幂等同上）。惰性工厂：不触发 CLI/凭据探测，引擎被
+  // 实际选用（P4 路由或显式 getEngine('zcode')）才解析 deps。
+  registerZcodeEngine();
+
+  // [U7b] 引擎列表在 extension 模块加载时即同步 engines.json（不等 session_start——
+  // 用户体验拍板 2026-08-25：xyz-agent 打开后激活任意 session 的第一时间（含 TUI 等价
+  // 场景）GUI 引擎选择器就该有数据；session_start 处保留幂等重写兜底 jiti 双路径/
+  // 模块重载场景的刷新）。
+  syncEnginesFile(getAgentDir());
 
   // ════════════════════════════════════════════════════════════
   //  subagents 域：tool + command + messageRenderer
@@ -331,6 +356,10 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     const agentDir = getAgentDir();
     const sessionId = ctx.sessionManager.getSessionId();
     lsRef.lastSessionId = sessionId;
+
+    // [U7] 引擎列表同步 engines.json（幂等零写 + fail-safe；组合根注册已在
+    // extension 工厂体完成，此处 registry 已含全部引擎）
+    syncEnginesFile(agentDir);
 
     // skill 路径两级缓存 session 级失效：pi 同进程可能有多个 session（TUI /new、/fork），
     // 运行中安装的 skill 需对新 session 可见（含曾 miss 缓存的 undefined 条目与 npm 新装
@@ -557,6 +586,22 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       ctx,
       storeHealthy,
     });
+  });
+
+  // ════════════════════════════════════════════════════════════
+  //  [U7] before_agent_start：引擎模型段注入（defaultEngine 非 pi 且引擎实现
+  //  listModels 时追加 <available_<engine>_models>——每 turn 重判 config，改配置
+  //  后下一 turn 即生效；fail-safe 任何异常不注入不阻塞 agent loop）
+  // ════════════════════════════════════════════════════════════
+  pi.on("before_agent_start", (event: BeforeAgentStartEvent) => {
+    try {
+      const service = getModelConfigService();
+      const append = service === null ? "" : buildEngineModelsPromptAppend(service.getGlobalConfig().defaultEngine);
+      if (append === "" || typeof event.systemPrompt !== "string") return undefined;
+      return { systemPrompt: `${event.systemPrompt}\n\n${append}` };
+    } catch {
+      return undefined;
+    }
   });
 
   // ════════════════════════════════════════════════════════════

@@ -16,7 +16,7 @@
       :key="seg.value"
       variant="ghost"
       size="sm"
-      class="h-[14px] gap-1 rounded-sm px-2.5 text-[11px]"
+      class="h-[14px] gap-1 rounded-sm px-2.5 text-[length:var(--text-2xs)]"
       :class="modelValue === seg.value ? 'bg-bg-elevated text-neutral-fg hover:bg-bg-elevated' : 'text-neutral-dim hover:bg-transparent hover:text-neutral-fg'"
       :data-testid="`trace-view-toggle-${seg.value}`"
       :aria-pressed="modelValue === seg.value"

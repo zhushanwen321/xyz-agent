@@ -19,14 +19,14 @@
     <!-- 头部：当前 session 标签 + 分支（左）× showIgnored 开关（右），同一行。
          D-020/D-004：忽略项开关从过滤框下方上移至此（与会话名同行：会话名左、忽略项右）。 -->
     <div v-if="sessionLabel" class="flex items-center gap-2 px-2 py-1.5">
-      <div class="min-w-0 flex-1 truncate font-mono text-[10px] text-neutral-mid">
+      <div class="min-w-0 flex-1 truncate font-mono text-[length:var(--text-3xs)] text-neutral-mid">
         <span class="text-neutral-fg">{{ sessionLabel }}</span>
         <span v-if="branch" class="opacity-60"> · </span>
         <span v-if="branch" class="text-accent">{{ branch }}</span>
       </div>
       <Button
         variant="ghost"
-        class="h-5 shrink-0 gap-1 rounded-sm px-1.5 text-[10px]"
+        class="h-5 shrink-0 gap-1 rounded-sm px-1.5 text-[length:var(--text-3xs)]"
         :class="store.showIgnored ? 'text-accent' : 'text-neutral-dim'"
         :title="store.showIgnored ? t('sidebar.fileView.hideIgnored') : t('sidebar.fileView.showIgnored')"
         data-testid="file-show-ignored-toggle"
@@ -46,7 +46,7 @@
       <Search class="pointer-events-none absolute left-4 top-3 size-3 -translate-y-1/2 text-neutral-dim" />
       <Input
         :model-value="filterDisplay"
-        class="h-6 pl-6 pr-2 text-[11px]"
+        class="h-6 pl-6 pr-2 text-[length:var(--text-2xs)]"
         :placeholder="t('sidebar.fileView.filterPlaceholder')"
         data-testid="file-filter-input"
         @focus="filterFocused = true"
@@ -66,7 +66,7 @@
         data-testid="file-loading"
       >
         <Loader2 class="size-4 animate-spin text-neutral-dim opacity-60" />
-        <p class="text-[11px] text-neutral-dim opacity-60">{{ t('sidebar.fileView.loadingTree') }}</p>
+        <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-60">{{ t('sidebar.fileView.loadingTree') }}</p>
       </div>
 
       <!-- 错误态（loadTree 失败，可重试） -->
@@ -76,8 +76,8 @@
         data-testid="file-error"
       >
         <AlertCircle class="size-5 text-danger opacity-60" />
-        <p class="text-[11px] text-neutral-mid">{{ t('sidebar.fileView.loadFailed', { reason: rootState.reason ?? 'unknown' }) }}</p>
-        <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="file-retry" @click="retry">{{ t('sidebar.fileView.retry') }}</Button>
+        <p class="text-[length:var(--text-2xs)] text-neutral-mid">{{ t('sidebar.fileView.loadFailed', { reason: rootState.reason ?? 'unknown' }) }}</p>
+        <Button variant="ghost" class="h-6 text-[length:var(--text-2xs)] text-accent" data-testid="file-retry" @click="retry">{{ t('sidebar.fileView.retry') }}</Button>
       </div>
 
       <!-- 空态：loaded 但无节点（空目录 cwd）或过滤无匹配（E7-c：投影空 → 维持既有空态） -->
@@ -87,7 +87,7 @@
         data-testid="file-empty"
       >
         <component :is="hasFilter ? SearchX : FolderOpen" class="size-5 text-neutral-dim opacity-50" />
-        <p class="text-[11px] text-neutral-dim opacity-55">{{ hasFilter ? t('sidebar.fileView.noMatch') : t('sidebar.fileView.noFile') }}</p>
+        <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-55">{{ hasFilter ? t('sidebar.fileView.noMatch') : t('sidebar.fileView.noFile') }}</p>
       </div>
 
       <!-- 文件树：virtua 挂扁平行（可见行 = projectVisibleRows 投影；itemProps 宽度 max-content
