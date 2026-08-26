@@ -59,6 +59,18 @@ export type UpdateState =
   | 'unsupported'
 
 /**
+ * 升级错误事件 payload（main → preload → renderer 全链路透传，D3）。
+ *
+ * preload.ts onUpdateError 和 renderer lib/ipc.ts 的类型签名必须与此一致。
+ */
+export interface UpdateErrorPayload {
+  stage: string
+  message: string
+  errorCode?: string
+  suggestion?: string
+}
+
+/**
  * 代理配置接口。
  * 支持三种模式：
  * - system：自动检测系统代理

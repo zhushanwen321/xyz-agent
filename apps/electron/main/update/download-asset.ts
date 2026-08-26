@@ -34,6 +34,7 @@ import { UPDATE_DIR } from './constants.js'
 import { hashFileSha256 } from './hash.js'
 import { resolveProxyUrl } from './proxy-config.js'
 import { UpdateError, UpdateIntegrityError } from './types.js'
+import { classifyNetError } from './net-errors.js'
 
 /**
  * 断点续传状态接口。
@@ -262,43 +263,9 @@ export async function downloadAsset(
     try {
       response = await fetch(asset.downloadUrl, fetchOptions as RequestInit)
     } catch (fetchErr) {
-      // 网络错误分类：区分超时、连接失败、代理错误
-      if (fetchErr instanceof Error) {
-        if (fetchErr.name === 'AbortError') {
-          throw new UpdateError(
-            `download timeout after ${DOWNLOAD_TIMEOUT_MS / MS_PER_SECOND}s`,
-            'downloading',
-            'UPDATE_NETWORK_TIMEOUT',
-          )
-        }
-        // [M6] ECONNABORTED 是通用连接中断，与代理无关——误归为 PROXY_ERROR 会
-        // 误导用户去查代理。归入 NETWORK_FAILED（连接中断）。
-        if (fetchErr.message.includes('ECONNREFUSED') || fetchErr.message.includes('ENOTFOUND') ||
-            fetchErr.message.includes('ECONNRESET') || fetchErr.message.includes('ETIMEDOUT') ||
-            fetchErr.message.includes('ECONNABORTED')) {
-          throw new UpdateError(
-            `network connection failed: ${fetchErr.message}`,
-            'downloading',
-            'UPDATE_NETWORK_FAILED',
-          )
-        }
-        // [M6] PROXY_ERROR 只保留代理特征字符串判断（如代理认证失败 407），
-        // 不再泛化匹配 'proxy' 子串以避免误判。代理认证失败是代理场景的强信号。
-        // [W-6] 裸 '407' 子串会误命中时间戳/端口号等。精确匹配 HTTP 407 状态描述
-        // 短语（含分隔边界），并保留 'Proxy Authentication' 文案兜底。
-        if (/^407\b|[\s(]407\b|Proxy Authentication/i.test(fetchErr.message)) {
-          throw new UpdateError(
-            `proxy error: ${fetchErr.message}`,
-            'downloading',
-            'UPDATE_PROXY_ERROR',
-          )
-        }
-      }
-      throw new UpdateError(
-        `download failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
-        'downloading',
-        'UPDATE_NETWORK_FAILED',
-      )
+      // D1: 使用统一的分类函数替代内联字符串匹配（收敛三条 fetch 路径）
+      const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
+      throw classifyNetError(fetchErr, 'downloading', proxyUrl)
     }
     if (!response.ok) {
       // [LEAK FIX] 抛错前显式 cancel body，释放底层 socket（无引用后 GC 也会清理，
@@ -674,7 +641,9 @@ async function downloadPart(
     // 的 unlinkSync 与并发 write 竞争会抛 EBUSY/EPERM 吞掉原始错误。这里每段清理自己的
     // part 文件（try/catch 容错，文件不存在或被占用都不影响抛出原始 err）。
     try { unlinkSync(part.tempPath) } catch (unlinkErr) { console.warn(`[download] part ${part.index} temp cleanup failed:`, unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
-    throw err
+    // D1: 对 downloadPart 的网络错误做统一分类（覆盖断点 1b：多段路径原无分类）
+    const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
+    throw classifyNetError(err, 'downloading', proxyUrl)
   } finally {
     clearTimeout(timer)
     if (idleTimer) clearTimeout(idleTimer)

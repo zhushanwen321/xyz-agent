@@ -43,3 +43,6 @@ export const UPDATER_LOG_PATH = path.join(UPDATE_DIR, 'updater.log')
 
 /** linux 升级日志路径 */
 export const LINUX_UPDATER_LOG_PATH = path.join(UPDATE_DIR, 'updater-linux.log')
+
+/** 升级错误日志路径（JSONL 格式，D7） */
+export const UPDATE_ERROR_LOG = path.join(UPDATE_DIR, 'update-error.log')
