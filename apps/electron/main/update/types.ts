@@ -107,11 +107,6 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateErrorCode, Omit<UpdateErrorInfo
     stage: 'replacing',
     suggestion: '请手动下载最新版本',
   },
-  UPDATE_PROXY_UNREACHABLE: {
-    message: '无法连接代理 (EHOSTUNREACH)',
-    stage: 'downloading',
-    suggestion: '系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」后重启应用',
-  },
 }
 
 /**

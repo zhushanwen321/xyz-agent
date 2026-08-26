@@ -82,10 +82,10 @@ describe('W5: release-checker 代理优先 + 失败降级直连', () => {
       // 只调用一次 fetch（代理成功，不降级）
       expect(fetchCalls).toHaveLength(1)
       // dispatcher 应存在（ProxyAgent 实例）——这是实现的具体特征
-      const options = fetchCalls[0] as Record<string, unknown>
+      const options = fetchCalls[0] as { dispatcher?: { constructor: { name: string } } }
       expect(options.dispatcher).toBeDefined()
       // dispatcher 必须是 ProxyAgent 实例（不是普通对象）
-      expect(options.dispatcher.constructor.name).toBe('ProxyAgent')
+      expect(options.dispatcher?.constructor.name).toBe('ProxyAgent')
     })
 
     it('A6b: 代理失败 → 降级直连重试一次', async () => {
