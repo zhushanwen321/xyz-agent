@@ -96,6 +96,7 @@ describe("messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）", 
     expect(result).toEqual({
       kind: "message",
       subagentId: "sa-test",
+      slug: "test",
       response: { delivered: true },
     });
   });

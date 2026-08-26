@@ -37,9 +37,10 @@ import type {
   Segment,
   ServerMessage,
   SteerFollowUpMode,
+  SubagentDirectiveData,
   ToolCall,
 } from '@xyz-agent/shared'
-import { normalizeContent, segmentsToText } from '@xyz-agent/shared'
+import { normalizeContent, segmentsToText, SUBAGENT_DIRECTIVE_CUSTOM_TYPE } from '@xyz-agent/shared'
 import type { RetryState, QueueState, FinalizeReason } from './store-types'
 import { isDevMode } from '../../platform/dev-mode'
 
@@ -786,6 +787,38 @@ export function createChatStore() {
     ])
   }
 
+  /**
+   * 追加 subagent 定向消息气泡（`@` 定向对话 live 链路，composer-symbol-system §3.3.3a）。
+   *
+   * 消息形态与 reload 链路逐字段对齐（live ≡ reload，关键规则 9）：reload 侧由
+   * mapSessionEntries 对 subagent-directive custom_message 覆写 display:true →
+   * applyCustomMessageEntry 投影出同字段 Message（role:'system' + customType + content +
+   * details + display:true）。live 侧消费 subagent.directive 广播时经本方法构造——
+   * id 用 `cm-<uuid>`（对齐 message.customStart effect 的客户端 id 先例；reload 侧为 pi
+   * 持久化 entry id，id 值异源属 W21 已裁决的 live/reload 差异类），timestamp 客户端时钟。
+   *
+   * 为什么不走 applyEntryFrame：同一 custom entry 的 display:false 形态已经
+   * message.customStart → applyEntryFrame 喂过 reducer（U2c 契约：generic 通路不可见），
+   * 再喂会重复 append；可见气泡是消费侧覆写产物，overlay 插入（与 appendSystemNotice
+   * 同款）不污染 reducer 累积态。
+   */
+  const appendSubagentDirective = (sessionId: string, data: SubagentDirectiveData): void => {
+    const prev = messages.value.get(sessionId)?.value ?? []
+    commitMessages(messages, sessionId, [
+      ...prev,
+      {
+        id: `cm-${crypto.randomUUID()}`,
+        role: 'system',
+        customType: SUBAGENT_DIRECTIVE_CUSTOM_TYPE,
+        content: data.text,
+        details: { subagentId: data.subagentId, slug: data.slug, direction: data.direction },
+        display: true,
+        status: 'complete',
+        timestamp: Date.now(),
+      },
+    ])
+  }
+
   /** 截断 session 消息到 messageId（编辑重发用）。委托 chat-mutations.truncateMessagesFrom。 */
   const truncateFrom = (sessionId: string, messageId: string, inclusive: boolean): void => truncateMessagesFrom(messages, sessionId, messageId, inclusive)
 
@@ -877,6 +910,7 @@ export function createChatStore() {
     isHandingOff,
     setHandingOff,
     appendSystemNotice,
+    appendSubagentDirective,
     truncateFrom,
     applyFileChanges,
     disposeSession,

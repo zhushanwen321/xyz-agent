@@ -433,8 +433,12 @@ export const session = {
     await sleep(TIMING.ack)
   },
 
-  /** Mock subagent cancel（对称 workflowAction，stub resolve 即可） */
-  async subagentAction(_sessionId: string, _action: string, _subagentId: string): Promise<void> {
+  /** Mock subagent 生命周期/定向消息操作（对称 workflowAction，stub resolve 即可） */
+  async subagentAction(
+    _sessionId: string,
+    _action: 'cancel' | 'message' | 'start',
+    _params: { subagentId?: string; text?: string; slug?: string; task?: string },
+  ): Promise<void> {
     await sleep(TIMING.ack)
   },
 
@@ -445,6 +449,11 @@ export const session = {
 
   /** Mock 取消 handoff（对称 handoff，stub resolve 即可） */
   async abortHandoff(_sessionId: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
+
+  /** Mock 强制退出（对称 real domain，stub resolve 即可；mock 无真实 pi 进程可杀） */
+  async forceQuit(_sessionId: string): Promise<void> {
     await sleep(TIMING.ack)
   },
 

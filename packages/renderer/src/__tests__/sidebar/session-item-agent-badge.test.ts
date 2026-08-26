@@ -117,13 +117,16 @@ describe('U8-B2 右键「查看父 session」菜单（SessionItem）', () => {
     expect(item!.textContent).toContain('查看父 session')
   })
 
-  it('U8-B2 user session 右键 → 无此菜单项（整块菜单内容不渲染）', async () => {
+  it('U8-B2 user session 右键 → 无「查看父 session」项（force-quit 功能上线后 user session 有强制退出项，菜单容器会渲染）', async () => {
     const wrapper = mountItem({ id: 'u8-user-2', spawnSource: 'user' })
     await openContextMenu(wrapper)
 
     expect(findViewParentItem()).toBeNull()
-    // 菜单容器本身也不渲染（Portal 条件挂载，user session 右键不出现空菜单）
-    expect(document.body.querySelector('[data-testid="session-context-menu"]')).toBeNull()
+    // [更新 2026-XX force-quit] 原断言「整块菜单不渲染」已失效：非 dead session 现在始终挂
+    // 「强制退出」菜单项（sidebar 强制退出逃生入口），菜单容器随之渲染。此处锁定新行为：
+    // 容器存在但仅含 forceQuit 一项，无 viewParent。
+    expect(document.body.querySelector('[data-testid="session-context-menu"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-testid="session-force-quit-item"]')).not.toBeNull()
   })
 
   it('U8-B2 agent session 但无 parentAgentSessionId → 右键无菜单项（有 badge 无导航目标，构建者白盒）', async () => {

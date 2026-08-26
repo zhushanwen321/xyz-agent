@@ -278,6 +278,9 @@ export default {
     copied: 'Copied',
     expand: 'Expand',
     collapse: 'Collapse',
+    // Four-symbol system (@ subagent popover)
+    newSubagent: '＋ New subagent',
+    newSubagentPlaceholder: 'New task',
   },
   queue: {
     title: 'Queue',

@@ -179,6 +179,17 @@ export interface ComposerInputInstance {
   /** context 注入消费（focus / insertTextAtCursor），W3 合并 context 版同名接口 */
   focus: () => void
   insertTextAtCursor: (text: string) => void
+  /**
+   * session chip 插入（四符号体系 §3.3.4 sidebar 直引：insertSessionChip(sessionId, label)）。
+   * 可选：ui ComposerInput 已 expose（U1），低配实现（旧 mock/测试桩）可缺省——
+   * 消费端（injection.ts）经 ?. 调用，缺省时不注入但不崩溃。
+   */
+  insertSessionChip?: (sessionId: string, label: string) => void
+  /**
+   * subagent 定向 chip 插入（四符号 @，restore 恢复草稿用：insertSubagentChip(subagentId, slug)）。
+   * 可选同上：ui ComposerInput 已 expose（U1），消费端（dom-core restore）经 ?. 调用。
+   */
+  insertSubagentChip?: (subagentId: string, slug: string) => void
 }
 
 /**

@@ -105,6 +105,36 @@
 
   /* panel-bg：panel 内 sticky 浮层底色契约 */
   --panel-bg: var(--surface);
+
+  /* 图表派生 tokens（用量统计页）
+     不手写色值，全部从 --chart-ink 派生（color-mix）。
+     --chart-ink = neutral-fg（中性主题：玄/黛蓝/暖墨/皓）；
+     彩色亮色 preset（青墨/朱印）：--chart-ink = color-mix(in oklch, var(--accent) 45%, var(--neutral-fg))
+     明度方向自动反转（暗：墨越亮越浓；亮：墨越深越浓）。
+     交互层（hover-tint / row-hover / track / heat-outline）从 neutral-fg 直接派生。 */
+  --chart-ink: var(--neutral-fg);
+  /* provider 序列（堆叠柱/图例/排名条，p1 = 占比最高档） */
+  --chart-p1: color-mix(in oklch, var(--chart-ink) 92%, var(--bg));
+  --chart-p2: color-mix(in oklch, var(--chart-ink) 70%, var(--bg));
+  --chart-p3: color-mix(in oklch, var(--chart-ink) 48%, var(--bg));
+  --chart-p4: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  --chart-p5: color-mix(in oklch, var(--chart-ink) 17%, var(--bg));
+  /* 热力日历墨阶（0 = 无消耗底色，5 = 当日最浓） */
+  --heat-0: color-mix(in oklch, var(--chart-ink) 5%, var(--bg));
+  --heat-1: color-mix(in oklch, var(--chart-ink) 12%, var(--bg));
+  --heat-2: color-mix(in oklch, var(--chart-ink) 24%, var(--bg));
+  --heat-3: color-mix(in oklch, var(--chart-ink) 40%, var(--bg));
+  --heat-4: color-mix(in oklch, var(--chart-ink) 60%, var(--bg));
+  --heat-5: color-mix(in oklch, var(--chart-ink) 82%, var(--bg));
+  /* 缓存构成三色（命中/新输入/输出） */
+  --cache-hit: color-mix(in oklch, var(--chart-ink) 85%, var(--bg));
+  --cache-out: color-mix(in oklch, var(--chart-ink) 55%, var(--bg));
+  --cache-in: color-mix(in oklch, var(--chart-ink) 30%, var(--bg));
+  /* 交互层（图表 hover 列 / 排名行 hover / 条形底槽 / 热力格描边） */
+  --hover-tint: color-mix(in oklch, var(--neutral-fg) 5%, transparent);
+  --row-hover: color-mix(in oklch, var(--neutral-fg) 3%, transparent);
+  --track: color-mix(in oklch, var(--neutral-fg) 8%, transparent);
+  --heat-outline: color-mix(in oklch, var(--neutral-fg) 45%, transparent);
 }
 
 /* 视口自适应字号（与 :root 的 --font-scale-mq 配合）：

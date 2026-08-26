@@ -6,7 +6,7 @@
  * 1. target='new'（仅 session composer 触发）→ 调 deps.startFlow(cwd) 进 landing
  *    → store.routeToLanding()（把 target 改 current + sessionId=null）→ 本实例不注入
  *    （landing composer 接手阶段二）
- * 2. target='current' → 按目标侧判定匹配 → insertFileChip → clearInjection
+ * 2. target='current' → 按目标侧判定匹配 → applyInjection（session/file chip 或纯文本）→ clearInjection
  *
  * ## 目标侧匹配（FR-2.1）
  * landing composer 的 sessionId 可能为 null（W3 移除公共 session 后，Landing.vue 的 composerSid
@@ -84,20 +84,29 @@ export function useComposerInjection(
   }
 
   /**
-   * 执行注入（file chip 或纯文本）。
+   * 执行注入（session chip / file chip / 纯文本）。
+   * - 有 refSessionId → insertSessionChip（四符号体系 §3.3.4 sidebar 直引，显示 label 非 uuid）
    * - 有 text → insertTextAtCursor（Phase 4 联动 1：TerminalView 选区「发给 AI」）
    * - 有 path → insertFileChip（file chip + 可选行范围）
-   * path 与 text 互斥（store schema 保证），text 优先判断。
+   * refSessionId / path / text 三互斥（store schema 保证），refSessionId 优先判断。
    */
   function applyInjection(req: {
     path?: string
     lineStart?: number
     lineEnd?: number
     text?: string
+    refSessionId?: string
+    label?: string
   }): void {
     const input = inputRef.value
     if (!input) return
     input.focus()
+    // session chip 注入（§3.3.4 sidebar 直引）
+    if (req.refSessionId !== undefined) {
+      // label 兜底 refSessionId：写入侧漏传 label 时 chip 不显示空串（uuid 也可读）
+      input.insertSessionChip?.(req.refSessionId, req.label ?? req.refSessionId)
+      return
+    }
     // text 注入（Phase 4 联动 1）
     if (req.text !== undefined) {
       input.insertTextAtCursor(req.text)

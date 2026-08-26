@@ -18,6 +18,57 @@ export type SteerFollowUpMode = 'steer' | 'follow-up'
  * - runtime mapSessionEntries / entry-tree-builder：对称覆写 display:false（历史链路，方案 Z）
  */
 export const COMPLETE_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify', 'workflow-result'])
+
+/**
+ * subagent-directive customType SSOT（composer 四符号 `@` 定向对话，设计
+ * docs/architecture/composer-symbol-system.md §3.3.3）。
+ *
+ * 用户经 @ subagent chip 发送的定向消息：subagent-workflow extension（/subagents message
+ * 命令面）在 deliverMessage 成功后经 pi.sendMessage 落 custom_message entry——
+ * customType 即本常量，content=定向文本原文，details={subagentId, slug, direction:'user'}，
+ * display:false（false 是 pi TUI 渲染语义；xyz-agent 消费侧另行决定显隐，见
+ * parseSubagentDirective 消费点）。留痕进主 agent 上下文但不 triggerTurn（留痕 ≠ 处理，§3.3.8）。
+ *
+ * 与 extension 端写入字符串严格一致（commit 21578c74f），改名需同步 extension + 测试。
+ */
+export const SUBAGENT_DIRECTIVE_CUSTOM_TYPE = 'subagent-directive'
+
+/**
+ * 定向消息数据——live 广播（subagent.directive payload 去掉 sessionId）与 reload 聊天流
+ * 消息项（custom system message 的 content + details）的公共字段。两链路共用
+ * parseSubagentDirective 单点解析，live ≡ reload 字段一致性构造性成立（关键规则 9）。
+ */
+export interface SubagentDirectiveData {
+  subagentId: string
+  slug: string
+  /** 方向：'user' = 用户 → subagent（本期唯一方向，extension details.direction 同源） */
+  direction: 'user'
+  /** 定向文本原文（custom_message entry 的 content） */
+  text: string
+}
+
+/**
+ * 防御性解析 subagent-directive custom message → 定向数据。
+ *
+ * 消费点（单点解析，避免多处字段读取漂移——parseBgNotifyDetails 同款范式）：
+ * - runtime live：event-adapter 组装 subagent.directive 广播 payload
+ * - runtime reload：session-entry-mapper 对该 customType 的 display 覆写判定
+ * - renderer（U2b）：定向气泡渲染（content + details → 结构化字段）
+ *
+ * details 必需字段（subagentId/slug/direction==='user'）缺失或类型异常 → null（消费侧
+ * 降级不崩溃）；content 非 string 时 text 归空串（details 有效则气泡仍携带去向信息）。
+ */
+export function parseSubagentDirective(content: unknown, details: unknown): SubagentDirectiveData | null {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null
+  const d = details as Record<string, unknown>
+  if (typeof d.subagentId !== 'string' || typeof d.slug !== 'string' || d.direction !== 'user') return null
+  return {
+    subagentId: d.subagentId,
+    slug: d.slug,
+    direction: 'user',
+    text: typeof content === 'string' ? content : '',
+  }
+}
 /** 消息生命周期状态（steer/followup 解耦后 pending 不再进消息流——m4 清理）。 */
 export type MessageStatus = 'streaming' | 'complete' | 'error'
 export type ToolCallStatus = 'running' | 'completed' | 'error' | 'end_not_received'

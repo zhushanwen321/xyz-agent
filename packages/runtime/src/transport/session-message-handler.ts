@@ -38,6 +38,8 @@ export class SessionMessageHandler {
   readonly handles: ClientMessageType[] = [
     'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.restore', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork', 'session.setProject',
     'session.handoff', 'session.abortHandoff',
+    // 强制退出（sidebar 右键）：杀 pi 进程 + stopped 收敛，区别于协作式 message.abort。
+    'session.forceQuit',
     // wave:runtime-wiring：session.subscribe/unsubscribe RPC（IF6/IF7）。
     'session.subscribe', 'session.unsubscribe',
     'session.getSubagents', 'session.getSubagentHistory',
@@ -102,6 +104,13 @@ export class SessionMessageHandler {
           this.ctx.sendError(ws, RESTORE_FAILED, toErrorMessage(e), msg.id)
           return
         }
+      }
+      case 'session.forceQuit': {
+        // 强杀 pi 进程 + stopped 收敛（终态经 session.exited 广播推回，不依赖 reply）。
+        // reply message.status ack（与 message.abort 对称），否则 renderer pending.register(id) 永挂。
+        const sessionId = msg.payload.sessionId
+        await this.ctx.sessionService.forceQuit(sessionId)
+        return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'force_quit' })
       }
       case 'session.fork': {
         // fork：runtime 读源 JSONL 截断 → 新进程 switch_session。reply session.created（复用类型）。
@@ -290,8 +299,15 @@ export class SessionMessageHandler {
         return this.ctx.reply(ws, msg.id, 'session.workflowActionDone', { sessionId: msg.payload.sessionId, action: msg.payload.action, runId: msg.payload.runId })
       }
       case 'session.subagentAction': {
-        await this.ctx.sessionService.subagentAction(msg.payload.sessionId, msg.payload.action, msg.payload.subagentId)
-        return this.ctx.reply(ws, msg.id, 'session.subagentActionDone', { sessionId: msg.payload.sessionId, action: msg.payload.action, subagentId: msg.payload.subagentId })
+        // action 分支（cancel/message/start 的命令拼装与换行编码）在 service 层，handler 只透传
+        // payload 字段；reply 回显目标标识（cancel/message→subagentId，start→slug）。
+        await this.ctx.sessionService.subagentAction(msg.payload.sessionId, msg.payload.action, {
+          subagentId: msg.payload.subagentId,
+          text: msg.payload.text,
+          slug: msg.payload.slug,
+          task: msg.payload.task,
+        })
+        return this.ctx.reply(ws, msg.id, 'session.subagentActionDone', { sessionId: msg.payload.sessionId, action: msg.payload.action, subagentId: msg.payload.subagentId, slug: msg.payload.slug })
       }
       // ── wave:runtime-patch ipc-converge-a3 W2：业务持久化写（从 main IPC 迁 WS）──
       case 'session.writeImage': {
@@ -449,10 +465,12 @@ export class SessionMessageHandler {
         return this.ctx.broadcastSessionList()
       }
       case 'message.send': {
-        const { sessionId, content, subagent, images } = msg.payload
-        const result = subagent
-          ? await this.ctx.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content)
-          : await this.ctx.sessionService.sendMessage(sessionId, content, images)
+        // 纯主 agent 通道：marker 半成品转发（subagent 字段 → sendSubagentMessage 拼 base64
+        // 隐藏注释前缀）已废弃（composer 四符号设计 D2）——定向消息改走
+        // session.subagentAction(message/start) 直达 subagent。旧 renderer 残留的 subagent
+        // 键被解构忽略，不 resurrect marker 行为。
+        const { sessionId, content, images } = msg.payload
+        const result = await this.ctx.sessionService.sendMessage(sessionId, content, images)
         // D(round7-must-fix-3): hook 拦截时 dispatcher 已广播 message.error（错误气泡），
         // 此处必须走 error envelope（带 msg.id）让 renderer pending.reject，不得 reply success。
         // 否则 renderer 见 msg.id 且非 error → pending.resolve → composer 清空，与错误气泡矛盾。

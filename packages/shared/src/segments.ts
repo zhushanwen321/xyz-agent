@@ -20,6 +20,10 @@
  * - skill: skill 命令段（/skill:xxx），含 name 和可选的 SKILL.md 文件路径
  * - file: 文件引用段（未来从 drawer/diff 选取追加到 composer），含路径和可选行范围
  * - mention: @mention 段（未来 @user 等），含 name
+ * - session: session 引用段（composer # session chip），sessionId 是 TUI session_read
+ *   协议消费的定位 id；label 仅用于 UI 展示（badge/气泡），不参与 prompt 序列化
+ * - subagent: subagent 定向段（composer @ subagent chip），是消息路由标记而非内容——
+ *   发送链路据此分流到 session.subagentAction（不经主 agent LLM），序列化为空串不进 prompt
  * - image: 图片附件段（Cmd+V 粘贴的截图等）：
  * - handoff: 交接来源标记段（fast-handoff 产出），含 sourceLabel（来源 session 名称）：
  *   - id：composer chip 的稳定唯一标识（crypto.randomUUID），同一文件附两次时供
@@ -41,6 +45,8 @@ export type Segment =
   | { type: 'skill'; name: string; location?: string }
   | { type: 'file'; path: string; lineRange?: [number, number] }
   | { type: 'mention'; name: string }
+  | { type: 'session'; sessionId: string; label: string }
+  | { type: 'subagent'; subagentId: string; slug: string }
   | { type: 'image'; id: string; path: string; fileName: string; displayName: string; needsMigrate?: boolean }
   | { type: 'handoff'; sourceLabel: string }
 
@@ -48,6 +54,7 @@ export type Segment =
  * Segment[] → 纯文本（归一化展示用 + pi prompt 序列化的唯一实现）。
  *
  * skill → `/skill:name`，file → `path`（可选 `:L<s>-L<e>` 行范围），mention → `@name`，
+ * session → `#sessionId`（TUI session_read 协议），subagent → 空串（路由标记不进 prompt），
  * text → 原文，image → 裸 path 独占一行（对齐 pi TUI，LLM 自己调 read 工具读），
  * handoff → `[handoff from sourceLabel]`（来源标记，文档内容在 text segment 中）。
  * skill 段后若紧跟 text 段，中间补一个空格分隔（修复零宽空格被过滤导致的粘连 bug）。
@@ -106,6 +113,16 @@ export function segmentsToText(segments: Segment[]): string {
       }
       case 'mention':
         parts.push(`@${seg.name}`)
+        break
+      case 'session':
+        // # 前缀对齐 TUI session_read 协议（stripHash 消费 #<sessionId>）；
+        // label 只用于 UI 展示，不进 prompt（LLM 不需要标题，uuid 已可定位）
+        parts.push(`#${seg.sessionId}`)
+        break
+      case 'subagent':
+        // 路由标记：发送链路据 segments 含 subagent 段分流到 subagentAction RPC，
+        // 文本本体走 RPC text 字段；若序列化进 prompt 会污染主 agent 上下文（见设计 3.3.8）
+        parts.push('')
         break
       case 'image':
         // 对齐 pi TUI 粘贴行为：裸路径进 prompt 文本，LLM 自己调 read 工具读。

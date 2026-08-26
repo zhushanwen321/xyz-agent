@@ -31,9 +31,14 @@ export interface ThinkingLevelSyncDeps {
   /**
    * 取指定 modelId 的 thinkingLevelMap。
    * @param modelId 完整 model id（provider/model 形式）
-   * @returns 该模型的思考档位映射；undefined 表示无 map（all-levels 全可用语义）
+   * @returns 该模型的思考档位映射；undefined 表示无 map
    */
   getThinkingLevelMap: (modelId: string) => Record<string, string | null> | undefined
+  /**
+   * 取指定 modelId 是否支持思考（models[].reasoning）。可选：未注入时按 undefined（视为支持）判定。
+   * non-reasoning 模型的可用档位只有 off——切模型重置逻辑需要此信息才能正确落到 off。
+   */
+  getModelReasoning?: (modelId: string) => boolean | undefined
 }
 
 export function useThinkingLevelSync(
@@ -44,6 +49,9 @@ export function useThinkingLevelSync(
 ): ComputedRef<Record<string, string | null> | undefined> {
   /** 当前模型的思考档位映射（按 currentModelId 经 deps 派生） */
   const currentThinkingLevelMap = computed(() => deps.getThinkingLevelMap(currentModelId.value))
+
+  /** 当前模型 reasoning 标志（non-reasoning 模型可用档只有 off） */
+  const reasoningOf = () => deps.getModelReasoning?.(currentModelId.value)
 
   /**
    * 模型切换后对齐思考等级（session 已建 + landing 态均触发）。
@@ -66,16 +74,16 @@ export function useThinkingLevelSync(
     const current = currentThinkingLevel.value
     if (!current) {
       // landing 态初始无思考等级 → 设为新模型最高可用档
-      const highest = highestAvailableLevel(map)
+      const highest = highestAvailableLevel(map, reasoningOf())
       onReset(resolveThinkingValue(highest, map))
       return
     }
     // 首次触发（无 oldMap 可比）→ 可用性检查，与原逻辑一致
     if (oldMap === undefined) {
       const currentKey = resolveThinkingKey(current, map)
-      const available = resolveAvailableLevels(map)
+      const available = resolveAvailableLevels(map, reasoningOf())
       if (!available.includes(currentKey)) {
-        const highest = highestAvailableLevel(map)
+        const highest = highestAvailableLevel(map, reasoningOf())
         onReset(resolveThinkingValue(highest, map))
       }
       return
@@ -84,12 +92,12 @@ export function useThinkingLevelSync(
     if (isSameThinkingScheme(oldMap, map)) {
       const currentKey = resolveThinkingKey(current, oldMap)
       // 防御：current 既不在 oldMap 的 value 里又非合法 ThinkingLevel 时，
-      // resolveThinkingKey 会 fallback 到 'max'；若新 map 不含 max 档，
-      // resolveThinkingValue('max', map) 会走 v ?? key 回退返回字符串 'max'，
-      // 静默发给 runtime 一个该模型不可用的档位。此时走跨体系重置（重置到最高可用档）。
-      const available = resolveAvailableLevels(map)
+      // resolveThinkingKey 缺省 fallback 到 oldMap 最高可用档；该 key 若在新 map
+      // 的可用档（含 reasoning 叠加判定）中不可用，resolveThinkingValue 会走
+      // v ?? key 回退把不可用档原样发给 runtime。此时走跨体系重置（重置到最高可用档）。
+      const available = resolveAvailableLevels(map, reasoningOf())
       if (!available.includes(currentKey)) {
-        const highest = highestAvailableLevel(map)
+        const highest = highestAvailableLevel(map, reasoningOf())
         const resetValue = resolveThinkingValue(highest, map)
         if (resetValue !== current) onReset(resetValue)
         return
@@ -100,7 +108,7 @@ export function useThinkingLevelSync(
       return
     }
     // 跨体系 → 重置到新模型最高可用档（value 未变则不触发冗余 RPC）
-    const highest = highestAvailableLevel(map)
+    const highest = highestAvailableLevel(map, reasoningOf())
     const newValue = resolveThinkingValue(highest, map)
     if (newValue !== current) onReset(newValue)
   }, { immediate: true })

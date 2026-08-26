@@ -32,10 +32,12 @@ export function useComposerRestore(deps: ComposerRestoreDeps) {
   }
 
   /**
-   * 发送失败后恢复 text + 各类 chip（W8 修复）。
+   * 发送失败后恢复 text + 各类 chip（W8 修复；U2b 补 session/subagent 两类）。
    *
    * 方案 A（无重复）：先从 segments 中只取 type==='text' 段重建纯文本，restoreInput 恢复文字；
-   * 再调 insertImageBadge/insertSlashChip/insertFileChip 把非 text 段还原成真 chip。
+   * 再调 insertImageBadge/insertSlashChip/insertFileChip/insertSessionChip/insertSubagentChip
+   * 把非 text 段还原成真 chip。session/subagent 两类经 ?. 调用（ComposerInputInstance 可选
+   * 契约——低配壳层缺省时静默跳过该类 chip，文字部分仍恢复，不崩溃）。
    */
   function restoreSegments(segments: Segment[]): void {
     const textOnly = segments
@@ -50,6 +52,13 @@ export function useComposerRestore(deps: ComposerRestoreDeps) {
         deps.inputRef.value?.insertSlashChip(`/skill:${seg.name}`)
       } else if (seg.type === 'file') {
         deps.inputRef.value?.insertFileChip(seg.path, seg.lineRange)
+      } else if (seg.type === 'session') {
+        // session 引用 chip 恢复（# session，U1）：label 展示 + sessionId 落 dataset（getSegments 重建 segment 用）
+        deps.inputRef.value?.insertSessionChip?.(seg.sessionId, seg.label)
+      } else if (seg.type === 'subagent') {
+        // subagent 定向 chip 恢复（@ subagent，U2b）：subagentId/slug 原样回填（占位新建
+        // chip subagentId 为空串，回填后再次发送仍走 start 分流，语义不变）
+        deps.inputRef.value?.insertSubagentChip?.(seg.subagentId, seg.slug)
       }
     }
   }

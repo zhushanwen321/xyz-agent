@@ -144,6 +144,7 @@ export function useComposerShell(params: ComposerShellParams) {
     currentModelId,
     currentThinkingLevel,
     currentThinkingLevelMap,
+    currentModelReasoning,
     localThinkingLevel,
     onModelSelect,
     onThinkingSelect,
@@ -168,6 +169,13 @@ export function useComposerShell(params: ComposerShellParams) {
       const [providerId, modelName] = modelId.split('/')
       const provider = settingsStore.providers?.value?.find((p: { id: string }) => p.id === providerId)
       return provider?.models.find((m: { id: string }) => m.id === modelName)?.thinkingLevelMap
+    },
+    getModelReasoning: (modelId: string) => {
+      // 与 getThinkingLevelMap 同源解析 models[].reasoning；non-reasoning 模型可用档只有 off。
+      if (!modelId.includes('/')) return undefined
+      const [providerId, modelName] = modelId.split('/')
+      const provider = settingsStore.providers?.value?.find((p: { id: string }) => p.id === providerId)
+      return provider?.models.find((m: { id: string }) => m.id === modelName)?.reasoning
     },
   })
 
@@ -340,6 +348,7 @@ export function useComposerShell(params: ComposerShellParams) {
     currentModelId,
     currentThinkingLevel,
     currentThinkingLevelMap,
+    currentModelReasoning,
     localThinkingLevel,
     onModelSelect,
     onThinkingSelect,

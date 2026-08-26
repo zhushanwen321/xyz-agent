@@ -19,8 +19,9 @@ export type {
   FileChangeStatus, FileChange, ChangeSetStatus, ReviewDecision,
   CompactionSummary, BranchSummary, SteerFollowUpMode,
   BgNotifyRecord, BgNotifyDetails,
+  SubagentDirectiveData,
 } from './message'
-export { parseBgNotifyDetails, COMPLETE_NOTIFY_CUSTOM_TYPES } from './message'
+export { parseBgNotifyDetails, COMPLETE_NOTIFY_CUSTOM_TYPES, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective } from './message'
 // w21 pi-entry：pi session entry wire 类型（runtime 实时重构 ↔ core reducer ↔ protocol payload 三方共用）
 export type {
   PiEntry, PiEntryBase, PiMessageEntry, PiMessageBody,
@@ -123,6 +124,8 @@ export {
   isPiLaunchPreset,
 } from './pi-preset'
 export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyConfig, UpdateSettings } from './update'
+// 用量统计类型（W1 数据层）
+export type { UsageMetrics, UsageRow, UsageStatsResult } from './usage-stats'
 // 迁移功能（从其他 agent 迁移配置）类型
 export type {
   ProviderSource,

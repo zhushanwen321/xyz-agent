@@ -202,6 +202,26 @@ export function ensureStreamSubscription(
       deps.toast.error(msg.payload.message ?? deps.t('composable.agentProcessing'))
       return
     }
+    // subagent.directive：`@` 定向消息的可见气泡信号（composer-symbol-system §3.3.3a
+    // live 链路）。runtime event-adapter 在 extension 留痕 custom_message entry 落盘后
+    // 广播（message_end 锚定）；同 entry 的 message.customStart 前置帧走 generic 通路
+    // （display:false 不可见，U2c 契约），可见气泡由本分支插入——与 reload 侧
+    // mapSessionEntries 覆写 display:true 后投影的 Message 逐字段同形态（store.
+    // appendSubagentDirective 注释），live ≡ reload（关键规则 9）。
+    // [ADR-0049] per-session 隔离：校验 payload.sessionId === 订阅 sid，不匹配丢弃
+    // （架构约定 7——消息带 sessionId，非本 session 忽略；per-sid 通道路由下恒等，
+    // 显式校验是防御层）。
+    if (msg.type === 'subagent.directive') {
+      if (msg.payload.sessionId === sid) {
+        chat.appendSubagentDirective(sid, {
+          subagentId: msg.payload.subagentId,
+          slug: msg.payload.slug,
+          direction: msg.payload.direction,
+          text: msg.payload.text,
+        })
+      }
+      return
+    }
     // message.* → 单一入口（F2 重构：消除 double-dispatch）。
     // applyMessageEvent 内部经 effect 注册表执行该 type 的全部副作用（chunk 状态更新
     // + finalizeSession 收口），useChat 不再自己 switch message.*。message.* 处理完即 return，
@@ -381,6 +401,20 @@ export function createUseChat(deps: UseChatDeps) {
   async function send(sessionId: string, segments: Segment[]): Promise<void> {
     const sid = sessionId
     if (segments.length === 0) return
+    // `@` 定向分流（composer-symbol-system §3.3.4/§3.3.7）：含 subagent 段的消息改走
+    // session.subagentAction RPC，不经 message.send 主 agent 通道（结构性保证无主 agent
+    // turn，§3.3.8 命题 1）。分流点必须在下方两道 guard 之前：
+    // - promptText 空 guard：subagent 段序列化为空串（路由标记），纯 chip 无文本时
+    //   promptText 为空会被静默 return——定向路径要求「空文本给可读错误」（不静默丢）；
+    // - isActive/steer：定向消息与主 agent turn 正交（extension 命令短路，不抢占 LLM
+    //   回合），busy 时不应转 steer 队列。
+    const subagentSeg = segments.find(
+      (s): s is Extract<Segment, { type: 'subagent' }> => s.type === 'subagent',
+    )
+    if (subagentSeg) {
+      await sendSubagentDirective(sid, segments, subagentSeg)
+      return
+    }
     const promptText = segmentsToPrompt(segments)
     if (!promptText.trim()) return
 
@@ -406,6 +440,66 @@ export function createUseChat(deps: UseChatDeps) {
       chat.clearPendingSend(sid)
       const msg = e instanceof Error ? e.message : String(e)
       deps.toast.error(deps.t('composable.sendFailed', { msg }))
+    }
+  }
+
+  /**
+   * `@` 定向消息发送（send 的分流终点，composer-symbol-system §3.3.4）。
+   *
+   * 与普通 send 的行为差异（均有结构性理由，非省略）：
+   * - 不 appendUser：pi 侧只落 extension 留痕的 subagent-directive custom entry（无 user
+   *   entry，§3.3.7）。若 live 时插 user 气泡，重开 session 后 reload 链路只重建定向
+   *   custom 消息——user 气泡消失，违反 live ≡ reload（关键规则 9）。可见气泡统一由
+   *   subagent.directive 广播驱动的 store.appendSubagentDirective 产出。
+   * - 不 addPendingSend：pendingSend 等 message_start 清（主 agent turn 信号），定向消息
+   *   无主 agent turn（不消耗），置位会永久卡 isGenerating。
+   * - 不写 segments.json sidecar：sidecar 的消费方是重开时按 clientUuid↔userEntryId 映射
+   *   回填 user badge；定向消息无 user entry，条目必然孤立（无消费方），不写。
+   * - ensureStreamSubscription 照做：subagent.directive 广播（插定向气泡）与
+   *   message.customStart（extension 留痕 entry 的 generic 帧）都走会话级订阅。
+   *
+   * 错误处理对齐 send 的 catch 模式：toast + 不 throw（throw 只会变 unhandled rejection，
+   * 消费侧 Composer.onSend 的 catch 不触发——错误已通过 toast 消化，消息不静默丢失）。
+   *
+   * @param sid 目标 session
+   * @param segments 原始 segments（text/file/session/image 段照常序列化进定向文本——
+   *                 定向消息也可以引用文件/session，§3.3.7「+ 普通 segments」）
+   * @param subagentSeg 分流命中的 subagent 段（send 已保证存在）
+   */
+  async function sendSubagentDirective(
+    sid: string,
+    segments: Segment[],
+    subagentSeg: Extract<Segment, { type: 'subagent' }>,
+  ): Promise<void> {
+    // subagent 段序列化为空串（shared/segments 路由标记），segmentsToPrompt 即
+    // 「其余段序列化 + trim」：file → path(:L 范围)、session → #sessionId、image → 裸路径。
+    const text = segmentsToPrompt(segments)
+    // 空文本挡：纯 chip（或多 chip 间无内容）时 text 为空串，extension 无从处理——
+    // 可读错误 + 不发 RPC（防御：上游 canSend 守卫通常已拦，此处兜底保证不静默）。
+    if (!text) {
+      deps.toast.error(deps.t('composable.subagentDirectiveEmpty'))
+      return
+    }
+    ensureStreamSubscription(sid, chat, session, subDeps)
+    try {
+      if (subagentSeg.subagentId) {
+        // 已开 subagent 追问（§3.1.3 场景 1）：message 定向，subagentId 是浮层选中 record id
+        await deps.chatApi.subagentAction(sid, 'message', {
+          subagentId: subagentSeg.subagentId,
+          text,
+        })
+      } else {
+        // 新建占位 chip（§3.1.3 场景 2）：subagentId 空串。slug 自动生成（用户无感）——
+        // chip 上的 slug 可能是 U2a 的 i18n 占位文案（如「新任务」），是展示占位不可作 id，
+        // 一律用自动 slug 覆盖。
+        const slug = 'chat-' + Date.now().toString(36)
+        await deps.chatApi.subagentAction(sid, 'start', { slug, task: text })
+      }
+    } catch (e) {
+      // RPC 失败（WS 断连 / extension 报「subagent 已结束」等）：toast 明确提示，
+      // 消息不静默丢失（S8：留在输入区或明确失败提示——此处为后者，与 send 失败同款）。
+      const msg = e instanceof Error ? e.message : String(e)
+      deps.toast.error(deps.t('composable.subagentDirectiveFailed', { msg }))
     }
   }
 

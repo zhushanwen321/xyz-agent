@@ -115,6 +115,43 @@ describe('W4TC3: UserBubble skill badge', () => {
     expect(badge.exists()).toBe(true)
     expect(badge.text()).toContain('foo.ts')
   })
+
+  // ── U2b：session / subagent 段徽标（四符号 # / @）──
+
+  it('Segment[] content 含 session segment → 渲染 # label 徽标（warn 色，title 悬浮 sessionId）', () => {
+    const segments: Segment[] = [
+      { type: 'text', text: '参考 ' },
+      { type: 'session', sessionId: '019e-abc', label: '设计讨论' } as Segment,
+    ]
+    const wrapper = mountBubble({
+      turn: makeTurn({
+        user: { id: 'u1', role: 'user', content: segments, status: 'complete', timestamp: NOW } as Message,
+      }),
+    })
+    const badge = wrapper.find('[data-testid="msg-session-badge-1"]')
+    expect(badge.exists()).toBe(true)
+    // 徽标显示 # + label（人可读标题，非 uuid）
+    expect(badge.text()).toContain('#')
+    expect(badge.text()).toContain('设计讨论')
+    expect(badge.classes()).toContain('text-warn')
+    expect(badge.attributes('title')).toBe('019e-abc')
+  })
+
+  it('Segment[] content 含 subagent segment → 渲染 @slug 去向徽标（accent 色，序列化空串仅作标记）', () => {
+    const segments: Segment[] = [
+      { type: 'subagent', subagentId: 'rec-1', slug: 'build-api' } as Segment,
+      { type: 'text', text: '汇报进度' },
+    ]
+    const wrapper = mountBubble({
+      turn: makeTurn({
+        user: { id: 'u1', role: 'user', content: segments, status: 'complete', timestamp: NOW } as Message,
+      }),
+    })
+    const badge = wrapper.find('[data-testid="msg-subagent-badge-0"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toContain('@build-api')
+    expect(badge.classes()).toContain('text-accent')
+  })
 })
 
 describe('W4TC3: UserBubble 编辑态', () => {

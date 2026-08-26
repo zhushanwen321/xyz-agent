@@ -16,27 +16,28 @@ import {
 import { startOnFreePort } from './helpers/free-port.js'
 
 /**
- * Tests for T3: Runtime manual trigger handling (subagent field in message.send).
+ * message.send 纯转发回归（composer 四符号设计 D2：marker 半成品通道废弃）。
  *
- * These tests verify that when `msg.payload.subagent` is present with
- * `{ agent: string; task: string }`, the runtime constructs an XML structured
- * prompt instead of sending raw content to `sessionService.sendMessage`.
+ * [HISTORICAL] 本文件曾断言 `subagent` 字段触发 base64 marker（隐藏注释前缀）拼装——
+ * 该通道在 extension 侧零消费方且经主 agent 转发违背「直达 subagent」目标，已删除。
+ * 现在守住相反的方向：message.send 永远走 sendMessage 原文转发（断言全文相等，强于
+ * 「不含 marker」——相等即不可能有任何前缀/包装）；旧版本 renderer 残留的 `subagent` 键
+ * 被忽略（升级窗口内不 resurrect marker 行为）。
+ * 定向消息的正路是 session.subagentAction(message/start)（session-service.test.ts 覆盖）。
  */
 
 // ── Mock SessionService to capture sendMessage calls ────────────
 //
-// controlSubagent=true：sendSubagentMessage 模拟真实编码（base64 marker → 调 sendMessage），
-// 测试需要持有 sendMessageMock / sendSubagentMessageMock ref 做断言，因此在 vi.mock
-// 之外用 createMockSessionServiceInstance 创建，再把 instance 字段铺到 class 上。
+// 测试需要持有 sendMessageMock ref 断言转发原文，因此在 vi.mock 之外用
+// createMockSessionServiceInstance 创建，再把 instance 字段铺到 class 上。
 
-const { instance: sessionServiceInstance, sendMessageMock, sendSubagentMessageMock } =
-  createMockSessionServiceInstance({ controlSubagent: true })
+const { instance: sessionServiceInstance, sendMessageMock } =
+  createMockSessionServiceInstance()
 
 vi.mock('../src/services/session/session-service.js', () => {
   return {
     SessionService: class MockSessionService {
       sendMessage = sessionServiceInstance.sendMessage
-      sendSubagentMessage = sessionServiceInstance.sendSubagentMessage
       listPersistedSessions = sessionServiceInstance.listPersistedSessions
       getSummary = sessionServiceInstance.getSummary
       getHistory = sessionServiceInstance.getHistory
@@ -102,14 +103,13 @@ import { ModelService } from '../src/services/model-service.js'
 /** S1-W1：真实 WS 测试统一 token（ConnectionManager auth 握手，见 ws-listen-hardening.test.ts） */
 const TEST_WS_TOKEN = 'test-ws-token-subagent'
 
-describe('RuntimeServer message.send with subagent field', () => {
+describe('RuntimeServer message.send（marker 通道废弃后的纯转发）', () => {
   let server: RuntimeServer
   let port: number
   let ws: WebSocket
 
   beforeEach(async () => {
   sendMessageMock.mockClear()
-  sendSubagentMessageMock.mockClear()
   // EADDRINUSE 韧性：端口在 RuntimeServer 构造函数绑定，重试需整体重建（startOnFreePort 语义）。
   // 注：server.test.ts 是本文件的 symlink（同体设计），本改动同时对两者生效。
   const started = await startOnFreePort((p) => {
@@ -154,7 +154,7 @@ describe('RuntimeServer message.send with subagent field', () => {
 
   /** Helper: send a message and wait for the response */
   function sendAndCollect(ws: WebSocket, msg: object): Promise<void> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     ws.send(JSON.stringify(msg))
     // Give server time to process
     setTimeout(() => resolve(), 200)
@@ -163,12 +163,28 @@ describe('RuntimeServer message.send with subagent field', () => {
 
   // ── Test cases ────────────────────────────────────────────────
 
-  it('should send XML structured prompt when subagent field is present', async () => {
+  it('普通消息 → sendMessage 收到原文，不拼 marker', async () => {
   const client = await connectClient()
 
   await sendAndCollect(client, {
     type: 'message.send',
     id: 'test-1',
+    payload: {
+    sessionId: 'sess-789',
+    content: 'just a normal message',
+    },
+  })
+
+  expect(sendMessageMock).toHaveBeenCalledTimes(1)
+  expect(sendMessageMock).toHaveBeenCalledWith('sess-789', 'just a normal message', undefined)
+  })
+
+  it('旧 renderer 残留 subagent 键 → 被忽略：sendMessage 收到原文（全文相等，无任何包装）', async () => {
+  const client = await connectClient()
+
+  await sendAndCollect(client, {
+    type: 'message.send',
+    id: 'test-2',
     payload: {
     sessionId: 'sess-123',
     content: 'original content',
@@ -179,82 +195,22 @@ describe('RuntimeServer message.send with subagent field', () => {
     },
   })
 
-  // Should have called sendMessage with hidden marker prompt
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sentContent = sendMessageMock.mock.calls[0][1] as string
-
-  // The content should use hidden marker format, not the raw "original content"
-  expect(sentContent).toContain('xyz-agent-force-subagent')
-  expect(sentContent).not.toContain('<tool_call')
-  // Parse the JSON from the marker and verify values
-  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
-  expect(markerMatch).not.toBeNull()
-  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
-  const parsed = JSON.parse(decoded)
-  expect(parsed.agent).toBe('harness-executor')
-  expect(parsed.task).toBe('Implement the feature')
-  // Marker should be followed by newline and prompt text
-  expect(sentContent).toContain('<!-- xyz-agent-force-subagent')
-  expect(sentContent).not.toBe('original content')
+  // marker 通道已删：内容与原文全文相等（强于「不含 marker」——不可能有任何前缀/注释包装）
+  expect(sentContent).toBe('original content')
+  expect(sentContent).not.toContain('<!--')
   })
 
-  it('should preserve special characters in agent name and task via JSON escaping', async () => {
-  const client = await connectClient()
-
-  await sendAndCollect(client, {
-    type: 'message.send',
-    id: 'test-2',
-    payload: {
-    sessionId: 'sess-456',
-    content: 'unused',
-    subagent: {
-      agent: 'agent<with>"special&chars',
-      task: 'do <something> "important" & more',
-    },
-    },
-  })
-
-  expect(sendMessageMock).toHaveBeenCalledTimes(1)
-  const sentContent = sendMessageMock.mock.calls[0][1] as string
-
-  // JSON.stringify handles escaping — original characters preserved in parsed JSON
-  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
-  expect(markerMatch).not.toBeNull()
-  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
-  const parsed = JSON.parse(decoded)
-  expect(parsed.agent).toBe('agent<with>"special&chars')
-  expect(parsed.task).toBe('do <something> "important" & more')
-  })
-
-  it('should send raw content when subagent field is absent', async () => {
+  it('subagent 键的空字段变体（agent/task 空串）同样被忽略，原文直发', async () => {
   const client = await connectClient()
 
   await sendAndCollect(client, {
     type: 'message.send',
     id: 'test-3',
     payload: {
-    sessionId: 'sess-789',
-    content: 'just a normal message',
-    },
-  })
-
-  expect(sendMessageMock).toHaveBeenCalledTimes(1)
-  const sentContent = sendMessageMock.mock.calls[0][1] as string
-
-  // Should send the raw content as-is
-  expect(sentContent).toBe('just a normal message')
-  expect(sentContent).not.toContain('<tool_call')
-  })
-
-  it('should handle empty task string in subagent', async () => {
-  const client = await connectClient()
-
-  await sendAndCollect(client, {
-    type: 'message.send',
-    id: 'test-4',
-    payload: {
     sessionId: 'sess-empty-task',
-    content: 'fallback',
+    content: 'fallback body',
     subagent: {
       agent: 'test-agent',
       task: '',
@@ -264,64 +220,43 @@ describe('RuntimeServer message.send with subagent field', () => {
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sentContent = sendMessageMock.mock.calls[0][1] as string
-
-  // Even with empty task, should construct the hidden marker prompt
-  expect(sentContent).toContain('xyz-agent-force-subagent')
-  expect(sentContent).not.toContain('<tool_call')
-  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
-  expect(markerMatch).not.toBeNull()
-  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
-  const parsed = JSON.parse(decoded)
-  expect(parsed.agent).toBe('test-agent')
-  expect(parsed.task).toBe('')
+  expect(sentContent).toBe('fallback body')
+  expect(sentContent).not.toContain('<!--')
   })
 
-  it('should produce valid base64-encoded marker for subagent messages', async () => {
+  it('特殊字符原文（XML 危险字符 / 引号 / 换行）原样透传，不做任何包装', async () => {
   const client = await connectClient()
 
+  const rawContent = '<script>alert("xss")</script> & "quoted"\nline2'
   await sendAndCollect(client, {
     type: 'message.send',
-    id: 'test-5',
+    id: 'test-4',
     payload: {
-    sessionId: 'sess-log',
-    content: 'unused',
-    subagent: {
-      agent: 'reviewer',
-      task: 'Review the code',
-    },
+    sessionId: 'sess-special',
+    content: rawContent,
     },
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
   const sentContent = sendMessageMock.mock.calls[0][1] as string
-
-  // Marker should contain base64-encoded JSON, not raw JSON
-  const markerMatch = sentContent.match(/<!-- xyz-agent-force-subagent:(.+?) -->/)
-  expect(markerMatch).not.toBeNull()
-  const decoded = Buffer.from(markerMatch![1], 'base64').toString('utf-8')
-  const parsed = JSON.parse(decoded)
-  expect(parsed.agent).toBe('reviewer')
-  expect(parsed.task).toBe('Review the code')
+  expect(sentContent).toBe(rawContent)
   })
 
-  it('should not modify behavior for normal messages without subagent', async () => {
+  it('带 images 的消息照常透传 images（payload 解构不受 subagent 键删除影响）', async () => {
   const client = await connectClient()
 
-  // Send a normal message
+  const images = [{ data: 'aGk=', mimeType: 'image/png' }]
   await sendAndCollect(client, {
     type: 'message.send',
-    id: 'test-6',
+    id: 'test-5',
     payload: {
-    sessionId: 'sess-normal',
-    content: 'Hello, this is a regular chat message',
+    sessionId: 'sess-img',
+    content: 'see image',
+    images,
     },
   })
 
   expect(sendMessageMock).toHaveBeenCalledTimes(1)
-  expect(sendMessageMock).toHaveBeenCalledWith(
-    'sess-normal',
-    'Hello, this is a regular chat message',
-    undefined,
-  )
+  expect(sendMessageMock).toHaveBeenCalledWith('sess-img', 'see image', images)
   })
 })

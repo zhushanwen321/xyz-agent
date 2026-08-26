@@ -382,7 +382,7 @@ describe('subagent store — cancelSubagent', () => {
     await store.cancelSubagent('session-1', 'bg-cancel-target')
 
     // 调了 RPC
-    expect(sessionApi.subagentAction).toHaveBeenCalledWith('session-1', 'cancel', 'bg-cancel-target')
+    expect(sessionApi.subagentAction).toHaveBeenCalledWith('session-1', 'cancel', { subagentId: 'bg-cancel-target' })
     // 乐观更新：status 变 cancelled（不等 WS 推送）
     expect(store.getRecordsBySession('session-1').find(r => r.subagentId === 'bg-cancel-target')?.status).toBe('cancelled')
   })

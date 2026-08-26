@@ -1,18 +1,21 @@
 /**
  * Composer 命令浮层触发态机（架构审查 F7，从 Composer.vue 拆出）。
  *
- * 职责（单一变化轴「slash/file 浮层触发 + CommandPopover 联动」）：
- * - slash/file 触发态标记（slashTriggerActive / fileTriggerActive）：区分「输入区 / 或 # 触发」
+ * 职责（单一变化轴「slash/file/session/subagent 浮层触发 + CommandPopover 联动」）：
+ * - 四路触发态标记（slash/file/session/subagent TriggerActive）：区分「输入区符号触发」
  *   与「+菜单触发」两条打开浮层路径——仅输入区路径设 true，使后续 trigger:null 能正确关闭浮层。
- * - onSlashTrigger / onFileTrigger：输入区触发事件路由（开/关浮层 + 记 query 透传过滤）。
+ * - onSlashTrigger / onFileTrigger / onSessionTrigger / onSubagentTrigger：输入区触发
+ *   事件路由（开/关浮层 + 记 query 透传过滤）。四符号语义（composer-symbol-system）：
+ *   $ 文件（file-trigger emit）/ # session（session-trigger）/ @ subagent（subagent-trigger）/ / 命令。
  * - onAddSelect：+ 菜单打开 slash 浮层（不设触发态，防普通键误关）。
- * - onCmdSelect：选中后插 chip（slash/file），清过滤文本 + 复位触发态。
+ * - onCmdSelect：选中后插 chip（slash/file/session/subagent），清过滤文本 + 复位触发态。
  * - pendingSlash watch：消费 SearchModal 经 commandStore 注入的 slash 请求。
  * - commandPopoverRef + cmdOpen：键盘路由（⏎/Esc）与 v-model:open 绑定。
  *
  * 不含：发送/steer/abort 编排、模型/思考等级、草稿维护（均留在 Composer.vue / 其他 composable）。
  */
 import { ref, watch, type Ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
 import { pickFile } from '@/lib/ipc'
 // W4：ComposerInput 迁 ui 包，类型 import 改 ui 包路径（旧 renderer 路径已删）
@@ -22,24 +25,48 @@ import type CommandPopover from '@/components/panel/CommandPopover.vue'
 /** + 菜单「附件」项的图片类型过滤扩展名（「图片」入口 pickFile filters 用） */
 const IMAGE_FILTER_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
 
+/** 命令浮层四路类型（四符号体系：$/file、#//session、@/subagent、//slash） */
+export type CommandPopoverType = 'file' | 'slash' | 'session' | 'subagent'
+
+/** 浮层选中 payload（四路归一；name 保留兼容 slash/file，session/subagent 走专属字段） */
+export interface CommandSelectPayload {
+  type: CommandPopoverType
+  name: string
+  icon?: string
+  description?: string
+  /** session 路：选中 session 的 id（TUI session_read 协议消费） */
+  sessionId?: string
+  /** session 路：显示 label（人可读标题，chip 展示用） */
+  label?: string
+  /** subagent 路：选中 record id；「新建」项为空串（语义由上层定） */
+  subagentId?: string
+  /** subagent 路：短标签；「新建」项为空串 */
+  slug?: string
+}
+
 export function useCommandPopoverTrigger(
   inputRef: Ref<InstanceType<typeof ComposerInput> | null>,
   sessionId: Ref<string | null>,
 ): {
   cmdOpen: Ref<boolean>
-  cmdType: Ref<'file' | 'slash'>
+  cmdType: Ref<CommandPopoverType>
   slashQuery: Ref<string>
   fileQuery: Ref<string>
+  sessionQuery: Ref<string>
+  subagentQuery: Ref<string>
   commandPopoverRef: Ref<InstanceType<typeof CommandPopover> | null>
   onSlashTrigger: (payload: { query: string } | null) => void
   onFileTrigger: (payload: { query: string } | null) => void
+  onSessionTrigger: (payload: { query: string } | null) => void
+  onSubagentTrigger: (payload: { query: string } | null) => void
   onAddSelect: (type: 'attach' | 'image' | 'slash') => Promise<void>
-  onCmdSelect: (payload: { type: 'file' | 'slash'; name: string; icon?: string; description?: string }) => void
+  onCmdSelect: (payload: CommandSelectPayload) => void
 } {
+  const { t } = useI18n()
   const commandStore = useCommandStore()
-  /** 命令浮层状态（§2d #//） */
+  /** 命令浮层状态（§2d #/$/@//） */
   const cmdOpen = ref(false)
-  const cmdType = ref<'file' | 'slash'>('file')
+  const cmdType = ref<CommandPopoverType>('file')
   /**
    * slash 触发态标记：区分「输入区 / 触发」与「+菜单触发」两条打开浮层路径。
    * 仅输入区 / 触发打开时为 true，使后续 slash-trigger:null 能正确关闭；
@@ -48,10 +75,18 @@ export function useCommandPopoverTrigger(
   const slashTriggerActive = ref(false)
   /** slash 命令过滤 query（输入区 / 后内容），透传给 CommandPopover 过滤 */
   const slashQuery = ref('')
-  /** # 文件触发态标记：同 slashTriggerActive 语义，区分输入区 # 触发与 +菜单触发两条路径 */
+  /** $ 文件触发态标记：同 slashTriggerActive 语义，区分输入区 $ 触发与 +菜单触发两条路径 */
   const fileTriggerActive = ref(false)
-  /** # 文件过滤 query（输入区 # 后内容），透传给 CommandPopover 过滤 */
+  /** $ 文件过滤 query（输入区 $ 后内容），透传给 CommandPopover 过滤 */
   const fileQuery = ref('')
+  /** # session 触发态标记（四符号体系新增，同上语义） */
+  const sessionTriggerActive = ref(false)
+  /** # session 过滤 query（输入区 # 后内容），透传给 CommandPopover 过滤 */
+  const sessionQuery = ref('')
+  /** @ subagent 触发态标记（四符号体系新增，同上语义） */
+  const subagentTriggerActive = ref(false)
+  /** @ subagent 过滤 query（输入区 @ 后内容），透传给 CommandPopover 过滤 */
+  const subagentQuery = ref('')
   const commandPopoverRef = ref<InstanceType<typeof CommandPopover> | null>(null)
 
   /**
@@ -74,35 +109,36 @@ export function useCommandPopoverTrigger(
     },
   )
 
-  /** 输入区 slash-trigger 事件路由：
-   *  - payload 非 null（/ 在最左且无 chip）→ 打开 slash 浮层，记录 query 透传过滤，标记 slashTriggerActive
-   *  - payload 为 null 且 slashTriggerActive → 关闭浮层（仅输入区触发路径；+菜单路径 slashTriggerActive=false 不受影响） */
-  function onSlashTrigger(payload: { query: string } | null): void {
-    if (payload) {
-      slashTriggerActive.value = true
-      slashQuery.value = payload.query
-      cmdType.value = 'slash'
-      cmdOpen.value = true
-    } else if (slashTriggerActive.value) {
-      cmdOpen.value = false
-      slashTriggerActive.value = false
+  /** 四路输入区触发事件路由的共用态机（$/#/@// 四符号行为一致，只差触发态、query、cmdType 三轴）：
+   *  - payload 非 null（光标前有「空格/行首 + 符号 + 非空白」）→ 打开对应浮层，记录 query 透传过滤，标记触发态
+   *  - payload 为 null 且该路触发态为 true → 关闭浮层（符号后遇空格等终止场景；仅输入区触发
+   *    路径受影响——+菜单路径不设触发态，普通键不会误关） */
+  function makeTriggerHandler(
+    active: Ref<boolean>,
+    query: Ref<string>,
+    type: CommandPopoverType,
+  ): (payload: { query: string } | null) => void {
+    return (payload) => {
+      if (payload) {
+        active.value = true
+        query.value = payload.query
+        cmdType.value = type
+        cmdOpen.value = true
+      } else if (active.value) {
+        cmdOpen.value = false
+        active.value = false
+      }
     }
   }
 
-  /** 输入区 file-trigger 事件路由（同 onSlashTrigger 语义，对应 # 文件浮层）：
-   *  - payload 非 null（光标前有「空格/行首 + # + 非空白」）→ 打开 file 浮层，记录 query 透传过滤
-   *  - payload 为 null 且 fileTriggerActive → 关闭浮层（# 后遇空格等终止场景） */
-  function onFileTrigger(payload: { query: string } | null): void {
-    if (payload) {
-      fileTriggerActive.value = true
-      fileQuery.value = payload.query
-      cmdType.value = 'file'
-      cmdOpen.value = true
-    } else if (fileTriggerActive.value) {
-      cmdOpen.value = false
-      fileTriggerActive.value = false
-    }
-  }
+  /** 输入区 / 触发 → slash 浮层（payload 非 null 条件：/ 在最左且无 chip） */
+  const onSlashTrigger = makeTriggerHandler(slashTriggerActive, slashQuery, 'slash')
+  /** 输入区 $ 触发 → file 浮层 */
+  const onFileTrigger = makeTriggerHandler(fileTriggerActive, fileQuery, 'file')
+  /** 输入区 # 触发 → session 浮层（四符号体系） */
+  const onSessionTrigger = makeTriggerHandler(sessionTriggerActive, sessionQuery, 'session')
+  /** 输入区 @ 触发 → subagent 浮层（四符号体系） */
+  const onSubagentTrigger = makeTriggerHandler(subagentTriggerActive, subagentQuery, 'subagent')
 
   /** + 菜单选择：
    *  - attach（任意文件）：调 pickFile IPC（无 filters），选中后插文本路径到输入区。canceled 静默 return。
@@ -111,7 +147,7 @@ export function useCommandPopoverTrigger(
    *
    *  pickFile 降级（web/mock 无 preload）→ {canceled:true, path:null}，onAddSelect 视同取消 return（不 throw）。
    *  pickFile 异常（reject）→ try/catch 降级：记 warn 后 return（取消已是预期路径，不 toast / 不重抛）。
-   *  file 入口已移除（# 改走 inline 触发）。 */
+   *  file 入口已移除（$ 文件走输入区 inline 触发，四符号体系 D 项确认 +菜单无 #/$ 提示入口）。 */
   async function onAddSelect(type: 'attach' | 'image' | 'slash'): Promise<void> {
     if (type === 'attach' || type === 'image') {
       inputRef.value?.focus()
@@ -149,25 +185,36 @@ export function useCommandPopoverTrigger(
     cmdOpen.value = true
   }
 
-  /** 命令浮层选中：插 slash chip / file chip。slash 分支先清掉 /query 过滤文本再插 chip；
-   *  file 分支先清掉 #query 过滤文本（任意位置，只删 # 到光标这段）再插 mention chip。
+  /** 命令浮层选中：四路各先清「符号+query」过滤文本再插对应 chip。
+   *  - slash：clearSlashQueryText → insertSlashChip
+   *  - file（$ 触发）：clearDollarFileQueryText → insertFileChip（绿色 file chip，
+   *    与原 insertMentionChip('#') 等价——dom-core 内 # 委托 insertFileChip，直接走本名）
+   *  - session（# 触发）：clearSessionQueryText → insertSessionChip（显示 label 非 uuid）
+   *  - subagent（@ 触发）：clearSubagentQueryText → insertSubagentChip；「新建」项
+   *    （subagentId/slug 空串）插占位 slug chip（@新任务），发送分流在 U2b 收口。
    *  icon 按 source 透传给 chip（extension→terminal / skill→star / 默认 wrench），与选择框图标一致。 */
-  function onCmdSelect(payload: {
-    type: 'file' | 'slash'
-    name: string
-    icon?: string
-    description?: string
-  }): void {
+  function onCmdSelect(payload: CommandSelectPayload): void {
     cmdOpen.value = false
     slashTriggerActive.value = false // 复位触发态标记
-    fileTriggerActive.value = false // 复位 # 触发态标记
+    fileTriggerActive.value = false // 复位 $ 触发态标记
+    sessionTriggerActive.value = false // 复位 # 触发态标记
+    subagentTriggerActive.value = false // 复位 @ 触发态标记
     inputRef.value?.focus()
     if (payload.type === 'slash') {
       inputRef.value?.clearSlashQueryText()
       inputRef.value?.insertSlashChip(payload.name, payload.icon)
+    } else if (payload.type === 'session') {
+      inputRef.value?.clearSessionQueryText()
+      inputRef.value?.insertSessionChip(payload.sessionId ?? '', payload.label ?? payload.name)
+    } else if (payload.type === 'subagent') {
+      inputRef.value?.clearSubagentQueryText()
+      const slug = payload.slug || ''
+      const subagentId = payload.subagentId || ''
+      // 「新建 subagent」项（两字段空串）：插占位 slug chip（设计 3.1.3 场景 2）
+      inputRef.value?.insertSubagentChip(subagentId, slug || t('panel.command.newSubagentPlaceholder'))
     } else {
-      inputRef.value?.clearHashQueryText()
-      inputRef.value?.insertMentionChip('#', payload.name)
+      inputRef.value?.clearDollarFileQueryText()
+      inputRef.value?.insertFileChip(payload.name)
     }
   }
 
@@ -176,9 +223,13 @@ export function useCommandPopoverTrigger(
     cmdType,
     slashQuery,
     fileQuery,
+    sessionQuery,
+    subagentQuery,
     commandPopoverRef,
     onSlashTrigger,
     onFileTrigger,
+    onSessionTrigger,
+    onSubagentTrigger,
     onAddSelect,
     onCmdSelect,
   }

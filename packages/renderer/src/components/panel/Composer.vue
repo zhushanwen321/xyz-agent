@@ -29,7 +29,7 @@
       :variant="variant"
       :project-skills="landingProjectSkills"
       :global-skills="landingGlobalSkills"
-      :query="cmdType === 'file' ? fileQuery : slashQuery"
+      :query="popoverQuery"
       @select="onCmdSelect"
     >
       <div
@@ -74,10 +74,13 @@
           :placeholder="placeholder"
           :disabled="isSending"
           :session-id="sessionId"
+          :suppress-triggers="isBashMode"
           @input="onInputChange"
           @keydown="onKeydown"
           @slash-trigger="onSlashTrigger"
           @file-trigger="onFileTrigger"
+          @session-trigger="onSessionTrigger"
+          @subagent-trigger="onSubagentTrigger"
           @focus="onBoxFocusIn"
           @blur="onBoxFocusOut"
         />
@@ -101,8 +104,8 @@
         <ContextCapacityPopover :session-id="sessionId ?? undefined" :model-id="currentModelId" />
         <!-- 模型（spec §2b：click 出模型切换 popover） -->
         <ModelSelectPopover :selected="currentModelId" @select="onModelSelect" />
-        <!-- 思考等级（spec §2c：click 出 6 级 popover；level 从 session 透传） -->
-        <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" @select="onThinkingSelect" />
+        <!-- 思考等级（spec §2c：click 出档位 popover；level 从 session 透传；reasoning 决定可用档集——non-reasoning 只 off） -->
+        <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" :reasoning="currentModelReasoning" @select="onThinkingSelect" />
 
         <!-- 发送位：staging（fork/handoff，含 streaming 中）→staging send / S6 streaming/dispatching→stop /
              S5 sending→spinner / compact→queue-send（可点，入队待重放）/ S1·S2 idle→send。
@@ -228,12 +231,24 @@ const {
   cmdType,
   slashQuery,
   fileQuery,
+  sessionQuery,
+  subagentQuery,
   commandPopoverRef,
   onSlashTrigger,
   onFileTrigger,
+  onSessionTrigger,
+  onSubagentTrigger,
   onAddSelect,
   onCmdSelect,
 } = useCommandPopoverTrigger(inputRef, sessionIdRef)
+
+/** 命令浮层过滤 query 四路映射（四符号体系：$ file / # session / @ subagent / / slash） */
+const popoverQuery = computed(() => {
+  if (cmdType.value === 'file') return fileQuery.value
+  if (cmdType.value === 'session') return sessionQuery.value
+  if (cmdType.value === 'subagent') return subagentQuery.value
+  return slashQuery.value
+})
 
 const isSending = ref(false)
 /** composer-box 聚焦态（v6 §6.1 .focused：border-accent + 3px accent 外环 --accent-ring）。
@@ -318,6 +333,7 @@ const {
   currentModelId,
   currentThinkingLevel,
   currentThinkingLevelMap,
+  currentModelReasoning,
   onModelSelect,
   onThinkingSelect,
   handleArrowUp,
@@ -340,6 +356,9 @@ const {
   canSubmit,
   boxClass,
   placeholder,
+  // bash 态（draft.trimStart().startsWith('!')，core dispatch/bash.ts isBashMode 同源判定）：
+  // 传 ComposerInput suppressTriggers——bash 模式下 $/#/@/ 全部不触发浮层（设计 D6 豁免）
+  isBashMode,
 } = shell
 
 watch(

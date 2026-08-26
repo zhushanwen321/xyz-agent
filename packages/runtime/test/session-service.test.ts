@@ -13,7 +13,8 @@
  * - existsSync 用真实 node:fs，测试数据用真实存在的 cwd（tmpdir）。
  *
  * 覆盖分类（对应 plan 归属表）：
- * - dispatcher：sendMessage / sendSubagentMessage / abort / steerMessage / followUpMessage / compact
+ * - dispatcher：sendMessage / abort / steerMessage / followUpMessage / compact
+ *   （[HISTORICAL] sendSubagentMessage 已随 marker 通道废弃删除，composer 四符号设计 D2）
  * - lifecycle：create / delete / renameSession / restoreSession
  * - Facade：switchModel / setThinkingLevel / getHistory / hasActiveSession / getRpcClient /
  *           ensureActive / listPersistedSessions / getSummary / destroyAll / setSendMessageHook
@@ -109,7 +110,7 @@ vi.mock('../src/services/session-history.js', () => ({
 
 // ── Mock 之后再 import 被测对象 ─────────────────────────────────────
 
-import { SessionService } from '../src/services/session/session-service.js'
+import { SessionService, encodeDirectiveText } from '../src/services/session/session-service.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
 
@@ -489,55 +490,6 @@ describe('SessionService · dispatcher', () => {
       await setup.service.sendMessage(id, 'hi')
       const summary = setup.service.getSummary(id)
       expect(summary?.status).toBe('active')
-    })
-  })
-
-  describe('sendSubagentMessage', () => {
-    it('injects base64 marker before the prompt text', async () => {
-      const client = setup.mountClient('sid-sub')
-      await setup.service.sendSubagentMessage('sid-sub', 'coder', 'fix the bug')
-      expect(client.prompt).toHaveBeenCalledTimes(1)
-      const arg = client.prompt.mock.calls[0][0] as string
-      expect(arg).toContain('<!-- xyz-agent-force-subagent:')
-      // base64 of {"agent":"coder","task":"fix the bug"}
-      const expectedB64 = Buffer.from(JSON.stringify({ agent: 'coder', task: 'fix the bug' }), 'utf-8').toString('base64')
-      expect(arg).toContain(expectedB64)
-      expect(arg.endsWith('\nExecute task using agent \'coder\'')).toBe(true)
-    })
-
-    it('uses provided content as prompt body when given', async () => {
-      const client = setup.mountClient('sid-sub')
-      await setup.service.sendSubagentMessage('sid-sub', 'coder', 't', 'do this please')
-      const arg = client.prompt.mock.calls[0][0] as string
-      expect(arg.endsWith('\ndo this please')).toBe(true)
-    })
-
-    // Fix-1：subagent 路径同样消费 modifiedContent——改写后的正文拼在 marker 之后
-    it('sends hook-modified body with marker prefix when hook returns modifiedContent', async () => {
-      const client = setup.mountClient('sid-sub')
-      setup.service.setSendMessageHook(async () => ({
-        blocked: false,
-        modifiedContent: 'rewritten body',
-      }))
-      await setup.service.sendSubagentMessage('sid-sub', 'coder', 't', 'raw body')
-      const arg = client.prompt.mock.calls[0][0] as string
-      expect(arg.startsWith('<!-- xyz-agent-force-subagent:')).toBe(true)
-      expect(arg.endsWith('\nrewritten body')).toBe(true)
-    })
-
-    it('hook audits the prompt text (not the marker) and blocks send', async () => {
-      const client = setup.mountClient('sid-sub')
-      let seenContent = ''
-      setup.service.setSendMessageHook(async (_sid, content) => {
-        seenContent = content
-        return { blocked: true, reason: 'blocked' }
-      })
-      await setup.service.sendSubagentMessage('sid-sub', 'coder', 't', 'raw-user-input')
-      // hook 收到的是用户原文，不含 marker
-      expect(seenContent).toBe('raw-user-input')
-      expect(client.prompt).not.toHaveBeenCalled()
-      const err = findBroadcast(setup, 'message.error')
-      expect(err?.payload).toMatchObject({ message: 'blocked' })
     })
   })
 
@@ -1438,15 +1390,91 @@ describe('SessionService · Facade', () => {
       await expect(setup.service.workflowAction('ghost', 'abort', 'wf-x')).rejects.toThrow('not active')
     })
 
-    it('subagentAction 转发 /subagents <action> <subagentId> 到 pi prompt', async () => {
+    it('subagentAction cancel 转发 /subagents cancel <subagentId> 到 pi prompt', async () => {
       const { id, client } = await setup.seedSession()
       vi.mocked(client.prompt).mockClear()
-      await setup.service.subagentAction(id, 'cancel', 'bg-abc-1-123')
+      await setup.service.subagentAction(id, 'cancel', { subagentId: 'bg-abc-1-123' })
       expect(client.prompt).toHaveBeenCalledWith('/subagents cancel bg-abc-1-123')
     })
 
     it('subagentAction session 不活跃 → throw', async () => {
-      await expect(setup.service.subagentAction('ghost', 'cancel', 'bg-x')).rejects.toThrow('not active')
+      await expect(setup.service.subagentAction('ghost', 'cancel', { subagentId: 'bg-x' })).rejects.toThrow('not active')
+    })
+
+    it('subagentAction message 转发 /subagents message <subagentId> <text>', async () => {
+      const { id, client } = await setup.seedSession()
+      vi.mocked(client.prompt).mockClear()
+      await setup.service.subagentAction(id, 'message', { subagentId: 'sa-1', text: '汇报当前进度' })
+      expect(client.prompt).toHaveBeenCalledWith('/subagents message sa-1 汇报当前进度')
+    })
+
+    it('subagentAction start 转发 /subagents start <slug> <task>', async () => {
+      const { id, client } = await setup.seedSession()
+      vi.mocked(client.prompt).mockClear()
+      await setup.service.subagentAction(id, 'start', { slug: 'fix-login', task: '修复登录页 并写测试' })
+      expect(client.prompt).toHaveBeenCalledWith('/subagents start fix-login 修复登录页 并写测试')
+    })
+
+    // ── 换行编码（转义协议，composer 四符号 §3.3.3 / 探针 P3）──
+    // 命令必须单行：真实换行编码为字面 \n 两字符，原生反斜杠编码为 \\（防歧义），
+    // extension 侧 decodeNewlineEscapes 互逆还原（两侧测试对同一 wire 协议双向钉死）。
+
+    it('message text 含真实换行 → 编码为字面 \\n（命令保持单行）', async () => {
+      const { id, client } = await setup.seedSession()
+      await setup.service.subagentAction(id, 'message', { subagentId: 'sa-1', text: '第一行\n第二行' })
+      // 期望串是字面反斜杠+n（源码里写 \\n）
+      expect(client.prompt).toHaveBeenCalledWith('/subagents message sa-1 第一行\\n第二行')
+    })
+
+    it('message text 含字面反斜杠+n（如路径 C:\\new）→ 反斜杠转义，不与换行歧义', async () => {
+      const { id, client } = await setup.seedSession()
+      // 源码 'C:\\new' = 字面反斜杠 + n
+      await setup.service.subagentAction(id, 'message', { subagentId: 'sa-1', text: '路径 C:\\new 的说明' })
+      // 期望：反斜杠翻倍为 \\，n 保持字面
+      expect(client.prompt).toHaveBeenCalledWith('/subagents message sa-1 路径 C:\\\\new 的说明')
+    })
+
+    it('start task 同样走换行编码', async () => {
+      const { id, client } = await setup.seedSession()
+      await setup.service.subagentAction(id, 'start', { slug: 'my-slug', task: '任务一\n任务二' })
+      expect(client.prompt).toHaveBeenCalledWith('/subagents start my-slug 任务一\\n任务二')
+    })
+
+    // ── 转义协议互逆（encode ↔ extension decodeNewlineEscapes）──
+    // decode 镜像：extension 侧 decodeNewlineEscapes 的等价实现（runtime 不依赖
+    // extension 包，互逆性靠两侧测试对同一 wire 协议各自钉死）。
+    const decodeMirror = (s: string): string =>
+      s.replace(/\\\\|\\n/g, (m) => (m === '\\\\' ? '\\' : '\n'))
+
+    it.each([
+      ['原文含字面 \\n（反斜杠+n）', '路径 C:\\new folder'],
+      ['原文含反斜杠（非 n 前缀）', '正则 \\d+ 与 \\\\server\\share'],
+      ['原文含真实换行', '第一行\n第二行'],
+      ['混合：反斜杠 + 真实换行 + 字面 \\n 同文', 'C:\\new\n正则 \\d+\n收尾'],
+    ])('encodeDirectiveText 互逆（%s）→ decode(encode(x)) === x', (_label, original) => {
+      expect(decodeMirror(encodeDirectiveText(original))).toBe(original)
+    })
+
+    it('encodeDirectiveText 产物不含真实换行（命令单行不变式）', () => {
+      const encoded = encodeDirectiveText('a\nb\nc\\d')
+      expect(encoded.includes('\n')).toBe(false)
+    })
+
+    // ── 必填字段 fail-fast（错误指向恢复动作：调用方补齐字段）──
+
+    it('cancel 缺 subagentId → throw', async () => {
+      const { id } = await setup.seedSession()
+      await expect(setup.service.subagentAction(id, 'cancel', {})).rejects.toThrow('subagentId is required')
+    })
+
+    it('message 缺 text → throw', async () => {
+      const { id } = await setup.seedSession()
+      await expect(setup.service.subagentAction(id, 'message', { subagentId: 'sa-1' })).rejects.toThrow('subagentId and text are required')
+    })
+
+    it('start 缺 slug → throw', async () => {
+      const { id } = await setup.seedSession()
+      await expect(setup.service.subagentAction(id, 'start', { task: 't' })).rejects.toThrow('slug and task are required')
     })
   })
 

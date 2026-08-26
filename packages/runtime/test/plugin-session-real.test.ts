@@ -49,7 +49,6 @@ function createMockSessionService(sessions: SessionSummary[] = []): ISessionServ
     create: vi.fn().mockResolvedValue(createSessionSummary()),
     delete: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
-    sendSubagentMessage: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn().mockResolvedValue(undefined),
     switchModel: vi.fn().mockResolvedValue('provider/model-a'),
     compact: vi.fn().mockResolvedValue(undefined),

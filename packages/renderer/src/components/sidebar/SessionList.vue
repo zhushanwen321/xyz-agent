@@ -77,6 +77,7 @@
             @delete="emit('delete', $event)"
             @set-project="emit('setProject', $event)"
             @navigate-parent="emit('navigateParent', $event)"
+            @force-quit="emit('forceQuit', $event)"
           />
           <!-- 当前 session 的分支：从组内 sessions filter parentSession 指向当前 session
                （sessionFile 路径或 sessionId，FR-20 fallback）。无分支时不渲染空容器。 -->
@@ -149,6 +150,8 @@ const emit = defineEmits<{
   /** 查看父 session（agent-managed-session U8）：透传 SessionItem 的 navigateParent，
    *  跳转接线（select 该父 session）由上层 Sidebar/store 完成。 */
   navigateParent: [parentAgentSessionId: string]
+  /** 强制退出（两段确认后）：透传 SessionItem 的 forceQuit，Sidebar 接 sessionApi.forceQuit */
+  forceQuit: [sessionId: string]
 }>()
 
 /**
