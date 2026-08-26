@@ -103,18 +103,18 @@ export interface UpdateSettings {
 }
 
 /**
- * 升级错误事件 payload（D3：suggestion 全链路透传）。
+ * 代理测试结果载荷（main → preload → renderer）。
  *
- * main → preload → renderer 全链路共享此类型，
- * 消除 preload.ts / lib/ipc.ts 两层类型签名丢弃 suggestion 的断点。
+ * 失败时含错误码与建议，renderer 据此展示两段式测试结果。
  */
-export interface UpdateErrorPayload {
-  /** 升级阶段 */
-  stage: UpdateStage
-  /** 用户友好的错误消息（中文） */
-  message: string
-  /** 错误码（可选，供前端精确分支） */
-  errorCode?: string
-  /** 恢复建议（可选，两行：摘要 + 指引） */
+export interface ProxyTestResult {
+  /** 测试是否成功 */
+  success: boolean
+  /** 错误码（失败时） */
+  code?: string
+  /** 错误摘要（失败时） */
+  message?: string
+  /** 解决建议（失败时） */
   suggestion?: string
 }
+

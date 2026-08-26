@@ -123,23 +123,30 @@
 
       <div class="flex items-center gap-2">
         <!-- 测试结果 -->
-        <span
+        <div
           v-if="testResult !== null"
           class="text-[11px]"
-          :class="{
-            'text-success': testResult.status === 'success',
-            'text-danger': testResult.status === 'failed',
-            'text-muted': testResult.status === 'skipped',
-          }"
           data-testid="test-proxy-result"
         >
-          {{ testResult.status === 'success'
-            ? t('settings.update.testSuccess')
-            : testResult.status === 'skipped'
-              ? (testResult.message ?? '')
-              : t('settings.update.testFailed', { msg: testResult.message ?? '' })
-          }}
-        </span>
+          <span
+            :class="{
+              'text-success': testResult.status === 'success',
+              'text-danger': testResult.status === 'failed',
+              'text-muted': testResult.status === 'skipped',
+            }"
+          >
+            {{ testResult.status === 'success'
+              ? t('settings.update.testSuccess')
+              : testResult.status === 'skipped'
+                ? (testResult.message ?? '')
+                : t('settings.update.testFailed', { msg: testResult.message ?? '' })
+            }}
+          </span>
+          <!-- 恢复指引（suggestion 存在时显示） -->
+          <div v-if="testResult.status === 'failed' && testResult.suggestion" class="mt-0.5 text-muted">
+            {{ testResult.suggestion }}
+          </div>
+        </div>
 
         <!-- 保存按钮 -->
         <Button
@@ -189,7 +196,7 @@ const testing = ref(false)
 /** 保存中 */
 const saving = ref(false)
 /** 测试结果（null=未测试） */
-type TestResult = { status: 'success' } | { status: 'failed'; message?: string } | { status: 'skipped'; message?: string }
+type TestResult = { status: 'success' } | { status: 'failed'; message?: string; suggestion?: string } | { status: 'skipped'; message?: string }
 const testResult = ref<TestResult | null>(null)
 
 /** 预下载开关（从 main 进程加载，切换时立即持久化） */
@@ -313,7 +320,7 @@ async function onTestProxy() {
     const res = await testProxy(config)
     testResult.value = res.success
       ? { status: 'success' }
-      : { status: 'failed', message: res.message }
+      : { status: 'failed', message: res.message, suggestion: res.suggestion }
   } catch (err) {
     testResult.value = {
       status: 'failed',

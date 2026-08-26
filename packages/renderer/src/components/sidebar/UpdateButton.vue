@@ -25,7 +25,8 @@
         </Button>
       </HoverCardTrigger>
       <HoverCardContent side="top" class="release-notes-content max-h-[360px] w-[360px] overflow-auto p-4 text-[length:var(--text-xs)] text-neutral-fg">
-        <div class="mb-2 text-[length:var(--text-sm)] font-semibold text-accent">{{ t('sidebar.update.newVersion') }}</div>
+        <div class="mb-2 text-[length:var(--text-sm)] font-semibold text-accent">{{ t('sidebar.update.newVersionWithVersion', { version: state.latestRelease?.version }) }}</div>
+        <div class="mb-3 text-[length:var(--text-2xs)] text-muted">{{ t('sidebar.update.versionTransition', { from: appVersion, to: state.latestRelease?.version }) }}</div>
         <!--
           不复用 MarkdownRenderer 组件：该组件位于 panel/message-stream 下，强依赖 fileSearch/fileTree/
           sideDrawer/AmbiguousFilePopover/MermaidRenderer 等 panel 上下文（sessionId 在此无值，文件路径识别/
@@ -107,8 +108,11 @@
           <span>{{ t('sidebar.update.error') }}</span>
         </Button>
       </HoverCardTrigger>
-      <HoverCardContent side="top" class="w-[280px] p-3 text-[length:var(--text-2xs)] text-neutral-mid">
-        {{ state.errorMessage }}
+      <HoverCardContent side="top" class="w-[280px] p-3 text-[length:var(--text-2xs)]">
+        <!-- 错误摘要 -->
+        <div class="text-danger">{{ state.errorMessage }}</div>
+        <!-- 恢复指引（suggestion 存在时显示） -->
+        <div v-if="state.errorSuggestion" class="mt-1 text-muted">{{ state.errorSuggestion }}</div>
         <Button
           variant="secondary"
           size="sm"
@@ -173,6 +177,9 @@ import { useAppUpdate } from '@/composables/features/settings/useAppUpdate'
 
 const { t } = useI18n()
 const { state, performDownload, performInstall, openFallbackUrl } = useAppUpdate()
+
+/** 当前应用版本（vite define 注入，全局声明见 env.d.ts） */
+const appVersion = __APP_VERSION__
 
 /** 确认重启安装 Dialog 开关 */
 const showConfirmDialog = ref(false)

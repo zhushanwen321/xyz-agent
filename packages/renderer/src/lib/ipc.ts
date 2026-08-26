@@ -7,7 +7,7 @@
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -285,8 +285,8 @@ export function onUpdateProgress(cb: (p: { stage: UpdateStage; percent: number }
   return api?.onUpdateProgress(cb) ?? (() => {})
 }
 
-/** 监听升级错误事件（stage + message + errorCode），返回取消订阅函数。无 IPC 返回 no-op */
-export function onUpdateError(cb: (e: { stage: string; message: string; errorCode?: string }) => void): () => void {
+/** 监听升级错误事件（stage + message + errorCode + suggestion），返回取消订阅函数。无 IPC 返回 no-op */
+export function onUpdateError(cb: (e: UpdateErrorPayload) => void): () => void {
   return api?.onUpdateError(cb) ?? (() => {})
 }
 
@@ -325,7 +325,7 @@ export function setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig)
 }
 
 /** 测试代理连接。无 IPC 时返回成功（跳过测试） */
-export function testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }> {
+export function testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<ProxyTestResult> {
   return api?.testProxy(config) ?? Promise.resolve({ success: true, message: 'No IPC available' })
 }
 

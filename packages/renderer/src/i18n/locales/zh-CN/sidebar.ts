@@ -21,6 +21,8 @@ export default {
   retry: '重试',
   update: {
     newVersion: '新版本可用',
+    newVersionWithVersion: '发现新版本 v{version}',
+    versionTransition: '当前 v{from} → v{to}',
     downloading: '下载中 {percent}%',
     replacing: '替换中',
     restarting: '即将重启',
