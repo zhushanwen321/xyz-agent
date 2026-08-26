@@ -239,6 +239,10 @@ export class RelayRegistry {
     try {
       const parsed = JSON.parse(line) as InboundFrame
       if (typeof parsed !== 'object' || parsed === null || typeof parsed.kind !== 'string') return null
+      // data 帧形状守卫：b64 缺失/非 string 时 Buffer.from 抛 TypeError，且本调用点在
+      // readline 回调内无捕获——畸形帧按 malformed 丢弃（数据阶段仅丢帧不断连，同连接
+      // 后续帧仍有效；与握手首帧 malformed 的 reject+断连语义按阶段区分）
+      if (parsed.kind === 'data' && (parsed.dir !== 'down' || typeof parsed.b64 !== 'string')) return null
       return parsed
     } catch {
       return null

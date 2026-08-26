@@ -11,6 +11,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import lockfile from 'proper-lockfile'
 import { SessionService } from '../services/session/session-service.js'
 import { MessageBus } from '../services/message-bus/message-bus.js'
 import type { IMessageBroker } from '../interfaces.js'
@@ -124,5 +125,28 @@ describe('setSubagentDefaultEngine', () => {
     const statBefore = fs.statSync(p)
     await makeService().setSubagentDefaultEngine('zcode')
     expect(fs.statSync(p).mtimeMs).toBe(statBefore.mtimeMs)
+  })
+
+  it('RMW 持跨进程锁：他方持同锁期间写入 fail-fast（ELOCKED），锁释放后重试成功且其他字段不被覆盖回滚', async () => {
+    // review round1 MUST_FIX：config.json 是多写方共享文件（runtime RMW / agent bash /
+    // 用户手编），RMW 必须持 withFileLockSync（lockfile = <config.json>.lock）。
+    writeJson('engines.json', { v: 1, engines: ['pi', 'zcode'], updatedAt: 1 })
+    writeJson('config.json', { version: 1, maxConcurrent: 5, engineRouting: { strict: true } })
+    const configPath = path.join(tmpDataRoot, 'pi/agent/subagents/config.json')
+    // 他方（遵守锁协议的另一写方）持同一把锁
+    const release = lockfile.lockSync(configPath, { realpath: false })
+    const p = makeService().setSubagentDefaultEngine('zcode')
+    await expect(p).rejects.toThrow(/ELOCKED/)
+    // 锁竞争失败零写入（不是降级无锁写）：defaultEngine 未落盘，其他字段原样
+    const confDuring = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>
+    expect(confDuring['defaultEngine']).toBeUndefined()
+    expect(confDuring['maxConcurrent']).toBe(5)
+    release()
+    // 锁释放后重试成功：defaultEngine 写入，engineRouting / maxConcurrent 不被 RMW 覆盖回滚
+    await makeService().setSubagentDefaultEngine('zcode')
+    const confAfter = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>
+    expect(confAfter['defaultEngine']).toBe('zcode')
+    expect(confAfter['maxConcurrent']).toBe(5)
+    expect(confAfter['engineRouting']).toEqual({ strict: true })
   })
 })

@@ -301,6 +301,25 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     agent.destroy()
   })
 
+  t('畸形 data 帧（缺 b64 / b64 非 string / null）→ 静默丢弃不炸服务，后续合法帧仍转发', async () => {
+    // review round1 MUST_FIX：修复前 Buffer.from(undefined, 'base64') 在 readline 回调内
+    // 抛未捕获 TypeError 可击穿 relay 服务；修复后按 malformed 丢弃（不断连），连接存活
+    await startServer()
+    const agent = new TestAgent(getActiveRelaySocketPath()!)
+    await agent.opened
+    agent.send(validHandshake({ argv: [fakePi, 'echo'] }))
+    agent.send({ v: 1, kind: 'data', dir: 'down' })
+    agent.send({ v: 1, kind: 'data', dir: 'down', b64: 123 })
+    agent.send({ v: 1, kind: 'data', dir: 'down', b64: null })
+    agent.send({ v: 1, kind: 'data', dir: 'down', b64: Buffer.from('PING\n').toString('base64') })
+    await waitFor(() => agent.dataUp().some((b) => b.includes(Buffer.from('ECHO:PING'))), 8_000, 'echo round-trip after malformed frames')
+    // 畸形帧全部丢弃（未进 child stdin）：echo 只回合法帧那一次
+    expect(Buffer.concat(agent.dataUp()).toString('utf-8').match(/ECHO:/g)?.length).toBe(1)
+    // 连接未被断开（服务存活；畸形帧只丢帧不 reject）
+    expect(agent.closed).toBe(false)
+    agent.destroy()
+  })
+
   t('child stderr → up-stderr 帧（不进 tee）', async () => {
     await startServer()
     const agent = new TestAgent(getActiveRelaySocketPath()!)

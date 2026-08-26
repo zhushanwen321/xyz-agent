@@ -66,6 +66,7 @@ import {
 } from './replicated-states.config.js'
 import { HistoryRebuildCache, mergeIncrementalMessages } from './history-rebuild-cache.js'
 import { toErrorMessage, isEnoent, BUILTIN_EXTENSIONS_MISSING } from '../../utils/errors.js'
+import { withFileLockSync } from '../../utils/file-lock.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
 import { PresetService, type PresetResolution } from '../preset-service.js'
 // MessageBus（wave:runtime-wiring）：per-session 消息广播核心。setter 注入（同 setConfigService 模式），
@@ -1093,6 +1094,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /**
    * [U7] 设置全局默认子代理引擎：读改写 config.json（保留其他字段）+ tmp+rename 原子写。
    * engineId 校验：engines.json 清单内才允许（防 GUI 端把未知引擎写进配置）。
+   *
+   * 🔒 跨进程锁（C-data-09）：config.json 与 agent bash 写（subagent-ext-config skill
+   * 指导）、用户手编构成多写方——RMW 全程持 withFileLockSync（lockfile = config.json.lock，
+   * 协议对齐 worktree-config-helper ext-config / settings.json 先例）。锁失败 fail-fast
+   * 抛错（ELOCKED，预算 1s），经 RPC 错误通路返回 GUI。不取锁的 bash/手编写方作为
+   * last-write-wins 残余风险由 data-source-registry.md §6 登记。
    */
   async setSubagentDefaultEngine(engineId: string): Promise<void> {
     const view = await this.getSubagentEngineConfig()
@@ -1100,19 +1107,31 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       throw new Error(`unknown subagent engine '${engineId}' (available: ${view.engines.join(', ')})`)
     }
     const configPath = join(getPiAgentDir(), 'subagents', 'config.json')
-    let conf: Record<string, unknown> = {}
-    try {
-      conf = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>
-    } catch {
-      // 无既有配置 → 新建（extension 读侧对缺字段的容忍与 DEFAULT_CONFIG 对齐）
-      conf = {}
-    }
-    if (conf['defaultEngine'] === engineId) return
-    conf['defaultEngine'] = engineId
-    mkdirSync(join(getPiAgentDir(), 'subagents'), { recursive: true })
-    const tmp = `${configPath}.tmp-${process.pid}-${Date.now()}`
-    writeFileSync(tmp, JSON.stringify(conf, null, 2), 'utf8')
-    renameSync(tmp, configPath)
+    withFileLockSync(configPath, () => {
+      let conf: Record<string, unknown> = {}
+      try {
+        conf = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>
+      } catch {
+        // 无既有配置 → 新建（extension 读侧对缺字段的容忍与 DEFAULT_CONFIG 对齐）
+        conf = {}
+      }
+      if (conf['defaultEngine'] === engineId) return
+      conf['defaultEngine'] = engineId
+      mkdirSync(join(getPiAgentDir(), 'subagents'), { recursive: true })
+      const tmp = `${configPath}.tmp-${process.pid}-${Date.now()}`
+      try {
+        writeFileSync(tmp, JSON.stringify(conf, null, 2), 'utf8')
+        renameSync(tmp, configPath)
+      } catch (e) {
+        // rename 失败清理 tmp（对齐 base-tool-enhance registry / engine-discovery 原子写先例，防 .tmp 残留累积）
+        try {
+          if (existsSync(tmp)) unlinkSync(tmp)
+        } catch {
+          // 清理失败不掩盖原错误
+        }
+        throw e
+      }
+    })
   }
 
   /**
