@@ -33,9 +33,11 @@ import {
   getPendingUpdate,
   onUpdateProgress,
   onUpdateError,
+  getLaunchResult as ipcGetLaunchResult,
   openUpdateFallbackUrl as ipcOpenUpdateFallbackUrl,
 } from '@/lib/ipc'
 import { renderMarkdown } from '@/composables/logic/markdown'
+import { useToast } from '@/composables/useToast'
 import { getLocale } from '@/i18n'
 
 /** 不支持当前平台的错误码（main 侧 platform-updater 抛出，preload 透传） */
@@ -520,6 +522,35 @@ async function runAutoCheck(): Promise<void> {
 }
 
 /**
+ * 读取启动结果并显示 toast 通知（D5 决策）。
+ *
+ * main 侧 cleanupCompletedUpdate 在 bootstrapMainWindow 之前运行，返回值缓存在进程级变量。
+ * renderer 启动时 invoke 一次 update:getLaunchResult（consumed 一次性，main 清缓存）：
+ * - done → info toast「已升级到 vX.Y.Z」
+ * - failed → warning toast「上次升级未完成」
+ * - rolled-back → warning toast「上次升级未完成，已恢复到 vX.Y.Z」
+ *
+ * 调用时机：initAutoCheck 内（Sidebar 挂载即触发，早于 30s 自动检查）。
+ */
+async function checkLaunchResult(): Promise<void> {
+  try {
+    const result = await ipcGetLaunchResult()
+    if (!result) return
+    const { info, warning } = useToast()
+    if (result.status === 'done') {
+      info(`已升级到 v${result.version}`)
+    } else if (result.status === 'rolled-back') {
+      warning(`上次升级未完成，已恢复到 v${result.version}`)
+    } else if (result.status === 'failed') {
+      warning('上次升级未完成')
+    }
+  } catch (e) {
+    // best-effort：启动结果通知失败不影响升级流程，用户下次启动仍可重试读取（main 侧缓存未 consumed）
+    console.warn('[useAppUpdate] checkLaunchResult failed:', e)
+  }
+}
+
+/**
  * 启动自动检测：先恢复持久化提醒（立即），再 30s 首次检测，之后每 20min 周期检测。
  *
  * 必须在活跃 effect scope 内调用，通常在组件 setup 顶层同步调用（onScopeDispose 依赖活跃 scope）；
@@ -540,6 +571,8 @@ function initAutoCheck(): void {
       void restorePendingUpdate()
     }
   })
+  // 读取启动结果（升级成功/失败/回滚），consumed 一次性：首次调用返回结果并清空
+  void checkLaunchResult()
   // 30s 后首次联网检测（避开冷启动高峰 + 刷新 release info），首次完成后转 20min 周期
   autoCheckTimer = setTimeout(runAutoCheck, AUTO_CHECK_DELAY_MS)
   onScopeDispose(() => {

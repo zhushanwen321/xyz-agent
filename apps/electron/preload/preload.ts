@@ -129,10 +129,15 @@ export interface ElectronAPI {
    * @returns 有效的 { release, filePath }，无预下载产物/损坏返回 null
    */
   getPreloaded(): Promise<{ release: LatestReleaseInfo; filePath: string } | null>
+  /**
+   * 读取启动结果（升级成功/失败/回滚通知）。
+   * main 侧一次性缓存：首次调用返回结果并清空，后续调用返回 null。
+   */
+  getLaunchResult(): Promise<{ status: string; version: string } | null>
   /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数 */
   onUpdateProgress(callback: (payload: { stage: UpdateStage; percent: number }) => void): () => void
-  /** 监听升级错误事件（stage + message + errorCode），返回取消订阅函数 */
-  onUpdateError(callback: (payload: { stage: string; message: string; errorCode?: string }) => void): () => void
+  /** 监听升级错误事件（stage + message + errorCode + suggestion），返回取消订阅函数 */
+  onUpdateError(callback: (payload: { stage: string; message: string; errorCode?: string; suggestion?: string }) => void): () => void
   /** 不支持当前平台时，打开备用下载页（release 页面） */
   openUpdateFallbackUrl(url: string): Promise<void>
   // ── 代理配置 ────────────────────────────────────────────────────
@@ -282,13 +287,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('update:download', { release }),
   updateInstall: () => ipcRenderer.invoke('update:install'),
   getPreloaded: () => ipcRenderer.invoke('update:getPreloaded'),
+  getLaunchResult: () => ipcRenderer.invoke('update:getLaunchResult'),
   onUpdateProgress: (callback: (payload: { stage: UpdateStage; percent: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { stage: UpdateStage; percent: number }) => callback(payload)
     ipcRenderer.on('update:progress', handler)
     return () => ipcRenderer.removeListener('update:progress', handler)
   },
-  onUpdateError: (callback: (payload: { stage: string; message: string; errorCode?: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, payload: { stage: string; message: string; errorCode?: string }) => callback(payload)
+  onUpdateError: (callback: (payload: { stage: string; message: string; errorCode?: string; suggestion?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { stage: string; message: string; errorCode?: string; suggestion?: string }) => callback(payload)
     ipcRenderer.on('update:error', handler)
     return () => ipcRenderer.removeListener('update:error', handler)
   },

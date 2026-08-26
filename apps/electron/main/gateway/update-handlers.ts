@@ -468,6 +468,13 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
     return getUpdateSettings()
   })
 
+  // ── update:getLaunchResult（读取启动结果，consumed 一次性）──────
+  // renderer 启动时调用一次，读取 cleanupCompletedUpdate 的返回值（done/failed/rolled-back），
+  // 用于显示升级成功/失败/回滚 toast。main.ts 侧缓存 + consumed 标志保证一次性语义。
+  ipcMain.handle('update:getLaunchResult', async () => {
+    return deps.getLaunchResult?.() ?? null
+  })
+
   // ── update:setSettings（保存升级设置，局部更新：只传要修改的字段）──
   ipcMain.handle('update:setSettings', async (_event, settings: Partial<UpdateSettings>) => {
     // 逐字段类型校验：传了的字段必须是 boolean（缺失 = 不更新该字段）

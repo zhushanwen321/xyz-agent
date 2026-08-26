@@ -33,6 +33,10 @@ export default {
     installLater: 'Later',
     installNow: 'Restart and install now',
     retry: 'Retry',
+    // Launch result toasts (D5: upgrade success/failure/rollback notifications)
+    upgradedToast: 'Upgraded to v{version}',
+    upgradeFailed: 'Last upgrade did not complete',
+    rolledBack: 'Last upgrade did not complete, reverted to v{version}',
   },
   sessionItem: {
     rename: 'Rename',

@@ -89,3 +89,21 @@ export interface UpdateSettings {
   /** 启动时自动检查更新并提示下载 */
   autoUpdate?: boolean
 }
+
+/**
+ * 启动结果终态状态值（D5 决策：升级成功/失败/回滚三态通知）。
+ * cleanupCompletedUpdate 返回的 LaunchResult.status 仅限这三个值，
+ * no-op（中断但无需回滚）不通知 renderer，返回 null。
+ */
+export const LAUNCH_RESULT_STATUSES = ['done', 'failed', 'rolled-back'] as const
+
+/** 启动结果终态类型（三值联合） */
+export type LaunchResultStatus = (typeof LAUNCH_RESULT_STATUSES)[number]
+
+/** 启动结果信息（main → renderer 一次性通知） */
+export interface LaunchResult {
+  /** 终态类型 */
+  status: LaunchResultStatus
+  /** 版本号（升级成功=新版本，回滚=恢复到的旧版本） */
+  version: string
+}

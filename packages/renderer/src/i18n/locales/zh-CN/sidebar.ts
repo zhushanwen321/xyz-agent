@@ -32,6 +32,10 @@ export default {
     installLater: '稍后再说',
     installNow: '立即重启安装',
     retry: '重试',
+    // 启动结果 toast（D5：升级成功/失败/回滚通知）
+    upgradedToast: '已升级到 v{version}',
+    upgradeFailed: '上次升级未完成',
+    rolledBack: '上次升级未完成，已恢复到 v{version}',
   },
   sessionItem: {
     rename: '重命名',

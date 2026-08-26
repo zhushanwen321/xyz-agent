@@ -145,6 +145,12 @@ const runtime = new RuntimeSupervisor()
 const windows = new WindowManager()
 const shortcuts = new ShortcutRegistry()
 const ctx: MainContext = createMainContext({ runtime, windows, shortcuts, isDev })
+/**
+ * 启动结果缓存（D5 决策）：cleanupCompletedUpdate 返回的终态上下文，
+ * renderer 启动时通过 update:getLaunchResult 一次性读取后清空（consumed 语义）。
+ * 生命周期 = 进程内一次性（app 不重启则不再重复 toast）。
+ */
+let launchResultCache: { status: string; version: string } | null = null
 // Browser drawer 的 WebContentsView 管理器（依赖 windows Facade 取窗口引用）。
 // W2：注入 onStateChange 回调，webContents 事件触发时把 state 推给主窗口 renderer（BrowserPane），
 // 用于地址栏回填真实 URL（防钓鱼）+ loading/error 态切换。win 在 ctx.mainWindow 设置后才有值，
@@ -178,6 +184,11 @@ registerIpcHandlers({
   browserViewManager,
   releaseChecker,
   updateOrchestrator,
+  getLaunchResult: async () => {
+    const result = launchResultCache
+    launchResultCache = null // consumed 一次性
+    return result
+  },
 })
 
 // ── App 生命周期编排 ─────────────────────────────────────────────
@@ -277,7 +288,9 @@ app.whenReady().then(async () => {
   // 清理已完成/失败的升级产物（done/failed/rolled-back/no-op 终态）：删除残留的 170MB zip、
   // preloaded/pending 元信息、updater 脚本日志等，避免磁盘占用与下次启动误恢复「已下载」态。
   // 必须在 maybeRollbackInterruptedUpdate 之后（replacing 回滚完成转入终态后再清理）。
-  await cleanupCompletedUpdate()
+  // 返回值缓存供 renderer 启动时通过 update:getLaunchResult 一次性读取（D5 决策：
+  // invoke 有构造性送达保证，consumed 标志由 main 单点保证去重）。
+  launchResultCache = await cleanupCompletedUpdate()
 
   await bootstrapMainWindow()
 })

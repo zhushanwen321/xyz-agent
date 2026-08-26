@@ -36,6 +36,7 @@ const hoisted = vi.hoisted(() => {
     updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
     getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
     getPendingUpdate: vi.fn<() => Promise<LatestReleaseInfo | null>>(),
+    getLaunchResult: vi.fn<() => Promise<{ status: string; version: string } | null>>(),
     openUpdateFallbackUrl: vi.fn<(url: string) => Promise<void>>(),
     onUpdateProgress: vi.fn((cb: typeof progressCb) => {
       progressCb = cb
@@ -66,6 +67,7 @@ vi.mock('@/lib/ipc', () => ({
   updateInstall: hoisted.updateInstall,
   getPreloaded: hoisted.getPreloaded,
   getPendingUpdate: hoisted.getPendingUpdate,
+  getLaunchResult: hoisted.getLaunchResult,
   openUpdateFallbackUrl: hoisted.openUpdateFallbackUrl,
   onUpdateProgress: hoisted.onUpdateProgress,
   onUpdateError: hoisted.onUpdateError,
@@ -73,6 +75,16 @@ vi.mock('@/lib/ipc', () => ({
 
 vi.mock('@/composables/logic/markdown', () => ({
   renderMarkdown: hoisted.renderMarkdown,
+}))
+
+// W4: useToast mock（launch result toast 测试用）
+const toastFns = vi.hoisted(() => ({
+  info: vi.fn(),
+  warning: vi.fn(),
+  error: vi.fn(),
+}))
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => toastFns,
 }))
 
 import { useAppUpdate, _resetForTest } from '@/composables/features/settings/useAppUpdate'
@@ -520,5 +532,74 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
 
     await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1) // 不再触发
+  })
+})
+
+// ── W4: 启动结果 toast（launch result）──────────────────────────
+describe('W4: launch result toast', () => {
+  beforeEach(() => {
+    _resetForTest()
+    vi.clearAllMocks()
+    hoisted.getLaunchResult.mockResolvedValue(null)
+    vi.stubGlobal('__APP_VERSION__', '0.0.0')
+  })
+
+  afterEach(() => {
+    _resetForTest()
+  })
+
+  it('A4-done-toast-vitest: done status → info toast 已升级到 vX.Y.Z', async () => {
+    hoisted.getLaunchResult.mockResolvedValue({ status: 'done', version: '0.9.9' })
+    hoisted.getPendingUpdate.mockResolvedValue(null)
+    hoisted.getPreloaded.mockResolvedValue(null)
+    const { stop } = setupUseAppUpdate({ initAutoCheck: true })
+    // initAutoCheck 内 checkLaunchResult 是 fire-and-forget，等微任务完成
+    await vi.waitFor(() => {
+      expect(toastFns.info).toHaveBeenCalledWith(expect.stringContaining('0.9.9'))
+    })
+    expect(toastFns.info).toHaveBeenCalledWith(expect.stringContaining('已升级'))
+    expect(toastFns.warning).not.toHaveBeenCalled()
+    stop()
+  })
+
+  it('A6-rolledback-toast-vitest: rolled-back status → warning toast 已恢复到旧版本', async () => {
+    hoisted.getLaunchResult.mockResolvedValue({ status: 'rolled-back', version: '0.9.7' })
+    hoisted.getPendingUpdate.mockResolvedValue(null)
+    hoisted.getPreloaded.mockResolvedValue(null)
+    const { stop } = setupUseAppUpdate({ initAutoCheck: true })
+    await vi.waitFor(() => {
+      expect(toastFns.warning).toHaveBeenCalled()
+    })
+    expect(toastFns.warning).toHaveBeenCalledWith(expect.stringContaining('0.9.7'))
+    expect(toastFns.warning).toHaveBeenCalledWith(expect.stringContaining('已恢复'))
+    stop()
+  })
+
+  it('A5-failed-toast-vitest: failed status → warning toast 上次升级未完成', async () => {
+    hoisted.getLaunchResult.mockResolvedValue({ status: 'failed', version: '0.9.9' })
+    hoisted.getPendingUpdate.mockResolvedValue(null)
+    hoisted.getPreloaded.mockResolvedValue(null)
+    const { stop } = setupUseAppUpdate({ initAutoCheck: true })
+    await vi.waitFor(() => {
+      expect(toastFns.warning).toHaveBeenCalledWith(expect.stringContaining('未完成'))
+    })
+    // failed 不含版本号
+    expect(toastFns.warning).toHaveBeenCalledWith(expect.not.stringContaining('0.9.9'))
+    stop()
+  })
+
+  it('A7-null-no-toast-vitest: null result → no toast + getLaunchResult 被调用', async () => {
+    hoisted.getLaunchResult.mockResolvedValue(null)
+    hoisted.getPendingUpdate.mockResolvedValue(null)
+    hoisted.getPreloaded.mockResolvedValue(null)
+    const { stop } = setupUseAppUpdate({ initAutoCheck: true })
+    // 给微任务时间完成
+    await new Promise((r) => setTimeout(r, 50))
+    // A7: getLaunchResult 必须被调用（新实现的 checkLaunchResult 会调它）
+    expect(hoisted.getLaunchResult).toHaveBeenCalled()
+    // null 结果不弹 toast
+    expect(toastFns.info).not.toHaveBeenCalled()
+    expect(toastFns.warning).not.toHaveBeenCalled()
+    stop()
   })
 })
