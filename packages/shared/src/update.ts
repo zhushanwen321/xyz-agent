@@ -89,3 +89,20 @@ export interface UpdateSettings {
   /** 启动时自动检查更新并提示下载 */
   autoUpdate?: boolean
 }
+
+/**
+ * 升级错误事件 payload（D3：suggestion 全链路透传）。
+ *
+ * main → preload → renderer 全链路共享此类型，
+ * 消除 preload.ts / lib/ipc.ts 两层类型签名丢弃 suggestion 的断点。
+ */
+export interface UpdateErrorPayload {
+  /** 升级阶段 */
+  stage: UpdateStage
+  /** 用户友好的错误消息（中文） */
+  message: string
+  /** 错误码（可选，供前端精确分支） */
+  errorCode?: string
+  /** 恢复建议（可选，两行：摘要 + 指引） */
+  suggestion?: string
+}

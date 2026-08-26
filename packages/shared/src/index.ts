@@ -123,7 +123,7 @@ export {
   PI_THINKING_LEVELS,
   isPiLaunchPreset,
 } from './pi-preset'
-export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyConfig, UpdateSettings } from './update'
+export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyConfig, UpdateSettings, UpdateErrorPayload } from './update'
 // 用量统计类型（W1 数据层）
 export type { UsageMetrics, UsageRow, UsageStatsResult } from './usage-stats'
 // 迁移功能（从其他 agent 迁移配置）类型

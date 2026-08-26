@@ -38,6 +38,7 @@ export type UpdateErrorCode =
   | 'UPDATE_DISK_SPACE'
   | 'UPDATE_PERMISSION_DENIED'
   | 'UPDATE_PROXY_ERROR'
+  | 'UPDATE_PROXY_UNREACHABLE'
   | 'UPDATE_INTEGRITY_FAILED'
   | 'UPDATE_UNSUPPORTED_PLATFORM'
 
@@ -91,6 +92,11 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateErrorCode, Omit<UpdateErrorInfo
     stage: 'downloading',
     suggestion: '请检查代理配置或尝试关闭代理',
   },
+  UPDATE_PROXY_UNREACHABLE: {
+    message: '无法连接代理 (EHOSTUNREACH)',
+    stage: 'downloading',
+    suggestion: '可能原因：macOS 未授予「本地网络」权限（代理在局域网时常见）\n恢复指引：系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」后重启应用',
+  },
   UPDATE_INTEGRITY_FAILED: {
     message: '安装包完整性校验失败',
     stage: 'verifying',
@@ -126,6 +132,8 @@ export class UpdateError extends Error {
   readonly stage: UpdateStage
   /** 错误码（可选，供前端精确分支） */
   readonly errorCode: UpdateErrorCode | undefined
+  /** 原始错误 cause 链的字符串化（用于磁盘落盘，D7） */
+  readonly rawCause?: string
 
   constructor(message: string, stage: UpdateStage, errorCode?: UpdateErrorCode) {
     super(message)
