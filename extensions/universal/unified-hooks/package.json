@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-unified-hooks",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "[DEPRECATED] Unified hooks extension - collect scattered hooks in one place for easy maintenance",
   "deprecated": "Superseded by @zhushanwen/pi-base-tool-enhance — install that instead; test-command guarding, tool-error audit and configurable timeouts are all covered.",
   "main": "index.ts",

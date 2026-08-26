@@ -1,5 +1,14 @@
 # @xyz-agent/extension-protocol
 
+## 0.7.0
+
+### Minor Changes
+
+- b3a8cf77b: **extension-protocol: subagent-engine discoverability contract**
+
+  - New `extensions/subagent-engine` contract shared by the write side (`pi-subagent-workflow` publishes the registered engine list to `<agentDir>/subagents/engines.json` on session start) and the read side (xyz-agent runtime `subagent.getEngineConfig` / `subagent.setDefaultEngine` RPC feeding the Settings engine dropdown)
+  - Exports: `SUBAGENTS_ENGINES_FILENAME`, `SubagentEnginesFile` (v1 state-file shape) and `SubagentEngineConfigView` (engines + defaultEngine composite view with `['pi']` fallback)
+
 ## 0.6.0
 
 ### Minor Changes
