@@ -67,6 +67,7 @@ import {
 import { HistoryRebuildCache, mergeIncrementalMessages } from './history-rebuild-cache.js'
 import { toErrorMessage, isEnoent, BUILTIN_EXTENSIONS_MISSING } from '../../utils/errors.js'
 import { withFileLockSync } from '../../utils/file-lock.js'
+import { atomicWrite } from '../../utils/fs-utils.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
 import { PresetService, type PresetResolution } from '../preset-service.js'
 // MessageBus（wave:runtime-wiring）：per-session 消息广播核心。setter 注入（同 setConfigService 模式），
@@ -1117,20 +1118,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       }
       if (conf['defaultEngine'] === engineId) return
       conf['defaultEngine'] = engineId
-      mkdirSync(join(getPiAgentDir(), 'subagents'), { recursive: true })
-      const tmp = `${configPath}.tmp-${process.pid}-${Date.now()}`
-      try {
-        writeFileSync(tmp, JSON.stringify(conf, null, 2), 'utf8')
-        renameSync(tmp, configPath)
-      } catch (e) {
-        // rename 失败清理 tmp（对齐 base-tool-enhance registry / engine-discovery 原子写先例，防 .tmp 残留累积）
-        try {
-          if (existsSync(tmp)) unlinkSync(tmp)
-        } catch {
-          // 清理失败不掩盖原错误
-        }
-        throw e
-      }
+      // subagents 目录无需再建：withFileLockSync 取锁前已兜底 mkdir dirname(configPath)
+      // （无锁时代这行 mkdir 承重，引入锁后成为死代码）。原子写单点走 fs-utils.atomicWrite
+      // （tmp+rename）；写失败时 .tmp 残留不被清理——与 worktree-config-helper ext-config
+      // 先例同款取舍，磁盘孤儿文件无害，不在此另复制一份清理逻辑
+      atomicWrite(configPath, JSON.stringify(conf, null, 2), `${process.pid}-${Date.now()}`)
     })
   }
 

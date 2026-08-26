@@ -221,9 +221,11 @@ export class RelayRegistry {
         this.registerHandshake(conn, frame)
         return
       }
-      // 握手后：仅消费 down 方向数据帧，其余忽略（代理不发其他 kind）
+      // 握手后：仅消费 down 方向数据帧，其余忽略（代理不发其他 kind）。
+      // dir==='down' / b64:string 的运行时不变量由 tryParseFrame 的 data 帧形状守卫
+      // 单点定义——畸形帧在解析层已按 null 丢弃，此处不再重复编码该判据
       const frame = this.tryParseFrame(line)
-      if (frame !== null && frame.kind === 'data' && frame.dir === 'down') {
+      if (frame !== null && frame.kind === 'data') {
         const entry = this.entries.get(conn)
         if (!entry) return
         const bytes = Buffer.from(frame.b64, 'base64')
