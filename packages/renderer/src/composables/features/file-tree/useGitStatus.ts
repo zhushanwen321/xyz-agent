@@ -136,13 +136,14 @@ export function useGitStatus(sessionIdRef: Ref<string | null> | (() => string | 
     const sid = getSessionId()
     if (!sid || pending.value) return
     pending.value = true
-    // 写入 sid 分区（非当前 sid 实时值——UI 操作时 sid 还没变，语义等价）
-    scoped.update((p) => { p.error = '' })
+    // ADR-0049 checklist #3：写入捕获 sid 分区（与 runOp 同范式）——await 期间用户可能切
+    // session，读实时 sid 会把 A 的 git 状态写进 B 分区且被 pending 守卫挡住新拉取
+    scoped.updateFor(sid, (p) => { p.error = '' })
     try {
       const r = await gitApi.status(sid)
-      scoped.update((p) => { p.result = r })
+      scoped.updateFor(sid, (p) => { p.result = r })
     } catch (e) {
-      scoped.update((p) => { p.error = e instanceof Error ? e.message : String(e) })
+      scoped.updateFor(sid, (p) => { p.error = e instanceof Error ? e.message : String(e) })
     } finally {
       pending.value = false
     }

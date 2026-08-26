@@ -218,11 +218,23 @@ U3（`f1f6634d8`）在 runtime 侧补「reload 完成后失效快照」，本设
 
 - 新增：`packages/renderer/src/composables/panel/useCommandSync.ts`（与 `useCommandPopoverTrigger.ts` 同目录，api 调用归 features/panel 编排层，符合「组件不直接调 api」铁律的既有例外先例——`useFileSearch` 同构）
 - 修改：`packages/renderer/src/components/panel/CommandPopover.vue`（setup 接线 + 订阅 handler 第二参数）
-- 测试：`packages/renderer/src/components/panel/__tests__/`（CommandPopover 既有测试同位置；具体文件名实施期按现有命名惯例定）
+- 测试：`packages/renderer/src/__tests__/composables/`（新 composable 测试，如同目录 use-context-usage.test.ts）与 `packages/renderer/src/__tests__/panel/`（CommandPopover 既有测试实际位置；实施期核实：`components/panel/__tests__/` 不存在）
 - 无 runtime / shared / 协议改动
 
 **待验证检查点（实施期确认，不阻塞设计）**：
 
 1. CommandPopover 既有测试的 mock provide 形态（`SLASH_COMMAND_SOURCE_KEY` 注入方式）——实施期读现有测试对齐。
-2. open 触发 watch 与既有 `loadCandidates`（文件候选 onMounted 拉取）是否合并 watch——倾向独立，实施期按代码简洁度定。
+2. open 触发 watch 与既有 `loadCandidates`（文件候选 onMounted 拉取）是否合并 watch——已选独立（实施定案）。
 3. P10 探针：打开浮层的 RPC 实测延迟（预期 ms 级；>100ms 走降级路径「仅空表时拉」）。
+
+### 实施期范围扩展登记（impl-review F4，超出 §5 原拆分清单）
+
+实施时同步收编了 session 隔离审计（ADR-0049 四条 checklist 扫描）发现的范式债，均与主修复同分支交付：
+
+| 单元 | commit | 内容 | 偏离/备注 |
+|---|---|---|---|
+| useGitStatus 迁移 | `57d2e7ac8` | result/commitMsg/error 三状态迁入 useSessionScopedState 分区，runOp/refresh 用 updateFor(捕获 sid) | 实现后审查（`.impl-review.md` F1）发现 refresh 初版漏用 updateFor，已修正 |
+| Composer drafts 收编 | `b2ba4bb1e` | 裸 Map → 工厂分区 + DraftStore 窄接口（贯通 dom-core restore 链），工厂自动注册 cleanup 修复 session 删除泄漏（旧裸 Map 从未被 triggerSessionCleanups 清到，已核实 useSidebar.deleteSession:321） | 三分支 save/restore/clear 语义逐字保持 |
+| CommandPopover fileCandidates 清理 | `75b8c434e`（内嵌） | 删实例级 loaded 标志 + watch 手动复位（checklist #2），useFileSearch store 分区缓存使 loadCandidates 幂等 | 完整工厂分区尝试后回退（工厂 current computed 在 happy-dom 测试环境无法经组件直调 update 路径传播——该说法无 diff 可核，登记为未验证）；last-write-wins 竞态与迁移前等价非回归 |
+
+设计原 §5「无 runtime / shared / 协议改动」仍成立（dom-core 属渲染端域包）。
