@@ -222,13 +222,27 @@ export function spawnBackgroundTask(opts: SpawnBackgroundOptions): SpawnBackgrou
 }
 
 /**
- * 后台显式 timeout（D6：任务寿命可由使用者显式约束）。到点：kill-tree + 两侧标
- * killing intent（reason 候选 timeout）——实际终态由轮询器边沿收尾写（单一终态
- * 归属），此处不写终态。
+ * 后台显式 timeout（D6：任务寿命可由使用者显式约束）。到点：pid 身份校验通过则
+ * kill-tree + 两侧标 killing intent（reason 候选 timeout）——实际终态由轮询器边沿
+ * 收尾写（单一终态归属），此处不写终态。
  */
 function armBackgroundTimeout(task: BackgroundTask, timeoutSec: number): void {
 	const timer = setTimeout(() => {
-		killProcessTree(task.pid);
+		// pid 复用防御（§3.6，同 reaper reapEntrySync / bash_kill 范式，宁不杀勿误杀）：
+		// 任务早已退出（exit 边沿未被轮询器收尾或竞态未及）且 pid 在到点前被系统复用
+		// 时，直接 killProcessTree 会杀掉复用 pid 上的无辜进程（整进程组 SIGKILL）。
+		if (!isRecordedPidStillOriginal(task)) {
+			logger.warn("background timeout: pid identity unverified (reuse suspected or start time unreadable), skipping kill", {
+				detail: {
+					taskId: task.taskId,
+					pid: task.pid,
+					pidStartTime: task.pidStartTime,
+					startedAt: task.startedAt,
+				},
+			});
+		} else {
+			killProcessTree(task.pid);
+		}
 		const marked = markKillingIntent(task.taskId, "timeout");
 		if (marked === undefined) return;
 		writeRegistryEntry(marked.registryPath, taskToRegistryEntry(marked));
@@ -236,6 +250,22 @@ function armBackgroundTimeout(task: BackgroundTask, timeoutSec: number): void {
 	}, timeoutSec * MS_PER_SECOND);
 	timer.unref?.();
 	task.timeoutTimer = timer;
+}
+
+/**
+ * 到点 pid 身份校验：true = 登记时的原进程仍占用该 pid（可安全 kill-tree）。
+ *  - 有 pidStartTime（spawn 时 ps 读取成功）→ 精确比较（同单位 epoch 秒）
+ *  - 缺 pidStartTime（ps 不可用平台/读取失败）→ startedAt 秒级降级（同 reaper：
+ *    登记晚于 spawn，原进程 start time 必然 ≤ floor(startedAt/1000)）
+ *  - 实际 start time 读不到 → 无法排除复用，保守判 false（不杀；timeout 降级为
+ *    仅标 intent，任务自然退出后由轮询边沿收尾）
+ */
+function isRecordedPidStillOriginal(task: BackgroundTask): boolean {
+	const actualStartSec = getProcessStartTimeSec(task.pid);
+	if (actualStartSec === undefined) return false;
+	return task.pidStartTime !== undefined
+		? actualStartSec === task.pidStartTime
+		: actualStartSec <= Math.floor(task.startedAt / MS_PER_SECOND);
 }
 
 function accessOrThrow(cwd: string): void {

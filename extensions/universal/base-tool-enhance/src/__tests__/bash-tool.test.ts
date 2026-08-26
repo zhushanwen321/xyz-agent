@@ -150,6 +150,23 @@ describe("createBashOverrideToolDefinition", () => {
 		]);
 	});
 
+	it("passes through official renderCall/renderResult (TUI render parity, pi 0.84.1 fields)", () => {
+		setupFactory();
+		const renderCall = vi.fn();
+		const renderResult = vi.fn();
+		createBashToolDefinitionMock.mockImplementation(() => ({
+			...createOfficialFactoryResult("render-probe"),
+			renderCall,
+			renderResult,
+		}));
+		const tool = createBashOverrideToolDefinition();
+		// 引用级相等证明 delegate 的 render 闭包原样透传（未覆写未丢弃）——官方
+		// renderCall（命令格式化）/ renderResult（elapsed 计时/富结果组件）是 TUI
+		// 渲染面，独立 pi 用户安装本包后不降级为通用组件
+		expect(tool.renderCall).toBe(renderCall);
+		expect(tool.renderResult).toBe(renderResult);
+	});
+
 	it("delegates execute to the official factory execute with recognized fields only (background stripped)", async () => {
 		setupFactory();
 		const expectedResult = { content: [{ type: "text" as const, text: "hi" }], details: undefined };

@@ -4,11 +4,24 @@
  * 绝不能挂在 extension dispose / session_shutdown 上——session 替换（fork/switch/new）
  * 也触发它们，那会误杀全部后台任务（任务跨同进程 session 替换继续运行）。收殓只认
  * process 级信号与进程退出：
- *  - SIGTERM/SIGINT handler：先跑收殓再退出（SIGTERM 不主动 exit——pi rpc-mode 自有
- *    SIGTERM → shutdown 流程，抢 exit 会打断其 tracked-pid 清理与日志 flush）
- *  - process.on("exit")：同步兜底路径（强杀之外的一切退出最终都到这里）——kill-tree
- *    同步 kill + registry 同步原子写
+ *  - SIGTERM handler：只收殓不 exit（pi rpc-mode 自有 SIGTERM → shutdown 流程，抢
+ *    exit 会打断其 tracked-pid 清理与日志 flush），随后 process.exit 触发下方兜底
+ *  - process.on("exit")：同步兜底路径——kill-tree 同步 kill + registry 同步原子写
  *  - 幂等：cleaned flag 保证信号 handler 先跑收殓后，exit 兜底再跑一次无害
+ *
+ * 不挂 SIGINT handler（pi 0.84.1 实装核实，2026-08 review 轮修复）：
+ *  - TUI 常态 raw mode，Ctrl+C 是按键不走信号；唯一收到 SIGINT 的 TUI 场景是挂起态
+ *    （cooked mode），而 pi 挂起态刻意注册 ignoreSigint 免疫 Ctrl+C
+ *    （interactive-mode.js「Ignore SIGINT while suspended」）。Node 对同一信号调用
+ *    全部 listener，本包任何 SIGINT listener（含 once）都会在此刻被触发——cleanup
+ *    杀光后台任务（违背 D15「interrupt 不传播后台任务」）再 exit 掐死本应存活的
+ *    挂起进程，pi 的 ignore 语义完全失效
+ *  - rpc/print 模式 Ctrl+C：pi 无 SIGINT listener（dist 全量 grep 唯一注册点在 TUI
+ *    挂起态）→ 默认处置进程即死。探针实测：无 listener 的信号默认终止**不触发
+ *    exit 事件**，同步收殓在该路径本就不可达；孤儿由 M5 reaper 属主判定收殓
+ *    （与 SIGKILL 强杀同类，设计内兜底）
+ *  - cleanup-only listener 更不可取：注册即抑制默认终止，rpc 前台 Ctrl+C 后 pi 变
+ *    成杀不死的僵尸进程
  *
  * 子进程死后 registry 目录无人再扫（reaper 是 M5）——本单元不管。
  */
@@ -22,9 +35,6 @@ import { taskToRegistryEntry, writeRegistryEntry } from "./registry.ts";
 import { finalizeTask, getActiveTasks } from "./task-store.ts";
 
 const logger = getLogger("base-tool-enhance");
-
-/** SIGINT 收殓后的退出码（Ctrl-C 交互终止惯例码 128+2）。 */
-const SIGINT_EXIT_CODE = 130;
 
 let installed = false;
 let cleaned = false;
@@ -44,14 +54,11 @@ export function installProcessExitGuard(): void {
 	};
 
 	// SIGTERM：只收殓不 exit——pi rpc-mode 的 SIGTERM handler（先注册先跑）走自己的
-	// shutdown 流程，最终 process.exit 触发下方 exit 兜底（幂等跳过）
+	// shutdown 流程，最终 process.exit 触发下方 exit 兜底（幂等跳过）。
+	// SIGINT 刻意不挂 handler（文件头「不挂 SIGINT handler」段：TUI 挂起态 pi 注册
+	// ignoreSigint 刻意免疫，本包 listener 会破坏该语义；rpc 模式默认终止路径 exit
+	// 事件本就不触发，孤儿归 M5 reaper 兜底）
 	process.once("SIGTERM", cleanup);
-	// SIGINT：pi rpc-mode 无 handler，挂 listener 会阻断默认终止——收殓后必须自行
-	// exit(130)（Ctrl-C 交互终止惯例码）
-	process.once("SIGINT", () => {
-		cleanup();
-		process.exit(SIGINT_EXIT_CODE);
-	});
 	// 同步兜底：exit handler 里只能做同步收殓（kill-tree 同步 + registry 同步原子写）
 	process.on("exit", cleanup);
 }

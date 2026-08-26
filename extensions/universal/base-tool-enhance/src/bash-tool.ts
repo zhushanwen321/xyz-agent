@@ -15,7 +15,7 @@
  *     （前台未填 → foregroundTimeoutSeconds，后台未填 → backgroundTimeoutSeconds）
  */
 
-import type { AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolUpdateCallback, BashToolDetails, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createBashToolDefinition, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -74,9 +74,11 @@ const ENHANCED_BASH_DESCRIPTION = [
  * cwd 处理：官方工厂在调用时固化 cwd（execute 闭包捕获），而 extension load 时机
  * 早于会话 cwd 确定。因此以 execute 时 ctx.cwd 为权威：cwd 变化（cd / session 切换）
  * 就地重建 delegate；同 cwd 复用（工厂是纯函数，重建仅多创建 ops 闭包，单槽缓存
- * 防止每次工具调用重复构建）。promptSnippet / promptGuidelines 从官方 delegate
- * 透传——override 掉整个 definition 后不透传会丢掉系统提示里的工具片段（types.d.ts
- * ToolDefinition：无 promptSnippet 的 custom tool 会被 Available tools 段省略）。
+ * 防止每次工具调用重复构建）。promptSnippet / promptGuidelines / renderCall /
+ * renderResult 等未覆盖字段从官方 delegate 展开透传——override 掉整个 definition
+ * 后不透传会丢掉系统提示里的工具片段（types.d.ts ToolDefinition：无 promptSnippet
+ * 的 custom tool 会被 Available tools 段省略）与 TUI 渲染（pi 0.84.1 bash 实装的
+ * renderCall 命令格式化 / renderResult elapsed 计时与富结果组件）。
  */
 export function createBashOverrideToolDefinition() {
 	let cachedCwd: string | undefined;
@@ -94,22 +96,27 @@ export function createBashOverrideToolDefinition() {
 	};
 
 	// registerTool 发生在 extension load 时（无 execute ctx），初始 delegate 用
-	// 进程 cwd 建立——name/label/promptSnippet 等静态字段与 cwd 无关，execute 路径
-	// 会被 getDelegate(ctx.cwd) 纠正。
+	// 进程 cwd 建立——name/label/promptSnippet/renderCall/renderResult 等静态字段与
+	// cwd 无关，execute 路径会被 getDelegate(ctx.cwd) 纠正。
 	const initial = getDelegate(process.cwd());
 
 	return {
+		// 官方 delegate 展开透传（render 面委托）：pi 0.84.1 bash definition 实装带
+		// renderCall（命令格式化）/ renderResult（elapsed 计时、富结果组件），独立
+		// pi TUI 用户安装本包后渲染不降级为通用组件——凡未在下方显式覆盖的字段
+		// （label/promptSnippet/promptGuidelines/renderCall/renderResult 等）全部随
+		// delegate 透传，cwd 重建 delegate 时静态闭包引用不变（render 闭包与 cwd 无关）
+		...initial,
 		name: initial.name, // "bash"：同名覆盖内置工具（agent-session _refreshToolRegistry 后注册者胜）
-		label: initial.label,
 		description: ENHANCED_BASH_DESCRIPTION,
-		promptSnippet: initial.promptSnippet,
-		promptGuidelines: initial.promptGuidelines,
 		parameters: enhancedBashSchema,
 		async execute(
 			toolCallId: string,
 			args: { command: string; timeout?: number; background?: boolean },
 			signal: AbortSignal | undefined,
-			onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+			// 与官方 delegate 同型（展开透传后泛型 TDetails=BashToolDetails|undefined
+			// 随 render 面传入，execute 签名必须对齐，否则 registerTool 赋值检查不过）
+			onUpdate: AgentToolUpdateCallback<BashToolDetails | undefined> | undefined,
 			ctx: ExtensionContext,
 		) {
 			// 配置每次 execute 读时加载（热重载契约：禁止上层缓存，同进程改配置文件

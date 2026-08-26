@@ -482,6 +482,66 @@ describe("explicit background timeout (D6)", () => {
 		expect(finalized?.reason).toBe("timeout");
 	});
 
+	it("P0-4: pid reuse suspected at the deadline → skip kill, intent still marked", () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			const spawned = spawnBg("sleep 30", { timeoutSec: 1 });
+			if (!spawned.ok) throw new Error(spawned.error);
+			const { task } = spawned;
+			// 构造不匹配的登记值（真实进程 start time 之外的时间）——pid 活但身份不符，
+			// 同 bash_kill P0-2.2 篡改范式
+			task.pidStartTime = (task.pidStartTime ?? 0) + 500;
+
+			vi.advanceTimersByTime(1000);
+			// 宁不杀勿误杀：到点不对复用嫌疑 pid 发 kill（整进程组 SIGKILL 会误杀无辜进程）
+			expect(killTreeCalls).not.toContain(task.pid);
+			// 仅标 killing intent（reason timeout）——终态归轮询边沿/对账收尾
+			expect(getTask(task.taskId)?.state).toBe("killing");
+			expect(getTask(task.taskId)?.intent?.reason).toBe("timeout");
+			expect(readRegistry(REGISTRY_PATH).get(task.taskId)?.state).toBe("killing");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("P0-4: missing pidStartTime degrades to startedAt check (mismatch → skip kill)", () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			const spawned = spawnBg("sleep 30", { timeoutSec: 1 });
+			if (!spawned.ok) throw new Error(spawned.error);
+			const { task } = spawned;
+			// 模拟 ps 不可用平台的 spawn（无 pidStartTime 字段）→ 降级 startedAt 秒级
+			// 比较；startedAt 篡改为 epoch 1（实际进程 start time 远大于 0）→ 不匹配
+			task.pidStartTime = undefined;
+			task.startedAt = 1;
+
+			vi.advanceTimersByTime(1000);
+			expect(killTreeCalls).not.toContain(task.pid);
+			expect(getTask(task.taskId)?.state).toBe("killing");
+			expect(getTask(task.taskId)?.intent?.reason).toBe("timeout");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("P0-4: degradation match (recent startedAt) → kill proceeds（降级判据不误拦正常 timeout）", () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			const spawned = spawnBg("sleep 30", { timeoutSec: 1 });
+			if (!spawned.ok) throw new Error(spawned.error);
+			const { task } = spawned;
+			// 无 pidStartTime + 真实 startedAt（登记晚于 spawn → 原进程 start time 必然
+			// ≤ floor(startedAt/1000)，floor 单调性）→ 降级判据匹配，正常发 kill
+			task.pidStartTime = undefined;
+
+			vi.advanceTimersByTime(1000);
+			expect(killTreeCalls).toContain(task.pid);
+			expect(getTask(task.taskId)?.state).toBe("killing");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("natural completion before the deadline cancels the timer (no late kill)", async () => {
 		// 全程真实 timers：命令 0.2s 完成 < 1s 超时
 		const before = killTreeCalls.length;
