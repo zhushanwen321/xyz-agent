@@ -49,6 +49,7 @@ export default {
   sessionList: {
     empty: '暂无会话',
     newSession: '新建会话',
+    newSessionInFolder: '在此目录新建会话',
     deleteFolderConfirm: '确认删除此文件夹下所有会话？',
   },
   assignProjectFailed: '归入项目失败',

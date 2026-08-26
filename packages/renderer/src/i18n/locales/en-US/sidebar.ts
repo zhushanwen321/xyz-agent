@@ -50,6 +50,7 @@ export default {
   sessionList: {
     empty: 'No sessions',
     newSession: 'New session',
+    newSessionInFolder: 'New session in this folder',
     deleteFolderConfirm: 'Delete all sessions in this folder?',
   },
   assignProjectFailed: 'Failed to assign to project',
