@@ -15,7 +15,7 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/command-popover-registry-merge.test.ts
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
@@ -25,6 +25,13 @@ import { ActivationManager, CommandRegistry, InternalEventBus, type SlashCommand
 import { __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 import CommandPopover from '@/components/panel/CommandPopover.vue'
 import { SLASH_COMMAND_SOURCE_KEY } from '@/components/panel/command-popover-source'
+
+// useCommandSync 挂载即拉 session.getCommands：mock 掉避免依赖真实 api 通道
+// （全量套跑时 mock 模式标志被其他文件污染，真实 '@/api' 会解析出 MOCK_COMMANDS
+// 并覆盖本测试 pushCommands 写入的受控 store 状态——单跑无症状，全量必炸）。
+vi.mock('@/api', () => ({
+  session: { getCommands: vi.fn().mockResolvedValue({ sessionId: '', commands: [] }) },
+}))
 
 /** 真 CommandRegistry（headless，零副作用）→ shell 注入同款 source 适配。 */
 function createSlashSource(): { resolveSlashCommands: (pi: SlashCommandLike[]) => ReturnType<CommandRegistry['resolveSlashCommands']> } {

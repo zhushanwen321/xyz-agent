@@ -41,7 +41,7 @@ vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
 }))
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   model: { switchModel: vi.fn() },
-  session: { setThinkingLevel: vi.fn() },
+  session: { setThinkingLevel: vi.fn(), getCommands: vi.fn().mockResolvedValue({ sessionId: '', commands: [] }) },
   // CommandPopover.loadCandidates onMounted 调 composer.getMentionCandidates/getFileCandidates，
   // mock 遗漏会导致 unhandled rejection（test 期间的 4 个 unhandled errors 根因）
   composer: {
