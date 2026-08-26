@@ -10,7 +10,7 @@
  * 运行：cd packages/runtime && npx vitest run src/__tests__/extension-startup-config.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, statSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, statSync, existsSync, symlinkSync, lstatSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -138,6 +138,21 @@ describe('ensureDeclaredStartupConfigs', () => {
     const report = ensureDeclaredStartupConfigs([dir, dirOk], agentDir)
     expect(report).toEqual({ ensured: 1, skipped: 0, failed: 1 })
     expect(existsSync(join(agentDir, 'other/ok.json'))).toBe(true)
+  })
+
+  it('病态竞态：broken symlink 占位 → O_EXCL 拒写穿，EEXIST 落 failed 且指向处无泄漏', { skip: process.platform === 'win32' }, () => {
+    const dir = makeExtDir('symlinked', {
+      startupConfig: [{ path: 'config/linked.json', content: { a: 1 } }],
+    })
+    const target = join(agentDir, 'config/linked.json')
+    mkdirSync(join(agentDir, 'config'), { recursive: true })
+    // broken symlink：existsSync 沿链接解析为 false，但 O_EXCL 对符号链接恒 EEXIST（POSIX）
+    symlinkSync(join(agentDir, 'nowhere.json'), target)
+    const report = ensureDeclaredStartupConfigs([dir], agentDir)
+    expect(report).toEqual({ ensured: 0, skipped: 0, failed: 1 })
+    // 未写穿链接：指向处不产生文件，占位仍是符号链接本身
+    expect(existsSync(join(agentDir, 'nowhere.json'))).toBe(false)
+    expect(lstatSync(target).isSymbolicLink()).toBe(true)
   })
 
   it('跨包重复 path 声明：仅首个生效（先到者 ensured），后续不覆盖', () => {

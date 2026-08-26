@@ -1,6 +1,6 @@
 # Extension 启动配置统一初始化机制（startupConfig）— 设计执行文档
 
-> 状态：已落地（2026-08-26，执行 + 两轮对抗式审查 + 修复收口）。本文档是实现的权威对照基准：执行 subagent 按本文档补齐剩余项，审查 subagent 按本文档逐条核对实现一致性。一轮审查（0 must-fix / 2 should-fix / 5 note）should-fix 已修 + note 全 5 项采纳；二轮审查（0 must-fix / 2 should-fix / 4 note）should-fix 已修（文档用例数 8→10 与「后到者 skipped」措辞）、note 采纳 2 项（agentDir 断言精确化、warn 点名先到者来源），不采纳 2 项（warn 按 code 细化文案——行为已可接受；guard 注释文件名已顺手修）。
+> 状态：已落地（2026-08-26，执行 + 两轮对抗式审查 + 修复收口）。本文档是实现的权威对照基准：执行 subagent 按本文档补齐剩余项，审查 subagent 按本文档逐条核对实现一致性。一轮审查（0 must-fix / 2 should-fix / 5 note）、二轮审查（0 must-fix / 2 should-fix / 4 note）的全部 should-fix 与 note 均已修复，无一遗留。
 >
 > 用户拍板（2026-08-26）：① 做整个机制（不是只修 permission 一家）；② 有配置面的 extension 全部接入；③ **已存在的配置文件一律不覆盖**。
 
@@ -43,7 +43,7 @@ extension 的用户配置文件（`<piAgentDir>/config/<pkg>-ext-config.json` �
 硬语义（用户拍板第 ③ 条）：
 1. **目标文件已存在 → 一律跳过，绝不覆盖**（含用户改过/改坏的文件；坏文件的回落是各 extension load 侧 normalize 的职责，不是本机制职责）。
 2. 缺失 → 首建：`JSON.stringify(content, null, 2) + '\n'`（2 空格缩进 + 尾换行）、`writeFileSync` mode `0o600`（对齐 permission ensureConfigFile 与 llm-shared saveConfig 落盘形态）、`mkdirSync` 递归建父目录。
-3. 首建直接 `writeFileSync` 且带 `flag: 'wx'`（存在即拒）：把「绝不覆盖」从 check-then-act 升级为结构性保证——existsSync 与 write 之间被并发首建（extension 惰性 ensure 同窗口，如 permission ensureConfigFile）时得 EEXIST 而非覆盖。EEXIST 语义区分：目标此刻存在 = 另一写者已建同内容文件，计 skipped；mkdirSync 的 EEXIST（父路径被同名文件占住、目标不存在）计 failed。守护测试保证两侧默认内容深相等，并发首建最终一致。
+3. 首建直接 `writeFileSync` 且带 `flag: 'wx'`（存在即拒）：把「绝不覆盖」从 check-then-act 升级为结构性保证——existsSync 与 write 之间被并发首建（extension 惰性 ensure 同窗口，如 permission ensureConfigFile）时得 EEXIST 而非覆盖；O_EXCL 对符号链接恒拒（POSIX），broken symlink 占位不会被写穿。EEXIST 语义区分：目标此刻存在 = 另一写者已建同内容文件，计 skipped；mkdirSync 的 EEXIST（父路径被同名文件占住、目标不存在）与 broken symlink / 建后即删竞态均计 failed（warn 文案按场景细化，下次启动自愈）。守护测试保证两侧默认内容深相等，并发首建最终一致。
 4. 每条目独立 try/catch，失败计入 `failed` 并 warn，不阻塞其余条目；启动日志：`ensured>0` 打 info 行，`failed>0` 升级 warn 行。
 5. 跨包重复 path 声明：read 阶段去重保留首个（后到者被丢弃，不进 ensure、不计 skipped）并 warn 同时点名先到者与后到者，辅助排查配置面误复制。
 
@@ -95,9 +95,9 @@ describe('startupConfig 声明守护', () => {
 
 | # | 文件 | 内容 | 验证 |
 |---|---|---|---|
-| A1 | `packages/runtime/src/services/extension-startup-config.ts`（新） | 机制实现（read + ensure + 校验 + 报告），文件头含机制文档 | 10 测试全过 |
+| A1 | `packages/runtime/src/services/extension-startup-config.ts`（新） | 机制实现（read + ensure + 校验 + 报告），文件头含机制文档 | 11 测试全过 |
 | A2 | `packages/runtime/src/services/startup-background-init.ts` | import ensureDeclaredStartupConfigs + getPiAgentDir；⑦ 之后新增 ⑦b 步骤（getExtensionPaths → ensure → ensured/skipped/failed 日志，failed>0 warn；外层 try/catch best-effort） | typecheck + 既有启动测试不破 |
-| A3 | `packages/runtime/src/__tests__/extension-startup-config.test.ts`（新） | 10 用例：收集合法声明/无 package.json 静默/坏 JSON 与非数组跳过/非法条目逐拒/首建形态（缩进+尾换行+0600+递归建父目录）/已存在不覆盖/read 阶段被拒不进 ensure/ensure 阶段 IO 失败计 failed 不阻塞/跨包重复 path 仅首个生效/多条目幂等 | 全过 |
+| A3 | `packages/runtime/src/__tests__/extension-startup-config.test.ts`（新） | 11 用例：收集合法声明/无 package.json 静默/坏 JSON 与非数组跳过/非法条目逐拒/首建形态（缩进+尾换行+0600+递归建父目录）/已存在不覆盖/read 阶段被拒不进 ensure/ensure 阶段 IO 失败计 failed 不阻塞/跨包重复 path 仅首个生效/broken symlink 拒写穿计 failed/多条目幂等 | 全过 |
 | A4 | `extensions/universal/permission/package.json` | startupConfig 声明，content = DEFAULT_CONFIG 全量展开 | 待守护测试锁 |
 | A5 | `extensions/universal/rename-session/package.json` | 声明，content = DEFAULT_RENAME_CONFIG | 待守护测试锁 |
 | A6 | `extensions/universal/smart-context/package.json` | 声明，content = DEFAULT_SMART_CONTEXT_CONFIG（reminderThresholds = [200000,400000,600000]） | 待守护测试锁 |
@@ -130,7 +130,7 @@ describe('startupConfig 声明守护', () => {
 ### 4.1 自动化（执行 subagent 交付即验）
 
 - [ ] 4 个守护测试全绿（各包目录内 vitest run）
-- [ ] runtime extension-startup-config.test.ts 10 用例全绿
+- [ ] runtime extension-startup-config.test.ts 11 用例全绿
 - [ ] `pnpm extensions:typecheck` 0 错
 - [ ] 各包既有相关测试（permission config.test / rename-session / smart-context pure.test / subagent-workflow config 相关）不红
 
@@ -153,5 +153,5 @@ describe('startupConfig 声明守护', () => {
 7. B1 export：仅加 export 与 jsdoc 注释，无其他改动。
 8. startup-background-init 接线：⑦b 位置（⑦ 之后）、getExtensionPaths await、best-effort catch、deps 未新增字段（复用既有 extensionService）。
 9. §3.3 边界：实现中没有把 engines.json / auto-rename marker 卷进来；没有删 permission 惰性 ensure。
-10. 测试质量：runtime 10 用例断言真实（不是空跑）；守护测试改声明或 DEFAULT 任一侧会红（可推演）。
+10. 测试质量：runtime 11 用例断言真实（不是空跑）；守护测试改声明或 DEFAULT 任一侧会红（可推演）。
 11. 无越界改动：git status 仅含 §3.1 表文件 + B 系列新文件 + conventions 文档。

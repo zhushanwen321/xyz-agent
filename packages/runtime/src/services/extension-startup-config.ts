@@ -160,7 +160,13 @@ export function ensureDeclaredStartupConfigs(
         continue
       }
       report.failed++
-      logger.warn(`[extension-startup-config] ensure failed: ${entry.source} -> ${entry.path} (${e instanceof Error ? e.message : String(e)})`)
+      if (code === 'EEXIST') {
+        // EEXIST 但 target 复查不存在：broken symlink 占位（O_EXCL 拒写穿符号链接，
+        // POSIX 规定）或并发建后即删的瞬态——异常态出声，下次启动自愈重试
+        logger.warn(`[extension-startup-config] ensure hit EEXIST but target missing (broken symlink or create-then-delete race), will retry next boot: ${entry.source} -> ${entry.path}`)
+      } else {
+        logger.warn(`[extension-startup-config] ensure failed: ${entry.source} -> ${entry.path} (${e instanceof Error ? e.message : String(e)})`)
+      }
     }
   }
   return report
