@@ -37,6 +37,7 @@ import {
 } from '@/lib/ipc'
 import { renderMarkdown } from '@/composables/logic/markdown'
 import { getLocale } from '@/i18n'
+import { useToast } from '@/composables/useToast'
 
 /** 不支持当前平台的错误码（main 侧 platform-updater 抛出，preload 透传） */
 const UNSUPPORTED_ERROR_CODE = 'UPDATE_UNSUPPORTED_PLATFORM'
@@ -150,6 +151,8 @@ const state = reactive({
   latestRelease: null as LatestReleaseInfo | null,
   /** 错误信息（state=error 时填充） */
   errorMessage: '',
+  /** 错误解决建议（state=error 时填充，用于展示恢复指引） */
+  errorSuggestion: '',
   /** 升级进度百分比（0-100，state=downloading/verifying/replacing 时填充） */
   percent: 0,
   /** release note 渲染后的 HTML（markdown-it + shiki，异步填充） */
@@ -226,6 +229,11 @@ function subscribeProgress(): void {
     } else {
       state.state = 'error'
       state.errorMessage = e.message
+      state.errorSuggestion = e.suggestion ?? ''
+      // D4：失败 toast 触发点在 useAppUpdate 单例的 onUpdateError 回调
+      // toast 只弹摘要（message），suggestion 太长不进 toast，留在 hover 浮层/设置页
+      const { error: toastError } = useToast()
+      toastError(e.message)
     }
     errorHandled = true
   })
@@ -581,6 +589,7 @@ export function _resetForTest(): void {
   state.state = 'idle'
   state.latestRelease = null
   state.errorMessage = ''
+  state.errorSuggestion = ''
   state.percent = 0
   state.releaseNotesHtml = ''
   errorHandled = false

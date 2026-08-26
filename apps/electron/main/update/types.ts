@@ -38,6 +38,7 @@ export type UpdateErrorCode =
   | 'UPDATE_DISK_SPACE'
   | 'UPDATE_PERMISSION_DENIED'
   | 'UPDATE_PROXY_ERROR'
+  | 'UPDATE_PROXY_UNREACHABLE'
   | 'UPDATE_INTEGRITY_FAILED'
   | 'UPDATE_UNSUPPORTED_PLATFORM'
 
@@ -90,6 +91,11 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateErrorCode, Omit<UpdateErrorInfo
     message: '代理配置错误',
     stage: 'downloading',
     suggestion: '请检查代理配置或尝试关闭代理',
+  },
+  UPDATE_PROXY_UNREACHABLE: {
+    message: '无法连接代理 (EHOSTUNREACH)',
+    stage: 'downloading',
+    suggestion: 'macOS 未授予「本地网络」权限（代理在局域网时常见）。恢复指引：系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」，重启应用后重试',
   },
   UPDATE_INTEGRITY_FAILED: {
     message: '安装包完整性校验失败',

@@ -89,3 +89,37 @@ export interface UpdateSettings {
   /** 启动时自动检查更新并提示下载 */
   autoUpdate?: boolean
 }
+
+/**
+ * 升级错误事件载荷（main → preload → renderer 全链路透传）。
+ *
+ * 包含错误摘要（message）和解决建议（suggestion），renderer 可据此
+ * 展示两段式错误信息：摘要 + 恢复指引。
+ */
+export interface UpdateErrorPayload {
+  /** 错误发生的阶段 */
+  stage: string
+  /** 用户友好的错误摘要 */
+  message: string
+  /** 错误码（可选） */
+  errorCode?: string
+  /** 解决建议（可选，用于展示恢复指引） */
+  suggestion?: string
+}
+
+/**
+ * 代理测试结果载荷（main → preload → renderer）。
+ *
+ * 包含测试结果、错误码和建议，renderer 可据此展示
+ * 两段式测试结果：摘要 + 恢复指引。
+ */
+export interface ProxyTestResult {
+  /** 测试是否成功 */
+  success: boolean
+  /** 错误码（失败时） */
+  code?: string
+  /** 错误摘要（失败时） */
+  message?: string
+  /** 解决建议（失败时） */
+  suggestion?: string
+}

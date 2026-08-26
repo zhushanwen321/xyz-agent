@@ -22,6 +22,8 @@ export default {
   retry: 'Retry',
   update: {
     newVersion: 'New version available',
+    newVersionWithVersion: 'New version v{version} available',
+    versionTransition: 'Current v{from} → v{to}',
     downloading: 'Downloading {percent}%',
     replacing: 'Replacing',
     restarting: 'Restarting',
