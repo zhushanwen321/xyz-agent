@@ -54,6 +54,15 @@
       "timeout": 300,
       "core": true,
       "scenario": "pnpm run lint 全量通过，无新增 lint 错误。"
+    },
+    {
+      "id": "W1-UpdateError-class",
+      "type": "unit",
+      "title": "UpdateError 类结构验证",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd apps/electron && npx vitest run main/update/__tests__/update.test.ts -t 'W1-UpdateError-class'",
+      "timeout": 300,
+      "core": false,
+      "scenario": "验证 UpdateError 类的基本结构：(1) 继承 Error；(2) 有 stage 属性；(3) 有 errorCode 属性；(4) 有 toUserFriendly 方法返回 UpdateErrorInfo。"
     }
   ],
   "contracts": [
