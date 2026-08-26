@@ -1,35 +1,30 @@
 /**
- * 升级错误日志落盘工具（D7）。
+ * 升级错误日志落盘（D7）。
  *
- * appendUpdateError 将错误信息以 JSONL 格式追加到 update-error.log。
- * 轮转策略：超 512KB 重命名为 .log.1（覆盖旧 .1），最多两份。
+ * JSONL 格式，512KB 轮转 x2。五个 source 覆盖：
+ * test-proxy / download / install / perform / preload。
  *
- * [HISTORICAL] 设计决策：
- * - 五处落盘点：testProxyConnection / download / install / perform / preload
- * - 落盘失败静默跳过——日志失败不能阻断升级主流程
- * - rawCause 来自 UpdateError.rawCause（D1 的 net-errors 包装构造时注入）
- * - proxyUrl 由 append 侧现取（文件读，成本可忽略）
+ * 落盘失败静默跳过（日志失败不能阻断升级主流程）。
  *
- * 依赖方向：error-log → constants（UPDATE_ERROR_LOG）+ node:fs + node:path
+ * 依赖方向：error-log → constants（UPDATE_ERROR_LOG 路径）+ node:fs。
  */
-
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
-import { UPDATE_ERROR_LOG } from './constants.js'
+import { existsSync, mkdirSync, statSync, renameSync, appendFileSync } from 'node:fs'
+import path from 'node:path'
+import { UPDATE_ERROR_LOG, UPDATE_DIR } from './constants.js'
 
 /** 单条错误日志条目 */
 export interface UpdateErrorEntry {
   /** ISO 8601 时间戳 */
   at: string
-  /** 错误来源 */
-  source: 'test-proxy' | 'download' | 'install' | 'perform' | 'preload'
+  /** 错误来源：test-proxy / download / install / perform / preload */
+  source: string
   /** 升级阶段 */
   stage: string
-  /** 错误码 */
+  /** 错误码（可选） */
   errorCode?: string
-  /** 原始错误 cause（从 UpdateError.rawCause 取得） */
+  /** 最内层原始 cause（可选，落盘诊断用） */
   rawCause?: string
-  /** 代理 URL（可选，由 append 侧 resolveProxyUrl 取得） */
+  /** 代理 URL（可选，脱敏后） */
   proxyUrl?: string
 }
 
@@ -37,62 +32,47 @@ export interface UpdateErrorEntry {
 const MAX_LOG_SIZE = 512 * 1024
 
 /**
- * 追加一条错误日志到 update-error.log（JSONL 格式）。
+ * 追加一条错误日志到 update-error.log。
  *
- * 落盘失败静默跳过——日志失败不能阻断升级主流程，只 console.error 兜底。
- *
- * @param entry 错误日志条目
+ * 轮转策略：超 MAX_LOG_SIZE 时重命名为 .log.1（覆盖旧 .1），最多两份。
+ * 落盘失败静默跳过（console.error 兜底，不阻断主流程）。
  */
 export function appendUpdateError(entry: UpdateErrorEntry): void {
   try {
-    ensureLogDir()
-    maybeRotate()
+    mkdirSync(UPDATE_DIR, { recursive: true })
+
+    // 轮转检查
+    if (existsSync(UPDATE_ERROR_LOG)) {
+      try {
+        const stat = statSync(UPDATE_ERROR_LOG)
+        if (stat.size >= MAX_LOG_SIZE) {
+          const rotatedPath = `${UPDATE_ERROR_LOG}.1`
+          // 覆盖旧 .1（如果存在）
+          renameSync(UPDATE_ERROR_LOG, rotatedPath)
+        }
+      } catch {
+        // 轮转失败不阻断写入
+      }
+    }
+
     const line = JSON.stringify(entry) + '\n'
-    // 使用 appendFileSync 保证原子追加
-    const fs = require('node:fs') as typeof import('node:fs')
-    fs.appendFileSync(UPDATE_ERROR_LOG, line, 'utf-8')
+    appendFileSync(UPDATE_ERROR_LOG, line, 'utf-8')
   } catch (err) {
-    // 落盘失败静默跳过——日志失败不能阻断升级主流程
-    console.error('[update-error-log] failed to append:', err)
+    // 落盘失败静默跳过，仅 console.error 兜底
+    console.error('[update-error-log] failed to write:', err)
   }
 }
 
 /**
- * 确保日志目录存在。
- */
-function ensureLogDir(): void {
-  const dir = dirname(UPDATE_ERROR_LOG)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
-}
-
-/**
- * 轮转检查：超 MAX_LOG_SIZE 重命名为 .log.1（覆盖旧 .1）。
- */
-function maybeRotate(): void {
-  if (!existsSync(UPDATE_ERROR_LOG)) return
-
-  try {
-    const stat = statSync(UPDATE_ERROR_LOG)
-    if (stat.size <= MAX_LOG_SIZE) return
-
-    const rotated = `${UPDATE_ERROR_LOG}.1`
-    // 覆盖旧 .1（renameSync 原子覆盖）
-    renameSync(UPDATE_ERROR_LOG, rotated)
-    // 新文件由后续 appendFileSync 自动创建
-  } catch {
-    // 轮转失败不影响追加——继续写入当前文件
-  }
-}
-
-/**
- * 读取日志文件内容（测试用）。
+ * 从 proxy-config 解析代理 URL（用于日志条目的 proxyUrl 字段）。
  *
- * 返回行数组（每行是 JSON 字符串），文件不存在返回空数组。
- * 仅供测试验证，不暴露为公开 API。
+ * 避免在 error-log 模块引入 proxy-config 的完整依赖，
+ * 这里做简化提取：仅从 config 对象取 URL，不做凭证还原。
  */
-export function _readLogForTest(): string[] {
-  if (!existsSync(UPDATE_ERROR_LOG)) return []
-  return readFileSync(UPDATE_ERROR_LOG, 'utf-8').split('\n').filter(Boolean)
+export function getProxyUrlForLog(config: { mode: string; httpProxy?: string; httpsProxy?: string }): string | undefined {
+  if (config.mode === 'disabled') return undefined
+  if (config.mode === 'manual') return config.httpsProxy ?? config.httpProxy
+  // system 模式读环境变量
+  return process.env.HTTPS_PROXY ?? process.env.https_proxy ??
+    process.env.HTTP_PROXY ?? process.env.http_proxy
 }

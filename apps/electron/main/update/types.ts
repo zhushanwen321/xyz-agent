@@ -92,11 +92,6 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateErrorCode, Omit<UpdateErrorInfo
     stage: 'downloading',
     suggestion: '请检查代理配置或尝试关闭代理',
   },
-  UPDATE_PROXY_UNREACHABLE: {
-    message: '无法连接代理 (EHOSTUNREACH)',
-    stage: 'downloading',
-    suggestion: '可能原因：macOS 未授予「本地网络」权限（代理在局域网时常见）\n恢复指引：系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」后重启应用',
-  },
   UPDATE_INTEGRITY_FAILED: {
     message: '安装包完整性校验失败',
     stage: 'verifying',
@@ -106,6 +101,11 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateErrorCode, Omit<UpdateErrorInfo
     message: '当前平台不支持自动更新',
     stage: 'replacing',
     suggestion: '请手动下载最新版本',
+  },
+  UPDATE_PROXY_UNREACHABLE: {
+    message: '无法连接代理 (EHOSTUNREACH)',
+    stage: 'downloading',
+    suggestion: '系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」后重启应用',
   },
 }
 
@@ -132,14 +132,15 @@ export class UpdateError extends Error {
   readonly stage: UpdateStage
   /** 错误码（可选，供前端精确分支） */
   readonly errorCode: UpdateErrorCode | undefined
-  /** 原始错误 cause 链的字符串化（用于磁盘落盘，D7） */
+  /** 最内层原始 cause 的 message（落盘诊断用，D7） */
   readonly rawCause?: string
 
-  constructor(message: string, stage: UpdateStage, errorCode?: UpdateErrorCode) {
+  constructor(message: string, stage: UpdateStage, errorCode?: UpdateErrorCode, rawCause?: string) {
     super(message)
     this.name = 'UpdateError'
     this.stage = stage
     this.errorCode = errorCode
+    this.rawCause = rawCause
   }
 
   /**

@@ -1,258 +1,215 @@
 /**
- * 网络错误分类与 cause 提取工具。
+ * 网络错误分类与代理可达性判定（D1 契约基建）。
  *
- * 收敛升级链路中三条 fetch 路径（单段 download-asset / 多段 downloadPart / testProxy）
- * 的错误分类逻辑，消除内联分类的重复实现 drift 风险。
+ * 收敛三条 fetch 路径（单段 download-asset / 多段 downloadPart / testProxyConnection）
+ * 的 cause 提取与分类逻辑，消除多处实现 drift 风险。
  *
- * [HISTORICAL] 设计决策 D1：
- * - extractNetErrorCode 逐层下钻 err.cause，提取 .code 或 message 前缀匹配
- * - isPrivateHost 判定 RFC1918 + IPv6 ULA + loopback（不解析 DNS，hostname 形式落通用文案）
- * - classifyProxyUnreachable = macOS + EHOSTUNREACH + isPrivateHost → UPDATE_PROXY_UNREACHABLE
+ * 设计决策：docs/design/update-observability.md §3.3 D1/D2。
  *
- * 依赖方向：net-errors → types（UpdateError / UpdateErrorCode / UpdateStage）
+ * 依赖方向：net-errors → update/types（UpdateError）+ node:os（网络判定）。
+ * 本模块不依赖 electron / undici，纯逻辑可测。
  */
 
+import { UpdateError } from './types.js'
+import type { UpdateErrorCode } from './types.js'
 import type { UpdateStage } from '@xyz-agent/shared'
-import { UpdateError, type UpdateErrorCode } from './types.js'
-
-// ─── cause 提取 ──────────────────────────────────────────────
 
 /**
- * 已知网络错误码（err.code 或 err.message 前缀匹配）。
+ * 从错误链中提取网络错误码（如 EHOSTUNREACH / ECONNREFUSED 等）。
  *
- * 包含 undici / node:net 常见网络错误码，以及 EHOSTUNREACH（macOS 本地网络权限场景）。
- */
-const KNOWN_NET_ERROR_CODES = [
-  'ECONNREFUSED',
-  'ENOTFOUND',
-  'ECONNRESET',
-  'ETIMEDOUT',
-  'ECONNABORTED',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
-  'EAI_AGAIN',
-] as const
-
-/**
- * 从 Error 对象中提取网络错误码。
+ * undici 的 fetch 抛错时，外层 Error 只带 'fetch failed'，真实网络错误
+ * （含 .code 如 EHOSTUNREACH）挂在 err.cause。本函数逐层下钻 cause 链，
+ * 优先取 Node errno code（cause.code），其次取 cause.message 前缀匹配。
  *
- * undici 的 fetch 抛错时外层 Error 只带 `fetch failed`，真实网络错误挂在 err.cause。
- * 本函数逐层下钻 cause 链，优先返回 .code（如 EHOSTUNREACH），
- * 其次匹配 message 中的已知错误码前缀。
- *
- * @returns 错误码字符串（如 'EHOSTUNREACH'），未识别返回 undefined
+ * @returns 错误码字符串（如 'EHOSTUNREACH'），未找到返回 undefined
  */
 export function extractNetErrorCode(err: unknown): string | undefined {
-  let current: unknown = err
-  // 下钻 cause 链，最多 5 层防循环
-  const MAX_DEPTH = 5
-  for (let i = 0; i < MAX_DEPTH && current != null; i++) {
-    if (current instanceof Error) {
-      // 优先 .code（node:net / undici 标准字段）
-      const code = (current as NodeJS.ErrnoException).code
-      if (code && KNOWN_NET_ERROR_CODES.includes(code as (typeof KNOWN_NET_ERROR_CODES)[number])) {
-        return code
-      }
-      // 次选：message 包含已知错误码
-      for (const known of KNOWN_NET_ERROR_CODES) {
-        if (current.message.includes(known)) {
-          return known
-        }
-      }
-      // 下钻 cause
-      current = current.cause
-    } else {
-      break
-    }
+  if (!(err instanceof Error)) return undefined
+
+  // 1. 直接在 err 上找 code（原生 Node fs 错误直接有）
+  const directCode = (err as NodeJS.ErrnoException).code
+  if (directCode) return directCode
+
+  // 2. 逐层下钻 cause 链
+  let current: unknown = (err as { cause?: unknown }).cause
+  const visited = new Set<unknown>()
+  while (current instanceof Error && !visited.has(current)) {
+    visited.add(current)
+    // cause.code（Node errno 风格）
+    const causeCode = (current as NodeJS.ErrnoException).code
+    if (causeCode) return causeCode
+    // cause.message 前缀匹配（部分 undici 错误把 code 放在 message 开头）
+    const prefix = current.message.match(/^([A-Z][A-Z0-9_]+)[\s:]/)
+    if (prefix) return prefix[1]
+    current = (current as { cause?: unknown }).cause
   }
   return undefined
 }
 
-// ─── 私网地址判定 ──────────────────────────────────────────────
-
 /**
- * 判定 URL 中的 host 是否为私网地址（RFC1918 / IPv6 ULA / loopback）。
+ * 从错误中提取最内层 cause 的 message（raw cause 字符串）。
  *
- * 不解析 DNS——hostname 形式（如 nas.local / DDNS 域名）直接返回 false，落通用文案。
- * 这是刻意的局限：解析 DNS 会引入新的失败面和延迟，且 hostname 代理场景下
- * 权限指引仍可行动（提示检查代理与权限），只是少了精确指引。
- *
- * @param urlString 代理 URL 字符串（如 'http://192.168.1.202:7890'）
+ * 用于落盘 update-error.log 的 rawCause 字段，保留完整诊断信息。
  */
-export function isPrivateHost(urlString: string): boolean {
-  let hostname: string
-  try {
-    // URL 构造器处理 scheme://host:port 格式
-    hostname = new URL(urlString).hostname
-  } catch {
-    // 非法 URL，保守返回 false
-    return false
+export function extractRawCause(err: unknown): string | undefined {
+  if (!(err instanceof Error)) return undefined
+  let current: unknown = err
+  const visited = new Set<unknown>()
+  while (current instanceof Error && !visited.has(current)) {
+    visited.add(current)
+    const next = (current as { cause?: unknown }).cause
+    if (!next) {
+      // 已到最内层，返回此层的 message（如果非外层则有意义）
+      if (current !== err) return current.message
+      return undefined
+    }
+    current = next
   }
-
-  // IPv6：去掉方括号
-  const cleanHost = hostname.replace(/^\[|\]$/g, '')
-
-  // IPv4 私网范围
-  if (isIPv4Private(cleanHost)) return true
-
-  // IPv6 ULA (fc00::/7) + loopback (::1)
-  if (isIPv6Private(cleanHost)) return true
-
-  return false
+  return undefined
 }
 
 /**
- * 判定 IPv4 地址是否为私网。
+ * 判断 hostname 是否为私网地址（RFC1918 IPv4 + IPv6 ULA fc00::/7 + loopback）。
  *
- * RFC1918 三段：
- * - 10.0.0.0/8
- * - 172.16.0.0/12
- * - 192.168.0.0/16
- * 加 loopback 127.0.0.0/8
+ * 已声明局限：hostname 形式（如 'nas.local'、DDNS 域名）不做 DNS 解析，
+ * 返回 false → 落通用「无法连接代理」文案（仍可行动，只是少了精确权限指引）。
+ *
+ * 不解析 DNS（引入解析即引入新失败面与延迟）。
  */
-function isIPv4Private(ip: string): boolean {
-  // 简单格式校验（不做完整 IPv4 parse，避免引入额外依赖）
-  const parts = ip.split('.')
+export function isPrivateHost(hostname: string): boolean {
+  // 去掉方括号（IPv6 URL 格式 [::1]）
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+
+  // IPv6 loopback
+  if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true
+
+  // IPv6 ULA fc00::/7（fc00:: 到 fdff:: 前缀）
+  if (host.startsWith('fc') || host.startsWith('fd')) return true
+
+  // IPv4 解析
+  const parts = host.split('.')
   if (parts.length !== 4) return false
+  const nums = parts.map(Number)
+  if (nums.some((n) => isNaN(n) || n < 0 || n > 255)) return false
 
-  const octets: number[] = []
-  for (const p of parts) {
-    const n = Number(p)
-    if (!Number.isInteger(n) || n < 0 || n > 255 || (p !== '0' && p.startsWith('0'))) return false
-    octets.push(n)
-  }
-
+  // 127.0.0.0/8 loopback
+  if (nums[0] === 127) return true
   // 10.0.0.0/8
-  if (octets[0] === 10) return true
-  // 172.16.0.0/12 (172.16.x.x ~ 172.31.x.x)
-  if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true
+  if (nums[0] === 10) return true
+  // 172.16.0.0/12
+  if (nums[0] === 172 && nums[1] >= 16 && nums[1] <= 31) return true
   // 192.168.0.0/16
-  if (octets[0] === 192 && octets[1] === 168) return true
-  // 127.0.0.0/8 (loopback)
-  if (octets[0] === 127) return true
+  if (nums[0] === 192 && nums[1] === 168) return true
 
   return false
 }
 
 /**
- * 判定 IPv6 地址是否为私网。
- *
- * - fc00::/7 (ULA，含 fd 前缀的常用子集)
- * - ::1 (loopback)
- * - ::ffff:x.x.x.x (mapped IPv4) 委托 IPv4 判定
+ * 从代理 URL 中提取 hostname。
  */
-function isIPv6Private(ip: string): boolean {
-  const lower = ip.toLowerCase()
-
-  // loopback
-  if (lower === '::1' || lower === '0:0:0:0:0:0:0:1') return true
-
-  // ULA fc00::/7：前 7 位 = 1111110 → fc 或 fd 开头
-  if (lower.startsWith('fc') || lower.startsWith('fd')) return true
-
-  // IPv4-mapped IPv6 (::ffff:x.x.x.x or hex form ::ffff:c0a8:101)
-  if (lower.startsWith('::ffff:') || lower.startsWith('0:0:0:0:0:ffff:')) {
-    const suffix = lower.replace(/^::ffff:/, '').replace(/^0:0:0:0:0:ffff:/, '')
-    // Check dotted-decimal form first
-    if (isIPv4Private(suffix)) return true
-    // Check hex form (URL normalizes ::ffff:192.168.1.1 → ::ffff:c0a8:101)
-    const ipv4FromHex = hexMappedToIPv4(suffix)
-    if (ipv4FromHex && isIPv4Private(ipv4FromHex)) return true
+function extractHostname(proxyUrl: string): string | undefined {
+  try {
+    return new URL(proxyUrl).hostname
+  } catch {
+    return undefined
   }
-
-  return false
 }
 
 /**
- * 将 IPv6 mapped hex 形式（如 c0a8:101）转回点分十进制 IPv4。
+ * 判定错误是否为「代理不可达（本地网络权限）」场景。
  *
- * URL 构造器会把 ::ffff:192.168.1.1 规范化为 ::ffff:c0a8:101，
- * 需要反向解析才能判定 IPv4 私网范围。
- */
-function hexMappedToIPv4(hex: string): string | undefined {
-  // 格式：两组 16 位 hex，冒号分隔
-  const parts = hex.split(':')
-  if (parts.length !== 2) return undefined
-  const high = parseInt(parts[0], 16)
-  const low = parseInt(parts[1], 16)
-  if (isNaN(high) || isNaN(low)) return undefined
-  // 拆回 4 个 8 位 octet
-  const o1 = (high >> 8) & 0xff
-  const o2 = high & 0xff
-  const o3 = (low >> 8) & 0xff
-  const o4 = low & 0xff
-  return `${o1}.${o2}.${o3}.${o4}`
-}
-
-// ─── 代理不可达分类 ──────────────────────────────────────────────
-
-/**
- * 分类代理不可达错误。
+ * 条件（D2）：
+ *   process.platform === 'darwin'
+ *   && err.cause.code === 'EHOSTUNREACH'
+ *   && isPrivateHost(proxyUrl.hostname)
  *
- * 判定为 UPDATE_PROXY_UNREACHABLE 的条件（D2）：
- * - macOS (process.platform === 'darwin')
- * - err.code === 'EHOSTUNREACH'
- * - proxyUrl host 是私网地址（RFC1918 + IPv6 ULA + loopback）
- *
- * 不满足条件时返回 false（由调用方走通用网络错误分类）。
+ * 不满足条件返回 false（由调用方 fallback 到通用网络错误分类）。
  */
 export function classifyProxyUnreachable(err: unknown, proxyUrl: string | undefined): boolean {
   if (process.platform !== 'darwin') return false
   const code = extractNetErrorCode(err)
   if (code !== 'EHOSTUNREACH') return false
   if (!proxyUrl) return false
-  return isPrivateHost(proxyUrl)
+  const hostname = extractHostname(proxyUrl)
+  if (!hostname) return false
+  return isPrivateHost(hostname)
 }
 
-// ─── UpdateError 工厂（注入 rawCause）──────────────────────────────
-
 /**
- * 从原始错误构造 UpdateError，注入 rawCause 用于磁盘落盘（D7）。
+ * 根据网络错误和代理信息，确定 UpdateErrorCode 和对应文案。
  *
- * rawCause 是 err.cause 的字符串化，用于 update-error.log 的 rawCause 字段——
- * 即使外层 Error.message 只有 'fetch failed'，落盘后仍可定位根因。
- *
- * @param err 原始错误
- * @param message 用户友好的错误消息（来自映射表）
- * @param stage 升级阶段
- * @param errorCode 错误码
+ * D2 决策：
+ * - macOS + EHOSTUNREACH + 私网代理 → UPDATE_PROXY_UNREACHABLE
+ * - 其他 EHOSTUNREACH → UPDATE_NETWORK_FAILED（含 EHOSTUNREACH 后缀）
+ * - 407/Proxy Authentication → UPDATE_PROXY_ERROR
+ * - ECONNREFUSED/ENOTFOUND/ECONNRESET/ETIMEDOUT/ECONNABORTED → UPDATE_NETWORK_FAILED
+ * - AbortError/timeout → UPDATE_NETWORK_TIMEOUT
+ * - 其他 → UPDATE_NETWORK_FAILED
  */
-export function wrapUpdateError(
+export function classifyNetError(
   err: unknown,
-  message: string,
   stage: UpdateStage,
-  errorCode: UpdateErrorCode,
+  proxyUrl?: string,
 ): UpdateError {
   const rawCause = extractRawCause(err)
-  const updateErr = new UpdateError(message, stage, errorCode)
-  // 动态注入 rawCause（readonly 字段在构造后赋值）
-  Object.defineProperty(updateErr, 'rawCause', {
-    value: rawCause,
-    writable: false,
-    enumerable: true,
-    configurable: false,
-  })
-  return updateErr
-}
+  const code = extractNetErrorCode(err)
 
-/**
- * 提取 rawCause 字符串（err.cause 的字符串化）。
- *
- * 递归下钻到最内层 cause，返回其 message 或 String 值。
- * 用于 update-error.log 的 rawCause 字段。
- */
-export function extractRawCause(err: unknown): string | undefined {
-  let current: unknown = err
-  const MAX_DEPTH = 5
-  let lastMessage: string | undefined
-  for (let i = 0; i < MAX_DEPTH && current != null; i++) {
-    if (current instanceof Error) {
-      lastMessage = current.message
-      current = current.cause
-    } else {
-      lastMessage = String(current)
-      break
-    }
+  // D2: 代理不可达（macOS 本地网络权限场景）
+  if (classifyProxyUnreachable(err, proxyUrl)) {
+    return new UpdateError(
+      '无法连接代理 (EHOSTUNREACH)',
+      stage,
+      'UPDATE_PROXY_UNREACHABLE' as UpdateErrorCode,
+      rawCause,
+    )
   }
-  return lastMessage
+
+  // 超时（AbortError）
+  if (err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'))) {
+    return new UpdateError(
+      `download timeout`,
+      stage,
+      'UPDATE_NETWORK_TIMEOUT',
+      rawCause,
+    )
+  }
+
+  // 407 / Proxy Authentication
+  if (err instanceof Error && /^407\b|[\s(]407\b|Proxy Authentication/i.test(err.message)) {
+    return new UpdateError(
+      `proxy error: ${err.message}`,
+      stage,
+      'UPDATE_PROXY_ERROR',
+      rawCause,
+    )
+  }
+
+  // EHOSTUNREACH 但不满足私网代理条件 → 通用网络失败
+  if (code === 'EHOSTUNREACH') {
+    return new UpdateError(
+      `network connection failed (EHOSTUNREACH)`,
+      stage,
+      'UPDATE_NETWORK_FAILED',
+      rawCause,
+    )
+  }
+
+  // 常见网络错误码
+  const NETWORK_CODES = ['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED']
+  if (code && NETWORK_CODES.includes(code)) {
+    return new UpdateError(
+      `network connection failed: ${code}`,
+      stage,
+      'UPDATE_NETWORK_FAILED',
+      rawCause,
+    )
+  }
+
+  // 兜底
+  return new UpdateError(
+    `download failed: ${err instanceof Error ? err.message : String(err)}`,
+    stage,
+    'UPDATE_NETWORK_FAILED',
+    rawCause,
+  )
 }

@@ -1,6 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -131,8 +131,8 @@ export interface ElectronAPI {
   getPreloaded(): Promise<{ release: LatestReleaseInfo; filePath: string } | null>
   /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数 */
   onUpdateProgress(callback: (payload: { stage: UpdateStage; percent: number }) => void): () => void
-  /** 监听升级错误事件（stage + message + errorCode），返回取消订阅函数 */
-  onUpdateError(callback: (payload: { stage: string; message: string; errorCode?: string }) => void): () => void
+  /** 监听升级错误事件（stage + message + errorCode + suggestion），返回取消订阅函数 */
+  onUpdateError(callback: (payload: UpdateErrorPayload) => void): () => void
   /** 不支持当前平台时，打开备用下载页（release 页面） */
   openUpdateFallbackUrl(url: string): Promise<void>
   // ── 代理配置 ────────────────────────────────────────────────────
@@ -152,7 +152,7 @@ export interface ElectronAPI {
   /** 保存代理配置 */
   setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void>
   /** 测试代理连接 */
-  testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }>
+  testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; code?: string; message?: string; suggestion?: string }>
   // ── 升级提醒持久化标志（功能 1：常驻提醒）──────────────────────────
   /**
    * 读取升级提醒持久化标志（app 启动时调用以恢复「可升级」提醒）。
@@ -287,8 +287,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('update:progress', handler)
     return () => ipcRenderer.removeListener('update:progress', handler)
   },
-  onUpdateError: (callback: (payload: { stage: string; message: string; errorCode?: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, payload: { stage: string; message: string; errorCode?: string }) => callback(payload)
+  onUpdateError: (callback: (payload: UpdateErrorPayload) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: UpdateErrorPayload) => callback(payload)
     ipcRenderer.on('update:error', handler)
     return () => ipcRenderer.removeListener('update:error', handler)
   },
