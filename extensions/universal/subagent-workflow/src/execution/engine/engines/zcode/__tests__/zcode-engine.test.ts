@@ -2,6 +2,7 @@
 // CLI 与真凭据；真机链路见 zcode-engine.live.test.ts 的手动门）。覆盖验收 6 的
 // capabilities/probe 部分 + run 错误语义三条（§3.3.5）。
 
+import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -46,16 +47,26 @@ interface FakeLaunchOpts {
   preKilled?: boolean;
 }
 
+/** fake 句柄的 child（立即退出的真实 node 短进程——满足 ChildProcess 类型与 D10 记账形态）。 */
+function fakeChild(): ChildProcess {
+  return spawn(process.execPath, ["-e", ""]);
+}
+
 function makeFakeLaunch(fake: FakeLaunchOpts) {
   const calls: Array<{ cliPath: string; args: string[]; env: NodeJS.ProcessEnv }> = [];
+  /** 每次 launch 创建的 child 句柄（D10 onChildSpawned 断言的 identity 数据源）。 */
+  const children: ChildProcess[] = [];
   let killed = fake.preKilled === true;
   const launch = (o: { cliPath: string; args: string[]; env: NodeJS.ProcessEnv }): ZcodeLaunchedProcess => {
     calls.push(o);
+    const child = fakeChild();
+    children.push(child);
     const stdout = new PassThrough();
     stdout.end(fake.stdout ?? "");
     const stderr = new PassThrough();
     stderr.end("");
     return {
+      child,
       pid: 4242,
       stdout,
       stderr,
@@ -66,7 +77,7 @@ function makeFakeLaunch(fake: FakeLaunchOpts) {
       killedByUs: () => killed,
     };
   };
-  return { launch, calls };
+  return { launch, calls, children };
 }
 
 function makeEngine(overrides?: Partial<ZcodeEngineDeps>): ZcodeEngine {
@@ -263,6 +274,40 @@ describe("run ② 成功路径：golden stdout → outcome/handle/事件合成",
   });
 });
 
+// ── D10 终止链路径①（C-ext-17 回归）：spawn 成功后同步回调 onChildSpawned ──
+
+describe("run D10：onChildSpawned（宿主终止链记账钩子）", () => {
+  it("spawn 成功 → ctx.onChildSpawned 收到 launcher 的 child 句柄，先于任何终态事件（同步口径）", async () => {
+    const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
+    const engine = makeEngine({ launch: fake.launch });
+    const seen: Array<{ child: ChildProcess; eventsBefore: number }> = [];
+    let eventCount = 0;
+    const { outcome } = await engine.run(
+      makeTask(),
+      makeCtx({
+        onChildSpawned: (child) => seen.push({ child, eventsBefore: eventCount }),
+        onEvent: () => {
+          eventCount++;
+        },
+      }),
+    );
+    expect(outcome.error).toBeUndefined();
+    // 回调恰好一次，句柄即 launch 返回的 child（宿主 registerSpawnedChildForRecord 数据源）
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.child).toBe(fake.children[0]);
+    // 同步回调（port.ts 契约）：zcode coarse 事件在终态后合成，回调时事件数为 0
+    expect(seen[0]?.eventsBefore).toBe(0);
+  });
+
+  it("ctx 未提供回调时静默跳过（可选钩子，run 正常完成）", async () => {
+    const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
+    const engine = makeEngine({ launch: fake.launch });
+    const { outcome } = await engine.run(makeTask(), makeCtx());
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.content).toBe("ok");
+  });
+});
+
 describe("run schema 仿真接线（D4 emulated 侧：common/schema-emulation 公共层）", () => {
   const VERDICT_SCHEMA = {
     type: "object",
@@ -311,6 +356,7 @@ describe("run schema 仿真接线（D4 emulated 侧：common/schema-emulation �
       const e = new PassThrough();
       e.end("");
       return {
+        child: fakeChild(),
         pid: 1,
         stdout: s,
         stderr: e,
@@ -394,6 +440,7 @@ describe("run ③ abort：杀链合成终态（exitCode=null + 杀链标记）",
     const stdout = new PassThrough();
     const stderr = new PassThrough();
     const launch = (): ZcodeLaunchedProcess => ({
+      child: fakeChild(),
       pid: 99,
       stdout,
       stderr,

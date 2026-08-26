@@ -416,6 +416,11 @@ export class ZcodeEngine implements EnginePort {
       );
     }
 
+    // [U0 D10] 终止链路径①：spawn 成功后同步注册子进程句柄进宿主 spawnedChildren
+    // 记账（port.ts 契约「spawn 成功后同步回调」）——cancelBackground SIGTERM /
+    // dispose killAll 收割兜底对引擎 record 生效，防 controller 丢失/竞态场景下孤儿进程
+    ctx.onChildSpawned?.(proc.child);
+
     // abort 分级（D1）：zcode 无原生中断（interrupt: kill-only），AbortSignal 直通
     // SIGTERM → grace → SIGKILL 杀链，终态由宿主合成
     const onAbort = (): void => {

@@ -7,6 +7,7 @@
 // registry 注册 fake EnginePort（probe 结果可注入）；frontmatter/全局配置经真实
 // ModelConfigService 单例（agentDir 指向临时目录，真实落盘 .md 与 config.json）。
 
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -18,6 +19,7 @@ import type { RunContext } from "../engine/port.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
 import type { EnginePort, ProbeReport } from "../engine/types.ts";
 import { ModelConfigService, setModelConfigService } from "../model-config-service.ts";
+import { getChildByRecord } from "../session-runner.ts";
 import { SubprocessAgentRunner } from "../subprocess-agent-runner.ts";
 import type { SubagentService } from "../subagent-service.ts";
 import type { ExecuteOptions } from "../types.ts";
@@ -281,5 +283,28 @@ describe("SAR 路由集成（P4 验收 1/2/3）", () => {
 
     expect(result.error).toContain("engine_not_found");
     expect(pi.executeAndAwait).not.toHaveBeenCalled();
+  });
+
+  it("[D10] RunContext.onChildSpawned 注入：子进程注册进 spawnedChildren，退出后按句移除", async () => {
+    // C-ext-17 路径①回归：SAR 构造的 RunContext 必须提供 onChildSpawned（引擎 spawn
+    // 后回调 → session-runner spawnedChildren 记账 → dispose killAll 收割兜底可见）
+    const agentRef = writeAgentMd("reviewer", "name: reviewer\ndescription: d\nengine: zcode");
+    installModelService();
+    const { engine, calls } = makeFakeZcodeEngine(true);
+    registerEngine("zcode", () => engine);
+    const pi = makeMockPiService();
+    const sar = new SubprocessAgentRunner({ subagentService: pi.service });
+
+    await sar.run(makeOpts({ agent: agentRef }), new AbortController().signal);
+
+    const ctx = calls.runs[0]?.ctx;
+    expect(ctx?.onChildSpawned).toBeTypeOf("function");
+    // 引擎回调（真实引擎在 spawn 成功后同步调）→ 按 taskId（'sa-' 记账 key）注册可见
+    const child = spawn(process.execPath, ["-e", ""]);
+    ctx?.onChildSpawned?.(child);
+    expect(getChildByRecord(ctx.taskId)).toBe(child);
+    // 子进程退出（真实 close 事件）后记账按句移除——不残留死句柄
+    await new Promise<void>((resolve) => child.once("close", () => resolve()));
+    expect(getChildByRecord(ctx.taskId)).toBeUndefined();
   });
 });

@@ -151,7 +151,7 @@ export async function routeEngine(opts: EngineRouteOptions): Promise<EngineRoute
     throw probeFailedError(routing.engineId, report, "engine 来自调用参数显式指定（能力依赖声明）——不兜底");
   }
 
-  const fallbackId = fallbackTargetId(opts.routing, routing.source);
+  const fallbackId = fallbackTargetId(opts.routing, routing.source, routing.engineId);
   // 守卫 c：显式 model 与引擎 provider 体系绑定（D9② model/engine 正交）——换引擎
   // 后 model 可解析性无法保证，静默换引擎跑 = 「以为用了 X 实际用 Y」。判定取保守
   // 口径（显式 model + 引擎切换即拒）：路由层无各引擎 provider 注册表的访问面，
@@ -176,12 +176,15 @@ export async function routeEngine(opts: EngineRouteOptions): Promise<EngineRoute
 /**
  * fallback 目标：请求来自 frontmatter/调用参数 → 全局默认引擎；请求即全局默认
  * （defaultEngine 配了坏引擎，source='default'）→ 内置缺省 'pi'（零风险回退——设计
- * 终态四口径：fallback 回「缺省 pi」而非原地重试坏引擎）。
+ * 终态四口径：fallback 回「缺省 pi」而非原地重试坏引擎）。全局默认与请求引擎相同
+ * （frontmatter engine === defaultEngine，如 agent .md engine: zcode + config
+ * defaultEngine: zcode）同样回 'pi'——回退到刚 probe 失败的同一引擎 = 原地重试坏
+ * 引擎（from==to 误导留痕），违背「回缺省 pi」的设计意图。
  */
-function fallbackTargetId(routing: EngineRoutingInput, source: EngineRoutingSource): string {
+function fallbackTargetId(routing: EngineRoutingInput, source: EngineRoutingSource, resolvedEngineId: string): string {
   if (source === "default") return DEFAULT_ENGINE_ID;
   const global = routing.globalDefaultEngine;
-  if (global !== undefined && global !== "" && global !== DEFAULT_ENGINE_ID) {
+  if (global !== undefined && global !== "" && global !== DEFAULT_ENGINE_ID && global !== resolvedEngineId) {
     return global;
   }
   return DEFAULT_ENGINE_ID;

@@ -565,6 +565,23 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
     expect(entry?.engineHandle).toBeUndefined();
   });
 
+  it("[池槽回归] 引擎 run 完成后 release 并发槽：连续 7 次（> maxConcurrent=6）后第 7 次不被永久阻塞", async () => {
+    // review MF1：kickOffEngineRun 旧实现 acquire 后无 release——每次引擎后台 run 泄漏
+    // 一个槽，累计 maxConcurrent(6) 次后全部 background subagent 在 acquire 队列挂死
+    process.env.XYZ_AGENT_DATA_DIR = agentDir;
+    const { service, zcode } = setup(agentDir);
+    zcode.runImpl = () => Promise.resolve({ handle: fakeHandle(), outcome: doneOutcome("ok") });
+
+    for (let i = 0; i < 7; i++) {
+      const h = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
+      // 等本条终态化（record 离开内存）再发下一条——泄漏形态下第 7 条 acquire 永久
+      // 排队、record 永卡 running，本 waitFor 即超时失败
+      await vi.waitFor(() => expect(service.findRecord(h.subagentId)).toBeUndefined());
+    }
+    // 7 次引擎 run 全部真实执行（第 7 次未被泄漏槽阻塞）
+    expect(zcode.runs.length).toBe(7);
+  }, 10_000);
+
   /** 最后一条 subagent-record entry（register→archive 双写点取终态侧）。 */
   function lastRecordEntry(pi: ReturnType<typeof makePi>): Record<string, unknown> | undefined {
     const calls = pi.appendEntry.mock.calls.filter((c) => c[0] === "subagent-record");

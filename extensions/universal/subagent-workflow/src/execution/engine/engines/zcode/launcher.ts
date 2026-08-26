@@ -15,7 +15,7 @@
 // 全缺全补」）；abort 由 AbortSignal 驱动（EnginePort 契约），zsub 的 cancel() 变为
 // abort(graceMs)。
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { Readable } from "node:stream";
 
 import { killChain } from "../../common/kill-chain.ts";
@@ -78,6 +78,8 @@ export function buildZcodeEnv(homeDir: string, baseEnv: NodeJS.ProcessEnv = proc
 
 /** launcher 产出的进程句柄（parser 消费 stdout/stderr/exited；abort 是杀链执行体）。 */
 export interface ZcodeLaunchedProcess {
+  /** spawn 出的原始子进程句柄（[U0 D10] 终止链记账——引擎经 RunContext.onChildSpawned 注册进宿主 spawnedChildren）。 */
+  readonly child: ChildProcess;
   readonly pid: number;
   readonly stdout: Readable;
   readonly stderr: Readable;
@@ -148,6 +150,7 @@ export function launchZcodeProcess(opts: ZcodeLaunchOptions): ZcodeLaunchedProce
   };
 
   return {
+    child,
     pid: child.pid ?? -1,
     stdout: stdoutStream,
     stderr: stderrStream,

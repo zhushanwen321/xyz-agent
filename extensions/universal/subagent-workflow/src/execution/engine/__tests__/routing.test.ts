@@ -49,10 +49,15 @@ function makeRoute(overrides?: {
   strict?: boolean;
   routing?: Partial<EngineRouteOptions["routing"]>;
   taskModel?: string;
+  /** 额外注册第三引擎（probe ok）——fallback 目标为「非 pi 的其他全局默认」用例。 */
+  globalEngine?: string;
 }) {
   const engines = new Map<string, EnginePort>();
   engines.set(DEFAULT_ENGINE_ID, makeFakeEngine("pi", true));
   engines.set("zcode", makeFakeEngine("zcode", overrides?.zcodeProbeOk ?? true));
+  if (overrides?.globalEngine !== undefined) {
+    engines.set(overrides.globalEngine, makeFakeEngine(overrides.globalEngine, true));
+  }
   const probeCalls: string[] = [];
   const opts: EngineRouteOptions = {
     routing: overrides?.routing ?? {},
@@ -194,6 +199,33 @@ describe("routeEngine：路由 + 探针 + 守卫编排（验收 1/2）", () => {
     const { opts } = makeRoute({ zcodeProbeOk: false, routing: { globalDefaultEngine: "zcode" } });
     const result = await routeEngine(opts);
     expect(result.engineId).toBe("pi");
+    expect(result.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
+  });
+
+  it("frontmatter zcode + config 默认同为 zcode + probe 失败：fallback 回 pi（不回退同一坏引擎）", async () => {
+    // review MF3 回归：全局默认 === 请求引擎时，fallback 目标不得 = 刚 probe 失败的
+    // 引擎（from==to 原地重试坏引擎 + 误导留痕）——回内置缺省 pi
+    const { opts, engines } = makeRoute({
+      zcodeProbeOk: false,
+      routing: { agentEngine: "zcode", globalDefaultEngine: "zcode" },
+    });
+    const result = await routeEngine(opts);
+    expect(result.engine).toBe(engines.get("pi"));
+    expect(result.engineId).toBe("pi");
+    expect(result.requestedEngineId).toBe("zcode");
+    expect(result.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
+  });
+
+  it("frontmatter zcode + config 默认为其他引擎：probe 失败回全局默认（既有行为不回归）", async () => {
+    // 全局默认 ≠ 请求引擎且非 pi：fallback 目标仍是全局默认（相等比较只拦截 from==to 形态）
+    const { opts, engines } = makeRoute({
+      zcodeProbeOk: false,
+      globalEngine: "claude",
+      routing: { agentEngine: "zcode", globalDefaultEngine: "claude" },
+    });
+    const result = await routeEngine(opts);
+    expect(result.engine).toBe(engines.get("claude"));
+    expect(result.engineId).toBe("claude");
     expect(result.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
   });
 });

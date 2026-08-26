@@ -2,6 +2,7 @@
 // 终态（exitCode=null）、无悬挂 promise（run 正常 resolve、exited 收口）、错误事件
 // 先于终态 emit（不变量 5 的事件面）。fake launcher 注入（不依赖真机）。
 
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -41,6 +42,8 @@ function makeHangingLaunch(): {
   });
   const launch = (): ZcodeLaunchedProcess => {
     launched = {
+      // D10 记账形态：child = 立即退出的真实 node 短进程（本用例不消费记账面）
+      child: spawn(process.execPath, ["-e", ""]),
       pid: 4242,
       stdout,
       stderr,

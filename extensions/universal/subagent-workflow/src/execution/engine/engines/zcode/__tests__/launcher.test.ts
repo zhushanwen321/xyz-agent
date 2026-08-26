@@ -90,6 +90,20 @@ describe("launchZcodeProcess：真实子进程杀链（node -e 代替 CLI）", (
   // 杀链/exited 机制与 CLI 无关（对子进程发信号 + close 事件），用 `node -e <script>`
   // 验证机制本身：launchZcodeProcess 的 spawn 形态是 `node <cliPath> <args...>`，
   // 测试借 cliPath 槽位传 -e、args 传脚本内容。
+  it("child 句柄暴露（D10 记账数据源）：proc.child 即 spawn 出的进程，退出码可读", async () => {
+    const proc = launchZcodeProcess({
+      cliPath: "-e",
+      args: ["process.stdout.write('hi'); process.exit(0)"],
+      env: process.env,
+    });
+    // 句柄与 pid 同源（宿主经 RunContext.onChildSpawned 注册进 spawnedChildren）
+    expect(proc.child.pid).toBe(proc.pid);
+    expect(proc.child.killed).toBe(false);
+    const exited = await proc.exited;
+    expect(exited.code).toBe(0);
+    expect(proc.child.exitCode).toBe(0); // close 后 exitCode 可读（close 事件先于 exited resolve）
+  });
+
   it("正常退出：exited 带退出码，stdout 可收集", async () => {
     const proc = launchZcodeProcess({
       cliPath: "-e",

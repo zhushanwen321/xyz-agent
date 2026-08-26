@@ -31,6 +31,7 @@ import type { AgentOutcome, EngineHandle } from "./engine/types.ts";
 import { mapToExecuteOptions, mergeTimeoutSignal } from "./execute-options-mapper.ts";
 import { getModelConfigService } from "./model-config-service.ts";
 import type { ModelInfo } from "./model-resolver.ts";
+import { registerSpawnedChildForRecord } from "./session-runner.ts";
 import type { SubagentStream } from "./stream-sink.ts";
 import type { SubagentService } from "./subagent-service.ts";
 import type { ExecuteOptions } from "./types.ts";
@@ -199,6 +200,10 @@ export class SubprocessAgentRunner implements AgentRunner {
         ctxModel: this.ctxModel,
         ...(route.engineFallback !== undefined ? { engineFallback: route.engineFallback } : {}),
         onPoolResolved: retargetJournal,
+        // [U0 D10] 终止链路径①：引擎 spawn 的子进程注册进 session-runner 的
+        // spawnedChildren 记账（dispose killAll 收割兜底对 workflow 域引擎任务生效）；
+        // taskId（'sa-' 前缀）即记账 key，与 chat 域 kickOffEngineRun 的 record.id 同构
+        onChildSpawned: (child) => registerSpawnedChildForRecord(taskId, child),
         ...(stream !== undefined ? { stream } : {}),
         // 解耦形态（有 schemaEnv 无 schema）的兜底通道——耦合形态下引擎从 task.schema
         // 派生等值，此值被忽略（见 RunContext.schemaEnv 注释）
