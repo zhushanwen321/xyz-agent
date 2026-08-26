@@ -13,7 +13,7 @@
     <!-- 展开在途占位（hint 行，depth 已含 +1 缩进） -->
     <div
       v-if="row.hint === 'loading'"
-      class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10px] text-neutral-dim"
+      class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[length:var(--text-3xs)] text-neutral-dim"
       :style="rowPaddingStyle"
       :data-testid="`file-tree-loading-${row.path}`"
     >
@@ -25,7 +25,7 @@
     <!-- 展开失败占位（点击沿用旧语义：已展开目录 → 折叠） -->
     <div
       v-else-if="row.hint === 'error'"
-      class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10px] text-danger"
+      class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[length:var(--text-3xs)] text-danger"
       :style="rowPaddingStyle"
       :data-testid="`file-tree-error-${row.path}`"
       @click="emit('toggle', row)"
@@ -38,7 +38,7 @@
     <!-- 已加载空目录（全部子项被 showIgnored 过滤后也视为空） -->
     <div
       v-else-if="row.hint === 'empty'"
-      class="py-1 pr-2 font-mono text-[10px] text-neutral-dim italic"
+      class="py-1 pr-2 font-mono text-[length:var(--text-3xs)] text-neutral-dim italic"
       :style="rowPaddingStyle"
       :data-testid="`file-tree-empty-${row.path}`"
     >
@@ -48,7 +48,7 @@
     <!-- 目录行 -->
     <div
       v-else-if="row.type === 'dir'"
-      class="flex w-max min-w-full cursor-pointer items-center gap-1 rounded-md py-0.5 pr-2 font-mono text-[12px] transition-colors hover:bg-surface-hover"
+      class="flex w-max min-w-full cursor-pointer items-center gap-1 rounded-md py-0.5 pr-2 font-mono text-[length:var(--text-xs)] transition-colors hover:bg-surface-hover"
       :style="rowPaddingStyle"
       :data-testid="`file-tree-dir-${row.path}`"
       @click="emit('toggle', row)"
@@ -64,7 +64,7 @@
       <!-- W2 目录改动数徽章（子树改动文件数，>0 才显；预聚合 count 由投影预计算） -->
       <span
         v-if="row.changeCount > 0"
-        class="shrink-0 rounded-sm bg-surface-2 px-1 py-0.5 font-mono text-[10px] text-neutral-dim"
+        class="shrink-0 rounded-sm bg-surface-2 px-1 py-0.5 font-mono text-[length:var(--text-3xs)] text-neutral-dim"
         :data-testid="`file-tree-dir-badge-${row.path}`"
       >{{ row.changeCount > 999 ? '999+' : row.changeCount }}</span>
     </div>
@@ -82,7 +82,7 @@
       <span :class="chevronSlotClass" data-testid="chevron-slot" />
       <component :is="fileIcon" class="size-3.5 shrink-0" :class="fileIconColor" />
       <span
-        class="shrink whitespace-nowrap font-mono text-[12px]"
+        class="shrink whitespace-nowrap font-mono text-[length:var(--text-xs)]"
         :class="[
           row.ignored ? 'text-neutral-dim italic' : 'text-neutral-fg',
           selected ? 'font-semibold text-accent' : '',
@@ -91,13 +91,13 @@
       <!-- git overlay 角标（D-012 树/标注分离：从投影的 row.gitStatus 取 status） -->
       <span
         v-if="gitBadge"
-        class="rounded-sm px-1 py-0.5 font-mono text-[10px]"
+        class="rounded-sm px-1 py-0.5 font-mono text-[length:var(--text-3xs)]"
         :class="gitBadgeClass"
       >{{ gitBadge }}</span>
       <!-- W2 文件行数 +N −M（tracked 改动有 numstat；untracked 降级显 ~size） -->
       <span
         v-if="row.lineStats"
-        class="shrink-0 font-mono text-[10px]"
+        class="shrink-0 font-mono text-[length:var(--text-3xs)]"
         :data-testid="`file-tree-linestats-${row.path}`"
       >
         <span v-if="row.lineStats.add !== undefined" class="text-success">+{{ formatCount(row.lineStats.add) }}</span>

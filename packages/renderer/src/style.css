@@ -80,6 +80,12 @@
    *   --font-scale-mq：视口媒体查询自动档位（见文件底部 @media） */
   --font-scale-u: 1;
   --font-scale-mq: 1;
+  /* 分区字号倍率（data-fs-sidebar/chat/drawer 档位映射，见下方选择器）。
+   * 区域根节点挂 .fs-<region> scope 类后，子树内 --text-* 链乘以对应倍率。 */
+  --font-scale-sidebar: 1;
+  --font-scale-chat: 1;
+  --font-scale-drawer: 1;
+  --text-3xs: calc(10px * var(--font-scale-u) * var(--font-scale-mq));
   --text-2xs: calc(11px * var(--font-scale-u) * var(--font-scale-mq));
   --text-xs: calc(12px * var(--font-scale-u) * var(--font-scale-mq));
   --text-sm: calc(13px * var(--font-scale-u) * var(--font-scale-mq));
@@ -292,6 +298,59 @@
 
 :root[data-font-size="large"] {
   --font-scale-u: 1.143;
+}
+
+/* ============================================================
+   分区字号槽位（data-fs-<region> → --font-scale-<region>）
+   store.setSystem({fontScales}) 经 applySystemToDom 同步 <html data-fs-*>。
+   档位倍率：small ×0.9 / medium ×1 / large ×1.15 / xlarge ×1.3。
+   三个区域共用同一档位表，逐区域写选择器（属性选择器无法参数化 key）。
+   ============================================================ */
+:root[data-fs-sidebar="small"] { --font-scale-sidebar: 0.9; }
+:root[data-fs-sidebar="medium"] { --font-scale-sidebar: 1; }
+:root[data-fs-sidebar="large"] { --font-scale-sidebar: 1.15; }
+:root[data-fs-sidebar="xlarge"] { --font-scale-sidebar: 1.3; }
+
+:root[data-fs-chat="small"] { --font-scale-chat: 0.9; }
+:root[data-fs-chat="medium"] { --font-scale-chat: 1; }
+:root[data-fs-chat="large"] { --font-scale-chat: 1.15; }
+:root[data-fs-chat="xlarge"] { --font-scale-chat: 1.3; }
+
+:root[data-fs-drawer="small"] { --font-scale-drawer: 0.9; }
+:root[data-fs-drawer="medium"] { --font-scale-drawer: 1; }
+:root[data-fs-drawer="large"] { --font-scale-drawer: 1.15; }
+:root[data-fs-drawer="xlarge"] { --font-scale-drawer: 1.3; }
+
+/* 区域字号 scope 槽位：挂在区域根节点（Sidebar 根 / main-area / drawer-area 的
+ * data-fs-scope 属性），对子树重声明 --text-* 链（乘区域倍率）。自定义属性继承，
+ * 子树内所有 text-[length:var(--text-*)] 与 em 相对字号（markdown 标题等）随之
+ * 缩放；硬编码 px 字号类不响应（各区域组件已转换为 token 引用）。
+ * 属性选择器而非类名：与 data-font-size 槽位同范式，且仍是纯 token 重声明。 */
+[data-fs-scope="sidebar"] {
+  --text-3xs: calc(10px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-sidebar));
+  --text-2xs: calc(11px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-sidebar));
+  --text-xs: calc(12px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-sidebar));
+  --text-sm: calc(13px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-sidebar));
+  --text-base: calc(14px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-sidebar));
+  --text-md: calc(15px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-sidebar));
+}
+
+[data-fs-scope="chat"] {
+  --text-3xs: calc(10px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-chat));
+  --text-2xs: calc(11px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-chat));
+  --text-xs: calc(12px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-chat));
+  --text-sm: calc(13px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-chat));
+  --text-base: calc(14px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-chat));
+  --text-md: calc(15px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-chat));
+}
+
+[data-fs-scope="drawer"] {
+  --text-3xs: calc(10px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-drawer));
+  --text-2xs: calc(11px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-drawer));
+  --text-xs: calc(12px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-drawer));
+  --text-sm: calc(13px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-drawer));
+  --text-base: calc(14px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-drawer));
+  --text-md: calc(15px * var(--font-scale-u) * var(--font-scale-mq) * var(--font-scale-drawer));
 }
 
 /* 视口自适应字号（与 --font-scale-mq 配合：大屏放大、小屏收缩） */

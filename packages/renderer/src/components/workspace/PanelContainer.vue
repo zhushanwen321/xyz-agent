@@ -52,6 +52,7 @@
          开合动画期间 rAF 循环逐帧派发 xyz:splitter-layout）。 -->
     <div ref="splitAreaEl" data-testid="split-area" class="relative flex min-h-0 flex-1 overflow-hidden">
       <div
+        data-fs-scope="chat"
         class="relative h-full min-w-0 overflow-hidden"
         :class="splitTransitionClass"
         :style="mainAreaStyle"
@@ -86,6 +87,7 @@
         @keydown="onHandleKeydown"
       />
       <div
+        data-fs-scope="drawer"
         class="h-full min-w-0 overflow-hidden"
         :class="splitTransitionClass"
         :style="{ width: drawerOpen ? `${drawerPct}%` : '0%' }"

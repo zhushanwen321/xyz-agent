@@ -95,6 +95,8 @@
 |-------|-----|------|
 | `--font-scale-u` | `1`（默认） | 用户字号档位（data-font-size: small=0.929 / medium=1 / large=1.143） | 2026-08-02 太极·玄新增（demo tokens.css + useTheme） |
 | `--font-scale-mq` | `1`（默认） | 视口自适应档位（@media: ≥2100px=1.08 / ≤1399px=0.95） | 2026-08-02 太极·玄新增（demo tokens.css 底部 @media） |
+| `--font-scale-sidebar` / `--font-scale-chat` / `--font-scale-drawer` | `1`（默认） | 分区字号档位（data-fs-\<region\>: small=0.9 / medium=1 / large=1.15 / xlarge=1.3；区域根 data-fs-scope 槽位重声明 --text-* 链） | 2026-08-26 feat-font-optimize 新增（Settings 外观页分区字号） |
+| `--text-3xs` | `calc(10px × u × mq)` | 极小字（sidebar 徽标 / drawer 次要 meta） | 2026-08-26 feat-font-optimize 新增（sidebar/drawer 硬编码 10px token 化） |
 | `--text-2xs` | `calc(11px × u × mq)` | 极小字（bash truncation / runId / dirPath） |
 | `--text-xs` | `calc(12px × u × mq)` | 小字（tag / meta / mono detail） |
 | `--text-sm` | `calc(13px × u × mq)` | 次级正文（task preview / bash content / label） |

@@ -10,6 +10,8 @@
  *   theme='system' 时按 prefers-color-scheme 解析为 light/dark（避免 CSS 再叠一层 media query，统一走 data-theme 单一通道）
  * - themePreset → <html data-theme-preset>（[data-theme-preset] 规则覆盖 --accent；cold-blue 与 :root 默认一致）
  * - fontSize → <html data-font-size>（[data-font-size] 规则调整基础字号，D17）
+ * - fontScales → <html data-fs-sidebar/chat/drawer>（[data-fs-*] 规则映射 --font-scale-<region>，
+ *   区域根节点 .fs-<region> scope 类重声明 --text-* 链实现分区缩放）
  * - locale → 经 deps.setLocale 注入（ui 不持有 i18n 全局实例，W4 壳传入真实 setLocale）
  *
  * SSR 守卫：typeof document === 'undefined' 时早返（不抛错），保证同构安全。
@@ -50,6 +52,11 @@ export function applySystemToDom(
 
   // fontSize：缺省 medium（D17，与 DEFAULT_SYSTEM 一致）。
   root.dataset.fontSize = s.fontSize ?? 'medium'
+
+  // fontScales：分区字号档位，缺省 medium（×1）。档位→倍率映射在 renderer style.css [data-fs-*] 规则。
+  root.dataset.fsSidebar = s.fontScales?.sidebar ?? 'medium'
+  root.dataset.fsChat = s.fontScales?.chat ?? 'medium'
+  root.dataset.fsDrawer = s.fontScales?.drawer ?? 'medium'
 
   if (s.locale && deps?.setLocale) {
     deps.setLocale(s.locale)

@@ -48,7 +48,7 @@
              经 staging.activeStaging 统一渲染（ADR-0057），退出调 staging.exit() -->
         <div
           v-if="staging.activeStaging.value"
-          class="composer-mode-chip mx-2.5 mt-2 flex items-center gap-1.5 rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[11px] font-medium text-[var(--accent)]"
+          class="composer-mode-chip mx-2.5 mt-2 flex items-center gap-1.5 rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[length:var(--text-2xs)] font-medium text-[var(--accent)]"
           :data-testid="staging.activeStaging.value.type === 'fork' ? 'composer-mode-chip' : 'composer-handoff-chip'"
         >
           <component :is="staging.activeStaging.value.visual.chipIcon" class="size-3" />

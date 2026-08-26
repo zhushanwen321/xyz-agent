@@ -52,7 +52,7 @@
       <!-- 主体：label + sub（fork 血缘 / branch） -->
       <div class="min-w-0 flex-1">
         <div
-          class="flex min-w-0 items-center gap-1 text-[12px] leading-[1.35]"
+          class="flex min-w-0 items-center gap-1 text-[length:var(--text-xs)] leading-[1.35]"
           :class="[
             active ? 'text-accent' : 'text-neutral-fg',
             markedDone ? 'opacity-60' : '',
@@ -61,15 +61,15 @@
           <span class="min-w-0 flex-1 truncate">{{ session.label }}</span>
           <!-- agent-spawned badge（U8）：accent 低饱和形态（bg-accent-soft + text-accent，
                对齐 popover-styles SELECTED_ITEM_CLASS 配对）；尺寸/圆角对齐同目录
-               FileTreeRow badge（rounded-sm px-1 py-0.5 text-[10px]），不抢左侧状态 icon 焦点 -->
+               FileTreeRow badge（rounded-sm px-1 py-0.5 text-[length:var(--text-3xs)]），不抢左侧状态 icon 焦点 -->
           <span
             v-if="isAgentSpawned"
             data-testid="session-agent-badge"
-            class="shrink-0 rounded-sm bg-accent-soft px-1 py-0.5 font-mono text-[10px] leading-none text-accent"
+            class="shrink-0 rounded-sm bg-accent-soft px-1 py-0.5 font-mono text-[length:var(--text-3xs)] leading-none text-accent"
           >{{ t('sidebar.sessionItem.agentBadge') }}</span>
         </div>
         <div
-          class="mt-0.5 truncate font-mono text-[10px] leading-[1.3] text-neutral-dim"
+          class="mt-0.5 truncate font-mono text-[length:var(--text-3xs)] leading-[1.3] text-neutral-dim"
           data-testid="sidebar-session-sub"
         >
           <!-- 分支血缘元信息（spec §8.5：分支 session 自身显示「↑ fork 自 <父名>」）优先；
@@ -84,7 +84,7 @@
 
       <!-- 右侧：仅时间文字（状态信号已移至左侧 7px icon） -->
       <span
-        class="mt-1 shrink-0 font-mono text-[10px] leading-[1.35] text-neutral-dim"
+        class="mt-1 shrink-0 font-mono text-[length:var(--text-3xs)] leading-[1.35] text-neutral-dim"
       >{{ timeLabel }}</span>
 
       <!-- hover ghost 操作（spec §3 SessionItem hover 帧）。
@@ -138,7 +138,7 @@
                 :key="p.id"
                 variant="ghost"
                 data-testid="assign-project-option"
-                class="h-auto w-full justify-start gap-2 rounded-sm px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+                class="h-auto w-full justify-start gap-2 rounded-sm px-2 py-1.5 text-[length:var(--text-xs)] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
                 :class="(session.projectId || '') === p.id ? 'text-accent' : ''"
                 @click="onAssign(p.id)"
               >
@@ -176,7 +176,7 @@
       >
         <ContextMenuItem
           data-testid="session-view-parent-item"
-          class="flex h-auto w-full cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-[12px] text-neutral-mid outline-none hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[13px]"
+          class="flex h-auto w-full cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-[length:var(--text-xs)] text-neutral-mid outline-none hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[13px]"
           @select="onViewParent"
         >
           <CornerLeftUp />

@@ -24,8 +24,8 @@
       data-testid="drawer-subagent-empty"
     >
       <Bot class="size-6 text-neutral-dim opacity-40" />
-      <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.sideDrawer.noSubagent') }}</p>
-      <p class="text-[11px] text-neutral-dim opacity-50">{{ t('panel.sideDrawer.subagentHint') }}</p>
+      <p class="text-[length:var(--text-xs)] text-neutral-dim opacity-70">{{ t('panel.sideDrawer.noSubagent') }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-50">{{ t('panel.sideDrawer.subagentHint') }}</p>
     </div>
 
     <template v-else>
@@ -49,7 +49,7 @@
         <span v-if="subagentMeta?.slug" class="min-w-0 shrink-0 truncate font-mono text-xs text-neutral-dim">
           · {{ subagentMeta.slug }}
         </span>
-        <span v-if="subagentMeta?.meta" class="ml-auto shrink-0 truncate font-mono text-[10px] text-neutral-dim">
+        <span v-if="subagentMeta?.meta" class="ml-auto shrink-0 truncate font-mono text-[length:var(--text-3xs)] text-neutral-dim">
           {{ subagentMeta.meta }}
         </span>
       </div>
@@ -61,9 +61,9 @@
         data-testid="drawer-subagent-error"
       >
         <AlertCircle class="size-5 text-danger opacity-60" />
-        <p class="text-[11px] text-neutral-mid">{{ t('panel.sideDrawer.subagentLoadFailed') }}</p>
-        <p class="max-w-full break-all text-[10px] text-neutral-dim opacity-60">{{ loadError }}</p>
-        <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="drawer-subagent-retry" @click="reload">
+        <p class="text-[length:var(--text-2xs)] text-neutral-mid">{{ t('panel.sideDrawer.subagentLoadFailed') }}</p>
+        <p class="max-w-full break-all text-[length:var(--text-3xs)] text-neutral-dim opacity-60">{{ loadError }}</p>
+        <Button variant="ghost" class="h-6 text-[length:var(--text-2xs)] text-accent" data-testid="drawer-subagent-retry" @click="reload">
           {{ t('panel.sideDrawer.subagentRetry') }}
         </Button>
       </div>
@@ -73,7 +73,7 @@
       <MessageStream v-else :session-id="selectedSubagentId" />
 
       <!-- 底部只读提示条（差异化层：subagent 为 background 任务，无 composer） -->
-      <div class="flex shrink-0 items-center gap-1.5 border-t border-hairline px-3 py-1.5 text-[10px] text-neutral-dim">
+      <div class="flex shrink-0 items-center gap-1.5 border-t border-hairline px-3 py-1.5 text-[length:var(--text-3xs)] text-neutral-dim">
         <Lock class="size-3 shrink-0 opacity-70" />
         <span>{{ t('panel.sideDrawer.subagentReadonly') }}</span>
       </div>

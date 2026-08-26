@@ -16,13 +16,13 @@
         <HoverCardTrigger as-child>
           <span
             data-testid="detail-filename"
-            class="flex-1 cursor-default truncate font-mono text-[11px] text-neutral-fg"
+            class="flex-1 cursor-default truncate font-mono text-[length:var(--text-2xs)] text-neutral-fg"
           >{{ fileName }}</span>
         </HoverCardTrigger>
         <HoverCardContent class="w-auto max-w-md p-2" side="bottom">
           <div data-testid="detail-path-tooltip" class="flex flex-col gap-1.5">
             <div class="flex items-center gap-2">
-              <span class="font-mono text-[11px] text-neutral-fg">{{ fileName }}</span>
+              <span class="font-mono text-[length:var(--text-2xs)] text-neutral-fg">{{ fileName }}</span>
               <Button
                 variant="ghost"
                 data-testid="detail-copy-filename"
@@ -36,7 +36,7 @@
               </Button>
             </div>
             <div class="flex items-center gap-2">
-              <span class="break-all font-mono text-[10px] text-neutral-mid">{{ absolutePath }}</span>
+              <span class="break-all font-mono text-[length:var(--text-3xs)] text-neutral-mid">{{ absolutePath }}</span>
               <Button
                 variant="ghost"
                 data-testid="detail-copy-path"
@@ -78,14 +78,14 @@
       <div v-if="state.hasGitChange" class="flex gap-0.5 rounded-md bg-bg-input p-0.5" data-testid="detail-view-toggle">
         <Button
           variant="ghost"
-          class="h-6 rounded-sm px-1.5 text-[10px]"
+          class="h-6 rounded-sm px-1.5 text-[length:var(--text-3xs)]"
           :class="state.viewMode === 'diff' ? 'bg-bg-elevated text-neutral-fg' : 'text-neutral-mid'"
           :title="t('panel.detail.showDiff')"
           @click="onToggleView('diff')"
         >{{ t('panel.detail.tabDiff') }}</Button>
         <Button
           variant="ghost"
-          class="h-6 rounded-sm px-1.5 text-[10px]"
+          class="h-6 rounded-sm px-1.5 text-[length:var(--text-3xs)]"
           :class="state.viewMode === 'preview' ? 'bg-bg-elevated text-neutral-fg' : 'text-neutral-mid'"
           :title="t('panel.detail.showPreview')"
           @click="onToggleView('preview')"
@@ -100,7 +100,7 @@
       data-testid="detail-loading"
     >
       <Loader2 class="size-4 animate-spin text-neutral-dim opacity-60" />
-      <p class="text-[11px] text-neutral-dim opacity-60">{{ t('panel.detail.loading') }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-60">{{ t('panel.detail.loading') }}</p>
     </div>
 
     <!-- 错误态（AC-6.4/T6.4：权限/不存在 → 错误态） -->
@@ -110,8 +110,8 @@
       data-testid="detail-error"
     >
       <AlertCircle class="size-5 text-danger opacity-60" />
-      <p class="text-[11px] text-neutral-mid">{{ t('panel.detail.cannotPreview') }}</p>
-      <p class="font-mono text-[10px] text-neutral-dim opacity-70">{{ state.error }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-mid">{{ t('panel.detail.cannotPreview') }}</p>
+      <p class="font-mono text-[length:var(--text-3xs)] text-neutral-dim opacity-70">{{ state.error }}</p>
     </div>
 
     <!-- 空态（无选中文件） -->
@@ -121,7 +121,7 @@
       data-testid="detail-empty"
     >
       <FileText class="size-6 text-neutral-dim opacity-40" />
-      <p class="text-[11px] text-neutral-dim opacity-55">{{ t('panel.detail.clickFilePreview') }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-55">{{ t('panel.detail.clickFilePreview') }}</p>
     </div>
 
     <!-- 二进制文件占位（AC-6.5/T6.6：binary=true） -->
@@ -131,8 +131,8 @@
       data-testid="detail-binary"
     >
       <ImageIcon class="size-6 text-neutral-dim opacity-50" />
-      <p class="text-[11px] text-neutral-mid">{{ t('panel.detail.binaryFile') }}</p>
-      <p class="font-mono text-[10px] text-neutral-dim opacity-60">{{ t('panel.detail.cannotShowDiff') }}</p>
+      <p class="text-[length:var(--text-2xs)] text-neutral-mid">{{ t('panel.detail.binaryFile') }}</p>
+      <p class="font-mono text-[length:var(--text-3xs)] text-neutral-dim opacity-60">{{ t('panel.detail.cannotShowDiff') }}</p>
     </div>
 
     <!-- 内容区：按 viewMode + kind 分发渲染（禁 v-html，<pre> + 文本插值，XSS 安全；
@@ -151,7 +151,7 @@
       <!-- 截断提示（>1MB，AC-6.5/T6.5） -->
       <div
         v-if="state.truncated"
-        class="border-b border-warn/30 bg-warn-soft px-2 py-1 text-[10px] text-warn"
+        class="border-b border-warn/30 bg-warn-soft px-2 py-1 text-[length:var(--text-3xs)] text-warn"
         data-testid="detail-truncated"
       >
         {{ t('panel.detail.truncated') }}
@@ -168,7 +168,7 @@
           variant="ghost"
           size="sm"
           data-testid="bubble-inject-current"
-          class="h-6 rounded-sm px-2 text-[11px]"
+          class="h-6 rounded-sm px-2 text-[length:var(--text-2xs)]"
           @mousedown.prevent
           @click="injectSelectionToCurrent"
         >{{ t('panel.detail.injectFileRef') }}</Button>
@@ -176,7 +176,7 @@
           variant="ghost"
           size="sm"
           data-testid="bubble-inject-new"
-          class="h-6 rounded-sm px-2 text-[11px]"
+          class="h-6 rounded-sm px-2 text-[length:var(--text-2xs)]"
           @mousedown.prevent
           @click="injectSelectionToNew"
         >{{ t('panel.detail.injectToNew') }}</Button>
@@ -220,8 +220,8 @@
           <!-- 图片加载失败（403 白名单/文件损坏）降级占位 -->
           <div v-else class="flex flex-col items-center gap-1 text-center">
             <ImageIcon class="size-6 text-neutral-dim opacity-50" />
-            <p class="text-[11px] text-neutral-mid">{{ t('panel.detail.loadFailed') }}</p>
-            <p class="font-mono text-[10px] text-neutral-dim opacity-60">{{ state.path }}</p>
+            <p class="text-[length:var(--text-2xs)] text-neutral-mid">{{ t('panel.detail.loadFailed') }}</p>
+            <p class="font-mono text-[length:var(--text-3xs)] text-neutral-dim opacity-60">{{ state.path }}</p>
           </div>
         </div>
         <!-- code：CodeBlock shiki 高亮 -->
@@ -235,7 +235,7 @@
         <!-- text（兜底）：纯文本插值 -->
         <pre
           v-else
-          class="whitespace-pre-wrap break-all p-2 font-mono text-[12px] leading-[1.5] text-neutral-fg/90"
+          class="whitespace-pre-wrap break-all p-2 font-mono text-[length:var(--text-xs)] leading-[1.5] text-neutral-fg/90"
           data-testid="detail-text"
         >{{ state.content }}</pre>
       </template>
