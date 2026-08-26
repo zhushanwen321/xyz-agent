@@ -1,124 +1,142 @@
 {
-  "unit": "sd-u5-send-queue",
+  "unit": "update-observability",
   "acceptance": [
     {
-      "id": "A1-busy-queue-vitest",
-      "type": "e2e-real",
-      "title": "handleSend busy 排队路径：delivery.sendChecked 返回 queued:true",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A1'",
-      "timeout": 300,
-      "core": true,
-      "scenario": "构造 mock kernel port（isIdle=false 模拟 busy）+ mock delivery（sendChecked resolve）+ mock sessionService，调用 handleSend({sessionId, prompt})，断言返回 {queued: true}（非 {blocked, rejected}）。delivery.sendChecked 被调用一次且传入正确 payload（kind:'text', content:prompt）。"
-    },
-    {
-      "id": "A2-error-hint-vitest",
-      "type": "e2e-real",
-      "title": "handleSend 错误路径返回 error + hint",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A2'",
-      "timeout": 300,
-      "core": true,
-      "scenario": "构造 mock delivery（sendChecked reject 模拟 pi 进程不可达），调用 handleSend，断言返回对象含 error 字段（非空字符串）和 hint 字段（含 'retry send_to_session' 或 'get_session_status' 子串）。验证错误不走前端 banner（无 send.rejected 广播）。"
-    },
-    {
-      "id": "A3-singleton-registry-vitest",
-      "type": "e2e-real",
-      "title": "单例注册表：同 sessionId 复用 handle",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A3'",
-      "timeout": 300,
-      "core": true,
-      "scenario": "连续两次 handleSend 同一 sessionId，断言 getOrCreateDelivery 只调用一次 factory（delivery 实例是同一引用）。第三次 handleSend 不同 sessionId，断言 factory 第二次调用（新实例）。验证单例约束（§3.4 同 session 单例装配）。"
-    },
-    {
-      "id": "A4-create-prompt-vitest",
-      "type": "e2e-real",
-      "title": "handleCreate 初始 prompt 直投（不走内核队列）",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A4'",
-      "timeout": 300,
-      "core": true,
-      "scenario": "调用 handleCreate({prompt: 'init'})，断言 sessionService.sendMessage 直接被调用（不经 delivery.sendChecked/send），新 session 必 idle 无竞态。prompt 为空或 undefined 时 sendMessage 不被调用。失败时 throw 含 sessionId + hint（恢复路径）。"
-    },
-    {
-      "id": "A5-d7-sideeffects-vitest",
-      "type": "e2e-real",
-      "title": "D7 置位副作用：isGenerating/lastActiveAt/workspaceService.record 在 port.send 成功后发生",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A5'",
-      "timeout": 300,
-      "core": true,
-      "scenario": "构造 mock port（send 成功），调用 handleSend，断言：(1) port.send 调用前 isGenerating 为 false（排除初始值已是 true 的假通过）；(2) port.send 调用后 isGenerating 被置为 true；(3) lastActiveAt 被更新（Date.now 差值 < 100ms）；(4) workspaceService.record 被调用（best-effort，try/catch warn 模式）。"
-    },
-    {
-      "id": "A6-plugin-paths-vitest",
+      "id": "W1-extractNetErrorCode",
       "type": "unit",
-      "title": "plugin-service 两处路径保持 dispatcher 现状不变",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run test/session-manager-send-queue.test.ts -t 'A6'",
+      "title": "extractNetErrorCode 逐层下钻 err.cause 提取网络错误码",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd apps/electron && npx vitest run main/update/__tests__/update.test.ts -t 'W1-extractNetErrorCode'",
       "timeout": 300,
-      "core": false,
-      "scenario": "grep 验证 session-api.ts:209 和 plugin-rpc-setup.ts:131 仍调用 deps.sendMessage（未改走 delivery）。vitest 断言 mock dispatcher 的 sendPrompt 仍被调用（plugin 路径 busy 时仍拒绝，返回 {blocked:true, rejected:true}）。"
+      "core": true,
+      "scenario": "从 ../net-errors 导入 extractNetErrorCode：(1) cause.code=ECONNREFUSED → 'ECONNREFUSED'；(2) cause.code=ENOTFOUND → 'ENOTFOUND'；(3) cause.code=ECONNRESET → 'ECONNRESET'；(4) cause.code=ETIMEDOUT → 'ETIMEDOUT'；(5) cause.code=ECONNABORTED → 'ECONNABORTED'；(6) cause.code=EHOSTUNREACH → 'EHOSTUNREACH'；(7) cause.message 含 'ECONNREFUSED'（无 code 字段）→ 'ECONNREFUSED'；(8) err.message='fetch failed' 无 cause → undefined。"
     },
     {
-      "id": "A7-type-guard-tsc",
+      "id": "W1-isPrivateHost",
       "type": "unit",
-      "title": "类型守卫：旧 SendResult 形状 {blocked,rejected} 在新类型下 @ts-expect-error 生效",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/extension-protocol && npx tsc --noEmit && echo 'A7 PASS'",
-      "timeout": 300,
-      "core": false,
-      "scenario": "构造类型守卫测试文件：(1) 验证 SessionManagerSendResult 类型只有 {queued: true} 形状；(2) 用 // @ts-expect-error 标记旧形状 {blocked:true, rejected:true} 的赋值行；tsc --noEmit 确认 @ts-expect-error 生效（编译通过 = 旧形状确实不可赋值，@ts-expect-error 消除了预期的类型错误）。若旧形状仍可赋值则 @ts-expect-error 变为多余注释，tsc 报错 exit≠0。"
-    },
-    {
-      "id": "A8-protocol-types-vitest",
-      "type": "e2e-real",
-      "title": "extension-protocol types.ts 签名变更同步：SendResult + 工具 schema",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/extension-protocol && npx vitest run test/session-manager-send-queue.test.ts -t 'A8'",
+      "title": "isPrivateHost RFC1918/ULA/loopback 矩阵判定",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd apps/electron && npx vitest run main/update/__tests__/update.test.ts -t 'W1-isPrivateHost'",
       "timeout": 300,
       "core": true,
-      "scenario": "vitest 验证：(1) SessionManagerSendResult 类型可赋值 {queued: true}；(2) 旧形状 {blocked: true, rejected: true} 不可赋值（@ts-expect-error）；(3) grep 验证 session-manager extension 的工具 description 含 'asynchronously queued' 或 'queued' 语义（工具 schema/description 同步改）。"
+      "scenario": "从 ../net-errors 导入 isPrivateHost：(1) 'http://192.168.1.202:7890' → true；(2) 'http://10.0.0.1:7890' → true；(3) 'http://172.16.0.1:7890' → true；(4) 'http://127.0.0.1:7890' → true；(5) 'http://[::1]:7890' → true；(6) 'http://[fd00::1]:7890' → true；(7) 'http://[fc00::1]:7890' → true；(8) 'http://203.0.113.1:7890' → false；(9) 'http://localhost:7890' → false；(10) 'http://[2001:db8::1]:7890' → false。"
     },
     {
-      "id": "A9-extension-three-check",
-      "type": "e2e-real",
-      "title": "extension 三连全绿（typecheck + lint + test）",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test && echo 'A9 PASS'",
-      "timeout": 600,
+      "id": "W1-classifyProxyUnreachable",
+      "type": "unit",
+      "title": "classifyProxyUnreachable macOS+EHOSTUNREACH+私网三条件组合",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd apps/electron && npx vitest run main/update/__tests__/update.test.ts -t 'W1-classifyProxyUnreachable'",
+      "timeout": 300,
       "core": true,
-      "scenario": "extensions/ 目录全量 typecheck + lint + test。protocol types 变更影响两端（runtime + extension），三连确保无编译错误、lint 违规、测试回归。覆盖 extension-protocol 包的 vitest.config.ts 存在性（suggestion #2：若不存在则本验收首跑暴露）。"
+      "scenario": "从 ../net-errors 导入 classifyProxyUnreachable：(1) darwin + cause.code=EHOSTUNREACH + proxyUrl='http://192.168.1.202:7890' → true；(2) darwin + cause.code=EHOSTUNREACH + proxyUrl='http://203.0.113.1:7890'（公网）→ false；(3) darwin + cause.code=ECONNREFUSED + proxyUrl='http://192.168.1.202:7890' → false；(4) win32 + cause.code=EHOSTUNREACH + proxyUrl='http://192.168.1.202:7890' → false。"
     },
     {
-      "id": "A10-runtime-vitest",
-      "type": "e2e-real",
-      "title": "runtime vitest 全绿（含新增 send-queue 测试 + 存量 session-manager-handler 测试不回归）",
-      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/runtime && npx vitest run && echo 'A10 PASS'",
-      "timeout": 600,
+      "id": "W1-error-log",
+      "type": "unit",
+      "title": "update-error.log JSONL 追加 + 512KB×2 轮转",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd apps/electron && npx vitest run main/update/__tests__/update.test.ts -t 'W1-error-log'",
+      "timeout": 300,
       "core": true,
-      "scenario": "runtime 子包 vitest 全量运行，新增 session-manager-send-queue 测试全部通过，存量 session-manager-handler.test.ts / event-adapter marker 分支测试不回归。"
+      "scenario": "从 ../error-log 导入 appendUpdateError：(1) 追加条目后文件存在且可 JSON.parse；(2) 轮转验收：超 512KB 后 .1 文件存在；(3) 落盘失败不抛异常。"
+    },
+    {
+      "id": "W3-UpdatePage-testProxy",
+      "type": "unit",
+      "title": "UpdatePage 测试连接结果两行渲染",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && cd packages/renderer && npx vitest run src/components/settings/__tests__/UpdatePage.test.ts -t 'W3-UpdatePage-testProxy'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "测试连接失败时 UpdatePage 渲染两行：错误摘要 + suggestion 指引。"
+    },
+    {
+      "id": "topic-lint-vitest",
+      "type": "unit",
+      "title": "项目 lint 检查",
+      "command": "env ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --silent && pnpm run lint && echo 'topic-lint-vitest PASS'",
+      "timeout": 300,
+      "core": true,
+      "scenario": "pnpm run lint 全量通过，无新增 lint 错误。"
     }
   ],
   "contracts": [
     {
       "id": "C1",
       "kind": "schema",
-      "provider": "sd-u5-send-queue",
-      "consumer": "session-manager-extension",
-      "file": "packages/extension-protocol/src/extensions/session-manager/types.ts",
-      "signature": "SessionManagerSendResult = { queued: true }",
-      "description": "send action 结果类型变更：旧 {blocked: boolean, rejected?: boolean} → 新 {queued: true}。错误走 SessionManagerErrorResult（error + hint）。extension 工具 schema/description 同步改「asynchronously queued」语义。"
+      "provider": "w1-contract-foundation",
+      "consumer": "update-observability",
+      "file": "packages/shared/src/update.ts",
+      "signature": "export interface UpdateErrorPayload { stage: UpdateStage; message: string; errorCode?: string; suggestion?: string }",
+      "description": "UpdateErrorPayload 类型导出——preload.ts / lib/ipc.ts 两层类型签名的共同依赖。"
     },
     {
       "id": "C2",
       "kind": "function",
-      "provider": "sd-u5-send-queue",
-      "consumer": "runtime",
-      "file": "packages/runtime/src/transport/session-manager-handler.ts",
-      "signature": "handleSend(params): Promise<SessionManagerSendResult>",
-      "description": "handleSend 改造：改走 delivery 的 sendChecked；成功返回 {queued:true}；失败同步返回 error + hint（'target session unreachable; retry send_to_session after checking get_session_status'）。handleCreate 初始 prompt 直投（不走内核队列）。"
+      "provider": "w1-contract-foundation",
+      "consumer": "update-observability",
+      "file": "apps/electron/main/update/net-errors.ts",
+      "signature": "export function extractNetErrorCode(err: unknown): string | undefined",
+      "description": "逐层下钻 err.cause?.code ?? err.cause?.message 提取网络错误码。参数 err 为 unknown 类型（兼容任意 thrown 值）。"
     },
     {
       "id": "C3",
       "kind": "function",
-      "provider": "sd-u5-send-queue",
-      "consumer": "runtime",
-      "file": "packages/runtime/src/transport/session-manager-handler.ts",
-      "signature": "getOrCreateDelivery(sessionId, factory): DeliveryHandle",
-      "description": "sessionId 单例注册表：以 sessionId 为键惰性装配 delivery handle（本 unit 建立注册表，sd-u6 复用）。同 sessionId 多次调用返回同一实例。factory 签名 () => DeliveryHandle。"
+      "provider": "w1-contract-foundation",
+      "consumer": "update-observability",
+      "file": "apps/electron/main/update/net-errors.ts",
+      "signature": "export function classifyProxyUnreachable(err: unknown, proxyUrl: string | undefined): boolean",
+      "description": "代理不可达分类：process.platform === 'darwin' && extractNetErrorCode(err) === 'EHOSTUNREACH' && isPrivateHost(proxyUrl) → true；不满足任一条件 → false。"
+    },
+    {
+      "id": "C4",
+      "kind": "schema",
+      "provider": "w1-contract-foundation",
+      "consumer": "update-observability",
+      "file": "packages/shared/src/update.ts",
+      "signature": "export interface UpdateErrorPayload { stage: UpdateStage; message: string; errorCode?: string; suggestion?: string }",
+      "description": "同 C1，确保 shared 类型在 w2/w3 消费侧可用。"
+    },
+    {
+      "id": "C5",
+      "kind": "function",
+      "provider": "w1-contract-foundation",
+      "consumer": "update-observability",
+      "file": "apps/electron/main/update/error-log.ts",
+      "signature": "export function appendUpdateError(entry: UpdateErrorEntry): void",
+      "description": "update-error.log JSONL 追加。entry.at 由函数内部生成。轮转：超 512KB 重命名为 .1，最多两份。落盘失败静默跳过。"
+    },
+    {
+      "id": "C-W2-1",
+      "kind": "function",
+      "provider": "w1-contract-foundation",
+      "consumer": "w2-main-integration",
+      "file": "apps/electron/main/update/net-errors.ts",
+      "signature": "export function extractNetErrorCode(err: unknown): string | undefined",
+      "description": "w2 消费：testProxyConnection / download-asset / downloadPart 错误分类。"
+    },
+    {
+      "id": "C-W2-2",
+      "kind": "function",
+      "provider": "w1-contract-foundation",
+      "consumer": "w2-main-integration",
+      "file": "apps/electron/main/update/net-errors.ts",
+      "signature": "export function classifyProxyUnreachable(err: unknown, proxyUrl: string | undefined): boolean",
+      "description": "w2 消费：判断是否 UPDATE_PROXY_UNREACHABLE 错误码。"
+    },
+    {
+      "id": "C-W2-3",
+      "kind": "function",
+      "provider": "w1-contract-foundation",
+      "consumer": "w2-main-integration",
+      "file": "apps/electron/main/update/error-log.ts",
+      "signature": "export function appendUpdateError(entry: UpdateErrorEntry): void",
+      "description": "w2 消费：五处落盘点（test-proxy/download/install/perform/preload）。"
+    },
+    {
+      "id": "C-W2-4",
+      "kind": "schema",
+      "provider": "w1-contract-foundation",
+      "consumer": "w2-main-integration",
+      "file": "packages/shared/src/update.ts",
+      "signature": "export interface UpdateErrorPayload { stage: UpdateStage; message: string; errorCode?: string; suggestion?: string }",
+      "description": "w2 消费：update:* handler 返回类型。"
     }
   ],
   "split": []
