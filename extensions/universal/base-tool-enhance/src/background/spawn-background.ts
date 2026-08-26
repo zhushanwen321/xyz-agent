@@ -15,7 +15,7 @@ import { randomBytes } from "node:crypto";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { killProcessTree } from "../kill-tree.ts";
-import { getProcessStartTimeSec } from "../reaper.ts";
+import { getProcessStartTimeSec, pidStartMatchesRegistered } from "../reaper.ts";
 import { emitPendingRegister } from "./notify.ts";
 import { ensurePollerRunning } from "./poller.ts";
 import { getRegistryPath, taskToRegistryEntry, writeRegistryEntry } from "./registry.ts";
@@ -254,18 +254,13 @@ function armBackgroundTimeout(task: BackgroundTask, timeoutSec: number): void {
 
 /**
  * 到点 pid 身份校验：true = 登记时的原进程仍占用该 pid（可安全 kill-tree）。
- *  - 有 pidStartTime（spawn 时 ps 读取成功）→ 精确比较（同单位 epoch 秒）
- *  - 缺 pidStartTime（ps 不可用平台/读取失败）→ startedAt 秒级降级（同 reaper：
- *    登记晚于 spawn，原进程 start time 必然 ≤ floor(startedAt/1000)）
- *  - 实际 start time 读不到 → 无法排除复用，保守判 false（不杀；timeout 降级为
- *    仅标 intent，任务自然退出后由轮询边沿收尾）
+ * 判据（精确比较 / startedAt 秒级降级 / 读不到保守 false）单点定义于 reaper
+ * 的 pidStartMatchesRegistered，与 reapEntrySync 孤儿补杀共用同一份。
  */
 function isRecordedPidStillOriginal(task: BackgroundTask): boolean {
 	const actualStartSec = getProcessStartTimeSec(task.pid);
 	if (actualStartSec === undefined) return false;
-	return task.pidStartTime !== undefined
-		? actualStartSec === task.pidStartTime
-		: actualStartSec <= Math.floor(task.startedAt / MS_PER_SECOND);
+	return pidStartMatchesRegistered(actualStartSec, task.pidStartTime, task.startedAt);
 }
 
 function accessOrThrow(cwd: string): void {

@@ -116,6 +116,25 @@ export function getProcessStartTimeSec(pid: number): number | undefined {
 	return Number.isNaN(ms) ? undefined : Math.floor(ms / MS_PER_SECOND);
 }
 
+/**
+ * pid 身份判据（§3.6「宁不杀勿误杀」的唯一定义点；reaper 孤儿补杀与 background
+ * timeout 到点 kill 共用）。true = 当前占用该 pid 的进程 start time 与登记值匹配，
+ * 可安全 kill。
+ *  - 有登记 start time（spawn 时 ps 读取成功）→ 精确比较（同单位 epoch 秒）
+ *  - 缺登记 start time（M3 前登记的存量条目 / ps 不可用平台）→ startedAtMs 秒级
+ *    降级：登记发生在 spawn 之后（进程先启动、条目后登记），原进程 start time
+ *    必然 ≤ floor(startedAtMs/1000)——见文件头「已知缺口→已闭合」的误杀窗口描述
+ */
+export function pidStartMatchesRegistered(
+	actualStartSec: number,
+	registeredStartSec: number | undefined,
+	startedAtMs: number,
+): boolean {
+	return registeredStartSec !== undefined
+		? actualStartSec === registeredStartSec
+		: actualStartSec <= Math.floor(startedAtMs / MS_PER_SECOND);
+}
+
 /** 单轮扫描统计（日志 + 测试断言面；写失败单独计数保持守恒）。 */
 export interface ReapResult {
 	/** 扫描的 sessionId 目录数（含无 registry / 无活跃条目的目录）。 */
@@ -240,12 +259,7 @@ function reapEntrySync(
 		return;
 	}
 	const registeredStartSec = readPidStartTimeSec(entry);
-	const matchesRegistered =
-		registeredStartSec !== undefined
-			? actualStartSec === registeredStartSec
-			: // 降级校验（M3 前登记、缺 pidStartTime 的存量条目，见文件头「已知缺口→已闭合」）
-				actualStartSec <= Math.floor(entry.startedAt / MS_PER_SECOND);
-	if (!matchesRegistered) {
+	if (!pidStartMatchesRegistered(actualStartSec, registeredStartSec, entry.startedAt)) {
 		// start time 与登记值不匹配 = pid 已被系统复用，当前占用者是无关新进程
 		// → 视为已死：不误杀，也不转终态（任务真实死活未知，交下一周期）
 		result.conservativelySkipped++;

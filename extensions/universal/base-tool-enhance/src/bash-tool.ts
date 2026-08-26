@@ -25,7 +25,7 @@ import {
 	truncateCommand,
 } from "./background/spawn-background.ts";
 import { isSubagentProcess } from "./background/subagent-guard.ts";
-import { loadBaseToolEnhanceConfig } from "./config.ts";
+import { loadBaseToolEnhanceConfig, type BaseToolEnhanceConfig } from "./config.ts";
 import { compileForcePatterns, describeForceMatch, matchForceBackground } from "./force-patterns.ts";
 
 /**
@@ -67,6 +67,47 @@ const ENHANCED_BASH_DESCRIPTION = [
 	"",
 	"Commands matching the force-background whitelist (test suites, dev servers, watch jobs and similar long-running commands) are automatically routed to background even when background was not requested; in that case the result carries a task_id to poll.",
 ].join("\n");
+
+/**
+ * spawn 后台任务并拼装立即返回的 tool result（白名单强转与显式 background:true
+ * 两分支共用——spawn 入参、失败抛错、返回文案只有这一份，改文案不再有漏改分叉）。
+ * extraNotes：分支差异文案（如 force 命中说明），插在 Output file 行与 Poll 指引之间。
+ */
+function startBackgroundAndReply(
+	command: string,
+	ctx: ExtensionContext,
+	config: BaseToolEnhanceConfig,
+	timeoutSec: number | undefined,
+	extraNotes: string[] = [],
+) {
+	const spawned = spawnBackgroundTask({
+		command,
+		cwd: ctx.cwd,
+		dataDir: getAgentDir(),
+		sessionId: ctx.sessionManager.getSessionId(),
+		timeoutSec,
+		maxConcurrent: config.maxConcurrentBackground,
+	});
+	if (!spawned.ok) {
+		throw new Error(spawned.error);
+	}
+	const { task } = spawned;
+	return {
+		content: [
+			{
+				type: "text" as const,
+				text: [
+					`Background task started: ${truncateCommand(task.command)}`,
+					`task_id: ${task.taskId}  pid: ${task.pid}`,
+					`Output file: ${task.outputFile}`,
+					...extraNotes,
+					`Poll with bash_output {task_id:"${task.taskId}"} or omit task_id to list all tasks; terminate with bash_kill {task_id:"${task.taskId}"}.`,
+				].join("\n"),
+			},
+		],
+		details: undefined as undefined,
+	};
+}
 
 /**
  * 构建 bash override 的 ToolDefinition。
@@ -140,18 +181,6 @@ export function createBashOverrideToolDefinition() {
 						undefined,
 						config.backgroundTimeoutSeconds ?? undefined,
 					);
-					const spawned = spawnBackgroundTask({
-						command: args.command,
-						cwd: ctx.cwd,
-						dataDir: getAgentDir(),
-						sessionId: ctx.sessionManager.getSessionId(),
-						timeoutSec,
-						maxConcurrent: config.maxConcurrentBackground,
-					});
-					if (!spawned.ok) {
-						throw new Error(spawned.error);
-					}
-					const { task } = spawned;
 					const notes = [
 						`Forced to background: command matched force-background whitelist ${describeForceMatch(forceMatch)}.`,
 						...(args.timeout !== undefined
@@ -161,21 +190,7 @@ export function createBashOverrideToolDefinition() {
 								]
 							: []),
 					];
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: [
-									`Background task started: ${truncateCommand(task.command)}`,
-									`task_id: ${task.taskId}  pid: ${task.pid}`,
-									`Output file: ${task.outputFile}`,
-									...notes,
-									`Poll with bash_output {task_id:"${task.taskId}"} or omit task_id to list all tasks; terminate with bash_kill {task_id:"${task.taskId}"}.`,
-								].join("\n"),
-							},
-						],
-						details: undefined,
-					};
+					return startBackgroundAndReply(args.command, ctx, config, timeoutSec, notes);
 				}
 			}
 
@@ -186,32 +201,7 @@ export function createBashOverrideToolDefinition() {
 				// timeout 优先级（§3.5）：LLM 显式值 > 配置默认 > 不限；无效显式值沿用
 				// pi 内置文案抛错（注入只发生在「LLM 未填 && 配置了默认」，D4）
 				const timeoutSec = resolveBackgroundTimeoutSec(args.timeout, config.backgroundTimeoutSeconds ?? undefined);
-				const spawned = spawnBackgroundTask({
-					command: args.command,
-					cwd: ctx.cwd,
-					dataDir: getAgentDir(),
-					sessionId: ctx.sessionManager.getSessionId(),
-					timeoutSec,
-					maxConcurrent: config.maxConcurrentBackground,
-				});
-				if (!spawned.ok) {
-					throw new Error(spawned.error);
-				}
-				const { task } = spawned;
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: [
-								`Background task started: ${truncateCommand(task.command)}`,
-								`task_id: ${task.taskId}  pid: ${task.pid}`,
-								`Output file: ${task.outputFile}`,
-								`Poll with bash_output {task_id:"${task.taskId}"} or omit task_id to list all tasks; terminate with bash_kill {task_id:"${task.taskId}"}.`,
-							].join("\n"),
-						},
-					],
-					details: undefined,
-				};
+				return startBackgroundAndReply(args.command, ctx, config, timeoutSec);
 			}
 			const delegate = getDelegate(ctx.cwd);
 			// 前台委托：只转发官方 schema 已识别的字段（command/timeout），background

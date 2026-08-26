@@ -55,9 +55,9 @@ export function installProcessExitGuard(): void {
 
 	// SIGTERM：只收殓不 exit——pi rpc-mode 的 SIGTERM handler（先注册先跑）走自己的
 	// shutdown 流程，最终 process.exit 触发下方 exit 兜底（幂等跳过）。
-	// SIGINT 刻意不挂 handler（文件头「不挂 SIGINT handler」段：TUI 挂起态 pi 注册
-	// ignoreSigint 刻意免疫，本包 listener 会破坏该语义；rpc 模式默认终止路径 exit
-	// 事件本就不触发，孤儿归 M5 reaper 兜底）
+	// SIGINT 刻意不挂 handler——会破坏 pi TUI 挂起态的 ignoreSigint 语义，且 rpc
+	// 默认终止路径 exit 事件本就不触发、孤儿归 M5 reaper 兜底（完整论证见文件头
+	// 「不挂 SIGINT handler」专段）
 	process.once("SIGTERM", cleanup);
 	// 同步兜底：exit handler 里只能做同步收殓（kill-tree 同步 + registry 同步原子写）
 	process.on("exit", cleanup);
@@ -89,7 +89,7 @@ export function reapBackgroundTasksNow(): void {
 		});
 		if (finalized !== undefined) {
 			writeRegistryEntry(finalized.registryPath, taskToRegistryEntry(finalized));
-			// 尽力补 emit pending:unregister（§3.5「pi API 若仍可用」）：SIGTERM/SIGINT
+			// 尽力补 emit pending:unregister（§3.5「pi API 若仍可用」）：SIGTERM
 			// 信号路径 pi 引用尚活（emit 经模块级 notify 引用，bus 未 dispose 时送达
 			// pending listener 落盘）；process.on("exit") 同步路径 bus 可能已 dispose，
 			// emit throw 被 notify 内部捕获降级——残留由 session_start 对账兜底。
