@@ -1531,74 +1531,93 @@ export class SubagentService {
   private kickOffEngineRun(record: ExecutionRecord, opts: ExecuteOptions, engine: EnginePort): void {
     const signal = record.controller?.signal;
     void (async () => {
-      const effectiveMaxConcurrent = Math.max(1, this.pool.maxConcurrent - record.depth);
-      // [review MF1] 池槽对齐 runAndFinalize 的 acquired 标志 + finally release 范式：
-      // engine run 完成后若不 release，DefaultConcurrencyPool._active 永不递减——每次
-      // 引擎任务泄漏一个并发槽，累计 maxConcurrent 次后全部 background subagent
-      // （pi 与引擎共用同一池）在 acquire 队列永久挂起
-      let acquired = false;
       try {
-        try {
-          await this.pool.acquire(PRIORITY_BACKGROUND, effectiveMaxConcurrent, signal);
-          acquired = true;
-        } catch {
-          // S1: 排队中被 abort（signal.aborted）走 cancelled，与已运行被 abort 一致（runAndFinalize 同款）
-          if (signal?.aborted) {
-            await this.finalizeAborted(record);
-          } else {
-            await this.finalizeFailed(record, new Error("aborted"));
-          }
-          return;
+        await this.pool.acquire(PRIORITY_BACKGROUND, this.effectiveMaxConcurrentFor(record), signal);
+      } catch {
+        // S1: 排队中被 abort（signal.aborted）走 cancelled，与已运行被 abort 一致（runAndFinalize 同款）
+        if (signal?.aborted) {
+          await this.finalizeAborted(record);
+        } else {
+          await this.finalizeFailed(record, new Error("aborted"));
         }
-        const journal = new JournalWriter({
-          path: resolveJournalPath(getEngineDataDir(), engine.id, "shared", record.id),
-          taskId: record.id,
-          engineId: engine.id,
-        });
-        const retargetJournal = (poolKey: string): void => {
-          journal.retarget(resolveJournalPath(getEngineDataDir(), engine.id, poolKey, record.id));
-        };
-        // 对齐点③：journal 路径权威 = 引擎声明的池 key（writer 初始用占位，retarget 后
-        // 与 handle.poolKey 同源）。模式对齐 SAR 的 journalingOnEvent：先落盘再转发。
-        const runCtx: RunContext = {
-          taskId: record.id,
-          poolKey: "shared",
-          signal,
-          ctxModel: opts.ctxModel,
-          onEvent: (event) => journal.append(event),
-          onPoolResolved: retargetJournal,
-          // D9①：路由层 fallback 留痕投影进 outcome（zcode 无独立 record 通路）
-          ...(record.engineFallback !== undefined ? { engineFallback: record.engineFallback } : {}),
-          // D10 终止链：engine spawn 的子进程注册进 spawnedChildren 记账
-          //（cancelBackground SIGTERM / dispose killAll 收割对非 pi record 生效）
-          onChildSpawned: (child) => registerSpawnedChildForRecord(record.id, child),
-        };
-        try {
-          const { handle, outcome } = await engine.run(executeOptionsToEngineTaskSpec(opts), runCtx);
-          // engineHandle 完整回填（U2：终态迁移落 entry 前）。sessionRef 整体透传——
-          // 失败终态 sessionId 缺失时也回填已有部分（dbPath/poolKey），读侧①级降②级
-          // 的防御形态；journalPath 取 retarget 后的实际落盘路径（writer 是路径权威）。
-          record.engineHandle = {
-            sessionRef: handle.data.sessionRef,
-            poolKey: handle.data.poolKey,
-            journalPath: journal.path,
-          };
-          await journal.close();
-          await this.finalizeEngineOutcome(record, outcome);
-        } catch (err) {
-          // engine.run prepare 期 reject（进程创建前）→ failed 终态（与 runAndFinalize catch 同语义）；
-          // journal 尽力而为收口（②级数据源写失败已由 writer 内部 warn 收敛）
-          await journal.close();
-          await this.finalizeFailed(record, err);
-        }
+        return;
+      }
+      // [review MF1] acquire 成功后必须 finally release：不 release 则
+      // DefaultConcurrencyPool._active 永不递减——每次引擎任务泄漏一个并发槽，累计
+      // maxConcurrent 次后全部 background subagent（pi 与引擎共用同一池）在 acquire 队列永久挂起
+      try {
+        await this.runEngineTask(record, opts, engine, signal);
         // cancel 抢先（closedReason='cancelled'）时 cancelBackground 自己 notify，跳过
         if (record.closedReason !== "cancelled") {
           this.notifyComplete(record);
         }
       } finally {
-        if (acquired) this.pool.release();
+        this.pool.release();
       }
     })();
+  }
+
+  /**
+   * kickOffEngineRun 的 acquire 后主体：journal 接线（D6 第②级：taskId=record.id，
+   * 初始池 key 占位 'shared'，onPoolResolved retarget 到引擎实际池 key）→ engine.run
+   * （signal 接 record controller，kill-chain 两级生效）→ engineHandle 回填（终态迁移
+   * 落 entry 前）→ 终态迁移。bg notify 归编排侧（与 kickOffBackground 收尾通知归编排对称）。
+   */
+  private async runEngineTask(
+    record: ExecutionRecord,
+    opts: ExecuteOptions,
+    engine: EnginePort,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const journal = new JournalWriter({
+      path: resolveJournalPath(getEngineDataDir(), engine.id, "shared", record.id),
+      taskId: record.id,
+      engineId: engine.id,
+    });
+    const retargetJournal = (poolKey: string): void => {
+      journal.retarget(resolveJournalPath(getEngineDataDir(), engine.id, poolKey, record.id));
+    };
+    // 对齐点③：journal 路径权威 = 引擎声明的池 key（writer 初始用占位，retarget 后
+    // 与 handle.poolKey 同源）。模式对齐 SAR 的 journalingOnEvent：先落盘再转发。
+    const runCtx: RunContext = {
+      taskId: record.id,
+      poolKey: "shared",
+      signal,
+      ctxModel: opts.ctxModel,
+      onEvent: (event) => journal.append(event),
+      onPoolResolved: retargetJournal,
+      // D9①：路由层 fallback 留痕投影进 outcome（zcode 无独立 record 通路）
+      ...(record.engineFallback !== undefined ? { engineFallback: record.engineFallback } : {}),
+      // D10 终止链：engine spawn 的子进程注册进 spawnedChildren 记账
+      //（cancelBackground SIGTERM / dispose killAll 收割对非 pi record 生效）
+      onChildSpawned: (child) => registerSpawnedChildForRecord(record.id, child),
+    };
+    try {
+      const { handle, outcome } = await engine.run(executeOptionsToEngineTaskSpec(opts), runCtx);
+      // engineHandle 完整回填（U2：终态迁移落 entry 前）。sessionRef 整体透传——
+      // 失败终态 sessionId 缺失时也回填已有部分（dbPath/poolKey），读侧①级降②级
+      // 的防御形态；journalPath 取 retarget 后的实际落盘路径（writer 是路径权威）。
+      record.engineHandle = {
+        sessionRef: handle.data.sessionRef,
+        poolKey: handle.data.poolKey,
+        journalPath: journal.path,
+      };
+      await journal.close();
+      await this.finalizeEngineOutcome(record, outcome);
+    } catch (err) {
+      // engine.run prepare 期 reject（进程创建前）→ failed 终态（与 runAndFinalize catch 同语义）；
+      // journal 尽力而为收口（②级数据源写失败已由 writer 内部 warn 收敛）
+      await journal.close();
+      await this.finalizeFailed(record, err);
+    }
+  }
+
+  /**
+   * 分层并发配额：depth 越深可用配额越少（下限 1）。fork 深度护栏在池维度的投影，
+   * 公式约定以 concurrency-pool.ts 注释为登记处、此处为唯一代码锚点。
+   */
+  private effectiveMaxConcurrentFor(record: ExecutionRecord): number {
+    return Math.max(1, this.pool.maxConcurrent - record.depth);
   }
 
   /**
@@ -1642,9 +1661,8 @@ export class SubagentService {
     const pooled = record.mode === "background";
     let acquired = false;
     if (pooled) {
-      const effectiveMaxConcurrent = Math.max(1, this.pool.maxConcurrent - record.depth);
       try {
-        await this.pool.acquire(priority, effectiveMaxConcurrent, signal);
+        await this.pool.acquire(priority, this.effectiveMaxConcurrentFor(record), signal);
         acquired = true;
       } catch {
         // S1: 排队中被 abort（signal.aborted）走 cancelled，与已运行被 abort 一致。

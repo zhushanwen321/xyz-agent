@@ -44,21 +44,25 @@ export interface EngineRouting {
   source: EngineRoutingSource;
 }
 
+/** 非空文本判据：路由层各配置入口统一口径——undefined 与空串同视为未指定。 */
+function hasText(v: string | undefined): v is string {
+  return v !== undefined && v !== "";
+}
+
 /**
  * 纯三层解析：调用参数 > agent frontmatter > 全局默认（缺省 'pi'）。
  * 不校验注册表（frontmatter 层已前置校验；调用参数层的校验归 routeEngine）——
  * 保持纯函数可独立单测。
  */
 export function resolveEngineRouting(input: EngineRoutingInput): EngineRouting {
-  if (input.callEngine !== undefined && input.callEngine !== "") {
+  if (hasText(input.callEngine)) {
     return { engineId: input.callEngine, source: "call" };
   }
-  if (input.agentEngine !== undefined && input.agentEngine !== "") {
+  if (hasText(input.agentEngine)) {
     return { engineId: input.agentEngine, source: "frontmatter" };
   }
-  const global = input.globalDefaultEngine;
-  if (global !== undefined && global !== "") {
-    return { engineId: global, source: "default" };
+  if (hasText(input.globalDefaultEngine)) {
+    return { engineId: input.globalDefaultEngine, source: "default" };
   }
   return { engineId: DEFAULT_ENGINE_ID, source: "default" };
 }
@@ -151,12 +155,12 @@ export async function routeEngine(opts: EngineRouteOptions): Promise<EngineRoute
     throw probeFailedError(routing.engineId, report, "engine 来自调用参数显式指定（能力依赖声明）——不兜底");
   }
 
-  const fallbackId = fallbackTargetId(opts.routing, routing.source, routing.engineId);
+  const fallbackId = fallbackTargetId(opts.routing, routing);
   // 守卫 c：显式 model 与引擎 provider 体系绑定（D9② model/engine 正交）——换引擎
   // 后 model 可解析性无法保证，静默换引擎跑 = 「以为用了 X 实际用 Y」。判定取保守
   // 口径（显式 model + 引擎切换即拒）：路由层无各引擎 provider 注册表的访问面，
   // 精确可解析性判定归引擎 prepare 期（ZcodePrepareError.model_not_available 已有）。
-  if (opts.taskModel !== undefined && opts.taskModel !== "" && fallbackId !== routing.engineId) {
+  if (hasText(opts.taskModel) && fallbackId !== routing.engineId) {
     throw new EngineError(
       "model_not_available",
       `engine '${routing.engineId}' probe 失败且任务显式指定 model '${opts.taskModel}'——model 与引擎 provider 体系绑定，换引擎（fallback 到 '${fallbackId}'）不静默执行`,
@@ -181,10 +185,11 @@ export async function routeEngine(opts: EngineRouteOptions): Promise<EngineRoute
  * defaultEngine: zcode）同样回 'pi'——回退到刚 probe 失败的同一引擎 = 原地重试坏
  * 引擎（from==to 误导留痕），违背「回缺省 pi」的设计意图。
  */
-function fallbackTargetId(routing: EngineRoutingInput, source: EngineRoutingSource, resolvedEngineId: string): string {
-  if (source === "default") return DEFAULT_ENGINE_ID;
-  const global = routing.globalDefaultEngine;
-  if (global !== undefined && global !== "" && global !== DEFAULT_ENGINE_ID && global !== resolvedEngineId) {
+function fallbackTargetId(routingInput: EngineRoutingInput, resolved: EngineRouting): string {
+  // source 与 engineId 由 resolved 承载配对关系，杜绝调用方传错配对的口子
+  if (resolved.source === "default") return DEFAULT_ENGINE_ID;
+  const global = routingInput.globalDefaultEngine;
+  if (hasText(global) && global !== DEFAULT_ENGINE_ID && global !== resolved.engineId) {
     return global;
   }
   return DEFAULT_ENGINE_ID;
@@ -203,10 +208,10 @@ function probeFailedError(engineId: string, report: ProbeReport, guard: string):
 
 /** 路由来源描述（EngineNotFoundError 的 source 定位）。 */
 function describeRoutingSource(routing: EngineRoutingInput): string | undefined {
-  if (routing.callEngine !== undefined && routing.callEngine !== "") {
+  if (hasText(routing.callEngine)) {
     return `call parameter engine='${routing.callEngine}'`;
   }
-  if (routing.agentEngine !== undefined && routing.agentEngine !== "") {
+  if (hasText(routing.agentEngine)) {
     return `agent frontmatter engine='${routing.agentEngine}'`;
   }
   return undefined;
