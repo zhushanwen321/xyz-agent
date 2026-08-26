@@ -138,11 +138,11 @@ function progressWidth(meta: WidgetMeta | undefined): string {
             class="size-[7px] shrink-0 rounded-full"
             :class="statusDotClass(w.entry.meta?.status)"
           />
-          <span class="min-w-0 truncate font-mono text-[11px] font-medium">
+          <span class="min-w-0 truncate font-mono text-[length:var(--text-2xs)] font-medium">
             {{ w.entry.meta?.title ?? w.viewId }}
           </span>
           <template v-if="w.entry.meta?.progress">
-            <span class="ml-auto shrink-0 font-mono text-[10px] tabular-nums text-neutral-dim">
+            <span class="ml-auto shrink-0 font-mono text-[length:var(--text-3xs)] tabular-nums text-neutral-dim">
               {{ progressLabel(w.entry.meta) }}
             </span>
             <span class="h-[3px] w-10 shrink-0 overflow-hidden rounded-full bg-surface-hover">

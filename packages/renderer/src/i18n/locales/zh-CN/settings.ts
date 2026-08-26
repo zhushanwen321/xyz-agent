@@ -42,7 +42,7 @@ export default {
       terminal: '终端',
     },
     regionSidebarDesc: '会话列表 / 文件树等侧栏文字',
-    regionChatDesc: '消息流与输入区文字',
+    regionChatDesc: '消息流与输入区文字（弹出菜单不随缩放）',
     regionDrawerDesc: '抽屉内 Git / 详情 / 文档等文字',
     tierSmall: '小',
     tierMedium: '标准',

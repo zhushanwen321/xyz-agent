@@ -17,7 +17,7 @@
       <Button
         variant="ghost"
         size="sm"
-        class="h-5 gap-1 px-1.5 text-[11px] text-neutral-dim hover:text-neutral-fg"
+        class="h-5 gap-1 px-1.5 text-[length:var(--text-2xs)] text-neutral-dim hover:text-neutral-fg"
         data-testid="trace-inspector-back"
         @click="onBack"
       >
@@ -25,14 +25,14 @@
         {{ t('panel.trace.inspectorBack') }}
       </Button>
       <span
-        class="shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide"
+        class="shrink-0 rounded px-1.5 py-px font-mono text-[length:var(--text-3xs)] tracking-wide"
         :class="badgeClass"
       >{{ badgeLabel }}</span>
-      <span class="min-w-0 truncate font-mono text-[11px] text-neutral-fg">#{{ row.seq }}<template v-if="blockIndex !== null"> · block {{ blockIndex }}</template><template v-if="time"> · {{ time }}</template></span>
+      <span class="min-w-0 truncate font-mono text-[length:var(--text-2xs)] text-neutral-fg">#{{ row.seq }}<template v-if="blockIndex !== null"> · block {{ blockIndex }}</template><template v-if="time"> · {{ time }}</template></span>
       <Button
         variant="ghost"
         size="sm"
-        class="ml-auto h-5 gap-1 px-1.5 text-[11px] text-neutral-dim hover:text-neutral-fg"
+        class="ml-auto h-5 gap-1 px-1.5 text-[length:var(--text-2xs)] text-neutral-dim hover:text-neutral-fg"
         data-testid="trace-inspector-copy"
         @click="copy(rawJson, 'entry')"
       >
@@ -42,7 +42,7 @@
       </Button>
     </div>
     <!-- sub：来源说明 -->
-    <p class="flex-shrink-0 px-2.5 pb-1.5 pt-1 text-[11px] text-neutral-faint">{{ t('panel.trace.inspectorSubtitle') }}</p>
+    <p class="flex-shrink-0 px-2.5 pb-1.5 pt-1 text-[length:var(--text-2xs)] text-neutral-faint">{{ t('panel.trace.inspectorSubtitle') }}</p>
     <!-- body：两态详情（select-text：全局 user-select:none 的内容区恢复点） -->
     <div class="min-h-0 flex-1 select-text overflow-y-auto px-2.5 pb-4" data-testid="trace-inspector-body">
       <!-- 损坏行恢复指引（§3.1）：打开 JSONL 所在目录（Electron reveal-in-folder IPC →
@@ -56,34 +56,34 @@
           variant="ghost"
           size="sm"
           :disabled="revealPath === null"
-          class="h-5 gap-1 px-1.5 text-[11px] text-neutral-dim"
+          class="h-5 gap-1 px-1.5 text-[length:var(--text-2xs)] text-neutral-dim"
           data-testid="trace-malformed-reveal"
           @click="onRevealFolder"
         >
           <FolderOpen class="size-3" />
           {{ t('panel.trace.malformedOpenDir') }}
         </Button>
-        <span class="min-w-0 flex-1 text-[11px] text-neutral-faint">{{ t('panel.trace.malformedHint', { line: row.lineNumber ?? 0 }) }}</span>
+        <span class="min-w-0 flex-1 text-[length:var(--text-2xs)] text-neutral-faint">{{ t('panel.trace.malformedHint', { line: row.lineNumber ?? 0 }) }}</span>
       </div>
 
       <!-- block 态：assistant 子 block 全文（父 entry 溯源 + 类型分支渲染） -->
       <template v-if="block !== null">
-        <p class="mb-2 font-mono text-[10px] text-neutral-faint">{{ blockParentRef }}</p>
+        <p class="mb-2 font-mono text-[length:var(--text-3xs)] text-neutral-faint">{{ blockParentRef }}</p>
         <pre
           v-if="block.kind === 'thinking' || block.kind === 'text'"
-          class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[11px] leading-relaxed"
+          class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[length:var(--text-2xs)] leading-relaxed"
           :class="block.kind === 'thinking' ? 'text-reasoning' : 'text-neutral-mid'"
           data-testid="trace-inspector-block-content"
         >{{ block.kind === 'thinking' && block.redacted ? t('panel.trace.blockRedacted') : block.text }}</pre>
         <template v-else-if="block.kind === 'toolCall'">
           <div class="mb-2 flex flex-col gap-1.5">
-            <div class="flex items-baseline gap-2 text-[11px]">
+            <div class="flex items-baseline gap-2 text-[length:var(--text-2xs)]">
               <span class="w-20 flex-shrink-0 text-neutral-faint">toolName</span>
-              <span class="min-w-0 break-all font-mono text-[11px] text-neutral-mid">{{ block.name }}</span>
+              <span class="min-w-0 break-all font-mono text-[length:var(--text-2xs)] text-neutral-mid">{{ block.name }}</span>
             </div>
-            <div class="flex items-baseline gap-2 text-[11px]">
+            <div class="flex items-baseline gap-2 text-[length:var(--text-2xs)]">
               <span class="w-20 flex-shrink-0 text-neutral-faint">toolCallId</span>
-              <span class="min-w-0 break-all font-mono text-[11px] text-neutral-mid">{{ block.callId }}</span>
+              <span class="min-w-0 break-all font-mono text-[length:var(--text-2xs)] text-neutral-mid">{{ block.callId }}</span>
             </div>
           </div>
           <Button
@@ -91,7 +91,7 @@
             variant="ghost"
             size="sm"
             :disabled="toolResultKey === null"
-            class="mb-2 h-5 gap-1 px-1.5 text-[11px] text-accent hover:underline"
+            class="mb-2 h-5 gap-1 px-1.5 text-[length:var(--text-2xs)] text-accent hover:underline"
             data-testid="trace-inspector-jump-tool-result"
             :title="t('panel.trace.jumpToolResult')"
             @click="onJumpToolResult"
@@ -100,13 +100,13 @@
             {{ t('panel.trace.jumpToolResult') }}
           </Button>
           <pre
-            class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[11px] leading-relaxed text-neutral-mid"
+            class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[length:var(--text-2xs)] leading-relaxed text-neutral-mid"
             data-testid="trace-inspector-block-arguments"
           >{{ blockArgumentsJson }}</pre>
         </template>
         <pre
           v-else
-          class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[11px] leading-relaxed text-neutral-mid"
+          class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[length:var(--text-2xs)] leading-relaxed text-neutral-mid"
           data-testid="trace-inspector-block-content"
         >{{ JSON.stringify(block.kind === 'unknown' ? block.raw : block, null, JSON_INDENT) }}</pre>
       </template>
@@ -114,45 +114,45 @@
       <!-- 聚合态：kind 分支详情（原有四层） -->
       <template v-else>
         <!-- 消息类：USER / NOTICE(role=custom) / TOOL 输出 文本全文 -->
-        <pre v-if="preText !== null" class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[11px] leading-relaxed text-neutral-mid">{{ preText }}</pre>
+        <pre v-if="preText !== null" class="mb-2 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[length:var(--text-2xs)] leading-relaxed text-neutral-mid">{{ preText }}</pre>
         <!-- ASSISTANT：逐 content block（可点击进入 block 态） -->
         <div v-if="blocks.length > 0" class="mb-2 flex flex-col gap-1" data-testid="trace-inspector-blocks">
           <div
             v-for="b in blocks"
             :key="b.key"
-            class="flex cursor-pointer items-center gap-2 rounded-sm px-1.5 py-1 text-[11px] text-neutral-mid hover:bg-surface-2"
+            class="flex cursor-pointer items-center gap-2 rounded-sm px-1.5 py-1 text-[length:var(--text-2xs)] text-neutral-mid hover:bg-surface-2"
             :data-testid="`trace-inspector-block-${b.index}`"
             @click="selectTraceEntry(props.sessionId, b.key)"
           >
-            <span class="flex-shrink-0 rounded px-1.5 py-px font-mono text-[10px] tracking-wide" :class="b.badgeClass">{{ b.label }}</span>
+            <span class="flex-shrink-0 rounded px-1.5 py-px font-mono text-[length:var(--text-3xs)] tracking-wide" :class="b.badgeClass">{{ b.label }}</span>
             <span class="min-w-0 flex-1 truncate" :class="b.thinking ? 'text-reasoning' : ''">{{ b.preview || b.label }}</span>
           </div>
         </div>
         <!-- meta kv（kind 特化字段：exitCode/tokensBefore/version/…）；SESSION 的
              parentSession 是溯源链接（§3.1 样例 5，jump-parent）而非纯文本 -->
         <div class="mb-2 flex flex-col gap-1.5">
-          <div v-for="kv in detailKv" :key="kv.k" class="flex items-baseline gap-2 text-[11px]">
+          <div v-for="kv in detailKv" :key="kv.k" class="flex items-baseline gap-2 text-[length:var(--text-2xs)]">
             <span class="w-20 flex-shrink-0 text-neutral-faint">{{ kv.k }}</span>
             <Button
               v-if="kv.action === 'jump-parent'"
               variant="ghost"
               size="sm"
-              class="h-auto min-w-0 justify-start break-all px-0 py-0 font-mono text-[11px] text-accent hover:underline"
+              class="h-auto min-w-0 justify-start break-all px-0 py-0 font-mono text-[length:var(--text-2xs)] text-accent hover:underline"
               data-testid="trace-inspector-jump-parent"
               :title="t('panel.trace.jumpParentTitle')"
               @click="onJumpParent"
             >{{ kv.v }} <ArrowUpRight class="size-3" /></Button>
-            <span v-else class="min-w-0 break-all font-mono text-[11px] text-neutral-mid" :class="kv.tone === 'bad' ? 'text-danger' : kv.tone === 'ok' ? 'text-success' : ''">{{ kv.v }}</span>
+            <span v-else class="min-w-0 break-all font-mono text-[length:var(--text-2xs)] text-neutral-mid" :class="kv.tone === 'bad' ? 'text-danger' : kv.tone === 'ok' ? 'text-success' : ''">{{ kv.v }}</span>
             <!-- 行尾右侧弱标注（usage 桶语义解释；「不进 context」同款视觉档位） -->
-            <span v-if="kv.hint" class="ml-auto shrink-0 font-mono text-[10px] text-neutral-faint">{{ kv.hint }}</span>
+            <span v-if="kv.hint" class="ml-auto shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-faint">{{ kv.hint }}</span>
           </div>
         </div>
       </template>
 
       <!-- 原始 JSON（通用兜底，G1 不丢信息；默认折叠减少视觉噪音；block 态为该 block 原文） -->
       <details class="group/raw mb-1">
-        <summary class="cursor-pointer select-none text-[10px] uppercase tracking-wide text-neutral-faint hover:text-neutral-mid">{{ t('panel.trace.inspectorRaw') }}</summary>
-        <pre class="mt-1 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[10px] leading-relaxed text-neutral-dim">{{ rawJson }}</pre>
+        <summary class="cursor-pointer select-none text-[length:var(--text-3xs)] uppercase tracking-wide text-neutral-faint hover:text-neutral-mid">{{ t('panel.trace.inspectorRaw') }}</summary>
+        <pre class="mt-1 overflow-x-auto whitespace-pre-wrap rounded-sm bg-bg-input p-2.5 font-mono text-[length:var(--text-3xs)] leading-relaxed text-neutral-dim">{{ rawJson }}</pre>
       </details>
     </div>
   </div>

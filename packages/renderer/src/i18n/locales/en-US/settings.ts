@@ -42,7 +42,7 @@ export default {
       terminal: 'Terminal',
     },
     regionSidebarDesc: 'Session list, file tree and other sidebar text',
-    regionChatDesc: 'Message stream and composer text',
+    regionChatDesc: 'Message stream and composer text (popup menus excluded)',
     regionDrawerDesc: 'Git / detail / doc panels inside the drawer',
     tierSmall: 'Small',
     tierMedium: 'Default',

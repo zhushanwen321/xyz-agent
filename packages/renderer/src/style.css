@@ -81,7 +81,7 @@
   --font-scale-u: 1;
   --font-scale-mq: 1;
   /* 分区字号倍率（data-fs-sidebar/chat/drawer 档位映射，见下方选择器）。
-   * 区域根节点挂 .fs-<region> scope 类后，子树内 --text-* 链乘以对应倍率。 */
+   * 区域根节点挂 [data-fs-scope] 属性后，子树内 --text-* 链乘以对应倍率。 */
   --font-scale-sidebar: 1;
   --font-scale-chat: 1;
   --font-scale-drawer: 1;

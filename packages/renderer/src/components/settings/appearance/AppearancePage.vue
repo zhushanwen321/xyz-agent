@@ -248,7 +248,7 @@ const tokenRows = computed(() =>
 
 // 主题/预设/字号变化 → token 实际值变化；DOM 属性由壳层 useSettingsShell 同步，rAF 后读到新值
 watch(
-  () => [props.system.theme, props.system.themePreset, props.system.fontSize],
+  () => [props.system.theme, props.system.themePreset, props.system.fontSize, props.system.fontScales],
   () => requestAnimationFrame(refreshTokens),
 )
 onMounted(() => {

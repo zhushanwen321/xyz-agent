@@ -9,7 +9,7 @@
     <span
       v-for="item in items"
       :key="item.id"
-      class="group inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-sm bg-surface-2 px-1.5 py-0.5 text-[11px] text-neutral-mid"
+      class="group inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-sm bg-surface-2 px-1.5 py-0.5 text-[length:var(--text-2xs)] text-neutral-mid"
       :class="item.type === 'image' ? 'text-reasoning' : ''"
     >
       <component :is="iconFor(item)" class="size-3 shrink-0" :class="item.type === 'image' ? 'text-reasoning' : 'text-neutral-dim'" />

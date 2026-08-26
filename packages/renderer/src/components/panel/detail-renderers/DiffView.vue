@@ -31,7 +31,7 @@
   首次 shiki 加载异步：未就绪时降级为纯文本行（无语法高亮，仍有 +/- 语义色）。
 -->
 <template>
-  <div v-if="parsed.hunks.length" class="diff-view w-max min-w-full bg-bg-input font-mono text-[12px] leading-[1.5]">
+  <div v-if="parsed.hunks.length" class="diff-view w-max min-w-full bg-bg-input font-mono text-[length:var(--text-xs)] leading-[1.5]">
     <div v-for="(hunk, hi) in parsed.hunks" :key="hi" class="diff-hunk">
       <!-- hunk 头：@@ -a,b +c,d @@ -->
       <div class="diff-hunk-header px-2 py-0.5 text-neutral-dim">
@@ -86,7 +86,7 @@
   <!-- 空 patch（无 hunk） -->
   <div v-else class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
     <GitCompare class="size-6 text-neutral-dim opacity-40" />
-    <p class="text-[11px] text-neutral-dim opacity-55">{{ t('panel.detail.noDiff') }}</p>
+    <p class="text-[length:var(--text-2xs)] text-neutral-dim opacity-55">{{ t('panel.detail.noDiff') }}</p>
   </div>
 </template>
 

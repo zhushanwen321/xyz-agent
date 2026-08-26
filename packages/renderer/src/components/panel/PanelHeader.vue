@@ -72,11 +72,11 @@
          不显会话名（仅目录 + 分支两段），避免与目录视觉重复。
          shrink + min-w-0：长目录+分支时截断优先发生于此，绝不盖右侧 3 按钮（按钮组 ml-auto + shrink-0）。 -->
     <nav class="flex min-w-0 shrink items-center gap-1 [-webkit-app-region:no-drag]">
-      <ol class="flex min-w-0 items-center gap-1 text-[12px]">
+      <ol class="flex min-w-0 items-center gap-1 text-[length:var(--text-xs)]">
         <li class="flex min-w-0 items-center gap-1.5">
           <Folder class="size-3 shrink-0 opacity-70 text-neutral-dim" />
           <span
-            class="truncate font-mono text-[12px] font-semibold text-neutral-fg"
+            class="truncate font-mono text-[length:var(--text-xs)] font-semibold text-neutral-fg"
             :title="`${t('panel.header.workingDir')}：${sessionDir}`"
           >{{ dirName }}</span>
         </li>
@@ -86,7 +86,7 @@
           </li>
           <li class="min-w-0">
             <span
-              class="truncate font-mono text-[11px] text-accent"
+              class="truncate font-mono text-[length:var(--text-2xs)] text-accent"
               :title="`${t('panel.header.branch')}：${gitBranch}`"
             >{{ gitBranch }}</span>
           </li>
@@ -118,7 +118,7 @@
         v-if="sessionFile"
         variant="ghost"
         data-testid="panel-session-file"
-        class="h-5 shrink-0 gap-1 rounded px-1 font-mono text-[11px] text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
+        class="h-5 shrink-0 gap-1 rounded px-1 font-mono text-[length:var(--text-2xs)] text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
         :title="t('panel.header.copySessionFile')"
         @click="copy(sessionFile, 'file')"
       >

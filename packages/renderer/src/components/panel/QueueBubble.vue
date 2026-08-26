@@ -19,7 +19,7 @@
     <div
       v-for="(item, i) in visibleItems"
       :key="i"
-      class="qb-item flex items-center gap-1.5 py-0.5 text-[12px]"
+      class="qb-item flex items-center gap-1.5 py-0.5 text-[length:var(--text-xs)]"
     >
       <component
         :is="item.type === 'followUp' ? Clock : Zap"
@@ -30,7 +30,7 @@
     </div>
     <div
       v-if="overflowCount > 0"
-      class="mt-0.5 pl-[21px] text-[11px] text-neutral-dim"
+      class="mt-0.5 pl-[21px] text-[length:var(--text-2xs)] text-neutral-dim"
     >
       +{{ overflowCount }}
     </div>

@@ -12,7 +12,7 @@
   <div class="flex flex-shrink-0 flex-col gap-1.5 pl-4 pr-2 pb-2 pt-1">
     <!-- 状态行 -->
     <div
-      class="flex flex-wrap items-center gap-2 font-mono text-[11px] tabular-nums text-neutral-dim"
+      class="flex flex-wrap items-center gap-2 font-mono text-[length:var(--text-2xs)] tabular-nums text-neutral-dim"
       data-testid="trace-stats"
     >
       <span>{{ t('panel.trace.entriesCount', { count: stats.total }) }}</span>
@@ -34,7 +34,7 @@
           variant="ghost"
           size="sm"
           :disabled="fetching"
-          class="h-4 gap-0.5 px-1 text-[10px]"
+          class="h-4 gap-0.5 px-1 text-[length:var(--text-3xs)]"
           data-testid="trace-fetch-current"
           @click="emit('fetch-current')"
         >
@@ -43,16 +43,16 @@
         </Button>
         <span
           v-if="fetchErrorMessage !== null"
-          class="text-[10px] text-danger"
+          class="text-[length:var(--text-3xs)] text-danger"
           data-testid="trace-fetch-current-error"
         >{{ fetchErrorMessage }}</span>
         <template v-else>
           <span
             v-if="currentPrompt !== null"
-            class="text-[10px] text-neutral-dim"
+            class="text-[length:var(--text-3xs)] text-neutral-dim"
             data-testid="trace-fetch-current-result"
           >{{ t('panel.trace.systemFetchedSummary', { count: currentPrompt.charCount, time: fetchedTime }) }}</span>
-          <span class="text-[10px] text-neutral-faint" data-testid="trace-fetch-current-note">{{ t('panel.trace.systemCurrentNotHistory') }}</span>
+          <span class="text-[length:var(--text-3xs)] text-neutral-faint" data-testid="trace-fetch-current-note">{{ t('panel.trace.systemCurrentNotHistory') }}</span>
         </template>
       </template>
     </div>
@@ -63,25 +63,25 @@
         :key="chip.key"
         variant="ghost"
         size="sm"
-        class="h-5 rounded-full px-2.5 text-[11px]"
+        class="h-5 rounded-full px-2.5 text-[length:var(--text-2xs)]"
         :class="chip.active ? 'bg-bg-elevated text-neutral-fg hover:bg-bg-elevated' : 'text-neutral-dim hover:text-neutral-fg'"
         :data-testid="`trace-chip-${chip.key}`"
         @click="emit('toggle-group', chip.key)"
       >
-        {{ chip.label }}<span class="ml-1 font-mono text-[10px] text-neutral-faint">{{ chip.count }}</span>
+        {{ chip.label }}<span class="ml-1 font-mono text-[length:var(--text-3xs)] text-neutral-faint">{{ chip.count }}</span>
       </Button>
       <div class="ml-1 flex min-w-[110px] flex-1 items-center gap-1.5 rounded-sm border border-transparent bg-bg-input px-2 py-1 focus-within:border-accent-ring">
         <Search class="size-3 shrink-0 text-neutral-dim" />
         <Input
           v-model="searchModel"
-          class="h-4 w-full border-0 bg-transparent px-0 py-0 font-sans text-[12px] focus-visible:ring-0"
+          class="h-4 w-full border-0 bg-transparent px-0 py-0 font-sans text-[length:var(--text-xs)] focus-visible:ring-0"
           type="text"
           :placeholder="t('panel.trace.searchPlaceholder')"
           data-testid="trace-search"
         />
       </div>
       <div
-        class="flex cursor-pointer select-none items-center gap-1.5 rounded-sm px-1 py-0.5 text-[11px]"
+        class="flex cursor-pointer select-none items-center gap-1.5 rounded-sm px-1 py-0.5 text-[length:var(--text-2xs)]"
         :class="contextOnly ? 'text-neutral-fg' : 'text-neutral-dim hover:text-neutral-fg'"
         :title="t('panel.trace.contextOnlyHint')"
         data-testid="trace-context-toggle"

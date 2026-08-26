@@ -11,15 +11,15 @@
 <template>
   <div
     v-if="state"
-    class="mb-1.5 flex items-center gap-2 rounded-md border border-warn/35 bg-warn-soft px-3 py-1.5 text-[12px] text-neutral-fg"
+    class="mb-1.5 flex items-center gap-2 rounded-md border border-warn/35 bg-warn-soft px-3 py-1.5 text-[length:var(--text-xs)] text-neutral-fg"
     :title="state.errorMessage ? t('panel.retryIndicator.lastFailed', { error: state.errorMessage }) : t('panel.retryIndicator.autoRetrying')"
   >
     <RefreshCw class="size-3 shrink-0 animate-spin text-warn" />
     <span class="font-semibold">{{ t('panel.retryIndicator.retrying') }}</span>
-    <span v-if="state.attempt !== undefined" class="font-mono text-[11px] tabular-nums text-neutral-mid">
+    <span v-if="state.attempt !== undefined" class="font-mono text-[length:var(--text-2xs)] tabular-nums text-neutral-mid">
       {{ state.attempt }}<template v-if="state.maxAttempts">/{{ state.maxAttempts }}</template>
     </span>
-    <span v-if="state.errorMessage" class="ml-1 min-w-0 truncate text-[11px] text-neutral-dim">
+    <span v-if="state.errorMessage" class="ml-1 min-w-0 truncate text-[length:var(--text-2xs)] text-neutral-dim">
       {{ state.errorMessage }}
     </span>
   </div>

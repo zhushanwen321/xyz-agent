@@ -58,11 +58,11 @@
       class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
     >
       <MessageSquare class="size-6 text-neutral-dim opacity-40" />
-      <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.panel.startConversation') }}</p>
+      <p class="text-[length:var(--text-xs)] text-neutral-dim opacity-70">{{ t('panel.panel.startConversation') }}</p>
     </div>
     <div v-else class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
       <MessageSquare class="size-6 text-neutral-dim opacity-40" />
-      <p class="text-[12px] text-neutral-dim opacity-70">{{ t('panel.panel.selectSession') }}</p>
+      <p class="text-[length:var(--text-xs)] text-neutral-dim opacity-70">{{ t('panel.panel.selectSession') }}</p>
     </div>
 
     <!-- M17 对话流 widget 面板（todo/goal 等常驻状态卡，ViewHostStore 经 inject 消费）。
