@@ -23,6 +23,9 @@ import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
 import { displayAgentName } from "../shared/agent-ref.ts";
+import { deriveOutcome } from "../execution/execution-record.ts";
+import { CLOSED_REASONS } from "../execution/types.ts";
+import type { ClosedReason, ExecutionOutcome } from "../execution/types.ts";
 import {
   firstLine,
   padToVisible,
@@ -55,8 +58,10 @@ interface BgNotifyRecord {
   id: string;
   /** v4 B-1: closed（终态，含 cancelled）或 running（对话模式轮次完成，旧 idle）。 */
   status: "running" | "closed";
-  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。 */
-  closedReason?: string;
+  /** L2 关闭原因子枚举（内部诊断 + outcome 兑底派生输入；经 toClosedReason 防御性收窄）。 */
+  closedReason?: ClosedReason;
+  /** 终态三态对外语义（U3 C-outcome）。缺失（升级前旧消息重放）时按 deriveOutcome 兑底。 */
+  outcome?: ExecutionOutcome;
   agent: string;
   model?: string;
   result?: string;
@@ -218,12 +223,15 @@ function renderRecordLines(record: BgNotifyRecord, t: ThemeLike): string[] {
   const modelPart = record.model
     ? ` ${t.fg("dim", "·")} ${t.fg("accent", truncLine(record.model, MODEL_MAX_WIDTH))}`
     : "";
-  // v4 B-1: closed 统一终态（含 cancelled）。按 closedReason 派生文案。
-  const reason = record.closedReason ?? "gc";
+  // U3 C-outcome：verb 与正文分流只读 outcome——单一权威派生（升级前旧消息重放等
+  // details 缺 outcome 的存量形态经 deriveOutcome(closedReason, error) 兑底，非同构
+  // 重写）。判定先于 patchFile：failed 分支不展示 patch/result（失败轮也会写
+  // patchFile，历史 bug 存档见 deriveOutcome 注释）。
+  const outcome = record.outcome ?? deriveOutcome(record.closedReason, record.error);
   let verb: string;
-  if (reason === "cancelled") {
+  if (outcome === "cancelled") {
     verb = "cancelled";
-  } else if (reason === "gc" && record.error) {
+  } else if (outcome === "failed") {
     verb = "failed";
   } else {
     verb = "finished";
@@ -233,13 +241,12 @@ function renderRecordLines(record: BgNotifyRecord, t: ThemeLike): string[] {
 
   switch (record.status) {
     case "closed": {
-      // v4 B-1: closed 统一终态（含 cancelled）。cancelled 无正文；失败显示错误；否则结果/patch。
-      const r = record.closedReason ?? "gc";
-      if (r === "cancelled") {
+      // U3 C-outcome：cancelled 无正文；failed 显示错误；否则结果/patch（同上，分流只读 outcome）。
+      if (outcome === "cancelled") {
         return [head];
       }
-      if (r === "gc" && record.error) {
-        return [head, t.fg("dim", truncLine(`Error: ${firstLineSanitized(record.error)}`, BODY_MAX_WIDTH))];
+      if (outcome === "failed") {
+        return [head, t.fg("dim", truncLine(`Error: ${firstLineSanitized(record.error ?? "")}`, BODY_MAX_WIDTH))];
       }
       if (!record.result && !record.patchFile) return [head];
       const lines: string[] = [];
@@ -276,6 +283,19 @@ function extractBatch(details: unknown): BgNotifyRecord[] | undefined {
 }
 
 /**
+ * details.closedReason 防御性收窄：任意字符串 → ClosedReason | undefined。
+ * 旧数据/外部构造的非法值按缺失处理，交由 deriveOutcome 兑底（消费方不崩溃）。
+ */
+function toClosedReason(value: unknown): ClosedReason | undefined {
+  return CLOSED_REASONS.find((reason) => reason === value);
+}
+
+/** details.outcome 防御性收窄：仅接受三态枚举值，其余按缺失处理。 */
+function toOutcome(value: unknown): ExecutionOutcome | undefined {
+  return value === "completed" || value === "failed" || value === "cancelled" ? value : undefined;
+}
+
+/**
  * 从 message.details 防御性提取 BgNotifyRecord。
  * 结构不全（缺 status / agent）返回 undefined。
  */
@@ -297,7 +317,8 @@ function extractBgNotifyRecord(details: unknown): BgNotifyRecord | undefined {
     model: typeof d.model === "string" ? d.model : undefined,
     result: typeof d.result === "string" ? d.result : undefined,
     error: typeof d.error === "string" ? d.error : undefined,
-    closedReason: typeof d.closedReason === "string" ? d.closedReason : undefined,
+    closedReason: toClosedReason(d.closedReason),
+    outcome: toOutcome(d.outcome),
     round: typeof d.round === "number" ? d.round : undefined,
     // [MF#1] 提取 patchFile（worktree background 完成通知携带）。
     patchFile: typeof d.patchFile === "string" ? d.patchFile : undefined,

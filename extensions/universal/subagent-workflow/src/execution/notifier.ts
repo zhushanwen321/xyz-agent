@@ -12,6 +12,9 @@
 
 import { createDelivery, type DeliveryHandle, type DeliveryPort } from "@xyz-agent/session-delivery";
 
+import { deriveOutcome } from "./execution-record.ts";
+import type { ClosedReason, ExecutionOutcome } from "./types.ts";
+
 /**
  * 一条待发送的完成通知记录。
  * SP-1: done/failed/crashed 合并为 closed + closedReason L2 子枚举。
@@ -24,8 +27,15 @@ export interface BgNotifyRecord {
    * toNotifyRecord 守卫放行后经此联合穷尽。
    */
   status: "running" | "closed";
-  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。供通知文案按需展示。 */
-  closedReason?: import("./types.ts").ClosedReason;
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。内部诊断 + outcome 兑底派生输入。 */
+  closedReason?: ClosedReason;
+  /**
+   * 终态三态对外语义（U3 C-outcome）。notify() 投影边界物化：closed 入参缺省时按
+   * deriveOutcome(closedReason, error) 兑底填充（所有可达流程下与 completeRecord
+   * 冻结的 record.outcome 等价——toNotifyRecord 构造点在 completeRecord 之后；该
+   * 构造点属 U3 领地外，不透传本字段）。buildLlmContent 与 bg-notify-render 只读本字段。
+   */
+  outcome?: ExecutionOutcome;
   agent: string;
   /** 执行所用 model（RecordSnapshot.model），用于完成通知显示。 */
   model?: string;
@@ -98,20 +108,19 @@ function buildLlmContent(record: BgNotifyRecord): string {
     : "";
   switch (record.status) {
     case "closed": {
-      // v4 B-1: closed 统一终态（含 cancelled）。按 closedReason 派生通知文案。
-      const reason = record.closedReason ?? "gc";
-      if (reason === "cancelled") {
+      // U3 C-outcome：终态文案只读 outcome（notify() 投影边界已物化；?? 兑底为防御
+      // 完整性——单一权威函数，非同构重写）。判定先于 patchFile——失败轮也会写
+      // patchFile（doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch），
+      // failed 分支不展示 patch 提示，否则 worktree 失败并存时 LLM 被告知 completed
+      // （历史 bug 存档见 deriveOutcome 注释）。
+      const outcome = record.outcome ?? deriveOutcome(record.closedReason, record.error);
+      if (outcome === "cancelled") {
         return `Subagent "${agent}" (${id}) cancelled.`;
       }
-      // 失败场景（gc + 有 error）：展示错误。判定必须先于 patchFile——失败轮也会写
-      // patchFile（doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch），若
-      // patch 分支在前，gc 失败 + worktree 并存时 LLM 被告知 completed。顺序与三处
-      // 同构契约的另外两处一致（shared/subagent.ts deriveClosedDisplay、
-      // bg-notify-render.ts renderRecordLines：cancelled → gc+error → patch/result）。
-      if (record.error && reason === "gc") {
+      if (outcome === "failed") {
         return `Subagent "${agent}" (${id}) failed: ${record.error}`;
       }
-      // 成功完成（user-close）或通用结束（gc/parent-shutdown 等）：展示结果。
+      // 成功完成或通用结束：展示结果。
       // [C-2] chatMode close 终态通知附轮次统计（设计 D2 路径①"completed after N rounds"）。
       // totalRounds 仅 close 语义携带（notifyClosed）；one-shot 完成通知不设置（round 无轮次
       // 语义），文案保持 "completed. Result:" 逐字节（G4 硬约束，one-shot 字节锁测试锚定）。
@@ -223,17 +232,27 @@ export function createNotifier(host: NotifierHost): BgNotifier {
     notify(record: BgNotifyRecord): void {
       if (disposed) return;
 
+      // U3 C-outcome：投影边界物化 outcome——closed payload 缺省时按单一权威
+      // deriveOutcome 兑底填充，content 与 details（GUI pane 消费）均携带一等 outcome；
+      // 所有可达流程下与 record.outcome 等价（toNotifyRecord 在 completeRecord 之后
+      // 构造）。running（轮次通知）语义上无 outcome，不物化。消源自 record 的浅拷贝
+      // ——不改写入方对象（BgNotifyRecord 由调用方持有）。
+      const payload: BgNotifyRecord =
+        record.status === "closed"
+          ? { ...record, outcome: record.outcome ?? deriveOutcome(record.closedReason, record.error) }
+          : record;
+
       // dedup key：idle（对话模式每轮完成）按 id:round 去重——不同轮次不互相掩蔽；
       // 非 idle（closed/cancelled）round 恒定 undefined，key 同旧行为不变。
-      const dedupeKey = record.round != null ? `${record.id}:${record.round}` : record.id;
+      const dedupeKey = payload.round != null ? `${payload.id}:${payload.round}` : payload.id;
 
       handle.send({
         payload: {
           kind: "custom",
           customType: NOTIFY_CUSTOM_TYPE,
-          content: buildLlmContent(record),
+          content: buildLlmContent(payload),
           display: true,
-          details: record,
+          details: payload,
         },
         dedupeKey,
       });

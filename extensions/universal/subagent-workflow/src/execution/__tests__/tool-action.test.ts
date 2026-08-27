@@ -377,6 +377,53 @@ describe("adapter", () => {
     expect(r.details.listResponse).toEqual({ running: 0, items: [] });
   });
 
+  // [U3 C-outcome] 对外 JSON 契约：list items 携带 outcome 且旧字段保留（验收③）。
+  it("[U3] list JSON：items[].outcome 在位（failed 值）且 status/mode/state 旧字段保留", () => {
+    const r = adapter({
+      action: "list",
+      domain: {
+        response: {
+          running: 0,
+          items: [
+            {
+              subagentId: "bg-u3", agent: "w", slug: "s", state: "ended", status: "closed",
+              mode: "background", duration: 1, model: "m", totalTokens: 0,
+              outcome: "failed",
+            },
+          ],
+        },
+      },
+    });
+    const parsed = JSON.parse(r.content[0]!.text) as {
+      listResponse: { items: Array<Record<string, unknown>> };
+    };
+    const item = parsed.listResponse.items[0]!;
+    expect(item.outcome).toBe("failed");
+    // 旧字段保留（向后兼容）
+    expect(item.status).toBe("closed");
+    expect(item.state).toBe("ended");
+    expect(item.mode).toBe("background");
+    // closedReason 退出对外 JSON
+    expect("closedReason" in item).toBe(false);
+  });
+
+  // [U3 C-outcome] start bgResponse：旧字段保留；outcome 为契约完备位，start 时点
+  // record 未终态恒 undefined（JSON.stringify 落键省略），终态成败经 list items 披露。
+  it("[U3] start bgResponse JSON：status/mode/message 旧字段保留，outcome 起点为 undefined", () => {
+    const r = adapter({
+      action: "start",
+      domain: {
+        kind: "bg", subagentId: "bg-u3-2", sessionFile: undefined, slug: "s",
+        response: { status: "running", mode: "background", message: "detached" },
+      },
+    });
+    const parsed = JSON.parse(r.content[0]!.text) as { bgResponse: Record<string, unknown> };
+    expect(parsed.bgResponse.status).toBe("running");
+    expect(parsed.bgResponse.mode).toBe("background");
+    expect(parsed.bgResponse.message).toBe("detached");
+    expect(parsed.bgResponse.outcome).toBeUndefined();
+  });
+
   it("cancel → cancelResponse.cancelled:true 字面量", () => {
     const r = adapter({ action: "cancel", domain: { subagentId: "bg-1", response: { cancelled: true } } });
     expect(r.details.cancelResponse).toEqual({ cancelled: true });

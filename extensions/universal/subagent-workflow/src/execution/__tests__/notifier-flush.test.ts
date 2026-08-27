@@ -334,8 +334,8 @@ describe("BgNotifier buildLlmContent 指针行（wave2：chatMode sessionFile �
 
 	it("[review 修复] gc-failed + patchFile 并存 → failed 文案优先（失败轮也会写 patchFile，patch 提示不可达）", () => {
 		// 回归锚定：doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch，gc 失败 +
-		// worktree 并存时 patchFile 有值。判定顺序必须与 deriveClosedDisplay / renderRecordLines
-		// 同构（cancelled → gc+error → patch/result），否则 LLM 被告知 completed 掩盖失败。
+		// worktree 并存时 patchFile 有值。[U3] 判定收口到单一 deriveOutcome（cancelled →
+		// failed → patch/result），否则 LLM 被告知 completed 掩盖失败。
 		notifier.notify({
 			id: "sa-ptr-8", status: "closed", closedReason: "gc", agent: "w",
 			error: "spawn EPIPE",
@@ -345,6 +345,52 @@ describe("BgNotifier buildLlmContent 指针行（wave2：chatMode sessionFile �
 		});
 
 		expect(sentContent()).toBe('Subagent "w" (sa-ptr-8) failed: spawn EPIPE');
+	});
+
+	it("[U3][D6 显式取舍] parent-shutdown 合成关闭 + patchFile 并存 → failed 文案优先（patch 提示不可达）", () => {
+		// disposeAllRecords 合成 result 恒写 error:"closed due to ..." → outcome='failed'；
+		// worktree 失败并存时仍不得展示 patch 提示（「failed 优先于 patchFile 提示」保真）。
+		notifier.notify({
+			id: "sa-u3-ps", status: "closed", closedReason: "parent-shutdown", agent: "w",
+			error: "closed due to parent-shutdown",
+			patchFile: "/tmp/patches/sa-u3-ps.patch",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-u3-ps) failed: closed due to parent-shutdown');
+	});
+
+	it("[U3] details payload 物化 outcome：closed 入参缺省时按 deriveOutcome 兑底填充", () => {
+		notifier.notify({
+			id: "sa-u3-mat", status: "closed", closedReason: "gc", agent: "w",
+			error: "boom",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(host.sendMessageCalls).toHaveLength(1);
+		const msg = host.sendMessageCalls[0]!.message as { details?: { outcome?: string } };
+		expect(msg.details?.outcome).toBe("failed");
+	});
+
+	it("[U3] 显式 outcome 优先于 closedReason 兑底（一等字段直读）", () => {
+		notifier.notify({
+			id: "sa-u3-explicit", status: "closed", closedReason: "gc", agent: "w",
+			outcome: "cancelled",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-u3-explicit) cancelled.');
+	});
+
+	it("[U3] running（轮次通知）不物化 outcome（终态语义不适用活跃态）", () => {
+		notifier.notify({
+			id: "sa-u3-round", status: "running", agent: "w", round: 1, result: "r1",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(host.sendMessageCalls).toHaveLength(1);
+		const msg = host.sendMessageCalls[0]!.message as { details?: { outcome?: string } };
+		expect(msg.details?.outcome).toBeUndefined();
 	});
 
 	it("one-shot（sessionFile 未透传 → undefined）→ closed 通知与改造前逐字节一致（基线常量锚定）", () => {

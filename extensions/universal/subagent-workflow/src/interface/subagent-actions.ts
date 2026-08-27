@@ -17,7 +17,7 @@ import {
 } from "@xyz-agent/extension-protocol";
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
-import { computeElapsedSeconds } from "../execution/execution-record.ts";
+import { computeElapsedSeconds, projectOutcome } from "../execution/execution-record.ts";
 import { isResumable } from "../execution/lifecycle-predicates.ts";
 import type { ExecutionRecord } from "../execution/types.ts";
 import type { ModelInfo } from "../execution/model-resolver.ts";
@@ -154,9 +154,11 @@ export function mapExternalState(status: ExecutionStatus): ExternalState {
 }
 
 /** SubagentRecord → SubagentListItem（state 四态主字段 + status 调试字段，duration 实时计算）。
- *  [v4 A-6] 新增 parent/resumable/closedReason：parent 从 record.parentRecordId 派生
- *  （配合 A-5 直接父守卫），resumable 从 isResumable 派生（B-1「可续聊」对外表达），
- *  closedReason 透传（SP-4 级联关闭告知替代 before_agent_start 注入）。
+ *  [v4 A-6] 新增 parent/resumable：parent 从 record.parentRecordId 派生（配合 A-5 直接父
+ *  守卫），resumable 从 isResumable 派生（B-1「可续聊」对外表达）。
+ *  [U3 C-outcome] 新增 outcome 一等终态语义（projectOutcome 唯一出口）；closedReason
+ *  退出对外 JSON（保留为 record 内部诊断字段），对外成败判读收口到 outcome，消费方
+ *  零手写推导（三处同构 switch 已收敛删除）。
  *  agent 是 GUI/TUI list 共用的显示名——取 basename 短名（displayAgentName），
  *  完整路径保留在 record.agent（数据层）。 */
 export function recordToListItem(r: SubagentRecord): SubagentListItem {
@@ -173,7 +175,7 @@ export function recordToListItem(r: SubagentRecord): SubagentListItem {
     sessionFile: r.sessionFile,
     parent: r.parentRecordId,
     resumable: isResumable(r),
-    closedReason: r.closedReason,
+    outcome: projectOutcome(r),
   };
 }
 
