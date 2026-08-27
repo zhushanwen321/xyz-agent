@@ -295,20 +295,41 @@ describe('cleanupCompletedUpdate', () => {
     for (const f of extra) expect(existsSync(f)).toBe(false)
   }
 
-  it('1. done + version <= current（真 done）→ 清全部产物含 result 自身', async () => {
+  it('A1-cleanup-returns-status-vitest: done + version <= current → 清全部 + 返回 LaunchResult', async () => {
     seedArtifacts()
     writeResult({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' })
     const { cleanupCompletedUpdate } = await loadModule()
-    await cleanupCompletedUpdate()
+    const result = await cleanupCompletedUpdate()
     expectAllCleaned()
+    // W4: done 终态返回 LaunchResult
+    expect(result).toEqual({ status: 'done', version: '0.8.49' })
   })
 
-  it('2. done + version > current（假 done，app 仍旧版）→ 不清', async () => {
+  it('A3-main-cache-vitest: cleanupCompletedUpdate 返回值可被缓存（module 级变量模式）', async () => {
+    // 模拟 main.ts 的 module-level cache 模式
+    let cache: { status: string; version: string } | null = null
+    seedArtifacts()
+    writeResult({ status: 'rolled-back', version: '0.9.7', at: '2025-12-01T00:00:00Z' })
+    const { cleanupCompletedUpdate } = await loadModule()
+    // main.ts 的 whenReady 内：cache = await cleanupCompletedUpdate()
+    cache = await cleanupCompletedUpdate()
+    // 验证缓存值可读取（模拟 getLaunchResult 回调）
+    expect(cache).toEqual({ status: 'rolled-back', version: '0.9.7' })
+    // consumed 一次性：读取后清空
+    const result = cache
+    cache = null
+    expect(result).toEqual({ status: 'rolled-back', version: '0.9.7' })
+    expect(cache).toBeNull()
+  })
+
+  it('2. done + version > current（假 done，app 仍旧版）→ 不清 + 返回 null', async () => {
     electronMock.appVersion = '0.8.48' // app 仍旧版，target 0.8.49 未生效
     seedArtifacts()
     writeResult({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' })
     const { cleanupCompletedUpdate } = await loadModule()
-    await cleanupCompletedUpdate()
+    const result = await cleanupCompletedUpdate()
+    // W4: 假 done 返回 null（不通知）
+    expect(result).toBeNull()
     // 全部产物仍在（未清理）
     expect(existsSync(resultFile)).toBe(true)
     expect(existsSync(preloadedFile)).toBe(true)
@@ -316,23 +337,27 @@ describe('cleanupCompletedUpdate', () => {
     expect(existsSync(pendingFile)).toBe(true)
   })
 
-  it('3. failed → 清全部含 result', async () => {
+  it('3. failed → 清全部含 result + 返回 LaunchResult', async () => {
     seedArtifacts()
     writeResult({ status: 'failed', version: '0.9.0', at: '2025-12-01T00:00:00Z', error: 'sha mismatch' })
     const { cleanupCompletedUpdate } = await loadModule()
-    await cleanupCompletedUpdate()
+    const result = await cleanupCompletedUpdate()
     expectAllCleaned()
+    // W4: failed 终态返回 LaunchResult
+    expect(result).toEqual({ status: 'failed', version: '0.9.0' })
   })
 
-  it('4. rolled-back → 清全部含 result', async () => {
+  it('4. rolled-back → 清全部含 result + 返回 LaunchResult', async () => {
     seedArtifacts()
     writeResult({ status: 'rolled-back', version: '0.9.0', at: '2025-12-01T00:00:00Z' })
     const { cleanupCompletedUpdate } = await loadModule()
-    await cleanupCompletedUpdate()
+    const result = await cleanupCompletedUpdate()
     expectAllCleaned()
+    // W4: rolled-back 终态返回 LaunchResult
+    expect(result).toEqual({ status: 'rolled-back', version: '0.9.0' })
   })
 
-  it('5. no-op → 清全部含 result + 清 .downloading 残留', async () => {
+  it('5. no-op → 清全部含 result + 返回 null（不通知）', async () => {
     seedArtifacts()
     const downloading1 = path.join(updateDir, 'asset.zip.downloading')
     const downloading2 = path.join(updateDir, 'other.downloading')
@@ -340,28 +365,31 @@ describe('cleanupCompletedUpdate', () => {
     writeFileSync(downloading2, 'partial')
     writeResult({ status: 'no-op', version: '0.9.0', at: '2025-12-01T00:00:00Z' })
     const { cleanupCompletedUpdate } = await loadModule()
-    await cleanupCompletedUpdate()
+    const result = await cleanupCompletedUpdate()
+    // W4: no-op 返回 null（不通知用户）
+    expect(result).toBeNull()
     expectAllCleaned([downloading1, downloading2])
   })
 
-  it('6. 无 update-result.json → no-op 不抛错（也不误删现存产物）', async () => {
+  it('6. 无 update-result.json → 返回 null 不抛错（也不误删现存产物）', async () => {
     // 不写 result，但写一些产物（验证无 result 时不触发清理）
     writeFileSync(pendingFile, '{}')
     writeFileSync(updaterLog, 'log')
     const { cleanupCompletedUpdate } = await loadModule()
-    await expect(cleanupCompletedUpdate()).resolves.toBeUndefined()
+    await expect(cleanupCompletedUpdate()).resolves.toBeNull()
     // 无 result → 不清理，产物仍在
     expect(existsSync(pendingFile)).toBe(true)
     expect(existsSync(updaterLog)).toBe(true)
   })
 
-  it('7. 幂等：连续两次调用不抛错', async () => {
+  it('7. 幂等：连续两次调用不抛错，首次有返回值，二次返回 null', async () => {
     seedArtifacts()
     writeResult({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' })
     const { cleanupCompletedUpdate } = await loadModule()
-    await cleanupCompletedUpdate()
-    // 第二次（产物已无，ignoreENOENT 吞 ENOENT）不抛错
-    await expect(cleanupCompletedUpdate()).resolves.toBeUndefined()
+    const first = await cleanupCompletedUpdate()
+    expect(first).toEqual({ status: 'done', version: '0.8.49' })
+    // 第二次（产物已无，ignoreENOENT 吞 ENOENT）不抛错，返回 null
+    await expect(cleanupCompletedUpdate()).resolves.toBeNull()
     expectAllCleaned()
   })
 

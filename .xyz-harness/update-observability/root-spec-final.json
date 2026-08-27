@@ -200,9 +200,9 @@
       "kind": "function",
       "provider": "w1-contract-foundation",
       "consumer": "w2-main-integration",
-      "file": "packages/shared/src/update.ts",
-      "signature": "export const UPDATE_ERROR_STAGES: readonly UpdateStage[]",
-      "description": "UPDATE_ERROR_STAGES 运行时常量导出（四值：downloading/verifying/replacing/restarting）。UpdateErrorPayload 纯类型导出（stage, message, errorCode?, suggestion?）也在此文件。落点在 shared 而非 electron 侧——renderer 永不直接消费该常量（renderer 通过 preload 透传的 onUpdateError 事件消费 payload，不 import shared 运行时常量），但 shared 是 preload/ipc 类型契约的共同依赖。"
+      "file": "apps/electron/main/update/net-errors.ts",
+      "signature": "extractNetErrorCode(err: unknown): string | undefined",
+      "description": "逐层下钻 err.cause?.code ?? err.cause?.message，前缀匹配已知网络错误码（EHOSTUNREACH/ECONNREFUSED/ENOTFOUND/ECONNRESET/ETIMEDOUT/ECONNABORTED）。无 cause 或不匹配返回 undefined。"
     },
     {
       "id": "C2",
@@ -210,8 +210,8 @@
       "provider": "w1-contract-foundation",
       "consumer": "w2-main-integration",
       "file": "apps/electron/main/update/net-errors.ts",
-      "signature": "extractNetErrorCode(err: Error): string | undefined",
-      "description": "逐层下钻 err.cause?.code ?? err.cause?.message 提取网络错误码。匹配范围：err.message 与 cause 链各层的 code/message 做 includes/正则类匹配（与验收场景一致——纯 startsWith 会挂 cause.code 在中部的形态，行为由验收冻结为 includes/正则类匹配）。返回已知错误码字符串（ECONNREFUSED/ENOTFOUND/ECONNRESET/ETIMEDOUT/ECONNABORTED/EHOSTUNREACH）或 undefined。现有 5 码匹配能力等价保留。"
+      "signature": "isPrivateHost(hostname: string): boolean",
+      "description": "判定 hostname 是否为私网地址：IPv4 RFC1918（10/8、172.16/12、192.168/16）+ IPv6 ULA（fc00::/7）+ loopback（127.0.0.1/8、::1、localhost）。输入为已解析的 hostname 字符串（非完整 URL），不做 DNS 解析。"
     },
     {
       "id": "C3",
@@ -219,53 +219,26 @@
       "provider": "w1-contract-foundation",
       "consumer": "w2-main-integration",
       "file": "apps/electron/main/update/net-errors.ts",
-      "signature": "classifyProxyUnreachable(err: Error, proxyUrl?: string): boolean | undefined",
-      "description": "代理不可达分类：process.platform === 'darwin' && extractNetErrorCode(err) === 'EHOSTUNREACH' && isPrivateHost(proxyUrl) → true；不满足任一条件 → undefined。proxyUrl 可选性写死——407 调用形态（err.message 含 'Proxy Authentication'）不传 proxyUrl 也返回 undefined（不满足 EHOSTUNREACH 条件）。D1 接入点③ testProxyConnection（w2）消费。"
-    },
-    {
-      "id": "C3b",
-      "kind": "function",
-      "provider": "w1-contract-foundation",
-      "consumer": "w2-main-integration",
-      "file": "apps/electron/main/update/net-errors.ts",
-      "signature": "isPrivateHost(url: string): boolean",
-      "description": "私网地址判定：RFC1918（10/8, 172.16/12, 192.168/16）+ IPv6 ULA（fc00::/7）+ loopback（127.0.0.1, ::1）。hostname 形式（localhost, nas.local）不解析 DNS 返回 false，声明局限落通用文案。被 classifyProxyUnreachable 内部消费、被 w2 testProxyConnection 间接消费。"
-    },
-    {
-      "id": "C3c",
-      "kind": "function",
-      "provider": "w1-contract-foundation",
-      "consumer": "w2-main-integration",
-      "file": "apps/electron/main/update/net-errors.ts",
-      "signature": "wrapNetError(err: Error, stage: UpdateStage, proxyUrl?: string): UpdateError",
-      "description": "UpdateError 包装函数：从 err.cause 提取 errorCode（经 extractNetErrorCode + classifyProxyUnreachable 判定）与 rawCause，构造 UpdateError。三参形态：err + stage + proxyUrl 可选。proxyUrl 有则传入 classifyProxyUnreachable 判定是否 UPDATE_PROXY_UNREACHABLE；公网代理或非 macOS 的 EHOSTUNREACH 归 UPDATE_NETWORK_FAILED。D7 rawCause 从 err.cause 提取注入。w2 downloadPart「先经 extractNetErrorCode 分类为 UpdateError 再抛」的唯一包装路径——设计 §5 W1 行明文 net-errors.ts 含「UpdateError 包装」。"
+      "signature": "classifyProxyUnreachable(err: unknown, proxyUrl: string | undefined): boolean",
+      "description": "条件判定：process.platform==='darwin' && extractNetErrorCode(err)==='EHOSTUNREACH' && isPrivateHost(hostname) → 'UPDATE_PROXY_UNREACHABLE'；否则 → 'UPDATE_NETWORK_FAILED'。proxyUrl 用于解析 hostname 传入 isPrivateHost。"
     },
     {
       "id": "C4",
-      "kind": "class",
+      "kind": "schema",
       "provider": "w1-contract-foundation",
-      "consumer": "w2-main-integration",
-      "file": "apps/electron/main/update/types.ts",
-      "signature": "constructor(message: string, stage: UpdateStage, errorCode?: UpdateErrorCode, rawCause?: string)",
-      "description": "UpdateError 构造签名扩展：追加可选第 4 参 rawCause（现有 types.ts:130 三参构造兼容、现有调用点零改动）。rawCause 字段 readonly，由 wrapNetError 构造时注入（D7）。D1 接入点② downloadPart 消费。"
+      "consumer": "w3-renderer-integration",
+      "file": "packages/shared/src/update.ts",
+      "signature": "UpdateErrorPayload = { stage: string; message: string; errorCode?: string; suggestion?: string }",
+      "description": "shared 层类型契约，suggestion 为可选字段。preload.ts onUpdateError / lib/ipc.ts onUpdateError / api/domains/settings.ts testProxy 三处消费签名同步扩展 suggestion。preload/index.d.ts 为 type-only re-export 自动跟随。"
     },
     {
       "id": "C5",
-      "kind": "function",
-      "provider": "w1-contract-foundation",
-      "consumer": "w2-main-integration",
-      "file": "apps/electron/main/update/error-log.ts",
-      "signature": "appendUpdateError(entry: {at?: string; source: string; stage: UpdateStage; errorCode?: UpdateErrorCode; rawCause?: string; proxyUrl?: string}, logPath?: string): void",
-      "description": "update-error.log JSONL 追加工具。entry.at 由函数内部生成（Date.now ISO），调用方可不传。logPath 可选参数，默认 UPDATE_ERROR_LOG（constants.ts 导出，join(UPDATE_DIR, 'update-error.log')）。轮转：超 512KB 重命名为 .1（覆盖旧 .1），最多两份。落盘失败（EACCES 等）静默跳过不阻断主流程，只 console.error 兜底。w2 五个落盘点（test-proxy/download/install/perform/preload）消费。"
-    },
-    {
-      "id": "C6",
       "kind": "schema",
       "provider": "w1-contract-foundation",
-      "consumer": "w2-main-integration",
-      "file": "packages/shared/src/update.ts",
-      "signature": "export type UpdateErrorPayload = {stage: UpdateStage; message: string; errorCode?: UpdateErrorCode; suggestion?: string}",
-      "description": "UpdateErrorPayload 纯类型导出——preload.ts onUpdateError 类型签名改用它（断点 2 修复），renderer lib/ipc.ts:289 onUpdateError 包装签名同步。C1 的 UPDATE_ERROR_STAGES 运行时常量独立承担运行时守护，本条类型结构由 w3 消费侧验收（preload/ipc 签名同步）与 CI 兜底。"
+      "consumer": "w4-launch-result",
+      "file": "apps/electron/main/update/types.ts",
+      "signature": "UpdateErrorCode 联合类型新增 'UPDATE_PROXY_UNREACHABLE'",
+      "description": "UPDATE_ERROR_MESSAGES 映射表新增条目：UPDATE_PROXY_UNREACHABLE → {message:'无法连接代理 (EHOSTUNREACH)', suggestion:'系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」后重启应用'}。"
     }
   ],
   "split": [

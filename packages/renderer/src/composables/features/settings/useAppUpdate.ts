@@ -33,10 +33,16 @@ import {
   getPendingUpdate,
   onUpdateProgress,
   onUpdateError,
+  getLaunchResult as ipcGetLaunchResult,
   openUpdateFallbackUrl as ipcOpenUpdateFallbackUrl,
 } from '@/lib/ipc'
 import { renderMarkdown } from '@/composables/logic/markdown'
-import { getLocale } from '@/i18n'
+import { useToast } from '@/composables/useToast'
+import i18n, { getLocale } from '@/i18n'
+
+// 模块级 t：checkLaunchResult 是 initAutoCheck 内 fire-and-forget 的异步函数，非 setup
+// 同步上下文用不了 useI18n()，照抄同目录 useProviderImport.ts 的 global.t 模式（B2 review）
+const t = i18n.global.t
 
 /** 不支持当前平台的错误码（main 侧 platform-updater 抛出，preload 透传） */
 const UNSUPPORTED_ERROR_CODE = 'UPDATE_UNSUPPORTED_PLATFORM'
@@ -150,6 +156,8 @@ const state = reactive({
   latestRelease: null as LatestReleaseInfo | null,
   /** 错误信息（state=error 时填充） */
   errorMessage: '',
+  /** 错误解决建议（state=error 时填充，用于展示恢复指引） */
+  errorSuggestion: '',
   /** 升级进度百分比（0-100，state=downloading/verifying/replacing 时填充） */
   percent: 0,
   /** release note 渲染后的 HTML（markdown-it + shiki，异步填充） */
@@ -226,6 +234,11 @@ function subscribeProgress(): void {
     } else {
       state.state = 'error'
       state.errorMessage = e.message
+      state.errorSuggestion = e.suggestion ?? ''
+      // D4：失败 toast 触发点在 useAppUpdate 单例的 onUpdateError 回调
+      // toast 只弹摘要（message），suggestion 太长不进 toast，留在 hover 浮层/设置页
+      const { error: toastError } = useToast()
+      toastError(e.message)
     }
     errorHandled = true
   })
@@ -520,6 +533,35 @@ async function runAutoCheck(): Promise<void> {
 }
 
 /**
+ * 读取启动结果并显示 toast 通知（D5 决策）。
+ *
+ * main 侧 cleanupCompletedUpdate 在 bootstrapMainWindow 之前运行，返回值缓存在进程级变量。
+ * renderer 启动时 invoke 一次 update:getLaunchResult（consumed 一次性，main 清缓存）：
+ * - done → info toast sidebar.update.upgradedToast
+ * - failed → warning toast sidebar.update.upgradeFailed
+ * - rolled-back → warning toast sidebar.update.rolledBack
+ *
+ * 调用时机：initAutoCheck 内（Sidebar 挂载即触发，早于 30s 自动检查）。
+ */
+async function checkLaunchResult(): Promise<void> {
+  try {
+    const result = await ipcGetLaunchResult()
+    if (!result) return
+    const { info, warning } = useToast()
+    if (result.status === 'done') {
+      info(t('sidebar.update.upgradedToast', { version: result.version }))
+    } else if (result.status === 'rolled-back') {
+      warning(t('sidebar.update.rolledBack', { version: result.version }))
+    } else if (result.status === 'failed') {
+      warning(t('sidebar.update.upgradeFailed'))
+    }
+  } catch (e) {
+    // best-effort：启动结果通知失败不影响升级流程，用户下次启动仍可重试读取（main 侧缓存未 consumed）
+    console.warn('[useAppUpdate] checkLaunchResult failed:', e)
+  }
+}
+
+/**
  * 启动自动检测：先恢复持久化提醒（立即），再 30s 首次检测，之后每 20min 周期检测。
  *
  * 必须在活跃 effect scope 内调用，通常在组件 setup 顶层同步调用（onScopeDispose 依赖活跃 scope）；
@@ -540,6 +582,8 @@ function initAutoCheck(): void {
       void restorePendingUpdate()
     }
   })
+  // 读取启动结果（升级成功/失败/回滚），consumed 一次性：首次调用返回结果并清空
+  void checkLaunchResult()
   // 30s 后首次联网检测（避开冷启动高峰 + 刷新 release info），首次完成后转 20min 周期
   autoCheckTimer = setTimeout(runAutoCheck, AUTO_CHECK_DELAY_MS)
   onScopeDispose(() => {
@@ -581,6 +625,7 @@ export function _resetForTest(): void {
   state.state = 'idle'
   state.latestRelease = null
   state.errorMessage = ''
+  state.errorSuggestion = ''
   state.percent = 0
   state.releaseNotesHtml = ''
   errorHandled = false

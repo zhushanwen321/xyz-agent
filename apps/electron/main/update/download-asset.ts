@@ -34,6 +34,7 @@ import { UPDATE_DIR } from './constants.js'
 import { hashFileSha256 } from './hash.js'
 import { resolveProxyUrl } from './proxy-config.js'
 import { UpdateError, UpdateIntegrityError } from './types.js'
+import { classifyNetError, getNodeErrnoCode } from './net-errors.js'
 
 /**
  * 断点续传状态接口。
@@ -91,26 +92,6 @@ function toNodeReadableWebStream(
   body: ReadableStream<Uint8Array> | null,
 ): import('stream/web').ReadableStream<Uint8Array> {
   return body as unknown as import('stream/web').ReadableStream<Uint8Array>
-}
-
-/**
- * 读取 Node 错误的 errno code（如 'ENOSPC'、'EACCES'）。
- *
- * 原生 Node fs 错误把 code 放在 `err.code`；fetch/undici 抛出的错误有时会把
- * 底层原因包到 `err.cause` 里（cause.code）。两者都查，命中其一即返回。
- * 不能用 `err.code` 直接判断：传入值可能非 NodeJS.ErrnoException（无 code 字段）。
- */
-function getNodeErrnoCode(err: unknown): string | undefined {
-  if (!(err instanceof Error)) return undefined
-  // 先看 err.code（原生 Node fs 错误）
-  const directCode = (err as NodeJS.ErrnoException).code
-  if (directCode) return directCode
-  // 再看 cause.code（fetch/undici 包裹的底层原因）
-  const cause = (err as { cause?: unknown }).cause
-  if (cause instanceof Error) {
-    return (cause as NodeJS.ErrnoException).code
-  }
-  return undefined
 }
 
 /**
@@ -262,43 +243,9 @@ export async function downloadAsset(
     try {
       response = await fetch(asset.downloadUrl, fetchOptions as RequestInit)
     } catch (fetchErr) {
-      // 网络错误分类：区分超时、连接失败、代理错误
-      if (fetchErr instanceof Error) {
-        if (fetchErr.name === 'AbortError') {
-          throw new UpdateError(
-            `download timeout after ${DOWNLOAD_TIMEOUT_MS / MS_PER_SECOND}s`,
-            'downloading',
-            'UPDATE_NETWORK_TIMEOUT',
-          )
-        }
-        // [M6] ECONNABORTED 是通用连接中断，与代理无关——误归为 PROXY_ERROR 会
-        // 误导用户去查代理。归入 NETWORK_FAILED（连接中断）。
-        if (fetchErr.message.includes('ECONNREFUSED') || fetchErr.message.includes('ENOTFOUND') ||
-            fetchErr.message.includes('ECONNRESET') || fetchErr.message.includes('ETIMEDOUT') ||
-            fetchErr.message.includes('ECONNABORTED')) {
-          throw new UpdateError(
-            `network connection failed: ${fetchErr.message}`,
-            'downloading',
-            'UPDATE_NETWORK_FAILED',
-          )
-        }
-        // [M6] PROXY_ERROR 只保留代理特征字符串判断（如代理认证失败 407），
-        // 不再泛化匹配 'proxy' 子串以避免误判。代理认证失败是代理场景的强信号。
-        // [W-6] 裸 '407' 子串会误命中时间戳/端口号等。精确匹配 HTTP 407 状态描述
-        // 短语（含分隔边界），并保留 'Proxy Authentication' 文案兜底。
-        if (/^407\b|[\s(]407\b|Proxy Authentication/i.test(fetchErr.message)) {
-          throw new UpdateError(
-            `proxy error: ${fetchErr.message}`,
-            'downloading',
-            'UPDATE_PROXY_ERROR',
-          )
-        }
-      }
-      throw new UpdateError(
-        `download failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
-        'downloading',
-        'UPDATE_NETWORK_FAILED',
-      )
+      // D1: 使用统一的分类函数替代内联字符串匹配（收敛三条 fetch 路径）
+      const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
+      throw classifyNetError(fetchErr, 'downloading', proxyUrl)
     }
     if (!response.ok) {
       // [LEAK FIX] 抛错前显式 cancel body，释放底层 socket（无引用后 GC 也会清理，
@@ -674,7 +621,17 @@ async function downloadPart(
     // 的 unlinkSync 与并发 write 竞争会抛 EBUSY/EPERM 吞掉原始错误。这里每段清理自己的
     // part 文件（try/catch 容错，文件不存在或被占用都不影响抛出原始 err）。
     try { unlinkSync(part.tempPath) } catch (unlinkErr) { console.warn(`[download] part ${part.index} temp cleanup failed:`, unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
-    throw err
+    // [B4] 已构造的 UpdateError 原样直通，不再进 classifyNetError 兜底分支：
+    // 上面 HTTP 非 200 抛的 `part N download failed: HTTP xxx` 若被重新分类，
+    // 会二次包装成「download failed: part N ...」双重前缀（探针已实证）。
+    // 与单段流式 catch 的直通先例保持一致；放在清理之后是刻意的——
+    // destroy/unlink 对所有错误类型都必须执行，不能提前 return 跳过。
+    if (err instanceof UpdateError) {
+      throw err
+    }
+    // D1: 对 downloadPart 的网络错误做统一分类（覆盖断点 1b：多段路径原无分类）
+    const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
+    throw classifyNetError(err, 'downloading', proxyUrl)
   } finally {
     clearTimeout(timer)
     if (idleTimer) clearTimeout(idleTimer)

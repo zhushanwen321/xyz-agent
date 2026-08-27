@@ -19,12 +19,16 @@
  * - sha256 来源：优先 GitHub asset.digest；digest 缺失（老 release / 某些情况下 undefined）
  *   时 fetch manifest.json（CI generate-manifest.sh 产物）作为 fallback
  * - manifest fallback 仅在至少一个 asset 缺 sha256 时 fetch 一次（lazy），全失败则 sha256 留 undefined
+ * - D6：代理优先 + 失败降级直连（mode=manual/system 且解析出代理 URL 时；
+ *   fetch 失败用无 dispatcher 直连重试一次；10s 超时各一次，总最坏 20s）
  *
- * 依赖方向：release-checker → @xyz-agent/shared + compare-versions + 全局 fetch
+ * 依赖方向：release-checker → @xyz-agent/shared + compare-versions + 全局 fetch + undici ProxyAgent
  */
 import { compare } from 'compare-versions'
+import { ProxyAgent } from 'undici'
 import type { LatestReleaseInfo, ReleaseAsset } from '@xyz-agent/shared'
 import type { IReleaseChecker } from './interfaces.js'
+import { readProxyConfig, resolveProxyUrl } from './update/proxy-config.js'
 
 /** GitHub /releases/latest API 端点 */
 const GITHUB_LATEST_RELEASE_URL =
@@ -180,23 +184,79 @@ export class ReleaseChecker implements IReleaseChecker {
    *
    * 三重 prerelease 防御 a：/releases/latest 端点本身只返回最近 stable，
    * 天然排除 prerelease（GitHub API 文档语义）。
+   *
+   * D6：代理优先 + 失败降级直连。
+   * - mode=manual/system 且解析出代理 URL 时，先用 ProxyAgent 走代理
+   * - fetch 失败（网络错误，如 EHOSTUNREACH）且用了代理时，降级直连重试一次
+   * - HTTP 错误（404/500）不触发降级（服务器已响应，重试无意义）
+   * - 10s 超时各一次（总最坏 20s，EHOSTUNREACH 类快速失败下降级延迟 <2s）
    */
   private async fetchGitHubLatestRelease(): Promise<GitHubRelease | null> {
+    // 读代理配置，决定是否走代理
+    const proxyConfig = readProxyConfig()
+    const proxyUrl = resolveProxyUrl(proxyConfig)
+    const useProxy = proxyUrl !== undefined
+
+    try {
+      // 第一次尝试：代理优先（若有）
+      return await this.doFetchGitHubLatestRelease(useProxy ? proxyUrl : undefined)
+    } catch {
+      // 网络错误（EHOSTUNREACH/ECONNREFUSED/超时等）
+      if (useProxy) {
+        // 降级：用了代理但网络失败时，直连重试一次（无 dispatcher）
+        try {
+          return await this.doFetchGitHubLatestRelease(undefined)
+        } catch {
+          // 直连也失败 → 返回 null
+          return null
+        }
+      }
+      // 无代理也失败 → 返回 null
+      return null
+    }
+  }
+
+  /**
+   * 执行单次 fetch GitHub /releases/latest。
+   *
+   * @param proxyUrl 代理 URL；undefined 表示直连（无 dispatcher）
+   * @returns 解析后的 GitHubRelease；
+   *          HTTP 错误（404/500 等）返回 null；网络错误抛出（供降级逻辑捕获）
+   * @throws 网络错误（EHOSTUNREACH/ECONNREFUSED/超时等）——调用方据此决定是否降级
+   */
+  private async doFetchGitHubLatestRelease(proxyUrl?: string): Promise<GitHubRelease | null> {
+    let dispatcher: ProxyAgent | undefined
+    if (proxyUrl) {
+      try {
+        dispatcher = new ProxyAgent(proxyUrl)
+      } catch {
+        // ProxyAgent 构造失败（URL 格式非法等）→ 降级直连
+        dispatcher = undefined
+      }
+    }
+
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
     try {
-      const response = await fetch(GITHUB_LATEST_RELEASE_URL, {
+      const options: RequestInit = {
         headers: GITHUB_HEADERS,
         signal: controller.signal,
-      })
+      }
+      if (dispatcher) {
+        // undici 扩展的 RequestInit 含 dispatcher 字段，经 as RequestInit 适配全局类型
+        (options as Record<string, unknown>).dispatcher = dispatcher
+      }
+      const response = await fetch(GITHUB_LATEST_RELEASE_URL, options)
       if (!response.ok) return null
       const data = (await response.json()) as GitHubRelease
       return data
     } catch {
-      // 网络/超时/解析错误等，一律降级为 null
-      return null
+      // 网络/超时错误 → 抛出供调用方降级；AbortError（超时）也视为网络错误
+      throw new Error('fetch failed')
     } finally {
       clearTimeout(timer)
+      // ProxyAgent 持有连接池，显式关闭避免句柄泄漏
+      await dispatcher?.close().catch(() => {})
     }
   }
 
@@ -255,33 +315,79 @@ export class ReleaseChecker implements IReleaseChecker {
    *   { version, releasedAt, assets: { "<filename>": { sha256, size } } }
    * 失败（网络/超时/解析/404）一律返回 null（不阻塞，sha256 留 undefined 由调用方降级）。
    *
+   * D6：代理优先 + 失败降级直连（与 fetchGitHubLatestRelease 同策略）。
+   *
    * @returns Map<filename, sha256hex>；不可用时返回 null
    */
   private async fetchManifestSha256(): Promise<Map<string, string> | null> {
+    // 读代理配置（复用缓存层逻辑，与 fetchGitHubLatestRelease 同源）
+    const proxyConfig = readProxyConfig()
+    const proxyUrl = resolveProxyUrl(proxyConfig)
+    const useProxy = proxyUrl !== undefined
+
     try {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-      try {
-        const resp = await fetch(MANIFEST_URL, { signal: controller.signal })
-        if (!resp.ok) return null
-        const manifest = (await resp.json()) as {
-          assets?: Record<string, { sha256?: unknown }>
-        }
-        const assetsMap = manifest?.assets
-        if (!assetsMap || typeof assetsMap !== 'object') return null
-        const map = new Map<string, string>()
-        for (const [name, info] of Object.entries(assetsMap)) {
-          const sha = info?.sha256
-          if (typeof sha === 'string' && /^[0-9a-f]{64}$/i.test(sha)) {
-            map.set(name, sha)
-          }
-        }
-        return map.size > 0 ? map : null
-      } finally {
-        clearTimeout(timer)
-      }
+      // 第一次尝试：代理优先
+      return await this.doFetchManifestSha256(useProxy ? proxyUrl : undefined)
     } catch {
+      // 网络错误
+      if (useProxy) {
+        // 降级直连重试
+        try {
+          return await this.doFetchManifestSha256(undefined)
+        } catch {
+          return null
+        }
+      }
       return null
+    }
+  }
+
+  /**
+   * 执行单次 fetch manifest.json。
+   *
+   * @param proxyUrl 代理 URL；undefined 表示直连
+   * @returns Map<filename, sha256hex>；
+   *          HTTP 错误返回 null；网络错误抛出（供降级逻辑捕获）
+   * @throws 网络错误——调用方据此决定是否降级
+   */
+  private async doFetchManifestSha256(proxyUrl?: string): Promise<Map<string, string> | null> {
+    let dispatcher: ProxyAgent | undefined
+    if (proxyUrl) {
+      try {
+        dispatcher = new ProxyAgent(proxyUrl)
+      } catch {
+        dispatcher = undefined
+      }
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+    try {
+      const options: RequestInit = { signal: controller.signal }
+      if (dispatcher) {
+        (options as Record<string, unknown>).dispatcher = dispatcher
+      }
+      const resp = await fetch(MANIFEST_URL, options)
+      if (!resp.ok) return null
+      const manifest = (await resp.json()) as {
+        assets?: Record<string, { sha256?: unknown }>
+      }
+      const assetsMap = manifest?.assets
+      if (!assetsMap || typeof assetsMap !== 'object') return null
+      const map = new Map<string, string>()
+      for (const [name, info] of Object.entries(assetsMap)) {
+        const sha = info?.sha256
+        if (typeof sha === 'string' && /^[0-9a-f]{64}$/i.test(sha)) {
+          map.set(name, sha)
+        }
+      }
+      return map.size > 0 ? map : null
+    } catch {
+      // 网络错误抛出供调用方降级
+      throw new Error('fetch failed')
+    } finally {
+      clearTimeout(timer)
+      await dispatcher?.close().catch(() => {})
     }
   }
 }

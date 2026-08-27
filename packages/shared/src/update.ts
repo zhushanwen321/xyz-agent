@@ -59,6 +59,18 @@ export type UpdateState =
   | 'unsupported'
 
 /**
+ * 升级错误事件 payload（main → preload → renderer 全链路透传，D3）。
+ *
+ * preload.ts onUpdateError 和 renderer lib/ipc.ts 的类型签名必须与此一致。
+ */
+export interface UpdateErrorPayload {
+  stage: string
+  message: string
+  errorCode?: string
+  suggestion?: string
+}
+
+/**
  * 代理配置接口。
  * 支持三种模式：
  * - system：自动检测系统代理
@@ -88,4 +100,38 @@ export interface UpdateSettings {
   preDownload: boolean
   /** 启动时自动检查更新并提示下载 */
   autoUpdate?: boolean
+}
+
+/**
+ * 代理测试结果载荷（main → preload → renderer）。
+ *
+ * 失败时含错误码与建议，renderer 据此展示两段式测试结果。
+ */
+export interface ProxyTestResult {
+  /** 测试是否成功 */
+  success: boolean
+  /** 错误码（失败时） */
+  code?: string
+  /** 错误摘要（失败时） */
+  message?: string
+  /** 解决建议（失败时） */
+  suggestion?: string
+}
+
+/**
+ * 启动结果终态状态值（D5 决策：升级成功/失败/回滚三态通知）。
+ * cleanupCompletedUpdate 返回的 LaunchResult.status 仅限这三个值，
+ * no-op（中断但无需回滚）不通知 renderer，返回 null。
+ */
+export const LAUNCH_RESULT_STATUSES = ['done', 'failed', 'rolled-back'] as const
+
+/** 启动结果终态类型（三值联合） */
+export type LaunchResultStatus = (typeof LAUNCH_RESULT_STATUSES)[number]
+
+/** 启动结果信息（main → renderer 一次性通知） */
+export interface LaunchResult {
+  /** 终态类型 */
+  status: LaunchResultStatus
+  /** 版本号（升级成功=新版本，回滚=恢复到的旧版本） */
+  version: string
 }

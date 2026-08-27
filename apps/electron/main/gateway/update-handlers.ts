@@ -30,6 +30,8 @@ import { writePendingUpdate, readPendingUpdate } from '../update/pending-update.
 import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.js'
 import type { IUpdateOrchestrator, UpdateProgressCallback } from '../update/orchestrator.js'
 import { writePreloadedUpdate, readPreloadedUpdate, readPreloadedUpdateRaw, clearPreloadedUpdate } from '../update/preloaded-update.js'
+import { classifyNetError } from '../update/net-errors.js'
+import { appendUpdateError } from '../update/error-log.js'
 
 /** 触发重启前留给前端渲染「重启中」状态的延迟（毫秒）。 */
 const RESTART_QUIT_DELAY_MS = 500
@@ -61,10 +63,8 @@ function resolveDispatcher(config: IProxyConfig): ProxyAgent | undefined {
  * 否则即便代理不可用也会因直连成功而误报——给用户虚假的成功反馈。
  * testProxy 用与真实下载相同的 resolveDispatcher 逻辑，确保测试结果反映代理可用性。
  */
-async function testProxyConnection(config: IProxyConfig): Promise<{ success: boolean; message?: string }> {
+async function testProxyConnection(config: IProxyConfig): Promise<{ success: boolean; code?: string; message?: string; suggestion?: string }> {
   if (config.mode === 'disabled') {
-    // [B2] 返回 success:false 让前端据此显示「代理已禁用，跳过测试」（消费 i18n key testDisabled），
-    // 而非误导性地显示「代理连接成功」。disabled 本就无连接可测，不应报成功。
     return { success: false, message: 'Proxy disabled, skipping test' }
   }
 
@@ -87,24 +87,46 @@ async function testProxyConnection(config: IProxyConfig): Promise<{ success: boo
     return { success: false, message: 'No proxy resolved (check configuration or env vars)' }
   }
 
+  const proxyUrl = resolveProxyUrl(config)
+
   // 使用 AbortController 设置超时（10s：代理探测应快速失败，避免 UI 长时间等待）
   const controller = new AbortController()
   // eslint-disable-next-line no-magic-numbers -- 10000ms = 10s 代理探测超时
   const timeout = setTimeout(() => controller.abort(), 10000)
 
   try {
-    // 测试访问 GitHub 下载链路相关域名（与真实下载目标一致，更有代表性）
-    // dispatcher 让请求真正走代理；这里是 undici 扩展的 RequestInit（含 dispatcher 字段），
-    // 经 as RequestInit 适配全局类型（global RequestInit 在当前 lib 下未声明 dispatcher）。
     const url = 'https://github.com'
     await fetch(url, { method: 'HEAD', signal: controller.signal, dispatcher } as RequestInit)
     return { success: true }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return { success: false, message }
+    // D1: 使用分类函数统一提取 cause + 判定错误码
+    const classified = classifyNetError(err, 'downloading', proxyUrl)
+    let info = classified.toUserFriendly()
+    // D2（v3 修订）testProxy 统一准绳：公网 EHOSTUNREACH 也给代理语境话术。
+    // 用户此刻在测代理，「网络连接失败 + 检查防火墙可访问 GitHub」语境错位；
+    // 不加映射表变体是因为该话术仅 testProxy 场景有意义，入枚举会污染
+    // perform/download/install 共用的错误码空间，handler 内覆写侵入最小。
+    // suggestion 不提本地网络权限（A4 反向验证）；落盘 code 维持原分类，
+    // 保证 D7 日志归因与下载路径一致。
+    if (info.code === 'UPDATE_NETWORK_FAILED' && classified.message.includes('EHOSTUNREACH')) {
+      info = {
+        ...info,
+        message: '无法连接代理 (EHOSTUNREACH)',
+        suggestion: '请检查代理地址与端口是否正确、代理服务是否正在运行，以及当前网络能否连通代理',
+      }
+    }
+    // D7: 落盘
+    appendUpdateError({
+      at: new Date().toISOString(),
+      source: 'test-proxy',
+      stage: info.stage,
+      errorCode: info.code,
+      rawCause: classified.rawCause,
+      proxyUrl,
+    })
+    return { success: false, code: info.code, message: info.message, suggestion: info.suggestion }
   } finally {
     clearTimeout(timeout)
-    // ProxyAgent 持有连接池，测试完显式关闭避免句柄泄漏
     await dispatcher.close().catch(() => {})
   }
 }
@@ -133,7 +155,8 @@ let preDownloadPromise: Promise<void> | null = null
  * 后台预下载（静默）：检测到新版 + 预下载开关开时触发。
  *
  * 不推 update:progress 事件（静默后台行为，不干扰用户）。下载成功后写 preloaded-update.json，
- * update:perform 走快路径跳过重复下载。下载失败仅 console.warn（符合「静默放弃，下次检测重试」决策）。
+ * update:perform 走快路径跳过重复下载。下载失败落盘 update-error.log（D7）后 console.warn
+ * 静默放弃，下次检测重试。
  *
  * download-asset 的断点续传机制保证：预下载未完成时用户手动点更新，performUpdate 的
  * downloadUpdate 会接管同一临时文件续传，进度不浪费。
@@ -161,9 +184,29 @@ async function preloadUpdateSilently(
     writePreloadedUpdate(release, filePath)
     console.log(`[preload] pre-downloaded v${release.version} to ${filePath}`)
   } catch (err) {
-    // 静默放弃：仅 warn，下次 check 检测到新版会再次尝试（断点续传保留进度）
-    console.warn(`[preload] background pre-download failed for v${release.version}:`, err)
-  } finally {
+      // D7: 预下载失败落盘（本诊断环境每次检查更新都会发生的第一失败现场）
+      const proxyConfig = readProxyConfig()
+      const proxyUrl = resolveProxyUrl(proxyConfig)
+      if (err instanceof UpdateError) {
+        appendUpdateError({
+          at: new Date().toISOString(),
+          source: 'preload',
+          stage: err.stage,
+          errorCode: err.errorCode,
+          rawCause: err.rawCause,
+          proxyUrl,
+        })
+      } else {
+        appendUpdateError({
+          at: new Date().toISOString(),
+          source: 'preload',
+          stage: 'downloading',
+          rawCause: err instanceof Error ? err.message : String(err),
+          proxyUrl,
+        })
+      }
+      console.warn(`[preload] background pre-download failed for v${release.version}:`, err)
+    } finally {
     preDownloading = false
     preDownloadPromise = null
   }
@@ -280,6 +323,15 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
           errorCode: friendlyInfo.code,
           suggestion: friendlyInfo.suggestion,
         }
+        // D7: perform 失败落盘
+        appendUpdateError({
+          at: new Date().toISOString(),
+          source: 'perform',
+          stage: friendlyInfo.stage,
+          errorCode: friendlyInfo.code,
+          rawCause: err.rawCause,
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
+        })
       } else {
         errorPayload = {
           stage: 'replacing' as const,
@@ -287,6 +339,13 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
           errorCode: undefined,
           suggestion: '请重试或联系技术支持',
         }
+        appendUpdateError({
+          at: new Date().toISOString(),
+          source: 'perform',
+          stage: 'replacing',
+          rawCause: err instanceof Error ? err.message : String(err),
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
+        })
       }
 
       if (win && !win.isDestroyed()) {
@@ -351,6 +410,15 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       if (err instanceof UpdateError) {
         const f = err.toUserFriendly()
         errorPayload = { stage: f.stage, message: f.message, errorCode: f.code, suggestion: f.suggestion }
+        // D7: download 失败落盘
+        appendUpdateError({
+          at: new Date().toISOString(),
+          source: 'download',
+          stage: f.stage,
+          errorCode: f.code,
+          rawCause: err.rawCause,
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
+        })
       } else {
         errorPayload = {
           stage: 'downloading' as const,
@@ -358,6 +426,13 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
           errorCode: undefined,
           suggestion: '请重试或联系技术支持',
         }
+        appendUpdateError({
+          at: new Date().toISOString(),
+          source: 'download',
+          stage: 'downloading',
+          rawCause: err instanceof Error ? err.message : String(err),
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
+        })
       }
       if (win && !win.isDestroyed()) {
         win.webContents.send('update:error', errorPayload)
@@ -403,6 +478,15 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       if (err instanceof UpdateError) {
         const f = err.toUserFriendly()
         errorPayload = { stage: f.stage, message: f.message, errorCode: f.code, suggestion: f.suggestion }
+        // D7: install 失败落盘
+        appendUpdateError({
+          at: new Date().toISOString(),
+          source: 'install',
+          stage: f.stage,
+          errorCode: f.code,
+          rawCause: err.rawCause,
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
+        })
       } else {
         errorPayload = {
           stage: 'replacing' as const,
@@ -410,6 +494,13 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
           errorCode: undefined,
           suggestion: '请重试或联系技术支持',
         }
+        appendUpdateError({
+          at: new Date().toISOString(),
+          source: 'install',
+          stage: 'replacing',
+          rawCause: err instanceof Error ? err.message : String(err),
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
+        })
       }
       if (win && !win.isDestroyed()) {
         win.webContents.send('update:error', errorPayload)
@@ -466,6 +557,13 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   // ── update:getSettings（读取升级设置）──────────────────────────
   ipcMain.handle('update:getSettings', async () => {
     return getUpdateSettings()
+  })
+
+  // ── update:getLaunchResult（读取启动结果，consumed 一次性）──────
+  // renderer 启动时调用一次，读取 cleanupCompletedUpdate 的返回值（done/failed/rolled-back），
+  // 用于显示升级成功/失败/回滚 toast。main.ts 侧缓存 + consumed 标志保证一次性语义。
+  ipcMain.handle('update:getLaunchResult', async () => {
+    return deps.getLaunchResult?.() ?? null
   })
 
   // ── update:setSettings（保存升级设置，局部更新：只传要修改的字段）──

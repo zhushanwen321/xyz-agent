@@ -21,6 +21,8 @@ export default {
   retry: '重试',
   update: {
     newVersion: '新版本可用',
+    newVersionWithVersion: '发现新版本 v{version}',
+    versionTransition: '当前 v{from} → v{to}',
     downloading: '下载中 {percent}%',
     replacing: '替换中',
     restarting: '即将重启',
@@ -32,6 +34,10 @@ export default {
     installLater: '稍后再说',
     installNow: '立即重启安装',
     retry: '重试',
+    // 启动结果 toast（D5：升级成功/失败/回滚通知）
+    upgradedToast: '已升级到 v{version}',
+    upgradeFailed: '上次升级未完成',
+    rolledBack: '上次升级未完成，已恢复到 v{version}',
   },
   sessionItem: {
     rename: '重命名',

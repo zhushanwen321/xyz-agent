@@ -261,3 +261,51 @@ describe('W3: update-handlers IPC update:perform (W3TC10)', () => {
     expect(sendSpy).not.toHaveBeenCalled()
   })
 })
+
+// ── W4: update:getLaunchResult handler（A2/A3）───────────────────
+describe('A2-launch-result-handler-vitest', () => {
+  beforeEach(() => {
+    handlers.clear()
+    vi.clearAllMocks()
+  })
+
+  function registerWithGetLaunchResult(getLaunchResult: () => Promise<{ status: string; version: string } | null>) {
+    registerUpdateHandlers({
+      getMainWindow: () => mockMainWindow as never,
+      releaseChecker: { checkForLatestRelease: vi.fn() } as never,
+      getLaunchResult,
+    } as never)
+  }
+
+  it('A2-launch-result-handler-vitest: getLaunchResult handler 返回缓存值 + consumed 一次性', async () => {
+    // 模拟 main.ts 的 consumed 一次性缓存
+    let cache: { status: string; version: string } | null = { status: 'done', version: '0.9.9' }
+    const getLaunchResult = async () => {
+      const result = cache
+      cache = null
+      return result
+    }
+    registerWithGetLaunchResult(getLaunchResult)
+
+    const handler = handlers.get('update:getLaunchResult')!
+    expect(handler).toBeDefined()
+
+    // 首次调用：返回缓存值
+    const first = await handler()
+    expect(first).toEqual({ status: 'done', version: '0.9.9' })
+
+    // 第二次调用：consumed 一次性，返回 null
+    const second = await handler()
+    expect(second).toBeNull()
+  })
+
+  it('A3-main-cache-vitest: getLaunchResult 回调返回 cleanupCompletedUpdate 的缓存值', async () => {
+    // 模拟 cleanupCompletedUpdate 返回 rolled-back 状态
+    const getLaunchResult = async () => ({ status: 'rolled-back', version: '0.9.7' })
+    registerWithGetLaunchResult(getLaunchResult)
+
+    const handler = handlers.get('update:getLaunchResult')!
+    const result = await handler()
+    expect(result).toEqual({ status: 'rolled-back', version: '0.9.7' })
+  })
+})

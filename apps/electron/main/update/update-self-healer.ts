@@ -29,6 +29,7 @@
  */
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import type { LaunchResult } from '@xyz-agent/shared'
 import { compare } from 'compare-versions'
 import { app } from 'electron'
 import {
@@ -185,7 +186,7 @@ export function ignoreENOENT(target: string): void {
 }
 
 /**
- * 启动时清理已完成/失败的升级产物。
+ * 启动时清理已完成/失败的升级产物，并返回终态上下文供 renderer 通知用户。
  *
  * 修复根因：升级成功后 update-result.json status='done'，但 maybeRollbackInterruptedUpdate
  * 只处理 'replacing'，done/failed/rolled-back/no-op 终态直接 return false 不清理 → 170MB zip
@@ -203,22 +204,25 @@ export function ignoreENOENT(target: string): void {
  *
  * 永不抛错、永不阻塞启动：整体 try/catch + console.warn。在 main.ts 的 whenReady 内、
  * maybeRollbackInterruptedUpdate 之后调用。
+ *
+ * @returns 有意义的终态上下文（done/failed/rolled-back），供 renderer 通知用户；
+ *          no-op 或无 result 返回 null（不通知）。
  */
-export async function cleanupCompletedUpdate(): Promise<void> {
+export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
   try {
-    if (!existsSync(UPDATE_RESULT_FILE)) return
+    if (!existsSync(UPDATE_RESULT_FILE)) return null
 
     let data: UpdateResultData
     try {
       data = JSON.parse(readFileSync(UPDATE_RESULT_FILE, 'utf-8')) as UpdateResultData
     } catch {
       // 文件读失败（existsSync 与 read 间竞态/权限）/ JSON 解析失败（半截写入）：均视为无可清理，no-op
-      return
+      return null
     }
 
     const status = typeof data.status === 'string' ? (data.status as UpdateResultStatus) : undefined
     if (!status || !TERMINAL_CLEANUP_STATUSES.includes(status)) {
-      return // replacing / 未知状态：不归本函数
+      return null // replacing / 未知状态：不归本函数
     }
 
     // done 需版本校验：仅当 app 确已升级到目标版本才清理（version <= current）。
@@ -233,10 +237,17 @@ export async function cleanupCompletedUpdate(): Promise<void> {
         )
       } catch (e) {
         console.warn('[update-self-healer] done status version compare failed, skip cleanup:', e)
-        return
+        return null
       }
-      if (!realDone) return // 假 done：app 仍旧版，result 可能未生效，不清
+      if (!realDone) return null // 假 done：app 仍旧版，result 可能未生效，不清
     }
+
+    // ── 捕获终态上下文（在清理 result 自身之前）────────────────
+    const version = typeof data.version === 'string' ? data.version : ''
+    const launchResult: LaunchResult | null =
+      (status === 'done' || status === 'failed' || status === 'rolled-back') && version
+        ? { status, version }
+        : null
 
     // ── 清理产物 ────────────────────────────────────────────────
     // 1. preloaded-update.json：先读其 filePath（指向下载 zip），再删 json + zip
@@ -286,9 +297,12 @@ export async function cleanupCompletedUpdate(): Promise<void> {
 
     // 4. result 自身最后删（标记本次清理完成；下次启动无 result → no-op）
     ignoreENOENT(UPDATE_RESULT_FILE)
+
+    return launchResult
   } catch (e) {
     // 永不阻塞启动：仅 warn
     console.warn('[update-self-healer] cleanupCompletedUpdate failed:', e)
+    return null
   }
 }
 

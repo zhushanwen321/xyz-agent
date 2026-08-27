@@ -38,6 +38,7 @@ export type UpdateErrorCode =
   | 'UPDATE_DISK_SPACE'
   | 'UPDATE_PERMISSION_DENIED'
   | 'UPDATE_PROXY_ERROR'
+  | 'UPDATE_PROXY_UNREACHABLE'
   | 'UPDATE_INTEGRITY_FAILED'
   | 'UPDATE_UNSUPPORTED_PLATFORM'
 
@@ -91,6 +92,11 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateErrorCode, Omit<UpdateErrorInfo
     stage: 'downloading',
     suggestion: '请检查代理配置或尝试关闭代理',
   },
+  UPDATE_PROXY_UNREACHABLE: {
+    message: '无法连接代理 (EHOSTUNREACH)',
+    stage: 'downloading',
+    suggestion: 'macOS 未授予「本地网络」权限（代理在局域网时常见）。恢复指引：系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」，重启应用后重试',
+  },
   UPDATE_INTEGRITY_FAILED: {
     message: '安装包完整性校验失败',
     stage: 'verifying',
@@ -126,12 +132,15 @@ export class UpdateError extends Error {
   readonly stage: UpdateStage
   /** 错误码（可选，供前端精确分支） */
   readonly errorCode: UpdateErrorCode | undefined
+  /** 最内层原始 cause 的 message（落盘诊断用，D7） */
+  readonly rawCause?: string
 
-  constructor(message: string, stage: UpdateStage, errorCode?: UpdateErrorCode) {
+  constructor(message: string, stage: UpdateStage, errorCode?: UpdateErrorCode, rawCause?: string) {
     super(message)
     this.name = 'UpdateError'
     this.stage = stage
     this.errorCode = errorCode
+    this.rawCause = rawCause
   }
 
   /**
@@ -146,9 +155,18 @@ export class UpdateError extends Error {
   toUserFriendly(): UpdateErrorInfo {
     if (this.errorCode && this.errorCode in UPDATE_ERROR_MESSAGES) {
       const info = UPDATE_ERROR_MESSAGES[this.errorCode]
+      // classifyNetError 构造的 message 常含 errno 码（如 'network connection failed
+      // (ETIMEDOUT)'），映射表转中文后码会丢——补回 (CODE) 后缀，让用户可见文案保留
+      // 具体网络故障类型（排障定位线索）。映射表条目自身已含该码时
+      // （UPDATE_PROXY_UNREACHABLE 的「无法连接代理 (EHOSTUNREACH)」）不重复拼接。
+      let message = info.message
+      const netCode = /\(([A-Z][A-Z0-9]+)\)/.exec(this.message)?.[1]
+      if (netCode && !info.message.includes(netCode)) {
+        message = `${message} (${netCode})`
+      }
       return {
         code: this.errorCode,
-        message: info.message,
+        message,
         stage: this.stage,
         suggestion: info.suggestion,
       }

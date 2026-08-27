@@ -11,7 +11,7 @@
 import * as configDomain from './config'
 import * as extensionDomain from './extension'
 import { command } from '../request'
-import type { ServerMessageMap, IProxyConfig, UpdateSettings } from '@xyz-agent/shared'
+import type { ServerMessageMap, IProxyConfig, UpdateSettings, ProxyTestResult } from '@xyz-agent/shared'
 import {
   getProxyConfig as getProxyConfigIpc,
   setProxyConfig as setProxyConfigIpc,
@@ -174,7 +174,7 @@ export async function setProxyConfig(config: IProxyConfig): Promise<void> {
 }
 
 /** 测试代理连接。 */
-export async function testProxy(config: IProxyConfig): Promise<{ success: boolean; message?: string }> {
+export async function testProxy(config: IProxyConfig): Promise<ProxyTestResult> {
   return testProxyIpc(config)
 }
 

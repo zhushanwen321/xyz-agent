@@ -14,7 +14,7 @@
  * @see docs/architecture/design.md §4.2 M1–M5
  */
 import type { BrowserWindow } from 'electron'
-import type { WindowState, LatestReleaseInfo } from '@xyz-agent/shared'
+import type { WindowState, LatestReleaseInfo, LaunchResult } from '@xyz-agent/shared'
 import type { BrowserViewManager } from './browser/browser-view-manager.js'
 import type { IUpdateOrchestrator } from './update/orchestrator.js'
 
@@ -203,4 +203,9 @@ export interface IpcHandlerDeps {
   releaseChecker?: IReleaseChecker
   /** 升级编排器（自动升级执行后端；可选，未注入时 update:perform 抛错） */
   updateOrchestrator?: IUpdateOrchestrator
+  /**
+   * 读取启动结果缓存（cleanupCompletedUpdate 的返回值）。
+   * renderer 启动时调用一次（update:getLaunchResult），consumed 一次性语义。
+   */
+  getLaunchResult?: () => Promise<LaunchResult | null>
 }
