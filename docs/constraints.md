@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 76 条（生成于 2026-08-26）。
+共 77 条（生成于 2026-08-27）。
 
 ## pi 关系（外部依赖边界）
 
@@ -116,4 +116,5 @@
 | C-proc-05 | 完成即提交：变更验证通过后、汇报完成前必须 git commit；「检查未过」不构成不提交理由（先修复） | global | [AGENTS.md](../AGENTS.md) | — |
 | C-proc-06 | push 发布 tag 后必须轮询验证 CI 产物直到验证脚本 exit 0（verify-ci-release.sh / prerelease-test.sh）；禁「应该没问题」 | global | [AGENTS.md](../AGENTS.md) | — |
 | C-proc-07 | ENV_WHITELIST_PREFIXES 只许定义在 packages/shared/src/constants.ts，main/runtime 只 import（pre-commit 检查） | packages/**、apps/** | [AGENTS.md](../AGENTS.md) | hook: `check_env_whitelist_sync.py` |
+| C-proc-08 | runtime 子进程 env 出站契约：进程创建点的子 env 必须经 buildOutboundChildEnv 构建（deny 清单剥 XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN）；与 ENV_WHITELIST_PREFIXES 入站准入正交共存——入站白名单管「外部环境哪些准许进来」，出站契约管「自身变量哪些允许跟随 spawn 出去」（设计文档 §3.5 D2）；B2 main→runtime 产品内部边界走 composeChildEnvBase 基座、不出 deny 兜底，deny 由下游对外边界承担 | packages/shared/src/spawn-env-contract.ts、packages/runtime/src/infra/spawn-env.ts、packages/runtime/src/infra/pi/rpc-client.ts、packages/runtime/src/infra/pi/process-manager.ts、apps/electron/main/supervisor/safe-env.ts、packages/runtime/src/infra/shell-runner.ts、packages/runtime/src/infra/git-executor.ts、packages/runtime/src/services/terminal/terminal-service.ts、packages/runtime/src/infra/relay/relay-registry.ts、packages/runtime/src/services/plugin-service/plugin-host-process.ts | [env-propagation-boundary](design/env-propagation-boundary.md) · [AGENTS.md](../AGENTS.md) | hook: `check_spawn_env_boundary.py` |
 

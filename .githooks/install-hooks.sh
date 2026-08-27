@@ -590,6 +590,40 @@ else
 fi
 
 # ============================================================================
+# runtime 子进程 env 出站契约检查（约束 C-proc-08）
+#   扫 packages/runtime/src 与 apps/electron/main 的进程创建调用点，要求子 env 经
+#   buildOutboundChildEnv / composeChildEnvBase 构建（deny 剥 XYZ_AGENT_PACKAGED /
+#   XYZ_RUNTIME_TOKEN）；豁免名单逐条注明理由，详见 checker 脚本头注释。
+#   注：不设独立跳过开关——新增 SKIP_* 逃生口须同步登记 AGENTS.md 的 SKIP_* 清单，
+#   故本段仅受既有 SKIP_ALL_CHECKS 总闸管辖。
+# ============================================================================
+
+SPAWN_ENV_BOUNDARY_CHECKER=".githooks/check_spawn_env_boundary.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    print_section "[出站 env 契约检查]"
+    echo -e "${BLUE}[INFO] 运行 runtime 子进程 env 出站契约检查（C-proc-08）...${NC}"
+
+    if [ ! -f "$SPAWN_ENV_BOUNDARY_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $SPAWN_ENV_BOUNDARY_CHECKER${NC}"
+    else
+        python3 "$SPAWN_ENV_BOUNDARY_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] runtime 子进程 env 出站契约检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 新增子进程必须经 buildOutboundChildEnv 组装 env；修复指引见上方脚本输出；设计依据 docs/design/env-propagation-boundary.md${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] runtime 子进程 env 出站契约检查通过${NC}"
+    fi
+else
+    echo -e "${YELLOW}[SKIP] runtime 子进程 env 出站契约检查已跳过${NC}"
+fi
+
+# ============================================================================
 # Pi extension tool schema 顶层 Object 合规检查（OpenAI 兼容性）
 # ============================================================================
 
