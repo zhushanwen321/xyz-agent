@@ -156,10 +156,16 @@ graph TD
 
 波次外增补单元：**U5b provider 下发标注接线**（message-broker.ts:144 + settings-message-handler.ts:66 两处 attachSupportedLevels 接线；U5 停手项，sa-dfec4245 进行中）；handoff-message-bus mock 预存缺口已修（8b1bd8fb4，175074197 漏改）。
 
-## 7 残留风险与变更历史
+## 7 验收记录（阶段 5）
 
-**残留风险（实施期门，失败即停上报）**：
-- ⛔ P-C1（U5/阶段5）：pi-ai 打入 runtime CJS bundle 行为等价 + 增量 < 100KB + 四包版本一致；降级 = 纯在线对账 + 设置页可用性妥协（需用户裁决）
+**Gate A 全量（2026-08-28，全部 exit 0）**：extensions:typecheck/lint(0 errors)/test（sw 2932 passed）；shared 20 files；core 90 files；ui 57 files（546 tests）；renderer 346 files（3555 tests，Errors 0）；runtime tsc + 主池 357 files（3939）+ real-pi 池 12 files（38，含 G5 e2e）；P-C1 三断言收口：四包版本一致（check-pi-semantics exit 0）、pi-ai 体积（external require 零残留 + 函数内联，metafile 实测 ~0.7KB << 100KB）、行为等价（diff-probe 1226 models 0 mismatches）；validate-runtime-bundle.sh 全过（含 Plugin E2E A-E + SEC-A1~A5）。修复回流 1 次（d671fc3a9 settings-message-handler 旧 mock）已重跑全绿。
+
+**Gate B 机器侧（2026-08-28，全过）**：P-S3①改 verifiedWith→0.80.3 → exit 1 + 报错含 16 条目 id 与重验命令，恢复后 exit 0；P-S3②篡改两级门控断言（reasoning:false 期望加 high）→ 1 failed 红，恢复后 8/8 绿；P-S4①白名单外 staged `deliverAs:"steer"` → pre-commit exit 1 + 报错指 WHITELIST_* 与 C-ext-19；P-S4②白名单外 staged `"--model"` → exit 1 + 报错指向 model-ref；两者撤销后工作区零残留。S5 的 outcome 投影与 P-S5 的「假模型仅关」已有机器等价证据（list-fields/tool-action 断言 + U5 离线计算 1226 模型 0 mismatches）。
+
+**Gate B GUI 侧（S1-S4/P-S1/P-S2/P-S5）**：需真实 GUI 会话 + 真实 LLM 后端的人工/半自动执行，剧本见两设计文档 §4；机器侧无 mock 替代，待用户执行后签收。
+
+## 8 残留风险与变更历史
+- ✅ P-C1（U5/阶段5）已收口（2026-08-28，证据见 §7 验收记录：四包一致 exit 0 / require 零残留 + 内联 ~0.7KB / diff-probe 1226 models 0 mismatches）；原降级路径（纯在线对账）未启用
 - ⛔ P-A1/P-A2（U1）：ctxModel 继承路径 spawn 全等 / 孪生守卫行为验证（守卫失效 = 阻断合入，无降级）
 - ⛔ P-B1~P-B4（U2/阶段5）：courier 全链路时序 / settled 竞态窗口 / 重启重放幂等 / compaction 后 entry 存活；P-B1(b) 晚于阈值时降级为「只记账 + 超时看门狗直达」
 - ⛔ P-D1（U7a）：个别 probe 条目降级为「锚点存在性 + 代码形态断言」
