@@ -131,12 +131,11 @@ useAppUpdate onUpdateError：state.errorMessage = e.message
 **场景 1：本地网络权限未开，点「测试连接」**（G1）
 
 ```
-无法连接代理 (EHOSTUNREACH)
-可能原因：macOS 未授予「本地网络」权限（代理在局域网时常见）
-恢复指引：系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」，重启应用后重试
+代理连接失败: 无法连接代理 (EHOSTUNREACH)
+macOS 未授予「本地网络」权限（代理在局域网时常见）。恢复指引：系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」，重启应用后重试
 ```
 
-（UI 上为两行：第一行 `text-danger` 错误摘要，第二行 `text-muted` 指引；不再是单行英文串。）
+（UI 上为两行，样例即实况：第一行 `text-danger` 错误摘要，message 经存量 i18n 键 `testFailed` 模板包装为「代理连接失败: {msg}」（UpdatePage.vue:142）；第二行 `text-muted` 指引，是映射表 suggestion 单独一行渲染——「可能原因 + 恢复指引」两段已合并为一段（types.ts:95-99 UPDATE_PROXY_UNREACHABLE 条目）；不再是单行英文串。）
 
 **场景 2：同环境点升级按钮**（G1+G2）
 
@@ -177,7 +176,7 @@ useAppUpdate onUpdateError：state.errorMessage = e.message
 
 | 方案 | 长期架构 | 短期成本 | 风险 | 裁决 |
 |------|---------|---------|------|------|
-| **A. 条件判定：macOS + err.code=EHOSTUNREACH + 代理 URL host 是私网地址 → 给权限指引文案；公网代理或非该错误码 → 通用「无法连接代理」文案** | 精确；公网代理 EHOSTUNREACH（路由问题）不会被误导去开权限 | 中（一个 isPrivateHost 工具函数 + 映射条件） | 低；误判率仅剩「私网代理但权限已开」场景，此时文案说「可能原因」，不武断。已声明局限：hostname 形式的代理（如 `nas.local`）不解析 DNS，落通用文案（见 D2） | ✅ |
+| **A. 条件判定：macOS + err.code=EHOSTUNREACH + 代理 URL host 是私网地址 → 给权限指引文案；公网代理或非该错误码 → 通用「无法连接代理」话术（附错误码后缀）** | 精确；公网代理 EHOSTUNREACH（路由问题）不会被误导去开权限 | 中（一个 isPrivateHost 工具函数 + 映射条件） | 低；误判率仅剩「私网代理但权限已开」场景，此时文案说「可能原因」，不武断。已声明局限：hostname 形式的代理（如 `nas.local`）不解析 DNS，落通用文案（见 D2） | ✅ |
 | B. 无条件：所有 EHOSTUNREACH 都提示开权限 | 简单 | 低 | 公网代理路由不可达时误导用户去开无关权限，破坏指引可信度 | ❌ |
 
 **D5 相关：成功/回滚反馈的数据通路**：
@@ -204,7 +203,7 @@ useAppUpdate onUpdateError：state.errorMessage = e.message
 - **效果**：G1 的前提——同一个错误码在全部四个入口（测试/单段下载/多段下载/预下载）产生同一个用户文案。
 
 **D2：新增错误码 `UPDATE_PROXY_UNREACHABLE`（选定）**
-- **采用**：types.ts 的 UpdateErrorCode 联合类型 + UPDATE_ERROR_MESSAGES 映射表加条目，message 统一模板「无法连接代理 (EHOSTUNREACH)」（与 §3.1 场景 1、§4 A1 一致）。判定条件（承接上表 A 方案）：`process.platform === 'darwin' && code === 'EHOSTUNREACH' && isPrivateHost(proxyUrl)` → message「无法连接代理 (EHOSTUNREACH)」+ suggestion「系统设置 → 隐私与安全性 → 本地网络 → 允许『太极』后重启应用」。isPrivateHost 覆盖 IPv4 RFC1918（10/8、172.16/12、192.168/16）+ IPv6 ULA（fc00::/7）+ loopback；**已声明局限**：hostname 形式的代理（`nas.local`、DDNS 域名）不做 DNS 解析（引入解析即引入新失败面与延迟），落通用「无法连接代理」文案——文案仍可行动（提示检查代理与权限），只是少了精确指引。不满足条件（公网代理/其他平台）的 EHOSTUNREACH 归 UPDATE_NETWORK_FAILED，message「网络连接失败 (EHOSTUNREACH)」，suggestion 提示检查代理地址与网络。
+- **采用**：types.ts 的 UpdateErrorCode 联合类型 + UPDATE_ERROR_MESSAGES 映射表加条目，message 统一模板「无法连接代理 (EHOSTUNREACH)」（与 §3.1 场景 1、§4 A1 一致）。判定条件（承接上表 A 方案）：`process.platform === 'darwin' && code === 'EHOSTUNREACH' && isPrivateHost(proxyUrl)` → message「无法连接代理 (EHOSTUNREACH)」+ suggestion「系统设置 → 隐私与安全性 → 本地网络 → 允许『太极』后重启应用」。isPrivateHost 覆盖 IPv4 RFC1918（10/8、172.16/12、192.168/16）+ IPv6 ULA（fc00::/7）+ loopback；**已声明局限**：hostname 形式的代理（`nas.local`、DDNS 域名）不做 DNS 解析（引入解析即引入新失败面与延迟），落通用「无法连接代理」文案——文案仍可行动（提示检查代理与权限），只是少了精确指引。不满足条件（公网代理/其他平台）的 EHOSTUNREACH 错误分类归 UPDATE_NETWORK_FAILED，但用户可见话术分通路：**testProxy 场景统一准绳 = 始终代理语境话术 + message 附错误码后缀**——message 用「无法连接代理 (EHOSTUNREACH)」，suggestion 提示检查代理地址与网络（不加权限精确指引，与 A4 反向验证一致）；升级/下载路径维持 UPDATE_NETWORK_FAILED 映射表通用网络文案。此措辞是 D2 正文、§3.2 表 A 与 §4 A4 三处的共同准绳（testProxy 分支话术与当前实现的代码侧对齐由后续任务跟进，本文档为准绳 SSOT）。
 - **被否**：复用 UPDATE_PROXY_ERROR（现语义是「代理认证失败 407」，混入可达性问题会让 407 的排查指引污染权限场景）。
 - **证据**：types.ts:89-93 UPDATE_PROXY_ERROR 现有映射（现表 8 个错误码）；探针 P1（局域网 EHOSTUNREACH 特征）。
 - **效果**：G1。testProxy 与三条下载路径共用此码。
@@ -229,7 +228,7 @@ useAppUpdate onUpdateError：state.errorMessage = e.message
 - **接管副作用枚举**：本决策不动 cleanupCompletedUpdate 的清理职责，只在其返回路径上加只读信息；update-result.json 的消费顺序（maybeRollback → cleanup）不变；缓存变量生命周期 = 进程内一次性（app 不重启则不再重复 toast）。
 
 **D6：release-checker 接代理 + 降级直连（选定）**
-- **采用**：fetchGitHubLatestRelease 构造 options 时读 readProxyConfig() → resolveProxyUrl() → 有则构造 ProxyAgent dispatcher 传入 fetch；fetch 失败（非 HTTP 错误）且 dispatcher 存在时，用无 dispatcher 的直连重试一次。10s 超时各一次（总最坏 20s，与现状单次 10s 同量级；EHOSTUNREACH 类快速失败下降级延迟 <2s）。
+- **采用**：fetchGitHubLatestRelease 构造 options 时读 readProxyConfig() → resolveProxyUrl() → 有则构造 ProxyAgent dispatcher 传入 fetch；fetch 失败（非 HTTP 错误）且 dispatcher 存在时，用无 dispatcher 的直连重试一次。10s 超时各一次（总最坏 20s，与现状单次 10s 同量级；EHOSTUNREACH 类快速失败下降级延迟 <2s）。sha256 的 manifest.json fallback 同策略覆盖：fetchManifestSha256/doFetchManifestSha256 实现了同款代理优先 + 直连降级（仅网络错误才降级重试一次，HTTP 非 200 直接返回 null 不重试；代码注释自述「与 fetchGitHubLatestRelease 同策略」，见 release-checker.ts:322-349/:353）。
 - **被否**：方案对比 B/C。
 - **证据**：release-checker.ts:184-204 现全局 fetch 无 dispatcher；resolveDispatcher 已有同构实现（update-handlers.ts:46）可提取复用。
 - **效果**：G5。
@@ -259,7 +258,7 @@ useAppUpdate onUpdateError：state.errorMessage = e.message
 | A1 | 本地网络权限未开（当前环境即满足：`tccutil reset LocalNetwork com.xyz-agent.app` 后重启 app） | 设置 → 更新 → 代理 `192.168.1.202:7890` → 点「测试连接」 | ≤3s 显示两行中文：摘要为「无法连接代理 (EHOSTUNREACH)」、指引含「本地网络」路径；不是 `fetch failed` | G1 |
 | A2 | 同 A1 环境 | 点侧边栏升级按钮（单段路径：先制造断点续传态或用 dev 配置禁多段） | error toast 自动弹出（无需 hover）；hover 角标浮层见 message+suggestion 两段；`~/.xyz-agent/update/update-error.log` 新增一行含 `"errorCode":"UPDATE_PROXY_UNREACHABLE"` 与 `"rawCause":"EHOSTUNREACH"` | G1+G2+G6 |
 | A3 | 恢复路径（A1 之后） | 系统设置 → 隐私与安全性 → 本地网络 → 允许太极 → 重启 app → 点「测试连接」→ 点升级 | 测试变绿「代理连接成功」；升级 15s 内完成下载进入确认安装；安装重启后见「已升级到 v0.9.9」toast | G4 + 恢复指引有效 |
-| A4 | 公网代理不可达（代理填 `http://203.0.113.1:7890`（TEST-NET 保留段，必然不可达）） | 点「测试连接」 | 摘要为「无法连接代理」通用文案，指引为检查代理地址；**不出现**本地网络权限指引（反向验证 D2 条件判定） | G1 负面行为 |
+| A4 | 公网代理不可达（代理填 `http://203.0.113.1:7890`（TEST-NET 保留段，必然不可达）） | 点「测试连接」 | 摘要为「无法连接代理 (EHOSTUNREACH)」（代理语境话术 + 错误码后缀，同 D2 testProxy 统一准绳），指引为检查代理地址与网络；**不出现**本地网络权限指引（反向验证 D2 条件判定） | G1 负面行为 |
 | A5 | UI 渲染层（dev mock release，`DEV_MOCK_UPDATE_ENABLED`；不依赖真实新版本发布） | hover 侧边栏升级角标 | 浮层首行「发现新版本 vX.Y.Z」，副行「当前 A.B.C → X.Y.Z」 | G3 |
 | A6 | 代理开启 + 直连 GitHub API 差的环境 | 终端 `nc -l 7890`（或代理端日志）→ 触发检查更新 | nc 输出含 `CONNECT api.github.com:443` 请求行；再故意停掉代理（不可达）→ 检查更新仍在 ≤20s 内返回结果（降级直连生效），功能不瞎 | G5 |
 | A7 | 任意失败后（含预下载） | A1 环境下开启预下载开关 → 触发检查更新（触发后台预下载静默失败）→ 再手动点升级 → `cat ~/.xyz-agent/update/update-error.log` | JSONL 每行可 `jq` 解析，含 at/source/stage/errorCode；**既有 `"source":"preload"` 行也有 `"source":"download"` 行**；重跑失败多次后文件不超 1MB（轮转生效） | G6 |
@@ -280,13 +279,19 @@ useAppUpdate onUpdateError：state.errorMessage = e.message
 |------|------|---------|--------------------------|
 | W1 | 契约与分类基建：net-errors.ts（extractNetErrorCode + isPrivateHost + classifyProxyUnreachable + UpdateError 包装）；UpdateErrorCode 加 UPDATE_PROXY_UNREACHABLE + 映射表条目；UpdateError 扩展 rawCause 字段；shared update.ts 加 UpdateErrorPayload；update-error.log append + 轮转工具 | `update/net-errors.ts`(新)、`update/types.ts`、`update/constants.ts`、`update/error-log.ts`(新)、`packages/shared/src/update.ts` | D1/D2/D3/D7 的依赖底座；独立单测（分类矩阵：私网 EHOSTUNREACH / 公网 EHOSTUNREACH / IPv6 ULA / 407 / 超时 / 多段路径包装） |
 | W2 | main 侧接入：testProxyConnection 用分类函数 + 返回结构化 {success, code?, message?, suggestion?}；单段 fetch 分类与 downloadPart 分类改调 net-errors；三个 update:* handler catch 落盘；preloadUpdateSilently catch 落盘；preload.ts onUpdateError / testProxy 类型更新 | `gateway/update-handlers.ts`、`update/download-asset.ts`、`preload/preload.ts` | A1/A2/A4/A7/A8 的 main 侧前提（preload/index.d.ts 为 type-only re-export 自动跟随，不列入） |
-| W3 | renderer 侧接入：lib/ipc.ts onUpdateError（:289）+ testProxy（:328）签名更新、api/domains/settings.ts（:177）testProxy 类型同步；UpdatePage 测试结果两行渲染；useAppUpdate state + errorSuggestion + onUpdateError toast；UpdateButton error 浮层两段渲染 + hover 版本号（__APP_VERSION__）+ i18n zh/en | `lib/ipc.ts`、`api/domains/settings.ts`、`useAppUpdate.ts`、`UpdateButton.vue`、`UpdatePage.vue`、`i18n/locales/zh-CN/settings.ts`、`i18n/locales/en/settings.ts`、`i18n/locales/*/sidebar.ts` | A1/A2/A5 的 renderer 呈现；类型三处消费点（preload.ts / lib/ipc.ts / api/domains/settings.ts）全部同步 |
-| W4 | 成功/回滚反馈：cleanupCompletedUpdate 返回终态上下文 {status, version}；main 启动缓存；update:getLaunchResult handler（consumed 一次性）；renderer useAppUpdate 初始化 invoke + done/failed/rolled-back toast | `update/update-self-healer.ts`、`main.ts`、`gateway/update-handlers.ts`、`preload.ts`、`lib/ipc.ts`、`useAppUpdate.ts` | A3 的成功 toast + 回滚告知（场景 4 两分支）；invoke 响应无丢失，无时序依赖 |
+| W3 | renderer 侧接入：lib/ipc.ts onUpdateError（:289）+ testProxy（:328）签名更新、api/domains/settings.ts（:177）testProxy 类型同步；UpdatePage 测试结果两行渲染；useAppUpdate state + errorSuggestion + onUpdateError toast；UpdateButton error 浮层两段渲染 + hover 版本号（__APP_VERSION__）+ i18n zh/en | `lib/ipc.ts`、`api/domains/settings.ts`、`useAppUpdate.ts`、`UpdateButton.vue`、`UpdatePage.vue`、`i18n/locales/zh-CN/sidebar.ts`、`i18n/locales/en-US/sidebar.ts` | A1/A2/A5 的 renderer 呈现；类型三处消费点（preload.ts / lib/ipc.ts / api/domains/settings.ts）全部同步。settings 语言包零改动——测试结果文案复用存量键 testFailed/testSuccess/testDisabled/testProxy 等（zh-CN/settings.ts:747-752） |
+| W4 | 成功/回滚反馈：cleanupCompletedUpdate 返回终态上下文 {status, version}；main 启动缓存；update:getLaunchResult handler（consumed 一次性）；renderer useAppUpdate 初始化 invoke + done/failed/rolled-back toast | `update/update-self-healer.ts`、`main.ts`、`gateway/update-handlers.ts`、`interfaces.ts`（getLaunchResult 的 DI 契约字段，+5 行）、`preload.ts`、`lib/ipc.ts`、`useAppUpdate.ts` | A3 的成功 toast + 回滚告知（场景 4 两分支）；invoke 响应无丢失，无时序依赖 |
 | W5 | release-checker 代理接入 + 降级直连 | `release-checker.ts` | A6；独立可回滚（出问题 revert 单文件） |
 
-**文件改动地图**：改 16 文件（main 7 + preload 1 + renderer 8，含 i18n zh/en 两语言 4 个）+ 新增 2 文件（net-errors.ts / error-log.ts）。无删除。类型契约同步点四处：preload.ts（ElectronAPI 单一来源）→ lib/ipc.ts（onUpdateError + testProxy 包装）→ api/domains/settings.ts（testProxy 域封装）；shared/src/update.ts 的 UpdateErrorPayload 为共同依赖。preload/index.d.ts 自动跟随无需手改。
+**文件改动地图**：改 16 文件（main 8 + preload 1 + renderer 7，其中 i18n 仅 sidebar zh/en 各 1 共 2 处；settings 语言包复用存量键零改动）+ 新增 2 文件（net-errors.ts / error-log.ts）。无删除。类型契约同步点四处：preload.ts（ElectronAPI 单一来源）→ lib/ipc.ts（onUpdateError + testProxy 包装）→ api/domains/settings.ts（testProxy 域封装）；shared/src/update.ts 的 UpdateErrorPayload 为共同依赖。preload/index.d.ts 自动跟随无需手改。
 
 **原待验证检查点处理**（v2 已全部消解）：
 1. currentVersion 通道——已解答：`__APP_VERSION__`（vite.config.ts:23 注入，useAppUpdate.ts:401 已在用），W3 直接使用。
 2. launchResult 时序——已消解：D5 改为 invoke + consumed 构造性机制，无时序依赖（原推送方案的竞态被 M4 审查否决）。
 3. 代理流量观察——已消解：A6 采用 `nc -l 7890` 监听 CONNECT 请求行，确定性验证手段。
+
+---
+
+## 修订记录
+
+- **v3（2026-08-27）**——吸收对抗式复审的实现漂移核对 5 处（均为「实现更合理，文档未跟上」）：① D6 补记 manifest sha256 fallback 同走代理优先 + 直连降级（release-checker.ts fetchManifestSha256:322-349）；② §5 W4 文件清单补 `interfaces.ts`（getLaunchResult DI 契约字段，+5 行）；③ §3.1 场景 1 样例改为与 UI 实况一致的两行（首行存量 `testFailed` 模板包装 UpdatePage.vue:142，次行 suggestion 合并段 types.ts:95-99），消除正文「两行」与三行样例的自相矛盾；④ §5 W3 删除 settings 语言包条目并注明复用存量 i18n 键（zh-CN/settings.ts:747-752），连带文件改动地图 i18n 计数修正；⑤ 统一 D2/§3.2 表 A/A4 的 testProxy 公网 EHOSTUNREACH 话术准绳（始终代理语境 + `(EHOSTUNREACH)` 后缀），消除 D2「归类 UPDATE_NETWORK_FAILED 网络话术」与 A4「无法连接代理代理话术」的文档内矛盾，代码侧对齐由后续任务跟进。
