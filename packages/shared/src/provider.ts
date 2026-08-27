@@ -145,6 +145,14 @@ export interface ProviderInfo {
      * optional 向后兼容（旧消费方无此字段行为不变）。
      */
     source?: 'builtin' | 'override'
+    /**
+     * 支持的思考档位（U5 能力注册表 view-ready 字段）：runtime 用 pi-ai 同源
+     * getSupportedThinkingLevels 离线算好下发（reasoning 缺失/false → ['off']，
+     * 与 pi 两级门控逐字节一致），renderer 零推导——档位 UI 直接消费，禁止前端
+     * 再从 thinkingLevelMap 自算（影子推断是事故 B 根因之一）。缺省 = 未标注
+     * （attachSupportedLevels 接线前的过渡态），消费方回退旧推导路径（U6 切换后移除）。
+     */
+    supportedLevels?: string[]
   }>
   enabled?: boolean
   /** 体系来源，聚合层（listProviders）标注。renderer 据此收窄操作（移除文案/编辑限制）。见 DM2。 */
