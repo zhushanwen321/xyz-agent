@@ -24,6 +24,7 @@
  * close 时 flush 各 buffer 的剩余半行（若有）。累积 stdout/stderr 仍用原始字符串（含 \n）。
  */
 import { EventEmitter } from 'node:events'
+import { buildOutboundChildEnv } from './spawn-env.js'
 import { ShellRunnerError } from '../services/ports/shell-runner.js'
 import type { IShellRunner, ShellRunnerExecuteOptions, ShellRunnerResult, SpawnFn } from '../services/ports/shell-runner.js'
 
@@ -62,6 +63,11 @@ export class ShellRunner implements IShellRunner {
     // 查找 .bare），而是 spawn 对脚本权限位的隐式依赖。
     const child = this.deps.spawn('bash', [scriptPath, ...(args ?? [])], {
       cwd,
+      // B8 出站边界显式化（docs/design/env-propagation-boundary.md §5-U4）：此前不传 env
+      // ＝隐式全量继承父进程环境；改传构建器输出——默认白名单前缀作基座保住 PATH/HOME
+      // （红线 R2：env 整体替换语义，禁从空对象起拼），deny 清单兜底剥生命周期标志与凭证。
+      // 本调用点无自有 env 键，故无 extras。
+      env: buildOutboundChildEnv({ parentEnv: process.env }),
       // stdin 显式 ignore：setup-worktree.sh 若 read stdin 会立即得 EOF，避免卡到 timeout。
       // stdout/stderr 仍 pipe 出来给 onOutput 流式回调。
       stdio: ['ignore', 'pipe', 'pipe'],

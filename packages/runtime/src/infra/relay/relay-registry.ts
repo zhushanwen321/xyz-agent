@@ -27,6 +27,7 @@ import {
   RELAY_ENV_RECORD_ID,
 } from '@zhushanwen/pi-subagent-workflow/src/execution/relay-env.js'
 import { findPiExecutable } from '../pi/find-pi-executable.js'
+import { buildOutboundChildEnv } from '../spawn-env.js'
 import { createPiRelayLog, type PiSessionLog } from '../logger.js'
 import { RelayTee } from './relay-tee.js'
 import { getRelayChildrenDir, getRelayPidFilePath } from './relay-paths.js'
@@ -167,18 +168,27 @@ function isHandshakeEnvOwnershipValid(frame: RelayHandshakeFrame): boolean {
 }
 
 /**
- * env 原样使用（身份贯穿/schemaEnv/worktree 标志全在握手帧），仅剥离 relay env——
+ * env 原样使用（身份贯穿/schemaEnv/worktree 标志全在握手帧），剥离 relay env——
  * 孙进程经 pi-invocation 判定三 env 缺失回落直连，防嵌套 relay 时旧值误导。
+ *
+ * B8 出站接线（docs/design/env-propagation-boundary.md §5-U4 / D4）：基座维持帧 env
+ * 全量拷贝拓扑（pass-all 前缀 '' 不做白名单过滤——schemaEnv/worktree 标志未在入站
+ * 白名单内，过滤即丢语义），五键剥离迁为 extras undefined=显式删除语义；deny 清单由
+ * 构建器末步兜底，「叠加 deny 过滤后不多不少」。导出仅供单测直验（handleConnection
+ * 全链路已在 relay-registry.test.ts 覆盖）。
  */
-function buildChildEnv(frame: RelayHandshakeFrame): Record<string, string> {
-  const childEnv: Record<string, string> = {}
-  for (const [key, value] of Object.entries(frame.env)) {
-    if (value === undefined) continue
-    if (key === RELAY_ENV_SOCKET || key === RELAY_ENV_NODE || key === RELAY_ENV_SCRIPT
-      || key === RELAY_ENV_SESSION_ID || key === RELAY_ENV_RECORD_ID) continue
-    childEnv[key] = value
-  }
-  return childEnv
+export function buildChildEnv(frame: RelayHandshakeFrame): Record<string, string> {
+  return buildOutboundChildEnv({
+    parentEnv: frame.env,
+    prefixes: [''],
+    extras: {
+      [RELAY_ENV_SOCKET]: undefined,
+      [RELAY_ENV_NODE]: undefined,
+      [RELAY_ENV_SCRIPT]: undefined,
+      [RELAY_ENV_SESSION_ID]: undefined,
+      [RELAY_ENV_RECORD_ID]: undefined,
+    },
+  })
 }
 
 export class RelayRegistry {
