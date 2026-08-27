@@ -1,0 +1,286 @@
+[
+  {
+    "id": "PS-01",
+    "claim": "--model 是 pattern 非精确 ID：findExactModelReferenceMatch 的 id 匹配为 toLowerCase 相等（canonical 双命中判歧义作废 → undefined）；无 exact 命中时 contains 模糊匹配，再按 isAlias 分桶、b.id.localeCompare(a.id) 降序取最大——「校验通过」不代表「子进程按此 id 执行」",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/cli/args.js",
+        "symbol": "--model 选项定义",
+        "note": ":245 help 文案自述 'Model pattern or ID'（pattern 语义声明）"
+      },
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/model-resolver.js",
+        "symbol": "findExactModelReferenceMatch / tryMatchModel / resolveCliModel",
+        "note": "resolveCliModel :291-463（内嵌 tryMatchModel 自 :104 起）；findExactModelReferenceMatch :69-95（toLowerCase 全等 + length===1 才放行）；localeCompare 取最大 :120/:125"
+      }
+    ],
+    "guard": {
+      "type": "probe",
+      "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-model-resolution.test.ts"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-02",
+    "claim": "思考能力两级门控：getSupportedThinkingLevels 在 !model.reasoning（含 undefined）时直接返回 [\"off\"]，thinkingLevelMap 仅在 reasoning 开关打开后参与档位计算——第一关不过任何档位钳回 off",
+    "piAnchor": [
+      {
+        "pkg": "pi-ai",
+        "distPath": "dist/models.js",
+        "symbol": "getSupportedThinkingLevels",
+        "note": ":546-557（两级门控首关）；EXTENDED_THINKING_LEVELS 枚举 :545"
+      }
+    ],
+    "guard": {
+      "type": "probe",
+      "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-thinking-gating.test.ts"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-03",
+    "claim": "set_thinking_level RPC 响应无 data（仅 success）；生效值必须 set 后另发 get_state 补读（runtime 的 set→get_state→effective 回执链是唯一正确姿势）",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/modes/rpc/rpc-mode.js",
+        "symbol": "case \"set_thinking_level\"",
+        "note": ":387-389 —— session.setThinkingLevel(command.level) 后 return success(id, \"set_thinking_level\") 无第三参"
+      }
+    ],
+    "guard": {
+      "type": "probe",
+      "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-rpc-surface.test.ts"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-04",
+    "claim": "setThinkingLevel 同值不落账不发声（isChanging = effective !== previous 才走 appendThinkingLevelChange + thinking_level_changed 事件）；effective ≠ previous 时必发事件——isChanging=false 仅覆盖「值未变」场景，不构成对账缺口（D9 删 30s 轮询的依据）",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/agent-session.js",
+        "symbol": "setThinkingLevel(level)",
+        "note": ":1275-1298 —— clamp 后 isChanging 判定 + 条件落账/发声；settings 写入有 supportsThinking 门控"
+      }
+    ],
+    "guard": {
+      "type": "probe",
+      "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-agent-session.test.ts"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-05",
+    "claim": "steeringQueue 全文仅 2 个 drain 点（run 轮询的 getSteeringMessages :321 / 手动 continue() :243），run 收尾后无残留补触发——依赖 steer 的投递是 at-most-once，无任何兜底重放",
+    "piAnchor": [
+      {
+        "pkg": "pi-agent-core",
+        "distPath": "dist/agent.js",
+        "symbol": "steeringQueue.drain()",
+        "note": ":243（continue 路径 const queuedSteering = …drain()）/:321（getSteeringMessages return …drain()）；enqueue :174 / clear :182 与 drain 区分"
+      }
+    ],
+    "guard": {
+      "type": "probe",
+      "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-steering-drain.test.ts"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-06",
+    "claim": "_pendingNextTurnMessages 唯一消费点 = 用户驱动 prompt 走到的 _runAgentPrompt 注入段（注入后立即清空）；pi 自身无周期性/收尾性 drain——nextTurn 投递依赖用户发起下一轮",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/agent-session.js",
+        "symbol": "_pendingNextTurnMessages",
+        "note": "声明 :95 / 入队 sendCustomMessage nextTurn 分支 :1078-1080 / 注入+清空 _runAgentPrompt :880-883"
+      }
+    ],
+    "guard": {
+      "type": "probe",
+      "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-agent-session.test.ts"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-07",
+    "claim": "_emitAgentSettled 先复位 _isAgentRunActive = false 再发 agent_settled 事件——边沿回调内 isIdle 恒真（settled 边沿驱动的通知通道不会撞上残留 busy 态）",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/agent-session.js",
+        "symbol": "_emitAgentSettled()",
+        "note": ":325-336 —— 首行 this._isAgentRunActive = false，finally 内 _resolveIdleWaitIfIdle"
+      }
+    ],
+    "guard": {
+      "type": "probe",
+      "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-agent-session.test.ts"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-08",
+    "claim": "sendCustomMessage 四分支：deliverAs=nextTurn 入队 / isStreaming 时 followUp|steer / 非流式且 triggerTurn:true 走 _runAgentPrompt 起轮直达 / 其余仅 append 不起轮——triggerTurn 直达是唯一不经队列的起轮路径",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/agent-session.js",
+        "symbol": "sendCustomMessage(message, options)",
+        "note": ":1071-1098 —— 直达分支 :1089-1090 await this._runAgentPrompt(appMessage)"
+      }
+    ],
+    "guard": {
+      "type": "probe",
+      "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-agent-session.test.ts"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-09",
+    "claim": "plain appendEntry 写入的 type=custom entry 不进 LLM 上下文；进上下文的是 custom_message entry（sessionEntryToContextMessages 对未识别类型返回 []）",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/session-manager.js",
+        "symbol": "sessionEntryToContextMessages(entry)",
+        "note": ":165-186 —— 仅 message/custom_message/branch_summary/compaction 映射，兜底 return []"
+      }
+    ],
+    "guard": {
+      "type": "probe",
+      "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-session-entries.test.ts"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-10",
+    "claim": "get_available_models RPC 返回 Model 全属性（含 reasoning: boolean 与 thinkingLevelMap）；get_state 不含 models 清单（model 字段仅当前模型）——runtime 对账 pi 合并清单的唯一在线入口",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/modes/rpc/rpc-mode.js",
+        "symbol": "case \"get_available_models\" / case \"get_state\"",
+        "note": ":380-382 返回 { models }；:344-363 state 快照无 models 集合"
+      },
+      {
+        "pkg": "pi-ai",
+        "distPath": "dist/types.d.ts",
+        "symbol": "interface Model / ThinkingLevelMap",
+        "note": ":660-672 —— reasoning: boolean、thinkingLevelMap?: ThinkingLevelMap"
+      }
+    ],
+    "guard": {
+      "type": "probe",
+      "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-rpc-surface.test.ts"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-11",
+    "claim": "models-store.json 远端目录周期刷新可引入新条目（含大小写家族条目），--model pattern 匹配结果随时间漂移——昨日可用的串今日可能命中别的模型",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/models-store.js",
+        "symbol": "FileModelsStore（models-store.json 缓存读写）",
+        "note": "model-runtime.js:80 装配于 <agentDir>/models-store.json；刷新时机与远端目录内容由上游控制，无稳定本地锚点可静态断言"
+      }
+    ],
+    "guard": {
+      "type": "observe",
+      "note": "运行时防御：切片 1 孪生守卫（start 同步期拒单）+ U5 能力注册表对账 drift 日志；pi 升级时人工复核 models-store 刷新行为（file mtime/checkedAt）"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-12",
+    "claim": "clampThinkingLevel 按模型族钳制就近回落：请求档位不被支持时先向高档回退再向低档回退（mimo 族设 max → high）；xhigh/max 仅在 thinkingLevelMap 显式映射（≠ undefined）时可用，null 显式标记不支持",
+    "piAnchor": [
+      {
+        "pkg": "pi-ai",
+        "distPath": "dist/models.js",
+        "symbol": "clampThinkingLevel / EXTENDED_THINKING_LEVELS",
+        "note": "枚举序 :545 / 钳制 :559-576（先向上再向下就近回落）；ThinkingLevel 枚举 pi-ai dist/types.d.ts:23"
+      }
+    ],
+    "guard": {
+      "type": "probe",
+      "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-thinking-gating.test.ts"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-13",
+    "claim": "interactive 挂起（Ctrl+Z）窗口内 SIGINT re-raise 被空的 ignoreSigint 处理器吞掉——subagent 信号收割在挂起窗口失效",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/modes/interactive/interactive-mode.js",
+        "symbol": "handleCtrlZ() 的 ignoreSigint",
+        "note": ":3199-3201 process.on(\"SIGINT\", ignoreSigint)；SIGCONT 恢复时 removeListener"
+      }
+    ],
+    "guard": {
+      "type": "observe",
+      "note": "处置建议已在 troubleshooting 观察项 #1（xyz 侧不依赖挂起窗口的信号语义；runtime 无 TUI 交互面）"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-14",
+    "claim": "session 延迟首写：首条 assistant 消息前 jsonl 不落盘（_persist 的 hasAssistant 门控），新 session crash 窗口内内存记账丢失",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/session-manager.js",
+        "symbol": "_persist(entry) 的 hasAssistant 门控",
+        "note": ":724-752 —— flushed 翻转前全部 entry 内存持有，wx 独占创建后逐条补写"
+      }
+    ],
+    "guard": {
+      "type": "observe",
+      "note": "既有兜底已生效（troubleshooting 观察项 #2；xyz 侧 SessionScanner.listAll 合并内存 Map 显示，读取代码必须处理文件不存在）"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-15",
+    "claim": "pi-ai/compat 是上游自声明临时入口，ModelManager 迁移完成后删除",
+    "piAnchor": [
+      {
+        "pkg": "pi-ai",
+        "distPath": "dist/compat.js",
+        "symbol": "模块头注释",
+        "note": "'This module is deleted with the coding-agent ModelManager migration.'；package.json exports 含 ./compat"
+      }
+    ],
+    "guard": {
+      "type": "observe",
+      "note": "pi 升级 PR 必查两项：exports 是否移除 ./compat、changelog 是否提及迁移完成——checklist 并入 C-proc-08 报错文案（U8 登记）"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-16",
+    "claim": "fork 路径 spawn 透传 preset model 可压过 fork 源 model_change entry 终态（pi CLI --model 恒优先于 session entry 恢复）",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/model-resolver.js",
+        "symbol": "resolveCliModel（CLI model 优先链）",
+        "note": "xyz 侧 forkSession 链路（packages/runtime session-lifecycle）透传 --model；pi 恢复语义 = CLI 显式 model > session entry 的 model_change 终态"
+      }
+    ],
+    "guard": {
+      "type": "observe",
+      "note": "待产品裁决（troubleshooting 观察项 #5）；裁决前 fork 链路不依赖 entry model_change 终态"
+    },
+    "verifiedWith": "0.84.1"
+  }
+]

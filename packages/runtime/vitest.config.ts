@@ -29,6 +29,7 @@ const REAL_PI_TESTS = [
   'src/__tests__/equivalence/scalar-state-invalidation.test.ts',
   'src/__tests__/equivalence/send-queue-e2e.test.ts',
   'src/__tests__/equivalence/session-manager-full-e2e.test.ts',
+  'src/__tests__/equivalence/thinking-level-effective-e2e.test.ts',
   'src/__tests__/equivalence/tool-call-index.test.ts',
   'src/__tests__/equivalence/usage-queue-commands-invalidation.test.ts',
 ] as const
