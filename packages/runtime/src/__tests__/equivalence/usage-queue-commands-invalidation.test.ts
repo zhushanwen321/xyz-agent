@@ -312,13 +312,9 @@ describe.skipIf(!REAL_PI_READY)(
     // 2 轮对话：每轮等 agent_end 后按生产接线失效（applyContextUpdate 汇聚点 → usage markDirty）
     for (let i = 0; i < 2; i++) {
       const round = i + 1
-      const agentEndBefore = fx.collectEvents((e) => e.type === 'agent_end').length
+      const turnMark = fx.markEvents()
       await fx.sendCommand('prompt', { message: `Reply with exactly: w8-sample-${round}` })
-      await waitUntil(
-        `round-${round} agent_end`,
-        () => fx.collectEvents((e) => e.type === 'agent_end').length > agentEndBefore,
-        TURN_TIMEOUT_MS,
-      )
+      await fx.waitForEvent((e) => e.type === 'agent_end', { since: turnMark, timeoutMs: TURN_TIMEOUT_MS })
       usageState.markDirty()
       await waitUntil(`round-${round} usage converge`, () => !usageState.isDirty())
     }
