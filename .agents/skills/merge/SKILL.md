@@ -46,6 +46,12 @@ bash .agents/skills/merge/scripts/init.sh <worktree-dir>
 
 脚本输出 `WS_ROOT`、`BRANCH_NAME`、`PR_NUMBER`，后续阶段需要这些值。
 
+**D9 gate 接入守卫**：merge 流程依赖 cw CLI 的 gate 域能力（pre-merge-check.sh 内 `cw gate wrap` 缓存确定性 check）。init.sh 调用后、阶段 1 前，确认 cw CLI 可用且含 gate 域：
+```bash
+command -v cw >/dev/null 2>&1 || { echo "ERROR: 未找到 cw CLI（gate wrap 接入依赖）。恢复动作：npm i -g @zhushanwen/coding-workflow（需含 gate 域版本）或从 coding-workflow 仓跑 dev-link"; exit 2; }
+cw --help 2>&1 | grep -q "gate wrap" || { echo "ERROR: cw CLI 无 gate 域。恢复动作：安装含 gate 域的 npm 版本，或在 coding-workflow 仓 bash .agents/skills/dev-link/use-link.sh"; exit 1; }
+```
+
 ### 阶段 1: 本地验证
 
 ```bash
@@ -97,6 +103,13 @@ bash .agents/skills/merge/scripts/wait-for-ci.sh "$MAIN_SHA"
 ```
 
 等待 main 分支 CI 通过。wait-for-ci.sh 在项目 skill 目录内（CI 轮询），需传入 commit SHA。
+
+**CI 失败处置（D10）**：wait-for-ci.sh 报 CI 失败时，先判定 flaky 还是真回归：
+```bash
+cd $WS_ROOT/main && cw ci-judge <run-id> --base "$(gh pr view <PR_NUMBER> --json baseRefOid --jq .baseRefOid)"
+# ⚠️ base = 合并前 main sha（gh pr view baseRefOid 获取），不是本阶段的 MAIN_SHA 变量（那是合并后值）
+```
+纯 flaky → 引擎自动 `gh run rerun --failed` 恰一次后重新等待；两轮 flaky 或真回归 → 引擎出声转人工/给归属证据链，真回归按阶段 4.5 或回 feature 修复流程处置。ci-judge 需仓外 cw CLI（同 D9 守卫依赖）。
 
 ### [MANDATORY] 阶段 3.5: 版本校验
 
