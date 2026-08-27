@@ -18,16 +18,8 @@ log()  { echo -e "${GREEN}[PRERELEASE]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
-# 手动恢复函数（CI 超时或异常时手动调用）
-cleanup_on_failure() {
-  warn "清理 beta tag 和 release..."
-  cd "$WS_ROOT"
-  git reset --hard HEAD~1 2>/dev/null || true
-  git push "$GITHUB_REMOTE" HEAD --force-with-lease 2>/dev/null || true
-  git push "$GITHUB_REMOTE" --delete "$BETA_TAG" 2>/dev/null || true
-  gh release delete "$BETA_TAG" --repo "$REPO" --yes 2>/dev/null || true
-  log "版本已还原到 ${ORIGINAL_VERSION}"
-}
+# CI 失败/超时时不自动删除任何远程状态（bump commit / beta tag / release 会残留），
+# 由失败路径打印手动还原命令，人工确认后执行
 
 # ── 阶段 1/6: 前置检查 ──
 log "=== 阶段 1/6: 前置检查 ==="
@@ -129,6 +121,10 @@ done
 if ! gh release view "$BETA_TAG" --repo "$REPO" &>/dev/null; then
   err "CI 超时（${CI_TIMEOUT_MINS} 分钟），请手动检查"
   warn "https://github.com/${REPO}/actions"
+  warn "脚本中断，远程已残留 bump commit 与 ${BETA_TAG} tag（release 若已创建也需清理）。确认 CI 问题后手动还原："
+  warn "  git reset --hard HEAD~1 && git push ${GITHUB_REMOTE} HEAD --force-with-lease"
+  warn "  git push ${GITHUB_REMOTE} --delete ${BETA_TAG}"
+  warn "  gh release delete ${BETA_TAG} --repo ${REPO} --yes"
   exit 1
 fi
 

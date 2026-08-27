@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # dev-merge.sh — 将当前 feat worktree 的分支合并到兄弟 dev-x.x.x 集成 worktree。
 #
-# 用法（cwd 必须在待合并的 feat worktree 内）：
-#   bash .agents/skills/dev-merge/dev-merge.sh merge   <dev-branch>   # 预检 + 合并
-#   bash .agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>   # 确认已合并后删当前 worktree + 分支
+# 用法（cwd 必须在待合并的 feat worktree 内；旧 base 的 worktree 可能未检出本脚本，一律用绝对路径调用）：
+#   bash /Users/zhushanwen/Code/xyz-agent-workspace/dev-0.9.10/.agents/skills/dev-merge/dev-merge.sh merge   <dev-branch>   # 预检 + 合并
+#   bash /Users/zhushanwen/Code/xyz-agent-workspace/dev-0.9.10/.agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>   # 确认已合并后删当前 worktree + 分支
 #
 # 退出码：
 #   0  成功
@@ -59,7 +59,7 @@ case "$SUBCMD" in
     echo ">> git -C $DEV_DIR merge --no-ff $CUR_BRANCH"
     if git -C "$DEV_DIR" merge --no-ff "$CUR_BRANCH"; then
       echo "OK: $CUR_BRANCH 已合并进 ${DEV_BRANCH}（--no-ff 保留分支历史）"
-      echo "NEXT: 确认无误后运行 bash .agents/skills/dev-merge/dev-merge.sh cleanup $DEV_BRANCH 清理源 worktree"
+      echo "NEXT: 确认无误后运行 bash $0 cleanup $DEV_BRANCH 清理源 worktree"
     else
       echo "CONFLICT: 以下文件需要解决（在 $DEV_DIR 内处理）：" >&2
       git -C "$DEV_DIR" diff --name-only --diff-filter=U >&2 || true
@@ -69,6 +69,7 @@ case "$SUBCMD" in
     ;;
 
   cleanup)
+    [[ "$DEV_DIR" != "$CUR_DIR" ]] || die "当前已在 ${DEV_BRANCH} worktree 内，拒绝 cleanup 自身。请在待合并的 feat worktree 中运行本脚本"
     is_merged || die "$CUR_BRANCH 尚未合并进 ${DEV_BRANCH}，拒绝清理。先跑 merge 子命令（或处理完冲突后 git commit 完成 merge）"
     check_clean "$DEV_DIR" "$DEV_BRANCH"
 
@@ -76,10 +77,11 @@ case "$SUBCMD" in
     # 先 cd 出待删目录（macOS 删除 cwd 所在目录后 shell cwd 悬空）
     cd "$DEV_DIR"
     if ! git worktree remove "$CUR_DIR" 2>/dev/null; then
-      # 清理所有 untracked 文件后重试（合并已完成，源 worktree 不再需要保留任何文件）
-      git -C "$CUR_DIR" clean -fd >/dev/null 2>&1 || true
-      git worktree remove "$CUR_DIR" 2>/dev/null \
-        || die "worktree 删除仍被拒绝。检查 $CUR_DIR 内容后用 git -C $DEV_DIR worktree remove --force $CUR_DIR 强删"
+      # 不自动 clean -fd：删 untracked 是破坏性操作，须用户检视确认（脚本不内置 force，见 SKILL.md 安全语义）
+      UNTRACKED="$(git -C "$CUR_DIR" status --short || true)"
+      die "worktree 删除被 $CUR_DIR 内的文件阻止（通常为 untracked / 未 ignore 文件）。git status --short 清单：
+$UNTRACKED
+先检视上述文件：认知外的询问用户；确认可丢弃后执行 git -C $CUR_DIR clean -fd，再重跑 cleanup：bash $0 cleanup $DEV_BRANCH"
     fi
     # is_merged 闸门已证明合入 dev；feat 分支 upstream 是 origin/main，-d 校验的是 upstream 包含性（已合入 dev 仍必拦），闸门通过后直接 -D
     git branch -D "$CUR_BRANCH" \

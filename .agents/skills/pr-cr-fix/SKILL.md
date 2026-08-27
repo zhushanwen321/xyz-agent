@@ -76,16 +76,13 @@ gh pr create --repo zhushanwen321/xyz-agent \
 
 **Gate-1**：`pr_url` 匹配 `^https://github\.com/.+/pull/\d+$`。`force_push=true` 时，阶段 3b 推 PR 加 `--force-with-lease`。
 
-### 1.4 [OPTIONAL] YAML / extension 规范校验
+### 1.4 [OPTIONAL] skill YAML 规范校验
 
-修改了 `.agents/skills/` 或 `extensions/*/package.json` 时，PR 创建前运行本 skill 内置校验脚本：
+修改了 `.agents/skills/` 时，PR 创建前运行本 skill 内置校验脚本：
 
 ```bash
 # 校验 skill SKILL.md 的 frontmatter（name/description 必填，description 双引号包裹或块标量）
 python3 .agents/skills/pr-cr-fix/scripts/validate-skill-yaml.py <skill-paths>
-
-# 校验 extension package.json 的 pi 字段（pi.extensions/keywords/type）
-python3 .agents/skills/pr-cr-fix/scripts/validate-extensions-yaml.py <extension-dirs>
 ```
 
 ## 阶段 1.5：度量快照 + Gate-1.5（硬门禁）[MANDATORY]
@@ -424,7 +421,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 ├── SKILL.md              # 本文件
 ├── agents/               # 8 个 review agent 定义 review-<维度>.md（不全局暴露；review-extension-api.md 含 Pi Extension 契约 checklist）
 ├── references/           # 触发场景才 read：coverage-industry-research.md（覆盖率调研）/ cot-leakage.md（CoT Leakage）/ mutation-testing.md（Mutation 深检）
-└── scripts/              # metrics-gate.py / coverage-gate.py（含 --extra-packages）/ validate-skill-yaml.py / validate-extensions-yaml.py
+└── scripts/              # metrics-gate.py / coverage-gate.py（含 --extra-packages）/ validate-skill-yaml.py
 
 .agents/workflows/
 └── pr-review-fix.js      # 路径 2（zcode）workflow 脚本（+ package.json 标记 CJS：仓库根 type:module 下 .js 默认 ESM）

@@ -19,6 +19,7 @@ description: >-
 
 ## 前置条件
 
+- **`WS_ROOT` 变量约定**：`WS_ROOT` = workspace root（bare repo 模式，含 `.bare/`，所有 worktree 均为其直接子目录），本项目为 `/Users/zhushanwen/Code/xyz-agent-workspace`。`.agents` 只存在于各 worktree 内、**`$WS_ROOT` 本身没有 `.agents`**——skill 脚本一律经 `cd $WS_ROOT/main && bash .agents/skills/merge/scripts/<脚本>` 调用（main worktree 恒存在不可删），禁止 `cd $WS_ROOT` 后直接相对调用
 - feature 分支有已创建的 PR
 - GitHub CLI 已认证
 
@@ -37,8 +38,7 @@ description: >-
 **事故背景**：阶段 4 `pnpm version patch` 因 bash 调用未自包含 `cd $WS_ROOT/main`，cwd reset 到 feature worktree，把 version bump 写进了 feature worktree 的 package.json（main worktree 未动），直到 `git branch --show-current` 检查才暴露。根因是旧版本文档误称"cwd 按调用持久"，AI 据此以为阶段 3 的 `cd main` 对后续调用仍有效。
 
 ```bash
-cd /Users/zhushanwen/Code/xyz-agent-workspace
-bash .agents/skills/merge/scripts/init.sh <worktree-dir>
+cd $WS_ROOT/main && bash .agents/skills/merge/scripts/init.sh <worktree-dir>
 ```
 
 参数说明：
@@ -49,10 +49,10 @@ bash .agents/skills/merge/scripts/init.sh <worktree-dir>
 ### 阶段 1: 本地验证
 
 ```bash
-bash .agents/skills/merge/scripts/pre-merge-check.sh <worktree-dir>
+cd $WS_ROOT/main && bash .agents/skills/merge/scripts/pre-merge-check.sh "$WS_ROOT/<worktree-dir>"
 ```
 
-阶段 1 调用项目内 pre-merge-check.sh（依赖安装、类型检查、lint、测试、构建）。脚本自包含在项目 skill 目录内，不依赖全局脚本。
+阶段 1 调用项目内 pre-merge-check.sh（依赖安装、类型检查、lint、测试、构建，以及第 5 步 Git 状态检查——有未提交变更或未推送 commits 会 FAIL 阻塞合并）。脚本自包含在项目 skill 目录内，不依赖全局脚本。
 
 ℹ️ **pnpm workspace 单步安装**：项目使用 pnpm workspace（`packages/* + apps/*`），`pnpm install` 一次装完所有依赖，无需手动 cd 子目录。如果 pre-merge-check.sh 未自动处理依赖安装，需手动执行：
 
@@ -65,8 +65,7 @@ ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install
 > **无条件执行**。跨 worktree 扫描所有 `.env.dev-extensions`，移除 `XYZ_EXTENSION_PATHS` 中指向即将删除的 feature worktree 的路径条目（dev-link 写入的是环境变量路径，不是 symlink）。
 
 ```bash
-cd $WS_ROOT
-bash .agents/skills/merge/scripts/prune-dev-link.sh "$WS_ROOT/<worktree-dir>"
+cd $WS_ROOT/main && bash .agents/skills/merge/scripts/prune-dev-link.sh "$WS_ROOT/<worktree-dir>"
 ```
 
 `<worktree-dir>` 是阶段 0 传给 init.sh 的 feature worktree 目录名。脚本自己向上查找 `.bare` 定位 workspace root，无需手动算路径。
@@ -382,7 +381,7 @@ bash scripts/validate-runtime-bundle.sh
 bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --skip-sync
 ```
 
-调用项目内 remove-worktree.sh 清理 feature worktree 和本地分支。`--force` 因为分支已删除（远程 delete-branch），本地 `git branch --merged` 检查会误判。`--skip-sync` 因为 pr-merge.sh 已 sync 过 main。
+调用项目内 remove-worktree.sh 清理 feature worktree 和本地分支。`--force` 跳过已合并检查并强制删除（含未提交/未跟踪内容，删除前会列出将销毁的清单）——分支已删除（远程 delete-branch）时本地 `git branch --merged` 检查会误判，故恒用 `--force`。`--skip-sync` 因为 pr-merge.sh 已 sync 过 main。
 
 门禁：阶段 7 启动前**必须**确认阶段 6（`verify-ci-release.sh`）已 exit 0。
 
@@ -390,11 +389,10 @@ bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --ski
 
 若 session 启动目录就是即将删除的 feature worktree，脚本删掉该目录后，后续 bash 调用的 cwd 指向已删除目录 → ENOENT。
 
-**自动化执行阶段 7 时，调用 remove-worktree.sh 的那条 bash 命令必须自包含 `cd $WS_ROOT &&`**（见阶段 0 cwd 隔离）。即便如此，删除后 session 启动目录已不存在，**后续任何 bash 调用仍可能 ENOENT**——因此阶段 7 必须是流程最后一步，删除后立即收尾，不再调 bash（手动终端执行则脚本内部的 cd 足够，因为终端 shell 的 cwd 会跟随 cd）。这与 AGENTS.md §8「multi-workspace cwd 不跨调用持久」是同一类陷阱。
+**自动化执行阶段 7 时，调用 remove-worktree.sh 的那条 bash 命令必须自包含 `cd $WS_ROOT/main &&`**（见阶段 0 cwd 隔离）。即便如此，删除后 session 启动目录已不存在，**后续任何 bash 调用仍可能 ENOENT**——因此阶段 7 必须是流程最后一步，删除后立即收尾，不再调 bash（手动终端执行则脚本内部的 cd 足够，因为终端 shell 的 cwd 会跟随 cd）。这与 AGENTS.md §8「multi-workspace cwd 不跨调用持久」是同一类陷阱。
 
 ```bash
-cd $WS_ROOT  # 必须在调用 remove-worktree.sh 前显式 cd
-bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --skip-sync
+cd $WS_ROOT/main && bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --skip-sync
 ```
 
 ## AI 操作步骤
@@ -407,7 +405,7 @@ bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --ski
 |---|------|------|
 | 1 | 初始化环境（阶段 0） | |
 | 2 | 本地验证（阶段 1） | |
-| 2.5 | ⚠️ Dev-Link 清理（阶段 1.5） | `bash .agents/skills/merge/scripts/prune-dev-link.sh "$WS_ROOT/<worktree-dir>"` |
+| 2.5 | ⚠️ Dev-Link 清理（阶段 1.5） | `cd $WS_ROOT/main && bash .agents/skills/merge/scripts/prune-dev-link.sh "$WS_ROOT/<worktree-dir>"` |
 | 3 | PR CI + 合并（阶段 2） | |
 | 4 | Post-merge CI（阶段 3） | |
 | 5 | ⚠️ 版本校验（阶段 3.5） | `bash scripts/check-version-bump.sh` |

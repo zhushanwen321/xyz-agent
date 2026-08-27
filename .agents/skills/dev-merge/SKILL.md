@@ -19,9 +19,11 @@ description: >-
 
 ## 流程
 
+**调用约束**：cwd 必须在待合并 feat worktree 根目录（脚本靠 `git rev-parse --show-toplevel` 定位源 worktree）。旧 base 的 feat worktree 分支历史可能不含本 skill 文件（相对路径调用会 No such file or directory），脚本调用一律用本文写死的绝对路径，禁止 `.agents/skills/...` 相对路径写法。
+
 ### 第 1 步：处理未提交改动（AI 决策，脚本不代劳）
 
-脚本预检发现未提交改动会以 exit 1 停下。此时**不要**用 `git add -A && git commit` 盲提交：
+脚本预检发现未提交的 **tracked** 改动会以 exit 1 停下（untracked 不触发预检，cleanup 阶段由 git 拒删 worktree 兜底）。此时**不要**用 `git add -A && git commit` 盲提交：
 
 - 本次会话产生的改动 → 按全局提交策略正常 commit（完成即提交）
 - 非本次会话产生的认知外改动 → **不提交、不修改、不丢弃**，先询问用户
@@ -31,10 +33,10 @@ description: >-
 ### 第 2 步：合并
 
 ```bash
-bash .agents/skills/dev-merge/dev-merge.sh merge <dev-branch>
+bash /Users/zhushanwen/Code/xyz-agent-workspace/dev-0.9.10/.agents/skills/dev-merge/dev-merge.sh merge <dev-branch>
 ```
 
-cwd 必须在待合并的 feat worktree 内（脚本用 `git rev-parse --show-toplevel` 定位当前）。脚本自动完成：两侧干净预检 → 已合并短路 → `git merge --no-ff`（保留 feature 分支历史，与项目 PR 合并策略一致）。
+脚本自动完成：两侧干净预检 → 已合并短路 → `git merge --no-ff`（保留 feature 分支历史，与项目 PR 合并策略一致）。
 
 三种结果：
 
@@ -61,7 +63,7 @@ cd /Users/zhushanwen/Code/xyz-agent-workspace/<dev-branch> && git add <files> &&
 合并成功后**自动执行清理**（删除 worktree + 分支）。用户不特别说明时默认清理，无需逐次确认。仅当用户明确说「不清理」时才跳过。
 
 ```bash
-bash .agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>
+bash /Users/zhushanwen/Code/xyz-agent-workspace/dev-0.9.10/.agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>
 ```
 
 脚本内置安全闸：分支未合并进 dev 拒绝清理（`is_merged` 闸门通过后脚本直接 `git branch -D`，不依赖 `git branch -d`——feat 分支 upstream 是 origin/main，`-d` 校验的是 upstream 包含性，即便已合入 dev 也必拦）；worktree 有未跟踪且未 ignore 的文件时 git 拒绝删除——**不要擅自 `--force`**，先看那些文件是什么（认知外的问用户），确认后由用户/显式决策强删。
