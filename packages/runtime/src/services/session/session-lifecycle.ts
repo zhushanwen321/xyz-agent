@@ -26,14 +26,18 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND } from '../../utils/errors.js'
 import { createForkedSessionFile } from './session-fork.js'
 
-// [arch 技术债登记，R3 ports 依赖倒置待收口] 下方三个 infra/pi 值 import（getSessionsDir /
-// normalizeSessionFileInPlace + cleanupMigrateResidues / assertPiSessionFile）违反「services
-// 禁止 import infra」三层规则（见 docs/architecture/runtime-three-layer-design.md 阶段 R3）。
+// [arch 技术债登记，R3 ports 依赖倒置待收口] 下方四个 infra/pi 值 import（getSessionsDir /
+// normalizeSessionFileInPlace + cleanupMigrateResidues / assertPiSessionFile / hydrateBindingMeta）
+// 违反「services 禁止 import infra」三层规则（见 docs/architecture/runtime-three-layer-design.md 阶段 R3）。
 // 未在本轮直接 port 化的原因：restore/fork 归一化管线是 W1 高危区（tmp+rename 原子覆盖 +
 // 附着断言），包一层 port 接口属于行为敏感重构，应随 R3 阶段统一落地（ISessionStore 等
-// port 扩展 + 专项测试），不在 review 修复批混入。新写 services 代码不得再效仿此处直引 infra。
+// port 扩展 + 专项测试），不在 review 修复批混入。hydrateBindingMeta 是注册表 SSOT 的
+// 统一回填入口（sidecar-binding-sync 设计文档拍板接线在此），同样随 R3 收口。新写
+// services 代码不得再效仿此处直引 infra。
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
 import { normalizeSessionFileInPlace, cleanupMigrateResidues } from '../../infra/pi/session-file-utils.js'
+// 绑定字段注册表模块（BINDING_FIELDS / hydrateBindingMeta / CREATE_DERIVED_CALLERS SSOT）
+import { hydrateBindingMeta } from '../../infra/pi/session-binding-fields.js'
 import { assertPiSessionFile } from '../../infra/pi/session-attach-assert.js'
 
 /**
@@ -368,38 +372,36 @@ export class SessionLifecycle {
     // 现在依赖 SessionScanner.listAll 的合并机制：active session 从内存 Map（this.sessions）读，
     // 即使磁盘无文件也显示（restart 后内存清空，但此时未 flush 的 session 本就无内容，丢失合理）。
     this.sessionStore.refreshAll()
+    // sidecar-binding-sync：绑定字段统一回填（BINDING_FIELDS 注册表驱动，create 列 = options）。
+    // 内存 patch 收敛为 hydrateBindingMeta 单入口（undefined 字段 skip，与原逐字段 `if (x)`
+    // 条件 patch 等价——presetId = options?.presetId 可为 undefined）；下方各 persist* 只管
+    // sidecar 落盘，磁盘形态与内存解耦。fork 在 active 期经 getSession(srcId)?.launchPresetId
+    // 读到（W-RT-5）；toSummary 透传绑定字段到 SessionSummary（含 session-manager list
+    // 过滤所需的 spawnSource / parentAgentSessionId）。
+    hydrateBindingMeta(session, {
+      launchPresetId: presetId,
+      projectId: options?.projectId,
+      spawnSource: options?.spawnSource,
+      parentAgentSessionId: options?.parentAgentSessionId,
+    }, 'create')
     // 持久化 preset 绑定到 .preset.json sidecar（设计文档 §4）。
     // presetId 存在时写 sidecar，供 fork/restore 继承；sessionFilePath 不存在（pi 延迟写入窗口）
     // 时 persistPresetBinding 内部 existsSync 守卫跳过（ES-RL-1，wave2 实现）。
-    // W-RT-4：sidecar 跳过时内存态兜底——patch session 对象的 launchPresetId 字段
-    //（ManagedSession 实例可扩展），fork 在 active 期经 getSession(srcId)?.launchPresetId
-    // 读到（W-RT-5），避免拿不到 preset。toSummary 透传此字段到 SessionSummary。
     if (presetId) {
-      ;(session as { launchPresetId?: string }).launchPresetId = presetId
       if (session.sessionFilePath) {
         this.sessionStore.persistPresetBinding(session.sessionFilePath, presetId)
       }
     }
     // 持久化归属 project 到 .project.json sidecar（D14 语义修正，2026-08-04）。
-    // 与 preset 同模式：pi 延迟写入窗口（sessionFilePath 未落盘）时 sidecar 写入内部
-    // existsSync 守卫跳过，内存态兑底 patch session.projectId（toSummary 透传）。
+    // pi 延迟写入窗口（sessionFilePath 未落盘）时 sidecar 写入内部 existsSync 守卫跳过。
     // 空 projectId（默认项目创建）不写 sidecar——等价于未归类，读取侧一致兑底默认项目。
     if (options?.projectId) {
-      ;(session as { projectId?: string }).projectId = options.projectId
       if (session.sessionFilePath) {
         this.sessionStore.persistProjectBinding(session.sessionFilePath, options.projectId)
       }
     }
-    // agent-managed session 标记：spawnSource / parentAgentSessionId。
-    // 内存态 patch 到 session 对象（toSummary 透传），供 session-manager list 过滤。
-    if (options?.spawnSource) {
-      ;(session as { spawnSource?: 'user' | 'agent' }).spawnSource = options.spawnSource
-    }
-    if (options?.parentAgentSessionId) {
-      ;(session as { parentAgentSessionId?: string }).parentAgentSessionId = options.parentAgentSessionId
-    }
     // .agent.json sidecar 落盘（重启恢复链路，G-1）——与 preset/project 同模式：
-    // pi 延迟写入窗口（sessionFilePath 未落盘）时 existsSync 守卫跳过，内存态兑底。
+    // pi 延迟写入窗口（sessionFilePath 未落盘）时 existsSync 守卫跳过，内存态兑底见上方 hydrate。
     if (options?.spawnSource && session.sessionFilePath) {
       // parentAgentSessionId 可选（#15）：spawnSource 单独成立即持久化，防异常路径下 badge 重启丢失
       this.sessionStore.persistAgentBinding(session.sessionFilePath, options.spawnSource, options.parentAgentSessionId)
@@ -731,8 +733,16 @@ export class SessionLifecycle {
     // 前端 useContextUsage composable 的恢复腿（每次切入视图拉 session.getContext）保证到达。
     // fire-and-forget：拉取失败不阻塞 session 恢复。
     void this.svc.fetchAndBroadcastContext(id)
-    // W-RT-4：恢复后 session 变 active，patch 内存态 launchPresetId（与 sidecar 并列兜底）。
-    ;(session as { launchPresetId?: string }).launchPresetId = presetId
+    // sidecar-binding-sync：restore 全量回填（矩阵 restore 列）——修复缺陷 A-1：原来只回填
+    // launchPresetId，projectId/spawnSource/parentAgentSessionId/handedOffTo 不回填导致
+    // 重开后归属/徽标丢失、广播回退默认项目。期望值来自 findScannedSession 全字段 meta。
+    hydrateBindingMeta(session, {
+      launchPresetId: presetId, // 已含 BUILTIN_PRESET_IDS.FULL 兜底的解析值（resolved-in-entry）
+      projectId: target.projectId,
+      spawnSource: target.spawnSource,
+      parentAgentSessionId: target.parentAgentSessionId,
+      handedOffTo: target.handedOffTo,
+    }, 'restore')
     const restoredSummary = this.svc.toSummary(session)
     // S3-W2：创建入口收敛点（restoreSession 路径）——session 复活进 Map，插件 didCreate 投递。
     this.svc.notifySessionCreated(restoredSummary)
@@ -916,8 +926,14 @@ export class SessionLifecycle {
     await this.persistExplicitLabel(client, forkedId, label, 'forkSession')
 
     void this.svc.fetchAndBroadcastContext(forkedId)
-    // W-RT-4：fork 出的新 session 变 active，patch 内存态 launchPresetId（继承源 preset）。
-    ;(session as { launchPresetId?: string }).launchPresetId = forkPresetId
+    // sidecar-binding-sync：fork 选择性继承回填（矩阵 fork 列）——修复缺陷 A-2：原来只写
+    // .project.json sidecar 不 patch 内存，fork 产物活跃期广播 projectId 恒 undefined、
+    // 重启才恢复。spawnSource/parentAgentSessionId/handedOffTo 刻意不传（fork none 语义，
+    // 与防御性 unlink .agent.json 并存）。forkProjectId 无归属时 undefined → skip → 现状等价。
+    hydrateBindingMeta(session, {
+      launchPresetId: forkPresetId,
+      projectId: forkProjectId,
+    }, 'fork')
     const forkedSummary = this.svc.toSummary(session)
     // S3-W2：创建入口收敛点（forkSession 路径）——新 session 诞生，插件 didCreate 投递。
     this.svc.notifySessionCreated(forkedSummary)
