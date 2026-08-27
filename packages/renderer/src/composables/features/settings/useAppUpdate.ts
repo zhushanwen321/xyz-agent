@@ -51,16 +51,18 @@ const UNSUPPORTED_ERROR_CODE = 'UPDATE_UNSUPPORTED_PLATFORM'
 const AUTO_CHECK_DELAY_MS = 30_000
 
 /**
- * 自动检测周期：每 20 分钟联网检测一次。
+ * 自动检测周期：每 60 分钟联网检测一次。
  *
- * GitHub API 未认证限额 60 次/小时，20min 一次 = 3 次/小时，配额安全。
+ * GitHub API 未认证限额 60 次/小时，1h 一次 = 1 次/小时，配额宽裕；与 release-checker
+ * 的 1h 缓存 TTL 同档（更密的周期也只会命中缓存）。启动后 30s 已有首查 + 恢复可见
+ * 补查，周期检测只覆盖「应用连开数天」的长驻场景，无需更高频率。
  * 用递归 setTimeout 而非 setInterval：checkForUpdate 是 async，setInterval 会在
  * 上一次未完成时排下一次，可能堆积并发请求；递归 setTimeout 保证「上一次完成后才排下一次」。
  */
-const CHECK_INTERVAL_MINUTES = 20
+const CHECK_INTERVAL_MINUTES = 60
 const SECONDS_PER_MINUTE = 60
 const MS_PER_SECOND = 1000
-const AUTO_CHECK_INTERVAL_MS = CHECK_INTERVAL_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND // 20min
+const AUTO_CHECK_INTERVAL_MS = CHECK_INTERVAL_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND // 60min
 
 /**
  * 多语言 release notes 分隔标记。
@@ -194,8 +196,8 @@ let autoCheckTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
  * visibility 守卫（Q1-6）：hidden 期间被跳过的周期联网检测标记。
- * 恢复可见时据此立即补查一次，不必等下一个 20min 周期（应用隐藏一整天后回来，
- * 最多再等 20min 才检测到新版是不可接受的延迟）。
+ * 恢复可见时据此立即补查一次，不必等下一个周期（应用隐藏一整天后回来，
+ * 最多再等一个周期才检测到新版是不可接受的延迟）。
  */
 let skippedWhileHidden = false
 
@@ -506,7 +508,7 @@ function detachVisibilityListener(): void {
  * replacing/restarting/downloaded 态跳过本次检查（不打断升级流程），但仍排下一次定时器，
  * 保证升级完成后能继续周期检测。
  *
- * visibility 守卫（Q1-6）：document.hidden 时跳过联网检测（后台隐藏期间不发 20min 请求，
+ * visibility 守卫（Q1-6）：document.hidden 时跳过联网检测（后台隐藏期间不发周期请求，
  * 省 GitHub API 配额），置 skippedWhileHidden 标记，恢复可见时由 onVisibilityChange 补查。
  *
  * force=true：绕过 release-checker 的 1h 缓存，确保每次周期真正联网（避免缓存未命中新版）。
@@ -526,7 +528,7 @@ async function runAutoCheck(): Promise<void> {
     await checkForUpdate(true)
   }
   // await 期间 scope 可能已 dispose（此时无 pending timer 可清）：
-  // 已 dispose 则不排下一周期，防卸载后 20min 仍联网（W05 review）
+  // 已 dispose 则不排下一周期，防卸载后周期定时器仍联网（W05 review）
   if (disposed) return
   // 无论本次是否检查，都排下一次周期（保证升级完成后继续周期检测）
   autoCheckTimer = setTimeout(runAutoCheck, AUTO_CHECK_INTERVAL_MS)
@@ -562,12 +564,12 @@ async function checkLaunchResult(): Promise<void> {
 }
 
 /**
- * 启动自动检测：先恢复持久化提醒（立即），再 30s 首次检测，之后每 20min 周期检测。
+ * 启动自动检测：先恢复持久化提醒（立即），再 30s 首次检测，之后每 60min 周期检测。
  *
  * 必须在活跃 effect scope 内调用，通常在组件 setup 顶层同步调用（onScopeDispose 依赖活跃 scope）；
  * 定时器不需要等 DOM 挂载，故不必放 onMounted。onScopeDispose 清理定时器避免泄漏。
  *
- * 周期机制：30s 首次 → 首次完成（await）→ 20min 周期（递归 setTimeout）。详见 runAutoCheck。
+ * 周期机制：30s 首次 → 首次完成（await）→ 60min 周期（递归 setTimeout）。详见 runAutoCheck。
  */
 function initAutoCheck(): void {
   // 防重复 init：先清已有 timer（多消费者场景只保留最新周期，避免泄漏）

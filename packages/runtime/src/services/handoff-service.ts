@@ -53,28 +53,21 @@ interface HandoffServiceOpts {
 export const HANDOFF_TIMEOUT_MS = 600_000
 
 /**
- * 探测源 pi 进程是否已退出的轮询间隔（ms）。
+ * 源 pi 进程退出探测：pi 在 handoff turn 中途崩溃（prompt 已 ack 但未发 agent_end）时，
+ * 既无 agent_end 事件也无 reject 信号能让 agentEndPromise settle，旧实现会挂到
+ * HANDOFF_TIMEOUT_MS（10 分钟）。经 IPiEngine.onExit（多播订阅，rpc-client 进程退出
+ * 时触发）事件化检测，命中即 reject（'handoff: source pi exited'），零轮询。
  *
- * W3：pi 进程在 handoff turn 中途崩溃（prompt 已 ack 但未发 agent_end）时，
- * 既无 agent_end 事件也无 reject 信号能让 agentEndPromise resolve，旧实现会挂起
- * 最长 HANDOFF_TIMEOUT_MS（10 分钟）。轮询 srcClient.exited 是兜底检测：
- * 一旦发现 exited=true 立即 reject（'handoff: source pi exited'）。
- *
- * 选 poll 而非 onExit：IPiEngine.onExit 在 RpcClient 实现里是单槽覆盖语义
- * （rpc-client.ts:439-441，无 unregister），而 ProcessManager.createSession 已注册
- * 自己的 onExit 回调（process-manager.ts:207-216，做 processes.delete + 上层通知）。
- * 此处若再 onExit 会覆盖 PM 的退出处理导致进程清理 / 上层通知丢失。poll
- * srcClient.exited（readonly，进程退出由 RpcClient proc.on('exit') 置位）是非侵入
- * 的观察方式，2 秒间隔对 10 分钟级超时是可忽略的开销。
+ * [HISTORICAL] 旧实现用 2s 轮询 srcClient.exited，因为 onExit 当时是单槽覆盖语义，
+ * 再注册会顶掉 ProcessManager 的清理回调；onExit 改 Set 多播后轮询失去存在理由。
  */
-export const HANDOFF_EXIT_POLL_MS = 2_000
 
 /**
  * 进行中的 handoff 句柄。存入 inflight Map，供 abortHandoff 取消用。
  *
  * detachListener：从 srcClient.onEvent 卸载 agent_end 监听。
  * timeoutTimer：HANDOFF_TIMEOUT_MS 后触发 reject 的定时器。
- * detachExitWatcher：清除退出探测定时器（W3）。
+ * detachExitWatcher：退订源 pi 退出监听（W3，onExit 多播订阅的 unsubscribe）。
  * resolve/reject：agentEndPromise 的两个端，由 agent_end 事件或 timeout/abort/exit 触发。
  * srcClient：源 session 的 IPiEngine，abort 时调 .abort() 取消 pi turn。
  */
@@ -225,17 +218,11 @@ export class HandoffService {
       const timeoutTimer = setTimeout(() => {
         finalize('reject', new Error(`handoff timeout after ${HANDOFF_TIMEOUT_MS}ms`))
       }, HANDOFF_TIMEOUT_MS)
-      // W3：轮询源 pi 是否已退出。pi 在 handoff turn 中途崩溃（prompt 已 ack 但无 agent_end）
-      // 时无事件能让 promise settle，旧实现会挂到 timeout（10 分钟）。poll srcClient.exited
-      // 兜底检测，命中即 reject。
-      const exitTimer = setInterval(() => {
-        if (srcClient.exited) {
-          finalize('reject', new Error('handoff: source pi exited'))
-        }
-      }, HANDOFF_EXIT_POLL_MS)
-      const detachExitWatcher = (): void => {
-        clearInterval(exitTimer)
-      }
+      // W3：源 pi 退出探测（事件化）。pi 在 handoff turn 中途崩溃（prompt 已 ack 但无
+      // agent_end）时无事件能让 promise settle，onExit 命中即 reject。
+      const detachExitWatcher = srcClient.onExit(() => {
+        finalize('reject', new Error('handoff: source pi exited'))
+      })
       this.inflight.set(srcSessionId, {
         detachListener,
         timeoutTimer,

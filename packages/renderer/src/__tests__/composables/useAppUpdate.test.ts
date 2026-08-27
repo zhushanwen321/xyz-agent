@@ -479,7 +479,7 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
     stop()
   })
 
-  it('首次完成后 20min 周期触发第二次 checkForUpdate', async () => {
+  it('首次完成后 60min 周期触发第二次 checkForUpdate', async () => {
     hoisted.checkForUpdate.mockResolvedValue(null)
     const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
 
@@ -487,8 +487,8 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
     await vi.advanceTimersByTimeAsync(30000)
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
 
-    // 20min（20 * 60 * 1000ms）周期触发第二次
-    await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+    // 60min（60 * 60 * 1000ms）周期触发第二次
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(2)
     expect(hoisted.checkForUpdate).toHaveBeenLastCalledWith({ force: true })
     stop()
@@ -506,7 +506,7 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
 
     // 恢复可检测态后，下一个周期应恢复检测（证明仍排了下一次定时器）
     result.state.state = 'idle'
-    await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
     stop()
   })
@@ -530,7 +530,7 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
 
     stop() // 触发 onScopeDispose → clearAutoCheckTimer
 
-    await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1) // 不再触发
   })
 })

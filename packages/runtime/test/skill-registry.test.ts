@@ -113,11 +113,12 @@ describe('skillRegistry (W1)', () => {
       expect(watchedPaths).toContain(join(cwd, '.xyz-agent', 'skills'))
       expect(watchedPaths).not.toContain(cwd)
       // options 断言：ignored 正则 + ignoreInitial:true（防几余重扫 + node_modules 排除被删）+
-      // usePolling:true（W5 根因修复：chokidar v4 移除 fsevents 后 macOS fs.watch 对新建子目录不可靠）
+      // usePolling:false（2026-08-28 起默认原生事件：nodejs/node#52601 在当前 Node 实测不再复现，
+      // polling 降级为 XYZ_AGENT_SKILL_WATCH_POLLING=1 显式开关；测试环境未设该变量）
       expect(watchArgs[1]).toMatchObject({
         ignored: expect.any(RegExp),
         ignoreInitial: true,
-        usePolling: true,
+        usePolling: false,
       })
     } finally {
       reg.dispose()

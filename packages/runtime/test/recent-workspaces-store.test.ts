@@ -231,7 +231,7 @@ describe('RecentWorkspacesStore', () => {
     warnSpy.mockRestore()
   })
 
-  // 注：以下两条为 flushAll / startFlushTimer 的「行为测试」，不占用 NFR 用例 ID。
+  // 注：以下这条为 flushAll 的「行为测试」，不占用 NFR 用例 ID。
   // T1.10（数据目录与 pi 隔离）与 T1.11（atomicWrite 原子性）属于 integration(real)
   // NFR 测试，见 recent-workspaces-real.test.ts（用真实文件系统验证）。
 
@@ -243,15 +243,6 @@ describe('RecentWorkspacesStore', () => {
 
     store.flushAll()
 
-    expect(mockedAtomicWrite).toHaveBeenCalled()
-  })
-
-  it('startFlushTimer: triggers periodic flushAll', () => {
-    store.record('/project/test')
-    store.startFlushTimer()
-
-    // 5 秒周期触发
-    vi.advanceTimersByTime(5000)
     expect(mockedAtomicWrite).toHaveBeenCalled()
   })
 

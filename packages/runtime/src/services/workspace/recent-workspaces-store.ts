@@ -22,7 +22,6 @@ import { atomicWrite } from '../../utils/fs-utils.js'
 import { isEnoent } from '../../utils/errors.js'
 
 const MAX_RECORDS = 6
-const FLUSH_INTERVAL_MS = 5_000
 const FILE_NAME = 'recent-workspaces.json'
 const JSON_INDENT = 2
 
@@ -32,7 +31,6 @@ const PARTITION_KEY = 'global' as const
 export class RecentWorkspacesStore {
   private readonly cache: WriteBackCache<typeof PARTITION_KEY, string, RecentWorkspaceRecord>
   private readonly filePath: string
-  private flushTimer: ReturnType<typeof setInterval> | null = null
 
   /**
    * @param configDir xyz-agent 配置根（~/.xyz-agent/），由组合根注入，不硬编码。
@@ -83,30 +81,10 @@ export class RecentWorkspacesStore {
 
   /**
    * 立即持久化所有 dirty 数据（不等 debounce）。shutdown 或测试用。
+   * 落盘保障 = per-write debounce 500ms + shutdown flushAll（无周期 flush 定时器）。
    */
   flushAll(): void {
     this.cache.flushAll()
-  }
-
-  /**
-   * 启动定期 flush 计时器（全量周期，补充 per-write debounce）。
-   * 由组合根在 initialize 后调用。
-   */
-  startFlushTimer(): void {
-    if (this.flushTimer) return
-    this.flushTimer = setInterval(() => {
-      this.cache.flushAll()
-    }, FLUSH_INTERVAL_MS)
-  }
-
-  /**
-   * 停止定期 flush 计时器。shutdown 用。
-   */
-  stopFlushTimer(): void {
-    if (this.flushTimer) {
-      clearInterval(this.flushTimer)
-      this.flushTimer = null
-    }
   }
 
   // ── Private（WriteBackCache backing 回调） ──────────────────

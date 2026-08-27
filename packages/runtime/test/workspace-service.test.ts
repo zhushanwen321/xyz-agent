@@ -52,7 +52,6 @@ describe('WorkspaceService — behavior', () => {
       record: vi.fn(),
       list: vi.fn().mockReturnValue([]),
       flushAll: vi.fn(),
-      startFlushTimer: vi.fn(),
     } as unknown as RecentWorkspacesStore
 
     service = new WorkspaceService(mockStore, { detect: () => ({ isBareMode: false, wsRoot: '', barePath: '' }) } as never)

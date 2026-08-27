@@ -3,7 +3,7 @@
  *
  * 覆盖（fake timers + document.hidden mock）：
  * - hidden 期间周期定时器照常触发，但不联网检测（checkForUpdate 零调用，连 hidden 多周期均不发）
- * - 恢复可见（visibilitychange → visible）：跳过被立即补查（force=true），不等下一个 20min
+ * - 恢复可见（visibilitychange → visible）：跳过被立即补查（force=true），不等下一个 60min
  * - 补查后周期检测继续（runAutoCheck 重排下一次定时器）
  * - 状态守卫优先于 visibility 补查：升级流程态（downloaded）hidden 期间跳过不标记，恢复可见不补查
  * - onScopeDispose：scope 卸载后 visibilitychange 不再触发检测
@@ -93,7 +93,7 @@ afterEach(() => {
 })
 
 describe('useAppUpdate 可见性守卫（Q1-6）', () => {
-  it('hidden 期间周期触发不联网检测：30s 首次 + 20min 周期均跳过 checkForUpdate', async () => {
+  it('hidden 期间周期触发不联网检测：30s 首次 + 60min 周期均跳过 checkForUpdate', async () => {
     setHidden(true)
     const { stop } = setupWithAutoCheck()
 
@@ -101,14 +101,14 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
     await vi.advanceTimersByTimeAsync(30_000)
     expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
 
-    // 连 hidden 多个 20min 周期均不发联网请求
-    await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
-    await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+    // 连 hidden 多个 60min 周期均不发联网请求
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
     expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
     stop()
   })
 
-  it('恢复可见立即补查（force=true），不等下一个 20min 周期', async () => {
+  it('恢复可见立即补查（force=true），不等下一个 60min 周期', async () => {
     setHidden(true)
     const { stop } = setupWithAutoCheck()
 
@@ -123,7 +123,7 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
     stop()
   })
 
-  it('补查后周期检测继续（下一个 20min 周期正常触发）', async () => {
+  it('补查后周期检测继续（下一个 60min 周期正常触发）', async () => {
     setHidden(true)
     const { stop } = setupWithAutoCheck()
 
@@ -132,8 +132,8 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
     fireVisibilityChange()
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
 
-    // 补查的 runAutoCheck 重排了周期定时器：20min 后再次检测
-    await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+    // 补查的 runAutoCheck 重排了周期定时器：60min 后再次检测
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(2)
     stop()
   })
