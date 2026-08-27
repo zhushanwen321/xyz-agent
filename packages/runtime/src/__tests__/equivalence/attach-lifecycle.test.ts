@@ -53,11 +53,13 @@ import { applyHeaderCwdFallback } from '../../services/session/session-lifecycle
  * - 180 → 300（2026-08-20 PR #185 测试收尾）：满载全量下 180s 仍 2/4 概率超时，主 agent
  *   裁决对齐该目录 equivalence 文件 300-420s 用例口径。
  */
-const TURN_TIMEOUT_MS = 300_000
+// 预算校准 [HISTORICAL]：满载环境单轮可超 300s（premerge 832s vs 144s ≈ 5.8× 实测），
+// 对齐 tool-call-index beforeAll「冷启动+轮次+余量」口径上调至 420s；用例级同步
+const TURN_TIMEOUT_MS = 420_000
 /** switch_session 慢 RPC 上限（对齐生产 rpc-client SLOW_TIMEOUT_MS） */
 const SWITCH_TIMEOUT_MS = 120_000
 /** 用例总超时 = 多次冷启动 + 多轮 LLM turn + 多次 RPC + dispose 的和再留余量（2× TURN 裕度） */
-const TEST_TIMEOUT_MS = 600_000
+const TEST_TIMEOUT_MS = 900_000
 
 /** 文件层 entry 最小形态（loadEntriesFromFile 的 xyz 侧等价读取：逐行 JSON.parse） */
 interface SessionFileEntry {

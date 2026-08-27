@@ -47,11 +47,14 @@ import { createChatStore } from '../../../../core/src/domain/chat/store.js'
 import { replayEntries, type PiEntry } from '../../../../core/src/domain/chat/apply-entry.js'
 
 /** 等 turn 完成的上限（真实 LLM 调用；对齐 live-reload.test.ts 余量口径） */
-const TURN_TIMEOUT_MS = 120_000
+// 预算校准 [HISTORICAL]：满载环境下（premerge 实测 test:runtime 832s vs 空闲 144s ≈ 5.8×）
+// mimo 单轮可超 120s，旧预算被真实慢击穿（红例 seen types 均含完整 turn 序列）。取 300s
+// 与 attach-lifecycle 口径一致；用例级 timeout 同步上调
+const TURN_TIMEOUT_MS = 300_000
 /** it 1 = 冷启动 + 3 个 turn（2 轮 prompt + followUp 投递）+ set_model + 实例收敛 + 双次权威拉取 */
-const STORM_TEST_TIMEOUT_MS = 420_000
+const STORM_TEST_TIMEOUT_MS = 600_000
 /** it 2 = 1 个带工具调用的 turn + 全量帧投递 + get_entries */
-const STORE_TEST_TIMEOUT_MS = 300_000
+const STORE_TEST_TIMEOUT_MS = 600_000
 
 /** 真实 timers 轮询等待（真实 pi 用例；fake timers 禁用于真实子进程 IO——W7/W8 同款） */
 async function waitUntil(label: string, predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
