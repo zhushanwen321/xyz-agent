@@ -43,6 +43,7 @@ interface MockClient {
   prompt: ReturnType<typeof vi.fn>
   abort: ReturnType<typeof vi.fn>
   onEvent: ReturnType<typeof vi.fn>
+  onExit: ReturnType<typeof vi.fn>
   exited: boolean
   _listeners: Set<(event: unknown) => void>
   /** 触发所有已注册 listener。 */
@@ -51,6 +52,8 @@ interface MockClient {
 
 function createMockClient(): MockClient {
   const listeners = new Set<(event: unknown) => void>()
+  // 这些用例不测退出路径：onExit 只支持注册/解绑（runHandoff 会订阅），不提供触发。
+  const exitListeners = new Set<(code: number | null, stderr: string) => void>()
   const client: MockClient = {
     prompt: vi.fn(async () => ({})),
     abort: vi.fn(async () => ({})),
@@ -60,6 +63,12 @@ function createMockClient(): MockClient {
       listeners.add(listener)
       return () => {
         listeners.delete(listener)
+      }
+    }),
+    onExit: vi.fn((callback: (code: number | null, stderr: string) => void) => {
+      exitListeners.add(callback)
+      return () => {
+        exitListeners.delete(callback)
       }
     }),
     emit(event: unknown) {
