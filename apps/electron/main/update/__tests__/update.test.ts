@@ -10,7 +10,7 @@
  * 运行：cd apps/electron && npx vitest run main/update/__tests__/update.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -20,11 +20,20 @@ import {
   classifyNetError,
 } from '../net-errors.js'
 import { UpdateError, UPDATE_ERROR_MESSAGES } from '../types.js'
+import { downloadAsset } from '../download-asset.js'
 
 // ─── error-log mock ──────────────────────────────────────────────
 
-const TEST_LOG_DIR = join(tmpdir(), `update-error-log-test-${Date.now()}`)
-const TEST_LOG_PATH = join(TEST_LOG_DIR, 'update-error.log')
+// [B4 测试引入 download-asset 静态导入后必须用 vi.hoisted]：
+// download-asset.js 在模块加载期就读 UPDATE_DIR，静态 import 早于本文件
+// 常量初始化执行；不用 hoisted 会报 Cannot access before initialization。
+const { TEST_LOG_DIR, TEST_LOG_PATH } = vi.hoisted(() => {
+  // 此处不能用已导入的 join/tmpdir（hoisted 工厂执行时 import 绑定尚未初始化），
+  // 用全局 process.env 构造等价路径；TMPDIR 与 os.tmpdir() 在 macOS 上指向同一目录
+  const base = process.env.TMPDIR || '/tmp'
+  const dir = `${base}/update-error-log-test-${Date.now()}`
+  return { TEST_LOG_DIR: dir, TEST_LOG_PATH: `${dir}/update-error.log` }
+})
 
 vi.mock('../constants.js', () => ({
   UPDATE_ERROR_LOG: TEST_LOG_PATH,
@@ -519,5 +528,94 @@ describe('W1-error-log-append', () => {
     const lines = readLogLines()
     expect(lines).toHaveLength(1)
     expect(JSON.parse(lines[0]).source).toBe('preload')
+  })
+})
+
+// ─── B1-disk-error-classification ──────────────────────────────
+
+describe('B1-disk-error-classification', () => {
+  it('B1 ENOSPC on err.code classifies as UPDATE_DISK_SPACE (multi-part path no longer misreports as network failure)', () => {
+    // 多段路径 writeStream error 直接 reject 原生 fs 错误（code 直接在 err 上），
+    // 与单段路径同一形态；修复前这条错误落兜底分支被报成 UPDATE_NETWORK_FAILED
+    const err = Object.assign(new Error('write ENOSPC: no space left on device'), { code: 'ENOSPC' })
+    const result = classifyNetError(err, 'downloading')
+    expect(result).toBeInstanceOf(UpdateError)
+    expect(result.errorCode).toBe('UPDATE_DISK_SPACE')
+    expect(result.stage).toBe('downloading')
+    expect(result.message).toBe('insufficient disk space')
+  })
+
+  it('B1 wrapped ENOSPC via err.cause.code classifies as UPDATE_DISK_SPACE', () => {
+    const cause = Object.assign(new Error('write failed'), { code: 'ENOSPC' })
+    const err = new Error('stream error', { cause })
+    expect(classifyNetError(err, 'downloading').errorCode).toBe('UPDATE_DISK_SPACE')
+  })
+
+  it('B1 non-english OS message falls back to disk space substring (parity with single-part W-6)', () => {
+    // 单段路径判定含子串兑底：无 errno code 时 message 含 'disk space' 同样判磁盘错
+    const err = new Error("can't write: not enough disk space")
+    expect(classifyNetError(err, 'downloading').errorCode).toBe('UPDATE_DISK_SPACE')
+  })
+
+  it('B1 ECONNREFUSED still classifies as UPDATE_NETWORK_FAILED (disk branch does not overtake network codes)', () => {
+    const cause = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })
+    const err = new Error('fetch failed', { cause })
+    expect(classifyNetError(err, 'downloading').errorCode).toBe('UPDATE_NETWORK_FAILED')
+  })
+})
+
+// ─── B4-downloadPart-no-double-wrap ────────────────────────────
+
+describe('B4-downloadPart-no-double-wrap', () => {
+  // ≥ MIN_MULTI_PART_SIZE(10MB)，确保走 multipart 路径（186MB 产物的默认路径）
+  const TOTAL_BYTES = 21 * 1024 * 1024
+
+  beforeEach(() => {
+    rmSync(TEST_LOG_DIR, { recursive: true, force: true })
+    mkdirSync(TEST_LOG_DIR, { recursive: true })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    rmSync(TEST_LOG_DIR, { recursive: true, force: true })
+  })
+
+  it('B4 pre-built part UpdateError passes through downloadPart verbatim (not double-wrapped by fallback)', async () => {
+    // 探针实证场景复现：probe HEAD 返回支持 Range，随后各段 Range 请求统一回 HTTP 500。
+    // downloadPart 内先构造 `part N download failed: HTTP 500`，再进自己的 catch——
+    // 修复前被 classifyNetError 兑底二次包装成
+    // 「download failed: part N download failed: HTTP 500」双重前缀
+    let probeDone = false
+    const fetchMock = vi.fn(async (_url: unknown, init?: { method?: string }) => {
+      if (!probeDone && init?.method === 'HEAD') {
+        probeDone = true
+        return new Response(null, {
+          status: 200,
+          headers: { 'accept-ranges': 'bytes', 'content-length': String(TOTAL_BYTES) },
+        })
+      }
+      return new Response(null, { status: 500 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    let caught: unknown
+    try {
+      await downloadAsset({
+        name: 'b4-double-wrap-test.zip',
+        downloadUrl: 'https://example.invalid/b4-double-wrap-test.zip',
+        size: TOTAL_BYTES,
+      })
+    } catch (err) {
+      caught = err
+    }
+
+    // 结构断言：仍是 UpdateError 且 errorCode 不变、message 无双重前缀；
+    // 正则不用固定 index：Promise.all 下哪个段先 reject 是非确定性的
+    expect(caught).toBeInstanceOf(UpdateError)
+    const updateErr = caught as UpdateError
+    expect(updateErr.message).toMatch(/^part \d+ download failed: HTTP 500$/)
+    expect(updateErr.errorCode).toBe('UPDATE_NETWORK_FAILED')
+    // 确实走了 multipart 路径：probe + 至少一个段请求都经过全局 fetch
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 })

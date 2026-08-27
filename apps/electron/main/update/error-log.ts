@@ -63,16 +63,3 @@ export function appendUpdateError(entry: UpdateErrorEntry): void {
   }
 }
 
-/**
- * 从 proxy-config 解析代理 URL（用于日志条目的 proxyUrl 字段）。
- *
- * 避免在 error-log 模块引入 proxy-config 的完整依赖，
- * 这里做简化提取：仅从 config 对象取 URL，不做凭证还原。
- */
-export function getProxyUrlForLog(config: { mode: string; httpProxy?: string; httpsProxy?: string }): string | undefined {
-  if (config.mode === 'disabled') return undefined
-  if (config.mode === 'manual') return config.httpsProxy ?? config.httpProxy
-  // system 模式读环境变量
-  return process.env.HTTPS_PROXY ?? process.env.https_proxy ??
-    process.env.HTTP_PROXY ?? process.env.http_proxy
-}

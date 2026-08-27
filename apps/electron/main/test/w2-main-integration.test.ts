@@ -3,6 +3,7 @@
  *
  * 覆盖 8 条验收场景（vitest fullName 含验收 id）：
  *   W2-testProxy-structured: testProxyConnection 返回结构化 {success, code, message, suggestion}
+ *   W2-testProxy-public-hostunreach: 公网代理 EHOSTUNREACH 代理语境话术（D2 v3 准绳 / A4）
  *   W2-testProxy-other-errors: 其他错误码分类 (ECONNREFUSED / 407 / AbortError)
  *   W2-download-classify: download-asset 单段 fetch 使用 classifyNetError
  *   W2-downloadPart-classify: downloadPart 网络错误经 classifyNetError 分类
@@ -18,7 +19,7 @@
  * 运行：cd apps/electron/main && npx vitest run test/w2-main-integration.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -72,6 +73,31 @@ describe('W2-update-error-type UpdateError rawCause 字段', () => {
     const info = err.toUserFriendly()
     expect(info.code).toBe('UPDATE_PROXY_UNREACHABLE')
     expect(info.suggestion).toContain('本地网络')
+  })
+
+  // B3-a：classifyNetError 带码 message 经映射表转中文后码不丢——补 (CODE) 后缀
+  it('W2-update-error-type toUserFriendly 映射表中文文案补回错误码后缀', async () => {
+    const { UpdateError } = await import('../update/types.js')
+    // classifyNetError 网络分支的 message 形态（英文 + errno 括号后缀）
+    const err = new UpdateError(
+      'network connection failed (ETIMEDOUT)',
+      'downloading',
+      'UPDATE_NETWORK_FAILED',
+    )
+    const info = err.toUserFriendly()
+    expect(info.message).toBe('网络连接失败 (ETIMEDOUT)')
+  })
+
+  it('W2-update-error-type toUserFriendly 映射表已含错误码时不重复拼接', async () => {
+    const { UpdateError } = await import('../update/types.js')
+    const err = new UpdateError(
+      '无法连接代理 (EHOSTUNREACH)',
+      'downloading',
+      'UPDATE_PROXY_UNREACHABLE',
+    )
+    const info = err.toUserFriendly()
+    // 恰好一个 (EHOSTUNREACH)：映射表条目自身已含码，不再追加后缀
+    expect(info.message).toBe('无法连接代理 (EHOSTUNREACH)')
   })
 
   // 区分力：types.ts UpdateError 构造函数签名片段必须含 rawCause 参数
@@ -273,11 +299,19 @@ describe('W2-handler-error-log appendUpdateError 落盘', () => {
     expect(lines.length).toBe(5)
   })
 
-  it('W2-handler-error-log getProxyUrlForLog 返回代理 URL', async () => {
-    const { getProxyUrlForLog } = await import('../update/error-log.js')
-    expect(getProxyUrlForLog({ mode: 'manual', httpProxy: 'http://127.0.0.1:7890' }))
+  it('W2-handler-error-log 代理 URL 解析收敛到 proxy-config.resolveProxyUrl（SSOT）', async () => {
+    const { resolveProxyUrl } = await import('../update/proxy-config.js')
+    expect(resolveProxyUrl({ mode: 'manual', httpProxy: 'http://127.0.0.1:7890' }))
       .toBe('http://127.0.0.1:7890')
-    expect(getProxyUrlForLog({ mode: 'disabled' })).toBeUndefined()
+    expect(resolveProxyUrl({ mode: 'disabled' })).toBeUndefined()
+  })
+
+  // 守卫：error-log 不得再自带代理 URL 解析本地实现（曾因与 proxy-config.resolveProxyUrl
+  // 同构双实现存在 drift 隐患而收敛，D7 SSOT 要求）
+  it('W2-handler-error-log error-log.ts 无本地代理解析双实现', () => {
+    const src = readSource('apps/electron/main/update/error-log.ts')
+    expect(src).not.toContain('getProxyUrlForLog')
+    expect(src).not.toMatch(/mode === '(disabled|manual)'/)
   })
 
   // 区分力：update-handlers.ts 必须 import appendUpdateError（w2 集成点，父 commit 无此 import）
@@ -350,8 +384,13 @@ describe('W2-preload-types 类型签名含 suggestion', () => {
   // 区分力：preload.ts testProxy 返回类型含 code 和 suggestion
   it('W2-preload-types preload.ts testProxy 返回类型含 code 和 suggestion', () => {
     const src = readSource('apps/electron/preload/preload.ts')
-    // 匹配 testProxy 接口声明：返回类型含 code? 和 suggestion?
-    expect(src).toMatch(/testProxy\(config[^)]*\)[\s\S]*?code\?[\s\S]*?suggestion\?/)
+    // [HISTORICAL] 原断言匹配内联 {code?, suggestion?} 字面量；update-observability B5
+    // 杂项将内联类型收敛到共享 ProxyTestResult（shared/update.ts SSOT，字段含
+    // success/code/message/suggestion）。改断言两层：①接口声明返回 Promise<ProxyTestResult>
+    // ②ProxyTestResult 从 @xyz-agent/shared 导入（堵手写副本漂移，字段语义仍在 SSOT 保证）。
+    expect(src).toMatch(/import\s*type\s*\{[^}]*ProxyTestResult[^}]*\}\s*from\s*['"]@xyz-agent\/shared['"]/
+    )
+    expect(src).toMatch(/^\s*testProxy\(.*\)\s*:\s*Promise<ProxyTestResult>/m)
   })
 
   // 区分力：shared/src/update.ts UpdateErrorPayload 定义含 suggestion
@@ -416,5 +455,72 @@ describe('W2-integration-log-file JSONL 写入 + 轮转', () => {
   it('W2-integration-log-file constants.ts 定义 UPDATE_ERROR_LOG', () => {
     const src = readSource('apps/electron/main/update/constants.ts')
     expect(src).toMatch(/export const UPDATE_ERROR_LOG/)
+  })
+})
+
+// ── W2-testProxy-public-hostunreach（D2 v3 / A4）─────────────────
+// 必须放在本文件最末尾：本 describe 经 dynamic import 加载 update-handlers →
+// error-log/constants 模块图。若在其他用例之前加载，UPDATE_ERROR_LOG 路径会提前固化
+// 到当时的 tmp 目录，打破下方落盘用例「固化目录恰被其后 afterEach rmSync 清场」
+// 的自洽机制（已实测引发「写入 JSONL/多次追加」行数断言互相泄漏）。
+// 放在末尾时错误日志路径已由更早的 error-log 用例固化并清理完毕，
+// 本用例写在固化路径上的记录由自身 unlink 兑底，此后无任何消费者。
+const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>()
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
+      capturedHandlers.set(channel, fn)
+    },
+  },
+  app: { getVersion: () => '0.9.0' },
+}))
+
+describe('W2-testProxy-public-hostunreach 公网 EHOSTUNREACH 代理语境话术', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('W2-testProxy-public-hostunreach 公网代理 EHOSTUNREACH 返回代理语境话术 + 检查代理指引', async () => {
+    // stub 全局 fetch 抛公网 EHOSTUNREACH（undici fetch failed 形态：errno 挂 cause.code）
+    const cause = Object.assign(new Error('connect EHOSTUNREACH 203.0.113.1:7890'), {
+      code: 'EHOSTUNREACH',
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw Object.assign(new Error('fetch failed'), { cause })
+      }),
+    )
+    // vi.mock('electron') 捕获 update:testProxy handler 真实调用：直接断言
+    // testProxyConnection 返回值的覆写行为，而非仅源码字符串匹配。
+    const { registerUpdateHandlers } = await import('../gateway/update-handlers.js')
+    registerUpdateHandlers({} as never)
+    const handler = capturedHandlers.get('update:testProxy')!
+    // ipcMain.handle 的 handler 签名是 (event, payload)：首位传 event 占位
+    const result = (await handler({}, {
+      mode: 'manual',
+      httpProxy: 'http://203.0.113.1:7890',
+    })) as {
+      success: boolean
+      code?: string
+      message?: string
+      suggestion?: string
+    }
+
+    expect(result.success).toBe(false)
+    // 分类维持 UPDATE_NETWORK_FAILED：下载/升级路径仍走映射表通用网络文案，仅 testProxy 场景覆写
+    expect(result.code).toBe('UPDATE_NETWORK_FAILED')
+    // 代理语境话术 + 错误码后缀（不再出现「网络连接失败」通用文案）
+    expect(result.message).toContain('无法连接代理')
+    expect(result.message).toContain('(EHOSTUNREACH)')
+    expect(result.message).not.toContain('网络连接失败')
+    // suggestion 为检查代理语境；不得出现本地网络权限指引（A4 反向验证）
+    expect(result.suggestion).toContain('检查代理')
+    expect(result.suggestion).not.toContain('本地网络')
+
+    // 兑底清理：清掉本用例经 handler 落在固化 UPDATE_ERROR_LOG 路径上的记录
+    const { UPDATE_ERROR_LOG } = await import('../update/constants.js')
+    if (existsSync(UPDATE_ERROR_LOG)) unlinkSync(UPDATE_ERROR_LOG)
   })
 })

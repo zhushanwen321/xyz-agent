@@ -31,7 +31,7 @@ import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.
 import type { IUpdateOrchestrator, UpdateProgressCallback } from '../update/orchestrator.js'
 import { writePreloadedUpdate, readPreloadedUpdate, readPreloadedUpdateRaw, clearPreloadedUpdate } from '../update/preloaded-update.js'
 import { classifyNetError } from '../update/net-errors.js'
-import { appendUpdateError, getProxyUrlForLog } from '../update/error-log.js'
+import { appendUpdateError } from '../update/error-log.js'
 
 /** 触发重启前留给前端渲染「重启中」状态的延迟（毫秒）。 */
 const RESTART_QUIT_DELAY_MS = 500
@@ -101,7 +101,20 @@ async function testProxyConnection(config: IProxyConfig): Promise<{ success: boo
   } catch (err) {
     // D1: 使用分类函数统一提取 cause + 判定错误码
     const classified = classifyNetError(err, 'downloading', proxyUrl)
-    const info = classified.toUserFriendly()
+    let info = classified.toUserFriendly()
+    // D2（v3 修订）testProxy 统一准绳：公网 EHOSTUNREACH 也给代理语境话术。
+    // 用户此刻在测代理，「网络连接失败 + 检查防火墙可访问 GitHub」语境错位；
+    // 不加映射表变体是因为该话术仅 testProxy 场景有意义，入枚举会污染
+    // perform/download/install 共用的错误码空间，handler 内覆写侵入最小。
+    // suggestion 不提本地网络权限（A4 反向验证）；落盘 code 维持原分类，
+    // 保证 D7 日志归因与下载路径一致。
+    if (info.code === 'UPDATE_NETWORK_FAILED' && classified.message.includes('EHOSTUNREACH')) {
+      info = {
+        ...info,
+        message: '无法连接代理 (EHOSTUNREACH)',
+        suggestion: '请检查代理地址与端口是否正确、代理服务是否正在运行，以及当前网络能否连通代理',
+      }
+    }
     // D7: 落盘
     appendUpdateError({
       at: new Date().toISOString(),
@@ -142,7 +155,8 @@ let preDownloadPromise: Promise<void> | null = null
  * 后台预下载（静默）：检测到新版 + 预下载开关开时触发。
  *
  * 不推 update:progress 事件（静默后台行为，不干扰用户）。下载成功后写 preloaded-update.json，
- * update:perform 走快路径跳过重复下载。下载失败仅 console.warn（符合「静默放弃，下次检测重试」决策）。
+ * update:perform 走快路径跳过重复下载。下载失败落盘 update-error.log（D7）后 console.warn
+ * 静默放弃，下次检测重试。
  *
  * download-asset 的断点续传机制保证：预下载未完成时用户手动点更新，performUpdate 的
  * downloadUpdate 会接管同一临时文件续传，进度不浪费。
@@ -172,7 +186,7 @@ async function preloadUpdateSilently(
   } catch (err) {
       // D7: 预下载失败落盘（本诊断环境每次检查更新都会发生的第一失败现场）
       const proxyConfig = readProxyConfig()
-      const proxyUrl = getProxyUrlForLog(proxyConfig)
+      const proxyUrl = resolveProxyUrl(proxyConfig)
       if (err instanceof UpdateError) {
         appendUpdateError({
           at: new Date().toISOString(),
@@ -316,7 +330,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
           stage: friendlyInfo.stage,
           errorCode: friendlyInfo.code,
           rawCause: err.rawCause,
-          proxyUrl: getProxyUrlForLog(readProxyConfig()),
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
         })
       } else {
         errorPayload = {
@@ -330,7 +344,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
           source: 'perform',
           stage: 'replacing',
           rawCause: err instanceof Error ? err.message : String(err),
-          proxyUrl: getProxyUrlForLog(readProxyConfig()),
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
         })
       }
 
@@ -403,7 +417,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
           stage: f.stage,
           errorCode: f.code,
           rawCause: err.rawCause,
-          proxyUrl: getProxyUrlForLog(readProxyConfig()),
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
         })
       } else {
         errorPayload = {
@@ -417,7 +431,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
           source: 'download',
           stage: 'downloading',
           rawCause: err instanceof Error ? err.message : String(err),
-          proxyUrl: getProxyUrlForLog(readProxyConfig()),
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
         })
       }
       if (win && !win.isDestroyed()) {
@@ -471,7 +485,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
           stage: f.stage,
           errorCode: f.code,
           rawCause: err.rawCause,
-          proxyUrl: getProxyUrlForLog(readProxyConfig()),
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
         })
       } else {
         errorPayload = {
@@ -485,7 +499,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
           source: 'install',
           stage: 'replacing',
           rawCause: err instanceof Error ? err.message : String(err),
-          proxyUrl: getProxyUrlForLog(readProxyConfig()),
+          proxyUrl: resolveProxyUrl(readProxyConfig()),
         })
       }
       if (win && !win.isDestroyed()) {

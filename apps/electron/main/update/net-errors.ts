@@ -11,7 +11,6 @@
  */
 
 import { UpdateError } from './types.js'
-import type { UpdateErrorCode } from './types.js'
 import type { UpdateStage } from '@xyz-agent/shared'
 
 /**
@@ -42,6 +41,31 @@ export function extractNetErrorCode(err: unknown): string | undefined {
     const prefix = current.message.match(/^([A-Z][A-Z0-9_]+)[\s:]/)
     if (prefix) return prefix[1]
     current = (current as { cause?: unknown }).cause
+  }
+  return undefined
+}
+
+/**
+ * 读取 Node 错误的 errno code（如 'ENOSPC'、'EACCES'）。
+ *
+ * 原生 Node fs 错误把 code 放在 `err.code`；包裹层有时会把底层原因包到
+ * `err.cause` 里（cause.code）。两者都查，命中其一即返回。
+ * 不能用 `err.code` 直接判断：传入值可能非 NodeJS.ErrnoException（无 code 字段）。
+ *
+ * 与 extractNetErrorCode 的区别：本函数只查 direct code + 一层 cause.code，
+ * 不做 message 前缀匹配、不再深钻。这是刻意保留的单段路径原始判定语义——
+ * classifyNetError 的磁盘分支必须与单段路径（download-asset stream catch 的
+ * isDiskError）用同一判定，保证同一磁盘错误在单段/多段两条下载路径上报同一分类。
+ */
+export function getNodeErrnoCode(err: unknown): string | undefined {
+  if (!(err instanceof Error)) return undefined
+  // 先看 err.code（原生 Node fs 错误）
+  const directCode = (err as NodeJS.ErrnoException).code
+  if (directCode) return directCode
+  // 再看 cause.code（包裹层挂的底层原因）
+  const cause = (err as { cause?: unknown }).cause
+  if (cause instanceof Error) {
+    return (cause as NodeJS.ErrnoException).code
   }
   return undefined
 }
@@ -145,6 +169,10 @@ export function classifyProxyUnreachable(err: unknown, proxyUrl: string | undefi
  * - ECONNREFUSED/ENOTFOUND/ECONNRESET/ETIMEDOUT/ECONNABORTED → UPDATE_NETWORK_FAILED
  * - AbortError/timeout → UPDATE_NETWORK_TIMEOUT
  * - 其他 → UPDATE_NETWORK_FAILED
+ *
+ * [NOTE] 此处构造的英文 message 从不直接面向用户（toUserFriendly() 的映射表中文
+ * 全量覆盖）：它是诊断/落盘通道的原始记录，同时是 toUserFriendly() 错误码后缀
+ * (CODE) 的提取源；用户可见文案以 types.ts 的 UPDATE_ERROR_MESSAGES 为准。
  */
 export function classifyNetError(
   err: unknown,
@@ -159,7 +187,25 @@ export function classifyNetError(
     return new UpdateError(
       '无法连接代理 (EHOSTUNREACH)',
       stage,
-      'UPDATE_PROXY_UNREACHABLE' as UpdateErrorCode,
+      'UPDATE_PROXY_UNREACHABLE',
+      rawCause,
+    )
+  }
+
+  // [B1] 磁盘错误分类：ENOSPC（磁盘满）原会落进底部兜底分支被报成
+  // UPDATE_NETWORK_FAILED，用户看到「网络连接失败，请检查防火墙」被严重误导。
+  // 判定与单段路径（download-asset stream catch 的 isDiskError）完全一致：
+  // errno 精确匹配优先 + 'disk space' 子串兜底（非英文 OS message 场景），
+  // 保证同一磁盘错误在单段/多段路径上报同一分类。
+  const diskErrno = getNodeErrnoCode(err)
+  if (
+    diskErrno === 'ENOSPC' ||
+    (err instanceof Error && err.message.toLowerCase().includes('disk space'))
+  ) {
+    return new UpdateError(
+      'insufficient disk space',
+      stage,
+      'UPDATE_DISK_SPACE',
       rawCause,
     )
   }

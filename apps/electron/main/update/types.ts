@@ -155,9 +155,18 @@ export class UpdateError extends Error {
   toUserFriendly(): UpdateErrorInfo {
     if (this.errorCode && this.errorCode in UPDATE_ERROR_MESSAGES) {
       const info = UPDATE_ERROR_MESSAGES[this.errorCode]
+      // classifyNetError 构造的 message 常含 errno 码（如 'network connection failed
+      // (ETIMEDOUT)'），映射表转中文后码会丢——补回 (CODE) 后缀，让用户可见文案保留
+      // 具体网络故障类型（排障定位线索）。映射表条目自身已含该码时
+      // （UPDATE_PROXY_UNREACHABLE 的「无法连接代理 (EHOSTUNREACH)」）不重复拼接。
+      let message = info.message
+      const netCode = /\(([A-Z][A-Z0-9]+)\)/.exec(this.message)?.[1]
+      if (netCode && !info.message.includes(netCode)) {
+        message = `${message} (${netCode})`
+      }
       return {
         code: this.errorCode,
-        message: info.message,
+        message,
         stage: this.stage,
         suggestion: info.suggestion,
       }
