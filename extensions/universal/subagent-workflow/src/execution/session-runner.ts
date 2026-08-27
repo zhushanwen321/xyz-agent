@@ -26,6 +26,7 @@ import { collectResult } from "./output-collector.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "./relay-env.ts";
+import { assertThinkingLevel, type ThinkingLevel } from "../shared/model-ref.ts";
 import { stringifySchemaCached } from "../shared/schema-jsonify.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
@@ -633,14 +634,28 @@ export async function buildEnvBlock(
 const SIGNAL_EXIT_CODE_THRESHOLD = 128;
 
 /**
+ * spawn 侧已裁决的模型身份（U1 D2）：buildSpawnArgs 只接受经 assertCanonicalModelRef /
+ * modelRefFromVerified 裁决的 {provider, id}，拼接值 = `${provider}/${id}`。
+ * 类型层面裸字符串不可达——任何未经 D1 裁决的模型串无法流入 `--model`。
+ */
+export interface SpawnModelRef {
+  provider: string;
+  id: string;
+}
+
+/**
  * 组装 pi CLI 参数（不含 task 本身，task 作为最后一个位置参数）。
  *
  * 抽取自 runSpawn 便于单测（纯函数，不依赖进程状态）。
+ *
+ * [U1 D2 spawn 前置守卫] 入参收窄：model 字符串 → modelRef（SpawnModelRef），
+ * thinkingLevel → ThinkingLevel 白名单字面量联合。`--model` 值恒为
+ * `${modelRef.provider}/${modelRef.id}`（+ 可选白名单 `:level` 后缀）。
  */
 export function buildSpawnArgs(
   params: {
-    model: string | undefined;
-    thinkingLevel: string | undefined;
+    modelRef: SpawnModelRef;
+    thinkingLevel: ThinkingLevel | undefined;
     agentTools: string[] | undefined;
     appendSystemPromptPath: string | undefined;
     sessionDir: string;
@@ -667,8 +682,9 @@ export function buildSpawnArgs(
   if (params.sessionFile) {
     args.push("--session", params.sessionFile);
   }
-  if (params.model) args.push("--model", params.model);
-  if (params.thinkingLevel && params.model) {
+  // [U1 D2] 只拼接已裁决 ModelRef；thinkingLevel 类型已收窄为白名单字面量联合。
+  args.push("--model", `${params.modelRef.provider}/${params.modelRef.id}`);
+  if (params.thinkingLevel) {
     // thinking level 通过 model 后缀 :level 传递（pi CLI 约定）
     // model 已 push，这里只补后缀到同一 token
     const lastIdx = args.length - 1;
@@ -1008,14 +1024,22 @@ function buildSpawnInvocation(
   const skillPaths = [...ctx.skillDirs, opts.skillPath].filter(
     (p): p is string => typeof p === "string" && p.length > 0,
   );
-  const modelId = opts.resolved.model.id;
+  // [U1 D2] modelRef 来源：
+  //   - 非 resume：opts.resolved.model（resolveModel 裁决放行的 registry 全等条目）。
+  //   - resume：resume.model 是 SpawnResumeOpts 回显（record.model，"provider/id" 系统自产
+  //     已裁决形态，P-10 防漂移），按第一个 / 拆分（与 subagent-service record 回读同构），
+  //     不再经 assertCanonicalModelRef（registry 快照可能已刷新，拒绝回显会破坏续聊）。
+  const modelRef: SpawnModelRef = resume?.model
+    ? splitRecordModelRef(resume.model)
+    : { provider: opts.resolved.model.provider, id: opts.resolved.model.id };
   // [M1 resume] resume 时 model/thinkingLevel 优先用 resume 值（防多轮对话模型漂移，P-10），
-  // 否则回退 opts.resolved。resume.model 已是 "provider/id" 格式，与 buildSpawnArgs 约定一致。
-  const effectiveModel = resume?.model ?? `${opts.resolved.model.provider}/${modelId}`;
-  const effectiveThinkingLevel = resume?.thinkingLevel ?? opts.resolved.thinkingLevel;
+  // 否则回退 opts.resolved。thinkingLevel 经白名单断言收窄（非法值同步拒，不静默降级）。
+  const effectiveThinkingLevel = assertThinkingLevel(
+    resume?.thinkingLevel ?? opts.resolved.thinkingLevel,
+  );
   const spawnArgs = buildSpawnArgs(
     {
-      model: effectiveModel,
+      modelRef,
       thinkingLevel: effectiveThinkingLevel,
       agentTools: opts.agentConfig?.tools,
       appendSystemPromptPath: tempPromptFile?.filePath,
@@ -1028,6 +1052,20 @@ function buildSpawnInvocation(
     },
   );
   return getPiInvocation(spawnArgs);
+}
+
+/**
+ * 拆分 record 回显的 "provider/id" 模型串（resume 路径专用）。
+ *
+ * [U1 D2 豁免依据] 输入是 SubagentService 从 record.model 读出的系统自产回显
+ * （createRecordForMode 写入 `${provider}/${id}`，源头已裁决），非用户自由字符串——
+ * 不经 assertCanonicalModelRef。modelId 可含 /，按第一个 / 分割（与 lookup 同构）。
+ * 异常形态（无 /）兜底 provider="unknown"（与 subagent-service.ts record 回读同构）。
+ */
+function splitRecordModelRef(model: string): SpawnModelRef {
+  const slashIdx = model.indexOf("/");
+  if (slashIdx <= 0) return { provider: "unknown", id: model };
+  return { provider: model.slice(0, slashIdx), id: model.slice(slashIdx + 1) };
 }
 
 /** attachStdoutPump 返回的共享句柄（waitForChildExit / get_state 握手启动消费）。 */

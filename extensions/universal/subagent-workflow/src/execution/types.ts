@@ -711,6 +711,13 @@ export interface BgResponse {
    * 披露。旧字段 status/mode/message 原样保留（向后兼容）。
    */
   outcome?: ProjectedOutcome;
+  /**
+   * 通知投递契约回显位（U1 预置，U2 通知账本的契约声明）。恒值
+   * "ledger+at-least-once"：主 agent 在当前 run 结束或有限延迟内收到完成通知，
+   * 送达保证为 at-least-once + notifyId 幂等可识别。字段与填充由 U1 负责，
+   * 值语义由 U2（execution/notify-ledger.ts）兑现。
+   */
+  notifyContract: "ledger+at-least-once";
 }
 
 /** list 的内层响应（挂在 SubagentToolResult.listResponse）。 */
@@ -753,7 +760,7 @@ export interface CloseResponse {
  *   - close → closeResponse（subagentId 有值；sessionFile 无意义，可为 null）
  */
 export type SubagentToolResult =
-  | { action: "start"; subagentId: string; sessionFile: string | null; slug: string; bgResponse: BgResponse; __gui__?: GuiRenderResult }
+  | { action: "start"; subagentId: string; sessionFile: string | null; slug: string; /** registry 全等回显（U1）：放行即与 registry 条目全等，"provider/id" 形态。 */ model: string; bgResponse: BgResponse; __gui__?: GuiRenderResult }
   | { action: "list"; subagentId: null; sessionFile: null; listResponse: ListResponse; __gui__?: GuiRenderResult }
   | { action: "cancel"; subagentId: string; sessionFile: null; cancelResponse: CancelResponse; __gui__?: GuiRenderResult }
   | { action: "message"; subagentId: string; sessionFile: null; messageResponse: MessageResponse; __gui__?: GuiRenderResult }

@@ -11,7 +11,7 @@ import { parseSpawnLine } from "../spawn-event-adapter.ts";
 
 describe("buildSpawnArgs - RPC mode", () => {
   const baseParams = {
-    model: "gpt-4",
+    modelRef: { provider: "openai", id: "gpt-4" },
     thinkingLevel: undefined,
     agentTools: undefined,
     appendSystemPromptPath: undefined,

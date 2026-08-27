@@ -31,6 +31,7 @@ import type { AgentOutcome, EngineHandle } from "./engine/types.ts";
 import { mapToExecuteOptions, mergeTimeoutSignal } from "./execute-options-mapper.ts";
 import { getModelConfigService } from "./model-config-service.ts";
 import type { ModelInfo } from "./model-resolver.ts";
+import { modelRefFromVerified } from "../shared/model-ref.ts";
 import { registerSpawnedChildForRecord } from "./session-runner.ts";
 import type { SubagentStream } from "./stream-sink.ts";
 import type { SubagentService } from "./subagent-service.ts";
@@ -185,6 +186,19 @@ export class SubprocessAgentRunner implements AgentRunner {
     };
 
     try {
+      // ── [U1 D2] RunContext.modelRef 接入：ctxModel 继承路径的孪生守卫 ──
+      // ctxModel 是运行时已验证的 ModelInfo（豁免 registry 存在性复查），但继承产出的
+      // canonical 串与显式入参走同一个 pi pattern 引擎，孪生守卫同等适用（modelRefFromVerified）。
+      // 守卫在 engine.run 之前同步拒绝：含孪生 registry 下不产生任何 record/spawn，
+      // 失败走下方 catch → errorResult（错误文案含恢复指引）。
+      // RunContext 类型本身定义在 engine/port.ts（跨模块 port，不在本单元领地），
+      // 故接入点为构造 runCtx 前的守卫调用；pi 链路下游 resolveModel 的 ctxModel 分支
+      // 有同一守卫（model-resolver.ts），两处共用同一入口函数。
+      if (this.ctxModel) {
+        const modelService = getModelConfigService();
+        if (modelService) modelRefFromVerified(this.ctxModel, modelService.getModelRegistry());
+      }
+
       // ── D-A9: timeoutMs 合并 signal（超时 abort 带 HOST_TIMEOUT_ABORT_REASON 标记）──
       const mergedSignal = mergeTimeoutSignal(signal, opts.timeoutMs);
 

@@ -97,7 +97,7 @@ describe("resolveModel — explicit override failures throw (no silent fallback)
     const reg = makeRegistry([]);
     expect(() =>
       resolveModel(undefined, reg, { model: "x/nonexistent" }, ctxModel),
-    ).toThrow(/not found in registry/);
+    ).toThrow(/is not a registry entry/);
   });
 
   it("paramOverride.model found but auth missing → throws auth-specific message", () => {
@@ -117,7 +117,7 @@ describe("resolveModel — explicit override failures throw (no silent fallback)
         undefined,
         ctxModel,
       ),
-    ).toThrow(/not found in registry/);
+    ).toThrow(/is not a registry entry/);
   });
 
   it("no override, no agentConfig.model, no ctxModel → throws listing available", () => {
@@ -132,7 +132,7 @@ describe("resolveModel — explicit override failures throw (no silent fallback)
     const reg = makeRegistry([]);
     expect(() =>
       resolveModel(undefined, reg, { model: "no-slash" }, ctxModel),
-    ).toThrow(/not found in registry/);
+    ).toThrow(/is not a registry entry/);
   });
 });
 
@@ -264,7 +264,7 @@ describe('resolveModel — strips ":thinkingLevel" suffix from model string (A)'
     // ":foo" 不是合法 thinking level，不剥离 → 查不到 → 抛 not found
     const m = makeModel({ id: "m1", provider: "p", reasoning: false });
     const reg = makeRegistry([m]);
-    expect(() => resolveModel(undefined, reg, { model: "p/m1:foo" })).toThrow(/not found in registry/);
+    expect(() => resolveModel(undefined, reg, { model: "p/m1:foo" })).toThrow(/is not a registry entry/);
   });
 
   it('suffix-stripped resolve still respects explicit thinkingLevel param', () => {
@@ -291,7 +291,7 @@ describe("resolveModel — not-found error suggests similar models (B)", () => {
     } catch (e) {
       msg = (e as Error).message;
     }
-    expect(msg).toMatch(/not found in registry/);
+    expect(msg).toMatch(/is not a registry entry/);
     expect(msg).toMatch(/deepseek-router\/ds-pro/); // 建议列表含正确拼写
   });
 
@@ -348,6 +348,58 @@ describe("availableThinkingLevels", () => {
     const levels = availableThinkingLevels({ reasoning: true, thinkingLevelMap: { off: 0, low: 1, high: 2, xhigh: 3, max: 4 } });
     expect(levels).toEqual(["off", "low", "high", "xhigh", "max"]);
     expect(levels.slice(-3)).toEqual(["high", "xhigh", "max"]);
+  });
+});
+
+// ============================================================
+// [U1 ModelRef 全等裁决] 孪生守卫（D1 规则④，两路径共用）
+// ============================================================
+
+describe("resolveModel — U1 twin guard (D1 rule ④)", () => {
+  /** 含大小写孪生的 registry 快照（模拟 models-store 刷新后大小写两形态并存）。 */
+  function makeTwinRegistry(): ModelRegistryLike {
+    return makeRegistry([
+      makeModel({ id: "GLM-5.3-Flash", provider: "zai-coding-cn" }),
+      makeModel({ id: "glm-5.3-flash", provider: "zai-coding-cn" }),
+    ]);
+  }
+
+  it("显式入参全等命中但 registry 含孪生 → 拒单（ambiguous，不代改输入）", () => {
+    expect(() =>
+      resolveModel(undefined, makeTwinRegistry(), { model: "zai-coding-cn/GLM-5.3-Flash" }, ctxModel),
+    ).toThrow(/ambiguous case variants/);
+  });
+
+  it("ctxModel 继承路径孪生守卫同等生效（D2 豁免的只是存在性复查）", () => {
+    const main = makeModel({ id: "GLM-5.3-Flash", provider: "zai-coding-cn" });
+    expect(() => resolveModel(undefined, makeTwinRegistry(), undefined, main)).toThrow(
+      /ambiguous case variants/,
+    );
+  });
+
+  it("无孪生时 ctxModel 路径零误伤（引用透传不变，P-A2 放行路径）", () => {
+    const main = makeModel({ id: "main-model", provider: "main" });
+    const r = resolveModel(undefined, makeRegistry([]), undefined, main);
+    expect(r.model).toBe(main);
+  });
+
+  it("小写入参（存在 case variant）→ 首个建议为正确大写串并标注（S2 负面路径）", () => {
+    const reg = makeRegistry([makeModel({ id: "GLM-5.3-Flash", provider: "zai-coding-cn" })]);
+    let msg = "";
+    try {
+      resolveModel(undefined, reg, { model: "zai-coding-cn/glm-5.3-flash" }, ctxModel);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toMatch(/is not a registry entry/);
+    expect(msg).toContain('zai-coding-cn/GLM-5.3-Flash   ← case variant of "glm-5.3-flash"');
+  });
+
+  it("放行后回显与入参全等（L1 路径 model 字段保持 registry 原始大小写）", () => {
+    const m = makeModel({ id: "GLM-5.3-Flash", provider: "zai-coding-cn" });
+    const r = resolveModel(undefined, makeRegistry([m]), { model: "zai-coding-cn/GLM-5.3-Flash" }, ctxModel);
+    expect(r.model.id).toBe("GLM-5.3-Flash");
+    expect(r.model.provider).toBe("zai-coding-cn");
   });
 });
 

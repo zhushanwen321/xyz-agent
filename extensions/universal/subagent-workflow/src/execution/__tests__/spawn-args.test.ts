@@ -11,8 +11,9 @@ import { MAX_FORK_DEPTH } from "../session-context-resolver.ts";
 import { buildEnvBlock, buildSpawnArgs } from "../session-runner.ts";
 
 describe("buildSpawnArgs", () => {
+  // [U1 D2] modelRef 为必填（spawn 前置守卫：未经裁决的裸字符串类型层面不可达）。
   const baseParams = {
-    model: undefined as string | undefined,
+    modelRef: { provider: "openai", id: "gpt-4o" },
     thinkingLevel: undefined as string | undefined,
     agentTools: undefined as string[] | undefined,
     appendSystemPromptPath: undefined as string | undefined,
@@ -21,9 +22,11 @@ describe("buildSpawnArgs", () => {
     skillPaths: undefined as string[] | undefined,
   };
 
-  it("基础参数：--mode rpc --session-dir，不含 -p 也不含 task（task 经 stdin 传）", () => {
+  it("基础参数：--mode rpc --session-dir + --model provider/id，不含 -p 也不含 task（task 经 stdin 传）", () => {
     const args = buildSpawnArgs(baseParams);
-    expect(args).toEqual(["--mode", "rpc", "--session-dir", "/sessions/dir"]);
+    expect(args).toEqual([
+      "--mode", "rpc", "--session-dir", "/sessions/dir", "--model", "openai/gpt-4o",
+    ]);
   });
 
   it("不含 -p / --print（rpc mode 下 -p 被 resolveAppMode 无视，是死代码）", () => {
@@ -32,28 +35,22 @@ describe("buildSpawnArgs", () => {
     expect(args).not.toContain("--print");
   });
 
-  it("有 model → 追加 --model provider/id", () => {
-    const args = buildSpawnArgs(
-      { ...baseParams, model: "openai/gpt-4o" },
-    );
-    expect(args).toContain("--model");
+  it("modelRef → --model 值恒为 `${provider}/${id}`（全等拼接，不重写输入）", () => {
+    // 含大小写差异的 provider/id 原样拼接（大小写敏感规则：放行即全等回显）
+    const args = buildSpawnArgs({
+      ...baseParams,
+      modelRef: { provider: "zai-coding-cn", id: "GLM-5.3-Flash" },
+    });
     const idx = args.indexOf("--model");
-    expect(args[idx + 1]).toBe("openai/gpt-4o");
+    expect(args[idx + 1]).toBe("zai-coding-cn/GLM-5.3-Flash");
   });
 
-  it("model + thinkingLevel → model 后缀 :level", () => {
+  it("modelRef + thinkingLevel → model 后缀 :level", () => {
     const args = buildSpawnArgs(
-      { ...baseParams, model: "anthropic/claude", thinkingLevel: "high" },
+      { ...baseParams, thinkingLevel: "high" },
     );
     const idx = args.indexOf("--model");
-    expect(args[idx + 1]).toBe("anthropic/claude:high");
-  });
-
-  it("thinkingLevel 无 model → 不追加（thinking 依赖 model 后缀）", () => {
-    const args = buildSpawnArgs(
-      { ...baseParams, model: undefined, thinkingLevel: "high" },
-    );
-    expect(args).not.toContain("--model");
+    expect(args[idx + 1]).toBe("openai/gpt-4o:high");
   });
 
   it("agentTools → --tools 逗号分隔", () => {
@@ -109,7 +106,7 @@ describe("buildSpawnArgs", () => {
   it("全参数组合：所有 flag 存在，不含 -p 也不含 positional task", () => {
     const args = buildSpawnArgs(
       {
-        model: "openai/gpt-4o",
+        ...baseParams,
         thinkingLevel: "low",
         agentTools: ["read"],
         appendSystemPromptPath: "/tmp/p.md",
@@ -179,12 +176,12 @@ describe("buildSpawnArgs", () => {
     expect(args).not.toContain("--extension");
     expect(args).not.toContain("--no-context-files");
     // 仅基础参数
-    expect(args).toEqual(["--mode", "rpc", "--session-dir", "/sessions/dir"]);
+    expect(args).toEqual(["--mode", "rpc", "--session-dir", "/sessions/dir", "--model", "openai/gpt-4o"]);
   });
 
   it("mirrorFlags undefined → 行为等同旧版（TC7）", () => {
     const args = buildSpawnArgs(baseParams);
-    expect(args).toEqual(["--mode", "rpc", "--session-dir", "/sessions/dir"]);
+    expect(args).toEqual(["--mode", "rpc", "--session-dir", "/sessions/dir", "--model", "openai/gpt-4o"]);
     expect(args).not.toContain("--extension");
     expect(args).not.toContain("--no-extensions");
     expect(args).not.toContain("--approve");
@@ -234,14 +231,13 @@ describe("buildSpawnArgs", () => {
   it("sessionFile undefined → 不含 --session（向后兼容）", () => {
     const args = buildSpawnArgs(baseParams);
     expect(args).not.toContain("--session");
-    expect(args).toEqual(["--mode", "rpc", "--session-dir", "/sessions/dir"]);
+    expect(args).toEqual(["--mode", "rpc", "--session-dir", "/sessions/dir", "--model", "openai/gpt-4o"]);
   });
 
-  it("sessionFile + model + thinkingLevel → 三者都进 args（resume 全参数）", () => {
+  it("sessionFile + modelRef + thinkingLevel → 三者都进 args（resume 全参数）", () => {
     const args = buildSpawnArgs({
       ...baseParams,
       sessionFile: "/sessions/sub/resume.jsonl",
-      model: "anthropic/claude",
       thinkingLevel: "high",
     });
     // --session <file>
@@ -251,7 +247,7 @@ describe("buildSpawnArgs", () => {
     // --model provider/id:level（thinkingLevel 作 model 后缀）
     const modelIdx = args.indexOf("--model");
     expect(modelIdx).toBeGreaterThan(-1);
-    expect(args[modelIdx + 1]).toBe("anthropic/claude:high");
+    expect(args[modelIdx + 1]).toBe("openai/gpt-4o:high");
   });
 });
 

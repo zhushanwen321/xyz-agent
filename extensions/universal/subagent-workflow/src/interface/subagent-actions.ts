@@ -49,6 +49,9 @@ const MAX_LIST_LIMIT = 100;
 /** background 启动提示文案（spec FR-3 bgResponse.message）。 */
 const BG_MESSAGE = "detached, will notify on completion (auto-injected message, do not poll)";
 
+/** 通知投递契约回显恒值（U1 预置，U2 账本兑现，见 BgResponse.notifyContract）。 */
+const NOTIFY_CONTRACT = "ledger+at-least-once" as const;
+
 /** subagentId（UUID）在 GUI header 的截断显示长度。 */
 const SUBAGENT_ID_PREVIEW = 8;
 
@@ -92,6 +95,11 @@ export type StartHandlerResult = {
   sessionFile: string | undefined;
   /** 短标签，来自 record（handle.details.slug）。用于 result 行展示。 */
   slug: string;
+  /**
+   * registry 全等回显（U1）：handle.details.model = record.model = `${provider}/${id}`，
+   * 源头是 resolveModel 裁决放行的条目——通过校验 = 子进程必然按此名执行。
+   */
+  model: string;
   response: BgResponse;
 };
 
@@ -234,10 +242,13 @@ export async function startHandler(
     subagentId: handle.subagentId,
     sessionFile: handle.sessionFile,
     slug: handle.details.slug,
+    // [U1] registry 全等回显：record.model 由 resolved（裁决放行条目）拼接，原样透出。
+    model: handle.details.model,
     response: {
       status: "running",
       mode: "background",
       message: BG_MESSAGE,
+      notifyContract: NOTIFY_CONTRACT,
     },
   };
 }
@@ -473,7 +484,8 @@ export function adapter(
     const d = input.domain;
     // MF-3（决策 10 细则 4）：LLM content (text) 用 null 瘦身，防诱导 agent 用 read 绕过工具
     // 直接读 session 文件。真实 sessionFile 仅 details 保留（供 GUI/程序化消费）。
-    result = { action, subagentId: d.subagentId, sessionFile: null, slug: d.slug, bgResponse: d.response };
+    // [U1] model 为 registry 全等回显（放行即全等）。
+    result = { action, subagentId: d.subagentId, sessionFile: null, slug: d.slug, model: d.model, bgResponse: d.response };
   } else if (action === "list") {
     result = { action, subagentId: null, sessionFile: null, listResponse: input.domain.response };
   } else if (action === "cancel") {
@@ -493,7 +505,7 @@ export function adapter(
   let detailsBase: SubagentToolResult = result;
   if (action === "start") {
     const d = input.domain;
-    detailsBase = { action: "start", subagentId: d.subagentId, sessionFile: d.sessionFile ?? null, slug: d.slug, bgResponse: d.response };
+    detailsBase = { action: "start", subagentId: d.subagentId, sessionFile: d.sessionFile ?? null, slug: d.slug, model: d.model, bgResponse: d.response };
   }
 
   // GUI 协议：RPC 模式下附加结构化渲染数据（union 各成员已声明 __gui__?，无需强转）

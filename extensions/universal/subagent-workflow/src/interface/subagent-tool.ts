@@ -90,7 +90,7 @@ const SubagentParams = Type.Object({
     description: 'Agent ref: absolute path to the agent .md file (use <location> from <available_subagents>). If omitted, defaults to "general-purpose" — a generic agent that inherits the main agent\'s model and project context. Do not invent names — only use paths from the injected list.',
   })),
   model: Type.Optional(Type.String({
-    description: 'Model override in "provider/modelId" format. Resolution order (top wins): (1) this param, (2) agent .md frontmatter model, (3) the main agent\'s current model (zero-config default). An explicit model (param or frontmatter) that is missing or unauthorized THROWS — there is no silent fallback to the main model. Omit this param to inherit the main model.',
+    description: 'Model override in "provider/modelId" format. CASE-SENSITIVE: the string must equal a registry entry exactly, including letter case (e.g. "zai-coding-cn/GLM-5.3-Flash", NOT "zai-coding-cn/glm-5.3-flash"). A non-exact match is rejected immediately with "Did you mean" suggestions — retry with the exact suggested string; the system never auto-corrects your input. Resolution order (top wins): (1) this param, (2) agent .md frontmatter model, (3) the main agent\'s current model (zero-config default). An explicit model (param or frontmatter) that is missing or unauthorized THROWS — there is no silent fallback to the main model. Omit this param to inherit the main model.',
   })),
   thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
     description: "Thinking depth override (derived from THINKING_ORDER SSOT, includes 'max'). Omit to default to the model's highest available level (not the main agent's level).",

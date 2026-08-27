@@ -17,9 +17,11 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentCallOpts, AgentResult } from "../../orchestration/models/types.ts";
+import { ModelConfigService, setModelConfigService } from "../model-config-service.ts";
+import type { ModelRegistryLike } from "../model-resolver.ts";
 import { replayJournal } from "../engine/common/event-journal.ts";
 import type { SubprocessAgentRunnerDeps } from "../subprocess-agent-runner.ts";
 import { SubprocessAgentRunner } from "../subprocess-agent-runner.ts";
@@ -184,6 +186,97 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
       // 修复后：opts.model 不再从 ctxModel.id 填底，ctxModel 作为完整对象透传
       expect(capturedOpts!.model).toBeUndefined();
       expect(capturedOpts!.ctxModel).toBe(ctxModel);
+    });
+  });
+
+  // ────────────────────────────────────────────────
+  // [U1 D2] RunContext.modelRef 接入：ctxModel 继承路径孪生守卫
+  // ────────────────────────────────────────────────
+  describe("U1 ctxModel twin guard (RunContext.modelRef 接入)", () => {
+    const prevDataDir = process.env["XYZ_AGENT_DATA_DIR"];
+    let tmpRoot = "";
+
+    /** 装配含指定快照的 ModelConfigService 单例（initModel 注入 registry）。 */
+    function installModelService(registry: ModelRegistryLike): void {
+      tmpRoot = mkdtempSync(join(tmpdir(), "sar-model-ref-"));
+      process.env["XYZ_AGENT_DATA_DIR"] = join(tmpRoot, "engine-data");
+      const svc = new ModelConfigService({ agentDir: join(tmpRoot, "agent"), cwd: tmpRoot });
+      svc.initModel({ modelRegistry: registry, sessionId: "sar-guard" });
+      setModelConfigService(svc);
+    }
+
+    afterEach(() => {
+      // 单例 slot 无 reset API，重装一个空注册服务隔离后续用例（同文件后续
+      // describe 不消费 ctxModel 守卫，getGlobalConfig 对空目录返回默认值）
+      if (tmpRoot) {
+        const svc = new ModelConfigService({ agentDir: join(tmpRoot, "agent"), cwd: tmpRoot });
+        svc.initModel({ modelRegistry: { getAvailable: () => [], find: () => undefined, hasConfiguredAuth: () => false }, sessionId: "cleanup" });
+        setModelConfigService(svc);
+        rmSync(tmpRoot, { recursive: true, force: true });
+        tmpRoot = "";
+      }
+      if (prevDataDir === undefined) delete process.env["XYZ_AGENT_DATA_DIR"];
+      else process.env["XYZ_AGENT_DATA_DIR"] = prevDataDir;
+    });
+
+    it("P-A2 拒单路径：ctxModel 命中但 registry 含孪生 → run 返回 error（ambiguous），executeAndAwait 未被调", async () => {
+      const models = [
+        { id: "GLM-5.3-Flash", name: "flash", provider: "zai-coding-cn", reasoning: false },
+        { id: "glm-5.3-flash", name: "flash lower", provider: "zai-coding-cn", reasoning: false },
+      ];
+      installModelService({
+        getAvailable: () => models,
+        find: (p, id) => models.find((m) => m.provider === p && m.id === id),
+        hasConfiguredAuth: () => true,
+      });
+      const mockService = createMockService();
+      const sar = new SubprocessAgentRunner({
+        subagentService: mockService as unknown as SubprocessAgentRunnerDeps["subagentService"],
+        ctxModel: { id: "GLM-5.3-Flash", name: "flash", provider: "zai-coding-cn", reasoning: false },
+      });
+
+      const result = await sar.run(makeBaseOpts(), new AbortController().signal);
+
+      expect(result.error).toMatch(/ambiguous case variants/);
+      expect(result.content).toBe("");
+      // 守卫在 engine.run 之前：不产生任何 record/spawn（委托零发生）
+      expect(mockService.executeAndAwait).not.toHaveBeenCalled();
+    });
+
+    it("P-A2 放行路径：无孪生 registry 下同 ctxModel 正常委托（守卫零误伤）", async () => {
+      const models = [
+        { id: "GLM-5.3-Flash", name: "flash", provider: "zai-coding-cn", reasoning: false },
+      ];
+      installModelService({
+        getAvailable: () => models,
+        find: (p, id) => models.find((m) => m.provider === p && m.id === id),
+        hasConfiguredAuth: () => true,
+      });
+      const mockService = createMockService(
+        vi.fn().mockResolvedValue(makeMockResult({ content: "ok" })),
+      );
+      const sar = new SubprocessAgentRunner({
+        subagentService: mockService as unknown as SubprocessAgentRunnerDeps["subagentService"],
+        ctxModel: { id: "GLM-5.3-Flash", name: "flash", provider: "zai-coding-cn", reasoning: false },
+      });
+
+      const result = await sar.run(makeBaseOpts(), new AbortController().signal);
+
+      expect(result.error).toBeUndefined();
+      expect(result.content).toBe("ok");
+      expect(mockService.executeAndAwait).toHaveBeenCalledTimes(1);
+    });
+
+    it("ctxModel 未指定时守卫跳过（无单例也不阻断）", async () => {
+      const mockService = createMockService(
+        vi.fn().mockResolvedValue(makeMockResult({ content: "ok" })),
+      );
+      const sar = new SubprocessAgentRunner({
+        subagentService: mockService as unknown as SubprocessAgentRunnerDeps["subagentService"],
+      });
+      const result = await sar.run(makeBaseOpts(), new AbortController().signal);
+      expect(result.content).toBe("ok");
+      expect(mockService.executeAndAwait).toHaveBeenCalledTimes(1);
     });
   });
 
