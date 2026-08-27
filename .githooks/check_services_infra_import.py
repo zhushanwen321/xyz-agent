@@ -41,6 +41,10 @@ ALLOWED_MODULES = {
     "file-change-reconciler",
     # sidecar-binding-sync 注册表 SSOT（2026-08-26）：纯声明+纯函数，同 session-file-utils 族随 R3 收编
     "session-binding-fields",
+    # spawn-env 出站契约构建器（2026-08-27）：纯函数（env 全 DI 不触 process.env），
+    # terminal-service / plugin-host-process 消费 buildOutboundChildEnv 组装子进程 env
+    # （env-propagation-boundary 设计 C-proc-08），同族随 R3 收编
+    "spawn-env",
 }
 
 # value import 行（import { X } from '...infra/...'；import type 豁免）
