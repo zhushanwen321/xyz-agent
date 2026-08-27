@@ -369,6 +369,14 @@ describe('W1-UPDATE_ERROR_STAGES', () => {
 // ─── W1-UpdateError-rawCause ──────────────────────────────────────
 
 describe('W1-UpdateError-rawCause', () => {
+  const originalPlatform = process.platform
+
+  afterEach(() => {
+    // 平台 stub 只在本 describe 生效，afterEach 恢复原值避免污染同文件其他用例
+    // （与 W1-classifyProxyUnreachable / W1-C3 同一恢复模式）
+    Object.defineProperty(process, 'platform', { value: originalPlatform })
+  })
+
   it('W1-UpdateError-rawCause UpdateError has rawCause property', () => {
     const err = new UpdateError('test', 'downloading', 'UPDATE_NETWORK_FAILED')
     expect(err).toHaveProperty('rawCause')
@@ -376,6 +384,10 @@ describe('W1-UpdateError-rawCause', () => {
 
   it('W1-UpdateError-rawCause classifyNetError injects rawCause from err.cause', () => {
     // w2 用 classifyNetError（非 wrapUpdateError）统一分类，内部调 extractRawCause 落盘
+    // [CI Linux] classifyProxyUnreachable 按 D2 要求 darwin 门（net-errors.ts），
+    // 不 stub 平台时 Linux runner 上会落 UPDATE_NETWORK_FAILED 兜底——此处显式
+    // stub darwin 锁定 macOS 本地网络权限分支的契约
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
     const cause = Object.assign(new Error('connect EHOSTUNREACH 192.168.1.202:7890'), {
       code: 'EHOSTUNREACH',
     })
@@ -387,6 +399,26 @@ describe('W1-UpdateError-rawCause', () => {
     expect(updateErr.errorCode).toBe('UPDATE_PROXY_UNREACHABLE')
     expect(updateErr.message).toBe('无法连接代理 (EHOSTUNREACH)')
     // rawCause = extractRawCause 返回最内层 cause.message
+    expect(updateErr.rawCause).toBe('connect EHOSTUNREACH 192.168.1.202:7890')
+  })
+
+  it('W1-UpdateError-rawCause non-darwin (linux) same EHOSTUNREACH input falls back to UPDATE_NETWORK_FAILED with rawCause intact', () => {
+    // D2 跨平台契约对照（锁定 Linux CI 上曾红的场景为预期行为）：
+    // 非 darwin → classifyProxyUnreachable 直接 false → 走通用 EHOSTUNREACH 分支
+    // 报 UPDATE_NETWORK_FAILED；extractRawCause 与平台无关，兜底分支同样携带完整
+    // cause.message（net-errors.ts 中所有分支均传 rawCause）
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    const cause = Object.assign(new Error('connect EHOSTUNREACH 192.168.1.202:7890'), {
+      code: 'EHOSTUNREACH',
+    })
+    const err = new Error('fetch failed', { cause })
+
+    const updateErr = classifyNetError(err, 'downloading', 'http://192.168.1.202:7890')
+
+    expect(updateErr).toBeInstanceOf(UpdateError)
+    expect(updateErr.errorCode).toBe('UPDATE_NETWORK_FAILED')
+    // 断言精确文案：证明走的是 EHOSTUNREACH 专用兜底分支而非磁盘/超时分支
+    expect(updateErr.message).toBe('network connection failed (EHOSTUNREACH)')
     expect(updateErr.rawCause).toBe('connect EHOSTUNREACH 192.168.1.202:7890')
   })
 
