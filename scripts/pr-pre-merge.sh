@@ -29,10 +29,6 @@
 
 set -euo pipefail
 
-# D9 gate 接入守卫：验证步骤依赖仓外 cw CLI；能力探测（版本号与 gate 域能力不对齐）
-command -v cw >/dev/null 2>&1 || { echo "ERROR: 未找到 cw CLI（gate wrap 接入依赖）。恢复动作：npm i -g @zhushanwen/coding-workflow（需含 gate 域版本）或从 coding-workflow 仓跑 dev-link"; exit 2; }
-cw --help 2>&1 | grep -q "gate wrap" || { echo "ERROR: cw CLI 无 gate 域。恢复动作：安装含 gate 域的 npm 版本，或在 coding-workflow 仓 bash .agents/skills/dev-link/use-link.sh"; exit 2; }
-
 QUIET="${PR_PRE_MERGE_QUIET:-0}"
 
 usage() {
@@ -94,13 +90,23 @@ cd "$GIT_ROOT"
 #    注入值来源是 coverage-gate 的测试判定，产物必须存在且针对同一 base，
 #    否则注入的是过期读数。不一致 → exit 2（工具错误），错误信息指向恢复动作。
 if [[ "$MODE" == "test-result" ]]; then
-    # 改查账本：coverage wrap hit 时内层不执行、coverage.json 不重产，
-    # 旧校验（读 coverage.json 存在 + base 一致）会误拦；账本 query 是权威。
-    # --json + node 判定（D1/A3 契约：消费点读 --json，不依赖人类可读行格式）。
-    if ! cw gate query --check coverage --base origin/main --json 2>/dev/null | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));process.exit((d.passEntries||[]).length>0?0:1)"; then
-        echo "ERROR: --test-result 需要 coverage gate 命中记录（未找到，注入值缺少来源产物）。" >&2
-        echo "恢复：先以 wrap 形态跑 coverage gate（裸跑不入账，恢复后仍查不到）：" >&2
-        echo '  cw gate wrap --check coverage --base origin/main --scope extensions/ --scope packages/ --scope .agents/skills/pr-cr-fix/scripts/coverage-gate.py --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml --scope pnpm-workspace.yaml -- python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base origin/main --extra-packages packages/runtime,packages/renderer' >&2
+    EXPECTED_BASE="main"  # 本脚本无 --base 参数；base 概念与 check_changeset 同源（main）
+    if [[ ! -f .review/coverage.json ]]; then
+        echo "ERROR: --test-result 需要 .review/coverage.json（未找到，注入值缺少来源产物）。" >&2
+        echo "恢复：先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main，" >&2
+        echo "再执行 bash scripts/pr-pre-merge.sh --test-result PASS|FAIL" >&2
+        exit 2
+    fi
+    COV_BASE="$(node -e 'try{const c=require("./.review/coverage.json");process.stdout.write(typeof c.base==="string"?c.base:"")}catch(e){}' 2>/dev/null || true)"
+    if [[ -z "$COV_BASE" ]]; then
+        echo "ERROR: .review/coverage.json 缺少 base 字段（或 JSON 无效）——无法确认产物针对的 base，注入判定不可信。" >&2
+        echo "恢复：先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main，" >&2
+        echo "再执行 bash scripts/pr-pre-merge.sh --test-result PASS|FAIL" >&2
+        exit 2
+    fi
+    if [[ "$COV_BASE" != "$EXPECTED_BASE" ]]; then
+        echo "ERROR: .review/coverage.json 的 base=\"$COV_BASE\" 与本次 base=\"$EXPECTED_BASE\" 不一致——产物过期（来自其他 base），注入判定不可信。" >&2
+        echo "恢复：先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main，" >&2
         echo "再执行 bash scripts/pr-pre-merge.sh --test-result PASS|FAIL" >&2
         exit 2
     fi
@@ -165,30 +171,30 @@ MARKER
 # extensions/ 有独立 tsconfig.json（noEmit），项目层暂无全局 typecheck script
 # 默认模式仅 extensions（向后兼容）；--skip-tests / --test-result 扩展为三处
 # （runtime / renderer 的 package.json 均声明 typecheck script：tsc / vue-tsc --noEmit）
-run_step "typecheck:extensions" cw gate wrap --check typecheck-extensions --base origin/main --scope extensions/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- bash -c 'cd "$0" && npx tsc --noEmit' extensions
+run_step "typecheck:extensions" bash -c 'cd "$0" && npx tsc --noEmit' extensions
 if [[ "$MODE" != "default" ]]; then
-    run_step "typecheck:runtime" cw gate wrap --check typecheck-runtime --base origin/main --scope packages/runtime/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- bash -c 'cd packages/runtime && pnpm run typecheck'
-    run_step "typecheck:renderer" cw gate wrap --check typecheck-renderer --base origin/main --scope packages/renderer/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- bash -c 'cd packages/renderer && pnpm run typecheck'
+    run_step "typecheck:runtime" bash -c 'cd packages/runtime && pnpm run typecheck'
+    run_step "typecheck:renderer" bash -c 'cd packages/renderer && pnpm run typecheck'
 fi
 
 # ── Step 2: lint（根 eslint 覆盖全局含 extensions）
-run_step "lint" cw gate wrap --check lint --base origin/main --scope apps/ --scope docs/ --scope e2e/ --scope extensions/ --scope packages/ --scope scripts/ --scope playwright.config.ts --scope taste-lint/ --scope eslint.config.mjs --scope .agents/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- pnpm run lint
+run_step "lint" pnpm run lint
 
 # ── Step 3: test（extensions + runtime + renderer 三条线；按模式取舍）
 if [[ "$MODE" == "default" ]]; then
     # extensions 测试（pnpm -r --filter @zhushanwen/pi-* test = vitest run）
-    run_step "test:extensions" cw gate wrap --check test-extensions --base origin/main --scope extensions/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- pnpm extensions:test
+    run_step "test:extensions" pnpm extensions:test
     # runtime 测试（vitest config 在 packages/runtime/）
-    run_step "test:runtime" cw gate wrap --check test-runtime --base origin/main --scope packages/runtime/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- bash -c 'cd packages/runtime && npx vitest run'
+    run_step "test:runtime" bash -c 'cd packages/runtime && npx vitest run'
     # renderer 测试（vitest config 在 packages/renderer/，含 @ alias）
-    run_step "test:renderer" cw gate wrap --check test-renderer --base origin/main --scope packages/renderer/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- bash -c 'cd packages/renderer && npx vitest run'
+    run_step "test:renderer" bash -c 'cd packages/renderer && npx vitest run'
 elif [[ "$MODE" == "test-result" ]]; then
     # extensions / renderer 线由 coverage-gate 承接（插桩口径），此处不重复执行，
     # 判定以注入值计入最终 result；runtime 线实跑——无插桩、不设 XYZ_SKIP_REAL_PI，
     # real-pi 义务原位承接（TEST-STRATEGY.md 阶段 3a 分工）
     log "  ↷ test:extensions skipped（--test-result 注入: ${TEST_RESULT_INJECT}）"
     RESULTS+=("SKIP test:extensions 0s (injected=${TEST_RESULT_INJECT})")
-    run_step "test:runtime" cw gate wrap --check test-runtime --base origin/main --scope packages/runtime/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- bash -c 'cd packages/runtime && npx vitest run'
+    run_step "test:runtime" bash -c 'cd packages/runtime && npx vitest run'
     log "  ↷ test:renderer skipped（--test-result 注入: ${TEST_RESULT_INJECT}）"
     RESULTS+=("SKIP test:renderer 0s (injected=${TEST_RESULT_INJECT})")
 else
@@ -206,7 +212,7 @@ if [[ "${PR_PRE_MERGE_SKIP_BUILD:-1}" == "1" ]]; then
     log "  ↷ build skipped (PR_PRE_MERGE_SKIP_BUILD=1, default for Electron project)"
     RESULTS+=("SKIP build 0s")
 else
-    run_step "build" cw gate wrap --check build --base origin/main --scope apps/ --scope extensions/ --scope packages/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- pnpm run build
+    run_step "build" pnpm run build
 fi
 
 # ── Step 5: changeset 完整性检查（WARNING 级别，不阻断）

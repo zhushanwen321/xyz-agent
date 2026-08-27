@@ -19,12 +19,6 @@ description: >-
 - 有 GitHub CLI（`gh`）认证
 - 全局安装 fallow（`npm i -g fallow`，实测 2.88.2）——阶段 1.5 度量门禁依赖
 - zcode 环境走路径 2 需 z-subagent-workflow 插件（`zflow` MCP 工具）；workflow 脚本 `.agents/workflows/pr-review-fix.js` 本仓自带（随 git 分发，提交前 `zflow(action="lint")` 校验）
-- gate wrap 接入依赖 cw CLI（含 gate 域）：
-
-```bash
-command -v cw >/dev/null 2>&1 || { echo "ERROR: 未找到 cw CLI（gate wrap 接入依赖）。恢复动作：npm i -g @zhushanwen/coding-workflow（需含 gate 域版本）或从 coding-workflow 仓跑 dev-link"; exit 1; }
-cw --help 2>&1 | grep -q "gate wrap" || { echo "ERROR: cw CLI 无 gate 域。恢复动作：安装含 gate 域的 npm 版本，或在 coding-workflow 仓 bash .agents/skills/dev-link/use-link.sh"; exit 1; }
-```
 
 ## 调用约定
 
@@ -101,7 +95,7 @@ python3 .agents/skills/pr-cr-fix/scripts/validate-extensions-yaml.py <extension-
 ### 执行（主 agent 直接跑）
 
 ```bash
-cw gate wrap --check metrics --base origin/main --scope apps/ --scope docs/ --scope e2e/ --scope extensions/ --scope packages/ --scope scripts/ --scope .agents/skills/pr-cr-fix/scripts/metrics-gate.py --scope .fallowrc.json --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base origin/main
+python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main
 ```
 
 - 产出 `.review/metrics.json`（fail/warn 清单 + 高 CRAP 靶子清单）；exit 1 = fail，exit 2 = 工具错误（中止；fallow 缺失时同样 exit 2 并给出安装命令）
@@ -139,7 +133,9 @@ cw gate wrap --check metrics --base origin/main --scope apps/ --scope docs/ --sc
 ### 执行（主 agent 直接跑）
 
 ```bash
-cw gate wrap --check coverage --base origin/main --scope extensions/ --scope packages/ --scope .agents/skills/pr-cr-fix/scripts/coverage-gate.py --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base origin/main --extra-packages packages/runtime,packages/renderer
+python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main
+# diff 含 packages/shared/**/src/** 时传下游追加（见下方 shared 下游传播）：
+python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main --extra-packages packages/runtime,packages/renderer
 ```
 
 - 自动检测 base...HEAD 改动过 `src/` 的 vitest 包（含 `extensions/shared/<lib>` 三层目录），逐包跑 `vitest run --coverage`（lcov），解析 lcov DA 行命中 × git diff 新增行号（精确路径匹配），算**可执行新增行覆盖率**
@@ -156,10 +152,6 @@ cw gate wrap --check coverage --base origin/main --scope extensions/ --scope pac
 - CI 产物：PR checks 页 Test (renderer) job → artifact "coverage-report"（lcov + html）
 
 renderer 全量阈值（S3-W1 基线-2~3% 重校准：lines 68 / stmts 66 / branches 56 / functions 60）由 CI 强制；其余包 provider 已全部声明（增量口径由 Gate-1.6 覆盖），全量 thresholds 先测量后设阈（见 TEST-STRATEGY §7）。
-
-### legacy 消费链与 gate wrap 缓存交互
-
-coverage wrap hit 时内层脚本不执行、coverage.json 不重产，metrics-gate 消费 `coverage.json` 的 `files` 节自动降级为 fallow-static 静态估算（安全方向：静态估算比真实覆盖更保守，不阻塞）。Gate-3a 场景必 miss（阶段 2 修复刚改代码，scope 内有变更）——产物照产、消费链正常运作；真正 hit 只发生在无改动重跑（如会话中断恢复）。review 维度 B 消费 `.review/metrics.json` 的路径不受影响——hit 时 metrics-gate 内层不执行、metrics.json **不更新**（读到旧文件或缺失），但 hit 仅发生于无改动重跑，而维度 B 的消费时点（阶段 2 修复后）必然先经 miss 重产，链路自洽。
 
 ## [OPTIONAL] Mutation testing 深检
 
@@ -327,9 +319,9 @@ Pi Extension 接口契约 checklist（SDK 签名核对 / spec 偏差记录 / sch
 
 ```bash
 # ① coverage-gate：测试第 2 遍（插桩口径）+ 覆盖率终值；diff 含 shared src 时同样传 --extra-packages（见 1.6）
-cw gate wrap --check coverage --base origin/main --scope extensions/ --scope packages/ --scope .agents/skills/pr-cr-fix/scripts/coverage-gate.py --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base origin/main --extra-packages packages/runtime,packages/renderer
+python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main
 # ② metrics-gate：结构度量终值
-cw gate wrap --check metrics --base origin/main --scope apps/ --scope docs/ --scope e2e/ --scope extensions/ --scope packages/ --scope scripts/ --scope .agents/skills/pr-cr-fix/scripts/metrics-gate.py --scope .fallowrc.json --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base origin/main
+python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main
 # ③ pre-merge 终局：typecheck 三处 + lint 实跑；test:runtime 实跑；test:extensions/renderer 以注入值计
 bash scripts/pr-pre-merge.sh --test-result <PASS|FAIL> --quiet
 ```

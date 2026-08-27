@@ -15,10 +15,6 @@
 
 set -euo pipefail
 
-# D9 gate 接入守卫：能力探测（cw 版本号与 gate 域能力不对齐，能力是唯一可判真形态）
-command -v cw >/dev/null 2>&1 || { echo "ERROR: 未找到 cw CLI（gate wrap 接入依赖）。恢复动作：npm i -g @zhushanwen/coding-workflow（需含 gate 域版本）或从 coding-workflow 仓跑 dev-link"; exit 2; }
-cw --help 2>&1 | grep -q "gate wrap" || { echo "ERROR: cw CLI 无 gate 域。恢复动作：安装含 gate 域的 npm 版本，或在 coding-workflow 仓 bash .agents/skills/dev-link/use-link.sh"; exit 2; }
-
 WORKTREE_DIR="${1:-.}"
 cd "$WORKTREE_DIR"
 
@@ -223,7 +219,7 @@ while IFS= read -r tsconfig; do
         tsc_script=$(get_script "$pkg_file" "typecheck")
         if [[ -n "$tsc_script" ]]; then
             echo "  检查 $label (pnpm run typecheck) ..."
-            run_check "${label}TypeScript 类型检查" cw gate wrap --check "typecheck-$(basename "${dir:-.}")" --base origin/main --scope "${dir#./}/" --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- bash -c "cd '${dir:-.}' && pnpm run typecheck"
+            run_check "${label}TypeScript 类型检查" bash -c "cd '${dir:-.}' && pnpm run typecheck"
             TSC_RAN=true
             continue
         fi
@@ -231,7 +227,7 @@ while IFS= read -r tsconfig; do
         # 如果 build 脚本就是 tsc，用 tsc --noEmit 代替
         if echo "$build_script" | grep -q "tsc"; then
             echo "  检查 $label (tsc --noEmit) ..."
-            run_check "${label}TypeScript 类型检查" cw gate wrap --check "typecheck-$(basename "${dir:-.}")" --base origin/main --scope "${dir#./}/" --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- bash -c "cd '${dir:-.}' && npx tsc --noEmit"
+            run_check "${label}TypeScript 类型检查" bash -c "cd '${dir:-.}' && npx tsc --noEmit"
             TSC_RAN=true
             continue
         fi
@@ -240,16 +236,15 @@ while IFS= read -r tsconfig; do
     # 直接运行 tsc
     if [[ "$dir" == "." ]]; then
         echo "  检查根目录 (tsc --noEmit) ..."
-        run_check "TypeScript 类型检查" cw gate wrap --check typecheck-root --base origin/main --scope ./ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- npx tsc --noEmit
+        run_check "TypeScript 类型检查" npx tsc --noEmit
     else
         echo "  检查 $label (tsc --noEmit) ..."
-        run_check "${label}TypeScript 类型检查" cw gate wrap --check "typecheck-$(basename "${dir:-.}")" --base origin/main --scope "${dir#./}/" --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- bash -c "cd '$dir' && npx tsc --noEmit"
+        run_check "${label}TypeScript 类型检查" bash -c "cd '$dir' && npx tsc --noEmit"
     fi
     TSC_RAN=true
 done < <(find . -maxdepth 2 -name "tsconfig.json" -not -path "*/node_modules/*" -not -path "*/dist/*" 2>/dev/null | sort)
 
 # 前端 vue-tsc（单独处理，因为命令不同）
-# dead code 路径未 wrap 化（xyz-agent 无 frontend/ 目录）
 if [[ -f "frontend/tsconfig.json" ]] || [[ -f "frontend/tsconfig.app.json" ]]; then
     echo "  检查 frontend/ (vue-tsc) ..."
     FE_PKG="frontend/package.json"
@@ -281,7 +276,7 @@ if [[ -f "package.json" ]]; then
     lint_script=$(get_script "./package.json" "lint")
     if [[ -n "$lint_script" ]]; then
         echo "  运行 pnpm run lint ..."
-        run_check "Lint 检查" cw gate wrap --check lint --base origin/main --scope apps/ --scope docs/ --scope e2e/ --scope extensions/ --scope packages/ --scope scripts/ --scope playwright.config.ts --scope taste-lint/ --scope eslint.config.mjs --scope .agents/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- pnpm run lint
+        run_check "Lint 检查" pnpm run lint
         LINT_RAN=true
     fi
 fi
@@ -294,7 +289,7 @@ if ! $LINT_RAN; then
         sub_lint=$(get_script "$pkg_file" "lint")
         if [[ -n "$sub_lint" ]]; then
             echo "  运行 $sub_dir lint ..."
-            run_check "${sub_dir}/ lint 检查" cw gate wrap --check lint --base origin/main --scope "${sub_dir}/" --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- bash -c "cd '$sub_dir' && pnpm run lint"
+            run_check "${sub_dir}/ lint 检查" bash -c "cd '$sub_dir' && pnpm run lint"
             LINT_RAN=true
         fi
     done
@@ -305,7 +300,7 @@ if ! $LINT_RAN; then
     for rc in .eslintrc.js .eslintrc.json .eslintrc.yml eslint.config.mjs eslint.config.js; do
         if [[ -f "$rc" ]]; then
             echo "  运行 npx eslint ..."
-            run_check "Eslint 检查" cw gate wrap --check lint --base origin/main --scope ./ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- npx eslint . --max-warnings 0
+            run_check "Eslint 检查" npx eslint . --max-warnings 0
             LINT_RAN=true
             break
         fi
@@ -330,7 +325,7 @@ if [[ -f "package.json" ]]; then
             skip "测试脚本为默认占位符"
         else
             echo "  运行 pnpm test ..."
-            run_check "单元测试" cw gate wrap --check test-root --base origin/main --scope ./ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- pnpm test
+            run_check "单元测试" pnpm test
             TEST_RAN=true
         fi
     fi
@@ -338,7 +333,7 @@ fi
 
 if ! $TEST_RAN && [[ -f "vitest.config.ts" ]]; then
     echo "  运行 npx vitest run ..."
-    run_check "Vitest 单元测试" cw gate wrap --check "test-$(basename "$(pwd)")" --base origin/main --scope ./ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- npx vitest run
+    run_check "Vitest 单元测试" npx vitest run
     TEST_RAN=true
 fi
 
@@ -356,7 +351,7 @@ if [[ -f "package.json" ]]; then
     build_script=$(get_script "./package.json" "build")
     if [[ -n "$build_script" ]]; then
         echo "  运行 pnpm run build ..."
-        run_check "构建检查" cw gate wrap --check build --base origin/main --scope apps/ --scope extensions/ --scope packages/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- pnpm run build
+        run_check "构建检查" pnpm run build
         BUILD_RAN=true
     fi
 fi
@@ -372,7 +367,7 @@ if [[ -f "frontend/package.json" ]]; then
             :
         else
             echo "  运行 frontend build ..."
-            run_check "前端构建检查" cw gate wrap --check build --base origin/main --scope apps/ --scope extensions/ --scope packages/ --scope package.json --scope pnpm-lock.yaml --scope pnpm-workspace.yaml -- bash -c "cd frontend && pnpm run build"
+            run_check "前端构建检查" bash -c "cd frontend && pnpm run build"
         fi
     fi
 fi
