@@ -51,7 +51,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
     unsubscribe: vi.fn().mockResolvedValue(undefined),
     writeSegments: vi.fn().mockResolvedValue(undefined),
     // useModel.setThinkingLevel 依赖（thinking-level-sync watch 在 mount 时触发）
-    setThinkingLevel: vi.fn().mockResolvedValue(undefined),
+    setThinkingLevel: vi.fn(async (sessionId: string, level: string) => ({ sessionId, level })),
   },
   config: {
     getGlobalSkills: vi.fn().mockResolvedValue([]),

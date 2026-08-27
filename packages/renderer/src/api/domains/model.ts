@@ -35,8 +35,9 @@ export async function listModels(): Promise<ModelInfo[]> {
 
 /**
  * 切换当前 session 的模型（动作；确认由 model.switched push，后续消费）。
- * [U6] 协议层 reply 已修型为 model.switched payload（runtime 侧生效值读回就绪，
- * transport reply 消费生效值的接线归 U5b）——前端暂无消费方，await 丢弃返回值。
+ * [U6] 协议层 reply 已修型为 model.switched payload，runtime 侧回传生效值（C-pi-13：
+ * switchModel 经 set→get_state 读回，settings-message-handler 拆解回填）——前端暂无
+ * 消费方，await 丢弃返回值。
  */
 export async function switchModel(
   sessionId: string,

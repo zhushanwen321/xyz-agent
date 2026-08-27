@@ -46,7 +46,7 @@ const { sessionApiMock, chatApiMock } = vi.hoisted(() => ({
     switchSession: vi.fn().mockResolvedValue(undefined),
     getCommands: vi.fn().mockResolvedValue({ commands: [] }),
     getContext: vi.fn().mockResolvedValue({}),
-    setThinkingLevel: vi.fn().mockResolvedValue(undefined),
+    setThinkingLevel: vi.fn(async (sessionId: string, level: string) => ({ sessionId, level })),
   },
   chatApiMock: {
     send: vi.fn(() => Promise.resolve()),

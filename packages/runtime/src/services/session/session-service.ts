@@ -652,9 +652,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 设置思考档并返回 pi 生效值。
    *
    * P3（pi-assumption final gate）：pi 会钳制模型族不支持的档位（如 mimo 族 max →
-   * high，clampThinkingLevel 就近回落），且钳制时不发事件不写 entry——reply 与内存
-   * 缓存若用请求值，会把 UI 的 pending 确认与 session 缓存污染成未生效档位。生效值
-   * 以 set 后 get_state 快照为准（标量状态唯一权威读路径，ADR-0062）。
+   * high，clampThinkingLevel 就近回落），reply 与内存缓存若用请求值，会把 UI 的
+   * pending 确认与 session 缓存污染成未生效档位。事件侧（PS-04 实证）：钳制致值变
+   * （effective ≠ previous）必发 thinking_level_changed，isChanging=false 仅覆盖
+   * 「值未变」场景；生效值以 set 后 get_state 快照为准（标量状态唯一权威读路径，
+   * ADR-0062）。
    */
   async setThinkingLevel(sessionId: string, level: string): Promise<string> {
     const client = this.pm.getClient(sessionId)
@@ -682,7 +684,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const session = this.sessions.get(sessionId)
     // PR #185 S2 裁决的永久双写形态：effective 来自 pi get_state（权威值），直写让
     // toSummary 与 state_changed fallback 在实例防抖重拉窗口内即读准值（modelId 同理，
-    // 见 switchModel）。pi 同档位钳制不发事件、不写 entry，此直写是唯一即时同步点。
+    // 见 switchModel）。值未变时 pi 不发事件、不写 entry（PS-04），此直写是唯一同步点；
+    // 值变场景事件随后到达，直写保证防抖窗口内的即时性。
     if (session) session.thinkingLevel = effective
     return effective
   }

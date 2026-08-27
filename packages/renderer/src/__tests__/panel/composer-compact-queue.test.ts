@@ -58,7 +58,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
   // chat: useCompactQueue.flush 依赖（TC15 flush 真实路径，非仅 useChat mock）
   chat: { send: chatApiMock.send, steer: chatApiMock.steer },
   model: { switchModel: vi.fn() },
-  session: { setThinkingLevel: vi.fn() },
+  session: { setThinkingLevel: vi.fn(async (sessionId: string, level: string) => ({ sessionId, level })) },
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
   config: { getGlobalSkills: vi.fn().mockResolvedValue([]), getProjectSkills: vi.fn().mockResolvedValue([]), onSkillCacheInvalidated: () => () => {} },
 }))
