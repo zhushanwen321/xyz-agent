@@ -26,7 +26,7 @@ import { collectResult } from "./output-collector.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "./relay-env.ts";
-import { assertThinkingLevel, type ThinkingLevel } from "../shared/model-ref.ts";
+import { assertThinkingLevel, type ThinkingLevel } from "../shared/model-ref";
 import { stringifySchemaCached } from "../shared/schema-jsonify.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";

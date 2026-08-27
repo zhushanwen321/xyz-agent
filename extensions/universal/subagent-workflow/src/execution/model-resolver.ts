@@ -15,10 +15,10 @@ import {
   THINKING_ORDER,
   assertCanonicalModelRef,
   modelRefFromVerified,
-} from "../shared/model-ref.ts";
+} from "../shared/model-ref";
 
 export { THINKING_ORDER };
-export type { ThinkingLevel } from "../shared/model-ref.ts";
+export type { ThinkingLevel } from "../shared/model-ref";
 
 /** 解析失败时错误信息列出的可用模型上限（防超长错误信息）。 */
 const MODEL_LIST_LIMIT = 20;

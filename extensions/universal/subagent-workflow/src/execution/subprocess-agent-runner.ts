@@ -31,7 +31,7 @@ import type { AgentOutcome, EngineHandle } from "./engine/types.ts";
 import { mapToExecuteOptions, mergeTimeoutSignal } from "./execute-options-mapper.ts";
 import { getModelConfigService } from "./model-config-service.ts";
 import type { ModelInfo } from "./model-resolver.ts";
-import { modelRefFromVerified } from "../shared/model-ref.ts";
+import { modelRefFromVerified } from "../shared/model-ref";
 import { registerSpawnedChildForRecord } from "./session-runner.ts";
 import type { SubagentStream } from "./stream-sink.ts";
 import type { SubagentService } from "./subagent-service.ts";
