@@ -796,6 +796,28 @@ export class SubagentService {
     return this.cancelBackground(record);
   }
 
+  /**
+   * [v8.5 A1/B] 全态查找：任意状态（running/closed）× 任意归属（含异 root session）的
+   * record 快照。供 message 拒绝文案分流（A1）与 fork-from 源解析（B）共用。
+   *
+   * 与 getRecordForAction 的差异：不做归属/直接父校验、不重建可变 record 入内存，
+   * 只读快照（light 形态可能缺详情重数据，身份/sidecar 状态字段齐全）。查询顺序与
+   * getRecordForAction 冷路径同款（idToFile 索引直查 → collectRecords 全扫兑底），
+   * 不限 status——终态（sidecar closed）记录也能查到。
+   *
+   * 返回 undefined：id 在内存与磁盘均不存在。
+   */
+  lookupRecordAnyState(id: string): SubagentRecord | undefined {
+    try {
+      this.assertReady();
+    } catch {
+      return undefined; // 未初始化/disposed 时按「不存在」处理（文案分流无需区分）
+    }
+    const direct = this.store.findLightById(id);
+    if (direct) return direct;
+    return this.store.collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined).find((r) => r.id === id);
+  }
+
   // ── 对话模式投递（M2-B3 message action 调用）──────────────
 
   // [review 修复] 已删除 deliverToRunning（busy follow_up/steer 投递 + pendingMessages
@@ -1502,10 +1524,10 @@ export class SubagentService {
         `改用 engine: pi（支持 conversation 续聊），或不传该参数（一次性任务默认形态）`,
       );
     }
-    if (opts.fork === true) {
+    if (opts.fork === true || opts.forkFromSessionFile !== undefined) {
       throw new EngineError(
         "engine_capability_unsupported",
-        `engine '${engine.id}' 不支持 fork（fork 依赖父 pi session 上下文继承，` +
+        `engine '${engine.id}' 不支持 fork${opts.forkFromSessionFile !== undefined ? "（fork-from 同为父 pi session 上下文继承）" : ""}（fork 依赖父 pi session 上下文继承，` +
           `capabilities.steer = '${caps.steer}'——非 pi 引擎无父 session 分叉通道）`,
         `把所需父上下文写进 task 正文后不传 fork，或改用 engine: pi`,
       );
@@ -1705,6 +1727,9 @@ export class SubagentService {
             onEvent,
             stream, // text_delta streaming（background 路径有值，workflow 路径 undefined）
             fork: opts.fork,
+            // [v8.5 B] fork-from 显式源（ExecuteOptions.forkFromSessionFile）优先于
+            // opts.fork 推导的 mainSessionFile；undefined = 旧语义不变。
+            forkSource: opts.forkFromSessionFile,
             worktree: worktreeHandle,
             parentForkDepth: parentDepth, // [MF#4] 父链深度，不从 opts 读
           }, ctx, resume),

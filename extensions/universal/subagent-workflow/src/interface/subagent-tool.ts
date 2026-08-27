@@ -21,7 +21,7 @@ import { getSubagentService } from "../execution/subagent-service.ts";
 import type { SubagentToolResult } from "../execution/types.ts";
 import { extractAgentName } from "./format.ts";
 import { toGuiCtx } from "./gui-mappers.ts";
-import { adapter, cancelHandler, closeHandler, listHandler, messageHandler, startHandler } from "./subagent-actions.ts";
+import { adapter, cancelHandler, closeHandler, forkFromHandler, listHandler, messageHandler, startHandler } from "./subagent-actions.ts";
 import { type RenderContext,renderSubagentCall, renderSubagentResult } from "./tool-render.ts";
 
 // ============================================================
@@ -71,8 +71,8 @@ type SubagentRenderResultCb = (
 // （subagent_start / subagent_list / subagent_cancel），让每个 tool 的 schema 真实
 // 反映必填性。勿在此基础上继续堆 action 条件逻辑——要加就拆 tool。
 const SubagentParams = Type.Object({
-  action: StringEnum(["start", "list", "cancel", "message", "close"], {
-    description: "Operation: 'start' runs a subagent, 'list' shows subagents, 'cancel' stops a background subagent, 'message' sends a follow-up to a running subagent (one-shot subagents are auto-upgraded to conversation mode on first message), 'close' ends a running subagent (conversation-mode or one-shot).",
+  action: StringEnum(["start", "list", "cancel", "message", "close", "fork-from"], {
+    description: "Operation: 'start' runs a subagent, 'list' shows subagents, 'cancel' stops a background subagent, 'message' sends a follow-up to a running subagent (one-shot subagents are auto-upgraded to conversation mode on first message), 'close' ends a running subagent (conversation-mode or one-shot), 'fork-from' spawns a NEW subagent inheriting an older one's history (recovery for restart-disconnected subagents; the old record is untouched).",
   }),
   // ── action:"start" fields (flattened to top level). task/slug REQUIRED for start. ──
   // Missing/empty task or slug throws at runtime (startHandler).
@@ -171,6 +171,17 @@ const SubagentParams = Type.Object({
       description: "If true, terminate immediately even if mid-round (in-progress work is lost). If false (default), let the current round finish, then close. When idle, the subagent closes immediately regardless.",
     })),
   })),
+  // action:"fork-from" → forkFromParam.sourceSubagentId REQUIRED ([v8.5 B] 断联恢复通道).
+  // 从旧 subagent 的会话历史 spawn 新 id：新进程 --fork 指向旧 session 文件（copy-on-write，
+  // 源文件只读不续写）；旧记录/状态机不动。pi 引擎限定（非 pi 在 execute 层拒绝）。
+  forkFromParam: Type.Optional(Type.Object({
+    sourceSubagentId: Type.String({
+      description: "REQUIRED for action:'fork-from'. The OLD subagentId whose conversation history becomes the inherited context of the new subagent. Works for records disconnected by a session restart or already finished; cancelled/worktree-bound/still-running ones are rejected with guidance.",
+    }),
+    prompt: Type.Optional(Type.String({
+      description: "Continuation instruction for the new subagent (what to do next on top of the inherited history). When omitted, a standard handover frame is injected: reconstruct done/decided/remaining from the inherited history, then continue to completion. Whitespace-only treated as omitted.",
+    })),
+  })),
 });
 
 // ============================================================
@@ -185,13 +196,14 @@ function assertNever(value: never): string {
 }
 
 /** Subagent action 字面量联合（与 parameters schema 的 StringEnum 取值一致）。 */
-type SubagentAction = "start" | "list" | "cancel" | "message" | "close";
+type SubagentAction = "start" | "list" | "cancel" | "message" | "close" | "fork-from";
 
 /** 类型守卫：把 schema 投影出的 string 形式 action 收窄回字面量联合。
  *  typebox v1 的 StringEnum Static 退化为 string，需运行时校验 + 类型收窄
  *  才能恢复 switch 的 exhaustiveness 约束。 */
 function isSubagentAction(value: string): value is SubagentAction {
-  return value === "start" || value === "list" || value === "cancel" || value === "message" || value === "close";
+  return value === "start" || value === "list" || value === "cancel" || value === "message"
+    || value === "close" || value === "fork-from";
 }
 
 /** unknown 是否为含 model/thinkingLevel 的对象（类型守卫，替代全可选结构 `as`）。 */
@@ -238,6 +250,7 @@ action:"list" before action:"start" — a reusable running subagent may exist; c
 - action:"close" — end a running subagent and release its resources. REQUIRED closeParam: { subagentId }. Optional: force (default false; true terminates mid-round immediately). Always close when done.
 - action:"list" — list subagents. Pass listParam: { includeFinished?, limit? } (all optional). Read an item's sessionFile for full detail.
 - action:"cancel" — stop a background subagent (legacy verb; for conversation-mode use close). REQUIRED cancelParam: { subagentId }.
+- action:"fork-from" — recovery for subagents disconnected by a session restart/exit: spawns a NEW subagent inheriting the old one's full history via --fork (source read-only, old record untouched). REQUIRED forkFromParam: { sourceSubagentId }. Optional: prompt (continuation instruction; handover frame injected if omitted). Returns { newSubagentId, sourceSessionFile }. Rejected with guidance: cancelled / worktree-bound / still-running sources.
 
 ## Examples
 
@@ -250,6 +263,7 @@ action:"list" before action:"start" — a reusable running subagent may exist; c
 {"action":"close","closeParam":{"subagentId":"sa-550e8400"}}
 {"action":"list","listParam":{"includeFinished":false,"limit":20}}
 {"action":"cancel","cancelParam":{"subagentId":"sa-550e8400"}}
+{"action":"fork-from","forkFromParam":{"sourceSubagentId":"sa-550e8400","prompt":"continue from where it stopped; verify tests first"}}
 \`\`\`
 
 ## After launching — do NOT wait
@@ -392,6 +406,8 @@ const executeSubagent: SubagentExecuteCb = async (
       return adapter({ action: "message", domain: await messageHandler(service, params.messageParam) }, toGuiCtx(_ctx));
     case "close":
       return adapter({ action: "close", domain: await closeHandler(service, params.closeParam) }, toGuiCtx(_ctx));
+    case "fork-from":
+      return adapter({ action: "fork-from", domain: await forkFromHandler(service, params.forkFromParam) }, toGuiCtx(_ctx));
     default:
       // assertNever：让 exhaustiveness 成为承重约束——新增 action 时 tsc 报错，
       // 而非悄悄落入此分支。

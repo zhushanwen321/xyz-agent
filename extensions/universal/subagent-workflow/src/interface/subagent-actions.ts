@@ -29,6 +29,7 @@ import type {
   CloseResponse,
   ExecutionStatus,
   ExternalState,
+  ForkFromResponse,
   ListResponse,
   MessageResponse,
   SubagentListItem,
@@ -113,6 +114,97 @@ export interface CancelHandlerInput {
 export interface CancelHandlerResult {
   subagentId: string;
   response: CancelResponse;
+}
+
+// ============================================================
+// [v8.5 A1/B] message 拒绝文案分流 + fork-from 引导语框架
+// ============================================================
+
+/**
+ * [v8.5 A1] message 拒绝时的可行动文案分流。
+ *
+ * 背景：getRecordForAction 冷查只认 status==='running'（SP-2 可续聊重建），任何终态/
+ * 异归属记录都落到同一个「not found or not owned」错误，把两类完全不同的场景混为一谈：
+ *   - user-close/cancelled：用户主动告别，记录真没了 → 引导 start 新的
+ *   - parent-shutdown/gc/orphan 等：父会话重启/进程退出导致的断联，对话 jsonl 完好，
+ *     resume/fork 基建现成 → 引导 fork-from 从旧记录接续
+ *
+ * 分流规则（消费方是 LLM，保持正交简单）：
+ *   - 找不到记录 → 原样透传 getRecordForAction 错误（id 打错最常见，原文案最准）
+ *   - closed + user-close/cancelled →「已主动关闭，无法续聊」文案
+ *   - 其余（closed 其他 reason / running 但异归属）→「断联可接续」文案
+ */
+export function endedMessageGuard(service: SubagentService, id: string, original: unknown): Error {
+  let snap: SubagentRecord | undefined;
+  try {
+    snap = service.lookupRecordAnyState(id);
+  } catch {
+    snap = undefined;
+  }
+  if (!snap) {
+    return original instanceof Error ? original : new Error(String(original));
+  }
+  if (snap.status === "closed") {
+    if (snap.closedReason === "cancelled" || snap.closedReason === "user-close") {
+      return new Error(
+        `subagent ${id} was deliberately closed by user (closedReason: ${snap.closedReason}) — ` +
+        `it cannot be messaged or resumed; nothing can reattach to it. ` +
+        `Recovery: start a new subagent (action:'start'); use action:'list' with includeFinished:true to review its final output.`,
+      );
+    }
+    return new Error(
+      `subagent ${id} is ended but reconnectable (closedReason: ${snap.closedReason ?? "unknown"}` +
+      `${describeClosedContext(snap)}). Its conversation history is intact at ${snap.sessionFile ?? "(session file unavailable)"}. ` +
+      `Recovery: resume from that history with {"action":"fork-from","forkFromParam":{"sourceSubagentId":"${id}"}}, ` +
+      `or read key points directly from the session file.`,
+    );
+  }
+  // running 但未通过 getRecordForAction：记录属于当前进程外的另一个 session 树
+  //（主会话重启前的遗留态，或其他并发 pi 进程的活跃 subagent）。无论哪种，历史
+  // jsonl 只读安全，fork-from 快照接续均有效。
+  return new Error(
+    `subagent ${id} is alive but belongs to a different session tree than this one` +
+    `${describeClosedContext(snap)}. You cannot message it from here. ` +
+    `Recovery: branch from its history with {"action":"fork-from","forkFromParam":{"sourceSubagentId":"${id}"}}` +
+    `${snap.sessionFile ? ` (source session: ${snap.sessionFile})` : ``}; otherwise start a new subagent.`,
+  );
+}
+
+/** 终态快照的上下文人话短语（仅作补充描述，主分支逻辑在 endedMessageGuard）。 */
+function describeClosedContext(r: SubagentRecord): string {
+  switch (r.closedReason) {
+    case "parent-shutdown":
+      return " — it was disconnected when the previous parent session exited";
+    case "parent-fork":
+      return " — it was detached when the previous parent session forked";
+    case "parent-new":
+      return " — it was detached when the previous parent session switched";
+    case "disconnected":
+      return " — it ended in a previous session (exact cause unknown)";
+    default:
+      return "";
+  }
+}
+
+/**
+ * [v8.5 B] fork-from 开场引导语框架（prompt 未指定时注入）：先从继承的历史重建状态
+ * 再继续，防猜。
+ */
+const FORK_FROM_DEFAULT_PROMPT =
+  "You are taking over work from a previous subagent whose full conversation history you inherited (--fork). " +
+  "First reconstruct state from that history: list what was already done, decided, and left unfinished (a few bullet lines). " +
+  "Then continue the remaining work to completion.";
+
+/**
+ * [v8.5 B] 有显式接续指令时的包裹框架：指令在前、上下文重建要求在后——指令首见即达，
+ * 不湮没在元说明里（弱模型友好）。
+ */
+function wrapForkFromPrompt(prompt: string): string {
+  return (
+    prompt.trim() +
+    "\n\n(You are continuing a previous subagent's inherited conversation via --fork. " +
+    "Reconstruct state from that history first — what was done, decided, and remains — then execute the instruction above.)"
+  );
 }
 
 // ============================================================
@@ -370,8 +462,16 @@ export async function messageHandler(
   );
   const interrupt = input?.interrupt === true;
 
-  // 归属守卫（决策 3）：getRecordForAction 内部校验 rootSessionId
-  const record = service.getRecordForAction(id);
+  // 归属守卫（决策 3）：getRecordForAction 内部校验 rootSessionId。
+  // [v8.5 A1] 拒绝时经 endedMessageGuard 分流：找不到 → 原错误；user-close/cancelled
+  // → 「已主动关闭」；断联/已完成/异归属 → fork-from 可行动指引。仅 message action
+  // 升级文案——close/cancel 维持原语义（它们不需要恢复通道）。
+  let record: ExecutionRecord;
+  try {
+    record = service.getRecordForAction(id);
+  } catch (err) {
+    throw endedMessageGuard(service, id, err);
+  }
 
   // SP-5 one-shot upgrade：非 chatMode 的 active record（running/idle）收到 message 时
   // 自动升级为 chatMode，后续走 deliverMessage 统一投递路径（热路径或冷路径 resume）。
@@ -447,6 +547,124 @@ export async function closeHandler(
 }
 
 // ============================================================
+// fork-from handler（[v8.5 B] 断联恢复通道）
+// ============================================================
+
+export interface ForkFromHandlerInput {
+  sourceSubagentId?: string;
+  prompt?: string;
+}
+
+/** fork-from 领域对象（adapter 包成 forkFromResponse）。 */
+export type ForkFromHandlerResult = {
+  kind: "fork-from";
+  /** 新 subagent 的 record id（后续续聊用 action:'message'）。 */
+  subagentId: string;
+  /** 作为 --fork 继承源的旧记录 session 文件。 */
+  sourceSessionFile: string;
+  response: ForkFromResponse;
+};
+
+/**
+ * fork-from action handler：从旧 subagent 的会话历史 spawn 新 id 接续。
+ *
+ * 用于 subagent 因会话重启/进程退出而断联后的恢复：新进程以 --fork 指向旧 session
+ * 文件（copy-on-write 建分支会话），继承全部对话历史；源文件只读不续写。
+ * 旧记录本身不动——closed 单向状态机不变量、tryTransition 语义均不触碰。
+ *
+ * 守卫链（拒绝原因与行动语言对齐现有 MF-4 风格）：
+ *   1. 本进程内存 running → 还活着，应走 message（防双写同一子 session 文件）
+ *   2. 不存在            → 引导 list 确认
+ *   3. 异进程活跃（磁盘 .alive pid 存活 / running 快照）→ 别处正跑，不可从此接续
+ *      （同 id 双写风险；等待其结束或在其所属会话内操作）
+ *   4. tombstone/cancelled → 用户主动取消，真没了（不提供接续通道）
+ *   5. worktree 记录     → checkout 不可复用，fork 子进程 cwd 会回落主仓破坏隔离
+ *      （对齐 deliverMessage 的 hadWorktree 守卫语义）
+ *   6. 无子 session 文件  → 无历史可继承（entry-only 孤儿：spawn 窗口期中断）
+ *
+ * @throws Error 各守卫命中 / service.execute 失败（引擎不支持等）
+ */
+export async function forkFromHandler(
+  service: SubagentService,
+  input: ForkFromHandlerInput | undefined,
+): Promise<ForkFromHandlerResult> {
+  const id = input?.sourceSubagentId?.trim();
+  if (!id) throw new Error("forkFromParam.sourceSubagentId is required for action:'fork-from'");
+  const prompt = input?.prompt?.trim() ?? "";
+  const task = prompt ? wrapForkFromPrompt(prompt) : FORK_FROM_DEFAULT_PROMPT;
+
+  // 守卫 1：本进程内存 running —— 直接 message 即可，fork-from 会双写其 session 文件。
+  if (service.findRecord(id)) {
+    throw new Error(
+      `subagent ${id} is still active in this process — use action:'message' to continue it directly. ` +
+      `If you want a parallel branch from its history, close it first (action:'close'), then fork-from.`,
+    );
+  }
+
+  // 守卫 2：全态查找（内存 archived + 磁盘重建）。
+  const source = service.lookupRecordAnyState(id);
+  if (!source) {
+    throw new Error(
+      `No subagent record with id "${id}". It may never have existed or been garbage-collected — ` +
+      `use action:'list' with includeFinished:true to verify the id.`,
+    );
+  }
+
+  // 守卫 3：异进程活跃（磁盘分支 3 externalInstance = 另一进程的活 pid marker；
+  // 或快照 running 但非本进程内存——上方 findRecord 已排除本进程，此处 status==='running'
+  // 只剩异进程形态）。双写防护：fork 虽 copy-on-write，但等它结束再接更安全。
+  if (source.externalInstance !== undefined || source.status === "running") {
+    throw new Error(
+      `subagent ${id} appears to be running in another process (alive pid marker present). ` +
+      `Recovery: wait until it finishes, or operate it in its own session; then retry fork-from.`,
+    );
+  }
+
+  // 守卫 4：tombstone/cancelled —— 用户主动告别，无接续语义。
+  if (source.status === "closed" && (source.closedReason === "cancelled")) {
+    throw new Error(
+      `subagent ${id} was cancelled by user — cancelled records cannot be resumed. ` +
+      `Start a fresh subagent (action:'start') instead.`,
+    );
+  }
+
+  // 守卫 5：worktree 记录 —— WorktreeHandle 不可序列化，checkout 已被 reaper/cleanup
+  // 回收；fork 子进程若复用旧路径会回落主 repo（破坏文件隔离）。与 deliverMessage 的
+  // hadWorktree 守卫同一判据同一理由。
+  if (source.worktree === true) {
+    throw new Error(
+      `subagent ${id} was created with worktree isolation; that binding was lost when its parent process ended. ` +
+      `Resuming from its history would run outside the original worktree isolation. ` +
+      `Recovery: start a new subagent with action:'start' and carry over key findings manually ` +
+      `(read ${source.sessionFile ?? "its session file"} if needed).`,
+    );
+  }
+
+  // 守卫 6：无子 session 文件（entry-born 孤儿：spawn 窗口期中断，从未开跑）。
+  if (!source.sessionFile) {
+    throw new Error(
+      `subagent ${id} has no child session file to inherit from (it never started successfully). ` +
+      `Recovery: start a fresh subagent (action:'start') describing the task again.`,
+    );
+  }
+
+  // slug 派生：源 slug + -resumed 后缀（截断到上限）。仅展示标签，不需唯一。
+  const baseSlug = (source.slug || source.agent || "resumed").slice(0, SLUG_MAX_LENGTH - "-resumed".length);
+  const handle = await service.execute({
+    task,
+    slug: `${baseSlug}-resumed`,
+    forkFromSessionFile: source.sessionFile,
+  });
+
+  return {
+    kind: "fork-from",
+    subagentId: handle.subagentId,
+    sourceSessionFile: source.sessionFile,
+    response: { newSubagentId: handle.subagentId, sourceSessionFile: source.sessionFile },
+  };
+}
+
+// ============================================================
 // adapter（领域对象 → SubagentToolResult + {content, details}）
 // ============================================================
 
@@ -459,7 +677,8 @@ type AdapterInput =
   | { action: "list"; domain: ListHandlerResult }
   | { action: "cancel"; domain: CancelHandlerResult }
   | { action: "message"; domain: MessageHandlerResult }
-  | { action: "close"; domain: CloseHandlerResult };
+  | { action: "close"; domain: CloseHandlerResult }
+  | { action: "fork-from"; domain: ForkFromHandlerResult };
 
 export function adapter(
   input: AdapterInput,
@@ -478,7 +697,13 @@ export function adapter(
     result = { action, subagentId: input.domain.subagentId, sessionFile: null, cancelResponse: input.domain.response };
   } else if (action === "message") {
     result = { action, subagentId: input.domain.subagentId, sessionFile: null, messageResponse: input.domain.response };
+  } else if (action === "fork-from") {
+    // MF-3 同款瘦身：sourceSessionFile 真实路径只在 forkFromResponse 内层（LLM 接续
+    // 不需要拼路径，需要时 list/details 可取）；顶层 sessionFile 保持 null 一致性。
+    const d = input.domain;
+    result = { action, subagentId: d.subagentId, sessionFile: null, forkFromResponse: d.response };
   } else {
+    // action === "close"
     // action === "close"
     result = { action, subagentId: input.domain.subagentId, sessionFile: null, closeResponse: input.domain.response };
   }
@@ -546,6 +771,14 @@ export function buildGuiComponent(
   if (action === "message") {
     return guiComponent("stats-line", {
       items: [{ label: "messaged", value: input.domain.subagentId, severity: "ok" }],
+    });
+  }
+  if (action === "fork-from") {
+    return guiComponent("stats-line", {
+      items: [
+        { label: "forked-from", value: input.domain.sourceSessionFile },
+        { label: "new subagent", value: input.domain.subagentId, severity: "ok" },
+      ],
     });
   }
   if (action === "close") {

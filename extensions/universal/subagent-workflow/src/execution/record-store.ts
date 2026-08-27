@@ -28,7 +28,7 @@ import * as path from "node:path";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { getCurrentActivity, getDisplayItems, getEventLog, markReconstructedStatus, snapshot as toSnapshot } from "./execution-record.ts";
-import { writeFinalized } from "./finalized-marker.ts";
+import { readFinalizedReason, writeFinalized } from "./finalized-marker.ts";
 import { toSubagentRecordEntry, SUBAGENT_RECORD_CUSTOM_TYPE } from "./record-entry.ts";
 import type { ManifestRecord, ManifestStore } from "./manifest-store.ts";
 import { INDEX_WRITE_MIN_INTERVAL_MS, loadIndex, saveIndex } from "./sessions-index.ts";
@@ -44,6 +44,7 @@ import {
 } from "./session-reconstructor.ts";
 import type {
   AliveMarker,
+  ClosedReason,
   ExecutionRecord,
   ExecutionStatus,
   RecordSnapshot,
@@ -106,6 +107,9 @@ interface Stamp {
 interface SidecarMatrix {
   tomb: CancelledTombstone | undefined;
   finalized: boolean;
+  /** [v8.5 A2] `.finalized` sidecar 内容携带的关闭原因（readFinalizedReason 读出）。
+   *  旧格式空文件 → 空串（死因不可考）；sidecar 不存在 → undefined。 */
+  finalizedReason: string | undefined;
   alive: AliveMarker | undefined;
   /** jsonl mtime（light 分支 2 的 endedAt 近似——finalize 后文件不再变化）。 */
   jsonlMtimeMs: number;
@@ -137,6 +141,9 @@ interface FileCacheEntry {
   /** 最近一次重建时读到的 sidecar 原始内容（校验命中路径复用，不重读文件）。 */
   tomb: CancelledTombstone | undefined;
   aliveData: AliveMarker | undefined;
+  /** [v8.5 A2] 最近一次重建时读到的 `.finalized` 内容 reason（同上，校验命中复用）。
+   *  sidecar 不存在时恒 undefined（与「存在但空串」区分，后者是旧格式空文件）。 */
+  finalReason: string | undefined;
 }
 
 /** 负缓存条目：确认无 identity 的文件（损坏/异构）。缓存「没有」这一事实，
@@ -312,6 +319,21 @@ function statStamp(p: string): Stamp | null {
 
 function sameStamp(a: Stamp, b: Stamp): boolean {
   return a.mtimeMs === b.mtimeMs && a.size === b.size;
+}
+
+/** ClosedReason 合法值集合（sidecar 内容校验用：外部损坏/手写垃圾内容 → disconnected）。 */
+const CLOSED_REASONS: ReadonlySet<string> = new Set([
+  "parent-shutdown",
+  "parent-fork",
+  "parent-new",
+  "user-close",
+  "cancelled",
+  "gc",
+]);
+
+/** sidecar 内容是否为合法的 ClosedReason 字面量（disconnected 只作兜底产出，不接受写入）。 */
+function isValidClosedReason(value: string | undefined): value is ClosedReason {
+  return value !== undefined && CLOSED_REASONS.has(value);
 }
 
 function sameNullableStamp(a: Stamp | null, b: Stamp | null): boolean {
@@ -612,7 +634,10 @@ export class RecordStore {
       parseOk = false;
     }
     // .finalized sidecar：防重锚（同 doFinalizeRecord 终态路径的收尾标记）。
-    writeFinalized(sessionFile);
+    // 显式携 reason="gc"：孤儿判定「末行完整 = 自然完成」，与 doFinalizeRecord 写入的
+    // 真实 reason 同层——否则无 reason sidecar 在磁盘重建时被兜底为 disconnected，
+    // 把正常完成的记录误标成断联。
+    writeFinalized(sessionFile, "gc");
     this.reportSubagentRecord({
       ...rec,
       status: "closed",
@@ -733,7 +758,7 @@ export class RecordStore {
    *
    * 优先级：
    *   1. .cancelled → closed（closedReason=cancelled）
-   *   2. .finalized → closed（closedReason=gc）
+   *   2. .finalized → closed（closedReason=sidecar 内容 reason；空/旧格式 → disconnected）
    *   3. .alive + pid 存活 + 未超软超时 → running, externalInstance=true
    *   4. 兜底（无 marker、pid 死、超时）→ running（v4 B-1 可续聊语义）
    *
@@ -851,7 +876,8 @@ export class RecordStore {
 
     // [perf L-1] 磁盘索引查询（首扫惰性装载，miss/空索引时 get 恒 undefined = 无索引）。
     // 条目戳匹配 jsonl 当前 stat → 零内容读取构造缓存条目。sidecar payload（tombstone/
-    // alive）是活态数据，沿用探测分支的每轮重读语义。
+    // alive）是活态数据，沿用探测分支的每轮重读语义；finalized reason 静态数据仅在
+    // sidecar 存在时读一次（文件小，成本可忽略）。
     if (this.indexEntries !== null) {
       const hit = this.indexEntries.get(path.basename(file));
       if (hit !== undefined && hit.mtimeMs === jsonl.mtimeMs && hit.size === jsonl.size) {
@@ -862,10 +888,11 @@ export class RecordStore {
         }
         const tomb = cancelled !== null ? readCancelledTombstone(file) : undefined;
         const aliveData = alive !== null ? readAliveMarker(file) : undefined;
+        const finalReason = finalized !== null ? readFinalizedReason(file) : undefined;
         const entry: FileCacheEntry = {
           light: RecordStore.buildRecord(
             { ...hit, forkDepth: undefined, sessionFile: file },
-            { tomb, finalized: finalized !== null, alive: aliveData, jsonlMtimeMs: jsonl.mtimeMs, now },
+            { tomb, finalized: finalized !== null, finalizedReason: finalReason, alive: aliveData, jsonlMtimeMs: jsonl.mtimeMs, now },
           ),
           full: undefined,
           jsonl,
@@ -874,6 +901,7 @@ export class RecordStore {
           alive,
           tomb,
           aliveData,
+          finalReason,
         };
         this.fileCache.set(file, entry);
         this.idToFile.set(hit.id, file);
@@ -900,10 +928,12 @@ export class RecordStore {
     }
     const tomb = cancelled !== null ? readCancelledTombstone(file) : undefined;
     const aliveData = alive !== null ? readAliveMarker(file) : undefined;
+    const finalReason = finalized !== null ? readFinalizedReason(file) : undefined;
     const entry: FileCacheEntry = {
       light: RecordStore.buildRecord(header, {
         tomb,
         finalized: finalized !== null,
+        finalizedReason: finalReason,
         alive: aliveData,
         jsonlMtimeMs: jsonl.mtimeMs,
         now,
@@ -915,6 +945,7 @@ export class RecordStore {
       alive,
       tomb,
       aliveData,
+      finalReason,
     };
     this.fileCache.set(file, entry);
     this.idToFile.set(header.id, file);
@@ -1021,6 +1052,7 @@ export class RecordStore {
         entry.full = RecordStore.buildRecord(recon, {
           tomb: entry.tomb,
           finalized: entry.finalized !== null,
+          finalizedReason: entry.finalized !== null ? (entry.finalReason ?? "") : undefined,
           alive: entry.aliveData,
           jsonlMtimeMs: entry.jsonl.mtimeMs,
           fullEndedAt: recon.endedAt,
@@ -1116,9 +1148,14 @@ export class RecordStore {
     }
     // ── 分支 2: .finalized ──
     else if (m.finalized) {
-      // closed 统一终态：done/failed/crashed 合并为 closed + closedReason=gc。
+      // closed 统一终态：done/failed/crashed 合并为 closed。closedReason 优先用
+      // sidecar 内容携带的真实原因（[v8.5 A2] doFinalizeRecord Step3 写入）。
+      // 空内容（旧格式空文件 / 未携 reason 的外部写入）→ disconnected 兜底：死因
+      // 不可考，但「正常结束过」信号仍在——替代旧的误导性 gc 兜底（自然完成 vs
+      // 断联不分）。非枚举值（外部损坏/手写垃圾内容）同 treated as unknown → disconnected。
       markReconstructedStatus(rec, "closed");
-      rec.closedReason = "gc";
+      const reason = m.finalizedReason?.trim();
+      rec.closedReason = isValidClosedReason(reason) ? (reason as ClosedReason) : "disconnected";
       // 全量路径用最后 entry ts（精确）；light 路径用 jsonl mtime 近似（finalize 后
       // 文件不再变化，误差 <1s），避免重建后耗时随墙钟无限增长。
       rec.endedAt = m.fullEndedAt ?? m.jsonlMtimeMs;
