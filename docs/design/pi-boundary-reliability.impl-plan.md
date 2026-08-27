@@ -1,6 +1,6 @@
 # pi 边界可靠性（双切片）实施计划
 
-基线: （本文件首次 commit 后回填 hash） | 来源设计: docs/design/pi-boundary-reliability.md（程序层 + 切片 2）+ docs/design/subagent-dispatch-reliability.md（切片 1） | 日期: 2026-08-28
+基线: 448438847ab30b4d3e17a44ac2f576990312af86 | 来源设计: docs/design/pi-boundary-reliability.md（程序层 + 切片 2）+ docs/design/subagent-dispatch-reliability.md（切片 1） | 日期: 2026-08-28
 
 > 范围决策：两切片一次做完（用户 2026-08-28 拍板）。切片 1 的 U1-U4 与切片 2 的 U5-U8 合并为一张 DAG；U7 按护栏挂载时序拆为 U7a（守卫核心）/ U7b（挂载接线）。共 9 单元、3 波次。
 
