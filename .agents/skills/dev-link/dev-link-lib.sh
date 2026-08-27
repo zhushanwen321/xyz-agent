@@ -4,8 +4,9 @@
 # 核心设计：短名 → 事实的映射从本项目 extensions/ 目录扫描构建（SSOT = 各包的 package.json）：
 #   extensions/<short>/package.json
 #     ├─ name           → npm 包名（如 @zhushanwen/pi-subagent-workflow）
-#     ├─ pi.extensions  → 是否真 pi extension（库包如 quota-providers 没有该字段）
-#     └─ 目录本身        → 源码目录（symlink target / XYZ_EXTENSION_PATHS 条目）
+#     ├─ pi.extensions  → 是否真 pi extension（库包如 llm-shared 没有该字段）
+#     ├─ 目录本身        → 源码目录（symlink target / XYZ_EXTENSION_PATHS 条目）
+#     └─ deprecated     → 已废弃包标记（字符串说明），查表时打 ⚠ 警告不阻断
 #
 # npm 包的安装/卸载交给 pi 原生命令（pi install / pi uninstall，同时管 settings 条目 + node_modules 包），
 # 本库不自己写 settings/node_modules 操作。
@@ -46,7 +47,9 @@ dl_resolve_short_name() {
 }
 
 # ── 构建映射：一次 node 扫描 extensions/{taiji,universal}/ + extensions/shared/ ──
-# 输出行格式：short|npm_name|src_dir|is_extension（is_extension = package.json 有 pi.extensions）
+# 输出行格式：short|npm_name|src_dir|is_extension|deprecated
+# （is_extension = package.json 有 pi.extensions；deprecated = package.json 的 deprecated 字段值，
+#   是字符串废弃说明而非布尔，空串表示未废弃）
 dl_build_mapping() {
 	dl_git_root || return 1
 	local base="$DL_GIT_ROOT/extensions"
@@ -64,7 +67,8 @@ dl_build_mapping() {
 				if (!fs.existsSync(pkgPath)) continue;
 				const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
 				const isExt = !!(pkg.pi && pkg.pi.extensions);
-				out.push([entry.name, pkg.name || "", d, isExt ? "yes" : "no"].join("|"));
+				const dep = pkg.deprecated ? String(pkg.deprecated).replace(/[|\n]/g, " ") : "";
+				out.push([entry.name, pkg.name || "", d, isExt ? "yes" : "no", dep].join("|"));
 			}
 		}
 		process.stdout.write(out.join("\n"));
@@ -85,6 +89,14 @@ dl_lookup() {
 	DL_NPM_NAME="$(echo "$line" | cut -d'|' -f2)"
 	DL_SRC_DIR="$(echo "$line" | cut -d'|' -f3)"
 	DL_IS_EXT="$(echo "$line" | cut -d'|' -f4)"
+	DL_DEPRECATED="$(echo "$line" | cut -d'|' -f5)"
+	# 废弃包警告：dl_lookup 是四个脚本共用的公共解析路径，在此统一拦截。
+	# deprecated 字段值是字符串废弃说明（非布尔），非空即警告；只提示不阻断
+	# （unlink 等场景仍需正常查表）。link 验证完应卸载废弃包，避免与替代包双重生效。
+	if [ -n "$DL_DEPRECATED" ]; then
+		yellow "⚠ ${DL_SHORT}（${DL_NPM_NAME}）已在 package.json 标记废弃：${DL_DEPRECATED}"
+		yellow "  废弃包残留安装会与替代包重复生效（unified-hooks 与 base-tool-enhance 会双重拦截 bash），验证完请尽快 unlink 并卸载"
+	fi
 	return 0
 }
 

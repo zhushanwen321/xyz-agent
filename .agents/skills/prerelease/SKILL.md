@@ -53,12 +53,12 @@ bash scripts/npm-prerelease.sh @zhushanwen/pi-goal      # 指定包名
 
 ### [MANDATORY] 2. 产物通知
 
-**Electron target**：脚本阶段 6 完成后输出产物链接。
+**Electron target**：脚本阶段 6 输出产物下载链接，随后阻塞等待你确认（确认前脚本未结束，链接在等待提示之前已输出）。
 - macOS: 下载 `.dmg`，拖入 Applications 安装测试
 - Windows: 下载 `.exe` 安装测试
 - Linux: 下载 `.AppImage` 运行测试
 
-**npm target**：脚本完成后输出安装命令：
+**npm target**：脚本在阶段 6 阻塞询问前输出安装命令（确认前脚本未结束，安装命令已在输出区）：
 ```bash
 npm install <pkg>@dev
 ```
@@ -86,7 +86,7 @@ CI 失败或超时时脚本直接中断退出，不会清理任何远程状态�
 
 | 条件 | 检查方式 |
 |------|---------|
-| npm scope 已创建 | `curl -s -o /dev/null -w "%{http_code}" https://registry.npmjs.org/@xyz-agent%2fextension-protocol` 返回 200（不要用 npm view——镜像同步延迟会误报） |
+| 包已发布可访问 | `curl -s -o /dev/null -w "%{http_code}" https://registry.npmjs.org/@xyz-agent%2fextension-protocol` 返回 200（不要用 npm view——镜像同步延迟会误报） |
 | GitHub repo 有 `NPM_TOKEN` secret | `gh secret list --repo zhushanwen321/xyz-agent` |
 | changeset 已初始化 | `.changeset/config.json` 存在 |
 

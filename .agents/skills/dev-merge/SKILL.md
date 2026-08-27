@@ -10,7 +10,7 @@ description: >-
 
 把**当前 feat worktree** 的分支合并到 `../dev-x.x.x` 集成 worktree（bare repo + 兄弟 worktree 布局），合并完成后清理源 worktree 与分支。
 
-**输入**：一个参数 = 目标 dev 分支名（同时是 worktree 目录名），如 `dev-0.9.6`。无参数时列出 `../dev-*` 让用户选择，不要猜。
+**输入**：一个参数 = 目标 dev 分支名（同时是 worktree 目录名），如 `dev-0.9.11`。无参数时列出 `../dev-*` 让用户选择，不要猜。
 
 **边界**：
 - 只做本地集成合并，**不 push**（push 必须用户明确授权）
@@ -66,7 +66,7 @@ cd /Users/zhushanwen/Code/xyz-agent-workspace/<dev-branch> && git add <files> &&
 bash /Users/zhushanwen/Code/xyz-agent-workspace/dev-0.9.10/.agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>
 ```
 
-脚本内置安全闸：分支未合并进 dev 拒绝清理（`is_merged` 闸门通过后脚本直接 `git branch -D`，不依赖 `git branch -d`——feat 分支 upstream 是 origin/main，`-d` 校验的是 upstream 包含性，即便已合入 dev 也必拦）；worktree 有未跟踪且未 ignore 的文件时 git 拒绝删除——**不要擅自 `--force`**，先看那些文件是什么（认知外的问用户），确认后由用户/显式决策强删。
+脚本内置安全闸：分支未合并进 dev 拒绝清理（`is_merged` 闸门通过后脚本直接 `git branch -D`，不依赖 `git branch -d`——`-D` 避免依赖 upstream/HEAD 校验的不确定性，已合并与否由 `is_merged` 闸门保证）；worktree 有未跟踪且未 ignore 的文件时 git 拒绝删除——**不要擅自 `--force`**，先看那些文件是什么（认知外的问用户），确认后由用户/显式决策强删。
 
 **`OK:` 输出 = 全部完成的权威证明**（worktree 与分支都已删）。此后不要再调用任何 bash——包括 `git worktree list` / `git log` 复核确认。直接输出合并总结收尾。
 

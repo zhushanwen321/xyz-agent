@@ -4,7 +4,7 @@ description: >-
   Use when 合并分支并发布（GitHub Release 交付 Electron 产物 + 可选 npm 发布）。
   触发词："合并"、"merge"、"发布"、"release"、"上线"。
   不用于 纯分支合并（不发布）、日常编码中的合并操作（合并数组/对象等）、
-  或 npm 预发布 / 测试版发布（用 npm-prerelease / prerelease-test）。
+  或 npm 预发布 / 测试版发布（用 prerelease skill，仓库脚本 scripts/npm-prerelease.sh / prerelease-test.sh）。
 ---
 
 # merge
@@ -79,10 +79,12 @@ cd $WS_ROOT/main && bash .agents/skills/merge/scripts/prune-dev-link.sh "$WS_ROO
 ### 阶段 2: PR CI + 合并
 
 ```bash
-bash .agents/skills/merge/scripts/pr-merge.sh <branch-name> <pr-number>
+cd $WS_ROOT/main && bash .agents/skills/merge/scripts/pr-merge.sh <branch-name> <pr-number>
 ```
 
 检查 PR CI 状态并通过 PR 合并（`gh pr merge --merge --delete-branch`，使用 merge commit 绝不 squash）。
+
+**空 checks 防误判**：PR 的 `statusCheckRollup` 为空（CI checks 尚未注册）时，脚本不判「CI 通过」，而是每 15s 重查、最多 4 次；仍为空则 exit 1 并输出排查指引（确认 PR head commit 是否触发 CI / 人工核实），不会在 CI 完全未运行时开始合并。
 
 脚本内部自动 sync 本地 main（`git fetch github && git reset --hard github/main`），无需手动执行。
 
@@ -97,6 +99,8 @@ bash .agents/skills/merge/scripts/wait-for-ci.sh "$MAIN_SHA"
 
 等待 main 分支 CI 通过。wait-for-ci.sh 在项目 skill 目录内（CI 轮询），需传入 commit SHA。
 
+> ⚠️ **边界**：commit 在约 30s 内无任何 workflow run 时，wait-for-ci.sh 视为「无 CI」直接放行（exit 0）——merge commit 因 ci.yml 路径过滤可能未触发任何 run。此时 exit 0 ≠「CI 通过」，须先用 `gh run list --commit "$MAIN_SHA" --repo zhushanwen321/xyz-agent` 人工确认是否存在 run；确认无 run 属预期（如纯 docs 改动）才可继续，不得把该放行误判为「CI 通过」。
+
 ### [MANDATORY] 阶段 3.5: 版本校验
 
 在 bump 版本之前，必须确认代码版本与最新正式 release 一致。
@@ -108,12 +112,15 @@ bash scripts/check-version-bump.sh
 ```
 
 - **Exit 0（通过）**：代码版本 == 最新正式 release，可以安全 bump
-- **Exit 1（失败）**：版本不匹配，会输出期望版本和实际版本
+- **Exit 1（失败）**：版本不匹配，或 pi 协议契约测试失败（W25 接线），会输出具体原因
 
 失败时需要检查：
 1. 是否有 prerelease（`-beta.N`）占用了目标版本号？清理后重试
-2. 是否已经手动 bump 过版本？执行 `pnpm version <latest_release_version> --no-git-tag-version` 回退
+2. 是否已经手动 bump 过版本？执行 `cd $WS_ROOT/main && pnpm version <latest_release_version> --no-git-tag-version` 回退
 3. 可能是之前的 pre-release 测试未还原？运行 `cd $WS_ROOT/main && git reset --hard github/main` 重置
+4. 版本号一致仍 exit 1？是 pi 协议契约测试失败（W25 接线：pi 依赖版本变更时先跑
+   `packages/runtime/src/__tests__/equivalence/pi-protocol-contract.test.ts`，红 = 上游协议漂移）——
+   先处理协议漂移再 bump，不要动版本号
 
 ### 阶段 4: 版本 bump + 发布
 
@@ -130,7 +137,9 @@ git branch --show-current  # 必须输出 main，否则 git checkout main
 #    commit 中，否则第二次 version 因 tag 已存在而失败，导致 apps/electron
 #    的版本号未提交，CI 从 apps/electron/package.json 读取到旧版本号。
 
-# 1. 纯修改文件，不创建 commit 和 tag（pnpm workspace 递归 bump 所有包）
+# 1. 纯修改文件，不创建 commit 和 tag。
+#    注意：pnpm@10 在 root 执行（不带 -r）只 bump root 包，并非递归 bump 所有包；
+#    实际变更 = 本行根 package.json + 下一行 apps/electron/package.json，共两个文件
 pnpm version patch --no-git-tag-version
 cd apps/electron && pnpm version patch --no-git-tag-version && cd ../..
 
@@ -224,6 +233,7 @@ bash scripts/apply-version.sh \
 
 验证：
 ```bash
+cd $WS_ROOT/main
 git diff -- extensions/*/package.json extensions/shared/*/package.json packages/*/package.json | grep '^[+-]  "version"'
 git diff --name-only | grep CHANGELOG
 ls .changeset/*.md 2>/dev/null | grep -v README.md && echo "⚠️ 未消费的 changeset 残留" || echo "✓ changeset 全消费"
@@ -278,10 +288,10 @@ done
 ### 阶段 5: Release Notes + Release
 
 ```bash
-bash .agents/skills/merge/scripts/release.sh
+cd $WS_ROOT/main && bash .agents/skills/merge/scripts/release.sh
 ```
 
-从 conventional commits 自动生成 Release Notes 草稿（双语三节结构：feat → 新增功能、perf → 功能优化、fix → 修复缺陷、breaking → 重大变更；条目为 commit 原文，须按 docs/release-notes.md 定稿）并创建/更新 GitHub Release。也可指定 tag 和 notes 文件：`bash .agents/skills/merge/scripts/release.sh v0.6.5 --notes ./my-notes.md`。
+从 conventional commits 自动生成 Release Notes 草稿（双语三节结构：feat → 新增功能、perf → 功能优化、fix → 修复缺陷、breaking → 重大变更；条目为 commit 原文，须按 docs/release-notes.md 定稿）并创建/更新 GitHub Release。也可指定 tag 和 notes 文件：`cd $WS_ROOT/main && bash .agents/skills/merge/scripts/release.sh v0.6.5 --notes ./my-notes.md`。
 
 > ⚠️ **release.sh 自动 notes 在 merge 末尾常不准**：脚本用 `git describe HEAD^` 找上一个 tag，但 merge 流程末尾 HEAD 已远超当前 tag（经过 bump + skill 更新 + 4N bump 等 commits），`git describe HEAD^` 会返回**当前 tag**，导致 range = `<当前tag>..HEAD` 几乎为空、自动 notes 退化。实际执行中建议跳过自动生成，直接按 docs/release-notes.md 手写双语 notes 后用 `gh release edit <tag> --notes-file <双语文件>` 覆盖（见下方 [MANDATORY] 要求）。
 
@@ -325,6 +335,11 @@ Release Notes 需要同时包含中文和英文版本，使用 `<!-- LANG:zh -->
 在创建 Release 后，必须校验 Release Notes 包含双语标记：
 
 ```bash
+cd $WS_ROOT/main
+
+# 本代码块独立取版本（shell 变量不跨代码块持久，不会从阶段 4 的代码块带过来）
+VERSION=$(node -p "require('./package.json').version")
+
 # 获取刚创建的 release body
 RELEASE_BODY=$(gh release view "v${VERSION}" --json body -q '.body')
 
@@ -344,6 +359,9 @@ echo "✓ Release Notes 双语格式校验通过"
 
 如果校验失败，需要编辑 release 添加双语标记：
 ```bash
+# shell 变量不跨代码块持久，先取版本
+VERSION=$(node -p "require('./package.json').version")
+
 # 编辑 release body（保留原有内容，添加语言标记）
 gh release edit "v${VERSION}" --notes-file ./release-notes-bilingual.md
 ```
@@ -367,6 +385,7 @@ bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version
 可选的本地验证脚本（项目根目录 `scripts/` 下）：
 
 ```bash
+cd $WS_ROOT/main
 bash scripts/postbuild-validate.sh
 bash scripts/validate-runtime-bundle.sh
 ```
@@ -377,11 +396,7 @@ bash scripts/validate-runtime-bundle.sh
 
 如果执行后 bash 工具报 ENOENT / cwd 不存在——这是删除 worktree **已成功**的最强确认（当前 shell 的 cwd 落在被删目录内），不是错误。详见底部 [HISTORICAL] 阶段 7 后 bash 工具失效处理。
 
-```bash
-bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --skip-sync
-```
-
-调用项目内 remove-worktree.sh 清理 feature worktree 和本地分支。`--force` 跳过已合并检查并强制删除（含未提交/未跟踪内容，删除前会列出将销毁的清单）——分支已删除（远程 delete-branch）时本地 `git branch --merged` 检查会误判，故恒用 `--force`。`--skip-sync` 因为 pr-merge.sh 已 sync 过 main。
+调用本 skill 的 remove-worktree.sh 清理 feature worktree 和本地分支（命令全文见下方「自动化执行」代码块，本阶段只此一个命令版本，避免出现不一致的两个副本）。`--force` 跳过已合并检查并强制删除（含未提交/未跟踪内容，删除前会列出将销毁的清单）——分支已删除（远程 delete-branch）时本地 `git branch --merged` 检查会误判，故恒用 `--force`。`--skip-sync` 因为 pr-merge.sh 已 sync 过 main。
 
 门禁：阶段 7 启动前**必须**确认阶段 6（`verify-ci-release.sh`）已 exit 0。
 

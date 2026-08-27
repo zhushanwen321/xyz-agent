@@ -62,7 +62,6 @@ bash .agents/skills/dev-link/link-list.sh
 - **xyz-agent 模式**（`.env.dev-extensions`）：从当前 git root 动态查找，检测路径存在性 + worktree 归属
 - **PI_CODING_AGENT_DIR 不一致警告**：link 位置与运行时 agentDir 不一致时提示（pi 可能不加载）
 - 路径 source `dev-link-lib.sh` 复用 `PI_EXT_DIR`，与 link 建立位置一致
-```
 
 ## 包名格式
 
@@ -75,11 +74,11 @@ bash .agents/skills/dev-link/link-list.sh
 ```
 extensions/<short>/package.json
   ├─ name           → npm 包名（如 @zhushanwen/pi-subagent-workflow）   ← 事实，不按命名约定拼
-  ├─ pi.extensions  → 是否真 pi extension（库包如 quota-providers 没有该字段）
+  ├─ pi.extensions  → 是否真 pi extension（库包如 llm-shared 没有该字段）
   └─ 目录本身        → 源码目录（symlink target / XYZ_EXTENSION_PATHS 条目）
 ```
 
-新增/改名包自动进映射，脚本零改动。pi loader（0.82.1 loader.js）识别 extension **不读目录名**——扫 globalExtDir 一层，靠目录内 package.json 的 `pi.extensions` 字段或 index.ts/js 识别，所以 symlink 目录名 `pi-<short>` 只是约定。
+新增/改名包自动进映射，脚本零改动。pi 实装版 loader 识别 extension **不读目录名**——扫 globalExtDir 一层，靠目录内 package.json 的 `pi.extensions` 字段或 index.ts/js 识别，所以 symlink 目录名 `pi-<short>` 只是约定。
 
 ## 约束
 
@@ -87,7 +86,8 @@ extensions/<short>/package.json
 - **两模式都需新建 session 生效**（运行中的 session 不重扫 extension 源）
 - **pi 模式 `pi-unlink` 用 `pi install` 重装 npm 版**（从 npm registry 下载，**需联网**）；失败时检查网络/proxy
 - **merge/删 worktree 前清理**：两模式 link 都指向 worktree 的 `extensions/` 源码，worktree 删了 pi 加载报 ENOENT。pi 模式 `pi-unlink.sh <pkg>`、xyz 模式 `link-npm.sh <pkg>` 清理
-- **quota-providers 是库包不是 extension**（package.json 无 `pi.extensions`），pi-link / link-local 都会自动跳过
+- **llm-shared 是库包不是 extension**（`extensions/shared/llm-shared`，package.json 无 `pi.extensions`），pi-link / link-local 都会自动跳过
+- **已废弃包（package.json 带 `deprecated` 字段，如 unified-hooks）仍是合法 link 目标，脚本只打 ⚠ 警告不阻断**：unified-hooks 已被 base-tool-enhance 取代，残留安装会与新包双重拦截 bash——验证完尽快 unlink 并卸载
 - 多 worktree：脚本用 `git rev-parse --show-toplevel` 定位 `extensions/`，worktree 切换后路径变，需在该 worktree 重新 link
 
 ## 常见错误
