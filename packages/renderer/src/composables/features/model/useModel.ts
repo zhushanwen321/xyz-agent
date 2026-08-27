@@ -2,13 +2,14 @@
  * useModel —— 模型切换 + 思考等级设置编排（R2 features 层，跨 api + stores 的唯一合法层）。
  *
  * 这是「api 调用只在 features 层」铁律（ADR-0028）的落点：所有 model.switch /
- * session.setThinkingLevel RPC 调用 + 乐观更新 sessionStore 的编排统一收口于此，
+ * session.setThinkingLevel RPC 调用 + sessionStore 更新的编排统一收口于此，
  * 上层（panel/useComposerModelThinking、features/useNewTaskFlow）不再直调 @/api。
  *
  * 两种态的统一处理：
- * - session 已建态：直接调 RPC + 乐观更新 sessionStore.applySnapshot（立即生效，
- *   不依赖 state_changed 广播到达——未发消息的 session 可能无 streamSubscription，
- *   广播会丢）。
+ * - session 已建态：直接调 RPC + 更新 sessionStore.applySnapshot（modelId 乐观写
+ *   （权威确认经 state_changed 广播回流）；thinkingLevel 写回执生效值（U6 弃乐观写，
+ *   pi 钳制档位时回执 ≠ 请求值）——立即生效，不依赖广播到达——未发消息的 session
+ *   可能无 streamSubscription，广播会丢）。
  * - landing 延迟态（useNewTaskFlow）：session 尚未 create，无法调 RPC。本 composable
  *   不处理 pending 记录（那是 useNewTaskFlow 的状态机职责），只暴露「session 已建后 apply」
  *   的能力，供 submitFirstMessage 在 create session 后调用，消除 useNewTaskFlow 与
@@ -51,10 +52,12 @@ export function useModel() {
   }
 
   /**
-   * 设置 session 的思考等级：调 runtime session.setThinkingLevel RPC + 乐观更新 sessionStore。
+   * 设置 session 的思考等级：调 runtime session.setThinkingLevel RPC，以回执生效值写 store。
    *
    * level 是前端 6 级枚举字符串（off/low/medium/high/xhigh/max）。
-   * 按 sessionId 乐观更新立即同步对应 session 的 thinkingLevel（Composer 工具条显示跟随）。
+   * 回执消费（U6 弃乐观写）：reply.level 是 pi 实际生效档（pi 会钳制模型族不支持的档位，
+   * 如 mimo 族 max → high，钳制时不发事件不写 entry）——显示值从第一毫秒起就是真值，
+   * 不存在「过一会自己变回去」（事故 B 根因 ③）。RPC 失败时不写 store（显示保持旧真值）。
    *
    * 调用方职责区分：
    * - session 已建（Composer 工具条切换档位）：直传 sessionId + level
@@ -64,8 +67,8 @@ export function useModel() {
    * @param level 前端 6 级枚举字符串
    */
   async function setThinkingLevel(sessionId: string, level: string): Promise<void> {
-    await sessionApi.setThinkingLevel(sessionId, level)
-    sessionStore.applySnapshot(sessionId, { thinkingLevel: level })
+    const reply = await sessionApi.setThinkingLevel(sessionId, level)
+    sessionStore.applySnapshot(sessionId, { thinkingLevel: reply.level })
   }
 
   return { switchModel, setThinkingLevel }

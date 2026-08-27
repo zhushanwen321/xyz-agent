@@ -51,36 +51,30 @@ export function isThinkingLevel(v: string): v is ThinkingLevel {
  */
 const PI_LEVEL_ORDER: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
+/** 下发档位集缺失/空时的归一结果（off..high 五档，对齐 pi 无 map 模型的默认档）。 */
+const DEFAULT_SUPPORTED_LEVELS: readonly ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high']
+
 /**
- * 解析当前模型的可用思考档位。
+ * 归一 runtime 下发的档位可用集（ProviderInfo.models[].supportedLevels，U5 注册表同源计算）。
  *
- * 语义基准：pi-ai 0.84.1 getSupportedThinkingLevels（实装版探针实测），**叠加禁用**而非 key 白名单：
- * - reasoning === false → 只 ['off']（pi !model.reasoning 分支）
- * - map 缺失/null/空 → 默认五档 off/minimal/low/medium/high（xhigh/max 需 map 显式定义才解锁——
- *   曾因把快照 thinkingLevelMap=null 当全档开放致 mimo 等模型多显两档）
- * - map 有值 → 逐档判定：mapped===null 显式禁用；xhigh/max 且 mapped===undefined 不可用；其余可用
- * - 结果为空 fallback ['off']（对齐 pi clampThinkingLevel 兜底）
+ * [HISTORICAL] 本函数的前身（从 thinkingLevelMap+reasoning 本地推算可用档，U6 已删）
+ * 已随 U6 删除——它是 pi getSupportedThinkingLevels 的影子实现（对 reasoning 缺失的语义
+ * 解释与 pi 相反，事故 B 根因 ②），档位可用集唯一权威 = runtime 侧 pi 同源计算下发的
+ * supportedLevels（pi-boundary-reliability D3③）。本函数只做归一（非法值过滤 + 全序排列），
+ * 零 pi 语义推断。
  *
- * @param map    当前模型的思考档位映射（key=UI 档位，value=发 runtime 的值或 null 禁用）
- * @param reasoning 模型是否支持思考（ProviderInfo.models[].reasoning）；undefined 视为 true
- *              （向后兼容未传 reasoning 的既有调用方）
- * @returns 可用的 ThinkingLevel 列表（按强度升序），至少含 off
+ * 归一规则：
+ * - undefined / 空数组 → 默认五档（supportedLevels 下发链路未接通时的过渡态，对齐旧实现「map 缺失 → 五档」）
+ * - 非法值过滤；合法档位按 pi 全序排列；'off' 恒在（防御归一）
+ *
+ * @param levels runtime 下发的支持档位集（string[]，pi 同源计算产物）
+ * @returns 按 pi 全序升序的可用 ThinkingLevel 列表，至少含 off
  */
-export function resolveAvailableLevels(
-  map?: Record<string, string | null> | null,
-  reasoning?: boolean,
-): ThinkingLevel[] {
-  if (reasoning === false) return ['off']
-  const hasMap = map != null && Object.keys(map).length > 0
-  const available: ThinkingLevel[] = []
-  for (const level of PI_LEVEL_ORDER) {
-    const mapped = hasMap ? map[level] : undefined
-    // null = 显式禁用；xhigh/max 需显式定义才解锁（pi 同款规则）
-    if (mapped === null) continue
-    if ((level === 'xhigh' || level === 'max') && mapped === undefined) continue
-    available.push(level)
-  }
-  return available.length > 0 ? available : ['off']
+export function normalizeSupportedLevels(levels?: string[] | null): ThinkingLevel[] {
+  if (!levels || levels.length === 0) return [...DEFAULT_SUPPORTED_LEVELS]
+  const valid = new Set(levels.filter(isThinkingLevel))
+  valid.add('off')
+  return PI_LEVEL_ORDER.filter((l) => valid.has(l))
 }
 
 /**
@@ -141,43 +135,38 @@ export function resolveThinkingKey(
   }
   // value 直接是档位名
   if (isThinkingLevel(value)) return value
-  // fallback 缺省取最高可用档（新语义下 map 缺失最高是 high 而非 max；
-  // 硬编码 max 会把不可用档回传 runtime，pi 端静默 clamp 造成 UI 抖动）
-  return fallback ?? highestAvailableLevel(map)
+  // fallback 缺省取默认五档最高档 'high'（U6：动态最高档推导已随本地档位推算函数删除，
+  // 需要精确最高档的调用方显式传 fallback——如 Popover/sync 传
+  // highestAvailableLevel(supportedLevels)）
+  return fallback ?? 'high'
 }
 
 /**
- * 取当前模型的最高可用思考档位。
+ * 取档位可用集的最高可用档。
  *
  * 用于切换模型后当前选中档位不可用时，自动重置到最高可用档。
- * resolveAvailableLevels 保证非空（fallback ['off']），`?? 'off'` 仅类型兜底。
+ * 入参是 runtime 下发的 supportedLevels（string[]，U6 切源）——归一后取末尾；
+ * 缺失/空归一为默认五档，最高 high。
  */
-export function highestAvailableLevel(
-  map?: Record<string, string | null> | null,
-  reasoning?: boolean,
-): ThinkingLevel {
-  const levels = resolveAvailableLevels(map, reasoning)
+export function highestAvailableLevel(supportedLevels?: string[] | null): ThinkingLevel {
+  const levels = normalizeSupportedLevels(supportedLevels)
   return levels[levels.length - 1] ?? 'off'
 }
 
 /**
- * 判断两个 thinkingLevelMap 是否属于同一思考体系（可用档位 key 集合相同）。
+ * 判断两个模型的档位可用集（supportedLevels）是否属同一思考体系。
  *
  * 用于模型切换时判定思考等级是否可直接映射：同体系直接映射当前档位，
  * 跨体系重置到目标模型最高档。
  *
- * 用可用 key 集合而非 ThinkingStrategy 预设枚举判定——thinkingLevelMap 是自由格式
- * Record<string,string|null>，用户可在 config 写任意 map；预设枚举只识别三种固定配置，
- * 对自定义 map 会误判。key 集合判定对所有 map 都准确。
- *
- * undefined/空 map 按默认五档（off..high）判定（resolveAvailableLevels 新语义），
- * 两个默认五档视为同体系。
+ * 入参是各自模型的 supportedLevels（U6 切源）；缺失/空归一为默认五档，
+ * 两个默认五档视为同体系（与旧实现对 map 缺失的判定对齐）。
  */
 export function isSameThinkingScheme(
-  a?: Record<string, string | null>,
-  b?: Record<string, string | null>,
+  a?: string[] | null,
+  b?: string[] | null,
 ): boolean {
-  const keysA = resolveAvailableLevels(a)
-  const keysB = resolveAvailableLevels(b)
+  const keysA = normalizeSupportedLevels(a)
+  const keysB = normalizeSupportedLevels(b)
   return keysA.length === keysB.length && keysA.every((k) => keysB.includes(k))
 }

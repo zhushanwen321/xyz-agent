@@ -575,7 +575,7 @@ export interface IModelService {
   ): Promise<Array<{ id: string; name: string; contextWindow?: number }>>
 
   /** Switch model with full side-effects: pi RPC + persist default + broadcast. */
-  switchModel(sessionId: string, provider: string, modelId: string): Promise<void>
+  switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
 
   /** Set thinking level for a session's pi subprocess. Returns pi-effective level (P3: pi clamps unsupported levels). */
   setThinkingLevel(sessionId: string, level: string): Promise<string>

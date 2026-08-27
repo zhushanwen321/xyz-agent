@@ -390,11 +390,12 @@ export const session = {
     return { cwd, deleted, failed: [] }
   },
 
-  /** 设置思考等级（mock：持久到 fixture session.thinkingLevel，runtime 确认属后续联调） */
-  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+  /** 设置思考等级（mock：持久到 fixture session.thinkingLevel；回执生效值形状对齐协议修型 U6） */
+  async setThinkingLevel(sessionId: string, level: string): Promise<{ sessionId: string; level: string }> {
     await sleep(TIMING.ack)
     const target = fixtureSessions.find((s) => s.id === sessionId)
     if (target) target.thinkingLevel = level
+    return { sessionId, level }
   },
 
   /**

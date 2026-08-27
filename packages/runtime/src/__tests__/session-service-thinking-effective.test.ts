@@ -27,6 +27,7 @@ function makeEnv(getStateValue: () => unknown, withClient = true) {
   const broker = { broadcast: vi.fn((m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBroker
   const client = {
     setThinkingLevel: vi.fn(async () => undefined),
+    setModel: vi.fn(async () => undefined),
     getState: vi.fn(async () => ({ thinkingLevel: getStateValue() })),
   } as unknown as IPiEngine
   const pm = {
@@ -79,5 +80,36 @@ describe('SessionService.setThinkingLevel 返回 pi 生效值（P3）', () => {
     const { svc } = makeEnv(() => 'high', false)
     const returned = await svc.setThinkingLevel('s1', 'low')
     expect(returned).toBe('low')
+  })
+})
+
+describe('SessionService.switchModel 返回 pi 生效模型（U6 回执普查）', () => {
+  it('pi pattern 换模（get_state 读回 ≠ 请求值）→ 返回生效复合串；缓存（getSummary 投影源）写生效值非请求值', async () => {
+    // 请求 model-a，pi pattern 引擎实际切到同族 model-b（事故 A 形态）
+    const { svc, client } = makeEnv(() => 'high')
+    ;(client.getState as ReturnType<typeof vi.fn>).mockResolvedValue({
+      thinkingLevel: 'high',
+      model: { id: 'model-b', provider: 'p' },
+    })
+    await svc.initializeManagedSession('s1', client, '/tmp', 't')
+    const returned = await svc.switchModel('s1', 'p' as never, 'model-a')
+    expect(client.setModel).toHaveBeenCalledWith('p', 'model-a')
+    expect(returned).toBe('p/model-b')
+    expect(svc.getSummary('s1')?.modelId).toBe('p/model-b')
+  })
+
+  it('get_state 读回与请求一致 → 返回请求复合串（常态路径）', async () => {
+    const { svc } = makeEnv(() => 'high')
+    await svc.initializeManagedSession('s1', {} as unknown as IPiEngine, '/tmp', 't')
+    const returned = await svc.switchModel('s1', 'p' as never, 'model-a')
+    expect(returned).toBe('p/model-a')
+  })
+
+  it('get_state 失败 → 请求值兜底不炸（读回是旁路，不反噬切模型主链路）', async () => {
+    const { svc, client } = makeEnv(() => 'high')
+    ;(client.getState as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('state unavailable'))
+    await svc.initializeManagedSession('s1', client, '/tmp', 't')
+    const returned = await svc.switchModel('s1', 'p' as never, 'model-a')
+    expect(returned).toBe('p/model-a')
   })
 })

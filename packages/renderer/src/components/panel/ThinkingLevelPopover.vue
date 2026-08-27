@@ -57,7 +57,8 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   THINKING_LEVELS,
-  resolveAvailableLevels,
+  normalizeSupportedLevels,
+  highestAvailableLevel,
   resolveThinkingValue,
   resolveThinkingKey,
   getDisplayLabel,
@@ -81,25 +82,28 @@ const props = withDefaults(
      *  key = UI 可选档位（ThinkingLevel 枚举值，含 max），value = 发给 runtime 的实际 level（非 null = 可用）。
      *  undefined/null/空 = pi 默认规则（off..high 五档，xhigh/max 需显式定义）。切换模型后 Composer 传入新模型的 map。 */
     levelMap?: Record<string, string | null>
-    /** 当前模型是否支持思考（models[].reasoning）；non-reasoning 只 off。undefined 视为支持。 */
-    reasoning?: boolean
+    /** 当前模型档位可用集（models[].supportedLevels，runtime 注册表 pi 同源计算下发，U6 切源）。
+     *  undefined/空 = 下发链路未接通 → 归一默认五档（off..high）。 */
+    supportedLevels?: string[]
  }>(),
-  { level: undefined, levelMap: undefined, reasoning: undefined },
+  { level: undefined, levelMap: undefined, supportedLevels: undefined },
 )
 
 const { t } = useI18n()
 const open = ref(false)
 // prop level 是 runtime 返回的 value，反查 map 得到 UI 档位 key
 const level = ref<ThinkingLevel>(
-  props.level ? resolveThinkingKey(props.level, props.levelMap) : 'max',
+  props.level
+    ? resolveThinkingKey(props.level, props.levelMap, highestAvailableLevel(props.supportedLevels))
+    : 'max',
 )
 watch(() => props.level, (v) => {
-  if (v) level.value = resolveThinkingKey(v, props.levelMap)
+  if (v) level.value = resolveThinkingKey(v, props.levelMap, highestAvailableLevel(props.supportedLevels))
 })
 
-/** 当前模型的可用档位选项（只渲染可用的，不灰显不可用档位；reasoning=false 时仅 off） */
+/** 当前模型的可用档位选项（只渲染可用的，不灰显不可用档位；可用集来自 supportedLevels 下发） */
 const availableOptions = computed<ThinkingLevelOption[]>(() => {
-  const available = new Set(resolveAvailableLevels(props.levelMap, props.reasoning))
+  const available = new Set(normalizeSupportedLevels(props.supportedLevels))
   return THINKING_LEVELS.filter((opt) => available.has(opt.level))
 })
 

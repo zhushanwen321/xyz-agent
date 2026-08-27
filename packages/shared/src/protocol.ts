@@ -696,6 +696,9 @@ export type ServerMessageType =
   | 'config.skillCacheInvalidated'
   | 'config.systemPrompt'
   | 'model.list' | 'model.switched'
+  // model:capabilityDrift：能力注册表在线对账漂移上报（U6，pi-boundary-reliability D2 ②）。
+  // 全局诊断通道（无 sessionId 路由需求，消费方=设置页/composer 档位显示的自省入口）。
+  | 'model:capabilityDrift'
   | 'session.thinkingLevelSet'
   | 'session.state_changed'
   // wave:runtime-wiring：session.subscribe 的 RPC reply type（payload 消费型，含 snapshot/lastSeq/gap）。
@@ -786,6 +789,18 @@ export type ServerMessageType =
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
+
+/**
+ * 能力注册表对账漂移项（'model:capabilityDrift' 的 drifts 元素形状，U6）。
+ * 三类（与 runtime model-capability.ts CapabilityDrift 同构）：
+ * - config_only：配置有而 pi 合并清单无全等命中（且无大小写孪生）；
+ * - reasoning_mismatch：全等命中但 reasoning 归一值不一致（config 缺失按 false 归一）；
+ * - case_twin：pi 无全等 id 但存在仅大小写不同的条目（pi pattern 引擎静默换模形态）。
+ */
+export type ModelCapabilityDriftItem =
+  | { kind: 'config_only'; providerId: string; modelId: string }
+  | { kind: 'reasoning_mismatch'; providerId: string; modelId: string; configReasoning?: boolean; piReasoning: boolean }
+  | { kind: 'case_twin'; providerId: string; modelId: string; piModelId: string }
 
 // ── session-trace payload 辅助类型（design D4，trace-runtime 单元）──
 // 字段镜像 core domain/session-trace 的 TraceSessionHeader / TraceSessionEndMeta——shared 不依赖
@@ -888,6 +903,12 @@ export interface ServerMessageMapBase {
   // UiBroadcastFn 的 Record<string, unknown> 同形。
   'plugin:uiRequest': { requestId: string; sessionId?: string } & Record<string, unknown>
   'model.list': { models: ModelInfo[] }
+  // model:capabilityDrift：runtime 能力注册表在线对账（reconcileModelCapabilities）发现
+  // 配置聚合与 pi 合并清单漂移时经 setCapabilityDriftSink 广播（drift 项已同步记 runtime
+  // 日志，本帧供前端后续消费——U6 先接通上报通道）。drifts 形状与 runtime
+  // model-capability.ts CapabilityDrift 结构兼容（shared 不依赖 runtime，结构同构即协议兼容，
+  // 与 SessionTraceHeaderPayload 先例同款）。
+  'model:capabilityDrift': { drifts: ModelCapabilityDriftItem[] }
   'config.sessions': { groups: SessionGroup[] }
   /** config.systemPrompt：reply + broadcast + 初始推送三用。corrupted=true 表示磁盘配置损坏已回退默认（SR5）。 */
   'config.systemPrompt': { config: SystemPromptConfig; corrupted?: boolean }
@@ -1654,7 +1675,9 @@ export interface ReplyPayloadMap {
   'message.follow_up': void       // reply message.status
   'message.send': void            // reply message.status
   'message.steer': void           // reply message.status
-  'model.switch': void            // reply model.switched（前端 model.ts register<void> 不读 payload）
+  'model.switch': ServerMessageMap['model.switched'] // reply model.switched（回执修型 U6：生效值回传链路
+            // runtime 侧已就绪（session-service switchModel 读回 get_state 生效模型）；transport reply
+            // 消费生效值的一行接线归 U5b，协议类型先行如实登记——runtime 本就回此形状 payload）
   'session.compact': void         // reply session.compacted
   'session.delete': void          // reply session.deleted
   'session.deleteByCwd': BatchDeleteResult // reply session.deletedByCwd（前端读 deleted/failed 列表）
@@ -1678,7 +1701,10 @@ export interface ReplyPayloadMap {
   'session.unsubscribe': void     // reply message.status
   'session.rename': void          // reply session.renamed
   'session.setProject': void      // reply session.setProject
-  'session.setThinkingLevel': void // reply session.thinkingLevelSet
+  // session.setThinkingLevel：reply 生效值（回执修型 U6，pi-boundary-reliability D3）——runtime
+  // settings-message-handler 已在回传 set→get_state→effective（pi 钳制档位时 ≠ 请求值），
+  // 消费方（useModel）以回执 level 写显示态，禁止乐观写请求值（改状态 RPC 一律回生效值）。
+  'session.setThinkingLevel': ServerMessageMap['session.thinkingLevelSet']
   'session.subagentAction': void  // reply session.subagentActionDone
   'session.switch': ServerMessageMap['session.switched'] // reply session.switched（R-11 瘦身：无 messages；前端 register<void> 不读 payload）
   'session.workflowAction': void  // reply session.workflowActionDone

@@ -1,7 +1,7 @@
 /**
  * thinking-levels —— W3 shim（re-export core + 保留 getDisplayLabel）。
  *
- * [归位] 纯逻辑（ThinkingLevel/THINKING_LEVELS/isThinkingLevel/resolveAvailableLevels/
+ * [归位] 纯逻辑（ThinkingLevel/THINKING_LEVELS/isThinkingLevel/normalizeSupportedLevels/
  * resolveThinkingValue/resolveThinkingKey/highestAvailableLevel/isSameThinkingScheme/
  * isOnOffMap）已迁 @xyz-agent/core/domain/composer/thinking-levels（W3）。
  *
@@ -17,8 +17,9 @@ import {
   type ThinkingLevel,
 } from '@xyz-agent/core/domain/composer/thinking-levels'
 
-// core 已含 ThinkingLevelOption / THINKING_LEVELS / isThinkingLevel / resolveAvailableLevels /
+// core 已含 ThinkingLevelOption / THINKING_LEVELS / isThinkingLevel / normalizeSupportedLevels /
 // resolveThinkingValue / resolveThinkingKey / highestAvailableLevel / isSameThinkingScheme / isOnOffMap
+// （U6：本地档位推算函数已删除，export * 自动收窄）
 export * from '@xyz-agent/core/domain/composer/thinking-levels'
 
 /**

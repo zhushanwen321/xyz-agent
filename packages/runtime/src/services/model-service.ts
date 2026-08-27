@@ -92,11 +92,12 @@ export class ModelService implements IModelService {
    * thinkingLevel；usage 已随 D1 协议收敛移出该帧，经 context.update 单帧贯穿），
    * 本方法不再自己 broadcastSessionState。
    */
-  async switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<void> {
+  async switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<string> {
     this.ensureInitialized()
     // 1. pi RPC + 缓存更新 + 广播 session.state_changed（session 级状态单一 owner；
     //    pi 侧同时持久化 defaultModel/defaultProvider）
-    await this.sessionService.switchModel(sessionId, provider, modelId)
+    // U6 回执普查：透传 get_state 读回的生效模型复合串（pi pattern 换模时 ≠ 请求值）
+    const effective = await this.sessionService.switchModel(sessionId, provider, modelId)
 
     // 2. Broadcast 全局默认模型（landing 态 Composer 的 fallback）
     this.broker.broadcast({
@@ -104,6 +105,7 @@ export class ModelService implements IModelService {
       id: this.nextPushId(),
       payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' },
     })
+    return effective
   }
 
   /**

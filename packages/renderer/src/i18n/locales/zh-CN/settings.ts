@@ -372,6 +372,8 @@ export default {
     inputImage: '图片',
     contextLabel: '上下文',
     thinkingLabel: '思考',
+    reasoningLabel: '推理',
+    reasoningTitle: '思考能力：关闭后 pi 将该模型的思考档位钳制为「关」',
     addBtn: '添加',
     noModels: '暂无模型',
     headInput: '输入',
