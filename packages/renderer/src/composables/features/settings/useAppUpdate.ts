@@ -38,7 +38,11 @@ import {
 } from '@/lib/ipc'
 import { renderMarkdown } from '@/composables/logic/markdown'
 import { useToast } from '@/composables/useToast'
-import { getLocale } from '@/i18n'
+import i18n, { getLocale } from '@/i18n'
+
+// 模块级 t：checkLaunchResult 是 initAutoCheck 内 fire-and-forget 的异步函数，非 setup
+// 同步上下文用不了 useI18n()，照抄同目录 useProviderImport.ts 的 global.t 模式（B2 review）
+const t = i18n.global.t
 
 /** 不支持当前平台的错误码（main 侧 platform-updater 抛出，preload 透传） */
 const UNSUPPORTED_ERROR_CODE = 'UPDATE_UNSUPPORTED_PLATFORM'
@@ -533,9 +537,9 @@ async function runAutoCheck(): Promise<void> {
  *
  * main 侧 cleanupCompletedUpdate 在 bootstrapMainWindow 之前运行，返回值缓存在进程级变量。
  * renderer 启动时 invoke 一次 update:getLaunchResult（consumed 一次性，main 清缓存）：
- * - done → info toast「已升级到 vX.Y.Z」
- * - failed → warning toast「上次升级未完成」
- * - rolled-back → warning toast「上次升级未完成，已恢复到 vX.Y.Z」
+ * - done → info toast sidebar.update.upgradedToast
+ * - failed → warning toast sidebar.update.upgradeFailed
+ * - rolled-back → warning toast sidebar.update.rolledBack
  *
  * 调用时机：initAutoCheck 内（Sidebar 挂载即触发，早于 30s 自动检查）。
  */
@@ -545,11 +549,11 @@ async function checkLaunchResult(): Promise<void> {
     if (!result) return
     const { info, warning } = useToast()
     if (result.status === 'done') {
-      info(`已升级到 v${result.version}`)
+      info(t('sidebar.update.upgradedToast', { version: result.version }))
     } else if (result.status === 'rolled-back') {
-      warning(`上次升级未完成，已恢复到 v${result.version}`)
+      warning(t('sidebar.update.rolledBack', { version: result.version }))
     } else if (result.status === 'failed') {
-      warning('上次升级未完成')
+      warning(t('sidebar.update.upgradeFailed'))
     }
   } catch (e) {
     // best-effort：启动结果通知失败不影响升级流程，用户下次启动仍可重试读取（main 侧缓存未 consumed）

@@ -44,9 +44,11 @@ vi.mock('@/composables/logic/markdown', () => ({
   renderMarkdown: vi.fn(() => Promise.resolve('<p>test</p>')),
 }))
 
-// Mock i18n
+// Mock i18n（default 形态供 useAppUpdate 模块级 const t = i18n.global.t 消费；
+// 本文件用例不走 launch toast 路径，回退返回 key 即可）
 vi.mock('@/i18n', () => ({
   getLocale: vi.fn(() => 'zh-CN'),
+  default: { global: { t: (key: string) => key } },
 }))
 
 describe('W3-A2-error-suggestion-state-vitest', () => {

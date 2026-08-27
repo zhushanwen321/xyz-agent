@@ -548,43 +548,42 @@ describe('W4: launch result toast', () => {
     _resetForTest()
   })
 
-  it('A4-done-toast-vitest: done status → info toast 已升级到 vX.Y.Z', async () => {
+  it('A4-done-toast-vitest: done status → info toast sidebar.update.upgradedToast（i18n 解析）', async () => {
     hoisted.getLaunchResult.mockResolvedValue({ status: 'done', version: '0.9.9' })
     hoisted.getPendingUpdate.mockResolvedValue(null)
     hoisted.getPreloaded.mockResolvedValue(null)
     const { stop } = setupUseAppUpdate({ initAutoCheck: true })
-    // initAutoCheck 内 checkLaunchResult 是 fire-and-forget，等微任务完成
+    // initAutoCheck 内 checkLaunchResult 是 fire-and-forget，等微任务完成。
+    // 断言真实 i18n（@/i18n 默认 zh-CN）解析插值后的完整文案，同时锁住 {version} 占位传参
     await vi.waitFor(() => {
-      expect(toastFns.info).toHaveBeenCalledWith(expect.stringContaining('0.9.9'))
+      expect(toastFns.info).toHaveBeenCalledWith('已升级到 v0.9.9')
     })
-    expect(toastFns.info).toHaveBeenCalledWith(expect.stringContaining('已升级'))
     expect(toastFns.warning).not.toHaveBeenCalled()
     stop()
   })
 
-  it('A6-rolledback-toast-vitest: rolled-back status → warning toast 已恢复到旧版本', async () => {
+  it('A6-rolledback-toast-vitest: rolled-back status → warning toast sidebar.update.rolledBack（i18n 解析）', async () => {
     hoisted.getLaunchResult.mockResolvedValue({ status: 'rolled-back', version: '0.9.7' })
     hoisted.getPendingUpdate.mockResolvedValue(null)
     hoisted.getPreloaded.mockResolvedValue(null)
     const { stop } = setupUseAppUpdate({ initAutoCheck: true })
+    // 精确断言 {version} 插值位置在句尾旧版本处
     await vi.waitFor(() => {
-      expect(toastFns.warning).toHaveBeenCalled()
+      expect(toastFns.warning).toHaveBeenCalledWith('上次升级未完成，已恢复到 v0.9.7')
     })
-    expect(toastFns.warning).toHaveBeenCalledWith(expect.stringContaining('0.9.7'))
-    expect(toastFns.warning).toHaveBeenCalledWith(expect.stringContaining('已恢复'))
     stop()
   })
 
-  it('A5-failed-toast-vitest: failed status → warning toast 上次升级未完成', async () => {
+  it('A5-failed-toast-vitest: failed status → warning toast sidebar.update.upgradeFailed（无版本号）', async () => {
     hoisted.getLaunchResult.mockResolvedValue({ status: 'failed', version: '0.9.9' })
     hoisted.getPendingUpdate.mockResolvedValue(null)
     hoisted.getPreloaded.mockResolvedValue(null)
     const { stop } = setupUseAppUpdate({ initAutoCheck: true })
+    // upgradeFailed 键不含 {version} 占位：精确断言完整文案 + 仅此一次调用（排除混入带版本的键）
     await vi.waitFor(() => {
-      expect(toastFns.warning).toHaveBeenCalledWith(expect.stringContaining('未完成'))
+      expect(toastFns.warning).toHaveBeenCalledWith('上次升级未完成')
     })
-    // failed 不含版本号
-    expect(toastFns.warning).toHaveBeenCalledWith(expect.not.stringContaining('0.9.9'))
+    expect(toastFns.warning).toHaveBeenCalledTimes(1)
     stop()
   })
 
