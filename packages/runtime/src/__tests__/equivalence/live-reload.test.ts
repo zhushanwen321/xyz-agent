@@ -103,10 +103,12 @@ describe.skipIf(!REAL_PI_READY)(
 
       // 操作序列：prompt 触发一次工具调用（bash 工具，--approve 自动批准）——覆盖
       // user / assistant(with toolCalls) / toolResult / assistant(summarize) 四种 message entry。
-      await fx.sendCommand('prompt', {
-        message: "Use the bash tool to run the command `echo probe-w21` and reply with its exact output.",
-      })
-      await fx.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+      await fx.runTurn(
+        {
+          message: "Use the bash tool to run the command `echo probe-w21` and reply with its exact output.",
+        },
+        TURN_TIMEOUT_MS,
+      )
 
       // live 侧：message_end 流经生产 translate() 重构 entry → 喂同一 reducer
       const liveEntries = collectLiveEntries(fx, sid)
@@ -151,8 +153,7 @@ describe.skipIf(!REAL_PI_READY)(
 
       // 操作序列：prompt → agent_end → `bash`（recordBashResult 直接 appendMessage，无
       // message_end，live 侧从 RPC reply 合并）→ 二次 prompt。
-      await fx.sendCommand('prompt', { message: 'Reply with exactly the word: pong' })
-      await fx.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+      await fx.runTurn({ message: 'Reply with exactly the word: pong' }, TURN_TIMEOUT_MS)
 
       const bashReply = await fx.sendCommand('bash', { command: 'echo bash-probe-w21' })
       const bashResult = (bashReply.data ?? {}) as {
@@ -164,11 +165,8 @@ describe.skipIf(!REAL_PI_READY)(
       }
       const bashAt = collectLiveEntries(fx, sid).length
 
-      await fx.sendCommand('prompt', { message: 'Reply with exactly the word: ping' })
-      await fx.waitForEvent(
-        (e) => e.type === 'agent_end' && seenAgentEnds(fx) >= 2,
-        TURN_TIMEOUT_MS,
-      )
+      // runTurn 的 since 打点保证只等本轮（第二次）agent_end，取代 seenAgentEnds 计数谓词
+      await fx.runTurn({ message: 'Reply with exactly the word: ping' }, TURN_TIMEOUT_MS)
 
       // live 侧：message_end 流 + bash entry（reply 到达点合并，位置 ≡ 持久化追加顺序）
       const liveEntries = collectLiveEntries(fx, sid)
@@ -213,10 +211,12 @@ describe.skipIf(!REAL_PI_READY)(
       fixture = fx
       const sid = 'equiv-chaos'
 
-      await fx.sendCommand('prompt', {
-        message: "Use the bash tool to run the command `echo chaos-w21` and reply with its exact output.",
-      })
-      await fx.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+      await fx.runTurn(
+        {
+          message: "Use the bash tool to run the command `echo chaos-w21` and reply with its exact output.",
+        },
+        TURN_TIMEOUT_MS,
+      )
 
       const liveEntries = collectLiveEntries(fx, sid)
       expect(liveEntries.length).toBeGreaterThanOrEqual(3) // user + assistant + toolResult + ...
@@ -263,7 +263,4 @@ describe.skipIf(!REAL_PI_READY)(
   )
 })
 
-/** 等第 N 个 agent_end（多轮 prompt 用） */
-function seenAgentEnds(fx: PiFixture): number {
-  return fx.collectEvents((e) => e.type === 'agent_end').length
-}
+// seenAgentEnds 计数谓词已删：多轮 agent_end 等待由 runTurn 的 since 打点取代（fixture 原语）

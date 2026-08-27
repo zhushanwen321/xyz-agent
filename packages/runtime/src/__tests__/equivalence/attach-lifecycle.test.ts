@@ -137,8 +137,7 @@ function waitSessionHeaderFlushed(filePath: string, timeoutMs = 15_000): void {
 async function seedSessionFile(workDir: string, fileName: string, marker: string): Promise<string> {
   let fx = await spawnPiFixture()
   try {
-    await fx.sendCommand('prompt', { message: `Reply with exactly the word: ${marker}` })
-    await fx.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+    await fx.runTurn({ message: `Reply with exactly the word: ${marker}` }, TURN_TIMEOUT_MS)
     const state = await fx.sendCommand('get_state')
     const srcFile = state.data?.sessionFile
     if (typeof srcFile !== 'string') throw new Error(`get_state.sessionFile missing after seeded turn (marker: ${marker})`)
@@ -171,8 +170,8 @@ async function attachAndRunTurn(targetFile: string, marker: string): Promise<{ f
   await assertPiSessionFile(fixtureStateClient(fx), targetFile, `attach-lifecycle(${basename(targetFile)})`)
   const beforeTurnMem = await fetchEntries(fx)
   const beforeTurnFileCount = readSessionEntries(targetFile).length
-  await fx.sendCommand('prompt', { message: `Reply with exactly the word: ${marker}` })
-  await fx.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+  // prompt→等本轮 end 改走 runTurn 原语（fixture 护栏 + since 游标，替代裸全量匹配）
+  await fx.runTurn({ message: `Reply with exactly the word: ${marker}` }, TURN_TIMEOUT_MS)
   const beforeKill = await fetchEntries(fx)
   return { fx, beforeTurnMem, beforeTurnFileCount, beforeKill }
 }
@@ -450,8 +449,7 @@ describe.skipIf(!REAL_PI_READY)(
         let fx1: PiFixture | null = await spawnPiFixture()
         fixture = fx1
         try {
-          await fx1.sendCommand('prompt', { message: 'Reply with exactly the word: model-seed' })
-          await fx1.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+          await fx1.runTurn({ message: 'Reply with exactly the word: model-seed' }, TURN_TIMEOUT_MS)
           await fx1.sendCommand('set_model', { provider: targetProvider, modelId: targetModelId })
           const state1 = await fx1.sendCommand('get_state')
           const model1 = state1.data?.model as { provider?: string; id?: string } | undefined
