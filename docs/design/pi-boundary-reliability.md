@@ -6,6 +6,7 @@
 - **证据基线**：本文全部现状事实取自 2026-08-27 两次排查的实证记录与三轮独立代码核查（pi 实装 `@earendil-works/pi-coding-agent@0.84.1` / `pi-ai@0.84.1` / `pi-agent-core@0.84.1` dist 直读，均已 `npm ls` 核对版本；xyz-agent 侧文件:行号经 subagent 实读核对）。事故 A 基线 session：`~/.xyz-agent/pi/sessions/2026-08-27T10-58-34-533Z_01a042df-21a5-783d-890d-61e075514b9d.jsonl`。
 - **切片关系**：切片 1 = [subagent-dispatch-reliability.md](subagent-dispatch-reliability.md)（D1-D6 / U1-U4 / S1-S5，审查报告见同名 .review.md，4 must-fix + 5 suggestions 已全部落盘修订）。本文不重述其细节，只引用结论。
 - **审查记录**：本文经一轮对抗式审查（[pi-boundary-reliability.review.md](pi-boundary-reliability.review.md)，3 must-fix + 8 suggestions；49 处事实抽查 47 命中 2 偏离），must-fix 已全部落盘修订，suggestions 全部吸收（含判据适用边界、事故 B 数据流图、多包版本门禁、verifiedWith 防线分层、缓存键补维、锚点修正）。
+- **2026-08-28 增补（D9 轮询精简 + 附录 C）**：经 ZCode（打包版反混淆直读）与 deepseek-harness / opencode 源码对照调研后新增。增补项中的代码落地（plugin-host 30s 空转删除、flushAll 5s×2 删除、handoff 2s 事件化、更新检查 20min→60min、skill watch polling 降级化）已随当日提交完成并测试全绿；thinkingLevel 30s 轮询删除仍随 U6 落地。本增补为删减性质 + 全部带证据锚点，未再单走一轮对抗式审查。
 
 ---
 
@@ -38,7 +39,7 @@
 ### Scope
 
 - **In-scope**：`packages/runtime`（能力注册表、回执链路、rpc-client 补齐）；`packages/shared`（协议类型）；`packages/core` / `packages/ui` / `packages/renderer`（档位可用集消费方切换、表单）；`docs/` 治理资产（constraints.json、troubleshooting.md、extension-conventions.md、TEST-STRATEGY.md、ADR）；`.githooks/` + `scripts/` + `.github/workflows/ci.yml`（护栏挂载）；切片 1 两个包按切片 1 文档。
-- **Out-of-scope**：pi 上游（MANDATORY 不改）；renderer 模型清单数据源重构（当前用户配置聚合保持，注册表只做能力标注与对账，不重做清单来源）；20+ 处既有轮询定时器的全面整改（仅登记两处待办：plugin-host.ts 30s memory monitor 无消费者空转、handoff 2s 轮询可事件化——列入附录 B 待办，不进本设计交付）；GUI 模型管理面之外的 pi 能力面（bash/compact 等）的注册表化。
+- **Out-of-scope**：pi 上游（MANDATORY 不改）；renderer 模型清单数据源重构（当前用户配置聚合保持，注册表只做能力标注与对账，不重做清单来源）；~~20+ 处既有轮询定时器的全面整改~~（2026-08-28 增补：已由 D9 处置完毕——12 处逐项处置见附录 C，其中 5 项当日落地、1 项随 U6 删除，不再列 Out-of-scope）；GUI 模型管理面之外的 pi 能力面（bash/compact 等）的注册表化。
 
 ---
 
@@ -258,6 +259,13 @@ AGENTS.md 文档索引涉及的资产，逐一定性「改/不改/怎么改」�
 | `docs/release-notes.md` | **不改** | 写作规范文档；发布时按规范撰写即可 |
 | `docs/extensions/development-guide.md` | **不改** | 通用开发流程，无涉本主题 |
 
+**D9：轮询/兜底定时器精简——只保留「push 结构性不可用」的探测（选定；2026-08-28 增补）**
+
+- **采用**：以「信息变化是否有 push 通道？无 push 是结构性的还是偷懒？」为判定准则，对全部驻留周期定时器做处置（逐项清单与证据见附录 C）：①**自有状态对账类**（变化 100% 经我方请求/事件路径）禁止周期轮询，正确机制是回执 + 事件失效——thinkingLevel 30s 兜底轮询在 U6 回执接通后**删除**（非降频）；②**活性探测类**保留，但后续优先「升级式触发」（事件静默超时再探）替代无条件周期；③**协议规定 pull**（OAuth 设备码）保留，参数须合规（服务端 interval + slow_down +5s——已核实 device-code-flow.ts 合规，未改）；④**外部信息类**（更新检查）降频到与下游缓存同档（20min→60min，已落地）；⑤**有事件通道却用轮询**（handoff 2s 轮询 exited）事件化（已落地）；⑥**无消费者空转**（plugin-host 30s 刷 lastActiveAt）与**防假设性 bug 的写穿兜底**（sessionData/recent-workspaces 5s flushAll）删除（均已落地）。
+- **被否**：全部保留现状（「事件为主、轮询兜底」哲学）——对照调研证明它被滥用为「不信任主链路的代偿」：ZCode 无引擎探活/无 WS 心跳/无 /health 轮询，deepseek-harness runtime 核心仅 1 个 setInterval，两者靠「被动信号 + 有界预算 + 便宜重建」达到同等可靠性；❌ 一刀切全删——pingPi 覆盖的 pi 半死态（ADR-0047 实证）与 WS 心跳（WS 通道必需）是真实需求，pi 无 stream_idle_timeout 类自报能力。
+- **证据**：附录 C 对照表（含 ZCode/DSH/opencode 逐项 file:line 锚点）；pi 侧源码实证 `setThinkingLevel` 状态真变必发事件（agent-session.js:1280-1299，isChanging=false 仅在值未变时不发，不构成对账缺口）；fs.watch 缺陷复测（2026-08-28，Node v24.11.1 / macOS 25，已 watch 目录下 10 轮「新建子目录+写文件」21/21 事件到达，nodejs/node#52601 不再复现）；rpc-client onExit 已多播（rpc-client.ts:144 注释自述单槽历史）。
+- **效果**：驻留周期定时器从 12 处收敛到 4 处保留 + 2 处待改造（附录 C 全清单），每处都有「为什么 push 不可替代」的登记答案；新增定时器按 troubleshooting.md「周期轮询/兜底定时器的合法性判定」过闸。
+
 ### §4 验收
 
 以下场景全部真实环境（xyz-agent GUI + 真实 pi 0.84.1 + 真实 LLM 后端 + 真实文件系统），无 mock。切片 1 验收 S1-S5 沿用切片 1 文档 §4，不在此重复。
@@ -293,7 +301,7 @@ AGENTS.md 文档索引涉及的资产，逐一定性「改/不改/怎么改」�
 | 单元 | 内容 | 依赖 | 可独立验收 |
 |---|---|---|---|
 | **U5 能力注册表** | runtime 新增 `model-capability.ts`（pi-ai 同源计算 + get_available_models 对账 + drift 日志）；rpc-client 封装 `get_available_models`；`packages/runtime/package.json` 加 `@earendil-works/pi-ai` + `tsup.config.ts` noExternal 登记；ProviderInfo.models 增 `supportedLevels` 字段（shared 类型） | 无（P-C1 打包门在其内） | P-S5 |
-| **U6 回执与表单** | protocol.ts ReplyPayloadMap 修型 + 改状态 RPC 普查补齐回执；useModel 弃乐观写；core **函数级**删除 resolveAvailableLevels 及其调用方（thinking-levels.ts 其余 9 个导出保留；连带项：renderer shim `panel/thinking-levels.ts` 与 core index re-export 保持——W3/W4 归位计划不动，thinking-level-sync.ts 与 Popover 的 resolveThinkingKey 不动，thinking-levels.test.ts 改锚删对应用例）；档位消费切 supportedLevels；ThinkingLevelPopover 接线；ModelListSection 加 reasoning 开关 + addModel 自动推导；session-service set→get_state→effective 链路补 debug 日志一条（P-S2 可观察点）；轮询降频检查点（评估：仅附着 session 条件化 / 30s 降频——改不改以实测事件覆盖率定，诚实标注为检查点而非承诺） | U5 | P-S1/P-S2 |
+| **U6 回执与表单** | protocol.ts ReplyPayloadMap 修型 + 改状态 RPC 普查补齐回执；useModel 弃乐观写；core **函数级**删除 resolveAvailableLevels 及其调用方（thinking-levels.ts 其余 9 个导出保留；连带项：renderer shim `panel/thinking-levels.ts` 与 core index re-export 保持——W3/W4 归位计划不动，thinking-level-sync.ts 与 Popover 的 resolveThinkingKey 不动，thinking-levels.test.ts 改锚删对应用例）；档位消费切 supportedLevels；ThinkingLevelPopover 接线；ModelListSection 加 reasoning 开关 + addModel 自动推导；session-service set→get_state→effective 链路补 debug 日志一条（P-S2 可观察点）；**删除 thinkingLevel 30s 兜底轮询**（D9 定案：回执接通后其覆盖场景只剩「不受支持的外部双写者」；删除点在回执链路验收 P-S1/P-S2 通过之后，验收锚点 = G5 e2e + set 被钳/切模型被钳/restore 附着三个手工场景） | U5 | P-S1/P-S2 |
 | **U7 漂移守卫与护栏** | `docs/pi-semantics.json`（附录 A 初始内容）+ `scripts/check-pi-semantics.mjs` + 探针测试族 + diff-probe 接线 + `check_subagent_channels.py`（G4，切片 1 U1/U2 合入后启用）+ G5 real-pi 用例登记 REAL_PI_TESTS；pre-commit 块插入 install-hooks.sh heredoc（i18n 段后）+ `pnpm prepare` 重部署 + CI invariants 挂步 | 无（G4 依赖切片 1 U1/U2） | P-S3/P-S4 |
 | **U8 治理文档** | constraints.json 四条登记 + render 重生成 + ADR-0064 + troubleshooting 观察项/规则 + extension-conventions 两节 + TEST-STRATEGY 三处 + context.md/glossary 术语 + AGENTS.md 索引行 + C-build-01 scope 漂移修正 | 对应护栏/单元同 commit 或护栏先行（render-constraints 存在性校验） | 文档评审 + select-constraints --check PASS |
 
@@ -332,7 +340,7 @@ docs/extensions/logging-conventions.md / AGENTS.md       [U8]
 - ⛔ P-C1 pi-ai 打入 runtime CJS bundle 的行为等价 + 体积阈值 + 版本一致性（D2）：三阶段打包验证 + validate-runtime-bundle.sh 之外，断言 bundle 增量 < 100KB（pi-ai dist 全量 5.7MB 含全部 provider 实现，主入口 import 在 CJS 输出下 tree-shake 效果未验；超标则评估子路径 import `@earendil-works/pi-ai/dist/models.js`）；并断言四包版本一致（D6 门禁同款校验的打包期形态）。降级 = 纯在线对账 + 设置页可用性妥协。
 - ⛔ P-D1 附录 A 各 probe 条目的断言可行性（D6；个别条目允许降级为锚点+代码形态断言）。
 - ⛔ P-D2 在线对账的触发面（每附着一次 vs 设置页打开时 withEphemeralPi 短命进程，C-pi-10 先例；以性能实测定）。
-- ⛔ 轮询降频检查点（U6 内，以事件覆盖率实测决定，不预先承诺）。
+- ~~轮询降频检查点~~ 已由 D9 定案为删除（U6 内，见上表）。
 
 ---
 
@@ -345,7 +353,7 @@ docs/extensions/logging-conventions.md / AGENTS.md       [U8]
 | PS-01 | `--model` 是 pattern 非精确 ID：canonical 双命中判歧义作废 → contains 模糊 → localeCompare 取最大；findExactModelReferenceMatch 的 id 匹配为 toLowerCase 相等 | pi-coding-agent dist/cli/args.js:245；dist/core/model-resolver.js resolveCliModel:291-463（内嵌 tryMatchModel 自 :104 起）、findExactModelReferenceMatch :97 | probe（代码形态断言）+ 切片 1 D1 孪生守卫（运行时） | 事故 A 探针 P-A0（node 复现与基线 session model_change 逐字一致） |
 | PS-02 | 思考能力两级门控：`!model.reasoning → ["off"]`，thinkingLevelMap 仅在开关打开后生效 | pi-ai dist/models.js:548-550 | probe（import pi-ai 直调断言 reasoning undefined/false → ["off"]） | 事故 B 实机探针复现钳制 |
 | PS-03 | `set_thinking_level` RPC 响应无 data（仅 success）；生效值须 set 后 get_state 补读 | pi-coding-agent dist/modes/rpc/rpc-mode.js:387-389；rpc-types.d.ts 同分支 | probe（静态断言响应构造） | 事故 B + 本轮核查 |
-| PS-04 | 同档位切换不发 thinking_level_changed（isChanging=false）；钳制后同值亦不发 | dist/core/agent-session.js:1275-1295 | probe | 事故 B（30s 兜底轮询的存在理由） |
+| PS-04 | 同档位切换不发 thinking_level_changed（isChanging=false）；钳制后同值亦不发。2026-08-28 补充实证：setThinkingLevel（agent-session.js:1280-1299）在 effective ≠ previous 时必发事件——isChanging=false 仅覆盖「值未变」场景，**不构成对账缺口**（D9 删 30s 轮询的依据） | dist/core/agent-session.js:1275-1295 | probe | 事故 B（30s 兜底轮询的存在理由） |
 | PS-05 | steeringQueue 全文仅 2 个 drain 点（turn 边界 / 手动 continue()），run 收尾后无残留补触发 | pi-agent-core dist/agent.js:321、:243 | probe | 事故 A F2 |
 | PS-06 | `_pendingNextTurnMessages` 唯一 drain 点 = 用户驱动 `session.prompt()`（声明 :95 / 入队 :1078-1080 / 注入清空 :880-883） | pi-coding-agent dist/core/agent-session.js | probe | 事故 A 审查 MF-1 |
 | PS-07 | `_emitAgentSettled` 先复位 `_isAgentRunActive` 再发事件（边沿回调内 isIdle 恒真） | dist/core/agent-session.js:327-331 | probe | 事故 A D5 |
@@ -366,4 +374,48 @@ docs/extensions/logging-conventions.md / AGENTS.md       [U8]
 - **C-comm-04（EventAdapter 唯一适配点）**：本设计把它从「传输格式适配」扩到「语义适配」——能力注册表是语义面的唯一入口，两者并列登记（C-pi-12 authority 会互相引用）。
 - **troubleshooting.md 观察项**：人读层保留并加 PS 互链；机器层（pi-semantics.json）是唯一守卫源，两边机制描述不双写。
 - **切片 1 文档**：D1-D6 技术决策不变；其中 D1（全等裁决）与 D4/D5（账本/ courier）分别是本设计支柱一/三的 subagent 域先行实例。
-- **已登记待办（不进本设计交付，防丢）**：scheduler 触发注入的账本化迁移（D5 存量口径：现状 `extensions/universal/scheduler/src/index.ts:97-99` 底层 deliverAs steer/followUp、无账本无幂等键；复用切片 1 U2 账本设施，迁移合入时 G4 扫描面同步扩到 scheduler 目录）；plugin-host.ts:490 30s memory monitor 无消费者空转（该删或实现消费者）；handoff 2s 轮询可事件化（exit promise + Promise.race）；renderer subagent pane 消费 outcome 字段的 UI 升级（切片 1 已保证向后兼容输出）。
+- **已登记待办（不进本设计交付，防丢）**：scheduler 触发注入的账本化迁移（D5 存量口径：现状 `extensions/universal/scheduler/src/index.ts:97-99` 底层 deliverAs steer/followUp、无账本无幂等键；复用切片 1 U2 账本设施，迁移合入时 G4 扫描面同步扩到 scheduler 目录）；renderer subagent pane 消费 outcome 字段的 UI 升级（切片 1 已保证向后兼容输出）；pingPi 60s 升级式触发改造（事件静默超时再探，替代无条件周期，D9 ②）；Electron 30s /health 周期探测按需化（WS watchdog 触发探测 → 重启决策，D9 ②，对齐 ZCode/DSH「请求超时 + 便宜重建」范式）；重试路径普查补三件套（尝试预算上限 / 稳定窗清零 / 尊重 retry-after，D9 对照 DSH MCP 监督）。**已随 2026-08-28 落地**：plugin-host 30s 空转删除、handoff 2s 事件化、5s flushAll×2 删除、更新检查 20min→60min、skill watch polling 降级化（明细见附录 C）。**核查后无需改**：WS 断线重连已是有界指数退避（packages/core/src/transport/ws-client.ts:43-50，1s 起步 ×2 退避、30s 封顶、60s 总预算后进 failed 态），与 opencode 同档，从待办移除。
+
+## 附录 C：轮询/定时器处置全清单（2026-08-28，D9 执行台账）
+
+12 处常规定时机制的逐项处置。判定准则（四类框架）的人读版在 [troubleshooting.md](../troubleshooting.md)「周期轮询/兜底定时器的合法性判定」；本表是处置事实与证据锚点的登记处。
+
+### C.1 结构性保留（活性探测 / 一次性握手，共 6 项）
+
+| 机制 | 锚点 | 类 | 处置 | 依据 |
+|---|---|---|---|---|
+| pingPi 60s 探活 | `packages/runtime/src/services/session/event-interpreter.ts:37`（PING_INTERVAL_MS），pingTick :770 | 活性探测 | **保留**；待改造为升级式触发（事件静默超时再探，替代无条件周期）——已登记附录 B 待办 | 死掉的 pi 无法主动 push 自己的死亡，探测结构性不可替代；ZCode 同域无周期 ping（30s 请求超时 + dispose + 惰性重建），证明「无条件周期」可降为「触发式」 |
+| WS 15s ping + 45s watchdog | renderer 侧 `packages/core/src/transport/ws-client.ts:42`（HEARTBEAT_INTERVAL_MS，keepalive only）；runtime 侧 `packages/runtime/src/transport/connection-manager.ts:30`（HEARTBEAT_TIMEOUT_MS，静默即 close） | 活性探测 | **保留**（现状已达标，无改造项） | 断线重连已是有界指数退避（ws-client.ts:43-50）；与 opencode SSE 心跳 10s/15s + 客户端 1s→30s 退避同档 |
+| Electron 30s /health 探针 | `apps/electron/main/supervisor/liveness-probe.ts:31`（LIVENESS_INTERVAL_MS） | 活性探测 | **保留**；待改造为按需化（WS watchdog 触发探测 → 重启决策）——已登记附录 B 待办 | 同上：runtime 卡死无法自报；ZCode 无 /health 轮询（wakaru-test/host/entry.js:5158，靠请求超时兜底），证明周期可降触发式 |
+| pi 启动有界等待 | `packages/runtime/src/infra/pi/process-manager.ts:26`（EPHEMERAL_READY_TIMEOUT_MS=5s）、`packages/runtime/src/infra/relay/relay-registry.ts:39`（HANDSHAKE_TIMEOUT_MS=10s） | 一次性握手 | **保留** | 一次性有界等待 ≠ 周期轮询；ZCode 反例：启动握手无超时上限是其弱点，有界等待方向正确 |
+| 快照重拉退避 1/5/15s | `packages/runtime/src/services/session/replicated-states.config.ts:63`（SCALAR_STATE_BACKOFF_SCHEDULE） | 协议补偿 | **保留**；重试三件套（预算上限/稳定窗清零/retry-after）普查待做——已登记附录 B 待办 | 补偿 pi session 延迟首写（PS-14）与快照暂不可读；失败驱动 + 有界退避 + 成功归零，形态已合规 |
+| OAuth 设备码轮询 | `packages/runtime/src/services/auth/device-code-flow.ts` | 协议规定 pull | **保留**（核查后未改，已合规） | RFC 8628 §3.5 规定客户端轮询；实现已尊重服务端 intervalSeconds 与 slow_down +5s；opencode 实现同档 |
+
+### C.2 外部世界类（保留，降频已落地，1 项）
+
+| 机制 | 锚点 | 处置 | 依据 |
+|---|---|---|---|
+| 应用更新检查 20min → **60min** | `packages/renderer/src/composables/features/settings/useAppUpdate.ts:62`（CHECK_INTERVAL_MINUTES） | **已落地降频**（2026-08-28） | GitHub Releases 无 push 通道，轮询结构性合理；频率 = 外部约束：未认证 API 限额 60 次/小时 → 1h 一次配额宽裕；与 release-checker 1h 缓存 TTL 同档；ZCode 同功能为启动时 + 1h（其 main/index.js:17712），对齐 |
+
+### C.3 事件化 / 删除（已落地，4 项）
+
+| 机制 | 原锚点 | 处置 | 依据 |
+|---|---|---|---|
+| handoff 2s 退出轮询 | `packages/runtime/src/services/handoff-service.ts`（原 HANDOFF_EXIT_POLL_MS=2_000） | **已事件化**（2026-08-28）：onExit 多播订阅命中即 reject | 轮询存在的唯一理由是 onExit 曾单槽（rpc-client.ts:144 注释）；多播化后理由消失。TC8b 改事件路径验证 |
+| plugin-host 30s memory monitor | `packages/runtime/src/services/plugin-service/plugin-host.ts`（原 MEMORY_MONITOR_DEFAULT_INTERVAL_MS） | **已删除**（2026-08-28） | 无消费者空转：WorkerHandle.lastActiveAt 只写不读（全仓 grep 零读取方），属「有数据无消费者」空转类 |
+| flushAll 5s 周期 ×2 | `session-data-store.ts`、`workspace/recent-workspaces-store.ts`（原 FLUSH_INTERVAL_MS=5_000） | **已删除**（2026-08-28） | 落盘保障已由 per-write debounce 500ms + 退出前 flushAll（plugin-shutdown.ts:64-77 / index.ts shutdown 链）双保险覆盖，周期 flush 是第三重冗余 |
+| skill watch stat-polling | `packages/runtime/src/services/skill-registry.ts:117`（WATCH_OPTIONS.usePolling） | **已显式降级化**（2026-08-28）：默认原生事件，`XYZ_AGENT_SKILL_WATCH_POLLING=1` 回退 | 2026-07-27 设 polling 的依据（nodejs/node#52601，实测触发率 ~40%）在当前 Node v24.11.1 / macOS 25 复测不再复现（10 轮新建子目录+文件 21/21 事件全到）；真实 watcher 测试 W5a/W5b 在原生事件路径下转绿 |
+
+### C.4 待删除（随 U6 落地，1 项）
+
+| 机制 | 锚点 | 处置 | 依据 |
+|---|---|---|---|
+| thinkingLevel 30s 兜底轮询 | `packages/runtime/src/services/session/replicated-states.config.ts:59`（THINKING_LEVEL_POLL_INTERVAL_MS）、:123（pollIntervalMs） | **删除**（非降频），随 U6 与回执链路一同落地 | 自有状态对账类：pi 全部写入路径经 xyz 自身 set/restore，回执接通后覆盖完备；pi 侧实证（PS-04 补充：agent-session.js:1280-1299 effective≠previous 必发事件，isChanging=false 仅「值未变」）证明 pi 不会静默改值；剩余覆盖仅「不受支持的外部双写者」，不构成保留理由。验收锚点 = G5 e2e + set 被钳/切模型被钳/restore 附着三手工场景 |
+
+### C.5 对照证据锚点（外部实现）
+
+| 对照源 | 关键证据 |
+|---|---|
+| ZCode（~/GitApp/ZCode 打包版反混淆直读） | 无 engine ping（30s 请求超时 → dispose+SIGTERM+惰性重建，wakaru-test/host/entry.js:5158、chunk_LG.js:137-149）；renderer↔host MessagePort 零心跳；无 /health 轮询；更新检查启动+1h（main/index.js:17712）；fs.watch+150ms debounce 无轮询兜底；重试线性 1s×n ≤5 + 120s 窗口 2 次崩溃熔断 |
+| deepseek-harness | runtime core 全仓仅 1 个 setInterval（ELU busy-budget 采样 25ms，60s busy/600s wall）；MCP 重连 500ms→30s ×10 + 30s 稳定窗清零 |
+| opencode | SSE 心跳 10s/15s + 客户端 1s→30s 指数退避重连；OAuth 严格 RFC 8628（server interval / first-poll 前 sleep / slow_down +5s） |
