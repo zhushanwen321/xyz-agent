@@ -5,8 +5,8 @@
  * renderer 零推导）——
  * - broadcastProviderList / sendInitialState 两条链路（共享 buildProviderListMsgs）都标注；
  * - pi 版本与 app.info 同源（services.appInfo.piVersion）；
- * - 结构探测降级：modelService 无 attachSupportedLevels（IModelService 接口未声明的过渡态）
- *   或标注抛错时，providers 原样下发，config.providers 与 model.list 两帧都不被阻断。
+ * - 降级：modelService 缺 attachSupportedLevels（调用抛 TypeError）或标注抛错时，
+ *   providers 原样下发，config.providers 与 model.list 两帧都不被阻断。
  *
  * 运行：cd packages/runtime && npx vitest run src/transport/message-broker-supported-levels.test.ts
  */
@@ -116,7 +116,7 @@ describe('ServerMessageBroker supportedLevels 接线（U5）', () => {
     for (const m of models) expect(m.supportedLevels).toBeUndefined()
   })
 
-  it('降级 A：modelService 无 attachSupportedLevels（接口未声明过渡态）→ providers 原样下发不抛', () => {
+  it('降级 A：modelService 缺 attachSupportedLevels（调用抛 TypeError）→ providers 原样下发不抛', () => {
     const { broker, sent } = makeBroker({ aggregateModelsWithScoped: vi.fn(() => []) })
 
     expect(() => broker.broadcastProviderList()).not.toThrow()

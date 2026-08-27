@@ -130,7 +130,7 @@ describe('useThinkingLevelSync', () => {
     expect(deps.getThinkingLevelMap).toHaveBeenCalledWith('p/m9')
   })
 
-  it('U11: 切到 non-reasoning 模型（getModelReasoning=false）→ 重置到 off', async () => {
+  it('U11: 切到 non-reasoning 模型（getSupportedLevels 返回 ["off"]）→ 重置到 off', async () => {
     const currentModelId = ref('p/m1')
     const currentThinkingLevel = ref<string | undefined>('h')
     const onReset = vi.fn()

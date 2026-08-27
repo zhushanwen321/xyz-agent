@@ -1675,9 +1675,9 @@ export interface ReplyPayloadMap {
   'message.follow_up': void       // reply message.status
   'message.send': void            // reply message.status
   'message.steer': void           // reply message.status
-  'model.switch': ServerMessageMap['model.switched'] // reply model.switched（回执修型 U6：生效值回传链路
-            // runtime 侧已就绪（session-service switchModel 读回 get_state 生效模型）；transport reply
-            // 消费生效值的一行接线归 U5b，协议类型先行如实登记——runtime 本就回此形状 payload）
+  'model.switch': ServerMessageMap['model.switched'] // reply model.switched（回执修型 U6：transport 层在
+            // model.switch case 消费 switchModel 返回的生效值（session-service 读回 get_state 生效模型）
+            // 拆解回填 provider/modelId，对齐 C-pi-13 改状态 RPC 一律回生效值）
   'session.compact': void         // reply session.compacted
   'session.delete': void          // reply session.deleted
   'session.deleteByCwd': BatchDeleteResult // reply session.deletedByCwd（前端读 deleted/failed 列表）

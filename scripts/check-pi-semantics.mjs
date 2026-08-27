@@ -21,9 +21,10 @@
  *   --root 指向一个含 docs/pi-semantics.json / packages/runtime/package.json /
  *   node_modules/@earendil-works/* 的目录结构（默认仓库根；fixture 自测用）。
  *
- * 零第三方依赖（node:fs/node:path）。退出码：0 = 通过（允许含 WARN）；1 = 违规。
+ * 零第三方依赖（node:fs/node:path/node:child_process）。退出码：0 = 通过（允许含 WARN）；1 = 违规。
  */
 import { readFileSync, existsSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -214,6 +215,37 @@ if (missingPkgs.length > 0) {
       )
     }
   }
+}
+
+// ── 4. D6 软门禁（可选）：staged verifiedWith 批量变更无探针陪跑 → WARN ────
+// 本地 pre-commit 语境读 git staged diff；CI 全仓 checkout 无 staged 内容（输出空 →
+// 不触发），--root fixture 非 git 目录（git 失败）则跳过不报错。仅提醒不拦截
+//（exit 0）——机器防线是探针族本身，本层只提醒「批量改 verifiedWith 时先跑探针」。
+try {
+  const stagedRegistry = execFileSync('git', ['-C', ROOT, 'diff', '--cached', '--', 'docs/pi-semantics.json'], {
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  const vwChangedLines = stagedRegistry
+    .split('\n')
+    .filter((line) => (line.startsWith('+') || line.startsWith('-')) && !line.startsWith('+++') && !line.startsWith('---') && line.includes('verifiedWith'))
+    .length
+  if (vwChangedLines > 3) {
+    const stagedNames = execFileSync('git', ['-C', ROOT, 'diff', '--cached', '--name-only'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    const probeTouched = stagedNames
+      .split('\n')
+      .some((f) => /pi-semantics-[^/]*\.test\.ts$/.test(f) || f.endsWith('thinking-level-effective-e2e.test.ts'))
+    if (!probeTouched) {
+      warn(
+        `staged 的 docs/pi-semantics.json 有 ${vwChangedLines} 行 verifiedWith 变更，但无任何探针测试文件（pi-semantics-*.test.ts / thinking-level-effective-e2e.test.ts）陪跑——D6 软门禁仅提醒不拦截；恢复动作：先跑探针族确认语义仍成立（cd packages/runtime && npx vitest run src/infra/pi/__tests__/pi-semantics），全绿再更新 verifiedWith`,
+      )
+    }
+  }
+} catch {
+  // git / staged diff 不可用（--root fixture 非 git 目录、无 index 等）：CI 全仓模式跳过，不报错
 }
 
 // ── 汇总 ────────────────────────────────────────────────────────────

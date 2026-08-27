@@ -324,8 +324,17 @@ export class SettingsMessageHandler {
       case 'model.switch': {
         const { sessionId, provider, modelId } = msg.payload
         console.log(`[runtime] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
-        await this.ctx.modelService.switchModel(sessionId, provider, modelId)
-        this.ctx.reply(ws, msg.id, 'model.switched', { sessionId, provider, modelId })
+        // C-pi-13 回执修型（U6）：reply 回传生效值——pi pattern 引擎可能把请求模型
+        // 静默换成同族条目（事故 A 形态），switchModel 经 set→get_state 读回
+        // 'provider/id' 复合串（请求 ≠ 生效），拆解回填保持 reply 协议形状；
+        // 无 '/' 形态（无活跃进程早退等 fallback）按请求值回显（旧行为兜底）。
+        const effectiveModel = await this.ctx.modelService.switchModel(sessionId, provider, modelId)
+        const slash = effectiveModel.indexOf('/')
+        this.ctx.reply(ws, msg.id, 'model.switched', {
+          sessionId,
+          provider: slash === -1 ? provider : effectiveModel.slice(0, slash),
+          modelId: slash === -1 ? modelId : effectiveModel.slice(slash + 1),
+        })
         return true
       }
       case 'config.setDefaultModel': {
@@ -400,7 +409,9 @@ export class SettingsMessageHandler {
       case 'session.setThinkingLevel': {
         const { sessionId: sid, level } = msg.payload
         // P3（final gate）：reply 生效值而非请求值——pi 会钳制模型族不支持的档位
-        //（mimo 族 max → high，钳制时不发事件不写 entry），回显请求值会污染前端 pending 确认
+        //（mimo 族 max → high；钳制后 effective ≠ previous 时 pi 仍必发
+        // thinking_level_changed 事件，isChanging=false 仅「值未变」场景——PS-04），
+        // 回显请求值会污染前端 pending 确认
         const effective = await this.ctx.modelService.setThinkingLevel(sid as string, level as string)
         this.ctx.reply(ws, msg.id, 'session.thinkingLevelSet', { sessionId: sid, level: effective })
         return true

@@ -79,8 +79,9 @@ const props = withDefaults(
   defineProps<{
     level?: string
     /** 当前模型的思考档位映射（per-model thinkingLevelMap）。
-     *  key = UI 可选档位（ThinkingLevel 枚举值，含 max），value = 发给 runtime 的实际 level（非 null = 可用）。
-     *  undefined/null/空 = pi 默认规则（off..high 五档，xhigh/max 需显式定义）。切换模型后 Composer 传入新模型的 map。 */
+     *  key = UI 可选档位（ThinkingLevel 枚举值，含 max），value = 发给 runtime 的实际 level——
+     *  只做档位名→实际值映射，不承载可用性语义（可用集由 supportedLevels 决定，U6 切源）。
+     *  切换模型后 Composer 传入新模型的 map。 */
     levelMap?: Record<string, string | null>
     /** 当前模型档位可用集（models[].supportedLevels，runtime 注册表 pi 同源计算下发，U6 切源）。
      *  undefined/空 = 下发链路未接通 → 归一默认五档（off..high）。 */

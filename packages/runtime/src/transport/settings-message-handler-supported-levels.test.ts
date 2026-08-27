@@ -3,8 +3,8 @@
  *
  * 锁定：getProviders reply 的 providers 与广播链路（message-broker.buildProviderListMsgs）
  * 同标 supportedLevels——modelService 用真实 ModelCapabilityRegistry 小 fixture（pi-ai 同源
- * 计算），断言端到端 view-ready 值；并锁定 modelService 无 attachSupportedLevels（IModelService
- * 接口未声明的过渡态）时原样 reply 不抛。
+ * 计算），断言端到端 view-ready 值；并锁定 modelService 缺 attachSupportedLevels
+ * （方法缺失降级）时原样 reply 不抛。
  *
  * 运行：cd packages/runtime && npx vitest run src/transport/settings-message-handler-supported-levels.test.ts
  */
@@ -87,7 +87,7 @@ describe('SettingsMessageHandler · config.getProviders supportedLevels 接线�
     expect(providers[0].models[1].supportedLevels).toEqual(['off'])
   })
 
-  it('modelService 无 attachSupportedLevels（接口未声明过渡态）→ providers 原样 reply 不抛', async () => {
+  it('modelService 缺 attachSupportedLevels（调用抛 TypeError）→ providers 原样 reply 不抛（降级兑底）', async () => {
     const { ctx, replies } = mockCtx({ aggregateModels: vi.fn(() => []) })
     const handler = new SettingsMessageHandler(ctx)
 

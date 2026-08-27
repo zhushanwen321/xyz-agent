@@ -56,7 +56,8 @@ export function useModel() {
    *
    * level 是前端 6 级枚举字符串（off/low/medium/high/xhigh/max）。
    * 回执消费（U6 弃乐观写）：reply.level 是 pi 实际生效档（pi 会钳制模型族不支持的档位，
-   * 如 mimo 族 max → high，钳制时不发事件不写 entry）——显示值从第一毫秒起就是真值，
+   * 如 mimo 族 max → high；钳制后 effective ≠ previous 时 pi 仍必发
+   * thinking_level_changed 事件，isChanging=false 仅「值未变」场景——PS-04）——显示值从第一毫秒起就是真值，
    * 不存在「过一会自己变回去」（事故 B 根因 ③）。RPC 失败时不写 store（显示保持旧真值）。
    *
    * 调用方职责区分：

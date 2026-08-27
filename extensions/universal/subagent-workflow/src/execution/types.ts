@@ -685,11 +685,6 @@ export interface SubagentListItem {
   /** 可冷路径 resume（running 且无活进程句柄）。[v4 A-6] B-1「可续聊」对外表达，
    *  agent 据 list 判断哪些 running subagent 实际可续聊（vs 正在忙）。 */
   resumable?: boolean;
-  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。[v4 A-6] SP-4 级联关闭告知
-   *  替代——砍 before_agent_start 注入通道后，被级联关闭的 record 经 list
-   *  （includeFinished:true）可查。[U3] 本字段退出对外 JSON（不再进 SubagentListItem），
-   *  对外终态语义由 outcome 一等字段表达；closedReason 保留为 record 内部诊断字段。 */
-  closedReason?: ClosedReason;
   /**
    * 终态三态对外语义（U3 C-outcome 一等披露，projectOutcome 唯一出口）：
    * completed / failed / cancelled，历史 record 无 outcome 字段时兜底派生，

@@ -643,8 +643,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // fire-and-forget：补拉失败不影响切模型主流程（syncTraceEntries 内部吞错）。
     this.syncTraceEntries(sessionId, 'set_model')
     // U6 回执普查：返回 pi 实际生效模型（get_state 读回，'provider/id' 复合串）——
-    // plugin agent.setModel 经此拿生效值回执；WS 侧 reply 消费该值的一行接线归 U5b
-    //（settings-message-handler 目前仍回显请求值）。
+    // plugin agent.setModel 经此拿生效值回执；WS 侧 settings-message-handler 的
+    // model.switch case 拆解该复合串回填 reply（对齐 C-pi-13 改状态 RPC 一律回生效值）。
     return effectiveModelId
   }
 
