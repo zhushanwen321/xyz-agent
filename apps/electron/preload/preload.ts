@@ -1,6 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -133,7 +133,7 @@ export interface ElectronAPI {
    * 读取启动结果（升级成功/失败/回滚通知）。
    * main 侧一次性缓存：首次调用返回结果并清空，后续调用返回 null。
    */
-  getLaunchResult(): Promise<{ status: string; version: string } | null>
+  getLaunchResult(): Promise<LaunchResult | null>
   /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数 */
   onUpdateProgress(callback: (payload: { stage: UpdateStage; percent: number }) => void): () => void
   /** 监听升级错误事件（stage + message + errorCode + suggestion），返回取消订阅函数 */
@@ -157,7 +157,7 @@ export interface ElectronAPI {
   /** 保存代理配置 */
   setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void>
   /** 测试代理连接 */
-  testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; code?: string; message?: string; suggestion?: string }>
+  testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<ProxyTestResult>
   // ── 升级提醒持久化标志（功能 1：常驻提醒）──────────────────────────
   /**
    * 读取升级提醒持久化标志（app 启动时调用以恢复「可升级」提醒）。

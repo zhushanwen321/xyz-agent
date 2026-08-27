@@ -57,6 +57,7 @@ import { existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { app, protocol, net, BrowserWindow } from 'electron'
 import { DEV_PORT_OFFSET } from '@xyz-agent/shared'
+import type { LaunchResult } from '@xyz-agent/shared'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import { createMainContext } from './context.js'
 import type { MainContext } from './interfaces.js'
@@ -150,7 +151,7 @@ const ctx: MainContext = createMainContext({ runtime, windows, shortcuts, isDev 
  * renderer 启动时通过 update:getLaunchResult 一次性读取后清空（consumed 语义）。
  * 生命周期 = 进程内一次性（app 不重启则不再重复 toast）。
  */
-let launchResultCache: { status: string; version: string } | null = null
+let launchResultCache: LaunchResult | null = null
 // Browser drawer 的 WebContentsView 管理器（依赖 windows Facade 取窗口引用）。
 // W2：注入 onStateChange 回调，webContents 事件触发时把 state 推给主窗口 renderer（BrowserPane），
 // 用于地址栏回填真实 URL（防钓鱼）+ loading/error 态切换。win 在 ctx.mainWindow 设置后才有值，

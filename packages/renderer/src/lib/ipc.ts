@@ -7,7 +7,7 @@
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -291,7 +291,7 @@ export function onUpdateError(cb: (e: UpdateErrorPayload) => void): () => void {
 }
 
 /** 读取启动结果（升级成功/失败/回滚通知）。首次调用返回结果，后续返回 null。无 IPC 返回 null */
-export function getLaunchResult(): Promise<{ status: string; version: string } | null> {
+export function getLaunchResult(): Promise<LaunchResult | null> {
   return api?.getLaunchResult() ?? Promise.resolve(null)
 }
 

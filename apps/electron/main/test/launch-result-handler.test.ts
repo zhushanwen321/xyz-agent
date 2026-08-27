@@ -11,6 +11,7 @@
  * 运行：cd apps/electron/main && npx vitest run test/launch-result-handler.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { LaunchResult } from '@xyz-agent/shared'
 
 // ── electron mock ──────────────────────────────────────────────────
 const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -57,7 +58,7 @@ import { registerUpdateHandlers } from '../gateway/update-handlers.js'
  * 模拟 main.ts 的缓存模式：module-level variable + consumed 一次性语义。
  * 完全对齐 main.ts 中 launchResultCache 的行为。
  */
-function makeCacheDeps(launchResult: { status: string; version: string } | null) {
+function makeCacheDeps(launchResult: LaunchResult | null) {
   // 模拟 main.ts 的 launchResultCache
   let cache = launchResult
   return {
@@ -99,7 +100,7 @@ describe('W4: launch result IPC handler', () => {
 
   it('A3-main-cache-vitest: cleanupCompletedUpdate 返回值可被 getLaunchResult 回调读取', async () => {
     // 模拟 cleanupCompletedUpdate 返回的 LaunchResult
-    const cleanupResult = { status: 'rolled-back', version: '0.9.7' }
+    const cleanupResult: LaunchResult = { status: 'rolled-back', version: '0.9.7' }
     const deps = makeCacheDeps(cleanupResult)
     registerUpdateHandlers(deps)
 

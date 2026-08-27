@@ -1,11 +1,3 @@
-/** cleanupCompletedUpdate 返回的启动结果信息（用于通知 renderer 升级成功/失败/回滚）。 */
-export interface LaunchResult {
-  /** 终态类型：done=升级成功，failed=升级失败，rolled-back=已回滚 */
-  status: UpdateResultStatus
-  /** 目标版本号（升级成功=新版本，回滚=恢复到的旧版本） */
-  version: string
-}
-
 /**
  * 启动自愈器（检测上次中断的升级并回滚）。
  *
@@ -37,6 +29,7 @@ export interface LaunchResult {
  */
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import type { LaunchResult } from '@xyz-agent/shared'
 import { compare } from 'compare-versions'
 import { app } from 'electron'
 import {
