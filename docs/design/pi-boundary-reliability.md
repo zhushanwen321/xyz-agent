@@ -168,7 +168,7 @@ models-store 远端目录刷新引入大小写孪生条目
 
 | 方案 | 长期架构 | 短期成本 | 风险 |
 |---|---|---|---|
-| **EC-echo 回执接通（选）**：`protocol.ts:1681` ReplyPayloadMap 从 `void` 改为 `{ sessionId, level }`（runtime 本就在回传），useModel 弃乐观写、消费 effective；并上升为通用约束「改状态 RPC 一律回生效值」（登记 C-pi-13） | 「请求-生效」零距离成为协议级不变量；乐观写反模式被规则化禁止 | 类型 + 两个消费点的小 diff | 其他改状态 RPC 需普查（modelService.setModel 等同族），普查清单列 U6 |
+| **EC-echo 回执接通（选）**：`protocol.ts:1681` ReplyPayloadMap 从 `void` 改为 `{ sessionId, level }`（runtime 本就在回传），useModel 弃乐观写、消费 effective；并上升为通用约束「改状态 RPC 一律回生效值」（登记 C-pi-13） | 「请求-生效」零距离成为协议级不变量；乐观写反模式被规则化禁止 | 类型 + 两个消费点的小 diff | 其他改状态 RPC 需普查（实装命令名为 model.switch 与 plugin 通道——设计初稿误写 setModel/cycleModel，实装无此二名），普查清单列 U6 |
 | EC-keep 保持乐观写 + 轮询兜底（现状） | 30s 窗口内显示假值是构造性的 | 零 | 事故 B 的体感来源原样保留 |
 
 ### 3.3 关键决策与权衡
@@ -195,7 +195,7 @@ models-store 远端目录刷新引入大小写孪生条目
 
 **D3：生效回执接通并上升为协议约束（选定）**
 
-- **采用**：① `packages/shared` protocol.ts 把 `session.setThinkingLevel` reply 从 `void` 改为 `{ sessionId, level }`（runtime 侧 `settings-message-handler.ts:397-404` 已在回传 effective，无需改）；② `useModel.setThinkingLevel` 删除乐观写（useModel.ts:68），消费回执值；③ renderer 档位可用集改读 D2 下发的 `supportedLevels`，`resolveAvailableLevels`（thinking-levels.ts）连同「undefined 视为 true」语义一起删除——它存在的唯一理由是前端自算，理由消失后保留即漂移源；**删除边界严格限于 resolveAvailableLevels 及其调用方**——同文件其余导出（resolveThinkingKey/resolveThinkingValue/highestAvailableLevel/isSameThinkingScheme 等共 9 个）是 xyz 自有的 UI 档位↔请求值映射协议，不是 pi 语义影子，全部保留（renderer shim `panel/thinking-levels.ts`、core index re-export、thinking-level-sync.ts、Popover 的 resolveThinkingKey 调用均不动）；④ 普查同族改状态 RPC（setModel/cycleModel/setThinkingLevel/plugin 通道同口径入口 plugin-rpc-setup.ts:233-240），凡 reply 为 void 的改状态命令一律补齐生效值回执；⑤ 登记约束 C-pi-13，CR 维度 review-type-safety 把「改状态 RPC reply=void」列为拦截项。
+- **采用**：① `packages/shared` protocol.ts 把 `session.setThinkingLevel` reply 从 `void` 改为 `{ sessionId, level }`（runtime 侧 `settings-message-handler.ts:397-404` 已在回传 effective，无需改）；② `useModel.setThinkingLevel` 删除乐观写（useModel.ts:68），消费回执值；③ renderer 档位可用集改读 D2 下发的 `supportedLevels`，`resolveAvailableLevels`（thinking-levels.ts）连同「undefined 视为 true」语义一起删除——它存在的唯一理由是前端自算，理由消失后保留即漂移源；**删除边界严格限于 resolveAvailableLevels 及其调用方**——同文件其余导出（resolveThinkingKey/resolveThinkingValue/highestAvailableLevel/isSameThinkingScheme 等共 9 个）是 xyz 自有的 UI 档位↔请求值映射协议，不是 pi 语义影子，全部保留（renderer shim `panel/thinking-levels.ts`、core index re-export、thinking-level-sync.ts、Popover 的 resolveThinkingKey 调用均不动）；④ 普查同族改状态 RPC（实装命令名：model.switch 与 plugin 通道——无 setModel/cycleModel，同口径入口 plugin-rpc-setup.ts），凡 reply 为 void 的改状态命令一律补齐生效值回执；⑤ 登记约束 C-pi-13，CR 维度 review-type-safety 把「改状态 RPC reply=void」列为拦截项。
 - **被否**：保留乐观写 + 缩短轮询周期——窗口只是变小不是消灭，且轮询越密成本越高，方向相反；❌ 让 pi 改 set_thinking_level 返回 data——不改上游。
 - **证据**：✅ 回执链路现状（session-service.ts:637-644 set→get_state→effective→return；protocol.ts:1681 void；useModel.ts:66-69 乐观写）；✅ pi 侧响应确实无 data（rpc-mode.js:387-389），runtime 的 set+get_state 补读已是唯一正确姿势且已实装。
 - **效果**：事故 B 的判据 2 环闭合；「过一会自己变关」的体感构造性消失（显示值从第一毫秒起就是真值）。
@@ -346,7 +346,7 @@ docs/extensions/logging-conventions.md / AGENTS.md       [U8]
 
 ## 附录 A：pi 语义依赖初始登记（docs/pi-semantics.json 的种子内容）
 
-（所有条目 verifiedWith 初值均为 `"0.84.1"`；校验口径 = D6 守卫层③的四者一致 + verifiedWith 比对。）
+（所有条目 verifiedWith 初值均为 `"0.84.1"`；校验口径 = D6 守卫层③的四者一致 + verifiedWith 比对。**行号权威声明（2026-08-28 实施核对）**：piAnchor 的 file:line 以 docs/pi-semantics.json 为唯一机器权威（探针直读 dist 校验）；本表是人读快照，个别行号与 json 实测有出入时以 json 为准，不四重维护。）
 
 | id | 语义断言 | pi 锚点（0.84.1 实装） | 守卫 | 实证来源 |
 |---|---|---|---|---|
@@ -374,7 +374,7 @@ docs/extensions/logging-conventions.md / AGENTS.md       [U8]
 - **C-comm-04（EventAdapter 唯一适配点）**：本设计把它从「传输格式适配」扩到「语义适配」——能力注册表是语义面的唯一入口，两者并列登记（C-pi-12 authority 会互相引用）。
 - **troubleshooting.md 观察项**：人读层保留并加 PS 互链；机器层（pi-semantics.json）是唯一守卫源，两边机制描述不双写。
 - **切片 1 文档**：D1-D6 技术决策不变；其中 D1（全等裁决）与 D4/D5（账本/ courier）分别是本设计支柱一/三的 subagent 域先行实例。
-- **已登记待办（不进本设计交付，防丢）**：scheduler 触发注入的账本化迁移（D5 存量口径：现状 `extensions/universal/scheduler/src/index.ts:97-99` 底层 deliverAs steer/followUp、无账本无幂等键；复用切片 1 U2 账本设施，迁移合入时 G4 扫描面同步扩到 scheduler 目录）；renderer subagent pane 消费 outcome 字段的 UI 升级（切片 1 已保证向后兼容输出）；pingPi 60s 升级式触发改造（事件静默超时再探，替代无条件周期，D9 ②）；Electron 30s /health 周期探测按需化（WS watchdog 触发探测 → 重启决策，D9 ②，对齐 ZCode/DSH「请求超时 + 便宜重建」范式）；重试路径普查补三件套（尝试预算上限 / 稳定窗清零 / 尊重 retry-after，D9 对照 DSH MCP 监督）。**已随 2026-08-28 落地**：plugin-host 30s 空转删除、handoff 2s 事件化、5s flushAll×2 删除、更新检查 20min→60min、skill watch polling 降级化（明细见附录 C）。**核查后无需改**：WS 断线重连已是有界指数退避（packages/core/src/transport/ws-client.ts:43-50，1s 起步 ×2 退避、30s 封顶、60s 总预算后进 failed 态），与 opencode 同档，从待办移除。
+- **已登记待办（不进本设计交付，防丢）**：scheduler 触发注入的账本化迁移（D5 存量口径：现状 `extensions/universal/scheduler/src/index.ts:97-99` 底层 deliverAs steer/followUp、无账本无幂等键；复用切片 1 U2 账本设施，迁移合入时 G4 扫描面同步扩到 scheduler 目录）；**subagent-workflow 内 workflow 完成通知的账本化迁移**（interface/helpers.ts notifyDone 存量 steer、结果语义，2026-08-28 审查补登记；复用 U2 账本设施，迁移合入时移除 g4-allow 豁免）；renderer subagent pane 消费 outcome 字段的 UI 升级（切片 1 已保证向后兼容输出；附带：packages/shared/src/subagent.ts 的「三处同构」注释已随 U3 失效，GUI 升级切片须同步更新）；pingPi 60s 升级式触发改造（事件静默超时再探，替代无条件周期，D9 ②）；Electron 30s /health 周期探测按需化（WS watchdog 触发探测 → 重启决策，D9 ②，对齐 ZCode/DSH「请求超时 + 便宜重建」范式）；重试路径普查补三件套（尝试预算上限 / 稳定窗清零 / 尊重 retry-after，D9 对照 DSH MCP 监督）。**已随 2026-08-28 落地**：plugin-host 30s 空转删除、handoff 2s 事件化、5s flushAll×2 删除、更新检查 20min→60min、skill watch polling 降级化（明细见附录 C）。**核查后无需改**：WS 断线重连已是有界指数退避（packages/core/src/transport/ws-client.ts:43-50，1s 起步 ×2 退避、30s 封顶、60s 总预算后进 failed 态），与 opencode 同档，从待办移除。
 
 ## 附录 C：轮询/定时器处置全清单（2026-08-28，D9 执行台账）
 

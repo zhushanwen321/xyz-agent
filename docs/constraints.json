@@ -1618,7 +1618,7 @@
     },
     {
       "id": "C-pi-13",
-      "summary": "改状态 RPC 一律回 pi 实际生效值：setThinkingLevel / model.switch / cycleModel / plugin 通道等改状态命令 reply 禁 void，须回生效值（pi 钳制时 ≠ 请求值）；消费方禁乐观写请求值，以回执写显示态（request≠effective 窗口显示假值 = 事故 B 形态）",
+      "summary": "改状态 RPC 一律回 pi 实际生效值：setThinkingLevel / model.switch / plugin 通道等改状态命令 reply 禁 void，须回生效值（pi 钳制时 ≠ 请求值）；消费方禁乐观写请求值，以回执写显示态（request≠effective 窗口显示假值 = 事故 B 形态）",
       "scope": [
         "packages/shared/src/protocol.ts",
         "packages/runtime/src/**",

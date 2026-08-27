@@ -170,7 +170,7 @@
 
 | 方案 | 长期架构 | 短期成本 | 风险 |
 |---|---|---|---|
-| **C-outcome 一等字段收敛派生（选）**：`ExecutionRecord` 新增 `outcome?: "completed"\|"failed"\|"cancelled"`，在 `completeRecord` 唯一写入点计算一次（cancelled 从 tryTransition 已知分支带出；failed = closed && error≠null；completed = closed && !error，patchFile/result 语义不变）；`project()`/list/bgResponse/bg-notify 文案/渲染器全部只读 `outcome`，三处同构 switch 收敛删除；`closedReason` 保留为内部诊断字段退出对外 JSON | 语义在诞生处定形，消费方零推导。未来任何新展示面（新版 GUI/webhook）自动获得正确语义；这是减法（删三份同构逻辑加一份权威计算），符合「遇子问题先问减法」 | 字段计算本身半天；收敛删码涉及注释与既有字节级锁定测试的同步更新（one-shot 文案 G4 有逐字节锚定测试，需同步改锚） | 改的是对外可见 JSON 形状——向后兼容靠「新增字段、不删旧字段」，renderer 未升级期间旧字段仍在（旧 `closedReason` 值继续存在但 GUI 判断逻辑可选升级） |
+| **C-outcome 一等字段收敛派生（选）**：`ExecutionRecord` 新增 `outcome?: "completed"\|"failed"\|"cancelled"`，在 `completeRecord` 唯一写入点计算一次（cancelled 从 tryTransition 已知分支带出；failed = closed && error 非空（truthy，空串不算，与旧三处同构判定逐字对齐）；completed = closed && !error，patchFile/result 语义不变）；`project()`/list/bgResponse/bg-notify 文案/渲染器全部只读 `outcome`，三处同构 switch 收敛删除；`closedReason` 保留为内部诊断字段退出对外 JSON | 语义在诞生处定形，消费方零推导。未来任何新展示面（新版 GUI/webhook）自动获得正确语义；这是减法（删三份同构逻辑加一份权威计算），符合「遇子问题先问减法」 | 字段计算本身半天；收敛删码涉及注释与既有字节级锁定测试的同步更新（one-shot 文案 G4 有逐字节锚定测试，需同步改锚） | 改的是对外可见 JSON 形状——向后兼容边界（2026-08-28 实施核对修正）：`closedReason` 退出 list/bgResponse 对外 JSON；GUI 链路（subagent-record entry / bg-notify details）继续携带，未升级 GUI 经 shared 投影读旧字段无异常 |
 | C-raw 直接修改 closedReason 枚举语义 | 无中间投影层、语义直白 | 需重定义枚举、迁移约 30 处消费点与历史数据，改动面大 | 推翻 v4 B-1 已登记决策，兼容性破坏最大、收益最小 |
 
 推荐组合：**A-strict + B-ledger + C-outcome**。三者共同点是「单一权威 + 受理确认」：模型身份一个函数说了算，通知一份账本说了算，终态一个字段说了算。三者互相独立可分阶段交付（见 §5），也可以说 F1/F2/F3 是同一个缺失原则（契约必须有受理确认）在三个环节的实例化。
@@ -178,7 +178,7 @@
 ### 3.3 关键决策与权衡
 
 **D1：模型裁决收拢为 `assertCanonicalModelRef` 单函数——全等放行 + 孪生守卫，模糊只做报错建议（选定）**
-- **采用**：扩展域内所有「字符串 → 模型身份」的转换只允许经这一个入口，且**校验发生在 start 工具调用的同步期（spawn 之前、返回值之内）**。规则：① strip 合法 thinking 后缀；② provider 精确匹配；③ modelId 与 registry 条目**全等精确匹配（含大小写）**；④ **孪生守卫**——全等命中后对 registry 做 case-insensitive 复扫，若存在与本次入参 case-insensitive 相等但非全等的其他条目（大小写孪生，如 `GLM-5.3-Flash` 与 `glm-5.3-flash` 并存），**拒绝放行**并报「registry contains ambiguous case variants for X: [A, B]」+ 恢复指引（清理 models.json / models-store 中重复条目后重试）。⑤ 未命中（步骤③）= 同步抛错，错误信息用模糊匹配（case variant / 包含关系 / provider 相似度）生成「Did you mean」候选 + 合法串全集 + 「省略 model 继承主 agent」指引。**系统绝不代改输入**：不自动纠正、不放行变体、不重试。孪生守卫同样作用于 ctxModel 继承路径（见 D2）。
+- **采用**：扩展域内所有「字符串 → 模型身份」的转换只允许经这一个入口，且**校验发生在 start 工具调用的同步期（spawn 之前、返回值之内）**。规则：① strip 合法 thinking 后缀；② provider 精确匹配；③ modelId 与 registry 条目**全等精确匹配（含大小写）**；④ **孪生守卫**——全等命中后对 registry 做 case-insensitive 复扫，若存在与本次入参 case-insensitive 相等但非全等的其他条目（大小写孪生，如 `GLM-5.3-Flash` 与 `glm-5.3-flash` 并存），**拒绝放行**并报「registry contains ambiguous case variants for X: [A, B]」+ 恢复指引（清理 models.json / models-store 中重复条目后重试）。⑤ 未命中（步骤③）= 同步抛错，错误信息用模糊匹配（case variant / 包含关系 / provider 相似度）生成「Did you mean」候选 + 合法串全集（截断至 MODEL_LIST_LIMIT=20 防超长错误信息；case variant 首位建议不受截断影响）+ 「省略 model 继承主 agent」指引。**系统绝不代改输入**：不自动纠正、不放行变体、不重试。孪生守卫同样作用于 ctxModel 继承路径（见 D2）；resume 路径的 record 回显串（系统自产已裁决形态）同属运行时已验证豁免（P-10 防漂移：registry 刷新后强制裁决会破坏续聊）。
 - **被否**：A-lenient 大小写宽容采纳——采纳即改写，「通过」与「执行名字」之间出现翻译层，registry 动态刷新时宽容命中会随时间漂移，复刻 F1 的非确定性；❌ 现状双层规则（扩展精确 + pi pattern 模糊）——2026-08-27 已实证产生「昨天成功今天 429」的非确定性；❌ 只做全等校验不做孪生守卫——恒等式存在静默破产面（见证据），零宽容必须覆盖「registry 自身歧义」这一输入侧不可控维度。
 - **证据**：✅ P-A0 探针（node 直译 pi `dist/core/model-resolver.js` tryMatchModel，输入现行 registry 快照复现 `glm-5.3 → glm-5.3-highspeed` 选择，输出与基线 session 子文件 model_change 逐字一致）；实装源码 `resolveCliModel` 第 291-463 行直读，其中 `findExactModelReferenceMatch` 的 id 匹配是 `toLowerCase()` 相等（:97），registry 存在大小写孪生时 canonical 串亦被判歧义作废、落入模糊分支 localeCompare 取最大——**即「扩展侧全等放行」并不能独立保证「子进程按此名执行」，恒等式成立需要孪生不存在这一前置条件，故守卫必须内建**（当前本机 store 实测无孪生，今日成立）；📋 ⛔ P-A2（实施期门）：孪生守卫行为验证——构造含孪生的 registry 快照实测拒单路径 + 无孪生快照实测放行路径。**失败语义**：探针发现「有孪生仍放行」= 守卫失效，阻断合入（守卫本身即终态，无降级形态——降级=恢复赌博）。
 - **效果**：§1 G1 成立的直接载体且无未声明前置条件；§3.1 成功路径「model 全等回显」与失败路径 A 问句式报错的来源。
@@ -203,7 +203,7 @@
 - **fork / branch / compaction 归属规则**：账本与 ack entry 随主 session 文件存在，扫描域 = **单 session 文件**（幂等键作用域随文件域天然隔离，分身与本体互不串扰）。fork 复制 session 文件时，分身会继承「创建后未销账」的 pending——分身重放补投是**可接受语义**（分身继承任务上下文，知悉子 agent 结局合理），notifyId 去重保证分身内部也至多一次送达（崩溃窗口例外见 G2）。compaction 对 entry 的保留行为实装未验证，登记为 ⛔ P-B4 探针：实测 compaction 后 ledger/ack entry 存活情况；若被清除，恢复扫描退化为「以 subagent-record entry 反查未闭环通知」（record-store 重建矩阵同构，终态已知）。
 
 **D5：courier 单通道化——投递时机统一收敛到 settled 边沿直达，删除 steer 与 nextTurn 通道（选定；初稿「busy 走 nextTurn」选型经审查证伪后重定）**
-- **采用**：投递尝试只发生在「主 session 确定空闲」的时刻——① `agent_settled` 边沿（实装 `_emitAgentSettled` 先复位 `_isAgentRunActive` 再发事件，agent-session.js:327-331，故边沿回调内 `ctx.isIdle()` 恒真）；② 完成后 120s 超时看门狗（主 session 长期无 settled 时兜底）。发送前二次复查 `ctx.isIdle()`，若竞态窗口内新 run 已启动则放弃本次发送、消息挂回 pending 等下一边沿（零宽容同样适用于发送时机：不在 isStreaming 分支有任何依赖）。发送调用为 `sendCustomMessage({triggerTurn:true})`，实装走 `_runAgentPrompt` 起轮直达（agent-session.js:1089-1090，基线 session 11:26:44Z 唯一成功样本即此路径）；同一边沿的多条 pending 经 delivery 合并窗口合为一条注入。
+- **采用**：投递尝试只发生在「主 session 确定空闲」的时刻——① `agent_settled` 边沿（实装 `_emitAgentSettled` 先复位 `_isAgentRunActive` 再发事件，agent-session.js:327-331，故边沿回调内 `ctx.isIdle()` 恒真）；② 完成后 120s 超时看门狗（主 session 长期无 settled 时兜底）；③ 实现补充（2026-08-28 实施核对）：notifier.notify() 即时 attemptDeliver 与 flushPendingNotifications 两个附加触发面（idle 即时尝试，发送前 isIdle 二次复查）——settled 仅随 run 结束发出，主 agent idle 且无 run 时永无边沿，保留旧内核 idle 即投语义使送达时机严格优于「最迟」上界，零宽容不破坏。发送前二次复查 `ctx.isIdle()`，若竞态窗口内新 run 已启动则放弃本次发送、消息挂回 pending 等下一边沿（零宽容同样适用于发送时机：不在 isStreaming 分支有任何依赖）。发送调用为 `sendCustomMessage({triggerTurn:true})`，实装走 `_runAgentPrompt` 起轮直达（agent-session.js:1089-1090，基线 session 11:26:44Z 唯一成功样本即此路径）；同一边沿的多条 pending 经合并语义（同款 join/batch details）合为一条注入。
 - **被否**：❌ steer 通道（现状）——queued steering 消费窗极窄（pi-agent-core 全文 drain 仅 agent.js:243/321）且回执为零；❌ **nextTurn 队列（初稿 D5 busy 分支选型，审查证伪）**——实测 `_pendingNextTurnMessages` 全文仅 3 处（声明 :95、入队 :1078-1080、注入并清空 :880-883），注入点**只在 `session.prompt()` 内**：仅当用户主动提交新 prompt 时才消费，`_runAgentPrompt` 直达、post-run `continue()` 续跑均不经过它。G2 主场景（主 agent 长 streaming、用户不输入）下 nextTurn 消息无限期滞留内存；且 pending 未消费期间 settled 直达照常落盘 → 超时重放再入队 → 用户下一次 prompt 时多条重复通知一次性涌入。既非可靠也非防重，整个通道删除（减法）。
 - **证据**：✅ P-B0（源码级已测：sendCustomMessage 四分支 :1068-1098、_emitAgentSettled 复位先行 :327-331、nextTurn 唯一 drain 点 :880-883，均 dist 直读）；⛔ P-B1（实施期门，含反向验证）：(a) 实测 triggerTurn 直达确实不消费 `_pendingNextTurnMessages`（锁死 nextTurn 不可依赖的结论，防未来误复活）；(b) 实测 settled 边沿发送 → custom_message 落盘 → 回执事件到达销账的全链路时序与内容完整；(c) 合并窗口下多条 pending 单条送达。**降级路径**：若 (b) 时序实测晚于 S3 阈值，维持「只记账，超时看门狗直达」的纯兜底形态——必达性由账本保证，实时性让位。
 - **效果**：busy 场景从「大概率永失」（§2.2 F2）变为「最迟当前 run 结束后一个边沿内必达」；通道唯一化后可测、可观测、可证伪。
@@ -228,7 +228,7 @@
 
 **S2 非法模型拒绝质量（回溯 G1，负面路径）**
 步骤：分别传 `"zai-coding-cn/nonexistent-probe"`（无相似物）与 `"zai-coding-cn/glm-5.3-flash"`（存在 case variant）各派发一次。
-通过标准：两次均为 start 工具调用同步期 isError（无异步 notify 报错路径）；前者列出 canonical 合法串全集 + 继承指引；后者的首个建议恰为 `zai-coding-cn/GLM-5.3-Flash` 且标注 case variant；系统全程零宽松放行（若本轮误放行任何非全等串即判不通过）。
+通过标准：两次均为 start 工具调用同步期 isError（无异步 notify 报错路径）；前者列出 canonical 合法串全集（截断至 20，见 D1 规则⑤）+ 继承指引；后者的首个建议恰为 `zai-coding-cn/GLM-5.3-Flash` 且标注 case variant；系统全程零宽松放行（若本轮误放行任何非全等串即判不通过）。
 
 **S3 通知必达压力（回溯 G2，含反向验证）**
 场景：主 agent 连续做重活制造持续 streaming（模拟基线 session 的连轴转形态），期间先后派发 6 个 background 子 agent（错峰完成），另外 1 个派发后被 cancel。
@@ -256,7 +256,7 @@
 | **U1 ModelRef 全等裁决** | 新增 `shared/model-ref.ts`（assertCanonicalModelRef：全等校验 + 模糊建议生成 + 问句式报错构建）；`model-resolver.ts` paramOverride/agentConfig 两路径接入；`buildSpawnArgs` 签名收窄 + thinkingLevel 白名单；start 返回值 model 全等回显；工具 description 写明大小写敏感规则 | 模型域自成一个纯函数群，无 IO、无状态，单测友好，与通知/披露互不牵连；裁决函数放 shared 层供 resolver 与 runner 双侧复用 | S1/S2 |
 | **U2 通知账本与 courier** | `packages/session-delivery` 增加回执回调口径（port.send 返回受理事实的扩展位，旧调用方兼容）；extension 侧新增 `execution/notify-ledger.ts`（appendEntry 写账 / ack 销账 entry / 两列差集扫描重放 / notifyId dedup / settled 边沿与超时看门狗两触发点 / session_start 恢复钩子，fork/compaction 归属规则按 D4 落地）；notifier 四步生命周期接线；chatMode round dedupe key 平移 | 通知是唯一触碰「消息何时能进上下文」这个 pi 内部行为的域，集中一处便于对照 P-B 系探针调参；账本不引入对 pi 新 API 的依赖（appendEntry/custom_message 事件均为现有能力） | S3/S4 |
 | **U3 outcome 一等披露** | `execution-record.ts`：outcome 计算 + project() 输出；`notifier.ts`/`bg-notify-render.ts`/list 投影切读 outcome 并删除同构 switch；`deriveClosedDisplayParity` 测试改锚至单一实现；start/list bgResponse JSON 增 outcome 字段 | 纯投影层改造，是 U2 文案正确性的前置输入；单独合入即可显著改善判读体验 | S5 |
-| **U4 观测补齐（轻量）** | delivery 的 warn 出口接 extensionLogger（落 `<dataDir>/logs/` 而非 console.warn）；ledger 投递计数按丢失路径分桶暴露到 eventLog（settle rejected / 销账超时 / 重放次数） | 今天排查最大的痛是投递丢失无痕（warn 走 stderr tee 不到）；这条不修，未来任何投递回归依然是黑盒。分桶口径与 §2.2 的三条丢失路径一一对应，回归时可定位到具体环节。与前三者解耦、随时可插 | 日志样例人工核对 |
+| **U4 观测补齐（轻量）** | delivery 的 warn 出口接 extensionLogger（落 `<dataDir>/logs/` 而非 console.warn）；ledger 投递计数分桶（settle rejected / 销账超时 / 重放次数）经 extensionLogger 落盘暴露 + `deliveryMetrics()` 诊断 API（2026-08-28 实施修正：session 级指标挂 per-record eventLog 语义错位，改 extensionLogger 通道） | 今天排查最大的痛是投递丢失无痕（warn 走 stderr tee 不到）；这条不修，未来任何投递回归依然是黑盒。三桶覆盖 §2.2 全部四条丢失路径（steer 滞留 / busy parked settle rejected / mergeHold 顺延 / 重启——watchdogReplays 桶吸收 steer 滞留与合批顺延两路，recoveryReplays 桶对应重启）。与前三者解耦、随时可插 | 日志样例人工核对 |
 
 **文件改动地图**：
 

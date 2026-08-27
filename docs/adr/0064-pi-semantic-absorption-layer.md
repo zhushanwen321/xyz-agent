@@ -23,7 +23,7 @@ pi 能力事实（模型全等 id / reasoning / 实际支持思考档位）只�
 
 ### 二、生效回执（登记 C-pi-13）
 
-改状态 RPC（setThinkingLevel / model.switch / cycleModel / plugin 通道等）reply 一律回 pi 实际生效值（pi 钳制时 ≠ 请求值），协议层禁把改状态 reply 映射为 void；消费方禁乐观写请求值，以回执写显示态。「请求-生效」零距离是协议级不变量。
+改状态 RPC（setThinkingLevel / model.switch / plugin 通道等）reply 一律回 pi 实际生效值（pi 钳制时 ≠ 请求值），协议层禁把改状态 reply 映射为 void；消费方禁乐观写请求值，以回执写显示态。「请求-生效」零距离是协议级不变量。
 
 ### 三、确认式送达（登记 C-ext-19）
 

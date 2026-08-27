@@ -128,6 +128,17 @@ graph TD
 | R15 | U2：notifyId 载体 = details 而非正文（D4 字面与 G4 字节锁定冲突，取后者） | 重复条目对 LLM 由同 id 同文案可识别，对系统由 details.notifyId 精确匹配 |
 | R16 | U2：ledger 投递不经 delivery 内核（合并语义兑现：同款 join/batch details；时机收敛 settled 边沿/看门狗）；内核路径原样保留 | 内核 60s 滑窗与零宽容 busy 投递语义冲突 |
 | R17 | 环境事实：background subagent 的 PI_SUBAGENT_* env 会污染 sw 依赖干净 env 的既有测试（此前各单元报告的 4 个 pre-existing 失败真根因） | 主 agent bash 无此变量复跑即绿；后续 subagent 跑 sw 测试须 env -u PI_SUBAGENT_* |
+| R18 | U6：链路必要连带超出领地清单（composer-shell/Composer.vue/session.ts/runtime index/agent-api/i18n/plugin-types/interfaces/4 个 contract 测试）；主 agent 核验修复 2 处（model-service switchModel return-await dead-code bug、session-service.test 旧锚） | 连带均为类型/接线必要面，已随 bd01aa375 提交 |
+| R19 | U7b：测试文件结构性排除（__tests__/*.test.ts）而非行级豁免 | install-hooks.sh EXTENSION_FILES 既有排除先例；行级豁免保留给源文件 |
+| R20 | U7b：argv-mirror.ts 纳入 --model 文件级白名单（argv flag 解析模块，非模型身份构造） | 白名单处带职责定性注释 |
+| R21 | U7b：CI 只挂 G1+G4（G3 仅 pre-commit 触发） | 审查判 unreasonable（设计 D7-G3 明文 CI 同步）——已在修复批次 A 补 G3 CI 步 |
+| R22 | U7b：G3 触发用 basename 匹配 | 覆盖 core 源文件与 renderer shim 两位置，误触发无害 |
+| R23 | U7b：diff-probe 用 --experimental-transform-types 自重 exec + registerHooks .js→.ts 回退 | 源文件零改动，调用方统一 node scripts/diff-probe-thinking.mjs |
+| R24 | U4：warn 注入类型挂 delivery.ts 内交叉类型（DeliveryConfigWithWarn）而非 types.ts | 领地纪律；正式化并入 DeliveryConfig 留待后续 |
+| R25 | U4：rejection 桶锚 ledger 受理失败分支（非内核 onSettled） | ledger 主路径不走 handle.send，内核 settle rejected 不发生 |
+| R26 | U4：暴露通道用 extensionLogger + deliveryMetrics() API（非 per-record eventLog） | session 级指标挂 per-record eventLog 语义错位；设计已同步措辞 |
+| R27 | U8：PS 互链映射按附录 A 权威（#4→PS-12）；PS-11 无对应既有项并入新规则② | task 描述与附录 A 不一致时按附录 A |
+| R28 | U8：scheduler 无 g4-allow（实证，不在扫描面）而带豁免的是 workflow 完成通知 helpers.ts 两处 | C-ext-19 登记文本按实证写；附录 B 已补 workflow 通知待办 |
 
 ## 6 状态表
 
@@ -159,3 +170,6 @@ graph TD
 **变更历史**：
 - 2026-08-28 创建（预检 + explorer 领地核实 + 波次编排）
 - 2026-08-28 基线 448438847；Wave 1 committed（U3 62506f39b / U5 545879857 / U7a 6257a871d + handoff mock 8b1bd8fb4）；增补 U5b 微单元；Wave 2 派发（U1/U2/U6 + U5b）；U5b cb582308c / U1 b06743f06 / U2 78c3cf605 committed，U6 进行中
+- 2026-08-28 Wave 2 收口：U6 bd01aa375；Wave 3：U7b 861b11c06 / U4 d6ebb485f / U8 796368fab；状态表同步 6f7d6dea0。注：g4-allow 豁免实为 6 处（4 文件，subagents.ts 与 helpers.ts 各占 2）
+- 2026-08-28 阶段 3 一致性审查（三区独立 reviewer）：切片 1 approve（3 Minor 代码 + 5 doc_errors）；切片 2 request changes（2 Major：model.switch 假回执 + use-model.test.ts untracked→已补 b80ab882c）；护栏治理 request changes（1 Major：G3 CI 缺失）。修复批次 A（代码 7 项）派发中；doc_errors 由主 agent 亲修（设计文档 5 处 + constraints/ADR cycleModel + 附录 B 补登记 + 附录 A 行号权威声明 + 本表 R18-R28 补登）
+- 区间内混入 3 个并行会话 commit（b8eab2077/bd67077ab/8679323d7，认知外，未触碰，审查已排除其路径）
