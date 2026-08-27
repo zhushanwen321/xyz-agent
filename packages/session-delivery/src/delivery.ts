@@ -19,6 +19,7 @@ import type {
   DeliveryIntent,
   DeliveryMessage,
   DeliveryPort,
+  SendReceipt,
 } from './types.js'
 
 /** 默认配置（D4 策略默认值）。 */
@@ -39,8 +40,8 @@ interface CheckedWaiter {
   reject: (err: unknown) => void
 }
 
-function isThenable(v: unknown): v is Promise<void> {
-  return !!v && typeof (v as Promise<void>).then === 'function'
+function isThenable(v: unknown): v is Promise<SendReceipt | void> {
+  return !!v && typeof (v as Promise<SendReceipt | void>).then === 'function'
 }
 
 /**
@@ -253,16 +254,27 @@ export function createDelivery(
       const result = port.send(composed, intent)
       if (isThenable(result)) {
         result.then(
-          () => onSendOk(composed),
+          (receipt) => onSendReceipt(composed, receipt),
           (err: unknown) => onSendFail(composed, err),
         )
       } else {
-        // 同步返回（void）= 成功
-        onSendOk(composed)
+        onSendReceipt(composed, result)
       }
     } catch (err) {
       onSendFail(composed, err)
     }
+  }
+
+  /**
+   * 受理判定（U2 回执口径）：显式 `{accepted:false}` → 发送失败路径（错误重试 /
+   * reject 链路）；void / `{accepted:true}` / 其他形态 = 受理成功（旧 port 兼容）。
+   */
+  function onSendReceipt(composed: DeliveryMessage, receipt: SendReceipt | void): void {
+    if (receipt !== undefined && receipt.accepted === false) {
+      onSendFail(composed, new Error(receipt.reason ?? 'port.send rejected (accepted:false)'))
+      return
+    }
+    onSendOk(composed)
   }
 
   function onSendOk(composed: DeliveryMessage): void {

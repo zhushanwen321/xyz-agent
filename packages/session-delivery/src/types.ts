@@ -47,6 +47,20 @@ export interface DeliveryMessage {
 
 // ─── 端口（注入运行时能力） ──────────────────────────────────
 
+/**
+ * port.send 的受理回执（U2 回执口径扩展位）。
+ *
+ * 受理 = 底层通道接受了消息（进入投递路径），**不等于送达事实**——送达判定由
+ * 调用方按自身回执锚点确认（如扩展侧扫描 custom_message entry）。旧 port 实现
+ * 返回 void 不受影响（void = 受理未知，按成功处理，与既有内核语义一致）。
+ */
+export interface SendReceipt {
+  /** 受理结果。false = 底层显式拒绝（消息未进入任何通道，走错误重试路径）。 */
+  accepted: boolean
+  /** 拒绝原因（accepted:false 时携带，进 warn 日志与 reject 链）。 */
+  reason?: string
+}
+
 /** 内核与外部世界的唯一接口（D2 端口注入）。 */
 export interface DeliveryPort {
   /** 本通路支持的 payload kind（D9 fail-fast）。 */
@@ -55,8 +69,12 @@ export interface DeliveryPort {
   isIdle(): boolean
   /** 是否有排队中的消息。 */
   hasPendingMessages(): boolean
-  /** 投递消息（intent → pi 参数的翻译在适配器内部）。 */
-  send(msg: DeliveryMessage, intent: DeliveryIntent): Promise<void> | void
+  /**
+   * 投递消息（intent → pi 参数的翻译在适配器内部）。
+   * 返回受理回执（U2 扩展位）：显式 `{accepted:false}` = 受理失败（内核按发送失败
+   * 处理）；void / `{accepted:true}` = 受理成功。旧实现返回 void 兼容。
+   */
+  send(msg: DeliveryMessage, intent: DeliveryIntent): Promise<SendReceipt | void> | SendReceipt | void
   /** agent_settled 边沿订阅（D8）。缺省时内核退化退避轮询。返回退订函数。 */
   subscribeSettled?(cb: () => void): () => void
 }

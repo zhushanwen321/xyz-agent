@@ -1,0 +1,425 @@
+// src/execution/notify-ledger.ts
+//
+// U2 B-ledger：后台通知的持久账本与 courier（设计 docs/design/subagent-dispatch-reliability.md
+// §3.3 D4/D5）。
+//
+// 通知拆为两个正交关注点：
+//   - 存在性（账本）：pi.appendEntry("subagent-bg-notify-ledger") 即写即盘，先于一切
+//     投递尝试——投递通道可以随便坏，账本永远在；
+//   - 可达性（courier）：只在「主 session 确定空闲」的时刻投递——agent_settled 边沿
+//    （边沿回调内 isIdle 恒真：_emitAgentSettled 先复位 _isAgentRunActive 再发事件，
+//     agent-session.js:327-331）+ 120s 超时看门狗兜底（主 session 长期无 settled 时）。
+//     发送前二次复查 isIdle，竞态窗口内新 run 已启动则放弃本次、消息挂回 pending
+//     等下一边沿（D5 零宽容：busy 场景无任何依赖）。
+//
+// 四步生命周期（D4）：
+//   ① record：appendEntry(ledger entry) 落盘（先于一切投递尝试）
+//   ② deliver：settled 边沿 / 看门狗触发 attemptDeliver——单通道
+//      pi.sendMessage({triggerTurn:true})（steer/followUp/nextTurn 通道已全部删除，
+//      D5）；同一边沿的多条 pending 合并为一条注入
+//   ③ ack：回执判定成功（主 session 出现 notifyId 匹配的 subagent-bg-notify
+//      custom_message entry）后 appendEntry("subagent-bg-notify-ack")
+//   ④ replay：重启恢复扫描 ledger/ack 两列 entry 差集重放；重放按 notifyId 幂等去重
+//    （details 携带 notifyId，重复条目可识别）
+//
+// 通道分工（D4）：ledger/ack 用 plain appendEntry（type=custom 不进 LLM 上下文——
+// session-manager sessionEntryToContextMessages 对 custom 返回 []）；送达消息用
+// pi.sendMessage({triggerTurn:true})（custom_message 进上下文）。两通道不得混用。
+//
+// fork/compaction 归属（D4）：扫描域 = 单 session 文件，幂等键作用域随文件域隔离。
+// fork 复制 session 文件时继承未销账 pending 属可接受语义（分身重放补投 + notifyId
+// 去重保证至多一次送达；「送达已落盘、销账未落盘」的强杀窗口允许重复，凭 notifyId
+// 可识别，见 G2）。compaction 对 entry 的保留行为实装未验证（P-B4 探针，阶段 5 实测）
+// ——compactionCheck() 提供条件降级：检测到 ledger/ack entry 被 compaction 清除时按
+// 内存态补写（record-store 重建矩阵的内存重建同构思路，降级路径而非主路径）。
+//
+// 模块级绑定：bindNotifyLedgerHost 由 index.ts 的 session_start handler 装配（pi +
+// ctx 在该处可用），notifier.notify 经 getBoundNotifyLedger 消费——不经
+// SubagentService.piAdapter（该适配层不在 U2 改动面）。未 bind 时 notifier 退回
+// delivery 内核路径（向后兼容旧装配 / 无 ledger 的测试场景）。
+
+/** 账本 entry customType（plain custom entry，不进 LLM 上下文）。 */
+export const NOTIFY_LEDGER_CUSTOM_TYPE = "subagent-bg-notify-ledger";
+/** 销账 entry customType（plain custom entry，不进 LLM 上下文）。 */
+export const NOTIFY_ACK_CUSTOM_TYPE = "subagent-bg-notify-ack";
+
+/**
+ * 送达消息的 customType。notifier.ts / bg-notify-render / index.ts（messageRenderer
+ * 注册）同名字符串的单一常量源——本模块不 import notifier（避免循环依赖：
+ * notifier.notify → getBoundNotifyLedger），等值由 notify-ledger.test.ts 钉住。
+ */
+export const NOTIFY_CUSTOM_TYPE = "subagent-bg-notify";
+
+/**
+ * 看门狗周期与超时（ms）：主 session 长期无 settled 时的兜底触发面（D5 ②）。
+ * 周期即超时——sent 后一个周期无回执即重投（正常时序 settled 远早于周期到达，
+ * 回执销账先行；只有消息真丢失（如 steer 滞留内存队列后 session 异常）才触发重投，
+ * at-least-once + notifyId 幂等兜底）。
+ */
+export const NOTIFY_WATCHDOG_MS = 120_000;
+
+/** ledger entry 的 data schema（v1）。content 为预格式化文案（notifier
+ *  buildLlmContent 产物）——恢复重放直接复用，ledger 不依赖格式化函数。
+ *  record 为投递 details（BgNotifyRecord 投影，含 notifyId）——对 ledger 不透明
+ *  （仅透传给送达 details / 重放），恢复扫描时经 isPlainObject 运行时校验。 */
+export interface NotifyLedgerEntryData {
+  v: 1;
+  notifyId: string;
+  /** 预格式化通知正文（重放时原样投递，G4 字节锁定由此保真）。 */
+  content: string;
+  /** details record（回执匹配键 notifyId 在其内）。 */
+  record: object;
+}
+
+/** ack entry 的 data schema（v1）。 */
+export interface NotifyAckEntryData {
+  v: 1;
+  notifyId: string;
+}
+
+/** ledger 依赖的宿主最小接口（index.ts session_start 装配；解耦便于测试）。 */
+export interface NotifyLedgerHost {
+  /** 写 plain custom entry（ledger/ack 通道；pi.appendEntry）。 */
+  appendLedgerEntry(customType: string, data: unknown): void;
+  /** 读当前 session 全部 entry（回执扫描 + 恢复扫描；ctx.sessionManager.getEntries()）。 */
+  readSessionEntries(): readonly unknown[];
+  /** 主 agent 是否空闲（发送前二次复查用；ctx.isIdle()）。 */
+  isIdle(): boolean;
+  /** 订阅 settled 边沿（pi.on("agent_settled")——无退订语义，由 ledger disposed 标志包装）。 */
+  onAgentSettled(handler: () => void): void;
+  /** 单通道送达（pi.sendMessage({triggerTurn:true})）。 */
+  sendDelivery(message: { customType: string; content: string; display: boolean; details?: unknown }): void;
+}
+
+/** 账面一条通知（entry 持久形态 + 运行时投递状态）。 */
+interface NotifyLedgerItem {
+  notifyId: string;
+  content: string;
+  record: object;
+  recordedAt: number;
+  /** 最近一次投递受理时刻；undefined = 尚未投递（pending，等下一边沿）。 */
+  sentAt: number | undefined;
+  /** 投递尝试次数（看门狗重投计数，诊断用）。 */
+  attempts: number;
+}
+
+/** 通知账本（四步生命周期载体）。 */
+export interface NotifyLedger {
+  /** ① 写账（appendEntry 先于一切投递尝试）。幂等：同 notifyId 已在账（pending/sent）
+   *  或已销账 → 返回 false（调用方跳过投递——notifyId 幂等去重）。 */
+  record(notifyId: string, content: string, record: object): boolean;
+  /** ② 投递尝试：isIdle 二次复查，busy / 探测异常 → 挂回 pending 等下一边沿；idle →
+   *  同批 pending 合并单条送达（triggerTurn 直达）。 */
+  attemptDeliver(): void;
+  /** ③ 回执销账：扫 session entries，出现 notifyId 匹配的送达 custom_message entry
+   *  → appendEntry(ack) + 摘账（内存态不承担销账职责，权威 = 两列 entry 差集）。 */
+  checkReceipts(): void;
+  /** ④ 重启恢复：扫 ledger/ack 两列 entry 差集，未销账号重新入账并投递（已销账零重发）。
+   *  @returns 重放条数。 */
+  recoverFromSession(): number;
+  /** compaction 降级（P-B4 未验证）：检测 ledger/ack entry 被清除 → 按内存态补写。
+   *  @returns 补写条数。 */
+  compactionCheck(): number;
+  /** 诊断/测试：pending（已记账未投递）条数。 */
+  pendingCount(): number;
+  /** 诊断/测试：已投递待回执条数。 */
+  waitingReceiptCount(): number;
+  /** 销毁：清看门狗 timer + 摘模块级绑定（settled 回调由 disposed 标志静默）。 */
+  dispose(): void;
+}
+
+// ─── entry 形态判定（运行时 guard，无 unsafe cast） ──────────────
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** 扫 ledger/ack 两列 plain custom entry（恢复 / compaction 检查共用）。 */
+function scanSessionLedgerEntries(entries: readonly unknown[]): {
+  ledger: Map<string, NotifyLedgerEntryData>;
+  acked: Set<string>;
+} {
+  const ledger = new Map<string, NotifyLedgerEntryData>();
+  const acked = new Set<string>();
+  for (const entry of entries) {
+    if (!isPlainObject(entry) || entry["type"] !== "custom") continue;
+    const customType = entry["customType"];
+    const data = entry["data"];
+    if (!isPlainObject(data)) continue;
+    const notifyId = data["notifyId"];
+    if (typeof notifyId !== "string") continue;
+    if (customType === NOTIFY_LEDGER_CUSTOM_TYPE) {
+      const content = data["content"];
+      const record = data["record"];
+      if (typeof content === "string" && isPlainObject(record)) {
+        // 后写覆盖：fork 文件含同 notifyId 多条 ledger entry 时取最新
+        ledger.set(notifyId, { v: 1, notifyId, content, record });
+      }
+    } else if (customType === NOTIFY_ACK_CUSTOM_TYPE) {
+      acked.add(notifyId);
+    }
+  }
+  return { ledger, acked };
+}
+
+/** 收集 wanted 集合中已送达（custom_message entry 出现）的 notifyId。
+ *  送达 entry 两种形态都匹配：单条 details.notifyId / 批量 details.items[].notifyId
+ *  （对齐 courier 合并投递的 details 结构）。 */
+function collectDeliveredNotifyIds(entries: readonly unknown[], wanted: Set<string>): Set<string> {
+  const delivered = new Set<string>();
+  if (wanted.size === 0) return delivered;
+  for (const entry of entries) {
+    if (!isPlainObject(entry) || entry["type"] !== "custom_message") continue;
+    if (entry["customType"] !== NOTIFY_CUSTOM_TYPE) continue;
+    const details = entry["details"];
+    if (!isPlainObject(details)) continue;
+    const notifyId = details["notifyId"];
+    if (typeof notifyId === "string" && wanted.has(notifyId)) {
+      delivered.add(notifyId);
+    }
+    const items = details["items"];
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        if (isPlainObject(item)) {
+          const id = item["notifyId"];
+          if (typeof id === "string" && wanted.has(id)) delivered.add(id);
+        }
+      }
+    }
+  }
+  return delivered;
+}
+
+// ─── 账本实现 ────────────────────────────────────────────────
+
+export function createNotifyLedger(host: NotifyLedgerHost): NotifyLedger {
+  /** 在账未销账（recorded / sent 两态）。 */
+  const items = new Map<string, NotifyLedgerItem>();
+  /** 已销账内存索引（notifyId 幂等判重 + compaction 补写源；权威 = ack entry 列）。 */
+  const ackedIds = new Set<string>();
+  let disposed = false;
+  let watchdogTimer: ReturnType<typeof setInterval> | undefined;
+
+  const api: NotifyLedger = {
+    record(notifyId, content, record): boolean {
+      if (disposed) return false;
+      if (items.has(notifyId) || ackedIds.has(notifyId)) return false;
+      host.appendLedgerEntry(NOTIFY_LEDGER_CUSTOM_TYPE, {
+        v: 1,
+        notifyId,
+        content,
+        record,
+      } satisfies NotifyLedgerEntryData);
+      items.set(notifyId, { notifyId, content, record, recordedAt: Date.now(), sentAt: undefined, attempts: 0 });
+      ensureWatchdog();
+      return true;
+    },
+
+    attemptDeliver(): void {
+      if (disposed) return;
+      const pending = [...items.values()].filter((i) => i.sentAt === undefined);
+      if (pending.length === 0) return;
+      // 发送前二次复查（D5 零宽容）：busy / 探测异常（session 关闭等）→ 放弃本次，
+      // 消息挂回 pending 等下一边沿 / 看门狗
+      try {
+        if (!host.isIdle()) return;
+      } catch {
+        return;
+      }
+      const message = mergeItems(pending);
+      try {
+        host.sendDelivery(message);
+      } catch {
+        // 受理失败：留 pending（账已落盘，下一边沿重试 + 重启恢复兜底）
+        return;
+      }
+      const now = Date.now();
+      for (const item of pending) {
+        item.sentAt = now;
+        item.attempts += 1;
+      }
+    },
+
+    checkReceipts(): void {
+      if (disposed || items.size === 0) return;
+      const delivered = collectDeliveredNotifyIds(host.readSessionEntries(), new Set(items.keys()));
+      for (const notifyId of delivered) {
+        ack(notifyId);
+      }
+    },
+
+    recoverFromSession(): number {
+      if (disposed) return 0;
+      const state = scanSessionLedgerEntries(host.readSessionEntries());
+      for (const notifyId of state.acked) ackedIds.add(notifyId);
+      let replayed = 0;
+      for (const entry of state.ledger.values()) {
+        if (state.acked.has(entry.notifyId)) continue; // 已销账零重发
+        if (items.has(entry.notifyId) || ackedIds.has(entry.notifyId)) continue; // 幂等
+        items.set(entry.notifyId, {
+          ...entry,
+          recordedAt: Date.now(),
+          sentAt: undefined,
+          attempts: 0,
+        });
+        replayed += 1;
+      }
+      if (replayed > 0) {
+        ensureWatchdog();
+        attemptDeliver();
+      }
+      return replayed;
+    },
+
+    compactionCheck(): number {
+      if (disposed) return 0;
+      const state = scanSessionLedgerEntries(host.readSessionEntries());
+      let rewritten = 0;
+      for (const item of items.values()) {
+        if (!state.ledger.has(item.notifyId)) {
+          host.appendLedgerEntry(NOTIFY_LEDGER_CUSTOM_TYPE, {
+            v: 1,
+            notifyId: item.notifyId,
+            content: item.content,
+            record: item.record,
+          } satisfies NotifyLedgerEntryData);
+          rewritten += 1;
+        }
+      }
+      for (const notifyId of ackedIds) {
+        if (!state.acked.has(notifyId)) {
+          host.appendLedgerEntry(NOTIFY_ACK_CUSTOM_TYPE, { v: 1, notifyId } satisfies NotifyAckEntryData);
+          rewritten += 1;
+        }
+      }
+      return rewritten;
+    },
+
+    pendingCount(): number {
+      let n = 0;
+      for (const item of items.values()) {
+        if (item.sentAt === undefined) n += 1;
+      }
+      return n;
+    },
+
+    waitingReceiptCount(): number {
+      let n = 0;
+      for (const item of items.values()) {
+        if (item.sentAt !== undefined) n += 1;
+      }
+      return n;
+    },
+
+    dispose(): void {
+      disposed = true;
+      if (watchdogTimer !== undefined) {
+        clearInterval(watchdogTimer);
+        watchdogTimer = undefined;
+      }
+      if (boundLedger === api) boundLedger = undefined;
+    },
+  };
+
+  // ─── 内部函数（闭包） ─────────────────────────────────────
+
+  function ack(notifyId: string): void {
+    if (!items.has(notifyId)) return;
+    host.appendLedgerEntry(NOTIFY_ACK_CUSTOM_TYPE, { v: 1, notifyId } satisfies NotifyAckEntryData);
+    items.delete(notifyId);
+    ackedIds.add(notifyId);
+    maybeStopWatchdog();
+  }
+
+  /** 同一边沿的多条 pending 合并为一条注入（D5）。合并形态对齐 delivery 内核
+   *  buildBatchPayload：content 以 "\n\n---\n\n" join；details 包装 {batch:true,
+   *  items}（bg-notify-render 的 extractBgNotifyRecord 按 item 顶层字段读取）。 */
+  function mergeItems(batch: NotifyLedgerItem[]): {
+    customType: string;
+    content: string;
+    display: boolean;
+    details?: unknown;
+  } {
+    if (batch.length === 1) {
+      return { customType: NOTIFY_CUSTOM_TYPE, content: batch[0]!.content, display: true, details: batch[0]!.record };
+    }
+    return {
+      customType: NOTIFY_CUSTOM_TYPE,
+      content: batch.map((i) => i.content).join("\n\n---\n\n"),
+      display: true,
+      details: { batch: true, items: batch.map((i) => i.record) },
+    };
+  }
+
+  function ensureWatchdog(): void {
+    if (watchdogTimer !== undefined || disposed) return;
+    // 看门狗（D5 ②兜底触发面）：回执检查 + 超时重投 + pending 补投。
+    watchdogTimer = setInterval(() => {
+      if (disposed) return;
+      checkReceipts();
+      // sent 超过一个周期无回执 → 转回 pending（attempts 累加），本次 tick 的
+      // attemptDeliver 即重投——正常时序 settled 边沿早已销账，只有消息真丢失才到这
+      const cutoff = Date.now() - NOTIFY_WATCHDOG_MS;
+      for (const item of items.values()) {
+        if (item.sentAt !== undefined && item.sentAt <= cutoff) {
+          item.sentAt = undefined;
+        }
+      }
+      attemptDeliver();
+    }, NOTIFY_WATCHDOG_MS);
+  }
+
+  function maybeStopWatchdog(): void {
+    if (items.size === 0 && watchdogTimer !== undefined) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = undefined;
+    }
+  }
+
+  function attemptDeliver(): void {
+    api.attemptDeliver();
+  }
+
+  function checkReceipts(): void {
+    api.checkReceipts();
+  }  // settled 边沿（D5 ①触发点）：先查回执（销账上一轮投递——custom message 落盘
+  // （message_end → appendCustomMessageEntry）先于 _emitAgentSettled，边沿时刻回执
+  // 必然可见），再投递新 pending。
+  host.onAgentSettled(() => {
+    if (disposed) return;
+    checkReceipts();
+    attemptDeliver();
+  });
+
+  return api;
+}
+
+// ─── 模块级绑定（notifier 消费入口） ──────────────────────────
+
+let boundLedger: NotifyLedger | undefined;
+
+/**
+ * session_start 装配（index.ts）：构造新 ledger 并绑定为模块级单例（notifier.notify
+ * 经 getBoundNotifyLedger 消费）。重复 bind（/resume /fork /new 的 session_start）
+ * 替换旧实例——内存态清零符合「内存不承担销账职责」，权威 = entry 两列差集
+ * （调用方随后 recoverFromSession 重建）。
+ */
+export function bindNotifyLedgerHost(host: NotifyLedgerHost): NotifyLedger {
+  boundLedger?.dispose();
+  boundLedger = createNotifyLedger(host);
+  return boundLedger;
+}
+
+/**
+ * notifier.notify 消费入口：未 bind（旧装配 / 无 ledger 的测试）→ undefined，
+ * notifier 退回 delivery 内核路径（向后兼容）。
+ */
+export function getBoundNotifyLedger(): NotifyLedger | undefined {
+  return boundLedger;
+}
+
+/** 测试隔离：dispose 并清模块级绑定。 */
+export function _resetNotifyLedgerForTest(): void {
+  boundLedger?.dispose();
+  boundLedger = undefined;
+}
