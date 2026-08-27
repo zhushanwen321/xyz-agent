@@ -1289,7 +1289,7 @@ export interface ServerMessageMapBase {
   }
   // session.fullHistory：session.getFullHistory reply（session-message-handler.ts:115 reply { sessionId, messages }，全量无截断）。
   'session.fullHistory': { sessionId: string; messages: Message[] }
-  // model.switched：model.switch reply（settings-message-handler.ts:134 reply { sessionId, provider, modelId }）。
+  // model.switched：model.switch reply（settings-message-handler.ts:324-339 reply { sessionId, provider, modelId }，U6 后回传 pi 生效值拆解）。
   'model.switched': { sessionId: string; provider: string; modelId: string }
   // message.status：send/abort/steer/follow_up + git stage/unstage/commit/checkout/createBranch 的 ack reply。
   // status 是动作结果字面量（sent/rejected/steered/queued/aborted/staged/unstaged/committed/switched/branch_created），

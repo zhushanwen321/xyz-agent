@@ -166,6 +166,7 @@ graph TD
 - ⛔ P-D2（U5/阶段5）：在线对账触发面（每附着 vs withEphemeralPi）按性能实测定
 - D9 增补未单走对抗式审查（源设计已声明：删减性质 + 全证据锚点 + 代码已落地测试绿）
 - G4 白名单外存量：现状 notifier 走 steer（U2 合入前），故 U7b 挂载必须在 U2 之后（DAG 已保证）
+- 待产品裁决（复审 new_issue）：model-service.ts switchModel 内 config.defaults 广播用请求值而非 effective——与 pi 侧 defaultModel 持久化口径（请求值）自洽，但与 C-pi-13「显示态用生效值」精神有张力；裁决前维持现状（自洽），裁决后若改 effective 需同步评估 landing Composer fallback 语义
 
 **变更历史**：
 - 2026-08-28 创建（预检 + explorer 领地核实 + 波次编排）
