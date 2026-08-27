@@ -19,6 +19,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { clearRateLimiterState, setPiHandle } from "@zhushanwen/pi-extension-logger";
 import {
   bindNotifyLedgerHost,
   createNotifyLedger,
@@ -48,6 +49,8 @@ interface LedgerHostMock {
   /** 送达是否同步落盘为 custom_message entry（模拟 pi：triggerTurn run 结束后落盘）。
    *  false = 模拟回执延迟/丢失（消息滞留内存）。 */
   deliverPersists: { value: boolean };
+  /** U4：sendDelivery 是否抛异常（模拟受理被拒——下方 sendDelivery 首行 throw）。 */
+  deliveryThrows: { value: boolean };
 }
 
 function makeLedgerHost(): LedgerHostMock {
@@ -57,6 +60,7 @@ function makeLedgerHost(): LedgerHostMock {
   const settledHandlers: Array<() => void> = [];
   const idle = { value: true };
   const deliverPersists = { value: true };
+  const deliveryThrows = { value: false };
   const host: NotifyLedgerHost = {
     appendLedgerEntry: (customType, data) => {
       entries.push({ type: "custom", customType, data: data as Record<string, unknown> | undefined });
@@ -67,6 +71,9 @@ function makeLedgerHost(): LedgerHostMock {
       settledHandlers.push(handler);
     },
     sendDelivery: (message) => {
+      if (deliveryThrows.value) {
+        throw new Error("delivery rejected (mock)");
+      }
       sentMessages.push(message);
       if (deliverPersists.value) {
         sessionEntries.push({
@@ -89,6 +96,7 @@ function makeLedgerHost(): LedgerHostMock {
       idle.value = v;
     },
     deliverPersists,
+    deliveryThrows,
   };
 }
 
@@ -344,6 +352,118 @@ describe("NotifyLedger — 120s 看门狗（D5 ②兜底触发面）", () => {
   });
 });
 
+// ─── U4 投递计数分桶（设计 §5 U4 × §2.2 三条丢失路径） ─────
+
+describe("NotifyLedger — U4 投递计数分桶", () => {
+  beforeEach(() => {
+    _resetNotifyLedgerForTest();
+    clearRateLimiterState();
+  });
+  afterEach(() => {
+    _resetNotifyLedgerForTest();
+    setPiHandle(undefined);
+    clearRateLimiterState();
+  });
+
+  it("初始快照：三桶全 0（无投递异常时零计数）", () => {
+    const mock = makeLedgerHost();
+    const ledger = createNotifyLedger(mock.host);
+    expect(ledger.deliveryMetrics()).toEqual({ settleRejected: 0, watchdogReplays: 0, recoveryReplays: 0 });
+    ledger.dispose();
+  });
+
+  it("②settleRejected 桶：sendDelivery 受理被拒 → +1 且消息挂回 pending；恢复后不再累计", () => {
+    const mock = makeLedgerHost();
+    const ledger = createNotifyLedger(mock.host);
+
+    mock.deliveryThrows.value = true;
+    ledger.record("sa-rj", "content", { notifyId: "sa-rj" });
+    ledger.attemptDeliver();
+
+    expect(ledger.deliveryMetrics().settleRejected).toBe(1);
+    expect(mock.sentMessages).toHaveLength(0);
+    expect(ledger.pendingCount()).toBe(1); // 挂回 pending，账未丢
+
+    // 下一边沿受理恢复：投递成功，rejection 桶不再增长
+    mock.deliveryThrows.value = false;
+    ledger.attemptDeliver();
+    expect(mock.sentMessages).toHaveLength(1);
+    expect(ledger.deliveryMetrics().settleRejected).toBe(1);
+
+    ledger.dispose();
+  });
+
+  it("①watchdogReplays 桶：销账超时重投按条数累计（同消息反复超时继续累计）", () => {
+    vi.useFakeTimers();
+    try {
+      const mock = makeLedgerHost();
+      const ledger = createNotifyLedger(mock.host);
+
+      // 投递但回执永不到（消息滞留内存丢失）
+      mock.deliverPersists.value = false;
+      ledger.record("sa-wd", "content", { notifyId: "sa-wd" });
+      ledger.attemptDeliver();
+      expect(ledger.deliveryMetrics().watchdogReplays).toBe(0);
+
+      // 第一个周期：销账超时 → 转回 pending 重投，桶 +1
+      vi.advanceTimersByTime(NOTIFY_WATCHDOG_MS);
+      expect(mock.sentMessages).toHaveLength(2);
+      expect(ledger.deliveryMetrics().watchdogReplays).toBe(1);
+
+      // 第二个周期仍无回执：同消息再重投，桶累计到 2（滞留深度可见）
+      vi.advanceTimersByTime(NOTIFY_WATCHDOG_MS);
+      expect(mock.sentMessages).toHaveLength(3);
+      expect(ledger.deliveryMetrics().watchdogReplays).toBe(2);
+
+      ledger.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("③recoveryReplays 桶：session_start 恢复重放条数与返回值一致，已销账零计数", () => {
+    const mock = makeLedgerHost();
+    mock.sessionEntries.push(
+      { type: "custom", customType: NOTIFY_LEDGER_CUSTOM_TYPE, data: { v: 1, notifyId: "s-a", content: "ca", record: { notifyId: "s-a" } } },
+      { type: "custom", customType: NOTIFY_LEDGER_CUSTOM_TYPE, data: { v: 1, notifyId: "s-b", content: "cb", record: { notifyId: "s-b" } } },
+      { type: "custom", customType: NOTIFY_ACK_CUSTOM_TYPE, data: { v: 1, notifyId: "s-a" } },
+    );
+
+    const ledger = createNotifyLedger(mock.host);
+    const replayed = ledger.recoverFromSession();
+
+    expect(replayed).toBe(1); // s-b 未销账重放；s-a 已销账零重发
+    expect(ledger.deliveryMetrics().recoveryReplays).toBe(1);
+
+    // 再次恢复（幂等）：差集已入账，零重发零计数
+    expect(ledger.recoverFromSession()).toBe(0);
+    expect(ledger.deliveryMetrics().recoveryReplays).toBe(1);
+
+    ledger.dispose();
+  });
+
+  it("分桶增量经 extensionLogger 通道落日志（appendEntry，msg 固定 key + 动态值在 data）", () => {
+    const appendEntry = vi.fn();
+    setPiHandle({ appendEntry });
+
+    const mock = makeLedgerHost();
+    const ledger = createNotifyLedger(mock.host);
+
+    mock.deliveryThrows.value = true;
+    ledger.record("sa-log", "content", { notifyId: "sa-log" });
+    ledger.attemptDeliver();
+
+    expect(appendEntry).toHaveBeenCalledTimes(1);
+    const [customType, data] = appendEntry.mock.calls[0] as unknown as [string, { level: string; message: string; data: Record<string, unknown> }];
+    expect(customType).toBe("subagents:log");
+    expect(data.level).toBe("warn");
+    expect(data.message).toContain("notify delivery bucket [settleRejected]");
+    expect(data.data).toEqual({ total: 1, pending: 1 });
+
+    ledger.dispose();
+  });
+});
+
 // ─── compaction 降级（P-B4） ───────────────────────────────
 
 describe("NotifyLedger — compaction 降级（P-B4 未验证，条件补写）", () => {
@@ -556,6 +676,32 @@ describe("createNotifier — ledger 四步接线（U2）", () => {
     expect(notifierHost.sentMessages[0]?.content).toBe('Subagent "worker" (sa-nb) completed. Result:\ndone');
 
     notifier.dispose();
+  });
+
+  it("U4 warn 注入：内核路径 port.send 失败 → 警告落 extensionLogger appendEntry，console.warn 零调用", () => {
+    const appendEntry = vi.fn();
+    setPiHandle({ appendEntry });
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const notifierHost = makeNotifierHost();
+      // sendMessage 抛异常 = port.send 同步失败 → 内核 onSendFail → warn（经注入出口）
+      notifierHost.sendMessage = () => {
+        throw new Error("channel closed (mock)");
+      };
+      const notifier = createNotifier(notifierHost);
+      notifier.notify(oneShotRecord("sa-warn"));
+
+      const logCalls = appendEntry.mock.calls.filter((c) => c[0] === "subagents:log");
+      expect(logCalls.length).toBeGreaterThanOrEqual(1);
+      expect(JSON.stringify(logCalls[0]?.[1])).toContain("port.send failed");
+      expect(consoleWarnSpy).not.toHaveBeenCalled();
+
+      notifier.dispose();
+    } finally {
+      consoleWarnSpy.mockRestore();
+      setPiHandle(undefined);
+      clearRateLimiterState();
+    }
   });
 
   it("dispose 摘除模块级绑定：后续 notify 走内核路径，settled 边沿静默", () => {

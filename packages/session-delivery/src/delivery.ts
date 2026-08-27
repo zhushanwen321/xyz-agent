@@ -22,6 +22,20 @@ import type {
   SendReceipt,
 } from './types.js'
 
+/**
+ * U4 warn 出口注入（设计 docs/design/subagent-dispatch-reliability.md §5 U4）：
+ * 装配方接 extensionLogger 使投递失败警告落 `<dataDir>/logs/`（console.warn 走
+ * stderr tee 不到日志盘——排查无痕）。通用包不硬依赖 xyz logger，故以可选注入
+ * 挂载；正式化并入 types.ts 的 DeliveryConfig 属领地外变更，暂以交叉类型承载。
+ */
+export interface DeliveryWarnSink {
+  /** 投递失败/异常警告出口。缺省 console.warn（前缀 `[session-delivery]`）。 */
+  warn?: (msg: string, err?: unknown) => void
+}
+
+/** createDelivery 配置（DeliveryConfig + warn 出口注入）。 */
+export type DeliveryConfigWithWarn = DeliveryConfig & DeliveryWarnSink
+
 /** 默认配置（D4 策略默认值）。 */
 const DEFAULT_CONFIG: Required<
   Omit<DeliveryConfig, 'mergeHoldActive' | 'dedupe' | 'onSettled'>
@@ -122,7 +136,7 @@ function settleChecked(
  */
 export function createDelivery(
   port: DeliveryPort,
-  config?: DeliveryConfig,
+  config?: DeliveryConfigWithWarn,
 ): DeliveryHandle {
   // 合并配置
   const cfg = {
@@ -402,10 +416,17 @@ export function createDelivery(
     doSend()
   }
 
-  // ─── warn 辅助 ─────────────────────────────────────────────
+  // ─── warn 辅助（U4 出口参数化）────────────────────────────
+  // 注入优先（装配方接 extensionLogger 落盘）；缺省 console.warn 保持通用包
+  // 零 logger 依赖（投递失败必须可见）。
+  const warnSink: (msg: string, err?: unknown) => void =
+    config?.warn ??
+    ((msg: string, err?: unknown) => {
+      console.warn(`[session-delivery] ${msg}`, err ?? '')
+    })
+
   function warn(msg: string, err?: unknown): void {
-    // 内核无 logger 依赖，用 console.warn（投递失败必须可见）
-    console.warn(`[session-delivery] ${msg}`, err ?? '')
+    warnSink(msg, err)
   }
 
   // ─── dedupe 入口检查（send/sendChecked 共用）──────────────

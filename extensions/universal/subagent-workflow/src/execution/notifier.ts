@@ -16,11 +16,15 @@
 // 设计 D5 实测证伪）；busy 场景由 ledger（settled 边沿 + isIdle 二次复查）或内核
 // settled 订阅驱动在空闲边沿投递。
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { createDelivery, type DeliveryHandle, type DeliveryPort } from "@xyz-agent/session-delivery";
 
 import { deriveOutcome } from "./execution-record.ts";
 import { getBoundNotifyLedger, NOTIFY_CUSTOM_TYPE } from "./notify-ledger.ts";
 import type { ClosedReason, ExecutionOutcome } from "./types.ts";
+
+/** U4：delivery warn 出口注入用——与 index.ts 共享同一具名 logger 单例。 */
+const notifyLogger = getLogger("subagents");
 
 /**
  * 一条待发送的完成通知记录。
@@ -239,6 +243,10 @@ export function createNotifier(host: NotifierHost): BgNotifier {
       // 同 key 可再入）。当前 key 空间（id / id:round，id 每 spawn 唯一）无实际差异；
       // 后续复用方勿按「60s 内不重复」假设接入（同 key 通知会被永久吞）。
       dedupe: { maxKeys: 1000 },
+      // U4 warn 出口参数化：内核投递失败警告接 extensionLogger（appendEntry 落
+      // session JSONL + XYZ_AGENT_DEBUG 落 <dataDir>/logs/），不再走 console.warn
+      // （stderr tee 不到日志盘——排查无痕，设计 §5 U4）。
+      warn: (msg, err) => notifyLogger.warn(msg, err),
     });
   let handle: DeliveryHandle = createHandle();
 

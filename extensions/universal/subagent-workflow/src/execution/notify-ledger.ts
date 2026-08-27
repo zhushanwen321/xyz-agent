@@ -38,6 +38,11 @@
 // SubagentService.piAdapter（该适配层不在 U2 改动面）。未 bind 时 notifier 退回
 // delivery 内核路径（向后兼容旧装配 / 无 ledger 的测试场景）。
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+/** U4 分桶日志与 index.ts 装配层共用同一具名 logger（getLogger 缓存单例）。 */
+const logger = getLogger("subagents");
+
 /** 账本 entry customType（plain custom entry，不进 LLM 上下文）。 */
 export const NOTIFY_LEDGER_CUSTOM_TYPE = "subagent-bg-notify-ledger";
 /** 销账 entry customType（plain custom entry，不进 LLM 上下文）。 */
@@ -57,6 +62,25 @@ export const NOTIFY_CUSTOM_TYPE = "subagent-bg-notify";
  * at-least-once + notifyId 幂等兜底）。
  */
 export const NOTIFY_WATCHDOG_MS = 120_000;
+
+/**
+ * U4 投递计数分桶（设计 §5 U4：分桶口径与 §2.2 三条丢失路径一一对应，回归时定位到
+ * 具体环节）：
+ *   - ②settleRejected → §2.2「delivery busy parked / 投递尝试被拒」：sendDelivery
+ *     受理失败（抛异常）次数（ledger 主路径下投递被拒的唯一形态；降级内核路径的
+ *     settle rejected 由 delivery warn 注入覆盖）；
+ *   - ①watchdogReplays → §2.2「busy 窗口滞留（steer 内存队列滞留 / 合批窗口顺延）」：
+ *     sent 超期无回执 → 看门狗转回 pending 重投的条数（同一消息多次超时累计）；
+ *   - ③recoveryReplays → §2.2「重启内存态清零」：session_start 恢复重放条数。
+ */
+export interface NotifyDeliveryBucketMetrics {
+  /** 投递尝试被拒（sendDelivery 受理失败）次数。 */
+  settleRejected: number;
+  /** 销账超时 → 看门狗重投条数（累计）。 */
+  watchdogReplays: number;
+  /** session_start 恢复重放条数（累计）。 */
+  recoveryReplays: number;
+}
 
 /** ledger entry 的 data schema（v1）。content 为预格式化文案（notifier
  *  buildLlmContent 产物）——恢复重放直接复用，ledger 不依赖格式化函数。
@@ -124,6 +148,8 @@ export interface NotifyLedger {
   pendingCount(): number;
   /** 诊断/测试：已投递待回执条数。 */
   waitingReceiptCount(): number;
+  /** U4 诊断：三桶计数快照（副本；增量同时经 extensionLogger 通道落日志）。 */
+  deliveryMetrics(): NotifyDeliveryBucketMetrics;
   /** 销毁：清看门狗 timer + 摘模块级绑定（settled 回调由 disposed 标志静默）。 */
   dispose(): void;
 }
@@ -197,6 +223,12 @@ export function createNotifyLedger(host: NotifyLedgerHost): NotifyLedger {
   const items = new Map<string, NotifyLedgerItem>();
   /** 已销账内存索引（notifyId 幂等判重 + compaction 补写源；权威 = ack entry 列）。 */
   const ackedIds = new Set<string>();
+  /** U4 投递计数三桶（诊断快照源；增量经 emitBucketLog 落 extensionLogger）。 */
+  const buckets: NotifyDeliveryBucketMetrics = {
+    settleRejected: 0,
+    watchdogReplays: 0,
+    recoveryReplays: 0,
+  };
   let disposed = false;
   let watchdogTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -230,7 +262,11 @@ export function createNotifyLedger(host: NotifyLedgerHost): NotifyLedger {
       try {
         host.sendDelivery(message);
       } catch {
-        // 受理失败：留 pending（账已落盘，下一边沿重试 + 重启恢复兜底）
+        // 受理失败：留 pending（账已落盘，下一边沿重试 + 重启恢复兜底）。
+        // U4 ②settleRejected 桶：投递尝试被拒按事件次计数（对齐内核 onSettled
+        // per-批次口径），增量落日志供回归定位。
+        buckets.settleRejected += 1;
+        emitBucketLog("settleRejected", buckets.settleRejected, { pending: pending.length });
         return;
       }
       const now = Date.now();
@@ -265,6 +301,9 @@ export function createNotifyLedger(host: NotifyLedgerHost): NotifyLedger {
         replayed += 1;
       }
       if (replayed > 0) {
+        // U4 ③recoveryReplays 桶：重启恢复重放条数（index.ts 装配层的重复日志已并入）
+        buckets.recoveryReplays += replayed;
+        emitBucketLog("recoveryReplays", buckets.recoveryReplays, { replayed });
         ensureWatchdog();
         attemptDeliver();
       }
@@ -309,6 +348,10 @@ export function createNotifyLedger(host: NotifyLedgerHost): NotifyLedger {
         if (item.sentAt !== undefined) n += 1;
       }
       return n;
+    },
+
+    deliveryMetrics(): NotifyDeliveryBucketMetrics {
+      return { ...buckets };
     },
 
     dispose(): void {
@@ -360,10 +403,17 @@ export function createNotifyLedger(host: NotifyLedgerHost): NotifyLedger {
       // sent 超过一个周期无回执 → 转回 pending（attempts 累加），本次 tick 的
       // attemptDeliver 即重投——正常时序 settled 边沿早已销账，只有消息真丢失才到这
       const cutoff = Date.now() - NOTIFY_WATCHDOG_MS;
+      let timedOut = 0;
       for (const item of items.values()) {
         if (item.sentAt !== undefined && item.sentAt <= cutoff) {
           item.sentAt = undefined;
+          timedOut += 1;
         }
+      }
+      if (timedOut > 0) {
+        // U4 ①watchdogReplays 桶：busy 窗口滞留兜底的重投条数（同一消息反复超时累计）
+        buckets.watchdogReplays += timedOut;
+        emitBucketLog("watchdogReplays", buckets.watchdogReplays, { timedOut });
       }
       attemptDeliver();
     }, NOTIFY_WATCHDOG_MS);
@@ -382,7 +432,20 @@ export function createNotifyLedger(host: NotifyLedgerHost): NotifyLedger {
 
   function checkReceipts(): void {
     api.checkReceipts();
-  }  // settled 边沿（D5 ①触发点）：先查回执（销账上一轮投递——custom message 落盘
+  }
+
+  /** U4 分桶日志：计数经既有 extensionLogger 通道暴露（appendEntry 落 session JSONL
+   *  不进 LLM/TUI + XYZ_AGENT_DEBUG=1 落 `<dataDir>/logs/`），替代无痕内存态。
+   *  msg 固定 key（限流命中面），动态值按 D4 约定放 data 参数。 */
+  function emitBucketLog(
+    bucket: keyof NotifyDeliveryBucketMetrics,
+    total: number,
+    extra: Record<string, unknown>,
+  ): void {
+    logger.warn(`notify delivery bucket [${bucket}]`, { total, ...extra });
+  }
+
+  // settled 边沿（D5 ①触发点）：先查回执（销账上一轮投递——custom message 落盘
   // （message_end → appendCustomMessageEntry）先于 _emitAgentSettled，边沿时刻回执
   // 必然可见），再投递新 pending。
   host.onAgentSettled(() => {

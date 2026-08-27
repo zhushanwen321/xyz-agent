@@ -434,10 +434,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
           pi.sendMessage(message, { triggerTurn: true });
         },
       };
-      const replayed = bindNotifyLedgerHost(ledgerHost).recoverFromSession();
-      if (replayed > 0) {
-        logger.warn(`[subagents] notify ledger recovery replayed ${replayed} unacked notification(s)`);
-      }
+      // U4：重放观测已内聚到 ledger 分桶日志（recoveryReplays 桶经 extensionLogger
+      // 通道落盘），此处不再重复打日志。
+      bindNotifyLedgerHost(ledgerHost).recoverFromSession();
     } catch (err) {
       // 账本装配失败不阻断 session_start（通知退回 notifier 的内核路径）
       logger.warn("[subagents] notify ledger bind failed", {
