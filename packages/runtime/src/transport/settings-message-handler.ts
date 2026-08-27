@@ -7,6 +7,7 @@ import type { ClientMessage, ProviderSource, SkillCacheScope, ProviderId } from 
 import type { IConfigService, ISessionService, IModelService, IAuthService } from '../interfaces.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
 import { SCOPED_MODEL_REGEX } from '../services/provider-extras-store.js'
+import { attachSupportedLevelsSafe } from './message-broker.js'
 import { toErrorMessage } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 
@@ -61,9 +62,11 @@ export class SettingsMessageHandler {
   async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
     switch (msg.type) {
       case 'config.getProviders':
-        // scoped-model design §3.3 D7：reply 与广播（message-broker.buildProviderListMsgs）均含 scopedModels
+        // scoped-model design §3.3 D7：reply 与广播（message-broker.buildProviderListMsgs）均含 scopedModels。
+        // supportedLevels 同样两路同标（U5 接线）：本 ctx 无 appInfo，piVersion 缺省（registry 以
+        // 逐模型签名兜底，缓存正确性不依赖该组分——见 model-capability.ts 头注）。
         this.ctx.reply(ws, msg.id, 'config.providers', {
-          providers: this.ctx.configService.listProviders(),
+          providers: attachSupportedLevelsSafe(this.ctx.modelService, this.ctx.configService.listProviders()),
           scopedModels: this.ctx.configService.getScopedModels(),
         })
         return true

@@ -12,7 +12,7 @@
  * broadcast 遍历 ConnectionManager.clients；sendInitialState 依赖 services 取数据。
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ServerMessage, ServerMessageMap, ServerMessageType, SkillCacheScope } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageMap, ServerMessageType, SkillCacheScope, ProviderInfo } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IPluginService, IExtensionService } from '../interfaces.js'
 import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '../services/skill-dir-config.js'
 import type { ErrorDetails } from './message-context.js'
@@ -21,6 +21,30 @@ import { WS_OPEN } from './connection-manager.js'
 /** broker 访问连接池的最小契约（由 ConnectionManager 实现：clients Set）。 */
 export interface ClientPool {
   readonly clients: Set<WsType>
+}
+
+/**
+ * config.providers 下发前的 supportedLevels 标注（U5 接线，字段语义见 shared/provider.ts）。
+ *
+ * IModelService 接口尚未声明 attachSupportedLevels（U5 只挂在 ModelService 类上，接口扩面
+ * 不归本单元），此处结构探测（同 model-capability.ts asModelsSource 先例）：方法存在才调。
+ * 标注失败只 warn 不抛——registry 内部已有 mtime 读取等降级，这里兜底保证 provider 列表
+ * 下发永不被能力标注阻断；探测失败/抛错时返回原 providers（supportedLevels 缺省 =
+ * shared/provider.ts 该字段注释的过渡态语义，renderer 走旧推导路径）。
+ */
+export function attachSupportedLevelsSafe(
+  modelService: IModelService,
+  providers: ProviderInfo[],
+  piVersion?: string,
+): ProviderInfo[] {
+  const annotatable = modelService as { attachSupportedLevels?: (providers: ProviderInfo[], piVersion?: string) => ProviderInfo[] }
+  if (typeof annotatable.attachSupportedLevels !== 'function') return providers
+  try {
+    return annotatable.attachSupportedLevels(providers, piVersion)
+  } catch (e) {
+    console.warn('[broker] attachSupportedLevels failed — providers sent without capability annotation:', e)
+    return providers
+  }
 }
 
 /**
@@ -141,7 +165,14 @@ export class ServerMessageBroker implements IMessageBroker {
     }
   }
   private buildProviderListMsgs(): ServerMessage[] {
-    const providers = this.services.configService.listProviders()
+    // U5 接线：下发前标注 supportedLevels。pi 版本与 app.info 同源（services.appInfo.piVersion，
+    // D8-2 组合根探测完成后 mutate 同对象，此处总读到当前值）。aggregateModelsWithScoped 的
+    // ModelInfo 映射（pickModelCapabilityFields 白名单）不透传 supportedLevels，model.list 不受影响。
+    const providers = attachSupportedLevelsSafe(
+      this.services.modelService,
+      this.services.configService.listProviders(),
+      this.services.appInfo.piVersion,
+    )
     // scopedModels 只读一次盘、两条消息复用同一值：aggregateModels 内部再读盘的话，
     // 两次读之间有写者落盘会让 config.providers.scopedModels 与 model.list 过滤结果
     // 互相矛盾一帧（review #4）。双参版聚合方法即为此引入（design D2 否决改单参签名）。
