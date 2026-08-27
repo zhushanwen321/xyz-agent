@@ -12,6 +12,17 @@ import * as fs from "node:fs";
 import type { AliveMarker } from "./types.ts";
 
 // ============================================================
+// 常量
+// ============================================================
+
+/**
+ * .alive marker 的软超时（1h，自 record-store.ts 迁移为共享常量）：超过此时长的
+ * alive 视为陈旧——pid 复用窗口有限（[防] 缩短窗口降误判），且长时间 marker 多半
+ * 是异常退出后的残留。v8.5 D 透明重生的异进程探针复用同一判据（findForeignLiveInstance）。
+ */
+export const ALIVE_SOFT_TIMEOUT_MS = 3_600_000;
+
+// ============================================================
 // 公开函数
 // ============================================================
 
@@ -81,6 +92,22 @@ export function isProcessAlive(pid: number): boolean {
     }
     return false; // ESRCH 或其他异常 → 保守判死
   }
+}
+
+/**
+ * [v8.5 D] 异进程活实例探针：sessionFile 是否仍有「另一进程」的活跃实例。
+ *
+ * 三判据与 record-store buildRecord 分支 3 同源（readAliveMarker + isProcessAlive +
+ * 软超时）：marker 存在 && pid 存活 && 未超软超时才返回 marker；其余返回 undefined
+ * （视为确死/陈旧，允许透明重生）。调用方在 resurrect 前必须经此确认源进程确死，
+ * 防双写同一 session jsonl。
+ */
+export function findForeignLiveInstance(sessionFile: string, now: number = Date.now()): AliveMarker | undefined {
+  const marker = readAliveMarker(sessionFile);
+  if (!marker) return undefined;
+  if (!isProcessAlive(marker.pid)) return undefined;
+  if (now - marker.startedAt >= ALIVE_SOFT_TIMEOUT_MS) return undefined;
+  return marker;
 }
 
 // ============================================================

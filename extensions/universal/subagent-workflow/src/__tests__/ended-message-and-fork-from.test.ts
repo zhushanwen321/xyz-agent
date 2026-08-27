@@ -26,13 +26,16 @@ const { loggerMock, rafCapture } = vi.hoisted(() => ({
   // 捕获穿透到 runAndFinalize 边界的 ExecuteOptions（fork-from 语义落点的服务层验证）。
   // buildSpawnArgs 层的 forkSource → --fork 映射已有专项直测（spawn-args.test.ts），
   // 两层合成即覆盖完整链路。
-  rafCapture: [] as Array<{ task: string; forkSource?: string; slugId: string }>,
+  rafCapture: [] as Array<{ task: string; forkSource?: string; slugId: string; resumeSessionFile?: string }>,
 }));
 vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：fork-from 的 execute 链经 kickOffBackground → runAndFinalize →
 // runSpawn。runSpawn 返回最小成功 AgentResult，后台收尾链可完整走完（archive + notify）。
-vi.mock("../session-runner.ts", () => ({
+// [v8.5 D 修正] 路径必须是 ../execution/session-runner.ts——原 "../session-runner.ts"
+// 指向不存在的文件，mock 从未生效（探针实证 identity=REAL），是历史上全量套件
+// 偶发挂起的真根源之一：真实 detached 链泄漏句柄让 worker 无法收敛。
+vi.mock("../execution/session-runner.ts", () => ({
   runSpawn: vi.fn(async () => ({
     text: "",
     turns: 1,
@@ -164,7 +167,14 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
         (...args: unknown[]) => {
           const opts = args[1] as ExecuteOptions;
           const record = args[0] as { id: string };
-          rafCapture.push({ task: String(opts.task), forkSource: opts.forkFromSessionFile, slugId: record.id });
+          rafCapture.push({
+            task: String(opts.task),
+            forkSource: opts.forkFromSessionFile,
+            slugId: record.id,
+            // [v8.5 D] 冷路径续写观测点：runAndFinalize 第 9 个位置参数 = resume spawn
+            // 选项（args[8].sessionFile = --session 重开目标；对齐 transparent-resume 同款手法）
+            resumeSessionFile: (args[8] as { sessionFile?: string } | undefined)?.sessionFile,
+          });
           return orig.apply(service as unknown as object, args);
         })((service as unknown as { runAndFinalize: (...a: unknown[]) => Promise<unknown> }).runAndFinalize);
     rafCapture.length = 0;
@@ -216,10 +226,12 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       expect(rec?.status).toBe("closed");
       expect(rec?.closedReason).toBe("disconnected");
 
-      // message 该记录 → 断联类 Y 文案（含 fork-from 指引），不崩且指向 history
-      await expect(messageHandler(service, { subagentId: "sa-a2-legacy", text: "hi" })).rejects.toThrow(
-        /reconnectable.*disconnected[\s\S]*fork-from/,
-      );
+      // [v8.5 D 升级] disconnected ∈ 可重连集 → message 不再拒绝而是透明重生，续写原文件；
+      // 「向后兼容」语义保持：旧格式 sidecar 可读、行为不崩、路径可达。
+      const res = await messageHandler(service, { subagentId: "sa-a2-legacy", text: "hi" });
+      expect(res.response.delivered).toBe(true);
+      await vi.waitFor(() => expect(rafCapture.length).toBe(1));
+      expect(rafCapture[0].resumeSessionFile).toBe(file);
     });
 
     it("sidecar 内容非法（外部损坏/手写垃圾）→ 兜底 disconnected", () => {
@@ -327,7 +339,6 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       // forkSource 透传 RunOptions（下游 buildSpawnArgs 的 --fork 映射有专项直测覆盖）
       expect(rafCapture[0].forkSource).toBe(sourceFile);
 
-      // 新记录 running 且 slug 派生自源 slug
       expect((service.findRecord(result.response.newSubagentId))?.status).toBe("running");
       expect((service.findRecord(result.response.newSubagentId))?.slug).toBe("src-resumed");
     });
@@ -349,7 +360,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       writeTombstone(file, "sa-canxx");
 
       await expect(forkFromHandler(service, { sourceSubagentId: "sa-canxx" })).rejects.toThrow(
-        /cancelled by user — cancelled records cannot be resumed/,
+        /deliberately closed by user \(closedReason: cancelled\)/,
       );
       expect(rafCapture.length).toBe(0); // 守卫拒绝：不进入执行链
     });

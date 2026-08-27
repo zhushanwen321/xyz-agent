@@ -36,6 +36,7 @@ import type {
   SubagentRecord,
   SubagentToolResult,
 } from "../execution/types.ts";
+import { ResurrectDeniedError } from "../execution/types.ts";
 import { mapRunIcon, mapRunStatus } from "./gui-mappers.ts";
 
 // ============================================================
@@ -135,6 +136,9 @@ export interface CancelHandlerResult {
  *   - 其余（closed 其他 reason / running 但异归属）→「断联可接续」文案
  */
 export function endedMessageGuard(service: SubagentService, id: string, original: unknown): Error {
+  // [v8.5 D] 透明重生守卫拒绝（worktree/异进程占用）原样透传——错误自带完整行动语言，
+  // 若被下方 fork-from 指引改写会误导 agent 走已被判死的通道（types.ts 契约声明）。
+  if (original instanceof ResurrectDeniedError) return original;
   let snap: SubagentRecord | undefined;
   try {
     snap = service.lookupRecordAnyState(id);
@@ -468,7 +472,7 @@ export async function messageHandler(
   // 升级文案——close/cancel 维持原语义（它们不需要恢复通道）。
   let record: ExecutionRecord;
   try {
-    record = service.getRecordForAction(id);
+    record = service.getRecordForAction(id, { allowReconnect: true });
   } catch (err) {
     throw endedMessageGuard(service, id, err);
   }
@@ -620,11 +624,14 @@ export async function forkFromHandler(
     );
   }
 
-  // 守卫 4：tombstone/cancelled —— 用户主动告别，无接续语义。
-  if (source.status === "closed" && (source.closedReason === "cancelled")) {
+  // 守卫 4：主动告别（cancelled tombstone / user-close 正式关闭）——close 语义无旁路：
+  // fork-from 与 message 一致拒绝（guard 一致性规格），文案升级为统一「主动关闭」形态
+  // （含 closedReason 显式列入），与 deliverMessage 的 X 分支同语系不同落地（此处强调不可 branch）。
+  if (source.status === "closed" && (source.closedReason === "cancelled" || source.closedReason === "user-close")) {
     throw new Error(
-      `subagent ${id} was cancelled by user — cancelled records cannot be resumed. ` +
-      `Start a fresh subagent (action:'start') instead.`,
+      `subagent ${id} was deliberately closed by user (closedReason: ${source.closedReason}) — ` +
+      `deliberately-closed records cannot be resumed or branched from; nothing can reattach to them. ` +
+      `Recovery: start a fresh subagent (action:'start'); use action:'list' with includeFinished:true to review its final output.`,
     );
   }
 

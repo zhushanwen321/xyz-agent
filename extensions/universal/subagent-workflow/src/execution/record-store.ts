@@ -51,7 +51,7 @@ import type {
   SubagentRecord,
 } from "./types.ts";
 import type { CancelledTombstone } from "./tombstone-store.ts";
-import { isProcessAlive, readAliveMarker } from "./alive-store.ts";
+import { isProcessAlive, readAliveMarker, ALIVE_SOFT_TIMEOUT_MS } from "./alive-store.ts";
 import { readCancelledTombstone } from "./tombstone-store.ts";
 
 const logger = getLogger("subagents");
@@ -68,8 +68,7 @@ const STATUS_PRIORITY: Record<ExecutionStatus, number> = {
   closed: 3,
 };
 
-/** .alive sidecar 的 24 小时软超时（超过此时间即使 pid 存活也判 crashed）。 */
-const ALIVE_SOFT_TIMEOUT_MS = 3_600_000; // 1h in ms (reduced from 24h to minimize PID reuse window)
+// .alive 软超时常量已迁移至 alive-store.ts（v8.5 D 透明重生探针共用同一判据 SSOT）。
 
 /**
  * manifest status → ExecutionStatus 运行时守卫映射。

@@ -66,6 +66,33 @@ export type ExecutionStatus = "running" | "closed";
 export type ClosedReason = 'parent-shutdown' | 'parent-fork' | 'parent-new' | 'user-close' | 'cancelled' | 'gc' | 'disconnected';
 
 /**
+ * [v8.5 D] 可透明重生的终态原因集：message action 对这些 closed 记录同 id 续写原
+ * sessionFile（resurrectClosed 回边），不再要求 fork-from 换新 id。
+ *
+ * 取值以 `.finalized` sidecar 实际写入的 ClosedReason 字面量为准：
+ *   disconnected    — 断联（sidecar 空/损坏兜底 + pi-invocation 中断写入）
+ *   parent-shutdown — 父进程 session_shutdown 回收
+ * 其余 reason 刻意排除：user-close/cancelled 是用户主动告别（close 语义不可旁路）；
+ * gc 是自然完成（追问走 fork-from 或新 start）；parent-fork/parent-new 同理是编排性
+ * 清理，历史分支语义已由 fork-from 承接。
+ */
+export const RECONNECTABLE_FINAL_REASONS = ["disconnected", "parent-shutdown"] as const satisfies readonly ClosedReason[];
+
+export type ReconnectableFinalReason = (typeof RECONNECTABLE_FINAL_REASONS)[number];
+
+/** 窄化守卫：closedReason 是否落在可重生集内。 */
+export function isReconnectableFinalReason(reason: string | undefined): reason is ReconnectableFinalReason {
+  return (RECONNECTABLE_FINAL_REASONS as readonly string[]).includes(reason ?? "");
+}
+
+/**
+ * [v8.5 D] 透明重生守卫拒绝专用错误：messageHandler 的 endedMessageGuard 必须原样
+ * 透传本类错误（自带完整行动语言），不得按 A1 分流规则改写——否则 worktree/异进程
+ * 占用文案会被「fork-from 指引」覆盖，误导 agent 走已被判死的通道。
+ */
+export class ResurrectDeniedError extends Error {}
+
+/**
  * 对外四态（设计决策 10 细则 3）：内部 ExecutionStatus（v4 B-1 两态）收敛为 agent
  * 可理解的状态语义。真实映射只有两条：
  *   running → active / closed → ended（closed 统一终态，含 cancelled）。

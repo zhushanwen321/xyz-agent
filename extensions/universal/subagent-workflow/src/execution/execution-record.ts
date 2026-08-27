@@ -676,6 +676,25 @@ export function tryTransition(
 }
 
 /**
+ * [v8.5 D] 透明重生唯一回边：closed → running，清除终态语义位。
+ *
+ * 与 tryTransition 单向语义的关系：tryTransition 只负责 running→closed 终化且不可逆；
+ * 本函数是刻意豁免的逆向特例——仅服务 message action 对可重连记录（finalizedReason
+ * ∈ RECONNECTABLE_FINAL_REASONS）的同 id 重生。调用方必须先通过四守卫（sessionFile
+ * 存在 / 非 tombstone / 可重连 reason / worktree+alive 探针），禁止在正常执行流程中
+ * 使用。running 入态防御性 no-op：重生是 closed 的专属回边，不是万能改写器。
+ */
+export function resurrectClosed(
+  record: { status: ExecutionStatus; closedReason?: ClosedReason; endedAt?: number },
+): boolean {
+  if (record.status !== "closed") return false;
+  record.status = "running";
+  record.closedReason = undefined;
+  record.endedAt = undefined;
+  return true;
+}
+
+/**
  * 重建专用收口：跳过 CAS 直接赋值 status。
  *
  * 仅用于 session-reconstructor 从 session.jsonl 重建终态 record 时——
