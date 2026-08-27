@@ -120,15 +120,6 @@ EXEMPT_CALLSITES = [
         "trusted 插件域真正跨进程出站统一收敛于 plugin-host-process.ts 的 fork 接线点"
         "（该文件经 buildOutboundChildEnv 组装）",
     ),
-    (
-        "infra/installers/npm-git-installer.ts",
-        "execFileSync('git'",
-        "[存量债务·待收编] extension 安装 git clone：白名单数组参数防注入（对齐 "
-        "git-executor 惯例），但 env 隐式继承未经出站契约——deny 键会流向 git "
-        "credential helper 体系。U4 接线范围未覆盖 infra/installers/，本守卫上线时"
-        "如实豁免登记而非静默放过；待后续接线 PR 把该调用改经 buildOutboundChildEnv"
-        "后删除本条",
-    ),
     # --- apps/electron/main ---
     (
         "supervisor/process-control.ts",

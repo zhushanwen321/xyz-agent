@@ -10,6 +10,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import type { IInstaller } from '../../services/ports/installer.js'
+import { buildOutboundChildEnv } from '../spawn-env.js'
 import {
   installPackage,
   uninstallPackage,
@@ -18,6 +19,28 @@ import {
 } from './npm-installer.js'
 
 const GIT_CLONE_DEFAULT_TIMEOUT = 120_000
+
+// git(git-remote-https/libcurl) 消费确凿的标准代理键全集。收编 C-proc-08 后子进程 env 以
+// 入站白名单基座构建（ENV_WHITELIST_PREFIXES 不含任何 PROXY 键，已核对 constants.ts），
+// 不显式 forward 则用户代理环境（git clone GitHub 为 extension 安装主场景）直接不可用。
+// 键集与 main 侧 update/proxy-config.ts 既有消费对齐（大小写双形），补齐 ALL_PROXY/
+// NO_PROXY 属 libcurl 标准族而非顺手扩清单。
+const GIT_PROXY_ENV_KEYS = [
+  'HTTPS_PROXY', 'https_proxy',
+  'HTTP_PROXY', 'http_proxy',
+  'ALL_PROXY', 'all_proxy',
+  'NO_PROXY', 'no_proxy',
+] as const
+
+/** 从父 env 快照提取代理键（有值才带，undefined 键天然不入 extras）。 */
+function pickProxyExtras(parentEnv: Record<string, string | undefined>): Record<string, string> {
+  const extras: Record<string, string> = {}
+  for (const key of GIT_PROXY_ENV_KEYS) {
+    const value = parentEnv[key]
+    if (value !== undefined) extras[key] = value
+  }
+  return extras
+}
 
 /** 版本检查默认超时 15s——比 install 的 60s 更快失败（轻量 metadata 查询不应长时间挂起）。 */
 const VERSION_CHECK_DEFAULT_TIMEOUT = 15_000
@@ -39,9 +62,14 @@ export class NpmGitInstaller implements IInstaller {
 
   async installGit(url: string, destDir: string, timeout?: number): Promise<void> {
     // execFileSync prevents command injection (no shell). Throws on non-zero exit.
+    // env 经出站契约构建器组装（C-proc-08 收编）：白名单基座过滤父 env + deny 兜底剥
+    // XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN；extras 仅 forward 上列 git 消费确凿的
+    // 代理键。自有键零注入——clone 输入只有 argv（url + destDir），向 credential
+    // helper 等下游传递产品变量无任何场景需求。
     execFileSync('git', ['clone', '--depth', '1', url, destDir], {
       stdio: 'pipe',
       timeout: timeout ?? GIT_CLONE_DEFAULT_TIMEOUT,
+      env: buildOutboundChildEnv({ parentEnv: process.env, extras: pickProxyExtras(process.env) }),
     })
   }
 
