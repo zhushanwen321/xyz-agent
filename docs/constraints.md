@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 76 条（生成于 2026-08-26）。
+共 80 条（生成于 2026-08-27）。
 
 ## pi 关系（外部依赖边界）
 
@@ -21,6 +21,8 @@
 | C-pi-09 | 系统提示词替换走 --system-prompt CLI（仅新会话），追加走 extension before_agent_start hook（每轮热生效）；禁 hook 内整段替换 | extensions/taiji/system-prompt/**、packages/runtime/src/** | [0044-system-prompt-replace-via-cli-append-via-hook](adr/0044-system-prompt-replace-via-cli-append-via-hook.md) | review: review-extension-api |
 | C-pi-10 | 非活跃 session 的修改经短命 pi 进程 + RPC（withEphemeralPi），不做直接文件操作 | packages/runtime/src/** | [data-source-governance](architecture/data-source-governance.md) | review: review-data-governance |
 | C-pi-11 | 扩展状态变更必须 appendEntry 自描述完整记录；禁借 pi 文件当私有数据库、禁逆向解析 toolCall/toolResult 编码 | extensions/** | [data-source-governance](architecture/data-source-governance.md) | review: review-data-governance |
+| C-pi-12 | pi 能力事实单点（能力注册表）：模型全等 id / reasoning / 实际支持思考档位只经 runtime 能力注册表（model-capability.ts，pi-ai 同源计算 + get_available_models 在线对账）进入域内，renderer/扩展禁止本地推断档位（禁复活 resolveAvailableLevels 类影子实现），档位可用集一律消费注册表下发的 supportedLevels | packages/runtime/src/services/model-capability.ts、packages/core/**、packages/renderer/**、packages/ui/**、extensions/** | [pi-boundary-reliability](design/pi-boundary-reliability.md#d2能力注册表--runtime-单点服务面离线同源--在线对账选定) · [0064-pi-semantic-absorption-layer](adr/0064-pi-semantic-absorption-layer.md) | review: review-arch-boundary + hook: `diff-probe-thinking.mjs` |
+| C-pi-13 | 改状态 RPC 一律回 pi 实际生效值：setThinkingLevel / model.switch / cycleModel / plugin 通道等改状态命令 reply 禁 void，须回生效值（pi 钳制时 ≠ 请求值）；消费方禁乐观写请求值，以回执写显示态（request≠effective 窗口显示假值 = 事故 B 形态） | packages/shared/src/protocol.ts、packages/runtime/src/**、packages/core/**、packages/renderer/** | [pi-boundary-reliability](design/pi-boundary-reliability.md#d3生效回执接通并上升为协议约束选定) · [0064-pi-semantic-absorption-layer](adr/0064-pi-semantic-absorption-layer.md) | review: review-type-safety |
 
 ## 数据治理（单一数据拥有者体系）
 
@@ -93,12 +95,13 @@
 | C-ext-16 | chat 域缺省引擎路径字节级守护：pi 缺省路由下 record.engine 恒 undefined（entry 序列化不增键），显式 engine:'pi' 亦剥离；引擎归属缺省映射只发生在读侧/渲染侧（D5）；兜底路径（engineFallback）是唯一允许 entry 增 engine 系字段的 pi 形态 | extensions/universal/subagent-workflow/src/execution/subagent-service.ts、extensions/universal/subagent-workflow/src/execution/__tests__/chat-engine-routing.test.ts | [subagent-engine-gui-visibility](architecture/subagent-engine-gui-visibility.md#d1-终态架构--职责分层--协议闭合) | review: review-arch-boundary |
 | C-ext-17 | 非 pi 引擎分支终止链三路径全覆盖：spawn 子进程注册 session-runner spawnedChildren 记账（shutdown 收割兜底）、record AbortController 的 signal wire 到 RunContext.signal（用户 cancel 经 kill-chain 两级）、会话级联挂 dispose() 既有编排（abortRunningControllers → killAllSpawnedChildren）——不留孤儿进程 | extensions/universal/subagent-workflow/src/execution/subagent-service.ts、extensions/universal/subagent-workflow/src/execution/session-runner.ts、extensions/universal/subagent-workflow/src/execution/engine/port.ts | [subagent-engine-gui-visibility](architecture/subagent-engine-gui-visibility.md#d1-终态架构--职责分层--协议闭合) | review: review-business-logic |
 | C-ext-18 | 引擎 icon 资产纪律：品牌 icon 复制入仓 packages/renderer/src/assets/icons/engine/（禁外部路径引用/symlink）、统一 currentColor 单色（禁硬编码品牌色）、引擎→icon 映射只经 ENGINE_ICON_REGISTRY 单点扩展（新引擎加一行，未知 id 防御回中性圆点） | packages/renderer/src/assets/icons/engine/**、packages/renderer/src/constants/engine-icons.ts、packages/renderer/src/components/sidebar/SubagentList.vue、packages/renderer/src/components/panel/SubagentTab.vue | [subagent-engine-gui-visibility](architecture/subagent-engine-gui-visibility.md#d1-终态架构--职责分层--协议闭合) | review: review-electron-build |
+| C-ext-19 | 结果语义通知必须走确认式送达（持久账本 + 幂等键，session-delivery/notify-ledger 通道），禁止新建依赖 pi 内存队列（steer/nextTurn/followUp）的 at-most-once 通道；交互式注入仅限非结果语义。生效口径：新代码即禁、存量列迁移切片（subagent-workflow 内存量经 g4-allow 行级豁免定性和迁移去向，scheduler 迁移登记 pi-boundary-reliability 附录 B 待办，G4 扫描面随迁移合入扩面） | extensions/**、packages/session-delivery/** | [pi-boundary-reliability](design/pi-boundary-reliability.md#d5确认式送达通用化at-most-once-内存通道禁止用于结果语义选定) · [extension-conventions](extensions/extension-conventions.md) | hook: `check_subagent_channels.py` |
 
 ## 打包与分发
 
 | ID | 约束（摘要） | scope | 权威源 | 执行 |
 |---|---|---|---|---|
-| C-build-01 | Electron 打包三铁律：runtime 源码禁 import.meta.url / globalThis.__dirname（须 typeof guard）；新 runtime 依赖同步 tsup noExternal；打包子系统改动逐 commit 逐验证 | packages/runtime/src/**、apps/electron/**、tsup.config.ts | [AGENTS.md](../AGENTS.md) | hook: `check_runtime_meta_url.py` + hook: `validate-runtime-bundle.sh` + review: review-electron-build |
+| C-build-01 | Electron 打包三铁律：runtime 源码禁 import.meta.url / globalThis.__dirname（须 typeof guard）；新 runtime 依赖同步 tsup noExternal；打包子系统改动逐 commit 逐验证 | packages/runtime/src/**、apps/electron/**、packages/runtime/tsup.config.ts、packages/extension-protocol/tsup.config.ts、packages/session-delivery/tsup.config.ts | [AGENTS.md](../AGENTS.md) | hook: `check_runtime_meta_url.py` + hook: `validate-runtime-bundle.sh` + review: review-electron-build |
 | C-build-02 | builtin extensions esbuild bundle 后 staged 到 apps/electron/resources/extensions/ 随应用打包（不走运行时 npm）；清单 SSOT = mandatory-extensions.json；删打包依赖致产物缺失是事故高发区 | extensions/**、apps/electron/resources/** | [AGENTS.md](../AGENTS.md) · [0011-bundled-extensions-direct-copy](adr/0011-bundled-extensions-direct-copy.md) | hook: `verify-staged-extensions.mjs` + review: review-electron-build |
 | C-build-03 | pnpm workspace 单 root 单 lock（pnpm-lock.yaml 唯一权威）；执行者是项目开发者/CI/AI 用 pnpm，外部消费者用 npm；禁 npm version | global | [AGENTS.md](../AGENTS.md) · [0036-monorepo-structure-target](adr/0036-monorepo-structure-target.md) | review: review-monorepo-impact |
 | C-build-04 | runtime/pi 日志必须落盘 + 轮转（date + size 双策略）；pi stdout tee 到 pi-<date>-<sessionId>.jsonl；新增日志库必须加 tsup noExternal | packages/runtime/src/** | [AGENTS.md](../AGENTS.md) | review: review-electron-build |
@@ -116,4 +119,5 @@
 | C-proc-05 | 完成即提交：变更验证通过后、汇报完成前必须 git commit；「检查未过」不构成不提交理由（先修复） | global | [AGENTS.md](../AGENTS.md) | — |
 | C-proc-06 | push 发布 tag 后必须轮询验证 CI 产物直到验证脚本 exit 0（verify-ci-release.sh / prerelease-test.sh）；禁「应该没问题」 | global | [AGENTS.md](../AGENTS.md) | — |
 | C-proc-07 | ENV_WHITELIST_PREFIXES 只许定义在 packages/shared/src/constants.ts，main/runtime 只 import（pre-commit 检查） | packages/**、apps/** | [AGENTS.md](../AGENTS.md) | hook: `check_env_whitelist_sync.py` |
+| C-proc-08 | pi 语义依赖机器登记 + 探针 + 版本门禁：docs/pi-semantics.json（PS-xx 条目，probe/observe 分型）是唯一机器登记源，scripts/check-pi-semantics.mjs（pre-commit + CI）守 schema/探针存在性/四包版本一致（pi-coding-agent ≡ pi-ai ≡ pi-agent-core ≡ runtime pin）；pi 升级 PR 必查两项——pi-ai exports 是否移除 ./compat、changelog 是否提及 ModelManager 迁移（PS-15 时间炸弹）；探针族红 = 语义漂移，先复核锚点再更新 verifiedWith | docs/pi-semantics.json、packages/runtime/src/infra/pi/**、package.json、packages/runtime/package.json | [pi-boundary-reliability](design/pi-boundary-reliability.md#d6漂移守卫体系pi-语义依赖的机器登记--探针--版本门禁选定) | hook: `check-pi-semantics.mjs` |
 

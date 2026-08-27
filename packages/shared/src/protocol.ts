@@ -1704,6 +1704,8 @@ export interface ReplyPayloadMap {
   // session.setThinkingLevel：reply 生效值（回执修型 U6，pi-boundary-reliability D3）——runtime
   // settings-message-handler 已在回传 set→get_state→effective（pi 钳制档位时 ≠ 请求值），
   // 消费方（useModel）以回执 level 写显示态，禁止乐观写请求值（改状态 RPC 一律回生效值）。
+  // [C-pi-13] 约束登记 docs/constraints.json C-pi-13：改状态命令 reply 禁 void、须回 pi 生效值，
+  // 新增/修改本区段改状态命令时同口径执行（权威源 ADR-0064）。
   'session.setThinkingLevel': ServerMessageMap['session.thinkingLevelSet']
   'session.subagentAction': void  // reply session.subagentActionDone
   'session.switch': ServerMessageMap['session.switched'] // reply session.switched（R-11 瘦身：无 messages；前端 register<void> 不读 payload）

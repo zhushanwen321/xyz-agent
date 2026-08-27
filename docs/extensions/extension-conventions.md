@@ -151,6 +151,19 @@ event handler（如 `tool_execution_end`）中注入消息**必须用 `pi.sendUs
 
 **防循环**：注入的 steer 消息可能触发新的同类事件，hook 逻辑必须幂等或去重，否则 hook → 消息 → 新事件 → hook 无限循环。
 
+**可靠性分级（结果语义 vs 交互注入）[MANDATORY]**：event handler 里发消息必须先分清两类语义——
+
+- **结果语义通知**（subagent 完成、scheduler 触发、未来 webhook 等终态/结果类）：**必须走确认式送达**——持久账本 + 幂等键通道（`@zhushanwen/pi-session-delivery` 账本 / subagent-workflow 的 notify-ledger 设施，at-least-once）；**禁止**依赖 steer/nextTurn/followUp 内存队列的 at-most-once 投递（消费窗极窄，基线事故十余次完成仅送达 1 次）。约束登记 [docs/constraints.json](../constraints.json) C-ext-19，机器守卫 `check_subagent_channels.py`（pre-commit + CI）。
+- **交互式注入**（非结果语义：实时 steer 用户意图、followUp 续推）：上表 deliverAs 两模式照常适用，不在禁令内——禁令对象是「结果语义的一次性通知」，不是交互式 steer。
+
+## 模型引用解析 [MANDATORY]
+
+扩展域内任何「字符串 → 模型身份」的转换（用户输入、配置、workflow 参数里的模型名），只允许经 `shared/model-ref.ts` 的 `assertCanonicalModelRef` 全等裁决（subagent-workflow 内路径；其余扩展复用该模块或同等全等裁决实现）——**禁止裸串拼 `--model`、禁止本地 find/includes 式模糊匹配**。
+
+- **原因**：pi CLI 的 `--model` 是 pattern 非精确 ID（toLowerCase 相等 → canonical 双命中判歧义作废 → contains 模糊 → localeCompare 取最大，PS-01；机器登记 [docs/pi-semantics.json](../pi-semantics.json)）——「扩展层校验通过」不代表「子进程按此名执行」，models-store 刷新引入大小写家族条目后被静默换模 429（2026-08-27 事故 A）
+- **守卫**：`check_subagent_channels.py` 拦截白名单外的 `"--model"` 字面量（pre-commit + CI，行级豁免须给职责定性注释）；全等裁决不通过时 start 同步期拒单并给纠错候选
+- **约束登记**：[docs/constraints.json](../constraints.json) C-ext-19；能力档位同理由 C-pi-12 禁本地推断（只消费注册表下发的 supportedLevels）
+
 ## 扩展安装红线 [强制]
 
 **所有扩展必须通过 npm 包（`pi install`）加载，禁止通过本地目录（`~/.pi/agent/extensions/`）加载，dev 环境测试除外。**
