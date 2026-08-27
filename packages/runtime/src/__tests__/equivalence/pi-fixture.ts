@@ -106,8 +106,29 @@ export interface PiFixture {
   writeLine(line: string): void
   /** 收集至今的事件流快照（可选谓词过滤）；实时累积快照的唯一来源 */
   collectEvents(predicate?: (event: PiStreamEvent) => boolean): PiStreamEvent[]
-  /** 轮询等待首条命中谓词的事件（进程提前退出时 reject） */
-  waitForEvent(predicate: (event: PiStreamEvent) => boolean, timeoutMs?: number): Promise<PiStreamEvent>
+  /** 轮询等待首条命中谓词的事件（进程提前退出时 reject）。第二参数为选项对象：
+   * since 为事件数组下标，只匹配下标之后的事件（事件游标/新鲜度语义，设计 D3）；
+   * 缺省（undefined）保持全量历史匹配语义——刻意不翻转默认：快 turn 可能在
+   * sendCommand resolve 与 waitForEvent 调用之间的毫秒级窗口内完成，默认语义翻转会让
+   * agent_end 先于调用到达 → 永久等不到。签名由数字改为对象是 break 真正意图：
+   * TS 编译期抓出全部漏改调用点（无静默回归通道）。 */
+  waitForEvent(
+    predicate: (event: PiStreamEvent) => boolean,
+    opts?: { timeoutMs?: number; since?: number },
+  ): Promise<PiStreamEvent>
+  /** 返回当前事件数组下标，供调用方在触发动作前打点（配合 waitForEvent 的 since 使用）。
+   * 替代手工 collectEvents().length 计数防御写法——打点动作与等待动作之间只隔一个表达式。 */
+  markEvents(): number
+  /** 原子化 turn 原语（设计 D4）：markEvents → 护栏放行后发 prompt → 只等本轮 agent_end（since 打点）。
+   * 消除「ack 与注册等待之间的完成竞态」+「上一轮旧 agent_end 假命中」两类缺陷；
+   * 新文件的最短路径即正确路径（by construction 而非靠纪律）。
+   * 仅覆盖「空闲起步 prompt + 等 agent_end」形态：steer/follow_up/streamingBehavior 转发
+   * 属流中投递（语义前提就是 busy 时入队），不经本原语也不经护栏。 */
+  runTurn(params: { message: string }, timeoutMs?: number): Promise<PiStreamEvent>
+  /** 失败兜底（设计 D2）：busy 时 abort 在途 turn 并 drain 至清态；非 busy 零操作幂等返回。
+   * 共享 fixture 文件应在 afterEach 调用，防上一用例失败后在途 turn 毒死后续用例
+   * （pi 会拒绝并发 prompt：Agent is already processing）。 */
+  recover(): Promise<void>
   /** kill 子进程（SIGTERM → 2s 上限 → SIGKILL）+ 删除临时目录；幂等 */
   dispose(): Promise<void>
 }
@@ -296,6 +317,13 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
 
   const pending = new Map<string, PendingEntry>()
   const events: PiStreamEvent[] = []
+  // turn 生命周期状态（设计 D1）：busy 状态机——prompt 的 ack 到达置位，本轮 agent_end 清态。
+  // 用事件游标推导而非 get_state 轮询 isStreaming：ack 与 streaming 翻真正先后是未实测时序断言，
+  // 且每 prompt 多一轮 RPC 往返；fixture 本就全量收事件，游标判定零额外 IPC。
+  let busy = false
+  let turnStartIdx = -1
+  const isPromptWithoutStreamingBehavior = (params: Record<string, unknown>): boolean =>
+    !('streamingBehavior' in params)
   const stderrLines: string[] = []
   const unparseableLines: string[] = []
   let msgCounter = 0
@@ -354,10 +382,21 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
       return
     }
     const event = asStreamEvent(msg)
-    if (event) events.push(event)
+    if (event) {
+      const idx = events.length
+      events.push(event)
+      // busy 清态：agent_end 出现在本轮起点下标之后才有效——上一轮遗留的旧 agent_end
+      // 不清本轮（事件新鲜度语义）。followUp 接续多轮期间 pi 只在队列 drain 后发最终
+      // agent_end（broadcast-getstate :146 注释口径），故首个中间 agent_end 根本不会到达。
+      if (busy && idx >= turnStartIdx && event.type === 'agent_end') {
+        busy = false
+        turnStartIdx = -1
+      }
+    }
   })
 
-  const sendCommand = (
+  // 内层原始发送（id 配对响应）；外层守卫版 sendCommand 对 prompt 入口套 busy 护栏
+  const rawSendCommand = (
     type: string,
     params: Record<string, unknown> = {},
     timeoutMs: number = commandTimeoutMs,
@@ -372,7 +411,19 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
         pending.delete(id)
         reject(new Error(`RPC "${type}" timed out after ${timeoutMs}ms${stderrTail()}`))
       }, timeoutMs)
-      pending.set(id, { resolve, reject, timer })
+      pending.set(id, {
+        resolve: (msg) => {
+          // ack 到达即置 busy（P-ack-order 已核实：ack 先于该轮 agent_end）；
+          // 带 streamingBehavior 的 prompt 是流中投递语义，不进护栏状态机
+          if (type === 'prompt' && isPromptWithoutStreamingBehavior(params)) {
+            busy = true
+            turnStartIdx = events.length
+          }
+          resolve(msg)
+        },
+        reject,
+        timer,
+      })
       proc.stdin!.write(JSON.stringify({ id, type, ...params }) + '\n', (err) => {
         if (err) {
           clearTimeout(timer)
@@ -381,6 +432,46 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
         }
       })
     })
+
+  /** abort 在途 turn 并等待 drain 至清态（护栏超时与 recover 共用的兜底层）。 */
+  const abortDrain = async (drainTimeoutMs: number): Promise<void> => {
+    try {
+      await rawSendCommand('abort')
+    } catch {
+      // 进程可能已退出/abort 已被处理：尽力而为，drain 循环会给出最终判定
+    }
+    const deadline = Date.now() + drainTimeoutMs
+    while (busy && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, EVENT_POLL_INTERVAL_MS))
+    }
+  }
+
+  /** busy 护栏（G1 本体）：busy=false 直接放行零开销（P-guard-noop by construction）；
+   * busy 超预算先 abort 再重试一次（D2），仍 busy 则抛带证据与恢复指引的错误。 */
+  const waitIdleGuard = async (): Promise<void> => {
+    if (!busy) return
+    const deadline = Date.now() + commandTimeoutMs
+    while (busy && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, EVENT_POLL_INTERVAL_MS))
+    }
+    if (!busy) return
+    await abortDrain(commandTimeoutMs)
+    if (busy) {
+      throw new Error(
+        `pi fixture busy guard: in-flight turn 未在预算内终结（abort+drain 各 ${commandTimeoutMs}ms 后仍 busy）${stderrTail()}\n` +
+          `👉 建议：对该 fixture 调 recover() 兜底，或单跑定位占用来源：npx vitest run <文件路径>`,
+      )
+    }
+  }
+
+  const sendCommand = (
+    type: string,
+    params: Record<string, unknown> = {},
+    timeoutMs: number = commandTimeoutMs,
+  ): Promise<PiRpcResponse> =>
+    type === 'prompt' && isPromptWithoutStreamingBehavior(params)
+      ? waitIdleGuard().then(() => rawSendCommand(type, params, timeoutMs))
+      : rawSendCommand(type, params, timeoutMs)
 
   const collectEvents = (predicate?: (event: PiStreamEvent) => boolean): PiStreamEvent[] =>
     predicate ? events.filter(predicate) : [...events]
@@ -391,12 +482,21 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
 
   const waitForEvent = (
     predicate: (event: PiStreamEvent) => boolean,
-    timeoutMs: number = commandTimeoutMs,
-  ): Promise<PiStreamEvent> =>
-    new Promise((resolve, reject) => {
+    opts: { timeoutMs?: number; since?: number } = {},
+  ): Promise<PiStreamEvent> => {
+    const timeoutMs = opts.timeoutMs ?? commandTimeoutMs
+    const since = opts.since ?? 0
+    return new Promise((resolve, reject) => {
       const startedAt = Date.now()
       const poll = (): void => {
-        const found = events.find(predicate)
+        // since 游标：只匹配下标之后的事件（D3 新鲜度语义）；缺省 0 = 既有全量匹配语义不变
+        let found: PiStreamEvent | undefined
+        for (let i = since; i < events.length; i++) {
+          if (predicate(events[i]!)) {
+            found = events[i]
+            break
+          }
+        }
         if (found) {
           resolve(found)
           return
@@ -413,6 +513,27 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
       }
       poll()
     })
+  }
+
+  /** 当前事件下标打点：markEvents() 触发动作 … waitForEvent(…, { since: 打点 }) 三步组合的游标原语 */
+  const markEvents = (): number => events.length
+
+  const recover = async (): Promise<void> => {
+    if (!busy) return
+    await abortDrain(commandTimeoutMs)
+    if (busy) {
+      throw new Error(`pi fixture recover failed: abort+drain ${commandTimeoutMs}ms 后仍 busy${stderrTail()}`)
+    }
+  }
+
+  const runTurn = async (params: { message: string }, timeoutMs?: number): Promise<PiStreamEvent> => {
+    const mark = markEvents()
+    await sendCommand('prompt', params)
+    return waitForEvent((e) => e.type === 'agent_end', {
+      since: mark,
+      timeoutMs: timeoutMs ?? commandTimeoutMs * 4,
+    })
+  }
 
   let disposed = false
   const dispose = async (): Promise<void> => {
@@ -457,6 +578,9 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
     writeLine,
     collectEvents,
     waitForEvent,
+    markEvents,
+    runTurn,
+    recover,
     dispose,
   }
 }
