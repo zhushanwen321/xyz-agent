@@ -517,7 +517,7 @@ export function adapter(
   // reminder 作为第二个 text block（独立追加，不污染 details/JSON schema）。
   // 只有 list 触发——start 的 reminder 已在 BG_MESSAGE 里；cancel 无需。
   const reminder = action === "list"
-    ? "\n\nReminder: Subagent completion is auto-notified via injected message (deliverAs: steer). Do NOT poll in a loop — there is no poll action. Use action:'list' only when you concretely need state, then continue working or stop."
+    ? "\n\nReminder: Subagent completion is auto-notified via injected message (deliverAs: steer). Do NOT poll in a loop — there is no poll action. Use action:'list' only when you concretely need state, then continue working or stop." // g4-allow: 契约文案——reminder 字符串描述投递通道，非实际投递调用
     : "";
 
   return {

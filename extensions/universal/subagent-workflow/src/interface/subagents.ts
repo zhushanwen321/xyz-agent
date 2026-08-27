@@ -45,7 +45,7 @@ export interface SubagentDirectiveDetails {
  * 定向消息注入正在运行的主 agent LLM turn，违反「不经主 agent LLM 直达 subagent」。
  * 故按调用时刻的权威 streaming 状态（ctx.isIdle()，与 sendCustomMessage 内部
  * isStreaming 判据精确互补，含 agent_end 后 retry/continuation 窗口）分流：
- * - streaming（isMainAgentIdle=false）：传 { deliverAs: "nextTurn" }——消息入
+ * - streaming（isMainAgentIdle=false）：传 { deliverAs: "nextTurn" }——消息入（g4-allow: 交互注入——GUI 定向消息留痕分流，非结果语义通知）
  *   pi 内存 _pendingNextTurnMessages 队列，下个 turn 注入主 agent 上下文；不打断、
  *   不 steer 当前 turn。注意：该队列不落 entry，留痕延迟到下个 turn
  * - 非 streaming（isMainAgentIdle=true）：不传 options——立即 append entry 留痕
@@ -66,7 +66,7 @@ function emitSubagentDirective(
       display: false,
       details,
     },
-    isMainAgentIdle ? undefined : { deliverAs: "nextTurn" },
+    isMainAgentIdle ? undefined : { deliverAs: "nextTurn" }, // g4-allow: 交互注入——/subagents GUI 定向消息留痕，非结果语义（C-ext-19 禁令边界，见 emitSubagentDirective JSDoc）
   );
 }
 

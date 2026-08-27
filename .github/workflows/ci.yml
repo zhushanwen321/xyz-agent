@@ -308,6 +308,7 @@ jobs:
   # - 后两步等效实现 scripts/validate-runtime-bundle.sh 的静态段（[2/6] noExternal、
   #   [3/6] 源码禁令）——该脚本无 preflight 模式，第 [1/6] 步起需构建产物无法在 CI
   #   单独跑静态段，故等效实现并注明同步维护：改脚本对应段时须同步本 job。
+  # - U7b 新增：G1 pi 语义登记守卫 + G4 subagent 通道禁则（--all 全仓模式）。
   # 只加红灯：不进 build needs，不阻塞发布链。
   invariants:
     name: Invariants
@@ -423,6 +424,18 @@ jobs:
           }
           console.log("apply-entry closure OK (shared + intra-directory only)");
           '
+
+      # G1 pi 语义登记守卫（pi-boundary-reliability §3.3 D7，与 pre-commit 同源直调）：
+      # registry schema / 探针存在性 / pi 三包 + runtime pin 四包版本门禁。
+      # 注：docs/** 在 paths-ignore 内——pi-semantics.json 单独变更不触发 CI，
+      # 此步覆盖代码/依赖侧变更（已知边界，D7 护栏设计通则登记）。
+      - name: pi semantics registry guard (G1)
+        run: node scripts/check-pi-semantics.mjs
+
+      # G4 subagent 通道禁则（C-ext-19，与 pre-commit 同源脚本）：CI 无 staged
+      # 上下文，用 --all 全仓扫描模式（「本地 hook 被绕过时的等价拦截点」，D7 通则）。
+      - name: Subagent channel bans (G4, full-repo)
+        run: python3 .githooks/check_subagent_channels.py --all
 
   # PR 构建检查：electron-builder 打包流程，不在 PR 上传产物。
   # dir-only=true：只产出 unpacked 目录，跳过安装器压缩（省 ~185s）。安装器配置回归交给 release.yml。
