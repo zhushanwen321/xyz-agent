@@ -205,8 +205,11 @@ describe.skipIf(!REAL_PI_READY)(
         const { fx, beforeTurnMem, beforeTurnFileCount, beforeKill } = await attachAndRunTurn(targetFile, 'attach-round-2')
         fixture = fx
 
-        // 附着即绑定写目标的直接自证：附着瞬间 pi 已向登记文件写入 entry（实测 ≥2 条）
-        expect(beforeTurnFileCount).toBeGreaterThan(seedCount)
+        // 附着写入时机基线校准 [HISTORICAL]：pi 0.84.1 实测附着（switch_session）不再立即
+        // 向目标文件写 entry，首个真实 turn 落盘时才写入（探针实测 5s 零增长、turn 后
+        // message 正常追加）。旧断言「附着瞬间写 ≥2 条 entry」已过期删除；写目标绑定的
+        // 即时自证由 assertPiSessionFile（get_state().sessionFile）覆盖，文件层由阶段 3
+        // 增长守恒断言（afterKill − beforeTurnFileCount ≡ beforeKill − beforeTurnMem）承接。
 
         // ── 阶段 3：kill（dispose ≈ destroySession：SIGTERM → 2s → SIGKILL）──
         await fx.dispose()
@@ -287,9 +290,8 @@ describe.skipIf(!REAL_PI_READY)(
         const forkHeader = readSessionEntries(forked.filePath)[0]
         expect(forkHeader?.type).toBe('session')
         expect(forkHeader?.parentSession).toBe(sourceFile)
-        const forkSeedCount = readSessionEntries(forked.filePath).length
-
         // ── 阶段 3：fork 文件附着 + 一轮真实对话 ──
+        // 附着写入时机基线校准同 restore 用例 [HISTORICAL]：不再要求附着即写盘
         const { fx, beforeTurnMem, beforeTurnFileCount, beforeKill } = await attachAndRunTurn(forked.filePath, 'attach-fork-round')
 
         // ── 阶段 4：kill ──
@@ -298,8 +300,7 @@ describe.skipIf(!REAL_PI_READY)(
 
         // ── 阶段 5：持久性屏障——fork 文件包含该轮 + 继承历史 ──
         const afterKill = readSessionEntries(forked.filePath)
-        // 附着即绑定写目标（同 restore 用例）+ 增长量守恒（双基线附着后取，口径差抵消）
-        expect(beforeTurnFileCount).toBeGreaterThan(forkSeedCount)
+        // 附着写入时机基线校准同 restore 用例 [HISTORICAL]：不再要求附着即写盘
         expect(afterKill.length - beforeTurnFileCount).toBe(beforeKill.length - beforeTurnMem.length)
         const roundUserIdx = afterKill.findIndex(
           (e) => e.type === 'message' && e.message?.role === 'user' && messageText(e).includes('attach-fork-round'),
