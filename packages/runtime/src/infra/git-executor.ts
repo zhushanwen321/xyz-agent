@@ -17,6 +17,7 @@
  */
 import { execFile } from 'node:child_process'
 import type { ExecFileException } from 'node:child_process'
+import { buildOutboundChildEnv } from './spawn-env.js'
 import { GitExecutorError } from '../services/ports/git-executor.js'
 import type { GitCommand, GitExecOptions, GitExecutorResult, IGitExecutor } from '../services/ports/git-executor.js'
 
@@ -45,6 +46,10 @@ export class GitExecutor implements IGitExecutor {
           encoding: 'utf8',
           timeout: timeoutMs,
           maxBuffer: GIT_MAX_BUFFER_BYTES, // 10MB：超大 status/diff 输出兜底
+          // B8 出站边界显式化（docs/design/env-propagation-boundary.md §5-U4）：execFile
+          // 默认隐式全量继承；改传构建器输出，同 shell-runner——白名单基座保 PATH/HOME
+          // （R2），deny 兜底。本调用点无自有 env 键，故无 extras。
+          env: buildOutboundChildEnv({ parentEnv: process.env }),
         },
         (err: ExecFileException | null, stdout: string, stderr: string) => {
           if (!err) {

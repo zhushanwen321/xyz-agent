@@ -126,20 +126,23 @@ describe("RecordStore per-file cache + light scan [perf]", () => {
         message: { role: "assistant", content: [{ type: "text", text: "more" }], usage: { input: 1, output: 1 }, stopReason: "stop", timestamp: 2500 },
       }) + "\n",
     );
-    fs.writeFileSync(`${fA}.finalized`, "");
+    fs.writeFileSync(`${fA}.finalized`, ""); // 空 sidecar = 旧格式（死因不可考）
 
     const records = store.collectRecords(100, "all", "root-1");
     const a = records.find((r) => r.id === "sa-1");
     const b = records.find((r) => r.id === "sa-2");
     expect(a?.status).toBe("closed");
-    expect(a?.closedReason).toBe("gc");
+    // [v8.5 A2] 空 sidecar 兜底 disconnected（旧格式：死因不可考），不再误导为 gc。
+    // reason 读回的正向用例在 ended-message-and-fork-from.test.ts。
+    expect(a?.closedReason).toBe("disconnected");
     expect(a?.endedAt).toBeGreaterThan(0); // light 分支 2 用 jsonl mtime 近似
     expect(b?.status).toBe("running"); // 未变文件不受影响
   });
 
   it("A3: sidecar 变化触发状态翻转——.finalized 换 .cancelled", () => {
     const f = writeSession({ name: "a.jsonl", id: "sa-1", assistantTexts: ["r1"], finalized: true });
-    expect(store.collectRecords(100, "all", "root-1")[0].closedReason).toBe("gc");
+    // [v8.5 A2] fixture 写的空 .finalized 属旧格式 → disconnected
+    expect(store.collectRecords(100, "all", "root-1")[0].closedReason).toBe("disconnected");
 
     fs.rmSync(`${f}.finalized`);
     fs.writeFileSync(

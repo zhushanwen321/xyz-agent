@@ -12,6 +12,8 @@ services 层 infra 直接 import 检查（C-comm-03）——落实 runtime 三�
   现状基线（2026-08-22 首次接入时登记）：session-file-utils / session-entry-mapper /
     pi-provider-store / session-attach-assert / message-converter / file-change-reconciler
   ——基线模块待专项收编（经 port 或明确豁免理由后更新本清单），新增 infra value import 直接拦。
+  session-binding-fields（2026-08-26 登记）：绑定字段注册表 SSOT（sidecar-binding-sync 设计），
+    纯声明数据 + 纯函数，自 session-file-utils 抽出（同族受控例外，随 R3 一并收编）。
 
 退出码: 0 通过 / 2 违规
 """
@@ -37,6 +39,12 @@ ALLOWED_MODULES = {
     "session-attach-assert",
     "message-converter",
     "file-change-reconciler",
+    # sidecar-binding-sync 注册表 SSOT（2026-08-26）：纯声明+纯函数，同 session-file-utils 族随 R3 收编
+    "session-binding-fields",
+    # spawn-env 出站契约构建器（2026-08-27）：纯函数（env 全 DI 不触 process.env），
+    # terminal-service / plugin-host-process 消费 buildOutboundChildEnv 组装子进程 env
+    # （env-propagation-boundary 设计 C-proc-08），同族随 R3 收编
+    "spawn-env",
 }
 
 # value import 行（import { X } from '...infra/...'；import type 豁免）

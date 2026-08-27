@@ -61,9 +61,12 @@ vi.mock('node:readline', () => ({
   }),
 }))
 
-vi.mock('@xyz-agent/shared', () => ({
-  ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM'],
-}))
+vi.mock('@xyz-agent/shared', async (importOriginal) => {
+  // U3 起 rpc-client 经 infra/spawn-env 门面消费 shared 的 buildOutboundChildEnv；
+  // mock 需保留真实导出（否则构建器为 undefined），仅收窄白名单前缀获得可控基座
+  const actual = await importOriginal<typeof import('@xyz-agent/shared')>()
+  return { ...actual, ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM'] }
+})
 
 vi.mock('@xyz-agent/shared/paths', () => ({ getDataDir: () => '/mock/home/.xyz-agent' }))
 

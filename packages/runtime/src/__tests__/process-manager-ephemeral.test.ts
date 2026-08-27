@@ -52,6 +52,10 @@ describe('ProcessManager.withEphemeralPi（W11 短命 pi 附着）', () => {
   let pm: ProcessManager
 
   beforeEach(() => {
+    // R3 隔离：打包版太极 agent 会话内执行时 XYZ_AGENT_PACKAGED 泄入测试进程，
+    // ProcessManager/依赖链内 isPackaged() 判真改道 findPackagedPi throw（P1 同款机制）。
+    // 本测试 hermetic 前提是非打包态，显式压平。
+    vi.stubEnv('XYZ_AGENT_PACKAGED', '')
     rpcMock.instances.length = 0
     // projectRoot 指向 tmpdir：dev 模式 resources/pi 不存在 → PATH fallback（RpcClient 已
     // mock，路径解析只影响日志，不真 spawn）
@@ -59,6 +63,7 @@ describe('ProcessManager.withEphemeralPi（W11 短命 pi 附着）', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     vi.restoreAllMocks()
     vi.useRealTimers()
   })

@@ -9,7 +9,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { readFinalized, writeFinalized } from "../finalized-marker.ts";
+import { readFinalized, readFinalizedReason, writeFinalized } from "../finalized-marker.ts";
 
 describe("finalized-marker", () => {
   let tmpDir: string;
@@ -34,10 +34,32 @@ describe("finalized-marker", () => {
       expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
     });
 
-    it("sidecar 内容为空（存在性即信号）", () => {
+    it("sidecar 内容为空（无 reason 时保持旧格式兼容）", () => {
       writeFinalized(sessionFile);
       const content = fs.readFileSync(`${sessionFile}.finalized`, "utf-8");
       expect(content).toBe("");
+      expect(readFinalizedReason(sessionFile)).toBe("");
+    });
+
+    // [v8.5 A2] 携带真实 closedReason 写入 → 读取返回原值（trim 后）
+    it("带 reason 写入 → readFinalizedReason 返回原值", () => {
+      writeFinalized(sessionFile, "user-close");
+      expect(readFinalized(sessionFile)).toBe(true);
+      expect(readFinalizedReason(sessionFile)).toBe("user-close");
+
+      writeFinalized(sessionFile, "parent-shutdown");
+      expect(readFinalizedReason(sessionFile)).toBe("parent-shutdown");
+    });
+
+    it("带 reason 的内容含首尾空白时 trim 后返回", () => {
+      fs.writeFileSync(`${sessionFile}.finalized`, "  gc \n", "utf-8");
+      expect(readFinalizedReason(sessionFile)).toBe("gc");
+    });
+  });
+
+  describe("readFinalizedReason 无 sidecar", () => {
+    it("不存在 → undefined（与「存在但空串」区分）", () => {
+      expect(readFinalizedReason(sessionFile)).toBeUndefined();
     });
   });
 

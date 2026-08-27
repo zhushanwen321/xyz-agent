@@ -108,7 +108,10 @@ export async function doFinalizeRecord(
           endedAt: record.endedAt ?? Date.now(),
         });
       } else {
-        writeFinalized(record.sessionFile);
+        // [v8.5 A2] 真实 reason 写入 sidecar 内容（旧格式是空文件）：磁盘重建时用它
+        // 还原 closedReason，不再一律硬编码 gc。cancelled 之外的全部原因（gc /
+        // user-close / parent-*）都经此路径持久化。
+        writeFinalized(record.sessionFile, closedReason);
       }
     } catch (err) {
       bestEffort(err, "writeFinalized/tombstone (finalizeRecord Step3)");

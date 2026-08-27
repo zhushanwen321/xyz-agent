@@ -17,6 +17,7 @@
 
 import { fork, type ChildProcess, type Serializable } from 'node:child_process'
 import { dirname as pathDirname } from 'node:path'
+import { buildOutboundChildEnv } from '../../infra/spawn-env.js'
 import type { ProcessHandle } from './plugin-types.js'
 import { PluginRpcServer, type RpcIdentity } from './plugin-rpc-server.js'
 import { resolveAndValidateFile, dispatchHostRpcMessage, safeDispatchHostMessage, isRecordMessage } from './plugin-host.js'
@@ -36,6 +37,26 @@ const DISCONNECT_GRACE_MS = 250
 
 type CrashCallback = (processId: string, pluginIds: string[], error: string) => void
 type ReplyCallback = (msg: unknown) => void
+
+/**
+ * 构建插件宿主 fork 子进程 env（唯一组装点，导出供单测直验）。
+ *
+ * D6（docs/design/env-propagation-boundary.md §5-U4）：{...process.env} 全量拷贝拓扑
+ * 不动（trusted/sandbox 插件兼容性属有意设计）——pass-all 前缀 '' 承载拷贝语义
+ * （构建器步骤 1 对任意 key 放行，副本操作绝不 mutate 父对象，R1），仅在输出上叠加
+ * 出站 deny 两键剔除（构建器末步兜底）+ 既有 ELECTRON_RUN_AS_NODE=1 注入。
+ */
+export function buildPluginHostChildEnv(parentEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return buildOutboundChildEnv({
+    parentEnv,
+    prefixes: [''],
+    extras: {
+      // 打包约束（AGENTS.md #12）：必须 process.execPath + ELECTRON_RUN_AS_NODE=1
+      // （打包后无独立 node；node 环境该 env 无害被忽略）
+      ELECTRON_RUN_AS_NODE: '1',
+    },
+  })
+}
 
 /**
  * PluginHostProcess 的最小接口契约（对齐 PluginHostContract，wiring 层无痛接入）。
@@ -387,7 +408,10 @@ export class PluginHostProcess implements PluginHostProcessContract {
     // loader 的 fail-closed 语义不变（env 缺失仍 initialize throw）。
     // trusted 不需要（ESM loader 仅 sandbox 进程经 execArgv --import 注入；
     // trusted 走 Worker 线程不经此 fork 路径）。
-    const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+    // D6（docs/design/env-propagation-boundary.md §5-U4）：{...process.env} 全量拷贝对
+    // trusted/sandbox 插件的兼容性属有意设计，拷贝拓扑不动——pass-all 前缀承载拷贝语义，
+    // 仅经构建器叠加 deny 两键剔除（副本上删，R1）。
+    const env: NodeJS.ProcessEnv = buildPluginHostChildEnv(process.env)
     if (trustLevel === 'sandbox' && pluginPath) {
       env.XYZ_PLUGIN_SANDBOX_DIR = pathDirname(pluginPath)
     }

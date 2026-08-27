@@ -12,7 +12,7 @@ import type { AgentResult as WorkflowAgentResult } from "../orchestration/models
 import { displayAgentName } from "../shared/agent-ref.ts";
 // D-A10: workflow 侧 AgentResult 映射（executeAndAwait 出口）
 import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
-import { removeAliveMarker } from "./alive-store.ts";
+import { removeAliveMarker, findForeignLiveInstance } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
 // [V2 决策 3] lifecycle-manager idle timer：chatMode 统一投递新 turn disarm（防误杀活进程）。
 // [M3] hasIdleTimer：piAdapter.hasRunningBackground 排除等待续聊（timer armed）的 record。
@@ -25,6 +25,7 @@ import {
   getFullTextFrom,
   nextRoundBaseTurnIndex,
   project,
+  resurrectClosed,
   snapshot,
   tryTransition,
 } from "./execution-record.ts";
@@ -73,6 +74,7 @@ import type {
   SubagentRecord,
 } from "./types.ts";
 import { ForkDepthExceededError } from "./types.ts";
+import { isReconnectableFinalReason, ResurrectDeniedError } from "./types.ts";
 import { DEFAULT_AGENT_NAME } from "./types.ts";
 import { registerGlobalObservability, UiRequestObservability } from "./ui-request-observability.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
@@ -796,6 +798,28 @@ export class SubagentService {
     return this.cancelBackground(record);
   }
 
+  /**
+   * [v8.5 A1/B] 全态查找：任意状态（running/closed）× 任意归属（含异 root session）的
+   * record 快照。供 message 拒绝文案分流（A1）与 fork-from 源解析（B）共用。
+   *
+   * 与 getRecordForAction 的差异：不做归属/直接父校验、不重建可变 record 入内存，
+   * 只读快照（light 形态可能缺详情重数据，身份/sidecar 状态字段齐全）。查询顺序与
+   * getRecordForAction 冷路径同款（idToFile 索引直查 → collectRecords 全扫兑底），
+   * 不限 status——终态（sidecar closed）记录也能查到。
+   *
+   * 返回 undefined：id 在内存与磁盘均不存在。
+   */
+  lookupRecordAnyState(id: string): SubagentRecord | undefined {
+    try {
+      this.assertReady();
+    } catch {
+      return undefined; // 未初始化/disposed 时按「不存在」处理（文案分流无需区分）
+    }
+    const direct = this.store.findLightById(id);
+    if (direct) return direct;
+    return this.store.collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined).find((r) => r.id === id);
+  }
+
   // ── 对话模式投递（M2-B3 message action 调用）──────────────
 
   // [review 修复] 已删除 deliverToRunning（busy follow_up/steer 投递 + pendingMessages
@@ -1039,10 +1063,14 @@ export class SubagentService {
    * collectRecords 返回的 SubagentRecord 可直接转为可变 ExecutionRecord 供续操作。
    *
    * @param id subagent record id
+   * @param opts.allowReconnect [v8.5 D] message 专属：冷查额外接受「可重连」的 closed 记录
+   *   （死因∈ RECONNECTABLE_FINAL_REASONS，A 档真实死因 sidecar 是唯一准入门），经四重守卫后
+   *   resurrectClosed 回边为 running 并续写原 session 文件。仅 message 开启；close/cancel 维持单向终态语义。
    * @returns 可变 ExecutionRecord（message/close handler 直接操作）
    * @throws Error record 不存在 / 非本 session 所有（含恢复指引）
+   * @throws ResurrectDeniedError 命中可重连集但被 worktree/异进程活实例守卫拦截（自带完整行动语言）
    */
-  getRecordForAction(id: string): ExecutionRecord {
+  getRecordForAction(id: string, opts?: { allowReconnect?: boolean }): ExecutionRecord {
     this.assertReady();
     let record = this.store.getMutable(id);
     // SP-2 跨重启恢复：内存未命中时，从磁盘 collectRecords 重建 idle record。
@@ -1053,11 +1081,34 @@ export class SubagentService {
       //（进程重启后尚未扫描、索引未热）才全目录 collectRecords 兜底建索引。
       // 跨重启后每条 message 从「readdir + N×4 stat 全扫」降为单文件校验。
       const direct = this.store.findLightById(id);
+      const allowReconnect = opts?.allowReconnect === true;
       const found =
         (direct?.status === "running" ? direct : undefined) ??
         this.store
           .collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined)
-          .find((r) => r.id === id && r.status === "running");
+          .find((r) => r.id === id && (r.status === "running" || (allowReconnect && this.isReconnectableClosed(r))));
+      // [v8.5 D] 可重连候选的守卫先于任何状态突变与注册：worktree 绑定丢失 / 异进程活实例
+      // 以 ResurrectDeniedError 抛出（endedMessageGuard 必须原样透传，不得改写为 fork-from
+      // 指引误导 agent 走已被判死的通道）；拒绝时内存不得残留该记录（findRecord 契约）。
+      if (found && found.status === "closed") {
+        if (found.worktree === true) {
+          throw new ResurrectDeniedError(
+            `subagent ${id} cannot be transparently resumed: it was created with worktree isolation, ` +
+            `and its worktree checkout no longer exists after restart (resuming in place would make spawn cwd fall back to the main repo). ` +
+            `Recovery: action:'start' a fresh subagent (with a new worktree if isolation is still needed); ` +
+            `its conversation history remains intact at ${found.sessionFile}.`,
+          );
+        }
+        const foreign = found.sessionFile ? findForeignLiveInstance(found.sessionFile) : undefined;
+        if (foreign) {
+          throw new ResurrectDeniedError(
+            `subagent ${id} is not transparently resumable: its previous instance still finishing in another process ` +
+            `(pid ${foreign.pid}, startedAt=${new Date(foreign.startedAt).toISOString()}). ` +
+            `Resuming in place would double-write ${found.sessionFile}. ` +
+            `Recovery: retry once that process exits; if it never exits, action:'start' a fresh subagent and treat the history at ${found.sessionFile} as read-only reference.`,
+          );
+        }
+      }
       if (found) {
         record = createRecord(id, {
           agent: found.agent,
@@ -1084,7 +1135,17 @@ export class SubagentService {
         // 隔离——正是 worktree 要防的并发写冲突场景）。close 不受影响（closeChatIdle 走
         // doFinalizeRecord，泄漏的 worktree 由 reaper 兜底回收）。
         record.hadWorktree = found.worktree === true;
+        // [v8.5 D] 透明重生回边：独立函数不走 tryTransition 单向语义（closed 单向性对正常
+        // 执行流完整保留）；准入唯一依据 = A 档 sidecar 真实死因 ∈ 可重连集。死亡语义位由
+        // resurrectClosed 清除；register 后立刻上报 transition entry，live/reload 视图同步
+        // 翻回 running（等价性由 applyEntry reducer 保证，对齐 SP-2 重建即报告先例）。
+        if (found.status !== "running") {
+          resurrectClosed(record);
+        }
         this.store.register(record);
+        if (found.status !== "running") {
+          this.store.reportRecordTransition(record);
+        }
       }
     }
     if (!record || record.rootSessionId !== this.sessionRootId) {
@@ -1110,6 +1171,14 @@ export class SubagentService {
       );
     }
     return record;
+  }
+
+  /** [v8.5 D] 冷查候选过滤：closed 且死因落在可重连集。判定源 = closedReason（buildRecord
+   *  归一化后的对外字段：A 档真实死因直通、旧空 sidecar 兑底 disconnected——SubagentRecord
+   *  不暴露 raw finalizedReason）；cancelled/user-close/gc 等主动关闭与自然完成死因天然不在集合内。
+   *  防线在集合本身而非调用点。 */
+  private isReconnectableClosed(r: SubagentRecord): boolean {
+    return isReconnectableFinalReason(r.closedReason);
   }
 
   /**
@@ -1502,10 +1571,10 @@ export class SubagentService {
         `改用 engine: pi（支持 conversation 续聊），或不传该参数（一次性任务默认形态）`,
       );
     }
-    if (opts.fork === true) {
+    if (opts.fork === true || opts.forkFromSessionFile !== undefined) {
       throw new EngineError(
         "engine_capability_unsupported",
-        `engine '${engine.id}' 不支持 fork（fork 依赖父 pi session 上下文继承，` +
+        `engine '${engine.id}' 不支持 fork${opts.forkFromSessionFile !== undefined ? "（fork-from 同为父 pi session 上下文继承）" : ""}（fork 依赖父 pi session 上下文继承，` +
           `capabilities.steer = '${caps.steer}'——非 pi 引擎无父 session 分叉通道）`,
         `把所需父上下文写进 task 正文后不传 fork，或改用 engine: pi`,
       );
@@ -1705,6 +1774,9 @@ export class SubagentService {
             onEvent,
             stream, // text_delta streaming（background 路径有值，workflow 路径 undefined）
             fork: opts.fork,
+            // [v8.5 B] fork-from 显式源（ExecuteOptions.forkFromSessionFile）优先于
+            // opts.fork 推导的 mainSessionFile；undefined = 旧语义不变。
+            forkSource: opts.forkFromSessionFile,
             worktree: worktreeHandle,
             parentForkDepth: parentDepth, // [MF#4] 父链深度，不从 opts 读
           }, ctx, resume),

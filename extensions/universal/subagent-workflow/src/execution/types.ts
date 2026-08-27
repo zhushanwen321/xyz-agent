@@ -58,8 +58,39 @@ export type ExecutionStatus = "running" | "closed";
  *   user-close      — 用户手动 close action（含对话模式 close）
  *   cancelled       — 用户取消（close(force:true) / cancelBackground）
  *   gc              — 通用完成/失败（一次执行自然结束、超时、错误等无专属 reason 的终态）
+ *   disconnected    — .finalized sidecar 存在但无 reason 内容（磁盘重建兜底）：
+ *                     正常结束但死因不可考——旧格式 sidecar（v8.5 前写入的是空文件）、
+ *                     或外部工具手工创建。替代旧的误导性 "gc" 兜底（自然完成 vs 断联
+ *                     不分），message/fork-from 据此给出可行动指引。
  */
-export type ClosedReason = 'parent-shutdown' | 'parent-fork' | 'parent-new' | 'user-close' | 'cancelled' | 'gc';
+export type ClosedReason = 'parent-shutdown' | 'parent-fork' | 'parent-new' | 'user-close' | 'cancelled' | 'gc' | 'disconnected';
+
+/**
+ * [v8.5 D] 可透明重生的终态原因集：message action 对这些 closed 记录同 id 续写原
+ * sessionFile（resurrectClosed 回边），不再要求 fork-from 换新 id。
+ *
+ * 取值以 `.finalized` sidecar 实际写入的 ClosedReason 字面量为准：
+ *   disconnected    — 断联（sidecar 空/损坏兜底 + pi-invocation 中断写入）
+ *   parent-shutdown — 父进程 session_shutdown 回收
+ * 其余 reason 刻意排除：user-close/cancelled 是用户主动告别（close 语义不可旁路）；
+ * gc 是自然完成（追问走 fork-from 或新 start）；parent-fork/parent-new 同理是编排性
+ * 清理，历史分支语义已由 fork-from 承接。
+ */
+export const RECONNECTABLE_FINAL_REASONS = ["disconnected", "parent-shutdown"] as const satisfies readonly ClosedReason[];
+
+export type ReconnectableFinalReason = (typeof RECONNECTABLE_FINAL_REASONS)[number];
+
+/** 窄化守卫：closedReason 是否落在可重生集内。 */
+export function isReconnectableFinalReason(reason: string | undefined): reason is ReconnectableFinalReason {
+  return (RECONNECTABLE_FINAL_REASONS as readonly string[]).includes(reason ?? "");
+}
+
+/**
+ * [v8.5 D] 透明重生守卫拒绝专用错误：messageHandler 的 endedMessageGuard 必须原样
+ * 透传本类错误（自带完整行动语言），不得按 A1 分流规则改写——否则 worktree/异进程
+ * 占用文案会被「fork-from 指引」覆盖，误导 agent 走已被判死的通道。
+ */
+export class ResurrectDeniedError extends Error {}
 
 /**
  * 对外四态（设计决策 10 细则 3）：内部 ExecutionStatus（v4 B-1 两态）收敛为 agent
@@ -574,6 +605,14 @@ export interface ExecuteOptions {
   onComplete?: (record: RecordSnapshot) => void;
   /** 是否继承父会话上下文（fork 模式，只继承上下文）。 */
   fork?: boolean;
+  /**
+   * [v8.5 B] fork-from 显式指定继承源 session 文件（非主 session）。
+   * 与 fork:true 的区别：fork:true 用主 session 作 --fork 源；本字段用任意已有
+   * session 文件（断联 subagent 接续场景）作源。优先级高于 fork；传了本字段时
+   * fork 取值不影响 spawn 参数。仅 pi 引擎支持（同 fork）。仅 background tool
+   * 层 fork-from action 使用；workflow / executeAndAwait 不消费。
+   */
+  forkFromSessionFile?: string;
   /** 文件系统隔离：true=创建新 git worktree，WorktreeHandle=复用外部已创建的；undefined=不隔离（parent cwd）。 */
   worktree?: boolean | WorktreeHandle;
   /** 覆盖执行 cwd（默认 mainCwd）。 */
@@ -701,7 +740,18 @@ export type SubagentToolResult =
   | { action: "list"; subagentId: null; sessionFile: null; listResponse: ListResponse; __gui__?: GuiRenderResult }
   | { action: "cancel"; subagentId: string; sessionFile: null; cancelResponse: CancelResponse; __gui__?: GuiRenderResult }
   | { action: "message"; subagentId: string; sessionFile: null; messageResponse: MessageResponse; __gui__?: GuiRenderResult }
-  | { action: "close"; subagentId: string; sessionFile: null; closeResponse: CloseResponse; __gui__?: GuiRenderResult };
+  | { action: "close"; subagentId: string; sessionFile: null; closeResponse: CloseResponse; __gui__?: GuiRenderResult }
+  | { action: "fork-from"; subagentId: string; sessionFile: string | null; forkFromResponse: ForkFromResponse; __gui__?: GuiRenderResult };
+
+/** fork-from 的内层响应：新 subagent id + 作为继承源的旧记录 session 文件。
+ *  [v8.5 B] 断联恢复通道——新 subagent 以 --fork 方式继承旧会话历史，源文件只读
+ *  不续写（pi fork 建 branched session，copy-on-write）。 */
+export interface ForkFromResponse {
+  /** 新 subagent record id（接续对话用 action:'message'）。 */
+  newSubagentId: string;
+  /** 作为继承源的旧 subagent session jsonl 绝对路径。 */
+  sourceSessionFile: string;
+}
 
 // ============================================================
 // TUI list 视图的合并 record（4 源 merge 后的形状）

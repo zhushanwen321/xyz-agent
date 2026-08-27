@@ -177,6 +177,31 @@ ls -la ~/.xyz-agent/run/          # dev 用 ~/.xyz-agent-dev
 lsof | grep relay-.*\.sock
 ```
 
+### 9. agent 会话内执行 validate-runtime-bundle 失败："Bundled pi binary not found"
+
+**症状**：从 agent 会话内跑 `bash scripts/validate-runtime-bundle.sh` 报
+`[runtime] fatal: relay server init failed: Error: Bundled pi binary not found at <root>/pi/pi-darwin-arm64`
+被 commit 卡住；或 agent 会话内其它依赖「打包态判定」的行为异常（如 `isPackaged()` 返回错误结果）。
+
+**根因**：agent 会话的 shell 环境里泄漏了本不该存在的 `XYZ_AGENT_PACKAGED=1`（打包标记只在 main→runtime
+注入链上有意义；它一且出现在 agent 会话 env 里，会话内再起的 runtime 子进程就会误判自己运行在打包态，按打包路径解析捆绑二进制 → 必然找不到而 fatal）。历史受害链：runtime→pi 的 spawn 曾用整体替换式白名单 env 但未剥出站 deny 键，标志随继承链下潜到所有后代进程。
+
+**治理现状**：已由子进程 env 出站契约治理（C-proc-08）——六个 spawn 点接线经 `buildOutboundChildEnv`
+构建器组装（deny 剥 `XYZ_AGENT_PACKAGED` / `XYZ_RUNTIME_TOKEN`），pre-commit 守卫
+`.githooks/check_spawn_env_boundary.py` 拦截未接线的新增调用点。
+
+**如何确认**：
+```bash
+# 会话内直接查泄漏
+# 会话内直接查泄漏：有输出 = 泄漏确认（出站契约只保证会话内再 spawn 的子进程
+# 不再携带该标志，不影响本会话自身的 env 快照）
+printenv | grep XYZ_AGENT_PACKAGED
+# 旁证对照：剥除后重跑原命令应恢复正常
+env -u XYZ_AGENT_PACKAGED bash scripts/validate-runtime-bundle.sh
+```
+若仍命中，说明该调用点未经出站契约构建器（守卫漏网或存量豁免），带着报错文件行号去
+`.githooks/check_spawn_env_boundary.py` 豁免名单核对。
+
 ## 环境变量速查
 
 | 变量 | 用途 | 生产默认值 | 开发默认值 |

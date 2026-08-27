@@ -212,6 +212,12 @@ export function persistSessionEnd(filePath: string, outcome: SessionOutcome, rea
     // 但 JSONL 未变 → 下次 scan 命中缓存 → 返回 stale outcome=null，侧栏显示 idle 而非 stopped）。
     // 删除缓存条目后，下次 scan 重新读 sidecar 拿到新 outcome。
     sessionMetaCache.delete(filePath)
+    // 目录级 TTL 缓存一并失效。注意这是每 turn 写点（agent_end → handleTurnEndSideEffects 无条件
+    // 调用；终态去重仅 onSessionExit 路径），失效后活跃会话每 turn 触发一次全量重扫——量级可控
+    // （sessionMetaCache 命中时仅 readdir + per-file stat，50 session 约 1-2ms），一致性优先于微优化
+    // （不失效则终态/outcome 变化迟到一个 TTL 窗口；opt-out 方案已在 sidecar-binding-sync 设计文档
+    // 决策 2 论证并否决）。
+    invalidateScanDirCache()
   // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
   } catch (e) {
     console.error(`[session-file-utils] persistSessionEnd failed: ${filePath}`, e)
@@ -253,9 +259,14 @@ export function projectSidecarPath(filePath: string): string {
 
 /**
  * sidecar 家族公共写入（preset/project/agent binding 共用骨架）：
- * 空路径守卫 + JSONL 未落盘守卫（规则 #6：绝不创建 sidecar）+ 原子写 + sessionMetaCache 失效。
- * 差异点参数化：sidecar 路径 helper、tmpfile 前缀、是否失效目录级扫描缓存
- * （agent 版需要——spawnSource 的消费方是列表扫描，1s TTL 窗口会让标记迟到一个窗口）。
+ * 空路径守卫 + JSONL 未落盘守卫（规则 #6：绝不创建 sidecar）+ 原子写 + 双层缓存失效
+ * （sessionMetaCache 必失效；scanDirCache 默认失效，见 invalidateScanDir 说明）。
+ * 差异点参数化：sidecar 路径 helper、tmpfile 前缀、目录级扫描缓存的豁免开关。
+ *
+ * invalidateScanDir 默认 true（sidecar-binding-sync 设计文档决策 2）：binding 写点的唯一
+ * 列表消费方是扫描侧，写后不失效无正当场景——不失效则紧跟的列表广播命中 1s TTL 窗口内的
+ * pre-write 快照返回 stale 数据；此前逐调用方 opt-in 已产出多个漏改实例（设计文档缺陷 B），
+ * 故收敛为默认开。确需跳过时必须显式传 { invalidateScanDir: false } 并附注释说明理由。
  */
 function persistBindingSidecar(
   filePath: string,
@@ -275,7 +286,8 @@ function persistBindingSidecar(
     // sidecar 写入后主动失效 sessionMetaCache：缓存键只含 JSONL 的 (mtimeMs, size)，
     // sidecar 变更不变 JSONL stat → 命中缓存返回旧值。
     sessionMetaCache.delete(filePath)
-    if (opts?.invalidateScanDir) {
+    // 默认失效，显式 false 才跳过（opt-out 语义与理由要求见函数 docstring）。
+    if (opts?.invalidateScanDir !== false) {
       invalidateScanDirCache()
     }
   // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
@@ -324,6 +336,9 @@ export function persistProjectBinding(filePath: string, projectId: string): void
         // 与写入分支同失效处理：缓存键只含 JSONL 的 (mtimeMs, size)，sidecar 删除不变 JSONL stat，
         // 不删缓存会命中旧 projectId（扫描读回已删除的归属）。
         sessionMetaCache.delete(filePath)
+        // 目录级 TTL 缓存同失效（设计文档缺陷 B 删除方向镜像）：移出项目后紧跟的列表广播若命中
+        // pre-delete 快照，session 会在 1s 内弹回项目视图——与写入方向对称的用户可见现象。
+        invalidateScanDirCache()
       }
     // eslint-disable-next-line taste/no-silent-catch -- file delete: failure must not crash caller
     } catch (e) {
@@ -366,10 +381,10 @@ function readProjectBinding(filePath: string): string | undefined {
  * @param parentAgentSessionId 父 agent session id
  */
 export function persistAgentBinding(filePath: string, spawnSource: 'user' | 'agent', parentAgentSessionId: string | undefined): void {
-  // invalidateScanDir：spawnSource 的消费方是列表扫描（SessionScanner.listAll →
-  // scanPiSessions force:false），binding 写入紧跟 session 创建后的列表广播刷新，
-  // 1s TTL 窗口内命中 pre-binding 快照会让 agent 标记迟到一个窗口。delete/fork/rename
-  // 同理由 runtime 自写后显式失效（invalidateScanDirCache 注释），此处对齐。
+  // 显式传 true 对齐默认失效语义（骨架默认开后本参数冗余，保留作自文档）：spawnSource 的
+  // 消费方是列表扫描（SessionScanner.listAll → scanPiSessions force:false），binding 写入
+  // 紧跟 session 创建后的列表广播刷新，1s TTL 窗口内命中 pre-binding 快照会让 agent 标记
+  // 迟到一个窗口。delete/fork/rename 同理由 runtime 自写后显式失效（invalidateScanDirCache 注释）。
   persistBindingSidecar(
     filePath,
     agentSidecarPath,
@@ -554,8 +569,9 @@ function findLastEntryField<R>(
  *
  * [规则 #6] JSONL 文件不存在时**绝不创建 sidecar**（与 persistSessionEnd 同守卫）：
  * pi 延迟写入窗口内 existsSync=false → console.warn + 静默跳过。
- * 写后失效 sessionMetaCache（缓存键只含 JSONL 的 mtime/size，sidecar 变更不变 JSONL
- * stat → 不失效会命中缓存返回旧 handedOffTo）。
+ * 写后双层缓存失效（sessionMetaCache + scanDirCache，与 persistBindingSidecar 骨架收敛为同一
+ * 纪律）：文件级缓存键只含 JSONL 的 mtime/size，sidecar 变更不变 JSONL stat → 不失效命中旧值；
+ * 目录级 TTL 不失效则 handedOffTo（消费方同样是列表扫描）迟到一个广播窗口。
  *
  * @param filePath 源 session JSONL 绝对路径（sidecar = filePath + '.handoff.json'）
  * @param newSessionId 交接目标的新 session id
@@ -573,6 +589,9 @@ export function persistHandoffSidecar(filePath: string, newSessionId: string): v
     // sidecar 写入后主动失效 sessionMetaCache（对齐 persistSessionEnd：缓存键只含
     // JSONL 的 (mtimeMs, size)，sidecar 变更不变 JSONL stat → 命中缓存返回旧值）。
     sessionMetaCache.delete(filePath)
+    // 目录级 TTL 缓存一并失效（本写点自维护、不经 persistBindingSidecar 骨架，但按决策 2
+    // 收敛为同一纪律：handedOffTo 消费方是列表扫描，不失效则广播迟到一个 TTL 窗口）。
+    invalidateScanDirCache()
   // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
   } catch (e) {
     console.error(`[session-file-utils] persistHandoffSidecar failed: ${filePath}`, e)
@@ -828,6 +847,10 @@ export interface ScannedSessionMeta {
   parentAgentSessionId?: string
 }
 
+// 绑定字段注册表已抽出至 './session-binding-fields.ts'（BINDING_FIELDS / hydrateBindingMeta /
+// CREATE_DERIVED_CALLERS 单一权威源，sidecar-binding-sync 设计文档；抽出原因：本文件
+// 聚焦 sidecar 文件 IO 与缓存治理，lint max-lines 预算留给 IO 逻辑）。
+
 /**
  * W3 文件级 mtime+size 缓存（INVAR-cache-1 模块级跨两阶段共享）。
  *
@@ -860,6 +883,9 @@ export function invalidateSessionMetaCache(filePath: string): void {
   sessionMetaCache.delete(filePath)
 }
 
+// [SSOT 指针] 新增绑定字段必经此处填充 ScannedSessionMeta——必须同步在
+// session-binding-fields.ts 的 BINDING_FIELDS 注册表登记（漏登记=编译错），
+// 回填入口适用性（hydrateBindingMeta 四入口矩阵）与 create 派生调用方清单均在该模块维护。
 /**
  * 单个 session 文件的元数据提取（三读合一 + 缓存）。
  *

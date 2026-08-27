@@ -454,6 +454,12 @@ export interface RunOptions {
   schemaEnv?: string;
   /** 是否继承父会话上下文（fork 模式，只继承上下文）。 */
   fork?: boolean;
+  /**
+   * [v8.5 B] 显式 --fork 源文件覆盖：优先于 opts.fork 推导的 ctx.mainSessionFile。
+   * 由 service.execute 从 ExecuteOptions.forkFromSessionFile 透传（fork-from action）。
+   * undefined = 沿用旧语义（opts.fork ? mainSessionFile : undefined），行为不变。
+   */
+  forkSource?: string;
   /** 预创建的 worktree handle（undefined=不隔离，在 parent cwd 跑）。 */
   worktree?: WorktreeHandle;
   /** 父级 fork depth（用于深度限制 + identity entry）。 */
@@ -1341,8 +1347,10 @@ export async function runSpawn(
   // worktree checkout 已由 worktree-manager 在 execute 前创建，此处只取路径。
   const spawnCwd = opts.worktree?.path ?? ctx.cwd;
 
-  // f. fork source：父 session 文件路径（--fork 参数）
-  const forkSource = opts.fork ? ctx.mainSessionFile : undefined;
+  // f. fork source：父 session 文件路径（--fork 参数）。
+  // [v8.5 B] opts.forkSource 显式覆盖优先（fork-from 指定旧 subagent session 作源）；
+  // 否则回退旧语义 opts.fork → 主 session 文件。两者均未设则无继承。
+  const forkSource = opts.forkSource ?? (opts.fork ? ctx.mainSessionFile : undefined);
 
   // g. appendSystemPrompt 落盘（env block + agent body + 调用方片段）
   const tempPromptFile = await writeAppendSystemPromptFile(record, opts, ctx);
