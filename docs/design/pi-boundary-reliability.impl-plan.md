@@ -162,7 +162,7 @@ graph TD
 
 **Gate B 机器侧（2026-08-28，全过）**：P-S3①改 verifiedWith→0.80.3 → exit 1 + 报错含 16 条目 id 与重验命令，恢复后 exit 0；P-S3②篡改两级门控断言（reasoning:false 期望加 high）→ 1 failed 红，恢复后 8/8 绿；P-S4①白名单外 staged `deliverAs:"steer"` → pre-commit exit 1 + 报错指 WHITELIST_* 与 C-ext-19；P-S4②白名单外 staged `"--model"` → exit 1 + 报错指向 model-ref；两者撤销后工作区零残留。S5 的 outcome 投影与 P-S5 的「假模型仅关」已有机器等价证据（list-fields/tool-action 断言 + U5 离线计算 1226 模型 0 mismatches）。
 
-**Gate B GUI 侧（S1-S4/P-S1/P-S2/P-S5）**：需真实 GUI 会话 + 真实 LLM 后端的人工/半自动执行，剧本见两设计文档 §4；机器侧无 mock 替代，待用户执行后签收。
+**Gate B GUI 侧（S1-S5/P-S1/P-S2/P-S5）**：用户明示豁免（2026-08-28 验收会话拍板：暂缓、日常自然验证）——机制的构造性正确已由机器侧证据全覆盖（G5 e2e 真实 pi / P-S3、P-S4 演练 / 1226 模型同源比对 / start 同步拒单、账本四步、重启重放的结构性测试）；日常使用中出问题时按 troubleshooting.md 新增排查规则（gc 判读看 outcome / 大小写 429 排查路径）定位。
 
 ## 8 残留风险与变更历史
 - ✅ P-C1（U5/阶段5）已收口（2026-08-28，证据见 §7 验收记录：四包一致 exit 0 / require 零残留 + 内联 ~0.7KB / diff-probe 1226 models 0 mismatches）；原降级路径（纯在线对账）未启用
