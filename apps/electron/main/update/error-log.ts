@@ -9,7 +9,6 @@
  * 依赖方向：error-log → constants（UPDATE_ERROR_LOG 路径）+ node:fs。
  */
 import { existsSync, mkdirSync, statSync, renameSync, appendFileSync } from 'node:fs'
-import path from 'node:path'
 import { UPDATE_ERROR_LOG, UPDATE_DIR } from './constants.js'
 
 /** 单条错误日志条目 */
