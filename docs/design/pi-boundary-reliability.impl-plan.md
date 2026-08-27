@@ -115,20 +115,35 @@ graph TD
 | R2 | 设计文档引用 `transport/handlers/settings-message-handler.ts` 实际在 `transport/settings-message-handler.ts`（:396-402 回传 effective 已实装）；`plugin-rpc-setup.ts` 在 `services/plugin-service/` 下 | U6 task 坐标按实际路径 |
 | R3 | BgResponse（execution/types.ts:653）现状仅 status/mode/message；model 回显与 notifyContract 均为新增字段而非改字段 | U1 按新增处理 |
 | R4 | resolveAvailableLevels 在 thinking-levels.ts 内部有 2 个间接消费（highestAvailableLevel:159 / isSameThinkingScheme:180-181），设计 D3③ 未列举 | U6 删除时连带改造（保持两函数行为：以 supportedLevels 或入参档位集为源） |
+| R5 | U3：outcome 持久化（record-entry.ts）在领地外，存量/磁盘重建 record 无 outcome 字段 | projectOutcome 对无字段记录经同一权威函数 deriveOutcome 兜底（语义与旧三处同构 switch 等价，收敛目标不变） |
+| R6 | U3：bgResponse.outcome 在 start 时点恒 undefined（终态实值经 list items[].outcome 披露） | 契约完备位落地，S5 判读走 list/通知两通路 |
+| R7 | U3：设计 D6「finalizer 同处注释」的 finalizer（finalize-record.ts）在领地外 | 保真注释改固化在 deriveOutcome 与 buildLlmContent 两消费点 + 专门单测锚定 |
+| R8 | U5：ProviderInfo 实际定义在 shared/src/provider.ts（非 protocol.ts，后者仅 import） | 字段加在 provider.ts，同一处字段变更 |
+| R9 | U5：三处接线点领地外停手（message-broker 下发标注 / session 附着对账 / drift 广播） | 前者补 U5b 微单元；后两者归 U6 领地内承接（session-service/protocol） |
+| R10 | U7a：探针族按 dist 锚点源文件分 6 文件（非每条一文件）；e2e 增加 PI_CODING_AGENT_DIR 隔离与冷启动余量 15s | 每条 PS 仍有独立 it 级断言；设计未明文的实现决策 |
+| R11 | U1：RunContext 类型定义在 execution/engine/port.ts（领地外），modelRef 接入落 SAR 构造 runCtx 前的孪生守卫 + model-resolver ctxModel 分支同一守卫 | 两处共用 modelRefFromVerified，chat/workflow 两域继承路径全覆盖 |
+| R12 | U1：THINKING_ORDER SSOT 迁至 shared/model-ref.ts（strip 后缀需要），model-resolver re-export 保持旧 import 路径 | 避免 shared→execution 反向依赖 |
+| R13 | U1：领地外涟漪 chat-engine-routing.test.ts mock 同源化（1 处，find 特判与 getAvailable 空数组不符真实 registry 契约） | 裁决单入口以 getAvailable 为孪生复扫面，mock 失真必挂，同源化必要 |
+| R14 | U2：ledger host 由 index.ts 模块级 bindNotifyLedgerHost 装配（notifier 创建点在领地外 subagent-service.ts） | 未 bind 时 notifier 完整退回内核路径，项目既有模块级注入惯例 |
+| R15 | U2：notifyId 载体 = details 而非正文（D4 字面与 G4 字节锁定冲突，取后者） | 重复条目对 LLM 由同 id 同文案可识别，对系统由 details.notifyId 精确匹配 |
+| R16 | U2：ledger 投递不经 delivery 内核（合并语义兑现：同款 join/batch details；时机收敛 settled 边沿/看门狗）；内核路径原样保留 | 内核 60s 滑窗与零宽容 busy 投递语义冲突 |
+| R17 | 环境事实：background subagent 的 PI_SUBAGENT_* env 会污染 sw 依赖干净 env 的既有测试（此前各单元报告的 4 个 pre-existing 失败真根因） | 主 agent bash 无此变量复跑即绿；后续 subagent 跑 sw 测试须 env -u PI_SUBAGENT_* |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| U3 | pending | 0 | — |
-| U5 | pending | 0 | — |
-| U7a | pending | 0 | — |
-| U1 | pending | 0 | — |
-| U2 | pending | 0 | — |
-| U6 | pending | 0 | — |
-| U7b | pending | 0 | — |
-| U4 | pending | 0 | — |
-| U8 | pending | 0 | — |
+| U3 | committed | 1 | 62506f39b（11 文件，sw 2865 passed；偏差 R5/R6/R7 见 §5） |
+| U5 | committed | 1 | 545879857（8 文件，22/22 用例，type_leak exit 0，pi-ai 内联 ~700B；接线停手三处 → U5b/U6 承接） |
+| U7a | committed | 1 | 6257a871d（16 条 registry + 探针 30 绿 + check exit 0 + e2e 登记；handoff mock 预存缺口另修 8b1bd8fb4） |
+| U1 | committed | 1 | b06743f06（15 文件；sw 2926 passed 零回归；P-A2 双路径实测；偏差 R11-R13） |
+| U2 | committed | 1 | 78c3cf605（10 文件；ledger 20 + delivery 67 + 三连全绿；偏差 R14-R16；PI_SUBAGENT_* env 污染发现见 R17） |
+| U6 | committed | 1 | bd01aa375（40 文件；五包全绿：shared 200/core 1261/ui 546/renderer 3555/runtime 主池 3936；核验修复 2 处：model-service dead-code bug、session-service 旧锚；偏差 R18） |
+| U7b | committed | 1 | 861b11c06（护栏 G1/G3/G4 挂载 + 检查器 + diff-probe 改目标 1226 models 0 mismatches + 4 处 g4-allow 豁免；偏差 R19-R23） |
+| U4 | committed | 1 | d6ebb485f（warn 参数化 + 三桶计数；delivery 70/70；偏差 R24-R26） |
+| U8 | committed | 1 | 796368fab（80 条约束 + ADR-0064 + 全部治理资产；render/select PASS；偏差 R27-R28） |
+
+波次外增补单元：**U5b provider 下发标注接线**（message-broker.ts:144 + settings-message-handler.ts:66 两处 attachSupportedLevels 接线；U5 停手项，sa-dfec4245 进行中）；handoff-message-bus mock 预存缺口已修（8b1bd8fb4，175074197 漏改）。
 
 ## 7 残留风险与变更历史
 
@@ -143,3 +158,4 @@ graph TD
 
 **变更历史**：
 - 2026-08-28 创建（预检 + explorer 领地核实 + 波次编排）
+- 2026-08-28 基线 448438847；Wave 1 committed（U3 62506f39b / U5 545879857 / U7a 6257a871d + handoff mock 8b1bd8fb4）；增补 U5b 微单元；Wave 2 派发（U1/U2/U6 + U5b）；U5b cb582308c / U1 b06743f06 / U2 78c3cf605 committed，U6 进行中
