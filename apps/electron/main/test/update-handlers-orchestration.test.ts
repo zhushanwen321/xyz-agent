@@ -25,7 +25,7 @@
  *
  * 运行：cd apps/electron/main && npx vitest run test/update-handlers-orchestration.test.ts
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { LatestReleaseInfo, UpdateSettings } from '@xyz-agent/shared'
 
 // ── 捕获注册的 handler（key=channel, value=handler fn）──────────────
@@ -149,7 +149,15 @@ function mockOrchestrator(overrides: Partial<MockOrchestrator> = {}): MockOrches
 /** 捕获 setTimeout（update:perform triggerRestart 后用 setTimeout 调 app.quit） */
 let capturedQuitTimer: { delay: number } | null = null
 
+// 预下载门控 isAutoUpdateSupportedForCurrentInstall（真实现非 mock）在 linux 无
+// APPIMAGE 时返回 false → update:check 不触发预下载 → downloadUpdate 0 次调用。
+// CI 在 linux x64 runner 上跑，本地 mac 全绿、CI 恒红的根因；FIXTURE 即 mac 语义，
+// 全文件统一桩 darwin
+let originalPlatform: PropertyDescriptor | undefined
+
 beforeEach(() => {
+  originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
   handlers.clear()
   vi.clearAllMocks()
   sendSpy.mockClear()
@@ -162,6 +170,10 @@ beforeEach(() => {
     // 不实际执行 cb（避免触发 app.quit mock 的副作用），返回占位 handle
     return 0 as unknown as NodeJS.Timeout
   }) as typeof setTimeout)
+})
+
+afterEach(() => {
+  if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
 })
 
 // ── S#9：update:getPending / update:getSettings / update:setSettings ──

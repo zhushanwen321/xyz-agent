@@ -69,9 +69,15 @@ const MAC_RELEASE: LatestReleaseInfo = {
 
 describe('W3: orchestrator (W3TC8-9)', () => {
   let originalPlatform: PropertyDescriptor | undefined
+  let originalArch: PropertyDescriptor | undefined
 
   beforeEach(async () => {
     originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    // darwin 用例的隐含环境是 Apple Silicon（m8 守卫 downloadUpdate 拒 Intel mac）：
+    // CI 在 x64 runner 上跑，若不桩 arch，darwin+x64 会误命中架构门控抛
+    // UpdateUnsupportedError——本地 arm64 全绿、CI 恒红的根因
+    originalArch = Object.getOwnPropertyDescriptor(process, 'arch')
+    Object.defineProperty(process, 'arch', { value: 'arm64', configurable: true })
     vi.clearAllMocks()
     // spawn 桩：返回带 unref 的假 ChildProcess（win installer 路径会真 spawn）
     childProcessMocks.spawn.mockReturnValue({ unref: vi.fn() })
@@ -80,6 +86,7 @@ describe('W3: orchestrator (W3TC8-9)', () => {
 
   afterEach(() => {
     if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
+    if (originalArch) Object.defineProperty(process, 'arch', originalArch)
     vi.restoreAllMocks()
     const updateDir = path.join(TMP_DATA_DIR, 'update')
     if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
