@@ -3,7 +3,8 @@
  *
  * 覆盖场景 W3TC5-7：
  *   W3TC5 MacUpdater：prepareUpdate → spawn detached bash + unref + 返回 detached-script
- *   W3TC6 WinUpdater：prepareUpdate → 返回 spawn-installer + NSIS args（不 spawn）
+ *   W3TC6 WinUpdater（u2a）：写盘 updater.cmd + cmd /c detached spawn + detached-script；
+ *         缺 sha256 → throw（RM4/m5）
  *   W3TC7 LinuxAppImageUpdater：APPIMAGE 存在 → detached-script；APPIMAGE 缺失 → UpdateUnsupportedError
  *
  * Mock 策略：vi.hoisted + vi.mock('node:child_process') + vi.mock('electron')。
@@ -70,6 +71,7 @@ const WIN_RELEASE = {
       name: 'TaiJi-setup-x64.exe',
       downloadUrl: 'https://example.com/setup.exe',
       size: 2000,
+      sha256: 'c'.repeat(64),
     },
   },
 }
@@ -169,23 +171,49 @@ describe('W3: platform-updater (W3TC5-7)', () => {
     expect(() => updater.prepareUpdate('/tmp/dl.zip', releaseNoSha as never)).toThrow(/missing sha256/)
   })
 
-  // ── W3TC6：WinUpdater ──────────────────────────────────────────
-  it('W3TC6: WinUpdater.prepareUpdate → 返回 spawn-installer + NSIS args（不 spawn）', async () => {
+  // ── W3TC6：WinUpdater（u2a 改造：cmd wrapper 写盘 + detached spawn）──
+  it('W3TC6: WinUpdater.prepareUpdate → 写盘 updater.cmd + cmd /c detached spawn + 返回 detached-script', async () => {
     // 注意：测试在 mac/linux 上跑，path.dirname 用 POSIX 分隔符；故 execPath 用正斜杠模拟。
     // 实际 win 上 path.dirname 会用 win32 分隔符（\\），不影响生产正确性。
-    setPlatform('win32', 'C:/Program Files/xyz-agent/xyz-agent.exe')
+    setPlatform('win32', 'C:/Program Files/xyz-agent/TaiJi.exe')
     const { WinUpdater } = await loadModule()
     const updater = new WinUpdater()
 
     const ref = updater.prepareUpdate('C:/tmp/downloaded.exe', WIN_RELEASE as never)
 
-    expect(ref.kind).toBe('spawn-installer')
-    expect(ref).toMatchObject({
-      kind: 'spawn-installer',
-      installerPath: 'C:/tmp/downloaded.exe',
-      args: ['/S', '--updated', '/D=C:/Program Files/xyz-agent'],
-    })
-    // WinUpdater 不在 prepareUpdate 内 spawn（orchestrator 负责）
+    // 三平台统一 detached-script 语义（§3.4：行为前移自 orchestrator 延迟分支）
+    expect(ref.kind).toBe('detached-script')
+    expect(ref).toMatchObject({ kind: 'detached-script', scriptPath: expect.stringContaining('updater.cmd') })
+    // wrapper 在 prepareUpdate 内 cmd /c detached spawn（Node 侧延迟 spawn 不可信）
+    expect(childProcessMocks.spawn).toHaveBeenCalledTimes(1)
+    const [cmd, args, opts] = childProcessMocks.spawn.mock.calls[0]
+    expect(cmd).toBe('cmd')
+    expect(args[0]).toBe('/c')
+    expect(args[1]).toMatch(/updater\.cmd$/)
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+
+    // 脚本已写盘：占位符全替换 + PARENT_PID/sha256/version 注入 + /D= 不加引号
+    const scriptContent = readFileSync(ref.kind === 'detached-script' ? ref.scriptPath : '', 'utf-8')
+    expect(scriptContent).not.toMatch(/\{\{[^}]+\}\}/)
+    expect(scriptContent, 'win 脚本应注入 PARENT_PID（u1b 同契约）').toContain(`set "PARENT_PID=${process.pid}"`)
+    expect(scriptContent, 'win 脚本应注入 sha256（certutil 复验用）').toContain('c'.repeat(64))
+    expect(scriptContent, 'version 注入').toContain('set "VERSION=0.9.0"')
+    expect(scriptContent, 'installDir 注入').toContain('set "INSTALL_DIR=C:/Program Files/xyz-agent"')
+    expect(scriptContent, '/D= 值不加引号（NSIS 约定，m16）').toContain('/D=%INSTALL_DIR%')
+    expect(scriptContent, '/D= 值不得加引号').not.toContain('/D="')
+  })
+
+  it('W3TC6b: win asset 缺 sha256 → 抛 UpdateError（RM4/m5 强制，对齐 mac/linux）', async () => {
+    setPlatform('win32', 'C:/Program Files/xyz-agent/TaiJi.exe')
+    const { WinUpdater } = await loadModule()
+    const updater = new WinUpdater()
+    const releaseNoSha = {
+      ...WIN_RELEASE,
+      assets: { winX64Exe: { name: 'setup.exe', downloadUrl: 'x', size: 1 /* 无 sha256 */ } },
+    }
+
+    expect(() => updater.prepareUpdate('C:/tmp/dl.exe', releaseNoSha as never)).toThrow(/missing sha256/)
+    // 缺 sha 在生成/写盘/spawn 之前拒绝
     expect(childProcessMocks.spawn).not.toHaveBeenCalled()
   })
 

@@ -5,10 +5,11 @@
  * 生成替换脚本/参数，触发替换动作（mac/linux spawn detached bash，win 返回 NSIS 参数）。
  *
  * [HISTORICAL] 不变量：
- * - mac：detached bash 脚本（含 sha256 二次校验 + rm-then-mv 回滚决策树），prepareUpdate 内已 spawn
+ * - mac：detached bash 脚本（staging 状态机，含 sha256 二次校验），prepareUpdate 内已 spawn
  * - linux：AppImage 走 detached 脚本（与 mac 一致，避免双实例）；deb 包（APPIMAGE undefined）走 unsupported
- * - win：返回 NSIS 静默安装参数，由 orchestrator 负责 spawn（不在 prepareUpdate 内 spawn，
- *   保持 mac/linux/win 返回值语义一致：orchestrator 据 ref.kind 决定后续动作）
+ * - win：cmd wrapper（设计 §3.4 批次 2）——prepareUpdate 内写盘 updater.cmd +
+ *   detached spawn，返回 detached-script（三平台统一语义）；sha256 缺失 throw
+ *   （RM4/m5）。orchestrator 的 win spawn-installer 延迟分支由批次 2 u2b 删除
  * - dev 模式（!app.isPackaged）一律拒绝自更新（避免覆盖 dev 环境）
  * - .app bundle 路径推导：process.execPath（.../太极.app/Contents/MacOS/TaiJi）
  *   向上 3 层 dirname 得到 .app 目录
@@ -28,7 +29,8 @@ import {
   UPDATER_LOG_PATH,
   UPDATER_SCRIPT_PATH,
 } from './constants.js'
-import { buildLinuxUpdaterScript, buildUpdaterScript, buildWinInstallerArgs } from './updater-script.js'
+import { buildLinuxUpdaterScript, buildUpdaterScript } from './updater-script.js'
+import { buildWinUpdaterCmd } from './win-updater-cmd.js'
 import { UpdateError, UpdateUnsupportedError } from './types.js'
 import type { UpdateScriptRef } from './types.js'
 
@@ -42,7 +44,8 @@ export interface PlatformUpdater {
    *
    * @param downloadedFilePath download-asset 返回的已下载文件路径（通过 sha256 校验）
    * @param release 当前 release 信息（取 sha256 / version / htmlUrl）
-   * @returns 替换动作描述（mac/linux detached-script / win spawn-installer）
+   * @returns 替换动作描述（三平台统一 detached-script：脚本/写盘 spawn 均在
+   *          prepareUpdate 内完成；orchestrator 只透传触发重启）
    */
   prepareUpdate(downloadedFilePath: string, release: LatestReleaseInfo): UpdateScriptRef
 }
@@ -90,21 +93,39 @@ export class MacUpdater implements PlatformUpdater {
 }
 
 /**
- * win NSIS 升级器。
+ * win NSIS 升级器（cmd wrapper，设计 §3.4 批次 2）。
  *
- * 不在 prepareUpdate 内 spawn（保持与 mac/linux 返回值语义一致）。
- * orchestrator 据 ref.kind='spawn-installer' 负责 spawn NSIS installer。
+ * 与 mac/linux 同构：prepareUpdate 内生成 updater.cmd 写盘 UPDATE_DIR 并
+ * detached spawn（cmd /c，detached + ignore stdio），返回 detached-script。
+ * sha256 强制（RM4/m5）：win 侧缺 sha256 直接 throw（对齐 mac/linux 语义），
+ * 关闭「size-only 内容错的 exe 被执行」窗口——download 降级 size-only 仍可能发生，
+ * 但 install 侧强制拒绝；wrapper 内 certutil 二次复验（见 win-updater-cmd.ts）。
  */
 export class WinUpdater implements PlatformUpdater {
-  prepareUpdate(downloadedFilePath: string, _release: LatestReleaseInfo): UpdateScriptRef {
+  prepareUpdate(downloadedFilePath: string, release: LatestReleaseInfo): UpdateScriptRef {
     if (!app.isPackaged) throw new UpdateError('dev mode does not support self-update', 'replacing')
     // win 安装目录 = execPath 的 dirname（electron-builder NSIS 默认布局）
     const installDir = path.dirname(process.execPath)
-    return {
-      kind: 'spawn-installer',
+    const sha256 = release.assets.winX64Exe?.sha256?.toLowerCase()
+    if (!sha256) throw new UpdateError('win asset missing sha256', 'verifying')
+    const script = buildWinUpdaterCmd({
       installerPath: downloadedFilePath,
-      args: buildWinInstallerArgs(installDir),
-    }
+      installDir,
+      // 重启目标：当前可执行文件同名落位（NSIS /D= 同目录覆盖安装，exe 名不变）
+      targetExePath: process.execPath,
+      resultPath: path.join(UPDATE_DIR, 'update-result.json'),
+      logPath: path.join(UPDATE_DIR, 'updater-win.log'),
+      parentPid: String(process.pid),
+      sha256,
+      targetVersion: release.version,
+    })
+    const scriptPath = path.join(UPDATE_DIR, 'updater.cmd')
+    mkdirSync(UPDATE_DIR, { recursive: true })
+    writeFileSync(scriptPath, script)
+    // cmd /c detached + ignore stdio：与 app.quit 解耦（Node 侧定时器随进程消亡，
+    // 等待逻辑全部前移进 wrapper，不可信 Node 延迟 spawn）
+    spawn('cmd', ['/c', scriptPath], { detached: true, stdio: 'ignore' }).unref()
+    return { kind: 'detached-script', scriptPath }
   }
 }
 
