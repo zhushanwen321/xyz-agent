@@ -168,17 +168,6 @@ export function buildLinuxUpdaterScript(vars: LinuxUpdaterScriptVars): string {
     .replace(/\{\{PARENT_PID\}\}/g, shellEscapeDoubleQuote(parentPid))
 }
 
-/**
- * 生成 win NSIS 安装器静默安装参数。
- *
- * - /S：静默安装（无 GUI，绕过 UAC）
- * - --updated：标记是升级流程（electron-builder NSIS 自定义）
- * - /D=<installDir>：指定安装目录（NSIS 约定，必须放最后，无引号）
- */
-export function buildWinInstallerArgs(installDir: string): string[] {
-  return ['/S', '--updated', `/D=${installDir}`]
-}
-
 // ── mac updater 脚本模板（staging 状态机）────────────────────────
 // 关键：S4 换装成功前正式位置零接触（G1 结构不变量）。所有命令显式判退出码，
 // 任一失败写 update-result.json status=failed 后退出（错误码 = 错误分类 SSOT，
@@ -195,6 +184,15 @@ const MAC_UPDATER_TEMPLATE = `#!/bin/bash
 set -uo pipefail
 exec > "{{LOG_PATH}}" 2>&1
 echo "[$(date)] start update to {{TARGET_VERSION}} (updater pid $$)"
+
+# ── 跨进程互斥（设计 §3.7.1）：启动即写 pid 文件，退出（含失败路径）时清理 ──
+# 检查方：新实例启动序列读此文件判断 updater 存活 → defer 回滚清理。
+# PID 文件与 update-result.json 同目录（UPDATE_DIR），由结果路径推导零新增注入点。
+PID_FILE="$(dirname "{{RESULT_PATH}}")/updater.pid"
+echo $$ > "$PID_FILE"
+# trap EXIT 覆盖所有退出路径（成功/fail/意外错误）；kill -9 不触发 → 残留 pid
+# 由新实例存活检查自愈（进程已死 → 不 defer + 清理残留）。
+trap 'rm -f "$PID_FILE"' EXIT
 
 APP="{{APP_BUNDLE}}"
 APP_DIR="$(dirname "$APP")"
@@ -333,6 +331,12 @@ const LINUX_UPDATER_TEMPLATE = `#!/bin/bash
 set -uo pipefail
 exec > "{{LOG_PATH}}" 2>&1
 echo "[\$(date)] start AppImage update to {{TARGET_VERSION}} (updater pid \$\$)"
+
+# ── 跨进程互斥（设计 §3.7.1）：启动即写 pid 文件，退出时清理（与 mac 同语义）──
+# PID 文件与 update-result.json 同目录（UPDATE_DIR），由结果路径推导零新增注入点
+PID_FILE="\$(dirname "{{RESULT_PATH}}")/updater.pid"
+echo \$\$ > "$PID_FILE"
+trap 'rm -f "$PID_FILE"' EXIT
 
 APP="{{APP_IMAGE_PATH}}"
 APP_DIR="\$(dirname "$APP")"

@@ -28,6 +28,7 @@
  * 依赖方向：update-self-healer → constants + types + compare-versions + electron + node:fs/path
  */
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import type { LaunchResult } from '@xyz-agent/shared'
 import { compare } from 'compare-versions'
@@ -44,6 +45,71 @@ import {
 } from './constants.js'
 import type { UpdateResultStatus } from './types.js'
 
+/** updater pid 文件（批次 5 互斥，§3.7.1）：写入方 = mac/linux 升级脚本启动时自写 */
+const UPDATER_PID_FILE = path.join(UPDATE_DIR, 'updater.pid')
+
+/**
+ * 判断升级脚本是否仍在运行（跨进程互斥检查方，§3.7.1）。
+ *
+ * 读取 updater.pid：
+ * - 文件不存在 → false（无 updater 在跑）
+ * - PID 已死 → 清理残留 pid 文件（自愈）→ false
+ * - PID 存活：
+ *   - mac/linux：叠加进程名加固（`ps -p <pid> -o comm=` 含 updater 字样）——
+ *     PID 复用（其他进程占用该 pid）→ 视为不存活（清理残留，正常清理）
+ *   - win：仅 PID 存活检查（S-7：cmd.exe 进程映像名固定，无 updater 字样可验）
+ *   - ps 调用异常（异常环境）→ 保守按存活处理（误判存活的后果 = 少做一次清理，
+ *     良性且下次启动补做；误判不存活才危险）
+ */
+export function isUpdaterInFlight(): boolean {
+  if (!existsSync(UPDATER_PID_FILE)) return false
+  let pid: number
+  try {
+    pid = Number.parseInt(readFileSync(UPDATER_PID_FILE, 'utf-8').trim(), 10)
+  } catch {
+    return false
+  }
+  if (!Number.isInteger(pid) || pid <= 0) return false
+
+  let alive = false
+  try {
+    process.kill(pid, 0) // 信号 0：仅探测存活
+    alive = true
+  } catch {
+    alive = false
+  }
+  if (!alive) {
+    // 残留 pid（脚本已退出但 trap 未及清理，如 kill -9）：自愈清理
+    try {
+      unlinkSync(UPDATER_PID_FILE)
+    } catch {
+      // 清理失败无害：下次启动再试
+    }
+    return false
+  }
+
+  // mac/linux 进程名廉价加固（S-7 win 侧无 updater 字样可验，仅做 PID 存活）
+  if (process.platform === 'darwin' || process.platform === 'linux') {
+    try {
+      const comm = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], {
+        encoding: 'utf8',
+      })
+      if (!/updater/i.test(comm)) {
+        // PID 已被复用（占位者非 updater）→ 视为不存活，清残留 pid 后正常清理
+        try {
+          unlinkSync(UPDATER_PID_FILE)
+        } catch {
+          // 忽略
+        }
+        return false
+      }
+    } catch {
+      // ps 不可用/失败：保守按存活 defer（误判 defer 良性）
+    }
+  }
+  return true
+}
+
 /** update-result.json 的合法结构（运行时校验） */
 interface UpdateResultData {
   status?: unknown
@@ -59,6 +125,13 @@ interface UpdateResultData {
  *          false=无需回滚（终态/无 result/.old 不存在/自愈失败，均不阻塞启动）
  */
 export async function maybeRollbackInterruptedUpdate(): Promise<boolean> {
+  // 批次 5 互斥（§3.7.1）：升级脚本仍在跑 → 本次启动跳过回滚与清理（良性：少做一次，
+  // 下次启动补做），正常进入应用；脚本退出删 pid 后下次启动恢复正常检查。
+  if (isUpdaterInFlight()) {
+    console.log('[update-self-healer] updater in flight, defer cleanup')
+    return false
+  }
+
   if (!existsSync(UPDATE_RESULT_FILE)) return false
 
   // 读取与解析分开 try：解析失败时 catch 仍能访问 raw 内容，
@@ -210,6 +283,12 @@ export function ignoreENOENT(target: string): void {
  */
 export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
   try {
+    // 批次 5 互斥（§3.7.1）：updater 在跑时同样 defer 清理（与回滚检查同口径）
+    if (isUpdaterInFlight()) {
+      console.log('[update-self-healer] updater in flight, defer cleanup')
+      return null
+    }
+
     if (!existsSync(UPDATE_RESULT_FILE)) return null
 
     let data: UpdateResultData

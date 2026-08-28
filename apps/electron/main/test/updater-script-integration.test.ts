@@ -354,6 +354,9 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
         expect(log, `log 应含 ${stage}`).toContain(`[stage] ${stage}`)
       }
       expect(log).toContain('update done')
+
+      // 批次 5 互斥：退出时 pid 文件被 trap 清理（验收①退出侧）
+      expect(existsSync(path.join(tmpDir, 'updater.pid')), '退出后 pid 文件应被清理').toBe(false)
     },
     20_000,
   )
@@ -496,6 +499,9 @@ describe.skipIf(!IS_MAC || !HAS_ZIP || !HAS_UNZIP || !HAS_SHASUM)('updater-scrip
 
       // 正式位置零接触（G1 结构不变量：S4 前 $APP 完整旧版）
       expect(existsSync(path.join(vars.appBundle, 'OLD_MARKER')), '旧 .app 必须完好').toBe(true)
+      // 批次 5 互斥（验收①运行侧）：脚本运行中 pid 文件存在（新实例据此 defer 清理）
+      const pidFile = path.join(tmpDir, 'updater.pid')
+      expect(existsSync(pidFile), '运行中应有 pid 文件').toBe(true)
       // S1 中断后果（状态机表）：残留 staging，正式位置无损
       expect(existsSync(stagingDir), 'staging 应残留（下次启动清理）').toBe(true)
       expect(existsSync(`${vars.appBundle}.new`), '.new 不应产生').toBe(false)

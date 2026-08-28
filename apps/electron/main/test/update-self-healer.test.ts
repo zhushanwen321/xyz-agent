@@ -421,3 +421,76 @@ describe('cleanupCompletedUpdate', () => {
     rmSync(outsideDir, { recursive: true, force: true })
   })
 })
+
+// ════════════════════════════════════════════════════════════════
+// 批次 5（u5a）：updater.pid 互斥检查方（§3.7.1）
+// ════════════════════════════════════════════════════════════════
+describe('批次 5: updater.pid 互斥（§3.7.1 检查方）', () => {
+  const updateDir2 = path.join(TMP_DATA_DIR, 'update')
+  const pidFile = path.join(updateDir2, 'updater.pid')
+  const resultFile = path.join(updateDir2, 'update-result.json')
+  let originalPlatform: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    vi.clearAllMocks()
+    mkdirSync(updateDir2, { recursive: true })
+  })
+
+  afterEach(() => {
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
+    if (existsSync(updateDir2)) rmSync(updateDir2, { recursive: true, force: true })
+  })
+
+  function writeReplacingResult(): void {
+    // 齐备的「应触发回滚」现场：replacing + .old 备份存在
+    writeFileSync(resultFile, JSON.stringify({ status: 'replacing', version: '0.9.1' }))
+    mkdirSync(path.join(updateDir2, 'TaiJi.app.old'), { recursive: true })
+  }
+
+  it('验收②：pid 存活（win 平台仅存活检查）→ defer：不回滚 + 日志 updater in flight', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    // pid = 测试进程自身（必存活）
+    writeFileSync(pidFile, String(process.pid))
+    writeReplacingResult()
+
+    const mod = await loadModule()
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const rolledBack = await mod.maybeRollbackInterruptedUpdate()
+    logSpy.mockRestore()
+
+    // defer：返回 false（未回滚）且 replacing result 原样保留（未被改写为 rolled-back）
+    expect(rolledBack).toBe(false)
+    expect(readFileSync(resultFile, 'utf-8')).toContain('replacing')
+    expect(existsSync(path.join(updateDir2, 'TaiJi.app.old'))).toBe(true)
+    // pid 文件保留（updater 还在跑，由它自己退出时清理）
+    expect(existsSync(pidFile)).toBe(true)
+  })
+
+  it('死 pid → 自愈清理残留 pid 文件并正常走回滚检查（不 defer）', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    writeFileSync(pidFile, '999999999') // 超出 pid 范围，必不存在
+    // 无 result 文件：正常检查路径直接 false（关键是 pid 残留被清理）
+
+    const mod = await loadModule()
+    const rolledBack = await mod.maybeRollbackInterruptedUpdate()
+
+    expect(rolledBack).toBe(false)
+    expect(existsSync(pidFile), '死 pid 残留应被自愈清理').toBe(false)
+  })
+
+  it('mac 进程名加固：pid 存活但 comm 不含 updater（PID 复用）→ 视为不存活，正常清理', async () => {
+    // 本机 darwin 跑：process.pid 的 comm = node/vitest，不含 updater → 加固判定不复用
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    writeFileSync(pidFile, String(process.pid))
+    writeReplacingResult()
+
+    const mod = await loadModule()
+    const rolledBack = await mod.maybeRollbackInterruptedUpdate()
+
+    // 非 updater 进程占位 → 不 defer，正常走回滚检查（replacing + .old 存在会真回滚，
+    // 这里 .old 未创建 → 走 no-op 分支返回 false，但 pid 残留被清理）
+    expect(rolledBack).toBe(false)
+    expect(existsSync(pidFile), 'PID 复用 → 残留 pid 应被清理').toBe(false)
+  })
+})

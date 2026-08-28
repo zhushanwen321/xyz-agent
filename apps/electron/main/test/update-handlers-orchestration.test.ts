@@ -6,9 +6,8 @@
  *        - preDownload=true → downloadUpdate 被异步触发 + pending 标志已写
  *        - preDownload=false → downloadUpdate 不被触发
  *        - preDownloading=true → 不重复下载（互斥）
- *   S#8  update:perform 快路径（readPreloadedUpdate 命中 → 跳过 performUpdate 直接 installUpdate）：
- *        - readPreloadedUpdate 返回有效路径 → installUpdate 被调、performUpdate 不被调
- *        - readPreloadedUpdate 返回 null → 降级走 performUpdate
+ *   S#8  update:perform 快路径：已随批次 3 m17 删除（update:perform handler 不存在）；
+ *        两阶段 update:download/update:install 的编排覆盖见下方 T4 describe
  *   S#9  update:getPending / update:getSettings / update:setSettings：
  *        - getSettings 返回默认值、setSettings 写入后 getSettings 读回
  *        - setSettings 传非 boolean preDownload 抛 'Invalid settings'
@@ -22,7 +21,7 @@
  *     顶层 path 预绑定对 XYZ_AGENT_DATA_DIR 时序的依赖；本文件不读真实 fs，纯 mock 交互断言）
  *   - proxy-config：保留真实模块（testProxy/getProxyConfig 不在本批用例；setProxyConfig 校验
  *     用例属旧文件）。本文件不触发代理 IPC，故不 mock，避免影响类型解析。
- *   - DI orchestrator：每个用例注入完整的 mock IUpdateOrchestrator（performUpdate/downloadUpdate/installUpdate）
+ *   - DI orchestrator：每个用例注入完整的 mock IUpdateOrchestrator（resolveByVersion/downloadUpdate/installUpdate）
  *
  * 运行：cd apps/electron/main && npx vitest run test/update-handlers-orchestration.test.ts
  */
@@ -116,10 +115,6 @@ import type { Mock } from 'vitest'
 
 /** mock IUpdateOrchestrator（保留 .mock 断言能力；每方法为 Mock 而非具体函数） */
 interface MockOrchestrator {
-  performUpdate: Mock<
-    (release: LatestReleaseInfo, opts: { onProgress: (stage: string, percent: number) => void }) =>
-      Promise<{ triggerRestart: boolean }>
-  >
   downloadUpdate: Mock<(release: LatestReleaseInfo, onProgress?: (percent: number) => void) =>
     Promise<{ filePath: string }>>
   installUpdate: Mock<
@@ -138,12 +133,11 @@ interface MockOrchestrator {
 }
 
 /**
- * 构造完整 mock IUpdateOrchestrator（performUpdate/downloadUpdate/installUpdate 全桩）。
+ * 构造完整 mock IUpdateOrchestrator（resolveByVersion/downloadUpdate/installUpdate 全桩）。
  * overrides 逐字段替换，保留其余字段的默认 mock（.mock 断言仍可用）。
  */
 function mockOrchestrator(overrides: Partial<MockOrchestrator> = {}): MockOrchestrator {
   return {
-    performUpdate: vi.fn(async () => ({ triggerRestart: false })),
     downloadUpdate: vi.fn(async () => ({ filePath: '/tmp/preloaded.zip' })),
     installUpdate: vi.fn(async () => ({ triggerRestart: false })),
     // u3a 契约版本号化：默认解析回 FIXTURE（权威 latest 与请求一致分支）
@@ -288,7 +282,6 @@ describe('S#7 update-handlers: preload orchestration in update:check', () => {
     expect(filePathArg).toBe('/tmp/preloaded.zip')
     // 快路径不调 installUpdate（预下载只下载不替换）
     expect(orch.installUpdate).not.toHaveBeenCalled()
-    expect(orch.performUpdate).not.toHaveBeenCalled()
   })
 
   it('preDownload=false → check 后写 pending 标志，但 downloadUpdate 不被触发', async () => {

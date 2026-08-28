@@ -34,6 +34,12 @@
  * 不做有损转义。注入值来自 main 侧 process.execPath / UPDATE_DIR 推导（非外部
  * 输入），正常不会命中；命中 = 路径异常，拒绝升级比静默坏安全。
  *
+ * [批次 5 互斥（§3.7.1）win 侧偏差登记]：设计要求 wrapper 启动时写 updater.pid，
+ * 但 cmd 无内建变量可廉价自取进程 PID（PowerShell $PID 是其自身进程而非 wrapper），
+ * 且写入方的另一可选落点 platform-updater.ts（spawn 后写 child.pid）不在本单元领地
+ * ——win 侧 defer 检查暂缺（行为不劣于现状）；写入方适配由触及 platform-updater.ts
+ * 的后续单元补齐。mac/linux 侧完整实现（bash $$ 自写 + trap 清理）见 updater-script.ts。
+ *
  * 占位符用 {{...}} 双花括号（与 mac/linux bash 生成器一致）。
  *
  * 依赖方向：win-updater-cmd → 无外部依赖（纯字符串拼接）

@@ -803,7 +803,11 @@ async function downloadMultiPart(
  */
 function saveResumeState(state: IResumeState): void {
   try {
-    writeFileSync(RESUME_STATE_FILE, JSON.stringify(state, null, 2)) // eslint-disable-line no-magic-numbers -- JSON 缩进 2 空格
+    // 原子写（批次 5 m12 / §3.7.2）：先写 .tmp 再 rename，避免读到半截 JSON
+    // （半截 state 会被 loadResumeState 的 parse 失败分支吞掉，丢掉续传进度）
+    const tmpPath = `${RESUME_STATE_FILE}.tmp`
+    writeFileSync(tmpPath, JSON.stringify(state, null, 2)) // eslint-disable-line no-magic-numbers -- JSON 缩进 2 空格
+    renameSync(tmpPath, RESUME_STATE_FILE)
   } catch (err) {
     // best-effort：resume state 只是续传优化，写入失败不应中断下载，下次重头下即可
     console.warn('[download] save resume state failed:', err)

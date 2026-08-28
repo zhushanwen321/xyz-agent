@@ -15,7 +15,7 @@
  * 运行：cd apps/electron/main && npx vitest run test/orchestrator.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
@@ -90,39 +90,31 @@ describe('W3: orchestrator (W3TC8-9)', () => {
   }
 
   // ── W3TC8：mac 完整流程 ────────────────────────────────────────
-  it('W3TC8: mac detached-script 流程 → triggerRestart=true + onProgress 全 stage 推送', async () => {
+  it('W3TC8: mac detached-script 流程 → triggerRestart=true + replacing 进度 + result 落盘无 .tmp 残留', async () => {
     setPlatform('darwin')
-    // downloadAsset 桩：返回固定 filePath
-    downloadMocks.downloadAsset.mockImplementation(async (_asset, onProgress) => {
-      onProgress?.(50)
-      onProgress?.(100)
-      return { filePath: '/tmp/downloaded.zip' }
-    })
     // platform-updater 桩：返回 detached-script
     const detachedRef: UpdateScriptRef = { kind: 'detached-script', scriptPath: '/tmp/updater.sh' }
     platformMocks.createPlatformUpdater.mockReturnValue({
       prepareUpdate: vi.fn(() => detachedRef),
     })
 
-    const { performUpdate } = await loadModule()
+    // 批次 3 删 update:perform（m17）后组合函数 performUpdate 移除：下载阶段由
+    // downloadUpdate 独立承载，安装阶段入口 = installUpdate
+    const { installUpdate } = await loadModule()
     const onProgress = vi.fn()
-    const result = await performUpdate(MAC_RELEASE, { onProgress })
+    const result = await installUpdate(MAC_RELEASE, '/tmp/downloaded.zip', onProgress)
 
     // detached-script → triggerRestart=true（mac/linux 已在 prepareUpdate 内 spawn）
     expect(result).toEqual({ triggerRestart: true })
-    // downloadAsset 被调，传入了 mac asset
-    expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(1)
-    const downloadArg = downloadMocks.downloadAsset.mock.calls[0][0]
-    expect(downloadArg.name).toBe('mac.zip')
-    // onProgress 全 stage 推送：downloading（含 downloadAsset 推的 50/100）+ verifying + replacing
+    // onProgress 推 replacing 阶段
     const stages = onProgress.mock.calls.map((c) => c[0])
-    expect(stages).toContain('downloading')
-    expect(stages).toContain('verifying')
     expect(stages).toContain('replacing')
-    // verifying 推 100
-    expect(onProgress).toHaveBeenCalledWith('verifying', 100)
-    // update-result.json status='replacing' 已写
-    expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'update-result.json'))).toBe(true)
+    expect(onProgress).toHaveBeenCalledWith('replacing', 100)
+    // update-result.json status='replacing' 已写（批次 5 原子写）：终态正确且无 .tmp 残留
+    const resultFile = path.join(TMP_DATA_DIR, 'update', 'update-result.json')
+    expect(existsSync(resultFile)).toBe(true)
+    expect(existsSync(`${resultFile}.tmp`)).toBe(false)
+    expect(JSON.parse(readFileSync(resultFile, 'utf-8')).status).toBe('replacing')
   })
 
   // ── W3TC8b：win 统一 detached-script 语义（批次 2：wrapper 在 prepareUpdate 内 spawn）──
@@ -145,22 +137,20 @@ describe('W3: orchestrator (W3TC8-9)', () => {
       prepareUpdate: vi.fn(() => detachedRef),
     })
 
-    const { performUpdate } = await loadModule()
-    const result = await performUpdate(winRelease, { onProgress: vi.fn() })
+    const { installUpdate } = await loadModule()
+    const result = await installUpdate(winRelease, '/tmp/setup.exe')
 
     // detached-script → triggerRestart=true（与 mac/linux 同分支）
     expect(result).toEqual({ triggerRestart: true })
-    // downloadAsset 传入了 win asset
-    const downloadArg = downloadMocks.downloadAsset.mock.calls[0][0]
-    expect(downloadArg.name).toBe('setup.exe')
+    // installUpdate 不走下载阶段（downloadAsset 不被调）
+    expect(downloadMocks.downloadAsset).not.toHaveBeenCalled()
     // orchestrator 不再延迟 spawn NSIS 安装器（分支与延迟魔数已删）：全程零 spawn
     expect(childProcessMocks.spawn).not.toHaveBeenCalled()
   })
 
   // ── W3TC9：linux deb 抛 UpdateUnsupportedError ─────────────────
-  it('W3TC9: prepareUpdate 抛 UpdateUnsupportedError → orchestrator 透传（含 fallbackUrl）', async () => {
+  it('W3TC9: prepareUpdate 抛 UpdateUnsupportedError → orchestrator 透传（含 fallbackUrl，installUpdate 路径）', async () => {
     setPlatform('linux')
-    downloadMocks.downloadAsset.mockResolvedValue({ filePath: '/tmp/app.AppImage' })
     // platform-updater 桩：prepareUpdate 抛 UpdateUnsupportedError（模拟 deb 包 APPIMAGE 缺失）
     const { UpdateUnsupportedError } = await import('../update/types.js')
     const unsupportedErr = new UpdateUnsupportedError(
@@ -171,23 +161,24 @@ describe('W3: orchestrator (W3TC8-9)', () => {
       prepareUpdate: vi.fn(() => { throw unsupportedErr }),
     })
 
-    const { performUpdate } = await loadModule()
+    const { installUpdate } = await loadModule()
     await expect(
-      performUpdate(MAC_RELEASE, { onProgress: vi.fn() }),
+      installUpdate(MAC_RELEASE, '/tmp/app.AppImage', vi.fn()),
     ).rejects.toThrow(/deb package does not support self-update/)
 
     // 错误对象携带 fallbackUrl
     await expect(
-      performUpdate(MAC_RELEASE, { onProgress: vi.fn() }).catch((e) => { throw e }),
+      installUpdate(MAC_RELEASE, '/tmp/app.AppImage', vi.fn()).catch((e) => { throw e }),
     ).rejects.toMatchObject({ fallbackUrl: MAC_RELEASE.htmlUrl })
   })
 
   // ── W3TC9b：无 platform asset → 抛 UpdateError ─────────────────
-  it('W3TC9b: 当前平台无 asset（如 unknown 平台）→ 抛 UpdateError', async () => {
+  it('W3TC9b: 当前平台无 asset（如 unknown 平台）→ downloadUpdate 抛 UpdateError', async () => {
     setPlatform('freebsd')
-    const { performUpdate } = await loadModule()
+    // performUpdate 组合函数已随批次 3 删除：无 asset 守卫在 downloadUpdate 内（pickPlatformAsset）
+    const { downloadUpdate } = await loadModule()
     await expect(
-      performUpdate(MAC_RELEASE, { onProgress: vi.fn() }),
+      downloadUpdate(MAC_RELEASE),
     ).rejects.toThrow(/no asset for platform freebsd/)
     // downloadAsset 不应被调
     expect(downloadMocks.downloadAsset).not.toHaveBeenCalled()

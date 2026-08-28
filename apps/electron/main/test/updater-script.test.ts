@@ -20,7 +20,6 @@ import { describe, it, expect } from 'vitest'
 import {
   buildUpdaterScript,
   buildLinuxUpdaterScript,
-  buildWinInstallerArgs,
 } from '../update/updater-script.js'
 
 /** 标准变量 fixture（parentPid 用不存在的 PID——9999999 超过 macOS/linux pid_max） */
@@ -195,13 +194,26 @@ describe('u1a: linux 脚本模板（PID 等待 + 只读检测 + 原子 result，
   })
 })
 
-describe('u1a: buildWinInstallerArgs（win 参数生成，u2a 前 keep）', () => {
-  it('返回 /S + --updated + /D=<installDir>', () => {
-    const args = buildWinInstallerArgs('C:\\Users\\test\\AppData\\Local\\xyz-agent')
-    expect(args).toEqual([
-      '/S',
-      '--updated',
-      '/D=C:\\Users\\test\\AppData\\Local\\xyz-agent',
-    ])
+describe('u5a: 跨进程互斥 pid 文件（批次 5 §3.7.1）', () => {
+  it('mac/linux 脚本启动即写 updater.pid（结果路径同目录）+ trap 退出清理', () => {
+    const mac = buildUpdaterScript({ ...MAC_VARS })
+    const linux = buildLinuxUpdaterScript({ ...LINUX_VARS })
+
+    // pid 文件路径：由 resultPath 同目录推导（零新增注入点）
+    expect(mac, 'mac 应写 pid 文件').toContain(
+      `PID_FILE="$(dirname "${MAC_VARS.resultPath}")/updater.pid"`,
+    )
+    expect(linux, 'linux 应写 pid 文件').toContain(
+      `PID_FILE="$(dirname "${LINUX_VARS.resultPath}")/updater.pid"`,
+    )
+    // 写自身 pid + trap EXIT 清理（覆盖成功/失败/意外错误退出路径）
+    expect(mac, 'mac 应写自身 pid').toMatch(/echo \$\$ > "\$PID_FILE"/)
+    expect(linux, 'linux 应写自身 pid').toMatch(/echo \$\$ > "\$PID_FILE"/)
+    expect(mac, 'mac 应 trap EXIT 清理 pid').toContain(
+      "trap 'rm -f \"$PID_FILE\"' EXIT",
+    )
+    expect(linux, 'linux 应 trap EXIT 清理 pid').toContain(
+      "trap 'rm -f \"$PID_FILE\"' EXIT",
+    )
   })
 })

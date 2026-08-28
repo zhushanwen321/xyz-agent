@@ -25,7 +25,7 @@
  *
  * 依赖方向：orchestrator → download-asset + platform-updater + proxy-config + constants + types + @xyz-agent/shared
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import type { LatestReleaseInfo, UpdateStage } from '@xyz-agent/shared'
 import { downloadAsset } from './download-asset.js'
 import { createPlatformUpdater } from './platform-updater.js'
@@ -55,21 +55,6 @@ interface DownloadedFile {
  * 经 mock DI 接口替换，而非靠 mock 模块本身（见 S#11 arch-boundary）。
  */
 export interface IUpdateOrchestrator {
-  /**
-   * 执行完整升级流程（下载 → 校验 → 替换 → 触发重启）。
-   *
-   * 内部组合 {@link IUpdateOrchestrator.downloadUpdate} + {@link IUpdateOrchestrator.installUpdate}。
-   *
-   * @param release release-checker 返回的最新版本信息
-   * @param opts.onProgress 进度回调（stage + percent 0-100）
-   * @returns triggerRestart=true 表示需要重启（handler 调 app.quit）
-   * @throws UpdateError/UpdateUnsupportedError 升级失败
-   */
-  performUpdate(
-    release: LatestReleaseInfo,
-    opts: { onProgress: UpdateProgressCallback },
-  ): Promise<{ triggerRestart: boolean }>
-
   /**
    * 下载阶段：选 asset + 下载 + sha256 校验。
    *
@@ -343,34 +328,6 @@ export async function installUpdate(
 }
 
 /**
- * 执行完整升级流程（下载 → 校验 → 替换 → 重启）。
- *
- * downloadUpdate + installUpdate 的组合，保持原有 onProgress 语义（downloading/verifying/replacing
- * 全阶段进度），供 update:perform handler 调用。预下载快路径（handler 内）直接调 installUpdate
- * 跳过下载阶段。
- *
- * 纯逻辑实现（不依赖 electron app），orchestrator 单例委托到此函数。
- */
-export async function performUpdate(
-  release: LatestReleaseInfo,
-  opts: { onProgress: UpdateProgressCallback },
-): Promise<{ triggerRestart: boolean }> {
-  // 提前检查 updating 锁：避免下载完成后才发现安装阶段被占用（下载白做）
-  if (updating) {
-    throw new UpdateError('update already in progress', 'downloading')
-  }
-  // 下载阶段（downloadUpdate 内部有独立 downloading 锁）
-  opts.onProgress('downloading', 0)
-  const { filePath } = await downloadUpdate(release, (percent) =>
-    opts.onProgress('downloading', percent),
-  )
-  opts.onProgress('verifying', PROGRESS_COMPLETE)
-
-  // 安装阶段（installUpdate 内部持有 updating 锁）
-  return await installUpdate(release, filePath, opts.onProgress)
-}
-
-/**
  * 根据平台升级器返回的 UpdateScriptRef 决定后续动作。
  *
  * - detached-script：三平台统一语义——替换脚本已在 prepareUpdate 内 spawn detached
@@ -405,20 +362,24 @@ function handleScriptRef(ref: UpdateScriptRef): { triggerRestart: boolean } {
  */
 function writeUpdateResult(status: string, version: string, error?: string): void {
   const data = { status, version, at: new Date().toISOString(), error }
+  // 原子写（批次 5 m12 / §3.7.2）：先写 .tmp 再 renameSync，读方（self-healer）不会
+  // 读到半截 JSON——半截 replacing 会被 corrupt-json 分支误判触发回滚。
+  const tmpPath = `${UPDATE_RESULT_FILE}.tmp`
   // eslint-disable-next-line no-magic-numbers -- 2 = JSON 缩进空格数（人类可读）
-  writeFileSync(UPDATE_RESULT_FILE, JSON.stringify(data, null, 2))
+  writeFileSync(tmpPath, JSON.stringify(data, null, 2))
+  // 同目录 rename：同卷原子替换（目标已存在时覆盖）
+  renameSync(tmpPath, UPDATE_RESULT_FILE)
 }
 
 /**
  * 升级编排器单例（注入 IpcHandlerDeps）。
  *
- * 实现 {@link IUpdateOrchestrator} 全部 3 个方法：performUpdate / downloadUpdate / installUpdate。
+ * 实现 {@link IUpdateOrchestrator} 全部方法：downloadUpdate / resolveByVersion / installUpdate。
  * handler 经 deps.updateOrchestrator.* 调用——快路径与预下载也走 DI，使全部升级能力可经
  * mock 接口替换测试（见 S#11 arch-boundary：消除「DI 契约只含 performUpdate，新能力绕过 DI」的分裂）。
  */
 export const updateOrchestrator: IUpdateOrchestrator = {
-  performUpdate,
   downloadUpdate,
-  installUpdate,
   resolveByVersion,
+  installUpdate,
 }

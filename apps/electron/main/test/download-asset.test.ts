@@ -17,6 +17,32 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'node
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+// ── 批次 5（u5a）原子写序列断言基建 ──────────────────────────────
+// 包装 writeFileSync/renameSync 透传真实现并记录调用参数，供「resume-state
+// tmp 写入后 rename」序列断言（§3.7.2）。其余 fs 函数原样透传。
+// 注意：原函数必须在 vi.mock 工厂闭包内捕获——若经测试文件顶层 import 别名
+// 调用，该别名本身已指向 mock（vi.fn），会无限递归（Maximum call stack size exceeded）。
+const fsSpy = vi.hoisted(() => ({
+  writeCalls: [] as Array<{ path: string; data: string }>,
+  renameCalls: [] as Array<{ from: string; to: string }>,
+}))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  const realWriteFileSync = actual.writeFileSync
+  const realRenameSync = actual.renameSync
+  return {
+    ...actual,
+    writeFileSync: vi.fn((...a: Parameters<typeof actual.writeFileSync>) => {
+      fsSpy.writeCalls.push({ path: String(a[0]), data: String(a[1]) })
+      return realWriteFileSync(...a)
+    }),
+    renameSync: vi.fn((...a: Parameters<typeof actual.renameSync>) => {
+      fsSpy.renameCalls.push({ from: String(a[0]), to: String(a[1]) })
+      return realRenameSync(...a)
+    }),
+  }
+})
+
 // ── 必须在 import 之前把 UPDATE_DIR 重定向到 tmp ──────────────────
 // constants.ts 在 import 时计算 UPDATE_DIR = path.join(getDataDir(), 'update')，
 // 而 getDataDir 读 XYZ_AGENT_DATA_DIR。此赋值必须在 import constants（间接被 download-asset import）
@@ -486,5 +512,67 @@ describe('RM3: multipart Range violation → fallback to single-stream', () => {
 
     expectIntactFile(result.filePath)
     expectNoLeftovers('rm3-body-truncated.zip')
+  })
+})
+
+// ════════════════════════════════════════════════════════════════
+// 批次 5（u5a）：resume-state 原子写序列（§3.7.2 m12）
+// 断言 saveResumeState 走「写 .tmp → renameSync 到终态」序列而非直写。
+// ════════════════════════════════════════════════════════════════
+describe('批次 5: resume-state 原子写序列（§3.7.2）', () => {
+  let originalFetch: typeof globalThis.fetch
+  let downloadAsset: typeof import('../update/download-asset.js')['downloadAsset']
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch
+    fsSpy.writeCalls.length = 0
+    fsSpy.renameCalls.length = 0
+    const mod = await loadModule()
+    downloadAsset = mod.downloadAsset
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    vi.restoreAllMocks()
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+  })
+
+  it('多段下载过程中 saveResumeState → 先写 resume-state.json.tmp 再 renameSync 到终态（验收③）', { timeout: 60_000 }, async () => {
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    // 单段大文件下载（服务器不支持 Range）→ data 流式回调触发 saveResumeState
+    // （多段成功路径不写 resume-state，分段写入只发生在单段流式下载）
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      const method = (init?.method as string | undefined) ?? 'GET'
+      if (method === 'HEAD') {
+        return new Response(null, {
+          status: 200,
+          headers: { 'Content-Length': String(MULTI_PART_CONTENT.length), 'Accept-Ranges': 'none' },
+        })
+      }
+      return makeContentResponse(MULTI_PART_CONTENT)
+    }) as unknown as typeof globalThis.fetch
+
+    const result = await downloadAsset({
+      name: 'multipart-atomic.zip',
+      downloadUrl: 'https://example.com/multipart-atomic.zip',
+      size: MULTI_PART_CONTENT.length,
+      sha256: expectedSha,
+    })
+
+    expect(result.filePath).toMatch(/multipart-atomic\.zip$/)
+
+    // 序列断言：resume-state.json.tmp 的 writeFileSync 先于 renameSync(→resume-state.json)
+    const tmpWrite = fsSpy.writeCalls.find((c) => c.path.endsWith('resume-state.json.tmp'))
+    const rename = fsSpy.renameCalls.find((c) => c.to.endsWith('resume-state.json'))
+    expect(tmpWrite, '应先写 resume-state.json.tmp').toBeDefined()
+    expect(rename, '应 renameSync 到 resume-state.json 终态').toBeDefined()
+    const writeIdx = fsSpy.writeCalls.indexOf(tmpWrite!)
+    const renameIdx = fsSpy.renameCalls.indexOf(rename!)
+    expect(rename).toBeDefined()
+    expect(rename!.from).toBe(tmpWrite!.path)
+    // 下载成功后 clearResumeState 清掉终态文件（且 .tmp 不残留）
+    expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'resume-state.json'))).toBe(false)
+    expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'resume-state.json.tmp'))).toBe(false)
   })
 })
