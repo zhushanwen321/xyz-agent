@@ -22,8 +22,6 @@ const MB = 1024 * 1024
 // eslint-disable-next-line no-magic-numbers
 const DEFAULT_MAX_SESSION_DATA_BYTES = 10 * MB
 const FLUSH_DEBOUNCE_MS = 500
-/** 全量 flush 周期：补充 per-write debounce，兜底未触发 debounce 的脏分区。 */
-const FLUSH_INTERVAL_MS = 5_000
 /** H1: session-data 持久化子目录名（configDir 下）。提常量消除 4 处魔法串重复。 */
 const SESSION_DATA_DIRNAME = 'session-data'
 /** [SEC-A5] 防御拒绝 message 中 sessionId 的回显截断长度（防超长输入撑爆日志） */
@@ -32,8 +30,6 @@ const SESSION_ID_PREVIEW_CHARS = 64
 export class SessionDataStore {
   /** write-back 缓存：分区键 = sessionId，内键 = key，值 = unknown */
   private readonly cache: WriteBackCache<string, string, unknown>
-  /** 定时 flush 计时器（全量周期 flush，补充 per-write debounce） */
-  private flushTimer: ReturnType<typeof setInterval> | null = null
   /** 配置根目录（session-data 持久化用），由组合根注入，不再直连 infra。 */
   private readonly configDir: string
 
@@ -83,27 +79,6 @@ export class SessionDataStore {
 
   // ── 生命周期 ─────────────────────────────────────────────
 
-  /** 启动定时 flush（全量周期 flush，补充 per-write debounce） */
-  startFlushTimer(): void {
-    if (this.flushTimer) return
-    this.flushTimer = setInterval(() => {
-      this.cache.flushAll()
-    }, FLUSH_INTERVAL_MS)
-  }
-
-  /** 停止定时 flush */
-  stopFlushTimer(): void {
-    if (this.flushTimer) {
-      clearInterval(this.flushTimer)
-      this.flushTimer = null
-    }
-  }
-
-  /** Test helper: check if flush timer is active */
-  isFlushTimerRunning(): boolean {
-    return this.flushTimer !== null
-  }
-
   /** 将所有 dirty 数据批量 flush */
   flushAll(): void {
     this.cache.flushAll()
@@ -148,9 +123,8 @@ export class SessionDataStore {
     }
   }
 
-  /** 停掉所有定时器（shutdown 用）。 */
+  /** shutdown 清理（落盘保障 = per-write debounce 500ms + 退出前 flushAll）。 */
   dispose(): void {
-    this.stopFlushTimer()
     this.cache.dispose()
   }
 

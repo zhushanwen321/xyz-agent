@@ -151,6 +151,19 @@ event handler（如 `tool_execution_end`）中注入消息**必须用 `pi.sendUs
 
 **防循环**：注入的 steer 消息可能触发新的同类事件，hook 逻辑必须幂等或去重，否则 hook → 消息 → 新事件 → hook 无限循环。
 
+**可靠性分级（结果语义 vs 交互注入）[MANDATORY]**：event handler 里发消息必须先分清两类语义——
+
+- **结果语义通知**（subagent 完成、scheduler 触发、未来 webhook 等终态/结果类）：**必须走确认式送达**——持久账本 + 幂等键通道（`@zhushanwen/pi-session-delivery` 账本 / subagent-workflow 的 notify-ledger 设施，at-least-once）；**禁止**依赖 steer/nextTurn/followUp 内存队列的 at-most-once 投递（消费窗极窄，基线事故十余次完成仅送达 1 次）。约束登记 [docs/constraints.json](../constraints.json) C-ext-19，机器守卫 `check_subagent_channels.py`（pre-commit + CI）。
+- **交互式注入**（非结果语义：实时 steer 用户意图、followUp 续推）：上表 deliverAs 两模式照常适用，不在禁令内——禁令对象是「结果语义的一次性通知」，不是交互式 steer。
+
+## 模型引用解析 [MANDATORY]
+
+扩展域内任何「字符串 → 模型身份」的转换（用户输入、配置、workflow 参数里的模型名），只允许经 `shared/model-ref.ts` 的 `assertCanonicalModelRef` 全等裁决（subagent-workflow 内路径；其余扩展复用该模块或同等全等裁决实现）——**禁止裸串拼 `--model`、禁止本地 find/includes 式模糊匹配**。
+
+- **原因**：pi CLI 的 `--model` 是 pattern 非精确 ID（toLowerCase 相等 → canonical 双命中判歧义作废 → contains 模糊 → localeCompare 取最大，PS-01；机器登记 [docs/pi-semantics.json](../pi-semantics.json)）——「扩展层校验通过」不代表「子进程按此名执行」，models-store 刷新引入大小写家族条目后被静默换模 429（2026-08-27 事故 A）
+- **守卫**：`check_subagent_channels.py` 拦截白名单外的 `"--model"` 字面量（pre-commit + CI，行级豁免须给职责定性注释）；全等裁决不通过时 start 同步期拒单并给纠错候选
+- **约束登记**：[docs/constraints.json](../constraints.json) C-ext-19；能力档位同理由 C-pi-12 禁本地推断（只消费注册表下发的 supportedLevels）
+
 ## 扩展安装红线 [强制]
 
 **所有扩展必须通过 npm 包（`pi install`）加载，禁止通过本地目录（`~/.pi/agent/extensions/`）加载，dev 环境测试除外。**
@@ -263,6 +276,14 @@ event handler（如 `tool_execution_end`）中注入消息**必须用 `pi.sendUs
 | **optional** | `"optional"` | 功能增强，缺失时降级运行 | 在 `peerDependencies` + `peerDependenciesMeta.optional: true` 中声明 |
 
 **校验**：`npx ajv-cli validate -s extension-dependencies.schema.json -d extension-dependencies.json`
+
+### Peer 版本联动：SW 精确依赖 pi-structured-output [强制]
+
+`@zhushanwen/pi-subagent-workflow`（SW）对 `@zhushanwen/pi-structured-output`（SO）的 peer 依赖是**精确版本**（开发态 `workspace:*`，`pnpm publish` 时解析为无范围的精确版本号，如 `5.0.2`）——不是 `^` 范围。
+
+**因此 SO 单独 bump 必须同步重发 SW**：npm 7+ 默认自动安装 peerDependencies 并严格解析——SO 发了新版本而 SW 未重发时，用户环境装新 SO + 旧 SW 会因旧 SW 的 peer 声明仍锁旧精确版本而报 ERESOLVE（装不上/需 --legacy-peer-deps 强装）。两包语义上本就同进退：`PI_WORKFLOW_SCHEMA` env 隐式契约 + 256KiB 上限由跨包契约测试锁字节相等（[structured-output-redesign.md](../design/structured-output-redesign.md) §7 补记 C），一端演进而另一端不跟即静默断桥。
+
+**一般化规则**：凡 peerDependencies 引用兄弟 extension 包（而非 `@earendil-works/pi-*` 上游）且发布态为精确版本的，被依赖包任何 bump 都必须同 PR/同批重发依赖包；只 bump 一端时 changeset 必须显式说明另一端为何可以不跟（如确无契约面变更）。
 
 详见：[pi-ext-019](./adr/pi-ext-019-structured-output-extension.md)
 

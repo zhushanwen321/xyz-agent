@@ -20,6 +20,7 @@ interface DepsSpies {
   setPendingModel: Spy
   switchModel: Spy
   setThinkingLevel: Spy
+  getSupportedLevels: Spy
 }
 
 function makeDeps(opts: {
@@ -27,11 +28,14 @@ function makeDeps(opts: {
   currentModel?: string | null
   defaultModel?: string
   thinkingLevelMap?: Record<string, string | null>
+  /** U6 切源：档位可用集（缺省 undefined → 归一默认五档，与旧断言兼容） */
+  supportedLevels?: string[]
 } = {}): { deps: ModelThinkingDeps; spies: DepsSpies } {
   const getSessionState = vi.fn(() => opts.sessionState ?? null)
   const setPendingModel = vi.fn()
   const switchModel = vi.fn().mockResolvedValue(undefined)
   const setThinkingLevel = vi.fn().mockResolvedValue(undefined)
+  const getSupportedLevels = vi.fn(() => opts.supportedLevels)
   const deps: ModelThinkingDeps = {
     getSessionState,
     defaultModel: computed(() => opts.defaultModel ?? 'provider-D/model-D'),
@@ -40,8 +44,9 @@ function makeDeps(opts: {
     switchModel,
     setThinkingLevel,
     getThinkingLevelMap: vi.fn(() => opts.thinkingLevelMap),
+    getSupportedLevels,
   }
-  return { deps, spies: { getSessionState, setPendingModel, switchModel, setThinkingLevel } }
+  return { deps, spies: { getSessionState, setPendingModel, switchModel, setThinkingLevel, getSupportedLevels } }
 }
 
 /** 包裹 useComposerModelThinking 在 effectScope 内（用完 stop 清理 watch） */
@@ -84,6 +89,26 @@ describe('useComposerModelThinking · currentModelId 派生', () => {
       defaultModel: 'provider-D/model-D',
     })
     expect(result.currentModelId.value).toBe('provider-D/model-D')
+    scope.stop()
+  })
+})
+
+describe('useComposerModelThinking · currentSupportedLevels 派生（U6 切源）', () => {
+  it('读 deps.getSupportedLevels(currentModelId)，未下发时 undefined（归一默认五档）', () => {
+    const { result, scope, spies } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
+      supportedLevels: ['off', 'high'],
+    })
+    expect(result.currentSupportedLevels.value).toEqual(['off', 'high'])
+    expect(spies.getSupportedLevels).toHaveBeenCalledWith('provider-A/model-A')
+    scope.stop()
+  })
+
+  it('未注入值（undefined）→ currentSupportedLevels 为 undefined，下游归一默认五档', () => {
+    const { result, scope } = mount('s1', {
+      sessionState: { modelId: 'provider-A/model-A', thinkingLevel: 'high' },
+    })
+    expect(result.currentSupportedLevels.value).toBeUndefined()
     scope.stop()
   })
 })

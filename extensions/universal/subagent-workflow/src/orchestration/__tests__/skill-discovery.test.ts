@@ -155,3 +155,47 @@ describe("resolveSkillPath — 结果缓存（IF8/DM3）", () => {
     expect(existsSyncCalls.count).toBeGreaterThan(callsAfterFirst); // 重扫发生
   });
 });
+
+describe("resolveSkillPath — `..` 穿越守卫（三通道对称修复：skill 名是名字不是路径）", () => {
+  it("project 源：含 .. 逃逸 skills 根的名字 → not found（即使逃逸目标真实存在）", () => {
+    vi.spyOn(process, "cwd").mockReturnValue(projRoot);
+    // 逃逸目标真实存在：projRoot/.agents/skills/../../escape-target = projRoot/escape-target。
+    // 旧实现 path.resolve 吸收 .. 后 existsSync 命中 → 返回树外目录；守卫后必须 undefined。
+    mkdirp(join(projRoot, "escape-target"));
+
+    expect(resolveSkillPath("../../escape-target")).toBeUndefined();
+  });
+
+  it("user 源：含 .. 逃逸的名字 → not found（同样不受 existsSync 命中误导）", () => {
+    vi.spyOn(process, "cwd").mockReturnValue(projRoot);
+    // user skills 根 = homeRoot/.pi/agent/skills；../../escape-target → homeRoot/escape-target。
+    mkdirp(join(homeRoot, "escape-target"));
+
+    expect(resolveSkillPath("../../escape-target")).toBeUndefined();
+  });
+
+  it("npm 源：含 .. 逃逸包内 skills 根的名字 → not found", () => {
+    vi.spyOn(process, "cwd").mockReturnValue(projRoot);
+    // npm skills 根 = homeRoot/.pi/agent/npm/node_modules/pkg/skills；"../steal" 逃逸到 node_modules/<pkg>/steal。
+    mkdirp(join(homeRoot, ".pi/agent/npm/node_modules/pkg-a/steal"));
+
+    expect(resolveSkillPath("../steal")).toBeUndefined();
+  });
+
+  it("根内归一化不被误拒：sub/../real 解析后仍在 skills 根内，正常命中", () => {
+    vi.spyOn(process, "cwd").mockReturnValue(projRoot);
+    const real = join(projRoot, ".agents/skills", "real");
+    mkdirp(real);
+
+    // 守卫只拒逃逸，不拒归一化：root/sub/../real = root/real（根内）→ 命中。
+    expect(resolveSkillPath("sub/../real")).toBe(real);
+  });
+
+  it("绝对路径形式的 skill 名 → not found（名字不具备绝对寻址能力）", () => {
+    vi.spyOn(process, "cwd").mockReturnValue(projRoot);
+    mkdirp(join(projRoot, "outside-abs"));
+
+    // resolve(root, "/outside-abs") = /outside-abs —— 树外，拒。
+    expect(resolveSkillPath(join(projRoot, "outside-abs"))).toBeUndefined();
+  });
+});

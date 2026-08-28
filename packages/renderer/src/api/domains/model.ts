@@ -33,12 +33,18 @@ export async function listModels(): Promise<ModelInfo[]> {
   return reply.models
 }
 
-/** 切换当前 session 的模型（动作；确认由 model.switched push，后续消费） */
-export function switchModel(
+/**
+ * 切换当前 session 的模型（动作）。
+ * [U6/C-pi-13] 回执消费：reply（model.switched payload）回传 pi 生效值——runtime 侧
+ * switchModel 经 set→get_state 读回，pi pattern 引擎静默换模（事故 A 形态）时
+ * 生效值 ≠ 请求值；settings-message-handler 对无 '/' 形态（无活跃进程早退等）按
+ * 请求值回显兜底。调用方须以回执值写显示态，禁用请求值乐观写。
+ */
+export async function switchModel(
   sessionId: string,
   provider: ProviderId,
   modelId: string,
-): Promise<void> {
+): Promise<{ sessionId: string; provider: string; modelId: string }> {
   return command('model.switch', { sessionId, provider, modelId })
 }
 

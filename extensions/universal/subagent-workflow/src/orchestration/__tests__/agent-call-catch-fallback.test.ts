@@ -48,12 +48,6 @@ function makeRunningRun(runId: string): WorkflowRun {
     runtime: {
       controller,
       worker: { postMessage: vi.fn() },
-      gate: {
-        // 直接 await fn()：executeAgentCall 内 runner.run reject 会沿 withSlot → 外层 .catch
-        withSlot: vi.fn(async (fn: () => Promise<void>, _signal: AbortSignal) => {
-          await fn();
-        }),
-      },
     },
     transition: vi.fn(),
     replaceRuntime: vi.fn(),

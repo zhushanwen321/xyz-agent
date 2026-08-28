@@ -1,11 +1,12 @@
 // src/execution/__tests__/list-fields.test.ts
 //
-// [v4 A-6] recordToListItem 字段派生单测。
+// [v4 A-6] recordToListItem 字段派生单测；[U3 C-outcome] closedReason 改锚 outcome。
 //
-// 验证 list 输出的新增字段派生正确：
+// 验证 list 输出的字段派生正确：
 //   - parent：从 record.parentRecordId 派生（顶层 record → undefined）
 //   - resumable：从 isResumable 派生（running && 无活进程句柄）
-//   - closedReason：透传 record.closedReason（SP-4 级联关闭告知替代）
+//   - outcome：一等终态语义（projectOutcome 唯一出口）；closedReason 退出对外 JSON，
+//     存量/重建 record（无 outcome 字段）由 deriveOutcome(closedReason, error) 兜底
 //
 // Mock 策略：vi.mock lifecycle-predicates 的 isResumable，控制其返回值模拟「有/无
 // 活进程句柄」两种 running 子态。isResumable 真实逻辑（running && !hasLiveProcessHandle）
@@ -21,7 +22,7 @@ vi.mock("../../execution/lifecycle-predicates.ts", () => ({
 
 import { recordToListItem } from "../../interface/subagent-actions.ts";
 import { isResumable } from "../../execution/lifecycle-predicates.ts";
-import type { ClosedReason, SubagentRecord } from "../types.ts";
+import type { SubagentRecord } from "../types.ts";
 
 // ── SubagentRecord stub 工厂（最小合法 record） ──
 
@@ -51,7 +52,7 @@ function makeRecord(over: Partial<SubagentRecord> = {}): SubagentRecord {
 	};
 }
 
-describe("recordToListItem — parent/resumable/closedReason (v4 A-6)", () => {
+describe("recordToListItem — parent/resumable (v4 A-6)", () => {
 	// ═══ parent：从 record.parentRecordId 派生 ═══
 
 	it("parent：嵌套 record（parentRecordId='sa-A'）→ parent='sa-A'", () => {
@@ -84,26 +85,56 @@ describe("recordToListItem — parent/resumable/closedReason (v4 A-6)", () => {
 		expect(recordToListItem(rec).resumable).toBe(false);
 	});
 
-	// ═══ closedReason：透传 record.closedReason ═══
+	// ═══ outcome：一等终态披露（U3 C-outcome，projectOutcome 唯一出口）═══
 
-	it("closedReason：closed + closedReason='parent-fork' → 透传", () => {
+	it("outcome：closed + closedReason='parent-fork' + 合成 error → 'failed'（D6 显式取舍：父进程关闭未完成即失败，勿改 cancelled）", () => {
 		const rec = makeRecord({
 			status: "closed",
-			closedReason: "parent-fork" as ClosedReason,
+			closedReason: "parent-fork",
+			error: "closed due to parent-fork",
 		});
-		expect(recordToListItem(rec).closedReason).toBe("parent-fork");
+		expect(recordToListItem(rec).outcome).toBe("failed");
 	});
 
-	it("closedReason：closed + closedReason='parent-new' → 透传（SP-4 级联关闭场景）", () => {
+	it("outcome：closed + closedReason='cancelled' → 'cancelled'（取消优先于 error）", () => {
 		const rec = makeRecord({
 			status: "closed",
-			closedReason: "parent-new" as ClosedReason,
+			closedReason: "cancelled",
+			error: "aborted",
 		});
-		expect(recordToListItem(rec).closedReason).toBe("parent-new");
+		expect(recordToListItem(rec).outcome).toBe("cancelled");
 	});
 
-	it("closedReason：running record（无 closedReason）→ undefined", () => {
+	it("outcome：closed + gc 正常完成（存量形态，无 outcome 字段、无 error）→ 兑底派生 'completed'", () => {
+		const rec = makeRecord({ status: "closed", closedReason: "gc" });
+		expect(recordToListItem(rec).outcome).toBe("completed");
+	});
+
+	it("outcome：closed + gc + error（存量失败形态）→ 兑底派生 'failed'", () => {
+		const rec = makeRecord({ status: "closed", closedReason: "gc", error: "spawn EPIPE" });
+		expect(recordToListItem(rec).outcome).toBe("failed");
+	});
+
+	it("outcome：一等字段存在时直读透传（不重推导）", () => {
+		const rec = makeRecord({ status: "closed", outcome: "failed", closedReason: "gc" });
+		expect(recordToListItem(rec).outcome).toBe("failed");
+	});
+
+	it("outcome：running record → undefined（终态语义不适用活跃态）", () => {
 		const rec = makeRecord({ status: "running" });
-		expect(recordToListItem(rec).closedReason).toBeUndefined();
+		expect(recordToListItem(rec).outcome).toBeUndefined();
+	});
+
+	it("closedReason 退出对外 JSON：list item 不再携带（内部诊断字段），outcome 字段在位", () => {
+		const rec = makeRecord({ status: "closed", closedReason: "gc", error: "boom" });
+		const item = recordToListItem(rec);
+		expect("closedReason" in item).toBe(false);
+		const parsed = JSON.parse(JSON.stringify(item)) as Record<string, unknown>;
+		expect("closedReason" in parsed).toBe(false);
+		expect(parsed.outcome).toBe("failed");
+		// 旧字段保留（向后兼容）
+		expect(parsed.status).toBe("closed");
+		expect(parsed.state).toBe("ended");
+		expect(parsed.mode).toBe("background");
 	});
 });

@@ -10,6 +10,8 @@
  * ④ 混合模型列表（catalog）：builtin 条目只读 + Built-in 徽章；override 条目可编辑/可删 +
  *    Custom 徽章；手动添加入口开放
  * ⑤ save payload：models 只含 override 条目（builtin id 不回传）+ authMethod 字段
+ * ⑥ 添加模型表单 reasoning 思考开关（D4「GLM 思考等级被钳 off」事故修复面）：
+ *    aria-label 可定位 + aria-checked 随点击翻转 + 翻转结果透传进 save payload
  *
  * 与 renderer 端 provider-edit-body-phase-b.test.ts 的差异（mock 层全部换 injection stub）：
  *  - USE_QUOTA_CONFIGURE_KEY provide 最小 stub 工厂（对齐 injection-keys.ts 的
@@ -555,5 +557,79 @@ describe('编排链路：dirty 上抛与测试连接', () => {
     expect(discoverModelsSpy).toHaveBeenCalledTimes(1)
     // 成功态用户可见（t(key, {count}) mock 会 append 命名参数值）
     expect(wrapper.text()).toContain('settings.providerEdit.testOk')
+  })
+})
+
+// ══ 场景 ⑥：添加模型表单 reasoning 思考开关（D4 事故修复面）══════════════════
+
+/**
+ * ModelListSection 真实渲染（非 stub）中的 reasoning Switch（reka SwitchRoot →
+ * button[role="switch"]）。三视角说明：
+ * - 黑盒用户视角（主）：aria-label 可定位（AT accessible name）、aria-checked /
+ *   data-state 随点击翻转（用户可见形态）、翻转结果经 addModel 落进 save payload
+ *   （用户最终持久化数据，证明开关真实生效而非装饰）。
+ * - 构建者白盒（佐证）：aria-checked 是 :model-value="deps.newModel.reasoning" 受控
+ *   回流的渲染结果，断言它即等价断言 newModel.reasoning 翻转，未窥组件私有状态。
+ * - 观察者形态：switch 的存在与状态变化全部经由 DOM 属性断言，无组件内部 spy。
+ */
+describe('添加模型表单：reasoning 思考开关（D4）', () => {
+  /** i18n mock t() 返回 key 本身 → aria-label 即 key（switch 唯一，可全局定位） */
+  const SW_SELECTOR = 'button[role="switch"][aria-label="settings.providerEdit.reasoningLabel"]'
+
+  async function openAddForm(): Promise<void> {
+    const addToggle = wrapper!.findAll('button').find((b) => b.text().includes('settings.providerEdit.manualAdd'))
+    expect(addToggle).toBeTruthy()
+    await addToggle!.trigger('click')
+    await flushPromises()
+  }
+
+  it('表单渲染 reasoning 开关（accessible name 定位），点击后 aria-checked 翻转且可逆向', async () => {
+    wrapper = mountBody(APIKEY_P)
+    await flushPromises()
+    await openAddForm()
+
+    // (a) 用户可见：开关渲染，出厂显式 boolean（newModel.reasoning 初始 true）
+    const sw = wrapper.find(SW_SELECTOR)
+    expect(sw.exists()).toBe(true)
+    expect(sw.attributes('aria-checked')).toBe('true')
+    expect(sw.attributes('data-state')).toBe('checked')
+
+    // (b) 点击翻转：aria-checked 变 false（DOM 可见形态，非仅内部状态）
+    await sw.trigger('click')
+    await flushPromises()
+    expect(wrapper.find(SW_SELECTOR).attributes('aria-checked')).toBe('false')
+    expect(wrapper.find(SW_SELECTOR).attributes('data-state')).toBe('unchecked')
+
+    // 逆向再点击翻回 true（用户可显式关/开）
+    await wrapper.find(SW_SELECTOR).trigger('click')
+    await flushPromises()
+    expect(wrapper.find(SW_SELECTOR).attributes('aria-checked')).toBe('true')
+  })
+
+  it('关掉 reasoning 后添加模型并保存 → payload 新条目 reasoning=false（开关真实生效）', async () => {
+    wrapper = mountBody(APIKEY_P)
+    await flushPromises()
+    await openAddForm()
+
+    // 关掉开关（出厂 true → false）
+    const sw = wrapper.find(SW_SELECTOR)
+    expect(sw.attributes('aria-checked')).toBe('true')
+    await sw.trigger('click')
+    await flushPromises()
+    expect(wrapper.find(SW_SELECTOR).attributes('aria-checked')).toBe('false')
+
+    // 填名 + 添加 + 保存（payload 链路对齐场景 ⑤ 既有模式）
+    await wrapper.find('input[placeholder="settings.providerEdit.modelNamePlaceholder"]').setValue('glm-5.4-preview')
+    const addBtn = wrapper.findAll('button').find((b) => b.text().trim() === 'settings.providerEdit.addBtn')
+    await addBtn!.trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="provider-save-btn"]').trigger('click')
+    await flushPromises()
+
+    // D4 契约：reasoning 显式 boolean 落盘（false 不被吞）——缺失会让 pi 把思考档钳回 off
+    const models = savePayload().models as Array<{ id: string; reasoning?: boolean }>
+    const added = models.find((m) => m.id === 'glm-5.4-preview')
+    expect(added).toBeTruthy()
+    expect(added!.reasoning).toBe(false)
   })
 })

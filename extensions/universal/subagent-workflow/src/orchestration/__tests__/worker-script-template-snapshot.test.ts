@@ -100,11 +100,30 @@ describe("buildWorkerScript — _KNOWN_FIELDS module scope 提升（IF6）", () 
     expect(agentBody).toContain("_KNOWN_FIELDS.has(k)");
   });
 
-  it("字段集合内容逐字段一致（17 known fields 不丢失——P4 增 engine）", () => {
+  it("字段集合内容逐字段一致（18 known fields 不丢失——P4 增 engine，预算语义对齐增 maxTurns）", () => {
     expect(script).toContain(
-      'const _KNOWN_FIELDS = new Set(["prompt", "description", "schema", "model", "scene", "label", "task", "agent", "phase", "skill", "timeoutMs", "cwd", "fork", "worktree", "returnMeta", "thinkingLevel", "engine"]);',
+      'const _KNOWN_FIELDS = new Set(["prompt", "description", "schema", "model", "scene", "label", "task", "agent", "phase", "skill", "timeoutMs", "maxTurns", "cwd", "fork", "worktree", "returnMeta", "thinkingLevel", "engine"]);',
     );
     // unknown-fields 警告文案不变（known 列表仍全量）
     expect(script).toMatch(/Known fields:.*returnMeta.*thinkingLevel.*engine/);
+  });
+
+  it("agent() 各分支均透传 maxTurns（预算语义对齐：脚本作者可显式传 turn 上限）", () => {
+    // task/agent shortcut 分支：显式转发
+    expect(script).toContain("maxTurns: firstArg.maxTurns,");
+    // string+secondArg 分支：显式转发（?? 语义保真：显式 0 不被抹成 undefined，F-2/U5）
+    expect(script).toContain(
+      'maxTurns: (secondArg && typeof secondArg === "object" ? secondArg.maxTurns : undefined) ?? undefined,',
+    );
+    // opts = firstArg 直传分支无需处理（整对象透传）
+  });
+
+  // [F-2 maxTurns:0 吞没修复] 旧字符串分支 `&& maxTurns) || undefined` 把显式 0
+  // 抹成 undefined → runSpawn 落 env 兑底（SPAWN_WATCHDOG env 设置时误挂 watchdog），
+  // 与对象分支保真语义分裂。锁定生成源为 ?? 形态（0/null/undefined 区分处理）。
+  it("string 分支 maxTurns 用 ?? 语义（显式 0 不抹成 undefined，F-2）", () => {
+    const out = buildWorkerScript("// noop");
+    expect(out).not.toContain('secondArg.maxTurns) || undefined');
+    expect(out).toContain("?? undefined");
   });
 });

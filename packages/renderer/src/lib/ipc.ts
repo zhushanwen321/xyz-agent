@@ -7,7 +7,7 @@
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -231,37 +231,29 @@ export function onBrowserState(
 }
 
 // ── 自动升级（w4 update-frontend）───────────────────────────────────────
-// Wave 2/3：renderer → main 五个 IPC 封装（check/perform/progress/error/fallback）。
-// checkForUpdate 返回 LatestReleaseInfo | null（无新版/失败/未注入返回 null）。
-// performUpdate 触发完整流程（下载→校验→替换→重启），triggerRestart=true 表示即将重启。
+// Wave 2/3 + 批次 3：renderer → main IPC 封装（check/download/progress/error/fallback）。
+// checkForUpdate 返回 UpdateCheckResult（RM2.3：info=null 时经 rateLimited 区分
+// 「确认无新版」与「限额退避中」）。updateDownload 传意图（version 字符串），
+// release 数据由 main 权威解析（RC1）。
 // onUpdateProgress/onUpdateError 订阅主进程推送，返回取消订阅函数。
-// 无 IPC（web/mock）静默 no-op / 返回空 unsubscribe / null / {triggerRestart:false}。
+// 无 IPC（web/mock）静默 no-op / 返回空 unsubscribe / {info:null} / {downloaded:false}。
 
 /**
  * 检测最新可用版本。
  * @param opts.force 强制刷新缓存（默认走 1h 缓存）
- * @returns 有新版返回 LatestReleaseInfo，无新版/失败/未注入返回 null
+ * @returns UpdateCheckResult：info 为新版信息（无新版/失败/未注入为 null）；
+ *   rateLimited=true 表示限额退避中（非「无新版」，不应回退已有提醒态）
  */
-export function checkForUpdate(opts?: { force?: boolean }): Promise<LatestReleaseInfo | null> {
-  return api?.checkForUpdate(opts) ?? Promise.resolve(null)
+export function checkForUpdate(opts?: { force?: boolean }): Promise<UpdateCheckResult> {
+  return api?.checkForUpdate(opts) ?? Promise.resolve({ info: null, rateLimited: false })
 }
 
 /**
- * 执行完整升级流程（下载 → 校验 → 替换 → 触发重启）。
- * @param release checkForUpdate 返回的最新版本信息
- * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
+ * 触发下载阶段（版本解析 → 下载 → 校验，止于 downloaded 态，不替换/重启）。
+ * @param version 请求的目标版本号（renderer 只传意图，release 由 main 权威解析）
  */
-export function performUpdate(release: LatestReleaseInfo): Promise<{ triggerRestart: boolean }> {
-  return api?.performUpdate(release) ?? Promise.resolve({ triggerRestart: false })
-}
-
-/**
- * 触发下载阶段（下载 → 校验，止于 downloaded 态，不替换/重启）。
- * @param release checkForUpdate 返回的最新版本信息
- * @returns downloaded=true 表示产物已下载并校验通过，等待 performInstall 触发替换重启
- */
-export function updateDownload(release: LatestReleaseInfo): Promise<{ downloaded: boolean }> {
-  return api?.updateDownload(release) ?? Promise.resolve({ downloaded: false })
+export function updateDownload(version: string): Promise<{ downloaded: boolean }> {
+  return api?.updateDownload(version) ?? Promise.resolve({ downloaded: false })
 }
 
 /**
@@ -285,9 +277,14 @@ export function onUpdateProgress(cb: (p: { stage: UpdateStage; percent: number }
   return api?.onUpdateProgress(cb) ?? (() => {})
 }
 
-/** 监听升级错误事件（stage + message + errorCode），返回取消订阅函数。无 IPC 返回 no-op */
-export function onUpdateError(cb: (e: { stage: string; message: string; errorCode?: string }) => void): () => void {
+/** 监听升级错误事件（stage + message + errorCode + suggestion），返回取消订阅函数。无 IPC 返回 no-op */
+export function onUpdateError(cb: (e: UpdateErrorPayload) => void): () => void {
   return api?.onUpdateError(cb) ?? (() => {})
+}
+
+/** 读取启动结果（升级成功/失败/回滚通知）。首次调用返回结果，后续返回 null。无 IPC 返回 null */
+export function getLaunchResult(): Promise<LaunchResult | null> {
+  return api?.getLaunchResult() ?? Promise.resolve(null)
 }
 
 /** 不支持当前平台时，打开备用下载页（release 页面）。无 IPC 时 no-op */
@@ -325,7 +322,7 @@ export function setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig)
 }
 
 /** 测试代理连接。无 IPC 时返回成功（跳过测试） */
-export function testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }> {
+export function testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<ProxyTestResult> {
   return api?.testProxy(config) ?? Promise.resolve({ success: true, message: 'No IPC available' })
 }
 

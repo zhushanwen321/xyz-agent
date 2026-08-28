@@ -3,7 +3,7 @@
     "name": "xyz-agent 架构约束登记表（SSOT）",
     "description": "全部架构级约束的机器可读登记。summary 仅作导航，非权威表述——约束内容的唯一权威源是 authority 指向的文档；两处不一致时以 authority 为准并修正本表。",
     "fields": {
-      "id": "C-<主题>-<两位序号>，主题：pi/data/comm/state/ext/build/proc",
+      "id": "C-<主题>-<两位序号>，主题：pi/data/comm/state/ext/build/proc/sw",
       "summary": "一句话摘要（仅导航）",
       "scope": "global 或路径 glob 数组（仅支持 <prefix>/** 前缀通配与精确路径；global = 每次 CR 必载）",
       "authority": "权威源文档（相对 docs/ 的路径，可含 #锚点；约束内容只活在这里）",
@@ -1206,7 +1206,9 @@
       "scope": [
         "packages/runtime/src/**",
         "apps/electron/**",
-        "tsup.config.ts"
+        "packages/runtime/tsup.config.ts",
+        "packages/extension-protocol/tsup.config.ts",
+        "packages/session-delivery/tsup.config.ts"
       ],
       "authority": [
         "../AGENTS.md"
@@ -1583,6 +1585,118 @@
         {
           "type": "review",
           "agent": "review-electron-build"
+        }
+      ]
+    },
+    {
+      "id": "C-pi-12",
+      "summary": "pi 能力事实单点（能力注册表）：模型全等 id / reasoning / 实际支持思考档位只经 runtime 能力注册表（model-capability.ts，pi-ai 同源计算 + get_available_models 在线对账）进入域内，renderer/扩展禁止本地推断档位（禁复活 resolveAvailableLevels 类影子实现），档位可用集一律消费注册表下发的 supportedLevels",
+      "scope": [
+        "packages/runtime/src/services/model-capability.ts",
+        "packages/core/**",
+        "packages/renderer/**",
+        "packages/ui/**",
+        "extensions/**"
+      ],
+      "authority": [
+        "design/pi-boundary-reliability.md#d2能力注册表--runtime-单点服务面离线同源--在线对账选定",
+        "adr/0064-pi-semantic-absorption-layer.md"
+      ],
+      "dimensions": [
+        "arch-boundary"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-arch-boundary"
+        },
+        {
+          "type": "machine",
+          "hook": "diff-probe-thinking.mjs"
+        }
+      ]
+    },
+    {
+      "id": "C-pi-13",
+      "summary": "改状态 RPC 一律回 pi 实际生效值：setThinkingLevel / model.switch / plugin 通道等改状态命令 reply 禁 void，须回生效值（pi 钳制时 ≠ 请求值）；消费方禁乐观写请求值，以回执写显示态（request≠effective 窗口显示假值 = 事故 B 形态）",
+      "scope": [
+        "packages/shared/src/protocol.ts",
+        "packages/runtime/src/**",
+        "packages/core/**",
+        "packages/renderer/**"
+      ],
+      "authority": [
+        "design/pi-boundary-reliability.md#d3生效回执接通并上升为协议约束选定",
+        "adr/0064-pi-semantic-absorption-layer.md"
+      ],
+      "dimensions": [
+        "type-safety"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-type-safety"
+        }
+      ]
+    },
+    {
+      "id": "C-ext-19",
+      "summary": "结果语义通知必须走确认式送达（持久账本 + 幂等键，session-delivery/notify-ledger 通道），禁止新建依赖 pi 内存队列（steer/nextTurn/followUp）的 at-most-once 通道；交互式注入仅限非结果语义。生效口径：新代码即禁、存量列迁移切片（subagent-workflow 内存量经 g4-allow 行级豁免定性和迁移去向，scheduler 迁移登记 pi-boundary-reliability 附录 B 待办，G4 扫描面随迁移合入扩面）",
+      "scope": [
+        "extensions/**",
+        "packages/session-delivery/**"
+      ],
+      "authority": [
+        "design/pi-boundary-reliability.md#d5确认式送达通用化at-most-once-内存通道禁止用于结果语义选定",
+        "extensions/extension-conventions.md"
+      ],
+      "dimensions": [
+        "extension-api"
+      ],
+      "enforcement": [
+        {
+          "type": "machine",
+          "hook": "check_subagent_channels.py"
+        }
+      ]
+    },
+    {
+      "id": "C-proc-08",
+      "summary": "pi 语义依赖机器登记 + 探针 + 版本门禁：docs/pi-semantics.json（PS-xx 条目，probe/observe 分型）是唯一机器登记源，scripts/check-pi-semantics.mjs（pre-commit + CI）守 schema/探针存在性/四包版本一致（pi-coding-agent ≡ pi-ai ≡ pi-agent-core ≡ runtime pin）；pi 升级 PR 必查两项——pi-ai exports 是否移除 ./compat、changelog 是否提及 ModelManager 迁移（PS-15 时间炸弹）；探针族红 = 语义漂移，先复核锚点再更新 verifiedWith",
+      "scope": [
+        "docs/pi-semantics.json",
+        "packages/runtime/src/infra/pi/**",
+        "package.json",
+        "packages/runtime/package.json"
+      ],
+      "authority": [
+        "design/pi-boundary-reliability.md#d6漂移守卫体系pi-语义依赖的机器登记--探针--版本门禁选定"
+      ],
+      "dimensions": [
+        "business-logic"
+      ],
+      "enforcement": [
+        {
+          "type": "machine",
+          "hook": "check-pi-semantics.mjs"
+        }
+      ]
+    },
+    {
+      "id": "C-sw-01",
+      "summary": "每 session JSONL 单写进程：子进程写独立 subagent sessionDir，主 session 仅主进程单线程写；pi _persist 首写 wx 无 O_APPEND、compaction 截断重写——引入第二写进程即破坏 appendEntry 原子性",
+      "scope": [
+        "extensions/universal/subagent-workflow/**"
+      ],
+      "authority": [
+        "../extensions/universal/subagent-workflow/src/execution/session-runner.ts"
+      ],
+      "dimensions": [
+        "data-governance"
+      ],
+      "enforcement": [
+        {
+          "type": "none"
         }
       ]
     }

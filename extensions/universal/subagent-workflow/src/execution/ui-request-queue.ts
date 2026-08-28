@@ -55,10 +55,20 @@ export function createUiRequestQueue(
     if (processing || queue.length === 0 || closed) return;
     processing = true;
     const { id, request, signal } = queue.shift()!;
-    handleUiRequest(child, id, request, ctx, signal).finally(() => {
-      processing = false;
-      processNext();
-    });
+    // [F2] .catch 在 .finally 之前：handleUiRequest 是 async 函数，任何同步异常（parseChannel
+    // 解析 throw / respond → writeStdinLine 的 EPIPE 同步 throw / catch 分支内 respond 再次
+    // throw）都会变成 rejection。旧链只有 .finally——rejection 穿透后无人接 →
+    // unhandledRejection（Node 15+ 默认 mode=throw）可崩父进程。记 error 后吞掉，
+    // .finally 照常释放 processing 推进队列（单个请求失败不阻塞后续 UI 请求）。
+    handleUiRequest(child, id, request, ctx, signal)
+      .catch((err: unknown) => {
+        const m = err instanceof Error ? err.message : String(err);
+        logger.error(`[subagents] ui request ${id} (${request.method}) failed unexpectedly: ${m}`);
+      })
+      .finally(() => {
+        processing = false;
+        processNext();
+      });
   }
 
   // [R3] 子进程退出时 abort 所有 pending handler，队列不再阻塞

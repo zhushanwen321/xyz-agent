@@ -133,10 +133,10 @@ function createMockContext(): {
       },
       // ── agent ─────────────────────────────────────────────
       agent: {
-        setModel: vi.fn(async () => {}),
+        setModel: vi.fn(async () => ''),
         getModel: vi.fn(async () => ''),
         getThinkingLevel: vi.fn(async () => 'high'),
-        setThinkingLevel: vi.fn(async () => {}),
+        setThinkingLevel: vi.fn(async () => ''),
         getActiveTools: vi.fn(async () => []),
       },
       // ── workspace ─────────────────────────────────────────

@@ -574,9 +574,9 @@ describe('Agent API — registerAgentRpcHandlers', () => {
 
     registerAgentRpcHandlers(rpc, {
       getModel: () => currentModel,
-      setModel: (model: string) => { currentModel = model },
+      setModel: (model: string) => { currentModel = model; return '' },
       getThinkingLevel: () => currentThinking,
-      setThinkingLevel: (level: string) => { currentThinking = level },
+      setThinkingLevel: (level: string) => { currentThinking = level; return '' },
       getActiveTools: () => activeTools,
     })
 

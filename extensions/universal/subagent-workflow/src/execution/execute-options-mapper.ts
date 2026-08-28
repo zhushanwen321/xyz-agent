@@ -10,13 +10,12 @@ import { HOST_TIMEOUT_ABORT_REASON } from "./engine/common/kill-chain.ts";
 import type { ModelInfo } from "./model-resolver.ts";
 import type { ExecuteOptions } from "./types.ts";
 
-/**
- * slug 最大长度（字符）。subagent/workflow 创建时 slug 超过此值会被截断。
- * subagent/workflow tool schema 的 maxLength 引用此常量（单一真相，勿再硬编码）。
- * 历史值 20 偏紧——描述性 slug 如 "audit-structured-output"（23）/"fix-subagent-wf-tools"（21）
- * 会撞上限，放宽到 35 兼顾「短到能塞进 TUI 标题行」与「容纳合理描述性 kebab-case 名」。
- */
-export const SLUG_MAX_LENGTH = 35;
+// SLUG_MAX_LENGTH 定义已迁至 interface/subagent-tool-schema.ts（与 tool schema 的
+// maxLength 同址，跨包契约测试经该零依赖叶子 import）。此处 re-export 保持既有
+// import 路径（tool-workflow / subagent-actions / error-recovery 等）不变。
+import { SLUG_MAX_LENGTH } from "../interface/subagent-tool-schema.ts";
+
+export { SLUG_MAX_LENGTH };
 
 /**
  * D-A2: AgentCallOpts → ExecuteOptions 映射。
@@ -36,6 +35,7 @@ export const SLUG_MAX_LENGTH = 35;
  *   skillPath       → skillPath
  *   thinkingLevel   → thinkingLevel（M1: 否则下游 subagent-service 读到 undefined）
  *   appendSystemPrompt → appendSystemPrompt（内容数组，同名同义透传）
+ *   maxTurns        → maxTurns（turn limiter 上限；undefined = 不限，不挂 turns 估算 watchdog）
  *
  * 忽略字段（委托后由 executeAndAwait 内部机制替代）：
  *   timeoutMs         —— mergeTimeoutSignal 单独处理
@@ -63,6 +63,7 @@ export function mapToExecuteOptions(
     skillPath: opts.skillPath,
     thinkingLevel: opts.thinkingLevel,
     appendSystemPrompt: opts.appendSystemPrompt,
+    maxTurns: opts.maxTurns,
   };
 }
 

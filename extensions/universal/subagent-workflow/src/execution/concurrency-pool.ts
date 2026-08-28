@@ -63,7 +63,7 @@ export class DefaultConcurrencyPool implements ConcurrencyPool {
       // H2: abort 时 reject 排队条目并从 queue 移除，防止永久挂起
       if (signal) {
         if (signal.aborted) {
-          // S1: abort reject 需带 name="AbortError"，对齐 concurrency-gate.ts 的 AbortError 语义
+          // S1: abort reject 需带 name="AbortError"，对齐包内 AbortError 错误语义约定（消费方按 err.name 判别）
           const err = new Error("acquire aborted");
           err.name = "AbortError";
           reject(err);

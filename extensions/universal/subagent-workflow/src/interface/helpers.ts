@@ -238,7 +238,7 @@ export function notifyDone(
 
   const content = parts.join("\n");
 
- // deliverAs:"steer" + triggerTurn:true —— workflow 完成作为 steering 消息注入
+ // deliverAs:"steer" + triggerTurn:true —— workflow 完成作为 steering 消息注入（g4-allow: 存量待迁移——结果语义通知，账本化迁移登记 pi-boundary-reliability 附录 B 待办）
  // 并立即唤醒 parent agent 处理结果（与 subagent 的 followUp+triggerTurn 对称）
   const details: WorkflowNotifyDetails = {
     runId,
@@ -275,7 +275,7 @@ export function notifyDone(
       display: true,
       details,
     },
-    { triggerTurn: true, deliverAs: "steer" },
+    { triggerTurn: true, deliverAs: "steer" }, // g4-allow: 存量待迁移——workflow 完成通知属结果语义，迁移切片复用 U2 账本设施（附录 B 待办）
   );
 }
 

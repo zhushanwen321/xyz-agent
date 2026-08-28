@@ -89,7 +89,12 @@ export interface AgentTaskSpec {
    * PI_WORKFLOW_SCHEMA env 注入链路按 native 直传，公共仿真层只服务 emulated 引擎。
    */
   schema?: Record<string, unknown>;
-  /** 原样（ExecuteOptions.maxTurns）。 */
+  /**
+   * 原样（ExecuteOptions.maxTurns）。pi 引擎专属（turn limiter + spawn watchdog
+   * 估算依赖 pi 的 turn_end 事件流）；其他引擎 prepare 期显式拒绝（U4，同 fork 模式）。
+   * 显式 0 压过 SPAWN_WATCHDOG_ENV 兑底（SP-6 参数 > env，U5）；undefined 未传才由
+   * env 兑底。
+   */
   maxTurns?: number;
   /** 原样（ExecuteOptions.graceTurns）。 */
   graceTurns?: number;

@@ -53,11 +53,13 @@ import { applyHeaderCwdFallback } from '../../services/session/session-lifecycle
  * - 180 → 300（2026-08-20 PR #185 测试收尾）：满载全量下 180s 仍 2/4 概率超时，主 agent
  *   裁决对齐该目录 equivalence 文件 300-420s 用例口径。
  */
-const TURN_TIMEOUT_MS = 300_000
+// 预算校准 [HISTORICAL]：满载环境单轮可超 300s（premerge 832s vs 144s ≈ 5.8× 实测），
+// 对齐 tool-call-index beforeAll「冷启动+轮次+余量」口径上调至 420s；用例级同步
+const TURN_TIMEOUT_MS = 420_000
 /** switch_session 慢 RPC 上限（对齐生产 rpc-client SLOW_TIMEOUT_MS） */
 const SWITCH_TIMEOUT_MS = 120_000
 /** 用例总超时 = 多次冷启动 + 多轮 LLM turn + 多次 RPC + dispose 的和再留余量（2× TURN 裕度） */
-const TEST_TIMEOUT_MS = 600_000
+const TEST_TIMEOUT_MS = 900_000
 
 /** 文件层 entry 最小形态（loadEntriesFromFile 的 xyz 侧等价读取：逐行 JSON.parse） */
 interface SessionFileEntry {
@@ -137,8 +139,7 @@ function waitSessionHeaderFlushed(filePath: string, timeoutMs = 15_000): void {
 async function seedSessionFile(workDir: string, fileName: string, marker: string): Promise<string> {
   let fx = await spawnPiFixture()
   try {
-    await fx.sendCommand('prompt', { message: `Reply with exactly the word: ${marker}` })
-    await fx.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+    await fx.runTurn({ message: `Reply with exactly the word: ${marker}` }, TURN_TIMEOUT_MS)
     const state = await fx.sendCommand('get_state')
     const srcFile = state.data?.sessionFile
     if (typeof srcFile !== 'string') throw new Error(`get_state.sessionFile missing after seeded turn (marker: ${marker})`)
@@ -171,8 +172,8 @@ async function attachAndRunTurn(targetFile: string, marker: string): Promise<{ f
   await assertPiSessionFile(fixtureStateClient(fx), targetFile, `attach-lifecycle(${basename(targetFile)})`)
   const beforeTurnMem = await fetchEntries(fx)
   const beforeTurnFileCount = readSessionEntries(targetFile).length
-  await fx.sendCommand('prompt', { message: `Reply with exactly the word: ${marker}` })
-  await fx.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+  // prompt→等本轮 end 改走 runTurn 原语（fixture 护栏 + since 游标，替代裸全量匹配）
+  await fx.runTurn({ message: `Reply with exactly the word: ${marker}` }, TURN_TIMEOUT_MS)
   const beforeKill = await fetchEntries(fx)
   return { fx, beforeTurnMem, beforeTurnFileCount, beforeKill }
 }
@@ -206,8 +207,11 @@ describe.skipIf(!REAL_PI_READY)(
         const { fx, beforeTurnMem, beforeTurnFileCount, beforeKill } = await attachAndRunTurn(targetFile, 'attach-round-2')
         fixture = fx
 
-        // 附着即绑定写目标的直接自证：附着瞬间 pi 已向登记文件写入 entry（实测 ≥2 条）
-        expect(beforeTurnFileCount).toBeGreaterThan(seedCount)
+        // 附着写入时机基线校准 [HISTORICAL]：pi 0.84.1 实测附着（switch_session）不再立即
+        // 向目标文件写 entry，首个真实 turn 落盘时才写入（探针实测 5s 零增长、turn 后
+        // message 正常追加）。旧断言「附着瞬间写 ≥2 条 entry」已过期删除；写目标绑定的
+        // 即时自证由 assertPiSessionFile（get_state().sessionFile）覆盖，文件层由阶段 3
+        // 增长守恒断言（afterKill − beforeTurnFileCount ≡ beforeKill − beforeTurnMem）承接。
 
         // ── 阶段 3：kill（dispose ≈ destroySession：SIGTERM → 2s → SIGKILL）──
         await fx.dispose()
@@ -288,9 +292,8 @@ describe.skipIf(!REAL_PI_READY)(
         const forkHeader = readSessionEntries(forked.filePath)[0]
         expect(forkHeader?.type).toBe('session')
         expect(forkHeader?.parentSession).toBe(sourceFile)
-        const forkSeedCount = readSessionEntries(forked.filePath).length
-
         // ── 阶段 3：fork 文件附着 + 一轮真实对话 ──
+        // 附着写入时机基线校准同 restore 用例 [HISTORICAL]：不再要求附着即写盘
         const { fx, beforeTurnMem, beforeTurnFileCount, beforeKill } = await attachAndRunTurn(forked.filePath, 'attach-fork-round')
 
         // ── 阶段 4：kill ──
@@ -299,8 +302,7 @@ describe.skipIf(!REAL_PI_READY)(
 
         // ── 阶段 5：持久性屏障——fork 文件包含该轮 + 继承历史 ──
         const afterKill = readSessionEntries(forked.filePath)
-        // 附着即绑定写目标（同 restore 用例）+ 增长量守恒（双基线附着后取，口径差抵消）
-        expect(beforeTurnFileCount).toBeGreaterThan(forkSeedCount)
+        // 附着写入时机基线校准同 restore 用例 [HISTORICAL]：不再要求附着即写盘
         expect(afterKill.length - beforeTurnFileCount).toBe(beforeKill.length - beforeTurnMem.length)
         const roundUserIdx = afterKill.findIndex(
           (e) => e.type === 'message' && e.message?.role === 'user' && messageText(e).includes('attach-fork-round'),
@@ -450,8 +452,7 @@ describe.skipIf(!REAL_PI_READY)(
         let fx1: PiFixture | null = await spawnPiFixture()
         fixture = fx1
         try {
-          await fx1.sendCommand('prompt', { message: 'Reply with exactly the word: model-seed' })
-          await fx1.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+          await fx1.runTurn({ message: 'Reply with exactly the word: model-seed' }, TURN_TIMEOUT_MS)
           await fx1.sendCommand('set_model', { provider: targetProvider, modelId: targetModelId })
           const state1 = await fx1.sendCommand('get_state')
           const model1 = state1.data?.model as { provider?: string; id?: string } | undefined

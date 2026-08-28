@@ -122,7 +122,8 @@ describe('W1：任意触发路径的 state_changed 帧永不含 usage 三字段'
     fx.svc.applyContextUpdate(sid, 9000, 9000)
     await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 50)
 
-    // 路径 4：thinkingLevel 30s 周期兜底 poll（thinkingLevel 实例 pollIntervalMs）
+    // 路径 4：thinkingLevel 失效驱动重拉（U6：30s 周期兜底已删，事件/RPC 响应失效替代；
+    // 推进长时段验证「无失效不拉取」下不变量仍成立——帧数由路径 2/3 保证）
     await vi.advanceTimersByTimeAsync(65_000)
 
     // 不变量：全路径产出帧序列化后 usage 三 key 均不存在

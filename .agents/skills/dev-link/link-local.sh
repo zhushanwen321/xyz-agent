@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # link-local.sh — 添加 extension 到 XYZ_EXTENSION_PATHS（本地源码，live edit）
 # 用法: ./link-local.sh <package> [package2 ...]
-#   <package> = 短名 (model-switch) / pi-前缀 (pi-model-switch) / npm全名 (@zhushanwen/pi-model-switch)
+#   <package> = 短名 (cw-tool) / pi-前缀 (pi-cw-tool) / npm全名 (@zhushanwen/pi-cw-tool)
 #
 # 幂等安全：重复添加不会产生重复条目，已是目标状态时直接跳过。
 # 写入项目根目录的 .env.dev-extensions 文件（已 gitignore）。
 #
 # 映射查 dev-link-lib.sh（SSOT = extensions/<short>/package.json）：源码目录、npm 包名、
 # 是否真 extension 均来自 package.json 事实，不按命名约定推导。库包（无 pi.extensions，
-# 如 quota-providers）自动跳过。
+# 如 llm-shared）自动跳过。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,7 +27,7 @@ ENV_FILE="$DL_GIT_ROOT/$ENV_FILE_NAME"
 main() {
 	if [ $# -lt 1 ]; then
 		echo "用法: $0 <package> [package2 ...]"
-		echo "  <package> = 短名 (model-switch) / pi-前缀 (pi-model-switch) / npm全名 (@zhushanwen/pi-model-switch)"
+		echo "  <package> = 短名 (cw-tool) / pi-前缀 (pi-cw-tool) / npm全名 (@zhushanwen/pi-cw-tool)"
 		echo "  可一次 link 多个: $0 goal todo ask-user"
 		exit 1
 	fi

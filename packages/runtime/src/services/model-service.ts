@@ -22,6 +22,11 @@ import type { IModelService, ISessionService, IConfigService, IMessageBroker } f
 import type { IModelSource } from './ports/model.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { toModelInfo } from './model-mapper.js'
+import {
+  ModelCapabilityRegistry,
+  runCapabilityReconcile,
+  type CapabilityDrift,
+} from './model-capability.js'
 
 /** discoverModelsFromApi 错误码（domain→文案映射归 service）。 */
 export type ModelDiscoveryErrorCode =
@@ -87,11 +92,12 @@ export class ModelService implements IModelService {
    * thinkingLevel；usage 已随 D1 协议收敛移出该帧，经 context.update 单帧贯穿），
    * 本方法不再自己 broadcastSessionState。
    */
-  async switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<void> {
+  async switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<string> {
     this.ensureInitialized()
     // 1. pi RPC + 缓存更新 + 广播 session.state_changed（session 级状态单一 owner；
     //    pi 侧同时持久化 defaultModel/defaultProvider）
-    await this.sessionService.switchModel(sessionId, provider, modelId)
+    // U6 回执普查：透传 get_state 读回的生效模型复合串（pi pattern 换模时 ≠ 请求值）
+    const effective = await this.sessionService.switchModel(sessionId, provider, modelId)
 
     // 2. Broadcast 全局默认模型（landing 态 Composer 的 fallback）
     this.broker.broadcast({
@@ -99,6 +105,7 @@ export class ModelService implements IModelService {
       id: this.nextPushId(),
       payload: { defaultModel: `${provider}/${modelId}`, source: 'model-switch' },
     })
+    return effective
   }
 
   /**
@@ -179,5 +186,42 @@ export class ModelService implements IModelService {
       return new ModelDiscoveryError('UNREACHABLE', `连接失败：无法访问 ${baseUrl}/v1/models`)
     }
     return new ModelDiscoveryError('UNKNOWN', raw)
+  }
+
+  // ── 能力注册表服务面（U5，pi-boundary-reliability design D2）──────────
+
+  /** 离线档位计算缓存（3 维缓存键：pi 版本 + models.json mtime + builtin-providers.json mtime）。 */
+  private readonly capabilityRegistry = new ModelCapabilityRegistry()
+
+  /** drift 事件上报出口（WS 协议消息类型属后续单元，宿主经 setCapabilityDriftSink 订阅）。 */
+  private capabilityDriftSink: ((drifts: CapabilityDrift[]) => void) | undefined
+
+  /** 订阅对账 drift 事件（重复调用覆盖：单订阅者语义，广播化需求出现时再扩）。 */
+  setCapabilityDriftSink(sink: (drifts: CapabilityDrift[]) => void): void {
+    this.capabilityDriftSink = sink
+  }
+
+  /**
+   * 给 ProviderInfo.models 逐模型标注 supportedLevels（view-ready，renderer 零推导）。
+   * piVersion 建议传消息层 appInfo.piVersion（与 app.info 同源）；缺省 'unknown'——
+   * 缓存正确性不依赖该组分（逐模型签名兜底，见 model-capability.ts 缓存键说明）。
+   */
+  attachSupportedLevels(providers: ProviderInfo[], piVersion?: string): ProviderInfo[] {
+    return this.capabilityRegistry.attachSupportedLevels(providers, piVersion)
+  }
+
+  /**
+   * 在线对账：session 附着后调用（编排 / 降级路径见 runCapabilityReconcile——引擎
+   * 不可用或 RPC 失败降级返回 []，绝不反噬附着主链路）。返回本次 drift 项（空 =
+   * 一致）；对账结果不缓存不落盘（每附着一次对一次）。
+   */
+  async reconcileModelCapabilities(sessionId: string): Promise<CapabilityDrift[]> {
+    this.ensureInitialized()
+    return runCapabilityReconcile({
+      sessionId,
+      getEngine: () => this.sessionService.getRpcClient(sessionId),
+      getConfigProviders: () => this.configService.listProviders(),
+      onDrift: drifts => this.capabilityDriftSink?.(drifts),
+    })
   }
 }

@@ -372,6 +372,8 @@ export default {
     inputImage: 'Image',
     contextLabel: 'Context',
     thinkingLabel: 'Thinking',
+    reasoningLabel: 'Reasoning',
+    reasoningTitle: 'Thinking capability: when off, pi clamps this model to thinking level "off"',
     addBtn: 'Add',
     noModels: 'No models',
     headInput: 'Input',

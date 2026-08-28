@@ -146,13 +146,14 @@ it('首屏渲染：<页面> DOM 含关键交互元素', () => {
 | **插件系统非 mock 端到端** | 隔离 runtime（tsx 源码形态）+ 真实插件文件 + 真实 WS：sandbox 激活 / toggle 往返 / built-in statusline 发现 / onBeforeSendMessage hook 真实执行。破坏=插件真实加载路径回归（mock 层不可见的 F1-F4 类 bug） | `2026-08 插件系统 F1-F4`（测试金字塔底部全 mock、真实加载路径零覆盖） | `scripts/verify-plugin-e2e.sh`（挂 `validate-runtime-bundle.sh` 第 7 步，pre-commit 于 runtime src 变更触发）+ `packages/runtime/test/plugin-registry.test.ts` TC-1-09/10/11（built-in 扫描两形态）；手册 [docs/testing/13-plugin-e2e.md](docs/testing/13-plugin-e2e.md) |
 | **流式 block 双轴尾部追踪 + 折叠头截短** | thinking 折叠预览/tool 折叠头在 streaming/running 中渲染尾部行窗口且 scrollLeft 钉右（`scrollLeft >= scrollWidth - clientWidth - 1`）、完成态回落静态摘要；折叠头路径 `…/末两段` 截短但展开态/copy 全量；preview 行高恒定（virtua 高度断言依赖）。破坏=流式预览死在开头/折叠头丢命令可见性/虚拟列表行高抖动 | `cw-2026-08-25-chat-visual-font-optimize`（实测发现：pi bash 部分输出无流式增量广播，tool 接入点按预案降级静态 argPath，thinking 链路钉尾 3/3）`[from: chat-visual-font-optimize (cw-2026-08-25) §D4]` | `packages/ui/src/features/chat/composables/__tests__/useTailScroll.test.ts`（9 用例：钉右/translateY/降级/未挂载）+ `packages/ui/src/features/chat/__tests__/Block.test.ts`（双态 DOM 断言）+ `format-utils.test.ts`（shortenForHeader/tailLines 规则） |
 | **等价性测试双轨** | live ≡ reload / broadcast ≡ get_state / 混沌注入收敛等不变量断言。CI 只跑凭证无关子集（mock RPC / fixture 重放），真实 LLM turn 用例由凭证探测 skip；完整基线跑在开发机（详见下方「等价性测试双轨」小节） | `2026-08-19 data-source-governance P1-P4` goal-audit 问题 1（CI 无 pi 凭证，push 后 test-runtime 预期红） | `packages/runtime/src/__tests__/equivalence/` 13 文件（skip 机制 SSOT = `pi-fixture.ts` `REAL_PI_READY`） |
+| **pi 语义守卫探针族** | 静态直读 pi dist 断言私有语义契约（pattern 引擎匹配规则 / reasoning 两级门控 / RPC 响应面 / steer drain 窗 / settled 复位序 / entry→context 映射），pi 升级语义漂移即红；配套 `check-pi-semantics.mjs` 版本门禁（四包一致 + verifiedWith 比对）与 `diff-probe-thinking.mjs` 档位对账。破坏=pi bump 后语义假设批量过期无人知（登记≠防御：8-20 登记观察项 8-27 照样出事的实证） | `2026-08-27 事故对`（subagent 派发 429/gc + 思考等级自动变关）`[from: pi-boundary-reliability U7]` | `packages/runtime/src/infra/pi/__tests__/pi-semantics-*.test.ts`（6 文件，凭证无关 CI 可跑）+ `scripts/check-pi-semantics.mjs`（pre-commit + CI）+ `scripts/diff-probe-thinking.mjs` |
 
 ### 等价性测试双轨（真实 LLM turn 基线跑在开发机）[from: 2026-08-19 data-source-governance]
 
 等价性测试族（`packages/runtime/src/__tests__/equivalence/`，G3 长期回归基线）按「是否发起真实 LLM 调用」分两轨：
 
 - **凭证无关子集（CI 覆盖）**：mock RPC 层 describe（`scalar-state-invalidation` / `usage-queue-commands-invalidation` 各自的「mock RPC 层」describe、`w10-usage-switchmodel-race` / `w12-owner-snapshot-publish` / `w18-record-entry-chaos` / `session-manager-e2e-fixture-unit`（探针基建纯单元：config 注册断言 + 行协议）整文件）——不 spawn pi、不发 LLM 请求，无条件执行。
-- **完整基线（开发机跑）**：真实 pi 子进程 + 真实 LLM turn 用例（`live-reload` / `broadcast-getstate` / `chaos` / `pi-protocol-contract` / `session-manager-full-e2e`（agent-managed session 真 pi 全链路，REAL_PI_TESTS 分池）整文件，及 `scalar-state-invalidation` / `usage-queue-commands-invalidation` 的「真实 pi 子进程」describe）——依赖本机 pi 凭证（默认模型 `xiaomi-token-plan-cn/mimo-v2.5-pro`）。**凭证属用户基础设施，不由 CI secrets 虚构注入**。
+- **完整基线（开发机跑）**：真实 pi 子进程 + 真实 LLM turn 用例（`live-reload` / `broadcast-getstate` / `chaos` / `pi-protocol-contract` / `session-manager-full-e2e`（agent-managed session 真 pi 全链路，REAL_PI_TESTS 分池）/ `thinking-level-effective-e2e`（pi 边界回执保险丝：reasoning:false 模型 set high → 断言回执=get_state=off，正常模型回执=请求值——「config ≡ pi effective」端到端守卫，REAL_PI_TESTS 分池）整文件，及 `scalar-state-invalidation` / `usage-queue-commands-invalidation` 的「真实 pi 子进程」describe）——依赖本机 pi 凭证（默认模型 `xiaomi-token-plan-cn/mimo-v2.5-pro`）。**凭证属用户基础设施，不由 CI secrets 虚构注入**。
 
 **何时跑完整基线**：改动涉及 pi 协议链路（`event-adapter` / `message-converter` / `pi-protocol`）、entry reducer（core `apply-entry`）、replicated-states 失效收敛、或 equivalence 目录本身时，merge 前在开发机跑 `cd packages/runtime && pnpm test:equivalence` 全量。**pr-cr-fix 阶段 3a（pr-pre-merge.sh `test:runtime` 步骤）不设 `XYZ_SKIP_REAL_PI`，默认承担该义务**——「CI 不跑 real-pi、开发验收必跑」是显式分工策略而非环境巧合；凭证缺失导致的 skip 出现即验收不完整（见 pr-cr-fix SKILL.md 3a）。
 
@@ -248,3 +249,29 @@ E1-E4 三视角集成测试基线（`session-active-state.test.ts`）：
 - 构建者：store.addPendingSend/setCompacting → isActive/isCompacting → deriveStatus 断言
 - 使用者：mount SessionItem/Panel 断言 DOM（composer/landing testid）
 - 观察者：dot class 含 animate-pulse-accent
+
+## pi-boundary-reliability [from: pi-boundary-reliability]
+
+pi 边界可靠性设计的测试面落地（2026-08-27 事故对 → 四支柱）：
+- 回归基线新增「pi 语义守卫探针族」（§4 表末行）：`packages/runtime/src/infra/pi/__tests__/pi-semantics-*.test.ts` 仿 `pi-paths-config-dir-contract.test.ts` 范式——静态直读 pi dist 做行为契约断言，dist 不可达 skip 不 fail，凭证无关 CI 可跑；机器登记源 = `docs/pi-semantics.json`（PS-xx，probe/observe 分型）
+- G5 real-pi 对账用例 `thinking-level-effective-e2e.test.ts` 归 REAL_PI_TESTS 分池（vitest.config.ts 已登记；漏加会落回 main 满并行组复发饿死超时）——回执保真的端到端保险丝，验证时改 pi 协议链路 / replicated_states 失效收敛时必跑
+- 防橡皮图章分层：verifiedWith 是提醒机制，探针族（与取值无关地红）才是机器防线；P-S3 演练口径——篡改 verifiedWith 或反转探针断言 → check-pi-semantics / 探针测试必红，报错自带恢复动作
+
+## 修复后验证纪律 [from: structured-output-redesign R3-R6 审计]
+
+> 沉淀来源：structured-output 重设计实施后的四轮对抗式审计（R3-R6，commits `f69766b44`→`9438940c0`→`1dfd93b1a`→`3f934637c`）。R4 与 R5 各发现一次「上轮修复自身引入回归」且均非单测可抓——回归只在资源面暴露，结果面（error 文案）完全正确。语义总览见 [docs/design/structured-output-redesign.md](docs/design/structured-output-redesign.md) §6.3/§7 补记。
+
+修复 ≠ 局部补丁。任何声称「修复完成」的变更必须同时交出两件验证产物，缺一即验收不完整：
+
+**规则 1：修复必须附交互矩阵（修复点 × 既有 retry / rebuild / budget / 计数机制）**。修复改变的是行为的某个分支，但被改分支的**输出**（error 文本、事件、退出码）往往是其他机制（重试分诊、预算消耗、闸门计数、状态重建）的**输入**——修复前必须列出这些消费者并逐个回答「新输出会被它如何处置」。不做这一步，修复点本身就是新回归的引入点（案例 B：三态归因产出的新 error 文本恰好落入 retryable 分支）。
+
+**规则 2：修复后必须重跑修复前的对照场景并比较资源面（时长 / 子进程数 / attempt 次数 / token），只看结果面（error 文案对不对）不够**。修复往往让「错误更可见/更正确」，结果面验证会假绿——错误确实可见了，但可见的错误可能触发新的放大循环。资源面对照是唯一暴露手段：同场景修复前后各跑一次，对比墙钟时长、spawn 的子进程数、重试 attempt 数、token 消耗。
+
+**两个案例锚（均实测复现，非推理）**：
+
+| 案例 | 回归形态 | 为什么结果面看不到 | 资源面暴露形态 |
+|---|---|---|---|
+| **AP 并集恒定（R4 发现）** | R3 修复（echo keys 并入签名）便 required 渐进修复场景「缺失列表∪keys」恒定——模型每轮修好 1 个字段的真实进展被判为同签名无进展，3 次 terminal 误杀 | 闸门行为完全符合自身契约（同签名 3 次 → 终止），error 文案正确 | 探针：6 required 字段每轮修 1 个，三轮签名恒 `fields(6)`——签名序列断言（进展必须产生新签名）才暴露 |
+| **F-1 retry 放大 3×（R5 发现）** | R3 失败表面化修复让 gate 终止的 run 从「静默 completed+{}」变为「failed+error」——新 error 恰好落入 `executeAgentCall` 的 retryable 分支，不可满足 schema 重试 3 轮（每轮含 ~25s gate teardown 窗口） | error 文案完全正确（归因清晰、可读、可恢复）；run 最终也确实失败 | 实测 attempts=3、4 个子进程 journal、235s vs 修复前同场景 67s（3× 放大）——时长/子进程数对照片刻暴露 |
+
+**落地形态**：修复 PR/commit 的验证记录应含 ①交互矩阵（哪怕三行：修复点 × 消费机制 × 处置结论）②修复前后同场景资源面对照表。单测锁不住这两面（R4/R5 的回归均在单测全绿下存活）——交互矩阵是设计期检查，资源面对照是实跑检查。

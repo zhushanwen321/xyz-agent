@@ -20,7 +20,7 @@
  * - 真实 pi 子集（describe.skipIf(!REAL_PI_READY)）：spawn 真实 pi 跑一轮含工具调用对话，
  *   锁定 wire 契约与 tool-call-index 真实产出。
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest'
 import { spawnPiFixture, REAL_PI_READY, REAL_PI_SKIP_REASON, type PiFixture } from './pi-fixture.js'
 import { translate } from '../../infra/pi/event-adapter.js'
 import type { PiEvent } from '../../infra/pi/pi-protocol.js'
@@ -107,13 +107,24 @@ describe.skipIf(!REAL_PI_READY)(
   // [HISTORICAL] 2026-08-22 sm-e2e cw verify 连续红：真实 LLM 偶尔纯文本回复不调工具
   //（toolcall_end 数为 0，下游 3 用例连锁假失败）——轮次间检测，无 toolcall 再推一轮，
   // 3 轮全无才交由用例断言失败（不弱化断言；语料守卫仍要求 toolcall 事件存在）。
+  // 失败兜底（设计 U3/G1）：三连发循环或用例失败后在途 turn 由 recover 截断，防传染；幂等
+  afterEach(async () => {
+    await fixture?.recover()
+  })
+
   beforeAll(async () => {
     fixture = await spawnPiFixture()
     for (let attempt = 0; attempt < 3; attempt++) {
-      await fixture.sendCommand('prompt', {
-        message: 'Use the bash tool to run exactly: echo W3-TOOLCALL-ANCHOR . You must call the bash tool before replying; after the tool finishes, reply with the tool output text.',
-      })
-      await fixture.waitForEvent((e) => e.type === 'agent_end', 120_000)
+      // runTurn 原语（设计 D4/U3）：原子化打点→prompt→只等本轮 agent_end——取代裸全量匹配
+      // （attempt-2 曾可能拿到 attempt-1 的旧 agent_end 造成零等待重发，撞 already-processing）
+      const endEvent = await fixture.runTurn(
+        {
+          message:
+            'Use the bash tool to run exactly: echo W3-TOOLCALL-ANCHOR . You must call the bash tool before replying; after the tool finishes, reply with the tool output text.',
+        },
+        120_000,
+      )
+      void endEvent
       const hasToolcallEnd = fixture
         .collectEvents((e) => e.type === 'message_update')
         .some((e) => (e as { assistantMessageEvent?: { type?: string } }).assistantMessageEvent?.type === 'toolcall_end')

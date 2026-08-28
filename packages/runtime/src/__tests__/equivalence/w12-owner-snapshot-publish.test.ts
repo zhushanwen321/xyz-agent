@@ -231,7 +231,7 @@ describe('W12 阶段 3：session.state_changed payload 全字段来自实例快�
     })
   })
 
-  it('diff 抑制：thinkingLevel 30s 周期兜底重拉（同值）不重复发 state_changed 帧', async () => {
+  it('diff 抑制：失效驱动重拉（同值）不重复发 state_changed 帧；值变恢复发帧（U6：30s 周期兜底已删）', async () => {
     const fx = makeFixture()
     const sid = 'w12-state-diff'
     const ws = createMockWs()
@@ -243,18 +243,20 @@ describe('W12 阶段 3：session.state_changed payload 全字段来自实例快�
       ws.sent.map((s) => JSON.parse(s) as ServerMessage).filter((m) => m.type === 'session.state_changed').length
     expect(countStateChanged()).toBe(1) // 播种后发布一次
 
-    // 推进多个 30s 周期兜底 poll（thinkingLevel 实例 pollIntervalMs）：权威未变 → 同值组合被 diff 抑制
+    // U6 删除 thinkingLevel 实例的 30s 周期兜底轮询（D9 C.4）——长时段无失效即无拉取、无重复帧
     await vi.advanceTimersByTimeAsync(95_000)
     expect(countStateChanged()).toBe(1)
 
-    // 权威翻新（切模型）后下一次周期 poll 的组合值变化 → 恢复发帧
+    // 权威翻新后失效驱动重拉（switchModel RPC 成功响应 markDirty，替代旧周期 poll）：
+    // 组合值变化 → 恢复发帧
     fx.client.getState.mockResolvedValue({
       sessionName: 'w12',
       thinkingLevel: 'high',
       model: { id: 'model-a', provider: 'p' },
       pendingMessageCount: 0,
     })
-    await vi.advanceTimersByTimeAsync(35_000)
+    await fx.svc.switchModel(sid, 'p' as never, 'model-a')
+    await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 50)
     expect(countStateChanged()).toBe(2)
     const late = fx.bus.subscribe(sid, createMockWs())
     expect(findStateMsg(late.stateSnapshot, 'session.state_changed')?.payload).toMatchObject({

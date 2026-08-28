@@ -62,13 +62,12 @@ describe('ThinkingLevelPopover onSelect 发 value（map 映射后）', () => {
   })
 })
 
-// ══ U9: pi 新语义（fix-thinking-level-pi-semantics）——mimo 场景档位渲染 ══
-// xiaomi-token-plan-cn/mimo-v2.5-pro 的 thinkingLevelMap 为 undefined（builtin 快照 null
-// 经 toProviderModel 归一）。pi 实装版 getSupportedThinkingLevels 返回默认五档。
-describe('U9: mimo 场景（levelMap undefined）→ 渲染默认五档含 minimal，无 xhigh/max', () => {
+// ══ U9: pi 新语义（U6 改锚：可用集读 supportedLevels 下发）——mimo 场景档位渲染 ══
+// xiaomi-token-plan-cn/mimo-v2.5-pro 的 supportedLevels = pi 同源计算默认五档。
+describe('U9: mimo 场景（supportedLevels 未下发）→ 渲染默认五档含 minimal，无 xhigh/max', () => {
   it('DOM 含 5 个档位项：off/minimal/low/medium/high，不含 xhigh/max', async () => {
     const wrapper = mount(ThinkingLevelPopover, {
-      props: { level: 'high' }, // levelMap 不传（undefined = pi 默认规则）
+      props: { level: 'high' }, // supportedLevels 不传（undefined = 归一默认五档）
     })
     // 打开 popover 使档位列表渲染进 DOM
     await (wrapper.vm as unknown as { open: boolean }).$nextTick()
@@ -79,11 +78,19 @@ describe('U9: mimo 场景（levelMap undefined）→ 渲染默认五档含 minim
     expect(renderedLevels).not.toContain('max')
   })
 
-  it('reasoning=false → availableOptions 只有 off（non-reasoning 模型）', () => {
+  it('supportedLevels=["off"]（non-reasoning 模型，pi 两级门控产物）→ availableOptions 只有 off', () => {
     const wrapper = mount(ThinkingLevelPopover, {
-      props: { level: 'off', reasoning: false },
+      props: { level: 'off', supportedLevels: ['off'] },
     })
     const vm = wrapper.vm as unknown as { availableOptions: Array<{ level: string }> }
     expect(vm.availableOptions.map((o) => o.level)).toEqual(['off'])
+  })
+
+  it('U6: supportedLevels 含 xhigh/max 档 → 对应档位渲染（下发集是可用档唯一权威）', () => {
+    const wrapper = mount(ThinkingLevelPopover, {
+      props: { level: 'max', supportedLevels: ['off', 'high', 'xhigh', 'max'] },
+    })
+    const vm = wrapper.vm as unknown as { availableOptions: Array<{ level: string }> }
+    expect(vm.availableOptions.map((o) => o.level)).toEqual(['off', 'high', 'xhigh', 'max'])
   })
 })

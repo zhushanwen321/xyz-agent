@@ -11,7 +11,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   HandoffService,
   HANDOFF_TIMEOUT_MS,
-  HANDOFF_EXIT_POLL_MS,
   extractFinalTextFromAgentEnd,
 } from '../handoff-service.js'
 import { HANDOFF_PROMPT_TEMPLATE, REPLY_MAX_LENGTH, buildHandoffPrompt, sanitizeReply } from '../handoff-prompt.js'
@@ -28,27 +27,40 @@ interface MockClient {
   prompt: ReturnType<typeof vi.fn>
   abort: ReturnType<typeof vi.fn>
   onEvent: ReturnType<typeof vi.fn>
-  exited: boolean
+  onExit: ReturnType<typeof vi.fn>
   _listeners: Set<(event: unknown) => void>
+  _exitListeners: Set<(code: number | null, stderr: string) => void>
   /** 触发所有已注册 listener（单参数 event，符合 PiEventListener 签名）。 */
   emit(event: unknown): void
+  /** 触发所有已注册 onExit 回调（模拟 pi 进程退出）。 */
+  emitExit(code: number | null): void
 }
 
 function createMockClient(): MockClient {
   const listeners = new Set<(event: unknown) => void>()
+  const exitListeners = new Set<(code: number | null, stderr: string) => void>()
   const client: MockClient = {
     prompt: vi.fn(async () => ({})),
     abort: vi.fn(async () => ({})),
-    exited: false,
     _listeners: listeners,
+    _exitListeners: exitListeners,
     onEvent: vi.fn((listener: (event: unknown) => void) => {
       listeners.add(listener)
       return () => {
         listeners.delete(listener)
       }
     }),
+    onExit: vi.fn((callback: (code: number | null, stderr: string) => void) => {
+      exitListeners.add(callback)
+      return () => {
+        exitListeners.delete(callback)
+      }
+    }),
     emit(event: unknown) {
       for (const l of listeners) l(event)
+    },
+    emitExit(code: number | null) {
+      for (const l of exitListeners) l(code, '')
     },
   }
   return client
@@ -345,27 +357,20 @@ describe('HandoffService', () => {
     warnSpy.mockRestore()
   })
 
-  it('TC8b: W3 pi 中途退出 — srcClient.exited=true 后 runHandoff rejects（source pi exited），不挂到 timeout', async () => {
-    vi.useFakeTimers()
-    try {
-      const runPromise = service.runHandoff('src-1')
-      // 预挂 catch，避免 reject 成为 unhandled rejection
-      const expectPromise = expect(runPromise).rejects.toThrow('source pi exited')
-      // 让 ensureActive / onEvent / prompt（async resolve）跑完
-      await vi.advanceTimersByTimeAsync(0)
+  it('TC8b: W3 pi 中途退出 — onExit 触发后 runHandoff rejects（source pi exited），不挂到 timeout', async () => {
+    const runPromise = service.runHandoff('src-1')
+    // 预挂 catch，避免 reject 成为 unhandled rejection
+    const expectPromise = expect(runPromise).rejects.toThrow('source pi exited')
+    // 让 ensureActive / onEvent / onExit / prompt（async resolve）跑完
+    await new Promise((r) => setTimeout(r, 0))
 
-      // 模拟 pi 中途崩溃：srcClient.exited 置 true
-      srcClient.exited = true
-      // 推进一个轮询间隔（HANDOFF_EXIT_POLL_MS）让退出探测定时器命中
-      await vi.advanceTimersByTimeAsync(HANDOFF_EXIT_POLL_MS)
+    // 模拟 pi 中途崩溃：触发 onExit 回调
+    srcClient.emitExit(1)
 
-      await expectPromise
-      // 远未到 timeout（10 分钟），证明 exit 探测命中而非超时
-      // wave:perf-w08：handoffStarted 广播已删，exit 路径零广播（原断言 1 次 handoffStarted）
-      expect(broker.broadcast).not.toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
-    }
+    await expectPromise
+    // 远未到 timeout（10 分钟），证明 exit 事件命中而非超时
+    // wave:perf-w08：handoffStarted 广播已删，exit 路径零广播（原断言 1 次 handoffStarted）
+    expect(broker.broadcast).not.toHaveBeenCalled()
   })
 
   it('TC8c: W4 settle 后 abort no-op — agent_end resolve 后再 abort 不抛错且广播未发（已 settle 的 promise 不再 reject）', async () => {

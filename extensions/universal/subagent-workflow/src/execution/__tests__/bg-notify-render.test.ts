@@ -128,6 +128,79 @@ describe("renderBgNotifyMessage", () => {
     expect(comp!.render(80).join("\n")).toContain("cancelled");
   });
 
+  // ── U3 C-outcome：渲染器切读 outcome ──
+
+  it("[U3] details 携带 outcome='failed' → verb 为 failed + Error 行（直读一等字段）", () => {
+    const { theme } = makeTheme();
+    const comp = renderBgNotifyMessage(
+      { details: { status: "closed", outcome: "failed", agent: "w", id: "bg-4", error: "kaboom" } },
+      { expanded: false },
+      theme,
+    );
+    const joined = comp!.render(80).join("\n");
+    expect(joined).toContain("failed");
+    expect(joined).toContain("Error");
+    expect(joined).toContain("kaboom");
+  });
+
+  it("[U3] details 携带 outcome='completed' → verb 为 finished，结果行可见", () => {
+    const { theme } = makeTheme();
+    const comp = renderBgNotifyMessage(
+      { details: { status: "closed", outcome: "completed", agent: "w", id: "bg-5", result: "ok" } },
+      { expanded: false },
+      theme,
+    );
+    const joined = comp!.render(80).join("\n");
+    expect(joined).toContain("finished");
+    expect(joined).toContain("ok");
+  });
+
+  it("[U3] outcome 优先于 closedReason（一等字段胜出）", () => {
+    const { theme } = makeTheme();
+    const comp = renderBgNotifyMessage(
+      {
+        details: {
+          status: "closed", outcome: "cancelled", closedReason: "gc", agent: "w", id: "bg-6",
+        },
+      },
+      { expanded: false },
+      theme,
+    );
+    const joined = comp!.render(80).join("\n");
+    expect(joined).toContain("cancelled");
+  });
+
+  it("[U3] 升级前旧消息重放（details 无 outcome，仅 closedReason+error）→ deriveOutcome 兑底不崩溃", () => {
+    const { theme } = makeTheme();
+    const comp = renderBgNotifyMessage(
+      {
+        details: {
+          status: "closed", closedReason: "gc", error: "legacy boom", agent: "w", id: "bg-7",
+        },
+      },
+      { expanded: false },
+      theme,
+    );
+    const joined = comp!.render(80).join("\n");
+    expect(joined).toContain("failed");
+    expect(joined).toContain("legacy boom");
+  });
+
+  it("[U3] 非法 outcome 值按缺失处理（防御性收窄，不崩溃，兑底派生）", () => {
+    const { theme } = makeTheme();
+    const comp = renderBgNotifyMessage(
+      {
+        details: {
+          status: "closed", outcome: "bogus", closedReason: "gc", result: "fine", agent: "w", id: "bg-8",
+        },
+      },
+      { expanded: false },
+      theme,
+    );
+    const joined = comp!.render(80).join("\n");
+    expect(joined).toContain("finished");
+  });
+
   it("details 缺失/结构不全 → undefined（走 Pi 默认渲染兜底）", () => {
     const { theme } = makeTheme();
     expect(renderBgNotifyMessage({ details: undefined }, { expanded: false }, theme)).toBeUndefined();

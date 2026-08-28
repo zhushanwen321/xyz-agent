@@ -16,7 +16,6 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ConcurrencyGate } from "../concurrency-gate.ts";
 import {
   handleScriptError,
   handleWorkerError,
@@ -41,6 +40,8 @@ function makeRunningRun(opts: {
   scriptErrorCount?: number;
   budgetTimeMs?: number;
   postMessage?: ReturnType<typeof vi.fn>;
+  /** [F1] 预置本 runtime 代际已收到终态消息（return/error）。 */
+  receivedTerminalMessage?: boolean;
 } = {}): WorkflowRun {
   return {
     state: {
@@ -66,6 +67,7 @@ function makeRunningRun(opts: {
     },
     runtime: {
       worker: { postMessage: opts.postMessage ?? vi.fn() },
+      receivedTerminalMessage: opts.receivedTerminalMessage,
     },
     // transition 副作用——run.state.status 由调用方通过 mock 控制后再次断言
     transition(target: string, reason?: string): void {
@@ -125,8 +127,11 @@ afterEach(() => {
 // ── handleWorkerExit ─────────────────────────────────────────
 
 describe("handleWorkerExit", () => {
-  it("code=0 正常退出：no-op（不 transition、不 save）", async () => {
-    const run = makeRunningRun();
+  it("code=0 且已收到终态消息：no-op（不 transition、不 save）", async () => {
+    // [F1] 语义更新：exit(0) no-op 的前提是本代际已交付 return/error（正常收尾退出，
+    // 或 script-error 重试退避窗口）。无终态消息的 exit(0) 现转 done,failed，
+    // 见下方用例与 worker-exit-without-result.test.ts。
+    const run = makeRunningRun({ receivedTerminalMessage: true });
     const deps = makeDeps();
     const handle = makeHandle(true);
 
@@ -135,6 +140,20 @@ describe("handleWorkerExit", () => {
     expect(run.state.status).toBe("running"); // 未改
     expect(deps.store.save).not.toHaveBeenCalled();
     expect(deps.eventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it("code=0 且无终态消息：[F1] 转 done,failed（不可克隆 return 被吞的悬挂防线）", async () => {
+    const run = makeRunningRun();
+    const deps = makeDeps();
+    const handle = makeHandle(true);
+
+    await handleWorkerExit(run, 0, handle, deps, makeHandlers());
+
+    expect(run.state.status).toBe("done");
+    expect(run.state.reason).toBe("failed");
+    expect(run.state.error).toContain("structured-cloneable");
+    expect(deps.store.save).toHaveBeenCalledTimes(1);
+    expect(deps.onRunDone).toHaveBeenCalledTimes(1);
   });
 
   it("code!=0 异常退出：委托 handleWorkerError → 超 MAX 重试 → transition done,failed", async () => {
@@ -379,6 +398,72 @@ describe("rebuildRuntime", () => {
 // rebuildRuntime → replaceRuntime → release 的 abort 旧 controller / terminate 旧
 // worker / discardInFlightCalls 全链路需要真实聚合根行为才成立。
 
+// ── race-F3：rebuild 时间预算折算（已耗墙钟不重置） ─────────────
+//
+// 旧实现 rebuildRuntime 重排计时器用满额 budgetTimeMs——每吃一次 worker/script
+// 错误重试就重置一次预算，最坏 6 次重试放大 ~6× 墙钟。修复后：
+// - 重排值 = max(0, 原预算 - 已耗墙钟)（从 run.meta.startedAt 推算）
+// - 重试前已耗尽 → 不 rebuild，直接 done,time_limited 终态
+//
+// 确定性说明：本文件 beforeEach 已 useFakeTimers()（默认 fake Date）——Date.now
+// 冻结，startedAt 倒拨值即精确已耗墙钟，断言可精确等值。
+describe("race-F3: rebuild 时间预算折算", () => {
+  it("剩余 30% → 重排预算 = 30% 而非满额", () => {
+    const run = makeRunningRun({ budgetTimeMs: 5000 });
+    // 已耗 70%（3500ms）→ 剩余 1500ms；fake Date 冻结，elapsed 精确
+    run.meta.startedAt = new Date(Date.now() - 3500).toISOString();
+    const scheduleTimeBudget = vi.fn(() => undefined);
+    const deps = makeDeps({ scheduleTimeBudget });
+
+    rebuildRuntime(run, deps, makeHandlers());
+
+    expect(scheduleTimeBudget).toHaveBeenCalledTimes(1);
+    const args = scheduleTimeBudget.mock.calls[0]!;
+    expect(args[1]).toBe(1500);
+    // run 保持 running（正常 rebuild 路径不受影响）
+    expect(run.state.status).toBe("running");
+  });
+
+  it("重试前预算已耗尽（已耗 > 预算）→ 不 rebuild，直接 done,time_limited", async () => {
+    const run = makeRunningRun({ budgetTimeMs: 5000 });
+    // 已耗 6000ms > 预算 5000ms（退避 advance 1000ms 后已耗 7000ms，仍耗尽）
+    run.meta.startedAt = new Date(Date.now() - 6000).toISOString();
+    const scheduleTimeBudget = vi.fn(() => undefined);
+    const deps = makeDeps({ scheduleTimeBudget });
+
+    const p = handleScriptError(run, "boom", [], deps, makeHandlers());
+    await vi.advanceTimersByTimeAsync(1000); // 推进退避（1s）
+    await p;
+
+    // 不 rebuild：不启新 worker、不重排计时器
+    expect(deps.workerHost.start).not.toHaveBeenCalled();
+    expect(scheduleTimeBudget).not.toHaveBeenCalled();
+    // 直接 time_limited 终态 + 持久化 + 注销通知 + onRunDone
+    expect(run.state.status).toBe("done");
+    expect(run.state.reason).toBe("time_limited");
+    expect(deps.store.save).toHaveBeenCalled();
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "pending:unregister",
+      expect.objectContaining({ reason: "time_limited" }),
+    );
+    expect(deps.onRunDone).toHaveBeenCalled();
+  });
+
+  it("预算未耗尽（fresh run）→ 照常 rebuild，不误转 time_limited（防误伤回归）", async () => {
+    const run = makeRunningRun({ budgetTimeMs: 5000 }); // startedAt ≈ now，remaining 满
+    const scheduleTimeBudget = vi.fn(() => undefined);
+    const deps = makeDeps({ scheduleTimeBudget });
+
+    const p = handleScriptError(run, "boom", [], deps, makeHandlers());
+    await vi.advanceTimersByTimeAsync(1000);
+    await p;
+
+    expect(deps.workerHost.start).toHaveBeenCalledTimes(1);
+    expect(scheduleTimeBudget).toHaveBeenCalledTimes(1);
+    expect(run.state.status).toBe("running");
+  });
+});
+
 /** 手动控制的 deferred——精确编排「dispatch 挂起 → rebuild → 旧 promise settle」交错。 */
 interface Deferred<T> {
   promise: Promise<T>;
@@ -429,7 +514,7 @@ function makeRealRun(runId: string, opts: { budgetTimeMs?: number } = {}): Workf
     postMessage: vi.fn(),
     terminate: vi.fn(async () => {}),
   } as unknown as WorkerHandle;
-  run.assignRuntime(new RunRuntime(initialWorker, new ConcurrencyGate(), new AbortController()));
+  run.assignRuntime(new RunRuntime(initialWorker, new AbortController()));
   return run;
 }
 

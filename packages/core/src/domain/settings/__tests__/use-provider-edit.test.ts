@@ -403,7 +403,7 @@ describe('模型 CRUD', () => {
     expect(() => edit.addModel()).toThrow('composable.modelAlreadyExists')
   })
 
-  it('addModel 正常添加 + 清空表单', async () => {
+  it('addModel 正常添加 + 清空表单 + reasoning 显式 boolean 落盘（D4，不 undefined 出厂）', async () => {
     const providerRef = ref<ProviderInfo | null>(null)
     const edit = mount(providerRef)
     await nextTick()
@@ -412,7 +412,41 @@ describe('模型 CRUD', () => {
     edit.addModel()
     expect(edit.localModels.value).toHaveLength(1)
     expect(edit.localModels.value[0].id).toBe('new-model')
+    // D4：reasoning 显式 boolean（事故 B 根因 ②——undefined 被 pi 判 off）
+    expect(edit.localModels.value[0].reasoning).toBe(true)
     expect(edit.newModel.name).toBe('')
+  })
+
+  it('addModel 用户显式关 reasoning → 落盘 false（显式开关可覆盖推导）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.newModel.name = 'no-reasoning-model'
+    edit.newModel.reasoning = false
+    edit.addModel()
+    expect(edit.localModels.value[0].reasoning).toBe(false)
+  })
+
+  it('D4 推导：思考策略切非 all-levels → reasoning 自动置 true（显式关后再切策略重新推导）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.newModel.reasoning = false
+    edit.newModel.thinking = 'high-max'
+    await nextTick()
+    expect(edit.newModel.reasoning).toBe(true)
+    // 用户显式关（覆盖推导）
+    edit.newModel.reasoning = false
+    expect(edit.newModel.reasoning).toBe(false)
+    // 再切策略 → 重新推导置 true
+    edit.newModel.thinking = 'on-off'
+    await nextTick()
+    expect(edit.newModel.reasoning).toBe(true)
+    // 切回 all-levels → 不推导（保持当前值）
+    edit.newModel.reasoning = false
+    edit.newModel.thinking = 'all-levels'
+    await nextTick()
+    expect(edit.newModel.reasoning).toBe(false)
   })
 
   it('removeModel 移除指定下标', async () => {

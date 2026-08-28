@@ -106,7 +106,6 @@ export function resolveAndValidateFile(filename: string): string {
 
 const MAX_PLUGINS_PER_TRUSTED_WORKER = 10
 const LOAD_PLUGIN_TIMEOUT_MS = 10_000
-const MEMORY_MONITOR_DEFAULT_INTERVAL_MS = 30_000
 const MAX_REBUILD_ATTEMPTS = 3
 const REBUILD_COOLDOWN_MS = 5_000
 /**
@@ -240,7 +239,6 @@ export class PluginHost implements PluginHostContract {
   private rpcServer: PluginRpcServer
   private onCrash: CrashCallback | null = null
   private onReply: ReplyCallback | null = null
-  private memoryMonitorTimer: ReturnType<typeof setInterval> | null = null
   private trustedCounter = 0
 
   /**
@@ -482,21 +480,6 @@ export class PluginHost implements PluginHostContract {
   }
 
   /**
-   * 定期刷新 Worker handle 的 lastActiveAt。
-   * 未来可扩展为从 /proc 或 process.memoryUsage() 采集实际内存。
-   */
-  startMemoryMonitor(intervalMs: number = MEMORY_MONITOR_DEFAULT_INTERVAL_MS): void {
-    if (this.memoryMonitorTimer) clearInterval(this.memoryMonitorTimer)
-    this.memoryMonitorTimer = setInterval(() => {
-      for (const [workerId] of this.workerInstances) {
-        const handle = this.workers.get(workerId)
-        if (!handle) continue
-        handle.lastActiveAt = Date.now()
-      }
-    }, intervalMs)
-  }
-
-  /**
    * 立即终止 rebuild 通道（D6/W3）：置 disposed + 清全部 rebuild/decay timer 与
    * crashedTrustedWorkers。
    *
@@ -516,10 +499,6 @@ export class PluginHost implements PluginHostContract {
   async shutdown(): Promise<void> {
     // D6/W3 rebuild 受约束（见 cancelPendingRebuilds 注释）
     this.cancelPendingRebuilds()
-    if (this.memoryMonitorTimer) {
-      clearInterval(this.memoryMonitorTimer)
-      this.memoryMonitorTimer = null
-    }
     // 子进程宿主先关（内部也 dispose rpcServer——dispose 幂等，重复调用无害）
     await this.processHost?.shutdown()
     // 同 terminateWorker：先统一置 terminated，terminate() 触发的 exit code=1 不误判崩溃

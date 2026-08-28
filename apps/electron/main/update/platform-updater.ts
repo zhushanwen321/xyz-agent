@@ -5,10 +5,11 @@
  * 生成替换脚本/参数，触发替换动作（mac/linux spawn detached bash，win 返回 NSIS 参数）。
  *
  * [HISTORICAL] 不变量：
- * - mac：detached bash 脚本（含 sha256 二次校验 + rm-then-mv 回滚决策树），prepareUpdate 内已 spawn
+ * - mac：detached bash 脚本（staging 状态机，含 sha256 二次校验），prepareUpdate 内已 spawn
  * - linux：AppImage 走 detached 脚本（与 mac 一致，避免双实例）；deb 包（APPIMAGE undefined）走 unsupported
- * - win：返回 NSIS 静默安装参数，由 orchestrator 负责 spawn（不在 prepareUpdate 内 spawn，
- *   保持 mac/linux/win 返回值语义一致：orchestrator 据 ref.kind 决定后续动作）
+ * - win：cmd wrapper（设计 §3.4 批次 2）——prepareUpdate 内写盘 updater.cmd +
+ *   detached spawn，返回 detached-script（三平台统一语义）；sha256 缺失 throw
+ *   （RM4/m5）。orchestrator 的 win spawn-installer 延迟分支由批次 2 u2b 删除
  * - dev 模式（!app.isPackaged）一律拒绝自更新（避免覆盖 dev 环境）
  * - .app bundle 路径推导：process.execPath（.../太极.app/Contents/MacOS/TaiJi）
  *   向上 3 层 dirname 得到 .app 目录
@@ -26,14 +27,44 @@ import {
   LINUX_UPDATER_LOG_PATH,
   UPDATE_DIR,
   UPDATER_LOG_PATH,
+  UPDATER_PID_FILE,
   UPDATER_SCRIPT_PATH,
+  WIN_UPDATER_LOG_PATH,
+  WIN_UPDATER_SCRIPT_PATH,
 } from './constants.js'
-import { buildLinuxUpdaterScript, buildUpdaterScript, buildWinInstallerArgs } from './updater-script.js'
+import { buildLinuxUpdaterScript, buildUpdaterScript } from './updater-script.js'
+import { buildWinUpdaterCmd } from './win-updater-cmd.js'
 import { UpdateError, UpdateUnsupportedError } from './types.js'
 import type { UpdateScriptRef } from './types.js'
 
 /** updater 脚本文件权限（rwxr-xr-x）：写盘 + chmod 共用，确保 detached bash 可执行。 */
 const UPDATER_SCRIPT_MODE = 0o755
+
+/**
+ * 写 updater.pid（批次 5 互斥 §3.7.1，接线收口 #13）。
+ *
+ * 写入语义对齐 mac/linux：脚本启动即写、退出即删。差异在写入方——
+ * mac/linux 由脚本模板自写 `$$`（`trap 'rm -f "$PID_FILE"' EXIT` 负责退出清理），
+ * win 的 cmd wrapper 无内建变量可廉价自取 PID（PowerShell `$PID` 是其自身进程而非
+ * wrapper），故由 main 侧在 spawn 后写 `child.pid`。
+ *
+ * **win 退出清理未覆盖**：cmd wrapper 不含删 pid 文件的逻辑（模板不在本单元领地），
+ * 残留在退出后由读侧 `update-self-healer` 的死 PID 自愈清理兜底（kill(pid,0) 失败
+ * 即 unlink）——cmd 进程退出后 pid 即死，自愈必然触发，不会永久残留。
+ *
+ * best-effort：写失败只告警不阻断。pid 文件是互斥辅助信号，写失败退回 u5a 之前的
+ * 现状（无互斥探测），远优于因为一个辅助文件而让整次升级失败。
+ */
+function writeUpdaterPid(pid: number | undefined): void {
+  if (pid === undefined) return
+  try {
+    writeFileSync(UPDATER_PID_FILE, String(pid))
+  } catch (err) {
+    // 降级策略：pid 文件是互斥辅助信号，写失败退回 u5a 之前的现状（无互斥探测），
+    // 远优于因为一个辅助文件而让整次升级失败——故只告警不重抛。
+    console.warn('[update] failed to write updater.pid (mutex degrades to no-op):', err)
+  }
+}
 
 /** 平台升级器接口 */
 export interface PlatformUpdater {
@@ -42,7 +73,8 @@ export interface PlatformUpdater {
    *
    * @param downloadedFilePath download-asset 返回的已下载文件路径（通过 sha256 校验）
    * @param release 当前 release 信息（取 sha256 / version / htmlUrl）
-   * @returns 替换动作描述（mac/linux detached-script / win spawn-installer）
+   * @returns 替换动作描述（三平台统一 detached-script：脚本/写盘 spawn 均在
+   *          prepareUpdate 内完成；orchestrator 只透传触发重启）
    */
   prepareUpdate(downloadedFilePath: string, release: LatestReleaseInfo): UpdateScriptRef
 }
@@ -68,7 +100,7 @@ export class MacUpdater implements PlatformUpdater {
     // 输出小写。注入前统一小写，避免 [ "$ACTUAL" != "$SHA256" ] 字符串比较大写 vs 小写
     // 误判为不匹配（导致正确下载被错误回滚）。download-asset.ts 的下载期校验已小写化。
     const sha256 = release.assets.macArm64Zip?.sha256?.toLowerCase()
-    if (!sha256) throw new UpdateError('mac asset missing sha256', 'verifying')
+    if (!sha256) throw new UpdateError('mac asset missing sha256', 'downloading')
     const script = buildUpdaterScript({
       appBundle,
       zipPath: downloadedFilePath,
@@ -77,6 +109,9 @@ export class MacUpdater implements PlatformUpdater {
       resultPath: path.join(UPDATE_DIR, 'update-result.json'),
       appName: 'TaiJi',
       targetVersion: release.version,
+      // u1a 模板契约：脚本用 kill -0 等待本进程退出（PID 制，上限 60s）；
+      // 缺失时 buildUpdaterScript 直接 throw，不静默跳过等待。
+      parentPid: String(process.pid),
     })
     mkdirSync(UPDATE_DIR, { recursive: true })
     writeFileSync(UPDATER_SCRIPT_PATH, script, { mode: UPDATER_SCRIPT_MODE })
@@ -87,21 +122,41 @@ export class MacUpdater implements PlatformUpdater {
 }
 
 /**
- * win NSIS 升级器。
+ * win NSIS 升级器（cmd wrapper，设计 §3.4 批次 2）。
  *
- * 不在 prepareUpdate 内 spawn（保持与 mac/linux 返回值语义一致）。
- * orchestrator 据 ref.kind='spawn-installer' 负责 spawn NSIS installer。
+ * 与 mac/linux 同构：prepareUpdate 内生成 updater.cmd 写盘 UPDATE_DIR 并
+ * detached spawn（cmd /c，detached + ignore stdio），返回 detached-script。
+ * sha256 强制（RM4/m5）：win 侧缺 sha256 直接 throw（对齐 mac/linux 语义），
+ * 关闭「size-only 内容错的 exe 被执行」窗口——download 降级 size-only 仍可能发生，
+ * 但 install 侧强制拒绝；wrapper 内 certutil 二次复验（见 win-updater-cmd.ts）。
  */
 export class WinUpdater implements PlatformUpdater {
-  prepareUpdate(downloadedFilePath: string, _release: LatestReleaseInfo): UpdateScriptRef {
+  prepareUpdate(downloadedFilePath: string, release: LatestReleaseInfo): UpdateScriptRef {
     if (!app.isPackaged) throw new UpdateError('dev mode does not support self-update', 'replacing')
     // win 安装目录 = execPath 的 dirname（electron-builder NSIS 默认布局）
     const installDir = path.dirname(process.execPath)
-    return {
-      kind: 'spawn-installer',
+    const sha256 = release.assets.winX64Exe?.sha256?.toLowerCase()
+    if (!sha256) throw new UpdateError('win asset missing sha256', 'downloading')
+    const script = buildWinUpdaterCmd({
       installerPath: downloadedFilePath,
-      args: buildWinInstallerArgs(installDir),
-    }
+      installDir,
+      // 重启目标：当前可执行文件同名落位（NSIS /D= 同目录覆盖安装，exe 名不变）
+      targetExePath: process.execPath,
+      resultPath: path.join(UPDATE_DIR, 'update-result.json'),
+      logPath: WIN_UPDATER_LOG_PATH,
+      parentPid: String(process.pid),
+      sha256,
+      targetVersion: release.version,
+    })
+    const scriptPath = WIN_UPDATER_SCRIPT_PATH
+    mkdirSync(UPDATE_DIR, { recursive: true })
+    writeFileSync(scriptPath, script)
+    // cmd /c detached + ignore stdio：与 app.quit 解耦（Node 侧定时器随进程消亡，
+    // 等待逻辑全部前移进 wrapper，不可信 Node 延迟 spawn）
+    const child = spawn('cmd', ['/c', scriptPath], { detached: true, stdio: 'ignore' })
+    child.unref()
+    writeUpdaterPid(child.pid)
+    return { kind: 'detached-script', scriptPath }
   }
 }
 
@@ -120,7 +175,7 @@ export class LinuxAppImageUpdater implements PlatformUpdater {
     // toLowerCase + 缺失抛 UpdateError：与 mac 路径一致。linux updater 脚本里
     // sha256sum 输出小写，统一小写避免字符串比较大小写误判。
     const sha256 = release.assets.linuxX64AppImage?.sha256?.toLowerCase()
-    if (!sha256) throw new UpdateError('linux asset missing sha256', 'verifying')
+    if (!sha256) throw new UpdateError('linux asset missing sha256', 'downloading')
     const script = buildLinuxUpdaterScript({
       appImagePath: appImage,
       newFilePath: downloadedFilePath,
@@ -128,6 +183,8 @@ export class LinuxAppImageUpdater implements PlatformUpdater {
       logPath: LINUX_UPDATER_LOG_PATH,
       resultPath: path.join(UPDATE_DIR, 'update-result.json'),
       targetVersion: release.version,
+      // 与 mac 同契约：脚本 kill -0 等待本进程退出
+      parentPid: String(process.pid),
     })
     mkdirSync(UPDATE_DIR, { recursive: true })
     writeFileSync(LINUX_UPDATER_SCRIPT_PATH, script, { mode: UPDATER_SCRIPT_MODE })

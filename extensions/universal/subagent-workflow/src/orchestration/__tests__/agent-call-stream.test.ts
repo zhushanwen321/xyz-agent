@@ -46,11 +46,6 @@ function makeRunningRun(runId: string): WorkflowRun {
     runtime: {
       controller,
       worker: { postMessage: vi.fn() },
-      gate: {
-        withSlot: vi.fn(async (fn: () => Promise<void>, _signal: AbortSignal) => {
-          await fn();
-        }),
-      },
     },
     transition: vi.fn(),
     replaceRuntime: vi.fn(),

@@ -92,10 +92,10 @@ describe('plugin-sdk freeze 运行时侧（AC12 后半：runtime api 对象冻�
         updateStatusBarItem: async () => undefined,
       },
       agent: {
-        setModel: async () => undefined,
+        setModel: async () => '',
         getModel: async () => '',
         getThinkingLevel: async () => '',
-        setThinkingLevel: async () => undefined,
+        setThinkingLevel: async () => '',
         getActiveTools: async () => [],
       },
       workspace: { rootPath: '', name: '', findFiles: async () => [] },

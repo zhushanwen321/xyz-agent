@@ -2,12 +2,14 @@
  * lib/ipc 自动升级方法单测（w4 update-frontend · W4TC11）。
  *
  * 验证两条路径：
- * 1. window.electronAPI 为 undefined（web/mock 环境）：5 方法优雅降级
- *    - checkForUpdate → null
- *    - performUpdate → { triggerRestart: false }
+ * 1. window.electronAPI 为 undefined（web/mock 环境）：方法优雅降级
+ *    - checkForUpdate → { info: null, rateLimited: false }（RM2.3 形状）
+ *    - updateDownload → { downloaded: false }
  *    - onUpdateProgress/onUpdateError → no-op（调用返回值不抛错）
  *    - openUpdateFallbackUrl → resolve（不抛错）
- * 2. window.electronAPI 含 5 方法：转发到对应方法 + 透传参数/返回值
+ * 2. window.electronAPI 含对应方法：转发到对应方法 + 透传参数/返回值
+ *
+ * [批次 3] performUpdate 一键封装已删（m17）；updateDownload 改传意图（version 字符串）。
  *
  * 关键：ipc.ts 顶层 `const api = window.electronAPI` 在模块加载时捕获，
  * 故每个用例需 vi.resetModules() + 动态 import 以新 module 实例读取新 stub。
@@ -17,7 +19,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 
-/** 测试用 LatestReleaseInfo（performUpdate/openUpdateFallbackUrl 透传） */
+/** 测试用 LatestReleaseInfo（openUpdateFallbackUrl/getPreloaded 透传） */
 const release: LatestReleaseInfo = {
   version: '0.9.0',
   tagName: 'v0.9.0',
@@ -42,15 +44,10 @@ describe('lib/ipc update 方法 · web/mock 降级（electronAPI=undefined）', 
     delete (window as { electronAPI?: unknown }).electronAPI
   })
 
-  it('checkForUpdate → null', async () => {
+  it('checkForUpdate → { info: null, rateLimited: false }（RM2.3 形状）', async () => {
     const ipc = await import('@/lib/ipc')
-    await expect(ipc.checkForUpdate()).resolves.toBeNull()
-    await expect(ipc.checkForUpdate({ force: true })).resolves.toBeNull()
-  })
-
-  it('performUpdate → { triggerRestart: false }', async () => {
-    const ipc = await import('@/lib/ipc')
-    await expect(ipc.performUpdate(release)).resolves.toEqual({ triggerRestart: false })
+    await expect(ipc.checkForUpdate()).resolves.toEqual({ info: null, rateLimited: false })
+    await expect(ipc.checkForUpdate({ force: true })).resolves.toEqual({ info: null, rateLimited: false })
   })
 
   it('onUpdateProgress → 返回 no-op 取消函数', async () => {
@@ -72,9 +69,9 @@ describe('lib/ipc update 方法 · web/mock 降级（electronAPI=undefined）', 
     await expect(ipc.openUpdateFallbackUrl('https://example.com')).resolves.toBeUndefined()
   })
 
-  it('updateDownload → { downloaded: false }', async () => {
+  it('updateDownload → { downloaded: false }（传意图：version 字符串）', async () => {
     const ipc = await import('@/lib/ipc')
-    await expect(ipc.updateDownload(release)).resolves.toEqual({ downloaded: false })
+    await expect(ipc.updateDownload('0.9.0')).resolves.toEqual({ downloaded: false })
   })
 
   it('updateInstall → { triggerRestart: false }', async () => {
@@ -89,31 +86,24 @@ describe('lib/ipc update 方法 · web/mock 降级（electronAPI=undefined）', 
 })
 
 describe('lib/ipc update 方法 · 转发到 electronAPI', () => {
-  it('checkForUpdate 转发 opts 并透传返回值', async () => {
+  it('checkForUpdate 转发 opts 并透传 UpdateCheckResult', async () => {
     const spy = vi.fn((opts?: { force?: boolean }) =>
-      Promise.resolve(opts?.force ? release : null),
+      Promise.resolve(
+        opts?.force
+          ? { info: release, rateLimited: false }
+          : { info: null, rateLimited: true },
+      ),
     )
     ;(window as { electronAPI?: unknown }).electronAPI = { checkForUpdate: spy }
     const ipc = await import('@/lib/ipc')
 
-    // force=true → 返回 release
-    await expect(ipc.checkForUpdate({ force: true })).resolves.toEqual(release)
+    // force=true → 透传 { info: release }
+    await expect(ipc.checkForUpdate({ force: true })).resolves.toEqual({ info: release, rateLimited: false })
     expect(spy).toHaveBeenLastCalledWith({ force: true })
 
-    // 无 force → 返回 null
-    await expect(ipc.checkForUpdate()).resolves.toBeNull()
+    // 无 force → 透传限额退避信号（rateLimited=true）
+    await expect(ipc.checkForUpdate()).resolves.toEqual({ info: null, rateLimited: true })
     expect(spy).toHaveBeenLastCalledWith(undefined)
-  })
-
-  it('performUpdate 转发 release 并透传返回值', async () => {
-    const spy = vi.fn((r: LatestReleaseInfo) =>
-      Promise.resolve({ triggerRestart: r.version === '0.9.0' }),
-    )
-    ;(window as { electronAPI?: unknown }).electronAPI = { performUpdate: spy }
-    const ipc = await import('@/lib/ipc')
-
-    await expect(ipc.performUpdate(release)).resolves.toEqual({ triggerRestart: true })
-    expect(spy).toHaveBeenCalledWith(release)
   })
 
   it('onUpdateProgress 转发 callback 并返回其 unsubscribe', async () => {
@@ -162,15 +152,13 @@ describe('lib/ipc update 方法 · 转发到 electronAPI', () => {
     expect(spy).toHaveBeenCalledWith('https://example.com/x')
   })
 
-  it('updateDownload 转发 release 并透传返回值', async () => {
-    const spy = vi.fn((r: LatestReleaseInfo) =>
-      Promise.resolve({ downloaded: r.version === '0.9.0' }),
-    )
+  it('updateDownload 转发 version 字符串并透传返回值（批次 3 契约）', async () => {
+    const spy = vi.fn((v: string) => Promise.resolve({ downloaded: v === '0.9.0' }))
     ;(window as { electronAPI?: unknown }).electronAPI = { updateDownload: spy }
     const ipc = await import('@/lib/ipc')
 
-    await expect(ipc.updateDownload(release)).resolves.toEqual({ downloaded: true })
-    expect(spy).toHaveBeenCalledWith(release)
+    await expect(ipc.updateDownload('0.9.0')).resolves.toEqual({ downloaded: true })
+    expect(spy).toHaveBeenCalledWith('0.9.0')
   })
 
   it('updateInstall 转发（无参）并透传返回值', async () => {

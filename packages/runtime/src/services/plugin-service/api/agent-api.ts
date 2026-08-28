@@ -27,12 +27,19 @@ import { asBoundedString } from '../validation.js'
  */
 const AGENT_ID_MAX_BYTES = 512
 
-/** Agent 服务依赖（主线程侧） */
+/**
+ * Agent 服务依赖（主线程侧）。
+ *
+ * setModel / setThinkingLevel 返回生效值（U6 回执普查，D3④——改状态 RPC 一律回
+ * pi 实际生效值，plugin 侧同口径）：setModel 返回 get_state 读回的 'provider/modelId'
+ * 复合串；setThinkingLevel 返回钳制后的生效档。无活跃 session / 无 sessionService 的
+ * 降级路径返回空串。
+ */
 export interface AgentHandlers {
   getModel(): string | Promise<string>
-  setModel(model: string): void | Promise<void>
+  setModel(model: string): string | Promise<string>
   getThinkingLevel(): string | Promise<string>
-  setThinkingLevel(level: string): void | Promise<void>
+  setThinkingLevel(level: string): string | Promise<string>
   getActiveTools(): string[] | Promise<string[]>
 }
 
@@ -43,7 +50,7 @@ export function registerAgentRpcHandlers(
   rpcServer.registerMethod('plugin.agent.setModel', async (params) => {
     // S3-W3 窄校验：model 非字符串/超长 → INVALID_MODEL，不进 switchModel
     const model = asBoundedString(params.model, 'model', AGENT_ID_MAX_BYTES)
-    await deps.setModel(model)
+    return deps.setModel(model)
   })
 
   rpcServer.registerMethod('plugin.agent.getModel', async () => {
@@ -56,7 +63,7 @@ export function registerAgentRpcHandlers(
 
   rpcServer.registerMethod('plugin.agent.setThinkingLevel', async (params) => {
     const level = asBoundedString(params.level, 'level', AGENT_ID_MAX_BYTES)
-    await deps.setThinkingLevel(level)
+    return deps.setThinkingLevel(level)
   })
 
   rpcServer.registerMethod('plugin.agent.getActiveTools', async () => {
@@ -68,15 +75,17 @@ export function createAgentApi(
   rpcClient: PluginRpcClient,
   pluginId: string,
 ): {
-  setModel(model: string): Promise<void>
+  /** 切换后 resolve 生效模型复合串（U6 回执：pi pattern 换模时 ≠ 请求值；降级路径空串） */
+  setModel(model: string): Promise<string>
   getModel(): Promise<string>
   getThinkingLevel(): Promise<string>
-  setThinkingLevel(level: string): Promise<void>
+  /** 设置后 resolve 生效档（U6 回执：pi 钳制时 ≠ 请求值；降级路径空串） */
+  setThinkingLevel(level: string): Promise<string>
   getActiveTools(): Promise<string[]>
 } {
   return {
     setModel: (model: string) =>
-      rpcClient.request('plugin.agent.setModel', { pluginId, model }).then(() => {}),
+      rpcClient.request('plugin.agent.setModel', { pluginId, model }).then(v => (v as string) ?? ''),
 
     getModel: () =>
       rpcClient.request('plugin.agent.getModel', { pluginId }).then(v => (v as string) ?? ''),
@@ -85,7 +94,7 @@ export function createAgentApi(
       rpcClient.request('plugin.agent.getThinkingLevel', { pluginId }).then(v => (v as string) ?? ''),
 
     setThinkingLevel: (level: string) =>
-      rpcClient.request('plugin.agent.setThinkingLevel', { pluginId, level }).then(() => {}),
+      rpcClient.request('plugin.agent.setThinkingLevel', { pluginId, level }).then(v => (v as string) ?? ''),
 
     getActiveTools: () =>
       rpcClient.request('plugin.agent.getActiveTools', { pluginId }).then(v => (v as string[]) ?? []),

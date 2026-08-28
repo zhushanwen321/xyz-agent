@@ -8,6 +8,21 @@
 // 设计：默认与主 agent 同模型（零配置）。只有「有人显式指定 model」时才查
 // registry 做解析 + 鉴权校验。thinkingLevel 同链路，无指定时 undefined。
 
+// [U1 ModelRef 全等裁决] THINKING_ORDER / ThinkingLevel / strip / 裁决入口收拢到
+// shared/model-ref.ts（单一权威），此处 re-export 保持既有 import 路径不变
+//（subagent-tool / tool-workflow 的 schema 枚举从本模块派生）。
+import {
+  THINKING_ORDER,
+  assertCanonicalModelRef,
+  modelRefFromVerified,
+} from "../shared/model-ref";
+
+export { THINKING_ORDER };
+export type { ThinkingLevel } from "../shared/model-ref";
+
+/** 解析失败时错误信息列出的可用模型上限（防超长错误信息）。 */
+const MODEL_LIST_LIMIT = 20;
+
 /**
  * ModelRegistry 的最小接口（duck-typed，测试可 mock）。
  * 字段结构与 Pi SDK 的 ctx.modelRegistry 对齐。
@@ -66,13 +81,8 @@ export interface ResolvedModel {
 // 常量
 // ============================================================
 
-/** thinking level 支持顺序（低→高），用于 clamp 到 model 可用级别。
- *  SSOT（单一权威源）：新增 thinking 级别只改此处，subagent-tool 的 thinkingLevel 枚举
- *  从本常量派生，避免两处硬编码不同步。 */
-export const THINKING_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-
-/** 解析失败时错误信息列出的可用模型上限（防超长错误信息）。 */
-const MODEL_LIST_LIMIT = 20;
+// MODEL_LIST_LIMIT 与 THINKING_ORDER 随 suggestSimilarModels/lookupModel 一并迁入
+// shared/model-ref.ts（U1 裁决单一入口）。
 
 // ============================================================
 // 解析
@@ -129,7 +139,10 @@ export function resolveModel(
   }
 
   // 3. 主 agent model（直接透传）。无显式 thinking → 兜底最高可用档。
+  // [U1 D2 豁免口径] ctxModel 是运行时已验证的 ModelInfo 对象，豁免 registry 存在性
+  // 复查与 auth 校验；但孪生守卫同等适用（registry 含大小写孪生时拒绝放行，modelRefFromVerified）。
   if (ctxModel) {
+    modelRefFromVerified(ctxModel, modelRegistry);
     return {
       model: ctxModel,
       thinkingLevel: paramOverride?.thinkingLevel ?? agentConfig?.thinkingLevel
@@ -150,9 +163,12 @@ export function resolveModel(
 /**
  * lookup + auth 校验 + thinkingLevel clamp。显式指定但失败 → 抛错（不降级）。
  *
+ * [U1 D1] 模型串裁决经 assertCanonicalModelRef 单一入口（strip 后缀 → provider 精确 →
+ * 全等匹配 → 孪生守卫；未命中同步抛错并附问句式纠错候选）。放行即与 registry 条目全等。
+ *
  * 错误信息区分两种失败（避免误导排查方向）：
- *   - model 不存在 → 提示检查拼写 + 列出相近可用 model
- *   - model 存在但 auth 未配置 → 提示在 models.json 配置鉴权
+ *   - model 非全等（不存在/大小写不符/孪生歧义）→ assertCanonicalModelRef 的问句式报错
+ *   - model 全等命中但 auth 未配置 → 提示在 models.json 配置鉴权
  */
 function lookupAndResolve(
   modelStr: string,
@@ -160,11 +176,14 @@ function lookupAndResolve(
   registry: ModelRegistryLike,
   source: "paramOverride" | "agentConfig",
 ): ResolvedModel {
-  const model = lookupModel(modelStr, registry);
+  const ref = assertCanonicalModelRef(modelStr, registry, { source });
+  const model = registry.find(ref.provider, ref.id);
   if (!model) {
+    // 裁决已按 getAvailable 全等命中；find 独立实现（duck-typed mock 可能不同源）时的
+    // 类型收窄兜底，非预期路径。
     throw new Error(
-      `Model "${modelStr}" (${source}) not found in registry. ` +
-        suggestSimilarModels(modelStr, registry),
+      `Model "${modelStr}" (${source}) passed the canonical ref check but registry.find missed it ` +
+        `(registry snapshot inconsistent). Retry with an exact entry from the available models list.`,
     );
   }
   if (!registry.hasConfiguredAuth(model)) {
@@ -195,53 +214,6 @@ function maxThinkingForModel(
   const levels = availableThinkingLevels(model);
   if (levels.length > 0) return levels[levels.length - 1];
   return model.reasoning ? "xhigh" : undefined;
-}
-
-/**
- * 解析 "provider/modelId" 并查 registry。
- *
- * 容错：剥离尾部 ":thinkingLevel" 后缀（off/minimal/low/medium/high/xhigh）。
- * 原因：LLM 常把平台复合标识 "provider/modelId:thinkingLevel"（如
- * "deepseek-router/ds-pro:xhigh"）整体当 model 参数传入。registry 仅存
- * "provider/modelId"（无后缀），不剥离则 modelId="ds-pro:xhigh" 查不到。
- * 剥离后 thinkingLevel 仍由独立的 thinkingLevel 参数/resolveThinkingLevel 处理。
- *
- * modelId 可含 /，按第一个 / 分割 provider 与 modelId。
- */
-function lookupModel(modelStr: string, registry: ModelRegistryLike): ModelInfo | undefined {
-  const cleanStr = stripThinkingSuffix(modelStr);
-  const idx = cleanStr.indexOf("/");
-  if (idx <= 0) return undefined;
-  return registry.find(cleanStr.slice(0, idx), cleanStr.slice(idx + 1));
-}
-
-/**
- * 剥离模型字符串尾部 ":thinkingLevel" 后缀（如 "ds-pro:xhigh" → "ds-pro"）。
- * 仅匹配合法 thinking level，避免误剥 "foo:bar" 这类无关冒号。
- * 返回去除后缀的字符串；无后缀则原样返回。
- */
-function stripThinkingSuffix(modelStr: string): string {
-  // THINKING_ORDER 含 off/minimal/low/medium/high/xhigh，按长度降序拼正则避免短串误匹配
-  const alt = THINKING_ORDER.slice().sort((a, b) => b.length - a.length).join("|");
-  return modelStr.replace(new RegExp(`:(${alt})$`), "");
-}
-
-/**
- * 为 not-found 错误生成「相近可用 model」建议，辅助定位拼写错误。
- * 策略：取 provider/modelId 的末段，与每个可用 model 的末段做小写包含匹配，
- * 命中则列出。无命中则列出前 N 个全部可用 model（兜底）。空 registry 不列。
- */
-function suggestSimilarModels(modelStr: string, registry: ModelRegistryLike): string {
-  const available = registry.getAvailable();
-  if (available.length === 0) return "Registry has no available models.";
-  const target = modelStr.split("/").pop()?.toLowerCase() ?? "";
-  // ponytail: 末段子串包含足够定位拼写错误，无需编辑距离/相似度库
-  const similar = available
-    .filter((m) => m.id.toLowerCase().includes(target) || target.includes(m.id.toLowerCase()))
-    .map((m) => `${m.provider}/${m.id}`)
-    .slice(0, MODEL_LIST_LIMIT);
-  const list = similar.length > 0 ? similar : available.slice(0, MODEL_LIST_LIMIT).map((m) => `${m.provider}/${m.id}`);
-  return `Check the model string (maybe a typo, or a ":thinkingLevel" suffix that should be passed via the thinkingLevel param instead). Similar available models:\n  ${list.join("\n  ")}`;
 }
 
 /**

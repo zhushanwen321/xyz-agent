@@ -76,16 +76,13 @@ gh pr create --repo zhushanwen321/xyz-agent \
 
 **Gate-1**：`pr_url` 匹配 `^https://github\.com/.+/pull/\d+$`。`force_push=true` 时，阶段 3b 推 PR 加 `--force-with-lease`。
 
-### 1.4 [OPTIONAL] YAML / extension 规范校验
+### 1.4 [OPTIONAL] skill YAML 规范校验
 
-修改了 `.agents/skills/` 或 `extensions/*/package.json` 时，PR 创建前运行本 skill 内置校验脚本：
+修改了 `.agents/skills/` 时，PR 创建前运行本 skill 内置校验脚本：
 
 ```bash
 # 校验 skill SKILL.md 的 frontmatter（name/description 必填，description 双引号包裹或块标量）
 python3 .agents/skills/pr-cr-fix/scripts/validate-skill-yaml.py <skill-paths>
-
-# 校验 extension package.json 的 pi 字段（pi.extensions/keywords/type）
-python3 .agents/skills/pr-cr-fix/scripts/validate-extensions-yaml.py <extension-dirs>
 ```
 
 ## 阶段 1.5：度量快照 + Gate-1.5（硬门禁）[MANDATORY]
@@ -112,7 +109,7 @@ python3 .agents/skills/pr-cr-fix/scripts/metrics-gate.py --base main
 ### 门禁项分级
 
 - **fail**：introduced 函数圈复杂度 > 15；新增循环依赖；新增无法解析的 import（全部）
-- **warn**（注入阶段 2 review）：introduced 认知复杂度 > 15 / CRAP ≥ 30 / 死代码（未用文件/导出/类型/依赖）；新增重复块
+- **warn**（注入阶段 2 review）：introduced 认知复杂度 > 15 / CRAP ≥ 30 / 死代码等 13 类（完整清单见 scripts/metrics-gate.py 的 `WARN_DEAD_CODE_KINDS`）；新增重复块
 
 设计理由：fallow audit 无 warn 档、无真实覆盖率时 CRAP 是静态估算（噪声大），metrics-gate 用同一份 audit JSON 显式双轨判定——结构性硬指标 fail，覆盖率相关指标 warn 给阶段 2 消费。
 
@@ -171,13 +168,13 @@ renderer 全量阈值（S3-W1 基线-2~3% 重校准：lines 68 / stmts 66 / bran
 node scripts/select-constraints.mjs --base main
 ```
 
-按 diff 范围从 `docs/constraints.json`（架构约束登记 SSOT，69 条）选择命中约束，落盘 `.review/constraints.md`：scope 为 `global` 的核心不变量每次必载，其余按改动路径前缀命中（只改 renderer 不载 extension 约束）。8 个 review agent 定义均含消费约定——清单中 dimensions 含本维度的条目必须逐条核对，`enforcement: review` 的条目是本维度重点；需要完整表述时 Read「权威源」列指向的文档原文（清单里的 summary 仅导航）。
+按 diff 范围从 `docs/constraints.json`（架构约束登记 SSOT）选择命中约束，落盘 `.review/constraints.md`：scope 为 `global` 的核心不变量每次必载，其余按改动路径前缀命中（只改 renderer 不载 extension 约束）。8 个 review agent 定义均含消费约定——清单中 dimensions 含本维度的条目必须逐条核对，`enforcement: review` 的条目是本维度重点；需要完整表述时 Read「权威源」列指向的文档原文（清单里的 summary 仅导航）。
 
 ### [MANDATORY] 三路径选择
 
 #### 路径 1：pi 环境（有 pi workflow 能力）
 
-**适用条件**：当前主 agent 是 pi agent，且能调用内置 workflow（`pi workflow list` 中名为 `review-fix-loop`、无 `.js` 路径后缀的条目即内置版；解析顺序：内置 → npm 包 → 项目 `.pi/workflows/`）。
+**适用条件**：当前主 agent 是 pi agent，且能调用内置 workflow（`pi workflow list` 中名为 `review-fix-loop`、无 `.js` 路径后缀的条目即内置版；完整解析顺序见 `extensions/universal/subagent-workflow/src/shared/resource-discovery.ts`，常用为内置 → npm 包 → 项目 `.pi/workflows/`）。
 
 主 agent 直接用 workflow 工具跑内置 `review-fix-loop`（8 维并行 review → 聚合 → fix → 重审直到 clean/converged/stuck）：
 
@@ -202,7 +199,7 @@ pi workflow run review-fix-loop --args '{
 
 内置行为要点：某 agent `must_fix === 0` 判 clean；连续 3 轮 must_fix 不降 → `terminated=stuck`；问题经 2 次修复未收敛 → `terminated=needs-redesign`；聚合器内置（合并去重为 `aggregated.md` + must_fix 计数）。
 
-**Gate-2**：workflow `terminated` ∈ {`clean`, `converged`, `stuck`} → 进阶段 3。`terminated=needs-redesign` = 结构性问题需人工介入，**停手上报用户**。
+**Gate-2**：workflow `terminated` ∈ {`clean`, `converged`, `stuck`} → 进阶段 3。`terminated=needs-redesign` = 结构性问题需人工介入，**停手上报用户**。`terminated ∈ {review-failure, aggregator-failure}` = 结构化失败终态（review agent 调用失败/结果无效、aggregator 失败且 fallback 失败；实装见 review-fix-loop.js）：环境问题，调参重跑一次，再败**停手上报用户**（处置与路径 2 同类问题一致）。
 
 #### 路径 2：zcode 环境（z-subagent-workflow 插件，zflow workflow）
 
@@ -410,6 +407,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 | Gate-1.6 增量覆盖率 <80% | 派测试专项 subagent 按 coverage.json uncovered_files 补测试 → 重跑（上限 3 轮；超限上报用户） |
 | Gate-2 `terminated=needs-redesign` | 结构性问题，上报用户决策（不自动重试） |
 | Gate-2 `terminated=stuck` | 看 aggregated.md 判断是 reviewer 误报还是真问题；误报可人工 ack 后进阶段 3，真问题上报用户 |
+| Gate-2（pi）`terminated ∈ {review-failure, aggregator-failure}` | 环境问题：调参重跑一次；再败上报用户（处置与路径 2 同类问题一致） |
 | Gate-2（zcode）`terminated ∈ {review-failed, fix-failed}` | 环境问题：调大 `timeoutMsPerPhase` 重跑一次；再败上报用户 |
 | Gate-2（zcode）`terminated ∈ {stuck, max-rounds, fixed-unverified}` | 按 terminated 映射处置（见路径 2 Gate-2）；`fixed-unverified` 需读最后一轮修复说明人工确认 |
 | 3a coverage-gate exit 1 | 注入 `--test-result FAIL` 写 marker 后拦截：增量不足派测试 subagent 补测试、测试失败按失败用例派 worker；从 3a ① 重跑 |
@@ -424,7 +422,7 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 ├── SKILL.md              # 本文件
 ├── agents/               # 8 个 review agent 定义 review-<维度>.md（不全局暴露；review-extension-api.md 含 Pi Extension 契约 checklist）
 ├── references/           # 触发场景才 read：coverage-industry-research.md（覆盖率调研）/ cot-leakage.md（CoT Leakage）/ mutation-testing.md（Mutation 深检）
-└── scripts/              # metrics-gate.py / coverage-gate.py（含 --extra-packages）/ validate-skill-yaml.py / validate-extensions-yaml.py
+└── scripts/              # metrics-gate.py / coverage-gate.py（含 --extra-packages）/ validate-skill-yaml.py
 
 .agents/workflows/
 └── pr-review-fix.js      # 路径 2（zcode）workflow 脚本（+ package.json 标记 CJS：仓库根 type:module 下 .js 默认 ESM）

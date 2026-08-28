@@ -18,7 +18,7 @@
 // 但**没有断言 setUiRequestHandler 被调用**——本测试补这个断言，且覆盖 existing 路径
 // （既有测试 fixed getSubagentService() => null，只能走 new 分支）。
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── mock modules（在 import 前声明；路径相对 src/execution/__tests/） ──
 //
@@ -191,8 +191,9 @@ import { WorkflowRun } from "../../orchestration/models/workflow-run.ts";
 // ── helpers ──
 
 /** 创建可观察的 mock ExtensionAPI，捕获 session_start / session_shutdown handler。
- *  Proxy 兜底：未显式处理的 pi.xxx 返回 noop，避免抛错。 */
-function createMockPi(): {
+ *  Proxy 兜底：未显式处理的 pi.xxx 返回 noop，避免抛错。
+ *  spies（可选）：U2 通知账本用例注入 appendEntry / sendMessage 观察桩。 */
+function createMockPi(spies?: { appendEntry?: (customType: string, data: unknown) => void; sendMessage?: (message: unknown, options?: unknown) => void }): {
   pi: ExtensionAPI;
   getSessionStartHandler: () => ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
   getSessionShutdownHandler: () => ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
@@ -216,7 +217,8 @@ function createMockPi(): {
         };
       }
       if (prop === "events") return events;
-      if (prop === "appendEntry") return noop;
+      if (prop === "appendEntry") return spies?.appendEntry ?? noop;
+      if (prop === "sendMessage") return spies?.sendMessage ?? noop;
       if (prop === "registerMessageRenderer") return noop;
       return noop;
     },
@@ -228,14 +230,16 @@ function createMockPi(): {
   };
 }
 
-/** 最小 ExtensionContext mock。mode 由参数控制（决定 handler 注入行为）。 */
-function createMockCtx(mode: "tui" | "rpc" | "json" | "print"): Record<string, unknown> {
+/** 最小 ExtensionContext mock。mode 由参数控制（决定 handler 注入行为）。
+ *  entries（可选）：U2 通知账本用例注入 sessionManager.getEntries 返回值
+ *  （模拟重启前落盘的 ledger/ack entry）。 */
+function createMockCtx(mode: "tui" | "rpc" | "json" | "print", entries?: unknown[]): Record<string, unknown> {
   const sessionManager = {
     getSessionId: () => "session-inject-1",
     getSessionFile: () => "/home/user/.pi/agent/sessions/session-inject-1.jsonl",
     getSessionDir: () => "/home/user/.pi/agent/sessions",
     getCwd: () => "/home/user/project",
-    getEntries: () => [],
+    getEntries: () => entries ?? [],
     getBranch: () => [],
     getLeafId: () => null,
     getLeafEntry: () => undefined,
@@ -256,6 +260,7 @@ function createMockCtx(mode: "tui" | "rpc" | "json" | "print"): Record<string, u
     model: undefined,
     sessionManager,
     ui,
+    isIdle: () => true,
   };
 }
 
@@ -589,5 +594,79 @@ describe("W-3: done run 淘汰接线（loadAll 裁剪 + onRunDone 裁剪）", ()
     for (let i = 1; i < 20; i++) {
       expect(runs.has(`wf-pre-${i}`)).toBe(true);
     }
+  });
+});
+
+// ============================================================
+// [U2] session_start 通知账本装配 + 重启恢复钩子（设计 D4）
+// ============================================================
+//
+// mock session 文件（ctx.sessionManager.getEntries）含 ledger/ack entry →
+// session_start handler 装配账本并重放差集：未销账号经 pi.sendMessage({triggerTurn:true})
+// 单通道重投；已销账零重发。bind 顺序在 service.initSession 之前（notifier.notify
+// 经模块级绑定消费账本）。
+
+import {
+  _resetNotifyLedgerForTest,
+  NOTIFY_ACK_CUSTOM_TYPE,
+  NOTIFY_CUSTOM_TYPE,
+  NOTIFY_LEDGER_CUSTOM_TYPE,
+} from "../notify-ledger.ts";
+
+describe("session_start 通知账本恢复钩子（U2 B-ledger）", () => {
+  afterEach(() => {
+    _resetNotifyLedgerForTest();
+  });
+
+  it("mock session 含 ledger/ack entry → 未销账号重放（单通道 triggerTurn），已销账零重发", async () => {
+    const appendEntryCalls: Array<{ customType: string; data: unknown }> = [];
+    const sendMessageCalls: Array<{ message: unknown; options: unknown }> = [];
+    const { pi, getSessionStartHandler } = createMockPi({
+      appendEntry: (customType, data) => {
+        appendEntryCalls.push({ customType, data });
+      },
+      sendMessage: (message, options) => {
+        sendMessageCalls.push({ message, options });
+      },
+    });
+    subagentsExtension(pi);
+
+    // 模拟重启前落盘：2 条 ledger entry（s-a 已销账 + s-b 未销账）+ 1 条 ack
+    const entries: unknown[] = [
+      { type: "custom", customType: NOTIFY_LEDGER_CUSTOM_TYPE, data: { v: 1, notifyId: "s-a", content: "ca", record: { notifyId: "s-a" } } },
+      { type: "custom", customType: NOTIFY_LEDGER_CUSTOM_TYPE, data: { v: 1, notifyId: "s-b", content: "cb", record: { notifyId: "s-b" } } },
+      { type: "custom", customType: NOTIFY_ACK_CUSTOM_TYPE, data: { v: 1, notifyId: "s-a" } },
+    ];
+    const handler = getSessionStartHandler();
+    expect(handler).toBeDefined();
+    await handler!({ type: "session_start" }, createMockCtx("rpc", entries));
+
+    // 未销账 s-b 单条重放：sendMessage 恰 1 次，options 恰 {triggerTurn:true}
+    expect(sendMessageCalls).toHaveLength(1);
+    expect(sendMessageCalls[0]!.options).toEqual({ triggerTurn: true });
+    const sent = sendMessageCalls[0]!.message as { customType: string; content: string; details?: { notifyId?: string } };
+    expect(sent.customType).toBe(NOTIFY_CUSTOM_TYPE);
+    expect(sent.content).toBe("cb");
+    expect(sent.details?.notifyId).toBe("s-b");
+    // 已销账 s-a 零重发（不追加新 ledger entry，不重投）
+    expect(appendEntryCalls.filter((c) => c.customType === NOTIFY_LEDGER_CUSTOM_TYPE)).toHaveLength(0);
+  });
+
+  it("全部已销账（差集为空）→ 零重放零发送", async () => {
+    const sendMessageCalls: unknown[] = [];
+    const { pi, getSessionStartHandler } = createMockPi({
+      sendMessage: () => {
+        sendMessageCalls.push({});
+      },
+    });
+    subagentsExtension(pi);
+
+    const entries: unknown[] = [
+      { type: "custom", customType: NOTIFY_LEDGER_CUSTOM_TYPE, data: { v: 1, notifyId: "s-x", content: "cx", record: { notifyId: "s-x" } } },
+      { type: "custom", customType: NOTIFY_ACK_CUSTOM_TYPE, data: { v: 1, notifyId: "s-x" } },
+    ];
+    await getSessionStartHandler()!({ type: "session_start" }, createMockCtx("rpc", entries));
+
+    expect(sendMessageCalls).toHaveLength(0);
   });
 });

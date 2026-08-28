@@ -4,7 +4,7 @@
 # 在 feature worktree 中运行。自动检测项目结构，执行完整验证。
 # 任何一项失败都会以非零退出码退出，并输出明确错误信息。
 #
-# 用法: bash ~/.claude/skills/merge-worktree/pre-merge-check.sh [worktree-dir]
+# 用法: cd $WS_ROOT/main && bash .agents/skills/merge/scripts/pre-merge-check.sh [worktree-dir]
 #   worktree-dir: 可选，默认当前目录
 #
 # AI 行为约束：
@@ -29,7 +29,8 @@ FAIL_COUNT=0
 SKIP_COUNT=0
 FAILURES=()
 
-# ── 日志支持（由 merge-and-publish.sh 通过 MERGE_LOG_FILE 环境变量注入）──
+# ── 日志支持（可选：MERGE_LOG_FILE 环境变量由调用方按需注入，SKILL.md 编排的 merge
+#    流程可设置它收集检查日志；未设置时 `[[ -n ... ]] || return 0` 静默跳过，不影响功能）──
 _chk_log() {
     [[ -n "${MERGE_LOG_FILE:-}" ]] || return 0
     echo "[$(date +%Y-%m-%dT%H:%M:%S)] [CHECK] $*" >> "$MERGE_LOG_FILE"

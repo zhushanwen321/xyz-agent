@@ -103,7 +103,7 @@ describe("startHandler", () => {
     ).rejects.toThrow(/≤35 chars/);
   });
 
-  it("background 启动 → kind=bg + bgResponse.message 含 detached", async () => {
+  it("background 启动 → kind=bg + bgResponse.message 含 detached + notifyContract 恒值", async () => {
     const svc = makeService({
       execute: vi.fn(async (): Promise<ExecutionHandle> => ({
         mode: "background",
@@ -117,6 +117,50 @@ describe("startHandler", () => {
     if (r.kind !== "bg") return;
     expect(r.subagentId).toBe("bg-1-123");
     expect(r.response.message).toMatch(/detached/);
+    // [U1] 通知投递契约回显位（U2 账本兑现）
+    expect(r.response.notifyContract).toBe("ledger+at-least-once");
+  });
+
+  it("[U1] start 返回值 model 为 registry 全等回显（透传 handle.details.model）", async () => {
+    const svc = makeService({
+      execute: vi.fn(async (): Promise<ExecutionHandle> => ({
+        mode: "background",
+        subagentId: "bg-2-456",
+        sessionFile: undefined,
+        // record.model = resolved（裁决放行条目）拼接的 "provider/id"，保留 registry 大小写
+        details: makeDetails({ status: "running", mode: "background", model: "zai-coding-cn/GLM-5.3-Flash" }),
+      })),
+    });
+    const r = await startHandler(svc, { task: "t", slug: "s" }, undefined);
+    expect(r.model).toBe("zai-coding-cn/GLM-5.3-Flash");
+    // adapter 外层 result 同源回显
+    const toolResult = adapter({ action: "start", domain: r });
+    const result = toolResult.details;
+    if (result.action !== "start") throw new Error("expected start variant");
+    expect(result.model).toBe("zai-coding-cn/GLM-5.3-Flash");
+    // LLM content JSON 同源（与 details 一致）
+    const contentJson = JSON.parse(toolResult.content[0]!.type === "text" ? toolResult.content[0].text : "{}");
+    expect(contentJson.model).toBe("zai-coding-cn/GLM-5.3-Flash");
+    expect(contentJson.bgResponse.notifyContract).toBe("ledger+at-least-once");
+  });
+
+  it("[U1] model 非全等 → 裁决错误向上传播（无 bgResponse 产出，execute 不重试）", async () => {
+    // 裁决发生在 service.execute 内部步骤 1（IDENTITY 解析 → resolveModel），在 record
+    // 创建 / runSpawn 之前——错误直接向上传播为 tool isError。resolveModel 层的拒单
+    // 行为（含 P-A2 双路径）由 model-ref.test.ts + model-resolver.test.ts 锁定；本用例
+    // 锁定 handler 层传播语义：异常穿越 startHandler，不产出任何受理响应。
+    const svc = makeService({
+      execute: vi.fn(async () => {
+        throw new Error(
+          'Model "zai-coding-cn/glm-5.3-flash" (paramOverride) is not a registry entry. ' +
+            "Did you mean one of these?\n  zai-coding-cn/GLM-5.3-Flash",
+        );
+      }),
+    });
+    await expect(
+      startHandler(svc, { task: "t", slug: "s", model: "zai-coding-cn/glm-5.3-flash" }, undefined),
+    ).rejects.toThrow(/is not a registry entry.*Did you mean/s);
+    expect(svc.execute).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -375,6 +419,53 @@ describe("adapter", () => {
     expect(r.details.subagentId).toBeNull();
     expect(r.details.sessionFile).toBeNull();
     expect(r.details.listResponse).toEqual({ running: 0, items: [] });
+  });
+
+  // [U3 C-outcome] 对外 JSON 契约：list items 携带 outcome 且旧字段保留（验收③）。
+  it("[U3] list JSON：items[].outcome 在位（failed 值）且 status/mode/state 旧字段保留", () => {
+    const r = adapter({
+      action: "list",
+      domain: {
+        response: {
+          running: 0,
+          items: [
+            {
+              subagentId: "bg-u3", agent: "w", slug: "s", state: "ended", status: "closed",
+              mode: "background", duration: 1, model: "m", totalTokens: 0,
+              outcome: "failed",
+            },
+          ],
+        },
+      },
+    });
+    const parsed = JSON.parse(r.content[0]!.text) as {
+      listResponse: { items: Array<Record<string, unknown>> };
+    };
+    const item = parsed.listResponse.items[0]!;
+    expect(item.outcome).toBe("failed");
+    // 旧字段保留（向后兼容）
+    expect(item.status).toBe("closed");
+    expect(item.state).toBe("ended");
+    expect(item.mode).toBe("background");
+    // closedReason 退出对外 JSON
+    expect("closedReason" in item).toBe(false);
+  });
+
+  // [U3 C-outcome] start bgResponse：旧字段保留；outcome 为契约完备位，start 时点
+  // record 未终态恒 undefined（JSON.stringify 落键省略），终态成败经 list items 披露。
+  it("[U3] start bgResponse JSON：status/mode/message 旧字段保留，outcome 起点为 undefined", () => {
+    const r = adapter({
+      action: "start",
+      domain: {
+        kind: "bg", subagentId: "bg-u3-2", sessionFile: undefined, slug: "s",
+        response: { status: "running", mode: "background", message: "detached" },
+      },
+    });
+    const parsed = JSON.parse(r.content[0]!.text) as { bgResponse: Record<string, unknown> };
+    expect(parsed.bgResponse.status).toBe("running");
+    expect(parsed.bgResponse.mode).toBe("background");
+    expect(parsed.bgResponse.message).toBe("detached");
+    expect(parsed.bgResponse.outcome).toBeUndefined();
   });
 
   it("cancel → cancelResponse.cancelled:true 字面量", () => {

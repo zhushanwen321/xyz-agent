@@ -165,10 +165,11 @@ export function removeByCwd(cwd: string): Promise<BatchDeleteResult> {
 }
 
 /**
- * 设置 session 的思考等级（动作；确认由 session.thinkingLevelSet reply 回灌 pending）。
+ * 设置 session 的思考等级，返回 pi 实际生效值（回执修型 U6）。
  * level 是前端 6 级枚举字符串（off/low/medium/high/xhigh/max，见 thinking-levels.ts）。
+ * reply { sessionId, level }：level 是 runtime set→get_state 读回的生效档（pi 钳制时 ≠ 请求值）。
  */
-export function setThinkingLevel(sessionId: string, level: string): Promise<void> {
+export function setThinkingLevel(sessionId: string, level: string): Promise<{ sessionId: string; level: string }> {
   return command('session.setThinkingLevel', { sessionId, level })
 }
 

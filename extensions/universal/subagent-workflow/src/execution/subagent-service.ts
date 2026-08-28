@@ -111,7 +111,7 @@ interface PiLike {
   events: { emit(channel: string, data: unknown): void };
   sendMessage(
     message: { customType: string; content: string; display: boolean; details?: unknown },
-    options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+    options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" }, // g4-allow: 类型注解——PiLike 接口形状（pi.sendMessage 签面子集），非投递调用
   ): void;
   /** 订阅 pi 事件（D8：notifier 的 settled 边沿订阅用 'agent_settled'）。
    *  pi 0.84.1 的 on 返回 void 且无 off——退订语义由调用侧 disposed 标志包装兑现。
@@ -967,6 +967,20 @@ export class SubagentService {
         sendPromptCommand(child, text, { streamingBehavior: interrupt ? "steer" : "followUp" });
         // 热路径成功，清零 EPIPE 连续失败计数（[v4 A-1] 计数器已迁移到 stdin-writer）
         clearEpipeFailure(record.id);
+        // [race-F5] 写后死进程检测：write 同步成功只代表数据进了内核 pipe 缓冲，子进程
+        // 可能在读取前死亡（gate/idle kill 竞速）。exitCode/signalCode 已非 null = 进程已死
+        //（close 事件可能尚未到达），缓冲中的消息将被静默丢弃。只 warn 留证（含 runId 与
+        // 消息类型），不抛错不重试：终态回收已由 kill 路径保证，对死进程重试反而可能二次写。
+        if (child.exitCode !== null || child.signalCode !== null) {
+          logger.warn(
+            `[subagents] deliverMessage: child ${record.id} died around stdin write, message may be lost`,
+            {
+              msgType: interrupt ? "steer" : "followUp",
+              exitCode: child.exitCode,
+              signalCode: child.signalCode,
+            },
+          );
+        }
         // 轮始执行态信号清除 + 迁移上报（residual-fixes U3 补全，与冷路径 resumeRound
         // 对称）：新一轮开跑 = 无轮终信号——清上一轮 result（§5.4 isStreaming 公式要求
         // result undefined 才显示 streaming）与 resumable，appendEntry 让 runtime/W18
@@ -1392,7 +1406,15 @@ export class SubagentService {
     // 直接用 override → 主 agent model。DEFAULT_AGENT_NAME 仅作 record 显示名
     // （TUI 层 extractAgentName 共用，保证显示一致）。
     const agent = opts.agent ?? DEFAULT_AGENT_NAME;
-    const agentConfig = opts.agent ? this.modelService.getAgentConfig(opts.agent) : undefined;
+    // 显式 agent ref（用户点名）失败必须报错，不静默降级：无 require 的 loadByPath
+    // 对相对路径/裸名/文件缺失都返回 undefined → agentConfig undefined → resolveModel
+    // 静默回落 override→主 agent model，用户拿到的 subagent 无 systemPrompt/工具白名单
+    // 且零反馈。require:true 让失败抛出带 <available_subagents> 指引的错误（对齐
+    // workflow name not found 反馈风格）；不传 agent = 默认 general-purpose 语义，
+    // agentConfig 保持 undefined（合法缺省，走 override → ctxModel 兑底）。
+    const agentConfig = opts.agent
+      ? this.modelService.getRequiredAgentConfig(opts.agent)
+      : undefined;
 
     const resolved = this.modelService.resolveModel(
       opts.agent ?? "",

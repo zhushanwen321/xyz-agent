@@ -2,7 +2,10 @@
 //
 // 模式：多批（batch）串行，批内循环（round）：并行 review → aggregate → fix → 重审。
 // 批次用于表达前置依赖（fallow 静态分析等前置检查必须先完成，后续审查才有意义）。
-// 批内某 agent 已无 must-fix（critical/major）则后续轮跳过，优化 token 效率。
+// 修复范围 = 全部等级（must-fix + suggestion/minor）；批内某 agent 已无任何等级问题
+// （must-fix 与 suggestion 全 0）则后续轮跳过，优化 token 效率。终止/收敛判定仍以
+// must-fix 为主驱动，但任何「成功类」终止（clean/converged/A4 全降级）都要求 suggestion 也为 0。
+// stuck 检测只看 must-fix（suggestion 主观新冒不谈 stuck，由 maxRounds 硬顶兑底）。
 //
 // 用法：
 //   workflow run review-fix-loop --args targetType=git-diff target=main \
@@ -25,8 +28,7 @@
 /* @pi-meta
 name: review-fix-loop
 description: >-
-  多批串行审查-修复循环：批内并行 review 聚合 must-fix 后迭代修复直到 clean
-  （唯一带写操作与 commit 副作用的内置 workflow，autoCommit 默认 false）
+  多批串行审查-修复循环：批内并行 review 聚合全部等级问题（must-fix + suggestion）后迭代修复直到 clean，终止判定以 must-fix 驱动且要求 suggestion 同样归零（唯一带写操作与 commit 副作用的内置 workflow，autoCommit 默认 false）
 when: 用户要 review 并迭代修复至 clean
 notFor: 单纯审查不改代码
 phases: [Review, Fix]
@@ -767,13 +769,16 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
           reconAll.add(r.prev_id); // M2: 含 fixed——全 fixed 时 reconSeen 空但 reconcile 仍需执行
         }
         const def = active[i];
-        if (parsed.must_fix === 0) {
+        // 修复范围全等级后，agent clean = must-fix 与 suggestion 全 0（skipCleanAgents 授予变严：
+        // 只剩 suggestion 的 agent 继续参与轮次直到修完，避免「must-fix 清零即跳」漏修 suggestion）
+        const agentAllClean = parsed.must_fix === 0 && (parsed.suggestion ?? 0) === 0;
+        if (agentAllClean) {
           recordAgentClean(state, def.name, batchIndex);
           cleanNames.add(def.name);
         } else {
           recordAgentDirty(state, def.name, parsed.must_fix, batchIndex);
         }
-        agentRoundResults.push({ name: def.name, must_fix: parsed.must_fix, suggestion: parsed.suggestion ?? 0, clean: parsed.must_fix === 0 });
+        agentRoundResults.push({ name: def.name, must_fix: parsed.must_fix, suggestion: parsed.suggestion ?? 0, clean: agentAllClean });
       } else {
         // tools 受限的 agent（如 tools: read）会过滤掉 structured-output → schema 失效，
         // 结果缺 must_fix。结构化终止（MF-3），raw 完整 dump 便于定位。
@@ -791,7 +796,9 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
 
     if (terminated === "review-failure") break; // 已结构化终止，退出 round 循环（MF-3）
 
-    if (reviewResults.every((r) => r.must_fix === 0)) {
+    // 全等级终止：任何等级（含 suggestion）未清零都不算 clean——否则建议级问题会在
+    // must-fix 清零的出口被静默漏修（与「must-fix 只是终止条件、不是修复范围」的语义对齐）
+    if (reviewResults.every((r) => r.must_fix === 0 && (r.suggestion ?? 0) === 0)) {
       log("Batch " + batchIndex + " round " + round + ": all agents clean.");
       // rfl clean 轮黑洞修复（tier-1 6.6 v5，T7）：all-clean 现状在聚合/reconcile 前
       // break——末轮 fix 的对账与回归回填永不发生，eval 数据在最 canonical 的成功
@@ -1090,7 +1097,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       const activeIssues = Object.values(state.issues || {})
         .filter((i) => i.status === "open" || i.status === "regressed");
       const noActiveIssues = trackedCount === 0 ? mustFix === 0 : activeIssues.length === 0;
-      if (conv.converged && noActiveIssues) {
+      if (conv.converged && noActiveIssues && suggestion === 0) {
         // MF-2 ④：converged 消息列出 open issue ID（对齐 max-rounds 的 remainingIds 逻辑）。
         // 门槛保证正常路径此处为空；状态漂移时调用方仍能看到残留而非「无 deferred」误报。
         const remainingIds = Object.entries(state.issues || {})
@@ -1110,11 +1117,12 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     }
 
     // A4（全降级轮不驱动 fix，设计 §6.3 省轮次的兑现）：reviewer 原始计数有 must-fix
-    // 但 aggregator 裁决后全部降级（mustFix===0 且活跃条目为 0）时，all-clean break
-    //（reviewer 原始计数口径，见上方 reviewResults.every 判定）拦不住本路径——不守卫
-    // 会空转派发 fixer（fixCount++ 且无问题可修）。suggestions-only 轮不受影响
-    //（reviewer 全 0 已在 all-clean break 提前终止）。
+    // 但 aggregator 裁决后全部降级（mustFix===0 且活跃条目为 0）且 suggestion 也为 0 时，
+    // all-clean break（reviewer 原始计数口径，见上方 every 判定）拦不住本路径——不守卫
+    // 会空转派发 fixer（fixCount++ 且无问题可修）。suggestion>0 时不得在此 break
+    //（修复范围全等级，建议级问题仍需走 fix 修复），fall through 到下方 fix 阶段。
     if (mustFix === 0
+      && suggestion === 0
       && reviewResults.some((r) => r.must_fix > 0)
       && (agg.must_fix_ids ? filterActiveIds(agg.must_fix_ids).length : 0) === 0) {
       log("All reviewer must-fix entries adjudicated down this round — no active fix queue, skipping fix stage.");
@@ -1165,7 +1173,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     const commitInstr = autoCommit
       ? "- After all fixes, stage ONLY the files you modified: `git add <file1> <file2> ...` (explicit paths).\n" +
         "- NEVER use `git add -A` or `git add .` — the workspace may contain unrelated untracked files.\n" +
-        "- Commit with message: `fix: review batch " + batchIndex + " round " + round + " — " + mustFix + " must-fix`"
+        "- Commit with message: `fix: review batch " + batchIndex + " round " + round + " — " + mustFix + " must-fix + " + suggestion + " suggestion`"
       : "- Do NOT commit. Leave the fixes in the working tree (autoCommit=false).";
 
     // A3（guidance 链最后一跳）：活跃条目中带非空 guidance 的清单——构造确定性通道

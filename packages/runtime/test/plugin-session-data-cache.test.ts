@@ -199,22 +199,11 @@ describe('SessionDataStore Flush + Lifecycle', () => {
     expect(existsSync(join(tmpDir, 'session-data', 's1.json'))).toBe(false)
   })
 
-  // ── timer flush ──────────────────────────────────────────────
-  it('timer flush: advance 5s → flush clears dirty', async () => {
-    vi.useFakeTimers()
-    store.startFlushTimer()
-    store.set('s1', 'k1', 'v1')
-    await vi.advanceTimersByTimeAsync(5_000)
-    expect(existsSync(join(tmpDir, 'session-data', 's1.json'))).toBe(true)
-    store.stopFlushTimer()
-    vi.useRealTimers()
-  })
-
-  // ── debounce flush happens before interval ──────────────────
-  it('per-write debounce flush persists within 500ms (before 5s interval)', async () => {
+  // ── debounce flush 落盘 ────────────────────────────────────
+  it('per-write debounce flush persists within 500ms', async () => {
     vi.useFakeTimers()
     store.set('s1', 'k1', 'v1')
-    // debounce flush at 500ms, well before 5s interval
+    // debounce flush at 500ms
     await vi.advanceTimersByTimeAsync(600)
     expect(existsSync(join(tmpDir, 'session-data', 's1.json'))).toBe(true)
     vi.useRealTimers()
@@ -229,13 +218,11 @@ describe('SessionDataStore Flush + Lifecycle', () => {
     vi.useRealTimers()
   })
 
-  // ── stopFlushTimer + dispose prevents future flush ───────────
-  it('dispose stops debounce + interval timers', async () => {
+  // ── dispose clears pending debounce without flush ───────────
+  it('dispose stops debounce timer: pending write never lands', async () => {
     vi.useFakeTimers()
-    store.startFlushTimer()
     store.set('s1', 'k1', 'v1')
     store.dispose()
-    expect(store.isFlushTimerRunning()).toBe(false)
     await vi.advanceTimersByTimeAsync(10_000)
     expect(existsSync(join(tmpDir, 'session-data', 's1.json'))).toBe(false)
     vi.useRealTimers()

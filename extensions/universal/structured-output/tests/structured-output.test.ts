@@ -5,29 +5,28 @@
 // 1. Schema 解析与 Ajv 编译
 // 2. Tool execute 校验（通过/失败）
 // 3. 环境变量检测逻辑
-// 4. 权威模式（workflow）错误消息格式锁定（M5-C1）
+// 4. workflow 模式透传断言（U1/D2：pi-ai 参数层是唯一校验权威，execute 不再 ajv 复核）
+// 5. createWorkflowToolDefinition 注册期防御 + parameters 合成（D4 注入 / P6 包装 / fail-fast）
+// 6. index 装配分岔（D1：env 有值 → workflow 变体；无值 → 日常变体）
 //
-// 权威模式四类错误消息格式（M5 决策：锁定现状，不统一）：
-//   ① validateWithAuthoritative keyword-less → 'no recognized keyword' + 'Received schema='
-//      （'Received schema=' 回显的是 authSchema——validateWithAuthoritative 签名 (data, authSchema)
-//      无 LLM schema 参数）
-//   ② validateWithAuthoritative 编译失败/校验失败 → 'The authoritative schema (PI_WORKFLOW_SCHEMA) is:'
-//      + 'Received data='（无 'Received schema='）
-//   ③ execute 入口 boolean true → 'boolean true' + 'Received schema='（回显 LLM schema）
-//   ④ execute 入口 boolean false → 'Schema validation failed (authoritative)' + 'Received schema='
-// 标签不统一是有意的：'Received schema=' 在 validateWithAuthoritative 内回显 authSchema、
-// 在 execute 入口回显 LLM schema。未来统一走独立源码 wave，届时本契约随测试一并更新。
+// [HISTORICAL] 08-01 事故的「权威 schema 唯一校验」语义已由 pi-ai 参数层承接：
+// 工具 parameters 即权威 schema（见 createWorkflowToolDefinition），execute 透传。
+// 旧的 execute 内权威 ajv 校验（validateWithAuthoritative）已删除——它不是双保险
+// 而是第二校验权威（方案 A 禁止形态）。LLM 自报 schema 绕过的防线从「execute 内
+// 复核」变为「模型根本没有 schema 参数可传」（结构约束）。
 
 // 直接使用真实的 Ajv，因为这是核心依赖
 import Ajv from "ajv";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // 被测主入口（src/index.ts 导出 executeStructuredOutput 供直接调用；
-// createToolDefinition 供 env→execute 桥接测试调用）
-import { createToolDefinition, executeStructuredOutput } from "../src/index.js";
-// validateWithAuthoritative 未被 index.ts re-export，格式锁定用例直调 src/execute.js 子模块
-//（M5-C1：不改对外 API）
-import { validateWithAuthoritative } from "../src/execute.js";
+// 双变体工厂供注册期防御/合成与 env→execute 桥接测试调用）
+import {
+  createDailyToolDefinition,
+  createWorkflowToolDefinition,
+  executeStructuredOutput,
+  SO_SCHEMA_SIZE_WARN_BYTES,
+} from "../src/index.js";
 // mock pi 公共 fixture（M5-T4：与 characterization-hook.test.ts 共享）
 import {
   createMockPi,
@@ -127,9 +126,9 @@ describe("Schema parsing and Ajv validation", () => {
 
 describe("PI_WORKFLOW_SCHEMA schema JSON parsing", () => {
   // 注：旧版测的是 STRUCTURED_OUTPUT_SCHEMA env 名（错误）+ 已删除的 block 语义。
-  // 实际 env 名是 PI_WORKFLOW_SCHEMA（见 src/index.ts ENV_SCHEMA），工具现已
-  // 无条件全局注册，env 只控制是否注册 workflow hook。env 驱动的行为由下面的
-  // 'Workflow hook' 测试组用 mock pi 覆盖；这里仅保留 schema JSON 解析的纯逻辑。
+  // 实际 env 名是 PI_WORKFLOW_SCHEMA（见 src/tool-definition.ts ENV_SCHEMA）。
+  // env 驱动的装配分岔行为由下面的 'index assembly fork' 测试组用 mock pi 覆盖；
+  // 这里仅保留 schema JSON 解析的纯逻辑。
   it("parses valid JSON schema", () => {
     const raw = JSON.stringify({
       type: "object",
@@ -239,6 +238,9 @@ describe("Workflow hook: structured-output failure retry", () => {
   afterEach(() => {
     // fixture 的 restoreSchemaEnv 只处理 env；vi.restoreAllMocks 必须在消费方保留
     restoreSchemaEnv(originalSchemaEnv);
+    // 闸门 terminal 会武装真实 15s 兜底硬退 timer——触发 terminal 的测试用 fake timers
+    // 包裹，此处还原真实 timers 并丢弃未触发的 fake timer（不残留跨测试的硬退风险）
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -253,9 +255,9 @@ describe("Workflow hook: structured-output failure retry", () => {
     const [msg, opts] = pi.sendUserMessage.mock.calls[0]!;
     expect(msg).toContain("FAILED validation");
     expect(msg).toContain("Schema validation failed: /count must be number");
-    // 新文案：告知 schema 由系统注入，引导只传 data
-    expect(msg).toContain(`The required schema for your \`data\` is: ${SCHEMA}`);
-    expect(msg).toContain("ONLY the `data` parameter");
+    // 单参数口径：schema 即工具 parameters，参数即数据，修正参数后重调
+    expect(msg).toContain(`The required schema for your result is: ${SCHEMA}`);
+    expect(msg).toContain("Fix your arguments to conform to this schema");
     expect(opts).toEqual({ deliverAs: "steer" });
   });
 
@@ -270,9 +272,28 @@ describe("Workflow hook: structured-output failure retry", () => {
     const msg = pi.sendUserMessage.mock.calls[0]![0] as string;
     expect(msg).toContain("MUST call the structured-output tool");
     expect(msg).not.toContain("FAILED validation");
-    // 与 failed 分支对齐：断言新增的 steer 关键文案（schema 由系统注入，只传 data）
-    expect(msg).toContain("ONLY `data`");
-    expect(msg).toContain("Do NOT pass a `schema`");
+    // 与 failed 分支对齐：断言 steer 关键文案（参数即数据，单参数口径）
+    expect(msg).toContain("Your arguments ARE the data");
+    expect(msg).toContain("matching this shape");
+  });
+
+  it("steers on 'never called' with the {value} wrapper contract for non-object roots (P6)", async () => {
+    // 非 object 根（array）：参数层实际是 {value} 包装（P6）——"arguments ARE the data"
+    // 文案会指导模型直传裸值，必被包装层 required:["value"] 拒绝。steer 文案必须与
+    // 工具 description / ASP 同语汇告知包装契约与 value. 错误路径前缀。
+    const arrayRootSchema = JSON.stringify({ type: "array", items: { type: "string" } });
+    const pi = createMockPi();
+    await loadExtension(pi, arrayRootSchema);
+
+    await pi.emit("turn_end", turnEndPayload());
+
+    expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+    const msg = pi.sendUserMessage.mock.calls[0]![0] as string;
+    expect(msg).toContain("MUST call the structured-output tool");
+    expect(msg).toContain("{value: <data>}");
+    expect(msg).toContain("`value`");
+    // object 根专属文案不得出现在非 object 根分支
+    expect(msg).not.toContain("Your arguments ARE the data");
   });
 
   it("does NOT steer when structured-output succeeded", async () => {
@@ -286,6 +307,7 @@ describe("Workflow hook: structured-output failure retry", () => {
   });
 
   it("stops steering after MAX_HOOK_RETRIES (=2) exhausted", async () => {
+    vi.useFakeTimers(); // 第 3 轮失败触发 gate terminal（武装 15s 兜底 timer）——fake 掉避免泄漏
     const pi = createMockPi();
     await loadExtension(pi, SCHEMA);
 
@@ -308,9 +330,10 @@ describe("Workflow hook: structured-output failure retry", () => {
   });
 });
 
-// ── Tool execute 真实调用测试（executeStructuredOutput）──────────────────
+// ── Tool execute 真实调用测试（executeStructuredOutput，日常分支）──────────
 //
-// 直接调 src/index.ts 导出的 executeStructuredOutput，覆盖三类路径：
+// 直接调 src/index.ts 导出的 executeStructuredOutput（不传 authoritativeSchema，
+// 走日常防御链），覆盖三类路径：
 //   - 合法 schema + data → 成功
 //   - 坏 schema（ajv 编译失败）/互换/keyword-less → 抛带纠错文案的错误
 //   - data 不匹配 → 抛 Schema validation failed
@@ -454,15 +477,14 @@ describe("Tool execute (real call via executeStructuredOutput)", () => {
   });
 });
 
-// ── 权威 schema（workflow 模式）测试 ──────────────────────────
+// ── workflow 模式透传（D2：pi-ai 参数层是唯一校验权威）──────────────────
 //
-// [HISTORICAL] 2026-08-01 事故回归：workflow 模式下 PI_WORKFLOW_SCHEMA 注入权威 schema，
-// executeStructuredOutput 用它校验 data，LLM 传入的 schema 参数不参与校验。
-// 核心保障：LLM 无法通过自报 schema 自洽绕过格式约束。
-// 直接调 executeStructuredOutput 显式传 authoritativeSchema 模拟 env 注入路径。
+// U1 改造后 execute 的 workflow 分支不再 ajv 复核：工具 parameters 即权威 schema
+// （注册期合成，见 createWorkflowToolDefinition），pi-ai validateToolArguments 在
+// execute 之前完成校验+矫正。execute 收到的 data 必然是已校验值，透传即可。
+// 直调 executeStructuredOutput 显式传 authoritativeSchema 模拟 env 注入路径。
 
-describe("Authoritative schema (workflow mode)", () => {
-  // 08-01 事故的 schema 形态：add_channels.items 要求 object，LLM 篡改成 string
+describe("Authoritative schema (workflow mode) — passthrough (D2)", () => {
   const authoritativeSchema = {
     type: "object",
     properties: {
@@ -481,9 +503,8 @@ describe("Authoritative schema (workflow mode)", () => {
     required: ["channels"],
   };
 
-  it("authoritativeSchema 存在 + data 合规 → 通过，details = data", async () => {
+  it("authoritativeSchema 存在 + data 合规 → 透传成功，details = data", async () => {
     const result = await executeStructuredOutput({
-      schema: authoritativeSchema, // LLM 传的 schema（碰巧和权威一致）
       data: { channels: [{ name: "ch1", action: "add" }] },
       authoritativeSchema,
     });
@@ -491,43 +512,40 @@ describe("Authoritative schema (workflow mode)", () => {
     expect(result.details).toEqual({ channels: [{ name: "ch1", action: "add" }] });
   });
 
-  // 核心回归用例：直接复现 08-01 事故——LLM 篡改 schema（items 改成 string）
-  // + data 跟着篡改（传字符串数组），必须被权威 schema 拒绝。
-  // 旧实现（校验 LLM schema）会让其通过 → 静默腐败；方案 A 必须拒绝。
-  it("rejects LLM-rewritten schema even when data matches the rewritten schema", async () => {
-    const rewrittenSchema = {
-      type: "object",
-      properties: {
-        channels: {
-          type: "array",
-          items: { type: "string" }, // LLM 篡改：object → string
-        },
-      },
-      required: ["channels"],
-    };
-    // data 符合篡改后的 schema（字符串数组），但不符合权威 schema（要求对象数组）
-    await expect(
-      executeStructuredOutput({
-        schema: rewrittenSchema,
-        data: { channels: ["ch1", "ch2"] },
-        authoritativeSchema,
-      }),
-    ).rejects.toThrow(/Schema validation failed \(authoritative\)/);
+  it("透传：data 不合权威 schema 也成功——校验责任已上移到 pi-ai 参数层（D2 删第二校验）", async () => {
+    // 旧实现在此抛 'Schema validation failed (authoritative)'。新形态下 execute 不再
+    // 复核：参数层（validateToolArguments，按注册进工具的权威 schema）才是唯一校验
+    // 权威；execute 收到的必然是已校验值。此用例锁死「不复活第二校验权威」。
+    const result = await executeStructuredOutput({
+      data: { channels: "not-an-array" },
+      authoritativeSchema,
+    });
+    expect(result.content[0]!.text).toContain("recorded successfully");
+    expect(result.details).toEqual({ channels: "not-an-array" });
   });
 
-  it("authoritativeSchema error includes authoritative schema echo for LLM guidance", async () => {
-    await expect(
-      executeStructuredOutput({
-        schema: { type: "object" }, // LLM 宽松 schema
-        data: { channels: "not-an-array" }, // 不符合权威 schema
-        authoritativeSchema,
-      }),
-    ).rejects.toThrow(/authoritative schema \(PI_WORKFLOW_SCHEMA\) is:/);
+  it("08-01 事故形态的反转：LLM 已无 schema 参数可传，自报绕过在结构上不可能", async () => {
+    // 旧用例「rejects LLM-rewritten schema even when data matches」防的是「LLM 篡改
+    // schema 自洽绕过」。单参数形态下模型根本没有 schema 参数（G3 结构约束），此用例
+    // 验证 workflow 分支对 LLM 可能残留传的 schema 字段不做任何校验消费（它只是 data
+    // 的一部分，会被参数层 additionalProperties:false 拒绝——那是参数层的职责）。
+    const result = await executeStructuredOutput({
+      data: {
+        schema: { type: "object", properties: { channels: { type: "array", items: { type: "string" } } } },
+        channels: ["ch1", "ch2"],
+      },
+      authoritativeSchema,
+    });
+    // execute 透传不解读内容；details 原样（真实链路里这份数据已在参数层被拒）
+    expect(result.details).toEqual({
+      schema: { type: "object", properties: { channels: { type: "array", items: { type: "string" } } } },
+      channels: ["ch1", "ch2"],
+    });
   });
 
   it("authoritativeSchema absent → falls through to daily-mode defense (regression guard)", async () => {
     // 不传 authoritativeSchema → 走日常防御链（LLM schema 校验）。
-    // 用一个 LLM schema + 合规 data 应通过（证明没误入权威分支抛错）。
+    // 用一个 LLM schema + 合规 data 应通过（证明没误入 workflow 透传分支）。
     const result = await executeStructuredOutput({
       schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
       data: { ok: true },
@@ -535,114 +553,440 @@ describe("Authoritative schema (workflow mode)", () => {
     expect(result.details).toEqual({ ok: true });
   });
 
-  it("authoritativeSchema present but LLM omits schema param → still validates data", async () => {
-    // 方案 A 后 schema 参数非必需。LLM 只传 data（schema=undefined）也应正常校验。
-    // 这对应提示词引导的新用法：「只需传 data」。
+  it("非 object 根 authoritativeSchema → 解包 {value}（P6 对称操作）", async () => {
     const result = await executeStructuredOutput({
-      schema: undefined,
-      data: { channels: [{ name: "ch1", action: "fix" }] },
-      authoritativeSchema,
+      data: { value: ["a", "b", "c"] },
+      authoritativeSchema: { type: "array", items: { type: "string" } },
     });
-    expect(result.details).toEqual({ channels: [{ name: "ch1", action: "fix" }] });
+    expect(result.details).toEqual(["a", "b", "c"]);
   });
 
-  // ── 权威分支类型边界（draft-07 允许 boolean 根；非 object/boolean 必须拒绝）──
-  // 覆盖 src/index.ts assertJsonSchemaRoot 的三个分支：boolean true / boolean false / 非法类型。
-
-  it("authoritativeSchema = boolean true → rejected (ERR-7: accept-all provides no shape constraint)", async () => {
-    // M4 设防：boolean true（accept-all）不提供任何形状约束，workflow 用它等于没校验，
-    // 与 keyword-less 对象同等拒绝（ERR-7），恢复指引要求改为 object schema。
-    // （draft-07 合法根，但权威模式下必须拒绝——否则声明的约束静默失效。）
-    // 格式锁定（M5-C1 ③）：execute 入口 boolean 分支回显 LLM schema（'Received schema='）。
-    const err = await executeStructuredOutput({
-      schema: undefined,
-      data: { anything: "goes", n: 42 },
-      authoritativeSchema: true,
-    }).catch((e: unknown) => e as Error);
-    expect(err.message).toContain("boolean true");
-    expect(err.message).toContain("object schema");
-    expect(err.message).toContain("Received schema=");
-  });
-
-  it("authoritativeSchema = boolean false → rejects all data (draft-07 reject-all root)", async () => {
-    // 格式锁定（M5-C1 ④）：'Schema validation failed (authoritative)' + 'Received schema='。
-    // 注意与 ②（validateWithAuthoritative 直调）不同：execute 入口的 boolean 分支
-    // 同时含权威标签与 'Received schema='（LLM schema 回显，此处 schema=undefined 回显 undefined）。
-    const err = await executeStructuredOutput({
-      schema: undefined,
-      data: { anything: "goes" },
+  it("boolean false 根 → 同走 {value} 解包（draft-07 reject-all；运行时拒绝由参数层承担）", async () => {
+    const result = await executeStructuredOutput({
+      data: { value: 42 },
       authoritativeSchema: false,
-    }).catch((e: unknown) => e as Error);
-    expect(err.message).toContain("Schema validation failed (authoritative)");
-    expect(err.message).toContain("Received schema=");
-  });
-
-  it("authoritativeSchema = non object/boolean (string) → throws clear type error", async () => {
-    // 非法形态（如 "invalid"）经 tryParseJson 保留原值 → assertJsonSchemaRoot 抛错，
-    // 外层 catch 包成 "Invalid authoritative JSON Schema" 含 echo 的错误。
-    await expect(
-      executeStructuredOutput({
-        schema: undefined,
-        data: {},
-        authoritativeSchema: "invalid",
-      }),
-    ).rejects.toThrow(/Invalid authoritative JSON Schema.*got string/s);
-  });
-
-  // ── 权威模式错误消息格式锁定（M5-C1）──
-  // validateWithAuthoritative 直调子模块（index.ts 未 re-export），断言四种格式快照，
-  // 防未来无意识漂移。格式细节见文件头注释。
-
-  it("validateWithAuthoritative 直调：校验失败 → 权威标签 + data 回显（M5-C1 ②）", () => {
-    const err = (() => {
-      try {
-        validateWithAuthoritative({ channels: "not-an-array" }, authoritativeSchema);
-        return null;
-      } catch (e) {
-        return e as Error;
-      }
-    })();
-    expect(err).not.toBeNull();
-    // 签名 (data, authSchema) 无 LLM schema 参数 → 无 'Received schema='，只有权威 schema 标签 + data 回显
-    expect(err!.message).toContain("Schema validation failed (authoritative)");
-    expect(err!.message).toContain("The authoritative schema (PI_WORKFLOW_SCHEMA) is:");
-    expect(err!.message).toContain("Received data=");
-    expect(err!.message).not.toContain("Received schema=");
-  });
-
-  it("validateWithAuthoritative 直调：keyword-less 权威 schema → 'no recognized keyword' + 'Received schema='（M5-C1 ①）", () => {
-    // 格式锁定：keyword-less 分支的 'Received schema=' 回显的是 authSchema（{a:1}），
-    // 非 LLM schema——validateWithAuthoritative 签名无 LLM schema 参数。
-    const err = (() => {
-      try {
-        validateWithAuthoritative({ name: "Alice" }, { a: 1 });
-        return null;
-      } catch (e) {
-        return e as Error;
-      }
-    })();
-    expect(err).not.toBeNull();
-    expect(err!.message).toContain("no recognized keyword");
-    expect(err!.message).toContain("Received schema=");
+    });
+    expect(result.details).toBe(42);
   });
 });
 
-// ── env → execute 桥接测试（createToolDefinition.execute 读 PI_WORKFLOW_SCHEMA）──
+// ── createWorkflowToolDefinition：注册期防御 + parameters 合成（验收③）──────────
 //
-// Must-fix #1：createToolDefinition().execute() 里读 process.env[PI_WORKFLOW_SCHEMA]
-// 注入 authoritativeSchema 的桥接分支此前无测试覆盖——5 个权威用例都直接调
-// executeStructuredOutput({...authoritativeSchema}) 绕过了这个 env→execute 注入点。
-// 若该行被误删/改错，整个方案 A 会静默回退到旧实现（LLM 自报 schema 校验），
-// 与本次修复要消除的静默腐败属同一类失败模式。本组用 createToolDefinition().execute()
-// 驱动真实 env 注入路径，断言权威校验生效。
+// 覆盖：D4 根级 additionalProperties 注入 / P6 非 object 根包装与解包 /
+// 加载期防御 fail-fast（keyword-less、boolean true、非法根）/ description 口径 /
+// execute 透传。P5/P6 的代码级预验证（模型可见性留给 U5 实机探针）。
 
-describe("createToolDefinition.execute env bridge (PI_WORKFLOW_SCHEMA → authoritative)", () => {
-  const SCHEMA_ENV_NAME = "PI_WORKFLOW_SCHEMA";
+describe("createWorkflowToolDefinition — registration-time defense + parameters synthesis", () => {
+  it("object 根未声明 additionalProperties → 注入 false（D4）", () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    }));
+    expect(def.parameters).toEqual({
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+      additionalProperties: false,
+    });
+  });
+
+  it("object 根显式声明 additionalProperties: true → 尊重不动（D4）", () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({
+      type: "object",
+      properties: { name: { type: "string" } },
+      additionalProperties: true,
+    }));
+    expect(def.parameters).toEqual({
+      type: "object",
+      properties: { name: { type: "string" } },
+      additionalProperties: true,
+    });
+  });
+
+  it("object 根显式声明 additionalProperties 子 schema → 尊重不动（D4）", () => {
+    const apSchema = { type: "string" };
+    const def = createWorkflowToolDefinition(JSON.stringify({
+      type: "object",
+      properties: { name: { type: "string" } },
+      additionalProperties: apSchema,
+    }));
+    expect(def.parameters).toEqual({
+      type: "object",
+      properties: { name: { type: "string" } },
+      additionalProperties: apSchema,
+    });
+  });
+
+  it("嵌套层级 additionalProperties 不注入（D4：嵌套宽严由作者 schema 自治）", () => {
+    const nested = { type: "object", properties: { a: { type: "string" } } };
+    const def = createWorkflowToolDefinition(JSON.stringify({
+      type: "object",
+      properties: { nested },
+    }));
+    // 仅根级注入 false；嵌套对象保持原样（未声明即未注入）
+    expect(def.parameters).toEqual({
+      type: "object",
+      properties: { nested },
+      additionalProperties: false,
+    });
+    expect(def.parameters).not.toEqual({
+      type: "object",
+      properties: { nested: { ...nested, additionalProperties: false } },
+      additionalProperties: false,
+    });
+  });
+
+  it("非 object 根（array）→ 包装 {value} + required + additionalProperties:false（P6）", () => {
+    const arrSchema = { type: "array", items: { type: "string" } };
+    const def = createWorkflowToolDefinition(JSON.stringify(arrSchema));
+    expect(def.parameters).toEqual({
+      type: "object",
+      properties: { value: arrSchema },
+      required: ["value"],
+      additionalProperties: false,
+    });
+  });
+
+  it("非 object 根（string 枚举）→ 同样包装 {value}", () => {
+    const strSchema = { type: "string", enum: ["low", "medium", "high"] };
+    const def = createWorkflowToolDefinition(JSON.stringify(strSchema));
+    expect(def.parameters).toEqual({
+      type: "object",
+      properties: { value: strSchema },
+      required: ["value"],
+      additionalProperties: false,
+    });
+  });
+
+  it("根类型判定边界：无 type 但有 properties → object 根直传（draft-07 object 关键字）", () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    }));
+    // 直传（非 {value} 包装）+ 根级注入 additionalProperties:false
+    expect(def.parameters).toEqual({
+      properties: { name: { type: "string" } },
+      required: ["name"],
+      additionalProperties: false,
+    });
+  });
+
+  it("根类型判定边界：type 数组含 object → object 根直传 + type 收敛为字符串（C-ext-03）", () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({
+      type: ["object", "null"],
+      properties: { name: { type: "string" } },
+    }));
+    // type 数组根收敛为字符串 "object"：顶层 type 序列化为数组会被严格 OpenAI 兼容
+    // 网关按 C-ext-03 立约动机整会话 400；且 arguments 协议上恒为 object，"null"
+    // 成员本就不可达，含 object 成员时收敛语义无损（tool-definition 源码注释同源）。
+    expect(def.parameters).toEqual({
+      type: "object",
+      properties: { name: { type: "string" } },
+      additionalProperties: false,
+    });
+  });
+
+  it("根类型判定边界：组合根（anyOf）可能接受非 object 值 → 包装 {value} 保真", () => {
+    const anyOfSchema = {
+      anyOf: [{ type: "string" }, { type: "object", properties: { name: { type: "string" } } }],
+    };
+    const def = createWorkflowToolDefinition(JSON.stringify(anyOfSchema));
+    // 包装后 value 可容纳任意成员类型（string 或 object）——直传会丢失非 object 成员可达性
+    expect(def.parameters).toEqual({
+      type: "object",
+      properties: { value: anyOfSchema },
+      required: ["value"],
+      additionalProperties: false,
+    });
+  });
+
+  it("keyword-less object 根（{a:1} / {}）→ 注册期 fail-fast：'no recognized keyword'（ERR-3 上移）", () => {
+    expect(() => createWorkflowToolDefinition(JSON.stringify({ a: 1 })))
+      .toThrow(/no recognized keyword/);
+    expect(() => createWorkflowToolDefinition("{}"))
+      .toThrow(/no recognized keyword/);
+    // 错误指回 workflow 脚本（恢复指引）
+    try {
+      createWorkflowToolDefinition(JSON.stringify({ a: 1 }));
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect((e as Error).message).toContain("outputSchema");
+    }
+  });
+
+  it("boolean true → 注册期 fail-fast：accept-all 无形状约束（ERR-7 上移）", () => {
+    expect(() => createWorkflowToolDefinition("true")).toThrow(/boolean true/);
+    try {
+      createWorkflowToolDefinition("true");
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect((e as Error).message).toContain("object schema");
+    }
+  });
+
+  it("非 object/boolean 根（string 'invalid' / JSON 数字）→ 注册期 fail-fast（assertJsonSchemaRoot）", () => {
+    expect(() => createWorkflowToolDefinition("invalid"))
+      .toThrow(/must be a JSON Schema object or boolean, got string/);
+    expect(() => createWorkflowToolDefinition("42"))
+      .toThrow(/must be a JSON Schema object or boolean, got number/);
+  });
+
+  it("malformed JSON env（'{invalid'）→ tryParseJson 保留原字符串 → 根类型 fail-fast", () => {
+    expect(() => createWorkflowToolDefinition("{invalid"))
+      .toThrow(/must be a JSON Schema object or boolean, got string/);
+  });
+
+  it("description：单参数口径，无 'pass ONLY' 类矛盾文案", () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({
+      type: "object", properties: { count: { type: "number" } },
+    }));
+    expect(def.description).toContain("Your arguments ARE the data");
+    expect(def.description).not.toMatch(/pass ONLY/i);
+    expect(def.description).toMatch(/validation fails/i);
+  });
+
+  // 根类型条件化（与 parameters 包装判定同源 isObjectRootSchema）：
+  // object 根口径「arguments ARE the data」；非 object 根参数层实际是 {value} 包装，
+  // 必须告知包装契约 + value. 错误路径前缀，否则模型按直传口径首调必败。
+  it("description object 根：保持 arguments ARE the data，不含 value 包装教学", () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({
+      type: "object", properties: { count: { type: "number" } },
+    }));
+    expect(def.description).toContain("Your arguments ARE the data");
+    // object 根无包装：不得出现 {value} 契约与 value. 路径前缀说明
+    expect(def.description).not.toMatch(/\{value:/);
+    expect(def.description).not.toMatch(/`value\./);
+  });
+
+  it("description 非 object 根：告知 {value} 包装契约 + value. 路径前缀（审查项#3）", () => {
+    const nonObjectRoots = [
+      { type: "array", items: { type: "string" } },
+      { type: "string", enum: ["low", "high"] },
+      { type: "number", minimum: 0 },
+      { type: "boolean" },
+      { anyOf: [{ type: "string" }, { type: "number" }] },
+    ];
+    for (const schema of nonObjectRoots) {
+      const def = createWorkflowToolDefinition(JSON.stringify(schema));
+      // 包装契约：单参数必须是 {value: <data>} 对象
+      expect(def.description).toMatch(/must be an object/);
+      expect(def.description).toContain("{value:");
+      expect(def.description).toContain("must conform to this schema");
+      // 错误路径前缀说明（参数层错误无改写通道，指引前置携带）
+      expect(def.description).toMatch(/`value\./);
+      // 不得再保留 object 根口径（两口径互斥）
+      expect(def.description).not.toContain("Your arguments ARE the data");
+    }
+  });
+
+  it("description 裸 object 警示：{type:'object'} 无属性约束 → 追加 empty-object 警示（审查项#5）", () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({ type: "object" }));
+    expect(def.description).toMatch(/accepts only an empty object \{\}/);
+    expect(def.description).toMatch(/will be rejected/);
+  });
+
+  it("description 裸 object 警示不误报：有属性约束/显式 additionalProperties/required/min-max Properties/非 object 根 → 无警示", () => {
+    const cases = [
+      { type: "object", properties: { a: { type: "string" } } },
+      { type: "object", additionalProperties: true },
+      { type: "object", patternProperties: { "^a": { type: "string" } } },
+      { type: "object", required: ["x"] },
+      { type: "array", items: { type: "string" } },
+    ];
+    for (const schema of cases) {
+      const def = createWorkflowToolDefinition(JSON.stringify(schema));
+      expect(def.description, JSON.stringify(schema)).not.toMatch(/empty object/);
+    }
+  });
+
+  // F2：minProperties/maxProperties 也是属性约束——{type:object,minProperties:1}
+  // 连空对象都拒绝，警示「只接受空对象」为假，不得出现（同 required 交由参数层
+  // 校验错误自然暴露）。
+  it("description 裸 object 警示不误报：minProperties/maxProperties 裸形态 → 无 empty-object 假警示（F2）", () => {
+    const cases = [
+      { type: "object", minProperties: 1 },
+      { type: "object", maxProperties: 5 },
+      { type: "object", minProperties: 1, maxProperties: 3 },
+    ];
+    for (const schema of cases) {
+      const def = createWorkflowToolDefinition(JSON.stringify(schema));
+      expect(def.description, JSON.stringify(schema)).not.toMatch(/empty object/);
+      // object 根口径不受影响（minProperties 是 object 特有关键字，仍算 object 根）
+      expect(def.description).toContain("Your arguments ARE the data");
+    }
+  });
+
+  it("execute 透传：object 根 params 即 data，不做第二校验（D2）", async () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({
+      type: "object", properties: { count: { type: "number" } }, required: ["count"],
+    }));
+    // 参数层已校验的合规值
+    const r1 = await def.execute("call-1", { count: 7 });
+    expect(r1.content[0]!.text).toContain("recorded successfully");
+    expect(r1.details).toEqual({ count: 7 });
+    // 不合 schema 的值也透传（校验责任在参数层——本用例即锁死「不复活 ajv 复核」）
+    const r2 = await def.execute("call-2", { wrong: "shape" });
+    expect(r2.details).toEqual({ wrong: "shape" });
+  });
+
+  it("execute 解包：非 object 根 params.value 即 data（P6 对称）", async () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({ type: "array", items: { type: "string" } }));
+    const r = await def.execute("call-1", { value: ["a", "b"] });
+    expect(r.details).toEqual(["a", "b"]);
+  });
+
+  it("execute 解包：string 根（枚举）→ details 为原始字符串", async () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({ type: "string", enum: ["low", "high"] }));
+    const r = await def.execute("call-1", { value: "high" });
+    expect(r.details).toBe("high");
+  });
+});
+
+// ── schema 体积可见性（SO-DATA-4：SO 侧只提示，硬拒绝在 SW 侧注入点）─────────
+//
+// schema 经 spawn childEnv 注入子进程，env 块受 ARG_MAX 约束（Linux E2BIG）。
+// SW 侧 session-runner 对超 SCHEMA_ENV_MAX_BYTES 的注入 fail-fast；本侧职责是
+// 注册期可见性提示（env 通道有上限，建议拆分 schema 或精简），不拒绝注册。
+describe("schema size visibility (SO-DATA-4)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("常量锁定：SO_SCHEMA_SIZE_WARN_BYTES = 256 KiB（与 SW 侧 SCHEMA_ENV_MAX_BYTES 同值，跨包契约测试锁字节相等）", () => {
+    expect(SO_SCHEMA_SIZE_WARN_BYTES).toBe(256 * 1024);
+  });
+
+  it("注册时 schema 超阈值 → stderr 提示（不拒绝注册）", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const bigSchema = JSON.stringify({
+      type: "object",
+      properties: { blob: { type: "string", description: "x".repeat(SO_SCHEMA_SIZE_WARN_BYTES) } },
+    });
+    expect(() => createWorkflowToolDefinition(bigSchema)).not.toThrow();
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("PI_WORKFLOW_SCHEMA is"));
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("256"));
+  });
+
+  it("阈值内不提示", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    createWorkflowToolDefinition(SCHEMA);
+    expect(stderrSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ── index 装配分岔（D1）+ registerTool parameters 断言（验收③第 4 点）──────────
+//
+// loadExtension 设 env 后动态 import src/index.js 并调 default(mockPi)——
+// 覆盖「读 env → 二选一注册」的装配分岔；registerTool spy 捕获工具定义，
+// 断言模型可见的 parameters 为注入后的权威 schema（P5 代码级预验证：
+// 运行时模型可见性的实机验证留给 U5 的 P5/P6 探针）。
+
+describe("index assembly fork (D1)", () => {
   const originalSchemaEnv = process.env[SCHEMA_ENV_NAME];
 
-  // 用真实的 execute（不 mock executeStructuredOutput），覆盖 env 读取 + 注入 + 校验全链路。
-  // createToolDefinition().execute 签名是 (toolCallId, params)；toolCallId 在内部未使用。
-  const toolDef = createToolDefinition();
+  afterEach(() => {
+    restoreSchemaEnv(originalSchemaEnv);
+    vi.restoreAllMocks();
+  });
+
+  it("env 有值（object 根）→ registerTool 收到注入后的权威 schema 作 parameters（P5 代码级）", async () => {
+    const pi = createMockPi();
+    const authSchema = {
+      type: "object",
+      properties: { count: { type: "number" } },
+      required: ["count"],
+    };
+    await loadExtension(pi, JSON.stringify(authSchema));
+
+    expect(pi.registerTool).toHaveBeenCalledTimes(1);
+    const toolDef = pi.registerTool.mock.calls[0]![0] as {
+      name: string;
+      description: string;
+      parameters: unknown;
+    };
+    expect(toolDef.name).toBe("structured-output");
+    // 模型可见 parameters = 权威 schema + 根级 additionalProperties 注入（D4）
+    expect(toolDef.parameters).toEqual({ ...authSchema, additionalProperties: false });
+    // description 为单参数口径（模型首读信息源自洽，G1/G3）
+    expect(toolDef.description).toContain("Your arguments ARE the data");
+  });
+
+  it("env 有值（非 object 根）→ registerTool parameters 为 {value} 包装（P6 代码级）", async () => {
+    const pi = createMockPi();
+    const arrSchema = { type: "array", items: { type: "string" } };
+    await loadExtension(pi, JSON.stringify(arrSchema));
+
+    const toolDef = pi.registerTool.mock.calls[0]![0] as { parameters: unknown };
+    expect(toolDef.parameters).toEqual({
+      type: "object",
+      properties: { value: arrSchema },
+      required: ["value"],
+      additionalProperties: false,
+    });
+  });
+
+  it("env 有值 → 注册 turn_end 强制 hook（workflow 模式）", async () => {
+    const pi = createMockPi();
+    await loadExtension(pi, SCHEMA);
+
+    // setupWorkflowHook 注册 tool_execution_end + turn_end 两个 handler
+    const registeredEvents = pi.on.mock.calls.map((c) => c[0]);
+    expect(registeredEvents).toContain("tool_execution_end");
+    expect(registeredEvents).toContain("turn_end");
+  });
+
+  it("env 无值 → registerTool 收到日常双参数形态，不注册 hook", async () => {
+    const pi = createMockPi();
+    await loadExtension(pi, undefined);
+
+    expect(pi.registerTool).toHaveBeenCalledTimes(1);
+    const toolDef = pi.registerTool.mock.calls[0]![0] as {
+      name: string;
+      description: string;
+      parameters: unknown;
+    };
+    expect(toolDef.name).toBe("structured-output");
+    // 日常变体：双参数 envelope（mock typebox 的 Type.Object 输出形态）
+    expect(toolDef.parameters).toEqual({
+      type: "object",
+      properties: {
+        schema: expect.objectContaining({ type: "unknown" }),
+        data: expect.objectContaining({ type: "unknown" }),
+      },
+    });
+    // 日常 description 保留 envelope 教学（G4），workflow 语句已移除（D5）
+    expect(toolDef.description).toContain("Correct (full call)");
+    expect(toolDef.description).not.toMatch(/pass ONLY/i);
+    // 无 hook
+    expect(pi.on).not.toHaveBeenCalled();
+  });
+
+  it("env 非法 schema（keyword-less）→ 加载期 fail-fast，工具不注册", async () => {
+    const pi = createMockPi();
+    await expect(loadExtension(pi, JSON.stringify({ a: 1 }))).rejects.toThrow(/no recognized keyword/);
+    expect(pi.registerTool).not.toHaveBeenCalled();
+  });
+
+  it("env 非法 schema（boolean true）→ 加载期 fail-fast，工具不注册", async () => {
+    const pi = createMockPi();
+    await expect(loadExtension(pi, "true")).rejects.toThrow(/boolean true/);
+    expect(pi.registerTool).not.toHaveBeenCalled();
+  });
+});
+
+// ── 日常变体 execute 的 env 桥接（createDailyToolDefinition.execute 读 PI_WORKFLOW_SCHEMA）──
+//
+// 装配分岔下日常变体注册时 env 为空，但 execute 的 env 桥接判定保留
+// （ENV_SCHEMA 存在 = workflow 模式）：env 有值时注入 authoritativeSchema
+// 走 workflow 透传分支。用真实的 execute（不 mock）覆盖 env 读取 + 注入全链路。
+
+describe("createDailyToolDefinition.execute env bridge (PI_WORKFLOW_SCHEMA → workflow passthrough)", () => {
+  const originalSchemaEnv = process.env[SCHEMA_ENV_NAME];
+
+  // 用真实的 execute（不 mock executeStructuredOutput），覆盖 env 读取 + 注入 + 分支选择全链路。
+  // createDailyToolDefinition().execute 签名是 (toolCallId, params)；toolCallId 在内部未使用。
+  const toolDef = createDailyToolDefinition();
   const exec = (params: { schema?: unknown; data: unknown }) =>
     toolDef.execute("call-id-1", params);
 
@@ -657,13 +1001,13 @@ describe("createToolDefinition.execute env bridge (PI_WORKFLOW_SCHEMA → author
     required: ["count"],
   });
 
-  it("env set + data non-conformant → throws 'Schema validation failed (authoritative)'", async () => {
+  it("env set + data 不合权威 schema → 透传成功（D2：权威 ajv 复核已删）", async () => {
     process.env[SCHEMA_ENV_NAME] = AUTHORITY;
-    // data 缺 required count → 权威校验失败。
-    // 注意：即便 LLM 传了一个自洽的宽松 schema，权威分支也只用 env 的 schema 校验。
-    await expect(
-      exec({ schema: { type: "object" }, data: {} }),
-    ).rejects.toThrow(/Schema validation failed \(authoritative\)/);
+    // 旧断言 'Schema validation failed (authoritative)' 已失效：workflow 分支不再校验。
+    // 此用例锁死「桥接注入 authoritativeSchema → 透传」的新行为。
+    const result = await exec({ schema: { type: "object" }, data: {} });
+    expect(result.content[0]!.text).toContain("recorded successfully");
+    expect(result.details).toEqual({});
   });
 
   it("env set + data conformant → passes, details = data", async () => {
@@ -673,14 +1017,24 @@ describe("createToolDefinition.execute env bridge (PI_WORKFLOW_SCHEMA → author
     expect(result.details).toEqual({ count: 7 });
   });
 
+  it("env set（非 object 根）→ 桥接 + 解包 value", async () => {
+    process.env[SCHEMA_ENV_NAME] = JSON.stringify({ type: "array", items: { type: "string" } });
+    const result = await exec({ data: { value: ["a", "b"] } });
+    expect(result.details).toEqual(["a", "b"]);
+  });
+
   it("env unset → falls through to daily mode (no authoritativeSchema injected)", async () => {
     delete process.env[SCHEMA_ENV_NAME];
     // env 未设 → execute 不注入 authoritativeSchema → 走日常防御链。
-    // 用一个合规的 LLM schema + 合规 data 验证它通过（证明没误入权威分支）。
+    // 用一个合规的 LLM schema + 合规 data 验证它通过（证明没误入 workflow 透传分支）。
     const result = await exec({
       schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
       data: { ok: true },
     });
     expect(result.details).toEqual({ ok: true });
+    // 日常防御链仍然生效（keyword-less 拒绝）
+    await expect(
+      exec({ schema: { a: 1 }, data: { ok: true } }),
+    ).rejects.toThrow(/recognized keyword/i);
   });
 });

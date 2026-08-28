@@ -29,6 +29,33 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 info() { echo -e "${CYAN}[INFO]${NC} $*"; }
 
+# 在 workspace 中定位包目录，输出相对 WS_ROOT 的路径；找不到时 return 1
+# （独立函数：可用探针脚本单独 source 验证，不依赖脚本其余部分）
+# [HISTORICAL] extensions/ 为三层分组（taiji|universal|shared/<pkg>/），不硬编码分组清单，
+# 用 extensions/*/*/ 两层通配按 package.json 的 name 字段匹配，新增分组无需改本脚本
+resolve_pkg_dir() {
+  local pkg="$1" candidate name_in_file
+  # packages/ 平铺（@xyz-agent/*）
+  candidate="packages/${pkg#@xyz-agent/}"
+  if [ -f "$WS_ROOT/$candidate/package.json" ]; then
+    name_in_file=$(node -p "require('$WS_ROOT/$candidate/package.json').name" 2>/dev/null || true)
+    if [ "$name_in_file" = "$pkg" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  fi
+  # extensions/ 分组子目录两层通配（taiji/universal/shared 同构）
+  for candidate in "$WS_ROOT"/extensions/*/*; do
+    [ -f "$candidate/package.json" ] || continue
+    name_in_file=$(node -p "require('$candidate/package.json').name" 2>/dev/null || true)
+    if [ "$name_in_file" = "$pkg" ]; then
+      echo "${candidate#"$WS_ROOT"/}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ── 阶段 1/6: 前置检查 ──
 log "=== 阶段 1/6: 前置检查 ==="
 
@@ -66,24 +93,9 @@ log "=== 阶段 2/6: 生成 prerelease changeset ==="
 
 cd "$WS_ROOT"
 
-# 从包名查找其在 workspace 中的目录路径（packages/* 或 extensions/*）
-PKG_DIR=""
-for candidate in \
-  "packages/extension-protocol" \
-  "packages/$(echo "$PKG_NAME" | sed 's|@xyz-agent/||')" \
-  "extensions/$(echo "$PKG_NAME" | sed 's|@zhushanwen/pi-||')" \
-  "extensions/shared/$(echo "$PKG_NAME" | sed 's|@zhushanwen/pi-||')"; do
-  if [ -f "$WS_ROOT/$candidate/package.json" ]; then
-    PKG_NAME_IN_FILE=$(node -p "require('./$candidate/package.json').name" 2>/dev/null || echo "")
-    if [ "$PKG_NAME_IN_FILE" = "$PKG_NAME" ]; then
-      PKG_DIR="$candidate"
-      break
-    fi
-  fi
-done
-
-if [ -z "$PKG_DIR" ]; then
-  err "找不到包 ${PKG_NAME} 对应的 workspace 目录（在 packages/ 和 extensions/ 下搜索均未命中）"
+# 从包名查找其在 workspace 中的目录路径
+if ! PKG_DIR=$(resolve_pkg_dir "$PKG_NAME"); then
+  err "找不到包 ${PKG_NAME} 对应的 workspace 目录（在 packages/ 和 extensions/ 分组子目录下按 package.json name 匹配均未命中）"
   err "请确认包名正确，且对应目录的 package.json name 字段匹配"
   exit 1
 fi

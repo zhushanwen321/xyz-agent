@@ -21,11 +21,14 @@ import { UPDATE_SETTINGS_FILE } from './constants.js'
  * 升级设置默认值。
  *
  * preDownload 默认 false：新用户不自动消耗流量/磁盘，需主动到设置页开启。
- * autoUpdate 默认 false：默认不自动检查更新（保持现状行为，v6 demo 语义为启动时自动检查并提示下载）。
+ * autoUpdate 默认 true（2026-08-28 用户拍板，设计 §3.6 RM1）：存量用户现状即
+ * 无条件自动检查（Sidebar.vue 无条件 initAutoCheck），若默认 false 则升级到本批次
+ * 后存量用户的自动检查/升级提醒会静默消失，属行为倒退；默认 true 后须在 release
+ * note 说明「自动检查现为可在设置中关闭」。
  */
 export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = {
   preDownload: false,
-  autoUpdate: false,
+  autoUpdate: true,
 }
 
 /**

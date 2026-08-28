@@ -258,8 +258,6 @@ async function main(): Promise<void> {
   // configDir 由 configService 动态推导，无硬编码路径（INV-5）。
   const recentWorkspacesStore = new RecentWorkspacesStore(configDir)
   const workspaceService = new WorkspaceService(recentWorkspacesStore, new WorkspaceDetector(fs))
-  // 启动定期 flush 计时器（全量周期，补充 per-write debounce 500ms）
-  recentWorkspacesStore.startFlushTimer()
   // ProjectStore：project 列表持久化（D14，2026-08-04 迁 runtime projects.json，
   // 与 recent-workspaces 同模式；前端 localStorage 仅首启迁移源）。
   const projectStore = new ProjectStore(configDir)
@@ -522,6 +520,14 @@ async function main(): Promise<void> {
 
   modelService.setServices(sessionService, configService, server)
 
+  // U6（D2② 在线对账接线）：①session 附着触发对账（fire-and-forget，内部降级不阻断附着）；
+  // ②drift 事件上报出口——setCapabilityDriftSink 订阅后经全局通道广播
+  // 'model:capabilityDrift'（drift 项已同步记 runtime 日志，本帧供前端后续消费）。
+  sessionService.setModelCapabilityReconciler((sid) => modelService.reconcileModelCapabilities(sid))
+  modelService.setCapabilityDriftSink((drifts) => {
+    server.broadcast({ type: 'model:capabilityDrift', payload: { drifts } })
+  })
+
   // 注入 ConfigService 供 getReplaceSystemPrompt 委托（spawn pi 时透传替换系统提示词）。
   sessionService.setConfigService(configService)
   // 注入 PresetService 供 getLaunchPresetOptions 委托（spawn pi 时按 launch preset 构建 args）。
@@ -655,7 +661,6 @@ async function main(): Promise<void> {
     console.log(`\n[runtime] received ${signal}, shutting down...`)
     try {
       recentWorkspacesStore.flushAll()
-      recentWorkspacesStore.stopFlushTimer()
       projectStore.flushAll()
       // R1：关闭 SkillRegistry 的 chokidar watcher（global + project），防句柄泄漏阻塞退出。
       skillRegistry.dispose()

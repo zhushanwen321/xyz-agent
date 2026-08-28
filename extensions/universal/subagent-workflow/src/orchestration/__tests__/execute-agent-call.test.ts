@@ -6,13 +6,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  DETERMINISTIC_SCHEMA_FAILURE_PREFIX,
   executeAgentCall,
+  isDeterministicSchemaFailureMsg,
   isStaleContextErrorMsg,
   STALE_CONTEXT_PATTERNS,
 } from "../execute-agent-call.ts";
 import { AgentCall } from "../models/agent-call.ts";
 import { Budget } from "../models/budget.ts";
 import type { AgentRunner } from "../models/ports.ts";
+import { describeMissingParsedOutput } from "../../execution/output-collector.ts";
+import type { ToolCall } from "../../execution/types.ts";
 import { Trace } from "../models/trace.ts";
 import type { ExecutionTraceNode } from "../models/types.ts";
 import type { AgentCallOpts, AgentResult } from "../models/types.ts";
@@ -310,5 +314,138 @@ describe("W4b: stale 分诊对齐 pi 真实文案", () => {
   it("普通 transient 错误 → 不命中 stale（照常进入重试路径，现状回归）", () => {
     expect(isStaleContextErrorMsg("transient network error")).toBe(false);
     expect(isStaleContextErrorMsg(undefined)).toBe(false);
+  });
+});
+
+// ── MF-1: 确定性 schema 失败不重试 ──
+//
+// 回归背景（第五轮实测）：gate 终止子进程后 collectResult F-1 置归因 error →
+// executeAgentCall 判非 stale 走可重试分支 → 不可满足 schema 下循环至
+// MAX_ATTEMPTS=3（实测 attempts=3、4 子进程、235s vs 修复前 67.3s）。
+// 修复：归因 error 带机器标记（SSOT = DETERMINISTIC_SCHEMA_FAILURE_PREFIX），
+// 分诊短路。用真实链路产物（describeMissingParsedOutput）作 error 输入，锁定
+// collectResult → executeAgentCall 全链路分诊行为。
+//
+// 三态可重试性矩阵（完整锁定在 output-collector.test 的 MF-1 describe）：
+//   态① 从未调用 SO → 不可重试；态② isError（gate 终止/不可满足 schema）→ 不可重试；
+//   态③ 调用过但无 details → 可重试（保留既有重试语义）。
+
+/** 构造态②真实产物（isError SO 调用，schema 校验失败——gate 终止回归场景）。 */
+function state2Attribution(): string {
+  const soCalls: ToolCall[] = [
+    {
+      toolName: "structured-output",
+      isError: true,
+      result: { details: {}, content: [{ type: "text", text: "Schema validation failed: /target is required" }] },
+    },
+  ];
+  const msg = describeMissingParsedOutput(soCalls);
+  expect(msg).toBeDefined();
+  return msg!;
+}
+
+describe("MF-1: 确定性 schema 失败不重试", () => {
+  it("态②真实产物（gate 终止/schema 校验失败归因）→ runner.run 恰 1 次 + 终态 failed", async () => {
+    const attribution = state2Attribution();
+    expect(isDeterministicSchemaFailureMsg(attribution)).toBe(true);
+
+    const { call, trace } = makeAgentCallAndTrace();
+    const runner = createMockRunner(
+      vi.fn().mockResolvedValue(makeMockResult({ error: attribution })),
+    );
+    const budget = new Budget();
+
+    await executeAgentCall(call, runner, budget, new AbortController().signal, trace);
+
+    // 修复前：循环至 MAX_ATTEMPTS=3（4 次子进程）；修复后：恰 1 次
+    expect(runner.run).toHaveBeenCalledTimes(1);
+    expect(call.attempts).toBe(1);
+    expect(call.status).toBe("done");
+    expect(trace.find(0)?.status).toBe("failed");
+  });
+
+  it("态①真实产物（never called，缺 extension 环境确定性）→ 同样不重试", async () => {
+    const attribution = describeMissingParsedOutput([])!;
+    const { call, trace } = makeAgentCallAndTrace();
+    const runner = createMockRunner(
+      vi.fn().mockResolvedValue(makeMockResult({ error: attribution })),
+    );
+    const budget = new Budget();
+
+    await executeAgentCall(call, runner, budget, new AbortController().signal, trace);
+
+    expect(runner.run).toHaveBeenCalledTimes(1);
+    expect(call.attempts).toBe(1);
+    expect(trace.find(0)?.status).toBe("failed");
+  });
+
+  it("MF-2 计数不再低估：retry 不发生 → usage consume 恰一次、totalCallCount=1", async () => {
+    const attribution = state2Attribution();
+    const { call, trace } = makeAgentCallAndTrace();
+    const runner = createMockRunner(
+      vi.fn().mockResolvedValue(
+        makeMockResult({ error: attribution, usage: { input: 100, output: 50, cost: 0.01 } }),
+      ),
+    );
+    const budget = new Budget();
+
+    await executeAgentCall(call, runner, budget, new AbortController().signal, trace);
+
+    // 修复前：3 attempts → consume×3（usedTokens×3）；修复后：恰一次加权消耗
+    // （input×1 + output×2 = 100 + 100 = 200，权重见 budget.ts）
+    expect(budget.usedTokens).toBe(200);
+    expect(budget.usedCost).toBeCloseTo(0.01);
+    expect(budget.totalCallCount).toBe(1);
+  });
+
+  it("MF-3 归因不再混合：终态 error 保持归因原文（不被重试轮次覆盖）", async () => {
+    const attribution = state2Attribution();
+    const { call, trace } = makeAgentCallAndTrace();
+    const runner = createMockRunner(
+      vi.fn().mockResolvedValue(makeMockResult({ error: attribution })),
+    );
+    const budget = new Budget();
+
+    await executeAgentCall(call, runner, budget, new AbortController().signal, trace);
+
+    expect(call.result?.error).toBe(attribution);
+  });
+
+  it("态③（no details，无标记）→ 照常重试（可重试语义保留）", async () => {
+    vi.useFakeTimers();
+    try {
+      // 态③真实文案（不带确定性标记）——矩阵执行面锁定：无标记 = 可重试
+      const msg = describeMissingParsedOutput([
+        { toolName: "structured-output", result: { content: [] } },
+      ])!;
+      expect(isDeterministicSchemaFailureMsg(msg)).toBe(false);
+
+      const { call, trace } = makeAgentCallAndTrace();
+      const runner = createMockRunner(
+        vi.fn()
+          .mockResolvedValueOnce(makeMockResult({ error: msg }))
+          .mockResolvedValueOnce(makeMockResult()),
+      );
+      const budget = new Budget();
+
+      const promise = executeAgentCall(call, runner, budget, new AbortController().signal, trace);
+      await vi.advanceTimersByTimeAsync(2000);
+      await promise;
+
+      expect(runner.run).toHaveBeenCalledTimes(2);
+      expect(call.status).toBe("done");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("分诊交叉锁定：标记词不命中任何 STALE_CONTEXT_PATTERNS（stale 分诊在前也不误吞）", () => {
+    const lower = DETERMINISTIC_SCHEMA_FAILURE_PREFIX.toLowerCase();
+    for (const pattern of STALE_CONTEXT_PATTERNS) {
+      expect(lower.includes(pattern)).toBe(false);
+    }
+    // 两个分诊只命中确定性分支，互不污染
+    expect(isStaleContextErrorMsg(DETERMINISTIC_SCHEMA_FAILURE_PREFIX)).toBe(false);
+    expect(isDeterministicSchemaFailureMsg(DETERMINISTIC_SCHEMA_FAILURE_PREFIX)).toBe(true);
   });
 });

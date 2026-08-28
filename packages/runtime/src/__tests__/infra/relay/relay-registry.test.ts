@@ -18,7 +18,10 @@ import { RELAY_PROTOCOL_VERSION, RELAY_ENV_SOCKET, RELAY_ENV_SESSION_ID, RELAY_E
 import type { ServerMessage } from '@xyz-agent/shared'
 
 /** 轮询等待条件成立（进程间时序）。 */
-async function waitFor(cond: () => boolean, timeoutMs = 8_000, what = 'condition'): Promise<void> {
+// 默认 30s：CI 2 核 runner 上 vitest 并行 worker 抢占下，spawn 假 pi → SIGTERM →
+// marker 写盘链路可显著慢于本地（8s 预算曾连续两轮 CI 超时红，同代码第三轮又绿，
+// 纯调度噪声）；断言语义不变，只放宽时序预算
+async function waitFor(cond: () => boolean, timeoutMs = 30_000, what = 'condition'): Promise<void> {
   const start = Date.now()
   while (!cond()) {
     if (Date.now() - start > timeoutMs) throw new Error(`timeout waiting for ${what}`)
@@ -84,7 +87,7 @@ class TestAgent {
   }
 
   async waitForClosed(): Promise<void> {
-    await waitFor(() => this.closed, 8_000, 'agent connection closed')
+    await waitFor(() => this.closed, 30_000, 'agent connection closed')
   }
 }
 
@@ -273,7 +276,7 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     const hs = validHandshake({ argv: [fakePi, 'hang'], cwd: childCwd })
     ;(hs.env as Record<string, string>).XYZ_TEST_ENV_DUMP = envDump
     agent.send(hs)
-    await waitFor(() => existsSync(envDump), 8_000, 'env dump written')
+    await waitFor(() => existsSync(envDump), 30_000, 'env dump written')
     const dump = JSON.parse(await readFile(envDump, 'utf-8')) as { argv: string[]; cwd: string; relayEnv: Array<[string, string]> }
     // runtime spawn 的 argv = [fakePi, 'hang']（握手 argv 原样），pi 视角 userArgs = slice(2)
     expect(dump.argv).toEqual(['hang'])
@@ -297,7 +300,7 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     await agent.opened
     agent.send(validHandshake({ argv: [fakePi, 'echo'] }))
     agent.send({ v: 1, kind: 'data', dir: 'down', b64: Buffer.from('PING\n').toString('base64') })
-    await waitFor(() => agent.dataUp().some((b) => b.includes(Buffer.from('ECHO:PING'))), 8_000, 'echo round-trip')
+    await waitFor(() => agent.dataUp().some((b) => b.includes(Buffer.from('ECHO:PING'))), 30_000, 'echo round-trip')
     agent.destroy()
   })
 
@@ -312,7 +315,7 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     agent.send({ v: 1, kind: 'data', dir: 'down', b64: 123 })
     agent.send({ v: 1, kind: 'data', dir: 'down', b64: null })
     agent.send({ v: 1, kind: 'data', dir: 'down', b64: Buffer.from('PING\n').toString('base64') })
-    await waitFor(() => agent.dataUp().some((b) => b.includes(Buffer.from('ECHO:PING'))), 8_000, 'echo round-trip after malformed frames')
+    await waitFor(() => agent.dataUp().some((b) => b.includes(Buffer.from('ECHO:PING'))), 30_000, 'echo round-trip after malformed frames')
     // 畸形帧全部丢弃（未进 child stdin）：echo 只回合法帧那一次
     expect(Buffer.concat(agent.dataUp()).toString('utf-8').match(/ECHO:/g)?.length).toBe(1)
     // 连接未被断开（服务存活；畸形帧只丢帧不 reject）
@@ -325,7 +328,7 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     const agent = new TestAgent(getActiveRelaySocketPath()!)
     await agent.opened
     agent.send(validHandshake({ argv: [fakePi, 'events'] }))
-    await waitFor(() => agent.dataUpStderr().length > 0, 8_000, 'stderr forwarded')
+    await waitFor(() => agent.dataUpStderr().length > 0, 30_000, 'stderr forwarded')
     expect(agent.dataUpStderr()[0].toString('utf-8')).toContain('pi boot noise')
     agent.destroy()
   })
@@ -335,7 +338,7 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     const agent = new TestAgent(getActiveRelaySocketPath()!)
     await agent.opened
     agent.send(validHandshake({ argv: [fakePi, 'events'] }))
-    await waitFor(() => published.some((p) => p.msg.type === 'session.subagentEntriesAppended'), 8_000, 'entries frame')
+    await waitFor(() => published.some((p) => p.msg.type === 'session.subagentEntriesAppended'), 30_000, 'entries frame')
     const entriesFrame = published.find((p) => p.msg.type === 'session.subagentEntriesAppended')!
     expect(entriesFrame.sid).toBe('main-1')
     expect((entriesFrame.msg.payload as { subagentId: string }).subagentId).toBe('rec-1')
@@ -347,7 +350,7 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     await waitFor(() => {
       const joined = Buffer.concat(agent.dataUp()).toString('utf-8')
       return joined.includes('text_delta') && joined.includes('message_end')
-    }, 8_000, 'up frames with both events')
+    }, 30_000, 'up frames with both events')
     agent.destroy()
   })
 
@@ -364,12 +367,12 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
       const logsDir = join(dataDir, 'logs')
       const mirrorName = () => readdirSync(logsDir).find((f) => /^pi-relay-\d{4}-\d{2}-\d{2}-rec-1\.jsonl$/.test(f))
       // 文件在首次镜像写入时惰性创建（date 前缀 + recordId 命名对齐 pi-<date>-<sessionId> 模式）
-      await waitFor(() => existsSync(logsDir) && mirrorName() !== undefined, 8_000, 'mirror log file created')
+      await waitFor(() => existsSync(logsDir) && mirrorName() !== undefined, 30_000, 'mirror log file created')
       // 内容含假 pi 原始输出字节（轮询等 WriteStream 缓冲 flush，不依赖时序）
       await waitFor(() => {
         const content = readFileSync(join(logsDir, mirrorName()!), 'utf-8')
         return content.includes('text_delta') && content.includes('message_end')
-      }, 8_000, 'mirror content flushed')
+      }, 30_000, 'mirror content flushed')
       const content = readFileSync(join(logsDir, mirrorName()!), 'utf-8')
       // 逐字节保真：假 pi 两行 JSONL 各带换行，镜像原样保留（不补/不吞换行）
       expect(content.match(/text_delta/g)?.length).toBe(1)
@@ -386,10 +389,10 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     const agent = new TestAgent(getActiveRelaySocketPath()!)
     await agent.opened
     agent.send(validHandshake({ argv: [fakePi, 'exit7'] }))
-    await waitFor(() => agent.exitFrames().length > 0, 8_000, 'exit frame')
+    await waitFor(() => agent.exitFrames().length > 0, 30_000, 'exit frame')
     expect(agent.exitFrames()[0].code).toBe(7)
     expect(agent.exitFrames()[0].signal).toBeNull()
-    await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 8_000, 'pid file removed')
+    await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file removed')
     await agent.waitForClosed()
   })
 
@@ -401,10 +404,10 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     const hs = validHandshake({ argv: [fakePi, 'hang'] })
     ;(hs.env as Record<string, string>).XYZ_TEST_SIGTERM_MARKER = marker
     agent.send(hs)
-    await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 8_000, 'pid file written')
+    await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file written')
     agent.destroy()
-    await waitFor(() => existsSync(marker), 8_000, 'SIGTERM marker (kill-on-disconnect)')
-    await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 8_000, 'pid file cleaned after kill')
+    await waitFor(() => existsSync(marker), 30_000, 'SIGTERM marker (kill-on-disconnect)')
+    await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file cleaned after kill')
   })
 
   t('deinitRelayServer：running 子进程全部杀链收割', async () => {
@@ -415,9 +418,9 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     const hs = validHandshake({ argv: [fakePi, 'hang'] })
     ;(hs.env as Record<string, string>).XYZ_TEST_SIGTERM_MARKER = marker
     agent.send(hs)
-    await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 8_000, 'pid file written')
+    await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file written')
     await deinitRelayServer()
-    await waitFor(() => existsSync(marker), 8_000, 'SIGTERM marker (deinit kill chain)')
+    await waitFor(() => existsSync(marker), 30_000, 'SIGTERM marker (deinit kill chain)')
   })
 
   t('重复 recordId → 第二个连接 reject duplicate', async () => {
@@ -425,11 +428,11 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     const a1 = new TestAgent(getActiveRelaySocketPath()!)
     await a1.opened
     a1.send(validHandshake({ argv: [fakePi, 'hang'] }))
-    await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 8_000, 'first registered')
+    await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'first registered')
     const a2 = new TestAgent(getActiveRelaySocketPath()!)
     await a2.opened
     a2.send(validHandshake({ argv: [fakePi, 'hang'] }))
-    await waitFor(() => a2.rejectFrames().length > 0, 8_000, 'duplicate reject')
+    await waitFor(() => a2.rejectFrames().length > 0, 30_000, 'duplicate reject')
     expect(a2.rejectFrames()[0].reason).toBe('duplicate')
     a1.destroy()
     a2.destroy()
@@ -445,14 +448,14 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
       const pidFile = getRelayPidFilePath('rec-stale', dataDir)
       await writeFileAsync(pidFile, JSON.stringify({ pid: 999_999_999, spawnedAt: Date.now() }))
       await startServer()
-      await waitFor(() => !existsSync(pidFile), 8_000, 'stale pid file removed')
+      await waitFor(() => !existsSync(pidFile), 30_000, 'stale pid file removed')
     })
 
     t('畸形 pid 文件 → 删除', async () => {
       const pidFile = getRelayPidFilePath('rec-bad', dataDir)
       await writeFileAsync(pidFile, 'not json')
       await startServer()
-      await waitFor(() => !existsSync(pidFile), 8_000, 'malformed pid file removed')
+      await waitFor(() => !existsSync(pidFile), 30_000, 'malformed pid file removed')
     })
 
     t('pid 复用防护：活进程但启动时间晚于 spawn 记录 → 不杀，仅删记录', async () => {
@@ -466,7 +469,7 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
       const pidFile = getRelayPidFilePath('rec-reuse', dataDir)
       await writeFileAsync(pidFile, JSON.stringify({ pid: child.pid, spawnedAt: Date.now() - 10 * 60_000 }))
       await startServer()
-      await waitFor(() => !existsSync(pidFile), 8_000, 'reused pid record removed')
+      await waitFor(() => !existsSync(pidFile), 30_000, 'reused pid record removed')
       // 无辜进程未被杀
       expect(child.exitCode === null && child.signalCode === null).toBe(true)
       child.kill('SIGKILL')
@@ -487,13 +490,13 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
       ].join('\n'))
       const { spawn } = await import('node:child_process')
       const child = spawn(process.execPath, [orphan], { stdio: 'ignore' })
-      await waitFor(() => existsSync(join(workDir, 'orphan-boot.json')), 8_000, 'orphan booted')
+      await waitFor(() => existsSync(join(workDir, 'orphan-boot.json')), 30_000, 'orphan booted')
       // 孤儿形态：spawn 在「现在」（进程已启动后写记录），runtime 已死（无注册表）
       const pidFile = getRelayPidFilePath('rec-orphan', dataDir)
       await writeFileAsync(pidFile, JSON.stringify({ pid: child.pid, spawnedAt: Date.now() }))
       await startServer()
-      await waitFor(() => existsSync(marker), 8_000, 'orphan reaped by sweep')
-      await waitFor(() => !existsSync(pidFile), 8_000, 'orphan pid file removed')
+      await waitFor(() => existsSync(marker), 30_000, 'orphan reaped by sweep')
+      await waitFor(() => !existsSync(pidFile), 30_000, 'orphan pid file removed')
     })
   })
 

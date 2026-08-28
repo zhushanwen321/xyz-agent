@@ -55,9 +55,12 @@ function makeHandler() {
   const modelService: IModelService = {
     aggregateModels: vi.fn().mockReturnValue([]),
     aggregateModelsWithScoped: vi.fn().mockReturnValue([]),
-    switchModel: vi.fn().mockResolvedValue(undefined),
-    setThinkingLevel: vi.fn().mockResolvedValue(undefined),
+    switchModel: vi.fn().mockResolvedValue('provider/model'),
+    setThinkingLevel: vi.fn().mockResolvedValue('high'),
     discoverModelsFromApi: vi.fn().mockResolvedValue([]),
+    attachSupportedLevels: vi.fn((providers) => providers),
+    reconcileModelCapabilities: vi.fn().mockResolvedValue([]),
+    setCapabilityDriftSink: vi.fn(),
   }
 
   const ctx = {

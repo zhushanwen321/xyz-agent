@@ -7,9 +7,11 @@
  * 实例按 session 注册在 session-service（本文件纯函数，无状态）。
  *
  * W7 二条目（thinkingLevel / modelId，fetch 同源 get_state）：
- * - thinkingLevel：fetch = get_state().thinkingLevel；失效 = thinking_level_changed +
- *   周期兜底 pollIntervalMs 30_000（pi 同档位切换不发射事件——session-service.switchModel 注释
- *   既有记录，纯事件失效覆盖不住）；空值语义 = 'required'（值域不含空、永不 guard）。
+ * - thinkingLevel：fetch = get_state().thinkingLevel；失效 = thinking_level_changed 事件 +
+ *   setThinkingLevel RPC 成功响应（U6 回执接通后删除 30s 周期兜底轮询——D9 附录 C.4 定案：
+ *   自有状态对账类变化 100% 经我方请求/事件路径，pi 侧 effective≠previous 必发事件
+ *   [PS-04]，剩余覆盖仅「不受支持的外部双写者」不构成保留理由）；空值语义 = 'required'
+ *   （值域不含空、永不 guard）。
  * - modelId：fetch = get_state().model（pi Model.id 是裸 modelId、provider 在 Model.provider，
  *   投影组合为 runtime 语义的 'provider/model' 字符串——与 session.modelId /
  *   switchModel 口径一致，见 rpc-types.ts RpcSessionState.model / ai types.ts Model）；
@@ -53,10 +55,6 @@ export const SCALAR_STATE_DEBOUNCE_MS = 300
 
 /** usagePercent 上限（对齐 session-service.computeUsage 的 MAX_PERCENT 口径，clamp 防越界）。 */
 const MAX_USAGE_PERCENT = 100
-
-/** thinkingLevel 周期兜底重拉间隔（ms，W7 验收锁定 30s）。
- * pi 同档位切换不发射 thinking_level_changed，纯事件失效覆盖不住——周期兜底补拉。 */
-const THINKING_LEVEL_POLL_INTERVAL_MS = 30_000
 
 /** 快照失败退避序列（canonical，W6 接口契约锁定值）。 */
 // eslint-disable-next-line no-magic-numbers -- canonical 退避序列 1s/5s/15s（W6 契约锁定，非可调魔数）
@@ -108,7 +106,7 @@ function projectSessionScalars(state: unknown): SessionScalarFields {
 /** get_state 窄访问器（session-service 注入：复用 rpc-client getState）。 */
 export type FetchStateFn = () => Promise<Record<string, unknown> | undefined>
 
-/** thinkingLevel 配置条目（登记表代码化，含 30s 周期兜底）。 */
+/** thinkingLevel 配置条目（登记表代码化；30s 周期兜底已随 U6 回执接通删除，见文件头）。 */
 export function createThinkingLevelStateConfig(
   fetchState: FetchStateFn,
 ): ReplicatedStateConfig<ThinkingLevelSnapshot> {
@@ -120,7 +118,6 @@ export function createThinkingLevelStateConfig(
     },
     debounceMs: SCALAR_STATE_DEBOUNCE_MS,
     backoffSchedule: SCALAR_STATE_BACKOFF_SCHEDULE,
-    pollIntervalMs: THINKING_LEVEL_POLL_INTERVAL_MS,
     merge: ownerSnapshotMerge,
     fieldsNullSemantics: { thinkingLevel: 'required' },
   }

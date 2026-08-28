@@ -535,7 +535,10 @@ export class ZcodeEngine implements EnginePort {
   /**
    * prepare 期的能力拒绝（进程创建前）：fork 是 pi 专属（AgentTaskSpec.fork 契约：
    * 其他引擎按 capabilities 拒绝）；conversation 是 interact 控制面的 task 标志，
-   * zcode 无此面（A11：同步拒绝 + 可操作建议，无进程创建）。
+   * zcode 无此面（A11：同步拒绝 + 可操作建议，无进程创建）；maxTurns 是 pi 引擎
+   * 专属（turn limiter + spawn watchdog 估算依赖 pi 的 turn_end 事件流）——zcode
+   * 无 turn_end 语义，静默丢弃会造成「传了上限却失控」的假象，显式拒绝（U4，
+   * 同 fork 模式）。
    */
   private rejectUnsupportedTaskShapes(task: AgentTaskSpec): void {
     if (task.fork === true) {
@@ -549,6 +552,13 @@ export class ZcodeEngine implements EnginePort {
         "engine_capability_unsupported",
         "zcode 引擎不支持 conversation 模式（spawn 单轮，无同进程 idle 复用）。" +
           "恢复指引：改用单次调用（去掉 conversation），或使用 engine: 'pi'。",
+      );
+    }
+    if (task.maxTurns !== undefined) {
+      throw new ZcodeTaskShapeError(
+        "engine_capability_unsupported",
+        "zcode 引擎不支持 maxTurns（pi 引擎专属 turn limiter；zcode 无 turn_end 语义，无法兑现轮数上限）。" +
+          "恢复指引：去掉 maxTurns 参数重派，或使用 engine: 'pi'。",
       );
     }
   }

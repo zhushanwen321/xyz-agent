@@ -2,15 +2,29 @@
 //
 // Background 完成回注主对话。sync 不用（调用方还在 await，结果直接返回）。
 //
-// 职责（迁移后，U3）：
+// 职责（U2 后）：
 //   - buildLlmContent：格式化通知文案（本文件唯一逻辑职责）
-//   - createNotifier：薄工厂，装配 @xyz-agent/session-delivery 内核
-//   - 合并窗口 / 去重 / 退避 / flush 全部委托内核
+//   - createNotifier：薄工厂——ledger 装配时（bindNotifyLedgerHost 已注入）走
+//     四步生命周期（写账 → courier 边沿投递 → 回执销账 → notifyId 幂等重放，
+//     notify-ledger.ts）；未装配时退回 @xyz-agent/session-delivery 内核路径
+//     （合并窗口 / 去重 / 退避 / flush 委托内核，旧装配 / 无 ledger 测试兼容）
 //
-// 投递通道：内核 → pi.sendMessage({ deliverAs:"steer", triggerTurn:true }) 注入——
-//   当前 turn 结束后唤醒父 agent 处理结果（steer 不打断 streaming、不锁滚动）
+// 投递通道（D5 单通道化）：ledger 路径经 courier 在 settled 边沿直达
+// pi.sendMessage({triggerTurn:true})；内核路径的 port.send 同样只传
+// {triggerTurn:true}——steer / followUp / nextTurn 通道已全部删除（nextTurn 的
+// 唯一 drain 点在 session.prompt() 内，主 agent 长 streaming 场景下无限期滞留，
+// 设计 D5 实测证伪）；busy 场景由 ledger（settled 边沿 + isIdle 二次复查）或内核
+// settled 订阅驱动在空闲边沿投递。
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { createDelivery, type DeliveryHandle, type DeliveryPort } from "@xyz-agent/session-delivery";
+
+import { deriveOutcome } from "./execution-record.ts";
+import { getBoundNotifyLedger, NOTIFY_CUSTOM_TYPE } from "./notify-ledger.ts";
+import type { ClosedReason, ExecutionOutcome } from "./types.ts";
+
+/** U4：delivery warn 出口注入用——与 index.ts 共享同一具名 logger 单例。 */
+const notifyLogger = getLogger("subagents");
 
 /**
  * 一条待发送的完成通知记录。
@@ -24,8 +38,15 @@ export interface BgNotifyRecord {
    * toNotifyRecord 守卫放行后经此联合穷尽。
    */
   status: "running" | "closed";
-  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。供通知文案按需展示。 */
-  closedReason?: import("./types.ts").ClosedReason;
+  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。内部诊断 + outcome 兑底派生输入。 */
+  closedReason?: ClosedReason;
+  /**
+   * 终态三态对外语义（U3 C-outcome）。notify() 投影边界物化：closed 入参缺省时按
+   * deriveOutcome(closedReason, error) 兑底填充（所有可达流程下与 completeRecord
+   * 冻结的 record.outcome 等价——toNotifyRecord 构造点在 completeRecord 之后；该
+   * 构造点属 U3 领地外，不透传本字段）。buildLlmContent 与 bg-notify-render 只读本字段。
+   */
+  outcome?: ExecutionOutcome;
   agent: string;
   /** 执行所用 model（RecordSnapshot.model），用于完成通知显示。 */
   model?: string;
@@ -47,6 +68,10 @@ export interface BgNotifyRecord {
    *  "Full transcript: <path>" 指针行，父 LLM 可按需读全文；one-shot 不透传，
    *  通知输出逐字节不变。缺失时 buildLlmContent 省略整行。 */
   sessionFile?: string;
+  /** [U2] 通知身份键（投影边界物化 = dedupe key：`id` / `id:round`）。账本条目 /
+   *  回执匹配 / 幂等去重共用——details 携带（不进文案，G4 字节锁定不受影响），
+   *  重复注入条目凭此可识别为同一条（G2 at-least-once 幂等键）。 */
+  notifyId?: string;
   /** [C-2] close 终态通知的轮次统计（文案 "completed after N rounds." 用）。
    *  仅 chatMode close 语义（notifyClosed）构造时携带——此时 dedup 身份 round 已被
    *  置 undefined（与轮次通知的 id:round key 区分，终态不被吞），轮数改由本字段进
@@ -57,10 +82,10 @@ export interface BgNotifyRecord {
 /** notifier 依赖的宿主最小接口（解耦，便于测试）。
  *  迁移后：仅用于构造 DeliveryPort 的底层依赖。 */
 export interface NotifierHost {
-  /** 注入消息到主对话。 */
+  /** 注入消息到主对话（U2 单通道：options 只接受 triggerTurn——多通道投递已删）。 */
   sendMessage(
     message: { customType: string; content: string; display: boolean; details?: unknown },
-    options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+    options?: { triggerTurn?: boolean },
   ): void;
   /** 是否还有 running 的 background 任务（用于滑动窗口立即 flush 判断）。 */
   hasRunningBackground(): boolean;
@@ -76,9 +101,6 @@ export interface NotifierHost {
    */
   onAgentSettled?(handler: () => void): void;
 }
-
-/** 发送给主对话的 customType（bg-notify-render 消费）。 */
-const NOTIFY_CUSTOM_TYPE = "subagent-bg-notify";
 
 /**
  * 将 BgNotifyRecord 格式化为 LLM 可读的 notification content。
@@ -98,20 +120,19 @@ function buildLlmContent(record: BgNotifyRecord): string {
     : "";
   switch (record.status) {
     case "closed": {
-      // v4 B-1: closed 统一终态（含 cancelled）。按 closedReason 派生通知文案。
-      const reason = record.closedReason ?? "gc";
-      if (reason === "cancelled") {
+      // U3 C-outcome：终态文案只读 outcome（notify() 投影边界已物化；?? 兑底为防御
+      // 完整性——单一权威函数，非同构重写）。判定先于 patchFile——失败轮也会写
+      // patchFile（doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch），
+      // failed 分支不展示 patch 提示，否则 worktree 失败并存时 LLM 被告知 completed
+      // （历史 bug 存档见 deriveOutcome 注释）。
+      const outcome = record.outcome ?? deriveOutcome(record.closedReason, record.error);
+      if (outcome === "cancelled") {
         return `Subagent "${agent}" (${id}) cancelled.`;
       }
-      // 失败场景（gc + 有 error）：展示错误。判定必须先于 patchFile——失败轮也会写
-      // patchFile（doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch），若
-      // patch 分支在前，gc 失败 + worktree 并存时 LLM 被告知 completed。顺序与三处
-      // 同构契约的另外两处一致（shared/subagent.ts deriveClosedDisplay、
-      // bg-notify-render.ts renderRecordLines：cancelled → gc+error → patch/result）。
-      if (record.error && reason === "gc") {
+      if (outcome === "failed") {
         return `Subagent "${agent}" (${id}) failed: ${record.error}`;
       }
-      // 成功完成（user-close）或通用结束（gc/parent-shutdown 等）：展示结果。
+      // 成功完成或通用结束：展示结果。
       // [C-2] chatMode close 终态通知附轮次统计（设计 D2 路径①"completed after N rounds"）。
       // totalRounds 仅 close 语义携带（notifyClosed）；one-shot 完成通知不设置（round 无轮次
       // 语义），文案保持 "completed. Result:" 逐字节（G4 硬约束，one-shot 字节锁测试锚定）。
@@ -150,10 +171,13 @@ export interface BgNotifier {
 }
 
 /**
- * 创建 Background 完成通知器（薄工厂，装配 @xyz-agent/session-delivery 内核）。
+ * 创建 Background 完成通知器（薄工厂）。
  *
- * 内核接管：gate（isIdle 退避）/ 合批窗口（滑动 60s）/ dedup（按 id:round）/ flush / shutdown flush。
- * 本函数职责：将 BgNotifyRecord → DeliveryMessage 映射 + buildLlmContent 预格式化。
+ * ledger 装配时（bindNotifyLedgerHost）：四步生命周期接线（写账 → courier 边沿
+ * 投递 → 回执销账 → notifyId 幂等，见 notify-ledger.ts）。未装配时：装配
+ * @xyz-agent/session-delivery 内核——gate（isIdle 退避）/ 合批窗口（滑动 60s）/
+ * dedup（按 id:round）/ flush / shutdown flush 均委托内核。
+ * 本函数职责：BgNotifyRecord → 预格式化 content + notifyId 物化。
  *
  * @param host 宿主能力注入（pi.sendMessage + hasRunningBackground + isIdle）
  * @returns BgNotifier 接口（与旧类同形）
@@ -187,7 +211,12 @@ export function createNotifier(host: NotifierHost): BgNotifier {
               disposed = true;
             };
           },
-    send: (msg, intent) => {
+    send: (msg, _intent) => {
+      // D5 单通道：投递意图唯一化——steer/followUp/nextTurn 多通道全部删除，
+      // 唯一发送形态 = sendCustomMessage({triggerTurn:true})。busy 场景由 ledger
+      //（settled 边沿 + isIdle 二次复查）或内核 settled 订阅在空闲边沿驱动，
+      // 不在此层分流。返回 void = 受理成功（同步无异常；SendReceipt 扩展位留待
+      // 升级方接入）。
       host.sendMessage(
         {
           customType: NOTIFY_CUSTOM_TYPE,
@@ -195,9 +224,7 @@ export function createNotifier(host: NotifierHost): BgNotifier {
           display: true,
           details: msg.payload.kind === "custom" ? msg.payload.details : undefined,
         },
-        intent === "interrupt-at-turn-boundary"
-          ? { triggerTurn: true, deliverAs: "steer" }
-          : { triggerTurn: true, deliverAs: "followUp" },
+        { triggerTurn: true },
       );
     },
   };
@@ -216,6 +243,10 @@ export function createNotifier(host: NotifierHost): BgNotifier {
       // 同 key 可再入）。当前 key 空间（id / id:round，id 每 spawn 唯一）无实际差异；
       // 后续复用方勿按「60s 内不重复」假设接入（同 key 通知会被永久吞）。
       dedupe: { maxKeys: 1000 },
+      // U4 warn 出口参数化：内核投递失败警告接 extensionLogger（appendEntry 落
+      // session JSONL + XYZ_AGENT_DEBUG 落 <dataDir>/logs/），不再走 console.warn
+      // （stderr tee 不到日志盘——排查无痕，设计 §5 U4）。
+      warn: (msg, err) => notifyLogger.warn(msg, err),
     });
   let handle: DeliveryHandle = createHandle();
 
@@ -223,29 +254,68 @@ export function createNotifier(host: NotifierHost): BgNotifier {
     notify(record: BgNotifyRecord): void {
       if (disposed) return;
 
-      // dedup key：idle（对话模式每轮完成）按 id:round 去重——不同轮次不互相掩蔽；
-      // 非 idle（closed/cancelled）round 恒定 undefined，key 同旧行为不变。
-      const dedupeKey = record.round != null ? `${record.id}:${record.round}` : record.id;
+      // U3 C-outcome：投影边界物化 outcome——closed payload 缺省时按单一权威
+      // deriveOutcome 兑底填充，content 与 details（GUI pane 消费）均携带一等 outcome；
+      // 所有可达流程下与 record.outcome 等价（toNotifyRecord 在 completeRecord 之后
+      // 构造）。running（轮次通知）语义上无 outcome，不物化。消源自 record 的浅拷贝
+      // ——不改写入方对象（BgNotifyRecord 由调用方持有）。notifyId 同批物化（U2：
+      // dedupe key 与账本身份键同源，details 携带供回执匹配）。
+      const notifyId = record.round != null ? `${record.id}:${record.round}` : record.id;
+      const payload: BgNotifyRecord =
+        record.status === "closed"
+          ? { ...record, outcome: record.outcome ?? deriveOutcome(record.closedReason, record.error), notifyId }
+          : { ...record, notifyId };
 
+      const content = buildLlmContent(payload);
+
+      // U2 B-ledger 四步接线（设计 D4/D5）：账本装配时①写账（appendEntry 先于一切
+      // 投递尝试）→ ②courier 边沿投递（settled 边沿 + 120s 看门狗 + isIdle 二次
+      // 复查）→ ③回执销账 / ④重放幂等均在 ledger 内。record 返回 false = 同
+      // notifyId 已在账或已销账（幂等去重，含重启恢复后的已送达账号零重发）。
+      const ledger = getBoundNotifyLedger();
+      if (ledger) {
+        if (!ledger.record(notifyId, content, payload)) return;
+        ledger.attemptDeliver();
+        return;
+      }
+
+      // 无 ledger 装配（旧装配 / 部分测试）：内核路径——合批窗口 / settled 边沿 /
+      // dedupe（按 notifyId，key 规则与旧 dedupeKey 一致：id 或 id:round）不变。
+      // [C-ext-06 配套] 降级留痕：bind 缺失（含 jiti 单例分裂致跨模块读不到绑定的
+      // 失效形态）本是无声分岔，U2 at-least-once 在此退化为内核路径——warn 一条
+      // 供诊断检索，不改变向后兼容行为。
+      notifyLogger.warn("notify ledger not bound, falling back to delivery kernel path (at-most-once)", {
+        notifyId,
+      });
       handle.send({
         payload: {
           kind: "custom",
           customType: NOTIFY_CUSTOM_TYPE,
-          content: buildLlmContent(record),
+          content,
           display: true,
-          details: record,
+          details: payload,
         },
-        dedupeKey,
+        dedupeKey: notifyId,
       });
     },
 
     flushPendingNotifications(): void {
+      // ledger 路径：立即投递尝试（isIdle 复查，busy 则挂 pending 等边沿——账已落盘，
+      // 重启恢复兑底）；内核路径：flush。
+      const ledger = getBoundNotifyLedger();
+      if (ledger) {
+        ledger.attemptDeliver();
+        return;
+      }
       handle.flush();
     },
 
     dispose(): void {
       disposed = true;
       handle.dispose();
+      // ledger 销毁（清看门狗 + 摘模块级绑定；settled 回调由 disposed 标志静默）。
+      // 未 bind 时 no-op。bind 归 index.ts session_start 装配，对称免受。
+      getBoundNotifyLedger()?.dispose();
     },
 
     revive(): void {

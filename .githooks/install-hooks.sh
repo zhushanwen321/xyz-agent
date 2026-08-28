@@ -1020,6 +1020,65 @@ else
 fi
 
 # ============================================================================
+# pi 边界可靠性护栏（pi-boundary-reliability §3.3 D7 G1/G3/G4，U7b 接线）
+#   - G1 pi 语义登记守卫：node scripts/check-pi-semantics.mjs（全仓校验：
+#     registry schema / 探针存在性 / pi 三包 + runtime pin 四包版本门禁；
+#     无 git index 依赖，每次必跑）
+#   - G3 思考档位差分探针：node scripts/diff-probe-thinking.mjs（registry
+#     计算路径 vs pi-ai 同源函数逐模型比对）；staged 含四个触发文件之一时跑
+#   - G4 subagent 通道禁则：python3 .githooks/check_subagent_channels.py
+#     （C-ext-19：禁白名单外 deliverAs steer/nextTurn 与裸 "--model" 拼装）；
+#     staged 含 subagent-workflow 目录时全包扫描
+#   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    print_section "[pi 边界可靠性护栏]"
+
+    # G1：pi 语义登记守卫
+    if [ ! -f "scripts/check-pi-semantics.mjs" ]; then
+        echo -e "${RED}[ERROR] 找不到 scripts/check-pi-semantics.mjs（U7a 交付物缺失）${NC}"
+        exit 1
+    fi
+    if ! node scripts/check-pi-semantics.mjs; then
+        echo -e "${RED}[ERROR] G1 pi 语义登记守卫未通过——按上方 ✗ 明细逐条恢复（每条自带动作）后重试${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+
+    # G3：registry vs pi-ai 差分探针（触发文件：档位链路四文件任一 staged，basename 匹配）
+    if echo "$STAGED_FILES" | grep -qE "(^|/)(thinking-levels\.ts|use-provider-edit\.ts|builtin-providers\.json|model-capability\.ts)$"; then
+        echo -e "${BLUE}[INFO] 档位链路文件有变更，运行 G3 差分探针...${NC}"
+        if ! node scripts/diff-probe-thinking.mjs; then
+            echo -e "${RED}[ERROR] G3 差分探针失败：registry 计算路径与 pi-ai 同源函数不一致${NC}"
+            echo -e "${YELLOW}[INFO] 恢复动作：按上方 ✗ 明细核对 model-capability.ts 的档位计算后重试${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] 无档位链路文件变更，跳过 G3 差分探针${NC}"
+    fi
+
+    # G4：subagent-workflow 通道禁则（staged 含该包文件时；检查器内部全包扫描）
+    if echo "$STAGED_FILES" | grep -q "^extensions/universal/subagent-workflow/"; then
+        echo -e "${BLUE}[INFO] subagent-workflow 有变更，运行 G4 通道禁则检查...${NC}"
+        if [ ! -f ".githooks/check_subagent_channels.py" ]; then
+            echo -e "${YELLOW}[WARN] 找不到检查脚本 .githooks/check_subagent_channels.py${NC}"
+        else
+            if ! python3 .githooks/check_subagent_channels.py; then
+                echo -e "${RED}[ERROR] G4 subagent 通道禁则检查失败（C-ext-19）——按上方明细与修复指引处理${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+                exit 1
+            fi
+        fi
+    else
+        echo -e "${GREEN}[OK] 无 subagent-workflow 变更，跳过 G4 通道禁则${NC}"
+    fi
+else
+    echo -e "${YELLOW}[SKIP] pi 边界可靠性护栏已跳过${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -1069,6 +1128,7 @@ echo -e "  ${GREEN}[+]${NC} AC7 extension-host 边界检查（core 变更时触�
 echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 + symlink 检查）"
 echo -e "  ${GREEN}[+]${NC} i18n CJK 残留检测（.vue 模板不得含硬编码中文）"
 echo -e "  ${GREEN}[+]${NC} i18n locale 双侧 key 对齐检查（zh-CN === en-US）"
+echo -e "  ${GREEN}[+]${NC} pi 边界可靠性护栏（G1 语义登记守卫 / G3 档位差分探针 / G4 subagent 通道禁则）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""

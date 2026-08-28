@@ -14,7 +14,8 @@
 
 set -euo pipefail
 
-# ── 日志支持（由 merge-and-publish.sh 通过 MERGE_LOG_FILE 环境变量注入）──
+# ── 日志支持（可选：MERGE_LOG_FILE 环境变量由调用方按需注入，SKILL.md 编排的 merge
+#    流程可设置它收集 CI 等待日志；未设置时走下方 `|| return 0` 静默跳过，不影响功能）──
 _ci_log() {
     # [HISTORICAL] 函数末尾必须 || return 0：
     # 当 MERGE_LOG_FILE 未设时，[[ -n ... ]] 返回 false（exit 1），

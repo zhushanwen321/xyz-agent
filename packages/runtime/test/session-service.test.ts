@@ -817,7 +817,8 @@ describe('SessionService · Facade', () => {
       const { id, client } = await setup.seedSession()
       vi.mocked(client.setModel).mockClear()
       const returned = await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
-      expect(returned).toBe(id)
+      // U6 回执普查：返回 get_state 读回的生效模型复合串（非 sessionId）
+      expect(returned).toBe('anthropic/claude-x')
       expect(client.setModel).toHaveBeenCalledWith('anthropic', 'claude-x')
       expect(setup.service.getSummary(id)?.modelId).toBe('anthropic/claude-x')
     })

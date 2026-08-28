@@ -1,6 +1,6 @@
 #!/bin/bash
 # 共享函数库：workspace 操作相关
-# 被 create-worktree.sh, merge-worktree.sh 等脚本 source 使用
+# 当前唯一调用方：本 skill 的 scripts/remove-worktree.sh（source 后使用 find_workspace_root / remove_worktree）
 
 # 从当前目录向上查找 workspace 根（包含 .bare/ 的目录）
 find_workspace_root() {
@@ -21,10 +21,15 @@ get_current_branch() {
 }
 
 # 清理 worktree + 可选删除分支
+# Usage: remove_worktree <workspace_root> <branch_name> [delete_branch=false] [force=false]
+#   delete_branch: 是否删除本地分支
+#   force: 强制删除——跳过 dirty 拦截，删除前打印 git status --short 清单（让将销毁的内容可见），
+#          并用 git worktree remove --force 删除；非 force 路径行为不变
 remove_worktree() {
     local workspace_root="$1"
     local branch_name="$2"
     local delete_branch="${3:-false}"
+    local force="${4:-false}"
     local dir_name="${branch_name//\//-}"
     local worktree_path="$workspace_root/$dir_name"
 
@@ -46,14 +51,22 @@ remove_worktree() {
         has_changes=true
     fi
     if $has_changes; then
-        echo "Error: '$dir_name' 有未提交/未跟踪的更改，请先提交或 stash。"
+        if [[ "$force" != "true" ]]; then
+            echo "Error: '$dir_name' 有未提交/未跟踪的更改，请先提交或 stash。"
+            git -C "$worktree_path" status --short
+            return 1
+        fi
+        echo "Warning: '$dir_name' 有未提交/未跟踪的更改，以下内容将随 worktree 一并销毁（--force）:"
         git -C "$worktree_path" status --short
-        return 1
     fi
 
     # 删除 worktree（git -C 确保在正确目录操作）
     echo "删除 worktree '$dir_name'..."
-    git -C "$workspace_root/.bare" worktree remove "$worktree_path"
+    if [[ "$force" == "true" ]]; then
+        git -C "$workspace_root/.bare" worktree remove --force "$worktree_path"
+    else
+        git -C "$workspace_root/.bare" worktree remove "$worktree_path"
+    fi
 
     # 可选删除分支
     if $delete_branch; then

@@ -1,0 +1,413 @@
+[
+ {
+  "id": "PS-01",
+  "claim": "--model 是 pattern 非精确 ID：findExactModelReferenceMatch 的 id 匹配为 toLowerCase 相等（canonical 双命中判歧义作废 → undefined）；无 exact 命中时 contains 模糊匹配，再按 isAlias 分桶、b.id.localeCompare(a.id) 降序取最大——「校验通过」不代表「子进程按此 id 执行」",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/cli/args.js",
+    "symbol": "--model 选项定义",
+    "note": ":245 help 文案自述 'Model pattern or ID'（pattern 语义声明）"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/model-resolver.js",
+    "symbol": "findExactModelReferenceMatch / tryMatchModel / resolveCliModel",
+    "note": "resolveCliModel :291-463（内嵌 tryMatchModel 自 :104 起）；findExactModelReferenceMatch :69-95（toLowerCase 全等 + length===1 才放行）；localeCompare 取最大 :120/:125"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-model-resolution.test.ts"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-02",
+  "claim": "思考能力两级门控：getSupportedThinkingLevels 在 !model.reasoning（含 undefined）时直接返回 [\"off\"]，thinkingLevelMap 仅在 reasoning 开关打开后参与档位计算——第一关不过任何档位钳回 off",
+  "piAnchor": [
+   {
+    "pkg": "pi-ai",
+    "distPath": "dist/models.js",
+    "symbol": "getSupportedThinkingLevels",
+    "note": ":546-557（两级门控首关）；EXTENDED_THINKING_LEVELS 枚举 :545"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-thinking-gating.test.ts"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-03",
+  "claim": "set_thinking_level RPC 响应无 data（仅 success）；生效值必须 set 后另发 get_state 补读（runtime 的 set→get_state→effective 回执链是唯一正确姿势）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/modes/rpc/rpc-mode.js",
+    "symbol": "case \"set_thinking_level\"",
+    "note": ":387-389 —— session.setThinkingLevel(command.level) 后 return success(id, \"set_thinking_level\") 无第三参"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-rpc-surface.test.ts"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-04",
+  "claim": "setThinkingLevel 同值不落账不发声（isChanging = effective !== previous 才走 appendThinkingLevelChange + thinking_level_changed 事件）；effective ≠ previous 时必发事件——isChanging=false 仅覆盖「值未变」场景，不构成对账缺口（D9 删 30s 轮询的依据）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "setThinkingLevel(level)",
+    "note": ":1275-1298 —— clamp 后 isChanging 判定 + 条件落账/发声；settings 写入有 supportsThinking 门控"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-agent-session.test.ts"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-05",
+  "claim": "steeringQueue 全文仅 2 个 drain 点（run 轮询的 getSteeringMessages :321 / 手动 continue() :243），run 收尾后无残留补触发——依赖 steer 的投递是 at-most-once，无任何兜底重放",
+  "piAnchor": [
+   {
+    "pkg": "pi-agent-core",
+    "distPath": "dist/agent.js",
+    "symbol": "steeringQueue.drain()",
+    "note": ":243（continue 路径 const queuedSteering = …drain()）/:321（getSteeringMessages return …drain()）；enqueue :174 / clear :182 与 drain 区分"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-steering-drain.test.ts"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-06",
+  "claim": "_pendingNextTurnMessages 唯一消费点 = 用户驱动 prompt 走到的 _runAgentPrompt 注入段（注入后立即清空）；pi 自身无周期性/收尾性 drain——nextTurn 投递依赖用户发起下一轮",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "_pendingNextTurnMessages",
+    "note": "声明 :95 / 入队 sendCustomMessage nextTurn 分支 :1078-1080 / 注入+清空 _runAgentPrompt :880-883"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-agent-session.test.ts"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-07",
+  "claim": "_emitAgentSettled 先复位 _isAgentRunActive = false 再发 agent_settled 事件——边沿回调内 isIdle 恒真（settled 边沿驱动的通知通道不会撞上残留 busy 态）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "_emitAgentSettled()",
+    "note": ":325-336 —— 首行 this._isAgentRunActive = false，finally 内 _resolveIdleWaitIfIdle"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-agent-session.test.ts"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-08",
+  "claim": "sendCustomMessage 四分支：deliverAs=nextTurn 入队 / isStreaming 时 followUp|steer / 非流式且 triggerTurn:true 走 _runAgentPrompt 起轮直达 / 其余仅 append 不起轮——triggerTurn 直达是唯一不经队列的起轮路径",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "sendCustomMessage(message, options)",
+    "note": ":1071-1098 —— 直达分支 :1089-1090 await this._runAgentPrompt(appMessage)"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-agent-session.test.ts"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-09",
+  "claim": "plain appendEntry 写入的 type=custom entry 不进 LLM 上下文；进上下文的是 custom_message entry（sessionEntryToContextMessages 对未识别类型返回 []）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/session-manager.js",
+    "symbol": "sessionEntryToContextMessages(entry)",
+    "note": ":165-186 —— 仅 message/custom_message/branch_summary/compaction 映射，兜底 return []"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-session-entries.test.ts"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-10",
+  "claim": "get_available_models RPC 返回 Model 全属性（含 reasoning: boolean 与 thinkingLevelMap）；get_state 不含 models 清单（model 字段仅当前模型）——runtime 对账 pi 合并清单的唯一在线入口",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/modes/rpc/rpc-mode.js",
+    "symbol": "case \"get_available_models\" / case \"get_state\"",
+    "note": ":380-382 返回 { models }；:344-363 state 快照无 models 集合"
+   },
+   {
+    "pkg": "pi-ai",
+    "distPath": "dist/types.d.ts",
+    "symbol": "interface Model / ThinkingLevelMap",
+    "note": ":660-672 —— reasoning: boolean、thinkingLevelMap?: ThinkingLevelMap"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-rpc-surface.test.ts"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-11",
+  "claim": "models-store.json 远端目录周期刷新可引入新条目（含大小写家族条目），--model pattern 匹配结果随时间漂移——昨日可用的串今日可能命中别的模型",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/models-store.js",
+    "symbol": "FileModelsStore（models-store.json 缓存读写）",
+    "note": "model-runtime.js:80 装配于 <agentDir>/models-store.json；刷新时机与远端目录内容由上游控制，无稳定本地锚点可静态断言"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "运行时防御：切片 1 孪生守卫（start 同步期拒单）+ U5 能力注册表对账 drift 日志；pi 升级时人工复核 models-store 刷新行为（file mtime/checkedAt）"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-12",
+  "claim": "clampThinkingLevel 按模型族钳制就近回落：请求档位不被支持时先向高档回退再向低档回退（mimo 族设 max → high）；xhigh/max 仅在 thinkingLevelMap 显式映射（≠ undefined）时可用，null 显式标记不支持",
+  "piAnchor": [
+   {
+    "pkg": "pi-ai",
+    "distPath": "dist/models.js",
+    "symbol": "clampThinkingLevel / EXTENDED_THINKING_LEVELS",
+    "note": "枚举序 :545 / 钳制 :559-576（先向上再向下就近回落）；ThinkingLevel 枚举 pi-ai dist/types.d.ts:23"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "packages/runtime/src/infra/pi/__tests__/pi-semantics-thinking-gating.test.ts"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-13",
+  "claim": "interactive 挂起（Ctrl+Z）窗口内 SIGINT re-raise 被空的 ignoreSigint 处理器吞掉——subagent 信号收割在挂起窗口失效",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/modes/interactive/interactive-mode.js",
+    "symbol": "handleCtrlZ() 的 ignoreSigint",
+    "note": ":3199-3201 process.on(\"SIGINT\", ignoreSigint)；SIGCONT 恢复时 removeListener"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "处置建议已在 troubleshooting 观察项 #1（xyz 侧不依赖挂起窗口的信号语义；runtime 无 TUI 交互面）"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-14",
+  "claim": "session 延迟首写：首条 assistant 消息前 jsonl 不落盘（_persist 的 hasAssistant 门控），新 session crash 窗口内内存记账丢失",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/session-manager.js",
+    "symbol": "_persist(entry) 的 hasAssistant 门控",
+    "note": ":724-752 —— flushed 翻转前全部 entry 内存持有，wx 独占创建后逐条补写"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "既有兜底已生效（troubleshooting 观察项 #2；xyz 侧 SessionScanner.listAll 合并内存 Map 显示，读取代码必须处理文件不存在）"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-15",
+  "claim": "pi-ai/compat 是上游自声明临时入口，ModelManager 迁移完成后删除",
+  "piAnchor": [
+   {
+    "pkg": "pi-ai",
+    "distPath": "dist/compat.js",
+    "symbol": "模块头注释",
+    "note": "'This module is deleted with the coding-agent ModelManager migration.'；package.json exports 含 ./compat"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "pi 升级 PR 必查两项：exports 是否移除 ./compat、changelog 是否提及迁移完成——checklist 并入 C-proc-08 报错文案（U8 登记）"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-16",
+  "claim": "fork 路径 spawn 透传 preset model 可压过 fork 源 model_change entry 终态（pi CLI --model 恒优先于 session entry 恢复）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/model-resolver.js",
+    "symbol": "resolveCliModel（CLI model 优先链）",
+    "note": "xyz 侧 forkSession 链路（packages/runtime session-lifecycle）透传 --model；pi 恢复语义 = CLI 显式 model > session entry 的 model_change 终态"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "待产品裁决（troubleshooting 观察项 #5）；裁决前 fork 链路不依赖 entry model_change 终态"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-17",
+  "claim": "已存在 session 文件上的 appendEntry 为内存同步入账 + flush debounce 管线落盘，非即写即盘/fsync——强杀落在 flush 窗口内该 entry 丢失（跨重启不可恢复）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/session-manager.js",
+    "symbol": "_appendEntry + _flushSoon 管线",
+    "note": "appendEntry 同步入内存缓冲并调度 flush；flush 为批量异步写，无 fsync——与 PS-14 首写延迟同族的落盘窗口语义"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "影响面：sw notify-ledger 的 G2『跨重启不丢』在 flush 窗口不成立（账目丢失→通知不重放，真丢失面）；notify-ledger.ts 头注与设计文档 D4/G2 已按此如实限定。观察项：flush 窗口量级为 debounce 毫秒级，日常触发概率低"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-18",
+  "claim": "session JSONL 写入原语族：_persist 首写 openSync(path,\"wx\") 整体落盘缓冲 entry、此后一律 appendFileSync 追加；运行时 compaction 走 appendCompaction → _appendEntry → _persist 的 append-only 追加（不重写文件）；截断重写 _rewriteFile（openSync(path,\"w\")）仅在加载期触发（空文件归一 / 版本迁移 / branch 换新文件）。全部写入仅在「每 session 单写进程」前提下原子——第二写进程下 appendFileSync 无 O_APPEND 交错截断、加载期重写吞并发尾部 entry（sw 单写者不变量的 pi 侧承重机制）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/session-manager.js",
+    "symbol": "_persist / appendCompaction / _rewriteFile",
+    "note": "_persist :724-753（首写 wx flag :739，后续 appendFileSync :730/:751）；appendCompaction :803-818 → _appendEntry :754-759；_rewriteFile :693-705（openSync \"w\" :696），调用点 = 加载期空文件归一 :627 / 版本迁移 :634 / branch 换新文件 :1143"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "compact（手动/自动 compaction 收尾）",
+    "note": ":1432 手动 / :1670 自动 → sessionManager.appendCompaction（append-only 追加，非截断重写）"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "sw 子进程单写者不变量（extensions/universal/subagent-workflow session-runner.ts 的 buildSpawnArgs / runSpawn 注释）的 pi 侧机制依据；resume/续聊冷路径须先确认旧进程已死（resumesInFlight 守卫）。pi 升级时重验：compaction 是否仍 append-only、_rewriteFile 触发面是否仍限于加载期"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-19",
+  "claim": "session 生命周期管理无自动 GC：listSessionsFromDir 是非递归 readdir + `.jsonl` 过滤 + header 解析的只读扫描，SessionManager.list / listAll 只是它之上的 cwd 过滤/mtime 排序封装——无按 age/数量的 retention/prune/expire 删除逻辑；唯一删除路径是 TUI SessionSelector 用户手动删除选中的单个顶层 session 文件（trash CLI → unlink fallback）。推论：子目录（如 workflow-state/）不在任何扫描/清理范围，state 文件无限累积，保留策略由 xyz 扩展自担",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/session-manager.js",
+    "symbol": "listSessionsFromDir / SessionManager.list / listAll",
+    "note": "listSessionsFromDir :548-571（非递归 readdir 只读扫描）；list :1281-1287 / listAll :1289 起（过滤 + 排序封装，零删除调用）"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/modes/interactive/components/session-selector.js",
+    "symbol": "deleteSessionFile（trash → unlink fallback）",
+    "note": ":539-550 —— 用户手动、单个、仅顶层目录文件，非自动不递归"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "sw jsonl-run-store B1 retention（XYZ_SUBAGENT_STATE_MAX_RUNS opt-in mtime 裁剪）的承重依据——pi 不清理则扩展自担磁盘保留。pi 升级时重验：SessionManager 是否新增自动清理/retention"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-20",
+  "claim": "tool-call 参数运行时强校验链：agent-loop 对每个 LLM tool_call 在 beforeToolCall / execute 之前调 validateToolArguments（TypeBox Value.Convert 类型矫正 + Compile 缓存编译 + Check），校验失败 throw `Validation failed for tool \"<name>\"`（含逐字段错误列表 + arguments 回显）→ catch 走 immediate error result（isError:true），execute 不被调用、beforeToolCall 永不触发；sequential 与 parallel 两条路径的 immediate 分支均 emitToolExecutionEnd（tool_execution_end 事件对参数层失败照常触发）。注册工具的 typebox schema 的 pattern/maxLength/enum 等约束因此是运行时强制，非仅模型可见契约；tool-definition-wrapper 对 params 原样透传，校验在 agent-loop 层不在 wrapper",
+  "piAnchor": [
+   {
+    "pkg": "pi-agent-core",
+    "distPath": "dist/agent-loop.js",
+    "symbol": "validateToolCall 前置校验 / catch immediate / emitToolExecutionEnd",
+    "note": "校验调用 :403-404（prepareToolCallArguments + validateToolArguments，均先于 beforeToolCall :405 与 execute）；catch → immediate error :445-451；immediate 分支 emitToolExecutionEnd :277 / :318 / :348 / :358"
+   },
+   {
+    "pkg": "pi-ai",
+    "distPath": "dist/utils/validation.js",
+    "symbol": "validateToolArguments / getValidator / throw 格式",
+    "note": "validateToolArguments :247 起；Value.Convert :249；Compile（validatorCache 缓存）:210；Check :265；`Validation failed for tool` errorMessage :272 + throw :273；ARGS 回显段 = JSON.stringify(arguments, null, 2)"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/tools/tool-definition-wrapper.js",
+    "symbol": "wrapToolDefinition",
+    "note": ":5-15（parameters :7 原样保留、execute :11 透传）——wrapper 层无校验，与上游 agent-loop 校验链互补不矛盾"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "共同承重机制：structured-output loop-gate 的 tool_execution_end 计数通道选型（参数层失败只经 tool_execution_end 可观测）+ workflow 变体 execute 透传不做第二校验（D2 单一校验权威 = 本链）+ subagent tool schema pattern/maxLength 运行时强制（工具层守卫定位为 defense-in-depth）。探针锚点：structured-output cross-package-contract.test.ts ③ 真实 SDK 冒烟对 SW schema 跑 validateToolArguments。pi 升级时重验：校验是否仍在 beforeToolCall/execute 之前、immediate 分支是否仍 emitToolExecutionEnd、错误消息格式（Received arguments: 回显）是否稳定"
+  },
+  "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-21",
+  "claim": "注册工具的 parameters schema 是 pi 注入给模型的权威展示面：agent-session 把注册工具装入 agent.state.tools，agent-core 每轮流式调用经 createContextSnapshot 把 state.tools 带入请求上下文，pi-ai provider 层 convertTools 对每个工具取 tool.parameters 原样映射进 provider 请求体（anthropic input_schema / openai function.parameters）——API tools 段即模型可见的 schema 全文，ASP/任务文本不放 schema 重复不影响模型拿到结构",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "toolRegistry setter → setActiveToolsByName",
+    "note": "setter :1987-2015 收尾调 setActiveToolsByName；:632-643 从 _toolRegistry 取工具装入 this.agent.state.tools（:641）"
+   },
+   {
+    "pkg": "pi-agent-core",
+    "distPath": "dist/agent.js",
+    "symbol": "createContextSnapshot",
+    "note": ":280-286（tools: this._state.tools.slice() :284），经 run :272 / runAgentLoopContinue :277 随每轮流式调用下发"
+   },
+   {
+    "pkg": "pi-ai",
+    "distPath": "dist/api/anthropic-messages.js",
+    "symbol": "convertTools",
+    "note": "调用点 :756-757；映射 :998-1020——:1000 const schema = tool.parameters、:1006-1011 strict 分支展开 ...tool.parameters、:1017 input_schema 入请求体"
+   },
+   {
+    "pkg": "pi-ai",
+    "distPath": "dist/api/openai-completions.js",
+    "symbol": "convertTools",
+    "note": ":1074 起；:1099 parameters: tool.parameters（上游自带注释 'TypeBox already generates JSON Schema'）"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "承重：subagent-workflow U3「ASP 单点注入、删 task 后缀」（agent-opts-resolver.ts formatSchemaInstruction 与 session-runner.ts runSpawn 头注引用本条）——若 pi 升级后不再把注册工具 parameters 下发进请求体，模型将失去 schema 展示面，structured-output 指令链断裂且 ASP 的 {value} 包装契约失去对位；PS-20 的 observe 守卫只覆盖校验链不覆盖展示面。pi 升级时重验：convertTools 是否仍原样映射 tool.parameters、state.tools 是否仍随流式调用上下文下发。观察记录：bcadf4c22 live-verification（structured-output 全链实测，schema 经工具定义对模型生效）"
+  },
+  "verifiedWith": "0.84.1"
+ }
+]

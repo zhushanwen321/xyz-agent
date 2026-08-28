@@ -41,11 +41,39 @@ else
     # 等待 PR CI
     echo "  检查 PR CI 状态..."
     CI_DATA=$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json statusCheckRollup 2>&1) || {
-        echo -e "  ${YELLOW}Warning: 无法获取 CI 状态，继续合并${NC}"
+        echo -e "  ${YELLOW}Warning: 无法获取 CI 状态，按 checks 未注册处理${NC}"
         CI_DATA='{"statusCheckRollup":[]}'
     }
 
     CI_CONCLUSIONS=$(echo "$CI_DATA" | jq -r '[.statusCheckRollup[] | .conclusion] | unique | join(",")' 2>/dev/null || echo "")
+    CI_CHECK_COUNT=$(echo "$CI_DATA" | jq '[.statusCheckRollup[]] | length' 2>/dev/null || echo "0")
+
+    # 空 rollup 防误判：checks 尚未注册时 CI_CONCLUSIONS 为空串，既无 failure 也无 pending，
+    # 直接往下走会在 CI 完全未运行时误判「PR CI 通过」开始合并。
+    # 有界重试（每 15s 一次、上限 4 次），仍为空则 exit 1 交人工排查。
+    if [[ "$CI_CHECK_COUNT" -eq 0 ]]; then
+        echo -e "  ${YELLOW}⚠️  CI checks 尚未注册（statusCheckRollup 为空），等待重查...${NC}"
+        EMPTY_RETRIES=0
+        while [[ "$CI_CHECK_COUNT" -eq 0 ]] && [[ $EMPTY_RETRIES -lt 4 ]]; do
+            EMPTY_RETRIES=$((EMPTY_RETRIES + 1))
+            sleep 15
+            CI_DATA=$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json statusCheckRollup 2>/dev/null) || CI_DATA='{"statusCheckRollup":[]}'
+            CI_CHECK_COUNT=$(echo "$CI_DATA" | jq '[.statusCheckRollup[]] | length' 2>/dev/null || echo "0")
+            CI_CONCLUSIONS=$(echo "$CI_DATA" | jq -r '[.statusCheckRollup[] | .conclusion] | unique | join(",")' 2>/dev/null || echo "")
+            echo "  ⏳ checks 重查 ${EMPTY_RETRIES}/4..."
+        done
+        if [[ "$CI_CHECK_COUNT" -eq 0 ]]; then
+            echo -e "  ${RED}❌ CI checks 持续未注册（重查 4 次共 60s），无法确认 PR CI 状态${NC}"
+            echo "  排查指引:"
+            echo "    1. 取 PR head commit，确认是否触发了 CI（ci.yml 路径过滤如只改 docs/ 可能不触发）:"
+            echo "       gh pr view $PR_NUMBER --repo $GH_REPO --json headRefOid --jq .headRefOid"
+            echo "       gh run list --repo $GH_REPO --commit <head-sha>"
+            echo "    2. 人工核实 checks 状态:"
+            echo "       gh pr view $PR_NUMBER --repo $GH_REPO --json statusCheckRollup"
+            echo "    3. 确认无需 CI 时人工执行合并，不依赖本脚本的自动判定"
+            exit 1
+        fi
+    fi
 
     if echo "$CI_CONCLUSIONS" | grep -qi "failure\|timed_out\|cancelled"; then
         echo -e "  ${RED}❌ PR CI 有失败项:${NC}"
@@ -53,7 +81,8 @@ else
         exit 1
     fi
 
-    if echo "$CI_CONCLUSIONS" | grep -qi "pending\|queued\|in_progress"; then
+    # conclusions 为空串且 checks 已注册 = 全部 check 尚未完成（conclusion 为 null），等同 pending
+    if [[ -z "$CI_CONCLUSIONS" ]] || echo "$CI_CONCLUSIONS" | grep -qi "pending\|queued\|in_progress"; then
         echo "  ⏳ PR CI 仍在运行，等待最多 10 分钟..."
         ELAPSED=0
         while [[ $ELAPSED -lt 600 ]]; do
@@ -61,13 +90,19 @@ else
             ELAPSED=$((ELAPSED + 30))
             CI_DATA=$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json statusCheckRollup 2>&1)
             CI_CONCLUSIONS=$(echo "$CI_DATA" | jq -r '[.statusCheckRollup[] | .conclusion] | unique | join(",")' 2>/dev/null || echo "")
-            if ! echo "$CI_CONCLUSIONS" | grep -qi "pending\|queued\|in_progress"; then
+            if [[ -n "$CI_CONCLUSIONS" ]] && ! echo "$CI_CONCLUSIONS" | grep -qi "pending\|queued\|in_progress"; then
                 break
             fi
             echo "  ⏳ 等待中... (${ELAPSED}s/600s)"
         done
         if echo "$CI_CONCLUSIONS" | grep -qi "failure\|timed_out\|cancelled"; then
             echo -e "  ${RED}❌ PR CI 失败${NC}"
+            exit 1
+        fi
+        # 等待循环超时退出后仍无结论（全 pending/空串）= CI 未完成，不得放行
+        if [[ -z "$CI_CONCLUSIONS" ]] || echo "$CI_CONCLUSIONS" | grep -qi "pending\|queued\|in_progress"; then
+            echo -e "  ${RED}❌ PR CI 在 10 分钟内未完成（checks 仍无结论）${NC}"
+            echo "  排查: gh pr view $PR_NUMBER --repo $GH_REPO --json statusCheckRollup"
             exit 1
         fi
     fi

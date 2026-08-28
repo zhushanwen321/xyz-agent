@@ -1,12 +1,13 @@
 /**
  * SkillRegistry watcher 真实 fs 集成测试（real chokidar，不 mock）。
  *
- * 验证根因修复（2026-07-27）：watcher 在「已 watch 的 skill 目录下新建子目录」时必须触发 rescan。
+ * 验证不变量：watcher 在「已 watch 的 skill 目录下新建子目录」时必须触发 rescan。
  *
- * 背景（预存 bug）：chokidar v4 移除了 native fsevents 绑定，macOS 上退化为纯 Node fs.watch，
- * 对「新建子目录 / 新文件」事件不可靠（nodejs/node#52601 启动竞态 + FSEvents coalescing 丢事件），
- * 实测触发率 ~40%（flaky）。修复在 WATCH_OPTIONS 启用 usePolling:true 切到 stat-polling 后端，
- * 让 watcher 对跨进程磁盘操作可靠触发。
+ * [HISTORICAL] 背景（2026-07-27 预存 bug）：chokidar v4 移除 native fsevents 绑定，macOS 上
+ * 退化为纯 Node fs.watch，对「新建子目录 / 新文件」事件不可靠（nodejs/node#52601），实测触发率
+ * ~40%（flaky）；当时修复为 WATCH_OPTIONS usePolling:true。2026-08-28 复测该缺陷在当前 Node
+ * 不再复现，默认回到原生事件（polling 留 XYZ_AGENT_SKILL_WATCH_POLLING=1 降级开关）——
+ * 本测试随之成为原生事件路径的回归守卫，正是它要防的场景。
  *
  * 本文件不 mock chokidar（顶层的 vi.mock('chokidar') 仅作用于 skill-registry.test.ts 同文件作用域，
  * 独立 test 文件默认走真实 chokidar），用真实磁盘 + 跨进程 spawn 创建 skill 子目录，验证 onChange 被触发。
@@ -23,22 +24,18 @@ import type { SkillInfo } from '@xyz-agent/shared'
 /**
  * watcher 触发检测的挂钟轮询 deadline（reviewer-D WARNING-4 加固）。
  *
- * usePolling interval(1500ms) + debounce(300ms)：原 6000ms 预算只能覆盖 ~4 次轮询周期，
- * CI 慢机器 / 系统抖动时 polling 可能滑到 2s+，4 次预算紧张导致偶发超时 flaky。
- * 提升到 12000ms 给 ~8 次轮询预算，留足缓冲应对 CI 抖动。
+ * polling 时代为 interval(1500ms) + debounce(300ms) 的 ~8 次轮询预算；原生事件路径下
+ * 检测是事件驱动（亚秒级），12000ms 仅为 CI 抖动留缓冲。
  * 配合 it() timeout（30000ms）确保测试本身不会先于 deadline 超时。
  */
 const WATCH_DETECT_DEADLINE_MS = 12000
 
 /**
- * chokidar 轮询 baseline 预热时长（ms）。
+ * watcher baseline 预热时长（ms）。
  *
- * 为什么需要：chokidar usePolling 的 first-tick 会快照当前目录状态作为 baseline，之后每个 interval
- * 与 baseline diff 出增量事件。若新建文件的 spawnSync 在 first-tick **之前**完成，新文件就被
- * baseline 快照「吞掉」，后续轮询看不到 diff → 事件永不触发（ignoreInitial 也会跳过）。
- * 原测试用异步 spawn（fire-and-forget）侥幸绕过：子进程 fork 后真正写盘通常落在 first-tick 之后，
- * 但这是隐式时序依赖（CI 调度抖动即可打破）。spawnSync 改为同步后写盘在 first-tick 前 → 必须显式
- * 等 first-tick 跑完再创建文件。1700ms > WATCH_POLL_INTERVAL_MS(1500ms) 确保至少一次轮询已建好 baseline。
+ * [HISTORICAL] 该等待源自 polling 时代的 first-tick baseline 竞态（新建文件若先于 first-tick
+ * 落盘会被 baseline 吞掉）；原生事件路径无此竞态，保留 1700ms 作为 watcher 建立监听的保守余量，
+ * 避免测试依赖隐式时序。
  */
 const WATCH_BASELINE_WARMUP_MS = 1700
 

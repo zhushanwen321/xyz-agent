@@ -140,13 +140,6 @@ describe('UpdateButton', () => {
     expect(bar.html()).toContain('width: 42%')
   })
 
-  it('W4TC7：verifying 也走 progress 分支', () => {
-    setTestState({ state: 'verifying', percent: 80 })
-    const wrapper = mount(UpdateButton)
-    expect(wrapper.find('[data-testid="update-progress"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="update-progress"]').text()).toContain('80%')
-  })
-
   it('W4TC6b：restarting 渲染 CheckCircle2 + 文案', () => {
     setTestState({ state: 'restarting' })
     const wrapper = mount(UpdateButton)

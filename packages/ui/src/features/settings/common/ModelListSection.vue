@@ -63,6 +63,18 @@
             </SelectContent>
           </Select>
         </div>
+        <!-- D4 reasoning 开关：默认按思考策略自动推导（非 all-levels 自动 true），用户可显式关。
+             显式 boolean 落盘——reasoning 缺失会让 pi 把思考档全钳回 off（事故 B）。 -->
+        <div>
+          <Label class="mb-1 block text-[10px] text-neutral-mid">{{ t('settings.providerEdit.reasoningLabel') }}</Label>
+          <Switch
+            :model-value="deps.newModel.reasoning"
+            class="mt-[9px]"
+            :aria-label="t('settings.providerEdit.reasoningLabel')"
+            :title="t('settings.providerEdit.reasoningTitle')"
+            @update:model-value="deps.newModel.reasoning = $event as boolean"
+          />
+        </div>
         <Button class="h-8 shrink-0 px-3 text-[12px]" @click="$emit('addModel')">{{ t('settings.providerEdit.addBtn') }}</Button>
       </div>
     </div>
@@ -178,7 +190,7 @@
 </template>
 
 <script setup lang="ts">
-import { Button, Input, Label, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@xyz-agent/ui'
+import { Button, Input, Label, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Switch } from '@xyz-agent/ui'
 import { inject, unref, computed, type Ref, type ComputedRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileText, ImageIcon, X, Settings2 } from '@lucide/vue'
@@ -223,6 +235,8 @@ interface ModelListDeps {
     inputTypes: Array<'text' | 'image'>
     contextWindow: number | undefined
     thinking: string | undefined
+    /** 思考能力开关（D4：出厂显式 boolean；非 all-levels 策略自动 true，用户可显式关） */
+    reasoning: boolean
   }
   localModels: Ref<LocalModel[]>
   toggleNewInput: (type: 'text' | 'image') => void

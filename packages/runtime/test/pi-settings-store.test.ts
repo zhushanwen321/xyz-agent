@@ -263,6 +263,25 @@ describe('pi-settings-store', () => {
         fs.writeFileSync(${JSON.stringify(settingsPath)}, JSON.stringify({ defaultModel: 'pi-child', packages: ['p1'] }), 'utf-8')
         setTimeout(() => { release(); process.exit(0) }, 150)
       `])
+      // 可观测性（设计文档 D6）：挂 stdout/stderr 双路监听进 ring buffer（50 行上限，
+      // 同 pi-fixture.ts 口径），失败 throw 时拼输出 tail + 单跑指引——子进程崩溃的
+      // 临终输出不再丢失。不抽共享工具：两处使用不构成抽象。
+      const CHILD_BUF_MAX_LINES = 50
+      const CHILD_TAIL_LINES = 10
+      const childStdoutLines: string[] = []
+      const childStderrLines: string[] = []
+      const captureChunk = (lines: string[], chunk: Buffer): void => {
+        const text = chunk.toString().trimEnd()
+        if (!text) return
+        lines.push(text)
+        if (lines.length > CHILD_BUF_MAX_LINES) lines.shift()
+      }
+      child.stdout?.on('data', (chunk: Buffer) => captureChunk(childStdoutLines, chunk))
+      child.stderr?.on('data', (chunk: Buffer) => captureChunk(childStderrLines, chunk))
+      const streamTail = (name: 'stdout' | 'stderr', lines: string[]): string =>
+        `\nchild ${name} (last ${CHILD_TAIL_LINES} lines):\n${lines.length === 0 ? '(empty)' : lines.slice(-CHILD_TAIL_LINES).join('\n')}`
+      const failureContext = (): string =>
+        `${streamTail('stdout', childStdoutLines)}${streamTail('stderr', childStderrLines)}\n👉 单跑复现：cd packages/runtime && npx vitest run test/pi-settings-store.test.ts`
       // 确定性等子进程持锁（替代盲等固定 40ms sleep）：探测 lockSync 直至 ELOCKED。
       // [HISTORICAL] 2026-08-20 PR #185 全量收尾实测 flaky：满载下子进程 spawn 慢于 40ms，
       // 主进程抢先拿锁、锁内读到旧值 'v1'（waitedMs 断言照过，仅 defaultModel 断言红）。
@@ -280,11 +299,11 @@ describe('pi-settings-store', () => {
           }
           probeRelease() // 子进程未起：让出锁重试
           if (child.exitCode !== null) {
-            throw new Error(`child exited (code ${child.exitCode}) before holding lock`)
+            throw new Error(`child exited (code ${child.exitCode}) before holding lock${failureContext()}`)
           }
           await new Promise((r) => setTimeout(r, 2))
         }
-        throw new Error('child did not acquire lock within 10s')
+        throw new Error(`child did not acquire lock within 10s${failureContext()}`)
       }
       await waitChildHoldsLock()
       const t0 = Date.now()

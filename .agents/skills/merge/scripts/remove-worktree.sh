@@ -1,6 +1,8 @@
 #!/bin/bash
 # 清理 git worktree：检查合并状态 → 同步其他 worktree → 删除目标 worktree
 # Usage: remove-worktree.sh <branch-name> [--force] [--skip-sync]
+#   --force: 跳过已合并检查，并强制删除（含未提交/未跟踪内容，删除前会列出将销毁的清单）
+#   --skip-sync: 跳过同步其他 worktree
 # Example: remove-worktree.sh feat/new-feature
 #          remove-worktree.sh feat/old-feature --force
 #          remove-worktree.sh feat/experiment --force --skip-sync
@@ -140,7 +142,9 @@ fi
 # --- 删除目标 worktree（最后执行） ---
 echo ""
 echo "=== 清理 worktree $BRANCH_NAME ==="
-remove_worktree "$WORKSPACE_ROOT" "$BRANCH_NAME" "$FORCE"
+# delete_branch 与 force 同步传递：--force 清理时本地分支一并删除（远程 delete-branch 后本地残留无意义）；
+# 非 force 模式仅删 worktree、保留本地分支（与既有行为一致）
+remove_worktree "$WORKSPACE_ROOT" "$BRANCH_NAME" "$FORCE" "$FORCE"
 
 # --- 输出报告 ---
 echo ""

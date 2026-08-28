@@ -61,7 +61,7 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
   }
   const modelService = {
     aggregateModels: overrides.aggregate ?? vi.fn().mockReturnValue([{ id: 'm1' }]),
-    switchModel: vi.fn().mockResolvedValue(undefined),
+    switchModel: vi.fn().mockResolvedValue('p1/m1'),
     setThinkingLevel: vi.fn().mockResolvedValue(undefined),
     discoverModelsFromApi: overrides.discover ?? vi.fn().mockResolvedValue([{ id: 'm1' }]),
   }

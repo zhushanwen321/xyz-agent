@@ -17,12 +17,14 @@ import { describe, it, expect, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
 import { useThinkingLevelSync, type ThinkingLevelSyncDeps } from './thinking-level-sync'
 
-// 体系 A：off+high 两档
+// 体系 A：off+high 两档（supportedLevels = pi 同源计算下发）
 const mapA = { off: 'o', high: 'h' }
-// 体系 A'：同 key 集合（off+high），value 不同 —— 与 A 同体系
+const supportedA = ['off', 'high']
+// 体系 A'：同档位集（off+high），value 不同 —— 与 A 同体系
 const mapASame = { off: 'o2', high: 'h2' }
-// 体系 B：low+medium 两档 —— 与 A 跨体系
+// 体系 B：low+medium 两档 —— 与 A 跨体系（可用集归一后为五档）
 const mapB = { low: 'l', medium: 'm' }
+const supportedDefault = ['off', 'minimal', 'low', 'medium', 'high']
 
 describe('useThinkingLevelSync', () => {
   it('case1: currentThinkingLevel 无值 → 设新模型最高可用档（immediate 同步）', () => {
@@ -31,9 +33,10 @@ describe('useThinkingLevelSync', () => {
     const onReset = vi.fn()
     const deps: ThinkingLevelSyncDeps = {
       getThinkingLevelMap: vi.fn((id: string) => (id === 'p/m1' ? mapA : undefined)),
+      getSupportedLevels: vi.fn((id: string) => (id === 'p/m1' ? supportedA : undefined)),
     }
     useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
-    // highestAvailableLevel(mapA) = 'high'；resolveThinkingValue('high', mapA) = 'h'
+    // highestAvailableLevel(supportedA) = 'high'；resolveThinkingValue('high', mapA) = 'h'
     expect(onReset).toHaveBeenCalledWith('h')
   })
 
@@ -47,6 +50,7 @@ describe('useThinkingLevelSync', () => {
         if (id === 'p/m2') return mapASame
         return undefined
       }),
+      getSupportedLevels: vi.fn(() => supportedA),
     }
     useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
     // immediate：current undefined → onReset('h')
@@ -73,6 +77,7 @@ describe('useThinkingLevelSync', () => {
         if (id === 'p/m3') return mapB
         return undefined
       }),
+      getSupportedLevels: vi.fn((id: string) => (id === 'p/m1' ? supportedA : supportedDefault)),
     }
     useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
     // immediate：current 'h' 有值，oldMap undefined → 第二分支可用性检查
@@ -95,11 +100,12 @@ describe('useThinkingLevelSync', () => {
     const onReset = vi.fn()
     const deps: ThinkingLevelSyncDeps = {
       getThinkingLevelMap: vi.fn(() => undefined),
+      getSupportedLevels: vi.fn(() => undefined),
     }
     useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
     // immediate：current 'high' 有值，oldMap undefined → 第二分支
     // resolveThinkingKey('high', undefined) = 'high'（isThinkingLevel 直接命中）
-    // available(undefined) = 全 6 档 includes 'high' → true → 不重置
+    // normalizeSupportedLevels(undefined) = 默认五档 includes 'high' → true → 不重置
     expect(onReset).not.toHaveBeenCalled()
   })
 
@@ -109,6 +115,7 @@ describe('useThinkingLevelSync', () => {
     const onReset = vi.fn()
     const deps: ThinkingLevelSyncDeps = {
       getThinkingLevelMap: vi.fn(() => mapA),
+      getSupportedLevels: vi.fn(() => supportedA),
     }
     const currentThinkingLevelMap = useThinkingLevelSync(
       currentModelId,
@@ -123,19 +130,20 @@ describe('useThinkingLevelSync', () => {
     expect(deps.getThinkingLevelMap).toHaveBeenCalledWith('p/m9')
   })
 
-  it('U11: 切到 non-reasoning 模型（getModelReasoning=false）→ 重置到 off', async () => {
+  it('U11: 切到 non-reasoning 模型（getSupportedLevels 返回 ["off"]）→ 重置到 off', async () => {
     const currentModelId = ref('p/m1')
     const currentThinkingLevel = ref<string | undefined>('h')
     const onReset = vi.fn()
     const deps: ThinkingLevelSyncDeps = {
       getThinkingLevelMap: vi.fn((id: string) => (id === 'p/m1' ? mapA : undefined)),
-      getModelReasoning: vi.fn((id: string) => (id === 'p/nonreasoning' ? false : true)),
+      // non-reasoning 模型的 supportedLevels = ['off']（pi 同源计算两级门控产物）
+      getSupportedLevels: vi.fn((id: string) => (id === 'p/nonreasoning' ? ['off'] : supportedA)),
     }
     useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
     // 切到 non-reasoning 模型：可用档只有 ['off']，当前 'h' 不可用
     currentModelId.value = 'p/nonreasoning'
     await nextTick()
-    // highestAvailableLevel(undefined, false) = 'off'；resolveThinkingValue('off', undefined) = 'off'
+    // highestAvailableLevel(['off']) = 'off'；resolveThinkingValue('off', undefined) = 'off'
     expect(onReset).toHaveBeenCalledWith('off')
   })
 
@@ -145,14 +153,14 @@ describe('useThinkingLevelSync', () => {
     const onReset = vi.fn()
     const deps: ThinkingLevelSyncDeps = {
       getThinkingLevelMap: vi.fn(() => ({ off: 'off', high: 'h', max: 'm' })),
-      getModelReasoning: vi.fn(() => false),
+      // non-reasoning：pi 同源计算产物 = ['off']（map 写得再多也压不过两级门控）
+      getSupportedLevels: vi.fn(() => ['off']),
     }
     useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
     // immediate 首次触发：oldMap === undefined，current 'h' 有值
     // currentKey = resolveThinkingKey('h', map) = 'high'；
-    // available(map, false) = ['off'] 不含 'high' → 重置
-    // 修复前：highestAvailableLevel(map) 漏传 reasoning → 'max' → onReset('m')（不可用档发给 runtime）
-    // 修复后：highestAvailableLevel(map, false) = 'off' → resolveThinkingValue('off', map) = 'off'
+    // normalizeSupportedLevels(['off']) 不含 'high' → 重置
+    // highestAvailableLevel(['off']) = 'off' → resolveThinkingValue('off', map) = 'off'
     expect(onReset).toHaveBeenCalledTimes(1)
     expect(onReset).toHaveBeenCalledWith('off')
   })
@@ -163,12 +171,12 @@ describe('useThinkingLevelSync', () => {
     const onReset = vi.fn()
     const deps: ThinkingLevelSyncDeps = {
       getThinkingLevelMap: vi.fn(() => undefined), // xiaomi-token-plan-cn/mimo-v2.5-pro 场景
-      getModelReasoning: vi.fn(() => true),
+      getSupportedLevels: vi.fn(() => supportedDefault),
     }
     useThinkingLevelSync(currentModelId, currentThinkingLevel, onReset, deps)
     currentModelId.value = 'p/mimo'
     await nextTick()
-    // 新语义可用集五档（无 max），最高可用档 = high → onReset('high')
+    // 可用集五档（无 max），最高可用档 = high → onReset('high')
     expect(onReset).toHaveBeenCalledWith('high')
   })
 })

@@ -1,13 +1,16 @@
 /**
  * W2 TDD 测试：ReleaseChecker（自动升级检测后端）。
  *
- * 覆盖场景 W2TC1-6：
+ * 覆盖场景 W2TC1-6 + D6TC1-3：
  *   W2TC1 happy path：/releases/latest 返回 v0.9.0 → 返回非 null，version 正确，sha256 提取
  *   W2TC2 三重 prerelease 过滤：prerelease=true / draft=true / tag=v0.9.0-rc1 → null
  *   W2TC3 版本比较：同版本 / 更老版本 → null
  *   W2TC4 asset 平台分流：4 平台产物 + blockmap 干扰，断言各平台 downloadUrl
  *   W2TC5 缓存：连续两次非 force 第二次不 fetch；force 强制刷新
  *   W2TC6 失败降级：fetch 抛错 / 403 / 404 / AbortError → null 不抛
+ *   D6TC1 代理优先：配置代理时 fetch 带 dispatcher 参数
+ *   D6TC2 代理失败降级直连：代理 fetch 失败 → 无 dispatcher 重试一次
+ *   D6TC3 disabled 模式：不走代理，纯直连
  *
  * Mock 策略：替换 globalThis.fetch，参考 health-checker-http.test.ts 的 mock 模式。
  * 每个 it 用 mockImplementationOnce 或重置 fetch 模拟独立响应。
@@ -16,6 +19,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ReleaseChecker } from '../release-checker.js'
+import * as proxyConfig from '../update/proxy-config.js'
 
 /** 构造一个完整的 GitHubRelease JSON（含 4 平台 + blockmap 干扰资产） */
 function makeReleaseJson(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -77,6 +81,9 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
 
   beforeEach(() => {
     originalFetch = globalThis.fetch
+    // 默认 mock 代理配置为 disabled（防止真实 proxy-config.json 干扰原有测试）
+    vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({ mode: 'disabled' })
+    vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue(undefined)
   })
 
   afterEach(() => {
@@ -221,14 +228,36 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
     expect(result).toBeNull()
   })
 
-  it('W2TC6b: 返回 403 → 返回 null', async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response('rate limited', { status: 403 }),
-    ) as typeof globalThis.fetch
+  it('W2TC6b: 返回 403 → 返回 null（批次 4：并触发 2h 限流退避）', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_700_000_000_000)
+      let fetchCount = 0
+      globalThis.fetch = vi.fn(async () => {
+        fetchCount++
+        return new Response('rate limited', { status: 403 })
+      }) as typeof globalThis.fetch
 
-    const checker = new ReleaseChecker()
-    const result = await checker.checkForLatestRelease('0.8.14')
-    expect(result).toBeNull()
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      // 返回值不变（null，renderer 非侵入静默）
+      expect(result).toBeNull()
+      expect(fetchCount).toBe(1)
+
+      // 批次 4 RM2.3：退避窗口内（2h）后续调用直接短路零联网（周期/补查/手动全尊重）
+      vi.setSystemTime(Date.now() + 60 * 60 * 1000) // +1h 仍在窗口内
+      const inWindow = await checker.checkForLatestRelease('0.8.14', { force: true })
+      expect(inWindow).toBeNull()
+      expect(fetchCount).toBe(1) // force 也被退避短路（零联网）
+
+      // 退避窗口外（+2h+1min）：恢复联网
+      vi.setSystemTime(Date.now() + 61 * 60 * 1000)
+      globalThis.fetch = vi.fn(async () => jsonResponse(makeReleaseJson())) as typeof globalThis.fetch
+      const recovered = await checker.checkForLatestRelease('0.8.14')
+      expect(recovered).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('W2TC6c: 返回 404 → 返回 null', async () => {
@@ -393,6 +422,135 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
     })
   })
 
+  // ── D6TC1-3：代理优先 + 失败降级直连 ───────────────────────────────
+  describe('D6: release-checker 代理优先 + 失败降级直连', () => {
+    it('D6TC1: 配置代理时 fetch 带 dispatcher 参数（代理优先）', async () => {
+      // mock 代理配置：manual 模式 + 代理 URL
+      vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({
+        mode: 'manual',
+        httpsProxy: 'http://192.168.1.202:7890',
+      })
+      vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue('http://192.168.1.202:7890')
+
+      // 记录 fetch 调用参数
+      const fetchCalls: RequestInit[] = []
+      globalThis.fetch = vi.fn(async (_url, init) => {
+        fetchCalls.push(init as RequestInit)
+        return jsonResponse(makeReleaseJson())
+      }) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+
+      expect(result).not.toBeNull()
+      expect(result!.version).toBe('0.9.0')
+      // 只调用一次 fetch（代理成功，不降级）
+      expect(fetchCalls).toHaveLength(1)
+      // dispatcher 应存在（ProxyAgent 实例）
+      const options = fetchCalls[0] as Record<string, unknown>
+      expect(options.dispatcher).toBeDefined()
+    })
+
+    it('D6TC2: 代理 fetch 失败 → 降级直连重试一次', async () => {
+      // mock 代理配置
+      vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({
+        mode: 'manual',
+        httpsProxy: 'http://192.168.1.202:7890',
+      })
+      vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue('http://192.168.1.202:7890')
+
+      // 记录 fetch 调用
+      const fetchCalls: RequestInit[] = []
+      let callCount = 0
+      globalThis.fetch = vi.fn(async (_url, init) => {
+        fetchCalls.push(init as RequestInit)
+        callCount++
+        if (callCount === 1) {
+          // 第一次（代理）失败
+          throw new Error('EHOSTUNREACH')
+        }
+        // 第二次（直连）成功
+        return jsonResponse(makeReleaseJson())
+      }) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+
+      expect(result).not.toBeNull()
+      expect(result!.version).toBe('0.9.0')
+      // 调用两次 fetch：代理失败 + 直连重试
+      expect(fetchCalls).toHaveLength(2)
+      // 第一次有 dispatcher（代理）
+      expect((fetchCalls[0] as Record<string, unknown>).dispatcher).toBeDefined()
+      // 第二次无 dispatcher（直连降级）
+      expect((fetchCalls[1] as Record<string, unknown>).dispatcher).toBeUndefined()
+    })
+
+    it('D6TC3: mode=disabled → 不走代理，纯直连', async () => {
+      // mock 代理配置：disabled
+      vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({ mode: 'disabled' })
+      vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue(undefined)
+
+      const fetchCalls: RequestInit[] = []
+      globalThis.fetch = vi.fn(async (_url, init) => {
+        fetchCalls.push(init as RequestInit)
+        return jsonResponse(makeReleaseJson())
+      }) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+
+      expect(result).not.toBeNull()
+      // 只调用一次（无代理，不降级）
+      expect(fetchCalls).toHaveLength(1)
+      // 无 dispatcher
+      expect((fetchCalls[0] as Record<string, unknown>).dispatcher).toBeUndefined()
+    })
+
+    it('D6TC4: 代理 + 直连都失败 → 返回 null（不抛）', async () => {
+      vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({
+        mode: 'manual',
+        httpsProxy: 'http://192.168.1.202:7890',
+      })
+      vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue('http://192.168.1.202:7890')
+
+      let callCount = 0
+      globalThis.fetch = vi.fn(async () => {
+        callCount++
+        throw new Error('EHOSTUNREACH')
+      }) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+
+      expect(result).toBeNull()
+      // 两次都失败：代理 + 直连降级
+      expect(callCount).toBe(2)
+    })
+
+    it('D6TC5: 代理 HTTP 错误（404）→ 不降级（只网络错误才降级）', async () => {
+      vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({
+        mode: 'manual',
+        httpsProxy: 'http://192.168.1.202:7890',
+      })
+      vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue('http://192.168.1.202:7890')
+
+      let callCount = 0
+      globalThis.fetch = vi.fn(async () => {
+        callCount++
+        // 404 是 HTTP 错误，不是网络错误 → 不应降级
+        return new Response('not found', { status: 404 })
+      }) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+
+      expect(result).toBeNull()
+      // 只调用一次（HTTP 404 是服务器响应，不触发降级重试）
+      expect(callCount).toBe(1)
+    })
+  })
+
   // ── W2TC8：win 产物名后缀匹配（M7-01 P0 回归防护）────────────────
   //
   // electron-builder.yml nsis artifactName 必须产出 TaiJi-<version>-setup-<arch>.exe
@@ -446,5 +604,93 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
       expect(result).not.toBeNull()
       expect(result!.assets.winX64Exe).toBeUndefined()
     })
+  })
+})
+
+// ════════════════════════════════════════════════════════════════
+// 批次 4（u4a）：负缓存（m7）——「无新版」也写缓存，TTL 同 1h
+// ════════════════════════════════════════════════════════════════
+describe('批次 4: 负缓存（无新版写缓存，m7）', () => {
+  let originalFetch: typeof globalThis.fetch
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch
+    vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({ mode: 'disabled' })
+    vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue(undefined)
+    vi.useFakeTimers()
+    vi.setSystemTime(1_700_000_000_000)
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  it('无新版（latest ≤ current）→ 首查 null 写负缓存；TTL 内非 force 再查零 fetch', async () => {
+    // latest = 0.8.13 < current = 0.8.14 → 无新版
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse(makeReleaseJson({ tag_name: 'v0.8.13' })),
+    ) as typeof globalThis.fetch
+
+    const checker = new ReleaseChecker()
+    const r1 = await checker.checkForLatestRelease('0.8.14')
+    expect(r1).toBeNull()
+    const fetchCountAfterFirst = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+    expect(fetchCountAfterFirst).toBe(1)
+
+    // TTL 内（+30min）非 force 再查 → 负缓存命中，零 fetch
+    vi.setSystemTime(Date.now() + 30 * 60 * 1000)
+    const r2 = await checker.checkForLatestRelease('0.8.14')
+    expect(r2).toBeNull()
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1)
+
+    // TTL 过（+61min）→ 重新 fetch（负缓存过期）
+    vi.setSystemTime(Date.now() + 31 * 60 * 1000)
+    const r3 = await checker.checkForLatestRelease('0.8.14')
+    expect(r3).toBeNull()
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2)
+  })
+
+  it('force=true 绕过负缓存重新 fetch（手动检查不被无新版缓存挡住）', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse(makeReleaseJson({ tag_name: 'v0.8.13' })),
+    ) as typeof globalThis.fetch
+
+    const checker = new ReleaseChecker()
+    await checker.checkForLatestRelease('0.8.14')
+    // force 绕过负缓存
+    await checker.checkForLatestRelease('0.8.14', { force: true })
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2)
+  })
+
+  it('prerelease → 也写负缓存（GitHub 侧判定无可用 stable）', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse(makeReleaseJson({ tag_name: 'v0.9.1', prerelease: true })),
+    ) as typeof globalThis.fetch
+
+    const checker = new ReleaseChecker()
+    await checker.checkForLatestRelease('0.8.14')
+    const count1 = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+
+    vi.setSystemTime(Date.now() + 30 * 60 * 1000)
+    await checker.checkForLatestRelease('0.8.14')
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(count1)
+  })
+
+  it('网络失败不写负缓存（失败后 TTL 内再查仍重新 fetch，W2TC6e 语义保持）', async () => {
+    let callCount = 0
+    globalThis.fetch = vi.fn(async () => {
+      callCount++
+      if (callCount === 1) throw new Error('network down')
+      return jsonResponse(makeReleaseJson({ tag_name: 'v0.8.13' }))
+    }) as typeof globalThis.fetch
+
+    const checker = new ReleaseChecker()
+    await checker.checkForLatestRelease('0.8.14')
+    vi.setSystemTime(Date.now() + 30 * 60 * 1000)
+    const r2 = await checker.checkForLatestRelease('0.8.14')
+    expect(r2).toBeNull() // 第二次成功但结果仍是无新版
+    expect(callCount).toBe(2) // 第一次失败未写负缓存，第二次仍发起 fetch
   })
 })
