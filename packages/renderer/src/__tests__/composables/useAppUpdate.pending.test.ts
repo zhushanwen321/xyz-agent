@@ -40,6 +40,7 @@ const hoisted = vi.hoisted(() => {
     updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
     getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
     getPendingUpdate: vi.fn<() => Promise<LatestReleaseInfo | null>>(),
+    getUpdateSettings: vi.fn<() => Promise<{ preDownload: boolean; autoUpdate?: boolean }>>(),
     openUpdateFallbackUrl: vi.fn<(url: string) => Promise<void>>(),
     onUpdateProgress: vi.fn((cb: typeof progressCb) => {
       progressCb = cb
@@ -60,6 +61,7 @@ vi.mock('@/lib/ipc', () => ({
   updateInstall: hoisted.updateInstall,
   getPreloaded: hoisted.getPreloaded,
   getPendingUpdate: hoisted.getPendingUpdate,
+  getUpdateSettings: hoisted.getUpdateSettings,
   openUpdateFallbackUrl: hoisted.openUpdateFallbackUrl,
   onUpdateProgress: hoisted.onUpdateProgress,
   onUpdateError: hoisted.onUpdateError,
@@ -91,6 +93,8 @@ beforeEach(() => {
   hoisted.updateInstall.mockReset()
   hoisted.getPreloaded.mockReset()
   hoisted.getPendingUpdate.mockReset()
+  // u4a：initAutoCheck 读 autoUpdate 开关（默认 true，存量行为不变）
+  hoisted.getUpdateSettings.mockReset().mockResolvedValue({ preDownload: false, autoUpdate: true })
   hoisted.openUpdateFallbackUrl.mockReset()
   hoisted.onUpdateProgress.mockClear()
   hoisted.onUpdateError.mockClear()

@@ -37,6 +37,7 @@ const hoisted = vi.hoisted(() => {
     getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
     getPendingUpdate: vi.fn<() => Promise<LatestReleaseInfo | null>>(),
     getLaunchResult: vi.fn<() => Promise<{ status: string; version: string } | null>>(),
+    getUpdateSettings: vi.fn<() => Promise<{ preDownload: boolean; autoUpdate?: boolean }>>(),
     openUpdateFallbackUrl: vi.fn<(url: string) => Promise<void>>(),
     onUpdateProgress: vi.fn((cb: typeof progressCb) => {
       progressCb = cb
@@ -68,6 +69,7 @@ vi.mock('@/lib/ipc', () => ({
   getPreloaded: hoisted.getPreloaded,
   getPendingUpdate: hoisted.getPendingUpdate,
   getLaunchResult: hoisted.getLaunchResult,
+  getUpdateSettings: hoisted.getUpdateSettings,
   openUpdateFallbackUrl: hoisted.openUpdateFallbackUrl,
   onUpdateProgress: hoisted.onUpdateProgress,
   onUpdateError: hoisted.onUpdateError,
@@ -127,6 +129,9 @@ beforeEach(() => {
   hoisted.updateDownload.mockReset()
   hoisted.updateInstall.mockReset()
   hoisted.getPreloaded.mockReset()
+  hoisted.getUpdateSettings.mockReset()
+  // 默认 autoUpdate=true（批次 4 默认值）：存量 autoCheck 用例行为不变
+  hoisted.getUpdateSettings.mockResolvedValue({ preDownload: false, autoUpdate: true })
   hoisted.openUpdateFallbackUrl.mockReset()
   hoisted.onUpdateProgress.mockClear()
   hoisted.onUpdateError.mockClear()
@@ -446,15 +451,37 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
     vi.useRealTimers()
   })
 
-  it('30s 首次触发 checkForUpdate(force=true)', async () => {
+  it('30s 首次触发 checkForUpdate(force=false)（批次 4 RM2.1：周期走缓存）', async () => {
     hoisted.checkForUpdate.mockResolvedValue(null)
+    hoisted.getUpdateSettings.mockResolvedValue({ preDownload: false, autoUpdate: true })
     // initAutoCheck 必须在 scope 内调（onScopeDispose 需绑定活跃 scope），用 options 触发
     const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
     expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(30000)
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
-    expect(hoisted.checkForUpdate).toHaveBeenCalledWith({ force: true })
+    expect(hoisted.checkForUpdate).toHaveBeenCalledWith({ force: false })
+    stop()
+  })
+
+  it('autoUpdate=false → 恢复链照走但零定时器/零 listener/零联网（RM1，验收①）', async () => {
+    hoisted.getUpdateSettings.mockResolvedValue({ preDownload: false, autoUpdate: false })
+    const addListenerSpy = vi.spyOn(document, 'addEventListener')
+    const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
+    // settings 读取是 fire-and-forget 异步：flush 微任务后再断言
+    await vi.advanceTimersByTimeAsync(0)
+
+    // 零联网：30s 首查从未发生
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
+    // 零 listener：visibilitychange 未挂载
+    expect(
+      addListenerSpy.mock.calls.some(([name]) => name === 'visibilitychange'),
+    ).toBe(false)
+    // 恢复链照走（本地读取不联网）：getPreloaded/getLaunchResult 被调
+    expect(hoisted.getPreloaded).toHaveBeenCalled()
+    expect(hoisted.getLaunchResult).toHaveBeenCalled()
+    addListenerSpy.mockRestore()
     stop()
   })
 
@@ -469,7 +496,7 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
     // 60min（60 * 60 * 1000ms）周期触发第二次
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(2)
-    expect(hoisted.checkForUpdate).toHaveBeenLastCalledWith({ force: true })
+    expect(hoisted.checkForUpdate).toHaveBeenLastCalledWith({ force: false })
     stop()
   })
 
@@ -511,6 +538,39 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
 
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1) // 不再触发
+  })
+
+  it('可见性补查 10min 节流（RM2.4）：10min 内无重复联网补查（净效果断言）', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(null)
+    const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
+    // flush settings promise → 30s 首查 timer 排上
+    await vi.advanceTimersByTimeAsync(0)
+
+    // 首查触发
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
+
+    // hidden（含 document.hidden，runAutoCheck 守卫读的是它）→ 周期触发置 skipped
+    const hiddenSpy = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1) // hidden 期间周期跳过联网
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    hiddenSpy.mockReturnValue(false)
+
+    // 恢复可见 → 距首查 60min+ > 10min 窗口 → 补查正常触发（第 2 次）
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(2)
+
+    // 10min 窗口内再次切窗切回（skipped 未置）→ 无第二次补查联网（净效果）
+    const hiddenSpy2 = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    hiddenSpy2.mockReturnValue(false)
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(2)
+    stop()
   })
 })
 

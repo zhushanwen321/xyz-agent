@@ -24,6 +24,7 @@ const hoisted = vi.hoisted(() => {
     updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
     getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
     getPendingUpdate: vi.fn<() => Promise<LatestReleaseInfo | null>>(),
+    getUpdateSettings: vi.fn<() => Promise<{ preDownload: boolean; autoUpdate?: boolean }>>(),
     openUpdateFallbackUrl: vi.fn<(url: string) => Promise<void>>(),
     onUpdateProgress: vi.fn(() => () => {}),
     onUpdateError: vi.fn(() => () => {}),
@@ -37,6 +38,7 @@ vi.mock('@/lib/ipc', () => ({
   updateInstall: hoisted.updateInstall,
   getPreloaded: hoisted.getPreloaded,
   getPendingUpdate: hoisted.getPendingUpdate,
+  getUpdateSettings: hoisted.getUpdateSettings,
   openUpdateFallbackUrl: hoisted.openUpdateFallbackUrl,
   onUpdateProgress: hoisted.onUpdateProgress,
   onUpdateError: hoisted.onUpdateError,
@@ -73,6 +75,9 @@ function setupWithAutoCheck(): { result: ReturnType<typeof useAppUpdate>; stop: 
 beforeEach(() => {
   _resetForTest()
   vi.useFakeTimers()
+  // fake 时钟起点设为真实 epoch 量级：lastVisibilityCheckAt 初值 0 时，
+  // 起点 0 会让「首查后 30s 的补查」被 10min 节流窗口误挡（真实时钟不会）
+  vi.setSystemTime(1_700_000_000_000)
   vi.stubGlobal('__APP_VERSION__', '0.0.0')
   setHidden(false)
   hoisted.checkForUpdate.mockReset().mockResolvedValue(null)
@@ -80,6 +85,8 @@ beforeEach(() => {
   hoisted.updateInstall.mockReset().mockResolvedValue({ triggerRestart: true })
   hoisted.getPreloaded.mockReset().mockResolvedValue(null)
   hoisted.getPendingUpdate.mockReset().mockResolvedValue(null)
+  // u4a：initAutoCheck 读 autoUpdate 开关（visibility 用例默认 true，保持周期调度行为）
+  hoisted.getUpdateSettings.mockReset().mockResolvedValue({ preDownload: false, autoUpdate: true })
   hoisted.openUpdateFallbackUrl.mockReset()
   hoisted.onUpdateProgress.mockClear()
   hoisted.onUpdateError.mockClear()
@@ -96,6 +103,8 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
   it('hidden 期间周期触发不联网检测：30s 首次 + 60min 周期均跳过 checkForUpdate', async () => {
     setHidden(true)
     const { stop } = setupWithAutoCheck()
+    // u4a：initAutoCheck 的定时器排在 settings promise 之后，先 flush 微任务
+    await vi.advanceTimersByTimeAsync(0)
 
     // 30s 首次触发 → hidden 跳过
     await vi.advanceTimersByTimeAsync(30_000)
@@ -111,6 +120,8 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
   it('恢复可见立即补查（force=true），不等下一个 60min 周期', async () => {
     setHidden(true)
     const { stop } = setupWithAutoCheck()
+    // u4a：initAutoCheck 的定时器排在 settings promise 之后，先 flush 微任务
+    await vi.advanceTimersByTimeAsync(0)
 
     await vi.advanceTimersByTimeAsync(30_000) // hidden 跳过，标记 skippedWhileHidden
     expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
@@ -119,13 +130,15 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
     fireVisibilityChange()
     // 补查同步发起，立即断言可见
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
-    expect(hoisted.checkForUpdate).toHaveBeenLastCalledWith({ force: true })
+    expect(hoisted.checkForUpdate).toHaveBeenLastCalledWith({ force: false })
     stop()
   })
 
   it('补查后周期检测继续（下一个 60min 周期正常触发）', async () => {
     setHidden(true)
     const { stop } = setupWithAutoCheck()
+    // u4a：initAutoCheck 的定时器排在 settings promise 之后，先 flush 微任务
+    await vi.advanceTimersByTimeAsync(0)
 
     await vi.advanceTimersByTimeAsync(30_000)
     setHidden(false)
@@ -140,6 +153,8 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
 
   it('恢复可见无跳过记录时不补查（正常周期内的 visibilitychange 是 no-op）', async () => {
     const { stop } = setupWithAutoCheck()
+    // u4a：initAutoCheck 的定时器排在 settings promise 之后，先 flush 微任务
+    await vi.advanceTimersByTimeAsync(0)
 
     // 可见期间正常 30s 首次检测（无跳过记录）
     await vi.advanceTimersByTimeAsync(30_000)
@@ -172,6 +187,8 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
   it('onScopeDispose 卸载 listener：dispose 后 visibilitychange 不再触发检测', async () => {
     setHidden(true)
     const { stop } = setupWithAutoCheck()
+    // u4a：initAutoCheck 的定时器排在 settings promise 之后，先 flush 微任务
+    await vi.advanceTimersByTimeAsync(0)
 
     await vi.advanceTimersByTimeAsync(30_000)
     stop() // 触发 onScopeDispose → 清 timer + 移除 listener
@@ -193,6 +210,8 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
 
     setHidden(true)
     const { stop } = setupWithAutoCheck()
+    // u4a：initAutoCheck 的定时器排在 settings promise 之后，先 flush 微任务
+    await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(30_000) // hidden 跳过，标记 skippedWhileHidden
     expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
 

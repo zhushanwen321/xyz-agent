@@ -7,7 +7,8 @@
  * - performUpdate：已删除（批次 3 m17）；两阶段 performDownload/performInstall 替代，
  *   download 传意图（version 字符串），release 数据由 main 权威解析（RC1）
  * - 订阅 onUpdateProgress（stage + percent）/ onUpdateError（错误 SSOT），onScopeDispose 退订
- * - initAutoCheck：30s 后自动检测一次（应用启动后延迟避开冷启动高峰）
+ * - initAutoCheck：先读 update:getSettings 的 autoUpdate 开关——false 时只执行恢复链
+ *   （零定时器/零 listener/零联网），true 时 30s 后首次检测（应用启动后延迟避开冷启动高峰）
  *
  * 单例范式：module-level state（全应用共享）+ refCount 引用计数管理订阅生命周期，
  * 对齐 usePlatformChrome.ts:34-52。UpdateButton 与 Sidebar 都读同一份 state。
@@ -26,6 +27,7 @@ import type { LatestReleaseInfo, UpdateState } from '@xyz-agent/shared'
 import { compare } from 'compare-versions'
 import {
   checkForUpdate as ipcCheckForUpdate,
+  getUpdateSettings as ipcGetUpdateSettings,
   updateDownload as ipcUpdateDownload,
   updateInstall as ipcUpdateInstall,
   getPreloaded as ipcGetPreloaded,
@@ -49,6 +51,9 @@ const UNSUPPORTED_ERROR_CODE = 'UPDATE_UNSUPPORTED_PLATFORM'
 /** 自动检测首次延迟：应用启动后 30s（避开冷启动资源竞争） */
 const AUTO_CHECK_DELAY_MS = 30_000
 
+/** 上次可见性补查时刻（epoch ms，0 = 从未）：10min 节流窗口用 */
+let lastVisibilityCheckAt = 0
+
 /**
  * 自动检测周期：每 60 分钟联网检测一次。
  *
@@ -62,6 +67,11 @@ const CHECK_INTERVAL_MINUTES = 60
 const SECONDS_PER_MINUTE = 60
 const MS_PER_SECOND = 1000
 const AUTO_CHECK_INTERVAL_MS = CHECK_INTERVAL_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND // 60min
+
+/** 可见性补查最小间隔（RM2.4：10min 内不重复补查，堵频繁切窗 = 频繁联网） */
+const VISIBILITY_RECHECK_WINDOW_MINUTES = 10
+const VISIBILITY_CHECK_MIN_INTERVAL_MS =
+  VISIBILITY_RECHECK_WINDOW_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND
 
 /**
  * 多语言 release notes 分隔标记。
@@ -477,6 +487,12 @@ function clearAutoCheckTimer(): void {
 function onVisibilityChange(): void {
   if (document.visibilityState !== 'visible' || !skippedWhileHidden) return
   skippedWhileHidden = false
+  // 节流（RM2.4）：10min 内已补查过 → 跳过本次，保留原周期 timer 不动
+  if (Date.now() - lastVisibilityCheckAt < VISIBILITY_CHECK_MIN_INTERVAL_MS) {
+    console.log('[useAppUpdate] visibility check throttled (within 10min window)')
+    return
+  }
+  lastVisibilityCheckAt = Date.now()
   clearAutoCheckTimer()
   void runAutoCheck()
 }
@@ -502,9 +518,10 @@ function detachVisibilityListener(): void {
  * 保证升级完成后能继续周期检测。
  *
  * visibility 守卫（Q1-6）：document.hidden 时跳过联网检测（后台隐藏期间不发周期请求，
- * 省 GitHub API 配额），置 skippedWhileHidden 标记，恢复可见时由 onVisibilityChange 补查。
+ * 省GitHub API 配额），置 skippedWhileHidden 标记，恢复可见时由 onVisibilityChange 补查。
  *
- * force=true：绕过 release-checker 的 1h 缓存，确保每次周期真正联网（避免缓存未命中新版）。
+ * force=false（批次 4 RM2.1）：周期检查走 release-checker 1h 缓存（含负缓存），
+ * 正常态 API 消耗 ≤1 次/小时；force=true 保留给设置页手动按钮。
  */
 async function runAutoCheck(): Promise<void> {
   autoCheckTimer = null // 当前 timer 已触发
@@ -518,7 +535,7 @@ async function runAutoCheck(): Promise<void> {
     skippedWhileHidden = true
   } else if (canCheck) {
     skippedWhileHidden = false
-    await checkForUpdate(true)
+    await checkForUpdate(false)
   }
   // await 期间 scope 可能已 dispose（此时无 pending timer 可清）：
   // 已 dispose 则不排下一周期，防卸载后周期定时器仍联网（W05 review）
@@ -557,7 +574,11 @@ async function checkLaunchResult(): Promise<void> {
 }
 
 /**
- * 启动自动检测：先恢复持久化提醒（立即），再 30s 首次检测，之后每 60min 周期检测。
+ * 启动自动检测：先恢复持久化提醒（立即），再读 autoUpdate 开关——
+ * true 时 30s 首次检测 + 60min 周期 + visibilitychange 补查 listener；
+ * false 时只执行恢复链（RM1：恢复链均为本地读取不联网，且不挂任何定时器/
+ * listener——无自动检查则补查无意义；设置页手动「检查更新」不受影响）。
+ * 开关变更下次启动生效（与 preDownload 开关现状一致）。
  *
  * 必须在活跃 effect scope 内调用，通常在组件 setup 顶层同步调用（onScopeDispose 依赖活跃 scope）；
  * 定时器不需要等 DOM 挂载，故不必放 onMounted。onScopeDispose 清理定时器避免泄漏。
@@ -569,7 +590,7 @@ function initAutoCheck(): void {
   clearAutoCheckTimer()
   skippedWhileHidden = false
   disposed = false // 新 init 复活周期检测（此前 scope dispose 置位过则清除）
-  attachVisibilityListener()
+  // 恢复链无条件执行（RM1：均为本地读取不联网，开关只控制「自动检查」行为）
   // 先恢复 preloaded（downloaded 态，优先级高于 pending）
   void restorePreloadedUpdate().then((restored) => {
     if (!restored) {
@@ -579,8 +600,20 @@ function initAutoCheck(): void {
   })
   // 读取启动结果（升级成功/失败/回滚），consumed 一次性：首次调用返回结果并清空
   void checkLaunchResult()
-  // 30s 后首次联网检测（避开冷启动高峰 + 刷新 release info），首次完成后转 20min 周期
-  autoCheckTimer = setTimeout(runAutoCheck, AUTO_CHECK_DELAY_MS)
+  // [RM1 开关消费] 异步读设置（fire-and-forget 保持 initAutoCheck 同步签名，
+  // onScopeDispose 须在同步段注册）。autoUpdate 缺失/undefined 视为 true
+  //（与 DEFAULT true 一致；显式 false 才关闭）。
+  void ipcGetUpdateSettings().then((settings) => {
+    // settings await 期间 scope 可能已 dispose：不挂任何定时器/listener
+    if (disposed) return
+    if (settings.autoUpdate === false) {
+      console.log('[useAppUpdate] autoUpdate disabled: scheduling skipped (restore chain only)')
+      return
+    }
+    attachVisibilityListener()
+    // 30s 后首次联网检测（避开冷启动高峰 + 刷新 release info），首次完成后转周期
+    autoCheckTimer = setTimeout(runAutoCheck, AUTO_CHECK_DELAY_MS)
+  })
   onScopeDispose(() => {
     clearAutoCheckTimer()
     detachVisibilityListener()
@@ -629,4 +662,6 @@ export function _resetForTest(): void {
   pendingRestored = false
   skippedWhileHidden = false
   disposed = false
+  // u4a：可见性补查节流时刻也属模块级测试态，一并重置
+  lastVisibilityCheckAt = 0
 }

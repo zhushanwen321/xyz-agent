@@ -4,7 +4,7 @@
  * 对应 slice auto-update-and-install：实现 IReleaseChecker Facade。
  *
  * 职责链：
- *   1. 缓存命中检查（1h，force 可绕过）
+ *   1. 缓存命中检查（1h，force 可绕过；批次 4 负缓存：「无新版」也写缓存，TTL 同 1h）
  *   2. fetch GitHub /releases/latest（AbortController 10s 超时）
  *   3. 三重 prerelease 防御：
  *      a. API 语义层：/releases/latest 端点天然排除 prerelease（仅最近 stable）
@@ -14,8 +14,17 @@
  *   5. 按平台分流 asset（后缀 pattern 匹配，兼容带/不带版本号的文件名）
  *   6. sha256 优先取 asset.digest（strip 'sha256:' 前缀）；digest 缺失时 fallback fetch manifest.json
  *
+ * [批次 4 调度与限额（设计 §3.6 RM2）]：
+ * - 负缓存（m7）：「无新版」结果（latest ≤ current / prerelease / draft / 版本格式非法）
+ *   同样写入缓存（info=null），TTL 同 1h——修掉「每周期必打 API」；网络失败不写缓存
+ *   （断网不阻塞下次重试）。
+ * - 403/429 可区分：不再并入 null，抛 ReleaseRateLimitedError 并内部记录
+ *   rateLimitedUntil = now + 2h——退避窗口内 checkForLatestRelease 直接短路返回 null
+ *   （周期/补查/手动全尊重，零联网），renderer 收到 null 即「非侵入静默」，无需感知信号。
+ *
  * [HISTORICAL] 不变量：
- * - 失败一律 catch 返回 null，不缓存失败（下次仍会重新尝试）
+ * - 失败一律 catch 返回 null，不缓存失败（下次仍会重新尝试）——网络失败仍不缓存；
+ *   「无新版」类结果自批次 4 起写入负缓存（见上）
  * - sha256 来源：优先 GitHub asset.digest；digest 缺失（老 release / 某些情况下 undefined）
  *   时 fetch manifest.json（CI generate-manifest.sh 产物）作为 fallback
  * - manifest fallback 仅在至少一个 asset 缺 sha256 时 fetch 一次（lazy），全失败则 sha256 留 undefined
@@ -48,13 +57,38 @@ const GITHUB_HEADERS = {
   'User-Agent': 'xyz-agent-updater',
 } as const
 
-/** fetch 超时（AbortController） */
-const FETCH_TIMEOUT_MS = 10_000
-
-/** 缓存有效期（1h） */
+/** 时长换算（复用于缓存 TTL / 限流退避等时长常量组合） */
 const SECONDS_PER_MINUTE = 60
 const MINUTES_PER_HOUR = 60
 const MS_PER_SECOND = 1000
+
+/** fetch 超时（AbortController） */
+const FETCH_TIMEOUT_MS = 10_000
+
+/** 403/429 限流退避窗口小时数（RM2.3：跳过后续周期的联网检查，共 2h） */
+const RATE_LIMIT_BACKOFF_HOURS = 2
+const RATE_LIMIT_BACKOFF_MS =
+  RATE_LIMIT_BACKOFF_HOURS * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND
+
+/** HTTP 状态码：GitHub API 限流/配额拒绝（RM2.3 可区分信号） */
+const HTTP_STATUS_FORBIDDEN = 403
+const HTTP_STATUS_TOO_MANY_REQUESTS = 429
+
+/**
+ * GitHub API 限流/拒绝信号（HTTP 403/429）。
+ *
+ * 与「网络失败」可区分：这是服务器明确响应（降级直连无意义），且需要触发
+ * 退避而非普通失败。checkForLatestRelease 捕获后记录 rateLimitedUntil 并
+ * 返回 null（接口形状不变，renderer 收到 null 即非侵入静默）。
+ */
+export class ReleaseRateLimitedError extends Error {
+  constructor(message = 'GitHub API rate limited (403/429)') {
+    super(message)
+    this.name = 'ReleaseRateLimitedError'
+  }
+}
+
+/** 缓存有效期（1h） */
 const CACHE_TTL_MS = SECONDS_PER_MINUTE * MINUTES_PER_HOUR * MS_PER_SECOND
 
 /**
@@ -111,8 +145,11 @@ const ASSET_PATTERNS = {
 
 // ── 缓存条目类型 ──────────────────────────────────────────────────
 
+/**
+ * 缓存条目（批次 4 负缓存：info=null 表示「已确认无新版」，同样受 TTL 保护）。
+ */
 interface CacheEntry {
-  info: LatestReleaseInfo
+  info: LatestReleaseInfo | null
   fetchedAt: number
 }
 
@@ -123,8 +160,11 @@ interface CacheEntry {
  * 单实例由 main.ts 构造并注入到 IpcHandlerDeps.releaseChecker。
  */
 export class ReleaseChecker implements IReleaseChecker {
-  /** 缓存条目；null 表示无缓存（首次或上次 fetch 失败） */
+  /** 缓存条目；null 表示无缓存（首次或上次 fetch 失败）；info=null 为负缓存（已确认无新版） */
   private cachedResult: CacheEntry | null = null
+
+  /** 限流退避截止时刻（epoch ms，0 = 未限流）：窗口内直接短路返回 null，零联网 */
+  private rateLimitedUntil = 0
 
   /**
    * 检测最新可用版本。
@@ -136,7 +176,13 @@ export class ReleaseChecker implements IReleaseChecker {
     currentVersion: string,
     opts?: { force?: boolean },
   ): Promise<LatestReleaseInfo | null> {
-    // 1. 缓存命中检查（force 可绕过）
+    // 0. 限流退避短路（批次 4 RM2.3）：窗口内周期/补查/手动全部直接返回 null，零联网。
+    // renderer 收到 null 即「非侵入静默」，无需感知限流信号。
+    if (Date.now() < this.rateLimitedUntil) {
+      return null
+    }
+
+    // 1. 缓存命中检查（force 可绕过；负缓存的 info=null 也命中 → 直接返回无新版）
     const now = Date.now()
     if (!opts?.force && this.cachedResult) {
       const age = now - this.cachedResult.fetchedAt
@@ -145,35 +191,62 @@ export class ReleaseChecker implements IReleaseChecker {
       }
     }
 
-    // 2. fetch + 校验 + 比较 + 分流
-    const release = await this.fetchGitHubLatestRelease()
+    // 2. fetch + 校验 + 比较 + 分流（限流信号向上传播，不降级直连）
+    let release: GitHubRelease | null
+    try {
+      release = await this.fetchGitHubLatestRelease()
+    } catch (err) {
+      if (err instanceof ReleaseRateLimitedError) {
+        // 403/429：记退避窗口（2h），窗口内后续调用直接短路零联网
+        this.rateLimitedUntil = Date.now() + RATE_LIMIT_BACKOFF_MS
+        console.warn(
+          `[release-checker] rate limited by GitHub, backing off until ${new Date(this.rateLimitedUntil).toISOString()}`,
+        )
+        return null
+      }
+      throw err
+    }
     if (!release) return null
 
-    // 3. 三重 prerelease 防御 b：字段校验
-    if (release.prerelease) return null
-    if (release.draft) return null
+    // 3. 三重 prerelease 防御 b：字段校验（负缓存：GitHub 侧判定无可用 stable）
+    if (release.prerelease) {
+      this.cachedResult = { info: null, fetchedAt: Date.now() }
+      return null
+    }
+    if (release.draft) {
+      this.cachedResult = { info: null, fetchedAt: Date.now() }
+      return null
+    }
 
     // 4. strip 前导 v，提取纯版本号
     const tagName = release.tag_name
     const strippedVersion = tagName.startsWith('v') ? tagName.slice(1) : tagName
 
-    // 5. 三重 prerelease 防御 c：严格 3 位版本号校验（拒绝 rc/beta 后缀）
-    if (!STRICT_VERSION_RE.test(strippedVersion)) return null
+    // 5. 三重 prerelease 防御 c：严格版本号校验（拒绝 rc/beta 后缀；负缓存同上）
+    if (!STRICT_VERSION_RE.test(strippedVersion)) {
+      this.cachedResult = { info: null, fetchedAt: Date.now() }
+      return null
+    }
 
-    // 6. 版本比较：latest 必须 > current
+    // 6. 版本比较：latest 必须 > current；否则为「无新版」→ 写负缓存（m7）
     let isNewer: boolean
     try {
       isNewer = compare(strippedVersion, currentVersion, '>') // compare 抛错则视为非新版
     } catch {
+      this.cachedResult = { info: null, fetchedAt: Date.now() }
       return null
     }
-    if (!isNewer) return null
+    if (!isNewer) {
+      this.cachedResult = { info: null, fetchedAt: Date.now() }
+      return null
+    }
 
-    // 7. 按平台分流 asset，组装 LatestReleaseInfo
+    // 7. 按平台分流 asset，组装 LatestReleaseInfo（解析失败 = GitHub 数据坏，
+    //    保守不写负缓存，下次重试）
     const info = await this.buildLatestReleaseInfo(release, strippedVersion, tagName)
     if (!info) return null
 
-    // 8. 写入缓存（成功才缓存）
+    // 8. 写入缓存（成功才写正缓存）
     // 注意：fetchedAt 必须在 fetch 完成后重新取 now，否则会比实际获取时间提前最多 10s（fetch timeout）
     this.cachedResult = { info, fetchedAt: Date.now() }
     return info
@@ -200,7 +273,9 @@ export class ReleaseChecker implements IReleaseChecker {
     try {
       // 第一次尝试：代理优先（若有）
       return await this.doFetchGitHubLatestRelease(useProxy ? proxyUrl : undefined)
-    } catch {
+    } catch (err) {
+      // 限流信号：服务器明确响应，降级直连无意义 → 直接向上传播（触发退避）
+      if (err instanceof ReleaseRateLimitedError) throw err
       // 网络错误（EHOSTUNREACH/ECONNREFUSED/超时等）
       if (useProxy) {
         // 降级：用了代理但网络失败时，直连重试一次（无 dispatcher）
@@ -247,10 +322,19 @@ export class ReleaseChecker implements IReleaseChecker {
         (options as Record<string, unknown>).dispatcher = dispatcher
       }
       const response = await fetch(GITHUB_LATEST_RELEASE_URL, options)
-      if (!response.ok) return null
+      if (!response.ok) {
+        // 批次 4 RM2.3：403/429 是服务器明确限流/拒绝 → 抛可区分信号（不并入 null，
+        // 也不降级直连——重试无意义）；其他 HTTP 错误仍 return null
+        if (response.status === HTTP_STATUS_FORBIDDEN || response.status === HTTP_STATUS_TOO_MANY_REQUESTS) {
+          throw new ReleaseRateLimitedError()
+        }
+        return null
+      }
       const data = (await response.json()) as GitHubRelease
       return data
-    } catch {
+    } catch (err) {
+      // 限流信号直接向上传播（若被此处包装成普通 Error，退避逻辑将失效）
+      if (err instanceof ReleaseRateLimitedError) throw err
       // 网络/超时错误 → 抛出供调用方降级；AbortError（超时）也视为网络错误
       throw new Error('fetch failed')
     } finally {

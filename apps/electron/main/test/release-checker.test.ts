@@ -228,14 +228,36 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
     expect(result).toBeNull()
   })
 
-  it('W2TC6b: 返回 403 → 返回 null', async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response('rate limited', { status: 403 }),
-    ) as typeof globalThis.fetch
+  it('W2TC6b: 返回 403 → 返回 null（批次 4：并触发 2h 限流退避）', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_700_000_000_000)
+      let fetchCount = 0
+      globalThis.fetch = vi.fn(async () => {
+        fetchCount++
+        return new Response('rate limited', { status: 403 })
+      }) as typeof globalThis.fetch
 
-    const checker = new ReleaseChecker()
-    const result = await checker.checkForLatestRelease('0.8.14')
-    expect(result).toBeNull()
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      // 返回值不变（null，renderer 非侵入静默）
+      expect(result).toBeNull()
+      expect(fetchCount).toBe(1)
+
+      // 批次 4 RM2.3：退避窗口内（2h）后续调用直接短路零联网（周期/补查/手动全尊重）
+      vi.setSystemTime(Date.now() + 60 * 60 * 1000) // +1h 仍在窗口内
+      const inWindow = await checker.checkForLatestRelease('0.8.14', { force: true })
+      expect(inWindow).toBeNull()
+      expect(fetchCount).toBe(1) // force 也被退避短路（零联网）
+
+      // 退避窗口外（+2h+1min）：恢复联网
+      vi.setSystemTime(Date.now() + 61 * 60 * 1000)
+      globalThis.fetch = vi.fn(async () => jsonResponse(makeReleaseJson())) as typeof globalThis.fetch
+      const recovered = await checker.checkForLatestRelease('0.8.14')
+      expect(recovered).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('W2TC6c: 返回 404 → 返回 null', async () => {
@@ -582,5 +604,93 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
       expect(result).not.toBeNull()
       expect(result!.assets.winX64Exe).toBeUndefined()
     })
+  })
+})
+
+// ════════════════════════════════════════════════════════════════
+// 批次 4（u4a）：负缓存（m7）——「无新版」也写缓存，TTL 同 1h
+// ════════════════════════════════════════════════════════════════
+describe('批次 4: 负缓存（无新版写缓存，m7）', () => {
+  let originalFetch: typeof globalThis.fetch
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch
+    vi.spyOn(proxyConfig, 'readProxyConfig').mockReturnValue({ mode: 'disabled' })
+    vi.spyOn(proxyConfig, 'resolveProxyUrl').mockReturnValue(undefined)
+    vi.useFakeTimers()
+    vi.setSystemTime(1_700_000_000_000)
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  it('无新版（latest ≤ current）→ 首查 null 写负缓存；TTL 内非 force 再查零 fetch', async () => {
+    // latest = 0.8.13 < current = 0.8.14 → 无新版
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse(makeReleaseJson({ tag_name: 'v0.8.13' })),
+    ) as typeof globalThis.fetch
+
+    const checker = new ReleaseChecker()
+    const r1 = await checker.checkForLatestRelease('0.8.14')
+    expect(r1).toBeNull()
+    const fetchCountAfterFirst = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+    expect(fetchCountAfterFirst).toBe(1)
+
+    // TTL 内（+30min）非 force 再查 → 负缓存命中，零 fetch
+    vi.setSystemTime(Date.now() + 30 * 60 * 1000)
+    const r2 = await checker.checkForLatestRelease('0.8.14')
+    expect(r2).toBeNull()
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1)
+
+    // TTL 过（+61min）→ 重新 fetch（负缓存过期）
+    vi.setSystemTime(Date.now() + 31 * 60 * 1000)
+    const r3 = await checker.checkForLatestRelease('0.8.14')
+    expect(r3).toBeNull()
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2)
+  })
+
+  it('force=true 绕过负缓存重新 fetch（手动检查不被无新版缓存挡住）', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse(makeReleaseJson({ tag_name: 'v0.8.13' })),
+    ) as typeof globalThis.fetch
+
+    const checker = new ReleaseChecker()
+    await checker.checkForLatestRelease('0.8.14')
+    // force 绕过负缓存
+    await checker.checkForLatestRelease('0.8.14', { force: true })
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2)
+  })
+
+  it('prerelease → 也写负缓存（GitHub 侧判定无可用 stable）', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse(makeReleaseJson({ tag_name: 'v0.9.1', prerelease: true })),
+    ) as typeof globalThis.fetch
+
+    const checker = new ReleaseChecker()
+    await checker.checkForLatestRelease('0.8.14')
+    const count1 = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+
+    vi.setSystemTime(Date.now() + 30 * 60 * 1000)
+    await checker.checkForLatestRelease('0.8.14')
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(count1)
+  })
+
+  it('网络失败不写负缓存（失败后 TTL 内再查仍重新 fetch，W2TC6e 语义保持）', async () => {
+    let callCount = 0
+    globalThis.fetch = vi.fn(async () => {
+      callCount++
+      if (callCount === 1) throw new Error('network down')
+      return jsonResponse(makeReleaseJson({ tag_name: 'v0.8.13' }))
+    }) as typeof globalThis.fetch
+
+    const checker = new ReleaseChecker()
+    await checker.checkForLatestRelease('0.8.14')
+    vi.setSystemTime(Date.now() + 30 * 60 * 1000)
+    const r2 = await checker.checkForLatestRelease('0.8.14')
+    expect(r2).toBeNull() // 第二次成功但结果仍是无新版
+    expect(callCount).toBe(2) // 第一次失败未写负缓存，第二次仍发起 fetch
   })
 })
