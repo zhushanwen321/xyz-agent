@@ -2,9 +2,10 @@
 //
 // 修复背景：subagent tool 的 skillPath 参数此前零校验直传 session-runner 拼
 // `--skill <path>`；cwd 仅 description 声明 "Must be an absolute path" 无运行时
-// 闸。pi 不对 tool-call args 做 schema 运行时校验（typebox schema 仅声明给 LLM），
-// 因此 schema pattern（声明层，对齐 action 枚举同机制）之外，运行时守卫必须
-// 自建——executeSubagent start 分支 immediate throw（与 action 枚举守卫同风格）。
+// 闸。schema pattern（^/）经 pi agent-loop 运行时强校验已是强制（PS-20：
+// agent-loop.js:403-404 → validation.js:247-273），工具层守卫定位 = defense-in-depth
+// + schema 表达力缺口——`..` 穿越语义超出 pattern 能力（^/ 放行 "/a/../b"），
+// 守卫在 executeSubagent start 分支 immediate throw（与 action 枚举守卫同风格）。
 //
 // 本文件锁住：
 //   1. skillPath / cwd 含 `..` 穿越段 → 同步 reject，service.execute 零触达

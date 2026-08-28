@@ -221,8 +221,9 @@ describe("cross-package contract: SW subagent tool schema（真实 typebox 校�
 // ── ③ 真实 SDK 冒烟：pi-ai validateToolArguments 对 SW schema 的校验路径（A4）──────
 //
 // SO 测试环境无 pi-ai alias → 直连根 node_modules 实装版（@earendil-works/pi-ai
-// 0.84.1，dist/utils/validation.js：Value.Convert + typebox/compile Compile + Check，
-// 失败 throw `Validation failed for tool "<name>"` 形态错误）。这是 SW schema 在
+// 0.84.1，dist/utils/validation.js：Value.Convert :249 + typebox/compile Compile :210
+// + Check :265，失败 throw `Validation failed for tool "<name>"` :272-273；登记 PS-20）。
+// 这是 SW schema 在
 // 真实消费链（pi 对 tool-call args 的运行时校验器）下的最小真实面：mock typebox
 // 失真再重，也影响不到这里的端到端判定。
 import { validateToolArguments } from "@earendil-works/pi-ai";

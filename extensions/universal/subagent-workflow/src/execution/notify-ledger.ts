@@ -491,14 +491,24 @@ export function createNotifyLedger(
 // dialogQueue / channelHandshake / ui-observability 同款（docs/standards.md §7.5）。
 const NOTIFY_LEDGER_SLOT_KEY = Symbol.for("@zhushanwen/pi-subagents.notifyLedger");
 
-type NotifyLedgerSlot = { current: NotifyLedger | undefined };
+type NotifyLedgerSlot = {
+  current: NotifyLedger | undefined;
+  /**
+   * [MF-5] settled 物理监听注册标志：物理监听（host.onAgentSettled → pi.on）只在
+   * 首次 bind 时注册一次；真实环境 pi 是同一 emitter，后续 /resume /fork /new 的
+   * session_start 只切换 boundLedger 引用，不新增监听。与 boundLedger 同 slot 持有
+   * （C-ext-06）——裸模块级 let 在 jiti 路径分裂下双实例各持旗标 → 同一 emitter
+   * 双注册 settledEdgeDispatch；并入 slot 后旗标与绑定单介质同源。
+   */
+  listenerRegistered: boolean;
+};
 
 function getNotifyLedgerSlot(): NotifyLedgerSlot {
   // globalThis 无 symbol 索引签名，但运行时支持 symbol 键——用 Reflect 安全读写，
   // 避免双重断言。NotifyLedgerSlot 是运行时保证的固定形状（本文件唯一写入点）。
   let slot = Reflect.get(globalThis, NOTIFY_LEDGER_SLOT_KEY) as NotifyLedgerSlot | undefined;
   if (!slot) {
-    slot = { current: undefined };
+    slot = { current: undefined, listenerRegistered: false };
     Reflect.set(globalThis, NOTIFY_LEDGER_SLOT_KEY, slot);
   }
   return slot;
@@ -512,13 +522,6 @@ function getBoundLedger(): NotifyLedger | undefined {
 function setBoundLedger(ledger: NotifyLedger | undefined): void {
   getNotifyLedgerSlot().current = ledger;
 }
-
-/**
- * [MF-5] settled 监听注册标志：物理监听（host.onAgentSettled → pi.on）只在首次
- * bind 时注册一次；真实环境 pi 是同一 emitter，后续 /resume /fork /new 的
- * session_start 只切换 boundLedger 引用，不新增监听。
- */
-let settledListenerRegistered = false;
 
 /**
  * [MF-5] settled 边沿模块级单例 handler：分发目标恒为当前活跃 ledger。
@@ -547,8 +550,8 @@ function settledEdgeDispatch(): void {
  */
 export function bindNotifyLedgerHost(host: NotifyLedgerHost): NotifyLedger {
   getBoundLedger()?.dispose();
-  if (!settledListenerRegistered) {
-    settledListenerRegistered = true;
+  if (!getNotifyLedgerSlot().listenerRegistered) {
+    getNotifyLedgerSlot().listenerRegistered = true;
     host.onAgentSettled(settledEdgeDispatch);
   }
   const ledger = createNotifyLedger(host, { registerSettledListener: false });
@@ -570,5 +573,5 @@ export function getBoundNotifyLedger(): NotifyLedger | undefined {
 export function _resetNotifyLedgerForTest(): void {
   getBoundLedger()?.dispose();
   setBoundLedger(undefined);
-  settledListenerRegistered = false;
+  getNotifyLedgerSlot().listenerRegistered = false;
 }

@@ -186,3 +186,45 @@ describe('SessionService.switchModel 返回 pi 生效模型（U6 回执普查）
     }
   })
 })
+
+describe('SessionService.setModelCapabilityReconciler — 附着触发能力对账（U6-D2②）', () => {
+  // D2② 在线对账回路的触发点在附着收敛路径（initializeManagedSession 末尾）：
+  // reconciler 已注册 → fire-and-forget 以 session id 恰调一次；未注册 → false 臂跳过。
+  // 现有用例全部跑在未注册态（false 臂），本 describe 锁 true 臂 + 吞错双保险语义。
+
+  it('reconciler 已注册 → 附着以 session id 恰调 1 次，附着主链路返回值/状态不受影响', async () => {
+    const { svc, client } = makeEnv(() => 'high')
+    const reconciler = vi.fn(async () => [])
+    svc.setModelCapabilityReconciler(reconciler)
+
+    const session = await svc.initializeManagedSession('s1', client, '/tmp', 't')
+
+    expect(reconciler).toHaveBeenCalledTimes(1)
+    expect(reconciler).toHaveBeenCalledWith('s1')
+    // 附着主链路无恙：返回视图 + summary 投影正常（对账是纯旁路诊断）
+    expect(session).toBeTruthy()
+    expect(svc.getSummary('s1')).toBeTruthy()
+  })
+
+  it('reconciler reject → 附着仍正常 resolve，无 unhandled rejection（降级绝不阻断附着）', async () => {
+    const { svc, client } = makeEnv(() => 'high')
+    const reconciler = vi.fn(async () => { throw new Error('reconcile boom') })
+    svc.setModelCapabilityReconciler(reconciler)
+
+    // 触发臂是 fire-and-forget（.catch 吞错）——若 catch 缺失，rejection 会在
+    // 微任务排空后升级为 unhandledRejection，此处进程级监听即红灯。
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason) }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const session = await svc.initializeManagedSession('s1', client, '/tmp', 't')
+      expect(reconciler).toHaveBeenCalledTimes(1)
+      // 排空微任务（fire-and-forget promise 的 rejection 结算）
+      await new Promise(r => setTimeout(r, 0))
+      expect(session).toBeTruthy()
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+})

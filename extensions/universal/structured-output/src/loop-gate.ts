@@ -1,11 +1,12 @@
 /**
  * 有界失败闸门（D3，U2 / M2）——G2「失败必有界」的执行体。
  *
- * 通道选型（设计 §6.3，P3-new 直读 dist 证实）：
- *   参数层失败（事故主形态）在 pi-ai validateToolArguments 抛错、走 agent-loop 的
- *   immediate error 路径——execute 不被调用、beforeToolCall 永不触发；唯一可靠
+ * 通道选型（设计 §6.3；pi 0.84.1 实装，登记 PS-20）：
+ *   参数层失败（事故主形态）在 pi-ai validateToolArguments 抛错（validation.js:272-273）、
+ *   走 agent-loop 的 immediate error 路径（agent-loop.js:404 校验 → :445-451 catch）
+ *   ——execute 不被调用、beforeToolCall 永不触发；唯一可靠
  *   的计数通道是 tool_execution_end 事件（sequential/parallel 两路径的 immediate
- *   分支均 emitToolExecutionEnd）。
+ *   分支均 emitToolExecutionEnd：agent-loop.js:277/:318/:348/:358）。
  *
  * 状态机：
  *   - 只统计 name=structured-output 的 isError 事件；其他工具的成功/失败均忽略。
@@ -442,8 +443,24 @@ export const TEARDOWN_FORCE_EXIT_MS = 15_000;
  */
 const TEARDOWN_EXIT_CODE = 1;
 
-/** 已武装的兜底硬退 timer（模块级；terminal 全生命周期至多一次，防御性幂等再清）。 */
-let teardownTimer: ReturnType<typeof setTimeout> | undefined;
+/** 已武装的兜底硬退 timer：globalThis[Symbol.for] slot 持有（C-ext-06，照 notify-ledger
+ *  先例）——jiti 路径分裂加载多份模块时裸模块级 let 双实例各持 timer（失效模式良性：
+ *  至多双 timer 各自 process.exit，进程级幂等）；slot 化后单介质同源，幂等再清语义不变。 */
+const TEARDOWN_TIMER_SLOT_KEY = Symbol.for("@zhushanwen/pi-structured-output.loopGate.teardownTimer");
+
+type TeardownTimerSlot = { current: ReturnType<typeof setTimeout> | undefined };
+
+function getTeardownTimerSlot(): TeardownTimerSlot {
+	// globalThis 无 symbol 索引签名，但运行时支持 symbol 键——用 Reflect 安全读写
+	//（notify-ledger getNotifyLedgerSlot 同款）。TeardownTimerSlot 是运行时保证的
+	// 固定形状（本文件唯一写入点）。
+	let slot = Reflect.get(globalThis, TEARDOWN_TIMER_SLOT_KEY) as TeardownTimerSlot | undefined;
+	if (!slot) {
+		slot = { current: undefined };
+		Reflect.set(globalThis, TEARDOWN_TIMER_SLOT_KEY, slot);
+	}
+	return slot;
+}
 
 /**
  * 武装 terminal 后的 bounded teardown 兜底：TEARDOWN_FORCE_EXIT_MS 后进程仍未退出
@@ -462,7 +479,8 @@ let teardownTimer: ReturnType<typeof setTimeout> | undefined;
  * terminal 路径幂等 clearTimeout（重复武装不叠加多个兜底 timer）。
  */
 export function armForceExitTeardown(): void {
-	if (teardownTimer !== undefined) clearTimeout(teardownTimer);
+	const slot = getTeardownTimerSlot();
+	if (slot.current !== undefined) clearTimeout(slot.current);
 	assertSafeTimerDelay(TEARDOWN_FORCE_EXIT_MS, "structured-output gate teardown");
 	const timer = setTimeout(() => {
 		process.stderr.write(
@@ -473,7 +491,7 @@ export function armForceExitTeardown(): void {
 	}, TEARDOWN_FORCE_EXIT_MS);
 	// unref：窗口内 pi 自然退出时不被本 timer 拖住（timer 随进程消亡，不再开火）
 	timer.unref();
-	teardownTimer = timer;
+	slot.current = timer;
 }
 
 /**

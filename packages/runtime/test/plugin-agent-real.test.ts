@@ -48,11 +48,12 @@ function createMockSessionService(sessions: SessionSummary[] = []): ISessionServ
   } as unknown as ISessionService
 }
 
-function createService(sessionService?: ISessionService): PluginService {
+function createService(sessionService?: ISessionService, modelService?: IPluginServiceDeps['modelService']): PluginService {
   const broker = createMockBroker()
   const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
   const deps: IPluginServiceDeps = {
     sessionService,
+    modelService,
   }
   return new PluginService(registry, broker, deps)
 }
@@ -284,5 +285,43 @@ describe('Agent RPC Handlers — U6 降级守卫返回空串', () => {
     const result = await callMethod(service, 'plugin.agent.setThinkingLevel', { level: 'max' })
     expect(result).toBe('high')
     expect(sessionService.setThinkingLevel).toHaveBeenCalledWith('s1', 'max')
+  })
+
+  it('setModel：deps 注入 modelService → 委托 modelService.switchModel 原样返回生效值（生产主臂锚点，session-only 兜底臂零触达）', async () => {
+    const session: SessionSummary = {
+      id: 's1', label: 'S1', cwd: '/work', status: 'active',
+      lastActiveAt: Date.now(), modelId: 'provider/old', tokenCount: 0,
+    }
+    const sessionService = createMockSessionService([session])
+    const modelService = {
+      switchModel: vi.fn().mockResolvedValue('provider/model-unified'),
+      setThinkingLevel: vi.fn().mockResolvedValue('high'),
+    } as unknown as IPluginServiceDeps['modelService']
+    const service = createService(sessionService, modelService)
+
+    const result = await callMethod(service, 'plugin.agent.setModel', { model: 'openai/gpt-4' })
+    // 委托返回行是回执契约承重点：若 return 丢失（回执退化为 undefined）此断言红
+    expect(result).toBe('provider/model-unified')
+    expect(modelService!.switchModel).toHaveBeenCalledWith('s1', 'openai', 'gpt-4')
+    // 主臂命中时 session-only fallback 臂不触达
+    expect(sessionService.switchModel).not.toHaveBeenCalled()
+  })
+
+  it('setThinkingLevel：deps 注入 modelService → 委托 modelService.setThinkingLevel 原样返回生效档（生产主臂锚点）', async () => {
+    const session: SessionSummary = {
+      id: 's1', label: 'S1', cwd: '/work', status: 'active',
+      lastActiveAt: Date.now(), modelId: 'provider/x', tokenCount: 0,
+    }
+    const sessionService = createMockSessionService([session])
+    const modelService = {
+      switchModel: vi.fn().mockResolvedValue('provider/model-unified'),
+      setThinkingLevel: vi.fn().mockResolvedValue('high'),
+    } as unknown as IPluginServiceDeps['modelService']
+    const service = createService(sessionService, modelService)
+
+    const result = await callMethod(service, 'plugin.agent.setThinkingLevel', { level: 'max' })
+    expect(result).toBe('high')
+    expect(modelService!.setThinkingLevel).toHaveBeenCalledWith('s1', 'max')
+    expect(sessionService.setThinkingLevel).not.toHaveBeenCalled()
   })
 })

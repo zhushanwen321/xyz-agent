@@ -88,11 +88,19 @@ function isModelOverrideObj(a: unknown): a is { model?: unknown; thinkingLevel?:
 /**
  * start 路径类参数（skillPath / cwd）运行时守卫：绝对路径 + 禁 `..` 穿越。
  *
- * 为什么在工具层校验：pi 不对 tool-call args 做 schema 运行时校验（typebox schema
- * 仅声明给 LLM——pi 0.84.1 dist/core/tools/tool-definition-wrapper.js:11 把 params
- * 原样透传 definition.execute，无任何校验步骤），
- * schema 的 pattern/maxLength 只是模型可见契约，运行时第二道闸必须自建
- * （同 slug maxLength「schema 声明 + startHandler 运行时」的双闸先例）。
+ * 校验链事实（pi 0.84.1 实装，登记 PS-20）：pi agent-loop 对注册 typebox schema
+ * 有运行时强校验——agent-loop.js:403-404 在 beforeToolCall / execute 之前调
+ * validateToolArguments（pi-ai validation.js:247：Value.Convert :249 + Compile :210
+ * + Check :265，失败 throw `Validation failed for tool` :272-273）→ catch 走
+ * immediate error（agent-loop.js:445-451），execute 不被调用。schema 的
+ * pattern（skillPath/cwd `^/`）/ maxLength（slug 35）是运行时强制而非仅模型可见
+ * 契约；tool-definition-wrapper.js:11 只原样透传 params，校验发生在上游 agent-loop 层。
+ *
+ * 工具层守卫定位 = defense-in-depth + schema 表达力缺口，非「pi 无校验」：
+ *   - action 条件必填（task/slug 仅 action=start 必填）flat JSON Schema 表达不了，
+ *     只能在 startHandler 运行时校验
+ *   - `..` 穿越段拒绝超出 pattern 能力（`^/` 放行 "/a/../b"），穿越语义只能在
+ *     工具层判——与 slug maxLength 双闸同理（schema 强制之上再叠 handler 兜底）
  *
  * 规则：
  *   - 绝对路径（isAbsolute；`~` 缩写不是绝对路径，拒绝并指引展开后重试——
@@ -162,7 +170,7 @@ action:"list" before action:"start" — a reusable running subagent may exist; c
 
 \`\`\`
 {"action":"start","task":"<your task>","slug":"<kebab-case>"}
-{"action":"start","task":"...","slug":"fix-login","agent":"coder","model":"anthropic/claude-3.5-sonnet","fork":true}
+{"action":"start","task":"...","slug":"fix-login","agent":"/abs/path/coder.md","model":"anthropic/claude-3.5-sonnet","fork":true}
 {"action":"start","task":"review iteratively","slug":"review","conversation":true}
 {"action":"message","messageParam":{"subagentId":"sa-550e8400","text":"now also handle the empty-list case"}}
 {"action":"message","messageParam":{"subagentId":"sa-550e8400","text":"stop, switch direction to X","interrupt":true}}

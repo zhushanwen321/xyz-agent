@@ -114,6 +114,18 @@ describe("subagent tool description — 行为约束器（非功能说明书）"
     expect(DESCRIPTION).not.toContain('"sa_');
   });
 
+  it("Examples 示例 agent 值必须是绝对路径 .md 形态（显式 ref 硬守卫拒绝裸名）", () => {
+    // 显式 agent ref 走硬守卫：getRequiredAgentConfig → loadByPath(ref, true)，
+    // 裸名（normalizeRef 非绝对路径 → null）同步 throw `Invalid agent ref` +
+    // <available_subagents> 恢复指引（explicit-agent-ref-guard.test.ts 锁定拒绝路径）。
+    // 示例若教裸名（历史漂移："agent":"coder"），弱模型照抄即必败调用——浪费一轮
+    // 并系统性教唆反模式。与 subagentId 格式测试同风格：示例必须与实际契约一致。
+    // ① 零裸名：任何 "agent":"<非/>" 形态都禁止
+    expect(DESCRIPTION).not.toMatch(/"agent":"(?!\/)[^"]*"/);
+    // ② 正例在位且为绝对路径 .md 形态（<available_subagents> 注入的 <location> 形态）
+    expect(DESCRIPTION).toMatch(/"agent":"\/[^"]*\.md"/);
+  });
+
   it("agent 字段 description 不写死枚举，指向 <available_subagents>（通用化防漂移）", () => {
     // 原实现把 9 个内置 agent 名写死在 schema field description（防漏），
     // 但枚举与包内 agents/*.md 存在漂移风险（新增/删除 agent 要手改两处）。
