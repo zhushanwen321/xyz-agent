@@ -459,9 +459,12 @@ export function createNotifyLedger(
     logger.warn(`notify delivery bucket [${bucket}]`, { total, ...extra });
   }
 
-  // settled 边沿（D5 ①触发点）：先查回执（销账上一轮投递——custom message 落盘
-  // （message_end → appendCustomMessageEntry）先于 _emitAgentSettled，边沿时刻回执
-  // 必然可见），再投递新 pending。
+  // settled 边沿（D5 ①触发点）：先查回执（销账上一轮投递），再投递新 pending。
+  // 回执可见性时序（custom message 落盘 message_end → appendCustomMessageEntry 先于
+  // _emitAgentSettled）= 设计 P-B1(b) 探针门待证项（subagent-dispatch-reliability.md
+  // D5）——实测若晚于 S3 阈值，按既定降级路径收敛为「只记账 + 超时看门狗直达」。
+  // at-least-once 正确性不承重于该时序：checkReceipts 错过边沿由看门狗 + 重启恢复兜底
+  // （P-B0 相邻机制已源码级锚定，agent-session.js:327-331，PS-07）。
   // [MF-5] registerSettledListener=false（bind 路径）时跳过注册：pi.on("agent_settled")
   // 无退订语义——createExtensionAPI.on 只 push 进 extension.handlers、无 off
   //（pi 0.84.1 dist/core/extensions/loader.js:209-214）。注意消歧两类订阅面：此处的
