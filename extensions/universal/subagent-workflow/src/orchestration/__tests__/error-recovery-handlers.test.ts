@@ -16,7 +16,6 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ConcurrencyGate } from "../concurrency-gate.ts";
 import {
   handleScriptError,
   handleWorkerError,
@@ -429,7 +428,7 @@ function makeRealRun(runId: string, opts: { budgetTimeMs?: number } = {}): Workf
     postMessage: vi.fn(),
     terminate: vi.fn(async () => {}),
   } as unknown as WorkerHandle;
-  run.assignRuntime(new RunRuntime(initialWorker, new ConcurrencyGate(), new AbortController()));
+  run.assignRuntime(new RunRuntime(initialWorker, new AbortController()));
   return run;
 }
 

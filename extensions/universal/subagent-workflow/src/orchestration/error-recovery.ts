@@ -12,15 +12,16 @@
  * 重试矩阵（domain-models.md §失败处理矩阵）：
  * - worker error/exit（非零）→ 3 次重试 + 指数退避 1s/2s/4s；超限 failed
  * - script error → 3 次重试 + 指数退避；超限 failed
- * - 重试前 rebuildRuntime（G3-001：整个 RunRuntime 重建：worker+gate+controller）
+ * - 重试前 rebuildRuntime（G3-001：整个 RunRuntime 重建：worker+controller）
  *
  * 关键不变式：
- * - 重试前必须 rebuildRuntime（worker+gate+controller 整体重建，避免孤儿资源）。
+ * - 重试前必须 rebuildRuntime（worker+controller 整体重建，避免孤儿资源）。
  * - 重试计数载体是 run.meta.workerErrorCount/scriptErrorCount（跨 runtime 存活，
  * retry replaceRuntime 后计数不丢）。
  * - handleWorkerExit 检查 handle.isCurrent（G-025：stale exit 事件丢弃）。
  *
- * 层归属：Engine。依赖 ports + ConcurrencyGate + WorkflowRun + executeAgentCall。
+ * 层归属：Engine。依赖 ports + WorkflowRun + executeAgentCall。
+ * （旧并发门闩 gate 抽象已删——no-op，实际并发由 SubagentService ConcurrencyPool 管理。）
  *
  * 参考：domain-models.md §失败处理矩阵。
  */
@@ -32,7 +33,6 @@ import { createRecord, updateFromEvent } from "../execution/execution-record.ts"
 import { SubagentStream } from "../execution/stream-sink.ts";
 import type { AgentEvent } from "../shared/agent-event.ts";
 import { resolveAgentOpts } from "./agent-opts-resolver.ts";
-import { ConcurrencyGate, DEFAULT_CONCURRENCY } from "./concurrency-gate.ts";
 import { executeAgentCall } from "./execute-agent-call.ts";
 import { AgentCall } from "./models/agent-call.ts";
 import type { LifecycleDeps, WorkerHandlers } from "./models/ports.ts";
@@ -169,7 +169,7 @@ function discardInFlightCalls(run: WorkflowRun): number[] {
 }
 
 /**
- * 重建整个 RunRuntime：新 controller + 新 gate + 新 worker。
+ * 重建整个 RunRuntime：新 controller + 新 worker。
  *
  * 调 run.replaceRuntime(newRt)（G5-001）：原子释放旧 runtime（worker.terminate +
  * abort）+ 绑定新 runtime，全程 status==="running" 不变（不变式 I1 不违反）。
@@ -194,7 +194,6 @@ export function rebuildRuntime(
     budgetTimeMs: run.spec.budgetTimeMs,
   });
   const controller = new AbortController();
-  const gate = new ConcurrencyGate({ maxConcurrency: DEFAULT_CONCURRENCY });
   const worker = deps.workerHost.start(run.spec, run.spec.args, handlers);
  // D-12 regression fix (round-2 #2)：重新调度 run 级墙钟预算计时器。
  // replaceRuntime 释放旧 runtime 时 clearTimeout 了旧计时器（run-runtime.release），
@@ -212,7 +211,7 @@ export function rebuildRuntime(
       budgetTimeMs: run.spec.budgetTimeMs,
     });
   }
-  run.replaceRuntime(new RunRuntime(worker, gate, controller, timeBudgetTimer));
+  run.replaceRuntime(new RunRuntime(worker, controller, timeBudgetTimer));
  // 清除被旧 runtime abort 的在飞 call——必须在 replaceRuntime 之后同步执行（无
  // await 间隔）：replaceRuntime 同步 abort 旧 controller + terminate 旧 worker，
  // 在飞 executeAgentCall 的 finalize 发生在 `await runner.run` resolve 后的
@@ -291,8 +290,9 @@ export async function handleWorkerMessage(
  * 异步触发（不 await）——立即返回，让 worker 能继续发后续 agent-call（parallel 场景）。
  * executeAgentCall 内部完成 markDone + trace.update。
  *
- * **C-3 修复**：executeAgentCall 通过 `run.runtime.gate.withSlot` 包装——gate 管并发
- * 上限（maxConcurrency=4）+ FIFO 排队，runner 管 spawn。两层职责分离。
+ * **C-3 修复**：executeAgentCall 经 dispatchCall 异步触发——原 gate.withSlot 包装已随
+ * 并发门闩 gate 抽象删除（no-op），并发调度归 SubagentService ConcurrencyPool，
+ * runner 管 spawn。
  *
  * **C-2 修复**：call 完成后检查 `budget.isExceeded` → abortRun(budget_limited)，
  * 终止整个 run（避免烧光预算后继续 spawn 新 call）。
@@ -394,8 +394,10 @@ function dispatchAgentCall(
   const call = new AgentCall(msg.callId, resolved.opts, node);
   run.state.calls.set(msg.callId, call);
 
- // C-3：经 ConcurrencyGate.withSlot 获取并发槽位后执行。
- // gate 管 maxConcurrency=4 + FIFO；executeAgentCall 管 retry/budget/stale-context；
+ // C-3：agent call 执行入口。
+ // （原经 gate.withSlot 包装，并发门闩 gate 已删——no-op 抽象，实际并发由
+ // SubagentService ConcurrencyPool 管理；仅保留其 pre-abort 检查语义，见下方
+ // dispatchCall 内 signal.aborted 分支。）executeAgentCall 管 retry/budget/stale-context；
  // runner（runner.run）管 spawn pi 子进程。
  // assignRuntime/replaceRuntime 保证 status==="running" ⟺ runtime defined，
  // 故 run.runtime 在此必存在（dispatchAgentCall 仅从 handleWorkerMessage 调用，
@@ -415,20 +417,24 @@ function dispatchAgentCall(
   const stream = deps.streamSink
     ? new SubagentStream(`${run.runId}-${msg.callId}`, deps.streamSink)
     : undefined;
-  void runtime.gate
-    .withSlot(
-      async () => {
-        try {
+ // 原 gate.withSlot(fn, signal) 语义内联：pre-aborted 时 reject AbortError（
+ // 下方 .catch 依赖此约定不记错），否则直接执行——并发调度归 ConcurrencyPool。
+  const dispatchCall = async (): Promise<void> => {
+    if (signal.aborted) {
+      const abortErr = new Error("Operation aborted before start");
+      abortErr.name = "AbortError";
+      throw abortErr;
+    }
+    try {
  // OB2（S7 残留）：isOrphaned 谓词注入——旧代际 finalize 在 trace.update 前被
  // 拦截（判定语义与下方 .then/.catch 守卫同一 isOrphanedCall，详见
  // execute-agent-call.ts finalizeCall 文档注释）。
-          await executeAgentCall(call, deps.runner, run.state.budget, signal, run.state.trace, onEvent, stream, () => isOrphanedCall(run, msg.callId, call));
-        } finally {
-          stream?.dispose();
-        }
-      },
-      signal,
-    )
+      await executeAgentCall(call, deps.runner, run.state.budget, signal, run.state.trace, onEvent, stream, () => isOrphanedCall(run, msg.callId, call));
+    } finally {
+      stream?.dispose();
+    }
+  };
+  void dispatchCall()
     .then(() => {
  // 清除 live record：终态已由 executeAgentCall → finalizeCall 写入 node.result，
  // live 不再需要（且含可变状态，不保留）。无论 stale 与否都清，避免内存泄漏。
@@ -491,12 +497,12 @@ function dispatchAgentCall(
       }
     })
     .catch((err: unknown) => {
- // withSlot 在 queued + signal-aborted 时 reject AbortError——预期，不记错。
+ // pre-abort 检查（原 gate.withSlot 语义）在 dispatchCall 入口 reject AbortError——预期，不记错。
       if (err instanceof Error && err.name === "AbortError") return;
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`[workflow] agent call ${msg.callId} failed: ${message}`);
  // 兜底回发：executeAgentCall 抛非 Abort 异常时（如 runner undefined 的 TypeError、
- // gate.withSlot 内部 bug）原 catch 仅 console.error，worker 内对 callId 的 pending
+ // dispatchCall 内部 bug）原 catch 仅 console.error，worker 内对 callId 的 pending
  // Promise 永不 resolve → agent() 永久 await → worker 脚本挂死。构造 failed AgentResult
  //（与 resolveAgentOpts 失败路径 L262-275 一致的模式）postAgentResult 回 worker，
  // 让 pending Promise resolve（结果为 error），脚本可继续或失败退出。

@@ -90,7 +90,6 @@ function makeRunningRealRun(
   const worker = { terminate, postMessage: vi.fn() } as unknown as Parameters<typeof RunRuntime.prototype.constructor>[0];
   const runtime = new RunRuntime(
     worker as never,
-    { withSlot: vi.fn() } as never,
     controller,
     undefined,
   );

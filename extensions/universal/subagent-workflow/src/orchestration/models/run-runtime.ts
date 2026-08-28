@@ -2,20 +2,20 @@
  * Workflow Extension — Run Runtime
  *
  * 聚合内运行时资源（仅 status==="running" 时存在）。技术资源聚合，
- * Engine 层类型，持 WorkerHandle / ConcurrencyGate 具体类（D-12 不造 interface）。
+ * Engine 层类型，持 WorkerHandle 具体类（D-12 不造 interface）。
  *
- * 职责：封装一次 running-segment 的所有技术资源（worker 线程 + 并发信号量 +
+ * 职责：封装一次 running-segment 的所有技术资源（worker 线程 +
  * abort controller），统一 release 入口（AC-2：单 release 替代多 boolean flag）。
+ * （旧并发门闩 gate 抽象已删——no-op，实际并发由 SubagentService ConcurrencyPool 管理；
+ * 原 withSlot 的 pre-abort 检查内联到 error-recovery dispatchAgentCall。）
  *
  * 一次性生命周期（G3-001）：runtime 释放后不再复用——AbortController 一次性
- * 语义决定 controller 无法跨释放复用，gate 队列也在 worker 重跑脚本 +
- * callCache replay 时清空无影响，所以整个 RunRuntime 重建。唯一注入路径：
+ * 语义决定 controller 无法跨释放复用，所以整个 RunRuntime 重建。唯一注入路径：
  * assignRuntime（runWorkflow 创建）与 replaceRuntime（error-recovery 崩溃重试）。
  *
  * 参考：domain-models.md §10、clarification.md G3-001。
  */
 
-import { ConcurrencyGate } from "../concurrency-gate.ts";
 import { WorkerHandle } from "../worker-handle.ts";
 
 /**
@@ -32,8 +32,6 @@ export type ReleaseMode = "terminal";
 export class RunRuntime {
  /** Worker 线程句柄。 */
   readonly worker: WorkerHandle;
- /** 并发信号量。 */
-  readonly gate: ConcurrencyGate;
  /** per-running-segment AbortController（一次性，无法复用——G3-001）。 */
   readonly controller: AbortController;
  /** Run 级墙钟时间预算计时器（spec.budgetTimeMs > 0 时由 lifecycle 调度，
@@ -45,12 +43,10 @@ export class RunRuntime {
 
   constructor(
     worker: WorkerHandle,
-    gate: ConcurrencyGate,
     controller: AbortController,
     timeBudgetTimer?: ReturnType<typeof setTimeout>,
   ) {
     this.worker = worker;
-    this.gate = gate;
     this.controller = controller;
     this.timeBudgetTimer = timeBudgetTimer;
   }

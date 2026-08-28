@@ -24,10 +24,10 @@
  * 只有两类重建——rebuildRuntime（error-recovery，崩溃重试路径，run 保持 running、
  * replaceRuntime 原子换新）与 abort/terminate 的终态释放（transition("done") 内
  * releaseRuntime，run 不再恢复）。
+ * （旧并发门闩 gate 抽象已删——no-op 无生产语义，实际并发由 SubagentService
+ * ConcurrencyPool 管理；原 D-13 maxConcurrency=4 无消费方。）
  *
- * **D-13**：maxConcurrency=4（ConcurrencyGate 默认值）。
- *
- * 层归属：Engine。依赖 LifecycleDeps + ConcurrencyGate + WorkerHost via port +
+ * 层归属：Engine。依赖 LifecycleDeps + WorkerHost via port +
  * WorkflowRun + handleWorker* 函数。
  *
  * 参考：domain-models.md §1（聚合根状态机）。
@@ -36,7 +36,6 @@
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { validateRunArgs } from "./args-validator.ts";
-import { ConcurrencyGate, DEFAULT_CONCURRENCY } from "./concurrency-gate.ts";
 import {
   handleWorkerError,
   handleWorkerExit,
@@ -213,17 +212,16 @@ export async function runWorkflow(
     );
   }
 
- // 构造 handlers + runtime（worker + gate + controller）
+ // 构造 handlers + runtime（worker + controller）
   const handlers = makeHandlers(run, deps);
   const controller = new AbortController();
-  const gate = new ConcurrencyGate({ maxConcurrency: DEFAULT_CONCURRENCY });
   const worker = deps.workerHost.start(spec, spec.args, handlers);
  // C.7：run 级时间预算计时器（spec.budgetTimeMs > 0 时启用，到期 abortRun time_limited）。
   const timeBudgetTimer =
     spec.budgetTimeMs && spec.budgetTimeMs > 0
       ? scheduleTimeBudget(runId, deps, spec.budgetTimeMs)
       : undefined;
-  const runtime = new RunRuntime(worker, gate, controller, timeBudgetTimer);
+  const runtime = new RunRuntime(worker, controller, timeBudgetTimer);
 
  // assignRuntime（注入 runtime，恢复 I1：running ⟺ runtime!==undefined）
   run.assignRuntime(runtime);

@@ -125,6 +125,7 @@ const SubagentParams = Type.Object({
     description:
       "Idle timeout in milliseconds for conversation-mode subagents. Controls how long an idle subagent (between rounds) stays alive before automatic cleanup. " +
       "Default: 300000 (5min). Override for long-interval collaboration where each round is spaced >5min apart. " +
+      "Pass 0 or a negative value to DISABLE idle cleanup entirely (subagent stays alive until explicitly closed). " +
       "Only meaningful with conversation:true; ignored for one-shot subagents.",
   })),
   engine: Type.Optional(StringEnum(["pi", "zcode"], {
@@ -277,7 +278,7 @@ When to use:
 - ✅ Long-interval rounds (>5min apart) → conversation:true + idleTimeoutMs increased
 - ❌ Single exploration/lookup → default (one-shot)
 
-idleTimeoutMs: per-subagent idle timeout (default 300000 / 5min). Env XYZ_SUBAGENT_IDLE_TIMEOUT_MS sets the global default; per-call param takes precedence.
+idleTimeoutMs: per-subagent idle timeout (default 300000 / 5min). Env XYZ_SUBAGENT_IDLE_TIMEOUT_MS sets the global default; per-call param takes precedence. Pass 0 or a negative value to disable idle cleanup entirely.
 
 ## You cannot
 

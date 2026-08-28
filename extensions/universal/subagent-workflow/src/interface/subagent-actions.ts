@@ -82,7 +82,10 @@ export interface StartHandlerInput {
   cwd?: string;
   /** 可持续对话模式（true = chatMode，轮次完成进 idle 等续聊）。 */
   conversation?: boolean;
-  /** 空闲超时毫秒数（仅 conversation 模式有意义，覆盖默认 5min）。 */
+  /**
+   * 空闲超时毫秒数（仅 conversation 模式有意义，覆盖默认 5min）。
+   * 显式传 0/负数 = 禁用 idle GC（不挂 timer）；不传走 env/默认优先级。
+   */
   idleTimeoutMs?: number;
   /** 执行引擎（D4 三层路由第一层：本参数 > agent frontmatter engine > config defaultEngine）。 */
   engine?: string;

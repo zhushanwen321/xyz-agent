@@ -17,7 +17,7 @@
  * 3. script.toExecutable → 可执行源
  * 4. 构建 RunSpec + runWorkflow(spec, deps, signal)
  * 5. 轮询至 done（间隔 STATUS_POLL_INTERVAL_MS）
- * 6. timeout → abortRun + transition done,time_limited
+ * 6. 显式 timeoutMs 到期 → abortRun + transition done,time_limited（未传不限时）
  * 7. signal.aborted → abortRun + reason=aborted
  *
  * 层归属：Engine。依赖 registry + runWorkflow/abortRun + LifecycleDeps。
@@ -34,9 +34,6 @@ import type { WorkflowRun } from "./models/workflow-run.ts";
 import type { WorkflowScriptRegistry } from "./models/workflow-script-registry.ts";
 
 // ── 常量 ─────────────────────────────────────────────────────
-
-/** 默认 runAndWait 超时（10 分钟）。 */
-const DEFAULT_RUNANDWAIT_TIMEOUT_MS = 600_000;
 
 /** 轮询间隔（500ms）。 */
 const STATUS_POLL_INTERVAL_MS = 500;
@@ -121,10 +118,13 @@ async function pollRunToResult(
   runId: string,
   deps: LauncherDeps,
   signal: AbortSignal | undefined,
-  timeoutMs: number,
+  timeoutMs: number | undefined,
   abortReason: string,
 ): Promise<WorkflowRunResult> {
-  const deadline = Date.now() + timeoutMs;
+  // [预算语义对齐] timeoutMs undefined → 无 wall-clock deadline：轮询至 done / signal abort
+  // 为止（不限时）。用 Infinity 哨兵统一 while 条件，避免循环内双重判空；Infinity 永不
+  // 小于自身，循环只在有限 deadline 到期时退出。
+  const deadline = timeoutMs === undefined ? Number.POSITIVE_INFINITY : Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (signal?.aborted) {
       const runBeforeAbort = deps.runs.get(runId);
@@ -142,6 +142,7 @@ async function pollRunToResult(
   }
   const runBeforeTimeout = deps.runs.get(runId);
   if (runBeforeTimeout?.state.status === "done") return toResult(runBeforeTimeout);
+  // 循环退出 ⇒ deadline 有限 ⇒ timeoutMs 必已定义（模板串内不可能实际出现 undefined）
   await safeAbort(runId, deps, `Workflow timed out after ${timeoutMs}ms`, "time_limited");
   const finalRun = deps.runs.get(runId);
   return finalRun
@@ -174,7 +175,8 @@ async function pollRunToResult(
  * @param args 调用参数（worker 内 $ARGS 访问）
  * @param deps LauncherDeps（LifecycleDeps + registry）
  * @param signal 外部 abort signal（可选）
- * @param timeoutMs 超时上限（默认 10 分钟）
+ * @param timeoutMs 超时上限（可选）。[预算语义对齐] 未传 = 不限（轮询至 done / abort 为
+ * 止）；仅显式传入才限时——旧实现默认 10 分钟会误杀长任务。
  * @returns WorkflowRunResult（status 恒 "done"）
  */
 export async function runAndWait(
@@ -182,7 +184,7 @@ export async function runAndWait(
   args: Record<string, unknown>,
   deps: LauncherDeps,
   signal?: AbortSignal,
-  timeoutMs: number = DEFAULT_RUNANDWAIT_TIMEOUT_MS,
+  timeoutMs?: number,
 ): Promise<WorkflowRunResult> {
  // 1. registry 查找脚本（workflowRef = 绝对路径，S2 路径统一）
   const script = await deps.registry.getPath(name);
@@ -361,13 +363,12 @@ export async function executeNestedWorkflow(
     const runId = await runWorkflow(spec, deps, childController.signal);
 
     // Step 5: 轮询至 done（复用 runAndWait 的轮询逻辑）
-    // [H-1] 嵌套 workflow timeout 从父 run 继承：父 spec.budgetTimeMs 存在时取
-    //  min(父 budget, DEFAULT)，让子 run 不超出父 run 的剩余时间预算；否则用 DEFAULT。
+    // [H-1] 嵌套 workflow timeout 从父 run 完整传导：父 spec.budgetTimeMs 显式设定时
+    //  原样作为子 run 轮询 deadline（不 min(DEFAULT) 封顶——旧实现把父 time:2h 截断到
+    //  10min，违背「显式传参完整生效」语义）；父未设 → undefined，无 deadline（不限）。
     //  budgetRef（共享 Budget）已在 Step 4 透传给子 run 处理 token/cost 预算，
     //  此处的 budgetTimeMs 只服务 pollRunToResult 的轮询 deadline（wall-clock 兜底）。
-    const nestedTimeoutMs = parentRun.spec.budgetTimeMs
-      ? Math.min(parentRun.spec.budgetTimeMs, DEFAULT_RUNANDWAIT_TIMEOUT_MS)
-      : DEFAULT_RUNANDWAIT_TIMEOUT_MS;
+    const nestedTimeoutMs = parentRun.spec.budgetTimeMs;
 
     const result = await pollRunToResult(
       runId,

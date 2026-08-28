@@ -629,6 +629,7 @@ export interface ExecuteOptions {
   /**
    * 空闲超时毫秒数（仅 conversation 模式有意义）。覆盖默认 5min idle timeout。
    * 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
+   * 显式传 0/负数 = 禁用 idle GC（不挂 timer；旧实现 0 会落成 setTimeout(0) 立即 kill）。
    */
   idleTimeoutMs?: number;
   /**

@@ -92,6 +92,27 @@ describe("lifecycle-manager — V2 §5.2 模块 1", () => {
       vi.advanceTimersByTime(1);
       expect(onTimeout).toHaveBeenCalledTimes(1);
     });
+
+    it("显式禁用值（0/负数）→ 不挂 timer（预算语义对齐：idle GC 可显式关闭；旧实现 0 落成 setTimeout(0) 立即 kill）", () => {
+      const onTimeout = vi.fn();
+      armIdleTimer("sa-disable-0", onTimeout, 0);
+      expect(hasIdleTimer("sa-disable-0")).toBe(false);
+      armIdleTimer("sa-disable-neg", onTimeout, -1);
+      expect(hasIdleTimer("sa-disable-neg")).toBe(false);
+
+      vi.advanceTimersByTime(DEFAULT_IDLE_TIMEOUT_MS * 2);
+      expect(onTimeout).not.toHaveBeenCalled();
+    });
+
+    it("显式禁用值顺带 disarm 已有 armed timer（禁用不形同虚设）", () => {
+      const onTimeout = vi.fn();
+      armIdleTimer("sa-disable-late", onTimeout, 1000);
+      expect(hasIdleTimer("sa-disable-late")).toBe(true);
+      armIdleTimer("sa-disable-late", onTimeout, 0);
+      expect(hasIdleTimer("sa-disable-late")).toBe(false);
+      vi.advanceTimersByTime(2000);
+      expect(onTimeout).not.toHaveBeenCalled();
+    });
   });
 
   // ============================================================

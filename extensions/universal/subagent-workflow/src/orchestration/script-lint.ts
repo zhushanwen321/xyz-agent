@@ -739,7 +739,7 @@ export function lintScript(source: string): LintResult {
  // 教训来源：daily-news-impact.js 用 (async function main(){...})();() 包裹整个脚本，
  // worker 外层 IIFE 不等内层 IIFE 就 postMessage("return")，主线程 transition done
  // → release runtime → controller.abort() → spawn 后 2ms SIGKILL 子进程。
- // 诊断耗时 4 轮：先后误判为 model 故障 / 工具缺失 / turn-signal abort / ConcurrencyGate 异常，
+ // 诊断耗时 4 轮：先后误判为 model 故障 / 工具缺失 / turn-signal abort / 并发门闩 gate 异常，
  // 最终靠 worker-host → handleReturn → release → abort 的调用栈定位。
   findings.push(...checkBareAsyncIIFE(source));
 

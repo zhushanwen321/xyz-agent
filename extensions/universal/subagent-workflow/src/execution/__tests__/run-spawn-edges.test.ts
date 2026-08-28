@@ -69,7 +69,7 @@ vi.mock("../temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, computeWatchdogMs } from "../session-runner.ts";
+import { killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, computeWatchdogMs, SPAWN_WATCHDOG_ENV } from "../session-runner.ts";
 import { readActivePendingFromSessionFile } from "../session-pending.ts";
 import {
   emitStdoutLine,
@@ -488,6 +488,43 @@ describe("runSpawn", () => {
         const result = await promise;
         expect(result.success).toBe(true);
       } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // [MF-4b] 预算语义对齐：maxTurns 未传且无兑底 env → count>0 分支不 re-arm watchdog，
+    // 不限时等待后代。若误回旧 50min 估算默认，51min 处会 kill，本用例失败。
+    it("MF-4b: agent_end（count>0）+ maxTurns 未传 → 不 re-arm watchdog（不限时等待）", async () => {
+      // hermetic：确保兑底 env 未设（若外层 shell 误设会让「不限时」断言失效）
+      const prevWatchdogEnv = process.env[SPAWN_WATCHDOG_ENV];
+      delete process.env[SPAWN_WATCHDOG_ENV];
+      mockPending.mockReturnValue({ count: 2 });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: slow-desc-no-turns", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        emitStdoutLine(child, sessionHeader());
+        emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+        await new Promise((r) => setImmediate(r));
+        // keep alive：不 kill
+        expect(child.killed).toBe(false);
+
+        // 超过旧 50min 估算默认仍不 kill = watchdog 未 re-arm
+        await vi.advanceTimersByTimeAsync(51 * 60 * 1000);
+        expect(child.killed).toBe(false);
+
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 143);
+
+        const result = await promise;
+        expect(result.success).toBe(true);
+      } finally {
+        if (prevWatchdogEnv !== undefined) process.env[SPAWN_WATCHDOG_ENV] = prevWatchdogEnv;
         vi.useRealTimers();
       }
     });

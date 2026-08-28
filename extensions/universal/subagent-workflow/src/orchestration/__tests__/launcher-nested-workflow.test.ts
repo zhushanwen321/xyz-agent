@@ -26,9 +26,9 @@ vi.mock("../lifecycle.ts", () => ({
 
 // import 在 vi.mock 之后（hoisting 保证拿到 mock 版本）。runWorkflow 从被 mock 的
 // lifecycle 模块导入，与 launcher.ts 内部引用的是同一 mock 实例。
-import { runWorkflow } from "../lifecycle.ts";
+import { runWorkflow, abortRun } from "../lifecycle.ts";
 import { ArgsValidationError } from "../args-validator.ts";
-import { executeNestedWorkflow } from "../launcher.ts";
+import { executeNestedWorkflow, runAndWait } from "../launcher.ts";
 
 const MOCK_RUN_ID = "wf-test-child";
 
@@ -69,12 +69,15 @@ function makeParentRun(opts: {
   parentWorkflowChain?: readonly string[];
   budget?: Budget;
   aborted?: boolean;
+  /** 预算语义对齐：父 run 级时间预算（deadline 传导测试用） */
+  budgetTimeMs?: number;
 } = {}): WorkflowRun {
   const controller = new AbortController();
   if (opts.aborted) controller.abort();
   const spec = {
     scriptName: opts.scriptName ?? "parent-wf",
     parentWorkflowChain: opts.parentWorkflowChain,
+    budgetTimeMs: opts.budgetTimeMs,
   };
   return {
     spec,
@@ -105,6 +108,24 @@ function makeDoneChildRun(opts: {
       scriptResult: opts.scriptResult,
       error: opts.error,
       budget: { usedTokens: opts.usedTokens ?? 0, usedCost: opts.usedCost ?? 0 },
+    },
+  } as unknown as WorkflowRun;
+}
+
+/**
+ * 构造 mock child WorkflowRun（running 态，pollRunToResult 持续轮询）。
+ * state 可变——deadline 测试中手动翻转为 done 模拟子 run 完成。
+ */
+function makeRunningChildRun(): WorkflowRun {
+  return {
+    runId: MOCK_RUN_ID,
+    spec: { scriptName: "child-wf" },
+    state: {
+      status: "running",
+      reason: undefined,
+      scriptResult: undefined,
+      error: undefined,
+      budget: { usedTokens: 0, usedCost: 0 },
     },
   } as unknown as WorkflowRun;
 }
@@ -273,5 +294,122 @@ describe("executeNestedWorkflow", () => {
 
     expect(result.content).toBe("");
     expect(result.error).toBe("agent exploded");
+  });
+
+  // ── deadline 传导（预算语义对齐 2026-08）──
+  // 语义：父 spec.budgetTimeMs 显式设定 → 原样作为子 run 轮询 deadline（不 min(DEFAULT)
+  // 封顶）；父未设 → 无 deadline。旧实现 min(父, 10min) 把父 time:2h 截断到 10min。
+  describe("deadline 传导（预算语义对齐）", () => {
+    it("父 budgetTimeMs=2h → 子 deadline 传导 2h（不 min(10min) 封顶）", async () => {
+      vi.useFakeTimers();
+      try {
+        const parent = makeParentRun({ budgetTimeMs: 7_200_000 });
+        const childRun = makeRunningChildRun();
+        const deps = makeDeps({ script: makeScript(), childRun });
+        setupRunWorkflow(childRun);
+
+        const promise = executeNestedWorkflow("child-wf", {}, parent, deps);
+
+        // 越过旧 10min 默认：不应 abort（若回归 min 封顶，这里会触发 time_limited abort）
+        await vi.advanceTimersByTimeAsync(600_000 + 500);
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+
+        // 2h deadline 到期：abortRun 收到完整 7200000ms 超时 + time_limited
+        await vi.advanceTimersByTimeAsync(7_200_000 + 1_000 - 600_500);
+        const result = await promise;
+        expect(vi.mocked(abortRun)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(abortRun)).toHaveBeenCalledWith(
+          MOCK_RUN_ID,
+          deps,
+          "Workflow timed out after 7200000ms",
+          "time_limited",
+        );
+        void result;
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("父未传 budgetTimeMs → 无 deadline（远超旧 10min 默认不 abort，子完成正常返回）", async () => {
+      vi.useFakeTimers();
+      try {
+        const parent = makeParentRun();
+        const childRun = makeRunningChildRun();
+        const deps = makeDeps({ script: makeScript(), childRun });
+        setupRunWorkflow(childRun);
+
+        const promise = executeNestedWorkflow("child-wf", {}, parent, deps);
+
+        // 旧实现 DEFAULT_RUNANDWAIT_TIMEOUT_MS=10min 会在此 abort；不限时则不 abort
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 500);
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+
+        // 子 run 完成 → 正常返回 completed（deadline 仍是 undefined）
+        childRun.state.status = "done";
+        childRun.state.reason = "completed";
+        childRun.state.scriptResult = "ok";
+        await vi.advanceTimersByTimeAsync(500);
+        const result = await promise;
+        // 成功分支返回 { content, parsedOutput? }（无 reason 字段）——string scriptResult 走 content
+        expect(result.content).toBe("ok");
+        expect(result.error).toBeUndefined();
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── runAndWait timeoutMs 语义（预算语义对齐 2026-08）──
+  describe("runAndWait timeoutMs 语义（预算语义对齐）", () => {
+    it("未传 timeoutMs → 不限（远超旧 10min 默认不 abort，完成后正常返回）", async () => {
+      vi.useFakeTimers();
+      try {
+        const childRun = makeRunningChildRun();
+        const deps = makeDeps({ script: makeScript(), childRun });
+        setupRunWorkflow(childRun);
+
+        // 只传 3 参：不传 signal / timeoutMs
+        const promise = runAndWait("child-wf", {}, deps);
+
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 500);
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+
+        childRun.state.status = "done";
+        childRun.state.reason = "completed";
+        childRun.state.scriptResult = "ok";
+        await vi.advanceTimersByTimeAsync(500);
+        const result = await promise;
+        expect(result.status).toBe("done");
+        expect(result.reason).toBe("completed");
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("显式 timeoutMs=1000 → 到期 abort time_limited（限时能力保留）", async () => {
+      vi.useFakeTimers();
+      try {
+        const childRun = makeRunningChildRun();
+        const deps = makeDeps({ script: makeScript(), childRun });
+        setupRunWorkflow(childRun);
+
+        const promise = runAndWait("child-wf", {}, deps, undefined, 1_000);
+
+        await vi.advanceTimersByTimeAsync(1_000 + 500);
+        const result = await promise;
+        expect(vi.mocked(abortRun)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(abortRun)).toHaveBeenCalledWith(
+          MOCK_RUN_ID,
+          deps,
+          "Workflow timed out after 1000ms",
+          "time_limited",
+        );
+        void result;
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

@@ -97,15 +97,28 @@ const idleTimers = new Map<string, IdleTimerEntry>();
  *
  * 调用时机（接入时由 session-runner 编排）：`agent_settled`（支柱四，真空闲边界）→ arm。
  *
+ * [预算语义对齐] 显式禁用：timeoutMs 传 0/负数 → 不挂 timer 并 disarm 已有的
+ * （idle GC 可被显式关闭，旧实现 0 会落成 setTimeout(0) 立即 kill——危险 footgun）。
+ * 默认行为不变（资源回收性质，默认值保留）：不传 → env XYZ_SUBAGENT_IDLE_TIMEOUT_MS
+ * → DEFAULT_IDLE_TIMEOUT_MS（5min）。env 频道不认识禁用值：非法（<=0）回落默认。
+ *
  * @param recordId subagent record id（sa-<uuid>）
  * @param onTimeout 超时回调（调用方注入：SIGTERM 回收进程）
- * @param timeoutMs 可选。SP-6 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > DEFAULT_IDLE_TIMEOUT_MS。
+ * @param timeoutMs 可选。SP-6 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > DEFAULT_IDLE_TIMEOUT_MS；
+ *   显式 <=0 表示禁用（不挂 timer）。
  */
 export function armIdleTimer(
   recordId: string,
   onTimeout: () => void,
   timeoutMs?: number,
 ): void {
+  // 显式禁用通道：参数明确传 0/负数 → 关闭该 record 的 idle GC（顺带清已有 timer，
+  // 否则早前默认 arm 的 timer 仍在跑，禁用形同虚设）。
+  if (timeoutMs !== undefined && timeoutMs <= 0) {
+    disarmIdleTimer(recordId);
+    return;
+  }
+
   // SP-6 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms (5min)。
   const resolved = timeoutMs ?? getEnvIdleTimeoutMs() ?? DEFAULT_IDLE_TIMEOUT_MS;
 

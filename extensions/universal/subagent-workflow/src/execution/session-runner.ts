@@ -137,7 +137,8 @@ const WATCHDOG_MS_PER_TURN = WATCHDOG_MINUTES_PER_TURN * SECONDS_PER_MINUTE * MS
 // 此后代卡死（永不完成）时此 timer 保证进程最终回收。超时 kill → finalize 视为正常
 // 完成 → 通知父（父查 cw status 发现未 closed 会走 L2/L3 重派，见 planning-agent 模板）。
 // 两类超时分挂不同分支（见 agent_end handler）：
-//   - 有活跃后代（count>0 / error）→ computeWatchdogMs(maxTurns) 动态超时（MF-4，不误杀慢后代）
+//   - 有活跃后代（count>0 / error）→ resolveSpawnWatchdogMs(maxTurns) 动态超时
+//     （MF-4，不误杀慢后代；maxTurns 未传且无兑底 env 时不挂 timer，不限时等待）
 //   - 仅 recentUnregister 竞态 → WAKEUP_GRACE_MS 秒级宽限（MF-3，不空等 2h）
 
 /** [MF-3] agent_end keep-alive 的 recentUnregister 竞态宽限（ms）。
@@ -155,22 +156,56 @@ export const WAKEUP_GRACE_MS = 15_000;
  * （全量重构/大规模迁移）正常需数小时，30 分钟到达即被误杀，limiter 机制形同虚设。
  *
  * 现按 maxTurns 线性估算：每 turn 约 5 分钟，下限 30 分钟。
- * - maxTurns 缺省（undefined/null/0）按 10 turns 估 → 50 分钟
  * - maxTurns=20 → 100 分钟
  * - maxTurns=100 → 500 分钟（8 小时+，覆盖全量重构）
- *
+ * 
+ * [预算语义对齐 2026-08] maxTurns 未传/<=0 → 不挂 watchdog（不限）。旧实现按 10 turns
+ * 估算出 50min 默认 SIGTERM，违背「默认不限制，显式传参才触发」的项目裁决；且显式
+ * maxTurns:0 也被落回估算，任何参数都关不掉。用户须知风险：watchdog 防的是 pi 子进程
+ * hang 泄漏（卡死在单个 tool 内 turn_end 永不触发，limiter 失效），默认关闭意味着
+ * 无 maxTurns 的 spawn 若 hang 将永不自动回收——须用下方 SPAWN_WATCHDOG_ENV 显式兑底。
+ * 
  * [MF-4] 同时是 agent_end keep-alive 的「有活跃后代」等待超时（不 kill 分支），
  * 替代旧固定 2h（WAIT_DESCENDANT_TIMEOUT_MS，已删除）——wave 开发 >2h 不被误杀。
  * [export] 测试可观测（run-spawn-edges MF-4 用例断言 keep-alive 等待超时 = 动态值）。
- *
- * @param maxTurns 调用方指定的 turn 上限；undefined/null/0 视为默认 10 turns
+ * 
+ * @param maxTurns 调用方指定的 turn 上限；调用方保证 > 0（否则走 resolveSpawnWatchdogMs）
  */
-/** maxTurns 缺省（undefined/null/0）时的估算 turn 数（computeWatchdogMs 兜底）。 */
-const DEFAULT_MAX_TURNS_ESTIMATE = 10;
+export function computeWatchdogMs(maxTurns: number): number {
+  return Math.max(SPAWN_WATCHDOG_FLOOR_MS, maxTurns * WATCHDOG_MS_PER_TURN);
+}
 
-export function computeWatchdogMs(maxTurns: number | undefined | null): number {
-  const effectiveTurns = maxTurns && maxTurns > 0 ? maxTurns : DEFAULT_MAX_TURNS_ESTIMATE;
-  return Math.max(SPAWN_WATCHDOG_FLOOR_MS, effectiveTurns * WATCHDOG_MS_PER_TURN);
+/**
+ * spawn watchdog 毫秒兑底 env（可选，默认未设 = 不挂 watchdog）。
+ * 
+ * 仅当 maxTurns 未传/<=0（无 turns 估算依据）时生效：设置后按该绝对时限挂 watchdog，
+ * 未设则完全不挂（不限）。前缀用 XYZ_SUBAGENT_*：本 env 是父侧（pi 进程内）读的配置
+ * env，xyz-agent 桌面 spawn 链会按 ENV_WHITELIST_PREFIXES（只有 XYZ_ 等，无 PI_）过滤，
+ * PI_ 前缀在桌面场景被静默丢弃——同 XYZ_SUBAGENT_IDLE_TIMEOUT_MS 的改名教训。
+ * 注意与 PI_SUBAGENT_* 系（extension spawn 子进程时直接注入 childEnv）的机制区别。
+ */
+export const SPAWN_WATCHDOG_ENV = "XYZ_SUBAGENT_SPAWN_WATCHDOG_MS";
+
+/** 解析 spawn watchdog 毫秒数；env 未设/非法返回 undefined（调用方不挂 timer）。 */
+function getEnvSpawnWatchdogMs(): number | undefined {
+  const raw = process.env[SPAWN_WATCHDOG_ENV];
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+/**
+ * 解析 spawn watchdog 超时（挂载判定的单一入口）。
+ * 
+ * 优先级：maxTurns 有效（>0）→ 按 turns 估算（computeWatchdogMs）；
+ * 否则 → SPAWN_WATCHDOG_ENV 兑底；env 也未设 → undefined（不挂 watchdog，不限）。
+ * 
+ * [export] 测试可观测（timeout-integration 用例断言 maxTurns 缺省/env 兑底分支）。
+ */
+export function resolveSpawnWatchdogMs(maxTurns: number | undefined | null): number | undefined {
+  if (maxTurns && maxTurns > 0) return computeWatchdogMs(maxTurns);
+  return getEnvSpawnWatchdogMs();
 }
 
 /** stderr 累积上限——按字符截断（.slice 语义），非字节；64K 规模沿自原实现。
@@ -1183,9 +1218,14 @@ function attachStdoutPump(
               // [MF-4] 动态超时 = computeWatchdogMs(maxTurns)：真实后代在跑，慢任务（wave 开发
               // 数小时）不能被固定 2h 误杀——2h 到点 kill 会连坐 SubagentService.dispose 的
               // killAllSpawnedChildren 杀全部子进程，L2 重派丢在途工作。maxTurns 大则超时长。
+              // [预算语义对齐] maxTurns 未传/<=0 且未设 SPAWN_WATCHDOG_ENV → 不 re-arm
+              // （等待后代不限时）；回收由外部 signal / dispose / 后代自然完成驱动。
               clearTimeout(state.watchdog);
-              state.watchdog = setTimeout(() => child.kill("SIGTERM"), computeWatchdogMs(opts.maxTurns));
-              state.watchdog.unref();
+              const keepAliveMs = resolveSpawnWatchdogMs(opts.maxTurns);
+              if (keepAliveMs !== undefined) {
+                state.watchdog = setTimeout(() => child.kill("SIGTERM"), keepAliveMs);
+                state.watchdog.unref();
+              }
             } else if (pending.recentUnregister) {
               // 差集 0 但最近有 unregister：后代刚完成，notify 唤醒可能在路上（竞态窗口），
               // 保持进程——父被唤醒后的下一次 agent_end 会正常判定。
@@ -1460,12 +1500,17 @@ export async function runSpawn(
     //    limiter 失效，此 timer 保证最终 SIGTERM，防止 background 槽位/资源泄漏。
     // [M-1] timeout 基于 maxTurns 动态计算（computeWatchdogMs）：旧实现固定 30 分钟
     //    误杀长任务，现按 maxTurns 线性估算（每 turn ~5 分钟，下限 30 分钟）。
+    // [预算语义对齐] maxTurns 未传/<=0 → 不挂 watchdog（不限，用户明确裁决——旧实现按
+    //    10 turns 估出 50min 默认 SIGTERM 且 maxTurns:0 也关不掉，已废）；
+    //    SPAWN_WATCHDOG_ENV 设置时按绝对时限兑底挂载（hang 泄漏防线 opt-in）。
     // [R0] unref：不阻止 Node 进程退出。安全性由 SubagentService.dispose 保证——
     // 主进程退出时（session_shutdown reason=quit）dispose 会 abort running controller
     // → 本监听器 kill 子进程。无此 unref，watchdog timer 会拖住 event loop 阻止退出。
-    const watchdogMs = computeWatchdogMs(opts.maxTurns);
-    state.watchdog = setTimeout(() => child.kill("SIGTERM"), watchdogMs);
-    state.watchdog.unref();
+    const watchdogMs = resolveSpawnWatchdogMs(opts.maxTurns);
+    if (watchdogMs !== undefined) {
+      state.watchdog = setTimeout(() => child.kill("SIGTERM"), watchdogMs);
+      state.watchdog.unref();
+    }
 
     // [recursive-orchestration] agent_end 有活跃后代时的等待超时（不 kill 分支的兑底）。
     // 层主 subagent 空闲等待后代完成（steer 唤醒）期间不产生 turn，原 watchdog 已清；

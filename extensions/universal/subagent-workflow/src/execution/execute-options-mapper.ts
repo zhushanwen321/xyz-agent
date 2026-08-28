@@ -36,6 +36,7 @@ export const SLUG_MAX_LENGTH = 35;
  *   skillPath       → skillPath
  *   thinkingLevel   → thinkingLevel（M1: 否则下游 subagent-service 读到 undefined）
  *   appendSystemPrompt → appendSystemPrompt（内容数组，同名同义透传）
+ *   maxTurns        → maxTurns（turn limiter 上限；undefined = 不限，不挂 turns 估算 watchdog）
  *
  * 忽略字段（委托后由 executeAndAwait 内部机制替代）：
  *   timeoutMs         —— mergeTimeoutSignal 单独处理
@@ -63,6 +64,7 @@ export function mapToExecuteOptions(
     skillPath: opts.skillPath,
     thinkingLevel: opts.thinkingLevel,
     appendSystemPrompt: opts.appendSystemPrompt,
+    maxTurns: opts.maxTurns,
   };
 }
 

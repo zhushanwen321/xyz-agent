@@ -32,7 +32,7 @@ import type { WorkflowRun } from "../orchestration/models/workflow-run.ts";
 // ── helpers ──────────────────────────────────────────────────
 
 /** 构造 status="running" 的 mock WorkflowRun，含 trace/budget/calls/runtime。
- *  与 agent-call-catch-fallback.test.ts 同构——gate.withSlot 直接 await fn()。 */
+ *  与 agent-call-catch-fallback.test.ts 同构。 */
 function makeRunningRun(runId: string): WorkflowRun {
   const trace = new Trace();
   const controller = new AbortController();
@@ -58,11 +58,6 @@ function makeRunningRun(runId: string): WorkflowRun {
     runtime: {
       controller,
       worker: { postMessage: vi.fn() },
-      gate: {
-        withSlot: vi.fn(async (fn: () => Promise<void>, _signal: AbortSignal) => {
-          await fn();
-        }),
-      },
     },
     transition: vi.fn(),
     replaceRuntime: vi.fn(),
