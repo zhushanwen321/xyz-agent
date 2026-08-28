@@ -40,6 +40,10 @@ vi.mock("node:child_process", async () => {
     stderr = new PassThrough();
     killed = false;
     killSignal: string | undefined;
+    // [race-F4] SIGKILL 升级判定读 exitCode/signalCode（真 ChildProcess 未退出时均 null），
+    // FakeChild 同形提供才能驱动升级路径测试（undefined === null 为 false 会误判已退出）。
+    exitCode: number | null = null;
+    signalCode: string | null = null;
     kill(sig?: string): boolean {
       this.killed = true;
       this.killSignal = sig;
@@ -303,6 +307,60 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
 
       const result = await promise;
       // 信号终止（>=128）视为正常完成
+      expect(result.success).toBe(true);
+    });
+
+    // [race-F4] SIGKILL 升级：watchdog SIGTERM 后子进程无视信号（exitCode/signalCode
+    // 保持 null = 未退出）→ 30s 后升级 SIGKILL。挂住子进程永不回收的兑底防线。
+    it("[race-F4] watchdog SIGTERM 后 30s 未 exit → 升级 SIGKILL", async () => {
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: hang ignores SIGTERM", makeOpts({ maxTurns: 6 }), makeCtx());
+
+      const child = await waitForSpawnFake();
+
+      // watchdog 到期 → SIGTERM（升级路径入口）
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 100);
+      expect(child.killSignal).toBe("SIGTERM");
+
+      // 子进程无视 SIGTERM：不 emit exit/close，exitCode/signalCode 保持 null。
+      // 推进升级窗口：非贴边断言（waitForSpawnFake 每步 10ms 推进，升级 timer 挂载
+      // 时刻有 ≤100ms 抖动）——先推 29s（余量 > 抖动）断言未升级，再推 2s 越过窗口。
+      await vi.advanceTimersByTimeAsync(29 * 1000);
+      expect(child.killSignal).toBe("SIGTERM"); // 尚未升级
+      await vi.advanceTimersByTimeAsync(2 * 1000);
+      expect(child.killSignal).toBe("SIGKILL"); // 已升级
+
+      // 收尾：SIGKILL 后子进程退出 → runSpawn resolve（信号终止视为完成）
+      emitStdoutLine(child, sessionHeader());
+      child.stdout.end();
+      child.emit("close", 137); // SIGKILL = 128+9
+      const result = await promise;
+      expect(result.success).toBe(true);
+    });
+
+    // [race-F4] 升级 timer 的 exit 自动 clear：SIGTERM 后子进程正常退出（exit 事件到
+    // 达），升级 timer 被清，不误发 SIGKILL（killSignal 停留在 SIGTERM）。
+    it("[race-F4] SIGTERM 后子进程 exit → 升级 timer 被 clear，不误发 SIGKILL", async () => {
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: dies on SIGTERM", makeOpts({ maxTurns: 6 }), makeCtx());
+
+      const child = await waitForSpawnFake();
+
+      // watchdog 到期 → SIGTERM
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 100);
+      expect(child.killSignal).toBe("SIGTERM");
+
+      // 子进程响应 SIGTERM 退出：exitCode 143（SIGTERM 终止形态）+ exit + close。
+      // exit 事件触发升级 timer clear（killChildWithEscalation 内 once("exit") 挂钩）。
+      child.exitCode = 143;
+      child.emit("exit", 143);
+      child.stdout.end();
+      child.emit("close", 143);
+      const result = await promise;
+
+      // 越过升级窗口：无 SIGKILL（timer 已被 exit clear），killSignal 停留在 SIGTERM
+      await vi.advanceTimersByTimeAsync(60 * 1000);
+      expect(child.killSignal).toBe("SIGTERM");
       expect(result.success).toBe(true);
     });
   });

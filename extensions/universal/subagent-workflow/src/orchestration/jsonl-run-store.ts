@@ -40,6 +40,17 @@
  * - Budget/Trace/AgentCall 都有公共构造器或 fromArray 工厂，反序列化时重建实例。
  * - Snapshot 形态用 SnapshotVersion 守护（D-5：格式识别）。
  *
+ * [S3 查证结论] pi 0.84.1 实装（node_modules/@earendil-works/pi-coding-agent/dist，
+ * core/session-manager.js）的 session 生命周期管理不含自动 GC：SessionManager.list /
+ * listAll / listSessionsFromDir 只做只读扫描（readdir + `.jsonl` 过滤 + header 解析），
+ * 无按 age/数量的 retention/prune/expire 删除逻辑；唯一删除路径是 TUI SessionSelector
+ * 里用户手动删除选中的单个顶层 session 文件（trash CLI → unlink fallback），非自动、
+ * 不递归子目录。listSessionsFromDir 是非递归 readdir——`<sessionDir>/workflow-state/`
+ * 子目录完全不在 pi 的任何扫描/清理范围内。**推论：workflow-state state 文件无限累积，
+ * 保留策略待定（由本包自担）**——现状：磁盘 state 文件不清理（内存侧由
+ * evictDoneRunsBeyondCap 淘汰）；W17 后 state 文件已降级为纯性能缓存（权威数据在
+ * session JSONL 的 workflow-record entry），随 session 文件被用户删除时一并消失。
+ *
  * 参考：domain-models.md §Ports（RunStore 定义）、clarification.md D-5。
  */
 

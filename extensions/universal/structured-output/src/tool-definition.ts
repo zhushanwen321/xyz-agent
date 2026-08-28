@@ -32,6 +32,40 @@ import {
 export const TOOL_NAME = "structured-output";
 export const ENV_SCHEMA = "PI_WORKFLOW_SCHEMA";
 
+/**
+ * schema env 值的可见性提示阈值（256 KiB，SO-DATA-4）。
+ *
+ * 背景：PI_WORKFLOW_SCHEMA 经 spawn childEnv 注入子进程，env 块受 ARG_MAX 约束
+ *（Linux E2BIG）——超大 schema 会在 spawn 调用点报难归因的失败。硬拒绝在
+ * subagent-workflow 侧（session-runner 的 applySchemaEnvToChildEnv，同值上限
+ * SCHEMA_ENV_MAX_BYTES = 256 * 1024，见其 src/shared/schema-env.ts [跨包契约 SSOT]
+ * 注释）；本包独立 npm 不能直接 import（isObjectRootSchema 本地副本同例），常量
+ * 各自保留、跨包契约测试锁字节相等（tests/cross-package-contract.test.ts）。
+ * 本侧职责仅可见性：注册时超限 logger.warn（无 logger API，stderr 直出惯例）提示
+ * env 通道有上限，建议拆分 schema 或精简——不拒绝注册（子进程能收到 env 说明 SW
+ * 侧闸门已放行，此处拒绝只会把可诊断的降级变成无法启动）。
+ *
+ * [跨包契约] 任一端改值必须同步另一端，否则 SW 侧硬拒绝线与 SO 侧提示线漂移。
+ */
+export const SO_SCHEMA_SIZE_WARN_BYTES = 256 * 1024;
+
+/**
+ * 注册期 schema 体积可见性提示（SO-DATA-4 的 SO 侧职责：提示，不拒绝）。
+ * stderr 直出（本包惯例：ExtensionContext 无 logger 成员，pi 0.84.1 types.d.ts
+ * 核实；与 writeTerminatedLog 同通道）。
+ */
+function warnIfSchemaOversized(envSchema: string): void {
+	const bytes = Buffer.byteLength(envSchema, "utf8");
+	if (bytes <= SO_SCHEMA_SIZE_WARN_BYTES) return;
+	process.stderr.write(
+		`[structured-output] PI_WORKFLOW_SCHEMA is ${bytes} bytes (> ${SO_SCHEMA_SIZE_WARN_BYTES} bytes / `
+			+ `${SO_SCHEMA_SIZE_WARN_BYTES / 1024} KiB). The env channel has a size ceiling: the workflow runner `
+			+ "rejects injection above its own limit (spawn fails, hard to attribute), and oversized values can "
+			+ "hit E2BIG (ARG_MAX) at spawn. "
+			+ "👉 精简 outputSchema（删冗余 description / 收敛深嵌套）或拆分为多个小 schema 步骤。\n",
+	);
+}
+
 // ── Workflow variant (parameters = authoritative schema) ─────────────
 
 /**
@@ -42,6 +76,9 @@ export const ENV_SCHEMA = "PI_WORKFLOW_SCHEMA";
  *   时在注册期 fail-fast——错误指回 workflow 脚本的 schema 定义（§5.2 形态 d）。
  */
 export function createWorkflowToolDefinition(envSchema: string) {
+	// SO-DATA-4：注册期体积可见性提示（超 256KiB 提示精简/拆分；硬拒绝在 SW 侧注入点）
+	warnIfSchemaOversized(envSchema);
+
 	// ── 注册期 fail-fast 防御（上移自 execute 权威分支）──
 	const schema = tryParseJson(envSchema);
 	assertJsonSchemaRoot(schema);

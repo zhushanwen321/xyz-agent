@@ -824,6 +824,9 @@ async function handleReturn(
  * - run.meta.workerErrorCount（C.5，跨 runtime 存活）< MAX → 退避 + rebuildRuntime
  * - >= MAX → transition done,failed
  *
+ * [R4-F1] 同代际幂等：复用 receivedTerminalMessage 代际标志（见函数体注释）——
+ * worker 崩溃时 error + exit(1) 双事件只处理一次（第二个事件直接跳过）。
+ *
  * @throws 不抛错——所有失败路径转 transition 或日志
  */
 export async function handleWorkerError(
@@ -835,6 +838,17 @@ export async function handleWorkerError(
  // 与 handleWorkerMessage 对称——终态（done）丢弃 stale error。
  // 否则终态后到达的 worker error 仍会 workerErrorCount++（污染跨 runtime 计数）。
   if (isTerminal(run)) return;
+
+ // [R4-F1] 同代际幂等守卫：worker 崩溃时 error + exit(1) 双事件各派发一次
+ // handleWorkerError（onError 先到，exit 非 0 经 handleWorkerExit 委托二次到达）——
+ // 旧实现单次崩溃 workerErrorCount +2、两个 scheduleRebuild 并行交错（双 rebuild
+ // 各自 new Worker，旧 handle 的 terminate/exit 事件与新 handle 的生命周期互相踩踏）。
+ // 复用 R4 的 receivedTerminalMessage 代际标志（RunRuntime 字段，rebuild 自然重置）：
+ // 进入处理前置 true 标记「本代际已有 error/terminal 处理」，第二个事件（无论
+ // onError 直达还是 exit(1) 委托）命中标志直接跳过。新代际的 handleWorkerError
+ // 不受影响（新 RunRuntime 的标志为 false）。
+  if (run.runtime?.receivedTerminalMessage) return;
+  if (run.runtime) run.runtime.receivedTerminalMessage = true;
 
   const count = (run.meta.workerErrorCount ?? 0) + 1;
   run.meta.workerErrorCount = count;

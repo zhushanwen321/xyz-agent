@@ -14,8 +14,12 @@
  *
  * 失败闸门（仅 workflow 模式，D3/U2）：
  *   tool_execution_end 上计数同签名校验失败，连续 3 次 → terminal：写日志
- *   （stderr + session JSONL，含恢复指引）后 ctx.shutdown() 优雅终止子进程；
- *   同时标记 RetryState.terminal，turn_end hook 不再 steer。
+ *   （stderr + session JSONL 双通道，含恢复指引）后 ctx.abort()（停当前 turn）+
+ *   ctx.shutdown() 优雅终止子进程（RPC mode 于 agent_settled 后 exit），并武装
+ *   15s 兑底硬退 timer（R3 F-2 bounded teardown：pi 0.84.1 ExtensionAPI 无子进程
+ *   信号能力，扩展与子进程同进程，process.exit 是唯一硬杀手段；覆盖 shutdown
+ *   请求后 pi 挂死不 settle 的异常态）；同时标记 RetryState.terminal，turn_end
+ *   hook 不再 steer。
  *
  * 模块拆分（M4）：实现体分布于 ajv-validator.ts（编译缓存）/
  * schema-guards.ts（形态守卫）/ execute.ts（校验编排）/ tool-definition.ts（工具定义）/
@@ -31,6 +35,7 @@ import {
 	createDailyToolDefinition,
 	createWorkflowToolDefinition,
 	ENV_SCHEMA,
+	SO_SCHEMA_SIZE_WARN_BYTES,
 } from "./tool-definition.js";
 import { RetryState, setupWorkflowHook } from "./workflow-hook.js";
 
@@ -42,6 +47,8 @@ export {
 	executeStructuredOutput,
 	createDailyToolDefinition,
 	createWorkflowToolDefinition,
+	ENV_SCHEMA,
+	SO_SCHEMA_SIZE_WARN_BYTES,
 	RetryState,
 	setupLoopGate,
 	LoopGate,

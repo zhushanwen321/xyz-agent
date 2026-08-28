@@ -98,6 +98,8 @@ function _safePost(msg, context) {
         // 让 parallel() 下的脚本容错循环（parseResult → null → skip）自然接管。
         // 错误原因已由主线程 executeAgentCall → trace.update(result.error) 保留在 trace/TUI，
         // 不丢失。失败 resolve 为空字符串是既定容错策略。
+        // [MF-4] schema 模式下失败时 agent() 仍 resolve（content 回退、不 throw）——
+        // 需要检查错误时请用 returnMeta:true（resolve 值含 error 字段）。
         // parsedOutput: validated data object from structured-output execute().
         // Fallback to content (raw text) when no schema was requested or on error.
         // W2 改动 9(b)：returnMeta===true 时 resolve {value,sessionFile,worktreePath,error,usage,durationMs,sessionId}

@@ -50,8 +50,11 @@ export class RunRuntime {
  * 重试退避窗口内（error 消息已收到、run 仍 running、旧 worker exit(0)）必须 no-op 等
  * rebuild；若挂 meta 则 rebuild 后新 worker 再静默退出时会被旧标记误放行，重新悬挂。
  *
- * 写点仅 handleWorkerMessage 的 return/error 分支（WorkerHandle.isCurrent 守卫保证
- * 消息必来自当前代际）；rebuildRuntime 构造新 RunRuntime 自然重置。
+ * 写点：① handleWorkerMessage 的 return/error 分支（WorkerHandle.isCurrent 守卫保证
+ * 消息必来自当前代际）；② handleWorkerError 进入处理前（[R4-F1] 同代际幂等守卫——
+ * worker 崩溃时 error + exit(1) 双事件各派发一次 handleWorkerError，第一个事件标记
+ * 本代际已处理，第二个事件命中标志跳过，消除单次崩溃计数 +2 / 双 rebuild 交错）。
+ * rebuildRuntime 构造新 RunRuntime 自然重置。
  */
   receivedTerminalMessage = false;
  /** 防止 release 重复执行（幂等）。 */

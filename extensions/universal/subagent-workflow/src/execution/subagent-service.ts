@@ -967,6 +967,20 @@ export class SubagentService {
         sendPromptCommand(child, text, { streamingBehavior: interrupt ? "steer" : "followUp" });
         // 热路径成功，清零 EPIPE 连续失败计数（[v4 A-1] 计数器已迁移到 stdin-writer）
         clearEpipeFailure(record.id);
+        // [race-F5] 写后死进程检测：write 同步成功只代表数据进了内核 pipe 缓冲，子进程
+        // 可能在读取前死亡（gate/idle kill 竞速）。exitCode/signalCode 已非 null = 进程已死
+        //（close 事件可能尚未到达），缓冲中的消息将被静默丢弃。只 warn 留证（含 runId 与
+        // 消息类型），不抛错不重试：终态回收已由 kill 路径保证，对死进程重试反而可能二次写。
+        if (child.exitCode !== null || child.signalCode !== null) {
+          logger.warn(
+            `[subagents] deliverMessage: child ${record.id} died around stdin write, message may be lost`,
+            {
+              msgType: interrupt ? "steer" : "followUp",
+              exitCode: child.exitCode,
+              signalCode: child.signalCode,
+            },
+          );
+        }
         // 轮始执行态信号清除 + 迁移上报（residual-fixes U3 补全，与冷路径 resumeRound
         // 对称）：新一轮开跑 = 无轮终信号——清上一轮 result（§5.4 isStreaming 公式要求
         // result undefined 才显示 streaming）与 resumable，appendEntry 让 runtime/W18

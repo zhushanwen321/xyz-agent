@@ -25,6 +25,7 @@ import {
   createDailyToolDefinition,
   createWorkflowToolDefinition,
   executeStructuredOutput,
+  SO_SCHEMA_SIZE_WARN_BYTES,
 } from "../src/index.js";
 // mock pi 公共 fixture（M5-T4：与 characterization-hook.test.ts 共享）
 import {
@@ -237,6 +238,9 @@ describe("Workflow hook: structured-output failure retry", () => {
   afterEach(() => {
     // fixture 的 restoreSchemaEnv 只处理 env；vi.restoreAllMocks 必须在消费方保留
     restoreSchemaEnv(originalSchemaEnv);
+    // 闸门 terminal 会武装真实 15s 兜底硬退 timer——触发 terminal 的测试用 fake timers
+    // 包裹，此处还原真实 timers 并丢弃未触发的 fake timer（不残留跨测试的硬退风险）
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -284,6 +288,7 @@ describe("Workflow hook: structured-output failure retry", () => {
   });
 
   it("stops steering after MAX_HOOK_RETRIES (=2) exhausted", async () => {
+    vi.useFakeTimers(); // 第 3 轮失败触发 gate terminal（武装 15s 兜底 timer）——fake 掉避免泄漏
     const pi = createMockPi();
     await loadExtension(pi, SCHEMA);
 
@@ -813,6 +818,38 @@ describe("createWorkflowToolDefinition — registration-time defense + parameter
     const def = createWorkflowToolDefinition(JSON.stringify({ type: "string", enum: ["low", "high"] }));
     const r = await def.execute("call-1", { value: "high" });
     expect(r.details).toBe("high");
+  });
+});
+
+// ── schema 体积可见性（SO-DATA-4：SO 侧只提示，硬拒绝在 SW 侧注入点）─────────
+//
+// schema 经 spawn childEnv 注入子进程，env 块受 ARG_MAX 约束（Linux E2BIG）。
+// SW 侧 session-runner 对超 SCHEMA_ENV_MAX_BYTES 的注入 fail-fast；本侧职责是
+// 注册期可见性提示（env 通道有上限，建议拆分 schema 或精简），不拒绝注册。
+describe("schema size visibility (SO-DATA-4)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("常量锁定：SO_SCHEMA_SIZE_WARN_BYTES = 256 KiB（与 SW 侧 SCHEMA_ENV_MAX_BYTES 同值，跨包契约测试锁字节相等）", () => {
+    expect(SO_SCHEMA_SIZE_WARN_BYTES).toBe(256 * 1024);
+  });
+
+  it("注册时 schema 超阈值 → stderr 提示（不拒绝注册）", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const bigSchema = JSON.stringify({
+      type: "object",
+      properties: { blob: { type: "string", description: "x".repeat(SO_SCHEMA_SIZE_WARN_BYTES) } },
+    });
+    expect(() => createWorkflowToolDefinition(bigSchema)).not.toThrow();
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("PI_WORKFLOW_SCHEMA is"));
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("256"));
+  });
+
+  it("阈值内不提示", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    createWorkflowToolDefinition(SCHEMA);
+    expect(stderrSpy).not.toHaveBeenCalled();
   });
 });
 

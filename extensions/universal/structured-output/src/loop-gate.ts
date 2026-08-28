@@ -15,15 +15,20 @@
  *     前缀截断在大 schema 下会把「修复排序靠后字段」（消息前缀不变）误折叠成同签名。
  *     required 错误的完整缺失字段列表从 message 解析并入 token（pi-ai bullet 路径位
  *     仅含 requiredProperties[0]，只取路径位会把「修好非首字段」折叠成同签名误杀）。
- *     AP 错误（D4 注入 additionalProperties:false，路径位恒 "root"、错误行无字段名）
- *     的实参回显顶层 keys 以 key:<name> 形式并入——keys 是结构信息不是值：keys 集合
- *     缩小 = 模型在删多余字段 = 真实进展；实参值变化（keys 不变）不产生新签名。
+ *     AP 错误（D4 注入 additionalProperties:false，错误行无字段名）按错误行路径位
+ *     下钻实参回显取该层 keys，以 key:<path>:<name> 形式并入——keys 是结构信息不是
+ *     值：该层 keys 集合缩小 = 模型在删多余字段 = 真实进展；实参值变化（keys 不变）
+ *     不产生新签名；嵌套 AP（路径位 a / a.b，R4-F2）下钻到嵌套层而非顶层——顶层
+ *     keys 恒不变会把嵌套场景折叠成同签名误杀。AP 行检测为行级固定文案精确匹配
+ *    （R4-F3，/additional propert/i 子串版会被字段名含该字样的非 AP 错误伪触发）。
  *     keys 并入按桶门控（仅错误行块含 AP 错误行时生效，见 normalizeErrorSignature
  *     的并集恒定陷阱注释）——required/格式类错误行天然携带字段名，keys 并入反而
  *     制造对流失衡。
  *   - 连续同签名失败达 MAX_CONSECUTIVE_FAILURES（3）→ terminal 态：
- *     写日志（stderr + appendEntry 双通道，含 §5.2 形态 b 恢复指引）后调
- *     ctx.shutdown() 优雅终止子进程（RPC mode 在 agent_settled 后 exit）。
+ *     写日志（stderr + appendEntry 双通道，含 §5.2 形态 b 恢复指引）后
+ *     ctx.abort()（停当前 turn，截断 token 燃烧窗口）+ ctx.shutdown() 优雅终止
+ *     子进程（RPC mode 在 agent_settled 后 exit），并武装 15s 兜底硬退 timer
+ *    （R3 F-2 bounded teardown，覆盖 pi 挂死不 settle 的异常态）。
  *   - 成功调用清零（模型走通即无循环）。
  *
  * 与 workflow-hook 的关系：terminal 态经 onTerminal 回调标记 RetryState.terminal，
@@ -36,7 +41,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { isToolExecutionEndEvent } from "./schema-guards.js";
+import { isPlainObject, isToolExecutionEndEvent } from "./schema-guards.js";
 import {
 	extractToolErrorText,
 	SIGNATURE_MAX_CHARS,
@@ -89,16 +94,28 @@ function requiredBulletPrefix(bulletPath: string, firstField: string): string {
 }
 
 /**
- * AP（additionalProperties）错误行标记（大小写不敏感子串）。
+ * AP（additionalProperties）错误行标记（R4-F3 精确化：行级固定文案匹配）。
  *
- * 覆盖两种实装形态：pi-ai 参数层 bullet "  - root: must not have additional
- * properties"（0.84.1 validation.js 探针核实）与日常模式 ajv "must NOT have
- * additional properties"（execute.ts instancePath 拼接形态）——两者大小写不同，
- * 子串取 "additional propert" 双形态通配。required/格式类错误 message 不含该子串。
- * 检测对象是剔除回显后的错误行块整体（而非逐 bullet 行）：ajv AP 行不是 bullet
- * 形态，逐行 bullet 检测会漏检导致该场景 keys 语义回退。
+ * 旧实现 /additional propert/i 大小写不敏感子串匹配会被「字段名/字段列表恰好含该
+ * 字样」的非 AP 错误伪触发（如 required message 列出名为 "additional properties"
+ * 的字段）——keys 分桶被错误激活，与常规 token 并集对流（同分桶陷阱的伪 AP 变体，
+ * 漏杀方向）。精确化后逐行匹配路径位之后的固定文案，字段名在冒号前不可能命中：
+ *
+ * 覆盖两种实装形态（均为固定文案，字段名不可能携带）：
+ *   1. pi-ai 参数层 bullet（pi-ai 0.84.1 dist/utils/validation.js + typebox 1.3.7
+ *      Compile 探针核实：message 恒为小写 "must not have additional properties"，
+ *      行形态 `  - <path>: must not have additional properties`）——行级后缀匹配
+ *      AP_LINE_SUFFIX_RE；路径位即 AP 层路径（root / a / a.b / list.0，
+ *      formatValidationPath 对 instancePath 点分），供嵌套 keys 下钻（R4-F2）。
+ *   2. 日常模式 ajv（execute.ts instancePath 拼接形态，ajv locale 模板大写 "must
+ *      NOT have additional properties"）——模板词组含空格与固定语序，字段名不可能
+ *      携带。该形态无 "Received arguments:" 回显段，keys 分桶天然不激活
+ *      （hasApError 仅作标记；闸门仅 workflow 模式装配，此形态实为防御性保留）。
  */
-const AP_ERROR_MARKER_RE = /additional propert/i;
+const AP_LINE_SUFFIX_RE = /^(.*):\s*must not have additional properties\s*$/;
+const AP_AJV_MESSAGE_RE = /must NOT have additional properties/;
+/** pi-ai bullet message 位（冒号后）的 AP 固定文案原文（见上方探针核实记录）。 */
+const AP_BULLET_MESSAGE = "must not have additional properties";
 
 /**
  * 从（已剔除实参回显的）错误文本提取字段/路径 token 集合——修复进展的坐标：
@@ -120,13 +137,22 @@ const AP_ERROR_MARKER_RE = /additional propert/i;
  * 的强判定；代价是弱模型对单字段多约束的试错容忍度下降（同字段反复错达阈值即闸门）。
  *
  * 同时报告错误行块是否含 AP 错误行（hasApError）——normalizeErrorSignature 据此
- * 门控 echo keys 并入（分桶动机见该函数注释）。
+ * 门控 echo keys 并入（分桶动机见该函数注释）；并收集 AP 错误行的路径位集合
+ *（apPaths，R4-F2）——嵌套 AP 场景（schema 属性 a 下 AP:false，模型在 a 里逐个
+ * 删多余字段）错误行路径位是 a（非 root），顶层 keys 恒不变 → 误杀；keys 必须
+ * 按路径位下钻到该层才有进展信号（见 keysAtPath）。
  *
  * 提取不到 token（非校验类错误文本，如 "structured-output call failed"/网络错误）
  * 返回空数组——调用方 fallback 到 SIGNATURE_MAX_CHARS 前缀。
  */
-function extractErrorFieldTokens(errorLines: string): { tokens: string[]; hasApError: boolean } {
+function extractErrorFieldTokens(errorLines: string): {
+	tokens: string[];
+	hasApError: boolean;
+	/** AP 错误行路径位集合（root / a / a.b / list.0）——嵌套 keys 下钻坐标。 */
+	apPaths: string[];
+} {
 	const tokens = new Set<string>();
+	const apPaths = new Set<string>();
 	// 形态 1：bullet 行（路径位 + message）；字符类覆盖点分路径/数组索引/斜杠
 	const bulletLine = /(?:^|\n)[ \t]*-[ \t]+([\w.\-/\[\]]+):[ \t]*([^\n]+)/g;
 	// 形态 2：行首/空白/分号后的 ajv instancePath（/a/b/c）——排除紧贴前字符的斜杠
@@ -134,7 +160,14 @@ function extractErrorFieldTokens(errorLines: string): { tokens: string[]; hasApE
 	const slashPath = /(?:^|[\s;])\/([\w.\-/\[\]]+)/g;
 	for (const m of errorLines.matchAll(bulletLine)) {
 		const path = m[1]!;
-		const requiredFields = parseRequiredMessageFields(m[2]!);
+		const message = m[2]!;
+		// AP bullet：message 位恒为固定文案（R4-F3 精确匹配）——路径位进下钻坐标集
+		if (message.trim() === AP_BULLET_MESSAGE) {
+			tokens.add(path);
+			apPaths.add(path);
+			continue;
+		}
+		const requiredFields = parseRequiredMessageFields(message);
 		if (!requiredFields) {
 			tokens.add(path);
 			continue;
@@ -143,10 +176,21 @@ function extractErrorFieldTokens(errorLines: string): { tokens: string[]; hasApE
 			tokens.add(`${requiredBulletPrefix(path, requiredFields[0]!)}${field}`);
 		}
 	}
+	// 非 bullet 形态的 AP 行兜底（路径位含 bullet 字符类外字符——空格/unicode 等）：
+	// 行级后缀匹配（R4-F3 规定式 AP_LINE_SUFFIX_RE）并从冒号前抠路径位，同样进下钻
+	// 坐标；bullet 已命中的行 Set 去重，无重复贡献。
+	for (const line of errorLines.split("\n")) {
+		const m = line.replace(/^[ \t]*-[ \t]+/, "").match(AP_LINE_SUFFIX_RE);
+		if (m) apPaths.add(m[1]!.trim());
+	}
 	for (const m of errorLines.matchAll(slashPath)) {
 		tokens.add(m[1]!);
 	}
-	return { tokens: [...tokens], hasApError: AP_ERROR_MARKER_RE.test(errorLines) };
+	return {
+		tokens: [...tokens],
+		hasApError: apPaths.size > 0 || AP_AJV_MESSAGE_RE.test(errorLines),
+		apPaths: [...apPaths],
+	};
 }
 
 /** FNV-1a 32-bit 参数：offset basis / prime（零依赖确定性哈希；签名仅用于等值比较，非加密场景）。 */
@@ -180,7 +224,36 @@ function truncateSignature(text: string): string {
 }
 
 /**
- * 从原始错误消息的 "Received arguments:" 段提取实参顶层 keys 集合（AP 误杀修复）。
+ * 按点分路径下钻实参对象，取该层 keys（R4-F2 嵌套 AP）。
+ *
+ * 路径位语义（pi-ai 0.84.1 formatValidationPath 探针核实）："root" = 实参对象本身
+ * （根级 instancePath 为空的哨兵）；"a.b" / "list.0" = instancePath 点分下钻
+ * （数组元素下标走数字段）。与「恰好有名为 root 的属性」的歧义由哨兵优先裁决
+ *（取实参顶层 keys，不向下钻）——与 pi-ai 自身的渲染歧义同构，根级 AP 是主形态。
+ *
+ * 演进语义：该层 keys 集合缩小（模型在删该层多余字段）= 新签名——与根级同一
+ * 「keys 是结构信息」契约。下钻中断（路径不存在 / 中间层非容器 / 目标层非 plain
+ * object）该路径降级不贡献（返回空数组）——签名退化为错误行块口径，不比缺该路径更差。
+ */
+function keysAtPath(args: Record<string, unknown>, path: string): string[] {
+	if (path === "root") return Object.keys(args);
+	let current: unknown = args;
+	for (const segment of path.split(".")) {
+		if (Array.isArray(current)) {
+			if (!/^\d+$/.test(segment)) return [];
+			const index = Number(segment);
+			if (index >= current.length) return [];
+			current = current[index];
+			continue;
+		}
+		if (!isPlainObject(current) || !(segment in current)) return [];
+		current = current[segment];
+	}
+	return isPlainObject(current) ? Object.keys(current) : [];
+}
+
+/**
+ * 从原始错误消息的 "Received arguments:" 段解析实参对象（AP 误杀修复的原料）。
  *
  * 背景（D4）：additionalProperties:false 默认注入后，模型带多余字段时 pi-ai 0.84.1
  * validation.js 报 "  - root: must not have additional properties"——bullet 路径位
@@ -189,27 +262,28 @@ function truncateSignature(text: string): string {
  * 仅凭错误行块会折叠成同签名、3 次 terminal 误杀。实参回显段是
  * JSON.stringify(toolCall.arguments, null, 2) 产物（validation.js 逐字核实），可
  * JSON.parse——顶层 keys 是结构信息：keys 集合缩小 = 模型在删字段 = 进展 → 并入
- * token 集合产生新签名。
+ * token 集合产生新签名；嵌套 AP（R4-F2）则按 AP 错误行路径位下钻取该层 keys
+ *（见 keysAtPath）。
  *
  * 与「剔除实参回显」既有语义的兼容区分（本意不变）：剔除回显的本意是「实参值变化
  * 不算进展」——keys 是结构不是值：值变化（keys 不变）不影响签名，既有语义保留；
  * keys 变化（结构变化）才产生新签名。回显段缺失 / JSON 解析失败 / 非 plain object
- * （null、数组、原始值）一律返回空数组（不贡献 token）——签名退化为仅错误行块口径
- * （如 steer 截断后的残缺回显、适配层改写过 errorMessage 的场景），不会比修复前更差。
+ * （null、数组、原始值）一律返回 undefined（不贡献 token）——签名退化为仅错误行
+ * 块口径（如 steer 截断后的残缺回显、适配层改写过 errorMessage 的场景），不会比
+ * 修复前更差。
  *
  * 调用方门控（并集恒定陷阱，见 normalizeErrorSignature 注释）：本函数结果仅在错误
- * 行块含 AP 错误行时以 key:<name> 前缀并入签名——required 渐进修复场景 keys 与缺失
- * 列表对流，无条件并入会使 token 并集恒定、签名恒定，3 次误杀（实测教训）。
+ * 行块含 AP 错误行时以 key:<path>:<name> 前缀并入签名——required 渐进修复场景 keys
+ * 与缺失列表对流，无条件并入会使 token 并集恒定、签名恒定，3 次误杀（实测教训）。
  */
-function parseArgsEchoTopLevelKeys(errorText: string, markerIdx: number): string[] {
+function parseArgsEchoObject(errorText: string, markerIdx: number): Record<string, unknown> | undefined {
 	const echoSection = errorText.slice(markerIdx + ARGS_ECHO_MARKER.length).trim();
-	if (!echoSection) return [];
+	if (!echoSection) return undefined;
 	try {
 		const parsed: unknown = JSON.parse(echoSection);
-		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
-		return Object.keys(parsed);
+		return isPlainObject(parsed) ? parsed : undefined;
 	} catch {
-		return [];
+		return undefined;
 	}
 }
 
@@ -221,9 +295,11 @@ function parseArgsEchoTopLevelKeys(errorText: string, markerIdx: number): string
  *      - 常规桶（无前缀）：bullet 路径位 / required message 字段 / ajv instancePath
  *        （extractErrorFieldTokens 既有逻辑）——required/格式类错误行天然携带字段名，
  *        token 集合演化（含缩小）即进展坐标。
- *      - AP 桶（key:<name> 前缀）：仅当错误行块含 AP 错误行（hasApError）时，实参回显
- *        顶层 keys 并入——AP 错误行无字段名（路径位恒 root），keys 集合是唯一进展
- *        坐标（keys 缩小 = 删多余字段 = 进展）；前缀防 keys 与常规桶同名字段 token 混淆。
+ *      - AP 桶（key:<path>:<name> 前缀）：仅当错误行块含 AP 错误行（hasApError）时，
+ *        按 AP 错误行路径位（apPaths）下钻实参回显取该层 keys 并入——AP 错误行无
+ *        字段名，keys 集合是唯一进展坐标（keys 缩小 = 删多余字段 = 进展）；嵌套 AP
+ *        场景路径位是嵌套层（a / a.b），顶层 keys 恒不变，必须下钻（R4-F2）；路径
+ *        限定防多 AP 层并存时同名 key 跨层折叠，也防 keys 与常规桶同名字段混淆。
  *   3. 集合不变 = 同签名（无进展）；集合变化 = 新签名（渐进修复不再被折叠）。
  *   4. 提取失败（无任何 token）fallback 到 500c 前缀硬上限（既有行为）。
  *
@@ -241,11 +317,17 @@ function parseArgsEchoTopLevelKeys(errorText: string, markerIdx: number): string
 export function normalizeErrorSignature(errorText: string): string {
 	const markerIdx = errorText.indexOf(ARGS_ECHO_MARKER);
 	const errorLines = (markerIdx >= 0 ? errorText.slice(0, markerIdx) : errorText).trim();
-	const { tokens, hasApError } = extractErrorFieldTokens(errorLines);
-	// echo keys 分桶门控（见上方并集恒定陷阱）：仅 AP 错误行存在时并入，带 key: 前缀
+	const { tokens, hasApError, apPaths } = extractErrorFieldTokens(errorLines);
+	// echo keys 分桶门控（见上方并集恒定陷阱）：仅 AP 错误行存在时并入，带路径限定前缀
+	//（key:<path>:<name>；嵌套层 keys 缩小 = 新签名，与根级同一演进契约）
 	if (hasApError && markerIdx >= 0) {
-		for (const key of parseArgsEchoTopLevelKeys(errorText, markerIdx)) {
-			tokens.push(`key:${key}`);
+		const args = parseArgsEchoObject(errorText, markerIdx);
+		if (args) {
+			for (const path of apPaths) {
+				for (const key of keysAtPath(args, path)) {
+					tokens.push(`key:${path}:${key}`);
+				}
+			}
 		}
 	}
 	const unique = [...new Set(tokens)];
@@ -309,6 +391,92 @@ export class LoopGate {
 export const GATE_ENTRY_TYPE = "structured-output:gate";
 
 /**
+ * setTimeout delay 安全域校验。[同源锚定] @zhushanwen/pi-subagent-workflow 的
+ * shared/timer-delay.ts assertSafeTimerDelay 本地副本——两包独立 npm 不能直接
+ * import（isObjectRootSchema 本地副本同例：跨包相对 import 在发布产物里悬空），
+ * 本包仅此一个 timer 入口，取最小面副本。语义同源：非有限值 / 超 2^31-1 的 delay
+ * 会被 Node 塌缩为 1ms 立即触发（语义反转：兜底窗口变成立即硬杀），fail-fast 不
+ * 静默 clamp（clamp 把配置错误变成静默语义漂移）。
+ */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+/** 每秒毫秒数（teardown 日志 ms→s 换算用，no-magic-numbers）。 */
+const MS_PER_SECOND = 1000;
+
+export function assertSafeTimerDelay(ms: number, source: string): void {
+	if (!Number.isFinite(ms)) {
+		throw new Error(
+			`[structured-output] ${source} = ${ms} is not a finite number (NaN/±Infinity). `
+				+ "Non-finite delays collapse to 1ms in Node setTimeout and fire immediately. "
+				+ "Recovery: fix the constant/computation feeding this timer and retry.",
+		);
+	}
+	if (ms > MAX_TIMER_DELAY_MS) {
+		throw new Error(
+			`[structured-output] ${source} = ${ms} exceeds the Node setTimeout limit `
+				+ `(${MAX_TIMER_DELAY_MS} ms = 2^31-1); larger delays silently collapse to 1ms and fire immediately. `
+				+ `Recovery: clamp the value to <= ${MAX_TIMER_DELAY_MS} and retry.`,
+		);
+	}
+}
+
+/**
+ * terminal 后 bounded teardown 的兜底硬退窗口（ms）。
+ *
+ * 任务原案 10s（SIGTERM 前优雅窗口）+ 5s（SIGKILL 前余量）的信号分级在扩展上下文
+ * 不可达（pi 0.84.1 ExtensionContext 无子进程句柄/信号能力，见 armForceExitTeardown
+ * 注释的核实记录），合并为单步 process.exit 硬退窗口。
+ *
+ * 数据完整性权衡（照任务要求写明）：session flush 在 shutdown 请求时已尽力——RPC
+ * mode 于 agent_settled 后 exit，session entry 逐条 append 落盘（writeTerminatedLog
+ * 的 entry 在 terminal 当下已写入）；15s 优雅窗口远超正常 flush 需求（abort+shutdown
+ * 后正常退出秒级完成），兜底只覆盖「pi 挂死不 settle」的异常态——此时宁可硬退
+ *（父进程 SW 侧走「子进程结束未产出 structured-output」失败路径，stderr 已留原因）
+ * 也不无限烧 token。
+ */
+export const TEARDOWN_FORCE_EXIT_MS = 15_000;
+
+/**
+ * 兜底硬退 exit code：非零且 < 128（SW 侧 session-runner 的 SIGNAL_EXIT_CODE_THRESHOLD）
+ * → 父进程按「子进程自身报错」记录（stderr 缓冲已先行写明原因），不会与信号终止混淆。
+ */
+const TEARDOWN_EXIT_CODE = 1;
+
+/** 已武装的兜底硬退 timer（模块级；terminal 全生命周期至多一次，防御性幂等再清）。 */
+let teardownTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * 武装 terminal 后的 bounded teardown 兜底：TEARDOWN_FORCE_EXIT_MS 后进程仍未退出
+ *（pi 挂死未 settle）则 process.exit 硬退。
+ *
+ * 方案依据（pi 0.84.1 实装核实，node_modules/@earendil-works/pi-coding-agent
+ * dist/core/extensions/types.d.ts + dist/core/extensions/runner.js）：
+ * ExtensionContext 对外仅 shutdown()（优雅：置 shutdownRequested，agent_settled 后
+ * exit）与 abort()（中止当前 agent 操作），无子进程句柄/信号 API；扩展与 pi 子进程
+ * 同进程（loader 进程内加载），「向子进程发 SIGTERM/SIGKILL」在语义上不成立——扩展
+ * 能做的最大硬杀就是对自身 process.exit。故采用任务预设的兜底形态：abort+shutdown
+ * 优雅退出为主，定时 process.exit 兜底。
+ *
+ * timer 卫生：assertSafeTimerDelay 包裹（防未来常量演化溢出塌缩为 1ms 立即硬杀）+
+ * unref（不阻止 pi 在窗口内自然退出；自然退出时本 timer 随进程消亡不再开火）+
+ * terminal 路径幂等 clearTimeout（重复武装不叠加多个兜底 timer）。
+ */
+export function armForceExitTeardown(): void {
+	if (teardownTimer !== undefined) clearTimeout(teardownTimer);
+	assertSafeTimerDelay(TEARDOWN_FORCE_EXIT_MS, "structured-output gate teardown");
+	const timer = setTimeout(() => {
+		process.stderr.write(
+			`[structured-output gate] graceful shutdown did not complete within ${TEARDOWN_FORCE_EXIT_MS / MS_PER_SECOND}s; `
+				+ "force-exiting (session flush was best-effort at shutdown request).\n",
+		);
+		process.exit(TEARDOWN_EXIT_CODE);
+	}, TEARDOWN_FORCE_EXIT_MS);
+	// unref：窗口内 pi 自然退出时不被本 timer 拖住（timer 随进程消亡，不再开火）
+	timer.unref();
+	teardownTimer = timer;
+}
+
+/**
  * terminal 态日志（§5.2 形态 b）：
  *   - stderr：子进程 stderr 直出（xyz-agent runtime 的 pi-*.jsonl tee / 本地探针可见）
  *   - appendEntry：session JSONL 持久化记录（事后排查通道，不进 LLM 上下文）
@@ -349,9 +517,13 @@ export interface LoopGateOptions {
 /**
  * 注册 tool_execution_end 闸门监听（仅 workflow 模式装配，见 index.ts）。
  *
- * terminal 触发时序：onTerminal 回调（同步，先标记 hook 状态）→ 写日志 →
- * ctx.shutdown()（RPC mode 置 shutdownRequested，agent_settled 后进程 exit(0)，
- * 父进程走「子进程结束但未产出 structured-output」的既有失败路径）。
+ * terminal 触发时序（R3 F-2 bounded teardown）：onTerminal 回调（同步，先标记
+ * hook 状态）→ 写日志（stderr + appendEntry 双通道，R3 F-3）→ ctx.abort()（中止
+ * 当前 agent 操作——截断「shutdown 请求后当前 turn 的 bash/read/流式继续跑、模型
+ * 继续烧 token」的窗口，~25s 实测窗口在 abort 后即止）→ ctx.shutdown()（RPC mode
+ * 置 shutdownRequested，agent_settled 后进程 exit(0)，父进程走「子进程结束但未
+ * 产出 structured-output」的既有失败路径）→ armForceExitTeardown()（15s 兜底硬退，
+ * 覆盖 pi 挂死不 settle 的异常态；方案依据见该函数注释）。
  */
 export function setupLoopGate(pi: PiAPI, options: LoopGateOptions = {}): LoopGate {
 	const gate = new LoopGate();
@@ -368,7 +540,9 @@ export function setupLoopGate(pi: PiAPI, options: LoopGateOptions = {}): LoopGat
 
 		options.onTerminal?.();
 		writeTerminatedLog(pi, gate);
+		ctx.abort();
 		ctx.shutdown();
+		armForceExitTeardown();
 	});
 
 	return gate;

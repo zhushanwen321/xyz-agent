@@ -185,6 +185,89 @@ describe("handleWorkerExit — [F1] exit(0) 无终态消息", () => {
   });
 });
 
+// ── [R4-F1] handleWorkerError：error + exit(1) 同代际双派发只计一次 ────
+
+describe("handleWorkerError — [R4-F1] 同代际双事件幂等", () => {
+  it("worker 崩溃：error 事件先到（退避窗口内）+ exit(1) 委托二次到达 → 只计一次、只 rebuild 一次", async () => {
+    // 真实时序：worker 崩溃 → onError 与 exit 几乎同时触发。handleWorkerError 进入
+    // scheduleRebuild 的退避 delay（未完成）时 exit(1) 到达 handleWorkerExit → 委托
+    // handleWorkerError 二次进入。旧实现在此处重复计数 + 第二个 scheduleRebuild
+    //（单次崩溃 workerErrorCount +2、双 rebuild 交错）。
+    vi.useFakeTimers();
+    try {
+      const run = makeRunningRun();
+      const deps = makeDeps();
+      const handlers = makeHandlers();
+
+      // 第一次：uncaught error 事件（进入退避 delay，不 await 完成）
+      const p1 = handleWorkerError(run, new Error("worker crashed"), deps, handlers);
+      // 第二次：exit(1) 在退避窗口内到达（runtime 尚未被 replace，同代际）
+      const p2 = handleWorkerExit(run, 1, makeHandle(), deps, handlers);
+      await vi.advanceTimersByTimeAsync(1000); // 跳过退避 → 第一个事件的 rebuild 执行
+      await Promise.all([p1, p2]);
+
+      // 双事件只处理一次：计数 +1（非 +2）、单次 rebuild、run 保持 running
+      expect(run.meta.workerErrorCount).toBe(1);
+      expect(deps.workerHost.start).toHaveBeenCalledTimes(1);
+      expect(run.state.status).toBe("running");
+      expect(deps.onRunDone).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("幂等守卫不误伤新代际：rebuild 后新 worker 的 error 正常处理（计数/重建各自 +1）", async () => {
+    vi.useFakeTimers();
+    try {
+      const run = makeRunningRun();
+      const deps = makeDeps();
+      const handlers = makeHandlers();
+
+      // 第一代：error → 标记本代际 → 退避 → rebuild（新 RunRuntime，标志重置 false）
+      const p1 = handleWorkerError(run, new Error("crash gen-1"), deps, handlers);
+      await vi.advanceTimersByTimeAsync(1000);
+      await p1;
+      expect(deps.workerHost.start).toHaveBeenCalledTimes(1);
+
+      // 新代际（rebuildRuntime 构造的真 RunRuntime 实例）标志为 false
+      expect((run.runtime as { receivedTerminalMessage?: boolean }).receivedTerminalMessage).toBe(false);
+
+      // 新代际再崩 → 正常走重试矩阵（计数 2、第二次 rebuild）
+      const p2 = handleWorkerError(run, new Error("crash gen-2"), deps, handlers);
+      // 第二次重试退避是指数值 backoffDelay(2) = 1000×2 = 2000ms，非 1000
+      await vi.advanceTimersByTimeAsync(2000);
+      await p2;
+
+      expect(run.meta.workerErrorCount).toBe(2);
+      expect(deps.workerHost.start).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("超限路径同样幂等：error + exit(1) 双到达只转一次 done,failed（onRunDone 只调一次）", async () => {
+    vi.useFakeTimers();
+    try {
+      // 预置 workerErrorCount = MAX（3）：本次 error 计数到 4 → 超限 → done,failed
+      const run = makeRunningRun({ workerErrorCount: 3 });
+      const deps = makeDeps();
+      const handlers = makeHandlers();
+
+      const p1 = handleWorkerError(run, new Error("worker crashed"), deps, handlers);
+      const p2 = handleWorkerExit(run, 1, makeHandle(), deps, handlers);
+      await Promise.all([p1, p2]);
+
+      expect(run.meta.workerErrorCount).toBe(4); // 只 +1
+      expect(run.state.status).toBe("done");
+      expect(run.state.reason).toBe("failed");
+      expect(deps.onRunDone).toHaveBeenCalledTimes(1);
+      expect(deps.eventBus.emit).toHaveBeenCalledTimes(1); // 单次 unregister，无重复
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 // ── [F1] handleWorkerMessage：return/error 标记 receivedTerminalMessage ────
 
 describe("handleWorkerMessage — [F1] 终态消息标记", () => {

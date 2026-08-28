@@ -17,6 +17,9 @@ import {
 	MAX_CONSECUTIVE_FAILURES,
 	normalizeErrorSignature,
 	setupLoopGate,
+	TEARDOWN_FORCE_EXIT_MS,
+	assertSafeTimerDelay,
+	armForceExitTeardown,
 } from "../src/loop-gate.js";
 
 import {
@@ -34,6 +37,9 @@ import {
 const originalSchemaEnv = process.env[SCHEMA_ENV_NAME];
 
 afterEach(() => {
+	// 闸门 terminal 会武装真实 15s 兜底硬退 timer——触发 terminal 的测试用 fake timers
+	// 包裹，此处还原真实 timers 并丢弃未触发的 fake timer（不残留跨测试的硬退风险）
+	vi.useRealTimers();
 	restoreSchemaEnv(originalSchemaEnv);
 	vi.restoreAllMocks();
 });
@@ -361,6 +367,133 @@ describe("additionalProperties 渐进删除签名区分（AP 回归：D4 默认�
 	});
 });
 
+// ── 嵌套 AP keys 下钻（R4-F2）────────────────────────────
+//
+// schema 属性 a 下 AP:false、模型在 a 里逐个删多余字段时，AP 错误行路径位是 a
+//（非 root；pi-ai formatValidationPath 对 instancePath /a 点分，探针核实）——
+// 旧「只取顶层 keys」实现在该场景顶层 keys 恒不变 → 折叠同签名 3 次误杀。
+// 修复：按 AP 错误行路径位下钻实参回显取该层 keys；嵌套层 keys 缩小 = 新签名。
+/** 构造「指定路径位」的 AP 错误（嵌套场景：路径位非 root，pi-ai 实际格式同构）。 */
+function apErrorAt(path: string, args: Record<string, unknown>): string {
+	return paramLayerErrorText(
+		`  - ${path}: must not have additional properties`,
+		JSON.stringify(args, null, 2),
+	);
+}
+
+describe("嵌套 AP keys 下钻（R4-F2：路径位 a / a.b / list.0）", () => {
+	it("一层嵌套逐删字段：每步互异签名计数重起，不触发 terminal（误杀回归）", () => {
+		const gate = new LoopGate();
+		// 模型在 a 里删多余字段：{keep, extra1, extra2} → {keep, extra1} → {keep}
+		expect(gate.onToolExecEnd(true, apErrorAt("a", { a: { keep: 1, extra1: 2, extra2: 3 } })))
+			.toEqual({ terminal: false, newlyTerminal: false });
+		expect(gate.consecutiveFailures).toBe(1);
+		expect(gate.onToolExecEnd(true, apErrorAt("a", { a: { keep: 1, extra1: 2 } })))
+			.toEqual({ terminal: false, newlyTerminal: false });
+		expect(gate.consecutiveFailures).toBe(1);
+		expect(gate.onToolExecEnd(true, apErrorAt("a", { a: { keep: 1 } })))
+			.toEqual({ terminal: false, newlyTerminal: false });
+		expect(gate.consecutiveFailures).toBe(1);
+		expect(gate.terminal).toBe(false);
+		// 签名级：三步互异（旧实现顶层 keys 恒 {a} → 三步同签名误杀）
+		const sigs = [
+			apErrorAt("a", { a: { keep: 1, extra1: 2, extra2: 3 } }),
+			apErrorAt("a", { a: { keep: 1, extra1: 2 } }),
+			apErrorAt("a", { a: { keep: 1 } }),
+		].map(normalizeErrorSignature);
+		expect(new Set(sigs).size).toBe(3);
+	});
+
+	it("同一嵌套多余字段反复失败 → 同签名第 3 次仍触闸（闸门有界语义在嵌套层保留）", () => {
+		const gate = new LoopGate();
+		const err = apErrorAt("a", { a: { keep: "wrong" } });
+		gate.onToolExecEnd(true, err);
+		gate.onToolExecEnd(true, err);
+		expect(gate.terminal).toBe(false);
+		expect(gate.onToolExecEnd(true, err)).toEqual({ terminal: true, newlyTerminal: true });
+	});
+
+	it("两层嵌套（a.b）与数组元素（list.0）：嵌套层 keys 缩小 = 新签名", () => {
+		// 两层嵌套：a.b 层删 rogue
+		expect(normalizeErrorSignature(apErrorAt("a.b", { a: { b: { x: 1, rogue: 2 } } })))
+			.not.toBe(normalizeErrorSignature(apErrorAt("a.b", { a: { b: { x: 1 } } })));
+		// 数组元素：list.0 层删 rogue（formatValidationPath 对 instancePath /list/0 点分）
+		expect(normalizeErrorSignature(apErrorAt("list.0", { list: [{ k: "v", rogue: 1 }] })))
+			.not.toBe(normalizeErrorSignature(apErrorAt("list.0", { list: [{ k: "v" }] })));
+	});
+
+	it("下钻中断降级不贡献：路径不存在 / 目标层非 object / 数组下标越界 → 退化为错误行块口径", () => {
+		// 基线：同错误行 + 回显段损坏（JSON.parse 失败）→ keys 无贡献，仅路径位 token
+		const corruptedGhost = paramLayerErrorText("  - ghost: must not have additional properties", "{broken");
+		const corruptedA = paramLayerErrorText("  - a: must not have additional properties", "{broken");
+		// 路径不存在（ghost 不在实参里）
+		expect(normalizeErrorSignature(apErrorAt("ghost", { a: 1 }))).toBe(normalizeErrorSignature(corruptedGhost));
+		// 目标层非 plain object（a 是标量）
+		expect(normalizeErrorSignature(apErrorAt("a", { a: "scalar" }))).toBe(normalizeErrorSignature(corruptedA));
+		// 数组下标越界（list 只有 0 号元素，报错却在 list.3）
+		expect(normalizeErrorSignature(apErrorAt("list.3", { list: [{ k: 1 }] })))
+			.toBe(normalizeErrorSignature(corruptedGhost.replace("ghost", "list.3")));
+	});
+
+	it("根级与嵌套 AP 并存：两条 AP 行各自下钻，任一层 keys 变化 = 新签名", () => {
+		// 同一错误块两条 AP 行（root + a）：root 桶取顶层 keys、a 桶取 a 层 keys
+		const err = (args: Record<string, unknown>) => paramLayerErrorText(
+			[
+				"  - root: must not have additional properties",
+				"  - a: must not have additional properties",
+			].join("\n"),
+			JSON.stringify(args, null, 2),
+		);
+		// 顶层删 top：root 桶变化 → 新签名（a 层不变）
+		expect(normalizeErrorSignature(err({ a: { x: 1, rogue: 2 }, top: 1 })))
+			.not.toBe(normalizeErrorSignature(err({ a: { x: 1, rogue: 2 } })));
+		// a 层删 rogue：a 桶变化 → 新签名（顶层不变）
+		expect(normalizeErrorSignature(err({ a: { x: 1, rogue: 2 }, top: 1 })))
+			.not.toBe(normalizeErrorSignature(err({ a: { x: 1 }, top: 1 })));
+	});
+});
+
+// ── AP marker 精确化（R4-F3）────────────────────────────
+//
+// 旧实现 /additional propert/i 子串匹配：字段名/字段列表恰好含该字样的非 AP 错误
+//（如 required message 列出名为 "additional properties" 的字段）伪触发 keys 分桶。
+// 修复后逐行匹配路径位后的固定文案（:/\s*must not have additional properties\s*$）。
+describe("AP marker 精确化（R4-F3：行级固定文案，子串版伪触发消除）", () => {
+	it("字段列表含 'additional properties' 字样的 required 错误不触发 AP 桶（keys 不进签名）", () => {
+		const weird = (echo: string) => paramLayerErrorText(
+			"  - root: must have required properties additional properties",
+			echo,
+		);
+		// keys 变化不改变签名 = keys 桶未激活（若伪触发，两签名必异）
+		expect(normalizeErrorSignature(weird(JSON.stringify({ x: 1 }, null, 2))))
+			.toBe(normalizeErrorSignature(weird(JSON.stringify({ x: 1, extra: 2 }, null, 2))));
+	});
+
+	it("正反对照：同构错误块换成真 AP 行后 keys 桶激活（证明上测的灵敏度）", () => {
+		const control = (echo: string) => paramLayerErrorText(AP_ERROR_LINE, echo);
+		expect(normalizeErrorSignature(control(JSON.stringify({ x: 1 }, null, 2))))
+			.not.toBe(normalizeErrorSignature(control(JSON.stringify({ x: 1, extra: 2 }, null, 2))));
+	});
+
+	it("message 位含 AP 字样但非完整固定文案收尾 → 不触发（整句匹配非子串）", () => {
+		// 行尾是 "…inside" 而非固定文案收束：旧子串版会伪触发，精确版不触发
+		const notAp = paramLayerErrorText("  - config: must not have additional properties inside", "{}");
+		const noEcho = "Validation failed for tool \"structured-output\":\n  - config: must not have additional properties inside";
+		expect(normalizeErrorSignature(notAp)).toBe(normalizeErrorSignature(noEcho));
+	});
+
+	it("真 AP 行行尾带空白仍触发（\\s*$ 容忍尾随空白）", () => {
+		const trailing = (echo: string) =>
+			paramLayerErrorText("  - root: must not have additional properties  ", echo);
+		// 与无空白版本同签名（容忍尾随空白）
+		expect(normalizeErrorSignature(trailing("{}")))
+			.toBe(normalizeErrorSignature(paramLayerErrorText(AP_ERROR_LINE, "{}")));
+		// keys 桶仍激活（keys 变化 → 新签名）
+		expect(normalizeErrorSignature(trailing(JSON.stringify({ x: 1 }, null, 2))))
+			.not.toBe(normalizeErrorSignature(trailing(JSON.stringify({ x: 1, extra: 2 }, null, 2))));
+	});
+});
+
 // ── echo keys 分桶回归（第四轮实测：并集恒定陷阱）─────────────
 //
 // 误杀复现（旧实现，esbuild+node 探针实证）：6 required 字段 schema 模型每轮修 1 个
@@ -465,18 +598,25 @@ describe("echo keys 分桶（并集恒定陷阱回归）", () => {
 // ── 装配层（setupLoopGate + mock pi：使用者黑盒 + 形态）───────────
 
 describe("setupLoopGate assembly (via mock pi)", () => {
-	it("第 3 次同签名失败 → shutdown 调用恰一次 + appendEntry 含指引 + onTerminal 恰一次", async () => {
+	it("第 3 次同签名失败 → abort+shutdown 恰一次（abort 先行）+ 双通道日志 + onTerminal 恰一次", async () => {
+		vi.useFakeTimers(); // terminal 武装 15s 兤底硬退 timer——fake 掉避免真实 timer 泄漏
 		const pi = createMockPi();
 		const onTerminal = vi.fn();
+		// R3 F-3：stderr 通道可见性——SW spawn 管道转发 stderr 时主进程可见（此处锁 SO 侧写入行为）
+		const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 		setupLoopGate(pi, { onTerminal });
 
 		const ev = failedToolEndWith(paramLayerErrorText("  - magic: must be equal to constant", '{"magic":"nope"}'));
 		await pi.emit("tool_execution_end", ev);
-		await pi.emit("tool_execution_end", failedToolEndWith(paramLayerErrorText("  - magic: must be equal to constant", '{"magic":"still-nope"}')));
+		await pi.emit("tool_execution_end", ev);
 		expect(pi.ctx.shutdown).not.toHaveBeenCalled();
 
-		await pi.emit("tool_execution_end", failedToolEndWith(paramLayerErrorText("  - magic: must be equal to constant", '{"magic":"third"}')));
+		await pi.emit("tool_execution_end", ev);
+		// R3 F-2：abort 先行（停当前 turn，截断 token 燃烧窗口）再 shutdown（请求优雅退出）
+		expect(pi.ctx.abort).toHaveBeenCalledTimes(1);
 		expect(pi.ctx.shutdown).toHaveBeenCalledTimes(1);
+		expect(pi.ctx.abort.mock.invocationCallOrder[0]!)
+			.toBeLessThan(pi.ctx.shutdown.mock.invocationCallOrder[0]!);
 		expect(onTerminal).toHaveBeenCalledTimes(1);
 
 		// 形态：appendEntry 持久化记录（session JSONL 通道，不进 LLM 上下文）
@@ -484,9 +624,13 @@ describe("setupLoopGate assembly (via mock pi)", () => {
 		const [entryType, entryData] = pi.appendEntry.mock.calls[0]!;
 		expect(entryType).toBe("structured-output:gate");
 		expect(entryData).toMatchObject({ event: "terminated", consecutiveFailures: 3 });
+		// R3 F-3 双通道：stderr 同步写入（含 Terminated 头与 👉 恢复指引）
+		expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("[structured-output gate] Terminated"));
+		expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("👉"));
 
-		// 第 4 次失败不重复 shutdown / 日志 / 回调（幂等）
+		// 第 4 次失败不重复 abort / shutdown / 日志 / 回调（幂等）
 		await pi.emit("tool_execution_end", ev);
+		expect(pi.ctx.abort).toHaveBeenCalledTimes(1);
 		expect(pi.ctx.shutdown).toHaveBeenCalledTimes(1);
 		expect(pi.appendEntry).toHaveBeenCalledTimes(1);
 		expect(onTerminal).toHaveBeenCalledTimes(1);
@@ -525,10 +669,52 @@ describe("setupLoopGate assembly (via mock pi)", () => {
 	});
 });
 
+
+// ── terminal bounded teardown（R3 F-2：abort 停当前 turn + 15s 兤底硬退）──────────
+
+describe("terminal bounded teardown（R3 F-2）", () => {
+	it("兤底窗口常量 = 15_000ms（10s 优雅 + 5s 硬杀余量合并；锁定防意外漂移）", () => {
+		expect(TEARDOWN_FORCE_EXIT_MS).toBe(15_000);
+	});
+
+	it("兤底 timer 到点（15s）仍未退出 → stderr 留因 + process.exit(1) 硬退；窗口内不退", async () => {
+		vi.useFakeTimers();
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+		const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		armForceExitTeardown();
+
+		await vi.advanceTimersByTimeAsync(TEARDOWN_FORCE_EXIT_MS - 1);
+		expect(exitSpy).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(exitSpy).toHaveBeenCalledTimes(1);
+		expect(exitSpy).toHaveBeenCalledWith(1);
+		// 硬退前 stderr 已留原因（失败要出声：父进程与排查者可见退出原因）
+		expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("force-exiting"));
+	});
+
+	it("幂等：重复武装只挂一个 timer，到点只硬退一次", async () => {
+		vi.useFakeTimers();
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+		armForceExitTeardown();
+		armForceExitTeardown();
+		await vi.advanceTimersByTimeAsync(TEARDOWN_FORCE_EXIT_MS);
+		expect(exitSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("assertSafeTimerDelay：非有限值 / 超 2^31-1 fail-fast（不静默 clamp）；安全域放行", () => {
+		expect(() => assertSafeTimerDelay(Number.NaN, "t")).toThrow(/not a finite number/);
+		expect(() => assertSafeTimerDelay(Number.POSITIVE_INFINITY, "t")).toThrow(/not a finite number/);
+		expect(() => assertSafeTimerDelay(2_147_483_648, "t")).toThrow(/2\^31-1/);
+		expect(() => assertSafeTimerDelay(TEARDOWN_FORCE_EXIT_MS, "t")).not.toThrow();
+		expect(() => assertSafeTimerDelay(2_147_483_647, "t")).not.toThrow();
+	});
+});
+
 // ── 端到端装配（index.ts workflow 模式整体分岔）─────────────────
 
 describe("index assembly: gate wired into workflow mode", () => {
 	it("workflow 模式下 3 次同签名失败 → terminal 后 turn_end 不 steer（hook 保险分支）", async () => {
+		vi.useFakeTimers(); // terminal 武装 15s 兤底硬退 timer——fake 掉避免真实 timer 泄漏
 		const pi = createMockPi();
 		await loadExtension(pi, SCHEMA);
 

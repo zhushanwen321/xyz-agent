@@ -328,6 +328,21 @@ describe("mirrorMainProcessFlags", () => {
     const r = mirrorMainProcessFlags(["bun", "/pi", "-e", "/a", "-e=/b", "-e", "/c"]);
     expect(r.extensionPaths).toEqual(["/a", "/b", "/c"]);
   });
+
+  // [MF-7a] flag 判定收窄为 startsWith("--")：单 - 开头的合法路径不被误判为 flag。
+  it("[MF-7a] - 开头的路径被当值镜像（不误判 flag）", () => {
+    const r = mirrorMainProcessFlags(["bun", "/pi", "--extension", "-weird-dir/ext.js"]);
+    expect(r.extensionPaths).toEqual(["-weird-dir/ext.js"]);
+  });
+
+  // [MF-7a] -- 开头的真 flag 仍正确跳过：--extension 后跟 --flag 时不吃值、不越界。
+  it("[MF-7a] --extension 后跟 -- 开头真 flag → 不吃值", () => {
+    const r = mirrorMainProcessFlags([
+      "bun", "/pi", "--extension", "--approve", "--extension", "/real.js",
+    ]);
+    expect(r.extensionPaths).toEqual(["/real.js"]);
+    expect(r.approve).toBe(true);
+  });
 });
 
 // ============================================================

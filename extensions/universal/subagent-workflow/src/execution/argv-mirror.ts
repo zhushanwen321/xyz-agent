@@ -86,9 +86,13 @@ export function mirrorMainProcessFlags(argv: readonly string[]): MirrorFlags {
       continue;
     }
     // 空格形式 --extension <path> / -e <path>：值在下一个 token
+    // [MF-7a] flag 判定收窄为 startsWith("--")：守卫原为 !startsWith("-")，把以单个
+    // - 开头的合法路径（如相对路径 -weird-dir/x.md）误判为 flag 跳过——extension 路径
+    // 静默丢失。pi CLI 的多字符长 flag 一律 -- 前缀，单 - 只接单字符短 flag（-e 本身），
+    // 故「-- 开头才算 flag」不误吃真 flag 且放行 - 开头路径。
     if (tok === "--extension" || tok === "-e") {
       const next = flagArgs[i + 1];
-      if (next !== undefined && !next.startsWith("-") && next.length > 0) {
+      if (next !== undefined && !next.startsWith("--") && next.length > 0) {
         extensionPaths.push(next);
         i++; // 跳过值
       }

@@ -22,10 +22,12 @@ export function createMockPi() {
   const sendUserMessage = vi.fn();
   const appendEntry = vi.fn();
   // U2（D3 闸门）：事件 handler 的第二参数 ctx（ExtensionContext）。
-  // pi 真实形态：shutdown 存在于 ctx（ExtensionContextActions），不在 pi 顶层
-  // API——闸门经 (event, ctx) => ctx.shutdown() 终止子进程。mock 只补齐闸门消费的成员。
+  // pi 真实形态：shutdown/abort 存在于 ctx（ExtensionContextActions），不在 pi 顶层
+  // API——闸门 terminal 时经 ctx.abort()（停当前 turn）+ ctx.shutdown()（请求优雅
+  // 退出）终止子进程。mock 只补齐闸门消费的成员。
   const shutdown = vi.fn();
-  const handlerCtx = { shutdown };
+  const abort = vi.fn();
+  const handlerCtx = { shutdown, abort };
   // on 的类型保持 Mock<Procedure>（vi.fn() 无实现）——Mock 调用签名参数是 any，
   // 赋给 ExtensionAPI 的 on 重载兼容；收集逻辑经 mockImplementation 注入，规避
   // 宽签名回调（参数逆变）与重载 handler 的静态类型冲突。

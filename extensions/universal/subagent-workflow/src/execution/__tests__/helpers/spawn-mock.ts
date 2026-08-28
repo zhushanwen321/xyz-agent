@@ -89,6 +89,10 @@ export class FakeChild extends EventEmitter {
   stdin = new PassThrough();
   killed = false;
   killSignal: string | undefined;
+  // [race-F4] SIGKILL 升级判定读真 ChildProcess 的 exitCode/signalCode（未退出时均为
+  // null）——FakeChild 同形提供，测试可赋值模拟已死进程（如 deliverMessage 写后死检测）。
+  exitCode: number | null = null;
+  signalCode: string | null = null;
   kill(sig?: string): boolean {
     this.killed = true;
     this.killSignal = sig;
