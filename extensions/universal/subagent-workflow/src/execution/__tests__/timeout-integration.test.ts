@@ -251,10 +251,17 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(false);
+    // [F-4 假红源修复] env 隔离：多数用例默认 maxTurns=undefined →
+    // resolveSpawnWatchdogMs 走 env 兑底分支，宿主 export SPAWN_WATCHDOG 即假红
+    //（极端值 3e9 还会在 assertSafeTimerDelay fail-fast 直接炸掉 runSpawn）。
+    // 用例内显式 stubEnv 的值照常叠加生效（inner describe 的 afterEach
+    // unstubAllEnvs 与本处兼容）。
+    vi.stubEnv(SPAWN_WATCHDOG_ENV, "");
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   // ── 1. watchdog 到期 → child.kill ──

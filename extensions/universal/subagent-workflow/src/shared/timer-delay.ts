@@ -24,12 +24,25 @@ export const MAX_TIMER_DELAY_MS = 2_147_483_647;
  * 错误信息含上限值与恢复指引（建议 clamp 后重试）——不静默 clamp：调用方须显式
  * 决定 clamp 目标值（语义归属调用方，helper 不替用户做语义决定）。
  *
+ * [F-3 NaN 穿透修复] 非有限数（Number.isFinite 为 false：NaN / ±Infinity）同样
+ * fail-fast——旧实现只挡 `> MAX`，NaN 的 `NaN > MAX` 为 false 静默放行，
+ * setTimeout(fn, NaN) 被 Node 塌缩为 1ms 立即触发（语义反转：watchdog 刚启动就误杀）。
+ * 错误消息区分「非有限值」与「超出上限」两种指引，恢复动作各自可达。
+ *
  * @param ms 即将作为 setTimeout delay 的毫秒值（调用方保证已过 undefined/<=0 分流；
- *   本函数只防溢出域，0/负值的「禁用/不限」语义由各入口自行处理）
+ *   本函数只防溢出域与非有限值，0/负值的「禁用/不限」语义由各入口自行处理）
  * @param source 值的来源标识（进错误信息，定位用，如 "budgetTimeMs" / env 名）
- * @throws Error 当 ms 超出 MAX_TIMER_DELAY_MS
+ * @throws Error 当 ms 非有限（NaN/±Infinity）或超出 MAX_TIMER_DELAY_MS
  */
 export function assertSafeTimerDelay(ms: number, source: string): void {
+  if (!Number.isFinite(ms)) {
+    throw new Error(
+      `[subagent-workflow] ${source} = ${ms} is not a finite number (NaN/±Infinity). ` +
+        "Non-finite delays collapse to 1ms in Node setTimeout and fire immediately. " +
+        "Recovery: fix the upstream computation that produced this value " +
+        "(e.g. guard division/parse results before passing them in) and retry.",
+    );
+  }
   if (ms > MAX_TIMER_DELAY_MS) {
     throw new Error(
       `[subagent-workflow] ${source} = ${ms} exceeds the Node setTimeout limit ` +

@@ -98,10 +98,16 @@ describe("runSpawn", () => {
     vi.clearAllMocks();
     // existsSync 默认 false（sessionFile 不存在兜底路径）
     mockExistsSync.mockReturnValue(false);
+    // [F-4 假红源修复] env 隔离：makeOpts 默认 maxTurns=undefined →
+    // resolveSpawnWatchdogMs 走 env 兑底分支，宿主 export SPAWN_WATCHDOG 即假红。
+    // 空串 = 未设（raw falsy 判定）；MF-4b 用例内的手动 save/delete/restore 与本
+    // stub 兼容（finally 恢复到 stub 值，语义不变）。
+    vi.stubEnv(SPAWN_WATCHDOG_ENV, "");
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   // ── 1. orphan 进程兜底（C1）──

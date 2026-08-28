@@ -153,8 +153,9 @@ function _safePost(msg, context) {
         scene: (secondArg && typeof secondArg === "object" && secondArg.scene) || undefined,
         phase: (secondArg && typeof secondArg === "object" && secondArg.phase) || undefined,
         thinkingLevel: (secondArg && typeof secondArg === "object" && secondArg.thinkingLevel) || $THINKING_LEVEL,
-        // step 级 turn 上限（turn limiter；未传/<=0 = 不限，不挂 spawn watchdog）
-        maxTurns: (secondArg && typeof secondArg === "object" && secondArg.maxTurns) || undefined,
+        // step 级 turn 上限（turn limiter；显式 0/负 = 显式不限，压过 spawn watchdog env 兑底，SP-6）
+        // ?? 语义保真：仅 null/undefined 归 undefined（走 env 兑底），显式 0 保留（U5 参数 > env）
+        maxTurns: (secondArg && typeof secondArg === "object" ? secondArg.maxTurns : undefined) ?? undefined,
         // P4 D9③：step 级 engine 显式指定（仅限必须某引擎独有能力的场景）
         engine: (secondArg && typeof secondArg === "object" && secondArg.engine) || undefined,
       };

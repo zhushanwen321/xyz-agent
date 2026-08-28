@@ -1604,12 +1604,16 @@ export async function runSpawn(
     }
 
     // g. collectResult（完全复用——全部从 record 读）
+    // [F-1] schemaExpected：schema/schemaEnv 任一存在即要求结构化产出（耦合形态
+    // 两者同设；解耦形态仅 schemaEnv 也要——tool 已注册，产出预期相同）。无有效
+    // parsedOutput 时由 collectResult 标注失败，不再静默 success。
     return collectResult(record, {
       startTime,
       success,
       error,
       sessionId: state.sessionHeader?.id ?? record.id,
       sessionFile: record.sessionFile,
+      schemaExpected: opts.schema !== undefined || opts.schemaEnv !== undefined,
     });
   } finally {
     // h. 清理临时 prompt 文件

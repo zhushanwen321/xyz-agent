@@ -30,6 +30,9 @@ describe("lifecycle-manager — V2 §5.2 模块 1", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     _resetLifecycleState();
+    // [F-4 同源修复] env 隔离：「默认超时」用例依赖 XYZ_SUBAGENT_IDLE_TIMEOUT_MS
+    // 未设基线（getEnvIdleTimeoutMs 会覆盖 DEFAULT），宿主 export 即假红。空串 = 未设。
+    vi.stubEnv("XYZ_SUBAGENT_IDLE_TIMEOUT_MS", "");
   });
 
   afterEach(() => {

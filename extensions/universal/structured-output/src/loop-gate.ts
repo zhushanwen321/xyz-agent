@@ -15,6 +15,9 @@
  *     前缀截断在大 schema 下会把「修复排序靠后字段」（消息前缀不变）误折叠成同签名。
  *     required 错误的完整缺失字段列表从 message 解析并入 token（pi-ai bullet 路径位
  *     仅含 requiredProperties[0]，只取路径位会把「修好非首字段」折叠成同签名误杀）。
+ *     AP 错误（D4 注入 additionalProperties:false，路径位恒 "root"）从实参回显段
+ *     解析顶层 keys 并入 token——keys 是结构信息不是值：keys 集合缩小 = 模型在删
+ *     多余字段 = 真实进展；实参值变化（keys 不变）不产生新签名，既有语义保留。
  *   - 连续同签名失败达 MAX_CONSECUTIVE_FAILURES（3）→ terminal 态：
  *     写日志（stderr + appendEntry 双通道，含 §5.2 形态 b 恢复指引）后调
  *     ctx.shutdown() 优雅终止子进程（RPC mode 在 agent_settled 后 exit）。
@@ -181,18 +184,53 @@ function truncateSignature(text: string): string {
 }
 
 /**
+ * 从原始错误消息的 "Received arguments:" 段提取实参顶层 keys 集合（AP 误杀修复）。
+ *
+ * 背景（D4）：additionalProperties:false 默认注入后，模型带多余字段时 pi-ai 0.84.1
+ * validation.js 报 "  - root: must not have additional properties"——bullet 路径位
+ * 恒为 "root"（根级非 required 错误不进 formatValidationPath 特判，本机探针核实），
+ * 错误行块不含多余字段名，字段 token 恒同集合；而模型逐个删除多余字段是真实进展，
+ * 仅凭错误行块会折叠成同签名、3 次 terminal 误杀。实参回显段是
+ * JSON.stringify(toolCall.arguments, null, 2) 产物（validation.js 逐字核实），可
+ * JSON.parse——顶层 keys 是结构信息：keys 集合缩小 = 模型在删字段 = 进展 → 并入
+ * token 集合产生新签名。
+ *
+ * 与「剔除实参回显」既有语义的兼容区分（本意不变）：剔除回显的本意是「实参值变化
+ * 不算进展」——keys 是结构不是值：值变化（keys 不变）不影响签名，既有语义保留；
+ * keys 变化（结构变化）才产生新签名。回显段缺失 / JSON 解析失败 / 非 plain object
+ * （null、数组、原始值）一律返回空数组（不贡献 token）——签名退化为仅错误行块口径
+ * （如 steer 截断后的残缺回显、适配层改写过 errorMessage 的场景），不会比修复前更差。
+ */
+function parseArgsEchoTopLevelKeys(errorText: string, markerIdx: number): string[] {
+	const echoSection = errorText.slice(markerIdx + ARGS_ECHO_MARKER.length).trim();
+	if (!echoSection) return [];
+	try {
+		const parsed: unknown = JSON.parse(echoSection);
+		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+		return Object.keys(parsed);
+	} catch {
+		return [];
+	}
+}
+
+/**
  * 错误签名归一化（审查项#7：字段/路径 token 集合哈希）：
- *   1. 剔除 "Received arguments:" 起的实参回显（语义保留——实参变化不等于进展）。
- *   2. 提取字段/路径 token 集合 → 排序哈希为签名：集合不变 = 同签名（无进展）；
- *      集合变化 = 新签名（渐进修复——集合缩小是主形态——不再被前缀截断误折叠）。
- *   3. 提取失败（无任何字段 token）fallback 到 500c 前缀硬上限（既有行为）。
- * 归一化对任意错误文本安全（非校验类错误走 fallback 分支）。
+ *   1. 剔除 "Received arguments:" 起的实参回显的「值」——值变化不等于进展（既有
+ *      语义保留）；但回显段的顶层 keys 作为结构信息并入 token（AP 渐进删除的进展
+ *      坐标，见 parseArgsEchoTopLevelKeys）。
+ *   2. 提取字段/路径 token 集合 ∪ 实参 keys → 去重排序哈希为签名：集合不变 = 同
+ *      签名（无进展）；集合变化 = 新签名（渐进修复——集合缩小是主形态——不再被
+ *      前缀截断误折叠）。
+ *   3. 提取失败（无任何 token）fallback 到 500c 前缀硬上限（既有行为）。
+ * 归一化对任意错误文本安全（非校验类错误 / 回显段残缺均走 fallback 或退化口径）。
  */
 export function normalizeErrorSignature(errorText: string): string {
 	const markerIdx = errorText.indexOf(ARGS_ECHO_MARKER);
 	const errorLines = (markerIdx >= 0 ? errorText.slice(0, markerIdx) : errorText).trim();
 	const tokens = extractErrorFieldTokens(errorLines);
-	return tokens.length > 0 ? fieldSetSignature(tokens) : truncateSignature(errorLines);
+	if (markerIdx >= 0) tokens.push(...parseArgsEchoTopLevelKeys(errorText, markerIdx));
+	const unique = [...new Set(tokens)];
+	return unique.length > 0 ? fieldSetSignature(unique) : truncateSignature(errorLines);
 }
 
 /**

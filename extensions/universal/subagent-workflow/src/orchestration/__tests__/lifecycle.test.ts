@@ -251,17 +251,42 @@ describe("runWorkflow", () => {
     expect(deps.eventBus.emit).not.toHaveBeenCalled();
   });
 
-  it("带 budgetTimeMs 时调度时间预算计时器", async () => {
+  it("带 budgetTimeMs 时调度时间预算计时器（真实消费：挂载 + 到期 time_limited）", async () => {
     const deps = makeDeps();
-    const scheduleTimeBudgetSpy = vi.fn(() => undefined);
-    (deps as LifecycleDeps & { scheduleTimeBudget?: unknown }).scheduleTimeBudget = scheduleTimeBudgetSpy;
     const spec = makeSpec({ budgetTimeMs: 3000 });
 
     const runId = await runWorkflow(spec, deps);
+    const run = deps.runs.get(runId)!;
 
-    // scheduleTimeBudget 在 lifecycle 内被调（runWorkflow 内联调，非走 deps.scheduleTimeBudget）
-    // 注意：runWorkflow 内直接调本文件的 scheduleTimeBudget，不读 deps.scheduleTimeBudget
-    expect(runId).toMatch(/^wf-/);
+    // 生产行为面①：budgetTimeMs>0 → RunRuntime.timeBudgetTimer 被真实挂载
+    //（scheduleTimeBudget 产出的 Node timer，非死代码 spy）
+    expect(run.runtime?.timeBudgetTimer).toBeDefined();
+
+    // 生产行为面②：到期后 abortRun(time_limited) 真实触发——run 转 done，
+    // reason/error/通知全部落位（文件级 beforeEach 已 fake timers）
+    await vi.advanceTimersByTimeAsync(3000);
+    await flushMicrotasks();
+
+    expect(run.state.status).toBe("done");
+    expect(run.state.reason).toBe("time_limited");
+    expect(run.state.error).toContain("Time budget exceeded");
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("pending:unregister", {
+      id: runId,
+      reason: "time_limited",
+    });
+  });
+
+  it("未传 budgetTimeMs → 不挂时间预算计时器（对照：runtime.timeBudgetTimer undefined）", async () => {
+    const deps = makeDeps();
+    const runId = await runWorkflow(makeSpec(), deps);
+    const run = deps.runs.get(runId)!;
+
+    expect(run.runtime?.timeBudgetTimer).toBeUndefined();
+
+    // 无预算 → 不存在到期 abort：推进 10min 后 run 仍 running
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    await flushMicrotasks();
+    expect(run.state.status).toBe("running");
   });
 
   it("signal 已 abort → fail fast（抛错，不创建 run）", async () => {

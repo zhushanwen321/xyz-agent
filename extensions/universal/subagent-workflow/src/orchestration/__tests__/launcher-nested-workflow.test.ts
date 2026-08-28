@@ -7,7 +7,7 @@
  * 通过 vi.mock("../lifecycle.ts") 控制 runWorkflow：返回固定 runId + 把预构造的
  * child run 注入 deps.runs，使 pollRunToResult 首轮即命中 done 返回（无需真实 worker）。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Budget } from "../models/budget.ts";
 import type { RunSpec } from "../models/run-spec.ts";
@@ -162,6 +162,17 @@ function setupRunWorkflow(childRun: WorkflowRun): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // [F-4 假红源修复] env 隔离对称化：本文件的「不限时」用例（deadline 传导 /
+  // runAndWait timeoutMs 语义）依赖「XYZ_SUBAGENT_RUN_WATCHDOG_MS 未设」基线，
+  // 宿主 shell export 即假红（U7 describe 内部 stubEnv 不覆盖同文件其他用例）。
+  // 空串 = 未设（getEnvRunWatchdogMs 的 raw falsy 判定）；SPAWN_WATCHDOG 同款
+  // 防御（launcher 不读，防未来接线后回归）。
+  vi.stubEnv(RUN_WATCHDOG_ENV, "");
+  vi.stubEnv("XYZ_SUBAGENT_SPAWN_WATCHDOG_MS", "");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 // ── tests ────────────────────────────────────────────────────

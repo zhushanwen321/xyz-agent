@@ -118,16 +118,23 @@ function legacyHead(text: string): string {
 }
 
 describe("normalizeErrorSignature", () => {
-	it("剔除 'Received arguments:' 起的实参回显：同错误行不同回显 → 同签名", () => {
+	it("剔除回显语义收窄（AP 修复）：实参值变化（keys 不变）→ 同签名；keys 变化（结构变化）→ 新签名", () => {
 		const a = paramLayerErrorText(
 			'  - assessments.0.impact: must be string\n  - name: must be string',
 			'{"name": 1}',
 		);
+		// keys 同为 {name}：回显值随便变（含嵌套大值）不算进展——「实参值变化 ≠ 进展」本意保留
 		const b = paramLayerErrorText(
 			'  - assessments.0.impact: must be string\n  - name: must be string',
-			'{"name": "x", "extra": {"deeply": {"nested": [1,2,3]}}}',
+			'{"name": {"deeply": {"nested": [1,2,3]}}}',
 		);
 		expect(normalizeErrorSignature(a)).toBe(normalizeErrorSignature(b));
+		// keys 变化（+extra）：结构变化 → 新签名（AP 渐进删除的语义根据）
+		const c = paramLayerErrorText(
+			'  - assessments.0.impact: must be string\n  - name: must be string',
+			'{"name": 1, "extra": 2}',
+		);
+		expect(normalizeErrorSignature(a)).not.toBe(normalizeErrorSignature(c));
 	});
 
 	it("字段集合不变 → 同签名（含同字段不同错误类型——集合不变 = 无进展，语义收紧）；集合不同 → 新签名", () => {
@@ -276,6 +283,79 @@ describe("required 渐进修复签名区分（F1 回归：bullet 路径位仅含
 		gate.onToolExecEnd(true, err);
 		gate.onToolExecEnd(true, err);
 		expect(gate.onToolExecEnd(true, err)).toEqual({ terminal: true, newlyTerminal: true });
+	});
+});
+
+// ── AP 渐进删除回归（D4：additionalProperties:false 默认注入）──────────────
+//
+// pi-ai 0.84.1 validation.js 本机探针实证：AP 错误 bullet 恒为
+// "  - root: must not have additional properties"（根级非 required 错误不进
+// formatValidationPath 特判 → 路径位恒 root，错误行块不含多余字段名）；实参回显是
+// JSON.stringify(toolCall.arguments, null, 2)。模型逐个删除多余字段时错误行块
+// 纹丝不动——旧实现折叠同签名、第 3 次 terminal 误杀；实参顶层 keys 集合是唯一
+// 进展信号（keys 缩小 = 在删字段 = 真实进展）。
+const AP_ERROR_LINE = "  - root: must not have additional properties";
+/** 按 validation.js 实际格式构造 AP 错误：错误行块 + pretty-print 实参回显。 */
+function apError(argObject: Record<string, unknown>): string {
+	return paramLayerErrorText(AP_ERROR_LINE, JSON.stringify(argObject, null, 2));
+}
+
+describe("additionalProperties 渐进删除签名区分（AP 回归：D4 默认注入）", () => {
+	it("锁定事实：AP 错误 bullet 路径位恒为 root（实参 keys 是唯一进展信号）", () => {
+		for (const args of [{ a: 1, b: 2, c: 3 }, { a: 1, b: 2 }, { x: true }]) {
+			expect(apError(args).split("\n")[1]).toContain("- root: must not have additional properties");
+		}
+	});
+
+	it("三多余字段逐个删除：三步互异签名计数重起，不触发 terminal（误杀回归）", () => {
+		const gate = new LoopGate();
+		// 模拟真实演化：{summary, confidence, extra} → 删 extra → 删 confidence
+		expect(gate.onToolExecEnd(true, apError({ summary: "s", confidence: 0.9, extra: true })))
+			.toEqual({ terminal: false, newlyTerminal: false });
+		expect(gate.consecutiveFailures).toBe(1);
+		expect(gate.onToolExecEnd(true, apError({ summary: "s", confidence: 0.9 })))
+			.toEqual({ terminal: false, newlyTerminal: false });
+		expect(gate.consecutiveFailures).toBe(1);
+		expect(gate.onToolExecEnd(true, apError({ summary: "s" })))
+			.toEqual({ terminal: false, newlyTerminal: false });
+		expect(gate.consecutiveFailures).toBe(1);
+		expect(gate.terminal).toBe(false);
+		// 签名级：三步互异
+		const s1 = normalizeErrorSignature(apError({ summary: "s", confidence: 0.9, extra: true }));
+		const s2 = normalizeErrorSignature(apError({ summary: "s", confidence: 0.9 }));
+		const s3 = normalizeErrorSignature(apError({ summary: "s" }));
+		expect(s1).not.toBe(s2);
+		expect(s2).not.toBe(s3);
+		expect(s1).not.toBe(s3);
+	});
+
+	it("同一多余字段反复失败（keys 集合不变）→ 同签名第 3 次仍触闸（闸门保护不丢失）", () => {
+		const gate = new LoopGate();
+		// keys 恒为 {summary}，仅值变化——不算进展，既有「值变化 ≠ 进展」语义在 AP 场景保留
+		gate.onToolExecEnd(true, apError({ summary: "wrong" }));
+		gate.onToolExecEnd(true, apError({ summary: "still wrong" }));
+		expect(gate.consecutiveFailures).toBe(2);
+		expect(gate.terminal).toBe(false);
+		expect(gate.onToolExecEnd(true, apError({ summary: "third try" })))
+			.toEqual({ terminal: true, newlyTerminal: true });
+	});
+
+	it("回显段 JSON 损坏 / 非 plain object → keys 不贡献，退化为错误行块口径（解析失败降级）", () => {
+		const errorOnly = `Validation failed for tool "structured-output":\n${AP_ERROR_LINE}`;
+		// 截断损坏的回显段：JSON.parse 失败 → 跳过 keys，与无回显段同签名
+		const corrupted = `${errorOnly}\n\nReceived arguments:\n{"summary": "trunca`;
+		expect(normalizeErrorSignature(corrupted)).toBe(normalizeErrorSignature(errorOnly));
+		// 数组 / null 实参（协议外畸形形态）：不贡献 keys，退化同上
+		const arrayEcho = `${errorOnly}\n\nReceived arguments:\n[1, 2]`;
+		const nullEcho = `${errorOnly}\n\nReceived arguments:\nnull`;
+		expect(normalizeErrorSignature(arrayEcho)).toBe(normalizeErrorSignature(errorOnly));
+		expect(normalizeErrorSignature(nullEcho)).toBe(normalizeErrorSignature(errorOnly));
+	});
+
+	it("同 keys 不同错误行 → 仍靠错误 token 区分（keys 只补坐标不掩盖错误变化）", () => {
+		const typeErr = paramLayerErrorText("  - count: must be number", '{"count": "x"}');
+		const otherErr = paramLayerErrorText("  - name: must be string", '{"count": "x"}');
+		expect(normalizeErrorSignature(typeErr)).not.toBe(normalizeErrorSignature(otherErr));
 	});
 });
 

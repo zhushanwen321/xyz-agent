@@ -518,3 +518,24 @@ describe("buildWorkerScript runtime — P3/P4 run-level model/thinkingLevel over
   });
 });
 
+describe("buildWorkerScript runtime — string 分支 maxTurns ?? 语义保真（F-2）", () => {
+  // 旧实现 `(cond && secondArg.maxTurns) || undefined` 把显式 0 抹成 undefined →
+  // 落 runSpawn 的 env 兑底（SPAWN_WATCHDOG env 设置时误挂 watchdog），与对象分支
+  // （直接透传保真）语义分裂。锁定运行时行为：string 分支传 0 → postMessage
+  // opts.maxTurns === 0。
+  it("agent(str, { maxTurns: 0 }) → postMessage opts.maxTurns === 0（不被抹成 undefined）", async () => {
+    const script = `await agent("p", { maxTurns: 0 }); return {};`;
+    const res = await runWorker(script);
+    expect(res.agentCalls).toHaveLength(1);
+    expect(res.agentCalls[0]!.opts.maxTurns).toBe(0);
+    expect(res.workerError).toBeUndefined();
+  });
+
+  it("agent(str, { maxTurns: 8 }) → 8；不传 → undefined（其余语义不变）", async () => {
+    const resA = await runWorker(`await agent("p", { maxTurns: 8 }); return {};`);
+    expect(resA.agentCalls[0]!.opts.maxTurns).toBe(8);
+    const resB = await runWorker(`await agent("p"); return {};`);
+    expect(resB.agentCalls[0]!.opts.maxTurns).toBeUndefined();
+  });
+});
+
