@@ -27,7 +27,7 @@
  *
  * 依赖方向：update-self-healer → constants + types + compare-versions + electron + node:fs/path
  */
-import { existsSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import type { LaunchResult } from '@xyz-agent/shared'
@@ -162,11 +162,18 @@ export async function maybeRollbackInterruptedUpdate(): Promise<boolean> {
           if (process.platform === 'darwin') rollbackMacBundle()
           else if (process.platform === 'linux') rollbackLinuxAppImage()
           // 标记已回滚（下次启动 no-op）；写失败也不影响（已回滚到位）
+          // m18（批次 5）：半截 raw 里 best-effort 提取 version（正则，提取不到则
+          // rolled-back 标记无 version 字段 → renderer 无 toast，维持现状下限）
+          const corruptVersion =
+            typeof raw === 'string'
+              ? raw.match(/"version":"(\d+\.\d+\.\d+(?:\.\d+)?)"/)?.[1]
+              : undefined
           try {
             writeFileSync(
               UPDATE_RESULT_FILE,
               JSON.stringify({
                 status: 'rolled-back',
+                ...(corruptVersion ? { version: corruptVersion } : {}),
                 at: new Date().toISOString(),
                 reason: 'rolled back after corrupt result.json',
               }),
@@ -194,16 +201,21 @@ export async function maybeRollbackInterruptedUpdate(): Promise<boolean> {
     if (data.status !== 'replacing') return false // done/failed/rolled-back 都是终态
 
     const oldPath = getOldBackupPath()
-    // .old 不存在：中断发生在下载/校验阶段，原 app 未被改动 → 无需回滚。
-    // 写 no-op 避免下次启动重复检测；返回 false 表示"没有回滚动作"。
+    // .old 不存在：无需回滚 → 写 no-op 避免下次启动重复检测；返回 false 表示"没有回滚动作"。
+    // m15（批次 5）：win 走 NSIS 无 .old 备份机制，no-op 仅发生在 wrapper 早死场景，
+    // reason 与 mac/linux 区分（wrapper 化后原「无 .old 备份」描述对 win 不准确）。
     if (!oldPath || !existsSync(oldPath)) {
+      const noOpReason =
+        process.platform === 'win32'
+          ? 'installer wrapper exited before completion'
+          : 'no .old backup: interrupted before replace phase'
       writeFileSync(
         UPDATE_RESULT_FILE,
         JSON.stringify({
           status: 'no-op',
           version: typeof data.version === 'string' ? data.version : undefined,
           at: new Date().toISOString(),
-          reason: 'no .old backup: interrupted before replace phase',
+          reason: noOpReason,
         }),
       )
       console.log('[update-self-healer] interrupted update had no .old backup; no-op')
@@ -243,6 +255,18 @@ const TERMINAL_CLEANUP_STATUSES: readonly UpdateResultStatus[] = [
   'no-op',
 ]
 
+// ── m14 失败日志保留（批次 5）────────────────────────────────────
+const LOG_RETENTION_DAYS = 7
+const HOURS_PER_DAY = 24
+const MINUTES_PER_HOUR = 60
+const SECONDS_PER_MINUTE = 60
+const MS_PER_SECOND = 1000
+/** 归档日志保留窗口（m14：failed/rolled-back 的日志保留 7 天供排障） */
+const LOG_RETENTION_MS =
+  LOG_RETENTION_DAYS * HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND
+/** 归档日志文件名 pattern（updater-<原名>-<date>.log） */
+const LOG_ARCHIVE_RE = /^updater.*-\d{4}-\d{2}-\d{2}\.log$/
+
 /**
  * 幂等删除：文件不存在(ENOENT)静默，其他错误 rethrow。
  *
@@ -255,6 +279,71 @@ export function ignoreENOENT(target: string): void {
     unlinkSync(target)
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+  }
+}
+
+/**
+ * 推导当前平台的升级残留路径全集（批次 5 m13：终态时这些全是垃圾）。
+ *
+ * - mac：.old 备份 / .broken 回滚中间态 / .app.new（staging 换装残留）/
+ *   .staging.<bundle>（批次 1 staging 解压目录，与 updater-script.ts 同推导）
+ * - linux：.old / .broken（单文件 mv 无 .new/staging）
+ * - win：无（NSIS 自管，无备份机制）
+ *
+ * .old 不再跨启动存活：消除「陈旧 .old 叠加预恢复分支回滚到远古版本」的风险。
+ */
+function getStaleArtifactPaths(): string[] {
+  const paths: string[] = []
+  const oldPath = getOldBackupPath()
+  if (oldPath) {
+    paths.push(oldPath)
+    if (process.platform === 'darwin') {
+      const appBundle = path.dirname(path.dirname(path.dirname(process.execPath)))
+      paths.push(`${appBundle}.broken`, `${appBundle}.new`)
+      paths.push(path.join(path.dirname(appBundle), `.staging.${path.basename(appBundle)}`))
+    } else if (process.platform === 'linux') {
+      const appImage = process.env.APPIMAGE
+      if (appImage) paths.push(`${appImage}.broken`)
+    }
+  }
+  return paths
+}
+
+/**
+ * m14：失败态日志归档/保留。
+ *
+ * failed / rolled-back：rename 为 updater-<原名>-<date>.log 保留（失败现场不被启动
+ * 清理抹掉，排障依据）；同日多次失败覆盖同名归档（保留最新）。done / no-op 不处理。
+ */
+function archiveUpdaterLogs(dateStamp: string): void {
+  for (const logPath of [UPDATER_LOG_PATH, LINUX_UPDATER_LOG_PATH]) {
+    if (!existsSync(logPath)) continue
+    try {
+      const dir = path.dirname(logPath)
+      const ext = path.extname(logPath)
+      const base = path.basename(logPath, ext)
+      renameSync(logPath, path.join(dir, `${base}-${dateStamp}${ext}`))
+    } catch (e) {
+      console.warn('[update-self-healer] archive updater log failed:', e)
+    }
+  }
+}
+
+/** m14：清理超过保留期的归档日志（>7 天） */
+function cleanupExpiredLogArchives(): void {
+  if (!existsSync(UPDATE_DIR)) return
+  const cutoff = Date.now() - LOG_RETENTION_MS
+  for (const f of readdirSync(UPDATE_DIR)) {
+    if (!LOG_ARCHIVE_RE.test(f)) continue
+    const full = path.join(UPDATE_DIR, f)
+    try {
+      if (statSync(full).mtimeMs < cutoff) {
+        unlinkSync(full)
+        console.log(`[update-self-healer] removed expired updater log archive: ${f}`)
+      }
+    } catch {
+      // 单个文件 stat/unlink 失败不阻塞其余清理
+    }
   }
 }
 
@@ -362,8 +451,23 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
     ignoreENOENT(PENDING_UPDATE_FILE)
     ignoreENOENT(UPDATER_SCRIPT_PATH)
     ignoreENOENT(LINUX_UPDATER_SCRIPT_PATH)
-    ignoreENOENT(UPDATER_LOG_PATH)
-    ignoreENOENT(LINUX_UPDATER_LOG_PATH)
+
+    // 2.5 m13：升级残留矩阵（.old/.broken/.new/staging）——终态时全是垃圾，
+    // .old 不再跨启动存活（消除陈旧 .old 回滚风险）。可能是目录（.broken/.staging），
+    // 用 rmSync recursive+force（吞 ENOENT）而非 ignoreENOENT/unlink。
+    for (const stale of getStaleArtifactPaths()) {
+      rmSync(stale, { recursive: true, force: true })
+    }
+
+    // 2.6 m14：日志保留策略——仅 done 删日志；failed/rolled-back 归档保留；
+    // no-op 保留原样（无实质事件）。归档旧档（>7 天）在此一并清理。
+    if (status === 'done') {
+      ignoreENOENT(UPDATER_LOG_PATH)
+      ignoreENOENT(LINUX_UPDATER_LOG_PATH)
+    } else if (status === 'failed' || status === 'rolled-back') {
+      archiveUpdaterLogs(new Date().toISOString().slice(0, 10))
+    }
+    cleanupExpiredLogArchives()
 
     // 3. 下载中断残留（.downloading 临时文件）
     if (existsSync(UPDATE_DIR)) {

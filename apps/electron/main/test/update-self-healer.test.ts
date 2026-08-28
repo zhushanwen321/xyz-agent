@@ -14,7 +14,7 @@
  * 运行：cd apps/electron/main && npx vitest run test/update-self-healer.test.ts
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -282,16 +282,18 @@ describe('cleanupCompletedUpdate', () => {
     writeFileSync(linuxUpdaterLog, 'log')
   }
 
-  /** 断言全套产物（含 result 自身）已被清理 */
-  function expectAllCleaned(extra: string[] = []): void {
+  /** 断言全套产物（含 result 自身）已被清理；keepLogs=true 时不断言日志删除（m14：非 done 终态保留日志） */
+  function expectAllCleaned(extra: string[] = [], opts: { keepLogs?: boolean } = {}): void {
     expect(existsSync(resultFile)).toBe(false)
     expect(existsSync(preloadedFile)).toBe(false)
     expect(existsSync(zipFile)).toBe(false)
     expect(existsSync(pendingFile)).toBe(false)
     expect(existsSync(updaterScript)).toBe(false)
     expect(existsSync(linuxUpdaterScript)).toBe(false)
-    expect(existsSync(updaterLog)).toBe(false)
-    expect(existsSync(linuxUpdaterLog)).toBe(false)
+    if (!opts.keepLogs) {
+      expect(existsSync(updaterLog)).toBe(false)
+      expect(existsSync(linuxUpdaterLog)).toBe(false)
+    }
     for (const f of extra) expect(existsSync(f)).toBe(false)
   }
 
@@ -357,7 +359,7 @@ describe('cleanupCompletedUpdate', () => {
     expect(result).toEqual({ status: 'rolled-back', version: '0.9.0' })
   })
 
-  it('5. no-op → 清全部含 result + 返回 null（不通知）', async () => {
+  it('5. no-op → 清全部含 result + 返回 null（不通知）；日志保留（m14）', async () => {
     seedArtifacts()
     const downloading1 = path.join(updateDir, 'asset.zip.downloading')
     const downloading2 = path.join(updateDir, 'other.downloading')
@@ -368,7 +370,10 @@ describe('cleanupCompletedUpdate', () => {
     const result = await cleanupCompletedUpdate()
     // W4: no-op 返回 null（不通知用户）
     expect(result).toBeNull()
-    expectAllCleaned([downloading1, downloading2])
+    expectAllCleaned([downloading1, downloading2], { keepLogs: true })
+    // m14：no-op 无实质事件 → 日志保留原样（不删不归档）
+    expect(existsSync(updaterLog)).toBe(true)
+    expect(existsSync(linuxUpdaterLog)).toBe(true)
   })
 
   it('6. 无 update-result.json → 返回 null 不抛错（也不误删现存产物）', async () => {
@@ -492,5 +497,165 @@ describe('批次 5: updater.pid 互斥（§3.7.1 检查方）', () => {
     // 这里 .old 未创建 → 走 no-op 分支返回 false，但 pid 残留被清理）
     expect(rolledBack).toBe(false)
     expect(existsSync(pidFile), 'PID 复用 → 残留 pid 应被清理').toBe(false)
+  })
+})
+
+// ════════════════════════════════════════════════════════════════
+// 批次 5（u5b）：清理矩阵修补（m13）+ 日志保留（m14）+ 文案/字段（m15/m18）
+// ════════════════════════════════════════════════════════════════
+describe('批次 5: 清理矩阵与 self-healer 债务（m13/m14/m15/m18）', () => {
+  const updateDir2 = path.join(TMP_DATA_DIR, 'update')
+  const resultFile2 = path.join(updateDir2, 'update-result.json')
+  let originalPlatform: PropertyDescriptor | undefined
+  let originalExecPath: string
+
+  /** mac 平台桩 + execPath 指向 tmp 内伪造 .app 布局 */
+  function stubMacWithApp(): { appBundle: string; stagingDir: string } {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    const appBundle = path.join(updateDir2, 'TaiJi.app')
+    Object.defineProperty(process, 'execPath', {
+      value: path.join(appBundle, 'Contents', 'MacOS', 'TaiJi'),
+      configurable: true,
+    })
+    return {
+      appBundle,
+      stagingDir: path.join(updateDir2, `.staging.TaiJi.app`),
+    }
+  }
+
+  beforeEach(() => {
+    originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    originalExecPath = process.execPath
+    vi.clearAllMocks()
+    mkdirSync(updateDir2, { recursive: true })
+  })
+
+  afterEach(() => {
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
+    Object.defineProperty(process, 'execPath', { value: originalExecPath, configurable: true })
+    if (existsSync(updateDir2)) rmSync(updateDir2, { recursive: true, force: true })
+  })
+
+  it('验收① m13：done 终态 + .old/.broken/.new/.staging 残留 → cleanup 后全清（rmSync recursive 吞目录）', async () => {
+    const { appBundle, stagingDir } = stubMacWithApp()
+    // 伪造全部残留：.old/.broken/.new 目录 + staging 目录（含内部文件验证 recursive）
+    for (const dir of [`${appBundle}.old`, `${appBundle}.broken`, `${appBundle}.new`, stagingDir]) {
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(path.join(dir, 'inner.txt'), 'stale')
+    }
+    writeFileSync(resultFile2, JSON.stringify({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' }))
+
+    const mod = await loadModule()
+    await mod.cleanupCompletedUpdate()
+
+    // m13：.old 不再跨启动存活，全部残留清空
+    expect(existsSync(`${appBundle}.old`)).toBe(false)
+    expect(existsSync(`${appBundle}.broken`)).toBe(false)
+    expect(existsSync(`${appBundle}.new`)).toBe(false)
+    expect(existsSync(stagingDir)).toBe(false)
+  })
+
+  it('m13 linux：.old/.broken 清理（APPIMAGE 推导）', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    process.env.APPIMAGE = path.join(updateDir2, 'TaiJi-x86_64.AppImage')
+    writeFileSync(path.join(updateDir2, 'TaiJi-x86_64.AppImage.old'), 'stale')
+    writeFileSync(path.join(updateDir2, 'TaiJi-x86_64.AppImage.broken'), 'stale')
+    writeFileSync(resultFile2, JSON.stringify({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' }))
+
+    const mod = await loadModule()
+    await mod.cleanupCompletedUpdate()
+
+    expect(existsSync(path.join(updateDir2, 'TaiJi-x86_64.AppImage.old'))).toBe(false)
+    expect(existsSync(path.join(updateDir2, 'TaiJi-x86_64.AppImage.broken'))).toBe(false)
+    delete process.env.APPIMAGE
+  })
+
+  it('验收② m14：failed → updater.log 归档为 updater-<date>.log 保留（原文件不存在）', async () => {
+    writeFileSync(path.join(updateDir2, 'updater.log'), 'failure stack trace')
+    writeFileSync(path.join(updateDir2, 'updater-linux.log'), 'failure stack trace linux')
+    writeFileSync(resultFile2, JSON.stringify({ status: 'failed', version: '0.9.1', at: '2025-12-01T00:00:00Z' }))
+
+    const mod = await loadModule()
+    await mod.cleanupCompletedUpdate()
+
+    const today = new Date().toISOString().slice(0, 10)
+    expect(existsSync(path.join(updateDir2, 'updater.log'))).toBe(false)
+    expect(existsSync(path.join(updateDir2, `updater-${today}.log`))).toBe(true)
+    expect(existsSync(path.join(updateDir2, `updater-linux-${today}.log`))).toBe(true)
+  })
+
+  it('m14 对照：done → updater.log 直接删除（不归档）', async () => {
+    writeFileSync(path.join(updateDir2, 'updater.log'), 'happy path log')
+    writeFileSync(resultFile2, JSON.stringify({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' }))
+
+    const mod = await loadModule()
+    await mod.cleanupCompletedUpdate()
+
+    expect(existsSync(path.join(updateDir2, 'updater.log'))).toBe(false)
+    const archived = readdirSync(updateDir2).filter((f) => /^updater.*-\d{4}-\d{2}-\d{2}\.log$/.test(f))
+    expect(archived).toEqual([])
+  })
+
+  it('m14：>7 天旧归档被清理，7 天内归档保留', async () => {
+    const utimesSync = (await import('node:fs')).utimesSync
+    const oldArchive = path.join(updateDir2, 'updater-2020-01-01.log')
+    const freshArchive = path.join(updateDir2, 'updater-2020-01-02.log')
+    writeFileSync(oldArchive, 'old')
+    writeFileSync(freshArchive, 'fresh')
+    // mtime 老化：8 天前 vs 1 天前（真实 mtime 操作，cutoff 用真实时钟比较）
+    const now = new Date()
+    utimesSync(oldArchive, now, new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000))
+    utimesSync(freshArchive, now, new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000))
+    writeFileSync(resultFile2, JSON.stringify({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' }))
+
+    const mod = await loadModule()
+    await mod.cleanupCompletedUpdate()
+
+    expect(existsSync(oldArchive), '8 天前旧档应被清理').toBe(false)
+    expect(existsSync(freshArchive), '1 天内归档应保留').toBe(true)
+  })
+
+  it('验收③ m15：win no-op reason = installer wrapper exited before completion', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    // win 无 .old 备份机制（getOldBackupPath win 返回 undefined）→ replacing 走 no-op 分支
+    writeFileSync(resultFile2, JSON.stringify({ status: 'replacing', version: '0.9.1' }))
+
+    const mod = await loadModule()
+    await mod.maybeRollbackInterruptedUpdate()
+
+    const written = JSON.parse(readFileSync(resultFile2, 'utf-8')) as { status: string; reason: string }
+    expect(written.status).toBe('no-op')
+    expect(written.reason).toBe('installer wrapper exited before completion')
+  })
+
+  it('验收④ m18：corrupt json 含 version → rolled-back 标记带提取的 version', async () => {
+    const { appBundle } = stubMacWithApp()
+    // corrupt raw：半截 replacing JSON，version 字段完整、at 字段被截断
+    writeFileSync(
+      resultFile2,
+      '{"status":"replacing","version":"0.9.1","at":"2025-12-01T00:00',
+    )
+    mkdirSync(`${appBundle}.old`, { recursive: true }) // .old 存在 → 触发回滚
+
+    const mod = await loadModule()
+    const rolledBack = await mod.maybeRollbackInterruptedUpdate()
+
+    expect(rolledBack).toBe(true)
+    const written = JSON.parse(readFileSync(resultFile2, 'utf-8')) as { status: string; version?: string }
+    expect(written.status).toBe('rolled-back')
+    expect(written.version).toBe('0.9.1')
+  })
+
+  it('验收④ m18 下限：corrupt json 无 version → rolled-back 无 version 字段（无 toast 维持下限）', async () => {
+    const { appBundle } = stubMacWithApp()
+    writeFileSync(resultFile2, '{"status":"replacing","at":"2025-12-01T00:00')
+    mkdirSync(`${appBundle}.old`, { recursive: true })
+
+    const mod = await loadModule()
+    await mod.maybeRollbackInterruptedUpdate()
+
+    const written = JSON.parse(readFileSync(resultFile2, 'utf-8')) as { status: string; version?: string }
+    expect(written.status).toBe('rolled-back')
+    expect(written.version).toBeUndefined()
   })
 })
