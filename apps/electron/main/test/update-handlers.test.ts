@@ -186,6 +186,59 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
   })
 })
 
+// ════════════════════════════════════════════════════════════════
+// [A-X4] update:check force 节流：10s 窗口内重复 force 请求降级为非 force
+// 语义（走 checker 缓存），不拒绝、不烧 GitHub API 配额。节流是模块级状态，
+// 用 fake timers + 未来基点错开各用例（与其他用例互不污染）。
+// ════════════════════════════════════════════════════════════════
+describe('[A-X4] update:check force 节流', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('10s 窗口内第二次 force=true 降级为非 force（不绕缓存），窗口外恢复透传', async () => {
+    vi.useFakeTimers()
+    // fake 起点默认为真实当前时间；+30s 偏移避开前序用例（真实时钟）置位的节流时间戳
+    vi.setSystemTime(Date.now() + 30_000)
+    const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => null)
+    registerUpdateHandlers({ releaseChecker: { checkForLatestRelease } } as never)
+
+    const handler = handlers.get('update:check')!
+
+    // 第 1 次 force：窗口外 → 透传 force: true（并置位节流时间戳）
+    const first = await handler({}, { force: true })
+    expect(first).toEqual({ info: null, rateLimited: false })
+    expect(checkForLatestRelease).toHaveBeenLastCalledWith('0.8.14', { force: true })
+
+    // 第 2 次（窗口内）：降级为非 force 语义——仍正常调用返回（体验无损），
+    // 但不再 force 绕缓存（配额不被放大）
+    const second = await handler({}, { force: true })
+    expect(second).toEqual({ info: null, rateLimited: false })
+    expect(checkForLatestRelease).toHaveBeenLastCalledWith('0.8.14', { force: false })
+    expect(checkForLatestRelease).toHaveBeenCalledTimes(2)
+
+    // 窗口外（+11s > 10s 窗口）：force 透传恢复
+    vi.setSystemTime(Date.now() + 11_000)
+    await handler({}, { force: true })
+    expect(checkForLatestRelease).toHaveBeenLastCalledWith('0.8.14', { force: true })
+  })
+
+  it('force=false/缺失不节流（本就命中缓存无害），透传行为不变', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.now() + 90_000)
+    const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => FIXTURE)
+    registerUpdateHandlers({ releaseChecker: { checkForLatestRelease } } as never)
+
+    const handler = handlers.get('update:check')!
+    // 连续两次非 force 调用（间隔 0ms）：均透传，不被节流降级
+    await handler({}, {})
+    await handler({}, {})
+    expect(checkForLatestRelease).toHaveBeenCalledTimes(2)
+    expect(checkForLatestRelease).toHaveBeenNthCalledWith(1, '0.8.14', { force: undefined })
+    expect(checkForLatestRelease).toHaveBeenNthCalledWith(2, '0.8.14', { force: undefined })
+  })
+})
+
 // ── W3：update:perform（W3TC10）──────────────────────────────────
 describe('u3b: update:install validateRelease（m11 防御纵深）', () => {
   beforeEach(() => {

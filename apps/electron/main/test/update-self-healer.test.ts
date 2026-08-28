@@ -411,6 +411,53 @@ describe('cleanupCompletedUpdate', () => {
     expect(existsSync(linuxUpdaterLog)).toBe(true)
   })
 
+  it('[A-G2] 原子写孤儿 tmp（update-result.json.tmp / resume-state.json.tmp）→ 终态清理一并删除', async () => {
+    seedArtifacts()
+    // 实际原子写实现的两类孤儿 tmp（写崩残留，半截 JSON）+ 一个通用 .tmp（模式覆盖未来新原子写点）
+    const resultTmp = path.join(updateDir, 'update-result.json.tmp')
+    const resumeTmp = path.join(updateDir, 'resume-state.json.tmp')
+    const genericTmp = path.join(updateDir, 'download-chunk.tmp')
+    writeFileSync(resultTmp, '{"status":"repl')
+    writeFileSync(resumeTmp, '{"downloadedBytes":')
+    writeFileSync(genericTmp, 'partial')
+    writeResult({ status: 'no-op', version: '0.9.0', at: '2025-12-01T00:00:00Z' })
+
+    const { cleanupCompletedUpdate } = await loadModule()
+    const result = await cleanupCompletedUpdate()
+
+    expect(result).toBeNull()
+    expectAllCleaned([resultTmp, resumeTmp, genericTmp], { keepLogs: true })
+    // 自身回滚路径（writeResultFileAtomic）正常完成后也不应留 tmp 中间产物
+    const leftoverTmp = readdirSync(updateDir).filter((f) => f.endsWith('.tmp'))
+    expect(leftoverTmp).toEqual([])
+  })
+
+  it('[A-G1] 回滚路径的 rolled-back 标记走原子写（tmp+rename），写后无 .tmp 残留', async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    const tmpAppDir = mkdtempSync(path.join(tmpdir(), 'w3-atomic-'))
+    const appImage = path.join(tmpAppDir, 'TaiJi-x86_64.AppImage')
+    writeFileSync(appImage, 'half-installed')
+    writeFileSync(`${appImage}.old`, 'old-good-version')
+    process.env.APPIMAGE = appImage
+    writeResult({ status: 'replacing', version: '0.9.0', at: '2025-12-01T00:00:00Z' })
+
+    try {
+      const { maybeRollbackInterruptedUpdate } = await loadModule()
+      const rolledBack = await maybeRollbackInterruptedUpdate()
+
+      expect(rolledBack).toBe(true)
+      // rolled-back 标记可解析（原子写语义：读到的是完整 JSON）且 .tmp 中间产物已 rename 消失
+      const written = JSON.parse(readFileSync(resultFile, 'utf-8'))
+      expect(written.status).toBe('rolled-back')
+      expect(existsSync(`${resultFile}.tmp`)).toBe(false)
+    } finally {
+      rmSync(tmpAppDir, { recursive: true, force: true })
+      delete process.env.APPIMAGE
+      if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
+    }
+  })
+
   it('6. 无 update-result.json → 返回 null 不抛错（也不误删现存产物）', async () => {
     // 不写 result，但写一些产物（验证无 result 时不触发清理）
     writeFileSync(pendingFile, '{}')

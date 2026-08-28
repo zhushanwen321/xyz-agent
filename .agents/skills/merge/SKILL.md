@@ -112,6 +112,11 @@ bash scripts/check-version-bump.sh
 ```
 
 - **Exit 0（通过）**：代码版本 == 最新正式 release，可以安全 bump
+
+> [HISTORICAL] **禁止同版本 re-upload**（2026-08 自动升级可靠性设计 m6）：GitHub release asset
+> 无世代 ID，同版本号重新上传会改变 asset sha256，破坏升级链路的 digest/sha256 信任锚
+> （下载缓存与 E1 观测均按版本号键控）。版本校验通过只允许 bump 到新版本，发现产物
+> 缺陷一律 bump 新版本重发，不得删除重传同版本号 asset。
 - **Exit 1（失败）**：版本不匹配，或 pi 协议契约测试失败（W25 接线），会输出具体原因
 
 失败时需要检查：

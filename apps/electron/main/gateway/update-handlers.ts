@@ -38,6 +38,25 @@ import { appendUpdateError } from '../update/error-log.js'
 const RESTART_QUIT_DELAY_MS = 500
 
 /**
+ * [A-X4] force 检测节流窗口（毫秒）。
+ *
+ * update:check 的 force=true 会绕 releaseChecker 缓存直打 GitHub latest API；恶意/异常
+ * renderer 高频 invoke 可烧穿 API 配额（403 后进入 2h 退避，期间所有用户检测不可用）。
+ * 窗口内的重复 force 请求不拒绝而是降级为非 force 语义（走 checker 缓存）——用户体验
+ * 无损，API 配额不再被放大。
+ */
+const FORCE_CHECK_THROTTLE_MS = 10_000
+
+/**
+ * [A-X4] 上次真正发起 force 检测的时间戳（模块级）。
+ *
+ * handler 在 registerUpdateHandlers 内模块级注册，多个 renderer 窗口共享同一 main
+ * 进程——跨窗口共享节流正是期望语义（配额是进程级共享的）。时间戳在发起 force 调用
+ * 前同步置位（而非成功后）：闭住同 tick 并发窗口，第二个并发 invoke 也会被降级。
+ */
+let lastForceCheckAt = 0
+
+/**
  * 根据 proxyConfig 解析出用于 fetch 的 dispatcher（undici ProxyAgent）。
  *
  * 代理 URL 的解析（mode→url）统一委托给 {@link resolveProxyUrl}（proxy-config SSOT），
@@ -224,9 +243,22 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   // 「确认无新版」与「限额退避中」——renderer 据此显示非侵入提示而非假阴性。
   ipcMain.handle('update:check', async (_event, payload?: { force?: boolean }): Promise<UpdateCheckResult> => {
     if (!deps.releaseChecker) return { info: null, rateLimited: false }
+    // [A-X4] force 节流：窗口内的重复 force 请求降级为非 force 语义（走 checker 缓存），
+    // 不拒绝（用户体验无损）。只约束 force=true——force=false 本就命中缓存无害，透传行为
+    // 保持原样（undefined / false 不改写，避免无谓改变 checker 入参形状）。
+    const requestedForce = payload?.force === true
+    let effectiveForce: boolean | undefined = payload?.force
+    if (requestedForce) {
+      const now = Date.now()
+      if (now - lastForceCheckAt >= FORCE_CHECK_THROTTLE_MS) {
+        lastForceCheckAt = now
+      } else {
+        effectiveForce = false
+      }
+    }
     try {
       const info = await deps.releaseChecker.checkForLatestRelease(app.getVersion(), {
-        force: payload?.force,
+        force: effectiveForce,
       })
       // 检测到新版 → 写持久化标志（功能 1：常驻提醒），best-effort 不阻塞响应
       if (info) {

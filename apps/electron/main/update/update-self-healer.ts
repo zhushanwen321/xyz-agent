@@ -127,6 +127,19 @@ interface UpdateResultData {
 }
 
 /**
+ * 原子写 update-result.json（[A-G1]）：先写 .tmp 再同目录 renameSync，读方不会读到
+ * 半截 JSON——corrupt-json 分支会把半截 replacing 误判为「需回滚」触发误回滚。
+ * tmp 命名与 orchestrator.writeUpdateResult / mac·linux·win 升级脚本模板一致
+ * （`${UPDATE_RESULT_FILE}.tmp`）；写崩残留的孤儿 tmp 由 cleanupCompletedUpdate
+ * 的 *.tmp 扫描兜底清理（[A-G2]）。
+ */
+function writeResultFileAtomic(content: string): void {
+  const tmpPath = `${UPDATE_RESULT_FILE}.tmp`
+  writeFileSync(tmpPath, content)
+  renameSync(tmpPath, UPDATE_RESULT_FILE)
+}
+
+/**
  * 检测并回滚上次中断的升级。
  *
  * 在 app.whenReady 内、bootstrapMainWindow 之前调用。
@@ -179,8 +192,7 @@ export async function maybeRollbackInterruptedUpdate(): Promise<boolean> {
               ? raw.match(/"version":"(\d+\.\d+\.\d+(?:\.\d+)?)"/)?.[1]
               : undefined
           try {
-            writeFileSync(
-              UPDATE_RESULT_FILE,
+            writeResultFileAtomic(
               JSON.stringify({
                 status: 'rolled-back',
                 ...(corruptVersion ? { version: corruptVersion } : {}),
@@ -219,8 +231,7 @@ export async function maybeRollbackInterruptedUpdate(): Promise<boolean> {
         process.platform === 'win32'
           ? 'installer wrapper exited before completion'
           : 'no .old backup: interrupted before replace phase'
-      writeFileSync(
-        UPDATE_RESULT_FILE,
+      writeResultFileAtomic(
         JSON.stringify({
           status: 'no-op',
           version: typeof data.version === 'string' ? data.version : undefined,
@@ -240,8 +251,7 @@ export async function maybeRollbackInterruptedUpdate(): Promise<boolean> {
     }
 
     // 标记已回滚（下次启动 no-op）
-    writeFileSync(
-      UPDATE_RESULT_FILE,
+    writeResultFileAtomic(
       JSON.stringify({
         status: 'rolled-back',
         version: typeof data.version === 'string' ? data.version : undefined,
@@ -486,10 +496,13 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
     }
     cleanupExpiredLogArchives()
 
-    // 3. 下载中断残留（.downloading 临时文件）
+    // 3. 下载中断残留（.downloading 临时文件）+ 原子写孤儿 tmp（[A-G2]：
+    //    update-result.json.tmp / resume-state.json.tmp 写崩残留后无任何读方消费，
+    //    终态清理一并扫掉；跨平台产物，与 .downloading 同属 UPDATE_DIR 扫描，
+    //    不入 getStaleArtifactPaths——那是 mac/linux 平台残留推导且 gated on .old 存在）
     if (existsSync(UPDATE_DIR)) {
       for (const f of readdirSync(UPDATE_DIR)) {
-        if (f.endsWith('.downloading')) {
+        if (f.endsWith('.downloading') || f.endsWith('.tmp')) {
           ignoreENOENT(path.join(UPDATE_DIR, f))
         }
       }
