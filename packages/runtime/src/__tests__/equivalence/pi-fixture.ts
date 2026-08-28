@@ -28,10 +28,20 @@
  * - pi 0.84 不为常规 entry append 发 entry 事件（entry_appended 仅 extension appendEntry 路径），
  *   故实时累积的 entry 快照以 message_end 流为等价源（断言对象 = 原始消息/entry 序列，W20-W21
  *   后升级 store 级快照）。
+ *
+ * agent dir 隔离（凭证可见、扩展不可见）：spawn 时注入 PI_CODING_AGENT_DIR 指向 mkdtemp 临时
+ * agent dir，只原样拷贝凭证类文件（auth.json / models.json / models-store.json，清单以 pi 0.84.1
+ * 实装读取面为准，见 copyCredentialFiles 注释）。不拷 settings.json、不放 extensions/ 子目录——
+ * 否则用户全局扩展集（settings.json packages/extensions 清单的 npm 扩展 + <agentDir>/extensions/
+ * 自动发现）会随子进程加载，其 appendEntry 调用发射 entry_appended 事件，击穿
+ * pi-protocol-contract D5 负向断言（全程 0 条 entry_appended）；且等价性基线不应随用户机器的
+ * 全局扩展集漂移。探测与 spawn 同源不变量：探测读真实 agentDir（piAgentDir()），spawn 把同一
+ * 目录的凭证文件原样拷贝进临时 dir，pi 实际读到的凭证与探测判定内容逐字节一致。
+ * settings.json 缺失安全（settings-manager loadFromStorage 空 content 返回 {}，不报错不创建）。
  */
 
 import { spawn, execSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -164,12 +174,39 @@ const FORCE_SKIP_REAL_PI_ENV = 'XYZ_SKIP_REAL_PI'
 /** DEFAULT_MODEL 的 provider id（pi 模型 id 形态 `<provider>/<modelId>`，'/' 前缀段） */
 const DEFAULT_PROVIDER = DEFAULT_MODEL.split('/')[0]!
 
-/** pi agent 目录（凭证所在）：与 pi config.ts getAgentDir() 同规则——PI_CODING_AGENT_DIR
- * 覆盖 → ~/.pi/agent。spawn 出的 pi 按此路径读凭证，探测必须同源否则误判。 */
+/** 真实 agent 目录（凭证所在 + 全局扩展所在）：与 pi config.js getAgentDir() 同规则
+ * （dist/config.js:412-418）——PI_CODING_AGENT_DIR 覆盖 → ~/.pi/agent。角色是「拷贝源 +
+ * 探测源」：凭证探测读它；spawnPiFixture 把其中凭证文件原样拷进临时 agent dir（探测与 pi
+ * 实读同源，见文件头「agent dir 隔离」）。本目录里的扩展不随子进程加载。 */
 function piAgentDir(): string {
   const envDir = process.env['PI_CODING_AGENT_DIR']
   if (envDir && envDir.trim() !== '') return envDir
   return join(homedir(), '.pi', 'agent')
+}
+
+/**
+ * 需要带入隔离 agent dir 的凭证类文件（pi 0.84.1 实装读取清单，逐项依据 dist 实现行号）：
+ * - auth.json：stored 凭证（dist/config.js:428-430 getAuthPath；dist/core/auth-storage.js:17
+ *   默认路径 join(getAgentDir(), 'auth.json')）
+ * - models.json：自定义 provider/模型定义与 providers[].apiKey（dist/config.js:424-426
+ *   getModelsPath；dist/core/model-runtime.js:76 默认路径）
+ * - models-store.json：动态 provider catalog 缓存（dist/core/models-store.js:29 默认路径，
+ *   model-runtime.js:80 落在 models.json 同目录）；条目经 FileAuthStorageBackend 存储、可能含
+ *   key，属凭证类；缺失安全（parse 空 content 返回 {}），存在则拷以保证 catalog 与真实环境一致。
+ * 刻意不带入：settings.json（global packages/extensions 清单是 npm 扩展注入源，缺失安全——
+ * dist/core/settings-manager.js loadFromStorage 空 content 返回 {}）、extensions/（全局扩展
+ * 自动发现目录，dist/core/package-manager.js addAutoDiscoveredResources join(globalBaseDir,
+ * 'extensions')）、skills/prompts/themes/tools/bin/sessions（等价性协议用例不涉及）。
+ */
+const CREDENTIAL_FILE_NAMES = ['auth.json', 'models.json', 'models-store.json'] as const
+
+/** 把真实 agentDir 中的凭证文件原样拷入临时 agentDir（存在才拷；探测已保证至少一份在位）。 */
+function copyCredentialFiles(sourceAgentDir: string, targetAgentDir: string): void {
+  for (const name of CREDENTIAL_FILE_NAMES) {
+    const source = join(sourceAgentDir, name)
+    if (!existsSync(source)) continue
+    copyFileSync(source, join(targetAgentDir, name))
+  }
 }
 
 /** provider 的 env API key 变量名（pi-ai env-api-keys.ts 映射表同形态：
@@ -304,6 +341,10 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
   const commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
 
   const sessionDir = options.sessionDir ?? mkdtempSync(join(tmpdir(), 'pi-equiv-'))
+  // agent dir 隔离（见文件头）：临时 agent dir 只含凭证文件拷贝，扩展不可见；
+  // 与 sessionDir 分开建目录，dispose 各自清理。
+  const agentDir = mkdtempSync(join(tmpdir(), 'pi-equiv-agent-'))
+  copyCredentialFiles(piAgentDir(), agentDir)
   const args = ['--mode', 'rpc', '--session-dir', sessionDir]
   if (model) args.push('--model', model)
   args.push('--approve')
@@ -312,6 +353,7 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
   }
   const proc: ChildProcess = spawn(PI_PATH, args, {
     cwd: sessionDir,
+    env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
 
@@ -556,6 +598,7 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
     rejectAll(new Error('pi fixture disposed'))
     rl.close()
     rmSync(sessionDir, { recursive: true, force: true })
+    rmSync(agentDir, { recursive: true, force: true })
   }
 
   // 冷启动就绪探针：get_state 是毫秒级只读 RPC；stdin 是管道，早写的数据缓冲到 pi
