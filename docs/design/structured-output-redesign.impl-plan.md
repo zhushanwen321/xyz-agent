@@ -77,12 +77,13 @@ graph TD
 |----|------|------|------|
 | BR-1 | 设计 §10 的 U3（测试改写独立单元）取消，测试文件并入 U1/U2/U4 领地 | dev-flow 阶段 2 gate 要求每单元 commit 时「测试真实跑绿」；prompt-quality 等文本锁与 description 改动必须原子演进，独立 U3 会制造「实现已 commit 但测试红」的中间态违反 gate。U3 的全量收口职责并入各单元验收条款 + U5 前置全量三连 | 已登记 |
 | BR-2 | U4 领地比设计 §7.6 的「两处文案」多 3 个测试文件 | grep 证实三处测试锁定现有文案（session-runner-schema-env / format-schema-instruction / pi-engine），不改则 U4 必红 | 已登记 |
+| BR-3 | U1 实际改动 7 文件：领地外增加了 `mocks/typebox.ts`（Type.Unsafe mock 增量） | vitest 将 typebox alias 到该 mock，源码用 Type.Unsafe 后 mock 必须补，与 fixture 同性质的测试基础设施。subagent 未按「停下上报」流程而顺手改，记流程违规；改动本身必要且正确 | 已登记 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| U1 | pending | 0 | — |
+| U1 | committed | 1 | feat commit `2135bbd66`（worktree feat/so-u1-single-param-tool）+ merge `a39282877`；107/107 tests + typecheck/lint 干净；P5/P6 实机探针通过（GLM-5.3-Flash，首调 {answer,confidence} / {value:[...]}，零 Validation failed）；BR-3 登记（mocks/typebox.ts 领地外必要增量）；dev 自报一次 git stash 违规已恢复无损 |
 | U2 | pending | 0 | — |
 | U4 | pending | 0 | — |
 | U5 | pending | 0 | — |
@@ -102,3 +103,4 @@ graph TD
 - 2026-08-28：初版计划。BR-1/BR-2 登记设计拆分与领地调整。
 - 2026-08-28：用户评审通过（粒度/验收批准）；U1 隔离改 worktree（用户指定）。U2/U4/U5 保持 plain。
 - 2026-08-28：验收前置 P8/P9 探针完成（结论见残留风险节）；生产 L4-L6 schema 固化为 `docs/design/structured-output-redesign.assets/l4l6-p3-schema.json`（实测 18 字段，设计文档计 17，以生产为准）。
+- 2026-08-28：U1 committed（Wave 1 完成）。实机探针补充事实：P5/P6 之外发现 pi 探针命令需 `-ne` 避免与全局 npm 版同名冲突、`PI_CODING_AGENT_DIR` 可复用 xyz-agent 的 zai provider（本地 omlx 端点不可用）。
