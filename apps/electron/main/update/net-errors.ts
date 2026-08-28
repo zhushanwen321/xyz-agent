@@ -107,8 +107,10 @@ export function isPrivateHost(hostname: string): boolean {
   // IPv6 loopback
   if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true
 
-  // IPv6 ULA fc00::/7（fc00:: 到 fdff:: 前缀）
-  if (host.startsWith('fc') || host.startsWith('fd')) return true
+  // IPv6 ULA fc00::/7（fc00:: 到 fdff:: 前缀）。必须带 ':' 形态校验：纯前缀匹配
+  // 会把 'fcbarcelona.com'、'fd-server.example.com' 等公网域名误判私网——ULA 地址
+  // 的 fc/fd 后必跟 hex 组再跟 ':'，域名不可能命中。
+  if (/^f[cd]/.test(host) && host.includes(':')) return true
 
   // IPv4 解析
   const parts = host.split('.')
@@ -210,10 +212,12 @@ export function classifyNetError(
     )
   }
 
-  // 超时（AbortError）
+  // 超时（AbortError）。message 用语境中性词：本函数被 testProxyConnection 复用，
+  // 'download timeout' 在代理测试超时场景语境错位（该场景无下载）——诊断通道原始
+  // 记录用通用 timeout，用户可见文案仍由 types.ts UPDATE_ERROR_MESSAGES 按错误码映射。
   if (err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'))) {
     return new UpdateError(
-      `download timeout`,
+      `timeout (aborted)`,
       stage,
       'UPDATE_NETWORK_TIMEOUT',
       rawCause,

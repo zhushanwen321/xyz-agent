@@ -311,6 +311,11 @@ export function createNotifyLedger(
         buckets.recoveryReplays += replayed;
         emitBucketLog("recoveryReplays", buckets.recoveryReplays, { replayed });
         ensureWatchdog();
+        // 「送达已落盘、销账未落盘」的强杀窗口（custom_message entry 已写、ack 尚未写）：
+        // 回执已在 session 文件里，先消费它补写 ack，避免对已送达条目必然重投一次
+        //（边沿/看门狗路径都是先 checkReceipts 再 attemptDeliver，恢复路径对齐同序；
+        // G2 仍保留 at-least-once 兜底语义，此处只是零成本消除常见重复）。
+        checkReceipts();
         attemptDeliver();
       }
       return replayed;
@@ -366,7 +371,7 @@ export function createNotifyLedger(
         clearInterval(watchdogTimer);
         watchdogTimer = undefined;
       }
-      if (boundLedger === api) boundLedger = undefined;
+      if (getBoundLedger() === api) setBoundLedger(undefined);
     },
   };
 
@@ -471,7 +476,35 @@ export function createNotifyLedger(
 
 // ─── 模块级绑定（notifier 消费入口） ──────────────────────────
 
-let boundLedger: NotifyLedger | undefined;
+// C-ext-06：跨模块单例经 globalThis[Symbol.for] slot 持有，不用裸模块级 let——
+// jiti 因路径字符串不同加载多份模块时裸 let 会单例分裂：index.ts 的 bind 与
+// notifier.ts 的 getBoundNotifyLedger 各持一份绑定 → notify 静默走「未 bind →
+// 退回 delivery 内核路径」分岔（无任何 warn），U2 at-least-once 退化回 C-ext-19
+// 立约要防的 at-most-once 事故基线。先例：model-config-service MODEL_SERVICE_SLOT_KEY /
+// dialogQueue / channelHandshake / ui-observability 同款（docs/standards.md §7.5）。
+const NOTIFY_LEDGER_SLOT_KEY = Symbol.for("@zhushanwen/pi-subagents.notifyLedger");
+
+type NotifyLedgerSlot = { current: NotifyLedger | undefined };
+
+function getNotifyLedgerSlot(): NotifyLedgerSlot {
+  // globalThis 无 symbol 索引签名，但运行时支持 symbol 键——用 Reflect 安全读写，
+  // 避免双重断言。NotifyLedgerSlot 是运行时保证的固定形状（本文件唯一写入点）。
+  let slot = Reflect.get(globalThis, NOTIFY_LEDGER_SLOT_KEY) as NotifyLedgerSlot | undefined;
+  if (!slot) {
+    slot = { current: undefined };
+    Reflect.set(globalThis, NOTIFY_LEDGER_SLOT_KEY, slot);
+  }
+  return slot;
+}
+
+/** 当前绑定的 ledger（bind/dispose/reset 三个写点与消费读点全部经 slot，单介质同源）。 */
+function getBoundLedger(): NotifyLedger | undefined {
+  return getNotifyLedgerSlot().current;
+}
+
+function setBoundLedger(ledger: NotifyLedger | undefined): void {
+  getNotifyLedgerSlot().current = ledger;
+}
 
 /**
  * [MF-5] settled 监听注册标志：物理监听（host.onAgentSettled → pi.on）只在首次
@@ -488,7 +521,7 @@ let settledListenerRegistered = false;
  * 静默返回，对齐旧闭包在实例不存在时的无动作语义。
  */
 function settledEdgeDispatch(): void {
-  const ledger = boundLedger;
+  const ledger = getBoundLedger();
   if (ledger === undefined) return;
   ledger.checkReceipts();
   ledger.attemptDeliver();
@@ -506,13 +539,14 @@ function settledEdgeDispatch(): void {
  * 保留 per-instance 注册（默认 registerSettledListener 语义不变）。
  */
 export function bindNotifyLedgerHost(host: NotifyLedgerHost): NotifyLedger {
-  boundLedger?.dispose();
+  getBoundLedger()?.dispose();
   if (!settledListenerRegistered) {
     settledListenerRegistered = true;
     host.onAgentSettled(settledEdgeDispatch);
   }
-  boundLedger = createNotifyLedger(host, { registerSettledListener: false });
-  return boundLedger;
+  const ledger = createNotifyLedger(host, { registerSettledListener: false });
+  setBoundLedger(ledger);
+  return ledger;
 }
 
 /**
@@ -520,14 +554,14 @@ export function bindNotifyLedgerHost(host: NotifyLedgerHost): NotifyLedger {
  * notifier 退回 delivery 内核路径（向后兼容）。
  */
 export function getBoundNotifyLedger(): NotifyLedger | undefined {
-  return boundLedger;
+  return getBoundLedger();
 }
 
 /** 测试隔离：dispose 并清模块级绑定。[MF-5] 同步重置监听注册标志——测试的 mock
  *  host 是新 emitter（真实 pi 同一 emitter，本函数仅测试路径调用），不复位则后续
  *  bind 不再注册、新 mock 的 fireSettled 失效。 */
 export function _resetNotifyLedgerForTest(): void {
-  boundLedger?.dispose();
-  boundLedger = undefined;
+  getBoundLedger()?.dispose();
+  setBoundLedger(undefined);
   settledListenerRegistered = false;
 }

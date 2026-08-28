@@ -1,11 +1,11 @@
 /**
- * useModel.setThinkingLevel 回执消费测试（U6，pi-boundary-reliability D3②）。
+ * useModel 回执消费测试（U6/C-pi-13，pi-boundary-reliability D3②）。
  *
- * 锁定（事故 B 根因 ③——「无受理确认 + 乐观写」的闭合）：
- * - 显示值 = reply 回执的生效值（pi 钳制时 ≠ 请求值，如 mimo 族 max → high），
+ * 锁定（事故 B 根因 ③ + 事故 A 形态——「无受理确认 + 乐观写」的闭合）：
+ * - thinkingLevel 显示值 = reply 回执的生效值（pi 钳制时 ≠ 请求值，如 mimo 族 max → high），
  *   第一毫秒起就是真值——不存在 30s 后「自己变回去」；
- * - RPC 失败不写 store（显示保持旧真值，无乐观写路径）；
- * - switchModel 保持乐观写（modelId，权威确认经 state_changed 广播回流——不在 U6 范围）。
+ * - modelId 显示值 = reply 回执的生效值（pi pattern 引擎静默换模时生效 ≠ 请求）；
+ * - RPC 失败不写 store（显示保持旧真值，无乐观写路径）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/features/use-model.test.ts
  */
@@ -104,23 +104,49 @@ describe('useModel.setThinkingLevel 回执消费（U6 弃乐观写）', () => {
   })
 })
 
-describe('useModel.switchModel 乐观写保持（不在 U6 弃写范围）', () => {
+describe('useModel.switchModel 回执消费（U6/C-pi-13 弃乐观写）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     setThinkingLevelMock.mockReset()
     switchModelMock.mockReset()
   })
 
-  it('switchModel 成功 → modelId 乐观写请求复合串（权威确认经 state_changed 广播回流）', async () => {
+  it('pi pattern 换模（reply 生效值 ≠ 请求值）→ modelId 写回执生效值，非请求值乐观写', async () => {
     const sessionStore = useSessionStore()
     seedSession('s1')
     sessionStore.applySnapshot('s1', { modelId: 'p/old' })
-    switchModelMock.mockResolvedValue(undefined)
+    // runtime set→get_state 读回：请求 glm-5.3，pi 实际切到同族 glm-5.3-air（事故 A 形态）
+    switchModelMock.mockResolvedValue({ sessionId: 's1', provider: 'p', modelId: 'glm-5.3-air' })
+
+    const { switchModel } = useModel()
+    await switchModel('s1', 'p', 'glm-5.3')
+
+    expect(switchModelMock).toHaveBeenCalledWith('s1', 'p', 'glm-5.3')
+    // 核心断言：显示值 = 回执生效值（runtime get_state 读回），不是请求值 glm-5.3
+    expect(sessionStore.list.find((s) => s.id === 's1')?.modelId).toBe('p/glm-5.3-air')
+  })
+
+  it('生效值与请求值一致 → 写请求复合串（常态路径）', async () => {
+    const sessionStore = useSessionStore()
+    seedSession('s1')
+    sessionStore.applySnapshot('s1', { modelId: 'p/old' })
+    switchModelMock.mockResolvedValue({ sessionId: 's1', provider: 'p', modelId: 'new' })
 
     const { switchModel } = useModel()
     await switchModel('s1', 'p', 'new')
 
-    expect(switchModelMock).toHaveBeenCalledWith('s1', 'p', 'new')
     expect(sessionStore.list.find((s) => s.id === 's1')?.modelId).toBe('p/new')
+  })
+
+  it('RPC 失败 → store 不写（显示保持旧真值，无乐观写路径）', async () => {
+    const sessionStore = useSessionStore()
+    seedSession('s1')
+    sessionStore.applySnapshot('s1', { modelId: 'p/old' })
+    switchModelMock.mockRejectedValue(new Error('rpc failed'))
+
+    const { switchModel } = useModel()
+    await expect(switchModel('s1', 'p', 'new')).rejects.toThrow('rpc failed')
+
+    expect(sessionStore.list.find((s) => s.id === 's1')?.modelId).toBe('p/old')
   })
 })

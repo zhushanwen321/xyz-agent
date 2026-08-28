@@ -18,8 +18,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import { SessionService } from '../services/session/session-service.js'
 import { MessageBus } from '../services/message-bus/message-bus.js'
+import { SCALAR_STATE_DEBOUNCE_MS } from '../services/session/replicated-states.config.js'
 import type { IMessageBroker } from '../interfaces.js'
 import type { IPiEngine, IProcessManager } from '../services/ports/pi-engine.js'
+import type { BusClient } from '../services/message-bus/types.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 function makeEnv(getStateValue: () => unknown, withClient = true) {
@@ -49,7 +51,17 @@ function makeEnv(getStateValue: () => unknown, withClient = true) {
     bus,
   )
   svc.setMessageBus(bus)
-  return { svc, client, pm, broadcasts }
+  return { svc, client, pm, broadcasts, bus }
+}
+
+/** 收集型 mock ws（BusClient 契约，w12-owner-snapshot-publish 同款）：收集原始 JSON 帧。 */
+function createMockWs(): BusClient & { sent: string[] } {
+  const sent: string[] = []
+  return { readyState: 1, send: (payload: string) => { sent.push(payload) }, sent }
+}
+
+function findStateMsg(msgs: ServerMessage[], type: string): ServerMessage | undefined {
+  return msgs.find((m) => m.type === type)
 }
 
 describe('SessionService.setThinkingLevel 返回 pi 生效值（P3）', () => {
@@ -111,5 +123,66 @@ describe('SessionService.switchModel 返回 pi 生效模型（U6 回执普查）
     await svc.initializeManagedSession('s1', client, '/tmp', 't')
     const returned = await svc.switchModel('s1', 'p' as never, 'model-a')
     expect(returned).toBe('p/model-a')
+  })
+
+  it('get_state 读回畸形 model（id 空串）→ 请求值兜底（U6 生效值 guard 分支）', async () => {
+    const env = makeEnv(() => 'high')
+    ;(env.client.getState as ReturnType<typeof vi.fn>).mockResolvedValue({
+      thinkingLevel: 'high',
+      model: { id: '', provider: 'p' },
+    })
+    await env.svc.initializeManagedSession('s1', env.client, '/tmp', 't')
+    const returned = await env.svc.switchModel('s1', 'p' as never, 'model-a')
+    expect(returned).toBe('p/model-a')
+    // 缓存（getSummary 投影源）同步兜底为请求值，不落畸形生效值
+    expect(env.svc.getSummary('s1')?.modelId).toBe('p/model-a')
+  })
+
+  it('get_state 读回畸形 model（provider 缺失）→ 请求值兜底（U6 生效值 guard 分支）', async () => {
+    const env = makeEnv(() => 'high')
+    ;(env.client.getState as ReturnType<typeof vi.fn>).mockResolvedValue({
+      thinkingLevel: 'high',
+      model: { id: 'model-b' },
+    })
+    await env.svc.initializeManagedSession('s1', env.client, '/tmp', 't')
+    const returned = await env.svc.switchModel('s1', 'p' as never, 'model-a')
+    expect(returned).toBe('p/model-a')
+    expect(env.svc.getSummary('s1')?.modelId).toBe('p/model-a')
+  })
+
+  it('pi pattern 换模 → state_changed 广播 payload 的 modelId 为生效值非请求值（markDirty 防抖收敛链）', async () => {
+    vi.useFakeTimers()
+    try {
+      const env = makeEnv(() => 'high')
+      // 播种权威值：model-a / high（防抖拉取成功，快照就绪）
+      ;(env.client.getState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        thinkingLevel: 'high',
+        model: { id: 'model-a', provider: 'p' },
+      })
+      await env.svc.initializeManagedSession('s1', env.client, '/tmp', 't')
+      await vi.advanceTimersByTimeAsync(1)
+
+      // pi pattern 引擎实际切到 model-b（事故 A 形态）：get_state 读回生效值 ≠ 请求值
+      ;(env.client.getState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        thinkingLevel: 'high',
+        model: { id: 'model-b', provider: 'p' },
+      })
+      const returned = await env.svc.switchModel('s1', 'p' as never, 'model-a')
+      expect(returned).toBe('p/model-b')
+      // switchModel RPC 成功响应 markDirty → 防抖重拉 → 快照挂钩发布 state_changed
+      await vi.advanceTimersByTimeAsync(SCALAR_STATE_DEBOUNCE_MS + 50)
+
+      const late = env.bus.subscribe('s1', createMockWs())
+      const snapshotMsg = findStateMsg(late.stateSnapshot, 'session.state_changed')
+      expect(snapshotMsg?.payload).toMatchObject({
+        sessionId: 's1',
+        modelId: 'p/model-b', // 生效值，非请求值 p/model-a
+      })
+      // 第三处消费点：缓存直写（session.modelId ← effectiveModelId）投影 getSummary /
+      // session 列表（toSummary），与 payload 的实例快照路径是两条独立数据链——都要是生效值
+      expect(env.svc.getSummary('s1')?.modelId).toBe('p/model-b')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -277,6 +277,25 @@ describe("Workflow hook: structured-output failure retry", () => {
     expect(msg).toContain("matching this shape");
   });
 
+  it("steers on 'never called' with the {value} wrapper contract for non-object roots (P6)", async () => {
+    // 非 object 根（array）：参数层实际是 {value} 包装（P6）——"arguments ARE the data"
+    // 文案会指导模型直传裸值，必被包装层 required:["value"] 拒绝。steer 文案必须与
+    // 工具 description / ASP 同语汇告知包装契约与 value. 错误路径前缀。
+    const arrayRootSchema = JSON.stringify({ type: "array", items: { type: "string" } });
+    const pi = createMockPi();
+    await loadExtension(pi, arrayRootSchema);
+
+    await pi.emit("turn_end", turnEndPayload());
+
+    expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+    const msg = pi.sendUserMessage.mock.calls[0]![0] as string;
+    expect(msg).toContain("MUST call the structured-output tool");
+    expect(msg).toContain("{value: <data>}");
+    expect(msg).toContain("`value`");
+    // object 根专属文案不得出现在非 object 根分支
+    expect(msg).not.toContain("Your arguments ARE the data");
+  });
+
   it("does NOT steer when structured-output succeeded", async () => {
     const pi = createMockPi();
     await loadExtension(pi, SCHEMA);
@@ -653,13 +672,16 @@ describe("createWorkflowToolDefinition — registration-time defense + parameter
     });
   });
 
-  it("根类型判定边界：type 数组含 object → object 根直传", () => {
+  it("根类型判定边界：type 数组含 object → object 根直传 + type 收敛为字符串（C-ext-03）", () => {
     const def = createWorkflowToolDefinition(JSON.stringify({
       type: ["object", "null"],
       properties: { name: { type: "string" } },
     }));
+    // type 数组根收敛为字符串 "object"：顶层 type 序列化为数组会被严格 OpenAI 兼容
+    // 网关按 C-ext-03 立约动机整会话 400；且 arguments 协议上恒为 object，"null"
+    // 成员本就不可达，含 object 成员时收敛语义无损（tool-definition 源码注释同源）。
     expect(def.parameters).toEqual({
-      type: ["object", "null"],
+      type: "object",
       properties: { name: { type: "string" } },
       additionalProperties: false,
     });

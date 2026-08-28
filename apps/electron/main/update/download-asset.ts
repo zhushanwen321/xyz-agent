@@ -34,7 +34,7 @@ import { UPDATE_DIR } from './constants.js'
 import { hashFileSha256 } from './hash.js'
 import { resolveProxyUrl } from './proxy-config.js'
 import { UpdateError, UpdateIntegrityError } from './types.js'
-import { classifyNetError, getNodeErrnoCode } from './net-errors.js'
+import { classifyNetError, extractRawCause, getNodeErrnoCode } from './net-errors.js'
 
 /**
  * 断点续传状态接口。
@@ -179,14 +179,14 @@ export async function downloadAsset(
     // 有断点续传状态，检查临时文件是否存在
     if (existsSync(tempPath)) {
       const stat = statSync(tempPath)
-      // [B-4] 续传判定放宽为「temp 落盘字节 <= state 记录值」即从 stat.size 续传。
-      // 旧实现严格相等会在崩溃时刻不巧时误判 mismatch 重下：
-      //   - 正常进度保存用内存 downloaded 计数器（偏大，pipe 未完全 flush）
-      //   - 可恢复错误保存用 statSync 真实字节（偏小）
-      // 两种口径不一致 → stat.size 与 state.downloadedBytes 经常差几 KB → 重下丢数据。
-      // 现在统一：只要 temp 不大于 state，就以更准确的 stat.size 为续传起点。
-      // 只有 temp 异常大于 state（残文件被外部追加等）才作废重下。
-      if (stat.size <= resumeState.downloadedBytes) {
+      // [B-4] 保存口径已统一为 statSync（保存时刻真实落盘字节），续传判定以 stat.size
+      // 为准：不大于 state 直接从 stat.size 续传；略大于 state（超出量 ≤ SAVE_INTERVAL_BYTES，
+      // 保存后 pipe 仍异步刷盘、硬崩溃常落在两次保存之间）同样信任真实落盘字节续传——
+      // 崩溃续传不再退化为全量重下，内容正确性由 [m5] totalBytes 一致性校验（206 响应）
+      // + 最终 sha256/size 校验兜底。只有 stat.size 显著大于 state（残文件被外部追加等）
+      // 或超过 totalBytes 上界才作废重下。
+      const overshoot = stat.size - resumeState.downloadedBytes
+      if (overshoot <= 0 || (overshoot <= SAVE_INTERVAL_BYTES && stat.size <= resumeState.totalBytes)) {
         downloadedBytes = stat.size
         console.log(`[download] resuming from ${downloadedBytes} bytes (state ${resumeState.downloadedBytes})`)
       } else {
@@ -392,6 +392,7 @@ export async function downloadAsset(
           'insufficient disk space',
           'downloading',
           'UPDATE_DISK_SPACE',
+          extractRawCause(err),
         )
       }
       // 超时（含 idle/total abort）：映射为 UPDATE_NETWORK_TIMEOUT
@@ -400,6 +401,7 @@ export async function downloadAsset(
           `download timeout (idle ${IDLE_TIMEOUT_MS / MS_PER_SECOND}s or total ${DOWNLOAD_TIMEOUT_MS / MS_PER_SECOND}s)`,
           'downloading',
           'UPDATE_NETWORK_TIMEOUT',
+          extractRawCause(err),
         )
       }
       // 如果已经是 UpdateError（来自上面的网络错误分类），直接抛出
@@ -410,6 +412,7 @@ export async function downloadAsset(
         `download stream error: ${err instanceof Error ? err.message : String(err)}`,
         'downloading',
         'UPDATE_NETWORK_FAILED',
+        extractRawCause(err),
       )
     } finally {
       // [M1] 流式传输已结束（成功 finish 或抛错）才停两个 watchdog。
@@ -596,6 +599,9 @@ function createThrottledProgress(
  * @param part 段描述
  * @param proxyConfig 代理配置
  * @param onProgress 段内进度（实际只更新总进度，这里传 no-op 或段内计数）
+ * @param sharedSignal downloadMultiPart 的共享 abort signal（[RM3] 段失败整批中断）：
+ *   与下方 per-part watchdog controller 组合——共享 abort 触发本段 controller abort，
+ *   idle/total 超时语义保留在 per-part controller 上不变。缺省（单段调用方）无共享中断。
  * @returns 下载字节数
  */
 async function downloadPart(
@@ -603,8 +609,14 @@ async function downloadPart(
   part: IPartSpec,
   proxyConfig: IProxyConfig | undefined,
   onProgress: (bytes: number) => void,
+  sharedSignal?: AbortSignal,
 ): Promise<number> {
   const controller = new AbortController()
+  const onSharedAbort = () => controller.abort()
+  if (sharedSignal) {
+    if (sharedSignal.aborted) controller.abort()
+    else sharedSignal.addEventListener('abort', onSharedAbort)
+  }
   const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
   let idleTimer: NodeJS.Timeout | undefined = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
   let dispatcher: ProxyAgent | undefined
@@ -680,6 +692,7 @@ async function downloadPart(
     const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
     throw classifyNetError(err, 'downloading', proxyUrl)
   } finally {
+    if (sharedSignal) sharedSignal.removeEventListener('abort', onSharedAbort)
     clearTimeout(timer)
     if (idleTimer) clearTimeout(idleTimer)
     if (dispatcher) await dispatcher.close().catch(() => {})
@@ -698,7 +711,7 @@ async function downloadPart(
  *
  * [MUST-FIX #4 / timeout 语义说明] downloadPart 每段独立用 DOWNLOAD_TIMEOUT_MS（3600s 总）
  * + IDLE_TIMEOUT_MS（30s 空闲）。这是多段下载的固有特性：某段 Range 落到 CDN 缓存未命中的
- * 字节区，单段 30s idle 中断即触发整批 Promise.all reject。这与单段下载「同一区域只中断一次
+ * 字节区，单段 30s idle 中断即经共享 abortController 中断整批。这与单段下载「同一区域只中断一次
  * 可续传」语义不同。不放宽 timeout（30s idle 是国内网络挂死检测的合理阈值，放宽会退化为挂死），
  * 阈值调整（10MB→更大）超出 must-fix 范围。确定性风险已通过 downloadPart 失败自清 part 文件
  * （见 downloadPart catch）收敛。
@@ -741,7 +754,7 @@ async function downloadMultiPart(
       const bytes = await downloadPart(asset, part, proxyConfig, (bytes) => {
         downloadedPerPart[part.index] = bytes
         updateProgress()
-      })
+      }, abortController.signal)
       downloadedPerPart[part.index] = bytes
       updateProgress()
       return part
@@ -750,10 +763,11 @@ async function downloadMultiPart(
       throw err
     }
   })
-  // [RM3] 用 allSettled 收集全部段结果而非 Promise.all：段失败会 abort 其他段，
-  // 其他段的 AbortError 与 Range 违约信号谁先入队是竞态——Promise.all 只暴露第一个
-  // rejection，可能把「应降级」误判为网络失败。全部收集后统一判定才符合
-  // 「任一段违约 → 整批放弃多段」的语义。
+  // [RM3] 用 allSettled 收集全部段结果而非 Promise.all：段失败经共享 abortController
+  // 中断其他段（signal 已传入 downloadPart，与其 per-part watchdog controller 组合，
+  // abort 真实生效——失败浮出不再等待健康段传完），其他段的 AbortError 与 Range 违约
+  // 信号谁先入队是竞态——Promise.all 只暴露第一个 rejection，可能把「应降级」误判为
+  // 网络失败。全部收集后统一判定才符合「任一段违约 → 整批放弃多段」的语义。
   const rejected = (await Promise.allSettled(partPromises)).filter(
     (r): r is PromiseRejectedResult => r.status === 'rejected',
   )

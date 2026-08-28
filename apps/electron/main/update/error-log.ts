@@ -4,6 +4,10 @@
  * JSONL 格式，512KB 轮转 x2。五个 source 覆盖：
  * test-proxy / download / install / perform / preload。
  *
+ * 形态豁免说明（data-source-registry C-data-11 口径）：本文件是 append-only 诊断
+ * 日志（appendFileSync 单向追加 + rename 轮转，无读-改-写），非 C-data-11 针对的
+ * 「每域一 JSON 配置文件」RMW 丢失面，不属于 writeFileSync 直写禁令范围。
+ *
  * 落盘失败静默跳过（日志失败不能阻断升级主流程）。
  *
  * 依赖方向：error-log → constants（UPDATE_ERROR_LOG 路径）+ node:fs。

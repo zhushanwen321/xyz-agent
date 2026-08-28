@@ -23,6 +23,7 @@
     "prepare-builtin-plugins": "bash ../../scripts/prepare-builtin-plugins.sh",
     "build:dir": "pnpm run prepare-builtin-extensions && node ../../scripts/verify-staged-extensions.mjs && pnpm run prepare-builtin-plugins && pnpm run build:runtime && pnpm run build:vite && pnpm run build:main && pnpm run build:preload && electron-builder --publish never --dir",
     "build:vite": "pnpm --filter @xyz-agent/frontend run build",
+    "typecheck:preload": "tsc -p tsconfig.preload.json",
     "test:main": "cd main && vitest run",
     "test:all": "pnpm --filter @xyz-agent/frontend run test && pnpm --filter @xyz-agent/runtime run test && cd main && vitest run"
   },

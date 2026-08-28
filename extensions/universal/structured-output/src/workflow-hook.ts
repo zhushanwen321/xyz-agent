@@ -19,7 +19,8 @@ import {
 	truncateText,
 } from "./text-primitives.js";
 
-import { isToolExecutionEndEvent, isTurnEndEvent } from "./schema-guards.js";
+import { isToolExecutionEndEvent, isTurnEndEvent, tryParseJson } from "./schema-guards.js";
+import { isObjectRootSchema } from "./execute.js";
 
 /** Pi Extension API — properly typed via ExtensionAPI from pi-coding-agent SDK */
 type PiAPI = ExtensionAPI;
@@ -142,7 +143,11 @@ function shouldSkipSteer(state: RetryState, event: unknown): boolean {
 /**
  * 构造 steer reminder（原 turn_end handler 内联三元提取）。两种失败形态：
  *   - calledButFailed（调了但全是 isError）→ 注入具体校验错误 + 正确 schema
- *   - 否则（完全没调用）→ 注入"必须调用"提示 + schema 形状
+ *   - 否则（完全没调用）→ 注入"必须调用"提示 + schema 形状；文案按参数层实际契约
+ *     （根类型）条件化：object 根 arguments 即 data；非 object 根参数层实际是 {value}
+ *     包装（P6）——固定 "arguments ARE the data" 会指导模型直传裸值，必被包装层
+ *     required:["value"] 拒绝，系统性浪费重试预算。判定与包装判定同源
+ *     （isObjectRootSchema），与工具 description / ASP 同语汇。
  *
  * 错误块经 truncateText 截断（审查项#1，上限 = STEER_ERROR_MAX_CHARS，与 loop-gate
  * 签名上限语义独立——见 F5 拆分）：pi-ai validation.js 的实参回显无截断，
@@ -154,22 +159,34 @@ function buildSteerReminder(
 	calledButFailed: boolean,
 	lastSchemaError: string | null,
 	schemaJson: string,
+	isObjectRoot: boolean,
 ): string {
-	return calledButFailed
+	if (calledButFailed) {
+		return [
+			"[MANDATORY] Your structured-output call FAILED validation:",
+			truncateText(lastSchemaError ?? "structured-output call failed", STEER_ERROR_MAX_CHARS),
+			"",
+			"The schema is enforced by the system (PI_WORKFLOW_SCHEMA) — this tool's parameter schema IS the required shape of your result.",
+			`The required schema for your result is: ${schemaJson}`,
+			"Fix your arguments to conform to this schema and call the structured-output tool AGAIN.",
+			"Do NOT output the result as text — call the tool.",
+		].join("\n");
+	}
+	return isObjectRoot
 		? [
-				"[MANDATORY] Your structured-output call FAILED validation:",
-				truncateText(lastSchemaError ?? "structured-output call failed", STEER_ERROR_MAX_CHARS),
-				"",
-				"The schema is enforced by the system (PI_WORKFLOW_SCHEMA) — this tool's parameter schema IS the required shape of your result.",
-				`The required schema for your result is: ${schemaJson}`,
-				"Fix your arguments to conform to this schema and call the structured-output tool AGAIN.",
-				"Do NOT output the result as text — call the tool.",
-			].join("\n")
-		: [
 				"[MANDATORY] You MUST call the structured-output tool now.",
 				"Your task requires a structured output. Do NOT respond with plain text.",
 				`Your arguments ARE the data — call structured-output with your result as the tool's arguments, matching this shape: ${schemaJson}`,
 				"The schema is enforced by the system; your arguments are validated against the authoritative schema automatically.",
+				"This is enforced by the workflow system. Just call the tool.",
+			].join("\n")
+		: [
+				"[MANDATORY] You MUST call the structured-output tool now.",
+				"Your task requires a structured output. Do NOT respond with plain text.",
+				`Call structured-output with a single argument \`{value: <data>}\` — put the result itself in \`value\`, and it must conform to this shape: ${schemaJson}`,
+				"Non-object schemas are wrapped in a `value` field because tool call arguments must be objects.",
+				"Validation errors may reference paths starting with `value.` (e.g. `value.0`, `value.name`): that prefix addresses the wrapper, not your data — strip it to locate the offending field.",
+				"The schema is enforced by the system; the `value` field is validated against the authoritative schema automatically.",
 				"This is enforced by the workflow system. Just call the tool.",
 			].join("\n");
 }
@@ -194,6 +211,11 @@ function buildSteerReminder(
 export function setupWorkflowHook(pi: PiAPI, schemaJson: string): RetryState {
 	const state = new RetryState();
 
+	// 根类型判定与 {value} 包装判定同源（isObjectRootSchema，P6）：注册期
+	// createWorkflowToolDefinition 已对同一 schema 完成 assertJsonSchemaRoot fail-fast，
+	// 此处解析失败不可能到达；真失败时判定为非 object 根 → 包装契约文案（保守方向）。
+	const isObjectRoot = isObjectRootSchema(tryParseJson(schemaJson));
+
 	// 追踪 structured-output 调用结果：
 	// 成功 → soSucceededEver=true（终态，后续不再干预）
 	// 失败 → soCallCount++，记录 lastSchemaError，由 turn_end 决定是否 steer 重试
@@ -215,7 +237,7 @@ export function setupWorkflowHook(pi: PiAPI, schemaJson: string): RetryState {
 		const calledButFailed = state.soCallCount > 0;
 		// 构造 reminder 时 lastSchemaError 必须仍是本 turn 的错误文本，
 		// 故 onTurnEnd()（清空 lastSchemaError）必须在发送成功之后调用。
-		const reminder = buildSteerReminder(calledButFailed, state.lastSchemaError, schemaJson);
+		const reminder = buildSteerReminder(calledButFailed, state.lastSchemaError, schemaJson, isObjectRoot);
 
 		// 审查项#8：await 发送结果——发送失败（如 compaction 中 prompt() 抛错 / 扩展已
 		// 被 assertActive 拒绝）不扣减重试预算（不调 onTurnEnd），否则 fire-and-forget

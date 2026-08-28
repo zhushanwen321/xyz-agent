@@ -1081,8 +1081,10 @@ const modelsSub = makeMockSubscription(() =>
 
 export const model = {
   onModels: (h: (models: ModelInfo[]) => void) => modelsSub.subscribe(h),
-  async switchModel(_sessionId: string, _provider: ProviderId, _modelId: string) {
+  async switchModel(sessionId: string, provider: ProviderId, modelId: string) {
     await sleep(TIMING.ack)
+    // 回执契约与真实 api 对齐（C-pi-13）：mock 无 pi，生效值 = 请求值回显
+    return { sessionId, provider, modelId }
   },
 }
 

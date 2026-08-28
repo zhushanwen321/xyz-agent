@@ -109,6 +109,8 @@ function thinkingLevelMapSignature(map: Record<string, string | null> | null | u
  * compute 可注入——单测断言缓存命中 / 键变更作废行为（计数断言），默认 pi 同源实现。
  */
 export class ModelCapabilityRegistry {
+  // @data-owner #20（data-source-registry.md）：supportedLevels 派生缓存唯一写方 =
+  // levelsFor 签名键 miss 时的 compute（值不可能陈旧）；批量作废键见 currentCacheKey。
   private cacheKey: string | null = null
   private readonly levelsBySignature = new Map<string, string[]>()
 

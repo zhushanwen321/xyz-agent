@@ -113,6 +113,10 @@ export function createWorkflowToolDefinition(envSchema: string) {
 	const parameters = isObjectRoot
 		? Type.Unsafe<Record<string, unknown>>({
 				...schema,
+				// type 数组根（如 ["object","null"]）收敛为字符串 "object"：顶层 type 序列化为
+				// 数组会被严格 OpenAI 兼容网关按 C-ext-03 立约动机整会话 400；且 arguments
+				// 协议上恒为 object，"null" 成员本就不可达，含 object 成员时收敛语义无损。
+				...(Array.isArray(schema.type) && schema.type.includes("object") ? { type: "object" } : {}),
 				additionalProperties: schema.additionalProperties ?? false,
 			})
 		: Type.Unsafe<{ value: unknown }>({

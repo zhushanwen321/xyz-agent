@@ -97,6 +97,13 @@ export function formatSchemaInstruction(schema: Record<string, unknown>): string
   const rulesCallLine = isObjectRoot
     ? "- Call the structured-output tool with your result data as its arguments. The system validates them against the schema above automatically."
     : "- Call the structured-output tool with `{value: <your result data>}`. The system validates the `value` field against the schema above automatically.";
+  // [AP 告知条件化] 根级 additionalProperties 未声明时 D4 注入 false（见
+  // structured-output tool-definition）——额外字段恒拒绝，强承诺成立；作者显式声明
+  // true / 子 schema 时 injection 侧尊重不动，额外字段按作者声明放行，无条件
+  // 「一律拒绝」文案与参数层行为不符（保守方向误导：模型不敢传合法字段）。
+  const apLine = schema.additionalProperties === undefined
+    ? "- Fields not defined in this schema are rejected — do not add extra fields."
+    : "- Extra fields follow this schema's own additionalProperties declaration.";
   return [
     "## MANDATORY: Structured Output Requirement",
     "",
@@ -114,7 +121,7 @@ export function formatSchemaInstruction(schema: Record<string, unknown>): string
     "- Do NOT output JSON in your text response — use the structured-output tool.",
     "- Do NOT skip this step. The structured-output call IS your result.",
     "- Complete all other work FIRST, then call structured-output as the last action.",
-    "- Fields not defined in this schema are rejected — do not add extra fields.",
+    apLine,
   ].join("\n");
 }
 

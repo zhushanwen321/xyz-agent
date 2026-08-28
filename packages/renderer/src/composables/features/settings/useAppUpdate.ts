@@ -470,6 +470,8 @@ async function performDownload(): Promise<void> {
     if (!errorHandled) {
       state.state = 'error'
       state.errorMessage = e instanceof Error ? e.message : String(e)
+      // 兜底错误不携带 suggestion，清掉上一次错误遗留的陈旧恢复指引
+      state.errorSuggestion = ''
     }
   }
 }
@@ -496,6 +498,8 @@ async function performInstall(): Promise<void> {
     if (!errorHandled) {
       state.state = 'error'
       state.errorMessage = e instanceof Error ? e.message : String(e)
+      // 兜底错误不携带 suggestion，清掉上一次错误遗留的陈旧恢复指引
+      state.errorSuggestion = ''
     }
   }
 }

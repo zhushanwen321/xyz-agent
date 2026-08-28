@@ -694,7 +694,10 @@ describe("createNotifier — ledger 四步接线（U2）", () => {
 
       const logCalls = appendEntry.mock.calls.filter((c) => c[0] === "subagents:log");
       expect(logCalls.length).toBeGreaterThanOrEqual(1);
-      expect(JSON.stringify(logCalls[0]?.[1])).toContain("port.send failed");
+      // 按内容定位目标日志（logCalls[0] 可能是 ledger 未 bind 的 fallback warn——
+      // 该降级留痕同样落 extensionLogger 通道，先于 port.send 失败发生）
+      const sendFailLogged = logCalls.some((c) => JSON.stringify(c[1]).includes("port.send failed"));
+      expect(sendFailLogged).toBe(true);
       expect(consoleWarnSpy).not.toHaveBeenCalled();
 
       notifier.dispose();

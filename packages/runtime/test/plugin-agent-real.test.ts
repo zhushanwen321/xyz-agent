@@ -34,6 +34,7 @@ function createMockSessionService(sessions: SessionSummary[] = []): ISessionServ
     getSummary: vi.fn((id: string) => sessionMap.get(id)),
     sendMessage: vi.fn().mockResolvedValue(undefined),
     switchModel: vi.fn().mockResolvedValue('provider/model-b'),
+    setThinkingLevel: vi.fn().mockResolvedValue('off'),
     create: vi.fn().mockResolvedValue(undefined),
     delete: vi.fn().mockResolvedValue(undefined),
     renameSession: vi.fn().mockResolvedValue(undefined),
@@ -194,5 +195,94 @@ describe('Agent RPC Handlers — real implementation', () => {
 
     const tools = await callMethod(service, 'plugin.agent.getActiveTools', {})
     expect(tools).toEqual([])
+  })
+})
+
+/**
+ * U6 回执普查降级守卫（C-pi-13 消费方契约）：setModel / setThinkingLevel 的 reply
+ * 是 pi 生效值（pi pattern 换模 / 钳制时 ≠ 请求值），消费端必须处理空串降级、
+ * 禁乐观写请求值。守卫分支零覆盖即契约无锁定。
+ */
+describe('Agent RPC Handlers — U6 降级守卫返回空串', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    clearActiveSessionCache()
+  })
+
+  it('setModel：无 sessionService → 返回空串（守卫分支 1）', async () => {
+    const broker = createMockBroker()
+    const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
+    const service = new PluginService(registry, broker)
+
+    const result = await callMethod(service, 'plugin.agent.setModel', { model: 'openai/gpt-4' })
+    expect(result).toBe('')
+  })
+
+  it('setModel：无活跃 session → 返回空串且不触达 switchModel（守卫分支 2）', async () => {
+    const sessionService = createMockSessionService([])
+    const service = createService(sessionService)
+
+    const result = await callMethod(service, 'plugin.agent.setModel', { model: 'openai/gpt-4' })
+    expect(result).toBe('')
+    expect(sessionService.switchModel).not.toHaveBeenCalled()
+  })
+
+  it('setModel：复合串无 "/"（parts < MIN_MODEL_PARTS）→ 返回空串且不触达 switchModel（守卫分支 3）', async () => {
+    const session: SessionSummary = {
+      id: 's1', label: 'S1', cwd: '/work', status: 'active',
+      lastActiveAt: Date.now(), modelId: 'provider/old', tokenCount: 0,
+    }
+    const sessionService = createMockSessionService([session])
+    const service = createService(sessionService)
+
+    const result = await callMethod(service, 'plugin.agent.setModel', { model: 'gpt-4' })
+    expect(result).toBe('')
+    expect(sessionService.switchModel).not.toHaveBeenCalled()
+  })
+
+  it('setModel：活跃 session + 合法复合串 → 返回 switchModel 的生效值（回执契约正向锚点）', async () => {
+    const session: SessionSummary = {
+      id: 's1', label: 'S1', cwd: '/work', status: 'active',
+      lastActiveAt: Date.now(), modelId: 'provider/old', tokenCount: 0,
+    }
+    const sessionService = createMockSessionService([session])
+    const service = createService(sessionService)
+
+    const result = await callMethod(service, 'plugin.agent.setModel', { model: 'openai/gpt-4' })
+    // 请求 'openai/gpt-4'，mock 的 sessionService.switchModel 返回生效值 'provider/model-b'
+    expect(result).toBe('provider/model-b')
+  })
+
+  it('setThinkingLevel：无 sessionService → 返回空串（守卫分支 1）', async () => {
+    const broker = createMockBroker()
+    const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
+    const service = new PluginService(registry, broker)
+
+    const result = await callMethod(service, 'plugin.agent.setThinkingLevel', { level: 'max' })
+    expect(result).toBe('')
+  })
+
+  it('setThinkingLevel：无活跃 session → 返回空串（守卫分支 2）', async () => {
+    const sessionService = createMockSessionService([])
+    const service = createService(sessionService)
+
+    const result = await callMethod(service, 'plugin.agent.setThinkingLevel', { level: 'max' })
+    expect(result).toBe('')
+    expect((sessionService.setThinkingLevel as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled()
+  })
+
+  it('setThinkingLevel：活跃 session → 返回 setThinkingLevel 的生效档（回执契约正向锚点）', async () => {
+    const session: SessionSummary = {
+      id: 's1', label: 'S1', cwd: '/work', status: 'active',
+      lastActiveAt: Date.now(), modelId: 'provider/x', tokenCount: 0,
+    }
+    const sessionService = createMockSessionService([session])
+    ;(sessionService.setThinkingLevel as ReturnType<typeof vi.fn>).mockResolvedValue('high')
+    const service = createService(sessionService)
+
+    // 请求 max，pi 钳制后生效档 high（事故 B 形态）——回执返回生效档而非请求值
+    const result = await callMethod(service, 'plugin.agent.setThinkingLevel', { level: 'max' })
+    expect(result).toBe('high')
+    expect(sessionService.setThinkingLevel).toHaveBeenCalledWith('s1', 'max')
   })
 })

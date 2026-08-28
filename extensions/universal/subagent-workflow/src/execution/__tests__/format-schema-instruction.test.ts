@@ -35,6 +35,14 @@ describe("formatSchemaInstruction", () => {
     expect(out).toContain("do not add extra fields");
   });
 
+  it("author-declared additionalProperties → weak wording (AP 条件化：声明时作者 schema 管辖额外字段)", () => {
+    // D4 只在「未声明」时注入 false；作者显式声明 true 时额外字段实际放行——
+    // 无条件「一律拒绝」强承诺与参数层行为不符，改用弱承诺措辞。
+    const out = formatSchemaInstruction({ type: "object", additionalProperties: true });
+    expect(out).not.toContain("Fields not defined in this schema are rejected");
+    expect(out).toContain("follow this schema's own additionalProperties declaration");
+  });
+
   // ── schema 序列化（compact：与 schemaEnv 复用同串，IF7 #13）───────
 
   it("embeds the schema as compact JSON inside a fenced block", () => {

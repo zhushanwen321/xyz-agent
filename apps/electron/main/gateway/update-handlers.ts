@@ -22,7 +22,7 @@
  */
 import { app, ipcMain } from 'electron'
 import { ProxyAgent } from 'undici'
-import type { LatestReleaseInfo, IProxyConfig, UpdateSettings, UpdateCheckResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, IProxyConfig, UpdateSettings, UpdateCheckResult, ProxyTestResult } from '@xyz-agent/shared'
 import type { IpcHandlerDeps } from '../interfaces.js'
 import { UpdateError } from '../update/types.js'
 import { readProxyConfig, writeProxyConfig, resolveProxyUrl } from '../update/proxy-config.js'
@@ -30,6 +30,7 @@ import { validateRelease } from '../update/validate-release.js'
 import { writePendingUpdate, readPendingUpdate } from '../update/pending-update.js'
 import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.js'
 import type { IUpdateOrchestrator, UpdateProgressCallback } from '../update/orchestrator.js'
+import { isAutoUpdateSupportedForCurrentInstall } from '../update/orchestrator.js'
 import { writePreloadedUpdate, readPreloadedUpdate, readPreloadedUpdateRaw, clearPreloadedUpdate } from '../update/preloaded-update.js'
 import { classifyNetError } from '../update/net-errors.js'
 import { appendUpdateError } from '../update/error-log.js'
@@ -82,8 +83,10 @@ function resolveDispatcher(config: IProxyConfig): ProxyAgent | undefined {
  * [C2] 必须真正走代理（构造 undici ProxyAgent dispatcher 传给 fetch），
  * 否则即便代理不可用也会因直连成功而误报——给用户虚假的成功反馈。
  * testProxy 用与真实下载相同的 resolveDispatcher 逻辑，确保测试结果反映代理可用性。
+ * 返回类型 = shared ProxyTestResult SSOT（update-handlers 内 errorPayload 同型手写处的
+ * 形状权威，防漂移）。
  */
-async function testProxyConnection(config: IProxyConfig): Promise<{ success: boolean; code?: string; message?: string; suggestion?: string }> {
+async function testProxyConnection(config: IProxyConfig): Promise<ProxyTestResult> {
   if (config.mode === 'disabled') {
     return { success: false, message: 'Proxy disabled, skipping test' }
   }
@@ -268,7 +271,9 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
         // 避免与后台预下载争抢 orchestrator 的 downloading 锁而硬报错。
         // updateOrchestrator 未注入（dev/check-only 场景）时跳过预下载（download/install 会另行报错）。
         const settings = getUpdateSettings()
-        if (settings.preDownload && deps.updateOrchestrator) {
+        // linux deb/rpm 安装形态不支持自动更新（downloadUpdate 入口同款门控，同源判定
+        // isAutoUpdateSupportedForCurrentInstall）——预下载必然失败，不触发后台空转
+        if (settings.preDownload && deps.updateOrchestrator && isAutoUpdateSupportedForCurrentInstall()) {
           preDownloadPromise = preloadUpdateSilently(info, deps.updateOrchestrator)
         }
       }

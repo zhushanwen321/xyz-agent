@@ -281,6 +281,12 @@ export function createNotifier(host: NotifierHost): BgNotifier {
 
       // 无 ledger 装配（旧装配 / 部分测试）：内核路径——合批窗口 / settled 边沿 /
       // dedupe（按 notifyId，key 规则与旧 dedupeKey 一致：id 或 id:round）不变。
+      // [C-ext-06 配套] 降级留痕：bind 缺失（含 jiti 单例分裂致跨模块读不到绑定的
+      // 失效形态）本是无声分岔，U2 at-least-once 在此退化为内核路径——warn 一条
+      // 供诊断检索，不改变向后兼容行为。
+      notifyLogger.warn("notify ledger not bound, falling back to delivery kernel path (at-most-once)", {
+        notifyId,
+      });
       handle.send({
         payload: {
           kind: "custom",

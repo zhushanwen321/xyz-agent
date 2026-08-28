@@ -121,6 +121,19 @@ let updating = false
 let downloading = false
 
 /**
+ * 当前安装形态是否支持自动更新（批次 6 review S：linux deb 与 Intel mac 同类门控的判定源）。
+ *
+ * linux 仅 AppImage 打包支持（APPIMAGE 环境变量由 AppImage 运行时注入）；deb/rpm 安装形态下
+ * pickPlatformAsset 恒返回 AppImage asset——下载恒成功、install 恒抛 UpdateUnsupportedError →
+ * handler 清 preloaded → 下次 check（预下载开启时）再后台下 ~170MB 循环空转。
+ * 该判定同时供 downloadUpdate 门控（fail-fast 零字节）与 handler 层预下载跳过使用，
+ * 两处同源防漂移。
+ */
+export function isAutoUpdateSupportedForCurrentInstall(): boolean {
+  return !(process.platform === 'linux' && !process.env.APPIMAGE)
+}
+
+/**
  * 下载阶段：选 asset + 下载 + sha256 校验。
  *
  * 从原一键流程拆分，供预下载（后台静默下载）复用。下载完成后返回已校验的文件路径，
@@ -154,6 +167,15 @@ export async function downloadUpdate(
     if (process.platform === 'darwin' && process.arch !== 'arm64') {
       throw new UpdateUnsupportedError(
         `auto update supports Apple Silicon only (current arch: ${process.arch})`,
+        release.htmlUrl,
+      )
+    }
+    // 0.6 打包形态门控（review round-1 S，与 m8 同类空转的第二形态）：linux deb/rpm
+    // 安装不支持自动更新——失败前置到零字节下载之前（fallbackUrl 引导手动安装），
+    // 预下载与手动下载共用本入口因此同样被拦。判定源 = isAutoUpdateSupportedForCurrentInstall。
+    if (!isAutoUpdateSupportedForCurrentInstall()) {
+      throw new UpdateUnsupportedError(
+        `auto update supports AppImage installs only on linux (APPIMAGE env not set — deb/rpm package)`,
         release.htmlUrl,
       )
     }
