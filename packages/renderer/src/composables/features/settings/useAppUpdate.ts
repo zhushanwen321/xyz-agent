@@ -253,6 +253,12 @@ function subscribeProgress(): void {
       // 设计 §3.5.1②：请求版本已过期（main 权威 latest 更新）→ 自动重查拿新 latest，
       // 不进 error 态（用户无责，信息性提示 + 自动恢复）。重查命中后 state 转 available，
       // 用户再次点击下载即拿到新版本（T3 验收路径）。
+      // 必须在重查前显式置稳定态：performDownload 已置 downloading 且其 catch 会被
+      // errorHandled 去重跳过，不置态则下方 checkForUpdate 捕获的 prevState='downloading'，
+      // 重查恰逢 rateLimited 时假 downloading 被固化（UpdateCheckCard 无按钮 + 周期检查
+      // 守卫跳过 → UI 永久卡死）。置 available（latestRelease 仍在，重查成功即刷新；
+      // 极端情况下用户再点下载会再次 STALE → 再次自动重查，有出路非死锁）。
+      state.state = 'available'
       console.info('[useAppUpdate] stale release detected, auto re-checking:', e.message)
       const { info: toastInfo } = useToast()
       toastInfo(t('sidebar.update.staleRelease'))
@@ -296,7 +302,9 @@ async function checkForUpdate(force = false): Promise<void> {
   // 仅当未恢复 pending（首次检测 / 正常流程）时才进入 checking 态。
   // prevState：限额退避（rateLimited）时恢复原态——「限额未知」≠「确认无新版」，
   // 不应把已有 available 提醒回退成 idle（RM2.3，2026-08 一致性审查补齐）。
-  const prevState = state.state
+  // 降级守卫：理论并发（上一 check 未返回又触发本次）时 state 可能仍是瞬态 checking，
+  // 恢复瞬态态会被周期检查守卫卡死（canCheck 不含 checking），降级为 idle。
+  const prevState = state.state === 'checking' ? 'idle' : state.state
   if (!pendingRestored) {
     state.state = 'checking'
   }

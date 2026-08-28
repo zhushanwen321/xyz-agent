@@ -237,6 +237,34 @@ describe('useAppUpdate', () => {
     stop()
   })
 
+  it('onUpdateError UPDATE_STALE_RELEASE + 自动重查恰逢限额 → 不固化 downloading 假态（#24 回归）', async () => {
+    toastFns.info.mockClear()
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    expect(result.state.state).toBe('available')
+
+    // STALE 错误推送触发自动重查，重查恰逢限额退避窗口：{info:null, rateLimited:true}
+    hoisted.updateDownload.mockImplementation(async () => {
+      hoisted.fireError({ stage: 'downloading', message: '更新信息已过期', errorCode: 'UPDATE_STALE_RELEASE' })
+      throw { message: '更新信息已过期', stage: 'downloading', errorCode: 'UPDATE_STALE_RELEASE' }
+    })
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: true })
+
+    await result.performDownload()
+
+    // 修复前：performDownload 已置 downloading 且 catch 被 errorHandled 去重跳过，
+    // STALE 分支不置态 → 自动重查 prevState='downloading' 被 rateLimited 恢复固化，
+    // UpdateCheckCard downloading 态无按钮 + 周期检查守卫跳过 → UI 永久卡死。
+    // 修复后：STALE 分支在重查前显式置 available，rateLimited 恢复 available（稳定态有出路）。
+    await vi.waitFor(() => {
+      expect(result.state.state).toBe('available')
+    })
+    expect(result.state.state).not.toBe('downloading')
+    expect(result.state.state).not.toBe('checking')
+    stop()
+  })
+
   it('performDownload 经 onUpdateProgress 推送做 stage 转换（downloading→replacing），downloaded:true 后置 downloaded', async () => {
     hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
     hoisted.updateDownload.mockImplementation(async () => {
