@@ -27,6 +27,7 @@ import {
   FAILED_TOOL_END,
   failedToolEndWith,
   loadExtension,
+  paramLayerErrorText,
   restoreSchemaEnv,
   SCHEMA,
   SCHEMA_ENV_NAME,
@@ -133,5 +134,102 @@ describe("characterization: setupWorkflowHook timing (baseline before RetryState
     expect(pi.sendUserMessage).not.toHaveBeenCalled();
     // terminal 幂等：第 4+ 次失败不重复 shutdown
     expect(pi.ctx.shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  // ── U3（审查项#8/#9/#1）新增基线 ─────────────────────────────
+
+  // 每轮不同字段的失败原料——字段集合不同 = 闸门签名不同，避免闸门 terminal
+  //（3 次同签名）先于 hook 上限拦截，干扰预算语义断言。
+  const failWith = (field: string) =>
+    failedToolEndWith(paramLayerErrorText(`  - ${field}: must be number`, "{}"));
+
+  it("⑥ [U3 审查项#9] stopReason=error/aborted 轮不 steer（防 chatMode 复用子进程时陈旧 steer 泄漏到下一轮），预算不扣、状态保留", async () => {
+    for (const stopReason of ["error", "aborted"]) {
+      const pi = createMockPi();
+      await loadExtension(pi, SCHEMA);
+
+      await pi.emit("tool_execution_end", FAILED_TOOL_END);
+      await pi.emit("turn_end", turnEndPayload(stopReason));
+      expect(pi.sendUserMessage).not.toHaveBeenCalled();
+      expect(pi.appendEntry).not.toHaveBeenCalled();
+
+      // 预算不扣减 + 失败状态保留：下一个正常收尾的轮仍 steer，
+      // 且因 soCallCount/lastSchemaError 保留走 FAILED 分支（非 MUST call）
+      await pi.emit("turn_end", turnEndPayload());
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+      const msg = pi.sendUserMessage.mock.calls[0]![0] as string;
+      expect(msg).toContain("FAILED validation");
+      expect(msg).toContain("Schema validation failed: /count must be number");
+    }
+  });
+
+  it("⑦ [U3 审查项#8] steer 发送失败（rejected promise）→ 不扣预算 + appendEntry 告警，后续轮仍可 steer（不永久哑火）", async () => {
+    const pi = createMockPi();
+    await loadExtension(pi, SCHEMA);
+
+    // 第 1 轮：发送失败（await 路径 reject —— 模拟 compaction 中 prompt() 抛错）
+    pi.sendUserMessage.mockRejectedValueOnce(new Error("compaction in progress"));
+    await pi.emit("tool_execution_end", failWith("count"));
+    await pi.emit("turn_end", turnEndPayload());
+    expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+
+    // 失败告警：appendEntry 持久化（沿用本包 customType 通道格式）
+    expect(pi.appendEntry).toHaveBeenCalledTimes(1);
+    const [entryType, entryData] = pi.appendEntry.mock.calls[0]!;
+    expect(entryType).toBe("structured-output:hook");
+    expect(entryData).toMatchObject({
+      event: "steer_send_failed",
+      error: "compaction in progress",
+    });
+
+    // 预算未扣减证明：之后两个正常轮各 steer 一次（若失败轮白扣，此处只剩 1 次）
+    await pi.emit("tool_execution_end", failWith("alpha"));
+    await pi.emit("turn_end", turnEndPayload());
+    await pi.emit("tool_execution_end", failWith("beta"));
+    await pi.emit("turn_end", turnEndPayload());
+    expect(pi.sendUserMessage).toHaveBeenCalledTimes(3);
+
+    // 第 4 个正常轮：hookRetryCount=2 达上限 → 放弃（失败有界语义不变）
+    await pi.emit("tool_execution_end", failWith("gamma"));
+    await pi.emit("turn_end", turnEndPayload());
+    expect(pi.sendUserMessage).toHaveBeenCalledTimes(3);
+  });
+
+  it("⑧ [U3 审查项#8] steer 发送同步 throw（扩展被拒）→ 同样不扣预算 + 告警含错误文本", async () => {
+    const pi = createMockPi();
+    await loadExtension(pi, SCHEMA);
+
+    pi.sendUserMessage.mockImplementationOnce(() => {
+      throw new Error("extension deactivated");
+    });
+    await pi.emit("tool_execution_end", FAILED_TOOL_END);
+    await pi.emit("turn_end", turnEndPayload());
+    expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(pi.appendEntry).toHaveBeenCalledWith(
+      "structured-output:hook",
+      expect.objectContaining({ event: "steer_send_failed", error: "extension deactivated" }),
+    );
+    expect(pi.ctx.shutdown).not.toHaveBeenCalled();
+  });
+
+  it("⑨ [U3 审查项#1] 大 payload 失败：回灌错误块经截断有界化，首部错误类型+字段名保留，全量实参回显不整体入回灌", async () => {
+    const pi = createMockPi();
+    await loadExtension(pi, SCHEMA);
+
+    // ≈11K chars 的参数层错误（审查场景：pi-ai validation.js 实参回显无截断）
+    const bigEcho = JSON.stringify({ payload: "x".repeat(11000) }, null, 2);
+    await pi.emit(
+      "tool_execution_end",
+      failedToolEndWith(paramLayerErrorText("  - assessments.0.impact: must be string", bigEcho)),
+    );
+    await pi.emit("turn_end", turnEndPayload());
+
+    expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+    const msg = pi.sendUserMessage.mock.calls[0]![0] as string;
+    expect(msg).toContain("FAILED validation");
+    expect(msg).toContain("Validation failed for tool");
+    expect(msg).toContain("assessments.0.impact"); // 首部关键信息：错误字段名保留
+    expect(msg).not.toContain(bigEcho); // 全量实参回显不得整体进入回灌
+    expect(msg.length).toBeLessThan(2000); // 有界（错误块 ≤500c + schema + 指引）
   });
 });

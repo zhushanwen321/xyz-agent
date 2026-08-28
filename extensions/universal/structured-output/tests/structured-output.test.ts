@@ -719,6 +719,60 @@ describe("createWorkflowToolDefinition — registration-time defense + parameter
     expect(def.description).toMatch(/validation fails/i);
   });
 
+  // 根类型条件化（与 parameters 包装判定同源 isObjectRootSchema）：
+  // object 根口径「arguments ARE the data」；非 object 根参数层实际是 {value} 包装，
+  // 必须告知包装契约 + value. 错误路径前缀，否则模型按直传口径首调必败。
+  it("description object 根：保持 arguments ARE the data，不含 value 包装教学", () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({
+      type: "object", properties: { count: { type: "number" } },
+    }));
+    expect(def.description).toContain("Your arguments ARE the data");
+    // object 根无包装：不得出现 {value} 契约与 value. 路径前缀说明
+    expect(def.description).not.toMatch(/\{value:/);
+    expect(def.description).not.toMatch(/`value\./);
+  });
+
+  it("description 非 object 根：告知 {value} 包装契约 + value. 路径前缀（审查项#3）", () => {
+    const nonObjectRoots = [
+      { type: "array", items: { type: "string" } },
+      { type: "string", enum: ["low", "high"] },
+      { type: "number", minimum: 0 },
+      { type: "boolean" },
+      { anyOf: [{ type: "string" }, { type: "number" }] },
+    ];
+    for (const schema of nonObjectRoots) {
+      const def = createWorkflowToolDefinition(JSON.stringify(schema));
+      // 包装契约：单参数必须是 {value: <data>} 对象
+      expect(def.description).toMatch(/must be an object/);
+      expect(def.description).toContain("{value:");
+      expect(def.description).toContain("must conform to this schema");
+      // 错误路径前缀说明（参数层错误无改写通道，指引前置携带）
+      expect(def.description).toMatch(/`value\./);
+      // 不得再保留 object 根口径（两口径互斥）
+      expect(def.description).not.toContain("Your arguments ARE the data");
+    }
+  });
+
+  it("description 裸 object 警示：{type:'object'} 无属性约束 → 追加 empty-object 警示（审查项#5）", () => {
+    const def = createWorkflowToolDefinition(JSON.stringify({ type: "object" }));
+    expect(def.description).toMatch(/accepts only an empty object \{\}/);
+    expect(def.description).toMatch(/will be rejected/);
+  });
+
+  it("description 裸 object 警示不误报：有属性约束/显式 additionalProperties/required/非 object 根 → 无警示", () => {
+    const cases = [
+      { type: "object", properties: { a: { type: "string" } } },
+      { type: "object", additionalProperties: true },
+      { type: "object", patternProperties: { "^a": { type: "string" } } },
+      { type: "object", required: ["x"] },
+      { type: "array", items: { type: "string" } },
+    ];
+    for (const schema of cases) {
+      const def = createWorkflowToolDefinition(JSON.stringify(schema));
+      expect(def.description, JSON.stringify(schema)).not.toMatch(/empty object/);
+    }
+  });
+
   it("execute 透传：object 根 params 即 data，不做第二校验（D2）", async () => {
     const def = createWorkflowToolDefinition(JSON.stringify({
       type: "object", properties: { count: { type: "number" } }, required: ["count"],

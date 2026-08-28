@@ -101,7 +101,21 @@ describe("LoopGate state machine (D3)", () => {
 	});
 });
 
-// ── 错误签名归一化（D3：同错误不同回显 = 同签名）────────────────
+// ── 错误签名归一化（U3 审查项#7：字段/路径 token 集合哈希）──────────────
+
+// 大 schema 渐进修复场景的原料：错误行块 ≈1.3K chars（远超 500c 前缀），
+// 修复列表尾部字段时消息前缀（首 500c）纹丝不动——旧前缀方案在此折叠成同签名。
+const ALL_FIELDS: string[] = Array.from({ length: 40 }, (_, i) => `field${String(i).padStart(2, "0")}`);
+function validationError(fields: string[]): string {
+	return paramLayerErrorText(
+		fields.map((f) => `  - ${f}: must be string`).join("\n"),
+		"{}",
+	);
+}
+/** 错误行块首 500c（剔除回显后）——旧 500c 前缀签名方案的等价物，用于锁定误杀场景。 */
+function legacyHead(text: string): string {
+	return text.split("\n\nReceived arguments:")[0]!.slice(0, 500);
+}
 
 describe("normalizeErrorSignature", () => {
 	it("剔除 'Received arguments:' 起的实参回显：同错误行不同回显 → 同签名", () => {
@@ -116,31 +130,76 @@ describe("normalizeErrorSignature", () => {
 		expect(normalizeErrorSignature(a)).toBe(normalizeErrorSignature(b));
 	});
 
-	it("错误行不同 → 不同签名（模型推进）", () => {
+	it("字段集合不变 → 同签名（含同字段不同错误类型——集合不变 = 无进展，语义收紧）；集合不同 → 新签名", () => {
+		// 同为 {impact}：must be string → must be number，旧前缀方案算「推进」，
+		// 集合哈希方案下字段集合不变 = 仍卡在同一字段 = 无进展
 		const a = paramLayerErrorText("  - impact: must be string", "{}");
 		const b = paramLayerErrorText("  - impact: must be number", "{}");
-		expect(normalizeErrorSignature(a)).not.toBe(normalizeErrorSignature(b));
+		expect(normalizeErrorSignature(a)).toBe(normalizeErrorSignature(b));
+		// 集合 {impact} → {impact, extra}：新签名
+		const c = paramLayerErrorText("  - impact: must be string\n  - extra: must be number", "{}");
+		expect(normalizeErrorSignature(a)).not.toBe(normalizeErrorSignature(c));
 	});
 
-	it("签名含工具名与错误行（回显剔除后首行保留），尾部空白被 trim", () => {
-		const sig = normalizeErrorSignature(
-			paramLayerErrorText("  - magic: must be equal to constant", "{}"),
-		);
-		expect(sig).toBe(
-			'Validation failed for tool "structured-output":\n  - magic: must be equal to constant',
-		);
+	it("渐进修复产生新签名：大 schema 下修复尾部字段（前缀不变）→ 签名变化（审查项#7 改写：原碰撞断言反转为区分断言）", () => {
+		const bigError = validationError(ALL_FIELDS);
+		const afterTailFixed = validationError(ALL_FIELDS.slice(0, -1));
+		// 前置锁定：两者错误行块首 500c 完全相同——旧前缀方案必然同签名（误杀）
+		expect(legacyHead(bigError)).toBe(legacyHead(afterTailFixed));
+		// 新方案：失败字段集合 {f00..f39} → {f00..f38} 缩小 → 新签名（模型在推进）
+		expect(normalizeErrorSignature(bigError)).not.toBe(normalizeErrorSignature(afterTailFixed));
 	});
 
-	it("无 'Received arguments:' 标记（非参数层错误文本）→ 全文截断参与比较", () => {
+	it("ajv instancePath 形态（日常模式）：'/count' 提取为字段 token，与 bullet 形态同字段同签名", () => {
 		expect(normalizeErrorSignature("Schema validation failed: /count must be number"))
-			.toBe("Schema validation failed: /count must be number");
+			.toBe(normalizeErrorSignature("  - count: must be number"));
 	});
 
-	it("超长签名截断到上限且稳定", () => {
+	it("提取失败 fallback：无字段 token → 500c 裸前缀签名，超长截断且稳定", () => {
+		const long = "Connection reset by peer ".repeat(300);
+		const sig = normalizeErrorSignature(long);
+		expect(sig.length).toBeLessThanOrEqual(500);
+		expect(sig).toBe(normalizeErrorSignature(long + "tail that must not matter"));
+	});
+
+	it("超长无 token 错误（'x'×5000）fallback 截断到上限且稳定", () => {
 		const long = "x".repeat(5000);
 		const sig = normalizeErrorSignature(long);
 		expect(sig.length).toBeLessThanOrEqual(500);
 		expect(sig).toBe(normalizeErrorSignature(long + "different tail"));
+	});
+});
+
+// ── 签名哈希化的闸门级验收（审查项#7）──────────────────────────
+
+describe("LoopGate signature hashing (progressive-fix acceptance)", () => {
+	it("渐进修复（字段集合缩小）→ 每步新签名计数重起，不触发 terminal；停止修复后第 3 次同签名才 terminal", () => {
+		const gate = new LoopGate();
+		let fields = [...ALL_FIELDS];
+		// 渐进修复链：40 → 30 个字段，每步集合缩小 = 新签名 = 连续计数重起，永不及 3
+		for (let i = 0; i < 10; i++) {
+			expect(gate.onToolExecEnd(true, validationError(fields))).toEqual({
+				terminal: false,
+				newlyTerminal: false,
+			});
+			expect(gate.consecutiveFailures).toBe(1);
+			fields = fields.slice(0, -1);
+		}
+		// 停止修复：同一集合重复——失败有界语义不变，第 3 次同签名触发 terminal
+		const stalled = validationError(fields);
+		gate.onToolExecEnd(true, stalled);
+		expect(gate.consecutiveFailures).toBe(1);
+		gate.onToolExecEnd(true, stalled);
+		expect(gate.consecutiveFailures).toBe(2);
+		expect(gate.onToolExecEnd(true, stalled)).toEqual({ terminal: true, newlyTerminal: true });
+	});
+
+	it("同集合不同实参 → 同签名计数递增（实参变化不等于进展——归一化语义保留）", () => {
+		const gate = new LoopGate();
+		gate.onToolExecEnd(true, paramLayerErrorText("  - alpha: must be string", '{"alpha":1}'));
+		gate.onToolExecEnd(true, paramLayerErrorText("  - alpha: must be string", '{"alpha":"totally different echo"}'));
+		expect(gate.consecutiveFailures).toBe(2);
+		expect(gate.terminal).toBe(false);
 	});
 });
 

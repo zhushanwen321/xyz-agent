@@ -29,6 +29,42 @@ export interface ResolveResult {
 }
 
 /**
+ * 构造 schema structured-output 指令——resolver 单点注入的唯一文案源。
+ *
+ * [审查项#2] 消费链：resolveAgentOpts → appendSystemPrompt（ASP 稳定前缀区）。
+ * 此前 session-runner 有一份措辞相近的同名函数并把指令拼进 task 末尾，形成
+ * ASP + task 双重静态注入；task 后缀已删（task 每 agent 变化不可缓存，工具
+ * parameters 是 pi 必然注入的权威展示，文本重复浪费 ~730 tokens/子进程）。
+ *
+ * [审查项#4] AP 告知：注入侧校验用 additionalProperties:false 收窄后的
+ * parameters，模型自带 schema 外字段会被拒——不前置告知，拒绝显得凭空。
+ *
+ * JSON 序列化用 compact（stringifySchemaCached），与 schemaEnv 复用同串（IF7 #13）。
+ */
+export function formatSchemaInstruction(schema: Record<string, unknown>): string {
+  const schemaJson = stringifySchemaCached(schema, "compact");
+  return [
+    "## MANDATORY: Structured Output Requirement",
+    "",
+    "This task requires structured output.",
+    "Your FINAL action must be calling the `structured-output` tool.",
+    "",
+    "Your call arguments ARE the result data itself — the tool's parameter schema IS the required shape of your result.",
+    `Your result must conform to this schema:`,
+    "```json",
+    schemaJson,
+    "```",
+    "",
+    "Rules:",
+    "- Call the structured-output tool with your result data as its arguments. The system validates them against the schema above automatically.",
+    "- Do NOT output JSON in your text response — use the structured-output tool.",
+    "- Do NOT skip this step. The structured-output call IS your result.",
+    "- Complete all other work FIRST, then call structured-output as the last action.",
+    "- Fields not defined in this schema are rejected — do not add extra fields.",
+  ].join("\n");
+}
+
+/**
  * Resolve skill and schema into appendSystemPrompt (content array) + skillPath + schemaEnv.
  *
  * - Skill name -> resolved SKILL.md dir path via --skill
@@ -60,31 +96,12 @@ export function resolveAgentOpts(opts: AgentCallOpts): ResolveResult {
  // which got concatenated into the final append file as path garbage — the SO instruction
  // never reached the subprocess. Now the instruction content is pushed directly.
   if (opts.schema) {
-    // IF7(#13)：同 schema 对象引用的 compact stringify 走 WeakMap 缓存
-    // （与 session-runner formatSchemaInstruction 的 pretty 版共享缓存条目）
-    const schemaJson = stringifySchemaCached(opts.schema, "compact");
-    const content = [
-      "## MANDATORY: Structured Output Requirement",
-      "",
-      "This task requires structured output.",
-      "Your FINAL action must be calling the `structured-output` tool.",
-      "",
-      "Your call arguments ARE the result data itself — the tool's parameter schema IS the required shape of your result.",
-      `Your result must conform to this schema:`,
-      "```json",
-      schemaJson,
-      "```",
-      "",
-      "Rules:",
-      "- Call the structured-output tool with your result data as its arguments. The system validates them against the schema above automatically.",
-      "- Do NOT output JSON in your text response — use the structured-output tool.",
-      "- Do NOT skip this step. The structured-output call IS your result.",
-      "- Complete all other work FIRST, then call structured-output as the last action.",
-    ].join("\n");
-    appendSystemPrompt.push(content);
+    // IF7(#13)：formatSchemaInstruction 与 schemaEnv 对同一 schema 对象引用共享
+    // WeakMap 缓存条目（compact stringify 整个 dispatch 只发生一次）
+    appendSystemPrompt.push(formatSchemaInstruction(opts.schema));
 
  // Set env var for structured-output extension to activate tool + hook
-    opts = { ...opts, schemaEnv: schemaJson };
+    opts = { ...opts, schemaEnv: stringifySchemaCached(opts.schema, "compact") };
   }
 
   return {

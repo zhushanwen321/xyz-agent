@@ -9,8 +9,10 @@
  *
  * 状态机：
  *   - 只统计 name=structured-output 的 isError 事件；其他工具的成功/失败均忽略。
- *   - 错误签名归一化：截掉 "Received arguments:" 起的实参回显，保留校验错误行——
- *     同签名 = 模型无进展（重复同一错误），签名变化 = 模型在推进。
+ *   - 错误签名归一化（审查项#7 签名哈希化）：截掉 "Received arguments:" 起的实参
+ *     回显后，提取错误字段/路径 token 集合排序哈希为签名——集合不变 = 模型无进展
+ *     （重复同一批字段错误），集合变化（含缩小 = 渐进修复）= 模型在推进。旧 500c
+ *     前缀截断在大 schema 下会把「修复排序靠后字段」（消息前缀不变）误折叠成同签名。
  *   - 连续同签名失败达 MAX_CONSECUTIVE_FAILURES（3）→ terminal 态：
  *     写日志（stderr + appendEntry 双通道，含 §5.2 形态 b 恢复指引）后调
  *     ctx.shutdown() 优雅终止子进程（RPC mode 在 agent_settled 后 exit）。
@@ -31,7 +33,11 @@ import { extractToolErrorText } from "./workflow-hook.js";
 
 type PiAPI = ExtensionAPI;
 
-/** 与 tool-definition.ts 的 TOOL_NAME 对应（依赖方向：loop-gate → workflow-hook → schema-guards）。 */
+// 依赖方向说明：本模块 → workflow-hook（extractToolErrorText），而 workflow-hook 为
+// steer 回灌截断反向 import 本模块的 truncateText——两处引用均为函数声明（ESM 提升），
+// 且只在事件回调运行期调用（无模块顶层执行），环安全；见 workflow-hook.ts 同款注释。
+
+/** 与 tool-definition.ts 的 TOOL_NAME 对应。 */
 const TOOL_NAME = "structured-output";
 
 /** 连续同签名失败阈值（设计 §6.3：对齐 qwen-code 的 3；workflow 子进程单用途短会话，更快失败更省）。 */
@@ -40,22 +46,94 @@ export const MAX_CONSECUTIVE_FAILURES = 3;
 /** 实参回显起点标记（pi-ai validation.js 的 errorMessage 格式：错误行 + 空行 + 本标记 + 回显）。 */
 const ARGS_ECHO_MARKER = "Received arguments:";
 
-/** 签名截断上限（实施期自定：错误行块由 schema 违规条数决定，500 字符覆盖现实错误列表）。 */
-const SIGNATURE_MAX_CHARS = 500;
+/**
+ * 签名/回灌文本截断上限（实施期自定：错误行块由 schema 违规条数决定，500 字符覆盖
+ * 现实错误列表）。双消费方：① 签名 fallback 前缀；② steer 回灌错误块截断
+ * （workflow-hook 复用，审查项#1——pi-ai validation.js 的实参回显无截断，大 payload
+ * 失败时单份 steer ≈11K chars，首部关键信息 = 错误类型 + 字段名保留在 500c 内）。
+ */
+export const SIGNATURE_MAX_CHARS = 500;
 
 /**
- * 错误签名归一化：剔除 "Received arguments:" 起的实参回显，保留校验错误行。
- * 同错误不同回显 → 同签名（模型把同样的东西又传了一遍 = 无进展）；
- * 错误行不同 → 不同签名（模型改了参数形态 = 在推进）。
- * 无标记（非参数层错误文本）时用全文截断——归一化对任意错误文本安全。
+ * 截断到 max 字符（超出追加 "..."）——有界化原语，勿复制（审查项#1：导出复用）。
+ * 消费方：LoopGate.lastErrorText（terminal 日志）与 workflow-hook 的 steer 回灌错误块。
+ */
+export function truncateText(text: string, max = SIGNATURE_MAX_CHARS): string {
+	return text.length <= max ? text : `${text.slice(0, max)}...`;
+}
+
+/**
+ * 从（已剔除实参回显的）错误文本提取字段/路径 token 集合——修复进展的坐标：
+ * 修一个字段必然改变失败字段集合，而消息前缀可能纹丝不动（大 schema 下错误行
+ * 按序排列，靠后字段的修复不进 500c 前缀——旧前缀方案的误杀根源）。
+ *
+ * 覆盖两种错误形态（pi 实装版核实的 errorMessage 结构）：
+ *   - pi-ai 参数层 bullet 行（validation.js：`  - ${formatValidationPath(error)}: ${message}`，
+ *     required/enum 的字段名都在 bullet 路径位）：`  - assessments.0.impact: must be string`
+ *   - 日常模式 ajv instancePath（execute.ts 拼接 `${err.instancePath} ${err.message}`）：
+ *     `Schema validation failed: /count must be number`
+ *
+ * 提取不到 token（非校验类错误文本，如 "structured-output call failed"/网络错误）
+ * 返回空数组——调用方 fallback 到 500c 前缀。
+ */
+function extractErrorFieldTokens(errorLines: string): string[] {
+	const tokens = new Set<string>();
+	// 形态 1：bullet 行路径位（"- " 与 ":" 之间）；字符类覆盖点分路径/数组索引/斜杠
+	const bulletPath = /(?:^|\n)\s*-\s+([\w.\-/\[\]]+)\s*:/g;
+	// 形态 2：行首/空白/分号后的 ajv instancePath（/a/b/c）——排除紧贴前字符的斜杠
+	//（避免把 bullet 路径里的 a/b 拆出半截 token 与形态 1 重复）
+	const slashPath = /(?:^|[\s;])\/([\w.\-/\[\]]+)/g;
+	for (const re of [bulletPath, slashPath]) {
+		for (const m of errorLines.matchAll(re)) {
+			tokens.add(m[1]!);
+		}
+	}
+	return [...tokens];
+}
+
+/** FNV-1a 32-bit 参数：offset basis / prime（零依赖确定性哈希；签名仅用于等值比较，非加密场景）。 */
+const FNV_OFFSET_BASIS = 0x811c9dc5;
+const FNV_PRIME = 0x01000193;
+/** 32-bit 哈希输出为 8 位十六进制。 */
+const HEX_RADIX = 16;
+const HEX_WIDTH = 8;
+
+function fnv1aHex(input: string): string {
+	let hash = FNV_OFFSET_BASIS;
+	for (let i = 0; i < input.length; i++) {
+		hash ^= input.charCodeAt(i);
+		hash = Math.imul(hash, FNV_PRIME);
+	}
+	return (hash >>> 0).toString(HEX_RADIX).padStart(HEX_WIDTH, "0");
+}
+
+/**
+ * 字段集合规范形 → 哈希：排序去重后 join（token 字符类不含逗号，join 无歧义）。
+ * 前缀带 token 数便于 appendEntry 日志肉眼判读（同数不同集靠哈希区分）。
+ */
+function fieldSetSignature(tokens: string[]): string {
+	const canonical = [...tokens].sort().join(",");
+	return `fields(${tokens.length})#${fnv1aHex(canonical)}`;
+}
+
+/** 签名 fallback 截断：裸切片不加 "..."（既有行为——上限即 500，锁定于测试）。 */
+function truncateSignature(text: string): string {
+	return text.length <= SIGNATURE_MAX_CHARS ? text : text.slice(0, SIGNATURE_MAX_CHARS);
+}
+
+/**
+ * 错误签名归一化（审查项#7：字段/路径 token 集合哈希）：
+ *   1. 剔除 "Received arguments:" 起的实参回显（语义保留——实参变化不等于进展）。
+ *   2. 提取字段/路径 token 集合 → 排序哈希为签名：集合不变 = 同签名（无进展）；
+ *      集合变化 = 新签名（渐进修复——集合缩小是主形态——不再被前缀截断误折叠）。
+ *   3. 提取失败（无任何字段 token）fallback 到 500c 前缀硬上限（既有行为）。
+ * 归一化对任意错误文本安全（非校验类错误走 fallback 分支）。
  */
 export function normalizeErrorSignature(errorText: string): string {
 	const markerIdx = errorText.indexOf(ARGS_ECHO_MARKER);
-	const errorLines = markerIdx >= 0 ? errorText.slice(0, markerIdx) : errorText;
-	const signature = errorLines.trim();
-	return signature.length <= SIGNATURE_MAX_CHARS
-		? signature
-		: signature.slice(0, SIGNATURE_MAX_CHARS);
+	const errorLines = (markerIdx >= 0 ? errorText.slice(0, markerIdx) : errorText).trim();
+	const tokens = extractErrorFieldTokens(errorLines);
+	return tokens.length > 0 ? fieldSetSignature(tokens) : truncateSignature(errorLines);
 }
 
 /**
@@ -89,7 +167,7 @@ export class LoopGate {
 		}
 
 		const rawText = errorText ?? "structured-output call failed";
-		this.lastErrorText = truncate(rawText);
+		this.lastErrorText = truncateText(rawText);
 		const signature = normalizeErrorSignature(rawText);
 		if (signature === this.lastSignature) {
 			this.consecutiveFailures++;
@@ -105,14 +183,10 @@ export class LoopGate {
 		return { terminal: false, newlyTerminal: false };
 	}
 
-	/** 当前归一化签名（无失败史时 null；测试与日志用）。 */
+	/** 当前归一化签名（字段集合哈希或 fallback 前缀；无失败史时 null；测试与日志用）。 */
 	get signature(): string | null {
 		return this.lastSignature;
 	}
-}
-
-function truncate(text: string, max = SIGNATURE_MAX_CHARS): string {
-	return text.length <= max ? text : `${text.slice(0, max)}...`;
 }
 
 /** terminal 日志的 appendEntry customType（session.jsonl 持久化，不进 LLM 上下文）。 */

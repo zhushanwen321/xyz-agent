@@ -27,7 +27,6 @@ import { getSubagentSessionDir } from "./path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "./relay-env.ts";
 import { assertThinkingLevel, type ThinkingLevel } from "../shared/model-ref";
-import { stringifySchemaCached } from "../shared/schema-jsonify.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import {
@@ -505,34 +504,6 @@ export function applySchemaEnvToChildEnv(
 }
 
 // ============================================================
-// Schema 指令
-// ============================================================
-
-/**
- * 构造 schema 指令模板（拼入 task 末尾 + steer reminder 复用）。
- * 指令明确要求 agent 调用 structured-output tool，而非直接输出 JSON 文本。
- *
- * schema JSON 的 pretty-print（indent=2）由 shared/schema-jsonify.ts 的
- * stringifySchemaCached(schema, "pretty") 产出（IF7：与 resolver 的 compact 版
- * 共享 WeakMap 缓存条目，输出与 JSON.stringify(schema, null, 2) 逐字节一致）。
- */
-export function formatSchemaInstruction(schema: Record<string, unknown>): string {
-  return [
-    "MANDATORY: Structured Output Requirement",
-    "You MUST call the `structured-output` tool with your final answer.",
-    "Do NOT output the JSON directly in your text response — you MUST use the structured-output tool.",
-    "Your call arguments ARE the result data itself — this tool's parameter schema IS the required shape of your result.",
-    "Pass your result data as the tool's arguments; the system validates them against the schema below automatically.",
-    "The schema for your result is:",
-    "```json",
-    // IF7(#13)：同 schema 对象引用的 pretty stringify 走 WeakMap 缓存
-    // （与 agent-opts-resolver 的 compact 版共享缓存条目，输出逐字节不变）
-    stringifySchemaCached(schema, "pretty"),
-    "```",
-  ].join("\n");
-}
-
-// ============================================================
 // 环境信息块（M1 恢复）
 // ============================================================
 
@@ -622,7 +593,8 @@ export async function buildEnvBlock(
 //   b. handleSdkEvent switch（SdkEvent → AgentEvent）
 //   c. turnLimiter：maxTurns 用事件计数 turn_end + proc.kill 替代 session.abort
 //   d. signal → proc.kill 监听（替代 signal → session.abort）
-//   e. schema enforcement：改为 task 内 MANDATORY 指令（spawn 无 steer 通道）
+//   e. schema enforcement：经 resolver 注入 appendSystemPrompt（ASP 单点，不再拼
+//      task 后缀——工具 parameters 是 pi 必然注入的权威展示，见 agent-opts-resolver）
 //   f. spawn + pump stdout（替代 session.prompt）
 //   g. collectResult → AgentResult（完全复用）
 //   h. proc cleanup（替代 session.dispose）
@@ -1363,9 +1335,8 @@ export async function runSpawn(
   // a/b. 事件累积器（pendingTools 寄存器 + turnLimiter + handleSdkEvent/agentEvent 闭包）
   const handleSdkEvent = createSpawnEventHandlers(state);
 
-  // c. schema 指令拼到 task 末尾（替代 in-process 的 turn_end steer 循环）
-  const instruction = opts.schema ? formatSchemaInstruction(opts.schema) : "";
-  const fullTask = task + instruction;
+  // [审查项#2] 原 c.（schema 指令拼 task 末尾）已删：resolver 经 appendSystemPrompt
+  // 单点注入，task 不再被每 agent 变化的指令后缀污染（可缓存 + 省 ~730 tokens/子进程）。
 
   // d. session 目录（与 in-process 一致：list/恢复可发现同一目录）
   // [MF-3] 用 ctx.rootCwd（贯穿真 ROOT）而非 ctx.mainCwd 编码：worktree 模式下 mainCwd 是
@@ -1474,7 +1445,7 @@ export async function runSpawn(
     // 喂 prompt 命令驱动子进程开始处理 task。pi runRpcMode 只消费 stdin RpcCommand，
     // 不读 positional arg；必须在 spawn 后主动写，否则子进程阻塞、totalTokens 恒 0。
     // 时机安全：pipe 内核缓冲不丢；pi 在 rebindSession 后才挂 stdin reader。
-    sendPromptCommand(child, fullTask);
+    sendPromptCommand(child, task);
 
     // d. signal → proc.kill 监听（一次性，替代 session.abort）
     const onAbort = (): void => {

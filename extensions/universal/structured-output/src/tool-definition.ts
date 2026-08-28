@@ -6,6 +6,10 @@
  *   未声明时注入 false（D4）；非 object 根包装 {value}（P6：tool call arguments
  *   必须是 object，execute 侧对称解包））。「模型不携带 schema」从文案约束升级为
  *   结构约束——pi-ai 参数层直接按权威 schema 校验，不存在可以传错的地方（G1/G3）。
+ *   description 按注册期已知的根类型条件化：object 根口径「arguments ARE the
+ *   data」；非 object 根参数层实际是 {value} 包装（模型直传裸值必首调失败），
+ *   文案明确告知包装契约与 value. 错误路径前缀。裸 object（D4 后只接受空对象）
+ *   追加显式警示。文案判定与包装判定同源（isObjectRootSchema），无漂移。
  *   注册期 fail-fast 防御：keyword-less 拒绝（原 ERR-3）与 boolean true 拦截
  *   （原 ERR-7）从 execute 权威分支上移，非法 schema 在子进程加载期终止。
  * - createDailyToolDefinition()：无 env 时注册。双参数自报形态逐字节保留（G4），
@@ -61,6 +65,7 @@ export function createWorkflowToolDefinition(envSchema: string) {
 	}
 
 	const isObjectRoot = isObjectRootSchema(schema);
+	const isBareObjectRoot = isBareObjectRootSchema(schema);
 
 	// D4：根级 additionalProperties 未声明时注入 false；作者显式声明（true / 子 schema）
 	// 尊重不动。堵输出污染：旧双参数 envelope 把模型习惯携带的 schema 隔离在专用参数里，
@@ -83,12 +88,30 @@ export function createWorkflowToolDefinition(envSchema: string) {
 	return {
 		name: TOOL_NAME,
 		label: "Structured Output",
+		// 根类型条件化（与上方 parameters 包装判定同一 isObjectRootSchema，天然同源）。
+		// 保持内联 ternary + 公共尾部：prompt-quality.test.ts 按源码拼接文本断言，
+		// object 根口径字面量被逐字锁定，抽出辅助函数会破坏提取与锁定。
 		description:
-			"Return the structured result for this task. Your arguments ARE the data; "
-				+ "they are validated against this schema — this tool's parameter schema IS the required shape of your result.\n\n"
-				+ "Do not output the result as text — call this tool instead.\n"
-				+ "If validation fails, the error names the fields that failed: "
-				+ "fix those fields to match this tool's parameter schema and call the tool again.",
+			(isObjectRoot
+				// object 根：arguments 即 data。
+				? "Return the structured result for this task. Your arguments ARE the data; "
+					+ "they are validated against this schema — this tool's parameter schema IS the required shape of your result."
+				// 非 object 根：参数层实际是 {value} 包装（P6），直传裸值必首调失败，
+				// 必须显式告知包装契约；value. 错误路径前缀一并在首读时说明（参数层
+				// 错误文案无改写通道，指引只能前置携带）。
+				: "Return the structured result for this task. Your single argument must be an object "
+					+ "`{value: <data>}` — put the result itself in `value`, and it must conform to this schema. "
+					+ "Non-object schemas are wrapped in a `value` field because tool call arguments must be objects. "
+					+ "Validation errors may reference paths starting with `value.` (e.g. `value.0`, `value.name`): "
+					+ "that prefix addresses the wrapper, not your data — strip it to locate the offending field.")
+			// 裸 object：D4 注入后 parameters 只接受空对象，首读即警示，避免模型
+			// 携带字段反复撞校验。
+			+ (isBareObjectRoot
+				? "\n\nNote: this schema accepts only an empty object {}; any fields will be rejected."
+				: "")
+			+ "\n\nDo not output the result as text — call this tool instead.\n"
+			+ "If validation fails, the error names the fields that failed: "
+			+ "fix those fields to match this tool's parameter schema and call the tool again.",
 		parameters,
 		async execute(_toolCallId: string, params: unknown) {
 			// D2 透传：pi-ai 参数层已按上面的 parameters（= 权威 schema）校验 + 类型矫正过
@@ -98,6 +121,21 @@ export function createWorkflowToolDefinition(envSchema: string) {
 			return executeStructuredOutput({ data: params, authoritativeSchema: schema });
 		},
 	};
+}
+
+/**
+ * 裸 object 根检测：object 形态但无任何属性约束（无 properties/patternProperties/
+ * required，且未显式声明 additionalProperties）。该形态经 D4 注入 false 后
+ * parameters 只接受空对象 {}。注册期静态可判定 → description 显式警示。
+ * required 存在（引用未定义属性的病态形态）不在此列——它连空对象都拒绝，
+ * 「accepts only an empty object」的警示反而误导，交由参数层校验错误自然暴露。
+ */
+function isBareObjectRootSchema(schema: unknown): boolean {
+	if (!isObjectRootSchema(schema)) return false;
+	return !("properties" in schema)
+		&& !("patternProperties" in schema)
+		&& !("required" in schema)
+		&& !("additionalProperties" in schema);
 }
 
 // ── Daily variant (self-reported {schema, data}, unchanged behavior) ──
