@@ -38,6 +38,9 @@ export default {
     upgradedToast: '已升级到 v{version}',
     upgradeFailed: '上次升级未完成',
     rolledBack: '上次升级未完成，已恢复到 v{version}',
+    // RM2.3：GitHub API 限额退避中的非侵入提示（非错误，不进 error 态）
+    rateLimited: '检查更新接口已被 GitHub 限额，约 2 小时内暂停自动检查',
+    staleRelease: '检测到更新的版本，已为你刷新更新信息',
   },
   sessionItem: {
     rename: '重命名',

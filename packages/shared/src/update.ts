@@ -58,6 +58,20 @@ export type UpdateState =
   | 'unsupported'
 
 /**
+ * update:check 的返回形状（批次 4 RM2.3 信号透传，2026-08 一致性审查补齐）。
+ *
+ * 三态诚实建模：有新版（info 非空）/ 确认无新版（info=null）/ 被限额未知
+ * （rateLimited=true，main 侧退避窗口内零联网短路）——限额不再并入「无新版」，
+ * renderer 据此显示非侵入提示而非假阴性。main 侧退避窗口见 release-checker。
+ */
+export interface UpdateCheckResult {
+  /** 检测到的新版信息；无新版/失败/被限额时为 null */
+  info: LatestReleaseInfo | null
+  /** true = 本次 null 是因为 GitHub API 限额退避中（非「无新版」） */
+  rateLimited: boolean
+}
+
+/**
  * 升级错误事件 payload（main → preload → renderer 全链路透传，D3）。
  *
  * preload.ts onUpdateError 和 renderer lib/ipc.ts 的类型签名必须与此一致。
@@ -91,7 +105,8 @@ export interface IProxyConfig {
  * 字段：
  * - preDownload：检测到新版时是否自动在后台预下载安装包。开启后点击更新跳过下载等待。
  *   默认 false（新用户不自动消耗流量/磁盘，需主动开启）。
- * - autoUpdate：启动时自动检查更新并提示下载（v6 demo 语义）。默认 false。
+ * - autoUpdate：启动时自动检查更新并提示下载（v6 demo 语义）。默认 true
+ *   （2026-08-28 拍板，设计 §3.6 RM1；存量用户现状即自动检查，见 update-settings.ts）。
  *   可选字段：调用方可以只传部分字段做局部更新（setUpdateSettings 内部与现有值合并）。
  */
 export interface UpdateSettings {
@@ -137,11 +152,9 @@ export interface LaunchResult {
 
 /**
  * 版本解析错误码（批次 3 信任锚 RC1）：update:download 请求的版本落后于权威 latest
- * （GitHub /releases/latest 实测值 ≠ 请求值）。renderer 收到此码后应自动重新检查更新，
- * 拿到更新的 latest 再发起下载，而非重试旧版本。
+ * （GitHub /releases/latest 实测值 ≠ 请求值）。renderer 收到此码后自动重新检查更新，
+ * 拿到更新的 latest 再展示，而非重试旧版本（useAppUpdate.onUpdateError 处理）。
  *
- * [类型接线遗留] main 侧 types.ts 的 UpdateErrorCode 闭联合尚未并入此值（types.ts
- * 不在 u3a 领地），orchestrator 抛错处临时以 as UpdateErrorCode 桥接；中文文案
- * （message / suggestion）接线 UPDATE_ERROR_MESSAGES 同批处理。
+ * 已并入 main 侧 types.ts 的 UpdateErrorCode 闭联合与 UPDATE_ERROR_MESSAGES 文案表。
  */
 export const UPDATE_STALE_RELEASE = 'UPDATE_STALE_RELEASE'

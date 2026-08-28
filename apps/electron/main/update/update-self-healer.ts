@@ -43,6 +43,8 @@ import {
   UPDATER_LOG_PATH,
   UPDATER_PID_FILE,
   UPDATER_SCRIPT_PATH,
+  WIN_UPDATER_LOG_PATH,
+  WIN_UPDATER_SCRIPT_PATH,
 } from './constants.js'
 import type { UpdateResultStatus } from './types.js'
 
@@ -55,8 +57,12 @@ import type { UpdateResultStatus } from './types.js'
  * - 文件不存在 → false（无 updater 在跑）
  * - PID 已死 → 清理残留 pid 文件（自愈）→ false
  * - PID 存活：
- *   - mac/linux：叠加进程名加固（`ps -p <pid> -o comm=` 含 updater 字样）——
- *     PID 复用（其他进程占用该 pid）→ 视为不存活（清理残留，正常清理）
+ *   - mac/linux：叠加 argv 校验（`ps -p <pid> -o command=` 含 updater.sh /
+ *     updater-linux.sh）——PID 复用（其他进程占用该 pid）→ 视为不存活（清理残留，
+ *     正常清理）。注意必须用 command=（完整 argv）而非 comm=：脚本进程的可执行
+ *     映像是 bash 解释器，comm 恒为 "bash"，永远不含 updater 字样（2026-08 实证，
+ *     用 comm= 会把真实存活的脚本 100% 误判为 PID 复用 → fail-open 清掉 pid 文件
+ *     并放行清理，互斥完全失效——误判方向恰好是危险侧）。
  *   - win：仅 PID 存活检查（S-7：cmd.exe 进程映像名固定，无 updater 字样可验）
  *   - ps 调用异常（异常环境）→ 保守按存活处理（误判存活的后果 = 少做一次清理，
  *     良性且下次启动补做；误判不存活才危险）
@@ -88,14 +94,16 @@ export function isUpdaterInFlight(): boolean {
     return false
   }
 
-  // mac/linux 进程名廉价加固（S-7 win 侧无 updater 字样可验，仅做 PID 存活）
+  // mac/linux argv 廉价加固：脚本进程的 argv 含 updater.sh / updater-linux.sh 路径
+  // （spawn('bash', [scriptPath])）。不能用 ps -o comm=——comm 只看可执行映像名
+  // （恒为 "bash"），脚本路径只在 argv（command=）里（S-7 win 侧无此信息，仅做 PID 存活）
   if (process.platform === 'darwin' || process.platform === 'linux') {
     try {
-      const comm = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], {
+      const argv = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
         encoding: 'utf8',
       })
-      if (!/updater/i.test(comm)) {
-        // PID 已被复用（占位者非 updater）→ 视为不存活，清残留 pid 后正常清理
+      if (!/\/updater(?:-linux)?\.sh(?:\s|$)/.test(argv)) {
+        // PID 已被复用（占位者非 updater 脚本）→ 视为不存活，清残留 pid 后正常清理
         try {
           unlinkSync(UPDATER_PID_FILE)
         } catch {
@@ -310,13 +318,14 @@ function getStaleArtifactPaths(): string[] {
 }
 
 /**
- * m14：失败态日志归档/保留。
+ * m14：失败态日志归档/保留（三平台升级日志同一策略：mac updater.log /
+ * linux updater-linux.log / win updater-win.log）。
  *
  * failed / rolled-back：rename 为 updater-<原名>-<date>.log 保留（失败现场不被启动
  * 清理抹掉，排障依据）；同日多次失败覆盖同名归档（保留最新）。done / no-op 不处理。
  */
 function archiveUpdaterLogs(dateStamp: string): void {
-  for (const logPath of [UPDATER_LOG_PATH, LINUX_UPDATER_LOG_PATH]) {
+  for (const logPath of [UPDATER_LOG_PATH, LINUX_UPDATER_LOG_PATH, WIN_UPDATER_LOG_PATH]) {
     if (!existsSync(logPath)) continue
     try {
       const dir = path.dirname(logPath)
@@ -447,10 +456,12 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
       ignoreENOENT(PRELOADED_UPDATE_FILE)
     }
 
-    // 2. 其余产物（固定路径，无注入风险）
+    // 2. 其余产物（固定路径，无注入风险）。三平台脚本同清：mac updater.sh /
+    //    linux updater-linux.sh / win updater.cmd（批次 2 产物，同入清理矩阵）
     ignoreENOENT(PENDING_UPDATE_FILE)
     ignoreENOENT(UPDATER_SCRIPT_PATH)
     ignoreENOENT(LINUX_UPDATER_SCRIPT_PATH)
+    ignoreENOENT(WIN_UPDATER_SCRIPT_PATH)
 
     // 2.5 m13：升级残留矩阵（.old/.broken/.new/staging）——终态时全是垃圾，
     // .old 不再跨启动存活（消除陈旧 .old 回滚风险）。可能是目录（.broken/.staging），
@@ -459,11 +470,12 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
       rmSync(stale, { recursive: true, force: true })
     }
 
-    // 2.6 m14：日志保留策略——仅 done 删日志；failed/rolled-back 归档保留；
-    // no-op 保留原样（无实质事件）。归档旧档（>7 天）在此一并清理。
+    // 2.6 m14：日志保留策略（三平台同口径）——仅 done 删日志；failed/rolled-back
+    // 归档保留；no-op 保留原样（无实质事件）。归档旧档（>7 天）在此一并清理。
     if (status === 'done') {
       ignoreENOENT(UPDATER_LOG_PATH)
       ignoreENOENT(LINUX_UPDATER_LOG_PATH)
+      ignoreENOENT(WIN_UPDATER_LOG_PATH)
     } else if (status === 'failed' || status === 'rolled-back') {
       archiveUpdaterLogs(new Date().toISOString().slice(0, 10))
     }

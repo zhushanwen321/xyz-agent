@@ -227,6 +227,7 @@ describe('S#9 update-handlers: settings & pending IPC', () => {
     // readPendingUpdate 收到 app.getVersion() = '0.8.14'
     expect(pendingMocks.readPendingUpdate).toHaveBeenCalledTimes(1)
     expect(pendingMocks.readPendingUpdate).toHaveBeenCalledWith('0.8.14')
+    // update:getPending 形状不变（设计 §3.5.1：getPending 不属于契约变更范围）
     expect(result).toEqual(FIXTURE)
   })
 
@@ -264,7 +265,7 @@ describe('S#7 update-handlers: preload orchestration in update:check', () => {
     const result = await handler({}, { force: true })
 
     // 返回 fixture
-    expect(result).toEqual(FIXTURE)
+    expect(result).toEqual({ info: FIXTURE, rateLimited: false })
     // 功能 1：pending 标志已写
     expect(pendingMocks.writePendingUpdate).toHaveBeenCalledTimes(1)
     expect(pendingMocks.writePendingUpdate).toHaveBeenCalledWith(FIXTURE)
@@ -275,7 +276,7 @@ describe('S#7 update-handlers: preload orchestration in update:check', () => {
       expect(orch.downloadUpdate).toHaveBeenCalledTimes(1)
     })
     expect(orch.downloadUpdate).toHaveBeenCalledWith(FIXTURE)
-    // 下载成功 → 写 preloaded-update.json（供 update:perform 快路径命中）
+    // 下载成功 → 写 preloaded-update.json（供 update:download 快路径命中）
     expect(preloadedMocks.writePreloadedUpdate).toHaveBeenCalledTimes(1)
     const [releaseArg, filePathArg] = preloadedMocks.writePreloadedUpdate.mock.calls[0]
     expect(releaseArg).toBe(FIXTURE)
@@ -310,7 +311,7 @@ describe('S#7 update-handlers: preload orchestration in update:check', () => {
     const handler = handlers.get('update:check')!
     const result = await handler({}, {})
 
-    expect(result).toEqual(FIXTURE)
+    expect(result).toEqual({ info: FIXTURE, rateLimited: false })
     expect(pendingMocks.writePendingUpdate).toHaveBeenCalledTimes(1)
     // 无 orchestrator → 不触发预下载（不抛 TypeError）
     await Promise.resolve() // 让微任务跑一轮
@@ -362,7 +363,7 @@ describe('S#7 update-handlers: preload orchestration in update:check', () => {
     const handler = handlers.get('update:check')!
     // check 响应正常返回 fixture（预下载失败不影响 check 结果）
     const result = await handler({}, {})
-    expect(result).toEqual(FIXTURE)
+    expect(result).toEqual({ info: FIXTURE, rateLimited: false })
 
     // 预下载失败 → warn + 不写 preloaded 元信息
     await vi.waitFor(() => expect(orch.downloadUpdate).toHaveBeenCalledTimes(1))

@@ -23,7 +23,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope } from 'vue'
-import type { LatestReleaseInfo } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateCheckResult } from '@xyz-agent/shared'
 
 // vi.mock 被 hoist，factory 内不能引用顶层变量，用 vi.hoisted 拿稳定引用
 const hoisted = vi.hoisted(() => {
@@ -31,7 +31,7 @@ const hoisted = vi.hoisted(() => {
   let progressCb: ((p: { stage: 'downloading' | 'replacing'; percent: number }) => void) | null = null
   let errorCb: ((e: { stage: string; message: string; errorCode?: string }) => void) | null = null
   return {
-    checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<LatestReleaseInfo | null>>(),
+    checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<UpdateCheckResult>>(),
     updateDownload: vi.fn<(version: string) => Promise<{ downloaded: boolean }>>(),
     updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
     getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
@@ -151,7 +151,7 @@ afterEach(() => {
 
 describe('useAppUpdate', () => {
   it('checkForUpdate 有新版 → state="available" + latestRelease 填充', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
     const { result, stop } = setupUseAppUpdate()
     await result.checkForUpdate()
     // renderMarkdown 异步，waitFor 等 html 填充
@@ -167,7 +167,7 @@ describe('useAppUpdate', () => {
   })
 
   it('checkForUpdate 无新版 → state="idle"', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(null)
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: false })
     const { result, stop } = setupUseAppUpdate()
     await result.checkForUpdate()
     expect(result.state.state).toBe('idle')
@@ -175,8 +175,70 @@ describe('useAppUpdate', () => {
     stop()
   })
 
+  it('checkForUpdate 限额退避（rateLimited=true）→ 状态不回退 + 每窗口一次性提示（RM2.3）', async () => {
+    toastFns.info.mockClear()
+    // 先进入 available（已有升级提醒）
+    hoisted.checkForUpdate.mockResolvedValueOnce({ info: makeRelease('0.9.0'), rateLimited: false })
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    expect(result.state.state).toBe('available')
+
+    // 退避窗口内的检查（周期/补查/手动同路径）：null + rateLimited=true
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: true })
+    await result.checkForUpdate(true)
+    // 「限额未知」≠「确认无新版」：available 提醒不回退 idle
+    expect(result.state.state).toBe('available')
+    // 非侵入提示一次（不进 error 态，info toast）
+    expect(toastFns.info).toHaveBeenCalledTimes(1)
+    expect(toastFns.info).toHaveBeenCalledWith('检查更新接口已被 GitHub 限额，约 2 小时内暂停自动检查')
+
+    // 同窗口内再查不重复提示
+    await result.checkForUpdate(true)
+    expect(toastFns.info).toHaveBeenCalledTimes(1)
+
+    // 窗口结束（拿到确定答案）→ 去重标记复位；确认无新版正常回退 idle
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: false })
+    await result.checkForUpdate(true)
+    expect(result.state.state).toBe('idle')
+
+    // 新退避窗口可再次提示
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: true })
+    await result.checkForUpdate(true)
+    expect(toastFns.info).toHaveBeenCalledTimes(2)
+    stop()
+  })
+
+  it('onUpdateError UPDATE_STALE_RELEASE → 不进 error 态，自动重查拿新 latest（§3.5.1② / T3）', async () => {
+    toastFns.info.mockClear()
+    toastFns.error.mockClear()
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    expect(result.state.state).toBe('available')
+
+    // 用户点下载期间服务端发了更新版本：main 权威解析拒绝旧版本并推 STALE 错误
+    hoisted.updateDownload.mockImplementation(async () => {
+      hoisted.fireError({ stage: 'downloading', message: '更新信息已过期', errorCode: 'UPDATE_STALE_RELEASE' })
+      throw { message: '更新信息已过期', stage: 'downloading', errorCode: 'UPDATE_STALE_RELEASE' }
+    })
+    // 自动重查拿到更新的 latest
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.1'), rateLimited: false })
+
+    await result.performDownload()
+
+    // 不进 error 态；自动重查后 available(v0.9.1)，用户再点下载即拿新版本
+    await vi.waitFor(() => {
+      expect(result.state.state).toBe('available')
+    })
+    expect(result.state.latestRelease?.version).toBe('0.9.1')
+    // 信息性提示而非错误 toast
+    expect(toastFns.info).toHaveBeenCalledWith('检测到更新的版本，已为你刷新更新信息')
+    expect(toastFns.error).not.toHaveBeenCalled()
+    stop()
+  })
+
   it('performDownload 经 onUpdateProgress 推送做 stage 转换（downloading→replacing），downloaded:true 后置 downloaded', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
     hoisted.updateDownload.mockImplementation(async () => {
       // 触发主进程推送：downloading 30% → replacing 100%（verifying 已随批次 3 删 perform 移除，m3）
       hoisted.fireProgress({ stage: 'downloading', percent: 30 })
@@ -195,7 +257,7 @@ describe('useAppUpdate', () => {
   })
 
   it('performDownload 在 progress 推到中间态后 resolve {downloaded:true}，state 置 downloaded 不卡在 downloading', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
     // 模拟：main 只推了一次 downloading 进度，updateDownload 随即 resolve
     hoisted.updateDownload.mockImplementation(async () => {
       hoisted.fireProgress({ stage: 'downloading', percent: 50 })
@@ -212,7 +274,7 @@ describe('useAppUpdate', () => {
   })
 
   it('performDownload downloaded=true → state="downloaded"（基础成功路径）', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
     hoisted.updateDownload.mockResolvedValue({ downloaded: true })
     const { result, stop } = setupUseAppUpdate()
     await result.checkForUpdate()
@@ -223,7 +285,7 @@ describe('useAppUpdate', () => {
   })
 
   it('onUpdateError 推送 → state="error" + errorMessage（SSOT）', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
     hoisted.updateDownload.mockImplementation(async () => {
       // 触发主进程错误推送（SSOT 优先于 performDownload catch）
       hoisted.fireError({ stage: 'downloading', message: '校验失败：sha256 不匹配' })
@@ -239,7 +301,7 @@ describe('useAppUpdate', () => {
   })
 
   it('onUpdateError errorCode="UPDATE_UNSUPPORTED_PLATFORM" → state="unsupported"', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
     hoisted.updateDownload.mockImplementation(async () => {
       hoisted.fireError({
         stage: 'init',
@@ -257,7 +319,7 @@ describe('useAppUpdate', () => {
   })
 
   it('performDownload catch 在 !errorHandled 时兜底置 error（去重：onUpdateError 未触发）', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
     // updateDownload reject 且未触发 onUpdateError → 走兜底 error
     hoisted.updateDownload.mockRejectedValue(new Error('网络中断'))
     const { result, stop } = setupUseAppUpdate()
@@ -280,7 +342,7 @@ describe('useAppUpdate', () => {
   // updateDownload 只传 version 字符串，proxy/structuredClone 问题不再存在；本用例改为
   // 断言传给 ipc 的是 available release 的 version 字段（意图透传）。
   it('performDownload 传给 ipc 的是 available release 的 version 字符串（批次 3 契约）', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
     // 捕获 updateDownload 实际收到的参数（IPC 入参）
     const received: string[] = []
     hoisted.updateDownload.mockImplementation(async (v) => {
@@ -297,7 +359,7 @@ describe('useAppUpdate', () => {
 
   it('openFallbackUrl 调 ipc.openUpdateFallbackUrl(latestRelease.htmlUrl)', async () => {
     const release = makeRelease('0.9.0')
-    hoisted.checkForUpdate.mockResolvedValue(release)
+    hoisted.checkForUpdate.mockResolvedValue({ info: release, rateLimited: false })
     hoisted.openUpdateFallbackUrl.mockResolvedValue(undefined)
     const { result, stop } = setupUseAppUpdate()
     await result.checkForUpdate()
@@ -414,7 +476,7 @@ describe('useAppUpdate', () => {
     // 否则 checkForUpdate 进入时会置 checking 态破坏守卫前提（pendingRestored 守的是 checking 回退）
     const preloadedRelease = makeRelease('0.8.44')
     hoisted.getPreloaded.mockResolvedValue({ release: preloadedRelease, filePath: '/tmp/x.zip' })
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.8.44')) // 同版本
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.8.44'), rateLimited: false }) // 同版本
     const { result, stop } = setupUseAppUpdate()
     await result.restorePreloadedUpdate()
     expect(result.state.state).toBe('downloaded')
@@ -429,7 +491,7 @@ describe('useAppUpdate', () => {
   it('状态守卫 ES5：downloaded 态检测到更新版本 → 退回 available（追新版）', async () => {
     const preloadedRelease = makeRelease('0.8.44')
     hoisted.getPreloaded.mockResolvedValue({ release: preloadedRelease, filePath: '/tmp/x.zip' })
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.8.46')) // 更新版本
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.8.46'), rateLimited: false }) // 更新版本
     const { result, stop } = setupUseAppUpdate()
     await result.restorePreloadedUpdate()
     expect(result.state.state).toBe('downloaded')
@@ -451,7 +513,7 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
   })
 
   it('30s 首次触发 checkForUpdate(force=false)（批次 4 RM2.1：周期走缓存）', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(null)
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: false })
     hoisted.getUpdateSettings.mockResolvedValue({ preDownload: false, autoUpdate: true })
     // initAutoCheck 必须在 scope 内调（onScopeDispose 需绑定活跃 scope），用 options 触发
     const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
@@ -485,7 +547,7 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
   })
 
   it('首次完成后 60min 周期触发第二次 checkForUpdate', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(null)
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: false })
     const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
 
     // 30s 首次触发
@@ -500,7 +562,7 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
   })
 
   it('守卫：state.state="downloaded" 时定时器触发跳过 checkForUpdate，但仍排下一次', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(null)
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: false })
     const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
     // 置为升级流程态（downloaded），定时器触发时不应打断
     result.state.state = 'downloaded'
@@ -517,7 +579,7 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
   })
 
   it('守卫：state.state="replacing" 时定时器触发跳过 checkForUpdate', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(null)
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: false })
     const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
     result.state.state = 'replacing'
 
@@ -527,7 +589,7 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
   })
 
   it('onScopeDispose 清理定时器：dispose 后周期不再触发 checkForUpdate', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(null)
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: false })
     const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
 
     await vi.advanceTimersByTimeAsync(30000)
@@ -540,7 +602,7 @@ describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）',
   })
 
   it('可见性补查 10min 节流（RM2.4）：10min 内无重复联网补查（净效果断言）', async () => {
-    hoisted.checkForUpdate.mockResolvedValue(null)
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: false })
     const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
     // flush settings promise → 30s 首查 timer 排上
     await vi.advanceTimersByTimeAsync(0)

@@ -29,6 +29,8 @@ import {
   UPDATER_LOG_PATH,
   UPDATER_PID_FILE,
   UPDATER_SCRIPT_PATH,
+  WIN_UPDATER_LOG_PATH,
+  WIN_UPDATER_SCRIPT_PATH,
 } from './constants.js'
 import { buildLinuxUpdaterScript, buildUpdaterScript } from './updater-script.js'
 import { buildWinUpdaterCmd } from './win-updater-cmd.js'
@@ -141,12 +143,12 @@ export class WinUpdater implements PlatformUpdater {
       // 重启目标：当前可执行文件同名落位（NSIS /D= 同目录覆盖安装，exe 名不变）
       targetExePath: process.execPath,
       resultPath: path.join(UPDATE_DIR, 'update-result.json'),
-      logPath: path.join(UPDATE_DIR, 'updater-win.log'),
+      logPath: WIN_UPDATER_LOG_PATH,
       parentPid: String(process.pid),
       sha256,
       targetVersion: release.version,
     })
-    const scriptPath = path.join(UPDATE_DIR, 'updater.cmd')
+    const scriptPath = WIN_UPDATER_SCRIPT_PATH
     mkdirSync(UPDATE_DIR, { recursive: true })
     writeFileSync(scriptPath, script)
     // cmd /c detached + ignore stdio：与 app.quit 解耦（Node 侧定时器随进程消亡，

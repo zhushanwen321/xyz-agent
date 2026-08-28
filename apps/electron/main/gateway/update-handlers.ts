@@ -16,13 +16,13 @@
  * - 错误转发为 'update:error' 事件（区分 UpdateError.stage / UpdateUnsupportedError.errorCode）
  * - orchestrator 是纯逻辑（不调 app.quit）；quit 由本 handler 在 triggerRestart=true 后调
  * - quit 用 setTimeout(500) 延迟：给前端一点时间显示「重启中」状态
- * - releaseChecker / updateOrchestrator 未注入时降级（check 返回 null / perform 抛错）
+ * - releaseChecker / updateOrchestrator 未注入时降级（check 返回 null / download、install 抛错）
  *
  * 依赖方向：update-handlers → electron(app/ipcMain) + interfaces + update/types + update/proxy-config
  */
 import { app, ipcMain } from 'electron'
 import { ProxyAgent } from 'undici'
-import type { LatestReleaseInfo, IProxyConfig, UpdateSettings } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, IProxyConfig, UpdateSettings, UpdateCheckResult } from '@xyz-agent/shared'
 import type { IpcHandlerDeps } from '../interfaces.js'
 import { UpdateError } from '../update/types.js'
 import { readProxyConfig, writeProxyConfig, resolveProxyUrl } from '../update/proxy-config.js'
@@ -106,7 +106,7 @@ async function testProxyConnection(config: IProxyConfig): Promise<{ success: boo
     // D2（v3 修订）testProxy 统一准绳：公网 EHOSTUNREACH 也给代理语境话术。
     // 用户此刻在测代理，「网络连接失败 + 检查防火墙可访问 GitHub」语境错位；
     // 不加映射表变体是因为该话术仅 testProxy 场景有意义，入枚举会污染
-    // perform/download/install 共用的错误码空间，handler 内覆写侵入最小。
+    // download/install 共用的错误码空间，handler 内覆写侵入最小。
     // suggestion 不提本地网络权限（A4 反向验证）；落盘 code 维持原分类，
     // 保证 D7 日志归因与下载路径一致。
     if (info.code === 'UPDATE_NETWORK_FAILED' && classified.message.includes('EHOSTUNREACH')) {
@@ -145,9 +145,9 @@ let preDownloading = false
  * 进行中的预下载 promise（若有）。
  *
  * 预下载持锁的是 orchestrator 的 `downloading` 锁。若用户在预下载进行中点更新，
- * update:perform 的 download 路径会因 `downloading` 锁被拒（'download already in progress'）。
- * 存下 promise 让 perform handler 先 await 它：预下载成功 → 写入 preloaded-update.json →
- * perform 重读命中快路径；预下载失败 → 锁已释放 → perform 正常走 download。
+ * update:download 会因 `downloading` 锁被拒（'download already in progress'）。
+ * 存下 promise 让 download handler 先 await 它：预下载成功 → 写入 preloaded-update.json →
+ * download 重读命中快路径；预下载失败 → 锁已释放 → download 正常走完整下载。
  * promise 完成后置回 null（配合 preDownloading 标志做幂等）。
  */
 let preDownloadPromise: Promise<void> | null = null
@@ -156,16 +156,16 @@ let preDownloadPromise: Promise<void> | null = null
  * 后台预下载（静默）：检测到新版 + 预下载开关开时触发。
  *
  * 不推 update:progress 事件（静默后台行为，不干扰用户）。下载成功后写 preloaded-update.json，
- * update:perform 走快路径跳过重复下载。下载失败落盘 update-error.log（D7）后 console.warn
+ * update:download 重读命中快路径跳过重复下载。下载失败落盘 update-error.log（D7）后 console.warn
  * 静默放弃，下次检测重试。
  *
- * download-asset 的断点续传机制保证：预下载未完成时用户手动点更新，performUpdate 的
- * downloadUpdate 会接管同一临时文件续传，进度不浪费。
+ * download-asset 的断点续传机制保证：预下载未完成时用户手动点更新，downloadUpdate 会
+ * 接管同一临时文件续传，进度不浪费。
  *
  * [S#11 arch-boundary] 经 DI 注入的 {@link IUpdateOrchestrator} 调 downloadUpdate，
  * 而非直接 import 模块级单例——使预下载能力也可在测试中经 mock DI 接口替换。
  *
- * @param orchestrator DI 注入的升级编排器（与 update:perform 共享同一实例）
+ * @param orchestrator DI 注入的升级编排器（与 update:download/install 共享同一实例）
  */
 async function preloadUpdateSilently(
   release: LatestReleaseInfo,
@@ -220,8 +220,10 @@ async function preloadUpdateSilently(
  */
 export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   // ── update:check（w2：检测最新版）──────────────────────────────
-  ipcMain.handle('update:check', async (_event, payload?: { force?: boolean }) => {
-    if (!deps.releaseChecker) return null
+  // 返回 UpdateCheckResult（RM2.3 信号透传）：info=null 时经 rateLimited 区分
+  // 「确认无新版」与「限额退避中」——renderer 据此显示非侵入提示而非假阴性。
+  ipcMain.handle('update:check', async (_event, payload?: { force?: boolean }): Promise<UpdateCheckResult> => {
+    if (!deps.releaseChecker) return { info: null, rateLimited: false }
     try {
       const info = await deps.releaseChecker.checkForLatestRelease(app.getVersion(), {
         force: payload?.force,
@@ -232,17 +234,19 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
         // 预下载开关开 → 异步后台下载（功能 2），不 await 不阻塞 check 响应。
         // 把 promise 存起来（非 void），供 update:download 在预下载进行中时 await，
         // 避免与后台预下载争抢 orchestrator 的 downloading 锁而硬报错。
-        // updateOrchestrator 未注入（dev/check-only 场景）时跳过预下载（perform 会另行报错）。
+        // updateOrchestrator 未注入（dev/check-only 场景）时跳过预下载（download/install 会另行报错）。
         const settings = getUpdateSettings()
         if (settings.preDownload && deps.updateOrchestrator) {
           preDownloadPromise = preloadUpdateSilently(info, deps.updateOrchestrator)
         }
       }
-      return info
+      // RM2.3：null 且处于限额退避窗口内 → rateLimited=true（限额未知，不是「无新版」）
+      const rateLimited = !info && (deps.releaseChecker.getRateLimitedUntil?.() ?? 0) > Date.now()
+      return { info, rateLimited }
     } catch (err) {
       // 兜底：理论上 checkForLatestRelease 自身已 catch，此处防止意外 reject
       console.error('[update:check] failed:', err)
-      return null
+      return { info: null, rateLimited: false }
     }
   })
 
@@ -252,7 +256,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   // ── update:download（拆分后的下载阶段）───────────────────────
   // 供新版 UI「先下载 → 再安装」两步流程的下载阶段调用。下载成功后写 preloaded-update.json，
   // 供 update:install 读取（install 权威源是 preloaded，不信任前端传入的 release）。
-  // 复刻 update:perform 的 inFlight-await（避免与后台预下载争抢 downloading 锁）+
+  // 复刻原一键路径的 inFlight-await（避免与后台预下载争抢 downloading 锁）+
   // 快路径（已有有效预下载产物 → 跳过重复下载）+ 错误转 update:error 事件。
   ipcMain.handle('update:download', async (_event, payload: { version: string }) => {
     if (!deps.updateOrchestrator) {
@@ -304,7 +308,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       console.log(`[update:download] downloaded v${release.version} to ${filePath}`)
       return { downloaded: true }
     } catch (err) {
-      // 错误处理与 update:perform catch 一致：推 update:error + throw 可序列化对象。
+      // 错误处理与 install catch 一致：推 update:error + throw 可序列化对象。
       // download 失败不清 preloaded（此时 preloaded 未写或是历史残留，由 readPreloadedUpdate 自管）。
       const win = deps.getMainWindow()
       let errorPayload
@@ -345,7 +349,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   // ── update:install（拆分后的安装阶段）─────────────────────────
   // install 权威源是 preloaded-update.json（不是前端传入）：从 readPreloadedUpdateRaw 读取
   // release + filePath，堵「装错版本」漏洞（前端可能传旧/错 release）。
-  // install 失败清 preloaded（防死循环，迁移 perform 的 usedFastPath clearPreloadedUpdate 逻辑）。
+  // install 失败清 preloaded（防死循环：重试不再命中同一坏产物，强制完整重下 + 重新校验）。
   ipcMain.handle('update:install', async () => {
     if (!deps.updateOrchestrator) {
       throw new Error('updateOrchestrator not configured')

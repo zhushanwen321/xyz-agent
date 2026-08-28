@@ -194,7 +194,7 @@ runtime relay server 启动（创建 socket + 计算脚本/runtime 路径）
 | 分发矩阵 | 每平台构建产物（darwin-arm64/x64、linux-x64/arm64、win-x64），构建管线 + postject 注入 + 产物校验 | 脚本经 builtin extension staged 资产机制分发（pi-permission 的 wasm 先例：bundle-extensions.mjs 拷贝资产 → resources/extensions → electron-builder extraResources，apps/electron/electron-builder.yml:74），零新增构建管线 | 零分发 |
 | 打包版无 node 约束 | ✅ | ✅（Electron 二进制内嵌 node；ELECTRON_RUN_AS_NODE 是 Electron 官方支持的纯 node 模式，VS Code helper 同款） | ❌ 违反（用户机器无 node 保证） |
 | 版本矩阵 | SEA 固化 node 版本，与宿主解耦——但 SEA API 仍 experimental，跨版本行为有漂移史 | 跟随宿主：dev=node 开发机、打包=Electron 内嵌 node，**代理与 runtime 恒同源同版本**（版本不匹配场景构造性消失） | 用户机器 node 版本不可控（14/16/20+ 行为差异） |
-| 杀软/签名 | 新二进制：Windows SmartScreen 未签名拦截风险、macOS 需公证（sign-mac-adhoc.sh 仅 dev 先例）；「无签名的自构建二进制」是杀软高敏形态 | 无新二进制——Electron 二进制已随应用公证/签名；脚本文件无杀软面 | 无新二进制 |
+| 杀软/签名 | 新二进制：Windows SmartScreen 未签名拦截风险、macOS 需公证；「无签名的自构建二进制」是杀软高敏形态 | 无新二进制——Electron 二进制已随应用公证/签名；脚本文件无杀软面 | 无新二进制 |
 | 实现复杂度 | SEA 构建管线接入 CI + 三平台产物矩阵维护 + 失败面 | env 注入（E-2）+ 零依赖脚本（E-1）；待验证项见 §10（runtime 打包形态下 process.execPath 的可用性） | 最低但不可用 |
 
 **推荐 B**。核心理由：**代理与 runtime 同包同版本**使协议版本协商（§3.1）从「运行时协商问题」降级为「安装完整性问题」——builtin extension staged 机制已经解决了「资产随包分发且与宿主同版本」的工程问题，B 直接继承；A 为同一问题引入新的三平台构建管线与杀软面，唯一的收益（零宿主依赖）在「宿主必然存在（relay 只在 xyz-agent runtime 存在时激活）」的前提下没有价值。**B 被证伪时的退路是 A**：待验证检查点（§10-1）若发现 ELECTRON_RUN_AS_NODE 在目标 Electron 版本/平台不可用，按 pi binary 同款机制（prepare-pi-resources.sh 模式）构建 SEA——协议与注册表设计不受形态切换影响。

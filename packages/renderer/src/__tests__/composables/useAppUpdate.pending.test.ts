@@ -27,14 +27,14 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope } from 'vue'
-import type { LatestReleaseInfo } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateCheckResult } from '@xyz-agent/shared'
 
 // vi.hoisted：mock factory 内不能引用顶层变量，用 hoisted 拿稳定引用
 const hoisted = vi.hoisted(() => {
   let progressCb: ((p: { stage: 'downloading' | 'replacing'; percent: number }) => void) | null = null
   let errorCb: ((e: { stage: string; message: string; errorCode?: string }) => void) | null = null
   return {
-    checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<LatestReleaseInfo | null>>(),
+    checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<UpdateCheckResult>>(),
     performUpdate: vi.fn<(release: LatestReleaseInfo) => Promise<{ triggerRestart: boolean }>>(),
     updateDownload: vi.fn<(release: LatestReleaseInfo) => Promise<{ downloaded: boolean }>>(),
     updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
@@ -170,7 +170,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     expect(result.state.state).toBe('available')
 
     // 2. 模拟 30s 后联网检测无新版（null）
-    hoisted.checkForUpdate.mockResolvedValue(null)
+    hoisted.checkForUpdate.mockResolvedValue({ info: null, rateLimited: false })
     await result.checkForUpdate()
 
     // 防覆盖守卫：pendingRestored=true 时无新版不回退 idle（pending 标志证明曾检测到更新）
@@ -187,7 +187,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     expect(result.state.latestRelease?.version).toBe('0.9.0')
 
     // 2. 联网检测到更新的 v0.9.5
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.5'))
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.5'), rateLimited: false })
     await result.checkForUpdate()
 
     // 确认有新版 → 正常刷新（latestRelease 更新为 v0.9.5）
@@ -242,7 +242,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     // pending 恢复成功（立即触发，不等 30s）
     hoisted.getPendingUpdate.mockResolvedValue(makeRelease('0.9.0'))
     // 30s 后联网检测确认有更新版本
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.5'))
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.5'), rateLimited: false })
     const { result, stop } = setupUseAppUpdate()
 
     // initAutoCheck 必须在活跃 effect scope 内调（onScopeDispose 注册 timer 清理）
@@ -285,7 +285,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     hoisted.getPendingUpdate.mockResolvedValue(null)
-    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.9.0'), rateLimited: false })
     const { result, stop } = setupUseAppUpdate()
 
     result.initAutoCheck()

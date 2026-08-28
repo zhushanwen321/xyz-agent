@@ -15,11 +15,11 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope } from 'vue'
-import type { LatestReleaseInfo } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateCheckResult } from '@xyz-agent/shared'
 
 const hoisted = vi.hoisted(() => {
   return {
-    checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<LatestReleaseInfo | null>>(),
+    checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<UpdateCheckResult>>(),
     updateDownload: vi.fn<(release: LatestReleaseInfo) => Promise<{ downloaded: boolean }>>(),
     updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
     getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
@@ -80,7 +80,7 @@ beforeEach(() => {
   vi.setSystemTime(1_700_000_000_000)
   vi.stubGlobal('__APP_VERSION__', '0.0.0')
   setHidden(false)
-  hoisted.checkForUpdate.mockReset().mockResolvedValue(null)
+  hoisted.checkForUpdate.mockReset().mockResolvedValue({ info: null, rateLimited: false })
   hoisted.updateDownload.mockReset().mockResolvedValue({ downloaded: true })
   hoisted.updateInstall.mockReset().mockResolvedValue({ triggerRestart: true })
   hoisted.getPreloaded.mockReset().mockResolvedValue(null)
@@ -200,10 +200,10 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
 
   it('补查 await 期间 dispose：await 恢复后不排新周期 timer（卸载后 60min 内不联网，W05 review）', async () => {
     // 让 checkForUpdate 挂起，制造 runAutoCheck 的 await 窗口（此窗口无 pending timer）
-    let resolveCheck!: (v: LatestReleaseInfo | null) => void
+    let resolveCheck!: (v: UpdateCheckResult) => void
     hoisted.checkForUpdate.mockImplementation(
       () =>
-        new Promise<LatestReleaseInfo | null>((res) => {
+        new Promise<UpdateCheckResult>((res) => {
           resolveCheck = res
         }),
     )
@@ -220,7 +220,7 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
     expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
 
     stop() // await 挂起期间 dispose（clearAutoCheckTimer 无 pending timer 可清）
-    resolveCheck(null) // await 恢复：disposed 已置位 → 不排下一周期 timer
+    resolveCheck({ info: null, rateLimited: false }) // await 恢复：disposed 已置位 → 不排下一周期 timer
     await vi.advanceTimersByTimeAsync(0) // flush microtasks
 
     // 无新周期 timer 排上：推进 20min 不再联网

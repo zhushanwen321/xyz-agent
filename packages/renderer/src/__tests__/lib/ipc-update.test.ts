@@ -3,7 +3,7 @@
  *
  * 验证两条路径：
  * 1. window.electronAPI 为 undefined（web/mock 环境）：方法优雅降级
- *    - checkForUpdate → null
+ *    - checkForUpdate → { info: null, rateLimited: false }（RM2.3 形状）
  *    - updateDownload → { downloaded: false }
  *    - onUpdateProgress/onUpdateError → no-op（调用返回值不抛错）
  *    - openUpdateFallbackUrl → resolve（不抛错）
@@ -44,10 +44,10 @@ describe('lib/ipc update 方法 · web/mock 降级（electronAPI=undefined）', 
     delete (window as { electronAPI?: unknown }).electronAPI
   })
 
-  it('checkForUpdate → null', async () => {
+  it('checkForUpdate → { info: null, rateLimited: false }（RM2.3 形状）', async () => {
     const ipc = await import('@/lib/ipc')
-    await expect(ipc.checkForUpdate()).resolves.toBeNull()
-    await expect(ipc.checkForUpdate({ force: true })).resolves.toBeNull()
+    await expect(ipc.checkForUpdate()).resolves.toEqual({ info: null, rateLimited: false })
+    await expect(ipc.checkForUpdate({ force: true })).resolves.toEqual({ info: null, rateLimited: false })
   })
 
   it('onUpdateProgress → 返回 no-op 取消函数', async () => {
@@ -86,19 +86,23 @@ describe('lib/ipc update 方法 · web/mock 降级（electronAPI=undefined）', 
 })
 
 describe('lib/ipc update 方法 · 转发到 electronAPI', () => {
-  it('checkForUpdate 转发 opts 并透传返回值', async () => {
+  it('checkForUpdate 转发 opts 并透传 UpdateCheckResult', async () => {
     const spy = vi.fn((opts?: { force?: boolean }) =>
-      Promise.resolve(opts?.force ? release : null),
+      Promise.resolve(
+        opts?.force
+          ? { info: release, rateLimited: false }
+          : { info: null, rateLimited: true },
+      ),
     )
     ;(window as { electronAPI?: unknown }).electronAPI = { checkForUpdate: spy }
     const ipc = await import('@/lib/ipc')
 
-    // force=true → 返回 release
-    await expect(ipc.checkForUpdate({ force: true })).resolves.toEqual(release)
+    // force=true → 透传 { info: release }
+    await expect(ipc.checkForUpdate({ force: true })).resolves.toEqual({ info: release, rateLimited: false })
     expect(spy).toHaveBeenLastCalledWith({ force: true })
 
-    // 无 force → 返回 null
-    await expect(ipc.checkForUpdate()).resolves.toBeNull()
+    // 无 force → 透传限额退避信号（rateLimited=true）
+    await expect(ipc.checkForUpdate()).resolves.toEqual({ info: null, rateLimited: true })
     expect(spy).toHaveBeenLastCalledWith(undefined)
   })
 

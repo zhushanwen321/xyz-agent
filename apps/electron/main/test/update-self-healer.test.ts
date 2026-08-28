@@ -15,6 +15,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -239,8 +240,10 @@ describe('cleanupCompletedUpdate', () => {
   const pendingFile = path.join(updateDir, 'pending-update.json')
   const updaterScript = path.join(updateDir, 'updater.sh')
   const linuxUpdaterScript = path.join(updateDir, 'updater-linux.sh')
+  const winUpdaterScript = path.join(updateDir, 'updater.cmd')
   const updaterLog = path.join(updateDir, 'updater.log')
   const linuxUpdaterLog = path.join(updateDir, 'updater-linux.log')
+  const winUpdaterLog = path.join(updateDir, 'updater-win.log')
   const zipFile = path.join(updateDir, 'xyz-agent-mac-arm64.zip')
 
   beforeEach(() => {
@@ -278,8 +281,10 @@ describe('cleanupCompletedUpdate', () => {
     writeFileSync(pendingFile, '{}')
     writeFileSync(updaterScript, '#!/bin/bash')
     writeFileSync(linuxUpdaterScript, '#!/bin/bash')
+    writeFileSync(winUpdaterScript, '@echo off')
     writeFileSync(updaterLog, 'log')
     writeFileSync(linuxUpdaterLog, 'log')
+    writeFileSync(winUpdaterLog, 'log')
   }
 
   /** 断言全套产物（含 result 自身）已被清理；keepLogs=true 时不断言日志删除（m14：非 done 终态保留日志） */
@@ -290,9 +295,11 @@ describe('cleanupCompletedUpdate', () => {
     expect(existsSync(pendingFile)).toBe(false)
     expect(existsSync(updaterScript)).toBe(false)
     expect(existsSync(linuxUpdaterScript)).toBe(false)
+    expect(existsSync(winUpdaterScript)).toBe(false)
     if (!opts.keepLogs) {
       expect(existsSync(updaterLog)).toBe(false)
       expect(existsSync(linuxUpdaterLog)).toBe(false)
+      expect(existsSync(winUpdaterLog)).toBe(false)
     }
     for (const f of extra) expect(existsSync(f)).toBe(false)
   }
@@ -484,8 +491,8 @@ describe('批次 5: updater.pid 互斥（§3.7.1 检查方）', () => {
     expect(existsSync(pidFile), '死 pid 残留应被自愈清理').toBe(false)
   })
 
-  it('mac 进程名加固：pid 存活但 comm 不含 updater（PID 复用）→ 视为不存活，正常清理', async () => {
-    // 本机 darwin 跑：process.pid 的 comm = node/vitest，不含 updater → 加固判定不复用
+  it('mac 进程名加固：pid 存活但 argv 不含 updater 脚本（PID 复用）→ 视为不存活，正常清理', async () => {
+    // 本机 darwin 跑：process.pid 的 argv = node/vitest，不含 updater.sh → 加固判定不复用
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
     writeFileSync(pidFile, String(process.pid))
     writeReplacingResult()
@@ -497,6 +504,51 @@ describe('批次 5: updater.pid 互斥（§3.7.1 检查方）', () => {
     // 这里 .old 未创建 → 走 no-op 分支返回 false，但 pid 残留被清理）
     expect(rolledBack).toBe(false)
     expect(existsSync(pidFile), 'PID 复用 → 残留 pid 应被清理').toBe(false)
+  })
+
+  it('mac 阳性：真实 bash updater.sh 进程 → 识别为 in-flight（defer），pid 文件保留', async () => {
+    // 回归守卫：加固用 ps -o command=（argv），不能退化为 comm=——脚本进程的 comm
+    // 恒为 "bash"（解释器映像），comm= 会把真实存活的脚本 100% 误判为 PID 复用，
+    // 互斥 fail-open（2026-08 一致性审查实证）。本用例用真实 bash 脚本进程 + 真实 ps。
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    const fakeScript = path.join(updateDir2, 'updater.sh')
+    writeFileSync(fakeScript, '#!/bin/bash\nsleep 30\n')
+    const child = spawn('bash', [fakeScript], { detached: true, stdio: 'ignore' })
+    try {
+      writeFileSync(pidFile, String(child.pid))
+      writeReplacingResult()
+
+      const mod = await loadModule()
+      const rolledBack = await mod.maybeRollbackInterruptedUpdate()
+
+      // defer：不回滚、result 原样保留、pid 文件不被误清（脚本还在跑）
+      expect(rolledBack).toBe(false)
+      expect(readFileSync(resultFile, 'utf-8')).toContain('replacing')
+      expect(existsSync(pidFile), '真实 updater 脚本在跑 → pid 文件必须保留').toBe(true)
+    } finally {
+      try { process.kill(-child.pid!, 'SIGKILL') } catch { /* 进程组已退 */ }
+      try { child.kill('SIGKILL') } catch { /* 已退 */ }
+    }
+  })
+
+  it('mac 阳性（linux 脚本名）：真实 bash updater-linux.sh 进程 → 识别为 in-flight', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    const fakeScript = path.join(updateDir2, 'updater-linux.sh')
+    writeFileSync(fakeScript, '#!/bin/bash\nsleep 30\n')
+    const child = spawn('bash', [fakeScript], { detached: true, stdio: 'ignore' })
+    try {
+      writeFileSync(pidFile, String(child.pid))
+      writeReplacingResult()
+
+      const mod = await loadModule()
+      const rolledBack = await mod.maybeRollbackInterruptedUpdate()
+
+      expect(rolledBack).toBe(false)
+      expect(existsSync(pidFile), 'updater-linux.sh 在跑 → pid 文件必须保留').toBe(true)
+    } finally {
+      try { process.kill(-child.pid!, 'SIGKILL') } catch { /* 进程组已退 */ }
+      try { child.kill('SIGKILL') } catch { /* 已退 */ }
+    }
   })
 })
 
@@ -573,6 +625,7 @@ describe('批次 5: 清理矩阵与 self-healer 债务（m13/m14/m15/m18）', ()
   it('验收② m14：failed → updater.log 归档为 updater-<date>.log 保留（原文件不存在）', async () => {
     writeFileSync(path.join(updateDir2, 'updater.log'), 'failure stack trace')
     writeFileSync(path.join(updateDir2, 'updater-linux.log'), 'failure stack trace linux')
+    writeFileSync(path.join(updateDir2, 'updater-win.log'), 'failure stack trace win')
     writeFileSync(resultFile2, JSON.stringify({ status: 'failed', version: '0.9.1', at: '2025-12-01T00:00:00Z' }))
 
     const mod = await loadModule()
@@ -582,16 +635,22 @@ describe('批次 5: 清理矩阵与 self-healer 债务（m13/m14/m15/m18）', ()
     expect(existsSync(path.join(updateDir2, 'updater.log'))).toBe(false)
     expect(existsSync(path.join(updateDir2, `updater-${today}.log`))).toBe(true)
     expect(existsSync(path.join(updateDir2, `updater-linux-${today}.log`))).toBe(true)
+    // win 日志同策略归档（一致性审查补齐：批次 2 产物原不在 m14 清单）
+    expect(existsSync(path.join(updateDir2, 'updater-win.log'))).toBe(false)
+    expect(existsSync(path.join(updateDir2, `updater-win-${today}.log`))).toBe(true)
   })
 
   it('m14 对照：done → updater.log 直接删除（不归档）', async () => {
     writeFileSync(path.join(updateDir2, 'updater.log'), 'happy path log')
+    writeFileSync(path.join(updateDir2, 'updater-win.log'), 'happy path log win')
     writeFileSync(resultFile2, JSON.stringify({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' }))
 
     const mod = await loadModule()
     await mod.cleanupCompletedUpdate()
 
     expect(existsSync(path.join(updateDir2, 'updater.log'))).toBe(false)
+    // win 日志 done 态同删（与 mac/linux 同口径）
+    expect(existsSync(path.join(updateDir2, 'updater-win.log'))).toBe(false)
     const archived = readdirSync(updateDir2).filter((f) => /^updater.*-\d{4}-\d{2}-\d{2}\.log$/.test(f))
     expect(archived).toEqual([])
   })

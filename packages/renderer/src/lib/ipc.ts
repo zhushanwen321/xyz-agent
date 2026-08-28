@@ -7,7 +7,7 @@
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -232,18 +232,20 @@ export function onBrowserState(
 
 // ── 自动升级（w4 update-frontend）───────────────────────────────────────
 // Wave 2/3 + 批次 3：renderer → main IPC 封装（check/download/progress/error/fallback）。
-// checkForUpdate 返回 LatestReleaseInfo | null（无新版/失败/未注入返回 null）。
-// updateDownload 传意图（version 字符串），release 数据由 main 权威解析（RC1）。
+// checkForUpdate 返回 UpdateCheckResult（RM2.3：info=null 时经 rateLimited 区分
+// 「确认无新版」与「限额退避中」）。updateDownload 传意图（version 字符串），
+// release 数据由 main 权威解析（RC1）。
 // onUpdateProgress/onUpdateError 订阅主进程推送，返回取消订阅函数。
-// 无 IPC（web/mock）静默 no-op / 返回空 unsubscribe / null / {downloaded:false}。
+// 无 IPC（web/mock）静默 no-op / 返回空 unsubscribe / {info:null} / {downloaded:false}。
 
 /**
  * 检测最新可用版本。
  * @param opts.force 强制刷新缓存（默认走 1h 缓存）
- * @returns 有新版返回 LatestReleaseInfo，无新版/失败/未注入返回 null
+ * @returns UpdateCheckResult：info 为新版信息（无新版/失败/未注入为 null）；
+ *   rateLimited=true 表示限额退避中（非「无新版」，不应回退已有提醒态）
  */
-export function checkForUpdate(opts?: { force?: boolean }): Promise<LatestReleaseInfo | null> {
-  return api?.checkForUpdate(opts) ?? Promise.resolve(null)
+export function checkForUpdate(opts?: { force?: boolean }): Promise<UpdateCheckResult> {
+  return api?.checkForUpdate(opts) ?? Promise.resolve({ info: null, rateLimited: false })
 }
 
 /**

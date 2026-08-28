@@ -28,7 +28,7 @@ vi.mock('@/composables/useToast', () => ({
 // Mock ipc
 const onUpdateErrorMock = vi.fn()
 vi.mock('@/lib/ipc', () => ({
-  checkForUpdate: vi.fn(() => Promise.resolve(null)),
+  checkForUpdate: vi.fn(() => Promise.resolve({ info: null, rateLimited: false })),
   performUpdate: vi.fn(() => Promise.resolve({ triggerRestart: false })),
   updateDownload: vi.fn(() => Promise.resolve({ downloaded: false })),
   updateInstall: vi.fn(() => Promise.resolve({ triggerRestart: false })),

@@ -39,6 +39,9 @@ export default {
     upgradedToast: 'Upgraded to v{version}',
     upgradeFailed: 'Last upgrade did not complete',
     rolledBack: 'Last upgrade did not complete, reverted to v{version}',
+    // RM2.3: non-intrusive hint while GitHub API rate-limit backoff is active (not an error state)
+    rateLimited: 'Update check is rate limited by GitHub; auto-check paused for about 2 hours',
+    staleRelease: 'A newer version was detected; update info refreshed',
   },
   sessionItem: {
     rename: 'Rename',

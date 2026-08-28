@@ -2,8 +2,8 @@
  * 预下载产物元信息 SSOT（Single Source Of Truth）。
  *
  * 后台预下载成功后记录已下载文件信息（version/assetName/filePath/downloadedAt + 完整性），
- * 用户点击更新时 update:perform handler 读取它走「快路径」：匹配 version + asset + 文件存在
- * 且完整性校验通过 → 直接 installUpdate 跳过重复下载。
+ * 用户点击更新时 update:install handler 以它为安装权威源：读出 release + filePath
+ * 直接 installUpdate（版本守卫 + 完整性校验在读取路径完成，见 readPreloadedUpdateRaw）。
  *
  * 清除时机：
  *   - 版本不匹配（pending.version 与本次要安装的 release.version 不一致）→ 清除

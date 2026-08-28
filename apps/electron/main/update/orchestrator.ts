@@ -18,7 +18,7 @@
  * - 失败时 throw UpdateError/UpdateUnsupportedError，handler catch 后推 update:error 事件
  * - linux deb 用户（APPIMAGE undefined）：pickAsset 仍返回 AppImage asset，但 prepareUpdate 抛
  *   UpdateUnsupportedError（携带 fallbackUrl），orchestrator 透传给 handler
- * - 并发保护：module-level updating 标志，performUpdate 进行中时拒绝重入（避免重复 spawn 脚本）
+ * - 并发保护：module-level updating 标志，installUpdate 进行中时拒绝重入（避免重复 spawn 脚本）
  * - win 与 mac/linux 统一 detached-script 语义（设计 §3.4 批次 2）：wrapper 在
  *   prepareUpdate 内 spawn，orchestrator 不再延迟 spawn NSIS 安装器（原 1.5s
  *   延迟魔数常量与 win 安装器 ref 分支已整体删除）
@@ -103,7 +103,7 @@ export interface IUpdateOrchestrator {
 }
 
 /**
- * 并发保护：performUpdate / installUpdate 进行中时拒绝重入。
+ * 并发保护：installUpdate 进行中时拒绝重入。
  *
  * 重复调用会竞争写 update-result.json + spawn 多个 detached 脚本（文件锁冲突 /
  * 多脚本同时替换导致破损）。用 module-level 单例标志做互斥。
@@ -114,7 +114,7 @@ let updating = false
 /**
  * 并发保护：downloadUpdate 进行中时拒绝重入（含预下载）。
  *
- * 与 {@link updating} 分离：预下载（downloadUpdate）与安装（installUpdate/performUpdate）
+ * 与 {@link updating} 分离：预下载（downloadUpdate）与安装（installUpdate）
  * 使用不同锁，允许「预下载进行中用户点击更新」等并发场景由调用方编排（见 update-handlers
  * 的快路径逻辑）。download-asset 自身的断点续传机制保证两者不会损坏同一临时文件。
  */
@@ -123,13 +123,13 @@ let downloading = false
 /**
  * 下载阶段：选 asset + 下载 + sha256 校验。
  *
- * 从原 performUpdate 拆分，供预下载（后台静默下载）复用。下载完成后返回已校验的文件路径，
+ * 从原一键流程拆分，供预下载（后台静默下载）复用。下载完成后返回已校验的文件路径，
  * 不触发替换——调用方拿到 filePath 后可立即 installUpdate 或暂存（preloaded-update.json）。
  * 注意：不写 update-result.json 的 replacing 标记（那是 installUpdate 的职责），
  * 否则预下载后未安装就崩溃会触发 self-healer 误回滚。
  *
  * 不推 update:progress 事件：预下载是静默后台行为，进度回调由调用方决定如何处理
- * （performUpdate 透传给 handler 推 IPC；预下载不传回调静默）。
+ * （update:download 透传给 handler 推 IPC；预下载不传回调静默）。
  *
  * @param release release-checker 返回的最新版本信息
  * @param onProgress 下载进度回调（0-100 百分比，仅 downloading 阶段）。可为 undefined（预下载）
@@ -262,7 +262,7 @@ export async function resolveByVersion(
 /**
  * 安装阶段：平台分发（生成替换脚本 + 触发替换）+ 据 ref.kind 决定返回值。
  *
- * 从原 performUpdate 拆分，供预下载快路径复用：预下载产物存在时跳过 downloadUpdate
+ * 从原一键流程拆分，供预下载快路径复用：预下载产物存在时跳过 downloadUpdate
  * 直接调本函数。filePath 必须是已通过 sha256 校验的下载产物。
  *
  * @param release 当前 release 信息（取 sha256 / version / htmlUrl，注入替换脚本）
@@ -276,7 +276,7 @@ export async function installUpdate(
   filePath: string,
   onProgress?: UpdateProgressCallback,
 ): Promise<{ triggerRestart: boolean }> {
-  // 复用 updating 锁：installUpdate 会 spawn 替换脚本，与 performUpdate 的替换阶段互斥
+  // 复用 updating 锁：installUpdate 会 spawn 替换脚本，与其他安装调用互斥
   if (updating) {
     throw new UpdateError('update already in progress', 'replacing')
   }
@@ -387,7 +387,7 @@ function writeUpdateResult(status: string, version: string, error?: string): voi
  *
  * 实现 {@link IUpdateOrchestrator} 全部方法：downloadUpdate / resolveByVersion / installUpdate。
  * handler 经 deps.updateOrchestrator.* 调用——快路径与预下载也走 DI，使全部升级能力可经
- * mock 接口替换测试（见 S#11 arch-boundary：消除「DI 契约只含 performUpdate，新能力绕过 DI」的分裂）。
+ * mock 接口替换测试（见 S#11 arch-boundary：消除「DI 契约只含旧一键方法，新能力绕过 DI」的分裂）。
  */
 export const updateOrchestrator: IUpdateOrchestrator = {
   downloadUpdate,

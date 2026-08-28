@@ -1,6 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -101,9 +101,10 @@ export interface ElectronAPI {
   /**
    * 检测最新可用版本。
    * @param opts.force 强制刷新缓存（默认走 1h 缓存）
-   * @returns 有新版返回 LatestReleaseInfo，无新版/失败/未注入返回 null
+   * @returns UpdateCheckResult：info 为新版信息（无新版/失败/未注入为 null）；
+   *   rateLimited=true 表示限额退避中（RM2.3 信号透传，renderer 显示非侵入提示）
    */
-  checkForUpdate(opts?: { force?: boolean }): Promise<LatestReleaseInfo | null>
+  checkForUpdate(opts?: { force?: boolean }): Promise<UpdateCheckResult>
   // ── 自动升级执行（w3）──────────────────────────────────────────
   /**
    * 拆分升级流程的下载阶段：版本解析（main 权威）+ 下载 + 校验 + 写入预下载产物元信息。

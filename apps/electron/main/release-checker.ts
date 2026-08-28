@@ -167,6 +167,15 @@ export class ReleaseChecker implements IReleaseChecker {
   private rateLimitedUntil = 0
 
   /**
+   * 限流退避截止时刻（IReleaseChecker 可选方法）。
+   * update:check handler 据此把「限额退避中的 null」与「确认无新版的 null」区分开，
+   * 经 UpdateCheckResult.rateLimited 透传 renderer（RM2.3 信号透传）。
+   */
+  getRateLimitedUntil(): number {
+    return this.rateLimitedUntil
+  }
+
+  /**
    * 检测最新可用版本。
    *
    * @param currentVersion 当前版本（如 '0.8.14'）

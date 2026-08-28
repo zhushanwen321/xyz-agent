@@ -104,8 +104,8 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
     // checkForLatestRelease 被调，app.getVersion() 透传为 '0.8.14'
     expect(checkForLatestRelease).toHaveBeenCalledTimes(1)
     expect(checkForLatestRelease).toHaveBeenCalledWith('0.8.14', { force: true })
-    // 返回 fixture
-    expect(result).toEqual(FIXTURE)
+    // 返回 UpdateCheckResult（RM2.3 形状）：有新版 + 非限额
+    expect(result).toEqual({ info: FIXTURE, rateLimited: false })
   })
 
   it('W2TC7b: 不传 payload → force 默认 undefined', async () => {
@@ -118,10 +118,10 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
     const result = await handler({})
 
     expect(checkForLatestRelease).toHaveBeenCalledWith('0.8.14', { force: undefined })
-    expect(result).toEqual(FIXTURE)
+    expect(result).toEqual({ info: FIXTURE, rateLimited: false })
   })
 
-  it('W2TC7c: checkForLatestRelease 返回 null → handler 返回 null', async () => {
+  it('W2TC7c: checkForLatestRelease 返回 null → info=null 且非限额（确认无新版）', async () => {
     const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => null)
     const mockChecker: IReleaseChecker = { checkForLatestRelease }
 
@@ -129,18 +129,47 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
 
     const handler = handlers.get('update:check')!
     const result = await handler({}, {})
-    expect(result).toBeNull()
+    expect(result).toEqual({ info: null, rateLimited: false })
   })
 
-  it('W2TC7d: releaseChecker=undefined（未注入）→ handler 返回 null，不调 checkForLatestRelease', async () => {
+  it('W2TC7c2: null + 退避窗口内 → rateLimited=true（RM2.3 信号透传：限额未知 ≠ 无新版）', async () => {
+    const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => null)
+    const mockChecker: IReleaseChecker = {
+      checkForLatestRelease,
+      getRateLimitedUntil: () => Date.now() + 2 * 60 * 60 * 1000,
+    }
+
+    registerUpdateHandlers({ releaseChecker: mockChecker } as never)
+
+    const handler = handlers.get('update:check')!
+    const result = await handler({}, {})
+    expect(result).toEqual({ info: null, rateLimited: true })
+  })
+
+  it('W2TC7c3: 有新版时不报 rateLimited（getRateLimitedUntil 不影响正结果）', async () => {
+    const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => FIXTURE)
+    const mockChecker: IReleaseChecker = {
+      checkForLatestRelease,
+      // 窗口未过但 info 非 null（理论上不发生：退避窗口内短路返回 null；防御断言）
+      getRateLimitedUntil: () => Date.now() + 60_000,
+    }
+
+    registerUpdateHandlers({ releaseChecker: mockChecker } as never)
+
+    const handler = handlers.get('update:check')!
+    const result = await handler({}, {})
+    expect(result).toEqual({ info: FIXTURE, rateLimited: false })
+  })
+
+  it('W2TC7d: releaseChecker=undefined（未注入）→ handler 返回 null 形状，不调 checkForLatestRelease', async () => {
     registerUpdateHandlers({} as never)
 
     const handler = handlers.get('update:check')!
     const result = await handler({}, { force: true })
-    expect(result).toBeNull()
+    expect(result).toEqual({ info: null, rateLimited: false })
   })
 
-  it('W2TC7e: checkForLatestRelease 抛错 → handler 兜底返回 null 不 reject', async () => {
+  it('W2TC7e: checkForLatestRelease 抛错 → handler 兜底返回 null 形状不 reject', async () => {
     const checkForLatestRelease = vi.fn(async (): Promise<LatestReleaseInfo | null> => {
       throw new Error('checker crash')
     })
@@ -151,7 +180,7 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
 
     const handler = handlers.get('update:check')!
     const result = await handler({}, {})
-    expect(result).toBeNull()
+    expect(result).toEqual({ info: null, rateLimited: false })
     expect(errSpy).toHaveBeenCalled()
     errSpy.mockRestore()
   })

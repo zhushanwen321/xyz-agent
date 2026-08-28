@@ -24,6 +24,7 @@
  */
 import { onScopeDispose, reactive } from 'vue'
 import type { LatestReleaseInfo, UpdateState } from '@xyz-agent/shared'
+import { UPDATE_STALE_RELEASE } from '@xyz-agent/shared'
 import { compare } from 'compare-versions'
 import {
   checkForUpdate as ipcCheckForUpdate,
@@ -53,6 +54,12 @@ const AUTO_CHECK_DELAY_MS = 30_000
 
 /** 上次可见性补查时刻（epoch ms，0 = 从未）：10min 节流窗口用 */
 let lastVisibilityCheckAt = 0
+
+/**
+ * 限额提示去重标记（RM2.3）：一次退避窗口内只弹一次非侵入提示，
+ * 窗口结束后（某次 check 返回 rateLimited=false）复位，下个窗口可再提示。
+ */
+let rateLimitHintShown = false
 
 /**
  * 自动检测周期：每 60 分钟联网检测一次。
@@ -242,6 +249,14 @@ function subscribeProgress(): void {
     // onUpdateError 为 SSOT：优先处理错误信息
     if (e.errorCode === UNSUPPORTED_ERROR_CODE) {
       state.state = 'unsupported'
+    } else if (e.errorCode === UPDATE_STALE_RELEASE) {
+      // 设计 §3.5.1②：请求版本已过期（main 权威 latest 更新）→ 自动重查拿新 latest，
+      // 不进 error 态（用户无责，信息性提示 + 自动恢复）。重查命中后 state 转 available，
+      // 用户再次点击下载即拿到新版本（T3 验收路径）。
+      console.info('[useAppUpdate] stale release detected, auto re-checking:', e.message)
+      const { info: toastInfo } = useToast()
+      toastInfo(t('sidebar.update.staleRelease'))
+      void checkForUpdate(true)
     } else {
       state.state = 'error'
       state.errorMessage = e.message
@@ -279,13 +294,30 @@ async function checkForUpdate(force = false): Promise<void> {
   // 防覆盖守卫：若已从 pending 恢复 available 态，联网检测不进入 checking 态
   // （否则 available→checking→idle 会短暂隐藏提醒，且失败/无更新会丢失已恢复的提醒）。
   // 仅当未恢复 pending（首次检测 / 正常流程）时才进入 checking 态。
+  // prevState：限额退避（rateLimited）时恢复原态——「限额未知」≠「确认无新版」，
+  // 不应把已有 available 提醒回退成 idle（RM2.3，2026-08 一致性审查补齐）。
+  const prevState = state.state
   if (!pendingRestored) {
     state.state = 'checking'
   }
   try {
-    const info = await ipcCheckForUpdate({ force })
+    const { info, rateLimited } = await ipcCheckForUpdate({ force })
     // 防陈旧：若期间又发了新 checkForUpdate，丢弃本次结果
     if (myToken !== renderToken) return
+    if (rateLimited) {
+      // RM2.3：限额退避中（main 侧 2h 窗口零联网短路）→ 状态恢复原样，不当作「无新版」；
+      // 一次性非侵入提示（不进 error 态；周期/补查/手动同路径，手动点「检查更新」
+      // 也能得到解释而非静默无反应）
+      state.state = prevState
+      if (!rateLimitHintShown) {
+        rateLimitHintShown = true
+        const { info: toastInfo } = useToast()
+        toastInfo(t('sidebar.update.rateLimited'))
+      }
+      return
+    }
+    // 拿到确定答案（有/无新版）→ 退避窗口已结束，复位提示去重标记
+    rateLimitHintShown = false
     if (info) {
       // 状态守卫 ES4：downloaded/replacing/restarting 不被覆盖（除非检测到更新版本=ES5）
       const currentVersion = state.latestRelease?.version
@@ -511,7 +543,7 @@ function detachVisibilityListener(): void {
 }
 
 /**
- * 自动检测单次执行：守卫检查 → 检测（force=true 绕过缓存）→ 排下一个 60min 周期定时器。
+ * 自动检测单次执行：守卫检查 → 检测（force=false 走 1h 缓存，RM2.1）→ 排下一个 60min 周期定时器。
  *
  * 守卫：仅在 idle/available/error/unsupported 态调 checkForUpdate；downloading/
  * replacing/restarting/downloaded 态跳过本次检查（不打断升级流程），但仍排下一次定时器，
@@ -664,4 +696,5 @@ export function _resetForTest(): void {
   disposed = false
   // u4a：可见性补查节流时刻也属模块级测试态，一并重置
   lastVisibilityCheckAt = 0
+  rateLimitHintShown = false
 }
