@@ -4,8 +4,10 @@
 // §3.3 D4/D5）。
 //
 // 通知拆为两个正交关注点：
-//   - 存在性（账本）：pi.appendEntry("subagent-bg-notify-ledger") 即写即盘，先于一切
-//     投递尝试——投递通道可以随便坏，账本永远在；
+//   - 存在性（账本）：pi.appendEntry("subagent-bg-notify-ledger") 内存同步入账，
+//     先于一切投递尝试（进程内时序）；文件落盘随 pi flush 管线 debounce（非 fsync，
+//     PS-17）——强杀落在 flush 窗口时账目丢失、该通知跨重启不重放（真丢失面，
+//     与 PS-14 首写延迟同族；日常触发概率低，观察项见 pi-semantics PS-17）；
 //   - 可达性（courier）：只在「主 session 确定空闲」的时刻投递——agent_settled 边沿
 //    （边沿回调内 isIdle 恒真：_emitAgentSettled 先复位 _isAgentRunActive 再发事件，
 //     agent-session.js:327-331）+ 120s 超时看门狗兜底（主 session 长期无 settled 时）。

@@ -24,7 +24,7 @@
 ### 设计目标（从使用者体验倒推）
 
 - **G1 派发即确定（输入零宽容）**：模型入参只有两种合法结局——与 registry 条目全等（含大小写，下同）→ 执行；否则 → 工具调用同步期当场报错并附纠错候选。不存在任何「宽容采纳/降级改写」路径，「通过校验」与「将按此名字执行」之间零距离；缺省继承主 agent 模型是唯一豁免（见 D2）。
-- **G2 通知必达（at-least-once + 幂等可识别）**：每个后台子 agent 终态后，主 agent 在当前 run 结束或有限延迟内收到完成通知；送达保证为 at-least-once——每条通知携带唯一 notifyId，已销账号绝不重发，构造性竞态（送达已落盘、销账未落盘的强杀窗口）允许重复但重复条目凭 notifyId 可识别为同一条；跨重启不丢。
+- **G2 通知必达（at-least-once + 幂等可识别）**：每个后台子 agent 终态后，主 agent 在当前 run 结束或有限延迟内收到完成通知；送达保证为 at-least-once——每条通知携带唯一 notifyId，已销账号绝不重发，构造性竞态（送达已落盘、销账未落盘的强杀窗口）允许重复但重复条目凭 notifyId 可识别为同一条；跨重启不丢（唯一排除面：pi flush 窗口——账本 entry 已入内存但尚未落盘时强杀，账目与通知真丢失，见 pi-semantics PS-17，与 PS-14 首写延迟同族）。
 - **G3 终态一眼可判**：主 agent 与用户看到的子 agent 结局是「completed / failed / cancelled」级别的语义判断，不是需要展开 error 字段推理的内部占位符。
 
 ### Scope
@@ -162,7 +162,7 @@
 
 | 方案 | 长期架构 | 短期成本 | 风险 |
 |---|---|---|---|
-| **B-ledger 账本+投递分离（选）**：通知拆为两个正交关注点——**存在性**由持久账本保证（`pi.appendEntry("subagent-bg-notify-ledger", …)` 即写即盘，先于一切投递尝试）；**可达性**由 courier 统一在 settled 边沿直达（busy 期间只记账不投递，见 D5）；销账回执 = 主 session 文件出现 `notifyId` 匹配的 custom_message entry；重启恢复扫账本重放，notifyId 幂等去重防双发 | 「发消息」变成「数据同步」：投递通道可以随便换/坏，账本永远在，at-least-once + 幂等键（notifyId dedupe）数学上闭环。这正是 GUI pane 已经在用的 subagent-record entry 流的同款范式，架构归一 | 账本读写 + 回执扫描约三天量级（record-store 已有 readLastJsonlLine/sidecar 同构先例可复刻）；notify 消费方（buildLlmContent 文案）不变 | 双发防护依赖销账及时性——「送达已落盘、销账未落盘」的强杀窗口允许重复注入，幂等键保证 LLM 侧可识别（正文含同一 notifyId）；P-B 系探针任一失败的降级路径见 D5 |
+| **B-ledger 账本+投递分离（选）**：通知拆为两个正交关注点——**存在性**由持久账本保证（`pi.appendEntry("subagent-bg-notify-ledger", …)` 内存同步入账先于一切投递尝试，文件落盘随 pi flush 管线 debounce、非 fsync——flush 窗口内强杀的真丢失面见 pi-semantics PS-17）；**可达性**由 courier 统一在 settled 边沿直达（busy 期间只记账不投递，见 D5）；销账回执 = 主 session 文件出现 `notifyId` 匹配的 custom_message entry；重启恢复扫账本重放，notifyId 幂等去重防双发 | 「发消息」变成「数据同步」：投递通道可以随便换/坏，账本永远在，at-least-once + 幂等键（notifyId dedupe）数学上闭环。这正是 GUI pane 已经在用的 subagent-record entry 流的同款范式，架构归一 | 账本读写 + 回执扫描约三天量级（record-store 已有 readLastJsonlLine/sidecar 同构先例可复刻）；notify 消费方（buildLlmContent 文案）不变 | 双发防护依赖销账及时性——「送达已落盘、销账未落盘」的强杀窗口允许重复注入，幂等键保证 LLM 侧可识别（正文含同一 notifyId）；P-B 系探针任一失败的降级路径见 D5 |
 | B-flowfix 仅把 intent 按 isIdle 分流（idle→triggerTurn/busy→steer 改 followUp） | 半天量级改动 | 本质仍 at-most-once：steer/followUp 都进内存队列，run 收尾窗口的丢失面和今天一模一样；重启照丢。§2.2 F2 三个丢点只堵住半个 | 补丁假象最危险的一种——测试时段可能全绿，生产长尾必复发 |
 | B-poll 取消推送全面转拉取 | 架构最简（无状态） | LLM 不会自发轮询，缺触发器 = 通知能力事实上消失；还需要给主 agent prompt 反复灌输轮询纪律，不可靠 | 等于放弃 G2 |
 
@@ -198,7 +198,7 @@
 **D4：通知的存在性与可达性分离——账本先行，投递尽力，回执销账（选定）**
 - **采用**：四步生命周期——① `appendEntry("subagent-bg-notify-ledger", {notifyId, payload})` 落盘（存在性基准，先于一切投递尝试）；② courier 按 D5 在 settled 边沿/超时点投递；③ **销账持久化**：回执判定成功（主 session 出现 `notifyId` 匹配的 custom_message entry 事件）后，向主 session 追加 `appendEntry("subagent-bg-notify-ack", {notifyId})`——销账记录与账本同文件同通道，**未销账号 = 两列 entry 的差集**，重启恢复扫描差集重放，内存态不承担任何销账职责；④ 重放按 notifyId 幂等去重。**通道分工**：ledger/ack 用 plain appendEntry——实测不进 LLM 上下文（session-manager.js:165-186 `sessionEntryToContextMessages` 对 type=custom 返回空），无上下文污染；送达消息用 sendCustomMessage（custom_message 进上下文）。两通道不得混用。
 - **被否**：销账仅存内存（Set/LRU）——重启即全量重放历史已送达通知，S4 不可满足；❌ 维持 delivery 内核单打独斗——它的 retry 重试的是函数调用不是事实，2026-08-27 基线 session 十余次完成仅 1 条落盘即为反证；❌ B-pull 纯拉取——无触发器则 G2 失效。
-- **证据**：`pi.appendEntry` 可靠落盘先例充分（`reportSubagentRecord`、IDENTITY_CUSTOM_TYPE 同款机制，跨重启由 record-store 重建矩阵消费）；plain appendEntry 不进上下文为审查期实测（session-manager.js:165-186）；reconstructAll/orphanJudged/sidecar 防重三件套提供了账本恢复的同构参照实现。
+- **证据**：`pi.appendEntry` 可靠落盘先例充分（`reportSubagentRecord`、IDENTITY_CUSTOM_TYPE 同款机制，跨重启由 record-store 重建矩阵消费）——落盘语义为内存入账 + flush debounce（非 fsync，强杀窗口见 pi-semantics PS-17）；plain appendEntry 不进上下文为审查期实测（session-manager.js:165-186）；reconstructAll/orphanJudged/sidecar 防重三件套提供了账本恢复的同构参照实现。
 - **效果**：G2 从「best effort 承诺」变为「可证明的最终一致」；重启示意架构直接消灭今天「重启丢通知」这一整类故障。
 - **fork / branch / compaction 归属规则**：账本与 ack entry 随主 session 文件存在，扫描域 = **单 session 文件**（幂等键作用域随文件域天然隔离，分身与本体互不串扰）。fork 复制 session 文件时，分身会继承「创建后未销账」的 pending——分身重放补投是**可接受语义**（分身继承任务上下文，知悉子 agent 结局合理），notifyId 去重保证分身内部也至多一次送达（崩溃窗口例外见 G2）。compaction 对 entry 的保留行为实装未验证，登记为 ⛔ P-B4 探针：实测 compaction 后 ledger/ack entry 存活情况；若被清除，恢复扫描退化为「以 subagent-record entry 反查未闭环通知」（record-store 重建矩阵同构，终态已知）。
 

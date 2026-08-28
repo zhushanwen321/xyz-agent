@@ -282,5 +282,22 @@
       "note": "待产品裁决（troubleshooting 观察项 #5）；裁决前 fork 链路不依赖 entry model_change 终态"
     },
     "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-17",
+    "claim": "已存在 session 文件上的 appendEntry 为内存同步入账 + flush debounce 管线落盘，非即写即盘/fsync——强杀落在 flush 窗口内该 entry 丢失（跨重启不可恢复）",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/session-manager.js",
+        "symbol": "_appendEntry + _flushSoon 管线",
+        "note": "appendEntry 同步入内存缓冲并调度 flush；flush 为批量异步写，无 fsync——与 PS-14 首写延迟同族的落盘窗口语义"
+      }
+    ],
+    "guard": {
+      "type": "observe",
+      "note": "影响面：sw notify-ledger 的 G2『跨重启不丢』在 flush 窗口不成立（账目丢失→通知不重放，真丢失面）；notify-ledger.ts 头注与设计文档 D4/G2 已按此如实限定。观察项：flush 窗口量级为 debounce 毫秒级，日常触发概率低"
+    },
+    "verifiedWith": "0.84.1"
   }
 ]

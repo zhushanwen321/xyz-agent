@@ -166,6 +166,9 @@ graph TD
 
 ## 8 残留风险与变更历史
 - ✅ P-C1（U5/阶段5）已收口（2026-08-28，证据见 §7 验收记录：四包一致 exit 0 / require 零残留 + 内联 ~0.7KB / diff-probe 1226 models 0 mismatches）；原降级路径（纯在线对账）未启用
+- 待裁决（review-fix-loop 2026-08-28 复审新增）：useModel.switchModel 仍乐观写请求值 `${provider}/${modelId}`（api 层 model.switched 回执前端暂无消费方）——与 config.defaults 广播同属 C-pi-13 张力，并入待产品裁决项：裁决「显示态用生效值」则一并改 useModel 消费 reply 拆解值
+- 待办（review-fix-loop 复审 S-2）：notify-ledger recoverFromSession 重放前可先对未销账号跑 collectDeliveredNotifyIds 预销账（已存在送达 entry 的条目直接销账不重投）——把「sent 后强杀/fork」窗口的重复注入面收敛到真丢失场景，属优化非正确性，后续迭代做
+- review-fix-loop 2026-08-28 复审（r2）结论 approve（must-fix 0）；M-1 已修（pi-semantics PS-17 + notify-ledger 头注 + 设计文档 G2/D4/证据行三处 flush 语义限定）；M-2 证伪（所谓 8 文件未提交与 HEAD 零差异，extensions/ 零未提交）；S-3 已修（provider.ts supportedLevels 注释），S-1/S-2 登记如上；审查产物 ~/.review-fix-loop/.../wf-1787879691064-hi2z4v/batch-1/round-1/reviewer.md
 - ⛔ P-A1/P-A2（U1）：ctxModel 继承路径 spawn 全等 / 孪生守卫行为验证（守卫失效 = 阻断合入，无降级）
 - ⛔ P-B1~P-B4（U2/阶段5）：courier 全链路时序 / settled 竞态窗口 / 重启重放幂等 / compaction 后 entry 存活；P-B1(b) 晚于阈值时降级为「只记账 + 超时看门狗直达」
 - ⛔ P-D1（U7a）：个别 probe 条目降级为「锚点存在性 + 代码形态断言」

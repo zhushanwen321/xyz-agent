@@ -150,7 +150,9 @@ export interface ProviderInfo {
      * getSupportedThinkingLevels 离线算好下发（reasoning 缺失/false → ['off']，
      * 与 pi 两级门控逐字节一致），renderer 零推导——档位 UI 直接消费，禁止前端
      * 再从 thinkingLevelMap 自算（影子推断是事故 B 根因之一）。缺省 = 未标注
-     * （attachSupportedLevels 接线前的过渡态），消费方回退旧推导路径（U6 切换后移除）。
+     * （标注链路失败/版本错配时的过渡态），消费方经 normalizeSupportedLevels
+     * 归一到默认五档——与 pi 两级门控可能不一致（reasoning:false 模型），仅作
+     * 过渡兜底，正常链路不应命中。
      */
     supportedLevels?: string[]
   }>
