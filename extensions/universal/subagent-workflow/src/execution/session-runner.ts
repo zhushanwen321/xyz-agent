@@ -679,7 +679,9 @@ export async function buildEnvBlock(
 //   c. turnLimiter：maxTurns 用事件计数 turn_end + proc.kill 替代 session.abort
 //   d. signal → proc.kill 监听（替代 signal → session.abort）
 //   e. schema enforcement：经 resolver 注入 appendSystemPrompt（ASP 单点，不再拼
-//      task 后缀——工具 parameters 是 pi 必然注入的权威展示，见 agent-opts-resolver）
+//      task 后缀——工具 parameters 是 pi 必然注入的权威展示，机制登记 PS-21：
+//      pi-ai provider 层 convertTools 把 tool.parameters 随请求下发（anthropic
+//      :1000/:1017 input_schema、openai :1099 parameters），见 agent-opts-resolver）
 //   f. spawn + pump stdout（替代 session.prompt）
 //   g. collectResult → AgentResult（完全复用）
 //   h. proc cleanup（替代 session.dispose）

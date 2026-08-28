@@ -374,5 +374,40 @@
    "note": "共同承重机制：structured-output loop-gate 的 tool_execution_end 计数通道选型（参数层失败只经 tool_execution_end 可观测）+ workflow 变体 execute 透传不做第二校验（D2 单一校验权威 = 本链）+ subagent tool schema pattern/maxLength 运行时强制（工具层守卫定位为 defense-in-depth）。探针锚点：structured-output cross-package-contract.test.ts ③ 真实 SDK 冒烟对 SW schema 跑 validateToolArguments。pi 升级时重验：校验是否仍在 beforeToolCall/execute 之前、immediate 分支是否仍 emitToolExecutionEnd、错误消息格式（Received arguments: 回显）是否稳定"
   },
   "verifiedWith": "0.84.1"
+ },
+ {
+  "id": "PS-21",
+  "claim": "注册工具的 parameters schema 是 pi 注入给模型的权威展示面：agent-session 把注册工具装入 agent.state.tools，agent-core 每轮流式调用经 createContextSnapshot 把 state.tools 带入请求上下文，pi-ai provider 层 convertTools 对每个工具取 tool.parameters 原样映射进 provider 请求体（anthropic input_schema / openai function.parameters）——API tools 段即模型可见的 schema 全文，ASP/任务文本不放 schema 重复不影响模型拿到结构",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "toolRegistry setter → setActiveToolsByName",
+    "note": "setter :1987-2015 收尾调 setActiveToolsByName；:632-643 从 _toolRegistry 取工具装入 this.agent.state.tools（:641）"
+   },
+   {
+    "pkg": "pi-agent-core",
+    "distPath": "dist/agent.js",
+    "symbol": "createContextSnapshot",
+    "note": ":280-286（tools: this._state.tools.slice() :284），经 run :272 / runAgentLoopContinue :277 随每轮流式调用下发"
+   },
+   {
+    "pkg": "pi-ai",
+    "distPath": "dist/api/anthropic-messages.js",
+    "symbol": "convertTools",
+    "note": "调用点 :756-757；映射 :998-1020——:1000 const schema = tool.parameters、:1006-1011 strict 分支展开 ...tool.parameters、:1017 input_schema 入请求体"
+   },
+   {
+    "pkg": "pi-ai",
+    "distPath": "dist/api/openai-completions.js",
+    "symbol": "convertTools",
+    "note": ":1074 起；:1099 parameters: tool.parameters（上游自带注释 'TypeBox already generates JSON Schema'）"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "承重：subagent-workflow U3「ASP 单点注入、删 task 后缀」（agent-opts-resolver.ts formatSchemaInstruction 与 session-runner.ts runSpawn 头注引用本条）——若 pi 升级后不再把注册工具 parameters 下发进请求体，模型将失去 schema 展示面，structured-output 指令链断裂且 ASP 的 {value} 包装契约失去对位；PS-20 的 observe 守卫只覆盖校验链不覆盖展示面。pi 升级时重验：convertTools 是否仍原样映射 tool.parameters、state.tools 是否仍随流式调用上下文下发。观察记录：bcadf4c22 live-verification（structured-output 全链实测，schema 经工具定义对模型生效）"
+  },
+  "verifiedWith": "0.84.1"
  }
 ]

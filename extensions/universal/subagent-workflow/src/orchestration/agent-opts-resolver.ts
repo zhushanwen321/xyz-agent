@@ -75,7 +75,10 @@ function isObjectRootSchema(schema: unknown): schema is Record<string, unknown> 
  * [审查项#2] 消费链：resolveAgentOpts → appendSystemPrompt（ASP 稳定前缀区）。
  * 此前 session-runner 有一份措辞相近的同名函数并把指令拼进 task 末尾，形成
  * ASP + task 双重静态注入；task 后缀已删（task 每 agent 变化不可缓存，工具
- * parameters 是 pi 必然注入的权威展示，文本重复浪费 ~730 tokens/子进程）。
+ * parameters 是 pi 必然注入的权威展示——注册工具 schema 随每次请求下发进
+ * provider 请求体，机制登记 PS-21：pi-ai dist/api/anthropic-messages.js
+ * convertTools :1000/:1008 → :1017 input_schema、openai-completions.js :1099
+ * parameters——schema 全文不必在 task 重复，文本重复浪费 ~730 tokens/子进程）。
  *
  * [审查项#4] AP 告知：注入侧校验用 additionalProperties:false 收窄后的
  * parameters，模型自带 schema 外字段会被拒——不前置告知，拒绝显得凭空。
