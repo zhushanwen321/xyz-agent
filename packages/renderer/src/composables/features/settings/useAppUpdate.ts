@@ -49,6 +49,37 @@ const t = i18n.global.t
 /** 不支持当前平台的错误码（main 侧 platform-updater 抛出，preload 透传） */
 const UNSUPPORTED_ERROR_CODE = 'UPDATE_UNSUPPORTED_PLATFORM'
 
+/**
+ * 升级失败原因码 → i18n key 后缀（A-D1，G3：失败 toast 带具体原因+恢复指引）。
+ * 错误码 SSOT = 升级脚本 fail() 调用：updater-script.ts（mac/linux）+ win-updater-cmd.ts（win）。
+ * 'app still running'/'app did not exit' 同为「旧进程未退出致升级中断」，共用一个文案。
+ * 未收录/缺失码 → 回退通用文案 sidebar.update.upgradeFailed（resolveFailedToastKey）。
+ */
+const LAUNCH_FAILURE_ERROR_KEYS: Record<string, string> = {
+  'read-only volume': 'upgradeFailedReadOnly',
+  'backup failed': 'upgradeFailedBackup',
+  'extract failed': 'upgradeFailedExtract',
+  'internal error': 'upgradeFailedInternal',
+  'mv failed': 'upgradeFailedMove',
+  'sha mismatch': 'upgradeFailedSha',
+  'swap failed': 'upgradeFailedSwap',
+  'app still running': 'upgradeFailedAppRunning',
+  'app did not exit': 'upgradeFailedAppRunning',
+}
+
+/** win 安装器失败为动态码（'installer exited <code>'），无法精确枚举，前缀匹配 */
+const INSTALLER_EXITED_PREFIX = 'installer exited'
+
+/** failed toast 文案选择：先精确匹配错误码，再匹配 win 安装器动态码前缀，兜底通用文案 */
+function resolveFailedToastKey(error?: string): string {
+  if (error) {
+    const mapped = LAUNCH_FAILURE_ERROR_KEYS[error]
+    if (mapped) return `sidebar.update.${mapped}`
+    if (error.startsWith(INSTALLER_EXITED_PREFIX)) return 'sidebar.update.upgradeFailedInstaller'
+  }
+  return 'sidebar.update.upgradeFailed'
+}
+
 /** 自动检测首次延迟：应用启动后 30s（避开冷启动资源竞争） */
 const AUTO_CHECK_DELAY_MS = 30_000
 
@@ -605,7 +636,8 @@ async function checkLaunchResult(): Promise<void> {
     } else if (result.status === 'rolled-back') {
       warning(t('sidebar.update.rolledBack', { version: result.version }))
     } else if (result.status === 'failed') {
-      warning(t('sidebar.update.upgradeFailed'))
+      // A-D1：按 result.json error 码映射具体原因+恢复指引，未知/缺失回退通用文案
+      warning(t(resolveFailedToastKey(result.error)))
     }
   } catch (e) {
     // best-effort：启动结果通知失败不影响升级流程，用户下次启动仍可重试读取（main 侧缓存未 consumed）

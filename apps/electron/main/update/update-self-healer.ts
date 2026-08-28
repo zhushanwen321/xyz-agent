@@ -122,6 +122,8 @@ export function isUpdaterInFlight(): boolean {
 interface UpdateResultData {
   status?: unknown
   version?: unknown
+  /** 脚本 fail() 写入的失败原因码（仅 status='failed'），透传给 renderer 映射文案 */
+  error?: unknown
 }
 
 /**
@@ -421,9 +423,12 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
 
     // ── 捕获终态上下文（在清理 result 自身之前）────────────────
     const version = typeof data.version === 'string' ? data.version : ''
+    // A-D1：failed 原因码透传（renderer 映射具体失败文案+恢复指引，G3）；
+    // 仅 failed 态有意义，done/rolled-back 保持既有形状不带 error
+    const error = typeof data.error === 'string' ? data.error : undefined
     const launchResult: LaunchResult | null =
       (status === 'done' || status === 'failed' || status === 'rolled-back') && version
-        ? { status, version }
+        ? { status, version, ...(status === 'failed' && error ? { error } : {}) }
         : null
 
     // ── 清理产物 ────────────────────────────────────────────────

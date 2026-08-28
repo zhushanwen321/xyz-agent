@@ -346,14 +346,42 @@ describe('cleanupCompletedUpdate', () => {
     expect(existsSync(pendingFile)).toBe(true)
   })
 
-  it('3. failed → 清全部含 result + 返回 LaunchResult', async () => {
+  it('3. failed → 清全部含 result + 返回 LaunchResult（error 原因码透传，A-D1）', async () => {
     seedArtifacts()
     writeResult({ status: 'failed', version: '0.9.0', at: '2025-12-01T00:00:00Z', error: 'sha mismatch' })
     const { cleanupCompletedUpdate } = await loadModule()
     const result = await cleanupCompletedUpdate()
     expectAllCleaned()
-    // W4: failed 终态返回 LaunchResult
+    // W4: failed 终态返回 LaunchResult；A-D1：error 码随返回值透传给 renderer
+    expect(result).toEqual({ status: 'failed', version: '0.9.0', error: 'sha mismatch' })
+  })
+
+  it('3b. failed + result 无 error 字段（旧版脚本）→ LaunchResult 不含 error 键', async () => {
+    seedArtifacts()
+    writeResult({ status: 'failed', version: '0.9.0', at: '2025-12-01T00:00:00Z' })
+    const { cleanupCompletedUpdate } = await loadModule()
+    const result = await cleanupCompletedUpdate()
+    expectAllCleaned()
     expect(result).toEqual({ status: 'failed', version: '0.9.0' })
+    expect(result && 'error' in result).toBe(false)
+  })
+
+  it('3c. failed + error 非字符串（受损 result）→ 容错不透传', async () => {
+    seedArtifacts()
+    writeResult({ status: 'failed', version: '0.9.0', at: '2025-12-01T00:00:00Z', error: 42 })
+    const { cleanupCompletedUpdate } = await loadModule()
+    const result = await cleanupCompletedUpdate()
+    expectAllCleaned()
+    expect(result).toEqual({ status: 'failed', version: '0.9.0' })
+  })
+
+  it('3d. done + result 含 error 字段 → 不透传（error 仅 failed 态有意义）', async () => {
+    seedArtifacts()
+    writeResult({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z', error: 'stale' })
+    const { cleanupCompletedUpdate } = await loadModule()
+    const result = await cleanupCompletedUpdate()
+    expectAllCleaned()
+    expect(result).toEqual({ status: 'done', version: '0.8.49' })
   })
 
   it('4. rolled-back → 清全部含 result + 返回 LaunchResult', async () => {

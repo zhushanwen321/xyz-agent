@@ -36,7 +36,7 @@ const hoisted = vi.hoisted(() => {
     updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
     getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
     getPendingUpdate: vi.fn<() => Promise<LatestReleaseInfo | null>>(),
-    getLaunchResult: vi.fn<() => Promise<{ status: string; version: string } | null>>(),
+    getLaunchResult: vi.fn<() => Promise<{ status: string; version: string; error?: string } | null>>(),
     getUpdateSettings: vi.fn<() => Promise<{ preDownload: boolean; autoUpdate?: boolean }>>(),
     openUpdateFallbackUrl: vi.fn<(url: string) => Promise<void>>(),
     onUpdateProgress: vi.fn((cb: typeof progressCb) => {
@@ -712,6 +712,40 @@ describe('W4: launch result toast', () => {
       expect(toastFns.warning).toHaveBeenCalledWith('上次升级未完成')
     })
     expect(toastFns.warning).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it('A5b-failed-error-mapping-vitest: failed + extract failed → 细分原因文案（A-D1 透传映射）', async () => {
+    hoisted.getLaunchResult.mockResolvedValue({ status: 'failed', version: '0.9.9', error: 'extract failed' })
+    hoisted.getPendingUpdate.mockResolvedValue(null)
+    hoisted.getPreloaded.mockResolvedValue(null)
+    const { stop } = setupUseAppUpdate({ initAutoCheck: true })
+    await vi.waitFor(() => {
+      expect(toastFns.warning).toHaveBeenCalledWith('解压新版本失败，请检查磁盘空间后重试')
+    })
+    expect(toastFns.warning).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it('A5c-failed-unknown-error-fallback-vitest: failed + 未收录 error 码 → 回退通用文案', async () => {
+    hoisted.getLaunchResult.mockResolvedValue({ status: 'failed', version: '0.9.9', error: 'future-code' })
+    hoisted.getPendingUpdate.mockResolvedValue(null)
+    hoisted.getPreloaded.mockResolvedValue(null)
+    const { stop } = setupUseAppUpdate({ initAutoCheck: true })
+    await vi.waitFor(() => {
+      expect(toastFns.warning).toHaveBeenCalledWith('上次升级未完成')
+    })
+    stop()
+  })
+
+  it('A5d-failed-installer-exited-vitest: failed + win 动态码 installer exited 1626 → 安装器文案（前缀匹配）', async () => {
+    hoisted.getLaunchResult.mockResolvedValue({ status: 'failed', version: '0.9.9', error: 'installer exited 1626' })
+    hoisted.getPendingUpdate.mockResolvedValue(null)
+    hoisted.getPreloaded.mockResolvedValue(null)
+    const { stop } = setupUseAppUpdate({ initAutoCheck: true })
+    await vi.waitFor(() => {
+      expect(toastFns.warning).toHaveBeenCalledWith('安装程序执行失败，请重新下载更新')
+    })
     stop()
   })
 

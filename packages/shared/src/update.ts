@@ -148,6 +148,13 @@ export interface LaunchResult {
   status: LaunchResultStatus
   /** 版本号（升级成功=新版本，回滚=恢复到的旧版本） */
   version: string
+  /**
+   * 升级失败原因码（仅 status='failed' 时可能存在）。
+   * 来源 = update-result.json 的 error 字段（升级脚本 fail() 写入，如 'sha mismatch'），
+   * self-healer 构造 LaunchResult 时透传；renderer 据此映射具体失败文案（A-D1）。
+   * 缺失/非字符串（旧版 result.json / 容错）→ undefined，renderer 回退通用文案。
+   */
+  error?: string
 }
 
 /**
