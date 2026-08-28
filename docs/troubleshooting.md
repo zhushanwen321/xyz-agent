@@ -177,6 +177,29 @@ ls -la ~/.xyz-agent/run/          # dev 用 ~/.xyz-agent-dev
 lsof | grep relay-.*\.sock
 ```
 
+### 9. 升级中断手动恢复（升级脚本 staging 状态机残余窗口）
+
+自动升级在换装阶段（备份 mv 与原子换装 mv 之间，毫秒级窗口）被断电/强杀命中时，app 无法自愈（自愈代码运行在 app 进程内，此时无执行机会）：**双击图标无反应、`/Applications` 下 `太极.app` 缺失，同时存在 `太极.app.old` / `太极.app.new`**。`(.old 与 .new 均为完整可用副本，缺失的只是正式位置的名字。)
+
+识别残留：
+
+```bash
+ls -la /Applications/ | grep '太极.app'
+# 典型残留形态：太极.app 不在列表，太极.app.old 与 太极.app.new 同时存在
+```
+
+二选一恢复（执行后 app 即可正常启动）：
+
+```bash
+# 回到旧版（丢弃未装完的新版）
+mv /Applications/太极.app.old /Applications/太极.app
+
+# 改用手动装新版（丢弃备份的旧版；若 .new 版本异常可再换回旧版命令）
+mv /Applications/太极.app.new /Applications/太极.app
+```
+
+补充：`.old` 或 `.new` 单独残留（`太极.app` 在位且可启动）属良性残留，下次启动自动清理，无需手动处理；从 DMG 只读卷运行时升级会被拒绝（update-result 写 `read-only volume`），请先将 `太极.app` 拖入「应用程序」文件夹再触发升级。
+
 ## 环境变量速查
 
 | 变量 | 用途 | 生产默认值 | 开发默认值 |
