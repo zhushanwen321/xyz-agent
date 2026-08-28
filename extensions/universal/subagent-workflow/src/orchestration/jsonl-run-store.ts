@@ -47,9 +47,11 @@
  * 里用户手动删除选中的单个顶层 session 文件（trash CLI → unlink fallback），非自动、
  * 不递归子目录。listSessionsFromDir 是非递归 readdir——`<sessionDir>/workflow-state/`
  * 子目录完全不在 pi 的任何扫描/清理范围内。**推论：workflow-state state 文件无限累积，
- * 保留策略待定（由本包自担）**——现状：磁盘 state 文件不清理（内存侧由
- * evictDoneRunsBeyondCap 淘汰）；W17 后 state 文件已降级为纯性能缓存（权威数据在
- * session JSONL 的 workflow-record entry），随 session 文件被用户删除时一并消失。
+ * 保留策略由本包自担**——磁盘侧保留现为 opt-in（B1）：设 {@link STATE_MAX_RUNS_ENV}
+ * 后每次新 run state 文件首写成功即按 mtime 裁剪到上限（默认关，见
+ * pruneStateFilesBeyondCap）；内存侧由 evictDoneRunsBeyondCap 淘汰。W17 后 state 文件
+ * 已降级为纯性能缓存（权威数据在 session JSONL 的 workflow-record entry），随 session
+ * 文件被用户删除时一并消失。
  *
  * 参考：domain-models.md §Ports（RunStore 定义）、clarification.md D-5。
  */
@@ -338,6 +340,58 @@ async function loadRunFromStateFile(filePath: string): Promise<WorkflowRun | nul
   }
 }
 
+// ── State file retention (B1, opt-in) ────────────────────────
+
+/** run state 文件名 glob：runId 形如 `wf-<ts>-<rand>`（lifecycle.ts 生成），只删命中者。
+ *  同目录可能存在的非 state 文件（及 session JSONL——在父目录，本就不在扫描范围）永不碰。 */
+const STATE_FILE_GLOB = /^wf-.*\.jsonl$/;
+
+/**
+ * 把 workflow-state 目录裁剪到 maxRuns 个最新 state 文件（mtime 升序，删最旧）。
+ *
+ * 只删本目录内命中 {@link STATE_FILE_GLOB} 的文件；任何失败都不抛（清理是旁路
+ * 维护，不能拖垮持久化主链路）：readdir/stat 失败静默放弃本轮，单个 unlink 失败
+ * （非 ENOENT）logger.warn 留证后继续删其余——ENOENT 视为并发删除竞态下的已达成
+ * 目标，不告警。
+ */
+async function pruneStateFilesBeyondCap(stateDir: string, maxRuns: number): Promise<void> {
+  let names: string[];
+  try {
+    names = await fs.promises.readdir(stateDir);
+  } catch (err) {
+    if (!isEnoentError(err)) {
+      const reason = err instanceof Error ? err.message : String(err);
+      logger.warn(`[subagent-workflow] state retention: readdir ${stateDir} failed: ${reason}`);
+    }
+    return;
+  }
+  const stateFiles = names.filter((n) => STATE_FILE_GLOB.test(n)).sort();
+  if (stateFiles.length <= maxRuns) return;
+
+  // stat 全集取 mtime；allSettled 部分降级——单文件 stat 失败（并发删除 ENOENT 等）
+  // 静默跳过该文件，不阻断本轮裁剪
+  const settled = await Promise.allSettled(
+    stateFiles.map(async (name) => {
+      const full = path.join(stateDir, name);
+      return { full, mtimeMs: (await fs.promises.stat(full)).mtimeMs };
+    }),
+  );
+  const byMtimeAsc = settled
+    .flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
+    .sort((a, b) => a.mtimeMs - b.mtimeMs);
+  const victims = byMtimeAsc.slice(0, byMtimeAsc.length - maxRuns);
+  for (const victim of victims) {
+    try {
+      await fs.promises.unlink(victim.full);
+      logger.debug(`[subagent-workflow] state retention: pruned ${victim.full}`);
+    } catch (err) {
+      if (isEnoentError(err)) continue; // 并发删除已达成目标
+      const reason = err instanceof Error ? err.message : String(err);
+      logger.warn(`[subagent-workflow] state retention: failed to delete ${victim.full}: ${reason}`);
+    }
+  }
+}
+
 // ── JsonlRunStore ────────────────────────────────────────────
 
 /** Node fs 错误 code 判定（ENOENT = 路径不存在，并发删除场景）。 */
@@ -359,6 +413,28 @@ const logger = getLogger("subagents");
  * export 供测试边界构造（对齐 TRACE_RESULT_MAX_CHARS export 先例）。
  */
 export const DEFAULT_SAVE_DEBOUNCE_MS = 200;
+
+/**
+ * 磁盘保留清理的 opt-in 开关 env（B1）：workflow-state 目录内 run state 文件上限。
+ *
+ * 默认关——未设/空/非有限数/≤0 都不清理（「limits 默认关」裁决；解析对齐
+ * session-runner 的 SPAWN_WATCHDOG_ENV watchdog 风格：Number() + Number.isFinite
+ * 过滤，非法值回落 undefined = 不启用，而非抛错或取默认上限）。
+ *
+ * 用 XYZ_ 前缀而非 PI_：本 env 是 pi 进程内读的配置 env，xyz-agent 桌面 spawn 链按
+ * ENV_WHITELIST_PREFIXES（只有 XYZ_ 等）过滤，PI_ 前缀在桌面场景被静默丢弃——
+ * 同 XYZ_SUBAGENT_IDLE_TIMEOUT_MS 的改名教训（lifecycle-manager.ts）。
+ */
+export const STATE_MAX_RUNS_ENV = "XYZ_SUBAGENT_STATE_MAX_RUNS";
+
+/** 解析保留上限；env 未设/非法/≤0 返回 undefined（调用方不清理）。 */
+function getEnvStateMaxRuns(): number | undefined {
+  const raw = process.env[STATE_MAX_RUNS_ENV];
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
 
 /**
  * per-runId 去抖批。窗口内 N 次 save 合并：latestRun 保留最新聚合引用
@@ -577,6 +653,16 @@ export class JsonlRunStore {
         WORKFLOW_RECORD_CUSTOM_TYPE,
         toWorkflowRecordEntryData(snapshot),
       );
+      // B1 磁盘保留清理（opt-in）：新 run state 文件首写成功后触发（rollbackFirstWrite
+      // 即 save() 冷路径传入的 isFirstWrite——「本实例首次写该 runId」≈ 新文件落盘时刻，
+      // 每个 run 只清一次，热路径 flush 不重复扫描目录）。prune 内部吞错不抛，
+      // 在串行链上 await：save 返回即清理已定，测试可同步断言目录终态。
+      if (rollbackFirstWrite) {
+        const maxRuns = getEnvStateMaxRuns();
+        if (maxRuns !== undefined) {
+          await pruneStateFilesBeyondCap(this.stateDir, maxRuns);
+        }
+      }
       for (const s of settlers) s.resolve();
     } catch (err) {
       // ES9 失败回滚（热路径 flush 也会写 entry，回滚的意义收敛为「下次 save 重走

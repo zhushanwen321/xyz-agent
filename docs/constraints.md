@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 80 条（生成于 2026-08-27）。
+共 81 条（生成于 2026-08-28）。
 
 ## pi 关系（外部依赖边界）
 
@@ -120,4 +120,10 @@
 | C-proc-06 | push 发布 tag 后必须轮询验证 CI 产物直到验证脚本 exit 0（verify-ci-release.sh / prerelease-test.sh）；禁「应该没问题」 | global | [AGENTS.md](../AGENTS.md) | — |
 | C-proc-07 | ENV_WHITELIST_PREFIXES 只许定义在 packages/shared/src/constants.ts，main/runtime 只 import（pre-commit 检查） | packages/**、apps/** | [AGENTS.md](../AGENTS.md) | hook: `check_env_whitelist_sync.py` |
 | C-proc-08 | pi 语义依赖机器登记 + 探针 + 版本门禁：docs/pi-semantics.json（PS-xx 条目，probe/observe 分型）是唯一机器登记源，scripts/check-pi-semantics.mjs（pre-commit + CI）守 schema/探针存在性/四包版本一致（pi-coding-agent ≡ pi-ai ≡ pi-agent-core ≡ runtime pin）；pi 升级 PR 必查两项——pi-ai exports 是否移除 ./compat、changelog 是否提及 ModelManager 迁移（PS-15 时间炸弹）；探针族红 = 语义漂移，先复核锚点再更新 verifiedWith | docs/pi-semantics.json、packages/runtime/src/infra/pi/**、package.json、packages/runtime/package.json | [pi-boundary-reliability](design/pi-boundary-reliability.md#d6漂移守卫体系pi-语义依赖的机器登记--探针--版本门禁选定) | hook: `check-pi-semantics.mjs` |
+
+## subagent-workflow（单写者不变量）
+
+| ID | 约束（摘要） | scope | 权威源 | 执行 |
+|---|---|---|---|---|
+| C-sw-01 | 每 session JSONL 单写进程：子进程写独立 subagent sessionDir，主 session 仅主进程单线程写；pi _persist 首写 wx 无 O_APPEND、compaction 截断重写——引入第二写进程即破坏 appendEntry 原子性 | extensions/universal/subagent-workflow/** | [session-runner.ts](../extensions/universal/subagent-workflow/src/execution/session-runner.ts) | — |
 

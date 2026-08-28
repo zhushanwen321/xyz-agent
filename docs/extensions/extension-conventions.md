@@ -277,6 +277,14 @@ event handler（如 `tool_execution_end`）中注入消息**必须用 `pi.sendUs
 
 **校验**：`npx ajv-cli validate -s extension-dependencies.schema.json -d extension-dependencies.json`
 
+### Peer 版本联动：SW 精确依赖 pi-structured-output [强制]
+
+`@zhushanwen/pi-subagent-workflow`（SW）对 `@zhushanwen/pi-structured-output`（SO）的 peer 依赖是**精确版本**（开发态 `workspace:*`，`pnpm publish` 时解析为无范围的精确版本号，如 `5.0.2`）——不是 `^` 范围。
+
+**因此 SO 单独 bump 必须同步重发 SW**：npm 7+ 默认自动安装 peerDependencies 并严格解析——SO 发了新版本而 SW 未重发时，用户环境装新 SO + 旧 SW 会因旧 SW 的 peer 声明仍锁旧精确版本而报 ERESOLVE（装不上/需 --legacy-peer-deps 强装）。两包语义上本就同进退：`PI_WORKFLOW_SCHEMA` env 隐式契约 + 256KiB 上限由跨包契约测试锁字节相等（[structured-output-redesign.md](../design/structured-output-redesign.md) §7 补记 C），一端演进而另一端不跟即静默断桥。
+
+**一般化规则**：凡 peerDependencies 引用兄弟 extension 包（而非 `@earendil-works/pi-*` 上游）且发布态为精确版本的，被依赖包任何 bump 都必须同 PR/同批重发依赖包；只 bump 一端时 changeset 必须显式说明另一端为何可以不跟（如确无契约面变更）。
+
 详见：[pi-ext-019](./adr/pi-ext-019-structured-output-extension.md)
 
 ## 禁止使用已废弃的 Pi SDK namespace [MANDATORY]

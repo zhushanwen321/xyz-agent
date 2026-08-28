@@ -256,3 +256,22 @@ pi 边界可靠性设计的测试面落地（2026-08-27 事故对 → 四支柱�
 - 回归基线新增「pi 语义守卫探针族」（§4 表末行）：`packages/runtime/src/infra/pi/__tests__/pi-semantics-*.test.ts` 仿 `pi-paths-config-dir-contract.test.ts` 范式——静态直读 pi dist 做行为契约断言，dist 不可达 skip 不 fail，凭证无关 CI 可跑；机器登记源 = `docs/pi-semantics.json`（PS-xx，probe/observe 分型）
 - G5 real-pi 对账用例 `thinking-level-effective-e2e.test.ts` 归 REAL_PI_TESTS 分池（vitest.config.ts 已登记；漏加会落回 main 满并行组复发饿死超时）——回执保真的端到端保险丝，验证时改 pi 协议链路 / replicated_states 失效收敛时必跑
 - 防橡皮图章分层：verifiedWith 是提醒机制，探针族（与取值无关地红）才是机器防线；P-S3 演练口径——篡改 verifiedWith 或反转探针断言 → check-pi-semantics / 探针测试必红，报错自带恢复动作
+
+## 修复后验证纪律 [from: structured-output-redesign R3-R6 审计]
+
+> 沉淀来源：structured-output 重设计实施后的四轮对抗式审计（R3-R6，commits `f69766b44`→`9438940c0`→`1dfd93b1a`→`3f934637c`）。R4 与 R5 各发现一次「上轮修复自身引入回归」且均非单测可抓——回归只在资源面暴露，结果面（error 文案）完全正确。语义总览见 [docs/design/structured-output-redesign.md](docs/design/structured-output-redesign.md) §6.3/§7 补记。
+
+修复 ≠ 局部补丁。任何声称「修复完成」的变更必须同时交出两件验证产物，缺一即验收不完整：
+
+**规则 1：修复必须附交互矩阵（修复点 × 既有 retry / rebuild / budget / 计数机制）**。修复改变的是行为的某个分支，但被改分支的**输出**（error 文本、事件、退出码）往往是其他机制（重试分诊、预算消耗、闸门计数、状态重建）的**输入**——修复前必须列出这些消费者并逐个回答「新输出会被它如何处置」。不做这一步，修复点本身就是新回归的引入点（案例 B：三态归因产出的新 error 文本恰好落入 retryable 分支）。
+
+**规则 2：修复后必须重跑修复前的对照场景并比较资源面（时长 / 子进程数 / attempt 次数 / token），只看结果面（error 文案对不对）不够**。修复往往让「错误更可见/更正确」，结果面验证会假绿——错误确实可见了，但可见的错误可能触发新的放大循环。资源面对照是唯一暴露手段：同场景修复前后各跑一次，对比墙钟时长、spawn 的子进程数、重试 attempt 数、token 消耗。
+
+**两个案例锚（均实测复现，非推理）**：
+
+| 案例 | 回归形态 | 为什么结果面看不到 | 资源面暴露形态 |
+|---|---|---|---|
+| **AP 并集恒定（R4 发现）** | R3 修复（echo keys 并入签名）便 required 渐进修复场景「缺失列表∪keys」恒定——模型每轮修好 1 个字段的真实进展被判为同签名无进展，3 次 terminal 误杀 | 闸门行为完全符合自身契约（同签名 3 次 → 终止），error 文案正确 | 探针：6 required 字段每轮修 1 个，三轮签名恒 `fields(6)`——签名序列断言（进展必须产生新签名）才暴露 |
+| **F-1 retry 放大 3×（R5 发现）** | R3 失败表面化修复让 gate 终止的 run 从「静默 completed+{}」变为「failed+error」——新 error 恰好落入 `executeAgentCall` 的 retryable 分支，不可满足 schema 重试 3 轮（每轮含 ~25s gate teardown 窗口） | error 文案完全正确（归因清晰、可读、可恢复）；run 最终也确实失败 | 实测 attempts=3、4 个子进程 journal、235s vs 修复前同场景 67s（3× 放大）——时长/子进程数对照片刻暴露 |
+
+**落地形态**：修复 PR/commit 的验证记录应含 ①交互矩阵（哪怕三行：修复点 × 消费机制 × 处置结论）②修复前后同场景资源面对照表。单测锁不住这两面（R4/R5 的回归均在单测全绿下存活）——交互矩阵是设计期检查，资源面对照是实跑检查。

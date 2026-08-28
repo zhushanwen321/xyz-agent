@@ -85,6 +85,8 @@ describe("[F1] 不可克隆 return → run failed（非悬挂）— e2e", () => 
         expect.objectContaining({ id: runId, reason: "failed" }),
       );
       expect(deps.onRunDone).toHaveBeenCalledTimes(1);
+      // 终态已落盘（F1 不变式的持久化半边：非但收敛，且状态被记录可恢复）
+      expect(store.save).toHaveBeenCalled();
       // workerLogs（DataCloneError 详情）随 error 消息落入 errorLogs，诊断不丢
       expect(run.state.errorLogs.length).toBeGreaterThan(0);
     },

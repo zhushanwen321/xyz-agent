@@ -11,15 +11,19 @@
 // 用例内 stubEnv 捕获的原始值为 undefined，afterEach unstubAllEnvs 恢复后仍是
 // 「未设」状态，语义一致。
 //
-// 字面量与 SSOT 常量对应（三处分属不同模块，setup 在模块加载前运行，不 import
+// 字面量与 SSOT 常量对应（四处分属不同模块，setup 在模块加载前运行，不 import
 // 源码模块以避免拖入运行时副作用）：
 // - XYZ_SUBAGENT_SPAWN_WATCHDOG_MS = session-runner.ts SPAWN_WATCHDOG_ENV
 // - XYZ_SUBAGENT_RUN_WATCHDOG_MS   = launcher.ts RUN_WATCHDOG_ENV
 // - XYZ_SUBAGENT_IDLE_TIMEOUT_MS   = lifecycle-manager.ts IDLE_TIMEOUT_ENV
+// - XYZ_SUBAGENT_STATE_MAX_RUNS    = jsonl-run-store.ts STATE_MAX_RUNS_ENV
+//   （B1 磁盘保留清理，非 watchdog 但同为「默认关、显式设置才启用」的 opt-in
+//   配置，测试默认语义基线同样是「未设」，故并入同一净化）
 const WATCHDOG_ENV_KEYS = [
   "XYZ_SUBAGENT_SPAWN_WATCHDOG_MS",
   "XYZ_SUBAGENT_RUN_WATCHDOG_MS",
   "XYZ_SUBAGENT_IDLE_TIMEOUT_MS",
+  "XYZ_SUBAGENT_STATE_MAX_RUNS",
 ] as const;
 
 for (const key of WATCHDOG_ENV_KEYS) {

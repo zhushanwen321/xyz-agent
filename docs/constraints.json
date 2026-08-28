@@ -3,7 +3,7 @@
     "name": "xyz-agent 架构约束登记表（SSOT）",
     "description": "全部架构级约束的机器可读登记。summary 仅作导航，非权威表述——约束内容的唯一权威源是 authority 指向的文档；两处不一致时以 authority 为准并修正本表。",
     "fields": {
-      "id": "C-<主题>-<两位序号>，主题：pi/data/comm/state/ext/build/proc",
+      "id": "C-<主题>-<两位序号>，主题：pi/data/comm/state/ext/build/proc/sw",
       "summary": "一句话摘要（仅导航）",
       "scope": "global 或路径 glob 数组（仅支持 <prefix>/** 前缀通配与精确路径；global = 每次 CR 必载）",
       "authority": "权威源文档（相对 docs/ 的路径，可含 #锚点；约束内容只活在这里）",
@@ -1679,6 +1679,24 @@
         {
           "type": "machine",
           "hook": "check-pi-semantics.mjs"
+        }
+      ]
+    },
+    {
+      "id": "C-sw-01",
+      "summary": "每 session JSONL 单写进程：子进程写独立 subagent sessionDir，主 session 仅主进程单线程写；pi _persist 首写 wx 无 O_APPEND、compaction 截断重写——引入第二写进程即破坏 appendEntry 原子性",
+      "scope": [
+        "extensions/universal/subagent-workflow/**"
+      ],
+      "authority": [
+        "../extensions/universal/subagent-workflow/src/execution/session-runner.ts"
+      ],
+      "dimensions": [
+        "data-governance"
+      ],
+      "enforcement": [
+        {
+          "type": "none"
         }
       ]
     }

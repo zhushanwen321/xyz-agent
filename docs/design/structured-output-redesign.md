@@ -211,7 +211,7 @@ Received arguments: {...}
 
 错误文本由 pi-ai 内部格式化，参数层失败不经过任何可改写文案的扩展 hook——故恢复指引静态携带在工具 description 里（「校验失败时按工具参数 schema 修正后重试」）。错误本身已含具体字段路径与实参回显，模型按工具 schema 自修正重试，无需外部信息源。
 
-**失败形态 b：同签名校验错误连续 3 次（模型陷入重复失败——事故形态 B 的终态版本）**——闸门在 `tool_execution_end` 事件上计数，第 3 次同签名失败到达时调用 `pi.shutdown()` 优雅终止子进程（单用途 workflow 子进程，退出即终态）。workflow 作者看到的：
+**失败形态 b：同签名校验错误连续 3 次（模型陷入重复失败——事故形态 B 的终态版本）**——闸门在 `tool_execution_end` 事件上计数，第 3 次同签名失败到达时进入 bounded teardown 链：`ctx.abort()` 截断当前 turn 的 token 燃烧（实测 ~25s 窗口）→ `ctx.shutdown()` 优雅终止子进程（单用途 workflow 子进程，退出即终态）→ 15s 兜底硬退 timer（覆盖 pi 挂死不 settle 的异常态；链路依据见 §6.3 v4 补记）。workflow 作者看到的：
 
 ```
 （子进程 stderr → pi-<date>-<sessionId>.jsonl tee / 扩展日志）
@@ -221,7 +221,7 @@ Last error: assessments.0.impact: must be string
 👉 (workflow 作者) 检查 workflow 脚本的 outputSchema 是否过苛（深嵌套/超长 required），
    或更换更强模型后重跑该步骤。
 
-（AgentResult）success=false，parsedOutput=undefined；3 次校验错误保留在 toolCalls 供检视
+（AgentResult）success=false，parsedOutput=undefined，error 带确定性失败前缀（`Structured output failed deterministically:`——宿主 `executeAgentCall` 据此短路重试：不可满足 schema 重试必同结果，见 §7 补记）；3 次校验错误保留在 toolCalls 供检视
 ```
 
 子进程退出 → session-runner 走现有「子进程结束但未产出 structured-output」失败路径（与 hook 重试放弃同一路径，消费者零改动）。单次失败成本 = 3 次调用 ≈ 十几秒，而非 345 次 ≈ 40 分钟（G2）。
@@ -266,6 +266,14 @@ Last error: assessments.0.impact: must be string
 - **效果**：G2（同签名失败第 3 次后进程终止，有界且与模型配合度无关）；§3.2 失败模式 B 若再现，3 次调用内收场。shutdown 前无「第 4 次调用」——计数即终止，不给锚定复读留第 4 次机会。
 - **诚实边界**：闸门终止的是「同签名无进展」这一种循环形态；签名不断变化的长尾低效（模型每轮犯不同错）不触发闸门，仍由 workflow 层 maxTurns 兜底——分层职责显式化，不虚构闸门覆盖一切循环。
 
+**v4 补记（R3-R6 审计演进）**——签名归一化与 terminal 动作在实施后四轮审计中演进，语义如下（源码 `loop-gate.ts` 注释为权威细化）：
+
+- **签名归一化：token 分桶哈希的四步演进**。v3 定义的「取校验错误行、剔除实参回显」在实施中细化为「错误行字段/路径 token 集合排序哈希」（`fields(<n>)#<fnv1a>`；修好排序靠后字段时消息前缀不变，纯前缀口径会把渐进修复折叠成同签名误杀；required message 需解析完整缺失字段列表——pi-ai bullet 路径位只含 requiredProperties[0]）。此后三步：
+  1. **R3：AP keys 并入**——AP（D4 注入 `additionalProperties:false`）错误行无字段名（路径位恒 root），模型逐个删多余字段是真实进展却签名恒定；修法是把实参回显段（`Received arguments:` 后可 JSON.parse）的顶层 keys 并入 token——keys 是结构不是值：keys 缩小 = 删字段 = 进展，值变化（keys 不变）仍不算进展。
+  2. **R4：并集恒定陷阱（实测误杀）**——keys 无条件并入后，required 渐进修复场景下字段从缺失列表「迁移」到回显 keys，缺失 token 集缩小恰被 keys 集增大抵消，并集恒定 → 签名恒定 → 3 次误杀（探针复现：6 required 字段每轮修 1 个，三轮签名恒 `fields(6)`）。修法：keys 改挂 **AP 桶**（`key:` 前缀）且**仅当错误行块含 AP 错误行时**才并入——required/格式类错误行天然携带字段名，进展由常规桶 token 独家刻画，keys 并入反而制造对流失衡；AP 错误行的 keys 是其唯一进展信号，机制保留。共享文本原语同轮下沉零依赖 `text-primitives.ts`（破 loop-gate ↔ workflow-hook import 环）。
+  3. **R6：嵌套 AP 路径下钻 + marker 精确化**——AP 错误行解析路径位（pi-ai `formatValidationPath` 点分：root / a / a.b / list.0），keys 按路径下钻取**该层** keys 而非顶层（嵌套场景顶层 keys 恒不变会误杀），token 形态 `key:<path>:<name>`——路径限定防兄弟 AP 层同名 key 跨层折叠；下钻中断（路径不存在/非容器）安全降级不贡献 token。AP 行检测从 `/additional propert/i` 子串改为**行级固定后缀精确匹配**（`<path>: must not have additional properties`）——字段名恰含该字样的非 AP 错误不再伪触发 keys 分桶（漏杀方向风险）。
+- **terminal 动作：bounded teardown 链（R6）**。v3 的「调 `pi.shutdown()` 优雅终止」在实测暴露燃烧窗口：shutdown 是请求语义（RPC mode 在 `agent_settled` 后才 exit），请求后当前 turn 的工具执行/流式生成继续跑——实测 ~25s 模型 token 白烧。终态链：`ctx.abort()`（止燃）→ `ctx.shutdown()`（优雅退出）→ 15s 兜底硬退 timer（`assertSafeTimerDelay` 包裹 + `unref` + terminal 路径幂等 clear；exit code 1，避开 SW 侧信号终止阈值）。实装依据：pi 0.84.1 `ExtensionContext` 仅有 `abort()`/`shutdown()`，无子进程句柄/信号 API（types.d.ts + runner.js 直读核实）。**与被否④的关系**：被否的是 abort **单独**作终止手段（子进程驻留空转到 watchdog）；abort 叠加在 shutdown 之前专司止燃，二者互补，非翻案。
+
 ### 6.4 D4：根级 `additionalProperties:false` 注入——堵输出污染（选定）
 
 - **采用**：合成 workflow 工具 parameters 时，若作者 schema 根级**未声明** `additionalProperties`，注入 `false`；作者显式声明的（含 `true` 或子 schema）尊重不动。嵌套层级的宽严完全由作者 schema 自治。
@@ -292,11 +300,49 @@ Last error: assessments.0.impact: must be string
 4. `workflow-hook.ts`：RetryState 增 terminal 态——terminal 时 turn_end 不 steer（防御性保留：shutdown 正常生效时进程已终止，此分支仅是 shutdown 失败路径下的保险）；「完全没调用」的 steer 保留（上限 2 不变）；两分支的 steer 文案同步重写为单参数口径（删除「do NOT pass your own `schema` parameter / with ONLY the `data` parameter」——按 §5.1「警告从全部文案删除」，一致性审查发现本条初版漏列，v3 补）。
 5. `index.ts`：装配分岔——读 env → 注册对应工具变体；workflow 模式额外注册闸门（`tool_execution_end` 计数 + shutdown 终止）+ turn_end hook。
 
-**`extensions/universal/subagent-workflow/`（仅文案，不动逻辑）**：
+**`extensions/universal/subagent-workflow/`（v3 原案：仅文案，不动逻辑；R3 起演进超出原案，见下方补记）**：
 
 6. `agent-opts-resolver.ts` 注入段、`session-runner.ts` `formatSchemaInstruction`：删除「do NOT pass a `schema` parameter」类警告，保留「必须调用工具、参数即 data」的要求。
 
-**显式不改**：`output-collector.ts`（仍按工具名取 `result.details`）；`PI_WORKFLOW_SCHEMA` env 契约（两包隐式契约字面量不变）；`agent({schema})` API；`mandatory-extensions.json`。
+**显式不改**：`output-collector.ts`（仍按工具名取 `result.details`；R3 起新增失败归因逻辑，见下方补记 A）；`PI_WORKFLOW_SCHEMA` env 契约（两包隐式契约字面量不变；R6 起有跨包契约测试锁字节相等，见补记 C）；`agent({schema})` API；`mandatory-extensions.json`。
+
+### 实施后审计演进（R3-R6 → v4 补记）
+
+M1/M2 落地后四轮对抗式审计（R3 `f69766b44` → R4 `9438940c0` → R5 `1dfd93b1a` → R6 `3f934637c`）对「失败必有界」（G2）做了递进修复，其中两轮是**对上轮修复本身的回归修复**（R4 修 R3 签名算法的并集恒定误杀、R5 修 R3 失败表面化引入的 retry 放大——方法论沉淀见 TEST-STRATEGY.md「修复后验证纪律」节）。签名分桶与 teardown 的演进已记 §6.3 v4 补记；本节回写 SW 侧与其余语义：
+
+**A. 失败表面化全链路（R3 → R4 → R5）**。「gate 终止的 run 被报告 completed 且 parsedOutput={}」的静默吞没修复是一条三层链，逐轮补齐：
+
+1. **R3（isError 跳过 + 三态归因）**：`extractParsedOutput` 跳过 `isError:true` 的调用（pi 失败路径 details 默认 `{}`，当 parsedOutput 会让失败 run 静默 completed）；schemaExpected 而 run 结束无有效 parsedOutput 时置 `success=false` 并写三态归因（优先级：校验失败 w/ last error > 从未调用 SO tool > 调用过但无 details），error 经 AgentResult 逐层传播。
+2. **R4（归因文本防误诊 + 失败分类）**：归因动态段（模型/provider 原始错误文本）可含 `STALE_CONTEXT_PATTERNS` 命中词（"aborted" 等）→ 被 SW 重试分诊误诊为 stale-context；修法：动态段先截断后中和（命中词替换 `[redacted]`），固定前缀静态无命中（测试锁定）。同轮把失败原因按实际内容分类（`schema validation` vs `execution failure`，锚点为 SO 侧校验失败固定文案前缀）——isError 只说明调用失败，硬编码校验语义会误导排障。
+3. **R5（确定性失败不重试矩阵）**：三态归因的 error 恰好落入 `executeAgentCall` 的 retryable 分支——不可满足 schema 重试必同结果，实测放大 3×（attempts=3、4 个子进程、235s vs 修复前 67s，每轮含 ~25s gate teardown 窗口）。修法（可重试性矩阵，标记前缀 SSOT 在 `execute-agent-call.ts` 的 `DETERMINISTIC_SCHEMA_FAILURE_PREFIX`）：
+
+   | 归因态 | 带确定性标记 | 可重试性 | 理由 |
+   |---|---|---|---|
+   | ① 从未调用 SO tool | 是 | 不可重试 | 缺 extension 是环境确定性（安装盲区），同环境重试必同结果 |
+   | ② SO 调用 isError（gate 终止/不可满足 schema/provider 错误） | 是 | 不可重试 | 同 schema 重试必同结果；实测回归即此态循环烧钱 |
+   | ③ 调用过但无 details | 否 | 可重试 | 可能瞬态（提取/序列化异常），保留既有重试语义 |
+
+   标记词与 `STALE_CONTEXT_PATTERNS` 逐字核对不命中（虽同样不重试，但归因语义不被污染）；`executeAgentCall` 对标记前缀与 stale-context 同构短路。注：态② 含 execution failure（provider 瞬态）也不重试——isError 态整体从重试面摘除，瞬态恢复交由上层 workflow 编排。
+4. **R4（exit(0)-no-terminal worker 兜底）**：workflow 返回值不可结构化克隆时 worker 侧 `DataCloneError` 被吞 → `exit(0)` 无终端消息 → run 永久 running。修法：worker post 可克隆的 error fallback；主侧 per-generation `receivedTerminalMessage` flag——`exit(0)` 而无终端消息即 fail 该 run（script-error 重试退避窗口豁免）。该 flag 同轮被 R6 复用为 worker 崩溃双事件幂等守卫（见 E）。
+
+**B. 【披露】失败表面化后 run 级 reason 语义**：gate 终止的 run 在 `agent()` 调用层仍 resolve（content fallback）——错误经 `returnMeta:true` 的 `result.errors` 暴露，run 级 `reason` 保持 completed（R5 登记的设计裁决：workflow 编排层消费 error，不改 reason 语义）。
+
+**C. schema 256KiB 双侧防线（R6）**：schema 经 env 注入子进程随 spawn 走 execve 语义，单条 env 值过大叠加继承的 process.env 可触发 E2BIG（ARG_MAX 约束），spawn 失败且错误难归因（报在 spawn 调用点，表象与 schema 内容无关）。防线双侧：
+
+- **SW 注入点硬拒**：`shared/schema-env.ts`（零依赖叶子模块，避免跨包契约测试拖入 session-runner 依赖树）的 `SCHEMA_ENV_MAX_BYTES = 256 KiB`，超限注入前 fail-fast，错误含实际字节数与 E2BIG 指引；
+- **SO 注册期 warn**：`tool-definition.ts` 的 `SO_SCHEMA_SIZE_WARN_BYTES = 256 KiB`，超限 stderr warn（CLI 实测 300081 bytes 触发）——硬拒在 SW 注入侧，SO 侧 warn 兼顾独立安装用户直设 env 的可见性；
+- **跨包契约测试**：`cross-package-contract.test.ts` 经 `pathToFileURL` 动态 import SW 叶子模块（绕过 vitest root 折叠），断言 env 名 `PI_WORKFLOW_SCHEMA` 与 256 KiB 上限**字节相等**——两包各自保留常量副本（独立 npm 包不能直接 import），漂移即红。
+
+**D. 加固机制清单（R4-R6，与闸门正交）**：
+
+- **worker 双事件幂等（R6）**：worker 崩溃时 error + exit(1) 双事件各派发一次 `handleWorkerError`，无守卫时同次崩溃计两次；per-generation flag 使第一次事件标记后第二次短路。
+- **SIGKILL 升级链（R6）**：watchdog SIGTERM 后 30s 仍存活升级 SIGKILL（`assertSafeTimerDelay` + unref + 退出清理；kill-chain 本身 SIGTERM → grace → SIGKILL + 10s 有界收尸；watchdog 默认关闭语义不变）。
+- **监听器单例（R5）**：pi 0.84.1 `on()` 无 off——每次 session_start 注册新 `agent_settled` handler 只翻转 disposed 标志，N 次 session 切换泄漏 N 个死 handler；修法：模块级单例 handler + boundLedger 引用切换（notify-ledger）。
+- **路径校验三通道（R5）**：`skillPath`/`cwd` schema pattern + 运行时 guard（绝对路径、无 `..` 穿越——pi 不对 schema pattern 做运行时校验，真门在 `executeSubagent`）；skill discovery 解析路径必须仍在 skills root 内（穿越尝试按 not-found 反馈）；显式 agent ref 查不到时 throw 并列出可用 subagents（不再静默降级 general-purpose）。
+- **单写者不变量（R6 注册，R5 元审查结论）**：session JSONL 原子性依赖「每 session 单写进程」——pi `_persist` 首写 wx（无 O_APPEND）、compaction 截断重写，均仅单写者前提下原子；引入第二写进程即尾部丢 entry/compaction 截断丢并发写入。代码内注册禁止双写者（子进程写独立 subagent sessionDir，主 session 仅本进程单线程写）。
+- **workflow-state 无 GC（R6 验证登记）**：pi 0.84.1 无 session GC；`workflow-state/` state 文件与 session entry 无按 age/数量的 retention，唯一删除路径是 TUI SessionSelector 删除 session——无限累积是已知接受特性。
+
+**E. 【披露】workflow state 快照体积膨胀（B3）**：每次 save 去抖后 flush 都序列化**全量 run 快照**写 state 文件并同步 append 同一 snapshot 的自描述 entry 到 session JSONL（W17 D4：pi 文件是持久化权威，state 文件降级纯性能缓存）——该设计支撑「live ≡ reload」（重启后从 entry 重建全部 run），代价是长 run 的 entry 体积**线性膨胀**（N 次 flush = N 份全量快照）。已知未优化：去抖已把相邻 save 合并，但跨步骤/跨子进程的 flush 间隔下快照重复存储仍在；优化方向（增量/diff entry）留待体积成为真实问题再做。
 
 **测试**：`prompt-quality.test.ts` 文本断言随 description 重写更新（锁定新口径）；新增 loop-gate 状态机单测（同签名计数 / 签名变化清零 / terminal 触发 shutdown / hook terminal 不 steer）；`structured-output.test.ts` 保留日常模式全量用例，workflow 分支改为「透传 + 解包」断言；`retry-state.test.ts`（RetryState 加 terminal 态的行为契约）与 `characterization-hook.test.ts`（锁定 hook 时序基线）随设计变更重锁基线——characterization 用例按「行为基线重锁」处理，不是零改动全绿。
 
@@ -351,6 +397,8 @@ M1 先行可独立上线（首调即成功单独已消除 80% 事故面）；M2 
 
 **本章结论：4 条 pi 行为断言已直读 dist 证实（✅）；5 条留实施期门（⛔），每条带降级路径；1 条初稿断言被对抗式审查证伪后作废（P3-old，如实保留以警后）。**
 
+> v4 注：⛔ 各项已在 M1/M2 实施与 R3-R6 审计实跑中逐项消耗（探针证据见各轮 commit message 与 /tmp/pi-probe5/；P3 系时序断言在 R6 以「pi 0.84.1 ExtensionContext 无信号能力」重新核实），表内状态保留为设计期快照。
+
 | ID | 验证的行为 | 探针 | 状态 | 失败时的降级路径 |
 |---|---|---|---|---|
 | P1 | pi-ai 参数层支持非 typebox 普通 JSON schema 作工具 parameters | 直读 `pi-ai/dist/utils/validation.js`：`TYPEBOX_KIND` 符号检测分支 + `Compile` 编译 | ✅（0.84.2 dist） | — |
@@ -373,3 +421,4 @@ M1 先行可独立上线（首调即成功单独已消除 80% 事故面）；M2 
 - v1（2026-08-28）：初版。基于事故核实 session（72cd03 T001/T002 对抗式核实）与 8 项目业界调研（T003），从终态视角重设计 workflow 模式为单参数合成工具 + tool_call 硬闸门。
 - v2（2026-08-28）：对抗式审查修订（审查报告 `structured-output-redesign.review.md`，23 项事实抽查 18 命中 5 偏离，2 must-fix 全部落盘）。① D3 闸门机制推翻重选：初稿 `tool_call` 事件 `block+terminate` 被证实对参数层失败结构性不可达（beforeToolCall 位于 validate 之后），改为 `tool_execution_end` 同签名计数 + `pi.shutdown()` 硬终止——初稿否掉 execute 内计数的时序推理同样适用于 tool_call，初稿只排查了三处出口中的两处；② 新增 D4 根级 `additionalProperties:false` 堵输出污染（审查实测未声明时多余字段整包流入 parsedOutput）；③ §5.2 形态 a 错误文案改为 pi-ai 原生（参数层失败无 hook 改写通道，指引下移到工具 description 静态携带）；④ 补 ajv→TypeBox 引擎差异（P8）、版本矩阵（P9）、retry-state/characterization-hook 测试基线重锁。
 - v3（2026-08-28）：实施期一致性审查修订。① §7.4 补 workflow-hook steer 文案重写条目（初版漏列，致实现照单执行后 hook 提醒残留旧双参数口径，成为终态下唯一矛盾信息源）；② session-runner formatSchemaInstruction 的 `data` 术语残留统一（resolver 侧已用 result）。
+- v4（2026-08-28）：R3-R6 四轮审计修复（`f69766b44`→`9438940c0`→`1dfd93b1a`→`3f934637c`）语义回写——前六轮演进（R1 设计对抗审查→v2、R2 实施一致性审查→v3、R3-R6 代码审计）中后四轮的实装语义此前未回写，本次补齐：① §6.3 签名归一化四步演进（token 集合哈希→R3 AP keys 并入→R4 并集恒定陷阱与 AP 桶门控→R6 嵌套路径下钻 `key:<path>:<name>` + AP marker 整句后缀精确匹配）；② §6.3/§5.2 terminal 动作升级 bounded teardown 链（abort 止燃实测 ~25s 窗口→shutdown→15s 硬退兜底；pi 0.84.1 无信号能力）；③ §7 补记 A/B 失败表面化全链路（isError 跳过→三态归因→STALE_CONTEXT_PATTERNS 中和→确定性失败不重试矩阵；exit(0)-no-terminal worker 兜底）；④ §7 补记 C schema 256KiB 双侧防线（SW 注入点硬拒 + SO 注册期 warn + 跨包契约测试锁字节相等）；⑤ §7 补记 D 加固清单（worker 双事件幂等、SIGKILL 升级链、监听器单例、路径校验三通道、单写者不变量、workflow-state 无 GC）；⑥ §7 补记 E 披露 workflow state flush 全量快照体积线性膨胀（live≡reload 代价，未优化）；⑦ §11 ⛔ 探针状态补注。R4/R5 两轮「修复自身引入回归」的教训沉淀入 TEST-STRATEGY.md「修复后验证纪律」。
