@@ -29,12 +29,23 @@ const MAX_HOOK_RETRIES = 2;
  *   - onTurnEnd()               → soCallCount=0 / hookRetryCount++ / lastSchemaError=null
  *     （仅当 workflow-hook 判定要 steer 时调用——toolUse/超上限/成功短路均不调，
  *      故 toolUse 保留 soCallCount、超上限保留 lastSchemaError，与旧 4-closure 逐点一致）
+ *
+ * terminal 态（D3/U2）：由 loop-gate 在同签名失败达 3 次时经 markTerminal() 置位，
+ * turn_end hook 据此不再 steer——防御性保留：shutdown 正常生效时进程已终止，
+ * 此分支是 shutdown 失败路径下的保险。terminal 不影响 onToolExecEnd 记录
+ * （闸门自身幂等，重复事件无害）。
  */
 export class RetryState {
 	soCallCount = 0;
 	soSucceededEver = false;
 	hookRetryCount = 0;
 	lastSchemaError: string | null = null;
+	terminal = false;
+
+	/** 闸门 terminal 置位（loop-gate 经 index.ts 回调调用；不可逆，仅 reset() 可清）。 */
+	markTerminal(): void {
+		this.terminal = true;
+	}
 
 	/** 记录一次 structured-output tool 执行结果。hasError = event.isError === true。 */
 	onToolExecEnd(hasError: boolean, errorMsg?: string): { shouldSteer: boolean } {
@@ -54,24 +65,27 @@ export class RetryState {
 		this.lastSchemaError = null;
 	}
 
-	/** 四字段归零（当前无调用方；保留作状态机完整契约）。 */
+	/** 五字段归零（当前无调用方；保留作状态机完整契约——含 U2 新增 terminal 态）。 */
 	reset(): void {
 		this.soCallCount = 0;
 		this.soSucceededEver = false;
 		this.hookRetryCount = 0;
 		this.lastSchemaError = null;
+		this.terminal = false;
 	}
 }
 
 /**
  * 从 tool 执行结果里提取错误文本。
  *
- * Pi 框架在 tool execute 抛错时，构造 `{ content: [{ type: "text", text }] }`
- * 塞进 result.content[0].text（见 extensions/universal/unified-hooks 的 extractErrorText 及其
- * 文档：SDK 事件结构里没有独立 errorMessage 字段，错误文本只能从 result.content 里取）。
+ * Pi 框架在参数层校验失败（immediate 路径）与 execute 抛错时，均构造
+ * `{ content: [{ type: "text", text }] }` 塞进 result.content[0].text
+ * （agent-loop.js createErrorToolResult；见 extensions/universal/unified-hooks 的
+ * extractErrorText 及其文档：SDK 事件结构里没有独立 errorMessage 字段，错误文本只能从
+ * result.content 里取）。loop-gate（D3）复用本函数提取签名原料。
  * 这里防御性取多种结构，取不到就返回 undefined（调用方降级为通用提示）。
  */
-function extractToolErrorText(result: unknown): string | undefined {
+export function extractToolErrorText(result: unknown): string | undefined {
 	// 常见结构：{ content: [{ type: "text", text: "..." }] }
 	if (typeof result === "object" && result !== null) {
 		const content = (result as Record<string, unknown>).content;
@@ -93,6 +107,9 @@ function extractToolErrorText(result: unknown): string | undefined {
 /**
  * 注册 turn_end hook，检查模型是否成功调用 structured-output 工具。
  * 未成功时通过 pi.sendUserMessage({deliverAs:"steer"}) 注入 steering message 重试。
+ * 最多重试 MAX_HOOK_RETRIES 次，防止无限循环。
+ *
+ * @returns 共享的 RetryState（U2：index.ts 拿它接线 loop-gate 的 onTerminal 回调）。
  *
  * 两种失败形态都会触发 steer：
  * 1. 完全没调用（soCallCount === 0）→ 注入"必须调用"提示 + 正确 schema
@@ -104,7 +121,7 @@ function extractToolErrorText(result: unknown): string | undefined {
  * 检测时序：Pi 保证同 turn 内所有 tool_execution_end 都在 turn_end 之前触发，
  * 故 turn_end 读取的状态已反映本 turn 全部 tool 调用结果。
  */
-export function setupWorkflowHook(pi: PiAPI, schemaJson: string): void {
+export function setupWorkflowHook(pi: PiAPI, schemaJson: string): RetryState {
 	const state = new RetryState();
 
 	// 追踪 structured-output 调用结果：
@@ -122,10 +139,13 @@ export function setupWorkflowHook(pi: PiAPI, schemaJson: string): void {
 	pi.on("turn_end", async (event: unknown) => {
 		// 守卫链：以下情况均直接 return（不调 onTurnEnd——toolUse 保留 soCallCount、
 		// 超上限保留 lastSchemaError，与旧 4-closure 逐点一致）：
+		// 0. 闸门 terminal（D3/U2）：同签名失败已满 3 次、shutdown 已发——不再 steer，
+		//    让进程终止（防御性保留：shutdown 正常生效时进程已死，到不了这里）
 		// 1. 已经成功调用过 structured-output，不再干预
 		// 2. 不是合法 turn_end 事件
 		// 3. stopReason="toolUse" → 模型还在调工具链，不需要干预
 		// 4. 超过重试上限：放弃，让子进程自然结束（调用方据 result.error 判定失败）
+		if (state.terminal) return;
 		if (state.soSucceededEver) return;
 		if (!isTurnEndEvent(event)) return;
 		if (event.message?.stopReason === "toolUse") return;
@@ -157,4 +177,7 @@ export function setupWorkflowHook(pi: PiAPI, schemaJson: string): void {
 		state.onTurnEnd();
 		pi.sendUserMessage(reminder, { deliverAs: "steer" });
 	});
+
+	// U2：暴露共享状态——index.ts 接线 loop-gate 的 onTerminal 回调（markTerminal）
+	return state;
 }

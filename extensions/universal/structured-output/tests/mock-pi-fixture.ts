@@ -7,6 +7,10 @@
 // loadExtension：设 process.env[PI_WORKFLOW_SCHEMA] + vi.resetModules + 动态 import
 // '../src/index.js'（fixture 位于 tests/ 根下，相对路径与消费方一致），再调 mod.default(mockPi)。
 // restoreSchemaEnv(original)：只处理 env——消费方 afterEach 必须保留自己的 vi.restoreAllMocks()。
+//
+// U2（D3 闸门）增量：emit 第二参数恒传 handlerCtx（含 shutdown spy）；appendEntry
+// 提升到 partial 供断言；failedToolEndWith / paramLayerErrorText 构造失败事件原料。
+// 向后兼容——既有消费方（workflow-hook 两测试）不受影响。
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { vi } from "vitest";
@@ -16,6 +20,12 @@ export const SCHEMA_ENV_NAME = "PI_WORKFLOW_SCHEMA";
 export function createMockPi() {
   const handlers = new Map<string, ((...args: unknown[]) => Promise<void> | void)[]>();
   const sendUserMessage = vi.fn();
+  const appendEntry = vi.fn();
+  // U2（D3 闸门）：事件 handler 的第二参数 ctx（ExtensionContext）。
+  // pi 真实形态：shutdown 存在于 ctx（ExtensionContextActions），不在 pi 顶层
+  // API——闸门经 (event, ctx) => ctx.shutdown() 终止子进程。mock 只补齐闸门消费的成员。
+  const shutdown = vi.fn();
+  const handlerCtx = { shutdown };
   // on 的类型保持 Mock<Procedure>（vi.fn() 无实现）——Mock 调用签名参数是 any，
   // 赋给 ExtensionAPI 的 on 重载兼容；收集逻辑经 mockImplementation 注入，规避
   // 宽签名回调（参数逆变）与重载 handler 的静态类型冲突。
@@ -26,12 +36,15 @@ export function createMockPi() {
   });
   return {
     sendUserMessage,
+    appendEntry,
+    /** 断言入口：ctx.shutdown 的 spy（闸门 terminal 行为断言用）。 */
+    ctx: handlerCtx,
     registerTool: vi.fn(),
     on,
-    // 驱动器：按注册顺序触发某事件的所有回调
+    // 驱动器：按注册顺序触发某事件的所有回调（第二参数恒传 handlerCtx）
     async emit(event: string, payload: unknown): Promise<void> {
       for (const cb of handlers.get(event) ?? []) {
-        await cb(payload);
+        await cb(payload, handlerCtx);
       }
     },
   };
@@ -51,7 +64,6 @@ function toFullExtensionAPI(partial: ReturnType<typeof createMockPi>): Extension
     registerEntryRenderer: vi.fn(),
     registerMarkdownTransformer: vi.fn(),
     sendMessage: vi.fn(),
-    appendEntry: vi.fn(),
     setSessionName: vi.fn(),
     getSessionName: vi.fn(),
     setLabel: vi.fn(),
@@ -91,7 +103,7 @@ export function restoreSchemaEnv(original: string | undefined): void {
 }
 
 export const SCHEMA = JSON.stringify({ type: "object", properties: { count: { type: "number" } }, required: ["count"] });
-// 校验失败时 Pi 把 execute() 抛出的 error.message 塞进 result.content[0].text。
+// 校验失败时 Pi 把错误文本（参数层 immediate 路径 / execute 抛错）塞进 result.content[0].text。
 export const FAILED_TOOL_END = {
   type: "tool_execution_end",
   toolName: "structured-output",
@@ -105,3 +117,21 @@ export const SUCCESS_TOOL_END = {
   result: { details: { count: 5 } },
 };
 export const turnEndPayload = (stopReason = "end_turn") => ({ message: { stopReason } });
+
+/**
+ * U2（D3 闸门）增量：按错误文本构造 structured-output 失败事件——
+ * 同/异签名、参数层回显形态（"Received arguments:" 起的实参块）的测试原料。
+ */
+export function failedToolEndWith(errorText: string, toolName = "structured-output") {
+  return {
+    type: "tool_execution_end",
+    toolName,
+    isError: true,
+    result: { content: [{ type: "text", text: errorText }] },
+  };
+}
+
+/** pi-ai 参数层错误的原生格式（validation.js errorMessage）：错误行 + 实参回显。 */
+export function paramLayerErrorText(errorLines: string, argsEcho: string): string {
+  return `Validation failed for tool "structured-output":\n${errorLines}\n\nReceived arguments:\n${argsEcho}`;
+}
