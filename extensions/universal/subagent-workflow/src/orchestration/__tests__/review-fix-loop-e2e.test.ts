@@ -418,14 +418,68 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       // m6：aggregator prompt 裁决段（5.4 ADJUDICATION）——裁决证据/降级保真/采信抽查
       const aggPrompt = prompts[kinds.indexOf("aggregate")];
       expect(aggPrompt).toContain("ADJUDICATION");
-      // m6：fix prompt 分流文案（trivial 直接修 / involved 标记 deferred）+ 自检要求
+      // m6：fix prompt 全等级修复文案（must-fix + minor 都修 / minor defer 需真实阻塞理由）+ 自检要求
       const fixPrompt = prompts[kinds.indexOf("fix")];
       expect(fixPrompt).toContain("Fix scope");
-      expect(fixPrompt).toContain("fix trivial ones");
-      expect(fixPrompt).toContain("mark involved ones as deferred");
+      expect(fixPrompt).toContain("across severity levels");
+      expect(fixPrompt).toContain("Minor (suggestion) issues are in fix scope too");
+      expect(fixPrompt).toContain("concrete blocker");
       expect(fixPrompt).toContain("self_check in each fixes[] entry MUST include");
       expect(fixPrompt).toContain("grep command + hit count + sync action");
       expect(reviewCalls.length).toBe(2);
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "E2E-1b：suggestions-only 轮进 fix（全等级修复语义）→ R2 全清才 clean 终止",
+    async () => {
+      const runner = makeScenarioRunner({
+        review: [
+          // R1：suggestions-only（must_fix=0 + suggestion=2）——旧语义会在 all-clean break 提前终止（漏修）；
+          // 新语义必须走 aggregate → fix 修复建议级问题
+          () => ({ report_file: "/tmp/r1b-sugg.md", must_fix: 0, suggestion: 2, reconciliation: [] }),
+          // R2：全 0 → all-clean（must-fix 与 suggestion 双零）终止
+          () => ({ report_file: "/tmp/r2b-sugg.md", must_fix: 0, suggestion: 0, reconciliation: [] }),
+        ],
+        aggregate: () => ({
+          report_file: "/tmp/agg-sugg.md", must_fix: 0, suggestion: 2,
+          must_fix_ids: [], fixes_caution: [],
+        }),
+        fix: () => ({
+          fixed_count: 2,
+          fixes: [
+            { issue_id: "S-1", description: "fix suggestion 1", self_check: "grep: 1 hit; synced", affected_files: ["src/a.ts"] },
+            { issue_id: "S-2", description: "fix suggestion 2", self_check: "grep: 1 hit; synced", affected_files: ["src/b.ts"] },
+          ],
+          deferred: [],
+        }),
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"), _runId: RUN_ID() },
+        deps,
+        undefined,
+        RUN_TIMEOUT_MS,
+      );
+
+      expect(result.reason).toBe("completed");
+      expect(result.error).toBeUndefined();
+      const outcome = assertScriptOutcome(result.scriptResult);
+      expect(outcome.terminated).toBe("clean");
+      expect(outcome.totalFixed).toBe(2);
+
+      // 关键差异：suggestions-only 轮也派 fixer（旧语义 R1 即 all-clean break，0 次 fix）
+      const { kinds, reviewCalls, prompts } = runner.stats();
+      expect(reviewCalls.length).toBe(2);
+      expect(kinds.filter((k) => k === "fix").length).toBe(1);
+      expect(kinds.filter((k) => k === "aggregate").length).toBe(1);
+      // fix prompt 携带全等级修复指令
+      const fixPrompt = prompts[kinds.indexOf("fix")];
+      expect(fixPrompt).toContain("across severity levels");
+      expect(fixPrompt).toContain("Minor (suggestion) issues are in fix scope too");
     },
     RUN_TIMEOUT_MS,
   );

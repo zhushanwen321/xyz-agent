@@ -247,6 +247,13 @@ describe("buildFixPrompt", () => {
     expect(p).toContain("Do NOT merge multiple must-fix issues");
     expect(p).toContain("Do NOT downgrade a must-fix");
   });
+  it("修复范围全等级：总纲句含 suggestion/minor，minor defer 需真实阻塞理由（非纯成本）", () => {
+    const p = buildFixPrompt(base);
+    expect(p).toContain("Fix ALL issues from the aggregated review report below, across severity levels");
+    expect(p).toContain("Minor (suggestion) issues are in fix scope too — fix them all");
+    expect(p).toContain("concrete blocker");
+    expect(p).not.toContain("fix trivial ones");
+  });
   it("用户 fixPrompt 与 commitInstr 保留在防护段之后", () => {
     const p = buildFixPrompt(base);
     expect(p.indexOf("自定义修复指令")).toBeGreaterThan(p.indexOf("Security notice"));
