@@ -25,10 +25,15 @@ describe("resolveAgentOpts schema prompt wording + M2 content passthrough", () =
     expect(result.opts.appendSystemPrompt!.length).toBe(1);
 
     const content = result.opts.appendSystemPrompt![0];
-    // 措辞锁（suggestion #4）：LLM 只传 data、不传 schema 参数
-    expect(content).toContain("ONLY the `data` parameter");
-    expect(content).toContain("do NOT pass a `schema` parameter");
-    expect(content).toContain("schema is enforced by the system");
+    // 措辞锁（单参数口径）：工具参数即结果数据本身，schema 已无独立 data 参数
+    expect(content).toContain("Your call arguments ARE the result data itself");
+    expect(content).toContain("Your result must conform to this schema:");
+    expect(content).toContain("The system validates them against the schema above automatically");
+    // 反向回流锁：旧双参数口径文案（"do NOT pass a schema parameter" / "ONLY the data
+    // parameter"）一旦回流立即失败
+    expect(content).not.toMatch(
+      /do NOT pass a .schema. parameter|ONLY the .data. parameter/i,
+    );
     // 内容直传（M2 fix）：非路径
     expect(content).not.toMatch(/\/tmp\/|\/var\/folders\//);
     expect(content).not.toMatch(/\.md$/);

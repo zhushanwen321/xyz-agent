@@ -47,13 +47,15 @@ describe("formatSchemaInstruction", () => {
     // 完整结构快照——任何指令措辞/顺序/缩进漂移都会被捕获。
     // 注意第三行末尾的 em-dash（—），防止有人把它替换成普通连字符。
     // [HISTORICAL] 方案 A 后文案更新：告知 LLM schema 由系统注入，只需传 data。
+    // [HISTORICAL] 终态重设计（U4）后工具已改单参数形态（arguments 即 data），
+    // 「不要传 schema」警告语义删除，改为参数即数据口径——警告失去对象。
     expect(out).toBe(
       [
         "MANDATORY: Structured Output Requirement",
         "You MUST call the `structured-output` tool with your final answer.",
         "Do NOT output the JSON directly in your text response — you MUST use the structured-output tool.",
-        "The schema is enforced by the system — call structured-output with ONLY the `data` parameter.",
-        "Do NOT pass a `schema` parameter; the system validates `data` against the authoritative schema automatically.",
+        "Your call arguments ARE the result data itself — this tool's parameter schema IS the required shape of your result.",
+        "Pass your result data as the tool's arguments; the system validates them against the schema below automatically.",
         "The schema for your `data` is:",
         "```json",
         '{',
@@ -62,6 +64,18 @@ describe("formatSchemaInstruction", () => {
         "```",
       ].join("\n"),
     );
+  });
+
+  it("locks the single-parameter wording: arguments ARE the data coexists with the MUST-call requirement", () => {
+    const out = formatSchemaInstruction({ type: "object" });
+    // 新口径双支柱必须共存：① 参数即数据（arguments ARE the data）② 必须调用工具
+    expect(out).toContain("arguments ARE the result data");
+    expect(out).toContain("parameter schema IS the required shape of your result");
+    expect(out).toContain("MUST call the `structured-output` tool");
+    // 旧双参数警告语义不得回流（工具已是单参数形态，警告失去对象）
+    expect(out).not.toMatch(/do NOT pass a .schema. parameter/i);
+    expect(out).not.toContain("ONLY the `data` parameter");
+    expect(out).not.toContain("enforced by the system");
   });
 
   // ── 特殊字符转义（注入风险路径）──────────────────────────────

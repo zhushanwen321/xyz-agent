@@ -521,8 +521,8 @@ export function formatSchemaInstruction(schema: Record<string, unknown>): string
     "MANDATORY: Structured Output Requirement",
     "You MUST call the `structured-output` tool with your final answer.",
     "Do NOT output the JSON directly in your text response — you MUST use the structured-output tool.",
-    "The schema is enforced by the system — call structured-output with ONLY the `data` parameter.",
-    "Do NOT pass a `schema` parameter; the system validates `data` against the authoritative schema automatically.",
+    "Your call arguments ARE the result data itself — this tool's parameter schema IS the required shape of your result.",
+    "Pass your result data as the tool's arguments; the system validates them against the schema below automatically.",
     "The schema for your `data` is:",
     "```json",
     // IF7(#13)：同 schema 对象引用的 pretty stringify 走 WeakMap 缓存
