@@ -299,5 +299,51 @@
       "note": "影响面：sw notify-ledger 的 G2『跨重启不丢』在 flush 窗口不成立（账目丢失→通知不重放，真丢失面）；notify-ledger.ts 头注与设计文档 D4/G2 已按此如实限定。观察项：flush 窗口量级为 debounce 毫秒级，日常触发概率低"
     },
     "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-18",
+    "claim": "session JSONL 写入原语族：_persist 首写 openSync(path,\"wx\") 整体落盘缓冲 entry、此后一律 appendFileSync 追加；运行时 compaction 走 appendCompaction → _appendEntry → _persist 的 append-only 追加（不重写文件）；截断重写 _rewriteFile（openSync(path,\"w\")）仅在加载期触发（空文件归一 / 版本迁移 / branch 换新文件）。全部写入仅在「每 session 单写进程」前提下原子——第二写进程下 appendFileSync 无 O_APPEND 交错截断、加载期重写吞并发尾部 entry（sw 单写者不变量的 pi 侧承重机制）",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/session-manager.js",
+        "symbol": "_persist / appendCompaction / _rewriteFile",
+        "note": "_persist :724-753（首写 wx flag :739，后续 appendFileSync :730/:751）；appendCompaction :803-818 → _appendEntry :754-759；_rewriteFile :693-705（openSync \"w\" :696），调用点 = 加载期空文件归一 :627 / 版本迁移 :634 / branch 换新文件 :1143"
+      },
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/agent-session.js",
+        "symbol": "compact（手动/自动 compaction 收尾）",
+        "note": ":1432 手动 / :1670 自动 → sessionManager.appendCompaction（append-only 追加，非截断重写）"
+      }
+    ],
+    "guard": {
+      "type": "observe",
+      "note": "sw 子进程单写者不变量（extensions/universal/subagent-workflow session-runner.ts 的 buildSpawnArgs / runSpawn 注释）的 pi 侧机制依据；resume/续聊冷路径须先确认旧进程已死（resumesInFlight 守卫）。pi 升级时重验：compaction 是否仍 append-only、_rewriteFile 触发面是否仍限于加载期"
+    },
+    "verifiedWith": "0.84.1"
+  },
+  {
+    "id": "PS-19",
+    "claim": "session 生命周期管理无自动 GC：listSessionsFromDir 是非递归 readdir + `.jsonl` 过滤 + header 解析的只读扫描，SessionManager.list / listAll 只是它之上的 cwd 过滤/mtime 排序封装——无按 age/数量的 retention/prune/expire 删除逻辑；唯一删除路径是 TUI SessionSelector 用户手动删除选中的单个顶层 session 文件（trash CLI → unlink fallback）。推论：子目录（如 workflow-state/）不在任何扫描/清理范围，state 文件无限累积，保留策略由 xyz 扩展自担",
+    "piAnchor": [
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/core/session-manager.js",
+        "symbol": "listSessionsFromDir / SessionManager.list / listAll",
+        "note": "listSessionsFromDir :548-571（非递归 readdir 只读扫描）；list :1281-1287 / listAll :1289 起（过滤 + 排序封装，零删除调用）"
+      },
+      {
+        "pkg": "pi-coding-agent",
+        "distPath": "dist/modes/interactive/components/session-selector.js",
+        "symbol": "deleteSessionFile（trash → unlink fallback）",
+        "note": ":539-550 —— 用户手动、单个、仅顶层目录文件，非自动不递归"
+      }
+    ],
+    "guard": {
+      "type": "observe",
+      "note": "sw jsonl-run-store B1 retention（XYZ_SUBAGENT_STATE_MAX_RUNS opt-in mtime 裁剪）的承重依据——pi 不清理则扩展自担磁盘保留。pi 升级时重验：SessionManager 是否新增自动清理/retention"
+    },
+    "verifiedWith": "0.84.1"
   }
 ]

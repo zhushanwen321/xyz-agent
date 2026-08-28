@@ -737,11 +737,16 @@ export function buildSpawnArgs(
   //
   // [单写者不变量·MF-8｜第五轮元审查结论] session JSONL 完整性依赖「每 session
   // 单写进程」架构不变量：子进程写独立 subagent sessionDir（getSubagentSessionDir
-  // 编码隔离），主 session 仅本进程单线程写。pi 的 _persist 首写用 wx flag（无
-  // O_APPEND），compaction 路径截断重写整个文件——两者都只在「唯一写者」前提下
-  // 原子。引入第二写进程（如父进程补写/双进程同 sessionDir）即破坏原子性：尾部
-  // 丢 entry、compaction 截断丢并发写入，历史上已造成双写者事故（v4 A-5/P7）。
-  // 任何改动不得让两个进程指向同一 session 文件写路径。
+  // 编码隔离），主 session 仅本进程单线程写。pi 0.84.1 写入原语（dist/core/
+  // session-manager.js，机制登记 PS-18）只在「唯一写者」前提下原子：_persist
+  //（:724-753）首写用 wx flag 整体落盘缓冲 entry（:739），此后一律 appendFileSync
+  // 追加（:730/:751）；运行时 compaction 走 appendCompaction（:803-818）→
+  // _appendEntry → _persist 的 append-only 追加（agent-session.js:1432 手动 /
+  // :1670 自动），不重写文件；截断重写 _rewriteFile（openSync(path,"w")，:693-705）
+  // 仅在加载期触发：空文件归一（:627）/ 版本迁移（:634）/ branch 换新文件（:1143）。
+  // 引入第二写进程（如父进程补写/双进程同 sessionDir）则全部失守：appendFileSync
+  // 无 O_APPEND 与对方交错截断，加载期重写吞掉并发追加的尾部 entry，历史上已造成
+  // 双写者事故（v4 A-5/P7）。任何改动不得让两个进程指向同一 session 文件写路径。
   const args: string[] = ["--mode", "rpc", "--session-dir", params.sessionDir];
   // resume：紧跟 --session-dir 追加 --session <file>，pi 续写原 session 文件（P-8）。
   if (params.sessionFile) {
@@ -1525,9 +1530,12 @@ export async function runSpawn(
   //
   // [单写者不变量·MF-8｜第五轮元审查结论] session JSONL 完整性依赖「每 session 单写
   // 进程」架构不变量：本目录是子进程专属 sessionDir，session 文件写入方仅此子进程
-  //（单进程单线程）；主进程只读（扫描/重建/统计），绝不写。pi 的 _persist 首写用 wx
-  // flag（无 O_APPEND），compaction 截断重写整个文件——第二写进程会破坏两者的原子性
-  //（尾部丢 entry / compaction 截断丢并发写入，见 v4 A-5/P7 双写者事故）。 resume/
+  //（单进程单线程）；主进程只读（扫描/重建/统计），绝不写。pi 0.84.1 的写入原语
+  //（session-manager.js，完整锚点见 buildSpawnArgs 注释 / PS-18）：_persist
+  //（:724-753）首写 wx flag + 后续 appendFileSync 追加；compaction 为 append-only
+  // 追加（appendCompaction :803-818），截断重写 _rewriteFile（:693-705）只在加载期
+  //（归一 :627 / 迁移 :634 / branch :1143）触发——第二写进程会破坏全部这些写入的
+  // 原子性（尾部丢 entry / 交错截断，见 v4 A-5/P7 双写者事故）。 resume/
   // 续聊走冷路径重开同一文件时也必须先确认旧进程已死（resumesInFlight 守卫），
   // 本质仍是单写者。
   const sessionDir = getSubagentSessionDir(ctx.agentDir, ctx.rootCwd);

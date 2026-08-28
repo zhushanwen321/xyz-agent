@@ -41,12 +41,14 @@
  * - Snapshot 形态用 SnapshotVersion 守护（D-5：格式识别）。
  *
  * [S3 查证结论] pi 0.84.1 实装（node_modules/@earendil-works/pi-coding-agent/dist，
- * core/session-manager.js）的 session 生命周期管理不含自动 GC：SessionManager.list /
- * listAll / listSessionsFromDir 只做只读扫描（readdir + `.jsonl` 过滤 + header 解析），
+ * core/session-manager.js，PS-19）的 session 生命周期管理不含自动 GC：
+ * listSessionsFromDir 只做只读扫描（readdir + `.jsonl` 过滤 + header 解析，:548-571，
+ * 非递归——`<sessionDir>/workflow-state/` 子目录完全不在 pi 的任何扫描/清理范围内），
+ * SessionManager.list / listAll 只是它之上的 cwd 过滤/排序封装（:1281-1287 / :1289），
  * 无按 age/数量的 retention/prune/expire 删除逻辑；唯一删除路径是 TUI SessionSelector
- * 里用户手动删除选中的单个顶层 session 文件（trash CLI → unlink fallback），非自动、
- * 不递归子目录。listSessionsFromDir 是非递归 readdir——`<sessionDir>/workflow-state/`
- * 子目录完全不在 pi 的任何扫描/清理范围内。**推论：workflow-state state 文件无限累积，
+ * 里用户手动删除选中的单个顶层 session 文件（trash CLI → unlink fallback，
+ * dist/modes/interactive/components/session-selector.js:539-550），非自动、
+ * 不递归子目录。**推论：workflow-state state 文件无限累积，
  * 保留策略由本包自担**——磁盘侧保留现为 opt-in（B1）：设 {@link STATE_MAX_RUNS_ENV}
  * 后每次新 run state 文件首写成功即按 mtime 裁剪到上限（默认关，见
  * pruneStateFilesBeyondCap）；内存侧由 evictDoneRunsBeyondCap 淘汰。W17 后 state 文件

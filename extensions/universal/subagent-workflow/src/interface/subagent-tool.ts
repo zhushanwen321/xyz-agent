@@ -89,7 +89,8 @@ function isModelOverrideObj(a: unknown): a is { model?: unknown; thinkingLevel?:
  * start 路径类参数（skillPath / cwd）运行时守卫：绝对路径 + 禁 `..` 穿越。
  *
  * 为什么在工具层校验：pi 不对 tool-call args 做 schema 运行时校验（typebox schema
- * 仅声明给 LLM——tool-definition-wrapper.js 把 params 原样透传 definition.execute），
+ * 仅声明给 LLM——pi 0.84.1 dist/core/tools/tool-definition-wrapper.js:11 把 params
+ * 原样透传 definition.execute，无任何校验步骤），
  * schema 的 pattern/maxLength 只是模型可见契约，运行时第二道闸必须自建
  * （同 slug maxLength「schema 声明 + startHandler 运行时」的双闸先例）。
  *

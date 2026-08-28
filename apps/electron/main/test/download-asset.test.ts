@@ -13,7 +13,7 @@
  */
 import { createHash } from 'node:crypto'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -574,5 +574,276 @@ describe('批次 5: resume-state 原子写序列（§3.7.2）', () => {
     // 下载成功后 clearResumeState 清掉终态文件（且 .tmp 不残留）
     expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'resume-state.json'))).toBe(false)
     expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'resume-state.json.tmp'))).toBe(false)
+  })
+})
+
+// ════════════════════════════════════════════════════════════════
+// B-4 续传判定边界（review round 1 test-coverage MF）。
+// 锁定 downloadAsset 的放宽续传分支语义：
+//   overshoot = stat.size - state.downloadedBytes
+//   - overshoot <= 0 → 信任 stat.size 续传（落盘字节是唯一真相）
+//   - 0 < overshoot <= SAVE_INTERVAL_BYTES 且 stat.size <= totalBytes → 仍续传
+//     （保存后 pipe 异步刷盘、硬崩溃常落在两次保存之间）
+//   - overshoot > SAVE_INTERVAL_BYTES 或 stat.size > totalBytes → 作废重下
+// 条件写反（如把信任窗口改成「只有 overshoot<=0 才续传」或全信任）这些用例必红。
+// ════════════════════════════════════════════════════════════════
+
+// 与 download-asset.ts 的 SAVE_INTERVAL_BYTES 一致（模块未导出）
+const SAVE_INTERVAL_BYTES = 1024 * 1024
+
+describe('B-4: 断点续传判定边界（overshoot 信任窗口）', () => {
+  let originalFetch: typeof globalThis.fetch
+  let downloadAsset: typeof import('../update/download-asset.js')['downloadAsset']
+
+  /** 预置续传现场：写 resume-state.json + 指定大小的 .downloading 临时文件。 */
+  function setupResumeScene(
+    assetName: string,
+    opts: { downloadedBytes: number; tempFileSize: number; totalBytes: number; tempIsContentPrefix?: boolean },
+  ): { tempPath: string; finalPath: string } {
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    mkdirSync(updateDir, { recursive: true })
+    const tempPath = path.join(updateDir, `${assetName}.downloading`)
+    const finalPath = path.join(updateDir, assetName)
+    // tempIsContentPrefix（默认 true）：temp 内容 = TEST_CONTENT 前缀，续传拼接后 sha 才能过；
+    // 重下用例的 temp 会被覆盖写，内容无关，用 junk buffer 模拟「外部追加的脏字节」。
+    const content = opts.tempIsContentPrefix === false
+      ? Buffer.alloc(opts.tempFileSize, 0xab)
+      : TEST_CONTENT.subarray(0, opts.tempFileSize)
+    writeFileSync(tempPath, content)
+    writeFileSync(
+      path.join(updateDir, 'resume-state.json'),
+      JSON.stringify({ downloadedBytes: opts.downloadedBytes, totalBytes: opts.totalBytes, tempPath, finalPath }),
+    )
+    return { tempPath, finalPath }
+  }
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch
+    const mod = await loadModule()
+    downloadAsset = mod.downloadAsset
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    vi.restoreAllMocks()
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+  })
+
+  // ① 0 < overshoot <= SAVE_INTERVAL_BYTES 且 stat.size <= totalBytes → 信任 stat.size 续传
+  it('略超 state（≤1MB）→ 从 stat.size 续传（Range 起点 = stat.size），产物完整', async () => {
+    const stateBytes = 20
+    const tempSize = 30 // overshoot = 10，落在 (0, 1MB] 信任窗口
+    setupResumeScene('b4-slight-overshoot.zip', { downloadedBytes: stateBytes, tempFileSize: tempSize, totalBytes: TEST_CONTENT.length })
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const rangeHeaders: Array<string | undefined> = []
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range
+      rangeHeaders.push(rangeHeader)
+      if (!rangeHeader) return makeContentResponse(TEST_CONTENT)
+      const start = Number(/^bytes=(\d+)-$/.exec(rangeHeader)![1])
+      return makeRangeResponse(TEST_CONTENT, start, TEST_CONTENT.length - 1)
+    }) as unknown as typeof globalThis.fetch
+
+    const result = await downloadAsset({
+      name: 'b4-slight-overshoot.zip',
+      downloadUrl: 'https://example.com/b4-slight-overshoot.zip',
+      size: TEST_CONTENT.length,
+      sha256: TEST_SHA256,
+    })
+
+    // 唯一一次 GET 带 Range 且起点 = stat.size（而非 state.downloadedBytes）
+    expect(rangeHeaders).toEqual([`bytes=${tempSize}-`])
+    // 可观察信号：日志声明续传起点
+    expect(logSpy.mock.calls.some((c) => String(c[0]).includes(`resuming from ${tempSize} bytes`))).toBe(true)
+    // 续传拼接后产物完整正确（前缀 + 剩余段 = 原内容）
+    expect(readFileSync(result.filePath).compare(TEST_CONTENT)).toBe(0)
+  })
+
+  // ①b overshoot <= 0（temp 比 state 记录的小）→ 同样信任 stat.size 续传
+  it('temp 不大于 state → 从 stat.size 续传（落盘字节优先于计数器）', async () => {
+    const stateBytes = 30
+    const tempSize = 20 // overshoot = -10
+    setupResumeScene('b4-undershoot.zip', { downloadedBytes: stateBytes, tempFileSize: tempSize, totalBytes: TEST_CONTENT.length })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const rangeHeaders: Array<string | undefined> = []
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range
+      rangeHeaders.push(rangeHeader)
+      if (!rangeHeader) return makeContentResponse(TEST_CONTENT)
+      const start = Number(/^bytes=(\d+)-$/.exec(rangeHeader)![1])
+      return makeRangeResponse(TEST_CONTENT, start, TEST_CONTENT.length - 1)
+    }) as unknown as typeof globalThis.fetch
+
+    const result = await downloadAsset({
+      name: 'b4-undershoot.zip',
+      downloadUrl: 'https://example.com/b4-undershoot.zip',
+      size: TEST_CONTENT.length,
+      sha256: TEST_SHA256,
+    })
+
+    expect(rangeHeaders).toEqual([`bytes=${tempSize}-`])
+    expect(readFileSync(result.filePath).compare(TEST_CONTENT)).toBe(0)
+  })
+
+  // ② overshoot > SAVE_INTERVAL_BYTES → 作废重下（全新请求无 Range 头）
+  it('显著超限（>1MB）→ 作废重下：请求无 Range 头、mismatch 日志、产物完整', async () => {
+    setupResumeScene('b4-big-overshoot.zip', {
+      downloadedBytes: 20,
+      tempFileSize: 20 + SAVE_INTERVAL_BYTES + 1, // overshoot 恰好超信任窗口 1 字节
+      totalBytes: TEST_CONTENT.length,
+      tempIsContentPrefix: false, // 模拟外部追加的脏字节
+    })
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const rangeHeaders: Array<string | undefined> = []
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range
+      rangeHeaders.push(rangeHeader)
+      if (!rangeHeader) return makeContentResponse(TEST_CONTENT)
+      const start = Number(/^bytes=(\d+)-$/.exec(rangeHeader)![1])
+      return makeRangeResponse(TEST_CONTENT, start, TEST_CONTENT.length - 1)
+    }) as unknown as typeof globalThis.fetch
+
+    const result = await downloadAsset({
+      name: 'b4-big-overshoot.zip',
+      downloadUrl: 'https://example.com/b4-big-overshoot.zip',
+      size: TEST_CONTENT.length,
+      sha256: TEST_SHA256,
+    })
+
+    // 重下 = 全新请求（无 Range 头）
+    expect(rangeHeaders).toEqual([undefined])
+    expect(logSpy.mock.calls.some((c) => String(c[0]).includes('resume state mismatch'))).toBe(true)
+    // 覆盖写后产物完整
+    expect(readFileSync(result.filePath).compare(TEST_CONTENT)).toBe(0)
+  })
+
+  // ②b stat.size > totalBytes（超上界）→ 即使 overshoot 在信任窗口内也作废重下
+  it('temp 超过 totalBytes 上界 → 作废重下（信任窗口不豁免上界检查）', async () => {
+    setupResumeScene('b4-over-total.zip', {
+      downloadedBytes: 20,
+      tempFileSize: 40, // overshoot = 20 ≤ 1MB，但 40 > totalBytes 30 → 必须重下
+      totalBytes: 30,
+      tempIsContentPrefix: true,
+    })
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const rangeHeaders: Array<string | undefined> = []
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range
+      rangeHeaders.push(rangeHeader)
+      if (!rangeHeader) return makeContentResponse(TEST_CONTENT)
+      const start = Number(/^bytes=(\d+)-$/.exec(rangeHeader)![1])
+      return makeRangeResponse(TEST_CONTENT, start, TEST_CONTENT.length - 1)
+    }) as unknown as typeof globalThis.fetch
+
+    const result = await downloadAsset({
+      name: 'b4-over-total.zip',
+      downloadUrl: 'https://example.com/b4-over-total.zip',
+      size: TEST_CONTENT.length,
+      sha256: TEST_SHA256,
+    })
+
+    expect(rangeHeaders).toEqual([undefined])
+    expect(logSpy.mock.calls.some((c) => String(c[0]).includes('resume state mismatch'))).toBe(true)
+    expect(readFileSync(result.filePath).compare(TEST_CONTENT)).toBe(0)
+  })
+})
+
+// ════════════════════════════════════════════════════════════════
+// RM3 downloadPart 共享 abort 组合（review round 1 test-coverage MF）。
+// RM3 修复本体：段失败 → downloadMultiPart 的 abortController.abort() 经
+// sharedSignal 传入 downloadPart，与其 per-part watchdog controller 组合——
+// 共享 abort 触发本段 controller abort，健康段的 fetch 被真实中断而非跑完。
+// 无此回归测试，修复可被无声回退回「abort 不生效」（健康段挂满全程）。
+// ════════════════════════════════════════════════════════════════
+describe('RM3-4: 段失败 → 共享 signal 中断其余段', () => {
+  let originalFetch: typeof globalThis.fetch
+  let downloadAsset: typeof import('../update/download-asset.js')['downloadAsset']
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch
+    const mod = await loadModule()
+    downloadAsset = mod.downloadAsset
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    vi.restoreAllMocks()
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+  })
+
+  it('part-0 返回 500 → 其余三段挂起流收到 abort 被中断（非跑完），整批 rejects', { timeout: 30_000 }, async () => {
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    // 每个健康段的可观察状态：aborted = 该段 fetch 的 signal 收到 abort
+    const partAborted = new Map<number, { aborted: boolean }>()
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      const method = (init?.method as string | undefined) ?? 'GET'
+      if (method === 'HEAD') {
+        return makeHeadResponse(MULTI_PART_CONTENT.length)
+      }
+      const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range ?? ''
+      const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader)
+      if (!match) {
+        return makeContentResponse(MULTI_PART_CONTENT)
+      }
+      const start = Number(match[1])
+      const end = Number(match[2])
+      if (start === 0) {
+        return new Response('Internal Server Error', { status: 500 })
+      }
+      // 健康段：发出一小块后挂起（永不自然结束），直到 signal abort 才 error——
+      // 若共享 abort 失效，该段 promise 永不 settle，下面的 waitFor 先给出明确失败
+      const signal = init?.signal as AbortSignal | undefined
+      const obs = { aborted: false }
+      partAborted.set(start, obs)
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(MULTI_PART_CONTENT.subarray(start, start + 64)))
+          const onAbort = () => {
+            obs.aborted = true
+            try { controller.error(new Error('shared abort')) } catch { /* 已关闭 */ }
+          }
+          if (signal?.aborted) onAbort()
+          else signal?.addEventListener('abort', onAbort, { once: true })
+        },
+      })
+      return new Response(stream, {
+        status: 206,
+        headers: {
+          'Content-Length': String(end - start + 1),
+          'Content-Range': `bytes ${start}-${end}/${MULTI_PART_CONTENT.length}`,
+        },
+      })
+    }) as unknown as typeof globalThis.fetch
+
+    const pending = downloadAsset({
+      name: 'rm3-shared-abort.zip',
+      downloadUrl: 'https://example.com/rm3-shared-abort.zip',
+      size: MULTI_PART_CONTENT.length,
+      sha256: expectedSha,
+    })
+    // part-0 会在 waitFor 窗口内先 reject——先挂兜底 handler 防被判 unhandled rejection
+    //（下方 await expect(pending).rejects 才是真正的断言消费）
+    pending.catch(() => {})
+
+    // fail-fast：三个健康段的 signal 必须收到共享 abort（否则 abort 组合失效，
+    // 与其等满 30s 测试超时，这里 5s 内给出指向性失败）
+    await vi.waitFor(() => {
+      expect(partAborted.size).toBe(3)
+      for (const obs of partAborted.values()) {
+        expect(obs.aborted).toBe(true)
+      }
+    }, { timeout: 5_000, interval: 50 })
+
+    // 无 Range 违约 → 抛第一个真实错误（part-0 的 HTTP 500），不误降级
+    await expect(pending).rejects.toThrow(/HTTP 500/)
+
+    // 清理兜底：无 .part-* 残留
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    if (existsSync(updateDir)) {
+      const leftovers = readdirSync(updateDir).filter((f) => /\.part-\d+$/.test(f))
+      expect(leftovers).toEqual([])
+    }
   })
 })
