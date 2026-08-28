@@ -1392,7 +1392,15 @@ export class SubagentService {
     // 直接用 override → 主 agent model。DEFAULT_AGENT_NAME 仅作 record 显示名
     // （TUI 层 extractAgentName 共用，保证显示一致）。
     const agent = opts.agent ?? DEFAULT_AGENT_NAME;
-    const agentConfig = opts.agent ? this.modelService.getAgentConfig(opts.agent) : undefined;
+    // 显式 agent ref（用户点名）失败必须报错，不静默降级：无 require 的 loadByPath
+    // 对相对路径/裸名/文件缺失都返回 undefined → agentConfig undefined → resolveModel
+    // 静默回落 override→主 agent model，用户拿到的 subagent 无 systemPrompt/工具白名单
+    // 且零反馈。require:true 让失败抛出带 <available_subagents> 指引的错误（对齐
+    // workflow name not found 反馈风格）；不传 agent = 默认 general-purpose 语义，
+    // agentConfig 保持 undefined（合法缺省，走 override → ctxModel 兑底）。
+    const agentConfig = opts.agent
+      ? this.modelService.getRequiredAgentConfig(opts.agent)
+      : undefined;
 
     const resolved = this.modelService.resolveModel(
       opts.agent ?? "",

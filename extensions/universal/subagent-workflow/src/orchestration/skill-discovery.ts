@@ -60,23 +60,46 @@ export function clearSkillPathCache(): void {
   skillCandidatesCache.clear();
 }
 
+/**
+ * 把 skillName 解析到 rootDir 内的候选路径；越界（穿越）返回 undefined。
+ *
+ * 为什么需要守卫：path.resolve/path.join 会吸收 `..`（"../../x" 落到 skills 根
+ * 之外），随后的 existsSync 命中会把 skills 树外的目录当 skill 目录返回——skill 名
+ * 是名字不是路径，不该具备树外寻址能力。resolve 后与规范化 skills 根做前缀比较
+ * （startsWith(root + sep)；恰好等于根也拒绝——"." 会把根自身当 skill 目录），
+ * 越界 = 该候选不存在：全部候选越界时 resolveSkillPath 返回 undefined，调用方
+ * （agent-opts-resolver）收到 not found（与 workflow name 拒绝的反馈风格一致）。
+ *
+ * 根内归一化仍允许（"a/../b" resolve 后在根内——守卫只拒逃逸，不拒归一化）。
+ */
+function resolveWithinRoot(rootDir: string, skillName: string): string | undefined {
+  const root = path.resolve(rootDir);
+  const resolved = path.resolve(root, skillName);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    return undefined;
+  }
+  return resolved;
+}
+
 export function resolveSkillPath(skillName: string): string | undefined {
   // has 先行区分「缓存了未命中(undefined)」与「无条目」——未命中也缓存（DM3）
   if (skillMemo.has(skillName)) {
     return skillMemo.get(skillName);
   }
 
-  const candidates = [
- // Project-level
-    path.resolve(process.cwd(), ".agents/skills", skillName),
- // Global user skills
-    path.join(getAgentDir(), "skills", skillName),
-  ];
+  const candidates: string[] = [];
+  const pushCandidate = (dir: string | undefined): void => {
+    if (dir !== undefined) candidates.push(dir);
+  };
+  // Project-level
+  pushCandidate(resolveWithinRoot(path.resolve(process.cwd(), ".agents/skills"), skillName));
+  // Global user skills
+  pushCandidate(resolveWithinRoot(path.join(getAgentDir(), "skills"), skillName));
 
- // npm package skills (cached)
+  // npm package skills (cached)
   const npmSkillsDir = path.join(getAgentDir(), "npm/node_modules");
   for (const pkgSkillsBase of getNpmSkillCandidates(npmSkillsDir)) {
-    candidates.push(path.join(pkgSkillsBase, skillName));
+    pushCandidate(resolveWithinRoot(pkgSkillsBase, skillName));
   }
 
   for (const dir of candidates) {

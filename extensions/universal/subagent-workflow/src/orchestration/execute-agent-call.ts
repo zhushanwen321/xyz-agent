@@ -9,6 +9,7 @@
  * - 重试：3 次 + 指数退避（BACKOFF_MS = [1000, 2000, 4000]）
  * - 预算：超限不重试（直接 markDone failed）
  * - stale-context：不重试（直接 markDone failed）
+ * - [MF-1] 确定性 schema 失败：不重试（直接 markDone failed）
  * - 成功：consume usage + incrementCallCount + markDone + trace.update(completed)
  *
  * 关键设计：
@@ -71,6 +72,36 @@ export function isStaleContextErrorMsg(msg: string | undefined): boolean {
   if (!msg) return false;
   const lower = msg.toLowerCase();
   return STALE_CONTEXT_PATTERNS.some((p) => lower.includes(p));
+}
+
+/**
+ * [MF-1] 确定性 schema 失败标记（error 文本前缀，产出方 = output-collector 的
+ * describeMissingParsedOutput）。
+ *
+ * 标记 SSOT 放本模块（与 STALE_CONTEXT_PATTERNS 同布局：orchestration 持表、
+ * execution 值引用；反向引用会形成 execute-agent-call → output-collector →
+ * execute-agent-call 运行时循环）。
+ *
+ * 标记词逐字核对不命中 STALE_CONTEXT_PATTERNS 任一 pattern 与
+ * isStaleContextErrorMsg 的子串匹配（否则归因 error 被误诊 stale-context，
+ * 虽然同样不重试但归因语义被污染；output-collector.test 有交叉锁定）。
+ *
+ * 三态可重试性矩阵（F-1 归因）：
+ * | 归因态                     | 带本标记 | 可重试性 | 理由 |
+ * |----------------------------|---------|---------|------|
+ * | ① 从未调用 SO tool         | 是      | 不可重试 | 缺 extension 是环境确定性（C1 安装盲区），同环境重试必同结果 |
+ * | ② SO 调用 isError（gate 终止/不可满足 schema） | 是 | 不可重试 | 同 schema 重试必同结果（第五轮实测：3 attempts/4 子进程/235s 纯烧钱） |
+ * | ③ 调用过但无 details        | 否      | 可重试   | 可能瞬态（details 提取/序列化异常），保留既有重试语义 |
+ */
+export const DETERMINISTIC_SCHEMA_FAILURE_PREFIX = "Structured output failed deterministically:";
+
+/**
+ * [MF-1] 判断错误信息是否为确定性 schema 失败（命中标记前缀）。
+ * 命中时不重试——同 schema 重试必同结果（矩阵见 DETERMINISTIC_SCHEMA_FAILURE_PREFIX）。
+ */
+export function isDeterministicSchemaFailureMsg(msg: string | undefined): boolean {
+  if (!msg) return false;
+  return msg.includes(DETERMINISTIC_SCHEMA_FAILURE_PREFIX);
 }
 
 // ── 内部 helper ──────────────────────────────────────────────
@@ -179,6 +210,14 @@ export async function executeAgentCall(
 
  // stale-context：不重试（P1-5）
   if (result.error !== undefined && isStaleContextErrorMsg(result.error)) {
+    finalizeCall(call, result, trace, isOrphaned);
+    budget.incrementCallCount();
+    return;
+  }
+
+ // [MF-1] 确定性 schema 失败：不重试（gate 终止/不可满足 schema 同 schema 重试必同
+ // 结果——重试纯烧钱；三态可重试性矩阵见 DETERMINISTIC_SCHEMA_FAILURE_PREFIX）
+  if (result.error !== undefined && isDeterministicSchemaFailureMsg(result.error)) {
     finalizeCall(call, result, trace, isOrphaned);
     budget.incrementCallCount();
     return;

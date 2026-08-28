@@ -5,7 +5,7 @@
 // （usage 收口进 getTotalUsage，text 收口进 getFullText，均在 execution-record.test 测）。
 import { describe, expect, it } from "vitest";
 
-import { isStaleContextErrorMsg } from "../../orchestration/execute-agent-call.ts";
+import { isStaleContextErrorMsg, DETERMINISTIC_SCHEMA_FAILURE_PREFIX, isDeterministicSchemaFailureMsg, STALE_CONTEXT_PATTERNS } from "../../orchestration/execute-agent-call.ts";
 import { collectResult, describeMissingParsedOutput, extractParsedOutput, neutralizeStalePatterns } from "../output-collector.ts";
 import type { ExecutionRecord, ToolCall } from "../types.ts";
 
@@ -229,6 +229,63 @@ describe("describeMissingParsedOutput", () => {
 });
 
 // ============================================================
+// MF-1: 三态可重试性矩阵（确定性失败标记）
+// ============================================================
+
+describe("MF-1: 三态可重试性矩阵（确定性失败标记）", () => {
+  // 矩阵（SSOT 注释在 execute-agent-call DETERMINISTIC_SCHEMA_FAILURE_PREFIX 与
+  // describeMissingParsedOutput JSDoc，本 describe 是执行面锁定）：
+  //   态① 从未调用 SO            → 带标记 → 不可重试（环境确定性，C1 安装盲区）
+  //   态② SO isError（gate 终止/不可满足 schema）→ 带标记 → 不可重试（同 schema 重试必同结果）
+  //   态③ 调用过但无 details       → 无标记 → 可重试（可能瞬态，保留既有重试语义）
+
+  it("态① 从未调用 SO → error 以确定性标记开头（不可重试）", () => {
+    const msg = describeMissingParsedOutput([])!;
+    expect(msg.startsWith(DETERMINISTIC_SCHEMA_FAILURE_PREFIX)).toBe(true);
+    expect(isDeterministicSchemaFailureMsg(msg)).toBe(true);
+  });
+
+  it("态② isError/schema validation 子类 → error 以确定性标记开头（不可重试）", () => {
+    const msg = describeMissingParsedOutput([
+      { toolName: "structured-output", isError: true, result: { details: {}, content: [{ type: "text", text: "Schema validation failed: /target is required" }] } },
+    ])!;
+    expect(msg.startsWith(DETERMINISTIC_SCHEMA_FAILURE_PREFIX)).toBe(true);
+    expect(isDeterministicSchemaFailureMsg(msg)).toBe(true);
+  });
+
+  it("态② execution failure 子类（provider 瞬态）同样带标记（isError 态整体不重试）", () => {
+    const msg = describeMissingParsedOutput([
+      { toolName: "structured-output", isError: true, result: { details: {}, content: [{ type: "text", text: "provider socket hang up" }] } },
+    ])!;
+    expect(isDeterministicSchemaFailureMsg(msg)).toBe(true);
+  });
+
+  it("态③ 调用过但无 details → 不带标记（可重试语义保留）", () => {
+    const msg = describeMissingParsedOutput([
+      { toolName: "structured-output", result: { content: [] } },
+    ])!;
+    expect(isDeterministicSchemaFailureMsg(msg)).toBe(false);
+  });
+
+  it("有有效 parsedOutput → 无归因无标记（不适用矩阵）", () => {
+    expect(
+      describeMissingParsedOutput([{ toolName: "structured-output", result: { details: { ok: 1 } } }]),
+    ).toBeUndefined();
+  });
+
+  // 验收④：标记词不命中 STALE_CONTEXT_PATTERNS——若命中，isStaleContextErrorMsg
+  // 分诊（判定在前）会抢先归因 stale-context，虽然同样不重试，但归因语义被污染
+  // （TUI/日志把 schema 失败误报为 stale）。
+  it("标记词与全部 STALE_CONTEXT_PATTERNS 零交集，isStaleContextErrorMsg 不抢先", () => {
+    const lower = DETERMINISTIC_SCHEMA_FAILURE_PREFIX.toLowerCase();
+    for (const pattern of STALE_CONTEXT_PATTERNS) {
+      expect(lower.includes(pattern)).toBe(false);
+    }
+    expect(isStaleContextErrorMsg(DETERMINISTIC_SCHEMA_FAILURE_PREFIX)).toBe(false);
+  });
+});
+
+// ============================================================
 // collectResult — F-1 集成行为（schemaExpected → 失败标注）
 // ============================================================
 
@@ -287,5 +344,15 @@ describe("collectResult — F-1 schemaExpected 失败标注", () => {
     const result = collectResult(record, { ...baseArgs, success: false, error: "provider boom", schemaExpected: true });
     expect(result.success).toBe(false);
     expect(result.error).toBe("provider boom");
+  });
+
+  it("[MF-1] F-1 标注的 error 携带确定性标记（流到 executeAgentCall 即不可重试）", () => {
+    const record = makeRecordWithCalls([
+      { toolName: "structured-output", isError: true, result: { details: {}, content: [{ type: "text", text: "Schema validation failed: /target is required" }] } },
+    ]);
+    const result = collectResult(record, { ...baseArgs, success: true, error: undefined, schemaExpected: true });
+    expect(result.success).toBe(false);
+    expect(result.error).toBeDefined();
+    expect(isDeterministicSchemaFailureMsg(result.error)).toBe(true);
   });
 });

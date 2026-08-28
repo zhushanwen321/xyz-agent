@@ -152,7 +152,8 @@ export interface NotifyLedger {
   waitingReceiptCount(): number;
   /** U4 诊断：三桶计数快照（副本；增量同时经 extensionLogger 通道落日志）。 */
   deliveryMetrics(): NotifyDeliveryBucketMetrics;
-  /** 销毁：清看门狗 timer + 摘模块级绑定（settled 回调由 disposed 标志静默）。 */
+  /** 销毁：清看门狗 timer + 摘模块级绑定。settled 边沿静默：直调实例由闭包内
+   *  disposed 标志短路；bind 路径实例从 boundLedger 摘除（单例 handler 不再分发到它）。 */
   dispose(): void;
 }
 
@@ -220,7 +221,10 @@ function collectDeliveredNotifyIds(entries: readonly unknown[], wanted: Set<stri
 
 // ─── 账本实现 ────────────────────────────────────────────────
 
-export function createNotifyLedger(host: NotifyLedgerHost): NotifyLedger {
+export function createNotifyLedger(
+  host: NotifyLedgerHost,
+  options?: { registerSettledListener?: boolean },
+): NotifyLedger {
   /** 在账未销账（recorded / sent 两态）。 */
   const items = new Map<string, NotifyLedgerItem>();
   /** 已销账内存索引（notifyId 幂等判重 + compaction 补写源；权威 = ack entry 列）。 */
@@ -450,11 +454,17 @@ export function createNotifyLedger(host: NotifyLedgerHost): NotifyLedger {
   // settled 边沿（D5 ①触发点）：先查回执（销账上一轮投递——custom message 落盘
   // （message_end → appendCustomMessageEntry）先于 _emitAgentSettled，边沿时刻回执
   // 必然可见），再投递新 pending。
-  host.onAgentSettled(() => {
-    if (disposed) return;
-    checkReceipts();
-    attemptDeliver();
-  });
+  // [MF-5] registerSettledListener=false（bind 路径）时跳过注册：pi.on("agent_settled")
+  // 无退订语义（pi 0.84.1 on() 无 off），per-bind 注册会随 session 切换累积死 handler
+  // （旧实例 disposed 短路但物理监听永存）——bind 用模块级单例 handler
+  // （settledEdgeDispatch）+ boundLedger 引用切换替代（见 bindNotifyLedgerHost）。
+  if (options?.registerSettledListener !== false) {
+    host.onAgentSettled(() => {
+      if (disposed) return;
+      checkReceipts();
+      attemptDeliver();
+    });
+  }
 
   return api;
 }
@@ -464,14 +474,44 @@ export function createNotifyLedger(host: NotifyLedgerHost): NotifyLedger {
 let boundLedger: NotifyLedger | undefined;
 
 /**
+ * [MF-5] settled 监听注册标志：物理监听（host.onAgentSettled → pi.on）只在首次
+ * bind 时注册一次；真实环境 pi 是同一 emitter，后续 /resume /fork /new 的
+ * session_start 只切换 boundLedger 引用，不新增监听。
+ */
+let settledListenerRegistered = false;
+
+/**
+ * [MF-5] settled 边沿模块级单例 handler：分发目标恒为当前活跃 ledger。
+ * disposed 实例已在 dispose() 中从 boundLedger 摘除 → 不会成为分发目标
+ * （短路语义与旧闭包 handler 的 `if (disposed) return` 等价；api 方法内
+ * disposed 守卫双保险）。boundLedger 为 undefined（未 bind / 已全部 dispose）时
+ * 静默返回，对齐旧闭包在实例不存在时的无动作语义。
+ */
+function settledEdgeDispatch(): void {
+  const ledger = boundLedger;
+  if (ledger === undefined) return;
+  ledger.checkReceipts();
+  ledger.attemptDeliver();
+}
+
+/**
  * session_start 装配（index.ts）：构造新 ledger 并绑定为模块级单例（notifier.notify
  * 经 getBoundNotifyLedger 消费）。重复 bind（/resume /fork /new 的 session_start）
  * 替换旧实例——内存态清零符合「内存不承担销账职责」，权威 = entry 两列差集
  * （调用方随后 recoverFromSession 重建）。
+ *
+ * [MF-5] 监听单例化：首次 bind 经当次 host 注册模块级单例 handler
+ * （settledEdgeDispatch），后续 bind 只换 boundLedger 引用——物理监听数不随
+ * session 切换增长。直调 createNotifyLedger（旧装配 / 测试）不经过此路径，
+ * 保留 per-instance 注册（默认 registerSettledListener 语义不变）。
  */
 export function bindNotifyLedgerHost(host: NotifyLedgerHost): NotifyLedger {
   boundLedger?.dispose();
-  boundLedger = createNotifyLedger(host);
+  if (!settledListenerRegistered) {
+    settledListenerRegistered = true;
+    host.onAgentSettled(settledEdgeDispatch);
+  }
+  boundLedger = createNotifyLedger(host, { registerSettledListener: false });
   return boundLedger;
 }
 
@@ -483,8 +523,11 @@ export function getBoundNotifyLedger(): NotifyLedger | undefined {
   return boundLedger;
 }
 
-/** 测试隔离：dispose 并清模块级绑定。 */
+/** 测试隔离：dispose 并清模块级绑定。[MF-5] 同步重置监听注册标志——测试的 mock
+ *  host 是新 emitter（真实 pi 同一 emitter，本函数仅测试路径调用），不复位则后续
+ *  bind 不再注册、新 mock 的 fireSettled 失效。 */
 export function _resetNotifyLedgerForTest(): void {
   boundLedger?.dispose();
   boundLedger = undefined;
+  settledListenerRegistered = false;
 }

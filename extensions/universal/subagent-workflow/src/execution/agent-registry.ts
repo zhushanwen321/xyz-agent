@@ -152,7 +152,13 @@ export class AgentRegistry {
    * - ~/ 前缀展开；相对路径/非 .md 引用返回 undefined（引用唯一形态 = 绝对路径）
    * - 文件不可读/不存在 → 驱逐缓存 + 返回 undefined（调用方给错误指引）
    * - mtime 未变复用 config 缓存；cache-miss 时 W4 lint 一次
+   *
+   * require 语义：require:true 时上述两类失败改为 throw（错误文案含
+   * <available_subagents> 恢复指引），供「用户显式点名 agent」的调用点使用——
+   * 显式 ref 失败是配置错误，必须显式报错而非静默降级（三通道对称审查）。
    */
+  loadByPath(ref: string, require: true): AgentConfig;
+  loadByPath(ref: string, require?: boolean): AgentConfig | undefined;
   loadByPath(ref: string, require?: boolean): AgentConfig | undefined {
     const filePath = normalizeRef(ref, AGENT_REF_EXT);
     if (filePath === null) {

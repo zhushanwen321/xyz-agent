@@ -23,6 +23,7 @@ import { clearRateLimiterState, setPiHandle } from "@zhushanwen/pi-extension-log
 import {
   bindNotifyLedgerHost,
   createNotifyLedger,
+  getBoundNotifyLedger,
   NOTIFY_ACK_CUSTOM_TYPE,
   NOTIFY_CUSTOM_TYPE,
   NOTIFY_LEDGER_CUSTOM_TYPE,
@@ -717,6 +718,80 @@ describe("createNotifier — ledger 四步接线（U2）", () => {
     notifier.revive();
     notifier.notify(oneShotRecord("sa-post-dispose"));
     expect(notifierHost.sentMessages).toHaveLength(1); // 内核路径立即投（无 ledger）
+  });
+});
+
+// ─── MF-5: settled 监听单例化 ──────────────────────────────
+//
+// 回归背景：index.ts:428-430 每次 session_start 注册新 pi.on("agent_settled")
+// handler，旧实例 dispose 只置标志不移除物理监听（pi 0.84.1 on() 无 off）——
+// 长会话 N 次切换累积 N 个死 handler。修复：bind 路径首次注册模块级单例
+// handler（settledEdgeDispatch），后续 bind 只换 boundLedger 引用。
+
+describe("MF-5: settled 监听单例化（多次 bind 物理监听数不增）", () => {
+  beforeEach(() => {
+    _resetNotifyLedgerForTest();
+  });
+  afterEach(() => {
+    _resetNotifyLedgerForTest();
+  });
+
+  it("连续 3 次 bind（/resume /fork /new 的 session_start）→ onAgentSettled 注册仅首次发生", () => {
+    const mocks = [makeLedgerHost(), makeLedgerHost(), makeLedgerHost()];
+    const registerSpies = mocks.map((mock) => {
+      const spy = vi.fn();
+      mock.host.onAgentSettled = spy;
+      return spy;
+    });
+
+    bindNotifyLedgerHost(mocks[0]!.host);
+    bindNotifyLedgerHost(mocks[1]!.host);
+    bindNotifyLedgerHost(mocks[2]!.host);
+
+    // 首次 bind 注册一次（单例 handler）；后续 bind 只换 boundLedger 引用
+    expect(registerSpies[0]).toHaveBeenCalledTimes(1);
+    expect(registerSpies[1]).not.toHaveBeenCalled();
+    expect(registerSpies[2]).not.toHaveBeenCalled();
+  });
+
+  it("边沿分发到当前活跃实例：旧 mock 上的边沿事件驱动新 ledger 投递，旧实例零动作", () => {
+    const mock1 = makeLedgerHost();
+    bindNotifyLedgerHost(mock1.host);
+    const mock2 = makeLedgerHost();
+    bindNotifyLedgerHost(mock2.host);
+
+    // 活跃实例（mock2 的 ledger）入账 pending
+    const ledger = getBoundNotifyLedger();
+    expect(ledger).toBeDefined();
+    ledger!.record("sa-active", "content", { notifyId: "sa-active" });
+
+    // 旧 mock（mock1）上触发边沿——单例 handler 分发到 boundLedger（mock2）
+    fireSettled(mock1);
+    expect(mock2.sentMessages).toHaveLength(1);
+    expect(mock2.sentMessages[0]?.details).toMatchObject({ notifyId: "sa-active" });
+    // 旧实例无动作（disposed 短路语义：不会成为分发目标）
+    expect(mock1.sentMessages).toHaveLength(0);
+  });
+
+  it("活跃实例 dispose 后边沿静默（boundLedger 摘除 → 单例 handler 无分发目标）", () => {
+    const mock1 = makeLedgerHost();
+    bindNotifyLedgerHost(mock1.host);
+    getBoundNotifyLedger()!.dispose();
+
+    fireSettled(mock1);
+    expect(mock1.sentMessages).toHaveLength(0);
+  });
+
+  it("直调 createNotifyLedger 注册行为不变（默认注册 / 显式 registerSettledListener:false 跳过）", () => {
+    const mockDefault = makeLedgerHost();
+    const ledgerDefault = createNotifyLedger(mockDefault.host);
+    expect(mockDefault.settledHandlers).toHaveLength(1);
+    ledgerDefault.dispose();
+
+    const mockSkip = makeLedgerHost();
+    const ledgerSkip = createNotifyLedger(mockSkip.host, { registerSettledListener: false });
+    expect(mockSkip.settledHandlers).toHaveLength(0);
+    ledgerSkip.dispose();
   });
 });
 

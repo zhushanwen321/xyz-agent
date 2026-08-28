@@ -9,6 +9,8 @@
 // Theme、ExtensionContext）会触发 TS2307 误报（probe5d/5f 验证）。
 // 抽到顶层后参数类型由 alias 提供，绕过该 quirk。
 
+import { isAbsolute } from "node:path";
+
 import type { Component } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
@@ -95,7 +97,13 @@ const SubagentParams = Type.Object({
   thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
     description: "Thinking depth override (derived from THINKING_ORDER SSOT, includes 'max'). Omit to default to the model's highest available level (not the main agent's level).",
   })),
-  skillPath: Type.Optional(Type.String()),
+  skillPath: Type.Optional(Type.String({
+    description:
+      "Absolute path to a skill directory, injected into the subagent's pi process via --skill " +
+      "(e.g. a path under .agents/skills/ already resolved for the caller). Must be an absolute path; " +
+      "'..' traversal segments are rejected.",
+    pattern: "^/",
+  })),
   appendSystemPrompt: Type.Optional(Type.Array(Type.String())),
   schema: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   maxTurns: Type.Optional(Type.Number({
@@ -111,7 +119,8 @@ const SubagentParams = Type.Object({
     description: "Worktree isolation: run the subagent in a dedicated git worktree, providing file-system level isolation from the parent session (prevents concurrent file-write conflicts). Independent of fork — worktree may be combined with fork:false (file isolation does not require context inheritance). When to use: parallel development scenarios where multiple agents write files concurrently and need isolated working directories (each gets its own checkout; merge later); leave false for single-agent or read-only tasks.",
   })),
   cwd: Type.Optional(Type.String({
-    description: 'Override the working directory for the subagent execution. Must be an absolute path. Defaults to the parent session\'s cwd.',
+    description: 'Override the working directory for the subagent execution. Must be an absolute path (no "~" shorthand, no relative paths); ".." segments are rejected. Defaults to the parent session\'s cwd.',
+    pattern: "^/",
   })),
   conversation: Type.Optional(Type.Boolean({
     description:
@@ -198,6 +207,38 @@ function isSubagentAction(value: string): value is SubagentAction {
 /** unknown 是否为含 model/thinkingLevel 的对象（类型守卫，替代全可选结构 `as`）。 */
 function isModelOverrideObj(a: unknown): a is { model?: unknown; thinkingLevel?: unknown } {
   return typeof a === "object" && a !== null;
+}
+
+/**
+ * start 路径类参数（skillPath / cwd）运行时守卫：绝对路径 + 禁 `..` 穿越。
+ *
+ * 为什么在工具层校验：pi 不对 tool-call args 做 schema 运行时校验（typebox schema
+ * 仅声明给 LLM——tool-definition-wrapper.js 把 params 原样透传 definition.execute），
+ * schema 的 pattern/maxLength 只是模型可见契约，运行时第二道闸必须自建
+ * （同 slug maxLength「schema 声明 + startHandler 运行时」的双闸先例）。
+ *
+ * 规则：
+ *   - 绝对路径（isAbsolute；`~` 缩写不是绝对路径，拒绝并指引展开后重试——
+ *     下游 session-runner 把该值原样拼进 `--skill <path>` / spawn cwd，不展开 `~`）
+ *   - 任意 `..` 路径段拒绝（按 /[\\/] 分段判断而非子串——"a..b" 不是穿越）：
+ *     相对穿越让子进程读到意图外的目录
+ *
+ * 校验失败 immediate throw（与 action 枚举守卫同风格）：pi 只对 execute throw 置
+ * isError:true，错误文案原样进 toolResult。
+ */
+function assertSafeStartPath(value: string, param: "skillPath" | "cwd"): void {
+  if (value.split(/[\\/]/).includes("..")) {
+    throw new Error(
+      `${param} must not contain '..' path segments (got "${value}"). ` +
+      `Pass a normalized absolute path — traversal segments are rejected.`,
+    );
+  }
+  if (!isAbsolute(value)) {
+    throw new Error(
+      `${param} must be an absolute path (got "${value}"). ` +
+      `Expand '~' yourself and pass the full path, e.g. "/Users/me/project".`,
+    );
+  }
 }
 
 /** 从 unknown args 安全提取 model/thinkingLevel override（传给 resolveModel）。
@@ -382,6 +423,10 @@ const executeSubagent: SubagentExecuteCb = async (
   }
   switch (params.action) {
     case "start":
+      // 路径类参数守卫（三通道对称审查 + MF-13）：skillPath/cwd 在进入 handler 前
+      // immediate throw，不产生半启动 record（与 action 枚举守卫同风格）。
+      if (params.skillPath !== undefined) assertSafeStartPath(params.skillPath, "skillPath");
+      if (params.cwd !== undefined) assertSafeStartPath(params.cwd, "cwd");
       // 拍平后直接传顶层 params（StartHandlerInput 是 SubagentExecuteParams 子集，
       // action/listParam/cancelParam 被忽略；task/slug 必填性由 startHandler 校验）。
       return adapter({ action: "start", domain: await startHandler(service, params, signal, _ctx?.model) }, toGuiCtx(_ctx));

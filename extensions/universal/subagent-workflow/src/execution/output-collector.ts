@@ -24,7 +24,11 @@ import {
 // isStaleContextErrorMsg 同源）。execution → orchestration 值引用有先例
 // （agent-registry.ts → script-lint.ts），且 execute-agent-call 对 execution 仅剩
 // type-only import（已擦除），无运行时循环。
-import { STALE_CONTEXT_PATTERNS } from "../orchestration/execute-agent-call.ts";
+// [MF-1] 同向引用确定性失败标记前缀（SSOT 同在 execute-agent-call，同一布局理由）。
+import {
+  DETERMINISTIC_SCHEMA_FAILURE_PREFIX,
+  STALE_CONTEXT_PATTERNS,
+} from "../orchestration/execute-agent-call.ts";
 
 // ============================================================
 // Result 收集
@@ -106,9 +110,17 @@ export function neutralizeStalePatterns(text: string): string {
  * 返回 undefined 表示 toolCalls 里有可用的 parsedOutput（无需归因）。
  * 三态判定优先级：校验失败（有 isError 调用）> 从未调用 SO tool > 调用过但无 details。
  *
+ * [MF-1] 三态可重试性矩阵（标记 SSOT 与消费端判定见 execute-agent-call 的
+ * DETERMINISTIC_SCHEMA_FAILURE_PREFIX / isDeterministicSchemaFailureMsg）：
+ * | 归因态                        | 带标记 | 可重试性 | 理由 |
+ * |------------------------------|-------|---------|------|
+ * | ① 从未调用 SO tool            | 是    | 不可重试 | 缺 extension 是环境确定性（C1 安装盲区），同环境重试必同结果 |
+ * | ② SO 调用 isError（gate 终止/不可满足 schema） | 是 | 不可重试 | 同 schema 重试必同结果（第五轮实测 retry 放大回归：3 attempts/4 子进程/235s） |
+ * | ③ 调用过但无 details           | 否    | 可重试   | 可能瞬态（details 提取/序列化异常），保留既有重试语义 |
+ *
  * 文案约束：不得命中 execute-agent-call 的 STALE_CONTEXT_PATTERNS（"aborted" 等
- * 子串）——命中会被误诊为 stale-context 跳过重试。固定前缀静态无命中（测试锁定）；
- * 动态段经 neutralizeStalePatterns 中和（F-R1）。
+ * 子串）——命中会被误诊为 stale-context 跳过重试。固定前缀（含 MF-1 标记词）静态
+ * 无命中（测试锁定）；动态段经 neutralizeStalePatterns 中和（F-R1）。
  *
  * 导出以便直接单测（纯函数契约）。
  */
@@ -118,7 +130,9 @@ export function describeMissingParsedOutput(toolCalls: ToolCall[]): string | und
   if (soCalls.length === 0) {
     // 覆盖独立安装盲区（C1）：schema enforcement 依赖 SO extension 注册 tool，
     // 未安装时 agent 无工具可调、steer 无法生效——只能在这里事后暴露。
+    // [MF-1] 态① 带确定性标记：缺 extension 是环境确定性，不重试。
     return (
+      `${DETERMINISTIC_SCHEMA_FAILURE_PREFIX} ` +
       "Agent finished without producing a structured output: the structured-output tool was never called. " +
       "Recovery: verify the structured-output extension is installed and enabled for this agent, " +
       "and that the agent's final answer conforms to the requested schema."
@@ -139,7 +153,11 @@ export function describeMissingParsedOutput(toolCalls: ToolCall[]): string | und
     const failureKind = lastErrorSummary.toLowerCase().includes("validation failed")
       ? "schema validation"
       : "execution failure";
+    // [MF-1] 态② 带确定性标记：gate 终止/不可满足 schema 同 schema 重试必同结果。
+    // 注：failureKind=execution failure（provider 瞬态错误）同样不重试——isError 态
+    // 整体从重试面摘除（实测回归即此态循环烧钱），瞬态恢复交由上层 workflow 编排。
     return (
+      `${DETERMINISTIC_SCHEMA_FAILURE_PREFIX} ` +
       `Agent finished without a valid structured output: ${failed.length} structured-output call(s) failed ` +
       `(${failureKind}). Last error: ${lastErrorSummary}`
     );
