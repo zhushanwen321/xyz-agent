@@ -15,9 +15,12 @@
  *     前缀截断在大 schema 下会把「修复排序靠后字段」（消息前缀不变）误折叠成同签名。
  *     required 错误的完整缺失字段列表从 message 解析并入 token（pi-ai bullet 路径位
  *     仅含 requiredProperties[0]，只取路径位会把「修好非首字段」折叠成同签名误杀）。
- *     AP 错误（D4 注入 additionalProperties:false，路径位恒 "root"）从实参回显段
- *     解析顶层 keys 并入 token——keys 是结构信息不是值：keys 集合缩小 = 模型在删
- *     多余字段 = 真实进展；实参值变化（keys 不变）不产生新签名，既有语义保留。
+ *     AP 错误（D4 注入 additionalProperties:false，路径位恒 "root"、错误行无字段名）
+ *     的实参回显顶层 keys 以 key:<name> 形式并入——keys 是结构信息不是值：keys 集合
+ *     缩小 = 模型在删多余字段 = 真实进展；实参值变化（keys 不变）不产生新签名。
+ *     keys 并入按桶门控（仅错误行块含 AP 错误行时生效，见 normalizeErrorSignature
+ *     的并集恒定陷阱注释）——required/格式类错误行天然携带字段名，keys 并入反而
+ *     制造对流失衡。
  *   - 连续同签名失败达 MAX_CONSECUTIVE_FAILURES（3）→ terminal 态：
  *     写日志（stderr + appendEntry 双通道，含 §5.2 形态 b 恢复指引）后调
  *     ctx.shutdown() 优雅终止子进程（RPC mode 在 agent_settled 后 exit）。
@@ -34,13 +37,17 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { isToolExecutionEndEvent } from "./schema-guards.js";
-import { extractToolErrorText } from "./workflow-hook.js";
+import {
+	extractToolErrorText,
+	SIGNATURE_MAX_CHARS,
+	truncateText,
+} from "./text-primitives.js";
 
 type PiAPI = ExtensionAPI;
 
-// 依赖方向说明：本模块 → workflow-hook（extractToolErrorText），而 workflow-hook 为
-// steer 回灌截断反向 import 本模块的 truncateText——两处引用均为函数声明（ESM 提升），
-// 且只在事件回调运行期调用（无模块顶层执行），环安全；见 workflow-hook.ts 同款注释。
+// 依赖方向说明：本模块 → text-primitives（共享叶节点，导出复用勿复制）。原先经
+// workflow-hook 取 extractToolErrorText 构成的模块环已破除——双方互引的纯函数/常量
+// 下沉到 text-primitives，依赖图单向（loop-gate → text-primitives ← workflow-hook）。
 
 /** 与 tool-definition.ts 的 TOOL_NAME 对应。 */
 const TOOL_NAME = "structured-output";
@@ -50,32 +57,6 @@ export const MAX_CONSECUTIVE_FAILURES = 3;
 
 /** 实参回显起点标记（pi-ai validation.js 的 errorMessage 格式：错误行 + 空行 + 本标记 + 回显）。 */
 const ARGS_ECHO_MARKER = "Received arguments:";
-
-/**
- * 闸门签名侧截断上限：① normalizeErrorSignature fallback 分支（提取不到字段 token 的
- * 非校验类错误文本降级为裸前缀做等值比较）；② LoopGate.lastErrorText（terminal 日志
- * 引用，不进模型上下文）。与 steer 回灌错误块上限（STEER_ERROR_MAX_CHARS）语义独立
- * （F5 拆分：签名只做比较原料、可随实现演化；steer 是模型可见文本预算），两上限
- * 不共享数值演化。
- */
-export const SIGNATURE_MAX_CHARS = 500;
-
-/**
- * steer 回灌错误块截断上限（workflow-hook 消费；审查项#1：pi-ai validation.js 的
- * 实参回显无截断，大 payload 失败时单份 steer ≈11K chars）。截断保留首部 = 错误类型
- * + 靠前字段名；完整 schema 形状由 reminder 内 schemaJson 全文另行完整携带，不依赖
- * 错误块。
- */
-export const STEER_ERROR_MAX_CHARS = 500;
-
-/**
- * 截断到 max 字符（超出追加 "..."）——有界化原语，勿复制（审查项#1：导出复用）。
- * max 必显式传入：签名侧传 SIGNATURE_MAX_CHARS（loop-gate 内部），steer 侧传
- * STEER_ERROR_MAX_CHARS（workflow-hook）——不设默认值，防止新调用方静默绑错语义。
- */
-export function truncateText(text: string, max: number): string {
-	return text.length <= max ? text : `${text.slice(0, max)}...`;
-}
 
 /**
  * TypeBox required message 形态（typebox locale en_US 逐字核实）：
@@ -108,6 +89,18 @@ function requiredBulletPrefix(bulletPath: string, firstField: string): string {
 }
 
 /**
+ * AP（additionalProperties）错误行标记（大小写不敏感子串）。
+ *
+ * 覆盖两种实装形态：pi-ai 参数层 bullet "  - root: must not have additional
+ * properties"（0.84.1 validation.js 探针核实）与日常模式 ajv "must NOT have
+ * additional properties"（execute.ts instancePath 拼接形态）——两者大小写不同，
+ * 子串取 "additional propert" 双形态通配。required/格式类错误 message 不含该子串。
+ * 检测对象是剔除回显后的错误行块整体（而非逐 bullet 行）：ajv AP 行不是 bullet
+ * 形态，逐行 bullet 检测会漏检导致该场景 keys 语义回退。
+ */
+const AP_ERROR_MARKER_RE = /additional propert/i;
+
+/**
  * 从（已剔除实参回显的）错误文本提取字段/路径 token 集合——修复进展的坐标：
  * 修一个字段必然改变失败字段集合，而消息前缀可能纹丝不动（大 schema 下错误行
  * 按序排列，靠后字段的修复不进 500c 前缀——旧前缀方案的误杀根源）。
@@ -126,10 +119,13 @@ function requiredBulletPrefix(bulletPath: string, firstField: string): string {
  * （"must be string" → "must be number"）折叠为同签名。权衡：换取「集合不变 = 无进展」
  * 的强判定；代价是弱模型对单字段多约束的试错容忍度下降（同字段反复错达阈值即闸门）。
  *
+ * 同时报告错误行块是否含 AP 错误行（hasApError）——normalizeErrorSignature 据此
+ * 门控 echo keys 并入（分桶动机见该函数注释）。
+ *
  * 提取不到 token（非校验类错误文本，如 "structured-output call failed"/网络错误）
  * 返回空数组——调用方 fallback 到 SIGNATURE_MAX_CHARS 前缀。
  */
-function extractErrorFieldTokens(errorLines: string): string[] {
+function extractErrorFieldTokens(errorLines: string): { tokens: string[]; hasApError: boolean } {
 	const tokens = new Set<string>();
 	// 形态 1：bullet 行（路径位 + message）；字符类覆盖点分路径/数组索引/斜杠
 	const bulletLine = /(?:^|\n)[ \t]*-[ \t]+([\w.\-/\[\]]+):[ \t]*([^\n]+)/g;
@@ -150,7 +146,7 @@ function extractErrorFieldTokens(errorLines: string): string[] {
 	for (const m of errorLines.matchAll(slashPath)) {
 		tokens.add(m[1]!);
 	}
-	return [...tokens];
+	return { tokens: [...tokens], hasApError: AP_ERROR_MARKER_RE.test(errorLines) };
 }
 
 /** FNV-1a 32-bit 参数：offset basis / prime（零依赖确定性哈希；签名仅用于等值比较，非加密场景）。 */
@@ -200,6 +196,10 @@ function truncateSignature(text: string): string {
  * keys 变化（结构变化）才产生新签名。回显段缺失 / JSON 解析失败 / 非 plain object
  * （null、数组、原始值）一律返回空数组（不贡献 token）——签名退化为仅错误行块口径
  * （如 steer 截断后的残缺回显、适配层改写过 errorMessage 的场景），不会比修复前更差。
+ *
+ * 调用方门控（并集恒定陷阱，见 normalizeErrorSignature 注释）：本函数结果仅在错误
+ * 行块含 AP 错误行时以 key:<name> 前缀并入签名——required 渐进修复场景 keys 与缺失
+ * 列表对流，无条件并入会使 token 并集恒定、签名恒定，3 次误杀（实测教训）。
  */
 function parseArgsEchoTopLevelKeys(errorText: string, markerIdx: number): string[] {
 	const echoSection = errorText.slice(markerIdx + ARGS_ECHO_MARKER.length).trim();
@@ -214,21 +214,40 @@ function parseArgsEchoTopLevelKeys(errorText: string, markerIdx: number): string
 }
 
 /**
- * 错误签名归一化（审查项#7：字段/路径 token 集合哈希）：
+ * 错误签名归一化（审查项#7：字段/路径 token 集合哈希；token 分桶版）：
  *   1. 剔除 "Received arguments:" 起的实参回显的「值」——值变化不等于进展（既有
- *      语义保留）；但回显段的顶层 keys 作为结构信息并入 token（AP 渐进删除的进展
- *      坐标，见 parseArgsEchoTopLevelKeys）。
- *   2. 提取字段/路径 token 集合 ∪ 实参 keys → 去重排序哈希为签名：集合不变 = 同
- *      签名（无进展）；集合变化 = 新签名（渐进修复——集合缩小是主形态——不再被
- *      前缀截断误折叠）。
- *   3. 提取失败（无任何 token）fallback 到 500c 前缀硬上限（既有行为）。
+ *      语义保留）。
+ *   2. 提取字段/路径 token 集合，桶语义：
+ *      - 常规桶（无前缀）：bullet 路径位 / required message 字段 / ajv instancePath
+ *        （extractErrorFieldTokens 既有逻辑）——required/格式类错误行天然携带字段名，
+ *        token 集合演化（含缩小）即进展坐标。
+ *      - AP 桶（key:<name> 前缀）：仅当错误行块含 AP 错误行（hasApError）时，实参回显
+ *        顶层 keys 并入——AP 错误行无字段名（路径位恒 root），keys 集合是唯一进展
+ *        坐标（keys 缩小 = 删多余字段 = 进展）；前缀防 keys 与常规桶同名字段 token 混淆。
+ *   3. 集合不变 = 同签名（无进展）；集合变化 = 新签名（渐进修复不再被折叠）。
+ *   4. 提取失败（无任何 token）fallback 到 500c 前缀硬上限（既有行为）。
+ *
+ * 并集恒定陷阱（keys 分桶动机，第四轮实测误杀教训）：旧实现把 echo keys 无条件
+ * 并入常规 token（无前缀）。required 渐进修复场景下，模型每轮修好 1 个字段时该字段
+ * 从错误行的缺失列表「迁移」到实参回显 keys——缺失 token 集缩小恰好被 keys 集增大
+ * 抵消，token 并集恒定 → 签名恒定 → 第 3 次同签名 terminal 误杀（6 required 字段
+ * 每轮修 1 个的探针实测复现：三轮签名恒 fields(6)#…）。而对流只发生在 required 类
+ * 错误（错误行携带字段名 + 实参同步增长）；AP 错误行无字段名、keys 是其唯一信号——
+ * 故按「是否存在 AP 错误行」门控 keys 并入：required/格式场景 keys 退出签名（进展
+ * 由错误行 token 独家刻画），AP 场景 keys 进 AP 桶（机制保留）。
+ *
  * 归一化对任意错误文本安全（非校验类错误 / 回显段残缺均走 fallback 或退化口径）。
  */
 export function normalizeErrorSignature(errorText: string): string {
 	const markerIdx = errorText.indexOf(ARGS_ECHO_MARKER);
 	const errorLines = (markerIdx >= 0 ? errorText.slice(0, markerIdx) : errorText).trim();
-	const tokens = extractErrorFieldTokens(errorLines);
-	if (markerIdx >= 0) tokens.push(...parseArgsEchoTopLevelKeys(errorText, markerIdx));
+	const { tokens, hasApError } = extractErrorFieldTokens(errorLines);
+	// echo keys 分桶门控（见上方并集恒定陷阱）：仅 AP 错误行存在时并入，带 key: 前缀
+	if (hasApError && markerIdx >= 0) {
+		for (const key of parseArgsEchoTopLevelKeys(errorText, markerIdx)) {
+			tokens.push(`key:${key}`);
+		}
+	}
 	const unique = [...new Set(tokens)];
 	return unique.length > 0 ? fieldSetSignature(unique) : truncateSignature(errorLines);
 }

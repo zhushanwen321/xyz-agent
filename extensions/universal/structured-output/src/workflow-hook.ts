@@ -10,9 +10,14 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-// 反向依赖（环）：loop-gate 为本模块 steer 回灌提供截断原语（审查项#1，导出复用勿复制）。
-// 两模块互引均为函数声明（ESM 提升）且只在事件回调运行期调用（无模块顶层执行），环安全。
-import { STEER_ERROR_MAX_CHARS, truncateText } from "./loop-gate.js";
+// 截断原语与错误块预算来自 text-primitives（共享叶节点，导出复用勿复制）。原
+// 「反向依赖（环）」已破除：本模块不再 import loop-gate，依赖图单向
+// （loop-gate → text-primitives ← workflow-hook）。
+import {
+	extractToolErrorText,
+	STEER_ERROR_MAX_CHARS,
+	truncateText,
+} from "./text-primitives.js";
 
 import { isToolExecutionEndEvent, isTurnEndEvent } from "./schema-guards.js";
 
@@ -80,35 +85,6 @@ export class RetryState {
 	}
 }
 
-/**
- * 从 tool 执行结果里提取错误文本。
- *
- * Pi 框架在参数层校验失败（immediate 路径）与 execute 抛错时，均构造
- * `{ content: [{ type: "text", text }] }` 塞进 result.content[0].text
- * （agent-loop.js createErrorToolResult；见 extensions/universal/unified-hooks 的
- * extractErrorText 及其文档：SDK 事件结构里没有独立 errorMessage 字段，错误文本只能从
- * result.content 里取）。loop-gate（D3）复用本函数提取签名原料。
- * 这里防御性取多种结构，取不到就返回 undefined（调用方降级为通用提示）。
- */
-export function extractToolErrorText(result: unknown): string | undefined {
-	// 常见结构：{ content: [{ type: "text", text: "..." }] }
-	if (typeof result === "object" && result !== null) {
-		const content = (result as Record<string, unknown>).content;
-		if (Array.isArray(content)) {
-			for (const item of content) {
-				if (typeof item === "object" && item !== null) {
-					const text = (item as Record<string, unknown>).text;
-					if (typeof text === "string" && text.length > 0) return text;
-				}
-			}
-		}
-		// 兜底：某些 tool 直接塞 { error: "..." }
-		const err = (result as Record<string, unknown>).error;
-		if (typeof err === "string" && err.length > 0) return err;
-	}
-	return undefined;
-}
-
 /** steer 发送失败告警的 appendEntry customType（session JSONL 持久化，不进 LLM 上下文）。 */
 export const HOOK_ENTRY_TYPE = "structured-output:hook";
 
@@ -136,6 +112,66 @@ function writeSteerFailedLog(pi: PiAPI, hookRetryCount: number, err: unknown): v
 			`[structured-output hook] appendEntry failed: ${appendErr instanceof Error ? appendErr.message : String(appendErr)}\n`,
 		);
 	}
+}
+
+/**
+ * steer 守卫链（原 turn_end handler 内联守卫提取，判定顺序与旧实现逐条一致）。
+ * 命中任一守卫即跳过 steer，且调用方不调 onTurnEnd（toolUse/error/aborted 保留
+ * soCallCount、超上限保留 lastSchemaError，与旧 4-closure 逐点一致）：
+ *   0. 闸门 terminal（D3/U2）：同签名失败已满 3 次、shutdown 已发——不再 steer，
+ *      让进程终止（防御性保留：shutdown 正常生效时进程已死，到不了这里）
+ *   1. 已经成功调用过 structured-output，不再干预
+ *   2. 不是合法 turn_end 事件
+ *   3. stopReason="toolUse" → 模型还在调工具链，不需要干预
+ *   4. stopReason="error"/"aborted"（审查项#9）/"deferred"（F4：pi-ai StopReason
+ *      枚举成员，types.d.ts:275——provider 延迟响应挂起，本轮没有可消费 steer 的
+ *      收尾点）→ 本轮异常/未收尾终止：此刻注入的 steer 在本轮不会被消费，
+ *      chatMode 复用子进程时会泄漏成下一轮的陈旧指令——不发送
+ *   5. 超过重试上限：放弃，让子进程自然结束（调用方据 result.error 判定失败）
+ */
+function shouldSkipSteer(state: RetryState, event: unknown): boolean {
+	if (state.terminal) return true;
+	if (state.soSucceededEver) return true;
+	if (!isTurnEndEvent(event)) return true;
+	const stopReason = event.message?.stopReason;
+	if (stopReason === "toolUse") return true;
+	if (stopReason === "error" || stopReason === "aborted" || stopReason === "deferred") return true;
+	return state.hookRetryCount >= MAX_HOOK_RETRIES;
+}
+
+/**
+ * 构造 steer reminder（原 turn_end handler 内联三元提取）。两种失败形态：
+ *   - calledButFailed（调了但全是 isError）→ 注入具体校验错误 + 正确 schema
+ *   - 否则（完全没调用）→ 注入"必须调用"提示 + schema 形状
+ *
+ * 错误块经 truncateText 截断（审查项#1，上限 = STEER_ERROR_MAX_CHARS，与 loop-gate
+ * 签名上限语义独立——见 F5 拆分）：pi-ai validation.js 的实参回显无截断，
+ * 大 payload 失败时原始错误 ≈11K chars。如实口径：截断保留首部 = 错误类型 +
+ * 靠前的字段名，列表靠后的字段名可能被截掉；完整 schema 形状由 reminder 内
+ * schemaJson 全文另行完整携带，模型修正不依赖错误块的截断尾部。
+ */
+function buildSteerReminder(
+	calledButFailed: boolean,
+	lastSchemaError: string | null,
+	schemaJson: string,
+): string {
+	return calledButFailed
+		? [
+				"[MANDATORY] Your structured-output call FAILED validation:",
+				truncateText(lastSchemaError ?? "structured-output call failed", STEER_ERROR_MAX_CHARS),
+				"",
+				"The schema is enforced by the system (PI_WORKFLOW_SCHEMA) — this tool's parameter schema IS the required shape of your result.",
+				`The required schema for your result is: ${schemaJson}`,
+				"Fix your arguments to conform to this schema and call the structured-output tool AGAIN.",
+				"Do NOT output the result as text — call the tool.",
+			].join("\n")
+		: [
+				"[MANDATORY] You MUST call the structured-output tool now.",
+				"Your task requires a structured output. Do NOT respond with plain text.",
+				`Your arguments ARE the data — call structured-output with your result as the tool's arguments, matching this shape: ${schemaJson}`,
+				"The schema is enforced by the system; your arguments are validated against the authoritative schema automatically.",
+				"This is enforced by the workflow system. Just call the tool.",
+			].join("\n");
 }
 
 /**
@@ -171,53 +207,15 @@ export function setupWorkflowHook(pi: PiAPI, schemaJson: string): RetryState {
 	});
 
 	pi.on("turn_end", async (event: unknown) => {
-		// 守卫链：以下情况均直接 return（不调 onTurnEnd——toolUse/error/aborted 保留
-		// soCallCount、超上限保留 lastSchemaError，与旧 4-closure 逐点一致）：
-		// 0. 闸门 terminal（D3/U2）：同签名失败已满 3 次、shutdown 已发——不再 steer，
-		//    让进程终止（防御性保留：shutdown 正常生效时进程已死，到不了这里）
-		// 1. 已经成功调用过 structured-output，不再干预
-		// 2. 不是合法 turn_end 事件
-		// 3. stopReason="toolUse" → 模型还在调工具链，不需要干预
-		// 4. stopReason="error"/"aborted"（审查项#9）/"deferred"（F4：pi-ai StopReason
-		//    枚举成员，types.d.ts:275——provider 延迟响应挂起，本轮没有可消费 steer 的
-		//    收尾点）→ 本轮异常/未收尾终止：此刻注入的 steer 在本轮不会被消费，
-		//    chatMode 复用子进程时会泄漏成下一轮的陈旧指令——不发送。
-		//    不调 onTurnEnd（预算不扣减），状态保留到下一个正常收尾的轮再判定 steer。
-		// 5. 超过重试上限：放弃，让子进程自然结束（调用方据 result.error 判定失败）
-		if (state.terminal) return;
-		if (state.soSucceededEver) return;
-		if (!isTurnEndEvent(event)) return;
-		if (event.message?.stopReason === "toolUse") return;
-		if (event.message?.stopReason === "error" || event.message?.stopReason === "aborted"
-			|| event.message?.stopReason === "deferred") return;
-		if (state.hookRetryCount >= MAX_HOOK_RETRIES) return;
+		// 守卫链（判定明细见 shouldSkipSteer 注释）：命中即直接 return，不调
+		// onTurnEnd——预算不扣减，状态保留到下一个正常收尾的轮再判定 steer。
+		if (shouldSkipSteer(state, event)) return;
 
 		// 完全没调用 OR 调了但全是失败 → 都需要 steer。两种情况共用重试上限与计数。
 		const calledButFailed = state.soCallCount > 0;
 		// 构造 reminder 时 lastSchemaError 必须仍是本 turn 的错误文本，
 		// 故 onTurnEnd()（清空 lastSchemaError）必须在发送成功之后调用。
-		// 错误块经 truncateText 截断（审查项#1，上限 = STEER_ERROR_MAX_CHARS，与 loop-gate
-		// 签名上限语义独立——见 F5 拆分）：pi-ai validation.js 的实参回显无截断，
-		// 大 payload 失败时原始错误 ≈11K chars。如实口径：截断保留首部 = 错误类型 +
-		// 靠前的字段名，列表靠后的字段名可能被截掉；完整 schema 形状由下方 reminder 内
-		// schemaJson 全文另行完整携带，模型修正不依赖错误块的截断尾部。
-		const reminder = calledButFailed
-			? [
-					"[MANDATORY] Your structured-output call FAILED validation:",
-					truncateText(state.lastSchemaError ?? "structured-output call failed", STEER_ERROR_MAX_CHARS),
-					"",
-					"The schema is enforced by the system (PI_WORKFLOW_SCHEMA) — this tool's parameter schema IS the required shape of your result.",
-					`The required schema for your result is: ${schemaJson}`,
-					"Fix your arguments to conform to this schema and call the structured-output tool AGAIN.",
-					"Do NOT output the result as text — call the tool.",
-				].join("\n")
-			: [
-					"[MANDATORY] You MUST call the structured-output tool now.",
-					"Your task requires a structured output. Do NOT respond with plain text.",
-					`Your arguments ARE the data — call structured-output with your result as the tool's arguments, matching this shape: ${schemaJson}`,
-					"The schema is enforced by the system; your arguments are validated against the authoritative schema automatically.",
-					"This is enforced by the workflow system. Just call the tool.",
-				].join("\n");
+		const reminder = buildSteerReminder(calledButFailed, state.lastSchemaError, schemaJson);
 
 		// 审查项#8：await 发送结果——发送失败（如 compaction 中 prompt() 抛错 / 扩展已
 		// 被 assertActive 拒绝）不扣减重试预算（不调 onTurnEnd），否则 fire-and-forget

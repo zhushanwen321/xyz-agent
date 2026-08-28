@@ -38,6 +38,22 @@ export class RunRuntime {
    * 到期 abortRun time_limited）。release 时清理，避免 abort/replaceRuntime
    * 后孤儿计时器仍触发（rebuildRuntime 会重排一个全新的计时器，旧的不应残留）。 */
   readonly timeBudgetTimer?: ReturnType<typeof setTimeout>;
+ /**
+ * 本 runtime 代际是否已收到 worker 的终态消息（return / error）。
+ *
+ * [F1] worker exit(0) 且本标记为 false = worker 静默退出、未交付任何终态——最常见根因
+ * 是 execute() 返回值不可克隆，worker 侧 _safePost 吞掉 DataCloneError 后 return 消息
+ * 根本没发出。旧实现 handleWorkerExit 对 code===0 no-op → run 永久 running、runAndWait
+ * 悬挂。handleWorkerExit 据此判定转 done,failed。
+ *
+ * 按代际归零：字段挂在 RunRuntime（每代际 new 一个实例）而非 run.meta——script-error
+ * 重试退避窗口内（error 消息已收到、run 仍 running、旧 worker exit(0)）必须 no-op 等
+ * rebuild；若挂 meta 则 rebuild 后新 worker 再静默退出时会被旧标记误放行，重新悬挂。
+ *
+ * 写点仅 handleWorkerMessage 的 return/error 分支（WorkerHandle.isCurrent 守卫保证
+ * 消息必来自当前代际）；rebuildRuntime 构造新 RunRuntime 自然重置。
+ */
+  receivedTerminalMessage = false;
  /** 防止 release 重复执行（幂等）。 */
   private released = false;
 

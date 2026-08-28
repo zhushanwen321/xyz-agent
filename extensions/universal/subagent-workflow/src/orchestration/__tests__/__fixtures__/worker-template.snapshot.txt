@@ -333,7 +333,14 @@ module.exports = { execute: async (ctx) => ctx.agent("finalize") };
   }
 })().then((result) => {
   const runId = (_workerData.args && typeof _workerData.args === "object" && _workerData.args._runId) || "";
-  _safePost({ type: "return", runId, result, workerLogs: _workerLogs }, "return");
+  if (!_safePost({ type: "return", runId, result, workerLogs: _workerLogs }, "return")) {
+    // [F1] return 值不可克隆（含 function/Symbol/循环引用 → DataCloneError）时 _safePost
+    // 只能记日志返回 false——若不补救，worker 将静默 exit(0)，主线程收不到任何终态消息，
+    // run 永久 running、runAndWait 悬挂。回发可克隆的 error 消息（DataCloneError 详情
+    // 已由 _safePost 记入 _workerLogs 随消息带回），让主线程 handleScriptError 接管，
+    // run 经既有重试矩阵收敛到终态 failed。
+    _safePost({ type: "error", runId, error: "Workflow return value could not be delivered (structured-clone failed) — see workerLogs for the postMessage error", workerLogs: _workerLogs }, "error");
+  }
 }).catch((err) => {
   const runId = (_workerData.args && typeof _workerData.args === "object" && _workerData.args._runId) || "";
   _safePost({ type: "error", runId, error: err.message || String(err), workerLogs: _workerLogs }, "error");

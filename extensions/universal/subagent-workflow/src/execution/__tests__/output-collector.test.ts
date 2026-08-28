@@ -5,7 +5,8 @@
 // （usage 收口进 getTotalUsage，text 收口进 getFullText，均在 execution-record.test 测）。
 import { describe, expect, it } from "vitest";
 
-import { collectResult, describeMissingParsedOutput, extractParsedOutput } from "../output-collector.ts";
+import { isStaleContextErrorMsg } from "../../orchestration/execute-agent-call.ts";
+import { collectResult, describeMissingParsedOutput, extractParsedOutput, neutralizeStalePatterns } from "../output-collector.ts";
 import type { ExecutionRecord, ToolCall } from "../types.ts";
 
 // ============================================================
@@ -156,6 +157,74 @@ describe("describeMissingParsedOutput", () => {
       expect(lower).not.toContain("ctx is stale");
       expect(lower).not.toContain("context canceled");
     }
+  });
+
+  // ── [F-R1] 态2（isError 分支）错误摘要拼接段中和 ──
+  //
+  // 动态错误文本（模型/provider 原始错误）可能携带 "aborted"/"ctx is stale" 等
+  // STALE_CONTEXT_PATTERNS 词；不中和则归因 error 经 collectResult → result.error
+  // 流到 execute-agent-call 的 isStaleContextErrorMsg 分诊，被误诊为 stale-context
+  // 跳过重试。固定前缀静态无命中（上一用例锁定），中和只针对动态段。
+  describe("F-R1: 态2 错误摘要 STALE_CONTEXT_PATTERNS 中和", () => {
+    function failedSoCallsWith(text: string): ToolCall[] {
+      return [
+        { toolName: "structured-output", isError: true, result: { details: {}, content: [{ type: "text", text }] } },
+      ];
+    }
+
+    it("失败 content 含 'aborted'/'ctx is stale' → 摘要被 [redacted]，归因 error 不触发 isStaleContextErrorMsg", () => {
+      const msg = describeMissingParsedOutput(
+        failedSoCallsWith("Request aborted: context canceled — ctx is stale after session replacement"),
+      )!;
+      expect(msg).toContain("[redacted]");
+      const lower = msg.toLowerCase();
+      expect(lower).not.toContain("aborted");
+      expect(lower).not.toContain("ctx is stale");
+      expect(lower).not.toContain("context canceled");
+      // 消费点语义锁定：归因 error 进入 stale-context 分诊必须为 false（可重试）
+      expect(isStaleContextErrorMsg(msg)).toBe(false);
+    });
+
+    it("大小写变体（'ABORTED'）同样被中和（分诊是大小写不敏感子串匹配）", () => {
+      const msg = describeMissingParsedOutput(failedSoCallsWith("ABORTED by provider"))!;
+      expect(msg).toContain("[redacted]");
+      expect(isStaleContextErrorMsg(msg)).toBe(false);
+    });
+
+    it("无动态内容时整条归因也不命中（防御回归锁定）", () => {
+      const msg = describeMissingParsedOutput([
+        { toolName: "structured-output", isError: true, result: { details: {} } },
+      ])!;
+      expect(isStaleContextErrorMsg(msg)).toBe(false);
+    });
+
+    it("neutralizeStalePatterns：多 pattern 同时命中 + 无命中原样透传", () => {
+      expect(neutralizeStalePatterns("aborted CTX IS STALE / context canceled")).toBe(
+        "[redacted] [redacted] / [redacted]",
+      );
+      expect(neutralizeStalePatterns("provider socket hang up")).toBe("provider socket hang up");
+    });
+  });
+
+  // ── [F-R4] 态2 文案按最后错误内容分类，不再硬编码 "(schema validation)" ──
+  describe("F-R4: 态2 失败原因分类", () => {
+    it("最后错误含 'validation failed'（大小写不敏感）→ (schema validation)", () => {
+      const calls: ToolCall[] = [
+        { toolName: "structured-output", isError: true, result: { details: {}, content: [{ type: "text", text: "Schema validation failed: /target is required" }] } },
+      ];
+      const msg = describeMissingParsedOutput(calls)!;
+      expect(msg).toContain("(schema validation)");
+      expect(msg).not.toContain("(execution failure)");
+    });
+
+    it("最后错误为非校验失败（如 provider 错误）→ (execution failure)", () => {
+      const calls: ToolCall[] = [
+        { toolName: "structured-output", isError: true, result: { details: {}, content: [{ type: "text", text: "provider socket hang up" }] } },
+      ];
+      const msg = describeMissingParsedOutput(calls)!;
+      expect(msg).toContain("(execution failure)");
+      expect(msg).not.toContain("(schema validation)");
+    });
   });
 });
 

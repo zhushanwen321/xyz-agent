@@ -218,8 +218,18 @@ export function resolveSpawnWatchdogMs(maxTurns: number | undefined | null): num
     if (envMs !== undefined) assertSafeTimerDelay(envMs, SPAWN_WATCHDOG_ENV);
     return envMs;
   }
-  if (maxTurns > 0) {
-    const estimated = computeWatchdogMs(maxTurns);
+  // [F-R3] 显式传参先数值规范化 + 有限性校验。旧实现直接走 maxTurns>0 判断：
+  // NaN / ""（Number("")===0）等垃圾值比较为 false 落到 return undefined——既绕过
+  // Number.isFinite 校验，又压过 SPAWN_WATCHDOG_ENV 兑底，把调用方 bug 静默变成
+  // 「显式不限」。现非有限数（NaN/±Infinity）与 timer-delay 同语义 fail-fast（U1，
+  // 非有限 delay 在 Node setTimeout 塔缩为 1ms 立即触发，比静默不限更危险，必须暴露）；
+  // Number("") === 0 → 与显式 0 同路径（显式不限，压过 env，U5 语义不回归）。
+  const turns = Number(maxTurns);
+  if (!Number.isFinite(turns)) {
+    assertSafeTimerDelay(turns, `maxTurns=${String(maxTurns)}`);
+  }
+  if (turns > 0) {
+    const estimated = computeWatchdogMs(turns);
     assertSafeTimerDelay(estimated, `computeWatchdogMs(maxTurns=${maxTurns})`);
     return estimated;
   }
@@ -865,13 +875,22 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
     // 非 chatMode：忽略（agent_end handler 的一次性 kill 已处理，进程不会活到 agent_settled）。
     if (isAgentSettledEvt(raw)) {
       if (record.chatMode) {
-        armIdleTimer(record.id, () => {
-          // onTimeout 复用现有 kill 路径：child.kill("SIGTERM") 触发 close → close handler
-          // 统一 cleanup（spawnedChildren.delete / get_stateListeners.clear / resolve）。
-          // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
-          const child = getChildByRecord(record.id);
-          if (child && !child.killed) child.kill("SIGTERM");
-        }, record.idleTimeoutMs);
+        // [F-R2] 本闭包经 stdout data 回调同步调用（handleSdkEvent ← attachStdoutPump）：
+        // armIdleTimer → assertSafeTimerDelay fail-fast 的 throw 若逃出回调 = uncaughtException
+        // 崩宿主。包 try/catch 降级为「不挂 idle timer」（进程回收由外部 signal / dispose 驱动），
+        // 错误经 bestEffort("error") 可见但不升级为进程崩溃；后续 limiter.reset /
+        // onRoundSettled / resolveRun 照常执行（本轮完成通知不因 GC timer 故障丢失）。
+        try {
+          armIdleTimer(record.id, () => {
+            // onTimeout 复用现有 kill 路径：child.kill("SIGTERM") 触发 close → close handler
+            // 统一 cleanup（spawnedChildren.delete / get_stateListeners.clear / resolve）。
+            // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
+            const child = getChildByRecord(record.id);
+            if (child && !child.killed) child.kill("SIGTERM");
+          }, record.idleTimeoutMs);
+        } catch (err) {
+          bestEffort(err, "armIdleTimer (agent_settled chatMode)", "error");
+        }
         // [SP-9] chatMode 每轮 reset turn-limiter：新一轮开始（续聊）时，
         // maxTurns/graceTurns 不跨轮累计（续聊本质是无限轮，累计上限违背 G1）。
         // reset steered/aborted 标志 + turnCount 归零，下一轮独立计数。
@@ -1238,8 +1257,19 @@ function attachStdoutPump(
               // killAllSpawnedChildren 杀全部子进程，L2 重派丢在途工作。maxTurns 大则超时长。
               // [预算语义对齐 + U5] maxTurns 未传且 env 未设，或显式 <=0（压过 env）→
               // 不 re-arm（等待后代不限时）；回收由外部 signal / dispose / 后代自然完成驱动。
+              // [F-R2] 本分支在 child.stdout.on("data") 同步回调链内：resolveSpawnWatchdogMs →
+              // assertSafeTimerDelay fail-fast 的 throw 若逃出回调 = Node uncaughtException 崩宿主。
+              // 此处包 try/catch 降级为「不 re-arm」（与 keepAliveMs === undefined 的既有降级语义
+              // 一致——回收由外部 signal / dispose / 后代自然完成驱动）：fail-fast 语义保留
+              // （错误经 bestEffort("error") 可见、行为明确），但不升级为进程崩溃。
               clearTimeout(state.watchdog);
-              const keepAliveMs = resolveSpawnWatchdogMs(opts.maxTurns);
+              let keepAliveMs: number | undefined;
+              try {
+                keepAliveMs = resolveSpawnWatchdogMs(opts.maxTurns);
+              } catch (err) {
+                bestEffort(err, "resolveSpawnWatchdogMs (agent_end keep-alive re-arm)", "error");
+                keepAliveMs = undefined;
+              }
               if (keepAliveMs !== undefined) {
                 state.watchdog = setTimeout(() => child.kill("SIGTERM"), keepAliveMs);
                 state.watchdog.unref();
@@ -1548,10 +1578,21 @@ export async function runSpawn(
     // stdin，pi rebindSession 后读取并返回 response，经 stdout pump 匹配 resolver 触发 resolve。
     // close handler await handshakeSettled，保证无论 task 多快结束，close 时 sessionFile 已回填。
     // [#18] 握手状态变量已在 attachStdoutPump 内部（stdout handler 注册前）定义，此处直接发起握手。
+    // [F2] .catch 兜底：performGetStateHandshake 的 Promise executor 同步调 tryOnce →
+    // sendGetStateCommand → writeStdinLine 在 stdin 已断（EPIPE/ERR_STREAM_DESTROYED）时同步
+    // throw → executor 内同步异常被 Promise 构造器转为 reject。若无人接（旧实现只有 .then），
+    // reject 无人消费 → unhandledRejection（Node 15+ 默认 mode=throw）可崩父 pi 进程。
+    // catch 内：logger.error 留证 + pump.abandonHandshake 记录握手失败终态——close handler
+    // await 的 handshakeSettled 立即 settle，isHandshakePending() 归 false，不阻塞收尾链路
+    //（sessionFile 兜底由收尾时的 existsSync 校验 + findSessionFileByHeaderId 承担）。
     void performGetStateHandshake(child, pump.registerGetStateListener).then((r) => {
       // header 加速路径下 settleHandshake 已 undefined，跳过（避免覆盖 header 结果）。
       // 超时兜底（r 为空对象）也经此分支 settle，但 record.sessionFile 不回填。
       if (pump.isHandshakePending()) pump.finishHandshake(r);
+    }).catch((err: unknown) => {
+      const m = err instanceof Error ? err.message : String(err);
+      logger.error(`[session-runner] get_state handshake failed: ${m}`);
+      pump.abandonHandshake();
     });
 
     child.stderr.on("data", (data: string) => {

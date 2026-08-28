@@ -256,15 +256,28 @@ function deserializeRun(snapshot: RunSnapshot): WorkflowRun | null {
 }
 
 /** workflow-record entry → 重建 run 写入 recordRuns（v1 entry guard + D-5 版本不匹配
- *  跳过；同 runId 后写覆盖 = 最后一条 entry 胜出）。返回 entry 是否命中该类型。 */
-function collectRecordRun(entry: CustomEntry, recordRuns: Map<string, WorkflowRun>): boolean {
+ *  跳过；同 runId 后写覆盖 = 最后一条 entry 胜出）。返回 entry 是否命中该类型。
+ *
+ *  [SO-DATA-2] per-entry 隔离：deserializeRun 在 v guard 之后直接读 snapshot.state.budget
+ *  等嵌套字段，残缺 entry（截断/手改/半写）抛 TypeError 会沿 collectEntrySources 穿透
+ *  loadAll 的 catch → 返回空——单条损坏让全部 run 不可见。现单条 try/catch：损坏
+ *  entry 跳过 + warn 留证（含 entry 索引与原因），其余 entry 正常重建。
+ */
+function collectRecordRun(entry: CustomEntry, entryIndex: number, recordRuns: Map<string, WorkflowRun>): boolean {
   if (entry.customType !== WORKFLOW_RECORD_CUSTOM_TYPE) return false;
   // v1 entry guard：schema 版本不认识 → 跳过（不猜测解析）
   const data = entry.data as WorkflowRecordEntryData | undefined;
   if (data?.v !== 1 || !data.snapshot) return true;
-  const run = deserializeRun(data.snapshot);
-  // D-5: null = old snapshot format / version mismatch — skip silently
-  if (run) recordRuns.set(run.runId, run); // 后写覆盖 = 最后一条 entry 胜出
+  try {
+    const run = deserializeRun(data.snapshot);
+    // D-5: null = old snapshot format / version mismatch — skip silently
+    if (run) recordRuns.set(run.runId, run); // 后写覆盖 = 最后一条 entry 胜出
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    logger.warn(
+      `[subagent-workflow] workflow-record entry #${entryIndex} corrupted, skipped run rebuild: ${reason}`,
+    );
+  }
   return true;
 }
 
@@ -287,9 +300,11 @@ function collectEntrySources(entries: SessionEntry[]): {
 } {
   const recordRuns = new Map<string, WorkflowRun>();
   const pointers = new Map<string, { path: string }>();
-  for (const entry of entries) {
+  // 索引循环：collectRecordRun 的 warn 留证需要 entry 索引（SO-DATA-2）
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]!;
     if (entry.type !== "custom") continue;
-    if (collectRecordRun(entry, recordRuns)) continue;
+    if (collectRecordRun(entry, i, recordRuns)) continue;
     collectStateLinkPointer(entry, pointers);
   }
   return { recordRuns, pointers };

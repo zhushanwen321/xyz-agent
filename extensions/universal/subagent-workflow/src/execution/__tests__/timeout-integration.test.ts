@@ -359,6 +359,24 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
       expect(() => resolveSpawnWatchdogMs(1_000_000)).toThrowError(/2147483647/);
     });
 
+    // [F-R3] maxTurns 垃圾值网格：NaN/""/null/0/负数（含 ±Infinity）。
+    // 旧实现 NaN/"" 绕过 Number.isFinite 且压过 env 兑底成「显式不限」。
+    it("resolveSpawnWatchdogMs：maxTurns NaN → fail-fast throw（压过 env）；\"\"→Number(\"\")=0 显式不限；null/0/负数网格（F-R3）", () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "60000");
+      // NaN：非有限数 fail-fast（与 timer-delay U1 同语义），不再压过 env 兑底成「显式不限」
+      expect(() => resolveSpawnWatchdogMs(NaN)).toThrowError(/not a finite number/);
+      expect(() => resolveSpawnWatchdogMs(NaN)).toThrowError(/Recovery/);
+      // ±Infinity：同非有限数 fail-fast
+      expect(() => resolveSpawnWatchdogMs(Infinity)).toThrowError(/not a finite number/);
+      // ""：Number("") === 0 → 与显式 0 同路径（显式不限，压过 env，U5 语义不回归）
+      expect(resolveSpawnWatchdogMs("" as unknown as number)).toBeUndefined();
+      // null → 未传语义，env 兑底生效
+      expect(resolveSpawnWatchdogMs(null)).toBe(60_000);
+      // 0 / 负数 → 显式不限，压过 env（既有 U5 网格不回归）
+      expect(resolveSpawnWatchdogMs(0)).toBeUndefined();
+      expect(resolveSpawnWatchdogMs(-5)).toBeUndefined();
+    });
+
     it("maxTurns 未传 → 推进 56min 不 kill（旧实现 50min 估算会误杀）", async () => {
       vi.stubEnv(SPAWN_WATCHDOG_ENV, "");
       const record = makeRecord();

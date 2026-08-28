@@ -20,6 +20,11 @@ import {
   getFullText,
   getTotalUsage,
 } from "./execution-record.ts";
+// [F-R1] 值引用 stale-context 分诊 pattern 表（SSOT 在 execute-agent-call，消费点
+// isStaleContextErrorMsg 同源）。execution → orchestration 值引用有先例
+// （agent-registry.ts → script-lint.ts），且 execute-agent-call 对 execution 仅剩
+// type-only import（已擦除），无运行时循环。
+import { STALE_CONTEXT_PATTERNS } from "../orchestration/execute-agent-call.ts";
 
 // ============================================================
 // Result 收集
@@ -70,13 +75,40 @@ export function extractParsedOutput(toolCalls: ToolCall[]): unknown {
 }
 
 /**
+ * [F-R1] 中和动态错误摘要中的 stale-context 命中词：对每个 STALE_CONTEXT_PATTERNS
+ * 做大小写不敏感的子串替换为 "[redacted]"（分诊 isStaleContextErrorMsg 是
+ * toLowerCase 后的子串匹配，故中和也必须大小写不敏感）。
+ *
+ * 为何只中和动态段（summarizeToolContent 产物）、不中和固定前缀：前缀是本模块
+ * 静态文案，已逐字核对无任何 pattern 命中，且由 output-collector.test.ts 的
+ * "messages avoid STALE_CONTEXT_PATTERNS substrings" 用例锁定；动态段是
+ * 模型/provider 的原始错误文本（可含 "aborted"/"ctx is stale" 等），不受本模块
+ * 控制。不中和的话，拼接结果经 collectResult → result.error 流到
+ * execute-agent-call 的 isStaleContextErrorMsg 分诊，SO 失败归因被误诊为
+ * stale-context → 跳过重试。
+ *
+ * 导出以便直接单测（纯函数契约）。
+ */
+export function neutralizeStalePatterns(text: string): string {
+  let out = text;
+  for (const pattern of STALE_CONTEXT_PATTERNS) {
+    // pattern 当前均为纯小写词/短语（无 regex 元字符），escape 仅为防未来 pattern
+    // 演化引入元字符时静默改变语义。
+    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(escaped, "gi"), "[redacted]");
+  }
+  return out;
+}
+
+/**
  * schema 模式下无有效 parsedOutput 时的三态失败归因（F-1）。
  *
  * 返回 undefined 表示 toolCalls 里有可用的 parsedOutput（无需归因）。
  * 三态判定优先级：校验失败（有 isError 调用）> 从未调用 SO tool > 调用过但无 details。
  *
  * 文案约束：不得命中 execute-agent-call 的 STALE_CONTEXT_PATTERNS（"aborted" 等
- * 子串）——命中会被误诊为 stale-context 跳过重试。
+ * 子串）——命中会被误诊为 stale-context 跳过重试。固定前缀静态无命中（测试锁定）；
+ * 动态段经 neutralizeStalePatterns 中和（F-R1）。
  *
  * 导出以便直接单测（纯函数契约）。
  */
@@ -95,9 +127,21 @@ export function describeMissingParsedOutput(toolCalls: ToolCall[]): string | und
   const failed = soCalls.filter((tc) => tc.isError === true);
   if (failed.length > 0) {
     const last = failed[failed.length - 1]!;
+    // [F-R1] 先截断后中和：截断边界把 pattern 切断时不产生新命中（半截词本就
+    // 匹配不到分诊子串），完整落入截断窗口的 pattern 一定被中和。
+    const lastErrorSummary = neutralizeStalePatterns(summarizeToolContent(last.result?.content));
+    // [F-R4] 失败原因分类：isError 只说明「调用失败」，原因未必是 schema 校验
+    // （provider 错误/pi abort/扩展内部错误同样走 isError），硬编码
+    // "(schema validation)" 会误导排障。按最后错误的实际内容分类——权威锚点是
+    // structured-output 扩展校验失败的固定文案前缀 "Schema validation failed: ..."
+    //（structured-output/src/execute.ts），大小写不敏感匹配；其余归为 execution
+    // failure。在已中和的摘要上分类：中和仅替换 stale 词，与校验词无交集。
+    const failureKind = lastErrorSummary.toLowerCase().includes("validation failed")
+      ? "schema validation"
+      : "execution failure";
     return (
       `Agent finished without a valid structured output: ${failed.length} structured-output call(s) failed ` +
-      `(schema validation). Last error: ${summarizeToolContent(last.result?.content)}`
+      `(${failureKind}). Last error: ${lastErrorSummary}`
     );
   }
   return (

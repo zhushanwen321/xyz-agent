@@ -118,23 +118,25 @@ function legacyHead(text: string): string {
 }
 
 describe("normalizeErrorSignature", () => {
-	it("剔除回显语义收窄（AP 修复）：实参值变化（keys 不变）→ 同签名；keys 变化（结构变化）→ 新签名", () => {
+	it("回显剔除语义（分桶后）：非 AP 错误行 keys 不进签名——值/结构变化均同签名（错误行 token 是唯一坐标）", () => {
 		const a = paramLayerErrorText(
 			'  - assessments.0.impact: must be string\n  - name: must be string',
 			'{"name": 1}',
 		);
-		// keys 同为 {name}：回显值随便变（含嵌套大值）不算进展——「实参值变化 ≠ 进展」本意保留
+		// 回显值随便变（含嵌套大值）不算进展——「实参值变化 ≠ 进展」本意保留
 		const b = paramLayerErrorText(
 			'  - assessments.0.impact: must be string\n  - name: must be string',
 			'{"name": {"deeply": {"nested": [1,2,3]}}}',
 		);
 		expect(normalizeErrorSignature(a)).toBe(normalizeErrorSignature(b));
-		// keys 变化（+extra）：结构变化 → 新签名（AP 渐进删除的语义根据）
+		// keys 结构变化（+extra）也不进签名：非 AP 错误行天然携带字段名，keys 并入会
+		// 与错误行 token 形成对流失衡（required 渐进误杀，见分桶回归组）——分桶门控后
+		// 同签名（旧实现此处为 not.toBe，语义反转是本次修复的刻意变更）
 		const c = paramLayerErrorText(
 			'  - assessments.0.impact: must be string\n  - name: must be string',
 			'{"name": 1, "extra": 2}',
 		);
-		expect(normalizeErrorSignature(a)).not.toBe(normalizeErrorSignature(c));
+		expect(normalizeErrorSignature(a)).toBe(normalizeErrorSignature(c));
 	});
 
 	it("字段集合不变 → 同签名（含同字段不同错误类型——集合不变 = 无进展，语义收紧）；集合不同 → 新签名", () => {
@@ -356,6 +358,107 @@ describe("additionalProperties 渐进删除签名区分（AP 回归：D4 默认�
 		const typeErr = paramLayerErrorText("  - count: must be number", '{"count": "x"}');
 		const otherErr = paramLayerErrorText("  - name: must be string", '{"count": "x"}');
 		expect(normalizeErrorSignature(typeErr)).not.toBe(normalizeErrorSignature(otherErr));
+	});
+});
+
+// ── echo keys 分桶回归（第四轮实测：并集恒定陷阱）─────────────
+//
+// 误杀复现（旧实现，esbuild+node 探针实证）：6 required 字段 schema 模型每轮修 1 个
+// ——修好的字段从错误行缺失列表「迁移」到实参回显 keys，req token 集缩小恰好被
+// keys 集增大抵消，token 并集恒为 {f1..f6} → 签名恒定 → 第 3 次 terminal 误杀。
+// 修复：keys 按「是否存在 AP 错误行」门控并入（key:<name> 前缀桶）；required/
+// 格式场景 keys 退出签名。五类演进语义锁定：①②③④⑤编号对应修复方案的验证清单
+//（②④的 AP/required 单形态另由既有用例组锁定：AP「三多余字段逐个删除」/
+// required「同缺失集合重复 3 次」、AP「同一多余字段反复失败」）。
+const SIX_FIELDS = ["f1", "f2", "f3", "f4", "f5", "f6"];
+/**
+ * required 渐进修复第 fixedCount 轮后的真实错误形态：缺失列表 = 后缀字段（bullet
+ * 路径位 = 首个缺失字段），实参回显含已修好的前 fixedCount 个字段（探针同构）。
+ */
+function progressiveRequiredError(fixedCount: number): string {
+	const missing = SIX_FIELDS.slice(fixedCount);
+	return paramLayerErrorText(
+		`  - ${missing[0]}: must have required properties ${missing.join(", ")}`,
+		JSON.stringify(Object.fromEntries(SIX_FIELDS.slice(0, fixedCount).map((f) => [f, 1])), null, 2),
+	);
+}
+/** required + AP 混合错误：缺失字段 bullet + AP bullet + pretty-print 实参回显。 */
+function mixedRequiredApError(missing: string[], args: Record<string, unknown>): string {
+	return paramLayerErrorText(
+		[
+			`  - ${missing[0]}: must have required properties ${missing.join(", ")}`,
+			AP_ERROR_LINE,
+		].join("\n"),
+		JSON.stringify(args, null, 2),
+	);
+}
+
+describe("echo keys 分桶（并集恒定陷阱回归）", () => {
+	it("锁定事实：旧并集口径下三步 token 并集恒定（缺失→keys 对流）——误杀根源", () => {
+		// 模拟旧实现口径（req tokens ∪ 裸名 keys）：修好字段从缺失集迁入 keys 集，并集恒为全量
+		const legacyUnion = (fixed: number): Set<string> =>
+			new Set([...SIX_FIELDS.slice(fixed), ...SIX_FIELDS.slice(0, fixed)]);
+		expect(legacyUnion(0)).toEqual(legacyUnion(1));
+		expect(legacyUnion(1)).toEqual(legacyUnion(2));
+	});
+
+	it("① 核心回归：6 required 字段每轮修 1 个（缺失缩小 + keys 增大），每步新签名计数重起不触闸", () => {
+		const gate = new LoopGate();
+		for (let fixed = 0; fixed < 5; fixed++) {
+			expect(gate.onToolExecEnd(true, progressiveRequiredError(fixed)))
+				.toEqual({ terminal: false, newlyTerminal: false });
+			expect(gate.consecutiveFailures).toBe(1); // keys 不进签名：缺失集缩小 = 新签名
+		}
+		expect(gate.terminal).toBe(false);
+		// 签名级：前 3 轮互异（旧实现此三步同签名 fields(6)#…——上方探针复现场景）
+		const sigs = [0, 1, 2].map((f) => normalizeErrorSignature(progressiveRequiredError(f)));
+		expect(new Set(sigs).size).toBe(3);
+	});
+
+	it("② AP 渐进删除：keys 桶缩小 = 新签名（key: 前缀；演进链全量断言见既有 AP 组）", () => {
+		expect(normalizeErrorSignature(apError({ a: 1, b: 2 })))
+			.not.toBe(normalizeErrorSignature(apError({ a: 1 })));
+	});
+
+	it("③ required+AP 混合：两类桶 token 并存，任一桶变化 = 新签名（req 桶/keys 桶各自生效）", () => {
+		// 轮 1：缺 f1,f2 且实参带多余 extra（req 桶 + AP 桶同时报错）
+		const r1 = mixedRequiredApError(["f1", "f2"], { extra: 1 });
+		// 轮 2：修好 f2（req 桶 {f1,f2}→{f1} 缩小；keys {extra}→{f2,extra} 增大）
+		// ——旧实现并集恒 {f1,f2,root,extra} 同签名（对流陷阱的混合形态），分桶后互异
+		const r2 = mixedRequiredApError(["f1"], { f2: 2, extra: 1 });
+		// 轮 3：删掉 extra（req 桶不变；keys 桶缩小）
+		const r3 = mixedRequiredApError(["f1"], { f2: 2 });
+		const s1 = normalizeErrorSignature(r1);
+		const s2 = normalizeErrorSignature(r2);
+		const s3 = normalizeErrorSignature(r3);
+		expect(s1).not.toBe(s2); // req 桶变化 → 新签名
+		expect(s2).not.toBe(s3); // keys 桶变化 → 新签名
+		expect(s1).not.toBe(s3);
+		// 闸门级：三步计数重起不触闸
+		const gate = new LoopGate();
+		for (const r of [r1, r2, r3]) {
+			expect(gate.onToolExecEnd(true, r)).toEqual({ terminal: false, newlyTerminal: false });
+			expect(gate.consecutiveFailures).toBe(1);
+		}
+	});
+
+	it("④ 同错反复（混合形态）：两类桶 token 恒同 → 第 3 次仍触闸（闸门有界语义保留）", () => {
+		const gate = new LoopGate();
+		const err = mixedRequiredApError(["f1"], { f2: 2, extra: 1 });
+		gate.onToolExecEnd(true, err);
+		gate.onToolExecEnd(true, err);
+		expect(gate.onToolExecEnd(true, err)).toEqual({ terminal: true, newlyTerminal: true });
+	});
+
+	it("⑤ 纯格式错误（pattern/format）：路径 token 语义与分桶前一致——同集合同签名（keys 不干扰），集合缩小新签名", () => {
+		const formatError = (fields: string[], echo: string): string =>
+			paramLayerErrorText(fields.map((f) => `  - ${f}: must match format "email"`).join("\n"), echo);
+		// 同路径集合：回显 keys 变化（+extra）不进签名 → 同签名（错误行 token 独家刻画）
+		expect(normalizeErrorSignature(formatError(["email"], '{"email": "x"}')))
+			.toBe(normalizeErrorSignature(formatError(["email"], '{"email": "x", "extra": 1}')));
+		// 修好一个格式错误 → 路径集合缩小 → 新签名
+		expect(normalizeErrorSignature(formatError(["email", "url"], "{}")))
+			.not.toBe(normalizeErrorSignature(formatError(["email"], "{}")));
 	});
 });
 
