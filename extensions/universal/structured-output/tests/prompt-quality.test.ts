@@ -84,6 +84,17 @@ describe("workflow 变体 description — 单参数口径（G1/G3）", () => {
 	it("要求调用工具而非文本输出", () => {
 		expect(WORKFLOW_DESCRIPTION).toMatch(/Do not output the result as text/i);
 	});
+
+	it("steer reminder 同口径：workflow-hook 旧双参数文案不得回流", () => {
+		// §7.4：steer reminder 也是模型可见提示词——旧口径（ONLY the `data` parameter /
+		// do NOT pass your own `schema`）回流会与单参数工具形态矛盾，在 SRC（含
+		// workflow-hook.ts）层面封死；单参数语汇与工具 description 同源。
+		expect(SRC).not.toMatch(/ONLY the `data` parameter/);
+		expect(SRC).not.toMatch(/do NOT pass/i);
+		expect(SRC).not.toContain("`schema` parameter");
+		expect(SRC).toContain("The required schema for your result is:");
+		expect(SRC).toContain("Your arguments ARE the data");
+	});
 });
 
 // ── 日常变体：envelope 教学保留（G4）+ workflow 语句移除（D5）──────────────

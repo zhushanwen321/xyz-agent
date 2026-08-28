@@ -251,9 +251,9 @@ describe("Workflow hook: structured-output failure retry", () => {
     const [msg, opts] = pi.sendUserMessage.mock.calls[0]!;
     expect(msg).toContain("FAILED validation");
     expect(msg).toContain("Schema validation failed: /count must be number");
-    // 新文案：告知 schema 由系统注入，引导只传 data
-    expect(msg).toContain(`The required schema for your \`data\` is: ${SCHEMA}`);
-    expect(msg).toContain("ONLY the `data` parameter");
+    // 单参数口径：schema 即工具 parameters，参数即数据，修正参数后重调
+    expect(msg).toContain(`The required schema for your result is: ${SCHEMA}`);
+    expect(msg).toContain("Fix your arguments to conform to this schema");
     expect(opts).toEqual({ deliverAs: "steer" });
   });
 
@@ -268,9 +268,9 @@ describe("Workflow hook: structured-output failure retry", () => {
     const msg = pi.sendUserMessage.mock.calls[0]![0] as string;
     expect(msg).toContain("MUST call the structured-output tool");
     expect(msg).not.toContain("FAILED validation");
-    // 与 failed 分支对齐：断言新增的 steer 关键文案（schema 由系统注入，只传 data）
-    expect(msg).toContain("ONLY `data`");
-    expect(msg).toContain("Do NOT pass a `schema`");
+    // 与 failed 分支对齐：断言 steer 关键文案（参数即数据，单参数口径）
+    expect(msg).toContain("Your arguments ARE the data");
+    expect(msg).toContain("matching this shape");
   });
 
   it("does NOT steer when structured-output succeeded", async () => {

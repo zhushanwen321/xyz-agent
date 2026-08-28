@@ -56,7 +56,7 @@ describe("formatSchemaInstruction", () => {
         "Do NOT output the JSON directly in your text response — you MUST use the structured-output tool.",
         "Your call arguments ARE the result data itself — this tool's parameter schema IS the required shape of your result.",
         "Pass your result data as the tool's arguments; the system validates them against the schema below automatically.",
-        "The schema for your `data` is:",
+        "The schema for your result is:",
         "```json",
         '{',
         '  "type": "object"',

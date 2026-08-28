@@ -289,7 +289,7 @@ Last error: assessments.0.impact: must be string
 1. `tool-definition.ts`：拆为 `createWorkflowToolDefinition(authoritativeSchema)` 与 `createDailyToolDefinition()`。workflow 变体：`parameters` = 权威 schema（object 根直接用；非 object 根包装 `{type:"object", properties:{value:<schema>}, required:["value"], additionalProperties:false}`）；根级 `additionalProperties` 未声明时注入 `false`（D4）；description 重写为单参数口径（「Return the structured result for this task. Your arguments ARE the data; they are validated against this schema.」+ 静态失败重试指引——参数层错误文案无扩展改写通道，指引只能前置携带，见 §5.2 形态 a）。权威 schema 在**加载时**做现有防御（keyword-less 拒绝——现 `validateWithAuthoritative`；boolean true 拦截——现 `executeStructuredOutput` 的 ERR-7 段——两项一并上移到注册期，fail-fast 于子进程启动）。
 2. `execute.ts`：workflow 分支简化为透传（非 object 根解包 `value`）；日常分支 `validateAgainstSelfReported` 防御链原样保留。
 3. `loop-gate.ts`（新增）：闸门状态机（同签名计数 / terminal 判定 / 计数清零规则）+ 错误签名归一化函数 + terminal 时写日志并调 `pi.shutdown()`。
-4. `workflow-hook.ts`：RetryState 增 terminal 态——terminal 时 turn_end 不 steer（防御性保留：shutdown 正常生效时进程已终止，此分支仅是 shutdown 失败路径下的保险）；「完全没调用」的 steer 保留（上限 2 不变）。
+4. `workflow-hook.ts`：RetryState 增 terminal 态——terminal 时 turn_end 不 steer（防御性保留：shutdown 正常生效时进程已终止，此分支仅是 shutdown 失败路径下的保险）；「完全没调用」的 steer 保留（上限 2 不变）；两分支的 steer 文案同步重写为单参数口径（删除「do NOT pass your own `schema` parameter / with ONLY the `data` parameter」——按 §5.1「警告从全部文案删除」，一致性审查发现本条初版漏列，v3 补）。
 5. `index.ts`：装配分岔——读 env → 注册对应工具变体；workflow 模式额外注册闸门（`tool_execution_end` 计数 + shutdown 终止）+ turn_end hook。
 
 **`extensions/universal/subagent-workflow/`（仅文案，不动逻辑）**：
@@ -372,3 +372,4 @@ M1 先行可独立上线（首调即成功单独已消除 80% 事故面）；M2 
 
 - v1（2026-08-28）：初版。基于事故核实 session（72cd03 T001/T002 对抗式核实）与 8 项目业界调研（T003），从终态视角重设计 workflow 模式为单参数合成工具 + tool_call 硬闸门。
 - v2（2026-08-28）：对抗式审查修订（审查报告 `structured-output-redesign.review.md`，23 项事实抽查 18 命中 5 偏离，2 must-fix 全部落盘）。① D3 闸门机制推翻重选：初稿 `tool_call` 事件 `block+terminate` 被证实对参数层失败结构性不可达（beforeToolCall 位于 validate 之后），改为 `tool_execution_end` 同签名计数 + `pi.shutdown()` 硬终止——初稿否掉 execute 内计数的时序推理同样适用于 tool_call，初稿只排查了三处出口中的两处；② 新增 D4 根级 `additionalProperties:false` 堵输出污染（审查实测未声明时多余字段整包流入 parsedOutput）；③ §5.2 形态 a 错误文案改为 pi-ai 原生（参数层失败无 hook 改写通道，指引下移到工具 description 静态携带）；④ 补 ajv→TypeBox 引擎差异（P8）、版本矩阵（P9）、retry-state/characterization-hook 测试基线重锁。
+- v3（2026-08-28）：实施期一致性审查修订。① §7.4 补 workflow-hook steer 文案重写条目（初版漏列，致实现照单执行后 hook 提醒残留旧双参数口径，成为终态下唯一矛盾信息源）；② session-runner formatSchemaInstruction 的 `data` 术语残留统一（resolver 侧已用 result）。

@@ -160,16 +160,16 @@ export function setupWorkflowHook(pi: PiAPI, schemaJson: string): RetryState {
 					"[MANDATORY] Your structured-output call FAILED validation:",
 					state.lastSchemaError ?? "structured-output call failed",
 					"",
-					"The schema is enforced by the system (PI_WORKFLOW_SCHEMA) — do NOT pass your own `schema` parameter.",
-					`The required schema for your \`data\` is: ${schemaJson}`,
-					"Call the structured-output tool AGAIN with ONLY the `data` parameter conforming to this schema.",
+					"The schema is enforced by the system (PI_WORKFLOW_SCHEMA) — this tool's parameter schema IS the required shape of your result.",
+					`The required schema for your result is: ${schemaJson}`,
+					"Fix your arguments to conform to this schema and call the structured-output tool AGAIN.",
 					"Do NOT output the result as text — call the tool.",
 				].join("\n")
 			: [
 					"[MANDATORY] You MUST call the structured-output tool now.",
 					"Your task requires a structured output. Do NOT respond with plain text.",
-					`The schema is enforced by the system. Call structured-output with ONLY \`data\` matching this shape: ${schemaJson}`,
-					"Do NOT pass a `schema` parameter — the system validates `data` against the authoritative schema automatically.",
+					`Your arguments ARE the data — call structured-output with your result as the tool's arguments, matching this shape: ${schemaJson}`,
+					"The schema is enforced by the system; your arguments are validated against the authoritative schema automatically.",
 					"This is enforced by the workflow system. Just call the tool.",
 				].join("\n");
 
