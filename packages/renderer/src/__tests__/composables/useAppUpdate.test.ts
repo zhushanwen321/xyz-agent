@@ -32,7 +32,7 @@ const hoisted = vi.hoisted(() => {
   let errorCb: ((e: { stage: string; message: string; errorCode?: string }) => void) | null = null
   return {
     checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<LatestReleaseInfo | null>>(),
-    updateDownload: vi.fn<(release: LatestReleaseInfo) => Promise<{ downloaded: boolean }>>(),
+    updateDownload: vi.fn<(version: string) => Promise<{ downloaded: boolean }>>(),
     updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
     getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
     getPendingUpdate: vi.fn<() => Promise<LatestReleaseInfo | null>>(),
@@ -272,43 +272,22 @@ describe('useAppUpdate', () => {
   // 用户在 UpdateButton hover 看到英文 clone 报错。现有用例 mock @/lib/ipc 接收的是
   // makeRelease() 返回的普通对象，测不到此问题；本用例在 reactive 上下文（effectScope +
   // useAppUpdate 内部 reactive state）下验证传给 ipc 的对象可被 structuredClone。
-  it('performDownload 传给 ipc 的是 plain object（非 reactive proxy），可过 structured clone', async () => {
-    // makeRelease 带嵌套 asset，覆盖「嵌套层也必须 plain」（toRaw 浅解包会漏掉嵌套）
-    const releaseWithAsset: LatestReleaseInfo = {
-      ...makeRelease('0.9.0'),
-      assets: {
-        macArm64Zip: {
-          name: 'xyz-agent-mac-arm64.zip',
-          downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/xyz-agent-mac-arm64.zip',
-          size: 100,
-          sha256: 'a'.repeat(64),
-        },
-      },
-    }
-    hoisted.checkForUpdate.mockResolvedValue(releaseWithAsset)
-    // 捕获 updateDownload 实际收到的参数（useAppUpdate.performDownload 内部读
-    // state.latestRelease 后 toRaw 解包透传给 ipc.updateDownload，捕获点即 IPC 入参）
-    const received: LatestReleaseInfo[] = []
-    hoisted.updateDownload.mockImplementation(async (r) => {
-      received.push(r)
+  // [批次 3 RC1] 旧用例验证「传给 ipc 的是 plain object（toRaw 解包）」——契约版本号化后
+  // updateDownload 只传 version 字符串，proxy/structuredClone 问题不再存在；本用例改为
+  // 断言传给 ipc 的是 available release 的 version 字段（意图透传）。
+  it('performDownload 传给 ipc 的是 available release 的 version 字符串（批次 3 契约）', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    // 捕获 updateDownload 实际收到的参数（IPC 入参）
+    const received: string[] = []
+    hoisted.updateDownload.mockImplementation(async (v) => {
+      received.push(v)
       return { downloaded: true }
     })
     const { result, stop } = setupUseAppUpdate()
     await result.checkForUpdate()
     await result.performDownload()
 
-    expect(received).toHaveLength(1)
-    const passed = received[0]!
-    // 关键断言 1：原型是 Object.prototype（plain object），不是 reactive proxy 的目标
-    expect(Object.getPrototypeOf(passed)).toBe(Object.prototype)
-    // 关键断言 2：可被 structuredClone（IPC 用的同款序列化算法），不抛 DataCloneError
-    expect(() => structuredClone(passed)).not.toThrow()
-    // 关键断言 3：嵌套层也是 plain（assets.macArm64Zip 不能是 reactive proxy）
-    expect(Object.getPrototypeOf(passed.assets.macArm64Zip!)).toBe(Object.prototype)
-    expect(() => structuredClone(passed.assets.macArm64Zip!)).not.toThrow()
-    // 数据完整性：深拷贝后字段保留
-    expect(passed.version).toBe('0.9.0')
-    expect(passed.assets.macArm64Zip!.sha256).toBe('a'.repeat(64))
+    expect(received).toEqual(['0.9.0'])
     stop()
   })
 

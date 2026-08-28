@@ -106,18 +106,12 @@ export interface ElectronAPI {
   checkForUpdate(opts?: { force?: boolean }): Promise<LatestReleaseInfo | null>
   // ── 自动升级执行（w3）──────────────────────────────────────────
   /**
-   * 执行完整升级流程（下载 → 校验 → 替换 → 触发重启）。
-   * @param release checkForUpdate 返回的最新版本信息
-   * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
-   */
-  performUpdate(release: LatestReleaseInfo): Promise<{ triggerRestart: boolean }>
-  /**
-   * 拆分升级流程的下载阶段：下载 + 校验 + 写入预下载产物元信息。
+   * 拆分升级流程的下载阶段：版本解析（main 权威）+ 下载 + 校验 + 写入预下载产物元信息。
    * 下载成功后状态进入 'downloaded'，前端可调 updateInstall 触发安装。
-   * @param release checkForUpdate 返回的最新版本信息
+   * @param version 请求的目标版本号（renderer 只传意图，release 数据由 main 权威解析）
    * @returns downloaded=true 表示下载完成
    */
-  updateDownload(release: LatestReleaseInfo): Promise<{ downloaded: boolean }>
+  updateDownload(version: string): Promise<{ downloaded: boolean }>
   /**
    * 拆分升级流程的安装阶段：从预下载产物读取 release + filePath，执行替换 + 触发重启。
    * install 权威源是预下载产物（不信任前端传入的 release，堵装错版本漏洞）。
@@ -280,11 +274,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkForUpdate: (opts?: { force?: boolean }) =>
     ipcRenderer.invoke('update:check', { force: opts?.force }),
   // ── 自动升级执行（w3）──────────────────────────────────────
-  performUpdate: (release: LatestReleaseInfo) =>
-    ipcRenderer.invoke('update:perform', { release }),
+  updateDownload: (version: string) =>
+    ipcRenderer.invoke('update:download', { version }),
   // ── 自动升级拆分流程（download → install）──────────────────────
-  updateDownload: (release: LatestReleaseInfo) =>
-    ipcRenderer.invoke('update:download', { release }),
   updateInstall: () => ipcRenderer.invoke('update:install'),
   getPreloaded: () => ipcRenderer.invoke('update:getPreloaded'),
   getLaunchResult: () => ipcRenderer.invoke('update:getLaunchResult'),

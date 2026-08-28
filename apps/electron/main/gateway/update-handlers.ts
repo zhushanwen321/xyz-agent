@@ -3,16 +3,16 @@
  *
  * 对应 slice auto-update-and-install：注册两类 channel：
  *   - 'update:check'：检测最新版（w2，委托 IReleaseChecker.checkForLatestRelease）
- *   - 'update:perform'：执行升级（w3，委托 IUpdateOrchestrator.performUpdate +
- *     推 update:progress / update:error 事件 + 收到 triggerRestart 后调 app.quit）
+ *   - 'update:perform'：已删除（批次 3 m17：UI 走两阶段 download/install，一键路径连同
+ *     renderer 暴露点一并移除；未来静默升级入口按「只传版本号」新契约另建）
  *   - 'update:download'：拆分后的下载阶段（批次 3 契约版本号化：resolveByVersion 权威解析
  *     → downloadUpdate + 写 preloaded）
  *   - 'update:install'：拆分后的安装阶段（从 preloaded 读取 release + filePath，委托 installUpdate）
  *   - 'update:getPreloaded'：读取预下载产物（readPreloadedUpdateRaw，供前端判断是否已下载完成）
  *
  * [HISTORICAL] 不变量：
- * - 单 payload 对象规则：emit('update:perform', { release })，禁止多 arg
- * - update:perform 内 onProgress 转发为 'update:progress' 事件（win.isDestroyed 守卫）
+ * - 单 payload 对象规则：invoke payload 恒为单对象，禁止多 arg
+ * - install/download 内 onProgress 转发为 'update:progress' 事件（win.isDestroyed 守卫）
  * - 错误转发为 'update:error' 事件（区分 UpdateError.stage / UpdateUnsupportedError.errorCode）
  * - orchestrator 是纯逻辑（不调 app.quit）；quit 由本 handler 在 triggerRestart=true 后调
  * - quit 用 setTimeout(500) 延迟：给前端一点时间显示「重启中」状态
@@ -214,7 +214,7 @@ async function preloadUpdateSilently(
 }
 
 /**
- * 注册自动升级 IPC handler（update:check + update:perform + getPending + getSettings/setSettings）。
+ * 注册自动升级 IPC handler（update:check + update:download/install + getPending + getSettings/setSettings）。
  *
  * @param deps 注入依赖（releaseChecker / updateOrchestrator / getMainWindow）
  */
@@ -230,7 +230,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       if (info) {
         writePendingUpdate(info)
         // 预下载开关开 → 异步后台下载（功能 2），不 await 不阻塞 check 响应。
-        // 把 promise 存起来（非 void），供 update:perform 在预下载进行中时 await，
+        // 把 promise 存起来（非 void），供 update:download 在预下载进行中时 await，
         // 避免与后台预下载争抢 orchestrator 的 downloading 锁而硬报错。
         // updateOrchestrator 未注入（dev/check-only 场景）时跳过预下载（perform 会另行报错）。
         const settings = getUpdateSettings()
@@ -246,120 +246,8 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
     }
   })
 
-  // [DEPRECATED] UI 已改用 update:download + update:install，此 handler 保留供未来静默升级。
-  // ── update:perform（w3：执行升级）──────────────────────────────
-  ipcMain.handle('update:perform', async (_event, payload: { release: LatestReleaseInfo }) => {
-    if (!deps.updateOrchestrator) {
-      throw new Error('updateOrchestrator not configured')
-    }
-    // [MUST-FIX #3] 记录本次是否走快路径：catch 中据此决定是否清 preloaded 标志，
-    // 避免快路径 installUpdate 失败后重试反复命中同一（可能损坏的）文件而死循环。
-    // 声明在 try 外，catch 才能读到。
-    let usedFastPath = false
-    try {
-      // [SECURITY] 校验 renderer payload：防 SSRF（downloadUrl 白名单 GitHub 域名）+
-      // 路径遍历（name 严格字符集）+ shell 注入（name/version/sha256 严格格式）。
-      // 必须在 performUpdate 前执行——orchestrator 内部会把 name 拼进下载路径、
-      // 可能 spawn bash 脚本，未校验的输入可触发任意代码执行。
-      validateRelease(payload.release)
 
-      // [功能 2 快路径] 若有有效的预下载产物（同版本 + 文件存在），跳过下载直接 installUpdate。
-      // 用户体感：点击更新后无需等待下载，直接进入替换重启。产物无效则降级走完整 performUpdate。
-      const onProgress: UpdateProgressCallback = (stage, percent) => {
-        const win = deps.getMainWindow()
-        if (win && !win.isDestroyed()) {
-          win.webContents.send('update:progress', { stage, percent })
-        }
-      }
 
-      // [MUST-FIX #1] 若后台预下载仍在进行，先 await 它：预下载持有 orchestrator 的
-      // downloading 锁，直接走 download 路径会被拒（'download already in progress'）。
-      // await 到锁释放后再决定走快路径（预下载成功写入了产物）还是 download 路径（预下载失败）。
-      // 用局部引用避免 await 期间 preDownloadPromise 被置 null 后读到旧值。
-      const inFlight = preDownloadPromise
-      if (inFlight) {
-        console.log('[update:perform] background preload in progress, waiting for it to finish')
-        await inFlight
-      }
-
-      const preloadedFile = await readPreloadedUpdate(payload.release)
-      let result: { triggerRestart: boolean }
-      if (preloadedFile) {
-        // 预下载产物有效：快路径，仅推 replacing 进度 + installUpdate。
-        // [S#11 arch-boundary] 经 DI 注入的 orchestrator 调 installUpdate，与 performUpdate
-        // 走同一 DI 契约，使快路径也可在测试中经 mock 接口替换。
-        console.log(`[update:perform] using preloaded file ${preloadedFile}, skipping download`)
-        usedFastPath = true
-        result = await deps.updateOrchestrator.installUpdate(payload.release, preloadedFile, onProgress)
-      } else {
-        // 无预下载产物或产物失效：完整流程（下载 → 校验 → 替换）
-        result = await deps.updateOrchestrator.performUpdate(payload.release, { onProgress })
-      }
-      if (result.triggerRestart) {
-        // 延迟 RESTART_QUIT_DELAY_MS 给前端时间显示「重启中」，再 quit
-        setTimeout(() => app.quit(), RESTART_QUIT_DELAY_MS)
-      }
-      return result
-    } catch (err) {
-      // [MUST-FIX #3] 快路径 installUpdate 失败时清 preloaded 标志：避免重试反复命中
-      // 同一产物（installUpdate 非「文件完整性」失败如 spawn 失败、replacing 权限错误，
-      // 或即便文件真坏），下次重试强制走完整重下 + 重新校验，杜绝死循环。
-      // 采用「快路径失败一律 clear」保守策略：重下后会重新 sha256 校验，比死循环安全；
-      // 文件完整性错误（UpdateIntegrityError）本就需重下，clear 同样正确。
-      if (usedFastPath) {
-        console.warn('[update:perform] fast-path install failed, clearing preloaded flag to force full re-download on retry')
-        clearPreloadedUpdate()
-      }
-
-      // 错误转 update:error 事件（区分 stage / errorCode）
-      const win = deps.getMainWindow()
-      let errorPayload
-
-      if (err instanceof UpdateError) {
-        // 使用 toUserFriendly() 获取用户友好的错误信息
-        const friendlyInfo = err.toUserFriendly()
-        errorPayload = {
-          stage: friendlyInfo.stage,
-          message: friendlyInfo.message,
-          errorCode: friendlyInfo.code,
-          suggestion: friendlyInfo.suggestion,
-        }
-        // D7: perform 失败落盘
-        appendUpdateError({
-          at: new Date().toISOString(),
-          source: 'perform',
-          stage: friendlyInfo.stage,
-          errorCode: friendlyInfo.code,
-          rawCause: err.rawCause,
-          proxyUrl: resolveProxyUrl(readProxyConfig()),
-        })
-      } else {
-        errorPayload = {
-          stage: 'replacing' as const,
-          message: err instanceof Error ? err.message : String(err),
-          errorCode: undefined,
-          suggestion: '请重试或联系技术支持',
-        }
-        appendUpdateError({
-          at: new Date().toISOString(),
-          source: 'perform',
-          stage: 'replacing',
-          rawCause: err instanceof Error ? err.message : String(err),
-          proxyUrl: resolveProxyUrl(readProxyConfig()),
-        })
-      }
-
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('update:error', errorPayload)
-      }
-      // [HISTORICAL] throw 可序列化的普通对象，而非原始 Error。
-      // Electron IPC 使用结构化克隆算法序列化 invoke reject 值，
-      // Error 对象的原生属性（stack 等）不可克隆，会抛 'an object could not be cloned'。
-      // 前端 useAppUpdate 的 onUpdateError 已通过事件通道接收错误详情，
-      // invoke reject 只需传递可序列化的错误摘要。
-      throw { message: errorPayload.message, stage: errorPayload.stage, errorCode: errorPayload.errorCode, suggestion: errorPayload.suggestion }
-    }
-  })
 
   // ── update:download（拆分后的下载阶段）───────────────────────
   // 供新版 UI「先下载 → 再安装」两步流程的下载阶段调用。下载成功后写 preloaded-update.json，
@@ -469,6 +357,12 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
         throw new Error('No preloaded update available')
       }
       const { release, filePath } = preloaded
+
+      // [SECURITY · m11] 防御纵深：install 权威源虽是 preloaded（不信任前端传入），
+      // 但 preloaded 文件本身是磁盘写入面，可能被篡改——污染的 version 会拼进下载
+      // 路径与 bash 脚本单引号上下文，未校验可触发任意代码执行。与 download 路径
+      // 同源白名单校验，堵「绕过 download 直改 preloaded 文件」的旁路。
+      validateRelease(release)
 
       // 安装阶段 onProgress → update:progress 事件（stage='replacing'）
       const onProgress: UpdateProgressCallback = (stage, percent) => {

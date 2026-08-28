@@ -35,6 +35,17 @@ vi.mock('electron', () => ({
   },
 }))
 
+// ── preloaded-update mock（u3b：install validateRelease 用例注入伪造 preloaded，不读真实 fs）──
+const preloadedMocks = vi.hoisted(() => ({
+  readPreloadedUpdateRaw: vi.fn<(v: string) => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
+}))
+vi.mock('../update/preloaded-update.js', () => ({
+  readPreloadedUpdateRaw: preloadedMocks.readPreloadedUpdateRaw,
+  writePreloadedUpdate: vi.fn(),
+  readPreloadedUpdate: vi.fn(),
+  clearPreloadedUpdate: vi.fn(),
+}))
+
 // 桩 main window + webContents.send（验证 update:progress / update:error 事件推送）
 const sendSpy = vi.fn()
 const mockMainWindow = {
@@ -147,120 +158,55 @@ describe('W2: update-handlers IPC (W2TC7)', () => {
 })
 
 // ── W3：update:perform（W3TC10）──────────────────────────────────
-describe('W3: update-handlers IPC update:perform (W3TC10)', () => {
+describe('u3b: update:install validateRelease（m11 防御纵深）', () => {
   beforeEach(() => {
     handlers.clear()
     vi.clearAllMocks()
     sendSpy.mockClear()
-    mockMainWindow.isDestroyed.mockReturnValue(false)
     capturedQuitTimer = null
-  })
-
-  /** 注册 handler 时注入 updateOrchestrator + getMainWindow */
-  function registerWithOrchestrator(orchestrator: IUpdateOrchestrator): void {
     // 拦截 setTimeout 捕获 quit 定时器
-    const realSetTimeout = setTimeout
     vi.spyOn(globalThis, 'setTimeout').mockImplementation(((cb: () => void, delay?: number) => {
       capturedQuitTimer = { callback: cb, delay: delay ?? 0 }
       return 0 as unknown as NodeJS.Timeout
     }) as typeof setTimeout)
-    void realSetTimeout // 引用避免 lint unused
+  })
 
+  it('污染 version 的 preloaded → install 前被 validateRelease 拒绝，installUpdate 不被调', async () => {
+    // m11：version 含单引号会被拼进 bash 脚本单引号上下文 → 白名单格式校验拦截
+    const poisoned: LatestReleaseInfo = {
+      ...FIXTURE,
+      version: "0.9.0' --$(touch /tmp/pwned)",
+    }
+    preloadedMocks.readPreloadedUpdateRaw.mockResolvedValue({ release: poisoned, filePath: '/tmp/pre.zip' })
+    const installUpdate = vi.fn(async () => ({ triggerRestart: true }))
     registerUpdateHandlers({
-      updateOrchestrator: orchestrator,
+      updateOrchestrator: { installUpdate } as unknown as IUpdateOrchestrator,
       getMainWindow: () => mockMainWindow as never,
     } as never)
-  }
 
-  it('W3TC10a: performUpdate 成功 triggerRestart=true → 推 update:progress + 延迟 quit', async () => {
-    const performUpdate = vi.fn(async (
-      _release: LatestReleaseInfo,
-      opts: { onProgress: (stage: string, percent: number) => void },
-    ) => {
-      // 模拟 orchestrator 推进度
-      opts.onProgress('downloading', 50)
-      opts.onProgress('verifying', 100)
-      return { triggerRestart: true }
-    })
-    registerWithOrchestrator({ performUpdate } as never)
+    const handler = handlers.get('update:install')!
+    await expect(handler({}, {})).rejects.toThrow(/invalid version/)
+    // 拒绝发生在 installUpdate 之前（污染数据不进 orchestrator）
+    expect(installUpdate).not.toHaveBeenCalled()
+  })
 
-    const handler = handlers.get('update:perform')!
-    const result = await handler({}, { release: FIXTURE })
+  it('合法 preloaded → validateRelease 放行，installUpdate 正常调用（不误伤）', async () => {
+    preloadedMocks.readPreloadedUpdateRaw.mockResolvedValue({ release: FIXTURE, filePath: '/tmp/pre.zip' })
+    const installUpdate = vi.fn(async () => ({ triggerRestart: true }))
+    registerUpdateHandlers({
+      updateOrchestrator: { installUpdate } as unknown as IUpdateOrchestrator,
+      getMainWindow: () => mockMainWindow as never,
+    } as never)
 
-    // 返回 triggerRestart
+    const handler = handlers.get('update:install')!
+    const result = await handler({}, {})
     expect(result).toEqual({ triggerRestart: true })
-    // update:progress 事件已推送（downloading 50 + verifying 100）
-    expect(sendSpy).toHaveBeenCalledWith('update:progress', { stage: 'downloading', percent: 50 })
-    expect(sendSpy).toHaveBeenCalledWith('update:progress', { stage: 'verifying', percent: 100 })
-    // triggerRestart=true → 安排了延迟 500ms 的 quit
-    expect(capturedQuitTimer).not.toBeNull()
-    expect(capturedQuitTimer!.delay).toBe(500)
-  })
-
-  it('W3TC10b: performUpdate 抛 UpdateError → 推 update:error 事件 + reject', async () => {
-    const performUpdate = vi.fn(async () => {
-      throw new UpdateError('download failed', 'downloading')
-    })
-    registerWithOrchestrator({ performUpdate } as never)
-
-    const handler = handlers.get('update:perform')!
-    await expect(handler({}, { release: FIXTURE })).rejects.toThrow(/download failed/)
-    // update:error 事件携带 stage + message + errorCode + suggestion。
-    // UpdateError('download failed', 'downloading') 未传 errorCode，toUserFriendly() 走
-    // fallback：code 缺省 'UPDATE_INTEGRITY_FAILED'、message 用传入的 'download failed'、
-    // stage 用 this.stage、suggestion 用默认 '请重试或联系技术支持'（见 types.ts:143-148）。
-    expect(sendSpy).toHaveBeenCalledWith('update:error', {
-      stage: 'downloading',
-      message: 'download failed',
-      errorCode: 'UPDATE_INTEGRITY_FAILED',
-      suggestion: '请重试或联系技术支持',
-    })
-    // 失败时不安排 quit
-    expect(capturedQuitTimer).toBeNull()
-  })
-
-  it('W3TC10c: performUpdate 抛 UpdateUnsupportedError → errorCode=UPDATE_UNSUPPORTED_PLATFORM', async () => {
-    const performUpdate = vi.fn(async () => {
-      throw new UpdateUnsupportedError('deb not supported', FIXTURE.htmlUrl)
-    })
-    registerWithOrchestrator({ performUpdate } as never)
-
-    const handler = handlers.get('update:perform')!
-    // errorCode 命中 UPDATE_ERROR_MESSAGES 映射表，toUserFriendly() 返回标准化的本地化
-    // message '当前平台不支持自动更新'（types.ts:86-90），而非构造时传入的英文。
-    await expect(handler({}, { release: FIXTURE })).rejects.toThrow(/当前平台不支持自动更新/)
-    expect(sendSpy).toHaveBeenCalledWith('update:error', {
-      stage: 'replacing',
-      message: '当前平台不支持自动更新',
-      errorCode: 'UPDATE_UNSUPPORTED_PLATFORM',
-      suggestion: '请手动下载最新版本',
-    })
-  })
-
-  it('W3TC10d: updateOrchestrator 未注入 → 抛 updateOrchestrator not configured', async () => {
-    registerUpdateHandlers({} as never)
-    const handler = handlers.get('update:perform')!
-    await expect(handler({}, { release: FIXTURE })).rejects.toThrow(/updateOrchestrator not configured/)
-  })
-
-  it('W3TC10e: 主窗口已销毁 → 不推送事件（isDestroyed 守卫）', async () => {
-    const performUpdate = vi.fn(async (
-      _release: LatestReleaseInfo,
-      opts: { onProgress: (stage: string, percent: number) => void },
-    ) => {
-      opts.onProgress('downloading', 10)
-      return { triggerRestart: true }
-    })
-    mockMainWindow.isDestroyed.mockReturnValue(true)
-    registerWithOrchestrator({ performUpdate } as never)
-
-    const handler = handlers.get('update:perform')!
-    await handler({}, { release: FIXTURE })
-
-    // 窗口已销毁 → send 不应被调
-    expect(sendSpy).not.toHaveBeenCalled()
+    expect(installUpdate).toHaveBeenCalledTimes(1)
+    expect(installUpdate).toHaveBeenCalledWith(FIXTURE, '/tmp/pre.zip', expect.any(Function))
   })
 })
+
+// ── W4: update:getLaunchResult handler（A2/A3）───────────────────
 
 // ── W4: update:getLaunchResult handler（A2/A3）───────────────────
 describe('A2-launch-result-handler-vitest', () => {

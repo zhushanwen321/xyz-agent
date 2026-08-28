@@ -320,12 +320,8 @@ describe('W2-handler-error-log appendUpdateError 落盘', () => {
     expect(src).toMatch(/import\s*\{[^}]*appendUpdateError[^}]*\}\s*from\s*['"]\.\.\/update\/error-log\.js['"]/)
   })
 
-  // 区分力：update:perform catch 必须调用 appendUpdateError
-  it('W2-handler-error-log update:perform catch 调用 appendUpdateError', () => {
-    const src = readSource('apps/electron/main/gateway/update-handlers.ts')
-    // update:perform handler 内 catch 块
-    expect(src).toContain("source: 'perform'")
-  })
+  // [批次 3 m17] 原 update:perform catch 落盘断言已随 handler 删除；落盘防线的
+  // download/install/preload 断言见下方同族用例。
 
   // 区分力：update:download catch 必须调用 appendUpdateError
   it('W2-handler-error-log update:download catch 调用 appendUpdateError', () => {

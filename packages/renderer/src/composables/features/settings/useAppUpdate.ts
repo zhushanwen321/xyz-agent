@@ -4,7 +4,8 @@
  * 职责：
  * - 维护 9 状态机（idle/checking/available/downloading/verifying/replacing/restarting/error/unsupported）
  * - checkForUpdate：经 ipc 检测新版，命中后异步渲染 releaseNotes 为 HTML
- * - performUpdate：触发 main 侧下载→校验→替换→重启全流程
+ * - performUpdate：已删除（批次 3 m17）；两阶段 performDownload/performInstall 替代，
+ *   download 传意图（version 字符串），release 数据由 main 权威解析（RC1）
  * - 订阅 onUpdateProgress（stage + percent）/ onUpdateError（错误 SSOT），onScopeDispose 退订
  * - initAutoCheck：30s 后自动检测一次（应用启动后延迟避开冷启动高峰）
  *
@@ -16,17 +17,15 @@
  * 的多消费者竞争（旧 listening flag 只由首个调用者的 onScopeDispose 守护，有缺口）。
  *
  * 错误双通路去重：onUpdateError 为 SSOT（已收到则设 errorHandled=true），
- * performUpdate 的 catch 仅在 !errorHandled 时兜底置 error（避免覆盖更精确的 onUpdateError 信息）。
+ * performDownload/performInstall 的 catch 仅在 !errorHandled 时兜底置 error（避免覆盖更精确的 onUpdateError 信息）。
  *
  * 依赖方向：lib/ipc（renderer→main 唯一适配点）+ composables/logic/markdown（releaseNotes 渲染）。
  */
-import { onScopeDispose, reactive, toRaw } from 'vue'
+import { onScopeDispose, reactive } from 'vue'
 import type { LatestReleaseInfo, UpdateState } from '@xyz-agent/shared'
 import { compare } from 'compare-versions'
 import {
   checkForUpdate as ipcCheckForUpdate,
-  // [NOTE] update:perform IPC 仍在 main 侧（update-handlers.ts 标 DEPRECATED）。
-  // renderer 当前走两阶段 update:download/update:install。切回一键模式时重新 import performUpdate。
   updateDownload as ipcUpdateDownload,
   updateInstall as ipcUpdateInstall,
   getPreloaded as ipcGetPreloaded,
@@ -173,7 +172,7 @@ const state = reactive({
  */
 let refCount = 0
 
-/** errorHandled flag：onUpdateError 已处理错误后置 true，performUpdate catch 据此去重兜底 */
+/** errorHandled flag：onUpdateError 已处理错误后置 true，performDownload/performInstall catch 据此去重兜底 */
 let errorHandled = false
 
 /**
@@ -223,7 +222,7 @@ function subscribeProgress(): void {
   if (refCount !== 1) return  // 已有订阅，只增计数
   // 首次订阅
   const offProgress = onUpdateProgress((p) => {
-    // stage 映射 state：downloading/verifying/replacing（restarting 由 performUpdate resolve 后置）
+    // stage 映射 state：downloading/verifying/replacing（restarting 由 performInstall resolve 后置）
     if (p.stage === 'downloading' || p.stage === 'verifying' || p.stage === 'replacing') {
       state.state = p.stage
     }
@@ -342,16 +341,10 @@ async function performDownload(): Promise<void> {
   state.errorMessage = ''
   errorHandled = false
   try {
-    // [HISTORICAL] toRaw 解包 reactive proxy 后再传 IPC。
-    // state 是 reactive，state.latestRelease 读取时 Vue 返回 proxy（含按需代理的嵌套
-    // assets.*）。ipcUpdateDownload → ipcRenderer.invoke('update:download', { release })
-    // 经 Electron structured clone 序列化，Proxy 不可克隆 → 抛 "an object could not
-    // be cloned" → invoke reject 被 catch 吞成 errorMessage，用户在 UpdateButton hover
-    // 看到英文 clone 报错（而非中文错误体系文案）。
-    // toRaw 拿回 reactive target 的原始 plain 引用（嵌套层也是原始引用，Vue 3 惰性代理
-    // 不改写 target 内部），structured clone 可正常序列化。不能用 JSON.parse(JSON.stringify)
-    // 做源头深拷贝替代——赋值给 reactive state 后读取仍会重新代理化（实测无效）。
-    const result = await ipcUpdateDownload(toRaw(release))
+    // [批次 3 RC1] 只传意图：version 字符串经 IPC，release 数据由 main 权威解析
+    // （resolveByVersion 缓存/force check）。旧契约传完整 release 对象（含 toRaw 解包
+    // proxy 的历史问题）随版本号化一并消失——字符串天然可 structured clone。
+    const result = await ipcUpdateDownload(release.version)
     if (result.downloaded) {
       state.state = 'downloaded'
     }

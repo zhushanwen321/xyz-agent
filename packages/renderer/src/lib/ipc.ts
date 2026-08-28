@@ -231,11 +231,11 @@ export function onBrowserState(
 }
 
 // ── 自动升级（w4 update-frontend）───────────────────────────────────────
-// Wave 2/3：renderer → main 五个 IPC 封装（check/perform/progress/error/fallback）。
+// Wave 2/3 + 批次 3：renderer → main IPC 封装（check/download/progress/error/fallback）。
 // checkForUpdate 返回 LatestReleaseInfo | null（无新版/失败/未注入返回 null）。
-// performUpdate 触发完整流程（下载→校验→替换→重启），triggerRestart=true 表示即将重启。
+// updateDownload 传意图（version 字符串），release 数据由 main 权威解析（RC1）。
 // onUpdateProgress/onUpdateError 订阅主进程推送，返回取消订阅函数。
-// 无 IPC（web/mock）静默 no-op / 返回空 unsubscribe / null / {triggerRestart:false}。
+// 无 IPC（web/mock）静默 no-op / 返回空 unsubscribe / null / {downloaded:false}。
 
 /**
  * 检测最新可用版本。
@@ -247,21 +247,11 @@ export function checkForUpdate(opts?: { force?: boolean }): Promise<LatestReleas
 }
 
 /**
- * 执行完整升级流程（下载 → 校验 → 替换 → 触发重启）。
- * @param release checkForUpdate 返回的最新版本信息
- * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
+ * 触发下载阶段（版本解析 → 下载 → 校验，止于 downloaded 态，不替换/重启）。
+ * @param version 请求的目标版本号（renderer 只传意图，release 由 main 权威解析）
  */
-export function performUpdate(release: LatestReleaseInfo): Promise<{ triggerRestart: boolean }> {
-  return api?.performUpdate(release) ?? Promise.resolve({ triggerRestart: false })
-}
-
-/**
- * 触发下载阶段（下载 → 校验，止于 downloaded 态，不替换/重启）。
- * @param release checkForUpdate 返回的最新版本信息
- * @returns downloaded=true 表示产物已下载并校验通过，等待 performInstall 触发替换重启
- */
-export function updateDownload(release: LatestReleaseInfo): Promise<{ downloaded: boolean }> {
-  return api?.updateDownload(release) ?? Promise.resolve({ downloaded: false })
+export function updateDownload(version: string): Promise<{ downloaded: boolean }> {
+  return api?.updateDownload(version) ?? Promise.resolve({ downloaded: false })
 }
 
 /**
