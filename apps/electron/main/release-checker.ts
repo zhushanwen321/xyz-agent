@@ -187,23 +187,58 @@ export class ReleaseChecker implements IReleaseChecker {
   ): Promise<LatestReleaseInfo | null> {
     // 0. 限流退避短路（批次 4 RM2.3）：窗口内周期/补查/手动全部直接返回 null，零联网。
     // renderer 收到 null 即「非侵入静默」，无需感知限流信号。
-    if (Date.now() < this.rateLimitedUntil) {
-      return null
-    }
+    if (this.isRateLimited()) return null
 
     // 1. 缓存命中检查（force 可绕过；负缓存的 info=null 也命中 → 直接返回无新版）
-    const now = Date.now()
-    if (!opts?.force && this.cachedResult) {
-      const age = now - this.cachedResult.fetchedAt
-      if (age < CACHE_TTL_MS) {
-        return this.cachedResult.info
-      }
-    }
+    const cached = this.getCachedResultIfFresh(opts)
+    if (cached !== undefined) return cached
 
-    // 2. fetch + 校验 + 比较 + 分流（限流信号向上传播，不降级直连）
-    let release: GitHubRelease | null
+    // 2. fetch（限流信号在内部分流：403/429 记退避并返回 null，不降级直连）
+    const release = await this.fetchLatestReleaseHandlingRateLimit()
+    if (!release) return null
+
+    // 3-6. 三重 prerelease 防御 b/c + 版本比较：判定「无新版」→ 写负缓存（m7）并返回 null
+    const strippedVersion = this.resolveNewerVersion(release, currentVersion)
+    if (strippedVersion === null) return null
+
+    // 7. 按平台分流 asset，组装 LatestReleaseInfo（解析失败 = GitHub 数据坏，
+    //    保守不写负缓存，下次重试）
+    const info = await this.buildLatestReleaseInfo(release, strippedVersion, release.tag_name)
+    if (!info) return null
+
+    // 8. 写入缓存（成功才写正缓存）
+    // 注意：fetchedAt 必须在 fetch 完成后重新取 now，否则会比实际获取时间提前最多 10s（fetch timeout）
+    this.cachedResult = { info, fetchedAt: Date.now() }
+    return info
+  }
+
+  /** 限流退避窗口判定：窗口内直接短路，零联网 */
+  private isRateLimited(): boolean {
+    return Date.now() < this.rateLimitedUntil
+  }
+
+  /**
+   * 缓存命中检查（force 可绕过；负缓存的 info=null 同样命中）。
+   *
+   * @returns 命中返回缓存 info（null = 负缓存「已确认无新版」）；
+   *          未命中（无缓存 / 已过期 / force）返回 undefined
+   */
+  private getCachedResultIfFresh(opts?: { force?: boolean }): LatestReleaseInfo | null | undefined {
+    if (opts?.force) return undefined
+    if (!this.cachedResult) return undefined
+    const age = Date.now() - this.cachedResult.fetchedAt
+    if (age >= CACHE_TTL_MS) return undefined
+    return this.cachedResult.info
+  }
+
+  /**
+   * fetch 最新 release 并分流限流信号（批次 4 RM2.3）。
+   * 403/429：记退避窗口（2h）后返回 null；其他错误原样向上抛
+   * （网络失败不缓存，下次仍会重新尝试）。
+   */
+  private async fetchLatestReleaseHandlingRateLimit(): Promise<GitHubRelease | null> {
     try {
-      release = await this.fetchGitHubLatestRelease()
+      return await this.fetchGitHubLatestRelease()
     } catch (err) {
       if (err instanceof ReleaseRateLimitedError) {
         // 403/429：记退避窗口（2h），窗口内后续调用直接短路零联网
@@ -215,50 +250,44 @@ export class ReleaseChecker implements IReleaseChecker {
       }
       throw err
     }
-    if (!release) return null
+  }
 
-    // 3. 三重 prerelease 防御 b：字段校验（负缓存：GitHub 侧判定无可用 stable）
-    if (release.prerelease) {
-      this.cachedResult = { info: null, fetchedAt: Date.now() }
-      return null
-    }
-    if (release.draft) {
-      this.cachedResult = { info: null, fetchedAt: Date.now() }
-      return null
-    }
+  /**
+   * 「无新版」统一出口（批次 4 m7 负缓存）：写 info=null 缓存并返回 null。
+   * prerelease / draft / 版本格式非法 / 不比当前新均经此处收口。
+   */
+  private writeNegativeCacheAndReturnNull(): null {
+    this.cachedResult = { info: null, fetchedAt: Date.now() }
+    return null
+  }
 
-    // 4. strip 前导 v，提取纯版本号
+  /**
+   * 三重 prerelease 防御 b/c + 版本比较（步骤 3-6）。
+   *
+   * @returns strip 前导 v 后的纯版本号；判定「无新版」（prerelease / draft /
+   *          版本格式非法 / 不比当前新，compare 抛错同此）时写负缓存并返回 null
+   */
+  private resolveNewerVersion(release: GitHubRelease, currentVersion: string): string | null {
+    // 三重 prerelease 防御 b：字段校验（负缓存：GitHub 侧判定无可用 stable）
+    if (release.prerelease) return this.writeNegativeCacheAndReturnNull()
+    if (release.draft) return this.writeNegativeCacheAndReturnNull()
+
+    // strip 前导 v，提取纯版本号
     const tagName = release.tag_name
     const strippedVersion = tagName.startsWith('v') ? tagName.slice(1) : tagName
 
-    // 5. 三重 prerelease 防御 c：严格版本号校验（拒绝 rc/beta 后缀；负缓存同上）
-    if (!STRICT_VERSION_RE.test(strippedVersion)) {
-      this.cachedResult = { info: null, fetchedAt: Date.now() }
-      return null
-    }
+    // 三重 prerelease 防御 c：严格版本号校验（拒绝 rc/beta 后缀；负缓存同上）
+    if (!STRICT_VERSION_RE.test(strippedVersion)) return this.writeNegativeCacheAndReturnNull()
 
-    // 6. 版本比较：latest 必须 > current；否则为「无新版」→ 写负缓存（m7）
+    // 版本比较：latest 必须 > current；否则为「无新版」→ 写负缓存（m7）
     let isNewer: boolean
     try {
       isNewer = compare(strippedVersion, currentVersion, '>') // compare 抛错则视为非新版
     } catch {
-      this.cachedResult = { info: null, fetchedAt: Date.now() }
-      return null
+      return this.writeNegativeCacheAndReturnNull()
     }
-    if (!isNewer) {
-      this.cachedResult = { info: null, fetchedAt: Date.now() }
-      return null
-    }
-
-    // 7. 按平台分流 asset，组装 LatestReleaseInfo（解析失败 = GitHub 数据坏，
-    //    保守不写负缓存，下次重试）
-    const info = await this.buildLatestReleaseInfo(release, strippedVersion, tagName)
-    if (!info) return null
-
-    // 8. 写入缓存（成功才写正缓存）
-    // 注意：fetchedAt 必须在 fetch 完成后重新取 now，否则会比实际获取时间提前最多 10s（fetch timeout）
-    this.cachedResult = { info, fetchedAt: Date.now() }
-    return info
+    if (!isNewer) return this.writeNegativeCacheAndReturnNull()
+    return strippedVersion
   }
 
   /**

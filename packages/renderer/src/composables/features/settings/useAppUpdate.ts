@@ -326,85 +326,121 @@ function subscribeProgress(): void {
  */
 let renderToken = 0
 
-async function checkForUpdate(force = false): Promise<void> {
-  const myToken = ++renderToken
-  // 防覆盖守卫：若已从 pending 恢复 available 态，联网检测不进入 checking 态
-  // （否则 available→checking→idle 会短暂隐藏提醒，且失败/无更新会丢失已恢复的提醒）。
-  // 仅当未恢复 pending（首次检测 / 正常流程）时才进入 checking 态。
-  // prevState：限额退避（rateLimited）时恢复原态——「限额未知」≠「确认无新版」，
-  // 不应把已有 available 提醒回退成 idle（RM2.3，2026-08 一致性审查补齐）。
-  // 降级守卫：理论并发（上一 check 未返回又触发本次）时 state 可能仍是瞬态 checking，
-  // 恢复瞬态态会被周期检查守卫卡死（canCheck 不含 checking），降级为 idle。
+/**
+ * 进入 checking 态前的状态守卫：记录本次检测前的稳定态（prevState）并按需置 checking。
+ *
+ * 防覆盖守卫：若已从 pending 恢复 available 态，联网检测不进入 checking 态
+ * （否则 available→checking→idle 会短暂隐藏提醒，且失败/无更新会丢失已恢复的提醒）。
+ * 仅当未恢复 pending（首次检测 / 正常流程）时才进入 checking 态。
+ * prevState：限额退避（rateLimited）时恢复原态——「限额未知」≠「确认无新版」，
+ * 不应把已有 available 提醒回退成 idle（RM2.3，2026-08 一致性审查补齐）。
+ * 降级守卫：理论并发（上一 check 未返回又触发本次）时 state 可能仍是瞬态 checking，
+ * 恢复瞬态态会被周期检查守卫卡死（canCheck 不含 checking），降级为 idle。
+ */
+function beginCheckTransition(): UpdateState {
   const prevState = state.state === 'checking' ? 'idle' : state.state
   if (!pendingRestored) {
     state.state = 'checking'
   }
+  return prevState
+}
+
+/**
+ * 限额退避处理（RM2.3）：main 侧 2h 窗口零联网短路 → 状态恢复原样，不当作「无新版」；
+ * 一次性非侵入提示（不进 error 态；周期/补查/手动同路径，手动点「检查更新」
+ * 也能得到解释而非静默无反应）
+ */
+function handleRateLimited(prevState: UpdateState): void {
+  state.state = prevState
+  if (!rateLimitHintShown) {
+    rateLimitHintShown = true
+    const { info: toastInfo } = useToast()
+    toastInfo(t('sidebar.update.rateLimited'))
+  }
+}
+
+/**
+ * 检测命中新版：应用 release 信息 + 置 available + 异步渲染 releaseNotes。
+ * myToken 用于渲染完成后的防陈旧检查（令牌语义见 checkForUpdate）。
+ */
+function applyCheckResult(info: LatestReleaseInfo, myToken: number): void {
+  // 状态守卫 ES4：downloaded/replacing/restarting 不被覆盖（除非检测到更新版本=ES5）
+  const currentVersion = state.latestRelease?.version
+  const isUpgrading = info.version !== currentVersion // 检测到不同（更新）版本
+  if (
+    state.state === 'downloaded' ||
+    state.state === 'replacing' ||
+    state.state === 'restarting'
+  ) {
+    if (state.state === 'downloaded' && isUpgrading) {
+      // ES5：downloaded 态检测到更新版本 → 退回 available（追新版，旧 preloaded 由 main 侧下次 download 时自动清）
+      console.log(
+        `[useAppUpdate] newer version ${info.version} detected during downloaded, rolling back to available`,
+      )
+      // 继续走下面的 available 设置（不 return）
+    } else {
+      // ES4：正在替换/重启 或 downloaded 同版本 → 不覆盖当前态
+      // 但更新 state.latestRelease（刷新 release info，如 releaseNotes 可能有变化）
+      state.latestRelease = info
+      return
+    }
+  }
+  state.latestRelease = info
+  state.state = 'available'
+  // releaseNotes 异步渲染（markdown-it + shiki WASM 首次加载），不阻塞 UI；
+  // 防陈旧：渲染期间若又发了新 checkForUpdate，丢弃本次 html（避免覆盖更新版本的信息）
+  // 提取当前语言对应的 release notes（支持多语言标记格式）
+  const localizedNotes = extractLocalizedNotes(info.releaseNotes)
+  void renderMarkdown(localizedNotes).then((html) => {
+    if (myToken !== renderToken) return  // 丢弃陈旧解析
+    state.releaseNotesHtml = html
+  })
+}
+
+/**
+ * 无新版回退 idle。防覆盖守卫：若已从 pending 恢复（pendingRestored=true），保持 available——
+ * pending 标志证明曾检测到更新，联网检测此刻未发现可能是缓存/网络问题，不应丢失提醒。
+ * 检测失败路径（handleCheckFailure）复用同一守卫，语义一致。
+ */
+function resetToIdleAfterMiss(): void {
+  if (!pendingRestored) {
+    state.state = 'idle'
+  }
+}
+
+/**
+ * 检测失败处理：不算升级流程错误（不打 error 态）。
+ * 不设 errorMessage：idle 态 UpdateButton 隐藏，设了也看不到，且会残留到下次。
+ * 失败信息仅 console.warn 便于诊断。
+ */
+function handleCheckFailure(e: unknown, myToken: number): void {
+  // 防陈旧：丢弃陈旧的失败结果
+  if (myToken !== renderToken) return
+  // 防覆盖守卫：pendingRestored 时不回退 idle（见 resetToIdleAfterMiss 理由）
+  resetToIdleAfterMiss()
+  console.warn('[useAppUpdate] checkForUpdate failed:', e)
+}
+
+async function checkForUpdate(force = false): Promise<void> {
+  const myToken = ++renderToken
+  const prevState = beginCheckTransition()
   try {
     const { info, rateLimited } = await ipcCheckForUpdate({ force })
     // 防陈旧：若期间又发了新 checkForUpdate，丢弃本次结果
     if (myToken !== renderToken) return
     if (rateLimited) {
-      // RM2.3：限额退避中（main 侧 2h 窗口零联网短路）→ 状态恢复原样，不当作「无新版」；
-      // 一次性非侵入提示（不进 error 态；周期/补查/手动同路径，手动点「检查更新」
-      // 也能得到解释而非静默无反应）
-      state.state = prevState
-      if (!rateLimitHintShown) {
-        rateLimitHintShown = true
-        const { info: toastInfo } = useToast()
-        toastInfo(t('sidebar.update.rateLimited'))
-      }
+      handleRateLimited(prevState)
       return
     }
     // 拿到确定答案（有/无新版）→ 退避窗口已结束，复位提示去重标记
     rateLimitHintShown = false
     if (info) {
-      // 状态守卫 ES4：downloaded/replacing/restarting 不被覆盖（除非检测到更新版本=ES5）
-      const currentVersion = state.latestRelease?.version
-      const isUpgrading = info.version !== currentVersion // 检测到不同（更新）版本
-      if (
-        state.state === 'downloaded' ||
-        state.state === 'replacing' ||
-        state.state === 'restarting'
-      ) {
-        if (state.state === 'downloaded' && isUpgrading) {
-          // ES5：downloaded 态检测到更新版本 → 退回 available（追新版，旧 preloaded 由 main 侧下次 download 时自动清）
-          console.log(
-            `[useAppUpdate] newer version ${info.version} detected during downloaded, rolling back to available`,
-          )
-          // 继续走下面的 available 设置（不 return）
-        } else {
-          // ES4：正在替换/重启 或 downloaded 同版本 → 不覆盖当前态
-          // 但更新 state.latestRelease（刷新 release info，如 releaseNotes 可能有变化）
-          state.latestRelease = info
-          return
-        }
-      }
-      state.latestRelease = info
-      state.state = 'available'
-      // releaseNotes 异步渲染（markdown-it + shiki WASM 首次加载），不阻塞 UI；
-      // 防陈旧：渲染期间若又发了新 checkForUpdate，丢弃本次 html（避免覆盖更新版本的信息）
-      // 提取当前语言对应的 release notes（支持多语言标记格式）
-      const localizedNotes = extractLocalizedNotes(info.releaseNotes)
-      void renderMarkdown(localizedNotes).then((html) => {
-        if (myToken !== renderToken) return  // 丢弃陈旧解析
-        state.releaseNotesHtml = html
-      })
-    } else if (!pendingRestored) {
-      // 无新版：回退 idle。但若已从 pending 恢复（pendingRestored=true），保持 available——
-      // pending 标志证明曾检测到更新，联网检测此刻未发现可能是缓存/网络问题，不应丢失提醒。
-      state.state = 'idle'
+      applyCheckResult(info, myToken)
+    } else {
+      resetToIdleAfterMiss()
     }
   } catch (e) {
-    // 防陈旧：丢弃陈旧的失败结果
-    if (myToken !== renderToken) return
-    // 检测失败不算升级流程错误（不打 error 态）。
-    // 不设 errorMessage：idle 态 UpdateButton 隐藏，设了也看不到，且会残留到下次。
-    // 失败信息仅 console.warn 便于诊断。
-    // 防覆盖守卫：pendingRestored 时不回退 idle（见上文理由）。
-    if (!pendingRestored) {
-      state.state = 'idle'
-    }
-    console.warn('[useAppUpdate] checkForUpdate failed:', e)
+    handleCheckFailure(e, myToken)
   }
 }
 
