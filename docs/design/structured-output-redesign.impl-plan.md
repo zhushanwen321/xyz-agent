@@ -85,9 +85,9 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | U1 | committed | 1 | feat commit `2135bbd66`（worktree feat/so-u1-single-param-tool）+ merge `a39282877`；107/107 tests + typecheck/lint 干净；P5/P6 实机探针通过（GLM-5.3-Flash，首调 {answer,confidence} / {value:[...]}，零 Validation failed）；BR-3 登记（mocks/typebox.ts 领地外必要增量）；dev 自报一次 git stash 违规已恢复无损 |
-| U2 | pending | 0 | — |
+| U2 | committed | 1 | commit 后续于 8a1020ee6 之前的独立 commit（7 文件：loop-gate 新增 + workflow-hook terminal 态 + index 装配 + 4 测试文件）；128→129 测试绿；P7' 探针通过未降级（RPC 子进程 + emptyEnum → 3 次同签名 → exit 41.9s + gate entry 落盘，主 agent 独立复核 session 证据） |
 | U4 | committed | 1（u4b 收尾） | commit `61987934a`（4 文件）；2933/2933 全绿 + typecheck 零错 + 验收 grep 两源文件零命中；BR-4 登记；S4 日常模式实机预验另由主 agent 完成（双参数保留 + 防御链活体） |
-| U5 | pending | 0 | — |
+| U5 | committed | 1 | 验收记录见 §8 签收表；S1-S5 全过（含环境限制如实标注）；一致性审查 2 unreasonable 修复于 `8a1020ee6`，doc_errors 设计 v3 修订同步 commit |
 
 ## 7 残留风险与变更历史
 
@@ -106,3 +106,22 @@ graph TD
 - 2026-08-28：验收前置 P8/P9 探针完成（结论见残留风险节）；生产 L4-L6 schema 固化为 `docs/design/structured-output-redesign.assets/l4l6-p3-schema.json`（实测 18 字段，设计文档计 17，以生产为准）。
 - 2026-08-28：U1 committed（Wave 1 完成）。实机探针补充事实：P5/P6 之外发现 pi 探针命令需 `-ne` 避免与全局 npm 版同名冲突、`PI_CODING_AGENT_DIR` 可复用 xyz-agent 的 zai provider（本地 omlx 端点不可用）。
 - 2026-08-28：U4 committed（BR-4 授权并入）。已知坑登记：subagent 环境跑 subagent-workflow 包测试须剥离全部 11 个 `PI_SUBAGENT_*` 环境变量（否则 vitest 继承后 SubagentService ownership guard 误报 4 失败）；波次内 harness ownership guard 将并行 subagent 记到已 gc 的 U1 名下致 message/cancel 通道被封，替代处置＝新派 one-shot subagent 收尾。S4/S5(D4) 实机预验完成（主 agent）。
+
+## 8 U5 验收记录（2026-08-28，逐行签收）
+
+前置探针：P9 ✅（0.84.1 dist 四点直读，见 §7 残留风险；碳上生产版本未登记，标注「未验证」）；P8 ✅（22 生产 schema 编译 0 失败 + 关键字强制实测）。
+
+| 场景 | 结果 | 证据 |
+|------|------|------|
+| S1 首调即成功 | ✅ GLM-5.3-Flash 3/3 | 每 run 恰 1 次调用、首调 18 字段全齐、零 Validation failed、无 schema 字段污染（对照事故基线：glm 100% 首调被拦、错 1-2 轮）。session 证据 /tmp/pi-probe-sessions/（01-31/01-33/01-34 三文件） |
+| S1 模型限制（如实标注） | ⚠️ 第二模型位未达成 | GLM-5.3 → 429 套餐无权限；deepseek-v4-flash → 401 key 失效（models-store 有目录但认证过期）；x-preview-f-free → 401 不支持。按用户指示统一用 flash 测试；deepseek 同族复现留待有该 provider 的环境（碳上） |
+| S2 失败有界 | ✅ | P7' 探针（RPC 子进程 + emptyEnum 不可满足 schema）：恰 3 次同签名失败 → 子进程 exit（41.9s，vs 事故 345 次/40 分钟）；session JSONL 含 structured-output:gate terminated entry（consecutiveFailures:3 + 归一化签名 + lastError）。父进程侧走「子进程结束未产出 structured-output」失败路径（S3 失败 run 的 call.error 记录形态同构验证） |
+| S3 链路兼容 | ✅ | chain workflow 端到端（RPC 常驻 + 双 dev extension）：三步 agent 全部 parsedOutput 产出并被下游消费，reason=completed；journal 原始事件 tool_start args={insights,keyPoints} 纯 data → tool_end details 透传 → isError:false；output-collector/AgentResult 零改动（diff 为空） |
+| S4 日常模式回归 | ✅ | 无 env 实跑：模型自报 {schema,data} 双参数形态保留（2 次调用均双参数）；防御链活体（schema 传 JS 风格字符串被拒 → 模型自修正为对象后成功）；日常全量单测保留（129 中日常组全绿） |
+| S5 负面反向 | ✅ | 全部实跑 0 次 "must have required properties schema"；D4 三层证据（单测注入断言 + P8 实测 additionalProperties:false 拒绝 + 实机：模型从 parameter schema 读到 additionalProperties:false 直接遵守并拒绝多塞字段要求）；L4-L6 schema 全部关键字在 TypeBox 参数层真实强制（P8） |
+
+一致性审查（阶段 3-4）：2 reviewer 分区对抗审查（structured-output 区 / subagent-workflow 区），结论 8 reasonable + 2 unreasonable（1 高：workflow-hook steer 文案残留旧口径；1 低：session-runner data 反引号）+ 1 doc_errors（设计 §7.4 漏列）——全部修复/修订于 commit `8a1020ee6`（设计 v3），定向复审通过（grep 零命中 + 新口径行级确认 + 129/2935 全绿）。
+
+波间与终验：Wave 2 后全量三连绿；修复后终验全量三连绿（typecheck exit 0 / lint 0 errors / extensions:test exit 0）。
+
+环境事实记录（复现验收需知）：pi 探针需 `-ne`（避免与全局 npm 版同名冲突）；`PI_CODING_AGENT_DIR=~/.xyz-agent/pi/agent` 复用 zai provider；models-store.json 缓存中 zai 小写 glm-5.3-flash 与 models.json 大写变体并存曾致子进程模型解析歧义（已删缓存小写变体，备份 /tmp/models-store.json.bak，pi 自动刷新可能重建）；print 模式主进程不等后台 workflow，端到端用 RPC 常驻；const 不可满足 schema 会被模型照传常量钻空（G1 副作用），S2 用 emptyEnum。
