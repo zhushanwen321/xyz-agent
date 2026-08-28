@@ -5,7 +5,8 @@
  *   - 'update:check'：检测最新版（w2，委托 IReleaseChecker.checkForLatestRelease）
  *   - 'update:perform'：执行升级（w3，委托 IUpdateOrchestrator.performUpdate +
  *     推 update:progress / update:error 事件 + 收到 triggerRestart 后调 app.quit）
- *   - 'update:download'：拆分后的下载阶段（委托 downloadUpdate + 写 preloaded）
+ *   - 'update:download'：拆分后的下载阶段（批次 3 契约版本号化：resolveByVersion 权威解析
+ *     → downloadUpdate + 写 preloaded）
  *   - 'update:install'：拆分后的安装阶段（从 preloaded 读取 release + filePath，委托 installUpdate）
  *   - 'update:getPreloaded'：读取预下载产物（readPreloadedUpdateRaw，供前端判断是否已下载完成）
  *
@@ -365,13 +366,19 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   // 供 update:install 读取（install 权威源是 preloaded，不信任前端传入的 release）。
   // 复刻 update:perform 的 inFlight-await（避免与后台预下载争抢 downloading 锁）+
   // 快路径（已有有效预下载产物 → 跳过重复下载）+ 错误转 update:error 事件。
-  ipcMain.handle('update:download', async (_event, payload: { release: LatestReleaseInfo }) => {
+  ipcMain.handle('update:download', async (_event, payload: { version: string }) => {
     if (!deps.updateOrchestrator) {
       throw new Error('updateOrchestrator not configured')
     }
+    if (!deps.releaseChecker) {
+      throw new Error('releaseChecker not configured')
+    }
     try {
-      // [SECURITY] 校验 renderer payload（与 update:perform 同源逻辑）
-      validateRelease(payload.release)
+      // [SECURITY · 批次 3 RC1] 契约版本号化：renderer 只传意图（version 字符串），
+      // release 数据由 main 权威解析（resolveByVersion：缓存 / force check）——旧契约的
+      // 完整 release payload（含 downloadUrl/sha256）不再过边界，能被下载执行的永远
+      // 是 GitHub 本仓库 latest release 的官方 asset。格式非法 / STALE / 网络失败在
+      // resolver 内拒绝，60s 节流防 API 放大。
 
       // [MUST-FIX #1] 若后台预下载仍在进行，先 await 它：预下载持有 orchestrator 的
       // downloading 锁，直接走 download 路径会被拒（'download already in progress'）。
@@ -382,16 +389,22 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
         await inFlight
       }
 
+      // 权威解析（缓存命中 / force check / 网络失败抛错 / 格式校验 + 60s 节流）
+      const release = await deps.updateOrchestrator.resolveByVersion(payload.version, {
+        currentVersion: app.getVersion(),
+        releaseChecker: deps.releaseChecker,
+      })
+
       // 快路径：已有有效预下载产物（同版本 + 文件存在 + 完整性通过）→ 不重复下载
-      const preloadedFile = await readPreloadedUpdate(payload.release)
+      const preloadedFile = await readPreloadedUpdate(release)
       if (preloadedFile) {
-        console.log(`[update:download] preloaded file exists for v${payload.release.version}, skip download`)
+        console.log(`[update:download] preloaded file exists for v${release.version}, skip download`)
         return { downloaded: true }
       }
 
       // 下载阶段 onProgress → update:progress 事件（stage='downloading'）
-      console.log(`[update:download] downloading v${payload.release.version}...`)
-      const { filePath } = await deps.updateOrchestrator.downloadUpdate(payload.release, (percent) => {
+      console.log(`[update:download] downloading v${release.version}...`)
+      const { filePath } = await deps.updateOrchestrator.downloadUpdate(release, (percent) => {
         const win = deps.getMainWindow()
         if (win && !win.isDestroyed()) {
           win.webContents.send('update:progress', { stage: 'downloading', percent })
@@ -399,8 +412,8 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       })
 
       // 写 preloaded（供 update:install 和 update:getPreloaded 读）
-      writePreloadedUpdate(payload.release, filePath)
-      console.log(`[update:download] downloaded v${payload.release.version} to ${filePath}`)
+      writePreloadedUpdate(release, filePath)
+      console.log(`[update:download] downloaded v${release.version} to ${filePath}`)
       return { downloaded: true }
     } catch (err) {
       // 错误处理与 update:perform catch 一致：推 update:error + throw 可序列化对象。

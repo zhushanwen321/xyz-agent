@@ -33,7 +33,9 @@ import { pickPlatformAsset } from './pick-platform-asset.js'
 import { UPDATE_DIR, UPDATE_RESULT_FILE } from './constants.js'
 import { readProxyConfig } from './proxy-config.js'
 import { UpdateError, UpdateUnsupportedError } from './types.js'
+import type { UpdateErrorCode } from './types.js'
 import type { UpdateScriptRef } from './types.js'
+import type { IReleaseChecker } from '../interfaces.js'
 
 /** 进度完成百分比 */
 const PROGRESS_COMPLETE = 100
@@ -82,6 +84,20 @@ export interface IUpdateOrchestrator {
     release: LatestReleaseInfo,
     onProgress?: (percent: number) => void,
   ): Promise<DownloadedFile>
+
+  /**
+   * 版本解析（批次 3 信任锚 RC1）：renderer 只传意图（version 字符串），release 数据
+   * 由 main 权威解析。四分支 + 60s 节流详见 {@link resolveByVersion}。
+   *
+   * @param version renderer 请求的目标版本号（不可信输入，严格校验）
+   * @param opts.currentVersion 当前 app 版本（checker 比较用）
+   * @param opts.releaseChecker Release 权威源（缓存 / force check）
+   * @throws UpdateError 格式非法 / STALE_RELEASE / check 网络失败 / 节流中
+   */
+  resolveByVersion(
+    version: string,
+    opts: { currentVersion: string; releaseChecker: IReleaseChecker },
+  ): Promise<LatestReleaseInfo>
 
   /**
    * 安装阶段：平台分发（生成替换脚本 + 触发替换）+ 据 ref.kind 决定返回值。
@@ -162,6 +178,91 @@ export async function downloadUpdate(
   } finally {
     downloading = false
   }
+}
+
+/**
+ * 版本解析拒绝后的节流窗口：拒绝后 60s 内同 channel 后续请求直接拒绝、不触发
+ * force check——恶意 renderer 高频 invoke 不能定向打光 GitHub API 限额（60 次/小时）。
+ * 批次 4 的退避在 renderer 侧，拦不住恶意 invoke，节流必须在 main 侧。
+ */
+const RESOLVE_THROTTLE_MS = 60_000
+
+/** 请求版本严格格式（3-4 段数字，与 release-checker 的 STRICT_VERSION_RE 同规则） */
+const REQUESTED_VERSION_RE = /^\d+\.\d+\.\d+(?:\.\d+)?$/
+
+/**
+ * 上次版本解析拒绝时刻（epoch ms，0 = 无拒绝）。
+ * 只由 STALE_RELEASE 与格式非法拒绝触发；网络失败不节流（用户网络恢复后可立即重试）。
+ */
+let lastResolveRejectedAt = 0
+
+/**
+ * 版本解析器（批次 3 信任锚 RC1 核心）。
+ *
+ * update:download 契约版本号化后，renderer 只传意图（version 字符串），release 数据
+ * 由 main 权威解析。四分支（设计 §3.5.1）：
+ *   ① ReleaseChecker 缓存（非强制调用 = 1h 缓存语义）命中且版本一致 → 用缓存 release
+ *   ② 缓存无 / 版本不一致 → 一次权威 force check：check 失败（网络断/超时，既不能
+ *      确认也不能证伪）→ 抛网络类 UpdateError，绝不回退使用任何缓存外或 renderer 侧
+ *      数据；check 成功但 latest.version ≠ 请求版本 → 抛 UPDATE_STALE_RELEASE
+ *      （renderer 收到后自动重查，拿到更新的 latest）
+ *   ③ 请求版本格式非法（非 string / 非 3-4 段数字）→ 直接拒绝
+ *   ④ 拒绝后 60s 节流：同 channel 后续请求直接拒绝，不触发 force check
+ *
+ * 效果断言：无论 renderer 传什么，能被下载执行的永远是 GitHub 本仓库 latest release
+ * 的官方 asset——RC1 的整类攻击面消失。
+ *
+ * [已知语义边界] checkForLatestRelease 的 null 同时覆盖「网络失败」与「latest ≤ 当前
+ * 版本」等情形（该接口不在本单元领地）：两者在此一律按失败处理拒绝升级——保守方向
+ * 安全（拒绝 ≠ 误装），代价是降级请求得到网络类错误文案。
+ */
+export async function resolveByVersion(
+  version: string,
+  opts: { currentVersion: string; releaseChecker: IReleaseChecker },
+): Promise<LatestReleaseInfo> {
+  // ④ main 侧廉价节流：拒绝后 60s 内直接拒绝（含合法重试——设计如此取舍，
+  //    renderer 侧批次 4 退避会避开窗口）
+  if (Date.now() - lastResolveRejectedAt < RESOLVE_THROTTLE_MS) {
+    throw new UpdateError(
+      'version resolve throttled: a previous resolve was rejected recently, retry later',
+      'downloading',
+    )
+  }
+
+  // ③ 版本格式非法 → 直接拒绝。typeof 守卫先行：IPC payload 不受 TS 类型约束，
+  //    数字等非 string 值会被正则隐式串化绕过（123 → '123' 合法），必须显式拒绝
+  if (typeof version !== 'string' || !REQUESTED_VERSION_RE.test(version)) {
+    lastResolveRejectedAt = Date.now()
+    throw new UpdateError(`invalid requested version format: ${String(version)}`, 'downloading')
+  }
+
+  // ① 缓存优先：非强制调用命中 1h 缓存且版本一致 → 直接用缓存 release（零网络）
+  const cached = await opts.releaseChecker.checkForLatestRelease(opts.currentVersion)
+  if (cached && cached.version === version) {
+    return cached
+  }
+
+  // ② 权威 force check（缓存无 / 版本不一致）
+  const latest = await opts.releaseChecker.checkForLatestRelease(opts.currentVersion, {
+    force: true,
+  })
+  if (!latest) {
+    // check 失败：既不能确认也不能证伪请求版本 → 抛网络类错误，绝不回退
+    throw new UpdateError('latest release check failed (network)', 'downloading', 'UPDATE_NETWORK_FAILED')
+  }
+  if (latest.version !== version) {
+    // check 成功但 latest ≠ 请求版本 → 请求版本已过期（renderer 应重新检查更新）
+    lastResolveRejectedAt = Date.now()
+    throw new UpdateError(
+      `requested version ${version} is stale (latest is ${latest.version})`,
+      'downloading',
+      // [类型接线遗留] 码值 SSOT 定义在 shared/src/update.ts 的 UPDATE_STALE_RELEASE，
+      // 但 shared index.ts 的 re-export 与 types.ts 的 UpdateErrorCode 闭联合约均不在
+      // 本单元领地，暂以字面量桥接；renderer（u3b）与文案接线（后续单元）收口
+      'UPDATE_STALE_RELEASE' as UpdateErrorCode,
+    )
+  }
+  return latest
 }
 
 /**
@@ -319,4 +420,5 @@ export const updateOrchestrator: IUpdateOrchestrator = {
   performUpdate,
   downloadUpdate,
   installUpdate,
+  resolveByVersion,
 }

@@ -135,3 +135,14 @@ export interface LaunchResult {
   /** 版本号（升级成功=新版本，回滚=恢复到的旧版本） */
   version: string
 }
+
+/**
+ * 版本解析错误码（批次 3 信任锚 RC1）：update:download 请求的版本落后于权威 latest
+ * （GitHub /releases/latest 实测值 ≠ 请求值）。renderer 收到此码后应自动重新检查更新，
+ * 拿到更新的 latest 再发起下载，而非重试旧版本。
+ *
+ * [类型接线遗留] main 侧 types.ts 的 UpdateErrorCode 闭联合尚未并入此值（types.ts
+ * 不在 u3a 领地），orchestrator 抛错处临时以 as UpdateErrorCode 桥接；中文文案
+ * （message / suggestion）接线 UPDATE_ERROR_MESSAGES 同批处理。
+ */
+export const UPDATE_STALE_RELEASE = 'UPDATE_STALE_RELEASE'
