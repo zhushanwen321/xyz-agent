@@ -1,0 +1,103 @@
+# structured-output 终态重设计 实施计划
+
+基线: <commit 时填> | 来源设计: docs/design/structured-output-redesign.md（v2，审查修订版） | 审查报告: docs/design/structured-output-redesign.review.md（2 must-fix 已在 v2 落盘） | 日期: 2026-08-28
+
+## 0 章节映射
+
+| 内容 | 设计文档实际位置 |
+|------|------------------|
+| 背景/目标 | §1 背景、§2 设计目标（G1-G4 + In/Out-of-scope） |
+| 终态/机制 | §5 终态、§6 关键决策 D1-D5、§7 实现机制（文件级改动地图 1-6） |
+| 验收场景表 | §8（S1-S5 五场景 + 版本矩阵前置项） |
+| 下一层拆分 | §10（U1-U5） |
+| 待验证检查点 | §11 探针清单（P1/P2/P3-new/P4 ✅ 已证实；P5/P6 在 U1 实施期；P7' 在 U2 实施期；P8/P9 在 U5 验收前置） |
+
+## 1 目标快照（逐字摘录，禁止改写）
+
+> **G1 首调即成功**：模型读完任务后第一次调 structured-output 就是正确形态。不存在「按工具描述传参却被参数层拦截」的系统性第一轮浪费（当前 glm-5.3 与 deepseek 均 100% 命中此坑）。
+> **G2 失败必有界**：无论模型多弱、schema 多复杂，structured-output 相关的连续失败在同签名错误第 3 次后终止子进程（当前上限 = 无上限，实测 345 次空转 40 分钟），终止原因进日志与调用记录、带恢复指引。
+> **G3 接口不自相矛盾**：模型从任何信息源（工具描述 / 工具参数 schema / prompt 注入 / hook 提醒）看到的调用约定都一致——不是靠四处文案对齐维持，而是矛盾在结构上不可能存在。
+> **G4 日常模式回归为零**：交互式主 agent 的自报双参数用法行为逐字节不变。
+
+**In-scope**：`extensions/universal/structured-output/`（工具定义、execute、hook、新增闸门）；`extensions/universal/subagent-workflow/` 内三处 prompt 文案。
+**Out-of-scope**：pi 上游（不修改）；`agent({schema})` API 与 `parsedOutput` 回收链路（零改动是设计约束）；emulated 引擎的 schema 仿真层；workflow 侧 schema 扁平化改造；maxTurns 兜底。
+
+## 2 单元列表
+
+> 单元编号沿用设计 §10 的 U1-U5；领地在设计基础上把测试文件并入实现单元（偏差 BR-1，见 §5）。
+
+| Unit | 职责 | 领地（精确文件路径） | 依赖 | 隔离 | 验收条款 |
+|------|------|----------------------|------|------|----------|
+| U1 workflow 单参数工具 | tool-definition 拆双变体（workflow 变体 parameters=权威 schema，非 object 根包装 `{value}`，根级 additionalProperties 未声明时注入 false）+ execute workflow 分支改透传/解包（删权威 ajv 复核）+ 加载期防御上移（keyword-less 拒绝 + boolean true 拦截 fail-fast 于注册期）+ index.ts 装配分岔 + 对应测试改写 | `extensions/universal/structured-output/src/tool-definition.ts`、`src/execute.ts`、`src/index.ts`、`tests/prompt-quality.test.ts`、`tests/structured-output.test.ts` | 无 | **worktree**（用户指定，2026-08-28 评审） | ① `cd extensions/universal/structured-output && pnpm test` 全绿；② `pnpm extensions:typecheck` + `pnpm extensions:lint` 干净；③ 新单测覆盖：workflow 变体 parameters 注入 additionalProperties:false（未声明时）/ 尊重显式声明、非 object 根包装与解包、加载期防御 fail-fast（keyword-less / boolean true）、execute workflow 分支透传不再 ajv；④ P5/P6 探针：本地 `pi --mode rpc` 起 workflow 子进程，session JSONL 确认模型可见 parameters=权威 schema + 首调即单参数形态（失败走 §11 降级路径并上报） |
+| U2 有界失败闸门 | loop-gate.ts 新增（同签名计数状态机 + 错误签名归一化 + terminal 时写日志调 `pi.shutdown()`）+ workflow-hook.ts RetryState 增 terminal 态（terminal 不 steer，未调用 steer 保留上限 2）+ index.ts workflow 模式注册闸门（`tool_execution_end`）+ 对应测试新增/重锁 | `extensions/universal/structured-output/src/loop-gate.ts`（新增）、`src/workflow-hook.ts`、`src/index.ts`、`tests/loop-gate.test.ts`（新增）、`tests/retry-state.test.ts`、`tests/characterization-hook.test.ts`、`tests/mock-pi-fixture.ts` | U1（src/index.ts 共改，串行） | plain | ① `pnpm test` 全绿（含 loop-gate 新单测：同签名计数 / 签名变化清零 / 连续 3 次 terminal→shutdown / hook terminal 不 steer）；② 三连干净；③ characterization-hook 按新行为基线重锁（非零改动全绿，断言目标变更需在 commit 说明）；④ P7' 探针：S2 形态实跑一次（不可满足 schema），检查子进程秒级退出 + 日志含 gate Terminated + 指引（失败走 §11 P7' 降级路径并上报） |
+| U4 文案收敛 | 删除「do NOT pass a schema parameter」类警告，保留「必须调用工具、参数即 data」口径 | `extensions/universal/subagent-workflow/src/orchestration/agent-opts-resolver.ts`、`src/execution/session-runner.ts`、`src/execution/__tests__/session-runner-schema-env.test.ts`、`src/execution/__tests__/format-schema-instruction.test.ts`、`src/execution/engine/engines/pi/__tests__/pi-engine.test.ts` | U1（文案正确性以新工具形态为准，串行）；与 U2 领地互斥可并行 | plain | ① `cd extensions/universal/subagent-workflow && pnpm test` 全绿；② 三连干净；③ `grep -rn "do NOT pass a .schema. \|ONLY the .data. parameter" src/` 在两源文件中零命中（测试文件中文案锁同步更新） |
+| U5 实机验收 | §8 五场景 + 前置探针 P8/P9 | 无代码领地；产物 = 本计划 §6 状态表证据指针 + 验收记录（追加到本文件 §7 下） | U2、U4 全 committed | plain | 前置 P9：项目 node_modules pi 0.84.1 复跑 P3-new/P1/P2 三点探针，结论登记；前置 P8：收集生产在用 schema 集合（L4-L6 取自事故 session `~/.pi/agent/sessions/--Users-zhushanwen-Stock--/2026-08-27T16-49-36-235Z_*.jsonl` + 内置 workflows 声明 schema）跑 TypeBox 编译 + enum/required/嵌套 items 关键字强制抽查。然后按 §8 逐行签收 S1-S5，每场景留命令与关键输出证据 |
+
+**u-foundation 缺席说明**：本次无跨单元共享的新契约模块；唯一共改文件 `structured-output/src/index.ts`（U1→U2）以串行边解决。
+
+## 3 DAG 图
+
+```mermaid
+graph TD
+  subgraph W1[Wave 1]
+    U1["U1 workflow 单参数工具<br/>领地: structured-output src 3 文件 + tests 2 文件<br/>隔离: worktree（用户指定）"]
+  end
+  subgraph W2[Wave 2]
+    U2["U2 有界失败闸门<br/>领地: structured-output src 3 + tests 4 文件"]
+    U4["U4 文案收敛<br/>领地: subagent-workflow 2 源 + 3 测试文件"]
+  end
+  subgraph W3[Wave 3]
+    U5["U5 实机验收 S1-S5<br/>领地: 无代码，产验收记录"]
+  end
+  U1 -->|"src/index.ts 共改（装配分岔→闸门注册）"| U2
+  U1 -->|"文案「参数即 data」以新工具形态为准"| U4
+  U2 -->|"全场景验收要求闸门就位"| U5
+  U4 -->|"S3 链路兼容经 subagent-workflow"| U5
+```
+
+波次：W1(U1) → W2(U2 ∥ U4) → W3(U5)。并发峰值 2，≤5 兼容。
+
+## 4 测试策略
+
+命令从项目 package.json scripts 真实读取：
+
+| 层级 | 命令 | 使用时机 |
+|------|------|----------|
+| 单包增量（structured-output） | `cd extensions/universal/structured-output && pnpm test` | U1/U2 开发循环内 |
+| 单包增量（subagent-workflow） | `cd extensions/universal/subagent-workflow && pnpm test` | U4 开发循环内 |
+| 类型 + lint | `pnpm extensions:typecheck && pnpm extensions:lint` | 每单元 commit 前 |
+| 全量三连 | `pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test` | 每单元 commit 前 + 收尾（U5 前置） |
+| 实机探针/验收 | `pi --mode rpc --session-dir <dir> --model <m> --approve --extension <path>` + stdin JSONL；`XYZ_AGENT_DEBUG=1` 看 `~/.pi/agent/logs/` | P5/P6/P7'/S1-S5 |
+
+测试框架红线（项目 AGENTS.md）：vitest（禁 node:test / tsx --test），timer 测试用 fake timers，三视角（构建者白盒 + 使用者黑盒 + 观察者形态）。
+
+## 5 合理偏差登记表
+
+| ID | 偏差 | 理由 | 状态 |
+|----|------|------|------|
+| BR-1 | 设计 §10 的 U3（测试改写独立单元）取消，测试文件并入 U1/U2/U4 领地 | dev-flow 阶段 2 gate 要求每单元 commit 时「测试真实跑绿」；prompt-quality 等文本锁与 description 改动必须原子演进，独立 U3 会制造「实现已 commit 但测试红」的中间态违反 gate。U3 的全量收口职责并入各单元验收条款 + U5 前置全量三连 | 已登记 |
+| BR-2 | U4 领地比设计 §7.6 的「两处文案」多 3 个测试文件 | grep 证实三处测试锁定现有文案（session-runner-schema-env / format-schema-instruction / pi-engine），不改则 U4 必红 | 已登记 |
+
+## 6 状态表
+
+| Unit | 状态 | 轮次 | 证据指针 |
+|------|------|------|----------|
+| U1 | pending | 0 | — |
+| U2 | pending | 0 | — |
+| U4 | pending | 0 | — |
+| U5 | pending | 0 | — |
+
+## 7 残留风险与变更历史
+
+**残留风险**（承接设计 §11 ⛔ 探针，均有降级路径）：
+
+- P5（动态 parameters 模型可见性）/ P6（非 object 根包装）：U1 实施期验证，失败降级 `Type.Unsafe` → `Type.Object({})` + execute 恢复 ajv（放弃 D2）。
+- P7'（shutdown 后父进程终态呈现）：U2 实施期 S2 实跑，失败降级 steer 一次 + maxTurns 兜底（G2 降为分钟级）。
+- P8（TypeBox 与 ajv 语义差）：U5 前置全量 schema 编译 + 关键字抽查，失败改写 schema 避开差集或走 P5 降级。
+- P9（版本矩阵）：0.84.1 复跑三点探针；碳上生产版本未登记项在验收记录中如实标注「未验证」。
+- 同一单元 dev→fix 超 2 轮未绿 → 冻结升级用户；一致性审查累计 ≥3 轮未收敛 → 暂停升级。
+
+**变更历史**：
+
+- 2026-08-28：初版计划。BR-1/BR-2 登记设计拆分与领地调整。
+- 2026-08-28：用户评审通过（粒度/验收批准）；U1 隔离改 worktree（用户指定）。U2/U4/U5 保持 plain。
