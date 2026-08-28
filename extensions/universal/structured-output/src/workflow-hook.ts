@@ -12,7 +12,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // 反向依赖（环）：loop-gate 为本模块 steer 回灌提供截断原语（审查项#1，导出复用勿复制）。
 // 两模块互引均为函数声明（ESM 提升）且只在事件回调运行期调用（无模块顶层执行），环安全。
-import { truncateText } from "./loop-gate.js";
+import { STEER_ERROR_MAX_CHARS, truncateText } from "./loop-gate.js";
 
 import { isToolExecutionEndEvent, isTurnEndEvent } from "./schema-guards.js";
 
@@ -178,28 +178,33 @@ export function setupWorkflowHook(pi: PiAPI, schemaJson: string): RetryState {
 		// 1. 已经成功调用过 structured-output，不再干预
 		// 2. 不是合法 turn_end 事件
 		// 3. stopReason="toolUse" → 模型还在调工具链，不需要干预
-		// 4. stopReason="error"/"aborted"（审查项#9）→ 本轮异常终止：此刻注入的 steer
-		//    在本轮不会被消费，chatMode 复用子进程时会泄漏成下一轮的陈旧指令——不发送。
+		// 4. stopReason="error"/"aborted"（审查项#9）/"deferred"（F4：pi-ai StopReason
+		//    枚举成员，types.d.ts:275——provider 延迟响应挂起，本轮没有可消费 steer 的
+		//    收尾点）→ 本轮异常/未收尾终止：此刻注入的 steer 在本轮不会被消费，
+		//    chatMode 复用子进程时会泄漏成下一轮的陈旧指令——不发送。
 		//    不调 onTurnEnd（预算不扣减），状态保留到下一个正常收尾的轮再判定 steer。
 		// 5. 超过重试上限：放弃，让子进程自然结束（调用方据 result.error 判定失败）
 		if (state.terminal) return;
 		if (state.soSucceededEver) return;
 		if (!isTurnEndEvent(event)) return;
 		if (event.message?.stopReason === "toolUse") return;
-		if (event.message?.stopReason === "error" || event.message?.stopReason === "aborted") return;
+		if (event.message?.stopReason === "error" || event.message?.stopReason === "aborted"
+			|| event.message?.stopReason === "deferred") return;
 		if (state.hookRetryCount >= MAX_HOOK_RETRIES) return;
 
 		// 完全没调用 OR 调了但全是失败 → 都需要 steer。两种情况共用重试上限与计数。
 		const calledButFailed = state.soCallCount > 0;
 		// 构造 reminder 时 lastSchemaError 必须仍是本 turn 的错误文本，
 		// 故 onTurnEnd()（清空 lastSchemaError）必须在发送成功之后调用。
-		// 错误块经 truncateText 截断（审查项#1，500c 上限沿用 loop-gate 签名常量）：
-		// pi-ai validation.js 的实参回显无截断，大 payload 失败时原始错误 ≈11K chars；
-		// 首部关键信息（错误类型 + 字段名）位于错误文本头部，截断后仍完整保留。
+		// 错误块经 truncateText 截断（审查项#1，上限 = STEER_ERROR_MAX_CHARS，与 loop-gate
+		// 签名上限语义独立——见 F5 拆分）：pi-ai validation.js 的实参回显无截断，
+		// 大 payload 失败时原始错误 ≈11K chars。如实口径：截断保留首部 = 错误类型 +
+		// 靠前的字段名，列表靠后的字段名可能被截掉；完整 schema 形状由下方 reminder 内
+		// schemaJson 全文另行完整携带，模型修正不依赖错误块的截断尾部。
 		const reminder = calledButFailed
 			? [
 					"[MANDATORY] Your structured-output call FAILED validation:",
-					truncateText(state.lastSchemaError ?? "structured-output call failed"),
+					truncateText(state.lastSchemaError ?? "structured-output call failed", STEER_ERROR_MAX_CHARS),
 					"",
 					"The schema is enforced by the system (PI_WORKFLOW_SCHEMA) — this tool's parameter schema IS the required shape of your result.",
 					`The required schema for your result is: ${schemaJson}`,

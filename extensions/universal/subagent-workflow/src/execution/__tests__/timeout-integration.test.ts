@@ -302,9 +302,10 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
 
   // ── 2. watchdog 默认不挂载 + env 兑底（预算语义对齐 2026-08）──
   //
-  // 语义：maxTurns 未传/<=0 → 不挂 watchdog（不限，旧实现按 10 turns 估出 50min 默认
-  // SIGTERM 且 maxTurns:0 也关不掉，已废）；env XYZ_SUBAGENT_SPAWN_WATCHDOG_MS 设置时
-  // 按绝对时限兑底挂载（hang 泄漏防线 opt-in）。resolveSpawnWatchdogMs 是挂载判定唯一入口。
+  // 语义：maxTurns 未传 → env 兑底；显式 0/负 → 压过 env 不挂（U5，SP-6 参数 > env，
+  // 旧实现 maxTurns:0 落到 env 兑底，参数显式关不掉 watchdog，已废）；
+  // env XYZ_SUBAGENT_SPAWN_WATCHDOG_MS 设置时按绝对时限兑底挂载（hang 泄漏防线
+  // opt-in）。resolveSpawnWatchdogMs 是挂载判定唯一入口。
   describe("watchdog 默认不挂载 + env 兑底（预算语义对齐）", () => {
     beforeEach(() => {
       vi.useFakeTimers();
@@ -326,13 +327,29 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
     it("resolveSpawnWatchdogMs：env 设置 → 绝对时限；非法值 → undefined；maxTurns 有效优先", () => {
       vi.stubEnv(SPAWN_WATCHDOG_ENV, "60000");
       expect(resolveSpawnWatchdogMs(undefined)).toBe(60_000);
-      expect(resolveSpawnWatchdogMs(0)).toBe(60_000);
+      // [U5] SP-6 参数 > env：显式 0 压过 env 兑底 → 不挂（旧实现落成 60000）
+      expect(resolveSpawnWatchdogMs(0)).toBeUndefined();
+      expect(resolveSpawnWatchdogMs(-5)).toBeUndefined();
       // maxTurns 有效（>0）→ turns 估算优先于 env 兑底
       expect(resolveSpawnWatchdogMs(6)).toBe(computeWatchdogMs(6));
       vi.stubEnv(SPAWN_WATCHDOG_ENV, "abc");
       expect(resolveSpawnWatchdogMs(undefined)).toBeUndefined();
       vi.stubEnv(SPAWN_WATCHDOG_ENV, "-1");
       expect(resolveSpawnWatchdogMs(undefined)).toBeUndefined();
+    });
+
+    // [U1] setTimeout 2^31-1 溢出 fail-fast：溢出 delay 被 Node 置 1ms 立即触发
+    //（watchdog 变「启动即杀」），两路径（env 兑底 / turns 估算）都必须在入口拦截。
+    it("resolveSpawnWatchdogMs：env 值溢出（>2^31-1）→ fail-fast throw（不静默 clamp/不挂）", () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "3000000000");
+      expect(() => resolveSpawnWatchdogMs(undefined)).toThrowError(/2147483647/);
+      expect(() => resolveSpawnWatchdogMs(undefined)).toThrowError(/Recovery/);
+    });
+
+    it("resolveSpawnWatchdogMs：maxTurns 估算值溢出 → fail-fast throw", () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "");
+      // maxTurns=1e6 → 估算 5e9 ms > 2^31-1，入口拦截
+      expect(() => resolveSpawnWatchdogMs(1_000_000)).toThrowError(/2147483647/);
     });
 
     it("maxTurns 未传 → 推进 56min 不 kill（旧实现 50min 估算会误杀）", async () => {
@@ -361,6 +378,25 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
 
       const child = await waitForSpawnFake();
       await vi.advanceTimersByTimeAsync(56 * 60 * 1000);
+      expect(child.killed).toBe(false);
+
+      emitStdoutLine(child, sessionHeader());
+      child.stdout.end();
+      child.emit("close", 0);
+      const result = await promise;
+      expect(result.success).toBe(true);
+    });
+
+    // [U5] SP-6 参数 > env：显式 maxTurns:0 压过 SPAWN_WATCHDOG_ENV 兑底——
+    // 旧实现落成 env 时限 kill，参数显式关不掉 watchdog。
+    it("maxTurns: 0 + env=60000 → 显式 0 压过 env，61s 不 kill（U5）", async () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "60000");
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: zero-turns-override", makeOpts({ maxTurns: 0 }), makeCtx());
+
+      const child = await waitForSpawnFake();
+      // 推进越过 env 兑底时限（60s）：若 maxTurns:0 未压过 env，此处已被 kill
+      await vi.advanceTimersByTimeAsync(61 * 1000);
       expect(child.killed).toBe(false);
 
       emitStdoutLine(child, sessionHeader());

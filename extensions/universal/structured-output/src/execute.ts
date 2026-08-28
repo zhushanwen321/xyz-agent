@@ -41,6 +41,10 @@ import {
  * object 特有关键字的存在意味着作者在描述 object 输出，arguments（必为 object）
  * 直接被这些约束校验，故算 object 根。组合根（anyOf/oneOf/allOf/$ref/enum）
  * 可能接受非 object 值，保真起见一律包装（{value} 内可容纳任意成员类型）。
+ *
+ * [同源锚定] @zhushanwen/pi-subagent-workflow 的 agent-opts-resolver.ts 持有
+ * 本函数的本地副本（两包独立 npm 不能直接 import，optional peer 不保证存在），
+ * 其 ASP 文案按本判定同源条件化——改动本函数判定逻辑必须同步该副本。
  */
 export function isObjectRootSchema(schema: unknown): schema is Record<string, unknown> {
 	if (!isPlainObject(schema)) return false;

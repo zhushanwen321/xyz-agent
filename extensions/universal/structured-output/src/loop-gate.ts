@@ -13,6 +13,8 @@
  *     回显后，提取错误字段/路径 token 集合排序哈希为签名——集合不变 = 模型无进展
  *     （重复同一批字段错误），集合变化（含缩小 = 渐进修复）= 模型在推进。旧 500c
  *     前缀截断在大 schema 下会把「修复排序靠后字段」（消息前缀不变）误折叠成同签名。
+ *     required 错误的完整缺失字段列表从 message 解析并入 token（pi-ai bullet 路径位
+ *     仅含 requiredProperties[0]，只取路径位会把「修好非首字段」折叠成同签名误杀）。
  *   - 连续同签名失败达 MAX_CONSECUTIVE_FAILURES（3）→ terminal 态：
  *     写日志（stderr + appendEntry 双通道，含 §5.2 形态 b 恢复指引）后调
  *     ctx.shutdown() 优雅终止子进程（RPC mode 在 agent_settled 后 exit）。
@@ -47,19 +49,59 @@ export const MAX_CONSECUTIVE_FAILURES = 3;
 const ARGS_ECHO_MARKER = "Received arguments:";
 
 /**
- * 签名/回灌文本截断上限（实施期自定：错误行块由 schema 违规条数决定，500 字符覆盖
- * 现实错误列表）。双消费方：① 签名 fallback 前缀；② steer 回灌错误块截断
- * （workflow-hook 复用，审查项#1——pi-ai validation.js 的实参回显无截断，大 payload
- * 失败时单份 steer ≈11K chars，首部关键信息 = 错误类型 + 字段名保留在 500c 内）。
+ * 闸门签名侧截断上限：① normalizeErrorSignature fallback 分支（提取不到字段 token 的
+ * 非校验类错误文本降级为裸前缀做等值比较）；② LoopGate.lastErrorText（terminal 日志
+ * 引用，不进模型上下文）。与 steer 回灌错误块上限（STEER_ERROR_MAX_CHARS）语义独立
+ * （F5 拆分：签名只做比较原料、可随实现演化；steer 是模型可见文本预算），两上限
+ * 不共享数值演化。
  */
 export const SIGNATURE_MAX_CHARS = 500;
 
 /**
- * 截断到 max 字符（超出追加 "..."）——有界化原语，勿复制（审查项#1：导出复用）。
- * 消费方：LoopGate.lastErrorText（terminal 日志）与 workflow-hook 的 steer 回灌错误块。
+ * steer 回灌错误块截断上限（workflow-hook 消费；审查项#1：pi-ai validation.js 的
+ * 实参回显无截断，大 payload 失败时单份 steer ≈11K chars）。截断保留首部 = 错误类型
+ * + 靠前字段名；完整 schema 形状由 reminder 内 schemaJson 全文另行完整携带，不依赖
+ * 错误块。
  */
-export function truncateText(text: string, max = SIGNATURE_MAX_CHARS): string {
+export const STEER_ERROR_MAX_CHARS = 500;
+
+/**
+ * 截断到 max 字符（超出追加 "..."）——有界化原语，勿复制（审查项#1：导出复用）。
+ * max 必显式传入：签名侧传 SIGNATURE_MAX_CHARS（loop-gate 内部），steer 侧传
+ * STEER_ERROR_MAX_CHARS（workflow-hook）——不设默认值，防止新调用方静默绑错语义。
+ */
+export function truncateText(text: string, max: number): string {
 	return text.length <= max ? text : `${text.slice(0, max)}...`;
+}
+
+/**
+ * TypeBox required message 形态（typebox locale en_US 逐字核实）：
+ * "must have required properties X, Y, Z"——单缺失也是复数 "properties"，字段名为
+ * 裸标识符 ", " 连接。解析恢复完整缺失字段列表；形态不符 → undefined（走路径位）。
+ */
+const REQUIRED_MESSAGE_RE = /must have required propert(?:y|ies) (.+)$/;
+
+function parseRequiredMessageFields(message: string): string[] | undefined {
+	const m = message.match(REQUIRED_MESSAGE_RE);
+	if (!m) return undefined;
+	const fields = m[1]!
+		.split(",")
+		.map((s) => s.trim())
+		.filter((s) => /^[\w.\-/\[\]]+$/.test(s));
+	return fields.length > 0 ? fields : undefined;
+}
+
+/**
+ * required bullet 的路径位 = 父路径 + requiredProperties[0]（pi-ai formatValidationPath）。
+ * 剥掉末尾首字段段得父路径前缀（"outer.inner" → "outer."；路径位即首字段 → ""），
+ * 供 message 中每个缺失字段还原成全路径 token。形态意外（路径位不以首字段结尾）时
+ * 退化为整段路径做前缀——token 仍确定性地区分不同缺失集合。
+ */
+function requiredBulletPrefix(bulletPath: string, firstField: string): string {
+	if (bulletPath === firstField) return "";
+	const suffix = `.${firstField}`;
+	const base = bulletPath.endsWith(suffix) ? bulletPath.slice(0, -suffix.length) : bulletPath;
+	return `${base}.`;
 }
 
 /**
@@ -68,25 +110,42 @@ export function truncateText(text: string, max = SIGNATURE_MAX_CHARS): string {
  * 按序排列，靠后字段的修复不进 500c 前缀——旧前缀方案的误杀根源）。
  *
  * 覆盖两种错误形态（pi 实装版核实的 errorMessage 结构）：
- *   - pi-ai 参数层 bullet 行（validation.js：`  - ${formatValidationPath(error)}: ${message}`，
- *     required/enum 的字段名都在 bullet 路径位）：`  - assessments.0.impact: must be string`
+ *   - pi-ai 参数层 bullet 行（validation.js：`  - ${formatValidationPath(error)}: ${message}`）：
+ *     enum/类型等错误的字段名在 bullet 路径位：`  - assessments.0.impact: must be string`。
+ *     required 是例外（F1）——formatValidationPath 只把 requiredProperties[0] 放进
+ *     路径位，其余缺失字段名只在 message（"must have required properties alpha, beta,
+ *     gamma"）；本函数解析 message 把完整缺失列表并入 token，否则「修好非首字段」
+ *     （列表收缩 = 真实进展）会因路径位不变被折叠成同签名、3 次误杀。
  *   - 日常模式 ajv instancePath（execute.ts 拼接 `${err.instancePath} ${err.message}`）：
  *     `Schema validation failed: /count must be number`
  *
+ * 有意决策（披露）：token 集合只含字段/路径、不含错误类型——同一字段换约束试错
+ * （"must be string" → "must be number"）折叠为同签名。权衡：换取「集合不变 = 无进展」
+ * 的强判定；代价是弱模型对单字段多约束的试错容忍度下降（同字段反复错达阈值即闸门）。
+ *
  * 提取不到 token（非校验类错误文本，如 "structured-output call failed"/网络错误）
- * 返回空数组——调用方 fallback 到 500c 前缀。
+ * 返回空数组——调用方 fallback 到 SIGNATURE_MAX_CHARS 前缀。
  */
 function extractErrorFieldTokens(errorLines: string): string[] {
 	const tokens = new Set<string>();
-	// 形态 1：bullet 行路径位（"- " 与 ":" 之间）；字符类覆盖点分路径/数组索引/斜杠
-	const bulletPath = /(?:^|\n)\s*-\s+([\w.\-/\[\]]+)\s*:/g;
+	// 形态 1：bullet 行（路径位 + message）；字符类覆盖点分路径/数组索引/斜杠
+	const bulletLine = /(?:^|\n)[ \t]*-[ \t]+([\w.\-/\[\]]+):[ \t]*([^\n]+)/g;
 	// 形态 2：行首/空白/分号后的 ajv instancePath（/a/b/c）——排除紧贴前字符的斜杠
 	//（避免把 bullet 路径里的 a/b 拆出半截 token 与形态 1 重复）
 	const slashPath = /(?:^|[\s;])\/([\w.\-/\[\]]+)/g;
-	for (const re of [bulletPath, slashPath]) {
-		for (const m of errorLines.matchAll(re)) {
-			tokens.add(m[1]!);
+	for (const m of errorLines.matchAll(bulletLine)) {
+		const path = m[1]!;
+		const requiredFields = parseRequiredMessageFields(m[2]!);
+		if (!requiredFields) {
+			tokens.add(path);
+			continue;
 		}
+		for (const field of requiredFields) {
+			tokens.add(`${requiredBulletPrefix(path, requiredFields[0]!)}${field}`);
+		}
+	}
+	for (const m of errorLines.matchAll(slashPath)) {
+		tokens.add(m[1]!);
 	}
 	return [...tokens];
 }
@@ -167,7 +226,7 @@ export class LoopGate {
 		}
 
 		const rawText = errorText ?? "structured-output call failed";
-		this.lastErrorText = truncateText(rawText);
+		this.lastErrorText = truncateText(rawText, SIGNATURE_MAX_CHARS);
 		const signature = normalizeErrorSignature(rawText);
 		if (signature === this.lastSignature) {
 			this.consecutiveFailures++;

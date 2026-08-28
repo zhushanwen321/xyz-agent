@@ -173,6 +173,16 @@ describe("scheduleTimeBudget", () => {
     expect(() => timer.unref()).not.toThrow();
     timer.unref();
   });
+
+  // [U1] setTimeout 2^31-1 溢出 fail-fast：溢出 budgetTimeMs 被 Node 置 1ms 立即触发
+  //（「不限时预算」变「立即超时」），arm 入口拦截且错误含上限值与恢复指引。
+  it("budgetTimeMs 溢出（>2^31-1）→ fail-fast throw（不挂 timer、不静默 clamp）", () => {
+    const deps = makeDeps();
+    expect(() => scheduleTimeBudget("wf-overflow", deps, 3_000_000_000)).toThrowError(/2147483647/);
+    expect(() => scheduleTimeBudget("wf-overflow", deps, Number.MAX_SAFE_INTEGER)).toThrowError(
+      /Recovery/,
+    );
+  });
 });
 
 // ── runWorkflow ──────────────────────────────────────────────

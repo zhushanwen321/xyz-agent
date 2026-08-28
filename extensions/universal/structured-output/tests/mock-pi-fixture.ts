@@ -116,7 +116,9 @@ export const SUCCESS_TOOL_END = {
   isError: false,
   result: { details: { count: 5 } },
 };
-export const turnEndPayload = (stopReason = "end_turn") => ({ message: { stopReason } });
+// 默认值用 pi-ai StopReason 真实枚举成员 "stop"（pi-ai dist/types.d.ts:275；披露修正：
+// 曾误用不存在的 "end_turn"——handler 只判特定值故测试行为不受影响，但 fixture 应如实建模）。
+export const turnEndPayload = (stopReason = "stop") => ({ message: { stopReason } });
 
 /**
  * U2（D3 闸门）增量：按错误文本构造 structured-output 失败事件——

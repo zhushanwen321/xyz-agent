@@ -203,6 +203,82 @@ describe("LoopGate signature hashing (progressive-fix acceptance)", () => {
 	});
 });
 
+// ── required 渐进修复回归（F1·high：message 字段列表并入 token）──────────────
+//
+// TypeBox required 错误只有一条 bullet，路径位仅含 requiredProperties[0]
+//（pi-ai validation.js formatValidationPath），其余缺失字段名只在 message
+//（"must have required properties alpha, beta, gamma"，typebox locale en_US 逐字核实）。
+// 旧实现只取路径位 → 模型修好非首字段（缺失列表收缩 = 真实进展）被判同签名 3 次误杀。
+const REQUIRED_FIELDS = ["alpha", "beta", "gamma"];
+function requiredError(fields: string[]): string {
+	return paramLayerErrorText(
+		`  - ${fields[0]}: must have required properties ${fields.join(", ")}`,
+		"{}",
+	);
+}
+
+describe("required 渐进修复签名区分（F1 回归：bullet 路径位仅含首字段）", () => {
+	it("锁定事实：required bullet 路径位在不同缺失集合下不变（修非首字段不改变路径位）——旧方案误杀的根源", () => {
+		// 三种缺失集合的 bullet 路径位均为 "alpha"（requiredProperties[0]）——
+		// 只取路径位的旧实现在此全部同签名；message 字段列表是唯一的进展信号。
+		for (const fields of [REQUIRED_FIELDS, ["alpha", "gamma"], ["alpha"]]) {
+			expect(requiredError(fields).split("\n")[1])
+				.toContain("- alpha: must have required properties");
+		}
+	});
+
+	it("演化序列 [缺a,b,c] → [缺a,c] → [缺a] 每步产生新签名（message 字段列表并入 token）", () => {
+		const s1 = normalizeErrorSignature(requiredError(REQUIRED_FIELDS));
+		const s2 = normalizeErrorSignature(requiredError(["alpha", "gamma"]));
+		const s3 = normalizeErrorSignature(requiredError(["alpha"]));
+		expect(s2).not.toBe(s1);
+		expect(s3).not.toBe(s2);
+		// 全量缺失与部分缺失也不折叠
+		expect(s1).not.toBe(s3);
+	});
+
+	it("闸门级：三步演化序列每步计数重起，不触发 terminal（误杀回归）", () => {
+		const gate = new LoopGate();
+		expect(gate.onToolExecEnd(true, requiredError(REQUIRED_FIELDS)))
+			.toEqual({ terminal: false, newlyTerminal: false });
+		expect(gate.consecutiveFailures).toBe(1);
+		// 修好 beta（列表 [a,b,c] → [a,c]）：新签名 → 计数重起
+		expect(gate.onToolExecEnd(true, requiredError(["alpha", "gamma"])))
+			.toEqual({ terminal: false, newlyTerminal: false });
+		expect(gate.consecutiveFailures).toBe(1);
+		// 再修好 gamma（[a,c] → [a]）：仍新签名
+		expect(gate.onToolExecEnd(true, requiredError(["alpha"])))
+			.toEqual({ terminal: false, newlyTerminal: false });
+		expect(gate.consecutiveFailures).toBe(1);
+		expect(gate.terminal).toBe(false);
+	});
+
+	it("单缺失 required 与普通类型错误 bullet 同字段同签名（token 集合口径一致）", () => {
+		// required message 字段经父路径前缀还原后 = 路径位 token，两种形态同字段不漂移
+		expect(normalizeErrorSignature(requiredError(["alpha"])))
+			.toBe(normalizeErrorSignature(paramLayerErrorText("  - alpha: must be string", "{}")));
+	});
+
+	it("嵌套 required：message 字段经父路径还原为全路径 token，不与根级同名字段混淆", () => {
+		// bullet: `  - outer.inner: must have required properties inner, delta`
+		// token = {outer.inner, outer.delta}（非 {outer.inner, inner, delta}）
+		const nested = paramLayerErrorText("  - outer.inner: must have required properties inner, delta", "{}");
+		const flat = paramLayerErrorText("  - inner: must have required properties inner, delta", "{}");
+		expect(normalizeErrorSignature(nested)).not.toBe(normalizeErrorSignature(flat));
+		// 同一嵌套集合内收缩仍产生新签名（渐进修复语义在嵌套路径下成立）
+		const nestedShrunk = paramLayerErrorText("  - outer.inner: must have required properties inner", "{}");
+		expect(normalizeErrorSignature(nested)).not.toBe(normalizeErrorSignature(nestedShrunk));
+	});
+
+	it("同缺失集合重复 3 次（模型没修任何字段）→ 仍触发 terminal（闸门有界语义不变）", () => {
+		const gate = new LoopGate();
+		const err = requiredError(REQUIRED_FIELDS);
+		gate.onToolExecEnd(true, err);
+		gate.onToolExecEnd(true, err);
+		expect(gate.onToolExecEnd(true, err)).toEqual({ terminal: true, newlyTerminal: true });
+	});
+});
+
 // ── 装配层（setupLoopGate + mock pi：使用者黑盒 + 形态）───────────
 
 describe("setupLoopGate assembly (via mock pi)", () => {

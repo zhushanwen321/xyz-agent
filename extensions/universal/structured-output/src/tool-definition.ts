@@ -125,16 +125,18 @@ export function createWorkflowToolDefinition(envSchema: string) {
 
 /**
  * 裸 object 根检测：object 形态但无任何属性约束（无 properties/patternProperties/
- * required，且未显式声明 additionalProperties）。该形态经 D4 注入 false 后
- * parameters 只接受空对象 {}。注册期静态可判定 → description 显式警示。
- * required 存在（引用未定义属性的病态形态）不在此列——它连空对象都拒绝，
- * 「accepts only an empty object」的警示反而误导，交由参数层校验错误自然暴露。
+ * required/minProperties/maxProperties，且未显式声明 additionalProperties）。该形态经
+ * D4 注入 false 后 parameters 只接受空对象 {}。注册期静态可判定 → description 显式警示。
+ * minProperties/maxProperties 也构成约束（F2）：{type:object,minProperties:1} 连空对象
+ * 都拒绝，警示「只接受空对象」反而误导——同 required 一样交由参数层校验错误自然暴露。
  */
 function isBareObjectRootSchema(schema: unknown): boolean {
 	if (!isObjectRootSchema(schema)) return false;
 	return !("properties" in schema)
 		&& !("patternProperties" in schema)
 		&& !("required" in schema)
+		&& !("minProperties" in schema)
+		&& !("maxProperties" in schema)
 		&& !("additionalProperties" in schema);
 }
 

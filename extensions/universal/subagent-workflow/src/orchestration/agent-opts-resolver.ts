@@ -28,6 +28,47 @@ export interface ResolveResult {
   error?: string;
 }
 
+// ── 根类型判定（与 structured-output 同源，本地副本） ──────────────
+
+/** plain object 判定（isPlainObject，与 @zhushanwen/pi-structured-output schema-guards.ts 同语义）。 */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * [U3 本地副本·同源锚定] 判定权威 schema 的根数据形态是否为 object。
+ *
+ * 与 @zhushanwen/pi-structured-output `src/execute.ts` 的 `isObjectRootSchema`
+ * 逐语义一致（该函数是 structured-output 工具 parameters {value} 包装/解包的唯一
+ * 判定源）。两包是独立 npm 包不能直接 import——optional peer 依赖在独立安装场景
+ * （pi 用户单独装本包）不保证存在，顶层值 import 会让整个 extension 加载崩溃；
+ * 且 builtin esbuild bundle 会把 import 的包内联成双实例（先例：session-runner.ts
+ * 的 PI_WORKFLOW_SCHEMA env 契约注释）。故本地复制，任一端改动判定逻辑必须同步
+ * 另一端（两端 docstring 互相锚定）。
+ *
+ * draft-07 语义：无 type 时类型关键字按值形态适用——properties/required 等
+ * object 特有关键字的存在意味着作者在描述 object 输出，算 object 根；组合根
+ * （anyOf/oneOf/allOf/$ref/enum）可能接受非 object 值，保真起见一律按非 object
+ * （{value} 包装可容纳任意成员类型）。
+ */
+function isObjectRootSchema(schema: unknown): schema is Record<string, unknown> {
+  if (!isPlainObject(schema)) return false;
+  if (schema.type === "object") return true;
+  if (Array.isArray(schema.type) && schema.type.includes("object")) return true;
+  const OBJECT_ONLY_KEYS = [
+    "properties",
+    "required",
+    "patternProperties",
+    "additionalProperties",
+    "minProperties",
+    "maxProperties",
+    "dependencies",
+    "dependentRequired",
+    "propertyNames",
+  ];
+  return OBJECT_ONLY_KEYS.some((k) => k in schema);
+}
+
 /**
  * 构造 schema structured-output 指令——resolver 单点注入的唯一文案源。
  *
@@ -43,20 +84,33 @@ export interface ResolveResult {
  */
 export function formatSchemaInstruction(schema: Record<string, unknown>): string {
   const schemaJson = stringifySchemaCached(schema, "compact");
+  // [U3] 根类型条件化：判定与 structured-output 的工具 parameters {value} 包装/解包
+  // 同源（上方 isObjectRootSchema 本地副本）。object 根 arguments 即 data；非 object
+  // 根参数层实为 {value} 包装——ASP 文案必须与工具 description 同语汇告知包装契约
+  // （{value: <data>} + value. 错误路径前缀），否则模型直传裸值必首调失败。
+  const isObjectRoot = isObjectRootSchema(schema);
+  const argsContractLine = isObjectRoot
+    ? "Your call arguments ARE the result data itself — the tool's parameter schema IS the required shape of your result."
+    : "The tool's single argument must be an object `{value: <data>}` — put the result itself in `value`, and it must conform to the schema below. " +
+      "Validation errors may reference paths starting with `value.` (e.g. `value.0`, `value.name`): " +
+      "that prefix addresses the wrapper, not your data.";
+  const rulesCallLine = isObjectRoot
+    ? "- Call the structured-output tool with your result data as its arguments. The system validates them against the schema above automatically."
+    : "- Call the structured-output tool with `{value: <your result data>}`. The system validates the `value` field against the schema above automatically.";
   return [
     "## MANDATORY: Structured Output Requirement",
     "",
     "This task requires structured output.",
     "Your FINAL action must be calling the `structured-output` tool.",
     "",
-    "Your call arguments ARE the result data itself — the tool's parameter schema IS the required shape of your result.",
+    argsContractLine,
     `Your result must conform to this schema:`,
     "```json",
     schemaJson,
     "```",
     "",
     "Rules:",
-    "- Call the structured-output tool with your result data as its arguments. The system validates them against the schema above automatically.",
+    rulesCallLine,
     "- Do NOT output JSON in your text response — use the structured-output tool.",
     "- Do NOT skip this step. The structured-output call IS your result.",
     "- Complete all other work FIRST, then call structured-output as the last action.",

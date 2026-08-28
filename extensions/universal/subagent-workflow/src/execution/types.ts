@@ -606,6 +606,10 @@ export interface ExecuteOptions {
   schema?: Record<string, unknown>;
   /** D-A6 bridge: workflow schemaEnv 经 ExecuteOptions 透传到 runSpawn childEnv。 */
   schemaEnv?: string;
+  /**
+   * Turn 上限 limiter。显式 0/负 = 显式不限：压过 SPAWN_WATCHDOG_ENV 兑底不挂
+   * watchdog（SP-6 参数 > env，U5）；undefined 未传才由 env 兑底。
+   */
   maxTurns?: number;
   graceTurns?: number;
   /** sync 模式来自 Pi tool 框架；background 模式 hub 忽略，自建 controller。 */

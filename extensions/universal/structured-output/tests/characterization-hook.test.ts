@@ -55,8 +55,9 @@ describe("characterization: setupWorkflowHook timing (baseline before RetryState
     await pi.emit("turn_end", turnEndPayload("toolUse"));
     expect(pi.sendUserMessage).not.toHaveBeenCalled();
 
-    // turn 2: 再次失败调用 + end_turn → steer。soCallCount 未被 toolUse turn 重置
-    //（累计 2），calledButFailed=true → 文案走 FAILED validation 分支而非 MUST call。
+    // turn 2: 再次失败调用 + stop（StopReason 真实枚举成员，原误写 end_turn）→ steer。
+    // soCallCount 未被 toolUse turn 重置（累计 2），calledButFailed=true →
+    // 文案走 FAILED validation 分支而非 MUST call。
     await pi.emit("tool_execution_end", FAILED_TOOL_END);
     await pi.emit("turn_end", turnEndPayload());
     expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
@@ -127,7 +128,7 @@ describe("characterization: setupWorkflowHook timing (baseline before RetryState
     }
     expect(pi.ctx.shutdown).toHaveBeenCalledTimes(1);
 
-    // 保险分支：后续任意 turn 形态（toolUse / end_turn）与失败均不 steer
+    // 保险分支：后续任意 turn 形态（toolUse / stop）与失败均不 steer
     await pi.emit("turn_end", turnEndPayload("toolUse"));
     await pi.emit("tool_execution_end", failedToolEndWith("a different error"));
     await pi.emit("turn_end", turnEndPayload());
@@ -143,8 +144,10 @@ describe("characterization: setupWorkflowHook timing (baseline before RetryState
   const failWith = (field: string) =>
     failedToolEndWith(paramLayerErrorText(`  - ${field}: must be number`, "{}"));
 
-  it("⑥ [U3 审查项#9] stopReason=error/aborted 轮不 steer（防 chatMode 复用子进程时陈旧 steer 泄漏到下一轮），预算不扣、状态保留", async () => {
-    for (const stopReason of ["error", "aborted"]) {
+  it("⑥ [U3 审查项#9 + F4] stopReason=error/aborted/deferred 轮不 steer（防 chatMode 复用子进程时陈旧 steer 泄漏到下一轮），预算不扣、状态保留", async () => {
+    // deferred：pi-ai StopReason 枚举成员（types.d.ts:275，provider 延迟响应挂起）——
+    // 与 error/aborted 同属「本轮无可消费 steer 的收尾点」形态，不发送不扣预算。
+    for (const stopReason of ["error", "aborted", "deferred"]) {
       const pi = createMockPi();
       await loadExtension(pi, SCHEMA);
 
@@ -164,6 +167,10 @@ describe("characterization: setupWorkflowHook timing (baseline before RetryState
   });
 
   it("⑦ [U3 审查项#8] steer 发送失败（rejected promise）→ 不扣预算 + appendEntry 告警，后续轮仍可 steer（不永久哑火）", async () => {
+    // 注（形态契约锁定）：pi 0.84.1 实装下 extension 侧 sendUserMessage 的异步 rejection
+    // 被 pi 吞（loader.js 同步转发 + .catch(emitError) 转事件，不冒泡到调用方），
+    // 本用例在 mock 层构造 reject，锁定的是「未来 pi 返回真 Promise 时 hook 不得
+    // 白扣预算/不得永久哑火」的 Promise 形态契约，非 0.84.1 现网行为复现。
     const pi = createMockPi();
     await loadExtension(pi, SCHEMA);
 

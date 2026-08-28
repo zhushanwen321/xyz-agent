@@ -35,6 +35,7 @@ describe("lifecycle-manager — V2 §5.2 模块 1", () => {
   afterEach(() => {
     _resetLifecycleState();
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   // ============================================================
@@ -112,6 +113,27 @@ describe("lifecycle-manager — V2 §5.2 模块 1", () => {
       expect(hasIdleTimer("sa-disable-late")).toBe(false);
       vi.advanceTimersByTime(2000);
       expect(onTimeout).not.toHaveBeenCalled();
+    });
+
+    // [U1] setTimeout 2^31-1 溢出 fail-fast：溢出 delay 被 Node 置 1ms 立即触发
+    //（「长空闲保活」变「立即 kill」），arm 入口拦截且错误含上限值与恢复指引。
+    // 显式禁用通道（<=0）不受影响（上方用例已锁）。
+    it("idleTimeoutMs 溢出（>2^31-1）→ fail-fast throw，不挂 timer", () => {
+      const onTimeout = vi.fn();
+      expect(() => armIdleTimer("sa-overflow", onTimeout, 3_000_000_000)).toThrowError(/2147483647/);
+      expect(() => armIdleTimer("sa-overflow", onTimeout, Number.MAX_SAFE_INTEGER)).toThrowError(
+        /Recovery/,
+      );
+      expect(hasIdleTimer("sa-overflow")).toBe(false);
+      vi.advanceTimersByTime(3_000_000_000);
+      expect(onTimeout).not.toHaveBeenCalled();
+    });
+
+    it("env XYZ_SUBAGENT_IDLE_TIMEOUT_MS 溢出 → fail-fast throw（arm 入口统一拦截）", () => {
+      vi.stubEnv("XYZ_SUBAGENT_IDLE_TIMEOUT_MS", "3000000000");
+      const onTimeout = vi.fn();
+      expect(() => armIdleTimer("sa-env-overflow", onTimeout)).toThrowError(/2147483647/);
+      expect(hasIdleTimer("sa-env-overflow")).toBe(false);
     });
   });
 

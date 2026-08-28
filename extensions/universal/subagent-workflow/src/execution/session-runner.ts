@@ -27,6 +27,7 @@ import { getSubagentSessionDir } from "./path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "./relay-env.ts";
 import { assertThinkingLevel, type ThinkingLevel } from "../shared/model-ref";
+import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import {
@@ -178,11 +179,15 @@ export function computeWatchdogMs(maxTurns: number): number {
 /**
  * spawn watchdog 毫秒兑底 env（可选，默认未设 = 不挂 watchdog）。
  * 
- * 仅当 maxTurns 未传/<=0（无 turns 估算依据）时生效：设置后按该绝对时限挂 watchdog，
- * 未设则完全不挂（不限）。前缀用 XYZ_SUBAGENT_*：本 env 是父侧（pi 进程内）读的配置
+ * 仅当 maxTurns 未传（undefined/null）时生效：设置后按该绝对时限挂 watchdog，
+ * 未设则完全不挂（不限）。显式传 maxTurns（含 0/负数）压过 env（U5，SP-6 参数 > env）
+ * ——旧实现 maxTurns:0 落到 env 兑底，参数显式关不掉 watchdog。
+ * 前缀用 XYZ_SUBAGENT_*：本 env 是父侧（pi 进程内）读的配置
  * env，xyz-agent 桌面 spawn 链会按 ENV_WHITELIST_PREFIXES（只有 XYZ_ 等，无 PI_）过滤，
  * PI_ 前缀在桌面场景被静默丢弃——同 XYZ_SUBAGENT_IDLE_TIMEOUT_MS 的改名教训。
  * 注意与 PI_SUBAGENT_* 系（extension spawn 子进程时直接注入 childEnv）的机制区别。
+ * 与 launcher 的 XYZ_SUBAGENT_RUN_WATCHDOG_MS（workflow run 轮询兑底）对称：
+ * 两者都是「默认关、显式设置才挂绝对时限」的 hang 兑底通道（U7）。
  */
 export const SPAWN_WATCHDOG_ENV = "XYZ_SUBAGENT_SPAWN_WATCHDOG_MS";
 
@@ -198,14 +203,27 @@ function getEnvSpawnWatchdogMs(): number | undefined {
 /**
  * 解析 spawn watchdog 超时（挂载判定的单一入口）。
  * 
- * 优先级：maxTurns 有效（>0）→ 按 turns 估算（computeWatchdogMs）；
- * 否则 → SPAWN_WATCHDOG_ENV 兑底；env 也未设 → undefined（不挂 watchdog，不限）。
+ * 优先级（SP-6 参数 > env，U5）：maxTurns 显式传参时压过 env——有效（>0）按 turns
+ * 估算（computeWatchdogMs）；显式 0/负 = 显式不限（不挂 watchdog）；仅 undefined/null
+ * （未传）才落 SPAWN_WATCHDOG_ENV 兑底；env 也未设 → undefined（不挂 watchdog，不限）。
+ * 
+ * [U1] 返回值（env 兑底或 turns 估算两条路径）流入 setTimeout 前校验安全域：
+ * >2^31-1 的 delay 被 Node 置 1ms 立即触发（watchdog 变「启动即杀」），fail-fast。
  * 
  * [export] 测试可观测（timeout-integration 用例断言 maxTurns 缺省/env 兑底分支）。
  */
 export function resolveSpawnWatchdogMs(maxTurns: number | undefined | null): number | undefined {
-  if (maxTurns && maxTurns > 0) return computeWatchdogMs(maxTurns);
-  return getEnvSpawnWatchdogMs();
+  if (maxTurns === undefined || maxTurns === null) {
+    const envMs = getEnvSpawnWatchdogMs();
+    if (envMs !== undefined) assertSafeTimerDelay(envMs, SPAWN_WATCHDOG_ENV);
+    return envMs;
+  }
+  if (maxTurns > 0) {
+    const estimated = computeWatchdogMs(maxTurns);
+    assertSafeTimerDelay(estimated, `computeWatchdogMs(maxTurns=${maxTurns})`);
+    return estimated;
+  }
+  return undefined;
 }
 
 /** stderr 累积上限——按字符截断（.slice 语义），非字节；64K 规模沿自原实现。
@@ -1218,8 +1236,8 @@ function attachStdoutPump(
               // [MF-4] 动态超时 = computeWatchdogMs(maxTurns)：真实后代在跑，慢任务（wave 开发
               // 数小时）不能被固定 2h 误杀——2h 到点 kill 会连坐 SubagentService.dispose 的
               // killAllSpawnedChildren 杀全部子进程，L2 重派丢在途工作。maxTurns 大则超时长。
-              // [预算语义对齐] maxTurns 未传/<=0 且未设 SPAWN_WATCHDOG_ENV → 不 re-arm
-              // （等待后代不限时）；回收由外部 signal / dispose / 后代自然完成驱动。
+              // [预算语义对齐 + U5] maxTurns 未传且 env 未设，或显式 <=0（压过 env）→
+              // 不 re-arm（等待后代不限时）；回收由外部 signal / dispose / 后代自然完成驱动。
               clearTimeout(state.watchdog);
               const keepAliveMs = resolveSpawnWatchdogMs(opts.maxTurns);
               if (keepAliveMs !== undefined) {

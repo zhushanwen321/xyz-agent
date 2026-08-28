@@ -25,7 +25,9 @@ const PRETTY_PRINT_INDENT_SPACES = 2;
  * JSON.stringify(schema) 的引用级缓存版。
  *
  * @param schema schema 对象（调用方 if 守卫保证非 undefined，helper 不判空）
- * @param mode "compact" = JSON.stringify(x)；"pretty" = JSON.stringify(x, null, 2)
+ * @param mode "compact" = JSON.stringify(x)；"pretty" = JSON.stringify(x, null, 2)。
+ *   pretty 为预留模式，当前生产仅 compact 消费（resolver instruction 与 schemaEnv
+ *   复用同串；pretty 暂无生产调用方，仅供测试/未来调试通道）。
  */
 export function stringifySchemaCached(schema: object, mode: "compact" | "pretty"): string {
   let entry = cache.get(schema);

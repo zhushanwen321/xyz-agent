@@ -32,11 +32,34 @@ import type { RunSpec } from "./models/run-spec.ts";
 import type { DoneReason } from "./models/types.ts";
 import type { WorkflowRun } from "./models/workflow-run.ts";
 import type { WorkflowScriptRegistry } from "./models/workflow-script-registry.ts";
+import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
 
 // ── 常量 ─────────────────────────────────────────────────────
 
 /** 轮询间隔（500ms）。 */
 const STATUS_POLL_INTERVAL_MS = 500;
+
+/**
+ * [U7] XYZ_SUBAGENT_RUN_WATCHDOG_MS：无显式限时 run 的轮询绝对时限兜底 env。
+ *
+ * 与 session-runner 的 XYZ_SUBAGENT_SPAWN_WATCHDOG_MS（spawn watchdog：maxTurns 无
+ * 估算依据时的 hang 兜底）对称：未设置 = 无兜底（不限，watchdog 默认关的用户裁决不变）；
+ * 设置 = pollRunToResult 的 wall-clock 绝对时限——无显式限时的 run（顶层 runAndWait
+ * 未传 timeoutMs / 嵌套父 run 未设 budgetTimeMs）若 workflow worker hang 将永不回收，
+ * 本 env 提供显式 opt-in 的兜底回收。非法值（非有限数/<=0）视为未设。
+ * 前缀用 XYZ_SUBAGENT_*：同 SPAWN_WATCHDOG_ENV 的桌面 safe-env 白名单原因
+ * （ENV_WHITELIST_PREFIXES 只放行 XYZ_ 等，PI_ 前缀被静默丢弃）。
+ */
+export const RUN_WATCHDOG_ENV = "XYZ_SUBAGENT_RUN_WATCHDOG_MS";
+
+/** 解析 run watchdog 毫秒数；env 未设/非法返回 undefined（无兜底，不限）。 */
+function getEnvRunWatchdogMs(): number | undefined {
+  const raw = process.env[RUN_WATCHDOG_ENV];
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
 
 // ── 类型 ─────────────────────────────────────────────────────
 
@@ -121,10 +144,23 @@ async function pollRunToResult(
   timeoutMs: number | undefined,
   abortReason: string,
 ): Promise<WorkflowRunResult> {
-  // [预算语义对齐] timeoutMs undefined → 无 wall-clock deadline：轮询至 done / signal abort
-  // 为止（不限时）。用 Infinity 哨兵统一 while 条件，避免循环内双重判空；Infinity 永不
-  // 小于自身，循环只在有限 deadline 到期时退出。
-  const deadline = timeoutMs === undefined ? Number.POSITIVE_INFINITY : Date.now() + timeoutMs;
+  // [预算语义对齐 + U2] timeoutMs undefined 或 <=0 → 无 wall-clock deadline（不限）：
+  // 与 lifecycle.runWorkflow 的 budgetTimeMs 判定（>0 才挂 scheduleTimeBudget）同语义。
+  // 旧实现 0 → deadline=now 立即超时（"timed out after 0ms"）、负数 → "timed out
+  // after -5000ms" 类错误串；非正值与 undefined 统一为不限。
+  // [U7] 显式不限时由 XYZ_SUBAGENT_RUN_WATCHDOG_MS 提供绝对时限兜底（未设 = 不限）。
+  // env 值与显式值同域：越界（>2^31-1）fail-fast——虽 deadline 是算术比较不经
+  // setTimeout、无 1ms 陷阱，但如此量级的配置几乎必然是手误，与 spawn watchdog env
+  // 的 fail-fast 策略对称。
+  const explicitTimeoutMs =
+    timeoutMs !== undefined && timeoutMs > 0 ? timeoutMs : getEnvRunWatchdogMs();
+  if (explicitTimeoutMs !== undefined) {
+    assertSafeTimerDelay(explicitTimeoutMs, `timeoutMs / ${RUN_WATCHDOG_ENV}`);
+  }
+  // Infinity 哨兵统一 while 条件，避免循环内双重判空；Infinity 永不小于自身，循环只在
+  // 有限 deadline 到期时退出。
+  const deadline =
+    explicitTimeoutMs === undefined ? Number.POSITIVE_INFINITY : Date.now() + explicitTimeoutMs;
   while (Date.now() < deadline) {
     if (signal?.aborted) {
       const runBeforeAbort = deps.runs.get(runId);
@@ -142,15 +178,15 @@ async function pollRunToResult(
   }
   const runBeforeTimeout = deps.runs.get(runId);
   if (runBeforeTimeout?.state.status === "done") return toResult(runBeforeTimeout);
-  // 循环退出 ⇒ deadline 有限 ⇒ timeoutMs 必已定义（模板串内不可能实际出现 undefined）
-  await safeAbort(runId, deps, `Workflow timed out after ${timeoutMs}ms`, "time_limited");
+  // 循环退出 ⇒ deadline 有限 ⇒ explicitTimeoutMs 必已定义（undefined/<=0 走 Infinity 不进此分支）
+  await safeAbort(runId, deps, `Workflow timed out after ${explicitTimeoutMs}ms`, "time_limited");
   const finalRun = deps.runs.get(runId);
   return finalRun
     ? toResult(finalRun)
     : {
         status: "done",
         reason: "time_limited",
-        error: `Workflow timed out after ${timeoutMs}ms`,
+        error: `Workflow timed out after ${explicitTimeoutMs}ms`,
         runId,
       };
 }
@@ -175,8 +211,9 @@ async function pollRunToResult(
  * @param args 调用参数（worker 内 $ARGS 访问）
  * @param deps LauncherDeps（LifecycleDeps + registry）
  * @param signal 外部 abort signal（可选）
- * @param timeoutMs 超时上限（可选）。[预算语义对齐] 未传 = 不限（轮询至 done / abort 为
- * 止）；仅显式传入才限时——旧实现默认 10 分钟会误杀长任务。
+ * @param timeoutMs 超时上限（可选）。[预算语义对齐 + U2] 未传或 <=0 = 不限（轮询至 done /
+ *  abort 为止，不限时由 XYZ_SUBAGENT_RUN_WATCHDOG_MS 兜底）——旧实现默认 10 分钟会误杀长任务，
+ *  且 0/负值会落成立即超时；仅显式正数才限时。
  * @returns WorkflowRunResult（status 恒 "done"）
  */
 export async function runAndWait(
@@ -368,7 +405,14 @@ export async function executeNestedWorkflow(
     //  10min，违背「显式传参完整生效」语义）；父未设 → undefined，无 deadline（不限）。
     //  budgetRef（共享 Budget）已在 Step 4 透传给子 run 处理 token/cost 预算，
     //  此处的 budgetTimeMs 只服务 pollRunToResult 的轮询 deadline（wall-clock 兜底）。
-    const nestedTimeoutMs = parentRun.spec.budgetTimeMs;
+    // [U2] 预算语义统一：父 budgetTimeMs <=0（含 0/负）与 undefined 同义 = 不限——
+    //  与 lifecycle.runWorkflow 的 budgetTimeMs 判定（>0 才挂 scheduleTimeBudget）对齐。
+    //  旧实现 0 传导给子 run 后 deadline=now 立即超时（"timed out after 0ms"），与
+    //  lifecycle 的 0=不限 语义分裂。pollRunToResult 内亦对非正值兜底归一（双写防漂移），
+    //  此处显式归一是传导语义的文档化表达。
+    const rawNestedTimeoutMs = parentRun.spec.budgetTimeMs;
+    const nestedTimeoutMs =
+      rawNestedTimeoutMs !== undefined && rawNestedTimeoutMs > 0 ? rawNestedTimeoutMs : undefined;
 
     const result = await pollRunToResult(
       runId,

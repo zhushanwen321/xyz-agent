@@ -759,7 +759,7 @@ describe("createWorkflowToolDefinition — registration-time defense + parameter
     expect(def.description).toMatch(/will be rejected/);
   });
 
-  it("description 裸 object 警示不误报：有属性约束/显式 additionalProperties/required/非 object 根 → 无警示", () => {
+  it("description 裸 object 警示不误报：有属性约束/显式 additionalProperties/required/min-max Properties/非 object 根 → 无警示", () => {
     const cases = [
       { type: "object", properties: { a: { type: "string" } } },
       { type: "object", additionalProperties: true },
@@ -770,6 +770,23 @@ describe("createWorkflowToolDefinition — registration-time defense + parameter
     for (const schema of cases) {
       const def = createWorkflowToolDefinition(JSON.stringify(schema));
       expect(def.description, JSON.stringify(schema)).not.toMatch(/empty object/);
+    }
+  });
+
+  // F2：minProperties/maxProperties 也是属性约束——{type:object,minProperties:1}
+  // 连空对象都拒绝，警示「只接受空对象」为假，不得出现（同 required 交由参数层
+  // 校验错误自然暴露）。
+  it("description 裸 object 警示不误报：minProperties/maxProperties 裸形态 → 无 empty-object 假警示（F2）", () => {
+    const cases = [
+      { type: "object", minProperties: 1 },
+      { type: "object", maxProperties: 5 },
+      { type: "object", minProperties: 1, maxProperties: 3 },
+    ];
+    for (const schema of cases) {
+      const def = createWorkflowToolDefinition(JSON.stringify(schema));
+      expect(def.description, JSON.stringify(schema)).not.toMatch(/empty object/);
+      // object 根口径不受影响（minProperties 是 object 特有关键字，仍算 object 根）
+      expect(def.description).toContain("Your arguments ARE the data");
     }
   });
 

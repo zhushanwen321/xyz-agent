@@ -24,6 +24,8 @@
 // 设计参考：session-runner 的 MF-3/MF-4 setTimeout→SIGTERM 骨架（复用 timer 形态，
 // 触发条件重构）；spawnedChildren Map 的模块级单例模式。
 
+import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
+
 // ============================================================
 // 默认常量
 // ============================================================
@@ -106,6 +108,9 @@ const idleTimers = new Map<string, IdleTimerEntry>();
  * @param onTimeout 超时回调（调用方注入：SIGTERM 回收进程）
  * @param timeoutMs 可选。SP-6 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > DEFAULT_IDLE_TIMEOUT_MS；
  *   显式 <=0 表示禁用（不挂 timer）。
+ * @throws 解析后的 delay（参数/env/默认任一层）超出 Node setTimeout 上限 2^31-1 ——
+ *   溢出值会被 Node 置 1ms 立即触发（「长空闲保活」变「立即回收」），fail-fast 不静默
+ *   clamp（U1）。
  */
 export function armIdleTimer(
   recordId: string,
@@ -121,6 +126,10 @@ export function armIdleTimer(
 
   // SP-6 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms (5min)。
   const resolved = timeoutMs ?? getEnvIdleTimeoutMs() ?? DEFAULT_IDLE_TIMEOUT_MS;
+
+  // [U1] arm 入口：值流入 setTimeout 前校验安全域（>2^31-1 会变 1ms 立即触发）。
+  // 显式 <=0 的禁用通道已在上方 return，不受影响。
+  assertSafeTimerDelay(resolved, "idleTimeoutMs");
 
   // 刷新：先清旧 timer，避免同一 record 叠加多个 armed timer。
   disarmIdleTimer(recordId);

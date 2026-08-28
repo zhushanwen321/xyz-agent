@@ -35,6 +35,7 @@
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
+import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
 import { validateRunArgs } from "./args-validator.ts";
 import {
   handleWorkerError,
@@ -120,12 +121,16 @@ function makeHandlers(run: WorkflowRun, deps: LifecycleDeps): WorkerHandlers {
  * 自动清理，避免孤儿触发。worker/script 错误重试经 rebuildRuntime 重排新计时器。
  *
  * @returns 计时器句柄（未设预算时 undefined）
+ * @throws budgetTimeMs 超出 Node setTimeout 上限（2^31-1）——溢出值会被 Node 置 1ms
+ *   立即触发（「不限时预算」变「立即超时」），fail-fast 不静默 clamp（U1）。
  */
 export function scheduleTimeBudget(
   runId: string,
   deps: LifecycleDeps,
   budgetTimeMs: number,
 ): ReturnType<typeof setTimeout> {
+  // [U1] arm 入口：值流入 setTimeout 前校验安全域（>2^31-1 会变 1ms 立即触发）。
+  assertSafeTimerDelay(budgetTimeMs, "budgetTimeMs");
   const timer = setTimeout(() => {
     void abortRun(runId, deps, "Time budget exceeded", "time_limited").catch(
       (err: unknown) => {

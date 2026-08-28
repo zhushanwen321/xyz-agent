@@ -86,4 +86,57 @@ describe("resolveAgentOpts schema prompt wording + M2 content passthrough", () =
 
     expect(result.opts.schemaEnv).toBeUndefined();
   });
+
+  // [U3] 根类型条件化：ASP 文案与 structured-output 工具 description 同源互斥——
+  // object 根口径「arguments ARE the data」；非 object 根参数层实为 {value} 包装，
+  // 文案必须告知 {value: <data>} 契约，两形态文案互斥不可共存。
+  describe("根类型条件化文案（U3：与工具 description 同源互斥）", () => {
+    it("object 根 → arguments 即 data 口径，无 {value} 包装语汇", () => {
+      const opts: AgentCallOpts = {
+        prompt: "x",
+        schema: { type: "object", properties: { n: { type: "number" } } },
+      };
+      const content = resolveAgentOpts(opts).opts.appendSystemPrompt![0];
+
+      expect(content).toContain("Your call arguments ARE the result data itself");
+      expect(content).not.toContain("{value:");
+      expect(content).not.toContain("value.");
+      // Rules 首条同样是 object 根口径
+      expect(content).toContain(
+        "- Call the structured-output tool with your result data as its arguments.",
+      );
+      expect(content).not.toContain("{value: <your result data>}");
+    });
+
+    it("非 object 根（array）→ {value} 包装契约语汇，无 arguments 即 data 口径", () => {
+      const opts: AgentCallOpts = {
+        prompt: "x",
+        schema: { type: "array", items: { type: "string" } },
+      };
+      const content = resolveAgentOpts(opts).opts.appendSystemPrompt![0];
+
+      // 包装契约与 value. 错误路径前缀（与工具 description 同语汇）
+      expect(content).toContain("{value: <data>}");
+      expect(content).toContain("value.");
+      expect(content).toContain("that prefix addresses the wrapper, not your data");
+      // 互斥：object 根专属文案不得出现
+      expect(content).not.toContain("Your call arguments ARE the result data itself");
+      expect(content).not.toContain(
+        "- Call the structured-output tool with your result data as its arguments.",
+      );
+      // Rules 首条切换为包装口径
+      expect(content).toContain("- Call the structured-output tool with `{value: <your result data>}`.");
+    });
+
+    it("组合根（anyOf，可能接受非 object 值）→ 按非 object 包装口径", () => {
+      const opts: AgentCallOpts = {
+        prompt: "x",
+        schema: { anyOf: [{ type: "string" }, { type: "number" }] },
+      };
+      const content = resolveAgentOpts(opts).opts.appendSystemPrompt![0];
+
+      expect(content).toContain("{value: <data>}");
+      expect(content).not.toContain("Your call arguments ARE the result data itself");
+    });
+  });
 });
