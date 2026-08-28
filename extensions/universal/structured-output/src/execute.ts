@@ -1,16 +1,14 @@
 /**
- * executeStructuredOutput 编排 + 校验双函数（IF-6 拆分）。
+ * executeStructuredOutput 编排 + 日常校验函数（IF-6 拆分；U1 权威分支透传化）。
  *
  * 两种模式：
- *   - 权威模式（workflow）：`authoritativeSchema` 存在时，只用它校验 data，LLM 传入的
- *     `schema` 不参与校验（仅用于错误回显）。这从根上杜绝 LLM 自报 schema 自洽绕过
- *     （[HISTORICAL] 2026-08-01 事故：ds-flash 重写 add_channels.items 的 schema 后
- *     自洽通过，4 条 channel 修复静默丢失）。
+ *   - workflow 模式（`authoritativeSchema` 存在）：透传（D2）。pi-ai 参数层
+ *     （validateToolArguments）已按注册进工具的 parameters（= 权威 schema，见
+ *     createWorkflowToolDefinition）校验 + 类型矫正过 arguments——execute 再 ajv
+ *     不是双保险而是第二校验权威（方案 A [HISTORICAL] 明令禁止的形态），已删除。
+ *     注册期 fail-fast 防御（keyword-less 拒绝 / boolean true 拦截）上移至
+ *     createWorkflowToolDefinition。非 object 根在注册期被包装为 {value}，此处解包。
  *   - 日常模式（交互式）：无 `authoritativeSchema`，走 validateAgainstSelfReported 防御链。
- *
- * 权威模式设防（SO-1 修复）：权威分支不再跳过防御链——keyword-less 权威 schema
- * （{} / {a:1}）被显式拒绝（ERR-3），boolean true（accept-all，无形状约束）被拦截
- * （ERR-7），否则 workflow 声明的约束会在 ajv strict:false 下静默失效。
  *
  * 日常模式防御顺序（编译前拦截，治静默腐败的根）：
  *   1. 互换检测 — schema 像数据（无 keyword）且 data 像 schema（有 keyword）→ 抛纠错
@@ -24,7 +22,6 @@ import type { ValidateFunction } from "ajv";
 
 import { getOrCompileValidator } from "./ajv-validator.js";
 import {
-	assertJsonSchemaRoot,
 	CORRECT_USAGE_HINT,
 	echo,
 	hasSchemaKeyword,
@@ -33,60 +30,47 @@ import {
 } from "./schema-guards.js";
 
 /**
- * 权威模式校验（IF-6）。authSchema 由 workflow 脚本（PI_WORKFLOW_SCHEMA env）注入，
- * 是唯一校验权威——LLM 传入的 schema 不参与校验，仅用于编排层错误回显。
+ * 判定权威 schema 的根数据形态是否为 object（U1/P6）。
  *
- * 权威模式不再跳过日常防御链（SO-1 修复）：keyword-less 权威 schema 必须先过
- * schema-guards 检查，否则 ajv strict:false 会静默编译成 accept-all，workflow 的
- * 形状约束失效且零报错（与 08-01 事故同类的静默腐败路径）。
+ * tool call arguments 协议上必为 object：object 根 schema 可直接作工具 parameters
+ * （arguments 即 data）；否则（array/string/number/boolean/enum/组合根等）需在注册期
+ * 包一层 {value}，execute 侧对称解包。判定口径与注册期包装严格同源（同一函数），
+ * 避免「注册期包装了但 execute 不解包」或反向的漂移。
  *
- * @returns 校验通过恒为 true；任何失败形态抛错（带恢复指引 + 回显）。
+ * draft-07 语义：无 type 时类型关键字按值形态适用——properties/required 等
+ * object 特有关键字的存在意味着作者在描述 object 输出，arguments（必为 object）
+ * 直接被这些约束校验，故算 object 根。组合根（anyOf/oneOf/allOf/$ref/enum）
+ * 可能接受非 object 值，保真起见一律包装（{value} 内可容纳任意成员类型）。
  */
-export function validateWithAuthoritative(data: unknown, authSchema: object): boolean {
-	// 类型收窄：签名声明 object（C2 契约），hasSchemaKeyword 需要索引签名。
-	// 编排层已 assertJsonSchemaRoot 保证 plain object；直接调用方传 plain object。
-	if (!isPlainObject(authSchema)) {
-		throw new Error(
-			"Authoritative schema (PI_WORKFLOW_SCHEMA) must be a plain object, got "
-			+ typeof authSchema,
-		);
-	}
+export function isObjectRootSchema(schema: unknown): schema is Record<string, unknown> {
+	if (!isPlainObject(schema)) return false;
+	if (schema.type === "object") return true;
+	if (Array.isArray(schema.type) && schema.type.includes("object")) return true;
+	const OBJECT_ONLY_KEYS = [
+		"properties",
+		"required",
+		"patternProperties",
+		"additionalProperties",
+		"minProperties",
+		"maxProperties",
+		"dependencies",
+		"dependentRequired",
+		"propertyNames",
+	];
+	return OBJECT_ONLY_KEYS.some((k) => k in schema);
+}
 
-	// 1. keyword-less 拒绝（ERR-3）：权威 schema 必须用 JSON Schema 关键字描述形状。
-	// 无 keyword 的对象会被 ajv 编译成"接受一切"，必须显式拦截并给恢复指引。
-	if (!hasSchemaKeyword(authSchema)) {
-		throw new Error(
-			"Authoritative schema (PI_WORKFLOW_SCHEMA) has no recognized keyword. "
-			+ "A workflow schema must describe shape via type/properties/items/... "
-			+ "👉 检查 workflow 脚本的 outputSchema 定义，补全 JSON Schema 关键字。 "
-			+ `Received schema=${echo(authSchema)}, data=${echo(data)}`,
-		);
+/**
+ * 非 object 根包装的解包（P6 的对称操作）。
+ * 注册期 {value} 包装 + 参数层 required ["value"] 保证到达这里的 arguments
+ * 形如 {value: <data>}；防御性 guard：意外形态（缺 value 字段）原样透传，
+ * 不在 execute 层制造第二道校验。
+ */
+function unwrapValueField(data: unknown): unknown {
+	if (isPlainObject(data) && "value" in data) {
+		return data.value;
 	}
-
-	// 2. 编译 + 校验。编译失败抛清晰错误（含权威 schema 回显供 workflow 作者修正）。
-	let validate: ValidateFunction;
-	try {
-		validate = getOrCompileValidator(authSchema);
-	} catch (e) {
-		throw new Error(
-			`Invalid authoritative JSON Schema (from PI_WORKFLOW_SCHEMA): ${(e as Error).message}. `
-			+ `The authoritative schema (PI_WORKFLOW_SCHEMA) is: ${echo(authSchema)}. `
-			+ `Received data=${echo(data)}`,
-		);
-	}
-
-	const valid = validate(data);
-	if (!valid) {
-		const errors = validate.errors
-			?.map((err) => `${err.instancePath} ${err.message}`)
-			.join("; ");
-		throw new Error(
-			`Schema validation failed (authoritative): ${errors}. `
-			+ `The authoritative schema (PI_WORKFLOW_SCHEMA) is: ${echo(authSchema)}. `
-			+ `Received data=${echo(data)}`,
-		);
-	}
-	return true;
+	return data;
 }
 
 /**
@@ -152,15 +136,17 @@ export function validateAgainstSelfReported(schema: unknown, data: unknown): boo
 }
 
 /**
- * 执行 schema 校验。从 createToolDefinition.execute 抽出以便单元测试直接调用。
+ * 执行 schema 编排。从工具 execute 抽出以便单元测试直接调用。
  *
- * 编排：tryParseJson 归一 → 权威分支（assertJsonSchemaRoot 收窄 + boolean 拦截 +
- * validateWithAuthoritative）→ 日常分支 validateAgainstSelfReported。
+ * 编排：workflow 透传分支（authoritativeSchema 存在；非 object 根解包 value）
+ * → 日常分支 validateAgainstSelfReported。
  */
 export async function executeStructuredOutput(params: {
-	schema: unknown;
-	data: unknown;
-	/** 权威 schema（workflow 模式由 PI_WORKFLOW_SCHEMA env 注入）。存在时成为唯一校验权威。 */
+	/** LLM 自报 schema（仅日常分支消费；workflow 分支忽略）。 */
+	schema?: unknown;
+	/** workflow 分支 = 模型 arguments（object 根即 data 本身 / 非 object 根为 {value} 包装）；日常分支 = 自报 data。 */
+	data?: unknown;
+	/** 权威 schema（workflow 模式由 PI_WORKFLOW_SCHEMA env 派生）。存在时走透传分支（D2）。 */
 	authoritativeSchema?: unknown;
 }): Promise<{
 	content: Array<{ type: "text"; text: string }>;
@@ -168,58 +154,14 @@ export async function executeStructuredOutput(params: {
 	// 测试断言 toEqual(42)/toEqual(true)/toEqual(["a","b","c"])，不可窄化为 Record。
 	details: unknown;
 }> {
-	// Normalize: some models pass schema/data as JSON strings instead of objects
-	const schema = tryParseJson(params.schema);
-	const data = tryParseJson(params.data);
-
-	// ── 权威模式（workflow）：用 PI_WORKFLOW_SCHEMA 声明的期望 schema 校验 data。 ──
-	// LLM 传入的 schema 仅用于错误回显（告知期望形态），不参与校验——否则 LLM
-	// 可同时控制 schema 与 data 自洽绕过任何约束。日常模式无权威 schema 走下方防御链。
+	// ── workflow 模式：透传（D2）──
+	// tryParseJson 兼容 string（env 原值）与 object（注册期已解析）两种传入形态。
+	// 非 object 根（注册期包装 {value}）→ 解包还原；object 根 → arguments 即 data。
+	// 解包判定与注册期包装判定同源（isObjectRootSchema）。
 	const authoritative =
 		params.authoritativeSchema !== undefined ? tryParseJson(params.authoritativeSchema) : undefined;
 	if (authoritative !== undefined) {
-		try {
-			// 先用 assert 函数把 unknown 收窄为 Record<string,unknown> | boolean，
-			// 使后续分支在类型层面成立（type-safety）。非 object/boolean 抛清晰错误，
-			// 由外层 catch 包成含 echo 的错误。
-			assertJsonSchemaRoot(authoritative);
-		} catch (e) {
-			throw new Error(
-				`Invalid authoritative JSON Schema (from PI_WORKFLOW_SCHEMA): ${(e as Error).message}. `
-				+ `Received schema=${echo(schema)}, data=${echo(data)}`,
-			);
-		}
-
-		if (authoritative === true) {
-			// ERR-7：boolean true（accept-all）不提供任何形状约束，workflow 用它等于没校验。
-			// 必须改为 object schema 才构成真正的约束（keyword-less 拒绝见 validateWithAuthoritative）。
-			throw new Error(
-				"Authoritative schema (PI_WORKFLOW_SCHEMA) is boolean true (accept-all), "
-				+ "provides no shape constraint. 👉 改为带 type/properties/items 的 object schema。"
-				+ `Received schema=${echo(schema)}, data=${echo(data)}`,
-			);
-		}
-
-		if (authoritative === false) {
-			// boolean false = reject-all（draft-07 合法根，有形状约束语义：拒绝一切）。
-			// 保留原行为：编译 + 校验失败抛 'Schema validation failed (authoritative)'。
-			const validate = getOrCompileValidator(false);
-			const valid = validate(data);
-			if (!valid) {
-				const errors = validate.errors
-					?.map((err) => `${err.instancePath} ${err.message}`)
-					.join("; ");
-				throw new Error(
-					`Schema validation failed (authoritative): ${errors}. `
-					+ `The authoritative schema (PI_WORKFLOW_SCHEMA) is: ${echo(authoritative)}. `
-					+ `Received schema=${echo(schema)}, data=${echo(data)}`,
-				);
-			}
-		} else {
-			// object 权威 schema：过 keyword-less 检查（ERR-3）+ 编译 + 校验。
-			validateWithAuthoritative(data, authoritative);
-		}
-
+		const data = isObjectRootSchema(authoritative) ? params.data : unwrapValueField(params.data);
 		return {
 			content: [
 				{ type: "text" as const, text: "Structured output recorded successfully." },
@@ -229,6 +171,9 @@ export async function executeStructuredOutput(params: {
 	}
 
 	// ── 日常模式防御链（validateAgainstSelfReported：互换/keyword-less/编译/校验）──
+	// Normalize: some models pass schema/data as JSON strings instead of objects
+	const schema = tryParseJson(params.schema);
+	const data = tryParseJson(params.data);
 	validateAgainstSelfReported(schema, data);
 
 	return {
