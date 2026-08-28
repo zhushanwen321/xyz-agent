@@ -212,8 +212,12 @@ export async function downloadAsset(
   if (!resumeState && asset.size && asset.size >= MIN_MULTI_PART_SIZE) {
     const { supported, totalBytes } = await probeMultiPartSupport(asset, proxyConfig)
     if (supported) {
-      useMultiPart = true
-      await downloadMultiPart(asset, totalBytes, onProgress, proxyConfig)
+      const multiResult = await downloadMultiPart(asset, totalBytes, onProgress, proxyConfig)
+      // [RM3] 服务器/代理不遵守 Range（任一段非 206 或段长不符）→ 整批放弃多段：
+      // 不设 useMultiPart，落入下方单段路径完整下载。此时 downloadedBytes=0（进多段
+      // 的前提就是无续传状态），单段全新请求不带 Range 头，既有 206/200 分类天然
+      // 兼容「忽略 Range 回 200」的服务器，sha256 校验兜底产物正确性。
+      useMultiPart = !multiResult.degradedToSingle
     }
   }
 
@@ -547,6 +551,22 @@ interface IPartSpec {
   tempPath: string
 }
 
+/**
+ * [RM3] 服务器未遵守 Range 协议的内部信号：多段请求收到非 206 响应（典型：
+ * 服务器/代理忽略 Range 回 200 全量），或响应内容长度与请求段不符。
+ *
+ * 定位是内部控制流信号而非用户可见错误——捕获方 downloadMultiPart 据此整批
+ * 放弃多段、降级单段完整下载（单段路径已有正确的 206/200 分类），绝不把错位
+ * 的段内容合并成损坏文件。刻意不继承 UpdateError：面向用户的网络错误分类
+ * （classifyNetError）不应对降级信号生效。
+ */
+class RangeNotRespectedError extends Error {
+  constructor(partIndex: number, reason: string) {
+    super(`part ${partIndex}: server did not honor Range request (${reason})`)
+    this.name = 'RangeNotRespectedError'
+  }
+}
+
 /** 创建带节流的进度回调（降低 IPC/渲染进程压力）。 */
 function createThrottledProgress(
   onProgress: ((percent: number) => void) | undefined,
@@ -596,6 +616,17 @@ async function downloadPart(
       await response.body?.cancel().catch(() => {})
       throw new UpdateError(`part ${part.index} download failed: HTTP ${response.status}`, 'downloading', 'UPDATE_NETWORK_FAILED')
     }
+    // [RM3] 旧实现只查 response.ok，200 全量也算 ok——服务器忽略 Range 时四段各下
+    // 全量，合并出 4 倍损坏文件后卡 sha 失败重试死循环。必须是 206，status 检查放
+    // 最前：200 场景 body 是整文件，立即 cancel 切断，避免 4 段并发白耗整文件流量。
+    // 段长校验由流结束后的实下字节数兜底（见下方 finish 回调），覆盖 chunked 等
+    // 无 content-length 场景。任一失守抛 RangeNotRespectedError，downloadMultiPart
+    // 据此整批放弃降级单段。
+    if (response.status !== HTTP_PARTIAL_CONTENT) {
+      await response.body?.cancel().catch(() => {})
+      throw new RangeNotRespectedError(part.index, `HTTP ${response.status}, expected 206 Partial Content`)
+    }
+    const expectedPartLength = part.end - part.start + 1
     const nodeStream = Readable.fromWeb(toNodeReadableWebStream(response.body))
     writeStream = createWriteStream(part.tempPath, { flags: 'w' })
     let downloaded = 0
@@ -609,7 +640,15 @@ async function downloadPart(
         onProgress(downloaded)
       })
       nodeStream.pipe(writeStream!)
-      writeStream!.on('finish', () => resolve(downloaded))
+      writeStream!.on('finish', () => {
+        // [RM3] 段长兜底校验：206 但 body 被中途截短/错位（代理返回错误区间等）
+        // 同样视为未遵守 Range，拒绝进入合并。
+        if (downloaded !== expectedPartLength) {
+          reject(new RangeNotRespectedError(part.index, `downloaded ${downloaded} bytes != part length ${expectedPartLength}`))
+          return
+        }
+        resolve(downloaded)
+      })
       writeStream!.on('error', reject)
       nodeStream.on('error', reject)
     })
@@ -624,9 +663,14 @@ async function downloadPart(
     // [B4] 已构造的 UpdateError 原样直通，不再进 classifyNetError 兜底分支：
     // 上面 HTTP 非 200 抛的 `part N download failed: HTTP xxx` 若被重新分类，
     // 会二次包装成「download failed: part N ...」双重前缀（探针已实证）。
-    // 与单段流式 catch 的直通先例保持一致；放在清理之后是刻意的——
-    // destroy/unlink 对所有错误类型都必须执行，不能提前 return 跳过。
-    if (err instanceof UpdateError) {
+    // 已构造错误原样直通，不再进 classifyNetError 兜底分支：
+    //   - [RM3] RangeNotRespectedError 是内部降级信号而非网络故障，被二次包装后
+    //     downloadMultiPart 将无法识别降级条件（误报成网络错误而非降级）。
+    //   - [B4] UpdateError 直通：`part N download failed: HTTP xxx` 被重新分类会
+    //     产生「download failed: part N ...」双重前缀（探针已实证）。
+    // 放在清理之后是刻意的——destroy/unlink 对所有错误类型都必须执行，
+    // 不能提前 return 跳过。
+    if (err instanceof RangeNotRespectedError || err instanceof UpdateError) {
       throw err
     }
     // D1: 对 downloadPart 的网络错误做统一分类（覆盖断点 1b：多段路径原无分类）
@@ -646,6 +690,8 @@ async function downloadPart(
  * 2. 每段独立 Range 请求 + 独立 ProxyAgent 连接，并发下载到各自 temp 文件
  * 3. 全部完成后按顺序合并到 .downloading 文件
  * 4. 删除段临时文件
+ * 5. [RM3] 任一段检测到服务器未遵守 Range（非 206 / 段长不符）→ 清理全部段文件，
+ *    返回 degradedToSingle=true，由调用方降级单段完整下载，绝不合并错位内容。
  *
  * [MUST-FIX #4 / timeout 语义说明] downloadPart 每段独立用 DOWNLOAD_TIMEOUT_MS（3600s 总）
  * + IDLE_TIMEOUT_MS（30s 空闲）。这是多段下载的固有特性：某段 Range 落到 CDN 缓存未命中的
@@ -659,7 +705,7 @@ async function downloadMultiPart(
   totalBytes: number,
   onProgress?: (percent: number) => void,
   proxyConfig?: IProxyConfig,
-): Promise<{ tempPath: string }> {
+): Promise<{ tempPath: string; degradedToSingle?: boolean }> {
   const maxParts = Math.max(1, Math.min(MULTI_PART_COUNT, Math.floor(totalBytes / MIN_BYTES_PER_PART)))
   const partSize = Math.floor(totalBytes / maxParts)
   const parts: IPartSpec[] = []
@@ -701,14 +747,24 @@ async function downloadMultiPart(
       throw err
     }
   })
-  try {
-    await Promise.all(partPromises)
-  } catch (err) {
+  // [RM3] 用 allSettled 收集全部段结果而非 Promise.all：段失败会 abort 其他段，
+  // 其他段的 AbortError 与 Range 违约信号谁先入队是竞态——Promise.all 只暴露第一个
+  // rejection，可能把「应降级」误判为网络失败。全部收集后统一判定才符合
+  // 「任一段违约 → 整批放弃多段」的语义。
+  const rejected = (await Promise.allSettled(partPromises)).filter(
+    (r): r is PromiseRejectedResult => r.status === 'rejected',
+  )
+  if (rejected.length > 0) {
     // 清理段临时文件
     for (const part of parts) {
       try { unlinkSync(part.tempPath) } catch (unlinkErr) { console.warn('[download] part cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
     }
-    throw err
+    // 任一段 Range 违约 → 整批放弃多段，降级单段完整下载；否则抛第一个真实错误
+    if (rejected.some((r) => r.reason instanceof RangeNotRespectedError)) {
+      console.log('[download] server did not honor Range requests, abandon multipart and fall back to single-stream download')
+      return { tempPath, degradedToSingle: true }
+    }
+    throw rejected[0]?.reason
   }
   // 合并段文件到 .downloading
   const writeStream = createWriteStream(tempPath, { flags: 'w' })
