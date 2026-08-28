@@ -10,7 +10,7 @@
  *   2. downloadAsset：下载 + sha256 校验（onProgress 推 downloading 进度）
  *   3. 写 update-result.json status='replacing'（installUpdate 阶段，self-healer 启动时检测中断）
  *   4. createPlatformUpdater().prepareUpdate：生成脚本 + 触发替换
- *   5. 据 ref.kind 决定返回值（detached-script → triggerRestart / spawn-installer → spawn + triggerRestart）
+ *   5. 据 ref.kind 决定返回值（detached-script → triggerRestart / unsupported → 抛错）
  *
  * [HISTORICAL] 不变量：
  * - orchestrator 不调 app.quit()（保持纯逻辑可测，quit 由 handler 调）
@@ -19,11 +19,12 @@
  * - linux deb 用户（APPIMAGE undefined）：pickAsset 仍返回 AppImage asset，但 prepareUpdate 抛
  *   UpdateUnsupportedError（携带 fallbackUrl），orchestrator 透传给 handler
  * - 并发保护：module-level updating 标志，performUpdate 进行中时拒绝重入（避免重复 spawn 脚本）
- * - win spawn-installer 延迟 1.5s 再 spawn，给 handler 的 app.quit 留时间避免文件锁冲突
+ * - win 与 mac/linux 统一 detached-script 语义（设计 §3.4 批次 2）：wrapper 在
+ *   prepareUpdate 内 spawn，orchestrator 不再延迟 spawn NSIS 安装器（原 1.5s
+ *   延迟魔数常量与 win 安装器 ref 分支已整体删除）
  *
  * 依赖方向：orchestrator → download-asset + platform-updater + proxy-config + constants + types + @xyz-agent/shared
  */
-import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import type { LatestReleaseInfo, UpdateStage } from '@xyz-agent/shared'
 import { downloadAsset } from './download-asset.js'
@@ -33,9 +34,6 @@ import { UPDATE_DIR, UPDATE_RESULT_FILE } from './constants.js'
 import { readProxyConfig } from './proxy-config.js'
 import { UpdateError, UpdateUnsupportedError } from './types.js'
 import type { UpdateScriptRef } from './types.js'
-
-/** Windows NSIS 安装器 spawn 延迟：给 handler 的 app.quit 留时间避免文件锁冲突 */
-const WIN_INSTALLER_SPAWN_DELAY_MS = 1500
 
 /** 进度完成百分比 */
 const PROGRESS_COMPLETE = 100
@@ -274,31 +272,22 @@ export async function performUpdate(
 /**
  * 根据平台升级器返回的 UpdateScriptRef 决定后续动作。
  *
- * - detached-script：mac/linux 已在 prepareUpdate 内 spawn detached，直接返回 triggerRestart
- * - spawn-installer：win，orchestrator 负责 spawn NSIS installer
+ * - detached-script：三平台统一语义——替换脚本已在 prepareUpdate 内 spawn detached
+ *   （win 为 cmd wrapper，见 win-updater-cmd.ts），orchestrator 只透传 triggerRestart
  * - unsupported：抛 UpdateUnsupportedError
  */
 function handleScriptRef(ref: UpdateScriptRef): { triggerRestart: boolean } {
   switch (ref.kind) {
     case 'detached-script':
-      // mac/linux 已 spawn detached，返回 triggerRestart=true（handler 调 app.quit）
-      return { triggerRestart: true }
-    case 'spawn-installer':
-      // win：先等 handler 的 setTimeout(app.quit, 500) 触发并完成退出，
-      // 再 spawn NSIS installer，避免文件锁冲突（NSIS 检测 app 运行会弹窗）。
-      // [NOTE] best-effort：handler quit 定时器 500ms + 本处延迟确保 app 已退出。
-      // 更彻底的方案是 wrapper 脚本轮询 PID 退出，暂不引入。
-      setTimeout(() => {
-        try {
-          spawn(ref.installerPath, ref.args, { detached: true, stdio: 'ignore' }).unref()
-        // eslint-disable-next-line taste/no-silent-catch -- best-effort：spawn 失败时 app 已 quit，无调用方可传播
-        } catch (e) {
-          console.error('[orchestrator] spawn NSIS failed:', e)
-        }
-      }, WIN_INSTALLER_SPAWN_DELAY_MS)
+      // 三平台统一：脚本已 spawn detached，返回 triggerRestart=true（handler 调 app.quit）
       return { triggerRestart: true }
     case 'unsupported':
       throw new UpdateUnsupportedError(ref.reason, ref.fallbackUrl)
+    default:
+      // win 安装器延迟 spawn 分支已随批次 2 删除：win 改走 detached-script（wrapper 在
+      // prepareUpdate 内 spawn，不再由 orchestrator 延迟 spawn NSIS）。防御性兑底：
+      // types.ts 联合类型收窄由后续单元处理，未知 kind 一律 fail-fast。
+      throw new UpdateError(`unexpected script ref kind: ${ref.kind}`, 'replacing')
   }
 }
 

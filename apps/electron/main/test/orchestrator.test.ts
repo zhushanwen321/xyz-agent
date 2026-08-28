@@ -125,46 +125,36 @@ describe('W3: orchestrator (W3TC8-9)', () => {
     expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'update-result.json'))).toBe(true)
   })
 
-  // ── W3TC8b：win spawn-installer 流程 ───────────────────────────
-  it('W3TC8b: win spawn-installer 流程 → orchestrator spawn installer + triggerRestart=true', async () => {
-    // win spawn 延迟 1.5s（给 handler 的 app.quit 留时间避免文件锁冲突），用 fake timers 推进
-    vi.useFakeTimers()
-    try {
-      setPlatform('win32')
-      // 改 WIN_RELEASE：需要 win asset
-      const winRelease: LatestReleaseInfo = {
-        ...MAC_RELEASE,
-        assets: {
-          winX64Exe: { name: 'setup.exe', downloadUrl: 'https://x/setup.exe', size: 2000 },
-        },
-      }
-      downloadMocks.downloadAsset.mockResolvedValue({ filePath: 'C:/tmp/setup.exe' })
-      const installerRef: UpdateScriptRef = {
-        kind: 'spawn-installer',
-        installerPath: 'C:/tmp/setup.exe',
-        args: ['/S', '--updated', '/D=C:/app'],
-      }
-      platformMocks.createPlatformUpdater.mockReturnValue({
-        prepareUpdate: vi.fn(() => installerRef),
-      })
-
-      const { performUpdate } = await loadModule()
-      const result = await performUpdate(winRelease, { onProgress: vi.fn() })
-
-      expect(result).toEqual({ triggerRestart: true })
-      // downloadAsset 传入了 win asset
-      const downloadArg = downloadMocks.downloadAsset.mock.calls[0][0]
-      expect(downloadArg.name).toBe('setup.exe')
-      // 推进 1.5s 延迟：触发 spawn NSIS installer（detached）
-      await vi.advanceTimersByTimeAsync(1500)
-      expect(childProcessMocks.spawn).toHaveBeenCalledTimes(1)
-      const [exe, args, opts] = childProcessMocks.spawn.mock.calls[0]
-      expect(exe).toBe('C:/tmp/setup.exe')
-      expect(args).toEqual(['/S', '--updated', '/D=C:/app'])
-      expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
-    } finally {
-      vi.useRealTimers()
+  // ── W3TC8b：win 统一 detached-script 语义（批次 2：wrapper 在 prepareUpdate 内 spawn）──
+  it('W3TC8b: win ref → detached-script 统一语义 → orchestrator 不 spawn 安装器 + triggerRestart=true', async () => {
+    setPlatform('win32')
+    // 改 WIN_RELEASE：需要 win asset
+    const winRelease: LatestReleaseInfo = {
+      ...MAC_RELEASE,
+      assets: {
+        winX64Exe: { name: 'setup.exe', downloadUrl: 'https://x/setup.exe', size: 2000, sha256: 'c'.repeat(64) },
+      },
     }
+    downloadMocks.downloadAsset.mockResolvedValue({ filePath: 'C:/tmp/setup.exe' })
+    // 三平台统一 detached-script：win 的 updater.cmd 已在 prepareUpdate 内 spawn（u2a）
+    const detachedRef: UpdateScriptRef = {
+      kind: 'detached-script',
+      scriptPath: 'C:/Users/t/AppData/Local/xyz-agent/update/updater.cmd',
+    }
+    platformMocks.createPlatformUpdater.mockReturnValue({
+      prepareUpdate: vi.fn(() => detachedRef),
+    })
+
+    const { performUpdate } = await loadModule()
+    const result = await performUpdate(winRelease, { onProgress: vi.fn() })
+
+    // detached-script → triggerRestart=true（与 mac/linux 同分支）
+    expect(result).toEqual({ triggerRestart: true })
+    // downloadAsset 传入了 win asset
+    const downloadArg = downloadMocks.downloadAsset.mock.calls[0][0]
+    expect(downloadArg.name).toBe('setup.exe')
+    // orchestrator 不再延迟 spawn NSIS 安装器（分支与延迟魔数已删）：全程零 spawn
+    expect(childProcessMocks.spawn).not.toHaveBeenCalled()
   })
 
   // ── W3TC9：linux deb 抛 UpdateUnsupportedError ─────────────────
