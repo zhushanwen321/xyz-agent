@@ -116,7 +116,8 @@ function validHandshake(overrides: Record<string, unknown> = {}): Record<string,
 describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
   // 本文件全部用例涉及真实子进程 + 杀链（SIGTERM → 3s grace → SIGKILL），满并行下
   // 5s 默认 testTimeout 不够（全量 347 文件满并行时杀链用例曾超时）——统一放宽。
-  const PROCESS_TEST_TIMEOUT_MS = 20_000
+  // 60s：waitFor 内部预算 30s（见 waitFor 注释），用例超时必须大于其最长等待。
+  const PROCESS_TEST_TIMEOUT_MS = 60_000
   const t = (name: string, fn: () => void | Promise<void>): void => { it(name, fn, PROCESS_TEST_TIMEOUT_MS) }
   let dataDir: string
   let workDir: string
@@ -158,6 +159,9 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
       "  if (process.env.XYZ_TEST_SIGTERM_MARKER) writeFileSync(process.env.XYZ_TEST_SIGTERM_MARKER, 'sigterm')",
       '  process.exit(0)',
       '})',
+      "// handler 注册完才写 ready：CI 2 核饱和下 node 冷启动可达数秒，杀链若在",
+      "// 注册前发 SIGTERM 走默认终止，marker 永不出现（间歇红 CI 的根因）",
+      "if (process.env.XYZ_TEST_READY_MARKER) writeFileSync(process.env.XYZ_TEST_READY_MARKER, 'ready')",
       '',
     ].join('\n'))
     published = []
@@ -402,9 +406,13 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     const agent = new TestAgent(getActiveRelaySocketPath()!)
     await agent.opened
     const hs = validHandshake({ argv: [fakePi, 'hang'] })
+    const ready = join(workDir, 'ready-marker')
     ;(hs.env as Record<string, string>).XYZ_TEST_SIGTERM_MARKER = marker
+    ;(hs.env as Record<string, string>).XYZ_TEST_READY_MARKER = ready
     agent.send(hs)
     await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file written')
+    // 等 handler 注册完再触发杀链：否则 SIGTERM 打进 node 启动期走默认终止，marker 永不出现
+    await waitFor(() => existsSync(ready), 30_000, 'fake-pi ready (SIGTERM handler registered)')
     agent.destroy()
     await waitFor(() => existsSync(marker), 30_000, 'SIGTERM marker (kill-on-disconnect)')
     await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file cleaned after kill')
@@ -416,9 +424,12 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     const agent = new TestAgent(getActiveRelaySocketPath()!)
     await agent.opened
     const hs = validHandshake({ argv: [fakePi, 'hang'] })
+    const ready = join(workDir, 'ready-marker-deinit')
     ;(hs.env as Record<string, string>).XYZ_TEST_SIGTERM_MARKER = marker
+    ;(hs.env as Record<string, string>).XYZ_TEST_READY_MARKER = ready
     agent.send(hs)
     await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file written')
+    await waitFor(() => existsSync(ready), 30_000, 'fake-pi ready (SIGTERM handler registered)')
     await deinitRelayServer()
     await waitFor(() => existsSync(marker), 30_000, 'SIGTERM marker (deinit kill chain)')
   })
