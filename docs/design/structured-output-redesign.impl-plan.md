@@ -1,6 +1,6 @@
 # structured-output 终态重设计 实施计划
 
-基线: <commit 时填> | 来源设计: docs/design/structured-output-redesign.md（v2，审查修订版） | 审查报告: docs/design/structured-output-redesign.review.md（2 must-fix 已在 v2 落盘） | 日期: 2026-08-28
+基线: bdc4ad2ae | 来源设计: docs/design/structured-output-redesign.md（v2，审查修订版） | 审查报告: docs/design/structured-output-redesign.review.md（2 must-fix 已在 v2 落盘） | 日期: 2026-08-28
 
 ## 0 章节映射
 
@@ -91,13 +91,14 @@ graph TD
 
 **残留风险**（承接设计 §11 ⛔ 探针，均有降级路径）：
 
+- ✅ **P9 已完成（2026-08-28，主 agent 直读 0.84.1 dist）**：① P1 `pi-ai/dist/utils/validation.js:251` TYPEBOX_KIND 分支存在；② P2 `agent-loop.js:404` validate → `:442 args: validatedArgs` → `:457 tool.execute(prepared.args)`；③ P3-new① immediate 分支（参数层失败）在 sequential/parallel 两路径均 `emitToolExecutionEnd`（348/358 等 4 处）；④ P3-new② `types.d.ts:241 shutdown()` "available in all contexts"；⑤ 顺带确认 beforeToolCall 位于 validate 之后（MUST_FIX-1 时序结论 0.84.1 同样成立）。碳上生产版本未登记，留验收记录标注「未验证」。
+- ✅ **P8 已完成（2026-08-28，探针 /tmp/p8-schema-probe.mjs）**：22 个生产 schema（stock daily/weekly 13 + 内置 workflow 内联 9，覆盖全部内联对象形态）在 pi-ai 0.84.1 参数层全部编译通过；required（顶层+嵌套）、enum（顶层+嵌套，direction/plan_followup.executed 实测被拒）、类型矫正（target_price '42'→42 输出值真实矫正）均强制生效；未声明 additionalProperties 时多余字段放行（确认 D4 动机，注入 false 后行为留 S5 复验）。
 - P5（动态 parameters 模型可见性）/ P6（非 object 根包装）：U1 实施期验证，失败降级 `Type.Unsafe` → `Type.Object({})` + execute 恢复 ajv（放弃 D2）。
 - P7'（shutdown 后父进程终态呈现）：U2 实施期 S2 实跑，失败降级 steer 一次 + maxTurns 兜底（G2 降为分钟级）。
-- P8（TypeBox 与 ajv 语义差）：U5 前置全量 schema 编译 + 关键字抽查，失败改写 schema 避开差集或走 P5 降级。
-- P9（版本矩阵）：0.84.1 复跑三点探针；碳上生产版本未登记项在验收记录中如实标注「未验证」。
 - 同一单元 dev→fix 超 2 轮未绿 → 冻结升级用户；一致性审查累计 ≥3 轮未收敛 → 暂停升级。
 
 **变更历史**：
 
 - 2026-08-28：初版计划。BR-1/BR-2 登记设计拆分与领地调整。
 - 2026-08-28：用户评审通过（粒度/验收批准）；U1 隔离改 worktree（用户指定）。U2/U4/U5 保持 plain。
+- 2026-08-28：验收前置 P8/P9 探针完成（结论见残留风险节）；生产 L4-L6 schema 固化为 `docs/design/structured-output-redesign.assets/l4l6-p3-schema.json`（实测 18 字段，设计文档计 17，以生产为准）。
