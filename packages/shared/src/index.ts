@@ -124,7 +124,7 @@ export {
   isPiLaunchPreset,
 } from './pi-preset'
 export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyConfig, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResultStatus, LaunchResult } from './update'
-export { LAUNCH_RESULT_STATUSES } from './update'
+export { LAUNCH_RESULT_STATUSES, UPDATE_STALE_RELEASE } from './update'
 // 用量统计类型（W1 数据层）
 export type { UsageMetrics, UsageRow, UsageStatsResult } from './usage-stats'
 // 迁移功能（从其他 agent 迁移配置）类型

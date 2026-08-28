@@ -27,6 +27,7 @@ import {
   LINUX_UPDATER_LOG_PATH,
   UPDATE_DIR,
   UPDATER_LOG_PATH,
+  UPDATER_PID_FILE,
   UPDATER_SCRIPT_PATH,
 } from './constants.js'
 import { buildLinuxUpdaterScript, buildUpdaterScript } from './updater-script.js'
@@ -36,6 +37,32 @@ import type { UpdateScriptRef } from './types.js'
 
 /** updater 脚本文件权限（rwxr-xr-x）：写盘 + chmod 共用，确保 detached bash 可执行。 */
 const UPDATER_SCRIPT_MODE = 0o755
+
+/**
+ * 写 updater.pid（批次 5 互斥 §3.7.1，接线收口 #13）。
+ *
+ * 写入语义对齐 mac/linux：脚本启动即写、退出即删。差异在写入方——
+ * mac/linux 由脚本模板自写 `$$`（`trap 'rm -f "$PID_FILE"' EXIT` 负责退出清理），
+ * win 的 cmd wrapper 无内建变量可廉价自取 PID（PowerShell `$PID` 是其自身进程而非
+ * wrapper），故由 main 侧在 spawn 后写 `child.pid`。
+ *
+ * **win 退出清理未覆盖**：cmd wrapper 不含删 pid 文件的逻辑（模板不在本单元领地），
+ * 残留在退出后由读侧 `update-self-healer` 的死 PID 自愈清理兜底（kill(pid,0) 失败
+ * 即 unlink）——cmd 进程退出后 pid 即死，自愈必然触发，不会永久残留。
+ *
+ * best-effort：写失败只告警不阻断。pid 文件是互斥辅助信号，写失败退回 u5a 之前的
+ * 现状（无互斥探测），远优于因为一个辅助文件而让整次升级失败。
+ */
+function writeUpdaterPid(pid: number | undefined): void {
+  if (pid === undefined) return
+  try {
+    writeFileSync(UPDATER_PID_FILE, String(pid))
+  } catch (err) {
+    // 降级策略：pid 文件是互斥辅助信号，写失败退回 u5a 之前的现状（无互斥探测），
+    // 远优于因为一个辅助文件而让整次升级失败——故只告警不重抛。
+    console.warn('[update] failed to write updater.pid (mutex degrades to no-op):', err)
+  }
+}
 
 /** 平台升级器接口 */
 export interface PlatformUpdater {
@@ -71,7 +98,7 @@ export class MacUpdater implements PlatformUpdater {
     // 输出小写。注入前统一小写，避免 [ "$ACTUAL" != "$SHA256" ] 字符串比较大写 vs 小写
     // 误判为不匹配（导致正确下载被错误回滚）。download-asset.ts 的下载期校验已小写化。
     const sha256 = release.assets.macArm64Zip?.sha256?.toLowerCase()
-    if (!sha256) throw new UpdateError('mac asset missing sha256', 'verifying')
+    if (!sha256) throw new UpdateError('mac asset missing sha256', 'downloading')
     const script = buildUpdaterScript({
       appBundle,
       zipPath: downloadedFilePath,
@@ -107,7 +134,7 @@ export class WinUpdater implements PlatformUpdater {
     // win 安装目录 = execPath 的 dirname（electron-builder NSIS 默认布局）
     const installDir = path.dirname(process.execPath)
     const sha256 = release.assets.winX64Exe?.sha256?.toLowerCase()
-    if (!sha256) throw new UpdateError('win asset missing sha256', 'verifying')
+    if (!sha256) throw new UpdateError('win asset missing sha256', 'downloading')
     const script = buildWinUpdaterCmd({
       installerPath: downloadedFilePath,
       installDir,
@@ -124,7 +151,9 @@ export class WinUpdater implements PlatformUpdater {
     writeFileSync(scriptPath, script)
     // cmd /c detached + ignore stdio：与 app.quit 解耦（Node 侧定时器随进程消亡，
     // 等待逻辑全部前移进 wrapper，不可信 Node 延迟 spawn）
-    spawn('cmd', ['/c', scriptPath], { detached: true, stdio: 'ignore' }).unref()
+    const child = spawn('cmd', ['/c', scriptPath], { detached: true, stdio: 'ignore' })
+    child.unref()
+    writeUpdaterPid(child.pid)
     return { kind: 'detached-script', scriptPath }
   }
 }
@@ -144,7 +173,7 @@ export class LinuxAppImageUpdater implements PlatformUpdater {
     // toLowerCase + 缺失抛 UpdateError：与 mac 路径一致。linux updater 脚本里
     // sha256sum 输出小写，统一小写避免字符串比较大小写误判。
     const sha256 = release.assets.linuxX64AppImage?.sha256?.toLowerCase()
-    if (!sha256) throw new UpdateError('linux asset missing sha256', 'verifying')
+    if (!sha256) throw new UpdateError('linux asset missing sha256', 'downloading')
     const script = buildLinuxUpdaterScript({
       appImagePath: appImage,
       newFilePath: downloadedFilePath,

@@ -6,7 +6,9 @@
  *
  * [HISTORICAL] 设计要点：
  * - UpdateScriptRef 用可辨识联合（kind 区分），orchestrator switch 穷尽分支
- * - 错误类带 stage 字段（downloading/verifying/replacing/restarting），便于前端精确展示
+ * - 错误类带 stage 字段（downloading/replacing/restarting），便于前端精确展示
+ *   （下载与校验合并进 downloading：原先独立的校验态随 update:perform 删除而失去推送点，
+ *    批次 5 u5d 已从 UpdateStage 联合类型与全部字面量中清除）
  * - UpdateUnsupportedError 单独成类（带 fallbackUrl），前端走「跳转 release 页」降级而非 retry
  *
  * 依赖方向：types → @xyz-agent/shared（UpdateStage 类型）
@@ -41,6 +43,8 @@ export type UpdateErrorCode =
   | 'UPDATE_PROXY_UNREACHABLE'
   | 'UPDATE_INTEGRITY_FAILED'
   | 'UPDATE_UNSUPPORTED_PLATFORM'
+  | 'UPDATE_STALE_RELEASE'
+  | 'UPDATE_FILE_RENAME_FAILED'
 
 /**
  * 错误码对应的用户友好提示信息。
@@ -74,7 +78,7 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateErrorCode, Omit<UpdateErrorInfo
   },
   UPDATE_SHA256_MISMATCH: {
     message: '安装包校验失败',
-    stage: 'verifying',
+    stage: 'downloading',
     suggestion: '安装包可能已损坏，请重新下载',
   },
   UPDATE_DISK_SPACE: {
@@ -99,7 +103,7 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateErrorCode, Omit<UpdateErrorInfo
   },
   UPDATE_INTEGRITY_FAILED: {
     message: '安装包完整性校验失败',
-    stage: 'verifying',
+    stage: 'downloading',
     suggestion: '安装包可能已损坏，请重新下载',
   },
   UPDATE_UNSUPPORTED_PLATFORM: {
@@ -107,19 +111,31 @@ export const UPDATE_ERROR_MESSAGES: Record<UpdateErrorCode, Omit<UpdateErrorInfo
     stage: 'replacing',
     suggestion: '请手动下载最新版本',
   },
+  UPDATE_STALE_RELEASE: {
+    message: '更新信息已过期',
+    stage: 'downloading',
+    suggestion: '已检测到更新的版本，请重新检查更新后再试',
+  },
+  UPDATE_FILE_RENAME_FAILED: {
+    message: '安装文件写入失败',
+    stage: 'replacing',
+    suggestion: '请确认应用未被占用或只读运行，然后重新下载安装',
+  },
 }
 
 /**
  * 平台升级器返回的「替换动作描述」。
  *
  * orchestrator 根据 kind 决定如何触发替换：
- * - detached-script：mac/linux，prepareUpdate 内已 spawn detached bash，orchestrator 只需返回 triggerRestart
- * - spawn-installer：win，orchestrator 负责 spawn NSIS installer（/S 静默）
+ * - detached-script：三平台统一，prepareUpdate 内已 spawn detached（mac/linux 为 bash
+ *   脚本，win 为 cmd wrapper），orchestrator 只需返回 triggerRestart
  * - unsupported：平台不支持自更新（如 deb），前端应跳 fallbackUrl
+ *
+ * [HISTORICAL] spawn-installer variant 随批次 2（u2b 删 orchestrator 延迟 spawn 分支）
+ * 成为死类型，批次 5 u5d 删除——保留一个永不可达的分支就是下一次注释漂移的种子。
  */
 export type UpdateScriptRef =
   | { kind: 'detached-script'; scriptPath: string }
-  | { kind: 'spawn-installer'; installerPath: string; args: string[] }
   | { kind: 'unsupported'; reason: string; fallbackUrl: string }
 
 /**
@@ -148,8 +164,8 @@ export class UpdateError extends Error {
    *
    * 根据 errorCode 从 UPDATE_ERROR_MESSAGES 映射表中获取错误描述和解决建议，
    * 但 stage 始终以构造时传入的 this.stage 为准——映射表里的 stage 只是「该错误码
-   * 的典型阶段」，并不一定等于实际发生阶段（例如 rename 失败被归为
-   * UPDATE_INTEGRITY_FAILED 但发生在 replacing 阶段，而非 verifying）。
+   * 的典型阶段」，并不一定等于实际发生阶段（例如 rename 失败发生在 replacing 阶段，
+   * 而它现在归类为 UPDATE_FILE_RENAME_FAILED，映射表里记的典型阶段也是 replacing）。
    * 如果 errorCode 未定义或不在映射表中，返回基础错误信息。
    */
   toUserFriendly(): UpdateErrorInfo {
@@ -187,7 +203,7 @@ export class UpdateError extends Error {
  */
 export class UpdateIntegrityError extends UpdateError {
   constructor(message: string, errorCode?: UpdateErrorCode) {
-    super(message, 'verifying', errorCode ?? 'UPDATE_INTEGRITY_FAILED')
+    super(message, 'downloading', errorCode ?? 'UPDATE_INTEGRITY_FAILED')
     this.name = 'UpdateIntegrityError'
   }
 }

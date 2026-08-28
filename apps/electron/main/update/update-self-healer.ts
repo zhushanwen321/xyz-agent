@@ -41,12 +41,12 @@ import {
   UPDATE_DIR,
   UPDATE_RESULT_FILE,
   UPDATER_LOG_PATH,
+  UPDATER_PID_FILE,
   UPDATER_SCRIPT_PATH,
 } from './constants.js'
 import type { UpdateResultStatus } from './types.js'
 
-/** updater pid 文件（批次 5 互斥，§3.7.1）：写入方 = mac/linux 升级脚本启动时自写 */
-const UPDATER_PID_FILE = path.join(UPDATE_DIR, 'updater.pid')
+/** updater.pid 见 constants.js（批次 5 u5d 抽常量：写入方含 win 的 main 侧，路径需唯一） */
 
 /**
  * 判断升级脚本是否仍在运行（跨进程互斥检查方，§3.7.1）。

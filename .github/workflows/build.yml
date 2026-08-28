@@ -266,10 +266,16 @@ jobs:
         # --platform <mac|win|linux>：输出 manifest-<platform>.json（三平台并行构建各自命名，
         # 避免 release.yml 的 download-artifact merge-multiple 同名覆盖。release.yml 用 jq 合并）。
 
-      - name: Ad-hoc sign mac app
-        if: matrix.platform == 'mac'
-        shell: bash
-        run: bash scripts/sign-mac-adhoc.sh
+      # 此处原有一个 "Ad-hoc sign mac app" 步骤（scripts/sign-mac-adhoc.sh），2026-08 批次 5
+      # u5d 删除。删除理由（探针 P7 实证 + CI 配置双重确认）：
+      # 1. 该步骤只签 unpacked 目录下的 .app，而上传清单只有 dmg/zip/exe/AppImage/deb——
+      #    签完的产物从不上传，是死步骤；
+      # 2. 它在 electron-builder 之后运行，zip 早已打包完成，zip 内的 .app 不可能被签上；
+      # 3. P7 探针实证：v0.9.9 的 TaiJi-0.9.9-mac-arm64.zip 共 897 个条目，
+      #    _CodeSignature / CodeResources 条目数 = 0，即发布产物确实未签名；
+      # 4. Build 步骤已设 CSC_IDENTITY_AUTO_DISCOVERY=false（无 Developer ID 证书）。
+      # 结论：产物走「未签名 + xattr -cr 清 quarantine」路线（见 updater-script.ts 头注释），
+      # 需要真签名时走批次 6 签名路线（设计 §3.8，待证书采购后单独实施），不要在此复活本步骤。
 
       - name: Upload artifacts
         if: inputs.upload-artifacts

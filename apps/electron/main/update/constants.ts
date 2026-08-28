@@ -46,3 +46,17 @@ export const LINUX_UPDATER_LOG_PATH = path.join(UPDATE_DIR, 'updater-linux.log')
 
 /** 升级错误日志路径（JSONL 格式，D7） */
 export const UPDATE_ERROR_LOG = path.join(UPDATE_DIR, 'update-error.log')
+
+/**
+ * 升级脚本 PID 文件（批次 5 互斥 §3.7.1）。
+ *
+ * 读写两端共用此常量，避免路径双写漂移：
+ * - 写侧：mac/linux 由 updater 脚本模板自写 `$$`（`$(dirname "{{RESULT_PATH}}")/updater.pid`，
+ *   与 UPDATE_DIR 同目录）；win 由 platform-updater 在 spawn 后写 `child.pid`（#13）
+ * - 读侧：update-self-healer 的存活探测（含 PID 复用加固与死 PID 自愈清理）
+ *
+ * [HISTORICAL] 写侧分散在 shell 模板与 TS 两处，但路径必须唯一——此前 mac 模板按
+ * `dirname(RESULT_PATH)` 推导、self-healer 按 UPDATE_DIR 推导，两者恰好等价
+ * （UPDATE_RESULT_FILE = UPDATE_DIR/update-result.json），抽出常量把这个巧合固化。
+ */
+export const UPDATER_PID_FILE = path.join(UPDATE_DIR, 'updater.pid')

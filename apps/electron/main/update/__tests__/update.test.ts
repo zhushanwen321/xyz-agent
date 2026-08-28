@@ -20,6 +20,7 @@ import {
   classifyNetError,
 } from '../net-errors.js'
 import { UpdateError, UPDATE_ERROR_MESSAGES } from '../types.js'
+import type { UpdateStage } from '@xyz-agent/shared'
 import { downloadAsset } from '../download-asset.js'
 
 // ─── error-log mock ──────────────────────────────────────────────
@@ -355,7 +356,9 @@ describe('W1-UPDATE_NETWORK_FAILED-for-public-EHOSTUNREACH', () => {
 
 describe('W1-UPDATE_ERROR_STAGES', () => {
   it('W1-UPDATE_ERROR_STAGES all error codes have valid stages', () => {
-    const VALID_STAGES = new Set(['downloading', 'verifying', 'replacing', 'restarting'])
+    // 显式标 UpdateStage：shared 侧删掉旧校验态后，这里若仍写死旧字面量会直接类型报错，
+    // 而不是静默放行一个已不存在的阶段。
+    const VALID_STAGES = new Set<UpdateStage>(['downloading', 'replacing', 'restarting'])
     for (const [code, info] of Object.entries(UPDATE_ERROR_MESSAGES)) {
       expect(VALID_STAGES.has(info.stage)).toBe(true)
     }

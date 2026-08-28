@@ -3,7 +3,7 @@
  *
  * 覆盖场景 W3TC8-9：
  *   W3TC8 mac 完整流程：downloadAsset mock → prepareUpdate mock 返回 detached-script
- *         → triggerRestart=true + onProgress 推 downloading/verifying/replacing
+ *         → triggerRestart=true + onProgress 推 downloading/replacing
  *   W3TC9 linux deb：prepareUpdate mock 抛 UpdateUnsupportedError → orchestrator 透传
  *
  * Mock 策略：vi.hoisted + vi.mock download-asset / platform-updater / electron。

@@ -27,13 +27,13 @@
  */
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import type { LatestReleaseInfo, UpdateStage } from '@xyz-agent/shared'
+import { UPDATE_STALE_RELEASE } from '@xyz-agent/shared'
 import { downloadAsset } from './download-asset.js'
 import { createPlatformUpdater } from './platform-updater.js'
 import { pickPlatformAsset } from './pick-platform-asset.js'
 import { UPDATE_DIR, UPDATE_RESULT_FILE } from './constants.js'
 import { readProxyConfig } from './proxy-config.js'
 import { UpdateError, UpdateUnsupportedError } from './types.js'
-import type { UpdateErrorCode } from './types.js'
 import type { UpdateScriptRef } from './types.js'
 import type { IReleaseChecker } from '../interfaces.js'
 
@@ -146,6 +146,18 @@ export async function downloadUpdate(
   }
   downloading = true
   try {
+    // 0.5 架构门控（批次 5 m8）：Intel mac 直接拒绝，不下载任何字节。
+    // 落点在 downloadUpdate 入口、pickPlatformAsset 之前——预下载与手动下载共用本入口，
+    // 因此预下载同样被拦住，不会先下完 ~170MB 才在 install 阶段被拒。
+    // 修复的是「静默装错架构产物」：pickPlatformAsset 对 darwin 一律返回 macArm64Zip，
+    // Intel mac 装上 arm64 包会得到一个打不开的 app。
+    if (process.platform === 'darwin' && process.arch !== 'arm64') {
+      throw new UpdateUnsupportedError(
+        `auto update supports Apple Silicon only (current arch: ${process.arch})`,
+        release.htmlUrl,
+      )
+    }
+
     // 1. 选 asset
     const asset = pickPlatformAsset(release)
     if (!asset) {
@@ -241,10 +253,7 @@ export async function resolveByVersion(
     throw new UpdateError(
       `requested version ${version} is stale (latest is ${latest.version})`,
       'downloading',
-      // [类型接线遗留] 码值 SSOT 定义在 shared/src/update.ts 的 UPDATE_STALE_RELEASE，
-      // 但 shared index.ts 的 re-export 与 types.ts 的 UpdateErrorCode 闭联合约均不在
-      // 本单元领地，暂以字面量桥接；renderer（u3b）与文案接线（后续单元）收口
-      'UPDATE_STALE_RELEASE' as UpdateErrorCode,
+      UPDATE_STALE_RELEASE,
     )
   }
   return latest
@@ -341,11 +350,13 @@ function handleScriptRef(ref: UpdateScriptRef): { triggerRestart: boolean } {
       return { triggerRestart: true }
     case 'unsupported':
       throw new UpdateUnsupportedError(ref.reason, ref.fallbackUrl)
-    default:
-      // win 安装器延迟 spawn 分支已随批次 2 删除：win 改走 detached-script（wrapper 在
-      // prepareUpdate 内 spawn，不再由 orchestrator 延迟 spawn NSIS）。防御性兑底：
-      // types.ts 联合类型收窄由后续单元处理，未知 kind 一律 fail-fast。
-      throw new UpdateError(`unexpected script ref kind: ${ref.kind}`, 'replacing')
+    default: {
+      // 不可达分支（TS 已穷尽：UpdateScriptRef 只剩 detached-script / unsupported 两个
+      // kind）。保留防御性 fail-fast 的理由：ref 来自 platform-updater 的返回值，未来
+      // 若新增 kind 而此处漏改，静默透传会让升级停在一个没人报错的中间态——比抛错难查。
+      const exhaustive: never = ref
+      throw new UpdateError(`unexpected script ref kind: ${exhaustive}`, 'replacing')
+    }
   }
 }
 

@@ -473,10 +473,13 @@ export async function downloadAsset(
         'UPDATE_PERMISSION_DENIED',
       )
     }
+    // [m9] 归一化落定失败此前复用 UPDATE_INTEGRITY_FAILED（「安装包完整性校验失败」），
+    // 语义错配：完整性没问题，是文件系统把 .downloading 改名到终态时失败（跨卷 / 占用 /
+    // 只读等）。改用独立错误码，前端文案才可能对症（见 types.ts UPDATE_ERROR_MESSAGES）。
     throw new UpdateError(
       `file rename failed: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
       'replacing',
-      'UPDATE_INTEGRITY_FAILED',
+      'UPDATE_FILE_RENAME_FAILED',
     )
   }
   return { filePath: finalPath }
