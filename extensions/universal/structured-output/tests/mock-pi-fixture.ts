@@ -49,6 +49,7 @@ function toFullExtensionAPI(partial: ReturnType<typeof createMockPi>): Extension
     getFlag: vi.fn(),
     registerMessageRenderer: vi.fn(),
     registerEntryRenderer: vi.fn(),
+    registerMarkdownTransformer: vi.fn(),
     sendMessage: vi.fn(),
     appendEntry: vi.fn(),
     setSessionName: vi.fn(),
@@ -68,8 +69,15 @@ function toFullExtensionAPI(partial: ReturnType<typeof createMockPi>): Extension
   };
 }
 
-export async function loadExtension(mockPi: ReturnType<typeof createMockPi>, schemaJson: string): Promise<void> {
-  process.env[SCHEMA_ENV_NAME] = schemaJson;
+export async function loadExtension(
+  mockPi: ReturnType<typeof createMockPi>,
+  schemaJson: string | undefined,
+): Promise<void> {
+  // U1 装配分岔：schemaJson = undefined 表示无 env（日常变体路径）。
+  // 注意必须 delete 而非赋空串——空串 env 在入口处与未设置同义（`if (schemaEnv)` truthy 语义），
+  // 但测试里 delete 才能真实模拟「未设置」。
+  if (schemaJson === undefined) delete process.env[SCHEMA_ENV_NAME];
+  else process.env[SCHEMA_ENV_NAME] = schemaJson;
   // 动态 import 确保每次拿到模块级 const（环境变量已设好）。
   // vitest 默认缓存模块，这里用 vi.resetModules + 动态 import 重置。
   vi.resetModules();
