@@ -77,6 +77,9 @@ export class MacUpdater implements PlatformUpdater {
       resultPath: path.join(UPDATE_DIR, 'update-result.json'),
       appName: 'TaiJi',
       targetVersion: release.version,
+      // u1a 模板契约：脚本用 kill -0 等待本进程退出（PID 制，上限 60s）；
+      // 缺失时 buildUpdaterScript 直接 throw，不静默跳过等待。
+      parentPid: String(process.pid),
     })
     mkdirSync(UPDATE_DIR, { recursive: true })
     writeFileSync(UPDATER_SCRIPT_PATH, script, { mode: UPDATER_SCRIPT_MODE })
@@ -128,6 +131,8 @@ export class LinuxAppImageUpdater implements PlatformUpdater {
       logPath: LINUX_UPDATER_LOG_PATH,
       resultPath: path.join(UPDATE_DIR, 'update-result.json'),
       targetVersion: release.version,
+      // 与 mac 同契约：脚本 kill -0 等待本进程退出
+      parentPid: String(process.pid),
     })
     mkdirSync(UPDATE_DIR, { recursive: true })
     writeFileSync(LINUX_UPDATER_SCRIPT_PATH, script, { mode: UPDATER_SCRIPT_MODE })

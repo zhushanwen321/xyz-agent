@@ -142,6 +142,9 @@ describe('W3: platform-updater (W3TC5-7)', () => {
     const scriptContent = readFileSync(ref.kind === 'detached-script' ? ref.scriptPath : '', 'utf-8')
     expect(scriptContent).not.toMatch(/\{\{[^}]+\}\}/)
     expect(scriptContent).toContain('a'.repeat(64)) // sha256 注入
+    // PARENT_PID 注入（u1b 契约）：脚本等待的父 PID = 当前 main 进程实际 pid
+    expect(scriptContent, 'mac 脚本应注入 PARENT_PID').toContain(`PARENT_PID="${process.pid}"`)
+    expect(scriptContent, 'mac 脚本应为 PID 制等待（kill -0）').toContain('kill -0 "$PARENT_PID"')
   })
 
   it('W3TC5b: dev 模式（!isPackaged）→ 抛 UpdateError', async () => {
@@ -203,6 +206,9 @@ describe('W3: platform-updater (W3TC5-7)', () => {
     // 脚本占位符替换
     const scriptContent = readFileSync(ref.kind === 'detached-script' ? ref.scriptPath : '', 'utf-8')
     expect(scriptContent).not.toMatch(/\{\{[^}]+\}\}/)
+    // PARENT_PID 注入（u1b 契约，与 mac 同语义）：linux 脚本同样 PID 制等待
+    expect(scriptContent, 'linux 脚本应注入 PARENT_PID').toContain(`PARENT_PID="${process.pid}"`)
+    expect(scriptContent, 'linux 脚本应为 PID 制等待（kill -0）').toContain('kill -0 "$PARENT_PID"')
   })
 
   it('W3TC7b: APPIMAGE 缺失（deb 包）→ 抛 UpdateUnsupportedError + fallbackUrl', async () => {
