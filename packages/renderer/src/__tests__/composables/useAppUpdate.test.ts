@@ -28,7 +28,7 @@ import type { LatestReleaseInfo } from '@xyz-agent/shared'
 // vi.mock 被 hoist，factory 内不能引用顶层变量，用 vi.hoisted 拿稳定引用
 const hoisted = vi.hoisted(() => {
   // 捕获 onUpdateProgress/onUpdateError 注册的回调，供测试手动触发（模拟 main 推送）
-  let progressCb: ((p: { stage: 'downloading' | 'verifying' | 'replacing'; percent: number }) => void) | null = null
+  let progressCb: ((p: { stage: 'downloading' | 'replacing'; percent: number }) => void) | null = null
   let errorCb: ((e: { stage: string; message: string; errorCode?: string }) => void) | null = null
   return {
     checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<LatestReleaseInfo | null>>(),
@@ -52,7 +52,7 @@ const hoisted = vi.hoisted(() => {
       }
     }),
     // 暴露给测试：手动触发 main 进程的进度/错误推送
-    fireProgress: (p: { stage: 'downloading' | 'verifying' | 'replacing'; percent: number }) => {
+    fireProgress: (p: { stage: 'downloading' | 'replacing'; percent: number }) => {
       if (progressCb) progressCb(p)
     },
     fireError: (e: { stage: string; message: string; errorCode?: string }) => {
@@ -175,12 +175,11 @@ describe('useAppUpdate', () => {
     stop()
   })
 
-  it('performDownload 经 onUpdateProgress 推送做 stage 转换（downloading→verifying→replacing），downloaded:true 后置 downloaded', async () => {
+  it('performDownload 经 onUpdateProgress 推送做 stage 转换（downloading→replacing），downloaded:true 后置 downloaded', async () => {
     hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
     hoisted.updateDownload.mockImplementation(async () => {
-      // 触发主进程推送：downloading 30% → verifying 70% → replacing 100%
+      // 触发主进程推送：downloading 30% → replacing 100%（verifying 已随批次 3 删 perform 移除，m3）
       hoisted.fireProgress({ stage: 'downloading', percent: 30 })
-      hoisted.fireProgress({ stage: 'verifying', percent: 70 })
       hoisted.fireProgress({ stage: 'replacing', percent: 100 })
       return { downloaded: true }
     })
@@ -195,18 +194,18 @@ describe('useAppUpdate', () => {
     stop()
   })
 
-  it('performDownload 在 progress 推到 verifying 后 resolve {downloaded:true}，state 置 downloaded 不卡在 verifying', async () => {
+  it('performDownload 在 progress 推到中间态后 resolve {downloaded:true}，state 置 downloaded 不卡在 downloading', async () => {
     hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
-    // 模拟：main 只推了一次 verifying 进度，updateDownload 随即 resolve
+    // 模拟：main 只推了一次 downloading 进度，updateDownload 随即 resolve
     hoisted.updateDownload.mockImplementation(async () => {
-      hoisted.fireProgress({ stage: 'verifying', percent: 50 })
+      hoisted.fireProgress({ stage: 'downloading', percent: 50 })
       return { downloaded: true }
     })
     const { result, stop } = setupUseAppUpdate()
     await result.checkForUpdate()
     await result.performDownload()
 
-    // downloaded:true 覆盖中间态 → state=downloaded（不卡在 verifying）
+    // downloaded:true 覆盖中间态 → state=downloaded（不卡在 downloading）
     expect(result.state.state).toBe('downloaded')
     expect(result.state.percent).toBe(50)
     stop()

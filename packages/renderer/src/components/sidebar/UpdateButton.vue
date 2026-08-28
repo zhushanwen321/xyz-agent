@@ -2,7 +2,7 @@
   <!--
     升级状态指示器 · 嵌入 Sidebar 版本号 span（兄弟元素）。
     按 state 分支渲染：idle/checking 不渲染；available 显可升级角标 + release note 浮层；
-    downloading/verifying/replacing 显 spinner + 进度条；restarting 显成功态；
+    downloading/replacing 显 spinner + 进度条；restarting 显成功态；
     error 显错误图标 + 完整错误浮层；unsupported 显「前往下载」按钮。
 
     单例：useAppUpdate 的 state 全应用共享（Sidebar initAutoCheck 检测，UpdateButton 消费）。
@@ -38,9 +38,9 @@
       </HoverCardContent>
     </HoverCard>
 
-    <!-- downloading / verifying：spinner + 进度条 + 百分比 -->
+    <!-- downloading：spinner + 进度条 + 百分比 -->
     <span
-      v-else-if="state.state === 'downloading' || state.state === 'verifying'"
+      v-else-if="state.state === 'downloading'"
       class="inline-flex items-center gap-1 text-[length:var(--text-3xs)] text-neutral-mid"
       data-testid="update-progress"
     >

@@ -29,9 +29,9 @@
           class="text-[12px] text-accent"
           data-testid="settings-update-new-version"
         >{{ t('settings.system.newVersionAvailable', { version: state.latestRelease?.version }) }}</span>
-        <!-- downloading / verifying：进度 -->
+        <!-- downloading：进度 -->
         <span
-          v-if="state.state === 'downloading' || state.state === 'verifying'"
+          v-if="state.state === 'downloading'"
           class="inline-flex items-center gap-1 text-[12px] text-neutral-mid"
         >
           <Loader2 class="size-4 animate-spin" />

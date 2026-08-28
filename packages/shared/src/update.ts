@@ -42,8 +42,8 @@ export interface ReleaseAsset {
   sha256?: string
 }
 
-/** 升级流程的阶段（用于前端进度展示） */
-export type UpdateStage = 'downloading' | 'verifying' | 'replacing' | 'restarting'
+/** 升级流程的阶段（用于前端进度展示）。校验中态已随批次 3 删 update:perform 移除（m3：唯一推送点不存在） */
+export type UpdateStage = 'downloading' | 'replacing' | 'restarting'
 
 /** 升级流程的整体状态机 */
 export type UpdateState =
@@ -51,7 +51,6 @@ export type UpdateState =
   | 'checking'
   | 'available'
   | 'downloading'
-  | 'verifying'
   | 'downloaded'
   | 'replacing'
   | 'restarting'

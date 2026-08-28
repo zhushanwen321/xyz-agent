@@ -198,7 +198,7 @@ describe('useAppUpdate 可见性守卫（Q1-6）', () => {
     expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
   })
 
-  it('补查 await 期间 dispose：await 恢复后不排新周期 timer（卸载后 20min 不联网，W05 review）', async () => {
+  it('补查 await 期间 dispose：await 恢复后不排新周期 timer（卸载后 60min 内不联网，W05 review）', async () => {
     // 让 checkForUpdate 挂起，制造 runAutoCheck 的 await 窗口（此窗口无 pending timer）
     let resolveCheck!: (v: LatestReleaseInfo | null) => void
     hoisted.checkForUpdate.mockImplementation(

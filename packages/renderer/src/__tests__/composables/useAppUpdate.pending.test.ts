@@ -31,7 +31,7 @@ import type { LatestReleaseInfo } from '@xyz-agent/shared'
 
 // vi.hoisted：mock factory 内不能引用顶层变量，用 hoisted 拿稳定引用
 const hoisted = vi.hoisted(() => {
-  let progressCb: ((p: { stage: 'downloading' | 'verifying' | 'replacing'; percent: number }) => void) | null = null
+  let progressCb: ((p: { stage: 'downloading' | 'replacing'; percent: number }) => void) | null = null
   let errorCb: ((e: { stage: string; message: string; errorCode?: string }) => void) | null = null
   return {
     checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<LatestReleaseInfo | null>>(),

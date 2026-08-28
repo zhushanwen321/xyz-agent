@@ -2,7 +2,7 @@
  * useAppUpdate —— 自动升级的单例 composable（w4 update-frontend）。
  *
  * 职责：
- * - 维护 9 状态机（idle/checking/available/downloading/verifying/replacing/restarting/error/unsupported）
+ * - 维护 9 状态机（idle/checking/available/downloading/downloaded/replacing/restarting/error/unsupported）
  * - checkForUpdate：经 ipc 检测新版，命中后异步渲染 releaseNotes 为 HTML
  * - performUpdate：已删除（批次 3 m17）；两阶段 performDownload/performInstall 替代，
  *   download 传意图（version 字符串），release 数据由 main 权威解析（RC1）
@@ -169,7 +169,7 @@ const state = reactive({
   errorMessage: '',
   /** 错误解决建议（state=error 时填充，用于展示恢复指引） */
   errorSuggestion: '',
-  /** 升级进度百分比（0-100，state=downloading/verifying/replacing 时填充） */
+  /** 升级进度百分比（0-100，state=downloading/replacing 时填充） */
   percent: 0,
   /** release note 渲染后的 HTML（markdown-it + shiki，异步填充） */
   releaseNotesHtml: '',
@@ -217,7 +217,7 @@ let visibilityListenerAttached = false
  * dispose 标志（W05 review）：onScopeDispose / _resetForTest 置位，initAutoCheck 复位。
  * runAutoCheck 在 await checkForUpdate 期间无 pending timer（autoCheckTimer 已置 null、
  * 下一周期尚未排）——此窗口内 scope dispose 后 clearAutoCheckTimer 无 timer 可清，
- * await 恢复仍会排上 20min timer → 卸载后继续联网。runAutoCheck 排下一周期前检查
+ * await 恢复仍会排上 60min timer → 卸载后继续联网。runAutoCheck 排下一周期前检查
  * 本标志，已 dispose 则直接返回。
  */
 let disposed = false
@@ -232,8 +232,8 @@ function subscribeProgress(): void {
   if (refCount !== 1) return  // 已有订阅，只增计数
   // 首次订阅
   const offProgress = onUpdateProgress((p) => {
-    // stage 映射 state：downloading/verifying/replacing（restarting 由 performInstall resolve 后置）
-    if (p.stage === 'downloading' || p.stage === 'verifying' || p.stage === 'replacing') {
+    // stage 映射 state：downloading/replacing（restarting 由 performInstall resolve 后置）
+    if (p.stage === 'downloading' || p.stage === 'replacing') {
       state.state = p.stage
     }
     state.percent = p.percent
@@ -511,9 +511,9 @@ function detachVisibilityListener(): void {
 }
 
 /**
- * 自动检测单次执行：守卫检查 → 检测（force=true 绕过缓存）→ 排下一个周期定时器。
+ * 自动检测单次执行：守卫检查 → 检测（force=true 绕过缓存）→ 排下一个 60min 周期定时器。
  *
- * 守卫：仅在 idle/available/error/unsupported 态调 checkForUpdate；downloading/verifying/
+ * 守卫：仅在 idle/available/error/unsupported 态调 checkForUpdate；downloading/
  * replacing/restarting/downloaded 态跳过本次检查（不打断升级流程），但仍排下一次定时器，
  * 保证升级完成后能继续周期检测。
  *
