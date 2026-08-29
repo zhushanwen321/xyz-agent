@@ -1672,7 +1672,9 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
       // 修复前 W5 凭弱证据补记 clean（batch=1、fixCount=0）→ 批 2 skip → 仅 2 次。
       const { kinds } = runner.stats();
       expect(kinds.filter((k) => k === "review").length).toBe(3);
-      expect(kinds.filter((k) => k === "aggregate").length).toBe(1); // 批 2 全 clean 不聚合
+      // aggregate 2 次 = 批 1 R1 的原调用 + 重试（C 修复：JSON 无效先原 prompt 重试
+      // 一次争取完整恢复，重试也无效才 md 兜底——mock 两次都返回 invalid 剧本）
+      expect(kinds.filter((k) => k === "aggregate").length).toBe(2);
       expect(kinds.filter((k) => k === "fix").length).toBe(0);
       // agentStatus 佐证：reviewer-a 的 clean 记录来自批 2 真实 clean 轮（=2），
       // 而非批 1 fallback 弱证据补记（修复前 =1）
@@ -1682,15 +1684,17 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
   );
 
   it(
-    "A4/W4: R2 全降级 break 不二次对账——open 条目同轮 openStreak 不双计",
+    "A4/W4: R2 全降级 + 台账残留 → 守门不假 clean，追账轮 openStreak 单计至 stuck 诚实终止",
     async () => {
       // 剧本：R1 reviewer 报 2 must-fix（MF-1/MF-2 聚合均活跃）→ fix 修两个
       //（fix-attempted）；R2 reviewer 原始报 1 must-fix + 对账 MF-1 fixed /
-      // MF-2 not-fixed；R2 聚合全部降级（mustFix=0、唯一条目 MF-2 downgraded）→
-      // A4 break 终止批 1。修复前：A4 break 前的 applyCleanRoundBackfill 内部第二次
-      // reconcileIssues 把 MF-2（regressed 且 seen）同轮 openStreak 再 +1（1→2 双计，
-      // 无谓吃掉 stuckThreshold 余量）；修复后（W4）A4 仅补 regression 维度，对账
-      // 只发生一次（stuck 检测处）。
+      // MF-2 not-fixed；R2 聚合全部降级（mustFix=0、唯一条目 MF-2 downgraded）。
+      // 台账守门后（2026-08-29 假 clean 修复）：A4 出口检出 MF-2 regressed 残留 →
+      // 不以 clean 收工（旧行为「A4 break → clean + 台账躺着 regressed 条目」即
+      // 假 clean 缺陷），跳过 fix（修复队列空）continue 追账。mock review 耗尽后
+      // 重复 R2 剧本（must_fix=1 + MF-2 not-fixed）→ 每轮 reconcile 恰好一次
+      //（同轮不双计，W4 语义在守门路径下保持）→ openStreak 1/2/3 → 第 3 次达
+      // stuckThreshold=3 → stuck 诚实终止。
       let aggN = 0;
       const runner = makeScenarioRunner({
         review: [
@@ -1741,26 +1745,25 @@ describe("startup fail-fast (ADR-0003 D6)", () => {
       expect(result.reason).toBe("completed");
       expect(result.error).toBeUndefined();
       const outcome = assertScriptOutcome(result.scriptResult);
-      // A4 break → batchClean → 单批 run 以 clean 终止
-      expect(outcome.terminated).toBe("clean");
+      // 守门生效：不再以 clean 收工（假 clean 缺陷修复）——残留追账至 stuck 诚实终止
+      expect(outcome.terminated).toBe("stuck");
 
       const st = JSON.parse(readFileSync(join(outcome.runDir!, "state.json"), "utf8")) as {
         issues: Record<string, { status: string; openStreak?: number; fixAttempts?: number; history: Array<{ round: number; status: string }> }>;
       };
-      // R2 对账（唯一一次）：MF-1 fixed；MF-2 regressed（fixAttempts=1）且
-      // openStreak=1（修复前第二次 reconcile 双计 → openStreak=2，本断言拦截）
+      // R2 对账：MF-1 申报 fixed（带 evidence）→ fixed；MF-2 regressed（fixAttempts=1）
       expect(st.issues["MF-1"].status).toBe("fixed");
       expect(st.issues["MF-2"].status).toBe("regressed");
-      expect(st.issues["MF-2"].openStreak).toBe(1);
       expect(st.issues["MF-2"].fixAttempts).toBe(1);
-      // history 旁证：{round:2, regressed} 只一条（双计的本质是 openStreak 数值，
-      // history 不重复 push——openStreak 断言才是判别点）
+      // openStreak 单计：R2/R3/R4 追账轮各 +1（3 轮 not-fixed 达阈值；同轮不双计的
+      // W4 语义在守门路径下保持——每轮 reconcile 恰好一次）
+      expect(st.issues["MF-2"].openStreak).toBe(3);
       expect(st.issues["MF-2"].history.filter((h) => h.round === 2 && h.status === "regressed")).toHaveLength(1);
 
-      // 调用数：review 2 + aggregate 2 + fix 1（R2 A4 不派 fixer）
+      // 调用数：review 4（R1 + R2/R3/R4 追账）+ aggregate 4 + fix 1（追账轮修复队列空不派 fixer）
       const { kinds } = runner.stats();
-      expect(kinds.filter((k) => k === "review").length).toBe(2);
-      expect(kinds.filter((k) => k === "aggregate").length).toBe(2);
+      expect(kinds.filter((k) => k === "review").length).toBe(4);
+      expect(kinds.filter((k) => k === "aggregate").length).toBe(4);
       expect(kinds.filter((k) => k === "fix").length).toBe(1);
     },
     RUN_TIMEOUT_MS,

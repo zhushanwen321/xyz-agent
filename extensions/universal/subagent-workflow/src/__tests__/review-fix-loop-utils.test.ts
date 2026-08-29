@@ -28,6 +28,12 @@ import {
   normalizeFixResult,
   normIssueId,
   findIssueKey,
+  hasOpenResidue,
+  normTitle,
+  matchByTitle,
+  nextFreeId,
+  resolveIssueIdentity,
+  translateId,
   validateFixResult,
   reconcileIssues,
   normalizeReviewResult,
@@ -1596,11 +1602,12 @@ describe("C3 applyCleanRoundBackfill：clean 轮确定性对账回填（黑洞�
       fixResults: [{ fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "d", self_check: "x", affected_files: [] }], deferred: [] }],
     };
     const out = applyCleanRoundBackfill(state, { reconSeen: new Set(), reconEscalate: new Set(), round: 2, stuckThreshold: 3 });
-    expect(out.issues["MF-1"].status).toBe("fixed");
-    expect(out.issues["MF-1"].history).toContainEqual({ round: 2, status: "fixed" });
-    expect(out.scores).toHaveLength(1);
-    expect(out.scores[0]).toMatchObject({ round: 1, targetKind: "fix" });
-    expect(out.scores[0].dimensions.regression).toBe(10);
+    expect(out.state.issues["MF-1"].status).toBe("fixed");
+    expect(out.state.issues["MF-1"].history).toContainEqual({ round: 2, status: "fixed" });
+    expect(out.state.scores).toHaveLength(1);
+    expect(out.state.scores[0]).toMatchObject({ round: 1, targetKind: "fix" });
+    expect(out.state.scores[0].dimensions.regression).toBe(10);
+    expect(out.stuck).toBe(false);
   });
 
   it("C3 round=1（无上轮 fix）仅对账，不做 regression 回填", () => {
@@ -1611,9 +1618,9 @@ describe("C3 applyCleanRoundBackfill：clean 轮确定性对账回填（黑洞�
       fixResults: [],
     };
     const out = applyCleanRoundBackfill(state, { reconSeen: new Set(["S-9"]), reconEscalate: new Set(), round: 1, stuckThreshold: 3 });
-    expect(out.scores).toEqual([]);
+    expect(out.state.scores).toEqual([]);
     // 新 ID 进 issues（reconcile 语义不变）
-    expect(out.issues["S-9"]).toBeDefined();
+    expect(out.state.issues["S-9"]).toBeDefined();
   });
 
   it("C3 再现（seen）→ regressed（对账语义与 reconcileIssues 一致），regression 分数相应下降", () => {
@@ -1626,8 +1633,8 @@ describe("C3 applyCleanRoundBackfill：clean 轮确定性对账回填（黑洞�
       fixResults: [{ fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "d", self_check: "x", affected_files: [] }], deferred: [] }],
     };
     const out = applyCleanRoundBackfill(state, { reconSeen: new Set(["MF-1"]), reconEscalate: new Set(), round: 2, stuckThreshold: 3 });
-    expect(out.issues["MF-1"].status).toBe("regressed");
-    expect(out.scores[0].dimensions.regression).toBe(0); // 1/1 regressed → 10-10
+    expect(out.state.issues["MF-1"].status).toBe("regressed");
+    expect(out.state.scores[0].dimensions.regression).toBe(0); // 1/1 regressed → 10-10
   });
 });
 
@@ -1761,8 +1768,8 @@ describe("filterDormantFromRecon + applyCleanRoundBackfill 的 dormant 分区", 
     // reviewer 在 clean 终止轮对 dormant id 声明 not-fixed（绕过向量）
     const out = applyCleanRoundBackfill(state, { reconSeen: new Set(["MF-D1"]), reconEscalate: new Set(), round: 2, stuckThreshold: 3 });
     // 过滤生效：MF-D1 不经对账通道建 issue（复活唯一入口 = 聚合活跃重报）
-    expect(out.issues["MF-D1"]).toBeUndefined();
-    expect(out.dormant[0].revived).toBe(false);
+    expect(out.state.issues["MF-D1"]).toBeUndefined();
+    expect(out.state.dormant[0].revived).toBe(false);
   });
 });
 
@@ -1992,5 +1999,262 @@ describe("A9 backfillFixRegression mode 三态（unverifiable 边缘缺口）", 
     expect(clean[0].note).toContain("clean-round deterministic backfill");
     const normal = backfillFixRegression({ scores: [], fixResult, issues: {}, round: 2, batch: 1, cleanRound: false });
     expect(normal[0].note).toContain("aggregation ran but returned no usable fix score entry");
+  });
+});
+
+// ── 假 clean 防护 + 身份对齐 + fixed 申报清账（2026-08-29，对照审查 7 must-fix 落地） ──
+
+describe("hasOpenResidue — 台账残留判定（四收工点守门）", () => {
+  it("空对象 / undefined / 全 closed（fixed/deferred）→ false", () => {
+    expect(hasOpenResidue({})).toBe(false);
+    expect(hasOpenResidue(undefined)).toBe(false);
+    expect(hasOpenResidue({
+      "MF-1": { status: "fixed" },
+      "MF-2": { status: "deferred" },
+    })).toBe(false);
+  });
+  it("存在 open 或 regressed 条目 → true", () => {
+    expect(hasOpenResidue({ "MF-1": { status: "open" } })).toBe(true);
+    expect(hasOpenResidue({
+      "MF-1": { status: "fixed" },
+      "MF-2": { status: "regressed" },
+    })).toBe(true);
+  });
+});
+
+describe("normTitle / matchByTitle — 标题归一与唯一匹配", () => {
+  it("normTitle：小写 + 空白折叠 + trim", () => {
+    expect(normTitle("  Null   Check in   Parser ")).toBe("null check in parser");
+    expect(normTitle(undefined)).toBe("");
+  });
+  it("归一标题唯一命中 issues → { kind: issue, id: 键 }", () => {
+    const issues = { "MF-1": { status: "open", title: "Null Check in Parser" } };
+    expect(matchByTitle("null check   IN parser", issues, [])).toEqual({ kind: "issue", id: "MF-1" });
+  });
+  it("唯一命中 dormant → { kind: dormant, id }", () => {
+    const dormant = [{ id: "MF-7", title: "Missing boundary guard", revived: false }];
+    expect(matchByTitle("missing boundary guard", {}, dormant)).toEqual({ kind: "dormant", id: "MF-7" });
+  });
+  it("短标题（<5 归一长度）不参与匹配（碰撞率高）", () => {
+    const issues = { "MF-1": { status: "open", title: "typo" } };
+    expect(matchByTitle("typo", issues, [])).toBeUndefined();
+  });
+  it("多命中歧义不猜 → undefined；0 命中 → undefined；无 title 既有条目不参与", () => {
+    const issues = {
+      "MF-1": { status: "open", title: "same issue title here" },
+      "MF-2": { status: "open", title: "Same Issue Title Here" },
+      "MF-3": { status: "open" },
+    };
+    expect(matchByTitle("same issue title here", issues, [])).toBeUndefined();
+    expect(matchByTitle("no such issue at all", issues, [])).toBeUndefined();
+  });
+});
+
+describe("nextFreeId — 避让占号分配", () => {
+  it("顺延：{MF-1, MF-2} → MF-3", () => {
+    expect(nextFreeId(["MF-1", "MF-2"])).toBe("MF-3");
+  });
+  it("空隙回填：{MF-1, MF-3} → MF-2；空集 → MF-1", () => {
+    expect(nextFreeId(["MF-1", "MF-3"])).toBe("MF-2");
+    expect(nextFreeId([])).toBe("MF-1");
+  });
+  it("非 MF 格式键不参与占号（仍分配 MF-1）", () => {
+    expect(nextFreeId(["S-1", "custom"])).toBe("MF-1");
+  });
+});
+
+describe("resolveIssueIdentity — 三级身份对齐", () => {
+  const mkIssues = () => ({
+    "MF-1": { status: "fix-attempted", title: "Null check missing in parser" },
+  });
+  it("L1：编号命中且标题归一一致 → 恒等沿用（mapped=false）", () => {
+    const out = resolveIssueIdentity({ id: "MF-1", title: "null check missing IN parser" }, { issues: mkIssues(), dormant: [] });
+    expect(out).toEqual({ key: "MF-1", mapped: false });
+  });
+  it("L1 旧格式降级：任一侧无 title → 沿用编号（现状兼容，mapped=false）", () => {
+    const a = resolveIssueIdentity({ id: "MF-1" }, { issues: mkIssues(), dormant: [] });
+    expect(a).toEqual({ key: "MF-1", mapped: false });
+    const b = resolveIssueIdentity({ id: "MF-1", title: "whatever" }, { issues: { "MF-1": { status: "open" } }, dormant: [] });
+    expect(b).toEqual({ key: "MF-1", mapped: false });
+  });
+  it("L1 守卫：编号命中但标题不一致（编号撞车）→ 不沿用，L2 标题命中他条或 L3 避让", () => {
+    // 编号撞车 + 无标题命中 + 编号被占 → L3 避让分配新号
+    const out = resolveIssueIdentity(
+      { id: "MF-1", title: "brand new unrelated problem" },
+      { issues: mkIssues(), dormant: [] },
+    );
+    expect(out.key).toBe("MF-2"); // MF-1 被占 → 避让
+    expect(out.mapped).toBe(true);
+  });
+  it("L2：编号未命中但标题归一唯一命中 dormant → 沿用 dormant id（同题换号复活走原条目）", () => {
+    const dormant = [{ id: "MF-7", title: "Missing boundary guard", revived: false }];
+    const out = resolveIssueIdentity(
+      { id: "MF-3", title: "missing boundary guard" },
+      { issues: {}, dormant },
+    );
+    expect(out).toEqual({ key: "MF-7", mapped: true });
+  });
+  it("L3：全新条目、编号未被占 → 直接用原号（mapped=false，主路径零开销）", () => {
+    const out = resolveIssueIdentity({ id: "MF-5", title: "a fresh finding" }, { issues: mkIssues(), dormant: [] });
+    expect(out).toEqual({ key: "MF-5", mapped: false });
+  });
+});
+
+describe("translateId — 表格号→台账键翻译（台账键优先）", () => {
+  const idMap = { "MF-3": "MF-5", "MF-9": "MF-2" };
+  it("表格号在 map 且非台账键 → 翻译", () => {
+    expect(translateId(idMap, "MF-3", {})).toBe("MF-5");
+  });
+  it("台账键优先：id 直接命中 issues → 不翻译（防同形碰撞误翻译）", () => {
+    expect(translateId(idMap, "MF-3", { "MF-3": { status: "open" } })).toBe("MF-3");
+  });
+  it("map miss → 回退原值（深层历史翻译丢失退化为现状行为）；空入参安全", () => {
+    expect(translateId(idMap, "MF-40", {})).toBe("MF-40");
+    expect(translateId(null, "MF-1", {})).toBe("MF-1");
+    expect(translateId(idMap, "", {})).toBe("");
+  });
+});
+
+describe("reconcileIssues fixed 申报清账（open/regressed + fixed 声明 → fixed）", () => {
+  const openIssue = (streak = 0) => ({
+    firstSeen: 1, severity: "major", status: "open", openStreak: streak,
+    history: [{ round: 1, status: "open" }], fixAttempts: 0,
+  });
+  it("open + fixedIds 命中 → fixed + history 落 via:reconciliation", () => {
+    const out = reconcileIssues({ "MF-1": openIssue(2) }, { seenIds: new Set(), fixedIds: new Set(["MF-1"]), round: 3, stuckThreshold: 3 });
+    expect(out.issues["MF-1"].status).toBe("fixed");
+    expect(out.issues["MF-1"].openStreak).toBe(0);
+    expect(out.issues["MF-1"].history).toContainEqual({ round: 3, status: "fixed", via: "reconciliation" });
+  });
+  it("regressed + fixedIds 命中 → 同样清账", () => {
+    const out = reconcileIssues(
+      { "MF-2": { ...openIssue(), status: "regressed", fixAttempts: 1 } },
+      { seenIds: new Set(), fixedIds: new Set(["MF-2"]), round: 2, stuckThreshold: 3 },
+    );
+    expect(out.issues["MF-2"].status).toBe("fixed");
+  });
+  it("未申报 fixed 的 open 条目行为不变（openStreak 增长 / stuck 判定照旧）", () => {
+    const out = reconcileIssues({ "MF-1": openIssue(2) }, { seenIds: new Set(["MF-1"]), fixedIds: new Set(), round: 3, stuckThreshold: 3 });
+    expect(out.issues["MF-1"].status).toBe("open");
+    expect(out.issues["MF-1"].openStreak).toBe(3);
+    expect(out.stuck).toBe(true);
+  });
+  it("fixed 申报与 seen 冲突时 seen 优先（互斥由调用方在收集点完成，reconcile 内 seen 分支先于 fixed 判定不成立——open 状态无 seen 转换，此用例锁定调用方互斥语义的函数侧行为：两者并传时 fixed 生效）", () => {
+    // 注：调用方（主循环）收集后已从 fixed 中剔除 seen/escalate 成员——此处锁定
+    // 纯函数不因 seen 共存而误转（open 条目 seen 时 openStreak 增长与本转换互斥
+    // 依赖调用方互斥，纯函数层 fixed 命中即转，证明调用方互斥的必要性）。
+    const out = reconcileIssues({ "MF-1": openIssue(0) }, { seenIds: new Set(["MF-1"]), fixedIds: new Set(["MF-1"]), round: 2, stuckThreshold: 3 });
+    expect(out.issues["MF-1"].status).toBe("fixed");
+  });
+});
+
+describe("applyCleanRoundBackfill 扩展：reconFixed 清账 + stuck 消费", () => {
+  it("clean 轮 open 条目经 reconFixed 申报 → 清账（不再滞留 open 产假 clean 终态）", () => {
+    const state = {
+      issues: { "MF-3": { firstSeen: 1, severity: "major", status: "open", openStreak: 1, history: [{ round: 1, status: "open" }], fixAttempts: 0 } },
+      knownRemaining: [], scores: [], fixResults: [],
+    };
+    const out = applyCleanRoundBackfill(state, {
+      reconSeen: new Set(), reconEscalate: new Set(), reconFixed: new Set(["MF-3"]), round: 2, stuckThreshold: 3,
+    });
+    expect(out.state.issues["MF-3"].status).toBe("fixed");
+    expect(out.stuck).toBe(false);
+  });
+  it("clean 轮残留持续 not-fixed 达 stuckThreshold → stuck=true 上抛（调用方诚实终止，不再丢弃）", () => {
+    const state = {
+      issues: { "MF-3": { firstSeen: 1, severity: "major", status: "open", openStreak: 2, history: [{ round: 1, status: "open" }], fixAttempts: 0 } },
+      knownRemaining: [], scores: [], fixResults: [],
+    };
+    const out = applyCleanRoundBackfill(state, {
+      reconSeen: new Set(["MF-3"]), reconEscalate: new Set(), reconFixed: new Set(), round: 3, stuckThreshold: 3,
+    });
+    expect(out.stuck).toBe(true);
+    expect(out.stuckIds).toEqual(["MF-3"]);
+    expect(out.state.issues["MF-3"].status).toBe("open"); // openStreak 3 未转状态
+  });
+});
+
+describe("title 数据链（schema 生成侧 → normalize 透传 → issues/dormant 落储）", () => {
+  it("normalizeAggregatorResult：对象条目 title 透传（trim）；非字符串/空 → 无键", () => {
+    const r = normalizeAggregatorResult({
+      must_fix: 2, suggestion: 0,
+      must_fix_ids: [
+        { id: "MF-1", severity: "major", title: "  Null check missing  " },
+        { id: "MF-2", severity: "major", title: 42 },
+        { id: "MF-3", severity: "major", title: "   " },
+      ],
+    });
+    expect(r!.must_fix_ids![0].title).toBe("Null check missing");
+    expect(r!.must_fix_ids![1].title).toBeUndefined();
+    expect(r!.must_fix_ids![2].title).toBeUndefined();
+  });
+  it("recordDormant：降级条目 title 落盘；同 id 再降级更新 title", () => {
+    const entries = [{ id: "MF-9", severity: "minor", adjudication: "downgraded", title: "Weak evidence claim" }];
+    const d1 = recordDormant([], entries, 2, new Set());
+    expect(d1[0].title).toBe("Weak evidence claim");
+    const d2 = recordDormant(d1, [{ ...entries[0], title: "Updated wording" }], 3, new Set());
+    expect(d2[0].title).toBe("Updated wording");
+    expect(d2).toHaveLength(1); // 同 id 幂等
+  });
+});
+
+describe("validateFixResult idMap — deferred 交叉核对的查表翻译", () => {
+  it("fixer 申报表格号、台账键不同（L2 改键）→ 经 idMap 翻译命中 tracked severity → 违规拦截", () => {
+    const result = {
+      fixed_count: 0, fixes: [],
+      deferred: [{ issue_id: "MF-3", severity: "minor", reason: "cost too high for a minor fix here" }],
+    };
+    const tracked = { "MF-5": { firstSeen: 1, severity: "major", status: "open" } };
+    // 无 idMap：MF-3 查表 miss → 采信自报 minor → 放行（旧行为）
+    expect(validateFixResult(result, [], tracked)).toEqual([]);
+    // 有 idMap：MF-3 → MF-5 命中 tracked major → 违规
+    expect(validateFixResult(result, [], tracked, { "MF-3": "MF-5" }))
+      .toEqual([{ issue_id: "MF-3", severity: "major" }]);
+  });
+});
+
+describe("buildR2ReviewPrompt 台账未结条目注入段（假 clean 防护信息通路）", () => {
+  const base = {
+    header: "Batch 1 Round 2/10 — b1", round: 2, max: 10, roundDir: "/tmp/rd2", reportFile: "rev",
+    aggPath: "/tmp/rd1/aggregated.md", fixResult: null, knownRemaining: [], dormant: [],
+    reviewPrompt: "rp", reviewInstruction: "ri",
+  };
+  it("openIssues 非空 → 渲染 OPEN ISSUES FROM WORKFLOW LEDGER 段 + AUTHORITATIVE 声明 + wrapUntrusted 包裹", () => {
+    const out = buildR2ReviewPrompt({
+      ...base,
+      openIssues: [{ id: "MF-4", severity: "major", title: "Leaked handle in cleanup", evidence: "src/a.ts:12" }],
+    });
+    expect(out).toContain("OPEN ISSUES FROM WORKFLOW LEDGER");
+    expect(out).toContain("AUTHORITATIVE");
+    expect(out).toContain('<untrusted source="open_ledger_issues">');
+    expect(out).toContain("MF-4 [major] Leaked handle in cleanup");
+    expect(out).toContain("prior evidence: src/a.ts:12");
+  });
+  it("title 缺失条目 → 占位说明（reviewer 可经对账段报告交叉定位）", () => {
+    const out = buildR2ReviewPrompt({ ...base, openIssues: [{ id: "MF-6", severity: "minor" }] });
+    expect(out).toContain("MF-6 [minor] (no title recorded");
+  });
+  it("openIssues 空/缺省 → 无该段（prompt 形状稳定，T9 动态区兼容）", () => {
+    expect(buildR2ReviewPrompt({ ...base, openIssues: [] })).not.toContain("OPEN ISSUES FROM WORKFLOW LEDGER");
+    expect(buildR2ReviewPrompt({ ...base })).not.toContain("OPEN ISSUES FROM WORKFLOW LEDGER");
+  });
+  it("注入段在动态段（ROUND_CONTEXT_MARKER 之后），不破坏三模板前缀稳定", () => {
+    const out = buildR2ReviewPrompt({
+      ...base,
+      openIssues: [{ id: "MF-4", severity: "major", title: "Leaked handle in cleanup" }],
+    });
+    expect(out.indexOf(ROUND_CONTEXT_MARKER)).toBeLessThan(out.indexOf("OPEN ISSUES FROM WORKFLOW LEDGER"));
+  });
+});
+
+describe("buildAggregatorPrompt title 契约（跨轮身份锚点生成侧）", () => {
+  it("JSON shape 示例含 title 字段 + STRICT RULES 要求 {id, title, severity...}", () => {
+    const out = buildAggregatorPrompt({
+      header: "h", round: 1, max: 10, roundDir: "/tmp/rd", reviewResults: [], prevFixResult: null,
+    });
+    expect(out).toContain('"title": "one-line issue title"');
+    expect(out).toContain("stable");
+    expect(out).toContain("cross-round identity anchor");
+    expect(out).toContain("MUST be an array of {id, title, severity,");
   });
 });
