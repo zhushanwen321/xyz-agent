@@ -21,17 +21,13 @@
     "index.ts",
     "agents/",
     "skills/",
-    "workflows/",
     "scripts/",
     "relay/",
     "src/index.ts",
-    "src/core/",
-    "src/execution/",
+    "src/jsonl-run-store.ts",
     "src/host/",
     "src/injectors/",
-    "src/orchestration/",
-    "src/interface/",
-    "src/shared/"
+    "src/interface/"
   ],
   "xyz-agent": {
     "role": "universal",
