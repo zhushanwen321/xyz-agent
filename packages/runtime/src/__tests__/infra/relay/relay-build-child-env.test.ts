@@ -18,7 +18,7 @@ import {
   RELAY_ENV_SCRIPT,
   RELAY_ENV_SESSION_ID,
   RELAY_ENV_RECORD_ID,
-} from '@zhushanwen/pi-subagent-workflow/src/execution/relay-env.js'
+} from '@zhushanwen/subagent-core/relay-env'
 
 /** 构造带污染项的最小握手帧（env 混合：五定位键 + deny 键 + 非白名单业务标志 + 正常键）。 */
 function createPollutedFrame(): {

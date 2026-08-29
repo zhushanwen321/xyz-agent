@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { initRelayServer, deinitRelayServer, isRelayServerActive, getActiveRelaySocketPath } from '../../../infra/relay/relay-server.js'
 import { getRelaySocketPath, getRelayPidFilePath, getRelayChildrenDir } from '../../../infra/relay/relay-paths.js'
 import { topicOf } from '../../../services/message-bus/message-bus.js'
-import { RELAY_PROTOCOL_VERSION, RELAY_ENV_SOCKET, RELAY_ENV_SESSION_ID, RELAY_ENV_RECORD_ID, RELAY_ENV_NODE, RELAY_ENV_SCRIPT } from '@zhushanwen/pi-subagent-workflow/src/execution/relay-env.js'
+import { RELAY_PROTOCOL_VERSION, RELAY_ENV_SOCKET, RELAY_ENV_SESSION_ID, RELAY_ENV_RECORD_ID, RELAY_ENV_NODE, RELAY_ENV_SCRIPT } from '@zhushanwen/subagent-core/relay-env'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 /** 轮询等待条件成立（进程间时序）。 */

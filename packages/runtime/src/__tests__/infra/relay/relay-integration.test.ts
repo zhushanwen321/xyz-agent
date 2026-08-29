@@ -14,7 +14,7 @@ import { join, resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 import { initRelayServer, deinitRelayServer } from '../../../infra/relay/relay-server.js'
 import { getRelaySocketPath, getRelayPidFilePath } from '../../../infra/relay/relay-paths.js'
-import { RELAY_ENV_SOCKET, RELAY_ENV_SESSION_ID, RELAY_ENV_RECORD_ID } from '@zhushanwen/pi-subagent-workflow/src/execution/relay-env.js'
+import { RELAY_ENV_SOCKET, RELAY_ENV_SESSION_ID, RELAY_ENV_RECORD_ID } from '@zhushanwen/subagent-core/relay-env'
 
 const RELAY_MJS = resolve(process.cwd(), '../../extensions/universal/subagent-workflow/relay/relay.mjs')
 

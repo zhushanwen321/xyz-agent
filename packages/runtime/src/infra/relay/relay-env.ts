@@ -9,8 +9,9 @@
  * （relay 整体不激活，extension 侧 isRelayActive 判定三 env 缺失回落直连 spawn 真实
  * pi，行为与现状逐字节一致，E-TUI 零回归）。
  *
- * env 名常量从 extension 的 relay-env.ts（E-0 产物）import——纯常量无状态模块，符合
- * 引擎抽象 §3.3.1 贯穿纪律④的双端复用例外；禁在此手写字符串镜像。
+ * env 名常量从 @zhushanwen/subagent-core/relay-env（E-0 产物，D8 复用链切换后
+ * runtime 直接依赖 core）import——纯常量无状态模块，符合引擎抽象 §3.3.1 贯穿纪律④
+ * 的双端复用例外；禁在此手写字符串镜像。
  */
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -18,7 +19,7 @@ import {
   RELAY_ENV_SOCKET,
   RELAY_ENV_NODE,
   RELAY_ENV_SCRIPT,
-} from '@zhushanwen/pi-subagent-workflow/src/execution/relay-env.js'
+} from '@zhushanwen/subagent-core/relay-env'
 import { getRelayScriptPath } from './relay-paths.js'
 import { isRelayServerActive, getActiveRelaySocketPath } from './relay-server.js'
 

@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { probeNodeExecutor, getRelaySpawnEnv, resetRelayNodeProbeCache } from '../../../infra/relay/relay-env.js'
 import { initRelayServer, deinitRelayServer } from '../../../infra/relay/relay-server.js'
 import { getActiveRelaySocketPath } from '../../../infra/relay/relay-server.js'
-import { RELAY_ENV_SOCKET, RELAY_ENV_NODE, RELAY_ENV_SCRIPT } from '@zhushanwen/pi-subagent-workflow/src/execution/relay-env.js'
+import { RELAY_ENV_SOCKET, RELAY_ENV_NODE, RELAY_ENV_SCRIPT } from '@zhushanwen/subagent-core/relay-env'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 describe('§10-1 探针实测：本机 dev 形态 execPath', () => {

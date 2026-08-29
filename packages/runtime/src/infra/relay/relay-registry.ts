@@ -25,7 +25,7 @@ import {
   RELAY_ENV_SCRIPT,
   RELAY_ENV_SESSION_ID,
   RELAY_ENV_RECORD_ID,
-} from '@zhushanwen/pi-subagent-workflow/src/execution/relay-env.js'
+} from '@zhushanwen/subagent-core/relay-env'
 import { findPiExecutable } from '../pi/find-pi-executable.js'
 import { buildOutboundChildEnv } from '../spawn-env.js'
 import { createPiRelayLog, type PiSessionLog } from '../logger.js'
