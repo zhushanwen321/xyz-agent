@@ -12,12 +12,136 @@
   "types": "src/index.ts",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts"
+      "import": {
+        "types": "./src/index.ts",
+        "default": "./src/index.ts"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      },
+      "default": "./src/index.ts"
+    },
+    "./engines/zcode/reader": {
+      "import": {
+        "types": "./src/execution/engine/engines/zcode/reader.ts",
+        "default": "./src/execution/engine/engines/zcode/reader.ts"
+      },
+      "require": {
+        "types": "./dist/execution/engine/engines/zcode/reader.d.cts",
+        "default": "./dist/execution/engine/engines/zcode/reader.cjs"
+      },
+      "default": "./src/execution/engine/engines/zcode/reader.ts"
+    },
+    "./engines/zcode/constants": {
+      "import": {
+        "types": "./src/execution/engine/engines/zcode/constants.ts",
+        "default": "./src/execution/engine/engines/zcode/constants.ts"
+      },
+      "require": {
+        "types": "./dist/execution/engine/engines/zcode/constants.d.cts",
+        "default": "./dist/execution/engine/engines/zcode/constants.cjs"
+      },
+      "default": "./src/execution/engine/engines/zcode/constants.ts"
+    },
+    "./engine/paths": {
+      "import": {
+        "types": "./src/execution/engine/paths.ts",
+        "default": "./src/execution/engine/paths.ts"
+      },
+      "require": {
+        "types": "./dist/execution/engine/paths.d.cts",
+        "default": "./dist/execution/engine/paths.cjs"
+      },
+      "default": "./src/execution/engine/paths.ts"
+    },
+    "./relay-env": {
+      "import": {
+        "types": "./src/execution/relay-env.ts",
+        "default": "./src/execution/relay-env.ts"
+      },
+      "require": {
+        "types": "./dist/execution/relay-env.d.cts",
+        "default": "./dist/execution/relay-env.cjs"
+      },
+      "default": "./src/execution/relay-env.ts"
+    },
+    "./workflows/*": {
+      "require": "./workflows/*",
+      "import": "./workflows/*",
+      "default": "./workflows/*"
     },
     "./*": "./src/*"
   },
-  "$comment": "TODO(u1-api-surface): exports 条件映射（import/require/types -> dist 与 source 条件 -> src）及 publishConfig 由该单元按设计 D5 定稿。require 条件指向 dist CJS 是本仓首例，D4 依据（docs/design/subagent-core-package-extraction.md §3.3）：zsw 宿主为纯 CJS（node>=20），而 core 依赖的 @xyz-agent/extension-protocol npm dist 仅 ESM（.mjs），node 20 下 require() 加载 ESM 不可靠——因此 CJS 产物必须将 extension-protocol bundle 进产物（见 tsup.config.ts noExternal），并经 exports 的 require 条件暴露 dist CJS，绝不能让外部 ESM 依赖出现在 require 链上。骨架期 exports 仅搭 workspace TS 消费形态（extension-protocol 包先例），不发布。",
+  "publishConfig": {
+    "main": "dist/index.cjs",
+    "module": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./dist/index.d.ts",
+          "default": "./dist/index.js"
+        },
+        "require": {
+          "types": "./dist/index.d.cts",
+          "default": "./dist/index.cjs"
+        },
+        "default": "./dist/index.js"
+      },
+      "./engines/zcode/reader": {
+        "import": {
+          "types": "./dist/execution/engine/engines/zcode/reader.d.ts",
+          "default": "./dist/execution/engine/engines/zcode/reader.js"
+        },
+        "require": {
+          "types": "./dist/execution/engine/engines/zcode/reader.d.cts",
+          "default": "./dist/execution/engine/engines/zcode/reader.cjs"
+        },
+        "default": "./dist/execution/engine/engines/zcode/reader.js"
+      },
+      "./engines/zcode/constants": {
+        "import": {
+          "types": "./dist/execution/engine/engines/zcode/constants.d.ts",
+          "default": "./dist/execution/engine/engines/zcode/constants.js"
+        },
+        "require": {
+          "types": "./dist/execution/engine/engines/zcode/constants.d.cts",
+          "default": "./dist/execution/engine/engines/zcode/constants.cjs"
+        },
+        "default": "./dist/execution/engine/engines/zcode/constants.js"
+      },
+      "./engine/paths": {
+        "import": {
+          "types": "./dist/execution/engine/paths.d.ts",
+          "default": "./dist/execution/engine/paths.js"
+        },
+        "require": {
+          "types": "./dist/execution/engine/paths.d.cts",
+          "default": "./dist/execution/engine/paths.cjs"
+        },
+        "default": "./dist/execution/engine/paths.js"
+      },
+      "./relay-env": {
+        "import": {
+          "types": "./dist/execution/relay-env.d.ts",
+          "default": "./dist/execution/relay-env.js"
+        },
+        "require": {
+          "types": "./dist/execution/relay-env.d.cts",
+          "default": "./dist/execution/relay-env.cjs"
+        },
+        "default": "./dist/execution/relay-env.js"
+      },
+      "./workflows/*": {
+        "require": "./workflows/*",
+        "import": "./workflows/*",
+        "default": "./workflows/*"
+      }
+    }
+  },
+  "$comment": "D5 公共 API 面定稿（docs/design/subagent-core-package-extraction.md §3.3 D5）：公共面 = 主入口 barrel + 4 条语义子入口（./engines/zcode/reader、./engines/zcode/constants、./engine/paths、./relay-env）+ ./workflows/* 资产子入口。exports 面 = semver 契约，收窄不放宽。双形态（D4）：workspace TS 消费走 import 条件 -> src（与 extension-protocol 先例同型）；npm 消费走 publishConfig 发布面（npm publish 时整体替换 exports）：import -> dist ESM、require -> dist CJS。require 条件指向 dist CJS 是本仓首例，D4 依据：zsw 宿主为纯 CJS（node>=20），而 core 依赖的 @xyz-agent/extension-protocol npm dist 仅 ESM（.mjs），node 20 下 require() 加载 ESM 不可靠——因此 CJS 产物将 extension-protocol bundle 进产物（tsup.config.ts noExternal），绝不让外部 ESM 依赖出现在 require 链上；require 分支的 types 用 .d.cts 对应。开发态 require 条件即指向 dist：dist 是 require 语义的真实载体，未 build 时 require 失败属预期（build 前置）。语义子入口精确条目优先于 `./*` 通配（Node 规范：exact match beats pattern），`./*` -> src 通配仅为仓内壳侧深路径消费保留（72 处 `<pkg>/<域>/<路径>.ts` 形态），发布面刻意不带该通配——npm 消费面收窄到上列受控入口。workflows/ 资产 .cjs/.js 不编译（D1：src=dist 同字节直发），require/import 条件同径。tsup 多入口保形输出见 tsup.config.ts（dist/<entry> 与 src 同构，d.ts/d.cts 全覆盖）。"
+  ,
   "files": [
     "src/",
     "workflows/",

@@ -2,8 +2,22 @@ import { defineConfig } from 'tsup'
 
 // D4（docs/design/subagent-core-package-extraction.md §3.3）：双形态构建——
 // TS 源供 workspace 消费（main/exports 指向 src），dist 双格式供 npm 消费。
+//
+// entry 用对象形态保形输出：dist/<key>.js|cjs|d.ts|d.cts 与 src/ 目录结构一一对应
+// （src/ 前缀替换为 dist/），package.json exports 的语义子入口按同形路径映射
+// （./execution/relay-env -> dist/execution/relay-env.cjs 等）。
+// 主入口 index 之外的四个 entry 恰好是 exports 的四个语义子入口（D5 公共面）：
+// runtime 复用链（D8）与 zsw 复用链（D6）只允许经语义子入口消费这些模块，
+// 语义子入口因此必须各自成为 bundle 入口——否则它们只存在于主入口 bundle 内部，
+// 无法被独立加载（单一 bundle 不做 chunk 拆分，模块实例也会分裂成两份）。
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: {
+    index: 'src/index.ts',
+    'execution/relay-env': 'src/execution/relay-env.ts',
+    'execution/engine/paths': 'src/execution/engine/paths.ts',
+    'execution/engine/engines/zcode/reader': 'src/execution/engine/engines/zcode/reader.ts',
+    'execution/engine/engines/zcode/constants': 'src/execution/engine/engines/zcode/constants.ts',
+  },
   format: ['esm', 'cjs'],
   dts: true,
   clean: true,
