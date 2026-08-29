@@ -27,6 +27,10 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// u0-data-discovery 注入化：execute 链路的 getEngineDataDir 回退段经
+// HostServices.dataRoot() 端口——端口态经 configureCore 显式控制（见 beforeEach）
+import { configureCore, resetCoreForTests } from "../../core/host-services.ts";
+
 // pi 原路径 spawn mock（FakeChild 挂起不推进——本文件只断言路由归属与 record 形态，
 // 不驱动 pi session 事件流）。
 vi.mock("node:child_process", async () => {
@@ -226,6 +230,10 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
   let agentDir: string;
 
   beforeEach(() => {
+    // u0-data-discovery 注入化：execute 链路的 getEngineDataDir 回退段经
+    // HostServices.dataRoot() 端口，未 configureCore 即消费抛 core_host_not_configured
+    // （execute fail-safe 吞掉后表现为 mock 计数 0）——端口态显式配置，值不被断言
+    configureCore({ dataRoot: () => "/fake-routing-data-root", log: () => {} });
     agentDir = makeTmpAgentDir();
     writeGlobalConfig(agentDir);
   });
@@ -233,6 +241,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
   afterEach(() => {
     // registry 是 globalThis 进程单例——必须清空，防假引擎泄漏进其他测试文件
     clearEngines();
+    resetCoreForTests();
     fs.rmSync(agentDir, { recursive: true, force: true });
     vi.clearAllMocks();
   });

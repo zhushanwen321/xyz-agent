@@ -293,7 +293,7 @@ describe("discoverAllWorkflows 顺序契约（KV-cache）", () => {
 		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
 
 		const { discoverAllWorkflows } = await import("../workflow-list-injector");
-		const workflows = await discoverAllWorkflows("/ws", "/agent");
+		const workflows = await discoverAllWorkflows("/ws");
 		expect(workflows.map((w) => w.name)).toEqual(["alpha", "chain", "zeta"]);
 	});
 
@@ -314,8 +314,8 @@ describe("discoverAllWorkflows 顺序契约（KV-cache）", () => {
 		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
 
 		const { discoverAllWorkflows, formatWorkflowList } = await import("../workflow-list-injector");
-		const first = await discoverAllWorkflows("/ws", "/agent");
-		const second = await discoverAllWorkflows("/ws", "/agent");
+		const first = await discoverAllWorkflows("/ws");
+		const second = await discoverAllWorkflows("/ws");
 		expect(second).toEqual(first);
 		expect(formatWorkflowList(second)).toBe(formatWorkflowList(first));
 	});

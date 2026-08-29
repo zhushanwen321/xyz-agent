@@ -4,7 +4,8 @@
 //
 // 设计原则（ADR-031 统一资源发现）：
 // 1. 扫描源前缀统一：user/project 级目录用相同前缀，末级目录名（agents/workflows）参数化
-// 2. 路径动态获取：user 级用 getAgentDir()（尊重 PI_CODING_AGENT_DIR），project 级用 findWorkspaceRoot(cwd)
+// 2. 路径动态获取：宿主级根经 ScanConfig.hostRoots 注入（u0-data-discovery，D2 语义
+//    边界——宿主提供根列表，扫描/遮蔽语义归 core），project 级用 findWorkspaceRoot(cwd)
 // 3. npm/dev 包内发现：有 manifest（pi.agents/pi.workflows）只走 manifest，无 manifest 扫约定目录
 // 4. manifest 路径存在性校验：声明的路径不存在 → 该包发现失败，不 fallback
 // 5. 废弃 discovery.json：扫描路径完全由代码内推导，无外部依赖
@@ -16,9 +17,11 @@ import { access, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import type { DiscoveryRoot } from "../core/host-services.ts";
+import { getLogger } from "../core/logger";
 
-// 模块级 logger（setPiHandle 注入后自动走 appendEntry，未注入时 console 兜底）
+// 模块级 logger（facade：configureCore 前落缺省 console，配置后透明切换宿主实现——
+// pi 壳经 pi-host 桥接到宿主结构化日志 appendEntry 通路，输出面不变）
 const logger = getLogger("subagents");
 
 // [D8d] warn 路径进程内去重集合：key=(kind, stem, shadowedPath, keptPath)，
@@ -61,8 +64,10 @@ export interface ScanConfig {
   kind: ResourceKind;
   /** 项目根目录（findWorkspaceRoot 推导结果） */
   workspaceRoot: string;
-  /** agent 配置目录（getAgentDir() 结果） */
-  agentDir: string;
+  /** 宿主注入的发现根（DiscoveryRoot.dir 已含 kind 末级目录与安装布局，
+   *  source 为宿主语义标签——pi 壳 = user-pi/npm/npm-dev 三根）。buildScanTargets
+   *  按标签查表填充对应槽位，宿主未提供某标签根时该槽位条目整体缺席。 */
+  hostRoots: DiscoveryRoot[];
   /** 是否包含 tmp 源（仅 workflow 用 .pi/workflows/.tmp/） */
   includeTmp?: boolean;
 }
@@ -512,28 +517,47 @@ function readExtensionPaths(): string[] {
 /**
  * 构建所有扫描源（按优先级低→高排列）。
  *
- * agent 和 workflow 共享相同的前缀体系，末级目录名由 kind 决定。
+ * agent 和 workflow 共享相同的前缀体系。宿主注入根（config.hostRoots）按 source
+ * 标签查表填充三个槽位条目——标签字面是 core 编排的槽位键（同时是 ResourceSource
+ * 枚举成员，报告输出与历史值逐字一致）；宿主未提供某标签根时该条目跳过（该源在
+ * 遮蔽序中自然缺席），其余条目（core 自建：homedir/env/workspaceRoot 推导）留原位
+ * 原序，遮蔽优先级语义与注入化前逐字一致。
  */
 function buildScanTargets(config: ScanConfig): ScanTarget[] {
-  const { kind, workspaceRoot, agentDir, includeTmp } = config;
+  const { kind, workspaceRoot, hostRoots, includeTmp } = config;
   const home = homedir();
 
-  const targets: ScanTarget[] = [
-    // 1. user .pi/agent/{kind}/
-    { dir: join(agentDir, kind), source: "user-pi", enabled: true },
-    // 2. user .agents/{kind}/
-    { dir: join(home, ".agents", kind), source: "user-agents", enabled: true },
-    // 3. npm global: agentDir/npm/node_modules/*/<pkg>/
-    { dir: join(agentDir, "npm", "node_modules"), source: "npm", enabled: true },
-    // 4. npm dev symlink: agentDir/extensions/*/<pkg>/
-    { dir: join(agentDir, "extensions"), source: "npm-dev", enabled: true },
-    // user extension paths (XYZ_EXTENSION_PATHS, dev-link): each path is a package dir,
-    // 走 processPackage 读 pi.{kind} manifest 或扫 {kind}/ 目录。优先级高于 npm/npm-dev
-    // （dev-link 是开发版 override），低于 project（项目正式资源优先）。
+  // 同标签多条目时取列表靠后者（hostRoots 按优先级低→高，靠后 = 宿主侧更高优先级）
+  const hostDirBySource = new Map<string, string>(
+    hostRoots.map((root): [string, string] => [root.source, root.dir]),
+  );
+
+  const targets: ScanTarget[] = [];
+  // 1. user .pi/agent/{kind}/（宿主注入，pi 壳 source "user-pi"）
+  const userPiDir = hostDirBySource.get("user-pi");
+  if (userPiDir !== undefined) {
+    targets.push({ dir: userPiDir, source: "user-pi", enabled: true });
+  }
+  // 2. user .agents/{kind}/（core 自建：homedir 推导，非宿主依赖）
+  targets.push({ dir: join(home, ".agents", kind), source: "user-agents", enabled: true });
+  // 3. npm global: <agentDir>/npm/node_modules/*/<pkg>/（宿主注入，pi 壳 source "npm"）
+  const npmDir = hostDirBySource.get("npm");
+  if (npmDir !== undefined) {
+    targets.push({ dir: npmDir, source: "npm", enabled: true });
+  }
+  // 4. npm dev symlink: <agentDir>/extensions/*/<pkg>/（宿主注入，pi 壳 source "npm-dev"）
+  const npmDevDir = hostDirBySource.get("npm-dev");
+  if (npmDevDir !== undefined) {
+    targets.push({ dir: npmDevDir, source: "npm-dev", enabled: true });
+  }
+  // user extension paths (XYZ_EXTENSION_PATHS, dev-link): each path is a package dir,
+  // 走 processPackage 读 pi.{kind} manifest 或扫 {kind}/ 目录。优先级高于 npm/npm-dev
+  // （dev-link 是开发版 override），低于 project（项目正式资源优先）。
+  targets.push(
     ...readExtensionPaths().map((dir) => ({ dir, source: "user-extension-paths" as const, enabled: true })),
-    // 5. project .pi/{kind}/
-    { dir: join(workspaceRoot, ".pi", kind), source: "project-pi", enabled: true },
-  ];
+  );
+  // 5. project .pi/{kind}/
+  targets.push({ dir: join(workspaceRoot, ".pi", kind), source: "project-pi", enabled: true });
 
   // 6. project .pi/{kind}/.tmp/（仅 workflow）
   if (includeTmp) {

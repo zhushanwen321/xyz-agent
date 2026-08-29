@@ -38,7 +38,9 @@ import {
   getCachedParsed,
   clearFileCache,
 } from "../resource-discovery.ts";
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+// logger 断言目标随源切换（u0-data-discovery）：resource-discovery 的 logger 是
+// core facade（同 component 单例引用），spyOn facade 实例即拦截模块内 logger 调用
+import { getLogger } from "../../core/logger";
 
 // ============================================================
 // helpers
@@ -46,6 +48,17 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 function tmpWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "res-disc-test-"));
+}
+
+/** 与 pi 壳 agentDirKindRoots 同构的注入根：由旧 ScanConfig.agentDir 入参等价推导
+ *  （user-pi 根 = <agentDir>/<kind>，npm 根 = <agentDir>/npm/node_modules，npm-dev
+ *  根 = <agentDir>/extensions）——扫描目录与形状改造前逐字一致，expected 断言不动。 */
+function hostRootsFor(agentDir: string, kind: "agents" | "workflows") {
+  return [
+    { dir: path.join(agentDir, kind), source: "user-pi" },
+    { dir: path.join(agentDir, "npm", "node_modules"), source: "npm" },
+    { dir: path.join(agentDir, "extensions"), source: "npm-dev" },
+  ];
 }
 
 function writeFile(dir: string, name: string, content: string): string {
@@ -103,7 +116,7 @@ describe("discoverResourcesSync", () => {
 
   it("discovers agents from project .pi/agents/", () => {
     writeFile(path.join(ws, ".pi", "agents"), "worker.md", "body");
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     // 按 source 过滤断言——用户全局目录（~/.agents/agents/）可能有真实 agent 文件，
     // 测试不假设环境为空（2026-08：环境新增 tech-design-review.md 暴露此脆弱性）
     const project = result.filter((r) => r.source === "project-pi");
@@ -113,14 +126,14 @@ describe("discoverResourcesSync", () => {
 
   it("discovers workflows from project .pi/workflows/", () => {
     writeFile(path.join(ws, ".pi", "workflows"), "build.js", "const meta={name:'build'};");
-    const result = discoverResourcesSync({ kind: "workflows", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "workflows", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "workflows") });
     expect(result.map((r) => path.basename(r.path))).toEqual(["build.js"]);
   });
 
   it("project .agents overrides project .pi on name clash (priority)", () => {
     writeFile(path.join(ws, ".pi", "agents"), "worker.md", "pi-body");
     writeFile(path.join(ws, ".agents", "agents"), "worker.md", "agents-body");
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     const project = result.filter((r) => r.source === "project-agents");
     expect(project).toHaveLength(1);
     expect(project[0]?.source).toBe("project-agents");
@@ -131,7 +144,7 @@ describe("discoverResourcesSync", () => {
     const result = discoverResourcesSync({
       kind: "workflows",
       workspaceRoot: ws,
-      agentDir,
+      hostRoots: hostRootsFor(agentDir, "workflows"),
       includeTmp: true,
     });
     expect(result.map((r) => path.basename(r.path))).toEqual(["temp.js"]);
@@ -140,7 +153,7 @@ describe("discoverResourcesSync", () => {
 
   it("excludes tmp source when includeTmp omitted", () => {
     writeFile(path.join(ws, ".pi", "workflows", ".tmp"), "temp.js", "x");
-    const result = discoverResourcesSync({ kind: "workflows", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "workflows", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "workflows") });
     expect(result).toEqual([]);
   });
 
@@ -149,13 +162,13 @@ describe("discoverResourcesSync", () => {
     writeFile(dir, "real.md", "body");
     writeFile(dir, "_skip.md", "ignored");
     writeFile(dir, "trace.chain.md", "ignored");
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     const project = result.filter((r) => r.source === "project-pi");
     expect(project.map((r) => path.basename(r.path))).toEqual(["real.md"]);
   });
 
   it("nonexistent directories are silently skipped", () => {
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     // 用户全局目录可能有真实文件——只断言 project 源为空
     expect(result.filter((r) => r.source === "project-pi" || r.source === "project-agents")).toEqual([]);
   });
@@ -238,7 +251,7 @@ describe("discoverResources (async)", () => {
     const result = await discoverResources({
       kind: "agents",
       workspaceRoot: ws,
-      agentDir: path.join(ws, ".fake-agent"),
+      hostRoots: hostRootsFor(path.join(ws, ".fake-agent"), "agents"),
     });
     expect(result).toHaveLength(1);
     expect(result[0]?.available).toBe(true);
@@ -250,7 +263,7 @@ describe("discoverResources (async)", () => {
     const result = await discoverResources({
       kind: "workflows",
       workspaceRoot: ws,
-      agentDir: path.join(ws, ".fake-agent"),
+      hostRoots: hostRootsFor(path.join(ws, ".fake-agent"), "workflows"),
       includeTmp: true,
     });
     expect(result).toHaveLength(2);
@@ -283,7 +296,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writePackageJson(pkgDir, { agents: ["./agents"] });
     writeFile(path.join(pkgDir, "agents"), "custom.md", "body");
     process.env.XYZ_EXTENSION_PATHS = pkgDir;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     const ext = result.filter((r) => r.source === "user-extension-paths");
     expect(ext.map((r) => path.basename(r.path))).toEqual(["custom.md"]);
     expect(ext[0]?.source).toBe("user-extension-paths");
@@ -293,7 +306,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     const pkgDir = path.join(ws, "my-ext");
     writeFile(path.join(pkgDir, "agents"), "conv.md", "body");
     process.env.XYZ_EXTENSION_PATHS = pkgDir;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     const ext = result.filter((r) => r.source === "user-extension-paths");
     expect(ext.map((r) => path.basename(r.path))).toEqual(["conv.md"]);
     expect(ext[0]?.source).toBe("user-extension-paths");
@@ -305,7 +318,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(pkg1, "agents"), "a1.md", "body");
     writeFile(path.join(pkg2, "agents"), "a2.md", "body");
     process.env.XYZ_EXTENSION_PATHS = `${pkg1}${path.delimiter}${pkg2}`;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     const ext = result.filter((r) => r.source === "user-extension-paths");
     expect(ext.map((r) => path.basename(r.path)).sort()).toEqual(["a1.md", "a2.md"]);
   });
@@ -318,7 +331,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writePackageJson(devPkg, { agents: ["./agents"] });
     writeFile(path.join(devPkg, "agents"), "shared.md", "dev-body");
     process.env.XYZ_EXTENSION_PATHS = devPkg;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     const shared = result.find((r) => path.basename(r.path) === "shared.md");
     expect(shared?.source).toBe("user-extension-paths");
   });
@@ -329,14 +342,14 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(devPkg, "agents"), "x.md", "dev-body");
     writeFile(path.join(ws, ".agents", "agents"), "x.md", "project-body");
     process.env.XYZ_EXTENSION_PATHS = devPkg;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     const x = result.find((r) => path.basename(r.path) === "x.md");
     expect(x?.source).toBe("project-agents");
   });
 
   it("empty/unset env → no user-extension-paths source", () => {
     delete process.env.XYZ_EXTENSION_PATHS;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     expect(result.filter((r) => r.source === "user-extension-paths")).toEqual([]);
   });
 
@@ -345,7 +358,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writePackageJson(pkgDir, { agents: ["./agents"] });
     writeFile(path.join(pkgDir, "agents"), "async.md", "body");
     process.env.XYZ_EXTENSION_PATHS = pkgDir;
-    const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     const ext = result.filter((r) => r.source === "user-extension-paths");
     expect(ext.map((r) => path.basename(r.path))).toEqual(["async.md"]);
     expect(ext[0]?.source).toBe("user-extension-paths");
@@ -359,7 +372,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writePackageJson(devPkg, { agents: ["./agents"] });
     writeFile(path.join(devPkg, "agents"), "shared.md", "dev-body");
     process.env.XYZ_EXTENSION_PATHS = devPkg;
-    const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     const shared = result.find((r) => path.basename(r.path) === "shared.md");
     expect(shared?.source).toBe("user-extension-paths");
   });
@@ -370,7 +383,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(devPkg, "agents"), "x.md", "dev-body");
     writeFile(path.join(ws, ".agents", "agents"), "x.md", "project-body");
     process.env.XYZ_EXTENSION_PATHS = devPkg;
-    const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+    const result = await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
     const x = result.find((r) => path.basename(r.path) === "x.md");
     expect(x?.source).toBe("project-agents");
   });
@@ -387,7 +400,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(ws, ".agents", "agents"), "shared.md", "project-body");
     writeFile(path.join(ws, ".agents", "agents"), "proj.md", "proj-body");
     process.env.XYZ_EXTENSION_PATHS = devPkg;
-    const config = { kind: "agents" as const, workspaceRoot: ws, agentDir };
+    const config = { kind: "agents" as const, workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") };
 
     const asyncResult = await discoverResources(config);
 
@@ -415,7 +428,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     const debugSpy = vi.spyOn(getLogger("subagents"), "debug");
 
     try {
-      const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+      const result = await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
 
       // 遮蔽仍生效（last-writer-wins 语义不变）
       expect(result.find((r) => path.basename(r.path) === "dup.md")?.source).toBe("project-agents");
@@ -444,7 +457,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     const debugSpy = vi.spyOn(getLogger("subagents"), "debug");
 
     try {
-      await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+      await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
 
       expect(warnSpy).not.toHaveBeenCalled();
       expect(debugSpy).toHaveBeenCalled();
@@ -469,7 +482,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     const debugSpy = vi.spyOn(getLogger("subagents"), "debug");
 
     try {
-      await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+      await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
 
       expect(warnSpy).not.toHaveBeenCalled();
       expect(debugSpy).toHaveBeenCalled();
@@ -495,14 +508,14 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
 
       try {
         // 第一次调用——应产生 warn（双用户源）
-        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
         expect(warnSpy).toHaveBeenCalledTimes(1);
         const [msg] = warnSpy.mock.calls[0];
         expect(String(msg)).toContain('duplicate agents "dup"');
 
         // 第二次调用——同进程去重，不再报
         warnSpy.mockClear();
-        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
         expect(warnSpy).not.toHaveBeenCalled();
       } finally {
         warnSpy.mockRestore();
@@ -523,12 +536,12 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
 
       try {
         // 第一次调用——报 warn
-        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
         expect(warnSpy).toHaveBeenCalledTimes(1);
 
         // 第二次调用——同 key 去重，不报
         warnSpy.mockClear();
-        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
         expect(warnSpy).not.toHaveBeenCalled();
 
         // 真实 path 变化产生新 key：双用户目录各加一个不同 stem（dup2.md）
@@ -536,7 +549,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
         writeFile(path.join(agentDir, "agents"), "dup2.md", "user-pi-body-2");
         fs.writeFileSync(path.join(userAgentsDir, "dup2.md"), "user-agents-body-2", "utf-8");
         warnSpy.mockClear();
-        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
         expect(warnSpy).toHaveBeenCalledTimes(1);
         const [newMsg] = warnSpy.mock.calls[0];
         expect(String(newMsg)).toContain('duplicate agents "dup2"');
@@ -567,7 +580,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
 
       try {
         // 步骤 1：首次调用——报 warn，dedup key 加入 set
-        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
         expect(warnSpy).toHaveBeenCalledTimes(1);
         warnSpy.mockClear();
 
@@ -580,12 +593,12 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
 
         // 步骤 3：第二次调用——dedup key 不在 set → 进 else 分支 →
         // size(1024) >= MAX(1024) → clear() → set 空 → add dedup key → warn
-        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
         expect(warnSpy).toHaveBeenCalledTimes(1);
         warnSpy.mockClear();
 
         // 步骤 4：第三次调用——dedup key 在 set 中 → 去重跳过 warn
-        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
         expect(warnSpy).not.toHaveBeenCalled();
 
         // 步骤 5：再次填充到 cap——重置 + 注入 1024 个虚拟 key
@@ -596,7 +609,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
         }
 
         // 步骤 6：第四次调用——cap 再次触发 clear → dedup key 重新报
-        await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+        await discoverResources({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
         expect(warnSpy).toHaveBeenCalledTimes(1);
       } finally {
         warnSpy.mockRestore();

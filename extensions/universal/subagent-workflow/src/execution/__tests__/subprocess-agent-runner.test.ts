@@ -17,7 +17,12 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// u0-data-discovery 注入化：getEngineDataDir 回退段经 HostServices.dataRoot() 端口，
+// 未 configureCore 即消费会抛 core_host_not_configured（SAR.run 内部调用，dataRoot
+// 值不被本文件断言）——端口态显式配置，测试隔离经 resetCoreForTests
+import { configureCore, resetCoreForTests } from "../../core/host-services.ts";
 
 import type { AgentCallOpts, AgentResult } from "../../orchestration/models/types.ts";
 import { ModelConfigService, setModelConfigService } from "../model-config-service.ts";
@@ -74,6 +79,14 @@ function makeBaseOpts(): AgentCallOpts {
 // ── T3.1: 正常路径 ──
 
 describe("SubprocessAgentRunner (wave-4 delegate)", () => {
+  beforeEach(() => {
+    configureCore({ dataRoot: () => "/fake-sar-data-root", log: () => {} });
+  });
+
+  afterEach(() => {
+    resetCoreForTests();
+  });
+
   // ────────────────────────────────────────────────
   // T3.1: 正常路径 — SAR 委托 executeAndAwait 返回 content
   // ────────────────────────────────────────────────

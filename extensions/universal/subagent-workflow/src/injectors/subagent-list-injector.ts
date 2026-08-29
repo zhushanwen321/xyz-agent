@@ -28,8 +28,9 @@ import type {
 	SessionShutdownEvent,
 	SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+import { getHostServices } from "../core/host-services.ts";
 
 import {
 	discoverResources,
@@ -112,12 +113,13 @@ export function parseAgentFrontmatter(content: string): AgentEntry | null {
  */
 export async function discoverAllAgents(
 	workspaceRoot: string,
-	agentDir: string,
 ): Promise<AgentEntry[]> {
 	const resources = await discoverResources({
 		kind: "agents",
 		workspaceRoot,
-		agentDir,
+		// 宿主注入根现取（pi 壳 discoveryRoots 每次现取 getAgentDir，实例隔离）；
+		// agentDir 形参已删——其唯一用途就是喂 ScanConfig（u0-data-discovery 偏差 #7）
+		hostRoots: getHostServices().discoveryRoots?.()?.agents ?? [],
 	});
 
 	const agentMap = new Map<string, AgentEntry>();
@@ -214,7 +216,6 @@ export function setupSubagentListInjector(pi: ExtensionAPI): void {
 				setAgentCache(
 					await discoverAllAgents(
 						findWorkspaceRoot(ctx.cwd),
-						getAgentDir(),
 					),
 				);
 			} catch (err) {
@@ -238,7 +239,6 @@ export function setupSubagentListInjector(pi: ExtensionAPI): void {
 					setAgentCache(
 						await discoverAllAgents(
 							findWorkspaceRoot(ctx.cwd),
-							getAgentDir(),
 						),
 					);
 				}

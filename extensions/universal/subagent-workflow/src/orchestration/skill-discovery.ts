@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getHostServices } from "../core/host-services.ts";
 
 // ── Skill path resolution (with npm dir cache) ─────────────────────
 
@@ -33,9 +33,19 @@ function getNpmSkillCandidates(npmSkillsDir: string): string[] {
  * Resolve a skill name to its directory or SKILL.md path.
  * Search order:
  * 1. Project-level: .agents/skills/<name>/
- * 2. Global: <agentDir>/skills/<name>/（agentDir = getAgentDir()，实例隔离：
- *    PI_CODING_AGENT_DIR 场景读隔离目录，不碰 ~/.pi/agent）
- * 3. npm packages: <agentDir>/npm/node_modules/<pkg>/skills/<name>/
+ * 2. Global: 宿主注入 skills 根中 source "user-pi" 条目（pi 壳 = <agentDir>/skills，
+ *    现取 getAgentDir()——实例隔离：PI_CODING_AGENT_DIR 场景读隔离目录，不碰
+ *    ~/.pi/agent；见 pi-host.ts skillRoots 契约）
+ * 3. npm packages: 宿主注入 skills 根中 source "npm" 条目下的 <pkg>/skills/<name>/
+ *    （pi 壳 = <agentDir>/npm/node_modules）
+ *
+ * 根来源（u0-data-discovery 注入化）：getAgentDir() 运行时触点收敛为
+ * discoveryRoots()?.skills 注入消费。按 source 标签取根是本模块的结构性要求而非
+ * 对标签的语义解释——user 根直接解析 <root>/<name>/，npm 根需先枚举 <pkg> 一层，
+ * 两类根的消费形状不同，无法像 resource-discovery 那样整体按序扫描；标签字面
+ * （user-pi/npm）与 pi 壳 skillRoots 契约一致，core 不新增标签字面量。
+ * 未配置宿主（discoveryRoots 缺席）→ 空根列表 → 仅 project 根可命中（生产宿主在
+ * 扩展初始化最早处 configureCore，此形态只出现在测试/裸 core 消费方）。
  * Returns the directory path if found, undefined otherwise.
  *
  * IF8(#14)：结果按 skillName 缓存（含未命中 undefined 也缓存，DM3）——调用点
@@ -93,13 +103,23 @@ export function resolveSkillPath(skillName: string): string | undefined {
   };
   // Project-level
   pushCandidate(resolveWithinRoot(path.resolve(process.cwd(), ".agents/skills"), skillName));
-  // Global user skills
-  pushCandidate(resolveWithinRoot(path.join(getAgentDir(), "skills"), skillName));
 
-  // npm package skills (cached)
-  const npmSkillsDir = path.join(getAgentDir(), "npm/node_modules");
-  for (const pkgSkillsBase of getNpmSkillCandidates(npmSkillsDir)) {
-    pushCandidate(resolveWithinRoot(pkgSkillsBase, skillName));
+  // 宿主注入根（每调用现取——与 pi-host 的 getAgentDir 现取语义一致，实例切换即生效）。
+  // 可选链从 discoveryRoots 起截断（discoveryRoots 是可选方法，缺席 = 空根列表）。
+  const injectedSkillRoots = getHostServices().discoveryRoots?.()?.skills ?? [];
+
+  // Global user skills（source "user-pi" 条目；宿主未提供该标签根时此源缺席）
+  const userSkillsRoot = injectedSkillRoots.find((root) => root.source === "user-pi");
+  if (userSkillsRoot !== undefined) {
+    pushCandidate(resolveWithinRoot(userSkillsRoot.dir, skillName));
+  }
+
+  // npm package skills (cached)（source "npm" 条目 = node_modules 基座）
+  const npmSkillsRoot = injectedSkillRoots.find((root) => root.source === "npm");
+  if (npmSkillsRoot !== undefined) {
+    for (const pkgSkillsBase of getNpmSkillCandidates(npmSkillsRoot.dir)) {
+      pushCandidate(resolveWithinRoot(pkgSkillsBase, skillName));
+    }
   }
 
   for (const dir of candidates) {

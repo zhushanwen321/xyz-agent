@@ -253,7 +253,11 @@ describe("manifestCache 双读者共享（async ↔ sync）", () => {
     const result = await discoverResources({
       kind: "agents",
       workspaceRoot: ws,
-      agentDir: path.join(ws, ".fake-agent"),
+      hostRoots: [
+        { dir: path.join(ws, ".fake-agent", "agents"), source: "user-pi" },
+        { dir: path.join(ws, ".fake-agent", "npm", "node_modules"), source: "npm" },
+        { dir: path.join(ws, ".fake-agent", "extensions"), source: "npm-dev" },
+      ],
     });
     const ext = result.filter((r) => r.source === "user-extension-paths");
     expect(ext.map((r) => path.basename(r.path))).toEqual(["a.md"]);
@@ -270,7 +274,11 @@ describe("manifestCache 双读者共享（async ↔ sync）", () => {
     await discoverResources({
       kind: "agents",
       workspaceRoot: ws,
-      agentDir: path.join(ws, ".fake-agent"),
+      hostRoots: [
+        { dir: path.join(ws, ".fake-agent", "agents"), source: "user-pi" },
+        { dir: path.join(ws, ".fake-agent", "npm", "node_modules"), source: "npm" },
+        { dir: path.join(ws, ".fake-agent", "extensions"), source: "npm-dev" },
+      ],
     });
     expect(asyncReadCount()).toBe(1); // async 读者读了一次
     // sync 读者应命中 async 写入的条目（readFileSync 计数不变）

@@ -1,17 +1,35 @@
-// data-dir.test.ts —— dataDir 通道解析（XYZ_AGENT_DATA_DIR 权威通道 + piAgentDir 回退）。
+// data-dir.test.ts —— dataDir 通道解析（XYZ_AGENT_DATA_DIR 权威通道 + 宿主数据根回退）。
 //
 // 三视角：①构建者——两级解析顺序正确；②使用者——独立 pi 用户（无 xyz env）拿到
-// piAgentDir 作根；③观察者——回退路径 warn 一次（不留静默漂移），不刷屏。
+// 宿主数据根（pi 壳 dataRoot() = getAgentDir()）作根；③观察者——回退路径 warn 一次
+// （不留静默漂移），不刷屏。
 //
-// 注意：getAgentDir 在 vitest 下 alias 到 mocks/pi-coding-agent.ts（返回
-// /home/user/.pi/agent）——本测试只断言两级解析顺序与 warn 行为，不测 pi SDK 内部。
+// 隔离（u0-data-discovery 注入化后）：fallback 值来自 HostServices.dataRoot() 端口，
+// 每用例 resetCoreForTests + configureCore 假宿主控制端口态，避免跨用例泄漏；
+// 不再依赖 vitest alias 的 pi-coding-agent mock。
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { getEngineDataDir, resetDataDirWarnForTests, XYZ_DATA_DIR_ENV } from "../../common/data-dir.ts";
+import { configureCore, resetCoreForTests } from "../../../../core/host-services.ts";
+import {
+  getEngineDataDir,
+  resetDataDirWarnForTests,
+  XYZ_DATA_DIR_ENV,
+} from "../../common/data-dir.ts";
+
+const FAKE_DATA_ROOT = "/home/user/.pi/agent";
 
 beforeEach(() => {
+  resetCoreForTests();
+  configureCore({
+    dataRoot: () => FAKE_DATA_ROOT,
+    log: () => {},
+  });
   resetDataDirWarnForTests();
+});
+
+afterEach(() => {
+  resetCoreForTests();
 });
 
 describe("getEngineDataDir", () => {
@@ -29,11 +47,11 @@ describe("getEngineDataDir", () => {
     expect(warnings.length).toBe(1);
   });
 
-  it("缺 env → 回退 piAgentDir（getAgentDir()，mock 值）并 warn 一次", () => {
+  it("缺 env → 回退宿主数据根（HostServices.dataRoot()，假宿主值）并 warn 一次", () => {
     const warnings: string[] = [];
     const warn = (m: string): void => warnings.push(m);
     const dir1 = getEngineDataDir({}, warn);
-    expect(dir1).toBe("/home/user/.pi/agent"); // vitest mock 的 getAgentDir
+    expect(dir1).toBe(FAKE_DATA_ROOT);
     expect(warnings.length).toBe(1);
     expect(warnings[0]).toContain("XYZ_AGENT_DATA_DIR");
 
@@ -50,4 +68,11 @@ describe("getEngineDataDir", () => {
     getEngineDataDir({}, (m) => warnings.push(m));
     expect(warnings.length).toBe(2);
   });
+
+  it("未 configureCore 即消费回退段 → 抛 core_host_not_configured（端口必需语义）", () => {
+    resetCoreForTests();
+    expect(() => getEngineDataDir({}, (m) => warningsNoop(m))).toThrow(/core_host_not_configured/);
+  });
 });
+
+function warningsNoop(_msg: string): void {}

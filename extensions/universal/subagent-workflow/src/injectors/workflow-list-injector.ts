@@ -25,8 +25,9 @@ import type {
 	SessionShutdownEvent,
 	SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+import { getHostServices } from "../core/host-services.ts";
 
 import {
 	discoverResources,
@@ -114,12 +115,13 @@ export function parseWorkflowMeta(content: string): WorkflowEntry | null {
  */
 export async function discoverAllWorkflows(
 	workspaceRoot: string,
-	agentDir: string,
 ): Promise<WorkflowEntry[]> {
 	const resources = await discoverResources({
 		kind: "workflows",
 		workspaceRoot,
-		agentDir,
+		// 宿主注入根现取（pi 壳 discoveryRoots 每次现取 getAgentDir，实例隔离）；
+		// agentDir 形参已删——其唯一用途就是喂 ScanConfig（u0-data-discovery 偏差 #7）
+		hostRoots: getHostServices().discoveryRoots?.()?.workflows ?? [],
 		includeTmp: true,
 	});
 
@@ -178,7 +180,6 @@ export function setupWorkflowListInjector(pi: ExtensionAPI): void {
 				setWorkflowCache(
 					await discoverAllWorkflows(
 						findWorkspaceRoot(ctx.cwd),
-						getAgentDir(),
 					),
 				);
 			} catch (err) {
@@ -202,7 +203,6 @@ export function setupWorkflowListInjector(pi: ExtensionAPI): void {
 					setWorkflowCache(
 						await discoverAllWorkflows(
 							findWorkspaceRoot(ctx.cwd),
-							getAgentDir(),
 						),
 					);
 				}

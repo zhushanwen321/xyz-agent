@@ -306,7 +306,7 @@ describe("discoverAllAgents 顺序契约（KV-cache）", () => {
 		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
 
 		const { discoverAllAgents } = await import("../subagent-list-injector");
-		const agents = await discoverAllAgents("/ws", "/agent");
+		const agents = await discoverAllAgents("/ws");
 		expect(agents.map((a) => a.name)).toEqual(["alpha", "worker", "zeta"]);
 	});
 
@@ -328,8 +328,8 @@ describe("discoverAllAgents 顺序契约（KV-cache）", () => {
 		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
 
 		const { discoverAllAgents, formatAgentList } = await import("../subagent-list-injector");
-		const first = await discoverAllAgents("/ws", "/agent");
-		const second = await discoverAllAgents("/ws", "/agent");
+		const first = await discoverAllAgents("/ws");
+		const second = await discoverAllAgents("/ws");
 		expect(second).toEqual(first);
 		expect(formatAgentList(second)).toBe(formatAgentList(first));
 	});

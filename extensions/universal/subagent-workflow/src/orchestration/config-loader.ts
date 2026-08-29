@@ -23,8 +23,8 @@ import { parseResourceMeta } from "../shared/meta-parser.ts";
 import { normalizeRef, WORKFLOW_REF_EXT } from "../shared/agent-ref.ts";
 export type { WorkflowMeta, WorkflowSource };
 
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getHostServices } from "../core/host-services.ts";
+import { getLogger } from "../core/logger";
 
 const logger = getLogger("config-loader");
 
@@ -174,8 +174,9 @@ export interface WorkflowScanConfig {
  * 把 WorkflowScanConfig 转为统一模块的 ScanConfig。
  *
  * 测试隔离场景下传入完整 config——此时按声明的 projectDir/tmpDir 反推
- * workspaceRoot（与原行为一致：resolve(config.projectDir, "../..")）。
- * 生产场景（省略或部分 config）走 findWorkspaceRoot(cwd)。
+ * workspaceRoot（与原行为一致：resolve(config.projectDir, "../..")），hostRoots
+ * 置空（隔离 = 不注入宿主根，仅 project 根可命中）。
+ * 生产场景（省略或部分 config）走 findWorkspaceRoot(cwd) + 宿主注入 workflows 根。
  */
 function toScanConfig(
   configOrCwd: Partial<WorkflowScanConfig> & { cwd?: string } | undefined,
@@ -186,18 +187,18 @@ function toScanConfig(
     return {
       kind: "workflows",
       workspaceRoot,
-      agentDir: "test-no-agent-dir",
+      hostRoots: [],
       includeTmp: true,
     };
   }
 
-  // 生产默认
+  // 生产默认（hostRoots 现取——pi 壳 discoveryRoots 每次现取 getAgentDir，实例隔离）
   const cwd = configOrCwd?.cwd;
   const workspaceRoot = findWorkspaceRoot(cwd);
   return {
     kind: "workflows",
     workspaceRoot,
-    agentDir: getAgentDir(),
+    hostRoots: getHostServices().discoveryRoots?.()?.workflows ?? [],
     includeTmp: true,
   };
 }

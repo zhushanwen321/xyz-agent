@@ -14,8 +14,9 @@
  * 真实 fs 下 ENOENT 由实现 catch）。mock 版被本集成版取代。
  *
  * 隔离：node:fs 的 existsSync 用 vi.mock 包一层计数（委托真实实现）；
- * getAgentDir 用 vi.mock 覆盖为临时 home（vitest alias 指向 mocks/pi-coding-agent.ts
- * 的硬编码桩 "/home/user/.pi/agent"，桩不读 os.homedir——mock node:os 无法影响它）；
+ * skills 发现根经 HostServices.discoveryRoots 端口注入（u0-data-discovery 注入化后
+ * 不再消费 pi SDK getAgentDir），每用例 resetCoreForTests + configureCore 假宿主，
+ * 假宿主根清单按 pi-host.ts skillRoots 契约形状推导自 hoisted 临时 home；
  * process.cwd 用 spyOn。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -23,9 +24,10 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const { existsSyncCalls, osHome } = vi.hoisted(() => ({
+import { configureCore, resetCoreForTests } from "../../core/host-services.ts";
+
+const { existsSyncCalls } = vi.hoisted(() => ({
   existsSyncCalls: { count: 0 },
-  osHome: { dir: "/nonexistent-home-skill-tests" },
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -40,13 +42,6 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...actual, existsSync: countingExistsSync };
 });
 
-vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
-  const { join } = await import("node:path");
-  // 桩不读 os.homedir，必须在此把 agentDir 指向 hoisted 临时 home（beforeEach 注入 homeRoot）
-  return { ...actual, getAgentDir: () => join(osHome.dir, ".pi", "agent") };
-});
-
 import { clearSkillPathCache, resolveSkillPath } from "../skill-discovery.ts";
 
 // ── 临时目录工具 ──────────────────────────────────────────────
@@ -59,11 +54,25 @@ beforeEach(() => {
   existsSyncCalls.count = 0;
   projRoot = mkdtempSync(join(tmpdir(), "skill-proj-"));
   homeRoot = mkdtempSync(join(tmpdir(), "skill-home-"));
-  osHome.dir = homeRoot;
+  // 假宿主根清单 = pi-host.ts skillRoots() 契约形状（user-pi + npm 两根，
+  // 每用例绑定当轮临时 home——discoveryRoots 每次调用现取，用例内改 homeRoot 即生效）
+  const agentDir = join(homeRoot, ".pi", "agent");
+  resetCoreForTests();
+  configureCore({
+    dataRoot: () => agentDir,
+    log: () => {},
+    discoveryRoots: () => ({
+      skills: [
+        { dir: join(agentDir, "skills"), source: "user-pi" },
+        { dir: join(agentDir, "npm", "node_modules"), source: "npm" },
+      ],
+    }),
+  });
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  resetCoreForTests();
   rmSync(projRoot, { recursive: true, force: true });
   rmSync(homeRoot, { recursive: true, force: true });
 });
