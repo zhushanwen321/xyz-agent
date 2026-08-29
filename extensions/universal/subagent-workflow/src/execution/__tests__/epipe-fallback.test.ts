@@ -19,6 +19,7 @@ const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：runSpawn 受控 + killAllSpawnedChildren 空实现；
 // getChildByRecord/spawnedChildren 提供真实 Map 语义。

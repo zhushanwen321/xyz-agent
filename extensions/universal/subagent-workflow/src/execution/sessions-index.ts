@@ -24,7 +24,7 @@ import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
 
 import { bestEffort } from "./best-effort.ts";
 import type { ExecutionMode } from "./types.ts";

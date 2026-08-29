@@ -19,7 +19,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
+vi.mock("../../core/logger", () => ({ getLogger: () => loggerMock }));
+
 import { clearRateLimiterState, setPiHandle } from "@zhushanwen/pi-extension-logger";
+import { createDelivery } from "@xyz-agent/session-delivery";
+import { configureNotifyDomain, resetNotifyDomainForTests } from "../../core/notify-ports.ts";
 import {
   bindNotifyLedgerHost,
   createNotifyLedger,
@@ -32,6 +39,17 @@ import {
   type NotifyLedgerHost,
 } from "../notify-ledger.ts";
 import { createNotifier, type BgNotifyRecord, type NotifierHost } from "../notifier.ts";
+
+// 投递内核经通知域窄端口注入（notifier 不再直接 import session-delivery）——
+// 「ledger 未 bind 退回内核路径」与「U4 warn 注入」用例依赖真实内核语义
+// （gate / 合批 / onSendFail warn 出口），注入真实 createDelivery 保住回归面；
+// afterEach 重置防注入态泄漏。
+beforeEach(() => {
+  configureNotifyDomain({ createDelivery });
+});
+afterEach(() => {
+  resetNotifyDomainForTests();
+});
 
 // ─── mock host ─────────────────────────────────────────────
 
@@ -443,10 +461,10 @@ describe("NotifyLedger — U4 投递计数分桶", () => {
     ledger.dispose();
   });
 
-  it("分桶增量经 extensionLogger 通道落日志（appendEntry，msg 固定 key + 动态值在 data）", () => {
-    const appendEntry = vi.fn();
-    setPiHandle({ appendEntry });
-
+  it("分桶增量经 core logger facade 落日志（warn，msg 固定 key + 动态值在 data）", () => {
+    // 共享 loggerMock 跨用例累计（同 describe 前序分桶用例也打 warn）——用例级清零，
+    // 断言「本次投递失败动作」恰产生一条分桶 warn。
+    loggerMock.warn.mockClear();
     const mock = makeLedgerHost();
     const ledger = createNotifyLedger(mock.host);
 
@@ -454,12 +472,10 @@ describe("NotifyLedger — U4 投递计数分桶", () => {
     ledger.record("sa-log", "content", { notifyId: "sa-log" });
     ledger.attemptDeliver();
 
-    expect(appendEntry).toHaveBeenCalledTimes(1);
-    const [customType, data] = appendEntry.mock.calls[0] as unknown as [string, { level: string; message: string; data: Record<string, unknown> }];
-    expect(customType).toBe("subagents:log");
-    expect(data.level).toBe("warn");
-    expect(data.message).toContain("notify delivery bucket [settleRejected]");
-    expect(data.data).toEqual({ total: 1, pending: 1 });
+    expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+    const [message, data] = loggerMock.warn.mock.calls[0] as unknown as [string, { total: number; pending: number }];
+    expect(message).toContain("notify delivery bucket [settleRejected]");
+    expect(data).toEqual({ total: 1, pending: 1 });
 
     ledger.dispose();
   });
@@ -679,9 +695,10 @@ describe("createNotifier — ledger 四步接线（U2）", () => {
     notifier.dispose();
   });
 
-  it("U4 warn 注入：内核路径 port.send 失败 → 警告落 extensionLogger appendEntry，console.warn 零调用", () => {
-    const appendEntry = vi.fn();
-    setPiHandle({ appendEntry });
+  it("U4 warn 注入：内核路径 port.send 失败 → 警告经 core logger 出口，console.warn 零调用", () => {
+    // 本文件 vi.mock 了 core/logger——notifier 的 U4 warn 出口（u0-notify 后走
+    // core facade）被 mock 截到 loggerMock，host-services 层不可达，无需 configureCore。
+    // U4 意图断言保持：警告落可检索通道（loggerMock = 注入出口）而非 console.warn。
     const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const notifierHost = makeNotifierHost();
@@ -692,19 +709,15 @@ describe("createNotifier — ledger 四步接线（U2）", () => {
       const notifier = createNotifier(notifierHost);
       notifier.notify(oneShotRecord("sa-warn"));
 
-      const logCalls = appendEntry.mock.calls.filter((c) => c[0] === "subagents:log");
-      expect(logCalls.length).toBeGreaterThanOrEqual(1);
-      // 按内容定位目标日志（logCalls[0] 可能是 ledger 未 bind 的 fallback warn——
-      // 该降级留痕同样落 extensionLogger 通道，先于 port.send 失败发生）
-      const sendFailLogged = logCalls.some((c) => JSON.stringify(c[1]).includes("port.send failed"));
+      const sendFailLogged = loggerMock.warn.mock.calls.some(
+        ([m]) => typeof m === "string" && m.includes("port.send failed"),
+      );
       expect(sendFailLogged).toBe(true);
       expect(consoleWarnSpy).not.toHaveBeenCalled();
 
       notifier.dispose();
     } finally {
       consoleWarnSpy.mockRestore();
-      setPiHandle(undefined);
-      clearRateLimiterState();
     }
   });
 

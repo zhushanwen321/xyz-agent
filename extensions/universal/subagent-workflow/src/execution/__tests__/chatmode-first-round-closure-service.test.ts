@@ -24,6 +24,7 @@ const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：runSpawn 受控返回 result，killAllSpawnedChildren 空实现。
 // [M3] getChildByRecord 返回活进程假句柄：让 piAdapter.hasRunningBackground 的判定只能靠
@@ -43,11 +44,22 @@ import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { RecordStore } from "../record-store.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { PiLike } from "../subagent-service.ts";
+import { createDelivery } from "@xyz-agent/session-delivery";
+import { configureNotifyDomain, resetNotifyDomainForTests } from "../../core/notify-ports.ts";
 import type {
   AgentResult,
   ExecutionRecord,
   ExecuteOptions,
 } from "../types.ts";
+
+// 投递内核经通知域窄端口注入（u0-notify）——[M3] 的「同 id:round dedup 吞第二次」
+// 依赖真实内核 dedupe 语义，注入真实 createDelivery（降级直发无 dedupe 会发 2 条）。
+beforeEach(() => {
+  configureNotifyDomain({ createDelivery });
+});
+afterEach(() => {
+  resetNotifyDomainForTests();
+});
 
 const mockRunSpawn = vi.mocked(runSpawn);
 const mockGetChildByRecord = vi.mocked(getChildByRecord);

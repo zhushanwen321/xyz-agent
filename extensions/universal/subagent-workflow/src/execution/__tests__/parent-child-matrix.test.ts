@@ -34,6 +34,9 @@ vi.mock("@zhushanwen/pi-extension-logger", () => ({
   getLogger: () => loggerMock,
   setPiHandle: vi.fn(),
 }));
+vi.mock("../../core/logger", () => ({
+  getLogger: () => loggerMock,
+}));
 
 // mock session-runner（import 链需要 runSpawn/killAllSpawnedChildren/getChildByRecord；
 // 避免真实 kill，且 dispose 收割路径可断言）

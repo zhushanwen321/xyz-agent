@@ -5,7 +5,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
 
 import type { ExtensionMode } from "./host-mode.ts";
 

@@ -22,6 +22,7 @@ const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger", () => ({ getLogger: () => loggerMock }));
 
 vi.mock("node:child_process", async () => {
   const { FakeChild } = await import("./helpers/spawn-mock.ts");

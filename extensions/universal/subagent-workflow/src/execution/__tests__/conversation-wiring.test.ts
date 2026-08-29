@@ -23,6 +23,7 @@ const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：runSpawn 返回永不 resolve 的 promise（阻断 runAndFinalize 收尾，
 // record 停在 running，execute 返回后立即可断言 createRecordForMode 的接线产物）。

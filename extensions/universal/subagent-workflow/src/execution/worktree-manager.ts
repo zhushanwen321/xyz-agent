@@ -31,7 +31,7 @@ import { encodeCwd } from "./path-encoding.ts";
 import type { PatchResult,WorktreeHandle } from "./types.ts";
 import { DirtyWorktreeError } from "./types.ts";
 import { bestEffort } from "./best-effort.ts";
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
 import { isProcessAlive, readAliveMarker } from "./alive-store.ts";
 import { SPAWN_GRACE_MS,type WorktreeEntry,WorktreeRegistry } from "./worktree-registry.ts";
 

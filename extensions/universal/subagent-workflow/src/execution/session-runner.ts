@@ -8,7 +8,7 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
 import { bestEffort } from "./best-effort.ts";
 import { armIdleTimer } from "./lifecycle-manager.ts";
 import { readActivePendingFromSessionFile } from "./session-pending.ts";

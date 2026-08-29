@@ -40,7 +40,7 @@
 // SubagentService.piAdapter（该适配层不在 U2 改动面）。未 bind 时 notifier 退回
 // delivery 内核路径（向后兼容旧装配 / 无 ledger 的测试场景）。
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
 
 /** U4 分桶日志与 index.ts 装配层共用同一具名 logger（getLogger 缓存单例）。 */
 const logger = getLogger("subagents");
