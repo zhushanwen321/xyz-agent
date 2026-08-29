@@ -24,10 +24,13 @@ import { bestEffort } from "./execution/best-effort.ts";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
 import { getOrCreateChannelRegistry } from "./execution/channel-registry-access.ts";
 import { DialogGlobalQueue } from "./execution/dialog-queue.ts";
+// [engine-awareness U3] 全局 config 三态读取（检测 poll 与 session_start 基线共用）
+import { readGlobalConfig } from "./execution/config.ts";
 // [U7] 引擎列表状态文件（registry → engines.json，GUI 引擎选择器数据源）
 import { syncEnginesFile } from "./execution/engine/engine-discovery.ts";
 // [U7] 引擎模型段注入（defaultEngine 非 pi 时 system prompt 补 <available_<engine>_models>）
-import { buildEngineModelsPromptAppend } from "./execution/engine/model-prompt.ts";
+// [engine-awareness U3] 补恒在状态段 <current_subagent_engine>（D6，pi 引擎也声明）
+import { buildEngineModelsPromptAppend, buildSubagentEngineSection } from "./execution/engine/model-prompt.ts";
 // [P1 引擎接线] 组合根登记 'pi' 引擎进 registry（引擎获取统一经 getEngine，缺省 id 'pi'）
 import { registerPiEngine } from "./execution/engine/engines/pi/registration.ts";
 // [P3 引擎接线] 组合根登记 'zcode' 引擎（spawn 单轮模式；engineDataDir 默认走
@@ -51,6 +54,8 @@ import {
 import { killAllSpawnedChildren } from "./execution/session-runner.ts";
 import { SubprocessAgentRunner } from "./execution/subprocess-agent-runner.ts";
 import { WorktreeManager } from "./execution/worktree-manager.ts";
+// [engine-awareness U3] per-turn 引擎检测编排（D1/D1b/D2/D3/D5）
+import { normalizeEngineId, runEngineAwarenessTurn } from "./injectors/engine-awareness.ts";
 import { setupModelListInjector } from "./injectors/model-list-injector.ts";
 import { setupSubagentListInjector } from "./injectors/subagent-list-injector.ts";
 import { setupWorkflowListInjector } from "./injectors/workflow-list-injector.ts";
@@ -267,6 +272,10 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
        *  workflow 域启动时 fail-fast，避免后续 store.save 再次失败导致 run 状态不落地。
        *  subagent 域不依赖 store，不受此标志影响。 */
       storeHealthy: boolean;
+      /** [engine-awareness D1b] 上一次已知默认引擎（session_start 初始化，per-turn 检测
+       *  diff 基准）。undefined = 初始化时 config 读失败——首 turn 检测遇 undefined
+       *  静默基线化，不算变更、不发通知（防首 turn 伪通知）。 */
+      lastEngine?: string;
     }
   >();
 
@@ -612,6 +621,11 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       ctxModel: ctx.model ?? undefined,
     });
 
+    // [engine-awareness D1b] lastEngine 初始化：与 initModel 同源读取（initModel 刚
+    // reloadGlobalConfig 过同一 config 文件，此处三态读取取同一现值）。ok/absent →
+    // 归一后的当前引擎；failed → undefined（首 turn 检测静默基线化兜底）。/resume、
+    // /fork 同样走 session_start（SR-3），基线天然覆盖。
+    const engineRead = readGlobalConfig(agentDir);
     sessionState.set(sessionId, {
       store,
       runs,
@@ -619,6 +633,8 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       runner,
       ctx,
       storeHealthy,
+      lastEngine:
+        engineRead.status === "failed" ? undefined : normalizeEngineId(engineRead.config.defaultEngine),
     });
   });
 
@@ -642,15 +658,40 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   });
 
   // ════════════════════════════════════════════════════════════
-  //  [U7] before_agent_start：引擎模型段注入（defaultEngine 非 pi 且引擎实现
-  //  listModels 时追加 <available_<engine>_models>——每 turn 重判 config，改配置
-  //  后下一 turn 即生效；fail-safe 任何异常不注入不阻塞 agent loop）
+  //  [U7 + engine-awareness U3] before_agent_start：引擎感知注入（链尾注册，D7——
+  //  段内容变化只断 system prompt 尾部 cache 前缀）。
+  //  ① per-turn 检测编排（§2.3 数据流）：三态 poll config → lastEngine diff →
+  //     变更时 reloadGlobalConfig 先行（D2，本 turn 路由生效）→ sendMessage 通知
+  //     （D3，不设 triggerTurn——P1 探针已证此形态消息进入本 turn LLM 上下文，
+  //     证据：真机 pi rpc payload dump + 0.84.4 dist sendMessage→_appendCustomMessage
+  //     →agent.state.messages.push→createContextSnapshot 调用链）→ 更新 lastEngine。
+  //  ② 恒在状态段 <current_subagent_engine>（D6）+ 引擎清单段 <available_<engine>_models>。
+  //     reload 后 getGlobalConfig() 即新值——通知、状态段、路由三处同 turn 对齐（G2）。
+  //  段序：状态段在前（文案声明 "listed ... below"），清单段在后；provider models 段
+  //  由更早注册的 handler 注入、位于上方。fail-safe 任何异常不注入不阻塞 agent loop。
   // ════════════════════════════════════════════════════════════
-  pi.on("before_agent_start", (event: BeforeAgentStartEvent) => {
+  pi.on("before_agent_start", (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
     try {
       const service = getModelConfigService();
-      const append = service === null ? "" : buildEngineModelsPromptAppend(service.getGlobalConfig().defaultEngine);
-      if (append === "" || typeof event.systemPrompt !== "string") return undefined;
+      if (service === null || typeof event.systemPrompt !== "string") return undefined;
+      const sid = ctx.sessionManager.getSessionId();
+      runEngineAwarenessTurn({
+        readConfig: () => readGlobalConfig(getAgentDir()),
+        reload: () => service.reloadGlobalConfig(),
+        sendMessage: (message) => {
+          // D3：不设 triggerTurn——切换是用户主动行为，无需唤醒 AI 立即行动
+          pi.sendMessage(message, {});
+        },
+        getLastEngine: () => sessionState.get(sid)?.lastEngine,
+        setLastEngine: (engine) => {
+          const state = sessionState.get(sid);
+          if (state) state.lastEngine = engine;
+        },
+      });
+      const defaultEngine = service.getGlobalConfig().defaultEngine;
+      const append = [buildSubagentEngineSection(defaultEngine), buildEngineModelsPromptAppend(defaultEngine)]
+        .filter((part) => part !== "")
+        .join("\n\n");
       return { systemPrompt: `${event.systemPrompt}\n\n${append}` };
     } catch {
       return undefined;
