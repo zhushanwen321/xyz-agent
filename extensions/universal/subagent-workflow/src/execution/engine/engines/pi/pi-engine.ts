@@ -17,7 +17,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../../../../core/logger";
 
 import type { AgentResult as WorkflowAgentResult } from "../../../../orchestration/models/types.ts";
 import type { PiInvocation } from "../../../pi-invocation.ts";

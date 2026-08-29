@@ -3,7 +3,7 @@
  * 从 subagent-service.ts 抽出（文件超 max-lines；逻辑自包含：interval + TTL 扫描）。
  * 启动幂等由调用方（service.startGcTimer）守卫；返回 stop 函数供 dispose 清理。
  */
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
 import { bestEffort } from "./best-effort.ts";
 import { isResumable } from "./lifecycle-predicates.ts";
 import type { RecordStore } from "./record-store.ts";

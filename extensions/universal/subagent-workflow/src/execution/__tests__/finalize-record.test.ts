@@ -21,7 +21,7 @@ const { loggerMock } = vi.hoisted(() => ({
     info: vi.fn(),
   },
 }));
-vi.mock("@zhushanwen/pi-extension-logger", () => ({
+vi.mock("../../core/logger", () => ({
   getLogger: () => loggerMock,
 }));
 

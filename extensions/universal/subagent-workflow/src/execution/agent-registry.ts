@@ -10,7 +10,7 @@
 
 import * as path from "node:path";
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
 
 import {
   getCachedFile,

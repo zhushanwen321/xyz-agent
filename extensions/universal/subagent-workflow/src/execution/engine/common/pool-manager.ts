@@ -18,7 +18,7 @@
 import { mkdir, readdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../../../core/logger";
 
 import { resolvePoolDir } from "../paths.ts";
 

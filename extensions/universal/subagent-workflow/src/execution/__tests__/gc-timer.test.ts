@@ -23,6 +23,7 @@ const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：runSpawn/killAllSpawnedChildren 占位（import 链需要），
 // getChildByRecord 默认返回 undefined（无活进程 → isResumable=true），用例内按需覆盖。

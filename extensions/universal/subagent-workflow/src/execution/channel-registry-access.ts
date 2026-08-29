@@ -24,7 +24,7 @@
 // handshake 形状： ChannelRegistryHandshake（version=1）
 // version 守卫：    slot.version !== 1 时 console.warn + 丢弃重建（向前兼容未来升级）
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
 
 import { createUiChannelRegistry, type UiChannelRegistry, type ChannelHandler } from "./ui-channels.ts";
 
