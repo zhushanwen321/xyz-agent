@@ -330,12 +330,17 @@ describe('W4 tail-scroll: thinking 双态（U8）', () => {
     // 横向钉右 = justify-end + overflow-hidden（纯 CSS，无 scrollLeft 时序）；行容器右对齐
     expect(viewport.classes()).toContain('justify-end')
     expect(viewport.classes()).toContain('overflow-hidden')
+    // leading-normal（无单位系数）必需：normal 行高下行盒高度随内容 fallback 字体变
+    //（实测 system-ui 16px / PingFang 18px / emoji 21px——CJK 行被裁 2-5px）
+    expect(viewport.classes()).toContain('leading-normal')
     const scroller = viewport.find('.flex-col')
     expect(scroller.exists()).toBe(true)
     expect(scroller.classes()).toContain('items-end')
     // self-start：脱离 flex cross 轴默认 stretch（否则滚动容器被拉到视口高度，
     // translateY(-50%) 变半行而非一行——sliding 新行错位，无头浏览器实测确认）
     expect(scroller.classes()).toContain('self-start')
+    // mr-auto：短行左贴 label（恢复旧行为）、长行溢出时被 justify-end 钉右
+    expect(scroller.classes()).toContain('mr-auto')
   })
 })
 

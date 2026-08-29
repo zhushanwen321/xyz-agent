@@ -23,16 +23,18 @@
           <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-dim">{{ t('panel.message.thinkingBlock') }}</span>
           <span v-if="!working" class="text-neutral-faint" :class="thinkingExpanded ? 'invisible' : ''">·</span>
           <!-- working 态：单行尾行视口（2026-08 抖动修复重写）。横向钉右 = viewport flex
-               justify-end + 行右对齐（溢出裁左，纯 CSS 无 scrollLeft 时序）；纵向换行 =
-               useTailScroll settled/sliding 状态机 translateY(-50%) 滑入（-50% 基于自身
-               2 行高度，与行高数值解耦）；h-[1lh] 视口高度 = 1 行行高（CSS lh 单位），
-               任何字号缩放下恒单行。非 working：头部 60 字符静态预览。 -->
+               justify-end + 行右对齐 + mr-auto（溢出裁左纯 CSS 无 scrollLeft 时序；mr-auto
+               短行左贴 label、长行溢出时钉右）；纵向换行 = useTailScroll settled/sliding
+               状态机 translateY(-50%) 滑入（-50% 基于自身 2 行高度，与行高数值解耦）；
+               h-[1lh] 视口高度 = 1 行行高。leading-normal（无单位）必需：normal 行高下
+               行盒高度随内容 fallback 字体变（实测 system-ui 16px / PingFang 18px /
+               emoji 21px，CJK 行被裁 2-5px）；无单位系数使行盒恒 = 系数×字号，字体无关。 -->
           <span
             v-if="working && thinkingTailLines.length > 0"
-            class="flex h-[1lh] min-w-0 flex-1 justify-end overflow-hidden text-[length:var(--text-sm)] text-neutral-dim"
+            class="flex h-[1lh] min-w-0 flex-1 justify-end overflow-hidden text-[length:var(--text-sm)] leading-normal text-neutral-dim"
             :class="thinkingExpanded ? 'invisible' : ''"
           >
-            <span class="flex flex-col items-end self-start" :style="thinkScrollStyle">
+            <span class="mr-auto flex flex-col items-end self-start" :style="thinkScrollStyle">
               <span v-for="(line, i) in thinkDisplayLines" :key="i" class="whitespace-nowrap">{{ line }}</span>
             </span>
           </span>
@@ -122,14 +124,14 @@
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="headerBlockIcon" v-else class="size-3.5 shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
           <span class="shrink-0 normal-case tracking-normal">{{ toolName }}</span>
-          <!-- running + 有流式输出：单行尾行视口（同 thinking header 结构，横向 CSS 钉右 +
-               纵向状态机滑入）；否则静态 shortenForHeader -->
+          <!-- running + 有流式输出：单行尾行视口（同 thinking header 结构：leading-normal
+               字体无关行高 + mr-auto 短行左贴/溢出钉右 + 纵向状态机滑入）；否则静态 shortenForHeader -->
           <span
             v-if="isRunning && toolTailLines.length > 0"
-            class="flex h-[1lh] min-w-0 flex-1 justify-end overflow-hidden normal-case tracking-normal text-neutral-dim"
+            class="flex h-[1lh] min-w-0 flex-1 justify-end overflow-hidden normal-case leading-normal tracking-normal text-neutral-dim"
             :class="{ invisible: toolExpanded && isBashTool }"
           >
-            <span class="flex flex-col items-end self-start" :style="toolScrollStyle">
+            <span class="mr-auto flex flex-col items-end self-start" :style="toolScrollStyle">
               <span v-for="(line, i) in toolDisplayLines" :key="i" class="whitespace-nowrap">{{ line }}</span>
             </span>
           </span>
