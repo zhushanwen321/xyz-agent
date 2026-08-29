@@ -82,16 +82,16 @@ graph TD
 | 2 | u3 | 既有 A6 测试第 2 用例断言演进：原「重选 builtin 首个 wasFixed:true」与 D5 态3 pass-through 直接冲突，改为 wasFixed:false 原样返回 | 合理（D5 取代） |
 | 3 | u3 | auto-fix 日志 console.log → console.warn（G2/A9 以 warn 可见为通过标准） | 合理 |
 | 4 | u3 | builtinModelsById 拆分：校验路径走合并视图，sanitizeInvalidProviders 保留快照索引（更名 snapshotCatalogModelsById）——MF-6 baseUrl 守卫不能吃 overlay 归一化的空 baseUrl，否则误「修复」为「删除」 | 合理（数据安全） |
-| 5 | u3 | 三态判定延伸至 findValidDefaultModel 主路径（设计 D5 仅叙述 auth-only 场景）——主路径存在同族失败模式 A（default=builtin + override-only 条目重启被静默改写） | 待审（需确认设计 D5 措辞是否补主路径） |
+| 5 | u3 | 三态判定延伸至 findValidDefaultModel 主路径（设计 D5 仅叙述 auth-only 场景）——主路径存在同族失败模式 A（default=builtin + override-only 条目重启被静默改写） | 合理（审查裁决：D5 采用行为函数级措辞，未限定分支；不延伸则 G2 在主路径仍破。设计 D5 已补两通路生效注记） |
 | 6 | u5 | 旧 project-switcher.test.ts 整体重写（组件从手风琴改常驻网格，旧折叠断言全部作废） | 合理（伴随测试） |
 | 7 | u5 | active 配色 demo #3f3f46 → 侧栏既有 bg-surface + text-accent token 范式（lint 禁硬编码，多主题 token 系统无对应色） | 合理 |
 | 8 | u5 | tooltip 用原生 title 兜底（设计待验证检查点 3 现场决策：纯 CSS tooltip 在 sidebar 滚动容器有裁剪风险） | 合理 |
 | 9 | u5 | 删除入口走右键 ContextMenu → ConfirmDialog（demo 3A 卡片无删除按钮，为不回退既有删除能力） | 合理（保功能） |
-| 10 | u5 | 「新建项目出现在网格尾部」（§3.1 终态 3/A5）与 D7 两段式张力：实现按 D7——新建项目置 active + 最新 lastUsedAt，落自动序段首位（有序段之后）而非整网格尾部 | 待审（A5 真机验收措辞需对齐） |
-| 11 | u2 | S4 用内存重生成等价校验（import gen 纯函数零落盘）替代 regen+diff——设计矩阵「或等价校验」条款覆盖 | 合理 |
+| 10 | u5 | 「新建项目出现在网格尾部」（§3.1 终态 3/A5）与 D7 两段式张力：实现按 D7——新建项目置 active + 最新 lastUsedAt，落自动序段首位（有序段之后）而非整网格尾部 | doc_error（审查裁决：设计措辞过时，§3.1/A5/D7 声明② 已同步修订为「自动序段首位」） |
+| 11 | u2 | S4 用内存重生成等价校验（import gen 纯函数零落盘）替代 regen+diff——D3「内容漂移提醒职责转移给守卫脚本的快照新鲜度 diff」的等价实现（避开 catalogGeneratedAt 时间戳噪声；初版登记「或等价校验条款」引用失实，审查后改引 D3） | 合理 |
 | 12 | u2 | pre-commit 挂载未由 subagent 实测（禁 git 约束）——主 agent commit u2 时已实测触发并通过 | 合理（已闭环） |
 | 13 | u4 | 接线经 configService.refreshProviderCatalogs() 薄包装（handler 不直调 impl）——导入的新 provider 须经该包装的范围过滤（kind==='catalog'）才会被刷到；config-service.ts 零改动 | 合理 |
-| 14 | u4 | refresh 完成后追加 broadcastProviderList 二次广播（D9「复用 fire-and-forget + broadcast 模式」动机要求，与 setSkillDirs 先例同构）；伴随 T9 断言 1→2 次 | 待审（设计 D9 措辞未明写二次广播） |
+| 14 | u4 | refresh 完成后追加 broadcastProviderList 二次广播（D9「复用 fire-and-forget + broadcast 模式」动机要求，与 setSkillDirs 先例同构）；伴随 T9 断言 1→2 次 | 合理（审查裁决：二次广播是 A8 在 UI 可达的必然组成；设计 D9 采用行已显式化） |
 | 15 | u6 | 缺 mock 文件实际 8 个（预期 1-3）：3 个直接 mount + 5 个经 SettingsModal 间接 mount，逐一按所在文件既有 mock 风格补齐 | 合理（计划外小修，领地随实际扩展） |
 
 ## 6 状态表
@@ -124,3 +124,4 @@ graph TD
 - 2026-08-29（第 2 轮验证性复审同步修订）：① 验收范围 A1-A8 → A1-A9（§0 映射 / §4 Gate B；设计侧 U2 独立验收补 A9）② U0-U4→u1-u5 映射表述精化（「U2 的 D3 部分 → u1」）③ u5「D9 外」错误编号引用修正 + 验收补键盘 reorder 通道断言（A5 键盘复验的开发期前置）。
 - 2026-08-29（W1 完成）：u1 ceed4fa12 / u3 a139afad0 / u5 8b8c0519c 全 committed，核心测试主 agent 复验绿；偏差 10 条登记 §5（2 条待审）；新增残留风险 7（ProviderPage mock 存量问题）。另注：W1 期间用户侧并行 commit f3eb0f243（packages/ui 流式 header，与本计划领地零交集）。
 - 2026-08-29（W2 完成 + u6 小修）：u2 c38020cbb / u4 65aebe1cf committed（守卫 pre-commit 挂载随 commit 实测触发）；计划外小修 u6（122e5c171）清障残留风险 7。偏差登记增至 15 条（4 条待审：#5/#10/#14 + 裁决粒度见一致性审查）。状态表全 committed → 转一致性审查。
+- 2026-08-29（一致性审查清零）：三区对抗审查（runtime 目录单真相 / pi-sync 守卫 / 项目切换前端）—— unreasonable 3 条全 low 级且已定向修复（守卫 S1 幻觉参数 --root 清除 + AGENTS.md:28 软锚点 0.84.4 + 默认卡删除菜单测试断言真实化），复验绿；doc_errors 4 条已修（设计文档 5 处措辞修订，见设计变更历史末条；#11 登记引用失实改引 D3）；#5/#14 裁决合理、#10 裁决 doc_error 并同步设计。 unreasonable 清零 → 转双级验收。

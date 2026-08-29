@@ -154,7 +154,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 
 **终态 3 —— 切换项目的用户（G3）**：
 
-> 侧边栏项目区是 2 列卡片网格（单行 pill，高 26px），每卡 = 项目名（超长截断 + hover 全名）+ 会话数徽章。点击任意卡 1 步切换；拖拽卡片调整顺序，重启后顺序保持；新建项目出现在网格尾部。徽章数字 = 点击该卡后 SessionList 实际显示的会话数。**默认项目**（未命名兜底项，恒存在）显示固定文案（复用既有 i18n key `sidebar.projectSwitcher.defaultName`，现 UI 已用同款 fallback），与命名项目同卡同权——可拖拽、有徽章（无归属/孤儿 session 计入其下）。
+> 侧边栏项目区是 2 列卡片网格（单行 pill，高 26px），每卡 = 项目名（超长截断 + hover 全名）+ 会话数徽章。点击任意卡 1 步切换；拖拽卡片调整顺序，重启后顺序保持；新建项目落自动序段首位（位于所有手动排序项目之后；无手动排序项目时按最近使用置顶，见 D7 声明②）。徽章数字 = 点击该卡后 SessionList 实际显示的会话数。**默认项目**（未命名兜底项，恒存在）显示固定文案（复用既有 i18n key `sidebar.projectSwitcher.defaultName`，现 UI 已用同款 fallback），与命名项目同卡同权——可拖拽、有徽章（无归属/孤儿 session 计入其下）。
 > **失败路径**（拖拽中途 ESC/拖出容器）：顺序不变（drop 未发生即不提交重排）。
 
 ### 3.2 方案对比
@@ -226,13 +226,13 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 - **效果**：G1 的「提交/CI 阶段拦截」成立。
 
 **D3：t10 指纹基线自包含化——指纹写入快照 header，测试只断言自洽（选定）**
-- **采用**：gen 脚本生成快照时一并写入指纹（provider 总数 / models 总和）到 JSON header；t10 改为断言「快照内容 == 快照 header 指纹」+「快照 piAiVersion == node_modules 实装版本」。内容漂移提醒职责转移给守卫脚本的快照新鲜度 diff（升级 PR 的快照 diff 本来就要人审）。
+- **采用**：gen 脚本生成快照时一并写入指纹（provider 总数 / models 总和）到 JSON header；t10 改为断言「快照内容 == 快照 header 指纹」+「快照 piAiVersion == node_modules 实装版本」+「磁盘快照 == gen 脚本当前输出」（第三断言为实施期补强：前两断言在「gen 提取逻辑变更但 pi 版本未变」时双失灵，仅此断言可检，且不引入手写数字）。内容漂移提醒职责转移给守卫脚本的快照新鲜度 diff（升级 PR 的快照 diff 本来就要人审）。
 - **被否**：继续手工维护基线数字——**守卫自身的基线成为需要人工同步的第三份数据**（本次失守的直接原因），每次 pi 升级必红一次再人工改数字，守卫退化成仪式。
 - **证据**：`gen-builtin-providers.test.ts:104-125` 基线 1220 vs 实际 1290（实跑红）。
 - **效果**：t10 从「每次升级必红」变为「结构自洽恒绿 + 漂移由守卫报告」；G1 的「守卫自身不产生新锚点」成立。与守卫矩阵第 3 项（快照 piAiVersion == 实装）构成刻意双通道：t10 在测试期跑（CI test 路径）、守卫在提交期跑（pre-commit + CI invariants），覆盖不同拦截时点。
 
 **D4：「有效模型」合并视图抽为 runtime 单点模块（选定）**
-- **采用**：把 listProviders 内联的「快照 ⊕ overlay」合并（`provider-config-helper.ts:337-343`）与 `getCatalogOverlayModels` 的读取逻辑收拢到一个模块（扩展 `provider-catalog.ts` 或新 `merged-catalog.ts`，实施层定）；对外暴露「provider X 的有效模型集（BuiltinModelSummary 形）」单一函数；listProviders 与 pi-provider-store 的 `builtinModelsById` 索引都改从它构建。
+- **采用**：把 listProviders 内联的「快照 ⊕ overlay」合并（`provider-config-helper.ts:337-343`）与 `getCatalogOverlayModels` 的读取逻辑收拢到一个模块（扩展 `provider-catalog.ts` 或新 `merged-catalog.ts`，实施层定）；对外暴露「provider X 的有效模型集（BuiltinModelSummary 形）」单一函数；listProviders 与 pi-provider-store 的 `builtinModelsById` 索引都改从它构建（实施期例外：`sanitizeInvalidProviders` 的空壳修复索引保留快照源——MF-6 `every(baseUrl)` 守卫不能消费 overlay 归一化的空 baseUrl，否则「修复」误判为「删除」；默认模型判定路径全部走合并视图单点）。
 - **被否**：在 pi-provider-store 里单独再写一份 overlay 合并（两处合并逻辑必然漂移——本次多真相正是这么产生的）；把校验搬到 listProviders（聚合层持 settings 写权，职责倒挂）。
 - **证据**：`provider-config-helper.ts:340`（展示已接）vs `pi-provider-store.ts:326-341`（校验未接，auth-only catalog 分支只查快照）。
 - **效果**：失败模式 A 构造性消除——校验与展示同源。
@@ -242,11 +242,13 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 
   | overlay 对该 provider 的状态 | 判定依据 | defaultModel 校验行为 |
   |---------------------------|---------|---------------------|
-  | 态 1：有数据且新鲜（lastModified > 快照 catalogGeneratedAt，未被 staleness 过滤） | 合并视图非空且条目未被 `provider-catalog-refresh.ts:150-151` 过滤 | 用**合并视图**判定——overlay-only 模型合法，不触发 auto-fix |
+  | 态 1：有数据且新鲜（lastModified > 快照 catalogGeneratedAt，未被 staleness 过滤） | 合并视图非空且条目未被 `getCatalogOverlayState` 的 fresh 判定排除（staleness 过滤） | 用**合并视图**判定——overlay-only 模型合法，不触发 auto-fix |
   | 态 2：有数据但过期/被声明为空（staleness 过滤掉，或 404/501 语义写入的 lastModified:0） | 条目存在但 `getCatalogOverlayModels` 返回被过滤 | 用**快照**裁定，允许 auto-fix——「见过但远程声明已过时」是明确信号（404 = 远程说无此目录），快照是更权威的基线 |
   | 态 3：从未见过（own 缓存与 pi store 均无该 provider 条目，或文件损坏） | 两份落盘均无条目 | **pass-through**：不判定有效性、不触发 auto-fix、不改写 settings.json，`--model` 直传 pi 由执行侧解析 |
 
   态 3 的显式 trade-off：手滑输入的垃圾模型名从「今天被 auto-fix 救回」变为「直传 pi，由 pi 报 model-not-found」。可接受的理由：错误显式暴露（用户可改）优于静默改写合法配置（失败模式 A）；且态 3 的常态是「该 provider 从未经过 overlay 通道」而非「用户配置有误」，对后者误伤才是真风险——pi 报错至少把决策还给用户。
+
+  生效范围（实施期确认）：三态在 **auth-only catalog 分支与 override 主路径两通路同样生效**——主路径存在同族失败模式 A（default=快照内模型 + override-only 条目 → 重启被静默改写为 override 首项）；主路径态 2 的 auto-fix fallback 目标仍为 override 首项（沿用旧语义）。
 - **被否**：无脑接入（overlay 短暂缺失时把合法 default 判死改写——把失败模式 A 反向变成「网络故障吞配置」）；「不可用一律回退快照 + 不改写」（对态 2 丢失 404 语义；对态 1 的 overlay-only 模型变成直传，砍掉本设计的主要收益）。
 - **证据**：`getCatalogOverlayModels` 现把「无条目 / 损坏 / staleness 过滤 / 空 models」四种状态全折叠成 `[]`（`provider-catalog-refresh.ts:143-153`）——三态语义正是要把这个歧义拆开；404/501 → `lastModified:0` 的既有语义（`:202-206`）是态 2 的判定材料。
 - **效果**：§3.1 终态 2 的成功与失败路径都成立；失败模式 A 构造性消除且不引入「网络故障吞配置」反向缺陷。
@@ -262,7 +264,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
   - **排序**：`recentProjects` 改为两段式——有 `userOrder` 的项目按 userOrder 升序在前，无 `userOrder` 的按现状规则（active 置顶 + lastUsedAt 降序）在后。`setActiveProject` 更新 lastUsedAt 但不重排有 userOrder 的项目（切换 ≠ 排序意图）。
   - **赋号语义**：drop 发生时按**落点位置**重排——对有序段（含新落点）**密集重编号 0..n-1** 后整体提交（deep watch 持久化）。从无序段首次拖起时，该卡插入落点、有序段连同它一起密集编号。不做 midpoint 稀疏编号，删除项目后也无需清理空洞（下次任何 drop 自然重编）。
   - **默认项目**：与命名项目同卡同权——可拖拽、参与 userOrder、徽章计入无归属/孤儿 session（渲染规格见 §3.1 终态 3）。
-  - **显式行为变化声明**：① 全员进入有序段后「active 置顶」自然消失（现状行为变更，属用户意图的胜利）；② 「新建项目出现在尾部」仅创建时刻成立——它落无序段，后续其他无序项目的 lastUsedAt 更新可能排到它前面（符合「自动序只管未被手动排序的项目」语义）。
+  - **显式行为变化声明**：① 全员进入有序段后「active 置顶」自然消失（现状行为变更，属用户意图的胜利）；② 新建项目落自动序段首位（创建时刻置 active + 最新 lastUsedAt；无手动排序项目时即网格首位——早期「出现在尾部」是对「不插队到已排序项目之前」的粗糙叙述，以本条为准），后续其他无序项目的 lastUsedAt 更新可能排到它前面（符合「自动序只管未被手动排序的项目」语义）。
 - **被否**：首次拖拽即赋 max+1（用户把项目拖到首位却落地尾部——首拖即可见错误）；全量 userOrder 无 fallback（旧数据被迫赋假顺序）；lastUsedAt 继续主导（拖拽意图被切换冲掉，持久化名存实亡）。
 - **证据**：`stores/project.ts:78-90` 现排序逻辑；deep watch 持久化对新字段零改动兼容（`project-store.ts:118-126` 零转换）；demo 的 reorder 已是纯数组 splice（`project-switcher-demo.html:367-375`），密集重排是其自然延伸。
 - **效果**：§3.1 终态 3 的「排序反映用户意图且跨重启稳定」成立，且拖到任意位置（含首位/中间）语义正确。
@@ -274,9 +276,9 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 - **效果**：零新依赖交付 G3；键盘用户可达。
 
 **D9：overlay 主动刷新触发点增补「导入供应商成功后」（选定，低优先级）**
-- **采用**：在 `applyImportProviders` 成功路径后追加一次 `refreshProviderCatalogs`（复用既有 fire-and-forget + broadcast 模式）。
+- **采用**：在 `applyImportProviders` 成功路径后追加一次 `refreshProviderCatalogs`（fire-and-forget：不阻塞导入 reply、失败仅 console.warn；refresh 完成后 `broadcastProviderList` 二次广播——否则 renderer 常驻订阅收不到刷新后列表，A8 在 UI 上不可达）。
 - **被否**：启动期全局刷（与 pi binary 每次 RPC 启动自刷重复，唯一缺口窗口是「首启且从未跑过会话」，此时用户尚未配任何凭据，模型列表新鲜度无消费者）；扩大到定时轮询（4h 窗口语义已在 pi 侧承载）。
-- **证据**：导入供应商正是问题 2 的原始触发场景（handoff：「导入供应商后模型列表不新鲜」）；`config-service.ts` 已有导入成功后 broadcast 先例。
+- **证据**：导入供应商正是问题 2 的原始触发场景（handoff：「导入供应商后模型列表不新鲜」）；`settings-message-handler.ts` 的 `config.refreshProviderCatalogs` case 已有 refresh 完成后 broadcast 先例（`config.applyImportProviders` case 内亦有同步 broadcast）。
 - **效果**：命中用户真实路径，成本一次可失败的 fetch。
 
 ---
@@ -291,7 +293,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 | A2 | 守卫覆盖当前实证（G1） | 守卫开发完成后、U0 修复前，在**当前仓库**首跑（真实漏同步在场） | 必须报出 build.yml 0.84.1 等不一致项——本次真实漏同步作为守卫的第一次实战验收；U0 修复后复跑转绿（红→绿闭环，与 U0 同 PR 交付） |
 | A3 | 默认模型不被静默改写（G2） | 真机 dev 环境。**前置条件**：① 断网（防 Provider 页 mount 触发的 `refreshProviderCatalogs` 从 pi.dev 拉回真实数据整体替换假条目——fetch 失败走 fail-safe 保留缓存）；② 向 `<getDataDir>/provider-catalog-overlay.json` 写入真实形状测试条目（zai + 一个快照外模型 id 如 `glm-test-overlay`），其 lastModified 晚于 pi store 的 zai 条目与快照 catalogGeneratedAt（防 newer-wins 压制与 staleness 过滤）。然后进 Provider 页设其为默认 → 重启应用 → 查看默认模型与 `~/.xyz-agent/pi/agent/settings.json` | Composer 默认模型仍显示 `glm-test-overlay`；settings.json 未被 auto-fix 改写；runtime 日志无 auto-fix 记录 |
 | A4 | 态 3 pass-through 不劣化（G2，负面行为） | 真机 dev：默认模型设为快照内模型（glm-5.3）+ 构造态 3（own 缓存 `<getDataDir>/provider-catalog-overlay.json` 与 pi store `~/.xyz-agent/pi/agent/models-store.json` 中该 provider 条目**双双清空**——只删 own 不够，pi store 是第二数据源）→ 重启 | 默认模型原样保留（无 auto-fix 改写，`--model` 直传 pi 解析成功）；再设一个垃圾模型名验证态 3 trade-off：pi 报 model-not-found 且 settings.json 未被静默改写 |
-| A5 | 排序持久化（G3） | 真机：拖某项目到**首位**、另一项目到**中间位置**（显式覆盖密集重排语义）→ 重启 → 再切换到另一项目 → 再重启；另以键盘通道复验一次（卡片 focus 后方向键交换位置，D8 同一 reorder 入口） | 顺序始终 = 拖拽落点顺序（拖到首位即首位，非尾部）；切换行为不重排有序项目；新项目出现在尾部；键盘交换与拖拽落点语义一致 |
+| A5 | 排序持久化（G3） | 真机：拖某项目到**首位**、另一项目到**中间位置**（显式覆盖密集重排语义）→ 重启 → 再切换到另一项目 → 再重启；另以键盘通道复验一次（卡片 focus 后方向键交换位置，D8 同一 reorder 入口） | 顺序始终 = 拖拽落点顺序（拖到首位即首位，非尾部）；切换行为不重排有序项目；新建项目落自动序段首位（手动排序项目之后，见 D7 声明②）；键盘交换与拖拽落点语义一致 |
 | A6 | 徽章数 = 列表实际数（G3） | 真机：多项目各含不同数量会话（含 1 个无归属 session） | 每张卡徽章数字 = 点击该卡后 SessionList 顶部的 totalCount；无归属 session 计入默认项目 |
 | A7 | 1 步切换（G3） | 真机点击非活跃项目卡 | 视图立即切换到该项目（无中间展开态）；active 卡样式反白 |
 | A8 | 导入触发刷新（G2，D9） | 真机联网：导入一份供应商配置 | 导入成功后 `<getDataDir>/provider-catalog-overlay.json` mtime 更新；随后 `listProviders` 结果含 overlay 新模型（与快照 diff 可见） |
@@ -347,3 +349,4 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 - 2026-08-29（merge origin/main 后增量评估修订）：main 合入 pi-semantics 守卫体系与 C-pi-12 格局反转后，经增量对抗评估修订——① §2.1 根因修正（A1 类已有四包门禁 + 两守卫分工声明 + merge 实证）② §3.2 方向 2 补方案 2D（runtime 直读 pi-ai，裁决维持 2A，理由：compat 时间炸弹的构建期/运行期失败模式不对称；2D 登记为演进触发条件）③ 守卫矩阵补 pi-tui 项（check-pi-semantics PI_PKGS 三包缺口补位）④ D1/D2 补与 check-pi-semantics 的互补关系与挂载先例 ⑤ §5 约束登记形态明确独立条目。方向③（ProjectSwitcher）与 D4-D9 经评估确认零影响，未改动。
 - 2026-08-29（第 1 轮全量复审修订）：1 must-fix + 10 suggestion 全部修复——CI 挂载点三处矛盾收敛为 ci.yml invariants job（唯一挂载实体，D2/D3/§5 统一）；矩阵基准分声明/实装两类（§2.1/§3.2/D1 三处措辞统一）；G1 收窄至矩阵覆盖面（A6 类文档锚点显式排除）；G2 补态 2 例外限定 + 新增 A9 态 2 验收场景；「D3 分支」撞名改「auth-only catalog 分支」；行号漂移修正（rpc-client :191、troubleshooting :296）；§5 计数改「矩阵全量」。
 - 2026-08-29（第 2 轮验证性复审修订）：2 must-fix + 6 suggestion 全部修复——§5 文件改动地图 U1 行挂载点漏网修正（ci.yml）+ U2 独立验收补 A9；A8 回溯目标 G1/G2 → G2；地图补 U3 行；A5 补键盘 reorder 复验（D8 同一入口）。两 must-fix 均为第 1 轮修复的下游漂移，方案本体零新发现。
+- 2026-08-29（实施后一致性审查同步修订）：三区对抗审查（runtime 守卫 / 前端）0 must 级 unreasonable 后的文档修正——① 「新建项目出现在网格尾部」（§3.1 终态 3 / A5）与 D7 两段式矛盾，按 D7 语义统一为「自动序段首位」，D7 声明② 精化；② D9 证据行实体位置纠正（broadcast 先例在 settings-message-handler.ts 非 config-service.ts）+ 采用行显式化二次广播；③ D5 态 1 判定依据行号引用改函数名引用 + 补两通路生效范围注记；④ D3 采用行补第三断言（实施期补强）；⑤ D4 采用行补 sanitizeInvalidProviders 快照索引例外注记。
