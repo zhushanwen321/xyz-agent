@@ -8,9 +8,12 @@
  * 本脚本机器化该判据（docs/design/subagent-core-package-extraction.md §3.3 D9-①）。
  *
  * 检查项：
- * 1. package.json：dependencies + peerDependencies 不含禁用依赖
- *    （@earendil-works/* 前缀通配 + 四个宿主专属包精确匹配）
- * 2. 源码 import 闭包：C/src 全量非测试 .ts 的 import/export-from/动态 import/
+ * 1. package.json：dependencies + peerDependencies + optionalDependencies 不含
+ *    禁用依赖（@earendil-works/* 前缀通配 + 四个宿主专属包精确/子路径匹配）。
+ *    optionalDependencies 同样进入发布物运行时闭包（npm 会安装），与 deps/peers
+ *    同判据，不扫 = 换段绕过。
+ * 2. 源码 import 闭包：C/src 全量非测试源码（.ts/.mts/.cts/.js/.mjs/.cjs，
+ *    .d.ts/.d.mts/.d.cts 声明文件豁免）的 import/export-from/动态 import/
  *    require 说明符不含禁用依赖。扫描面为可达闭包的超集（全量已发布源码；
  *    传递闭包经相对 import 的真实展开由检查项 3 的 worker 子图承载）。
  *    非测试源码中类型 import 同样违规——dist d.ts 会引用 pi 类型，npm 消费者
@@ -55,8 +58,11 @@ const BANNED_EXACT = new Set([
   '@xyz-agent/session-delivery',
   '@zhushanwen/pi-file-lock',
 ])
+// 精确项双口径：裸名精确相等 或 子路径 import（如 ".../pi-extension-logger/sub"）。
+// 只匹配裸名时，子路径说明符绕过精确匹配——包根被 ban 则其任意子路径导出同 ban。
 const isBanned = (spec) =>
-  BANNED_PREFIXES.some((p) => spec.startsWith(p)) || BANNED_EXACT.has(spec)
+  BANNED_PREFIXES.some((p) => spec.startsWith(p)) ||
+  [...BANNED_EXACT].some((b) => spec === b || spec.startsWith(`${b}/`))
 
 // 检查点 5：worker 内禁止到达的宿主服务模块（相对 src/ 的路径）
 const HOST_SERVICE_MODULES = ['core/host-services.ts', 'core/notify-ports.ts']
@@ -93,7 +99,7 @@ try {
   process.exit(1)
 }
 let declaredDepCount = 0
-for (const section of ['dependencies', 'peerDependencies']) {
+for (const section of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
   for (const name of Object.keys(pkg[section] ?? {})) {
     declaredDepCount += 1
     if (isBanned(name)) {
@@ -102,14 +108,23 @@ for (const section of ['dependencies', 'peerDependencies']) {
   }
 }
 
-// ── 2. 源码 import 闭包（非测试 .ts 全量扫描） ──────────────────────
-function* walkTs(dir) {
+// ── 2. 源码 import 闭包（非测试源码全量扫描，扩展名见头注释检查项 2） ──────────
+// 已发布源码的 TS/JS 全形态扩展名都在扫描面（.mts/.cts/.js/.mjs/.cjs 漏扫 =
+// 换扩展名绕过）；声明文件（.d.ts/.d.mts/.d.cts）豁免——不承载可执行 import，
+// 且其内容随实现文件进入检查项 2 的类型违规判据（非测试 type import 同样违规）。
+const SRC_EXTENSIONS = ['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs']
+const DECLARATION_SUFFIXES = ['.d.ts', '.d.mts', '.d.cts']
+const isSrcFile = (name) =>
+  SRC_EXTENSIONS.some((ext) => name.endsWith(ext)) &&
+  !DECLARATION_SUFFIXES.some((suffix) => name.endsWith(suffix))
+
+function* walkSrc(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name)
     if (entry.isDirectory()) {
       if (entry.name === '__tests__') continue // 豁免理由见头注释检查项 2
-      yield* walkTs(p)
-    } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+      yield* walkSrc(p)
+    } else if (isSrcFile(entry.name)) {
       yield p
     }
   }
@@ -117,7 +132,7 @@ function* walkTs(dir) {
 const SRC_SPEC_PATTERNS = [FROM_SPEC_RE, IMPORT_SPEC_RE, DYNAMIC_SPEC_RE, REQUIRE_SPEC_RE]
 let srcFileCount = 0
 let srcSpecCount = 0
-for (const file of walkTs(SRC_DIR)) {
+for (const file of walkSrc(SRC_DIR)) {
   const specs = extractSpecs(readFileSync(file, 'utf-8'), SRC_SPEC_PATTERNS)
     .filter((s) => !s.startsWith('.'))
   srcFileCount += 1

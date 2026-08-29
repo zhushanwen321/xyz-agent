@@ -11,7 +11,11 @@
  *   2. require：node require CJS dist——主入口 + 四条语义子入口
  *      （engines/zcode/reader、engines/zcode/constants、engine/paths、relay-env），
  *      经 package.json exports 的 require 条件解析（Node self-reference），
- *      等价验证 npm 消费者的加载路径与 exports→dist 映射，而非直接拼文件路径
+ *      等价验证 npm 消费者的加载路径与 exports→dist 映射，而非直接拼文件路径；
+ *      随后同一 CJS 上下文跑 dist 主入口行为 golden 断言（routeEngine mock 注入
+ *      断言三层路由 call 层生效 + DEFAULT_DATA_ROOT / CORE_PACKAGE_VERSION 导出
+ *      形态）——golden 行为面在 dist 产物上成立，而非仅 vitest/src 上下文
+ *      （V7 golden 语义的字面覆盖）
  *   3. golden 回放：vitest run 跑 conformance 免 LLM 免二进制测试集
  *      （golden-replay.pi/zcode + contract.probe/abort/agent-events/read-degradation，
  *      全部 fake 注入），质量资产随 dist 形态可用
@@ -19,7 +23,7 @@
  * 全绿 exit 0；任一步失败非零退出（发布管线据此拦截）。
  *
  * 挂载点（发布门接线，u1-guards）：
- *   - scripts/npm-prerelease.sh 阶段 1（本地，分支/changeset 变更之前，fail-fast）
+ *   - scripts/npm-prerelease.sh 阶段 1.5（本地，分支/changeset 变更之前，fail-fast）
  *   - .github/workflows/release-npm.yml publish job（"Publish to npm" 步骤之前）
  *
  * node 版本说明：engines 声明 node>=20。本脚本实际执行环境跟随调用方
@@ -97,6 +101,60 @@ for (const spec of CJS_ENTRY_SPECS) {
     console.error('    exports require 条件与 dist 产物映射核对 package.json（D4 双形态契约）')
     process.exit(1)
   }
+}
+
+// dist 主入口行为 golden 断言（同一 CJS 上下文）：上方 require 探针只证明「可加载 +
+// exports 映射正确」，此处补最小行为面——纯路由与常量导出在 dist 形态下返回值
+// 确定性正确。全部 mock 注入（零 LLM / 零子进程 / 零宿主状态），使 V7 golden
+// 语义在 npm 消费者的真实加载路径（dist CJS）上字面成立。
+console.log('  [2/3] dist 主入口行为 golden 断言（routeEngine mock 注入 + 导出常量形态）...')
+const coreMod = coreRequire(CORE_PKG_NAME)
+let routed
+try {
+  routed = await coreMod.routeEngine({
+    // 第一层（调用参数）非缺省引擎 → 必走 probe 分支；probe mock 返回 ok →
+    // 确定性返回 { engineId: 'smoke-mock-engine', source: 'call' }，零 fallback
+    routing: { callEngine: 'smoke-mock-engine' },
+    strict: true,
+    probe: async () => ({
+      ok: true,
+      engineVersion: '0.0.0-smoke',
+      checks: [{ name: 'smoke', ok: true }],
+    }),
+    getEngineFn: () => ({ __smoke: true }),
+    hasEngineFn: () => true,
+    listEnginesFn: () => ['smoke-mock-engine'],
+  })
+} catch (e) {
+  console.error(`  ✗ dist golden 断言失败: routeEngine 抛错: ${e.message}`)
+  console.error('    排查：dist 产物行为面与 src 不一致（tsup 配置漂移 / 导出面收窄）——')
+  console.error('    核对 packages/subagent-core/tsup.config.ts 与 src/execution/engine/routing.ts barrel 导出')
+  process.exit(1)
+}
+const distGoldenChecks = [
+  {
+    ok: routed.engineId === 'smoke-mock-engine' && routed.source === 'call',
+    msg: `routeEngine 三层路由第一层生效（engineId=${routed.engineId} source=${routed.source}）`,
+  },
+  {
+    ok:
+      typeof coreMod.DEFAULT_DATA_ROOT === 'string' &&
+      coreMod.DEFAULT_DATA_ROOT.endsWith('.subagent-core'),
+    msg: `DEFAULT_DATA_ROOT 为 string 且锚定 .subagent-core（实际 ${typeof coreMod.DEFAULT_DATA_ROOT}）`,
+  },
+  {
+    ok: typeof coreMod.CORE_PACKAGE_VERSION === 'string' && coreMod.CORE_PACKAGE_VERSION !== '',
+    msg: `CORE_PACKAGE_VERSION 非空 string（实际 ${typeof coreMod.CORE_PACKAGE_VERSION}）`,
+  },
+]
+for (const g of distGoldenChecks) {
+  if (!g.ok) {
+    console.error(`  ✗ dist golden 断言失败: ${g.msg}`)
+    console.error('    排查：dist 产物行为面与 src 不一致（tsup 配置漂移 / 导出面收窄）——')
+    console.error('    核对 packages/subagent-core/tsup.config.ts 与 src/index.ts barrel（D5 公共 API 面）')
+    process.exit(1)
+  }
+  console.log(`  ✓ ${g.msg}`)
 }
 
 console.log('[3/3] golden 回放层（conformance 免 LLM 免二进制，6 文件）...')

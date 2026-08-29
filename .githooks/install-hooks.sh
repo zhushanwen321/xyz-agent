@@ -1152,9 +1152,15 @@ fi
 #   （改构建面，秒级耗时也属发布门职责），挂发布管线 npm-prerelease.sh /
 #   release-npm.yml。
 #   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# 触发面在主 STAGED_FILES（ACMR）外并入本路径范围的 staged 删除（不带 --diff-filter
+# 的 pathspec 清单，天然含 D）：单独 staged 删除守卫脚本也必须触发——下方 [ ! -f ]
+# 存在性检查正是删除场景的防线，ACMR 过滤 D 导致漏触发 = 删除静默放行。主
+# STAGED_FILES 保持 ACMR 的理由见上方 pi-sync 段注释（D 喂给 ESLint/manifest 等
+# 文件存在性检查段会 ERR，仅守卫挂载点需要 D）。
 # ============================================================================
 
-if echo "$STAGED_FILES" | grep -qE "^packages/subagent-core/|^scripts/check-subagent-core-closure\.mjs$"; then
+SUBAGENT_CORE_STAGED=$(git diff --cached --name-only -- packages/subagent-core/ scripts/check-subagent-core-closure.mjs)
+if echo "$SUBAGENT_CORE_STAGED" | grep -qE "^packages/subagent-core/|^scripts/check-subagent-core-closure\.mjs$"; then
     print_section "[subagent-core 依赖闭包守卫]"
     if [ ! -f "scripts/check-subagent-core-closure.mjs" ]; then
         echo -e "${RED}[ERROR] 找不到 scripts/check-subagent-core-closure.mjs（u1-guards 交付物缺失）${NC}"
