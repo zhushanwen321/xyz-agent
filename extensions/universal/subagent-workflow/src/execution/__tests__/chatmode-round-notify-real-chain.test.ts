@@ -89,12 +89,24 @@ import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import type { ExecutionRecord } from "../types.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { PiLike } from "../subagent-service.ts";
+import { createDelivery } from "@xyz-agent/session-delivery";
+import { configureNotifyDomain, resetNotifyDomainForTests } from "../../core/notify-ports.ts";
 import {
   emitStdoutLine,
   lastSpawnedChild,
   sessionHeader,
   waitForSpawn,
 } from "./helpers/spawn-mock.ts";
+
+// 投递内核经通知域窄端口注入（u0-notify）——本测试是真实 session-runner 链路回归，
+// 投递内核同样保真实 createDelivery（dedupe/合批语义参与断言：同 notifyId 重放被吞，
+// 降级直发无 dedupe 会让 sendMessage 计数翻倍）。
+beforeEach(() => {
+  configureNotifyDomain({ createDelivery });
+});
+afterEach(() => {
+  resetNotifyDomainForTests();
+});
 
 const mockSpawn = vi.mocked(spawn);
 

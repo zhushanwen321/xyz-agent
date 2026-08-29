@@ -7,9 +7,20 @@
  * 因此迁移后应通过内核装配 + 同一 buildLlmContent 产生相同输出。
  */
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createDelivery } from "@xyz-agent/session-delivery";
+import { configureNotifyDomain, resetNotifyDomainForTests } from "../../core/notify-ports.ts";
 import { createNotifier, type BgNotifyRecord, type NotifierHost } from "../notifier.ts";
 import { renderBgNotifyMessage } from "../../interface/bg-notify-render.ts";
+
+// 投递内核经通知域窄端口注入（notifier 不再直接 import session-delivery）——
+// batch merge 用例依赖真实内核合批语义，注入真实 createDelivery 保住回归面。
+beforeEach(() => {
+  configureNotifyDomain({ createDelivery });
+});
+afterEach(() => {
+  resetNotifyDomainForTests();
+});
 
 /** 渲染锁用 mock theme（与 bg-notify-render.test.ts 同款：透传文本，记录色 token）。 */
 function makeRenderTheme(): { theme: Theme } {

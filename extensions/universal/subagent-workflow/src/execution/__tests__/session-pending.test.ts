@@ -7,9 +7,24 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { configureNotifyDomain, resetNotifyDomainForTests } from "../../core/notify-ports.ts";
 
 import { readActivePendingFromSessionFile, clearPendingCursors } from "../session-pending.ts";
+
+// 计数器经通知域窄端口注入（session-pending 不再直接 import pi-pending-notifications）
+// ——注入 pi 真函数保住差集语义回归面；真函数返回 CountActiveResult，端口契约是
+// number（拆 .count，与 pi 壳 createPiNotifyDomainPorts 适配同构）；afterEach 重置
+// 防注入态泄漏。
+beforeEach(() => {
+  configureNotifyDomain({
+    countActiveFromEntries: (entries) => countActiveFromEntries(entries).count,
+  });
+});
+afterEach(() => {
+  resetNotifyDomainForTests();
+});
 
 function makeTmpSessionFile(lines: string[]): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-pending-test-"));

@@ -13,7 +13,20 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createDelivery } from "@xyz-agent/session-delivery";
+import { configureNotifyDomain, resetNotifyDomainForTests } from "../../core/notify-ports.ts";
 import { createNotifier, type BgNotifier, type NotifierHost } from "../notifier.ts";
+
+// 投递内核经通知域窄端口注入（notifier 不再直接 import session-delivery）——
+// 本文件全部用例依赖真实内核语义（isIdle gate 退避 / 60s 合批 / dedup LRU /
+// settled 边沿驱动 / revive 重建），故注入真实 createDelivery 保住回归面；
+// afterEach 重置防注入态泄漏到其他测试文件（vitest 文件级模块隔离内的双保险）。
+beforeEach(() => {
+  configureNotifyDomain({ createDelivery });
+});
+afterEach(() => {
+  resetNotifyDomainForTests();
+});
 
 /** mock host：捕获所有 sendMessage 调用 + 控制 hasRunningBackground + isIdle。 */
 function makeMockHost(): NotifierHost & {

@@ -1,8 +1,10 @@
 // src/execution/session-pending.ts
 //
 // agent_end 后代判定：读子进程的 session 文件，用 pending-notifications 的
-// countActiveFromEntries（register − unregister 差集）判断该 subagent 是否还有
-// 活跃后代（background subagent / workflow）。
+// register − unregister 差集计数（经通知域窄端口 NotifyDomainPorts 注入的
+// countActiveFromEntries——core 依赖闭包不含 pi-pending-notifications，见
+// core/notify-ports.ts；端口缺席时按零活跃处理 = pending 门全开）判断该 subagent
+// 是否还有活跃后代（background subagent / workflow）。
 //
 // 背景（v4 递归编排）：层主 planning-agent 派子 subagent 后结束 turn 等待被唤醒。
 // 若 runSpawn 在 agent_end 无条件 kill，进程被回收、steer 唤醒送不到，递归树断。
@@ -15,8 +17,8 @@
 
 import * as fs from "node:fs";
 
-import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger.ts";
+import { getNotifyDomainPorts } from "../core/notify-ports.ts";
 
 const logger = getLogger("subagents");
 
@@ -154,9 +156,13 @@ export function readActivePendingFromSessionFile(
     }
   }
 
-  const active = countActiveFromEntries(cursor.entries);
+  // 计数器经通知域窄端口解析（缺省实现恒 0 = 零活跃，pending 门全开——安全侧缺省
+  // 收敛在端口层，见 core/notify-ports.ts DEFAULT_NOTIFY_PORTS；此处 `?? 0` 仅防御
+  // 宿主注入部分端口对象的形态）。
+  const countActive = getNotifyDomainPorts().countActiveFromEntries;
+  const active = countActive ? countActive(cursor.entries) : 0;
   return {
-    count: active.count,
+    count: active,
     recentUnregister:
       cursor.latestUnregisterMs > 0 &&
       Date.now() - cursor.latestUnregisterMs < RECENT_UNREGISTER_WINDOW_MS,

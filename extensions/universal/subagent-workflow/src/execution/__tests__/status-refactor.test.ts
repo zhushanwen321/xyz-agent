@@ -12,14 +12,26 @@
 //   7. statusGlyph closed → ✓ success
 //   8. BgNotifyRecord.status 不含 done/failed
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { createDelivery } from "@xyz-agent/session-delivery";
+import { configureNotifyDomain, resetNotifyDomainForTests } from "../../core/notify-ports.ts";
 import { completeRecord, createRecord, tryTransition } from "../execution-record.ts";
 import { createNotifier } from "../notifier.ts";
 import type { BgNotifyRecord, BgNotifier, NotifierHost } from "../notifier.ts";
 import { mapExternalState } from "../../interface/subagent-actions.ts";
 import { statusGlyph } from "../../interface/format.ts";
 import type { ClosedReason, ExecutionRecord, ExecutionStatus } from "../types.ts";
+
+// 投递内核经通知域窄端口注入（notifier 不再直接 import session-delivery）——
+// BgNotifier dedupKey 用例依赖真实内核 dedupe 语义，注入真实 createDelivery；
+// afterEach 重置防注入态泄漏。
+beforeEach(() => {
+  configureNotifyDomain({ createDelivery });
+});
+afterEach(() => {
+  resetNotifyDomainForTests();
+});
 
 // ============================================================
 // ClosedReason 枚举完整性

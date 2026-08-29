@@ -6,8 +6,9 @@
 //   - buildLlmContent：格式化通知文案（本文件唯一逻辑职责）
 //   - createNotifier：薄工厂——ledger 装配时（bindNotifyLedgerHost 已注入）走
 //     四步生命周期（写账 → courier 边沿投递 → 回执销账 → notifyId 幂等重放，
-//     notify-ledger.ts）；未装配时退回 @xyz-agent/session-delivery 内核路径
-//     （合并窗口 / 去重 / 退避 / flush 委托内核，旧装配 / 无 ledger 测试兼容）
+//     notify-ledger.ts）；未装配时退回投递内核路径（createDelivery 经通知域窄端口
+//     NotifyDomainPorts 注入——core 依赖闭包不含 session-delivery，见 core/notify-ports.ts；
+//     合并窗口 / 去重 / 退避 / flush 委托内核，旧装配 / 无 ledger 测试兼容）
 //
 // 投递通道（D5 单通道化）：ledger 路径经 courier 在 settled 边沿直达
 // pi.sendMessage({triggerTurn:true})；内核路径的 port.send 同样只传
@@ -16,14 +17,15 @@
 // 设计 D5 实测证伪）；busy 场景由 ledger（settled 边沿 + isIdle 二次复查）或内核
 // settled 订阅驱动在空闲边沿投递。
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
-import { createDelivery, type DeliveryHandle, type DeliveryPort } from "@xyz-agent/session-delivery";
+import { getLogger } from "../core/logger.ts";
+import { getNotifyDomainPorts, type DeliveryHandle, type DeliveryPort } from "../core/notify-ports.ts";
 
 import { deriveOutcome } from "./execution-record.ts";
 import { getBoundNotifyLedger, NOTIFY_CUSTOM_TYPE } from "./notify-ledger.ts";
 import type { ClosedReason, ExecutionOutcome } from "./types.ts";
 
-/** U4：delivery warn 出口注入用——与 index.ts 共享同一具名 logger 单例。 */
+/** U4：delivery warn 出口注入用——facade 同 component 同引用，与 index.ts 的
+ *  getLogger("subagents") 共享单例；configureCore 后透明切换到宿主实现。 */
 const notifyLogger = getLogger("subagents");
 
 /**
@@ -171,11 +173,32 @@ export interface BgNotifier {
 }
 
 /**
+ * 投递工厂缺席降级（NotifyDomainPorts.createDelivery === undefined）时的最小直发
+ * handle：send 直接调 port.send，无 gate / 合批窗口 / dedupe / 退避。
+ *
+ * 缺席形态 = 宿主漏配通知域窄端口（生产接线在 extension 入口 configureNotifyDomain，
+ * 见 index.ts——正常不可达）或测试未装配。降级是「消息仍能发出」的安全侧退化：
+ * 丢失的只是 busy 场景的投递时机治理（isIdle gate 由 port.send 装配层兜底语义吸收）。
+ */
+function createDirectSendHandle(port: DeliveryPort): DeliveryHandle {
+  return {
+    send: (msg) => {
+      // D5 单通道下 port.send 装配忽略 intent 参数；传 notifier 装配的唯一 intent
+      // 与工厂配置保持语义一致。回执（receipt）为扩展位，直发路径不消费。
+      void port.send(msg, "interrupt-at-turn-boundary");
+    },
+    flush: () => {}, // 无队列（每条 send 即投），无待 flush 内容
+    dispose: () => {}, // 无 timer / 订阅需清理
+  };
+}
+
+/**
  * 创建 Background 完成通知器（薄工厂）。
  *
  * ledger 装配时（bindNotifyLedgerHost）：四步生命周期接线（写账 → courier 边沿
- * 投递 → 回执销账 → notifyId 幂等，见 notify-ledger.ts）。未装配时：装配
- * @xyz-agent/session-delivery 内核——gate（isIdle 退避）/ 合批窗口（滑动 60s）/
+ * 投递 → 回执销账 → notifyId 幂等，见 notify-ledger.ts）。未装配时：装配投递内核
+ * （createDelivery 经 NotifyDomainPorts 注入，缺席降级直发见 createDirectSendHandle）
+ * ——gate（isIdle 退避）/ 合批窗口（滑动 60s）/
  * dedup（按 id:round）/ flush / shutdown flush 均委托内核。
  * 本函数职责：BgNotifyRecord → 预格式化 content + notifyId 物化。
  *
@@ -232,8 +255,25 @@ export function createNotifier(host: NotifierHost): BgNotifier {
   // #5（must-fix）：内核 handle 的 disposed 不可逆——dispose 后 revive 必须重建 handle，
   // 否则 revive 后所有 notify() 被内核静默吞（外层标志复位救不回已销毁的内核）。
   // revive = 新生命周期：合批窗口 / 在途批次 / dedup LRU 随重建自然复位（可接受）。
-  const createHandle = (): DeliveryHandle =>
-    createDelivery(port, {
+  // 工厂经通知域窄端口解析（每次 createHandle 时取——与 facade logger 同款延迟解析，
+  // 宿主 configureNotifyDomain 的时序无关紧要）；缺席降级直发并 warn 一次（per-notifier
+  // 一次：revive 重建 handle 不重复刷屏，新 session 新 notifier 再 warn 可接受）。
+  let directFallbackWarned = false;
+  const createHandle = (): DeliveryHandle => {
+    const factory = getNotifyDomainPorts().createDelivery;
+    if (factory === undefined) {
+      if (!directFallbackWarned) {
+        directFallbackWarned = true;
+        // 错误必须可操作：指出恢复动作（configureNotifyDomain 注入）与 pi 壳落点。
+        notifyLogger.warn(
+          "NotifyDomainPorts.createDelivery not configured - falling back to direct-send delivery " +
+            "(no idle gate / merge window / dedupe). Host must call configureNotifyDomain({ createDelivery }) " +
+            "during extension initialization (pi shell: createPiNotifyDomainPorts in src/host/pi-host.ts).",
+        );
+      }
+      return createDirectSendHandle(port);
+    }
+    return factory(port, {
       intent: "interrupt-at-turn-boundary",    // D3：turn 边界抢占（F1 教训内化）
       mergeWindowMs: 60_000,                   // 滑动窗口合批（继承 MERGE_WINDOW_MS=60s）
       mergeHoldActive: () => host.hasRunningBackground(), // D4 must-fix #1：禁止用 isIdle 代替
@@ -243,11 +283,13 @@ export function createNotifier(host: NotifierHost): BgNotifier {
       // 同 key 可再入）。当前 key 空间（id / id:round，id 每 spawn 唯一）无实际差异；
       // 后续复用方勿按「60s 内不重复」假设接入（同 key 通知会被永久吞）。
       dedupe: { maxKeys: 1000 },
-      // U4 warn 出口参数化：内核投递失败警告接 extensionLogger（appendEntry 落
-      // session JSONL + XYZ_AGENT_DEBUG 落 <dataDir>/logs/），不再走 console.warn
-      // （stderr tee 不到日志盘——排查无痕，设计 §5 U4）。
+      // U4 warn 出口参数化：内核投递失败警告接 core logger facade（pi 壳下经
+      // extension-logger appendEntry 落 session JSONL + XYZ_AGENT_DEBUG 落
+      // <dataDir>/logs/），不再走 console.warn（stderr tee 不到日志盘——排查无痕，
+      // 设计 §5 U4）。
       warn: (msg, err) => notifyLogger.warn(msg, err),
     });
+  };
   let handle: DeliveryHandle = createHandle();
 
   return {
