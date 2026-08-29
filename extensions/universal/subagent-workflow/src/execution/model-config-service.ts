@@ -89,7 +89,7 @@ export class ModelConfigService {
    */
   initModel(init: ModelServiceSessionInit): void {
     // 1. 重载配置（agent 按需 loadByPath，无预热扫描）
-    this.globalConfig = loadGlobalConfig(this.agentRegistryDir);
+    this.reloadGlobalConfig();
 
     // 2. modelRegistry（fail-fast）
     if (init.modelRegistry === null) {
@@ -100,6 +100,18 @@ export class ModelConfigService {
     // 3. sessionId + ctxModel 缓存（model_select 后续调 setCtxModel 刷新）
     this._sessionId = init.sessionId;
     this._ctxModel = init.ctxModel;
+  }
+
+  /**
+   * 重载全局配置缓存（幂等可重入）。
+   *
+   * 从 initModel 提取（设计 D2）：引擎感知检测器 per-turn poll 发现 config 变更时
+   * 调用本方法，使「system prompt 现值、路由缓存、变更通知」同 turn 对齐——只改注入
+   * 不 reload 路由缓存，会出现 prompt 说引擎 B、实际派发跑引擎 A（权威信息源说谎）。
+   * 幂等性：只做「读文件 → 覆盖缓存」单向赋值，无时序状态，重复调用收敛到同一结果。
+   */
+  reloadGlobalConfig(): void {
+    this.globalConfig = loadGlobalConfig(this.agentRegistryDir);
   }
 
   /**
