@@ -20,6 +20,11 @@ import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext, SessionComp
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
+// ═══ core 宿主端口接线（subagent-core 包抽离 u0-wire；实现见 src/host/pi-host.ts） ═══
+import { configureCore } from "./core/host-services.ts";
+import { configureNotifyDomain } from "./core/notify-ports.ts";
+import { createPiHostServices, createPiNotifyDomainPorts } from "./host/pi-host.ts";
+
 import { bestEffort } from "./execution/best-effort.ts";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
 import { getOrCreateChannelRegistry } from "./execution/channel-registry-access.ts";
@@ -174,6 +179,14 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // 注入 pi handle 给全局 extension-logger，让深层代码（best-effort / error-recovery）
   // 的 getLogger("subagents") 也能走 appendEntry。
   setPiHandle(pi);
+
+  // [u0-wire] core 宿主端口接线：本波端口尚无 core 消费方（消费切换在 u0-log /
+  // u0-data-discovery / u0-notify 波次），接线本身零行为变化。紧随 setPiHandle——
+  // core log 桥接走 pi-extension-logger，其 pi handle 先注入则配置完成即桥接链路
+  // 完整；且先于任何可能消费 core 端口的初始化逻辑（引擎登记等）。缺省态若被消费，
+  // dataRoot 抛 core_host_not_configured（§3.4），接线后不再可达。
+  configureCore(createPiHostServices());
+  configureNotifyDomain(createPiNotifyDomainPorts());
 
   // [P1 引擎接线] 组合根登记缺省引擎：进程级 SubagentService 单例（session_start 注入）
   // 经 registry 以 'pi' 暴露——引擎获取从此统一走 getEngine(DEFAULT_ENGINE_ID)，上层
