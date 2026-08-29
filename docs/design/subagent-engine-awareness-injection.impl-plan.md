@@ -83,6 +83,10 @@ worktree 决策：全部 plain。理由：`src/index.ts` 虽为扩展入口（�
 | u3 | sendMessage 携带 details {from,to} | 合理 | D8 对齐 notifier 形态（details 结构化数据供 GUI），设计未禁止 |
 | u3 | runEngineAwarenessTurn 返回 EngineAwarenessOutcome 判别联合 | 合理 | 结构化断言面，纯增量不改编排行为 |
 | u3 | P1 探针结论：主路径成立（sendMessage 同 turn 可见） | 证据 | 源级 dist 0.84.4 调用链（agent-session.js:915/1143 + createContextSnapshot）+ 真机 pi rpc payload dump 双证据；无需 NOTE 行回退 |
+| 审查轮2 | normalizeEngineId 下沉 registry.ts 单一权威源（原散在 engine-awareness 具名函数 + model-prompt 两处内联同款表达式） | 合理 | 归一规则变更单点生效，消灭注释人工耦合的漂移面（两区 reviewer 独立共现发现）；设计 D5 表述已同步 |
+| 审查轮2 | reloadGlobalConfig 三态化（readGlobalConfig + applyGlobalConfig；failed 保持缓存） | 合理 | 设计 D2 原文「复用 loadGlobalConfig sanitize」形态读失败会把好缓存静默打回缺省且调用方无感知；设计 D2 已同步修订 |
+| 审查轮2 | session_start 改调 modelService.reloadGlobalConfig()（单次读取同时定缓存与 lastEngine）；编排 deps reload()→applyRead(read)（检测与缓存共用同一次读取结果） | 合理 | 根治双读分叉窗口：D1b「同源取值零额外成本」原文不可达成（initModel 与 lastEngine 初始化是两次独立读取，隔 3 个 await）；设计 D1b/D2/§2.3 数据流已同步修订 |
+| 审查轮2 | 5 个测试文件手工 ModelConfigService mock 补 reloadGlobalConfig stub（absent 态） | 合理 | session_start 调用形态变化的直接下游（扩领地裁决）；absent 与旧「读不到文件」行为等价，断言意图零改动 |
 
 ## 6 状态表
 
@@ -111,3 +115,4 @@ worktree 决策：全部 plain。理由：`src/index.ts` 虽为扩展入口（�
 | 2026-08-29 | 阶段 4 修复：u2 轮 2 接替 dev 完成（原会话网络错误中断，工作区核实零残留后补派）commit b0a4935c9；u3 轮 3 commit 20fbe5c58。定向复审 verdict=清零（245 用例绿），前瞻观察登记如上 |
 | 2026-08-29 | 阶段 5 Gate A 绿：typecheck exit 0 / lint 0 errors（166 warnings 存量技术债标记）/ 全部 pi-* 包测试通过（subagent-workflow 3134 passed，6 skipped 为存量 env 门控 live 套件 ENGINE_CONFORMANCE_LIVE，非本次引入） |
 | 2026-08-29 | 阶段 5 Gate B 绿（真机 pi rpc 沙箱 + dump 探针，8/8 pass）：A1/A2 状态段与清单逐字比对 MATCH；A3 三处同 turn 对齐经 pi-only 模型真派发 + record 键形态双证；A3' record engine=zcode 盖章；A4 双向边沿各恰一条零清单（「恰 3」时点成立——任务口径与动作序列的计数差为剧本措辞问题，语义验证成立）；A5 坏 JSON 零伪通知 + warn 日志落盘；A6 ghost 警告行与 engine_not_found 文案一致（LLM 依段内指引自主改 engine:'pi' 重试成功，注入正向收益旁证）；A7 双进程各自独立边沿；A8 分段 sha256 指纹实测共享前缀 ≥40000 字符、断点仅尾部引擎区（未走降级）。附带修正：pi rpc prompt 命令字段实装为 message 非 text。**双绿，交付** |
+| 2026-08-29 | **审查轮 2**（交付后用户追加两区独立对抗审查，互不引用对方结论）：无 P0/P1；3 条 P2 unreasonable（session_start 双读分叉窗口 / normalize 三处重复——两 reviewer 独立共现 / reloadGlobalConfig 静默回落）+ 3 条 doc_errors + 10 条 reasonable（8 条为已登记偏差确认）。用户裁决全部修复：dev 单元两轮（4 项机制修复 + 5 mock 文件扩领地定向修，中间一轮 blocker 经扩领地裁决打回），包内全量 3137 用例 0 failed / tsc 0（主 agent 独立复核一致）；代码 commit **5a623cd9e**；设计文档 9 处同步修订（D1b 构造性同源重写 / D2 三态缓存提交 / D5 ENOENT 含目录缺失 + normalize 单一权威源 / §3.1 表补 listModels 抛异常 / §2.3 数据流 / U2 段包裹说明 / U3 行 / 文件改动地图）+ 本登记 4 行，见同 commit |

@@ -93,7 +93,7 @@ pi before_agent_start（每 turn，用户提交 prompt 后）
         ├─ ① config 三态读取（明确值 / ENOENT→缺省 pi / 读失败）
         ├─ ② 目标引擎 ≠ sessionState[sid].lastEngine？（lastEngine 于 session_start
         │      初始化为当时读取结果——首 turn 无伪通知，D1b）
-        │      ├─ 是 → reload ModelConfigService 全局配置（路由同一 turn 生效，F3 对齐）
+        │      ├─ 是 → 读取结果提交 ModelConfigService 全局配置（applyGlobalConfig，路由同一 turn 生效，F3 对齐）
         │      │        sendMessage(customType:"subagent-engine-changed", 短文案, 不含清单)
         │      │        sessionState[sid].lastEngine ← 新值
         │      └─ 否 → 无事
@@ -153,7 +153,7 @@ omit `model` to inherit. The <current_subagent_engine> section reflects the curr
 | config.json **读失败**（坏 JSON / 权限） | **不算变更**（保持 lastEngine，无伪通知）；段显示 lastEngine | 段内不提示；U1 交付 read-failure warn 日志（现状 config.ts catch 静默无日志） |
 | config.json **不存在**（ENOENT，如用户删配置切回缺省） | **合法变更**：目标值 = 缺省 pi，正常触发检测/通知/生效 | ——（这是用户意图，不是故障） |
 | defaultEngine 配了未注册引擎名 | 段显示配置值 + 警告行 | `engine '<id>' is not registered — dispatches will fail at routing; fix subagents/config.json` |
-| zcode 引擎无凭据模型（v2 config 空清单） | 状态段正常，清单段显示提示行 | `engine 'zcode' has no credentialed models right now — configure the provider in ZCode desktop first` |
+| zcode 引擎无凭据模型（v2 config 空清单 / listModels 抛异常） | 状态段正常，清单段显示提示行 | `engine 'zcode' has no credentialed models right now — configure the provider in ZCode desktop first` |
 
 ### 3.2 方案对比
 
@@ -173,9 +173,9 @@ omit `model` to inherit. The <current_subagent_engine> section reflects the curr
 **D1 检测时机：per-turn poll（before_agent_start 内重读 config）**，否决 fs.watch。
 选 poll：与需求「下一次 turn 时 hook」一致；config.json <1KB，每 turn 一次 `readFileSync` 可忽略（provider models 段每 turn 做 registry 全量渲染已是同量级先例）；fs.watch 有平台 quirk 与生命周期绑定问题。多 session 并行时各自 turn 各自 poll，读侧无竞害。
 
-**D1b lastEngine 初始化规则（防首 turn 伪通知）**：`sessionState[sid].lastEngine` 初值语义必须显式定义，否则首 turn diff（`undefined ≠ "zcode"`）会发「changed: undefined → zcode」伪通知，直接违反 G2。规则：**session_start 时 lastEngine ← loadGlobalConfig 三态读取结果**（session_start 本就触发 initModel 读 config，同源取值零额外成本；/resume、/fork 同样走 session_start（index.ts SR-3），天然覆盖）；若读取失败（三态之「读失败」），lastEngine 置 undefined 且**首 turn 检测遇 undefined 时静默基线化**（记为当前值、不算变更、不发通知）——双保险防伪通知。基线化不只是记账：**基线分支在读取成功时必须同步 reload 单例缓存**（把 service 缓存对齐到刚读到的现值）——否则「session_start 读失败（缓存静默回落 pi）→ 用户修好 config 为 zcode → 首 turn 基线化只记 lastEngine=zcode 不 reload」会让缓存永停 pi 而 diff 永远 unchanged，改配置不生效以更隐蔽形态复活（一致性审查发现的规则盲区）。
+**D1b lastEngine 初始化规则（防首 turn 伪通知）**：`sessionState[sid].lastEngine` 初值语义必须显式定义，否则首 turn diff（`undefined ≠ "zcode"`）会发「changed: undefined → zcode」伪通知，直接违反 G2。规则：**session_start 时 lastEngine ← `reloadGlobalConfig()` 三态读取结果**——单次读取同时刷新 Service 路由缓存与 lastEngine 基准（**构造性同源**，审查轮 2 根治；/resume、/fork 同样走 session_start（index.ts SR-3），天然覆盖。原表述「与 initModel 同源取值零额外成本」不可达成：initModel 与 lastEngine 初始化曾是两次独立读取，两读值不一致时首 turn diff 走 unchanged 不刷新，状态段/路由永停旧值且永不通知）；若读取失败（三态之「读失败」），lastEngine 置 undefined 且**首 turn 检测遇 undefined 时静默基线化**（记为当前值、不算变更、不发通知）——双保险防伪通知。基线化不只是记账：**基线分支在读取成功时必须把本 turn 读取结果提交到单例缓存**（applyGlobalConfig，把 service 缓存对齐到刚读到的现值）——否则「session_start 读失败（lastEngine 未设置、缓存保持旧值）→ 用户修好 config 为 zcode → 首 turn 基线化只记 lastEngine=zcode 不提交」会让缓存永停旧值而 diff 永远 unchanged，改配置不生效以更隐蔽形态复活（一致性审查发现的规则盲区）。
 
-**D2 变更生效一致性（本设计最关键的正确性约束）**：检测到变更时，**reload 必须先于一切后续动作**（通知、渲染、路由读缓存）。若只改注入不改路由缓存，prompt 说引擎 B、实际派发跑引擎 A——比不注入更糟（权威信息源说谎）。reload 复用 `loadGlobalConfig()` 现有 sanitize 逻辑；`ModelConfigService` 暴露 `reloadGlobalConfig()` 公开方法（从 initModel 提取）。通知与渲染的相对顺序不构成约束（§2.3 数据流的形态为 reload → 通知 → 渲染；两者均须在 LLM 请求构建前完成，P1 已证同 turn 可见）。
+**D2 变更生效一致性（本设计最关键的正确性约束）**：检测到变更时，**缓存提交必须先于一切后续动作**（通知、渲染、路由读缓存）。若只改注入不改路由缓存，prompt 说引擎 B、实际派发跑引擎 A——比不注入更糟（权威信息源说谎）。缓存提交复用 `readGlobalConfig()` 三态读取：`ModelConfigService` 暴露 `reloadGlobalConfig()`（三态读 + 提交，返回读取结果）与 `applyGlobalConfig(read)`（纯赋值提交；failed 保持缓存不动）——审查轮 2 修订：原「复用 loadGlobalConfig() sanitize」形态读失败会把好缓存静默打回缺省且调用方无感知。编排层把本 turn 已有的读取结果经 applyGlobalConfig 直接提交（构造性单次读取：检测值 = 缓存值，消灭检测读与缓存读两次独立读取间的窗口）。通知与渲染的相对顺序不构成约束（§2.3 数据流的形态为缓存提交 → 通知 → 渲染；两者均须在 LLM 请求构建前完成，P1 已证同 turn 可见）。
 
 **对齐范围的精确声明（不过度承诺）**：「三处同 turn 对齐」仅对**检测到变更的 session** 成立。ModelConfigService 是进程级单例（`model-config-service.ts:196-219` globalThis Symbol slot），路由读单例缓存——因此：
 - **同进程多 session**（pi fork / session_tree 场景）：session 1 检测并 reload 单例后，session 2 的**路由立即变新值**，但其 prompt 状态段与通知要等它自己的下一 turn。窗口期内 session 2 若派发，会落入「AI 上下文旧引擎、实际路由新引擎」——错误最终落在既有 `model_not_available` / engine 报错路径（有恢复指引，非静默），这是接受的兜底而非消除的竞态。
@@ -189,9 +189,9 @@ omit `model` to inherit. The <current_subagent_engine> section reflects the curr
 
 **D5 config 读取三态语义**。检测器不得消费「静默回落值」，须区分：
 1. **读到明确值**——JSON 可解析且 defaultEngine 字段合法 → 目标值；
-2. **明确缺省**——文件不存在（ENOENT）→ 目标值 = 缺省 pi（**是合法变更**：用户删配置切回默认，须正常检测生效；若按「读失败」处理，这条合法路径会比现状更顽固——现状重启 session 后尚能生效）；
+2. **明确缺省**——文件不存在（ENOENT，含 subagents/ 目录不存在）→ 目标值 = 缺省 pi（**是合法变更**：用户删配置切回默认，须正常检测生效；若按「读失败」处理，这条合法路径会比现状更顽固——现状重启 session 后尚能生效）；
 3. **读失败**——坏 JSON / 权限等 → 保持 lastEngine 不动、不发通知（防 torn write 瞬间发伪通知），落 warn 日志。
-现状 `loadGlobalConfig`（config.ts:55-73）catch 不分错误类型，ENOENT 与坏 JSON 同归 DEFAULT_CONFIG——U1 需把读取结果改造为三态返回（或检测器独立 try-catch 区分 errno）。补充语义（实现固化后回填）：**JSON 可解析但 defaultEngine 字段非法（空白等）= 第 1 态 ok + config.defaultEngine undefined**，沿用既有 sanitize 惯例（缺省引擎由路由层落 pi），消费方经 normalizeEngineId 归一——与删字段的 ENOENT 缺省殊途同归，不构成第三种失败。
+现状 `loadGlobalConfig`（config.ts:55-73）catch 不分错误类型，ENOENT 与坏 JSON 同归 DEFAULT_CONFIG——U1 需把读取结果改造为三态返回（或检测器独立 try-catch 区分 errno）。补充语义（实现固化后回填）：**JSON 可解析但 defaultEngine 字段非法（空白等）= 第 1 态 ok + config.defaultEngine undefined**，沿用既有 sanitize 惯例（缺省引擎由路由层落 pi），消费方经 `registry.ts normalizeEngineId` 归一（单一权威源，审查轮 2 下沉：检测 diff 与状态段渲染共用同一函数，禁止各处内联同款表达式）——与删字段的 ENOENT 缺省殊途同归，不构成第三种失败。
 
 **D6 pi 引擎也声明（恒在段）**。现状 defaultEngine=pi 时无引擎段（F2）。终态恒在 `<current_subagent_engine>`——AI 不需要「从段缺失反推」；顺带修复「agent .md 配 engine 时无对应清单」的门控缺口的一半（全局侧）。
 
@@ -230,8 +230,8 @@ omit `model` to inherit. The <current_subagent_engine> section reflects the curr
 | 单元 | 内容 | 文件 | justification / 验收挂钩 |
 |---|------|------|------------------------|
 | U1 | config 读取**三态化**（明确值 / ENOENT 明确缺省 / 读失败，D5）+ read-failure warn 日志（现状 catch 静默）+ `reloadGlobalConfig()` 公开方法（从 initModel 提取） | `config.ts`、`model-config-service.ts` | D2/D5 的地基；A2/A5 |
-| U2 | 引擎状态段渲染器：`buildSubagentEngineSection(defaultEngine)`（恒在段 D6，含 AGENTS.md 冲突裁决文案）+ 既有清单段函数改造为「空清单→提示行」+ 引擎已注册但 `listModels` 未实现/返回 null 时清单段提示行声明「与主 agent 模型体系一致，ids 见 `<available_provider_models>`」（port 契约语义）；仅空清单/listModels 抛异常才用「无凭据模型 + ZCode desktop 指引」文案（一致性审查修订：两种降级形态文案必须区分，未实现 ≠ 无模型） | `execution/engine/model-prompt.ts` | 纯函数易测；A1/A2/A6 |
-| U3 | 检测模块：per-turn poll + 三态 diff + reload 编排 + 通知构造（D1/D1b/D2/D3/D5）；lastEngine 于 session_start 初始化（与 initModel 同源），per-session 状态挂 sessionState | 新 `injectors/engine-awareness.ts`；`index.ts:649` handler 替换为调用它 | A1/A3/A4/A7 |
+| U2 | 引擎状态段渲染器：`buildSubagentEngineSection(defaultEngine)`（恒在段 D6，含 AGENTS.md 冲突裁决文案）+ 既有清单段函数改造为「空清单→提示行」+ 引擎已注册但 `listModels` 未实现/返回 null 时清单段提示行声明「与主 agent 模型体系一致，ids 见 `<available_provider_models>`」（port 契约语义）；仅空清单/listModels 抛异常才用「无凭据模型 + ZCode desktop 指引」文案（一致性审查修订：两种降级形态文案必须区分，未实现 ≠ 无模型）；两种降级提示行均保留 `<available_<engine>_models>` 段包裹，恒在段的 ids 声明在降级形态下保持为真 | `execution/engine/model-prompt.ts` | 纯函数易测；A1/A2/A6 |
+| U3 | 检测模块：per-turn poll + 三态 diff + 读取结果提交编排 + 通知构造（D1/D1b/D2/D3/D5）；lastEngine 于 session_start 初始化（reloadGlobalConfig 单次读取同时定缓存与 lastEngine，构造性同源——审查轮 2 修订），per-session 状态挂 sessionState | 新 `injectors/engine-awareness.ts`；`index.ts:649` handler 替换为调用它 | A1/A3/A4/A7 |
 | U4 | 通知投递 + P1 探针结论落地（同 turn 可见或 NOTE 行回退） | `engine-awareness.ts` | A3(a) |
 | U5 | 字节稳定守护测试：段渲染确定性 + 段序（engine 恒链尾） | `__tests__/`（照抄 injector 现有测试模式） | A8 |
 
@@ -240,7 +240,7 @@ omit `model` to inherit. The <current_subagent_engine> section reflects the curr
 ```
 extensions/universal/subagent-workflow/src/
 ├─ execution/config.ts                    # 读取成败区分（U1）
-├─ execution/model-config-service.ts      # reloadGlobalConfig() 公开（U1）
+├─ execution/model-config-service.ts      # reloadGlobalConfig()/applyGlobalConfig() 公开（U1；审查轮 2 三态化）
 ├─ execution/engine/model-prompt.ts       # 恒在状态段 + 空清单提示行（U2）
 ├─ injectors/engine-awareness.ts          # 新增：检测/编排/通知（U3/U4）
 ├─ index.ts                               # handler 替换（~649 行处）（U3）
