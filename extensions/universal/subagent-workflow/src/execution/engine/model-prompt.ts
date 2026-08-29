@@ -87,6 +87,9 @@ export function buildSubagentEngineSection(defaultEngine: string | undefined): s
  * 为什么不返回空串：状态段（恒在）声明「ids listed in <available_<engine>_models>
  * below」，段缺失会让该声明说谎；提示行保持段存在且如实声明当前无任何可派发的
  * 显式模型（G4 诚实降级）。文案逐字取自设计失败路径表恢复指引列。
+ *
+ * 仅服务「引擎实现了 listModels 但当前空清单 / 抛异常」两种形态——引擎侧 provider
+ * 体系存在、只是暂时没有可用模型，恢复动作是去宿主配置凭据。
  */
 function buildEmptyModelsHint(engineId: string): string {
   return [
@@ -97,14 +100,36 @@ function buildEmptyModelsHint(engineId: string): string {
 }
 
 /**
+ * 清单段「与主 agent 模型体系一致」声明行形态（U2 一致性审查修订：未实现 ≠ 无模型）。
+ * port 契约（port.ts listModels JSDoc）：引擎省略 listModels 或返回 null = 引擎没有
+ * 自己的 provider 枚举面，模型 id 沿用主 agent 的 <available_provider_models>——
+ * 与「引擎有 provider 体系但无凭据模型」（buildEmptyModelsHint）是两种不同事实，
+ * 文案必须区分：此处若复用「no credentialed models + ZCode desktop 指引」会让 AI
+ * 误以为引擎不可派发、且 ZCode desktop 指引无处落地。
+ * 段仍保留 <available_<engine>_models> 包裹：状态段恒在声明「listed in ... below」，
+ * 段缺失会让该声明说谎（与 buildEmptyModelsHint 同理）。
+ */
+function buildCoreAlignedHint(engineId: string): string {
+  return [
+    `<available_${engineId}_models>`,
+    `engine '${engineId}' uses the same model registry as the main agent — use ids from <available_provider_models> above`,
+    `</available_${engineId}_models>`,
+  ].join("\n");
+}
+
+/**
  * 依据全局 defaultEngine 生成追加段（不含前导换行）。
  *
- * 规则（设计 §3.1 失败路径表 + G4）：
+ * 规则（设计 §3.1 失败路径表 + G4 + U2 一致性审查修订）：
  *   - defaultEngine 为 pi / 缺省 → 不注入（pi 段已由核心提供）；
  *   - 引擎未注册 → 不注入（状态段 <current_subagent_engine> 已有警告行，避免双份）；
  *   - 已注册且 listModels 有清单 → 注入该引擎段（渲染不变）；
- *   - 已注册但 listModels 未实现 / 返回 null / 空清单 / 抛异常 → 提示行段（从「静默
- *     不注入」改为如实声明——现状空清单返回空串会让 AI 误以为没有任何引擎清单可看）。
+ *   - 已注册但 listModels 未实现 / 返回 null → 「与主 agent 模型体系一致」声明段
+ *     （port 契约语义：引擎无自有 provider 枚举面，id 见上方核心段，见
+ *     buildCoreAlignedHint）；
+ *   - 已注册但空清单 / listModels 抛异常 → 「无凭据模型」提示行段（引擎 provider
+ *     体系存在但当前无可用模型，见 buildEmptyModelsHint；从「静默不注入」改为如实
+ *     声明——空清单返回空串会让 AI 误以为没有任何引擎清单可看）。
  * fail-safe：listModels 异常同样落提示行段、不向外抛（注入失败不阻塞 agent loop——
  * 与 system-prompt extension 的 before_agent_start 处置一致）。
  */
@@ -115,12 +140,14 @@ export function buildEngineModelsPromptAppend(defaultEngine: string | undefined)
   if (!hasEngine(engineId)) return "";
   try {
     const engine = getEngine(engineId);
-    if (engine.listModels === undefined) return buildEmptyModelsHint(engineId);
+    if (engine.listModels === undefined) return buildCoreAlignedHint(engineId);
     const models = engine.listModels();
-    if (models === null || models.length === 0) return buildEmptyModelsHint(engineId);
+    if (models === null) return buildCoreAlignedHint(engineId);
+    if (models.length === 0) return buildEmptyModelsHint(engineId);
     return buildEngineSection(engineId, models);
   } catch {
-    // listModels 抛异常（如 v2 config 损坏）同属「无凭据模型」：如实降级为提示行而非静默
+    // listModels 抛异常（如 v2 config 损坏）＝引擎枚举面存在但读取失败，与空清单
+    // 同属「暂无可派发的显式模型」：降级为无凭据提示行而非静默
     return buildEmptyModelsHint(engineId);
   }
 }

@@ -1,5 +1,6 @@
 // model-prompt.test.ts —— [U7] 引擎模型段注入的开关语义（defaultEngine）与段格式；
-// [engine-awareness U2] 恒在状态段三形态（zcode/pi/ghost）+ 空清单提示行降级 + 渲染确定性（D7）。
+// [engine-awareness U2] 恒在状态段三形态（zcode/pi/ghost）+ 清单段双降级文案
+// （未实现/null → 与主体系一致声明；空清单/异常 → 无凭据提示行）+ 渲染确定性（D7）。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -65,31 +66,41 @@ describe("buildEngineModelsPromptAppend（defaultEngine 开关语义）", () => 
     expect(append).toContain("do NOT apply to engine 'zcode'");
   });
 
-  it("引擎未实现 listModels → 提示行段（G4 诚实降级，不再静默空串）", () => {
+  it("引擎未实现 listModels → 「与主 agent 模型体系一致」声明段（port 契约：未实现 ≠ 无模型）", () => {
+    // fakeEngine(id, null) = 不带 listModels 方法（未实现形态）
     registerEngine("bare", () => fakeEngine("bare", null));
     expect(buildEngineModelsPromptAppend("bare")).toBe(
       [
         "<available_bare_models>",
-        "engine 'bare' has no credentialed models right now — configure the provider in ZCode desktop first",
+        "engine 'bare' uses the same model registry as the main agent — use ids from <available_provider_models> above",
         "</available_bare_models>",
       ].join("\n"),
     );
+    // 文案语义守卫：指向上方核心段、不含 ZCode desktop 指引（那是无凭据形态专属）
+    const append = buildEngineModelsPromptAppend("bare");
+    expect(append).toContain("use ids from <available_provider_models> above");
+    expect(append).not.toContain("ZCode desktop");
   });
 
-  it("listModels 返回 null / 空清单 → 提示行段", () => {
-    // null：listModels 存在但显式返回 null（port 契约「与主体系一致」面）
+  it("listModels 返回 null → 「与主 agent 模型体系一致」声明段；空清单 → 无凭据提示行段", () => {
+    // null：listModels 存在但显式返回 null——port 契约与「未实现」同语义（与主体系一致）
     registerEngine("nul", () => ({ ...fakeEngine("nul", []), listModels: () => null }));
     expect(buildEngineModelsPromptAppend("nul")).toBe(
       [
         "<available_nul_models>",
-        "engine 'nul' has no credentialed models right now — configure the provider in ZCode desktop first",
+        "engine 'nul' uses the same model registry as the main agent — use ids from <available_provider_models> above",
         "</available_nul_models>",
       ].join("\n"),
     );
-    // 空清单：段名稳定，内容为提示行
+    expect(buildEngineModelsPromptAppend("nul")).not.toContain("ZCode desktop");
+    // 空清单：引擎枚举面存在但当前无凭据模型——维持「无凭据 + ZCode desktop 指引」文案
     registerEngine("empty", () => fakeEngine("empty", []));
-    expect(buildEngineModelsPromptAppend("empty")).toContain(
-      "engine 'empty' has no credentialed models right now — configure the provider in ZCode desktop first",
+    expect(buildEngineModelsPromptAppend("empty")).toBe(
+      [
+        "<available_empty_models>",
+        "engine 'empty' has no credentialed models right now — configure the provider in ZCode desktop first",
+        "</available_empty_models>",
+      ].join("\n"),
     );
     expect(buildEngineModelsPromptAppend("empty")).toContain("<available_empty_models>");
   });
@@ -177,5 +188,10 @@ describe("buildSubagentEngineSection（恒在状态段三形态，§3.1 逐字�
     }
     expect(buildEngineModelsPromptAppend("zcode")).toBe(buildEngineModelsPromptAppend("zcode"));
     expect(buildEngineModelsPromptAppend("pi")).toBe(buildEngineModelsPromptAppend("pi"));
+    // 新降级形态（U2 修订）确定性：「与主体系一致」声明段同输入恒同输出
+    registerEngine("shared", () => fakeEngine("shared", null));
+    registerEngine("nulled", () => ({ ...fakeEngine("nulled", []), listModels: () => null }));
+    expect(buildEngineModelsPromptAppend("shared")).toBe(buildEngineModelsPromptAppend("shared"));
+    expect(buildEngineModelsPromptAppend("nulled")).toBe(buildEngineModelsPromptAppend("nulled"));
   });
 });
