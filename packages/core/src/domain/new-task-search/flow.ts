@@ -419,7 +419,12 @@ export function useNewTaskFlow(deps: NewTaskFlowDeps) {
     transition('landing')
   }
 
-  /** landing→completed（首条消息成功，终态）。completed 后实例销毁，⌘N 再触发重建（AC-3.6/3.12）。 */
+  /**
+   * [HISTORICAL] landing→completed 薄封装，保留为 API 完整性。D3 交接原子化后主线
+   * 终态在 submitFirstMessage 交接点定格（setActiveSession + loadPanel + pushChat 完成
+   * 即 transition('completed')，见其内注释），本函数不再处于首发主线。
+   * completed 后实例销毁，⌘N 再触发重建（AC-3.6/3.12）。
+   */
   function completeFlow(): void {
     transition('completed')
   }

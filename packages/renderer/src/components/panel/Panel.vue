@@ -80,19 +80,22 @@
          对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。
          [U7] overlay 移除后 composer 常驻（不再 v-if="!isViewingSubagent"）。 -->
     <div class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-5 pb-3.5">
-      <!-- ask-user 渲染 ⟺ conversation && input==='ask-user'（D5）：dead 态被派生优先级吞掉
-           （kind==='dead'），保留 W6「dead 不渲染 ask-user」语义；landing/empty 无 session，
+      <!-- ask-user 渲染 ⟺ (conversation || trace) && input==='ask-user'（D5）：dead 态被
+           派生优先级吞掉（kind==='dead'），保留 W6「dead 不渲染 ask-user」语义；trace 同样
+           承接 ask-user（session-trace 契约「不打断对话能力」，V4）；landing/empty 无 session，
            ask-user 依附具体会话，天然不可达。 -->
       <AskUserOverlay
-        v-if="panelView.kind === 'conversation' && panelView.input === 'ask-user'"
+        v-if="(panelView.kind === 'conversation' || panelView.kind === 'trace') && panelView.input === 'ask-user'"
         :questions="askUserQuestions"
         :allow-cancel="currentAskUserRequest?.allowCancel"
         @submit="onAskUserSubmit"
         @cancel="onAskUserCancel"
       />
-      <!-- Composer 渲染 ⟺ conversation || (empty && sessionId!==null)（D5）：
-           会话中恒常驻（G1），绑定空会话（终态派生为 conversation，防御性保留 empty-with-session
-           判据）band 渲染 composer 供直输；landing（内嵌 composer）/无 session 空态不挂。 -->
+      <!-- Composer 渲染 ⟺ conversation || trace || (empty && sessionId!==null)（D5）：
+           会话中恒常驻（G1），trace 态 composer 保留（session-trace 契约「composer 保留在
+           底部，不打断对话能力」）；绑定空会话（终态派生为 conversation，防御性保留
+           empty-with-session 判据）band 渲染 composer 供直输；landing（内嵌 composer）/
+           无 session 空态不挂。 -->
       <Composer v-else-if="showPanelComposer" :session-id="sessionId" />
     </div>
   </section>
@@ -160,10 +163,13 @@ const widgetSessionId = computed<string | null>(() => {
   if (v.kind === 'empty' && v.sessionId !== null) return v.sessionId
   return null
 })
-/** band 内 Composer 渲染（D5）：conversation 恒挂；empty 绑定会话时挂（直输） */
+/** band 内 Composer 渲染（D5）：conversation/trace 恒挂（trace 保留输入面 = session-trace
+ *  契约「composer 保留在底部，不打断对话能力」）；empty 绑定会话时挂（直输，防御支现行不可达） */
 const showPanelComposer = computed(() => {
   const v = panelView.value
-  return v.kind === 'conversation' || (v.kind === 'empty' && v.sessionId !== null)
+  return (
+    v.kind === 'conversation' || v.kind === 'trace' || (v.kind === 'empty' && v.sessionId !== null)
+  )
 })
 
 /** ask-user questions（类型守卫收窄 unknown[] → AskUserQuestion[]）。

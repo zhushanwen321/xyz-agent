@@ -58,7 +58,29 @@ T1/T2/T4 首波并行（无相互依赖），T3 次波，T5 收尾。
 
 ## 5 合理偏差登记表
 
-（初始为空）
+一致性审查（core 区 + renderer 区，2026-08-29）裁定的 reasonable 项汇总：
+
+| # | 单元 | 偏差 | 裁决依据 |
+|---|------|------|----------|
+| 1 | T2 | transition 落点 pushChat 后 loadTree 前（窗口内自由度，loadTree fire-and-forget 无时序影响） | D3 只约束窗口 |
+| 2 | T1 | 「turn 活跃+无消息」检查点以「无消息→conversation」新契约等价覆盖（新输入不含 turn 维度） | D2 删 turn 判据后组合退化 |
+| 3 | T2 | TC-6e 断言强度高于 D3 探针最低要求（额外锁 reject 传播/交接三步/createInFlight 清理） | 加强锁定非偏移 |
+| 4 | T3 | core session/index.ts 授权导出实际 +2 行（1 注释 + 1 export，注释符合文件惯例） | 用户授权项 |
+| 5 | T3 | 模板 v-if 链等价 switch（Vue 模板无 switch 语句）+ script 侧收窄 computed 供 vue-tsc | 等价实现 |
+| 6 | T3 | empty-with-session Composer 判据防御性保留（现行派生不可达，对冲规则演化） | D5 字面一致 |
+| 7 | T3 | 验收用例③按行为等价落地（绑定空会话→conversation+Composer） | 与 empty-with-session 渲染结果一致 |
+| 8 | T3 | 2 个既有测试（session-active-state E4 / panel-per-session-generating）按新判据更新 + flow-idle 对照用例 | 旧行为断言必然破坏面 |
+| 9 | T3 | widget-area co-located 测试纳入领地（flow mock 补 isActive 零语义变化） | Panel 重写必然破坏面 |
+| 10 | T2 | flow-integration 重试用例按新语义改写（retry 由 core TC-7 承接覆盖） | 物理约束下必要断言更新 |
+| 11 | T2 | 补修内容被并行会话 commit 820a8700c 携带入库（diff 核验一致，内容正确） | 认知外交织，登记不处理 |
+| 12 | T4 | 守卫测试追加在既有 landing.test.ts + flowMock 补齐三成员 | 文件归属正确 |
+| 13 | T4 | D7-U6 用 currentCwd 等价断言（公开返回面无 pendingCwd，landing 态二者同源） | 语义等价已核实 |
+| 14 | T3 | landing.test.ts T1.6 补 isActive=true（state 与 isActive 同源残留的忠实模拟）+ conversation 分支守卫断言 | 忠实模拟 |
+| 15 | T5 | constraints authority 用 docs/ 相对路径（../ 前缀会触发校验失败） | 既有条目风格 |
+| 16 | T5 | ui-consistency 枚举未入 _meta（脚本不校验 dimensions 枚举） | 后续可补 |
+| 17 | T3 | landing.test.ts 3 旧行为用例由 T3 补修（T4 领地文件，授权扩展） | D1 必然破坏面 |
+
+审查同时裁定的 doc_errors（3 条）与 unreasonable（4 条，含 trace 输入面 high）已在阶段 4 处理：设计文档 D1/D5/D3/V4 已由主 agent 修订（trace 裁决：恢复 trace 态输入面、派生层实现）。
 
 ## 6 状态表
 

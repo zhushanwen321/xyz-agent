@@ -2,7 +2,7 @@
  * panel-view —— panel 主区/输入面渲染视图模型 + derivePanelView 派生纯函数。
  *
  * [权威] docs/design/panel-view-derivation-and-flow-lifecycle.md §3.3 D1。
- * 背景（§2.4 根因）：现行 Panel.vue 在组件 computed 里手工组合四个异构状态源
+ * 背景（§2.4 根因）：现行 Panel.vue 在组件 computed 里手工组合六个异构状态源
  * （session 绑定 / 消息有无 / flow 单例态 / dead / ask-user / trace），组合空间无穷举
  * 守卫——每个 bug 来自一个未被考虑的格子（flow 卡 landing → turn 结束后 composer 消失）。
  * 本模块把该组合收敛为单一纯函数：决策可穷举（G3，64 组合全表单测守卫）、
@@ -13,15 +13,18 @@
  * - 派生优先级：dead > trace > conversation > landing > empty。
  *   ① 前置约束：dead / trace 仅 sessionId 非空成立（dead 是 per-session 事实，
  *      trace 视图替换对话流位置，二者都依附具体会话）。
- *   ② conversation：sessionId 非空即成立——有消息走 MessageStream、无消息走空对话态，
- *      消息有无只影响 conversation 分支内部的子视图（渲染层 switch 的事），不改变 kind；
- *      输入面按 hasAskUserRequest 互斥二选一（ask-user 阻塞应答替换 composer）。
+ *   ② conversation / trace：sessionId 非空即成立——conversation 有消息走 MessageStream、
+ *      无消息走空对话态，消息有无只影响分支内部子视图（渲染层 switch 的事），不改变 kind；
+ *      输入面按 hasAskUserRequest 互斥二选一（ask-user 阻塞应答替换 composer），trace
+ *      同样保留输入面 = session-trace 契约「composer 保留在底部，不打断对话能力」
+ *      （D5/V4，一致性审查 R-U1 补入）。
  *      该分支吸收现行「已绑空 session 走空对话态 + band composer 供直输」与
  *      「turn 活跃 + 无消息 → 空白」边界组合（§5 检查点）。
  *   ③ landing：仅 !sessionId && isFlowActive（isFlowActive 对应 NewTaskFlow 的
  *      ACTIVE_STATES = landing + 六 overlay，见 flow-state.ts）——新建任务流程只承接
  *      「无会话」的 panel（G2：流程状态不越权）。
- *   ④ empty：兜底。无 session 且 flow 未活跃（选会话空态）；或绑定空会话（composer 供直输）。
+ *   ④ empty：兜底，仅无 session 且 flow 未活跃（选会话空态）可达；绑定空会话归
+ *      conversation（见②），empty-with-session 为类型层防御、现行派生不可达。
  *
  * - hasMessages 在输入契约中但不参与 kind 判定：它是 panel 事实全集的一员（G3 穷举的
  *   对象即该全集，设计 D1 输入面明确列入），语义上供消费方区分 conversation 的子视图。
@@ -53,7 +56,8 @@ export interface PanelViewInput {
  */
 export type PanelView =
   | { kind: 'dead'; sessionId: string }
-  | { kind: 'trace'; sessionId: string }
+  /** trace 保留输入面：session-trace 契约「composer 保留在底部，不打断对话能力」（D5） */
+  | { kind: 'trace'; sessionId: string; input: 'ask-user' | 'composer' }
   | { kind: 'conversation'; sessionId: string; input: 'ask-user' | 'composer' }
   | { kind: 'landing' }
   | { kind: 'empty'; sessionId: string | null }
@@ -80,7 +84,8 @@ export function derivePanelView(input: PanelViewInput): PanelView {
     return { kind: 'dead', sessionId }
   }
   if (isTraceView) {
-    return { kind: 'trace', sessionId }
+    // trace 只替换对话流位置，输入面与 conversation 同规则保留（D5，见模块头注释②）
+    return { kind: 'trace', sessionId, input: hasAskUserRequest ? 'ask-user' : 'composer' }
   }
   return {
     kind: 'conversation',

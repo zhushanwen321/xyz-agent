@@ -102,10 +102,10 @@ ask-user 请求 ──────►  extensionUIStore ────────
 ```ts
 type PanelView =
   | { kind: 'dead'; sessionId: string }
-  | { kind: 'trace'; sessionId: string }                                  // 现行 isTraceView 分支保留
+  | { kind: 'trace'; sessionId: string; input: 'ask-user' | 'composer' } // trace 保留输入面（session-trace 契约「composer 保留，不打断对话能力」；一致性审查 R-U1 裁决补入）
   | { kind: 'conversation'; sessionId: string; input: 'ask-user' | 'composer' }
   | { kind: 'landing' }                                                   // 无 session 且 flow 活跃
-  | { kind: 'empty'; sessionId: string | null }                           // 绑定空会话（composer 供直输）/ 无 session
+  | { kind: 'empty'; sessionId: string | null }                           // 仅无 session 且 flow 未活跃可达；绑定空会话按规则归 conversation，非空 sessionId 为类型层防御（现行派生不可达）
 ```
 
 派生规则（全组合表进单测）：**前置约束 `dead`/`trace` 仅在 `sessionId` 非空时成立**；优先级 dead > trace > conversation（`sessionId` 非空即成立——有消息走 MessageStream、无消息走空对话态，输入面均为 composer/ask-user）> landing（`!sessionId && isFlowActive`）> empty。**注意 conversation 与 landing 判据互斥于 `sessionId` 有无**——「有消息且 landing」在输入组合上不可表达（landing 只在 `!sessionId` 时成立），根因 3 由此根除。该规则依赖既有不变量「startFlow 进入 landing 时清空 activeId」（[flow.ts:162-166](../../packages/core/src/domain/new-task-search/flow.ts#L162)，`isFlowActive ⟹ sessionId=null`）——landing 分支的 `!sessionId` 条件与该不变量构成双保险：即便未来不变量被破坏，派生也只会落到 empty/conversation 而非错误地藏 composer。
@@ -113,12 +113,12 @@ type PanelView =
 **D2：`isSessionActive` / `isCompacting` 从输入面存在性判据中移除。**
 现行它们是 landing 残留的兜底；终态下 landing 不可残留，兜底删除后任何新泄漏**立即显形**（composer 消失）而非被掩盖。composer 内部的禁用/进度态（compacting 期间）不受影响——那是 input 的**模态**，不是存在性。被否：保留兜底（掩盖未来回归，违背 G3 显形原则）。**行为变化声明**：dead + streaming 残留组合（进程死亡、turn.end 未到达、`isSessionActive` 恒 true，[store.ts:283-284](../../packages/core/src/domain/chat/store.ts#L283)）从现行「显示 composer」变为「dead 占位视图无 composer」——与 W6 语义（dead 不应答）对齐，属修正而非回归。
 
-**D3：交接原子化——`transition('completed')` 上移到 `pushChat` 之后、`chat.send` 之前**（[flow.ts:308-326](../../packages/core/src/domain/new-task-search/flow.ts#L308) 序列内）。论证是**时序正确性 + 防御加固**而非堵现行路径（send 现行吞错，见 §2.2 诊断声明）：交接（setActiveSession + loadPanel + pushChat）完成即 flow 职责终结，这是「流程状态机只守自己不变量」的正确语义；`send` 成败属于 session 的错误通道（toast，现行行为），flow 终态不应依赖它——send 链路未来任何演化（如恢复 throw、新增前置抛错点）都不再影响 flow 终态。探针：单测强制 `ports.chat.send` reject，断言 `flow.state==='completed'`（✅ 已纳入 V1；现行代码该用例也过，价值在锁定语义防回归）。
+**D3：交接原子化——`transition('completed')` 上移到 `pushChat` 之后、`chat.send` 之前**（[flow.ts:308-326](../../packages/core/src/domain/new-task-search/flow.ts#L308) 序列内）。论证是**时序正确性 + 防御加固**而非堵现行路径（send 现行吞错，见 §2.2 诊断声明）：交接（setActiveSession + loadPanel + pushChat）完成即 flow 职责终结，这是「流程状态机只守自己不变量」的正确语义；`send` 成败属于 session 的错误通道（toast，现行行为），flow 终态不应依赖它——send 链路未来任何演化（如恢复 throw、新增前置抛错点）都不再影响 flow 终态。探针：单测强制 `ports.chat.send` reject，断言 `flow.state==='completed'`（✅ 已纳入 V1'/T2 单测；现行代码该用例也过，价值在锁定语义防回归）。
 
 **D4：Landing 视图卸载守卫——`onUnmounted(() => { if (flow.isActive.value) flow.cancelFlow() })`。**
 Landing 是 landing/overlay 态的唯一承接视图（startFlow 由其挂载逻辑触发已是现状，[Landing.vue:90-91](../../packages/renderer/src/components/new-task/Landing.vue#L90)），卸载即终结，封死「视图消失、状态漂留」的未知路径（§2.2 声明的不可确证残留由本出口兜底）。守卫限定 `isActive`（landing/overlay 态）：正常首发（completed）与切换（cancelled）路径下卸载时已非活跃态，守卫 noop，不产生非法转换（ACTIVE 态 → cancelled 均在 ALLOWED 表内）。被否：仅依赖 D3（`setThinkingLevel` 等交接前中间步骤抛错仍可卡 landing——D4 是出口兜底层）。
 
-**D5：`Panel.vue` 模板重写为 `switch(panelView.kind)` 渲染。** composer-band 判据收敛为：**ask-user 渲染 ⟺ `kind==='conversation' && input==='ask-user'`**（dead 态被优先级吞掉，保留 W6「dead 不渲染 ask-user」语义，[Panel.vue:201-203](../../packages/renderer/src/components/panel/Panel.vue#L201)）；**Composer 渲染 ⟺ `kind==='conversation' || (kind==='empty' && sessionId !== null)`**（绑定空会话的 composer 直输是现行行为）。WidgetArea 挂载条件映射为 `kind ∈ {trace, conversation, empty-with-session}`（等价现行 `sessionId && !isSessionDead`，[Panel.vue:72](../../packages/renderer/src/components/panel/Panel.vue#L72)）。
+**D5：`Panel.vue` 模板重写为 `switch(panelView.kind)` 渲染。** composer-band 判据收敛为：**ask-user 渲染 ⟺ `(kind==='conversation' || kind==='trace') && input==='ask-user'`**（dead 态被优先级吞掉，保留 W6「dead 不渲染 ask-user」语义，[Panel.vue:201-203](../../packages/renderer/src/components/panel/Panel.vue#L201)；**trace 同样承接 ask-user**——session-trace 契约「不打断对话能力」的完整语义，一致性审查补入）；**Composer 渲染 ⟺ `kind==='conversation' || kind==='trace' || (kind==='empty' && sessionId !== null)`**（trace 态 composer 保留是 session-trace 既有契约「composer 保留在底部，不打断对话能力」[session-trace/design.md:145]；绑定空会话的直输由 conversation 承接，empty-with-session 支为类型层防御、现行派生不可达）。WidgetArea 挂载条件映射为 `kind ∈ {trace, conversation, empty-with-session}`（等价现行 `sessionId && !isSessionDead`，[Panel.vue:72](../../packages/renderer/src/components/panel/Panel.vue#L72)）。
 
 **D6：`Workspace.vue` 的 `flow.isActive` 消费与单 panel 现实保持不动。** split 重启时，PanelView 输入本就 per-panel（sessionId per panel），landing 属于「无 session」的 panel 级状态，届时把 `isFlowActive` 换成该 panel 的派生即可，无需现在预付 per-attempt 实例化（呼应 §3.2 否 B）。
 
@@ -134,7 +134,7 @@ Landing 是 landing/overlay 态的唯一承接视图（startFlow 由其挂载逻
 | V2 | 稳定对话输入面恒定 | 选一个已有会话连续对话 ≥3 轮（含带变更集的轮） | 每轮 turn 结束（text+变更集出现）composer 不消失、不闪动；compacting 提示期间 composer 保持禁用态可见 | G1 |
 | V3 | 新建放弃切换 | ⌘N → 不输入 → 点侧栏另一会话 | Landing 消失，目标会话对话流 + composer 正常；再 ⌘N → 点侧栏切回原会话 → composer 正常 | G2 |
 | V3' | 删除唯一会话承接（D7） | 侧栏仅剩一个会话时删除它 | 列表空 → Landing 渲染（新建页），composer 卡片可用；与改造前「删除即新建页」体验一致 | G1（无死态空态） |
-| V4 | ask-user 互斥不变 | 在会话中触发一个 ask-user（装 ask-user extension 的模型对话） | AskUserOverlay 替换 composer；应答后 composer 恢复；dead session 下不渲染 overlay；行为与改造前一致 | G1（无回归） |
+| V4 | ask-user 互斥不变 | 在会话中触发一个 ask-user（装 ask-user extension 的模型对话）；再切到 Trace 视图 | AskUserOverlay 替换 composer；应答后 composer 恢复；dead session 下不渲染 overlay；**Trace 视图下 composer 保留、ask-user overlay 正常承接应答**（session-trace 契约不变）；行为与改造前一致 | G1（无回归） |
 | V5 | 穷举组合守卫（附加，不替代 V1-V4） | `cd packages/core && npx vitest run src/domain/session/__tests__/panel-view.test.ts` | derivePanelView 全输入组合表测试通过；含回归用例「`{sessionId:'s1', hasMessages:true, isFlowActive:true}` → conversation（landing 不可表达）」与「dead 优先级吞掉 ask-user」 | G3 |
 
 ## §5 下一层拆分

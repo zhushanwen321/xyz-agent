@@ -15,19 +15,29 @@
  * - PV4 dead：占位视图（重开入口），无 Composer；ask-user 请求在场仍无 overlay
  *   （W6「dead 不应答」由派生优先级 dead > ask-user 承接，收集侧不重复判）
  * - PV5 ask-user：请求到达 → AskUserOverlay 替换 Composer；应答出队 → Composer 恢复
+ * - PV6 trace 输入面保留（D5/V4，一致性审查 R-U1）：trace 视图 → TraceView 替换对话流
+ *   位置 + Composer 保留；trace + ask-user 请求 → overlay 承接应答
  *
  * mock 策略：vi.hoisted 模块级可变对象（对齐 ask-user-inline.test.ts / landing.test.ts
  * 既有基建）——useExtensionUI（ask-user 请求队列）与 useNewTaskFlow（flow 单例态）
- * 可控；chat/session store 用真 pinia（消息 hydrate / markDead 走真实状态）。
+ * 可控；chat/session/panel store 与 trace store 用真实实现（消息 hydrate / markDead /
+ * setTraceView 走真实状态；trace 分区键经 bindTraceSessionId 重绑到当前 pinia）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/panel-view.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { computed } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import Panel from '@/components/panel/Panel.vue'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
+import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
+import {
+  _resetTraceStoreForTest,
+  bindTraceSessionId,
+  setTraceView,
+} from '@/composables/features/trace/useSessionTrace'
 import type { ExtensionUIRequest } from '@/api/domains/extension'
 import type { SessionSummary } from '@xyz-agent/shared'
 
@@ -115,8 +125,17 @@ function hydrateS1Messages(): void {
   ])
 }
 
+/** 单 panel 契约：trace 分区键（focusedSessionId）与 props.sessionId 一致（分区键跟随） */
+function focusSession(sid: string | null): void {
+  usePanelStore().loadSession(ROOT_PANEL_ID, sid)
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
+  // trace 分区是模块级单例（不随 pinia 重建）：reset 后重绑分区键到当前 pinia 的
+  // panel store（对齐 useSessionTrace.test.ts 模式），防上一用例的 trace 视图态残留
+  _resetTraceStoreForTest()
+  bindTraceSessionId(computed(() => usePanelStore().focusedSessionId))
   extUIMock.__mockAskUserReq.value = undefined
   mockState.flowIsActive.value = false
 })
@@ -207,7 +226,7 @@ describe('PV4: dead 占位（W6：dead 不应答，派生优先级 dead > ask-us
   })
 })
 
-describe('PV5: ask-user 互斥替换（D5：overlay ⟺ conversation && input===ask-user）', () => {
+describe('PV5: ask-user 互斥替换（D5：overlay ⟺ (conversation || trace) && input===ask-user）', () => {
   it('有 ask-user 请求 → AskUserOverlay 替换 Composer', () => {
     hydrateS1Messages()
     extUIMock.__mockAskUserReq.value = askUserReq
@@ -230,5 +249,34 @@ describe('PV5: ask-user 互斥替换（D5：overlay ⟺ conversation && input===
 
     expect(wrapper.find('[data-testid="ask-user-overlay"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
+  })
+})
+
+describe('PV6: trace 态输入面保留（D5/V4：session-trace 契约「composer 保留，不打断对话能力」）', () => {
+  it('trace 视图 → TraceView 替换对话流位置，Composer 保留', () => {
+    hydrateS1Messages()
+    focusSession('s1')
+    setTraceView('s1', 'trace')
+
+    const wrapper = mountPanel('s1')
+
+    // 用户可见：Trace 视图替换对话流，输入面不被打断（composer 保留在底部）
+    expect(wrapper.find('[data-testid="trace-view"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="msg-stream"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
+  })
+
+  it('trace 视图 + ask-user 请求 → overlay 承接应答（替换 composer），TraceView 不受影响', () => {
+    hydrateS1Messages()
+    focusSession('s1')
+    setTraceView('s1', 'trace')
+    extUIMock.__mockAskUserReq.value = askUserReq
+
+    const wrapper = mountPanel('s1')
+
+    // 用户可见：trace 态 ask-user overlay 正常出现并替换 composer（V4 验收语义）
+    expect(wrapper.find('[data-testid="trace-view"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ask-user-overlay"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(false)
   })
 })

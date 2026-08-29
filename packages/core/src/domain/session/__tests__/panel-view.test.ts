@@ -11,7 +11,8 @@
  * 期望表推导依据（D1 规则，非实现）：
  * - sessionId 非空：dead > trace > conversation；isFlowActive 不参与（landing 要求无 session）。
  *   dead=1 → dead（吞掉 trace/ask-user/flow，W6「dead 不应答」）；
- *   dead=0,trace=1 → trace；
+ *   dead=0,trace=1 → trace（保留输入面，session-trace 契约「composer 保留，不打断对话
+ *   能力」，D5），input 按 hasAskUserRequest 互斥；
  *   dead=0,trace=0 → conversation，input 按 hasAskUserRequest 互斥。
  * - sessionId 空：dead/trace 前置约束不成立、conversation 不可达、ask-user 无处挂靠；
  *   isFlowActive=1 → landing，否则 empty{sessionId:null}。
@@ -31,11 +32,12 @@ const EXPECTED: Record<string, PanelView> = {
   's1|1101': { kind: 'dead', sessionId: 's1' },
   's1|1110': { kind: 'dead', sessionId: 's1' },
   's1|1111': { kind: 'dead', sessionId: 's1' },
-  // ── trace 次优先（吞掉 ask-user / flow，2^2 = 4 格）──
-  's1|0100': { kind: 'trace', sessionId: 's1' },
-  's1|0101': { kind: 'trace', sessionId: 's1' },
-  's1|0110': { kind: 'trace', sessionId: 's1' },
-  's1|0111': { kind: 'trace', sessionId: 's1' },
+  // ── trace 次优先（吞掉 flow；input 同 conversation 规则按 hasAskUserRequest 互斥，
+  //    trace 保留输入面 = session-trace 契约「composer 保留，不打断对话能力」，2^2 = 4 格）──
+  's1|0100': { kind: 'trace', sessionId: 's1', input: 'composer' },
+  's1|0101': { kind: 'trace', sessionId: 's1', input: 'composer' },
+  's1|0110': { kind: 'trace', sessionId: 's1', input: 'ask-user' },
+  's1|0111': { kind: 'trace', sessionId: 's1', input: 'ask-user' },
   // ── conversation：sessionId 非空即成立，input 由 hasAskUserRequest 互斥决定（2^2 = 4 格）──
   's1|0000': { kind: 'conversation', sessionId: 's1', input: 'composer' },
   's1|0001': { kind: 'conversation', sessionId: 's1', input: 'composer' },
@@ -102,7 +104,7 @@ describe('derivePanelView 全组合表（2^6 = 64）', () => {
   })
 })
 
-describe('回归用例（V5 指定三项）', () => {
+describe('回归用例（V5 指定三项 + trace 输入面专项）', () => {
   it('① 有消息 + isFlowActive → conversation（landing 不可表达，§2.2 根因症状核心回归）', () => {
     // 为什么：现行判据 isLandingView = !sessionId || flow.state==='landing'——flow 单例卡
     // landing 时，有消息会话的 landing 判据仍成立，turn 结束瞬间（isSessionActive 翻 false）
@@ -120,7 +122,7 @@ describe('回归用例（V5 指定三项）', () => {
   })
 
   it('② dead + hasAskUserRequest → dead（dead 优先级吞掉 ask-user）', () => {
-    // 为什么：W6「dead 不应答」——ask-user 渲染 ⟺ conversation && input==='ask-user'
+    // 为什么：W6「dead 不应答」——ask-user 渲染 ⟺ (conversation || trace) && input==='ask-user'
     // （设计 D5），进程已死的会话即便 ask-user 请求仍 pending，也必须落 dead 占位视图
     // 而非渲染应答 overlay。若此处返回含 input 的 conversation，即优先级回归。
     const view = derivePanelView({
@@ -158,5 +160,21 @@ describe('回归用例（V5 指定三项）', () => {
       isFlowActive: false,
     })
     expect(askUser).toEqual({ kind: 'conversation', sessionId: 's1', input: 'ask-user' })
+  })
+
+  it('④ trace + hasAskUserRequest → trace + input=ask-user（trace 保留输入面，D5/V4 专项）', () => {
+    // 为什么：session-trace 契约「composer 保留在底部，不打断对话能力」——Trace 视图
+    // 替换的是对话流位置而非输入面，ask-user 请求在 trace 态仍由 overlay 承接应答
+    // （D5：ask-user 渲染 ⟺ (conversation || trace) && input==='ask-user'）。
+    // 若此处把 ask-user 吞成 composer，即输入面恢复缺口回归（一致性审查 R-U1）。
+    const view = derivePanelView({
+      sessionId: 's1',
+      hasMessages: true,
+      isSessionDead: false,
+      isTraceView: true,
+      hasAskUserRequest: true,
+      isFlowActive: false,
+    })
+    expect(view).toEqual({ kind: 'trace', sessionId: 's1', input: 'ask-user' })
   })
 })
