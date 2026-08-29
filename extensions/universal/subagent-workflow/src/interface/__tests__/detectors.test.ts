@@ -18,17 +18,17 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { argKeysFromMeta, findFlattenedArgKeys } from "../tool-workflow";
-import { parseResourceMeta } from "../../shared/meta-parser.ts";
+import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
 
 // 真实参数集（argKeysFromMeta 产物——m6 动态数据源，与 TC2 同源防漂移）
 function rflKeys() {
-  const src = readFileSync(join(__dirname, "../../../workflows/review-fix-loop.js"), "utf-8");
+  const src = readFileSync(join(__dirname, "../../../node_modules/@zhushanwen/subagent-core/workflows/review-fix-loop.js"), "utf-8");
   const meta = parseResourceMeta(src, "workflow");
   if (!meta || meta.kind !== "workflow" || !meta.parameters) throw new Error("rfl meta");
   return argKeysFromMeta(meta.parameters);
 }
 function chainKeys() {
-  const src = readFileSync(join(__dirname, "../../../workflows/chain.js"), "utf-8");
+  const src = readFileSync(join(__dirname, "../../../node_modules/@zhushanwen/subagent-core/workflows/chain.js"), "utf-8");
   const meta = parseResourceMeta(src, "workflow");
   if (!meta || meta.kind !== "workflow" || !meta.parameters) throw new Error("chain meta");
   return argKeysFromMeta(meta.parameters);

@@ -14,8 +14,8 @@ import os from "node:os";
 
 import { visibleWidth } from "@earendil-works/pi-tui";
 
-import type { AgentEventLogEntry, DisplayItem, ExecutionStatus } from "../execution/types.ts";
-import { DEFAULT_AGENT_NAME } from "../execution/types.ts";
+import type { AgentEventLogEntry, DisplayItem, ExecutionStatus } from "@zhushanwen/subagent-core/execution/types.ts";
+import { DEFAULT_AGENT_NAME } from "@zhushanwen/subagent-core/execution/types.ts";
 
 /**
  * ThemeLike:TUI 语义 token 着色接口(duck-typed,兼容 Pi Theme).

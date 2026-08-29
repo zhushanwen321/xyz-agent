@@ -11,10 +11,10 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
-import { computeElapsedSeconds } from "../execution/execution-record.ts";
-import type { SubagentService } from "../execution/subagent-service.ts";
-import type { SubagentRecord } from "../execution/types.ts";
-import { displayAgentName } from "../shared/agent-ref.ts";
+import { computeElapsedSeconds } from "@zhushanwen/subagent-core/execution/execution-record.ts";
+import type { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import type { SubagentRecord } from "@zhushanwen/subagent-core/execution/types.ts";
+import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
 import {
   firstLine,
   formatDisplayItem,

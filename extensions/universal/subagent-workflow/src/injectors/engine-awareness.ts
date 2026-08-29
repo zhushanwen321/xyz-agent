@@ -15,8 +15,8 @@
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import type { GlobalConfigReadResult } from "../execution/config.ts";
-import { DEFAULT_ENGINE_ID, normalizeEngineId } from "../execution/engine/registry.ts";
+import type { GlobalConfigReadResult } from "@zhushanwen/subagent-core/execution/config.ts";
+import { DEFAULT_ENGINE_ID, normalizeEngineId } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
 
 const logger = getLogger("subagents");
 

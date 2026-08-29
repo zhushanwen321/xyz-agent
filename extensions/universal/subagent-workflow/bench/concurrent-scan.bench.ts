@@ -31,9 +31,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { RecordStore } from "../src/execution/record-store.ts";
-import { INDEX_FILENAME } from "../src/execution/sessions-index.ts";
-import type { SubagentRecord } from "../src/execution/types.ts";
+import { RecordStore } from "@zhushanwen/subagent-core/execution/record-store.ts";
+import { INDEX_FILENAME } from "@zhushanwen/subagent-core/execution/sessions-index.ts";
+import type { SubagentRecord } from "@zhushanwen/subagent-core/execution/types.ts";
 
 const DEFAULT_WORKERS = 3;
 const DEFAULT_ITERS = 20;

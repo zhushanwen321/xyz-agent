@@ -35,7 +35,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import { escapeXml, renderXmlSection } from "../shared/xml-injection.ts";
+import { escapeXml, renderXmlSection } from "@zhushanwen/subagent-core/shared/xml-injection.ts";
 
 const logger = getLogger("injector");
 

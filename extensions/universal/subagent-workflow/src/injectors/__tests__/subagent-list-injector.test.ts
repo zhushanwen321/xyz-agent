@@ -10,7 +10,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DiscoveredResource } from "../../shared/resource-discovery.ts";
+import type { DiscoveredResource } from "@zhushanwen/subagent-core/shared/resource-discovery.ts";
 // 共享 mock 基建（vi.mock 工厂 / mock pi / mock ctx）：helpers/injector-test-mocks.ts
 import { createDiscoveryModuleMock, createLoggerModuleMock, createMockCtx, createMockPi, type CapturedHandlers } from "./helpers/injector-test-mocks.ts";
 
@@ -19,7 +19,7 @@ import { createDiscoveryModuleMock, createLoggerModuleMock, createMockCtx, creat
 //    resetModules 调用计数连续，mockClear 控制每用例重置） ──
 const spies = vi.hoisted(() => ({ discoverResources: vi.fn(), getCachedFileContent: vi.fn() }));
 
-vi.mock("../../shared/resource-discovery.ts", () => createDiscoveryModuleMock(spies));
+vi.mock("@zhushanwen/subagent-core/shared/resource-discovery.ts", () => createDiscoveryModuleMock(spies));
 
 // 工厂必须写成箭头惰性形式：vi.mock 被提升到 import 之前执行，直接传
 // createLoggerModuleMock 引用会在提升位置立即求值 import 绑定 → TDZ ReferenceError

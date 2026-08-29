@@ -16,8 +16,8 @@ import type { AgentToolResult, ExtensionAPI, ExtensionContext, Theme } from "@ea
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 import type { Static } from "typebox";
 
-import { getSubagentService } from "../execution/subagent-service.ts";
-import type { SubagentToolResult } from "../execution/types.ts";
+import { getSubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import type { SubagentToolResult } from "@zhushanwen/subagent-core/execution/types.ts";
 import { extractAgentName } from "./format.ts";
 import { toGuiCtx } from "./gui-mappers.ts";
 import { adapter, cancelHandler, closeHandler, forkFromHandler, listHandler, messageHandler, startHandler } from "./subagent-actions.ts";

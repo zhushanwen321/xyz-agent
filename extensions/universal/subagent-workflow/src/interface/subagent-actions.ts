@@ -16,13 +16,13 @@ import {
   isGuiCapable,
 } from "@xyz-agent/extension-protocol";
 
-import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
-import { computeElapsedSeconds, projectOutcome } from "../execution/execution-record.ts";
-import { isResumable } from "../execution/lifecycle-predicates.ts";
-import type { ExecutionRecord } from "../execution/types.ts";
-import type { ModelInfo } from "../execution/model-resolver.ts";
-import type { SubagentService } from "../execution/subagent-service.ts";
-import { displayAgentName } from "../shared/agent-ref.ts";
+import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
+import { computeElapsedSeconds, projectOutcome } from "@zhushanwen/subagent-core/execution/execution-record.ts";
+import { isResumable } from "@zhushanwen/subagent-core/execution/lifecycle-predicates.ts";
+import type { ExecutionRecord } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { ModelInfo } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
+import type { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
 import type {
   BgResponse,
   CancelResponse,
@@ -35,8 +35,8 @@ import type {
   SubagentListItem,
   SubagentRecord,
   SubagentToolResult,
-} from "../execution/types.ts";
-import { ResurrectDeniedError } from "../execution/types.ts";
+} from "@zhushanwen/subagent-core/execution/types.ts";
+import { ResurrectDeniedError } from "@zhushanwen/subagent-core/execution/types.ts";
 import { mapRunIcon, mapRunStatus } from "./gui-mappers.ts";
 
 // ============================================================

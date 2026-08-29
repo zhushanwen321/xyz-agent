@@ -18,12 +18,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // ── module mocks（必须在 import 被测模块之前声明）──────────────
 
 /** 桩化 subagent-service——只暴露 getSubagentService，由测试控制返回值。 */
-vi.mock("../execution/subagent-service.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
   getSubagentService: vi.fn(),
 }));
 
 /** 桩化 lifecycle——abortRun 为 vi.fn，由测试控制 resolve/reject。 */
-vi.mock("../orchestration/lifecycle.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/orchestration/lifecycle.ts", () => ({
   abortRun: vi.fn(),
 }));
 
@@ -31,10 +31,10 @@ vi.mock("../orchestration/lifecycle.ts", () => ({
 
 // 被 mock 的模块——import 路径与被测源文件一致，确保 vitest 拦截同一模块实例。
 // 使用 import 副作用顺序：vi.mock 在文件顶部提升，此处 import 拿到的是 mock 版本。
-import { getSubagentService } from "../execution/subagent-service.ts";
+import { getSubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
 import { registerWorkflowsCommand } from "../interface/commands.ts";
 import { registerSubagentsCommand } from "../interface/subagents.ts";
-import { abortRun } from "../orchestration/lifecycle.ts";
+import { abortRun } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
 
 // ── 类型辅助 ────────────────────────────────────────────────
 

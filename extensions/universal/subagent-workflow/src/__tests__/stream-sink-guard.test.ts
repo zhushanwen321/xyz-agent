@@ -54,7 +54,7 @@ const { mockInitSession, mockSetUiRequestHandler, mockLoadAll, existingServiceRe
     existingServiceRef: { current: null as unknown },
   }));
 
-vi.mock("../execution/subagent-service.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
   SubagentService: class {
     initSession = mockInitSession;
     setUiRequestHandler = mockSetUiRequestHandler;
@@ -67,7 +67,7 @@ vi.mock("../execution/subagent-service.ts", () => ({
   setSubagentService: vi.fn(),
 }));
 
-vi.mock("../execution/model-config-service.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/execution/model-config-service.ts", () => ({
   ModelConfigService: class {
     initModel = vi.fn();
     // session_start 的 lastEngine 基线读取经本方法（构造性同源）：absent → lastEngine
@@ -79,7 +79,7 @@ vi.mock("../execution/model-config-service.ts", () => ({
   setModelConfigService: vi.fn(),
 }));
 
-vi.mock("../execution/worktree-manager.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/execution/worktree-manager.ts", () => ({
   WorktreeManager: class {
     constructor(_agentDir: string) {
       /* mock */
@@ -92,11 +92,11 @@ vi.mock("../execution/worktree-manager.ts", () => ({
   },
 }));
 
-vi.mock("../execution/session-file-gc.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/execution/session-file-gc.ts", () => ({
   maybeCleanupExpiredSessionFiles: vi.fn(),
 }));
 
-vi.mock("../orchestration/jsonl-run-store.ts", () => ({
+vi.mock("../jsonl-run-store.ts", () => ({
   JsonlRunStore: class {
     loadAll = mockLoadAll;
     save = vi.fn(async () => {});

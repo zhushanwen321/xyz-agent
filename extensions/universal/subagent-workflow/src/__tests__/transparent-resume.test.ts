@@ -42,9 +42,9 @@ const { loggerMock, rafCapture, chainPromises } = vi.hoisted(() => ({
   // 杜绝后台链跨用例游走与 runner 竞态（宽松挂起隔离差的机器上表现为事件循环级冻结）。
   chainPromises: [] as Array<Promise<unknown>>,
 }));
-vi.mock("../core/logger.ts", () => ({ getLogger: () => loggerMock }));
+vi.mock("@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-vi.mock("../execution/session-runner.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
   runSpawn: vi.fn(async () => ({
     text: "",
     turns: 1,
@@ -58,13 +58,13 @@ vi.mock("../execution/session-runner.ts", () => ({
   spawnedChildren: new Map(),
 }));
 
-import { findForeignLiveInstance } from "../execution/alive-store.ts";
-import { resurrectClosed } from "../execution/execution-record.ts";
-import { writeFinalized } from "../execution/finalized-marker.ts";
-import { getSubagentSessionDir } from "../execution/path-encoding.ts";
-import type { ExecuteOptions } from "../execution/types.ts";
-import { SubagentService } from "../execution/subagent-service.ts";
-import { ModelConfigService } from "../execution/model-config-service.ts";
+import { findForeignLiveInstance } from "@zhushanwen/subagent-core/execution/alive-store.ts";
+import { resurrectClosed } from "@zhushanwen/subagent-core/execution/execution-record.ts";
+import { writeFinalized } from "@zhushanwen/subagent-core/execution/finalized-marker.ts";
+import { getSubagentSessionDir } from "@zhushanwen/subagent-core/execution/path-encoding.ts";
+import type { ExecuteOptions } from "@zhushanwen/subagent-core/execution/types.ts";
+import { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
 import { forkFromHandler, messageHandler, closeHandler } from "../interface/subagent-actions.ts";
 
 /** SpawnResumeOpts 的观测投影（args[8]，仅需本测试断言的字段）。 */

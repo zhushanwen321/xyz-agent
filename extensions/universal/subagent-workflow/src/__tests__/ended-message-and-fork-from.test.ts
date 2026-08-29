@@ -28,14 +28,14 @@ const { loggerMock, rafCapture } = vi.hoisted(() => ({
   // 两层合成即覆盖完整链路。
   rafCapture: [] as Array<{ task: string; forkSource?: string; slugId: string; resumeSessionFile?: string }>,
 }));
-vi.mock("../core/logger.ts", () => ({ getLogger: () => loggerMock }));
+vi.mock("@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：fork-from 的 execute 链经 kickOffBackground → runAndFinalize →
 // runSpawn。runSpawn 返回最小成功 AgentResult，后台收尾链可完整走完（archive + notify）。
 // [v8.5 D 修正] 路径必须是 ../execution/session-runner.ts——原 "../session-runner.ts"
 // 指向不存在的文件，mock 从未生效（探针实证 identity=REAL），是历史上全量套件
 // 偶发挂起的真根源之一：真实 detached 链泄漏句柄让 worker 无法收敛。
-vi.mock("../execution/session-runner.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
   runSpawn: vi.fn(async () => ({
     text: "",
     turns: 1,
@@ -49,13 +49,13 @@ vi.mock("../execution/session-runner.ts", () => ({
   spawnedChildren: new Map(),
 }));
 
-import { writeFinalized } from "../execution/finalized-marker.ts";
-import type { ModelRegistryLike } from "../execution/model-resolver.ts";
-import { getSubagentSessionDir } from "../execution/path-encoding.ts";
-import type { RecordStore } from "../execution/record-store.ts";
-import type { ExecuteOptions } from "../execution/types.ts";
-import { SubagentService } from "../execution/subagent-service.ts";
-import { ModelConfigService } from "../execution/model-config-service.ts";
+import { writeFinalized } from "@zhushanwen/subagent-core/execution/finalized-marker.ts";
+import type { ModelRegistryLike } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
+import { getSubagentSessionDir } from "@zhushanwen/subagent-core/execution/path-encoding.ts";
+import type { RecordStore } from "@zhushanwen/subagent-core/execution/record-store.ts";
+import type { ExecuteOptions } from "@zhushanwen/subagent-core/execution/types.ts";
+import { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
 import { forkFromHandler, messageHandler } from "../interface/subagent-actions.ts";
 
 const IDENTITY_ENV_KEYS = [

@@ -30,16 +30,16 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import { getHostServices } from "../core/host-services.ts";
+import { getHostServices } from "@zhushanwen/subagent-core/core/host-services.ts";
 
 import {
 	discoverResources,
 	findWorkspaceRoot,
 	getCachedFileContent,
 	getCachedParsed,
-} from "../shared/resource-discovery.ts";
-import { parseResourceMeta } from "../shared/meta-parser.ts";
-import { escapeXml, renderXmlSection } from "../shared/xml-injection.ts";
+} from "@zhushanwen/subagent-core/shared/resource-discovery.ts";
+import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
+import { escapeXml, renderXmlSection } from "@zhushanwen/subagent-core/shared/xml-injection.ts";
 
 const logger = getLogger("injector");
 

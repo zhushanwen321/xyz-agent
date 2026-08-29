@@ -12,22 +12,18 @@
 // 编译本 schema 并断言 required/description/enum/pattern 存活——SW 自身测试环境
 // 把 typebox alias 到 mock（丢 options），SO 侧测试以真实构造为对照基准。
 //
-// 层归属：Interface（工具 schema 的家）。SLUG_MAX_LENGTH 随 schema 迁入：
-// 它的唯一语义就是 tool schema 的 maxLength（见原 execute-options-mapper 注释），
-// execution 侧经 re-export 保持既有 import 路径不变。
+// 层归属：Interface（工具 schema 的家）。SLUG_MAX_LENGTH 权威定义回归 core 侧
+// execution/execute-options-mapper.ts（subagent-core 包抽离 u1-move：core 切面不得
+// 反向 import 壳侧 interface，常量随之内化）——此处 re-export 保持既有 import 路径。
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 
-import { THINKING_ORDER } from "../shared/model-ref.ts";
+import { THINKING_ORDER } from "@zhushanwen/subagent-core/shared/model-ref.ts";
 
-/**
- * slug 最大长度（字符）。subagent/workflow 创建时 slug 超过此值会被截断。
- * subagent/workflow tool schema 的 maxLength 引用此常量（单一真相，勿再硬编码）。
- * 历史值 20 偏紧——描述性 slug 如 "audit-structured-output"（23）/"fix-subagent-wf-tools"（21）
- * 会撞上限，放宽到 35 兼顾「短到能塞进 TUI 标题行」与「容纳合理描述性 kebab-case 名」。
- */
-export const SLUG_MAX_LENGTH = 35;
+import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
+
+export { SLUG_MAX_LENGTH };
 
 // Params schema（跨包契约测试的真实 typebox 校验入口）。
 //

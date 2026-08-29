@@ -39,12 +39,12 @@ vi.mock("typebox", () => ({
 const { mockServiceExecute } = vi.hoisted(() => ({
   mockServiceExecute: vi.fn(),
 }));
-vi.mock("../../execution/subagent-service.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
   getSubagentService: () => ({ execute: mockServiceExecute }),
 }));
 
 import { registerSubagentTool } from "../../interface/subagent-tool.ts";
-import { mockExtensionApi } from "../../execution/__tests__/helpers/mock-extension-api.ts";
+import { mockExtensionApi } from "@zhushanwen/subagent-core/execution/__tests__/helpers/mock-extension-api.ts";
 
 type ExecuteCb = (...args: unknown[]) => Promise<unknown>;
 

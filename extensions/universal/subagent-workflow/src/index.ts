@@ -21,44 +21,44 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
 // ═══ core 宿主端口接线（subagent-core 包抽离 u0-wire；实现见 src/host/pi-host.ts） ═══
-import { configureCore } from "./core/host-services.ts";
-import { configureNotifyDomain } from "./core/notify-ports.ts";
+import { configureCore } from "@zhushanwen/subagent-core/core/host-services.ts";
+import { configureNotifyDomain } from "@zhushanwen/subagent-core/core/notify-ports.ts";
 import { createPiHostServices, createPiNotifyDomainPorts } from "./host/pi-host.ts";
 
-import { bestEffort } from "./execution/best-effort.ts";
+import { bestEffort } from "@zhushanwen/subagent-core/execution/best-effort.ts";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
-import { getOrCreateChannelRegistry } from "./execution/channel-registry-access.ts";
-import { DialogGlobalQueue } from "./execution/dialog-queue.ts";
+import { getOrCreateChannelRegistry } from "@zhushanwen/subagent-core/execution/channel-registry-access.ts";
+import { DialogGlobalQueue } from "@zhushanwen/subagent-core/execution/dialog-queue.ts";
 // [engine-awareness U3] 全局 config 三态读取（检测 poll 与 session_start 基线共用）
-import { readGlobalConfig } from "./execution/config.ts";
+import { readGlobalConfig } from "@zhushanwen/subagent-core/execution/config.ts";
 // [U7] 引擎列表状态文件（registry → engines.json，GUI 引擎选择器数据源）
-import { syncEnginesFile } from "./execution/engine/engine-discovery.ts";
+import { syncEnginesFile } from "@zhushanwen/subagent-core/execution/engine/engine-discovery.ts";
 // [U7] 引擎模型段注入（defaultEngine 非 pi 时 system prompt 补 <available_<engine>_models>）
 // [engine-awareness U3] 补恒在状态段 <current_subagent_engine>（D6，pi 引擎也声明）
-import { buildEngineModelsPromptAppend, buildSubagentEngineSection } from "./execution/engine/model-prompt.ts";
+import { buildEngineModelsPromptAppend, buildSubagentEngineSection } from "@zhushanwen/subagent-core/execution/engine/model-prompt.ts";
 // [P1 引擎接线] 组合根登记 'pi' 引擎进 registry（引擎获取统一经 getEngine，缺省 id 'pi'）
-import { registerPiEngine } from "./execution/engine/engines/pi/registration.ts";
+import { registerPiEngine } from "@zhushanwen/subagent-core/execution/engine/engines/pi/registration.ts";
 // [P3 引擎接线] 组合根登记 'zcode' 引擎（spawn 单轮模式；engineDataDir 默认走
 // common/data-dir SSOT，见 engines/zcode/registration.ts）
-import { registerZcodeEngine } from "./execution/engine/engines/zcode/registration.ts";
-import { createUiRequestHandlerForMode } from "./execution/ui-request-handler-factory.ts";
+import { registerZcodeEngine } from "@zhushanwen/subagent-core/execution/engine/engines/zcode/registration.ts";
+import { createUiRequestHandlerForMode } from "@zhushanwen/subagent-core/execution/ui-request-handler-factory.ts";
 import {
   getModelConfigService,
   ModelConfigService,
   setModelConfigService,
-} from "./execution/model-config-service.ts";
-import { bindNotifyLedgerHost, getBoundNotifyLedger, type NotifyLedgerHost } from "./execution/notify-ledger.ts";
-import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "./execution/session-reconstructor.ts";
-import type { ExecutionMode, SubagentRecord } from "./execution/types.ts";
-import { maybeCleanupExpiredSessionFiles } from "./execution/session-file-gc.ts";
+} from "@zhushanwen/subagent-core/execution/model-config-service.ts";
+import { bindNotifyLedgerHost, getBoundNotifyLedger, type NotifyLedgerHost } from "@zhushanwen/subagent-core/execution/notify-ledger.ts";
+import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "@zhushanwen/subagent-core/execution/session-reconstructor.ts";
+import type { ExecutionMode, SubagentRecord } from "@zhushanwen/subagent-core/execution/types.ts";
+import { maybeCleanupExpiredSessionFiles } from "@zhushanwen/subagent-core/execution/session-file-gc.ts";
 import {
   getSubagentService,
   setSubagentService,
   SubagentService,
-} from "./execution/subagent-service.ts";
-import { killAllSpawnedChildren } from "./execution/session-runner.ts";
-import { SubprocessAgentRunner } from "./execution/subprocess-agent-runner.ts";
-import { WorktreeManager } from "./execution/worktree-manager.ts";
+} from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import { killAllSpawnedChildren } from "@zhushanwen/subagent-core/execution/session-runner.ts";
+import { SubprocessAgentRunner } from "@zhushanwen/subagent-core/execution/subprocess-agent-runner.ts";
+import { WorktreeManager } from "@zhushanwen/subagent-core/execution/worktree-manager.ts";
 // [engine-awareness U3] per-turn 引擎检测编排（D1/D1b/D2/D3/D5）
 import { normalizeEngineId, runEngineAwarenessTurn } from "./injectors/engine-awareness.ts";
 import { setupModelListInjector } from "./injectors/model-list-injector.ts";
@@ -73,20 +73,20 @@ import { registerSubagentTool } from "./interface/subagent-tool.ts";
 import { registerSubagentsCommand } from "./interface/subagents.ts";
 import { registerWorkflowTool } from "./interface/tool-workflow.ts";
 import { registerWorkflowScriptTool } from "./interface/tool-workflow-script.ts";
-import { JsonlRunStore } from "./orchestration/jsonl-run-store.ts";
-import { clearSkillPathCache } from "./orchestration/skill-discovery.ts";
+import { JsonlRunStore } from "./jsonl-run-store.ts";
+import { clearSkillPathCache } from "@zhushanwen/subagent-core/orchestration/skill-discovery.ts";
 // ═══ orchestration/ 层（workflow engine + infra） ═══
-import type { LauncherDeps } from "./orchestration/launcher.ts";
-import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "./orchestration/launcher.ts";
+import type { LauncherDeps } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
+import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
 import {
   evictDoneRunsBeyondCap,
   MAX_RETAINED_DONE_RUNS,
   scheduleTimeBudget,
   terminateRunningRuns,
-} from "./orchestration/lifecycle.ts";
-import type { WorkflowRun } from "./orchestration/models/workflow-run.ts";
-import { WorkerHostImpl } from "./orchestration/worker-host.ts";
-import { WorkflowScriptRegistryImpl } from "./orchestration/workflow-script-registry-impl.ts";
+} from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
+import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { WorkerHostImpl } from "@zhushanwen/subagent-core/orchestration/worker-host.ts";
+import { WorkflowScriptRegistryImpl } from "@zhushanwen/subagent-core/orchestration/workflow-script-registry-impl.ts";
 
 // ── pi.__workflowRun 类型扩展（D-8 签名） ─────────────────
 
@@ -1010,4 +1010,4 @@ export {
   getOrCreateChannelRegistry,
   type UiChannelRegistry,
   type ChannelHandler,
-} from "./execution/channel-registry-access.ts";
+} from "@zhushanwen/subagent-core/execution/channel-registry-access.ts";

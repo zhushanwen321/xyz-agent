@@ -10,14 +10,14 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DiscoveredResource } from "../../shared/resource-discovery.ts";
+import type { DiscoveredResource } from "@zhushanwen/subagent-core/shared/resource-discovery.ts";
 // 共享 mock 基建（vi.mock 工厂 / mock pi / mock ctx）：helpers/injector-test-mocks.ts
 import { createDiscoveryModuleMock, createLoggerModuleMock, createMockCtx, createMockPi, type CapturedHandlers } from "./helpers/injector-test-mocks.ts";
 
 // ── 稳定 spy（vi.hoisted 保证 resetModules 后引用不变，见 subagent 测试同款注释） ──
 const spies = vi.hoisted(() => ({ discoverResources: vi.fn(), getCachedFileContent: vi.fn() }));
 
-vi.mock("../../shared/resource-discovery.ts", () => createDiscoveryModuleMock(spies));
+vi.mock("@zhushanwen/subagent-core/shared/resource-discovery.ts", () => createDiscoveryModuleMock(spies));
 
 // 工厂必须写成箭头惰性形式（vi.mock 提升后直接传引用会 TDZ，见 helper 文件头注释）
 vi.mock("@zhushanwen/pi-extension-logger", () => createLoggerModuleMock());

@@ -40,9 +40,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { RecordStore } from "../src/execution/record-store.ts";
-import { INDEX_FILENAME } from "../src/execution/sessions-index.ts";
-import type { SubagentRecord } from "../src/execution/types.ts";
+import { RecordStore } from "@zhushanwen/subagent-core/execution/record-store.ts";
+import { INDEX_FILENAME } from "@zhushanwen/subagent-core/execution/sessions-index.ts";
+import type { SubagentRecord } from "@zhushanwen/subagent-core/execution/types.ts";
 
 /** 冷启动预算（设计目标 1：2.7s → ≤300ms）。 */
 const COLD_SCAN_BUDGET_MS = 300;
