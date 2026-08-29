@@ -299,6 +299,109 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 // updateSettingsFields 不在此 re-export（零外部消费者，直接从 pi-settings-store import）。
 export { readSettings, writeSettings, setSettingsPath } from './pi-settings-store.js'
 
+/** findValidDefaultModel 主路径：defaultProvider 有 models.json override 且未被禁用时的裁定。null = 未裁定，走 fallback。 */
+function adjudicateOverrideDefault(
+  defaultProvider: string,
+  defaultModel: string,
+  providerConfig: { models?: Array<{ id: string }> },
+  isEnabled: boolean,
+): { result: { provider: ProviderId; modelId: string } | null; wasFixed: boolean } | null {
+  if (!providerConfig?.models?.length || !isEnabled) return null
+  const found = providerConfig.models.find(m => m.id === defaultModel)
+  if (found) {
+    // defaultProvider 来自 settings.json 磁盘读（反序列化边界，design D5）→ as ProviderId
+    return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
+  }
+  // D4/D5：catalog provider 的有效模型集不止 models.json override（builtin ⊕ overlay
+  // 恒在，B-2 语义）——override 未命中时以合并视图继续裁定；非 catalog provider
+  // （合并视图 undefined）维持旧语义（override 即全集）。
+  const mergedCatalog = getMergedCatalogModels(defaultProvider)
+  if (mergedCatalog) {
+    // D5 态 3（never-seen，overlay 从未见过该 provider）：pass-through——不判定有效性、
+    // 不触发 auto-fix，原值直传 pi 由执行侧解析。态 3 的常态是「该 provider 从未经过
+    // overlay 通道」而非「配置有误」，静默改写合法配置（失败模式 A）比让错误显式暴露更糟。
+    if (mergedCatalog.overlayState.state === 'never-seen') {
+      return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
+    }
+    // D5 态 1/态 2：合并视图裁定。态 2 时 overlay 已被过滤，合并视图 == 快照 → 快照裁定。
+    // 附带修复：用户在 UI 选的非 override 模型（builtin/overlay 模型）不再被误判失效改写。
+    if (mergedCatalog.models.some(m => m.id === defaultModel)) {
+      return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
+    }
+  }
+  console.warn(`[provider-store] defaultModel "${defaultModel}" not found in provider "${defaultProvider}", falling back to "${providerConfig.models[0].id}"`)
+  return { result: { provider: defaultProvider as ProviderId, modelId: providerConfig.models[0].id }, wasFixed: true }
+}
+
+/**
+ * findValidDefaultModel 副路径：auth.json-only catalog provider（OAuth 形态）无
+ * models.json 条目时的裁定。null = 未裁定（无合并视图或无凭据或被禁用），走 fallback。
+ * D5：有效集从纯快照升级为合并视图，并按 overlay 三态区分行为——
+ * 态 1（fresh）合并视图判定，overlay-only 模型合法不 auto-fix；
+ * 态 2（expired，含 404/501 落盘的 lastModified:0）合并视图已退化为快照 → 快照裁定，
+ * 允许 auto-fix（远程明确声明过时/不存在是明确信号，快照是更权威基线）；
+ * 态 3（never-seen）pass-through 不改写（见下方分支注释）。
+ */
+function adjudicateCatalogOnlyDefault(
+  defaultProvider: string,
+  defaultModel: string,
+  models: PiModelsConfig,
+  isEnabled: boolean,
+): { result: { provider: ProviderId; modelId: string } | null; wasFixed: boolean } | null {
+  const mergedCatalog = getMergedCatalogModels(defaultProvider)
+  if (!mergedCatalog || mergedCatalog.models.length === 0) return null
+  const authCredentials = readAuthCredentials()
+  const hasCredential = defaultProvider in authCredentials || !!models.providers[defaultProvider]?.apiKey
+  if (!hasCredential || !isEnabled) return null
+  // D5 态 3（never-seen）：pass-through——不判定有效性、不触发 auto-fix、不改写
+  // settings.json，`--model` 直传 pi 由执行侧解析（模型确实不存在时 pi 报
+  // model-not-found，错误 surfaced 给用户而非 xyz 静默改写；垃圾模型名的 auto-fix
+  // 「救回」被有意放弃，见设计 D5 态 3 trade-off）。
+  if (mergedCatalog.overlayState.state === 'never-seen') {
+    return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
+  }
+  // D5 态 1/态 2：合并视图判定（态 2 == 快照裁定）
+  const foundInCatalog = mergedCatalog.models.find(m => m.id === defaultModel)
+  if (foundInCatalog) {
+    return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
+  }
+  // defaultModel 不在有效集（真无效），用有效集第一个（快照打底，[0] 恒为快照首模型）
+  return { result: { provider: defaultProvider as ProviderId, modelId: mergedCatalog.models[0].id }, wasFixed: true }
+}
+
+/**
+ * catalog 兜底：models.json 无可用 provider 时，查 builtin-providers 副本找
+ * 「凭据可解析」的 catalog provider 作默认候选（决策 4：校验 auth.json credential /
+ * models.json apiKey 任一）。遍历而非取排序第一个——amazon-bedrock 等 ambient 认证
+ * provider 无凭据时不可用，不能作为默认。
+ * wasFixed=false：兜底是临时展示，不是配置修复——写回 settings.json 会污染用户配置
+ * （曾踩坑：兜底结果经 updateSettingsFields 覆盖用户默认 provider，见 2026-08-09 回归）。
+ */
+function pickCredentialBackedCatalogProvider(models: PiModelsConfig): {
+  result: { provider: ProviderId; modelId: string } | null
+  wasFixed: boolean
+} {
+  const authCredentials = readAuthCredentials()
+  const builtinProviders = (builtinData.providers ?? []) as Array<{
+    id: string
+    models?: Array<{ id: string }>
+  }>
+  for (const bp of builtinProviders) {
+    const hasCredential =
+      bp.id in authCredentials || !!models.providers[bp.id]?.apiKey
+    // ES3：被 enabledModels 禁用的 catalog provider 不作 default 候选（避免返回用户已禁用的 provider）。
+    // deriveEnabled 复用 listProviders 的启用判定（DM3），保持「可用 provider」语义一致。
+    if (hasCredential && deriveEnabled(bp.id, getEnabledModels()) && bp.models && bp.models.length > 0) {
+      return {
+        // bp.id 来自 builtin-providers.json 磁盘读（反序列化边界，design D5）→ as ProviderId
+        result: { provider: bp.id as ProviderId, modelId: bp.models[0].id },
+        wasFixed: false,
+      }
+    }
+  }
+  return { result: null, wasFixed: false }
+}
+
 /**
  * 纯校验：检查 defaultProvider/defaultModel 在 models.json 中是否有效。
  * 无副作用，不修改任何文件。
@@ -316,61 +419,13 @@ export function findValidDefaultModel(): {
     // A8：被 enabledModels 禁用的 default provider 不走主路径，fall through 到 fallback 重选
     // （主路径原只校验 provider/model 有效，未过滤 enabledModels，被禁用的 default 会直接返回）。
     const isEnabled = deriveEnabled(defaultProvider, getEnabledModels())
-    if (providerConfig?.models?.length && isEnabled) {
-      const found = providerConfig.models.find(m => m.id === defaultModel)
-      if (found) {
-        // defaultProvider 来自 settings.json 磁盘读（反序列化边界，design D5）→ as ProviderId
-        return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
-      }
-      // D4/D5：catalog provider 的有效模型集不止 models.json override（builtin ⊕ overlay
-      // 恒在，B-2 语义）——override 未命中时以合并视图继续裁定；非 catalog provider
-      // （合并视图 undefined）维持旧语义（override 即全集）。
-      const mergedCatalog = getMergedCatalogModels(defaultProvider)
-      if (mergedCatalog) {
-        // D5 态 3（never-seen，overlay 从未见过该 provider）：pass-through——不判定有效性、
-        // 不触发 auto-fix，原值直传 pi 由执行侧解析。态 3 的常态是「该 provider 从未经过
-        // overlay 通道」而非「配置有误」，静默改写合法配置（失败模式 A）比让错误显式暴露更糟。
-        if (mergedCatalog.overlayState.state === 'never-seen') {
-          return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
-        }
-        // D5 态 1/态 2：合并视图裁定。态 2 时 overlay 已被过滤，合并视图 == 快照 → 快照裁定。
-        // 附带修复：用户在 UI 选的非 override 模型（builtin/overlay 模型）不再被误判失效改写。
-        if (mergedCatalog.models.some(m => m.id === defaultModel)) {
-          return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
-        }
-      }
-      console.warn(`[provider-store] defaultModel "${defaultModel}" not found in provider "${defaultProvider}", falling back to "${providerConfig.models[0].id}"`)
-      return { result: { provider: defaultProvider as ProviderId, modelId: providerConfig.models[0].id }, wasFixed: true }
-    }
+    const overrideOutcome = adjudicateOverrideDefault(defaultProvider, defaultModel, providerConfig, isEnabled)
+    if (overrideOutcome) return overrideOutcome
     if (!providerConfig?.models?.length) {
       // D3 修复：auth.json-only catalog provider（OAuth 形态）无 models.json 条目时，
       // 校验 defaultModel ∈ 该 provider 的有效模型集，通过则不 fallback 不写回。
-      // D5：有效集从纯快照升级为合并视图，并按 overlay 三态区分行为——
-      // 态 1（fresh）合并视图判定，overlay-only 模型合法不 auto-fix；
-      // 态 2（expired，含 404/501 落盘的 lastModified:0）合并视图已退化为快照 → 快照裁定，
-      // 允许 auto-fix（远程明确声明过时/不存在是明确信号，快照是更权威基线）；
-      // 态 3（never-seen）pass-through 不改写（见下方分支注释）。
-      const mergedCatalog = getMergedCatalogModels(defaultProvider)
-      if (mergedCatalog && mergedCatalog.models.length > 0) {
-        const authCredentials = readAuthCredentials()
-        const hasCredential = defaultProvider in authCredentials || !!models.providers[defaultProvider]?.apiKey
-        if (hasCredential && isEnabled) {
-          // D5 态 3（never-seen）：pass-through——不判定有效性、不触发 auto-fix、不改写
-          // settings.json，`--model` 直传 pi 由执行侧解析（模型确实不存在时 pi 报
-          // model-not-found，错误 surfaced 给用户而非 xyz 静默改写；垃圾模型名的 auto-fix
-          // 「救回」被有意放弃，见设计 D5 态 3 trade-off）。
-          if (mergedCatalog.overlayState.state === 'never-seen') {
-            return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
-          }
-          // D5 态 1/态 2：合并视图判定（态 2 == 快照裁定）
-          const foundInCatalog = mergedCatalog.models.find(m => m.id === defaultModel)
-          if (foundInCatalog) {
-            return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
-          }
-          // defaultModel 不在有效集（真无效），用有效集第一个（快照打底，[0] 恒为快照首模型）
-          return { result: { provider: defaultProvider as ProviderId, modelId: mergedCatalog.models[0].id }, wasFixed: true }
-        }
-      }
+      const catalogOnlyOutcome = adjudicateCatalogOnlyDefault(defaultProvider, defaultModel, models, isEnabled)
+      if (catalogOnlyOutcome) return catalogOnlyOutcome
       console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
     }
     // isEnabled===false：default provider 被禁用，静默 fall through 到 fallback（不 warn 误导）
@@ -381,34 +436,7 @@ export function findValidDefaultModel(): {
     return { result: { provider: fallback.provider, modelId: fallback.modelId }, wasFixed: true }
   }
 
-  // catalog 兜底：models.json 无可用 provider 时，查 builtin-providers 副本找
-  // 「凭据可解析」的 catalog provider 作默认候选（决策 4：校验 auth.json credential /
-  // models.json apiKey 任一）。遍历而非取排序第一个——amazon-bedrock 等 ambient 认证
-  // provider 无凭据时不可用，不能作为默认。
-  // wasFixed=false：兜底是临时展示，不是配置修复——写回 settings.json 会污染用户配置
-  //（曾踩坑：兜底结果经 updateSettingsFields 覆盖用户默认 provider，见 2026-08-09 回归）。
-  if (!fallback) {
-    const authCredentials = readAuthCredentials()
-    const builtinProviders = (builtinData.providers ?? []) as Array<{
-      id: string
-      models?: Array<{ id: string }>
-    }>
-    for (const bp of builtinProviders) {
-      const hasCredential =
-        bp.id in authCredentials || !!models.providers[bp.id]?.apiKey
-      // ES3：被 enabledModels 禁用的 catalog provider 不作 default 候选（避免返回用户已禁用的 provider）。
-      // deriveEnabled 复用 listProviders 的启用判定（DM3），保持「可用 provider」语义一致。
-      if (hasCredential && deriveEnabled(bp.id, getEnabledModels()) && bp.models && bp.models.length > 0) {
-        return {
-          // bp.id 来自 builtin-providers.json 磁盘读（反序列化边界，design D5）→ as ProviderId
-          result: { provider: bp.id as ProviderId, modelId: bp.models[0].id },
-          wasFixed: false,
-        }
-      }
-    }
-  }
-
-  return { result: null, wasFixed: false }
+  return pickCredentialBackedCatalogProvider(models)
 }
 
 /**

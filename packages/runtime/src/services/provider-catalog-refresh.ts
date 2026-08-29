@@ -198,6 +198,76 @@ async function persistOwnCache(entries: Record<string, OverlayEntry>): Promise<v
   await rename(tmp, path)
 }
 
+/** 解析远程目录响应体（pi.dev 现用 id-keyed object map；parseCatalog 同款容错：数组 / {models:[...]} / map）。 */
+function parseCatalogBody(body: unknown): OverlayModel[] {
+  if (Array.isArray(body)) {
+    return body as OverlayModel[]
+  }
+  if (typeof body === 'object' && body !== null) {
+    if (Array.isArray((body as { models?: unknown }).models)) {
+      return (body as { models: OverlayModel[] }).models
+    }
+    return Object.values(body) as OverlayModel[]
+  }
+  return []
+}
+
+/** 由 200 响应构造 overlay 条目（last-modified 缺失/非法时以当前时间兜底）。 */
+function buildEntryFromResponse(res: globalThis.Response, body: unknown): OverlayEntry {
+  const models = parseCatalogBody(body).filter(m => m && typeof m.id === 'string')
+  const lastModifiedHeader = res.headers.get('last-modified')
+  const lastModified = lastModifiedHeader ? new Date(lastModifiedHeader).getTime() : Date.now()
+  return {
+    models,
+    checkedAt: Date.now(),
+    lastModified: Number.isNaN(lastModified) ? Date.now() : lastModified,
+    etag: res.headers.get('etag') ?? undefined,
+  }
+}
+
+/**
+ * 对单个 catalog provider 发起远程刷新并写入 entries/refreshed/failed（共享可变状态
+ * 由 refreshProviderCatalogs 持有，语义见其注释）。单点失败记入 failed 不抛出。
+ */
+async function refreshOneProvider(
+  providerId: string,
+  entries: Record<string, OverlayEntry>,
+  refreshed: string[],
+  failed: CatalogRefreshResult['failed'],
+): Promise<void> {
+  try {
+    const prev = entries[providerId]
+    const url = `${CATALOG_BASE_URL}/api/models/providers/${encodeURIComponent(providerId)}`
+    const headers: Record<string, string> = { accept: 'application/json' }
+    // 仅当缓存有 body 时才带 validator，避免 304 落在空缓存上得到空 overlay
+    if (prev?.etag && prev.models.length > 0) headers['if-none-match'] = prev.etag
+    const res = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (res.status === 304 && prev) {
+      entries[providerId] = { ...prev, checkedAt: Date.now() }
+      refreshed.push(providerId)
+      return
+    }
+    if (res.status === 404 || res.status === 501) {
+      // 远程声明无此 provider 目录：永久失效 overlay（回纯快照），直到远程恢复
+      entries[providerId] = { models: [], checkedAt: Date.now(), lastModified: 0 }
+      refreshed.push(providerId)
+      return
+    }
+    if (!res.ok) {
+      failed.push({ providerId, reason: `HTTP ${res.status}` })
+      return
+    }
+    const body: unknown = await res.json()
+    entries[providerId] = buildEntryFromResponse(res, body)
+    refreshed.push(providerId)
+  } catch (err) {
+    failed.push({ providerId, reason: err instanceof Error ? err.message : String(err) })
+  }
+}
+
 /**
  * 对指定 catalog provider 集合发起远程目录刷新（ETag 协商，单请求 4s 超时）。
  *
@@ -213,56 +283,7 @@ export async function refreshProviderCatalogs(providerIds: string[]): Promise<Ca
   const failed: CatalogRefreshResult['failed'] = []
 
   await Promise.all(
-    providerIds.map(async (providerId) => {
-      try {
-        const prev = entries[providerId]
-        const url = `${CATALOG_BASE_URL}/api/models/providers/${encodeURIComponent(providerId)}`
-        const headers: Record<string, string> = { accept: 'application/json' }
-        // 仅当缓存有 body 时才带 validator，避免 304 落在空缓存上得到空 overlay
-        if (prev?.etag && prev.models.length > 0) headers['if-none-match'] = prev.etag
-        const res = await fetch(url, {
-          headers,
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        })
-        if (res.status === 304 && prev) {
-          entries[providerId] = { ...prev, checkedAt: Date.now() }
-          refreshed.push(providerId)
-          return
-        }
-        if (res.status === 404 || res.status === 501) {
-          // 远程声明无此 provider 目录：永久失效 overlay（回纯快照），直到远程恢复
-          entries[providerId] = { models: [], checkedAt: Date.now(), lastModified: 0 }
-          refreshed.push(providerId)
-          return
-        }
-        if (!res.ok) {
-          failed.push({ providerId, reason: `HTTP ${res.status}` })
-          return
-        }
-        const body: unknown = await res.json()
-        // pi.dev 现用 id-keyed object map；parseCatalog 同款容错：数组 / {models:[...]} / map
-        let models: OverlayModel[] = []
-        if (Array.isArray(body)) {
-          models = body as OverlayModel[]
-        } else if (typeof body === 'object' && body !== null && Array.isArray((body as { models?: unknown }).models)) {
-          models = (body as { models: OverlayModel[] }).models
-        } else if (typeof body === 'object' && body !== null) {
-          models = Object.values(body) as OverlayModel[]
-        }
-        models = models.filter(m => m && typeof m.id === 'string')
-        const lastModifiedHeader = res.headers.get('last-modified')
-        const lastModified = lastModifiedHeader ? new Date(lastModifiedHeader).getTime() : Date.now()
-        entries[providerId] = {
-          models,
-          checkedAt: Date.now(),
-          lastModified: Number.isNaN(lastModified) ? Date.now() : lastModified,
-          etag: res.headers.get('etag') ?? undefined,
-        }
-        refreshed.push(providerId)
-      } catch (err) {
-        failed.push({ providerId, reason: err instanceof Error ? err.message : String(err) })
-      }
-    }),
+    providerIds.map(providerId => refreshOneProvider(providerId, entries, refreshed, failed)),
   )
 
   if (refreshed.length > 0) {
