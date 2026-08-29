@@ -28,8 +28,8 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 
 | # | 目标 | 使用者体验表述 |
 |---|------|--------------|
-| G1 | 构建期派生一致性 | 开发者升级 pi 时改一处版本号，任何派生点漏同步被 CI/提交阶段机器拦截，而不是以「混装安装包」或「红测试」形式在下游暴露 |
-| G2 | 运行期目录单真相 | 用户在 UI 看到并选择的任何模型（含 overlay 新模型），在默认模型校验、会话创建、pi 执行三个环节被同等认可；用户显式设置永不被静默改写 |
+| G1 | 构建期派生一致性 | 开发者升级 pi 时改一处版本号，**守卫矩阵覆盖的**派生点漏同步被 CI/提交阶段机器拦截，而不是以「混装安装包」或「红测试」形式在下游暴露（A6 类纯文档锚点做一次性清理，不入常驻矩阵——其漂移仅为文档误导，无运行时影响） |
+| G2 | 运行期目录单真相 | 用户在 UI 看到并选择的任何模型（含 overlay 新模型），在默认模型校验、会话创建、pi 执行三个环节被同等认可；用户显式设置不被静默改写——**唯一例外**是远程目录明确声明该条目过时/不存在（D5 态 2）时的 auto-fix 重选（伴随 console.warn） |
 | G3 | 项目切换体验 | 项目切换 1 步点击完成；排序反映用户拖拽意图且跨重启稳定；徽章数字与点击后实际显示的会话数一致 |
 
 ### Scope
@@ -60,14 +60,14 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 | A3 | bundled pi binary（6 件产物：binary/assets/wasm/theme…） | `apps/electron/resources/pi/`（gitignore，dev 为 symlink → workspace 级 `.pi-binary-cache`） | `prepare-pi-resources.sh`，`PI_VERSION` 默认值手工写（`:14`） | binary 与 npm 包错配 → RPC 协议漂移 |
 | A4 | **CI 下载版本 env** | `.github/workflows/build.yml:47` `PI_VERSION: '0.84.1'` | 手工编辑 | CI 打「JS 0.84.4 + binary 0.84.1」混装包 |
 | A5 | **快照指纹测试基线** | `packages/runtime/scripts/__tests__/gen-builtin-providers.test.ts:104-125`（t10：写死 1220 模型 / deepseek 精确 2 模型） | 手工维护 | 测试红（守卫自身成为派生锚点） |
-| A6 | 手工镜像常量与文档锚点 | `packages/shared/src/constants.ts:58` `KNOWN_PI_API_TYPES`（注释自认「升级时人工 diff」）；`docs/troubleshooting.md:245` 等 | 手工维护 | 类型漂移无检测 |
+| A6 | 手工镜像常量与文档锚点 | `packages/shared/src/constants.ts:58` `KNOWN_PI_API_TYPES`（注释自认「升级时人工 diff」）；`docs/troubleshooting.md:296` 等 | 手工维护 | 类型漂移无检测 |
 
 **已发生的失败模式（本次 0.84.4 升级实证，非想象）**：
 
 1. **A4 漏同步**：`build.yml:47` 仍是 `0.84.1`（注释还写着「与 prepare-pi-resources.sh 默认值对齐（0.84.1）」，而脚本默认值已是 0.84.4）。若此时打 tag 发版，CI 产物 = JS 层 0.84.4 + binary 0.84.1 混装包，无任何守卫拦截。
 2. **A5 失守**：t10 基线写死 pi-ai 0.84.1 的指纹（1220 模型），0.84.4 快照实际 1290、deepseek 多出 `deepseek-v4-flash-vision-exp`。本机实跑确认红：`expected 1290 to be 1220`。该测试在 `ci.yml` test-runtime 全量路径内，**当前 CI 测试应处于红态**。
 
-**根因**：pi 版本声明分散在 ≥4 类手工锚点上（A1/A3/A4/A5），其中 A1 类（npm 四包实装一致性）已由 main 合入的 `check-pi-semantics.mjs` 四包版本门禁覆盖（C-proc-08——且 2026-08-29 merge origin/main 时实际抓到 runtime pin 0.84.1 残留，守卫有效性的新鲜实证），**A2-A6 类构建期派生锚点仍是零守卫**。两守卫分工（防重复建设）：**实装内部一致 + pi 语义漂移归 check-pi-semantics；构建期派生锚点对实装的跟随归本设计的 check-pi-sync**。AGENTS.md 已记载升级 runbook（三件套），但两个漏同步都发生在有 runbook 的前提下——**文档挡不住多点手工同步，这是结构性失败模式，不是偶发失误**。
+**根因**：pi 版本声明分散在 ≥4 类手工锚点上（A1/A3/A4/A5），其中 A1 类（npm 四包实装一致性）已由 main 合入的 `check-pi-semantics.mjs` 四包版本门禁覆盖（C-proc-08——且 2026-08-29 merge origin/main 时实际抓到 runtime pin 0.84.1 残留，守卫有效性的新鲜实证），**A2-A6 类构建期派生锚点仍是零守卫**。两守卫分工（防重复建设）：**实装内部一致 + pi 语义漂移归 check-pi-semantics；构建期派生锚点的跟随归本设计的 check-pi-sync**——其矩阵分两类基准：声明基准项（build.yml env / 脚本默认值 / extensions peerDeps）对根 package.json 声明比对；实装基准项（快照 piAiVersion / 快照新鲜度 / KNOWN_PI_API_TYPES / pi-tui）对 node_modules 实装比对（实装经四包门禁与声明锁定）。AGENTS.md 已记载升级 runbook（三件套），但两个漏同步都发生在有 runbook 的前提下——**文档挡不住多点手工同步，这是结构性失败模式，不是偶发失误**。
 
 ### 2.2 问题 2 现状：模型目录在 xyz-agent 内部有两套真相，与 pi 执行侧的第三套分叉
 
@@ -97,7 +97,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 
 1. pi.dev 上线一个快照外新模型（例：假设 9 月上线 `glm-5.4`；当前窗口内任何「overlay 有、快照无」的模型同理）。
 2. 用户进 Provider 页 → overlay 刷新 → 展示视图出现 `glm-5.4` → 用户点「设为默认」→ `setDefaultModel` 写 settings.json 成功。
-3. 用户重启应用或创建会话 → `session-lifecycle.ts:296` gate / `rpc-client.ts:135` 组装 `--model` 均经 `getDefaultModel()` → `findValidDefaultModel`（`pi-provider-store.ts:304-380`）：zai 凭据在 auth.json、无 models.json override → 走 D3 分支（`:326-341`）→ 在 **快照** `builtinModelsById` 里找 `glm-5.4` → 找不到 → 返回快照首模型 + `wasFixed:true`。
+3. 用户重启应用或创建会话 → `session-lifecycle.ts:296` gate / `rpc-client.ts:191` 组装 `--model` 均经 `getDefaultModel()` → `findValidDefaultModel`（`pi-provider-store.ts:304-380`）：zai 凭据在 auth.json、无 models.json override → 走 auth-only catalog 分支（`:326-341`，源码注释称 D3 修复——与本设计决策编号无关）→ 在 **快照** `builtinModelsById` 里找 `glm-5.4` → 找不到 → 返回快照首模型 + `wasFixed:true`。
 4. `getDefaultModel`（`:385-394`）见 `wasFixed:true` → **`updateSettingsFields` 把用户配置改写为快照首模型并落盘**，仅 console.log 一行。
 5. 结果：用户设置的默认模型被静默吞掉。展示视图（下一步 listProviders）仍会显示 glm-5.4 存在——三层给出互相矛盾的答案。
 
@@ -167,7 +167,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 | 1B：全派生——CI env / 脚本默认值运行时从 package.json 动态读取 | 中：消除部分锚点，但 prepare-pi-resources.sh 需引入 node/jq 依赖解析 JSON，shell 变重；快照新鲜度无法「派生」只能「比对」 | 中 | 中：动态解析自身出错时静默用错值 | ❌（局部采纳：build.yml env 可在 CI 步骤内动态读 package.json，作为 1A 的补充） |
 | 1C：纯文档 runbook 强化 | 低：**已被本次实证否决**——两个漏同步都发生在有 runbook 的前提下 | 低 | 高：同样的失败模式会再次发生 | ❌ |
 
-守卫覆盖矩阵（1A 的比对项，全部为只读检查；与 check-pi-semantics 四包门禁**逐项零重叠**——后者管「实装内部一致」，本矩阵管「派生锚点对锚点的跟随」，见 §2.1 分工声明）：
+守卫覆盖矩阵（1A 的比对项，全部为只读检查；与 check-pi-semantics 四包门禁**逐项零重叠**——后者管「实装内部一致」，本矩阵管「构建期派生锚点的跟随」，基准分声明/实装两类，见 §2.1 分工声明）：
 
 | 比对项 | 判定 |
 |--------|------|
@@ -214,13 +214,13 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 ### 3.3 关键决策与权衡
 
 **D1：pi 版本唯一锚点 = 根 package.json 的 pi-coding-agent 依赖版本（选定）**
-- **采用**：守卫脚本以它为 expected，比对 §3.2 矩阵全部锚点。
+- **采用**：守卫脚本以它为 expected 比对矩阵的声明基准项（build.yml env / 脚本默认值 / extensions peerDeps）；矩阵的实装基准项（快照 piAiVersion / 快照新鲜度 / KNOWN_PI_API_TYPES / pi-tui）对 node_modules 实装比对——实装与声明的一致性由四包门禁（check-pi-semantics）先行锁定，两级基准不冲突（改声明未 install 时：四包门禁红，提示先 install——本守卫以实装为准的项不受影响）。
 - **被否**：锚点放 shared/constants.ts（renderer 也加载，runtime 版本概念泄漏到渲染层）；锚点放 prepare-pi-resources.sh（shell 非结构化数据源，且它是被校验方之一，不能既当裁判又当运动员）。
-- **证据**：`package.json:31-51` 是 pnpm overrides 与 deps 的汇聚点，lockfile 由它驱动。与 check-pi-semantics 四包门禁的关系是**互补非重复**：门禁以 node_modules 实装为基准查「实装内部一致」（`check-pi-semantics.mjs:157-165`），本守卫以声明为锚点查「派生锚点对声明的跟随」——两侧基准与对象均不同。
+- **证据**：`package.json:31-51` 是 pnpm overrides 与 deps 的汇聚点，lockfile 由它驱动。与 check-pi-semantics 四包门禁的关系是**互补非重复**：门禁以 node_modules 实装为基准查「实装内部一致」（`check-pi-semantics.mjs:157-165`），本守卫查「派生锚点的跟随」（声明基准项对声明、实装基准项对实装）。
 - **效果**：G1 的「改一处」成立。
 
-**D2：守卫形态 = 独立 check 脚本 + CI（build.yml PR 路径）+ pre-commit 双挂载（选定）**
-- **采用**：`scripts/check-pi-sync.mjs`（node，能复用 gen 脚本的 pi-ai 源码提取手法）；CI 在现有 test job 前置一步；pre-commit 只对「触碰派生锚点文件」的提交触发（性能考虑，仿 `.githooks/` 既有按路径触发模式）。挂载实体已探明：pre-commit 生成逻辑在 tracked 的 `.githooks/install-hooks.sh`（check-pi-semantics 的 G1 区块在 `:1058-1077`，照同区块模式追加）。
+**D2：守卫形态 = 独立 check 脚本 + CI（ci.yml invariants job）+ pre-commit 双挂载（选定）**
+- **采用**：`scripts/check-pi-sync.mjs`（node，能复用 gen 脚本的 pi-ai 源码提取手法）；CI 挂 **ci.yml 的 invariants job**（与 check-pi-semantics 同 job 同模式，`ci.yml:433` 同区块——单一快失败入口；build.yml 不适用：它是 reusable workflow（`on: workflow_call`）且在 3 平台 matrix 中每平台各跑一遍）；pre-commit 只对「触碰派生锚点文件」的提交触发（性能考虑，仿 `.githooks/` 既有按路径触发模式）。挂载实体已探明：pre-commit 生成逻辑在 tracked 的 `.githooks/install-hooks.sh`（check-pi-semantics 的 G1 区块在 `:1058-1077`，照同区块模式追加）。
 - **被否**：只挂 CI 不挂 pre-commit（本地红到 CI 才发现，反馈慢）；vitest 测试承载（混入测试套件语义不清，且 pre-commit 无法选择性触发）；**并入 check-pi-semantics**（职责正交——语义漂移 vs 派生锚点；C-proc-08 已限定其 scope，并入膨胀约束边界；且 check-pi-semantics 刻意零第三方依赖单一职责，本守卫需要 yaml/git 工具面；check-* 家族并列是项目既有模式）。
 - **证据**：`.githooks/check_spawn_env_boundary.py` 先例（按路径触发的守卫 hook）；`.githooks/install-hooks.sh:1058-1077` + `.github/workflows/ci.yml:433`（check-pi-semantics 的 pre-commit + CI 双挂载先例）。
 - **效果**：G1 的「提交/CI 阶段拦截」成立。
@@ -234,7 +234,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 **D4：「有效模型」合并视图抽为 runtime 单点模块（选定）**
 - **采用**：把 listProviders 内联的「快照 ⊕ overlay」合并（`provider-config-helper.ts:337-343`）与 `getCatalogOverlayModels` 的读取逻辑收拢到一个模块（扩展 `provider-catalog.ts` 或新 `merged-catalog.ts`，实施层定）；对外暴露「provider X 的有效模型集（BuiltinModelSummary 形）」单一函数；listProviders 与 pi-provider-store 的 `builtinModelsById` 索引都改从它构建。
 - **被否**：在 pi-provider-store 里单独再写一份 overlay 合并（两处合并逻辑必然漂移——本次多真相正是这么产生的）；把校验搬到 listProviders（聚合层持 settings 写权，职责倒挂）。
-- **证据**：`provider-config-helper.ts:340`（展示已接）vs `pi-provider-store.ts:326-341`（校验未接，D3 分支只查快照）。
+- **证据**：`provider-config-helper.ts:340`（展示已接）vs `pi-provider-store.ts:326-341`（校验未接，auth-only catalog 分支只查快照）。
 - **效果**：失败模式 A 构造性消除——校验与展示同源。
 
 **D5：defaultModel 校验接入 overlay 的三态语义（选定）**
@@ -291,12 +291,13 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 | A2 | 守卫覆盖当前实证（G1） | 守卫开发完成后、U0 修复前，在**当前仓库**首跑（真实漏同步在场） | 必须报出 build.yml 0.84.1 等不一致项——本次真实漏同步作为守卫的第一次实战验收；U0 修复后复跑转绿（红→绿闭环，与 U0 同 PR 交付） |
 | A3 | 默认模型不被静默改写（G2） | 真机 dev 环境。**前置条件**：① 断网（防 Provider 页 mount 触发的 `refreshProviderCatalogs` 从 pi.dev 拉回真实数据整体替换假条目——fetch 失败走 fail-safe 保留缓存）；② 向 `<getDataDir>/provider-catalog-overlay.json` 写入真实形状测试条目（zai + 一个快照外模型 id 如 `glm-test-overlay`），其 lastModified 晚于 pi store 的 zai 条目与快照 catalogGeneratedAt（防 newer-wins 压制与 staleness 过滤）。然后进 Provider 页设其为默认 → 重启应用 → 查看默认模型与 `~/.xyz-agent/pi/agent/settings.json` | Composer 默认模型仍显示 `glm-test-overlay`；settings.json 未被 auto-fix 改写；runtime 日志无 auto-fix 记录 |
 | A4 | 态 3 pass-through 不劣化（G2，负面行为） | 真机 dev：默认模型设为快照内模型（glm-5.3）+ 构造态 3（own 缓存 `<getDataDir>/provider-catalog-overlay.json` 与 pi store `~/.xyz-agent/pi/agent/models-store.json` 中该 provider 条目**双双清空**——只删 own 不够，pi store 是第二数据源）→ 重启 | 默认模型原样保留（无 auto-fix 改写，`--model` 直传 pi 解析成功）；再设一个垃圾模型名验证态 3 trade-off：pi 报 model-not-found 且 settings.json 未被静默改写 |
-| A5 | 排序持久化（G3） | 真机：拖某项目到**首位**、另一项目到**中间位置**（显式覆盖密集重排语义）→ 重启 → 再切换到另一项目 → 再重启 | 顺序始终 = 拖拽落点顺序（拖到首位即首位，非尾部）；切换行为不重排有序项目；新项目出现在尾部 |
+| A5 | 排序持久化（G3） | 真机：拖某项目到**首位**、另一项目到**中间位置**（显式覆盖密集重排语义）→ 重启 → 再切换到另一项目 → 再重启；另以键盘通道复验一次（卡片 focus 后方向键交换位置，D8 同一 reorder 入口） | 顺序始终 = 拖拽落点顺序（拖到首位即首位，非尾部）；切换行为不重排有序项目；新项目出现在尾部；键盘交换与拖拽落点语义一致 |
 | A6 | 徽章数 = 列表实际数（G3） | 真机：多项目各含不同数量会话（含 1 个无归属 session） | 每张卡徽章数字 = 点击该卡后 SessionList 顶部的 totalCount；无归属 session 计入默认项目 |
 | A7 | 1 步切换（G3） | 真机点击非活跃项目卡 | 视图立即切换到该项目（无中间展开态）；active 卡样式反白 |
-| A8 | 导入触发刷新（G1/G2，D9） | 真机联网：导入一份供应商配置 | 导入成功后 `<getDataDir>/provider-catalog-overlay.json` mtime 更新；随后 `listProviders` 结果含 overlay 新模型（与快照 diff 可见） |
+| A8 | 导入触发刷新（G2，D9） | 真机联网：导入一份供应商配置 | 导入成功后 `<getDataDir>/provider-catalog-overlay.json` mtime 更新；随后 `listProviders` 结果含 overlay 新模型（与快照 diff 可见） |
+| A9 | 态 2 快照裁定 + auto-fix（G2，负面行为的显式验证） | 真机 dev：向 overlay 缓存写入 zai 条目，`lastModified: 0`（404/501 语义——远程声明无此目录），`models` 含一个快照外模型 id；断网后设该模型为默认 → 重启 | 快照裁定生效：默认模型被 auto-fix 改回快照首模型 + runtime 日志有 auto-fix 记录（console.warn 可见）——态 2 的降级路径按设计发生，而非静默 |
 
-设计阶段即 testable：A1/A2 纯脚本可跑；A3/A4 用真实数据文件构造（写真实缓存路径，非 mock 组件）；A5-A8 为真机操作断言。
+设计阶段即 testable：A1/A2 纯脚本可跑；A3/A4/A9 用真实数据文件构造（写真实缓存路径，非 mock 组件）；A5-A8 为真机操作断言。
 
 ---
 
@@ -307,16 +308,17 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 | 单元 | 内容 | justification | 独立验收 | 依赖 |
 |------|------|--------------|---------|------|
 | **U0（P0，立即）** | 修复本次实证漏同步：`build.yml:47` → 0.84.4；t10 基线核对后更新（1290 / deepseek 3 模型——人工确认 0.84.4 生成物内容合理） | CI 红态 + 混装包风险是现实损害；「完成即提交」纪律要求恢复绿态 | 手跑 t10 绿 + 目视 build.yml | 与 U1 组成红→绿闭环（见下） |
-| **U1** | `check-pi-sync.mjs` 守卫脚本（§3.2 矩阵 7 项）+ CI 挂载 + pre-commit 按路径触发 | G1 主体；优先级高于 U2（混装包风险 > 校验视图缺口）。**与 U0 同 PR 交付**：守卫首跑于 U0 修复前，真实漏同步即首个测试用例（A2）；U0 修复后复跑转绿（A1），既守卫有效性验收天然嵌入，又避免「CI 挂上守卫即红」的中间窗口 | A1 + A2 | 与 U0 同 PR（红→绿闭环） |
-| **U2** | 合并目录视图单点（D4）+ pi-provider-store 接入（D5 保守语义）+ t10 自包含化（D3，属 gen 脚本改造，与 U1 的快照新鲜度检查协同） | G2 主体；失败模式 A 是用户配置损坏级缺陷 | A3 + A4 + 既有 16 用例回归（`provider-catalog-refresh.test.ts` 等） | 无硬依赖（建议在 U1 后：守卫先行保护快照锚点） |
+| **U1** | `check-pi-sync.mjs` 守卫脚本（§3.2 矩阵全量，当前 8 项）+ CI 挂载（ci.yml invariants job）+ pre-commit 按路径触发 | G1 主体；优先级高于 U2（混装包风险 > 校验视图缺口）。**与 U0 同 PR 交付**：守卫首跑于 U0 修复前，真实漏同步即首个测试用例（A2）；U0 修复后复跑转绿（A1），既守卫有效性验收天然嵌入，又避免「CI 挂上守卫即红」的中间窗口 | A1 + A2 | 与 U0 同 PR（红→绿闭环） |
+| **U2** | 合并目录视图单点（D4）+ pi-provider-store 接入（D5 三态语义）+ t10 自包含化（D3，属 gen 脚本改造，与 U1 的快照新鲜度检查协同） | G2 主体；失败模式 A 是用户配置损坏级缺陷 | A3 + A4 + A9（态 2 快照裁定）+ 既有 16 用例回归（`provider-catalog-refresh.test.ts` 等） | 无硬依赖（建议在 U1 后：守卫先行保护快照锚点） |
 | **U3** | 导入成功后触发刷新（D9） | 小增量，复用既有模式 | A8 | U2（同一链路） |
 | **U4** | ProjectSwitcher 3A 重写：`userOrder` 字段（shared 类型 + recentProjects 两段式排序）+ 2 列网格组件 + 原生 DnD + 键盘 reorder + badge computed（与 SessionList 规则提取共享） | G3 主体；demo 已定稿参数（26px pill / gap 4px / radius-sm / active `#3f3f46`） | A5 + A6 + A7 | 无 |
 
 ### 文件改动地图（高层）
 
 - U0：`.github/workflows/build.yml`、`packages/runtime/scripts/__tests__/gen-builtin-providers.test.ts`
-- U1：新增 `scripts/check-pi-sync.mjs`；`.github/workflows/build.yml`（挂载）；`.githooks/`（按路径触发）
+- U1：新增 `scripts/check-pi-sync.mjs`；`.github/workflows/ci.yml`（invariants job 挂载，见 D2）；`.githooks/`（按路径触发）
 - U2：`packages/runtime/src/services/provider-catalog*.ts`（合并视图收拢）、`packages/runtime/src/infra/pi/pi-provider-store.ts`（builtinModelsById 改建索引源）、`packages/runtime/scripts/gen-builtin-providers.mjs`（指纹入 header）、t10 重写
+- U3：`packages/runtime/src/transport/settings-message-handler.ts`（导入成功后触发刷新）、`packages/runtime/src/services/config-service.ts`
 - U4：`packages/shared/src/project.ts`（userOrder）、`packages/renderer/src/stores/project.ts`（排序）、重写 `packages/renderer/src/components/sidebar/ProjectSwitcher.vue`、badge 计数共享函数（新 composable 或 utils）
 - `docs/page-design/project-switcher-demo.html`（当前 untracked）随 U4 一并提交
 
@@ -343,3 +345,5 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 
 - 2026-08-29（初版）：三问题终态分析 + 对抗式审查（4 must-fix + 4 suggestion 全部修订）。
 - 2026-08-29（merge origin/main 后增量评估修订）：main 合入 pi-semantics 守卫体系与 C-pi-12 格局反转后，经增量对抗评估修订——① §2.1 根因修正（A1 类已有四包门禁 + 两守卫分工声明 + merge 实证）② §3.2 方向 2 补方案 2D（runtime 直读 pi-ai，裁决维持 2A，理由：compat 时间炸弹的构建期/运行期失败模式不对称；2D 登记为演进触发条件）③ 守卫矩阵补 pi-tui 项（check-pi-semantics PI_PKGS 三包缺口补位）④ D1/D2 补与 check-pi-semantics 的互补关系与挂载先例 ⑤ §5 约束登记形态明确独立条目。方向③（ProjectSwitcher）与 D4-D9 经评估确认零影响，未改动。
+- 2026-08-29（第 1 轮全量复审修订）：1 must-fix + 10 suggestion 全部修复——CI 挂载点三处矛盾收敛为 ci.yml invariants job（唯一挂载实体，D2/D3/§5 统一）；矩阵基准分声明/实装两类（§2.1/§3.2/D1 三处措辞统一）；G1 收窄至矩阵覆盖面（A6 类文档锚点显式排除）；G2 补态 2 例外限定 + 新增 A9 态 2 验收场景；「D3 分支」撞名改「auth-only catalog 分支」；行号漂移修正（rpc-client :191、troubleshooting :296）；§5 计数改「矩阵全量」。
+- 2026-08-29（第 2 轮验证性复审修订）：2 must-fix + 6 suggestion 全部修复——§5 文件改动地图 U1 行挂载点漏网修正（ci.yml）+ U2 独立验收补 A9；A8 回溯目标 G1/G2 → G2；地图补 U3 行；A5 补键盘 reorder 复验（D8 同一入口）。两 must-fix 均为第 1 轮修复的下游漂移，方案本体零新发现。
