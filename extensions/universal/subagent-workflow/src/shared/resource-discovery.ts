@@ -18,7 +18,7 @@ import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
 import type { DiscoveryRoot } from "../core/host-services.ts";
-import { getLogger } from "../core/logger";
+import { getLogger } from "../core/logger.ts";
 
 // 模块级 logger（facade：configureCore 前落缺省 console，配置后透明切换宿主实现——
 // pi 壳经 pi-host 桥接到宿主结构化日志 appendEntry 通路，输出面不变）

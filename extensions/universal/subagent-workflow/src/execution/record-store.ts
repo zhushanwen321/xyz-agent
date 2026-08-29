@@ -25,7 +25,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { getLogger } from "../core/logger";
+import { getLogger } from "../core/logger.ts";
 
 import { getCurrentActivity, getDisplayItems, getEventLog, markReconstructedStatus, snapshot as toSnapshot } from "./execution-record.ts";
 import { readFinalizedReason, writeFinalized } from "./finalized-marker.ts";

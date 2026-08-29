@@ -16,8 +16,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
-vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
-vi.mock("../../core/logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 import { getChildByRecord, killAllSpawnedChildren, spawnedChildren } from "../session-runner.ts";
 

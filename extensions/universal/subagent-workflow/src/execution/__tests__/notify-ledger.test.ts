@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
-vi.mock("../../core/logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 import { clearRateLimiterState, setPiHandle } from "@zhushanwen/pi-extension-logger";
 import { createDelivery } from "@xyz-agent/session-delivery";

@@ -25,7 +25,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { getLogger } from "../../../../core/logger";
+import { getLogger } from "../../../../core/logger.ts";
 
 import {
   buildSchemaEmulationSegment,

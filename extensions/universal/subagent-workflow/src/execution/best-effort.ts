@@ -11,7 +11,7 @@
 // console 调用。本 helper 是普通函数调用（ExpressionStatement），既非空也非仅
 // console，故合规。helper 函数体内部经共享 logger 路由（不裸 console）。
 
-import { getLogger } from "../core/logger";
+import { getLogger } from "../core/logger.ts";
 
 const logger = getLogger("subagents");
 

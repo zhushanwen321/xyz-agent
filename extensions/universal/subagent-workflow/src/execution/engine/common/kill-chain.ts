@@ -7,7 +7,7 @@
 //
 // 为什么放公共层：没有任何引擎有 CLI 级超时（§2.2 表），杀链写一次全引擎复用（D4）。
 
-import { getLogger } from "../../../core/logger";
+import { getLogger } from "../../../core/logger.ts";
 
 import { engineTimeoutDetail } from "./errors.ts";
 import type { AgentOutcome, AgentTaskSpec } from "../types.ts";

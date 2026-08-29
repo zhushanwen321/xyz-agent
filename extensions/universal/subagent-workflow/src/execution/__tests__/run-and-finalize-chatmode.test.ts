@@ -21,8 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
-vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
-vi.mock("../../core/logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：runSpawn 受控返回 result，killAllSpawnedChildren 空实现。
 // 注意：必须在 import SubagentService 之前 mock（vi.mock 提升到顶部）。

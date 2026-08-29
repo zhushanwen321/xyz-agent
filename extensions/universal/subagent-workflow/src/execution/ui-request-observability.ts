@@ -3,7 +3,7 @@
 // UI 请求可观测性状态（从 subagent-service.ts 提取，降低主文件行数）。
 // 持有 sessionMode + handler 缺失告警去重集合，供 SubagentService 委托调用。
 
-import { getLogger } from "../core/logger";
+import { getLogger } from "../core/logger.ts";
 
 import type { ExtensionMode } from "./host-mode.ts";
 

@@ -17,7 +17,7 @@ import { appendFile, mkdir, open } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { getLogger } from "../../../core/logger";
+import { getLogger } from "../../../core/logger.ts";
 
 import type { AgentEvent } from "../../types.ts";
 

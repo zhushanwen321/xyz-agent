@@ -40,7 +40,7 @@ import {
 } from "../resource-discovery.ts";
 // logger 断言目标随源切换（u0-data-discovery）：resource-discovery 的 logger 是
 // core facade（同 component 单例引用），spyOn facade 实例即拦截模块内 logger 调用
-import { getLogger } from "../../core/logger";
+import { getLogger } from "../../core/logger.ts";
 
 // ============================================================
 // helpers

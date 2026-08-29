@@ -21,7 +21,7 @@
 // core_host_not_configured（显式报错取代缺省静默漂目录）。
 
 import { getHostServices } from "../../../core/host-services.ts";
-import { getLogger } from "../../../core/logger";
+import { getLogger } from "../../../core/logger.ts";
 
 const logger = getLogger("subagents");
 

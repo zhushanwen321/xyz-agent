@@ -21,9 +21,11 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { loggerMock } = vi.hoisted(() => ({
-  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
+// 被测真实链路（session-runner/notifier/session-pending）的 logger 已切 core facade——
+// mock 目标跟随消费方实际 import 源（旧 pi-extension-logger mock 已无消费方，双 mock 清理移除）。
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 vi.mock("node:child_process", async () => {
   const { FakeChild } = await import("./helpers/spawn-mock.ts");

@@ -42,8 +42,7 @@ const { loggerMock, rafCapture, chainPromises } = vi.hoisted(() => ({
   // 杜绝后台链跨用例游走与 runner 竞态（宽松挂起隔离差的机器上表现为事件循环级冻结）。
   chainPromises: [] as Array<Promise<unknown>>,
 }));
-vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
-vi.mock("../core/logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 vi.mock("../execution/session-runner.ts", () => ({
   runSpawn: vi.fn(async () => ({

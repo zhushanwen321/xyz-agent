@@ -24,7 +24,7 @@ import { normalizeRef, WORKFLOW_REF_EXT } from "../shared/agent-ref.ts";
 export type { WorkflowMeta, WorkflowSource };
 
 import { getHostServices } from "../core/host-services.ts";
-import { getLogger } from "../core/logger";
+import { getLogger } from "../core/logger.ts";
 
 const logger = getLogger("config-loader");
 

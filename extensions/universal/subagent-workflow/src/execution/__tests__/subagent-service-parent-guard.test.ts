@@ -23,8 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
-vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
-vi.mock("../../core/logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner（import 链需要 runSpawn/killAllSpawnedChildren/getChildByRecord 存在）
 vi.mock("../session-runner.ts", () => ({

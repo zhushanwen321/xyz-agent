@@ -13,7 +13,7 @@
 
 import type { ChildProcess } from "node:child_process";
 
-import { getLogger } from "../core/logger";
+import { getLogger } from "../core/logger.ts";
 
 import type { UiRequest } from "./dialog-queue.ts";
 // 类型再导出：dialog-queue.ts 是 UiRequest/UiResponse/UiRequestHandler 的规范来源，

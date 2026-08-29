@@ -19,7 +19,7 @@
 //   setUiRequestHandler——/resume /fork 复用 existingService 时旧 handler 可能已失效。
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getLogger } from "../core/logger";
+import { getLogger } from "../core/logger.ts";
 
 import { DialogGlobalQueue, type UiRequest, type UiRequestHandler, type UiResponse } from "./dialog-queue.ts";
 import { type HostMode, resolveHostMode } from "./host-mode.ts";

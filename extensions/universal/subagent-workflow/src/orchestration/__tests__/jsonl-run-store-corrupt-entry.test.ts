@@ -23,7 +23,7 @@ const { loggerMock } = vi.hoisted(() => ({
     error: vi.fn(),
   },
 }));
-vi.mock("../../core/logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 import * as fs from "node:fs";
 import * as os from "node:os";

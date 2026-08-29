@@ -10,7 +10,7 @@
 import type { ChildProcess } from "node:child_process";
 import * as crypto from "node:crypto";
 
-import { getLogger } from "../core/logger";
+import { getLogger } from "../core/logger.ts";
 
 import type { UiResponse } from "./dialog-queue.ts";
 

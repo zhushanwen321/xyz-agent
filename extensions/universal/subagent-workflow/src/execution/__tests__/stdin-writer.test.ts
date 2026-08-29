@@ -30,7 +30,7 @@ const { loggerMock } = vi.hoisted(() => ({
     info: vi.fn(),
   },
 }));
-vi.mock("../../core/logger", () => ({
+vi.mock("../../core/logger.ts", () => ({
   getLogger: () => loggerMock,
 }));
 

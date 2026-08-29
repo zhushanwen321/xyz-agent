@@ -34,7 +34,7 @@ vi.mock("@zhushanwen/pi-extension-logger", () => ({
   getLogger: () => loggerMock,
   setPiHandle: vi.fn(),
 }));
-vi.mock("../../core/logger", () => ({
+vi.mock("../../core/logger.ts", () => ({
   getLogger: () => loggerMock,
 }));
 
