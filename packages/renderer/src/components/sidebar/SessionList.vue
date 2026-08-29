@@ -119,6 +119,7 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { dirNameOf } from '@xyz-agent/ui'
+import { collectNamedProjectIds, sessionBelongsToProject } from '@/composables/logic/project-session'
 import { useProjectStore } from '@/stores/project'
 import SessionItem from './SessionItem.vue'
 import ForkGroup from './ForkGroup.vue'
@@ -160,22 +161,17 @@ const emit = defineEmits<{
  * 过滤粒度是 **session 级**：同一 cwd 组内可混合不同归属的 session（project 可跨目录，
  * 同一目录下不同 session 可服务不同 project），按 session.projectId 逐条匹配后重组分组。
  *
- * - 命名 project：只保留 projectId === activeProjectId 的 session
- * - 默认项目（name 空）：未归类（无 projectId）+ 孤儿（归属的 project 已删除）聚合——
- *   保证任何 session 都至少在一个项目视图中可见，不因 project 删除而丢失可见性
+ * 过滤规则本体已提取到 sessionBelongsToProject（composables/logic/project-session.ts SSOT），
+ * ProjectSwitcher 徽章计数消费同一函数——保证徽章数字与点击后本列表实际显示数恒一致。
  *
  * 过滤后无匹配 → totalCount=0 走空态（「暂无会话」+ 新建按钮）。
  */
 const visibleGroups = computed<SessionGroup[]>(() => {
   const pid = projectStore.activeProjectId
   const isDefault = projectStore.isDefaultProject
-  const knownIds = new Set(
-    projectStore.projects.filter((p) => p.name).map((p) => p.id),
-  )
-  const matches = (s: SessionGroup['sessions'][number]): boolean => {
-    if (isDefault) return !s.projectId || !knownIds.has(s.projectId)
-    return s.projectId === pid
-  }
+  const knownIds = collectNamedProjectIds(projectStore.projects)
+  const matches = (s: SessionGroup['sessions'][number]): boolean =>
+    sessionBelongsToProject(s, pid, isDefault, knownIds)
   return props.groups
     .map((g) => ({ cwd: g.cwd, sessions: g.sessions.filter(matches) }))
     .filter((g) => g.sessions.length > 0)

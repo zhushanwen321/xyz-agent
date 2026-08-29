@@ -1,60 +1,114 @@
 <script setup lang="ts">
 /**
- * ProjectSwitcher —— v6 D14 Project 一级导航（UI 形态对齐 v6 demo，spec §6.2）。
+ * ProjectSwitcher —— ProjectSwitcher 3A：2 列卡片网格（形态权威 docs/page-design/
+ * project-switcher-demo.html 变体 3A 单行 pill）+ 1 步点击切换 + 拖拽/键盘排序（D7/D8）。
  *
- * 折叠态 = 当前 project 名 + 展开箭头；展开态 = project 列表（hover 出删除）+ 底部「+ 新建项目」。
- *  - 新建：点击展开 input，Enter 创建（Esc 取消 / blur 提交），创建后设为活跃 project。
- *  - 删除：点击 trash → ConfirmDialog（variant danger）确认 → removeProject；
- *    删活跃项自动切首个；保底不删最后一个（store.removeProject 守卫）。
- *  - 折叠时一并取消未提交的新建输入（demo toggle 语义）。
+ * 形态（demo 3A）：单行 pill 卡（26px）= 项目名（截断 + title 全名兜底）+ 会话数徽章；
+ * 网格尾部「新建」卡（点击展开内联 Input，Enter/blur 提交、Esc 取消）。
  *
- * 数据层（2026-08-04 语义修正 + 持久化迁移，恢复自 343453206^）：
- *  - session 按 projectId 直接关联过滤（SessionList 消费，默认项目 = 未归类 + 孤儿聚合）。
- *  - 自动归因：新建 session 归属当前 activeProject（create 透传 projectId）。
- *  - 手动归类：SessionItem「归入项目」菜单（session.setProject RPC）。
- *  - project 列表持久化迁 runtime projects.json（ProjectStore，localStorage 仅首启迁移）。
+ * 排序（D7）：卡片顺序 = store.recentProjects 两段式（用户序段 userOrder 升序在前 +
+ * 自动序段 active 置顶/lastUsedAt 降序在后）；drop 与方向键（←→↑↓，focus 后）调用
+ * store.reorderProject 同一入口，提交时对用户序段密集重编号 0..n-1。
+ *
+ * 拖拽（D8）：原生 HTML5 DnD（draggable + dragstart/dragover/drop）——全仓零 dnd 库依赖
+ * （@dnd-kit 是 React 库，Vue 不可用，设计已裁决）。
+ *
+ * 徽章：computeProjectSessionCounts 与 SessionList 过滤共用 sessionBelongsToProject
+ * 规则 SSOT——徽章数字 = 点击该卡后 SessionList 实际显示的会话数；默认项目计入
+ * 未归类 + 孤儿 session。
+ *
+ * 删除：demo 3A 卡片无删除按钮（26px 单行放不下），保留既有删除能力走右键 ContextMenu
+ * （reka 原语，SessionItem 同范式）→ ConfirmDialog 确认；默认项目卡不渲染删除项
+ * （review MF-1 双保险，与 store.removeProject 守卫一致）。
+ *
+ * 数据层：session 按 projectId 直接关联过滤（SSOT 见 shared/project.ts）；列表持久化
+ * runtime projects.json（deep watch → 全量 save，userOrder 随之持久化，跨重启稳定）。
  */
 import { computed, nextTick, ref, type ComponentPublicInstance } from 'vue'
-import { ChevronDown, Folder, Plus, Trash2 } from '@lucide/vue'
+import { Plus, Trash2 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  ContextMenuPortal,
+  ContextMenuContent,
+  ContextMenuItem,
+} from 'reka-ui'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { useProjectStore } from '@/stores/project'
+import { useSessionStore } from '@/stores/session'
+import { computeProjectSessionCounts } from '@/composables/logic/project-session'
 
 const { t } = useI18n()
 const projectStore = useProjectStore()
+const sessionStore = useSessionStore()
 
-// ── 折叠/展开两态（demo 形态：默认折叠，点击 toggle 展开列表）──
-const expanded = ref(false)
-
-function toggle() {
-  expanded.value = !expanded.value
-  // 折叠时一并取消未提交的新建输入
-  if (!expanded.value) creating.value = false
-}
-
-// ── 当前 project（activeProject fallback 列表第一个；name 空时 fallback i18n defaultName）──
-const current = computed(() => projectStore.activeProject)
-const currentName = computed(
-  () => current.value?.name || t('sidebar.projectSwitcher.defaultName'),
+// ── 徽章计数（与 SessionList 过滤同一规则 SSOT）──
+const sessionCounts = computed(() =>
+  computeProjectSessionCounts(sessionStore.groups, projectStore.projects),
 )
 
-// ── 删除确认流（ConfirmDialog variant=danger）──
+function displayName(p: { name: string }): string {
+  return p.name || t('sidebar.projectSwitcher.defaultName')
+}
+
+function select(id: string) {
+  projectStore.setActiveProject(id)
+}
+
+// ── 原生 HTML5 DnD（D8；拖拽与键盘共用 reorderProject 单一入口）──
+const dragId = ref<string | null>(null)
+const overId = ref<string | null>(null)
+
+function onDragStart(e: DragEvent, id: string) {
+  dragId.value = id
+  e.dataTransfer?.setData('text/plain', id)
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+
+function onDragOver(e: DragEvent, id: string) {
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  overId.value = id
+}
+
+function onDragLeave(id: string) {
+  if (overId.value === id) overId.value = null
+}
+
+function onDrop(e: DragEvent, id: string) {
+  e.preventDefault()
+  overId.value = null
+  if (dragId.value) projectStore.reorderProject(dragId.value, id)
+  dragId.value = null
+}
+
+function onDragEnd() {
+  dragId.value = null
+  overId.value = null
+}
+
+// ── 键盘 reorder（D8 键盘可达性）：focus 卡片后 ↑/← 与前一位交换、↓/→ 与后一位交换，
+//    与 drop 走同一 reorderProject；v-for 以 project.id 为 key，交换后元素复用焦点不丢。
+function moveCard(id: string, delta: -1 | 1) {
+  const order = projectStore.recentProjects
+  const idx = order.findIndex((p) => p.id === id)
+  const neighbor = order[idx + delta]
+  if (!neighbor) return
+  projectStore.reorderProject(id, neighbor.id)
+}
+
+// ── 删除流（右键菜单 → ConfirmDialog variant=danger；默认项目卡不渲染菜单）──
 const deleteOpen = ref(false)
 const pendingDeleteId = ref<string | null>(null)
 const pendingDeleteName = computed(
   () => projectStore.projects.find((p) => p.id === pendingDeleteId.value)?.name ?? '',
 )
 
-// ── 新建流（input / 按钮 互斥）──
-const creating = ref(false)
-const draft = ref('')
-const inputRef = ref<ComponentPublicInstance | null>(null)
-
-function select(id: string) {
-  projectStore.setActiveProject(id)
-  expanded.value = false
+function canDelete(p: { name: string }): boolean {
+  return Boolean(p.name) && projectStore.projects.length > 1
 }
 
 function requestDelete(id: string) {
@@ -67,6 +121,11 @@ function confirmDelete() {
   pendingDeleteId.value = null
   deleteOpen.value = false
 }
+
+// ── 新建流（网格尾部 add 卡 / Input 互斥；Esc 取消 / Enter、blur 提交）──
+const creating = ref(false)
+const draft = ref('')
+const inputRef = ref<ComponentPublicInstance | null>(null)
 
 function startCreate() {
   creating.value = true
@@ -92,78 +151,99 @@ function cancelCreate() {
 </script>
 
 <template>
-  <div class="mb-1 mx-1 overflow-hidden rounded-md border border-border bg-bg-input">
-    <!-- 折叠态：当前 project 行（ghost 行，点击展开/收起） -->
-    <Button
-      variant="ghost"
-      type="button"
-      class="flex h-auto w-full items-center justify-start gap-1.5 rounded-none px-2 py-1.5 text-[length:var(--text-xs)] font-medium text-neutral-fg"
-      :aria-expanded="expanded"
-      data-testid="project-switcher-current"
-      @click="toggle"
-    >
-      <Folder class="size-3.5 shrink-0 text-neutral-mid" />
-      <span class="flex-1 truncate text-left">{{ currentName }}</span>
-      <ChevronDown
-        class="size-3 shrink-0 text-neutral-dim transition-transform duration-[var(--duration-fast)] ease-[var(--ease)]"
-        :class="{ 'rotate-180': expanded }"
+  <div class="mb-1 mx-1" data-testid="project-switcher">
+    <!-- 2 列卡片网格（demo 3A：gap 4px / 单行 pill 26px / radius-sm） -->
+    <div class="grid grid-cols-2 gap-1" data-testid="project-grid">
+      <template v-for="p in projectStore.recentProjects" :key="p.id">
+        <!-- 右键菜单（删除入口；默认项目卡无菜单项 → Portal 条件渲染，不吞右键） -->
+        <ContextMenuRoot>
+          <ContextMenuTrigger as-child>
+            <!-- 卡片：div role=button（旧列表项同范式，避免 button 嵌套 input/触发器）；
+                 active 态沿用侧栏既有范式 bg-surface + text-accent（SessionItem/旧列表一致）。 -->
+            <div
+              role="button"
+              tabindex="0"
+              draggable="true"
+              data-testid="project-card"
+              :data-project-id="p.id"
+              class="flex h-[26px] min-w-0 cursor-pointer select-none items-center gap-1.5 rounded-sm border px-2 text-[length:var(--text-xs)] transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
+              :class="[
+                p.id === projectStore.activeProjectId
+                  ? 'border-transparent bg-surface text-accent'
+                  : 'border-transparent text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg',
+                dragId === p.id ? 'opacity-45' : '',
+                overId === p.id && dragId !== p.id ? 'border-accent border-dashed' : '',
+              ]"
+              :title="displayName(p)"
+              :aria-label="displayName(p)"
+              @click="select(p.id)"
+              @keydown.enter="select(p.id)"
+              @dragstart="onDragStart($event, p.id)"
+              @dragover="onDragOver($event, p.id)"
+              @dragleave="onDragLeave(p.id)"
+              @drop="onDrop($event, p.id)"
+              @dragend="onDragEnd"
+              @keydown.up.prevent="moveCard(p.id, -1)"
+              @keydown.left.prevent="moveCard(p.id, -1)"
+              @keydown.down.prevent="moveCard(p.id, 1)"
+              @keydown.right.prevent="moveCard(p.id, 1)"
+            >
+              <span class="min-w-0 flex-1 truncate text-left" data-testid="project-card-name">
+                {{ displayName(p) }}
+              </span>
+              <!-- 会话数徽章：规则与 SessionList 过滤共享（SSOT），数字 = 点击后列表实际条数 -->
+              <span
+                data-testid="project-card-count"
+                class="flex-none rounded-full px-[5px] text-center text-[length:var(--text-3xs)] leading-[15px]"
+                :class="
+                  p.id === projectStore.activeProjectId
+                    ? 'bg-surface-hover text-accent'
+                    : 'bg-surface-hover text-neutral-dim'
+                "
+              >
+                {{ sessionCounts.get(p.id) ?? 0 }}
+              </span>
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuPortal v-if="canDelete(p)">
+            <ContextMenuContent
+              data-testid="project-context-menu"
+              class="z-[1100] min-w-[160px] rounded-md border border-border-strong bg-bg-elevated p-1 text-neutral-fg shadow-2 outline-none"
+            >
+              <ContextMenuItem
+                data-testid="project-delete-item"
+                class="flex h-auto w-full cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-[length:var(--text-xs)] text-danger/90 outline-none hover:bg-danger-soft hover:text-danger [&_svg]:size-[13px]"
+                @select="requestDelete(p.id)"
+              >
+                <Trash2 />
+                <span>{{ t('sidebar.projectSwitcher.deleteProject') }}</span>
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenuPortal>
+        </ContextMenuRoot>
+      </template>
+
+      <!-- 新建：add 卡 / 内联 Input 互斥（Esc 取消 / Enter、blur 提交） -->
+      <Input
+        v-if="creating"
+        ref="inputRef"
+        v-model="draft"
+        data-testid="project-create-input"
+        class="h-[26px] rounded-sm border-border-strong bg-bg-input px-2 text-[length:var(--text-xs)] text-neutral-fg"
+        :placeholder="t('sidebar.projectSwitcher.namePlaceholder')"
+        @keydown.enter.prevent="commitCreate"
+        @keydown.esc.prevent="cancelCreate"
+        @blur="commitCreate"
       />
-    </Button>
-
-    <!-- 展开态：project 列表（popover 范式：bg-elevated + border-strong + shadow-2） -->
-    <div
-      v-if="expanded"
-      data-testid="project-list"
-      class="flex max-h-36 flex-col gap-px overflow-y-auto border-t border-border-strong bg-bg-elevated p-1"
-    >
-      <!-- list item：div role=button + hover 出删除（避免 button 嵌套 button） -->
-      <div
-        v-for="p in projectStore.recentProjects"
-        :key="p.id"
-        data-testid="project-item"
-        role="button"
-        tabindex="0"
-        class="group flex cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-[5px] text-[length:var(--text-2xs)] transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
-        :class="p.id === projectStore.activeProjectId
-          ? 'bg-surface text-accent'
-          : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg'"
-        @click="select(p.id)"
-        @keydown.enter="select(p.id)"
-      >
-        <span class="flex-1 truncate">{{ p.name || t('sidebar.projectSwitcher.defaultName') }}</span>
-        <!-- 删除按钮：命名 project 且多 project 时才显（保底不删最后一个；默认项目行永不显，review MF-1 双保险）；hover item 淡入 -->
-        <Button
-          v-if="p.name && projectStore.projects.length > 1"
-          variant="ghost"
-          class="size-5 shrink-0 rounded-sm p-0 text-neutral-dim opacity-0 transition-opacity duration-[var(--duration-fast)] hover:bg-danger-soft hover:text-danger group-hover:opacity-100 group-focus-within:opacity-100"
-          :title="t('sidebar.projectSwitcher.deleteProject')"
-          :aria-label="t('sidebar.projectSwitcher.deleteProject')"
-          @click.stop="requestDelete(p.id)"
-        >
-          <Trash2 class="size-3.5" />
-        </Button>
-      </div>
-
-      <!-- 新建项目：input / 按钮互斥 -->
-      <div v-if="creating" class="p-0">
-        <Input
-          ref="inputRef"
-          v-model="draft"
-          class="mt-px h-[26px] rounded-sm border-border-strong bg-bg-input px-2 text-[length:var(--text-2xs)] text-neutral-fg"
-          :placeholder="t('sidebar.projectSwitcher.namePlaceholder')"
-          @keydown.enter.prevent="commitCreate"
-          @keydown.esc.prevent="cancelCreate"
-          @blur="commitCreate"
-        />
-      </div>
       <Button
         v-else
         variant="ghost"
         type="button"
-        class="mt-px h-auto w-full justify-start gap-1.5 rounded-sm px-1.5 py-[5px] text-[length:var(--text-2xs)] text-neutral-dim"
+        data-testid="project-add-btn"
+        class="h-[26px] w-full justify-center gap-1 rounded-sm border border-dashed border-border-strong text-[length:var(--text-xs)] text-neutral-dim [&_svg]:size-3"
         @click="startCreate"
       >
-        <Plus class="size-3 shrink-0 text-neutral-dim" />
+        <Plus class="shrink-0" />
         <span>{{ t('sidebar.projectSwitcher.newProject') }}</span>
       </Button>
     </div>
