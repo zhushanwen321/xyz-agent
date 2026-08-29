@@ -93,6 +93,8 @@ graph TD
 | 13 | u4 | 接线经 configService.refreshProviderCatalogs() 薄包装（handler 不直调 impl）——导入的新 provider 须经该包装的范围过滤（kind==='catalog'）才会被刷到；config-service.ts 零改动 | 合理 |
 | 14 | u4 | refresh 完成后追加 broadcastProviderList 二次广播（D9「复用 fire-and-forget + broadcast 模式」动机要求，与 setSkillDirs 先例同构）；伴随 T9 断言 1→2 次 | 合理（审查裁决：二次广播是 A8 在 UI 可达的必然组成；设计 D9 采用行已显式化） |
 | 15 | u6 | 缺 mock 文件实际 8 个（预期 1-3）：3 个直接 mount + 5 个经 SettingsModal 间接 mount，逐一按所在文件既有 mock 风格补齐 | 合理（计划外小修，领地随实际扩展） |
+| 16 | 验收 | A9 态 2 改写目标 = 合并视图首项 glm-4.6v（pi store 新鲜目录首模型，真实可用）而非验收措辞的「快照首模型 glm-4.7」——设计写验收时按双数据源（own+快照）措辞，真机第三源 pi models-store 在 own 过期后仍新鲜且参与合并视图 | 合理（auto-fix 目标始终是合法可用模型，优于快照旧数据；设计 A9 措辞待下轮文档修订同步） |
+| 17 | 验收 | A8 触发路径真机走了「进 Provider 页」（commit 2bcdfb756 既有链路，实证 overlay 落盘 + overlay-only 模型 UI 可见）；「导入成功触发」fire-and-forget 语义由 u4 4 个单测锁定（真实 handler 全链路），导入文件对话框 UI 路径未走真机 | 合理（等效覆盖：refresh 链路真机实证 + 触发语义单测锁定） |
 
 ## 6 状态表
 
@@ -128,3 +130,4 @@ graph TD
 - 2026-08-29（一致性审查清零）：三区对抗审查（runtime 目录单真相 / pi-sync 守卫 / 项目切换前端）—— unreasonable 3 条全 low 级且已定向修复（守卫 S1 幻觉参数 --root 清除 + AGENTS.md:28 软锚点 0.84.4 + 默认卡删除菜单测试断言真实化），复验绿；doc_errors 4 条已修（设计文档 5 处措辞修订，见设计变更历史末条；#11 登记引用失实改引 D3）；#5/#14 裁决合理、#10 裁决 doc_error 并同步设计。 unreasonable 清零 → 转双级验收。
 - 2026-08-29（Gate A：FAIL → 修复 → PASS）：首轮 runtime 全量 40 failed（4 个本计划引入：u4 handler 测试 mock 漏补 ×3 + u3 store 测试断言未随 D5 演进 ×1，根因均为增量回归漏扫 `test/` 根级目录；35 个存量：env-builder mock 缺失 ×33 + real-pi ×2）。修复批次 820a8700c（含计划外 u7：mock 族修复 importOriginal spread 长期方案 + tool-call-index 哨兵对齐 pi 0.84.4 `toolcall_start` 顶层 id/toolName wire 契约——pi-semantics 体系外的漏网探针，send-queue-e2e 判 flaky 4 连绿不修）。复验：runtime 382 files/4089 tests exit 0 + renderer 348 files/3584 tests exit 0 + lint 0 errors + 守卫三件绿 → **Gate A PASS**。
 - 2026-08-29（事故记录：并行会话 stage 竞态）：commit 820a8700c 意外裹挟用户侧并行 dev-flow（panel-view-derivation）T2 单元的伴随测试 `flow-integration.test.ts`（其 agent stage 后未 commit，本 agent commit 提交了整个 index）。内容完整合理无损害、不改写历史（并行会话活跃期 reset 危险）；此后本计划所有 commit 改用 `git commit -- <精确路径>` 形式提交指定路径绕过 index 竞态。待用户知悉。
+- 2026-08-29（Gate B：PASS，全场景签收）：A1/A2 引用 u2 开发期实证（8 项负向探测 + 红→绿闭环）；A3 态 1 pass（glm-test-overlay Composer 显示 + settings md5 前后一致 + 零 auto-fix——失败模式 A 修复实证）；A4 态 3 pass 两步（快照内 glm-5.3 正常 + 垃圾名 pass-through 原样透传，零改写）；A5 pass（拖首位 userOrder:0 落盘 → 两次重启顺序保持 → 切换不重排有序段 → 键盘 ArrowUp 与拖拽同 reorderProject 入口交换并落盘）；A6 pass（22=22 / 23=23 双向，无归属计入默认项目）；A7 pass（1 步点击切换 + active 反白）；A8 pass with note（偏差 #17）；A9 pass with note（偏差 #16）。测试 fixture 已清理（defaultModel 恢复 glm-5.2，dev app 已停）。**双 Gate 全绿，计划交付**。
