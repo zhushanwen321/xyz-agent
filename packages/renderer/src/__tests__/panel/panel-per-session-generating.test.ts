@@ -11,11 +11,19 @@
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/panel-per-session-generating.test.ts
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import Panel from '@/components/panel/Panel.vue'
 import { useChatStore } from '@/stores/chat'
+
+// flow 单例态 mock（panel-view 派生消费 isActive）：用例 1 的 landing 场景需 flow 活跃。
+// isFlowActive 与 chat streaming 解耦（D1 独立事实源），mock 不读 chat store。
+const flowState = vi.hoisted(() => ({ isActive: { value: false as boolean } }))
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
+  useNewTaskFlow: () => ({ isActive: flowState.isActive, state: { value: 'landing' }, startFlow: vi.fn(), cancelFlow: vi.fn() }),
+  resetNewTaskFlow: vi.fn(),
+}))
 
 const stubs = {
   PanelHeader: { template: '<div />' },
@@ -37,7 +45,10 @@ function mountPanel(sessionId: string | null) {
   })
 }
 
-beforeEach(() => setActivePinia(createPinia()))
+beforeEach(() => {
+  setActivePinia(createPinia())
+  flowState.isActive.value = false
+})
 
 describe('Panel per-session 生成态守卫（isGenerating 不跨 session 误伤）', () => {
   it('另一 session 流式中（sessionId=null）→ 渲染 Landing，不落兜底空态', () => {
@@ -49,7 +60,9 @@ describe('Panel per-session 生成态守卫（isGenerating 不跨 session 误伤
     })
     expect(chat.isGenerating('session-A')).toBe(true)
 
-    // 点新建后切到空 session（sessionId=null）→ 应渲染 Landing
+    // 点新建后切到空 session（sessionId=null）→ flow 活跃 → 应渲染 Landing。
+    // isFlowActive 与 A 的流式解耦（D1）：landing 判据不读 chat streaming
+    flowState.isActive.value = true
     const wrapper = mountPanel(null)
     expect(wrapper.find('[data-testid="landing"]').exists()).toBe(true)
     // 关键：不落兜底空态（「选择左侧会话开始」）
@@ -65,7 +78,8 @@ describe('Panel per-session 生成态守卫（isGenerating 不跨 session 误伤
     })
 
     const wrapper = mountPanel('session-B')
-    // 本 session 在生成 → Landing 被抑制（AC-2.8：生成态优先，等 assistant 出现）
+    // 有会话恒 conversation（D1：landing 需 !sessionId，「有会话 × landing」不可表达），
+    // 生成态只影响 conversation 分支内部子视图，不影响 landing 判据
     expect(wrapper.find('[data-testid="landing"]').exists()).toBe(false)
   })
 

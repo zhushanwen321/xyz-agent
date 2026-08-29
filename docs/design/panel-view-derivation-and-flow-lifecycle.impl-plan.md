@@ -65,8 +65,8 @@ T1/T2/T4 首波并行（无相互依赖），T3 次波，T5 收尾。
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | T1 | committed | 1 | commit 见本行下次提交；panel-view.test.ts 5 passed（64 组合表 + 完整性守卫 + 3 回归断言）；session 域 55 passed 既有零破坏；tsc/eslint 零问题；deviations=[] |
-| T2 | committed | 1 | commit 5e0db4001；flow.test.ts 14 passed（含 TC-6e send reject→completed）；2 deviations（transition 置于 pushChat 后 loadTree 前 / TC-6e 增强断言）待一致性审查裁决 |
-| T3 | pending | 0 | — |
+| T2 | committed | 2 | 主体 commit 5e0db4001（flow.test.ts 14 passed 含 TC-6e）；补修轮（flow-integration.test.ts 断言对齐新语义 20 passed）内容被并行会话的认知外 commit 820a8700c 顺带携带入库（diff 与本流程核验一致 +10/-6，测试实测绿，内容正确未 revert——规则 0 登记不擅自处理）；deviations 累计 4 条待一致性审查裁决 |
+| T3 | committed | 2 | panel/ 59 文件 492 用例全绿（含 panel-view.test.ts 9 用例：PV1 flow 残留免疫 / PV4 dead 吞 ask-user 等）；landing.test.ts 补修 3 旧行为用例后 18/18；renderer 全量 3594 passed 零失败；双端 typecheck 零错误；7 deviations 待一致性审查裁决（含用户授权的 core session/index.ts 一行导出） |
 | T4 | pending | 0 | — |
 | T5 | pending | 0 | — |
 

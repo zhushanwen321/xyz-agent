@@ -127,12 +127,18 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Landing 渲染条件（Panel v-if 分支）', () => {
-  it('T1.6 new-task landing 态（flow=landing 且无消息）→ 渲染 landing', () => {
+  it('T1.6 有会话 × flow landing（残留态）→ Landing 不渲染，走 conversation 分支（G2 结构免疫）', () => {
     const chat = useChatStore()
-    flowMock.state.value = 'landing' // new-task flow 激活 landing 态（Landing chip 合法前提）
-    // session 's1' 未 hydrate → getMessages 返回 [] → messageCount=0
+    flowMock.state.value = 'landing' // new-task flow 激活 landing 态
+    flowMock.isActive.value = true // panel-view 派生输入：isFlowActive（与 state 同源残留）
+    // session 's1' 未 hydrate → getMessages 返回 [] → 无消息
     const wrapper = mountPanel({ sessionId: 's1' })
-    expect(wrapper.findComponent(Landing).exists()).toBe(true)
+    // D1：landing 判据需 !sessionId——「有会话 × flow 活跃」在派生上不可表达，
+    // 无论 flow 单例因何残留活跃，有会话 panel 恒走 conversation（composer 常驻）
+    expect(wrapper.findComponent(Landing).exists()).toBe(false)
+    // conversation 无消息 → 空对话态 + band composer（输入面不因 flow 残留消失）
+    expect(wrapper.text()).toContain('输入消息开始对话')
+    expect(wrapper.find('[data-testid="band-composer"]').exists()).toBe(true)
   })
 
   it('恢复空 session（有 sid 无消息，flow=idle）→ 不渲染 Landing（无 chip 死锁），渲染空对话态 + band composer', () => {
@@ -151,6 +157,7 @@ describe('Landing 渲染条件（Panel v-if 分支）', () => {
   it('首次启动 new-task（sid=null, flow=landing）→ 渲染 Landing（正向不回归）', () => {
     const chat = useChatStore()
     flowMock.state.value = 'landing'
+    flowMock.isActive.value = true // D1：landing ⟺ !sessionId && isFlowActive
     const wrapper = mountPanel({ sessionId: null })
     expect(wrapper.findComponent(Landing).exists()).toBe(true)
     // new-task landing 态 composer 由 Landing 内嵌；band 不重复挂（showPanelComposer=false）。
@@ -178,6 +185,7 @@ describe('Landing 渲染条件（Panel v-if 分支）', () => {
       payload: { sessionId: 'session-A', messageId: 'aA' },
     })
     flowMock.state.value = 'landing'
+    flowMock.isActive.value = true // D1：landing ⟺ !sessionId && isFlowActive
     const wrapper = mountPanel({ sessionId: null })
     expect(wrapper.findComponent(Landing).exists()).toBe(true)
   })

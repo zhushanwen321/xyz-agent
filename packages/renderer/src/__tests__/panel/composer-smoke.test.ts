@@ -34,6 +34,9 @@ const flowMock = vi.hoisted(() => ({
   mode: { value: 'plain-repo' as string },
   worktreeItems: { value: [] as Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }> },
   state: { value: 'landing' as string },
+  // panel-view 派生消费（D1：landing ⟺ !sessionId && isFlowActive）——TC19 的 Landing
+  // 态挂载前提；flow mock 与 chat 解耦，true 恒定即可（挂载前求值，无响应式需求）
+  isActive: { value: true as boolean },
   startFlow: vi.fn(),
   presetCwd: vi.fn(),
   openDirPopover: vi.fn(),
