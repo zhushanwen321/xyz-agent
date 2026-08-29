@@ -139,17 +139,47 @@ function newerEntry(a?: OverlayEntry, b?: OverlayEntry): OverlayEntry | undefine
 }
 
 /**
- * 取某 provider 的有效 overlay 模型（已做 staleness 过滤与新者胜合并）。
- * provider-config-helper 聚合时消费；纯同步只读，异常静默回退空数组。
+ * overlay 对某 provider 的数据状态（D5 三态语义）。
+ *
+ * 旧 getCatalogOverlayModels 把四种情况（无条目/文件损坏/staleness 过滤/空 models）
+ * 全折叠成 []，导致「从未见过」与「见过但过期」不可区分——后者是远程的明确否定信号
+ * （404 = 远程声明无此目录），允许 auto-fix；前者必须 pass-through 不改写用户配置。
+ * 三态正是要把这个歧义拆开：
+ *
+ * - fresh（见过且新鲜）：lastModified 晚于快照 catalogGeneratedAt（或旧格式无
+ *   lastModified 字段，不过滤）→ models 参与「快照 ⊕ overlay」合并，参与默认模型
+ *   合法性判定，overlay-only 模型合法
+ * - expired（见过但过期）：staleness 过滤（lastModified <= catalogGeneratedAt，
+ *   含 404/501 落盘的 lastModified:0）→ 该条目按快照裁定，快照没有则视为无效，
+ *   允许 auto-fix 修复
+ * - never-seen（从未见过）：own 缓存与 pi store 均无该 provider 条目（或文件损坏）
+ *   → pass-through：不改写用户 settings，原值直传 pi 由执行侧自行判定
  */
-export function getCatalogOverlayModels(providerId: string): OverlayModel[] {
+export type CatalogOverlayState =
+  | { state: 'fresh'; models: OverlayModel[] }
+  | { state: 'expired' }
+  | { state: 'never-seen' }
+
+/** 取某 provider 的 overlay 三态（判定依据见 CatalogOverlayState 注释）。 */
+export function getCatalogOverlayState(providerId: string): CatalogOverlayState {
   const { own, pi } = loadOverlay()
   const entry = newerEntry(own.entries[providerId], pi.entries[providerId])
-  if (!entry || !Array.isArray(entry.models)) return []
+  if (!entry || !Array.isArray(entry.models)) return { state: 'never-seen' }
   // staleness 保护：远程条目不比内置 catalog 数据新 → 内置已覆盖，忽略（对齐 pi remoteModels）
   const generatedAt = getCatalogGeneratedAt()
-  if (entry.lastModified !== undefined && entry.lastModified <= generatedAt) return []
-  return entry.models
+  if (entry.lastModified !== undefined && entry.lastModified <= generatedAt) return { state: 'expired' }
+  return { state: 'fresh', models: entry.models }
+}
+
+/**
+ * 取某 provider 的有效 overlay 模型（已做 staleness 过滤与新者胜合并）。
+ * 三态的展平视图（fresh → models；expired/never-seen → []）。需要区分「过期」与
+ * 「从未见过」的消费方（合并视图单点 provider-catalog）应改用 getCatalogOverlayState，
+ * 展平会丢失 auto-fix / pass-through 的裁决材料。
+ */
+export function getCatalogOverlayModels(providerId: string): OverlayModel[] {
+  const state = getCatalogOverlayState(providerId)
+  return state.state === 'fresh' ? state.models : []
 }
 
 /** 刷新结果（config.refreshProviderCatalogs reply 载荷）。 */

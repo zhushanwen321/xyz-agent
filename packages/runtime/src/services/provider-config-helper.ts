@@ -9,13 +9,12 @@
 // 避免运行时 fs/路径解析（打包后 asar 路径问题）。tsc 类型检查需 resolveJsonModule（tsconfig.json 已加）。
 import builtinData from '../generated/builtin-providers.json'
 import { type ProviderInfo, type BuiltinProviderTemplate, type ProviderId } from '@xyz-agent/shared'
-import { isCatalogProvider, deriveEnabled } from './provider-catalog.js'
+import { isCatalogProvider, deriveEnabled, getMergedCatalogModels } from './provider-catalog.js'
 import type { IConfigStore, ConfigModelDefinition, ConfigProviderConfig } from './ports/config.js'
 import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
 import type { XyzProviderStore } from './provider-extras-store.js'
 import { readAllExtrasWithFallback, type ProviderExtrasReader } from './migration/provider-extras-migration.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
-import { getCatalogOverlayModels, type OverlayModel } from './provider-catalog-refresh.js'
 
 /** auth.json 存储能力（ConfigService 注入，与 ConfigService 构造函数 authStorage 同构）。
  * 不含 'set'——写入唯一经 credentialWriter（A1-4 收口，AuthService.saveCredential）。 */
@@ -90,26 +89,6 @@ function toProviderModel(
 const builtinProvidersById = new Map<string, BuiltinProviderTemplate>(
   (builtinData.providers ?? []).map(p => [p.id, p as unknown as BuiltinProviderTemplate]),
 )
-
-/**
- * 远程目录 overlay 条目 → BuiltinModelSummary 同形（merge 进快照模型集合前的归一）。
- * pi.dev 条目字段与内置 catalog 同构，缺省字段按展示层安全默认填充（toProviderModel 消费）。
- */
-function overlayToBuiltinShape(m: OverlayModel): BuiltinProviderTemplate['models'][number] {
-  return {
-    id: m.id,
-    name: m.name ?? m.id,
-    api: m.api ?? '',
-    baseUrl: m.baseUrl ?? '',
-    reasoning: m.reasoning ?? false,
-    input: m.input ?? ['text'],
-    cost: (m.cost ?? null) as BuiltinProviderTemplate['models'][number]['cost'],
-    compat: (m.compat ?? null) as BuiltinProviderTemplate['models'][number]['compat'],
-    contextWindow: m.contextWindow ?? 0,
-    maxTokens: m.maxTokens ?? null,
-    thinkingLevelMap: (m.thinkingLevelMap ?? null) as BuiltinProviderTemplate['models'][number]['thinkingLevelMap'],
-  } as BuiltinProviderTemplate['models'][number]
-}
 
 /**
  * ConfigModelDefinition → ProviderInfo.models 元素（wave2 双源共用，提取 custom 内联逻辑避免重复）。
@@ -331,15 +310,14 @@ export function listProviders(
     // 它已被用户定义覆盖；builtin 副本条目标 'builtin'。builtin 在前与 design §3.1 场景 A
     // 的混合列表形态一致（内置在前、自定义追加在后）。
     const overrideIds = new Set(overrideModels.map(m => m.id))
-    // 远程目录 overlay（settings-provider 页进入时刷新）：快照打底，overlay 同 id 覆盖、
-    // 新 id 追加（对齐 pi mergeModels 语义），override 用户定义仍最高优先。
-    // overlay 内部已做 staleness 过滤（lastModified <= 快照 catalogGeneratedAt → 忽略）。
+    // 远程目录 overlay（settings-provider 页进入时刷新）：合并逻辑收拢在 provider-catalog
+    // 单点（D4，与 pi-provider-store 校验视图同源）——快照打底，仅 fresh 态 overlay 并入
+    // （同 id 覆盖、新 id 追加，对齐 pi mergeModels 语义；expired/never-seen 态等于纯快照），
+    // override 用户定义仍最高优先。
+    const mergedCatalog = getMergedCatalogModels(id)
     const mergedBuiltin = new Map<string, BuiltinProviderTemplate['models'][number]>(
-      (builtinP.models ?? []).map(m => [m.id, m]),
+      (mergedCatalog?.models ?? builtinP.models ?? []).map(m => [m.id, m]),
     )
-    for (const m of getCatalogOverlayModels(id)) {
-      mergedBuiltin.set(m.id, overlayToBuiltinShape(m))
-    }
     const builtinNotOverridden = [...mergedBuiltin.values()].filter(m => !overrideIds.has(m.id))
     // id 来自 models.json / auth.json 的磁盘 key（反序列化边界，design D5）→ as ProviderId 提升
     result.push({

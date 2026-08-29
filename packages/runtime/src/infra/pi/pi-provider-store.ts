@@ -12,7 +12,7 @@ import { join } from 'node:path'
 // builtin provider catalog（QuickSetup 模板源）：sanitizeInvalidProviders 对 catalog 已知的
 // 空壳 provider 合并 models 修复而非删除（对齐 config-service 的 builtinModelsById 先例）。
 import builtinData from '../../generated/builtin-providers.json'
-import { deriveEnabled } from '../../services/provider-catalog.js'
+import { deriveEnabled, getMergedCatalogModels } from '../../services/provider-catalog.js'
 import { JsonStore } from '../../utils/json-store.js'
 import { getModelsPath, getPiAgentDir } from './pi-paths.js'
 // settings.json 的唯一读写层（D17 收口）：readSettings/updateSettingsFields/PiSettings/缓存/
@@ -213,14 +213,16 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
     const newModelList = config.models
     // catalog provider 的 models.json 条目只承载用户 override（B-2 前端保存只回传
     // override 条目，无 override 时为 []），builtin 模型不在列表内——default 校验必须以
-    // 「override ∪ builtin catalog」为有效模型列表，否则 catalog 默认 provider 保存
+    // 「override ∪ catalog」为有效模型列表，否则 catalog 默认 provider 保存
     // override-only 条目时 builtin 默认模型被误判失效：models:[] 会删除 default 回退到
     // 其他 provider、models:[override] 会把 defaultModel 静默改写为 override 首项
-    //（round 1 review must-fix #1）。非 catalog provider builtin 集为空，行为不变。
-    const builtinModels = builtinModelsById.get(providerId) ?? []
+    //（round 1 review must-fix #1）。非 catalog provider catalog 集为空，行为不变。
+    // D4：catalog 集改从合并视图取（fresh overlay 并入，expired/never-seen == 快照），
+    // overlay-only 模型在保存校验中同样合法。
+    const catalogModels = getMergedCatalogModels(providerId)?.models ?? []
     const effectiveModelList = [
       ...newModelList,
-      ...builtinModels.filter(bm => !newModelList.some(m => m.id === bm.id)),
+      ...catalogModels.filter(bm => !newModelList.some(m => m.id === bm.id)),
     ]
     if (effectiveModelList.length === 0) {
       delete s.defaultProvider
@@ -320,23 +322,53 @@ export function findValidDefaultModel(): {
         // defaultProvider 来自 settings.json 磁盘读（反序列化边界，design D5）→ as ProviderId
         return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
       }
+      // D4/D5：catalog provider 的有效模型集不止 models.json override（builtin ⊕ overlay
+      // 恒在，B-2 语义）——override 未命中时以合并视图继续裁定；非 catalog provider
+      // （合并视图 undefined）维持旧语义（override 即全集）。
+      const mergedCatalog = getMergedCatalogModels(defaultProvider)
+      if (mergedCatalog) {
+        // D5 态 3（never-seen，overlay 从未见过该 provider）：pass-through——不判定有效性、
+        // 不触发 auto-fix，原值直传 pi 由执行侧解析。态 3 的常态是「该 provider 从未经过
+        // overlay 通道」而非「配置有误」，静默改写合法配置（失败模式 A）比让错误显式暴露更糟。
+        if (mergedCatalog.overlayState.state === 'never-seen') {
+          return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
+        }
+        // D5 态 1/态 2：合并视图裁定。态 2 时 overlay 已被过滤，合并视图 == 快照 → 快照裁定。
+        // 附带修复：用户在 UI 选的非 override 模型（builtin/overlay 模型）不再被误判失效改写。
+        if (mergedCatalog.models.some(m => m.id === defaultModel)) {
+          return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
+        }
+      }
       console.warn(`[provider-store] defaultModel "${defaultModel}" not found in provider "${defaultProvider}", falling back to "${providerConfig.models[0].id}"`)
       return { result: { provider: defaultProvider as ProviderId, modelId: providerConfig.models[0].id }, wasFixed: true }
     }
     if (!providerConfig?.models?.length) {
       // D3 修复：auth.json-only catalog provider（OAuth 形态）无 models.json 条目时，
-      // 校验 defaultModel ∈ 该 provider 的 builtin 模型集，通过则不 fallback 不写回
-      const builtinProvider = builtinModelsById.get(defaultProvider)
-      if (builtinProvider && builtinProvider.length > 0) {
+      // 校验 defaultModel ∈ 该 provider 的有效模型集，通过则不 fallback 不写回。
+      // D5：有效集从纯快照升级为合并视图，并按 overlay 三态区分行为——
+      // 态 1（fresh）合并视图判定，overlay-only 模型合法不 auto-fix；
+      // 态 2（expired，含 404/501 落盘的 lastModified:0）合并视图已退化为快照 → 快照裁定，
+      // 允许 auto-fix（远程明确声明过时/不存在是明确信号，快照是更权威基线）；
+      // 态 3（never-seen）pass-through 不改写（见下方分支注释）。
+      const mergedCatalog = getMergedCatalogModels(defaultProvider)
+      if (mergedCatalog && mergedCatalog.models.length > 0) {
         const authCredentials = readAuthCredentials()
         const hasCredential = defaultProvider in authCredentials || !!models.providers[defaultProvider]?.apiKey
         if (hasCredential && isEnabled) {
-          const foundInBuiltin = builtinProvider.find(m => m.id === defaultModel)
-          if (foundInBuiltin) {
+          // D5 态 3（never-seen）：pass-through——不判定有效性、不触发 auto-fix、不改写
+          // settings.json，`--model` 直传 pi 由执行侧解析（模型确实不存在时 pi 报
+          // model-not-found，错误 surfaced 给用户而非 xyz 静默改写；垃圾模型名的 auto-fix
+          // 「救回」被有意放弃，见设计 D5 态 3 trade-off）。
+          if (mergedCatalog.overlayState.state === 'never-seen') {
             return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
           }
-          // defaultModel 不在 builtin 集，用 builtin 第一个
-          return { result: { provider: defaultProvider as ProviderId, modelId: builtinProvider[0].id }, wasFixed: true }
+          // D5 态 1/态 2：合并视图判定（态 2 == 快照裁定）
+          const foundInCatalog = mergedCatalog.models.find(m => m.id === defaultModel)
+          if (foundInCatalog) {
+            return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
+          }
+          // defaultModel 不在有效集（真无效），用有效集第一个（快照打底，[0] 恒为快照首模型）
+          return { result: { provider: defaultProvider as ProviderId, modelId: mergedCatalog.models[0].id }, wasFixed: true }
         }
       }
       console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
@@ -389,7 +421,9 @@ export function getDefaultModel(): { provider: ProviderId; modelId: string } | n
       s.defaultProvider = result.provider
       s.defaultModel = result.modelId
     })
-    console.log(`[provider-store] auto-fixed defaultModel: ${result.provider}/${result.modelId}`)
+    // warn 非 log：auto-fix 是对用户配置的改写，必须显著可见（G2/D5——态 2 唯一例外
+    // 伴随 console.warn；验收 A9 以「日志有 auto-fix 记录」为通过标准之一）
+    console.warn(`[provider-store] auto-fixed defaultModel: ${result.provider}/${result.modelId}`)
   }
   return result
 }
@@ -427,11 +461,18 @@ export function setDefaultThinkingLevel(level: string): void {
 // 排除出修复名单（维持删除语义）——目录中不存在任何可用 baseUrl 数据。
 
 /**
- * builtin provider id → catalog models 索引（MF-5 修复空壳用）。
- * JSON import 推断类型与 PiModelDefinition 有 input 等字段差异，构造时断言（对齐
- * config-service builtinModelsById 的 `as [string, ...]` 处理）。
+ * 快照 catalog 索引（provider id → 快照 models），仅剩 sanitizeInvalidProviders 空壳
+ * 修复在用（MF-5）。
+ *
+ * 为什么修复路径不用合并视图（D4）：MF-6 守卫要求 catalog models 每个模型都有真实
+ * baseUrl，而 overlay 条目归一化时 baseUrl 缺省填 ''（远程目录不保证该字段）——混入
+ * 合并视图会让 every(m => !!m.baseUrl) 误判，provider 从「合并 models 修复」退化成
+ * 「删除」，用户数据丢失。修复的数据源必须是编译期快照（构建期权威）。
+ *
+ * 默认模型有效性判定（upsertProvider / findValidDefaultModel）已改走
+ * getMergedCatalogModels 合并视图单点（D4/D5），不再消费本索引。
  */
-const builtinModelsById = new Map<string, PiModelDefinition[]>(
+const snapshotCatalogModelsById = new Map<string, PiModelDefinition[]>(
   (builtinData.providers ?? []).map(p => [p.id, p.models] as [string, PiModelDefinition[]]),
 )
 
@@ -476,7 +517,7 @@ export function sanitizeInvalidProviders(): { removed: string[]; repaired: strin
         // 用户 apiKey 静默失效且条目 isInvalidProvider===false 无自愈路径）。这类 provider
         // （azure-openai-responses 38/38 模型空 baseUrl）维持删除语义；过滤空 baseUrl 模型会退回
         // models:[] 八字段全缺态再次被删（transient 非法态），合成 baseUrl 不可接受（catalog 无数据）。
-        const catalogModels = builtinModelsById.get(id)
+        const catalogModels = snapshotCatalogModelsById.get(id)
         if (catalogModels && catalogModels.length > 0 && catalogModels.every(m => !!m.baseUrl)) {
           draft.providers[id] = { ...cfg, models: catalogModels }
           repaired.push(id)
