@@ -281,6 +281,10 @@ const aggregatorSchema = {
             required: ["id"],
             properties: {
               id: { type: "string" },
+              // title（跨轮身份锚点）：buildAggregatorPrompt 已强制要求，schema 侧
+              // 补齐保证生成/校验不丢字段——缺失时 L1/L2 身份匹配静默退化为纯编号
+              //（编号撞车防护失效）。normalizeMustFixEntry 透传 title。
+              title: { type: "string", description: "One-line issue title (cross-round identity anchor)" },
               // A5: severity 加 enum 约束生成侧（prompt 已列三值）；normalize 侧另有
               // 枚举回退兜底（畸形值 → major），双层防御。
               severity: { type: "string", enum: ["critical", "major", "minor"] },
@@ -423,6 +427,7 @@ function freshState() {
     lastModifiedFiles: [],
     idMap: null,
     lastAggPath: "",
+    lastAggRound: 0,
   };
 }
 
@@ -583,9 +588,13 @@ function buildR2ReviewCall(base, def, header, round, max, roundDir, batchIndex) 
       header, round, max, roundDir,
       reportFile: def.report,
       aggPath: aggRef,
+      aggRound: aggRef === state.lastAggPath && state.lastAggRound ? state.lastAggRound : round - 1,
       fixResult: state.fixResults && state.fixResults.length
         ? state.fixResults[state.fixResults.length - 1]
         : null,
+      fixRound: state.fixResults && state.fixResults.length
+        ? state.fixResults[state.fixResults.length - 1].round
+        : undefined,
       knownRemaining: (state.knownRemaining && Array.isArray(state.knownRemaining)) ? state.knownRemaining : [],
       // rfl dormant 复活通道（tier-1 6.3 delta ③）：降级条目注入 R2+ prompt（动态段内容）
       dormant: (state.dormant && Array.isArray(state.dormant)) ? state.dormant : [],
@@ -608,9 +617,13 @@ function buildScopedReviewCall(base, def, header, round, max, roundDir, batchInd
       modifiedFiles: lastModifiedFiles(),
       affectedFiles: (state.fixImpactFiles && Array.isArray(state.fixImpactFiles)) ? state.fixImpactFiles : [],
       aggPath: RUN_ROOT + "/batch-" + batchIndex + "/round-" + (round - 1) + "/aggregated.md",
+      aggRound: round - 1,
       fixResult: state.fixResults && state.fixResults.length
         ? state.fixResults[state.fixResults.length - 1]
         : null,
+      fixRound: state.fixResults && state.fixResults.length
+        ? state.fixResults[state.fixResults.length - 1].round
+        : undefined,
       reviewPrompt, reviewInstruction,
     }),
     agent: def.path,
@@ -701,6 +714,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
   // 对账段引用需回溯到最近存在的报告）。批作用域重置防跨批残留。
   state.idMap = null;
   state.lastAggPath = "";
+  state.lastAggRound = 0;
 
   // 跨批跳过：agent 在更早批 clean 且此后无 fix → 本批不派发
   if (batchIndex > 1) {
@@ -815,6 +829,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
           if (r.status === "escalate") reconEscalate.add(r.prev_id);
           else if (r.status !== "fixed") reconSeen.add(r.prev_id);
           else if (typeof r.evidence === "string" && r.evidence.trim()) reconFixed.add(r.prev_id); // 空 evidence 的口头断言不采信（reviewer 吹牛防护，与 fix-attempted 的 verify 语义对齐）
+          else log("reconciliation fixed-claim without evidence ignored: " + r.prev_id); // 保守丢弃可见化（S-1）
           reconAll.add(r.prev_id); // M2: 含 fixed——全 fixed 时 reconSeen 空但 reconcile 仍需执行
         }
         const def = active[i];
@@ -904,6 +919,14 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       prevFixResult: round > 1 && state.fixResults && state.fixResults.length
         ? state.fixResults[state.fixResults.length - 1]
         : null,
+      // S-5：上一轮标题注入——「keep the title close to the previous wording」此前无
+      // 材料可依。取台账（issues + dormant）条目的 id: title 清单。
+      prevTitles: round > 1
+        ? [
+            ...Object.entries(state.issues || {}).map(([id, i]) => (i && typeof i.title === "string" && i.title ? id + ": " + i.title : null)),
+            ...((state.dormant || []) || []).map((d) => (d && typeof d.title === "string" && d.title ? d.id + ": " + d.title : null)),
+          ].filter(Boolean)
+        : [],
     });
     let aggRaw = await agent({
       prompt: aggPrompt,
@@ -934,7 +957,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         model: AGG_MODEL,
         schema: aggregatorSchema,
         description: "aggregate",
-        timeoutMs: 3_600_000, // 1h
+        timeoutMs: 1_200_000, // 20min：确定性失败（context overflow 等）不该在 md 兜底前再烧 1h（S-4）
         returnMeta: true,
       });
       recordCall(buildCallRecord({
@@ -980,6 +1003,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // 最近一次聚合报告路径（含 numeric-only fallback）：all-clean 轮不聚合（round-1
     // 目录无 aggregated.md），残留 continue 后下轮对账段需回溯到最近存在的报告。
     state.lastAggPath = (typeof agg.report_file === "string" && agg.report_file.trim()) || (roundDir + "/aggregated.md");
+    state.lastAggRound = round; // S-3：对账段标注报告轮号（与 fixResult 轮号可能不同轮）
 
     // rfl 打分落盘（tier-1 6.6，T7）：aggregator 顺手输出的弱信号 scores（reviewer
     // 分每轮 / fix LLM 三维度 R2+）。A6：逐条形状校验（landScores 纯函数）——畸形
@@ -1498,7 +1522,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // （不依赖下轮 reconcile 才生成——否则滞后一轮，reviewer 本轮看不到 deferred 清单）
     state.knownRemaining = computeKnownRemaining(state.issues);
     if (!state.fixResults) state.fixResults = [];
-    state.fixResults.push(fixResult);
+    state.fixResults.push({ ...fixResult, round }); // round 供对账段标注轮号（S-3）
 
     const fixedCount = fixResult.fixed_count ?? mustFix;
     totalFixed += fixedCount;

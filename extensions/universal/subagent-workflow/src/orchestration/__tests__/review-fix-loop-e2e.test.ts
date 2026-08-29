@@ -883,6 +883,80 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
   );
 
   it(
+    "E2E-8：L2 换号改键后对账翻译用上一轮 idMap（MF-1 回归：prev 表格号 ≠ 本轮表格号）",
+    async () => {
+      // MF-1 场景：同一问题（同 title）跨轮换表格号——R2 报 MF-5（改键 MF-5→MF-1）、
+      // R3 报 MF-9（改键 MF-9→MF-1）。R3 reviewer 的 reconciliation prev_id 抄自 R2
+      // 报告（MF-5），必须经 R2 的 idMap 翻译。修复前 reconcile 误用本轮（R3）map
+      // {MF-9→MF-1}：MF-5 miss → MF-1 fix-attempted 未 seen 被假转 fixed + 幽灵 MF-5
+      // 新建 → R3 不终止 needs-redesign 继续 R4。修复后：MF-5 → MF-1 seen → 第 2 次
+      // regressed → needs-redesign 终止于 R3。
+      let aggRound = 0;
+      let fixRound = 0;
+      const runner = makeScenarioRunner({
+        review: [
+          // R1：MF-1 首次发现
+          () => ({ report_file: "/tmp/r1.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          // R2：对账 prev_id = MF-1（抄自 R1 报告，无改键）。must_fix 1 避免全员 clean
+          // 早退（clean 轮不聚合，改键剧本不可达）
+          () => ({ report_file: "/tmp/r2.md", must_fix: 1, suggestion: 0, reconciliation: [{ prev_id: "MF-1", status: "not-fixed", evidence: "still wrong" }] }),
+          // R3：对账 prev_id = MF-5（抄自 R2 报告——R2 聚合把同一问题换号为 MF-5）
+          () => ({ report_file: "/tmp/r3.md", must_fix: 1, suggestion: 0, reconciliation: [{ prev_id: "MF-5", status: "not-fixed", evidence: "still wrong" }] }),
+          // R4（仅修复前的错误路径会到达）
+          () => ({ report_file: "/tmp/r4.md", must_fix: 0, suggestion: 0, reconciliation: [] }),
+        ],
+        aggregate: () => {
+          aggRound++;
+          if (aggRound === 1) return { report_file: "/tmp/agg.md", must_fix: 1, suggestion: 0, must_fix_ids: [{ id: "MF-1", severity: "major", title: "Null check missing in parser" }], fixes_caution: [] };
+          // R2 聚合：同一问题（同 title）换表格号为 MF-5 → L2 改键 MF-5→MF-1
+          if (aggRound === 2) return { report_file: "/tmp/agg.md", must_fix: 1, suggestion: 0, must_fix_ids: [{ id: "MF-5", severity: "major", title: "Null check missing in parser" }], fixes_caution: [] };
+          // R3 聚合：再换号为 MF-9 → 本轮 map {MF-9→MF-1}（错误的翻译空间）
+          return { report_file: "/tmp/agg.md", must_fix: 1, suggestion: 0, must_fix_ids: [{ id: "MF-9", severity: "major", title: "Null check missing in parser" }], fixes_caution: [] };
+        },
+        fix: () => {
+          fixRound++;
+          // R2 fix 申报表格号 MF-5（经 round2 fixIdMap 翻译到 MF-1）
+          if (fixRound === 1) {
+            return { fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "fix1", self_check: "grep: 1 hit; synced", affected_files: [] }], deferred: [] };
+          }
+          return { fixed_count: 1, fixes: [{ issue_id: "MF-5", description: "fix2", self_check: "grep: 1 hit; synced", affected_files: [] }], deferred: [] };
+        },
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"), maxRounds: 4, stuckThreshold: 5, _runId: RUN_ID() },
+        deps,
+        undefined,
+        RUN_TIMEOUT_MS,
+      );
+
+      expect(result.reason).toBe("completed");
+      expect(result.error).toBeUndefined();
+      const outcome = assertScriptOutcome(result.scriptResult);
+      // 修复前：MF-1 在 R3 被假转 fixed（翻译 miss）→ 不终止 → R4 继续；
+      // 修复后：MF-5 经 R2 map 翻译命中 MF-1 → 第 2 次 regressed → needs-redesign @ R3
+      expect(outcome.terminated).toBe("needs-redesign");
+      expect(outcome.message).toContain("MF-1");
+      expect(outcome.message).toContain("2 次修复仍未收敛");
+      const { reviewCalls } = runner.stats();
+      expect(reviewCalls.length).toBe(3);
+
+      // MF-3 连带：aggregatorSchema 对象分支必须含 title（生成/校验不丢身份锚点字段）
+      const { schemas } = runner.stats();
+      const aggSchema = schemas.find((s: Record<string, unknown> | undefined) => s && "must_fix_ids" in ((s as { properties?: Record<string, unknown> }).properties ?? {})) as {
+        properties: { must_fix_ids: { items: { oneOf: Array<{ properties: Record<string, unknown> }> } } };
+      } | undefined;
+      expect(aggSchema).toBeDefined();
+      const objBranch = aggSchema!.properties.must_fix_ids.items.oneOf.find((b) => "properties" in b);
+      expect(objBranch!.properties.title).toBeDefined();
+      expect(objBranch!.properties.title.type).toBe("string");
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
     "fail-fast：未知参数名（batchl 拼错）→ workflow 失败且 error 含未知参数提示（S-19）",
     async () => {
       const runner = makeScenarioRunner({

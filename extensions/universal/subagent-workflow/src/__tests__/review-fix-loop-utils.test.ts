@@ -58,6 +58,7 @@ import {
   shouldSkipAgent,
   updateStuckState,
   resolveBatchTerminated,
+  translateReconSets,
 } from "../../workflows/review-fix-loop-utils.cjs";
 
 /** 测试用 fail：与 workflow 内 fail() 同语义（抛错终止） */
@@ -2256,5 +2257,121 @@ describe("buildAggregatorPrompt title 契约（跨轮身份锚点生成侧）", 
     expect(out).toContain("stable");
     expect(out).toContain("cross-round identity anchor");
     expect(out).toContain("MUST be an array of {id, title, severity,");
+  });
+});
+
+describe("translateReconSets — 对账集合 id 翻译 + 冲突互斥（MF-1/MF-2 共享助手）", () => {
+  const issues = {
+    "MF-1": { firstSeen: 1, severity: "major", status: "open", openStreak: 1, history: [], fixAttempts: 0 },
+    "MF-2": { firstSeen: 1, severity: "major", status: "fix-attempted", openStreak: 0, history: [], fixAttempts: 0 },
+  };
+  it("表格号经 idMap 翻译到台账键（台账键优先：MF-1 直接命中不过 map）", () => {
+    const seen = new Set(["MF-9"]); // R2 表格号 → 台账键 MF-2
+    const esc = new Set(); const fixed = new Set();
+    translateReconSets(seen, esc, fixed, { "MF-9": "MF-2" }, issues);
+    expect([...seen]).toEqual(["MF-2"]);
+  });
+  it("seen/escalate 与 fixed 同 prev_id 冲突 → 未修好侧获胜（互斥）", () => {
+    const seen = new Set(["MF-9"]); const esc = new Set(["MF-1"]); const fixed = new Set(["MF-9", "MF-1"]);
+    translateReconSets(seen, esc, fixed, { "MF-9": "MF-2" }, issues);
+    expect([...fixed]).toEqual([]);
+    expect([...seen]).toEqual(["MF-2"]);
+    expect([...esc]).toEqual(["MF-1"]);
+  });
+  it("idMap miss 回退原值（translateId 语义）", () => {
+    const seen = new Set(["MF-X"]); const esc = new Set(); const fixed = new Set();
+    translateReconSets(seen, esc, fixed, {}, issues);
+    expect([...seen]).toEqual(["MF-X"]);
+  });
+});
+
+describe("applyCleanRoundBackfill 对账翻译 + 冲突消解（MF-2 回归：clean 轮假 clean 终止向量）", () => {
+  const openIssue = (streak: number) => ({
+    firstSeen: 1, severity: "major", status: "open", openStreak: streak,
+    history: [{ round: 1, status: "open" }], fixAttempts: 0,
+  });
+  const mkState = (issues: Record<string, unknown>) => ({
+    issues, knownRemaining: [], scores: [], fixResults: [],
+    idMap: { round: 2, map: { "MF-3": "MF-1" } }, // 上一轮聚合的表格号→台账键
+  });
+  it("clean 轮 fixed 申报的表格号经 idMap 翻译 → 命中台账键清账", () => {
+    const state = mkState({ "MF-1": openIssue(1) });
+    const out = applyCleanRoundBackfill(state, {
+      reconSeen: new Set(), reconEscalate: new Set(), reconFixed: new Set(["MF-3"]),
+      round: 3, stuckThreshold: 3,
+    });
+    expect(out.state.issues["MF-1"].status).toBe("fixed");
+  });
+  it("多 reviewer 对同一 prev_id 矛盾（not-fixed vs fixed）→ seen 优先，不销账（假 clean 防护）", () => {
+    const state = mkState({ "MF-1": openIssue(1) });
+    const out = applyCleanRoundBackfill(state, {
+      reconSeen: new Set(["MF-3"]), reconEscalate: new Set(), reconFixed: new Set(["MF-3"]),
+      round: 3, stuckThreshold: 3,
+    });
+    expect(out.state.issues["MF-1"].status).toBe("open"); // 未被乐观 fixed 申报清账
+  });
+  it("escalate 声明的表格号同样翻译（clean 轮 deferred 重开不失效）", () => {
+    const state = mkState({
+      "MF-1": { firstSeen: 1, severity: "minor", status: "deferred", deferredReason: "cost",
+        openStreak: 0, history: [], fixAttempts: 0 },
+    });
+    const out = applyCleanRoundBackfill(state, {
+      reconSeen: new Set(), reconEscalate: new Set(["MF-3"]), reconFixed: new Set(),
+      round: 3, stuckThreshold: 3,
+    });
+    expect(out.state.issues["MF-1"].status).toBe("open");
+  });
+});
+
+describe("matchByTitle CJK 加权长度（S-2：3-4 字中文标题参与 L2 匹配）", () => {
+  it("3 字中文标题（加权 6 ≥ 5）可唯一命中；修复前被纯计数挡在门外", () => {
+    const issues = { "MF-1": { status: "open", title: "空指针解引用" } };
+    expect(matchByTitle("空指针解引用", issues, [])).toEqual({ kind: "issue", id: "MF-1" });
+  });
+  it("2 字中文标题（加权 4 < 5）仍不参与（碰撞率守门不放松）", () => {
+    const issues = { "MF-1": { status: "open", title: "拼写" } };
+    expect(matchByTitle("拼写", issues, [])).toBeUndefined();
+  });
+  it("2 字英文短标题（加权 2 < 5）不参与（现状行为保持）", () => {
+    const issues = { "MF-1": { status: "open", title: "typo" } };
+    expect(matchByTitle("typo", issues, [])).toBeUndefined();
+  });
+});
+
+describe("buildAggregatorPrompt prevTitles 注入（S-5：上一轮标题材料）", () => {
+  it("prevTitles 非空 → 注入 wrapUntrusted 包裹的清单；空 → 无该段", () => {
+    const withTitles = buildAggregatorPrompt({
+      header: "h", round: 2, max: 10, roundDir: "/tmp/rd", reviewResults: [], prevFixResult: null,
+      prevTitles: ["MF-1: Null check missing"],
+    });
+    expect(withTitles).toContain('<untrusted source="prev_titles">');
+    expect(withTitles).toContain("MF-1: Null check missing");
+    const without = buildAggregatorPrompt({
+      header: "h", round: 1, max: 10, roundDir: "/tmp/rd", reviewResults: [], prevFixResult: null,
+      prevTitles: [],
+    });
+    expect(without).not.toContain("prev_titles");
+  });
+});
+
+describe("buildReconciliationSection 轮号标注（S-3：报告与 fix 结果可能不同轮）", () => {
+  it("aggRound/fixRound 传入 → 各自标注轮号", () => {
+    const out = buildR2ReviewPrompt({
+      header: "h", round: 4, max: 10, roundDir: "/tmp/rd4", reportFile: "rev",
+      aggPath: "/tmp/rd2/aggregated.md", aggRound: 2, fixResult: { round: 3, fixes: [] },
+      fixRound: 3, knownRemaining: [], dormant: [], openIssues: [],
+      reviewPrompt: "rp", reviewInstruction: "ri",
+    });
+    expect(out).toContain("report from round 2");
+    expect(out).toContain("fix result from round 3");
+  });
+  it("轮号缺省 → 不标注（形状稳定）", () => {
+    const out = buildR2ReviewPrompt({
+      header: "h", round: 2, max: 10, roundDir: "/tmp/rd2", reportFile: "rev",
+      aggPath: "/tmp/rd1/aggregated.md", fixResult: null,
+      knownRemaining: [], dormant: [], openIssues: [],
+      reviewPrompt: "rp", reviewInstruction: "ri",
+    });
+    expect(out).not.toContain("from round");
   });
 });
