@@ -25,7 +25,9 @@
     "scripts/",
     "relay/",
     "src/index.ts",
+    "src/core/",
     "src/execution/",
+    "src/host/",
     "src/injectors/",
     "src/orchestration/",
     "src/interface/",
@@ -67,8 +69,8 @@
     "@xyz-agent/extension-protocol": "workspace:*",
     "@xyz-agent/session-delivery": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*",
-    "@zhushanwen/pi-file-lock": "workspace:*",
     "ajv": "^8.20.0",
+    "proper-lockfile": "^4.1.2",
     "yaml": "^2.9.0"
   },
   "peerDependencies": {

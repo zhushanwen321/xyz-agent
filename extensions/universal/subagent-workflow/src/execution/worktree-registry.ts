@@ -23,8 +23,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { withFileLock } from "@zhushanwen/pi-file-lock";
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
+import lockfile from "proper-lockfile";
 
 import { bestEffort } from "./best-effort.ts";
 
@@ -40,6 +40,15 @@ const JSON_INDENT = 2;
 const TMP_RANDOM_BASE = 36;
 const TMP_RANDOM_SLICE_START = 2; // 跳过 Math.random 字符串的 "0." 前缀
 const TMP_RANDOM_SLICE_END = 10;
+
+/**
+ * 锁参数：逐项对齐 extensions/shared/file-lock/src/file-lock.ts 的 withFileLock
+ * 包装默认值（stale 30s / retries 10）。两侧参数漂移会破坏「同一把
+ * <worktrees.json>.lock」的跨进程互斥语义（协议登记 data-source-registry.md §6），
+ * 与旧包装共存/替换期间尤其如此。
+ */
+const LOCK_STALE_MS = 30_000;
+const LOCK_RETRIES = 10;
 
 /** 注册表 JSON 顶层结构的运行时类型守卫。 */
 function isRegistryData(value: unknown): value is { entries: WorktreeEntry[] } {
@@ -159,9 +168,8 @@ export class WorktreeRegistry {
       this.save(entries, context);
     };
     try {
-      await withFileLock(this.filePath, () => {
+      await this.withLock(() => {
         run();
-        return Promise.resolve();
       });
     } catch (lockErr) {
       // 锁不可用（ELOCKED 重试耗尽 / 锁目录损坏等）：降级无锁 RMW。
@@ -174,6 +182,55 @@ export class WorktreeRegistry {
         run();
       } catch (err) {
         bestEffort(err, "worktree registry degraded RMW");
+      }
+    }
+  }
+
+  /**
+   * proper-lockfile 直用的跨进程锁（取代已删除的共享 file-lock 包装，抽包去依赖）。
+   * 锁协议逐项对齐 extensions/shared/file-lock/src/file-lock.ts 的 withFileLock：
+   *   - lockfile 路径 = <目标文件>.lock（proper-lockfile 默认，与包装/runtime 侧
+   *     同一路径才互斥）
+   *   - realpath:false —— 目标文件不存在也可锁（realpath 默认 true 时 ENOENT）
+   *   - stale 30s：持锁进程崩溃后锁可被夺取
+   *   - async retries 指数退避：10 次 / factor 2 / 100ms~10s / randomize，耗尽抛
+   *     ELOCKED（调用方 mutate 的 catch 决定降级路径）
+   *   - onCompromised：锁被 stale 夺取时标记，fn 执行前抛错——防止在失去互斥
+   *     保证的锁下写盘（对齐 pi throwIfCompromised 语义）
+   * 锁参数值由 LOCK_STALE_MS / LOCK_RETRIES 常量承载（防漂移说明见常量注释）。
+   */
+  private async withLock(fn: () => void): Promise<void> {
+    // 锁前确保父目录存在：proper-lockfile 创建 lockfile（<目标>.lock）需要目录在
+    const dir = path.dirname(this.filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    let compromised: Error | undefined;
+    const release = await lockfile.lock(this.filePath, {
+      realpath: false,
+      stale: LOCK_STALE_MS,
+      retries: {
+        retries: LOCK_RETRIES,
+        factor: 2,
+        minTimeout: 100,
+        maxTimeout: 10_000,
+        randomize: true,
+      },
+      onCompromised: (err: Error) => {
+        compromised = err;
+      },
+    });
+    try {
+      if (compromised) throw compromised;
+      fn();
+    } finally {
+      try {
+        await release();
+      } catch (unlockErr) {
+        // 锁已 compromised（被 stale 夺取）时 unlock 必然失败且可忽略——记录留痕
+        // 不外抛（对齐被替换的 file-lock 包装 finally catch 语义）。
+        logger.debug("unlock failed after compromise (ignorable)", {
+          detail: { err: unlockErr instanceof Error ? unlockErr.message : String(unlockErr) },
+        });
       }
     }
   }
