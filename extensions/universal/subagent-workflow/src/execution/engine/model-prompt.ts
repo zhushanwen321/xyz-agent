@@ -17,7 +17,7 @@
 //
 // engine-neutral：遍历注册表驱动，未来引擎实现 listModels 即自动注入，宿主零改动。
 
-import { DEFAULT_ENGINE_ID, getEngine, hasEngine } from "./registry.ts";
+import { DEFAULT_ENGINE_ID, getEngine, hasEngine, normalizeEngineId } from "./registry.ts";
 
 /** pi 段之外的引擎才需要清单段（pi 与主 agent 模型体系一致，核心已有段）。 */
 const CORE_ENGINE_ID = DEFAULT_ENGINE_ID;
@@ -48,8 +48,9 @@ function buildEngineSection(engineId: string, models: Array<{ id: string; name?:
  * 引擎注册与否经 hasEngine 只读判断（不取实例、不触发工厂副作用），同输入恒同输出。
  */
 export function buildSubagentEngineSection(defaultEngine: string | undefined): string {
-  // 与 buildEngineModelsPromptAppend 同一 normalize：空白/缺省归一到缺省引擎
-  const engineId = defaultEngine?.trim() || CORE_ENGINE_ID;
+  // 归一走 registry.normalizeEngineId 单一权威源：本函数与 buildEngineModelsPromptAppend
+  // （及引擎感知检测 diff）必须对同一读取结果给出同一引擎 id，否则两处会说谎
+  const engineId = normalizeEngineId(defaultEngine);
   const lines = [
     "<current_subagent_engine>",
     "Default engine for subagent dispatches when neither the call's `engine` param",
@@ -134,7 +135,8 @@ function buildCoreAlignedHint(engineId: string): string {
  * 与 system-prompt extension 的 before_agent_start 处置一致）。
  */
 export function buildEngineModelsPromptAppend(defaultEngine: string | undefined): string {
-  const engineId = defaultEngine?.trim() || CORE_ENGINE_ID;
+  // 归一走 registry.normalizeEngineId 单一权威源（与状态段渲染同一 normalize，见上文）
+  const engineId = normalizeEngineId(defaultEngine);
   if (engineId === CORE_ENGINE_ID) return "";
   // hasEngine 只读判断（不触发工厂）；未注册时状态段负责警告，这里保持空串
   if (!hasEngine(engineId)) return "";

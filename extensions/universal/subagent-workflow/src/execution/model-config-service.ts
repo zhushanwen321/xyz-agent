@@ -9,6 +9,8 @@
 import { AgentRegistry } from "./agent-registry.ts";
 import {
   loadGlobalConfig,
+  readGlobalConfig,
+  type GlobalConfigReadResult,
 } from "./config.ts";
 import {
   type AgentConfig,
@@ -103,15 +105,32 @@ export class ModelConfigService {
   }
 
   /**
-   * 重载全局配置缓存（幂等可重入）。
+   * 将一次三态读取结果提交到路由缓存（纯赋值幂等）。
+   *
+   * ok/absent 覆盖缓存、failed 保持缓存不动（坏 JSON 不能把好缓存打回缺省）；
+   * 返回入参便于链式消费。用途 = 构造性同源：session_start 初始化与 per-turn 引擎
+   * 检测各只读一次文件，同一读取结果既刷新路由缓存又充当检测基准，消灭两次独立
+   * 读取之间的分叉窗口（两次读值不一致时检测走 unchanged，状态段/路由永停旧值）。
+   */
+  applyGlobalConfig(read: GlobalConfigReadResult): GlobalConfigReadResult {
+    if (read.status !== "failed") {
+      this.globalConfig = read.config;
+    }
+    return read;
+  }
+
+  /**
+   * 三态重读全局配置并提交缓存（幂等可重入），返回本次读取结果供调用方感知。
    *
    * 从 initModel 提取（设计 D2）：引擎感知检测器 per-turn poll 发现 config 变更时
    * 调用本方法，使「system prompt 现值、路由缓存、变更通知」同 turn 对齐——只改注入
-   * 不 reload 路由缓存，会出现 prompt 说引擎 B、实际派发跑引擎 A（权威信息源说谎）。
-   * 幂等性：只做「读文件 → 覆盖缓存」单向赋值，无时序状态，重复调用收敛到同一结果。
+   * 不刷新路由缓存，会出现 prompt 说引擎 B、实际派发跑引擎 A（权威信息源说谎）。
+   * 幂等性：只做「读文件 → 按三态提交缓存」单向赋值，无时序状态，重复调用收敛到
+   * 同一结果。三态语义（failed 保持缓存、静默回落 DEFAULT 是旧缺陷——读失败曾把
+   * 好缓存打回缺省且调用方无法感知）：ok/absent 覆盖、failed 保持并携带原因。
    */
-  reloadGlobalConfig(): void {
-    this.globalConfig = loadGlobalConfig(this.agentRegistryDir);
+  reloadGlobalConfig(): GlobalConfigReadResult {
+    return this.applyGlobalConfig(readGlobalConfig(this.agentRegistryDir));
   }
 
   /**

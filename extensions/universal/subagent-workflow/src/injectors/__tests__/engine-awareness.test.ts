@@ -1,10 +1,11 @@
 // engine-awareness 单测（[engine-awareness U3]）
 //
 // 覆盖（设计 docs/design/subagent-engine-awareness-injection.md 验收挂钩 D1/D1b/D2/D3/D5）：
-// 1. normalizeEngineId：缺省/空白归一到 'pi'（与 model-prompt.ts 同一 normalize）
+// 1. normalizeEngineId：缺省/空白归一到 'pi'（单一权威源 registry.ts，经本模块再导出）
 // 2. buildEngineChangeNotice：§3.1 文案骨架、pi/非 pi 指路段分界、不含任何模型清单（D4）
 // 3. runEngineAwarenessTurn 编排：
-//    - 变更触发 reload + 通知（D2 顺序硬约束：reload 先于通知先于记账）
+//    - 变更触发 apply + 通知（D2 顺序硬约束：提交缓存先于通知先于记账）
+//    - applyRead 收到的参数与 readConfig 返回值引用相等（构造性同源，消灭双读分叉）
 //    - 无变更无事
 //    - 读失败保持 lastEngine 不动、不发通知（D5 态 3，防 torn write 伪通知）
 //    - ENOENT（absent）= 合法缺省 pi，正常触发变更（D5 态 2）
@@ -38,11 +39,13 @@ function okRead(defaultEngine: string | undefined): GlobalConfigReadResult {
 function makeDeps(overrides: Partial<EngineAwarenessDeps> = {}) {
 	const calls: string[] = [];
 	const sent: Array<{ customType: string; content: string; display: boolean; details?: unknown }> = [];
+	const applied: GlobalConfigReadResult[] = [];
 	let lastEngine: string | undefined;
 	const deps: EngineAwarenessDeps = {
 		readConfig: () => okRead(undefined),
-		reload: () => {
-			calls.push("reload");
+		applyRead: (read) => {
+			calls.push("apply");
+			applied.push(read);
 		},
 		sendMessage: (message) => {
 			calls.push("send");
@@ -55,7 +58,7 @@ function makeDeps(overrides: Partial<EngineAwarenessDeps> = {}) {
 		},
 		...overrides,
 	};
-	return { deps, calls, sent, getLast: () => lastEngine };
+	return { deps, calls, sent, applied, getLast: () => lastEngine };
 }
 
 // ── normalizeEngineId ──────────────────────────────────
@@ -109,14 +112,17 @@ describe("buildEngineChangeNotice", () => {
 // ── runEngineAwarenessTurn：变更编排 ─────────────────────
 
 describe("runEngineAwarenessTurn", () => {
-	it("变更触发 reload + 通知 + 记账，顺序硬约束 reload → send → set（D2）", () => {
-		const { deps, calls, sent } = makeDeps({
-			readConfig: () => okRead("pi"),
+	it("变更触发 apply + 通知 + 记账，顺序硬约束 apply → send → set（D2）", () => {
+		const read = okRead("pi");
+		const { deps, calls, sent, applied } = makeDeps({
+			readConfig: () => read,
 			getLastEngine: () => "zcode",
 		});
 		const result = runEngineAwarenessTurn(deps);
 		expect(result).toEqual({ outcome: "changed", from: "zcode", to: "pi" });
-		expect(calls).toEqual(["reload", "send", "set:pi"]);
+		expect(calls).toEqual(["apply", "send", "set:pi"]);
+		// 构造性同源：提交到路由缓存的就是本次读取返回的同一对象（非重读、非拷贝）
+		expect(applied[0]).toBe(read);
 		expect(sent).toHaveLength(1);
 		expect(sent[0].customType).toBe(ENGINE_CHANGE_CUSTOM_TYPE);
 		expect(sent[0].content).toContain("zcode → pi");
@@ -132,7 +138,7 @@ describe("runEngineAwarenessTurn", () => {
 		expect(sent[0].details).toEqual({ from: "pi", to: "zcode" });
 	});
 
-	it("无变更无事：零 reload 零通知零写入", () => {
+	it("无变更无事：零 apply 零通知零写入", () => {
 		const { deps, calls, sent } = makeDeps({
 			readConfig: () => okRead("zcode"),
 			getLastEngine: () => "zcode",
@@ -143,7 +149,7 @@ describe("runEngineAwarenessTurn", () => {
 		expect(sent).toHaveLength(0);
 	});
 
-	it("读失败保持 lastEngine 不动、不 reload 不通知（D5 态 3）", () => {
+	it("读失败保持 lastEngine 不动、不 apply 不通知（D5 态 3）", () => {
 		let lastEngine: string | undefined = "zcode";
 		const { deps, calls, sent } = makeDeps({
 			readConfig: () => ({ status: "failed", reason: "Unexpected token in JSON" }),
@@ -160,13 +166,16 @@ describe("runEngineAwarenessTurn", () => {
 	});
 
 	it("ENOENT（absent）= 合法缺省 pi：正常触发变更（D5 态 2）", () => {
-		const { deps, calls, sent } = makeDeps({
-			readConfig: () => ({ status: "absent", config: { version: 1, maxConcurrent: 6 } }),
+		const read: GlobalConfigReadResult = { status: "absent", config: { version: 1, maxConcurrent: 6 } };
+		const { deps, calls, sent, applied } = makeDeps({
+			readConfig: () => read,
 			getLastEngine: () => "zcode",
 		});
 		const result = runEngineAwarenessTurn(deps);
 		expect(result).toEqual({ outcome: "changed", from: "zcode", to: "pi" });
-		expect(calls).toEqual(["reload", "send", "set:pi"]);
+		expect(calls).toEqual(["apply", "send", "set:pi"]);
+		// absent 态同样构造性同源（删配置切回缺省也走同一次读取）
+		expect(applied[0]).toBe(read);
 		expect(sent[0].content).toContain("zcode → pi");
 	});
 
@@ -184,17 +193,20 @@ describe("runEngineAwarenessTurn", () => {
 // ── runEngineAwarenessTurn：D1b 基线化 ───────────────────
 
 describe("runEngineAwarenessTurn lastEngine 基线化（D1b）", () => {
-	it("首 turn lastEngine === undefined：静默基线化为当前值，无伪通知，但 reload 先行（D1b 修订）", () => {
-		const { deps, calls, sent, getLast } = makeDeps({
-			readConfig: () => okRead("zcode"),
+	it("首 turn lastEngine === undefined：静默基线化为当前值，无伪通知，但 apply 先行（D1b 修订）", () => {
+		const read = okRead("zcode");
+		const { deps, calls, sent, applied, getLast } = makeDeps({
+			readConfig: () => read,
 			// session_start 初始化读失败 → lastEngine 未设置（undefined）
 		});
 		const result = runEngineAwarenessTurn(deps);
 		expect(result).toEqual({ outcome: "baseline", engine: "zcode" });
-		// D1b 修订：基线分支必须先 reload 把 Service 缓存对齐到刚读到的现值——
+		// D1b 修订：基线分支必须先提交读取结果把 Service 缓存对齐到刚读到的现值——
 		// 否则「session_start 读失败缓存回落 + 文件此后被修好」形态下，
 		// 缓存/路由/状态段永停旧值且永不通知
-		expect(calls).toEqual(["reload", "set:zcode"]);
+		expect(calls).toEqual(["apply", "set:zcode"]);
+		// 构造性同源：基线分支提交的也是本次读取的同一对象
+		expect(applied[0]).toBe(read);
 		expect(sent).toHaveLength(0);
 		expect(getLast()).toBe("zcode");
 	});
@@ -211,8 +223,8 @@ describe("runEngineAwarenessTurn lastEngine 基线化（D1b）", () => {
 		expect(runEngineAwarenessTurn(deps)).toEqual({ outcome: "baseline", engine: "zcode" });
 		expect(runEngineAwarenessTurn(deps)).toEqual({ outcome: "unchanged", engine: "zcode" });
 		// setLastEngine 被本用例 override（写局部变量、不记录 calls），故 calls 仅剩
-		// baseline 分支的 reload；unchanged 分支零调用
-		expect(calls).toEqual(["reload"]);
+		// baseline 分支的 apply；unchanged 分支零调用
+		expect(calls).toEqual(["apply"]);
 		expect(sent).toHaveLength(0);
 	});
 
@@ -241,7 +253,7 @@ describe("runEngineAwarenessTurn 多 session 独立 lastEngine", () => {
 		function depsFor(sid: string, read: () => GlobalConfigReadResult): EngineAwarenessDeps {
 			return {
 				readConfig: read,
-				reload: () => {},
+				applyRead: () => {},
 				sendMessage: (message) => {
 					notices.push({ sid, content: message.content });
 				},

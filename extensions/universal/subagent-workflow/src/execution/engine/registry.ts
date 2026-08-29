@@ -23,6 +23,16 @@ export type EngineFactory = () => EnginePort;
 export const DEFAULT_ENGINE_ID = "pi";
 
 /**
+ * defaultEngine 缺省归一（单一权威源）：空白 / undefined 归一到缺省引擎（'pi'）。
+ * 引擎感知检测 diff 与状态段渲染必须对同一读取结果给出同一引擎 id——若两处各自
+ * 内联归一，一致性只靠注释人工耦合，漂移即两处说谎；故收敛到本函数供各处调用。
+ * sanitize 保证透传值非空，但可能带首尾空格，故 trim 后再判。
+ */
+export function normalizeEngineId(engine: string | undefined): string {
+  return engine?.trim() || DEFAULT_ENGINE_ID;
+}
+
+/**
  * engine_not_found（错误规格表第 1 行）：agent frontmatter 写了未注册 engine id。
  * 错误文案契约：含已注册引擎清单 + 配置文件指引——配置错误前置暴露（agent 解析期），
  * 不留到运行时神秘失败（设计目标 4）。

@@ -621,11 +621,13 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       ctxModel: ctx.model ?? undefined,
     });
 
-    // [engine-awareness D1b] lastEngine 初始化：与 initModel 同源读取（initModel 刚
-    // reloadGlobalConfig 过同一 config 文件，此处三态读取取同一现值）。ok/absent →
-    // 归一后的当前引擎；failed → undefined（首 turn 检测静默基线化兜底）。/resume、
-    // /fork 同样走 session_start（SR-3），基线天然覆盖。
-    const engineRead = readGlobalConfig(agentDir);
+    // [engine-awareness D1b] lastEngine 初始化：构造性同源——单次 reloadGlobalConfig
+    // 读取同时刷新 Service 路由缓存与 lastEngine 基准，消灭 initModel 与本处两次独立
+    // 读取间的分叉窗口（两读值不一致时检测走 unchanged 分支不 reload，状态段/路由
+    // 永停旧值且永不通知）。ok/absent → 归一后的当前引擎；failed → undefined（首 turn
+    // 检测静默基线化兜底，此时缓存亦保持不动）。/resume、/fork 同样走 session_start
+    // （SR-3），基线天然覆盖。
+    const engineRead = modelService.reloadGlobalConfig();
     sessionState.set(sessionId, {
       store,
       runs,
@@ -661,12 +663,13 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   //  [U7 + engine-awareness U3] before_agent_start：引擎感知注入（链尾注册，D7——
   //  段内容变化只断 system prompt 尾部 cache 前缀）。
   //  ① per-turn 检测编排（§2.3 数据流）：三态 poll config → lastEngine diff →
-  //     变更时 reloadGlobalConfig 先行（D2，本 turn 路由生效）→ sendMessage 通知
+  //     变更时读取结果先行提交缓存（D2，applyGlobalConfig 纯赋值，本 turn 路由生效）
+  //     → sendMessage 通知
   //     （D3，不设 triggerTurn——P1 探针已证此形态消息进入本 turn LLM 上下文，
   //     证据：真机 pi rpc payload dump + 0.84.4 dist sendMessage→_appendCustomMessage
   //     →agent.state.messages.push→createContextSnapshot 调用链）→ 更新 lastEngine。
   //  ② 恒在状态段 <current_subagent_engine>（D6）+ 引擎清单段 <available_<engine>_models>。
-  //     reload 后 getGlobalConfig() 即新值——通知、状态段、路由三处同 turn 对齐（G2）。
+  //     apply 后 getGlobalConfig() 即新值——通知、状态段、路由三处同 turn 对齐（G2）。
   //  段序：状态段在前（文案声明 "listed ... below"），清单段在后；provider models 段
   //  由更早注册的 handler 注入、位于上方。fail-safe 任何异常不注入不阻塞 agent loop。
   // ════════════════════════════════════════════════════════════
@@ -677,7 +680,7 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       const sid = ctx.sessionManager.getSessionId();
       runEngineAwarenessTurn({
         readConfig: () => readGlobalConfig(getAgentDir()),
-        reload: () => service.reloadGlobalConfig(),
+        applyRead: (read) => service.applyGlobalConfig(read),
         sendMessage: (message) => {
           // D3：不设 triggerTurn——切换是用户主动行为，无需唤醒 AI 立即行动
           pi.sendMessage(message, {});

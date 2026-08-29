@@ -22,6 +22,7 @@ import {
   getGlobalConfigPath,
   loadGlobalConfig,
   readGlobalConfig,
+  type GlobalConfigReadResult,
 } from "../config.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
@@ -241,5 +242,61 @@ describe("ModelConfigService.reloadGlobalConfig（设计 D2）", () => {
     expect(service.getGlobalConfig().maxConcurrent).toBe(9);
     expect(service.getGlobalConfig().defaultEngine).toBe("zcode");
     expect(() => service.getModelRegistry()).not.toThrow();
+  });
+
+  it("三态返回：文件存在 → ok 且返回值含文件值；文件删除 → absent 且缓存变缺省", () => {
+    const service = new ModelConfigService({ agentDir: tmpDir, cwd: tmpDir });
+    writeConfig(tmpDir, JSON.stringify({ version: 1, maxConcurrent: 9, defaultEngine: "zcode" }));
+    const okResult = service.reloadGlobalConfig();
+    expect(okResult.status).toBe("ok");
+    if (okResult.status !== "ok") return; // 判别联合收窄（运行时 guard）
+    expect(okResult.config.maxConcurrent).toBe(9);
+    expect(service.getGlobalConfig().defaultEngine).toBe("zcode");
+
+    fs.rmSync(getGlobalConfigPath(tmpDir));
+    const absentResult = service.reloadGlobalConfig();
+    expect(absentResult.status).toBe("absent");
+    // absent = 用户删配置切回缺省（合法意图）：缓存覆盖为缺省，不当作故障保持
+    expect(service.getGlobalConfig()).toEqual({ ...DEFAULT_CONFIG });
+  });
+
+  it("failed 保持缓存：坏 JSON 重读返回 failed 且缓存保持上次值，不被打回缺省", () => {
+    const service = new ModelConfigService({ agentDir: tmpDir, cwd: tmpDir });
+    writeConfig(tmpDir, JSON.stringify({ version: 1, maxConcurrent: 9, defaultEngine: "zcode" }));
+    service.reloadGlobalConfig();
+    writeConfig(tmpDir, "{not valid json");
+    const result = service.reloadGlobalConfig();
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") return;
+    expect(result.reason).not.toBe("");
+    // 旧缺陷回归锁定：旧实现用静默 loadGlobalConfig，读失败把好缓存打回 DEFAULT_CONFIG
+    expect(service.getGlobalConfig().maxConcurrent).toBe(9);
+    expect(service.getGlobalConfig().defaultEngine).toBe("zcode");
+  });
+
+  it("applyGlobalConfig：ok/absent 覆盖缓存、failed 保持，返回值 === 入参（纯赋值幂等）", () => {
+    const service = new ModelConfigService({ agentDir: tmpDir, cwd: tmpDir });
+    // 手工构造 read 结果（绕过读取层 sanitize）：锁定「提交什么缓存什么」的纯赋值语义
+    const okRead: GlobalConfigReadResult = {
+      status: "ok",
+      config: { version: 1, maxConcurrent: 7, defaultEngine: "zcode" },
+    };
+    expect(service.applyGlobalConfig(okRead)).toBe(okRead);
+    expect(service.getGlobalConfig().maxConcurrent).toBe(7);
+    expect(service.getGlobalConfig().defaultEngine).toBe("zcode");
+
+    const absentRead: GlobalConfigReadResult = {
+      status: "absent",
+      config: { version: 1, maxConcurrent: 5 },
+    };
+    expect(service.applyGlobalConfig(absentRead)).toBe(absentRead);
+    expect(service.getGlobalConfig().maxConcurrent).toBe(5);
+    expect(service.getGlobalConfig().defaultEngine).toBeUndefined();
+
+    // failed 保持：缓存停在最近一次成功提交的值
+    const failedRead: GlobalConfigReadResult = { status: "failed", reason: "EACCES" };
+    expect(service.applyGlobalConfig(failedRead)).toBe(failedRead);
+    expect(service.getGlobalConfig().maxConcurrent).toBe(5);
+    expect(service.getGlobalConfig().defaultEngine).toBeUndefined();
   });
 });

@@ -68,6 +68,9 @@ vi.mock("../subagent-service.ts", () => ({
 vi.mock("../model-config-service.ts", () => ({
   ModelConfigService: class {
     initModel = vi.fn();
+    // session_start 的 lastEngine 基线读取经本方法（构造性同源）：absent → lastEngine
+    // 归一 'pi'，与旧实现 readGlobalConfig 读不到文件时的行为一致
+    reloadGlobalConfig = vi.fn(() => ({ status: "absent", config: { version: 1, maxConcurrent: 6 } }));
     setCtxModel = vi.fn();
   },
   getModelConfigService: () => null,
