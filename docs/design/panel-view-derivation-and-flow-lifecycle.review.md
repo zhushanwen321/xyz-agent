@@ -52,3 +52,9 @@
 结论：收敛。0 must-fix, 0 suggestion, 2 info（均已顺手处理：D7 括号改功能性描述并标注 newSession L258 排除项；T4 行同步 4 处定义）。文档进入实施。
 
 审查历程：Round 1（2 must-fix + 7 sug：根因链证伪重写为结构免疫论证 / D7 空态承接）→ Round 2（1 must-fix + 3 sug：V1' 构造矛盾重写 / D7 扩 4 处 / V1 改 devtools）→ Round 3（收敛）。
+
+# 实施记录（dev-flow，2026-08-29）
+
+单元 T1-T5 全部 committed，全量验证：core 1267 passed | renderer 3594 passed | ui 550 passed，三包零失败；双端 typecheck / eslint / vue_rules_checker 全绿；constraints 登记 C-state-09（derivePanelView 唯一派生入口）并经 render --check 校验（83 条）。
+
+偏差登记（一致性审查待裁决项汇总）：T2×4（transition 精确落点 pushChat 后 loadTree 前 / TC-6e 增强断言 / flow-integration 重试用例按新语义改写 / 补修内容被并行会话 commit 820a8700c 携带入库）；T3×7（core session/index.ts 一行导出经用户授权 / widget-area co-located 测试纳入 / v-if 链等价 switch / empty-with-session 防御性判据保留 / 用例③行为等价落地 / 2 个既有测试按新判据更新）；T4×3（守卫测试追加在既有 landing.test.ts / flowMock 补齐三成员 / D7-U6 用 currentCwd 等价断言）；T5×2（authority 相对路径对齐 / ui-consistency 枚举未入 _meta）。

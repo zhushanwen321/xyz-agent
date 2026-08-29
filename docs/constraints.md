@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 82 条（生成于 2026-08-29）。
+共 83 条（生成于 2026-08-29）。
 
 ## pi 关系（外部依赖边界）
 
@@ -72,6 +72,7 @@
 | C-state-06 | 视图切换状态驱动（settingsStore.currentView）不用 vue-router；Mock 用 VITE_MOCK 在 ws-client 层拦截（mock 不越过通信层） | packages/renderer/src/** | [AGENTS.md](../AGENTS.md) | review: review-arch-boundary |
 | C-state-07 | 领域类型 SSOT 归领域层，mock 反向 import 生产类型；禁生产代码从 mock 目录获取类型 | packages/renderer/src/**、packages/core/src/** | [0029-domain-types-ssot-in-lib](adr/0029-domain-types-ssot-in-lib.md) | review: review-type-safety |
 | C-state-08 | session 级 renderer 状态三问——存哪里（分区 store/composable）？切走谁清（cleanup 编排）？切回谁喂（恢复腿）？新增 ServerMessageType 的 renderer 消费方 / useSessionEvents 调用点时 CR 必查，三问有明确归属才放行；「onMessage 直写组件本地 ref」反模式由 taste-lint 规则 no-instance-level-session-state 机器拦截 | packages/renderer/src/** | [context-consistency-design](todo/context-consistency-design.md) · [0049-session-isolation-map-partition](adr/0049-session-isolation-map-partition.md) | hook: `taste-lint/base.mjs` + review: review-data-governance |
+| C-state-09 | panel 输入面（composer/ask-user/landing）显隐只许经 derivePanelView 纯函数派生（packages/core/src/domain/session/panel-view.ts），禁止组件内直接组合 flow/chat/session 状态判显隐；landing 判据恒为 !sessionId && isFlowActive（G2 结构免疫） | packages/renderer/src/components/panel/**、packages/core/src/domain/session/panel-view.ts | [panel-view-derivation-and-flow-lifecycle](design/panel-view-derivation-and-flow-lifecycle.md) | review: review-arch-boundary |
 
 ## extension 体系
 

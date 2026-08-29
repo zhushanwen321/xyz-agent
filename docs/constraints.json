@@ -964,6 +964,27 @@
       ]
     },
     {
+      "id": "C-state-09",
+      "summary": "panel 输入面（composer/ask-user/landing）显隐只许经 derivePanelView 纯函数派生（packages/core/src/domain/session/panel-view.ts），禁止组件内直接组合 flow/chat/session 状态判显隐；landing 判据恒为 !sessionId && isFlowActive（G2 结构免疫）",
+      "scope": [
+        "packages/renderer/src/components/panel/**",
+        "packages/core/src/domain/session/panel-view.ts"
+      ],
+      "authority": [
+        "design/panel-view-derivation-and-flow-lifecycle.md"
+      ],
+      "dimensions": [
+        "arch-boundary",
+        "ui-consistency"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-arch-boundary"
+        }
+      ]
+    },
+    {
       "id": "C-ext-01",
       "summary": "目录分组（taiji/universal）+ package.json xyz-agent.role + mandatory 清单三处一致；extensions/ 顶层禁放 extension 包",
       "scope": [
