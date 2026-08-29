@@ -1058,6 +1058,9 @@ fi
 #   - G1 pi 语义登记守卫：node scripts/check-pi-semantics.mjs（全仓校验：
 #     registry schema / 探针存在性 / pi 三包 + runtime pin 四包版本门禁；
 #     无 git index 依赖，每次必跑）
+#   - pi-sync 派生锚点守卫：node scripts/check-pi-sync.mjs（pi-evolution-consistency
+#     §3.2 D2：build.yml env / prepare 脚本默认值 / 快照 / extensions peerDeps /
+#     KNOWN_PI_API_TYPES / pi-tui / dev binary 8 项；与 G1 零重叠，按路径触发）
 #   - G3 思考档位差分探针：node scripts/diff-probe-thinking.mjs（registry
 #     计算路径 vs pi-ai 同源函数逐模型比对）；staged 含四个触发文件之一时跑
 #   - G4 subagent 通道禁则：python3 .githooks/check_subagent_channels.py
@@ -1078,6 +1081,25 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
         echo -e "${RED}[ERROR] G1 pi 语义登记守卫未通过——按上方 ✗ 明细逐条恢复（每条自带动作）后重试${NC}"
         echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
         exit 1
+    fi
+
+    # pi-sync 派生锚点守卫（pi-evolution-consistency §3.2 D2，按路径触发——性能考虑，
+    # 只在触碰派生锚点文件时全量跑：根 package.json / lockfile / build.yml / prepare 脚本 /
+    # 快照 / gen 脚本 / shared constants / extensions 任一 package.json / 守卫脚本自身）。
+    # 与 G1 逐项零重叠（设计 §2.1 分工声明）；不占 G 编号（G1/G3/G4 属 pi-boundary-reliability 体系）。
+    if echo "$STAGED_FILES" | grep -qE "(^|/)(package\.json|pnpm-lock\.yaml)$|^(\.github/workflows/build\.yml|scripts/prepare-pi-resources\.sh|scripts/check-pi-sync\.mjs|packages/runtime/src/generated/builtin-providers\.json|packages/runtime/scripts/gen-builtin-providers\.mjs|packages/shared/src/constants\.ts)$|^extensions/.*/package\.json$"; then
+        echo -e "${BLUE}[INFO] pi 派生锚点文件有变更，运行 pi-sync 派生锚点守卫...${NC}"
+        if [ ! -f "scripts/check-pi-sync.mjs" ]; then
+            echo -e "${RED}[ERROR] 找不到 scripts/check-pi-sync.mjs（u2 交付物缺失）${NC}"
+            exit 1
+        fi
+        if ! node scripts/check-pi-sync.mjs; then
+            echo -e "${RED}[ERROR] pi-sync 派生锚点守卫未通过——按上方 ✗ 明细逐条恢复（每条自带动作）后重试${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] 无 pi 派生锚点文件变更，跳过 pi-sync 守卫${NC}"
     fi
 
     # G3：registry vs pi-ai 差分探针（触发文件：档位链路四文件任一 staged，basename 匹配）

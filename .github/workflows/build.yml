@@ -43,8 +43,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       # 提到 job 级：Cache pi resources 步骤的 key 和 prepare 步骤共用同一版本号。
-      # 与 scripts/prepare-pi-resources.sh 默认值对齐（0.84.1），避免 CI 打包内置旧 pi。
-      PI_VERSION: '0.84.1'
+      # 与 scripts/prepare-pi-resources.sh 默认值对齐（0.84.4），避免 CI 打包内置旧 pi。
+      # 该值受 scripts/check-pi-sync.mjs S1 守卫（pre-commit 按路径触发 + ci.yml invariants），
+      # 与根 package.json 声明不一致时会被拦截。
+      PI_VERSION: '0.84.4'
 
     steps:
       - uses: actions/checkout@v4

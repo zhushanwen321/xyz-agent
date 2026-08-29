@@ -432,6 +432,13 @@ jobs:
       - name: pi semantics registry guard (G1)
         run: node scripts/check-pi-semantics.mjs
 
+      # pi 构建期派生锚点守卫（pi-evolution-consistency §3.2 方向 1A / D2，与 pre-commit 同源直调）：
+      # 声明基准（build.yml env / prepare 脚本默认值 / extensions peerDeps 对根 package.json）
+      # + 实装基准（快照 piAiVersion / 快照新鲜度 / KNOWN_PI_API_TYPES / pi-tui 对 node_modules）。
+      # 与上行 G1 逐项零重叠（§2.1 分工声明）：语义漂移归 check-pi-semantics，派生锚点跟随归本守卫。
+      - name: pi sync derived anchors guard
+        run: node scripts/check-pi-sync.mjs
+
       # G3 思考档位差分探针（pi-boundary-reliability D7-G3「CI invariants 同步」）：
       # 能力注册表计算路径 vs pi-ai 同源函数直调逐模型比对——防 registry 自身漂移
       #（U6 删 resolveAvailableLevels 后探针改守卫 registry，见脚本头注）。
