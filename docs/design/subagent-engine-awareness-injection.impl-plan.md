@@ -109,3 +109,5 @@ worktree 决策：全部 plain。理由：`src/index.ts` 虽为扩展入口（�
 | 2026-08-29 | W3 u4 committed（be71ece2a） |
 | 2026-08-29 | 阶段 3 双区一致性审查：u3/u4 零缺陷；u1/u2 一条 unreasonable（listModels 降级文案语义错位）+ 两条 doc_errors（D1b 组合盲区[中]、D2 顺序表述矛盾[低]）。设计文档修订 4 处（D1b 补基线 reload / D2 顺序统一 / D5 补非法值语义 / U2 行降级文案区分） |
 | 2026-08-29 | 阶段 4 修复：u2 轮 2 接替 dev 完成（原会话网络错误中断，工作区核实零残留后补派）commit b0a4935c9；u3 轮 3 commit 20fbe5c58。定向复审 verdict=清零（245 用例绿），前瞻观察登记如上 |
+| 2026-08-29 | 阶段 5 Gate A 绿：typecheck exit 0 / lint 0 errors（166 warnings 存量技术债标记）/ 全部 pi-* 包测试通过（subagent-workflow 3134 passed，6 skipped 为存量 env 门控 live 套件 ENGINE_CONFORMANCE_LIVE，非本次引入） |
+| 2026-08-29 | 阶段 5 Gate B 绿（真机 pi rpc 沙箱 + dump 探针，8/8 pass）：A1/A2 状态段与清单逐字比对 MATCH；A3 三处同 turn 对齐经 pi-only 模型真派发 + record 键形态双证；A3' record engine=zcode 盖章；A4 双向边沿各恰一条零清单（「恰 3」时点成立——任务口径与动作序列的计数差为剧本措辞问题，语义验证成立）；A5 坏 JSON 零伪通知 + warn 日志落盘；A6 ghost 警告行与 engine_not_found 文案一致（LLM 依段内指引自主改 engine:'pi' 重试成功，注入正向收益旁证）；A7 双进程各自独立边沿；A8 分段 sha256 指纹实测共享前缀 ≥40000 字符、断点仅尾部引擎区（未走降级）。附带修正：pi rpc prompt 命令字段实装为 message 非 text。**双绿，交付** |
