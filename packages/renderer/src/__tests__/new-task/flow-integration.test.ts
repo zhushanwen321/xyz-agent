@@ -317,14 +317,18 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     await expect(flow.submitFirstMessage(textToSegments('first'))).rejects.toThrow('network down')
     expect(createCtrl.create).toHaveBeenCalledTimes(1)
     expect(flow.currentSessionId.value).toBe('retry-s') // session 已绑定
-    expect(flow.state.value).toBe('landing') // send 失败未进 completed
-
-    // 重试：currentSession 已存在 → 跳过 create，直接 send
-    chatMock.send.mockResolvedValueOnce(undefined)
-    await flow.submitFirstMessage(textToSegments('first'))
-    expect(createCtrl.create).toHaveBeenCalledTimes(1) // 未重复 create
-    expect(chatMock.send).toHaveBeenCalledTimes(2)
+    // T2 交接原子化（设计 panel-view-derivation-and-flow-lifecycle.md §3.3 D3）：
+    // 交接（setActiveSession+loadPanel+pushChat）完成即终态定格，send 失败属 session
+    // 错误通道（toast），flow 终态不回退 landing
     expect(flow.state.value).toBe('completed')
+
+    // 新语义推论：send 失败后 flow 已终结（completed），再次 submitFirstMessage 撞
+    // 「非 landing」守卫抛错——重发走对话视图 composer（session 错误通道），不再经
+    // new-task flow。「跳过 create 直接 send」的 retry 分支覆盖由 core flow.test.ts
+    // TC-7（bindSession 构造 landing+currentSession）承接，本文件此路径已不可达。
+    await expect(flow.submitFirstMessage(textToSegments('first'))).rejects.toThrow('非 landing')
+    expect(createCtrl.create).toHaveBeenCalledTimes(1) // 未重复 create
+    expect(chatMock.send).toHaveBeenCalledTimes(1) // 守卫先于 send，未重发
   })
 
   it('E2/E3 create reject→错误向上抛，不留僵尸 session（state 留 landing，currentSession=null）', async () => {

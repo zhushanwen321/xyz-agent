@@ -14,6 +14,12 @@
  *   （pi-ai types.d.ts:405-409 + 244-250；toolCall 非 partial 字段，wire 保留）
  * - 实测配对：toolcall_end.toolCall.id 与后续 tool_execution_start.toolCallId 同值
  *
+ * [契约漂移 2026-08-29] 实装 pi 0.84.4 起 toolcall_start wire 增顶层 id/toolName
+ * （dist/modes/json-event.js toJsonAssistantMessageEvent 显式提升：return { ...deltaEvent,
+ * id: toolCall.id, toolName: toolCall.name }），0.84.1 探针形态不再成立；下方真实 pi
+ * 哨兵断言已同步更新。提取点仍为 toolcall_end 不前移（配对语义不变），mock 子集样本
+ * 保留 0.84.1 历史形态（translate 对 start 的 noop 行为与 id 有无无关）。
+ *
  * 双轨（TEST-STRATEGY.md §4）：
  * - 凭证无关子集（CI 可跑，无条件执行）：mock 事件**照抄探针抓包样本**（真实 wire 形态，
  *   无顶层 message 字段）喂生产 translate() + EventInterpreter 全链路。
@@ -146,7 +152,7 @@ describe.skipIf(!REAL_PI_READY)(
     }
   })
 
-  it('wire 契约：toolcall_end 携带 toolCall.id + contentIndex；toolcall_start 无 id 字段', () => {
+  it('wire 契约：toolcall_end 携带 toolCall.id + contentIndex；toolcall_start 携带顶层 id/toolName（pi 0.84.4+）', () => {
     const fx = fixture!
     const subEvents = fx
       .collectEvents((e) => e.type === 'message_update')
@@ -160,10 +166,13 @@ describe.skipIf(!REAL_PI_READY)(
       expect(typeof s.contentIndex).toBe('number')
     }
     for (const s of starts) {
-      // id 只在 partial 里（wire 剥离）——若 pi 未来形态变化（start 携带 id），
-      // 本断言失败即提醒重新评估提取点（可前移回 toolcall_start）。
+      // [哨兵触发 2026-08-29] pi 0.84.4 起 toJsonAssistantMessageEvent 把 id/toolName 提升到
+      // wire 顶层（dist/modes/json-event.js），0.84.1 形态（start 无 id）不再成立。生产提取点
+      // 维持 toolcall_end（event-adapter.ts：toolCallId 与 tool_execution_start 配对，由
+      // 「真实产出」用例锁定）；start.id 仅是更早锚点信息，提取点不前移。
       expect(s.toolCall).toBeUndefined()
-      expect('id' in s).toBe(false)
+      expect(typeof s.id).toBe('string')
+      expect(typeof s.toolName).toBe('string')
     }
   })
 

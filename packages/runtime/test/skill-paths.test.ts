@@ -90,7 +90,11 @@ vi.mock('../src/infra/system/trash.js', () => ({
 }))
 
 // Mock @xyz-agent/shared barrel — provide constants needed by rpc-client + session-lifecycle
-vi.mock('@xyz-agent/shared', () => ({
+// importOriginal spread 而非完全替换：rpc-client.start 经 ../spawn-env.js re-export 消费
+// shared 的 buildOutboundChildEnv（纯函数、env 全 DI），完全替换式 mock 会随 shared 新增
+// 导出静默断联（b5d3e6329 事故根因，spawn 未及执行即抛 TypeError 致 capture 为空）。
+vi.mock('@xyz-agent/shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@xyz-agent/shared')>()),
   ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM', 'NODE_', 'NVM_', 'XYZ_', 'XDG_', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP'],
   // session-lifecycle.restoreSession L259 用 BUILTIN_PRESET_IDS.FULL 兜底历史 session 的 presetId
   BUILTIN_PRESET_IDS: { FULL: 'builtin:full', ORCHESTRATOR: 'builtin:orchestrator', READONLY: 'builtin:readonly' },
