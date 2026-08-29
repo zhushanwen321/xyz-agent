@@ -104,6 +104,7 @@ graph TD
 | u2 | committed | 1 | c38020cbb — 守卫 8 项红→绿 + 负向探测 8/8，pre-commit 挂载随 commit 实测 |
 | u4 | committed | 1 | 65aebe1cf — D9 4 新用例 + 56 回归绿 |
 | u6 | committed | 1 | 122e5c171 — 计划外小修：8 文件补 mock，全量 3576 passed exit=0 |
+| u7 | committed | 1 | 820a8700c — 计划外存量修复：rpc-client/skill-paths env-builder mock（importOriginal spread，34 用例）+ tool-call-index 哨兵对齐 pi 0.84.4 wire 契约；runtime 全量 382 files/4089 tests exit 0 |
 
 ## 7 残留风险与变更历史
 
@@ -125,3 +126,5 @@ graph TD
 - 2026-08-29（W1 完成）：u1 ceed4fa12 / u3 a139afad0 / u5 8b8c0519c 全 committed，核心测试主 agent 复验绿；偏差 10 条登记 §5（2 条待审）；新增残留风险 7（ProviderPage mock 存量问题）。另注：W1 期间用户侧并行 commit f3eb0f243（packages/ui 流式 header，与本计划领地零交集）。
 - 2026-08-29（W2 完成 + u6 小修）：u2 c38020cbb / u4 65aebe1cf committed（守卫 pre-commit 挂载随 commit 实测触发）；计划外小修 u6（122e5c171）清障残留风险 7。偏差登记增至 15 条（4 条待审：#5/#10/#14 + 裁决粒度见一致性审查）。状态表全 committed → 转一致性审查。
 - 2026-08-29（一致性审查清零）：三区对抗审查（runtime 目录单真相 / pi-sync 守卫 / 项目切换前端）—— unreasonable 3 条全 low 级且已定向修复（守卫 S1 幻觉参数 --root 清除 + AGENTS.md:28 软锚点 0.84.4 + 默认卡删除菜单测试断言真实化），复验绿；doc_errors 4 条已修（设计文档 5 处措辞修订，见设计变更历史末条；#11 登记引用失实改引 D3）；#5/#14 裁决合理、#10 裁决 doc_error 并同步设计。 unreasonable 清零 → 转双级验收。
+- 2026-08-29（Gate A：FAIL → 修复 → PASS）：首轮 runtime 全量 40 failed（4 个本计划引入：u4 handler 测试 mock 漏补 ×3 + u3 store 测试断言未随 D5 演进 ×1，根因均为增量回归漏扫 `test/` 根级目录；35 个存量：env-builder mock 缺失 ×33 + real-pi ×2）。修复批次 820a8700c（含计划外 u7：mock 族修复 importOriginal spread 长期方案 + tool-call-index 哨兵对齐 pi 0.84.4 `toolcall_start` 顶层 id/toolName wire 契约——pi-semantics 体系外的漏网探针，send-queue-e2e 判 flaky 4 连绿不修）。复验：runtime 382 files/4089 tests exit 0 + renderer 348 files/3584 tests exit 0 + lint 0 errors + 守卫三件绿 → **Gate A PASS**。
+- 2026-08-29（事故记录：并行会话 stage 竞态）：commit 820a8700c 意外裹挟用户侧并行 dev-flow（panel-view-derivation）T2 单元的伴随测试 `flow-integration.test.ts`（其 agent stage 后未 commit，本 agent commit 提交了整个 index）。内容完整合理无损害、不改写历史（并行会话活跃期 reset 危险）；此后本计划所有 commit 改用 `git commit -- <精确路径>` 形式提交指定路径绕过 index 竞态。待用户知悉。
