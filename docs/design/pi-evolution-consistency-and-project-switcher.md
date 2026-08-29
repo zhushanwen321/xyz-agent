@@ -67,7 +67,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 1. **A4 漏同步**：`build.yml:47` 仍是 `0.84.1`（注释还写着「与 prepare-pi-resources.sh 默认值对齐（0.84.1）」，而脚本默认值已是 0.84.4）。若此时打 tag 发版，CI 产物 = JS 层 0.84.4 + binary 0.84.1 混装包，无任何守卫拦截。
 2. **A5 失守**：t10 基线写死 pi-ai 0.84.1 的指纹（1220 模型），0.84.4 快照实际 1290、deepseek 多出 `deepseek-v4-flash-vision-exp`。本机实跑确认红：`expected 1290 to be 1220`。该测试在 `ci.yml` test-runtime 全量路径内，**当前 CI 测试应处于红态**。
 
-**根因**：pi 版本声明分散在 ≥4 类手工锚点上（A1/A3/A4/A5），派生一致性零机器检查。AGENTS.md 已记载升级 runbook（三件套），但两个漏同步都发生在有 runbook 的前提下——**文档挡不住多点手工同步，这是结构性失败模式，不是偶发失误**。
+**根因**：pi 版本声明分散在 ≥4 类手工锚点上（A1/A3/A4/A5），其中 A1 类（npm 四包实装一致性）已由 main 合入的 `check-pi-semantics.mjs` 四包版本门禁覆盖（C-proc-08——且 2026-08-29 merge origin/main 时实际抓到 runtime pin 0.84.1 残留，守卫有效性的新鲜实证），**A2-A6 类构建期派生锚点仍是零守卫**。两守卫分工（防重复建设）：**实装内部一致 + pi 语义漂移归 check-pi-semantics；构建期派生锚点对实装的跟随归本设计的 check-pi-sync**。AGENTS.md 已记载升级 runbook（三件套），但两个漏同步都发生在有 runbook 的前提下——**文档挡不住多点手工同步，这是结构性失败模式，不是偶发失误**。
 
 ### 2.2 问题 2 现状：模型目录在 xyz-agent 内部有两套真相，与 pi 执行侧的第三套分叉
 
@@ -167,7 +167,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 | 1B：全派生——CI env / 脚本默认值运行时从 package.json 动态读取 | 中：消除部分锚点，但 prepare-pi-resources.sh 需引入 node/jq 依赖解析 JSON，shell 变重；快照新鲜度无法「派生」只能「比对」 | 中 | 中：动态解析自身出错时静默用错值 | ❌（局部采纳：build.yml env 可在 CI 步骤内动态读 package.json，作为 1A 的补充） |
 | 1C：纯文档 runbook 强化 | 低：**已被本次实证否决**——两个漏同步都发生在有 runbook 的前提下 | 低 | 高：同样的失败模式会再次发生 | ❌ |
 
-守卫覆盖矩阵（1A 的比对项，全部为只读检查）：
+守卫覆盖矩阵（1A 的比对项，全部为只读检查；与 check-pi-semantics 四包门禁**逐项零重叠**——后者管「实装内部一致」，本矩阵管「派生锚点对锚点的跟随」，见 §2.1 分工声明）：
 
 | 比对项 | 判定 |
 |--------|------|
@@ -177,6 +177,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 | 快照新鲜度：重跑 gen 脚本 → diff 已提交快照 | 有 diff → fail（node_modules 升了快照没重生成） |
 | extensions/ 全部 package.json（实测 24，含 deprecated unified-hooks 与 shared 3 包）peerDeps 满足当前版本（`^0.84.4` satisfies 0.84.4） | 不满足 → fail |
 | `KNOWN_PI_API_TYPES`（shared 常量）== pi-ai KnownApi 源码提取值 | 不等 → fail（复用 gen 脚本既有的源码提取手法） |
+| pi-tui 实装 == 锚点（check-pi-semantics 的 PI_PKGS 只含三包，pi-tui 有真实消费者却不在门禁内——补位） | 不等 → fail |
 | （dev 环境，可选）resources/pi 内 binary 自带 package.json 版本 == 锚点 | 不等 → warn（symlink 缓存可能故意多版本共存，降级为警告） |
 
 #### 方向 2：模型目录单真相（G2）
@@ -186,6 +187,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 | **2A：xyz 内部统一「合并目录视图」单点**——把「快照 ⊕ overlay」合并逻辑从 listProviders 内联抽为单一模块；listProviders 与 pi-provider-store 的有效性判定都消费它 | 高：消除多真相的构造性方案——「有效模型」只在一处定义；改动面收敛在 runtime 两个消费点 | 中：抽取 + 接入 + 回退语义，约 3 个文件 | 中：defaultModel 校验接入后需保证「overlay 不可用时不误杀合法 default」——用保守回退语义控制（见 D5） | ✅ |
 | 2B：放弃 xyz 快照，直接消费 pi 落盘数据（models-store.json + 从 binary 提取内置 catalog） | 低：pi binary 内置 catalog 无稳定的机器可读导出承诺；models-store.json 初始不存在（首启空窗）；快照是离线兜底（pi.dev 不可达时唯一基线） | 高 | 高：依赖 pi 内部格式的隐性契约 | ❌ |
 | 2C：xyz 不做校验，`--model` 直传，错了让 pi 报错 | 低：xyz 需要默认模型做 Landing 展示与 session gate（`session-lifecycle.ts:296`）；pi RPC 报错路径对桌面用户不友好且错误语义不可控 | 中 | 高：错误处理外包给不可控的外部系统 | ❌ |
+| 2D：runtime 直读 `@earendil-works/pi-ai/providers/all`（`getBuiltinProviders()` / `getBuiltinModels()` / `getBuiltinModelDataGeneratedAt()` 均为公开导出，快照数据运行期直接可得）——**main 合入的 C-pi-12 格局反转（runtime 可 import pi-ai，`model-capability.ts` 首次反转声明）后此选项才进入方案空间** | 中：能构造性消灭快照锚点（A2/A5）+ gen 脚本整链 + u1 单元，「快照恒滞后」消失（pnpm install 即同步） | 高：7 个消费文件改造 + bundle 体积（全 provider 工厂代码进 runtime bundle，需实测） | **高：compat 时间炸弹移入运行期**——PS-15（pi-semantics.json，observe）登记 pi-ai/compat 是上游自声明的临时入口（ModelManager 迁移后删除）；快照方案下删除只崩 gen 脚本（构建期、守卫拦截、可控），直读方案下崩 runtime bundle（运行期、全应用瘫痪）。失败模式不对称是裁决的决定性理由；另快照的 `BuiltinModelSummary` 形态是 pi-ai 内部 Model 形态的稳定缓冲层，直读让 7 个消费者直接耦合上游数据形态 | ❌（登记为演进触发条件：① pi-ai 对 compat/目录 API 作出稳定承诺（PS-15 解除）② 或快照守卫再次失守——满足其一时重开本方案对比） |
 
 若用被否方案 2B：§3.1 终态 2 在「首启 + 离线」场景退化为无任何模型列表（数据源都不存在），且 pi 升级改变内部格式时无守卫拦截——不可接受。若用 2C：失败模式 A 变成「会话启动时 pi 报 model not found」，用户配置仍未被尊重，只是失败位置后移。
 
@@ -214,20 +216,20 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 **D1：pi 版本唯一锚点 = 根 package.json 的 pi-coding-agent 依赖版本（选定）**
 - **采用**：守卫脚本以它为 expected，比对 §3.2 矩阵全部锚点。
 - **被否**：锚点放 shared/constants.ts（renderer 也加载，runtime 版本概念泄漏到渲染层）；锚点放 prepare-pi-resources.sh（shell 非结构化数据源，且它是被校验方之一，不能既当裁判又当运动员）。
-- **证据**：`package.json:31-45` 是 pnpm overrides 与 deps 的汇聚点，lockfile 由它驱动。
+- **证据**：`package.json:31-51` 是 pnpm overrides 与 deps 的汇聚点，lockfile 由它驱动。与 check-pi-semantics 四包门禁的关系是**互补非重复**：门禁以 node_modules 实装为基准查「实装内部一致」（`check-pi-semantics.mjs:157-165`），本守卫以声明为锚点查「派生锚点对声明的跟随」——两侧基准与对象均不同。
 - **效果**：G1 的「改一处」成立。
 
 **D2：守卫形态 = 独立 check 脚本 + CI（build.yml PR 路径）+ pre-commit 双挂载（选定）**
-- **采用**：`scripts/check-pi-sync.mjs`（node，能复用 gen 脚本的 pi-ai 源码提取手法）；CI 在现有 test job 前置一步；pre-commit 只对「触碰派生锚点文件」的提交触发（性能考虑，仿 `.githooks/` 既有按路径触发模式）。
-- **被否**：只挂 CI 不挂 pre-commit（本地红到 CI 才发现，反馈慢）；vitest 测试承载（混入测试套件语义不清，且 pre-commit 无法选择性触发）。
-- **证据**：`.githooks/check_spawn_env_boundary.py` 先例（按路径触发的守卫 hook）。
+- **采用**：`scripts/check-pi-sync.mjs`（node，能复用 gen 脚本的 pi-ai 源码提取手法）；CI 在现有 test job 前置一步；pre-commit 只对「触碰派生锚点文件」的提交触发（性能考虑，仿 `.githooks/` 既有按路径触发模式）。挂载实体已探明：pre-commit 生成逻辑在 tracked 的 `.githooks/install-hooks.sh`（check-pi-semantics 的 G1 区块在 `:1058-1077`，照同区块模式追加）。
+- **被否**：只挂 CI 不挂 pre-commit（本地红到 CI 才发现，反馈慢）；vitest 测试承载（混入测试套件语义不清，且 pre-commit 无法选择性触发）；**并入 check-pi-semantics**（职责正交——语义漂移 vs 派生锚点；C-proc-08 已限定其 scope，并入膨胀约束边界；且 check-pi-semantics 刻意零第三方依赖单一职责，本守卫需要 yaml/git 工具面；check-* 家族并列是项目既有模式）。
+- **证据**：`.githooks/check_spawn_env_boundary.py` 先例（按路径触发的守卫 hook）；`.githooks/install-hooks.sh:1058-1077` + `.github/workflows/ci.yml:433`（check-pi-semantics 的 pre-commit + CI 双挂载先例）。
 - **效果**：G1 的「提交/CI 阶段拦截」成立。
 
 **D3：t10 指纹基线自包含化——指纹写入快照 header，测试只断言自洽（选定）**
 - **采用**：gen 脚本生成快照时一并写入指纹（provider 总数 / models 总和）到 JSON header；t10 改为断言「快照内容 == 快照 header 指纹」+「快照 piAiVersion == node_modules 实装版本」。内容漂移提醒职责转移给守卫脚本的快照新鲜度 diff（升级 PR 的快照 diff 本来就要人审）。
 - **被否**：继续手工维护基线数字——**守卫自身的基线成为需要人工同步的第三份数据**（本次失守的直接原因），每次 pi 升级必红一次再人工改数字，守卫退化成仪式。
 - **证据**：`gen-builtin-providers.test.ts:104-125` 基线 1220 vs 实际 1290（实跑红）。
-- **效果**：t10 从「每次升级必红」变为「结构自洽恒绿 + 漂移由守卫报告」；G1 的「守卫自身不产生新锚点」成立。
+- **效果**：t10 从「每次升级必红」变为「结构自洽恒绿 + 漂移由守卫报告」；G1 的「守卫自身不产生新锚点」成立。与守卫矩阵第 3 项（快照 piAiVersion == 实装）构成刻意双通道：t10 在测试期跑（CI test 路径）、守卫在提交期跑（pre-commit + CI invariants），覆盖不同拦截时点。
 
 **D4：「有效模型」合并视图抽为 runtime 单点模块（选定）**
 - **采用**：把 listProviders 内联的「快照 ⊕ overlay」合并（`provider-config-helper.ts:337-343`）与 `getCatalogOverlayModels` 的读取逻辑收拢到一个模块（扩展 `provider-catalog.ts` 或新 `merged-catalog.ts`，实施层定）；对外暴露「provider X 的有效模型集（BuiltinModelSummary 形）」单一函数；listProviders 与 pi-provider-store 的 `builtinModelsById` 索引都改从它构建。
@@ -320,7 +322,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 
 ### 约束登记（落地时）
 
-按仓库规矩，U1/U2 若确立新架构级约束（「pi 派生锚点必须过 check-pi-sync」「有效模型判定必须走合并视图单点」），先登记 `docs/constraints.json` 再写代码，改后跑 `node scripts/render-constraints.mjs`。
+按仓库规矩，U1/U2 若确立新架构级约束（「pi 派生锚点必须过 check-pi-sync」「有效模型判定必须走合并视图单点」），先登记 `docs/constraints.json` 再写代码，改后跑 `node scripts/render-constraints.mjs`。登记形态：**新增独立条目**（如 C-build-02「构建期 pi 派生锚点一致性」），不扩展 C-proc-08——后者 scope 已限定为 pi-semantics 语义登记体系，两者是并列守卫非包含关系（见 §2.1 分工声明）。
 
 ### 待验证检查点（设计阶段无法确定，留给实施期）
 
@@ -333,6 +335,11 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 
 ## 附：遗留事项提醒（非本文档 scope）
 
-- 4 个已提交 commit 均**未 push**（push 需用户授权）
+- 4 个已提交 commit 均**未 push**（push 需用户授权）；merge origin/main 已完成（75534d044，含 runtime pin 0.84.4 同步 + pi-semantics 探锚/verifiedWith 0.84.4 重验）
 - 问题 2 的真机验收（Provider 页确认 glm-5.3 可见——注意 0.84.4 快照本身已含 glm-5.3，双通道都应可见）仍待执行
 - `docs/page-design/project-switcher-demo.html` 为 untracked，随 U4 提交
+
+## 变更历史
+
+- 2026-08-29（初版）：三问题终态分析 + 对抗式审查（4 must-fix + 4 suggestion 全部修订）。
+- 2026-08-29（merge origin/main 后增量评估修订）：main 合入 pi-semantics 守卫体系与 C-pi-12 格局反转后，经增量对抗评估修订——① §2.1 根因修正（A1 类已有四包门禁 + 两守卫分工声明 + merge 实证）② §3.2 方向 2 补方案 2D（runtime 直读 pi-ai，裁决维持 2A，理由：compat 时间炸弹的构建期/运行期失败模式不对称；2D 登记为演进触发条件）③ 守卫矩阵补 pi-tui 项（check-pi-semantics PI_PKGS 三包缺口补位）④ D1/D2 补与 check-pi-semantics 的互补关系与挂载先例 ⑤ §5 约束登记形态明确独立条目。方向③（ProjectSwitcher）与 D4-D9 经评估确认零影响，未改动。
