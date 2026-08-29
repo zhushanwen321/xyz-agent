@@ -64,8 +64,8 @@ T1/T2/T4 首波并行（无相互依赖），T3 次波，T5 收尾。
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| T1 | pending | 0 | — |
-| T2 | pending | 0 | — |
+| T1 | committed | 1 | commit 见本行下次提交；panel-view.test.ts 5 passed（64 组合表 + 完整性守卫 + 3 回归断言）；session 域 55 passed 既有零破坏；tsc/eslint 零问题；deviations=[] |
+| T2 | committed | 1 | commit 5e0db4001；flow.test.ts 14 passed（含 TC-6e send reject→completed）；2 deviations（transition 置于 pushChat 后 loadTree 前 / TC-6e 增强断言）待一致性审查裁决 |
 | T3 | pending | 0 | — |
 | T4 | pending | 0 | — |
 | T5 | pending | 0 | — |
