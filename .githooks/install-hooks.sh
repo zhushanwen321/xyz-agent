@@ -426,7 +426,7 @@ if [ "$SKIP_CODE_RULES_CHECK" != "1" ]; then
             python3 "$RULES_CHECKER" --batch $ABSOLUTE_FILES
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] 代码规范检查失败${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -458,7 +458,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_SIDECAR_SESSION_CHECK" != "1" ]; th
             python3 "$SIDECAR_CHECKER" "$SIDECAR_SERVER"
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] Sidecar session 隔离检查失败${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -489,7 +489,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKENS_CHECK" != "1" ]; then
             python3 "$CSS_CHECKER" "$CSS_FILE"
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] CSS tokens 检查失败${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -520,7 +520,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKEN_SSOT_CHECK" != "1" ]; the
             python3 "$CSS_SSOT_CHECKER"
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] CSS token SSOT 检查失败：style.css 含 design-tokens.md 未收录的 token${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -550,7 +550,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_RENDERER_DEPS_CHECK" != "1" ]; then
             python3 "$RENDERER_DEPS_CHECKER"
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] Renderer 依赖完整性检查失败：存在 import 了但 package.json 未声明的包${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -577,7 +577,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_ENV_WHITELIST_CHECK" != "1" ]; then
         python3 "$ENV_WHITELIST_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] ENV_WHITELIST_PREFIXES SSOT 检查失败${NC}"
             echo -e "${YELLOW}[INFO] 定义点应在 shared/constants.ts，main/runtime 只能 import${NC}"
@@ -610,7 +610,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
         python3 "$SPAWN_ENV_BOUNDARY_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] runtime 子进程 env 出站契约检查失败${NC}"
             echo -e "${YELLOW}[INFO] 新增子进程必须经 buildOutboundChildEnv 组装 env；修复指引见上方脚本输出；设计依据 docs/design/env-propagation-boundary.md${NC}"
@@ -638,7 +638,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_TOOL_SCHEMA_CHECK" != "1" ]; then
         python3 "$TOOL_SCHEMA_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] Pi extension tool schema 合规检查失败${NC}"
             echo -e "${YELLOW}[INFO] parameters 顶层必须 Type.Object（OpenAI 兼容），禁止顶层 Type.Union${NC}"
@@ -665,7 +665,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PATH_WHITELIST_CHECK" != "1" ]; the
         python3 "$PATH_WHITELIST_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] 路径白名单动态化检查失败${NC}"
             echo -e "${YELLOW}[INFO] 路径白名单必须使用 getConfigDir()/getPiAgentDir() 动态生成${NC}"
@@ -696,7 +696,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
         python3 "$PI_DIRECT_WRITE_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] R1 pi session JSONL 直写检查失败${NC}"
             echo -e "${YELLOW}[INFO] session JSONL 本体唯一写方 = pi；例外与豁免登记见 docs/architecture/data-source-registry.md${NC}"
@@ -724,7 +724,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_WS_SEND_CHECK" != "1" ]; then
         python3 "$WS_SEND_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] ws-client send 直调检查失败${NC}"
             echo -e "${YELLOW}[INFO] renderer 禁止直调 ws-client.send，统一走 api client${NC}"
@@ -751,7 +751,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_NO_SERVICE_CYCLE_CHECK" != "1" ]; t
         python3 "$SERVICE_CYCLE_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] runtime services 循环依赖检查失败（D6c）${NC}"
             echo -e "${YELLOW}[INFO] service 间不得具体类循环 import，改用接口/事件解耦${NC}"
@@ -787,7 +787,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
         echo -e "${BLUE}[INFO] 运行 $CONSTRAINT_CHECKER ...${NC}"
         python3 "$CHECKER_PATH"
         EXIT_CODE=$?
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] $CONSTRAINT_CHECKER 检查失败${NC}"
             echo -e "${YELLOW}[INFO] 约束登记见 docs/constraints.json / docs/constraints.md（机器 SSOT + 人读视图）${NC}"
@@ -835,7 +835,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSP_COMPAT_CHECK" != "1" ]; then
         python3 "$CSP_COMPAT_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] CSP 能力一致性检查失败${NC}"
             echo -e "${YELLOW}[INFO] 源码出现 eval/WebAssembly 用法但 CSP script-src 'self' 未放行——运行时会抛 CompileError${NC}"
@@ -977,7 +977,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_DIRECTORY_RULES_CHECK" != "1" ]; th
         python3 "$DIRECTORY_RULES_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] 目录规范检查失败${NC}"
             echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -1011,7 +1011,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_I18N_CJK_CHECK" != "1" ]; then
             python3 "$I18N_CJK_CHECKER" $ABSOLUTE_VUE
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] i18n CJK 残留检测失败：模板含硬编码中文${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -1041,7 +1041,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_I18N_LOCALE_SYNC_CHECK" != "1" ]; t
             python3 "$I18N_LOCALE_CHECKER"
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] i18n locale 双侧 key 不一致：zh-CN 与 en-US key 集合 desync${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"

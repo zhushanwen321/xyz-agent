@@ -212,15 +212,18 @@ function parseCatalogBody(body: unknown): OverlayModel[] {
   return []
 }
 
-/** 由 200 响应构造 overlay 条目（last-modified 缺失/非法时以当前时间兜底）。 */
+/** 由 200 响应构造 overlay 条目。last-modified 缺失/非法时置 0（stale）——与 pi
+ * 0.84.4 实装（core/remote-catalog-provider.js：`Date.parse(...) ?? ""` →
+ * `Number.isNaN(lastModified) ? 0 : lastModified`）逐字对齐：pi 侧 0 视为 stale、
+ * 执行期忽略该 entry，若此处用 Date.now() 兜底会把 pi 判 stale 的 entry 标成
+ * fresh，重演「展示可用 ≠ 执行可用」漂移。 */
 function buildEntryFromResponse(res: globalThis.Response, body: unknown): OverlayEntry {
   const models = parseCatalogBody(body).filter(m => m && typeof m.id === 'string')
-  const lastModifiedHeader = res.headers.get('last-modified')
-  const lastModified = lastModifiedHeader ? new Date(lastModifiedHeader).getTime() : Date.now()
+  const lastModified = Date.parse(res.headers.get('last-modified') ?? '')
   return {
     models,
     checkedAt: Date.now(),
-    lastModified: Number.isNaN(lastModified) ? Date.now() : lastModified,
+    lastModified: Number.isNaN(lastModified) ? 0 : lastModified,
     etag: res.headers.get('etag') ?? undefined,
   }
 }

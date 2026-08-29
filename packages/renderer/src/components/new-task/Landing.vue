@@ -86,7 +86,12 @@ const cwd = computed(() => flow.currentCwd.value ?? props.currentCwd)
  * Git chip 不显示 + 点 chip 时 idle→branch-popover 非法转换报错。
  * startFlow 幂等（已 landing 不翻 state，只刷新 cwd），idle 态调它会 idle→landing + presetCwd。
  */
+// [review MF-11] 实例计数：flow 是模块级单例，split/drawer 模式下多个 sessionId===null
+// 面板可同时挂载 Landing；计数归零（最后一个实例卸载）才允许终结 flow，否则关闭副面板
+// 会把用户在另一面板正在编辑的草稿（draft/model/segments）一并 cancel 掉。
+let landingInstanceCount = 0
 onMounted(() => {
+  landingInstanceCount++
   if (flow.state.value !== 'landing') {
     flow.startFlow(props.currentCwd ?? undefined)
   } else if (!flow.currentCwd.value && props.currentCwd) {
@@ -99,10 +104,11 @@ onMounted(() => {
  * 视图卸载后若停留 landing/overlay，无任何承接者能终结它——设计 panel-view-derivation
  * §3.3 D4 的出口兜底层）。限定 isActive（landing/overlay 活跃态）才 cancel：正常首发
  * （completed）与切换（cancelled，selectSession 守卫已 cancel）路径下卸载时已非活跃，
- * 守卫 noop，不产生非法转换。
+ * 守卫 noop，不产生非法转换。多实例下仅最后一个卸载的实例执行 cancel（见上计数注释）。
  */
 onUnmounted(() => {
-  if (flow.isActive.value) flow.cancelFlow()
+  landingInstanceCount = Math.max(0, landingInstanceCount - 1)
+  if (landingInstanceCount === 0 && flow.isActive.value) flow.cancelFlow()
 })
 watch(() => props.currentCwd, (newCwd) => {
   if (!flow.currentCwd.value && newCwd) {

@@ -652,12 +652,15 @@ function assertAndLookupForkFromSource(service: SubagentService, id: string): Su
     );
   }
 
-  // 守卫 3：异进程活跃（磁盘分支 3 externalInstance = 另一进程的活 pid marker；
-  // 或快照 running 但非本进程内存——上方 findRecord 已排除本进程，此处 status==='running'
-  // 只剩异进程形态）。双写防护：fork 虽 copy-on-write，但等它结束再接更安全。
-  if (source.externalInstance !== undefined || source.status === "running") {
+  // 守卫 3：异进程活跃（磁盘分支 3 externalInstance = 另一进程的活 pid marker）。
+  // 双写防护：fork 虽 copy-on-write（历史 jsonl 只读），但源仍在异进程运行时接续容易
+  // 读到半截历史，等它结束再接更安全。判据只认 externalInstance（真实活 pid 探针
+  // 命中），不拦 status==='running' 的快照——后者含 B-1 跨重启回退重建的 running 记录
+  //（无活 pid，历史已完整落盘），它们正是 endedMessageGuard 指引 fork-from 的目标；
+  // 拦了会让 agent 在「建议 fork-from」与「fork-from 拒绝 running」两条错误间死循环。
+  if (source.externalInstance !== undefined) {
     throw new Error(
-      `subagent ${id} appears to be running in another process (alive pid marker present). ` +
+      `subagent ${id} is still running in another process (alive pid marker present). ` +
       `Recovery: wait until it finishes, or operate it in its own session; then retry fork-from.`,
     );
   }
@@ -737,7 +740,6 @@ export function adapter(
     const d = input.domain;
     result = { action, subagentId: d.subagentId, sessionFile: null, forkFromResponse: d.response };
   } else {
-    // action === "close"
     // action === "close"
     result = { action, subagentId: input.domain.subagentId, sessionFile: null, closeResponse: input.domain.response };
   }

@@ -280,14 +280,12 @@ function isDetailsStructurallyComplete(d: SubagentToolResult): boolean {
       return "listResponse" in d;
     case "cancel":
       return "cancelResponse" in d;
-    case "message":
-      return "messageResponse" in d;
-    case "close":
-      return "closeResponse" in d;
     case "fork-from":
       // [v8.5 B] 新 action 直接纳入 guard：缺内层分组才 fallback。
       // message/close 维持历史现状（不落此 switch 显式分支，走 extractResultError
-      // 回显 content 首行）不变，避免本任务触碰现有渲染回归面。
+      // 回显 content 首行）不变，避免触碰现有渲染回归面——review MF-13 曾引入
+      // message/close 显式分支后回退：无对应渲染分支却判「结构完整」会改走
+      // generic 无响应渲染，属静默行为变更。
       return "forkFromResponse" in d;
     default:
       return false;

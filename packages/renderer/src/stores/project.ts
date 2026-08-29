@@ -224,15 +224,18 @@ export const useProjectStore = defineStore('project', () => {
     if (from === -1 || to === -1) return
     const next = [...display]
     const [dragged] = next.splice(from, 1)
+    // 插入位 = 移除后的 to：from>to（上移）时目标仍在 to，落目标前；from<to（下移）
+    // 时目标已左移到 to-1，落 to 即目标后——键盘 ↑/↓ 的相邻交换两个方向都成立
+    //（D↔E 互换语义对称），无需方向修正（曾试 `from<to?to:to-1`，to=0 时负索引 splice
+    // 尾插致错序，见 review MF-12 回归）。
     next.splice(to, 0, dragged!)
-    // 用户序成员 = 旧有序段 ∪ 被拖卡；按 splice 后顺序密集编号 0..n-1
-    const orderedIds = new Set(
-      projects.value.filter((p) => p.userOrder != null).map((p) => p.id),
-    )
-    orderedIds.add(dragId)
+    // 全量定序（review MF-12）：把 splice 后的完整显示序固化为用户序（0..n-1）。
+    // 旧实现只 pin「旧有序段 ∪ 被拖卡」，auto 段卡片被拖时仅其自身获得 userOrder=0
+    // → 渲染时瞬移到用户序段头部（[A,B,C,D,E] 上移 D 实际显示 [D,A,B,C,E]），
+    // 且该错序被持久化。全量 pin 后显示序 ≡ splice 结果；后续新增项目（userOrder
+    // null）仍落入 auto 段排在末尾，语义不变。
     let order = 0
     for (const p of next) {
-      if (!orderedIds.has(p.id)) continue
       projects.value.find((q) => q.id === p.id)!.userOrder = order
       order++
     }

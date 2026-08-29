@@ -8,6 +8,7 @@ import { assertPiSessionFile } from './session-attach-assert.js'
 import type { IProcessManager } from '../../services/ports/pi-engine.js'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
+import { buildOutboundChildEnv } from '../spawn-env.js'
 // E-2（subagent-realtime-channel §4.2/§4.4）：findPiExecutable 抽出为共享函数
 // （relay-registry 受托 spawn 真实 pi 复用同一决策链），原调用点行为零变化。
 import { findPiExecutable } from './find-pi-executable.js'
@@ -83,7 +84,12 @@ export class ProcessManager implements IProcessManager {
     try {
       const piPath = await this.getPiPath()
       const cmd = piPath !== 'pi' ? `"${piPath}" --version` : 'pi --version'
-      const version = execSync(cmd, { encoding: 'utf-8', timeout: 5_000 }).trim()
+      const version = execSync(cmd, {
+        encoding: 'utf-8',
+        timeout: 5_000,
+        // C-proc-09：出站契约构建器组装 env（pi --version 只读探测，白名单基座保留 PATH/HOME）
+        env: buildOutboundChildEnv({ parentEnv: process.env }),
+      }).trim()
       this.piVersionCache = version || 'unknown'
     } catch (e) {
       console.warn('[process-manager] failed to detect pi version:', e)

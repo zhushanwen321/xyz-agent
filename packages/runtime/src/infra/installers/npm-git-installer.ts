@@ -32,13 +32,19 @@ const GIT_PROXY_ENV_KEYS = [
   'NO_PROXY', 'no_proxy',
 ] as const
 
-/** 从父 env 快照提取代理键（有值才带，undefined 键天然不入 extras）。 */
-function pickProxyExtras(parentEnv: Record<string, string | undefined>): Record<string, string> {
+/** 从父 env 快照提取代理键（有值才带，undefined 键天然不入 extras）。
+ * 导出供 shell-runner / git-executor 复用：这三个出站点（clone / fetch / shell 脚本
+ * 内嵌 git+pnpm）共享同一 git 代理消费面，键集分叉会造成「clone 走代理而 fetch 不走」
+ * 的隐性不一致。 */
+export function pickProxyExtras(parentEnv: Record<string, string | undefined>): Record<string, string> {
   const extras: Record<string, string> = {}
   for (const key of GIT_PROXY_ENV_KEYS) {
     const value = parentEnv[key]
     if (value !== undefined) extras[key] = value
   }
+  // SSH_AUTH_SOCK：git@… ssh remote 的 ssh-agent 认证通道（OpenSSH 标准消费）。
+  // 值守卫：仅在父 env 已设置时转发，不凭空注入。
+  if (parentEnv.SSH_AUTH_SOCK !== undefined) extras.SSH_AUTH_SOCK = parentEnv.SSH_AUTH_SOCK
   return extras
 }
 
@@ -63,9 +69,9 @@ export class NpmGitInstaller implements IInstaller {
   async installGit(url: string, destDir: string, timeout?: number): Promise<void> {
     // execFileSync prevents command injection (no shell). Throws on non-zero exit.
     // env 经出站契约构建器组装（C-proc-09 收编）：白名单基座过滤父 env + deny 兜底剥
-    // XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN；extras 仅 forward 上列 git 消费确凿的
-    // 代理键。自有键零注入——clone 输入只有 argv（url + destDir），向 credential
-    // helper 等下游传递产品变量无任何场景需求。
+    // XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN；extras 经 pickProxyExtras forward 代理键
+    // 与 SSH_AUTH_SOCK（git@… ssh remote 的 ssh-agent 认证通道，值守卫：仅在父 env
+    // 已设置时转发）。自有键零注入——clone 输入只有 argv（url + destDir）。
     execFileSync('git', ['clone', '--depth', '1', url, destDir], {
       stdio: 'pipe',
       timeout: timeout ?? GIT_CLONE_DEFAULT_TIMEOUT,

@@ -81,12 +81,18 @@ export interface BuildOutboundChildEnvOptions {
  */
 export function composeChildEnvBase(opts: BuildOutboundChildEnvOptions): Record<string, string> {
   const prefixes = opts.prefixes ?? ENV_WHITELIST_PREFIXES
+  // 大小写不敏感匹配：Windows 进程 env 键形如 SystemRoot / ComSpec / ProgramFiles，
+  // 而白名单登记的是大写形——大小写敏感的 startsWith 会把这些 Windows ambient 键
+  // 静默剥掉，导致新收编的 spawn 调用点（git schannel / cmd wrapper 等）在 Windows
+  // 上失败。env 键在 Windows 语义本就不区分大小写，故统一 lower-case 比较。
+  const loweredPrefixes = prefixes.map(p => p.toLowerCase())
 
   // 步骤 1：白名单过滤父 env 为基座（undefined 值天然不放行）
   const out: Record<string, string> = {}
   for (const [key, value] of Object.entries(opts.parentEnv)) {
     if (value === undefined) continue
-    if (prefixes.some(prefix => key.startsWith(prefix))) out[key] = value
+    const loweredKey = key.toLowerCase()
+    if (loweredPrefixes.some(prefix => loweredKey.startsWith(prefix))) out[key] = value
   }
 
   // 步骤 2：merge extras——undefined = 显式删除（safe-env.ts 同款语义）
@@ -194,6 +200,19 @@ export const SPAWN_ENV_FORWARD_REFERENCE: readonly SpawnEnvForwardEntry[] = [
     injectionPath: 'B3 白名单放行（裸 XYZ_ 前缀）；extension 无 frame.env 自注入通路（U0① 核实）',
     piConsumerAnchors: [
       'extensions/universal/subagent-workflow/src/execution/lifecycle-manager.ts:57（armIdleTimer 三层优先级中的全局缺省来源）',
+    ],
+  },
+  {
+    // git ssh remote（git@github.com:…）的 ssh-agent 认证通道：OpenSSH 经
+    // SSH_AUTH_SOCK 连接 agent。不在白名单前缀内，故由 npm-git-installer /
+    // shell-runner / git-executor 的 extras 显式 forward（值守卫：父 env 未设置
+    // 时不注入）；消费锚点 = git 的 ssh 子进程（libssh2/OpenSSH 标准行为）。
+    name: 'SSH_AUTH_SOCK',
+    injectionPath:
+      'extras 显式转发（infra/installers/npm-git-installer.ts pickProxyExtras，'
+      + 'shell-runner.ts / git-executor.ts 同源复用）',
+    piConsumerAnchors: [
+      'git clone git@… / git fetch / git push 的 ssh 子进程（OpenSSH agent 协议标准消费）',
     ],
   },
 ]

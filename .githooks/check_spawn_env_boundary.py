@@ -48,8 +48,14 @@ SCAN_ROOTS = [
 EXCLUDED_DIR_PARTS = {"__tests__", "test"}
 EXCLUDED_FILE_SUFFIXES = (".test.ts", ".spec.ts", ".d.ts")
 
-# 文件级白名单符号：任一出现即整文件通过（含 import 与调用两种形态）
-CONTRACT_BUILDERS = ("buildOutboundChildEnv", "composeChildEnvBase")
+# 文件级白名单：仅当文件真 import 或真调用了构建器才整文件通过。裸子串匹配
+# （`b in source`）会让仅注释提及构建器的文件静默放行其全部未武装调用点，故必须
+# 用形态化正则：import {...} 花括号内出现符号名，或紧跟 ( 的调用形态。
+CONTRACT_BUILDER_SYMBOLS = ("buildOutboundChildEnv", "composeChildEnvBase")
+CONTRACT_BUILDER_USAGE_RE = re.compile(
+    r"(?:import\s+(?:type\s+)?\{[^}]*\b(?:%s)\b[^}]*\}|\b(?:%s)\s*\()"
+    % ("|".join(CONTRACT_BUILDER_SYMBOLS), "|".join(CONTRACT_BUILDER_SYMBOLS))
+)
 
 # ---------------------------------------------------------------------------
 # API 调用点模式
@@ -60,7 +66,12 @@ IMPORT_CHILD_PROCESS_RE = re.compile(
     r"import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+[\"'](?:node:)?child_process[\"']",
     re.DOTALL,
 )
-CHILD_PROCESS_APIS = ("spawn", "execFile", "execFileSync", "fork")
+CHILD_PROCESS_APIS = (
+    "spawn", "spawnSync",
+    "execFile", "execFileSync",
+    "exec", "execSync",
+    "fork",
+)
 IMPORT_NODE_PTY_RE = re.compile(
     r"import\s+(?:\*\s+as\s+(\w+)|(\w+))\s+from\s+[\"']node-pty[\"']"
 )
@@ -79,8 +90,13 @@ IMPORT_ELECTRON_RE = re.compile(
 # 故无条件兜底（业务代码几乎无 .deps.spawn 命名，误报率天然低）。
 CALL_PATTERNS = {
     "spawn": re.compile(r"(?<![\w.$])spawn\s*\("),
+    "spawnSync": re.compile(r"(?<![\w.$])spawnSync\s*\("),
     "execFile": re.compile(r"(?<![\w.$])execFile\s*\("),
     "execFileSync": re.compile(r"(?<![\w.$])execFileSync\s*\("),
+    # exec/execSync 是 shell-string 形态（经 /bin/sh -c），env 面与 spawn 等价，
+    # 纳入同一边界；(?<![\w.$]) 排除 obj.exec( 方法式调用（regex.exec 等）。
+    "exec": re.compile(r"(?<![\w.$])exec\s*\("),
+    "execSync": re.compile(r"(?<![\w.$])execSync\s*\("),
     "fork": re.compile(r"(?<![\w.$])fork\s*\("),
 }
 DEPS_PATTERNS = [
@@ -149,7 +165,8 @@ EXEMPT_CALLSITES = [
         "update/platform-updater.ts",
         "UPDATER_SCRIPT_PATH",
         "自更新拉起 bash 更新脚本（mac/linux 两条路径共用 snippet 匹配）detached + "
-        "stdio ignore；main 进程域 env 在应用启动时已受入站白名单管辖",
+        "stdio ignore；env 已经 buildOutboundChildEnv 组装，本条豁免仅兜底未来新增"
+        "spawn 形态漂移时的误报复核入口",
     ),
     (
         "update/orchestrator.ts",
@@ -159,7 +176,29 @@ EXEMPT_CALLSITES = [
     (
         "supervisor/port-discoverer.ts",
         "execFileSync(",
-        "lsof/netstat 端口探测只读三处，同步等待直接返回输出，无 env 传播意图",
+        "netstat.exe 端口探测只读，同步等待直接返回输出，无 env 传播意图",
+    ),
+    (
+        "supervisor/port-discoverer.ts",
+        "ps -p",
+        "子孙 pid 探测 ps 只读（clearProcessTree 语义，无 env 传播意图）",
+    ),
+    (
+        "supervisor/port-discoverer.ts",
+        "lsof -n -P",
+        "unix 监听 pid 探测 lsof 只读，无 env 传播意图",
+    ),
+    (
+        "supervisor/shell-env.ts",
+        "spawnSync(shell",
+        "登录 shell env 采集探针（入站白名单机制自身的实现）：shell 需要完整登录"
+        "环境才能还原用户 env，输出仅用于白名单过滤后的回写，无数据外泄面",
+    ),
+    (
+        "gateway/sound-handlers.ts",
+        "spawnSync(cmd",
+        "音效播放器存在性探测（cmd --version）：只读探测、stdio ignore，"
+        "无 env 传播意图",
     ),
     (
         "supervisor/windows-process.ts",
@@ -236,13 +275,6 @@ def exempted(rel_path, line_text):
     return False
 
 
-def reason_for(rel_path, line_text):
-    for suffix, snippet, reason in EXEMPT_CALLSITES:
-        if rel_path.endswith(suffix) and snippet in line_text:
-            return reason
-    return ""
-
-
 FIX_HINT = """[fix] 子进程 env 须经出站契约构建器组装（deny 清单剥 XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN）:
       runtime 包内:   import { buildOutboundChildEnv } from '<相对路径>/infra/spawn-env.js'
       跨包直连 SSOT:  import { buildOutboundChildEnv } from '@xyz-agent/shared'
@@ -270,7 +302,7 @@ def main():
         if not patterns:
             continue
 
-        has_builder = any(b in source for b in CONTRACT_BUILDERS)
+        has_builder = CONTRACT_BUILDER_USAGE_RE.search(source) is not None
         call_lines = []
         for idx, line in enumerate(source.splitlines(), start=1):
             if COMMENT_LINE_RE.match(line):

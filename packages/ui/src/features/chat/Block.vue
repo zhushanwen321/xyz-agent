@@ -515,13 +515,5 @@ const testId = computed(() => {
   opacity: 0;
   transform: translateY(-4px);
 }
-
-/* running toolcall 透明度呼吸：文字在 opacity 1 ↔ 0.55 间呼吸，区分进行中与已完成。
-   animation 声明走模板 Tailwind 任意值类 animate-[toolcall-breathe_2.4s_ease-in-out_infinite]，
-   此处只保留 @keyframes（checker 豁免；普通选择器 + animation 属性行会被自定义 CSS 规则拦）。 */
-@keyframes toolcall-breathe {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
-}
 </style>
 

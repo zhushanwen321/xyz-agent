@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { statSync, readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import type { GitInfo, IGitInfoReader } from '../../services/ports/git-info.js'
+import { buildOutboundChildEnv } from '../spawn-env.js'
 
 const GIT_TIMEOUT_MS = 2000
 // eslint-disable-next-line no-magic-numbers -- 5 minutes = 5 * 60 * 1000ms, self-documenting with comment
@@ -58,6 +59,8 @@ function readGitInfoUncached(cwd: string): GitInfo | undefined {
       timeout: GIT_TIMEOUT_MS,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      // C-proc-09：出站契约构建器组装 env（git 仅需 PATH/HOME，白名单基座保留）
+      env: buildOutboundChildEnv({ parentEnv: process.env }),
     }).trim()
     if (!branch) return undefined
     // Detect worktree: .git is a file (not dir) containing 'gitdir:'

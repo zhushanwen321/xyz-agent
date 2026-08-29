@@ -167,7 +167,7 @@ describe('reorderProject：drop 位置密集重排（D7 赋号语义）', () => 
     expect(store.recentProjects.map((p) => p.id)).toEqual(['x3', 'x1'])
   })
 
-  it('未拖动的自动序项目保持无 userOrder（不被迫赋假顺序）', () => {
+  it('全量定序（review MF-12）：reorder 后完整显示序固化为用户序，auto 卡不再瞬移', () => {
     const store = useProjectStore()
     store.projects = [
       makeProject('x1', 'X1', 0, 0),
@@ -176,13 +176,50 @@ describe('reorderProject：drop 位置密集重排（D7 赋号语义）', () => 
     ]
     store.activeProjectId = 'x1'
 
+    // 把 auto 卡 a 拖到首位：旧语义只 pin 被拖卡（a.userOrder=0 瞬移到段首，
+    // b 仍 auto 落段尾 → 显示 [a, x1, b] 与拖拽落点 [a, x1, b]…但键盘/auto 段内
+    // 拖动会瞬移到网格边缘）。新语义全量定序：显示序 ≡ splice 结果。
     store.reorderProject('a', 'x1')
 
-    expect(store.projects.find((p) => p.id === 'b')!.userOrder).toBeUndefined()
+    expect(store.recentProjects.map((p) => p.id)).toEqual(['a', 'x1', 'b'])
+    expectDenseOrder(store, ['a', 'x1', 'b'])
   })
 
-  it('守卫：同卡拖到自身 / 未知 id 不产生任何变更', () => {
+  // [review MF-12] 键盘 ↑/↓ 相邻交换双向回归：auto 段卡片（旧语义会瞬移到段首）
+  it('全 auto 卡上移（D→C）：显示序 = 相邻交换 [A,B,D,C,E]，非瞬移 [D,A,B,C,E]', () => {
     const store = useProjectStore()
+    store.projects = [
+      makeProject('A', 'A', 500),
+      makeProject('B', 'B', 400),
+      makeProject('C', 'C', 300),
+      makeProject('D', 'D', 200),
+      makeProject('E', 'E', 100),
+    ]
+    store.activeProjectId = 'A'
+    // 显示序 = active A 置顶 + lastUsedAt 降序 = [A,B,C,D,E]；键盘 ↑ 等价于
+    // reorderProject(D, C)（moveCard 邻居目标）
+    store.reorderProject('D', 'C')
+    expect(store.recentProjects.map((p) => p.id)).toEqual(['A', 'B', 'D', 'C', 'E'])
+    expectDenseOrder(store, ['A', 'B', 'D', 'C', 'E'])
+  })
+
+  it('全 auto 卡下移（D→E）：显示序 = 相邻交换 [A,B,C,E,D]，非 no-op 也非瞬移', () => {
+    const store = useProjectStore()
+    store.projects = [
+      makeProject('A', 'A', 500),
+      makeProject('B', 'B', 400),
+      makeProject('C', 'C', 300),
+      makeProject('D', 'D', 200),
+      makeProject('E', 'E', 100),
+    ]
+    store.activeProjectId = 'A'
+    // 键盘 ↓ 等价于 reorderProject(D, E)
+    store.reorderProject('D', 'E')
+    expect(store.recentProjects.map((p) => p.id)).toEqual(['A', 'B', 'C', 'E', 'D'])
+    expectDenseOrder(store, ['A', 'B', 'C', 'E', 'D'])
+  })
+
+  it('守卫：同卡拖到自身 / 未知 id 不产生任何变更', () => {    const store = useProjectStore()
     store.projects = [makeProject('x1', 'X1', 0, 0), makeProject('a', 'A', 1)]
     store.activeProjectId = 'x1'
 

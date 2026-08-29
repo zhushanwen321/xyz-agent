@@ -51,6 +51,7 @@ import type {
   SubagentRecord,
 } from "./types.ts";
 import type { CancelledTombstone } from "./tombstone-store.ts";
+import { CLOSED_REASONS as CLOSED_REASON_LIST } from "./types.ts";
 import { isProcessAlive, readAliveMarker, ALIVE_SOFT_TIMEOUT_MS } from "./alive-store.ts";
 import { readCancelledTombstone } from "./tombstone-store.ts";
 
@@ -320,15 +321,9 @@ function sameStamp(a: Stamp, b: Stamp): boolean {
   return a.mtimeMs === b.mtimeMs && a.size === b.size;
 }
 
-/** ClosedReason 合法值集合（sidecar 内容校验用：外部损坏/手写垃圾内容 → disconnected）。 */
-const CLOSED_REASONS: ReadonlySet<string> = new Set([
-  "parent-shutdown",
-  "parent-fork",
-  "parent-new",
-  "user-close",
-  "cancelled",
-  "gc",
-]);
+/** ClosedReason 合法值集合（sidecar 内容校验用：外部损坏/手写垃圾内容 → disconnected）。
+ * SSOT = types.ts CLOSED_REASONS 全枚举，此处仅建 Set 索引（避免第二份字面量清单漂移）。 */
+const CLOSED_REASONS: ReadonlySet<string> = new Set(CLOSED_REASON_LIST);
 
 /** sidecar 内容是否为合法的 ClosedReason 字面量（disconnected 只作兜底产出，不接受写入）。 */
 function isValidClosedReason(value: string | undefined): value is ClosedReason {

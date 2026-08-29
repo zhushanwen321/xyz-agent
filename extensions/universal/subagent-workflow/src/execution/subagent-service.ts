@@ -3,6 +3,7 @@
 // session_start 时经 initSession 注入 pi；modelRegistry/entries 归 ModelConfigService.initModel。
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import * as fs from "node:fs";
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
@@ -12,7 +13,7 @@ import type { AgentResult as WorkflowAgentResult } from "../orchestration/models
 import { displayAgentName } from "../shared/agent-ref.ts";
 // D-A10: workflow 侧 AgentResult 映射（executeAndAwait 出口）
 import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
-import { removeAliveMarker, findForeignLiveInstance } from "./alive-store.ts";
+import { removeAliveMarker, findForeignLiveInstance, writeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
 // [V2 决策 3] lifecycle-manager idle timer：chatMode 统一投递新 turn disarm（防误杀活进程）。
 // [M3] hasIdleTimer：piAdapter.hasRunningBackground 排除等待续聊（timer armed）的 record。
@@ -1153,6 +1154,26 @@ export class SubagentService {
         );
       }
     }
+    // [review MF-9] 归属校验先于任何持久化副作用：coldLookup 是 getRecordForAction 的
+    // 内存未命中分支，若先 resurrect/register/report 再由调用方抛归属错误，会在磁盘/
+    // 内存留下幽灵 running record + running transition entry（跨进程双 resurrect 窗口）。
+    // rootSessionId 不匹配 → 返回 undefined，由 getRecordForAction 抛统一「not found or
+    // not owned」（不区分失败形态，防跨 session 探测）；parentRecordId 跨层不匹配 →
+    // 原样抛 direct parent 错误（与外层校验同文案，保留跨层导航指引）。
+    if (found && found.rootSessionId !== this.sessionRootId) {
+      return undefined;
+    }
+    if (found) {
+      const baselineRecordId = this.execCtxBaseline?.recordId ?? undefined;
+      if (found.parentRecordId !== baselineRecordId) {
+        throw new Error(
+          `subagent ${id} is owned by its direct parent; message it through that parent ` +
+          `(see /subagents list, parent=${found.parentRecordId ?? "(root layer)"}). [v4 A-5] cross-layer ` +
+          `ownership guard: this process's baseline=${baselineRecordId ?? "(root)"} is not the direct parent of ${id}; ` +
+          `operating here would race the owning child process's handle and double-write the session file.`,
+        );
+      }
+    }
     if (!found) return undefined;
     const record = createRecord(id, {
       agent: found.agent,
@@ -1184,6 +1205,19 @@ export class SubagentService {
     // resurrectClosed 清除；register 后立刻上报 transition entry，live/reload 视图同步
     // 翻回 running（等价性由 applyEntry reducer 保证，对齐 SP-2 重建即报告先例）。
     if (found.status !== "running") {
+      // [review MF-8] 磁盘终态位同步翻转：record-store buildRecord 分支 2（.finalized
+      // 存在 → closed）优先级高于 .alive 活态分支 3，重生若不删 sidecar，任何磁盘扫描
+      // （异进程 / reload / session-reader）都会把本进程内存里 running 的 record 报成
+      // closed/disconnected——破坏 live ≡ reload，且为跨进程二次 resurrect 开门。
+      // best-effort 对齐 BC-4 语义；.alive 刷新为当前进程（后续 resume spawn 会覆盖写）。
+      if (record.sessionFile) {
+        try {
+          fs.rmSync(`${record.sessionFile}.finalized`, { force: true });
+          writeAliveMarker(record.sessionFile, { pid: process.pid, id, startedAt: Date.now() });
+        } catch (_e) {
+          void _e; // best-effort：sidecar 翻转失败不阻断重生主流程
+        }
+      }
       resurrectClosed(record);
     }
     this.store.register(record);
