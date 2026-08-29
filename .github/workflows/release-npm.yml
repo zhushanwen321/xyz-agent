@@ -69,6 +69,13 @@ jobs:
       - name: Typecheck extensions
         run: pnpm extensions:typecheck
 
+      # D9-② dist 发布回归门（subagent-core 包抽离 u1-guards）：npm 消费者视角
+      # 最小回路——build dist → require CJS dist（exports require 条件）→ golden
+      # 回放层免 LLM 免二进制。src 全绿不代表 dist 未坏（tsup 配置漂移/依赖升级/
+      # d.ts 缺陷），发布前强制验证。CI 首跑在下次发布管线（本地只做语法级接线）。
+      - name: Smoke subagent-core dist
+        run: node scripts/smoke-core-dist.mjs
+
       - name: Publish to npm
         run: pnpm changeset publish
         env:
@@ -85,3 +92,5 @@ jobs:
           echo "- \`@xyz-agent/extension-protocol\` (builds dist)" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`@xyz-agent/session-delivery\` (builds dist)" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`@zhushanwen/pi-*\` extensions (publishes TS source, no build)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Pre-publish gates: extensions typecheck + \`@zhushanwen/subagent-core\` dist smoke (build + CJS require + golden replay, D9-②)" >> "$GITHUB_STEP_SUMMARY"

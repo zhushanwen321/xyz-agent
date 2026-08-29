@@ -1142,6 +1142,33 @@ else
 fi
 
 # ============================================================================
+# subagent-core 依赖闭包守卫（D9-① + 检查点 5，subagent-core 包抽离 u1-guards）
+#   packages/subagent-core/** 变更时触发：scripts/check-subagent-core-closure.mjs
+#   校验 C 的 dependencies/peerDependencies/源码 import 闭包不含 pi SDK 与宿主
+#   专属依赖（@earendil-works/*、pi-extension-logger、pi-pending-notifications、
+#   session-delivery、pi-file-lock），附检查点 5 断言（worker 入口子图零
+#   host-services/notify-ports——worker 内零宿主服务）。守卫脚本自身变更同样触发。
+#   dist 回归门（D9-②：build + require CJS dist + golden 回放）不进 pre-commit
+#   （改构建面，秒级耗时也属发布门职责），挂发布管线 npm-prerelease.sh /
+#   release-npm.yml。
+#   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+if echo "$STAGED_FILES" | grep -qE "^packages/subagent-core/|^scripts/check-subagent-core-closure\.mjs$"; then
+    print_section "[subagent-core 依赖闭包守卫]"
+    if [ ! -f "scripts/check-subagent-core-closure.mjs" ]; then
+        echo -e "${RED}[ERROR] 找不到 scripts/check-subagent-core-closure.mjs（u1-guards 交付物缺失）${NC}"
+        exit 1
+    fi
+    if ! node scripts/check-subagent-core-closure.mjs; then
+        echo -e "${RED}[ERROR] subagent-core 依赖闭包守卫未通过——pi SDK / 宿主专属依赖回流闭包，按上方 ✗ 明细处理${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] subagent-core 依赖闭包守卫通过${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -1192,6 +1219,7 @@ echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 +
 echo -e "  ${GREEN}[+]${NC} i18n CJK 残留检测（.vue 模板不得含硬编码中文）"
 echo -e "  ${GREEN}[+]${NC} i18n locale 双侧 key 对齐检查（zh-CN === en-US）"
 echo -e "  ${GREEN}[+]${NC} pi 边界可靠性护栏（G1 语义登记守卫 / G3 档位差分探针 / G4 subagent 通道禁则）"
+echo -e "  ${GREEN}[+]${NC} subagent-core 依赖闭包守卫（D9-① 闭包 + 检查点 5 worker 零宿主服务）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""
