@@ -22,16 +22,18 @@
           <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-3.5 shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
           <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-dim">{{ t('panel.message.thinkingBlock') }}</span>
           <span v-if="!working" class="text-neutral-faint" :class="thinkingExpanded ? 'invisible' : ''">·</span>
-          <!-- working 态：尾部行窗口 + 双轴尾部追踪（D4 高频横向 rAF + 低频纵向 transition）；
-               非 working：头部 60 字符静态预览 -->
+          <!-- working 态：单行尾行视口（2026-08 抖动修复重写）。横向钉右 = viewport flex
+               justify-end + 行右对齐（溢出裁左，纯 CSS 无 scrollLeft 时序）；纵向换行 =
+               useTailScroll settled/sliding 状态机 translateY(-50%) 滑入（-50% 基于自身
+               2 行高度，与行高数值解耦）；h-[1lh] 视口高度 = 1 行行高（CSS lh 单位），
+               任何字号缩放下恒单行。非 working：头部 60 字符静态预览。 -->
           <span
             v-if="working && thinkingTailLines.length > 0"
-            ref="thinkViewportRef"
-            class="flex-1 min-w-0 overflow-hidden text-[length:var(--text-sm)] text-neutral-dim whitespace-nowrap"
+            class="flex h-[1lh] min-w-0 flex-1 justify-end overflow-hidden text-[length:var(--text-sm)] text-neutral-dim"
             :class="thinkingExpanded ? 'invisible' : ''"
           >
-            <span class="inline-block whitespace-nowrap" :style="thinkScrollStyle">
-              <span v-for="(line, i) in thinkDisplayLines" :key="i" class="block whitespace-nowrap">{{ line }}</span>
+            <span class="flex flex-col items-end self-start" :style="thinkScrollStyle">
+              <span v-for="(line, i) in thinkDisplayLines" :key="i" class="whitespace-nowrap">{{ line }}</span>
             </span>
           </span>
           <span v-else class="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-neutral-dim" :class="thinkingExpanded ? 'invisible' : ''">{{ previewText }}</span>
@@ -112,7 +114,7 @@
         <div
           data-testid="tool-block-header"
           class="tool-header flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-sm)] font-medium transition-opacity hover:opacity-80"
-          :class="[toolStatusClass, isRunning ? 'toolcall-breathing' : '']"
+          :class="[toolStatusClass, isRunning ? 'animate-[toolcall-breathe_2.4s_ease-in-out_infinite]' : '']"
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
         >
@@ -120,15 +122,15 @@
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="headerBlockIcon" v-else class="size-3.5 shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
           <span class="shrink-0 normal-case tracking-normal">{{ toolName }}</span>
-          <!-- running + 有流式输出：尾部行窗口 + 双轴尾部追踪；否则静态 shortenForHeader -->
+          <!-- running + 有流式输出：单行尾行视口（同 thinking header 结构，横向 CSS 钉右 +
+               纵向状态机滑入）；否则静态 shortenForHeader -->
           <span
             v-if="isRunning && toolTailLines.length > 0"
-            ref="toolViewportRef"
-            class="min-w-0 flex-1 overflow-hidden normal-case tracking-normal text-neutral-dim whitespace-nowrap"
+            class="flex h-[1lh] min-w-0 flex-1 justify-end overflow-hidden normal-case tracking-normal text-neutral-dim"
             :class="{ invisible: toolExpanded && isBashTool }"
           >
-            <span class="inline-block whitespace-nowrap" :style="toolScrollStyle">
-              <span v-for="(line, i) in toolDisplayLines" :key="i" class="block whitespace-nowrap">{{ line }}</span>
+            <span class="flex flex-col items-end self-start" :style="toolScrollStyle">
+              <span v-for="(line, i) in toolDisplayLines" :key="i" class="whitespace-nowrap">{{ line }}</span>
             </span>
           </span>
           <span v-else-if="argPath" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate" :class="{ invisible: toolExpanded && isBashTool }">· {{ shortenForHeader(argPath) }}</span>
@@ -280,18 +282,15 @@ const previewText = computed(() => {
   return `${c.slice(0, PREVIEW_LIMIT)}…`
 })
 
-/* ── thinking 尾部行窗口（W4 流式 block 双轴尾部追踪）──
- * working 态折叠预览改渲染尾部 3 行 + useTailScroll 双轴追踪；
- * 非 working 保持 previewText 头部 60 字符静态。 */
-const TAIL_LINE_COUNT = 3
-const thinkViewportRef = ref<HTMLElement>()
+/* ── thinking 尾行视口（2026-08 抖动修复重写）──
+ * working 态折叠预览：单行视口显示最新行（横向 CSS 钉右 + 纵向滑入动画，
+ * 机制见 useTailScroll 头注释）；非 working 保持 previewText 头部 60 字符静态。
+ * 尾 2 行即状态机所需（旧行 + 新行）。 */
+const TAIL_LINE_COUNT = 2
 const thinkingTailLines = computed(() =>
   props.working ? tailLines(props.content ?? '', TAIL_LINE_COUNT) : [],
 )
-const { displayLines: thinkDisplayLines, contentStyle: thinkScrollStyle } = useTailScroll(
-  thinkingTailLines,
-  { viewportRef: thinkViewportRef },
-)
+const { displayLines: thinkDisplayLines, contentStyle: thinkScrollStyle } = useTailScroll(thinkingTailLines)
 
 /** 纯 error：status==='error' 且无 msg.error（markSessionError/registry 无 streaming 实体时
  *  手动追加的整条 error 消息，errorText 即 content 全文）。 */
@@ -350,7 +349,7 @@ const copyContent = computed(() => {
 /** 原始 ANSI 文本（未经 stripAnsi）。有此字段时用 AnsiText 渲染着色，无则回退 output 纯文本。 */
 const outputRaw = computed(() => props.tool?.outputRaw)
 
-/* ── tool 尾部行窗口（W4 流式 block 双轴尾部追踪）──
+/* ── tool 尾行视口（同 thinking，2026-08 抖动修复重写）──
  * isRunning + 有流式输出时，bash 用 outputRaw 去 ANSI 取尾行；其余 tool 用 displayContent 取尾行。
  * 无流式输出或非 running 保持静态 shortenForHeader(argPath)。 */
 const toolTailLines = computed(() => {
@@ -359,11 +358,7 @@ const toolTailLines = computed(() => {
   if (!raw) return []
   return tailLines(isBashTool.value ? stripAnsi(raw) : raw, TAIL_LINE_COUNT)
 })
-const toolViewportRef = ref<HTMLElement>()
-const { displayLines: toolDisplayLines, contentStyle: toolScrollStyle } = useTailScroll(
-  toolTailLines,
-  { viewportRef: toolViewportRef },
-)
+const { displayLines: toolDisplayLines, contentStyle: toolScrollStyle } = useTailScroll(toolTailLines)
 
 /** 补充细节条 meta 项（耗时 + 工具特化行数/字符数 + 失败错误摘要），逻辑拆到 useToolMeta */
 const { metaItems } = useToolMeta({
@@ -519,13 +514,12 @@ const testId = computed(() => {
   transform: translateY(-4px);
 }
 
-/* running toolcall 透明度呼吸：文字在 opacity 1 ↔ 0.55 间呼吸，区分进行中与已完成 */
+/* running toolcall 透明度呼吸：文字在 opacity 1 ↔ 0.55 间呼吸，区分进行中与已完成。
+   animation 声明走模板 Tailwind 任意值类 animate-[toolcall-breathe_2.4s_ease-in-out_infinite]，
+   此处只保留 @keyframes（checker 豁免；普通选择器 + animation 属性行会被自定义 CSS 规则拦）。 */
 @keyframes toolcall-breathe {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
-}
-.toolcall-breathing {
-  animation: toolcall-breathe 2.4s ease-in-out infinite;
 }
 </style>
 
