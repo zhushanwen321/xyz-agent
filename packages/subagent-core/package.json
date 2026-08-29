@@ -1,0 +1,44 @@
+{
+  "name": "@zhushanwen/subagent-core",
+  "version": "0.1.0",
+  "description": "Cross-host shared subagent execution layer and workflow orchestration core (dual-form npm package: TS source for workspace, dist ESM+CJS for npm)",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./*": "./src/*"
+  },
+  "$comment": "TODO(u1-api-surface): exports 条件映射（import/require/types -> dist 与 source 条件 -> src）及 publishConfig 由该单元按设计 D5 定稿。require 条件指向 dist CJS 是本仓首例，D4 依据（docs/design/subagent-core-package-extraction.md §3.3）：zsw 宿主为纯 CJS（node>=20），而 core 依赖的 @xyz-agent/extension-protocol npm dist 仅 ESM（.mjs），node 20 下 require() 加载 ESM 不可靠——因此 CJS 产物必须将 extension-protocol bundle 进产物（见 tsup.config.ts noExternal），并经 exports 的 require 条件暴露 dist CJS，绝不能让外部 ESM 依赖出现在 require 链上。骨架期 exports 仅搭 workspace TS 消费形态（extension-protocol 包先例），不发布。",
+  "files": [
+    "src/",
+    "workflows/",
+    "dist/"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@xyz-agent/extension-protocol": "workspace:*",
+    "ajv": "^8.20.0",
+    "proper-lockfile": "^4.1.2",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^4.1.9",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.8"
+  }
+}
