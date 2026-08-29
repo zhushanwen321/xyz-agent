@@ -266,7 +266,7 @@ describe('PV6: trace 态输入面保留（D5/V4：session-trace 契约「compose
     expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
   })
 
-  it('trace 视图 + ask-user 请求 → overlay 承接应答（替换 composer），TraceView 不受影响', () => {
+  it('trace 视图 + ask-user 请求 → overlay 承接应答；应答出队后 composer 恢复、TraceView 不受影响', async () => {
     hydrateS1Messages()
     focusSession('s1')
     setTraceView('s1', 'trace')
@@ -274,9 +274,17 @@ describe('PV6: trace 态输入面保留（D5/V4：session-trace 契约「compose
 
     const wrapper = mountPanel('s1')
 
-    // 用户可见：trace 态 ask-user overlay 正常出现并替换 composer（V4 验收语义）
+    // 前半程（用户可见）：trace 态 ask-user overlay 正常出现并替换 composer（V4 验收语义）
     expect(wrapper.find('[data-testid="trace-view"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="ask-user-overlay"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(false)
+
+    // 后半程：应答出队（响应式驱动同 PV5）→ overlay 消失、composer 恢复，TraceView 保持
+    extUIMock.__mockAskUserReq.value = undefined
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="ask-user-overlay"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="trace-view"]').exists()).toBe(true)
   })
 })

@@ -80,7 +80,7 @@ T1/T2/T4 首波并行（无相互依赖），T3 次波，T5 收尾。
 | 16 | T5 | ui-consistency 枚举未入 _meta（脚本不校验 dimensions 枚举） | 后续可补 |
 | 17 | T3 | landing.test.ts 3 旧行为用例由 T3 补修（T4 领地文件，授权扩展） | D1 必然破坏面 |
 
-审查同时裁定的 doc_errors（3 条）与 unreasonable（4 条，含 trace 输入面 high）已在阶段 4 处理：设计文档 D1/D5/D3/V4 已由主 agent 修订（trace 裁决：恢复 trace 态输入面、派生层实现）。
+审查同时裁定的 doc_errors（3 条）与 unreasonable（4 条，含 trace 输入面 high）已在阶段 4 处理：设计文档 D1/D5/D3/V4 已由主 agent 修订（trace 裁决：恢复 trace 态输入面、派生层实现）。修复批次（commit 73f684c3e）定向复审 pass=true，3 条 low 处理：PV6 补应答恢复半程断言（打回补）；D5 行号锚点改 computed 名锚点（主 agent 已修）；「eslint ignore 说明」deviation 系对验收输出的解释性说明（测试文件命中仓库既有 ignore 模式属仓库现状），非仓内落地物，特此澄清。
 
 ## 6 状态表
 
