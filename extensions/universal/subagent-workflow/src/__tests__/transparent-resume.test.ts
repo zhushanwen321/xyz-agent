@@ -44,7 +44,7 @@ const { loggerMock, rafCapture, chainPromises } = vi.hoisted(() => ({
 }));
 vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
 
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../execution/session-runner.ts", () => ({
   runSpawn: vi.fn(async () => ({
     text: "",
     turns: 1,
