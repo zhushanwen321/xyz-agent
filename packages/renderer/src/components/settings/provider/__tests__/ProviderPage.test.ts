@@ -47,6 +47,8 @@ const CUSTOM_P: ProviderInfo = {
 /** mock config 门面：toggleProviderEnabled / removeProviderByKind / listBuiltinProviders + auth 事件订阅 */
 const configMock = vi.hoisted(() => ({
   listBuiltinProviders: vi.fn(() => Promise.resolve([])),
+  // ProviderPage onMounted 按需刷新远程模型目录（缺则 unhandled rejection）
+  refreshProviderCatalogs: vi.fn(() => Promise.resolve({ refreshed: [], failed: [] })),
   toggleProviderEnabled: vi.fn(() => Promise.resolve()),
   removeProviderByKind: vi.fn(() => Promise.resolve()),
   // P2：默认 pill 设置默认模型 + 默认修复 toast 订阅

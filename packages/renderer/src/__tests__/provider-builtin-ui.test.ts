@@ -29,6 +29,8 @@ import { useToast } from '@/composables/useToast'
 // vi.mock 被 vitest 提升到 import 之前，保证 ProviderPage import 时 @/api 已 mock。
 const configMock = vi.hoisted(() => ({
   listBuiltinProviders: vi.fn(async () => [] as BuiltinProviderTemplate[]),
+  // ProviderPage onMounted 按需刷新远程模型目录（缺则 unhandled rejection）
+  refreshProviderCatalogs: vi.fn(async () => ({ refreshed: [], failed: [] })),
   setProvider: vi.fn(async () => {}),
   onProviders: vi.fn(() => () => {}),
   listProviders: vi.fn(async () => ({ providers: [] })),

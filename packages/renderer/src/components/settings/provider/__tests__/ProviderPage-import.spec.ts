@@ -35,6 +35,8 @@ const PREVIEW: ProviderImportPreview = {
 /** mock config 门面：previewImportProviders 返 fixture，applyImportProviders 返空结果 */
 const configMock = vi.hoisted(() => ({
   listProviders: vi.fn(() => Promise.resolve([])),
+  // ProviderPage onMounted 按需刷新远程模型目录（缺则 unhandled rejection）
+  refreshProviderCatalogs: vi.fn(() => Promise.resolve({ refreshed: [], failed: [] })),
   previewImportProviders: vi.fn(() => Promise.resolve({ importId: 'imp-1', preview: PREVIEW })),
   applyImportProviders: vi.fn(() => Promise.resolve({
     result: { source: 'claude', imported: [{ id: 'openai', name: 'OpenAI', status: 'imported' }], failedCount: 0 },

@@ -42,6 +42,8 @@ const configMock = vi.hoisted(() => ({
   onAuthSuccess: vi.fn(() => () => {}),
   onAuthError: vi.fn(() => () => {}),
   listBuiltinProviders: vi.fn(async () => []),
+  // ProviderPage onMounted 按需刷新远程模型目录（缺则 unhandled rejection）
+  refreshProviderCatalogs: vi.fn(async () => ({ refreshed: [], failed: [] })),
 }))
 
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
