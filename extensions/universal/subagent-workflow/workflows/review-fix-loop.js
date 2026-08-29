@@ -921,11 +921,12 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         : null,
       // S-5：上一轮标题注入——「keep the title close to the previous wording」此前无
       // 材料可依。取台账（issues + dormant）条目的 id: title 清单。
+      // R3 S-1：清单截尾（最近 50 条）——长循环台账单调膨胀只造成 prompt token 膨胀。
       prevTitles: round > 1
         ? [
             ...Object.entries(state.issues || {}).map(([id, i]) => (i && typeof i.title === "string" && i.title ? id + ": " + i.title : null)),
             ...((state.dormant || []) || []).map((d) => (d && typeof d.title === "string" && d.title ? d.id + ": " + d.title : null)),
-          ].filter(Boolean)
+          ].filter(Boolean).slice(-50)
         : [],
     });
     let aggRaw = await agent({
@@ -1177,7 +1178,8 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     let stuck = { stuck: false };
     if (round > 1 && (reconCount > 0 || hasFixAttempted || reconFixed.size > 0)) {
       // 对账 id 翻译（表格号→台账键，台账键优先——注入段清单的 id 即台账键）：
-      // L2/L3 改键后 reviewer 从 aggregated.md 抄的表格号需经 state.idMap 翻译才能
+      // L2/L3 改键后 reviewer 从 aggregated.md 抄的表格号需经 prevIdMap（上一轮
+      // idMap 快照，MF-1）翻译才能
       // 命中台账。冲突互斥（not-fixed/escalate 优先于 fixed，保守方向）：多 reviewer
       // 并行对同一 prev_id 申报矛盾时，采信「未修好」侧——误转 fixed 会销账真问题，
       // 误留 open 只多跑一轮，可由下轮对账纠正。
