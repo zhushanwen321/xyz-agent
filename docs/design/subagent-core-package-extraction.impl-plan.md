@@ -148,8 +148,8 @@ graph TD
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u0-foundation | pending | 0 | — |
-| u0-failfast | pending | 0 | — |
+| u0-foundation | committed | 2（交付 + no-console/pre-commit 双守卫修复） | 587b39e56（22 测试绿 + typecheck + eslint + 守卫自测） |
+| u0-failfast | committed | 2（交付 + 四内置脚本扩展轮） | 46c4d5562（9 新测试 + 423 回归绿） |
 | u0-wire | pending | 0 | — |
 | u0-log-a | pending | 0 | — |
 | u0-log-b | pending | 0 | — |
