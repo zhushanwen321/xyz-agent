@@ -1,6 +1,6 @@
 # pi 演进一致性与项目切换 实施计划
 
-基线: （待用户确认后 commit） | 来源设计: `docs/design/pi-evolution-consistency-and-project-switcher.md`（最新 a1b5da693 + 第 1、2 轮复审修订；对抗式审查累计 4 轮——初版 4 must-fix、增量评估 4 must-adjust、第 1 轮全量复审 1 must-fix + 10 suggestion、第 2 轮验证性复审 2 must-fix + 6 suggestion，全部修复；第 3 轮收敛确认 0 must-fix） | 日期: 2026-08-29
+基线: d30125d1f | 来源设计: `docs/design/pi-evolution-consistency-and-project-switcher.md`（最新 a1b5da693 + 第 1、2 轮复审修订；对抗式审查累计 4 轮——初版 4 must-fix、增量评估 4 must-adjust、第 1 轮全量复审 1 must-fix + 10 suggestion、第 2 轮验证性复审 2 must-fix + 6 suggestion，全部修复；第 3 轮收敛确认 0 must-fix） | 日期: 2026-08-29
 
 ## 0 章节映射
 
@@ -74,13 +74,28 @@ graph TD
 
 初始为空。执行中发现的合理不一致（实现现实与设计措辞的良性偏差）登记于此，必要时同步设计文档。
 
+**W1 登记（待一致性审查阶段裁决分类）**：
+
+| # | 单元 | 偏差 | 初判 |
+|---|------|------|------|
+| 1 | u1 | t10 在 D3 条款外增加第三层断言「磁盘快照 == generateBuiltinProviders() 当前输出」——补齐「提取逻辑变更但版本未变」的检测盲区，无手写数字不脆弱 | 合理 |
+| 2 | u3 | 既有 A6 测试第 2 用例断言演进：原「重选 builtin 首个 wasFixed:true」与 D5 态3 pass-through 直接冲突，改为 wasFixed:false 原样返回 | 合理（D5 取代） |
+| 3 | u3 | auto-fix 日志 console.log → console.warn（G2/A9 以 warn 可见为通过标准） | 合理 |
+| 4 | u3 | builtinModelsById 拆分：校验路径走合并视图，sanitizeInvalidProviders 保留快照索引（更名 snapshotCatalogModelsById）——MF-6 baseUrl 守卫不能吃 overlay 归一化的空 baseUrl，否则误「修复」为「删除」 | 合理（数据安全） |
+| 5 | u3 | 三态判定延伸至 findValidDefaultModel 主路径（设计 D5 仅叙述 auth-only 场景）——主路径存在同族失败模式 A（default=builtin + override-only 条目重启被静默改写） | 待审（需确认设计 D5 措辞是否补主路径） |
+| 6 | u5 | 旧 project-switcher.test.ts 整体重写（组件从手风琴改常驻网格，旧折叠断言全部作废） | 合理（伴随测试） |
+| 7 | u5 | active 配色 demo #3f3f46 → 侧栏既有 bg-surface + text-accent token 范式（lint 禁硬编码，多主题 token 系统无对应色） | 合理 |
+| 8 | u5 | tooltip 用原生 title 兜底（设计待验证检查点 3 现场决策：纯 CSS tooltip 在 sidebar 滚动容器有裁剪风险） | 合理 |
+| 9 | u5 | 删除入口走右键 ContextMenu → ConfirmDialog（demo 3A 卡片无删除按钮，为不回退既有删除能力） | 合理（保功能） |
+| 10 | u5 | 「新建项目出现在网格尾部」（§3.1 终态 3/A5）与 D7 两段式张力：实现按 D7——新建项目置 active + 最新 lastUsedAt，落自动序段首位（有序段之后）而非整网格尾部 | 待审（A5 真机验收措辞需对齐） |
+
 ## 6 状态表
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|--------------------------------------------|------|---------|
-| u1 | pending | 0 | — |
-| u3 | pending | 0 | — |
-| u5 | pending | 0 | — |
+| u1 | committed | 1 | ceed4fa12 — t10 红→绿（11 tests），仓库根 regen 幂等验证 |
+| u3 | committed | 1 | a139afad0 — 三态单测 18 新增 + services/infra 911 回归绿 |
+| u5 | committed | 1 | 8b8c0519c — ordering 16 新增 + sidebar 161 绿，demo html 入库 |
 | u2 | pending | 0 | — |
 | u4 | pending | 0 | — |
 
@@ -94,9 +109,11 @@ graph TD
 4. pi-ai KnownApi 源码提取的稳定性（设计待验证检查点 1）——u2 实施期验证
 5. `findValidDefaultModel` 在 session create 热路径的性能（设计待验证检查点 2）——u3 完成后实测确认无感知劣化
 6. 真机验收 A3/A8 依赖 pi.dev 网络；A3 需断网构造——验收期注意环境切换
+7. **存量问题（非本计划引入）**：`ProviderPage.vue:301 config.refreshProviderCatalogs is not a function`——commit 2bcdfb756 引入的 overlay 刷新功能在 renderer 全量测试中 settings mock 缺该函数，致 `pnpm test` exit 非零（63 unhandled errors，用例本身 3576 全 passed）。**Gate A 前必须修**（补 mock），不在任何单元领地——W2 后派独立小修任务
 
 **变更历史**：
 - 2026-08-29 计划创建。设计 §5 U0-U4 → 本计划 u1-u5 映射（t10 自包含化独立为 u1 先行，消解守卫对指纹格式的依赖；原「U0 先修复 t10 基线数字」被 D3 自包含化取代——避免改数字再重构的重复劳动）。
 - 2026-08-29（merge origin/main 75534d044 后修订）：增量对抗评估（4 must-adjust）落地——① 方案 2D（runtime 直读 pi-ai）经裁决**维持 2A 快照方案**（compat 时间炸弹的构建期/运行期失败模式不对称），u1 照做、单元划分与 DAG 不变；② 守卫矩阵 7→8 项（补 pi-tui，check-pi-semantics PI_PKGS 三包缺口的补位）；③ u2 挂载实体已探明（install-hooks.sh:1058-1077 同模式），残留风险 1 消解；④ 与 check-pi-semantics 分工声明写入设计 §2.1（逐项零重叠，独立脚本不并入）。方向③ u5 经评估零影响未改动。
 - 2026-08-29（第 1 轮全量复审同步修订）：① u2 领地补 `.github/workflows/ci.yml`（CI 挂载点与设计 D2 裁决对齐：ci.yml invariants job，build.yml 仅 PI_VERSION P0 修复）② 基线行更新 a1b5da693 ③ u1 验收③ 注明仓库根执行 ④ 新增残留风险 0（build.yml 修复推迟至 W2 的混装风险窗口 trade-off 显式声明）。
 - 2026-08-29（第 2 轮验证性复审同步修订）：① 验收范围 A1-A8 → A1-A9（§0 映射 / §4 Gate B；设计侧 U2 独立验收补 A9）② U0-U4→u1-u5 映射表述精化（「U2 的 D3 部分 → u1」）③ u5「D9 外」错误编号引用修正 + 验收补键盘 reorder 通道断言（A5 键盘复验的开发期前置）。
+- 2026-08-29（W1 完成）：u1 ceed4fa12 / u3 a139afad0 / u5 8b8c0519c 全 committed，核心测试主 agent 复验绿；偏差 10 条登记 §5（2 条待审）；新增残留风险 7（ProviderPage mock 存量问题）。另注：W1 期间用户侧并行 commit f3eb0f243（packages/ui 流式 header，与本计划领地零交集）。
