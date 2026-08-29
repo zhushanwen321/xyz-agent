@@ -58,3 +58,21 @@
 单元 T1-T5 全部 committed，全量验证：core 1267 passed | renderer 3594 passed | ui 550 passed，三包零失败；双端 typecheck / eslint / vue_rules_checker 全绿；constraints 登记 C-state-09（derivePanelView 唯一派生入口）并经 render --check 校验（83 条）。
 
 偏差登记（一致性审查待裁决项汇总）：T2×4（transition 精确落点 pushChat 后 loadTree 前 / TC-6e 增强断言 / flow-integration 重试用例按新语义改写 / 补修内容被并行会话 commit 820a8700c 携带入库）；T3×7（core session/index.ts 一行导出经用户授权 / widget-area co-located 测试纳入 / v-if 链等价 switch / empty-with-session 防御性判据保留 / 用例③行为等价落地 / 2 个既有测试按新判据更新）；T4×3（守卫测试追加在既有 landing.test.ts / flowMock 补齐三成员 / D7-U6 用 currentCwd 等价断言）；T5×2（authority 相对路径对齐 / ui-consistency 枚举未入 _meta）。
+
+# Gate B 验收记录（dev app 实测，2026-08-29）
+
+环境：pnpm dev（Electron 9222 CDP + runtime 3310 + 真模型 GLM-5.2），Playwright 连接操作 + pinia store 探针。
+
+| 场景 | verdict | 证据 |
+|------|---------|------|
+| V1 结构免疫 | **PASS** | ⌘N 进 landing（activeId=null）后绕过 selectSession 守卫直接恢复 panel 绑定（构造 flow=landing × 有消息会话残留态）→ msgStream 渲染 + composer 恒可见；残留态下再跑两轮完整对话（total=4，两轮 assistant complete），每轮 turn 结束 composer 均在——原 bug 病灶状态实测无症状 |
+| V1' 首发失败恢复 | **PASS（超集实测 + 单测守卫失败半程）** | kill runtime 后从 Landing 发首条消息：Electron main 自动重启 runtime，create→交接→send→回复「ok」全链路自愈，composer 全程可见；「create 失败→Landing 停留」精确时窗（重启快于 RPC 超时）无法稳定构造，其语义由 flow-integration 单测（send reject→completed）锁定 |
+| V2 输入面恒定 | **PASS** | 两轮 turn 结束（lastStatus=complete）composer 可见性探测均为 true，无消失/闪动 |
+| V3 新建放弃切换 | **PARTIAL（环境阻塞）** | 新建→Landing→放弃半程 PASS；切换旧会话被 pi restore 崩溃阻塞（见下「环境问题」）；切换守卫语义由 D4-U1/U2 单测守卫 |
+| V3' 删唯一会话承接 | **BLOCKED（破坏性）** | 45 个真实会话不可删光做实测；D7-U1~U6 单测守卫（4 出口 + 排除保护 + 成功回退不触发） |
+| V4 ask-user/trace | **PASS** | trace 半程实测：TraceView（树+检查器）渲染、消息流让位、**composer 保留**（阶段 4 修复核心的行为级验证）；ask-user 实机触发依赖模型调 extension 不可控，PV4/PV5/PV6 DOM 级单测守卫（含 trace 态 overlay 承接+恢复全程） |
+| V5 穷举组合 | **PASS** | core panel-view 6/6（64 组合表 + 完整性守卫 + trace 专项） |
+
+## 环境问题（认知外，与本流程改动无关）
+
+切换已有会话时 pi 进程 restore 崩溃（exit 1）：`proper-lockfile/lib/mtime-precision.js` 的 `fs[cacheSymbol]` 在 pi Bun 运行时的 fs Proxy 下抛 TypeError（runtime-2026-08-29.log 三次复现）。根因是某 extension 的 file-lock 依赖经模块解析加载了仓库根 `node_modules/proper-lockfile`（与 pi 内置环境不兼容）。手动以同参数直接 spawn pi 不崩（未走 restore 路径）。该问题阻塞「切换旧会话」类实测（V3 半程），建议单独排查（疑似与并行会话的 node_modules / extension 改动相关）。

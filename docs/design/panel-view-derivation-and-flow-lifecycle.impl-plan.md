@@ -89,8 +89,12 @@ T1/T2/T4 首波并行（无相互依赖），T3 次波，T5 收尾。
 | T1 | committed | 1 | commit 见本行下次提交；panel-view.test.ts 5 passed（64 组合表 + 完整性守卫 + 3 回归断言）；session 域 55 passed 既有零破坏；tsc/eslint 零问题；deviations=[] |
 | T2 | committed | 2 | 主体 commit 5e0db4001（flow.test.ts 14 passed 含 TC-6e）；补修轮（flow-integration.test.ts 断言对齐新语义 20 passed）内容被并行会话的认知外 commit 820a8700c 顺带携带入库（diff 与本流程核验一致 +10/-6，测试实测绿，内容正确未 revert——规则 0 登记不擅自处理）；deviations 累计 4 条待一致性审查裁决 |
 | T3 | committed | 2 | panel/ 59 文件 492 用例全绿（含 panel-view.test.ts 9 用例：PV1 flow 残留免疫 / PV4 dead 吞 ask-user 等）；landing.test.ts 补修 3 旧行为用例后 18/18；renderer 全量 3594 passed 零失败；双端 typecheck 零错误；7 deviations 待一致性审查裁决（含用户授权的 core session/index.ts 一行导出） |
-| T4 | pending | 0 | — |
-| T5 | pending | 0 | — |
+| T4 | committed | 1 | Landing 卸载守卫（D4-U1/U2）+ 4 空态出口 helper（D7-U1~U6）；landing 18/18 + delete-empty-state 6/6 |
+| T5 | committed | 1 | C-state-09 登记（render --check 83 条过）；三包全量零失败 |
+| 阶段3 审查 | 完成 | 1 | core+renderer 双区：17 reasonable（入 §5 登记表）/ 4 unreasonable / 3 doc_errors |
+| 阶段4 修复 | 完成 | 2 | trace 输入面派生层恢复（73f684c3e）+ 注释三连修；定向复审 pass=true；PV6 全程补全（399c867c4） |
+| Gate A | 绿 | 2 | 修复后全量重验：core 1268 / renderer 3598 零失败 |
+| Gate B | 完成 | 1 | V1/V1'(超集)/V2/V4-trace/V5 实测 PASS；V3 切换半程与 V3' 因 pi restore 崩溃（认知外环境问题）与破坏性约束 blocked（单测守卫）；详见 .review.md Gate B 记录 |
 
 ## 7 残留风险与变更历史
 
