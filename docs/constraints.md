@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 83 条（生成于 2026-08-29）。
+共 84 条（生成于 2026-08-29）。
 
 ## pi 关系（外部依赖边界）
 
@@ -108,6 +108,7 @@
 | C-build-04 | runtime/pi 日志必须落盘 + 轮转（date + size 双策略）；pi stdout tee 到 pi-<date>-<sessionId>.jsonl；新增日志库必须加 tsup noExternal | packages/runtime/src/** | [AGENTS.md](../AGENTS.md) | review: review-electron-build |
 | C-build-05 | runtime 零 Electron 依赖（纯 Node.js 可独立运行）；renderer 对 Electron 的依赖收敛 lib/ipc.ts 单一适配层（undefined 时优雅降级） | packages/runtime/**、packages/renderer/src/** | [0036-monorepo-structure-target](adr/0036-monorepo-structure-target.md) | review: review-monorepo-impact |
 | C-build-06 | 嵌入式网页一律用 WebContentsView；禁 iframe（X-Frame-Options/CSP 硬伤）与 <webview> tag（官方 discouraged） | apps/electron/** | [0054-browser-drawer-webcontentsview](adr/0054-browser-drawer-webcontentsview.md) | review: review-electron-build |
+| C-build-07 | 构建期 pi 派生锚点跟随守卫（8 项矩阵，SSOT = 守卫头注）：声明基准（根 package.json 的 pi 包声明版本）→ build.yml PI_VERSION env / prepare-pi-resources.sh 默认值 / extensions pi 依赖 range；实装基准（node_modules pi-ai）→ 快照 piAiVersion / 快照新鲜度（gen 脚本内存重生成比对）/ KNOWN_PI_API_TYPES / pi-tui 实装。与 C-proc-08 并列零重叠——其管 pi 语义登记/探针/四包版本门禁（读 pi-semantics.json），本条只管派生锚点跟随（不读 pi-semantics.json、不做包间互检）；pi 升级后执行 pnpm gen:builtin-providers 重生成快照并随升级 PR 提交 | package.json、pnpm-lock.yaml、.github/workflows/build.yml、scripts/prepare-pi-resources.sh、scripts/check-pi-sync.mjs、packages/runtime/src/generated/builtin-providers.json、packages/runtime/scripts/gen-builtin-providers.mjs、packages/shared/src/constants.ts、extensions/** | [pi-evolution-consistency-and-project-switcher](design/pi-evolution-consistency-and-project-switcher.md#32-方案对比) · [check-pi-sync.mjs](../scripts/check-pi-sync.mjs) | hook: `check-pi-sync.mjs` |
 
 ## 工程流程
 

@@ -18,6 +18,11 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+// re-export 供 scripts/check-pi-sync.mjs S4 快照新鲜度比对调用：守卫必须与 main() 落盘
+// 走同一函数，否则守卫侧 `gen.getBuiltinModelDataGeneratedAt?.() ?? snapshot.catalogGeneratedAt`
+// 退化为快照自比（恒真死分支），S4 声称的比对失效。
+export { getBuiltinModelDataGeneratedAt }
+
 // pi-ai exports 封锁 './package.json' 子路径且仅定义 import 条件（无 "." 主入口、
 // createRequire 的 require 条件解析均实测失败），用与头部 import 同语义的
 // import.meta.resolve 定位子路径入口，再向上爬包根；校验 name 防止爬出包读到 workspace 根的版本。

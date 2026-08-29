@@ -164,6 +164,10 @@ function selfTest() {
   // parseScriptDefault
   assert(parseScriptDefault('PI_VERSION="${1:-0.84.4}"\n').version === '0.84.4', '脚本默认值解析命中')
   assert(parseScriptDefault('PI_VERSION="$1"\n').error !== undefined, '脚本默认值非 ${1:-} 形态报 error')
+  assert(
+    parseScriptDefault('PI_VERSION="${1:-1.0.0}"\nPI_VERSION="${1:-2.0.0}"\n').error !== undefined,
+    '脚本多处默认值赋值报 error（歧义态宁可误报）',
+  )
   // extractSemver / cmpSemver
   assert(extractSemver('^0.84.4') === '0.84.4' && extractSemver('latest') === null, 'extractSemver 提取与拒绝')
   assert(cmpSemver('0.84.4', '0.84.4') === 0 && cmpSemver('0.84.4', '0.84.10') < 0 && cmpSemver('1.0.0', '0.9.9') > 0, 'cmpSemver 三态')

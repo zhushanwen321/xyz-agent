@@ -1086,8 +1086,15 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
     # pi-sync 派生锚点守卫（pi-evolution-consistency §3.2 D2，按路径触发——性能考虑，
     # 只在触碰派生锚点文件时全量跑：根 package.json / lockfile / build.yml / prepare 脚本 /
     # 快照 / gen 脚本 / shared constants / extensions 任一 package.json / 守卫脚本自身）。
+    # 触发面在主 STAGED_FILES（ACMR）外并入 staged 删除列表（--diff-filter=D）：删除派生锚点
+    # 必须触发守卫——各 S 项对锚点文件不存在自带 fail 分支（S1/S2/S3/S6），漏触发 = 删除场景
+    # 静默放行。主 STAGED_FILES 保持 ACMR 不放行 D：会把已删除的 .ts/package.json 路径喂给
+    # ESLint / manifest 等文件存在性检查段致 ERR，影响面大，仅守卫挂载点需要 D。
     # 与 G1 逐项零重叠（设计 §2.1 分工声明）；不占 G 编号（G1/G3/G4 属 pi-boundary-reliability 体系）。
-    if echo "$STAGED_FILES" | grep -qE "(^|/)(package\.json|pnpm-lock\.yaml)$|^(\.github/workflows/build\.yml|scripts/prepare-pi-resources\.sh|scripts/check-pi-sync\.mjs|packages/runtime/src/generated/builtin-providers\.json|packages/runtime/scripts/gen-builtin-providers\.mjs|packages/shared/src/constants\.ts)$|^extensions/.*/package\.json$"; then
+    STAGED_DELETED=$(git diff --cached --name-only --diff-filter=D)
+    PI_SYNC_TRIGGER_FILES="${STAGED_FILES}
+${STAGED_DELETED}"
+    if echo "$PI_SYNC_TRIGGER_FILES" | grep -qE "(^|/)(package\.json|pnpm-lock\.yaml)$|^(\.github/workflows/build\.yml|scripts/prepare-pi-resources\.sh|scripts/check-pi-sync\.mjs|packages/runtime/src/generated/builtin-providers\.json|packages/runtime/scripts/gen-builtin-providers\.mjs|packages/shared/src/constants\.ts)$|^extensions/.*/package\.json$"; then
         echo -e "${BLUE}[INFO] pi 派生锚点文件有变更，运行 pi-sync 派生锚点守卫...${NC}"
         if [ ! -f "scripts/check-pi-sync.mjs" ]; then
             echo -e "${RED}[ERROR] 找不到 scripts/check-pi-sync.mjs（u2 交付物缺失）${NC}"
