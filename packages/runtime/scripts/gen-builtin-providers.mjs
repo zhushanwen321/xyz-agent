@@ -13,6 +13,25 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+// pi-ai exports 封锁 './package.json' 子路径且仅定义 import 条件（无 "." 主入口、
+// createRequire 的 require 条件解析均实测失败），用与头部 import 同语义的
+// import.meta.resolve 定位子路径入口，再向上爬包根；校验 name 防止爬出包读到 workspace 根的版本。
+// piAiVersion 必须动态取实装版本：写死会在 pi 升级后失真，快照元数据与 catalog 脱节。
+function readPiAiVersion() {
+  let dir = dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-ai/providers/all')))
+  for (;;) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8'))
+      if (pkg.name === '@earendil-works/pi-ai') return pkg.version
+    } catch {
+      // 当前目录无 package.json，继续向上
+    }
+    const parent = dirname(dir)
+    if (parent === dir) throw new Error('未定位到 @earendil-works/pi-ai 的 package.json')
+    dir = parent
+  }
+}
+
 // 镜像 pi-ai 0.82.1 dist/env-api-keys.js 的 getApiKeyEnvVars 映射。
 // 升级 pi-ai 后 verifyEnvVars() 做双向守卫校验（镜像表 ⊆ pi-ai 且 pi-ai ⊆ 镜像表），
 // 任一方向不一致则报错 exit 1。
@@ -384,7 +403,7 @@ export function verifyEnvVars() {
     }
     console.error(
       `[verifyEnvVars] ${failures.length} 处不一致 —— PROVIDER_ENV_VARS 镜像表与 pi-ai findEnvKeys 不匹配，` +
-        `请确认 pi-ai 版本（当前期望 0.82.1）是否升级并同步镜像表`,
+        `请确认 pi-ai 实装版本（当前 ${readPiAiVersion()}）是否升级并同步镜像表`,
     )
     process.exit(1)
   }
@@ -401,7 +420,7 @@ function main() {
   }
   const payload = {
     generatedAt: new Date().toISOString(),
-    piAiVersion: '0.84.1',
+    piAiVersion: readPiAiVersion(),
     providers,
   }
   const outPath = fileURLToPath(new URL('../src/generated/builtin-providers.json', import.meta.url))

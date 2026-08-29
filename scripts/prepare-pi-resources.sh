@@ -11,7 +11,7 @@
 # Usage: ./scripts/prepare-pi-resources.sh [PI_VERSION]
 set -euo pipefail
 
-PI_VERSION="${1:-0.84.1}"
+PI_VERSION="${1:-0.84.4}"
 PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
