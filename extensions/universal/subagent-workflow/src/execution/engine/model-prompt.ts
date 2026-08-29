@@ -1,6 +1,8 @@
 // src/execution/engine/model-prompt.ts
 //
 // [U7] 引擎模型段 system prompt 注入（模型可发现性）。
+// [engine-awareness U2] 引擎恒在状态段 <current_subagent_engine>（设计权威源：
+// docs/design/subagent-engine-awareness-injection.md §3.1 终态逐字基准 / §3.3 D6、D7）。
 //
 // 背景：pi 核心在 system prompt 生成 <available_provider_models> 段并教育 agent
 // 「subagent/workflow 的 model 参数用这些 id」——该教育对 engine: zcode 等自带
@@ -8,6 +10,10 @@
 // 「defaultEngine 开关」（用户拍板 2026-08-25）补齐非默认引擎的模型可发现性：
 // defaultEngine 指向非 pi 引擎且该引擎实现 EnginePort.listModels 时，追加
 // <available_<engine>_models> 段，与 pi 段形成「一段一引擎」的分界标注。
+//
+// 恒在状态段（D6）：现状 AI 对「当前默认引擎」无权威信息源，只能从「zcode 段缺失
+// 与否」反推（pi 时完全无声明）。<current_subagent_engine> 恒在段显式声明当前引擎
+// 并裁决「AGENTS.md 路由表的 pi-registry id 在非 pi 引擎下不适用」的指令冲突。
 //
 // engine-neutral：遍历注册表驱动，未来引擎实现 listModels 即自动注入，宿主零改动。
 
@@ -30,28 +36,92 @@ function buildEngineSection(engineId: string, models: Array<{ id: string; name?:
 }
 
 /**
- * 依据全局 defaultEngine 生成追加段（不含前导换行；无需注入时返回空串）。
+ * 恒在状态段 <current_subagent_engine>（设计 D6：pi 引擎也声明——AI 不需要
+ * 「从段缺失反推」当前引擎）。三种形态（§3.1 终态逐字基准 + 失败路径表）：
+ *   - 缺省 / pi：声明 pi + 指向上方核心段 <available_provider_models>（无冲突 bullet）；
+ *   - 非 pi 且已注册：指向下方该引擎清单段 + 「pi registry id 不适用」+ AGENTS.md
+ *     冲突裁决 bullet + 省略 model 用引擎默认；
+ *   - 未注册引擎（如配置手误 "ghost"）：如实显示配置值 + 警告行（派发将报
+ *     engine_not_found，指引修 subagents/config.json）——G4 诚实降级：不静默、不伪造。
  *
- * 规则（用户拍板的开关语义）：
+ * 字节稳定（D7）：纯字符串确定性拼装（无 localeCompare / 无随机序 / 无时间态）；
+ * 引擎注册与否经 hasEngine 只读判断（不取实例、不触发工厂副作用），同输入恒同输出。
+ */
+export function buildSubagentEngineSection(defaultEngine: string | undefined): string {
+  // 与 buildEngineModelsPromptAppend 同一 normalize：空白/缺省归一到缺省引擎
+  const engineId = defaultEngine?.trim() || CORE_ENGINE_ID;
+  const lines = [
+    "<current_subagent_engine>",
+    "Default engine for subagent dispatches when neither the call's `engine` param",
+    `nor an agent .md \`engine\` frontmatter overrides: ${engineId}`,
+  ];
+  if (engineId === CORE_ENGINE_ID) {
+    // pi：清单在上方核心段，无需引擎侧清单段，也无 AGENTS.md 冲突（路由表 id 本就是 pi 的）
+    lines.push(
+      "- Model ids for pi dispatches are the ids in <available_provider_models> above.",
+      "- Omit `model` to use the engine default.",
+    );
+  } else if (hasEngine(engineId)) {
+    lines.push(
+      `- Model ids for ${engineId} dispatches are listed in <available_${engineId}_models> below.`,
+      `  Ids in <available_provider_models> do NOT apply to ${engineId} dispatches.`,
+      "- Omit `model` to use the engine default.",
+      // AGENTS.md 冲突裁决 bullet（§3.1 逐字基准）：全局路由表给的绝对 pi id 是 2026-08-28
+      // 事故根因——更强的指令源必须被段内显式裁决约束
+      "- If AGENTS.md or other standing guidance names model ids from the pi registry",
+      "  (e.g. zai-coding-cn/*), those ids apply to pi-engine dispatches ONLY — when",
+      "  the current engine is not pi, use only ids from the engine section below.",
+    );
+  } else {
+    // 失败路径表「未注册引擎」行：文案逐字为恢复指引（与 dispatch 期 engine_not_found 对齐）
+    lines.push(
+      `- engine '${engineId}' is not registered — dispatches will fail at routing; fix subagents/config.json`,
+    );
+  }
+  lines.push("</current_subagent_engine>");
+  return lines.join("\n");
+}
+
+/**
+ * 清单段「无凭据模型」提示行形态（§3.1 失败路径表：状态段正常、清单段显示提示行）。
+ * 为什么不返回空串：状态段（恒在）声明「ids listed in <available_<engine>_models>
+ * below」，段缺失会让该声明说谎；提示行保持段存在且如实声明当前无任何可派发的
+ * 显式模型（G4 诚实降级）。文案逐字取自设计失败路径表恢复指引列。
+ */
+function buildEmptyModelsHint(engineId: string): string {
+  return [
+    `<available_${engineId}_models>`,
+    `engine '${engineId}' has no credentialed models right now — configure the provider in ZCode desktop first`,
+    `</available_${engineId}_models>`,
+  ].join("\n");
+}
+
+/**
+ * 依据全局 defaultEngine 生成追加段（不含前导换行）。
+ *
+ * 规则（设计 §3.1 失败路径表 + G4）：
  *   - defaultEngine 为 pi / 缺省 → 不注入（pi 段已由核心提供）；
- *   - defaultEngine 指向已注册且实现 listModels 的引擎 → 注入该引擎段；
- *   - 引擎未实现 listModels / 清单为空 → 不注入（可发现性降级不阻塞，prepare 报错
- *     的事后清单兜底仍在）。
- * fail-safe：任何异常返回空串（注入失败不阻塞 agent loop——与 system-prompt
- * extension 的 before_agent_start 处置一致）。
+ *   - 引擎未注册 → 不注入（状态段 <current_subagent_engine> 已有警告行，避免双份）；
+ *   - 已注册且 listModels 有清单 → 注入该引擎段（渲染不变）；
+ *   - 已注册但 listModels 未实现 / 返回 null / 空清单 / 抛异常 → 提示行段（从「静默
+ *     不注入」改为如实声明——现状空清单返回空串会让 AI 误以为没有任何引擎清单可看）。
+ * fail-safe：listModels 异常同样落提示行段、不向外抛（注入失败不阻塞 agent loop——
+ * 与 system-prompt extension 的 before_agent_start 处置一致）。
  */
 export function buildEngineModelsPromptAppend(defaultEngine: string | undefined): string {
+  const engineId = defaultEngine?.trim() || CORE_ENGINE_ID;
+  if (engineId === CORE_ENGINE_ID) return "";
+  // hasEngine 只读判断（不触发工厂）；未注册时状态段负责警告，这里保持空串
+  if (!hasEngine(engineId)) return "";
   try {
-    const engineId = defaultEngine?.trim() || CORE_ENGINE_ID;
-    if (engineId === CORE_ENGINE_ID) return "";
-    if (!hasEngine(engineId)) return "";
     const engine = getEngine(engineId);
-    if (engine.listModels === undefined) return "";
+    if (engine.listModels === undefined) return buildEmptyModelsHint(engineId);
     const models = engine.listModels();
-    if (models === null || models.length === 0) return "";
+    if (models === null || models.length === 0) return buildEmptyModelsHint(engineId);
     return buildEngineSection(engineId, models);
   } catch {
-    return "";
+    // listModels 抛异常（如 v2 config 损坏）同属「无凭据模型」：如实降级为提示行而非静默
+    return buildEmptyModelsHint(engineId);
   }
 }
 

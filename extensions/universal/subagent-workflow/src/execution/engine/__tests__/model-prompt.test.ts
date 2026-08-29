@@ -1,4 +1,5 @@
-// model-prompt.test.ts —— [U7] 引擎模型段注入的开关语义（defaultEngine）与段格式。
+// model-prompt.test.ts —— [U7] 引擎模型段注入的开关语义（defaultEngine）与段格式；
+// [engine-awareness U2] 恒在状态段三形态（zcode/pi/ghost）+ 空清单提示行降级 + 渲染确定性（D7）。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -8,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { EnginePort } from "../port.ts";
 import { clearEngines, registerEngine } from "../registry.ts";
-import { buildEngineModelsPromptAppend } from "../model-prompt.ts";
+import { buildEngineModelsPromptAppend, buildSubagentEngineSection } from "../model-prompt.ts";
 
 /** 最小 fake 引擎：仅 id + 可选 listModels（其余面 run/read 走不到，测试只触碰注入链）。 */
 function fakeEngine(id: string, models: Array<{ id: string; name?: string }> | null): EnginePort {
@@ -64,15 +65,41 @@ describe("buildEngineModelsPromptAppend（defaultEngine 开关语义）", () => 
     expect(append).toContain("do NOT apply to engine 'zcode'");
   });
 
-  it("引擎未实现 listModels / 清单为空 / 未注册引擎 → 不注入（可发现性降级）", () => {
+  it("引擎未实现 listModels → 提示行段（G4 诚实降级，不再静默空串）", () => {
     registerEngine("bare", () => fakeEngine("bare", null));
-    expect(buildEngineModelsPromptAppend("bare")).toBe("");
+    expect(buildEngineModelsPromptAppend("bare")).toBe(
+      [
+        "<available_bare_models>",
+        "engine 'bare' has no credentialed models right now — configure the provider in ZCode desktop first",
+        "</available_bare_models>",
+      ].join("\n"),
+    );
+  });
+
+  it("listModels 返回 null / 空清单 → 提示行段", () => {
+    // null：listModels 存在但显式返回 null（port 契约「与主体系一致」面）
+    registerEngine("nul", () => ({ ...fakeEngine("nul", []), listModels: () => null }));
+    expect(buildEngineModelsPromptAppend("nul")).toBe(
+      [
+        "<available_nul_models>",
+        "engine 'nul' has no credentialed models right now — configure the provider in ZCode desktop first",
+        "</available_nul_models>",
+      ].join("\n"),
+    );
+    // 空清单：段名稳定，内容为提示行
     registerEngine("empty", () => fakeEngine("empty", []));
-    expect(buildEngineModelsPromptAppend("empty")).toBe("");
+    expect(buildEngineModelsPromptAppend("empty")).toContain(
+      "engine 'empty' has no credentialed models right now — configure the provider in ZCode desktop first",
+    );
+    expect(buildEngineModelsPromptAppend("empty")).toContain("<available_empty_models>");
+  });
+
+  it("未注册引擎 → 清单段不注入（警告归状态段负责，避免双份）", () => {
+    registerEngine("zcode", () => fakeEngine("zcode", [{ id: "p/m1" }]));
     expect(buildEngineModelsPromptAppend("ghost")).toBe("");
   });
 
-  it("listModels 抛异常 → fail-safe 不注入", () => {
+  it("listModels 抛异常 → fail-safe 输出提示行段不向外抛", () => {
     const throwing: EnginePort = {
       ...fakeEngine("boom", null),
       listModels: () => {
@@ -80,6 +107,75 @@ describe("buildEngineModelsPromptAppend（defaultEngine 开关语义）", () => 
       },
     };
     registerEngine("boom", () => throwing);
-    expect(buildEngineModelsPromptAppend("boom")).toBe("");
+    const append = buildEngineModelsPromptAppend("boom");
+    expect(append).toContain("<available_boom_models>");
+    expect(append).toContain(
+      "engine 'boom' has no credentialed models right now — configure the provider in ZCode desktop first",
+    );
+  });
+});
+
+describe("buildSubagentEngineSection（恒在状态段三形态，§3.1 逐字基准）", () => {
+  it("defaultEngine=zcode（已注册非 pi）→ 声明 + 指向下方清单段 + AGENTS.md 冲突裁决 bullet", () => {
+    registerEngine("zcode", () => fakeEngine("zcode", [{ id: "p/m1" }]));
+    // 逐字基准：设计 §3.1 Turn 1 样例（含 AGENTS.md bullet 的 em dash 与换行拆分）
+    expect(buildSubagentEngineSection("zcode")).toBe(
+      [
+        "<current_subagent_engine>",
+        "Default engine for subagent dispatches when neither the call's `engine` param",
+        "nor an agent .md `engine` frontmatter overrides: zcode",
+        "- Model ids for zcode dispatches are listed in <available_zcode_models> below.",
+        "  Ids in <available_provider_models> do NOT apply to zcode dispatches.",
+        "- Omit `model` to use the engine default.",
+        "- If AGENTS.md or other standing guidance names model ids from the pi registry",
+        "  (e.g. zai-coding-cn/*), those ids apply to pi-engine dispatches ONLY — when",
+        "  the current engine is not pi, use only ids from the engine section below.",
+        "</current_subagent_engine>",
+      ].join("\n"),
+    );
+  });
+
+  it("defaultEngine=pi / 缺省 / 空白 → 声明 pi + 指向上方核心段（无冲突 bullet）", () => {
+    // pi 形态不依赖注册表（缺省形态注册表为空也成立）
+    const expected = [
+      "<current_subagent_engine>",
+      "Default engine for subagent dispatches when neither the call's `engine` param",
+      "nor an agent .md `engine` frontmatter overrides: pi",
+      "- Model ids for pi dispatches are the ids in <available_provider_models> above.",
+      "- Omit `model` to use the engine default.",
+      "</current_subagent_engine>",
+    ].join("\n");
+    expect(buildSubagentEngineSection("pi")).toBe(expected);
+    expect(buildSubagentEngineSection(undefined)).toBe(expected);
+    expect(buildSubagentEngineSection("  ")).toBe(expected);
+  });
+
+  it("defaultEngine=未注册引擎（ghost）→ 显示配置值 + 未注册警告行（失败路径表逐字）", () => {
+    // 注册表里有其他引擎也不能让 ghost 误判为已注册
+    registerEngine("zcode", () => fakeEngine("zcode", [{ id: "p/m1" }]));
+    expect(buildSubagentEngineSection("ghost")).toBe(
+      [
+        "<current_subagent_engine>",
+        "Default engine for subagent dispatches when neither the call's `engine` param",
+        "nor an agent .md `engine` frontmatter overrides: ghost",
+        "- engine 'ghost' is not registered — dispatches will fail at routing; fix subagents/config.json",
+        "</current_subagent_engine>",
+      ].join("\n"),
+    );
+  });
+
+  it("渲染确定性（D7）：同输入两次调用输出逐字节相等", () => {
+    registerEngine("zcode", () => fakeEngine("zcode", [{ id: "a/m1" }, { id: "b/m2" }]));
+    const inputs: Array<string | undefined> = ["zcode", "pi", "ghost", undefined];
+    for (const input of inputs) {
+      // 字符串 toBe = 逐 UTF-16 码元值比较，即「同输入恒同输出」的字节稳定契约
+      expect(buildSubagentEngineSection(input)).toBe(buildSubagentEngineSection(input));
+      // 独立两次取值再比一次，排除实现内共享可变状态的可能
+      const first = buildSubagentEngineSection(input);
+      const second = buildSubagentEngineSection(input);
+      expect(second).toBe(first);
+    }
+    expect(buildEngineModelsPromptAppend("zcode")).toBe(buildEngineModelsPromptAppend("zcode"));
+    expect(buildEngineModelsPromptAppend("pi")).toBe(buildEngineModelsPromptAppend("pi"));
   });
 });
