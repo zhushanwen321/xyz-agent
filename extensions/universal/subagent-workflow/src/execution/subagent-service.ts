@@ -1125,56 +1125,45 @@ export class SubagentService {
    *  「readdir + N×4 stat 全扫」降为单文件校验。
    *  @returns 重建的 record；磁盘也无则 undefined
    *  @throws ResurrectDeniedError 可重连候选被 worktree/异进程活实例守卫拦截 */
-  private coldLookupForAction(id: string, allowReconnect: boolean): ExecutionRecord | undefined {
+  /** 冷查候选定位（coldLookupForAction 步骤 1）：idToFile 索引直查 running 命中，
+   *  未命中再全目录 collectRecords 兜底（running，或 allowReconnect 且可重连 closed）。 */
+  private findColdLookupCandidate(id: string, allowReconnect: boolean): SubagentRecord | undefined {
     const direct = this.store.findLightById(id);
-    const found =
+    return (
       (direct?.status === "running" ? direct : undefined) ??
       this.store
         .collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined)
-        .find((r) => r.id === id && (r.status === "running" || (allowReconnect && this.isReconnectableClosed(r))));
-    // [v8.5 D] 可重连候选的守卫先于任何状态突变与注册：worktree 绑定丢失 / 异进程活实例
-    // 以 ResurrectDeniedError 抛出（endedMessageGuard 必须原样透传，不得改写为 fork-from
-    // 指引误导 agent 走已被判死的通道）；拒绝时内存不得残留该记录（findRecord 契约）。
-    if (found && found.status === "closed") {
-      if (found.worktree === true) {
-        throw new ResurrectDeniedError(
-          `subagent ${id} cannot be transparently resumed: it was created with worktree isolation, ` +
-          `and its worktree checkout no longer exists after restart (resuming in place would make spawn cwd fall back to the main repo). ` +
-          `Recovery: action:'start' a fresh subagent (with a new worktree if isolation is still needed); ` +
-          `its conversation history remains intact at ${found.sessionFile}.`,
-        );
-      }
-      const foreign = found.sessionFile ? findForeignLiveInstance(found.sessionFile) : undefined;
-      if (foreign) {
-        throw new ResurrectDeniedError(
-          `subagent ${id} is not transparently resumable: its previous instance still finishing in another process ` +
-          `(pid ${foreign.pid}, startedAt=${new Date(foreign.startedAt).toISOString()}). ` +
-          `Resuming in place would double-write ${found.sessionFile}. ` +
-          `Recovery: retry once that process exits; if it never exits, action:'start' a fresh subagent and treat the history at ${found.sessionFile} as read-only reference.`,
-        );
-      }
+        .find((r) => r.id === id && (r.status === "running" || (allowReconnect && this.isReconnectableClosed(r))))
+    );
+  }
+
+  /** 可重连守卫（coldLookupForAction 步骤 2，[v8.5 D]）：先于任何状态突变与注册。
+   *  worktree 绑定丢失 / 异进程活实例以 ResurrectDeniedError 抛出（endedMessageGuard
+   *  必须原样透传，不得改写为 fork-from 指引误导 agent 走已被判死的通道）；拒绝时
+   *  内存不得残留该记录（findRecord 契约）。 */
+  private assertReconnectAllowed(found: SubagentRecord, id: string): void {
+    if (found.status !== "closed") return;
+    if (found.worktree === true) {
+      throw new ResurrectDeniedError(
+        `subagent ${id} cannot be transparently resumed: it was created with worktree isolation, ` +
+        `and its worktree checkout no longer exists after restart (resuming in place would make spawn cwd fall back to the main repo). ` +
+        `Recovery: action:'start' a fresh subagent (with a new worktree if isolation is still needed); ` +
+        `its conversation history remains intact at ${found.sessionFile}.`,
+      );
     }
-    // [review MF-9] 归属校验先于任何持久化副作用：coldLookup 是 getRecordForAction 的
-    // 内存未命中分支，若先 resurrect/register/report 再由调用方抛归属错误，会在磁盘/
-    // 内存留下幽灵 running record + running transition entry（跨进程双 resurrect 窗口）。
-    // rootSessionId 不匹配 → 返回 undefined，由 getRecordForAction 抛统一「not found or
-    // not owned」（不区分失败形态，防跨 session 探测）；parentRecordId 跨层不匹配 →
-    // 原样抛 direct parent 错误（与外层校验同文案，保留跨层导航指引）。
-    if (found && found.rootSessionId !== this.sessionRootId) {
-      return undefined;
+    const foreign = found.sessionFile ? findForeignLiveInstance(found.sessionFile) : undefined;
+    if (foreign) {
+      throw new ResurrectDeniedError(
+        `subagent ${id} is not transparently resumable: its previous instance still finishing in another process ` +
+        `(pid ${foreign.pid}, startedAt=${new Date(foreign.startedAt).toISOString()}). ` +
+        `Resuming in place would double-write ${found.sessionFile}. ` +
+        `Recovery: retry once that process exits; if it never exits, action:'start' a fresh subagent and treat the history at ${found.sessionFile} as read-only reference.`,
+      );
     }
-    if (found) {
-      const baselineRecordId = this.execCtxBaseline?.recordId ?? undefined;
-      if (found.parentRecordId !== baselineRecordId) {
-        throw new Error(
-          `subagent ${id} is owned by its direct parent; message it through that parent ` +
-          `(see /subagents list, parent=${found.parentRecordId ?? "(root layer)"}). [v4 A-5] cross-layer ` +
-          `ownership guard: this process's baseline=${baselineRecordId ?? "(root)"} is not the direct parent of ${id}; ` +
-          `operating here would race the owning child process's handle and double-write the session file.`,
-        );
-      }
-    }
-    if (!found) return undefined;
+  }
+
+  /** 磁盘候选重建为可变 record 并 register + 上报（coldLookupForAction 步骤 4）。 */
+  private resurrectColdRecord(found: SubagentRecord, id: string): ExecutionRecord {
     const record = createRecord(id, {
       agent: found.agent,
       model: found.model,
@@ -1225,6 +1214,32 @@ export class SubagentService {
       this.store.reportRecordTransition(record);
     }
     return record;
+  }
+
+  private coldLookupForAction(id: string, allowReconnect: boolean): ExecutionRecord | undefined {
+    const found = this.findColdLookupCandidate(id, allowReconnect);
+    if (!found) return undefined;
+    // [v8.5 D] 可重连候选的守卫先于任何状态突变与注册（细节见 assertReconnectAllowed）
+    this.assertReconnectAllowed(found, id);
+    // [review MF-9] 归属校验先于任何持久化副作用：coldLookup 是 getRecordForAction 的
+    // 内存未命中分支，若先 resurrect/register/report 再由调用方抛归属错误，会在磁盘/
+    // 内存留下幽灵 running record + running transition entry（跨进程双 resurrect 窗口）。
+    // rootSessionId 不匹配 → 返回 undefined，由 getRecordForAction 抛统一「not found or
+    // not owned」（不区分失败形态，防跨 session 探测）；parentRecordId 跨层不匹配 →
+    // 原样抛 direct parent 错误（与外层校验同文案，保留跨层导航指引）。
+    if (found.rootSessionId !== this.sessionRootId) {
+      return undefined;
+    }
+    const baselineRecordId = this.execCtxBaseline?.recordId ?? undefined;
+    if (found.parentRecordId !== baselineRecordId) {
+      throw new Error(
+        `subagent ${id} is owned by its direct parent; message it through that parent ` +
+        `(see /subagents list, parent=${found.parentRecordId ?? "(root layer)"}). [v4 A-5] cross-layer ` +
+        `ownership guard: this process's baseline=${baselineRecordId ?? "(root)"} is not the direct parent of ${id}; ` +
+        `operating here would race the owning child process's handle and double-write the session file.`,
+      );
+    }
+    return this.resurrectColdRecord(found, id);
   }
 
   /** [v8.5 D] 冷查候选过滤：closed 且死因落在可重连集。判定源 = closedReason（buildRecord

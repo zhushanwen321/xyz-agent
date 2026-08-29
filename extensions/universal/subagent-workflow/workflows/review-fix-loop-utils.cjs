@@ -737,35 +737,42 @@ function nextFreeId(existingIds) {
  * L3: 表格号未被 issues/dormant 占用 → 直接用；被占 → nextFreeId 避让分配。
  * @returns { key: string, mapped: boolean } mapped=true 表示表格号≠台账键，需记入 idMap。
  */
+/** L1/dormant 同构标题守卫：两侧 title 归一（缺 title 归空串），一致或任一侧无 title → true。 */
+function titlesCompatible(leftTitle, rightTitle) {
+  const a = typeof leftTitle === "string" ? normTitle(leftTitle) : "";
+  const b = typeof rightTitle === "string" ? normTitle(rightTitle) : "";
+  return !a || !b || a === b;
+}
+
+/** L3 占号集合：issues 键 ∪ dormant 条目 id（非字符串 id 忽略）。 */
+function collectOccupiedIds(issues, dormant) {
+  return new Set([
+    ...Object.keys(issues || {}),
+    ...(Array.isArray(dormant) ? dormant : [])
+      .map((d) => (d && typeof d.id === "string" ? d.id : ""))
+      .filter(Boolean),
+  ]);
+}
+
 function resolveIssueIdentity(entry, { issues, dormant }) {
   const id = entry && typeof entry.id === "string" ? entry.id : "";
+  // L1：表格号在 issues 且标题守卫通过 → 恒等沿用
   const existing = id && (issues || {})[id];
-  if (existing) {
-    const a = typeof existing.title === "string" ? normTitle(existing.title) : "";
-    const b = typeof entry.title === "string" ? normTitle(entry.title) : "";
-    if (!a || !b || a === b) return { key: id, mapped: false };
-  }
+  if (existing && titlesCompatible(existing.title, entry.title)) return { key: id, mapped: false };
   // dormant 自识别（表格号 = dormant 条目的 id，同构 L1 守卫）：title 一致或任一侧
   // 无 title 可核 → 沿用该号（该 dormant 条目以活跃身份重报 = 复活，键即 dormant id）；
   // title 不一致 = 新问题冒用 dormant 占号（幽灵复活向量）→ 落 L2/L3 避让。
   // 缺此分支时 L3 会把 dormant 自身的 id 当「被占」避让——复活条目拿到新键，
   // dormantHit（d.id === resolved.key）miss，revived 永不置位（复活链断裂）。
   const dormantSelf = (Array.isArray(dormant) ? dormant : []).find((d) => d && d.id === id);
-  if (dormantSelf) {
-    const a = typeof dormantSelf.title === "string" ? normTitle(dormantSelf.title) : "";
-    const b = typeof entry.title === "string" ? normTitle(entry.title) : "";
-    if (!a || !b || a === b) return { key: id, mapped: false };
-  }
+  if (dormantSelf && titlesCompatible(dormantSelf.title, entry.title)) return { key: id, mapped: false };
+  // L2：标题归一唯一命中
   if (entry && typeof entry.title === "string" && entry.title.trim()) {
     const hit = matchByTitle(entry.title, issues, dormant);
     if (hit) return { key: hit.id, mapped: hit.id !== id };
   }
-  const occupied = new Set([
-    ...Object.keys(issues || {}),
-    ...(Array.isArray(dormant) ? dormant : [])
-      .map((d) => (d && typeof d.id === "string" ? d.id : ""))
-      .filter(Boolean),
-  ]);
+  // L3：未被占 → 直接用；被占 → nextFreeId 避让分配
+  const occupied = collectOccupiedIds(issues, dormant);
   if (!occupied.has(id)) return { key: id, mapped: false };
   const free = nextFreeId(occupied);
   return { key: free, mapped: true };
@@ -1348,6 +1355,26 @@ function backfillFixRegression({ scores, fixResult, issues, round, batch, cleanR
  * @param state 可变 state（issues/knownRemaining/scores 原地更新）
  * @returns { state, stuck, stuckIds }
  */
+/** clean 轮对账（MF-2）：与主对账路径同构的 id 翻译 + 冲突互斥 + dormant 分区过滤
+ *  （clean 轮此前直传原始表格号，L2/L3 改键后 miss 翻译，且多 reviewer 矛盾申报时
+ *  fixed 侧静默获胜——假 clean 终止向量）。state.issues/knownRemaining 原地更新。 */
+function reconcileCleanRound(state, { reconSeen, reconEscalate, reconFixed, round, stuckThreshold }) {
+  const issues = state.issues || {};
+  translateReconSets(
+    reconSeen, reconEscalate || new Set(), reconFixed || new Set(),
+    (state.idMap && state.idMap.map) || {}, issues,
+  );
+  // 对账通道的 dormant 分区（exec-review 修复）：pending dormant id 不进 reconcile
+  const filtered = filterDormantFromRecon(reconSeen, reconEscalate || new Set(), state.dormant);
+  const rec = reconcileIssues(issues, {
+    seenIds: filtered.seen, escalateIds: filtered.escalate, fixedIds: reconFixed || new Set(),
+    round, stuckThreshold,
+  });
+  state.issues = rec.issues;
+  state.knownRemaining = rec.knownRemaining;
+  return { stuck: rec.stuck, stuckIds: rec.stuckIds };
+}
+
 function applyCleanRoundBackfill(state, { reconSeen, reconEscalate, reconFixed, round, stuckThreshold, batch }) {
   const issues = state.issues || {};
   const hasFixAttempted = Object.values(issues).some((i) => i.status === "fix-attempted");
@@ -1358,22 +1385,7 @@ function applyCleanRoundBackfill(state, { reconSeen, reconEscalate, reconFixed, 
   const fixedCount = reconFixed ? reconFixed.size : 0;
   let stuckResult = { stuck: false, stuckIds: [] };
   if (reconSeen && (reconSeen.size > 0 || escalateCount > 0 || fixedCount > 0 || hasFixAttempted)) {
-    // MF-2：与主对账路径同构的 id 翻译 + seen/escalate-over-fixed 冲突互斥——
-    // clean 轮此前直传原始表格号，L2/L3 改键后 miss 翻译，且多 reviewer 矛盾申报
-    // 时 fixed 侧静默获胜（假 clean 终止向量）。
-    translateReconSets(
-      reconSeen, reconEscalate || new Set(), reconFixed || new Set(),
-      (state.idMap && state.idMap.map) || {}, issues,
-    );
-    // 对账通道的 dormant 分区（exec-review 修复）：pending dormant id 不进 reconcile
-    const filtered = filterDormantFromRecon(reconSeen, reconEscalate || new Set(), state.dormant);
-    const rec = reconcileIssues(issues, {
-      seenIds: filtered.seen, escalateIds: filtered.escalate, fixedIds: reconFixed || new Set(),
-      round, stuckThreshold,
-    });
-    state.issues = rec.issues;
-    state.knownRemaining = rec.knownRemaining;
-    stuckResult = { stuck: rec.stuck, stuckIds: rec.stuckIds };
+    stuckResult = reconcileCleanRound(state, { reconSeen, reconEscalate, reconFixed, round, stuckThreshold });
   }
   if (round > 1 && state.fixResults && state.fixResults.length > 0) {
     const prevFix = state.fixResults[state.fixResults.length - 1];
