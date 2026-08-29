@@ -43,7 +43,7 @@ ALLOWED_MODULES = {
     "session-binding-fields",
     # spawn-env 出站契约构建器（2026-08-27）：纯函数（env 全 DI 不触 process.env），
     # terminal-service / plugin-host-process 消费 buildOutboundChildEnv 组装子进程 env
-    # （env-propagation-boundary 设计 C-proc-08），同族随 R3 收编
+    # （env-propagation-boundary 设计 C-proc-09），同族随 R3 收编
     "spawn-env",
 }
 

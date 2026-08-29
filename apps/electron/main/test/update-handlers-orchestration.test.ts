@@ -6,9 +6,8 @@
  *        - preDownload=true → downloadUpdate 被异步触发 + pending 标志已写
  *        - preDownload=false → downloadUpdate 不被触发
  *        - preDownloading=true → 不重复下载（互斥）
- *   S#8  update:perform 快路径（readPreloadedUpdate 命中 → 跳过 performUpdate 直接 installUpdate）：
- *        - readPreloadedUpdate 返回有效路径 → installUpdate 被调、performUpdate 不被调
- *        - readPreloadedUpdate 返回 null → 降级走 performUpdate
+ *   S#8  update:perform 快路径：已随批次 3 m17 删除（update:perform handler 不存在）；
+ *        两阶段 update:download/update:install 的编排覆盖见下方 T4 describe
  *   S#9  update:getPending / update:getSettings / update:setSettings：
  *        - getSettings 返回默认值、setSettings 写入后 getSettings 读回
  *        - setSettings 传非 boolean preDownload 抛 'Invalid settings'
@@ -22,11 +21,11 @@
  *     顶层 path 预绑定对 XYZ_AGENT_DATA_DIR 时序的依赖；本文件不读真实 fs，纯 mock 交互断言）
  *   - proxy-config：保留真实模块（testProxy/getProxyConfig 不在本批用例；setProxyConfig 校验
  *     用例属旧文件）。本文件不触发代理 IPC，故不 mock，避免影响类型解析。
- *   - DI orchestrator：每个用例注入完整的 mock IUpdateOrchestrator（performUpdate/downloadUpdate/installUpdate）
+ *   - DI orchestrator：每个用例注入完整的 mock IUpdateOrchestrator（resolveByVersion/downloadUpdate/installUpdate）
  *
  * 运行：cd apps/electron/main && npx vitest run test/update-handlers-orchestration.test.ts
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { LatestReleaseInfo, UpdateSettings } from '@xyz-agent/shared'
 
 // ── 捕获注册的 handler（key=channel, value=handler fn）──────────────
@@ -116,10 +115,6 @@ import type { Mock } from 'vitest'
 
 /** mock IUpdateOrchestrator（保留 .mock 断言能力；每方法为 Mock 而非具体函数） */
 interface MockOrchestrator {
-  performUpdate: Mock<
-    (release: LatestReleaseInfo, opts: { onProgress: (stage: string, percent: number) => void }) =>
-      Promise<{ triggerRestart: boolean }>
-  >
   downloadUpdate: Mock<(release: LatestReleaseInfo, onProgress?: (percent: number) => void) =>
     Promise<{ filePath: string }>>
   installUpdate: Mock<
@@ -129,17 +124,24 @@ interface MockOrchestrator {
       onProgress?: (stage: string, percent: number) => void,
     ) => Promise<{ triggerRestart: boolean }>
   >
+  resolveByVersion: Mock<
+    (
+      version: string,
+      opts: { currentVersion: string; releaseChecker: unknown },
+    ) => Promise<LatestReleaseInfo>
+  >
 }
 
 /**
- * 构造完整 mock IUpdateOrchestrator（performUpdate/downloadUpdate/installUpdate 全桩）。
+ * 构造完整 mock IUpdateOrchestrator（resolveByVersion/downloadUpdate/installUpdate 全桩）。
  * overrides 逐字段替换，保留其余字段的默认 mock（.mock 断言仍可用）。
  */
 function mockOrchestrator(overrides: Partial<MockOrchestrator> = {}): MockOrchestrator {
   return {
-    performUpdate: vi.fn(async () => ({ triggerRestart: false })),
     downloadUpdate: vi.fn(async () => ({ filePath: '/tmp/preloaded.zip' })),
     installUpdate: vi.fn(async () => ({ triggerRestart: false })),
+    // u3a 契约版本号化：默认解析回 FIXTURE（权威 latest 与请求一致分支）
+    resolveByVersion: vi.fn(async () => FIXTURE),
     ...overrides,
   }
 }
@@ -147,7 +149,15 @@ function mockOrchestrator(overrides: Partial<MockOrchestrator> = {}): MockOrches
 /** 捕获 setTimeout（update:perform triggerRestart 后用 setTimeout 调 app.quit） */
 let capturedQuitTimer: { delay: number } | null = null
 
+// 预下载门控 isAutoUpdateSupportedForCurrentInstall（真实现非 mock）在 linux 无
+// APPIMAGE 时返回 false → update:check 不触发预下载 → downloadUpdate 0 次调用。
+// CI 在 linux x64 runner 上跑，本地 mac 全绿、CI 恒红的根因；FIXTURE 即 mac 语义，
+// 全文件统一桩 darwin
+let originalPlatform: PropertyDescriptor | undefined
+
 beforeEach(() => {
+  originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
   handlers.clear()
   vi.clearAllMocks()
   sendSpy.mockClear()
@@ -160,6 +170,10 @@ beforeEach(() => {
     // 不实际执行 cb（避免触发 app.quit mock 的副作用），返回占位 handle
     return 0 as unknown as NodeJS.Timeout
   }) as typeof setTimeout)
+})
+
+afterEach(() => {
+  if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
 })
 
 // ── S#9：update:getPending / update:getSettings / update:setSettings ──
@@ -225,6 +239,7 @@ describe('S#9 update-handlers: settings & pending IPC', () => {
     // readPendingUpdate 收到 app.getVersion() = '0.8.14'
     expect(pendingMocks.readPendingUpdate).toHaveBeenCalledTimes(1)
     expect(pendingMocks.readPendingUpdate).toHaveBeenCalledWith('0.8.14')
+    // update:getPending 形状不变（设计 §3.5.1：getPending 不属于契约变更范围）
     expect(result).toEqual(FIXTURE)
   })
 
@@ -262,7 +277,7 @@ describe('S#7 update-handlers: preload orchestration in update:check', () => {
     const result = await handler({}, { force: true })
 
     // 返回 fixture
-    expect(result).toEqual(FIXTURE)
+    expect(result).toEqual({ info: FIXTURE, rateLimited: false })
     // 功能 1：pending 标志已写
     expect(pendingMocks.writePendingUpdate).toHaveBeenCalledTimes(1)
     expect(pendingMocks.writePendingUpdate).toHaveBeenCalledWith(FIXTURE)
@@ -273,14 +288,13 @@ describe('S#7 update-handlers: preload orchestration in update:check', () => {
       expect(orch.downloadUpdate).toHaveBeenCalledTimes(1)
     })
     expect(orch.downloadUpdate).toHaveBeenCalledWith(FIXTURE)
-    // 下载成功 → 写 preloaded-update.json（供 update:perform 快路径命中）
+    // 下载成功 → 写 preloaded-update.json（供 update:download 快路径命中）
     expect(preloadedMocks.writePreloadedUpdate).toHaveBeenCalledTimes(1)
     const [releaseArg, filePathArg] = preloadedMocks.writePreloadedUpdate.mock.calls[0]
     expect(releaseArg).toBe(FIXTURE)
     expect(filePathArg).toBe('/tmp/preloaded.zip')
     // 快路径不调 installUpdate（预下载只下载不替换）
     expect(orch.installUpdate).not.toHaveBeenCalled()
-    expect(orch.performUpdate).not.toHaveBeenCalled()
   })
 
   it('preDownload=false → check 后写 pending 标志，但 downloadUpdate 不被触发', async () => {
@@ -309,7 +323,7 @@ describe('S#7 update-handlers: preload orchestration in update:check', () => {
     const handler = handlers.get('update:check')!
     const result = await handler({}, {})
 
-    expect(result).toEqual(FIXTURE)
+    expect(result).toEqual({ info: FIXTURE, rateLimited: false })
     expect(pendingMocks.writePendingUpdate).toHaveBeenCalledTimes(1)
     // 无 orchestrator → 不触发预下载（不抛 TypeError）
     await Promise.resolve() // 让微任务跑一轮
@@ -361,107 +375,13 @@ describe('S#7 update-handlers: preload orchestration in update:check', () => {
     const handler = handlers.get('update:check')!
     // check 响应正常返回 fixture（预下载失败不影响 check 结果）
     const result = await handler({}, {})
-    expect(result).toEqual(FIXTURE)
+    expect(result).toEqual({ info: FIXTURE, rateLimited: false })
 
     // 预下载失败 → warn + 不写 preloaded 元信息
     await vi.waitFor(() => expect(orch.downloadUpdate).toHaveBeenCalledTimes(1))
     expect(preloadedMocks.writePreloadedUpdate).not.toHaveBeenCalled()
     expect(warnSpy).toHaveBeenCalled()
     warnSpy.mockRestore()
-  })
-})
-
-// ── S#8：update:perform 快路径 ─────────────────────────────────────
-describe('S#8 update-handlers: update:perform fast path', () => {
-  beforeEach(() => {
-    // 快路径用例默认 readPreloadedUpdate 返回 null（由具体用例覆盖为命中）
-    preloadedMocks.readPreloadedUpdate.mockResolvedValue(null)
-  })
-
-  function register(orch: MockOrchestrator): void {
-    registerUpdateHandlers({
-      updateOrchestrator: orch,
-      getMainWindow: () => mockMainWindow as never,
-    } as never)
-  }
-
-  it('readPreloadedUpdate 命中有效路径 → 走快路径：installUpdate 被调、performUpdate 不被调', async () => {
-    // S#11：快路径经 deps.updateOrchestrator.installUpdate 调用（DI 契约）
-    preloadedMocks.readPreloadedUpdate.mockResolvedValue('/tmp/preloaded.zip')
-    const orch = mockOrchestrator({
-      installUpdate: vi.fn(async () => ({ triggerRestart: true })),
-    })
-    register(orch)
-
-    const handler = handlers.get('update:perform')!
-    const result = await handler({}, { release: FIXTURE })
-
-    // 快路径：installUpdate 被调，收到 release + preloadedFile
-    expect(orch.installUpdate).toHaveBeenCalledTimes(1)
-    const [releaseArg, filePathArg] = orch.installUpdate.mock.calls[0]
-    expect(releaseArg).toBe(FIXTURE)
-    expect(filePathArg).toBe('/tmp/preloaded.zip')
-    // 快路径不调 performUpdate（跳过下载）
-    expect(orch.performUpdate).not.toHaveBeenCalled()
-    expect(orch.downloadUpdate).not.toHaveBeenCalled()
-    // triggerRestart=true → 安排延迟 quit
-    expect(result).toEqual({ triggerRestart: true })
-    expect(capturedQuitTimer).not.toBeNull()
-    expect(capturedQuitTimer!.delay).toBe(500)
-  })
-
-  it('readPreloadedUpdate 返回 null → 降级走 performUpdate（完整下载+安装）', async () => {
-    preloadedMocks.readPreloadedUpdate.mockResolvedValue(null)
-    const orch = mockOrchestrator({
-      performUpdate: vi.fn(async () => ({ triggerRestart: false })),
-    })
-    register(orch)
-
-    const handler = handlers.get('update:perform')!
-    const result = await handler({}, { release: FIXTURE })
-
-    // 降级：performUpdate 被调
-    expect(orch.performUpdate).toHaveBeenCalledTimes(1)
-    expect(orch.performUpdate).toHaveBeenCalledWith(FIXTURE, expect.any(Object))
-    // 降级路径不直接调 installUpdate/downloadUpdate（由 performUpdate 内部组合）
-    expect(orch.installUpdate).not.toHaveBeenCalled()
-    expect(orch.downloadUpdate).not.toHaveBeenCalled()
-    expect(result).toEqual({ triggerRestart: false })
-  })
-
-  it('快路径 installUpdate 抛错 → clearPreloadedUpdate 被调（避免重试死循环，MUST-FIX#3 回归防护）', async () => {
-    preloadedMocks.readPreloadedUpdate.mockResolvedValue('/tmp/preloaded.zip')
-    const orch = mockOrchestrator({
-      installUpdate: vi.fn(async () => {
-        throw new Error('spawn failed')
-      }),
-    })
-    register(orch)
-
-    const handler = handlers.get('update:perform')!
-    // installUpdate 抛错 → handler reject
-    await expect(handler({}, { release: FIXTURE })).rejects.toThrow(/spawn failed/)
-
-    // 快路径失败 → 清 preloaded 标志（MUST-FIX#3：下次重试强制走完整重下）
-    expect(preloadedMocks.clearPreloadedUpdate).toHaveBeenCalledTimes(1)
-    // performUpdate 不应被调（快路径已选定）
-    expect(orch.performUpdate).not.toHaveBeenCalled()
-  })
-
-  it('降级路径 performUpdate 抛错 → 不清 preloaded 标志（仅快路径失败才清）', async () => {
-    preloadedMocks.readPreloadedUpdate.mockResolvedValue(null)
-    const orch = mockOrchestrator({
-      performUpdate: vi.fn(async () => {
-        throw new Error('download failed')
-      }),
-    })
-    register(orch)
-
-    const handler = handlers.get('update:perform')!
-    await expect(handler({}, { release: FIXTURE })).rejects.toThrow(/download failed/)
-
-    // 降级路径（usedFastPath=false）→ 不清 preloaded 标志
-    expect(preloadedMocks.clearPreloadedUpdate).not.toHaveBeenCalled()
   })
 })
 
@@ -476,22 +396,29 @@ describe('T4 update-handlers: update:download / update:install / update:getPrelo
   function register(orch: MockOrchestrator): void {
     registerUpdateHandlers({
       updateOrchestrator: orch,
+      // u3a：update:download 新增 releaseChecker 依赖（resolveByVersion 权威解析用）
+      releaseChecker: { checkForLatestRelease: vi.fn(async () => null) },
       getMainWindow: () => mockMainWindow as never,
     } as never)
   }
 
   // ── update:download 成功路径 ───────────────────────────────
-  it('update:download：无预下载产物 → 调 downloadUpdate + 写 preloaded + 返回 {downloaded:true}', async () => {
+  it('update:download：无预下载产物 → resolveByVersion 权威解析 + downloadUpdate + 写 preloaded', async () => {
     const orch = mockOrchestrator({
       downloadUpdate: vi.fn(async () => ({ filePath: '/tmp/dl.zip' })),
     })
     register(orch)
 
     const handler = handlers.get('update:download')!
-    const result = await handler({}, { release: FIXTURE })
+    // u3a 新契约：renderer 只传意图（version），不传 release 数据
+    const result = await handler({}, { version: '0.9.0' })
 
     expect(result).toEqual({ downloaded: true })
-    // downloadUpdate 被调，传入了 FIXTURE
+    // resolveByVersion 被调：version + currentVersion（app.getVersion = 0.8.14）
+    expect(orch.resolveByVersion).toHaveBeenCalledTimes(1)
+    expect(orch.resolveByVersion.mock.calls[0][0]).toBe('0.9.0')
+    expect(orch.resolveByVersion.mock.calls[0][1]).toMatchObject({ currentVersion: '0.8.14' })
+    // downloadUpdate 用的是 main 权威解析出的 release（非 renderer 传入）
     expect(orch.downloadUpdate).toHaveBeenCalledTimes(1)
     expect(orch.downloadUpdate.mock.calls[0][0]).toBe(FIXTURE)
     // 写 preloaded 元信息（供 update:install 读）
@@ -500,16 +427,17 @@ describe('T4 update-handlers: update:download / update:install / update:getPrelo
   })
 
   // ── update:download 快路径（已有预下载产物）─────────────────
-  it('update:download：已有有效预下载产物 → 跳过 downloadUpdate + 返回 {downloaded:true}', async () => {
+  it('update:download：已有有效预下载产物 → resolveByVersion 后跳过 downloadUpdate', async () => {
     preloadedMocks.readPreloadedUpdate.mockResolvedValue('/tmp/preloaded.zip')
     const orch = mockOrchestrator()
     register(orch)
 
     const handler = handlers.get('update:download')!
-    const result = await handler({}, { release: FIXTURE })
+    const result = await handler({}, { version: '0.9.0' })
 
     expect(result).toEqual({ downloaded: true })
-    // 快路径：不调 downloadUpdate（已有产物）
+    // 解析照走（权威 latest 判定），但快路径不调 downloadUpdate（已有产物）
+    expect(orch.resolveByVersion).toHaveBeenCalledTimes(1)
     expect(orch.downloadUpdate).not.toHaveBeenCalled()
     // 也不重复写 preloaded（已有产物）
     expect(preloadedMocks.writePreloadedUpdate).not.toHaveBeenCalled()
@@ -547,7 +475,7 @@ describe('T4 update-handlers: update:download / update:install / update:getPrelo
 
     // update:download 会先 await preDownloadPromise（后台预下载）
     const downloadHandler = handlers.get('update:download')!
-    const downloadPromise = downloadHandler({}, { release: FIXTURE })
+    const downloadPromise = downloadHandler({}, { version: '0.9.0' })
     await Promise.resolve() // 让事件循环跑一轮
 
     // 释放后台预下载 → downloadPromise 继续
@@ -571,7 +499,7 @@ describe('T4 update-handlers: update:download / update:install / update:getPrelo
     register(orch)
 
     const handler = handlers.get('update:download')!
-    await handler({}, { release: FIXTURE })
+    await handler({}, { version: '0.9.0' })
 
     // downloadUpdate 的 onProgress 被传入了
     expect(orch.downloadUpdate.mock.calls[0][1]).toBeTypeOf('function')
@@ -591,7 +519,7 @@ describe('T4 update-handlers: update:download / update:install / update:getPrelo
 
     const handler = handlers.get('update:download')!
     // reject 抛出可序列化对象（非 Error，避免结构化克隆失败）
-    await expect(handler({}, { release: FIXTURE })).rejects.toMatchObject({
+    await expect(handler({}, { version: '0.9.0' })).rejects.toMatchObject({
       stage: 'downloading',
     })
     // 推 update:error 事件

@@ -14,7 +14,7 @@
  * @see docs/architecture/design.md §4.2 M1–M5
  */
 import type { BrowserWindow } from 'electron'
-import type { WindowState, LatestReleaseInfo } from '@xyz-agent/shared'
+import type { WindowState, LatestReleaseInfo, LaunchResult } from '@xyz-agent/shared'
 import type { BrowserViewManager } from './browser/browser-view-manager.js'
 import type { IUpdateOrchestrator } from './update/orchestrator.js'
 
@@ -176,6 +176,15 @@ export interface IReleaseChecker {
     currentVersion: string,
     opts?: { force?: boolean },
   ): Promise<LatestReleaseInfo | null>
+
+  /**
+   * 限流退避截止时刻（epoch ms，0 = 未限流）。可选：checker 不支持限额语义时不实现。
+   *
+   * 批次 4 RM2.3 信号透传（2026-08 一致性审查补齐）：update:check handler 在
+   * checkForLatestRelease 返回 null 后读此值，区分「确认无新版」与「限额退避中」，
+   * 经 UpdateCheckResult.rateLimited 透传给 renderer（显示非侵入提示而非假阴性）。
+   */
+  getRateLimitedUntil?(): number
 }
 
 // ── Gateway 依赖契约 ───────────────────────────────────────────────
@@ -201,6 +210,11 @@ export interface IpcHandlerDeps {
   browserViewManager: BrowserViewManager
   /** Release 检测器（自动升级；可选，未注入时 update:check 返回 null） */
   releaseChecker?: IReleaseChecker
-  /** 升级编排器（自动升级执行后端；可选，未注入时 update:perform 抛错） */
+  /** 升级编排器（自动升级执行后端；可选，未注入时 update:download/install 抛错） */
   updateOrchestrator?: IUpdateOrchestrator
+  /**
+   * 读取启动结果缓存（cleanupCompletedUpdate 的返回值）。
+   * renderer 启动时调用一次（update:getLaunchResult），consumed 一次性语义。
+   */
+  getLaunchResult?: () => Promise<LaunchResult | null>
 }

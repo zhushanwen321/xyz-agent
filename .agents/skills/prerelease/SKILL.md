@@ -16,10 +16,10 @@ description: >-
 
 | Target | 触发词 | 脚本 | CI Workflow | 版本号 | 验证方式 |
 |--------|--------|------|-------------|--------|---------|
-| **electron**（默认） | "发测试版"、"beta release"、"测版"、"构建测试 DMG" | `scripts/prerelease-test.sh` | release.yml（push v*-beta tag） | 手动 beta（0.7.1-beta） | dmg/exe/AppImage 产物存在 |
-| **npm** | "npm 预发布"、"发 npm beta"、"npm prerelease" | `scripts/npm-prerelease.sh` | release-npm-dev.yml（push dev-npm-* 分支） | changeset prerelease（0.1.1-dev.0） | npm view 确认版本可见 |
+| **electron**（默认） | "发测试版"、"beta release"、"测版"、"构建测试 DMG" | `scripts/prerelease-test.sh` | release.yml（push v*-beta tag） | 自动 patch+1 + `-beta`（如 0.4.6 → 0.4.7-beta） | dmg/exe/AppImage 产物存在 |
+| **npm** | "npm 预发布"、"发 npm beta"、"npm prerelease" | `scripts/npm-prerelease.sh` | release-npm-dev.yml（push dev-npm-* 分支） | changeset prerelease（0.1.1-dev.0） | curl 官方 registry 确认版本上线 |
 
-npm target 支持两类包：`@xyz-agent/*`（位于 `packages/`）和 `@zhushanwen/pi-*`（位于 `extensions/`），脚本按包名自动定位 workspace 目录。
+npm target 支持两类包：`@xyz-agent/*`（位于 `packages/`）和 `@zhushanwen/pi-*`（位于 `extensions/` 三层分组 `taiji|universal|shared/<pkg>/` 下），脚本按 package.json 的 name 字段自动定位 workspace 目录。
 
 AI 根据触发词自动判断 target。不确定时问用户。
 
@@ -53,12 +53,12 @@ bash scripts/npm-prerelease.sh @zhushanwen/pi-goal      # 指定包名
 
 ### [MANDATORY] 2. 产物通知
 
-**Electron target**：脚本阶段 5 完成后输出产物链接。
+**Electron target**：脚本阶段 6 输出产物下载链接，随后阻塞等待你确认（确认前脚本未结束，链接在等待提示之前已输出）。
 - macOS: 下载 `.dmg`，拖入 Applications 安装测试
 - Windows: 下载 `.exe` 安装测试
 - Linux: 下载 `.AppImage` 运行测试
 
-**npm target**：脚本完成后输出安装命令：
+**npm target**：脚本在阶段 6 阻塞询问前输出安装命令（确认前脚本未结束，安装命令已在输出区）：
 ```bash
 npm install <pkg>@dev
 ```
@@ -70,15 +70,23 @@ AI 必须等待用户明确确认后再输入 `yes`。
 
 ### [OPTIONAL] 4. CI 失败时的处理
 
-如果 CI 失败，脚本会自动还原版本。AI 应：
+CI 失败或超时时脚本直接中断退出，不会清理任何远程状态：远程会残留 bump commit、beta tag 与 release（npm target 则残留 dev-npm-* 分支）。AI 应：
 1. 打开 CI 链接查看失败日志
-2. 修复问题后重新运行脚本
+2. 按脚本失败路径末尾输出的指引手动还原远程残留（Electron target 示例，tag 名以脚本实际输出为准）：
+
+   ```bash
+   git reset --hard HEAD~1 && git push github HEAD --force-with-lease
+   git push github --delete v0.4.7-beta
+   gh release delete v0.4.7-beta --repo zhushanwen321/xyz-agent --yes   # release 已创建时
+   ```
+
+3. 修复问题后重新运行脚本
 
 ## npm target 前置条件
 
 | 条件 | 检查方式 |
 |------|---------|
-| npm scope 已创建 | `npm view <pkg>` 不报 404 |
+| 包已发布可访问 | `curl -s -o /dev/null -w "%{http_code}" https://registry.npmjs.org/@xyz-agent%2fextension-protocol` 返回 200（不要用 npm view——镜像同步延迟会误报） |
 | GitHub repo 有 `NPM_TOKEN` secret | `gh secret list --repo zhushanwen321/xyz-agent` |
 | changeset 已初始化 | `.changeset/config.json` 存在 |
 
@@ -105,11 +113,18 @@ AI 必须等待用户明确确认后再输入 `yes`。
 # 查看 CI 日志
 gh run list --workflow=release-npm-dev.yml --repo zhushanwen321/xyz-agent --limit 3
 
-# 手动验证 npm 版本
-npm view <pkg>@dev version
+# 手动验证 npm 版本——不要用 npm view（npmmirror 等镜像同步延迟会误报），与脚本一致用 curl 查官方 registry：
+# dev dist-tag 指向的版本
+curl -s https://registry.npmjs.org/-/package/@xyz-agent%2fextension-protocol/dist-tags/dev
+# 具体版本是否上线（HTTP 200 = 已上线；scope 包路径中的 / 须写成 %2f）
+curl -s -o /dev/null -w "%{http_code}" https://registry.npmjs.org/@xyz-agent%2fextension-protocol/0.1.1-dev.0
 
-# 手动还原
-git checkout main && git branch -D dev-npm-* && git push github --delete dev-npm-* 2>/dev/null || true
+# 手动还原（优先用脚本输出的具体分支名 dev-npm-<timestamp>）
+git checkout main && git branch -D dev-npm-<timestamp> && git push github --delete dev-npm-<timestamp>
+
+# 或批量清理本地+远程（引号防 glob：无匹配时 bash 会按字面量传给 git 导致 branch not found）
+git branch --list 'dev-npm-*' | xargs git branch -D
+git branch -r --list 'github/dev-npm-*' | sed 's|github/||' | xargs -n1 git push github --delete
 ```
 
 ---

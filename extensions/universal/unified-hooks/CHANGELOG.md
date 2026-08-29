@@ -1,5 +1,15 @@
 # @zhushanwen/pi-unified-hooks
 
+## 0.2.7
+
+### Patch Changes
+
+- 23d8fe3cc: **Deprecated: superseded by `@zhushanwen/pi-base-tool-enhance`**
+
+  - This package is no longer maintained and is marked `deprecated` on npm
+  - Test-command guarding, tool-error audit and hang protection (now via configurable timeouts) are all covered by `pi-base-tool-enhance`
+  - Migration: uninstall this package (`pi uninstall npm:@zhushanwen/pi-unified-hooks`), then install `pi-base-tool-enhance`. Keeping both installed causes double interception of `bash` calls — always remove this one first
+
 ## 0.2.6
 
 ### Patch Changes

@@ -34,6 +34,7 @@ const TOPIC_NAMES = {
   ext: "extension 体系",
   build: "打包与分发",
   proc: "工程流程",
+  sw: "subagent-workflow（单写者不变量）",
 };
 
 const errors = [];
@@ -64,7 +65,7 @@ function validate(data) {
   if (!Array.isArray(constraints) || constraints.length === 0) fail("constraints 为空数组");
 
   const seenIds = new Set();
-  const idRe = /^C-(pi|data|comm|state|ext|build|proc)-\d{2}$/;
+  const idRe = /^C-(pi|data|comm|state|ext|build|proc|sw)-\d{2}$/;
   for (const c of constraints) {
     const at = c.id || "(missing id)";
     if (!c.id || !idRe.test(c.id)) fail(`id 格式非法: ${at}`);

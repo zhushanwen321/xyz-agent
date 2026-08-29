@@ -7,6 +7,7 @@ import type { ClientMessage, ProviderSource, SkillCacheScope, ProviderId } from 
 import type { IConfigService, ISessionService, IModelService, IAuthService } from '../interfaces.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
 import { SCOPED_MODEL_REGEX } from '../services/provider-extras-store.js'
+import { attachSupportedLevelsSafe } from './message-broker.js'
 import { toErrorMessage } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 
@@ -61,9 +62,11 @@ export class SettingsMessageHandler {
   async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
     switch (msg.type) {
       case 'config.getProviders':
-        // scoped-model design §3.3 D7：reply 与广播（message-broker.buildProviderListMsgs）均含 scopedModels
+        // scoped-model design §3.3 D7：reply 与广播（message-broker.buildProviderListMsgs）均含 scopedModels。
+        // supportedLevels 同样两路同标（U5 接线）：本 ctx 无 appInfo，piVersion 缺省（registry 以
+        // 逐模型签名兜底，缓存正确性不依赖该组分——见 model-capability.ts 头注）。
         this.ctx.reply(ws, msg.id, 'config.providers', {
-          providers: this.ctx.configService.listProviders(),
+          providers: attachSupportedLevelsSafe(this.ctx.modelService, this.ctx.configService.listProviders()),
           scopedModels: this.ctx.configService.getScopedModels(),
         })
         return true
@@ -329,8 +332,17 @@ export class SettingsMessageHandler {
       case 'model.switch': {
         const { sessionId, provider, modelId } = msg.payload
         console.log(`[runtime] model.switch: sessionId=${sessionId}, provider=${provider}, modelId=${modelId}`)
-        await this.ctx.modelService.switchModel(sessionId, provider, modelId)
-        this.ctx.reply(ws, msg.id, 'model.switched', { sessionId, provider, modelId })
+        // C-pi-13 回执修型（U6）：reply 回传生效值——pi pattern 引擎可能把请求模型
+        // 静默换成同族条目（事故 A 形态），switchModel 经 set→get_state 读回
+        // 'provider/id' 复合串（请求 ≠ 生效），拆解回填保持 reply 协议形状；
+        // 无 '/' 形态（无活跃进程早退等 fallback）按请求值回显（旧行为兜底）。
+        const effectiveModel = await this.ctx.modelService.switchModel(sessionId, provider, modelId)
+        const slash = effectiveModel.indexOf('/')
+        this.ctx.reply(ws, msg.id, 'model.switched', {
+          sessionId,
+          provider: slash === -1 ? provider : effectiveModel.slice(0, slash),
+          modelId: slash === -1 ? modelId : effectiveModel.slice(slash + 1),
+        })
         return true
       }
       case 'config.setDefaultModel': {
@@ -405,7 +417,9 @@ export class SettingsMessageHandler {
       case 'session.setThinkingLevel': {
         const { sessionId: sid, level } = msg.payload
         // P3（final gate）：reply 生效值而非请求值——pi 会钳制模型族不支持的档位
-        //（mimo 族 max → high，钳制时不发事件不写 entry），回显请求值会污染前端 pending 确认
+        //（mimo 族 max → high；钳制后 effective ≠ previous 时 pi 仍必发
+        // thinking_level_changed 事件，isChanging=false 仅「值未变」场景——PS-04），
+        // 回显请求值会污染前端 pending 确认
         const effective = await this.ctx.modelService.setThinkingLevel(sid as string, level as string)
         this.ctx.reply(ws, msg.id, 'session.thinkingLevelSet', { sessionId: sid, level: effective })
         return true

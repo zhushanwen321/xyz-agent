@@ -280,6 +280,28 @@ describe("buildWorkerScript runtime — _safePost scope regression (exit code 1 
     expect(res.returnValue).toEqual({ count: 2, ok: true });
     expect(res.exitCode).not.toBe(1);
   });
+
+  it("[F1] execute() 返回不可克隆值 → 回发可克隆 error 消息（不再静默 exit(0)），DataCloneError 详情在 workerLogs", async () => {
+    // 修复前：return 值含 function → _safePost 吞掉 DataCloneError 返回 false → 无任何
+    // 消息发出 → worker 静默 exit(0) → 主线程 handleWorkerExit(0) no-op → run 永久
+    // running、runAndWait 悬挂（runWorker 会 2s 超时 reject，即本测试修复前会红）。
+    // 修复后：.then 检测 _safePost 失败，回发可克隆 error 消息接管。
+    const script = `return { ok: true, fn: () => 1 };`;
+    const res = await runWorker(script);
+    expect(res.workerError).toBeUndefined();
+    expect(res.returnValue).toBeUndefined(); // return 消息未发出（被 DataCloneError 拦下）
+    expect(res.errorMessage).toMatch(/structured-clone failed/);
+    // DataCloneError 详情由 _safePost 记入 workerLogs 随 error 消息带回（诊断不丢）
+    expect((res.errorWorkerLogs ?? []).length).toBeGreaterThan(0);
+    expect(res.exitCode).not.toBe(1);
+  });
+
+  it("[F1] 不可克隆 Symbol 成员同样回发 error 消息（循环引用同理，同一 _safePost 失败路径）", async () => {
+    const script = `return { sym: Symbol("no-clone") };`;
+    const res = await runWorker(script);
+    expect(res.errorMessage).toMatch(/structured-clone failed/);
+    expect(res.exitCode).not.toBe(1);
+  });
 });
 
 // ── S4-S7：覆盖此前缺失的运行时路径 ──────────────────────────────────
@@ -515,6 +537,27 @@ describe("buildWorkerScript runtime — P3/P4 run-level model/thinkingLevel over
     const res = await runWorker(script);
     expect(res.agentCalls).toHaveLength(1);
     expect(res.agentCalls[0]!.opts.model).toBeUndefined();
+  });
+});
+
+describe("buildWorkerScript runtime — string 分支 maxTurns ?? 语义保真（F-2）", () => {
+  // 旧实现 `(cond && secondArg.maxTurns) || undefined` 把显式 0 抹成 undefined →
+  // 落 runSpawn 的 env 兑底（SPAWN_WATCHDOG env 设置时误挂 watchdog），与对象分支
+  // （直接透传保真）语义分裂。锁定运行时行为：string 分支传 0 → postMessage
+  // opts.maxTurns === 0。
+  it("agent(str, { maxTurns: 0 }) → postMessage opts.maxTurns === 0（不被抹成 undefined）", async () => {
+    const script = `await agent("p", { maxTurns: 0 }); return {};`;
+    const res = await runWorker(script);
+    expect(res.agentCalls).toHaveLength(1);
+    expect(res.agentCalls[0]!.opts.maxTurns).toBe(0);
+    expect(res.workerError).toBeUndefined();
+  });
+
+  it("agent(str, { maxTurns: 8 }) → 8；不传 → undefined（其余语义不变）", async () => {
+    const resA = await runWorker(`await agent("p", { maxTurns: 8 }); return {};`);
+    expect(resA.agentCalls[0]!.opts.maxTurns).toBe(8);
+    const resB = await runWorker(`await agent("p"); return {};`);
+    expect(resB.agentCalls[0]!.opts.maxTurns).toBeUndefined();
   });
 });
 

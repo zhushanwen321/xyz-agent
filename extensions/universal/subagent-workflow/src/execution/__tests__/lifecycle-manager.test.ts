@@ -30,11 +30,15 @@ describe("lifecycle-manager — V2 §5.2 模块 1", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     _resetLifecycleState();
+    // [F-4 同源修复] env 隔离：「默认超时」用例依赖 XYZ_SUBAGENT_IDLE_TIMEOUT_MS
+    // 未设基线（getEnvIdleTimeoutMs 会覆盖 DEFAULT），宿主 export 即假红。空串 = 未设。
+    vi.stubEnv("XYZ_SUBAGENT_IDLE_TIMEOUT_MS", "");
   });
 
   afterEach(() => {
     _resetLifecycleState();
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   // ============================================================
@@ -91,6 +95,48 @@ describe("lifecycle-manager — V2 §5.2 模块 1", () => {
 
       vi.advanceTimersByTime(1);
       expect(onTimeout).toHaveBeenCalledTimes(1);
+    });
+
+    it("显式禁用值（0/负数）→ 不挂 timer（预算语义对齐：idle GC 可显式关闭；旧实现 0 落成 setTimeout(0) 立即 kill）", () => {
+      const onTimeout = vi.fn();
+      armIdleTimer("sa-disable-0", onTimeout, 0);
+      expect(hasIdleTimer("sa-disable-0")).toBe(false);
+      armIdleTimer("sa-disable-neg", onTimeout, -1);
+      expect(hasIdleTimer("sa-disable-neg")).toBe(false);
+
+      vi.advanceTimersByTime(DEFAULT_IDLE_TIMEOUT_MS * 2);
+      expect(onTimeout).not.toHaveBeenCalled();
+    });
+
+    it("显式禁用值顺带 disarm 已有 armed timer（禁用不形同虚设）", () => {
+      const onTimeout = vi.fn();
+      armIdleTimer("sa-disable-late", onTimeout, 1000);
+      expect(hasIdleTimer("sa-disable-late")).toBe(true);
+      armIdleTimer("sa-disable-late", onTimeout, 0);
+      expect(hasIdleTimer("sa-disable-late")).toBe(false);
+      vi.advanceTimersByTime(2000);
+      expect(onTimeout).not.toHaveBeenCalled();
+    });
+
+    // [U1] setTimeout 2^31-1 溢出 fail-fast：溢出 delay 被 Node 置 1ms 立即触发
+    //（「长空闲保活」变「立即 kill」），arm 入口拦截且错误含上限值与恢复指引。
+    // 显式禁用通道（<=0）不受影响（上方用例已锁）。
+    it("idleTimeoutMs 溢出（>2^31-1）→ fail-fast throw，不挂 timer", () => {
+      const onTimeout = vi.fn();
+      expect(() => armIdleTimer("sa-overflow", onTimeout, 3_000_000_000)).toThrowError(/2147483647/);
+      expect(() => armIdleTimer("sa-overflow", onTimeout, Number.MAX_SAFE_INTEGER)).toThrowError(
+        /Recovery/,
+      );
+      expect(hasIdleTimer("sa-overflow")).toBe(false);
+      vi.advanceTimersByTime(3_000_000_000);
+      expect(onTimeout).not.toHaveBeenCalled();
+    });
+
+    it("env XYZ_SUBAGENT_IDLE_TIMEOUT_MS 溢出 → fail-fast throw（arm 入口统一拦截）", () => {
+      vi.stubEnv("XYZ_SUBAGENT_IDLE_TIMEOUT_MS", "3000000000");
+      const onTimeout = vi.fn();
+      expect(() => armIdleTimer("sa-env-overflow", onTimeout)).toThrowError(/2147483647/);
+      expect(hasIdleTimer("sa-env-overflow")).toBe(false);
     });
   });
 

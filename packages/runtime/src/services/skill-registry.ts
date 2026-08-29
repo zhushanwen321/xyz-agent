@@ -88,41 +88,33 @@ const GLOBAL_KEY = '__global__'
 const WATCH_IGNORED = /(^|[\/\\])(node_modules|dist|build|\.git|\.next|coverage|out)([\/\\]|$)/
 
 /**
- * chokidar 轮询间隔（ms）。chokidar v4 移除了 fsevents 绑定，macOS fs.watch 对新子目录创建
- * 不可靠（nodejs/node#52601），故全局+项目 watcher 都用 usePolling。
+ * chokidar 轮询间隔（ms）——仅在显式开启 polling 降级时生效（XYZ_AGENT_SKILL_WATCH_POLLING=1）。
  *
- * 1500ms 是权衡"变更检测延迟"与"stat 开销"的折中值——skill 目录通常条目数 < 50，
- * 单轮 stat 开销可忽略；W1/W4 已把 watch 范围收窄到几个 skill 容器目录。
- * TODO: 若未来 skill discovery 引入大量第三方目录，需重测负载并调整此值。
+ * [HISTORICAL] 2026-07-27 起默认 usePolling:true：chokidar v4 移除 fsevents 绑定后 macOS
+ * fs.watch 对「已 watch 目录下新建子目录」事件不可靠（nodejs/node#52601 启动竞态 +
+ * FSEvents coalescing 丢事件），当时实测（mkdir new-skill && 写 SKILL.md，连跑 5 次）
+ * 事件触发率仅 ~40%，landing 浮层长期不刷新。
+ * 2026-08-28 复测（Node v24.11.1 / macOS 25，已 watch 根目录下 10 轮「新建子目录+写文件」，
+ * 21/21 事件全部到达）：该缺陷在当前运行时不再复现，故默认回到原生事件（事件驱动更快、
+ * 零常驻 stat 开销），polling 降级为显式开关。1500ms 沿用当时的折中值（skill 目录条目
+ * < 50，单轮 stat 开销可忽略）。若缺陷在未来 Node/macOS 版本复发需重开降级，且 skill
+ * discovery 引入大量第三方目录时须重测负载。
  */
 const WATCH_POLL_INTERVAL_MS = 1500
 
 /**
  * chokidar watcher 配置（全局 + 项目级共用）。
  *
- * usePolling:true 的根因（2026-07-27 端到端验收发现的预存 bug）：
- * chokidar v4（2024-09）移除了内置的 native fsevents 绑定（Changelog v4: "remove glob support
- * and bundled fsevents"），macOS 上退化为纯 Node fs.watch（基于 FSEvents stream，但 chokidar 不再
- * 用原生绑定做 reliable 事件归并）。结果是 fs.watch 在 macOS 上对「已 watch 目录下新建子目录 /
- * 新文件」事件**不可靠**——存在 nodejs/node#52601 描述的启动竞态（fs.watch 返回后到真正开始监听
- * 之间有不确定延迟，窗口期内创建的事件被吞），且 FSEvents 的事件 coalescing 也会丢事件。
- *
- * 实测复现：在已扫描的 skill 目录下 `mkdir new-skill && echo body > new-skill/SKILL.md`，
- * 连续 5 次运行 watcher 的 'all' 事件触发率 ~40%（flaky），landing 浮层长期不刷新。
- *
- * 根因修复：在这些 watcher 上启用 usePolling:true（chokidar README 明确推荐的 macOS 可靠监听方式，
- * 也即 fs.watchFile stat-polling 后端）。由于 W1/W4 已把 watch 范围收窄到几个 skill 容器目录
- * （resolveGlobalSkillDirs / resolveProjectSkillDirs，浅层、条目少），stat 轮询开销可忽略，
- * 不会重蹈 2026-07-22 EMFILE 事故（那是 watch 整个 home 目录十万文件导致 fd 耗尽；
- * usePolling 用 stat 不占 fd，反而更安全）。轮询间隔 WATCH_POLL_INTERVAL_MS 调到 1500ms 平衡实时性与开销。
- *
+ * 默认原生事件（usePolling:false）；XYZ_AGENT_SKILL_WATCH_POLLING=1 回退 stat 轮询
+ * （平台缺陷复发时的逃生口，见上）。polling 用 stat 不占 fd，不会重蹈 2026-07-22
+ * EMFILE 事故（那是 watch 整个 home 目录十万文件致 fd 耗尽）。
  * 场景1（settings 改路径 → rebuildGlobal → 刷新）不依赖 watcher，不受影响继续工作。
  */
 const WATCH_OPTIONS = {
   ignored: WATCH_IGNORED,
   ignoreInitial: true,
   persistent: true,
-  usePolling: true,
+  usePolling: process.env.XYZ_AGENT_SKILL_WATCH_POLLING === '1',
   interval: WATCH_POLL_INTERVAL_MS,
   binaryInterval: WATCH_POLL_INTERVAL_MS,
 } as const

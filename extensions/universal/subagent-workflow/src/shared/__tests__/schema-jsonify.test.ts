@@ -58,7 +58,7 @@ describe("stringifySchemaCached — WeakMap 引用级缓存", () => {
     }
   });
 
-  it("pretty 缩进锚定：indent=2 与 formatSchemaInstruction 渲染同源", () => {
+  it("pretty 缩进锚定：indent=2 与 resolver formatSchemaInstruction 渲染同源", () => {
     const out = stringifySchemaCached({ type: "object" }, "pretty");
     expect(out).toBe('{\n  "type": "object"\n}');
   });

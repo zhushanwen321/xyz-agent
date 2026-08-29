@@ -12,6 +12,7 @@
     "test:equivalence": "vitest run src/__tests__/equivalence/"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "0.84.4",
     "@iarna/toml": "^2.2.5",
     "@xyz-agent/core": "workspace:*",
     "@xyz-agent/extension-protocol": "workspace:*",

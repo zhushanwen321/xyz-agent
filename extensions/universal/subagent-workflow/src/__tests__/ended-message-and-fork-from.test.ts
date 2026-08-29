@@ -50,6 +50,7 @@ vi.mock("../execution/session-runner.ts", () => ({
 }));
 
 import { writeFinalized } from "../execution/finalized-marker.ts";
+import type { ModelRegistryLike } from "../execution/model-resolver.ts";
 import { getSubagentSessionDir } from "../execution/path-encoding.ts";
 import type { RecordStore } from "../execution/record-store.ts";
 import type { ExecuteOptions } from "../execution/types.ts";
@@ -154,9 +155,19 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
 
     // 真实 fs 路线：execute 链在 tmp 内落盘安全。
     const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
+    // modelRegistry stub：main 侧 resolveModel 的 ctxModel 孪生守卫（modelRefFromVerified）
+    // 会调 source.getAvailable()（initModel 缺省时此前炸 TypeError）。本测试不测模型解析域，
+    // 空 registry（无大小写孪生）即放行 ctxModel 继承路径；find/hasConfiguredAuth 仅为
+    // 显式 param/agentConfig model 路径所需，本链路不触达，补齐只为满足 ModelRegistryLike。
+    const modelRegistry: ModelRegistryLike = {
+      getAvailable: () => [],
+      find: () => undefined,
+      hasConfiguredAuth: () => false,
+    };
     modelService.initModel({
       sessionId: "root-session-cur",
       ctxModel: { id: "m", name: "M", provider: "p", reasoning: false },
+      modelRegistry,
     });
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session-cur" });

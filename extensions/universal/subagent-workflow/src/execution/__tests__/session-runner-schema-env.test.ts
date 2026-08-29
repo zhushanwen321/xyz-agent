@@ -94,8 +94,10 @@ import {
   applySchemaEnvToChildEnv,
   type RunOptions,
   runSpawn,
+  SCHEMA_ENV_MAX_BYTES,
   type SessionRunnerContext,
 } from "../session-runner.ts";
+import { schemaEnvByteLength } from "../../shared/schema-env.ts";
 
 const mockSpawn = vi.mocked(spawn);
 const mockExistsSync = vi.mocked(fs.existsSync);
@@ -224,6 +226,43 @@ describe("applySchemaEnvToChildEnv (T3.9/T3.11/T3.16)", () => {
     expect(childEnv.PATH).toBe("/usr/bin");
     expect(childEnv.HOME).toBe("/home/user");
     expect(childEnv.PI_WORKFLOW_SCHEMA).toBe('{"x":1}');
+  });
+
+  // [SO-DATA-4] 边界内通过：255KB（< 256KiB 上限）正常注入，行为不变
+  it("[SO-DATA-4] 255KB schema 正常注入（上限内不误拒）", () => {
+    const childEnv: Record<string, string | undefined> = {};
+    // ASCII 串 byteLength === length，构造 255KB 纯 JSON body（外层再包一层合法 JSON）
+    const padding = "x".repeat(255 * 1024);
+    const schemaJson = JSON.stringify({ type: "object", properties: { pad: { const: padding } } });
+    expect(schemaEnvByteLength(schemaJson)).toBeLessThanOrEqual(SCHEMA_ENV_MAX_BYTES);
+    applySchemaEnvToChildEnv(childEnv, schemaJson);
+    expect(childEnv.PI_WORKFLOW_SCHEMA).toBe(schemaJson);
+  });
+
+  // [SO-DATA-4] 超限 fail-fast：257KB 拒绝，错误消息含实际大小 + 精简/拆分指引 + E2BIG 归因
+  it("[SO-DATA-4] 257KB schema fail-fast 拒绝（错误含实际大小与恢复指引）", () => {
+    const childEnv: Record<string, string | undefined> = {};
+    const padding = "x".repeat(257 * 1024);
+    const schemaJson = JSON.stringify({ type: "object", properties: { pad: { const: padding } } });
+    expect(schemaEnvByteLength(schemaJson)).toBeGreaterThan(SCHEMA_ENV_MAX_BYTES);
+    expect(() => applySchemaEnvToChildEnv(childEnv, schemaJson)).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining("bytes exceeds"),
+      }),
+    );
+    // 错误消息含实际大小、上限、精简/拆分指引与 E2BIG 归因（可操作性验收）
+    try {
+      applySchemaEnvToChildEnv(childEnv, schemaJson);
+      throw new Error("expected applySchemaEnvToChildEnv to throw");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      expect(msg).toContain(String(schemaEnvByteLength(schemaJson))); // 实际大小
+      expect(msg).toContain(String(SCHEMA_ENV_MAX_BYTES)); // 上限值
+      expect(msg).toContain("simplify the schema"); // 精简指引
+      expect(msg).toContain("E2BIG"); // ARG_MAX/E2BIG 约束说明
+    }
+    // fail-fast：不写入半截值
+    expect(childEnv.PI_WORKFLOW_SCHEMA).toBeUndefined();
   });
 });
 

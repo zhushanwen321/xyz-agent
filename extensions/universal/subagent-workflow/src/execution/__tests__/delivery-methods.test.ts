@@ -96,7 +96,9 @@ function makeIdleRecord(id = "sa-chat"): ExecutionRecord {
 
 /** PassThrough child（可读出 stdin 字节验证 deliverToRunning 写入）。 */
 function makeStreamChild(): ChildProcess {
-  return { stdin: new PassThrough() } as unknown as ChildProcess;
+  // exitCode/signalCode：真 ChildProcess 未退出时均为 null（deliverMessage [race-F5]
+  // 写后死进程检测读这两个字段，缺省 undefined 会被误判为已死触发 warn）。
+  return { stdin: new PassThrough(), exitCode: null, signalCode: null } as unknown as ChildProcess;
 }
 
 function readStdinLines(child: ChildProcess): unknown[] {
@@ -230,6 +232,41 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
     const lines = readStdinLines(child);
     expect(lines[0]).toMatchObject({ type: "prompt", message: "stop now", streamingBehavior: "steer" });
     expect(record.status).toBe("running");
+  });
+
+  // [race-F5] 写后死进程检测：热路径 write 同步成功（数据进内核缓冲）但子进程在读取前
+  // 已死（gate/idle kill 竞速）→ 消息将随缓冲静默丢弃。修复：写后检查 exitCode/signalCode，
+  // 已死则 warn 留证（含 runId 与消息类型），不抛错不重试（终态已由 kill 路径保证）。
+  it("[race-F5] 热路径写后子进程已死 → logger.warn 被记录（含 runId 与消息类型），不抛错", () => {
+    const child = makeStreamChild();
+    // 模拟 gate/idle kill 竞速：写 stdin 成功但子进程已死（SIGTERM 终止形态）
+    Object.assign(child, { signalCode: "SIGTERM" });
+    spawnedChildren.set(record.id, child);
+
+    expect(() => service.deliverMessage(record, "lost msg", true)).not.toThrow();
+
+    // 写入照常发生（热路径语义不变，不做二次分发）
+    const lines = readStdinLines(child);
+    expect(lines[0]).toMatchObject({ type: "prompt", message: "lost msg", streamingBehavior: "steer" });
+    // warn 留证：含 runId（record.id）与消息类型（steer）
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.stringContaining(`child ${record.id} died around stdin write`),
+      expect.objectContaining({ msgType: "steer", signalCode: "SIGTERM" }),
+    );
+  });
+
+  it("[race-F5] 活进程正常投递不触发死进程 warn（守卫不误报）", () => {
+    // loggerMock 是模块级共享 mock：清历史调用后再断言（防前一用例的 warn 干扰）
+    loggerMock.warn.mockClear();
+    const child = makeStreamChild();
+    spawnedChildren.set(record.id, child);
+
+    service.deliverMessage(record, "normal", false);
+
+    expect(loggerMock.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("died around stdin write"),
+      expect.anything(),
+    );
   });
 
   it("热路径 disarm idle timer：arm 后 deliverMessage → timer 清除（防 turn 期间误杀）", () => {

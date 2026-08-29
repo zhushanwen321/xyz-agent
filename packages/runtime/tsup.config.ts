@@ -39,7 +39,10 @@ export default defineConfig({
   // （E-2 relay env 名/协议版本常量 SSOT，纯常量+纯函数），设计 §3.3.1 例外条款），
   // 运行时闭包 = node:fs + 纯常量；import 链其余均为 type-only（bundle 后
   // 消失）。禁止扩大消费面到 launcher/preparer/parser/EnginePort（依赖方向纪律）
-  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/pi-subagent-workflow', 'chokidar', '@iarna/toml', 'proper-lockfile'],
+  // @earendil-works/pi-ai：能力注册表（pi-boundary-reliability U5）pi 同源档位计算——
+  // 「根声明、runtime 不可 import」格局的首次反转，声明见 services/model-capability.ts 头注；
+  // pin 与根 pin 双副本一致性由 D6 版本门禁机器保证
+  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/pi-subagent-workflow', '@earendil-works/pi-ai', 'chokidar', '@iarna/toml', 'proper-lockfile'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
   // node-pty 是 native module（含 .node 二进制），不能打包进 JS bundle：
   // 其 JS 入口用 node-gyp-build 动态 require prebuilds/<platform>/*.node，

@@ -1,13 +1,14 @@
 /**
- * BgNotifier flushPendingNotifications — deliverAs 契约（FR-3/AC-3）。
+ * BgNotifier flushPendingNotifications — 单通道 triggerTurn 契约（U2 / D5）。
  *
- * 修复：deliverAs 从 'followUp' 改为 'steer'，确保 subagent 完成通知在主 agent
- * 处于 processing 状态（如轮询 loop）时也能立即抢占下一个 turn。
+ * 迁移史：deliverAs 从 'followUp' 改为 'steer'（FR-3/AC-3，commit d214d0d83）后，
+ * U2 courier 单通道化再收敛——steer / followUp / nextTurn 通道全部删除（nextTurn
+ * 唯一 drain 点在 session.prompt() 内，主 agent 长 streaming 场景下无限期滞留，
+ * 设计 D5 实测证伪），唯一发送形态 = sendCustomMessage({triggerTurn:true})；busy
+ * 场景由 ledger（settled 边沿 + isIdle 二次复查）或内核 settled 订阅在空闲边沿驱动。
  *
- * 修复背景：commit d214d0d83 已验证 steer 能避免 'Agent is already processing'；
- * workflow helpers.ts:151 已在同语义下用 steer。
- *
- * 测试方法：mock NotifierHost，捕获 sendMessage 调用参数，断言 deliverAs === 'steer'。
+ * 测试方法：mock NotifierHost，捕获 sendMessage 调用参数，断言 options 恰为
+ * { triggerTurn: true }（G4 字节锁定测试新锚：行为契约不变，机械迁移）。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,7 +34,7 @@ function makeMockHost(): NotifierHost & {
 	};
 }
 
-describe("BgNotifier.flushPendingNotifications — deliverAs 契约", () => {
+describe("BgNotifier.flushPendingNotifications — 单通道 triggerTurn 契约（U2/D5）", () => {
 	let host: ReturnType<typeof makeMockHost>;
 		let notifier: BgNotifier;
 
@@ -46,7 +47,7 @@ describe("BgNotifier.flushPendingNotifications — deliverAs 契约", () => {
 		notifier.dispose();
 	});
 
-	it("flush 时调 sendMessage 的 options.deliverAs === 'steer'（FR-3/AC-3）", () => {
+	it("flush 时 sendMessage 的 options 恰为 { triggerTurn: true }（无 deliverAs，D5 单通道）", () => {
 		notifier.notify({
 			id: "bg-test-1",
 			status: "closed",
@@ -59,10 +60,10 @@ describe("BgNotifier.flushPendingNotifications — deliverAs 契约", () => {
 		// hasRunningBackground=false → notify 立即 flush
 		expect(host.sendMessageCalls).toHaveLength(1);
 		const call = host.sendMessageCalls[0];
-		expect(call.options).toMatchObject({ deliverAs: "steer" });
+		expect(call.options).toEqual({ triggerTurn: true });
 	});
 
-	it("flush 时 triggerTurn 也必须为 true（让父 agent 立即唤醒）", () => {
+	it("flush 时 triggerTurn 必须为 true（让父 agent 立即唤醒）", () => {
 		notifier.notify({
 			id: "bg-test-2",
 			status: "closed",
@@ -73,10 +74,7 @@ describe("BgNotifier.flushPendingNotifications — deliverAs 契约", () => {
 		});
 
 		expect(host.sendMessageCalls).toHaveLength(1);
-		expect(host.sendMessageCalls[0].options).toMatchObject({
-			triggerTurn: true,
-			deliverAs: "steer",
-		});
+		expect(host.sendMessageCalls[0].options).toEqual({ triggerTurn: true });
 	});
 });
 
@@ -119,12 +117,9 @@ describe("BgNotifier — isIdle gate 竞态修复", () => {
 		host.isIdle.mockReturnValue(true);
 		vi.advanceTimersByTime(100);
 
-		// idle 后发送，deliverAs=steer + triggerTurn=true
+		// idle 后发送，单通道 {triggerTurn:true}（U2/D5：无 deliverAs）
 		expect(host.sendMessageCalls).toHaveLength(1);
-		expect(host.sendMessageCalls[0].options).toMatchObject({
-			triggerTurn: true,
-			deliverAs: "steer",
-		});
+		expect(host.sendMessageCalls[0].options).toEqual({ triggerTurn: true });
 	});
 
 	it("主 agent 持续 busy 达退避上限后强制发送（防通知饿死）", () => {
@@ -334,8 +329,8 @@ describe("BgNotifier buildLlmContent 指针行（wave2：chatMode sessionFile �
 
 	it("[review 修复] gc-failed + patchFile 并存 → failed 文案优先（失败轮也会写 patchFile，patch 提示不可达）", () => {
 		// 回归锚定：doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch，gc 失败 +
-		// worktree 并存时 patchFile 有值。判定顺序必须与 deriveClosedDisplay / renderRecordLines
-		// 同构（cancelled → gc+error → patch/result），否则 LLM 被告知 completed 掩盖失败。
+		// worktree 并存时 patchFile 有值。[U3] 判定收口到单一 deriveOutcome（cancelled →
+		// failed → patch/result），否则 LLM 被告知 completed 掩盖失败。
 		notifier.notify({
 			id: "sa-ptr-8", status: "closed", closedReason: "gc", agent: "w",
 			error: "spawn EPIPE",
@@ -345,6 +340,52 @@ describe("BgNotifier buildLlmContent 指针行（wave2：chatMode sessionFile �
 		});
 
 		expect(sentContent()).toBe('Subagent "w" (sa-ptr-8) failed: spawn EPIPE');
+	});
+
+	it("[U3][D6 显式取舍] parent-shutdown 合成关闭 + patchFile 并存 → failed 文案优先（patch 提示不可达）", () => {
+		// disposeAllRecords 合成 result 恒写 error:"closed due to ..." → outcome='failed'；
+		// worktree 失败并存时仍不得展示 patch 提示（「failed 优先于 patchFile 提示」保真）。
+		notifier.notify({
+			id: "sa-u3-ps", status: "closed", closedReason: "parent-shutdown", agent: "w",
+			error: "closed due to parent-shutdown",
+			patchFile: "/tmp/patches/sa-u3-ps.patch",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-u3-ps) failed: closed due to parent-shutdown');
+	});
+
+	it("[U3] details payload 物化 outcome：closed 入参缺省时按 deriveOutcome 兑底填充", () => {
+		notifier.notify({
+			id: "sa-u3-mat", status: "closed", closedReason: "gc", agent: "w",
+			error: "boom",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(host.sendMessageCalls).toHaveLength(1);
+		const msg = host.sendMessageCalls[0]!.message as { details?: { outcome?: string } };
+		expect(msg.details?.outcome).toBe("failed");
+	});
+
+	it("[U3] 显式 outcome 优先于 closedReason 兑底（一等字段直读）", () => {
+		notifier.notify({
+			id: "sa-u3-explicit", status: "closed", closedReason: "gc", agent: "w",
+			outcome: "cancelled",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(sentContent()).toBe('Subagent "w" (sa-u3-explicit) cancelled.');
+	});
+
+	it("[U3] running（轮次通知）不物化 outcome（终态语义不适用活跃态）", () => {
+		notifier.notify({
+			id: "sa-u3-round", status: "running", agent: "w", round: 1, result: "r1",
+			startedAt: 1, endedAt: 2,
+		});
+
+		expect(host.sendMessageCalls).toHaveLength(1);
+		const msg = host.sendMessageCalls[0]!.message as { details?: { outcome?: string } };
+		expect(msg.details?.outcome).toBeUndefined();
 	});
 
 	it("one-shot（sessionFile 未透传 → undefined）→ closed 通知与改造前逐字节一致（基线常量锚定）", () => {
@@ -433,10 +474,7 @@ describe("BgNotifier — subscribeSettled 装配（must-fix #4 / D8 settled 边�
 		settledEdges[0]!();
 
 		expect(host.sendMessageCalls).toHaveLength(1);
-		expect(host.sendMessageCalls[0]!.options).toMatchObject({
-			triggerTurn: true,
-			deliverAs: "steer",
-		});
+		expect(host.sendMessageCalls[0]!.options).toEqual({ triggerTurn: true });
 	});
 
 	it("dispose 后 settled 边沿不再触发发送（内核 disposed 拦截）", () => {

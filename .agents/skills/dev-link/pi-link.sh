@@ -8,7 +8,7 @@
 #
 # 为何 symlink 而非 pi install path：symlink 在 globalExtDir（loader 扫描早于 configuredPaths），
 # pi list 不显示（pi list 只列 packages），但 loader 会发现并加载。pi-statusline 即此模式。
-# loader 不读目录名——包身份来自目录内 package.json 的 pi.extensions 字段（pi 0.82.1 loader.js）。
+# loader 不读目录名——包身份来自目录内 package.json 的 pi.extensions 字段（pi 实装版 loader.js，语义不绑版本）。
 #
 # 恢复（pi-unlink）：rm symlink + pi install 重装 npm 版。
 #

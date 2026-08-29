@@ -140,10 +140,13 @@ describe.skipIf(!REAL_PI_READY)(`send queue e2e real pi${REAL_PI_READY ? '' : `�
       expect(sendResp.success, '长任务 prompt 应受理成功').toBe(true)
 
       // ── 4. 事件同步：turn 1 开边沿 + assistant streaming 证据 ──
-      const firstTurnStart = await targetFx.waitForEvent((e) => e.type === 'turn_start', STEP_TIMEOUT_MS)
+      const firstTurnStart = await targetFx.waitForEvent(
+        (e) => e.type === 'turn_start',
+        { timeoutMs: STEP_TIMEOUT_MS },
+      )
       await targetFx.waitForEvent(
         (e) => e.type === 'message_start' && e.message?.role === 'assistant',
-        STEP_TIMEOUT_MS,
+        { timeoutMs: STEP_TIMEOUT_MS },
       )
 
       // ── 5. busy 前提结构化断言（G1 核心：目标 idle 时场景同样满足，不断言则排队路径假通过）──
@@ -170,18 +173,18 @@ describe.skipIf(!REAL_PI_READY)(`send queue e2e real pi${REAL_PI_READY ? '' : `�
       // ── 7. turn 边界注入：第二个 turn_start + PROBE 作为 user message 出现 ──
       await targetFx.waitForEvent(
         (e) => e.type === 'turn_start' && e !== firstTurnStart,
-        STEP_TIMEOUT_MS,
+        { timeoutMs: STEP_TIMEOUT_MS },
       )
       const probeUser = await targetFx.waitForEvent(
         (e) => e.type === 'message_start' && e.message?.role === 'user' && contentToText(e.message?.content).includes(PROBE_MARK),
-        STEP_TIMEOUT_MS,
+        { timeoutMs: STEP_TIMEOUT_MS },
       )
       expect(contentToText(probeUser.message?.content)).toContain(PROBE_MARK)
 
       // ── 8. PROBE turn 定局（assistant ACK 边沿 = run 尾部信号）──
       await targetFx.waitForEvent(
         (e) => e.type === 'message_end' && e.message?.role === 'assistant' && contentToText(e.message?.content).includes(ACK_MARK),
-        STEP_TIMEOUT_MS,
+        { timeoutMs: STEP_TIMEOUT_MS },
       )
 
       // ── 9. settled 后断言队列清空 ──

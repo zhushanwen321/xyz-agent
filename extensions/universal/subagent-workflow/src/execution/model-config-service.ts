@@ -132,9 +132,24 @@ export class ModelConfigService {
     return resolveModel(config, this.modelRegistry!, override, ctxModel ?? this._ctxModel);
   }
 
-  /** 查询 agent 配置（SubagentService 内部判定 defaultBackground 用）。 */
+  /** 查询 agent 配置（SubagentService 内部判定 defaultBackground 用）。
+   *  undefined = 合法缺省语义（未点名 / 默认 general-purpose 形态）。 */
   getAgentConfig(agentRef?: string): AgentConfig | undefined {
     return agentRef ? this.agentRegistry.loadByPath(agentRef) : undefined;
+  }
+
+  /**
+   * 查询 agent 配置——显式 ref 失败即 throw（SubagentService.resolveIdentity 用）。
+   *
+   * 与 getAgentConfig 的语义分界（「用户显式点名」vs「默认 general-purpose」）：
+   * 用户显式点名的 agentRef（工具 agent 参数 / workflow agent({agent}) opts）解析
+   * 失败 = 配置错误，必须显式报错——错误文案含 <available_subagents> 恢复指引
+   * （对齐 workflow name not found 反馈风格），不允许静默降级为无配置
+   * general-purpose 形态（systemPrompt/工具白名单全丢且零反馈）。默认形态
+   * （不传 agent）走 getAgentConfig：undefined = 合法缺省，走 override → ctxModel 兑底。
+   */
+  getRequiredAgentConfig(agentRef: string): AgentConfig {
+    return this.agentRegistry.loadByPath(agentRef, true);
   }
 
   // ── 配置读取（subagent-service 调）────────────────────────

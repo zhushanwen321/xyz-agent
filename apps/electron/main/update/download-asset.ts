@@ -34,6 +34,7 @@ import { UPDATE_DIR } from './constants.js'
 import { hashFileSha256 } from './hash.js'
 import { resolveProxyUrl } from './proxy-config.js'
 import { UpdateError, UpdateIntegrityError } from './types.js'
+import { classifyNetError, extractRawCause, getNodeErrnoCode } from './net-errors.js'
 
 /**
  * 断点续传状态接口。
@@ -91,26 +92,6 @@ function toNodeReadableWebStream(
   body: ReadableStream<Uint8Array> | null,
 ): import('stream/web').ReadableStream<Uint8Array> {
   return body as unknown as import('stream/web').ReadableStream<Uint8Array>
-}
-
-/**
- * 读取 Node 错误的 errno code（如 'ENOSPC'、'EACCES'）。
- *
- * 原生 Node fs 错误把 code 放在 `err.code`；fetch/undici 抛出的错误有时会把
- * 底层原因包到 `err.cause` 里（cause.code）。两者都查，命中其一即返回。
- * 不能用 `err.code` 直接判断：传入值可能非 NodeJS.ErrnoException（无 code 字段）。
- */
-function getNodeErrnoCode(err: unknown): string | undefined {
-  if (!(err instanceof Error)) return undefined
-  // 先看 err.code（原生 Node fs 错误）
-  const directCode = (err as NodeJS.ErrnoException).code
-  if (directCode) return directCode
-  // 再看 cause.code（fetch/undici 包裹的底层原因）
-  const cause = (err as { cause?: unknown }).cause
-  if (cause instanceof Error) {
-    return (cause as NodeJS.ErrnoException).code
-  }
-  return undefined
 }
 
 /**
@@ -198,14 +179,14 @@ export async function downloadAsset(
     // 有断点续传状态，检查临时文件是否存在
     if (existsSync(tempPath)) {
       const stat = statSync(tempPath)
-      // [B-4] 续传判定放宽为「temp 落盘字节 <= state 记录值」即从 stat.size 续传。
-      // 旧实现严格相等会在崩溃时刻不巧时误判 mismatch 重下：
-      //   - 正常进度保存用内存 downloaded 计数器（偏大，pipe 未完全 flush）
-      //   - 可恢复错误保存用 statSync 真实字节（偏小）
-      // 两种口径不一致 → stat.size 与 state.downloadedBytes 经常差几 KB → 重下丢数据。
-      // 现在统一：只要 temp 不大于 state，就以更准确的 stat.size 为续传起点。
-      // 只有 temp 异常大于 state（残文件被外部追加等）才作废重下。
-      if (stat.size <= resumeState.downloadedBytes) {
+      // [B-4] 保存口径已统一为 statSync（保存时刻真实落盘字节），续传判定以 stat.size
+      // 为准：不大于 state 直接从 stat.size 续传；略大于 state（超出量 ≤ SAVE_INTERVAL_BYTES，
+      // 保存后 pipe 仍异步刷盘、硬崩溃常落在两次保存之间）同样信任真实落盘字节续传——
+      // 崩溃续传不再退化为全量重下，内容正确性由 [m5] totalBytes 一致性校验（206 响应）
+      // + 最终 sha256/size 校验兜底。只有 stat.size 显著大于 state（残文件被外部追加等）
+      // 或超过 totalBytes 上界才作废重下。
+      const overshoot = stat.size - resumeState.downloadedBytes
+      if (overshoot <= 0 || (overshoot <= SAVE_INTERVAL_BYTES && stat.size <= resumeState.totalBytes)) {
         downloadedBytes = stat.size
         console.log(`[download] resuming from ${downloadedBytes} bytes (state ${resumeState.downloadedBytes})`)
       } else {
@@ -231,8 +212,12 @@ export async function downloadAsset(
   if (!resumeState && asset.size && asset.size >= MIN_MULTI_PART_SIZE) {
     const { supported, totalBytes } = await probeMultiPartSupport(asset, proxyConfig)
     if (supported) {
-      useMultiPart = true
-      await downloadMultiPart(asset, totalBytes, onProgress, proxyConfig)
+      const multiResult = await downloadMultiPart(asset, totalBytes, onProgress, proxyConfig)
+      // [RM3] 服务器/代理不遵守 Range（任一段非 206 或段长不符）→ 整批放弃多段：
+      // 不设 useMultiPart，落入下方单段路径完整下载。此时 downloadedBytes=0（进多段
+      // 的前提就是无续传状态），单段全新请求不带 Range 头，既有 206/200 分类天然
+      // 兼容「忽略 Range 回 200」的服务器，sha256 校验兜底产物正确性。
+      useMultiPart = !multiResult.degradedToSingle
     }
   }
 
@@ -262,43 +247,9 @@ export async function downloadAsset(
     try {
       response = await fetch(asset.downloadUrl, fetchOptions as RequestInit)
     } catch (fetchErr) {
-      // 网络错误分类：区分超时、连接失败、代理错误
-      if (fetchErr instanceof Error) {
-        if (fetchErr.name === 'AbortError') {
-          throw new UpdateError(
-            `download timeout after ${DOWNLOAD_TIMEOUT_MS / MS_PER_SECOND}s`,
-            'downloading',
-            'UPDATE_NETWORK_TIMEOUT',
-          )
-        }
-        // [M6] ECONNABORTED 是通用连接中断，与代理无关——误归为 PROXY_ERROR 会
-        // 误导用户去查代理。归入 NETWORK_FAILED（连接中断）。
-        if (fetchErr.message.includes('ECONNREFUSED') || fetchErr.message.includes('ENOTFOUND') ||
-            fetchErr.message.includes('ECONNRESET') || fetchErr.message.includes('ETIMEDOUT') ||
-            fetchErr.message.includes('ECONNABORTED')) {
-          throw new UpdateError(
-            `network connection failed: ${fetchErr.message}`,
-            'downloading',
-            'UPDATE_NETWORK_FAILED',
-          )
-        }
-        // [M6] PROXY_ERROR 只保留代理特征字符串判断（如代理认证失败 407），
-        // 不再泛化匹配 'proxy' 子串以避免误判。代理认证失败是代理场景的强信号。
-        // [W-6] 裸 '407' 子串会误命中时间戳/端口号等。精确匹配 HTTP 407 状态描述
-        // 短语（含分隔边界），并保留 'Proxy Authentication' 文案兜底。
-        if (/^407\b|[\s(]407\b|Proxy Authentication/i.test(fetchErr.message)) {
-          throw new UpdateError(
-            `proxy error: ${fetchErr.message}`,
-            'downloading',
-            'UPDATE_PROXY_ERROR',
-          )
-        }
-      }
-      throw new UpdateError(
-        `download failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
-        'downloading',
-        'UPDATE_NETWORK_FAILED',
-      )
+      // D1: 使用统一的分类函数替代内联字符串匹配（收敛三条 fetch 路径）
+      const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
+      throw classifyNetError(fetchErr, 'downloading', proxyUrl)
     }
     if (!response.ok) {
       // [LEAK FIX] 抛错前显式 cancel body，释放底层 socket（无引用后 GC 也会清理，
@@ -441,6 +392,7 @@ export async function downloadAsset(
           'insufficient disk space',
           'downloading',
           'UPDATE_DISK_SPACE',
+          extractRawCause(err),
         )
       }
       // 超时（含 idle/total abort）：映射为 UPDATE_NETWORK_TIMEOUT
@@ -449,6 +401,7 @@ export async function downloadAsset(
           `download timeout (idle ${IDLE_TIMEOUT_MS / MS_PER_SECOND}s or total ${DOWNLOAD_TIMEOUT_MS / MS_PER_SECOND}s)`,
           'downloading',
           'UPDATE_NETWORK_TIMEOUT',
+          extractRawCause(err),
         )
       }
       // 如果已经是 UpdateError（来自上面的网络错误分类），直接抛出
@@ -459,6 +412,7 @@ export async function downloadAsset(
         `download stream error: ${err instanceof Error ? err.message : String(err)}`,
         'downloading',
         'UPDATE_NETWORK_FAILED',
+        extractRawCause(err),
       )
     } finally {
       // [M1] 流式传输已结束（成功 finish 或抛错）才停两个 watchdog。
@@ -522,10 +476,13 @@ export async function downloadAsset(
         'UPDATE_PERMISSION_DENIED',
       )
     }
+    // [m9] 归一化落定失败此前复用 UPDATE_INTEGRITY_FAILED（「安装包完整性校验失败」），
+    // 语义错配：完整性没问题，是文件系统把 .downloading 改名到终态时失败（跨卷 / 占用 /
+    // 只读等）。改用独立错误码，前端文案才可能对症（见 types.ts UPDATE_ERROR_MESSAGES）。
     throw new UpdateError(
       `file rename failed: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
       'replacing',
-      'UPDATE_INTEGRITY_FAILED',
+      'UPDATE_FILE_RENAME_FAILED',
     )
   }
   return { filePath: finalPath }
@@ -600,6 +557,22 @@ interface IPartSpec {
   tempPath: string
 }
 
+/**
+ * [RM3] 服务器未遵守 Range 协议的内部信号：多段请求收到非 206 响应（典型：
+ * 服务器/代理忽略 Range 回 200 全量），或响应内容长度与请求段不符。
+ *
+ * 定位是内部控制流信号而非用户可见错误——捕获方 downloadMultiPart 据此整批
+ * 放弃多段、降级单段完整下载（单段路径已有正确的 206/200 分类），绝不把错位
+ * 的段内容合并成损坏文件。刻意不继承 UpdateError：面向用户的网络错误分类
+ * （classifyNetError）不应对降级信号生效。
+ */
+class RangeNotRespectedError extends Error {
+  constructor(partIndex: number, reason: string) {
+    super(`part ${partIndex}: server did not honor Range request (${reason})`)
+    this.name = 'RangeNotRespectedError'
+  }
+}
+
 /** 创建带节流的进度回调（降低 IPC/渲染进程压力）。 */
 function createThrottledProgress(
   onProgress: ((percent: number) => void) | undefined,
@@ -626,6 +599,9 @@ function createThrottledProgress(
  * @param part 段描述
  * @param proxyConfig 代理配置
  * @param onProgress 段内进度（实际只更新总进度，这里传 no-op 或段内计数）
+ * @param sharedSignal downloadMultiPart 的共享 abort signal（[RM3] 段失败整批中断）：
+ *   与下方 per-part watchdog controller 组合——共享 abort 触发本段 controller abort，
+ *   idle/total 超时语义保留在 per-part controller 上不变。缺省（单段调用方）无共享中断。
  * @returns 下载字节数
  */
 async function downloadPart(
@@ -633,8 +609,14 @@ async function downloadPart(
   part: IPartSpec,
   proxyConfig: IProxyConfig | undefined,
   onProgress: (bytes: number) => void,
+  sharedSignal?: AbortSignal,
 ): Promise<number> {
   const controller = new AbortController()
+  const onSharedAbort = () => controller.abort()
+  if (sharedSignal) {
+    if (sharedSignal.aborted) controller.abort()
+    else sharedSignal.addEventListener('abort', onSharedAbort)
+  }
   const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
   let idleTimer: NodeJS.Timeout | undefined = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
   let dispatcher: ProxyAgent | undefined
@@ -649,6 +631,17 @@ async function downloadPart(
       await response.body?.cancel().catch(() => {})
       throw new UpdateError(`part ${part.index} download failed: HTTP ${response.status}`, 'downloading', 'UPDATE_NETWORK_FAILED')
     }
+    // [RM3] 旧实现只查 response.ok，200 全量也算 ok——服务器忽略 Range 时四段各下
+    // 全量，合并出 4 倍损坏文件后卡 sha 失败重试死循环。必须是 206，status 检查放
+    // 最前：200 场景 body 是整文件，立即 cancel 切断，避免 4 段并发白耗整文件流量。
+    // 段长校验由流结束后的实下字节数兜底（见下方 finish 回调），覆盖 chunked 等
+    // 无 content-length 场景。任一失守抛 RangeNotRespectedError，downloadMultiPart
+    // 据此整批放弃降级单段。
+    if (response.status !== HTTP_PARTIAL_CONTENT) {
+      await response.body?.cancel().catch(() => {})
+      throw new RangeNotRespectedError(part.index, `HTTP ${response.status}, expected 206 Partial Content`)
+    }
+    const expectedPartLength = part.end - part.start + 1
     const nodeStream = Readable.fromWeb(toNodeReadableWebStream(response.body))
     writeStream = createWriteStream(part.tempPath, { flags: 'w' })
     let downloaded = 0
@@ -662,7 +655,15 @@ async function downloadPart(
         onProgress(downloaded)
       })
       nodeStream.pipe(writeStream!)
-      writeStream!.on('finish', () => resolve(downloaded))
+      writeStream!.on('finish', () => {
+        // [RM3] 段长兜底校验：206 但 body 被中途截短/错位（代理返回错误区间等）
+        // 同样视为未遵守 Range，拒绝进入合并。
+        if (downloaded !== expectedPartLength) {
+          reject(new RangeNotRespectedError(part.index, `downloaded ${downloaded} bytes != part length ${expectedPartLength}`))
+          return
+        }
+        resolve(downloaded)
+      })
       writeStream!.on('error', reject)
       nodeStream.on('error', reject)
     })
@@ -674,8 +675,24 @@ async function downloadPart(
     // 的 unlinkSync 与并发 write 竞争会抛 EBUSY/EPERM 吞掉原始错误。这里每段清理自己的
     // part 文件（try/catch 容错，文件不存在或被占用都不影响抛出原始 err）。
     try { unlinkSync(part.tempPath) } catch (unlinkErr) { console.warn(`[download] part ${part.index} temp cleanup failed:`, unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
-    throw err
+    // [B4] 已构造的 UpdateError 原样直通，不再进 classifyNetError 兜底分支：
+    // 上面 HTTP 非 200 抛的 `part N download failed: HTTP xxx` 若被重新分类，
+    // 会二次包装成「download failed: part N ...」双重前缀（探针已实证）。
+    // 已构造错误原样直通，不再进 classifyNetError 兜底分支：
+    //   - [RM3] RangeNotRespectedError 是内部降级信号而非网络故障，被二次包装后
+    //     downloadMultiPart 将无法识别降级条件（误报成网络错误而非降级）。
+    //   - [B4] UpdateError 直通：`part N download failed: HTTP xxx` 被重新分类会
+    //     产生「download failed: part N ...」双重前缀（探针已实证）。
+    // 放在清理之后是刻意的——destroy/unlink 对所有错误类型都必须执行，
+    // 不能提前 return 跳过。
+    if (err instanceof RangeNotRespectedError || err instanceof UpdateError) {
+      throw err
+    }
+    // D1: 对 downloadPart 的网络错误做统一分类（覆盖断点 1b：多段路径原无分类）
+    const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
+    throw classifyNetError(err, 'downloading', proxyUrl)
   } finally {
+    if (sharedSignal) sharedSignal.removeEventListener('abort', onSharedAbort)
     clearTimeout(timer)
     if (idleTimer) clearTimeout(idleTimer)
     if (dispatcher) await dispatcher.close().catch(() => {})
@@ -689,10 +706,12 @@ async function downloadPart(
  * 2. 每段独立 Range 请求 + 独立 ProxyAgent 连接，并发下载到各自 temp 文件
  * 3. 全部完成后按顺序合并到 .downloading 文件
  * 4. 删除段临时文件
+ * 5. [RM3] 任一段检测到服务器未遵守 Range（非 206 / 段长不符）→ 清理全部段文件，
+ *    返回 degradedToSingle=true，由调用方降级单段完整下载，绝不合并错位内容。
  *
  * [MUST-FIX #4 / timeout 语义说明] downloadPart 每段独立用 DOWNLOAD_TIMEOUT_MS（3600s 总）
  * + IDLE_TIMEOUT_MS（30s 空闲）。这是多段下载的固有特性：某段 Range 落到 CDN 缓存未命中的
- * 字节区，单段 30s idle 中断即触发整批 Promise.all reject。这与单段下载「同一区域只中断一次
+ * 字节区，单段 30s idle 中断即经共享 abortController 中断整批。这与单段下载「同一区域只中断一次
  * 可续传」语义不同。不放宽 timeout（30s idle 是国内网络挂死检测的合理阈值，放宽会退化为挂死），
  * 阈值调整（10MB→更大）超出 must-fix 范围。确定性风险已通过 downloadPart 失败自清 part 文件
  * （见 downloadPart catch）收敛。
@@ -702,7 +721,7 @@ async function downloadMultiPart(
   totalBytes: number,
   onProgress?: (percent: number) => void,
   proxyConfig?: IProxyConfig,
-): Promise<{ tempPath: string }> {
+): Promise<{ tempPath: string; degradedToSingle?: boolean }> {
   const maxParts = Math.max(1, Math.min(MULTI_PART_COUNT, Math.floor(totalBytes / MIN_BYTES_PER_PART)))
   const partSize = Math.floor(totalBytes / maxParts)
   const parts: IPartSpec[] = []
@@ -735,7 +754,7 @@ async function downloadMultiPart(
       const bytes = await downloadPart(asset, part, proxyConfig, (bytes) => {
         downloadedPerPart[part.index] = bytes
         updateProgress()
-      })
+      }, abortController.signal)
       downloadedPerPart[part.index] = bytes
       updateProgress()
       return part
@@ -744,14 +763,25 @@ async function downloadMultiPart(
       throw err
     }
   })
-  try {
-    await Promise.all(partPromises)
-  } catch (err) {
+  // [RM3] 用 allSettled 收集全部段结果而非 Promise.all：段失败经共享 abortController
+  // 中断其他段（signal 已传入 downloadPart，与其 per-part watchdog controller 组合，
+  // abort 真实生效——失败浮出不再等待健康段传完），其他段的 AbortError 与 Range 违约
+  // 信号谁先入队是竞态——Promise.all 只暴露第一个 rejection，可能把「应降级」误判为
+  // 网络失败。全部收集后统一判定才符合「任一段违约 → 整批放弃多段」的语义。
+  const rejected = (await Promise.allSettled(partPromises)).filter(
+    (r): r is PromiseRejectedResult => r.status === 'rejected',
+  )
+  if (rejected.length > 0) {
     // 清理段临时文件
     for (const part of parts) {
       try { unlinkSync(part.tempPath) } catch (unlinkErr) { console.warn('[download] part cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
     }
-    throw err
+    // 任一段 Range 违约 → 整批放弃多段，降级单段完整下载；否则抛第一个真实错误
+    if (rejected.some((r) => r.reason instanceof RangeNotRespectedError)) {
+      console.log('[download] server did not honor Range requests, abandon multipart and fall back to single-stream download')
+      return { tempPath, degradedToSingle: true }
+    }
+    throw rejected[0]?.reason
   }
   // 合并段文件到 .downloading
   const writeStream = createWriteStream(tempPath, { flags: 'w' })
@@ -790,7 +820,11 @@ async function downloadMultiPart(
  */
 function saveResumeState(state: IResumeState): void {
   try {
-    writeFileSync(RESUME_STATE_FILE, JSON.stringify(state, null, 2)) // eslint-disable-line no-magic-numbers -- JSON 缩进 2 空格
+    // 原子写（批次 5 m12 / §3.7.2）：先写 .tmp 再 rename，避免读到半截 JSON
+    // （半截 state 会被 loadResumeState 的 parse 失败分支吞掉，丢掉续传进度）
+    const tmpPath = `${RESUME_STATE_FILE}.tmp`
+    writeFileSync(tmpPath, JSON.stringify(state, null, 2)) // eslint-disable-line no-magic-numbers -- JSON 缩进 2 空格
+    renameSync(tmpPath, RESUME_STATE_FILE)
   } catch (err) {
     // best-effort：resume state 只是续传优化，写入失败不应中断下载，下次重头下即可
     console.warn('[download] save resume state failed:', err)

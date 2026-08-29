@@ -49,10 +49,11 @@ export interface ModelThinkingDeps {
   /** 按 modelId 派生 thinkingLevelMap（透传给 useThinkingLevelSync，壳层从 settingsStore.providers 解析） */
   getThinkingLevelMap: (modelId: string) => Record<string, string | null> | undefined
   /**
-   * 按 modelId 派生模型是否支持思考（models[].reasoning）。可选。
-   * non-reasoning 模型可用档只有 off；未注入时按 undefined（视为支持）判定，行为同旧版。
+   * 按 modelId 派生档位可用集（ProviderInfo.models[].supportedLevels，U6 切源——runtime
+   * 能力注册表 pi 同源计算的 view-ready 下发，renderer 零推导）。non-reasoning 模型该集
+   * 为 ['off']；undefined = 下发链路未接通（归一为默认五档）。
    */
-  getModelReasoning?: (modelId: string) => boolean | undefined
+  getSupportedLevels: (modelId: string) => string[] | undefined
 }
 
 export function useComposerModelThinking(
@@ -62,8 +63,8 @@ export function useComposerModelThinking(
   currentModelId: ComputedRef<string>
   currentThinkingLevel: ComputedRef<string | undefined>
   currentThinkingLevelMap: ComputedRef<Record<string, string | null> | undefined>
-  /** 当前模型 reasoning 标志（non-reasoning 模型可用档只有 off；未注入 deps.getModelReasoning 时恒 undefined） */
-  currentModelReasoning: ComputedRef<boolean | undefined>
+  /** 当前模型档位可用集（supportedLevels，U6 切源；下发未接通时 undefined → 归一默认五档） */
+  currentSupportedLevels: ComputedRef<string[] | undefined>
   localThinkingLevel: Ref<string | undefined>
   onModelSelect: (payload: { modelId: string; provider: ProviderId }) => Promise<void>
   onThinkingSelect: (level: string) => Promise<void>
@@ -82,7 +83,7 @@ export function useComposerModelThinking(
     switchModel,
     setThinkingLevel: applyThinkingLevel,
     getThinkingLevelMap,
-    getModelReasoning,
+    getSupportedLevels,
   } = deps
 
   /**
@@ -145,11 +146,11 @@ export function useComposerModelThinking(
     currentModelId,
     currentThinkingLevel,
     (level) => { void onThinkingSelect(level) },
-    { getThinkingLevelMap, getModelReasoning },
+    { getThinkingLevelMap, getSupportedLevels },
   )
 
-  /** 当前模型 reasoning 标志（供 popover 判定可用档：non-reasoning 只 off） */
-  const currentModelReasoning = computed(() => getModelReasoning?.(currentModelId.value))
+  /** 当前模型档位可用集（供 popover 判定可用档，U6 切 supportedLevels） */
+  const currentSupportedLevels = computed(() => getSupportedLevels(currentModelId.value))
 
   /**
    * 模型切换：staging 活跃时只写快照（不调 RPC，不改源 session）。
@@ -222,7 +223,7 @@ export function useComposerModelThinking(
     currentModelId,
     currentThinkingLevel,
     currentThinkingLevelMap,
-    currentModelReasoning,
+    currentSupportedLevels,
     localThinkingLevel,
     onModelSelect,
     onThinkingSelect,

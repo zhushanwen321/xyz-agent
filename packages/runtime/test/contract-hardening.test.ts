@@ -801,7 +801,7 @@ describe('CT-U1 api 入口窄校验层（畸形输入 → INVALID_* 结构化错
     notifySent: ReturnType<typeof vi.fn<(pluginId: string, level: string, message: string) => void>>
     statusBarSet: ReturnType<typeof vi.fn<(pluginId: string, id: string, text: string, options?: Record<string, unknown>) => Promise<void>>>
     viewUpdated: ReturnType<typeof vi.fn<(pluginId: string, viewId: string, guiTree: unknown[]) => void>>
-    setModel: ReturnType<typeof vi.fn<(model: string) => Promise<void>>>
+    setModel: ReturnType<typeof vi.fn<(model: string) => Promise<string>>>
     syncTools: ReturnType<typeof vi.fn<() => Promise<void>>>
   }
   let commandRegistry: Map<string, CommandRegistration>
@@ -820,7 +820,7 @@ describe('CT-U1 api 入口窄校验层（畸形输入 → INVALID_* 结构化错
       notifySent: vi.fn<(pluginId: string, level: string, message: string) => void>(),
       statusBarSet: vi.fn<(pluginId: string, id: string, text: string, options?: Record<string, unknown>) => Promise<void>>(),
       viewUpdated: vi.fn<(pluginId: string, viewId: string, guiTree: unknown[]) => void>(),
-      setModel: vi.fn<(model: string) => Promise<void>>(),
+      setModel: vi.fn<(model: string) => Promise<string>>(),
       syncTools: vi.fn<() => Promise<void>>(),
     }
     commandRegistry = new Map()
@@ -831,7 +831,7 @@ describe('CT-U1 api 入口窄校验层（畸形输入 → INVALID_* 结构化错
       getModel: () => '',
       setModel: effects.setModel,
       getThinkingLevel: () => '',
-      setThinkingLevel: vi.fn<(level: string) => Promise<void>>(),
+      setThinkingLevel: vi.fn<(level: string) => Promise<string>>(),
       getActiveTools: () => [],
     })
     registerCommandRpcHandlers(rpc, {

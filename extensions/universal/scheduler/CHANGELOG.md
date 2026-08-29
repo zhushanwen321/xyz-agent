@@ -1,5 +1,11 @@
 # @zhushanwen/pi-scheduler
 
+## 0.4.2
+
+### Patch Changes
+
+- 23d8fe3cc: chore: refresh dependency range (triggered by @xyz-agent/session-delivery@0.2.0 → @xyz-agent/session-delivery@0.3.0)
+
 ## 0.4.1
 
 ### Patch Changes

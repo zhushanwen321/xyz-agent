@@ -52,6 +52,22 @@ Agent Runtime（一个 Node.js 进程）
 
 **依赖方向**: Transport → Service → Adapter/Config。Service 不直接碰 pi 协议，Transport 不包含业务逻辑。
 
+### 语义吸收层（pi-boundary-reliability，2026-08-28）
+
+xyz-agent 与 pi 之间对 pi 私有语义的统一适配层（[ADR-0064](../adr/0064-pi-semantic-absorption-layer.md)）：对 pi 语义的推断与跨边界承诺只在边界一次吸收（四支柱：能力注册表 / 生效回执 / 确认式送达 / 漂移守卫），域内只剩确定性。EventAdapter 只适配传输格式；语义适配（这个模型支持什么、这条消息是否真的到达、这个状态是否真的生效）归本层——散布在扩展/core/renderer 的本地推断即「影子推断」，是该层要消灭的问题类。
+
+### 能力注册表
+
+runtime `model-capability.ts` 单点服务面：模型全等 id / reasoning / 实际支持思考档位等 pi 能力事实的唯一进入点（pi-ai 同源函数离线计算 + `get_available_models` RPC 在线对账，覆盖 models-store 刷新漂移），结果以 view-ready `supportedLevels` 随模型信息下发，renderer/扩展禁止本地推断档位（约束 C-pi-12）。
+
+### 生效回执
+
+改状态 RPC（setThinkingLevel / model.switch 等）的 reply 一律回 pi 实际生效值（pi 钳制时 ≠ 请求值），消费方以回执写显示态、禁乐观写请求值（约束 C-pi-13）。「请求-生效」零距离是协议级不变量。
+
+### 确认式送达
+
+结果语义（终态/完成）跨边界通知的送达形态：持久账本 + 幂等键（notifyId）+ settled 边沿 courier（投递员，销账即确认）at-least-once 重放——账本、销账、courier 概念归并于本条。禁新建依赖 pi steer/nextTurn 内存队列的 at-most-once 通道（约束 C-ext-19）；交互式 steer/followUp 注入仅限非结果语义。
+
 ### SubAgent
 pi 引擎的底层 extension，负责派生子进程执行子任务。这是 pi 侧的实现概念，不是 xyz-agent 的领域术语。
 

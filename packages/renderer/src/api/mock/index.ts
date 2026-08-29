@@ -390,11 +390,12 @@ export const session = {
     return { cwd, deleted, failed: [] }
   },
 
-  /** 设置思考等级（mock：持久到 fixture session.thinkingLevel，runtime 确认属后续联调） */
-  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+  /** 设置思考等级（mock：持久到 fixture session.thinkingLevel；回执生效值形状对齐协议修型 U6） */
+  async setThinkingLevel(sessionId: string, level: string): Promise<{ sessionId: string; level: string }> {
     await sleep(TIMING.ack)
     const target = fixtureSessions.find((s) => s.id === sessionId)
     if (target) target.thinkingLevel = level
+    return { sessionId, level }
   },
 
   /**
@@ -1085,8 +1086,10 @@ const modelsSub = makeMockSubscription(() =>
 
 export const model = {
   onModels: (h: (models: ModelInfo[]) => void) => modelsSub.subscribe(h),
-  async switchModel(_sessionId: string, _provider: ProviderId, _modelId: string) {
+  async switchModel(sessionId: string, provider: ProviderId, modelId: string) {
     await sleep(TIMING.ack)
+    // 回执契约与真实 api 对齐（C-pi-13）：mock 无 pi，生效值 = 请求值回显
+    return { sessionId, provider, modelId }
   },
 }
 

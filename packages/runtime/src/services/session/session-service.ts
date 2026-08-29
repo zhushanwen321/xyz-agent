@@ -66,6 +66,7 @@ import {
 } from './replicated-states.config.js'
 import { HistoryRebuildCache, mergeIncrementalMessages } from './history-rebuild-cache.js'
 import { toErrorMessage, isEnoent, BUILTIN_EXTENSIONS_MISSING } from '../../utils/errors.js'
+import { logger } from '../../infra/logger.js'
 import { withFileLockSync } from '../../utils/file-lock.js'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
@@ -226,6 +227,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 见 pi-launch-presets 设计文档 §8.1。
    */
   private presetService: PresetService | null = null
+  /**
+   * U6：能力对账回调（组合根绑 modelService.reconcileModelCapabilities，附着路径调用）。
+   */
+  private modelCapabilityReconciler: ((sessionId: string) => Promise<unknown>) | null = null
+
   /**
    * W5：message.complete 广播回调（组合根注入 ReloadOrchestrator.onMessageComplete）。
    * 经 setter 注入（同 setConfigService 模式），避免构造参数环
@@ -417,6 +423,16 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
+   * U6（D2② 在线对账）：注入能力对账回调（组合根绑 modelService.reconcileModelCapabilities）。
+   * session 附着路径（initializeManagedSession）fire-and-forget 调用——失败不阻断附着
+   *（内部降级：引擎不可用 / RPC 失败一律返回空）。窄回调签名避免 SessionService 反向
+   * 持有 ModelService 引用（modelService 依赖 sessionService，构造注入会成环）。
+   */
+  setModelCapabilityReconciler(reconciler: (sessionId: string) => Promise<unknown>): void {
+    this.modelCapabilityReconciler = reconciler
+  }
+
+  /**
    * 注入 MessageBus 单例（组合根在所有服务构造后调用，wave:runtime-wiring）。
    *
    * session 级消息（带 sessionId payload）单通道走 bus.publish（wave:perf-w09 D1-2 删双写后
@@ -591,6 +607,21 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       console.error(`[session-service] switchModel RPC failed: sessionId=${sessionId}, model=${newModelId}`, e)
       throw e
     }
+    // 回执普查（U6，D3④）：pi pattern 引擎可能把请求模型静默换成同族条目（事故 A 形态），
+    // 请求值 ≠ 生效值——set 后 get_state 读回实际生效模型，双写缓存与返回值都用生效值
+    //（与 setThinkingLevel 的 set→get_state→effective 同款模式，PS-03/PS-01）。
+    // get_state 失败 fallback 请求值（旧行为），不反噬切模型主链路。
+    let effectiveModelId = newModelId
+    try {
+      const state = await client.getState()
+      const model = state?.model
+      const m = typeof model === 'object' && model !== null ? model as Record<string, unknown> : undefined
+      if (m && typeof m.id === 'string' && m.id !== '' && typeof m.provider === 'string' && m.provider !== '') {
+        effectiveModelId = `${m.provider}/${m.id}`
+      }
+    } catch {
+      // 读回失败保持请求值（下游 markDirty 防抖重拉 get_state 仍会收敛到权威值）
+    }
     // W7：switchModel RPC 成功响应 = modelId 实例的失效源（RPC 响应驱动，「事件只做失效」的
     // 补充合法形态，D7）。markDirty 防抖重拉 get_state，实例快照与 pi 权威值收敛（行为级
     // 验收：模型名 1s 内更新）。失败路径（上方 throw）不失效——pi 侧未生效，实例保持旧快照。
@@ -604,22 +635,28 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.replicatedStates.get(sessionId)?.thinkingLevel.markDirty()
     // PR #185 S2 裁决的永久双写形态：RPC 已成功（pi 侧生效），直写让 toSummary（session
     // 列表）与 state_changed fallback（防抖 300ms + 重拉窗口内快照未收敛）立即读到新值；
-    // 实例快照收敛后主路径照常读快照（与直写同值，无冲突）。
-    session.modelId = newModelId
+    // 实例快照收敛后主路径照常读快照（与直写同值，无冲突）。U6：直写 get_state 读回的
+    // 生效值（pi pattern 换模时 ≠ 请求值），缓存不再携带未生效的请求模型。
+    session.modelId = effectiveModelId
     // session-trace（A33）：lifecycle RPC 成功后主动补拉——model_change 的 append 无通用事件
     //（design D4：model_change / label 无事件，这些动作由 runtime 自身发起，RPC 成功后补拉覆盖）。
     // fire-and-forget：补拉失败不影响切模型主流程（syncTraceEntries 内部吞错）。
     this.syncTraceEntries(sessionId, 'set_model')
-    return sessionId
+    // U6 回执普查：返回 pi 实际生效模型（get_state 读回，'provider/id' 复合串）——
+    // plugin agent.setModel 经此拿生效值回执；WS 侧 settings-message-handler 的
+    // model.switch case 拆解该复合串回填 reply（对齐 C-pi-13 改状态 RPC 一律回生效值）。
+    return effectiveModelId
   }
 
   /**
    * 设置思考档并返回 pi 生效值。
    *
    * P3（pi-assumption final gate）：pi 会钳制模型族不支持的档位（如 mimo 族 max →
-   * high，clampThinkingLevel 就近回落），且钳制时不发事件不写 entry——reply 与内存
-   * 缓存若用请求值，会把 UI 的 pending 确认与 session 缓存污染成未生效档位。生效值
-   * 以 set 后 get_state 快照为准（标量状态唯一权威读路径，ADR-0062）。
+   * high，clampThinkingLevel 就近回落），reply 与内存缓存若用请求值，会把 UI 的
+   * pending 确认与 session 缓存污染成未生效档位。事件侧（PS-04 实证）：钳制致值变
+   * （effective ≠ previous）必发 thinking_level_changed，isChanging=false 仅覆盖
+   * 「值未变」场景；生效值以 set 后 get_state 快照为准（标量状态唯一权威读路径，
+   * ADR-0062）。
    */
   async setThinkingLevel(sessionId: string, level: string): Promise<string> {
     const client = this.pm.getClient(sessionId)
@@ -636,10 +673,19 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.syncTraceEntries(sessionId, 'set_thinking_level')
     const state = await client.getState()
     const effective = typeof state?.thinkingLevel === 'string' ? state.thinkingLevel : level
+    // U6（P-S2 可观察点）：set→get_state→effective 链路日志——被钳场景（如 mimo 族
+    // max → high）在 runtime 日志即可见「请求值 ≠ 生效值」，不再依赖前端体感反推。
+    logger.debug('[session-service] setThinkingLevel effective', {
+      sessionId,
+      requested: level,
+      effective,
+      clamped: effective !== level,
+    })
     const session = this.sessions.get(sessionId)
     // PR #185 S2 裁决的永久双写形态：effective 来自 pi get_state（权威值），直写让
     // toSummary 与 state_changed fallback 在实例防抖重拉窗口内即读准值（modelId 同理，
-    // 见 switchModel）。pi 同档位钳制不发事件、不写 entry，此直写是唯一即时同步点。
+    // 见 switchModel）。值未变时 pi 不发事件、不写 entry（PS-04），此直写是唯一同步点；
+    // 值变场景事件随后到达，直写保证防抖窗口内的即时性。
     if (session) session.thinkingLevel = effective
     return effective
   }
@@ -1920,6 +1966,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // W18：注册 record entry 派生缓存（不播种——首个 entry_appended 失效时全量拉取；
     // 激活后 renderer 的初始列表由 getSubagents/getWorkflows RPC 磁盘扫描承接，同 scan 函数）。
     this.ensureRecordEntriesCache(id)
+    // U6（D2②）：session 附着触发能力对账（getAvailableModels vs 配置聚合，drift 经
+    // setCapabilityDriftSink 上报 + runtime 日志）。一次调用，fire-and-forget——对账是
+    // 纯旁路诊断，失败绝不阻断附着（内部已降级，catch 双保险）。
+    if (this.modelCapabilityReconciler) {
+      this.modelCapabilityReconciler(id).catch(() => { /* 降级吞错：附着主链路优先 */ })
+    }
     return session
   }
 

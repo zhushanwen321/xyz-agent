@@ -26,7 +26,13 @@ import { collectResult } from "./output-collector.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
 import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "./relay-env.ts";
-import { stringifySchemaCached } from "../shared/schema-jsonify.ts";
+import { assertThinkingLevel, type ThinkingLevel } from "../shared/model-ref";
+import {
+  SCHEMA_ENV_MAX_BYTES,
+  SCHEMA_ENV_VAR,
+  schemaEnvByteLength,
+} from "../shared/schema-env.ts";
+import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import {
@@ -137,7 +143,8 @@ const WATCHDOG_MS_PER_TURN = WATCHDOG_MINUTES_PER_TURN * SECONDS_PER_MINUTE * MS
 // 此后代卡死（永不完成）时此 timer 保证进程最终回收。超时 kill → finalize 视为正常
 // 完成 → 通知父（父查 cw status 发现未 closed 会走 L2/L3 重派，见 planning-agent 模板）。
 // 两类超时分挂不同分支（见 agent_end handler）：
-//   - 有活跃后代（count>0 / error）→ computeWatchdogMs(maxTurns) 动态超时（MF-4，不误杀慢后代）
+//   - 有活跃后代（count>0 / error）→ resolveSpawnWatchdogMs(maxTurns) 动态超时
+//     （MF-4，不误杀慢后代；maxTurns 未传且无兑底 env 时不挂 timer，不限时等待）
 //   - 仅 recentUnregister 竞态 → WAKEUP_GRACE_MS 秒级宽限（MF-3，不空等 2h）
 
 /** [MF-3] agent_end keep-alive 的 recentUnregister 竞态宽限（ms）。
@@ -155,22 +162,83 @@ export const WAKEUP_GRACE_MS = 15_000;
  * （全量重构/大规模迁移）正常需数小时，30 分钟到达即被误杀，limiter 机制形同虚设。
  *
  * 现按 maxTurns 线性估算：每 turn 约 5 分钟，下限 30 分钟。
- * - maxTurns 缺省（undefined/null/0）按 10 turns 估 → 50 分钟
  * - maxTurns=20 → 100 分钟
  * - maxTurns=100 → 500 分钟（8 小时+，覆盖全量重构）
- *
+ * 
+ * [预算语义对齐 2026-08] maxTurns 未传/<=0 → 不挂 watchdog（不限）。旧实现按 10 turns
+ * 估算出 50min 默认 SIGTERM，违背「默认不限制，显式传参才触发」的项目裁决；且显式
+ * maxTurns:0 也被落回估算，任何参数都关不掉。用户须知风险：watchdog 防的是 pi 子进程
+ * hang 泄漏（卡死在单个 tool 内 turn_end 永不触发，limiter 失效），默认关闭意味着
+ * 无 maxTurns 的 spawn 若 hang 将永不自动回收——须用下方 SPAWN_WATCHDOG_ENV 显式兑底。
+ * 
  * [MF-4] 同时是 agent_end keep-alive 的「有活跃后代」等待超时（不 kill 分支），
  * 替代旧固定 2h（WAIT_DESCENDANT_TIMEOUT_MS，已删除）——wave 开发 >2h 不被误杀。
  * [export] 测试可观测（run-spawn-edges MF-4 用例断言 keep-alive 等待超时 = 动态值）。
- *
- * @param maxTurns 调用方指定的 turn 上限；undefined/null/0 视为默认 10 turns
+ * 
+ * @param maxTurns 调用方指定的 turn 上限；调用方保证 > 0（否则走 resolveSpawnWatchdogMs）
  */
-/** maxTurns 缺省（undefined/null/0）时的估算 turn 数（computeWatchdogMs 兜底）。 */
-const DEFAULT_MAX_TURNS_ESTIMATE = 10;
+export function computeWatchdogMs(maxTurns: number): number {
+  return Math.max(SPAWN_WATCHDOG_FLOOR_MS, maxTurns * WATCHDOG_MS_PER_TURN);
+}
 
-export function computeWatchdogMs(maxTurns: number | undefined | null): number {
-  const effectiveTurns = maxTurns && maxTurns > 0 ? maxTurns : DEFAULT_MAX_TURNS_ESTIMATE;
-  return Math.max(SPAWN_WATCHDOG_FLOOR_MS, effectiveTurns * WATCHDOG_MS_PER_TURN);
+/**
+ * spawn watchdog 毫秒兑底 env（可选，默认未设 = 不挂 watchdog）。
+ * 
+ * 仅当 maxTurns 未传（undefined/null）时生效：设置后按该绝对时限挂 watchdog，
+ * 未设则完全不挂（不限）。显式传 maxTurns（含 0/负数）压过 env（U5，SP-6 参数 > env）
+ * ——旧实现 maxTurns:0 落到 env 兑底，参数显式关不掉 watchdog。
+ * 前缀用 XYZ_SUBAGENT_*：本 env 是父侧（pi 进程内）读的配置
+ * env，xyz-agent 桌面 spawn 链会按 ENV_WHITELIST_PREFIXES（只有 XYZ_ 等，无 PI_）过滤，
+ * PI_ 前缀在桌面场景被静默丢弃——同 XYZ_SUBAGENT_IDLE_TIMEOUT_MS 的改名教训。
+ * 注意与 PI_SUBAGENT_* 系（extension spawn 子进程时直接注入 childEnv）的机制区别。
+ * 与 launcher 的 XYZ_SUBAGENT_RUN_WATCHDOG_MS（workflow run 轮询兑底）对称：
+ * 两者都是「默认关、显式设置才挂绝对时限」的 hang 兑底通道（U7）。
+ */
+export const SPAWN_WATCHDOG_ENV = "XYZ_SUBAGENT_SPAWN_WATCHDOG_MS";
+
+/** 解析 spawn watchdog 毫秒数；env 未设/非法返回 undefined（调用方不挂 timer）。 */
+function getEnvSpawnWatchdogMs(): number | undefined {
+  const raw = process.env[SPAWN_WATCHDOG_ENV];
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+/**
+ * 解析 spawn watchdog 超时（挂载判定的单一入口）。
+ * 
+ * 优先级（SP-6 参数 > env，U5）：maxTurns 显式传参时压过 env——有效（>0）按 turns
+ * 估算（computeWatchdogMs）；显式 0/负 = 显式不限（不挂 watchdog）；仅 undefined/null
+ * （未传）才落 SPAWN_WATCHDOG_ENV 兑底；env 也未设 → undefined（不挂 watchdog，不限）。
+ * 
+ * [U1] 返回值（env 兑底或 turns 估算两条路径）流入 setTimeout 前校验安全域：
+ * >2^31-1 的 delay 被 Node 置 1ms 立即触发（watchdog 变「启动即杀」），fail-fast。
+ * 
+ * [export] 测试可观测（timeout-integration 用例断言 maxTurns 缺省/env 兑底分支）。
+ */
+export function resolveSpawnWatchdogMs(maxTurns: number | undefined | null): number | undefined {
+  if (maxTurns === undefined || maxTurns === null) {
+    const envMs = getEnvSpawnWatchdogMs();
+    if (envMs !== undefined) assertSafeTimerDelay(envMs, SPAWN_WATCHDOG_ENV);
+    return envMs;
+  }
+  // [F-R3] 显式传参先数值规范化 + 有限性校验。旧实现直接走 maxTurns>0 判断：
+  // NaN / ""（Number("")===0）等垃圾值比较为 false 落到 return undefined——既绕过
+  // Number.isFinite 校验，又压过 SPAWN_WATCHDOG_ENV 兑底，把调用方 bug 静默变成
+  // 「显式不限」。现非有限数（NaN/±Infinity）与 timer-delay 同语义 fail-fast（U1，
+  // 非有限 delay 在 Node setTimeout 塔缩为 1ms 立即触发，比静默不限更危险，必须暴露）；
+  // Number("") === 0 → 与显式 0 同路径（显式不限，压过 env，U5 语义不回归）。
+  const turns = Number(maxTurns);
+  if (!Number.isFinite(turns)) {
+    assertSafeTimerDelay(turns, `maxTurns=${String(maxTurns)}`);
+  }
+  if (turns > 0) {
+    const estimated = computeWatchdogMs(turns);
+    assertSafeTimerDelay(estimated, `computeWatchdogMs(maxTurns=${maxTurns})`);
+    return estimated;
+  }
+  return undefined;
 }
 
 /** stderr 累积上限——按字符截断（.slice 语义），非字节；64K 规模沿自原实现。
@@ -178,15 +246,18 @@ export function computeWatchdogMs(maxTurns: number | undefined | null): number {
 const STDERR_MAX_CHARS = 65_536;
 
 /**
- * 跨包契约 env 名：workflow 子进程把权威 JSON Schema 通过此 env 传给 structured-output 扩展。
+ * 跨包契约 env 名与注入上限（SCHEMA_ENV_VAR / SCHEMA_ENV_MAX_BYTES）：
+ * 实装已抽到 shared/schema-env.ts（零依赖叶子，S5），顶部 import + 下方 re-export。
  *
  * [跨包契约 SSOT] 此字面量是两个独立 npm 包（@zhushanwen/pi-subagent-workflow 与
  * @zhushanwen/pi-structured-output）之间的隐式 env 契约。structured-output 包内同名常量为
  * `ENV_SCHEMA = "PI_WORKFLOW_SCHEMA"`（见 extensions/universal/structured-output/src/index.ts）。
  * 两包是独立 npm 包不能直接 import，故各自保留常量但显式标注此契约关系——
  * 任一端改名必须同步另一端，否则权威 schema 注入会静默断桥（子进程不注册 tool/hook）。
+ * 抽叶子的目的：跨包契约测试从 session-runner import 会拖入整条 spawn/pi SDK 依赖树，
+ * 叶子模块提供稳定 import 点（导出名与值不变）。
  */
-const SCHEMA_ENV_VAR = "PI_WORKFLOW_SCHEMA";
+export { SCHEMA_ENV_MAX_BYTES, SCHEMA_ENV_VAR };
 
 // ============================================================
 // W4: ask_user RPC 系统提示词
@@ -499,42 +570,28 @@ export interface SpawnResumeOpts {
  * [模块内直调] —— 纯 env 赋值。从 runSpawn 的 childEnv 构造块调用。
  * 存在时设 childEnv[SCHEMA_ENV_VAR] → 子进程 structured-output 扩展读取并注册 tool。
  * 不存在时 childEnv 不变（BC-6：tool 层不传 schemaEnv → 行为与合并前一致）。
+ *
+ * [SO-DATA-4] 注入前按 UTF-8 字节长度校验，超 SCHEMA_ENV_MAX_BYTES（256KiB）fail-fast
+ * 拒绝：env 值过大叠加全量继承的 process.env 可能触发 execve 的 E2BIG（ARG_MAX 约束），
+ * spawn 直接失败且错误难归因。提前在注入点报错，消息含实际大小与精简指引。
+ *
+ * @throws Error schemaEnv 序列化后超过 SCHEMA_ENV_MAX_BYTES
  */
 export function applySchemaEnvToChildEnv(
   childEnv: Record<string, string | undefined>,
   schemaEnv?: string,
 ): void {
   if (schemaEnv) {
+    const sizeBytes = schemaEnvByteLength(schemaEnv);
+    if (sizeBytes > SCHEMA_ENV_MAX_BYTES) {
+      throw new Error(
+        `[subagent-workflow] schema env too large: ${sizeBytes} bytes exceeds the ${SCHEMA_ENV_MAX_BYTES}-byte limit for ${SCHEMA_ENV_VAR}. ` +
+          "Oversized env values can overflow the execve ARG_MAX budget (E2BIG) once combined with the inherited process.env, failing the spawn with a hard-to-attribute error. " +
+          "Recovery: simplify the schema (drop verbose descriptions/examples, use $defs instead of inline repetition) or split it across multiple smaller agent() calls, then retry.",
+      );
+    }
     childEnv[SCHEMA_ENV_VAR] = schemaEnv;
   }
-}
-
-// ============================================================
-// Schema 指令
-// ============================================================
-
-/**
- * 构造 schema 指令模板（拼入 task 末尾 + steer reminder 复用）。
- * 指令明确要求 agent 调用 structured-output tool，而非直接输出 JSON 文本。
- *
- * schema JSON 的 pretty-print（indent=2）由 shared/schema-jsonify.ts 的
- * stringifySchemaCached(schema, "pretty") 产出（IF7：与 resolver 的 compact 版
- * 共享 WeakMap 缓存条目，输出与 JSON.stringify(schema, null, 2) 逐字节一致）。
- */
-export function formatSchemaInstruction(schema: Record<string, unknown>): string {
-  return [
-    "MANDATORY: Structured Output Requirement",
-    "You MUST call the `structured-output` tool with your final answer.",
-    "Do NOT output the JSON directly in your text response — you MUST use the structured-output tool.",
-    "The schema is enforced by the system — call structured-output with ONLY the `data` parameter.",
-    "Do NOT pass a `schema` parameter; the system validates `data` against the authoritative schema automatically.",
-    "The schema for your `data` is:",
-    "```json",
-    // IF7(#13)：同 schema 对象引用的 pretty stringify 走 WeakMap 缓存
-    // （与 agent-opts-resolver 的 compact 版共享缓存条目，输出逐字节不变）
-    stringifySchemaCached(schema, "pretty"),
-    "```",
-  ].join("\n");
 }
 
 // ============================================================
@@ -627,7 +684,10 @@ export async function buildEnvBlock(
 //   b. handleSdkEvent switch（SdkEvent → AgentEvent）
 //   c. turnLimiter：maxTurns 用事件计数 turn_end + proc.kill 替代 session.abort
 //   d. signal → proc.kill 监听（替代 signal → session.abort）
-//   e. schema enforcement：改为 task 内 MANDATORY 指令（spawn 无 steer 通道）
+//   e. schema enforcement：经 resolver 注入 appendSystemPrompt（ASP 单点，不再拼
+//      task 后缀——工具 parameters 是 pi 必然注入的权威展示，机制登记 PS-21：
+//      pi-ai provider 层 convertTools 把 tool.parameters 随请求下发（anthropic
+//      :1000/:1017 input_schema、openai :1099 parameters），见 agent-opts-resolver）
 //   f. spawn + pump stdout（替代 session.prompt）
 //   g. collectResult → AgentResult（完全复用）
 //   h. proc cleanup（替代 session.dispose）
@@ -639,14 +699,28 @@ export async function buildEnvBlock(
 const SIGNAL_EXIT_CODE_THRESHOLD = 128;
 
 /**
+ * spawn 侧已裁决的模型身份（U1 D2）：buildSpawnArgs 只接受经 assertCanonicalModelRef /
+ * modelRefFromVerified 裁决的 {provider, id}，拼接值 = `${provider}/${id}`。
+ * 类型层面裸字符串不可达——任何未经 D1 裁决的模型串无法流入 `--model`。
+ */
+export interface SpawnModelRef {
+  provider: string;
+  id: string;
+}
+
+/**
  * 组装 pi CLI 参数（不含 task 本身，task 作为最后一个位置参数）。
  *
  * 抽取自 runSpawn 便于单测（纯函数，不依赖进程状态）。
+ *
+ * [U1 D2 spawn 前置守卫] 入参收窄：model 字符串 → modelRef（SpawnModelRef），
+ * thinkingLevel → ThinkingLevel 白名单字面量联合。`--model` 值恒为
+ * `${modelRef.provider}/${modelRef.id}`（+ 可选白名单 `:level` 后缀）。
  */
 export function buildSpawnArgs(
   params: {
-    model: string | undefined;
-    thinkingLevel: string | undefined;
+    modelRef: SpawnModelRef;
+    thinkingLevel: ThinkingLevel | undefined;
     agentTools: string[] | undefined;
     appendSystemPromptPath: string | undefined;
     sessionDir: string;
@@ -668,13 +742,27 @@ export function buildSpawnArgs(
   // task 不通过命令行传——pi 的 runRpcMode 只消费 stdin RpcCommand，
   // positional task arg / -p flag 在 rpc mode 下被 resolveAppMode 无视。
   // task 由 runSpawn 内 sendPromptCommand 写 child.stdin 驱动。
+  //
+  // [单写者不变量·MF-8｜第五轮元审查结论] session JSONL 完整性依赖「每 session
+  // 单写进程」架构不变量：子进程写独立 subagent sessionDir（getSubagentSessionDir
+  // 编码隔离），主 session 仅本进程单线程写。pi 0.84.1 写入原语（dist/core/
+  // session-manager.js，机制登记 PS-18）只在「唯一写者」前提下原子：_persist
+  //（:724-753）首写用 wx flag 整体落盘缓冲 entry（:739），此后一律 appendFileSync
+  // 追加（:730/:751）；运行时 compaction 走 appendCompaction（:803-818）→
+  // _appendEntry → _persist 的 append-only 追加（agent-session.js:1432 手动 /
+  // :1670 自动），不重写文件；截断重写 _rewriteFile（openSync(path,"w")，:693-705）
+  // 仅在加载期触发：空文件归一（:627）/ 版本迁移（:634）/ branch 换新文件（:1143）。
+  // 引入第二写进程（如父进程补写/双进程同 sessionDir）则全部失守：appendFileSync
+  // 无 O_APPEND 与对方交错截断，加载期重写吞掉并发追加的尾部 entry，历史上已造成
+  // 双写者事故（v4 A-5/P7）。任何改动不得让两个进程指向同一 session 文件写路径。
   const args: string[] = ["--mode", "rpc", "--session-dir", params.sessionDir];
   // resume：紧跟 --session-dir 追加 --session <file>，pi 续写原 session 文件（P-8）。
   if (params.sessionFile) {
     args.push("--session", params.sessionFile);
   }
-  if (params.model) args.push("--model", params.model);
-  if (params.thinkingLevel && params.model) {
+  // [U1 D2] 只拼接已裁决 ModelRef；thinkingLevel 类型已收窄为白名单字面量联合。
+  args.push("--model", `${params.modelRef.provider}/${params.modelRef.id}`);
+  if (params.thinkingLevel) {
     // thinking level 通过 model 后缀 :level 传递（pi CLI 约定）
     // model 已 push，这里只补后缀到同一 token
     const lastIdx = args.length - 1;
@@ -757,6 +845,9 @@ interface SpawnRunState {
   proc: ChildProcess | undefined;
   /** watchdog timer（stdout handler 的 agent_end keep-alive 分支重挂，收尾统一 clearTimeout）。 */
   watchdog: NodeJS.Timeout | undefined;
+  /** [race-F4] SIGKILL 升级 timer（killChildWithEscalation 挂载；exit 事件自动 clear，
+   *  收尾统一 clearTimeout 兑底）。 */
+  escalationTimer: NodeJS.Timeout | undefined;
   /** stdout 首行 header（json mode 才有；RPC mode 恒 undefined）——收尾 sessionFile 兜底查找用。 */
   sessionHeader: SpawnSessionHeader | undefined;
   /** get_state 握手结果（RPC mode）——收尾 sessionFile 兜底查找用。 */
@@ -768,6 +859,55 @@ interface SpawnRunState {
    * 是 no-op（Promise 只 resolve 一次）。
    */
   resolveRun: ((code: number) => void) | undefined;
+}
+
+/**
+ * 事件累积器工厂（原 runSpawn 内联的 a/b 两段 + handleSdkEvent/agentEvent 闭包）。
+ *
+ * pendingTools 寄存器 / turnLimiter / accumulateMessageEnd 均闭包在工厂内部，
+ * 对外只暴露 handleSdkEvent（stdout 解析出的 SdkEvent 的唯一喂入口）。
+ */
+
+/**
+ * [race-F4] SIGTERM 后升级 SIGKILL 的等待窗口：30s 未见 exit 视为 SIGTERM 被无视，强杀。
+ */
+const SIGKILL_ESCALATION_SECONDS = 30;
+const SIGKILL_ESCALATION_MS = SIGKILL_ESCALATION_SECONDS * MS_PER_SECOND;
+
+/**
+ * [race-F4] 发 SIGTERM 并武装 SIGKILL 升级 timer：SIGKILL_ESCALATION_MS 后子进程
+ * 仍未退出（exitCode/signalCode 双 null）则 SIGKILL。
+ *
+ * 背景：watchdog/limiter/idle timer/abort 触发只发一次 SIGTERM——子进程若无视
+ * SIGTERM（卡死在不可中断的 native 调用 / SIGTERM handler 挂死），close 永不触发
+ * → runSpawn 悬挂、background 槽位/worktree/alive marker 泄漏，旧实现永不回收。
+ *
+ * - 升级 timer unref（不阻止主进程退出；dispose 路径 killAllSpawnedChildren 兜底）
+ * - assertSafeTimerDelay：包内 timer 挂载入口统一校验（常量 30s 恒通过，防未来改
+ *   可配置时静默引入 1ms 溢出语义反转）
+ * - child exit 事件 clear 升级 timer（自然退出/被 SIGTERM 杀死均不升级）
+ * - state.escalationTimer 记录句柄：watchdog re-arm 场景先清旧升级窗口，收尾兜底 clear
+ *
+ * @param source 升级来源标识（warn 日志定位用，如 "spawn watchdog" / "turn limiter"）
+ */
+function killChildWithEscalation(state: SpawnRunState, child: ChildProcess, source: string): void {
+  child.kill("SIGTERM");
+  if (state.escalationTimer) clearTimeout(state.escalationTimer);
+  assertSafeTimerDelay(SIGKILL_ESCALATION_MS, `SIGKILL escalation (${source})`);
+  const escalation = setTimeout(
+    () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        logger.warn(
+          `[session-runner] child ${state.record.id} still alive ${SIGKILL_ESCALATION_MS / MS_PER_SECOND}s after SIGTERM, escalating to SIGKILL (source: ${source})`,
+        );
+        child.kill("SIGKILL");
+      }
+    },
+    SIGKILL_ESCALATION_MS,
+  );
+  escalation.unref();
+  child.once("exit", () => clearTimeout(escalation));
+  state.escalationTimer = escalation;
 }
 
 /**
@@ -794,7 +934,8 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
       // 但未实现写入逻辑）。补偿已在启动时注入 WRAP_UP_HINT 让 agent 主动收尾。
     },
     abort: () => {
-      state.proc?.kill("SIGTERM");
+      // [race-F4] 升级路径：SIGTERM 后 30s 未 exit 则 SIGKILL（挂住子进程永不回收防线）
+      if (state.proc) killChildWithEscalation(state, state.proc, "turn limiter abort");
     },
   });
 
@@ -830,13 +971,23 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
     // 非 chatMode：忽略（agent_end handler 的一次性 kill 已处理，进程不会活到 agent_settled）。
     if (isAgentSettledEvt(raw)) {
       if (record.chatMode) {
-        armIdleTimer(record.id, () => {
-          // onTimeout 复用现有 kill 路径：child.kill("SIGTERM") 触发 close → close handler
-          // 统一 cleanup（spawnedChildren.delete / get_stateListeners.clear / resolve）。
-          // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
-          const child = getChildByRecord(record.id);
-          if (child && !child.killed) child.kill("SIGTERM");
-        }, record.idleTimeoutMs);
+        // [F-R2] 本闭包经 stdout data 回调同步调用（handleSdkEvent ← attachStdoutPump）：
+        // armIdleTimer → assertSafeTimerDelay fail-fast 的 throw 若逃出回调 = uncaughtException
+        // 崩宿主。包 try/catch 降级为「不挂 idle timer」（进程回收由外部 signal / dispose 驱动），
+        // 错误经 bestEffort("error") 可见但不升级为进程崩溃；后续 limiter.reset /
+        // onRoundSettled / resolveRun 照常执行（本轮完成通知不因 GC timer 故障丢失）。
+        try {
+          armIdleTimer(record.id, () => {
+            // onTimeout 复用现有 kill 路径：child.kill("SIGTERM") 触发 close → close handler
+            // 统一 cleanup（spawnedChildren.delete / get_stateListeners.clear / resolve）。
+            // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
+            // [race-F4] 升级：idle timer SIGTERM 后挂住 → 30s 后 SIGKILL。
+            const child = getChildByRecord(record.id);
+            if (child && !child.killed) killChildWithEscalation(state, child, "idle timer");
+          }, record.idleTimeoutMs);
+        } catch (err) {
+          bestEffort(err, "armIdleTimer (agent_settled chatMode)", "error");
+        }
         // [SP-9] chatMode 每轮 reset turn-limiter：新一轮开始（续聊）时，
         // maxTurns/graceTurns 不跨轮累计（续聊本质是无限轮，累计上限违背 G1）。
         // reset steered/aborted 标志 + turnCount 归零，下一轮独立计数。
@@ -1014,14 +1165,22 @@ function buildSpawnInvocation(
   const skillPaths = [...ctx.skillDirs, opts.skillPath].filter(
     (p): p is string => typeof p === "string" && p.length > 0,
   );
-  const modelId = opts.resolved.model.id;
+  // [U1 D2] modelRef 来源：
+  //   - 非 resume：opts.resolved.model（resolveModel 裁决放行的 registry 全等条目）。
+  //   - resume：resume.model 是 SpawnResumeOpts 回显（record.model，"provider/id" 系统自产
+  //     已裁决形态，P-10 防漂移），按第一个 / 拆分（与 subagent-service record 回读同构），
+  //     不再经 assertCanonicalModelRef（registry 快照可能已刷新，拒绝回显会破坏续聊）。
+  const modelRef: SpawnModelRef = resume?.model
+    ? splitRecordModelRef(resume.model)
+    : { provider: opts.resolved.model.provider, id: opts.resolved.model.id };
   // [M1 resume] resume 时 model/thinkingLevel 优先用 resume 值（防多轮对话模型漂移，P-10），
-  // 否则回退 opts.resolved。resume.model 已是 "provider/id" 格式，与 buildSpawnArgs 约定一致。
-  const effectiveModel = resume?.model ?? `${opts.resolved.model.provider}/${modelId}`;
-  const effectiveThinkingLevel = resume?.thinkingLevel ?? opts.resolved.thinkingLevel;
+  // 否则回退 opts.resolved。thinkingLevel 经白名单断言收窄（非法值同步拒，不静默降级）。
+  const effectiveThinkingLevel = assertThinkingLevel(
+    resume?.thinkingLevel ?? opts.resolved.thinkingLevel,
+  );
   const spawnArgs = buildSpawnArgs(
     {
-      model: effectiveModel,
+      modelRef,
       thinkingLevel: effectiveThinkingLevel,
       agentTools: opts.agentConfig?.tools,
       appendSystemPromptPath: tempPromptFile?.filePath,
@@ -1034,6 +1193,20 @@ function buildSpawnInvocation(
     },
   );
   return getPiInvocation(spawnArgs);
+}
+
+/**
+ * 拆分 record 回显的 "provider/id" 模型串（resume 路径专用）。
+ *
+ * [U1 D2 豁免依据] 输入是 SubagentService 从 record.model 读出的系统自产回显
+ * （createRecordForMode 写入 `${provider}/${id}`，源头已裁决），非用户自由字符串——
+ * 不经 assertCanonicalModelRef。modelId 可含 /，按第一个 / 分割（与 lookup 同构）。
+ * 异常形态（无 /）兜底 provider="unknown"（与 subagent-service.ts record 回读同构）。
+ */
+function splitRecordModelRef(model: string): SpawnModelRef {
+  const slashIdx = model.indexOf("/");
+  if (slashIdx <= 0) return { provider: "unknown", id: model };
+  return { provider: model.slice(0, slashIdx), id: model.slice(slashIdx + 1) };
 }
 
 /** attachStdoutPump 返回的共享句柄（waitForChildExit / get_state 握手启动消费）。 */
@@ -1179,9 +1352,28 @@ function attachStdoutPump(
               // [MF-4] 动态超时 = computeWatchdogMs(maxTurns)：真实后代在跑，慢任务（wave 开发
               // 数小时）不能被固定 2h 误杀——2h 到点 kill 会连坐 SubagentService.dispose 的
               // killAllSpawnedChildren 杀全部子进程，L2 重派丢在途工作。maxTurns 大则超时长。
+              // [预算语义对齐 + U5] maxTurns 未传且 env 未设，或显式 <=0（压过 env）→
+              // 不 re-arm（等待后代不限时）；回收由外部 signal / dispose / 后代自然完成驱动。
+              // [F-R2] 本分支在 child.stdout.on("data") 同步回调链内：resolveSpawnWatchdogMs →
+              // assertSafeTimerDelay fail-fast 的 throw 若逃出回调 = Node uncaughtException 崩宿主。
+              // 此处包 try/catch 降级为「不 re-arm」（与 keepAliveMs === undefined 的既有降级语义
+              // 一致——回收由外部 signal / dispose / 后代自然完成驱动）：fail-fast 语义保留
+              // （错误经 bestEffort("error") 可见、行为明确），但不升级为进程崩溃。
               clearTimeout(state.watchdog);
-              state.watchdog = setTimeout(() => child.kill("SIGTERM"), computeWatchdogMs(opts.maxTurns));
-              state.watchdog.unref();
+              let keepAliveMs: number | undefined;
+              try {
+                keepAliveMs = resolveSpawnWatchdogMs(opts.maxTurns);
+              } catch (err) {
+                bestEffort(err, "resolveSpawnWatchdogMs (agent_end keep-alive re-arm)", "error");
+                keepAliveMs = undefined;
+              }
+              if (keepAliveMs !== undefined) {
+                state.watchdog = setTimeout(
+                  () => killChildWithEscalation(state, child, "keep-alive watchdog"),
+                  keepAliveMs,
+                );
+                state.watchdog.unref();
+              }
             } else if (pending.recentUnregister) {
               // 差集 0 但最近有 unregister：后代刚完成，notify 唤醒可能在路上（竞态窗口），
               // 保持进程——父被唤醒后的下一次 agent_end 会正常判定。
@@ -1192,10 +1384,13 @@ function attachStdoutPump(
                 "[session-runner] agent_end: keep alive, recent descendant completion (wake-up in flight)",
               );
               clearTimeout(state.watchdog);
-              state.watchdog = setTimeout(() => child.kill("SIGTERM"), WAKEUP_GRACE_MS);
+              state.watchdog = setTimeout(
+                () => killChildWithEscalation(state, child, "wakeup grace timer"),
+                WAKEUP_GRACE_MS,
+              );
               state.watchdog.unref();
             } else {
-              child.kill("SIGTERM");
+              killChildWithEscalation(state, child, "agent_end final kill");
             }
           }
         }
@@ -1323,6 +1518,7 @@ export async function runSpawn(
     ctx,
     proc: undefined,
     watchdog: undefined,
+    escalationTimer: undefined,
     sessionHeader: undefined,
     handshakeResult: undefined,
     resolveRun: undefined,
@@ -1331,15 +1527,25 @@ export async function runSpawn(
   // a/b. 事件累积器（pendingTools 寄存器 + turnLimiter + handleSdkEvent/agentEvent 闭包）
   const handleSdkEvent = createSpawnEventHandlers(state);
 
-  // c. schema 指令拼到 task 末尾（替代 in-process 的 turn_end steer 循环）
-  const instruction = opts.schema ? formatSchemaInstruction(opts.schema) : "";
-  const fullTask = task + instruction;
+  // [审查项#2] 原 c.（schema 指令拼 task 末尾）已删：resolver 经 appendSystemPrompt
+  // 单点注入，task 不再被每 agent 变化的指令后缀污染（可缓存 + 省 ~730 tokens/子进程）。
 
   // d. session 目录（与 in-process 一致：list/恢复可发现同一目录）
   // [MF-3] 用 ctx.rootCwd（贯穿真 ROOT）而非 ctx.mainCwd 编码：worktree 模式下 mainCwd 是
   // 子进程的 checkout 路径，按它编码会让深层 record 落到 enc(worktree) 段，ROOT 磁盘重建
   // 扫不到 → 全树可见性深度 ≥ 2 断裂。rootCwd 与 store 构造同源（subagent-service 同键），
   // 保证 runSpawn 写入的 session 文件就在本进程/ROOT store 扫描的目录里。
+  //
+  // [单写者不变量·MF-8｜第五轮元审查结论] session JSONL 完整性依赖「每 session 单写
+  // 进程」架构不变量：本目录是子进程专属 sessionDir，session 文件写入方仅此子进程
+  //（单进程单线程）；主进程只读（扫描/重建/统计），绝不写。pi 0.84.1 的写入原语
+  //（session-manager.js，完整锚点见 buildSpawnArgs 注释 / PS-18）：_persist
+  //（:724-753）首写 wx flag + 后续 appendFileSync 追加；compaction 为 append-only
+  // 追加（appendCompaction :803-818），截断重写 _rewriteFile（:693-705）只在加载期
+  //（归一 :627 / 迁移 :634 / branch :1143）触发——第二写进程会破坏全部这些写入的
+  // 原子性（尾部丢 entry / 交错截断，见 v4 A-5/P7 双写者事故）。 resume/
+  // 续聊走冷路径重开同一文件时也必须先确认旧进程已死（resumesInFlight 守卫），
+  // 本质仍是单写者。
   const sessionDir = getSubagentSessionDir(ctx.agentDir, ctx.rootCwd);
   fs.mkdirSync(sessionDir, { recursive: true });
 
@@ -1444,11 +1650,12 @@ export async function runSpawn(
     // 喂 prompt 命令驱动子进程开始处理 task。pi runRpcMode 只消费 stdin RpcCommand，
     // 不读 positional arg；必须在 spawn 后主动写，否则子进程阻塞、totalTokens 恒 0。
     // 时机安全：pipe 内核缓冲不丢；pi 在 rebindSession 后才挂 stdin reader。
-    sendPromptCommand(child, fullTask);
+    sendPromptCommand(child, task);
 
     // d. signal → proc.kill 监听（一次性，替代 session.abort）
+    // [race-F4] 用户取消同样升级：SIGTERM 后挂住 → 30s 后 SIGKILL 兑现取消语义。
     const onAbort = (): void => {
-      child.kill("SIGTERM");
+      killChildWithEscalation(state, child, "abort signal");
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     // 前置检查：signal 在 spawn 前已 aborted 时 addEventListener 不会触发 onAbort，
@@ -1459,12 +1666,20 @@ export async function runSpawn(
     //    limiter 失效，此 timer 保证最终 SIGTERM，防止 background 槽位/资源泄漏。
     // [M-1] timeout 基于 maxTurns 动态计算（computeWatchdogMs）：旧实现固定 30 分钟
     //    误杀长任务，现按 maxTurns 线性估算（每 turn ~5 分钟，下限 30 分钟）。
+    // [预算语义对齐] maxTurns 未传/<=0 → 不挂 watchdog（不限，用户明确裁决——旧实现按
+    //    10 turns 估出 50min 默认 SIGTERM 且 maxTurns:0 也关不掉，已废）；
+    //    SPAWN_WATCHDOG_ENV 设置时按绝对时限兑底挂载（hang 泄漏防线 opt-in）。
     // [R0] unref：不阻止 Node 进程退出。安全性由 SubagentService.dispose 保证——
     // 主进程退出时（session_shutdown reason=quit）dispose 会 abort running controller
     // → 本监听器 kill 子进程。无此 unref，watchdog timer 会拖住 event loop 阻止退出。
-    const watchdogMs = computeWatchdogMs(opts.maxTurns);
-    state.watchdog = setTimeout(() => child.kill("SIGTERM"), watchdogMs);
-    state.watchdog.unref();
+    const watchdogMs = resolveSpawnWatchdogMs(opts.maxTurns);
+    if (watchdogMs !== undefined) {
+      state.watchdog = setTimeout(
+        () => killChildWithEscalation(state, child, "spawn watchdog"),
+        watchdogMs,
+      );
+      state.watchdog.unref();
+    }
 
     // [recursive-orchestration] agent_end 有活跃后代时的等待超时（不 kill 分支的兑底）。
     // 层主 subagent 空闲等待后代完成（steer 唤醒）期间不产生 turn，原 watchdog 已清；
@@ -1484,10 +1699,21 @@ export async function runSpawn(
     // stdin，pi rebindSession 后读取并返回 response，经 stdout pump 匹配 resolver 触发 resolve。
     // close handler await handshakeSettled，保证无论 task 多快结束，close 时 sessionFile 已回填。
     // [#18] 握手状态变量已在 attachStdoutPump 内部（stdout handler 注册前）定义，此处直接发起握手。
+    // [F2] .catch 兜底：performGetStateHandshake 的 Promise executor 同步调 tryOnce →
+    // sendGetStateCommand → writeStdinLine 在 stdin 已断（EPIPE/ERR_STREAM_DESTROYED）时同步
+    // throw → executor 内同步异常被 Promise 构造器转为 reject。若无人接（旧实现只有 .then），
+    // reject 无人消费 → unhandledRejection（Node 15+ 默认 mode=throw）可崩父 pi 进程。
+    // catch 内：logger.error 留证 + pump.abandonHandshake 记录握手失败终态——close handler
+    // await 的 handshakeSettled 立即 settle，isHandshakePending() 归 false，不阻塞收尾链路
+    //（sessionFile 兜底由收尾时的 existsSync 校验 + findSessionFileByHeaderId 承担）。
     void performGetStateHandshake(child, pump.registerGetStateListener).then((r) => {
       // header 加速路径下 settleHandshake 已 undefined，跳过（避免覆盖 header 结果）。
       // 超时兜底（r 为空对象）也经此分支 settle，但 record.sessionFile 不回填。
       if (pump.isHandshakePending()) pump.finishHandshake(r);
+    }).catch((err: unknown) => {
+      const m = err instanceof Error ? err.message : String(err);
+      logger.error(`[session-runner] get_state handshake failed: ${m}`);
+      pump.abandonHandshake();
     });
 
     child.stderr.on("data", (data: string) => {
@@ -1500,6 +1726,9 @@ export async function runSpawn(
 
     opts.signal?.removeEventListener("abort", onAbort);
     clearTimeout(state.watchdog);
+    // [race-F4] 兑底清升级 timer（exit 事件自动 clear 的双保险：close 先于升级触发的
+    // 竞态窗口内不误杀下一个占用同 state 的子进程）
+    clearTimeout(state.escalationTimer);
 
     // [持久化 A] sessionFile 兜底校验。
     // identity custom entry 已改由子进程 session_start hook 写（M4 / V2 决策 5），
@@ -1540,12 +1769,16 @@ export async function runSpawn(
     }
 
     // g. collectResult（完全复用——全部从 record 读）
+    // [F-1] schemaExpected：schema/schemaEnv 任一存在即要求结构化产出（耦合形态
+    // 两者同设；解耦形态仅 schemaEnv 也要——tool 已注册，产出预期相同）。无有效
+    // parsedOutput 时由 collectResult 标注失败，不再静默 success。
     return collectResult(record, {
       startTime,
       success,
       error,
       sessionId: state.sessionHeader?.id ?? record.id,
       sessionFile: record.sessionFile,
+      schemaExpected: opts.schema !== undefined || opts.schemaEnv !== undefined,
     });
   } finally {
     // h. 清理临时 prompt 文件

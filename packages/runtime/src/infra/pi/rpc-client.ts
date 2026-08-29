@@ -27,6 +27,22 @@ export interface PiMessage {
 
 export type PiEventListener = (event: PiMessage) => void
 
+/**
+ * pi get_available_models 返回的模型元素（pi-ai Model 翻译为内部消费形状的子集：
+ * id/provider/reasoning/thinkingLevelMap，对账所需字段）。
+ *
+ * 非 Pi 前缀命名：本类型会被 services/model-capability.ts 消费——PiXxx 命名只许
+ * 留在 infra/pi 内部（check_pi_type_leak / runtime-three-layer-design 边界规则），
+ * 对上导出的翻译类型用内部命名（pi-events 翻译范式）。
+ */
+export interface AvailableModelSnapshot {
+  id: string
+  /** pi Model.provider（provider id，如 'zai-coding-cn'）。 */
+  provider: string
+  reasoning?: boolean
+  thinkingLevelMap?: Record<string, string | null>
+}
+
 export interface RpcClientOptions {
   cwd?: string
   model?: string
@@ -668,6 +684,25 @@ export class RpcClient implements IPiEngine {
   async getState(): Promise<Record<string, unknown> | undefined> {
     // L6：getState 是毫秒级操作，用 FAST_TIMEOUT_MS（10s）替代默认 60s
     return (await this.sendCommand('get_state', {}, FAST_TIMEOUT_MS)).data
+  }
+
+  /**
+   * 取 pi 合并模型清单快照（get_available_models RPC，U5 能力注册表在线对账数据源）。
+   *
+   * 返回 pi 进程内视角的可用模型全集（内置 catalog ∪ models.json 自定义 ∪
+   * models-store 远端目录刷新合并），元素是 pi-ai Model 经本层翻译的内部类型
+   * AvailableModelSnapshot（含 reasoning/thinkingLevelMap）——services/model-capability.ts
+   * 的 runCapabilityReconcile 用它检测配置聚合与 pi 运行态的漂移（配置有而 pi 无 /
+   * reasoning 不一致 / 大小写孪生）。毫秒级内存快照，FAST_TIMEOUT_MS 即可；
+   * malformed 响应抛错由对账层降级捕获（避免误判为全量漂移）。
+   */
+  async getAvailableModels(): Promise<AvailableModelSnapshot[]> {
+    const msg = await this.sendCommand('get_available_models', {}, FAST_TIMEOUT_MS)
+    const models = msg.data?.models
+    if (!Array.isArray(models)) {
+      throw new Error('[rpc] getAvailableModels: malformed response from pi (data.models is not an array)')
+    }
+    return models as AvailableModelSnapshot[]
   }
 
   /**

@@ -396,10 +396,12 @@ export interface Phase2AgentAPI extends Phase1AgentAPI {
     updateStatusBarItem(id: string, text: string, options?: StatusBarItemOptions): Promise<void>
   }
   readonly agent: {
-    setModel(model: string): Promise<void>
+    /** U6 回执：resolve 生效模型复合串（pi pattern 换模时 ≠ 请求值；降级路径空串） */
+    setModel(model: string): Promise<string>
     getModel(): Promise<string>
     getThinkingLevel(): Promise<string>
-    setThinkingLevel(level: string): Promise<void>
+    /** U6 回执：resolve 钳制后生效档（降级路径空串） */
+    setThinkingLevel(level: string): Promise<string>
     getActiveTools(): Promise<string[]>
   }
   readonly workspace: {

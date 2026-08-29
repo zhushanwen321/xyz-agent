@@ -17,7 +17,7 @@ import {
 } from "@xyz-agent/extension-protocol";
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
-import { computeElapsedSeconds } from "../execution/execution-record.ts";
+import { computeElapsedSeconds, projectOutcome } from "../execution/execution-record.ts";
 import { isResumable } from "../execution/lifecycle-predicates.ts";
 import type { ExecutionRecord } from "../execution/types.ts";
 import type { ModelInfo } from "../execution/model-resolver.ts";
@@ -51,6 +51,9 @@ const MAX_LIST_LIMIT = 100;
 /** background 启动提示文案（spec FR-3 bgResponse.message）。 */
 const BG_MESSAGE = "detached, will notify on completion (auto-injected message, do not poll)";
 
+/** 通知投递契约回显恒值（U1 预置，U2 账本兑现，见 BgResponse.notifyContract）。 */
+const NOTIFY_CONTRACT = "ledger+at-least-once" as const;
+
 /** subagentId（UUID）在 GUI header 的截断显示长度。 */
 const SUBAGENT_ID_PREVIEW = 8;
 
@@ -81,7 +84,10 @@ export interface StartHandlerInput {
   cwd?: string;
   /** 可持续对话模式（true = chatMode，轮次完成进 idle 等续聊）。 */
   conversation?: boolean;
-  /** 空闲超时毫秒数（仅 conversation 模式有意义，覆盖默认 5min）。 */
+  /**
+   * 空闲超时毫秒数（仅 conversation 模式有意义，覆盖默认 5min）。
+   * 显式传 0/负数 = 禁用 idle GC（不挂 timer）；不传走 env/默认优先级。
+   */
   idleTimeoutMs?: number;
   /** 执行引擎（D4 三层路由第一层：本参数 > agent frontmatter engine > config defaultEngine）。 */
   engine?: string;
@@ -94,6 +100,11 @@ export type StartHandlerResult = {
   sessionFile: string | undefined;
   /** 短标签，来自 record（handle.details.slug）。用于 result 行展示。 */
   slug: string;
+  /**
+   * registry 全等回显（U1）：handle.details.model = record.model = `${provider}/${id}`，
+   * 源头是 resolveModel 裁决放行的条目——通过校验 = 子进程必然按此名执行。
+   */
+  model: string;
   response: BgResponse;
 };
 
@@ -250,9 +261,11 @@ export function mapExternalState(status: ExecutionStatus): ExternalState {
 }
 
 /** SubagentRecord → SubagentListItem（state 四态主字段 + status 调试字段，duration 实时计算）。
- *  [v4 A-6] 新增 parent/resumable/closedReason：parent 从 record.parentRecordId 派生
- *  （配合 A-5 直接父守卫），resumable 从 isResumable 派生（B-1「可续聊」对外表达），
- *  closedReason 透传（SP-4 级联关闭告知替代 before_agent_start 注入）。
+ *  [v4 A-6] 新增 parent/resumable：parent 从 record.parentRecordId 派生（配合 A-5 直接父
+ *  守卫），resumable 从 isResumable 派生（B-1「可续聊」对外表达）。
+ *  [U3 C-outcome] 新增 outcome 一等终态语义（projectOutcome 唯一出口）；closedReason
+ *  退出对外 JSON（保留为 record 内部诊断字段），对外成败判读收口到 outcome，消费方
+ *  零手写推导（三处同构 switch 已收敛删除）。
  *  agent 是 GUI/TUI list 共用的显示名——取 basename 短名（displayAgentName），
  *  完整路径保留在 record.agent（数据层）。 */
 export function recordToListItem(r: SubagentRecord): SubagentListItem {
@@ -269,7 +282,7 @@ export function recordToListItem(r: SubagentRecord): SubagentListItem {
     sessionFile: r.sessionFile,
     parent: r.parentRecordId,
     resumable: isResumable(r),
-    closedReason: r.closedReason,
+    outcome: projectOutcome(r),
   };
 }
 
@@ -328,10 +341,13 @@ export async function startHandler(
     subagentId: handle.subagentId,
     sessionFile: handle.sessionFile,
     slug: handle.details.slug,
+    // [U1] registry 全等回显：record.model 由 resolved（裁决放行条目）拼接，原样透出。
+    model: handle.details.model,
     response: {
       status: "running",
       mode: "background",
       message: BG_MESSAGE,
+      notifyContract: NOTIFY_CONTRACT,
     },
   };
 }
@@ -697,7 +713,8 @@ export function adapter(
     const d = input.domain;
     // MF-3（决策 10 细则 4）：LLM content (text) 用 null 瘦身，防诱导 agent 用 read 绕过工具
     // 直接读 session 文件。真实 sessionFile 仅 details 保留（供 GUI/程序化消费）。
-    result = { action, subagentId: d.subagentId, sessionFile: null, slug: d.slug, bgResponse: d.response };
+    // [U1] model 为 registry 全等回显（放行即全等）。
+    result = { action, subagentId: d.subagentId, sessionFile: null, slug: d.slug, model: d.model, bgResponse: d.response };
   } else if (action === "list") {
     result = { action, subagentId: null, sessionFile: null, listResponse: input.domain.response };
   } else if (action === "cancel") {
@@ -723,7 +740,7 @@ export function adapter(
   let detailsBase: SubagentToolResult = result;
   if (action === "start") {
     const d = input.domain;
-    detailsBase = { action: "start", subagentId: d.subagentId, sessionFile: d.sessionFile ?? null, slug: d.slug, bgResponse: d.response };
+    detailsBase = { action: "start", subagentId: d.subagentId, sessionFile: d.sessionFile ?? null, slug: d.slug, model: d.model, bgResponse: d.response };
   }
 
   // GUI 协议：RPC 模式下附加结构化渲染数据（union 各成员已声明 __gui__?，无需强转）
@@ -735,7 +752,7 @@ export function adapter(
   // reminder 作为第二个 text block（独立追加，不污染 details/JSON schema）。
   // 只有 list 触发——start 的 reminder 已在 BG_MESSAGE 里；cancel 无需。
   const reminder = action === "list"
-    ? "\n\nReminder: Subagent completion is auto-notified via injected message (deliverAs: steer). Do NOT poll in a loop — there is no poll action. Use action:'list' only when you concretely need state, then continue working or stop."
+    ? "\n\nReminder: Subagent completion is auto-notified via auto-injected message (turn-triggering on idle). Do NOT poll in a loop — there is no poll action. Use action:'list' only when you concretely need state, then continue working or stop." // g4-allow: 契约文案——reminder 字符串描述自动注入通道（triggerTurn 单通道，U2/D5 无 deliverAs），非实际投递调用
     : "";
 
   return {

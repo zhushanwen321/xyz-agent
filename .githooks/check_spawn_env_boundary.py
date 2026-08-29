@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-runtime 子进程 env 出站契约静态守卫（约束 C-proc-08）
+runtime 子进程 env 出站契约静态守卫（约束 C-proc-09）
 
 扫描 packages/runtime/src 与 apps/electron/main 的 *.ts 中所有 child-process 进程创建
 调用点（spawn / execFile / execFileSync / fork / pty.spawn / new Worker /
@@ -10,7 +10,7 @@ composeChildEnvBase）组装子进程 env；未经构建器的文件按调用点
 
 设计依据与背景：docs/design/env-propagation-boundary.md
 （§3.5 D2/D3 deny 清单最小起步 · §3.6 R1-R5 红线 · §5 U7 · AC8 演练场景）
-约束登记：docs/constraints.json C-proc-08；与入站白名单（C-proc-07）正交共存——
+约束登记：docs/constraints.json C-proc-09；与入站白名单（C-proc-07）正交共存——
 入站白名单管「外部环境哪些准许进来」，本契约管「自身变量哪些允许跟随 spawn 出去」。
 
 判定模型（折中：文件级白名单 + 调用点邻近证据，避免逐调用点窗口匹配的易碎性）：

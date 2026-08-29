@@ -42,8 +42,8 @@ export interface ReleaseAsset {
   sha256?: string
 }
 
-/** 升级流程的阶段（用于前端进度展示） */
-export type UpdateStage = 'downloading' | 'verifying' | 'replacing' | 'restarting'
+/** 升级流程的阶段（用于前端进度展示）。校验中态已随批次 3 删 update:perform 移除（m3：唯一推送点不存在） */
+export type UpdateStage = 'downloading' | 'replacing' | 'restarting'
 
 /** 升级流程的整体状态机 */
 export type UpdateState =
@@ -51,12 +51,37 @@ export type UpdateState =
   | 'checking'
   | 'available'
   | 'downloading'
-  | 'verifying'
   | 'downloaded'
   | 'replacing'
   | 'restarting'
   | 'error'
   | 'unsupported'
+
+/**
+ * update:check 的返回形状（批次 4 RM2.3 信号透传，2026-08 一致性审查补齐）。
+ *
+ * 三态诚实建模：有新版（info 非空）/ 确认无新版（info=null）/ 被限额未知
+ * （rateLimited=true，main 侧退避窗口内零联网短路）——限额不再并入「无新版」，
+ * renderer 据此显示非侵入提示而非假阴性。main 侧退避窗口见 release-checker。
+ */
+export interface UpdateCheckResult {
+  /** 检测到的新版信息；无新版/失败/被限额时为 null */
+  info: LatestReleaseInfo | null
+  /** true = 本次 null 是因为 GitHub API 限额退避中（非「无新版」） */
+  rateLimited: boolean
+}
+
+/**
+ * 升级错误事件 payload（main → preload → renderer 全链路透传，D3）。
+ *
+ * preload.ts onUpdateError 和 renderer lib/ipc.ts 的类型签名必须与此一致。
+ */
+export interface UpdateErrorPayload {
+  stage: string
+  message: string
+  errorCode?: string
+  suggestion?: string
+}
 
 /**
  * 代理配置接口。
@@ -80,7 +105,8 @@ export interface IProxyConfig {
  * 字段：
  * - preDownload：检测到新版时是否自动在后台预下载安装包。开启后点击更新跳过下载等待。
  *   默认 false（新用户不自动消耗流量/磁盘，需主动开启）。
- * - autoUpdate：启动时自动检查更新并提示下载（v6 demo 语义）。默认 false。
+ * - autoUpdate：启动时自动检查更新并提示下载（v6 demo 语义）。默认 true
+ *   （2026-08-28 拍板，设计 §3.6 RM1；存量用户现状即自动检查，见 update-settings.ts）。
  *   可选字段：调用方可以只传部分字段做局部更新（setUpdateSettings 内部与现有值合并）。
  */
 export interface UpdateSettings {
@@ -89,3 +115,53 @@ export interface UpdateSettings {
   /** 启动时自动检查更新并提示下载 */
   autoUpdate?: boolean
 }
+
+/**
+ * 代理测试结果载荷（main → preload → renderer）。
+ *
+ * 失败时含错误码与建议，renderer 据此展示两段式测试结果。
+ */
+export interface ProxyTestResult {
+  /** 测试是否成功 */
+  success: boolean
+  /** 错误码（失败时） */
+  code?: string
+  /** 错误摘要（失败时） */
+  message?: string
+  /** 解决建议（失败时） */
+  suggestion?: string
+}
+
+/**
+ * 启动结果终态状态值（D5 决策：升级成功/失败/回滚三态通知）。
+ * cleanupCompletedUpdate 返回的 LaunchResult.status 仅限这三个值，
+ * no-op（中断但无需回滚）不通知 renderer，返回 null。
+ */
+export const LAUNCH_RESULT_STATUSES = ['done', 'failed', 'rolled-back'] as const
+
+/** 启动结果终态类型（三值联合） */
+export type LaunchResultStatus = (typeof LAUNCH_RESULT_STATUSES)[number]
+
+/** 启动结果信息（main → renderer 一次性通知） */
+export interface LaunchResult {
+  /** 终态类型 */
+  status: LaunchResultStatus
+  /** 版本号（升级成功=新版本，回滚=恢复到的旧版本） */
+  version: string
+  /**
+   * 升级失败原因码（仅 status='failed' 时可能存在）。
+   * 来源 = update-result.json 的 error 字段（升级脚本 fail() 写入，如 'sha mismatch'），
+   * self-healer 构造 LaunchResult 时透传；renderer 据此映射具体失败文案（A-D1）。
+   * 缺失/非字符串（旧版 result.json / 容错）→ undefined，renderer 回退通用文案。
+   */
+  error?: string
+}
+
+/**
+ * 版本解析错误码（批次 3 信任锚 RC1）：update:download 请求的版本落后于权威 latest
+ * （GitHub /releases/latest 实测值 ≠ 请求值）。renderer 收到此码后自动重新检查更新，
+ * 拿到更新的 latest 再展示，而非重试旧版本（useAppUpdate.onUpdateError 处理）。
+ *
+ * 已并入 main 侧 types.ts 的 UpdateErrorCode 闭联合与 UPDATE_ERROR_MESSAGES 文案表。
+ */
+export const UPDATE_STALE_RELEASE = 'UPDATE_STALE_RELEASE'

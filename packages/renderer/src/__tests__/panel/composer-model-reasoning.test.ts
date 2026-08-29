@@ -4,11 +4,12 @@
  * 测试框架：vitest（禁 node:test）。
  * 运行命令：cd packages/renderer && npx vitest run src/__tests__/panel/composer-model-reasoning.test.ts
  *
- * 覆盖：composer-shell.ts getModelReasoning（settingsStore.providers 按 provider/model
- * 解析 models[].reasoning）——ThinkingLevelPopover 的 :reasoning prop 直连该派生，
- * 用透传探针 stub 断言真实 Composer 树上 reasoning 标志随 providers 数据正确落到 DOM：
- *   - reasoning:true 模型 → probe data-reasoning="true"
- *   - reasoning:false 模型 → probe data-reasoning="false"（non-reasoning 只 off 档的判据）
+ * 覆盖：composer-shell.ts getSupportedLevels（settingsStore.providers 按 provider/model
+ * 解析 models[].supportedLevels，U6 切源）——ThinkingLevelPopover 的 :supported-levels
+ * prop 直连该派生，用透传探针 stub 断言真实 Composer 树上档位可用集随 providers 数据
+ * 正确落到 DOM：
+ *   - reasoning:true 模型（supportedLevels=['off','high']）→ probe data-supported="off,high"
+ *   - reasoning:false 模型（pi 两级门控产物 ['off']）→ probe data-supported="off"
  *
  * 范式参照 composer-fork-mode.test.ts（mock useChat/useNewTaskFlow/api + stub 子组件）。
  */
@@ -85,16 +86,16 @@ const ComposerInputMock = defineComponent({
   template: '<div data-testid="composer-input" />',
 })
 
-// ── ThinkingLevelPopover 透传探针：把 reasoning/level 派生落到 DOM 属性 ──
+// ── ThinkingLevelPopover 透传探针：把 supportedLevels/level 派生落到 DOM 属性 ──
 const ThinkingLevelProbe = defineComponent({
   name: 'ThinkingLevelPopover',
   props: {
     level: { type: String, default: '' },
     levelMap: { type: Object, default: undefined },
-    reasoning: { type: Boolean, default: undefined },
+    supportedLevels: { type: Array as () => string[] | undefined, default: undefined },
   },
   template:
-    '<div data-testid="tlp-probe" :data-reasoning="reasoning === undefined ? \'undef\' : String(reasoning)" :data-level="level" />',
+    '<div data-testid="tlp-probe" :data-supported="supportedLevels === undefined ? \'undef\' : supportedLevels.join(\',\')" :data-level="level" />',
 })
 
 const SIMPLE = defineComponent({ name: 'SimpleStub', template: '<div />' })
@@ -121,8 +122,8 @@ function makeProviders(): ProviderInfo[] {
       apiKeySet: true,
       status: 'connected',
       models: [
-        { id: 'm-r', name: 'reasoning model', reasoning: true, thinkingLevelMap: { off: 'off', high: 'high' } },
-        { id: 'm-plain', name: 'plain model', reasoning: false },
+        { id: 'm-r', name: 'reasoning model', reasoning: true, thinkingLevelMap: { off: 'off', high: 'high' }, supportedLevels: ['off', 'high'] },
+        { id: 'm-plain', name: 'plain model', reasoning: false, supportedLevels: ['off'] },
       ],
     },
   ]
@@ -132,14 +133,14 @@ function mountComposer() {
   return mount(Composer, { props: { sessionId: null }, global: { stubs: otherStubs } })
 }
 
-describe('Composer 模型 reasoning 派生（composer-shell getModelReasoning）', () => {
+describe('Composer 档位可用集派生（composer-shell getSupportedLevels，U6 切源）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     lastInputText.value = ''
   })
 
-  it('defaultModel 指向 reasoning:true 模型 → ThinkingLevelPopover 收到 reasoning=true', async () => {
+  it('defaultModel 指向 reasoning:true 模型 → ThinkingLevelPopover 收到 supportedLevels=["off","high"]', async () => {
     const settings = getSettingsStore()
     settings.providers.value = makeProviders()
     settings.defaultModel.value = 'p1/m-r'
@@ -149,10 +150,10 @@ describe('Composer 模型 reasoning 派生（composer-shell getModelReasoning）
 
     const probe = wrapper.find('[data-testid="tlp-probe"]')
     expect(probe.exists()).toBe(true)
-    expect(probe.attributes('data-reasoning')).toBe('true')
+    expect(probe.attributes('data-supported')).toBe('off,high')
   })
 
-  it('defaultModel 指向 reasoning:false 模型 → probe 收到 reasoning=false（non-reasoning 只 off 档判据）', async () => {
+  it('defaultModel 指向 reasoning:false 模型 → probe 收到 ["off"]（pi 两级门控产物，non-reasoning 只 off 档判据）', async () => {
     const settings = getSettingsStore()
     settings.providers.value = makeProviders()
     settings.defaultModel.value = 'p1/m-plain'
@@ -161,6 +162,26 @@ describe('Composer 模型 reasoning 派生（composer-shell getModelReasoning）
     await wrapper.vm.$nextTick()
 
     const probe = wrapper.find('[data-testid="tlp-probe"]')
-    expect(probe.attributes('data-reasoning')).toBe('false')
+    expect(probe.attributes('data-supported')).toBe('off')
+  })
+
+  it('模型无 supportedLevels 字段（下发未覆盖的旧数据）→ probe 收到 undef（下游归一默认五档）', async () => {
+    const settings = getSettingsStore()
+    settings.providers.value = [
+      {
+        id: 'p1',
+        name: 'P1',
+        apiKeySet: true,
+        status: 'connected',
+        models: [{ id: 'm-legacy', name: 'legacy model' }],
+      },
+    ]
+    settings.defaultModel.value = 'p1/m-legacy'
+
+    const wrapper = mountComposer()
+    await wrapper.vm.$nextTick()
+
+    const probe = wrapper.find('[data-testid="tlp-probe"]')
+    expect(probe.attributes('data-supported')).toBe('undef')
   })
 })

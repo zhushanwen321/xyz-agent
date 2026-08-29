@@ -28,10 +28,20 @@
  * - pi 0.84 不为常规 entry append 发 entry 事件（entry_appended 仅 extension appendEntry 路径），
  *   故实时累积的 entry 快照以 message_end 流为等价源（断言对象 = 原始消息/entry 序列，W20-W21
  *   后升级 store 级快照）。
+ *
+ * agent dir 隔离（凭证可见、扩展不可见）：spawn 时注入 PI_CODING_AGENT_DIR 指向 mkdtemp 临时
+ * agent dir，只原样拷贝凭证类文件（auth.json / models.json / models-store.json，清单以 pi 0.84.1
+ * 实装读取面为准，见 copyCredentialFiles 注释）。不拷 settings.json、不放 extensions/ 子目录——
+ * 否则用户全局扩展集（settings.json packages/extensions 清单的 npm 扩展 + <agentDir>/extensions/
+ * 自动发现）会随子进程加载，其 appendEntry 调用发射 entry_appended 事件，击穿
+ * pi-protocol-contract D5 负向断言（全程 0 条 entry_appended）；且等价性基线不应随用户机器的
+ * 全局扩展集漂移。探测与 spawn 同源不变量：探测读真实 agentDir（piAgentDir()），spawn 把同一
+ * 目录的凭证文件原样拷贝进临时 dir，pi 实际读到的凭证与探测判定内容逐字节一致。
+ * settings.json 缺失安全（settings-manager loadFromStorage 空 content 返回 {}，不报错不创建）。
  */
 
 import { spawn, execSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -106,8 +116,29 @@ export interface PiFixture {
   writeLine(line: string): void
   /** 收集至今的事件流快照（可选谓词过滤）；实时累积快照的唯一来源 */
   collectEvents(predicate?: (event: PiStreamEvent) => boolean): PiStreamEvent[]
-  /** 轮询等待首条命中谓词的事件（进程提前退出时 reject） */
-  waitForEvent(predicate: (event: PiStreamEvent) => boolean, timeoutMs?: number): Promise<PiStreamEvent>
+  /** 轮询等待首条命中谓词的事件（进程提前退出时 reject）。第二参数为选项对象：
+   * since 为事件数组下标，只匹配下标之后的事件（事件游标/新鲜度语义，设计 D3）；
+   * 缺省（undefined）保持全量历史匹配语义——刻意不翻转默认：快 turn 可能在
+   * sendCommand resolve 与 waitForEvent 调用之间的毫秒级窗口内完成，默认语义翻转会让
+   * agent_end 先于调用到达 → 永久等不到。签名由数字改为对象是 break 真正意图：
+   * TS 编译期抓出全部漏改调用点（无静默回归通道）。 */
+  waitForEvent(
+    predicate: (event: PiStreamEvent) => boolean,
+    opts?: { timeoutMs?: number; since?: number },
+  ): Promise<PiStreamEvent>
+  /** 返回当前事件数组下标，供调用方在触发动作前打点（配合 waitForEvent 的 since 使用）。
+   * 替代手工 collectEvents().length 计数防御写法——打点动作与等待动作之间只隔一个表达式。 */
+  markEvents(): number
+  /** 原子化 turn 原语（设计 D4）：markEvents → 护栏放行后发 prompt → 只等本轮 agent_end（since 打点）。
+   * 消除「ack 与注册等待之间的完成竞态」+「上一轮旧 agent_end 假命中」两类缺陷；
+   * 新文件的最短路径即正确路径（by construction 而非靠纪律）。
+   * 仅覆盖「空闲起步 prompt + 等 agent_end」形态：steer/follow_up/streamingBehavior 转发
+   * 属流中投递（语义前提就是 busy 时入队），不经本原语也不经护栏。 */
+  runTurn(params: { message: string }, timeoutMs?: number): Promise<PiStreamEvent>
+  /** 失败兜底（设计 D2）：busy 时 abort 在途 turn 并 drain 至清态；非 busy 零操作幂等返回。
+   * 共享 fixture 文件应在 afterEach 调用，防上一用例失败后在途 turn 毒死后续用例
+   * （pi 会拒绝并发 prompt：Agent is already processing）。 */
+  recover(): Promise<void>
   /** kill 子进程（SIGTERM → 2s 上限 → SIGKILL）+ 删除临时目录；幂等 */
   dispose(): Promise<void>
 }
@@ -143,12 +174,39 @@ const FORCE_SKIP_REAL_PI_ENV = 'XYZ_SKIP_REAL_PI'
 /** DEFAULT_MODEL 的 provider id（pi 模型 id 形态 `<provider>/<modelId>`，'/' 前缀段） */
 const DEFAULT_PROVIDER = DEFAULT_MODEL.split('/')[0]!
 
-/** pi agent 目录（凭证所在）：与 pi config.ts getAgentDir() 同规则——PI_CODING_AGENT_DIR
- * 覆盖 → ~/.pi/agent。spawn 出的 pi 按此路径读凭证，探测必须同源否则误判。 */
+/** 真实 agent 目录（凭证所在 + 全局扩展所在）：与 pi config.js getAgentDir() 同规则
+ * （dist/config.js:412-418）——PI_CODING_AGENT_DIR 覆盖 → ~/.pi/agent。角色是「拷贝源 +
+ * 探测源」：凭证探测读它；spawnPiFixture 把其中凭证文件原样拷进临时 agent dir（探测与 pi
+ * 实读同源，见文件头「agent dir 隔离」）。本目录里的扩展不随子进程加载。 */
 function piAgentDir(): string {
   const envDir = process.env['PI_CODING_AGENT_DIR']
   if (envDir && envDir.trim() !== '') return envDir
   return join(homedir(), '.pi', 'agent')
+}
+
+/**
+ * 需要带入隔离 agent dir 的凭证类文件（pi 0.84.1 实装读取清单，逐项依据 dist 实现行号）：
+ * - auth.json：stored 凭证（dist/config.js:428-430 getAuthPath；dist/core/auth-storage.js:17
+ *   默认路径 join(getAgentDir(), 'auth.json')）
+ * - models.json：自定义 provider/模型定义与 providers[].apiKey（dist/config.js:424-426
+ *   getModelsPath；dist/core/model-runtime.js:76 默认路径）
+ * - models-store.json：动态 provider catalog 缓存（dist/core/models-store.js:29 默认路径，
+ *   model-runtime.js:80 落在 models.json 同目录）；条目经 FileAuthStorageBackend 存储、可能含
+ *   key，属凭证类；缺失安全（parse 空 content 返回 {}），存在则拷以保证 catalog 与真实环境一致。
+ * 刻意不带入：settings.json（global packages/extensions 清单是 npm 扩展注入源，缺失安全——
+ * dist/core/settings-manager.js loadFromStorage 空 content 返回 {}）、extensions/（全局扩展
+ * 自动发现目录，dist/core/package-manager.js addAutoDiscoveredResources join(globalBaseDir,
+ * 'extensions')）、skills/prompts/themes/tools/bin/sessions（等价性协议用例不涉及）。
+ */
+const CREDENTIAL_FILE_NAMES = ['auth.json', 'models.json', 'models-store.json'] as const
+
+/** 把真实 agentDir 中的凭证文件原样拷入临时 agentDir（存在才拷；探测已保证至少一份在位）。 */
+function copyCredentialFiles(sourceAgentDir: string, targetAgentDir: string): void {
+  for (const name of CREDENTIAL_FILE_NAMES) {
+    const source = join(sourceAgentDir, name)
+    if (!existsSync(source)) continue
+    copyFileSync(source, join(targetAgentDir, name))
+  }
 }
 
 /** provider 的 env API key 变量名（pi-ai env-api-keys.ts 映射表同形态：
@@ -283,6 +341,10 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
   const commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
 
   const sessionDir = options.sessionDir ?? mkdtempSync(join(tmpdir(), 'pi-equiv-'))
+  // agent dir 隔离（见文件头）：临时 agent dir 只含凭证文件拷贝，扩展不可见；
+  // 与 sessionDir 分开建目录，dispose 各自清理。
+  const agentDir = mkdtempSync(join(tmpdir(), 'pi-equiv-agent-'))
+  copyCredentialFiles(piAgentDir(), agentDir)
   const args = ['--mode', 'rpc', '--session-dir', sessionDir]
   if (model) args.push('--model', model)
   args.push('--approve')
@@ -291,11 +353,19 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
   }
   const proc: ChildProcess = spawn(PI_PATH, args, {
     cwd: sessionDir,
+    env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
 
   const pending = new Map<string, PendingEntry>()
   const events: PiStreamEvent[] = []
+  // turn 生命周期状态（设计 D1）：busy 状态机——prompt 的 ack 到达置位，本轮 agent_end 清态。
+  // 用事件游标推导而非 get_state 轮询 isStreaming：ack 与 streaming 翻真正先后是未实测时序断言，
+  // 且每 prompt 多一轮 RPC 往返；fixture 本就全量收事件，游标判定零额外 IPC。
+  let busy = false
+  let turnStartIdx = -1
+  const isPromptWithoutStreamingBehavior = (params: Record<string, unknown>): boolean =>
+    !('streamingBehavior' in params)
   const stderrLines: string[] = []
   const unparseableLines: string[] = []
   let msgCounter = 0
@@ -354,10 +424,21 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
       return
     }
     const event = asStreamEvent(msg)
-    if (event) events.push(event)
+    if (event) {
+      const idx = events.length
+      events.push(event)
+      // busy 清态：agent_end 出现在本轮起点下标之后才有效——上一轮遗留的旧 agent_end
+      // 不清本轮（事件新鲜度语义）。followUp 接续多轮期间 pi 只在队列 drain 后发最终
+      // agent_end（broadcast-getstate :146 注释口径），故首个中间 agent_end 根本不会到达。
+      if (busy && idx >= turnStartIdx && event.type === 'agent_end') {
+        busy = false
+        turnStartIdx = -1
+      }
+    }
   })
 
-  const sendCommand = (
+  // 内层原始发送（id 配对响应）；外层守卫版 sendCommand 对 prompt 入口套 busy 护栏
+  const rawSendCommand = (
     type: string,
     params: Record<string, unknown> = {},
     timeoutMs: number = commandTimeoutMs,
@@ -372,7 +453,19 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
         pending.delete(id)
         reject(new Error(`RPC "${type}" timed out after ${timeoutMs}ms${stderrTail()}`))
       }, timeoutMs)
-      pending.set(id, { resolve, reject, timer })
+      pending.set(id, {
+        resolve: (msg) => {
+          // ack 到达即置 busy（P-ack-order 已核实：ack 先于该轮 agent_end）；
+          // 带 streamingBehavior 的 prompt 是流中投递语义，不进护栏状态机
+          if (type === 'prompt' && isPromptWithoutStreamingBehavior(params)) {
+            busy = true
+            turnStartIdx = events.length
+          }
+          resolve(msg)
+        },
+        reject,
+        timer,
+      })
       proc.stdin!.write(JSON.stringify({ id, type, ...params }) + '\n', (err) => {
         if (err) {
           clearTimeout(timer)
@@ -381,6 +474,46 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
         }
       })
     })
+
+  /** abort 在途 turn 并等待 drain 至清态（护栏超时与 recover 共用的兜底层）。 */
+  const abortDrain = async (drainTimeoutMs: number): Promise<void> => {
+    try {
+      await rawSendCommand('abort')
+    } catch {
+      // 进程可能已退出/abort 已被处理：尽力而为，drain 循环会给出最终判定
+    }
+    const deadline = Date.now() + drainTimeoutMs
+    while (busy && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, EVENT_POLL_INTERVAL_MS))
+    }
+  }
+
+  /** busy 护栏（G1 本体）：busy=false 直接放行零开销（P-guard-noop by construction）；
+   * busy 超预算先 abort 再重试一次（D2），仍 busy 则抛带证据与恢复指引的错误。 */
+  const waitIdleGuard = async (): Promise<void> => {
+    if (!busy) return
+    const deadline = Date.now() + commandTimeoutMs
+    while (busy && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, EVENT_POLL_INTERVAL_MS))
+    }
+    if (!busy) return
+    await abortDrain(commandTimeoutMs)
+    if (busy) {
+      throw new Error(
+        `pi fixture busy guard: in-flight turn 未在预算内终结（abort+drain 各 ${commandTimeoutMs}ms 后仍 busy）${stderrTail()}\n` +
+          `👉 建议：对该 fixture 调 recover() 兜底，或单跑定位占用来源：npx vitest run <文件路径>`,
+      )
+    }
+  }
+
+  const sendCommand = (
+    type: string,
+    params: Record<string, unknown> = {},
+    timeoutMs: number = commandTimeoutMs,
+  ): Promise<PiRpcResponse> =>
+    type === 'prompt' && isPromptWithoutStreamingBehavior(params)
+      ? waitIdleGuard().then(() => rawSendCommand(type, params, timeoutMs))
+      : rawSendCommand(type, params, timeoutMs)
 
   const collectEvents = (predicate?: (event: PiStreamEvent) => boolean): PiStreamEvent[] =>
     predicate ? events.filter(predicate) : [...events]
@@ -391,12 +524,21 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
 
   const waitForEvent = (
     predicate: (event: PiStreamEvent) => boolean,
-    timeoutMs: number = commandTimeoutMs,
-  ): Promise<PiStreamEvent> =>
-    new Promise((resolve, reject) => {
+    opts: { timeoutMs?: number; since?: number } = {},
+  ): Promise<PiStreamEvent> => {
+    const timeoutMs = opts.timeoutMs ?? commandTimeoutMs
+    const since = opts.since ?? 0
+    return new Promise((resolve, reject) => {
       const startedAt = Date.now()
       const poll = (): void => {
-        const found = events.find(predicate)
+        // since 游标：只匹配下标之后的事件（D3 新鲜度语义）；缺省 0 = 既有全量匹配语义不变
+        let found: PiStreamEvent | undefined
+        for (let i = since; i < events.length; i++) {
+          if (predicate(events[i]!)) {
+            found = events[i]
+            break
+          }
+        }
         if (found) {
           resolve(found)
           return
@@ -413,6 +555,27 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
       }
       poll()
     })
+  }
+
+  /** 当前事件下标打点：markEvents() 触发动作 … waitForEvent(…, { since: 打点 }) 三步组合的游标原语 */
+  const markEvents = (): number => events.length
+
+  const recover = async (): Promise<void> => {
+    if (!busy) return
+    await abortDrain(commandTimeoutMs)
+    if (busy) {
+      throw new Error(`pi fixture recover failed: abort+drain ${commandTimeoutMs}ms 后仍 busy${stderrTail()}`)
+    }
+  }
+
+  const runTurn = async (params: { message: string }, timeoutMs?: number): Promise<PiStreamEvent> => {
+    const mark = markEvents()
+    await sendCommand('prompt', params)
+    return waitForEvent((e) => e.type === 'agent_end', {
+      since: mark,
+      timeoutMs: timeoutMs ?? commandTimeoutMs * 4,
+    })
+  }
 
   let disposed = false
   const dispose = async (): Promise<void> => {
@@ -435,6 +598,7 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
     rejectAll(new Error('pi fixture disposed'))
     rl.close()
     rmSync(sessionDir, { recursive: true, force: true })
+    rmSync(agentDir, { recursive: true, force: true })
   }
 
   // 冷启动就绪探针：get_state 是毫秒级只读 RPC；stdin 是管道，早写的数据缓冲到 pi
@@ -457,6 +621,9 @@ export async function spawnPiFixture(options: PiFixtureOptions = {}): Promise<Pi
     writeLine,
     collectEvents,
     waitForEvent,
+    markEvents,
+    runTurn,
+    recover,
     dispose,
   }
 }

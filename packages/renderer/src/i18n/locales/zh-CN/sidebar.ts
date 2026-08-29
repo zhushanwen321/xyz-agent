@@ -21,6 +21,8 @@ export default {
   retry: '重试',
   update: {
     newVersion: '新版本可用',
+    newVersionWithVersion: '发现新版本 v{version}',
+    versionTransition: '当前 v{from} → v{to}',
     downloading: '下载中 {percent}%',
     replacing: '替换中',
     restarting: '即将重启',
@@ -32,6 +34,23 @@ export default {
     installLater: '稍后再说',
     installNow: '立即重启安装',
     retry: '重试',
+    // 启动结果 toast（D5：升级成功/失败/回滚通知）
+    upgradedToast: '已升级到 v{version}',
+    upgradeFailed: '上次升级未完成',
+    rolledBack: '上次升级未完成，已恢复到 v{version}',
+    // A-D1：失败原因码细分文案（错误码→key 映射见 useAppUpdate LAUNCH_FAILURE_ERROR_KEYS）
+    upgradeFailedReadOnly: '应用位于只读位置（如 DMG），请移入应用程序文件夹后重试',
+    upgradeFailedBackup: '备份旧版本失败，请检查磁盘空间后重试',
+    upgradeFailedExtract: '解压新版本失败，请检查磁盘空间后重试',
+    upgradeFailedInternal: '升级过程内部错误，请重新检查更新并重试',
+    upgradeFailedMove: '替换文件失败，请检查磁盘空间后重试',
+    upgradeFailedSha: '新版本文件校验失败，请重新下载更新',
+    upgradeFailedSwap: '替换应用失败，请检查磁盘空间后重试',
+    upgradeFailedAppRunning: '升级因应用未退出而中断，请重启应用后重试',
+    upgradeFailedInstaller: '安装程序执行失败，请重新下载更新',
+    // RM2.3：GitHub API 限额退避中的非侵入提示（非错误，不进 error 态）
+    rateLimited: '检查更新接口已被 GitHub 限额，约 2 小时内暂停自动检查',
+    staleRelease: '检测到更新的版本，已为你刷新更新信息',
   },
   sessionItem: {
     rename: '重命名',

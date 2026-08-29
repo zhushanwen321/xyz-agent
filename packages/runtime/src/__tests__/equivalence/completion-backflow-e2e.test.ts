@@ -102,7 +102,7 @@ describe.skipIf(!REAL_PI_READY)(`completion backflow e2e real pi${REAL_PI_READY 
       // settled 多播（组合根 agentSettledListeners 的驱动器形态）：子 settled 事件边沿 → 分发。
       // 父侧仅维护 isGenerating 信号（D7 置位后由父 settled 复位），供内核 isIdle gate。
       const settledCbs: Array<(sid: string) => void> = []
-      void parentFx.waitForEvent((e) => e.type === 'agent_settled', STEP_TIMEOUT_MS * 3)
+      void parentFx.waitForEvent((e) => e.type === 'agent_settled', { timeoutMs: STEP_TIMEOUT_MS * 3 })
         .then(() => { parentView.isGenerating = false })
         .catch(() => {})
 
@@ -148,7 +148,7 @@ describe.skipIf(!REAL_PI_READY)(`completion backflow e2e real pi${REAL_PI_READY 
         message: 'Run ls in the current directory, then reply with exactly: U6-DONE',
       }, STEP_TIMEOUT_MS)
       expect(sendResp.success, '子 pi prompt 应受理成功').toBe(true)
-      await childFx.waitForEvent((e) => e.type === 'agent_settled', STEP_TIMEOUT_MS)
+      await childFx.waitForEvent((e) => e.type === 'agent_settled', { timeoutMs: STEP_TIMEOUT_MS })
 
       // 3.5 子 transcript 已 flush（agent_settled 晚于 pi finally flush）→ 扫唯一 jsonl
       // 回填 view 指针，再分发 settled（backflow 读到的即最终路径）
@@ -162,9 +162,9 @@ describe.skipIf(!REAL_PI_READY)(`completion backflow e2e real pi${REAL_PI_READY 
       for (const cb of [...settledCbs]) cb(childSessionId!)
 
       // ── 5. 父无人工输入自动开新 turn（回流唤醒的端到端证据）──
-      await parentFx.waitForEvent((e) => e.type === 'agent_start', STEP_TIMEOUT_MS)
+      await parentFx.waitForEvent((e) => e.type === 'agent_start', { timeoutMs: STEP_TIMEOUT_MS })
       // 等 turn 定局再读 entries（user message 已入树）
-      await parentFx.waitForEvent((e) => e.type === 'message_end', STEP_TIMEOUT_MS)
+      await parentFx.waitForEvent((e) => e.type === 'message_end', { timeoutMs: STEP_TIMEOUT_MS })
 
       // ── 6. get_entries(父) 校验通知文案（label/status/Full transcript 指针行）──
       const entriesResp = await parentFx.sendCommand('get_entries', {}, STEP_TIMEOUT_MS)

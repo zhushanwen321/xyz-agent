@@ -16,7 +16,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext, SessionCompactEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
@@ -39,6 +39,7 @@ import {
   ModelConfigService,
   setModelConfigService,
 } from "./execution/model-config-service.ts";
+import { bindNotifyLedgerHost, getBoundNotifyLedger, type NotifyLedgerHost } from "./execution/notify-ledger.ts";
 import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "./execution/session-reconstructor.ts";
 import type { ExecutionMode, SubagentRecord } from "./execution/types.ts";
 import { maybeCleanupExpiredSessionFiles } from "./execution/session-file-gc.ts";
@@ -410,6 +411,39 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       }
     }
 
+    // ── [U2] 通知账本装配 + 重启恢复（设计 D4：存在性 / 可达性分离）──
+    // bind 先于 service.initSession（notifier.revive 在其内——notify() 经
+    // getBoundNotifyLedger 消费账本）。recoverFromSession 扫 ledger/ack 两列 entry
+    // 差集：未销账号重放投递（已销账零重发，notifyId 幂等）；fork 继承未销账
+    // pending 属可接受语义（D4 归属规则——扫描域 = 单 session 文件，幂等键作用域
+    // 随文件域隔离）。compaction 存活情况归 session_compact handler 的条件降级（P-B4
+    // 探针阶段 5 实测，见 notify-ledger.ts compactionCheck）。
+    try {
+      const ledgerHost: NotifyLedgerHost = {
+        appendLedgerEntry: (customType, data) => {
+          pi.appendEntry(customType, data);
+        },
+        readSessionEntries: () => ctx.sessionManager.getEntries(),
+        isIdle: () => ctx.isIdle(),
+        onAgentSettled: (handler) => {
+          pi.on("agent_settled", handler);
+        },
+        sendDelivery: (message) => {
+          // D5 单通道：唯一发送形态 = sendCustomMessage({triggerTurn:true})，
+          // courier 已在发送前二次复查 isIdle，多通道投递选项已删（D5）。
+          pi.sendMessage(message, { triggerTurn: true });
+        },
+      };
+      // U4：重放观测已内聚到 ledger 分桶日志（recoveryReplays 桶经 extensionLogger
+      // 通道落盘），此处不再重复打日志。
+      bindNotifyLedgerHost(ledgerHost).recoverFromSession();
+    } catch (err) {
+      // 账本装配失败不阻断 session_start（通知退回 notifier 的内核路径）
+      logger.warn("[subagents] notify ledger bind failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     // ── subagents 域：双 Service 装配 ──
     const existingService = getSubagentService();
     const existingModelService = getModelConfigService();
@@ -586,6 +620,25 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       ctx,
       storeHealthy,
     });
+  });
+
+  // ════════════════════════════════════════════════════════════
+  //  [U2 P-B4 降级] session_compact：compaction 对 custom entry 保留行为实装未
+  //  验证——检测 ledger/ack entry 被 compaction 清除时按内存态补写（notify-ledger
+  //  compactionCheck；未清除则 no-op）。内存态在 compaction 后仍活着，作为补写源；
+  //  重启后的权威仍是两列 entry 差集（内存不承担销账职责）。
+  // ═══════════════════════════════════════════════════════
+  pi.on("session_compact", (_event: SessionCompactEvent, _ctx: ExtensionContext) => {
+    try {
+      const rewritten = getBoundNotifyLedger()?.compactionCheck() ?? 0;
+      if (rewritten > 0) {
+        logger.warn(`[subagents] notify ledger entries lost to compaction; rewrote ${rewritten} from memory`);
+      }
+    } catch (err) {
+      logger.warn("[subagents] notify ledger compactionCheck failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   });
 
   // ════════════════════════════════════════════════════════════

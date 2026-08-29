@@ -53,7 +53,7 @@ vi.mock('@/composables/features/search/useFileSearch', () => ({
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   model: { switchModel: vi.fn() },
   session: {
-    setThinkingLevel: vi.fn(),
+    setThinkingLevel: vi.fn(async (sessionId: string, level: string) => ({ sessionId, level })),
     getCommands: getCommandsMock,
     getSubagents: getSubagentsMock,
   },

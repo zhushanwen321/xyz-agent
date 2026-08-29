@@ -1,6 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -101,23 +101,18 @@ export interface ElectronAPI {
   /**
    * 检测最新可用版本。
    * @param opts.force 强制刷新缓存（默认走 1h 缓存）
-   * @returns 有新版返回 LatestReleaseInfo，无新版/失败/未注入返回 null
+   * @returns UpdateCheckResult：info 为新版信息（无新版/失败/未注入为 null）；
+   *   rateLimited=true 表示限额退避中（RM2.3 信号透传，renderer 显示非侵入提示）
    */
-  checkForUpdate(opts?: { force?: boolean }): Promise<LatestReleaseInfo | null>
+  checkForUpdate(opts?: { force?: boolean }): Promise<UpdateCheckResult>
   // ── 自动升级执行（w3）──────────────────────────────────────────
   /**
-   * 执行完整升级流程（下载 → 校验 → 替换 → 触发重启）。
-   * @param release checkForUpdate 返回的最新版本信息
-   * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
-   */
-  performUpdate(release: LatestReleaseInfo): Promise<{ triggerRestart: boolean }>
-  /**
-   * 拆分升级流程的下载阶段：下载 + 校验 + 写入预下载产物元信息。
+   * 拆分升级流程的下载阶段：版本解析（main 权威）+ 下载 + 校验 + 写入预下载产物元信息。
    * 下载成功后状态进入 'downloaded'，前端可调 updateInstall 触发安装。
-   * @param release checkForUpdate 返回的最新版本信息
+   * @param version 请求的目标版本号（renderer 只传意图，release 数据由 main 权威解析）
    * @returns downloaded=true 表示下载完成
    */
-  updateDownload(release: LatestReleaseInfo): Promise<{ downloaded: boolean }>
+  updateDownload(version: string): Promise<{ downloaded: boolean }>
   /**
    * 拆分升级流程的安装阶段：从预下载产物读取 release + filePath，执行替换 + 触发重启。
    * install 权威源是预下载产物（不信任前端传入的 release，堵装错版本漏洞）。
@@ -129,10 +124,15 @@ export interface ElectronAPI {
    * @returns 有效的 { release, filePath }，无预下载产物/损坏返回 null
    */
   getPreloaded(): Promise<{ release: LatestReleaseInfo; filePath: string } | null>
+  /**
+   * 读取启动结果（升级成功/失败/回滚通知）。
+   * main 侧一次性缓存：首次调用返回结果并清空，后续调用返回 null。
+   */
+  getLaunchResult(): Promise<LaunchResult | null>
   /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数 */
   onUpdateProgress(callback: (payload: { stage: UpdateStage; percent: number }) => void): () => void
-  /** 监听升级错误事件（stage + message + errorCode），返回取消订阅函数 */
-  onUpdateError(callback: (payload: { stage: string; message: string; errorCode?: string }) => void): () => void
+  /** 监听升级错误事件（stage + message + errorCode + suggestion），返回取消订阅函数 */
+  onUpdateError(callback: (payload: UpdateErrorPayload) => void): () => void
   /** 不支持当前平台时，打开备用下载页（release 页面） */
   openUpdateFallbackUrl(url: string): Promise<void>
   // ── 代理配置 ────────────────────────────────────────────────────
@@ -152,7 +152,7 @@ export interface ElectronAPI {
   /** 保存代理配置 */
   setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void>
   /** 测试代理连接 */
-  testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }>
+  testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<ProxyTestResult>
   // ── 升级提醒持久化标志（功能 1：常驻提醒）──────────────────────────
   /**
    * 读取升级提醒持久化标志（app 启动时调用以恢复「可升级」提醒）。
@@ -275,20 +275,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkForUpdate: (opts?: { force?: boolean }) =>
     ipcRenderer.invoke('update:check', { force: opts?.force }),
   // ── 自动升级执行（w3）──────────────────────────────────────
-  performUpdate: (release: LatestReleaseInfo) =>
-    ipcRenderer.invoke('update:perform', { release }),
+  updateDownload: (version: string) =>
+    ipcRenderer.invoke('update:download', { version }),
   // ── 自动升级拆分流程（download → install）──────────────────────
-  updateDownload: (release: LatestReleaseInfo) =>
-    ipcRenderer.invoke('update:download', { release }),
   updateInstall: () => ipcRenderer.invoke('update:install'),
   getPreloaded: () => ipcRenderer.invoke('update:getPreloaded'),
+  getLaunchResult: () => ipcRenderer.invoke('update:getLaunchResult'),
   onUpdateProgress: (callback: (payload: { stage: UpdateStage; percent: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { stage: UpdateStage; percent: number }) => callback(payload)
     ipcRenderer.on('update:progress', handler)
     return () => ipcRenderer.removeListener('update:progress', handler)
   },
-  onUpdateError: (callback: (payload: { stage: string; message: string; errorCode?: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, payload: { stage: string; message: string; errorCode?: string }) => callback(payload)
+  onUpdateError: (callback: (payload: UpdateErrorPayload) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: UpdateErrorPayload) => callback(payload)
     ipcRenderer.on('update:error', handler)
     return () => ipcRenderer.removeListener('update:error', handler)
   },

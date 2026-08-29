@@ -166,7 +166,7 @@ async function runFullChain(): Promise<{ result: FullChainResult; fx: PiFixture;
       try {
         uiRequest = await fx.waitForEvent(
           (e) => e.type === 'extension_ui_request' && e.title === SESSION_MANAGER_MARKER,
-          STEP_TIMEOUT_MS,
+          { timeoutMs: STEP_TIMEOUT_MS },
         )
       } catch (e) {
         if (attempt === 2) throw e
@@ -186,7 +186,7 @@ async function runFullChain(): Promise<{ result: FullChainResult; fx: PiFixture;
       (e) => e.type === 'turn_end'
         && Array.isArray(e.toolResults)
         && e.toolResults.some((tr) => (tr as { toolName?: string }).toolName === 'create_managed_session'),
-      STEP_TIMEOUT_MS,
+      { timeoutMs: STEP_TIMEOUT_MS },
     )
     timings.uiRequestToToolResultMs = Date.now() - tPrompt - timings.promptToUiRequestMs - timings.dispatchMs
 

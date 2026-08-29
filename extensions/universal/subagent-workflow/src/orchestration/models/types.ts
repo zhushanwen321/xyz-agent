@@ -101,6 +101,15 @@ export interface AgentCallOpts {
  */
   timeoutMs?: number;
  /**
+ * Turn 上限（turn limiter 用）。
+ *
+ * [预算语义对齐] 未传或 <=0 = 不限 turn；此时也不按 turns 估算 spawn watchdog——
+ * 仅当 env XYZ_SUBAGENT_SPAWN_WATCHDOG_MS 设置时才按绝对时限挂 watchdog（见
+ * session-runner.resolveSpawnWatchdogMs）。mapToExecuteOptions 原样透传到
+ * ExecuteOptions.maxTurns → 引擎 task-spec → runSpawn。
+ */
+  maxTurns?: number;
+ /**
  * Skill name to load (e.g. "code-review"). Resolved to SKILL.md path
  * and injected via --skill flag in the subprocess.
  */

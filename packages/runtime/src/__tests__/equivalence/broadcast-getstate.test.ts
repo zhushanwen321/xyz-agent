@@ -25,7 +25,7 @@
  * skip-if-no-real-pi：pi binary 或 LLM 凭证缺席的环境（如 CI）本 describe 整体 skip
  * （skip 计数 >0、fail 数 = 0；describe 名注入理由，约定见 pi-fixture.ts 文件头）。
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest'
 import { effectScope } from 'vue'
 import { textToSegments } from '@xyz-agent/shared'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -47,11 +47,14 @@ import { createChatStore } from '../../../../core/src/domain/chat/store.js'
 import { replayEntries, type PiEntry } from '../../../../core/src/domain/chat/apply-entry.js'
 
 /** 等 turn 完成的上限（真实 LLM 调用；对齐 live-reload.test.ts 余量口径） */
-const TURN_TIMEOUT_MS = 120_000
+// 预算校准 [HISTORICAL]：满载环境下（premerge 实测 test:runtime 832s vs 空闲 144s ≈ 5.8×）
+// mimo 单轮可超 120s，旧预算被真实慢击穿（红例 seen types 均含完整 turn 序列）。取 300s
+// 与 attach-lifecycle 口径一致；用例级 timeout 同步上调
+const TURN_TIMEOUT_MS = 300_000
 /** it 1 = 冷启动 + 3 个 turn（2 轮 prompt + followUp 投递）+ set_model + 实例收敛 + 双次权威拉取 */
-const STORM_TEST_TIMEOUT_MS = 420_000
+const STORM_TEST_TIMEOUT_MS = 600_000
 /** it 2 = 1 个带工具调用的 turn + 全量帧投递 + get_entries */
-const STORE_TEST_TIMEOUT_MS = 300_000
+const STORE_TEST_TIMEOUT_MS = 600_000
 
 /** 真实 timers 轮询等待（真实 pi 用例；fake timers 禁用于真实子进程 IO——W7/W8 同款） */
 async function waitUntil(label: string, predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
@@ -95,6 +98,12 @@ describe.skipIf(!REAL_PI_READY)(
     }
   })
 
+  // 失败兜底（设计 U3/G1）：上一用例失败后在途 turn 由 recover 截断，防 Agent is already
+  // processing 毒死同文件后续用例；非 busy 时零操作幂等，不影响正常用例
+  afterEach(async () => {
+    await fixture?.recover()
+  })
+
   it(
     '事件风暴（多轮对话 + followUp 队列 + 切模型）后实例快照与 stateSnapshot 广播 == 三 RPC 权威快照逐字段',
     { timeout: STORM_TEST_TIMEOUT_MS },
@@ -135,9 +144,9 @@ describe.skipIf(!REAL_PI_READY)(
       const countOf = (type: string) => fx.collectEvents((e) => e.type === type).length
       const thinkingLevelChangedBefore = countOf('thinking_level_changed')
 
-      // 第 1 轮对话
-      await fx.sendCommand('prompt', { message: 'Reply with exactly: w22-r1' })
-      await waitUntil('round-1 agent_end', () => agentEnds() > agentEndsBefore, TURN_TIMEOUT_MS)
+      // 第 1 轮对话（runTurn：原子化打点→prompt→只等本轮 agent_end，取代手工计数防御；
+      // agentEndsBefore 保留供第 2 轮复合断言累计口径引用）
+      await fx.runTurn({ message: 'Reply with exactly: w22-r1' }, TURN_TIMEOUT_MS)
       // 生产接线：agent_end → applyContextUpdate 汇聚点 → usage markDirty
       usageState.markDirty()
 
@@ -311,10 +320,8 @@ describe.skipIf(!REAL_PI_READY)(
       const text = 'Use the bash tool to run the command `echo w22-store` and reply with its exact output.'
       store.addPendingSend(sid)
       store.appendUser(sid, textToSegments(text))
-      await fx.sendCommand('prompt', { message: text })
-      const agentEnds = () => fx.collectEvents((e) => e.type === 'agent_end').length
-      const agentEndsBefore = agentEnds()
-      await waitUntil('store-feed turn agent_end', () => agentEnds() > agentEndsBefore, TURN_TIMEOUT_MS)
+      // runTurn 原语取代手工计数基线：空闲起步 prompt → 只等本轮 agent_end
+      await fx.runTurn({ message: text }, TURN_TIMEOUT_MS)
 
       // live 侧：起点后事件经完整生产帧链（adapter translate → EventInterpreter 编排 → send 帧），
       // 帧按产出序喂 store 单一入口（生产链路 interpreter send → ws → renderer applyMessageEvent；

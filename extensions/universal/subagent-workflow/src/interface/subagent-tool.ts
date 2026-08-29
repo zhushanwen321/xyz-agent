@@ -9,19 +9,19 @@
 // Theme、ExtensionContext）会触发 TS2307 误报（probe5d/5f 验证）。
 // 抽到顶层后参数类型由 alias 提供，绕过该 quirk。
 
+import { isAbsolute } from "node:path";
+
 import type { Component } from "@earendil-works/pi-tui";
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
-import { type Static, Type } from "typebox";
+import type { Static } from "typebox";
 
-import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
-import { THINKING_ORDER } from "../execution/model-resolver.ts";
 import { getSubagentService } from "../execution/subagent-service.ts";
 import type { SubagentToolResult } from "../execution/types.ts";
 import { extractAgentName } from "./format.ts";
 import { toGuiCtx } from "./gui-mappers.ts";
 import { adapter, cancelHandler, closeHandler, forkFromHandler, listHandler, messageHandler, startHandler } from "./subagent-actions.ts";
+import { SubagentParams } from "./subagent-tool-schema.ts";
 import { type RenderContext,renderSubagentCall, renderSubagentResult } from "./tool-render.ts";
 
 // ============================================================
@@ -55,138 +55,13 @@ type SubagentRenderResultCb = (
 ) => Component;
 
 // ============================================================
-// Params schema
-// ============================================================
-
-// Params schema（模块内消费，未导出）。
-//
-// action:"start" 的 13 字段（task/slug/agent/model/...）拍平在顶层，不再用 startParam
-// 嵌套容器包。原因：弱模型（GLM/DeepSeek）信任 schema 结构信号 > 文本信号，经常省略
-// startParam 嵌套层把 task/slug 直接平铺到顶层导致调用失败。拍平后 schema 结构与模型
-// 的自然倾向一致，消除这层误用。task/slug 必填性由 startHandler runtime 校验（flat
-// JSON Schema 无法表达「action 条件必填」）。
-//
-// TODO(long-term, option-A): listParam/cancelParam 仍标 Optional 也是 flat JSON Schema
-// 表达「action 分发条件必填」的妥协——长期方案是拆成 3 个独立 tool
-// （subagent_start / subagent_list / subagent_cancel），让每个 tool 的 schema 真实
-// 反映必填性。勿在此基础上继续堆 action 条件逻辑——要加就拆 tool。
-const SubagentParams = Type.Object({
-  action: StringEnum(["start", "list", "cancel", "message", "close", "fork-from"], {
-    description: "Operation: 'start' runs a subagent, 'list' shows subagents, 'cancel' stops a background subagent, 'message' sends a follow-up to a running subagent (one-shot subagents are auto-upgraded to conversation mode on first message), 'close' ends a running subagent (conversation-mode or one-shot), 'fork-from' spawns a NEW subagent inheriting an older one's history (recovery for restart-disconnected subagents; the old record is untouched).",
-  }),
-  // ── action:"start" fields (flattened to top level). task/slug REQUIRED for start. ──
-  // Missing/empty task or slug throws at runtime (startHandler).
-  // (flat JSON Schema can't express conditional requirement — see file-level TODO.)
-  task: Type.Optional(Type.String({
-    description: "REQUIRED for action:'start'. The task for the subagent to execute. Throws if missing or whitespace-only.",
-  })),
-  slug: Type.Optional(Type.String({
-    description:
-      "REQUIRED for action:'start'. Short label (≤35 chars) for this subagent, e.g. 'fix-login', 'extract-urls'. " +
-      "Shown in TUI to distinguish concurrent subagents.",
-    maxLength: SLUG_MAX_LENGTH,
-  })),
-  agent: Type.Optional(Type.String({
-    description: 'Agent ref: absolute path to the agent .md file (use <location> from <available_subagents>). If omitted, defaults to "general-purpose" — a generic agent that inherits the main agent\'s model and project context. Do not invent names — only use paths from the injected list.',
-  })),
-  model: Type.Optional(Type.String({
-    description: 'Model override in "provider/modelId" format. Resolution order (top wins): (1) this param, (2) agent .md frontmatter model, (3) the main agent\'s current model (zero-config default). An explicit model (param or frontmatter) that is missing or unauthorized THROWS — there is no silent fallback to the main model. Omit this param to inherit the main model.',
-  })),
-  thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
-    description: "Thinking depth override (derived from THINKING_ORDER SSOT, includes 'max'). Omit to default to the model's highest available level (not the main agent's level).",
-  })),
-  skillPath: Type.Optional(Type.String()),
-  appendSystemPrompt: Type.Optional(Type.Array(Type.String())),
-  schema: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-  maxTurns: Type.Optional(Type.Number({
-    description: "Turn limit. The subagent is terminated via SIGTERM after maxTurns turn_end events + graceTurns of slack. There is no graceful wrap-up message — the process is killed. 0 or omitted = unlimited.",
-  })),
-  graceTurns: Type.Optional(Type.Number({
-    description: "Extra turns allowed after maxTurns is reached before SIGTERM (default 2). Only meaningful when maxTurns is set.",
-  })),
-  fork: Type.Optional(Type.Boolean({
-    description: "Fork mode: inherit the parent's conversation context. When true, the subagent receives the parent's session file via --fork and builds a branched conversation (it sees prior turns/messages). The subagent still runs in a separate spawned child process (process isolation) — fork is about context inheritance, not process sharing; independent of worktree (file-system isolation, see worktree param). When to use: only when the task extends from the parent and genuinely needs key information from the parent's conversation history that a self-contained task prompt cannot carry — most tasks a plain prompt can describe do NOT need fork, so keep false by default and enable only when the user explicitly asks or the task truly depends on seeing prior turns. Caveat: fork drags in the parent's dispatch records and unrelated task context, polluting the subagent (it cannot tell 'context meant for me' from 'parent dispatching me'); when state lives in an external store the subagent can query (e.g., cw handoff), prefer that over fork.",
-  })),
-  worktree: Type.Optional(Type.Boolean({
-    description: "Worktree isolation: run the subagent in a dedicated git worktree, providing file-system level isolation from the parent session (prevents concurrent file-write conflicts). Independent of fork — worktree may be combined with fork:false (file isolation does not require context inheritance). When to use: parallel development scenarios where multiple agents write files concurrently and need isolated working directories (each gets its own checkout; merge later); leave false for single-agent or read-only tasks.",
-  })),
-  cwd: Type.Optional(Type.String({
-    description: 'Override the working directory for the subagent execution. Must be an absolute path. Defaults to the parent session\'s cwd.',
-  })),
-  conversation: Type.Optional(Type.Boolean({
-    description:
-      "Enable continuous chat with this subagent. When true, the subagent stays available after each reply — you can send follow-up messages (action:'message') and it keeps the full conversation context across rounds, with no need to re-spawn or re-explain. " +
-      "\nUse conversation:true for: multi-round collaboration (iterative review-fix loops, back-and-forth refinement), any task where you expect to send follow-up messages after the initial result. " +
-      "\nOmit (or false) for: one-shot tasks — single exploration, lookup, file read, code generation that needs no follow-up. The subagent runs once, notifies on completion, and is cleaned up automatically (default). " +
-      "\nFor long-interval collaboration (each round spaced >5min apart), set conversation:true AND increase idleTimeoutMs to avoid premature timeout. " +
-      "Cost: a conversation-mode subagent holds resources (memory, and a worktree if enabled) until you explicitly end it with action:'close'. Always close when done.",
-  })),
-  idleTimeoutMs: Type.Optional(Type.Number({
-    description:
-      "Idle timeout in milliseconds for conversation-mode subagents. Controls how long an idle subagent (between rounds) stays alive before automatic cleanup. " +
-      "Default: 300000 (5min). Override for long-interval collaboration where each round is spaced >5min apart. " +
-      "Only meaningful with conversation:true; ignored for one-shot subagents.",
-  })),
-  engine: Type.Optional(StringEnum(["pi", "zcode"], {
-    description:
-      "Execution engine for this subagent. Omit to inherit the global config. " +
-      "Three-layer priority: this parameter > agent .md frontmatter engine > config.json defaultEngine. " +
-      "Non-pi engines do not support conversation/fork/worktree (rejected before the subagent is created).",
-  })),
-  // action:"list" → listParam OPTIONAL (all fields optional, defaults apply). Ignored by other actions.
-  listParam: Type.Optional(Type.Object({
-    includeFinished: Type.Optional(Type.Boolean({
-      description: "Include finished (done/failed/cancelled) records. Default false (running only).",
-    })),
-    limit: Type.Optional(Type.Number({
-      description: "Max items to return. Default 20, clamped to [1, 100].",
-    })),
-  })),
-  // action:"cancel" → cancelParam.subagentId REQUIRED. Throws if missing. Ignored by other actions.
-  cancelParam: Type.Optional(Type.Object({
-    subagentId: Type.String({
-      description: "REQUIRED for action:'cancel'. The subagentId to cancel. Throws if missing. Only background subagents can be cancelled.",
-    }),
-  })),
-  // action:"message" → messageParam.subagentId + text REQUIRED. Any RUNNING subagent works —
-  // one-shot subagents are auto-upgraded to conversation mode on first message (SP-5); ended ones throw.
-  messageParam: Type.Optional(Type.Object({
-    subagentId: Type.String({
-      description: "REQUIRED for action:'message'. The subagentId to message (any running subagent; a one-shot subagent is auto-upgraded to conversation mode on first message, so you may also message one-shot subagents that are still running).",
-    }),
-    text: Type.String({
-      description: "REQUIRED for action:'message'. The message to send. Whitespace-only throws.",
-    }),
-    interrupt: Type.Optional(Type.Boolean({
-      description: "If true, interrupt the subagent's current work immediately (in-progress output stops, it switches to your new message). If false (default), the message is queued and processed after the current round completes. When the subagent is idle (between rounds), interrupt has no effect — the message always starts a new round.",
-    })),
-  })),
-  // action:"close" → closeParam.subagentId REQUIRED. Ends a running subagent (conversation-mode
-  // or one-shot — closeSubagent behavior split covers both).
-  closeParam: Type.Optional(Type.Object({
-    subagentId: Type.String({
-      description: "REQUIRED for action:'close'. The subagentId to close (any running subagent, conversation-mode or one-shot).",
-    }),
-    force: Type.Optional(Type.Boolean({
-      description: "If true, terminate immediately even if mid-round (in-progress work is lost). If false (default), let the current round finish, then close. When idle, the subagent closes immediately regardless.",
-    })),
-  })),
-  // action:"fork-from" → forkFromParam.sourceSubagentId REQUIRED ([v8.5 B] 断联恢复通道).
-  // 从旧 subagent 的会话历史 spawn 新 id：新进程 --fork 指向旧 session 文件（copy-on-write，
-  // 源文件只读不续写）；旧记录/状态机不动。pi 引擎限定（非 pi 在 execute 层拒绝）。
-  forkFromParam: Type.Optional(Type.Object({
-    sourceSubagentId: Type.String({
-      description: "REQUIRED for action:'fork-from'. The OLD subagentId whose conversation history becomes the inherited context of the new subagent. Works for records disconnected by a session restart or already finished; cancelled/worktree-bound/still-running ones are rejected with guidance.",
-    }),
-    prompt: Type.Optional(Type.String({
-      description: "Continuation instruction for the new subagent (what to do next on top of the inherited history). When omitted, a standard handover frame is injected: reconstruct done/decided/remaining from the inherited history, then continue to completion. Whitespace-only treated as omitted.",
-    })),
-  })),
-});
-
-// ============================================================
 // renderCall 预解析 helper
 // ============================================================
+//
+// Params schema（SubagentParams）定义在 ./subagent-tool-schema.ts 纯常量叶子：
+// subagent-tool 依赖树沉重，structured-output 侧跨包契约测试需要零依赖 import
+// schema 常量经真实 typebox 编译校验（SW 自身 vitest 把 typebox alias 到 mock，
+// 丢 options——required/description 断言必须以真实构造为基准）。
 
 // extractAgentName 已上移到 ../tui/format.ts 共享（tool-render / subagent-tool 复用）。
 
@@ -209,6 +84,47 @@ function isSubagentAction(value: string): value is SubagentAction {
 /** unknown 是否为含 model/thinkingLevel 的对象（类型守卫，替代全可选结构 `as`）。 */
 function isModelOverrideObj(a: unknown): a is { model?: unknown; thinkingLevel?: unknown } {
   return typeof a === "object" && a !== null;
+}
+
+/**
+ * start 路径类参数（skillPath / cwd）运行时守卫：绝对路径 + 禁 `..` 穿越。
+ *
+ * 校验链事实（pi 0.84.1 实装，登记 PS-20）：pi agent-loop 对注册 typebox schema
+ * 有运行时强校验——agent-loop.js:403-404 在 beforeToolCall / execute 之前调
+ * validateToolArguments（pi-ai validation.js:247：Value.Convert :249 + Compile :210
+ * + Check :265，失败 throw `Validation failed for tool` :272-273）→ catch 走
+ * immediate error（agent-loop.js:445-451），execute 不被调用。schema 的
+ * pattern（skillPath/cwd `^/`）/ maxLength（slug 35）是运行时强制而非仅模型可见
+ * 契约；tool-definition-wrapper.js:11 只原样透传 params，校验发生在上游 agent-loop 层。
+ *
+ * 工具层守卫定位 = defense-in-depth + schema 表达力缺口，非「pi 无校验」：
+ *   - action 条件必填（task/slug 仅 action=start 必填）flat JSON Schema 表达不了，
+ *     只能在 startHandler 运行时校验
+ *   - `..` 穿越段拒绝超出 pattern 能力（`^/` 放行 "/a/../b"），穿越语义只能在
+ *     工具层判——与 slug maxLength 双闸同理（schema 强制之上再叠 handler 兜底）
+ *
+ * 规则：
+ *   - 绝对路径（isAbsolute；`~` 缩写不是绝对路径，拒绝并指引展开后重试——
+ *     下游 session-runner 把该值原样拼进 `--skill <path>` / spawn cwd，不展开 `~`）
+ *   - 任意 `..` 路径段拒绝（按 /[\\/] 分段判断而非子串——"a..b" 不是穿越）：
+ *     相对穿越让子进程读到意图外的目录
+ *
+ * 校验失败 immediate throw（与 action 枚举守卫同风格）：pi 只对 execute throw 置
+ * isError:true，错误文案原样进 toolResult。
+ */
+function assertSafeStartPath(value: string, param: "skillPath" | "cwd"): void {
+  if (value.split(/[\\/]/).includes("..")) {
+    throw new Error(
+      `${param} must not contain '..' path segments (got "${value}"). ` +
+      `Pass a normalized absolute path — traversal segments are rejected.`,
+    );
+  }
+  if (!isAbsolute(value)) {
+    throw new Error(
+      `${param} must be an absolute path (got "${value}"). ` +
+      `Expand '~' yourself and pass the full path, e.g. "/Users/me/project".`,
+    );
+  }
 }
 
 /** 从 unknown args 安全提取 model/thinkingLevel override（传给 resolveModel）。
@@ -256,7 +172,7 @@ action:"list" before action:"start" — a reusable running subagent may exist; c
 
 \`\`\`
 {"action":"start","task":"<your task>","slug":"<kebab-case>"}
-{"action":"start","task":"...","slug":"fix-login","agent":"coder","model":"anthropic/claude-3.5-sonnet","fork":true}
+{"action":"start","task":"...","slug":"fix-login","agent":"/abs/path/coder.md","model":"anthropic/claude-3.5-sonnet","fork":true}
 {"action":"start","task":"review iteratively","slug":"review","conversation":true}
 {"action":"message","messageParam":{"subagentId":"sa-550e8400","text":"now also handle the empty-list case"}}
 {"action":"message","messageParam":{"subagentId":"sa-550e8400","text":"stop, switch direction to X","interrupt":true}}
@@ -395,6 +311,10 @@ const executeSubagent: SubagentExecuteCb = async (
   }
   switch (params.action) {
     case "start":
+      // 路径类参数守卫（三通道对称审查 + MF-13）：skillPath/cwd 在进入 handler 前
+      // immediate throw，不产生半启动 record（与 action 枚举守卫同风格）。
+      if (params.skillPath !== undefined) assertSafeStartPath(params.skillPath, "skillPath");
+      if (params.cwd !== undefined) assertSafeStartPath(params.cwd, "cwd");
       // 拍平后直接传顶层 params（StartHandlerInput 是 SubagentExecuteParams 子集，
       // action/listParam/cancelParam 被忽略；task/slug 必填性由 startHandler 校验）。
       return adapter({ action: "start", domain: await startHandler(service, params, signal, _ctx?.model) }, toGuiCtx(_ctx));

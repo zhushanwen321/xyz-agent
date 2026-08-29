@@ -14,6 +14,8 @@ import {
   getTotalUsage,
   markReconstructedStatus,
   nextRoundBaseTurnIndex,
+  deriveOutcome,
+  projectOutcome,
   project,
   projectLiveProgress,
   snapshot,
@@ -886,6 +888,106 @@ describe("completeRecord", () => {
     completeRecord(r, failedResult, "failed");
     expect(r.error).toBe("oops");
   });
+
+  // ── U3 C-outcome：completeRecord 唯一写入点冻结 outcome ──
+
+  it("[U3] 唯一写入点冻结 outcome：completed / failed / cancelled", () => {
+    const ok = makeRecord();
+    ok.status = "closed";
+    completeRecord(ok, SAMPLE_RESULT, "closed", "gc");
+    expect(ok.outcome).toBe("completed");
+    expect(ok.closedReason).toBe("gc");
+
+    const failed = makeRecord();
+    failed.status = "closed";
+    const failedResult: AgentResult = { ...SAMPLE_RESULT, success: false, error: "oops" };
+    completeRecord(failed, failedResult, "closed", "gc");
+    expect(failed.outcome).toBe("failed");
+
+    // 取消优先于 error（abort 合成 result 可能携带 error，取消语义优先）
+    const cancelled = makeRecord();
+    cancelled.status = "closed";
+    completeRecord(
+      cancelled,
+      { ...SAMPLE_RESULT, success: false, error: "aborted by user" },
+      "closed",
+      "cancelled",
+    );
+    expect(cancelled.outcome).toBe("cancelled");
+  });
+
+  it("[U3][D6 显式取舍] parent-shutdown 合成关闭（error='closed due to ...'）→ outcome 'failed'", () => {
+    // disposeAllRecords 合成 result 恒写 success:false + error:"closed due to ${reason}"
+    // ——语义为「父进程关闭时子 agent 未完成即失败」，选定行为而非疏漏。
+    const r = makeRecord();
+    r.status = "closed";
+    completeRecord(
+      r,
+      { ...SAMPLE_RESULT, success: false, error: "closed due to parent-shutdown" },
+      "closed",
+      "parent-shutdown",
+    );
+    expect(r.outcome).toBe("failed");
+  });
+
+  it("[U3] patchFile 语义不变：completeRecord 不触碰 patchFile/result，仅新增 outcome", () => {
+    const r = makeRecord({ patchFile: "/tmp/patches/sa-x.patch" });
+    r.status = "closed";
+    completeRecord(r, SAMPLE_RESULT, "closed", "gc");
+    expect(r.patchFile).toBe("/tmp/patches/sa-x.patch");
+    expect(r.result).toBe("done");
+    expect(r.outcome).toBe("completed");
+  });
+});
+
+// ============================================================
+// deriveOutcome / projectOutcome（U3 C-outcome 单一权威派生）
+// ============================================================
+describe("deriveOutcome（单一权威终态派生）", () => {
+  it("completed：closed + 无 error（gc / user-close 正常完成）", () => {
+    expect(deriveOutcome("gc", undefined)).toBe("completed");
+    expect(deriveOutcome("user-close", undefined)).toBe("completed");
+  });
+
+  it("failed：closed + error 非空（gc 失败）", () => {
+    expect(deriveOutcome("gc", "spawn EPIPE")).toBe("failed");
+  });
+
+  it("failed：parent-shutdown/parent-fork/parent-new 合成关闭（D6 显式取舍，勿改 cancelled）", () => {
+    expect(deriveOutcome("parent-shutdown", "closed due to parent-shutdown")).toBe("failed");
+    expect(deriveOutcome("parent-fork", "closed due to parent-fork")).toBe("failed");
+    expect(deriveOutcome("parent-new", "closed due to parent-new")).toBe("failed");
+  });
+
+  it("cancelled：取消优先于 error（abort 合成 result 可能带 error）", () => {
+    expect(deriveOutcome("cancelled", undefined)).toBe("cancelled");
+    expect(deriveOutcome("cancelled", "aborted by user")).toBe("cancelled");
+  });
+
+  it("空串 error 不构成 failed（与旧三处同构的 `record.error &&` truthy 判定逐字对齐）", () => {
+    expect(deriveOutcome("gc", "")).toBe("completed");
+  });
+});
+
+describe("projectOutcome（投影唯一出口）", () => {
+  it("running → undefined（终态语义不适用活跃态；即使误带 outcome 也拦截）", () => {
+    expect(projectOutcome({ status: "running" })).toBeUndefined();
+    expect(projectOutcome({ status: "running", outcome: "completed" })).toBeUndefined();
+  });
+
+  it("closed + 一等 outcome → 直读透传", () => {
+    expect(projectOutcome({ status: "closed", outcome: "failed" })).toBe("failed");
+    expect(projectOutcome({ status: "closed", outcome: "cancelled" })).toBe("cancelled");
+  });
+
+  it("closed + 无 outcome（存量/重建 record）→ deriveOutcome(closedReason, error) 兑底", () => {
+    expect(projectOutcome({ status: "closed", closedReason: "gc", error: "boom" })).toBe("failed");
+    expect(projectOutcome({ status: "closed", closedReason: "cancelled" })).toBe("cancelled");
+    expect(projectOutcome({ status: "closed", closedReason: "gc" })).toBe("completed");
+    // 连 closedReason/error 都缺失的最旧存量：兜底为 completed（与旧 closedReason??'gc'
+    // 兑底显示语义一致）
+    expect(projectOutcome({ status: "closed" })).toBe("completed");
+  });
 });
 
 // ============================================================
@@ -926,6 +1028,14 @@ describe("projections", () => {
       const d = project(r);
       expect(d.mode).toBe("background");
       expect(d.sessionFile).toBe("bg-1-abc.jsonl");
+    });
+
+    it("[U3] project 投影携带 outcome：一等字段直读 / 存量兑底 / running undefined", () => {
+      const done = makeRecord({ status: "closed", outcome: "completed", closedReason: "gc" });
+      expect(project(done).outcome).toBe("completed");
+      const legacy = makeRecord({ status: "closed", closedReason: "gc", error: "boom" });
+      expect(project(legacy).outcome).toBe("failed");
+      expect(project(makeRecord({ status: "running" })).outcome).toBeUndefined();
     });
 
     it("sessionFile is undefined when record.sessionFile unset", () => {

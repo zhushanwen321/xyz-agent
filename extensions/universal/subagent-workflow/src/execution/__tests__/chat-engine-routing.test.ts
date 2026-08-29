@@ -176,10 +176,14 @@ const CTX_MODEL: ModelInfo = { id: "m", name: "M", provider: "p", reasoning: fal
 
 /** registry：可解析 "zcode/glm"（taskSpec 字段用例的显式 model），其余未配置。 */
 function fakeRegistry(): ModelRegistryLike {
+  // [U1] getAvailable 与 find 必须同源：assertCanonicalModelRef 以 getAvailable 为
+  // 全等/孪生扫描面（D1④ 孪生守卫需复扫 registry 全集）。旧 mock 只在 find 特判、
+  // getAvailable 返回空，与真实 registry 契约（find 可命中 ⇔ getAvailable 列出）不符。
+  const AVAILABLE: ModelInfo[] = [{ id: "glm", name: "GLM", provider: "zcode", reasoning: true }];
   return {
-    getAvailable: () => [],
+    getAvailable: () => AVAILABLE,
     find: (provider: string, id: string) =>
-      provider === "zcode" && id === "glm" ? { id: "glm", name: "GLM", provider: "zcode", reasoning: true } : undefined,
+      AVAILABLE.find((m) => m.provider === provider && m.id === id),
     hasConfiguredAuth: () => true,
   };
 }

@@ -200,6 +200,19 @@ describe("run ① prepare 期错误：进程创建前 reject、不产生 handle"
       /engine_capability_unsupported/,
     );
   });
+
+  it("maxTurns（pi 专属）→ engine_capability_unsupported，不调 launch（U4：静默丢弃会造成假上限）", async () => {
+    const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
+    const engine = makeEngine({ launch: fake.launch });
+    await expect(engine.run(makeTask({ maxTurns: 10 }), makeCtx())).rejects.toThrowError(
+      /engine_capability_unsupported/,
+    );
+    // 恢复指引：去掉 maxTurns 或改用 pi 引擎
+    await expect(engine.run(makeTask({ maxTurns: 10 }), makeCtx())).rejects.toThrowError(
+      /maxTurns|engine: 'pi'/,
+    );
+    expect(fake.calls).toHaveLength(0);
+  });
 });
 
 describe("run ② 成功路径：golden stdout → outcome/handle/事件合成", () => {

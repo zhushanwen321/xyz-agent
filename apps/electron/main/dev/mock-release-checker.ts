@@ -5,7 +5,7 @@
  * 返回伪造的 LatestReleaseInfo（version 999.999.999 永远比当前版本新），
  * 让前端 UpdateButton 显示「可升级」态，便于 Playwright 截图验证。
  *
- * 真实升级流程（performUpdate）仍会因 dev 模式被 MacUpdater 拒绝
+ * 真实升级流程（download + install）仍会因 dev 模式被 MacUpdater 拒绝
  * （app.isPackaged=false 抛 UpdateError），这是有意为之——
  * P2 只验证「检测 → UI 显示」，不验证「真实替换」（P3 才做）。
  *
@@ -44,9 +44,9 @@ const MOCK_RELEASE: LatestReleaseInfo = {
   htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/dev-mock',
   assets: {
     // macArm64Zip 是必须的（MacUpdater 走此 asset）；指向不存在的 URL，
-    // performUpdate 下载时会失败——但 P2 不走到这步（只验证检测 + UI）。
+    // 真实下载时会失败——但 P2 不走到这步（只验证检测 + UI）。
     // downloadUrl 用合法的 GitHub URL（即使 404），以便通过 validateRelease
-    // 白名单校验（update:perform handler 在 performUpdate 前会校验 payload）。
+    // 白名单校验（install 路径会校验从 preloaded 读出的 release）。
     macArm64Zip: {
       name: 'TaiJi-mac-arm64.zip',
       downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v999.999.999/TaiJi-mac-arm64.zip',

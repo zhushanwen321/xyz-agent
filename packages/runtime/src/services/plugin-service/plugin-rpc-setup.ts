@@ -209,21 +209,22 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       return active?.modelId ?? ''
     },
     setModel: async (model: string) => {
-      if (!deps.sessionService) return
+      // U6 回执普查：返回 get_state 读回的生效模型复合串（pi pattern 换模时 ≠ 请求值）；
+      // 无 sessionService / 无活跃 session / 非法复合串的降级路径返回空串。
+      if (!deps.sessionService) return ''
       const active = ctx.activeSessionResolver.resolve()
-      if (!active) return
+      if (!active) return ''
       const parts = model.split('/')
-      if (parts.length < MIN_MODEL_PARTS) return
+      if (parts.length < MIN_MODEL_PARTS) return ''
       // 复合串切分边界（design D5）：parts[0] 是 provider id，从插件传入的 "providerId/modelId" 切出
       const provider = parts[0] as ProviderId
       const modelId = parts.slice(1).join('/')
-      // Unified entry: persist + broadcast included
+      // Unified entry: persist + broadcast included（返回生效模型，session-service 读回）
       if (deps.modelService) {
-        await deps.modelService.switchModel(active.id, provider, modelId)
-      } else {
-        // Fallback: session-only (no persist/broadcast)
-        await deps.sessionService.switchModel(active.id, provider, modelId)
+        return await deps.modelService.switchModel(active.id, provider, modelId)
       }
+      // Fallback: session-only (no persist/broadcast)
+      return await deps.sessionService.switchModel(active.id, provider, modelId)
     },
     getThinkingLevel: () => {
       if (!deps.sessionService) return 'off'
@@ -231,14 +232,15 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       return active?.thinkingLevel ?? 'off'
     },
     setThinkingLevel: async (level: string) => {
-      if (!deps.sessionService) return
+      // U6 回执普查：返回 pi 钳制后的生效档（两条路径均 set→get_state→effective）；
+      // 降级路径返回空串。
+      if (!deps.sessionService) return ''
       const active = ctx.activeSessionResolver.resolve()
-      if (!active) return
+      if (!active) return ''
       if (deps.modelService) {
-        await deps.modelService.setThinkingLevel(active.id, level)
-      } else {
-        await deps.sessionService.setThinkingLevel(active.id, level)
+        return await deps.modelService.setThinkingLevel(active.id, level)
       }
+      return await deps.sessionService.setThinkingLevel(active.id, level)
     },
     getActiveTools: () => {
       return Array.from(toolRegistry.values()).map(e => e.schema.name)

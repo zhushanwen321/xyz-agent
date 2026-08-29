@@ -98,7 +98,8 @@ export interface EventInterpreterOptions {
    * W7 data-source-governance：thinkingLevel ReplicatedState 实例的延迟解析器。
    *
    * thinking_level_changed 到达时调 thinkingLevelState()?.markDirty()——事件只做失效；
-   * pi 同档位切换不发射事件，由实例的周期兜底（pollIntervalMs 30s）覆盖。延迟解析
+   * pi 同档位切换不发射事件，由 setThinkingLevel RPC 成功响应驱动的 markDirty 覆盖
+   *（U6 删除了实例的 30s 周期兜底轮询，D9 附录 C.4）。延迟解析
    * （与 pingPi 同款模式）：interpreter 在 session 创建时构造，那时实例可能尚未
    * 注册（initializeManagedSession 先建 adapter 后注册实例）；session 已销毁时解析为
    * undefined（实例已 dispose，markDirty 本也是 no-op），安全跳过。

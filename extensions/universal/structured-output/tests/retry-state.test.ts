@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { RetryState } from "../src/workflow-hook.js";
 
-describe("RetryState transition table (IF-7)", () => {
+describe("RetryState transition table (IF-7 + U2 terminal)", () => {
 	it("① 成功短路：onToolExecEnd(false) → soSucceededEver=true，onTurnEnd 不翻转", () => {
 		const s = new RetryState();
 		const r = s.onToolExecEnd(false);
@@ -103,17 +103,53 @@ describe("RetryState transition table (IF-7)", () => {
 		expect(s.hookRetryCount).toBe(1);
 	});
 
-	it("reset() 四字段归零（IF-7 完整契约）", () => {
+	it("reset() 五字段归零（IF-7 完整契约 + U2 terminal）", () => {
 		const s = new RetryState();
 		s.onToolExecEnd(true, "err");
 		s.onTurnEnd();
 		s.onToolExecEnd(false);
+		s.markTerminal();
 		expect(s.soSucceededEver).toBe(true);
+		expect(s.terminal).toBe(true);
 
 		s.reset();
 		expect(s.soCallCount).toBe(0);
 		expect(s.soSucceededEver).toBe(false);
 		expect(s.hookRetryCount).toBe(0);
 		expect(s.lastSchemaError).toBeNull();
+		expect(s.terminal).toBe(false);
+	});
+
+	// ── U2（D3）terminal 态行为契约 ────────────────────────────────
+
+	it("⑦ terminal 初始 false；markTerminal() 置位且不可逆（重复调用无副作用）", () => {
+		const s = new RetryState();
+		expect(s.terminal).toBe(false);
+		s.markTerminal();
+		expect(s.terminal).toBe(true);
+		// 不可逆：再 mark 不变化（无计数/状态副作用）
+		s.markTerminal();
+		expect(s.terminal).toBe(true);
+	});
+
+	it("⑧ terminal 不阻断 onToolExecEnd 记录（闸门幂等，重复事件无害；hook 侧只在 turn_end 读 terminal）", () => {
+		const s = new RetryState();
+		s.markTerminal();
+		const r = s.onToolExecEnd(true, "late error");
+		expect(r).toEqual({ shouldSteer: true });
+		expect(s.soCallCount).toBe(1);
+		expect(s.lastSchemaError).toBe("late error");
+		expect(s.terminal).toBe(true);
+	});
+
+	it("⑨ terminal 后 onTurnEnd 仍可调用（状态机完整；hook 守卫在调用方拦，不在这里）", () => {
+		const s = new RetryState();
+		s.onToolExecEnd(true, "err");
+		s.markTerminal();
+		s.onTurnEnd();
+		expect(s.soCallCount).toBe(0);
+		expect(s.hookRetryCount).toBe(1);
+		// terminal 是独立于 steer 计数的终态标记
+		expect(s.terminal).toBe(true);
 	});
 });

@@ -1,6 +1,6 @@
 {
   "name": "xyz-agent",
-  "version": "0.9.9",
+  "version": "0.9.10",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.27.0",
@@ -22,6 +22,7 @@
     "extensions:typecheck": "cd extensions && npx tsc --noEmit",
     "extensions:lint": "npx eslint extensions/",
     "extensions:test": "pnpm -r --filter '@zhushanwen/pi-*' test",
+    "extensions:test:isolated": "pnpm -r --filter '@zhushanwen/pi-*' test:isolated",
     "verify:coexistence-flag": "node scripts/verify-coexistence-flag.mjs",
     "gen:builtin-providers": "node packages/runtime/scripts/gen-builtin-providers.mjs",
     "prebuild": "node packages/runtime/scripts/gen-builtin-providers.mjs"

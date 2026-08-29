@@ -7,7 +7,7 @@
  * 通过 vi.mock("../lifecycle.ts") 控制 runWorkflow：返回固定 runId + 把预构造的
  * child run 注入 deps.runs，使 pollRunToResult 首轮即命中 done 返回（无需真实 worker）。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Budget } from "../models/budget.ts";
 import type { RunSpec } from "../models/run-spec.ts";
@@ -26,9 +26,9 @@ vi.mock("../lifecycle.ts", () => ({
 
 // import 在 vi.mock 之后（hoisting 保证拿到 mock 版本）。runWorkflow 从被 mock 的
 // lifecycle 模块导入，与 launcher.ts 内部引用的是同一 mock 实例。
-import { runWorkflow } from "../lifecycle.ts";
+import { runWorkflow, abortRun } from "../lifecycle.ts";
 import { ArgsValidationError } from "../args-validator.ts";
-import { executeNestedWorkflow } from "../launcher.ts";
+import { RUN_WATCHDOG_ENV, executeNestedWorkflow, runAndWait } from "../launcher.ts";
 
 const MOCK_RUN_ID = "wf-test-child";
 
@@ -69,12 +69,15 @@ function makeParentRun(opts: {
   parentWorkflowChain?: readonly string[];
   budget?: Budget;
   aborted?: boolean;
+  /** 预算语义对齐：父 run 级时间预算（deadline 传导测试用） */
+  budgetTimeMs?: number;
 } = {}): WorkflowRun {
   const controller = new AbortController();
   if (opts.aborted) controller.abort();
   const spec = {
     scriptName: opts.scriptName ?? "parent-wf",
     parentWorkflowChain: opts.parentWorkflowChain,
+    budgetTimeMs: opts.budgetTimeMs,
   };
   return {
     spec,
@@ -105,6 +108,24 @@ function makeDoneChildRun(opts: {
       scriptResult: opts.scriptResult,
       error: opts.error,
       budget: { usedTokens: opts.usedTokens ?? 0, usedCost: opts.usedCost ?? 0 },
+    },
+  } as unknown as WorkflowRun;
+}
+
+/**
+ * 构造 mock child WorkflowRun（running 态，pollRunToResult 持续轮询）。
+ * state 可变——deadline 测试中手动翻转为 done 模拟子 run 完成。
+ */
+function makeRunningChildRun(): WorkflowRun {
+  return {
+    runId: MOCK_RUN_ID,
+    spec: { scriptName: "child-wf" },
+    state: {
+      status: "running",
+      reason: undefined,
+      scriptResult: undefined,
+      error: undefined,
+      budget: { usedTokens: 0, usedCost: 0 },
     },
   } as unknown as WorkflowRun;
 }
@@ -141,6 +162,17 @@ function setupRunWorkflow(childRun: WorkflowRun): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // [F-4 假红源修复] env 隔离对称化：本文件的「不限时」用例（deadline 传导 /
+  // runAndWait timeoutMs 语义）依赖「XYZ_SUBAGENT_RUN_WATCHDOG_MS 未设」基线，
+  // 宿主 shell export 即假红（U7 describe 内部 stubEnv 不覆盖同文件其他用例）。
+  // 空串 = 未设（getEnvRunWatchdogMs 的 raw falsy 判定）；SPAWN_WATCHDOG 同款
+  // 防御（launcher 不读，防未来接线后回归）。
+  vi.stubEnv(RUN_WATCHDOG_ENV, "");
+  vi.stubEnv("XYZ_SUBAGENT_SPAWN_WATCHDOG_MS", "");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 // ── tests ────────────────────────────────────────────────────
@@ -273,5 +305,296 @@ describe("executeNestedWorkflow", () => {
 
     expect(result.content).toBe("");
     expect(result.error).toBe("agent exploded");
+  });
+
+  // ── deadline 传导（预算语义对齐 2026-08）──
+  // 语义：父 spec.budgetTimeMs 显式设定 → 原样作为子 run 轮询 deadline（不 min(DEFAULT)
+  // 封顶）；父未设 → 无 deadline。旧实现 min(父, 10min) 把父 time:2h 截断到 10min。
+  describe("deadline 传导（预算语义对齐）", () => {
+    it("父 budgetTimeMs=2h → 子 deadline 传导 2h（不 min(10min) 封顶）", async () => {
+      vi.useFakeTimers();
+      try {
+        const parent = makeParentRun({ budgetTimeMs: 7_200_000 });
+        const childRun = makeRunningChildRun();
+        const deps = makeDeps({ script: makeScript(), childRun });
+        setupRunWorkflow(childRun);
+
+        const promise = executeNestedWorkflow("child-wf", {}, parent, deps);
+
+        // 越过旧 10min 默认：不应 abort（若回归 min 封顶，这里会触发 time_limited abort）
+        await vi.advanceTimersByTimeAsync(600_000 + 500);
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+
+        // 2h deadline 到期：abortRun 收到完整 7200000ms 超时 + time_limited
+        await vi.advanceTimersByTimeAsync(7_200_000 + 1_000 - 600_500);
+        const result = await promise;
+        expect(vi.mocked(abortRun)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(abortRun)).toHaveBeenCalledWith(
+          MOCK_RUN_ID,
+          deps,
+          "Workflow timed out after 7200000ms",
+          "time_limited",
+        );
+        void result;
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("父未传 budgetTimeMs → 无 deadline（远超旧 10min 默认不 abort，子完成正常返回）", async () => {
+      vi.useFakeTimers();
+      try {
+        const parent = makeParentRun();
+        const childRun = makeRunningChildRun();
+        const deps = makeDeps({ script: makeScript(), childRun });
+        setupRunWorkflow(childRun);
+
+        const promise = executeNestedWorkflow("child-wf", {}, parent, deps);
+
+        // 旧实现 DEFAULT_RUNANDWAIT_TIMEOUT_MS=10min 会在此 abort；不限时则不 abort
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 500);
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+
+        // 子 run 完成 → 正常返回 completed（deadline 仍是 undefined）
+        childRun.state.status = "done";
+        childRun.state.reason = "completed";
+        childRun.state.scriptResult = "ok";
+        await vi.advanceTimersByTimeAsync(500);
+        const result = await promise;
+        // 成功分支返回 { content, parsedOutput? }（无 reason 字段）——string scriptResult 走 content
+        expect(result.content).toBe("ok");
+        expect(result.error).toBeUndefined();
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // [U2] 预算语义统一：budgetTimeMs <=0（含 0/负）与 undefined 同义 = 不限——
+    // 旧实现 0 传导给子 run 后 deadline=now 立即超时（"timed out after 0ms"），与
+    // lifecycle 的 0=不限（>0 才挂 scheduleTimeBudget）语义分裂。
+    it("父 budgetTimeMs=0 → 不限（旧实现立即超时；子 run 晚完成正常返回，U2）", async () => {
+      vi.useFakeTimers();
+      try {
+        const parent = makeParentRun({ budgetTimeMs: 0 });
+        const childRun = makeRunningChildRun();
+        const deps = makeDeps({ script: makeScript(), childRun });
+        setupRunWorkflow(childRun);
+
+        const promise = executeNestedWorkflow("child-wf", {}, parent, deps);
+
+        // 旧实现 0 落成 deadline=now：首轮轮询即 abort time_limited。不限时则不 abort
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+
+        childRun.state.status = "done";
+        childRun.state.reason = "completed";
+        childRun.state.scriptResult = "ok";
+        await vi.advanceTimersByTimeAsync(500);
+        const result = await promise;
+        expect(result.content).toBe("ok");
+        expect(result.error).toBeUndefined();
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("父 budgetTimeMs=-5000 → 不限且错误串无 \"-5000ms\"（U2 负数同义不限）", async () => {
+      vi.useFakeTimers();
+      try {
+        const parent = makeParentRun({ budgetTimeMs: -5_000 });
+        const childRun = makeRunningChildRun();
+        const deps = makeDeps({ script: makeScript(), childRun });
+        setupRunWorkflow(childRun);
+
+        const promise = executeNestedWorkflow("child-wf", {}, parent, deps);
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+
+        childRun.state.status = "done";
+        childRun.state.reason = "completed";
+        childRun.state.scriptResult = "ok";
+        await vi.advanceTimersByTimeAsync(500);
+        const result = await promise;
+        expect(result.content).toBe("ok");
+        expect(result.error).toBeUndefined();
+        // 防御：任何路径都不产生 "timed out after -5000ms" 类错误串
+        const abortCalls = vi.mocked(abortRun).mock.calls.map((c) => String(c[2]));
+        expect(abortCalls.join(";")).not.toContain("-5000ms");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── runAndWait timeoutMs 语义（预算语义对齐 2026-08）──
+  describe("runAndWait timeoutMs 语义（预算语义对齐）", () => {
+    it("未传 timeoutMs → 不限（远超旧 10min 默认不 abort，完成后正常返回）", async () => {
+      vi.useFakeTimers();
+      try {
+        const childRun = makeRunningChildRun();
+        const deps = makeDeps({ script: makeScript(), childRun });
+        setupRunWorkflow(childRun);
+
+        // 只传 3 参：不传 signal / timeoutMs
+        const promise = runAndWait("child-wf", {}, deps);
+
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 500);
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+
+        childRun.state.status = "done";
+        childRun.state.reason = "completed";
+        childRun.state.scriptResult = "ok";
+        await vi.advanceTimersByTimeAsync(500);
+        const result = await promise;
+        expect(result.status).toBe("done");
+        expect(result.reason).toBe("completed");
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("显式 timeoutMs=1000 → 到期 abort time_limited（限时能力保留）", async () => {
+      vi.useFakeTimers();
+      try {
+        const childRun = makeRunningChildRun();
+        const deps = makeDeps({ script: makeScript(), childRun });
+        setupRunWorkflow(childRun);
+
+        const promise = runAndWait("child-wf", {}, deps, undefined, 1_000);
+
+        await vi.advanceTimersByTimeAsync(1_000 + 500);
+        const result = await promise;
+        expect(vi.mocked(abortRun)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(abortRun)).toHaveBeenCalledWith(
+          MOCK_RUN_ID,
+          deps,
+          "Workflow timed out after 1000ms",
+          "time_limited",
+        );
+        void result;
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // [U2] 0/负 timeoutMs 与 undefined 同义 = 不限（旧实现 0 → 立即超时、
+    // 负数 → "timed out after -5000ms" 类错误串）。
+    it("timeoutMs=0 → 不限（旧实现立即超时；不产生 \"timed out after 0ms\"，U2）", async () => {
+      vi.useFakeTimers();
+      try {
+        const childRun = makeRunningChildRun();
+        const deps = makeDeps({ script: makeScript(), childRun });
+        setupRunWorkflow(childRun);
+
+        const promise = runAndWait("child-wf", {}, deps, undefined, 0);
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+
+        childRun.state.status = "done";
+        childRun.state.reason = "completed";
+        childRun.state.scriptResult = "ok";
+        await vi.advanceTimersByTimeAsync(500);
+        const result = await promise;
+        expect(result.reason).toBe("completed");
+        expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // [U7] XYZ_SUBAGENT_RUN_WATCHDOG_MS：显式不限时 run 的绝对时限兑底（与
+    // spawn watchdog env 同款：未设 = 无兑底，设置 = opt-in 挂载）。
+    describe("XYZ_SUBAGENT_RUN_WATCHDOG_MS 兑底（U7）", () => {
+      it("env 设置 + 未传 timeoutMs → env 时限到期 abort time_limited，错误串含 env 值", async () => {
+        vi.useFakeTimers();
+        try {
+          vi.stubEnv(RUN_WATCHDOG_ENV, "1000");
+          const childRun = makeRunningChildRun();
+          const deps = makeDeps({ script: makeScript(), childRun });
+          setupRunWorkflow(childRun);
+
+          const promise = runAndWait("child-wf", {}, deps);
+
+          await vi.advanceTimersByTimeAsync(1_000 + 500);
+          const result = await promise;
+          expect(vi.mocked(abortRun)).toHaveBeenCalledWith(
+            MOCK_RUN_ID,
+            deps,
+            "Workflow timed out after 1000ms",
+            "time_limited",
+          );
+          // mock abortRun 不翻转 run 状态（对齐同组 timeoutMs=1000 用例）：result.reason
+          // 是 toResult 对 running run 的防御 fallback，不在此断言
+          void result;
+        } finally {
+          vi.useRealTimers();
+          vi.unstubAllEnvs();
+        }
+      });
+
+      it("env 设置 + 显式 timeoutMs → 显式值优先（env 不截断显式限时）", async () => {
+        vi.useFakeTimers();
+        try {
+          vi.stubEnv(RUN_WATCHDOG_ENV, "1000");
+          const childRun = makeRunningChildRun();
+          const deps = makeDeps({ script: makeScript(), childRun });
+          setupRunWorkflow(childRun);
+
+          const promise = runAndWait("child-wf", {}, deps, undefined, 60_000);
+
+          // env 1000ms 到期：不 abort（显式 60s 优先）
+          await vi.advanceTimersByTimeAsync(1_000 + 500);
+          expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+
+          // 显式 60s 到期：才 abort，错误串为显式值
+          await vi.advanceTimersByTimeAsync(60_000);
+          const result = await promise;
+          expect(vi.mocked(abortRun)).toHaveBeenCalledWith(
+            MOCK_RUN_ID,
+            deps,
+            "Workflow timed out after 60000ms",
+            "time_limited",
+          );
+          void result;
+        } finally {
+          vi.useRealTimers();
+          vi.unstubAllEnvs();
+        }
+      });
+
+      it("env 非法值（abc / -1）→ 视为未设（无兑底，不限）", async () => {
+        vi.useFakeTimers();
+        try {
+          const childRun = makeRunningChildRun();
+          const deps = makeDeps({ script: makeScript(), childRun });
+          setupRunWorkflow(childRun);
+
+          vi.stubEnv(RUN_WATCHDOG_ENV, "abc");
+          const promiseAbc = runAndWait("child-wf", {}, deps);
+          await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 500);
+          expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+          // 收尾完成，防用例间 promise 悬挂
+          childRun.state.status = "done";
+          childRun.state.reason = "completed";
+          childRun.state.scriptResult = "ok";
+          await vi.advanceTimersByTimeAsync(500);
+          await promiseAbc;
+
+          vi.mocked(abortRun).mockClear();
+          vi.stubEnv(RUN_WATCHDOG_ENV, "-1");
+          // childRun 已是 done 态：pollRunToResult 首轮即命中终态返回，无 deadline 可言
+          await runAndWait("child-wf", {}, deps);
+          expect(vi.mocked(abortRun)).not.toHaveBeenCalled();
+        } finally {
+          vi.useRealTimers();
+          vi.unstubAllEnvs();
+        }
+      });
+    });
   });
 });

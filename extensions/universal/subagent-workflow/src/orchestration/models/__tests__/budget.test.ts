@@ -9,7 +9,6 @@ import {
   CACHE_WRITE_WEIGHT,
   INPUT_WEIGHT,
   OUTPUT_WEIGHT,
-  SOFT_MAX_AGENTS_WARNING,
 } from "../budget.js";
 import type { AgentUsage } from "../types.js";
 
@@ -106,7 +105,7 @@ describe("Budget.consume 加权公式", () => {
 // ── consume：NaN 守卫（TDD，预期主 agent 同步补源码守卫）──────
 //
 // 源码 consume() 当前无守卫：undefined/NaN/Infinity 进入加权公式会产出
-// NaN/Infinity 污染 usedTokens，导致后续 isExceeded/isThresholdReached 永远命中。
+// NaN/Infinity 污染 usedTokens，导致后续 isExceeded 永远命中。
 // 以下测试断言「脏字段当 0 处理」——守卫补上前会失败，属预期临时状态。
 
 describe("Budget.consume NaN 守卫（undefined/NaN/Infinity 当 0 处理）", () => {
@@ -273,65 +272,6 @@ describe("Budget.remaining", () => {
   it("maxTokens <= 0 → undefined（视为不限制）", () => {
     const b = new Budget({ maxTokens: 0 });
     expect(b.remaining()).toBeUndefined();
-  });
-});
-
-// ── isThresholdReached ───────────────────────────────────────
-
-describe("Budget.isThresholdReached", () => {
-  it("达到 90% 阈值（usedTokens >= maxTokens × 0.9）", () => {
-    const b = new Budget({ maxTokens: 1000 });
-    b.consume(usage({ input: 900 }));
-    expect(b.isThresholdReached(0.9)).toBe(true);
-  });
-
-  it("未达 90% 阈值", () => {
-    const b = new Budget({ maxTokens: 1000 });
-    b.consume(usage({ input: 899 }));
-    expect(b.isThresholdReached(0.9)).toBe(false);
-  });
-
-  it("边界：恰好等于阈值 → true（>= 语义）", () => {
-    const b = new Budget({ maxTokens: 1000 });
-    b.consume(usage({ input: 950 }));
-    expect(b.isThresholdReached(0.95)).toBe(true);
-  });
-
-  it("maxTokens=0 → false（守卫）", () => {
-    const b = new Budget({ maxTokens: 0 });
-    b.consume(usage({ input: 999999 }));
-    expect(b.isThresholdReached(0.9)).toBe(false);
-  });
-
-  it("maxTokens undefined → false", () => {
-    const b = new Budget();
-    b.consume(usage({ input: 999999 }));
-    expect(b.isThresholdReached(0.9)).toBe(false);
-  });
-
-  it("纯查询无状态——重复查询结果一致", () => {
-    const b = new Budget({ maxTokens: 1000 });
-    b.consume(usage({ input: 950 }));
-    expect(b.isThresholdReached(0.9)).toBe(true);
-    expect(b.isThresholdReached(0.9)).toBe(true);
-  });
-});
-
-// ── isSoftLimitReached ───────────────────────────────────────
-
-describe("Budget.isSoftLimitReached", () => {
-  it(`totalCallCount > ${SOFT_MAX_AGENTS_WARNING} 触发（> 严格语义）`, () => {
-    const b = new Budget();
-    for (let i = 0; i < SOFT_MAX_AGENTS_WARNING; i++) b.incrementCallCount();
-    expect(b.isSoftLimitReached()).toBe(false);
-    b.incrementCallCount(); // 501
-    expect(b.isSoftLimitReached()).toBe(true);
-  });
-
-  it("无状态——可重复查询（非一次性 flag）", () => {
-    const b = new Budget({ totalCallCount: SOFT_MAX_AGENTS_WARNING + 1 });
-    expect(b.isSoftLimitReached()).toBe(true);
-    expect(b.isSoftLimitReached()).toBe(true);
   });
 });
 

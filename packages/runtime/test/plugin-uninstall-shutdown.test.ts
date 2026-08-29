@@ -7,8 +7,8 @@
  *  ③ sandbox 子进程 terminate（SIGTERM→SIGKILL 升级链入口；trusted 共享线程不杀）
  *  ④ activator.removeDescriptor（描述符/状态/eventMap 清理，防幽灵重激活）
  *
- * F5：shutdown 在 stopFlushTimer 之前 flushAll（WriteBackCache per-write 500ms
- * debounce，只停 timer 不 flush 丢最后 ≤500ms 写入），并含真实落盘行为断言。
+ * F5：shutdown 在 dispose 之前 flushAll（WriteBackCache per-write 500ms
+ * debounce，dispose 清 pending debounce 不 flush，丢最后 ≤500ms 写入），并含真实落盘行为断言。
  *
  * 运行命令: npx vitest run test/plugin-uninstall-shutdown.test.ts
  */
@@ -220,13 +220,13 @@ describe('PluginService.shutdown flush 时序（F5）', () => {
     await rm(tmpConfigDir, { recursive: true, force: true })
   })
 
-  it('F5-①: flushAll 在 stopFlushTimer 之前完成（停 timer 前冲刷 dirty 数据）', async () => {
+  it('F5-①: flushAll 在 dispose 之前完成（清 debounce 定时器前冲刷 dirty 数据）', async () => {
     const { service, reg } = createService({ configDir: tmpConfigDir })
     reg.initialized = true
 
     const order: string[] = []
     reg.sessionDataStore.flushAll = vi.fn(() => { order.push('sessionData.flushAll') })
-    reg.sessionDataStore.stopFlushTimer = vi.fn(() => { order.push('sessionData.stopFlushTimer') })
+    reg.sessionDataStore.dispose = vi.fn(() => { order.push('sessionData.dispose') })
     // storage 未 init（cache null 会 NPE），stub 掉——F5 断言对象是 sessionDataStore
     reg.storage.flushAll = vi.fn(() => { order.push('storage.flushAll') })
 
@@ -234,7 +234,7 @@ describe('PluginService.shutdown flush 时序（F5）', () => {
 
     expect(order).toEqual([
       'sessionData.flushAll',
-      'sessionData.stopFlushTimer',
+      'sessionData.dispose',
       'storage.flushAll',
     ])
   })

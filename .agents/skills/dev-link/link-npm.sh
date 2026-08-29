@@ -4,7 +4,7 @@
 #   ./link-npm.sh <package> [package2 ...]   # 移除指定包的 link
 #   ./link-npm.sh --all                       # 移除所有 link（清空 .env.dev-extensions）
 #
-#   <package> = 短名 (model-switch) / pi-前缀 (pi-model-switch) / npm全名 (@zhushanwen/pi-model-switch)
+#   <package> = 短名 (cw-tool) / pi-前缀 (pi-cw-tool) / npm全名 (@zhushanwen/pi-cw-tool)
 #
 # 幂等安全：link 不存在时直接跳过。
 # 路径匹配用映射的完整源码目录（dev-link-lib.sh 查表），不用 "extensions/<short>" 子串

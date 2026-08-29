@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-base-tool-enhance",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Base tool enhancement - override builtin bash tool: foreground delegates to pi official factory, incremental background mode (design: docs/design/base-tool-enhance.md)",
   "type": "module",
   "main": "src/index.ts",

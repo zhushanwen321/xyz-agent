@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # dev-merge.sh — 将当前 feat worktree 的分支合并到兄弟 dev-x.x.x 集成 worktree。
 #
-# 用法（cwd 必须在待合并的 feat worktree 内）：
-#   bash .agents/skills/dev-merge/dev-merge.sh merge   <dev-branch>   # 预检 + 合并
-#   bash .agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>   # 确认已合并后删当前 worktree + 分支
+# 用法（cwd 必须在待合并 feat worktree 根目录；旧 base 的 worktree 可能未检出本脚本，一律用绝对路径调用）：
+#   bash /Users/zhushanwen/Code/xyz-agent-workspace/dev-0.9.10/.agents/skills/dev-merge/dev-merge.sh merge   <dev-branch>   # 预检 + 合并
+#   bash /Users/zhushanwen/Code/xyz-agent-workspace/dev-0.9.10/.agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>   # 确认已合并后删当前 worktree + 分支
 #
 # 退出码：
 #   0  成功
@@ -22,7 +22,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 SUBCMD="${1:-}"
 DEV_BRANCH="${2:-}"
 
-[[ "$SUBCMD" =~ ^(merge|cleanup)$ ]] || die "用法: dev-merge.sh merge|cleanup <dev-branch>，如 dev-merge.sh merge dev-0.9.6"
+[[ "$SUBCMD" =~ ^(merge|cleanup)$ ]] || die "用法: bash $0 merge|cleanup <dev-branch>，如 bash $0 merge dev-0.9.11"
 
 # ── 当前 worktree 定位 ──
 CUR_DIR="$(git rev-parse --show-toplevel 2>/dev/null)" || die "当前目录不在 git 仓库内，请在待合并的 feat worktree 中运行本脚本"
@@ -34,7 +34,7 @@ DEV_DIR="$WS_ROOT/$DEV_BRANCH"
 
 list_dev_worktrees() { ls "$WS_ROOT" | grep '^dev-' | tr '\n' ' ' || true; }
 
-[[ -n "$DEV_BRANCH" ]] || die "缺少目标分支参数（如 dev-0.9.6）。可用 dev worktree: $(list_dev_worktrees)"
+[[ -n "$DEV_BRANCH" ]] || die "缺少目标分支参数（如 dev-0.9.11）。可用 dev worktree: $(list_dev_worktrees)"
 [[ -d "$DEV_DIR" ]] || die "目标 worktree $WS_ROOT/$DEV_BRANCH 不存在。可用 dev worktree: $(list_dev_worktrees)"
 
 # ── 公共预检：两边 worktree 都必须干净（tracked 改动）──
@@ -59,7 +59,7 @@ case "$SUBCMD" in
     echo ">> git -C $DEV_DIR merge --no-ff $CUR_BRANCH"
     if git -C "$DEV_DIR" merge --no-ff "$CUR_BRANCH"; then
       echo "OK: $CUR_BRANCH 已合并进 ${DEV_BRANCH}（--no-ff 保留分支历史）"
-      echo "NEXT: 确认无误后运行 bash .agents/skills/dev-merge/dev-merge.sh cleanup $DEV_BRANCH 清理源 worktree"
+      echo "NEXT: 确认无误后运行 bash $0 cleanup $DEV_BRANCH 清理源 worktree"
     else
       echo "CONFLICT: 以下文件需要解决（在 $DEV_DIR 内处理）：" >&2
       git -C "$DEV_DIR" diff --name-only --diff-filter=U >&2 || true
@@ -69,6 +69,10 @@ case "$SUBCMD" in
     ;;
 
   cleanup)
+    # 闸 1：cwd 所在 worktree 检出 dev-* 分支即拒绝（覆盖跨 dev 误用：如在 dev-0.9.11 内 cleanup dev-0.9.10）
+    [[ "$CUR_BRANCH" != dev-* ]] || die "当前 worktree 检出的是 dev 集成分支（${CUR_BRANCH}），拒绝 cleanup。cleanup 必须在待清理 feat worktree 根目录内运行"
+    # 闸 2：拒绝 cleanup 目标自身（覆盖 dev worktree 内检出非 dev-* 分支的残余路径）
+    [[ "$DEV_DIR" != "$CUR_DIR" ]] || die "当前已在 ${DEV_BRANCH} worktree 内，拒绝 cleanup 自身。请在待清理 feat worktree 根目录内运行"
     is_merged || die "$CUR_BRANCH 尚未合并进 ${DEV_BRANCH}，拒绝清理。先跑 merge 子命令（或处理完冲突后 git commit 完成 merge）"
     check_clean "$DEV_DIR" "$DEV_BRANCH"
 
@@ -76,12 +80,13 @@ case "$SUBCMD" in
     # 先 cd 出待删目录（macOS 删除 cwd 所在目录后 shell cwd 悬空）
     cd "$DEV_DIR"
     if ! git worktree remove "$CUR_DIR" 2>/dev/null; then
-      # 清理所有 untracked 文件后重试（合并已完成，源 worktree 不再需要保留任何文件）
-      git -C "$CUR_DIR" clean -fd >/dev/null 2>&1 || true
-      git worktree remove "$CUR_DIR" 2>/dev/null \
-        || die "worktree 删除仍被拒绝。检查 $CUR_DIR 内容后用 git -C $DEV_DIR worktree remove --force $CUR_DIR 强删"
+      # 不自动 clean -fd：删 untracked 是破坏性操作，须用户检视确认（脚本不内置 force，见 SKILL.md 安全语义）
+      UNTRACKED="$(git -C "$CUR_DIR" status --short || true)"
+      die "worktree 删除被 $CUR_DIR 内的文件阻止（通常为 untracked / 未 ignore 文件）。git status --short 清单：
+$UNTRACKED
+先检视上述文件：认知外的询问用户；确认可丢弃后执行 git -C $CUR_DIR clean -fd，再重跑 cleanup：bash $0 cleanup $DEV_BRANCH"
     fi
-    # is_merged 闸门已证明合入 dev；feat 分支 upstream 是 origin/main，-d 校验的是 upstream 包含性（已合入 dev 仍必拦），闸门通过后直接 -D
+    # is_merged 闸门已证明合入 dev；-D 避免依赖 upstream/HEAD 校验的不确定性，已合并与否由 is_merged 闸门保证
     git branch -D "$CUR_BRANCH" \
       || die "分支 $CUR_BRANCH 删除失败。恢复命令：git -C $DEV_DIR branch -D $CUR_BRANCH"
     echo "OK: worktree $CUR_DIR 与分支 $CUR_BRANCH 已清理"

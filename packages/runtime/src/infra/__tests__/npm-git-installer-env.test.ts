@@ -1,5 +1,5 @@
 /**
- * NpmGitInstaller.installGit 出站 env 契约锁定（C-proc-08 收编回归，原守卫豁免条目）。
+ * NpmGitInstaller.installGit 出站 env 契约锁定（C-proc-09 收编回归，原守卫豁免条目）。
  *
  * 收编后锁定的不变式：
  * 1. deny 清单两键（XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN）无论从哪条通路进父 env，
@@ -30,7 +30,7 @@ vi.mock('node:child_process', () => ({
   },
 }))
 
-describe('NpmGitInstaller.installGit — 出站 env 契约（C-proc-08 收编）', () => {
+describe('NpmGitInstaller.installGit — 出站 env 契约（C-proc-09 收编）', () => {
   beforeEach(() => {
     capturedEnv = undefined
     capturedArgs = undefined

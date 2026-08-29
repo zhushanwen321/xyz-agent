@@ -3,20 +3,15 @@
  *
  * Token / cost 预算值对象（D-12）。纯数据 + 不变式守卫，无副作用。
  *
- * 设计：
- * - 无 onConsume 回调（值对象不应持可变回调）。
- * - soft limit 通知由 lifecycle 层 consume 后查 isSoftLimitReached 发出（职责分离）。
- * - 90% 预警用查询式 isThresholdReached（无状态，可重复查）。
- * - maxTokens===0 视为不限制（守卫，避免首个 agent 完成误判 budget_limited）。
+ * maxTokens===0 视为不限制（守卫，避免首个 agent 完成误判 budget_limited）。
+ * （预算语义对齐 2026-08：soft-limit 常量（500 调用数预警）与 90% 阈值预警方法
+ * 已删——全库无生产消费方，仅测试锁定。）
  *
  * 层归属：Engine。
  *
  * 参考：domain-models.md §4（字段/不变式/操作）。
  */
 import type { AgentUsage } from "./types.ts";
-
-/** Soft limit：总调用数超此值发预警（FR-7，从 ConcurrencyGate 迁入）。 */
-export const SOFT_MAX_AGENTS_WARNING = 500;
 
 /**
  * Budget 加权系数（token 口径）。
@@ -51,7 +46,7 @@ export class Budget {
   readonly maxTimeMs?: number;
   usedTokens = 0;
   usedCost = 0;
- /** 总调用计数（soft limit 用，从 ConcurrencyGate.totalCallCount 迁入）。 */
+ /** 总调用计数（持久化/诊断用；execute-agent-call 每次 dispatch 后 increment）。 */
   totalCallCount = 0;
 
   constructor(opts: {
@@ -89,7 +84,7 @@ export class Budget {
     this.usedCost += numOrZero(usage.cost);
   }
 
- /** 累加调用计数（每次 agent dispatch 后调用）。 */
+ /** 累加调用计数（每次 agent dispatch 后调用；持久化快照同步）。 */
   incrementCallCount(): void {
     this.totalCallCount += 1;
   }
@@ -111,17 +106,6 @@ export class Budget {
   }
 
  /**
- * 是否达到 soft limit（FR-7）。
- *
- * totalCallCount > SOFT_MAX_AGENTS_WARNING（500）。
- * 调用方（lifecycle）在 consume/incrementCallCount 后查询，
- * 命中时发通知（无状态——可重复查询）。
- */
-  isSoftLimitReached(): boolean {
-    return this.totalCallCount > SOFT_MAX_AGENTS_WARNING;
-  }
-
- /**
  * 剩余 token 预算。maxTokens 未设或 ≤0 时返回 undefined（视为不限制）。
  *
  * 嵌套 workflow() 调用时由 executeNestedWorkflow 消费：子 run 的 budgetTokens
@@ -130,19 +114,5 @@ export class Budget {
   remaining(): number | undefined {
     if (this.maxTokens === undefined || this.maxTokens <= 0) return undefined;
     return Math.max(0, this.maxTokens - this.usedTokens);
-  }
-
- /**
- * 是否达到 token 预算的给定比例阈值（如 0.9 = 90% 预警）。
- *
- * 纯查询，无状态——调用方负责去重（旧 _budgetWarningSent 语义由 lifecycle 层用
- * 外部 Set 或 once-listener 实现）。maxTokens 未设或为 0 时返回 false。
- */
-  isThresholdReached(ratio: number): boolean {
-    return (
-      this.maxTokens !== undefined &&
-      this.maxTokens > 0 &&
-      this.usedTokens >= this.maxTokens * ratio
-    );
   }
 }

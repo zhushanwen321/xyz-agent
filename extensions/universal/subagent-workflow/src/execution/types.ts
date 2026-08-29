@@ -92,6 +92,37 @@ export function isReconnectableFinalReason(reason: string | undefined): reason i
  */
 export class ResurrectDeniedError extends Error {}
 
+/** ClosedReason 全枚举值（运行时守卫用——防御性解析外部输入时校验成员资格）。 */
+export const CLOSED_REASONS: readonly ClosedReason[] = [
+  'parent-shutdown',
+  'parent-fork',
+  'parent-new',
+  'user-close',
+  'cancelled',
+  'gc',
+];
+
+/**
+ * 终态三态对外语义（U3 C-outcome 一等披露）。
+ *
+ * 由 completeRecord 唯一写入点按 deriveOutcome 一次计算（判定顺序：cancelled 优先
+ * → error 非空 → completed），消费方（project/list/notify 文案/渲染器）只读本字段，
+ * 不再各自手写成败推导 switch（三处同构 switch 已随 U3 收敛删除）。
+ *
+ * [D6 显式取舍] parent-shutdown/parent-fork/parent-new 合成关闭（subagent-service
+ * disposeAllRecords 合成 result 恒写 error:"closed due to ..."）落 "failed"——语义为
+ * 「父进程关闭时子 agent 未完成即失败」，选定行为而非疏漏，勿当 bug 改回 cancelled。
+ */
+export type ExecutionOutcome = "completed" | "failed" | "cancelled";
+
+/**
+ * 对外投影的 outcome 联合：含历史 record（outcome 字段诞生前的存量数据）兼容态。
+ * 投影层（projectOutcome 唯一出口）对无 outcome 字段的 closed record 按
+ * deriveOutcome(closedReason, error) 兜底派生；"closed-legacy" 预留给连派生输入都
+ * 不足以判读的存量形态，消费方必须处理该成员（不得因未知值崩溃）。
+ */
+export type ProjectedOutcome = ExecutionOutcome | "closed-legacy";
+
 /**
  * 对外四态（设计决策 10 细则 3）：内部 ExecutionStatus（v4 B-1 两态）收敛为 agent
  * 可理解的状态语义。真实映射只有两条：
@@ -448,6 +479,12 @@ export interface ExecutionRecord {
    *  由 tryTransition(record, "closed", reason) 写入；投影层按需派生对外语义。
    *  向后兼容：旧 record 无此字段，按 gc 处理（通用完成/失败）。 */
   closedReason?: ClosedReason;
+  /**
+   * 终态三态对外语义（U3 C-outcome）。completeRecord 唯一写入点按 deriveOutcome
+   * 一次计算，消费方只读本字段不再自行推导。向后兼容：旧 record / 磁盘重建
+   * record 无此字段，投影层按 projectOutcome 兜底（closed-legacy 语义）。
+   */
+  outcome?: ExecutionOutcome;
   /** 完整执行内容，按 turn 组织。createRecord 初始化为 [空 turn]。 */
   turns: Turn[];
   /** turn 计数（= turns.filter(closed).length，冗余存储供投影直接读）。 */
@@ -551,6 +588,11 @@ export interface ExecutionRecord {
  */
 export interface SubagentToolDetails {
   status: ExecutionStatus;
+  /**
+   * 终态三态对外语义（U3 C-outcome，projectOutcome 唯一出口）。running → undefined；
+   * 历史数据无 outcome 字段时兜底派生（见 ProjectedOutcome）。
+   */
+  outcome?: ProjectedOutcome;
   mode: ExecutionMode;
   agent: string;
   model: string;
@@ -595,6 +637,10 @@ export interface ExecuteOptions {
   schema?: Record<string, unknown>;
   /** D-A6 bridge: workflow schemaEnv 经 ExecuteOptions 透传到 runSpawn childEnv。 */
   schemaEnv?: string;
+  /**
+   * Turn 上限 limiter。显式 0/负 = 显式不限：压过 SPAWN_WATCHDOG_ENV 兑底不挂
+   * watchdog（SP-6 参数 > env，U5）；undefined 未传才由 env 兑底。
+   */
   maxTurns?: number;
   graceTurns?: number;
   /** sync 模式来自 Pi tool 框架；background 模式 hub 忽略，自建 controller。 */
@@ -626,6 +672,7 @@ export interface ExecuteOptions {
   /**
    * 空闲超时毫秒数（仅 conversation 模式有意义）。覆盖默认 5min idle timeout。
    * 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
+   * 显式传 0/负数 = 禁用 idle GC（不挂 timer；旧实现 0 会落成 setTimeout(0) 立即 kill）。
    */
   idleTimeoutMs?: number;
   /**
@@ -682,10 +729,13 @@ export interface SubagentListItem {
   /** 可冷路径 resume（running 且无活进程句柄）。[v4 A-6] B-1「可续聊」对外表达，
    *  agent 据 list 判断哪些 running subagent 实际可续聊（vs 正在忙）。 */
   resumable?: boolean;
-  /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。[v4 A-6] SP-4 级联关闭告知
-   *  替代——砍 before_agent_start 注入通道后，被级联关闭的 record 经 list
-   *  （includeFinished:true）可查，closedReason 显示 'parent-fork'/'parent-new' 等。 */
-  closedReason?: ClosedReason;
+  /**
+   * 终态三态对外语义（U3 C-outcome 一等披露，projectOutcome 唯一出口）：
+   * completed / failed / cancelled，历史 record 无 outcome 字段时兜底派生，
+   * 不可判读的存量形态为 "closed-legacy"。GUI pane / agent 据此判读成败，
+   * 无需翻 error 字段原文（S5）。
+   */
+  outcome?: ProjectedOutcome;
 }
 
 /** background 启动的内层响应（挂在 SubagentToolResult.bgResponse）。 */
@@ -694,6 +744,19 @@ export interface BgResponse {
   mode: "background";
   /** 启动提示文案（"detached, will notify on completion"）。 */
   message: string;
+  /**
+   * 终态三态语义（U3 C-outcome 对外 JSON 契约完备位）。start 时点 record 尚未终态，
+   * 恒 undefined（JSON.stringify 落键省略）；终态成败语义经 list items[].outcome
+   * 披露。旧字段 status/mode/message 原样保留（向后兼容）。
+   */
+  outcome?: ProjectedOutcome;
+  /**
+   * 通知投递契约回显位（U1 预置，U2 通知账本的契约声明）。恒值
+   * "ledger+at-least-once"：主 agent 在当前 run 结束或有限延迟内收到完成通知，
+   * 送达保证为 at-least-once + notifyId 幂等可识别。字段与填充由 U1 负责，
+   * 值语义由 U2（execution/notify-ledger.ts）兑现。
+   */
+  notifyContract: "ledger+at-least-once";
 }
 
 /** list 的内层响应（挂在 SubagentToolResult.listResponse）。 */
@@ -736,7 +799,7 @@ export interface CloseResponse {
  *   - close → closeResponse（subagentId 有值；sessionFile 无意义，可为 null）
  */
 export type SubagentToolResult =
-  | { action: "start"; subagentId: string; sessionFile: string | null; slug: string; bgResponse: BgResponse; __gui__?: GuiRenderResult }
+  | { action: "start"; subagentId: string; sessionFile: string | null; slug: string; /** registry 全等回显（U1）：放行即与 registry 条目全等，"provider/id" 形态。 */ model: string; bgResponse: BgResponse; __gui__?: GuiRenderResult }
   | { action: "list"; subagentId: null; sessionFile: null; listResponse: ListResponse; __gui__?: GuiRenderResult }
   | { action: "cancel"; subagentId: string; sessionFile: null; cancelResponse: CancelResponse; __gui__?: GuiRenderResult }
   | { action: "message"; subagentId: string; sessionFile: null; messageResponse: MessageResponse; __gui__?: GuiRenderResult }

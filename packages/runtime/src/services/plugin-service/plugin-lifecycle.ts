@@ -89,9 +89,6 @@ export async function bootstrapPluginService(ctx: PluginLifecycleContext): Promi
     return ctx.permissionChecker.check(identity, method)
   })
 
-  // 5. 启动内存监控
-  ctx.host.startMemoryMonitor()
-
   // 6. 触发 onStartupFinished
   await ctx.activator.handleEvent(
     { type: 'onStartupFinished' },
@@ -100,9 +97,6 @@ export async function bootstrapPluginService(ctx: PluginLifecycleContext): Promi
 
   // 7. 广播插件列表
   ctx.broadcastPluginList()
-
-  // 8. 启动 sessionData flush 定时器
-  ctx.sessionDataStore.startFlushTimer()
 
   // 8b. Restore sessionData from disk（WriteBackCache lazy load，扫描目录预热分区）
   ctx.sessionDataStore.restoreFromDisk()

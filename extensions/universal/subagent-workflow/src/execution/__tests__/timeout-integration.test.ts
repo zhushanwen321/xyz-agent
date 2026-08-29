@@ -40,6 +40,10 @@ vi.mock("node:child_process", async () => {
     stderr = new PassThrough();
     killed = false;
     killSignal: string | undefined;
+    // [race-F4] SIGKILL 升级判定读 exitCode/signalCode（真 ChildProcess 未退出时均 null），
+    // FakeChild 同形提供才能驱动升级路径测试（undefined === null 为 false 会误判已退出）。
+    exitCode: number | null = null;
+    signalCode: string | null = null;
     kill(sig?: string): boolean {
       this.killed = true;
       this.killSignal = sig;
@@ -97,7 +101,14 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 
 import { createRecord } from "../execution-record.ts";
-import { type RunOptions, runSpawn, type SessionRunnerContext } from "../session-runner.ts";
+import {
+  computeWatchdogMs,
+  type RunOptions,
+  resolveSpawnWatchdogMs,
+  runSpawn,
+  SPAWN_WATCHDOG_ENV,
+  type SessionRunnerContext,
+} from "../session-runner.ts";
 
 const mockSpawn = vi.mocked(spawn);
 const mockExistsSync = vi.mocked(fs.existsSync);
@@ -244,10 +255,17 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(false);
+    // [F-4 假红源修复] env 隔离：多数用例默认 maxTurns=undefined →
+    // resolveSpawnWatchdogMs 走 env 兑底分支，宿主 export SPAWN_WATCHDOG 即假红
+    //（极端值 3e9 还会在 assertSafeTimerDelay fail-fast 直接炸掉 runSpawn）。
+    // 用例内显式 stubEnv 的值照常叠加生效（inner describe 的 afterEach
+    // unstubAllEnvs 与本处兼容）。
+    vi.stubEnv(SPAWN_WATCHDOG_ENV, "");
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   // ── 1. watchdog 到期 → child.kill ──
@@ -291,9 +309,209 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
       // 信号终止（>=128）视为正常完成
       expect(result.success).toBe(true);
     });
+
+    // [race-F4] SIGKILL 升级：watchdog SIGTERM 后子进程无视信号（exitCode/signalCode
+    // 保持 null = 未退出）→ 30s 后升级 SIGKILL。挂住子进程永不回收的兑底防线。
+    it("[race-F4] watchdog SIGTERM 后 30s 未 exit → 升级 SIGKILL", async () => {
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: hang ignores SIGTERM", makeOpts({ maxTurns: 6 }), makeCtx());
+
+      const child = await waitForSpawnFake();
+
+      // watchdog 到期 → SIGTERM（升级路径入口）
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 100);
+      expect(child.killSignal).toBe("SIGTERM");
+
+      // 子进程无视 SIGTERM：不 emit exit/close，exitCode/signalCode 保持 null。
+      // 推进升级窗口：非贴边断言（waitForSpawnFake 每步 10ms 推进，升级 timer 挂载
+      // 时刻有 ≤100ms 抖动）——先推 29s（余量 > 抖动）断言未升级，再推 2s 越过窗口。
+      await vi.advanceTimersByTimeAsync(29 * 1000);
+      expect(child.killSignal).toBe("SIGTERM"); // 尚未升级
+      await vi.advanceTimersByTimeAsync(2 * 1000);
+      expect(child.killSignal).toBe("SIGKILL"); // 已升级
+
+      // 收尾：SIGKILL 后子进程退出 → runSpawn resolve（信号终止视为完成）
+      emitStdoutLine(child, sessionHeader());
+      child.stdout.end();
+      child.emit("close", 137); // SIGKILL = 128+9
+      const result = await promise;
+      expect(result.success).toBe(true);
+    });
+
+    // [race-F4] 升级 timer 的 exit 自动 clear：SIGTERM 后子进程正常退出（exit 事件到
+    // 达），升级 timer 被清，不误发 SIGKILL（killSignal 停留在 SIGTERM）。
+    it("[race-F4] SIGTERM 后子进程 exit → 升级 timer 被 clear，不误发 SIGKILL", async () => {
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: dies on SIGTERM", makeOpts({ maxTurns: 6 }), makeCtx());
+
+      const child = await waitForSpawnFake();
+
+      // watchdog 到期 → SIGTERM
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 100);
+      expect(child.killSignal).toBe("SIGTERM");
+
+      // 子进程响应 SIGTERM 退出：exitCode 143（SIGTERM 终止形态）+ exit + close。
+      // exit 事件触发升级 timer clear（killChildWithEscalation 内 once("exit") 挂钩）。
+      child.exitCode = 143;
+      child.emit("exit", 143);
+      child.stdout.end();
+      child.emit("close", 143);
+      const result = await promise;
+
+      // 越过升级窗口：无 SIGKILL（timer 已被 exit clear），killSignal 停留在 SIGTERM
+      await vi.advanceTimersByTimeAsync(60 * 1000);
+      expect(child.killSignal).toBe("SIGTERM");
+      expect(result.success).toBe(true);
+    });
   });
 
-  // ── 2. watchdog 到期前正常完成 → clearTimeout 生效，不 kill ──
+  // ── 2. watchdog 默认不挂载 + env 兑底（预算语义对齐 2026-08）──
+  //
+  // 语义：maxTurns 未传 → env 兑底；显式 0/负 → 压过 env 不挂（U5，SP-6 参数 > env，
+  // 旧实现 maxTurns:0 落到 env 兑底，参数显式关不掉 watchdog，已废）；
+  // env XYZ_SUBAGENT_SPAWN_WATCHDOG_MS 设置时按绝对时限兑底挂载（hang 泄漏防线
+  // opt-in）。resolveSpawnWatchdogMs 是挂载判定唯一入口。
+  describe("watchdog 默认不挂载 + env 兑底（预算语义对齐）", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    });
+
+    it("resolveSpawnWatchdogMs：maxTurns 未传/0/负数且 env 未设 → undefined（不挂）", () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, ""); // 空串 = 未设（raw falsy）
+      expect(resolveSpawnWatchdogMs(undefined)).toBeUndefined();
+      expect(resolveSpawnWatchdogMs(null)).toBeUndefined();
+      expect(resolveSpawnWatchdogMs(0)).toBeUndefined();
+      expect(resolveSpawnWatchdogMs(-5)).toBeUndefined();
+    });
+
+    it("resolveSpawnWatchdogMs：env 设置 → 绝对时限；非法值 → undefined；maxTurns 有效优先", () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "60000");
+      expect(resolveSpawnWatchdogMs(undefined)).toBe(60_000);
+      // [U5] SP-6 参数 > env：显式 0 压过 env 兑底 → 不挂（旧实现落成 60000）
+      expect(resolveSpawnWatchdogMs(0)).toBeUndefined();
+      expect(resolveSpawnWatchdogMs(-5)).toBeUndefined();
+      // maxTurns 有效（>0）→ turns 估算优先于 env 兑底
+      expect(resolveSpawnWatchdogMs(6)).toBe(computeWatchdogMs(6));
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "abc");
+      expect(resolveSpawnWatchdogMs(undefined)).toBeUndefined();
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "-1");
+      expect(resolveSpawnWatchdogMs(undefined)).toBeUndefined();
+    });
+
+    // [U1] setTimeout 2^31-1 溢出 fail-fast：溢出 delay 被 Node 置 1ms 立即触发
+    //（watchdog 变「启动即杀」），两路径（env 兑底 / turns 估算）都必须在入口拦截。
+    it("resolveSpawnWatchdogMs：env 值溢出（>2^31-1）→ fail-fast throw（不静默 clamp/不挂）", () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "3000000000");
+      expect(() => resolveSpawnWatchdogMs(undefined)).toThrowError(/2147483647/);
+      expect(() => resolveSpawnWatchdogMs(undefined)).toThrowError(/Recovery/);
+    });
+
+    it("resolveSpawnWatchdogMs：maxTurns 估算值溢出 → fail-fast throw", () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "");
+      // maxTurns=1e6 → 估算 5e9 ms > 2^31-1，入口拦截
+      expect(() => resolveSpawnWatchdogMs(1_000_000)).toThrowError(/2147483647/);
+    });
+
+    // [F-R3] maxTurns 垃圾值网格：NaN/""/null/0/负数（含 ±Infinity）。
+    // 旧实现 NaN/"" 绕过 Number.isFinite 且压过 env 兑底成「显式不限」。
+    it("resolveSpawnWatchdogMs：maxTurns NaN → fail-fast throw（压过 env）；\"\"→Number(\"\")=0 显式不限；null/0/负数网格（F-R3）", () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "60000");
+      // NaN：非有限数 fail-fast（与 timer-delay U1 同语义），不再压过 env 兑底成「显式不限」
+      expect(() => resolveSpawnWatchdogMs(NaN)).toThrowError(/not a finite number/);
+      expect(() => resolveSpawnWatchdogMs(NaN)).toThrowError(/Recovery/);
+      // ±Infinity：同非有限数 fail-fast
+      expect(() => resolveSpawnWatchdogMs(Infinity)).toThrowError(/not a finite number/);
+      // ""：Number("") === 0 → 与显式 0 同路径（显式不限，压过 env，U5 语义不回归）
+      expect(resolveSpawnWatchdogMs("" as unknown as number)).toBeUndefined();
+      // null → 未传语义，env 兑底生效
+      expect(resolveSpawnWatchdogMs(null)).toBe(60_000);
+      // 0 / 负数 → 显式不限，压过 env（既有 U5 网格不回归）
+      expect(resolveSpawnWatchdogMs(0)).toBeUndefined();
+      expect(resolveSpawnWatchdogMs(-5)).toBeUndefined();
+    });
+
+    it("maxTurns 未传 → 推进 56min 不 kill（旧实现 50min 估算会误杀）", async () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "");
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: no-turns", makeOpts({ maxTurns: undefined }), makeCtx());
+
+      const child = await waitForSpawnFake();
+      expect(child.killed).toBe(false);
+
+      // 旧实现的估算默认（10 turns → 50min）已过，仍不 kill = watchdog 未挂载
+      await vi.advanceTimersByTimeAsync(56 * 60 * 1000);
+      expect(child.killed).toBe(false);
+
+      emitStdoutLine(child, sessionHeader());
+      child.stdout.end();
+      child.emit("close", 0);
+      const result = await promise;
+      expect(result.success).toBe(true);
+    });
+
+    it("maxTurns: 0（显式关不掉的旧默认已废）→ 同样不挂 watchdog", async () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "");
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: zero-turns", makeOpts({ maxTurns: 0 }), makeCtx());
+
+      const child = await waitForSpawnFake();
+      await vi.advanceTimersByTimeAsync(56 * 60 * 1000);
+      expect(child.killed).toBe(false);
+
+      emitStdoutLine(child, sessionHeader());
+      child.stdout.end();
+      child.emit("close", 0);
+      const result = await promise;
+      expect(result.success).toBe(true);
+    });
+
+    // [U5] SP-6 参数 > env：显式 maxTurns:0 压过 SPAWN_WATCHDOG_ENV 兑底——
+    // 旧实现落成 env 时限 kill，参数显式关不掉 watchdog。
+    it("maxTurns: 0 + env=60000 → 显式 0 压过 env，61s 不 kill（U5）", async () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "60000");
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: zero-turns-override", makeOpts({ maxTurns: 0 }), makeCtx());
+
+      const child = await waitForSpawnFake();
+      // 推进越过 env 兑底时限（60s）：若 maxTurns:0 未压过 env，此处已被 kill
+      await vi.advanceTimersByTimeAsync(61 * 1000);
+      expect(child.killed).toBe(false);
+
+      emitStdoutLine(child, sessionHeader());
+      child.stdout.end();
+      child.emit("close", 0);
+      const result = await promise;
+      expect(result.success).toBe(true);
+    });
+
+    it("env SPAWN_WATCHDOG_MS=60000 + maxTurns 未传 → 1min 兑底 kill", async () => {
+      vi.stubEnv(SPAWN_WATCHDOG_ENV, "60000");
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: env-watchdog", makeOpts(), makeCtx());
+
+      const child = await waitForSpawnFake();
+      // 非贴边断言：waitForSpawnFake 每步 10ms 推进，watchdog 挂载时刻有 ≤10ms 抖动，
+      // 用 55s / 61s 两个窗口避开 60s 贴边比较
+      await vi.advanceTimersByTimeAsync(55_000);
+      expect(child.killed).toBe(false);
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(child.killed).toBe(true);
+      expect(child.killSignal).toBe("SIGTERM");
+
+      emitStdoutLine(child, sessionHeader());
+      child.stdout.end();
+      child.emit("close", 143);
+      const result = await promise;
+      expect(result.success).toBe(true);
+    });
+  });
+
+  // ── 3. watchdog 到期前正常完成 → clearTimeout 生效，不 kill ──
   describe("watchdog 到期前正常完成 → 不 kill", () => {
     beforeEach(() => {
       vi.useFakeTimers();

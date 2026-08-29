@@ -22,6 +22,8 @@ export default {
   retry: 'Retry',
   update: {
     newVersion: 'New version available',
+    newVersionWithVersion: 'New version v{version} available',
+    versionTransition: 'Current v{from} → v{to}',
     downloading: 'Downloading {percent}%',
     replacing: 'Replacing',
     restarting: 'Restarting',
@@ -33,6 +35,23 @@ export default {
     installLater: 'Later',
     installNow: 'Restart and install now',
     retry: 'Retry',
+    // Launch result toasts (D5: upgrade success/failure/rollback notifications)
+    upgradedToast: 'Upgraded to v{version}',
+    upgradeFailed: 'Last upgrade did not complete',
+    rolledBack: 'Last upgrade did not complete, reverted to v{version}',
+    // A-D1: failure-reason messages (error-code→key mapping in useAppUpdate LAUNCH_FAILURE_ERROR_KEYS)
+    upgradeFailedReadOnly: 'App is in a read-only location (e.g. DMG). Move it to Applications and retry',
+    upgradeFailedBackup: 'Failed to back up the old version. Check disk space and retry',
+    upgradeFailedExtract: 'Failed to extract the new version. Check disk space and retry',
+    upgradeFailedInternal: 'An internal error occurred. Check for updates and retry',
+    upgradeFailedMove: 'Failed to replace files. Check disk space and retry',
+    upgradeFailedSha: 'New version failed verification. Please download the update again',
+    upgradeFailedSwap: 'Failed to replace the app. Check disk space and retry',
+    upgradeFailedAppRunning: 'Update interrupted because the app did not quit. Restart and retry',
+    upgradeFailedInstaller: 'The installer failed. Please download the update again',
+    // RM2.3: non-intrusive hint while GitHub API rate-limit backoff is active (not an error state)
+    rateLimited: 'Update check is rate limited by GitHub; auto-check paused for about 2 hours',
+    staleRelease: 'A newer version was detected; update info refreshed',
   },
   sessionItem: {
     rename: 'Rename',

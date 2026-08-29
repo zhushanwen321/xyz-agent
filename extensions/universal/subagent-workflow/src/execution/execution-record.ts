@@ -23,9 +23,11 @@ import type {
   ClosedReason,
   DisplayItem,
   ExecutionMode,
+  ExecutionOutcome,
   ExecutionRecord,
   ExecutionStatus,
   InternalToolCall,
+  ProjectedOutcome,
   RecordSnapshot,
   SubagentToolDetails,
   ToolCall,
@@ -709,7 +711,7 @@ export function markReconstructedStatus(
 }
 
 /**
- * 唯一完成入口。冻结状态（写 endedAt/agentResult/result/error）。
+ * 唯一完成入口。冻结状态（写 endedAt/agentResult/result/error/outcome）。
  * 不修改 turns/totalTokens——已由 updateFromEvent 累积，completeRecord 只读不重置。
  *
  * ⚠ 前置条件：调用方必须先通过 tryTransition 抢到锁（status 已被 CAS 设为 target）。
@@ -725,10 +727,66 @@ export function completeRecord(
 ): void {
   record.status = status;
   record.closedReason = closedReason ?? "gc";
+  // U3 C-outcome：outcome 唯一写入点——终态语义在此一次定形（D6），下游消费方
+  // （project/list/notify 文案/渲染器）只读 record.outcome，不再各自推导。
+  record.outcome = deriveOutcome(record.closedReason, result.error);
   record.endedAt = Date.now();
   record.agentResult = result;
   record.result = result.text;
   record.error = result.error;
+}
+
+// ============================================================
+// 终态 outcome（U3 C-outcome：单一权威派生）
+// ============================================================
+
+/**
+ * closed 终态 → 三态 outcome 的唯一权威派生（D6 收敛：原 notifier/bg-notify-render/
+ * shared deriveClosedDisplay 三处手写同构 switch 的单一实现）。
+ *
+ * 判定顺序（顺序敏感，勿回退成「error 有值即 failed」的无视取消规则）：
+ *   1. closedReason === "cancelled" → "cancelled"（取消优先，不参与 error——abort 合成
+ *      result 可能携带 error，但用户取消语义优先）
+ *   2. error 非空（truthy，与旧三处同构的 `record.error &&` 判定逐字对齐——空串 error
+ *      不构成失败）→ "failed"
+ *   3. 其余 → "completed"
+ *
+ * [D6 待核项保真] 「failed 优先于 patchFile 提示」：失败轮也会写 patchFile
+ * （doFinalizeRecord Step 0 对 worktreeHandle 无条件 collectPatch），消费方必须先按
+ * outcome 分流再渲染 patch 提示——failed 分支不展示 patch/result。历史 bug：notifier
+ * 的 patchFile 分支曾遮蔽 gc+error 判定，失败终态被 LLM 告知 completed（M1 修复存档）。
+ *
+ * [D6 显式取舍] parent-shutdown/parent-fork/parent-new 合成关闭（subagent-service
+ * disposeAllRecords 合成 result 恒写 error:"closed due to ${reason}"）在本映射下落
+ * "failed"——语义为「父进程关闭时子 agent 未完成即失败」，选定行为而非疏漏，
+ * 勿当 bug 改回 cancelled 造成派生矛盾。
+ *
+ * 唯一写点 completeRecord 调用本函数冻结 record.outcome；通知 payload（notifier 投影
+ * 边界）与无 outcome 字段的存量/重建 record 由 projectOutcome 兜底复用本函数。
+ */
+export function deriveOutcome(
+  closedReason: ClosedReason | undefined,
+  error: string | undefined | null,
+): ExecutionOutcome {
+  if (closedReason === "cancelled") return "cancelled";
+  if (error) return "failed";
+  return "completed";
+}
+
+/**
+ * 投影层 outcome 唯一出口：running → undefined（终态语义不适用活跃态）；closed →
+ * 一等 outcome 字段直读优先，字段缺失（存量/磁盘重建 record——outcome 持久化不在
+ * U3 领地内）时回退 deriveOutcome(closedReason, error) 兜底——单一权威函数，
+ * 消费方零手写推导。返回值联合含 "closed-legacy" 预留态，消费方必须处理。
+ */
+export function projectOutcome(record: {
+  status: ExecutionStatus;
+  outcome?: ExecutionOutcome;
+  closedReason?: ClosedReason;
+  error?: string;
+}): ProjectedOutcome | undefined {
+  if (record.status !== "closed") return undefined;
+  return record.outcome ?? deriveOutcome(record.closedReason, record.error);
 }
 
 // ============================================================
@@ -747,6 +805,7 @@ export function computeElapsedSeconds(record: { startedAt: number; endedAt?: num
 export function project(record: ExecutionRecord): SubagentToolDetails {
   return {
     status: record.status,
+    outcome: projectOutcome(record),
     mode: record.mode,
     agent: record.agent,
     model: record.model,

@@ -1,8 +1,10 @@
 /**
  * Mock for typebox
  *
- * structured-output 仅用 Type.Object / Type.Unknown 构造 tool 参数 schema；
- * 真实校验由扩展内部的 ajv 完成，schema 形状在运行时只需可序列化。
+ * structured-output 用 Type.Object / Type.Unknown 构造日常变体参数 schema，
+ * 用 Type.Unsafe 把普通 JSON schema（workflow 权威 schema）包装为 TSchema
+ * （U1：真实 Type.Unsafe 返回 schema 本身 + Kind 符号；JSON 序列化视角等价，
+ * mock 直接返回原对象即可覆盖测试断言）。
  */
 export const Type = {
 	Object: (properties: Record<string, unknown>, _options?: Record<string, unknown>) =>
@@ -14,5 +16,6 @@ export const Type = {
 	Array: (_item: unknown, _options?: Record<string, unknown>) => ({ type: "array" }),
 	Record: (_key: unknown, _value: unknown) => ({ type: "object" }),
 	Unknown: (_options?: Record<string, unknown>) => ({ type: "unknown" }),
+	Unsafe: <T>(schema: T) => schema,
 };
 export type Static<_T> = unknown;

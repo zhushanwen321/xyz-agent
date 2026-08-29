@@ -25,7 +25,7 @@
  * skip-if-no-real-pi：pi binary 或 LLM 凭证缺席的环境（如 CI）本 describe 整体 skip，
  * describe 名注入 skip 理由（约定见 pi-fixture.ts 文件头）。
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest'
 import { effectScope } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
 import { spawnPiFixture, REAL_PI_READY, REAL_PI_SKIP_REASON, type PiFixture } from './pi-fixture.js'
@@ -70,6 +70,12 @@ describe.skipIf(!REAL_PI_READY)(
   `W22 equivalence: 混沌注入 → 收敛权威快照（真实 pi 子进程${REAL_PI_SKIP_REASON ? `｜skip：${REAL_PI_SKIP_REASON}` : ''}）`,
   () => {
   let fixture: PiFixture | null = null
+
+  // 失败兜底（设计 U3/G1）：beforeAll 装置阶段失败后在途 turn 由 recover 截断，
+  // 防传染同文件后续用例；非 busy 时零操作幂等
+  afterEach(async () => {
+    await fixture?.recover()
+  })
   /** 非 transient 帧语料（translate 产出的全部 message kind 帧，到达序） */
   let frames: ServerMessage[] = []
   /** message_end 帧重构的 entry 序列（与 frames 内 entry 对象同引用，供帧 ↔ entry 对位） */
@@ -85,10 +91,12 @@ describe.skipIf(!REAL_PI_READY)(
     const fx = fixture
 
     // 一轮带工具调用的 turn：产出 user / assistant(toolCalls) / toolResult / assistant 序列
-    await fx.sendCommand('prompt', {
-      message: "Use the bash tool to run the command `echo chaos-w22` and reply with its exact output.",
-    })
-    await fx.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+    await fx.runTurn(
+      {
+        message: "Use the bash tool to run the command `echo chaos-w22` and reply with its exact output.",
+      },
+      TURN_TIMEOUT_MS,
+    )
 
     // 帧语料：完整生产帧链（pi 事件 → adapter translate → EventInterpreter 编排 → send 帧）。
     // 只用 send 依赖（cwd/fileChangeDiff 缺省 → 跳过 file_changes，无 git 调用；其余回调可选）。

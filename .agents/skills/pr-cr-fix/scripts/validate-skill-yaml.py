@@ -3,12 +3,17 @@
 
 Checks:
 1. Frontmatter exists and is properly closed with ---
-2. description field exists and is non-empty
-3. YAML parses without errors
-4. If description uses double-quoted string: escape quotes (\") must be paired
-5. If description uses double-quoted string with many escapes (>= 4 \"): warn to use >-
-6. If description uses >- block scalar: content must not contain standalone --- line
-7. If description is unquoted plain string: error (colons/quotes may break YAML)
+2. name field exists and matches the skill directory name
+   (zcode discovery mechanism requires frontmatter name == directory name)
+3. description field exists and is non-empty
+4. YAML parses without errors
+5. description must be double-quoted or block scalar (>- / |), per project
+   convention (SKILL.md stage 1.4). Single-quoted is valid YAML but violates
+   the documented convention — tightened to error on purpose; unquoted plain
+   string is error (colons/quotes may break YAML)
+6. If description uses double-quoted string: escape quotes (\") must be paired
+7. If description uses double-quoted string with many escapes (>= 4 \"): warn to use >-
+8. If description uses >- block scalar: content must not contain standalone --- line
 
 Auto-fix (--fix):
 - Converts problematic double-quoted descriptions to >- block scalar (unescaping \\")
@@ -216,7 +221,10 @@ def validate_skill(fpath: str, fix: bool = False) -> tuple[list[str], list[str],
     desc_start, desc_end = desc_range
     dtype = detect_description_type(fm_lines, desc_start)
 
-    # Check 2: description is quoted or block scalar (not plain string)
+    # Check 2: description is double-quoted or block scalar (not plain/single-quoted)
+    # 项目约定（SKILL.md 阶段 1.4）：description 双引号包裹或块标量。单引号在 YAML
+    # 里合法，但与文档约定不符，按文档收紧为 error；不提供 auto-fix——格式迁移应
+    # 显式手工完成，避免脚本静默改写 frontmatter。
     if dtype == 'plain':
         errors.append(f'{name}: description is unquoted plain string (will break on colons/quotes)')
         if fix:
@@ -227,6 +235,11 @@ def validate_skill(fpath: str, fix: bool = False) -> tuple[list[str], list[str],
             if desc_range:
                 desc_start, desc_end = desc_range
                 dtype = detect_description_type(fm_lines, desc_start)
+    elif dtype == 'single-quoted':
+        errors.append(
+            f"{name}: description uses single quotes "
+            f"(project convention: double-quoted or block scalar '>-' / '|')"
+        )
 
     # Check 3: YAML parses
     try:
@@ -244,6 +257,18 @@ def validate_skill(fpath: str, fix: bool = False) -> tuple[list[str], list[str],
     if not desc_value or not str(desc_value).strip():
         errors.append(f'{name}: description is empty')
         return errors, warnings, was_fixed
+
+    # Check 2b: name required and must match directory name.
+    # zcode skill 发现机制（collectAgentMarkdownPaths）以目录名装载 skill，
+    # frontmatter name 与目录名不一致时触发器与实际装载名脱节。
+    fm_name = data.get('name')
+    if not fm_name or not str(fm_name).strip():
+        errors.append(f'{name}: missing name field (name/description both required)')
+    elif str(fm_name).strip() != name:
+        errors.append(
+            f"{name}: frontmatter name '{fm_name}' does not match directory "
+            f"name '{name}' — zcode discovery requires both to be identical"
+        )
 
     # Check 4: Double-quoted string: escape pairing
     if dtype == 'double-quoted':

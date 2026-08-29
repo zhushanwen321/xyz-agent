@@ -14,12 +14,14 @@
  *   currentThinkingLevelMap computed 内联的 providers/models 解析逻辑。改为经
  *   deps.getThinkingLevelMap 回调注入（壳层 Composer 从 settingsStore.providers 派生后传入），
  *   core 零 store 依赖。
+ * - [U6] 可用档判定切 deps.getSupportedLevels（ProviderInfo.models[].supportedLevels，
+ *   runtime 注册表 pi 同源计算下发），本地推算已删除。
  * - import 路径 `@/components/panel/thinking-levels` → core 本域 `./thinking-levels`（batch1 已迁入）。
  * 函数签名 / 逻辑 byte-level 保持。
  */
 import { computed, watch, type ComputedRef, type Ref } from 'vue'
 import {
-  resolveAvailableLevels,
+  normalizeSupportedLevels,
   resolveThinkingValue,
   resolveThinkingKey,
   highestAvailableLevel,
@@ -35,10 +37,11 @@ export interface ThinkingLevelSyncDeps {
    */
   getThinkingLevelMap: (modelId: string) => Record<string, string | null> | undefined
   /**
-   * 取指定 modelId 是否支持思考（models[].reasoning）。可选：未注入时按 undefined（视为支持）判定。
-   * non-reasoning 模型的可用档位只有 off——切模型重置逻辑需要此信息才能正确落到 off。
+   * 取指定 modelId 的档位可用集（ProviderInfo.models[].supportedLevels，U6 切源——
+   * runtime 能力注册表 pi 同源计算的 view-ready 下发）。undefined = 下发链路未接通
+   * （归一为默认五档）。non-reasoning 模型该集为 ['off']——切模型重置逻辑据此正确落到 off。
    */
-  getModelReasoning?: (modelId: string) => boolean | undefined
+  getSupportedLevels: (modelId: string) => string[] | undefined
 }
 
 export function useThinkingLevelSync(
@@ -50,8 +53,8 @@ export function useThinkingLevelSync(
   /** 当前模型的思考档位映射（按 currentModelId 经 deps 派生） */
   const currentThinkingLevelMap = computed(() => deps.getThinkingLevelMap(currentModelId.value))
 
-  /** 当前模型 reasoning 标志（non-reasoning 模型可用档只有 off） */
-  const reasoningOf = () => deps.getModelReasoning?.(currentModelId.value)
+  /** 当前模型档位可用集（supportedLevels，U6 切源——可用档判定唯一权威） */
+  const supportedOf = () => deps.getSupportedLevels(currentModelId.value)
 
   /**
    * 模型切换后对齐思考等级（session 已建 + landing 态均触发）。
@@ -70,34 +73,41 @@ export function useThinkingLevelSync(
    *
    * onReset 传的是 map 映射后的 value（发给 runtime/pi 的字符串）。
    */
-  watch(currentThinkingLevelMap, (map, oldMap) => {
+  watch(
+    // 组合观察源：map（key→value 映射）+ supportedLevels（可用档集，U6 切源）。
+    // 一起观察让回调同时拿到新旧 supported——体系判定（isSameThinkingScheme）需要
+    // 切换前后两个模型的档位集，单观察 map 拿不到旧模型的 supported。
+    () => [currentThinkingLevelMap.value, supportedOf()] as const,
+    ([map, supported], oldPair) => {
+    const oldMap = oldPair?.[0]
+    const oldSupported = oldPair?.[1]
     const current = currentThinkingLevel.value
     if (!current) {
       // landing 态初始无思考等级 → 设为新模型最高可用档
-      const highest = highestAvailableLevel(map, reasoningOf())
+      const highest = highestAvailableLevel(supported)
       onReset(resolveThinkingValue(highest, map))
       return
     }
     // 首次触发（无 oldMap 可比）→ 可用性检查，与原逻辑一致
     if (oldMap === undefined) {
-      const currentKey = resolveThinkingKey(current, map)
-      const available = resolveAvailableLevels(map, reasoningOf())
+      const currentKey = resolveThinkingKey(current, map, highestAvailableLevel(supported))
+      const available = normalizeSupportedLevels(supported)
       if (!available.includes(currentKey)) {
-        const highest = highestAvailableLevel(map, reasoningOf())
+        const highest = highestAvailableLevel(supported)
         onReset(resolveThinkingValue(highest, map))
       }
       return
     }
     // 模型切换：同体系 → 直接映射当前档位 key 到新模型 value
-    if (isSameThinkingScheme(oldMap, map)) {
+    if (isSameThinkingScheme(oldSupported, supported)) {
       const currentKey = resolveThinkingKey(current, oldMap)
       // 防御：current 既不在 oldMap 的 value 里又非合法 ThinkingLevel 时，
-      // resolveThinkingKey 缺省 fallback 到 oldMap 最高可用档；该 key 若在新 map
-      // 的可用档（含 reasoning 叠加判定）中不可用，resolveThinkingValue 会走
-      // v ?? key 回退把不可用档原样发给 runtime。此时走跨体系重置（重置到最高可用档）。
-      const available = resolveAvailableLevels(map, reasoningOf())
+      // resolveThinkingKey 缺省 fallback 到默认五档最高档；该 key 若在新模型的
+      // 可用档中不可用，resolveThinkingValue 会走 v ?? key 回退把不可用档原样发给
+      // runtime。此时走跨体系重置（重置到最高可用档）。
+      const available = normalizeSupportedLevels(supported)
       if (!available.includes(currentKey)) {
-        const highest = highestAvailableLevel(map, reasoningOf())
+        const highest = highestAvailableLevel(supported)
         const resetValue = resolveThinkingValue(highest, map)
         if (resetValue !== current) onReset(resetValue)
         return
@@ -108,7 +118,7 @@ export function useThinkingLevelSync(
       return
     }
     // 跨体系 → 重置到新模型最高可用档（value 未变则不触发冗余 RPC）
-    const highest = highestAvailableLevel(map, reasoningOf())
+    const highest = highestAvailableLevel(supported)
     const newValue = resolveThinkingValue(highest, map)
     if (newValue !== current) onReset(newValue)
   }, { immediate: true })

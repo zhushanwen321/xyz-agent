@@ -189,7 +189,22 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     contextWindow: 200_000,
     inputTypes: ['text'] as Array<'text' | 'image'>,
     thinking: 'on-off' as ThinkingStrategy,
+    /**
+     * 思考能力开关（D4 addModel reasoning 显式化，U6）：出厂显式 boolean 不允许 undefined——
+     * 同一个 undefined pi 解释为「关」而旧本地推算解释为「支持」，写入时语义
+     * 坍缩正是事故 B 根因。默认 true；选非 all-levels 思考策略时自动置 true（用户可显式关）。
+     */
+    reasoning: true,
   })
+
+  // D4：思考策略自动推导——选非 all-levels 策略 → reasoning 自动置 true（用户可显式关；
+  // 再切策略会重新推导，保持「策略变化 → 推导、用户拨动 → 直接写」的简单模型）。
+  watch(
+    () => newModel.thinking,
+    (strategy) => {
+      if (strategy !== 'all-levels') newModel.reasoning = true
+    },
+  )
   const localModels = ref<LocalModel[]>([])
 
   /**
@@ -558,6 +573,9 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
       thinkingLevelMap: THINKING_PRESETS[newModel.thinking]
         ? structuredClone(THINKING_PRESETS[newModel.thinking])
         : undefined,
+      // D4：reasoning 显式 boolean 出厂（不 undefined）——pi 两级门控把缺失判为「关」，
+      // 手加模型静默丢字段会让思考档全被钳回 off（事故 B 根因 ②）。
+      reasoning: newModel.reasoning,
     })
     newModel.name = ''
   }

@@ -279,8 +279,7 @@ describe.skipIf(!REAL_PI_READY)(
       expect(thinking.level).toBe(targetLevel)
 
       // ── 事件 3：message_end（真实 prompt 对话，user + assistant 各至少一条）──
-      await fx.sendCommand('prompt', { message: 'Reply with exactly the word: w25-contract' })
-      await fx.waitForEvent((e) => e.type === 'agent_end', TURN_TIMEOUT_MS)
+      await fx.runTurn({ message: 'Reply with exactly the word: w25-contract' }, TURN_TIMEOUT_MS)
       const messageEnds = fx.collectEvents((e) => e.type === 'message_end')
       expect(messageEnds.length).toBeGreaterThanOrEqual(2)
       const messageEndRoles = messageEnds.map((e) => e.message?.role)

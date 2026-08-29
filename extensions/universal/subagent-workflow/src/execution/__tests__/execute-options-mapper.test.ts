@@ -125,6 +125,17 @@ describe("mapToExecuteOptions (D-A2)", () => {
     const result = mapToExecuteOptions(baseOpts);
     expect(result.appendSystemPrompt).toBeUndefined();
   });
+
+  it("maxTurns 透传（预算语义对齐：workflow agent() 可显式传 turn 上限）", () => {
+    const opts: AgentCallOpts = { ...baseOpts, maxTurns: 20 };
+    const result = mapToExecuteOptions(opts);
+    expect(result.maxTurns).toBe(20);
+  });
+
+  it("maxTurns 不传 → undefined（不限 turn，不挂 turns 估算 watchdog）", () => {
+    const result = mapToExecuteOptions(baseOpts);
+    expect(result.maxTurns).toBeUndefined();
+  });
 });
 
 describe("mergeTimeoutSignal (D-A9)", () => {

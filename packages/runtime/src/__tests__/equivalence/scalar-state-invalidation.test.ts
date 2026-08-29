@@ -188,21 +188,18 @@ describe.skipIf(!REAL_PI_READY)(
     await waitUntil('seed', () => states.every((s) => s.get() !== undefined))
     const seededCalls = calls
 
-    // 3 轮对话：每轮等「新的」agent_end（按计数递增等待，禁 waitForEvent——它匹配历史
-    // 事件缓存会立即返回，下一轮 prompt 撞 pi already-processing）；期间到达的
-    // thinking_level_changed 按生产接线喂给对应实例 markDirty（interpreter 生产行为），
-    // 并等防抖拉取收敛。session_info_changed 不再触发实例失效（label 实例已撤销，
-    // PR #185 MF1——真值走 onSessionRenamed 直写 setLabelCache，无 get_state 拉取）
+    // 3 轮对话：每轮等「新的」agent_end（markEvents 打点 + since 游标 = 新鲜度语义，只匹配
+    // 打点之后的事件；裸 waitForEvent 无 since 会匹配历史缓存立即返回，下一轮 prompt 撞
+    // pi already-processing）；期间到达的 thinking_level_changed 按生产接线喂给对应实例
+    // markDirty（interpreter 生产行为），并等防抖拉取收敛。session_info_changed 不再触发
+    // 实例失效（label 实例已撤销，PR #185 MF1——真值走 onSessionRenamed 直写 setLabelCache，
+    // 无 get_state 拉取）
     for (let i = 0; i < 3; i++) {
       const round = i + 1
-      const agentEndBefore = fx.collectEvents((e) => e.type === 'agent_end').length
+      const turnMark = fx.markEvents()
       const tlBefore = fx.collectEvents((e) => e.type === 'thinking_level_changed').length
       await fx.sendCommand('prompt', { message: `Reply with exactly: round-${round}` })
-      await waitUntil(
-        `round-${round} agent_end`,
-        () => fx.collectEvents((e) => e.type === 'agent_end').length > agentEndBefore,
-        TURN_TIMEOUT_MS,
-      )
+      await fx.waitForEvent((e) => e.type === 'agent_end', { since: turnMark, timeoutMs: TURN_TIMEOUT_MS })
       if (fx.collectEvents((e) => e.type === 'thinking_level_changed').length > tlBefore) {
         thinkingLevelState.markDirty()
         await waitUntil(`round-${round} thinkingLevel converge`, () => !thinkingLevelState.isDirty())
