@@ -26,7 +26,7 @@
  * 参考：domain-models.md §失败处理矩阵。
  */
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
 import { createRecord, updateFromEvent } from "../execution/execution-record.ts";

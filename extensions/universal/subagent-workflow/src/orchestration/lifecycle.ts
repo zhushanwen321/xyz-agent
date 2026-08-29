@@ -33,7 +33,7 @@
  * 参考：domain-models.md §1（聚合根状态机）。
  */
 
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
 
 import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
 import { validateRunArgs } from "./args-validator.ts";

@@ -29,6 +29,7 @@ const { loggerMock, rafCapture } = vi.hoisted(() => ({
   rafCapture: [] as Array<{ task: string; forkSource?: string; slugId: string; resumeSessionFile?: string }>,
 }));
 vi.mock("@zhushanwen/pi-extension-logger", () => ({ getLogger: () => loggerMock }));
+vi.mock("../core/logger", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：fork-from 的 execute 链经 kickOffBackground → runAndFinalize →
 // runSpawn。runSpawn 返回最小成功 AgentResult，后台收尾链可完整走完（archive + notify）。

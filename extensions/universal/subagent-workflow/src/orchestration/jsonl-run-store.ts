@@ -62,7 +62,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import type { CustomEntry, ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger } from "../core/logger";
 
 import { AgentCall } from "./models/agent-call.ts";
 import { Budget } from "./models/budget.ts";

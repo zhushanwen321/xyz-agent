@@ -35,6 +35,9 @@ const { loggerMock } = vi.hoisted(() => ({
 vi.mock("@zhushanwen/pi-extension-logger", () => ({
   getLogger: () => loggerMock,
 }));
+vi.mock("../../core/logger", () => ({
+  getLogger: () => loggerMock,
+}));
 
 import { handleWorkerMessage, postBudgetUpdate } from "../error-recovery.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../models/ports.ts";
