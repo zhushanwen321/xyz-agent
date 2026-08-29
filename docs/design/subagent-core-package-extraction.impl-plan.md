@@ -144,6 +144,8 @@ graph TD
 - 2026-08-29：初始基线（commit 313c08d57 设计契约细化之后）；P2/P3 明确出范围。
 - 2026-08-29（Wave 1 验收轮）：①u0-foundation 领地扩入 `eslint.config.mjs`（no-console config 级 override——缺省 sink 即 console 属 D2 设计，resource-discovery.ts 先例形态，禁行内 disable）；②u0-failfast 领地扩入其余四个内置 workflow 脚本（偏差 #6）。范围重申（用户指示）：本计划只开发 xyz-agent 侧（P0+P1），zcode 插件（P2）待 core npm 包完成后由用户另行安排。
 - 2026-08-29（Wave 1 提交轮）：pre-commit `check_staged_forbidden_lines` 拦截两处——①eslint.config.mjs 注释散文含 `eslint-disable` 字面触发规则 B（改措辞避开，非真实 disable 指令）；②host-services.ts 的 console.warn/error 触发规则 A（eslint override 管不到 python 守卫）——按「规则误报修正规则本体」doctrine 给守卫加 scoped allowlist（`src/core/` 前缀 + 理由注释，P1 迁包后自然失效），u0-foundation 领地相应扩入 `.githooks/check_staged_forbidden_lines.py`。
+- 2026-08-29（Wave 3/4 验收轮）：u0-data-discovery 领地扩入两 injector（偏差 #7：§2.5 审计只覆盖 pi SDK import 面，漏 ScanConfig 构造面）；裁决 ScanConfig.agentDir→hostRoots 标签查表形态（遮蔽序逐字不变）。
+- 2026-08-30（P0 验收门 **PASS**）：九单元全 committed（最新 8b047a341 波次收尾：28 源文件 facade import 补 .ts 后缀 + 17 个失效双 mock 清理）；全量 3226 测试绿 + typecheck/lint 绿；**pi CLI 实测一例 subagent 通过**——扩展加载零错误、record `running→closed` 生命周期完整、日志经 facade→pi-host 桥接落盘（组件前缀保持）、resource-discovery 遮蔽报告在 hostRoots 注入下语义不变（user-agents shadows user-pi 实测）、agent 发现三源命中。实测命令记录：`pi -ne -p <派 subagent 提示> --model xiaomi-token-plan-cn/mimo-v2.5-pro --extension <E 绝对路径> --session-dir /tmp/pi-p0-gate --approve`（-ne 避开全局 npm 同名扩展的工具冲突）。进入 P1。
 
 ## 6 状态表
 
