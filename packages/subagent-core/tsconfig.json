@@ -8,9 +8,13 @@
     "declaration": true,
     "resolveJsonModule": true,
     "outDir": "dist",
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
   },
   "include": [
     "src"
+  ],
+  "exclude": [
+    "src/**/__tests__/**"
   ]
 }
