@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, provide, watch } from 'vue'
+import { computed, onMounted, onUnmounted, provide, watch } from 'vue'
 /**
  * Landing.vue —— 新建任务落地空态（#2，spec §3.1 / §4.5）。
  *
@@ -92,6 +92,17 @@ onMounted(() => {
   } else if (!flow.currentCwd.value && props.currentCwd) {
     flow.presetCwd(props.currentCwd)
   }
+})
+/**
+ * [D4 卸载守卫] Landing 是 landing/overlay 态的唯一承接视图（挂载 → startFlow 见上），
+ * 卸载即终结：封死「视图消失、状态漂留」的未知残留路径（flow.state 是 core 模块级单例，
+ * 视图卸载后若停留 landing/overlay，无任何承接者能终结它——设计 panel-view-derivation
+ * §3.3 D4 的出口兜底层）。限定 isActive（landing/overlay 活跃态）才 cancel：正常首发
+ * （completed）与切换（cancelled，selectSession 守卫已 cancel）路径下卸载时已非活跃，
+ * 守卫 noop，不产生非法转换。
+ */
+onUnmounted(() => {
+  if (flow.isActive.value) flow.cancelFlow()
 })
 watch(() => props.currentCwd, (newCwd) => {
   if (!flow.currentCwd.value && newCwd) {

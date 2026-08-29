@@ -44,6 +44,10 @@ const flowMock = vi.hoisted(() => ({
   openBranchModal: vi.fn(),
   setPendingPreset: vi.fn(),
   state: { value: 'idle' as string },
+  // [D4 卸载守卫] onMounted 自动 startFlow + onUnmounted isActive 才 cancelFlow
+  isActive: { value: false as boolean },
+  startFlow: vi.fn(),
+  cancelFlow: vi.fn(),
 }))
 // [w5] NewTaskDeps mock（Landing 经 useNewTaskDeps 构造 + provide NewTaskDepsKey；
 // ui 组件（PresetSelectChip 等）inject 消费。flow = flowMock）
@@ -83,6 +87,8 @@ beforeEach(() => {
   flowMock.mode.value = 'plain-repo'
   flowMock.gitInfo.value = null
   flowMock.worktreeItems.value = []
+  // [D4] 卸载守卫输入默认非活跃（completed/cancelled 路径守卫 noop）；活跃用例单独设 true
+  flowMock.isActive.value = false
 })
 
 const DONE = 'done' as DerivedStatus
@@ -311,5 +317,30 @@ describe('Landing openDirDialog 异常处理（W3: AC-5.6）', () => {
 
     expect(flowMock.openDirDialog).toHaveBeenCalledTimes(1)
     expect(depsMock.toast.error).not.toHaveBeenCalled()
+  })
+})
+
+describe('Landing onUnmounted 卸载守卫（D4：视图卸载即终结 flow）', () => {
+  it('D4-U1: 卸载时 flow 活跃（landing/overlay）→ cancelFlow 被调（封死状态漂留）', () => {
+    flowMock.isActive.value = true
+    const wrapper = mount(Landing, {
+      props: { sessionId: null, currentCwd: null },
+      global: { stubs: landingStubs },
+    })
+    expect(flowMock.cancelFlow).not.toHaveBeenCalled() // 挂载期不 cancel
+    wrapper.unmount()
+    expect(flowMock.cancelFlow).toHaveBeenCalledTimes(1)
+  })
+
+  it('D4-U2: 卸载时 flow 非活跃（completed/cancelled）→ 守卫 noop，不产生非法转换', () => {
+    flowMock.isActive.value = false
+    const wrapper = mount(Landing, {
+      props: { sessionId: null, currentCwd: null },
+      global: { stubs: landingStubs },
+    })
+    wrapper.unmount()
+    // 正常首发（completed）与切换（cancelled）路径下卸载不触发 cancelFlow——
+    // 对已完成流程的二次 cancel 会是非法状态转换
+    expect(flowMock.cancelFlow).not.toHaveBeenCalled()
   })
 })
