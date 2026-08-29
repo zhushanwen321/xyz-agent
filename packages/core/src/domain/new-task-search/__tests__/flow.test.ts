@@ -2,7 +2,7 @@
  * useNewTaskFlow 编排器单测（IF5）。
  *
  * 覆盖 plan TC-4..TC-8：startFlow 不变量/幂等/终态重建、submitFirstMessage 主链路
- * /bash 分支/null guard/非 landing 抛错/createInFlight 守卫/retry 迁移、closeOverlay 幂等。
+ * /bash 分支/null guard/非 landing 抛错/createInFlight 守卫/send reject 交接定格/retry 迁移、closeOverlay 幂等。
  * 全部端口 mock 注入（vi.fn()）；模块级状态 beforeEach resetNewTaskFlow 隔离。
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
@@ -217,6 +217,33 @@ describe('useNewTaskFlow', () => {
     expect(deps.ports.createSessionFlow.createSession).not.toHaveBeenCalled()
     expect(deps.ports.chat.send).not.toHaveBeenCalled()
     useNewTaskFlowController_setCreateInFlight(false)
+  })
+
+  it('TC-6e: send reject → 交接点已定格 completed + createInFlight 清理（D3 交接原子化探针）', async () => {
+    const deps = makeDeps()
+    const flow = useNewTaskFlow(deps)
+    await enterLanding(flow)
+    ;(deps.ports.createSessionFlow.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      session: mockSession,
+      migratedSegments: [textSeg('hello')],
+    })
+    // 探针（设计 §3.3 D3）：真实 useChat.send 内部吞错（W2 策略，不 throw），
+    // mock 层面直接返回 rejected promise 锁定语义——flow 终态与 send 成败解耦，
+    // 交接（setActiveSession + loadPanel + pushChat）完成即 completed，send 链路
+    // 未来任何演化（恢复 throw、新增前置抛错点）都不影响 flow 终态
+    ;(deps.ports.chat.send as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('send failed'))
+
+    // submitFirstMessage 对 send 的 await 未吞错，reject 向上抛
+    await expect(flow.submitFirstMessage([textSeg('hello')])).rejects.toThrow('send failed')
+
+    // 交接已完成且 transition('completed') 在 send 之前执行（若仍在 send 后，
+    // send reject 会让 state 卡 landing——此断言即探针本体）
+    expect(deps.ports.navigation.setActiveSession).toHaveBeenCalledWith('s1')
+    expect(deps.ports.navigation.pushChat).toHaveBeenCalledWith('s1')
+    expect(deps.ports.chat.send).toHaveBeenCalledTimes(1)
+    expect(useNewTaskFlowState().state.value).toBe('completed')
+    // finally 语义：异常路径 createInFlight 也必须清理
+    expect(flow.isInflight.value).toBe(false)
   })
 
   it('TC-7: retry 分支——session 已绑定走 migrateImage 迁移 + 部分失败 toast 不阻断', async () => {
