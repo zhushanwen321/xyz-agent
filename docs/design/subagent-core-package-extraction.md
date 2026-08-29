@@ -199,9 +199,10 @@ interface DiscoveryRoot { dir: string; source: string }
 interface NotifyDomainPorts {
   /** pending 计数：pi 会话 entries 中活跃 register/unregister 差集判定。 */
   countActiveFromEntries?(entries: unknown[]): number;
-  /** 投递内核工厂：结构化签名与 @xyz-agent/session-delivery 的 createDelivery 兼容，
-   *  类型由 core 自持结构类型描述（闭包守卫红线：core 不得 import session-delivery）。 */
-  createDelivery?(port: unknown, opts: unknown): unknown;
+  /** 投递内核工厂：签名即 core 自持结构化类型（DeliveryPort / DeliveryConfig /
+   *  DeliveryHandle——从 @xyz-agent/session-delivery 的类型面手工转写，闭包红线：
+   *  core 不得 import 该包）；结构超集/子集兼容由宿主注入点 typecheck 守护。 */
+  createDelivery?(port: DeliveryPort, options?: DeliveryConfig): DeliveryHandle;
 }
 ```
 
@@ -257,7 +258,7 @@ interface NotifyDomainPorts {
 
 **D9：core 依赖卫生机器守卫 + dist 持续发布门（选定）**
 
-- **采用**：两道机器守卫（挂 pre-commit / CI invariants / 发布管线）：①**闭包守卫**——新增探针脚本校验 core 的 dependencies + peerDependencies + 源码 import 闭包**不含** `@earendil-works/*`、`@zhushanwen/pi-extension-logger`、`@zhushanwen/pi-pending-notifications`、`@xyz-agent/session-delivery`，防未来回归（新代码把 pi SDK 带回闭包）；②**dist 发布回归门**——发布管线（changeset 稳定 + prerelease 通道）内置「build dist → node 20 require CJS dist → golden 回放绿」才放行，即 V7 机制的产品化：workspace 消费者永远吃最新 TS 源，npm 消费者吃 tsup dist，一次性验收后若无常设门，tsup 配置漂移 / 依赖升级 / d.ts 缺陷会导致「src 侧全绿、dist 已坏」照常发布（workflows/*.cjs 资产 src=dist 同字节零分歧，分歧面只在 TS 编译产物）。
+- **采用**：两道机器守卫（挂 pre-commit / CI invariants / 发布管线）：①**闭包守卫**——新增探针脚本校验 core 的 dependencies + peerDependencies + 源码 import 闭包**不含** `@earendil-works/*`、`@zhushanwen/pi-extension-logger`、`@zhushanwen/pi-pending-notifications`、`@xyz-agent/session-delivery`，防未来回归（新代码把 pi SDK 带回闭包）；②**dist 发布回归门**——发布管线（changeset 稳定 + prerelease 通道）内置「build dist → require CJS dist → golden 回放绿」才放行，即 V7 机制的产品化：workspace 消费者永远吃最新 TS 源，npm 消费者吃 tsup dist，一次性验收后若无常设门，tsup 配置漂移 / 依赖升级 / d.ts 缺陷会导致「src 侧全绿、dist 已坏」照常发布（workflows/*.cjs 资产 src=dist 同字节零分歧，分歧面只在 TS 编译产物）。**落地注记（一致性审查回写）**：smoke 门的 require/golden 段在调用方 node 环境执行（CI node 24），node 20 真机 runner 为待接入 TODO；`./engines/zcode/reader` 子入口 dist 依赖 node:sqlite（node≥22.5），node 20 消费者不可加载该子入口（主入口与其余子入口无此依赖）——P2 zcode 侧 2c 接入时需评估宿主 node 版本面或 reader 的 sqlite 惰性加载。
 - **被否**：靠 review 纪律——§2.3 已证明人工纪律守不住漂移。
 - **证据**：本仓探针文化（check-pi-semantics / check-extension-dependencies / check-pi-sync 同族）。
 - **效果**：D1 判据与 D4 双形态契约从文档约束升级为机器约束；目标 1 与目标 5 的长期保障。
