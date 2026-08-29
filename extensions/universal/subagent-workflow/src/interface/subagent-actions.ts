@@ -613,6 +613,28 @@ export async function forkFromHandler(
   const prompt = input?.prompt?.trim() ?? "";
   const task = prompt ? wrapForkFromPrompt(prompt) : FORK_FROM_DEFAULT_PROMPT;
 
+  const source = assertAndLookupForkFromSource(service, id);
+
+  // slug 派生：源 slug + -resumed 后缀（截断到上限）。仅展示标签，不需唯一。
+  const baseSlug = (source.slug || source.agent || "resumed").slice(0, SLUG_MAX_LENGTH - "-resumed".length);
+  const handle = await service.execute({
+    task,
+    slug: `${baseSlug}-resumed`,
+    forkFromSessionFile: source.sessionFile,
+  });
+
+  return {
+    kind: "fork-from",
+    subagentId: handle.subagentId,
+    sourceSessionFile: source.sessionFile,
+    response: { newSubagentId: handle.subagentId, sourceSessionFile: source.sessionFile },
+  };
+}
+
+/** forkFromHandler 的守卫链（fork-from handler doc 的守卫 1–6 原样提取）：按序校验
+ *  源记录可接续，命中即抛带行动语言的 Error；全部通过则返回源 SubagentRecord
+ *  （守卫 6 已保证 sessionFile 非空，返回类型随之收窄）。 */
+function assertAndLookupForkFromSource(service: SubagentService, id: string): SubagentRecord & { sessionFile: string } {
   // 守卫 1：本进程内存 running —— 直接 message 即可，fork-from 会双写其 session 文件。
   if (service.findRecord(id)) {
     throw new Error(
@@ -664,27 +686,15 @@ export async function forkFromHandler(
   }
 
   // 守卫 6：无子 session 文件（entry-born 孤儿：spawn 窗口期中断，从未开跑）。
-  if (!source.sessionFile) {
+  const sessionFile = source.sessionFile;
+  if (!sessionFile) {
     throw new Error(
       `subagent ${id} has no child session file to inherit from (it never started successfully). ` +
       `Recovery: start a fresh subagent (action:'start') describing the task again.`,
     );
   }
 
-  // slug 派生：源 slug + -resumed 后缀（截断到上限）。仅展示标签，不需唯一。
-  const baseSlug = (source.slug || source.agent || "resumed").slice(0, SLUG_MAX_LENGTH - "-resumed".length);
-  const handle = await service.execute({
-    task,
-    slug: `${baseSlug}-resumed`,
-    forkFromSessionFile: source.sessionFile,
-  });
-
-  return {
-    kind: "fork-from",
-    subagentId: handle.subagentId,
-    sourceSessionFile: source.sessionFile,
-    response: { newSubagentId: handle.subagentId, sourceSessionFile: source.sessionFile },
-  };
+  return { ...source, sessionFile };
 }
 
 // ============================================================

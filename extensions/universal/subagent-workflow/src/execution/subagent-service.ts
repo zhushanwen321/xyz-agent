@@ -1091,76 +1091,7 @@ export class SubagentService {
     // reconstructAll 已将跨重启 record（无 sidecar + pid 死）标记为 running（v4 B-1 可续聊语义，非 crashed），
     // 直接转为可变 ExecutionRecord register 进内存，供 message/close action 续操作。
     if (!record) {
-      // [perf] SP-2 冷路径：先走 idToFile 索引直查（单文件 stat 校验），未命中
-      //（进程重启后尚未扫描、索引未热）才全目录 collectRecords 兜底建索引。
-      // 跨重启后每条 message 从「readdir + N×4 stat 全扫」降为单文件校验。
-      const direct = this.store.findLightById(id);
-      const allowReconnect = opts?.allowReconnect === true;
-      const found =
-        (direct?.status === "running" ? direct : undefined) ??
-        this.store
-          .collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined)
-          .find((r) => r.id === id && (r.status === "running" || (allowReconnect && this.isReconnectableClosed(r))));
-      // [v8.5 D] 可重连候选的守卫先于任何状态突变与注册：worktree 绑定丢失 / 异进程活实例
-      // 以 ResurrectDeniedError 抛出（endedMessageGuard 必须原样透传，不得改写为 fork-from
-      // 指引误导 agent 走已被判死的通道）；拒绝时内存不得残留该记录（findRecord 契约）。
-      if (found && found.status === "closed") {
-        if (found.worktree === true) {
-          throw new ResurrectDeniedError(
-            `subagent ${id} cannot be transparently resumed: it was created with worktree isolation, ` +
-            `and its worktree checkout no longer exists after restart (resuming in place would make spawn cwd fall back to the main repo). ` +
-            `Recovery: action:'start' a fresh subagent (with a new worktree if isolation is still needed); ` +
-            `its conversation history remains intact at ${found.sessionFile}.`,
-          );
-        }
-        const foreign = found.sessionFile ? findForeignLiveInstance(found.sessionFile) : undefined;
-        if (foreign) {
-          throw new ResurrectDeniedError(
-            `subagent ${id} is not transparently resumable: its previous instance still finishing in another process ` +
-            `(pid ${foreign.pid}, startedAt=${new Date(foreign.startedAt).toISOString()}). ` +
-            `Resuming in place would double-write ${found.sessionFile}. ` +
-            `Recovery: retry once that process exits; if it never exits, action:'start' a fresh subagent and treat the history at ${found.sessionFile} as read-only reference.`,
-          );
-        }
-      }
-      if (found) {
-        record = createRecord(id, {
-          agent: found.agent,
-          model: found.model,
-          thinkingLevel: found.thinkingLevel,
-          mode: found.mode,
-          task: found.task,
-          slug: found.slug,
-          startedAt: found.startedAt,
-          rootSessionId: found.rootSessionId,
-          parentRecordId: found.parentRecordId,
-          depth: found.depth,
-          // [v4 A-3] 跨重启恢复入口——message 路径磁盘重建无条件置 chatMode=true（现状机制，
-          // V3 方案 A 方向兑现）。改动此处必须带 S3 回归场景（跨重启 message 续聊验证）。
-          // V3 SP-5 探针定案：机制已存在，本注释即定案，不再悬置。
-          chatMode: true,
-          controller: new AbortController(),
-        });
-        record.sessionFile = found.sessionFile;
-        record.round = found.round;
-        // [review round2] 跨重启 worktree 绑定丢失防护：原 record 创建时启用了 worktree 隔离
-        //（session entry 的 worktree 标志），但 WorktreeHandle 不可序列化、重建后恒缺失。
-        // 标记 hadWorktree，resumeRound 守卫据此拒绝续聊（防 spawn cwd 静默回落主 repo 破坏
-        // 隔离——正是 worktree 要防的并发写冲突场景）。close 不受影响（closeChatIdle 走
-        // doFinalizeRecord，泄漏的 worktree 由 reaper 兜底回收）。
-        record.hadWorktree = found.worktree === true;
-        // [v8.5 D] 透明重生回边：独立函数不走 tryTransition 单向语义（closed 单向性对正常
-        // 执行流完整保留）；准入唯一依据 = A 档 sidecar 真实死因 ∈ 可重连集。死亡语义位由
-        // resurrectClosed 清除；register 后立刻上报 transition entry，live/reload 视图同步
-        // 翻回 running（等价性由 applyEntry reducer 保证，对齐 SP-2 重建即报告先例）。
-        if (found.status !== "running") {
-          resurrectClosed(record);
-        }
-        this.store.register(record);
-        if (found.status !== "running") {
-          this.store.reportRecordTransition(record);
-        }
-      }
+      record = this.coldLookupForAction(id, opts?.allowReconnect === true);
     }
     if (!record || record.rootSessionId !== this.sessionRootId) {
       throw new Error(
@@ -1183,6 +1114,81 @@ export class SubagentService {
         `ownership guard: this process's baseline=${baselineRecordId ?? "(root)"} is not the direct parent of ${id}; ` +
         `operating here would race the owning child process's handle and double-write the session file.`,
       );
+    }
+    return record;
+  }
+
+  /** SP-2 冷路径（getRecordForAction 内存未命中分支的提取）：从磁盘重建可变 ExecutionRecord
+   *  并 register 进内存。[perf] 先走 idToFile 索引直查（单文件 stat 校验），未命中（进程重启后
+   *  尚未扫描、索引未热）才全目录 collectRecords 兜底建索引——跨重启后每条 message 从
+   *  「readdir + N×4 stat 全扫」降为单文件校验。
+   *  @returns 重建的 record；磁盘也无则 undefined
+   *  @throws ResurrectDeniedError 可重连候选被 worktree/异进程活实例守卫拦截 */
+  private coldLookupForAction(id: string, allowReconnect: boolean): ExecutionRecord | undefined {
+    const direct = this.store.findLightById(id);
+    const found =
+      (direct?.status === "running" ? direct : undefined) ??
+      this.store
+        .collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined)
+        .find((r) => r.id === id && (r.status === "running" || (allowReconnect && this.isReconnectableClosed(r))));
+    // [v8.5 D] 可重连候选的守卫先于任何状态突变与注册：worktree 绑定丢失 / 异进程活实例
+    // 以 ResurrectDeniedError 抛出（endedMessageGuard 必须原样透传，不得改写为 fork-from
+    // 指引误导 agent 走已被判死的通道）；拒绝时内存不得残留该记录（findRecord 契约）。
+    if (found && found.status === "closed") {
+      if (found.worktree === true) {
+        throw new ResurrectDeniedError(
+          `subagent ${id} cannot be transparently resumed: it was created with worktree isolation, ` +
+          `and its worktree checkout no longer exists after restart (resuming in place would make spawn cwd fall back to the main repo). ` +
+          `Recovery: action:'start' a fresh subagent (with a new worktree if isolation is still needed); ` +
+          `its conversation history remains intact at ${found.sessionFile}.`,
+        );
+      }
+      const foreign = found.sessionFile ? findForeignLiveInstance(found.sessionFile) : undefined;
+      if (foreign) {
+        throw new ResurrectDeniedError(
+          `subagent ${id} is not transparently resumable: its previous instance still finishing in another process ` +
+          `(pid ${foreign.pid}, startedAt=${new Date(foreign.startedAt).toISOString()}). ` +
+          `Resuming in place would double-write ${found.sessionFile}. ` +
+          `Recovery: retry once that process exits; if it never exits, action:'start' a fresh subagent and treat the history at ${found.sessionFile} as read-only reference.`,
+        );
+      }
+    }
+    if (!found) return undefined;
+    const record = createRecord(id, {
+      agent: found.agent,
+      model: found.model,
+      thinkingLevel: found.thinkingLevel,
+      mode: found.mode,
+      task: found.task,
+      slug: found.slug,
+      startedAt: found.startedAt,
+      rootSessionId: found.rootSessionId,
+      parentRecordId: found.parentRecordId,
+      depth: found.depth,
+      // [v4 A-3] 跨重启恢复入口——message 路径磁盘重建无条件置 chatMode=true（现状机制，
+      // V3 方案 A 方向兑现）。改动此处必须带 S3 回归场景（跨重启 message 续聊验证）。
+      // V3 SP-5 探针定案：机制已存在，本注释即定案，不再悬置。
+      chatMode: true,
+      controller: new AbortController(),
+    });
+    record.sessionFile = found.sessionFile;
+    record.round = found.round;
+    // [review round2] 跨重启 worktree 绑定丢失防护：原 record 创建时启用了 worktree 隔离
+    //（session entry 的 worktree 标志），但 WorktreeHandle 不可序列化、重建后恒缺失。
+    // 标记 hadWorktree，resumeRound 守卫据此拒绝续聊（防 spawn cwd 静默回落主 repo 破坏
+    // 隔离——正是 worktree 要防的并发写冲突场景）。close 不受影响（closeChatIdle 走
+    // doFinalizeRecord，泄漏的 worktree 由 reaper 兜底回收）。
+    record.hadWorktree = found.worktree === true;
+    // [v8.5 D] 透明重生回边：独立函数不走 tryTransition 单向语义（closed 单向性对正常
+    // 执行流完整保留）；准入唯一依据 = A 档 sidecar 真实死因 ∈ 可重连集。死亡语义位由
+    // resurrectClosed 清除；register 后立刻上报 transition entry，live/reload 视图同步
+    // 翻回 running（等价性由 applyEntry reducer 保证，对齐 SP-2 重建即报告先例）。
+    if (found.status !== "running") {
+      resurrectClosed(record);
+    }
+    this.store.register(record);
+    if (found.status !== "running") {
+      this.store.reportRecordTransition(record);
     }
     return record;
   }
