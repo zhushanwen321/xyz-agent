@@ -22,7 +22,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 // createRequire 的 require 条件解析均实测失败），用与头部 import 同语义的
 // import.meta.resolve 定位子路径入口，再向上爬包根；校验 name 防止爬出包读到 workspace 根的版本。
 // piAiVersion 必须动态取实装版本：写死会在 pi 升级后失真，快照元数据与 catalog 脱节。
-function readPiAiVersion() {
+// export 供 t10 测试断言「快照 piAiVersion == node_modules 实装版本」，测试不重复实现爬包根逻辑。
+export function readPiAiVersion() {
   let dir = dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-ai/providers/all')))
   for (;;) {
     try {
@@ -430,21 +431,32 @@ function main() {
     // lastModified 保护基准：remote lastModified <= 此值 → 内置已更新，忽略该 overlay 条目。
     // 误用 generatedAt（提取时刻恒新）会导致 overlay 永远被忽略。
     catalogGeneratedAt: getBuiltinModelDataGeneratedAt(),
+    // 自包含指纹（D3 决策）：由生成端写入，t10 测试断言「快照 providers 内容 == header 指纹」
+    // 即可自洽，替代手写基线数字——pi 升级后重生成快照即自洽，测试基线不再是需要人工同步的
+    // 第三份数据（0.84.1→0.84.4 升级时 1220→1290 基线失守的直接教训）。
+    providerCount: providers.length,
+    totalModels: providers.reduce((s, p) => s + p.models.length, 0),
     providers,
   }
   const outPath = fileURLToPath(new URL('../src/generated/builtin-providers.json', import.meta.url))
   mkdirSync(dirname(outPath), { recursive: true })
   // 内容无变化时跳过写入：generatedAt 时间戳随每次运行变化，无条件重写会把
   // prebuild 后的 git status 永久弄脏（merge 流程「未提交变更」gate 永远不过）。
-  // providers/piAiVersion/catalogGeneratedAt 深度相等 → 保留磁盘文件（含旧 generatedAt）不动。
+  // providers/piAiVersion/catalogGeneratedAt/指纹 深度相等 → 保留磁盘文件（含旧 generatedAt）不动。
+  // 指纹纳入比对：providers 深度相等时指纹必然相等，显式比对是防御——旧格式快照（无指纹字段）
+  // 或指纹被破坏的产物不会被误判 same，保证磁盘快照恒满足「内容 == header 指纹」自洽契约。
   try {
     const existing = JSON.parse(readFileSync(outPath, 'utf-8'))
     const sameProviders =
       JSON.stringify(existing.providers) === JSON.stringify(payload.providers) &&
       existing.piAiVersion === payload.piAiVersion &&
-      existing.catalogGeneratedAt === payload.catalogGeneratedAt
+      existing.catalogGeneratedAt === payload.catalogGeneratedAt &&
+      existing.providerCount === payload.providerCount &&
+      existing.totalModels === payload.totalModels
     if (sameProviders) {
-      console.log(`[gen-builtin-providers] ${providers.length} providers unchanged, skip rewrite -> ${outPath}`)
+      console.log(
+        `[gen-builtin-providers] ${providers.length} providers / ${payload.totalModels} models unchanged, skip rewrite -> ${outPath}`,
+      )
       return
     }
   } catch {

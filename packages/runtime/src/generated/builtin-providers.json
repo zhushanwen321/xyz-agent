@@ -1,7 +1,9 @@
 {
-  "generatedAt": "2026-08-29T03:20:04.400Z",
+  "generatedAt": "2026-08-29T06:29:05.578Z",
   "piAiVersion": "0.84.4",
   "catalogGeneratedAt": 1787954402569,
+  "providerCount": 39,
+  "totalModels": 1290,
   "providers": [
     {
       "id": "amazon-bedrock",
