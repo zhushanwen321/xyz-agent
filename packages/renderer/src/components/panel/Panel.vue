@@ -63,7 +63,10 @@
       :history-error="historyError"
       @retry="onRetryHistory"
     />
-    <!-- empty 兜底：无 session 且 flow 未活跃（选会话空态） -->
+    <!-- empty 兜底：无 session 且 flow 未活跃（选会话空态）。
+         本兜底当前仅 empty(sessionId===null) 可达；kind==='empty' && sessionId!==null 属
+         类型层防御组合（widget/composer 判据保留），若未来派生规则演化使该组合可达，
+         主区应渲染空对话态而非本兜底文案。 -->
     <div v-else class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
       <MessageSquare class="size-6 text-neutral-dim opacity-40" />
       <p class="text-[length:var(--text-xs)] text-neutral-dim opacity-70">{{ t('panel.panel.selectSession') }}</p>

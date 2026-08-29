@@ -140,7 +140,7 @@ describe('E2: 非焦点 session 提交后 pending 态（activeId 限定已移除
   })
 })
 
-describe('E3: compact 期 compacting 态 + Panel 渲染 Composer（isCompacting 分支）', () => {
+describe('E3: compact 期 compacting 态 + Panel 渲染 Composer（conversation 恒挂，D2 存在性与模态正交）', () => {
   it('setCompacting(s1,true) → derivedStatus=compacting；Panel 渲染 Composer', () => {
     const chat = useChatStore()
     const sessionStore = useSessionStore()
@@ -160,7 +160,7 @@ describe('E3: compact 期 compacting 态 + Panel 渲染 Composer（isCompacting 
     const status = derivedStatus('s1').value
     expect(status).toBe('compacting')
 
-    // mount Panel(s1) → Composer 在 DOM 中（showPanelComposer 含 isCompacting 分支）
+    // mount Panel(s1) → Composer 在 DOM 中（conversation 恒常驻，compacting 禁用模态由 Composer 内部承担）
     const wrapper = mountPanel('s1')
     expect(wrapper.find('[data-testid="composer"]').exists()).toBe(true)
   })

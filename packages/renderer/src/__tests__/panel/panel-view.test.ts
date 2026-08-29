@@ -154,7 +154,7 @@ describe('PV1: flow 残留免疫（G2 结构实证——用户报告 bug 的原�
     expect(wrapper.find('[data-testid="landing"]').exists()).toBe(false)
   })
 
-  it('flow 活跃 + 有会话无消息（turn 活跃边界组合）→ 空对话态 + Composer', () => {
+  it('flow 活跃 + 有会话无消息（新契约无 turn 维度，flow 残留等价探针）→ 空对话态 + Composer', () => {
     mockState.flowIsActive.value = true
 
     const wrapper = mountPanel('s1')

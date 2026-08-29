@@ -29,7 +29,7 @@ Out of scope：split 多 panel 重启；flow 状态机 10 态内部重构；ask-
 | T1 | PanelView 类型 + derivePanelView 纯函数 + 全组合表测试（含回归用例「有消息+flowActive→conversation」与「dead 吞 ask-user」与「turn 活跃+无消息→conversation」） | `packages/core/src/domain/session/panel-view.ts`（新）`packages/core/src/domain/session/__tests__/panel-view.test.ts`（新） | 无（foundation） | plain | V5 |
 | T2 | `transition('completed')` 上移到 pushChat 后（send 前）；flow.test.ts 增「send reject → state=completed」用例 | `packages/core/src/domain/new-task-search/flow.ts` `packages/core/src/domain/new-task-search/__tests__/flow.test.ts` | 无 | plain | 单测过 + 现有 flow 测试不破 |
 | T3 | Panel.vue 模板 switch(panelView) 重写 + composer-band 判据收敛（删 isSessionActive/isCompacting 兜底；ask-user ⟺ conversation&&input；WidgetArea 映射）+ renderer 输入收集 composable | `packages/renderer/src/components/panel/Panel.vue` `packages/renderer/src/composables/features/panel/usePanelView.ts`（新）`packages/renderer/src/__tests__/panel/panel-view.test.ts`（新或并入现有 Panel 测试） | T1 | plain | V1/V2/V4 判据 + renderer 测试绿 |
-| T4 | Landing onUnmounted 卸载守卫（isActive 才 cancel）+ useSidebar 删除路径 4 处空态出口统一 helper（排除 newSession L258） | `packages/renderer/src/components/new-task/Landing.vue` `packages/renderer/src/composables/features/sidebar/useSidebar.ts` | 无 | plain | V3/V3' + 相关测试绿 |
+| T4 | Landing onUnmounted 卸载守卫（isActive 才 cancel）+ useSidebar 删除路径 4 处空态出口统一 helper（排除 newSession L258） | `packages/renderer/src/components/new-task/Landing.vue` `packages/renderer/src/composables/features/sidebar/useSidebar.ts` `packages/renderer/src/__tests__/new-task/landing.test.ts`（守卫用例追加）`packages/renderer/src/__tests__/useSidebar-delete-empty-state.test.ts`（新建，D7-U1~U6） | 无 | plain | V3/V3' + 相关测试绿 |
 | T5 | constraints.json 登记新约束 + render-constraints 重新生成 + 全量验证 + review.md 补实施记录 | `docs/constraints.json` `docs/constraints.md`（生成） | T1-T4 | plain | 全量测试绿 + Gate A/B |
 
 ## 3 DAG 图
@@ -64,7 +64,7 @@ T1/T2/T4 首波并行（无相互依赖），T3 次波，T5 收尾。
 |---|------|------|----------|
 | 1 | T2 | transition 落点 pushChat 后 loadTree 前（窗口内自由度，loadTree fire-and-forget 无时序影响） | D3 只约束窗口 |
 | 2 | T1 | 「turn 活跃+无消息」检查点以「无消息→conversation」新契约等价覆盖（新输入不含 turn 维度） | D2 删 turn 判据后组合退化 |
-| 3 | T2 | TC-6e 断言强度高于 D3 探针最低要求（额外锁 reject 传播/交接三步/createInFlight 清理） | 加强锁定非偏移 |
+| 3 | T2 | TC-6e 断言强度高于 D3 探针最低要求（额外锁 reject 传播/交接三步中的 setActiveSession 与 pushChat——loadPanel 未单独断言/createInFlight 清理） | 加强锁定非偏移 |
 | 4 | T3 | core session/index.ts 授权导出实际 +2 行（1 注释 + 1 export，注释符合文件惯例） | 用户授权项 |
 | 5 | T3 | 模板 v-if 链等价 switch（Vue 模板无 switch 语句）+ script 侧收窄 computed 供 vue-tsc | 等价实现 |
 | 6 | T3 | empty-with-session Composer 判据防御性保留（现行派生不可达，对冲规则演化） | D5 字面一致 |
@@ -76,11 +76,13 @@ T1/T2/T4 首波并行（无相互依赖），T3 次波，T5 收尾。
 | 12 | T4 | 守卫测试追加在既有 landing.test.ts + flowMock 补齐三成员 | 文件归属正确 |
 | 13 | T4 | D7-U6 用 currentCwd 等价断言（公开返回面无 pendingCwd，landing 态二者同源） | 语义等价已核实 |
 | 14 | T3 | landing.test.ts T1.6 补 isActive=true（state 与 isActive 同源残留的忠实模拟）+ conversation 分支守卫断言 | 忠实模拟 |
-| 15 | T5 | constraints authority 用 docs/ 相对路径（../ 前缀会触发校验失败） | 既有条目风格 |
+| 15 | T5 | constraints authority 用 docs/ 相对路径（校验器把 `../` 前缀解析为仓库根相对，误写 `../design/...` 这类 docs/ 语义路径会因文件不存在而校验失败） | 既有条目风格 |
 | 16 | T5 | ui-consistency 枚举未入 _meta（脚本不校验 dimensions 枚举） | 后续可补 |
 | 17 | T3 | landing.test.ts 3 旧行为用例由 T3 补修（T4 领地文件，授权扩展） | D1 必然破坏面 |
 
 审查同时裁定的 doc_errors（3 条）与 unreasonable（4 条，含 trace 输入面 high）已在阶段 4 处理：设计文档 D1/D5/D3/V4 已由主 agent 修订（trace 裁决：恢复 trace 态输入面、派生层实现）。修复批次（commit 73f684c3e）定向复审 pass=true，3 条 low 处理：PV6 补应答恢复半程断言（打回补）；D5 行号锚点改 computed 名锚点（主 agent 已修）；「eslint ignore 说明」deviation 系对验收输出的解释性说明（测试文件命中仓库既有 ignore 模式属仓库现状），非仓内落地物，特此澄清。
+
+**Gate 后追加复审（2026-08-29，三区并行 reviewer，相互独立）**：审查对象 = 领地文件清单在 `7fca8632a..4c4e214b2` 的 diff 对照设计文档终态（区间内混有 project-switcher / subagent-engine 两条并行线 commit，已按领地清单排除）。结论：① core 区与 flow-lifecycle 区零 unreasonable、零 doc_error；② renderer-panel 区 1 条 low unreasonable——`session-active-state.test.ts` E3 的 describe 名与行内注释仍归因「isCompacting 分支」（D2 已删该判据，断言仍绿但注释误导），已修；③ 3 条 doc_errors——设计文档 §5 检查点①「终态同样 empty」与 D1「绑定空会话归 conversation」矛盾（阶段 4 修订未同步，已改）、登记 #3「交接三步」实锁 setActiveSession+pushChat 2/3 步（已澄清 loadPanel 未单独断言）、登记 #15「`../` 前缀触发校验失败」理由不准（校验器按仓库根相对解析，已改）；④ 2 条合理化改进落地——PV1 第二用例名去「turn 活跃」旧归因、Panel.vue else 兜底分支注释声明 empty-with-session 组合可达时的预期主区形态；⑤ T4 领地补记测试文件实际路径（`__tests__/useSidebar-delete-empty-state.test.ts` 在 `__tests__/` 根目录而非 `sidebar/` 子目录）。审查含测试反推（对旧判据必红验证）与登记表条目抽查（13/17 条核验属实）。
 
 ## 6 状态表
 
@@ -95,8 +97,9 @@ T1/T2/T4 首波并行（无相互依赖），T3 次波，T5 收尾。
 | 阶段4 修复 | 完成 | 2 | trace 输入面派生层恢复（73f684c3e）+ 注释三连修；定向复审 pass=true；PV6 全程补全（399c867c4） |
 | Gate A | 绿 | 2 | 修复后全量重验：core 1268 / renderer 3598 零失败 |
 | Gate B | 完成 | 1 | V1/V1'(超集)/V2/V4-trace/V5 实测 PASS；V3 切换半程与 V3' 因 pi restore 崩溃（认知外环境问题）与破坏性约束 blocked（单测守卫）；详见 .review.md Gate B 记录 |
+| Gate 后追加复审 | 完成 | 1 | 三区并行对抗审查：零高危；1 low（E3 注释归因漂移）+ 3 doc_errors（设计 §5 检查点① / 登记 #3 / #15）+ 2 合理化改进，全部当日修复落地 |
 
 ## 7 残留风险与变更历史
 
 - 残留风险：§5 检查点①②需实施期实测（Landing 渲染条件语义差异 / overlay 卸载时序）；V1-V4 真实场景验收依赖 dev app 可运行（最后统一做）。
-- 变更历史：2026-08-29 创建（设计三轮审查收敛后）。
+- 变更历史：2026-08-29 创建（设计三轮审查收敛后）；2026-08-29 Gate 后追加三区对抗式复审，1 low + 3 doc_errors + 2 改进全部当日修复。
