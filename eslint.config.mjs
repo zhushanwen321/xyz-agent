@@ -297,6 +297,18 @@ export default [
       'no-console': 'error',
     },
   },
+  // [subagent-core 抽离 P0（新规则例外，沿用 [HISTORICAL] 登记风格）] core log 端口的
+  // 缺省 sink 按 subagent-core 设计 D2 即为 console（docs/design/
+  // subagent-core-package-extraction.md §3.3 D2「缺省 console」）：configureCore 之前
+  // 宿主 appendEntry 通道不存在，console 是唯一可用出口，该路径仅测试与库误用场景
+  // 可达（host-services.ts 的 NULL_HOST.log）。故不走行内注释豁免形态（对应
+  // taste 守卫规则语义），统一走本配置级 override。
+  {
+    files: ['extensions/universal/subagent-workflow/src/core/**'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
   // [HISTORICAL] resource-discovery.ts 的 3 处 Promise.all（源级/包级/scoped 子包级）触发
   // taste/prefer-allsettled 属规则误报，per-file override 关闭。规则设计针对「独立数据源
   // 可部分降级」场景；本文件三处是 swf-perf-impl cleanup slice（TC2/IF2，见

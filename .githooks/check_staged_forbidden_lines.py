@@ -26,6 +26,13 @@ DIFF_CMD_PREFIX = ["git", "diff", "--cached", "--unified=0", "--diff-filter=ACMR
 CONSOLE_RE = re.compile(r"console\.(warn|error)\(")
 DISABLE_RE = re.compile(r"eslint-disable")
 
+# [subagent-core 抽离 P0] 规则 A 的 scoped allowlist：core log 端口（HostServices.log 的
+# NULL_HOST 缺省 sink）按设计 D2 即为 console——configureCore 之前宿主 appendEntry 通道
+# 不存在，该路径仅测试与库误用场景可达；设计文档 docs/design/subagent-core-package-extraction.md
+# §3.3 D2「缺省 console」，eslint 侧已有同范围 config 级 override（eslint.config.mjs）。
+# P1 物理抽包后该目录迁至 packages/subagent-core/（不以 extensions/ 开头），本条目自然失效。
+ALLOWED_CONSOLE_PREFIXES = ("extensions/universal/subagent-workflow/src/core/",)
+
 
 def check_file(path: str) -> list[str]:
     """返回该文件 staged 新增行中的违规描述列表。"""
@@ -36,7 +43,8 @@ def check_file(path: str) -> list[str]:
             continue
         added = line[1:]
         is_ext_ts = path.startswith("extensions/") and path.endswith(".ts")
-        if is_ext_ts and CONSOLE_RE.search(added):
+        console_rule_applies = is_ext_ts and not path.startswith(ALLOWED_CONSOLE_PREFIXES)
+        if console_rule_applies and CONSOLE_RE.search(added):
             violations.append(f"{path}: 新增行含 console.warn/error（extensions 日志统一接 @zhushanwen/pi-extension-logger，见 docs/extensions/logging-conventions.md）")
         if path.endswith((".ts", ".vue", ".mjs")) and DISABLE_RE.search(added):
             # eslint-disable 后须带 `-- 说明`（AGENTS.md 禁静默 disable）
