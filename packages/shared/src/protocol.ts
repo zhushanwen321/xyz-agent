@@ -74,6 +74,7 @@ export type ClientMessageType =
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'message.bash' | 'message.abortBash'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
+  | 'config.refreshProviderCatalogs'
   | 'config.discoverModels' | 'config.setDefaultModel'
   | 'config.scanSkills' | 'config.setSkill' | 'config.deleteSkill'
   | 'config.scanSessionSkills'
@@ -399,6 +400,8 @@ export interface ClientMessageMap {
   // message.abortBash：取消进行中的 bash 执行（调 pi abort_bash）。
   'message.abortBash': { sessionId: string }
   'config.getProviders': Record<string, never>
+  // 进入 Settings Provider 页时触发远程模型目录刷新（无参：刷新列表内全部 catalog provider）
+  'config.refreshProviderCatalogs': Record<string, never>
   'config.setProvider': { providerId: ProviderId } & SetProviderData
   'config.deleteProvider': { providerId: ProviderId }
   // wave4：provider 启用切换（wave3 RPC 链路在 wave4 补全）。enabled=false 时 runtime 移除白名单 pattern，
@@ -686,6 +689,7 @@ export type ServerMessageType =
   | 'message.complete' | 'message.error' | 'message.status'
   | 'context.update'
   | 'config.providers' | 'config.providerUpdated' | 'config.discoveredModels' | 'config.defaults'
+  | 'config.providerCatalogsRefreshed'
   | 'config.scopedModels'
   | 'config.scannedSkills' | 'config.skillUpdated' | 'config.skillDeleted'
   | 'config.sessionSkills'
@@ -841,6 +845,8 @@ export interface SkillCacheInvalidatedPayload {
 export interface ServerMessageMapBase {
   // ── sendInitialState 推送 / domain 订阅（精确）──
   'config.providers': { providers: ProviderInfo[]; scopedModels?: string[] }
+  // refreshed = 远程目录协商完成的 provider（304/404 也算完成）；failed 携带原因
+  'config.providerCatalogsRefreshed': { refreshed: string[]; failed: Array<{ providerId: string; reason: string }> }
   'config.skills': { skills: SkillInfo[] }
   /**
    * skill 缓存失效信号（landing useGlobalSkills/useProjectSkills 失效缓存重拉）。
@@ -1488,6 +1494,7 @@ export interface ReplyPayloadMap {
   // ── payload 消费型（value 引用 ServerMessageMap[<reply type>]）──
   'config.discoverModels': ServerMessageMap['config.discoveredModels']
   'config.getProviders': ServerMessageMap['config.providers']
+  'config.refreshProviderCatalogs': ServerMessageMap['config.providerCatalogsRefreshed']
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
   'config.detectSources': ServerMessageMap['config.sourcesDetected']

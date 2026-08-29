@@ -67,6 +67,14 @@ export class SettingsMessageHandler {
           scopedModels: this.ctx.configService.getScopedModels(),
         })
         return true
+      case 'config.refreshProviderCatalogs': {
+        // settings-provider 页进入时触发：远程模型目录 ETag 协商刷新（单请求 4s 超时，
+        // 全部 fail-safe），完成后广播新列表（store 常驻订阅自动更新，renderer 零状态管理）。
+        const result = await this.ctx.configService.refreshProviderCatalogs()
+        this.ctx.reply(ws, msg.id, 'config.providerCatalogsRefreshed', result)
+        this.ctx.broadcastProviderList()
+        return true
+      }
       case 'config.setProvider': {
         const { providerId, ...data } = msg.payload
         const setResult = await this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])

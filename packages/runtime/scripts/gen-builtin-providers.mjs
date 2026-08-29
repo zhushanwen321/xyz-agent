@@ -7,7 +7,12 @@
 //   ./env-api-keys 子路径被 package.json exports 封锁 ERR_PACKAGE_PATH_NOT_EXPORTED，
 //   compat 是唯一通过 exports 校验且 re-export findEnvKeys 的入口，见 dist/compat.js:22）
 
-import { getBuiltinProviders, getBuiltinModels, builtinProviders } from '@earendil-works/pi-ai/providers/all'
+import {
+  getBuiltinProviders,
+  getBuiltinModels,
+  builtinProviders,
+  getBuiltinModelDataGeneratedAt,
+} from '@earendil-works/pi-ai/providers/all'
 import { findEnvKeys } from '@earendil-works/pi-ai/compat'
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -421,18 +426,23 @@ function main() {
   const payload = {
     generatedAt: new Date().toISOString(),
     piAiVersion: readPiAiVersion(),
+    // pi-ai 内置 catalog 数据的构建时刻（ms，非本脚本提取时刻）。远程目录 overlay 的
+    // lastModified 保护基准：remote lastModified <= 此值 → 内置已更新，忽略该 overlay 条目。
+    // 误用 generatedAt（提取时刻恒新）会导致 overlay 永远被忽略。
+    catalogGeneratedAt: getBuiltinModelDataGeneratedAt(),
     providers,
   }
   const outPath = fileURLToPath(new URL('../src/generated/builtin-providers.json', import.meta.url))
   mkdirSync(dirname(outPath), { recursive: true })
   // 内容无变化时跳过写入：generatedAt 时间戳随每次运行变化，无条件重写会把
   // prebuild 后的 git status 永久弄脏（merge 流程「未提交变更」gate 永远不过）。
-  // providers/piAiVersion 深度相等 → 保留磁盘文件（含旧 generatedAt）不动。
+  // providers/piAiVersion/catalogGeneratedAt 深度相等 → 保留磁盘文件（含旧 generatedAt）不动。
   try {
     const existing = JSON.parse(readFileSync(outPath, 'utf-8'))
     const sameProviders =
       JSON.stringify(existing.providers) === JSON.stringify(payload.providers) &&
-      existing.piAiVersion === payload.piAiVersion
+      existing.piAiVersion === payload.piAiVersion &&
+      existing.catalogGeneratedAt === payload.catalogGeneratedAt
     if (sameProviders) {
       console.log(`[gen-builtin-providers] ${providers.length} providers unchanged, skip rewrite -> ${outPath}`)
       return

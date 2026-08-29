@@ -296,6 +296,9 @@ onMounted(async () => {
     // 拉取失败静默降级（Picker 渲染空列表），不阻断页面
     toast.error(t('settings.provider.builtinTemplate.fetchFailed'))
   }
+  // 远程模型目录按需刷新：不阻塞页面（先展示缓存/快照），结果经 config.providers
+  // 广播推回 store 自动更新。失败静默——离线/超时时列表保持原样。
+  config.refreshProviderCatalogs().catch(() => {})
 })
 
 /** 选中内置模板 → 打开 QuickSetup（先刷新 OAuth presence + env 检测） */

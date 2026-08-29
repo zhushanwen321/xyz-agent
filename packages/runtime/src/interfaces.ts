@@ -40,6 +40,7 @@ import type { SessionTraceSnapshot } from './services/session/session-trace.js'
 import type { Credential } from './services/auth/auth-storage.js'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 import type { IManagedSessionView } from './services/session/types.js'
+import type { CatalogRefreshResult } from './services/provider-catalog-refresh.js'
 
 /**
  * pi 引擎 / 进程池 port 的权威定义在 services/ports/pi-engine.ts（D24 收口）。
@@ -348,6 +349,8 @@ export type { ISessionServiceInternal } from './services/session/session-interna
 /** Provider / Skill / Agent CRUD and tool permissions. */
 export interface IConfigService {
   listProviders(): ProviderInfo[]
+  /** 远程模型目录按需刷新（settings-provider 页进入时触发，fail-safe）。 */
+  refreshProviderCatalogs(): Promise<CatalogRefreshResult>
   /** 列出内置 provider 模板（wave 2，import generated JSON，无参只读）。 */
   listBuiltinProviders(): BuiltinProviderTemplate[]
   /**

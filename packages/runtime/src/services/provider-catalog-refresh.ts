@@ -1,0 +1,247 @@
+/**
+ * 远程模型目录 overlay（settings-provider 页进入时按需刷新）。
+ *
+ * 背景：展示层模型列表来自编译期快照 builtin-providers.json，恒反映打包时刻的
+ * pi-ai 内置 catalog，上游新模型（如 glm-5.3）不会出现。pi 官方机制是「内置 catalog
+ * baseline + pi.dev 远程目录 overlay」两层（remote-catalog-provider.js），且执行侧
+ * pi binary 在 --mode rpc 启动时已自动刷新并经 PI_CODING_AGENT_DIR 落盘到
+ * <getPiAgentDir()>/models-store.json。本模块补齐展示侧：
+ *
+ * - 读：自刷缓存（<getDataDir()>/provider-catalog-overlay.json）⊕ pi 已刷的
+ *   models-store.json，按 lastModified 新者胜（同源语义，零网络）。
+ * - 刷：进入 Settings Provider 页时由 renderer 触发 config.refreshProviderCatalogs，
+ *   对列表内 catalog provider 向 pi.dev 发 ETag 协商请求（304 仅更新 checkedAt，
+ *   404/501 视为远程声明无此 provider，永久失效其 overlay）。
+ * - 合并语义对齐 pi mergeModels：baseline 在前，overlay 同 id 覆盖、新 id 追加；
+ *   lastModified <= 快照 catalogGeneratedAt 的条目忽略（内置数据已更新，保护基准
+ *   必须用数据构建时刻而非提取时刻——见 gen-builtin-providers.mjs catalogGeneratedAt）。
+ *
+ * 铁律：只读 <getPiAgentDir()>（xyz-agent 数据目录内的 pi 隔离区），禁止触碰
+ * 用户全局 ~/.pi/agent/。全部 IO fail-safe：文件缺失/损坏/网络失败一律回退快照，
+ * 不抛错拖垮 Settings。零新依赖（Node 24 全局 fetch），无 tsup noExternal 改动。
+ */
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { getDataDir, getPiAgentDir } from '@xyz-agent/shared/paths'
+import builtinData from '../generated/builtin-providers.json'
+
+const CATALOG_BASE_URL = 'https://pi.dev'
+const REQUEST_TIMEOUT_MS = 4000
+const CACHE_VERSION = 1
+
+/** overlay 条目模型（pi.dev 返回形状的宽松子集，仅要求 merge/展示所需字段存在）。 */
+export type OverlayModel = {
+  id: string
+  name?: string
+  api?: string
+  baseUrl?: string
+  reasoning?: boolean
+  input?: string[]
+  cost?: unknown
+  compat?: Record<string, unknown> | null
+  contextWindow?: number
+  maxTokens?: number | null
+  thinkingLevelMap?: Record<string, string | null> | null
+  [key: string]: unknown
+}
+
+type OverlayEntry = {
+  models: OverlayModel[]
+  checkedAt: number
+  lastModified?: number
+  etag?: string
+}
+
+type OverlayCache = { version: number; entries: Record<string, OverlayEntry> }
+
+/** 自刷缓存路径（xyz-agent 数据目录，与 pi store 分离：写入方只有本模块）。 */
+function overlayCachePath(): string {
+  return join(getDataDir(), 'provider-catalog-overlay.json')
+}
+
+/** pi store 路径（执行侧 pi binary 经 PI_CODING_AGENT_DIR 落盘，本模块只读）。 */
+function piModelsStorePath(): string {
+  return join(getPiAgentDir(), 'models-store.json')
+}
+
+/** 快照 catalog 数据构建时刻（ms）。旧快照无此字段 → 0（不做 staleness 过滤，override 仍最高优先）。 */
+export function getCatalogGeneratedAt(): number {
+  const v = (builtinData as { catalogGeneratedAt?: number }).catalogGeneratedAt
+  return typeof v === 'number' ? v : 0
+}
+
+/** 解析单份缓存文件为 entries，任何损坏返回 {}（fail-safe）。 */
+function parseCacheFile(path: string): Record<string, OverlayEntry> {
+  try {
+    if (!existsSync(path)) return {}
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'))
+    if (typeof parsed !== 'object' || parsed === null) return {}
+    // 自刷缓存带 version 包装；pi store 是顶层 providerId 分桶——两者取 entries 语义一致
+    const entries = (parsed as { entries?: unknown }).entries ?? parsed
+    if (typeof entries !== 'object' || entries === null) return {}
+    const out: Record<string, OverlayEntry> = {}
+    for (const [id, entry] of Object.entries(entries as Record<string, unknown>)) {
+      const e = entry as OverlayEntry
+      if (Array.isArray(e?.models)) out[id] = { ...e, models: e.models.filter(m => m && typeof m.id === 'string') }
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/** 文件 mtime（ms），不存在返回 -1。内存缓存失效检测用。 */
+function mtimeOf(path: string): number {
+  try {
+    return statSync(path).mtimeMs
+  } catch {
+    return -1
+  }
+}
+
+type OverlaySnapshot = {
+  own: { mtime: number; entries: Record<string, OverlayEntry> }
+  pi: { mtime: number; entries: Record<string, OverlayEntry> }
+}
+
+let overlaySnapshot: OverlaySnapshot | null = null
+
+/**
+ * 读两份落盘 overlay（内存缓存 + mtime 失效检测）。
+ * 同 provider 两份都有 → lastModified 新者胜（缺 lastModified 视为最旧）。
+ */
+function loadOverlay(): OverlaySnapshot {
+  const ownPath = overlayCachePath()
+  const piPath = piModelsStorePath()
+  const ownMtime = mtimeOf(ownPath)
+  const piMtime = mtimeOf(piPath)
+  if (
+    overlaySnapshot &&
+    overlaySnapshot.own.mtime === ownMtime &&
+    overlaySnapshot.pi.mtime === piMtime
+  ) {
+    return overlaySnapshot
+  }
+  const next: OverlaySnapshot = {
+    own: { mtime: ownMtime, entries: parseCacheFile(ownPath) },
+    pi: { mtime: piMtime, entries: parseCacheFile(piPath) },
+  }
+  overlaySnapshot = next
+  return next
+}
+
+/** 同 provider 两份 overlay 新者胜（缺 lastModified 视为最旧；单边存在时直接取有值一边）。 */
+function newerEntry(a?: OverlayEntry, b?: OverlayEntry): OverlayEntry | undefined {
+  if (!a) return b
+  if (!b) return a
+  return (a.lastModified ?? -1) >= (b.lastModified ?? -1) ? a : b
+}
+
+/**
+ * 取某 provider 的有效 overlay 模型（已做 staleness 过滤与新者胜合并）。
+ * provider-config-helper 聚合时消费；纯同步只读，异常静默回退空数组。
+ */
+export function getCatalogOverlayModels(providerId: string): OverlayModel[] {
+  const { own, pi } = loadOverlay()
+  const entry = newerEntry(own.entries[providerId], pi.entries[providerId])
+  if (!entry || !Array.isArray(entry.models)) return []
+  // staleness 保护：远程条目不比内置 catalog 数据新 → 内置已覆盖，忽略（对齐 pi remoteModels）
+  const generatedAt = getCatalogGeneratedAt()
+  if (entry.lastModified !== undefined && entry.lastModified <= generatedAt) return []
+  return entry.models
+}
+
+/** 刷新结果（config.refreshProviderCatalogs reply 载荷）。 */
+export type CatalogRefreshResult = {
+  refreshed: string[]
+  failed: Array<{ providerId: string; reason: string }>
+}
+
+/** 写自刷缓存（tmp + rename 原子替换；目录不存在则创建）。 */
+async function persistOwnCache(entries: Record<string, OverlayEntry>): Promise<void> {
+  const path = overlayCachePath()
+  await mkdir(dirname(path), { recursive: true })
+  const payload: OverlayCache = { version: CACHE_VERSION, entries }
+  const tmp = `${path}.tmp`
+  await writeFile(tmp, JSON.stringify(payload, null, 2), 'utf-8')
+  await rename(tmp, path)
+}
+
+/**
+ * 对指定 catalog provider 集合发起远程目录刷新（ETag 协商，单请求 4s 超时）。
+ *
+ * 状态码语义对齐 pi remote-catalog-provider：200 全量替换 + 记录 etag/lastModified；
+ * 304 仅顺延 checkedAt（4h 窗口语义的承载点）；404/501 持久化 lastModified:0
+ * （远程声明无此 provider 的目录，永久失效其 overlay 直到远程恢复）。任何单点失败
+ * 不影响其他 provider（allSettled），失败方保留原缓存条目。
+ */
+export async function refreshProviderCatalogs(providerIds: string[]): Promise<CatalogRefreshResult> {
+  const { own } = loadOverlay()
+  const entries: Record<string, OverlayEntry> = { ...own.entries }
+  const refreshed: string[] = []
+  const failed: CatalogRefreshResult['failed'] = []
+
+  await Promise.all(
+    providerIds.map(async (providerId) => {
+      try {
+        const prev = entries[providerId]
+        const url = `${CATALOG_BASE_URL}/api/models/providers/${encodeURIComponent(providerId)}`
+        const headers: Record<string, string> = { accept: 'application/json' }
+        // 仅当缓存有 body 时才带 validator，避免 304 落在空缓存上得到空 overlay
+        if (prev?.etag && prev.models.length > 0) headers['if-none-match'] = prev.etag
+        const res = await fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        })
+        if (res.status === 304 && prev) {
+          entries[providerId] = { ...prev, checkedAt: Date.now() }
+          refreshed.push(providerId)
+          return
+        }
+        if (res.status === 404 || res.status === 501) {
+          // 远程声明无此 provider 目录：永久失效 overlay（回纯快照），直到远程恢复
+          entries[providerId] = { models: [], checkedAt: Date.now(), lastModified: 0 }
+          refreshed.push(providerId)
+          return
+        }
+        if (!res.ok) {
+          failed.push({ providerId, reason: `HTTP ${res.status}` })
+          return
+        }
+        const body: unknown = await res.json()
+        // pi.dev 现用 id-keyed object map；parseCatalog 同款容错：数组 / {models:[...]} / map
+        let models: OverlayModel[] = []
+        if (Array.isArray(body)) {
+          models = body as OverlayModel[]
+        } else if (typeof body === 'object' && body !== null && Array.isArray((body as { models?: unknown }).models)) {
+          models = (body as { models: OverlayModel[] }).models
+        } else if (typeof body === 'object' && body !== null) {
+          models = Object.values(body) as OverlayModel[]
+        }
+        models = models.filter(m => m && typeof m.id === 'string')
+        const lastModifiedHeader = res.headers.get('last-modified')
+        const lastModified = lastModifiedHeader ? new Date(lastModifiedHeader).getTime() : Date.now()
+        entries[providerId] = {
+          models,
+          checkedAt: Date.now(),
+          lastModified: Number.isNaN(lastModified) ? Date.now() : lastModified,
+          etag: res.headers.get('etag') ?? undefined,
+        }
+        refreshed.push(providerId)
+      } catch (err) {
+        failed.push({ providerId, reason: err instanceof Error ? err.message : String(err) })
+      }
+    }),
+  )
+
+  if (refreshed.length > 0) {
+    try {
+      await persistOwnCache(entries)
+    } catch {
+      // 落盘失败不阻断 reply：本次内存外无持久化，下次进入页面重刷
+    }
+    overlaySnapshot = null // 失效内存缓存，合并展示立即读到新数据
+  }
+  return { refreshed, failed }
+}
