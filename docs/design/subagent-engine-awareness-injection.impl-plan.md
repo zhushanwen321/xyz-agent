@@ -69,24 +69,43 @@ worktree 决策：全部 plain。理由：`src/index.ts` 虽为扩展入口（�
 
 ## 5 合理偏差登记表
 
-（初始为空）
+| Unit | 偏差 | 判定 | 理由 |
+|------|------|------|------|
+| u1 | loadGlobalConfig 内 sanitize 提取为共用 sanitizeParsedConfig | 合理 | D5 明文要求三态函数复用 sanitize；既有行为零变化（13 用例不回归） |
+| u1 | read-failure warn 日志用英文 | 合理 | 包内日志惯例全英文（[subagents] 前缀同款），一致性优先 |
+| u1 | 失败态补充用例用 EISDIR 替代 EACCES | 合理 | chmod 000 在 root/CI 有假阳性风险，EISDIR 稳定覆盖同分支 |
+| u2 | pi 形态补齐「Omit model」bullet | 合理 | 设计 §3.1 未锁定 pi 形态完整段，恒在段结构一致性优先，全量 toBe 锁定 |
+| u2 | ghost 警告行加「- 」列表标记 | 合理 | 仅格式统一，A6「段内警告行」语义不变 |
+| u2 | listModels 抛异常从「不注入」改为「提示行段」 | 合理 | G4「不静默」语义下静默空串会让状态段「ids listed below」声明说谎 |
+| u4 | 源码级守护用字符偏移断言（同渲染调用同行）+ 链模拟省略 subagent/workflow 注入器 | 合理 | 同行调用行号无法判先后；省略项与本断言无关，相对序由源码级断言独立锚定 |
+| u4 | 加固用例（无状态残留/重注册不变/颠倒对照/zcode→ghost 尾部断言） | 合理 | 均在 u4 三项职责范围内，提升判别力 |
+| u3 | 通知文案指路段按目标引擎参数化（非 pi 目标指向 `<available_<engine>_models>`） | 合理 | 设计只给了 zcode→pi 样例；与 u2 恒在段分界语义一致 |
+| u3 | sendMessage 携带 details {from,to} | 合理 | D8 对齐 notifier 形态（details 结构化数据供 GUI），设计未禁止 |
+| u3 | runEngineAwarenessTurn 返回 EngineAwarenessOutcome 判别联合 | 合理 | 结构化断言面，纯增量不改编排行为 |
+| u3 | P1 探针结论：主路径成立（sendMessage 同 turn 可见） | 证据 | 源级 dist 0.84.4 调用链（agent-session.js:915/1143 + createContextSnapshot）+ 真机 pi rpc payload dump 双证据；无需 NOTE 行回退 |
 
 ## 6 状态表
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|------|------|------|
-| u1 | pending | 0 | — |
-| u2 | pending | 0 | — |
-| u3 | pending | 0 | — |
-| u4 | pending | 0 | — |
+| u1 | committed | 1 | b3161fd61（18 用例绿含 6 三态；tsc 0；偏差 3 条已登记 §5） |
+| u2 | committed | 1 | 21af37319（10 用例绿；tsc 0；偏差 3 条已登记 §5） |
+| u3 | committed | 2 | 882aa08ca（16 用例绿 + 整包 3122 绿 + tsc 0；轮 2 修 ESLint 未使用 import；P1 主路径双证据） |
+| u4 | committed | 1 | be71ece2a（12 守护用例绿 + 89 回归绿 + tsc 0；偏差 5 条已登记 §5） |
 
 ## 7 残留风险与变更历史
 
-- P1（u3 内置探针门）：结果决定通知走主路径还是 NOTE 行回退，两条路径设计均已成立。
+- P1（u3 内置探针门）：**已闭环**——主路径成立，双证据（源级 dist 0.84.4 调用链 + 真机 pi rpc payload dump），无 NOTE 行回退需求。
 - P2（A7 验收）：跨进程双 rpc 时序，预期无害。
-- P3（A8 验收）：cache 指纹断点实测依赖 cache-probe，不可用则降级。
+- P3（A8 验收）：cache 指纹断点实测依赖 cache-probe，不可用则降级为 u4 守护测试证据 + 声明。
 - 设计风险节声明的 AGENTS.md 强伴随条件不在本计划领地（Out of scope）。
+- **[前瞻观察，复审登记]**：未来若有已注册非 pi 引擎省略 listModels/返回 null（「与主体系一致」型），状态段无条件的「Ids in <available_provider_models> do NOT apply」行（model-prompt.ts:67）会与清单段 core-aligned 提示行同屏矛盾——当前 zcode 实装非可空 listModels，形态不可达；首个此类引擎落地时需回改状态段 registered-non-pi 分支。
 
 | 日期 | 事件 |
 |------|------|
 | 2026-08-29 | 计划创建，基线 7ff29c101 |
+| 2026-08-29 | W1 双单元 committed（u1 b3161fd61 / u2 21af37319），核验：28 用例绿 + tsc 0，偏差 6 条登记。备注：本 worktree 存在并行会话（pi-sync/panel 线），其认知外文件已由该线自行提交（c38020cbb 等）；本计划所有 commit 均按精确路径 add，与其无纠缠 |
+| 2026-08-29 | W2 u3 committed（882aa08ca，轮 2 修 ESLint 未使用 import）；P1 探针主路径双证据闭环 |
+| 2026-08-29 | W3 u4 committed（be71ece2a） |
+| 2026-08-29 | 阶段 3 双区一致性审查：u3/u4 零缺陷；u1/u2 一条 unreasonable（listModels 降级文案语义错位）+ 两条 doc_errors（D1b 组合盲区[中]、D2 顺序表述矛盾[低]）。设计文档修订 4 处（D1b 补基线 reload / D2 顺序统一 / D5 补非法值语义 / U2 行降级文案区分） |
+| 2026-08-29 | 阶段 4 修复：u2 轮 2 接替 dev 完成（原会话网络错误中断，工作区核实零残留后补派）commit b0a4935c9；u3 轮 3 commit 20fbe5c58。定向复审 verdict=清零（245 用例绿），前瞻观察登记如上 |
