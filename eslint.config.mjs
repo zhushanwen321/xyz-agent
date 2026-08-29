@@ -204,8 +204,8 @@ export default [
   // returnMeta 透传补全后函数体超 300（303），属同质唯一聚合中心，override 避免误报。
   {
     // [u1-move] 文件随 core 切面迁入 packages/subagent-core（subagent-core 包抽离），
-  // override 路径同步跟随，约束语义不变。
-  files: ['packages/subagent-core/src/orchestration/worker-script-builder.ts'],
+    // override 路径同步跟随，约束语义不变。
+    files: ['packages/subagent-core/src/orchestration/worker-script-builder.ts'],
     rules: {
       'max-lines-per-function': 'off',
     },

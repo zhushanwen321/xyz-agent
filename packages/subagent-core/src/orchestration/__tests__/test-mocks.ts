@@ -16,9 +16,9 @@
 //   pi.appendEntry）行为真实；其余成员为 no-op spy（vi.fn()），调用不炸但返回
 //   undefined——本包测试不消费它们。
 // - modelRegistry / ui.theme 是含 private 字段的 nominal class：真实构造需
-//   ModelRuntime.create()（async + 读用户级 models.json）/ loadTheme 读包文件，且
-//   vitest 把 @earendil-works/pi-coding-agent alias 到 mocks/（无这些值导出），结构
-//   构造又被 private 字段阻断。二者经 fail-loud Proxy 提供：误用时立即抛错（而非
+//   ModelRuntime.create()（async + 读用户级 models.json）/ loadTheme 读包文件。
+//   pi-coding-agent 在本包测试中仅剩 import type（转译擦除，无运行时导出可用），
+//   结构构造又被 private 字段阻断。二者经 fail-loud Proxy 提供：误用时立即抛错（而非
 //   静默 undefined），把「缺 mock」变成显式失败。这是本文件仅有的两处断言收敛点。
 
 import { vi } from "vitest";

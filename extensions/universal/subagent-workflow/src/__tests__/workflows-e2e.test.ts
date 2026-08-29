@@ -48,8 +48,8 @@ import type { WorkflowScriptRegistry } from "@zhushanwen/subagent-core/orchestra
 import { WorkerHostImpl } from "@zhushanwen/subagent-core/orchestration/worker-host.ts";
 
 // ── 路径：定位真实 workflows 目录 ─────────────────────────────────────────
-// 本测试文件在 src/orchestration/__tests__/，workflows 目录在 extensions/universal/subagent-workflow/workflows/
-// 即 __dirname → ..  (orchestration) → ..  (src) → ..  (subagent-workflow) → workflows
+// 本测试文件在 src/__tests__/，workflows 目录经包内 node_modules 指向 subagent-core 包
+// 即 __dirname → ..  (src) → ..  (subagent-workflow 包根) → node_modules/@zhushanwen/subagent-core/workflows
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKFLOWS_DIR = join(__dirname, "..", "..", "node_modules", "@zhushanwen", "subagent-core", "workflows");
 const AGENTS_DIR = join(__dirname, "..", "..", "..", "agents");

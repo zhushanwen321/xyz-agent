@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-// package.json 与 src/ 的相对位置（本文件在 src/execution/engine/__tests__/ 下，四级上溯）
+// package.json 与 src/ 的相对位置（本文件在 src/__tests__/ 下，两级上溯）
 const pkgPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../package.json");
 
 describe("package.json xyz-agent.subagentEngines 静态声明一致性（U7b 冷启动回退源）", () => {
