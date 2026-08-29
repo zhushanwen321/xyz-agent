@@ -49,6 +49,9 @@ function mockContext(): SettingsHandlerContext {
       // applyImportProviders 后 handler 调 getDefaultModel（重选 default + 广播 config.defaults），mock 补全
       getDefaultModel: vi.fn(() => null),
       applyImportProviders: vi.fn(),
+      // D9：导入成功后 handler fire-and-forget 调 refreshProviderCatalogs（完成后二次广播），
+      // mock 缺失会 TypeError 拖垮 handler 成功分支
+      refreshProviderCatalogs: vi.fn().mockResolvedValue({ refreshed: [], failed: [] }),
     } as unknown as SettingsHandlerContext['configService'],
     sessionService: {} as SettingsHandlerContext['sessionService'],
     modelService: {} as SettingsHandlerContext['modelService'],
@@ -152,7 +155,9 @@ describe('config.previewImportProviders / config.applyImportProviders WS round-t
     expect(applyReply![1]).toBe('apply-id')
     expect(applyReply![3]).toEqual({ result })
     // apply 成功 → 广播 provider 列表（让所有 panel 同步新增的 provider）
-    expect(ctx.broadcastProviderList).toHaveBeenCalledTimes(1)
+    // D9 后共 2 次：导入同步广播 1 次 + fire-and-forget refresh 完成后广播 1 次（refresh mock
+    // 已 resolve，await 恢复前其 .then 回调已入 microtask 队列先执行）
+    expect(ctx.broadcastProviderList).toHaveBeenCalledTimes(2)
     // apply 传入的参数：importId + selectedIds
     expect(ctx.configService.applyImportProviders).toHaveBeenCalledWith(importId, ['deepseek-router', 'existing-one'])
   })
@@ -200,6 +205,99 @@ describe('config.previewImportProviders / config.applyImportProviders WS round-t
     )
     // apply 失败不广播（result 不含 result 字段）
     expect(ctx.broadcastProviderList).not.toHaveBeenCalled()
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// D9（pi-evolution-consistency-and-project-switcher §3.3）：导入成功后触发
+// 远程目录刷新（fire-and-forget）。锁定 handler 层接线：成功路径调
+// configService.refreshProviderCatalogs 且完成后二次广播；失败路径零触发；
+// refresh reject 不影响导入 reply（不阻塞、不上抛）。
+// ══════════════════════════════════════════════════════════════════
+describe('D9: applyImportProviders 成功路径触发 refreshProviderCatalogs（fire-and-forget）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function applyMsg(): ClientMessage {
+    return msg('config.applyImportProviders', { importId: 'd9-id', selectedIds: ['deepseek-router'] }, 'd9-apply-id')
+  }
+
+  const OK_RESULT: ProviderImportResult = {
+    source: 'pi',
+    imported: [{ id: 'deepseek-router', name: 'deepseek-router', status: 'imported' }],
+    failedCount: 0,
+  }
+
+  it('apply 成功 → refreshProviderCatalogs 被调用 + refresh 完成后二次广播（overlay 新模型推给前端）', async () => {
+    const ctx = mockContext()
+    vi.mocked(ctx.configService.applyImportProviders).mockResolvedValue({ result: OK_RESULT })
+    const handler = new SettingsMessageHandler(ctx)
+
+    await handler.handleSettingsMessage(applyMsg(), mockWs())
+
+    // 成功路径触发 refresh（经 config-service 薄包装，范围=聚合列表内 catalog provider）
+    expect(ctx.configService.refreshProviderCatalogs).toHaveBeenCalledTimes(1)
+    // 导入同步广播 + refresh 完成广播 = 2 次
+    expect(ctx.broadcastProviderList).toHaveBeenCalledTimes(2)
+    // 导入 reply 不被 refresh 阻塞：providersImported 已在 refresh 前正常回给发起端
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.anything(),
+      'd9-apply-id',
+      'config.providersImported',
+      { result: OK_RESULT },
+    )
+  })
+
+  it('apply 失败（缓存过期）→ 不触发 refresh，也不广播', async () => {
+    const ctx = mockContext()
+    vi.mocked(ctx.configService.applyImportProviders).mockResolvedValue({
+      error: { code: 'PREVIEW_EXPIRED', message: '预览已过期' },
+    })
+    const handler = new SettingsMessageHandler(ctx)
+
+    await handler.handleSettingsMessage(applyMsg(), mockWs())
+
+    expect(ctx.configService.refreshProviderCatalogs).not.toHaveBeenCalled()
+    expect(ctx.broadcastProviderList).not.toHaveBeenCalled()
+  })
+
+  it('payload 校验失败（selectedIds 非字符串数组）→ sendError 短路，不触发 refresh', async () => {
+    const ctx = mockContext()
+    const handler = new SettingsMessageHandler(ctx)
+
+    const handled = await handler.handleSettingsMessage(
+      msg('config.applyImportProviders', { importId: 'd9-id', selectedIds: [123] }, 'bad-id'),
+      mockWs(),
+    )
+
+    expect(handled).toBe(true)
+    expect(ctx.sendError).toHaveBeenCalled()
+    expect(ctx.configService.applyImportProviders).not.toHaveBeenCalled()
+    expect(ctx.configService.refreshProviderCatalogs).not.toHaveBeenCalled()
+  })
+
+  it('refresh reject → 仅日志，导入 reply 不受影响，handler 不上抛（fire-and-forget 契约）', async () => {
+    const ctx = mockContext()
+    vi.mocked(ctx.configService.applyImportProviders).mockResolvedValue({ result: OK_RESULT })
+    vi.mocked(ctx.configService.refreshProviderCatalogs).mockRejectedValue(new Error('disk full'))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const handler = new SettingsMessageHandler(ctx)
+
+    // handler 不因 refresh 失败而上抛（失败不影响导入结果）
+    await expect(handler.handleSettingsMessage(applyMsg(), mockWs())).resolves.toBe(true)
+
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.anything(),
+      'd9-apply-id',
+      'config.providersImported',
+      { result: OK_RESULT },
+    )
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[settings-handler] applyImportProviders: provider catalog refresh failed:'),
+      expect.any(Error),
+    )
+    warnSpy.mockRestore()
   })
 })
 
