@@ -5,6 +5,7 @@
 > 状态：两轮对抗式审查。
 > - r1（2026-08-29，报告 `.review/design-review-subagent-core-r1.md`）：4 must-fix 已修复——①D1 切面补 `workflows/` 脚本资产处置（2a/2b 替换对象的落点）②依赖闭包审计补 `config-loader.ts` 触点与 logger 全量计数 ③D6 副作用核对补 runner-appserver 活跃通道处置 ④D2 补 pi 壳 dataRoot 三段回退语义；4 suggestion（D8 计数、检查点 5 降级路径、审计表补注、V1 比对判据与打包验证）已随文处理。
 > - r2（2026-08-29，报告 `.review/design-review-subagent-core-r2.md`，tech-design-review agent 与主 agent 双路独立亲审、全部源码实测）：5 must-fix 已修复——①D2 log 端口补 facade 解析时机契约（切面内 30 处模块顶层 `getLogger` 缓存实测，configureCore 时序陷阱）②D2 discoveryRoots 补语义边界 + D6 接管核对补「资源发现」段 ③D6 接管核对补「自定义脚本契约」段（zsw 进程内 fresh-require + ctx 契约 vs core worker 契约的执行模型差异实测）④D1 修正 require 机制失实（实为 workerData.scriptPath 锚定 + cwd 静默回退，非相对 require）并补 fail-fast 加固 ⑤§3.5 终态图 workflow-state 落点与 D2 矛盾修正（pi 侧权威在会话 entry）；8 suggestion（§3.2 补 A' 独立仓对比、D2 端口演进纪律、D9 dist 持续发布门、D5 版本跟随治理、D6-⑥/P3 per-session model 回收载体、D1 workflows TS 化裁决记录、§4 前置门 file: 机制前提、计数口径修正）已随文处理。
+> - 计划期契约细化（2026-08-29，dev-flow 执行计划编写时实证定案，3 处 D2 细化 + P0 行同步）：①discoveryRoots 根条目从 `string[]` 细化为 `{ dir, source }` 带语义标签——resource-discovery 遮蔽报告与既有测试断言依赖 user-pi/npm/npm-dev 标签，纯 string[] 丢失语义；②HostServices.notify 落地次序澄清——pi 侧完成通知的两机制（session-delivery 投递内核 / pending 活跃计数）经新增通知域窄端口 NotifyDomainPorts 结构化注入，notify 事件推送方法按演进纪律②（禁止推测性预留）推迟到 P2 zsw 壳首个真实触点时落地；③dataRoot 分段归属——env 覆盖段与 warn-once 留 core data-dir.ts、pi 壳 dataRoot() 仅返回 getAgentDir()，且未 configureCore 即消费抛 core_host_not_configured（缺省值改为显式导出 DEFAULT_DATA_ROOT 供宿主选用，消除「缺省静默漂目录」与 §3.4 错误规格的矛盾）。
 
 ## 1. 背景目标
 
@@ -161,9 +162,11 @@
 ```ts
 export interface HostServices {
   /** 数据根目录：引擎隔离池 / journal / record 派生存放的锚点。
-   *  pi 壳：原样内联现 data-dir.ts 三段语义（env 优先 → getAgentDir() 回退 + warn-once，
-   *  standalone pi 用户落 ~/.pi/agent——不内联则独立 pi 用户的 journal 会静默漂目录）；
-   *  zsw 壳：zsw 数据根；缺省实现：~/.subagent-core */
+   *  分段归属（计划期细化）：env 覆盖段（XYZ_AGENT_DATA_DIR 优先）与 warn-once 留 core
+   *  data-dir.ts；pi 壳 dataRoot() 仅返回 getAgentDir()（standalone pi 用户落
+   *  ~/.pi/agent——不内联则独立 pi 用户的 journal 会静默漂目录）；zsw 壳：zsw 数据根。
+   *  未 configureCore 即消费 → 抛 core_host_not_configured（§3.4，错误含宿主接入示例
+   *  路径）；导出 DEFAULT_DATA_ROOT（~/.subagent-core）供宿主显式采用 */
   dataRoot(): string;
   /** 结构化日志：对齐现 getLogger 调用面（level/component/message/data）。缺省 console。
    *  解析时机契约：core 保留 getLogger(component) 调用面，返回 facade 代理 logger——
@@ -175,10 +178,30 @@ export interface HostServices {
    *  低→高排列）；扫描/同名遮蔽（last-writer-wins）/遮蔽报告语义归 core 统一
    *  （resource-discovery 既有实现随切面进 core）。pi 壳：getAgentDir + pi 通路（含 npm
    *  包发现根，zsw 不传该根即不适用）；zsw 壳：zsw 四根。symlink 跟随策略两宿主现状
-   *  可能不同（zsw 刻意跟随），对齐为单一 core 行为是实施期核对点（检查点 6）。 */
-  discoveryRoots?(): { agents?: string[]; skills?: string[]; workflows?: string[] };
-  /** 完成通知（可选）。pi 壳：pending-notifications + session-delivery 组合；zsw 壳：task-notification；缺省 no-op。 */
+   *  可能不同（zsw 刻意跟随），对齐为单一 core 行为是实施期核对点（检查点 6）。
+   *  根条目带 source 语义标签（计划期细化 2026-08-29）：遮蔽报告与既有测试断言依赖
+   *  user-pi / npm / npm-dev 标签，纯 string[] 会丢失该语义——条目形态
+   *  { dir, source }，source 字符串由宿主提供、core 透传进报告，不枚举封闭集。 */
+  discoveryRoots?(): { agents?: DiscoveryRoot[]; skills?: DiscoveryRoot[]; workflows?: DiscoveryRoot[] };
+  /** 完成通知事件推送（可选）。首个真实宿主触点在 P2 zsw 壳（task-notification）；
+   *  P0/P1 不落该方法（演进纪律②：禁止无真实触点的推测性预留）——pi 侧完成通知的
+   *  两个机制（session-delivery 投递内核工厂 / pending-notifications 活跃计数）经
+   *  独立窄端口 NotifyDomainPorts 结构化注入，见下方通知域窄端口。 */
   notify?(event: NotifyEvent): Promise<void>;
+}
+
+/** 发现根条目：dir 为扫描根路径，source 为宿主提供的语义标签（遮蔽报告用）。 */
+interface DiscoveryRoot { dir: string; source: string }
+
+/** 通知域窄端口（D2 纪律「独立窄端口」先例形态，与 HostServices 并列的 configure 入口）：
+ *  pi 壳在扩展初始化时注入；两成员均为可选，缺席时对应机制降级（投递退化为直发 /
+ *  pending 门按零活跃处理）。zsw 壳不注入——其通知走 HostServices.notify。 */
+interface NotifyDomainPorts {
+  /** pending 计数：pi 会话 entries 中活跃 register/unregister 差集判定。 */
+  countActiveFromEntries?(entries: unknown[]): number;
+  /** 投递内核工厂：结构化签名与 @xyz-agent/session-delivery 的 createDelivery 兼容，
+   *  类型由 core 自持结构类型描述（闭包守卫红线：core 不得 import session-delivery）。 */
+  createDelivery?(port: unknown, opts: unknown): unknown;
 }
 ```
 
@@ -296,7 +319,7 @@ export interface HostServices {
 
 | 阶段 | 单元 | 内容 | justification / 验收挂钩 |
 |------|------|------|--------------------------|
-| P0 | 依赖闭包 port 化（包内完成，零行为变化） | 新增 `src/core/host-services.ts`（HostServices + configureCore + 缺省实现 + facade getLogger）；`engine/common/data-dir.ts` getAgentDir → `host.dataRoot()`（保留 env 优先三段语义，缺省实现内联）；`orchestration/skill-discovery.ts` 与 `orchestration/config-loader.ts` 的 getAgentDir → `host.discoveryRoots()`/`host.dataRoot()`（按用途归口，实施期核对 config-loader 的具体用途后定端口归属）；`execution/notifier.ts` + `session-pending.ts` 的 session-delivery/pending-notifications → `host.notify`；30 处 getLogger（含 `shared/resource-discovery.ts`）→ core log 端口的 facade getLogger——**保持模块顶层缓存惯例**（实测 30 处全部顶层 `const logger = getLogger(...)`，facade 代理保证 configureCore 后透明切换，不做下沉惰性化改造）；`worktree-registry.ts` 改用 proper-lockfile；`workflows/review-fix-loop.js` 的 cwd 静默回退改 fail-fast（D1 附带加固，scriptPath 缺失即 `core_module_load_failed`） | 除 D1 的 cwd 回退 fail-fast 加固（边缘路径的刻意行为收紧）外纯重构无行为变更，现有 229 个测试文件的全量测试族守护；先收口再搬家，Phase 1 是纯物理迁移不再改语义。验收：全量测试绿 + extension 在 pi CLI 实测一例 subagent |
+| P0 | 依赖闭包 port 化（包内完成，零行为变化） | 新增 `src/core/host-services.ts`（HostServices + configureCore + 缺省实现 + facade getLogger）与 `src/core/notify-ports.ts`（NotifyDomainPorts + configureNotifyDomain）；`engine/common/data-dir.ts` getAgentDir → `host.dataRoot()`（三段语义分段归属——env 优先段与 warn-once 留 core data-dir.ts，pi 壳 dataRoot() 仅返回 getAgentDir()，缺省实现 `~/.subagent-core`）；`orchestration/skill-discovery.ts` 与 `orchestration/config-loader.ts` 的 getAgentDir → `host.discoveryRoots()`（根条目带 source 标签，resource-discovery 的根构建段改注入消费）；`execution/notifier.ts` + `session-pending.ts` 的 session-delivery/pending-notifications → NotifyDomainPorts 窄端口结构化注入；30 处 getLogger（含 `shared/resource-discovery.ts`）→ core log 端口的 facade getLogger——**保持模块顶层缓存惯例**（实测 30 处全部顶层 `const logger = getLogger(...)`，facade 代理保证 configureCore 后透明切换，不做下沉惰性化改造）；`worktree-registry.ts` 改用 proper-lockfile；`workflows/review-fix-loop.js` 的 cwd 静默回退改 fail-fast（D1 附带加固，scriptPath 缺失即 `core_module_load_failed`） | 除 D1 的 cwd 回退 fail-fast 加固（边缘路径的刻意行为收紧）外纯重构无行为变更，现有 229 个测试文件的全量测试族守护；先收口再搬家，Phase 1 是纯物理迁移不再改语义。验收：全量测试绿 + extension 在 pi CLI 实测一例 subagent |
 | P1 | 物理抽包 + 双形态构建 + 回接 + 发布 | 新包 `packages/subagent-core/`（package.json / tsup ESM+CJS / vitest / README）；代码物理迁移；extension 改 workspace 引用；runtime 深路径 import 切 core（D8）+ tsup noExternal 更新；changeset 接入；D4 的 node 20 CJS smoke 门；D9 闭包守卫探针 + dist 发布回归门落地 | 单仓内闭环，不依赖 zcode 仓配合；pi 侧行为零变化由 V1 守护；发布物由 V7 验证 |
 | P2 | zcode 仓渐进替换（2a/2b/2c） | 2a：vendor utils → npm 依赖（file: 联调→beta 通道）；2b：workflow 运行时替换；2c：spawn 驱动 + slots/pool/reaper 归属切换 + 存量切换点（D7 门）+ daemon 变 core 宿主壳 | 风险递增次序（D6），2a 立即兑现分叉归零（V2），2c 兑现 V3/V5 |
 | P3 | 后续演进（另行小设计） | `file:` 入口、材料注入 parity、独立 bin CLI、core zcode engine 内部常驻实现（回收 2c 退役的 appserver 优势：长驻/零冷启动/实时进度，EnginePort 接口已常驻友好）、core engine 配置面扩展（回收 appserver 的 per-session model——EnginePort 三层路由不含 per-task model 配置面，扩展后由 zsw 壳透传）、workflows 脚本 TS 化评估（D1 被否④，reopen 条件：worker 契约类型化先行）、`pi-file-lock` 去 logger 化清理 | 依赖本设计落地；每项独立成立不绑架本设计 |
