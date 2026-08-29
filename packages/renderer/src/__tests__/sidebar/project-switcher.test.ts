@@ -302,15 +302,19 @@ describe('ProjectSwitcher 3A：删除流（右键 ContextMenu）', () => {
     document.body.innerHTML = ''
   })
 
-  it('默认项目卡右键无删除菜单项（review MF-1 双保险：组件侧不渲染）', () => {
+  it('默认项目卡右键无删除菜单项（review MF-1 双保险：组件侧不渲染）', async () => {
     const projectStore = useProjectStore()
     projectStore.projects = [makeProject(DEFAULT_PROJECT_ID, ''), makeProject('a', 'Alpha')]
     projectStore.activeProjectId = 'a'
 
     wrapper = mountSwitcher()
-    // Portal v-if 不渲染：默认项目卡不产生 ContextMenuContent（无 testid 注入点即无菜单）
-    // 结构断言：仅命名项目卡可携带删除菜单（canDelete 守卫存在于组件语义，经 ConfirmDialog 路径验证）
-    expect(cardById(wrapper, DEFAULT_PROJECT_ID).exists()).toBe(true)
+    // 右键默认项目卡 → Portal v-if="canDelete(p)" 为 false，菜单整块不渲染
+    // （触发写法对齐本文件命名卡正向用例；「Portal 整块不渲染」断言对齐 session-item-force-quit 先例）
+    await cardById(wrapper, DEFAULT_PROJECT_ID).trigger('contextmenu')
+    await nextTick()
+    await nextTick()
+    expect(document.body.querySelector('[data-testid="project-delete-item"]')).toBeNull()
+    expect(document.body.querySelector('[data-testid="project-context-menu"]')).toBeNull()
   })
 
   it('命名卡右键 → 删除项 → ConfirmDialog 确认 → removeProject 生效', async () => {

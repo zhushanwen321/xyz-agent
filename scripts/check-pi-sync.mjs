@@ -266,7 +266,7 @@ console.log(`pi-sync 守卫：声明基准 ${PI_CODING_AGENT}=${declaredAgent}�
 // ── S1 build.yml PI_VERSION env（声明基准）────────────────────────────
 {
   if (!existsSync(BUILD_YML)) {
-    fail(`S1 build.yml 不存在: ${BUILD_YML}——恢复动作：确认 --root/工作目录为仓库根`)
+    fail(`S1 build.yml 不存在: ${BUILD_YML}——恢复动作：核对 .github/workflows/build.yml 是否被移动/删除（脚本以自身位置锚定仓库根，与当前工作目录无关），恢复文件后重跑 node scripts/check-pi-sync.mjs`)
   } else {
     const r = parseBuildYmlPiVersion(readFileSync(BUILD_YML, 'utf-8'))
     if (r.error) {
