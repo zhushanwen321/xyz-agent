@@ -40,7 +40,7 @@
 | u0-log-a | logger 切换批次 A（execution 前 11 文件 + 其测试）：`E/src/core/logger.ts` facade 替换 pi-extension-logger import；对应测试 `vi.mock("@zhushanwen/pi-extension-logger")` 目标同步替换为 facade 模块 | 源：`E/src/execution/{agent-registry,best-effort,channel-registry-access,config,finalize-record,idle-gc}.ts`、`E/src/execution/engine/common/{event-journal,kill-chain,pool-manager}.ts`、`E/src/execution/engine/engines/pi/pi-engine.ts`、`E/src/execution/engine/engines/zcode/zcode-engine.ts`；测试：`E/src/execution/__tests__/{config,finalize-record,gc-timer,channel-registry-handshake}.test.ts`、`E/src/execution/engine/engines/zcode/__tests__/registration.test.ts` | u0-wire | plain | ① 领地内 `grep pi-extension-logger` 零残留；② 受影响测试全绿（mock 断言仍有效）；③ 行为零变化——logger 调用面（方法名/参数序）逐文件等价替换 |
 | u0-log-b | logger 切换批次 B（execution 后 10 文件 + 其测试） | 源：`E/src/execution/{notify-ledger,record-store,session-runner,sessions-index,stdin-writer,subagent-service,ui-request-handler-factory,ui-request-observability,ui-request-queue,worktree-manager}.ts`；测试：`E/src/execution/__tests__/{stdin-writer,ui-request-observability,ui-request-handler-factory,notify-ledger,run-and-finalize-chatmode,chatmode-first-round-closure-service,conversation-wiring,parent-child-matrix,one-shot-upgrade,get-record-for-action-restart,spawned-children,run-spawn-stdout-callback-throw,epipe-fallback,subagent-service-message-close,subagent-service-parent-guard}.test.ts` | u0-wire | plain | 同 u0-log-a 三条 |
 | u0-log-c | logger 切换批次 C（orchestration 3 文件 + 跨面集成测试） | 源：`E/src/orchestration/{error-recovery,jsonl-run-store,lifecycle}.ts`；测试：`E/src/orchestration/__tests__/{jsonl-run-store-corrupt-entry,jsonl-run-store-retention,jsonl-run-store-session-file,error-recovery-postmessage-defense}.test.ts`、`E/src/__tests__/{ended-message-and-fork-from,transparent-resume,robustness-medium-batch4}.test.ts`（跨 a/b 面集成测试归本单元避免领地交集） | u0-wire | plain | 同 u0-log-a 三条 |
-| u0-data-discovery | pi SDK 运行时值触点 ×3 + 根构建注入化：`data-dir.ts` fallback getAgentDir→host.dataRoot()（env 段与 warn-once 留 core）；`skill-discovery.ts` getAgentDir→discoveryRoots().skills（标签条目）；`config-loader.ts` scanConfig.agentDir→discoveryRoots().workflows 注入；`resource-discovery.ts` 根构建段（:518-529）改消费注入 roots（source 标签/顺序逐字保留）；各自 logger 同步切 facade | `E/src/execution/engine/common/data-dir.ts`、`E/src/orchestration/skill-discovery.ts`、`E/src/orchestration/config-loader.ts`、`E/src/shared/resource-discovery.ts`；测试：`E/src/execution/engine/__tests__/common/data-dir.test.ts`、`E/src/orchestration/__tests__/skill-discovery.test.ts`、`E/src/shared/__tests__/resource-discovery.test.ts`、`E/src/orchestration/__tests__/config-loader*.test.ts`（以 grep 现存为准） | u0-wire | plain | ① 领地内 `grep "pi-coding-agent"` 仅剩 type import（本组三处均为运行时值，应清零）；② 遮蔽报告输出（标签/顺序）与改造前快照逐字一致——测试用改造前 expected 固化；③ 受影响测试全绿 |
+| u0-data-discovery | pi SDK 运行时值触点 ×3 + 根构建注入化：`data-dir.ts` fallback getAgentDir→host.dataRoot()（env 段与 warn-once 留 core）；`skill-discovery.ts` getAgentDir→discoveryRoots().skills（标签条目）；`config-loader.ts` scanConfig.agentDir→discoveryRoots().workflows 注入；`resource-discovery.ts` 根构建段（:518-529）改消费注入 roots（source 标签/顺序逐字保留）；各自 logger 同步切 facade。**收口轮扩入**（验收发现，偏差 #7）：`subagent-list-injector.ts` / `workflow-list-injector.ts` 的 ScanConfig 构造点同步改传 hostRoots（领地外构造面，计划期审计缺口；两文件 getAgentDir 其他用途属壳侧合法保留） | `E/src/execution/engine/common/data-dir.ts`、`E/src/orchestration/skill-discovery.ts`、`E/src/orchestration/config-loader.ts`、`E/src/shared/resource-discovery.ts`、`E/src/injectors/subagent-list-injector.ts`、`E/src/injectors/workflow-list-injector.ts`；测试：`E/src/execution/engine/__tests__/common/data-dir.test.ts`、`E/src/orchestration/__tests__/skill-discovery.test.ts`、`E/src/shared/__tests__/resource-discovery.test.ts`、`E/src/orchestration/__tests__/config-loader*.test.ts`、`E/src/injectors/__tests__/{subagent-list-injector,workflow-list-injector}.test.ts`（以 grep 现存为准） | u0-wire | plain | ① 领地内核心四源文件 `grep "pi-coding-agent"` 运行时值清零（config-loader:26-29 收口后删除）；② 遮蔽报告输出（标签/顺序）与改造前快照逐字一致——测试用改造前 expected 固化；③ 受影响测试全绿（含两 injector 测试） |
 | u0-notify | 通知域两机制注入化：`notifier.ts` createDelivery import→经 notify-ports 工厂（NotifierHost 不改面，工厂在 createNotifier 内解析；缺席降级直发并 warn 一次）；`session-pending.ts` countActiveFromEntries import→notify-ports 计数器（缺席按零活跃处理）；各自 logger 同步切 facade | `E/src/execution/notifier.ts`、`E/src/execution/session-pending.ts`；测试：`E/src/execution/__tests__/{delivery-methods,chatmode-round-notify-real-chain}.test.ts` + `E/src/execution/__tests__/notifier*.test.ts`、`session-pending*.test.ts`（以 grep 现存为准） | u0-wire | plain | ① 领地内 `grep "session-delivery\|pi-pending-notifications"` 零残留（import 面）；② 受影响测试全绿（含 delivery 门/合批语义回归） |
 | u0-lock | worktree-registry 去依赖：withFileLock→proper-lockfile 直用（语义对齐 `extensions/shared/file-lock/src/file-lock.ts`：stale 30s / retries 10 指数退避 / onCompromised 抛错 / ELOCKED 降级无锁 RMW 保留）；logger 同步切 facade；package.json 增 proper-lockfile 依赖 | `E/src/execution/worktree-registry.ts`、`E/package.json`；测试：`E/src/execution/__tests__/worktree-registry*.test.ts`（以 grep 现存为准） | u0-wire | plain | ① `grep pi-file-lock` 领地内零残留；② 锁竞争/stale 用例绿；③ `pnpm install` 后 typecheck 绿 |
 
@@ -137,6 +137,7 @@ graph TD
 | 4 | u1-move 单元规模豁免（迁移面 >120 文件） | execution↔orchestration 双向 import（实测 agent-result-mapper/agent-registry→orchestration、execute-agent-call/error-recovery→execution）决定不可分目录渐进；git mv+codemod 机械度高，人工编辑限残差 | 本计划登记；dev task 内附 codemod 策略与残差清点要求 |
 | 5 | ui-request-handler-factory.ts 进 core 并类型中立化 | 检查点 1 裁定：dialog-queue（core）与 index.ts（壳）双消费，非「仅 interface 层消费」；ExtensionContext 仅 type import，结构化 UIContext 可承载 | 落 u1-move；一致性审查时复核 |
 | 6 | u0-failfast 收口面从 review-fix-loop.js 单文件扩展到全部五个内置 workflow 脚本 | Wave 1 验收发现 chain/parallel/map-reduce/scatter-gather 存在同构 SCRIPT_DIR cwd 回退——同一代码加载面，D1 加固理由等价适用；P0 收口保 P1 纯物理迁移 | 计划领地已更新（本文件）；设计 D1 的「附带加固」措辞以本条为准扩展 |
+| 7 | u0-data-discovery 领地扩入 subagent-list-injector / workflow-list-injector 两壳文件 | 计划期审计缺口：设计 §2.5 只审计 pi SDK import 面，未审计 core 类型 ScanConfig 的构造面——两 injector 各有一处 `{kind, workspaceRoot, agentDir}` 构造，形状重构必然波及。裁决：ScanConfig.agentDir → hostRoots（带标签根），resource-discovery buildScanTargets 保持数组结构、agentDir 派生三条目改按 source 标签查 hostRoots（core 自建 user-agents/project/tmp 条目留原位，遮蔽序逐字不变，不引入槽位语义） | 计划领地已更新（本文件）；一致性审查时复核遮蔽序等价 |
 
 **变更历史**：
 
@@ -150,13 +151,13 @@ graph TD
 |------|------|------|---------|
 | u0-foundation | committed | 2（交付 + no-console/pre-commit 双守卫修复） | 587b39e56（22 测试绿 + typecheck + eslint + 守卫自测） |
 | u0-failfast | committed | 2（交付 + 四内置脚本扩展轮） | 46c4d5562（9 新测试 + 423 回归绿） |
-| u0-wire | pending | 0 | — |
-| u0-log-a | pending | 0 | — |
-| u0-log-b | pending | 0 | — |
-| u0-log-c | pending | 0 | — |
-| u0-data-discovery | pending | 0 | — |
-| u0-notify | pending | 0 | — |
-| u0-lock | pending | 0 | — |
+| u0-wire | committed | 1 | 0915a9f58（12 新测试 + 全量 3225 绿） |
+| u0-log-a | committed | 1 | b33cb3892（58 定向 + 297 engine 子树绿） |
+| u0-log-b | committed | 1 | 1304125f7（171 定向绿；notify-ledger 断言平移登记） |
+| u0-log-c | committed | 1 | 4df8765c2（96 定向 + 464 orchestration 子树绿） |
+| u0-notify | committed | 1 | b78c30c2a（223 定向绿；与 log-b 的交叉测试冲突双向消解） |
+| u0-lock | committed | 1 | 445b2d10e（53 测试绿含真实锁竞争；files 面补齐 + pi-file-lock 死依赖清除） |
+| u0-data-discovery | committed | 2（交付 + injectors 扩领地收口轮，偏差 #7） | 6c8815dbd（全量 3226 绿；遮蔽序 40 用例快照未动全绿） |
 | u1-scaffold | pending | 0 | — |
 | u1-move | pending | 0 | — |
 | u1-api-surface | pending | 0 | — |
