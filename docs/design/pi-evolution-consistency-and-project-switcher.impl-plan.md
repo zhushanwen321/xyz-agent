@@ -107,6 +107,8 @@ graph TD
 | u4 | committed | 1 | 65aebe1cf — D9 4 新用例 + 56 回归绿 |
 | u6 | committed | 1 | 122e5c171 — 计划外小修：8 文件补 mock，全量 3576 passed exit=0 |
 | u7 | committed | 1 | 820a8700c — 计划外存量修复：rpc-client/skill-paths env-builder mock（importOriginal spread，34 用例）+ tool-call-index 哨兵对齐 pi 0.84.4 wire 契约；runtime 全量 382 files/4089 tests exit 0 |
+| u8 | committed | 1 | 终审修复批次（守卫侧 4 条）：C-build-07 登记 + render（84 条）、S4 死分支激活（gen re-export）、pre-commit STAGED_DELETED 删除触发、self-test 23 断言 |
+| u9 | committed | 1 | 终审修复批次（测试侧 5 条）：tool-call-index 注释 3 处限定、project-store roundtrip +1、ordering 新建落位 +2、ProviderPage mock 形状 ×2（import.spec + settings/ProviderPage.test.ts 第 9 个同族） |
 
 ## 7 残留风险与变更历史
 
@@ -131,3 +133,4 @@ graph TD
 - 2026-08-29（Gate A：FAIL → 修复 → PASS）：首轮 runtime 全量 40 failed（4 个本计划引入：u4 handler 测试 mock 漏补 ×3 + u3 store 测试断言未随 D5 演进 ×1，根因均为增量回归漏扫 `test/` 根级目录；35 个存量：env-builder mock 缺失 ×33 + real-pi ×2）。修复批次 820a8700c（含计划外 u7：mock 族修复 importOriginal spread 长期方案 + tool-call-index 哨兵对齐 pi 0.84.4 `toolcall_start` 顶层 id/toolName wire 契约——pi-semantics 体系外的漏网探针，send-queue-e2e 判 flaky 4 连绿不修）。复验：runtime 382 files/4089 tests exit 0 + renderer 348 files/3584 tests exit 0 + lint 0 errors + 守卫三件绿 → **Gate A PASS**。
 - 2026-08-29（事故记录：并行会话 stage 竞态）：commit 820a8700c 意外裹挟用户侧并行 dev-flow（panel-view-derivation）T2 单元的伴随测试 `flow-integration.test.ts`（其 agent stage 后未 commit，本 agent commit 提交了整个 index）。内容完整合理无损害、不改写历史（并行会话活跃期 reset 危险）；此后本计划所有 commit 改用 `git commit -- <精确路径>` 形式提交指定路径绕过 index 竞态。待用户知悉。
 - 2026-08-29（Gate B：PASS，全场景签收）：A1/A2 引用 u2 开发期实证（8 项负向探测 + 红→绿闭环）；A3 态 1 pass（glm-test-overlay Composer 显示 + settings md5 前后一致 + 零 auto-fix——失败模式 A 修复实证）；A4 态 3 pass 两步（快照内 glm-5.3 正常 + 垃圾名 pass-through 原样透传，零改写）；A5 pass（拖首位 userOrder:0 落盘 → 两次重启顺序保持 → 切换不重排有序段 → 键盘 ArrowUp 与拖拽同 reorderProject 入口交换并落盘）；A6 pass（22=22 / 23=23 双向，无归属计入默认项目）；A7 pass（1 步点击切换 + active 反白）；A8 pass with note（偏差 #17）；A9 pass with note（偏差 #16）。测试 fixture 已清理（defaultModel 恢复 glm-5.2，dev app 已停）。**双 Gate 全绿，计划交付**。
+- 2026-08-29（终局对照审查轮，用户指示）：第三轮三区终审（代码终态 vs 文档，含 Gate A 修复批次与文档修订 5 处）——1 medium（守卫未登记 constraints SSOT，设计 §5 明文要求在实施层脱落）+ 7 low + 4 doc_errors。全部处置：u8 修复守卫侧 4 条（C-build-07/S4 死分支/删除触发/self-test 盲区）、u9 修复测试侧 5 条（注释/锚点 ×3/mock 形状 ×2）、主 agent 修文档 4 处（A9 步骤与通过标准、D1 断言、S5 措辞、终态 1 示例回写）。**A9 态 2 补验两次实测揭示**：删除 pi store 条目会被 pi binary 联网自刷回填（newer-wins 覆盖态 2 标记），auto-fix 目标始终为合并视图合法首项（glm-4.6v，真实可用）——态 2 真机实证需断网窗口（A9 原文「断网」前置的真正含义），当前判定 **blocked**（态 2 行为由单测 4 用例含落盘断言锁定；联网降级路径真机已两轮实证且 console.warn 可见）。A9 行已二次修正（断网 + 双源处理的完整构造条件）。

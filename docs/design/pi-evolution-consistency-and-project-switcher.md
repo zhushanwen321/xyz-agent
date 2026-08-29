@@ -137,15 +137,19 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 
 **终态 1 —— 升级 pi 的开发者（G1）**：
 
-> 开发者把根 `package.json` 的 pi 依赖升到 0.85.0，跑 `pnpm install` + 快照重生成。提交前跑守卫脚本，输出：
+> 开发者把根 `package.json` 的 pi 依赖升到 0.85.0，跑 `pnpm install`，改了 prepare 脚本默认值，但漏了 build.yml 与快照重生成。提交前跑守卫脚本，输出：
 > ```
-> ✗ pi-sync: build.yml PI_VERSION env = 0.84.4, expected 0.85.0
-> ✗ pi-sync: 快照 piAiVersion = 0.84.4（快照未重生成或 gen 脚本未跑）
-> ✓ pi-sync: prepare-pi-resources.sh 默认值 = 0.85.0
-> ✓ pi-sync: extensions peerDeps 均满足 0.85.0
+> pi-sync 守卫：声明基准 @earendil-works/pi-coding-agent=0.85.0，实装基准取 node_modules
+>   ✗ S1 build.yml PI_VERSION env = 0.84.4, expected 0.85.0——恢复动作：同步 .github/workflows/build.yml 的 PI_VERSION 后重跑
+>   ✓ S2 prepare-pi-resources.sh 默认值 = 0.85.0
+>   ✗ S3 快照 piAiVersion = 0.84.4 ≠ node_modules 实装 pi-ai = 0.85.0——恢复动作：仓库根 pnpm gen:builtin-providers
+>   ✗ S4 快照过期（providers 内容与实装重生成不一致）——恢复动作：仓库根 pnpm gen:builtin-providers
+>   ✓ S5 extensions pi 依赖均满足声明基准（39 条 / 24 包）
+>   ……
+> ✗ pi-sync 守卫发现 3 处派生锚点不一致（fail 级，exit 1）
 > ```
 > 按报告逐项修复后守卫绿。CI 在 PR 上跑同一守卫——漏同步的提交无法合入。
-> **失败路径**（守卫脚本自身损坏/无法解析某锚点）：报告该锚点 `?（无法解析，人工核对）` 并以非零退出——宁可误报不可漏报。
+> **失败路径**（守卫脚本自身损坏/无法解析某锚点）：报告该锚点的解析错误详情与可执行恢复动作，并以非零退出——宁可误报不可漏报。
 
 **终态 2 —— 设置默认模型的用户（G2）**：
 
@@ -175,7 +179,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 | `prepare-pi-resources.sh` PI_VERSION 默认值 == 同上 | 不等 → fail |
 | 快照 `piAiVersion` == node_modules 实装 pi-ai 版本 | 不等 → fail（快照过期） |
 | 快照新鲜度：重跑 gen 脚本 → diff 已提交快照 | 有 diff → fail（node_modules 升了快照没重生成） |
-| extensions/ 全部 package.json（实测 24，含 deprecated unified-hooks 与 shared 3 包）peerDeps 满足当前版本（`^0.84.4` satisfies 0.84.4） | 不满足 → fail |
+| extensions/ 全部 package.json（实测 24，含 deprecated unified-hooks 与 shared 3 包）pi 依赖满足各自对应包的根声明版本（如 `^0.84.4` satisfies 0.84.4） | 不满足 → fail |
 | `KNOWN_PI_API_TYPES`（shared 常量）== pi-ai KnownApi 源码提取值 | 不等 → fail（复用 gen 脚本既有的源码提取手法） |
 | pi-tui 实装 == 锚点（check-pi-semantics 的 PI_PKGS 只含三包，pi-tui 有真实消费者却不在门禁内——补位） | 不等 → fail |
 | （dev 环境，可选）resources/pi 内 binary 自带 package.json 版本 == 锚点 | 不等 → warn（symlink 缓存可能故意多版本共存，降级为警告） |
@@ -214,7 +218,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 ### 3.3 关键决策与权衡
 
 **D1：pi 版本唯一锚点 = 根 package.json 的 pi-coding-agent 依赖版本（选定）**
-- **采用**：守卫脚本以它为 expected 比对矩阵的声明基准项（build.yml env / 脚本默认值 / extensions peerDeps）；矩阵的实装基准项（快照 piAiVersion / 快照新鲜度 / KNOWN_PI_API_TYPES / pi-tui）对 node_modules 实装比对——实装与声明的一致性由四包门禁（check-pi-semantics）先行锁定，两级基准不冲突（改声明未 install 时：四包门禁红，提示先 install——本守卫以实装为准的项不受影响）。
+- **采用**：守卫脚本以它为 expected 比对矩阵的声明基准项（build.yml env / 脚本默认值 / extensions peerDeps——后者实现为各 pi 包满足**各自对应包的根声明版本**，比「统一满足 pi-coding-agent 版本」更严：能抓 extensions range 已改新而对应根声明漏改的分裂）；矩阵的实装基准项（快照 piAiVersion / 快照新鲜度 / KNOWN_PI_API_TYPES / pi-tui）对 node_modules 实装比对。两级基准不冲突——四包门禁（check-pi-semantics）只锁「实装内部一致」（不读根声明）；声明与实装的缝隙由 CI `--frozen-lockfile` 安装失败与守卫 S1/S2 报不一致兜底，全绿漏报窗口仅剩「声明与全部锚点已同步但未 install」的本地视角（CI 上 install 会红）。
 - **被否**：锚点放 shared/constants.ts（renderer 也加载，runtime 版本概念泄漏到渲染层）；锚点放 prepare-pi-resources.sh（shell 非结构化数据源，且它是被校验方之一，不能既当裁判又当运动员）。
 - **证据**：`package.json:31-51` 是 pnpm overrides 与 deps 的汇聚点，lockfile 由它驱动。与 check-pi-semantics 四包门禁的关系是**互补非重复**：门禁以 node_modules 实装为基准查「实装内部一致」（`check-pi-semantics.mjs:157-165`），本守卫查「派生锚点的跟随」（声明基准项对声明、实装基准项对实装）。
 - **效果**：G1 的「改一处」成立。
@@ -297,7 +301,7 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 | A6 | 徽章数 = 列表实际数（G3） | 真机：多项目各含不同数量会话（含 1 个无归属 session） | 每张卡徽章数字 = 点击该卡后 SessionList 顶部的 totalCount；无归属 session 计入默认项目 |
 | A7 | 1 步切换（G3） | 真机点击非活跃项目卡 | 视图立即切换到该项目（无中间展开态）；active 卡样式反白 |
 | A8 | 导入触发刷新（G2，D9） | 真机联网：导入一份供应商配置 | 导入成功后 `<getDataDir>/provider-catalog-overlay.json` mtime 更新；随后 `listProviders` 结果含 overlay 新模型（与快照 diff 可见） |
-| A9 | 态 2 快照裁定 + auto-fix（G2，负面行为的显式验证） | 真机 dev：向 overlay 缓存写入 zai 条目，`lastModified: 0`（404/501 语义——远程声明无此目录），`models` 含一个快照外模型 id；断网后设该模型为默认 → 重启 | 快照裁定生效：默认模型被 auto-fix 改回快照首模型 + runtime 日志有 auto-fix 记录（console.warn 可见）——态 2 的降级路径按设计发生，而非静默 |
+| A9 | 态 2 快照裁定 + auto-fix（G2，负面行为的显式验证） | 真机 dev：**断网**（防 pi binary 启动自刷从 pi.dev 回填新鲜目录压过态 2 标记）+ 向 overlay 缓存写入 zai 条目 `lastModified: 0`（404/501 语义——远程声明无此目录），`models` 含一个快照外模型 id + **删除 pi models-store.json 中 zai 条目**（双源处理）→ 设该模型为默认 → 重启 | 快照裁定生效：默认模型被 auto-fix 改回快照首模型 + runtime 日志有 auto-fix 记录（console.warn 可见）——态 2 的降级路径按设计发生，而非静默。已实测的联网变体（终局审查偏差 #16，两次真机）：删 pi store 条目会被 pi binary 联网自刷回填，auto-fix 落合并视图首项（pi store 新鲜目录首模型，真实可用）——联网下态 2 被 newer-wins 数据覆盖属预期，目标始终合法可用模型；态 2 的快照裁定行为由单测 4 用例（含落盘断言）锁定，断网真机实证待专门窗口 |
 
 设计阶段即 testable：A1/A2 纯脚本可跑；A3/A4/A9 用真实数据文件构造（写真实缓存路径，非 mock 组件）；A5-A8 为真机操作断言。
 
@@ -350,3 +354,4 @@ xyz-agent = Electron 主进程 + Vue 3 渲染层 + Node.js runtime（WebSocket R
 - 2026-08-29（第 1 轮全量复审修订）：1 must-fix + 10 suggestion 全部修复——CI 挂载点三处矛盾收敛为 ci.yml invariants job（唯一挂载实体，D2/D3/§5 统一）；矩阵基准分声明/实装两类（§2.1/§3.2/D1 三处措辞统一）；G1 收窄至矩阵覆盖面（A6 类文档锚点显式排除）；G2 补态 2 例外限定 + 新增 A9 态 2 验收场景；「D3 分支」撞名改「auth-only catalog 分支」；行号漂移修正（rpc-client :191、troubleshooting :296）；§5 计数改「矩阵全量」。
 - 2026-08-29（第 2 轮验证性复审修订）：2 must-fix + 6 suggestion 全部修复——§5 文件改动地图 U1 行挂载点漏网修正（ci.yml）+ U2 独立验收补 A9；A8 回溯目标 G1/G2 → G2；地图补 U3 行；A5 补键盘 reorder 复验（D8 同一入口）。两 must-fix 均为第 1 轮修复的下游漂移，方案本体零新发现。
 - 2026-08-29（实施后一致性审查同步修订）：三区对抗审查（runtime 守卫 / 前端）0 must 级 unreasonable 后的文档修正——① 「新建项目出现在网格尾部」（§3.1 终态 3 / A5）与 D7 两段式矛盾，按 D7 语义统一为「自动序段首位」，D7 声明② 精化；② D9 证据行实体位置纠正（broadcast 先例在 settings-message-handler.ts 非 config-service.ts）+ 采用行显式化二次广播；③ D5 态 1 判定依据行号引用改函数名引用 + 补两通路生效范围注记；④ D3 采用行补第三断言（实施期补强）；⑤ D4 采用行补 sanitizeInvalidProviders 快照索引例外注记。
+- 2026-08-29（终局对照审查同步修订）：第三轮三区终审（代码终态 vs 文档，含上轮未覆盖的 Gate A 修复批次）4 条 doc_errors 修正——① A9 步骤补双源处理（删 pi models-store 条目，防 newer-wins 使实际态变 fresh）+ 通过标准区分双源过期（快照首模型）与三源变体（合并视图首项，#16 实测）；② D1 断言修正（四包门禁只锁实装内部一致、不读根声明；缝隙由 CI frozen-lockfile + S1/S2 兜底）；③ S5 基准措辞按实现对齐（各 pi 包满足对应包根声明，更严）；④ §3.1 终态 1 输出示例按守卫实跑格式回写（S 编号/恢复动作后缀/失败路径措辞）。连带 unreasonable 8 条（1 medium：守卫未登记 constraints——已补 C-build-07；7 low：S4 死分支/ACMR 删除缝隙/self-test 盲区/注释失真×3/测试锚点×2/mock 形状×2）由 u8/u9 修复批次处理。
