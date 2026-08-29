@@ -146,6 +146,8 @@ graph TD
 - 2026-08-29（Wave 1 提交轮）：pre-commit `check_staged_forbidden_lines` 拦截两处——①eslint.config.mjs 注释散文含 `eslint-disable` 字面触发规则 B（改措辞避开，非真实 disable 指令）；②host-services.ts 的 console.warn/error 触发规则 A（eslint override 管不到 python 守卫）——按「规则误报修正规则本体」doctrine 给守卫加 scoped allowlist（`src/core/` 前缀 + 理由注释，P1 迁包后自然失效），u0-foundation 领地相应扩入 `.githooks/check_staged_forbidden_lines.py`。
 - 2026-08-29（Wave 3/4 验收轮）：u0-data-discovery 领地扩入两 injector（偏差 #7：§2.5 审计只覆盖 pi SDK import 面，漏 ScanConfig 构造面）；裁决 ScanConfig.agentDir→hostRoots 标签查表形态（遮蔽序逐字不变）。
 - 2026-08-30（P0 验收门 **PASS**）：九单元全 committed（最新 8b047a341 波次收尾：28 源文件 facade import 补 .ts 后缀 + 17 个失效双 mock 清理）；全量 3226 测试绿 + typecheck/lint 绿；**pi CLI 实测一例 subagent 通过**——扩展加载零错误、record `running→closed` 生命周期完整、日志经 facade→pi-host 桥接落盘（组件前缀保持）、resource-discovery 遮蔽报告在 hostRoots 注入下语义不变（user-agents shadows user-pi 实测）、agent 发现三源命中。实测命令记录：`pi -ne -p <派 subagent 提示> --model xiaomi-token-plan-cn/mimo-v2.5-pro --extension <E 绝对路径> --session-dir /tmp/pi-p0-gate --approve`（-ne 避开全局 npm 同名扩展的工具冲突）。进入 P1。
+- 2026-08-30（P1 补充单元）：u1-typecheck-cleanup（2d5dc8ec5）——api-surface 验收发现的 C 自有 tsc 存量红（280 条），归因为 E 侧 tsconfig 本就 exclude `__/__tests__`（测试从未进 tsc 面，运行时由 vitest 守护——仓内 20 包同策略），C 配置补 skipLibCheck + exclude 对齐，零测试改动。
+- 2026-08-30（P1 验收门 **PASS**）：七单元全 committed（9986d5d57 → 022904c24）。证据：①V1-② 合入后重跑实测——默认引擎 subagent（u1-move 内）、zcode 引擎 subagent（record `engine: zcode` running→closed + journal 落 `engines/zcode/<poolKey>/` 含 zcode CLI rollout）、parallel 双分支 workflow（wf 启动 → 2×subagent running→closed → workflow 结束 entry）；②V1-③ standalone pi 数据落点（P0 门 + P1 各实测均走 `~/.pi/agent` 派生回退）；③V1-④ staged 双探针（u1-staged）；④V6-① 守卫有牙（注入 pi-SDK import 与 worker→host-services require 双探针转红、移除复绿）+ pre-commit 真实触发实证（C 路径 staged 自动运行守卫段）；⑤V7 npm 消费者完整形态——`pnpm pack` 正确替换 workspace 协议（extension-protocol→0.7.0），裸 npm 消费者安装后 CJS require 主入口（8 导出）+ 语义子入口（ZCODE_ENGINE_ID）+ workflows 资产子入口（utils 49 导出 = P2 2a 消费形态）全通；⑥`bash scripts/validate-runtime-bundle.sh` 全绿（含尾段 plugin e2e + SEC 场景）；⑦三包全量：E 908 / C 2321 / runtime 382 + C typecheck 绿。发现并登记残留风险 7（node:sqlite）与 8（eslint warnings 存量）。进入一致性审查。
 
 ## 6 状态表
 
@@ -160,12 +162,13 @@ graph TD
 | u0-notify | committed | 1 | b78c30c2a（223 定向绿；与 log-b 的交叉测试冲突双向消解） |
 | u0-lock | committed | 1 | 445b2d10e（53 测试绿含真实锁竞争；files 面补齐 + pi-file-lock 死依赖清除） |
 | u0-data-discovery | committed | 2（交付 + injectors 扩领地收口轮，偏差 #7） | 6c8815dbd（全量 3226 绿；遮蔽序 40 用例快照未动全绿） |
-| u1-scaffold | pending | 0 | — |
-| u1-move | pending | 0 | — |
-| u1-api-surface | pending | 0 | — |
-| u1-staged | pending | 0 | — |
-| u1-runtime | pending | 0 | — |
-| u1-guards | pending | 0 | — |
+| u1-scaffold | committed | 1 | 9986d5d57（CJS require 探针过） |
+| u1-move | committed | 2（交付 + 4 行 disable 理由后缀轮） | 48ae09ba4（C 2321 / E 908 双绿 + pi CLI 实测 + 闭包红线 grep 清） |
+| u1-api-surface | committed | 1 | 782144709（exports/barrel/README + d.ts 消费探针；C typecheck 存量红移交补充单元） |
+| u1-staged | committed | 1 | 2c01ef4b5（staged 逐字节一致 + V1-④ 双探针） |
+| u1-runtime | committed | 1 | 1e3074678（runtime 382 绿 + validate-runtime-bundle 全绿——D8 端到端） |
+| u1-guards | committed | 1 | 022904c24（闭包守卫有牙双探针 + smoke 三段门 + 双管线接线；pre-commit 真实触发实证） |
+| u1-typecheck-cleanup（补充单元） | committed | 1 | 2d5dc8ec5（280 条配置对齐清零：skipLibCheck + __tests__ exclude，零测试改动） |
 
 ## 7 残留风险与变更历史
 
@@ -177,3 +180,5 @@ graph TD
 4. **ajv/yaml 依赖归属**：实测壳侧（interface/injectors/index.ts）零直接使用，预期整体迁 C；若 codemod 后发现残差使用，两包并列声明（不构成闭包违规）。
 5. **D4 CJS bundle 边界**：extension-protocol bundle 进 CJS 产物的探针若失败，走设计既定降级（全量 bundle 闭包内非 node 依赖）。
 6. **u1-guards 动 .github/workflows**：CI 文件改动在本地只能语法核验（`node --check` / yaml parse），真实门到下一次发布管线才首次生效——P1 门记录该限制。
+7. **`./engines/zcode/reader` dist 依赖 node:sqlite（node≥22.5）**（u1-guards 实测发现）：node 20 消费者不可加载该子入口（主入口与其余子入口无此依赖）。P2 zcode 侧 2c 接入 engines/zcode 时需评估：zsw 宿主 node 版本面或 reader 的 sqlite 加载惰性化。已在 smoke-core-dist.mjs 头注释登记 TODO node20 runner。
+8. **C 侧 eslint 706 warnings 存量**（u1-move 验收登记）：extensions/packages 规则集差异 + 674 可 --fix 项，非阻断（0 errors）；收口留后续清理单元或随一致性审查处置。
