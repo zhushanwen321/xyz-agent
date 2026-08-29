@@ -20,7 +20,8 @@ import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/cor
 
 const configMock = vi.hoisted(() => ({
   onProviders: vi.fn(() => () => {}),
-  listProviders: vi.fn(async () => []),
+  // 门面签名 { providers, scopedModels }（settings-lifecycle 解构消费）；裸数组解构得 undefined
+  listProviders: vi.fn(async () => ({ providers: [], scopedModels: undefined })),
   setProvider: vi.fn(async () => {}),
   deleteProvider: vi.fn(async () => {}),
   // wave4 C1/IF3：toggle 持久化走 toggleProviderEnabled（写 enabledModels 白名单），删除按 kind 走 removeProviderByKind

@@ -3,6 +3,7 @@
  *
  * 覆盖（u5 验收①四类 + badge 共享计数规则）：
  *  - 两段式排序：有 userOrder 升序在前段；无 userOrder 按 active 置顶 + lastUsedAt 降序在后段
+ *  - A5 新建项目落位：addProject 的新项目落在用户序段之后、自动序段首位（active 置顶）
  *  - drop 密集重排：reorderProject 提交后用户序段（旧有序段 ∪ 被拖卡）重编号 0..n-1，
  *    消除稀疏（拖到首位即首位 / 中间即中间 / 删除遗留空洞被重编）
  *  - 默认项目同卡同权：可获 userOrder、参与两段排序
@@ -78,6 +79,32 @@ describe('recentProjects 两段式排序（D7）', () => {
     ]
     store.activeProjectId = 'a'
     expect(store.recentProjects.map((p) => p.id)).toEqual(['a', 'c', 'b'])
+  })
+
+  it('A5 新建项目落位：无有序卡时 addProject 后新项目为 recentProjects[0]（active 置顶）', () => {
+    const store = useProjectStore()
+    store.projects = [makeProject(DEFAULT_PROJECT_ID, '', 0)]
+    store.activeProjectId = DEFAULT_PROJECT_ID
+
+    const newId = store.addProject('Fresh')
+
+    // 新项目无 userOrder（自动序段）且被设为 active → 置顶
+    expect(store.recentProjects.map((p) => p.id)).toEqual([newId, DEFAULT_PROJECT_ID])
+  })
+
+  it('A5 新建项目落位：有有序卡时新项目位于用户序段之后、自动序段首位', () => {
+    const store = useProjectStore()
+    store.projects = [
+      makeProject('x1', 'X1', 0, 0),
+      makeProject('x2', 'X2', 0, 1),
+      makeProject(DEFAULT_PROJECT_ID, '', 100),
+    ]
+    store.activeProjectId = 'x1'
+
+    const newId = store.addProject('Fresh')
+
+    // 新项目不进用户序段（未拖拽），但作为 active 置顶自动序段 → 夹在两段交界处
+    expect(store.recentProjects.map((p) => p.id)).toEqual(['x1', 'x2', newId, DEFAULT_PROJECT_ID])
   })
 })
 

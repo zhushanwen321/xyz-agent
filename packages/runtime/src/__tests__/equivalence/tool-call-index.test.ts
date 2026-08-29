@@ -21,8 +21,9 @@
  * 保留 0.84.1 历史形态（translate 对 start 的 noop 行为与 id 有无无关）。
  *
  * 双轨（TEST-STRATEGY.md §4）：
- * - 凭证无关子集（CI 可跑，无条件执行）：mock 事件**照抄探针抓包样本**（真实 wire 形态，
- *   无顶层 message 字段）喂生产 translate() + EventInterpreter 全链路。
+ * - 凭证无关子集（CI 可跑，无条件执行）：mock 事件**照抄探针抓包样本**（0.84.1 历史 wire
+ *   形态，无顶层 message 字段；与 0.84.4 实装的行为等价性见上方契约漂移注释）喂生产
+ *   translate() + EventInterpreter 全链路。
  * - 真实 pi 子集（describe.skipIf(!REAL_PI_READY)）：spawn 真实 pi 跑一轮含工具调用对话，
  *   锁定 wire 契约与 tool-call-index 真实产出。
  */
@@ -34,8 +35,9 @@ import { EventInterpreter } from '../../services/session/event-interpreter.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 // ── 探针抓包样本（照抄，2026-08-20 /tmp 隔离探针，xiaomi mimo-v2.5-pro）──────────
-// 样本即 wire 真契约：message_update 恒无顶层 message；toolcall_start 无 id；
-// toolcall_end 携带完整 toolCall；id 与 tool_execution_start 同值。
+// 0.84.1 历史样本（与实装的行为等价性见头部契约漂移注释）：message_update 恒无顶层
+// message；toolcall_start 无 id（0.84.4 起增顶层 id/toolName）；toolcall_end 携带完整
+// toolCall；id 与 tool_execution_start 同值。
 const WIRE_TOOLCALL_START = {
   type: 'message_update',
   assistantMessageEvent: { type: 'toolcall_start', contentIndex: 1 },
@@ -80,9 +82,10 @@ describe('W3 tool-call-index: translate 提取（真实 wire 形态 mock，凭�
     ])
   })
 
-  it('toolcall_start（wire 形态：无 id、无顶层 message）不产出——noop', () => {
-    // 旧 bug 回归锚：wire 上此事件拿不到 id（partial 被剥离）；若实现退回从
-    // event.message 提取，本用例与上一用例的组合即复现「恒 undefined 生产死」。
+  it('toolcall_start（0.84.1 历史 wire 形态：无 id、无顶层 message）不产出——noop', () => {
+    // 旧 bug 回归锚：0.84.1 wire 上此事件拿不到 id（partial 被剥离；0.84.4 起增顶层
+    // id/toolName，见头部契约漂移注释）；若实现退回从 event.message 提取，本用例与
+    // 上一用例的组合即复现「恒 undefined 生产死」。
     const events = translate(WIRE_TOOLCALL_START as unknown as PiEvent, 's')
     expect(events).toEqual([{ kind: 'noop' }])
   })
