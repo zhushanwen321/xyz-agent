@@ -89,7 +89,17 @@ function fail(msg) {
 // 的纯函数在 review-fix-loop-utils.cjs，
 // vitest 单测见 src/__tests__/review-fix-loop-utils.test.ts。
 // worker 运行时经 workerData.scriptPath 定位自身目录——内置 workflow 在 npm 包内，
-// process.cwd() 是用户项目目录，不能作为锚点；其他引擎无 workerData 时回退 cwd。
+// process.cwd() 是用户项目目录，不能作为锚点；scriptPath 注入是 worker 契约的显式前提
+// （D1 加固），缺席即 fail-fast，不回退 cwd——消除从用户目录误加载/被植入同名
+// review-fix-loop-utils.cjs 的代码加载面。
+// 校验先于 $ARGS 白名单执行；fail 为函数声明（提升可用），沿用同一失败输出协议。
+if (typeof workerData === "undefined" || !workerData || typeof workerData.scriptPath !== "string") {
+  fail("core_module_load_failed: workerData.scriptPath 缺失，无法定位 review-fix-loop-utils.cjs。" +
+    "恢复动作：worker 宿主（WorkerHost）启动 worker 时必须经 workerData 注入 scriptPath" +
+    "（指向本脚本真实路径，注入点见 src/orchestration/worker-host.ts 的 workerData 组装处），" +
+    "禁止依赖 process.cwd() 巧合。");
+}
+
 const {
   TARGET_TYPES,
   VALID_ARG_KEYS,
@@ -135,11 +145,7 @@ const {
   shouldSkipAgent,
   updateStuckState,
   resolveBatchTerminated,
-} = require(
-  (typeof workerData !== "undefined" && workerData && typeof workerData.scriptPath === "string"
-    ? require("path").dirname(workerData.scriptPath)
-    : process.cwd()) + "/review-fix-loop-utils.cjs"
-);
+} = require(require("path").dirname(workerData.scriptPath) + "/review-fix-loop-utils.cjs");
 
 // 白名单校验：未知参数名（防 batchX 拼错如 batchl）→ 报错
 for (const key of Object.keys($ARGS)) {
