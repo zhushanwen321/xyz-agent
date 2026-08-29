@@ -184,21 +184,24 @@ describe("runEngineAwarenessTurn", () => {
 // ── runEngineAwarenessTurn：D1b 基线化 ───────────────────
 
 describe("runEngineAwarenessTurn lastEngine 基线化（D1b）", () => {
-	it("首 turn lastEngine === undefined：静默基线化为当前值，无伪通知", () => {
+	it("首 turn lastEngine === undefined：静默基线化为当前值，无伪通知，但 reload 先行（D1b 修订）", () => {
 		const { deps, calls, sent, getLast } = makeDeps({
 			readConfig: () => okRead("zcode"),
 			// session_start 初始化读失败 → lastEngine 未设置（undefined）
 		});
 		const result = runEngineAwarenessTurn(deps);
 		expect(result).toEqual({ outcome: "baseline", engine: "zcode" });
-		expect(calls).toEqual(["set:zcode"]);
+		// D1b 修订：基线分支必须先 reload 把 Service 缓存对齐到刚读到的现值——
+		// 否则「session_start 读失败缓存回落 + 文件此后被修好」形态下，
+		// 缓存/路由/状态段永停旧值且永不通知
+		expect(calls).toEqual(["reload", "set:zcode"]);
 		expect(sent).toHaveLength(0);
 		expect(getLast()).toBe("zcode");
 	});
 
-	it("基线化后再 turn 读到同值 → unchanged（基线生效）", () => {
+	it("基线化后再 turn 读到同值 → unchanged（基线生效，且 unchanged 仍零调用）", () => {
 		let lastEngine: string | undefined;
-		const { deps, sent } = makeDeps({
+		const { deps, calls, sent } = makeDeps({
 			readConfig: () => okRead("zcode"),
 			getLastEngine: () => lastEngine,
 			setLastEngine: (engine) => {
@@ -207,6 +210,9 @@ describe("runEngineAwarenessTurn lastEngine 基线化（D1b）", () => {
 		});
 		expect(runEngineAwarenessTurn(deps)).toEqual({ outcome: "baseline", engine: "zcode" });
 		expect(runEngineAwarenessTurn(deps)).toEqual({ outcome: "unchanged", engine: "zcode" });
+		// setLastEngine 被本用例 override（写局部变量、不记录 calls），故 calls 仅剩
+		// baseline 分支的 reload；unchanged 分支零调用
+		expect(calls).toEqual(["reload"]);
 		expect(sent).toHaveLength(0);
 	});
 

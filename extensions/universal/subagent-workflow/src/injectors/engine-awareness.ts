@@ -99,6 +99,11 @@ export function runEngineAwarenessTurn(deps: EngineAwarenessDeps): EngineAwarene
   const target = normalizeEngineId(read.config.defaultEngine);
   const last = deps.getLastEngine();
   if (last === undefined) {
+    // D1b（修订）：基线化前同步 reload 单例缓存。baseline 形态可能来自 session_start
+    // 读取失败（lastEngine 未设置 + Service 缓存静默回落缺省）而文件此后被修好——若只
+    // 记账不 reload，缓存/路由/状态段永停旧值且永不通知（「改 config 不生效」以更隐蔽
+    // 形态复活）。reload 幂等（读文件覆盖缓存），重复调用无害。
+    deps.reload();
     deps.setLastEngine(target);
     return { outcome: "baseline", engine: target };
   }
