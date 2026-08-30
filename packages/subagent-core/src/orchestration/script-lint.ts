@@ -76,13 +76,13 @@ function checkEntryPoint(source: string): LintFinding[] {
 function checkLine(lineText: string, lineNum: number): LintFinding[] {
   const results: LintFinding[] = [];
 
- // 跳过注释行
+  // 跳过注释行
   const trimmed = lineText.trim();
   if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
     return results;
   }
 
- // result.output / result.parsedOutput / result.content
+  // result.output / result.parsedOutput / result.content
   const resultAccessPatterns: Array<{ regex: RegExp; field: string }> = [
     { regex: /\bresult\s*\.\s*output\b/, field: "output" },
     { regex: /\bresult\s*\.\s*parsedOutput\b/, field: "parsedOutput" },
@@ -99,7 +99,7 @@ function checkLine(lineText: string, lineNum: number): LintFinding[] {
     }
   }
 
- // 文件传状态（readFileSync of STATE）
+  // 文件传状态（readFileSync of STATE）
   if (/readFileSync\(.*STATE.*\)|readFileSync\(.*state.*\.json/i.test(lineText)) {
     results.push({
       severity: "warning",
@@ -109,7 +109,7 @@ function checkLine(lineText: string, lineNum: number): LintFinding[] {
     });
   }
 
- // unlinkSync 清理状态
+  // unlinkSync 清理状态
   if (/unlinkSync.*state/i.test(lineText)) {
     results.push({
       severity: "warning",
@@ -169,7 +169,7 @@ function forEachAgentCallRange(
     const line = lines[i];
     const trimmed = line.trim();
 
- // 跳过注释
+    // 跳过注释
     if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
       continue;
     }
@@ -177,12 +177,12 @@ function forEachAgentCallRange(
     // 匹配/计括号都用剔除字符串与注释后的行，避免字面量内容干扰
     const codeLine = stripStringsAndComments(line);
 
- // 检测 agent 调用开始
+    // 检测 agent 调用开始
     if (!inAgentCall && /\bagent\s*\(/.test(codeLine)) {
       inAgentCall = true;
       depth = 0;
       agentStartLine = i;
- // 从 agent( 开始计括号
+      // 从 agent( 开始计括号
       const afterAgent = codeLine.replace(/^.*?\bagent\s*\(/, "(");
       // 非字面量实参（agent(callVar) / agent(expr)）→ 跳过（见函数头注释）。
       // 形如 `agent(` 换行 `{` 的多行字面量调用（argTail 为空）保留原追踪行为。
@@ -196,7 +196,7 @@ function forEachAgentCallRange(
         if (ch === ")" || ch === "}" || ch === "]") depth--;
       }
       if (depth <= 0) {
- // 单行 agent 调用
+        // 单行 agent 调用
         callback(agentStartLine, i);
         inAgentCall = false;
       }
@@ -247,15 +247,15 @@ function checkAgentCallOptions(
   for (let i = startLine; i <= endLine; i++) {
     const line = lines[i];
 
- // 跳过变量声明（const/let/var outputSchema = ...）
+    // 跳过变量声明（const/let/var outputSchema = ...）
     if (/\b(?:const|let|var)\s+outputSchema\b/.test(line)) {
       continue;
     }
 
- // 匹配：outputSchema 作为对象 key（简写或显式）
+    // 匹配：outputSchema 作为对象 key（简写或显式）
     if (/\boutputSchema\s*[,\}]/.test(line) || /\boutputSchema\s*:/.test(line)) {
- // 排除：outputSchema 作为 value（在另一个 key 的冒号后）
- // e.g. "schema: outputSchema," — outputSchema 前是冒号
+      // 排除：outputSchema 作为 value（在另一个 key 的冒号后）
+      // e.g. "schema: outputSchema," — outputSchema 前是冒号
       const beforeOutput = line.substring(0, line.indexOf("outputSchema"));
       if (/:\s*$/.test(beforeOutput)) {
         continue; // outputSchema 是 value，不是 key
@@ -329,7 +329,7 @@ function checkAgentDescription(source: string): LintFinding[] {
     // 对象以展开开头（agent({ ...call, ... })）：description 来自运行时对象、调用点静态
     // 不可见——无法验证即不报（review-fix-loop 的 agent({ ...call, agent: ... }) 即此形态）。
     if (/\{\s*\.\.\./.test(range)) return;
- // 匹配 description 或 label 作为对象 key（后跟冒号）
+    // 匹配 description 或 label 作为对象 key（后跟冒号）
     if (!/\b(description|label)\s*:/.test(range)) {
       findings.push({
         severity: "warning",
@@ -416,7 +416,7 @@ function isIIFEAwaited(source: string, iifeStart: number): boolean {
 function checkBareAsyncIIFE(source: string): LintFinding[] {
   if (!ENTRY_POINT_PATTERNS.some((p) => p.test(source))) return [];
 
- // 用 matchAll 检查所有 IIFE（脚本可能有多个，每个都需独立判断）
+  // 用 matchAll 检查所有 IIFE（脚本可能有多个，每个都需独立判断）
   const findings: LintFinding[] = [];
   for (const match of source.matchAll(BARE_ASYNC_IIFE_PATTERN)) {
     const iifeStart = match.index ?? 0;
@@ -519,13 +519,13 @@ function checkMetaPhases(source: string): LintFinding[] {
 function checkPhaseConsistency(source: string): LintFinding[] {
   const findings: LintFinding[] = [];
 
- // 提取 meta.phases 声明的字符串 + 声明所在行号
+  // 提取 meta.phases 声明的字符串 + 声明所在行号
   const declared = new Map<string, number>();
   const phasesArrayMatch = source.match(/phases\s*:\s*\[[^\]]*\]/);
   if (phasesArrayMatch && phasesArrayMatch.index !== undefined) {
     const inner = phasesArrayMatch[0];
- // 对象数组（如 [{title,detail}]）由 checkMetaPhases 单独报，这里跳过提取，
- // 避免从对象字段里误抽出字符串作 declared。
+    // 对象数组（如 [{title,detail}]）由 checkMetaPhases 单独报，这里跳过提取，
+    // 避免从对象字段里误抽出字符串作 declared。
     if (!/\[\s*\{/.test(inner)) {
       const phasesLine = source.slice(0, phasesArrayMatch.index).split("\n").length;
       for (const m of inner.matchAll(/['"]([^'"]+)['"]/g)) {
@@ -534,7 +534,7 @@ function checkPhaseConsistency(source: string): LintFinding[] {
     }
   }
 
- // 提取所有 phase() 调用实参 + 首次出现的行号
+  // 提取所有 phase() 调用实参 + 首次出现的行号
   const called = new Map<string, number>();
   for (const m of source.matchAll(/\bphase\s*\(\s*['"]([^'"]+)['"]/g)) {
     if (m.index === undefined) continue;
@@ -542,10 +542,10 @@ function checkPhaseConsistency(source: string): LintFinding[] {
     if (!called.has(m[1])) called.set(m[1], lineNum);
   }
 
- // 两者都为空 → 跳过（脚本不使用 phase 机制）
+  // 两者都为空 → 跳过（脚本不使用 phase 机制）
   if (declared.size === 0 && called.size === 0) return [];
 
- // 声明了但从未 phase() 调用
+  // 声明了但从未 phase() 调用
   for (const [name, line] of declared) {
     if (!called.has(name)) {
       findings.push({
@@ -557,7 +557,7 @@ function checkPhaseConsistency(source: string): LintFinding[] {
     }
   }
 
- // 调用了但未声明
+  // 调用了但未声明
   for (const [name, line] of called) {
     if (!declared.has(name)) {
       findings.push({
@@ -724,10 +724,10 @@ export function lintScript(source: string): LintResult {
   const lines = source.split("\n");
   const findings: LintFinding[] = [];
 
- // 入口检查（必须有 agent/parallel/pipeline 之一）
+  // 入口检查（必须有 agent/parallel/pipeline 之一）
   findings.push(...checkEntryPoint(source));
 
- // 逐行检查（result.output、文件传状态等）
+  // 逐行检查（result.output、文件传状态等）
   for (let i = 0; i < lines.length; i++) {
     findings.push(...checkLine(lines[i], i + 1));
   }
@@ -735,23 +735,23 @@ export function lintScript(source: string): LintResult {
   // agent 调用上下文检查（outputSchema 作为 key）
   findings.push(...checkAgentCalls(source));
 
- // [HISTORICAL] 顶层未 await 的异步 IIFE + 内部调 agent——子进程被提前 kill。
- // 教训来源：daily-news-impact.js 用 (async function main(){...})();() 包裹整个脚本，
- // worker 外层 IIFE 不等内层 IIFE 就 postMessage("return")，主线程 transition done
- // → release runtime → controller.abort() → spawn 后 2ms SIGKILL 子进程。
- // 诊断耗时 4 轮：先后误判为 model 故障 / 工具缺失 / turn-signal abort / 并发门闩 gate 异常，
- // 最终靠 worker-host → handleReturn → release → abort 的调用栈定位。
+  // [HISTORICAL] 顶层未 await 的异步 IIFE + 内部调 agent——子进程被提前 kill。
+  // 教训来源：daily-news-impact.js 用 (async function main(){...})();() 包裹整个脚本，
+  // worker 外层 IIFE 不等内层 IIFE 就 postMessage("return")，主线程 transition done
+  // → release runtime → controller.abort() → spawn 后 2ms SIGKILL 子进程。
+  // 诊断耗时 4 轮：先后误判为 model 故障 / 工具缺失 / turn-signal abort / 并发门闩 gate 异常，
+  // 最终靠 worker-host → handleReturn → release → abort 的调用栈定位。
   findings.push(...checkBareAsyncIIFE(source));
 
- // m4 W1-W3：meta 质量（description/when/notFor 短单句 + 不含已声明参数名）。
- // 仅对 IF1 解析成功的 @pi-meta 执行——旧 const meta 格式（D1 无 adapter）不检查。
+  // m4 W1-W3：meta 质量（description/when/notFor 短单句 + 不含已声明参数名）。
+  // 仅对 IF1 解析成功的 @pi-meta 执行——旧 const meta 格式（D1 无 adapter）不检查。
   const meta = parseResourceMeta(source, "workflow");
   if (meta && meta.kind === "workflow") {
     findings.push(...checkMetaQuality(meta));
   }
 
- // 显示性检查（warning）：agent 缺 description / meta.phases 形式 / phase 一致性。
- // 目的：让 TUI /workflows 视图避免 unnamed agent 与 (unnamed) phase 分组。
+  // 显示性检查（warning）：agent 缺 description / meta.phases 形式 / phase 一致性。
+  // 目的：让 TUI /workflows 视图避免 unnamed agent 与 (unnamed) phase 分组。
   findings.push(...checkAgentDescription(source));
   findings.push(...checkMetaPhases(source));
   findings.push(...checkPhaseConsistency(source));

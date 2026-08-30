@@ -79,6 +79,12 @@ const DOWNLOAD_TIMEOUT_MS = 3_600_000
 const IDLE_TIMEOUT_MS = 30_000
 
 /**
+ * 多段支持探测（HEAD probe）超时：probe 只是多段加速的前置判定，失败即降级单段，
+ * 不值得长等，超时口径与空闲超时一致即可。
+ */
+const PROBE_TIMEOUT_MS = 30_000
+
+/**
  * 把 fetch 返回的 web ReadableStream 适配成 Node stream/web 的 ReadableStream 类型，
  * 供 `Readable.fromWeb` 消费。
  *
@@ -116,14 +122,20 @@ const MS_PER_SECOND = 1000
 const HTTP_PARTIAL_CONTENT = 206
 
 /**
+ * 1 MiB 的字节数（字节阈值常量的组合基元）。
+ * [NOTE] 保持单一字面量形式（不用 1024 * 1024）：no-magic-numbers 对
+ * 「单一字面量整初始值的 const 声明」豁免，表达式初始值则逐字面量报。
+ */
+const BYTES_PER_MIB = 1_048_576
+
+/**
  * 断点续传状态保存阈值：每超过上次保存点 N 字节才落盘一次。
  *
  * 替代旧的 `downloaded % 1MB === 0` 整除判断——后者在续传场景
  * （downloaded 从非 1MB 整数倍起步）几乎永远不再命中，导致中途崩溃
  * state 仍是旧值。改用阈值比较保证进度稳步落盘且不过频写文件。
  */
-// eslint-disable-next-line no-magic-numbers -- 1MB 的字节数，语义即常量名
-const SAVE_INTERVAL_BYTES = 1024 * 1024
+const SAVE_INTERVAL_BYTES = BYTES_PER_MIB
 
 /**
  * totalBytes 一致性校验容差：续传时新请求拿到的 content-length 与
@@ -144,11 +156,13 @@ const DOWNLOAD_USER_AGENT = 'xyz-agent-updater'
  */
 const MULTI_PART_COUNT = 4
 
-/** 只有文件大于此阈值才启用多段（小文件拆分收益低、连接开销占比大）。 */
-const MIN_MULTI_PART_SIZE = 10 * 1024 * 1024
+/** 多段启用阈值（MiB）：只有文件大于此值才启用多段（小文件拆分收益低、连接开销占比大）。 */
+const MIN_MULTI_PART_MIB = 10
+const MIN_MULTI_PART_SIZE = MIN_MULTI_PART_MIB * BYTES_PER_MIB
 
-/** 每段至少 2MB，防止段数过多。 */
-const MIN_BYTES_PER_PART = 2 * 1024 * 1024
+/** 每段最小体积（MiB），防止段数过多。 */
+const MIN_BYTES_PER_PART_MIB = 2
+const MIN_BYTES_PER_PART = MIN_BYTES_PER_PART_MIB * BYTES_PER_MIB
 
 /** 进度回调节流间隔：同一段下载内最多每 N ms 推一次进度，降低 IPC 压力。 */
 const PROGRESS_THROTTLE_MS = 200
@@ -230,206 +244,206 @@ export async function downloadAsset(
   //    60s 只会约束初始 HTTP 响应；后续流式字节传输（pipe）将无超时，慢速/卡住
   //    连接的大文件可能永远挂住。下方用外层 try/finally 保证 stream 结束才 clear。
   if (!useMultiPart) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
-  let response: Response
-  // dispatcher 声明在外层，确保外层 finally 能访问到做 close（连接池清理）。
-  let dispatcher: ProxyAgent | undefined
-  try {
-    // 构建 fetch 选项：User-Agent + 代理 + 断点续传 Range 头。
-    const rangeHeaders = downloadedBytes > 0
-      ? { Range: `bytes=${downloadedBytes}-` }
-      : undefined
-    const fetchOptions = buildFetchOptions(proxyConfig, controller.signal, rangeHeaders)
-    dispatcher = fetchOptions.dispatcher
-
-    // 执行 fetch（dispatcher 存在时真正走代理），捕获网络错误并分类
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
+    let response: Response
+    // dispatcher 声明在外层，确保外层 finally 能访问到做 close（连接池清理）。
+    let dispatcher: ProxyAgent | undefined
     try {
-      response = await fetch(asset.downloadUrl, fetchOptions as RequestInit)
-    } catch (fetchErr) {
+    // 构建 fetch 选项：User-Agent + 代理 + 断点续传 Range 头。
+      const rangeHeaders = downloadedBytes > 0
+        ? { Range: `bytes=${downloadedBytes}-` }
+        : undefined
+      const fetchOptions = buildFetchOptions(proxyConfig, controller.signal, rangeHeaders)
+      dispatcher = fetchOptions.dispatcher
+
+      // 执行 fetch（dispatcher 存在时真正走代理），捕获网络错误并分类
+      try {
+        response = await fetch(asset.downloadUrl, fetchOptions as RequestInit)
+      } catch (fetchErr) {
       // D1: 使用统一的分类函数替代内联字符串匹配（收敛三条 fetch 路径）
-      const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
-      throw classifyNetError(fetchErr, 'downloading', proxyUrl)
-    }
-    if (!response.ok) {
+        const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
+        throw classifyNetError(fetchErr, 'downloading', proxyUrl)
+      }
+      if (!response.ok) {
       // [LEAK FIX] 抛错前显式 cancel body，释放底层 socket（无引用后 GC 也会清理，
       // 但显式 cancel 更确定，避免连接挂在 keep-alive 池）。
-      await response.body?.cancel().catch(() => {})
-      throw new UpdateError(`download failed: HTTP ${response.status}`, 'downloading', 'UPDATE_NETWORK_FAILED')
-    }
-    if (!response.body) {
-      throw new UpdateError('download failed: empty response body', 'downloading', 'UPDATE_NETWORK_FAILED')
-    }
-
-    // 4. 流式写到 .downloading 临时文件，同时累加进度（共用上面的 controller/timer）
-    //
-    // [C3] Range 续传响应分类：发了 Range: bytes=N- 后必须区分
-    //   - 206 Partial Content：续传成功，content-length 是剩余部分大小，
-    //     total = content-length + downloadedBytes，writeStream 用追加模式 'a'。
-    //   - 200 OK：服务器/CDN 忽略 Range（整文件回源）。若仍按续传处理，
-    //     content-length 是整个文件大小，total 会多算 downloadedBytes；
-    //     且 writeStream 追加模式会把完整内容拼到残文件后 → 文件损坏。
-    //     因此回退到完整下载：重置 downloadedBytes=0，total 用 content-length，
-    //     writeStream 用覆盖模式 'w'。
-    const requestedRange = downloadedBytes > 0
-    const resumeAccepted = requestedRange && response.status === HTTP_PARTIAL_CONTENT
-    const contentLength = Number(response.headers.get('content-length') ?? 0)
-    // 续传成功用追加模式 + 累加 total；否则覆盖写（200 回退或全新下载）
-    const writeFlags: 'a' | 'w' = resumeAccepted ? 'a' : 'w'
-    const total = resumeAccepted ? contentLength + downloadedBytes : contentLength
-
-    // [m5] totalBytes 一致性校验：续传成功（206）时，对比新算出的 total 与
-    // 上次记录的 totalBytes。差异超容差说明 release 文件已变更（残文件过期），
-    // 作废重下，避免把不同版本的内容拼接到一起。注意只在 resumeAccepted
-    // 分支校验——200 回退场景 total 计算方式本就不同，不参与此校验。
-    if (resumeAccepted && resumeState && Math.abs(total - resumeState.totalBytes) > TOTAL_BYTES_TOLERANCE) {
-      console.log(`[download] total bytes changed (expected ${resumeState.totalBytes}, got ${total}), restarting`)
-      await response.body?.cancel().catch(() => {})
-      // 残文件过期：清理后递归重下（从头开始）
-      try { unlinkSync(tempPath) } catch (e) { console.warn('[download] stale temp cleanup failed:', e) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
-      clearResumeState()
-      return downloadAsset(asset, onProgress, proxyConfig)
-    }
-
-    // 续传起点（206 = downloadedBytes；200 回退/全新 = 0）
-    let downloaded = resumeAccepted ? downloadedBytes : 0
-    // 如果是断点续传（206），使用追加模式打开文件；否则覆盖写
-    const writeStream = createWriteStream(tempPath, { flags: writeFlags })
-    // response.body 是 web ReadableStream；转 node Readable 以 pipe。
-    const nodeStream = Readable.fromWeb(toNodeReadableWebStream(response.body))
-    // [M1] idle timeout：长时间无新数据字节即中断。每次收到 chunk 重置。
-    let idleTimer: NodeJS.Timeout | undefined = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
-    // [M3] 记录上次保存进度（续传起点），超过 SAVE_INTERVAL_BYTES 才落盘（替代整除判断）
-    let lastSavedBytes = downloaded
-    // 进度回调节流：每段下载内按百分比变化 + 时间间隔推，降低 IPC 压力。
-    const reportProgress = createThrottledProgress(onProgress, total)
-    const clearTimers = () => {
-      clearTimeout(timer)
-      if (idleTimer) {
-        clearTimeout(idleTimer)
-        idleTimer = undefined
+        await response.body?.cancel().catch(() => {})
+        throw new UpdateError(`download failed: HTTP ${response.status}`, 'downloading', 'UPDATE_NETWORK_FAILED')
       }
-    }
-    try {
-      await new Promise<void>((resolve, reject) => {
-        nodeStream.on('data', (chunk: Buffer) => {
-          downloaded += chunk.length
-          // [M1] 收到新数据重置 idle timer（只要有字节流动就不算挂死）
-          if (idleTimer) clearTimeout(idleTimer)
-          idleTimer = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
-          // [NOTE] total=0（chunked 传输无 content-length）时不报进度：
-          // onProgress 签名是 0-100 百分比，无总量时无法计算百分比；
-          // 前端 useAppUpdate 的 state.percent 期望 0-100，传负值会 UI 异常。
-          // 设计权衡：chunked 时进度条不动（但下载会完成），优于 UI 异常。
-          if (total > 0) {
-            reportProgress(downloaded)
-          }
-          // [M3] 保存断点续传状态：每超过上次保存点 SAVE_INTERVAL_BYTES 字节才落盘。
-          // 旧实现 `downloaded % 1MB === 0` 在续传场景（起点非 1MB 整数倍）几乎
-          // 永不命中，中途崩溃 state 仍是旧值。
-          // [B-4] 统一保存口径：这里也用真实落盘字节（statSync）而非内存 downloaded 计数器。
-          // 原先进度保存用 downloaded（偏大，pipe 未完全 flush）、可恢复错误保存用
-          // statSync（偏小）→ 两口径不一致 → 续传判定 mismatch 重下。现在两处统一，
-          // 配合放宽的续传判定（stat.size <= state）形成正确续传闭环。
-          if (downloaded - lastSavedBytes >= SAVE_INTERVAL_BYTES) {
-            const persisted = getPersistedBytes(tempPath, downloaded)
-            saveResumeState({
-              downloadedBytes: persisted,
-              totalBytes: total,
-              tempPath,
-              finalPath,
-            })
-            lastSavedBytes = persisted
-          }
+      if (!response.body) {
+        throw new UpdateError('download failed: empty response body', 'downloading', 'UPDATE_NETWORK_FAILED')
+      }
+
+      // 4. 流式写到 .downloading 临时文件，同时累加进度（共用上面的 controller/timer）
+      //
+      // [C3] Range 续传响应分类：发了 Range: bytes=N- 后必须区分
+      //   - 206 Partial Content：续传成功，content-length 是剩余部分大小，
+      //     total = content-length + downloadedBytes，writeStream 用追加模式 'a'。
+      //   - 200 OK：服务器/CDN 忽略 Range（整文件回源）。若仍按续传处理，
+      //     content-length 是整个文件大小，total 会多算 downloadedBytes；
+      //     且 writeStream 追加模式会把完整内容拼到残文件后 → 文件损坏。
+      //     因此回退到完整下载：重置 downloadedBytes=0，total 用 content-length，
+      //     writeStream 用覆盖模式 'w'。
+      const requestedRange = downloadedBytes > 0
+      const resumeAccepted = requestedRange && response.status === HTTP_PARTIAL_CONTENT
+      const contentLength = Number(response.headers.get('content-length') ?? 0)
+      // 续传成功用追加模式 + 累加 total；否则覆盖写（200 回退或全新下载）
+      const writeFlags: 'a' | 'w' = resumeAccepted ? 'a' : 'w'
+      const total = resumeAccepted ? contentLength + downloadedBytes : contentLength
+
+      // [m5] totalBytes 一致性校验：续传成功（206）时，对比新算出的 total 与
+      // 上次记录的 totalBytes。差异超容差说明 release 文件已变更（残文件过期），
+      // 作废重下，避免把不同版本的内容拼接到一起。注意只在 resumeAccepted
+      // 分支校验——200 回退场景 total 计算方式本就不同，不参与此校验。
+      if (resumeAccepted && resumeState && Math.abs(total - resumeState.totalBytes) > TOTAL_BYTES_TOLERANCE) {
+        console.log(`[download] total bytes changed (expected ${resumeState.totalBytes}, got ${total}), restarting`)
+        await response.body?.cancel().catch(() => {})
+        // 残文件过期：清理后递归重下（从头开始）
+        try { unlinkSync(tempPath) } catch (e) { console.warn('[download] stale temp cleanup failed:', e) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+        clearResumeState()
+        return downloadAsset(asset, onProgress, proxyConfig)
+      }
+
+      // 续传起点（206 = downloadedBytes；200 回退/全新 = 0）
+      let downloaded = resumeAccepted ? downloadedBytes : 0
+      // 如果是断点续传（206），使用追加模式打开文件；否则覆盖写
+      const writeStream = createWriteStream(tempPath, { flags: writeFlags })
+      // response.body 是 web ReadableStream；转 node Readable 以 pipe。
+      const nodeStream = Readable.fromWeb(toNodeReadableWebStream(response.body))
+      // [M1] idle timeout：长时间无新数据字节即中断。每次收到 chunk 重置。
+      let idleTimer: NodeJS.Timeout | undefined = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
+      // [M3] 记录上次保存进度（续传起点），超过 SAVE_INTERVAL_BYTES 才落盘（替代整除判断）
+      let lastSavedBytes = downloaded
+      // 进度回调节流：每段下载内按百分比变化 + 时间间隔推，降低 IPC 压力。
+      const reportProgress = createThrottledProgress(onProgress, total)
+      const clearTimers = () => {
+        clearTimeout(timer)
+        if (idleTimer) {
+          clearTimeout(idleTimer)
+          idleTimer = undefined
+        }
+      }
+      try {
+        await new Promise<void>((resolve, reject) => {
+          nodeStream.on('data', (chunk: Buffer) => {
+            downloaded += chunk.length
+            // [M1] 收到新数据重置 idle timer（只要有字节流动就不算挂死）
+            if (idleTimer) clearTimeout(idleTimer)
+            idleTimer = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
+            // [NOTE] total=0（chunked 传输无 content-length）时不报进度：
+            // onProgress 签名是 0-100 百分比，无总量时无法计算百分比；
+            // 前端 useAppUpdate 的 state.percent 期望 0-100，传负值会 UI 异常。
+            // 设计权衡：chunked 时进度条不动（但下载会完成），优于 UI 异常。
+            if (total > 0) {
+              reportProgress(downloaded)
+            }
+            // [M3] 保存断点续传状态：每超过上次保存点 SAVE_INTERVAL_BYTES 字节才落盘。
+            // 旧实现 `downloaded % 1MB === 0` 在续传场景（起点非 1MB 整数倍）几乎
+            // 永不命中，中途崩溃 state 仍是旧值。
+            // [B-4] 统一保存口径：这里也用真实落盘字节（statSync）而非内存 downloaded 计数器。
+            // 原先进度保存用 downloaded（偏大，pipe 未完全 flush）、可恢复错误保存用
+            // statSync（偏小）→ 两口径不一致 → 续传判定 mismatch 重下。现在两处统一，
+            // 配合放宽的续传判定（stat.size <= state）形成正确续传闭环。
+            if (downloaded - lastSavedBytes >= SAVE_INTERVAL_BYTES) {
+              const persisted = getPersistedBytes(tempPath, downloaded)
+              saveResumeState({
+                downloadedBytes: persisted,
+                totalBytes: total,
+                tempPath,
+                finalPath,
+              })
+              lastSavedBytes = persisted
+            }
+          })
+          nodeStream.pipe(writeStream)
+          writeStream.on('finish', () => resolve())
+          writeStream.on('error', reject)
+          nodeStream.on('error', reject)
         })
-        nodeStream.pipe(writeStream)
-        writeStream.on('finish', () => resolve())
-        writeStream.on('error', reject)
-        nodeStream.on('error', reject)
-      })
-    } catch (err) {
+      } catch (err) {
       // [LEAK FIX] destroy writeStream 释放底层 fd，避免错误路径泄漏文件描述符。
-      writeStream.destroy()
-      // 超时判定（用于错误分类：UPDATE_NETWORK_TIMEOUT vs 其他），不影响是否保留 temp。
-      const isTimeout = err instanceof Error && (
-        err.name === 'AbortError' ||
+        writeStream.destroy()
+        // 超时判定（用于错误分类：UPDATE_NETWORK_TIMEOUT vs 其他），不影响是否保留 temp。
+        const isTimeout = err instanceof Error && (
+          err.name === 'AbortError' ||
         err.message.includes('aborted') ||
         err.message.includes('timeout')
-      )
-      // [W-6] 磁盘错误判定：优先用 Node errno code（ENOSPC）精确匹配，
-      // 子串 'disk space' 仅作非英文 OS message 的 fallback。
-      const errno = getNodeErrnoCode(err)
-      const isDiskError = errno === 'ENOSPC' ||
+        )
+        // [W-6] 磁盘错误判定：优先用 Node errno code（ENOSPC）精确匹配，
+        // 子串 'disk space' 仅作非英文 OS message 的 fallback。
+        const errno = getNodeErrnoCode(err)
+        const isDiskError = errno === 'ENOSPC' ||
         (err instanceof Error && err.message.toLowerCase().includes('disk space'))
 
-      // [B-2] 默认 Error 视为可恢复——保留 temp + state 让下次续传。
-      // 旧实现用白名单子串匹配（ECONNRESET/ETIMEDOUT + NETWORK_* code）判 isRecoverable，
-      // 但国内网络常见错误不命中：undici 流中断 UND_ERR_SOCKET/UND_ERR_BODY_TIMEOUT
-      // （message 形如 'other side closed'）、代理中途 407/TLS 错误经流 reject，
-      // message 都不含上述子串 → 走 else 删 temp。这恰恰在最需要续传的「流中途断开」
-      // 场景丢数据，违背 PR 核心目标。
-      // 现在反转默认值：只有明确命中 isDiskError 才删 temp；其余一律保留。
-      // sha256 mismatch 不受影响（它在校验段单独删 temp，不进 stream catch）。
-      if (!isDiskError) {
+        // [B-2] 默认 Error 视为可恢复——保留 temp + state 让下次续传。
+        // 旧实现用白名单子串匹配（ECONNRESET/ETIMEDOUT + NETWORK_* code）判 isRecoverable，
+        // 但国内网络常见错误不命中：undici 流中断 UND_ERR_SOCKET/UND_ERR_BODY_TIMEOUT
+        // （message 形如 'other side closed'）、代理中途 407/TLS 错误经流 reject，
+        // message 都不含上述子串 → 走 else 删 temp。这恰恰在最需要续传的「流中途断开」
+        // 场景丢数据，违背 PR 核心目标。
+        // 现在反转默认值：只有明确命中 isDiskError 才删 temp；其余一律保留。
+        // sha256 mismatch 不受影响（它在校验段单独删 temp，不进 stream catch）。
+        if (!isDiskError) {
         // 保留 temp + 用真实落盘字节存 state，下次可续传。
-        const persistedBytes = getPersistedBytes(tempPath, downloaded)
-        saveResumeState({
-          downloadedBytes: persistedBytes,
-          totalBytes: total,
-          tempPath,
-          finalPath,
-        })
-        console.log(`[download] recoverable error, kept temp file for resume (${persistedBytes} bytes)`)
-      } else {
+          const persistedBytes = getPersistedBytes(tempPath, downloaded)
+          saveResumeState({
+            downloadedBytes: persistedBytes,
+            totalBytes: total,
+            tempPath,
+            finalPath,
+          })
+          console.log(`[download] recoverable error, kept temp file for resume (${persistedBytes} bytes)`)
+        } else {
         // 磁盘空间不足：删 temp + 清 state（无法续传）。
         // [W-5] 此路径不再 saveResumeState——马上就 clear 了，save 纯属浪费。
-        try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] stream cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
-        clearResumeState()
-      }
-      // 流式传输错误分类（throw 什么 errorCode）；与是否保留 temp 无关。
-      if (isDiskError) {
+          try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] stream cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+          clearResumeState()
+        }
+        // 流式传输错误分类（throw 什么 errorCode）；与是否保留 temp 无关。
+        if (isDiskError) {
+          throw new UpdateError(
+            'insufficient disk space',
+            'downloading',
+            'UPDATE_DISK_SPACE',
+            extractRawCause(err),
+          )
+        }
+        // 超时（含 idle/total abort）：映射为 UPDATE_NETWORK_TIMEOUT
+        if (isTimeout) {
+          throw new UpdateError(
+            `download timeout (idle ${IDLE_TIMEOUT_MS / MS_PER_SECOND}s or total ${DOWNLOAD_TIMEOUT_MS / MS_PER_SECOND}s)`,
+            'downloading',
+            'UPDATE_NETWORK_TIMEOUT',
+            extractRawCause(err),
+          )
+        }
+        // 如果已经是 UpdateError（来自上面的网络错误分类），直接抛出
+        if (err instanceof UpdateError) {
+          throw err
+        }
         throw new UpdateError(
-          'insufficient disk space',
+          `download stream error: ${err instanceof Error ? err.message : String(err)}`,
           'downloading',
-          'UPDATE_DISK_SPACE',
+          'UPDATE_NETWORK_FAILED',
           extractRawCause(err),
         )
-      }
-      // 超时（含 idle/total abort）：映射为 UPDATE_NETWORK_TIMEOUT
-      if (isTimeout) {
-        throw new UpdateError(
-          `download timeout (idle ${IDLE_TIMEOUT_MS / MS_PER_SECOND}s or total ${DOWNLOAD_TIMEOUT_MS / MS_PER_SECOND}s)`,
-          'downloading',
-          'UPDATE_NETWORK_TIMEOUT',
-          extractRawCause(err),
-        )
-      }
-      // 如果已经是 UpdateError（来自上面的网络错误分类），直接抛出
-      if (err instanceof UpdateError) {
-        throw err
-      }
-      throw new UpdateError(
-        `download stream error: ${err instanceof Error ? err.message : String(err)}`,
-        'downloading',
-        'UPDATE_NETWORK_FAILED',
-        extractRawCause(err),
-      )
-    } finally {
+      } finally {
       // [M1] 流式传输已结束（成功 finish 或抛错）才停两个 watchdog。
-      clearTimers()
-    }
+        clearTimers()
+      }
 
-    // 5. 下载完成，清除断点续传状态
-    clearResumeState()
+      // 5. 下载完成，清除断点续传状态
+      clearResumeState()
 
-  } finally {
+    } finally {
     // 外层兜底：fetch 阶段异常也确保 total timer 被清理。
-    clearTimeout(timer)
-    // ProxyAgent 持有连接池，下载结束（成功/失败）后显式关闭避免句柄泄漏。
-    if (dispatcher) {
-      await dispatcher.close().catch(() => {}) // best-effort 连接池清理，失败不影响下载结果
+      clearTimeout(timer)
+      // ProxyAgent 持有连接池，下载结束（成功/失败）后显式关闭避免句柄泄漏。
+      if (dispatcher) {
+        await dispatcher.close().catch(() => {}) // best-effort 连接池清理，失败不影响下载结果
+      }
     }
-  }
   }
 
   // 6. 校验：sha256 优先，缺失降级 size，再缺失拒绝
@@ -507,6 +521,8 @@ function buildFetchOptions(
     try {
       options.dispatcher = new ProxyAgent(proxyUrl)
     } catch (err) {
+      // best-effort 降级：ProxyAgent 构造失败（如非法代理 URL）回退直连继续下载，
+      // 不把代理配置问题升级为下载失败——直连可用性优于直接失败
       console.warn('[download] proxy agent init failed, fallback to direct:', err)
     }
   }
@@ -525,7 +541,7 @@ async function probeMultiPartSupport(
   let dispatcher: ProxyAgent | undefined
   try {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 30_000)
+    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
     const options = buildFetchOptions(proxyConfig, controller.signal)
     dispatcher = options.dispatcher
     const response = await fetch(asset.downloadUrl, { ...options, method: 'HEAD' })

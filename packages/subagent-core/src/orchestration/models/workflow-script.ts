@@ -60,10 +60,10 @@ export class WorkflowScript {
   readonly name: string;
   readonly source: WorkflowSource;
   readonly path: string;
- /** 原始文件内容（可编辑）。toExecutable 返回 strip 后的副本，不改本字段。 */
+  /** 原始文件内容（可编辑）。toExecutable 返回 strip 后的副本，不改本字段。 */
   sourceCode: string;
   readonly meta: WorkflowMeta;
- /** false 当 meta 提取失败（loader 不抛错，标记不可用但仍列出）。 */
+  /** false 当 meta 提取失败（loader 不抛错，标记不可用但仍列出）。 */
   available: boolean;
 
   constructor(opts: {
@@ -82,7 +82,7 @@ export class WorkflowScript {
     this.available = opts.available;
   }
 
- /**
+  /**
  * 静态检查脚本合法性。
  *
  * 委托 engine/script-lint.ts 的 lintScript——检查项含：
@@ -104,7 +104,7 @@ export class WorkflowScript {
     return result;
   }
 
- /**
+  /**
  * 返回可执行源。
  *
  * m2：不再 strip `export const meta`——meta 现为 @pi-meta 块注释（合法 JS，

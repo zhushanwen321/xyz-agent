@@ -88,7 +88,7 @@ function attachRunningToolCall(prev: Message[], form: PiToolCallEntryForm): Mess
   const toolCalls = existing
     ? host.toolCalls!.map((t) => (t === existing ? { ...t, status: 'running' as const } : t))
     : [
-        ...(host.toolCalls ?? []),
+      ...(host.toolCalls ?? []),
         {
           id: callId,
           toolName: typeof form.toolName === 'string' ? form.toolName : 'tool',
@@ -96,7 +96,7 @@ function attachRunningToolCall(prev: Message[], form: PiToolCallEntryForm): Mess
           status: 'running',
           startTime: Date.now(),
         } satisfies ToolCall,
-      ]
+    ]
   const next = [...prev]
   next[idx] = { ...host, toolCalls }
   return next

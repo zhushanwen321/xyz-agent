@@ -91,7 +91,7 @@ function generateRunId(): string {
  * 实际 handleWorkerError 会做最终计数（含重试上限判断），onError 不重复递增。
  */
 function makeHandlers(run: WorkflowRun, deps: LifecycleDeps): WorkerHandlers {
- // 自引用——error-recovery rebuildRuntime 需要 handlers 参数（handlers 引用自身）
+  // 自引用——error-recovery rebuildRuntime 需要 handlers 参数（handlers 引用自身）
   const handlers: WorkerHandlers = {
     async onMessage(raw: unknown): Promise<void> {
       await handleWorkerMessage(run, raw, deps, handlers);
@@ -100,10 +100,10 @@ function makeHandlers(run: WorkflowRun, deps: LifecycleDeps): WorkerHandlers {
       await handleWorkerError(run, err, deps, handlers);
     },
     async onExit(code: number, handle: WorkerHandle): Promise<void> {
- // H-2：用 worker-host 传入的 handle（即真正触发 exit 的那个 handle），而非
- // run.runtime?.worker——重试竞态下 runtime.worker 可能已被 replaceRuntime 替换
- // 为新 handle，导致 handleWorkerExit 内的 isCurrent 检查误判（漏判 stale exit 或
- // 误杀新 worker）。G-025 检查仍在 handleWorkerExit 内（handle.isCurrent）。
+      // H-2：用 worker-host 传入的 handle（即真正触发 exit 的那个 handle），而非
+      // run.runtime?.worker——重试竞态下 runtime.worker 可能已被 replaceRuntime 替换
+      // 为新 handle，导致 handleWorkerExit 内的 isCurrent 检查误判（漏判 stale exit 或
+      // 误杀新 worker）。G-025 检查仍在 handleWorkerExit 内（handle.isCurrent）。
       await handleWorkerExit(run, code, handle, deps, handlers);
     },
   };
@@ -139,7 +139,7 @@ export function scheduleTimeBudget(
       },
     );
   }, budgetTimeMs);
- // unref：不阻止 Node 退出（workflow 是后台任务，不应因计时器持有事件循环）。
+  // unref：不阻止 Node 退出（workflow 是后台任务，不应因计时器持有事件循环）。
   timer.unref();
   return timer;
 }
@@ -182,7 +182,7 @@ export async function runWorkflow(
   }
   deps.log?.("debug", "workflow:lifecycle", "runWorkflow start", { runId, scriptName: spec.scriptName });
 
- // P1-2: pre-aborted signal → fail fast
+  // P1-2: pre-aborted signal → fail fast
   if (signal?.aborted) {
     throw new Error("Workflow run aborted before start");
   }
@@ -203,7 +203,7 @@ export async function runWorkflow(
     { startedAt: new Date().toISOString() },
   );
 
- // signal abort → abortRun（一次性监听）
+  // signal abort → abortRun（一次性监听）
   if (signal) {
     signal.addEventListener(
       "abort",
@@ -217,30 +217,30 @@ export async function runWorkflow(
     );
   }
 
- // 构造 handlers + runtime（worker + controller）
+  // 构造 handlers + runtime（worker + controller）
   const handlers = makeHandlers(run, deps);
   const controller = new AbortController();
   const worker = deps.workerHost.start(spec, spec.args, handlers);
- // C.7：run 级时间预算计时器（spec.budgetTimeMs > 0 时启用，到期 abortRun time_limited）。
+  // C.7：run 级时间预算计时器（spec.budgetTimeMs > 0 时启用，到期 abortRun time_limited）。
   const timeBudgetTimer =
     spec.budgetTimeMs && spec.budgetTimeMs > 0
       ? scheduleTimeBudget(runId, deps, spec.budgetTimeMs)
       : undefined;
   const runtime = new RunRuntime(worker, controller, timeBudgetTimer);
 
- // assignRuntime（注入 runtime，恢复 I1：running ⟺ runtime!==undefined）
+  // assignRuntime（注入 runtime，恢复 I1：running ⟺ runtime!==undefined）
   run.assignRuntime(runtime);
 
- // 注册到 deps.runs（assignRuntime 之后——构造到 assignRuntime 之间 run 处于
- // I1 跳过窗口（running 而 runtime undefined），后移保证窗口对外不可见；
- // worker.start 抛错时 run 未注册，无孤儿 run 残留）
+  // 注册到 deps.runs（assignRuntime 之后——构造到 assignRuntime 之间 run 处于
+  // I1 跳过窗口（running 而 runtime undefined），后移保证窗口对外不可见；
+  // worker.start 抛错时 run 未注册，无孤儿 run 残留）
   deps.runs.set(runId, run);
 
   await deps.store.save(run);
   deps.log?.("debug", "workflow:lifecycle", "run saved", { runId, status: run.state.status });
 
- // pending-notifications: run 启动 → 注册（所有 workflow 启动路径的单一汇聚点：
- // runAndWait / actionRun / 未来入口全覆盖）
+  // pending-notifications: run 启动 → 注册（所有 workflow 启动路径的单一汇聚点：
+  // runAndWait / actionRun / 未来入口全覆盖）
   deps.log?.("debug", "workflow:lifecycle", "emit pending:register", { runId });
   deps.eventBus?.emit("pending:register", {
     id: runId,
@@ -279,21 +279,21 @@ export async function abortRun(
 
   deps.log?.("debug", "workflow:lifecycle", "abortRun", { runId, status: run.state.status, reason, doneReason });
 
- // done 状态 no-op
+  // done 状态 no-op
   if (run.state.status === "done") {
     deps.log?.("debug", "workflow:lifecycle", "abortRun no-op: already done", { runId });
     return;
   }
 
- // 记录中止原因
+  // 记录中止原因
   if (reason) {
     run.state.error = reason;
   }
- // A4: transition 内部 releaseRuntime（cleanup before mutate）
+  // A4: transition 内部 releaseRuntime（cleanup before mutate）
   run.transition("done", doneReason);
   await deps.store.save(run);
   deps.log?.("debug", "workflow:lifecycle", "abortRun transition done", { runId, reason: run.state.reason });
- // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
+  // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
   deps.log?.("debug", "workflow:lifecycle", "emit pending:unregister", { runId, reason: run.state.reason });
   deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
   deps.log?.("debug", "workflow:lifecycle", "emit pending:unregister done", { runId });

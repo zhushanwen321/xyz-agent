@@ -47,7 +47,9 @@ export const ENV_SCHEMA = "PI_WORKFLOW_SCHEMA";
  *
  * [跨包契约] 任一端改值必须同步另一端，否则 SW 侧硬拒绝线与 SO 侧提示线漂移。
  */
-export const SO_SCHEMA_SIZE_WARN_BYTES = 256 * 1024;
+const SCHEMA_SIZE_WARN_KIB = 256;
+const BYTES_PER_KIB = 1024;
+export const SO_SCHEMA_SIZE_WARN_BYTES = SCHEMA_SIZE_WARN_KIB * BYTES_PER_KIB;
 
 /**
  * 注册期 schema 体积可见性提示（SO-DATA-4 的 SO 侧职责：提示，不拒绝）。
@@ -59,7 +61,7 @@ function warnIfSchemaOversized(envSchema: string): void {
 	if (bytes <= SO_SCHEMA_SIZE_WARN_BYTES) return;
 	process.stderr.write(
 		`[structured-output] PI_WORKFLOW_SCHEMA is ${bytes} bytes (> ${SO_SCHEMA_SIZE_WARN_BYTES} bytes / `
-			+ `${SO_SCHEMA_SIZE_WARN_BYTES / 1024} KiB). The env channel has a size ceiling: the workflow runner `
+			+ `${SO_SCHEMA_SIZE_WARN_BYTES / BYTES_PER_KIB} KiB). The env channel has a size ceiling: the workflow runner `
 			+ "rejects injection above its own limit (spawn fails, hard to attribute), and oversized values can "
 			+ "hit E2BIG (ARG_MAX) at spawn. "
 			+ "👉 精简 outputSchema（删冗余 description / 收敛深嵌套）或拆分为多个小 schema 步骤。\n",

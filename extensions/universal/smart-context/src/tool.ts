@@ -65,11 +65,16 @@ const TOOL_DESCRIPTION =
 	"2) 后续工作不再依赖将被压缩的早期细节；3) 上下文已超过提醒阈值（你会收到 [smart-context 提示]）。" +
 	"若任一条件不满足，不要调用。";
 
+/** unknown 的对象收窄（Record 视图；字段消费再经 typeof 收窄）。 */
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
 /** CompactionResult → 宽松形状的 guard 转换（onComplete 回调参数消费，避免 cast）。 */
 function toCompactionResultLike(result: unknown): CompactionResultLike {
-	const r = result as { tokensBefore?: unknown; estimatedTokensAfter?: unknown; usage?: unknown; details?: unknown };
-	const usage = (r.usage ?? null) as { input?: unknown; output?: unknown; cacheRead?: unknown } | null;
-	const details = (r.details ?? null) as { engine?: unknown; mode?: unknown } | null;
+	const r: Record<string, unknown> = isRecord(result) ? result : {};
+	const usage = isRecord(r.usage) ? r.usage : null;
+	const details = isRecord(r.details) ? r.details : null;
 	const num = (v: unknown) => (typeof v === "number" ? v : undefined);
 	const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 	return {
@@ -82,7 +87,7 @@ function toCompactionResultLike(result: unknown): CompactionResultLike {
 				cacheRead: num(usage.cacheRead),
 			}
 			: undefined,
-		details: details && typeof details === "object"
+		details: details
 			? {
 				engine: str(details.engine),
 				mode: str(details.mode),

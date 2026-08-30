@@ -92,6 +92,27 @@ export function extractRawCause(err: unknown): string | undefined {
   return undefined
 }
 
+// ── IPv4 私网/特殊地址段判定常量（点分十进制各段的段值；见 isPrivateHost）──
+
+/** IPv4 点分十进制的段数。 */
+const IPV4_OCTET_COUNT = 4
+/** IPv4 单段合法上界（点分十进制取值 0-255）。 */
+const IPV4_OCTET_MAX = 255
+/** 127.0.0.0/8 loopback 的首段。 */
+const IPV4_LOOPBACK_FIRST_OCTET = 127
+/** 10.0.0.0/8 私网的首段。 */
+const IPV4_10_PRIVATE_FIRST_OCTET = 10
+/** 172.16.0.0/12 私网的首段。 */
+const IPV4_172_PRIVATE_FIRST_OCTET = 172
+/** 172.16.0.0/12 私网第二段范围下界（172.16-172.31）。 */
+const IPV4_172_PRIVATE_SECOND_OCTET_MIN = 16
+/** 172.16.0.0/12 私网第二段范围上界（172.16-172.31）。 */
+const IPV4_172_PRIVATE_SECOND_OCTET_MAX = 31
+/** 192.168.0.0/16 私网的首段。 */
+const IPV4_192_PRIVATE_FIRST_OCTET = 192
+/** 192.168.0.0/16 私网的第二段。 */
+const IPV4_192_PRIVATE_SECOND_OCTET = 168
+
 /**
  * 判断 hostname 是否为私网地址（RFC1918 IPv4 + IPv6 ULA fc00::/7 + loopback）。
  *
@@ -114,18 +135,22 @@ export function isPrivateHost(hostname: string): boolean {
 
   // IPv4 解析
   const parts = host.split('.')
-  if (parts.length !== 4) return false
+  if (parts.length !== IPV4_OCTET_COUNT) return false
   const nums = parts.map(Number)
-  if (nums.some((n) => isNaN(n) || n < 0 || n > 255)) return false
+  if (nums.some((n) => isNaN(n) || n < 0 || n > IPV4_OCTET_MAX)) return false
 
   // 127.0.0.0/8 loopback
-  if (nums[0] === 127) return true
+  if (nums[0] === IPV4_LOOPBACK_FIRST_OCTET) return true
   // 10.0.0.0/8
-  if (nums[0] === 10) return true
+  if (nums[0] === IPV4_10_PRIVATE_FIRST_OCTET) return true
   // 172.16.0.0/12
-  if (nums[0] === 172 && nums[1] >= 16 && nums[1] <= 31) return true
+  if (
+    nums[0] === IPV4_172_PRIVATE_FIRST_OCTET &&
+    nums[1] >= IPV4_172_PRIVATE_SECOND_OCTET_MIN &&
+    nums[1] <= IPV4_172_PRIVATE_SECOND_OCTET_MAX
+  ) return true
   // 192.168.0.0/16
-  if (nums[0] === 192 && nums[1] === 168) return true
+  if (nums[0] === IPV4_192_PRIVATE_FIRST_OCTET && nums[1] === IPV4_192_PRIVATE_SECOND_OCTET) return true
 
   return false
 }

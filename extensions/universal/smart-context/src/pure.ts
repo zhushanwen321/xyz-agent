@@ -18,7 +18,14 @@ export const CHARS_PER_TOKEN_ESTIMATE = 4;
 const MAX_THRESHOLD_TIERS = 3;
 
 /** 3 档提醒阈值默认值（token 绝对数）：200K / 400K / 600K。 */
-const DEFAULT_REMINDER_THRESHOLDS: readonly number[] = [200_000, 400_000, 600_000];
+const DEFAULT_REMINDER_THRESHOLD_TIER_1_TOKENS = 200_000;
+const DEFAULT_REMINDER_THRESHOLD_TIER_2_TOKENS = 400_000;
+const DEFAULT_REMINDER_THRESHOLD_TIER_3_TOKENS = 600_000;
+const DEFAULT_REMINDER_THRESHOLDS: readonly number[] = [
+	DEFAULT_REMINDER_THRESHOLD_TIER_1_TOKENS,
+	DEFAULT_REMINDER_THRESHOLD_TIER_2_TOKENS,
+	DEFAULT_REMINDER_THRESHOLD_TIER_3_TOKENS,
+];
 
 /** smart-context 磁盘配置（<agentDir>/config/smart-context-ext-config.json）。 */
 export interface SmartContextConfig {
@@ -263,6 +270,11 @@ export function countCompactions(entries: ReadonlyArray<EntryLike>): number {
 	return entries.filter((e) => e.type === "compaction").length;
 }
 
+/** unknown 的对象收窄（Record 视图；字段消费再经 typeof / Array.isArray 收窄）。 */
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
 /**
  * 保留段已 Read 的文件集合（D13-11 去重：重注入跳过保留段已有的 Read 结果）。
  * 保留段 = branchEntries 中 firstKeptEntryId 之后的 message entries；从其 toolCall 参数提取 path。
@@ -271,16 +283,18 @@ export function collectKeptReadFiles(branchEntries: ReadonlyArray<unknown>, firs
 	const kept = new Set<string>();
 	let found = false;
 	for (const entry of branchEntries) {
-		const e = entry as { id?: string; message?: { role?: string; content?: unknown } };
+		if (!isRecord(entry)) continue;
 		if (!found) {
-			if (e.id === firstKeptEntryId) found = true;
+			if (entry.id === firstKeptEntryId) found = true;
 			continue;
 		}
-		const msg = e.message;
+		const msg = isRecord(entry.message) ? entry.message : undefined;
 		if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
-		for (const block of msg.content as ReadonlyArray<{ type?: string; name?: string; arguments?: { path?: unknown } }>) {
-			if (block.type === "toolCall" && block.name === "read" &&
-				block.arguments && typeof block.arguments.path === "string") {
+		for (const block of msg.content) {
+			if (
+				isRecord(block) && block.type === "toolCall" && block.name === "read" &&
+				isRecord(block.arguments) && typeof block.arguments.path === "string"
+			) {
 				kept.add(block.arguments.path);
 			}
 		}

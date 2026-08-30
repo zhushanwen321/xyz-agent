@@ -89,8 +89,9 @@ export function isUpdaterInFlight(): boolean {
     // 残留 pid（脚本已退出但 trap 未及清理，如 kill -9）：自愈清理
     try {
       unlinkSync(UPDATER_PID_FILE)
-    } catch {
-      // 清理失败无害：下次启动再试
+    } catch (err) {
+      // best-effort：清理失败无害——残留 pid 文件下次启动会再次检测并重试清理
+      console.warn('[update-self-healer] cleanup stale pid file failed:', err)
     }
     return false
   }
@@ -108,13 +109,16 @@ export function isUpdaterInFlight(): boolean {
         // PID 已被复用（占位者非 updater 脚本）→ 视为不存活，清残留 pid 后正常清理
         try {
           unlinkSync(UPDATER_PID_FILE)
-        } catch {
-          // 忽略
+        } catch (err) {
+          // best-effort：PID 复用清理失败无害——下次启动重新检测到复用会再清
+          console.warn('[update-self-healer] cleanup reused pid file failed:', err)
         }
         return false
       }
-    } catch {
-      // ps 不可用/失败：保守按存活 defer（误判 defer 良性）
+    } catch (err) {
+      // ps 不可用/失败：保守按存活 defer（误判存活的后果 = 少做一次清理，良性且
+      // 下次启动补做；误判不存活才危险），不向上传播
+      console.warn('[update-self-healer] ps argv check failed, treat updater as alive:', err)
     }
   }
   return true
@@ -289,6 +293,9 @@ const LOG_RETENTION_MS =
 /** 归档日志文件名 pattern（updater-<原名>-<date>.log） */
 const LOG_ARCHIVE_RE = /^updater.*-\d{4}-\d{2}-\d{2}\.log$/
 
+/** ISO 日期串（YYYY-MM-DD）长度，归档文件名的日期段截取用。 */
+const ISO_DATE_LENGTH = 10
+
 /**
  * 幂等删除：文件不存在(ENOENT)静默，其他错误 rethrow。
  *
@@ -347,6 +354,8 @@ function archiveUpdaterLogs(dateStamp: string): void {
       const base = path.basename(logPath, ext)
       renameSync(logPath, path.join(dir, `${base}-${dateStamp}${ext}`))
     } catch (e) {
+      // best-effort：单个日志归档失败（文件被占用/权限）只影响该份日志的保留形态，
+      // 不阻塞其余日志归档，更不影响升级主流程
       console.warn('[update-self-healer] archive updater log failed:', e)
     }
   }
@@ -364,8 +373,9 @@ function cleanupExpiredLogArchives(): void {
         unlinkSync(full)
         console.log(`[update-self-healer] removed expired updater log archive: ${f}`)
       }
-    } catch {
-      // 单个文件 stat/unlink 失败不阻塞其余清理
+    } catch (err) {
+      // best-effort：单个归档文件 stat/unlink 失败只跳过该份，不阻塞其余过期清理
+      console.warn(`[update-self-healer] remove expired log archive failed: ${f}`, err)
     }
   }
 }
@@ -494,7 +504,7 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
       ignoreENOENT(LINUX_UPDATER_LOG_PATH)
       ignoreENOENT(WIN_UPDATER_LOG_PATH)
     } else if (status === 'failed' || status === 'rolled-back') {
-      archiveUpdaterLogs(new Date().toISOString().slice(0, 10))
+      archiveUpdaterLogs(new Date().toISOString().slice(0, ISO_DATE_LENGTH))
     }
     cleanupExpiredLogArchives()
 

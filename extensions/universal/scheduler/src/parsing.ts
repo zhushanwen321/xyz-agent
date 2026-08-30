@@ -2,13 +2,19 @@ import type { ParseScheduleResult, ScheduleSpec } from './types.js'
 
 // ── Duration 解析 ──
 
+// 时间单位毫秒数（包内共享：format.ts / runtime.ts 复用）
+export const MS_PER_DAY = 86_400_000
+export const MS_PER_HOUR = 3_600_000
+export const MS_PER_MINUTE = 60_000
+export const MS_PER_SECOND = 1000
+
 const DURATION_RE = /^(\d+)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)$/i
 
 const DURATION_MULTIPLIERS: Record<string, number> = {
-  s: 1000, sec: 1000, second: 1000, seconds: 1000,
-  m: 60_000, min: 60_000, minute: 60_000, minutes: 60_000,
-  h: 3_600_000, hr: 3_600_000, hour: 3_600_000, hours: 3_600_000,
-  d: 86_400_000, day: 86_400_000, days: 86_400_000,
+  s: MS_PER_SECOND, sec: MS_PER_SECOND, second: MS_PER_SECOND, seconds: MS_PER_SECOND,
+  m: MS_PER_MINUTE, min: MS_PER_MINUTE, minute: MS_PER_MINUTE, minutes: MS_PER_MINUTE,
+  h: MS_PER_HOUR, hr: MS_PER_HOUR, hour: MS_PER_HOUR, hours: MS_PER_HOUR,
+  d: MS_PER_DAY, day: MS_PER_DAY, days: MS_PER_DAY,
 }
 
 /**
@@ -34,10 +40,10 @@ export function formatDuration(ms: number): string {
   if (ms <= 0) return '0s'
 
   const units: [string, number][] = [
-    ['d', 86_400_000],
-    ['h', 3_600_000],
-    ['m', 60_000],
-    ['s', 1000],
+    ['d', MS_PER_DAY],
+    ['h', MS_PER_HOUR],
+    ['m', MS_PER_MINUTE],
+    ['s', MS_PER_SECOND],
   ]
 
   for (const [suffix, divisor] of units) {
@@ -47,10 +53,17 @@ export function formatDuration(ms: number): string {
   }
 
   // 兜底：用秒表示
-  return `${Math.round(ms / 1000)}s`
+  return `${Math.round(ms / MS_PER_SECOND)}s`
 }
 
 // ── Cron 解析 ──
+
+/** cron 标准字段数（分 时 日 月 周）。 */
+const CRON_FIELD_COUNT = 5
+/** 带秒字段的标准 cron 字段数（秒 分 时 日 月 周）。 */
+const CRON_FIELD_COUNT_WITH_SECONDS = 6
+/** computeNextCronRuns / computeNextRuns 默认返回的未来执行时间数。 */
+const DEFAULT_NEXT_RUNS_COUNT = 5
 
 let cronerModule: typeof import('croner') | null | undefined
 
@@ -76,12 +89,12 @@ export function normalizeCronExpression(input: string): { expression: string; no
   const parts = trimmed.split(/\s+/)
 
   // 6 字段原样返回
-  if (parts.length === 6) {
+  if (parts.length === CRON_FIELD_COUNT_WITH_SECONDS) {
     return { expression: trimmed }
   }
 
   // 5 字段补秒字段
-  if (parts.length === 5) {
+  if (parts.length === CRON_FIELD_COUNT) {
     return {
       expression: `0 ${trimmed}`,
       note: 'Auto-prepended seconds field (0)',
@@ -121,7 +134,7 @@ export async function computeNextCronRunAt(
 export async function computeNextCronRuns(
   expression: string,
   from?: number,
-  count = 5,
+  count = DEFAULT_NEXT_RUNS_COUNT,
 ): Promise<number[]> {
   const croner = await getCroner()
   if (!croner) return []
@@ -215,7 +228,7 @@ export async function computeNextRunAt(
 export async function computeNextRuns(
   spec: ScheduleSpec,
   from?: number,
-  count = 5,
+  count = DEFAULT_NEXT_RUNS_COUNT,
 ): Promise<number[]> {
   if (spec.mode === 'interval') {
     const start = from ?? Date.now()

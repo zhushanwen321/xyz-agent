@@ -11,7 +11,7 @@
  * WR8：focusIndex 模 5（Custom form 5 项 Tab 循环）。
  */
 
-import { type Component, Container, Input, type SelectItem, SelectList, type SelectListTheme, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Component, Container, Input, isFocusable, type SelectItem, SelectList, type SelectListTheme, truncateToWidth } from "@earendil-works/pi-tui";
 import { matchesKey } from "@earendil-works/pi-tui";
 
 import {
@@ -35,6 +35,19 @@ const THEME: SelectListTheme = {
 };
 
 const MAX_VISIBLE = 12;
+
+/** box 边框左右各占用 1 列（│ × 2）。 */
+const BORDER_OVERHEAD = 2;
+
+/** custom form 焦点指示前缀（▶ + 空格，1 显示列 + 1 空格）。 */
+const FOCUS_INDICATOR_PREFIX = "\u25B6 ";
+
+/** scope 选择：all/subcmd 二选一全可见。 */
+const SCOPE_LIST_MAX_VISIBLE = 2;
+/** action 选择：allow/deny/ask 三选一全可见。 */
+const ACTION_LIST_MAX_VISIBLE = 3;
+/** submit 选择：Submit/Cancel 二选一全可见。 */
+const SUBMIT_LIST_MAX_VISIBLE = 2;
 
 // ──────────────────────── TextLines component ────────────────────────
 
@@ -123,11 +136,8 @@ export class RuleEditorComponent extends Container {
 
 	// ──────────────────────── 边框渲染 ────────────────────────
 
-	/** box 边框左右各占用 1 列（│ × 2） */
-	private static readonly BORDER_OVERHEAD = 2;
-
 	override render(width: number): string[] {
-		const innerWidth = Math.max(0, width - RuleEditorComponent.BORDER_OVERHEAD);
+		const innerWidth = Math.max(0, width - BORDER_OVERHEAD);
 		let inner = super.render(innerWidth);
 
 		// custom form 焦点指示（M4）：当前焦点字段的标签加 ▶ 前缀
@@ -169,11 +179,11 @@ export class RuleEditorComponent extends Container {
 		return lines.map((line) => {
 			// 精确匹配当前焦点标签 → 加 ▶ 前缀
 			if (line === focusedLabel) {
-				return `\u25B6 ${line}`;
+				return FOCUS_INDICATOR_PREFIX + line;
 			}
 			// 焦点已转移：去掉其他标签行残留的 ▶ 前缀（避免重复渲染累积）
-			if (line.startsWith("\u25B6 ") && fieldLabels.includes(line.slice(2))) {
-				return line.slice(2);
+			if (line.startsWith(FOCUS_INDICATOR_PREFIX) && fieldLabels.includes(line.slice(FOCUS_INDICATOR_PREFIX.length))) {
+				return line.slice(FOCUS_INDICATOR_PREFIX.length);
 			}
 			return line;
 		});
@@ -468,7 +478,7 @@ export class RuleEditorComponent extends Container {
 			{ value: "__all__", label: `${cmd} * (all subcommands)`, description: `Allow/deny all invocations of ${cmd}` },
 			{ value: "__subcmd__", label: `${cmd} <subcommand> *`, description: `Allow/deny a specific subcommand` },
 		];
-		const list = new SelectList(scopeItems, 2, this.theme);
+		const list = new SelectList(scopeItems, SCOPE_LIST_MAX_VISIBLE, this.theme);
 		list.onSelect = (item: SelectItem): void => {
 			if (item.value === "__all__") {
 				this.fillSelections.cmd = cmd;
@@ -674,7 +684,7 @@ export class RuleEditorComponent extends Container {
 			{ value: "deny", label: "deny" },
 			{ value: "ask", label: "ask" },
 		];
-		const actionList = new SelectList(actionItems, 3, this.theme);
+		const actionList = new SelectList(actionItems, ACTION_LIST_MAX_VISIBLE, this.theme);
 		actionList.onSelect = (item: SelectItem): void => {
 			this.fillSelections.action = item.value as PermissionAction;
 		};
@@ -709,7 +719,7 @@ export class RuleEditorComponent extends Container {
 			{ value: "__submit__", label: "[Submit]" },
 			{ value: "__cancel__", label: "[Cancel]" },
 		];
-		const submitList = new SelectList(submitItems, 2, this.theme);
+		const submitList = new SelectList(submitItems, SUBMIT_LIST_MAX_VISIBLE, this.theme);
 		submitList.onSelect = (item: SelectItem): void => {
 			if (item.value === "__submit__") {
 				this.commitFill();
@@ -875,8 +885,8 @@ export class RuleEditorComponent extends Container {
 	private syncCustomFocus(): void {
 		for (let i = 0; i < this.customChildren.length; i++) {
 			const child = this.customChildren[i];
-			if (child !== undefined && "focused" in child) {
-				(child as unknown as { focused: boolean }).focused = i === this.customFocusIndex;
+			if (child !== undefined && isFocusable(child)) {
+				child.focused = i === this.customFocusIndex;
 			}
 		}
 	}

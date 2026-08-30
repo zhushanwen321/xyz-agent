@@ -17,7 +17,7 @@ import './styles/tokens.css'
 // core import（TC-7 回归 + W1 ac1-dependency-edge 护栏）。
 void providePlatform
 
-// eslint-disable-next-line no-console
+ 
 console.log(`[mobile-renderer] boot: ui=${UI_PACKAGE_NAME}`)
 
 // 启动壳编排（注入 platform → 注册挂载点 → 挂载 App）。

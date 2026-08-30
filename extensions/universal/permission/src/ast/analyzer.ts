@@ -29,6 +29,9 @@ const logger = getLogger("pi-permission/ast");
 /** 超过此长度的输入直接拒（防止 wasm 解析巨型 payload DoS）。 */
 const MAX_COMMAND_LENGTH = 65536;
 
+/** 带引号 token 的最小长度（首尾引号各占 1 字符）；满足才能安全剥引号。 */
+const MIN_QUOTED_TOKEN_LENGTH = 2;
+
 /**
  * Codex ALLOWED_KINDS（11 个 named node）。
  * 遇到不在此集合的 named node 即判定为危险结构。
@@ -76,7 +79,7 @@ function parseDoubleQuotedString(node: Node): string | null {
 	}
 	const raw = node.text;
 	// 去掉首尾的 `"`（raw 形如 `"hello world"`）
-	if (raw.startsWith('"') && raw.endsWith('"') && raw.length >= 2) {
+	if (raw.startsWith('"') && raw.endsWith('"') && raw.length >= MIN_QUOTED_TOKEN_LENGTH) {
 		return raw.slice(1, -1);
 	}
 	// 异常 grammar（理论上不会到这）—— 原样返回
@@ -92,7 +95,7 @@ function parseRawString(node: Node): string | null {
 		return null;
 	}
 	const raw = node.text;
-	if (raw.startsWith("'") && raw.endsWith("'") && raw.length >= 2) {
+	if (raw.startsWith("'") && raw.endsWith("'") && raw.length >= MIN_QUOTED_TOKEN_LENGTH) {
 		return raw.slice(1, -1);
 	}
 	return raw;

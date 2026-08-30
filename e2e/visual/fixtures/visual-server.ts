@@ -23,10 +23,13 @@ import { resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 const PORT_START = 1430
-const PORT_END = PORT_START + 50
+const PORT_SCAN_SPAN = 50
+const PORT_END = PORT_START + PORT_SCAN_SPAN
 const READY_TIMEOUT_MS = 60_000
 const POLL_INTERVAL_MS = 500
 const KILL_GRACE_MS = 2000
+const HTTP_SERVER_ERROR = 500
+const STDERR_TAIL_LINES = 20
 
 const REPO_ROOT = process.cwd()
 const RENDERER_DIR = resolve(REPO_ROOT, 'packages/renderer')
@@ -77,9 +80,10 @@ async function pollReady(
     if (child.exitCode !== null) return { ok: false, reason: 'vite 子进程已退出' }
     try {
       const res = await fetch(url, { method: 'GET' })
-      if (res.status < 500) return { ok: true, ms: Date.now() - start }
-    } catch {
+      if (res.status < HTTP_SERVER_ERROR) return { ok: true, ms: Date.now() - start }
+    } catch (err) {
       /* ECONNREFUSED → 继续轮询 */
+      void err
     }
     await sleep(POLL_INTERVAL_MS)
   }
@@ -99,8 +103,9 @@ async function killProcess(child: ChildProcess): Promise<void> {
   if (!exited) {
     try {
       child.kill('SIGKILL')
-    } catch {
-      /* ignore */
+    } catch (err) {
+      /* 进程已退出时 kill 抛错，兜底路径忽略 */
+      void err
     }
   }
 }
@@ -121,7 +126,7 @@ export const test = base.extend<Record<never, never>, { visualBaseURL: string }>
       try {
         const ready = await pollReady(url, child)
         if (ready.ok === false) {
-          const tail = stderrBuf.slice(-20).join('')
+          const tail = stderrBuf.slice(-STDERR_TAIL_LINES).join('')
           throw new Error(
             `[visual-server] vite dev server 未 ready（${ready.reason}）@ ${url}\n${tail}\n` +
               `提示：检查 packages/renderer 依赖是否已安装（pnpm install）、端口是否被占`,

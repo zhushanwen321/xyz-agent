@@ -22,9 +22,9 @@ export function executeOptionsToEngineTaskSpec(opts: ExecuteOptions): AgentTaskS
   const persona: PersonaSpec | undefined =
     opts.skillPath !== undefined || opts.appendSystemPrompt !== undefined
       ? {
-          ...(opts.skillPath !== undefined ? { skillPath: opts.skillPath } : {}),
-          ...(opts.appendSystemPrompt !== undefined ? { appendSystemPrompt: opts.appendSystemPrompt } : {}),
-        }
+        ...(opts.skillPath !== undefined ? { skillPath: opts.skillPath } : {}),
+        ...(opts.appendSystemPrompt !== undefined ? { appendSystemPrompt: opts.appendSystemPrompt } : {}),
+      }
       : undefined;
   return {
     task: opts.task,

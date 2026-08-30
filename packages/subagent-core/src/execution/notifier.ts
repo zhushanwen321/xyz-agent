@@ -226,14 +226,14 @@ export function createNotifier(host: NotifierHost): BgNotifier {
       host.onAgentSettled === undefined
         ? undefined
         : (cb) => {
-            let disposed = false;
-            host.onAgentSettled?.(() => {
-              if (!disposed) cb();
-            });
-            return () => {
-              disposed = true;
-            };
-          },
+          let disposed = false;
+          host.onAgentSettled?.(() => {
+            if (!disposed) cb();
+          });
+          return () => {
+            disposed = true;
+          };
+        },
     send: (msg, _intent) => {
       // D5 单通道：投递意图唯一化——steer/followUp/nextTurn 多通道全部删除，
       // 唯一发送形态 = sendCustomMessage({triggerTurn:true})。busy 场景由 ledger

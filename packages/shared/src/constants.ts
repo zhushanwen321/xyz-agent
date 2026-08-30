@@ -188,7 +188,7 @@ export const PRESET_EXTENSION_DIRS = [
  */
 export const PLUGIN_NOTIFY_LIMITS = {
   /** notify 令牌桶速率（条/秒/插件，容量 = 速率，即可瞬时突发该数） */
-  // eslint-disable-next-line no-magic-numbers
+   
   NOTIFY_RATE_PER_SEC: 20,
   /** 单条 notify message 上限（UTF-8 字节）。超出拒绝（INVALID_MESSAGE） */
   // eslint-disable-next-line no-magic-numbers
@@ -197,7 +197,7 @@ export const PLUGIN_NOTIFY_LIMITS = {
   // eslint-disable-next-line no-magic-numbers
   STATUSBAR_TEXT_MAX_BYTES: 4 * 1024,
   /** statusbar 更新广播合并窗口（ms）：窗口内多次更新合并为一次广播 */
-  // eslint-disable-next-line no-magic-numbers
+   
   STATUSBAR_COALESCE_MS: 100,
 } as const
 
@@ -207,5 +207,5 @@ export const PLUGIN_NOTIFY_LIMITS = {
  * 在列 toast 超过上限时新 toast 丢弃并计数（droppedCount），防止通知风暴刷屏。
  * 5 = 单屏可读的告警密度上限；与 runtime 侧 20/s 限流叠加构成两道独立防线。
  */
-// eslint-disable-next-line no-magic-numbers
+ 
 export const UI_TOAST_LIMITS = { MAX_IN_FLIGHT: 5 } as const

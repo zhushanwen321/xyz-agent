@@ -46,7 +46,7 @@ export class Budget {
   readonly maxTimeMs?: number;
   usedTokens = 0;
   usedCost = 0;
- /** 总调用计数（持久化/诊断用；execute-agent-call 每次 dispatch 后 increment）。 */
+  /** 总调用计数（持久化/诊断用；execute-agent-call 每次 dispatch 后 increment）。 */
   totalCallCount = 0;
 
   constructor(opts: {
@@ -65,7 +65,7 @@ export class Budget {
     this.totalCallCount = opts.totalCallCount ?? 0;
   }
 
- /**
+  /**
  * 累加一次 agent 调用的 usage（加权口径）。
  *
  * 四项 token 按各自权重（INPUT/CACHE_READ/CACHE_WRITE/OUTPUT_WEIGHT）折算后求和，
@@ -84,12 +84,12 @@ export class Budget {
     this.usedCost += numOrZero(usage.cost);
   }
 
- /** 累加调用计数（每次 agent dispatch 后调用；持久化快照同步）。 */
+  /** 累加调用计数（每次 agent dispatch 后调用；持久化快照同步）。 */
   incrementCallCount(): void {
     this.totalCallCount += 1;
   }
 
- /**
+  /**
  * 是否超 token / cost 预算（FR-3）。
  *
  * maxTokens===0 或 undefined 视为不限制（守卫）；
@@ -105,7 +105,7 @@ export class Budget {
     return this.maxCost !== undefined && this.maxCost > 0 && this.usedCost >= this.maxCost;
   }
 
- /**
+  /**
  * 剩余 token 预算。maxTokens 未设或 ≤0 时返回 undefined（视为不限制）。
  *
  * 嵌套 workflow() 调用时由 executeNestedWorkflow 消费：子 run 的 budgetTokens

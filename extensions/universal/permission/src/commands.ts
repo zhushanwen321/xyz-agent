@@ -55,6 +55,9 @@ export function handlePermissionCommand(
 
 // ──────────────────────── 消息格式化 ────────────────────────
 
+/** 模式列表 mode 列的 padEnd 宽度（最长 'approve' 7 字符 + 1 间隔，保证描述列对齐）。 */
+const MODE_COLUMN_WIDTH = 8;
+
 function formatStatusMessage(config: PermissionConfig): string {
 	const lines: string[] = [];
 	lines.push("[pi-permission] Current mode: " + modeHighlight(config.mode));
@@ -62,7 +65,7 @@ function formatStatusMessage(config: PermissionConfig): string {
 	lines.push("Available modes (by strictness, low → high):");
 	for (const mode of PERMISSION_MODES) {
 		const marker = mode === config.mode ? "►" : " ";
-		lines.push(`  ${marker} ${mode.padEnd(8)} — ${MODE_DESCRIPTIONS[mode]}`);
+		lines.push(`  ${marker} ${mode.padEnd(MODE_COLUMN_WIDTH)} — ${MODE_DESCRIPTIONS[mode]}`);
 	}
 	lines.push("");
 	lines.push("Switch with: /permission <mode>");

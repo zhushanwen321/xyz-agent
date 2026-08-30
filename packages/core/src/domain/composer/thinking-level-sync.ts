@@ -79,49 +79,49 @@ export function useThinkingLevelSync(
     // 切换前后两个模型的档位集，单观察 map 拿不到旧模型的 supported。
     () => [currentThinkingLevelMap.value, supportedOf()] as const,
     ([map, supported], oldPair) => {
-    const oldMap = oldPair?.[0]
-    const oldSupported = oldPair?.[1]
-    const current = currentThinkingLevel.value
-    if (!current) {
+      const oldMap = oldPair?.[0]
+      const oldSupported = oldPair?.[1]
+      const current = currentThinkingLevel.value
+      if (!current) {
       // landing 态初始无思考等级 → 设为新模型最高可用档
-      const highest = highestAvailableLevel(supported)
-      onReset(resolveThinkingValue(highest, map))
-      return
-    }
-    // 首次触发（无 oldMap 可比）→ 可用性检查，与原逻辑一致
-    if (oldMap === undefined) {
-      const currentKey = resolveThinkingKey(current, map, highestAvailableLevel(supported))
-      const available = normalizeSupportedLevels(supported)
-      if (!available.includes(currentKey)) {
         const highest = highestAvailableLevel(supported)
         onReset(resolveThinkingValue(highest, map))
-      }
-      return
-    }
-    // 模型切换：同体系 → 直接映射当前档位 key 到新模型 value
-    if (isSameThinkingScheme(oldSupported, supported)) {
-      const currentKey = resolveThinkingKey(current, oldMap)
-      // 防御：current 既不在 oldMap 的 value 里又非合法 ThinkingLevel 时，
-      // resolveThinkingKey 缺省 fallback 到默认五档最高档；该 key 若在新模型的
-      // 可用档中不可用，resolveThinkingValue 会走 v ?? key 回退把不可用档原样发给
-      // runtime。此时走跨体系重置（重置到最高可用档）。
-      const available = normalizeSupportedLevels(supported)
-      if (!available.includes(currentKey)) {
-        const highest = highestAvailableLevel(supported)
-        const resetValue = resolveThinkingValue(highest, map)
-        if (resetValue !== current) onReset(resetValue)
         return
       }
-      const newValue = resolveThinkingValue(currentKey, map)
-      // value 变了才重置（同体系同 value 时不触发冗余 RPC）
+      // 首次触发（无 oldMap 可比）→ 可用性检查，与原逻辑一致
+      if (oldMap === undefined) {
+        const currentKey = resolveThinkingKey(current, map, highestAvailableLevel(supported))
+        const available = normalizeSupportedLevels(supported)
+        if (!available.includes(currentKey)) {
+          const highest = highestAvailableLevel(supported)
+          onReset(resolveThinkingValue(highest, map))
+        }
+        return
+      }
+      // 模型切换：同体系 → 直接映射当前档位 key 到新模型 value
+      if (isSameThinkingScheme(oldSupported, supported)) {
+        const currentKey = resolveThinkingKey(current, oldMap)
+        // 防御：current 既不在 oldMap 的 value 里又非合法 ThinkingLevel 时，
+        // resolveThinkingKey 缺省 fallback 到默认五档最高档；该 key 若在新模型的
+        // 可用档中不可用，resolveThinkingValue 会走 v ?? key 回退把不可用档原样发给
+        // runtime。此时走跨体系重置（重置到最高可用档）。
+        const available = normalizeSupportedLevels(supported)
+        if (!available.includes(currentKey)) {
+          const highest = highestAvailableLevel(supported)
+          const resetValue = resolveThinkingValue(highest, map)
+          if (resetValue !== current) onReset(resetValue)
+          return
+        }
+        const newValue = resolveThinkingValue(currentKey, map)
+        // value 变了才重置（同体系同 value 时不触发冗余 RPC）
+        if (newValue !== current) onReset(newValue)
+        return
+      }
+      // 跨体系 → 重置到新模型最高可用档（value 未变则不触发冗余 RPC）
+      const highest = highestAvailableLevel(supported)
+      const newValue = resolveThinkingValue(highest, map)
       if (newValue !== current) onReset(newValue)
-      return
-    }
-    // 跨体系 → 重置到新模型最高可用档（value 未变则不触发冗余 RPC）
-    const highest = highestAvailableLevel(supported)
-    const newValue = resolveThinkingValue(highest, map)
-    if (newValue !== current) onReset(newValue)
-  }, { immediate: true })
+    }, { immediate: true })
 
   return currentThinkingLevelMap
 }

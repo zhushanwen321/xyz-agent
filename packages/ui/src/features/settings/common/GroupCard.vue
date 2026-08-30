@@ -11,6 +11,7 @@
  */
 import { ref } from 'vue'
 import { ChevronDown } from '@lucide/vue'
+import { Button } from '@xyz-agent/ui'
 
 withDefaults(
   defineProps<{
@@ -36,9 +37,9 @@ function toggle(): void {
       </div>
       <div class="head-right">
         <slot name="actions" />
-        <button
+        <Button
           v-if="collapsible"
-          type="button"
+          variant="ghost"
           class="collapse-btn"
           :class="{ down: collapsed }"
           :title="collapsed ? '展开' : '折叠'"
@@ -46,7 +47,7 @@ function toggle(): void {
           @click="toggle"
         >
           <ChevronDown class="collapse-ico" />
-        </button>
+        </Button>
       </div>
     </header>
     <div v-show="!collapsed" class="group-body">

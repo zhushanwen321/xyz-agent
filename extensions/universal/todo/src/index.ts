@@ -35,9 +35,11 @@ import { registerTodoTool } from "./tool";
 /**
  * 构造依赖 TodoSessionState 的 refreshDisplay（M17 widget 面板推送）。
  *
- * 类型断言根因：pi 的 ExtensionContext.ui.custom 是泛型方法，参数逆变使其
- * 与 GuiContext 不兼容，直接传参需断言收窄；双步 unknown 中转沿用 goal
- * adapters/ports.ts setGuiWidget 同款先例。
+ * 类型断言根因：pi 的 ExtensionContext.ui.custom 是泛型方法（返回 Promise<T>），
+ * 与 GuiContext.ui.custom 的具体返回类型静态不兼容，传参需断言收窄；
+ * mode/hasUI/ui.setWidget 形状一致（ExtensionMode 与 GuiContext.mode union 完全
+ * 相同），单层直接断言可过 tsc（guiSetWidget/isGuiCapable 不读 custom），
+ * 与 goal adapters/ports.ts setGuiWidget 同款。
  *
  * isGuiCapable 外层判定不可省略：guiSetWidget 内部无 isGui 守卫
  * （extension-protocol helpers.ts 仅查 ctx.ui?.setWidget 存在性），
@@ -47,15 +49,15 @@ export function makeRefreshDisplay(state: TodoSessionState): (ctx: ExtensionCont
 	return function refreshDisplay(ctx: ExtensionContext): void {
 		const statusText = renderStatusText(state.todos, ctx.ui.theme);
 		ctx.ui.setStatus("todo", statusText || undefined);
-		const isGui = isGuiCapable(ctx as unknown as GuiContext);
+		const isGui = isGuiCapable(ctx as GuiContext);
 		if (state.todos.length === 0) {
 			if (isGui) {
-				guiSetWidget(ctx as unknown as GuiContext, "todo", undefined);
+				guiSetWidget(ctx as GuiContext, "todo", undefined);
 			} else {
 				ctx.ui.setWidget("todo", undefined);
 			}
 		} else if (isGui) {
-			guiSetWidget(ctx as unknown as GuiContext, "todo", buildGui(state.todos));
+			guiSetWidget(ctx as GuiContext, "todo", buildGui(state.todos));
 		} else {
 			ctx.ui.setWidget("todo", renderWidgetLines(state.todos, ctx.ui.theme));
 		}

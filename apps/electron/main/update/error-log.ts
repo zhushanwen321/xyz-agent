@@ -31,8 +31,14 @@ export interface UpdateErrorEntry {
   proxyUrl?: string
 }
 
+/** 1KB 的字节数。 */
+const BYTES_PER_KB = 1024
+
+/** 轮转阈值（KB）。 */
+const MAX_LOG_SIZE_KB = 512
+
 /** 轮转阈值：512KB */
-const MAX_LOG_SIZE = 512 * 1024
+const MAX_LOG_SIZE = MAX_LOG_SIZE_KB * BYTES_PER_KB
 
 /**
  * 追加一条错误日志到 update-error.log。
@@ -53,8 +59,10 @@ export function appendUpdateError(entry: UpdateErrorEntry): void {
           // 覆盖旧 .1（如果存在）
           renameSync(UPDATE_ERROR_LOG, rotatedPath)
         }
-      } catch {
-        // 轮转失败不阻断写入
+      } catch (err) {
+        // best-effort 降级：轮转失败（rename 被占用/权限）不阻断写入——error-log 本身是
+        // 诊断日志通道，宁可继续追加原文件（超出轮转阈值），不可因轮转失败丢错误记录
+        console.warn('[update-error-log] rotate failed, keep appending to original file:', err)
       }
     }
 

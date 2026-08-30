@@ -1,6 +1,9 @@
 import { formatRelativeTime, truncate } from './format.js'
 import type { ScheduledTask } from './types.js'
 
+/** widget 中任务名的最大显示宽度（列）。 */
+const WIDGET_NAME_MAX_WIDTH = 20
+
 /**
  * 渲染 TUI status bar widget（string[]，配合 SDK setWidget 第一重载）。
  * 格式：[scheduler] 3 scheduled · check-build in 4m · 1 overdue
@@ -23,7 +26,7 @@ export function renderSchedulerWidget(tasks: ScheduledTask[]): string[] {
 
   if (upcoming.length > 0) {
     const next = upcoming[0]!
-    parts.push(`${truncate(next.name, 20)} ${formatRelativeTime(next.nextRunAt)}`)
+    parts.push(`${truncate(next.name, WIDGET_NAME_MAX_WIDTH)} ${formatRelativeTime(next.nextRunAt)}`)
   }
 
   if (overdue.length > 0) {

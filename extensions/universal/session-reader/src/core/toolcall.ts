@@ -10,6 +10,19 @@
  */
 import type { Entry } from './parser.js'
 
+// ---------------------------------------------------------------------------
+// 模块常量（参数摘要的截断宽度 / 换算基数）
+// ---------------------------------------------------------------------------
+
+/** bash 命令参数摘要截断字符数。 */
+const BASH_CMD_MAX_CHARS = 60
+/** subagent task 参数摘要截断字符数。 */
+const SUBAGENT_TASK_MAX_CHARS = 40
+/** 未知工具 arguments JSON 摘要截断字符数。 */
+const ARGS_JSON_MAX_CHARS = 50
+/** bytes→KB 换算基数（write content 的 KB 显示）。 */
+const BYTES_PER_KB = 1024
+
 /** 单次工具调用信息（从 assistant content 的 toolCall block 提取）。 */
 export interface ToolCallInfo {
   id: string
@@ -45,8 +58,10 @@ function coerceArgs(raw: unknown): Record<string, unknown> {
       if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>
       }
-    } catch {
-      // 非法 JSON 字符串 → 空对象兜底（实测 arguments 全为 object，此分支纯防御）
+    } catch (err) {
+      // 非法 JSON 字符串 → 空对象兜底（实测 arguments 全为 object，此分支纯防御）；
+      // 共享层保持零依赖（无 logger 可用），不留 void err 以外的语句
+      void err
     }
   }
   return {}
@@ -103,7 +118,7 @@ export function formatToolCallSummary(tc: ToolCallInfo): string {
   switch (name) {
     case 'bash': {
       const cmd = strArg(args, 'command')
-      return cmd !== undefined ? `bash: ${truncate(cmd, 60)}` : 'bash'
+      return cmd !== undefined ? `bash: ${truncate(cmd, BASH_CMD_MAX_CHARS)}` : 'bash'
     }
     case 'read': {
       const p = strArg(args, 'path')
@@ -122,12 +137,12 @@ export function formatToolCallSummary(tc: ToolCallInfo): string {
       const head = p !== undefined ? `write: ${basename(p)}` : 'write'
       if (c === undefined) return head
       // utf8 字节转 KB 取整；小文件至少 1KB（0KB 无信息量）
-      const kb = Math.max(1, Math.round(Buffer.byteLength(c, 'utf8') / 1024))
+      const kb = Math.max(1, Math.round(Buffer.byteLength(c, 'utf8') / BYTES_PER_KB))
       return `${head} (${kb}KB)`
     }
     case 'subagent': {
       const task = strArg(args, 'task')
-      return task !== undefined ? `subagent: ${truncate(task, 40)}` : 'subagent'
+      return task !== undefined ? `subagent: ${truncate(task, SUBAGENT_TASK_MAX_CHARS)}` : 'subagent'
     }
     case 'head': {
       const p = strArg(args, 'path')
@@ -159,7 +174,7 @@ export function formatToolCallSummary(tc: ToolCallInfo): string {
       // 未知工具：arguments 非空 → name: <json 前50>；空对象 → 仅 name（{} 无信息量）
       if (Object.keys(args).length === 0) return name
       try {
-        return `${name}: ${truncate(JSON.stringify(args), 50)}`
+        return `${name}: ${truncate(JSON.stringify(args), ARGS_JSON_MAX_CHARS)}`
       } catch {
         return name
       }

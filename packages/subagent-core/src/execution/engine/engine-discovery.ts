@@ -16,6 +16,9 @@ import { SUBAGENTS_ENGINES_FILENAME, type SubagentEnginesFile } from "@xyz-agent
 
 import { listEngines } from "./registry.ts";
 
+/** engines.json 落盘缩进（与 subagent-core 其他 JSON store 的 JSON_INDENT 约定一致）。 */
+const JSON_INDENT = 2;
+
 /** engines.json 绝对路径（与 config.json 同目录；config.ts 的 getGlobalConfigPath 同构）。 */
 export function getEnginesFilePath(agentDir: string): string {
   return path.join(agentDir, "subagents", SUBAGENTS_ENGINES_FILENAME);
@@ -32,7 +35,7 @@ export function syncEnginesFile(agentDir: string): void {
   try {
     const filePath = getEnginesFilePath(agentDir);
     const payload: SubagentEnginesFile = { v: 1, engines: listEngines(), updatedAt: Date.now() };
-    const serialized = JSON.stringify(payload, null, 2);
+    const serialized = JSON.stringify(payload, null, JSON_INDENT);
     try {
       const existing = fs.readFileSync(filePath, "utf8");
       const parsed = JSON.parse(existing) as Partial<SubagentEnginesFile>;
@@ -44,8 +47,9 @@ export function syncEnginesFile(agentDir: string): void {
       ) {
         return;
       }
-    } catch {
+    } catch (err) {
       // 现文件缺失/损坏 → 走写入
+      void err;
     }
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
@@ -55,11 +59,13 @@ export function syncEnginesFile(agentDir: string): void {
     } finally {
       try {
         if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-      } catch {
+      } catch (err) {
         // rename 失败路径的残留清理 best-effort
+        void err;
       }
     }
-  } catch {
+  } catch (err) {
     // 吞掉：见文件头 fail-safe 说明
+    void err;
   }
 }

@@ -130,7 +130,7 @@ export function useDrawerControl(): {
   selectedSubagentId: ComputedRef<string | null>
   selectedWorkflowName: ComputedRef<string | null>
   enteredFrom: ComputedRef<'chat' | 'workflow' | null>
-} {
+  } {
   return {
     isOpen: computed(() => controlState.current.value.isOpen),
     activeTab: computed(() => controlState.current.value.activeTab),
