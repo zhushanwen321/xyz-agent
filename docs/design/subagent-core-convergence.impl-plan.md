@@ -117,12 +117,12 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| C1-core-assets | pending | 0 | — |
-| C2-core-discovery | pending | 0 | — |
+| C1-core-assets | committed | 1 | 86b700f67（vitest 2363 绿；grep tools 全 0；README 67/68 行连带修——同性质漂移合理偏差） |
+| C2-core-discovery | committed | 1 | 5b03be26d（新增 15 用例 + pi 单条目形态快照；真机探针 IDENTICAL 落 [probe-c2.md](subagent-core-convergence.probe-c2.md)；检查点 1 定案 project-host 槽） |
 | C3-core-render | pending | 0 | — |
 | C4-core-script-pipeline | pending | 0 | — |
 | C5-pi-rebind | pending | 0 | — |
-| R1-engine-dispose | pending | 0 | — |
+| R1-engine-dispose | committed | 1 | b0519eccd（24 新用例；registry disposeEngines() 导出为等价封装偏差） |
 | R2-connection | pending | 0 | — |
 | R3-session-channel | pending | 0 | — |
 | R4-engine-wiring | pending | 0 | — |
