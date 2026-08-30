@@ -92,7 +92,7 @@ renderer (useAppUpdate 单例)
 
 **场景 A（授权失效，自动恢复）**：用户点「更新」→ 进度条短暂停顿（undici 快速失败 <2s）→ 自动经 curl 继续下载 → 完成 →「重启安装」→ 升级成功。用户全程无感知引擎切换（诊断日志记录 `engine: curl` 的降级事件）。
 
-**场景 B（curl 也不行 / 用户主动手动下载）**：下载失败 toast 的恢复指引末尾新增一步：「或从 release 页手动下载 zip 放入 `<update>/manual/` 目录后重试」。用户用浏览器下载 `TaiJi-x.x.x-mac-arm64.zip` 放入该目录（设置页更新卡片常驻展示此路径 + 「打开目录」按钮）→ 重启 app 或再点「更新」→ 升级按钮直接进入「已下载，重启安装」态（与预下载完成态完全一致）→ 点安装 → 成功。**全程 app 可完全断网**。
+**场景 B（curl 也不行 / 用户主动手动下载）**：下载失败时 toast 弹错误摘要（suggestion 不进 toast）；恢复指引中的手动下载一步（「或从 release 页手动下载 zip 放入 `<update>/manual/` 目录后重试」）追加在错误 suggestion 文案末尾，展示通道 = 侧边栏升级角标 hover 浮层，设置页更新卡片另常驻手动升级通道区（含路径与打开目录按钮）兜底可见性。用户用浏览器下载 `TaiJi-x.x.x-mac-arm64.zip` 放入该目录（设置页更新卡片常驻展示此路径 + 「打开目录」按钮）→ 重启 app 或再点「更新」→ 升级按钮直接进入「已下载，重启安装」态（与预下载完成态完全一致）→ 点安装 → 成功。**全程 app 可完全断网**。
 
 **场景 C（手动文件损坏，安全拒绝）**：用户放入了不完整/被篡改的同名文件 → 认领静默失败（不安装、不弹错打断），落盘 `source: manual-claim` 诊断记录，升级按钮维持原路径（继续尝试在线下载）。
 
@@ -142,7 +142,7 @@ renderer (useAppUpdate 单例)
 
 - 选择：目录内仅当存在与基准 release 的**当前平台** asset（`pickPlatformAsset(pending)`，跨平台包不参与匹配）**同名**文件，且 size 一致、sha256 一致时认领：`renameSync` 移入 `<update>/<asset.name>` + `writePreloadedUpdate` 落登记。落盘噪音控制：目录为空或无同名候选（常态）**不落盘**；存在同名候选但 size/sha256 不符才落盘 `source: manual-claim` + 具因。
 - 被否：仅文件名匹配——同名不同内容是直接的恶意替换/损坏文件安装面；仅 size 匹配同理。
-- 证据：sha256 匹配即内容与官方产物一致（抗碰撞），认领后文件与 app 自下载产物不可区分，installUpdate 的既有防线（m11 `validateRelease` + 脚本内 sha 校验）全量复用。sha256 缺失（异常 release / digest 未返回且 manifest fallback 失败）时拒绝认领并落盘，宁可不认不可装错。
+- 证据：sha256 匹配即内容与官方产物一致（抗碰撞），认领后文件与 app 自下载产物不可区分，installUpdate 的既有防线（m11 `validateRelease` + 脚本内 sha 校验）全量复用。sha256 缺失（异常 release / digest 未返回且 manifest fallback 失败）时拒绝认领并落盘，宁可不认不可装错；`size` 缺失按 size mismatch 同向拒绝（三重校验之一无法执行即无从证明一致）。
 - 并发幂等：Electron 同 channel handler 可并发。认领内 `renameSync` 抛 `ENOENT`（源文件已被并发认领移走）视为「已被认领」按成功处理（幂等），不落 mismatch。短路①②位于 handler 入口（`await preDownloadPromise` 之前），与后台预下载存在真实并发窗口：认领与预下载先后各调一次 `writePreloadedUpdate`，最后写者胜。交错场景声明（接受，取舍如下）：认领写 0.9.11 → 预下载以 0.9.12 完成覆写 → install 从 preloaded 读时装 0.9.12 而 UI 显示 0.9.11——装上的仍是更新的官方校验产物（无安全危害，语义为「顺手升到最新」），违背「用户确认哪个版本就装哪个版本」的严格动机属低频低害（窗口 = 预下载完成恰好落在认领写入与用户点安装之间）；缓解：`update:install` 响应增加 `version`（实装版本）字段，renderer 进入 restarting 态前对齐 `state.latestRelease`，UI 与实装归一。被覆写登记抛下的孤儿 zip 文件**接受残留**（不在本次 scope 加清理器，交由用户/后续 UPDATE_DIR 清理策略处理）。
 
 **D3 认领的版本基准：`pending-update.json`（上次成功检测的持久化 release）**
@@ -158,13 +158,13 @@ renderer (useAppUpdate 单例)
 | 连接建立失败：`EHOSTUNREACH` / `ECONNREFUSED` / `ENETUNREACH` / `UND_ERR_CONNECT_TIMEOUT` | **是** | **是** | 授权拦截与代理拒绝属进程生命周期级稳定状态（实测含重启后复现），记忆有效。授权拦截的丢包型呈现即 connect timeout（拒绝型为 `EHOSTUNREACH`），两者同源，必须同档 |
 | 瞬时连接类：`ECONNRESET` / `ETIMEDOUT` / `ENOTFOUND` | 是 | 否 | CDN 抖动/DNS 瞬断是国内常态（多段下载单 part 中招概率不低），一次瞬时错误即永久放弃 undici 多段并发是过度泛化 |
 | 流中断：`UND_ERR_SOCKET` / body timeout / 建立后断开 | **是**（下载路径，curl `-C -` 续传） | 否 | 不同实现栈或能恢复；sha256 终校验兜底内容正确性 |
-| HTTP 状态错误（403 / 404 / 5xx，服务器已响应） | 否 | 否 | 与引擎无关（对齐检测路径「HTTP 错误不触发降级」既有语义） |
+| HTTP 状态错误（403 / 404 / 5xx，服务器已响应） | 否 | 否 | 与引擎无关（对齐检测路径「HTTP 错误不触发降级」既有语义）。**curl 引擎下经 `-f` 表现为 exit 22 的 CurlFetchError（携带 httpStatusCode）上抛而非返回 result——调用方须据此重建「服务器已响应」类既有语义，见 D8 交互规则** |
 | 磁盘错误（`ENOSPC` / `EACCES`） | 否 | 否 | 换引擎不解决磁盘问题 |
 | AbortError 总超时 | 否 | 否 | 总预算已耗尽，curl 同样会超时 |
 
 **D5 进程级引擎记忆：仅连接建立失败置位，重启复位**
 
-- 选择：`upgrade-fetch` 模块内 `enginePreference` 标志；置位后 downloadAsset 直接走 curl 下载、后续 fetch 跳过 undici 等待。**置位判定逻辑收敛在封装内部**：只有当本次 undici 失败经 D4 分类属「连接建立失败」档时才置位；瞬时类/流中断仅本次降级，不置位（下次调用重探 undici）。`upgradeFetch` 提供调用方声明「本次调用不参与置位」的选项（testProxy 使用：设置页试错探针不污染进程级记忆）。进程重启复位（签名/授权/网络状态可能变化，重启后重探）。
+- 选择：`upgrade-fetch` 模块内 `enginePreference` 标志；置位后 downloadAsset 直接走 curl 下载、后续 fetch 跳过 undici 等待。**置位判定逻辑收敛在封装内部**：只有当本次 undici 失败经 D4 分类属「连接建立失败」档时才置位；瞬时类/流中断仅本次降级，不置位（下次调用重探 undici）。`upgradeFetch` 提供调用方声明「本次调用不参与置位」的选项（testProxy 使用：设置页试错探针不污染进程级记忆）；该选项为「不读不置」双语义——置位判定的 flag 分流也被绕过，探针每次完整重探双引擎，信息量完整。进程重启复位（签名/授权/网络状态可能变化，重启后重探）。
 - 被否：每次调用都先试 undici——授权坏场景每次多付一次失败延迟（EHOSTUNREACH 快速失败虽 <2s，但 probe + part + 单段多次叠加可感知）；全部错误码都置位——见 D4 瞬时类反例（多段被单 part 抖动永久误杀）。
 - 证据：授权失效是进程生命周期级的稳定状态（实测含重启后仍失败），连接建立失败类与之同构；瞬时类不是。
 
@@ -172,10 +172,10 @@ renderer (useAppUpdate 单例)
 
 - 路径：macOS `/usr/bin/curl`（系统自带，Apple 签名）、Windows `curl`（Win10+ System32）、Linux `curl`（PATH 解析；**缺失时引擎降级不可用，D10 下载链自动回退 undici 直连，不因 curl 缺失丢失直连兜底**）。
 - `spawn(path, [args])` 数组传参不走 shell，URL/代理参数来自受控配置，无注入面。
-- 关键 flags：**`-L`（必带——GitHub release URL 实测 302 两跳至 CDN 签名 URL，不带 `-L` 时 curl 引擎拿到重定向页、sha256 必挂；undici fetch 默认 `redirect:'follow'`，必须对齐）**、**`-f`（HTTP ≥400 时 exit 22 且不输出 body——缺失时错误页会写入 `.downloading` temp，被 sha256 失败掩盖真实原因；与 `-w` 不冲突，exit 22 时 `%{http_code}` 仍输出最终码）**、probe 用 `-I -L`（HEAD 跟随重定向后取最终响应头）、`-w '%{http_code}'`（语义为**跟随重定向后的最终状态码**，与 undici fetch `response.status` 对齐）、`-x <proxyUrl>`（代理，含凭证形态 `http://user:pass@host:port`）、`--connect-timeout 10`（对齐检测 10s）、`--speed-limit 1 --speed-time 30`（30s 无有效字节中止，对齐 undici `IDLE_TIMEOUT_MS=30s`）、下载路径 `-C - -o <temp>`（断点续传，以输出文件当前大小为起点，与 undici 侧 statSync 口径一致）+ 总时长上限 1h（对齐 `DOWNLOAD_TIMEOUT_MS`，超时 kill 进程）。
+- 关键 flags：**`-L`（必带——GitHub release URL 实测 302 两跳至 CDN 签名 URL，不带 `-L` 时 curl 引擎拿到重定向页、sha256 必挂；undici fetch 默认 `redirect:'follow'`，必须对齐）**、**`-f`（HTTP ≥400 时 exit 22 且不输出 body——缺失时错误页会写入 `.downloading` temp，被 sha256 失败掩盖真实原因；与 `-w` 不冲突，exit 22 时 `%{http_code}` 仍输出最终码；注意 `-f` 使 HTTP ≥400 以引擎层失败上抛而非返回 result，`CurlFetchError.httpStatusCode` 供调用方重建既有 HTTP 语义——限流退避 / testProxy「任何响应算成功」准绳在两引擎下等价，重建责任归调用方，见 D8）**、probe 用 `-I -L`（HEAD 跟随重定向后取最终响应头）、`-w '%{http_code}'`（语义为**跟随重定向后的最终状态码**，与 undici fetch `response.status` 对齐）、`-x <proxyUrl>`（代理，含凭证形态 `http://user:pass@host:port`）、`--connect-timeout 10`（对齐检测 10s）、`--speed-limit 1 --speed-time 30`（30s 无有效字节中止，对齐 undici `IDLE_TIMEOUT_MS=30s`）、下载路径 `-C - -o <temp>`（断点续传，以输出文件当前大小为起点，与 undici 侧 statSync 口径一致）+ 总时长上限 1h（对齐 `DOWNLOAD_TIMEOUT_MS`，超时 kill 进程）。
 - 小请求（GET/HEAD）body 获取：`-D <headerTmpfile>`（headers 落文件）+ body 落第二个临时文件，避免 headers/body 混流解析；用后清理。
 - exit code 映射（D8）：`7` 连接失败、`28` 超时（connect-timeout / speed-time / max-time）、`33` HTTP range error（`-C -` 续传被服务器以 200 拒绝）、`35`/`56` SSL/接收错误、`22` HTTP 状态错误（`--fail` 语义）。**`33` 的恢复动作：删除 temp 文件后从头下载一次**（等价 undici 路径「200 回退覆盖写」语义）。
-- 进度：下载路径 watch `statSync(temp)` 文件大小（500ms 轮询）折算百分比（总量 = `asset.size`），复用现有节流回调。
+- 进度：下载路径 watch `statSync(temp)` 文件大小（500ms 轮询）推原始字节数（引擎执行体职责），百分比折算与节流由 downloadAsset 编排层复用 `createThrottledProgress(onProgress, asset.size)`（总量 = `asset.size`）完成——两层分工，单段 undici 路径复用同一节流函数。
 - 凭证出现在 argv 的安全评估：safeStorage 可用时凭证在磁盘为密文，argv 形态相对磁盘确有增量暴露（密文→明文）；但同 uid 威胁模型下攻击者已有更强手段（直接改 proxy-config.json、进程注入），该增量风险可接受。
 - 子进程生命周期：curl 非 detached spawn，main 进程 `before-quit` 时 kill 未结束的 curl 子进程（防孤儿进程在 app 退出后继续占用带宽；内容正确性无风险——半下载文件本就由 `.downloading` 后缀 + sha256 兜底）。
 - 下载完成后的 `resume-state.json` 清理归属：统一由 `downloadAsset` 校验链前执行（undici / curl 两引擎同点清理，不散落）。
@@ -193,6 +193,8 @@ renderer (useAppUpdate 单例)
 - 双引擎均失败时对用户报**undici 错误的分类**（undici 错误携带 errno，`classifyProxyUnreachable` 等精准分类只在 undici 侧成立），curl 侧结果仅作 `engine` 落盘字段——理由：curl exit 7 覆盖 `ECONNREFUSED`/`EHOSTUNREACH`/`ENETUNREACH` 全部连接失败，无 errno 级区分，若以 curl 结果分类会把「代理未启动（ECONNREFUSED）」误报为「本地网络权限（EHOSTUNREACH）」。
 - 认领失败落盘：`source: 'manual-claim'` + `rawCause: 'size mismatch' | 'sha256 mismatch' | 'sha256 missing'` 等具因（落盘噪音控制见 D2）。
 - testProxy 双引擎均失败才报错；单引擎失败即降级成功时返回成功（用户测代理的目的是「升级能不能走」，curl 能走 = 能升级）。`UPDATE_PROXY_UNREACHABLE` 等用户文案链路按上述「报 undici 分类」规则保持不变。
+- **curl 引擎的 HTTP 状态交互规则**（`-f` 与既有语义的桥接，调用方重建责任）：① release-checker 对携带 `httpStatusCode` 403/429 的 `CurlFetchError` 重建 `ReleaseRateLimitedError`（RM2.3 限流退避在两引擎下等价成立）；404/5xx 按「服务器已响应」收口（null / 非 2xx 语义），不触发通道维度直连重试；② testProxy 收到携带 `httpStatusCode` 的 `CurlFetchError` 视为「代理可达、服务器返回了 HTTP 状态」→ `success:true`（「任何 HTTP 响应算代理可用」准绳两引擎等价）。
+- 降级点落盘主体分层：小请求（检测 / probe / testProxy）由 `upgradeFetch` 在内部降级点落盘；下载路径的降级落盘由 downloadAsset 编排层完成（downloadViaCurl 单次执行无法感知「失败被后续步骤兜住」）。`engine-fallback` 双向均落：undici→curl 与「curl 不可用被 undici 直连兜住」（D10 第三步反向）都记 `engine` = 失败引擎；curl+代理 exit 7 被直连兜住另落 `source:'download' + engine:'curl'`（通道级降级记录）。双失败对外报 undici 分类的限定：有降级上下文（undiciError 存在）时才报 undici 分类，flag 分流路径无 undici 错误上下文时按 curl 映射错误对外。
 
 **D9 手动目录的 UI 引导（settings 页常驻 + 错误指引双入口）**
 

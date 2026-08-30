@@ -8,7 +8,9 @@
  *   - D1 启动恢复链：update:getPreloaded miss 后认领（全本地），命中后重读返回
  *   - D2 交错缓解：update:install 响应增加实装 version 字段
  *   - D5/D8 testProxy 双引擎：undici 失败被 curl 兜住 → success:true（且探针不置
- *     enginePreference）；双失败 → undici 侧分类文案（含 D2 v3 修订的 EHOSTUNREACH 覆写）
+ *     enginePreference）；双失败 → undici 侧分类文案（含 D2 v3 修订的 EHOSTUNREACH 覆写）；
+ *     D8 curl HTTP 状态错误（exit 22 携带 httpStatusCode）→ success:true 不落盘不报错；
+ *     双失败落盘补 engine 诊断字段（CurlFetchError=curl 侧 / 原样上抛=仅 undici）
  *
  * Mock 策略（对齐 test/update-handlers-orchestration.test.ts 范式）：
  *   - electron：ipcMain.handle 捕获 handler 到 Map + app.getVersion='0.8.14'
@@ -432,9 +434,65 @@ describe('u6 D5/D8: update:testProxy 双引擎', () => {
       code: 'UPDATE_PROXY_UNREACHABLE',
       message: '无法连接代理 (EHOSTUNREACH)',
     })
-    // D7：落盘 source=test-proxy，code 维持原分类（与下载路径归因一致）
+    // D7：落盘 source=test-proxy，code 维持原分类（与下载路径归因一致）；
+    // engine 诊断字段：CurlFetchError = curl 侧失败形态（双引擎均失败）
     expect(errorLogMocks.appendUpdateError).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'test-proxy', errorCode: 'UPDATE_PROXY_UNREACHABLE' }),
+      expect.objectContaining({ source: 'test-proxy', errorCode: 'UPDATE_PROXY_UNREACHABLE', engine: 'curl' }),
+    )
+  })
+
+  it('D8: curl 引擎 HTTP 状态错误（exit 22 携带 httpStatusCode）→ 代理可达返回 success:true，不落盘不报错', async () => {
+    // undici 连接失败降级 curl → curl -f 拿到 HTTP 403（服务器已响应）以上抛形态
+    // 结束——「任何 HTTP 响应算代理可用」准绳在 curl 引擎下同样成立
+    const fetchSpy = vi.fn(async () => {
+      throw undiciEhostUnreachable()
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+    const curlRunner = vi.fn(() => ({
+      exitCode: 22,
+      stdout: '403',
+      stderr: 'curl: (22) The requested URL returned error: 403',
+    }))
+    __setCurlRunnerForTest(curlRunner)
+
+    const handler = handlers.get('update:testProxy')!
+    const result = await handler({}, {
+      mode: 'manual',
+      httpProxy: 'http://192.168.1.202:7890',
+      httpsProxy: 'http://192.168.1.202:7890',
+    })
+
+    // HTTP 状态 = 代理链路可用（服务器返回了状态）：与 undici 路径任何 resolve 算成功等价
+    expect(result).toEqual({ success: true })
+    expect(curlRunner).toHaveBeenCalledTimes(1)
+    // 不落盘、不报错（区别于双引擎网络失败）
+    expect(errorLogMocks.appendUpdateError).not.toHaveBeenCalled()
+    expect(getEnginePreference()).toBe('undici')
+  })
+
+  it('双失败但仅 undici 侧失败（AbortError 非降级类原样上抛）→ 落盘 engine=undici', async () => {
+    // AbortError 总超时属 D4 不降级档：curl 从未执行，错误原样上抛为 undici 形态
+    const abortErr = Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })
+    const fetchSpy = vi.fn(async () => {
+      throw abortErr
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+    const curlRunner = vi.fn(() => ({ exitCode: 0, stdout: '200', stderr: '' }))
+    __setCurlRunnerForTest(curlRunner)
+
+    const handler = handlers.get('update:testProxy')!
+    const result = await handler({}, {
+      mode: 'manual',
+      httpProxy: 'http://192.168.1.202:7890',
+      httpsProxy: 'http://192.168.1.202:7890',
+    })
+
+    // 分类走 undici 侧（UPDATE_NETWORK_TIMEOUT），curl 未被触发
+    expect(result).toMatchObject({ success: false, code: 'UPDATE_NETWORK_TIMEOUT' })
+    expect(curlRunner).not.toHaveBeenCalled()
+    // engine 诊断字段：非 CurlFetchError 上抛形态 = 仅 undici 失败
+    expect(errorLogMocks.appendUpdateError).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'test-proxy', engine: 'undici' }),
     )
   })
 
@@ -464,7 +522,7 @@ describe('u6 D5/D8: update:testProxy 双引擎', () => {
       suggestion: '请检查代理地址与端口是否正确、代理服务是否正在运行，以及当前网络能否连通代理',
     })
     expect(errorLogMocks.appendUpdateError).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'test-proxy', errorCode: 'UPDATE_NETWORK_FAILED' }),
+      expect.objectContaining({ source: 'test-proxy', errorCode: 'UPDATE_NETWORK_FAILED', engine: 'curl' }),
     )
   })
 })

@@ -76,8 +76,7 @@ export interface UpdateCheckResult {
  *
  * version = 实装版本（install 时从 preloaded 登记读取）：手动认领与后台
  * 预下载存在并发覆写窗口，UI 确认版本与实装版本可能不一致，renderer 进入
- * restarting 态前以本字段对齐 state.latestRelease（preload / lib/ipc.ts
- * 签名同步见 U8，属后续单元）。
+ * restarting 态前以本字段对齐 state.latestRelease（preload / lib/ipc.ts 签名已同步）。
  */
 export interface UpdateInstallResult {
   /** true = 升级已触发、app 即将退出重启 */

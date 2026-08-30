@@ -92,6 +92,7 @@ graph TD
 | 7 | u4 遗留：killActiveCurlDownloads 的 before-quit 接线不在任何既有单元领地（main.ts） | 追加微单元 u4b-before-quit（见单元表末行） |
 | 8 | u7 五处偏差（接受）：① 手动通道文案落 settings.system.*（UpdateCheckCard 现有文案同节，一致性）；② 通道区默认展开（D9「常驻展示」语义，折叠能力保留）；③ version 对齐只 spread 版本字段（最小侵入）；④ w3-acceptance 两处断言跟进（D 契约扩展后果）；⑤ 手动通道区路径展示用 getDataDir 推导（与 main MANUAL_ASSET_DIR 同源规则，renderer 无该常量导出通道） | 已登记 |
 | 9 | u7 blocker：D9「打开目录」按钮需 main 侧新 IPC（open-external 拒 file://、reveal-in-folder 要绝对路径而 get-data-dir 返回 ~ 缩写）——u7 按裁决未越权建 IPC | 追加微单元 u7b-open-manual-dir（main handler + preload + 按钮）；另：前端全量存在 1 个认知外存量失败 chat-chunk-content-blocks.test.ts（根因 core 提交 abbfa0689，非本流水线，上报用户裁决） |
+| 10 | 阶段 3 一致性审查（三区 reviewer）reasonable 结论固化——机制层已同步设计文档措辞：① D5 disableFlagPersistence 为「不读不置」双语义；② D8 降级落盘主体分层（upgradeFetch 小请求 / downloadAsset 编排层）；③ engine-fallback 双向均落（含 D10 第三步 curl 缺失被 undici 直连兜住）+ 通道级降级另落 source='download'+engine='curl'；④ 双失败报 undici 分类的限定（有降级上下文时）；⑤ D2 size 缺失按 mismatch 拒绝；⑥ D6 进度两层分工（轮询归引擎体/折算节流归编排层）；⑦ curl `-f` 与 HTTP 状态类既有语义的交互规则（调用方重建：限流退避 / testProxy 准绳 / HTTP 已响应不触发直连重试）——由 unreasonable 修复批次落地 | 设计文档 D2/D4/D5/D6/D8 已同步修订；场景 B 展示通道描述已改实态 |
 
 ## 6 状态表
 
@@ -112,3 +113,5 @@ graph TD
 - **变更历史**：
   - 2026-08-30 计划创建（阶段 0 预检通过：结构四节齐全；审查证据 [update-network-resilience.review.md](update-network-resilience.review.md) must_fix=0）。
   - 2026-08-30 u0 committed 后：修正测试命令路径（偏差 #1）、u7 领地补 shared index.ts（偏差 #2）、登记偏差 #3；状态表同步。
+- 2026-08-30 阶段 2 收官（10/10 单元 committed）；阶段 3 三区一致性审查返回：6 unreasonable（区1×1 测试缺口、区2×3 curl -f 语义交互、区3×2 renderer 低危）+ 3 doc_errors + 15 reasonable；doc_errors 与 reasonable 文档同步已由主 agent 修订（D2/D4/D5/D6/D8/场景 B + shared 过时注释）；unreasonable 组修复批次 A（main）/B（renderer）派发。
+- 2026-08-30 阶段 4 清零：批次 A/B 修毕（6 条 unreasonable 全消）→ 定向复审击穿 2 新缺口（直连第二步吞 RateLimited / manifest 403 两引擎漂移）→ 第 2 轮定向修（含同族第三缺口：try 内 RateLimited 直通守卫；manifest 第二步改就地记退避，rethrow 推演经 JS 语义证伪）→ 聚焦复审 converged（throw 点×catch 位 4×7 全配对闭合，断言强度三类删除回归可抓）。main 全量 730 绿。进入阶段 5 双级验收。

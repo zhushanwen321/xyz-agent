@@ -40,7 +40,7 @@ import { compare } from 'compare-versions'
 import type { LatestReleaseInfo, ReleaseAsset } from '@xyz-agent/shared'
 import type { IReleaseChecker } from './interfaces.js'
 import { readProxyConfig, resolveProxyUrl } from './update/proxy-config.js'
-import { upgradeFetch } from './update/upgrade-fetch.js'
+import { upgradeFetch, isCurlHttpStatusError } from './update/upgrade-fetch.js'
 
 /** GitHub /releases/latest API 端点 */
 const GITHUB_LATEST_RELEASE_URL =
@@ -221,6 +221,19 @@ export class ReleaseChecker implements IReleaseChecker {
   }
 
   /**
+   * 记录限流退避窗口（RM2.3：2h）并输出诊断日志。
+   *
+   * latest / manifest 两路径的三个识别位共用（latest 编排 rethrow 汇点 + manifest
+   * 两步各自的就地识别），保证 ReleaseRateLimitedError 无论从哪一步冒出都必被记录。
+   */
+  private recordRateLimitBackoff(context: string): void {
+    this.rateLimitedUntil = Date.now() + RATE_LIMIT_BACKOFF_MS
+    console.warn(
+      `[release-checker] rate limited by GitHub (${context}), backing off until ${new Date(this.rateLimitedUntil).toISOString()}`,
+    )
+  }
+
+  /**
    * 缓存命中检查（force 可绕过；负缓存的 info=null 同样命中）。
    *
    * @returns 命中返回缓存 info（null = 负缓存「已确认无新版」）；
@@ -244,11 +257,9 @@ export class ReleaseChecker implements IReleaseChecker {
       return await this.fetchGitHubLatestRelease()
     } catch (err) {
       if (err instanceof ReleaseRateLimitedError) {
-        // 403/429：记退避窗口（2h），窗口内后续调用直接短路零联网
-        this.rateLimitedUntil = Date.now() + RATE_LIMIT_BACKOFF_MS
-        console.warn(
-          `[release-checker] rate limited by GitHub, backing off until ${new Date(this.rateLimitedUntil).toISOString()}`,
-        )
+        // 403/429：记退避窗口（2h），窗口内后续调用直接短路零联网。
+        // latest 编排（含直连重试第二步）的 RateLimited rethrow 均汇于此记退避
+        this.recordRateLimitBackoff('latest')
         return null
       }
       throw err
@@ -324,7 +335,11 @@ export class ReleaseChecker implements IReleaseChecker {
         // 降级：用了代理但网络失败时，直连重试一次（无 dispatcher）
         try {
           return await this.doFetchGitHubLatestRelease(undefined)
-        } catch {
+        } catch (directErr) {
+          // 直连重试撞 403/429（服务器已响应限流，undici ok:false / curl exit 22
+          // 重建均以 RateLimited 上抛）：rethrow 汇至 fetchLatestReleaseHandling
+          // RateLimit 记退避，不得被裸 catch 吞掉（否则每周期照打 API）
+          if (directErr instanceof ReleaseRateLimitedError) throw directErr
           // 直连也失败 → 返回 null
           return null
         }
@@ -342,9 +357,11 @@ export class ReleaseChecker implements IReleaseChecker {
    *
    * @param proxyUrl 代理 URL；undefined 表示直连（upgradeFetch 内不建 ProxyAgent）
    * @returns 解析后的 GitHubRelease；
-   *          HTTP 错误（404/500 等）返回 null；网络错误抛出（供降级逻辑捕获）
-   * @throws 网络错误（EHOSTUNREACH/ECONNREFUSED/超时/双引擎均失败的
-   *         CurlFetchError 等）——调用方据此决定是否降级
+   *          HTTP 错误（404/500 等已响应形态，含 curl 引擎携带 httpStatusCode 的
+   *          CurlFetchError）返回 null；网络错误抛出（供降级逻辑捕获）
+   * @throws 网络错误（EHOSTUNREACH/ECONNREFUSED/超时/双引擎均网络失败的
+   *         CurlFetchError——不带 httpStatusCode 的 exit 7/28 等形态）——调用方
+   *         据此决定是否降级；限流信号抛 ReleaseRateLimitedError（D8 重建）
    */
   private async doFetchGitHubLatestRelease(proxyUrl?: string): Promise<GitHubRelease | null> {
     try {
@@ -368,8 +385,21 @@ export class ReleaseChecker implements IReleaseChecker {
     } catch (err) {
       // 限流信号直接向上传播（若被此处包装成普通 Error，退避逻辑将失效）
       if (err instanceof ReleaseRateLimitedError) throw err
-      // 网络/超时错误 → 抛出供调用方做通道维度降级。CurlFetchError（双引擎均失败）
-      // 同归网络错误桶：触发直连降级而非退避；body 非法 JSON 也按失败收口
+      // D8 curl 引擎 HTTP 状态交互规则：-f 使 HTTP ≥400 以携带 httpStatusCode 的
+      // CurlFetchError 上抛（服务器已响应），据此重建 undici 引擎的 status 分支语义——
+      // 403/429 → RateLimited（RM2.3 退避两引擎等价）；其他（404/5xx）→ 非 2xx null
+      // 收口。两者均不触发外层「代理→直连」通道重试（服务器已响应，换通道无意义）
+      if (isCurlHttpStatusError(err)) {
+        if (
+          err.httpStatusCode === HTTP_STATUS_FORBIDDEN ||
+          err.httpStatusCode === HTTP_STATUS_TOO_MANY_REQUESTS
+        ) {
+          throw new ReleaseRateLimitedError()
+        }
+        return null
+      }
+      // 网络/超时错误（含不带 httpStatusCode 的 CurlFetchError——exit 7/28 等网络级
+      // 失败仍归网络错误桶）→ 抛出供调用方做通道维度降级；body 非法 JSON 也按失败收口
       // （对齐旧实现 response.json() 抛错被 catch 包装的语义）
       throw new Error('fetch failed')
     }
@@ -428,7 +458,8 @@ export class ReleaseChecker implements IReleaseChecker {
    *
    * manifest 由 CI generate-manifest.sh 生成，结构：
    *   { version, releasedAt, assets: { "<filename>": { sha256, size } } }
-   * 失败（网络/超时/解析/404）一律返回 null（不阻塞，sha256 留 undefined 由调用方降级）。
+   * 失败（网络/超时/解析/404）一律返回 null（不阻塞，sha256 留 undefined 由调用方降级）；
+   * 403/429 额外记录 2h 限流退避（两引擎同形态）后同样返回 null。
    *
    * D6/D10：代理优先 + 失败降级直连（与 fetchGitHubLatestRelease 同策略，通道维度
    * 编排保留在 checker；引擎降级内嵌 upgradeFetch——消灭裸 undici 无降级路径）。
@@ -444,13 +475,27 @@ export class ReleaseChecker implements IReleaseChecker {
     try {
       // 第一次尝试：代理优先
       return await this.doFetchManifestSha256(useProxy ? proxyUrl : undefined)
-    } catch {
+    } catch (err) {
+      // D8：403/429 重建的限流信号——服务器已响应，不触发通道维度直连
+      // 重试（对齐 latest 路径对 RateLimited 的处理位），记退避窗口后按 manifest
+      // 失败收口（null → sha256 留 undefined，不阻塞 release 组装）
+      if (err instanceof ReleaseRateLimitedError) {
+        this.recordRateLimitBackoff('manifest')
+        return null
+      }
       // 网络错误
       if (useProxy) {
         // 降级直连重试
         try {
           return await this.doFetchManifestSha256(undefined)
-        } catch {
+        } catch (directErr) {
+          // 直连重试撞 403/429：就地记退避后收口 null——此处不能 rethrow（本
+          // catch 位于外层 catch 块内，rethrow 会直接冒泡出 fetchManifestSha256，
+          // 破坏「manifest 失败不阻塞 checkForLatestRelease」契约，外层识别位
+          // 无法再捕获），退避必须在此记录
+          if (directErr instanceof ReleaseRateLimitedError) {
+            this.recordRateLimitBackoff('manifest direct')
+          }
           return null
         }
       }
@@ -466,8 +511,11 @@ export class ReleaseChecker implements IReleaseChecker {
    *
    * @param proxyUrl 代理 URL；undefined 表示直连
    * @returns Map<filename, sha256hex>；
-   *          HTTP 错误返回 null；网络错误抛出（供降级逻辑捕获）
-   * @throws 网络错误——调用方据此决定是否降级
+   *          HTTP 错误返回 null（403/429 除外——undici ok:false 与 curl exit 22
+   *          携带 httpStatusCode 两形态同抛 RateLimited，D8 两引擎无漂移）；
+   *          网络错误抛出（供降级逻辑捕获）
+   * @throws 网络错误（含不带 httpStatusCode 的 CurlFetchError）与限流信号
+   *         ReleaseRateLimitedError（外层记退避后收口 null）
    */
   private async doFetchManifestSha256(proxyUrl?: string): Promise<Map<string, string> | null> {
     try {
@@ -475,7 +523,18 @@ export class ReleaseChecker implements IReleaseChecker {
         proxyUrl,
         timeoutMs: FETCH_TIMEOUT_MS,
       })
-      if (!result.ok) return null
+      if (!result.ok) {
+        // 403/429 重建 RateLimited（与 latest undici 分支同款）——消除两引擎漂移：
+        // curl 引擎 exit 22 携带 httpStatusCode 的同形态同退避（GitHub secondary
+        // rate limit 下退避方向更正确）；其他 HTTP 错误仍 return null（404 语义）
+        if (
+          result.status === HTTP_STATUS_FORBIDDEN ||
+          result.status === HTTP_STATUS_TOO_MANY_REQUESTS
+        ) {
+          throw new ReleaseRateLimitedError()
+        }
+        return null
+      }
       const manifest = JSON.parse(result.bodyText ?? '') as {
         assets?: Record<string, { sha256?: unknown }>
       }
@@ -489,9 +548,24 @@ export class ReleaseChecker implements IReleaseChecker {
         }
       }
       return map.size > 0 ? map : null
-    } catch {
-      // 网络错误（含双引擎均失败的 CurlFetchError）与非法 JSON 均抛出，
-      // 供调用方做通道维度降级
+    } catch (err) {
+      // 限流信号直通（undici !ok 分支在 try 内 throw，若无此保护会被下方包装成
+      // 'fetch failed' 网络错误吞掉退避语义——与 latest doFetch catch 同款首行守卫）
+      if (err instanceof ReleaseRateLimitedError) throw err
+      // D8 curl 引擎 HTTP 状态交互规则（与 latest 路径同款重建）：携带 httpStatusCode
+      // 的 CurlFetchError = 服务器已响应——403/429 重建 RateLimited 供外层记退避且
+      // 不触发直连重试；404/5xx 按 manifest null 语义收口（同样不触发直连重试）
+      if (isCurlHttpStatusError(err)) {
+        if (
+          err.httpStatusCode === HTTP_STATUS_FORBIDDEN ||
+          err.httpStatusCode === HTTP_STATUS_TOO_MANY_REQUESTS
+        ) {
+          throw new ReleaseRateLimitedError()
+        }
+        return null
+      }
+      // 网络错误（含不带 httpStatusCode 的 CurlFetchError——双引擎均网络失败）与
+      // 非法 JSON 均抛出，供调用方做通道维度降级
       throw new Error('fetch failed')
     }
   }

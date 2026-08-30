@@ -241,6 +241,20 @@ export class CurlFetchError extends Error {
   }
 }
 
+/**
+ * err 是否为「携带 httpStatusCode 的 CurlFetchError」（D8 curl 引擎 HTTP 状态交互规则判定辅助）。
+ *
+ * true = 服务器已响应（curl -f exit 22 上抛形态）——与「网络错误」（exit 7/28 等无
+ * httpStatusCode 的 CurlFetchError / undici 原始网络错误）可区分：调用方须据此重建
+ * 既有 HTTP 语义（限流退避 / 非 2xx null 收口 / testProxy「任何响应算成功」），
+ * 不得归入网络错误桶触发通道维度「代理→直连」重试。
+ */
+export function isCurlHttpStatusError(
+  err: unknown,
+): err is CurlFetchError & { httpStatusCode: number } {
+  return err instanceof CurlFetchError && typeof err.httpStatusCode === 'number'
+}
+
 // ─── curl 引擎：runner 抽象（子进程可测注入点） ───────────────────
 
 /** curl 一次执行的结果形态。 */

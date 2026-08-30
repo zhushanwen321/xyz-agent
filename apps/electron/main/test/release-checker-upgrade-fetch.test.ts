@@ -26,7 +26,7 @@ vi.mock('../update/upgrade-fetch.js', async (importOriginal) => {
   return { ...actual, upgradeFetch: vi.fn() }
 })
 
-import { ReleaseChecker } from '../release-checker.js'
+import { ReleaseChecker, ReleaseRateLimitedError } from '../release-checker.js'
 import { upgradeFetch, CurlFetchError } from '../update/upgrade-fetch.js'
 import type { UpgradeFetchResult } from '../update/upgrade-fetch.js'
 
@@ -48,6 +48,16 @@ function okResult(bodyText: string, init: Partial<UpgradeFetchResult> = {}): Upg
 /** 构造 upgradeFetch HTTP 错误返回（不抛、resolve ok:false——引擎语义）。 */
 function httpErrorResult(status: number): UpgradeFetchResult {
   return { ok: false, status, headers: {}, bodyText: '', usedEngine: 'undici' }
+}
+
+/** 构造 curl 引擎 exit 22（-f）形态的 CurlFetchError——携带 httpStatusCode = 服务器已响应（D8）。 */
+function curlHttpStatusError(status: number): CurlFetchError {
+  return new CurlFetchError({
+    kind: 'http-error',
+    exitCode: 22,
+    stderr: `curl: (22) The requested URL returned error: ${status}`,
+    httpStatusCode: status,
+  })
 }
 
 /** 构造完整 GitHubRelease JSON（4 平台 asset 全带合法 digest，不触发 manifest） */
@@ -292,6 +302,166 @@ describe('u5: 403/429 RateLimited 直通不降级（退避窗口生效）', () =
     expect(inWindow).toBeNull()
     expect(upgradeFetchMock).toHaveBeenCalledTimes(1)
   })
+})
+
+// ─── 验收④-c：D8 curl 引擎 HTTP 状态交互规则（两引擎语义等价） ──────
+
+describe('u5 D8: curl 引擎 HTTP 状态交互规则', () => {
+  it.each([403, 429])(
+    'latest 路径 CurlFetchError httpStatusCode=%i → 重建 ReleaseRateLimitedError：null、单次调用、退避生效',
+    async (status) => {
+      mockProxyEnabled()
+      upgradeFetchMock.mockRejectedValueOnce(curlHttpStatusError(status))
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+
+      // curl 引擎 403/429 与 undici 引擎同语义：限流信号直通（RM2.3 退避两引擎等价）
+      expect(result).toBeNull()
+      // 关键断言：服务器已响应 → 不触发「代理→直连」通道重试（单次调用）
+      expect(upgradeFetchMock).toHaveBeenCalledTimes(1)
+      expect(callOpts(0).proxyUrl).toBe(PROXY_URL)
+      // 退避窗口生效：checker 内部只有 ReleaseRateLimitedError 的 catch 分支会置
+      // rateLimitedUntil——该断言即证明 curl 形态被重建为 ReleaseRateLimitedError
+      expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+      // 窗口内 force 查询也短路（零联网）
+      const inWindow = await checker.checkForLatestRelease('0.8.14', { force: true })
+      expect(inWindow).toBeNull()
+      expect(upgradeFetchMock).toHaveBeenCalledTimes(1)
+      // ReleaseRateLimitedError 导出形态回归锚点（重建用的是同一导出类）
+      expect(new ReleaseRateLimitedError()).toBeInstanceOf(ReleaseRateLimitedError)
+      expect(new ReleaseRateLimitedError().name).toBe('ReleaseRateLimitedError')
+    },
+  )
+
+  it('latest 路径 CurlFetchError httpStatusCode=404 → null、单次调用（服务器已响应不触发直连重试）、不触发退避', async () => {
+    mockProxyEnabled()
+    upgradeFetchMock.mockRejectedValueOnce(curlHttpStatusError(404))
+
+    const checker = new ReleaseChecker()
+    const result = await checker.checkForLatestRelease('0.8.14')
+
+    // 404 按 undici 引擎「非 2xx → null」语义收口
+    expect(result).toBeNull()
+    expect(upgradeFetchMock).toHaveBeenCalledTimes(1)
+    expect(checker.getRateLimitedUntil()).toBe(0)
+  })
+
+  it('manifest 路径 CurlFetchError httpStatusCode=404 → null 收口不触发直连重试（单次 manifest 调用）', async () => {
+    mockProxyEnabled()
+    upgradeFetchMock
+      .mockResolvedValueOnce(okResult(JSON.stringify(makeDigestMissingReleaseJson()))) // latest：代理成功
+      .mockRejectedValueOnce(curlHttpStatusError(404)) // manifest：curl 引擎 404 上抛
+
+    const checker = new ReleaseChecker()
+    const result = await checker.checkForLatestRelease('0.8.14')
+
+    // manifest 404 → null（sha256 留 undefined，不阻塞 release 组装）；
+    // 关键断言：总计 2 次调用（latest 1 + manifest 1）——服务器已响应不触发直连重试
+    expect(result).not.toBeNull()
+    expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
+    expect(callUrl(1)).toContain('manifest.json')
+    expect(result!.assets.macArm64Zip?.sha256).toBeUndefined()
+    expect(checker.getRateLimitedUntil()).toBe(0)
+  })
+
+  it.each([403, 429])(
+    'manifest 路径 CurlFetchError httpStatusCode=%i → 重建 RateLimited：不直连重试、记退避、sha256 留 undefined',
+    async (status) => {
+      mockProxyEnabled()
+      upgradeFetchMock
+        .mockResolvedValueOnce(okResult(JSON.stringify(makeDigestMissingReleaseJson()))) // latest：代理成功
+        .mockRejectedValueOnce(curlHttpStatusError(status)) // manifest：curl 引擎 403/429 上抛
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+
+      // manifest 单次调用（无第二步直连）；退避窗口记录；release 组装不被阻塞
+      expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
+      expect(callUrl(1)).toContain('manifest.json')
+      expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+      expect(result!.assets.macArm64Zip?.sha256).toBeUndefined()
+      expect(result!.assets.macArm64Zip?.name).toBe('TaiJi-mac-arm64.zip')
+    },
+  )
+})
+
+// ─── 验收④-d（R2）：直连重试第二步限流识别 + manifest 两引擎对偶 ────
+
+describe('u5 R2: 直连重试第二步不吞 ReleaseRateLimitedError + manifest 两引擎对偶', () => {
+  it.each([
+    ['undici 形态（ok:false resolve）', (status: number) => Promise.resolve(httpErrorResult(status))],
+    ['curl 形态（exit 22 rejection）', (status: number) => Promise.reject(curlHttpStatusError(status))],
+  ])(
+    'latest 第一步网络失败 + 第二步直连 429（%s）→ 记退避（不被裸 catch 吞）',
+    async (_label, secondStep) => {
+      mockProxyEnabled()
+      upgradeFetchMock
+        .mockRejectedValueOnce(new Error('fetch failed')) // 第一步：代理 + 网络错误
+        .mockImplementationOnce(() => secondStep(429)) // 第二步：直连 + 限流
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+
+      // 两步都走完：第一步带代理、第二步直连
+      expect(result).toBeNull()
+      expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
+      expect(callOpts(1).proxyUrl).toBeUndefined()
+      // 关键断言：第二步撞 429 记退避（修复前被裸 catch 吞、rateLimitedUntil 保持 0）
+      expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+      // 窗口内 force 查询短路（零联网）
+      const inWindow = await checker.checkForLatestRelease('0.8.14', { force: true })
+      expect(inWindow).toBeNull()
+      expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it.each([
+    ['undici 形态（ok:false resolve）', (status: number) => Promise.resolve(httpErrorResult(status))],
+    ['curl 形态（exit 22 rejection）', (status: number) => Promise.reject(curlHttpStatusError(status))],
+  ])(
+    'manifest 第一步网络失败 + 第二步直连 429（%s）→ 记退避 + sha256 留 undefined',
+    async (_label, secondStep) => {
+      mockProxyEnabled()
+      upgradeFetchMock
+        .mockResolvedValueOnce(okResult(JSON.stringify(makeDigestMissingReleaseJson()))) // latest：代理成功
+        .mockRejectedValueOnce(new Error('fetch failed')) // manifest 第一步：代理 + 网络错误
+        .mockImplementationOnce(() => secondStep(429)) // manifest 第二步：直连 + 限流
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+
+      // manifest 两步都走完（latest 1 + manifest 2 = 总 3 次），release 组装不被阻塞
+      expect(result).not.toBeNull()
+      expect(upgradeFetchMock).toHaveBeenCalledTimes(3)
+      expect(callUrl(2)).toContain('manifest.json')
+      expect(callOpts(2).proxyUrl).toBeUndefined()
+      expect(result!.assets.macArm64Zip?.sha256).toBeUndefined()
+      // 关键断言：第二步撞 429 就地记退避（修复前被裸 catch 吞）
+      expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+    },
+  )
+
+  it.each([403, 429])(
+    'manifest undici 引擎 HTTP %i（第一步直接 resolve）→ 记退避，与 curl 引擎同形态同退避（两引擎对偶）',
+    async (status) => {
+      mockProxyEnabled()
+      upgradeFetchMock
+        .mockResolvedValueOnce(okResult(JSON.stringify(makeDigestMissingReleaseJson()))) // latest：代理成功
+        .mockResolvedValueOnce(httpErrorResult(status)) // manifest：undici 403/429
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+
+      // 服务器已响应 → 不触发直连重试（manifest 单次调用）
+      expect(upgradeFetchMock).toHaveBeenCalledTimes(2)
+      expect(callUrl(1)).toContain('manifest.json')
+      // 与 curl 引擎对偶：同记 2h 退避（修复前 undici 侧 !ok 一律 null 不退避 = 两引擎漂移）
+      expect(checker.getRateLimitedUntil()).toBeGreaterThan(Date.now())
+      expect(result!.assets.macArm64Zip?.sha256).toBeUndefined()
+      expect(result!.assets.macArm64Zip?.name).toBe('TaiJi-mac-arm64.zip')
+    },
+  )
 })
 
 // ─── 验收③：manifest fallback 路径同源接入 ─────────────────────────

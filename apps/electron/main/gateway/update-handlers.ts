@@ -41,7 +41,7 @@ import type { IUpdateOrchestrator, UpdateProgressCallback } from '../update/orch
 import { isAutoUpdateSupportedForCurrentInstall } from '../update/orchestrator.js'
 import { writePreloadedUpdate, readPreloadedUpdate, readPreloadedUpdateRaw, clearPreloadedUpdate } from '../update/preloaded-update.js'
 import { MANUAL_ASSET_DIR, tryClaimManualAsset } from '../update/manual-claim.js'
-import { upgradeFetch, CurlFetchError } from '../update/upgrade-fetch.js'
+import { upgradeFetch, CurlFetchError, isCurlHttpStatusError } from '../update/upgrade-fetch.js'
 import { classifyNetError } from '../update/net-errors.js'
 import { appendUpdateError } from '../update/error-log.js'
 
@@ -94,6 +94,10 @@ async function tryClaimManualAssetSafe(release: LatestReleaseInfo): Promise<stri
  * [D8] 双引擎准绳：单引擎失败被另一引擎兜住 → success:true（用户测代理的目的是
  * 「升级能不能走」，curl 能走 = 能升级）；双引擎均失败才报错，且分类取 undici 侧
  * （CurlFetchError.undiciError 携带 errno 语境，curl exit 7 无 errno 级区分）。
+ * 「任何 HTTP 响应算代理可用」准绳在两引擎下等价：undici 引擎任何 resolve（含
+ * ok:false）即成功；curl 引擎 -f 把 HTTP ≥400 以携带 httpStatusCode 的
+ * CurlFetchError 上抛——该形态同样视为「代理可达、服务器返回了 HTTP 状态」→
+ * success:true（不落盘、不报错）。
  * [D5] 试错探针不参与 enginePreference 读写：设置页一次失败不该永久改变进程引擎选择。
  */
 async function testProxyConnection(config: IProxyConfig): Promise<ProxyTestResult> {
@@ -131,6 +135,12 @@ async function testProxyConnection(config: IProxyConfig): Promise<ProxyTestResul
     })
     return { success: true }
   } catch (err) {
+    // D8 curl 引擎 HTTP 状态交互规则：-f 使 HTTP ≥400 以携带 httpStatusCode 的
+    // CurlFetchError 上抛——服务器已返回 HTTP 状态本身就证明代理链路可达（与 undici
+    // 引擎「任何完成的 HTTP 响应算成功」准绳两引擎等价），不落盘、不报错
+    if (isCurlHttpStatusError(err)) {
+      return { success: true }
+    }
     // D8: 双引擎均失败，报 undici 错误的分类（curl 降级时 CurlFetchError 携带触发降级的
     // undiciError；未降级（不可降级类）则原样上抛的即 undici 错误）。使用分类函数统一
     // 提取 cause + 判定错误码。
@@ -150,7 +160,8 @@ async function testProxyConnection(config: IProxyConfig): Promise<ProxyTestResul
         suggestion: '请检查代理地址与端口是否正确、代理服务是否正在运行，以及当前网络能否连通代理',
       }
     }
-    // D7: 落盘
+    // D7: 落盘。engine 从错误形态推导（D8 诊断字段）：CurlFetchError = curl 侧失败
+    // 形态（undici 已降级、curl 亦失败）；原样上抛的非降级类错误 = 仅 undici 失败
     appendUpdateError({
       at: new Date().toISOString(),
       source: 'test-proxy',
@@ -158,6 +169,7 @@ async function testProxyConnection(config: IProxyConfig): Promise<ProxyTestResul
       errorCode: info.code,
       rawCause: classified.rawCause,
       proxyUrl,
+      engine: err instanceof CurlFetchError ? 'curl' : 'undici',
     })
     return { success: false, code: info.code, message: info.message, suggestion: info.suggestion }
   }
