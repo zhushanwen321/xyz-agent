@@ -70,8 +70,11 @@ export interface MessageEffectContext {
    */
   drainN: (sessionId: string, sendMode: SteerFollowUpMode, n: number) => Segment[][]
   /**
-   * [W14] 深度结构性对账（D6：深度权威 = pi pendingMessageCount）——queue_update
-   * handler 每帧 drain 处理后调，偏差时全量重对 pendingBuffer（见 store.reconcilePending）。
+   * [W14] 深度结构性对账（D6：深度权威 = pi pendingMessageCount）——偏差时全量重对
+   * pendingBuffer（见 store.reconcilePending）。
+   * [steer-bubble u2 / D4] 投递侧（queue_update 每帧）调用已移除（会吃掉腿 2 还没回填的
+   * segments，F3 不可逆放大器）；现调用点：G-023 时点（message_start(assistant)）僵尸清理
+   * （传快照深度）与 abort（message.complete{stopReason:'aborted'}，传 0 = 全清）。
    */
   reconcilePending: (sessionId: string, depth: number) => void
   /**

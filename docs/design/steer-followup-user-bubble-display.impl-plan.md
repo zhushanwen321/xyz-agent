@@ -107,6 +107,7 @@ graph TD
 | 2026-08-30 | u2-lifecycle | 僵尸清理与 abort 清空复用 ctx.reconcilePending（存量>深度判断内建、depth=0 全清），未新增 store action | 新增 action 须改 effect-types.ts（不在领地）；复用语义精确匹配 D4「裁残量/全清」 | 合理不一致登记（零越界复用，reconcilePending 获得新调用方无需 deprecated） |
 | 2026-08-30 | u2-lifecycle | store.ts 改动为 reconcilePending 函数头注释更新（函数体零改动） | 投递侧调用移除后原注释与行为背离，必要文档一致性修复 | 合理不一致登记（超「仅新增 action」字面范围，已核 diff 纯注释） |
 | 2026-08-30 | u2-lifecycle | pending-drain-fifo 组4 / effects TC4 由「投递侧裁剪」断言改写为「G-023 僵尸清理 / 不再调 reconcilePending」断言 | D4 行为移除的直接锁定对象；已核 diff 为换断言（非删断言），并新增组6（F3 不可逆丢失回归）/组7（腿 2 回填非降级） | 合理不一致登记（行为变更测试同步） |
+| 2026-08-30 | u4-equivalence | E5 组采用真 store + applyMessageEvent 范式（custom-start-equivalence 同款）而非 W6 块纯 reducer 双序列构造 | 腿 2 插入产物是 messages ref 气泡（appendUser 路径），纯 reducer 层无法驱动；reducer 权威镜像维度在 E5a 内补齐 deep-equal 共用 | 合理不一致登记（范式对齐既有惯例） |
 
 ## 6 状态表
 
@@ -117,7 +118,7 @@ graph TD
 | u3-reconcile | committed | 0 | fc0f800e3：mergeBaselineWithLive 两步规则 + hydrate 复用；typecheck 绿；store.test.ts 76 passed（68 既有 + 8 新增，含四类快照 + 已知边界 + F2 组合）；域内回归 27 files / 530 tests 绿 |
 | u1-leg2 | committed | 0 | 93a667f66：confirmUserDeliveryOnMessageEnd 腿 2 裁决（inflight 抵消/includes 兜底/纯文本降级/剔快照）；effects.test.ts 38 passed（31 既有 + 7 新增七路径）；域内回归 481 passed |
 | u2-lifecycle | committed | 0 | queue_update 投递侧裁剪移除 + 腿 1 inflight +=m；G-023 条件清（F4 修复）+ 同点僵尸清理；abort 三项清；send 挂钩 ±1 + S7 注释清理；域内 22 files / 498 tests 绿（pending-drain-fifo 7 + effects 49 + useChat 35） |
-| u4-equivalence | pending | 0 | — |
+| u4-equivalence | committed | 0 | apply-entry-equivalence E5a/E5b/E5c（腿 2 includes 消费 / 纯文本降级 / 腿 1——stripHetero 归一 deep-equal + id 异源形态断言 + inflight 抵消无双插）：28 passed（25 既有 + 3 新增）；runtime equivalence 18 files / 65 tests 零破坏；effect-types reconcilePending JSDoc 更正调用点 |
 
 ## 7 残留风险与变更历史
 

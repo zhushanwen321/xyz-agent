@@ -5,6 +5,8 @@
  * 1. 本文件：同 fixture 序列两次喂入 reducer → state 全等（D5 纯函数确定性）+
  *    lift 保真（伪消息 lift == 手写等价 entry 直接喂入）。fixture 全集取自迁移前
  *    message-converter*.test.ts 家族的真实形态（用例集不缩水）。
+ *    [steer-bubble u4 / AC-7] E5 组：steer/followUp 投递气泡（腿 1 / 腿 2 消费 /
+ *    腿 2 纯文本降级）vs 文件重放投影——真 store 驱动 registry 消费链，按字段归一断言。
  * 2. runtime src/__tests__/equivalence/live-reload.test.ts：live≡reload store 级同构
  *    （真实 pi 子进程，实时 message_end 流与 get_entries 重放喂同一 reducer）。
  *
@@ -13,12 +15,16 @@
  *
  * 运行：cd packages/core && pnpm exec vitest run src/domain/chat/__tests__/apply-entry-equivalence.test.ts
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { effectScope } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 import { replayEntries } from '../apply-entry'
 import type { ChatViewState, PiEntry } from '../apply-entry'
 import { toRenderItems } from '../message-turns'
 import type { RenderItem } from '../message-turns'
-import type { Message } from '@xyz-agent/shared'
+import { createChatStore } from '../store'
+import type { ChatStoreInstance } from '../store'
+import type { Message, Segment, ServerMessage } from '@xyz-agent/shared'
 import {
   convertPiHistory,
   liftHistoryToEntries,
@@ -491,6 +497,235 @@ describe('live ≡ reload 构造性等价（W6 全类型）', () => {
     // 用户可见行为：两侧都是空 content 行（不走 fallback 文案——与 E4b 的 undefined 形态对照）
     expect(liveState.messages[0]).toMatchObject({ role: 'system', content: '' })
     expect(replayState.messages[0]).toMatchObject({ role: 'system', content: '' })
+  })
+})
+
+// ── steer/followUp 投递气泡 live ≡ reload（steer-bubble u4 / D3 表述修正 + §4 AC-7）──
+//
+// 锁定对象：steer/followUp 投递的用户气泡。live 侧走**真实 store + applyMessageEvent**
+// （真 registry 腿 1 / 腿 2 消费链，custom-start-equivalence 同款范式），重放侧 = 同内容
+// pi 持久化 entry（uuidv7 id）直接 replayEntries——归一后逐字段 deep-equal。
+//
+// [D3 表述修正] 腿 2 插入与重放投影是**形态同构、id 异源**：live ref 气泡 id 是 appendUser
+// 客户端 `u-<uuid>`（clientUuid 契约），重放投影 id 是 pi uuidv7 entry id——属 W21 已裁决
+// 差异类。归一只剥 id / piEntryId / timestamp 三异源字段，**断言 id 异源形态而非相等**；
+// timestamp 用时钟窗容差（ref 侧 = appendUser 客户端时钟，重放侧 = pi 落盘时刻，差值为
+// 投递延迟）。其余字段（role / content segments / status / contentBlocks …）逐字段相等。
+//
+// 内容前提（P2 探针 ✅）：plain 文本下入队文本 = 投递 contentText = 帧数组文本三处同源，
+// 故提交 segments 与重放投影内容恒等。已知例外：file/mention 徽章 segments 无法从 entry
+// 反解（重开降级纯文本，D5 已裁决维持现状 + segments sidecar 回填）——不进本组断言范围。
+describe('steer/followUp 投递气泡 live ≡ reload（steer-bubble u4 / D3 + AC-7）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  /** ms → ISO（fixture 统一 timestamp 形态） */
+  const ts = (ms: number) => new Date(ms).toISOString()
+
+  /** uuidv7 形态假 id（重放侧专用，模拟 pi 持久化 id 空间；独立于 W6 块的同形 helper） */
+  const piId = (n: number) => `0198aabb-ccdd-7e${n.toString().padStart(2, '0')}-8f00-0000000000${n}0`
+
+  /** 构造独立 store 实例（effectScope 包裹 onScopeDispose 注册 + 测试隔离）。 */
+  function makeStore(): { store: ChatStoreInstance; dispose: () => void } {
+    const scope = effectScope(true)
+    const store = scope.run(() => createChatStore())!
+    return { store, dispose: () => scope.stop() }
+  }
+
+  /** message_end(user) 帧构造（event-adapter handleMessageEnd 重构形态：entry **无 id**——
+   * pi 在 emit 之后才 appendMessage 分配 uuidv7；content parts 数组为 P2 探针实证形态）。 */
+  function userEndFrame(sid: string, text: string, at: number): ServerMessage {
+    return {
+      type: 'message.message_end',
+      payload: {
+        sessionId: sid,
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: ts(at),
+          message: { role: 'user', content: [{ type: 'text', text }], timestamp: at },
+        },
+      },
+    } as ServerMessage
+  }
+
+  /** 同内容单 text part 持久化 entry（重放侧 get_entries 返回形态：uuidv7 id + pi 落盘时刻） */
+  function persistedUserEntry(id: string, text: string, at: number): PiEntry {
+    return {
+      type: 'message',
+      id,
+      parentId: null,
+      timestamp: ts(at),
+      message: { role: 'user', content: [{ type: 'text', text }], timestamp: at },
+    }
+  }
+
+  /** ref 气泡归一：剥 W21 已裁决三异源字段——id（live u-<uuid> vs 重放 uuidv7）、piEntryId
+   *（appendUser 构造点已剥，对称防御性同剥）、timestamp（客户端时钟 vs pi 落盘时刻）。 */
+  function stripHetero(m: Message): Record<string, unknown> {
+    const { id: _id, piEntryId: _pid, timestamp: _ts, ...rest } = m
+    return rest as Record<string, unknown>
+  }
+
+  /** id 异源形态断言（D3 表述修正：断言形态而非相等）+ ref timestamp 时钟窗容差断言 */
+  function expectIdShapeAndTsWindow(
+    live: Message,
+    replay: Message,
+    liveWindow: [number, number],
+    replayTs: number,
+  ): void {
+    // live：appendUser 客户端 u-<uuid>（clientUuid 映射链契约形态）
+    expect(live.id).toMatch(/^u-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    // 重放：pi uuidv7（version 7 + variant 位锚定）
+    expect(replay.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    // 形态同构、值异源：显式断言不等（异源是设计裁决，归一是断言策略而非测试妥协）
+    expect(live.id).not.toBe(replay.id)
+    // timestamp 容差：live = appendUser 调用点客户端时钟 ∈ 窗口；重放 = pi 落盘时刻（fixture 值）
+    expect(live.timestamp).toBeGreaterThanOrEqual(liveWindow[0])
+    expect(live.timestamp).toBeLessThanOrEqual(liveWindow[1])
+    expect(replay.timestamp).toBe(replayTs)
+  }
+
+  it('E5a: 腿 2 includes 消费（drainN 回填 segments）ref 气泡 ≡ 重放投影——F1 兜底路径', () => {
+    const s = makeStore()
+    const sid = 's-leg2-segments'
+    const text = 'streaming 中追加的补充说明'
+    const segments: Segment[] = [{ type: 'text', text }]
+    // live 前置链：提交 steer 暂存 → pi 入队帧写快照（F1：splice 失败 / drain 帧未达——
+    // 快照停留于入队帧，投递时腿 1 无 prev，显示由腿 2 兜底）
+    s.store.pushPending(sid, segments, 'steer')
+    s.store.applyMessageEvent(sid, {
+      type: 'message.queue_update',
+      payload: { sessionId: sid, steering: [text], pendingMessageCount: 1 },
+    } as ServerMessage)
+
+    // pi 投递：message_end(user) 帧到达 → inflight 0 → includes 命中 → drainN 回填 segments
+    const t0 = Date.now()
+    s.store.applyMessageEvent(sid, userEndFrame(sid, text, t0))
+    const t1 = Date.now()
+
+    // G1 用户可见：气泡恰一条（G2：segments 回填非降级）
+    const refUsers = s.store.getMessages(sid).filter((m) => m.role === 'user')
+    expect(refUsers).toHaveLength(1)
+    const live = refUsers[0]!
+    expect(live).toMatchObject({ role: 'user', status: 'complete', content: segments })
+
+    // 重放投影：同内容持久化 entry（uuidv7 id，pi 落盘 timestamp = 帧 timestamp）
+    const replayState = replayEntries([persistedUserEntry(piId(1), text, t0)])
+    expect(replayState.messages.filter((m) => m.role === 'user')).toHaveLength(1)
+    const replay = replayState.messages[0]!
+
+    // 按字段归一 deep-equal（content segments / role / status / contentBlocks 逐字段）
+    expect(stripHetero(live)).toEqual(stripHetero(replay))
+    expectIdShapeAndTsWindow(live, replay, [t0, t1], t0)
+
+    // reducer 权威镜像同构：live 侧帧 entry（无 id → 位置派生 e<N>）与重放（uuidv7）
+    // 剥 id/piEntryId 后逐字段一致——timestamp 两侧 fixture 同值可直比（差异只在 ref 侧
+    // appendUser 客户端时钟，上方窗断言已覆盖）。此维度对三条路径共用（message_end 帧
+    // 恒先喂 reducer，E5b/E5c 不再重复）。
+    const liveReducer = s.store._entryStatesForTest.get(sid)!.messages
+    expect(liveReducer).toHaveLength(1)
+    const { id: _li, piEntryId: _lp, ...liveReducerMsg } = liveReducer[0]!
+    const { id: _ri, piEntryId: _rp, ...replayMsg } = replay
+    expect(liveReducerMsg).toEqual(replayMsg)
+    s.dispose()
+  })
+
+  it('E5b: 腿 2 纯文本降级（暂存空 → 帧内文本插入）ref 气泡 ≡ 重放投影——多 text part 拼接同源', () => {
+    const s = makeStore()
+    const sid = 's-leg2-plain'
+    // 暂存空（扩展 deliverAs 注入场景）：pendingBuffer 无货 → drainN 取空 → 纯文本降级。
+    // 帧内容用多 text part：live extractUserContentText 顺序拼接与重放 reducer
+    // collectTextPart 累加是同语义（apply-entry-convert，P2：pi 不 trim）
+    const joined = 'first part ' + 'second part'
+    // 快照含拼接文本（入队帧数组文本 = 投递 contentText，P2 三处同源）
+    const t0 = Date.now()
+    s.store.applyMessageEvent(sid, {
+      type: 'message.queue_update',
+      payload: { sessionId: sid, followUp: [joined], pendingMessageCount: 1 },
+    } as ServerMessage)
+    s.store.applyMessageEvent(sid, {
+      type: 'message.message_end',
+      payload: {
+        sessionId: sid,
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: ts(2000),
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'first part ' }, { type: 'text', text: 'second part' }],
+            timestamp: 2000,
+          },
+        },
+      },
+    } as ServerMessage)
+    const t1 = Date.now()
+
+    const refUsers = s.store.getMessages(sid).filter((m) => m.role === 'user')
+    expect(refUsers).toHaveLength(1)
+    const live = refUsers[0]!
+    // G2 降级形态：帧内拼接文本包成单 text segment（降级可见不静默）
+    expect(live.content).toEqual([{ type: 'text', text: joined }])
+
+    // 重放侧独立构造（本文件惯例：两侧消息体独立手写不共享字面量）：同内容多 part entry
+    const replayState = replayEntries([{
+      type: 'message',
+      id: piId(2),
+      parentId: null,
+      timestamp: ts(2000),
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'first part ' }, { type: 'text', text: 'second part' }],
+        timestamp: 2000,
+      },
+    }])
+    const replay = replayState.messages[0]!
+
+    expect(stripHetero(live)).toEqual(stripHetero(replay))
+    // timestamp 异源容差：live 客户端时钟窗 / 重放 pi 落盘时刻 2000（fixture 值），不直比
+    expectIdShapeAndTsWindow(live, replay, [t0, t1], 2000)
+    s.dispose()
+  })
+
+  it('E5c: 腿 1（queue_update drain → drainN FIFO 回填）ref 气泡 ≡ 重放投影；确认帧抵消无双插', () => {
+    const s = makeStore()
+    const sid = 's-leg1-eq'
+    const text = '注意用中文回复'
+    const segments: Segment[] = [{ type: 'text', text }]
+    s.store.pushPending(sid, segments, 'steer')
+    s.store.applyMessageEvent(sid, {
+      type: 'message.queue_update',
+      payload: { sessionId: sid, steering: [text], pendingMessageCount: 1 },
+    } as ServerMessage)
+    // pi 投递：drain 帧先于 message_end（P1）——countDrained 差集 1 → drainN FIFO 取出
+    // → appendUser（segments 原引用入流）；投递侧不裁剪（D4），buffer 清空由 drainN 自身完成
+    const d0 = Date.now()
+    s.store.applyMessageEvent(sid, {
+      type: 'message.queue_update',
+      payload: { sessionId: sid, steering: [], pendingMessageCount: 0 },
+    } as ServerMessage)
+    const d1 = Date.now()
+
+    const refUsers = s.store.getMessages(sid).filter((m) => m.role === 'user')
+    expect(refUsers).toHaveLength(1)
+    const live = refUsers[0]!
+    // 腿 1 消费置确认配额（D2 维护点 1：已显示待 message_end 确认）
+    expect(s.store.getInflight(sid)).toBe(1)
+
+    // 确认帧到达（正常路径后置）：inflight 抵消零动作——不查 includes、不再 appendUser
+    //（多插盯防：AC-1 的 D2 互斥裁决在等价性用例里的直接表现）
+    const t0 = Date.now()
+    s.store.applyMessageEvent(sid, userEndFrame(sid, text, t0))
+    expect(s.store.getInflight(sid)).toBe(0)
+    expect(s.store.getMessages(sid).filter((m) => m.role === 'user')).toHaveLength(1)
+
+    // 腿 1 ref 气泡 vs 同 entry 重放投影（ref timestamp = drain 帧消费点时钟，窗口取 d0/d1）
+    const replayState = replayEntries([persistedUserEntry(piId(3), text, t0)])
+    const replay = replayState.messages[0]!
+    expect(stripHetero(live)).toEqual(stripHetero(replay))
+    expect(live).toMatchObject({ role: 'user', status: 'complete', content: segments })
+    expectIdShapeAndTsWindow(live, replay, [d0, d1], t0)
+    s.dispose()
   })
 })
 
