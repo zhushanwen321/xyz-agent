@@ -109,6 +109,7 @@ graph TD
 
 ## 7 残留风险与变更历史
 
+- **残留风险（Gate B 阶段新发现的认知外 bug）**：dev 模式无 `XYZ_AGENT_DATA_DIR` 启动时，update 模块的 `UPDATE_DIR`（constants.ts 模块级常量）在 import 期烤死为真实目录 `~/.xyz-agent/update`——main.ts 的 isDev env 覆盖晚于静态 import 链执行。后果：dev 实例的升级产物/日志会写入真实数据目录（Gate B 期间实测发生过一次，已清理还原）。不属本流水线领地，登记待用户裁决是否立修复任务。
 - **残留风险**：① A7 跨平台定向检查无法在本机执行（deferred 至 CI/手测）；② §5 待验证检查点 4 条（curl speed-time 等价性 / 打包环境 spawn / 进度平滑度 / Win curl 支持）属实施期门，计划在 u2 完成后以探针脚本验证；③ u7 触达 UpdateCheckCard.vue 与 locales，需遵守 renderer 三视角测试红线（用户可见 DOM 断言）。
 - **变更历史**：
   - 2026-08-30 计划创建（阶段 0 预检通过：结构四节齐全；审查证据 [update-network-resilience.review.md](update-network-resilience.review.md) must_fix=0）。
