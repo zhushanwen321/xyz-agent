@@ -98,14 +98,19 @@ graph TD
 
 初始为空。格式：| 日期 | 单元 | 偏差 | 理由 | 处置 |
 
+| 日期 | 单元 | 偏差 | 理由 | 处置 |
+|------|------|------|------|------|
+| 2026-08-30 | u3-reconcile | D3 已确认判据在「piEntryId 缺失或不在基线 id 集」字面规则上加 id 命中兜底（身份集 = piEntryId ∪ id 双收，isConfirmed = 任一命中） | 字面规则下 hydrate 投影 user（id 即基线 id、无 piEntryId 的形态）被误判未确认 → 保护段越过已确认 user 扩展 → 既有用例回归；overlay u-<uuid> 与基线 uuidv7 永不相交，兜底不误判 | 合理不一致登记 + 设计文档 D3 判据措辞同步修正（身份集读法，随 u3 commit） |
+| 2026-08-30 | u3-reconcile | hydrate 的 load-more 切分锚改为取**基线**首条（非 merged 首条） | live 保护段可能排在 merged 头部，用 merged 首条会污染切分锚 | 合理不一致登记（实现内注释披露，不改设计——设计未规定锚取值细节） |
+
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | u-probe | in-progress | 0 | 探针 agent 运行中（pi rpc 实跑 P1/P2/P3） |
-| u0-foundation | committed | 0 | commit: inflight state + 4 action + ctx 注入 + D4 豁免注释 ×2；typecheck 绿；store.test.ts 68 passed（61 既有 + 7 新增 inflight） |
+| u0-foundation | committed | 0 | e7fdf2cd5：inflight state + 4 action + ctx 注入 + D4 豁免注释 ×2；typecheck 绿；store.test.ts 68 passed（61 既有 + 7 新增） |
+| u3-reconcile | committed | 0 | mergeBaselineWithLive 两步规则 + hydrate 复用；typecheck 绿；store.test.ts 76 passed（68 既有 + 8 新增，含四类快照 + 已知边界 + F2 组合）；域内回归 27 files / 530 tests 绿 |
 | u1-leg2 | pending | 0 | — |
-| u3-reconcile | pending | 0 | — |
 | u2-lifecycle | pending | 0 | — |
 | u4-equivalence | pending | 0 | — |
 

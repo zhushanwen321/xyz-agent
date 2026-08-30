@@ -43,6 +43,28 @@ function streamingAssistant(id: string, overrides: Partial<Message> = {}): Messa
   return { id, role: 'assistant', content: '', status: 'streaming', timestamp: 1, ...overrides }
 }
 
+/** 构造 complete assistant 消息（基线 / 分区共用形态） */
+function completeAssistant(id: string, content = '回复'): Message {
+  return { id, role: 'assistant', content, status: 'complete', timestamp: 1 }
+}
+
+/**
+ * [steer-bubble u3/D3] 构造基线（文件重放 / getHistory 快照）user 消息：
+ * 携带真实 pi entry id（piEntryId + entry 派生 id，uuidv7 空间）。
+ */
+function baselineUser(entryId: string, content = 'hi'): Message {
+  return { id: entryId, piEntryId: entryId, role: 'user', content, status: 'complete', timestamp: 1 }
+}
+
+/**
+ * [steer-bubble u3/D3] 构造 live overlay user 消息（appendUser 投递形态）：
+ * 客户端 `u-<uuid>` id，piEntryId 被剥除（store.ts appendUser 剥除点）——
+ * 与基线 uuidv7 是两个永不相等的 id 空间，mergeBaselineWithLive 的未确认判据。
+ */
+function overlayUser(id: string, content = 'hi'): Message {
+  return { id, role: 'user', content, status: 'complete', timestamp: 2 }
+}
+
 describe('createChatStore factory', () => {
   let sut: { store: ChatStoreInstance; dispose: () => void }
 
@@ -140,6 +162,174 @@ describe('createChatStore factory', () => {
         sut.store.reconcileHistory(sid, [userMsg('m1'), userMsg('m2')])
         expect(sut.store.getMessages(sid)).toHaveLength(2)
         expect(sut.store.getHydrateAnchor(sid)).toBe('m1')
+      })
+
+      // ── [steer-bubble u3 / docs/design/steer-followup-user-bubble-display.md D3]
+      //    两步合并快照序列：①尾部保护段收集（streaming assistant ∨ 未确认 user）
+      //    ②user 正序-尾窗对齐去重（a=min(n,k)，保护段正数 1..a ↔ 基线尾部 k−a+1..k
+      //    逐位剔除）。四类快照序列 + 已知边界逐一覆盖（F2：切入刷新不抹已投递气泡、
+      //    不双计）。分区构造：已确认头部（带 piEntryId）+ live overlay 尾部（u- id）。──
+      describe('两步合并快照序列（u3/D3：尾部保护 + user 正序-尾窗对齐去重）', () => {
+        it('全对齐 n=k：快照含全部新投递 → overlay 全剔，基线版本显示（无双计）', () => {
+          const sid = 's1'
+          sut.store.hydrate(sid, [baselineUser('ent-m1', 'q1'), completeAssistant('ent-a1', '先答复')])
+          // live 分区：两条 steer 相继投递（appendUser overlay，客户端 id + 无 piEntryId）
+          sut.store.setMessages(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            overlayUser('u-ov1', '注意用中文'),
+            overlayUser('u-ov2', '顺便看下配置'),
+          ])
+          // 快照已含全部两条投递（n=k=2）
+          sut.store.reconcileHistory(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            baselineUser('ent-r1', '注意用中文'),
+            baselineUser('ent-r2', '顺便看下配置'),
+          ])
+          const msgs = sut.store.getMessages(sid)
+          expect(msgs).toHaveLength(4)
+          // overlay 全剔（无客户端 id 残留）+ 每条文本恰一次（无双计）
+          expect(msgs.some((m) => m.id.startsWith('u-'))).toBe(false)
+          expect(msgs.filter((m) => m.content === '注意用中文')).toHaveLength(1)
+          expect(msgs.filter((m) => m.content === '顺便看下配置')).toHaveLength(1)
+        })
+
+        it('部分滞后 n>k>0：快照在两次落盘之间取得 → s1_ov 剔、s2_ov 留（方向不能倒）', () => {
+          const sid = 's1'
+          sut.store.hydrate(sid, [baselineUser('ent-m1', 'q1'), completeAssistant('ent-a1', '先答复')])
+          sut.store.setMessages(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            overlayUser('u-s1', '第一条'),
+            overlayUser('u-s2', '第二条'),
+          ])
+          // 快照含 s1 不含 s2（k=1 < n=2）
+          sut.store.reconcileHistory(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            baselineUser('ent-s1', '第一条'),
+          ])
+          const msgs = sut.store.getMessages(sid)
+          // 正序-尾窗对齐：s1_ov ↔ s1_real 剔除、s2_ov 保留（快照全缺它）
+          expect(msgs.map((m) => m.id)).toEqual(['ent-m1', 'ent-a1', 'ent-s1', 'u-s2'])
+          expect(msgs.filter((m) => m.content === '第一条')).toHaveLength(1) // 无双计
+          expect(msgs.filter((m) => m.content === '第二条')).toHaveLength(1) // 不丢
+          // 方向断言：倒序对齐（D3 被否项）会把 s2_ov 错配 s1_real——上面两条恰捕获
+        })
+
+        it('基线多含 n<k：快照尾部比保护段多 → overlay 剔除，纯基线刷新（无双计）', () => {
+          const sid = 's1'
+          sut.store.hydrate(sid, [baselineUser('ent-m1', 'q1'), completeAssistant('ent-a1', '先答复')])
+          // 分区只余 s1 的 overlay（s2 的 overlay 尚未插入，n=1）
+          sut.store.setMessages(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            overlayUser('u-s1', '第一条'),
+          ])
+          // 快照已含 s1 + s2 两条落盘（k=2 > n=1）
+          sut.store.reconcileHistory(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            baselineUser('ent-s1', '第一条'),
+            baselineUser('ent-s2', '第二条'),
+          ])
+          const msgs = sut.store.getMessages(sid)
+          expect(msgs).toHaveLength(4)
+          expect(msgs.some((m) => m.id.startsWith('u-'))).toBe(false) // overlay 被基线版本覆盖
+          expect(msgs.filter((m) => m.content === '第一条')).toHaveLength(1)
+          expect(msgs.filter((m) => m.content === '第二条')).toHaveLength(1)
+        })
+
+        it('全缺 k=0：快照全缺（尾部非 user）→ 保护段全保留（G4 不抹已投递气泡）', () => {
+          const sid = 's1'
+          sut.store.hydrate(sid, [baselineUser('ent-m1', 'q1'), completeAssistant('ent-a1', '先答复')])
+          sut.store.setMessages(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            overlayUser('u-s1', '第一条'),
+            overlayUser('u-s2', '第二条'),
+          ])
+          // 快照尾部是 assistant（两次投递均未落盘，k=0）
+          sut.store.reconcileHistory(sid, [baselineUser('ent-m1', 'q1'), completeAssistant('ent-a1', '先答复')])
+          const msgs = sut.store.getMessages(sid)
+          expect(msgs.map((m) => m.id)).toEqual(['ent-m1', 'ent-a1', 'u-s1', 'u-s2'])
+        })
+
+        it('已知边界：跨 turn 重发相同文本 → 数量对齐误剔新 overlay，不丢消息不重复（以基线旧版本显示）', () => {
+          const sid = 's1'
+          // 旧 turn 已落盘同文本 user
+          sut.store.hydrate(sid, [
+            baselineUser('ent-m0', 'q1'),
+            completeAssistant('ent-a0', '旧回复'),
+            baselineUser('ent-old', '重发这句'),
+          ])
+          // 跨 turn 重发相同文本（新 overlay 进保护段；新 entry 尚未落盘）
+          sut.store.setMessages(sid, [
+            baselineUser('ent-m0', 'q1'),
+            completeAssistant('ent-a0', '旧回复'),
+            baselineUser('ent-old', '重发这句'),
+            overlayUser('u-new', '重发这句'),
+          ])
+          sut.store.reconcileHistory(sid, [
+            baselineUser('ent-m0', 'q1'),
+            completeAssistant('ent-a0', '旧回复'),
+            baselineUser('ent-old', '重发这句'),
+          ])
+          // D3 已知边界：n=k=1 但基线那条属旧 turn——新 overlay 被误剔，消息暂以基线
+          // 旧版本显示（位置在历史区）；断言硬约束 = 不丢消息不重复（恰显示一次）
+          const msgs = sut.store.getMessages(sid)
+          expect(msgs).toHaveLength(3)
+          expect(msgs.filter((m) => m.content === '重发这句')).toHaveLength(1)
+        })
+
+        it('F2 组合形态：streaming assistant + 未确认 user 同保护段 → overlay 剔、streaming 保留不断链', () => {
+          const sid = 's1'
+          sut.store.hydrate(sid, [baselineUser('ent-m1', 'q1'), completeAssistant('ent-a1', '先答复')])
+          // F2 窗口：turn 进行中（a-live streaming）+ steer 投递 overlay 追加其后
+          sut.store.setMessages(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            streamingAssistant('a-live', { content: '生成中' }),
+            overlayUser('u-s1', '注意用中文'),
+          ])
+          // 快照已含 s1 落盘（pi 投递即 append）；a-live entry 未完成不在快照
+          sut.store.reconcileHistory(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            baselineUser('ent-s1', '注意用中文'),
+          ])
+          const msgs = sut.store.getMessages(sid)
+          expect(msgs).toHaveLength(4)
+          // s1 双通道收敛为基线版本一条（overlay 剔除，无双计）
+          expect(msgs.filter((m) => m.content === '注意用中文')).toHaveLength(1)
+          // streaming 实体保留（后续 text_delta 守卫不丢流）
+          expect(msgs[3]).toMatchObject({ id: 'a-live', status: 'streaming', content: '生成中' })
+          expect(sut.store.isGenerating(sid)).toBe(true)
+        })
+
+        it('hydrate 复用同规则：未 hydrate 分区持 live 实体 + 快照全缺 → 不抹（G4 首入窗口）', () => {
+          const sid = 's1'
+          // 新 session：send 乐观 overlay + streaming 先于 hydrate 到达
+          sut.store.setMessages(sid, [overlayUser('u-s1', '注意用中文'), streamingAssistant('a-live', { content: '生成中' })])
+          // 首入快照全缺（pi 文件延迟写入：首条 assistant 消息前文件可能不存在）
+          sut.store.hydrate(sid, [baselineUser('ent-m1', '旧问'), completeAssistant('ent-a1', '旧答')])
+          const msgs = sut.store.getMessages(sid)
+          expect(msgs.map((m) => m.id)).toEqual(['ent-m1', 'ent-a1', 'u-s1', 'a-live'])
+          expect(sut.store.isHydrated(sid)).toBe(true)
+          expect(sut.store.isGenerating(sid)).toBe(true)
+          // 锚定基线首条（文件侧身份），不因合并追加的保护段漂移
+          expect(sut.store.getHydrateAnchor(sid)).toBe('ent-m1')
+        })
+
+        it('hydrate 复用去重：快照已含投递 user 时 overlay 剔除（不双计）', () => {
+          const sid = 's2'
+          sut.store.setMessages(sid, [overlayUser('u-s1', '注意用中文')])
+          sut.store.hydrate(sid, [baselineUser('ent-m1', '旧问'), baselineUser('ent-s1', '注意用中文')])
+          const msgs = sut.store.getMessages(sid)
+          expect(msgs).toHaveLength(2)
+          expect(msgs.filter((m) => m.content === '注意用中文')).toHaveLength(1)
+        })
       })
     })
 

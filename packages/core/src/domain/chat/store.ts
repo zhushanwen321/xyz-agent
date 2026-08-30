@@ -103,6 +103,72 @@ function attachRunningToolCall(prev: Message[], form: PiToolCallEntryForm): Mess
 }
 
 /**
+ * [steer-bubble u3 / docs/design/steer-followup-user-bubble-display.md D3]
+ * 基线（服务端 getHistory 快照）与 live 分区的两步合并——reconcileHistory 与 hydrate
+ * 共用同一函数（设计 U3：live ≡ reload，两条历史刷新入口语义同源）。
+ *
+ * 背景（F2）：切入 session 的 getHistory 存在一次本地 RPC 往返窗口——快照取得时消息
+ * 未投递、返回前 pi 恰好投递（drain 帧 → appendUser 入流），旧快照整量替换会抹掉已
+ * 显示的用户气泡（G4 违背）。
+ *
+ * 步骤① 尾部保护段收集：从分区尾向前收集「streaming assistant（pi 无对应 entry 的
+ * 进行中实体，直接替换会让后续 text_delta 被守卫丢弃、流永久停滞）或 user
+ * （piEntryId 缺失或不在基线 id 集——live overlay 的结构性特征：appendUser 剥除
+ * piEntryId 且 id 为客户端 u-<uuid>，与基线 entry 派生 uuidv7 永不相等）」的连续段，
+ * 遇其他已确认消息即停——已确认部分由基线接管（基线是准确相）。
+ *
+ * 步骤② user 正序-尾窗对齐去重：a = min(保护段 user 数 n, 基线尾部连续 user 数 k)，
+ * 保护段**正数**第 1..a 条 ↔ 基线尾部正数第 k−a+1..k 条逐位对齐，对齐上的保护段
+ * user 剔除（基线版本已含该消息），其余 n−a 条保留。方向依据：投递序 = 落盘序
+ * （pi session 文件 appendFileSync 按投递序追加），基线滞后时缺的是尾部新消息
+ * （后缀），对齐必然从保护段头部（先投递）对起。**不能倒序**：k < n 时倒序会把
+ * 保护段最新条（基线没有）错配到基线最新条（较旧）——剔掉基线没有的、留下基线
+ * 已有的，恰好双计反转（设计 D3 被否项）。
+ *
+ * 已知边界（设计 D3，可接受）：跨 turn 重发相同文本时数量对齐可能误剔新 overlay——
+ * 表现为该消息暂以基线旧版本显示（位置在历史区），不丢消息不重复，新 entry 落盘后
+ * 下一轮 reconcile 自然收敛。
+ */
+function mergeBaselineWithLive(baseline: Message[], partition: Message[]): Message[] {
+  // 基线身份集：piEntryId 与 id 双收（user/assistant 消息带 piEntryId；system 族无
+  // piEntryId 字段但 id 即 entry 派生 uuidv7——与 hydrate 锚取值 `piEntryId ?? id` 对称）。
+  // 分区 user 的已确认判据 = 身份任一命中：piEntryId 命中覆盖真实基线投影（前轮
+  // reconcile/hydrate 注入的消息），id 命中兜底同 id 形态；live overlay 的 u-<uuid> id
+  // 与基线 uuidv7 是两个永不相等的 id 空间（mutations.ts prependHistory 同款论证），
+  // 不会被误判已确认。
+  const baselineIds = new Set<string>()
+  for (const m of baseline) {
+    if (m.piEntryId !== undefined) baselineIds.add(m.piEntryId)
+    baselineIds.add(m.id)
+  }
+  const isConfirmed = (m: Message): boolean =>
+    (m.piEntryId !== undefined && baselineIds.has(m.piEntryId)) || baselineIds.has(m.id)
+
+  // 步骤①：尾部保护段（从尾向前，遇已确认消息即止）
+  let cut = partition.length
+  while (cut > 0) {
+    const m = partition[cut - 1]!
+    const isLiveStreaming = m.role === 'assistant' && m.status === 'streaming'
+    const isUnconfirmedUser = m.role === 'user' && !isConfirmed(m)
+    if (!isLiveStreaming && !isUnconfirmedUser) break
+    cut--
+  }
+  const protectedSeg = partition.slice(cut)
+
+  // 步骤②：user 正序-尾窗对齐去重（剔除保护段头部 a 条 user——它们已被基线尾部覆盖）
+  let k = 0
+  while (k < baseline.length && baseline[baseline.length - 1 - k]!.role === 'user') k++
+  const protectedUserIdx: number[] = []
+  for (let i = 0; i < protectedSeg.length; i++) {
+    if (protectedSeg[i]!.role === 'user') protectedUserIdx.push(i)
+  }
+  const a = Math.min(protectedUserIdx.length, k)
+  const alignedIdx = new Set(protectedUserIdx.slice(0, a))
+  const keptTail = protectedSeg.filter((_, i) => !alignedIdx.has(i))
+  return [...baseline.map((m) => ({ ...m })), ...keptTail]
+}
+
+/**
  * 读 streaming 超时阈值（D-003 阈值可配置 + D-016 IPC）。
  * [D-016] 经 IPC 读主进程 env（非 import.meta.env，Vite 不暴露 XYZ_ 前缀）。
  * 留在模块作用域以控制 setup 函数行数（max-lines-per-function）。
@@ -393,15 +459,26 @@ export function createChatStore() {
     failedHistory.value = next
   }
 
-  /** 注入历史（首入 session）。W2 H3 截断回流（AC-10），W3 touchLru。 */
+  /**
+   * 注入历史（首入 session）。W2 H3 截断回流（AC-10），W3 touchLru。
+   *
+   * [steer-bubble u3/D3] 未 hydrate 的分区也可能持有 live 实体（send 乐观插入 /
+   * steer 投递 overlay 先于 hydrate 到达）——快照不含它们时整量替换会抹掉已显示
+   * 气泡（F2 的首入窗口，G4）。与 reconcileHistory 走同一合并函数（设计 U3：
+   * live ≡ reload，两条历史刷新入口语义同源）。分区为空时合并结果 = 基线本身，
+   * 与旧的整量替换行为逐字等价。
+   */
   function hydrate(sessionId: string, history: Message[]): void {
     if (hydrated.value.has(sessionId)) return
-    const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
-    commitMessages(messages, sessionId, cloned)
+    const cur = messages.value.get(sessionId)?.value ?? []
+    commitMessages(messages, sessionId, truncateToolOutputBatch(mergeBaselineWithLive(history, cur)))
     // [W5 D5] hydrate 尾窗锚：hydrate 守卫保证每 session 只在此写一次；
     // disposeSession / LRU 驱逐清 hydrated 后重 hydrate 到这里 → set 覆盖旧锚。
     // 空 history（新 session）不记锚——此时无 load-more（truncated=false），锚缺失走兜底。
-    const anchorMsg = cloned[0]
+    // [steer-bubble u3] 锚取**基线**首条（非 merged 首条）：合并追加的尾部保护段是
+    // live 实体（客户端 id，非文件侧身份），锚是 load-more 对全量历史的切分依据，
+    // 必须锚定在文件侧消息上。
+    const anchorMsg = history[0]
     if (anchorMsg) hydrateAnchors.set(sessionId, anchorMsg.piEntryId ?? anchorMsg.id)
     hydrated.value = new Set(hydrated.value).add(sessionId)
     lruTouch(sessionId) // W3: LRU recency
@@ -413,7 +490,7 @@ export function createChatStore() {
   }
 
   /**
-   * 切入 reconcile：entry 历史（服务端 getHistory 全量）与 live 分区合并。
+   * 切入 reconcile：entry 历史（服务端 getHistory 快照）与 live 分区合并。
    *
    * [背景 session-reconcile 2026-08-22] 后台 session（agent-managed 子 session）在
    * 前端不在场时推进/完成 turn——hydrate 的一次性守卫会让切入后的新 entry 永不出现
@@ -422,9 +499,11 @@ export function createChatStore() {
    * 守卫丢弃 → 流永久停滞。合并方向（登记表 #7 切入 reconcile 规则）：
    * **entry 历史为基线，分区尾部 streaming 实体追加其后**（live 真相优先于 entry 快照）。
    *
-   * - 未 hydrate → 等价 hydrate（原语义：全量替换 + 锚 + 标记）
-   * - 已 hydrate → 基线替换 + 保留尾部 streaming assistant（进行中轮次不断链）；
-   *   turn 已结束（无 streaming 实体）则纯刷新到最新 entries
+   * - 未 hydrate → 等价 hydrate（原语义：合并注入 + 锚 + 标记）
+   * - 已 hydrate → 基线替换 + 保留尾部保护段（streaming assistant + 未确认 user，
+   *   [steer-bubble u3/D3] 两步合并：尾部保护段收集 + user 正序-尾窗对齐去重，见
+   *   mergeBaselineWithLive——快照滞后窗口不丢已投递气泡、不双计；turn 已结束（无
+   *   保护段）则纯刷新到最新 entries
    */
   function reconcileHistory(sessionId: string, history: Message[]): void {
     if (!hydrated.value.has(sessionId)) {
@@ -432,16 +511,7 @@ export function createChatStore() {
       return
     }
     const cur = messages.value.get(sessionId)?.value ?? []
-    // 尾部连续 streaming assistant（live 进行中实体，pi 无对应 entry）。一个 turn 至多
-    // 一条 streaming assistant；从尾向前截，遇非 streaming 即止。
-    let cut = cur.length
-    while (cut > 0 && cur[cut - 1].role === 'assistant' && cur[cut - 1].status === 'streaming') {
-      cut--
-    }
-    const trailing = cur.slice(cut)
-    const merged = trailing.length > 0
-      ? [...history.map((m) => ({ ...m })), ...trailing]
-      : history.map((m) => ({ ...m }))
+    const merged = mergeBaselineWithLive(history, cur)
     commitMessages(messages, sessionId, truncateToolOutputBatch(merged))
     lruTouch(sessionId) // W3: LRU recency（切入刷新视同活跃访问）
   }

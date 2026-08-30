@@ -167,7 +167,7 @@ steer/followUp 提交后，消息**不直接进对话流**（`store.ts:479` push
 
 **D3：reconcileHistory/hydrate 尾部保护 + user 正序-尾窗对齐去重（选定）**
 - **采用**：两步合并规则：
-  1. **尾部保护段收集**（现规则扩展）：从分区尾向前收集「streaming assistant **或** user（piEntryId 缺失或不在基线 id 集）」的连续段，遇其他已确认消息即停——快照滞后时已投递消息先被保留。记保护段中 user 数为 n，基线尾部连续 user 数为 k。
+  1. **尾部保护段收集**（现规则扩展）：从分区尾向前收集「streaming assistant **或** user（身份不在基线身份集）」的连续段，遇其他已确认消息即停——快照滞后时已投递消息先被保留。身份集 = 基线消息的 piEntryId ∪ id 双收集合（与 hydrate 锚取值 `piEntryId ?? id` 对称；live overlay 的 `u-<uuid>` id 与基线 uuidv7 是永不相交的 id 空间，不误判已确认——实施期 u3 落地时确认：hydrate 投影的 user 存在「id 即基线 id、无 piEntryId」形态，单看 piEntryId 的字面判据会把它们误判未确认）。记保护段中 user 数为 n，基线尾部连续 user 数为 k。
   2. **user 正序-尾窗对齐去重**（新增，解决 live id 异源的双计）：对齐数 a = min(n, k)；**保护段正数第 1..a 条 ↔ 基线尾部正数第 k−a+1..k 条**逐位对齐，对齐上的保护段 user 从保留集中剔除（基线版本已含该消息）；保护段其余 n−a 条保留。方向依据：**投递序 = 落盘序**，先投递的先落盘——基线滞后时缺的是尾部新消息（后缀），对齐必然从保护段头部（先投递）与基线尾部窗口的后缀前缘对起。**不能倒序对齐**：k < n 时倒数第 1 会把保护段最新条（基线没有）错配到基线最新条（较旧），剔掉基线没有的、留下基线已有的——恰好双计反转。
 - **被否**：
   - 纯 piEntryId 判定（初版）——live 侧 user 消息 piEntryId 恒缺省（D2 证据），「piEntryId ∈ 基线」对 user 消息结构性不可满足 → 快照全含后 streaming 窗口内 reconcile 双气泡。
