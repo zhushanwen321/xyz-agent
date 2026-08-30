@@ -79,6 +79,19 @@ export {
   type EngineRoutingSource,
 } from "./execution/engine/routing.ts";
 
+// ── 资源发现面（shared/resource-discovery，W2③）──────────────
+// discoverResources：agent .md / workflow .js 的多源统一发现（ADR-031）——多源扫描
+// + stem last-writer-wins 合并 + realpath 去重。宿主（zsw 回接）经 ScanConfig.hostRoots
+// 注入发现根（source 标签即 ResourceSource 槽位键，含 project-host 项目级槽）；
+// 深路径消费在 npm/vendored 发布形态不可达（exports 无深路径通配），故出 barrel。
+export { discoverResources } from "./shared/resource-discovery.ts";
+export type {
+  DiscoveredResource,
+  ResourceKind,
+  ResourceSource,
+  ScanConfig,
+} from "./shared/resource-discovery.ts";
+
 // ── workflow 编排入口（orchestration）────────────────────────
 // runWorkflow / abortRun：run 生命周期 free functions（D-12）——orchestration 的
 // 最小宿主入口。以下 host-surface 扩面（zsw 回接 U0）出 Barrel：宿主壳组装
