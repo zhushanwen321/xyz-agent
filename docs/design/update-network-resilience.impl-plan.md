@@ -90,9 +90,9 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | u0-foundation | committed | 1 | `update/__tests__/ 68 passed`；diff 30 行（error-log engine 字段 + shared UpdateInstallResult） |
-| u1-fetch | pending | 0 | — |
-| u2-curl | pending | 0 | — |
-| u3-claim | pending | 0 | — |
+| u1-fetch | committed | 2 | `0ed3e7c6b` 前置 + spawn env 修复轮；update suite 128 passed（60 新用例）；守卫 0 违规 |
+| u2-curl | committed | 1 | 17 新用例；update suite 145 passed；spawn env 经 buildOutboundChildEnv（守卫 0 违规） |
+| u3-claim | committed | 1 | `0ed3e7c6b`；10 新用例（真实临时目录+真实文件）；78 passed 单跑 |
 | u4-download | pending | 0 | — |
 | u5-checker | pending | 0 | — |
 | u6-handlers | pending | 0 | — |
