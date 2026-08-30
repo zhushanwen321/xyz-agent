@@ -285,8 +285,7 @@ function scanWorkerClosure(file, rootDir, seen) {
   // ③ fail-closed：残余 require(<非字面量>) 无法静态展开
   const normalized = text.replace(LEFTOVER_CONCAT_RE, ' ')
   const leftover = /\brequire\s*\(\s*[^"')\s]/g
-  let dyn
-  while ((dyn = leftover.exec(normalized)) !== null) {
+  while (leftover.exec(normalized) !== null) {
     fail(`worker 入口子图含无法静态解析的 require(...)（${rel(file)}）——闭包守卫无法证明 worker 零宿主服务，请改为字面量或 SCRIPT_DIR 拼接形态`)
   }
 }
