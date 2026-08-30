@@ -92,6 +92,31 @@ export type {
   ScanConfig,
 } from "./shared/resource-discovery.ts";
 
+// ── 注入渲染面（shared/injection-render + shared/xml-injection，W3）──
+// 三段 XML（<available_subagents>/<available_workflows>/<available_provider_models>）
+// 的 format 纯函数 + Entry 接口从 pi-sw 插件层下沉（D-3）：ModelEntry 并集口径
+// （除 id/name 外全字段 optional，红线 5 守卫不抛不渲垃圾）、分段条目预算
+// （码点序排 + 截尾 + 宿主注入兜底指引；models 段无预算永不截，红线 7）、
+// guide 文案宿主注入（core 不内嵌平台文案）。summarizeDescription 随
+// WorkflowEntry 链导出（zsw 侧同口径消费）。escapeXml/renderXmlSection 渲染
+// 原语随面出 barrel——深路径消费在 npm/vendored 发布形态不可达。
+export {
+  formatAgentList,
+  formatModelList,
+  formatWorkflowList,
+  sortByCodepoint,
+  summarizeDescription,
+} from "./shared/injection-render.ts";
+export type {
+  AgentEntry,
+  ListFormatOptions,
+  ModelEntry,
+  ModelListFormatOptions,
+  ModelReasoningInfo,
+  WorkflowEntry,
+} from "./shared/injection-render.ts";
+export { escapeXml, renderXmlSection } from "./shared/xml-injection.ts";
+
 // ── workflow 编排入口（orchestration）────────────────────────
 // runWorkflow / abortRun：run 生命周期 free functions（D-12）——orchestration 的
 // 最小宿主入口。以下 host-surface 扩面（zsw 回接 U0）出 Barrel：宿主壳组装
