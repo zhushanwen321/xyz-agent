@@ -126,7 +126,7 @@ steer/followUp 提交后，消息**不直接进对话流**（`store.ts:479` push
 
 **失败路径 A（控制帧丢失）**：用户网络闪断 30 秒，期间恰好投递。重连后对话流补齐：agent 的回复气泡出现，**用户气泡也在**——重连 ring 回放按 seq 保序，两腿各需「帧 + 快照」成对成立：腿 1 = drain 帧 + 前置快照（回放先入队帧再 drain 帧，prev 重建，countDrained 正常差集）；腿 2 = `message_end(user)` 数据帧 + 入队帧快照（includes 在重建快照上命中 → 消费插入）。**已知降级形态**：ring 逐出旧帧优先，入队帧（老）被冲掉而 drain 帧（新）存活的断连下，腿 1 缺 prev、腿 2 缺快照，气泡短暂缺失——但 pendingBuffer 未被裁剪，用户切入切出触发 reconcile 刷新后由快照（含已落盘 entry）补齐——恢复动作：切走再切回该 session 即可，无需重启。
 
-**失败路径 B（abort 丢弃）**：用户追加消息后点了停止。pi 丢弃队列中未投递消息，QueueBubble 消失，气泡不出现（未投递的消息不进对话流——与现状语义一致）。前端在同一信号（`message.complete{stopReason:'aborted'}`）清理暂存，无残留错位。
+**失败路径 B（abort，D4 修订 2026-08-30）**：用户追加消息后点了停止。pi `abort()` 不清队列（Gate B 实测：残余在下一 prompt 照常投递、模型收到）——abort 后 QueueBubble 持续显示残余（真实队列深度，非悬挂）；用户下一 prompt 触发投递，气泡正常显示（两腿消费，无漏显窗口）。前端在同一信号（`message.complete{stopReason:'aborted'}`）只清 inflight 计数（已显示未确认条目不会再有 message_end），buffer 与快照随 pi 存活队列保留。
 
 **失败路径 C（RPC 失败）**：追加提交时 WS 已断，steer RPC 失败 → toast 报错 + 暂存回滚（现状 W1 机制，不变）。
 
@@ -178,11 +178,11 @@ steer/followUp 提交后，消息**不直接进对话流**（`store.ts:479` push
 - **表述修正**（对初版）：腿 2 插入与重放投影是**形态同构、id 异源**（live 客户端 id / 重放 uuidv7，W21 已裁决差异类），AC-7 等价性断言按字段归一设计，不断言 id 相等。
 
 **D4：pendingBuffer 生命周期闭合 + queueStates 显示语义归正（选定）**
-- **采用**：去掉 queue_update handler 中 reconcilePending 的**投递侧裁剪**（drain 后立即裁到深度——它会吃掉腿 2 还没回填的 segments，且是丢消息的不可逆放大器）。裁剪语义改为**只清僵尸**：仅在 `message_start(assistant)`（G-023 时点）时，若 buffer 存量 > 快照深度，清空残量。**G-023 从无条件清快照改为条件清**（F4 修复）：仅当快照深度 == 0（无快照或数组全空）时清 queueStates——QueueBubble 消失语义从「新回合启动」（edge，混合提交时误删未投递 followUp 的快照）归正为「队列深度归零」（level，幂等、丢帧可由下一帧收敛）。此时快照深度 = 未投递 followUp 数（steering 已 drain、followUp 待 turn 边界——混合提交常见非 0）；僵尸清理与条件清同帧同据（先读快照深度，再判定），F1 残留快照由 D2 第 3 点的消费剔快照对齐。abort 场景：`message.complete{stopReason:'aborted'}`（registry.ts:226 现有信号）时清 pendingBuffer **+ inflight 计数 + queueStates**——pi abort 确定性清队列，三者同作废，防 FIFO 错位、确认基线悬挂与 QueueBubble 悬挂（G-023 条件清后 abort 后的 message_start(assistant) 不再兜底清残留快照，abort 信号成为唯一出口）。disposeSession 清分区（现状保留）。
-- **刻意保留（跨扰动存活，两条腿的工作前提）**：**LRU 驱逐不清 pendingBuffer / queueStates / inflight 计数**（现状如此，维持）——驱逐重进后腿 2 判定与腿 1 暂存仍可用；**断连收口清 queueStates、保留 pendingBuffer 与 inflight 计数**（现状如此，维持）——重连 ring 回放入队帧可重建 queueStates，buffer 与 inflight 在则两腿可对账消费。注意这与 `store.ts:182`「disposeSession / LRU 驱逐同点清理」的既有清理惯例**不一致，是有意为之**：清理 entryStates/anchors 是重建型状态（hydrate 重放可恢复），pendingBuffer 与 inflight 计数是不可重建状态（segments 与确认基线仅存在于前端），清了即永久丢失/漂移。实施时在 LRU 驱逐回调与 clearIndependentTransient 处加注释声明此豁免，防后续维护按惯例顺手补清。**计数清理挂点**：abort（`message.complete{stopReason:'aborted'}`）与 disposeSession 时同步清 inflight——pi 队列已确定性清空，确认基线作废，防跨生命周期错位（abort 后已显示未确认的条目不会再有 message_end，inflight 残留会吞掉后续投递的确认配额）。
+- **采用**：去掉 queue_update handler 中 reconcilePending 的**投递侧裁剪**（drain 后立即裁到深度——它会吃掉腿 2 还没回填的 segments，且是丢消息的不可逆放大器）。裁剪语义改为**只清僵尸**：仅在 `message_start(assistant)`（G-023 时点）时，若 buffer 存量 > 快照深度，清空残量。**G-023 从无条件清快照改为条件清**（F4 修复）：仅当快照深度 == 0（无快照或数组全空）时清 queueStates——QueueBubble 消失语义从「新回合启动」（edge，混合提交时误删未投递 followUp 的快照）归正为「队列深度归零」（level，幂等、丢帧可由下一帧收敛）。此时快照深度 = 未投递 followUp 数（steering 已 drain、followUp 待 turn 边界——混合提交常见非 0）；僵尸清理与条件清同帧同据（先读快照深度，再判定），F1 残留快照由 D2 第 3 点的消费剔快照对齐。abort 场景（**D4 修订 2026-08-30**）：`message.complete{stopReason:'aborted'}`（registry.ts 现有信号）时**只清 inflight 计数**——初版按「pi abort 确定性清队列」假设做三项清（buffer/inflight/queueStates），Gate B 实测证伪：pi `abort()` 不调 clearQueue 也不 emit queue_update，队列跨 abort 存活并在下一 prompt 照常投递（残余已被模型收到）。pendingBuffer 与 queueStates 是 pi 存活队列的前端镜像，随 pi 保留——下一 prompt 投递时两腿正常消费（腿 1 回填完整 segments），abort 后 QueueBubble 持续显示 = 真实队列深度（初版判定的「abort 后 QueueBubble 悬挂」实为真实态）；快照/暂存偏差收敛出口 = G-023 条件清 + 僵尸清理（帧驱动对账，不依赖 abort 全清）；inflight 清除保留——abort 后已显示未确认条目不会再有 message_end，残留会吞掉后续投递的确认配额。disposeSession 清分区（现状保留）。
+- **刻意保留（跨扰动存活，两条腿的工作前提）**：**LRU 驱逐不清 pendingBuffer / queueStates / inflight 计数**（现状如此，维持）——驱逐重进后腿 2 判定与腿 1 暂存仍可用；**断连收口清 queueStates、保留 pendingBuffer 与 inflight 计数**（现状如此，维持）——重连 ring 回放入队帧可重建 queueStates，buffer 与 inflight 在则两腿可对账消费。注意这与 `store.ts:182`「disposeSession / LRU 驱逐同点清理」的既有清理惯例**不一致，是有意为之**：清理 entryStates/anchors 是重建型状态（hydrate 重放可恢复），pendingBuffer 与 inflight 计数是不可重建状态（segments 与确认基线仅存在于前端），清了即永久丢失/漂移。实施时在 LRU 驱逐回调与 clearIndependentTransient 处加注释声明此豁免，防后续维护按惯例顺手补清。**计数清理挂点**：abort（`message.complete{stopReason:'aborted'}`）与 disposeSession 时同步清 inflight——abort 后已显示未确认的条目不会再有 message_end（确认通道作废），inflight 残留会吞掉后续投递的确认配额；disposeSession 分区整体销毁。
 - **被否**：维持"每帧 reconcilePending 裁剪"——pi 时序保证 drain 帧先于 message_end，立即裁剪会让腿 2 的 segments 回填在正常路径下永远失效（D2 依赖 buffer 在两腿间存活到 message_end 到达）；断连等场景的裁剪不可逆丢内容（F3 放大器）。**维持 G-023 无条件清（现状）**——F4 反例：混合提交 [steer s1 + followUp f1] 常态路径下，s1 投递后的 message_start(assistant) 无条件删 `{followUp:[f1]}` 快照 → f1 投递时腿 1 prev 缺失 + reconcilePending 裁空 buffer + 腿 2 无快照可查，f1 永久漏显（AC-1 主路径即此场景）；条件清后 f1 投递时 prev 在场，腿 1 直接恢复。
-- **证据**：pi 投递时序（queue_update → message_end(user)，同批事件循环内相邻）；`reconcilePending` 现行为（`registry.ts:640`，drain 后无条件执行）；G-023 无条件 `queueStates.value.delete(sid)`（`registry.ts:151`，注释自述"只清显示态"——但快照同时是腿 2 includes 的判据源与腿 1 的 prev，清显示态 = 断数据链）；空帧删条目（`registry.ts:642-648`，drain 到空自动收敛 QueueBubble——条件清只是让"深度未归零"的快照活下去）；**pi `abort()` 不调 `clearQueue()` 也不 emit queue_update**（pi dist agent-session.js:1222-1227，clearQueue 是独立 API :1191-1201）——abort 后 session 层队列镜像既不清也不通知，前端 abort 信号清快照是唯一出口，且顺带修复现状 abort 后 QueueBubble 悬挂的存量 bug（无 message_start(assistant) 跟随时现状本就无人清）；LRU 驱逐回调现清单（`store.ts:323-334`，不含 queueStates/pendingBuffer）与 clearIndependentTransient 现清单（`streaming-state-machine.ts:115-128`，清 queueStates 不清 pendingBuffer）；混合提交时 G-023 时点深度=1（steering 投递后 followUp 仍在队，final gate review 轮确认）。
-- **效果**：G2 成立（buffer 存活到 message_end，正常路径徽章不降级）；**F4 修复**（混合提交常态路径 f1 显示恢复，且 QueueBubble 在 followUp 待投递期间持续显示——比现状语义更正确）；buffer 生命周期出口全闭合：push（提交）→ drain（两腿消费）→ abort 清空（pi 丢弃）/ abortPending（RPC 失败）→ disposeSession（销毁）｜LRU 驱逐与断连收口 = **刻意保留**（见上）。僵尸隔离：G-023 时点清残量防 FIFO 错位污染后续 steer。
+- **证据**：pi 投递时序（queue_update → message_end(user)，同批事件循环内相邻）；`reconcilePending` 现行为（`registry.ts:640`，drain 后无条件执行）；G-023 无条件 `queueStates.value.delete(sid)`（`registry.ts:151`，注释自述"只清显示态"——但快照同时是腿 2 includes 的判据源与腿 1 的 prev，清显示态 = 断数据链）；空帧删条目（`registry.ts:642-648`，drain 到空自动收敛 QueueBubble——条件清只是让"深度未归零"的快照活下去）；**pi `abort()` 不调 `clearQueue()` 也不 emit queue_update**（pi dist agent-session.js:1222-1227，clearQueue 是独立 API :1191-1201）——abort 后 session 层队列既不清也不通知，**队列跨 abort 存活并在下一 prompt 投递**（Gate B 2026-08-30 实测残余投递——D4 修订依据：abort 保留 buffer/快照与 pi 真实队列对齐，abort 后 QueueBubble 持续显示为真实态而非悬挂）；LRU 驱逐回调现清单（`store.ts:323-334`，不含 queueStates/pendingBuffer）与 clearIndependentTransient 现清单（`streaming-state-machine.ts:115-128`，清 queueStates 不清 pendingBuffer）；混合提交时 G-023 时点深度=1（steering 投递后 followUp 仍在队，final gate review 轮确认）。
+- **效果**：G2 成立（buffer 存活到 message_end，正常路径徽章不降级）；**F4 修复**（混合提交常态路径 f1 显示恢复，且 QueueBubble 在 followUp 待投递期间持续显示——比现状语义更正确）；buffer 生命周期出口全闭合：push（提交）→ drain（两腿消费）→ abortPending（RPC 失败）→ disposeSession（销毁）｜abort、LRU 驱逐与断连收口 = **刻意保留**（abort 保留 = pi 队列跨 abort 存活，D4 修订；其余见上）。僵尸隔离：G-023 时点清残量防 FIFO 错位污染后续 steer。
 
 **D5：steer/followUp 的 badge 重开回填不接 msg-id 标记（选定，scope 裁剪）**
 - **采用**：本设计不给 steer/followUp 的 promptText 加 `<!--xyz:msg:u-uuid>-->` 标记（send 独有机制）。重开后 steer 消息维持纯文本降级（现状已知限制，`store.ts:444` 注释 textToSegments 已知限制）。
@@ -218,10 +218,10 @@ steer/followUp 提交后，消息**不直接进对话流**（`store.ts:479` push
   切入 session（selectSession）─→ getHistory 快照 ─★ reconcileHistory 两步合并：
        ①尾部保护段（streaming assistant ∨ user 未确认）②user 数量对齐去重（基线已含则剔 overlay）
 
-  pendingBuffer 生命周期：push → 两腿 drain → aborted 信号清空 / RPC 失败回滚 → disposeSession 清
-                          ｜ LRU 驱逐、断连收口 = 刻意保留（不可重建状态，见 D4）
+  pendingBuffer 生命周期：push → 两腿 drain → RPC 失败回滚 → disposeSession 清
+                          ｜ abort、LRU 驱逐、断连收口 = 刻意保留（不可重建状态 / pi 队列存活，见 D4 修订）
   inflight 计数：腿 1 消费 +m / send 乐观插入 +1 / message_end 确认 −1 / abort·disposeSession 清零 ★
-  queueStates：入队帧/回放重建 → 腿 2 消费剔文本对齐深度 → 深度归零删 / abort 删 ★（其余清理点见 D4 豁免）
+  queueStates：入队帧/回放重建 → 腿 2 消费剔文本对齐深度 → 深度归零删 / 断连收口清 ★（abort·LRU 驱逐 = 刻意保留，见 D4 修订）
 ```
 
 ### 错误规格与恢复指引
@@ -235,10 +235,10 @@ steer/followUp 提交后，消息**不直接进对话流**（`store.ts:479` push
 | 跨 mode 同文本且腿 1 全失效 | 顺序 fallback（steering→followUp 取有货方）后降级收敛到「两命中维度暂存全空」一种：纯文本降级插入（内容同质、数量不差，D2 已知边界①） | 无需恢复 |
 | 编辑重发文本与未投递 steer 同文本碰撞（理论边界，三条件叠加：编辑入口 streaming 中可达 + 同文本 + 腿 1 未先消费） | edit 的 message_end 走 includes 误命中 → 腿 2 消费 buffer 未投递条目（未投递先显示）；编辑入口通常仅非 streaming 可用（队列空），实际概率趋零 | 无需恢复（与 abort 丢弃语义一致的极低概率错位，下一轮 reconcile 收敛） |
 | 时序倒置（message_end 先于 drain 帧，P1 假设外） | 腿 2 先消费后 drain 帧到达，腿 1 错取下一条 | P1 降级路径：腿 1 加守卫（drain 帧处理时若本帧差集文本已被腿 2 消费——per-session 已消费文本 multiset——跳过 drainN） |
-| abort 时 buffer/inflight/queueStates 清空后用户重发同文本 | pushPending 新条目 + inflight 从 0 起步，FIFO 无残留干扰 | — |
+| abort 后、残余投递前用户重发同文本 | 残余与新提交并存且各显示一次（pi 队列跨 abort 存活，两者都会真实投递——非双计）；inflight 已清零、与后续投递重新配对无配额污染 | — |
 | G-023（message_start(assistant)）时快照深度 > 0（混合提交，followUp 待投递） | 快照保留，QueueBubble 持续显示待投递条目；该 followUp 投递时腿 1 prev 在场正常差集（F4 修复后的正常路径） | 无需恢复 |
 | F1 场景腿 2 消费后快照残留同文本 | 消费时剔快照一个实例（D2 第 3 点），后续提交的 countDrained 不被残留污染（pi 侧镜像残留经全量帧带回的窗口见 D2 边界披露，与现状等同） | 无需恢复（剔快照内建） |
-| 清理信号帧丢失（message_start(assistant) / message.complete{aborted} 被 ring 冲掉） | 显示态悬挂：QueueBubble 显示已投递/已作废条目；数据链无损（buffer/inflight 有 D3 与计数兜底） | 无需操作——下一次 queue_update 全量帧自愈或切入刷新收敛 |
+| 清理信号帧丢失（message_start(assistant) 被 ring 冲掉；abort 信号丢失 → inflight 悬挂，由下行配额漂移行兜底） | 显示态悬挂：QueueBubble 显示已投递条目；数据链无损（buffer/inflight 有 D3 与计数兜底） | 无需操作——下一次 queue_update 全量帧自愈或切入刷新收敛 |
 | inflight 配额漂移（send 失败未回滚兜底失效 / message_end 帧被 ring 溢出冲掉） | 悬空配额错抵下一次 F1 投递的确认 → 该消息 me_end 被跳过（一次性，错抵后归零自愈，非永久失效——区别于第三版双计数的单调欠账） | 切走再切回该 session，由 D3 快照恢复补显 |
 | 跨 turn 重发相同文本（D3 已知边界） | 正序-尾窗对齐可能误剔新 overlay，消息暂以基线旧版本显示（位置在历史区） | 不丢消息不重复；新 entry 落盘后下一轮 reconcile 自然收敛 |
 | live 与 reload 投影差异 | **形态同构、id 异源**（live 客户端 id / 重放 uuidv7，W21 已裁决差异类）；等价性测试（apply-entry-equivalence）按字段归一断言，扩用例守卫 | 测试失败 = 设计假设错，回 D1/D2 重审 |
@@ -272,9 +272,9 @@ steer/followUp 提交后，消息**不直接进对话流**（`store.ts:479` push
 - 场景与确定性触发：**先做 1-2 轮正常 steer 追加投递**（建立正常投递历史——第三轮审查确认：无正常历史的 session 测不出计数欠账类缺陷），然后 streaming 中追加一条以 `/` 开头触发 skill 展开的长消息（pi 入队文本与提交原文不同）+ 一条含连续空行/首尾空白的消息（trim 边界），各投递。因 F1 自然发生依赖 pi splice 匹配失败（诱因待实跑，可能空转），**需构造确定性触发**：dev 构建加临时开关跳过腿 1 的 drain 消费（模拟 drain 帧丢失，真实链路其余部分不动）跑一遍，验证腿 2 独立承担显示；恢复正常构建再跑一遍回归。
 - 通过标准：两遍实跑——腿 1 跳过遍：正常轮 + 测试轮的全部气泡显示且无重复（skill 展开消息允许降级为展开后纯文本——G2 降级可见），证明腿 2 在有正常投递历史的 session 上仍生效；正常遍：无重复、徽章正常。对照 `~/.xyz-agent/logs/pi-*.jsonl` 核对投递时序与 drain 帧有无。
 
-**AC-5 abort 语义不变 + 暂存无残留（负面验证，对应 D4）**
+**AC-5 abort 后残余不丢不重（D4 修订 2026-08-30）**
 - 场景：streaming 中追加 2 条 steer（未投递），点停止；随后正常发 1 条新消息。
-- 通过标准：被丢弃的 2 条不出现气泡、QueueBubble 消失（现状语义保持）；新消息正常显示且徽章正常（FIFO 无残留错位）。
+- 通过标准：abort 后 QueueBubble 持续显示 2 条残余（pi 队列跨 abort 存活，真实深度非悬挂）；残余随新消息触发的投递各显示一次且徽章正常（腿 1 全保真消费——segments 在，无纯文本降级）；新消息自身正常显示；全程无双计、FIFO 无错位（inflight 在 abort 清零后与残余投递重新配对）。
 
 **AC-6 send 路径零回归（负面验证，对应 D2）**
 - 场景：正常（非 streaming）发送 5 条消息，其中 2 条带 `@文件引用`。

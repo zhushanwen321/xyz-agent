@@ -612,9 +612,11 @@ export function createChatStore() {
    * （queue_update 每帧）裁剪已移除**：drain 后立即裁到深度会吃掉腿 2（message_end(user)）
    * 还没回填的 segments，且是丢消息的不可逆放大器（F3：断连 prev 缺失时以本帧深度裁空
    * buffer，内容永久删除）。现调用点（均经 ctx 注入 registry，非 queue_update）：
-   * - G-023 时点（message_start(assistant)）僵尸清理：buffer 存量 > 快照深度时裁残量；
-   * - abort（message.complete{stopReason:'aborted'}）：reconcilePending(sid, 0) 对账到
-   *   深度 0 = 全清（pi abort 确定性清队列，见 handler 注释）。
+   * - G-023 时点（message_start(assistant)）僵尸清理：buffer 存量 > 快照深度时裁残量
+   *   （深度 0 = 快照已空/无条目形态，对账到零）。
+   *
+   * [steer-bubble D4 修订 2026-08-30] abort 调用点已移除：pi abort() 不清队列（Gate B
+   * 实测残余投递），pendingBuffer 随 pi 存活队列保留，两腿在下一 prompt 照常消费。
    *
    * 不变式：renderer 提交数 − pi 队列深度 = 已投递数，pendingBuffer 存量 = 提交数 −
    * 已投递数 = 深度。偏差语义：
@@ -680,8 +682,8 @@ export function createChatStore() {
   }
 
   /**
-   * inflight 清零（abort / disposeSession 挂点，D4：pi 队列确定性作废 → 确认基线整体
-   * 作废）。幂等。
+   * inflight 清零（abort / disposeSession 挂点，D4：abort 后已显示未确认条目不会再有
+   * message_end → 确认基线作废；disposeSession 分区整体销毁）。幂等。
    */
   function clearInflight(sessionId: string): void {
     if (!inflightCounts.value.has(sessionId)) return

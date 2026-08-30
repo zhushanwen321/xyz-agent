@@ -806,7 +806,7 @@ describe('dispatchMessageEvent message_end(user) 腿 2 确认制（steer-bubble 
 })
 
 // ── [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D4+F4]
-//    message_start G-023 条件清 + 同点僵尸清理；message.complete abort 三项清 ──
+//    message_start G-023 条件清 + 同点僵尸清理；message.complete abort 只清 inflight ──
 //
 // 条件清保真前提（P3 探针 ✅）：message_start(assistant) 时点快照深度 == pi 真实队列
 // 深度 == 未投递 followUp 数。僵尸裁剪的行为语义（存量 > 深度才裁 / 保留最早）在
@@ -855,7 +855,7 @@ describe('dispatchMessageEvent message_start G-023 条件清 + 同点僵尸清�
     expect(ctx.reconcilePending).toHaveBeenCalledWith(SID, 1)
   })
 
-  it('僵尸清理：深度 0 → reconcilePending(sid, 0)（对账到零——abort 全清复用同参数形态）', () => {
+  it('僵尸清理：深度 0 → reconcilePending(sid, 0)（对账到零——快照空/无条目形态）', () => {
     const ctx = makeCtx()
     ctx.queueStates.value = new Map([[SID, {}]])
 
@@ -865,25 +865,36 @@ describe('dispatchMessageEvent message_start G-023 条件清 + 同点僵尸清�
   })
 })
 
-describe('dispatchMessageEvent message.complete abort 三项清（steer-bubble u2 / D4）', () => {
+describe('dispatchMessageEvent message.complete abort 清理（steer-bubble u2 / D4 修订）', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  it('stopReason=aborted → reconcilePending(sid,0) 全清 buffer + clearInflight + 删 queueStates 条目', () => {
+  it('stopReason=aborted → 只 clearInflight；pendingBuffer/queueStates 保留（pi 队列跨 abort 存活）', () => {
     const ctx = makeCtx()
     ctx.queueStates.value = new Map([[SID, { followUp: ['f1'] }]])
 
     dispatchMessageEvent(ctx, SID, msg('message.complete', { stopReason: 'aborted' }))
 
-    // pi abort 清队列不发 queue_update——前端 abort 信号是三者的唯一清理出口（D4 证据）
-    expect(ctx.reconcilePending).toHaveBeenCalledTimes(1)
-    expect(ctx.reconcilePending).toHaveBeenCalledWith(SID, 0)
+    // D4 修订（Gate B 实测 2026-08-30）：pi abort() 不清队列，残余在下一 prompt 投递——
+    // buffer 与快照是 pi 存活队列的前端镜像，保留供两腿消费；只清确认计数（已显示未
+    // 确认条目不会再有 message_end，残留会吞掉后续确认配额）。
+    expect(ctx.reconcilePending).not.toHaveBeenCalled()
     expect(ctx.clearInflight).toHaveBeenCalledWith(SID)
-    expect(ctx.queueStates.value.has(SID)).toBe(false)
-    // 通用收口照常（三项清在 finalizeSession 之外显式做，不替代收口）
+    expect(ctx.queueStates.value.get(SID)).toEqual({ followUp: ['f1'] })
+    // 通用收口照常（清理在 finalizeSession 之外显式做，不替代收口）
     expect(ctx.finalizeSession).toHaveBeenCalledWith(SID, 'aborted')
   })
 
-  it('normal（stopReason=stop）不触发三项清（finalizeSession 是通用收口，normal/error 不清）', () => {
+  it('aborted 且快照无条目 → clearInflight 幂等无副作用', () => {
+    const ctx = makeCtx()
+
+    dispatchMessageEvent(ctx, SID, msg('message.complete', { stopReason: 'aborted' }))
+
+    expect(ctx.clearInflight).toHaveBeenCalledWith(SID)
+    expect(ctx.reconcilePending).not.toHaveBeenCalled()
+    expect(ctx.queueStates.value.has(SID)).toBe(false)
+  })
+
+  it('normal（stopReason=stop）不触发清理（finalizeSession 是通用收口，normal/error 不清）', () => {
     const ctx = makeCtx()
     ctx.queueStates.value = new Map([[SID, { followUp: ['f1'] }]])
 
@@ -894,7 +905,7 @@ describe('dispatchMessageEvent message.complete abort 三项清（steer-bubble u
     expect(ctx.queueStates.value.get(SID)).toEqual({ followUp: ['f1'] })
   })
 
-  it('error stopReason 同样不清（abort 是唯一三项清出口）', () => {
+  it('error stopReason 同样不清（abort 是唯一清理出口）', () => {
     const ctx = makeCtx()
     ctx.queueStates.value = new Map([[SID, { followUp: ['f1'] }]])
 

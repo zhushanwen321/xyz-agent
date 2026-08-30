@@ -364,21 +364,18 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // 统一收口（finalizeSession 幂等：entity 已改则 no-op，只清 pendingSend + timer）
     // 此处 message status 已改终态 → finalizeSession 内走「只补 toolCall 收口」分支。
     const reason: FinalizeReason = isErrorStop ? 'error' : (stopReason === 'aborted' ? 'aborted' : 'normal')
-    // [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D4] abort 三项清
-    // （在 finalizeSession 之外显式做——finalizeSession 是通用收口，normal/error 不清）：
-    // pi abort() 确定性清队列但既不调 clearQueue 也不 emit queue_update（pi dist
-    // agent-session.js，clearQueue 是独立 API），前端 abort 信号是三者的唯一清理出口：
-    // - pendingBuffer：对账到深度 0 = 全清（reconcilePending(sid, 0)，防 FIFO 错位污染
-    //   后续 steer——被丢弃的暂存永不投递）；
-    // - inflight：清零（确认基线随队列作废——abort 后已显示未确认的条目不会再有
-    //   message_end，残留会吞掉后续投递的确认配额）；
-    // - queueStates：删条目（QueueBubble 消失；G-023 改条件清后，abort 后的
-    //   message_start(assistant) 不再兜底清非空残留快照，abort 信号是唯一出口）。
+    // [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D4] abort 只清
+    // inflight（在 finalizeSession 之外显式做——finalizeSession 是通用收口，normal/error
+    // 不清）。D4 初版按「pi abort 确定性清队列」假设做三项清，Gate B 实测（2026-08-30）
+    // 证伪：pi abort() 不调 clearQueue 也不 emit queue_update，队列跨 abort 存活并在下一
+    // prompt 照常投递（残余投递已被模型收到）。pendingBuffer 与 queueStates 是 pi 存活
+    // 队列的前端镜像，随 pi 保留——下一 prompt 的 drain/message_end 帧到达时两腿正常
+    // 消费（腿 1 回填完整 segments），QueueBubble 在 abort 后持续显示 = 真实队列深度；
+    // 快照/暂存的偏差收敛出口仍是 G-023 条件清 + 僵尸清理（帧驱动对账，不依赖 abort
+    // 全清）。inflight 必须清：abort 后已显示未确认的条目不会再有 message_end，残留
+    // 计数会吞掉后续投递的确认配额。
     if (reason === 'aborted') {
-      const { queueStates, reconcilePending, clearInflight } = ctx
-      reconcilePending(sid, 0)
-      clearInflight(sid)
-      queueStates.value.delete(sid)
+      ctx.clearInflight(sid)
     }
     finalizeSession(sid, reason)
   },

@@ -111,6 +111,7 @@ graph TD
 | 2026-08-30 | u1-leg2 | 空文本防御分支（registry.ts !text return，设计未规定） | 纯 image 等无文字 content 无入队比对语义，且规避空串文本对 includes 的病态命中；行为=跳过，与「无快照跳过」同恢复语义 | 合理不一致登记（一致性审查 reasonable #2；错误规格表不另加行） |
 | 2026-08-30 | u2-lifecycle | 腿 1 两维度各自 increment 实取数（合计 = m） | 与 D2 维护点 1「按实取数 m 计」语义等价；m<N 差额与 m=0 no-op 由 TC6/TC7 锁定 | 合理不一致登记（一致性审查 reasonable #3） |
 | 2026-08-30 | u1-leg2 | 剔快照「维度剔空删字段 / 全空删条目」与 queue_update 空帧删条目惯例形态对齐 | 快照深度持续充当「未投递数」镜像，G-023 条件清读数可靠 | 合理不一致登记（一致性审查 reasonable #4） |
+| 2026-08-30 | u2-lifecycle（D4 修订） | abort 清理从三项清（buffer/queueStates/inflight）改为**只清 inflight**——buffer 与 queueStates 随 pi 存活队列保留 | Gate B 实测证伪 D4 前提「pi abort 确定性清队列」：pi `abort()` 不清队列，残余在下一 prompt 照常投递；三项清致残余投递时两腿皆无判据 → 一次性漏显窗口（§7 残留风险）。保留镜像使腿 1 全保真消费（segments 在，无纯文本降级），比处置建议原案「清 buffer 保留 queueStates」（走腿 2 纯文本降级）保真度更高 | 合理不一致登记 + 设计文档 D4/失败路径 B/数据流图/错误规格表/AC-5 同步修订；AC-5 语义改判（残余不丢弃，QueueBubble 持续显示真实深度）；effects.test.ts abort 用例改写（含幂等分支）；真实链路复验见 §7 变更历史 Gate B 记录 |
 
 ## 6 状态表
 
@@ -129,10 +130,11 @@ graph TD
 - P1/P2/P3 探针任一证伪时按设计降级路径调整（u-probe 验收条款），不推翻 B-hybrid 主结构。——已消项：三探针全 ✅。
 - F1 的 pi 侧镜像残留经全量帧带回前端快照的窗口（D2 边界披露）——与现状行为等同，非回归，不修。
 - AC-4 的 F1 自然触发依赖 pi splice 匹配失败，诱因待实跑——验收用确定性触发（临时开关）覆盖。——Gate B 待续项。
-- **[Gate B 实测发现 2026-08-30] pi abort 后队列残余投递的一次性漏显窗口**：D4 假设「pi abort 确定性清队列」与 pi 实测行为偏差——pi `abort()` 不调 clearQueue（复审已核实源码），abort 后 agent loop 的队列残余（如已入队未投递的第二条同文本 steer）**仍会被投递**；此时前端已按 D4 执行三项清（buffer/queueStates/inflight），两腿皆无判据 → 该残余消息漏显（一次性）。实测恢复动作有效：切入切出触发 getHistory 快照收敛，气泡补显（Gate B 已验证）。处置建议（后续独立小改动，不阻塞本次交付）：abort 三项清改为「清 buffer + inflight、保留 queueStates」，或在错误规格表登记该边界为已知限制。
+- **[Gate B 实测发现 2026-08-30 → 当日已处置] pi abort 后队列残余投递的一次性漏显窗口**：D4 假设「pi abort 确定性清队列」与 pi 实测行为偏差——pi `abort()` 不调 clearQueue（复审已核实源码），abort 后 agent loop 的队列残余（如已入队未投递的第二条同文本 steer）**仍会被投递**；此时前端已按 D4 执行三项清（buffer/queueStates/inflight），两腿皆无判据 → 该残余消息漏显（一次性）。实测恢复动作有效：切入切出触发 getHistory 快照收敛，气泡补显（Gate B 已验证）。**处置（已实施）**：abort 清理改为**只清 inflight**，pendingBuffer 与 queueStates 随 pi 存活队列保留——下一 prompt 投递时两腿正常消费（腿 1 全保真回填 segments），abort 后 QueueBubble 持续显示 = 真实队列深度；较处置建议原案「清 buffer + inflight、保留 queueStates」保真度更高（原案走腿 2 纯文本降级插入）。registry abort 分支 + store/effect-types JSDoc + effects.test.ts abort 用例改写（4 用例含幂等分支）+ 设计文档 5 处同步（D4/失败路径 B/数据流图/错误规格表 2 行/AC-5）；定向测试 168 + equivalence 28 全绿。真实链路复验随本轮 Gate B 待续场景实跑（AC-5 新语义），结果见变更历史。
 - **[Gate B 观测] 纯文字 turn（无工具调用）无 steering 注入点**：streaming 中 steer 提交后挂 pi 队列，直到下一次 prompt/turn 边界才投递（与 u-probe 补充观察 #2 一致）——非 bug（pi 语义），用户感知为「steer 追加延迟生效」，QueueBubble 在此期间持续显示（G-023 条件清后行为正确）。
 
 **变更历史**：
 - 2026-08-30 计划创建（基线 4239651ec）。
 - 2026-08-30 阶段 3 一致性审查清零：unreasonable 空；4 条 doc_errors 全修（①D2 边界①三处同步为顺序 fallback 语义 ②registry queue_update 注释 pendingMessageCount 消费方修正 ③u1 全空降级路径剔维度注释补句 ④错误规格表补 editAndResend 同文本碰撞理论边界披露）+ effect-types D6 注释消歧；新增 reasonable 3 条入登记表（累计 11 条）。审查区间 093b986f4..c8096e773。
 - 2026-08-30 阶段 5 双级验收：Gate A 全绿（core 1310 / runtime 4090 + equivalence 65 / renderer 3625 / 根 lint 0 error；修复批次 = renderer ctx stub 同步 6 字段 + eslint dist.bundle ignores，commit 841550c9d）。Gate B 核心场景 PASS：AC-1 主路径（F4 混合提交 steer+followUp 全显示、inflight 归零）、G3/G4 切换一致性（8→8 无丢无重）、AC-2b 同文本双 steer（两条各显一次）、AC-5 abort 三项清生效、恢复动作（快照补显）有效、AC-6 send 零回归（全程 5+ 条 send 正常）。**未执行（待续）**：AC-2 全量十轮竞态（已覆盖 2 轮）、AC-3a/3b 断连族、AC-4 确定性触发两遍。新发现残留风险两条（见上）。
+- 2026-08-30 D4 修订（abort 残留风险处置，Gate B 待续项之一）：abort 三项清 → 只清 inflight（pi abort 不清队列的实测前提修正，见 §7 残留风险条目处置记录）；core 定向测试 168 + equivalence 28 全绿。Gate B 待续场景（AC-2 全量十轮 / AC-3a/3b / AC-4 两遍 / AC-5 新语义复验）本轮继续实跑。

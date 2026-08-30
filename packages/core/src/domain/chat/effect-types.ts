@@ -75,7 +75,7 @@ export interface MessageEffectContext {
    * 全量重对 pendingBuffer（见 store.reconcilePending）。
    * [steer-bubble u2 / D4] 投递侧（queue_update 每帧）调用已移除（会吃掉腿 2 还没回填的
    * segments，F3 不可逆放大器）；现调用点：G-023 时点（message_start(assistant)）僵尸清理
-   * （传快照深度）与 abort（message.complete{stopReason:'aborted'}，传 0 = 全清）。
+   * （传快照深度；abort 不再调用——pi abort 不清队列，buffer 随 pi 保留，D4 修订 2026-08-30）。
    */
   reconcilePending: (sessionId: string, depth: number) => void
   /**
