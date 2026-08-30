@@ -308,6 +308,81 @@ describe('createChatStore factory', () => {
           expect(sut.store.isGenerating(sid)).toBe(true)
         })
 
+        // ── [steer-bubble Gate B 修复 2026-08-30] 文本多重集第三判据回归（AC-2 实跑
+        //    R3 双计：pi 文件领先 live 帧流 + overlay 身份判据结构性永假）──
+
+        it('基线领先且尾部为 assistant（k=0）：overlay 文本命中基线副本 → 剔除无双计（AC-2 R3 场景）', () => {
+          const sid = 's1'
+          // 上一轮已合并的基线投影头部
+          sut.store.hydrate(sid, [baselineUser('ent-m1', 'q1'), completeAssistant('ent-a1', '先答复')])
+          // 本轮：send 乐观 overlay + turn 进行中（多消息 turn 首个 assistant 已在 live 流式）
+          sut.store.setMessages(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            overlayUser('u-p', 'AC2-R3-PROMPT'),
+            streamingAssistant('a-tool', { content: '工具调用中' }),
+          ])
+          // 快照取得时 message_end(user) 已落盘、turn 首个 assistant 定稿也已落盘——
+          // 基线领先 live 帧流，且基线尾部是 assistant（k=0，数量对齐失效窗口）
+          sut.store.reconcileHistory(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            baselineUser('ent-p', 'AC2-R3-PROMPT'),
+            completeAssistant('ent-a-tool', '工具调用结果'),
+          ])
+          const msgs = sut.store.getMessages(sid)
+          // 修复前：k=0 → a=0 → overlay 保留 → 'AC2-R3-PROMPT' 双计（前端 2 条 / pi 1 条）
+          expect(msgs.filter((m) => m.content === 'AC2-R3-PROMPT')).toHaveLength(1)
+          expect(msgs.some((m) => m.id === 'u-p')).toBe(false)
+          // streaming 实体保留（live-only，基线没有进行中副本）
+          expect(msgs.some((m) => m.id === 'a-tool' && m.status === 'streaming')).toBe(true)
+        })
+
+        it('同文本双投递中窗切换（AC-2b）：[T,T] overlay、基线只含 1×T → 两条各显一次', () => {
+          const sid = 's1'
+          sut.store.hydrate(sid, [baselineUser('ent-m1', 'q1'), completeAssistant('ent-a1', '先答复')])
+          // 两条同文本 steer 相继投递显示（appendUser overlay ×2）
+          sut.store.setMessages(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            overlayUser('u-t1', '同文本'),
+            overlayUser('u-t2', '同文本'),
+          ])
+          // 切换窗口快照：首条已落盘、次条未落盘（基线 1×T）
+          sut.store.reconcileHistory(sid, [
+            baselineUser('ent-m1', 'q1'),
+            completeAssistant('ent-a1', '先答复'),
+            baselineUser('ent-t1', '同文本'),
+          ])
+          const msgs = sut.store.getMessages(sid)
+          // 文本判据消费 1×T（u-t1 确认）+ 步骤② k 排除已消费副本 → u-t2 保留：
+          // 基线 1 条 + overlay 1 条 = 恰两条（次条落盘后下一轮 reconcile 收敛为基线版）
+          expect(msgs.filter((m) => m.content === '同文本')).toHaveLength(2)
+          expect(msgs.some((m) => m.id === 'u-t2')).toBe(true)
+          expect(msgs.some((m) => m.id === 'u-t1')).toBe(false)
+        })
+
+        it('dup overlay 透明跳过：文本确认副本位于 streaming assistant 之前 → streaming 仍受保护', () => {
+          const sid = 's1'
+          sut.store.hydrate(sid, [baselineUser('ent-m1', 'q1')])
+          // 形态：send 乐观 overlay（基线已含）→ streaming 追加其后（F2 组合的 dup 变体）
+          sut.store.setMessages(sid, [
+            baselineUser('ent-m1', 'q1'),
+            overlayUser('u-p', 'AC2-R3-PROMPT'),
+            streamingAssistant('a-live', { content: '生成中' }),
+          ])
+          sut.store.reconcileHistory(sid, [
+            baselineUser('ent-m1', 'q1'),
+            baselineUser('ent-p', 'AC2-R3-PROMPT'),
+            completeAssistant('ent-a-half', '定稿'),
+          ])
+          const msgs = sut.store.getMessages(sid)
+          // dup overlay 剔除且不中断 walk——streaming 实体保留（在 dup 之前也受保护）
+          expect(msgs.filter((m) => m.content === 'AC2-R3-PROMPT')).toHaveLength(1)
+          expect(msgs.some((m) => m.id === 'a-live' && m.status === 'streaming')).toBe(true)
+          expect(sut.store.isGenerating(sid)).toBe(true)
+        })
+
         it('hydrate 复用同规则：未 hydrate 分区持 live 实体 + 快照全缺 → 不抹（G4 首入窗口）', () => {
           const sid = 's1'
           // 新 session：send 乐观 overlay + streaming 先于 hydrate 到达

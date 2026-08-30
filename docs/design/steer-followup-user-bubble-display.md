@@ -165,9 +165,9 @@ steer/followUp 提交后，消息**不直接进对话流**（`store.ts:479` push
 - **证据**：pi 入队文本、投递 message contentText、queue_update 帧数组文本**三者同源恒等**（agent-session.js：`steer(text)` 展开后 `_queueSteer(expandedText)` 同时写入队列数组与 agent 消息 content；splice 按 indexOf 同文本匹配）——第 3 点的 includes 是 **pi 帧文本 ↔ pi 帧文本** 同源比对，与 W14 否决的「前端提交原文 ↔ pi 展开文本」跨源匹配（`store.ts:50-52`）不是同一命题；且 includes 只作 inflight==0 时的兜底校验（唯一职责 = 排除 send 与确认曾入队），不再承担同文本裁决。pi 投递时序保证 drain 帧先于 message_end（`_handleAgentEvent`：splice + emitQueueUpdate 先于事件广播）→ 确认制成立。
 - **效果**：G1/G2 成立且不错插：正常路径逐投递 inflight 归零（无欠账，任何 session 状态下腿 2 都活着）；同文本/跨 mode 由 inflight 计数裁决（与文本无关）；send 由乐观挂钩抵消（零干扰）；扩展注入获得纯文本显示能力。**已知边界**：①跨 mode 同文本 + 腿 1 全失效 + 两命中维度暂存**全空**时才走纯文本降级（顺序 fallback 后误指风险收敛为「剔维度与实际投递 mode 不一致」的三条件叠加——F1 + 跨 mode 同文本 + 先试维度恰空，后果不劣于本边界本身；内容同质无视觉差、数量不差）；②时序倒置（message_end 先于 drain 帧，P1 探针假设外）→ 腿 2 先消费后 drain 帧到达，腿 1 countDrained 会错取下一条——P1 降级路径给腿 1 加守卫（见 §5 P1）。
 
-**D3：reconcileHistory/hydrate 尾部保护 + user 正序-尾窗对齐去重（选定）**
+**D3：reconcileHistory/hydrate 尾部保护 + user 正序-尾窗对齐去重（选定；Gate B 修订 2026-08-30 补第三判据）**
 - **采用**：两步合并规则：
-  1. **尾部保护段收集**（现规则扩展）：从分区尾向前收集「streaming assistant **或** user（身份不在基线身份集）」的连续段，遇其他已确认消息即停——快照滞后时已投递消息先被保留。身份集 = 基线消息的 piEntryId ∪ id 双收集合（与 hydrate 锚取值 `piEntryId ?? id` 对称；live overlay 的 `u-<uuid>` id 与基线 uuidv7 是永不相交的 id 空间，不误判已确认——实施期 u3 落地时确认：hydrate 投影的 user 存在「id 即基线 id、无 piEntryId」形态，单看 piEntryId 的字面判据会把它们误判未确认）。记保护段中 user 数为 n，基线尾部连续 user 数为 k。
+  1. **尾部保护段收集**（现规则扩展）：从分区尾向前收集「streaming assistant **或** user（身份不在基线身份集）」的连续段，遇其他已确认消息即停——快照滞后时已投递消息先被保留。身份集 = 基线消息的 piEntryId ∪ id 双收集合（与 hydrate 锚取值 `piEntryId ?? id` 对称；live overlay 的 `u-<uuid>` id 与基线 uuidv7 是永不相交的 id 空间，不误判已确认——实施期 u3 落地时确认：hydrate 投影的 user 存在「id 即基线 id、无 piEntryId」形态，单看 piEntryId 的字面判据会把它们误判未确认）。**[Gate B 修订] user 增补第三判据——文本多重集确认**：overlay 文本（segmentsToText 投影）∈ 基线 user 文本多重集（按分区正序 = 投递序 = pi 落盘序消费，每条基线副本至多抵消一条 overlay）→ 判已确认（dup overlay，剔除）。动因：AC-2 实跑暴露的结构性竞态——**pi 文件（基线源）对「message_end(user) 已落盘但帧仍在途」的消息领先于 live 帧流**，而 overlay 的身份判据结构性永假（piEntryId 剥除 + id 空间不相交），数量对齐在基线尾部为 assistant（k=0）时失去去重能力 → 基线权威副本 + 保护段 overlay 双计（实测 R3-PROMPT 前端 2 条 / pi 1 条）。文本同源性由 P2 探针保证（pi 不 trim，纯文本逐字节保留；富文本 badge 经 segmentsToText→pi 文本→textToSegments 往返同文）；skill 展开消息（pi 文本 ≠ 提交文本）自然失配 → 落回身份+数量对齐现状。**dup overlay 在保护段收集中透明跳过（丢弃但不停止 walk）**——它前面的 streaming assistant 仍可能 live-only，在 dup 处停止会把 streaming 实体踢出保护、流被基线副本替换后 text_delta 守卫丢弃（F2 组合形态 [streaming, dup-overlay]）。记保护段中 user 数为 n，基线尾部连续 user 中**未被文本判据消费**的数量为 k（消费按序性 = 基线 user 序前缀，尾部遇 consumed 即止——防 AC-2b 同文本双投递 [T,T] overlay、基线 1×T 时数量对齐二次错剔未落盘副本）。
   2. **user 正序-尾窗对齐去重**（新增，解决 live id 异源的双计）：对齐数 a = min(n, k)；**保护段正数第 1..a 条 ↔ 基线尾部正数第 k−a+1..k 条**逐位对齐，对齐上的保护段 user 从保留集中剔除（基线版本已含该消息）；保护段其余 n−a 条保留。方向依据：**投递序 = 落盘序**，先投递的先落盘——基线滞后时缺的是尾部新消息（后缀），对齐必然从保护段头部（先投递）与基线尾部窗口的后缀前缘对起。**不能倒序对齐**：k < n 时倒数第 1 会把保护段最新条（基线没有）错配到基线最新条（较旧），剔掉基线没有的、留下基线已有的——恰好双计反转。
 - **被否**：
   - 纯 piEntryId 判定（初版）——live 侧 user 消息 piEntryId 恒缺省（D2 证据），「piEntryId ∈ 基线」对 user 消息结构性不可满足 → 快照全含后 streaming 窗口内 reconcile 双气泡。
@@ -241,6 +241,8 @@ steer/followUp 提交后，消息**不直接进对话流**（`store.ts:479` push
 | 清理信号帧丢失（message_start(assistant) 被 ring 冲掉；abort 信号丢失 → inflight 悬挂，由下行配额漂移行兜底） | 显示态悬挂：QueueBubble 显示已投递条目；数据链无损（buffer/inflight 有 D3 与计数兜底） | 无需操作——下一次 queue_update 全量帧自愈或切入刷新收敛 |
 | inflight 配额漂移（send 失败未回滚兜底失效 / message_end 帧被 ring 溢出冲掉） | 悬空配额错抵下一次 F1 投递的确认 → 该消息 me_end 被跳过（一次性，错抵后归零自愈，非永久失效——区别于第三版双计数的单调欠账） | 切走再切回该 session，由 D3 快照恢复补显 |
 | 跨 turn 重发相同文本（D3 已知边界） | 正序-尾窗对齐可能误剔新 overlay，消息暂以基线旧版本显示（位置在历史区） | 不丢消息不重复；新 entry 落盘后下一轮 reconcile 自然收敛 |
+| 基线领先 live 帧流（message_end(user) 已落盘、帧在途）+ 基线尾部为 assistant（k=0）——AC-2 实测 R3 场景 | [Gate B 修复 2026-08-30] 文本多重集第三判据剔除 dup overlay，无双计；修复前数量对齐 a=0 失效 → 前端 2 条 / pi 1 条 | 已修复（store.test.ts 回归锁定）；skill 展开文本失配时落回数量对齐现状 |
+| 多消息 turn（工具调用）中途切入切回：turn 内已定稿 assistant 已落盘 + live streaming 副本在保护段 | assistant 侧无双计判据（streaming 实体必须保留防 delta 守卫丢流）→ 基线定稿副本 + live 收口副本并存，**assistant 气泡双显**（user 判据不受影响，AC-2 验收维度外） | 存量家族（保护段语义 W20 前已存在，非本设计引入）；下次 reconcile/hydrate 全量基线替换时收敛；登记为已知边界 |
 | live 与 reload 投影差异 | **形态同构、id 异源**（live 客户端 id / 重放 uuidv7，W21 已裁决差异类）；等价性测试（apply-entry-equivalence）按字段归一断言，扩用例守卫 | 测试失败 = 设计假设错，回 D1/D2 重审 |
 
 ---

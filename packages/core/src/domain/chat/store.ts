@@ -129,6 +129,18 @@ function attachRunningToolCall(prev: Message[], form: PiToolCallEntryForm): Mess
  * 表现为该消息暂以基线旧版本显示（位置在历史区），不丢消息不重复，新 entry 落盘后
  * 下一轮 reconcile 自然收敛。
  */
+/**
+ * user 消息文本投影（mergeBaselineWithLive 文本多重集判据用）：基线（pi 文本经
+ * textToSegments 重派生）与 live overlay（原始 segments）两侧同函数转换，纯文本
+ * 逐字节同源（P2 探针），富文本 badge 维度两态一致（segmentsToText 往返）。
+ */
+function userMessageText(m: Message): string {
+  const c = m.content
+  if (typeof c === 'string') return c
+  if (Array.isArray(c)) return segmentsToText(c as Segment[])
+  return ''
+}
+
 function mergeBaselineWithLive(baseline: Message[], partition: Message[]): Message[] {
   // 基线身份集：piEntryId 与 id 双收（user/assistant 消息带 piEntryId；system 族无
   // piEntryId 字段但 id 即 entry 派生 uuidv7——与 hydrate 锚取值 `piEntryId ?? id` 对称）。
@@ -141,23 +153,72 @@ function mergeBaselineWithLive(baseline: Message[], partition: Message[]): Messa
     if (m.piEntryId !== undefined) baselineIds.add(m.piEntryId)
     baselineIds.add(m.id)
   }
-  const isConfirmed = (m: Message): boolean =>
-    (m.piEntryId !== undefined && baselineIds.has(m.piEntryId)) || baselineIds.has(m.id)
-
-  // 步骤①：尾部保护段（从尾向前，遇已确认消息即止）
-  let cut = partition.length
-  while (cut > 0) {
-    const m = partition[cut - 1]!
-    const isLiveStreaming = m.role === 'assistant' && m.status === 'streaming'
-    const isUnconfirmedUser = m.role === 'user' && !isConfirmed(m)
-    if (!isLiveStreaming && !isUnconfirmedUser) break
-    cut--
+  // [steer-bubble Gate B 修复 2026-08-30] user 文本多重集判据（第三判据）：
+  // AC-2 实跑暴露的结构性竞态——pi 文件（基线源）对「message_end(user) 帧已落盘但帧
+  // 仍在途」的消息领先于 live 帧流，此时 overlay（乐观/腿 1 投递插入，身份判据结构性
+  // 永假：piEntryId 剥除 + id 空间不相交）会被当 live-only 保护保留，与基线权威副本
+  // 双计（实测 R3-PROMPT 前端 2 条 / pi 1 条；触发形态 = 基线尾部为 assistant（k=0）
+  // 时数量尾窗对齐 a=0 失去去重能力）。文本判据：pi 存储文本与提交 segmentsToText
+  // 输出同源恒等（P2 探针：pi 不 trim，纯文本逐字节保留；富文本 badge 经
+  // segmentsToText→pi→textToSegments 往返同文），skill 展开消息（pi 文本 ≠ 提交文本）
+  // 自然失配 → 落回身份+数量对齐现状。多重集按分区正序（= 投递序 = pi 落盘序）消费，
+  // 每条基线副本至多抵消一条 overlay；被消费的基线副本同步从步骤②的尾窗 k 中排除
+  // （消费按序 = 基线 user 序前缀，尾部遇 consumed 即止），防同文本双投递场景
+  // （AC-2b：[T,T] overlay、基线只含 1×T）被数量对齐二次错剔未落盘副本。
+  const baselineUserIdxByText = new Map<string, number[]>()
+  baseline.forEach((m, i) => {
+    if (m.role !== 'user') return
+    const t = userMessageText(m)
+    if (!t) return
+    const q = baselineUserIdxByText.get(t)
+    if (q) q.push(i)
+    else baselineUserIdxByText.set(t, [i])
+  })
+  const consumedBaselineIdx = new Set<number>()
+  const consumeBaselineUserText = (t: string): boolean => {
+    if (!t) return false
+    const q = baselineUserIdxByText.get(t)
+    if (!q || q.length === 0) return false
+    consumedBaselineIdx.add(q.shift()!)
+    return true
   }
-  const protectedSeg = partition.slice(cut)
+  const identityConfirmed = (m: Message): boolean =>
+    (m.piEntryId !== undefined && baselineIds.has(m.piEntryId)) || baselineIds.has(m.id)
+  // 预计算整分区三态确认标记（正序消费多重集——尾部 walk 的逆序调用序会把同文本
+  // 新 overlay 错配到基线旧副本上，AC-2b 同文本双投递场景实测暴露）：
+  // 'identity' = 前轮合并注入的基线投影；'text' = 与基线副本文本同源的 dup overlay；
+  // false = 未确认（live-only 候选）。
+  type ConfirmKind = 'identity' | 'text' | false
+  const confirmKinds: ConfirmKind[] = partition.map((m) => {
+    if (identityConfirmed(m)) return 'identity'
+    if (m.role === 'user' && consumeBaselineUserText(userMessageText(m))) return 'text'
+    return false
+  })
+
+  // 步骤①：尾部保护段。'text' 确认的 dup overlay **透明跳过**（丢弃但不停止 walk——
+  // 它前面的 streaming assistant 仍可能 live-only，F2 组合形态 [streaming, dup-overlay]
+  // 若在 dup 处停止会把 streaming 实体踢出保护、流被基线替换后 delta 守卫丢弃）；
+  // 'identity' 确认或 complete assistant（非 streaming 的已定稿消息）才停止。
+  const protectedSeg: Message[] = []
+  for (let i = partition.length - 1; i >= 0; i--) {
+    const kind = confirmKinds[i]!
+    if (kind === 'text') continue
+    const m = partition[i]!
+    if (kind === 'identity') break
+    const isLiveStreaming = m.role === 'assistant' && m.status === 'streaming'
+    const isUnconfirmedUser = m.role === 'user'
+    if (!isLiveStreaming && !isUnconfirmedUser) break
+    protectedSeg.unshift(m)
+  }
 
   // 步骤②：user 正序-尾窗对齐去重（剔除保护段头部 a 条 user——它们已被基线尾部覆盖）
   let k = 0
-  while (k < baseline.length && baseline[baseline.length - 1 - k]!.role === 'user') k++
+  while (k < baseline.length) {
+    const idx = baseline.length - 1 - k
+    if (baseline[idx]!.role !== 'user') break
+    if (consumedBaselineIdx.has(idx)) break
+    k++
+  }
   const protectedUserIdx: number[] = []
   for (let i = 0; i < protectedSeg.length; i++) {
     if (protectedSeg[i]!.role === 'user') protectedUserIdx.push(i)
