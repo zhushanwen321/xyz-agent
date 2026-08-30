@@ -10,6 +10,7 @@ import * as fs from "node:fs";
 
 import { getLogger } from "../core/logger.ts";
 import { bestEffort } from "./best-effort.ts";
+import { disposeEngines } from "./engine/registry.ts";
 import { armIdleTimer } from "./lifecycle-manager.ts";
 import { readActivePendingFromSessionFile } from "./session-pending.ts";
 
@@ -334,6 +335,19 @@ export const spawnedChildren = new Map<string, ChildProcess>();
 /**
  * kill 所有未退出的 spawned 子进程（dispose 兜底用）。
  *
+ * [R1 D6③] 编排扩容：先触发 engine registry 各已实例化引擎的 dispose（常驻资源
+ * 归引擎所有，见 EnginePort.dispose / registry.disposeEngines），再杀 per-record
+ * children——顺序不可反（D6①：SIGTERM 先发会导致引擎侧 close 帧必丢）。dispose
+ * 触发不等待：本函数保持同步契约（宿主调用点零改动，函数签名与导出名不变），
+ * 引擎 dispose 的同步面（fire close 帧 + 同步 SIGTERM）由引擎实现保证，异步
+ * promise 段（grace→SIGKILL）的 rejection 由 registry 侧 catch 吞掉，防
+ * unhandledRejection 崩宿主。
+ *
+ * [R1 D6 注释契约] spawnedChildren Map 是 per-record 一次性 spawn 模态（一任务一
+ * 进程，key=record.id）；引擎持有的常驻进程（跨任务共享）**不进本 Map**——其生命
+ * 周期完全归引擎 dispose 管理（边界声明见 RunContext.onChildSpawned）。常驻进程的
+ * 注册/回收问题在引擎层解决（R4），此处只立 Map 模态契约。
+ *
  * 遍历 spawnedChildren Map 的 values()，对每个未 killed 的子进程发 `child.kill(signal)`。
  * 已退出的子进程在 close/error 事件时已从 Map 移除（按句守卫 removeChildRegistration——
  * Map 当前值仍是该 child 才删，防误删 resume spawn 的新注册），故 Map 中只剩「活着的」
@@ -349,6 +363,9 @@ export const spawnedChildren = new Map<string, ChildProcess>();
  * @returns 被 kill 的子进程数（诊断用）
  */
 export function killAllSpawnedChildren(signal: NodeJS.Signals = "SIGTERM"): number {
+  // [R1 D6③] 先全部触发引擎 dispose（含时序与等待策略说明的完整注释见函数 doc），
+  // 后遍历杀 per-record children。
+  disposeEngines();
   let n = 0;
   for (const child of spawnedChildren.values()) {
     // 跳过已 kill 的（killed=true 表示已调过 child.kill；已退出的在 close/error 时已从 Set 移除）。
