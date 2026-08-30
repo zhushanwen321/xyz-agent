@@ -12,10 +12,12 @@
  *      （engines/zcode/reader、engines/zcode/constants、engine/paths、relay-env），
  *      经 package.json exports 的 require 条件解析（Node self-reference），
  *      等价验证 npm 消费者的加载路径与 exports→dist 映射，而非直接拼文件路径；
- *      随后同一 CJS 上下文跑 dist 主入口行为 golden 断言（routeEngine mock 注入
- *      断言三层路由 call 层生效 + DEFAULT_DATA_ROOT / CORE_PACKAGE_VERSION 导出
- *      形态）——golden 行为面在 dist 产物上成立，而非仅 vitest/src 上下文
- *      （V7 golden 语义的字面覆盖）
+ *      随后同一 CJS 上下文跑 dist 行为断言——主入口（routeEngine mock 注入断言
+ *      三层路由 call 层生效 + DEFAULT_DATA_ROOT / CORE_PACKAGE_VERSION 导出形态）
+ *      与 engine/paths 子入口（纯函数确定性输出）；5 个入口的 .d.cts 类型产物
+ *      做存在性断言。语义边界如实登记：V7 golden 回放跑在 src TS 源（步骤 3 的
+ *      vitest），dist 侧行为面 = 上述主入口 + paths 子入口断言，d.cts 仅验证
+ *      存在性（不做内容 / TS 编译面校验）
  *   3. golden 回放：vitest run 跑 conformance 免 LLM 免二进制测试集
  *      （golden-replay.pi/zcode + contract.probe/abort/agent-events/read-degradation，
  *      全部 fake 注入），质量资产随 dist 形态可用
@@ -39,6 +41,7 @@
  * 零第三方依赖（node:child_process/node:module/node:path）。
  */
 import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -103,10 +106,57 @@ for (const spec of CJS_ENTRY_SPECS) {
   }
 }
 
+console.log('  [2/3] dist 类型产物存在性断言（exports require.types → dist .d.cts，5 入口）...')
+// npm 消费者的 TS 编译面走 exports require 条件的 types 字段——声明存在但 dist
+// .d.cts 未产出（tsup dts 配置漂移）会让消费者类型解析断裂。路径按 exports
+// require 条件映射推导（不手工拼），映射本身漂移也在此报错。
+const pkgRaw = JSON.parse(readFileSync(join(CORE_DIR, 'package.json'), 'utf8'))
+for (const spec of CJS_ENTRY_SPECS) {
+  // spec → exports 键换算：主入口 spec 是完整包名，exports 键是 "."；
+  // 子入口 spec 是 "pkg/sub"，exports 键是 "./sub"
+  const exportsKey = spec === CORE_PKG_NAME ? '.' : `.${spec.slice(CORE_PKG_NAME.length)}`
+  const dcts = pkgRaw.exports?.[exportsKey]?.require?.types
+  if (typeof dcts !== 'string' || !dcts.endsWith('.d.cts')) {
+    console.error(`  ✗ exports["${spec}"].require.types 缺失或非 .d.cts（D4 双形态契约漂移？核对 package.json exports）`)
+    process.exit(1)
+  }
+  if (!existsSync(join(CORE_DIR, dcts))) {
+    console.error(`  ✗ dist 类型产物缺失: ${dcts}（exports 声明了但 tsup 未产出——核对 packages/subagent-core/tsup.config.ts 的 dts 输出）`)
+    process.exit(1)
+  }
+  console.log(`  ✓ ${dcts}`)
+}
+
+// dist paths 子入口行为断言（engine/paths 是零 IO 零状态的纯函数模块，读源码确认；
+// 断言其确定性输出在 dist 形态下不变——路径穿越归一 + D5 journal 布局 SSOT）。
+console.log('  [2/3] dist paths 子入口行为断言（纯函数确定性输出）...')
+const pathsMod = coreRequire(`${CORE_PKG_NAME}/engine/paths`)
+const pathsChecks = [
+  {
+    ok: pathsMod.sanitizeSeg('../../etc/passwd') === 'etc-passwd',
+    msg: "sanitizeSeg 路径穿越归一（'../../etc/passwd' → 'etc-passwd'）",
+  },
+  {
+    ok:
+      pathsMod.resolveJournalPath('/data', 'zcode', 'pool:1', 'task 2') ===
+      '/data/engines/zcode/pool-1/journal-task-2.jsonl',
+    msg: 'resolveJournalPath 布局 SSOT 输出（D5 journal 路径形态）',
+  },
+]
+for (const c of pathsChecks) {
+  if (!c.ok) {
+    console.error(`  ✗ dist paths 断言失败: ${c.msg}`)
+    console.error('    排查：dist 行为面与 src 不一致——核对 packages/subagent-core/tsup.config.ts 与 src/execution/engine/paths.ts')
+    process.exit(1)
+  }
+  console.log(`  ✓ ${c.msg}`)
+}
+
 // dist 主入口行为 golden 断言（同一 CJS 上下文）：上方 require 探针只证明「可加载 +
 // exports 映射正确」，此处补最小行为面——纯路由与常量导出在 dist 形态下返回值
-// 确定性正确。全部 mock 注入（零 LLM / 零子进程 / 零宿主状态），使 V7 golden
-// 语义在 npm 消费者的真实加载路径（dist CJS）上字面成立。
+// 确定性正确。全部 mock 注入（零 LLM / 零子进程 / 零宿主状态）。语义边界见头注释：
+// golden 回放本体跑在 src TS 源（步骤 3），dist 侧行为面 = 主入口 + paths 子入口
+// 上述断言，不宣称「golden 在 dist 上字面成立」。
 console.log('  [2/3] dist 主入口行为 golden 断言（routeEngine mock 注入 + 导出常量形态）...')
 const coreMod = coreRequire(CORE_PKG_NAME)
 let routed

@@ -1,4 +1,4 @@
-// src/execution/__tests__/crash-recovery.test.ts
+// src/__tests__/crash-recovery.test.ts
 //
 // MF-5: session_start crash recovery 路径测试。
 //
@@ -9,9 +9,9 @@
 //   4. loadAll 失败后 subagent 域不受影响（subagent tool 注册仍被调用）
 //
 // 通过 vi.mock("../jsonl-run-store.ts") 注入可控的 loadAll 行为。
-// 路径说明：index.ts 从 ./orchestration/jsonl-run-store.ts 导入 JsonlRunStore，
-// 该文件绝对路径 src/orchestration/jsonl-run-store.ts，从本测试文件
-// （src/execution/__tests/）相对路径为 ../../orchestration/jsonl-run-store.ts。
+// 路径说明：index.ts 从 ./jsonl-run-store.ts 导入 JsonlRunStore，
+// 该文件绝对路径 src/jsonl-run-store.ts（P1 抽包留壳迁位），从本测试文件
+// （src/__tests__/）相对路径为 ../jsonl-run-store.ts。
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

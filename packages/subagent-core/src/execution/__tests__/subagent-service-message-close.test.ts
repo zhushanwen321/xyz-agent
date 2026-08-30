@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // mock logger（doFinalizeRecord manifest 写入降级路径用）
 const { loggerMock } = vi.hoisted(() => ({
-  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 

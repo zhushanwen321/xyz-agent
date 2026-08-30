@@ -29,7 +29,8 @@ export interface HostServices {
   /** 数据根目录：引擎隔离池 / journal / record 派生存放的锚点。
    *  pi 壳返回 getAgentDir()（独立 pi 用户 journal 不漂目录）；zsw 壳返回 zsw 数据根。 */
   dataRoot(): string;
-  /** 结构化日志：对齐现 getLogger 调用面（level/component/message/data）。缺省 console。 */
+  /** 结构化日志：对齐现 getLogger 调用面（level/component/message/data）。缺省 sink 按级分化：
+   *  warn/error 走 console、debug no-op（对齐 pi-extension-logger 语义，见 NULL_HOST.log）。 */
   log(level: LogLevel, component: string, message: string, data?: unknown): void;
   /** agent/skill/workflow 资源发现根（可选端口，缺席 = 调用方降级）。宿主只提供根列表
    *  （按优先级低→高）；扫描 / 同名遮蔽（last-writer-wins）/ 遮蔽报告语义归 core 统一。 */

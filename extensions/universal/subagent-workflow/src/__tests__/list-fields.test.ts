@@ -1,4 +1,4 @@
-// src/execution/__tests__/list-fields.test.ts
+// src/__tests__/list-fields.test.ts
 //
 // [v4 A-6] recordToListItem 字段派生单测；[U3 C-outcome] closedReason 改锚 outcome。
 //

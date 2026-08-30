@@ -1,4 +1,4 @@
-// src/execution/__tests__/chatmode-first-round-closure-service.test.ts
+// src/__tests__/chatmode-first-round-closure-service.test.ts（P1 抽包留壳：subject 为 subagent-core 件真链路，注入 pi/session-delivery 真机制，见 impl-plan 偏差 #17）
 //
 // [V2 决策 2/3] chatMode 首轮闭环——onRoundSettled 注入 + runAndFinalize early return
 // + double-notify 防护（Step 4a 改动 2/3）。

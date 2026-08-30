@@ -450,6 +450,13 @@ jobs:
       - name: Subagent channel bans (G4, full-repo)
         run: python3 .githooks/check_subagent_channels.py --all
 
+      # D9-① subagent-core 依赖闭包守卫（与 pre-commit 同源直调）：D9-① 闭包守卫：
+      # pre-commit 之外的 CI 面——闭包红线（零 pi SDK / 零宿主专属依赖 + worker
+      # 入口零宿主服务）在 PR invariants 上同源拦截，防本地 hook 被绕过（D7 通则，
+      # 同上行 G4 的挂载理由）。
+      - name: Subagent-core closure guard (D9-①)
+        run: node scripts/check-subagent-core-closure.mjs
+
   # PR 构建检查：electron-builder 打包流程，不在 PR 上传产物。
   # dir-only=true：只产出 unpacked 目录，跳过安装器压缩（省 ~185s）。安装器配置回归交给 release.yml。
   # needs gate：lint/typecheck/sdk-sync + 4 个 test job + e2e-visual 任一已知失败时不浪费 mac runner（mac 构建 5-8min）。

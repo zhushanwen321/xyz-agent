@@ -16,7 +16,6 @@ const { loggerMock } = vi.hoisted(() => ({
     debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
-    info: vi.fn(),
   },
 }));
 vi.mock("../core/logger.ts", () => ({

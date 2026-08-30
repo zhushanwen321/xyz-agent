@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // 三态用例需断言 read-failure warn 日志（设计 D5 第 3 态的验收面），
 // 用包内测试既有 vi.mock 模式拦 logger（见 epipe-fallback.test.ts 同款）。
 const { loggerMock } = vi.hoisted(() => ({
-  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 

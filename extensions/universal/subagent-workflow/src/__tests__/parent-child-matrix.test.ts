@@ -1,4 +1,4 @@
-// src/execution/__tests__/parent-child-matrix.test.ts
+// src/__tests__/parent-child-matrix.test.ts
 //
 // SP-4: 父子联动测试（真实 SubagentService + index.ts 事件接线）。
 //

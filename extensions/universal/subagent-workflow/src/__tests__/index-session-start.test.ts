@@ -1,4 +1,4 @@
-// src/execution/__tests__/index-session-start.test.ts
+// src/__tests__/index-session-start.test.ts
 //
 // C2 critical: index.ts session_start 的 UI handler 注入链路测试。
 //
@@ -20,7 +20,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ── mock modules（在 import 前声明；路径相对 src/execution/__tests/） ──
+// ── mock modules（在 import 前声明；路径相对 src/__tests__/） ──
 //
 // [D15] 为何此处内联 vi.mock 与 vitest.config.ts 的 alias（包根 mocks/pi-coding-agent.ts）并存：
 // 两套 mock 分工不同，不强制统一——
@@ -157,7 +157,7 @@ vi.mock("@zhushanwen/subagent-core/orchestration/lifecycle.ts", async (importOri
 });
 
 // interface 层 mock：避免触发真实 pi.registerTool（pi 是 Proxy，真实模块访问 pi
-// 属性时可能抛错）。路径相对 src/execution/__tests/ → ../../interface/...
+// 属性时可能抛错）。路径相对 src/__tests__/ → ../interface/...
 // registerWorkflowTool / registerWorkflowsCommand 用 hoisted spy——W3TC7/8 需在
 // it 内读 mock.calls 捕获 lazyDeps 与 runs getter（对齐 mockStoreDispose 先例）。
 vi.mock("../interface/subagent-tool.ts", () => ({

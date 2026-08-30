@@ -1,4 +1,4 @@
-// src/execution/__tests__/notify-ledger.test.ts
+// src/__tests__/notify-ledger.test.ts（P1 抽包留壳：subject 为 subagent-core 件真链路，注入 pi/session-delivery 真机制，见 impl-plan 偏差 #17）
 //
 // U2 B-ledger 单测族：通知账本与 courier 的四步生命周期
 // （设计 docs/design/subagent-dispatch-reliability.md §3.3 D4/D5）。

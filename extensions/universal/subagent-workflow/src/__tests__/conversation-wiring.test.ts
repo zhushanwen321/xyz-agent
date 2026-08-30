@@ -1,4 +1,4 @@
-// src/execution/__tests__/conversation-wiring.test.ts
+// src/__tests__/conversation-wiring.test.ts
 //
 // [M9] conversation:true → record.chatMode 接线穿透测试。
 //

@@ -1,4 +1,4 @@
-// src/execution/__tests__/agent-registry.test.ts
+// src/__tests__/agent-registry.test.ts（P1 抽包留壳：混合 subject——除「builtin agents 数据合规」段扫描壳内 agents/*.md 资产须随壳外，其余 describe 均为 subagent-core 解析行为，见 impl-plan 偏差 #17）
 //
 // AgentRegistry 测试（S2 路径统一版）。
 //

@@ -303,6 +303,23 @@ export default [
       'no-console': 'error',
     },
   },
+  // [HISTORICAL] subagent-core 源码禁裸 console（恢复迁移前 extensions/**/src 的等价
+  // 约束面）：@zhushanwen/subagent-core 由 extensions/universal/subagent-workflow 的
+  // core 切面抽离（u1-move），迁移前该源码受上方 extensions no-console:error 块约束，
+  // 抽离后 extensions glob 不再命中——本块恢复同强度约束，防裸 console 渗入跨宿主
+  // 共享层。范围同样限 src 源码：__tests__/ 与 *.test.ts 属测试基建（spyOn /
+  // monkey-patch），不在守卫目标内。
+  {
+    files: ['packages/subagent-core/src/**/*.ts'],
+    ignores: [
+      'packages/subagent-core/src/core/**',
+      'packages/subagent-core/src/**/__tests__/**',
+      'packages/subagent-core/src/**/*.test.ts',
+    ],
+    rules: {
+      'no-console': 'error',
+    },
+  },
   // [subagent-core 抽离 P0（新规则例外，沿用 [HISTORICAL] 登记风格）] core log 端口的
   // 缺省 sink 按 subagent-core 设计 D2 即为 console（docs/design/
   // subagent-core-package-extraction.md §3.3 D2「缺省 console」）：configureCore 之前

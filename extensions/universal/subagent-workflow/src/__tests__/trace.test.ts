@@ -1,5 +1,5 @@
 // 测试框架：vitest
-// 运行命令：npx vitest run src/orchestration/models/__tests__/trace.test.ts
+// 运行命令：npx vitest run src/__tests__/trace.test.ts
 //
 // Trace 首个直接单测（W1TC1-W1TC12，.cw/swf-perf-impl/rt-w1-design.json）：
 // - W1TC1-3/9：byIndex 倒排索引一致性与 no-op 防御语义

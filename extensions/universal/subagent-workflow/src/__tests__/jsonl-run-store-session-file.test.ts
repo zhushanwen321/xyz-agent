@@ -1,4 +1,4 @@
-// src/orchestration/__tests__/jsonl-run-store-session-file.test.ts
+// src/__tests__/jsonl-run-store-session-file.test.ts
 //
 // W1: jsonl-run-store 序列化/反序列化 sessionFile round-trip 测试
 //

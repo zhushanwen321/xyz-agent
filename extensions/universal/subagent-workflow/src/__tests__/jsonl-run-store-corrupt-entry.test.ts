@@ -1,4 +1,4 @@
-// src/orchestration/__tests__/jsonl-run-store-corrupt-entry.test.ts
+// src/__tests__/jsonl-run-store-corrupt-entry.test.ts
 //
 // [SO-DATA-2] collectRecordRun 的 per-entry 隔离：1 条残缺 workflow-record entry
 // 不得让整个 loadAll 返回空。

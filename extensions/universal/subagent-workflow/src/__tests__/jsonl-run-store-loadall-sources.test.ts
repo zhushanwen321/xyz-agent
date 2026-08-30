@@ -1,4 +1,4 @@
-// src/orchestration/__tests__/jsonl-run-store-loadall-sources.test.ts
+// src/__tests__/jsonl-run-store-loadall-sources.test.ts
 //
 // loadAll entry 源扫描（collectEntrySources + loadRunFromStateFile）定向用例（R2-TC S4）。
 //

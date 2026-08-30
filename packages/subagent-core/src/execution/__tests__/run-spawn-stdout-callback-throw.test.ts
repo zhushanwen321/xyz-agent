@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // logger mock：bestEffort / session-runner 共享同一 loggerMock（断言错误可见性）。
 // vi.hoisted：vi.mock 工厂被提升到顶层 const 之前执行，loggerMock 必须经 vi.hoisted 创建。
 const { loggerMock } = vi.hoisted(() => ({
-  loggerMock: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 

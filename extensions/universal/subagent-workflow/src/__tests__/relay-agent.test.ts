@@ -1,4 +1,4 @@
-// src/execution/__tests__/relay-agent.test.ts
+// src/__tests__/relay-agent.test.ts
 //
 // relay.mjs 代理 CLI 协议行为集成测试（E-1 验收）——本地环回 socket + 伪 runtime
 // （net.createServer 模拟 runtime 侧行为），spawn 真实代理进程逐条断言：

@@ -76,6 +76,12 @@ jobs:
       - name: Smoke subagent-core dist
         run: node scripts/smoke-core-dist.mjs
 
+      # D9-① 闭包守卫（与上方 Smoke 同 job、publish 前同源直调）：发布前强制验证
+      # 依赖闭包红线（零 pi SDK / 零宿主专属依赖 + worker 入口零宿主服务）仍成立——
+      # 闭包漂移的包不该发布。CI 首跑在下次发布管线（本地只做语法级接线）。
+      - name: Subagent-core closure guard (D9-①)
+        run: node scripts/check-subagent-core-closure.mjs
+
       - name: Publish to npm
         run: pnpm changeset publish
         env:

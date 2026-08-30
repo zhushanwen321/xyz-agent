@@ -223,6 +223,12 @@ for (const root of workerRoots) {
 //     模板源码在字符串字面量里，在 worker 线程执行——其 require 面只允许 node
 //     内置，且禁止任何 host-services / notify-ports / 禁用依赖引用。该文件自身
 //     的真实 import（主线程、type-only）不在 call-form 扫描面，不误报。
+//     [已知局限（前瞻性登记，当前零实例）] ① FROM_HOST_RE 只拦「指向
+//     host-services/notify-ports 的 from-import」——模板内其他裸 from-import
+//     不拦，与上方 require 面的 fail-closed 口径不一致；② 本条正则作用于全文、
+//     不区分模板字面量区段与主线程代码，worker-script-builder.ts 主线程侧未来
+//     若合法 import core/host-services 会误报。修复方向（模板字面量区段提取 +
+//     node 内置放行后的裸名 fail-closed）留待真实用例出现时实施。
 const WSB_REL = 'src/orchestration/worker-script-builder.ts'
 const wsbFile = join(CORE_DIR, WSB_REL)
 if (existsSync(wsbFile)) {

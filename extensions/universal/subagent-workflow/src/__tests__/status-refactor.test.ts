@@ -1,4 +1,4 @@
-// src/execution/__tests__/status-refactor.test.ts
+// src/__tests__/status-refactor.test.ts
 //
 // SP-1: L1/L2 状态机重构验证测试。
 //

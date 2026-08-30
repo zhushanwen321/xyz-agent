@@ -1,4 +1,4 @@
-// src/orchestration/__tests__/jsonl-run-store-retention.test.ts
+// src/__tests__/jsonl-run-store-retention.test.ts
 //
 // [B1] workflow-state 磁盘保留清理（opt-in，默认关）。
 //

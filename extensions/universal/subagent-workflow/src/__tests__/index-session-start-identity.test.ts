@@ -1,4 +1,4 @@
-// src/execution/__tests__/index-session-start-identity.test.ts
+// src/__tests__/index-session-start-identity.test.ts
 //
 // [M4 / V2 决策 5] identity 子进程写入测试。
 //
@@ -21,7 +21,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ── mock modules（路径相对 src/execution/__tests/）──
+// ── mock modules（路径相对 src/__tests__/）──
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   getAgentDir: () => "/home/user/.pi/agent",
 }));

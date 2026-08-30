@@ -15,10 +15,11 @@
 // 源码模块以避免拖入运行时副作用）：
 // - XYZ_SUBAGENT_SPAWN_WATCHDOG_MS = session-runner.ts SPAWN_WATCHDOG_ENV
 // - XYZ_SUBAGENT_RUN_WATCHDOG_MS   = launcher.ts RUN_WATCHDOG_ENV
-// - XYZ_SUBAGENT_IDLE_TIMEOUT_MS   = lifecycle-manager.ts IDLE_TIMEOUT_ENV
-// - XYZ_SUBAGENT_STATE_MAX_RUNS    = jsonl-run-store.ts STATE_MAX_RUNS_ENV
-//   （B1 磁盘保留清理，非 watchdog 但同为「默认关、显式设置才启用」的 opt-in
-//   配置，测试默认语义基线同样是「未设」，故并入同一净化）
+// - XYZ_SUBAGENT_IDLE_TIMEOUT_MS   = lifecycle-manager.ts（裸字面量 :59，包内无 env 名常量）
+// - XYZ_SUBAGENT_STATE_MAX_RUNS    = 留壳件 jsonl-run-store.ts STATE_MAX_RUNS_ENV
+//   （extensions/universal/subagent-workflow/src/jsonl-run-store.ts:430；B1 磁盘保留
+//   清理，非 watchdog 但同为「默认关、显式设置才启用」的 opt-in 配置）——本包无
+//   消费方，净化为防御性继承（宿主 shell export 隔离）
 const WATCHDOG_ENV_KEYS = [
   "XYZ_SUBAGENT_SPAWN_WATCHDOG_MS",
   "XYZ_SUBAGENT_RUN_WATCHDOG_MS",

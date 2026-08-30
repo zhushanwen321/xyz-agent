@@ -1,4 +1,4 @@
-// src/execution/__tests__/before-agent-start-injection.test.ts
+// src/__tests__/before-agent-start-injection.test.ts
 //
 // SP-3: before_agent_start subagent 状态注入测试。
 //

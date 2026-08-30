@@ -1,4 +1,4 @@
-// src/execution/__tests__/one-shot-upgrade.test.ts
+// src/__tests__/one-shot-upgrade.test.ts
 //
 // SP-5 one-shot upgrade：非 chatMode active record 收到 message 时自动升级 chatMode。
 //

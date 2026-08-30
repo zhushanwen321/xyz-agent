@@ -21,7 +21,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { loggerMock } = vi.hoisted(() => ({
-  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 // [race-F5] 断言的消费方 stdin-writer（及 notifier/session-pending）的 logger 已切
 // core facade——mock 目标跟随消费方实际 import 源，拦到同一 loggerMock。
