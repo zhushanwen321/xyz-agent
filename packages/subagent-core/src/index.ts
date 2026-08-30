@@ -152,6 +152,27 @@ export { WorkflowScriptRegistryImpl } from "./orchestration/workflow-script-regi
 export { lintScript } from "./orchestration/script-lint.ts";
 export type { LintFinding, LintResult } from "./orchestration/script-lint.ts";
 
+// ── workflow 创作闭环面（orchestration/script-generate + workflow-files，W4）──
+// generateWorkflowScript：generate 校验管线（五道闸 + @pi-meta round-trip + tmp
+// 写盘）从 pi-sw 插件层下沉（D-6）——纯函数返回结构化结果（不 throw，pi 的
+// isError 契约转换由宿主负责），报错文案逐字对齐 pi 现版（CA2 前提）。
+// saveWorkflow/deleteWorkflow 首次出 barrel：宿主（zsw）generate→save→delete
+// 创作闭环的完整入口；目录经 WorkflowDirOptions 注入（缺省 pi 布局
+// DEFAULT_WORKFLOW_TMP_DIR / DEFAULT_WORKFLOW_SAVED_DIR，向后兼容——pi 现深路径
+// 调用形态行为不变，改接在 C5）。
+export { generateWorkflowScript } from "./orchestration/script-generate.ts";
+export type {
+  GenerateWorkflowScriptOptions,
+  GenerateWorkflowScriptResult,
+} from "./orchestration/script-generate.ts";
+export { deleteWorkflow, saveWorkflow } from "./orchestration/workflow-files.ts";
+export type { WorkflowDirOptions } from "./orchestration/workflow-files.ts";
+// 缺省目录常量随面导出：宿主显式注入 pi 缺省布局时引用常量，避免字面硬编码回流。
+export {
+  DEFAULT_WORKFLOW_SAVED_DIR,
+  DEFAULT_WORKFLOW_TMP_DIR,
+} from "./orchestration/workflow-files.ts";
+
 // workflow 发现/加载（ADR-031 统一资源发现）：宿主 list 面与 registry 构造消费；
 // invalidateCache 供宿主在写脚本后主动失效 mtime 缓存。
 export {
