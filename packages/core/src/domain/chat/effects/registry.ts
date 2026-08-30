@@ -781,7 +781,12 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // skill 展开后文本 ≠ 提交原文，文本相等匹配在该场景必丢消息，D1 表末行 + D6）。
     // steer / follow-up 各自差集各自计数（sendMode 隔离，防跨类型同文本误取——W5 语义保留）。
     const prev = queueStates.value.get(sid)
-    if (prev) {
+    // [steer-bubble Gate B AC-4 / dev 验证开关] globalThis.__XYZ_STEER_SKIP_LEG1__ = true 时
+    // 跳过腿 1 消费（模拟 drain 帧丢失——真实链路其余部分不动，快照照常写入），用于 AC-4
+    // 确定性触发验证腿 2 独立承担显示（devtools console 设置；产线无人设置恒 false）。
+    const skipLeg1 =
+      (globalThis as { __XYZ_STEER_SKIP_LEG1__?: boolean }).__XYZ_STEER_SKIP_LEG1__ === true
+    if (prev && !skipLeg1) {
       const steerN = countDrained(prev.steering ?? [], steering ?? []).length
       const steerDrained = drainN(sid, 'steer', steerN)
       for (const segs of steerDrained) appendUser(sid, segs)
