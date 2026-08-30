@@ -1,5 +1,11 @@
 # @zhushanwen/pi-msg-id-mapper
 
+## 1.0.4
+
+### Patch Changes
+
+- 837f2faf6: (no changeset body; patch version bump)
+
 ## 1.0.3
 
 ### Patch Changes

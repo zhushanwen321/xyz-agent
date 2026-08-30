@@ -1,5 +1,11 @@
 # @zhushanwen/pi-plan
 
+## 0.3.15
+
+### Patch Changes
+
+- 837f2faf6: (no changeset body; patch version bump)
+
 ## 0.3.14
 
 ### Patch Changes

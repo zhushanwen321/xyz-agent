@@ -1,5 +1,11 @@
 # @zhushanwen/pi-todo
 
+## 0.8.6
+
+### Patch Changes
+
+- 837f2faf6: (no changeset body; patch version bump)
+
 ## 0.8.5
 
 ### Patch Changes

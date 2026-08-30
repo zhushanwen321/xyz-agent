@@ -1,5 +1,11 @@
 # @zhushanwen/pi-cw-tool
 
+## 0.5.1
+
+### Patch Changes
+
+- 837f2faf6: (no changeset body; patch version bump)
+
 ## 0.5.0
 
 ### Minor Changes
