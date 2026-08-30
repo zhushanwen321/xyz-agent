@@ -102,6 +102,8 @@ graph TD
 |------|------|------|------|------|
 | 2026-08-30 | u3-reconcile | D3 已确认判据在「piEntryId 缺失或不在基线 id 集」字面规则上加 id 命中兜底（身份集 = piEntryId ∪ id 双收，isConfirmed = 任一命中） | 字面规则下 hydrate 投影 user（id 即基线 id、无 piEntryId 的形态）被误判未确认 → 保护段越过已确认 user 扩展 → 既有用例回归；overlay u-<uuid> 与基线 uuidv7 永不相交，兜底不误判 | 合理不一致登记 + 设计文档 D3 判据措辞同步修正（身份集读法，随 u3 commit） |
 | 2026-08-30 | u3-reconcile | hydrate 的 load-more 切分锚改为取**基线**首条（非 merged 首条） | live 保护段可能排在 merged 头部，用 merged 首条会污染切分锚 | 合理不一致登记（实现内注释披露，不改设计——设计未规定锚取值细节） |
+| 2026-08-30 | u1-leg2 | 双维度同文本命中的消费策略实现为顺序 fallback 链（steering→followUp 依次 drainN 取有货方，全空才纯文本降级） | 设计 D2 已知边界①「单 mode 误指降级」的直接改进：降级概率收敛到两 mode 暂存全空；已重演错吃反例（需 F1 + 跨 mode 同文本 + steer 暂存恰空三条件叠加，后果不劣于边界①本身） | 合理不一致登记；阶段 3 一致性审查时统一回顾 D2 边界①措辞 |
+| 2026-08-30 | u1-leg2 | 腿 2 接线位置在 applyEntryFrame 之后（reducer 权威喂入前置） | 与 customStart「先喂 reducer 再投影 ref」范式一致；任务明示两序等价 | 合理不一致登记（范式对齐，无需改设计） |
 
 ## 6 状态表
 
@@ -109,8 +111,8 @@ graph TD
 |------|------|------|---------|
 | u-probe | committed | 0 | P1 ✅ 4/4 投递 drain 帧先于 message_end(user) 成对（隔 2 seq，events-p1.jsonl）；P2 ✅ 帧文本↔帧文本同源 3/3（plain/空白逐字节/skill 展开，pi 不 trim，events-p2*.jsonl）；P3 ✅ 快照保真 8/8 采样点（3 场景 get_state 对账，events-p3-*.jsonl）。三探针全过，无降级路径触发；证据 /tmp/probe-steer-bubble/ |
 | u0-foundation | committed | 0 | e7fdf2cd5：inflight state + 4 action + ctx 注入 + D4 豁免注释 ×2；typecheck 绿；store.test.ts 68 passed（61 既有 + 7 新增） |
-| u3-reconcile | committed | 0 | mergeBaselineWithLive 两步规则 + hydrate 复用；typecheck 绿；store.test.ts 76 passed（68 既有 + 8 新增，含四类快照 + 已知边界 + F2 组合）；域内回归 27 files / 530 tests 绿 |
-| u1-leg2 | pending | 0 | — |
+| u3-reconcile | committed | 0 | fc0f800e3：mergeBaselineWithLive 两步规则 + hydrate 复用；typecheck 绿；store.test.ts 76 passed（68 既有 + 8 新增，含四类快照 + 已知边界 + F2 组合）；域内回归 27 files / 530 tests 绿 |
+| u1-leg2 | committed | 0 | confirmUserDeliveryOnMessageEnd 腿 2 裁决（inflight 抵消/includes 兜底/纯文本降级/剔快照）+ extractUserContentText + removeQueuedTextFromSnapshot；effects.test.ts 38 passed（31 既有 + 7 新增七路径）；域内回归 22 files / 481 tests 绿 |
 | u2-lifecycle | pending | 0 | — |
 | u4-equivalence | pending | 0 | — |
 

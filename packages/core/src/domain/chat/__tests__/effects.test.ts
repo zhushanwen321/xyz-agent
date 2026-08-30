@@ -15,6 +15,8 @@
  * - stream_warn：system 提示行 + liveOnly 标记（W2，pi 无 entry 的 live-only 消息）
  * - compactionSummary：构造 compaction entry 喂 applyEntryFrame（W6 entry 化，最后一条
  *   直插双路径消灭——live 与重开共用 reducer compaction case）
+ * - message_end(user) 腿 2 确认制（steer-bubble u1 / D2：inflight 抵消 / includes 兜底
+ *   消费 + 剔快照 / 未命中·无快照跳过 / 暂存空纯文本降级）
  *
  * 运行：cd packages/core && npx vitest run src/domain/chat/__tests__/effects.test.ts
  */
@@ -46,6 +48,11 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     appendUser: vi.fn(),
     // w21：entry 载体帧喂 reducer 的接入点（store.applyEntryFrame 注入）
     applyEntryFrame: vi.fn(),
+    // steer-bubble u1/D2：inflight 确认计数读写（message_end 腿 2 裁决输入，store 注入）
+    getInflight: vi.fn(() => 0),
+    incrementInflight: vi.fn(),
+    decrementInflight: vi.fn(),
+    clearInflight: vi.fn(),
   }
 }
 
@@ -73,6 +80,19 @@ function toolResultEntry(fields: { toolCallId: string; toolName: string; content
     timestamp: new Date(0).toISOString(),
     // content 包 text block 数组（pi 持久化形态，W21 契约）
     message: { role: 'toolResult', toolCallId: fields.toolCallId, toolName: fields.toolName, content: [{ type: 'text', text: String(fields.content) }], isError: fields.isError, ...(fields.details !== undefined ? { details: fields.details } : {}), timestamp: 0 },
+  }
+}
+
+/**
+ * [steer-bubble u1] message_end(user) 帧的 entry 构造（payload.entry——event-adapter
+ * 重构形态）。content 用 content parts 数组（P2 探针实证的 pi 投递形态，pi 不 trim）。
+ */
+function userEndEntry(text: string): Record<string, unknown> {
+  return {
+    type: 'message',
+    parentId: null,
+    timestamp: new Date(0).toISOString(),
+    message: { role: 'user', content: [{ type: 'text', text }], timestamp: 0 },
   }
 }
 
@@ -621,5 +641,123 @@ describe('dispatchMessageEvent tool_call_end 异常帧降级与错误收口', ()
     // 降级路径只保证不崩、reducer 照常喂入；此处锚定「不抛 + 帧被消费」的用户可见行为）
     expect(ctx.applyEntryFrame).toHaveBeenCalledTimes(1)
     expect(getMsgs(ctx)).toHaveLength(1)
+  })
+})
+
+// ── [steer-bubble u1 / docs/design/steer-followup-user-bubble-display.md D1+D2]
+//    message_end(user) 腿 2 确认制——投递事实驱动的用户气泡兜底显示 ──
+//
+// 与 queue_update TC1-TC4 同为 handler 接线测试：测裁决分支对 ctx 方法/快照的调用与
+// 副作用（drainN/appendUser/inflight/queueStates），store 内部逻辑归 store 单测。
+// 前提（P1 探针）：drain 帧恒先于 message_end(user)——腿 1 消费置 inflight、本帧确认
+// 抵消的时序基础。appendUser 的入流行为（segments 原样进消息流）在 store.test.ts 锁定。
+
+describe('dispatchMessageEvent message_end(user) 腿 2 确认制（steer-bubble u1 / D2）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('inflight > 0 → decrementInflight 抵消，零消费（同文本仍在快照也不查 includes——计数优先裁决）', () => {
+    const ctx = makeCtx()
+    // 腿 1 消费置 1 / send 乐观 +1 的确认通道：同文本残留快照在 includes 上会命中，
+    // 但同文本下数组可能还剩未投递条目，includes 不可判定——inflight 优先（D2 第 2 点）
+    vi.mocked(ctx.getInflight).mockReturnValue(1)
+    ctx.queueStates.value = new Map([[SID, { steering: ['T'] }]])
+
+    dispatchMessageEvent(ctx, SID, msg('message.message_end', { entry: userEndEntry('T') }))
+
+    expect(ctx.decrementInflight).toHaveBeenCalledWith(SID, 1)
+    expect(ctx.drainN).not.toHaveBeenCalled()
+    expect(ctx.appendUser).not.toHaveBeenCalled()
+    // 快照不动（未消费）+ reducer 喂入无条件保留
+    expect(ctx.queueStates.value.get(SID)).toEqual({ steering: ['T'] })
+    expect(ctx.applyEntryFrame).toHaveBeenCalledTimes(1)
+  })
+
+  it('inflight == 0 且 includes 命中 steering → 消费 1 条 appendUser 入流 + 快照剔一个实例 + 不加 inflight', () => {
+    const ctx = makeCtx()
+    // F1 场景：pi splice 失败 / drain 帧未达 → 快照停留于入队帧（同文本两条，投递其一）
+    ctx.queueStates.value = new Map([[SID, { steering: ['T', 'T'] }]])
+    const segs: Segment[] = [{ type: 'text', text: 'T' }]
+    vi.mocked(ctx.drainN).mockReturnValue([segs])
+
+    dispatchMessageEvent(ctx, SID, msg('message.message_end', { entry: userEndEntry('T') }))
+
+    expect(ctx.drainN).toHaveBeenCalledWith(SID, 'steer', 1)
+    expect(ctx.appendUser).toHaveBeenCalledWith(SID, segs)
+    // 快照只剔一个实例（multiset 语义，另一条 T 仍在队——真实待投递条目）
+    expect(ctx.queueStates.value.get(SID)).toEqual({ steering: ['T'] })
+    // 消费后不加 inflight：显示即完成，本帧就是自己的确认帧（D2 第 3 点）
+    expect(ctx.incrementInflight).not.toHaveBeenCalled()
+    expect(ctx.decrementInflight).not.toHaveBeenCalled()
+    expect(ctx.applyEntryFrame).toHaveBeenCalledTimes(1)
+  })
+
+  it('inflight == 0 且 includes 命中 followUp → 消费走 follow-up 维度（sendMode 由命中数组维度推导）', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, { followUp: ['next round'] }]])
+    const segs: Segment[] = [{ type: 'text', text: 'next round' }]
+    vi.mocked(ctx.drainN).mockReturnValue([segs])
+
+    dispatchMessageEvent(ctx, SID, msg('message.message_end', { entry: userEndEntry('next round') }))
+
+    expect(ctx.drainN).toHaveBeenCalledWith(SID, 'follow-up', 1)
+    expect(ctx.appendUser).toHaveBeenCalledWith(SID, segs)
+    // 剔空后条目删除（对齐 queue_update 空帧语义——queueStates 不积累空形态条目）
+    expect(ctx.queueStates.value.has(SID)).toBe(false)
+  })
+
+  it('includes 未命中（send 路径——send 文本从不在数组）→ 跳过，零消费零抵消', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, { steering: ['queued text'] }]])
+
+    dispatchMessageEvent(ctx, SID, msg('message.message_end', { entry: userEndEntry('my send text') }))
+
+    expect(ctx.drainN).not.toHaveBeenCalled()
+    expect(ctx.appendUser).not.toHaveBeenCalled()
+    expect(ctx.decrementInflight).not.toHaveBeenCalled()
+    expect(ctx.queueStates.value.get(SID)).toEqual({ steering: ['queued text'] })
+    // send 的乐观插入已在 send 点显示；reducer 喂入照常（权威帧不因腿 2 跳过而丢）
+    expect(ctx.applyEntryFrame).toHaveBeenCalledTimes(1)
+  })
+
+  it('无快照（断连清了 queueStates / drain 空帧已删条目）→ includes 无据跳过', () => {
+    const ctx = makeCtx()
+
+    dispatchMessageEvent(ctx, SID, msg('message.message_end', { entry: userEndEntry('any') }))
+
+    expect(ctx.drainN).not.toHaveBeenCalled()
+    expect(ctx.appendUser).not.toHaveBeenCalled()
+    expect(ctx.decrementInflight).not.toHaveBeenCalled()
+    expect(ctx.applyEntryFrame).toHaveBeenCalledTimes(1)
+  })
+
+  it('命中但暂存空（扩展注入等 buffer 无货）→ 帧内文本纯文本降级插入（G2：降级可见不静默）', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, { followUp: ['injected note'] }]])
+    // drainN 默认 mock 返回 []（pendingBuffer 无匹配货）
+
+    dispatchMessageEvent(ctx, SID, msg('message.message_end', { entry: userEndEntry('injected note') }))
+
+    // 降级形态：帧内文本包成 text segment（appendUser 的纯文本路径，形态对齐 user 投影）
+    expect(ctx.appendUser).toHaveBeenCalledWith(SID, [{ type: 'text', text: 'injected note' }])
+    // 降级也是消费：剔快照 + 不加 inflight
+    expect(ctx.queueStates.value.has(SID)).toBe(false)
+    expect(ctx.incrementInflight).not.toHaveBeenCalled()
+  })
+
+  it('双维度同文本命中 → 按 steering→followUp 取有货的一方，剔实际取货维度（D2 已知边界①的顺序 fallback）', () => {
+    const ctx = makeCtx()
+    // 跨 mode 同文本 + 腿 1 失效：steering 暂存无货、followUp 有货 → fallback 到 follow-up
+    ctx.queueStates.value = new Map([[SID, { steering: ['T'], followUp: ['T'] }]])
+    const segs: Segment[] = [{ type: 'text', text: 'T' }]
+    vi.mocked(ctx.drainN).mockImplementation((_sid, mode, _n) => (mode === 'follow-up' ? [segs] : []))
+
+    dispatchMessageEvent(ctx, SID, msg('message.message_end', { entry: userEndEntry('T') }))
+
+    expect(ctx.drainN).toHaveBeenCalledWith(SID, 'steer', 1)
+    expect(ctx.drainN).toHaveBeenCalledWith(SID, 'follow-up', 1)
+    expect(ctx.appendUser).toHaveBeenCalledWith(SID, segs)
+    // 剔实际取货维度（followUp）的一个实例；steering 残留的 T 是 pi 队列真实待投递条目
+    expect(ctx.queueStates.value.get(SID)).toEqual({ steering: ['T'] })
+    expect(ctx.incrementInflight).not.toHaveBeenCalled()
   })
 })

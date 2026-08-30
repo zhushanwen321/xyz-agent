@@ -44,8 +44,10 @@ import type {
   PiEntry,
   PiMessageEntry,
   PiToolCallEntryForm,
+  Segment,
   ServerMessage,
   ServerMessageType,
+  SteerFollowUpMode,
   ToolCall,
 } from '@xyz-agent/shared'
 import { applyEntry, createInitialChatViewState, normalizePiToolResult } from '../apply-entry'
@@ -95,6 +97,124 @@ function countDrained(prev: string[], next: string[]): string[] {
     }
   }
   return drained
+}
+
+/**
+ * [steer-bubble u1 / docs/design/steer-followup-user-bubble-display.md D2 第 3 点]
+ * 提取 message_end(user) 帧的投递文本——腿 2 includes 兜底判据的比对源。
+ *
+ * 实测 pi 投递的 user message content 是 content parts 数组 [{type:'text',text}]
+ * （P2 探针，pi 不 trim）；wire 宽形态也可能到达 string（lift/异常帧），两种都归一为
+ * 纯文本。非 text part（image 等）不拼接——入队帧数组只含文本，拼接会破坏同源比对。
+ * text parts 按顺序拼接与 reducer 的 textContent 累加同语义（apply-entry-convert）。
+ */
+function extractUserContentText(entry: PiMessageEntry): string {
+  const content = entry.message.content
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    let text = ''
+    for (const part of content) {
+      if (
+        typeof part === 'object' && part !== null &&
+        (part as { type?: unknown }).type === 'text' &&
+        typeof (part as { text?: unknown }).text === 'string'
+      ) {
+        text += (part as { text: string }).text
+      }
+    }
+    return text
+  }
+  return content != null ? String(content) : ''
+}
+
+/**
+ * [steer-bubble u1 / D2 第 3 点] 腿 2 消费后从快照剔命中文本一个实例（不可变写）。
+ *
+ * 为什么剔：F1 场景（pi splice 失败、drain 帧未发）快照停留于入队帧——含已被腿 2
+ * 消费的文本，不剔则下一条提交的 countDrained(prev, new) 差集会错算出虚假 drain 数
+ * → 腿 1 提前取出未投递条目；剔后快照深度与实际待投递对齐。
+ *
+ * 剔后形态对齐 queue_update handler 的既有惯例：维度数组剔空 → 移除该维度字段；
+ * 两维度全空 → 删除条目（queueStates 不积累空形态条目，QueueBubble 随深度归零消失，
+ * 与空帧删条目同语义）。
+ */
+function removeQueuedTextFromSnapshot(
+  queueStates: MessageEffectContext['queueStates'],
+  sid: string,
+  dimension: 'steering' | 'followUp',
+  text: string,
+): void {
+  const prev = queueStates.value.get(sid)
+  const arr = prev?.[dimension]
+  if (!prev || !arr) return
+  const idx = arr.indexOf(text)
+  if (idx === -1) return
+  const rest = arr.filter((_, i) => i !== idx)
+  const next: QueueState = { ...prev }
+  if (rest.length === 0) delete next[dimension]
+  else next[dimension] = rest
+  const nextMap = new Map(queueStates.value)
+  if (next.steering?.length || next.followUp?.length) nextMap.set(sid, next)
+  else nextMap.delete(sid)
+  queueStates.value = nextMap
+}
+
+/**
+ * [steer-bubble u1 / D1 + D2] message_end(user) 腿 2：投递事实驱动的用户气泡兜底显示。
+ *
+ * 双腿互斥裁决（D2，P1 探针保证 drain 帧恒先于 message_end(user) 到达）：
+ * - inflight > 0 → 本帧对应**已显示**的投递（腿 1 消费 +m / send 乐观 +1 的确认通道）
+ *   → decrementInflight 抵消后跳过。不查 includes——同文本下数组可能还剩未投递条目，
+ *   includes 不可判定，计数优先裁决。
+ * - inflight == 0 → includes 兜底：contentText ∈ 最后 queue_update 帧快照（steering /
+ *   followUp 两维度分别查）。这是 **pi 帧文本 ↔ pi 帧文本** 同源比对（P2 探针三处同源
+ *   恒等），与 W14 否决的「前端提交原文 ↔ pi 展开文本」跨源匹配不是同一命题；唯一
+ *   职责 = 排除 send（文本从不在数组）与确认曾入队。
+ *   - 无快照（断连清了 queueStates / drain 空帧已删条目）→ 无据跳过，漏显由 D3
+ *     快照收敛兜底。
+ *   - 命中 → 消费 1 条：drainN(1) 回填 segments，暂存空（扩展注入等 buffer 无货）
+ *     → 帧内文本纯文本降级插入（G2：降级可见不静默）。**消费后不加 inflight**——
+ *     显示即完成，本帧就是自己的确认帧。
+ *   - 双维度同文本命中（跨 mode）：按 steering → followUp 顺序取**有货**的一方
+ *     （pi 投递序 steering 先于 followUp，同文本双命中时已投递更可能是 steering 条目；
+ *     顺序 fallback 后仅剩「两 mode 暂存全空」才降级，比设计 D2 已知边界①的单 mode
+ *     误指降级更强，内容同质无视觉差）。消费剔快照剔实际取货维度的一个实例。
+ */
+function confirmUserDeliveryOnMessageEnd(
+  ctx: MessageEffectContext,
+  sid: string,
+  entry: PiMessageEntry,
+): void {
+  if (ctx.getInflight(sid) > 0) {
+    ctx.decrementInflight(sid, 1)
+    return
+  }
+  const snapshot = ctx.queueStates.value.get(sid)
+  // 无快照 → includes 无据 → 跳过（D2：漏显由 D3 reconcile 快照收敛兜底）
+  if (!snapshot) return
+  const text = extractUserContentText(entry)
+  // 空文本（纯 image 等无文字内容）无入队比对语义，跳过
+  if (!text) return
+  const hitSteer = snapshot.steering?.includes(text) === true
+  const hitFollow = snapshot.followUp?.includes(text) === true
+  // 未命中 = send 路径（send 文本从不在数组，其乐观插入已在 send 点显示）→ 跳过
+  if (!hitSteer && !hitFollow) return
+  const candidates: Array<{ mode: SteerFollowUpMode; dimension: 'steering' | 'followUp' }> = []
+  if (hitSteer) candidates.push({ mode: 'steer', dimension: 'steering' })
+  if (hitFollow) candidates.push({ mode: 'follow-up', dimension: 'followUp' })
+  let consumed: Segment[] | undefined
+  let consumedDimension = candidates[0]!.dimension
+  for (const candidate of candidates) {
+    consumedDimension = candidate.dimension
+    const drained = ctx.drainN(sid, candidate.mode, 1)
+    if (drained.length > 0) {
+      consumed = drained[0]
+      break
+    }
+    // 该 mode 暂存无货 → 试下一命中维度（双维度同文本场景取有货方，见函数头注释）
+  }
+  ctx.appendUser(sid, consumed ?? [{ type: 'text', text }])
+  removeQueuedTextFromSnapshot(ctx.queueStates, sid, consumedDimension, text)
 }
 
 /**
@@ -451,6 +571,11 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // 首次投递后二次 no-op），对齐 event-adapter handleMessageEnd「toolResult 与
     // tool_execution_end 的回填，去重/合并归 core store 的 reducer 接入层编排」的职责划分。
     ctx.applyEntryFrame(sid, entry as PiEntry)
+    // [steer-bubble u1 / D1+D2] 腿 2：user role 时做投递确认/兜底消费（reducer 喂入
+    // 无条件保留在前——腿 2 只是 overlay 显示侧的补充裁决，异常路径不阻断权威喂入）。
+    if ((entry as PiMessageEntry).message?.role === 'user') {
+      confirmUserDeliveryOnMessageEnd(ctx, sid, entry as PiMessageEntry)
+    }
   },
 
   'message.tool_call_update': (ctx, sid, payload) => {
