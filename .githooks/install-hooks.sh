@@ -1176,6 +1176,33 @@ if echo "$SUBAGENT_CORE_STAGED" | grep -qE "^packages/subagent-core/|^scripts/ch
 fi
 
 # ============================================================================
+# 文档-代码符号漂移守卫（C-proc-10）
+#   staged 命中映射设计文档（docs/design/）或 update 源码模块或守卫脚本自身时触发：
+#   scripts/check-doc-symbol-drift.mjs —— TypeScript AST 提取源码符号表 × 设计文档
+#   反引号符号候选，文档引用已删除/改名符号即拦截。
+#   [HISTORICAL] 2026-08-31：update 路径常量函数化后设计文档 3 处旧常量引用
+#   （UPDATE_DIR / MANUAL_ASSET_DIR×2）悬空存活，无机器信号，靠事后对抗审查才抓出。
+#   不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+DOC_SYMBOL_STAGED=$(git diff --cached --name-only -- docs/design/ apps/electron/main/update/ scripts/check-doc-symbol-drift.mjs)
+if echo "$DOC_SYMBOL_STAGED" | grep -qE "^docs/design/|^apps/electron/main/update/|^scripts/check-doc-symbol-drift\.mjs$"; then
+    print_section "[文档-代码符号漂移守卫]"
+    if [ ! -f "scripts/check-doc-symbol-drift.mjs" ]; then
+        echo -e "${RED}[ERROR] 找不到 scripts/check-doc-symbol-drift.mjs（守卫脚本被删除）${NC}"
+        exit 1
+    fi
+    if ! node scripts/check-doc-symbol-drift.mjs; then
+        echo -e "${RED}[ERROR] 文档符号漂移：设计文档引用了源码中不存在的符号（删除/改名未同步文档）——按上方 ✗ 明细修正文档后重试${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] 文档-代码符号一致性通过${NC}"
+else
+    echo -e "${GREEN}[OK] 无设计文档/update 源码变更，跳过文档符号漂移守卫${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -1227,6 +1254,7 @@ echo -e "  ${GREEN}[+]${NC} i18n CJK 残留检测（.vue 模板不得含硬编�
 echo -e "  ${GREEN}[+]${NC} i18n locale 双侧 key 对齐检查（zh-CN === en-US）"
 echo -e "  ${GREEN}[+]${NC} pi 边界可靠性护栏（G1 语义登记守卫 / G3 档位差分探针 / G4 subagent 通道禁则）"
 echo -e "  ${GREEN}[+]${NC} subagent-core 依赖闭包守卫（D9-① 闭包 + 检查点 5 worker 零宿主服务）"
+echo -e "  ${GREEN}[+]${NC} 文档-代码符号漂移守卫（C-proc-10：设计文档引用已删除/改名符号即拦截）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""
