@@ -13,6 +13,17 @@
  *      （正常 release 必有 sha256 或非零 size，二者全缺视为可疑，拒绝）
  *   6. rename .downloading 到最终文件名，返回 { filePath }
  *
+ * u4（update-network-resilience 设计 docs/design/update-network-resilience.md）：
+ * 双引擎降级编排接入——
+ * - 入口 flag 分流（D5：enginePreference='curl' 直接 curl 整文件）+ probe 经
+ *   upgradeFetch（D7：usedEngine='curl' 本次放弃多段）+ 多段/单段失败按 D4 分类降级
+ *   （连接建立失败置 flag；瞬时类/流中断只降级不记忆；HTTP/磁盘/总超时不降级）
+ *   + D10 三步链（curl+代理 → CurlConnectionError 判定代理不可用 → 直连兜底：
+ *   curl 可用走 curl 直连，curl 缺失 spawn ENOENT 回退 undici 直连）。
+ * - 双引擎均失败对外报 undici 错误分类（D8：undici 错误携带 errno 精准分类，
+ *   curl 侧形态只作 engine:'curl' 落盘诊断）。
+ * - resume-state 清理统一在校验链前执行（D6：undici / curl 两引擎同点清理，不散落）。
+ *
  * [HISTORICAL] 不变量：
  * - 用全局 fetch（不用 electron.net，与 release-checker 一致，便于测试 mock）
  * - 流式下载：response.body.getReader() 累加 chunk 算进度 + pipe 到 writeStream（避免 100MB 一次进内存）
@@ -21,7 +32,8 @@
  * - 校验失败必须删除半下载文件，避免下次误用残文件
  * - .downloading 临时后缀：崩溃后残留文件不会伪装成完整安装包
  *
- * 依赖方向：download-asset → constants + types + hash + @xyz-agent/shared + node:fs/stream
+ * 依赖方向：download-asset → constants + types + hash + net-errors + upgrade-fetch
+ *   + curl-download + error-log + @xyz-agent/shared + node:fs/stream
  *   （hash 为无网络依赖的纯函数叶子模块，见 hash.ts / review S#13）
  */
 import { createWriteStream, createReadStream, mkdirSync, renameSync, statSync, unlinkSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -32,9 +44,18 @@ import { ProxyAgent } from 'undici'
 import type { ReleaseAsset, IProxyConfig } from '@xyz-agent/shared'
 import { UPDATE_DIR } from './constants.js'
 import { hashFileSha256 } from './hash.js'
-import { resolveProxyUrl } from './proxy-config.js'
+import { resolveProxyUrl, stripCredential } from './proxy-config.js'
 import { UpdateError, UpdateIntegrityError } from './types.js'
 import { classifyNetError, extractRawCause, getNodeErrnoCode } from './net-errors.js'
+import {
+  upgradeFetch,
+  getEnginePreference,
+  markEnginePreferenceFromUndiciFailure,
+  classifyUndiciFailure,
+} from './upgrade-fetch.js'
+import type { FetchEngine } from './upgrade-fetch.js'
+import { downloadViaCurl, CurlConnectionError } from './curl-download.js'
+import { appendUpdateError } from './error-log.js'
 
 /**
  * 断点续传状态接口。
@@ -145,9 +166,11 @@ const DOWNLOAD_USER_AGENT = 'xyz-agent-updater'
 const MULTI_PART_COUNT = 4
 
 /** 只有文件大于此阈值才启用多段（小文件拆分收益低、连接开销占比大）。 */
+// eslint-disable-next-line no-magic-numbers -- 10MB 的字节数，语义即常量名
 const MIN_MULTI_PART_SIZE = 10 * 1024 * 1024
 
 /** 每段至少 2MB，防止段数过多。 */
+// eslint-disable-next-line no-magic-numbers -- 2MB 的字节数，语义即常量名
 const MIN_BYTES_PER_PART = 2 * 1024 * 1024
 
 /** 进度回调节流间隔：同一段下载内最多每 N ms 推一次进度，降低 IPC 压力。 */
@@ -171,6 +194,9 @@ export async function downloadAsset(
   mkdirSync(UPDATE_DIR, { recursive: true })
   const tempPath = path.join(UPDATE_DIR, `${asset.name}.downloading`)
   const finalPath = path.join(UPDATE_DIR, asset.name)
+  // 引擎编排用的完整代理 URL（upgradeFetch / downloadViaCurl 吃 URL 形态；
+  // undici 路径仍按原样用 proxyConfig 构造 ProxyAgent）
+  const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
 
   // 2. 检查是否有断点续传状态
   const resumeState = loadResumeState()
@@ -201,236 +227,82 @@ export async function downloadAsset(
     }
   }
 
-  // 3. 决定单段 or 多段并行下载：
-  //    - 无续传状态、文件较大、远端支持 accept-ranges: bytes 时启用多段并行。
-  //    - 多段绕过单条 HTTP/1.1 连接被代理/出口限速的问题，类似 Chrome 多连接。
-  let useMultiPart = false
-  // [S#1 / business-logic] 多段启用阈值用 release 声明的 asset.size，而非 probe 返回的
-  // 真实 totalBytes：此判定在 probe 之前，目的是先过滤掉小文件，避免对每个小文件都发一次
-  // HEAD probe（额外 RTT）。即使 release 声明 size 被误填偏小，导致大文件误走单段下载，
-  // probe 仍会兜底判 supported=false；多段只是加速优化，单段下载本身完全正确，无正确性风险。
-  if (!resumeState && asset.size && asset.size >= MIN_MULTI_PART_SIZE) {
-    const { supported, totalBytes } = await probeMultiPartSupport(asset, proxyConfig)
-    if (supported) {
-      const multiResult = await downloadMultiPart(asset, totalBytes, onProgress, proxyConfig)
-      // [RM3] 服务器/代理不遵守 Range（任一段非 206 或段长不符）→ 整批放弃多段：
-      // 不设 useMultiPart，落入下方单段路径完整下载。此时 downloadedBytes=0（进多段
-      // 的前提就是无续传状态），单段全新请求不带 Range 头，既有 206/200 分类天然
-      // 兼容「忽略 Range 回 200」的服务器，sha256 校验兜底产物正确性。
-      useMultiPart = !multiResult.degradedToSingle
-    }
+  // 3. 引擎编排（u4：双引擎降级 + D10 三步链，设计 §3.4 数据流图）。
+  //    - A/D5 flag 分流：enginePreference 已置 curl（此前连接建立失败）→ 跳过 undici
+  //      直接 curl 整文件（授权坏场景每次 undici 连接失败都是白付的失败延迟）。
+  //    - B/D7 probe 经 upgradeFetch（双引擎）：usedEngine='curl' → 本次放弃多段直接
+  //      curl 整文件；flag 置位与否由 upgradeFetch 内部按 D4 判定，这里不做置位决策。
+  //    - C/D 多段/单段失败按 D4 分类：连接建立失败 → 置 flag + 降级 curl；瞬时类/流中断
+  //      → 仅本次降级；HTTP/磁盘/总超时（non-fallback）原样上抛不降级。
+  let handledByCurl = false
+  if (getEnginePreference() === 'curl') {
+    await runCurlDownloadChain(asset, {
+      tempPath, finalPath, downloadedBytes, onProgress, proxyUrl,
+    })
+    handledByCurl = true
   }
 
-  // 4. 单段下载（续传或 Probe 未通过时走此路径）。
-  //    fetch + 流式传输共用同一个 AbortController，配两个 watchdog：
-  //    - timer: 总超时 DOWNLOAD_TIMEOUT_MS（兜底上限，3600s）
-  //    - idleTimer: 空闲超时 IDLE_TIMEOUT_MS（30s 无新数据字节即中断）
-  //    [NOTE] clearTimeout 必须在流式传输真正完成（writeStream finish/close）
-  //    或出错后才执行 —— 若像旧实现那样在 fetch resolve 后的 finally 里 clear，
-  //    60s 只会约束初始 HTTP 响应；后续流式字节传输（pipe）将无超时，慢速/卡住
-  //    连接的大文件可能永远挂住。下方用外层 try/finally 保证 stream 结束才 clear。
-  if (!useMultiPart) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
-  let response: Response
-  // dispatcher 声明在外层，确保外层 finally 能访问到做 close（连接池清理）。
-  let dispatcher: ProxyAgent | undefined
-  try {
-    // 构建 fetch 选项：User-Agent + 代理 + 断点续传 Range 头。
-    const rangeHeaders = downloadedBytes > 0
-      ? { Range: `bytes=${downloadedBytes}-` }
-      : undefined
-    const fetchOptions = buildFetchOptions(proxyConfig, controller.signal, rangeHeaders)
-    dispatcher = fetchOptions.dispatcher
-
-    // 执行 fetch（dispatcher 存在时真正走代理），捕获网络错误并分类
-    try {
-      response = await fetch(asset.downloadUrl, fetchOptions as RequestInit)
-    } catch (fetchErr) {
-      // D1: 使用统一的分类函数替代内联字符串匹配（收敛三条 fetch 路径）
-      const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
-      throw classifyNetError(fetchErr, 'downloading', proxyUrl)
-    }
-    if (!response.ok) {
-      // [LEAK FIX] 抛错前显式 cancel body，释放底层 socket（无引用后 GC 也会清理，
-      // 但显式 cancel 更确定，避免连接挂在 keep-alive 池）。
-      await response.body?.cancel().catch(() => {})
-      throw new UpdateError(`download failed: HTTP ${response.status}`, 'downloading', 'UPDATE_NETWORK_FAILED')
-    }
-    if (!response.body) {
-      throw new UpdateError('download failed: empty response body', 'downloading', 'UPDATE_NETWORK_FAILED')
-    }
-
-    // 4. 流式写到 .downloading 临时文件，同时累加进度（共用上面的 controller/timer）
-    //
-    // [C3] Range 续传响应分类：发了 Range: bytes=N- 后必须区分
-    //   - 206 Partial Content：续传成功，content-length 是剩余部分大小，
-    //     total = content-length + downloadedBytes，writeStream 用追加模式 'a'。
-    //   - 200 OK：服务器/CDN 忽略 Range（整文件回源）。若仍按续传处理，
-    //     content-length 是整个文件大小，total 会多算 downloadedBytes；
-    //     且 writeStream 追加模式会把完整内容拼到残文件后 → 文件损坏。
-    //     因此回退到完整下载：重置 downloadedBytes=0，total 用 content-length，
-    //     writeStream 用覆盖模式 'w'。
-    const requestedRange = downloadedBytes > 0
-    const resumeAccepted = requestedRange && response.status === HTTP_PARTIAL_CONTENT
-    const contentLength = Number(response.headers.get('content-length') ?? 0)
-    // 续传成功用追加模式 + 累加 total；否则覆盖写（200 回退或全新下载）
-    const writeFlags: 'a' | 'w' = resumeAccepted ? 'a' : 'w'
-    const total = resumeAccepted ? contentLength + downloadedBytes : contentLength
-
-    // [m5] totalBytes 一致性校验：续传成功（206）时，对比新算出的 total 与
-    // 上次记录的 totalBytes。差异超容差说明 release 文件已变更（残文件过期），
-    // 作废重下，避免把不同版本的内容拼接到一起。注意只在 resumeAccepted
-    // 分支校验——200 回退场景 total 计算方式本就不同，不参与此校验。
-    if (resumeAccepted && resumeState && Math.abs(total - resumeState.totalBytes) > TOTAL_BYTES_TOLERANCE) {
-      console.log(`[download] total bytes changed (expected ${resumeState.totalBytes}, got ${total}), restarting`)
-      await response.body?.cancel().catch(() => {})
-      // 残文件过期：清理后递归重下（从头开始）
-      try { unlinkSync(tempPath) } catch (e) { console.warn('[download] stale temp cleanup failed:', e) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
-      clearResumeState()
-      return downloadAsset(asset, onProgress, proxyConfig)
-    }
-
-    // 续传起点（206 = downloadedBytes；200 回退/全新 = 0）
-    let downloaded = resumeAccepted ? downloadedBytes : 0
-    // 如果是断点续传（206），使用追加模式打开文件；否则覆盖写
-    const writeStream = createWriteStream(tempPath, { flags: writeFlags })
-    // response.body 是 web ReadableStream；转 node Readable 以 pipe。
-    const nodeStream = Readable.fromWeb(toNodeReadableWebStream(response.body))
-    // [M1] idle timeout：长时间无新数据字节即中断。每次收到 chunk 重置。
-    let idleTimer: NodeJS.Timeout | undefined = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
-    // [M3] 记录上次保存进度（续传起点），超过 SAVE_INTERVAL_BYTES 才落盘（替代整除判断）
-    let lastSavedBytes = downloaded
-    // 进度回调节流：每段下载内按百分比变化 + 时间间隔推，降低 IPC 压力。
-    const reportProgress = createThrottledProgress(onProgress, total)
-    const clearTimers = () => {
-      clearTimeout(timer)
-      if (idleTimer) {
-        clearTimeout(idleTimer)
-        idleTimer = undefined
-      }
-    }
-    try {
-      await new Promise<void>((resolve, reject) => {
-        nodeStream.on('data', (chunk: Buffer) => {
-          downloaded += chunk.length
-          // [M1] 收到新数据重置 idle timer（只要有字节流动就不算挂死）
-          if (idleTimer) clearTimeout(idleTimer)
-          idleTimer = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
-          // [NOTE] total=0（chunked 传输无 content-length）时不报进度：
-          // onProgress 签名是 0-100 百分比，无总量时无法计算百分比；
-          // 前端 useAppUpdate 的 state.percent 期望 0-100，传负值会 UI 异常。
-          // 设计权衡：chunked 时进度条不动（但下载会完成），优于 UI 异常。
-          if (total > 0) {
-            reportProgress(downloaded)
+  if (!handledByCurl) {
+    let useMultiPart = false
+    // [S#1 / business-logic] 多段启用阈值用 release 声明的 asset.size，而非 probe 返回的
+    // 真实 totalBytes：此判定在 probe 之前，目的是先过滤掉小文件，避免对每个小文件都发一次
+    // HEAD probe（额外 RTT）。即使 release 声明 size 被误填偏小，导致大文件误走单段下载，
+    // probe 仍会兜底判 supported=false；多段只是加速优化，单段下载本身完全正确，无正确性风险。
+    if (!resumeState && asset.size && asset.size >= MIN_MULTI_PART_SIZE) {
+      const probed = await probeMultiPartSupport(asset, proxyUrl)
+      if (probed.usedEngine === 'curl') {
+        // D7：probe 引擎为 curl → 本次放弃多段（多段是 undici 的加速优化），直接整文件
+        // curl 下载。多段前提即无续传状态，此处 downloadedBytes 恒为 0。
+        await runCurlDownloadChain(asset, { tempPath, finalPath, downloadedBytes: 0, onProgress, proxyUrl })
+        handledByCurl = true
+      } else if (probed.supported) {
+        try {
+          const multiResult = await downloadMultiPart(asset, probed.totalBytes, onProgress, proxyConfig)
+          // [RM3] 服务器/代理不遵守 Range（任一段非 206 或段长不符）→ 整批放弃多段：
+          // 不设 useMultiPart，落入下方单段路径完整下载。此时 downloadedBytes=0（进多段
+          // 的前提就是无续传状态），单段全新请求不带 Range 头，既有 206/200 分类天然
+          // 兼容「忽略 Range 回 200」的服务器，sha256 校验兜底产物正确性。
+          useMultiPart = !multiResult.degradedToSingle
+        } catch (err) {
+          // C：多段失败编排。RangeNotRespectedError 已在 downloadMultiPart 内部消化为
+          // degradedToSingle（降级单段语义保持），到这里的是网络/磁盘/HTTP 分类错误。
+          if (classifyUndiciFailure(err) === 'non-fallback') {
+            throw err
           }
-          // [M3] 保存断点续传状态：每超过上次保存点 SAVE_INTERVAL_BYTES 字节才落盘。
-          // 旧实现 `downloaded % 1MB === 0` 在续传场景（起点非 1MB 整数倍）几乎
-          // 永不命中，中途崩溃 state 仍是旧值。
-          // [B-4] 统一保存口径：这里也用真实落盘字节（statSync）而非内存 downloaded 计数器。
-          // 原先进度保存用 downloaded（偏大，pipe 未完全 flush）、可恢复错误保存用
-          // statSync（偏小）→ 两口径不一致 → 续传判定 mismatch 重下。现在两处统一，
-          // 配合放宽的续传判定（stat.size <= state）形成正确续传闭环。
-          if (downloaded - lastSavedBytes >= SAVE_INTERVAL_BYTES) {
-            const persisted = getPersistedBytes(tempPath, downloaded)
-            saveResumeState({
-              downloadedBytes: persisted,
-              totalBytes: total,
-              tempPath,
-              finalPath,
-            })
-            lastSavedBytes = persisted
-          }
-        })
-        nodeStream.pipe(writeStream)
-        writeStream.on('finish', () => resolve())
-        writeStream.on('error', reject)
-        nodeStream.on('error', reject)
-      })
-    } catch (err) {
-      // [LEAK FIX] destroy writeStream 释放底层 fd，避免错误路径泄漏文件描述符。
-      writeStream.destroy()
-      // 超时判定（用于错误分类：UPDATE_NETWORK_TIMEOUT vs 其他），不影响是否保留 temp。
-      const isTimeout = err instanceof Error && (
-        err.name === 'AbortError' ||
-        err.message.includes('aborted') ||
-        err.message.includes('timeout')
-      )
-      // [W-6] 磁盘错误判定：优先用 Node errno code（ENOSPC）精确匹配，
-      // 子串 'disk space' 仅作非英文 OS message 的 fallback。
-      const errno = getNodeErrnoCode(err)
-      const isDiskError = errno === 'ENOSPC' ||
-        (err instanceof Error && err.message.toLowerCase().includes('disk space'))
-
-      // [B-2] 默认 Error 视为可恢复——保留 temp + state 让下次续传。
-      // 旧实现用白名单子串匹配（ECONNRESET/ETIMEDOUT + NETWORK_* code）判 isRecoverable，
-      // 但国内网络常见错误不命中：undici 流中断 UND_ERR_SOCKET/UND_ERR_BODY_TIMEOUT
-      // （message 形如 'other side closed'）、代理中途 407/TLS 错误经流 reject，
-      // message 都不含上述子串 → 走 else 删 temp。这恰恰在最需要续传的「流中途断开」
-      // 场景丢数据，违背 PR 核心目标。
-      // 现在反转默认值：只有明确命中 isDiskError 才删 temp；其余一律保留。
-      // sha256 mismatch 不受影响（它在校验段单独删 temp，不进 stream catch）。
-      if (!isDiskError) {
-        // 保留 temp + 用真实落盘字节存 state，下次可续传。
-        const persistedBytes = getPersistedBytes(tempPath, downloaded)
-        saveResumeState({
-          downloadedBytes: persistedBytes,
-          totalBytes: total,
-          tempPath,
-          finalPath,
-        })
-        console.log(`[download] recoverable error, kept temp file for resume (${persistedBytes} bytes)`)
-      } else {
-        // 磁盘空间不足：删 temp + 清 state（无法续传）。
-        // [W-5] 此路径不再 saveResumeState——马上就 clear 了，save 纯属浪费。
-        try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] stream cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
-        clearResumeState()
+          // 置位判定收敛在 upgrade-fetch（D5）：仅连接建立失败档实际置 flag，
+          // 瞬时类/流中断只本次降级不记忆（下次调用重探 undici 多段）。
+          markEnginePreferenceFromUndiciFailure(err)
+          await runCurlDownloadChain(asset, {
+            tempPath, finalPath, downloadedBytes: 0, onProgress, proxyUrl, undiciError: err,
+          })
+          logUndiciEngineFallback(err, proxyUrl)
+          handledByCurl = true
+        }
       }
-      // 流式传输错误分类（throw 什么 errorCode）；与是否保留 temp 无关。
-      if (isDiskError) {
-        throw new UpdateError(
-          'insufficient disk space',
-          'downloading',
-          'UPDATE_DISK_SPACE',
-          extractRawCause(err),
-        )
-      }
-      // 超时（含 idle/total abort）：映射为 UPDATE_NETWORK_TIMEOUT
-      if (isTimeout) {
-        throw new UpdateError(
-          `download timeout (idle ${IDLE_TIMEOUT_MS / MS_PER_SECOND}s or total ${DOWNLOAD_TIMEOUT_MS / MS_PER_SECOND}s)`,
-          'downloading',
-          'UPDATE_NETWORK_TIMEOUT',
-          extractRawCause(err),
-        )
-      }
-      // 如果已经是 UpdateError（来自上面的网络错误分类），直接抛出
-      if (err instanceof UpdateError) {
-        throw err
-      }
-      throw new UpdateError(
-        `download stream error: ${err instanceof Error ? err.message : String(err)}`,
-        'downloading',
-        'UPDATE_NETWORK_FAILED',
-        extractRawCause(err),
-      )
-    } finally {
-      // [M1] 流式传输已结束（成功 finish 或抛错）才停两个 watchdog。
-      clearTimers()
     }
 
-    // 5. 下载完成，清除断点续传状态
-    clearResumeState()
-
-  } finally {
-    // 外层兜底：fetch 阶段异常也确保 total timer 被清理。
-    clearTimeout(timer)
-    // ProxyAgent 持有连接池，下载结束（成功/失败）后显式关闭避免句柄泄漏。
-    if (dispatcher) {
-      await dispatcher.close().catch(() => {}) // best-effort 连接池清理，失败不影响下载结果
+    // 4. 单段下载（续传或 Probe 未通过时走此路径），失败按 D4 分类降级 curl。
+    if (!useMultiPart && !handledByCurl) {
+      try {
+        await downloadSingleStream(asset, { tempPath, finalPath, downloadedBytes, resumeState, onProgress, proxyConfig })
+      } catch (err) {
+        // D：单段失败编排——连接建立失败/瞬时类/流中断 → 降级 curl（downloadViaCurl 以
+        // -C - 从 temp 现有字节续传，语义对齐）；HTTP/磁盘/总超时原样上抛。
+        if (classifyUndiciFailure(err) === 'non-fallback') {
+          throw err
+        }
+        markEnginePreferenceFromUndiciFailure(err)
+        await runCurlDownloadChain(asset, {
+          tempPath, finalPath, downloadedBytes, onProgress, proxyUrl, undiciError: err,
+        })
+        logUndiciEngineFallback(err, proxyUrl)
+      }
     }
   }
-  }
+
+  // 5. 校验链前统一清理 resume-state（D6：undici / curl 两引擎同点清理，不散落）。
+  //    curl 续传以 temp 实际落盘字节为准（-C -），state 只服务 undici 续传。
+  clearResumeState()
 
   // 6. 校验：sha256 优先，缺失降级 size，再缺失拒绝
   //    [BLOCKER 4] 旧实现 `else if (asset.size && asset.size > 0)`：若 size=0 且无 sha256，
@@ -488,6 +360,441 @@ export async function downloadAsset(
   return { filePath: finalPath }
 }
 
+/** 单段流式下载的执行上下文（downloadAsset 编排层 / curl 链 undici 直连回退共用）。 */
+interface ISingleStreamContext {
+  /** `.downloading` temp 路径 */
+  tempPath: string
+  /** 最终文件路径（m5 作废重下递归 downloadAsset 时沿用原编排参数） */
+  finalPath: string
+  /** 续传起点字节数（0 = 全新下载 / 覆盖写） */
+  downloadedBytes: number
+  /** 已加载的断点续传状态（m5 totalBytes 一致性校验用；null = 跳过该校验） */
+  resumeState: IResumeState | null
+  /** 进度回调（0-100 百分比） */
+  onProgress?: (percent: number) => void
+  /** 代理配置：undefined = 无 dispatcher 直连（D10 第三步 undici 直连回退用） */
+  proxyConfig?: IProxyConfig
+}
+
+/**
+ * 单段流式下载（undici fetch + 双 watchdog + 断点续传保存）。
+ *
+ * 从 downloadAsset 抽出为独立函数（u4）：既服务原单段路径，也作为 D10 第三步
+ * 「curl 缺失回退 undici 直连」的执行体（proxyConfig=undefined 即无 dispatcher 直连）。
+ *
+ *    fetch + 流式传输共用同一个 AbortController，配两个 watchdog：
+ *    - timer: 总超时 DOWNLOAD_TIMEOUT_MS（兜底上限，3600s）
+ *    - idleTimer: 空闲超时 IDLE_TIMEOUT_MS（30s 无新数据字节即中断）
+ *    [NOTE] clearTimeout 必须在流式传输真正完成（writeStream finish/close）
+ *    或出错后才执行 —— 若像旧实现那样在 fetch resolve 后的 finally 里 clear，
+ *    60s 只会约束初始 HTTP 响应；后续流式字节传输（pipe）将无超时，慢速/卡住
+ *    连接的大文件可能永远挂住。下方用外层 try/finally 保证 stream 结束才 clear。
+ *
+ * @throws UpdateError 网络/超时/磁盘分类错误（网络类附 cause=原始 undici 错误，
+ *   供编排层 classifyUndiciFailure 按 D4 分类降级——errno 只在 cause 链上可提取）
+ */
+async function downloadSingleStream(
+  asset: ReleaseAsset,
+  ctx: ISingleStreamContext,
+): Promise<void> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
+  let response: Response
+  // dispatcher 声明在外层，确保外层 finally 能访问到做 close（连接池清理）。
+  let dispatcher: ProxyAgent | undefined
+  try {
+    // 构建 fetch 选项：User-Agent + 代理 + 断点续传 Range 头。
+    const rangeHeaders = ctx.downloadedBytes > 0
+      ? { Range: `bytes=${ctx.downloadedBytes}-` }
+      : undefined
+    const fetchOptions = buildFetchOptions(ctx.proxyConfig, controller.signal, rangeHeaders)
+    dispatcher = fetchOptions.dispatcher
+
+    // 执行 fetch（dispatcher 存在时真正走代理），捕获网络错误并分类
+    try {
+      response = await fetch(asset.downloadUrl, fetchOptions as RequestInit)
+    } catch (fetchErr) {
+      // D1: 使用统一的分类函数替代内联字符串匹配（收敛三条 fetch 路径）
+      const proxyUrl = ctx.proxyConfig ? resolveProxyUrl(ctx.proxyConfig) : undefined
+      const classified = classifyNetError(fetchErr, 'downloading', proxyUrl)
+      // 保留原始 undici 错误引用（cause 链）：编排层按 D4 分类降级需要 errno
+      // （classifyUndiciFailure 的 extractNetErrorCode 沿 cause 链下钻；分类后的
+      // message 不含结构化错误码）
+      classified.cause = fetchErr
+      throw classified
+    }
+    if (!response.ok) {
+      // [LEAK FIX] 抛错前显式 cancel body，释放底层 socket（无引用后 GC 也会清理，
+      // 但显式 cancel 更确定，避免连接挂在 keep-alive 池）。
+      await response.body?.cancel().catch(() => {})
+      throw new UpdateError(`download failed: HTTP ${response.status}`, 'downloading', 'UPDATE_NETWORK_FAILED')
+    }
+    if (!response.body) {
+      throw new UpdateError('download failed: empty response body', 'downloading', 'UPDATE_NETWORK_FAILED')
+    }
+
+    // 4. 流式写到 .downloading 临时文件，同时累加进度（共用上面的 controller/timer）
+    //
+    // [C3] Range 续传响应分类：发了 Range: bytes=N- 后必须区分
+    //   - 206 Partial Content：续传成功，content-length 是剩余部分大小，
+    //     total = content-length + downloadedBytes，writeStream 用追加模式 'a'。
+    //   - 200 OK：服务器/CDN 忽略 Range（整文件回源）。若仍按续传处理，
+    //     content-length 是整个文件大小，total 会多算 downloadedBytes；
+    //     且 writeStream 追加模式会把完整内容拼到残文件后 → 文件损坏。
+    //     因此回退到完整下载：重置 downloadedBytes=0，total 用 content-length，
+    //     writeStream 用覆盖模式 'w'。
+    const requestedRange = ctx.downloadedBytes > 0
+    const resumeAccepted = requestedRange && response.status === HTTP_PARTIAL_CONTENT
+    const contentLength = Number(response.headers.get('content-length') ?? 0)
+    // 续传成功用追加模式 + 累加 total；否则覆盖写（200 回退或全新下载）
+    const writeFlags: 'a' | 'w' = resumeAccepted ? 'a' : 'w'
+    const total = resumeAccepted ? contentLength + ctx.downloadedBytes : contentLength
+
+    // [m5] totalBytes 一致性校验：续传成功（206）时，对比新算出的 total 与
+    // 上次记录的 totalBytes。差异超容差说明 release 文件已变更（残文件过期），
+    // 作废重下，避免把不同版本的内容拼接到一起。注意只在 resumeAccepted
+    // 分支校验——200 回退场景 total 计算方式本就不同，不参与此校验。
+    if (resumeAccepted && ctx.resumeState && Math.abs(total - ctx.resumeState.totalBytes) > TOTAL_BYTES_TOLERANCE) {
+      console.log(`[download] total bytes changed (expected ${ctx.resumeState.totalBytes}, got ${total}), restarting`)
+      await response.body?.cancel().catch(() => {})
+      // 残文件过期：清理后递归重下（从头开始，沿用编排层原参数）
+      try { unlinkSync(ctx.tempPath) } catch (e) { console.warn('[download] stale temp cleanup failed:', e) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+      clearResumeState()
+      await downloadAsset(asset, ctx.onProgress, ctx.proxyConfig)
+      return
+    }
+
+    // 续传起点（206 = downloadedBytes；200 回退/全新 = 0）
+    let downloaded = resumeAccepted ? ctx.downloadedBytes : 0
+    // 如果是断点续传（206），使用追加模式打开文件；否则覆盖写
+    const writeStream = createWriteStream(ctx.tempPath, { flags: writeFlags })
+    // response.body 是 web ReadableStream；转 node Readable 以 pipe。
+    const nodeStream = Readable.fromWeb(toNodeReadableWebStream(response.body))
+    // [M1] idle timeout：长时间无新数据字节即中断。每次收到 chunk 重置。
+    let idleTimer: NodeJS.Timeout | undefined = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
+    // [M3] 记录上次保存进度（续传起点），超过 SAVE_INTERVAL_BYTES 才落盘（替代整除判断）
+    let lastSavedBytes = downloaded
+    // 进度回调节流：每段下载内按百分比变化 + 时间间隔推，降低 IPC 压力。
+    const reportProgress = createThrottledProgress(ctx.onProgress, total)
+    const clearTimers = () => {
+      clearTimeout(timer)
+      if (idleTimer) {
+        clearTimeout(idleTimer)
+        idleTimer = undefined
+      }
+    }
+    try {
+      await new Promise<void>((resolve, reject) => {
+        nodeStream.on('data', (chunk: Buffer) => {
+          downloaded += chunk.length
+          // [M1] 收到新数据重置 idle timer（只要有字节流动就不算挂死）
+          if (idleTimer) clearTimeout(idleTimer)
+          idleTimer = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
+          // [NOTE] total=0（chunked 传输无 content-length）时不报进度：
+          // onProgress 签名是 0-100 百分比，无总量时无法计算百分比；
+          // 前端 useAppUpdate 的 state.percent 期望 0-100，传负值会 UI 异常。
+          // 设计权衡：chunked 时进度条不动（但下载会完成），优于 UI 异常。
+          if (total > 0) {
+            reportProgress(downloaded)
+          }
+          // [M3] 保存断点续传状态：每超过上次保存点 SAVE_INTERVAL_BYTES 字节才落盘。
+          // 旧实现 `downloaded % 1MB === 0` 在续传场景（起点非 1MB 整数倍）几乎
+          // 永不命中，中途崩溃 state 仍是旧值。
+          // [B-4] 统一保存口径：这里也用真实落盘字节（statSync）而非内存 downloaded 计数器。
+          // 原先进度保存用 downloaded（偏大，pipe 未完全 flush）、可恢复错误保存用
+          // statSync（偏小）→ 两口径不一致 → 续传判定 mismatch 重下。现在两处统一，
+          // 配合放宽的续传判定（stat.size <= state）形成正确续传闭环。
+          if (downloaded - lastSavedBytes >= SAVE_INTERVAL_BYTES) {
+            const persisted = getPersistedBytes(ctx.tempPath, downloaded)
+            saveResumeState({
+              downloadedBytes: persisted,
+              totalBytes: total,
+              tempPath: ctx.tempPath,
+              finalPath: ctx.finalPath,
+            })
+            lastSavedBytes = persisted
+          }
+        })
+        nodeStream.pipe(writeStream)
+        writeStream.on('finish', () => resolve())
+        writeStream.on('error', reject)
+        nodeStream.on('error', reject)
+      })
+    } catch (err) {
+      // [LEAK FIX] destroy writeStream 释放底层 fd，避免错误路径泄漏文件描述符。
+      writeStream.destroy()
+      // 超时判定（用于错误分类：UPDATE_NETWORK_TIMEOUT vs 其他），不影响是否保留 temp。
+      const isTimeout = err instanceof Error && (
+        err.name === 'AbortError' ||
+        err.message.includes('aborted') ||
+        err.message.includes('timeout')
+      )
+      // [W-6] 磁盘错误判定：优先用 Node errno code（ENOSPC）精确匹配，
+      // 子串 'disk space' 仅作非英文 OS message 的 fallback。
+      const errno = getNodeErrnoCode(err)
+      const isDiskError = errno === 'ENOSPC' ||
+        (err instanceof Error && err.message.toLowerCase().includes('disk space'))
+
+      // [B-2] 默认 Error 视为可恢复——保留 temp + state 让下次续传。
+      // 旧实现用白名单子串匹配（ECONNRESET/ETIMEDOUT + NETWORK_* code）判 isRecoverable，
+      // 但国内网络常见错误不命中：undici 流中断 UND_ERR_SOCKET/UND_ERR_BODY_TIMEOUT
+      // （message 形如 'other side closed'）、代理中途 407/TLS 错误经流 reject，
+      // message 都不含上述子串 → 走 else 删 temp。这恰恰在最需要续传的「流中途断开」
+      // 场景丢数据，违背 PR 核心目标。
+      // 现在反转默认值：只有明确命中 isDiskError 才删 temp；其余一律保留。
+      // sha256 mismatch 不受影响（它在校验段单独删 temp，不进 stream catch）。
+      if (!isDiskError) {
+        // 保留 temp + 用真实落盘字节存 state，下次可续传（curl 降级路径以 -C -
+        // 从同一 temp 续传，两引擎共用该残文件）。
+        const persistedBytes = getPersistedBytes(ctx.tempPath, downloaded)
+        saveResumeState({
+          downloadedBytes: persistedBytes,
+          totalBytes: total,
+          tempPath: ctx.tempPath,
+          finalPath: ctx.finalPath,
+        })
+        console.log(`[download] recoverable error, kept temp file for resume (${persistedBytes} bytes)`)
+      } else {
+        // 磁盘空间不足：删 temp + 清 state（无法续传）。
+        // [W-5] 此路径不再 saveResumeState——马上就 clear 了，save 纯属浪费。
+        try { unlinkSync(ctx.tempPath) } catch (unlinkErr) { console.warn('[download] stream cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+        clearResumeState()
+      }
+      // 流式传输错误分类（throw 什么 errorCode）；与是否保留 temp 无关。
+      if (isDiskError) {
+        throw new UpdateError(
+          'insufficient disk space',
+          'downloading',
+          'UPDATE_DISK_SPACE',
+          extractRawCause(err),
+        )
+      }
+      // 超时（含 idle/total abort）：映射为 UPDATE_NETWORK_TIMEOUT
+      if (isTimeout) {
+        throw new UpdateError(
+          `download timeout (idle ${IDLE_TIMEOUT_MS / MS_PER_SECOND}s or total ${DOWNLOAD_TIMEOUT_MS / MS_PER_SECOND}s)`,
+          'downloading',
+          'UPDATE_NETWORK_TIMEOUT',
+          extractRawCause(err),
+        )
+      }
+      // 如果已经是 UpdateError（来自上面的网络错误分类），直接抛出
+      if (err instanceof UpdateError) {
+        throw err
+      }
+      const streamError = new UpdateError(
+        `download stream error: ${err instanceof Error ? err.message : String(err)}`,
+        'downloading',
+        'UPDATE_NETWORK_FAILED',
+        extractRawCause(err),
+      )
+      // 保留原始错误引用（cause 链）：编排层按 D4 分类降级需要错误码
+      // （UND_ERR_SOCKET 等流中断形态只在原始错误上可提取）
+      streamError.cause = err
+      throw streamError
+    } finally {
+      // [M1] 流式传输已结束（成功 finish 或抛错）才停两个 watchdog。
+      clearTimers()
+    }
+  } finally {
+    // 外层兜底：fetch 阶段异常也确保 total timer 被清理。
+    clearTimeout(timer)
+    // ProxyAgent 持有连接池，下载结束（成功/失败）后显式关闭避免句柄泄漏。
+    if (dispatcher) {
+      await dispatcher.close().catch(() => {}) // best-effort 连接池清理，失败不影响下载结果
+    }
+  }
+}
+
+/** curl 引擎下载编排上下文（D10 三步链参数）。 */
+interface ICurlDownloadContext {
+  /** `.downloading` temp 路径（downloadViaCurl 产物原地写于此） */
+  tempPath: string
+  /** 最终文件路径（undici 直连回退时下载单段上下文需要） */
+  finalPath: string
+  /** 编排方已知续传字节（仅意图记录：curl `-C -` 以 temp 实际落盘字节数为准） */
+  downloadedBytes: number
+  /** 进度回调（0-100 百分比） */
+  onProgress?: (percent: number) => void
+  /** 完整代理 URL；undefined = 无代理配置（直连） */
+  proxyUrl?: string
+  /** 触发降级的 undici 错误（D8：双引擎均失败时对外报 undici 分类）；
+   *  入口 flag / probe 引擎为 curl 的路径无此上下文（curl 映射错误原样对外） */
+  undiciError?: unknown
+}
+
+/**
+ * curl 整文件下载 + D10 三步链后半段（产物写 temp，sha256 校验/rename 归 downloadAsset）。
+ *
+ * 三步链（D10）：
+ *   ① curl + 代理（无代理配置时本就是 curl 直连）
+ *   ② CurlConnectionError（curl 也连不上代理，exit 7）→ 判定代理整体不可用 →
+ *      直连兜底：curl 可用 → curl 直连（无代理重试）
+ *   ③ curl 缺失（spawn ENOENT 等进程级失败，可用性判定对整条链生效）→ 跳过全部
+ *      curl 形态，直连兜底走 undici（无 dispatcher 单段；flag 仅因私网代理连接失败
+ *      置位时 undici 对公网直连仍可达，回退无矛盾——保证无 curl 环境矩阵第 2 行覆盖）
+ *
+ * 仍失败 → 对外报 undici 错误分类（有降级上下文时）；curl 侧形态仅作 engine:'curl'
+ * 落盘（D8：curl exit 7 覆盖全部连接失败无 errno 区分度，不能当对外分类依据）。
+ */
+async function runCurlDownloadChain(asset: ReleaseAsset, ctx: ICurlDownloadContext): Promise<void> {
+  // curl-download 推原始字节数（statSync 轮询），节流与百分比折算在本层复用现有
+  // 回调（D6：总量 = asset.size；降级重下进度归零属预期，设计 D7 已声明）
+  const progress = createThrottledProgress(ctx.onProgress, asset.size ?? 0)
+  const runOnce = async (proxyUrl: string | undefined) =>
+    downloadViaCurl(asset, {
+      tempPath: ctx.tempPath,
+      proxyUrl,
+      resumeBytes: ctx.downloadedBytes,
+      onProgress: progress,
+    })
+
+  let curlError: unknown
+  try {
+    await runOnce(ctx.proxyUrl)
+    return // ① 成功
+  } catch (err) {
+    curlError = err
+  }
+
+  if (isCurlProcessFailure(curlError)) {
+    // ③ curl 可执行不可用（spawn ENOENT 等）→ 直连兜底改走 undici（见函数尾）
+    logCurlEngineUnavailable(curlError)
+  } else if (curlError instanceof CurlConnectionError && ctx.proxyUrl) {
+    // ② curl 亦连接失败 → 代理整体不可用 → 直连兜底（curl 可用 → curl 直连）
+    logCurlSideFailure(curlError, ctx.proxyUrl)
+    try {
+      await runOnce(undefined)
+      return
+    } catch (directErr) {
+      if (!isCurlProcessFailure(directErr)) {
+        throw finalizeCurlSideFailure(directErr, ctx, undefined)
+      }
+      // 直连 curl 也进程级失败（罕见）：同样跳过 curl 形态走 undici 直连
+      logCurlEngineUnavailable(directErr)
+    }
+  } else {
+    // curl 已运行但失败（超时/HTTP/SSL 等，或本就直连无代理可降）→ 最终失败
+    throw finalizeCurlSideFailure(curlError, ctx, ctx.proxyUrl)
+  }
+
+  // ③ undici 直连兜底：无 dispatcher 单段下载。续传起点对齐 curl `-C -` 口径
+  //（temp 实际落盘字节；无 temp 即完整下载）。resumeState 传 null——直连重连场景
+  // 残 state 的 totalBytes 基准无意义，206/200 分类 + sha256 终校验兜底正确性。
+  let directResumeBytes = 0
+  try {
+    directResumeBytes = statSync(ctx.tempPath).size
+  } catch {
+    // temp 不存在（无残留）即从 0 完整下载
+    directResumeBytes = 0
+  }
+  await downloadSingleStream(asset, {
+    tempPath: ctx.tempPath,
+    finalPath: ctx.finalPath,
+    downloadedBytes: directResumeBytes,
+    resumeState: null,
+    onProgress: ctx.onProgress,
+    proxyConfig: undefined,
+  })
+}
+
+/**
+ * curl 子进程级失败（spawn ENOENT 等）判定。
+ *
+ * downloadViaCurl 的失败形态二分：UpdateError 族（curl 已运行、按 exit code 映射）
+ * vs 原生 Error（spawn 'error' 事件原样上抛——curl-download 刻意不包装以保留 D10
+ * 第三步引擎回退判定依据）。非 UpdateError 的 Error 即进程级失败 → curl 形态整体
+ * 不可用（D10：可用性判定对整条链生效）。
+ */
+function isCurlProcessFailure(err: unknown): boolean {
+  return err instanceof Error && !(err instanceof UpdateError)
+}
+
+/** curl 引擎不可用落盘（engine-fallback：被 undici 直连兜住，A7③ 可观测依据）。 */
+function logCurlEngineUnavailable(err: unknown): void {
+  try {
+    appendUpdateError({
+      at: new Date().toISOString(),
+      source: 'engine-fallback',
+      stage: 'downloading',
+      errorCode: 'UPDATE_NETWORK_FAILED',
+      rawCause: err instanceof Error ? err.message : String(err),
+      engine: 'curl',
+    })
+  } catch (logErr) {
+    // best-effort：落盘失败不阻断降级主流程（对齐 error-log 容错语义），仅 console 兜底
+    console.error('[download] curl-unavailable log write failed:', logErr)
+  }
+}
+
+/** curl 侧失败落盘（D8：curl 结果只作 engine 诊断字段，不参与对外分类）。 */
+function logCurlSideFailure(err: unknown, proxyUrl: string | undefined): void {
+  try {
+    appendUpdateError({
+      at: new Date().toISOString(),
+      source: 'download',
+      stage: 'downloading',
+      errorCode: err instanceof UpdateError ? err.errorCode : 'UPDATE_NETWORK_FAILED',
+      rawCause: err instanceof Error ? err.message : String(err),
+      proxyUrl: proxyUrl ? stripCredential(proxyUrl).safeUrl : undefined,
+      engine: 'curl',
+    })
+  } catch (logErr) {
+    // best-effort：落盘失败不阻断下载主流程（对齐 error-log 容错语义），仅 console 兜底
+    console.error('[download] curl-side failure log write failed:', logErr)
+  }
+}
+
+/**
+ * curl 侧最终失败 → 对外错误（D8：双引擎均失败报 undici 错误分类）。
+ *
+ * 有 undici 上下文（降级路径）→ classifyNetError(undiciError)（errno 级精准分类
+ * 只在 undici 侧成立）；无上下文（入口 flag / probe 引擎为 curl）→ curl 映射的
+ * UpdateError 原样对外。curl 侧形态始终附 engine:'curl' 落盘。
+ */
+function finalizeCurlSideFailure(
+  curlErr: unknown,
+  ctx: ICurlDownloadContext,
+  failedProxyUrl: string | undefined,
+): UpdateError {
+  logCurlSideFailure(curlErr, failedProxyUrl)
+  if (ctx.undiciError !== undefined) {
+    return classifyNetError(ctx.undiciError, 'downloading', ctx.proxyUrl)
+  }
+  if (curlErr instanceof UpdateError) {
+    return curlErr
+  }
+  return new UpdateError(
+    `curl download failed: ${curlErr instanceof Error ? curlErr.message : String(curlErr)}`,
+    'downloading',
+    'UPDATE_NETWORK_FAILED',
+  )
+}
+
+/**
+ * undici 失败被 curl 兜住时的降级点落盘（D8，对齐 upgrade-fetch 的 logEngineFallback）。
+ *
+ * 单段/多段下载路径的 undici 失败不经 upgradeFetch（直用全局 fetch），其降级
+ * 可观测性由本编排层补齐——降级成功时调用方 handler 不进 catch，只能在降级
+ * 发生点落盘（A1 验收依据）。
+ */
+function logUndiciEngineFallback(err: unknown, proxyUrl: string | undefined): void {
+  try {
+    appendUpdateError({
+      at: new Date().toISOString(),
+      source: 'engine-fallback',
+      stage: 'downloading',
+      errorCode: classifyNetError(err, 'downloading', proxyUrl).errorCode,
+      rawCause: extractRawCause(err),
+      proxyUrl: proxyUrl ? stripCredential(proxyUrl).safeUrl : undefined,
+      engine: 'undici',
+    })
+  } catch (logErr) {
+    // best-effort：落盘失败不阻断降级主流程（对齐 error-log 容错语义），仅 console 兜底
+    console.error('[download] engine-fallback log write failed:', logErr)
+  }
+}
+
 /**
  * 构造 fetch 选项（User-Agent + 代理 + signal + 可选 Range 头）。
  * 与 release-checker 保持一致的 User-Agent，避免部分 CDN 因空 UA 拒绝/限速。
@@ -507,6 +814,7 @@ function buildFetchOptions(
     try {
       options.dispatcher = new ProxyAgent(proxyUrl)
     } catch (err) {
+      // best-effort 降级：ProxyAgent 构造失败按直连继续请求，不阻断下载
       console.warn('[download] proxy agent init failed, fallback to direct:', err)
     }
   }
@@ -516,36 +824,34 @@ function buildFetchOptions(
 /**
  * 探测目标是否支持多段并行下载（HEAD 请求检查 accept-ranges + content-length）。
  *
- * @returns supported=true 表示支持 Range 且 totalBytes 已知；否则返回 false
+ * u4：probe 改经 upgradeFetch（双引擎，D7）——undici 连接类失败时封装内部按 D4
+ * 判定降级 curl（连接建立失败同时置 flag）并在降级点落盘 engine-fallback；
+ * usedEngine 供编排层分流（curl → 本次放弃多段直接整文件 curl 下载）。
+ *
+ * @returns supported=true 表示支持 Range 且 totalBytes 已知；usedEngine 为 probe
+ *   实际引擎。probe 失败（双引擎均失败 / undici 不可降级错误）非致命：返回
+ *   supported=false 落单段路径（现有语义），引擎编排由单段失败分类接管。
  */
 async function probeMultiPartSupport(
   asset: ReleaseAsset,
-  proxyConfig: IProxyConfig | undefined,
-): Promise<{ supported: boolean; totalBytes: number }> {
-  let dispatcher: ProxyAgent | undefined
+  proxyUrl: string | undefined,
+): Promise<{ supported: boolean; totalBytes: number; usedEngine: FetchEngine }> {
   try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 30_000)
-    const options = buildFetchOptions(proxyConfig, controller.signal)
-    dispatcher = options.dispatcher
-    const response = await fetch(asset.downloadUrl, { ...options, method: 'HEAD' })
-    clearTimeout(timer)
-    const acceptRanges = response.headers.get('accept-ranges') ?? ''
-    const contentLength = Number(response.headers.get('content-length') ?? 0)
-    // 无论是否支持都释放 body
-    await response.body?.cancel().catch(() => {})
-    const supported = response.ok &&
+    const result = await upgradeFetch(asset.downloadUrl, {
+      method: 'HEAD',
+      proxyUrl,
+      stage: 'downloading',
+    })
+    const acceptRanges = result.headers['accept-ranges'] ?? ''
+    const contentLength = Number(result.headers['content-length'] ?? 0)
+    const supported = result.ok &&
       acceptRanges.includes('bytes') &&
       contentLength > 0 &&
       contentLength >= MIN_MULTI_PART_SIZE
-    return { supported, totalBytes: contentLength }
+    return { supported, totalBytes: contentLength, usedEngine: result.usedEngine }
   } catch (err) {
     console.warn('[download] multipart probe failed:', err)
-    return { supported: false, totalBytes: 0 }
-  } finally {
-    if (dispatcher) {
-      await dispatcher.close().catch(() => {})
-    }
+    return { supported: false, totalBytes: 0, usedEngine: 'undici' }
   }
 }
 
@@ -690,7 +996,11 @@ async function downloadPart(
     }
     // D1: 对 downloadPart 的网络错误做统一分类（覆盖断点 1b：多段路径原无分类）
     const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
-    throw classifyNetError(err, 'downloading', proxyUrl)
+    const classified = classifyNetError(err, 'downloading', proxyUrl)
+    // 保留原始 undici 错误引用（cause 链）：编排层（downloadAsset）按 D4 分类降级
+    // 需要 errno（classifyUndiciFailure 的 extractNetErrorCode 沿 cause 链下钻）。
+    classified.cause = err
+    throw classified
   } finally {
     if (sharedSignal) sharedSignal.removeEventListener('abort', onSharedAbort)
     clearTimeout(timer)
@@ -807,9 +1117,8 @@ async function downloadMultiPart(
       try { unlinkSync(part.tempPath) } catch (unlinkErr) { console.warn('[download] part cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
     }
   }
-  // [MUST-FIX #2] multipart 成功：与单段路径对齐，清除 resume-state（本路径开头已 clear，
-  // 但中途单段下载流程不会重新 save，这里保持幂等清理，确保成功后无残留）。
-  clearResumeState()
+  // [MUST-FIX #2] multipart 成功后的 resume-state 清理统一由 downloadAsset 在校验链前
+  // 执行（D6：两引擎同点清理不散落；本路径开头已 clear 过，此处无需重复）。
   return { tempPath }
 }
 
