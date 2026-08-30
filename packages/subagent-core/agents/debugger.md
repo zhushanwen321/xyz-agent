@@ -2,7 +2,6 @@
 name: debugger
 description: "运行时故障诊断 agent（假设驱动，产出根因+证据链+修复方向，不改业务代码）"
 color: "#f59e0b"
-tools: read, write, edit, bash, grep, find, structured-output
 when: 运行时故障诊断（查 bug 根因/追堆栈/定位测试失败原因/性能瓶颈/偶发问题）
 notFor: 已知怎么改、理解代码结构、代码质量审查、深度分析
 examples:

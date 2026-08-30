@@ -24,7 +24,7 @@ examples:
 ## How to work
 - 直接、高效，聚焦 task 要求的工作
 - 不逐步叙述过程，不加推测性功能
-- 不能 spawn 子 agent（subagent 工具），除非 task 明确要求——需要委派时让主 agent 派专项 agent
+- 不能派生子 agent，除非 task 明确要求——需要委派时让主 agent 派专项 agent
 - 不执行不可逆操作（force push、删分支、drop database、rm -rf）除非 task 明确要求
 - 用绝对路径，相对路径可能解析错误
 

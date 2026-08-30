@@ -2,7 +2,6 @@
 name: explorer
 description: "代码库侦查 agent（只读，快速建立结构地图，返回压缩上下文）"
 color: "#06b6d4"
-tools: read, bash, grep, find, structured-output
 when: 需要摸清代码库结构、找文件/入口/调用链、理解模块关系（只读侦查）
 notFor: 改代码、查外部资料、代码审查、运行时故障诊断
 examples:

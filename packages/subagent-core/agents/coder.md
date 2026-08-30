@@ -2,7 +2,6 @@
 name: coder
 description: "代码实现、修改与测试 agent（可改文件，唯一改代码的角色，最小变更，改前先读）"
 color: "#3b82f6"
-tools: read, write, edit, bash, grep, find, structured-output
 when: 写新功能/重构/修 bug/写测试/跑测试（唯一改代码的角色）
 notFor: 诊断根因、审查代码、理解陌生代码、深度分析
 examples:

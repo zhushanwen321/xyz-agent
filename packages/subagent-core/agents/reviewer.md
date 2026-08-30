@@ -2,7 +2,6 @@
 name: reviewer
 description: "代码审查与需求验收 agent（只读含 git diff，severity 分级+证据，只报不改）"
 color: "#ef4444"
-tools: read, bash, grep, find, structured-output
 when: 用户要求 review/审查代码或 diff，找 bug/逻辑错误/安全问题（含需求验收）
 notFor: 实现修复、理解代码结构、运行时故障诊断
 examples:

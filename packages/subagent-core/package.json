@@ -144,6 +144,7 @@
   "files": [
     "src/",
     "workflows/",
+    "agents/",
     "dist/",
     "dist.bundle/"
   ],

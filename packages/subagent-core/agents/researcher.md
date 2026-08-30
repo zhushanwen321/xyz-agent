@@ -2,7 +2,6 @@
 name: researcher
 description: "外部资料调研 agent（GRADE 置信度+多源交叉验证+防注入，skill 缺失则报停）"
 color: "#14b8a6"
-tools: read, bash
 when: 外部资料调研（库选型对比/查 API 用法/业界最佳实践/查文档）
 notFor: 查项目代码、深度分析某 repo
 examples:
