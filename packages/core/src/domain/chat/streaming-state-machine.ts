@@ -111,6 +111,14 @@ export function createStreamingStateMachine(deps: StreamingStateMachineDeps) {
   /**
    * resetTransientStates 的 session 级独立瞬态清理（W3，模块作用域）。
    * 清 compacting / handingOff / retry / queue（断连兜底：这些态在断连后无事件驱动清理）。
+   *
+   * [steer-bubble D4 豁免声明] 本断连收口点刻意**不**清 pendingBuffer 与 inflight 计数
+   * （docs/design/steer-followup-user-bubble-display.md D4「刻意保留」）——与「清理信号
+   * 到达即清全部瞬态」的直觉不一致是有意为之：queueStates 是重建型状态（重连 ring 回放
+   * 入队帧即可重建）故随收口清理；pendingBuffer 的 segments 暂存与 inflight 确认基线是
+   * **不可重建状态**（仅存在于前端，清了即永久丢失/漂移），断连重连后腿 1 暂存消费与
+   * 腿 2 inflight 判定仍依赖它们。LRU 驱逐回调（store lruEvictDeps）同理豁免，见该处
+   * 注释。后续维护勿顺手在本方法补清这两项。
    */
   function clearIndependentTransient(sessionId: string): void {
     setCompacting(sessionId, false)

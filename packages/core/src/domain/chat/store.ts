@@ -169,6 +169,28 @@ export function createChatStore() {
    */
   const pendingBuffer = ref<Map<string, PendingItem[]>>(new Map())
   /**
+   * [steer-bubble u0 / docs/design/steer-followup-user-bubble-display.md D2]
+   * per-session inflight 投递确认计数（Map 分区，对齐 queueStates/pendingBuffer 惯例，
+   * 不可变写保证响应式）。
+   *
+   * 语义 = **已显示待确认的投递数**：steer/followUp 气泡已进对话流（腿 1 drain 消费）
+   * 或 send 乐观插入，但其确认帧 message_end(user) 未到。不变式 inflight ≥ 0
+   * （decrementInflight 钳制，配额漂移不产生负值）；正常路径逐投递归零——pi 投递
+   * 时序保证 drain 帧先于 message_end，无欠账可累积。
+   *
+   * 三个维护点（本单元只建 state 与 action 面，不接线调用方——后续单元接）：
+   * 1. 腿 1 消费：queue_update drain 帧 drainN 实取 m 条 → +m（drain 帧即投递证据，
+   *    未显示的不确认，u2 接）
+   * 2. send 乐观：appendUser 乐观插入 +1 / RPC 失败 catch 回滚 −1（挂 useChat send
+   *    调用点，不在 appendUser 内防双计，u2 接）
+   * 3. message_end(user) 确认：−1（inflight > 0 抵消跳过腿 2 兜底，u1 接）
+   *
+   * 清零挂点（D4 生命周期闭合）：abort（message.complete{stopReason:'aborted'}）与
+   * disposeSession——pi 队列确定性作废后确认基线一并作废，防残留吞掉后续投递的确认
+   * 配额。LRU 驱逐与断连收口**刻意不清**（D4 豁免，见 lruEvictDeps 处声明注释）。
+   */
+  const inflightCounts = ref<Map<string, number>>(new Map())
+  /**
    * [W21] per-session reducer state（实时 feed 喂入 applyEntry 的累积态）。
    *
    * 实时路径（message_end / tool_call_end 重构 entry）与文件重放（get_entries →
@@ -319,7 +341,14 @@ export function createChatStore() {
    *  W19 review Fix-2：deleteChangeSetStatusesFor 注入——删 messages 分区时同步清该 sid 的
    *  changeSetStatuses 前缀条目（此前仅 disposeSession 清理，LRU 驱逐不清 → map 泄漏）。
    *  W21：同回调内联清 entryStates 分区（reducer 累积态随 messages 分区同生共死——驱逐重进后
-   *  由 hydrate 全量重放重建，残留旧累积会造成 W22 对账基线陈旧）。 */
+   *  由 hydrate 全量重放重建，残留旧累积会造成 W22 对账基线陈旧）。
+   *  [steer-bubble D4 豁免声明] 本驱逐回调刻意**不**清 pendingBuffer / queueStates /
+   *  inflightCounts——与「disposeSession 同点全清」的既有清理惯例不一致是有意为之
+   *  （docs/design/steer-followup-user-bubble-display.md D4「刻意保留」）：这三者是不可
+   *  重建状态（segments 暂存与 inflight 确认基线仅存在于前端，清了即永久丢失/漂移），
+   *  且驱逐重进后腿 1 暂存与腿 2 判定仍依赖它们；entryStates/anchors/hydrated 是重建型
+   *  （hydrate 重放可恢复）才随驱逐清理。断连收口（clearIndependentTransient）同理豁免
+   *  pendingBuffer 与 inflight，见该处注释。后续维护勿按惯例顺手补清。 */
   const lruEvictDeps = makeLruEvictDeps(
     messages,
     hydrated,
@@ -544,6 +573,45 @@ export function createChatStore() {
     pendingBuffer.value = new Map(pendingBuffer.value).set(sessionId, prev.filter((_, i) => i !== idx))
   }
 
+  // ── inflight 投递确认计数（[steer-bubble u0/D2] 契约层：state 见上，调用方接线归 u1/u2）──
+
+  /** 读 per-session inflight 计数。无记录 = 0（归零即删条目，正常路径 Map 多数时间无该 sid）。 */
+  function getInflight(sessionId: string): number {
+    return inflightCounts.value.get(sessionId) ?? 0
+  }
+
+  /**
+   * inflight += n（默认 1）。腿 1 消费按 drainN 实取数传 m（u2），send 乐观 +1（u2）。
+   * n ≤ 0 no-op——实取数为 0（drain 差集 > 0 但暂存无匹配货）时不产生零值条目。
+   */
+  function incrementInflight(sessionId: string, n = 1): void {
+    if (n <= 0) return
+    inflightCounts.value = new Map(inflightCounts.value).set(sessionId, getInflight(sessionId) + n)
+  }
+
+  /**
+   * inflight -= n（默认 1）。message_end(user) 确认 −1（u1）/ send 失败回滚 −1（u2）。
+   * 钳制到 0（不变式 ≥ 0）：负值在「inflight > 0」判定上行为与 0 等同，钳制保证值域
+   * 始终符合语义声明。归零即删条目（Map 不积累零值）。
+   */
+  function decrementInflight(sessionId: string, n = 1): void {
+    if (n <= 0) return
+    const next = Math.max(0, getInflight(sessionId) - n)
+    if (next === 0) clearInflight(sessionId)
+    else inflightCounts.value = new Map(inflightCounts.value).set(sessionId, next)
+  }
+
+  /**
+   * inflight 清零（abort / disposeSession 挂点，D4：pi 队列确定性作废 → 确认基线整体
+   * 作废）。幂等。
+   */
+  function clearInflight(sessionId: string): void {
+    if (!inflightCounts.value.has(sessionId)) return
+    const next = new Map(inflightCounts.value)
+    next.delete(sessionId)
+    inflightCounts.value = next
+  }
+
   /**
    * [W21] 重构 entry 喂 per-session reducer state（applyEntry）——实时 feed 与文件重放
    * （hydrate 链的 replayEntries）喂同一个 reducer。
@@ -617,6 +685,10 @@ export function createChatStore() {
         drainN,
         reconcilePending,
         applyEntryFrame,
+        getInflight,
+        incrementInflight,
+        decrementInflight,
+        clearInflight,
       },
       sessionId,
       msg,
@@ -830,7 +902,9 @@ export function createChatStore() {
     // retryStates/queueStates 是深 ref，此写法同样正确触发。统一用"构造新 Map → delete → 赋值"范式。
     // 显式结构类型（对齐原 disposeSession 编排参数）：数组元素统一为 Map<string, unknown>，
     // 避免 TS 将不同 Map 元素推断为具体联合类型导致 new Map(ref.value) 不兼容。
-    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, compactingReasons]
+    // inflightCounts（[steer-bubble D4]）：disposeSession 同步清 inflight——确认基线随分区
+    // 销毁作废（与 LRU 驱逐的刻意豁免不同，见 lruEvictDeps 处声明注释）。
+    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, inflightCounts, compactingReasons]
     const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, compactingSessions, handingOffSessions, failedHistory]
     for (const ref of mapRefs) {
       if (ref.value.has(sessionId)) {
@@ -873,6 +947,7 @@ export function createChatStore() {
     retryStates,
     queueStates,
     pendingBuffer,
+    inflightCounts,
     changeSetStatuses,
     failedHistory,
     hydrated,
@@ -892,6 +967,10 @@ export function createChatStore() {
     drainN,
     reconcilePending,
     abortPending,
+    getInflight,
+    incrementInflight,
+    decrementInflight,
+    clearInflight,
     applyMessageEvent,
     isGenerating,
     isActive,

@@ -386,6 +386,85 @@ describe('createChatStore factory', () => {
     })
   })
 
+  // ── [steer-bubble u0/D2] inflight 投递确认计数契约层：state + 增/减/清零 action 面。
+  //    本组只锁 store 层语义；调用方接线（腿 1 消费 +m / send 乐观 ±1 / message_end 确认
+  //    −1 / abort 清零）归 u1/u2 单元。设计：docs/design/steer-followup-user-bubble-display.md D2/D4 ──
+  describe('inflight 计数（u0 契约层：已显示待确认的投递数）', () => {
+    it('increment/decrement 基本语义：默认步长 1，显式 n 累加（腿 1 实取数 m 形态）', () => {
+      const sid = 's1'
+      sut.store.incrementInflight(sid) // send 乐观 +1 / 腿 1 消费 1 条
+      expect(sut.store.getInflight(sid)).toBe(1)
+      sut.store.incrementInflight(sid, 2) // 腿 1 按实取数 +m
+      expect(sut.store.getInflight(sid)).toBe(3)
+      sut.store.decrementInflight(sid) // message_end 确认 −1
+      expect(sut.store.getInflight(sid)).toBe(2)
+      expect(sut.store.getInflight('other')).toBe(0) // 无记录 = 0
+    })
+
+    it('decrement 归零即删条目（Map 不积累零值）+ 钳制 ≥ 0（不变式，漂移不产生负值）', () => {
+      const sid = 's1'
+      sut.store.incrementInflight(sid, 2)
+      sut.store.decrementInflight(sid, 2)
+      expect(sut.store.getInflight(sid)).toBe(0)
+      expect(sut.store.inflightCounts.value.has(sid)).toBe(false) // 归零即删
+      // 0 上再减（send 失败回滚兜底失效等配额漂移场景）：钳制到 0，不出现负值
+      sut.store.decrementInflight(sid)
+      expect(sut.store.getInflight(sid)).toBe(0)
+    })
+
+    it('n ≤ 0 no-op（drain 实取数为 0 不产生条目）', () => {
+      const sid = 's1'
+      sut.store.incrementInflight(sid, 0)
+      sut.store.decrementInflight(sid, 0)
+      expect(sut.store.inflightCounts.value.has(sid)).toBe(false)
+    })
+
+    it('clearInflight 清零 + 幂等（abort / disposeSession 挂点语义）', () => {
+      const sid = 's1'
+      sut.store.incrementInflight(sid, 3)
+      sut.store.clearInflight(sid)
+      expect(sut.store.getInflight(sid)).toBe(0)
+      sut.store.clearInflight(sid) // 幂等：无条目 no-op
+      expect(sut.store.getInflight(sid)).toBe(0)
+    })
+
+    it('per-session 分区隔离（A/B session 计数互不干扰）', () => {
+      sut.store.incrementInflight('sa', 1)
+      sut.store.incrementInflight('sb', 2)
+      sut.store.decrementInflight('sb', 1)
+      expect(sut.store.getInflight('sa')).toBe(1)
+      expect(sut.store.getInflight('sb')).toBe(1)
+    })
+
+    it('disposeSession 后计数清空（D4：确认基线随分区销毁作废）', () => {
+      const sid = 's1'
+      sut.store.incrementInflight(sid, 2)
+      sut.store.disposeSession(sid)
+      expect(sut.store.getInflight(sid)).toBe(0)
+      expect(sut.store.inflightCounts.value.has(sid)).toBe(false)
+      // 分区隔离：其他 session 不受销毁影响
+      sut.store.incrementInflight('sb', 1)
+      sut.store.disposeSession(sid)
+      expect(sut.store.getInflight('sb')).toBe(1)
+    })
+
+    it('LRU 驱逐后计数保留（D4 豁免验证：不可重建状态，刻意不随驱逐清理）', () => {
+      // 9 个 session 全部 setMessages + touchLru（时间戳递增），s0 最旧被驱逐
+      for (let i = 0; i < 9; i++) {
+        const sid = `s${i}`
+        sut.store.setMessages(sid, [userMsg(`m${i}`, 'x')])
+        sut.store.incrementInflight(sid, 1)
+        sut.store.touchLru(sid)
+      }
+      sut.store.evictIfNeeded()
+      expect(sut.store.getMessages('s0')).toHaveLength(0) // 前置：s0 被驱逐（messages 已清）
+      // 豁免验证：驱逐刻意不清 inflight（与 disposeSession 全清惯例刻意不一致——segments
+      // 与确认基线不可重建，驱逐重进后两腿判定仍依赖）
+      expect(sut.store.getInflight('s0')).toBe(1)
+      expect(sut.store.getInflight('s8')).toBe(1) // 保留 session 不受影响
+    })
+  })
+
   describe('isGenerating 派生（D-3 per-session 惰性派生，判定与旧全 Map scan 等价）', () => {
     it('空 session isGenerating=false', () => {
       expect(sut.store.isGenerating('empty')).toBe(false)

@@ -102,8 +102,8 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u-probe | pending | 0 | — |
-| u0-foundation | pending | 0 | — |
+| u-probe | in-progress | 0 | 探针 agent 运行中（pi rpc 实跑 P1/P2/P3） |
+| u0-foundation | committed | 0 | commit: inflight state + 4 action + ctx 注入 + D4 豁免注释 ×2；typecheck 绿；store.test.ts 68 passed（61 既有 + 7 新增 inflight） |
 | u1-leg2 | pending | 0 | — |
 | u3-reconcile | pending | 0 | — |
 | u2-lifecycle | pending | 0 | — |

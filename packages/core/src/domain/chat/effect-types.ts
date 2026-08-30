@@ -81,6 +81,22 @@ export interface MessageEffectContext {
    * 全走 reducer，副作用类保留 effect）。实现在 store.applyEntryFrame。
    */
   applyEntryFrame: (sessionId: string, entry: PiEntry) => void
+  /**
+   * [steer-bubble u0 / docs/design/steer-followup-user-bubble-display.md D2] per-session
+   * inflight 投递确认计数读写——语义 = **已显示待确认的投递数**（steer/followUp 气泡已
+   * 进对话流或 send 乐观插入，其确认帧 message_end(user) 未到）。不变式 ≥ 0（decrement
+   * 钳制，配额漂移不产生负值），正常路径逐投递归零。实现在 store（getInflight 等），
+   * 本单元只注入契约，消费接线归 u1（message_end 确认 −1）与 u2（腿 1 消费 +m /
+   * abort 清零）。
+   */
+  /** 读 per-session inflight 计数（无记录 = 0）。 */
+  getInflight: (sessionId: string) => number
+  /** inflight += n（默认 1；腿 1 消费按 drainN 实取数传 m，send 乐观插入 +1）。n ≤ 0 no-op。 */
+  incrementInflight: (sessionId: string, n?: number) => void
+  /** inflight -= n（默认 1；message_end(user) 确认 / send 失败回滚）。钳制 ≥ 0，归零删条目。 */
+  decrementInflight: (sessionId: string, n?: number) => void
+  /** inflight 清零（abort（message.complete{aborted}）挂点，D4：确认基线随队列作废）。幂等。 */
+  clearInflight: (sessionId: string) => void
 }
 
 /**
