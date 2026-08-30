@@ -471,6 +471,83 @@ describe('send 定向分流（含 subagent 段）', () => {
   })
 })
 
+// ── [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D2 维护点 2]
+//    send inflight 挂钩：乐观 +1 / catch 回滚 −1 / 挂钩位置约定（busy 转 steer 不挂）──
+
+describe('send inflight 挂钩（steer-bubble u2 / D2 维护点 2）', () => {
+  beforeEach(() => {
+    resetChatModuleStateForTest()
+  })
+
+  /** message_end(user) 帧（payload.entry 为 event-adapter 重构形态——send 乐观插入的确认帧） */
+  function userEnd(sid: string, text: string): ServerMessage {
+    return {
+      type: 'message.message_end',
+      payload: {
+        sessionId: sid,
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: new Date(0).toISOString(),
+          message: { role: 'user', content: [{ type: 'text', text }], timestamp: 0 },
+        },
+      },
+    } as ServerMessage
+  }
+
+  it('send 乐观插入 → inflight +1；pi 投递确认 message_end(user) 到达 → 抵消归零', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s30', textToSegments('hi'))
+    // 乐观插入即「已显示」——待 message_end(user) 确认（不落入腿 2 includes 兜底，
+    // 防与队列未投递同文本碰撞误命中）
+    expect(f.chatStore.getInflight('s30')).toBe(1)
+
+    f.emit('s30', userEnd('s30', 'hi'))
+    expect(f.chatStore.getInflight('s30')).toBe(0)
+    f.dispose()
+  })
+
+  it('send RPC 失败 → catch 回滚 −1（pi 侧无消息、message_end 永不到来，配额不悬空）', async () => {
+    const f = makeFixture()
+    f.chatApi.send.mockRejectedValueOnce(new Error('WS断'))
+
+    await f.useChat.send('s31', textToSegments('hi'))
+
+    // +1 后回滚 −1 → 0：不回滚则配额永久悬空、下一次 F1 投递的 message_end 被错抵
+    expect(f.chatStore.getInflight('s31')).toBe(0)
+    expect(f.toast.error).toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('busy 转 steer 分支不挂钩（走 pushPending 暂存，投递时腿 1/腿 2 消费各自计数）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s32', textToSegments('hi')) // 首发 send：+1
+    f.emit('s32', msg('s32', 'message.message_start', { messageId: 'a1' })) // busy
+    expect(f.chatStore.isActive('s32')).toBe(true)
+
+    await f.useChat.send('s32', textToSegments('more')) // B 策略转 steer
+
+    // 只有首发的 +1；steer 的 pushPending 不动 inflight（其确认走腿 1 消费 +m 链路）
+    expect(f.chatStore.getInflight('s32')).toBe(1)
+    expect(f.chatApi.steer).toHaveBeenCalledTimes(1)
+    f.dispose()
+  })
+
+  it('editAndResend 不挂钩（其 message_end 走 includes 不命中跳过，无需配额）', async () => {
+    const f = makeFixture()
+    // 建 1 条可编辑的 user 消息（首条 user 消息 id）
+    await f.useChat.send('s33', textToSegments('old'))
+    const userMsgId = f.chatStore.getMessages('s33').find((m) => m.role === 'user')!.id
+
+    await f.useChat.editAndResend('s33', userMsgId, textToSegments('edited'))
+
+    // 挂钩在 send 调用点不在 appendUser 内：编辑重发路径零计数（误挂会在此 +1，
+    // 其 message_end 到达时错抵真正的 inflight 配额）
+    expect(f.chatStore.getInflight('s33')).toBe(1) // 仅首发 send 的 +1
+    f.dispose()
+  })
+})
+
 // ── subagent.directive live 广播消费（U2b，§3.3.3a live 链路）──────────────────────
 
 describe('subagent.directive 广播消费', () => {

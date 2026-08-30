@@ -104,6 +104,9 @@ graph TD
 | 2026-08-30 | u3-reconcile | hydrate 的 load-more 切分锚改为取**基线**首条（非 merged 首条） | live 保护段可能排在 merged 头部，用 merged 首条会污染切分锚 | 合理不一致登记（实现内注释披露，不改设计——设计未规定锚取值细节） |
 | 2026-08-30 | u1-leg2 | 双维度同文本命中的消费策略实现为顺序 fallback 链（steering→followUp 依次 drainN 取有货方，全空才纯文本降级） | 设计 D2 已知边界①「单 mode 误指降级」的直接改进：降级概率收敛到两 mode 暂存全空；已重演错吃反例（需 F1 + 跨 mode 同文本 + steer 暂存恰空三条件叠加，后果不劣于边界①本身） | 合理不一致登记；阶段 3 一致性审查时统一回顾 D2 边界①措辞 |
 | 2026-08-30 | u1-leg2 | 腿 2 接线位置在 applyEntryFrame 之后（reducer 权威喂入前置） | 与 customStart「先喂 reducer 再投影 ref」范式一致；任务明示两序等价 | 合理不一致登记（范式对齐，无需改设计） |
+| 2026-08-30 | u2-lifecycle | 僵尸清理与 abort 清空复用 ctx.reconcilePending（存量>深度判断内建、depth=0 全清），未新增 store action | 新增 action 须改 effect-types.ts（不在领地）；复用语义精确匹配 D4「裁残量/全清」 | 合理不一致登记（零越界复用，reconcilePending 获得新调用方无需 deprecated） |
+| 2026-08-30 | u2-lifecycle | store.ts 改动为 reconcilePending 函数头注释更新（函数体零改动） | 投递侧调用移除后原注释与行为背离，必要文档一致性修复 | 合理不一致登记（超「仅新增 action」字面范围，已核 diff 纯注释） |
+| 2026-08-30 | u2-lifecycle | pending-drain-fifo 组4 / effects TC4 由「投递侧裁剪」断言改写为「G-023 僵尸清理 / 不再调 reconcilePending」断言 | D4 行为移除的直接锁定对象；已核 diff 为换断言（非删断言），并新增组6（F3 不可逆丢失回归）/组7（腿 2 回填非降级） | 合理不一致登记（行为变更测试同步） |
 
 ## 6 状态表
 
@@ -112,8 +115,8 @@ graph TD
 | u-probe | committed | 0 | P1 ✅ 4/4 投递 drain 帧先于 message_end(user) 成对（隔 2 seq，events-p1.jsonl）；P2 ✅ 帧文本↔帧文本同源 3/3（plain/空白逐字节/skill 展开，pi 不 trim，events-p2*.jsonl）；P3 ✅ 快照保真 8/8 采样点（3 场景 get_state 对账，events-p3-*.jsonl）。三探针全过，无降级路径触发；证据 /tmp/probe-steer-bubble/ |
 | u0-foundation | committed | 0 | e7fdf2cd5：inflight state + 4 action + ctx 注入 + D4 豁免注释 ×2；typecheck 绿；store.test.ts 68 passed（61 既有 + 7 新增） |
 | u3-reconcile | committed | 0 | fc0f800e3：mergeBaselineWithLive 两步规则 + hydrate 复用；typecheck 绿；store.test.ts 76 passed（68 既有 + 8 新增，含四类快照 + 已知边界 + F2 组合）；域内回归 27 files / 530 tests 绿 |
-| u1-leg2 | committed | 0 | confirmUserDeliveryOnMessageEnd 腿 2 裁决（inflight 抵消/includes 兜底/纯文本降级/剔快照）+ extractUserContentText + removeQueuedTextFromSnapshot；effects.test.ts 38 passed（31 既有 + 7 新增七路径）；域内回归 22 files / 481 tests 绿 |
-| u2-lifecycle | pending | 0 | — |
+| u1-leg2 | committed | 0 | 93a667f66：confirmUserDeliveryOnMessageEnd 腿 2 裁决（inflight 抵消/includes 兜底/纯文本降级/剔快照）；effects.test.ts 38 passed（31 既有 + 7 新增七路径）；域内回归 481 passed |
+| u2-lifecycle | committed | 0 | queue_update 投递侧裁剪移除 + 腿 1 inflight +=m；G-023 条件清（F4 修复）+ 同点僵尸清理；abort 三项清；send 挂钩 ±1 + S7 注释清理；域内 22 files / 498 tests 绿（pending-drain-fifo 7 + effects 49 + useChat 35） |
 | u4-equivalence | pending | 0 | — |
 
 ## 7 残留风险与变更历史

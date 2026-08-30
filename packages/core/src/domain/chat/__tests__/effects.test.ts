@@ -278,14 +278,57 @@ describe('dispatchMessageEvent queue_update drain（m2 steer/followup 解耦，W
     expect(ctx.appendUser).not.toHaveBeenCalled()
   })
 
-  it('TC4: 深度对账——reconcilePending 以帧内 pendingMessageCount 为深度调用', () => {
+  it('TC4: [steer-bubble u2/D4] 投递侧不再调 reconcilePending（每帧裁剪移除，僵尸清理移交 G-023 时点）', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: ['a'], pendingMessageCount: 1 }))
-    expect(ctx.reconcilePending).toHaveBeenCalledWith(SID, 1)
+    // 旧行为：同帧 reconcilePending(sid, depth) 裁 buffer 到深度——会吃掉腿 2 还没回填
+    // 的 segments 且是丢消息的不可逆放大器（F3），D4 移除；僵尸改由 message_start(assistant)
+    // 同点清理（见 G-023 用例）
+    expect(ctx.reconcilePending).not.toHaveBeenCalled()
 
-    // 字段缺失（旧 runtime / mock 帧）时退化为帧内数组长度和（W8 恒等公式，等价）
+    // 旧 runtime / mock 帧字段缺失（无 pendingMessageCount）同样不触发——裁剪语义整体移除
     dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: ['a', 'b'] }))
-    expect(ctx.reconcilePending).toHaveBeenLastCalledWith(SID, 2)
+    expect(ctx.reconcilePending).not.toHaveBeenCalled()
+  })
+
+  it('TC5: [u2/D2 维护点 1] 腿 1 消费点 inflight += 实取数——drainN 返回 1 组 → +1', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, { steering: ['adjust plan'] }]])
+    const segs: Segment[] = [{ type: 'text', text: 'adjust plan' }]
+    // 对齐真 store.drainN 行为：n ≤ 0 / 维度不匹配返回 []（防 follow 维度假命中）
+    vi.mocked(ctx.drainN).mockImplementation((_sid, mode, n) => (mode === 'steer' && n > 0 ? [segs] : []))
+
+    dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: [] }))
+
+    // 实取数 m = drainN 实际返回数组长度（drain 帧是投递证据，已显示待 message_end 确认）
+    expect(ctx.incrementInflight).toHaveBeenCalledWith(SID, 1)
+  })
+
+  it('TC6: [u2/D2] 按实取数 m 计而非差集 N——差集 N=3 但 buffer 取尽只回 2 组 → +2', () => {
+    const ctx = makeCtx()
+    // 扩展注入例外：pi 队列 3 条被全部投递（差集 3），前端暂存只有 2 条（drainN 取尽）
+    ctx.queueStates.value = new Map([[SID, { steering: ['a', 'b', 'EXT'] }]])
+    vi.mocked(ctx.drainN).mockImplementation((_sid, _mode, n) =>
+      n >= 2 ? [[{ type: 'text', text: 'a' }], [{ type: 'text', text: 'b' }]] : [])
+
+    dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: [] }))
+
+    // m < N 的差额（EXT 无前端暂存）未显示即不确认——其 message_end 到达时走腿 2 兜底
+    expect(ctx.incrementInflight).toHaveBeenCalledWith(SID, 2)
+    expect(ctx.incrementInflight).not.toHaveBeenCalledWith(SID, 3)
+  })
+
+  it('TC7: [u2/D2] drainN 取尽返回 []（实取 m=0）→ incrementInflight 以 0 调用（store 侧 no-op）', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, { steering: ['x'] }]])
+    // drainN 默认 mock 返回 []（pendingBuffer 空 / 已 abort）
+
+    dispatchMessageEvent(ctx, SID, msg('message.queue_update', { steering: [] }))
+
+    // 接线形态：按维度各调一次、m=0 透传（incrementInflight n ≤ 0 no-op，不产生零值条目）
+    expect(ctx.incrementInflight).toHaveBeenCalledTimes(2)
+    expect(ctx.incrementInflight).toHaveBeenNthCalledWith(1, SID, 0)
+    expect(ctx.incrementInflight).toHaveBeenNthCalledWith(2, SID, 0)
   })
 })
 
@@ -759,5 +802,106 @@ describe('dispatchMessageEvent message_end(user) 腿 2 确认制（steer-bubble 
     // 剔实际取货维度（followUp）的一个实例；steering 残留的 T 是 pi 队列真实待投递条目
     expect(ctx.queueStates.value.get(SID)).toEqual({ steering: ['T'] })
     expect(ctx.incrementInflight).not.toHaveBeenCalled()
+  })
+})
+
+// ── [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D4+F4]
+//    message_start G-023 条件清 + 同点僵尸清理；message.complete abort 三项清 ──
+//
+// 条件清保真前提（P3 探针 ✅）：message_start(assistant) 时点快照深度 == pi 真实队列
+// 深度 == 未投递 followUp 数。僵尸裁剪的行为语义（存量 > 深度才裁 / 保留最早）在
+// pending-drain-fifo.test.ts 真 store 端到端锁定，此处测 handler 接线与参数。
+
+describe('dispatchMessageEvent message_start G-023 条件清 + 同点僵尸清理（steer-bubble u2 / D4+F4）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('快照深度 0（条目存在但数组全空）→ 删条目（QueueBubble 随深度归零消失，现状语义）', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, { steering: [] }]])
+
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+
+    expect(ctx.queueStates.value.has(SID)).toBe(false)
+    // assistant 气泡照常建立（条件清不动 streaming 链路）
+    expect(getMsgs(ctx)).toHaveLength(1)
+    expect(lastAssistant(ctx).status).toBe('streaming')
+  })
+
+  it('无快照条目 → 深度 0 分支等价现状（delete no-op），消息流照常', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    expect(ctx.queueStates.value.has(SID)).toBe(false)
+    expect(getMsgs(ctx)).toHaveLength(1)
+  })
+
+  it('快照深度 1（followUp 待投递——F4 场景）→ 快照保留（其投递时腿 1 prev / 腿 2 includes 依赖它）', () => {
+    const ctx = makeCtx()
+    // 混合提交常态路径：s1(steer) 已投递（drain 帧后 steering 已清），f1 待 turn 边界投递。
+    // 现状无条件清在此删掉 {followUp:[f1]} → f1 投递时两腿全断 + 永久漏显（F4）
+    ctx.queueStates.value = new Map([[SID, { followUp: ['f1'] }]])
+
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+
+    expect(ctx.queueStates.value.get(SID)).toEqual({ followUp: ['f1'] })
+  })
+
+  it('僵尸清理：与条件清同帧同据——reconcilePending 以快照深度（1）调用（内建存量>深度判断）', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, { followUp: ['f1'] }]])
+
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+
+    expect(ctx.reconcilePending).toHaveBeenCalledTimes(1)
+    expect(ctx.reconcilePending).toHaveBeenCalledWith(SID, 1)
+  })
+
+  it('僵尸清理：深度 0 → reconcilePending(sid, 0)（对账到零——abort 全清复用同参数形态）', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, {}]])
+
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+
+    expect(ctx.reconcilePending).toHaveBeenCalledWith(SID, 0)
+  })
+})
+
+describe('dispatchMessageEvent message.complete abort 三项清（steer-bubble u2 / D4）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('stopReason=aborted → reconcilePending(sid,0) 全清 buffer + clearInflight + 删 queueStates 条目', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, { followUp: ['f1'] }]])
+
+    dispatchMessageEvent(ctx, SID, msg('message.complete', { stopReason: 'aborted' }))
+
+    // pi abort 清队列不发 queue_update——前端 abort 信号是三者的唯一清理出口（D4 证据）
+    expect(ctx.reconcilePending).toHaveBeenCalledTimes(1)
+    expect(ctx.reconcilePending).toHaveBeenCalledWith(SID, 0)
+    expect(ctx.clearInflight).toHaveBeenCalledWith(SID)
+    expect(ctx.queueStates.value.has(SID)).toBe(false)
+    // 通用收口照常（三项清在 finalizeSession 之外显式做，不替代收口）
+    expect(ctx.finalizeSession).toHaveBeenCalledWith(SID, 'aborted')
+  })
+
+  it('normal（stopReason=stop）不触发三项清（finalizeSession 是通用收口，normal/error 不清）', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, { followUp: ['f1'] }]])
+
+    dispatchMessageEvent(ctx, SID, msg('message.complete', { stopReason: 'stop' }))
+
+    expect(ctx.reconcilePending).not.toHaveBeenCalled()
+    expect(ctx.clearInflight).not.toHaveBeenCalled()
+    expect(ctx.queueStates.value.get(SID)).toEqual({ followUp: ['f1'] })
+  })
+
+  it('error stopReason 同样不清（abort 是唯一三项清出口）', () => {
+    const ctx = makeCtx()
+    ctx.queueStates.value = new Map([[SID, { followUp: ['f1'] }]])
+
+    dispatchMessageEvent(ctx, SID, msg('message.complete', { stopReason: 'error', errorMessage: 'x' }))
+
+    expect(ctx.reconcilePending).not.toHaveBeenCalled()
+    expect(ctx.clearInflight).not.toHaveBeenCalled()
+    expect(ctx.queueStates.value.get(SID)).toEqual({ followUp: ['f1'] })
   })
 })

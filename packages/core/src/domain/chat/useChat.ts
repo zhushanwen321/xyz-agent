@@ -427,6 +427,15 @@ export function createUseChat(deps: UseChatDeps) {
     // appendUser 返回生成的 user message id（u-<uuid>），作为 clientUuid 传给 submitSegments
     // （写 segments.json sidecar + prompt 标记，建立 clientUuid ↔ pi userEntryId 映射）。
     const clientUuid = chat.appendUser(sid, segments)
+    // [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D2 维护点 2]
+    // send 乐观 +1：乐观插入即「已显示」，其自身投递的 message_end(user) 到达时被
+    // inflight 计数抵消（不落入腿 2 includes 兜底——send 文本通常不在队列数组，但与
+    // 队列未投递条目同文本碰撞时会误命中，计数优先裁决）。挂钩在 send 调用点（与
+    // appendUser 相邻但不在其内）：防腿 1 的 drainN→appendUser 路径双计、防
+    // editAndResend 等其他 appendUser 调用方误挂（编辑重发的 message_end 走 includes
+    // 不命中跳过，无需配额）。busy 转 steer 分支（上方 B 策略）不挂——走 pushPending
+    // 暂存，投递时由腿 1/腿 2 消费各自计数。
+    chat.incrementInflight(sid, 1)
     ensureStreamSubscription(sid, chat, session, subDeps)
     chat.addPendingSend(sid)
     try {
@@ -438,6 +447,9 @@ export function createUseChat(deps: UseChatDeps) {
       // Turn.vue submitEdit（调 editAndResend，无 try/catch）也不再产生 unhandled rejection。
       // throw 只会变 unhandled rejection，错误已通过 toast 消化。
       chat.clearPendingSend(sid)
+      // [steer-bubble u2 / D2] RPC 失败回滚 −1：pi 侧无消息、message_end 永不到来，
+      // 不回滚则配额永久悬空、下一次 F1 投递的 message_end 确认被错抵。
+      chat.decrementInflight(sid, 1)
       const msg = e instanceof Error ? e.message : String(e)
       deps.toast.error(deps.t('composable.sendFailed', { msg }))
     }
@@ -515,7 +527,11 @@ export function createUseChat(deps: UseChatDeps) {
     const promptText = segmentsToPrompt(segments)
     if (!promptText.trim() || !chat.isActive(sid)) return
 
-    // pending 气泡（S7）：steer 发出后立即入流，投递时（queue_update 移除）转 complete。
+    // [steer-bubble u2] pending 暂存（**不进对话流**）：steer 提交先写 pendingBuffer 暂存
+    // （store.pushPending），投递时经腿 1（queue_update drain 差集）/ 腿 2（message_end(user)
+    // includes 兜底）消费入流（docs/design/steer-followup-user-bubble-display.md D1）。
+    // S7「steer 发出后立即入流，投递时转 complete」的旧设计与实现早已背离（pending 从
+    // 不进对话流），过时注释易误导后续维护——本注释为设计 §2 根因 3 的文档性收尾。
     // [W1] API 失败（WS 断连/steer_failed envelope/hook 拦截）回滚 pending + toast 提示，
     // 不 throw（错误已消化：pending 已回滚 + 用户已得反馈；throw 只会变 unhandled rejection）。
     chat.pushPending(sid, segments, 'steer')
@@ -546,7 +562,10 @@ export function createUseChat(deps: UseChatDeps) {
       return
     }
 
-    // pending 气泡（S7）：followUp 发出后立即入流，投递时（queue_update 移除）转 complete。
+    // [steer-bubble u2] pending 暂存（**不进对话流**）：followUp 提交先写 pendingBuffer
+    // 暂存（store.pushPending），turn 结束投递时经腿 1 / 腿 2 消费入流（同 steer，见该处
+    // 注释；S7 过时注释清理亦同）。混合提交下 followUp 待投递期间 QueueBubble 持续显示
+    //（G-023 条件清），其投递时腿 1 prev 在场——F4 修复后的正常路径。
     // [W1] API 失败回滚 pending + toast 提示（同 steer，不 throw）。
     chat.pushPending(sid, segments, 'follow-up')
     try {

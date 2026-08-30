@@ -261,14 +261,31 @@ function insertContentBlockByIndex(blocks: ContentBlock[], block: ContentBlock):
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
   // ── 主流式生命周期（chunk 创建/收口 + isGenerating 派生）──
   'message.message_start': (ctx, sid, payload) => {
-    const { messages, queueStates, clearPendingSend, armStreamingTimer } = ctx
-    // G-023: message_start 到达清除 QueueBubble（新回合已启动，QueueBubble 不再需要显示）。
-    // 只清 queueStates 显示态——pending→complete 的转换完全由 queue_update 的 countDrained
-    // 精确驱动（pi 保证 queue_update(drain) 先于 message_start 到达，见 agent-session.ts:515-536
-    // 注释 "remove it BEFORE emitting"）。此前有个 W2 flush（把残留 pending 强转 complete），
-    // 基于错误前提「queue_update 可能晚于 message_start 乱序」——pi 同步保证不会乱序，
-    // 且 abort 清空队列时强转会把「被丢弃」误标成「已投递」。已删除。
-    queueStates.value.delete(sid)
+    const { messages, queueStates, clearPendingSend, armStreamingTimer, reconcilePending } = ctx
+    // G-023: message_start 清 QueueBubble。只清 queueStates 显示态——pending→complete 的
+    // 转换完全由 queue_update 的 countDrained 精确驱动（pi 保证 queue_update(drain) 先于
+    // message_start 到达，见 agent-session.ts:515-536 注释 "remove it BEFORE emitting"）。
+    // 此前有个 W2 flush（把残留 pending 强转 complete），基于错误前提「queue_update 可能
+    // 晚于 message_start 乱序」——pi 同步保证不会乱序，且 abort 清空队列时强转会把
+    // 「被丢弃」误标成「已投递」。已删除。
+    //
+    // [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D4 + §2 F4]
+    // 无条件清改**条件清**（F4 修复）：先读快照深度（steering + followUp 数组长度和），
+    // 深度 == 0（无条目或数组全空）→ 删条目（QueueBubble 随深度归零消失，现状语义）；
+    // 深度 > 0 → **保留**——混合提交常态路径下 steering 已 drain、followUp 待 turn 边界
+    // 投递，该快照是未投递 followUp 的投递判据（腿 1 的 prev 差集与腿 2 的 includes 都
+    // 读它），无条件删会断两腿（F4：f1 永久漏显）。QueueBubble 消失语义从「新回合启动」
+    // （edge，混合提交时误删未投递快照）归正为「队列深度归零」（level，幂等、丢帧可由
+    // 下一帧收敛）。保真前提（P3 探针 ✅）：本时点快照深度 == pi 真实队列深度 ==
+    // 未投递 followUp 数。
+    const snapshot = queueStates.value.get(sid)
+    const queueDepth = (snapshot?.steering?.length ?? 0) + (snapshot?.followUp?.length ?? 0)
+    if (queueDepth === 0) queueStates.value.delete(sid)
+    // [steer-bubble u2 / D4] 同点僵尸清理（与条件清同帧同据，先读后清）：pendingBuffer
+    // 存量 > 快照深度 → 裁残量（reconcilePending 内建判断：存量 <= 深度 no-op）。
+    // 投递侧每帧裁剪已移除（见 queue_update handler 注释），僵尸隔离收敛到本时点——
+    // 清残量防 FIFO 错位污染后续 steer。
+    reconcilePending(sid, queueDepth)
     const prev = messages.value.get(sid)?.value ?? []
     const messageId = readString(payload, 'messageId') ?? `a-${crypto.randomUUID()}`
     commitMessages(messages, sid, [
@@ -344,6 +361,22 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // 统一收口（finalizeSession 幂等：entity 已改则 no-op，只清 pendingSend + timer）
     // 此处 message status 已改终态 → finalizeSession 内走「只补 toolCall 收口」分支。
     const reason: FinalizeReason = isErrorStop ? 'error' : (stopReason === 'aborted' ? 'aborted' : 'normal')
+    // [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D4] abort 三项清
+    // （在 finalizeSession 之外显式做——finalizeSession 是通用收口，normal/error 不清）：
+    // pi abort() 确定性清队列但既不调 clearQueue 也不 emit queue_update（pi dist
+    // agent-session.js，clearQueue 是独立 API），前端 abort 信号是三者的唯一清理出口：
+    // - pendingBuffer：对账到深度 0 = 全清（reconcilePending(sid, 0)，防 FIFO 错位污染
+    //   后续 steer——被丢弃的暂存永不投递）；
+    // - inflight：清零（确认基线随队列作废——abort 后已显示未确认的条目不会再有
+    //   message_end，残留会吞掉后续投递的确认配额）；
+    // - queueStates：删条目（QueueBubble 消失；G-023 改条件清后，abort 后的
+    //   message_start(assistant) 不再兜底清非空残留快照，abort 信号是唯一出口）。
+    if (reason === 'aborted') {
+      const { queueStates, reconcilePending, clearInflight } = ctx
+      reconcilePending(sid, 0)
+      clearInflight(sid)
+      queueStates.value.delete(sid)
+    }
     finalizeSession(sid, reason)
   },
 
@@ -732,7 +765,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
   },
 
   'message.queue_update': (ctx, sid, payload) => {
-    const { queueStates, drainN, reconcilePending, appendUser } = ctx
+    const { queueStates, drainN, appendUser, incrementInflight } = ctx
     // W06-B：消息队列更新。payload（event-adapter）：{ steering?, followUp? }。
     // pi 发空数组 []（_emitQueueUpdate 总展开为数组），空数组视为无内容（length 判断）。
     const state: QueueState = {}
@@ -750,19 +783,27 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     const prev = queueStates.value.get(sid)
     if (prev) {
       const steerN = countDrained(prev.steering ?? [], steering ?? []).length
-      for (const segs of drainN(sid, 'steer', steerN)) appendUser(sid, segs)
+      const steerDrained = drainN(sid, 'steer', steerN)
+      for (const segs of steerDrained) appendUser(sid, segs)
       const followN = countDrained(prev.followUp ?? [], followUp ?? []).length
-      for (const segs of drainN(sid, 'follow-up', followN)) appendUser(sid, segs)
+      const followDrained = drainN(sid, 'follow-up', followN)
+      for (const segs of followDrained) appendUser(sid, segs)
+      // [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D2 维护点 1]
+      // 腿 1 消费点 inflight += 实取数（m = drainN 实际返回数组长度，两维度各算各的）：
+      // drain 帧是投递证据，这些气泡「已显示待 message_end 确认」。按实取数 m 计而非差集
+      // N——m < N 的差额 = 扩展注入等 buffer 无货条目，未显示即不确认，其 message_end
+      // 到达时走腿 2 includes 兜底。m = 0 时 incrementInflight no-op（不产生零值条目）。
+      incrementInflight(sid, steerDrained.length)
+      incrementInflight(sid, followDrained.length)
     }
 
-    // [W14 D6 / PR #185 MF2 定口径] 深度结构性对账：帧内 pendingMessageCount（event-adapter
-    // 翻译恒附 = steering.length + followUp.length，与 rpc-mode get_state 同公式同源、数值恒等）
-    // = pi 队列深度的推送投影，本帧即深度的权威推送通道——对账直读帧内值，不经任何 runtime
-    // 侧快照缓存（queue ReplicatedState 实例及 markDirty 接线已撤销，登记表 #6 修订）。
-    // drain 处理后 pendingBuffer 存量应等于深度，偏差则全量重对（reconcilePending：
-    // buffer > 深度裁剪僵尸暂存；buffer < 深度 = 扩展注入例外，有界偏差，队列清空时收敛）。
-    // 字段缺失（旧 runtime / mock 帧）时退化为帧内数组长度和（恒等公式，等价）。
-    reconcilePending(sid, readNumber(payload, 'pendingMessageCount') ?? (steering?.length ?? 0) + (followUp?.length ?? 0))
+    // [steer-bubble u2 / D4] 投递侧 reconcilePending 裁剪已移除：drain 后立即裁到深度会
+    // 吃掉腿 2（message_end(user)）还没回填的 segments——pi 时序保证 drain 帧先于
+    // message_end（P1 探针），立即裁剪会让腿 2 的 segments 回填在正常路径下永远失效；
+    // 且断连等场景 prev 缺失时以本帧深度裁空 buffer 是丢消息的不可逆放大器（F3）。
+    // buffer 存活到 message_end 是 D2 双腿的工作前提；僵尸改由 G-023 时点
+    // （message_start(assistant)）条件清理（见该 handler），深度权威推送通道
+    // （帧内 pendingMessageCount）仍服务 QueueBubble 快照写入。
 
     const hasContent = !!state.steering?.length || !!state.followUp?.length
     if (!hasContent) {

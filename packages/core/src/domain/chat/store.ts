@@ -608,8 +608,16 @@ export function createChatStore() {
   /**
    * [W14] 深度结构性对账（D6：深度权威 = pi pendingMessageCount）。
    *
+   * [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D4] **投递侧
+   * （queue_update 每帧）裁剪已移除**：drain 后立即裁到深度会吃掉腿 2（message_end(user)）
+   * 还没回填的 segments，且是丢消息的不可逆放大器（F3：断连 prev 缺失时以本帧深度裁空
+   * buffer，内容永久删除）。现调用点（均经 ctx 注入 registry，非 queue_update）：
+   * - G-023 时点（message_start(assistant)）僵尸清理：buffer 存量 > 快照深度时裁残量；
+   * - abort（message.complete{stopReason:'aborted'}）：reconcilePending(sid, 0) 对账到
+   *   深度 0 = 全清（pi abort 确定性清队列，见 handler 注释）。
+   *
    * 不变式：renderer 提交数 − pi 队列深度 = 已投递数，pendingBuffer 存量 = 提交数 −
-   * 已投递数 = 深度。每帧 queue_update（drain 处理后）对账 pendingBuffer 长度 vs 深度：
+   * 已投递数 = 深度。偏差语义：
    * - buffer > 深度：队列中已不存在的暂存（僵尸项——永不被投递且污染后续 FIFO 计数），
    *   裁剪到深度（保留最早的，与 FIFO 取出顺序一致）。
    * - buffer < 深度：pi 队列存在 renderer 未提交的条目（扩展 deliverAs 注入，D6 已知
