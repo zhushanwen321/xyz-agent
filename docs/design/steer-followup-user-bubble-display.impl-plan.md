@@ -108,6 +108,9 @@ graph TD
 | 2026-08-30 | u2-lifecycle | store.ts 改动为 reconcilePending 函数头注释更新（函数体零改动） | 投递侧调用移除后原注释与行为背离，必要文档一致性修复 | 合理不一致登记（超「仅新增 action」字面范围，已核 diff 纯注释） |
 | 2026-08-30 | u2-lifecycle | pending-drain-fifo 组4 / effects TC4 由「投递侧裁剪」断言改写为「G-023 僵尸清理 / 不再调 reconcilePending」断言 | D4 行为移除的直接锁定对象；已核 diff 为换断言（非删断言），并新增组6（F3 不可逆丢失回归）/组7（腿 2 回填非降级） | 合理不一致登记（行为变更测试同步） |
 | 2026-08-30 | u4-equivalence | E5 组采用真 store + applyMessageEvent 范式（custom-start-equivalence 同款）而非 W6 块纯 reducer 双序列构造 | 腿 2 插入产物是 messages ref 气泡（appendUser 路径），纯 reducer 层无法驱动；reducer 权威镜像维度在 E5a 内补齐 deep-equal 共用 | 合理不一致登记（范式对齐既有惯例） |
+| 2026-08-30 | u1-leg2 | 空文本防御分支（registry.ts !text return，设计未规定） | 纯 image 等无文字 content 无入队比对语义，且规避空串文本对 includes 的病态命中；行为=跳过，与「无快照跳过」同恢复语义 | 合理不一致登记（一致性审查 reasonable #2；错误规格表不另加行） |
+| 2026-08-30 | u2-lifecycle | 腿 1 两维度各自 increment 实取数（合计 = m） | 与 D2 维护点 1「按实取数 m 计」语义等价；m<N 差额与 m=0 no-op 由 TC6/TC7 锁定 | 合理不一致登记（一致性审查 reasonable #3） |
+| 2026-08-30 | u1-leg2 | 剔快照「维度剔空删字段 / 全空删条目」与 queue_update 空帧删条目惯例形态对齐 | 快照深度持续充当「未投递数」镜像，G-023 条件清读数可靠 | 合理不一致登记（一致性审查 reasonable #4） |
 
 ## 6 状态表
 
@@ -129,3 +132,4 @@ graph TD
 
 **变更历史**：
 - 2026-08-30 计划创建（基线 4239651ec）。
+- 2026-08-30 阶段 3 一致性审查清零：unreasonable 空；4 条 doc_errors 全修（①D2 边界①三处同步为顺序 fallback 语义 ②registry queue_update 注释 pendingMessageCount 消费方修正 ③u1 全空降级路径剔维度注释补句 ④错误规格表补 editAndResend 同文本碰撞理论边界披露）+ effect-types D6 注释消歧；新增 reasonable 3 条入登记表（累计 11 条）。审查区间 093b986f4..c8096e773。

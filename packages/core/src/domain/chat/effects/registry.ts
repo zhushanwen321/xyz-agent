@@ -204,6 +204,9 @@ function confirmUserDeliveryOnMessageEnd(
   if (hitFollow) candidates.push({ mode: 'follow-up', dimension: 'followUp' })
   let consumed: Segment[] | undefined
   let consumedDimension = candidates[0]!.dimension
+  // 全空降级路径（两命中维度暂存全无货）下 consumedDimension 停留在最后尝试维度——
+  // 同文本剔一实例即完成深度对齐，维度选择不影响后续 countDrained 正确性（一致性审查
+  // doc_error #3：该子路径无取货发生，「剔实际取货维度」名不副实但行为等价）。
   for (const candidate of candidates) {
     consumedDimension = candidate.dimension
     const drained = ctx.drainN(sid, candidate.mode, 1)
@@ -802,8 +805,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // message_end（P1 探针），立即裁剪会让腿 2 的 segments 回填在正常路径下永远失效；
     // 且断连等场景 prev 缺失时以本帧深度裁空 buffer 是丢消息的不可逆放大器（F3）。
     // buffer 存活到 message_end 是 D2 双腿的工作前提；僵尸改由 G-023 时点
-    // （message_start(assistant)）条件清理（见该 handler），深度权威推送通道
-    // （帧内 pendingMessageCount）仍服务 QueueBubble 快照写入。
+    // （message_start(assistant)）条件清理（见该 handler）。帧数组（steering/followUp）
+    // 仍驱动 QueueBubble 快照写入；帧内 pendingMessageCount 字段投递侧裁剪移除后
+    // 前端已无消费方（仅 event-adapter 翻译附带，与帧数组等值——W14 D6 的同源公式）。
 
     const hasContent = !!state.steering?.length || !!state.followUp?.length
     if (!hasContent) {
