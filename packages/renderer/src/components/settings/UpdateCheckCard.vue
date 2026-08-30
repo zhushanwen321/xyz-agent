@@ -249,13 +249,19 @@ const manualChannelOpen = ref(true)
 const manualDir = ref<string | null>(null)
 
 onMounted(async () => {
-  const dir = await getDataDir()
-  // 与 main 侧 MANUAL_ASSET_DIR = path.join(getDataDir(), 'update', 'manual') 同源
-  // （update/constants.ts + update/manual-claim.ts）。getDataDir 为 ~ 缩写展示形态
-  // （bridge-handlers get-data-dir），仅作展示用，不做文件系统操作。
-  if (dir) {
-    const sep = dir.includes('\\') ? '\\' : '/'
-    manualDir.value = `${dir}${sep}update${sep}manual`
+  try {
+    const dir = await getDataDir()
+    // 与 main 侧 MANUAL_ASSET_DIR = path.join(getDataDir(), 'update', 'manual') 同源
+    // （update/constants.ts + update/manual-claim.ts）。getDataDir 为 ~ 缩写展示形态
+    // （bridge-handlers get-data-dir），仅作展示用，不做文件系统操作。
+    if (dir) {
+      const sep = dir.includes('\\') ? '\\' : '/'
+      manualDir.value = `${dir}${sep}update${sep}manual`
+    }
+  } catch (e) {
+    // 展示态降级：IPC reject 时 manualDir 保持 null 走占位态（打开目录不依赖路径展示，
+    // main 侧幂等建目录），onMounted async 不被 await，不 catch 会产生 unhandledRejection
+    console.warn('[UpdateCheckCard] getDataDir failed:', e)
   }
 })
 

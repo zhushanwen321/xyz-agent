@@ -2,9 +2,9 @@
  * useAppUpdate · 手动通道衔接测试（update-network-resilience renderer 侧 D2/D9）。
  *
  * 覆盖：
- *  - D9 suggestion 追加：三类网络/代理错误码（UPDATE_PROXY_UNREACHABLE /
- *    UPDATE_NETWORK_FAILED / UPDATE_NETWORK_TIMEOUT）→ errorSuggestion 末尾追加
- *    手动下载指引；非网络类错误码 / 无错误码不追加
+ *  - D9 suggestion 追加：四类网络/代理错误码（UPDATE_PROXY_UNREACHABLE /
+ *    UPDATE_PROXY_ERROR / UPDATE_NETWORK_FAILED / UPDATE_NETWORK_TIMEOUT）→
+ *    errorSuggestion 末尾追加手动下载指引；非网络类错误码 / 无错误码不追加
  *  - D2 交错缓解：performInstall 返回实装 version ≠ latestRelease.version →
  *    版本显示对齐（其他字段保留）；version 相同/缺失 → 不动 latestRelease
  *
@@ -89,7 +89,12 @@ beforeEach(async () => {
 })
 
 describe('D9 suggestion 追加手动下载指引', () => {
-  it.each(['UPDATE_PROXY_UNREACHABLE', 'UPDATE_NETWORK_FAILED', 'UPDATE_NETWORK_TIMEOUT'])(
+  it.each([
+    'UPDATE_PROXY_UNREACHABLE',
+    'UPDATE_PROXY_ERROR',
+    'UPDATE_NETWORK_FAILED',
+    'UPDATE_NETWORK_TIMEOUT',
+  ])(
     '%s → errorSuggestion 末尾追加手动下载指引',
     async (code) => {
       const scope = effectScope()

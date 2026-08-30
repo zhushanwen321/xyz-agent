@@ -5,7 +5,8 @@
  *  - 默认展开：DOM 含引导文案 + 「仅支持 app 已提示的新版本」限定语 + 目录路径展示
  *  - 路径推导：getDataDir('~ 缩写形态) + /update/manual 与 main 侧 MANUAL_ASSET_DIR 同源
  *  - 折叠交互：点折叠触发器 → 引导内容从 DOM 消失
- *  - 降级：getDataDir 无值（web/mock 环境）→ 展示「路径暂不可用」占位而非报错
+ *  - 降级：getDataDir 无值（web/mock 环境）→ 展示「路径暂不可用」占位而非报错；
+ *    getDataDir reject（IPC 异常）→ 同占位降级且不产生未处理 rejection
  *  - 「打开目录」按钮（u7b D9）：可见 + 点击触发 openUpdateManualDir IPC + 失败 toast 降级
  *
  * Mock 策略（同 update-page.test.ts 结构）：
@@ -123,6 +124,23 @@ describe('UpdateCheckCard 手动升级通道区（D9）', () => {
     const dir = wrapper.find('[data-testid="settings-update-manual-dir"]')
     expect(dir.exists()).toBe(true)
     expect(dir.text()).toBe('路径暂不可用')
+  })
+
+  it('降级：getDataDir reject（IPC 异常）→ 不产生未处理 rejection，路径区显示占位', async () => {
+    getDataDirMock.mockRejectedValue(new Error('ipc get-data-dir unavailable'))
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      wrapper = mount(UpdateCheckCard)
+      await flushPromises()
+      // onMounted async 不被 await：无 catch 会以 unhandledRejection 形态逃逸
+      expect(unhandled).not.toHaveBeenCalled()
+      const dir = wrapper.find('[data-testid="settings-update-manual-dir"]')
+      expect(dir.exists()).toBe(true)
+      expect(dir.text()).toBe('路径暂不可用')
+    } finally {
+      process.off('unhandledRejection', unhandled)
+    }
   })
 })
 

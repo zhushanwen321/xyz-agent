@@ -77,6 +77,7 @@ const INSTALLER_EXITED_PREFIX = 'installer exited'
  */
 const MANUAL_HINT_ERROR_CODES: ReadonlySet<string> = new Set([
   'UPDATE_PROXY_UNREACHABLE',
+  'UPDATE_PROXY_ERROR',
   'UPDATE_NETWORK_FAILED',
   'UPDATE_NETWORK_TIMEOUT',
 ])
