@@ -33,6 +33,25 @@
 | `runWorkflow(spec, deps, signal?)` | fn | workflow run 生命周期入口（返回 runId） |
 | `abortRun(runId, deps, ...)` | fn | 终止 run（done 态 no-op） |
 | `RunSpec`, `LifecycleDeps` | type | `runWorkflow` 参数类型 |
+| `terminateRunningRuns(deps, reason)` | fn | session 切换/关闭时批量终止全部 running run（转 done,failed 落盘） |
+| `evictDoneRunsBeyondCap(runs, keepDone)` | fn | done run 内存淘汰（按 completedAt 升序裁超出保留窗口的项） |
+| `MAX_RETAINED_DONE_RUNS` | const | done run 内存保留窗口（K=20），`evictDoneRunsBeyondCap` 生产入参 |
+| `scheduleTimeBudget(runId, deps, budgetTimeMs)` | fn | run 级墙钟预算计时器（到期 abortRun `time_limited`；溢出值 fail-fast） |
+| `runAndWait(name, args, deps, ...)` | fn | 阻塞至 done 的 launcher 入口（registry 查找 + lint + 轮询，返回 `WorkflowRunResult`） |
+| `executeNestedWorkflow(name, args, parentRun, deps)` | fn | 嵌套 `workflow()` 调用执行体（循环检测 + budget 共享；宿主 `onWorkflowCall` 注入用） |
+| `WorkflowRunResult` | type | `runAndWait` 返回（status 恒 done + reason/scriptResult/error） |
+| `LauncherDeps` | type | launcher 依赖（`LifecycleDeps` + `registry` 脚本发现） |
+| `WorkerHostImpl` | class | `WorkerHost` port 的 worker_threads 实现（`deps.workerHost` 默认装配） |
+| `WorkflowScriptRegistryImpl` | class | 脚本注册表 Infra 实现（`LauncherDeps.registry` 默认装配，config-loader 之上包装 `WorkflowScript` 实体） |
+| `lintScript(source)` | fn | workflow 脚本静态检查（执行前 fail-fast） |
+| `LintFinding`, `LintResult` | type | lint 发现项 / 结果 |
+| `discoverWorkflows(configOrCwd?)`, `loadWorkflows()`, `getWorkflow(name)`, `getWorkflowByPath(ref)`, `invalidateCache()` | fn | workflow 发现/加载/缓存失效（宿主 list 面与 registry 构造消费） |
+| `WorkflowScanConfig`, `CachedWorkflowMeta`, `WorkflowMeta`, `WorkflowSource` | type | 发现层类型（扫描目录声明 / 缓存 meta / 资源 meta / 来源标签） |
+| `FileRunStore` | class | `RunStore` port 的宿主无关文件实现：落盘 `<dataRoot>/workflow-state/<runId>.jsonl`（append-only 全量快照，`loadAll` 取每文件最后一条有效行、损坏行跳过并 warn）。zsw 等无 pi session 设施的宿主装配 `deps.store` 用 |
+| `AgentRunner`, `RunStore`, `WorkerHost`, `WorkerHandlers` | type | 编排层 port 契约（宿主自写 Infra 实现时的契约面） |
+| `registerZcodeEngine(engineDataDir?)` | fn | 把 `zcode` 引擎登记进 registry（组合根调用，幂等、工厂惰性） |
+| `createZcodeEngine(deps)` | fn | zcode 引擎 DI 工厂（测试/宿主注入 `ZcodeEngineDeps`） |
+| `killAllSpawnedChildren(signal?)` | fn | 批量回收 agent 子进程（宿主 shutdown 钩子消费），返回回收数 |
 | `CORE_PACKAGE_VERSION` | const | 包版本常量（与 package.json 同步维护） |
 
 ### 语义子入口（双端复用链专用）
@@ -106,9 +125,33 @@ logger.debug("host configured");
 ## 构建
 
 ```bash
-pnpm run build   # tsup 多入口：主入口 + 4 语义子入口保形输出（dist/<entry> 与 src 同构，d.ts/d.cts 全覆盖）
+pnpm run build         # tsup 多入口：主入口 + 4 语义子入口保形输出（dist/<entry> 与 src 同构，d.ts/d.cts 全覆盖）
+pnpm run build:bundle  # 自包含 CJS bundle：dist.bundle/index.cjs（见下节）
 pnpm run test
 pnpm run typecheck
 ```
 
 发布走本仓 changeset 管线；`publishConfig` 中的发布面与开发态 `exports` 必须同步维护（新增子入口时两处同改）。
+
+### 自包含 bundle 构建（`build:bundle`）
+
+`dist.bundle/index.cjs` 是**单文件自包含 CJS 产物**：tsup `noExternal` 把全部运行时依赖（`@xyz-agent/*`、`ajv`、`yaml`、`proper-lockfile`）内联进产物，require 链上只剩 node 内建模块。
+
+用途：**无 node_modules 解析面的宿主 vendoring**——典型是 zcode 插件（zsw）：插件目录被整体复制进 marketplace 缓存 / inline 加载，没有依赖安装链，`require("@zhushanwen/subagent-core")` 无从解析。这类宿主把 `dist.bundle/index.cjs` 复制进自身目录后直接 `require("./vendor/subagent-core/index.cjs")`，只认文件不认解析链。
+
+与常规 `dist/` 的分工：`dist/` 面向有正常 node_modules 解析面的消费者（npm 安装形态，依赖留外部）；`dist.bundle/` 面向 vendoring 形态。两档构建按 script 名分流（`tsup.config.ts` 读 `npm_lifecycle_event`）：`build` 行为不变，`build:bundle` 独立产出。
+
+vendoring 宿主接入片段：
+
+```js
+// 宿主目录内（无 node_modules）
+const {
+  configureCore, getLogger, FileRunStore, WorkerHostImpl,
+  runWorkflow, abortRun, terminateRunningRuns, discoverWorkflows,
+} = require("./vendor/subagent-core/dist.bundle/index.cjs");
+
+configureCore({
+  dataRoot() { return "/path/to/host/data-root"; }, // FileRunStore 落 <dataRoot>/workflow-state/
+  log(level, component, message, data) { /* 接宿主日志 */ },
+});
+```

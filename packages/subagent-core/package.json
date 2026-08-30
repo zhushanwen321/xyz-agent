@@ -144,10 +144,12 @@
   "files": [
     "src/",
     "workflows/",
-    "dist/"
+    "dist/",
+    "dist.bundle/"
   ],
   "scripts": {
     "build": "tsup",
+    "build:bundle": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

@@ -5,8 +5,10 @@
  * （./engines/zcode/reader、./engines/zcode/constants、./engine/paths、./relay-env）
  * + ./workflows/* 资产子入口。exports 面即 semver 契约（D5）：收窄不放宽——
  * 新增导出走 minor，本文件刻意不使用 `export *`，逐名列出以使 diff 可审。
- * 内部实现细节（registry / error-recovery / execution 编排件等）不经 barrel 导出，
- * 仓内壳侧深路径消费（`./*` -> src 通配）不受本文件约束。
+ * 内部实现细节（error-recovery / execute-agent-call / worker-script-builder 等
+ * engine 编排件）不经 barrel 导出；host-surface 扩面（zsw 回接 U0，2026-08-30）
+ * 后 port 的 Infra 实现与宿主组装件已列入公共面，仓内壳侧深路径消费
+ * （`./*` -> src 通配）不受本文件约束。
  *
  * 设计权威源：docs/design/subagent-core-package-extraction.md §3.3 D5；
  * 宿主接入示例见包 README（§3.4 core_host_not_configured 恢复指引的落点）。
@@ -79,9 +81,79 @@ export {
 
 // ── workflow 编排入口（orchestration）────────────────────────
 // runWorkflow / abortRun：run 生命周期 free functions（D-12）——orchestration 的
-// 最小宿主入口。更细粒度编排（terminateRunningRuns / evictDoneRunsBeyondCap /
-// scheduleTimeBudget）与 launcher 层（runAndWait 等）暂不进 barrel：
-// 无宿主触点证据前不放宽（端口演进纪律②）；壳侧现经深路径消费，不受影响。
+// 最小宿主入口。以下 host-surface 扩面（zsw 回接 U0）出 Barrel：宿主壳组装
+// LifecycleDeps 需要亲手构造三个 port 实现与消费细粒度编排函数，深路径消费
+// 在 npm 形态不可达（发布面无 `./*` 通配）——宿主触点证据即 zsw 回接设计 D2。
 export { abortRun, runWorkflow } from "./orchestration/lifecycle.ts";
 export type { RunSpec } from "./orchestration/models/run-spec.ts";
 export type { LifecycleDeps } from "./orchestration/models/ports.ts";
+
+// lifecycle 细粒度编排：session 切换/关闭批量终止、done run 内存淘汰（窗口常量
+// MAX_RETAINED_DONE_RUNS）、run 级墙钟预算计时器（宿主 rebuildRuntime 重排用）。
+export {
+  evictDoneRunsBeyondCap,
+  MAX_RETAINED_DONE_RUNS,
+  scheduleTimeBudget,
+  terminateRunningRuns,
+} from "./orchestration/lifecycle.ts";
+
+// launcher 层：runAndWait（阻塞至 done）与 executeNestedWorkflow（嵌套 workflow()，
+// 宿主 onWorkflowCall 注入的实现体）——宿主 tool/action 面的直接消费入口。
+export { executeNestedWorkflow, runAndWait } from "./orchestration/launcher.ts";
+export type { LauncherDeps, WorkflowRunResult } from "./orchestration/launcher.ts";
+
+// WorkerHost port 的 Infra 实现（worker_threads 启动 worker 脚本）——宿主组装
+// LifecycleDeps.workerHost 的默认实现；WorkerHandlers 是 start 的回调 bag 类型。
+export { WorkerHostImpl } from "./orchestration/worker-host.ts";
+
+// 脚本注册表 Infra 实现（config-loader 之上的 WorkflowScript 实体工厂）——
+// launcher 层 registry 依赖的默认实现。
+export { WorkflowScriptRegistryImpl } from "./orchestration/workflow-script-registry-impl.ts";
+
+// lintScript：workflow 脚本静态检查（执行前 fail-fast，宿主 list/validate 面消费）。
+export { lintScript } from "./orchestration/script-lint.ts";
+export type { LintFinding, LintResult } from "./orchestration/script-lint.ts";
+
+// workflow 发现/加载（ADR-031 统一资源发现）：宿主 list 面与 registry 构造消费；
+// invalidateCache 供宿主在写脚本后主动失效 mtime 缓存。
+export {
+  discoverWorkflows,
+  getWorkflow,
+  getWorkflowByPath,
+  invalidateCache,
+  loadWorkflows,
+} from "./orchestration/config-loader.ts";
+export type {
+  CachedWorkflowMeta,
+  WorkflowMeta,
+  WorkflowScanConfig,
+  WorkflowSource,
+} from "./orchestration/config-loader.ts";
+
+// FileRunStore：RunStore port 的宿主无关文件实现（D2 设计件）——落盘
+// <dataRoot>/workflow-state/<runId>.jsonl，zsw 等无 pi session 设施的宿主装配
+// LifecycleDeps.store 用；pi 壳继续用 session 锚定的 JsonlRunStore。
+export { FileRunStore } from "./orchestration/file-run-store.ts";
+
+// RunStore / AgentRunner / WorkerHost port 契约类型：宿主自写 Infra 实现
+// （如 zsw 的 RunnerPort 桥接）需要契约面；WorkerHandlers 已随 WorkerHost 注释。
+export type {
+  AgentRunner,
+  RunStore,
+  WorkerHandlers,
+  WorkerHost,
+} from "./orchestration/models/ports.ts";
+
+// ── zcode 引擎注册面（execution/engine）──────────────────────
+// registerZcodeEngine：把 'zcode' 引擎登记进 registry（组合根职责，幂等）；
+// createZcodeEngine：DI 工厂（测试/宿主注入 deps）。ZcodeEngineDeps 经
+// registration.ts 的 re-export 导出（避免与 zcode-engine.ts 双源）。
+export {
+  createZcodeEngine,
+  registerZcodeEngine,
+} from "./execution/engine/engines/zcode/registration.ts";
+export type { ZcodeEngineDeps } from "./execution/engine/engines/zcode/registration.ts";
+
+// killAllSpawnedChildren：session 关闭时批量回收 agent 子进程（宿主 shutdown
+// 钩子消费；子进程注册表在 session-runner 模块内）。
+export { killAllSpawnedChildren } from "./execution/session-runner.ts";
