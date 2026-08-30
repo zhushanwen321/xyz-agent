@@ -15,7 +15,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { UpdateSettings } from '@xyz-agent/shared'
-import { UPDATE_SETTINGS_FILE } from './constants.js'
+import { getUpdateSettingsFile } from './constants.js'
 
 /**
  * 升级设置默认值。
@@ -38,13 +38,13 @@ export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = {
  * 逐字段校验类型，确保未知/损坏的字段不污染返回值。
  */
 export function getUpdateSettings(): UpdateSettings {
-  if (!existsSync(UPDATE_SETTINGS_FILE)) {
+  if (!existsSync(getUpdateSettingsFile())) {
     return { ...DEFAULT_UPDATE_SETTINGS }
   }
 
   let raw: string
   try {
-    raw = readFileSync(UPDATE_SETTINGS_FILE, 'utf-8')
+    raw = readFileSync(getUpdateSettingsFile(), 'utf-8')
   } catch (err) {
     console.warn('[update-settings] read failed, using defaults:', err)
     return { ...DEFAULT_UPDATE_SETTINGS }
@@ -82,9 +82,9 @@ export function getUpdateSettings(): UpdateSettings {
  * 调用方只传要修改的字段（如仅 { preDownload } 或仅 { autoUpdate }），不会覆盖其他开关的持久化值。
  */
 export function setUpdateSettings(settings: Partial<UpdateSettings>): void {
-  mkdirSync(path.dirname(UPDATE_SETTINGS_FILE), { recursive: true })
+  mkdirSync(path.dirname(getUpdateSettingsFile()), { recursive: true })
   // 合并写入：读现有设置做基底，局部更新不丢其他字段
   const merged: UpdateSettings = { ...getUpdateSettings(), ...settings }
   // eslint-disable-next-line no-magic-numbers -- 2 = JSON 缩进空格数（人类可读）
-  writeFileSync(UPDATE_SETTINGS_FILE, JSON.stringify(merged, null, 2))
+  writeFileSync(getUpdateSettingsFile(), JSON.stringify(merged, null, 2))
 }

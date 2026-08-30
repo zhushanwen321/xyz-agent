@@ -31,7 +31,7 @@ import { UPDATE_STALE_RELEASE } from '@xyz-agent/shared'
 import { downloadAsset } from './download-asset.js'
 import { createPlatformUpdater } from './platform-updater.js'
 import { pickPlatformAsset } from './pick-platform-asset.js'
-import { UPDATE_DIR, UPDATE_RESULT_FILE } from './constants.js'
+import { getUpdateDir, getUpdateResultFile } from './constants.js'
 import { readProxyConfig } from './proxy-config.js'
 import { UpdateError, UpdateUnsupportedError } from './types.js'
 import type { UpdateScriptRef } from './types.js'
@@ -310,7 +310,7 @@ export async function installUpdate(
     // 不应写 replacing——否则下载后用户未点安装就崩溃，self-healer 会误判
     // 需要回滚（实际只是下载中断）。此处放在 installUpdate（即将 spawn 替换脚本）才写。
     try {
-      mkdirSync(UPDATE_DIR, { recursive: true })
+      mkdirSync(getUpdateDir(), { recursive: true })
       writeUpdateResult('replacing', release.version)
     } catch (writeErr) {
       // 权限错误分类
@@ -395,13 +395,14 @@ function handleScriptRef(ref: UpdateScriptRef): { triggerRestart: boolean } {
  */
 function writeUpdateResult(status: string, version: string, error?: string): void {
   const data = { status, version, at: new Date().toISOString(), error }
+  const resultFile = getUpdateResultFile()
   // 原子写（批次 5 m12 / §3.7.2）：先写 .tmp 再 renameSync，读方（self-healer）不会
   // 读到半截 JSON——半截 replacing 会被 corrupt-json 分支误判触发回滚。
-  const tmpPath = `${UPDATE_RESULT_FILE}.tmp`
+  const tmpPath = `${resultFile}.tmp`
   // eslint-disable-next-line no-magic-numbers -- 2 = JSON 缩进空格数（人类可读）
   writeFileSync(tmpPath, JSON.stringify(data, null, 2))
   // 同目录 rename：同卷原子替换（目标已存在时覆盖）
-  renameSync(tmpPath, UPDATE_RESULT_FILE)
+  renameSync(tmpPath, resultFile)
 }
 
 /**

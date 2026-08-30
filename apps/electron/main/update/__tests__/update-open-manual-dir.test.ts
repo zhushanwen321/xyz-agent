@@ -38,48 +38,48 @@ vi.mock('electron', () => ({
   },
 }))
 
-// MANUAL_ASSET_DIR 隔离到 tmpdir（handler 内真实 mkdirSync 会创建它）。
+// getManualAssetDir 隔离到 tmpdir（handler 内真实 mkdirSync 会创建它）。
 // factory 内动态 import node:os/path：vi.mock 工厂执行先于测试文件 import 初始化。
 vi.mock('../manual-claim.js', async () => {
   const os = await import('node:os')
   const path = await import('node:path')
   return {
     tryClaimManualAsset: vi.fn(async () => null),
-    MANUAL_ASSET_DIR: path.join(os.tmpdir(), 'xyz-agent-open-manual-dir-test'),
+    getManualAssetDir: () => path.join(os.tmpdir(), 'xyz-agent-open-manual-dir-test'),
   }
 })
 
 import { registerUpdateHandlers } from '../../gateway/update-handlers.js'
-// 读 mock 后的 MANUAL_ASSET_DIR（与 handler 内 import 同一模块实例）
-import { MANUAL_ASSET_DIR } from '../manual-claim.js'
+// 读 mock 后的 getManualAssetDir（与 handler 内 import 同一模块实例）
+import { getManualAssetDir } from '../manual-claim.js'
 
 beforeEach(() => {
   handlers.clear()
   vi.clearAllMocks()
   // 每用例从「目录不存在」起步（幂等用例内部自建再复调验证 recursive 语义）
-  rmSync(MANUAL_ASSET_DIR, { recursive: true, force: true })
+  rmSync(getManualAssetDir(), { recursive: true, force: true })
   // openPath 成功语义：返回空字符串（Electron 契约：'' = 成功，非空 = 错误描述）
   openPathMock.mockResolvedValue('')
   registerUpdateHandlers({ getMainWindow: () => null } as never)
 })
 
 afterEach(() => {
-  rmSync(MANUAL_ASSET_DIR, { recursive: true, force: true })
+  rmSync(getManualAssetDir(), { recursive: true, force: true })
 })
 
 describe('u7b D9: update:openManualDir', () => {
   it('首次点击：幂等建目录（不存在 → 创建）+ openPath 打开 + 返回 { success: true }', async () => {
-    expect(existsSync(MANUAL_ASSET_DIR)).toBe(false)
+    expect(existsSync(getManualAssetDir())).toBe(false)
 
     const handler = handlers.get('update:openManualDir')!
     const result = await handler()
 
     expect(result).toEqual({ success: true })
     // 目录已真实创建（mkdirSync recursive）
-    expect(existsSync(MANUAL_ASSET_DIR)).toBe(true)
-    // openPath 收到 MANUAL_ASSET_DIR（与 manual-claim 常量同源）
+    expect(existsSync(getManualAssetDir())).toBe(true)
+    // openPath 收到 getManualAssetDir()（与 manual-claim 路径函数同源）
     expect(openPathMock).toHaveBeenCalledTimes(1)
-    expect(openPathMock).toHaveBeenCalledWith(MANUAL_ASSET_DIR)
+    expect(openPathMock).toHaveBeenCalledWith(getManualAssetDir())
   })
 
   it('幂等：目录已存在时重复调用不抛错（recursive 语义）', async () => {
@@ -87,12 +87,12 @@ describe('u7b D9: update:openManualDir', () => {
 
     // 第一次：创建目录
     await expect(handler()).resolves.toEqual({ success: true })
-    expect(existsSync(MANUAL_ASSET_DIR)).toBe(true)
+    expect(existsSync(getManualAssetDir())).toBe(true)
 
     // 第二次：目录已存在，recursive mkdir 不抛 EEXIST，正常打开
     await expect(handler()).resolves.toEqual({ success: true })
     expect(openPathMock).toHaveBeenCalledTimes(2)
-    expect(openPathMock).toHaveBeenNthCalledWith(2, MANUAL_ASSET_DIR)
+    expect(openPathMock).toHaveBeenNthCalledWith(2, getManualAssetDir())
   })
 
   it('openPath 失败（返回非空错误字符串）→ throw Error 含该字符串', async () => {
@@ -101,6 +101,6 @@ describe('u7b D9: update:openManualDir', () => {
     const handler = handlers.get('update:openManualDir')!
     // 目录仍会先建好（建目录成功 + 打开失败两步独立）
     await expect(handler()).rejects.toThrow('Failed to open path (no access)')
-    expect(existsSync(MANUAL_ASSET_DIR)).toBe(true)
+    expect(existsSync(getManualAssetDir())).toBe(true)
   })
 })

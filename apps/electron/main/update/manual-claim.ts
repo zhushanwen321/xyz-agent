@@ -22,14 +22,19 @@
 import { existsSync, renameSync, statSync } from 'node:fs'
 import path from 'node:path'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
-import { UPDATE_DIR } from './constants.js'
+import { getUpdateDir } from './constants.js'
 import { appendUpdateError } from './error-log.js'
 import { hashFileSha256 } from './hash.js'
 import { pickPlatformAsset } from './pick-platform-asset.js'
 import { writePreloadedUpdate } from './preloaded-update.js'
 
-/** 手动下载产物的固定投放目录（D9 UI 引导展示同一约定）。 */
-export const MANUAL_ASSET_DIR = path.join(UPDATE_DIR, 'manual')
+/**
+ * 手动下载产物的固定投放目录（D9 UI 引导展示同一约定）。
+ * 延迟求值：调用时经 getUpdateDir 解析（见 constants.ts，防 import 期烤死真实目录）。
+ */
+export function getManualAssetDir(): string {
+  return path.join(getUpdateDir(), 'manual')
+}
 
 /** 认领失败落盘（size/sha256 具因，D8）。best-effort，不抛出。 */
 function logClaimFailure(rawCause: string): void {
@@ -53,7 +58,7 @@ export async function tryClaimManualAsset(release: LatestReleaseInfo): Promise<s
   const asset = pickPlatformAsset(release)
   if (!asset?.name) return null
 
-  const candidatePath = path.join(MANUAL_ASSET_DIR, asset.name)
+  const candidatePath = path.join(getManualAssetDir(), asset.name)
   // 无同名候选（含目录不存在）→ 常态噪音，不落盘
   if (!existsSync(candidatePath)) return null
 
@@ -79,7 +84,7 @@ export async function tryClaimManualAsset(release: LatestReleaseInfo): Promise<s
   }
 
   // 三重通过 → move 到 UPDATE_DIR（与 app 自下载产物同位）
-  const finalPath = path.join(UPDATE_DIR, asset.name)
+  const finalPath = path.join(getUpdateDir(), asset.name)
   try {
     renameSync(candidatePath, finalPath)
   } catch (err) {

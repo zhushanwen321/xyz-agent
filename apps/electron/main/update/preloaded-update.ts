@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync, statSyn
 import path from 'node:path'
 import { compare } from 'compare-versions'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
-import { PRELOADED_UPDATE_FILE } from './constants.js'
+import { getPreloadedUpdateFile } from './constants.js'
 import { pickPlatformAsset, pickPlatformAssetName } from './pick-platform-asset.js'
 import { hashFileSha256 } from './hash.js'
 
@@ -80,7 +80,7 @@ export function writePreloadedUpdate(release: LatestReleaseInfo, filePath: strin
     return
   }
   try {
-    mkdirSync(path.dirname(PRELOADED_UPDATE_FILE), { recursive: true })
+    mkdirSync(path.dirname(getPreloadedUpdateFile()), { recursive: true })
     const data: PreloadedUpdateData = {
       version: release.version,
       assetName: asset.name,
@@ -91,7 +91,7 @@ export function writePreloadedUpdate(release: LatestReleaseInfo, filePath: strin
       release,
     }
     // eslint-disable-next-line no-magic-numbers -- 2 = JSON 缩进空格数（人类可读）
-    writeFileSync(PRELOADED_UPDATE_FILE, JSON.stringify(data, null, 2))
+    writeFileSync(getPreloadedUpdateFile(), JSON.stringify(data, null, 2))
   } catch (err) {
     // best-effort：写元信息失败不影响已下载的文件，快路径降级为完整下载
     console.warn('[preloaded-update] write failed:', err)
@@ -105,11 +105,11 @@ export function writePreloadedUpdate(release: LatestReleaseInfo, filePath: strin
  * @returns 有效的产物文件路径；无效或不存在返回 null
  */
 export async function readPreloadedUpdate(release: LatestReleaseInfo): Promise<string | null> {
-  if (!existsSync(PRELOADED_UPDATE_FILE)) return null
+  if (!existsSync(getPreloadedUpdateFile())) return null
 
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(PRELOADED_UPDATE_FILE, 'utf-8')) as unknown
+    parsed = JSON.parse(readFileSync(getPreloadedUpdateFile(), 'utf-8')) as unknown
   } catch (err) {
     console.warn('[preloaded-update] parse failed, clearing:', err)
     clearPreloadedUpdate()
@@ -186,11 +186,11 @@ export async function readPreloadedUpdate(release: LatestReleaseInfo): Promise<s
 export async function readPreloadedUpdateRaw(
   currentVersion: string,
 ): Promise<{ release: LatestReleaseInfo; filePath: string } | null> {
-  if (!existsSync(PRELOADED_UPDATE_FILE)) return null
+  if (!existsSync(getPreloadedUpdateFile())) return null
 
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(PRELOADED_UPDATE_FILE, 'utf-8')) as unknown
+    parsed = JSON.parse(readFileSync(getPreloadedUpdateFile(), 'utf-8')) as unknown
   } catch (err) {
     console.warn('[preloaded-update] parse failed, clearing:', err)
     clearPreloadedUpdate()
@@ -252,8 +252,8 @@ export async function readPreloadedUpdateRaw(
  */
 export function clearPreloadedUpdate(): void {
   try {
-    if (existsSync(PRELOADED_UPDATE_FILE)) {
-      unlinkSync(PRELOADED_UPDATE_FILE)
+    if (existsSync(getPreloadedUpdateFile())) {
+      unlinkSync(getPreloadedUpdateFile())
     }
   } catch (err) {
     // best-effort：清除失败只留残留元信息，下次 read 校验失败会再清

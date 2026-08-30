@@ -25,9 +25,8 @@ import { downloadAsset } from '../download-asset.js'
 
 // ─── error-log mock ──────────────────────────────────────────────
 
-// [B4 测试引入 download-asset 静态导入后必须用 vi.hoisted]：
-// download-asset.js 在模块加载期就读 UPDATE_DIR，静态 import 早于本文件
-// 常量初始化执行；不用 hoisted 会报 Cannot access before initialization。
+// constants 路径函数重定向到 tmpdir（隔离真实数据目录）。延迟求值后 hoisted
+// 不再是硬约束（模块加载期无路径求值），保留结构最小化 diff。
 const { TEST_LOG_DIR, TEST_LOG_PATH } = vi.hoisted(() => {
   // 此处不能用已导入的 join/tmpdir（hoisted 工厂执行时 import 绑定尚未初始化），
   // 用全局 process.env 构造等价路径；TMPDIR 与 os.tmpdir() 在 macOS 上指向同一目录
@@ -37,8 +36,8 @@ const { TEST_LOG_DIR, TEST_LOG_PATH } = vi.hoisted(() => {
 })
 
 vi.mock('../constants.js', () => ({
-  UPDATE_ERROR_LOG: TEST_LOG_PATH,
-  UPDATE_DIR: TEST_LOG_DIR,
+  getUpdateErrorLog: () => TEST_LOG_PATH,
+  getUpdateDir: () => TEST_LOG_DIR,
 }))
 
 const { appendUpdateError } = await import('../error-log.js')

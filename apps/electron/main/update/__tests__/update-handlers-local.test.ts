@@ -70,7 +70,7 @@ const claimMocks = vi.hoisted(() => ({
 }))
 vi.mock('../manual-claim.js', () => ({
   tryClaimManualAsset: claimMocks.tryClaimManualAsset,
-  MANUAL_ASSET_DIR: '/tmp/manual-claim-test/manual',
+  getManualAssetDir: () => '/tmp/manual-claim-test/manual',
 }))
 
 const errorLogMocks = vi.hoisted(() => ({

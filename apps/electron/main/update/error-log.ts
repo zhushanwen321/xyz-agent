@@ -12,10 +12,10 @@
  *
  * 落盘失败静默跳过（日志失败不能阻断升级主流程）。
  *
- * 依赖方向：error-log → constants（UPDATE_ERROR_LOG 路径）+ node:fs。
+ * 依赖方向：error-log → constants（getUpdateErrorLog 路径）+ node:fs。
  */
 import { existsSync, mkdirSync, statSync, renameSync, appendFileSync } from 'node:fs'
-import { UPDATE_ERROR_LOG, UPDATE_DIR } from './constants.js'
+import { getUpdateDir, getUpdateErrorLog } from './constants.js'
 
 /** 单条错误日志条目 */
 export interface UpdateErrorEntry {
@@ -54,16 +54,17 @@ const MAX_LOG_SIZE = 512 * 1024
  */
 export function appendUpdateError(entry: UpdateErrorEntry): void {
   try {
-    mkdirSync(UPDATE_DIR, { recursive: true })
+    mkdirSync(getUpdateDir(), { recursive: true })
 
-    // 轮转检查
-    if (existsSync(UPDATE_ERROR_LOG)) {
+    // 轮转检查（每次调用现取路径：env 可能在模块加载后才注入，见 constants.ts）
+    const errorLogPath = getUpdateErrorLog()
+    if (existsSync(errorLogPath)) {
       try {
-        const stat = statSync(UPDATE_ERROR_LOG)
+        const stat = statSync(errorLogPath)
         if (stat.size >= MAX_LOG_SIZE) {
-          const rotatedPath = `${UPDATE_ERROR_LOG}.1`
+          const rotatedPath = `${errorLogPath}.1`
           // 覆盖旧 .1（如果存在）
-          renameSync(UPDATE_ERROR_LOG, rotatedPath)
+          renameSync(errorLogPath, rotatedPath)
         }
       } catch {
         // 轮转失败不阻断写入
@@ -71,7 +72,7 @@ export function appendUpdateError(entry: UpdateErrorEntry): void {
     }
 
     const line = JSON.stringify(entry) + '\n'
-    appendFileSync(UPDATE_ERROR_LOG, line, 'utf-8')
+    appendFileSync(errorLogPath, line, 'utf-8')
   } catch (err) {
     // 落盘失败静默跳过，仅 console.error 兜底
     console.error('[update-error-log] failed to write:', err)

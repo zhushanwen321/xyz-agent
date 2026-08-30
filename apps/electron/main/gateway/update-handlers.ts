@@ -40,7 +40,7 @@ import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.
 import type { IUpdateOrchestrator, UpdateProgressCallback } from '../update/orchestrator.js'
 import { isAutoUpdateSupportedForCurrentInstall } from '../update/orchestrator.js'
 import { writePreloadedUpdate, readPreloadedUpdate, readPreloadedUpdateRaw, clearPreloadedUpdate } from '../update/preloaded-update.js'
-import { MANUAL_ASSET_DIR, tryClaimManualAsset } from '../update/manual-claim.js'
+import { getManualAssetDir, tryClaimManualAsset } from '../update/manual-claim.js'
 import { upgradeFetch, CurlFetchError, isCurlHttpStatusError } from '../update/upgrade-fetch.js'
 import { classifyNetError } from '../update/net-errors.js'
 import { appendUpdateError } from '../update/error-log.js'
@@ -599,8 +599,8 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   // 管理器打开——用户不必先手动建目录。openPath 失败时返回非空错误字符串（成功为 ''），
   // 抛 Error 携带该字符串对齐本文件既有 handler 错误风格（错误信息可操作）。
   ipcMain.handle('update:openManualDir', async () => {
-    mkdirSync(MANUAL_ASSET_DIR, { recursive: true })
-    const openError = await shell.openPath(MANUAL_ASSET_DIR)
+    mkdirSync(getManualAssetDir(), { recursive: true })
+    const openError = await shell.openPath(getManualAssetDir())
     if (openError) {
       throw new Error(`Failed to open manual asset directory: ${openError}`)
     }

@@ -21,7 +21,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import path from 'node:path'
 import { compare } from 'compare-versions'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
-import { PENDING_UPDATE_FILE } from './constants.js'
+import { getPendingUpdateFile } from './constants.js'
 
 /**
  * pending-update.json 落盘结构。
@@ -73,10 +73,10 @@ function isPendingUpdateData(x: unknown): x is PendingUpdateData {
  */
 export function writePendingUpdate(release: LatestReleaseInfo): void {
   try {
-    mkdirSync(path.dirname(PENDING_UPDATE_FILE), { recursive: true })
+    mkdirSync(path.dirname(getPendingUpdateFile()), { recursive: true })
     const data: PendingUpdateData = { release, at: new Date().toISOString() }
     // eslint-disable-next-line no-magic-numbers -- 2 = JSON 缩进空格数（人类可读）
-    writeFileSync(PENDING_UPDATE_FILE, JSON.stringify(data, null, 2))
+    writeFileSync(getPendingUpdateFile(), JSON.stringify(data, null, 2))
   } catch (err) {
     // best-effort：写标志失败不应阻断检测响应，下次检测会再次尝试写入
     console.warn('[pending-update] write failed:', err)
@@ -98,11 +98,11 @@ export function writePendingUpdate(release: LatestReleaseInfo): void {
  * @returns 仍有效的 pending release（有新版待升级），否则 null
  */
 export function readPendingUpdate(currentVersion: string): LatestReleaseInfo | null {
-  if (!existsSync(PENDING_UPDATE_FILE)) return null
+  if (!existsSync(getPendingUpdateFile())) return null
 
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(PENDING_UPDATE_FILE, 'utf-8')) as unknown
+    parsed = JSON.parse(readFileSync(getPendingUpdateFile(), 'utf-8')) as unknown
   } catch (err) {
     // 文件损坏：清除残留避免每次启动都尝试解析失败
     console.warn('[pending-update] parse failed, clearing:', err)
@@ -144,8 +144,8 @@ export function readPendingUpdate(currentVersion: string): LatestReleaseInfo | n
  */
 export function clearPendingUpdate(): void {
   try {
-    if (existsSync(PENDING_UPDATE_FILE)) {
-      unlinkSync(PENDING_UPDATE_FILE)
+    if (existsSync(getPendingUpdateFile())) {
+      unlinkSync(getPendingUpdateFile())
     }
   } catch (err) {
     // best-effort：清除失败只留残留文件，下次 read 会 parse 失败再清

@@ -42,7 +42,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { ProxyAgent } from 'undici'
 import type { ReleaseAsset, IProxyConfig } from '@xyz-agent/shared'
-import { UPDATE_DIR } from './constants.js'
+import { getUpdateDir } from './constants.js'
 import { hashFileSha256 } from './hash.js'
 import { resolveProxyUrl, stripCredential } from './proxy-config.js'
 import { UpdateError, UpdateIntegrityError } from './types.js'
@@ -73,9 +73,11 @@ interface IResumeState {
 }
 
 /**
- * 断点续传状态文件路径。
+ * 断点续传状态文件路径（延迟求值：跟随 getDataDir，见 constants.ts）。
  */
-const RESUME_STATE_FILE = path.join(UPDATE_DIR, 'resume-state.json')
+function getResumeStateFile(): string {
+  return path.join(getUpdateDir(), 'resume-state.json')
+}
 
 /**
  * 下载总超时 watchdog：覆盖 fetch + 流式传输全过程（兜底上限）。
@@ -191,9 +193,10 @@ export async function downloadAsset(
   proxyConfig?: IProxyConfig,
 ): Promise<{ filePath: string }> {
   // 1. 准备目录 + 临时文件路径
-  mkdirSync(UPDATE_DIR, { recursive: true })
-  const tempPath = path.join(UPDATE_DIR, `${asset.name}.downloading`)
-  const finalPath = path.join(UPDATE_DIR, asset.name)
+  const updateDir = getUpdateDir()
+  mkdirSync(updateDir, { recursive: true })
+  const tempPath = path.join(updateDir, `${asset.name}.downloading`)
+  const finalPath = path.join(updateDir, asset.name)
   // 引擎编排用的完整代理 URL（upgradeFetch / downloadViaCurl 吃 URL 形态；
   // undici 路径仍按原样用 proxyConfig 构造 ProxyAgent）
   const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
@@ -1035,8 +1038,8 @@ async function downloadMultiPart(
   const maxParts = Math.max(1, Math.min(MULTI_PART_COUNT, Math.floor(totalBytes / MIN_BYTES_PER_PART)))
   const partSize = Math.floor(totalBytes / maxParts)
   const parts: IPartSpec[] = []
-  const tempPath = path.join(UPDATE_DIR, `${asset.name}.downloading`)
-  mkdirSync(UPDATE_DIR, { recursive: true })
+  const tempPath = path.join(getUpdateDir(), `${asset.name}.downloading`)
+  mkdirSync(getUpdateDir(), { recursive: true })
   // [MUST-FIX #2] multipart 路径全程不写 resume-state（各段独立写 .part-N，无单一进度可记）。
   // 若上次单段下载残留了 resume-state（state.downloadedBytes 可能远大于本次合并进度），
   // 本次 multipart 失败后下次启动会被误判为「单段续传起点」拼接到损坏的合并片段上。
@@ -1131,9 +1134,10 @@ function saveResumeState(state: IResumeState): void {
   try {
     // 原子写（批次 5 m12 / §3.7.2）：先写 .tmp 再 rename，避免读到半截 JSON
     // （半截 state 会被 loadResumeState 的 parse 失败分支吞掉，丢掉续传进度）
-    const tmpPath = `${RESUME_STATE_FILE}.tmp`
+    const resumeStateFile = getResumeStateFile()
+    const tmpPath = `${resumeStateFile}.tmp`
     writeFileSync(tmpPath, JSON.stringify(state, null, 2)) // eslint-disable-line no-magic-numbers -- JSON 缩进 2 空格
-    renameSync(tmpPath, RESUME_STATE_FILE)
+    renameSync(tmpPath, resumeStateFile)
   } catch (err) {
     // best-effort：resume state 只是续传优化，写入失败不应中断下载，下次重头下即可
     console.warn('[download] save resume state failed:', err)
@@ -1147,10 +1151,10 @@ function saveResumeState(state: IResumeState): void {
  */
 function loadResumeState(): IResumeState | null {
   try {
-    if (!existsSync(RESUME_STATE_FILE)) {
+    if (!existsSync(getResumeStateFile())) {
       return null
     }
-    const data = readFileSync(RESUME_STATE_FILE, 'utf-8')
+    const data = readFileSync(getResumeStateFile(), 'utf-8')
     return JSON.parse(data) as IResumeState
   } catch (err) {
     console.warn('[download] load resume state failed:', err)
@@ -1163,8 +1167,8 @@ function loadResumeState(): IResumeState | null {
  */
 function clearResumeState(): void {
   try {
-    if (existsSync(RESUME_STATE_FILE)) {
-      unlinkSync(RESUME_STATE_FILE)
+    if (existsSync(getResumeStateFile())) {
+      unlinkSync(getResumeStateFile())
     }
   } catch (err) {
     // best-effort：清理失败只留下残留 state 文件，下次下载会因 mismatch 自动重下，无副作用

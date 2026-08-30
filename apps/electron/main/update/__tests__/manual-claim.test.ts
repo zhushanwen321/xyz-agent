@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// ─── 路径重定向 + mock 注入点（hoisted：manual-claim.ts 模块加载期即读 UPDATE_DIR）───
+// ─── 路径重定向 + mock 注入点 ─────────────────────────────────────
 
 const {
   TEST_UPDATE_DIR,
@@ -39,11 +39,11 @@ const {
   }
 })
 
-// UPDATE_DIR/PRELOADED_UPDATE_FILE 重定向到临时目录（隔离真实数据目录）；
-// 本 import 图内仅 manual-claim 与 preloaded-update 消费 constants
+// 路径函数重定向到临时目录（隔离真实数据目录）；延迟求值后不再依赖
+// 「模块加载前 mock」的时序，本 import 图内 manual-claim 与 preloaded-update 均消费 constants
 vi.mock('../constants.js', () => ({
-  UPDATE_DIR: TEST_UPDATE_DIR,
-  PRELOADED_UPDATE_FILE: TEST_PRELOADED_FILE,
+  getUpdateDir: () => TEST_UPDATE_DIR,
+  getPreloadedUpdateFile: () => TEST_PRELOADED_FILE,
 }))
 
 // mock 边界：appendUpdateError 只捕获调用，不写真实日志文件

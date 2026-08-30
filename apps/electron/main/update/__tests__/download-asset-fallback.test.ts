@@ -30,15 +30,17 @@ import { UpdateError } from '../types.js'
 // ─── 模块 mock（vi.mock 提升：先于 download-asset 静态导入生效） ───────────────
 
 // constants mock：UPDATE_DIR 指向临时目录（download-asset 模块加载期即读 UPDATE_DIR
-// 派生 RESUME_STATE_FILE，须用 vi.hoisted 保证工厂先拿到路径）
+// constants mock：路径函数重定向到临时目录（download-asset 的 getResumeStateFile /
+// 临时文件路径运行时经 getUpdateDir 解析）。延迟求值后 hoisted 不再是硬约束，
+// 保留结构最小化 diff。
 const { TEST_DIR } = vi.hoisted(() => {
   const base = process.env.TMPDIR || '/tmp'
   return { TEST_DIR: `${base}/u4-download-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}` }
 })
 
 vi.mock('../constants.js', () => ({
-  UPDATE_DIR: TEST_DIR,
-  UPDATE_ERROR_LOG: `${TEST_DIR}/update-error.log`,
+  getUpdateDir: () => TEST_DIR,
+  getUpdateErrorLog: () => `${TEST_DIR}/update-error.log`,
 }))
 
 // error-log mock：不落真实磁盘，直接断言 appendUpdateError 调用参数
