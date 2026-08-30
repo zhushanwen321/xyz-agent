@@ -335,7 +335,7 @@ export function createUseChat(deps: UseChatDeps) {
    *
    * 调用方负责：appendUser / truncateFrom / pendingSend 等状态机编排
    * （submitSegments 只管「文本化 + 发送」核心步骤）：
-   *   1. segmentsToPrompt（trim 后的 pi prompt 文本，image 段产出裸路径）
+   *   1. segmentsToPrompt（pi prompt 文本，原文保真，image 段产出裸路径）
    *   2. 写 segments.json sidecar（clientUuid 关联，重开时回填 badge）——仅非纯文本消息
    *   3. chatApi.send(promptText + clientUuid 标记)——仅非纯文本消息（最小写入，见下方注释）
    *
@@ -347,9 +347,9 @@ export function createUseChat(deps: UseChatDeps) {
    * @param clientUuid          调用方 appendUser 生成的 user message id（`u-<uuid>`），
    *                            用作 segments.json 主键 + prompt 标记 uuid（建立 clientUuid ↔
    *                            pi userEntryId 映射，extension input hook 剥标记后写 custom entry）
-   * @param precomputedPromptText 调用方已算过的 segmentsToPrompt(segments)（trim 后非空）。
-   *                            send/editAndResend 各有空检查 trim 校验（segmentsToPrompt 一次），
-   *                            传入复用避免 submitSegments 内部再算一遍（S4 修复，热路径去重）。
+   * @param precomputedPromptText 调用方已算过的 segmentsToPrompt(segments)（非空白——调用方
+   *                            !text.trim() 守卫保证）。传入复用避免 submitSegments
+   *                            内部再算一遍（S4 修复，热路径去重）。
    */
   async function submitSegments(
     sessionId: string,
@@ -484,11 +484,13 @@ export function createUseChat(deps: UseChatDeps) {
     subagentSeg: Extract<Segment, { type: 'subagent' }>,
   ): Promise<void> {
     // subagent 段序列化为空串（shared/segments 路由标记），segmentsToPrompt 即
-    // 「其余段序列化 + trim」：file → path(:L 范围)、session → #sessionId、image → 裸路径。
+    // 其余段序列化：file → path(:L 范围)、session → #sessionId、image → 裸路径。
     const text = segmentsToPrompt(segments)
-    // 空文本挡：纯 chip（或多 chip 间无内容）时 text 为空串，extension 无从处理——
+    // 空文本挡：纯 chip（或仅空白文本）时 text 为空白串，extension 无从处理——
     // 可读错误 + 不发 RPC（防御：上游 canSend 守卫通常已拦，此处兜底保证不静默）。
-    if (!text) {
+    // trim 判断必须显式：segmentsToPrompt 已去 trim 保真（Gate B 观测①修复），
+    // 纯空白文本若不在此拦会直发 RPC。
+    if (!text.trim()) {
       deps.toast.error(deps.t('composable.subagentDirectiveEmpty'))
       return
     }

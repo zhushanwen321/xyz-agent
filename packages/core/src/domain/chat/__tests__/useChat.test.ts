@@ -190,6 +190,26 @@ describe('createUseChat factory 行为', () => {
     f.dispose()
   })
 
+  it('首尾空白保真：steer 原文（含空白）直达 chatApi.steer（Gate B 观测①回归）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s8w', textToSegments('hi'))
+    f.emit('s8w', msg('s8w', 'message.message_start', { messageId: 'a1' }))
+    // busy → steer；提交文本带首尾空白，发往 pi 的 promptText 必须原文保真
+    // （segmentsToPrompt 曾 trim，pi 落盘 ≠ 提交原文破坏显示对账）
+    await f.useChat.send('s8w', textToSegments('  注意  '))
+    expect(f.chatApi.steer).toHaveBeenCalledWith('s8w', '  注意  ')
+    f.dispose()
+  })
+
+  it('纯空白文本不发送：steer 空挡拦截（保真修复后空白拦截归调用方）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s8b', textToSegments('hi'))
+    f.emit('s8b', msg('s8b', 'message.message_start', { messageId: 'a1' }))
+    await f.useChat.send('s8b', textToSegments('   '))
+    expect(f.chatApi.steer).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
   it('abort API 失败：toast.error（乐观 clearPendingSend，不 throw）', async () => {
     const f = makeFixture()
     f.chatApi.abort.mockRejectedValueOnce(new Error('pi死'))
@@ -364,8 +384,9 @@ describe('send 定向分流（含 subagent 段）', () => {
     expect(f.chatApi.subagentAction).toHaveBeenCalledTimes(1)
     expect(f.chatApi.subagentAction).toHaveBeenCalledWith('d1', 'message', {
       subagentId: 'rec-1',
-      // 定向文本 = 其余段序列化：session → #sessionId、file → path:L 范围、subagent 段空串不进
-      text: '#sess-9 /a.ts:L1-L5 展开讲讲',
+      // 定向文本 = 其余段序列化：session → #sessionId、file → path:L 范围、subagent 段空串不进。
+      // 前导空格 = subagent(chip)→text 边界补格，segmentsToPrompt 不 trim（保真）随行发出
+      text: ' #sess-9 /a.ts:L1-L5 展开讲讲',
     })
     // 不走主 agent 通道（§3.3.8 命题 1：无主 agent turn）
     expect(f.chatApi.send).not.toHaveBeenCalled()
@@ -400,7 +421,8 @@ describe('send 定向分流（含 subagent 段）', () => {
     expect(action).toBe('start')
     expect(params.slug).toMatch(/^chat-/) // 自动 slug 生成规则
     expect(params.slug).not.toBe('新任务') // 占位 slug 不可作 id，被覆盖
-    expect(params.task).toBe('帮我修 bug')
+    // 前导空格 = subagent(chip)→text 边界补格（segmentsToPrompt 不 trim，原文保真）
+    expect(params.task).toBe(' 帮我修 bug')
     expect(f.chatApi.send).not.toHaveBeenCalled()
     f.dispose()
   })
