@@ -1,8 +1,10 @@
 /**
  * 升级错误日志落盘（D7）。
  *
- * JSONL 格式，512KB 轮转 x2。五个 source 覆盖：
- * test-proxy / download / install / perform / preload。
+ * JSONL 格式，512KB 轮转 x2。七个 source 覆盖：
+ * test-proxy / download / install / perform / preload /
+ * engine-fallback / manual-claim（D8：前者为单引擎失败被另一引擎兜住的
+ * 降级点落盘，后者为手动认领校验失败落盘）。
  *
  * 形态豁免说明（data-source-registry C-data-11 口径）：本文件是 append-only 诊断
  * 日志（appendFileSync 单向追加 + rename 轮转，无读-改-写），非 C-data-11 针对的
@@ -19,7 +21,11 @@ import { UPDATE_ERROR_LOG, UPDATE_DIR } from './constants.js'
 export interface UpdateErrorEntry {
   /** ISO 8601 时间戳 */
   at: string
-  /** 错误来源：test-proxy / download / install / perform / preload */
+  /**
+   * 错误来源：test-proxy / download / install / perform / preload /
+   * engine-fallback（单引擎失败被另一引擎兜住时在降级发生点落盘，D8）/
+   * manual-claim（手动认领 size/sha256 校验失败落盘，D2）
+   */
   source: string
   /** 升级阶段 */
   stage: string
@@ -29,6 +35,12 @@ export interface UpdateErrorEntry {
   rawCause?: string
   /** 代理 URL（可选，脱敏后） */
   proxyUrl?: string
+  /**
+   * 失败引擎（可选，D8 诊断字段，不入 shared 枚举）：降级落盘时为失败引擎；
+   * 双引擎均失败时落 undici——对用户的错误分类以 undici 侧 errno 为准
+   * （curl exit code 无 errno 级区分，见 D8）。
+   */
+  engine?: 'undici' | 'curl'
 }
 
 /** 轮转阈值：512KB */
