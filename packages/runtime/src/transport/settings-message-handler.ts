@@ -70,6 +70,14 @@ export class SettingsMessageHandler {
           scopedModels: this.ctx.configService.getScopedModels(),
         })
         return true
+      case 'config.refreshProviderCatalogs': {
+        // settings-provider 页进入时触发：远程模型目录 ETag 协商刷新（单请求 4s 超时，
+        // 全部 fail-safe），完成后广播新列表（store 常驻订阅自动更新，renderer 零状态管理）。
+        const result = await this.ctx.configService.refreshProviderCatalogs()
+        this.ctx.reply(ws, msg.id, 'config.providerCatalogsRefreshed', result)
+        this.ctx.broadcastProviderList()
+        return true
+      }
       case 'config.setProvider': {
         const { providerId, ...data } = msg.payload
         const setResult = await this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
@@ -285,6 +293,16 @@ export class SettingsMessageHandler {
           // 导入后重选 defaultModel：不传 newDefault → reconcile 自动走 getDefaultModel 兜底
           //（内部 findValidDefaultModel + wasFixed:true 时写回 settings.json）。
           reconcileDefaultModelAfterProviderChange(this.ctx)
+          // D9（pi-evolution-consistency-and-project-switcher §3.3）：导入成功后 fire-and-forget
+          // 刷新远程模型目录（overlay 通道）——导入的 catalog provider 此刻才进 listProviders，
+          // 不刷则其模型列表停留在快照（「导入后模型列表不新鲜」的原始场景）。完成后广播新列表
+          //（与 config.refreshProviderCatalogs case 的 refresh→broadcast 模式同构）；不阻塞导入
+          // reply，失败仅日志（refresh 自身 4s 超时 fail-safe，导入主语义已成功，失败可重进页面重试）。
+          void this.ctx.configService.refreshProviderCatalogs()
+            .then(() => { this.ctx.broadcastProviderList() })
+            .catch((e: unknown) => {
+              console.warn('[settings-handler] applyImportProviders: provider catalog refresh failed:', e)
+            })
         }
         return true
       }

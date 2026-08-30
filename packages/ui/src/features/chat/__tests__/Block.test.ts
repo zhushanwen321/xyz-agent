@@ -320,6 +320,28 @@ describe('W4 tail-scroll: thinking 双态（U8）', () => {
     const thinkHeaderAfter = minHeightEl.exists() ? minHeightEl : wrapper.find('.trace-think .flex.items-center')
     expect(thinkHeaderAfter.exists()).toBe(true)
   })
+
+  it('working 态尾行视口锁单行高度 + 横向钉右结构（2026-08 抖动修复形态守卫）', async () => {
+    const wrapper = mountThinkingWithContent({ working: true })
+    await nextTick()
+    // h-[1lh]：视口高度 = 1 行行高（CSS lh 单位），缺失即回归「多行内容撑高视口」抖动
+    const viewport = wrapper.find('.h-\\[1lh\\]')
+    expect(viewport.exists()).toBe(true)
+    // 横向钉右 = justify-end + overflow-hidden（纯 CSS，无 scrollLeft 时序）；行容器右对齐
+    expect(viewport.classes()).toContain('justify-end')
+    expect(viewport.classes()).toContain('overflow-hidden')
+    // leading-normal（无单位系数）必需：normal 行高下行盒高度随内容 fallback 字体变
+    //（实测 system-ui 16px / PingFang 18px / emoji 21px——CJK 行被裁 2-5px）
+    expect(viewport.classes()).toContain('leading-normal')
+    const scroller = viewport.find('.flex-col')
+    expect(scroller.exists()).toBe(true)
+    expect(scroller.classes()).toContain('items-end')
+    // self-start：脱离 flex cross 轴默认 stretch（否则滚动容器被拉到视口高度，
+    // translateY(-50%) 变半行而非一行——sliding 新行错位，无头浏览器实测确认）
+    expect(scroller.classes()).toContain('self-start')
+    // mr-auto：短行左贴 label（恢复旧行为）、长行溢出时被 justify-end 钉右
+    expect(scroller.classes()).toContain('mr-auto')
+  })
 })
 
 // U9: tool 双态——running 态显示去 ANSI 末行文本，completed 态显示 shortenForHeader

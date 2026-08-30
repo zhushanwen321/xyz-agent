@@ -964,6 +964,27 @@
       ]
     },
     {
+      "id": "C-state-09",
+      "summary": "panel 输入面（composer/ask-user/landing）显隐只许经 derivePanelView 纯函数派生（packages/core/src/domain/session/panel-view.ts），禁止组件内直接组合 flow/chat/session 状态判显隐；landing 判据恒为 !sessionId && isFlowActive（G2 结构免疫）",
+      "scope": [
+        "packages/renderer/src/components/panel/**",
+        "packages/core/src/domain/session/panel-view.ts"
+      ],
+      "authority": [
+        "design/panel-view-derivation-and-flow-lifecycle.md"
+      ],
+      "dimensions": [
+        "arch-boundary",
+        "ui-consistency"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-arch-boundary"
+        }
+      ]
+    },
+    {
       "id": "C-ext-01",
       "summary": "目录分组（taiji/universal）+ package.json xyz-agent.role + mandatory 清单三处一致；extensions/ 顶层禁放 extension 包",
       "scope": [
@@ -1461,6 +1482,35 @@
       ]
     },
     {
+      "id": "C-proc-09",
+      "summary": "runtime 子进程 env 出站契约：进程创建点的子 env 必须经 buildOutboundChildEnv 构建（deny 清单剥 XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN）；与 ENV_WHITELIST_PREFIXES 入站准入正交共存——入站白名单管「外部环境哪些准许进来」，出站契约管「自身变量哪些允许跟随 spawn 出去」（设计文档 §3.5 D2）；B2 main→runtime 产品内部边界走 composeChildEnvBase 基座、不出 deny 兜底，deny 由下游对外边界承担",
+      "scope": [
+        "packages/shared/src/spawn-env-contract.ts",
+        "packages/runtime/src/infra/spawn-env.ts",
+        "packages/runtime/src/infra/pi/rpc-client.ts",
+        "packages/runtime/src/infra/pi/process-manager.ts",
+        "apps/electron/main/supervisor/safe-env.ts",
+        "packages/runtime/src/infra/shell-runner.ts",
+        "packages/runtime/src/infra/git-executor.ts",
+        "packages/runtime/src/services/terminal/terminal-service.ts",
+        "packages/runtime/src/infra/relay/relay-registry.ts",
+        "packages/runtime/src/services/plugin-service/plugin-host-process.ts"
+      ],
+      "authority": [
+        "design/env-propagation-boundary.md",
+        "../AGENTS.md"
+      ],
+      "dimensions": [
+        "arch-boundary"
+      ],
+      "enforcement": [
+        {
+          "type": "machine",
+          "hook": "check_spawn_env_boundary.py"
+        }
+      ]
+    },
+    {
       "id": "C-ext-13",
       "summary": "subagent 引擎抽象依赖方向单向：上层→中立类型/EnginePort，adapter→公共降级层；runtime 永不 import adapter 运行时件（launcher/preparer/parser 与 EnginePort 实例），例外仅无状态 reader 模块与中立制品（record+journal）",
       "scope": [
@@ -1697,6 +1747,34 @@
       "enforcement": [
         {
           "type": "none"
+        }
+      ]
+    },
+    {
+      "id": "C-build-07",
+      "summary": "构建期 pi 派生锚点跟随守卫（8 项矩阵，SSOT = 守卫头注）：声明基准（根 package.json 的 pi 包声明版本）→ build.yml PI_VERSION env / prepare-pi-resources.sh 默认值 / extensions pi 依赖 range；实装基准（node_modules pi-ai）→ 快照 piAiVersion / 快照新鲜度（gen 脚本内存重生成比对）/ KNOWN_PI_API_TYPES / pi-tui 实装。与 C-proc-08 并列零重叠——其管 pi 语义登记/探针/四包版本门禁（读 pi-semantics.json），本条只管派生锚点跟随（不读 pi-semantics.json、不做包间互检）；pi 升级后执行 pnpm gen:builtin-providers 重生成快照并随升级 PR 提交",
+      "scope": [
+        "package.json",
+        "pnpm-lock.yaml",
+        ".github/workflows/build.yml",
+        "scripts/prepare-pi-resources.sh",
+        "scripts/check-pi-sync.mjs",
+        "packages/runtime/src/generated/builtin-providers.json",
+        "packages/runtime/scripts/gen-builtin-providers.mjs",
+        "packages/shared/src/constants.ts",
+        "extensions/**"
+      ],
+      "authority": [
+        "design/pi-evolution-consistency-and-project-switcher.md#32-方案对比",
+        "../scripts/check-pi-sync.mjs"
+      ],
+      "dimensions": [
+        "electron-build"
+      ],
+      "enforcement": [
+        {
+          "type": "machine",
+          "hook": "check-pi-sync.mjs"
         }
       ]
     }

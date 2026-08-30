@@ -156,7 +156,8 @@ describe("cross-package contract: SW subagent tool schema（真实 typebox 校�
 
 		// action：枚举 + description（StringEnum 的 options 在 mock pi-ai/SW mock 下均被丢弃，
 		// 真实 pi-ai StringEnum 才保留——本断言即「SO 环境解析到真实 pi-ai」的间接守卫）
-		expect(schema.properties.action?.enum).toEqual(["start", "list", "cancel", "message", "close"]);
+		// 6 值含 fork-from（SW v8.5 断联恢复通道；schema 合法扩展 action 时同步本断言）
+		expect(schema.properties.action?.enum).toEqual(["start", "list", "cancel", "message", "close", "fork-from"]);
 		expectDescription(schema.properties, "action");
 
 		// start 路径类参数：pattern ^/（R6 加入的绝对路径约束）+ description

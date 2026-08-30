@@ -146,3 +146,34 @@ describe('GitExecutor.exec（异步化行为等价）', () => {
     await expect(pending).resolves.toEqual({ stdout: '', stderr: '', exitCode: 0 })
   })
 })
+
+describe('GitExecutor env 出站接线（U4-B8）', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('污染 deny 键不入 options.env；白名单基座（PATH/HOME）放行；非白名单键被过滤', async () => {
+    vi.stubEnv('XYZ_AGENT_PACKAGED', '1')
+    vi.stubEnv('XYZ_RUNTIME_TOKEN', 'secret-token')
+    vi.stubEnv('PATH', '/usr/bin:/bin')
+    vi.stubEnv('HOME', '/Users/tester')
+    // 隐式继承语义下该键会原样跟随；显式白名单基座下必须消失
+    vi.stubEnv('SOME_RANDOM_SESSION_VAR', 'leak-probe')
+
+    const executor = new GitExecutor()
+    const done = executor.exec('/repo', 'status')
+    capturedCallback?.(null, '', '')
+    await done
+
+    expect(execFileMock).toHaveBeenCalledTimes(1)
+    const opts = execFileMock.mock.calls[0][2] as Record<string, unknown>
+    const env = opts.env as Record<string, string>
+    expect(env).toBeTruthy()
+    expect(env.XYZ_AGENT_PACKAGED).toBeUndefined()
+    expect(env.XYZ_RUNTIME_TOKEN).toBeUndefined()
+    // R2：基座保 PATH/HOME，git hooks / credential helper 不因 env 缺失远距离爆炸
+    expect(env.PATH).toBe('/usr/bin:/bin')
+    expect(env.HOME).toBe('/Users/tester')
+    expect(env.SOME_RANDOM_SESSION_VAR).toBeUndefined()
+  })
+})

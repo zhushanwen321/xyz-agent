@@ -210,15 +210,18 @@ describe('A6: findValidDefaultModel 对 auth.json-only catalog provider（D3 修
     expect(r.wasFixed).toBe(false)
   })
 
-  it('A6 defaultModel 不在 builtin 集 → 重选 builtin 第一个，wasFixed=true', () => {
+  it('D5 态 3 演进：defaultModel 不在快照集且 overlay 从未见过 → pass-through 不改写（原「重选 builtin 第一个」被 D5 取代）', () => {
     writeModels({ 'custom-x': { models: [{ id: 'm-x' }] } })
     writeSettings({ defaultProvider: 'zai-coding-cn', defaultModel: 'nonexistent-model', enabledModels: [] })
     writeAuth({ 'zai-coding-cn': { type: 'api_key', key: 'kz' } })
+    // 未写任何 overlay 文件 → zai-coding-cn 处于 never-seen 态。D5 裁定：pass-through
+    // 不判定有效性、不 auto-fix（垃圾模型名直传 pi 报错，优于静默改写用户配置）。
+    // 旧行为（wasFixed:true 重选 builtin 第一个）正是设计文档「失败模式 A」同族：静默改写。
 
     const r = findValidDefaultModel()
 
-    expect(r.result).toEqual({ provider: 'zai-coding-cn', modelId: firstZaiModelId })
-    expect(r.wasFixed).toBe(true)
+    expect(r.result).toEqual({ provider: 'zai-coding-cn', modelId: 'nonexistent-model' })
+    expect(r.wasFixed).toBe(false)
   })
 
   it('A6 对照：无凭据时 D3 不生效 → fallback 到 models.json 其他 provider', () => {

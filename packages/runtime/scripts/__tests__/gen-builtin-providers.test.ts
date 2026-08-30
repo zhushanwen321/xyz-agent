@@ -1,7 +1,8 @@
-// 8 用例 vitest 测试：校验 generateBuiltinProviders 提取的 39 provider 元数据结构。
+// vitest 测试：校验 generateBuiltinProviders 提取的内置 provider 元数据结构 + 磁盘快照自包含指纹。
 // 测试框架 vitest（禁 node:test / tsx --test）。
 import { describe, it, expect } from 'vitest'
-import { generateBuiltinProviders } from '../gen-builtin-providers.mjs'
+import { generateBuiltinProviders, readPiAiVersion } from '../gen-builtin-providers.mjs'
+import snapshot from '../../src/generated/builtin-providers.json'
 
 describe('gen-builtin-providers', () => {
   const providers = generateBuiltinProviders()
@@ -102,25 +103,19 @@ describe('gen-builtin-providers', () => {
     expect(typeof claude.maxTokens).toBe('number')
   })
 
-  it('t10: catalog 指纹（pi-ai 升级 model 级内容漂移守卫）——39 provider + models 总和 + 代表 provider model id 集合', () => {
-    // 内容守卫（非 git 快照比对）：pi-ai 升级后 model 增删/改名会破坏以下断言，提示人工核对生成物。
-    // 基线值取自 builtin-providers.json（pi-ai 0.84.1，generatedAt 2026-08-23）。
-    // provider 总数
-    expect(providers).toHaveLength(39)
-    // 所有 provider 的 models 总和（模型库整体规模漂移守卫）
-    const totalModels = providers.reduce((s, p) => s + p.models.length, 0)
-    expect(totalModels).toBe(1220)
-    // 代表 provider 的 model id 集合（删/改名即破坏；新增模型用 arrayContaining 容忍）
-    const openai = providers.find((p) => p.id === 'openai')!
-    expect(openai.models.map((m) => m.id)).toEqual(
-      expect.arrayContaining(['gpt-5', 'gpt-4o', 'gpt-5.4-pro']),
-    )
-    const anthropic = providers.find((p) => p.id === 'anthropic')!
-    expect(anthropic.models.map((m) => m.id)).toEqual(
-      expect.arrayContaining(['claude-fable-5', 'claude-sonnet-4-5', 'claude-opus-4-5']),
-    )
-    // 小 provider 全量精确断言（深痛：删/改名/新增都会破坏）
-    const deepseek = providers.find((p) => p.id === 'deepseek')!
-    expect(deepseek.models.map((m) => m.id)).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro'])
+  it('t10: 快照自包含指纹（D3）——header 指纹 == providers 内容 + piAiVersion == 实装 + 快照 == 提取函数输出', () => {
+    // 自包含断言替代手写基线数字（旧基线 1220 在 pi 0.84.1→0.84.4 升级时失守，守卫自身成为
+    // 需要人工同步的第三份数据）。pi 升级后只需重跑 gen 重生成快照即自洽；model 级内容漂移的
+    // 人工核对面（升级 PR 的快照 diff）归 check-pi-sync 守卫的快照新鲜度检查。
+    // ① header 指纹 == 快照 providers 实际内容（生成端与产物端的自洽契约）
+    expect(snapshot.providerCount).toBe(snapshot.providers.length)
+    const totalModels = snapshot.providers.reduce((s, p) => s + p.models.length, 0)
+    expect(snapshot.totalModels).toBe(totalModels)
+    // ② 磁盘快照 == 当前代码 + 当前实装 pi-ai 的提取输出：快照过期（pi 升级未重生成）
+    //    或 gen 脚本提取逻辑变更未重生成时在此暴露
+    expect(snapshot.providers).toEqual(providers)
+    // ③ 快照 piAiVersion == node_modules 实装版本——与 check-pi-sync 守卫矩阵第 3 项构成
+    //    刻意双通道：本条在测试期跑（CI test 路径），守卫在提交期跑（pre-commit + CI invariants）
+    expect(snapshot.piAiVersion).toBe(readPiAiVersion())
   })
 })

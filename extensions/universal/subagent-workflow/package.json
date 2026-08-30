@@ -21,15 +21,13 @@
     "index.ts",
     "agents/",
     "skills/",
-    "workflows/",
     "scripts/",
     "relay/",
     "src/index.ts",
-    "src/execution/",
+    "src/jsonl-run-store.ts",
+    "src/host/",
     "src/injectors/",
-    "src/orchestration/",
-    "src/interface/",
-    "src/shared/"
+    "src/interface/"
   ],
   "xyz-agent": {
     "role": "universal",
@@ -67,14 +65,12 @@
     "@xyz-agent/extension-protocol": "workspace:*",
     "@xyz-agent/session-delivery": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*",
-    "@zhushanwen/pi-file-lock": "workspace:*",
-    "ajv": "^8.20.0",
-    "yaml": "^2.9.0"
+    "@zhushanwen/subagent-core": "workspace:*"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^0.84.1",
-    "@earendil-works/pi-coding-agent": "^0.84.1",
-    "@earendil-works/pi-tui": "^0.84.1",
+    "@earendil-works/pi-ai": "^0.84.4",
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@earendil-works/pi-tui": "^0.84.4",
     "@zhushanwen/pi-pending-notifications": "workspace:*",
     "@zhushanwen/pi-structured-output": "workspace:*",
     "typebox": "*"

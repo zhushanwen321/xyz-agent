@@ -265,10 +265,16 @@ export class HandoffService {
     // 而非全局默认。源 session 的 handoff turn 已用自身模型跑完，不受此 override 影响。
     // A'（2026-08-24）：persistLabel=true —— "handoff from X" 是语义性承接名，持久化到
     // session_info 且防 auto-rename 覆盖（承接会话名不应被 LLM 标题改写）。
+    // 缺陷 C 修复（sidecar-binding-sync 决策 1 矩阵 handoff 列）：承接 session 继承源 project
+    // 归属——工作主体留在用户逻辑分组，与 fork 归属继承 / cwd 继承对称。内存态兑底读法对齐
+    // fork 同款 as-cast 惯例（IManagedSessionView 未声明 projectId）；源无归属时 undefined，
+    // create 内部不触发 project 分支（行为与现状一致，归默认项目）。
+    const srcProjectId = (srcSession as { projectId?: string }).projectId
     const newSession = await this.opts.sessionService.create(srcCwd, `handoff from ${srcLabel}`, {
       persistLabel: true,
       modelOverride: options?.modelOverride,
       thinkingOverride: options?.thinkingOverride,
+      projectId: srcProjectId,
     })
     const newId = newSession.id
 

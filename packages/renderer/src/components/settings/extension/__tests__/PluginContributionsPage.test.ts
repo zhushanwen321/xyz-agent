@@ -51,6 +51,8 @@ vi.mock('@/api', () => ({
   project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   config: {
     listProviders: vi.fn(async () => ({ providers: [] })),
+    // SettingsModal → ProviderPage onMounted 按需刷新远程模型目录（缺则 unhandled rejection）
+    refreshProviderCatalogs: vi.fn(async () => ({ refreshed: [], failed: [] })),
     setProvider: vi.fn(async () => undefined),
     setSkillDirs: vi.fn(async () => undefined),
     setAgentDirs: vi.fn(async () => undefined),

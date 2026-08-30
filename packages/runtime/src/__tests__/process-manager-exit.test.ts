@@ -14,7 +14,7 @@
  *
  * 运行：cd packages/runtime && npx vitest run src/__tests__/process-manager-exit.test.ts
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ProcessManager } from '../infra/pi/process-manager.js'
 
 // ── Mocks（与 rpc-client-bash.test.ts 同构）──────────────────────
@@ -69,9 +69,12 @@ vi.mock('node:readline', () => ({
   }),
 }))
 
-vi.mock('@xyz-agent/shared', () => ({
-  ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM'],
-}))
+vi.mock('@xyz-agent/shared', async (importOriginal) => {
+  // U3 起 rpc-client/process-manager 链路经 infra/spawn-env 门面消费 shared 的
+  // buildOutboundChildEnv；mock 需保留真实导出，仅收窄白名单前缀获得可控基座
+  const actual = await importOriginal<typeof import('@xyz-agent/shared')>()
+  return { ...actual, ENV_WHITELIST_PREFIXES: ['PATH', 'HOME', 'USER', 'LANG', 'TERM'] }
+})
 
 vi.mock('@xyz-agent/shared/paths', () => ({ getDataDir: () => '/mock/home/.xyz-agent' }))
 
@@ -111,10 +114,19 @@ describe('ProcessManager onExit 死亡通知', () => {
   let pm: ProcessManager
 
   beforeEach(async () => {
+    // R3 隔离：本测试的 hermetic 前提是 findPiExecutable 走 'pi' fallback，但该函数
+    // 先读 process.env.XYZ_AGENT_PACKAGED 判打包分支（find-pi-executable.ts:26），
+    // 打包版太极的 agent 会话内执行 vitest 时该变量泄入测试进程（P1 同款机制）→
+    // findPackagedPi throw。显式压平为非打包态，维持设计意图。
+    vi.stubEnv('XYZ_AGENT_PACKAGED', '')
     procExitHandlers.length = 0
     fakeProc.kill.mockClear()
     const { ProcessManager } = await import('../infra/pi/process-manager.js')
     pm = new ProcessManager('/mock/project-root')
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   it('rekey 后进程异常退出：清理两个 Map，onSessionExit 收到 rekey 后的 id（非 tempId）', async () => {

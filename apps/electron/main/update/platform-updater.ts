@@ -22,6 +22,7 @@ import { spawn } from 'node:child_process'
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
+import { buildOutboundChildEnv } from '@xyz-agent/shared'
 import {
   LINUX_UPDATER_SCRIPT_PATH,
   LINUX_UPDATER_LOG_PATH,
@@ -116,7 +117,13 @@ export class MacUpdater implements PlatformUpdater {
     mkdirSync(UPDATE_DIR, { recursive: true })
     writeFileSync(UPDATER_SCRIPT_PATH, script, { mode: UPDATER_SCRIPT_MODE })
     chmodSync(UPDATER_SCRIPT_PATH, UPDATER_SCRIPT_MODE)
-    spawn('bash', [UPDATER_SCRIPT_PATH], { detached: true, stdio: 'ignore' }).unref()
+    spawn('bash', [UPDATER_SCRIPT_PATH], {
+      detached: true,
+      stdio: 'ignore',
+      // C-proc-09：出站契约构建器组装 env（与 win NSIS 路径对齐），deny 兜底剥
+      // XYZ_AGENT_PACKAGED 等 dev-shell 残留标志，防拉起的新 app 实例被污染判定
+      env: buildOutboundChildEnv({ parentEnv: process.env }),
+    }).unref()
     return { kind: 'detached-script', scriptPath: UPDATER_SCRIPT_PATH }
   }
 }
@@ -153,7 +160,11 @@ export class WinUpdater implements PlatformUpdater {
     writeFileSync(scriptPath, script)
     // cmd /c detached + ignore stdio：与 app.quit 解耦（Node 侧定时器随进程消亡，
     // 等待逻辑全部前移进 wrapper，不可信 Node 延迟 spawn）
-    const child = spawn('cmd', ['/c', scriptPath], { detached: true, stdio: 'ignore' })
+    const child = spawn('cmd', ['/c', scriptPath], {
+      detached: true,
+      stdio: 'ignore',
+      env: buildOutboundChildEnv({ parentEnv: process.env }),
+    })
     child.unref()
     writeUpdaterPid(child.pid)
     return { kind: 'detached-script', scriptPath }
@@ -189,7 +200,12 @@ export class LinuxAppImageUpdater implements PlatformUpdater {
     mkdirSync(UPDATE_DIR, { recursive: true })
     writeFileSync(LINUX_UPDATER_SCRIPT_PATH, script, { mode: UPDATER_SCRIPT_MODE })
     chmodSync(LINUX_UPDATER_SCRIPT_PATH, UPDATER_SCRIPT_MODE)
-    spawn('bash', [LINUX_UPDATER_SCRIPT_PATH], { detached: true, stdio: 'ignore' }).unref()
+    spawn('bash', [LINUX_UPDATER_SCRIPT_PATH], {
+      detached: true,
+      stdio: 'ignore',
+      // C-proc-09：同 mac 路径，出站契约构建器组装 env + deny 兜底
+      env: buildOutboundChildEnv({ parentEnv: process.env }),
+    }).unref()
     return { kind: 'detached-script', scriptPath: LINUX_UPDATER_SCRIPT_PATH }
   }
 }

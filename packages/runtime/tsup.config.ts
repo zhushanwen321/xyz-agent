@@ -34,15 +34,17 @@ export default defineConfig({
   // ══════════════════════════════════════════════════════════════
   // @xyz-agent/shared：workspace 包（纯 TS 类型 + 工具函数），必须打包进 bundle，
   // 否则打包后 require('@xyz-agent/shared') 找不到（runtime 子进程无 node_modules）
-  // @zhushanwen/pi-subagent-workflow：只消费双端复用的无状态模块
-  // （engine/engines/zcode/reader.ts + constants.ts + engine/paths.ts + execution/relay-env.ts
-  // （E-2 relay env 名/协议版本常量 SSOT，纯常量+纯函数），设计 §3.3.1 例外条款），
-  // 运行时闭包 = node:fs + 纯常量；import 链其余均为 type-only（bundle 后
-  // 消失）。禁止扩大消费面到 launcher/preparer/parser/EnginePort（依赖方向纪律）
+  // @zhushanwen/subagent-core：只消费双端复用的无状态模块（D8 复用链切换，原
+  // pi-subagent-workflow 深路径改走语义子入口）：engines/zcode/reader + constants +
+  // engine/paths + relay-env（E-2 relay env 名/协议版本常量 SSOT，纯常量+纯函数，
+  // 设计 §3.3.1 例外条款），运行时闭包 = node:fs + 纯常量；import 链其余均为
+  // type-only（bundle 后消失）。禁止扩大消费面到 launcher/preparer/parser/EnginePort
+  // （依赖方向纪律）。require 条件解析到该包 dist CJS——core dist 未 build 时打包失败
+  // 属预期（build 前置）
   // @earendil-works/pi-ai：能力注册表（pi-boundary-reliability U5）pi 同源档位计算——
   // 「根声明、runtime 不可 import」格局的首次反转，声明见 services/model-capability.ts 头注；
   // pin 与根 pin 双副本一致性由 D6 版本门禁机器保证
-  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/pi-subagent-workflow', '@earendil-works/pi-ai', 'chokidar', '@iarna/toml', 'proper-lockfile'],
+  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/subagent-core', '@earendil-works/pi-ai', 'chokidar', '@iarna/toml', 'proper-lockfile'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
   // node-pty 是 native module（含 .node 二进制），不能打包进 JS bundle：
   // 其 JS 入口用 node-gyp-build 动态 require prebuilds/<platform>/*.node，
@@ -82,7 +84,7 @@ export default defineConfig({
       throw new Error(
         'Runtime bundle contains bare dynamic import("sqlite") — esbuild stripped the node: prefix ' +
         '(zcode reader tier1 would always fail). Fix: keep the variable-indirected dynamic import in ' +
-        'extensions/universal/subagent-workflow/src/execution/engine/engines/zcode/reader.ts.',
+        'packages/subagent-core/src/execution/engine/engines/zcode/reader.ts.',
       )
     }
 

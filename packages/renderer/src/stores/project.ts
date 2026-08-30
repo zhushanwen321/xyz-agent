@@ -68,25 +68,36 @@ export const useProjectStore = defineStore('project', () => {
   const isDefaultProject = computed(() => !activeProject.value.name)
 
   /**
-   * 按「最近使用」排序的 project 列表（供 ProjectSwitcher 列表渲染）。
+   * 按「用户序 > 自动序」两段式排序的 project 列表（供 ProjectSwitcher 网格渲染，D7）。
    *
-   * 排序规则：
-   *  1. activeProject 强制第一（用户当前/上次最后关注的项目，无论 lastUsedAt 值）；
-   *  2. 其余按 lastUsedAt 降序（最新在前）；
-   *  3. lastUsedAt 相同（如旧数据升级全 0）时保持原数组顺序（稳定兜底）。
+   * 排序规则（2026-08-29 ProjectSwitcher 3A）：
+   *  1. 用户序段（有 userOrder）：按 userOrder 升序排前段——拖拽意图跨重启稳定，
+   *     setActiveProject 更新 lastUsedAt 不影响此段顺序（切换 ≠ 排序意图）；
+   *  2. 自动序段（无 userOrder）：activeProject 置顶 + lastUsedAt 降序（沿用旧规则，
+   *     仅作用于本段内部）；lastUsedAt 相同时保持原数组顺序（稳定兜底）。
+   *  3. 默认项目（isDefault）同卡同权参与两段排序，无特殊待遇。
    */
   const recentProjects = computed<Project[]>(() => {
     const activeId = activeProjectId.value
-    const active = projects.value.find((p) => p.id === activeId)
-    const rest = projects.value.filter((p) => p.id !== activeId)
-    // 稳定排序：用原 index 做 tiebreaker，保证 lastUsedAt 相同时不乱序
-    const indexed = rest.map((p, i) => ({ p, i }))
-    indexed.sort((a, b) => {
+    // 用户序段：userOrder 升序；同值（外部脏数据）用原数组 index 做稳定 tiebreaker
+    const orderedIndexed = projects.value
+      .map((p, i) => ({ p, i }))
+      .filter((x) => x.p.userOrder != null)
+    orderedIndexed.sort((a, b) => {
+      const diff = a.p.userOrder! - b.p.userOrder!
+      return diff !== 0 ? diff : a.i - b.i
+    })
+    // 自动序段：active 置顶 + lastUsedAt 降序（旧 recentProjects 规则收拢进本段）
+    const rest = projects.value.filter((p) => p.userOrder == null && p.id !== activeId)
+    const restIndexed = rest.map((p, i) => ({ p, i }))
+    restIndexed.sort((a, b) => {
       const diff = b.p.lastUsedAt - a.p.lastUsedAt
       return diff !== 0 ? diff : a.i - b.i
     })
-    const sortedRest = indexed.map((x) => x.p)
-    return active ? [active, ...sortedRest] : sortedRest
+    const active = projects.value.find((p) => p.id === activeId && p.userOrder == null)
+    const ordered = orderedIndexed.map((x) => x.p)
+    const autoSeg = active ? [active, ...restIndexed.map((x) => x.p)] : restIndexed.map((x) => x.p)
+    return [...ordered, ...autoSeg]
   })
 
   /**
@@ -190,6 +201,46 @@ export const useProjectStore = defineStore('project', () => {
     return id
   }
 
+  /**
+   * 拖拽/键盘 reorder 提交（D7 赋号语义：drop 位置密集重排，ProjectSwitcher 拖拽与方向键
+   * 共用此单一入口）。
+   *
+   * 算法：以 recentProjects 当前显示顺序为基准执行 splice（dragId 移到 targetId 位置），
+   * 然后「旧用户序段 ∪ 被拖卡」的成员按新顺序密集重编号 0..n-1 后整体写回——不做 midpoint
+   * 稀疏编号，删除项目留下的空洞由下次 drop 自然消除。未被拖动的自动序项目保持无 userOrder。
+   *
+   * 推演（覆盖验收关键场景）：
+   *  - 用户序段内拖动：段内换位后整段重编 0..n-1；
+   *  - 自动序卡首次拖到用户序段（含首位）：插入落点、连同用户序段一起密集编号（拖到首位即首位）；
+   *  - 用户序卡拖向自动序区：它仍是用户序成员，按新显示顺序落在用户序段末位（自动序区位置
+   *    不稳定，不作为排序锚点）。
+   * 持久化：deep watch 感知 userOrder 原地写 → 全量 RPC save，无需额外调用。
+   */
+  function reorderProject(dragId: string, targetId: string): void {
+    if (!dragId || dragId === targetId) return
+    const display = recentProjects.value
+    const from = display.findIndex((p) => p.id === dragId)
+    const to = display.findIndex((p) => p.id === targetId)
+    if (from === -1 || to === -1) return
+    const next = [...display]
+    const [dragged] = next.splice(from, 1)
+    // 插入位 = 移除后的 to：from>to（上移）时目标仍在 to，落目标前；from<to（下移）
+    // 时目标已左移到 to-1，落 to 即目标后——键盘 ↑/↓ 的相邻交换两个方向都成立
+    //（D↔E 互换语义对称），无需方向修正（曾试 `from<to?to:to-1`，to=0 时负索引 splice
+    // 尾插致错序，见 review MF-12 回归）。
+    next.splice(to, 0, dragged!)
+    // 全量定序（review MF-12）：把 splice 后的完整显示序固化为用户序（0..n-1）。
+    // 旧实现只 pin「旧有序段 ∪ 被拖卡」，auto 段卡片被拖时仅其自身获得 userOrder=0
+    // → 渲染时瞬移到用户序段头部（[A,B,C,D,E] 上移 D 实际显示 [D,A,B,C,E]），
+    // 且该错序被持久化。全量 pin 后显示序 ≡ splice 结果；后续新增项目（userOrder
+    // null）仍落入 auto 段排在末尾，语义不变。
+    let order = 0
+    for (const p of next) {
+      projects.value.find((q) => q.id === p.id)!.userOrder = order
+      order++
+    }
+  }
+
   /** 删除 project：移除；若删的是活跃则切到第一个；保底不删最后一个（UI 永远有项可显）。
    *  删除不影响已归属该 project 的 session（归属在 session sidecar，project 删除后这些
    *  session 在展示层落入默认项目聚合——projectId 匹配不到任何命名 project）。
@@ -207,5 +258,5 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
-  return { projects, activeProjectId, activeProject, isDefaultProject, recentProjects, init, setActiveProject, addProject, removeProject }
+  return { projects, activeProjectId, activeProject, isDefaultProject, recentProjects, init, setActiveProject, addProject, removeProject, reorderProject }
 })

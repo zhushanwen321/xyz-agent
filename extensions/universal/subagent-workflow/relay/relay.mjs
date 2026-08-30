@@ -8,7 +8,7 @@
  * 通道，payload 一律 base64 封装保字节精确。
  *
  * ============================ 镜像常量表 ============================
- * SSOT = src/execution/relay-env.ts（零依赖脚本不能 import workspace 包，只能内嵌镜像；
+ * SSOT = packages/subagent-core/src/execution/relay-env.ts（零依赖脚本不能 import workspace 包，只能内嵌镜像；
  * 改名/改值必须双侧同步，一致性由 E-3 conformance relay 变体断言锁定——设计 §10-5）：
  *
  *   | relay-env.ts 常量         | 本文件常量                | 值                          |

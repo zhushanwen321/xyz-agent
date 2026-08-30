@@ -809,6 +809,11 @@ export const config = {
     await sleep(TIMING.ack)
     return []
   },
+  // 远程模型目录按需刷新：mock 无网络层，空结果保持签名同构（facade 三元）。
+  async refreshProviderCatalogs(): Promise<{ refreshed: string[]; failed: Array<{ providerId: string; reason: string }> }> {
+    await sleep(TIMING.ack)
+    return { refreshed: [], failed: [] }
+  },
   // wave-env-check：env 检测。mock 读 process.env 同构（浏览器 mock 下多为未设置）。
   async checkEnvVars(names: string[]): Promise<Record<string, boolean>> {
     await sleep(TIMING.ack)

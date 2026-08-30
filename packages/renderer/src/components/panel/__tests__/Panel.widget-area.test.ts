@@ -37,9 +37,11 @@ const sessionMock = vi.hoisted(() => ({
 }))
 vi.mock('@/stores/session', () => ({ useSessionStore: () => sessionMock }))
 
-/** new-task flow mock：state 恒 idle（非 landing 态，TC8 走 MessageStream/空对话分支） */
+/** new-task flow mock：state 恒 idle（非 landing 态，TC8 走 MessageStream/空对话分支）。
+ *  isActive 供 panel-view 派生消费（D1：landing ⟺ !sessionId && isFlowActive），
+ *  恒 false → 本文件的 sid=null 用例落 empty 而非 landing，与 TC9② 断言一致 */
 vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
-  useNewTaskFlow: () => ({ state: ref('idle') }),
+  useNewTaskFlow: () => ({ state: ref('idle'), isActive: ref(false) }),
 }))
 
 /** sidebar mock：Panel setup 内解构 restoreSession/retryHistory/deleteSession */

@@ -10,7 +10,7 @@
  * - T10f：apply envelope error（{ error: {...} }）→ importState 回 previewing，对话框仍开 + error 区域显示
  *
  * mock 策略：
- *  - vi.mock('@/api') 把 config 门面替成可控 mock（listProviders 空数组 + previewImportProviders fixture）
+ *  - vi.mock('@/api') 把 config 门面替成可控 mock（listProviders 空 providers 结果 + previewImportProviders fixture）
  *  - createPinia + setActivePinia 让 useSettingsStore/useQuotaStore 正常初始化
  *  - useToast 是模块级单例，通过 useToast() 取 toasts.value 断言
  *
@@ -34,7 +34,10 @@ const PREVIEW: ProviderImportPreview = {
 
 /** mock config 门面：previewImportProviders 返 fixture，applyImportProviders 返空结果 */
 const configMock = vi.hoisted(() => ({
-  listProviders: vi.fn(() => Promise.resolve([])),
+  // 门面签名 { providers, scopedModels }（settings-lifecycle 解构消费）；裸数组解构得 undefined
+  listProviders: vi.fn(() => Promise.resolve({ providers: [], scopedModels: undefined })),
+  // ProviderPage onMounted 按需刷新远程模型目录（缺则 unhandled rejection）
+  refreshProviderCatalogs: vi.fn(() => Promise.resolve({ refreshed: [], failed: [] })),
   previewImportProviders: vi.fn(() => Promise.resolve({ importId: 'imp-1', preview: PREVIEW })),
   applyImportProviders: vi.fn(() => Promise.resolve({
     result: { source: 'claude', imported: [{ id: 'openai', name: 'OpenAI', status: 'imported' }], failedCount: 0 },

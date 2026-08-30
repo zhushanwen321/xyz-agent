@@ -21,9 +21,9 @@
 
 import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 
-import type { LauncherDeps } from "../orchestration/launcher.ts";
-import { abortRun } from "../orchestration/lifecycle.ts";
-import type { WorkflowRun } from "../orchestration/models/workflow-run.ts";
+import type { LauncherDeps } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
+import { abortRun } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
+import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
 import { parseWorkflowRpcCommand } from "./command-actions.ts";
 import { createWorkflowsView, type ViewActions } from "./views/WorkflowsView.ts";
 

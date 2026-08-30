@@ -35,6 +35,10 @@ export default [
       // 后一层 * 不再命中，workflows/*.js 被误 lint 报 25 个 no-require-imports error）
       'extensions/**/workflows/**',
       'extensions/**/.pi/workflows/**',
+      // [u1-move] 内置 workflow 脚本资产随 core 切面迁入 packages/subagent-core
+      // （subagent-core 包抽离）：worker 脚本 require() 是 scriptPath 目录锚定机制
+      // （设计 D1），src=dist 同字节直发不做 TS 化——同 extensions/**/workflows 先例豁免。
+      'packages/subagent-core/workflows/**',
       'extensions/**/examples/**',
       // zsub/zflow workflow 脚本（.agents/workflows/*.js）：CJS 是 zflow 加载器契约
       // （module.exports + require，.cjs 后缀不被其发现层扫描），与根 package.json
@@ -199,7 +203,9 @@ export default [
   // 依赖 agent/parallel/pipeline/$ARGS/$BUDGET 等注入契约），不可为凑行数随意合并/拆分行。
   // returnMeta 透传补全后函数体超 300（303），属同质唯一聚合中心，override 避免误报。
   {
-    files: ['extensions/universal/subagent-workflow/src/orchestration/worker-script-builder.ts'],
+    // [u1-move] 文件随 core 切面迁入 packages/subagent-core（subagent-core 包抽离），
+    // override 路径同步跟随，约束语义不变。
+    files: ['packages/subagent-core/src/orchestration/worker-script-builder.ts'],
     rules: {
       'max-lines-per-function': 'off',
     },
@@ -297,6 +303,37 @@ export default [
       'no-console': 'error',
     },
   },
+  // [HISTORICAL] subagent-core 源码禁裸 console（恢复迁移前 extensions/**/src 的等价
+  // 约束面）：@zhushanwen/subagent-core 由 extensions/universal/subagent-workflow 的
+  // core 切面抽离（u1-move），迁移前该源码受上方 extensions no-console:error 块约束，
+  // 抽离后 extensions glob 不再命中——本块恢复同强度约束，防裸 console 渗入跨宿主
+  // 共享层。范围同样限 src 源码：__tests__/ 与 *.test.ts 属测试基建（spyOn /
+  // monkey-patch），不在守卫目标内。
+  {
+    files: ['packages/subagent-core/src/**/*.ts'],
+    ignores: [
+      'packages/subagent-core/src/core/**',
+      'packages/subagent-core/src/**/__tests__/**',
+      'packages/subagent-core/src/**/*.test.ts',
+    ],
+    rules: {
+      'no-console': 'error',
+    },
+  },
+  // [subagent-core 抽离 P0（新规则例外，沿用 [HISTORICAL] 登记风格）] core log 端口的
+  // 缺省 sink 按 subagent-core 设计 D2 即为 console（docs/design/
+  // subagent-core-package-extraction.md §3.3 D2「缺省 console」）：configureCore 之前
+  // 宿主 appendEntry 通道不存在，console 是唯一可用出口，该路径仅测试与库误用场景
+  // 可达（host-services.ts 的 NULL_HOST.log）。故不走行内注释豁免形态（对应
+  // taste 守卫规则语义），统一走本配置级 override。
+  // [u1-move] src/core 随 core 切面迁入 packages/subagent-core（subagent-core 包抽离），
+  // override 路径同步跟随，约束语义不变。
+  {
+    files: ['packages/subagent-core/src/core/**'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
   // [HISTORICAL] resource-discovery.ts 的 3 处 Promise.all（源级/包级/scoped 子包级）触发
   // taste/prefer-allsettled 属规则误报，per-file override 关闭。规则设计针对「独立数据源
   // 可部分降级」场景；本文件三处是 swf-perf-impl cleanup slice（TC2/IF2，见
@@ -308,8 +345,10 @@ export default [
   // 注释形态（taste/no-eslint-disable 语义），统一走本配置级 override。
   // 路径随 extensions 分组重构补 universal/ 段（2026-08-25：原 glob 缺段致 override 失配、
   // 3 处 warning 漏网）。
+  // [u1-move] 文件随 core 切面迁入 packages/subagent-core（subagent-core 包抽离），
+  // override 路径同步跟随，约束语义不变。
   {
-    files: ['extensions/universal/subagent-workflow/src/shared/resource-discovery.ts'],
+    files: ['packages/subagent-core/src/shared/resource-discovery.ts'],
     rules: {
       'taste/prefer-allsettled': 'off',
     },

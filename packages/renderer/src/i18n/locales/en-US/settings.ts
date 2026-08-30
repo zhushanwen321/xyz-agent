@@ -116,6 +116,7 @@ export default {
     emptyDesc: 'Add your first provider to connect AI models and start chatting.',
     defaultPill: 'Default',
     defaultAutoUpdated: 'Default model auto-updated to {model}',
+    autoEnabledToast: 'API Key configured, {name} enabled automatically',
     modelsCount: '{count} models',
     editTitle: 'Edit provider',
     deleteTitle: 'Delete provider',

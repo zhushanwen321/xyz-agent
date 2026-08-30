@@ -43,6 +43,19 @@ export async function listProviders(): Promise<{ providers: ProviderInfo[]; scop
   return { providers: reply.providers, scopedModels: reply.scopedModels }
 }
 
+/**
+ * 进入 Settings Provider 页时触发远程模型目录刷新（runtime 对列表内 catalog provider
+ * 发 ETag 协商请求，fail-safe）。列表变更经 config.providers 广播推回（settings store
+ * 常驻订阅），本调用只等 reply 不做状态管理。
+ */
+export async function refreshProviderCatalogs(): Promise<{
+  refreshed: string[]
+  failed: Array<{ providerId: string; reason: string }>
+}> {
+  const reply = await command('config.refreshProviderCatalogs', {})
+  return { refreshed: reply.refreshed, failed: reply.failed }
+}
+
 export async function scanSkills(sources: string[]): Promise<ScannedSkillInfo[]> {
   const reply = await command('config.scanSkills', { sources })
   return reply.skills

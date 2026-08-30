@@ -322,6 +322,21 @@ export function useSidebar() {
   }
 
   /**
+   * [D7 空态承接] 删除路径的空态出口统一编排（deleteSession / deleteFolder 专用）。
+   *
+   * 删空后 push chat 空态 + 显式 startFlow()：flow.state 是 core 模块级单例，面板 landing
+   * 渲染要求 flow 活跃（flow=idle 时落入无输入面死态 empty），把现行「Landing onMounted
+   * 隐式兜底触发」显式化为编排层职责（Landing onMounted 兜底保留，双入口幂等）。
+   * 命名以删除路径的功能定义为准，不泛化——**不用于 newSession 的延迟 create 分支**：
+   * 该处 flow 已是 landing 不需编排，且无参 startFlow 的 pendingCwd=null 会清掉
+   * newSession 刚回灌的 fallback cwd（设计 panel-view-derivation §3.3 D7 排除说明）。
+   */
+  function enterEmptyChatState(): void {
+    navigation.push({ view: 'chat' })
+    void useNewTaskFlow().startFlow()
+  }
+
+  /**
    * 删除 session（API + 本地状态清理）。
    * 删除当前 active 时回退到列表首项（若无则停留空态）。
    *
@@ -329,7 +344,7 @@ export function useSidebar() {
    *
    * [W1 / S4] 删 active 后 selectSession(next) 失败兜底：cleanupSessionState 已把 activeId
    * 回退到 list[0]，若随后的 selectSession(next) 因网络抖动 reject，activeId=next 但 panel
-   * 空载 → 跨 store 撕裂。失败时 fallback 到 navigation.push({ view: 'chat' }) 空态。
+   * 空载 → 跨 store 撕裂。失败时 fallback 到空态承接 enterEmptyChatState（[D7]）。
    */
   async function deleteSession(id: string): Promise<void> {
     await sessionApi.remove(id)
@@ -341,11 +356,11 @@ export function useSidebar() {
         try {
           await selectSession(next.id)
         } catch {
-          // selectSession 失败（网络抖动）→ fallback 到 chat 空态，避免 activeId=next 但 panel 空载撕裂（S4）
-          navigation.push({ view: 'chat' })
+          // selectSession 失败（网络抖动）→ 空态承接，避免 activeId=next 但 panel 空载撕裂（S4）
+          enterEmptyChatState()
         }
       } else {
-        navigation.push({ view: 'chat' })
+        enterEmptyChatState()
       }
     }
   }
@@ -356,6 +371,7 @@ export function useSidebar() {
    * 调 sessionApi.removeByCwd 拿 BatchDeleteResult，对 res.deleted 逐个调
    * cleanupSessionState（复用 deleteSession 提取的清理逻辑）。wasActiveInFolder
    * 在调 WS 前快照，循环结束后统一回退（不依赖 removeFromList 中间态）。
+   * 删空 / selectSession(next) 失败的空态出口统一走 enterEmptyChatState（[D7]，同 deleteSession）。
    * 返回 BatchDeleteResult——caller（Sidebar.onDeleteFolder）读 res.failed 决定 toast。
    */
   async function deleteFolder(cwd: string): Promise<BatchDeleteResult> {
@@ -374,10 +390,10 @@ export function useSidebar() {
         try {
           await selectSession(next.id)
         } catch {
-          navigation.push({ view: 'chat' })
+          enterEmptyChatState()
         }
       } else {
-        navigation.push({ view: 'chat' })
+        enterEmptyChatState()
       }
     }
     return res

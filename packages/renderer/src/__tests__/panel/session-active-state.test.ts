@@ -11,7 +11,7 @@
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/session-active-state.test.ts
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import SessionItem from '@/components/sidebar/SessionItem.vue'
@@ -21,6 +21,14 @@ import { useSessionStore } from '@/stores/session'
 import { useSessionDerivations, invalidateStatusCache } from '@/composables/features/chat/useSessionDerivations'
 import { DOT_CLASS } from '@/composables/logic/sessionStatus'
 import type { SessionSummary } from '@xyz-agent/shared'
+
+// flow 单例态 mock（panel-view 派生消费 isActive）：E4 的 landing 场景需 flow 活跃。
+// flow 与 chat streaming 解耦（D1：isFlowActive 是独立事实源），mock 不读 chat store。
+const flowState = vi.hoisted(() => ({ isActive: { value: false as boolean } }))
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
+  useNewTaskFlow: () => ({ isActive: flowState.isActive, state: { value: 'landing' }, startFlow: vi.fn(), cancelFlow: vi.fn() }),
+  resetNewTaskFlow: vi.fn(),
+}))
 
 /** Panel 子组件 stub（隔离 PanelHeader/MessageStream 等的重渲染，聚焦被测逻辑） */
 const panelStubs = {
@@ -57,6 +65,7 @@ function mountPanel(sessionId: string | null) {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  flowState.isActive.value = false
   // useSessionDerivations 的 statusCache 是模块级（同 id 复用 ComputedRef），跨测试残留。
   // 各用例新建独立 pinia，但缓存仍持有上个用例的 chat/session store 引用（已随旧 pinia 失活），
   // 导致 derivedStatus 复用陈旧闭包。每个用例前清空缓存，保证派生绑定当前 pinia 的 store。
@@ -131,7 +140,7 @@ describe('E2: 非焦点 session 提交后 pending 态（activeId 限定已移除
   })
 })
 
-describe('E3: compact 期 compacting 态 + Panel 渲染 Composer（isCompacting 分支）', () => {
+describe('E3: compact 期 compacting 态 + Panel 渲染 Composer（conversation 恒挂，D2 存在性与模态正交）', () => {
   it('setCompacting(s1,true) → derivedStatus=compacting；Panel 渲染 Composer', () => {
     const chat = useChatStore()
     const sessionStore = useSessionStore()
@@ -151,7 +160,7 @@ describe('E3: compact 期 compacting 态 + Panel 渲染 Composer（isCompacting 
     const status = derivedStatus('s1').value
     expect(status).toBe('compacting')
 
-    // mount Panel(s1) → Composer 在 DOM 中（showPanelComposer 含 isCompacting 分支）
+    // mount Panel(s1) → Composer 在 DOM 中（conversation 恒常驻，compacting 禁用模态由 Composer 内部承担）
     const wrapper = mountPanel('s1')
     expect(wrapper.find('[data-testid="composer"]').exists()).toBe(true)
   })
@@ -168,13 +177,30 @@ describe('E4: Panel landing 态不被其他 session 流式误伤（回归保护�
     })
     expect(chat.isGenerating('session-A')).toBe(true)
 
-    // Panel 绑定 sessionId=null（landing 态，点新建后的空 panel）
+    // Panel 绑定 sessionId=null（landing 态，点新建后）。panel-view 派生下 landing
+    // 需 flow 活跃（D1：landing ⟺ !sessionId && isFlowActive）；isFlowActive 与
+    // chat streaming 解耦，A 的流式不误伤 landing panel（本用例回归语义）
+    flowState.isActive.value = true
     const wrapper = mountPanel(null)
 
-    // 关键回归断言：A 流式不误伤 landing panel（per-session isGenerating 守卫）
+    // 关键回归断言：A 流式不误伤 landing panel
     expect(wrapper.find('[data-testid="landing"]').exists()).toBe(true)
     // 不落兜底空态（「选择左侧会话开始」）
     expect(wrapper.text()).not.toContain('选择左侧会话开始')
+  })
+
+  it('Panel(sessionId=null) + flow idle → 落 empty 空态（D1 派生：无 session 且流程未活跃无 Landing）', () => {
+    const chat = useChatStore()
+    chat.applyMessageEvent('session-A', {
+      type: 'message.message_start',
+      payload: { sessionId: 'session-A', messageId: 'a1' },
+    })
+
+    // flow 未活跃（无编排入口触发 startFlow）→ empty 兜底空态，不再渲染 Landing
+    const wrapper = mountPanel(null)
+
+    expect(wrapper.find('[data-testid="landing"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('选择左侧会话开始')
   })
 })
 

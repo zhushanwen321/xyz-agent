@@ -16,11 +16,11 @@ import type { AgentToolResult, ExtensionAPI, ExtensionContext, Theme } from "@ea
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 import type { Static } from "typebox";
 
-import { getSubagentService } from "../execution/subagent-service.ts";
-import type { SubagentToolResult } from "../execution/types.ts";
+import { getSubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import type { SubagentToolResult } from "@zhushanwen/subagent-core/execution/types.ts";
 import { extractAgentName } from "./format.ts";
 import { toGuiCtx } from "./gui-mappers.ts";
-import { adapter, cancelHandler, closeHandler, listHandler, messageHandler, startHandler } from "./subagent-actions.ts";
+import { adapter, cancelHandler, closeHandler, forkFromHandler, listHandler, messageHandler, startHandler } from "./subagent-actions.ts";
 import { SubagentParams } from "./subagent-tool-schema.ts";
 import { type RenderContext,renderSubagentCall, renderSubagentResult } from "./tool-render.ts";
 
@@ -71,13 +71,14 @@ function assertNever(value: never): string {
 }
 
 /** Subagent action 字面量联合（与 parameters schema 的 StringEnum 取值一致）。 */
-type SubagentAction = "start" | "list" | "cancel" | "message" | "close";
+type SubagentAction = "start" | "list" | "cancel" | "message" | "close" | "fork-from";
 
 /** 类型守卫：把 schema 投影出的 string 形式 action 收窄回字面量联合。
  *  typebox v1 的 StringEnum Static 退化为 string，需运行时校验 + 类型收窄
  *  才能恢复 switch 的 exhaustiveness 约束。 */
 function isSubagentAction(value: string): value is SubagentAction {
-  return value === "start" || value === "list" || value === "cancel" || value === "message" || value === "close";
+  return value === "start" || value === "list" || value === "cancel" || value === "message"
+    || value === "close" || value === "fork-from";
 }
 
 /** unknown 是否为含 model/thinkingLevel 的对象（类型守卫，替代全可选结构 `as`）。 */
@@ -165,6 +166,7 @@ action:"list" before action:"start" — a reusable running subagent may exist; c
 - action:"close" — end a running subagent and release its resources. REQUIRED closeParam: { subagentId }. Optional: force (default false; true terminates mid-round immediately). Always close when done.
 - action:"list" — list subagents. Pass listParam: { includeFinished?, limit? } (all optional). Read an item's sessionFile for full detail.
 - action:"cancel" — stop a background subagent (legacy verb; for conversation-mode use close). REQUIRED cancelParam: { subagentId }.
+- action:"fork-from" — recovery for subagents disconnected by a session restart/exit: spawns a NEW subagent inheriting the old one's full history via --fork (source read-only, old record untouched). REQUIRED forkFromParam: { sourceSubagentId }. Optional: prompt (continuation instruction; handover frame injected if omitted). Returns { newSubagentId, sourceSessionFile }. Rejected with guidance: cancelled / worktree-bound / still-running sources.
 
 ## Examples
 
@@ -177,6 +179,7 @@ action:"list" before action:"start" — a reusable running subagent may exist; c
 {"action":"close","closeParam":{"subagentId":"sa-550e8400"}}
 {"action":"list","listParam":{"includeFinished":false,"limit":20}}
 {"action":"cancel","cancelParam":{"subagentId":"sa-550e8400"}}
+{"action":"fork-from","forkFromParam":{"sourceSubagentId":"sa-550e8400","prompt":"continue from where it stopped; verify tests first"}}
 \`\`\`
 
 ## After launching — do NOT wait
@@ -204,7 +207,7 @@ When to use:
 - ✅ Long-interval rounds (>5min apart) → conversation:true + idleTimeoutMs increased
 - ❌ Single exploration/lookup → default (one-shot)
 
-idleTimeoutMs: per-subagent idle timeout (default 300000 / 5min). Env XYZ_SUBAGENT_IDLE_TIMEOUT_MS sets the global default; per-call param takes precedence. Pass 0 or a negative value to disable idle cleanup entirely.
+idleTimeoutMs: per-subagent idle timeout (default 300000 / 5min). Env XYZ_SUBAGENT_IDLE_TIMEOUT_MS sets the global default; per-call param takes precedence.
 
 ## You cannot
 
@@ -323,6 +326,8 @@ const executeSubagent: SubagentExecuteCb = async (
       return adapter({ action: "message", domain: await messageHandler(service, params.messageParam) }, toGuiCtx(_ctx));
     case "close":
       return adapter({ action: "close", domain: await closeHandler(service, params.closeParam) }, toGuiCtx(_ctx));
+    case "fork-from":
+      return adapter({ action: "fork-from", domain: await forkFromHandler(service, params.forkFromParam) }, toGuiCtx(_ctx));
     default:
       // assertNever：让 exhaustiveness 成为承重约束——新增 action 时 tsc 报错，
       // 而非悄悄落入此分支。

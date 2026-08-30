@@ -1,44 +1,75 @@
 /**
- * ProjectSwitcher 组件测试：折叠/展开两态（UI 形态对齐 v6 demo）+ 最近使用排序 + 滚动。
+ * ProjectSwitcher 组件测试（3A 2 列卡片网格 + 拖拽/键盘排序，形态权威
+ * docs/page-design/project-switcher-demo.html 变体 3A）。
  *
- * 覆盖：
- *  - 首屏默认折叠：只显示当前 project 行，列表不可见；点击 toggle 展开。
- *  - 展开后列表按 recentProjects 排序（activeProject 第一 + 其余 lastUsedAt 降序）。
- *  - 超过 5 个 project 时列表容器可滚动（max-h + overflow-y-auto）。
- *  - 选择 project 后列表收起（select 关 expanded）。
- *  - 新建流：点「新建项目」→ input 出现 → Enter 创建并设为活跃。
- *  - 删除流：hover 项出删除按钮 → ConfirmDialog → 确认删除（默认项目行永不渲染删除按钮；
- *    取消路径不删除；删活跃项自动切首个）。
+ * 覆盖（三视角：每条含用户可见 DOM 断言）：
+ *  - 渲染形态：2 列网格常驻（无折叠展开态），卡片 = 名称 + 会话数徽章，active 卡高亮
+ *  - 徽章数字：与 SessionList 过滤同一规则（默认项目聚合未归类 + 孤儿），数字 = 点击后列表实际条数
+ *  - 1 步切换：点击卡片直接切 active（无中间展开态）
+ *  - 拖拽排序（D8）：dragstart → drop 到目标卡 → reorderProject 提交 userOrder（DOM 顺序变化）
+ *  - 键盘排序（D8，u5 验收④）：focus 卡片 + 方向键交换相邻位置，与拖拽走同一 reorderProject 入口
+ *  - 新建流：网格尾部 add 卡 → 内联 Input → Enter 创建；Esc 取消
+ *  - 删除流（右键 ContextMenu，demo 3A 卡片无删除按钮的保功能方案）：默认项目卡无删除菜单；
+ *    命名卡右键 → 删除项 → ConfirmDialog 确认
+ *  - title 兜底：tooltip 在 sidebar 滚动容器内裁剪风险 → 卡片 title=全名（待验证检查点 3 决策）
  *
  * 测试框架：vitest + @vue/test-utils（mount）。vue-i18n 由 vitest-i18n-setup.ts 全局 mock。
  * 运行：cd packages/renderer && npx vitest run src/__tests__/sidebar/project-switcher.test.ts
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
+import type { Project, SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import ProjectSwitcher from '@/components/sidebar/ProjectSwitcher.vue'
 import { useProjectStore, DEFAULT_PROJECT_ID } from '@/stores/project'
-import type { Project } from '@xyz-agent/shared'
+import { useSessionStore } from '@/stores/session'
 
-function makeProject(id: string, name: string, lastUsedAt = 0): Project {
-  return { id, name, lastUsedAt }
+vi.mock('@/api', () => ({
+  project: { load: vi.fn(), save: vi.fn().mockResolvedValue(undefined) },
+}))
+
+function makeProject(id: string, name: string, lastUsedAt = 0, userOrder?: number): Project {
+  return userOrder === undefined ? { id, name, lastUsedAt } : { id, name, lastUsedAt, userOrder }
 }
 
-/** ConfirmDialog 经 reka DialogPortal teleport 到 body：在 body 内找确认/取消按钮（同 command-popover-landing 范式）。 */
+function makeSession(id: string, projectId?: string): SessionSummary {
+  return { id, label: id, cwd: '/repo', status: 'idle', lastActiveAt: 1, modelId: 'm', tokenCount: 0, projectId }
+}
+
+function mountSwitcher(): VueWrapper {
+  return mount(ProjectSwitcher, { attachTo: document.body })
+}
+
+/** 卡片 testid 按 id 定位（data-project-id 属性） */
+function cardById(wrapper: VueWrapper, id: string) {
+  return wrapper.find(`[data-testid="project-card"][data-project-id="${id}"]`)
+}
+
+/** ConfirmDialog 经 reka DialogPortal teleport 到 body：在 body 内找按钮（既有范式） */
 function findDialogButton(text: string): HTMLElement | null {
   return Array.from(document.body.querySelectorAll('button')).find(
     (b) => b.textContent?.trim() === text,
   ) ?? null
 }
 
-/** 删除流用例共享 wrapper：afterEach 统一 unmount，避免 teleport 内容在 body 残留叠加。 */
-let wrapper: ReturnType<typeof mount> | null = null
+/** 触发 HTML5 DnD 事件链（dragstart → dragover → drop），dataTransfer 用 stub */
+function dropOnto(wrapper: VueWrapper, fromId: string, toId: string) {
+  const from = cardById(wrapper, fromId)
+  const to = cardById(wrapper, toId)
+  const transfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' }
+  from.trigger('dragstart', { dataTransfer: transfer })
+  to.trigger('dragover', { dataTransfer: transfer, preventDefault: vi.fn() })
+  to.trigger('drop', { dataTransfer: transfer, preventDefault: vi.fn() })
+  from.trigger('dragend')
+}
 
-describe('ProjectSwitcher: 折叠/展开两态 + 排序 + 滚动', () => {
+let wrapper: VueWrapper | null = null
+
+describe('ProjectSwitcher 3A：2 列网格渲染 + 徽章 + 切换', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    localStorage.removeItem('xyz-agent:projects')
+    document.body.innerHTML = ''
   })
 
   afterEach(() => {
@@ -47,301 +78,273 @@ describe('ProjectSwitcher: 折叠/展开两态 + 排序 + 滚动', () => {
     document.body.innerHTML = ''
   })
 
-  // ── 首屏折叠态 ─────────────────────────────
-  it('首屏默认折叠：只渲染当前 project 行，列表不可见；点 toggle 展开列表', async () => {
-    const store = useProjectStore()
-    store.projects = [makeProject('a', 'Alpha'), makeProject('b', 'Beta')]
-    store.activeProjectId = 'a'
-
-    const wrapper = mount(ProjectSwitcher)
-
-    // 折叠态：当前行显示 active project 名，列表不渲染
-    const currentRow = wrapper.find('[data-testid="project-switcher-current"]')
-    expect(currentRow.exists()).toBe(true)
-    expect(currentRow.text()).toContain('Alpha')
-    expect(wrapper.find('[data-testid="project-list"]').exists()).toBe(false)
-
-    // 点击 toggle → 展开，列表项可见（active + 其他全部列出）
-    await currentRow.trigger('click')
-    const items = wrapper.findAll('[data-testid="project-item"]')
-    expect(items.length).toBe(2)
-    expect(items.some((w) => w.text().includes('Alpha'))).toBe(true)
-    expect(items.some((w) => w.text().includes('Beta'))).toBe(true)
-  })
-
-  // ── 排序 ───────────────────────────────────
-  it('列表渲染顺序跟随 recentProjects（activeProject 第一 + 其余 lastUsedAt 降序）', async () => {
-    const store = useProjectStore()
-    // 数组顺序 [A, B, C]，但 lastUsedAt 让 recentProjects = [A, C, B]
-    store.projects = [
-      makeProject('a', 'A', 300),
-      makeProject('b', 'B', 100),
-      makeProject('c', 'C', 200),
+  it('用户可见 DOM：常驻 2 列网格渲染全部项目卡（名称 + 会话数徽章），无折叠展开态', () => {
+    const projectStore = useProjectStore()
+    projectStore.projects = [
+      makeProject(DEFAULT_PROJECT_ID, ''),
+      makeProject('a', 'Alpha'),
+      makeProject('b', 'Beta'),
     ]
-    store.activeProjectId = 'a'
+    projectStore.activeProjectId = 'a'
 
-    const wrapper = mount(ProjectSwitcher)
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
-    const names = wrapper.findAll('[data-testid="project-item"]').map((w) => w.text())
+    wrapper = mountSwitcher()
 
-    expect(names).toEqual(['A', 'C', 'B'])
+    // 网格常驻可见（demo 3A：无手风琴折叠态，1 步切换的前提）
+    const grid = wrapper.find('[data-testid="project-grid"]')
+    expect(grid.exists()).toBe(true)
+    expect(grid.classes()).toContain('grid-cols-2')
+    // 卡片渲染：默认项目卡名称走 i18n fallback「默认项目」
+    const cards = wrapper.findAll('[data-testid="project-card"]')
+    expect(cards).toHaveLength(3)
+    expect(cardById(wrapper, 'a').find('[data-testid="project-card-name"]').text()).toBe('Alpha')
+    expect(cardById(wrapper, DEFAULT_PROJECT_ID).find('[data-testid="project-card-name"]').text()).toBe('默认项目')
+    // active 卡高亮（bg-surface 范式），非 active 卡无
+    expect(cardById(wrapper, 'a').classes()).toContain('bg-surface')
+    expect(cardById(wrapper, 'b').classes()).not.toContain('bg-surface')
+    // 网格尾部有「新建项目」入口
+    expect(wrapper.find('[data-testid="project-add-btn"]').exists()).toBe(true)
   })
 
-  // ── 滚动 ───────────────────────────────────
-  it('超过 5 个 project 时列表容器可滚动（max-h + overflow-y-auto）', async () => {
-    const store = useProjectStore()
-    store.projects = Array.from({ length: 8 }, (_, i) =>
-      makeProject(`p${i}`, `Proj-${i}`, i),
-    )
-    store.activeProjectId = 'p0'
+  it('徽章数字 = 点击该卡后 SessionList 实际显示的会话数（默认项目聚合未归类 + 孤儿）', () => {
+    const projectStore = useProjectStore()
+    projectStore.projects = [
+      makeProject(DEFAULT_PROJECT_ID, ''),
+      makeProject('a', 'Alpha'),
+      makeProject('b', 'Beta'),
+    ]
+    projectStore.activeProjectId = 'a'
+    // sa/sd→a；sc→b；sb 未归类；s-orphan 归属已删项目 → 全部计入默认项目徽章
+    const sessionStore = useSessionStore()
+    sessionStore.applySnapshot({
+      groups: [
+        { cwd: '/repo', sessions: [makeSession('sa', 'a'), makeSession('sb'), makeSession('sc', 'b'), makeSession('s-orphan', 'ghost')] },
+        { cwd: '/repo2', sessions: [makeSession('sd', 'a')] },
+      ] as SessionGroup[],
+    })
 
-    const wrapper = mount(ProjectSwitcher)
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
-    const list = wrapper.find('[data-testid="project-list"]')
+    wrapper = mountSwitcher()
 
-    expect(list.exists()).toBe(true)
-    // 滚动机制：overflow-y-auto class（happy-dom 不做真实布局，用 class 断言）
-    expect(list.classes()).toContain('overflow-y-auto')
-    // 高度限制：含 max-h-* class（限定可视区约 5 项）
-    expect(list.classes().some((c) => c.startsWith('max-h-'))).toBe(true)
-    // 8 项全部渲染在列表中（滚动可见，非隐藏）
-    expect(list.findAll('[data-testid="project-item"]').length).toBe(8)
+    expect(cardById(wrapper, 'a').find('[data-testid="project-card-count"]').text()).toBe('2')
+    expect(cardById(wrapper, 'b').find('[data-testid="project-card-count"]').text()).toBe('1')
+    expect(cardById(wrapper, DEFAULT_PROJECT_ID).find('[data-testid="project-card-count"]').text()).toBe('2')
   })
 
-  // ── 选择收起 ───────────────────────────────
-  it('展开态选择 project 后切换 active 并收起列表', async () => {
-    const store = useProjectStore()
-    store.projects = [makeProject('a', 'Alpha'), makeProject('b', 'Beta')]
-    store.activeProjectId = 'a'
+  it('1 步切换：点击非 active 卡直接切 active 并高亮（无中间展开态）', async () => {
+    const projectStore = useProjectStore()
+    projectStore.projects = [makeProject('a', 'Alpha'), makeProject('b', 'Beta')]
+    projectStore.activeProjectId = 'a'
 
-    const wrapper = mount(ProjectSwitcher)
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
+    wrapper = mountSwitcher()
+    await cardById(wrapper, 'b').trigger('click')
 
-    const betaItem = wrapper.findAll('[data-testid="project-item"]').find((w) => w.text().includes('Beta'))
-    expect(betaItem).toBeTruthy()
-    await betaItem!.trigger('click')
-
-    expect(store.activeProjectId).toBe('b')
-    // 选中后收起：列表不再渲染，当前行显示新 active
-    expect(wrapper.find('[data-testid="project-list"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="project-switcher-current"]').text()).toContain('Beta')
+    expect(projectStore.activeProjectId).toBe('b')
+    expect(cardById(wrapper, 'b').classes()).toContain('bg-surface')
+    expect(cardById(wrapper, 'a').classes()).not.toContain('bg-surface')
   })
 
-  // ── 新建流 ─────────────────────────────────
-  it('新建流：点「新建项目」出输入框，Enter 创建并设为活跃', async () => {
-    const store = useProjectStore()
-    store.projects = [makeProject('a', 'Alpha')]
-    store.activeProjectId = 'a'
+  it('title 兜底：卡片 title = 全名（sidebar 滚动容器内 CSS tooltip 裁剪的规避决策）', () => {
+    const projectStore = useProjectStore()
+    projectStore.projects = [makeProject('a', '很长的项目名称会被截断')]
+    projectStore.activeProjectId = 'a'
 
-    const wrapper = mount(ProjectSwitcher)
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
+    wrapper = mountSwitcher()
+    expect(cardById(wrapper, 'a').attributes('title')).toBe('很长的项目名称会被截断')
+  })
+})
 
-    // 点「新建项目」→ 输入框出现
-    const newBtn = wrapper.findAll('button').find((w) => w.text().includes('新建项目'))
-    expect(newBtn).toBeTruthy()
-    await newBtn!.trigger('click')
-    const input = wrapper.find('input')
+describe('ProjectSwitcher 3A：排序（拖拽 + 键盘同一 reorderProject 入口）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+    document.body.innerHTML = ''
+  })
+
+  it('拖拽：把 B 拖到 A 上（首位）→ DOM 顺序与 userOrder 同步为落点序', async () => {
+    const projectStore = useProjectStore()
+    projectStore.projects = [
+      makeProject('a', 'Alpha', 0, 0),
+      makeProject('b', 'Beta', 0, 1),
+      makeProject('c', 'Gamma', 0, 2),
+    ]
+    projectStore.activeProjectId = 'a'
+
+    wrapper = mountSwitcher()
+    expect(wrapper.findAll('[data-testid="project-card"]').map((c) => c.attributes('data-project-id'))).toEqual(['a', 'b', 'c'])
+
+    dropOnto(wrapper, 'b', 'a')
+    await nextTick()
+
+    // 落点序：b 到首位；userOrder 密集 0..n-1（store 层断言见 project-ordering.test.ts）
+    expect(wrapper.findAll('[data-testid="project-card"]').map((c) => c.attributes('data-project-id'))).toEqual(['b', 'a', 'c'])
+    expect(projectStore.projects.find((p) => p.id === 'b')!.userOrder).toBe(0)
+    expect(projectStore.projects.find((p) => p.id === 'a')!.userOrder).toBe(1)
+    expect(projectStore.projects.find((p) => p.id === 'c')!.userOrder).toBe(2)
+  })
+
+  it('键盘通道（u5 验收④）：focus 卡片按 ArrowDown 与后一位交换，与拖拽同一 reorderProject 入口', async () => {
+    const projectStore = useProjectStore()
+    projectStore.projects = [
+      makeProject('a', 'Alpha', 0, 0),
+      makeProject('b', 'Beta', 0, 1),
+      makeProject('c', 'Gamma', 0, 2),
+    ]
+    projectStore.activeProjectId = 'a'
+
+    wrapper = mountSwitcher()
+
+    // focus 首卡，ArrowDown → 与 b 交换（reorderProject(a, b)）
+    await cardById(wrapper, 'a').trigger('keydown.down')
+    expect(wrapper.findAll('[data-testid="project-card"]').map((c) => c.attributes('data-project-id'))).toEqual(['b', 'a', 'c'])
+    expect(projectStore.projects.find((p) => p.id === 'a')!.userOrder).toBe(1)
+
+    // ArrowRight 同语义（2 列网格 ←→↑↓ 四方向均可触发相邻交换）
+    await cardById(wrapper, 'a').trigger('keydown.right')
+    expect(wrapper.findAll('[data-testid="project-card"]').map((c) => c.attributes('data-project-id'))).toEqual(['b', 'c', 'a'])
+
+    // 末位再 ArrowDown：无后一位，no-op
+    await cardById(wrapper, 'a').trigger('keydown.down')
+    expect(wrapper.findAll('[data-testid="project-card"]').map((c) => c.attributes('data-project-id'))).toEqual(['b', 'c', 'a'])
+  })
+
+  it('键盘通道与拖拽等价：同一初始态下 ArrowUp 交换结果 = 拖拽 reorderProject 结果', async () => {
+    const projectStore = useProjectStore()
+    projectStore.projects = [
+      makeProject('a', 'Alpha', 0, 0),
+      makeProject('b', 'Beta', 0, 1),
+    ]
+    projectStore.activeProjectId = 'a'
+
+    wrapper = mountSwitcher()
+    // 键盘：b 上移到首位
+    await cardById(wrapper, 'b').trigger('keydown.up')
+    const afterKeyboard = projectStore.projects.map((p) => ({ id: p.id, userOrder: p.userOrder }))
+
+    // 拖拽（新 store 实例、同初始态）：c…… 用 b 拖到 a 复现同一目标序
+    wrapper.unmount()
+    setActivePinia(createPinia())
+    const store2 = useProjectStore()
+    store2.projects = [
+      makeProject('a', 'Alpha', 0, 0),
+      makeProject('b', 'Beta', 0, 1),
+    ]
+    store2.activeProjectId = 'a'
+    wrapper = mountSwitcher()
+    dropOnto(wrapper, 'b', 'a')
+
+    // 两条通道产出完全一致的 userOrder 提交（同一 reorderProject 入口的等价性）
+    expect(store2.projects.map((p) => ({ id: p.id, userOrder: p.userOrder }))).toEqual(afterKeyboard)
+    expect(store2.projects.find((p) => p.id === 'b')!.userOrder).toBe(0)
+  })
+})
+
+describe('ProjectSwitcher 3A：新建流', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+    document.body.innerHTML = ''
+  })
+
+  it('点「新建项目」出内联 Input，Enter 创建并设为活跃', async () => {
+    const projectStore = useProjectStore()
+    projectStore.projects = [makeProject('a', 'Alpha')]
+    projectStore.activeProjectId = 'a'
+
+    wrapper = mountSwitcher()
+    await wrapper.find('[data-testid="project-add-btn"]').trigger('click')
+    const input = wrapper.find('input[data-testid="project-create-input"]')
     expect(input.exists()).toBe(true)
 
-    // 输入名称 + Enter → 创建并设为活跃
     await input.setValue('新项目')
     await input.trigger('keydown.enter')
 
-    expect(store.projects.some((p) => p.name === '新项目')).toBe(true)
-    expect(store.activeProjectId).toBe(store.projects.find((p) => p.name === '新项目')!.id)
+    expect(projectStore.projects.some((p) => p.name === '新项目')).toBe(true)
+    expect(projectStore.activeProjectId).toBe(projectStore.projects.find((p) => p.name === '新项目')!.id)
+    // 提交后回到 add 卡
+    expect(wrapper.find('[data-testid="project-create-input"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="project-add-btn"]').exists()).toBe(true)
   })
 
-  it('新建流边缘：展开态输入未提交 → 点折叠态行收起 → 输入框消失（creating 复位）', async () => {
-    const store = useProjectStore()
-    store.projects = [makeProject('a', 'Alpha')]
-    store.activeProjectId = 'a'
+  it('Esc 取消不创建', async () => {
+    const projectStore = useProjectStore()
+    projectStore.projects = [makeProject('a', 'Alpha')]
+    projectStore.activeProjectId = 'a'
 
-    const wrapper = mount(ProjectSwitcher)
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
-
-    // 展开态进入新建流：输入未提交（只输入不回车）
-    const newBtn = wrapper.findAll('button').find((w) => w.text().includes('新建项目'))
-    await newBtn!.trigger('click')
-    const input = wrapper.find('input')
-    expect(input.exists()).toBe(true)
-    await input.setValue('未提交')
-
-    // 点折叠态行（toggle 收起）→ 未提交输入一并取消
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
-    expect(wrapper.find('[data-testid="project-list"]').exists()).toBe(false)
-    expect(wrapper.find('input').exists()).toBe(false)
-    expect(store.projects.some((p) => p.name === '未提交')).toBe(false)
-
-    // 再次展开：新建输入已复位（回到「新建项目」按钮，非输入框）
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
-    expect(wrapper.find('input').exists()).toBe(false)
-    expect(wrapper.findAll('button').some((w) => w.text().includes('新建项目'))).toBe(true)
-  })
-
-  it('新建流边缘：输入名称后 blur → 提交创建', async () => {
-    const store = useProjectStore()
-    store.projects = [makeProject('a', 'Alpha')]
-    store.activeProjectId = 'a'
-
-    const wrapper = mount(ProjectSwitcher)
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
-
-    const newBtn = wrapper.findAll('button').find((w) => w.text().includes('新建项目'))
-    await newBtn!.trigger('click')
-    const input = wrapper.find('input')
-    await input.setValue('Blur项目')
-    // blur → commitCreate（同 Enter 提交语义）
-    await input.trigger('blur')
-
-    expect(store.projects.some((p) => p.name === 'Blur项目')).toBe(true)
-    // 提交后输入框退出新建流（creating 复位）
-    expect(wrapper.find('input').exists()).toBe(false)
-  })
-
-  it('新建流边缘：输入后按 Esc → 取消不创建', async () => {
-    const store = useProjectStore()
-    store.projects = [makeProject('a', 'Alpha')]
-    store.activeProjectId = 'a'
-
-    const wrapper = mount(ProjectSwitcher)
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
-
-    const newBtn = wrapper.findAll('button').find((w) => w.text().includes('新建项目'))
-    await newBtn!.trigger('click')
-    const input = wrapper.find('input')
-    await input.setValue('Esc项目')
+    wrapper = mountSwitcher()
+    await wrapper.find('[data-testid="project-add-btn"]').trigger('click')
+    const input = wrapper.find('input[data-testid="project-create-input"]')
+    await input.setValue('不创建')
     await input.trigger('keydown.esc')
 
-    // Esc → cancelCreate：不创建、输入框消失、回到「新建项目」按钮
-    expect(store.projects.some((p) => p.name === 'Esc项目')).toBe(false)
-    expect(wrapper.find('input').exists()).toBe(false)
-    expect(wrapper.findAll('button').some((w) => w.text().includes('新建项目'))).toBe(true)
+    expect(projectStore.projects.some((p) => p.name === '不创建')).toBe(false)
+    expect(wrapper.find('[data-testid="project-add-btn"]').exists()).toBe(true)
+  })
+})
+
+describe('ProjectSwitcher 3A：删除流（右键 ContextMenu）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    document.body.innerHTML = ''
   })
 
-  it('新建流边缘：输入纯空格 → 不创建（trim 后空）', async () => {
-    const store = useProjectStore()
-    store.projects = [makeProject('a', 'Alpha')]
-    store.activeProjectId = 'a'
-    const before = store.projects.length
-
-    const wrapper = mount(ProjectSwitcher)
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
-
-    const newBtn = wrapper.findAll('button').find((w) => w.text().includes('新建项目'))
-    await newBtn!.trigger('click')
-    const input = wrapper.find('input')
-    await input.setValue('   ')
-    await input.trigger('keydown.enter')
-
-    // trim 后空 → commitCreate 不 addProject（守卫：if (name)）
-    expect(store.projects.length).toBe(before)
-    expect(store.projects.some((p) => p.name === '')).toBe(false)
-    // 输入框仍复位（创建流程结束，回到「新建项目」按钮）
-    expect(wrapper.find('input').exists()).toBe(false)
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+    document.body.innerHTML = ''
   })
 
-  // ── 删除流（review MF-4：补删除按钮显隐 + ConfirmDialog + 确认/取消 + 删活跃切首个）──
-  it('删除流：默认项目行永不渲染删除按钮；仅默认 project 时列表无任何删除按钮', async () => {
-    const store = useProjectStore()
-    // 默认态（仅默认 project）：展开后无删除按钮
-    const w1 = mount(ProjectSwitcher)
-    await w1.find('[data-testid="project-switcher-current"]').trigger('click')
-    expect(w1.findAll('[title="删除项目"]').length).toBe(0)
-    w1.unmount()
+  it('默认项目卡右键无删除菜单项（review MF-1 双保险：组件侧不渲染）', async () => {
+    const projectStore = useProjectStore()
+    projectStore.projects = [makeProject(DEFAULT_PROJECT_ID, ''), makeProject('a', 'Alpha')]
+    projectStore.activeProjectId = 'a'
 
-    // 默认 + 命名 project：命名行有删除按钮，默认行（name 空）没有（review MF-1 双保险）
-    store.projects = [
-      makeProject(DEFAULT_PROJECT_ID, ''),
-      makeProject('a', 'Alpha'),
-    ]
-    store.activeProjectId = 'a'
-    const w2 = mount(ProjectSwitcher)
-    await w2.find('[data-testid="project-switcher-current"]').trigger('click')
-    const rows = w2.findAll('[data-testid="project-item"]')
-    expect(rows).toHaveLength(2)
-    const defaultRow = rows.find((r) => r.text().includes('默认项目'))!
-    expect(defaultRow.find('[title="删除项目"]').exists()).toBe(false)
-    const alphaRow = rows.find((r) => r.text().includes('Alpha'))!
-    expect(alphaRow.find('[title="删除项目"]').exists()).toBe(true)
+    wrapper = mountSwitcher()
+    // 右键默认项目卡 → Portal v-if="canDelete(p)" 为 false，菜单整块不渲染
+    // （触发写法对齐本文件命名卡正向用例；「Portal 整块不渲染」断言对齐 session-item-force-quit 先例）
+    await cardById(wrapper, DEFAULT_PROJECT_ID).trigger('contextmenu')
+    await nextTick()
+    await nextTick()
+    expect(document.body.querySelector('[data-testid="project-delete-item"]')).toBeNull()
+    expect(document.body.querySelector('[data-testid="project-context-menu"]')).toBeNull()
   })
 
-  it('删除流：点 Trash → ConfirmDialog 出现（描述指向被删项）→ 确认 → removeProject 生效 + 列表消失', async () => {
-    const store = useProjectStore()
-    store.projects = [
+  it('命名卡右键 → 删除项 → ConfirmDialog 确认 → removeProject 生效', async () => {
+    const projectStore = useProjectStore()
+    projectStore.projects = [
       makeProject(DEFAULT_PROJECT_ID, ''),
       makeProject('a', 'Alpha'),
       makeProject('b', 'Beta'),
     ]
-    store.activeProjectId = 'a'
+    projectStore.activeProjectId = 'a'
 
-    wrapper = mount(ProjectSwitcher, { attachTo: document.body })
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
-
-    // 点 Beta 行的 Trash → ConfirmDialog 打开（teleport 到 body，描述含被删项名）
-    const betaRow = wrapper
-      .findAll('[data-testid="project-item"]')
-      .find((r) => r.text().includes('Beta'))!
-    await betaRow.find('[title="删除项目"]').trigger('click')
+    wrapper = mountSwitcher()
+    // 右键 Beta 卡 → ContextMenu（teleport 到 body）→ 点删除项
+    // （reka 菜单经两次 tick 才挂载完成，同 session-item-force-quit 先例）
+    await cardById(wrapper, 'b').trigger('contextmenu')
     await nextTick()
+    await nextTick()
+    const deleteItem = document.body.querySelector('[data-testid="project-delete-item"]')
+    expect(deleteItem).not.toBeNull()
+    expect(deleteItem!.textContent).toContain('删除项目')
+    // reka ContextMenuItem：原生 click（bubbles）触发 select（同 force-quit 先例）
+    deleteItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+
+    // ConfirmDialog（teleport 到 body）确认
     expect(document.body.textContent).toContain('确认删除项目「Beta」')
-
-    // 确认 → removeProject 生效，列表刷新后 Beta 行消失
-    findDialogButton('删除')!.dispatchEvent(new MouseEvent('click'))
-    await nextTick()
-    expect(store.projects.some((p) => p.id === 'b')).toBe(false)
-    expect(
-      wrapper.findAll('[data-testid="project-item"]').some((r) => r.text().includes('Beta')),
-    ).toBe(false)
-  })
-
-  it('删除流：取消不删除，ConfirmDialog 关闭', async () => {
-    const store = useProjectStore()
-    store.projects = [
-      makeProject(DEFAULT_PROJECT_ID, ''),
-      makeProject('a', 'Alpha'),
-      makeProject('b', 'Beta'),
-    ]
-    store.activeProjectId = 'a'
-
-    wrapper = mount(ProjectSwitcher, { attachTo: document.body })
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
-
-    const betaRow = wrapper
-      .findAll('[data-testid="project-item"]')
-      .find((r) => r.text().includes('Beta'))!
-    await betaRow.find('[title="删除项目"]').trigger('click')
-    await nextTick()
-
-    findDialogButton('取消')!.dispatchEvent(new MouseEvent('click'))
-    await nextTick()
-    expect(store.projects.some((p) => p.id === 'b')).toBe(true)
-    // 关闭态断言：reka DialogContent data-state=closed（exit 动画依赖 transitionend，happy-dom 不触发，
-    // 内容不会卸载——以 state 断言关闭语义而非 DOM 消失）
-    expect(document.body.querySelector('[data-state="closed"]')).not.toBeNull()
-  })
-
-  it('删除流：删活跃项自动切首个（recentProjects 顺序首位）', async () => {
-    const store = useProjectStore()
-    store.projects = [
-      makeProject(DEFAULT_PROJECT_ID, ''),
-      makeProject('a', 'Alpha'),
-      makeProject('b', 'Beta'),
-    ]
-    store.activeProjectId = 'a'
-
-    wrapper = mount(ProjectSwitcher, { attachTo: document.body })
-    await wrapper.find('[data-testid="project-switcher-current"]').trigger('click')
-
-    const alphaRow = wrapper
-      .findAll('[data-testid="project-item"]')
-      .find((r) => r.text().includes('Alpha'))!
-    await alphaRow.find('[title="删除项目"]').trigger('click')
-    await nextTick()
     findDialogButton('删除')!.dispatchEvent(new MouseEvent('click'))
     await nextTick()
 
-    expect(store.projects.some((p) => p.id === 'a')).toBe(false)
-    // 删的是活跃项 → 切到列表首位（默认项目，recentProjects 排序后的第一个）
-    expect(store.activeProjectId).toBe(DEFAULT_PROJECT_ID)
+    expect(projectStore.projects.some((p) => p.id === 'b')).toBe(false)
+    expect(cardById(wrapper, 'b').exists()).toBe(false)
   })
 })

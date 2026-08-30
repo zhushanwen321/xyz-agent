@@ -20,7 +20,8 @@ import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/cor
 
 const configMock = vi.hoisted(() => ({
   onProviders: vi.fn(() => () => {}),
-  listProviders: vi.fn(async () => []),
+  // 门面签名 { providers, scopedModels }（settings-lifecycle 解构消费）；裸数组解构得 undefined
+  listProviders: vi.fn(async () => ({ providers: [], scopedModels: undefined })),
   setProvider: vi.fn(async () => {}),
   deleteProvider: vi.fn(async () => {}),
   // wave4 C1/IF3：toggle 持久化走 toggleProviderEnabled（写 enabledModels 白名单），删除按 kind 走 removeProviderByKind
@@ -42,6 +43,8 @@ const configMock = vi.hoisted(() => ({
   onAuthSuccess: vi.fn(() => () => {}),
   onAuthError: vi.fn(() => () => {}),
   listBuiltinProviders: vi.fn(async () => []),
+  // ProviderPage onMounted 按需刷新远程模型目录（缺则 unhandled rejection）
+  refreshProviderCatalogs: vi.fn(async () => ({ refreshed: [], failed: [] })),
 }))
 
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },

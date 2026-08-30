@@ -1,11 +1,15 @@
 /**
- * useTailScroll composable 单测（W4 双轴尾部追踪）。
+ * useTailScroll composable 单测（2026-08 抖动修复重写：settled/sliding 状态机）。
  *
- * 覆盖 U11：
- * - scrollLeft 钉右逻辑分支（scrollWidth > clientWidth 时 scrollLeft = scrollWidth）
- * - translateY 计算（N 行 → translateY(-(N-1)*lineHeight)）
- * - disableScroll 降级分支（无 transform、无 rAF DOM 操作）
- * - 未挂载防御（元素不存在时跳过，不抛异常）
+ * 覆盖：
+ * - 初始化：首行瞬切 settled（无动画）
+ * - 同行横向追加：只更新文本，无纵向动作（不进 sliding）
+ * - 换行：进入 sliding（双行渲染 + 双 rAF 后 translateY(-50%) 过渡）
+ * - settle：slideDuration 后无过渡重置单行（transform 0、无 transition，显示内容不变）
+ * - 滑入中尾行追加：目标行原地更新，动画继续（仍 sliding）
+ * - 滑入中又换行：瞬切 settle 到最新
+ * - disableScroll 降级：恒 settled 瞬切
+ * - 卸载清理：unmount 后 pending timer/rAF 不再改状态
  *
  * 运行：cd packages/ui && npx vitest run src/features/chat/composables/__tests__/useTailScroll.test.ts
  */
@@ -13,7 +17,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, h, ref, computed, nextTick } from 'vue'
 import type { Ref, ComputedRef } from 'vue'
-import { useTailScroll, type UseTailScrollOptions } from '../useTailScroll'
+import { useTailScroll } from '../useTailScroll'
+
+const SLIDE_DURATION = 120
 
 // ── rAF 手动队列（同 MarkdownRenderer.test.ts 模式）──
 const rafQueue: FrameRequestCallback[] = []
@@ -21,6 +27,9 @@ const originalRAF = globalThis.requestAnimationFrame
 const originalCAF = globalThis.cancelAnimationFrame
 beforeEach(() => {
   rafQueue.length = 0
+  // toFake 不含 requestAnimationFrame：rAF 走下方手动队列（驱动 sliding 双拍切相），
+  // setTimeout 走 fake timers（驱动 settle 定时）
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
     rafQueue.push(cb)
     return rafQueue.length
@@ -30,11 +39,12 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.requestAnimationFrame = originalRAF
   globalThis.cancelAnimationFrame = originalCAF
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
 async function flushRaf(): Promise<void> {
-  // Drain all queued rAF callbacks (nested callbacks may enqueue more)
+  // Drain all queued rAF callbacks（双 rAF 嵌套会再入队）
   while (rafQueue.length > 0) {
     const cbs = [...rafQueue]
     rafQueue.length = 0
@@ -43,157 +53,153 @@ async function flushRaf(): Promise<void> {
   await nextTick()
 }
 
+/** 推进一帧（执行已入队的 rAF 但不产生新帧） */
+async function advanceOneFrame(): Promise<void> {
+  const cbs = [...rafQueue]
+  rafQueue.length = 0
+  for (const cb of cbs) cb(0)
+  await nextTick()
+}
+
 /**
- * 创建测试组件：使用 useTailScroll 并暴露内部状态供断言。
+ * 创建测试组件：props.lines 驱动 useTailScroll，暴露状态供断言。
  */
-function createTestComponent(disableScroll = false, lineHeight = 20) {
+function createTestComponent(disableScroll = false) {
   return defineComponent({
     props: {
       lines: { type: Array as () => string[], required: true },
     },
     setup(props) {
-      const viewportRef = ref<HTMLElement>()
       const rawLines = computed(() => props.lines) as unknown as ComputedRef<string[]>
       const result = useTailScroll(rawLines, {
-        viewportRef,
         disableScroll,
-        lineHeight,
+        slideDuration: SLIDE_DURATION,
       })
       return {
-        viewportRef,
         displayLines: result.displayLines,
         contentStyle: result.contentStyle,
       }
     },
-    template: `
-      <div ref="viewportRef" style="width:100px;overflow:hidden;">
-        <div :style="contentStyle">
-          <div v-for="(line, i) in displayLines" :key="i">{{ line }}</div>
-        </div>
-      </div>
-    `,
+    render() {
+      return h('div', { style: this.contentStyle }, this.displayLines.map((l) => h('span', { key: l }, l)))
+    },
   })
 }
 
-describe('useTailScroll U11', () => {
-  describe('scrollLeft 钉右逻辑', () => {
-    it('scrollWidth > clientWidth 时 scrollLeft 被设为 scrollWidth', async () => {
-      // 直接测试 composable 的 rAF 行为（mock 元素，不挂载 DOM）
-      const rawLines = ref(['short', 'a very long line'])
-      const viewportRef = ref<HTMLElement>()
-
-      // 创建 mock 元素，可控 scrollWidth/clientWidth
-      const scrollLeftSetter = vi.fn()
-      const mockViewport = {
-        scrollWidth: 200,
-        clientWidth: 100,
-        scrollLeft: 0,
-      } as unknown as HTMLElement
-      Object.defineProperty(mockViewport, 'scrollLeft', { set: scrollLeftSetter, get: () => 0, configurable: true })
-
-      viewportRef.value = mockViewport
-
-      useTailScroll(rawLines, { viewportRef })
-
-      // 触发 watch（flush: 'post' 需多次 nextTick 才能落定）
-      rawLines.value = ['new', 'new very long line']
-      // flush: 'post' watcher 排入微任务后需 await nextTick 落定
-      await nextTick()
-      // watch 回调内 nextTick + rAF 需再 flush
-      await flushRaf()
-      // 嵌套 nextTick 可能还需一轮
-      await flushRaf()
-
-      expect(scrollLeftSetter).toHaveBeenCalledWith(200)
-    })
-
-    it('scrollWidth <= clientWidth 时 scrollLeft 不变', async () => {
-      const rawLines = ref(['short'])
-      const viewportRef = ref<HTMLElement>()
-
-      const scrollLeftSetter = vi.fn()
-      const mockViewport = {
-        scrollWidth: 50,
-        clientWidth: 100,
-        scrollLeft: 0,
-      } as unknown as HTMLElement
-      Object.defineProperty(mockViewport, 'scrollLeft', { set: scrollLeftSetter, get: () => 0, configurable: true })
-
-      viewportRef.value = mockViewport
-
-      useTailScroll(rawLines, { viewportRef })
-
-      rawLines.value = ['still short']
-      await nextTick()
-      await flushRaf()
-
-      expect(scrollLeftSetter).not.toHaveBeenCalled()
-    })
+describe('useTailScroll（settled/sliding 状态机）', () => {
+  it('初始化：首行瞬切 settled，无动画', async () => {
+    const TestComp = createTestComponent()
+    const wrapper = mount(TestComp, { props: { lines: ['first line'] } })
+    await nextTick()
+    expect(wrapper.vm.displayLines).toEqual(['first line'])
+    expect(wrapper.vm.contentStyle).toEqual({ transform: 'translateY(0)' })
   })
 
-  describe('translateY 计算', () => {
-    it('1 行无 transform', () => {
-      const TestComp = createTestComponent()
-      const wrapper = mount(TestComp, { props: { lines: ['only'] } })
-      expect(wrapper.vm.contentStyle).toEqual({})
-    })
-
-    it('N 行 → translateY(-(N-1)*lineHeight)', () => {
-      const TestComp = createTestComponent(false, 20)
-      const wrapper = mount(TestComp, { props: { lines: ['a', 'b', 'c'] } })
-      const style = wrapper.vm.contentStyle
-      expect(style.transform).toBe('translateY(-40px)') // (3-1)*20 = 40
-      expect(style.transition).toContain('transform')
-    })
-
-    it('lineHeight 自定义', () => {
-      const TestComp = createTestComponent(false, 24)
-      const wrapper = mount(TestComp, { props: { lines: ['a', 'b'] } })
-      expect(wrapper.vm.contentStyle.transform).toBe('translateY(-24px)') // (2-1)*24 = 24
-    })
+  it('首行为空串也能初始化（不误判为未初始化）', async () => {
+    const TestComp = createTestComponent()
+    const wrapper = mount(TestComp, { props: { lines: [''] } })
+    await nextTick()
+    expect(wrapper.vm.displayLines).toEqual([''])
+    // 空串初始化后再来数据：走正常换行/追加逻辑，不被误判为 init 分支
+    await wrapper.setProps({ lines: ['', 'second'] })
+    expect(wrapper.vm.displayLines).toEqual(['', 'second'])
   })
 
-  describe('disableScroll 降级', () => {
-    it('disableScroll=true 时无 transform', () => {
-      const TestComp = createTestComponent(true)
-      const wrapper = mount(TestComp, { props: { lines: ['a', 'b', 'c'] } })
-      expect(wrapper.vm.contentStyle).toEqual({})
-    })
-
-    it('disableScroll=true 时不触发 rAF DOM 操作', async () => {
-      const TestComp = createTestComponent(true)
-      const wrapper = mount(TestComp, { props: { lines: ['a', 'b'] } })
-      const viewport = wrapper.vm.viewportRef!
-      const scrollLeftSpy = vi.fn()
-      Object.defineProperty(viewport, 'scrollLeft', { set: scrollLeftSpy, get: () => 0, configurable: true })
-
-      await wrapper.setProps({ lines: ['a', 'b', 'c'] })
-      await flushRaf()
-
-      expect(scrollLeftSpy).not.toHaveBeenCalled()
-    })
+  it('同行横向追加：只更新文本，不进 sliding', async () => {
+    const TestComp = createTestComponent()
+    const wrapper = mount(TestComp, { props: { lines: ['abc'] } })
+    await nextTick()
+    // 尾行文本追加（窗口 1 行，无倒数第二行）→ settled 文本更新，无纵向动作
+    await wrapper.setProps({ lines: ['abcdef'] })
+    expect(wrapper.vm.displayLines).toEqual(['abcdef'])
+    expect(wrapper.vm.contentStyle).toEqual({ transform: 'translateY(0)' })
   })
 
-  describe('未挂载防御', () => {
-    it('元素不存在时不抛异常', async () => {
-      const rawLines = ref(['a', 'b'])
-      const viewportRef = ref<HTMLElement>()
-      // 元素未挂载（ref 为 undefined）
-      expect(() => {
-        useTailScroll(rawLines, { viewportRef })
-      }).not.toThrow()
-    })
+  it('换行：进入 sliding，双 rAF 后 translateY(-50%) 过渡', async () => {
+    const TestComp = createTestComponent()
+    const wrapper = mount(TestComp, { props: { lines: ['abc'] } })
+    await nextTick()
+    // 换行：窗口变 ['abc', 'new']（倒数第二行 === 旧尾行）
+    await wrapper.setProps({ lines: ['abc', 'new line'] })
+    // enter 拍：双行渲染、transform 0、无 transition
+    expect(wrapper.vm.displayLines).toEqual(['abc', 'new line'])
+    expect(wrapper.vm.contentStyle).toEqual({ transform: 'translateY(0)' })
+    // 双 rAF 后 slide 拍：-50% + transition
+    await advanceOneFrame()
+    await advanceOneFrame()
+    expect(wrapper.vm.contentStyle.transform).toBe('translateY(-50%)')
+    expect(wrapper.vm.contentStyle.transition).toContain('transform')
+  })
 
-    it('元素不存在时 rAF 不抛', async () => {
-      const rawLines = ref(['a', 'b'])
-      const viewportRef = ref<HTMLElement>()
-      useTailScroll(rawLines, { viewportRef })
+  it('settle：slideDuration 后重置单行，transform 0 且无过渡（显示内容不变无闪烁）', async () => {
+    const TestComp = createTestComponent()
+    const wrapper = mount(TestComp, { props: { lines: ['abc'] } })
+    await nextTick()
+    await wrapper.setProps({ lines: ['abc', 'new line'] })
+    await advanceOneFrame()
+    await advanceOneFrame()
+    expect(wrapper.vm.displayLines).toEqual(['abc', 'new line'])
+    // settle 后：单行 = 滑动目标行（显示内容不变），无 transition
+    vi.advanceTimersByTime(SLIDE_DURATION)
+    await nextTick()
+    expect(wrapper.vm.displayLines).toEqual(['new line'])
+    expect(wrapper.vm.contentStyle).toEqual({ transform: 'translateY(0)' })
+  })
 
-      rawLines.value = ['a', 'b', 'c']
-      await nextTick()
-      expect(async () => {
-        await flushRaf()
-      }).not.toThrow()
-    })
+  it('滑入中尾行文本追加：目标行原地更新，动画继续', async () => {
+    const TestComp = createTestComponent()
+    const wrapper = mount(TestComp, { props: { lines: ['abc'] } })
+    await nextTick()
+    await wrapper.setProps({ lines: ['abc', 'new'] })
+    await advanceOneFrame()
+    // 滑入中（未 settle），尾行追加字符：倒数第二行 'abc' ≠ sliding 目标行 'new' → 原地更新
+    await wrapper.setProps({ lines: ['abc', 'new continued'] })
+    expect(wrapper.vm.displayLines).toEqual(['abc', 'new continued'])
+    // 仍是 sliding（settle 前双行），动画未被打断
+    vi.advanceTimersByTime(SLIDE_DURATION)
+    await nextTick()
+    expect(wrapper.vm.displayLines).toEqual(['new continued'])
+  })
+
+  it('滑入中又换行：瞬切 settle 到最新（放弃动画）', async () => {
+    const TestComp = createTestComponent()
+    const wrapper = mount(TestComp, { props: { lines: ['abc'] } })
+    await nextTick()
+    await wrapper.setProps({ lines: ['abc', 'line2'] })
+    await advanceOneFrame()
+    // 滑入中再次换行：窗口 ['line2', 'line3']，倒数第二行 'line2' === sliding 目标行 → 瞬切
+    await wrapper.setProps({ lines: ['line2', 'line3'] })
+    expect(wrapper.vm.displayLines).toEqual(['line3'])
+    expect(wrapper.vm.contentStyle).toEqual({ transform: 'translateY(0)' })
+  })
+
+  it('disableScroll：恒 settled 瞬切，换行也不进 sliding', async () => {
+    const TestComp = createTestComponent(true)
+    const wrapper = mount(TestComp, { props: { lines: ['abc'] } })
+    await nextTick()
+    await wrapper.setProps({ lines: ['abc', 'new line'] })
+    await advanceOneFrame()
+    await advanceOneFrame()
+    expect(wrapper.vm.displayLines).toEqual(['new line'])
+    expect(wrapper.vm.contentStyle).toEqual({ transform: 'translateY(0)' })
+  })
+
+  it('卸载清理：unmount 后 settle timer 不再改状态（不抛错）', async () => {
+    const TestComp = createTestComponent()
+    const wrapper = mount(TestComp, { props: { lines: ['abc'] } })
+    await nextTick()
+    await wrapper.setProps({ lines: ['abc', 'new line'] })
+    await advanceOneFrame()
+    wrapper.unmount()
+    expect(() => {
+      vi.advanceTimersByTime(SLIDE_DURATION * 10)
+    }).not.toThrow()
+  })
+
+  it('直接调用（不挂载组件）不抛错——composable 可脱离 DOM 使用', () => {
+    const rawLines = ref<string[]>(['a', 'b'])
+    expect(() => {
+      useTailScroll(rawLines as unknown as ComputedRef<string[]>)
+    }).not.toThrow()
   })
 })

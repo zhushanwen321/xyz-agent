@@ -9,8 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import { buildDetailContent } from "../detail-content.ts";
 import type { ThemeLike } from "../format.ts";
-import type { ExecutionTraceNode } from "../../../orchestration/models/types.ts";
-import type { WorkflowRun } from "../../../orchestration/models/workflow-run.ts";
+import type { ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
+import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
 
 /** plain theme: fg/bold 直接返回原文，无 ANSI 色码——测试断言纯文本。 */
 const plainTheme: ThemeLike = {

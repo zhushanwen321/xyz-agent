@@ -24,8 +24,8 @@ import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
 import type {
   ListResponse,
   SubagentToolResult,
-} from "../execution/types.ts";
-import { displayAgentName } from "../shared/agent-ref.ts";
+} from "@zhushanwen/subagent-core/execution/types.ts";
+import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
 import {
   extractAgentName,
   firstLine,
@@ -208,6 +208,15 @@ function buildCompactLines(d: SubagentToolResult, theme: ThemeLike): string[] {
       width,
     )];
   }
+  // ── fork-from 分支：接续确认行（[v8.5 B]）──
+  if (d.action === "fork-from" && d.forkFromResponse) {
+    const src = shortSessionLabel(d.forkFromResponse.sourceSessionFile);
+    return [truncLine(
+      `${theme.fg("accent", "⑂")} ${theme.fg("dim", "forked-from ")}${theme.fg("accent", src)}` +
+      ` ${theme.fg("dim", "→ new: ")}${theme.fg("accent", d.subagentId ?? "?")}`,
+      width,
+    )];
+  }
   // ── start 分支：background ──
   if ("bgResponse" in d) {
     return [truncLine(
@@ -233,6 +242,16 @@ function buildExpandedLines(d: SubagentToolResult, theme: ThemeLike): string[] {
       `${theme.fg("muted", "■")} ${theme.fg("dim", "cancelled ")}${theme.fg("accent", d.subagentId ?? "?")}`,
       width,
     )];
+  }
+  if (d.action === "fork-from" && d.forkFromResponse) {
+    // expanded 与 compact 同形（一次性 block 无细节可展开），另附源文件完整路径行。
+    return [
+      truncLine(
+        `${theme.fg("accent", "⑂")} ${theme.fg("dim", "forked-from ")}${theme.fg("accent", d.forkFromResponse.sourceSessionFile)}` +
+        ` ${theme.fg("dim", "→ new: ")}${theme.fg("accent", d.subagentId ?? "?")}`,
+        width,
+      ),
+    ];
   }
 
   const lines: string[] = [];
@@ -261,9 +280,22 @@ function isDetailsStructurallyComplete(d: SubagentToolResult): boolean {
       return "listResponse" in d;
     case "cancel":
       return "cancelResponse" in d;
+    case "fork-from":
+      // [v8.5 B] 新 action 直接纳入 guard：缺内层分组才 fallback。
+      // message/close 维持历史现状（不落此 switch 显式分支，走 extractResultError
+      // 回显 content 首行）不变，避免触碰现有渲染回归面——review MF-13 曾引入
+      // message/close 显式分支后回退：无对应渲染分支却判「结构完整」会改走
+      // generic 无响应渲染，属静默行为变更。
+      return "forkFromResponse" in d;
     default:
       return false;
   }
+}
+
+/** fork-from 渲染用的源文件短标签（basename；失败时原样返回——渲染不应抛错）。 */
+function shortSessionLabel(file: string): string {
+  const idx = file.lastIndexOf("/");
+  return idx >= 0 ? file.slice(idx + 1) : file;
 }
 
 /**

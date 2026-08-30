@@ -426,7 +426,7 @@ if [ "$SKIP_CODE_RULES_CHECK" != "1" ]; then
             python3 "$RULES_CHECKER" --batch $ABSOLUTE_FILES
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] 代码规范检查失败${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -458,7 +458,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_SIDECAR_SESSION_CHECK" != "1" ]; th
             python3 "$SIDECAR_CHECKER" "$SIDECAR_SERVER"
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] Sidecar session 隔离检查失败${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -489,7 +489,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKENS_CHECK" != "1" ]; then
             python3 "$CSS_CHECKER" "$CSS_FILE"
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] CSS tokens 检查失败${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -520,7 +520,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSS_TOKEN_SSOT_CHECK" != "1" ]; the
             python3 "$CSS_SSOT_CHECKER"
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] CSS token SSOT 检查失败：style.css 含 design-tokens.md 未收录的 token${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -550,7 +550,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_RENDERER_DEPS_CHECK" != "1" ]; then
             python3 "$RENDERER_DEPS_CHECKER"
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] Renderer 依赖完整性检查失败：存在 import 了但 package.json 未声明的包${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -577,7 +577,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_ENV_WHITELIST_CHECK" != "1" ]; then
         python3 "$ENV_WHITELIST_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] ENV_WHITELIST_PREFIXES SSOT 检查失败${NC}"
             echo -e "${YELLOW}[INFO] 定义点应在 shared/constants.ts，main/runtime 只能 import${NC}"
@@ -587,6 +587,40 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_ENV_WHITELIST_CHECK" != "1" ]; then
     fi
 else
     echo -e "${YELLOW}[SKIP] ENV_WHITELIST_PREFIXES SSOT 检查已跳过${NC}"
+fi
+
+# ============================================================================
+# runtime 子进程 env 出站契约检查（约束 C-proc-09）
+#   扫 packages/runtime/src 与 apps/electron/main 的进程创建调用点，要求子 env 经
+#   buildOutboundChildEnv / composeChildEnvBase 构建（deny 剥 XYZ_AGENT_PACKAGED /
+#   XYZ_RUNTIME_TOKEN）；豁免名单逐条注明理由，详见 checker 脚本头注释。
+#   注：不设独立跳过开关——新增 SKIP_* 逃生口须同步登记 AGENTS.md 的 SKIP_* 清单，
+#   故本段仅受既有 SKIP_ALL_CHECKS 总闸管辖。
+# ============================================================================
+
+SPAWN_ENV_BOUNDARY_CHECKER=".githooks/check_spawn_env_boundary.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    print_section "[出站 env 契约检查]"
+    echo -e "${BLUE}[INFO] 运行 runtime 子进程 env 出站契约检查（C-proc-09）...${NC}"
+
+    if [ ! -f "$SPAWN_ENV_BOUNDARY_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $SPAWN_ENV_BOUNDARY_CHECKER${NC}"
+    else
+        python3 "$SPAWN_ENV_BOUNDARY_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] runtime 子进程 env 出站契约检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 新增子进程必须经 buildOutboundChildEnv 组装 env；修复指引见上方脚本输出；设计依据 docs/design/env-propagation-boundary.md${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] runtime 子进程 env 出站契约检查通过${NC}"
+    fi
+else
+    echo -e "${YELLOW}[SKIP] runtime 子进程 env 出站契约检查已跳过${NC}"
 fi
 
 # ============================================================================
@@ -604,7 +638,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_TOOL_SCHEMA_CHECK" != "1" ]; then
         python3 "$TOOL_SCHEMA_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] Pi extension tool schema 合规检查失败${NC}"
             echo -e "${YELLOW}[INFO] parameters 顶层必须 Type.Object（OpenAI 兼容），禁止顶层 Type.Union${NC}"
@@ -631,7 +665,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PATH_WHITELIST_CHECK" != "1" ]; the
         python3 "$PATH_WHITELIST_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] 路径白名单动态化检查失败${NC}"
             echo -e "${YELLOW}[INFO] 路径白名单必须使用 getConfigDir()/getPiAgentDir() 动态生成${NC}"
@@ -662,7 +696,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
         python3 "$PI_DIRECT_WRITE_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] R1 pi session JSONL 直写检查失败${NC}"
             echo -e "${YELLOW}[INFO] session JSONL 本体唯一写方 = pi；例外与豁免登记见 docs/architecture/data-source-registry.md${NC}"
@@ -690,7 +724,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_WS_SEND_CHECK" != "1" ]; then
         python3 "$WS_SEND_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] ws-client send 直调检查失败${NC}"
             echo -e "${YELLOW}[INFO] renderer 禁止直调 ws-client.send，统一走 api client${NC}"
@@ -717,7 +751,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_NO_SERVICE_CYCLE_CHECK" != "1" ]; t
         python3 "$SERVICE_CYCLE_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] runtime services 循环依赖检查失败（D6c）${NC}"
             echo -e "${YELLOW}[INFO] service 间不得具体类循环 import，改用接口/事件解耦${NC}"
@@ -753,7 +787,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
         echo -e "${BLUE}[INFO] 运行 $CONSTRAINT_CHECKER ...${NC}"
         python3 "$CHECKER_PATH"
         EXIT_CODE=$?
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] $CONSTRAINT_CHECKER 检查失败${NC}"
             echo -e "${YELLOW}[INFO] 约束登记见 docs/constraints.json / docs/constraints.md（机器 SSOT + 人读视图）${NC}"
@@ -801,7 +835,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_CSP_COMPAT_CHECK" != "1" ]; then
         python3 "$CSP_COMPAT_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] CSP 能力一致性检查失败${NC}"
             echo -e "${YELLOW}[INFO] 源码出现 eval/WebAssembly 用法但 CSP script-src 'self' 未放行——运行时会抛 CompileError${NC}"
@@ -943,7 +977,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_DIRECTORY_RULES_CHECK" != "1" ]; th
         python3 "$DIRECTORY_RULES_CHECKER"
         EXIT_CODE=$?
 
-        if [ $EXIT_CODE -eq 2 ]; then
+        if [ $EXIT_CODE -ne 0 ]; then
             echo ""
             echo -e "${RED}[ERROR] 目录规范检查失败${NC}"
             echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -977,7 +1011,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_I18N_CJK_CHECK" != "1" ]; then
             python3 "$I18N_CJK_CHECKER" $ABSOLUTE_VUE
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] i18n CJK 残留检测失败：模板含硬编码中文${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -1007,7 +1041,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_I18N_LOCALE_SYNC_CHECK" != "1" ]; t
             python3 "$I18N_LOCALE_CHECKER"
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 2 ]; then
+            if [ $EXIT_CODE -ne 0 ]; then
                 echo ""
                 echo -e "${RED}[ERROR] i18n locale 双侧 key 不一致：zh-CN 与 en-US key 集合 desync${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
@@ -1024,6 +1058,9 @@ fi
 #   - G1 pi 语义登记守卫：node scripts/check-pi-semantics.mjs（全仓校验：
 #     registry schema / 探针存在性 / pi 三包 + runtime pin 四包版本门禁；
 #     无 git index 依赖，每次必跑）
+#   - pi-sync 派生锚点守卫：node scripts/check-pi-sync.mjs（pi-evolution-consistency
+#     §3.2 D2：build.yml env / prepare 脚本默认值 / 快照 / extensions peerDeps /
+#     KNOWN_PI_API_TYPES / pi-tui / dev binary 8 项；与 G1 零重叠，按路径触发）
 #   - G3 思考档位差分探针：node scripts/diff-probe-thinking.mjs（registry
 #     计算路径 vs pi-ai 同源函数逐模型比对）；staged 含四个触发文件之一时跑
 #   - G4 subagent 通道禁则：python3 .githooks/check_subagent_channels.py
@@ -1044,6 +1081,32 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
         echo -e "${RED}[ERROR] G1 pi 语义登记守卫未通过——按上方 ✗ 明细逐条恢复（每条自带动作）后重试${NC}"
         echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
         exit 1
+    fi
+
+    # pi-sync 派生锚点守卫（pi-evolution-consistency §3.2 D2，按路径触发——性能考虑，
+    # 只在触碰派生锚点文件时全量跑：根 package.json / lockfile / build.yml / prepare 脚本 /
+    # 快照 / gen 脚本 / shared constants / extensions 任一 package.json / 守卫脚本自身）。
+    # 触发面在主 STAGED_FILES（ACMR）外并入 staged 删除列表（--diff-filter=D）：删除派生锚点
+    # 必须触发守卫——各 S 项对锚点文件不存在自带 fail 分支（S1/S2/S3/S6），漏触发 = 删除场景
+    # 静默放行。主 STAGED_FILES 保持 ACMR 不放行 D：会把已删除的 .ts/package.json 路径喂给
+    # ESLint / manifest 等文件存在性检查段致 ERR，影响面大，仅守卫挂载点需要 D。
+    # 与 G1 逐项零重叠（设计 §2.1 分工声明）；不占 G 编号（G1/G3/G4 属 pi-boundary-reliability 体系）。
+    STAGED_DELETED=$(git diff --cached --name-only --diff-filter=D)
+    PI_SYNC_TRIGGER_FILES="${STAGED_FILES}
+${STAGED_DELETED}"
+    if echo "$PI_SYNC_TRIGGER_FILES" | grep -qE "(^|/)(package\.json|pnpm-lock\.yaml)$|^(\.github/workflows/build\.yml|scripts/prepare-pi-resources\.sh|scripts/check-pi-sync\.mjs|packages/runtime/src/generated/builtin-providers\.json|packages/runtime/scripts/gen-builtin-providers\.mjs|packages/shared/src/constants\.ts)$|^extensions/.*/package\.json$"; then
+        echo -e "${BLUE}[INFO] pi 派生锚点文件有变更，运行 pi-sync 派生锚点守卫...${NC}"
+        if [ ! -f "scripts/check-pi-sync.mjs" ]; then
+            echo -e "${RED}[ERROR] 找不到 scripts/check-pi-sync.mjs（u2 交付物缺失）${NC}"
+            exit 1
+        fi
+        if ! node scripts/check-pi-sync.mjs; then
+            echo -e "${RED}[ERROR] pi-sync 派生锚点守卫未通过——按上方 ✗ 明细逐条恢复（每条自带动作）后重试${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] 无 pi 派生锚点文件变更，跳过 pi-sync 守卫${NC}"
     fi
 
     # G3：registry vs pi-ai 差分探针（触发文件：档位链路四文件任一 staged，basename 匹配）
@@ -1076,6 +1139,40 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
     fi
 else
     echo -e "${YELLOW}[SKIP] pi 边界可靠性护栏已跳过${NC}"
+fi
+
+# ============================================================================
+# subagent-core 依赖闭包守卫（D9-① + 检查点 5，subagent-core 包抽离 u1-guards）
+#   packages/subagent-core/** 变更时触发：scripts/check-subagent-core-closure.mjs
+#   校验 C 的 dependencies/peerDependencies/optionalDependencies/源码 import 闭包不含
+#   pi SDK 与宿主专属依赖（@earendil-works/*、pi-extension-logger、pi-pending-notifications、
+#   session-delivery、pi-file-lock），附版本双源一致性断言（src/index.ts
+#   CORE_PACKAGE_VERSION ≡ package.json version）与检查点 5 断言（worker 入口子图零
+#   host-services/notify-ports——worker 内零宿主服务）。守卫脚本自身变更同样触发。
+#   dist 回归门（D9-②：build + require CJS dist + golden 回放）不进 pre-commit
+#   （改构建面，秒级耗时也属发布门职责），挂发布管线 npm-prerelease.sh /
+#   release-npm.yml。
+#   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# 触发面在主 STAGED_FILES（ACMR）外并入本路径范围的 staged 删除（不带 --diff-filter
+# 的 pathspec 清单，天然含 D）：单独 staged 删除守卫脚本也必须触发——下方 [ ! -f ]
+# 存在性检查正是删除场景的防线，ACMR 过滤 D 导致漏触发 = 删除静默放行。主
+# STAGED_FILES 保持 ACMR 的理由见上方 pi-sync 段注释（D 喂给 ESLint/manifest 等
+# 文件存在性检查段会 ERR，仅守卫挂载点需要 D）。
+# ============================================================================
+
+SUBAGENT_CORE_STAGED=$(git diff --cached --name-only -- packages/subagent-core/ scripts/check-subagent-core-closure.mjs)
+if echo "$SUBAGENT_CORE_STAGED" | grep -qE "^packages/subagent-core/|^scripts/check-subagent-core-closure\.mjs$"; then
+    print_section "[subagent-core 依赖闭包守卫]"
+    if [ ! -f "scripts/check-subagent-core-closure.mjs" ]; then
+        echo -e "${RED}[ERROR] 找不到 scripts/check-subagent-core-closure.mjs（u1-guards 交付物缺失）${NC}"
+        exit 1
+    fi
+    if ! node scripts/check-subagent-core-closure.mjs; then
+        echo -e "${RED}[ERROR] subagent-core 依赖闭包守卫未通过——pi SDK / 宿主专属依赖回流闭包，按上方 ✗ 明细处理${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] subagent-core 依赖闭包守卫通过${NC}"
 fi
 
 # ============================================================================
@@ -1129,6 +1226,7 @@ echo -e "  ${GREEN}[+]${NC} 打包配置预检查（asarUnpack/files 一致性 +
 echo -e "  ${GREEN}[+]${NC} i18n CJK 残留检测（.vue 模板不得含硬编码中文）"
 echo -e "  ${GREEN}[+]${NC} i18n locale 双侧 key 对齐检查（zh-CN === en-US）"
 echo -e "  ${GREEN}[+]${NC} pi 边界可靠性护栏（G1 语义登记守卫 / G3 档位差分探针 / G4 subagent 通道禁则）"
+echo -e "  ${GREEN}[+]${NC} subagent-core 依赖闭包守卫（D9-① 闭包 + 检查点 5 worker 零宿主服务）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""

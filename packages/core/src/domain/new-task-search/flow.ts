@@ -196,6 +196,10 @@ export function useNewTaskFlow(deps: NewTaskFlowDeps) {
    * - 无绑定 session（未选目录直接输入发送，用 workspaceStore.defaultCwd 兑底 create）→ create 后发送
    * - 已绑定 session（选过目录预建 / 重试场景）→ 直接载入 + 发送，不重复 create
    *
+   * 终态时序（D3 交接原子化）：交接三步（setActiveSession + loadPanel + pushChat）完成
+   * 即 transition('completed')，早于 send——send 成败属于 session 的错误通道（useChat
+   * W2 吞错 toast），与 flow 状态机无关（设计 panel-view-derivation-and-flow-lifecycle.md §3.3 D3）。
+   *
    * bash 首发（composer-bash-execute）：landing 态输入 !/!! 前缀时，Composer 提取 bashCommand
    * 传入，session 创建 + panel 载入流程不变，仅发送阶段改调 chat.sendBash（不走 LLM turn，
    * 不经 segments 提取）。segments 仍作为 session label 来源 + 非空校验。
@@ -310,6 +314,12 @@ export function useNewTaskFlow(deps: NewTaskFlowDeps) {
       ports.navigation.setActiveSession(newSid)
       ports.navigation.loadPanel(ports.navigation.activePanelId(), newSid)
       ports.navigation.pushChat(newSid)
+      // [D3 交接原子化] landing→completed 在交接点定格：交接（setActiveSession + loadPanel +
+      // pushChat）完成即 flow 职责终结——这是「流程状态机只守自己不变量」的正确语义。send
+      // 成败属于 session 的错误通道（useChat W2 内部吞错只 toast），与 flow 状态机无关，
+      // flow 终态不应依赖它——send 链路未来任何演化（恢复 throw、新增前置抛错点）都不再
+      // 影响 flow 终态（时序正确性 + 防御加固，设计 panel-view-derivation-and-flow-lifecycle.md §3.3 D3）。
+      transition('completed')
       // 文件树预加载：新建 session 后侧栏「文件」tab 计数（fileCount 读 store.getTree）立即更新。
       // fire-and-forget：失败不阻断首发发送（文件树缺失仅致 tab 计数为 0）。
       void ports.fileTree.loadTree(newSid)
@@ -323,7 +333,6 @@ export function useNewTaskFlow(deps: NewTaskFlowDeps) {
       } else {
         await ports.chat.send(newSid, finalSegments)
       }
-      transition('completed') // landing→completed（首发成功，终态）
     } finally {
       controller.setCreateInFlight(false)
     }
@@ -410,7 +419,12 @@ export function useNewTaskFlow(deps: NewTaskFlowDeps) {
     transition('landing')
   }
 
-  /** landing→completed（首条消息成功，终态）。completed 后实例销毁，⌘N 再触发重建（AC-3.6/3.12）。 */
+  /**
+   * [HISTORICAL] landing→completed 薄封装，保留为 API 完整性。D3 交接原子化后主线
+   * 终态在 submitFirstMessage 交接点定格（setActiveSession + loadPanel + pushChat 完成
+   * 即 transition('completed')，见其内注释），本函数不再处于首发主线。
+   * completed 后实例销毁，⌘N 再触发重建（AC-3.6/3.12）。
+   */
   function completeFlow(): void {
     transition('completed')
   }

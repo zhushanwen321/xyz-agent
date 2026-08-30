@@ -10,6 +10,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { isPackaged } from '../../utils/runtime-env.js'
+import { buildOutboundChildEnv } from '../spawn-env.js'
 
 // Find pi executable path (cross-platform). Search order:
 // Packaged: Resources/pi/pi-<plat>-<arch>
@@ -72,7 +73,11 @@ function findDevResourcesPi(projectRoot: string, binaryName: string): string | u
 function findPiOnPath(isWindows: boolean): string | undefined {
   try {
     const whichCmd = isWindows ? 'where pi' : 'which pi'
-    const which = execSync(whichCmd, { encoding: 'utf-8' }).trim()
+    const which = execSync(whichCmd, {
+      encoding: 'utf-8',
+      // C-proc-09：出站契约构建器组装 env（which/where 只读探测，仅需 PATH）
+      env: buildOutboundChildEnv({ parentEnv: process.env }),
+    }).trim()
     // Windows 'where' may return multiple lines, take first
     const firstMatch = which.split('\n')[0].trim()
     if (firstMatch && existsSync(firstMatch)) return firstMatch

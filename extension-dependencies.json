@@ -239,7 +239,7 @@
         {
           "package": "@zhushanwen/pi-pending-notifications",
           "type": "optional",
-          "reason": "运行时经 EventBus emit pending:register/pending:unregister + pi.sendMessage 完成通知（代码层零 import，经 notify.ts 模块级 pi 引用投递）；未加载时通知链路缺失但 bash 后台功能完整（D16 peer 门槛：package.json peerDependencies 声明 optional 版本门槛 workspace:*，发布时解析为实际版本；pi 0.84.1 无已加载 extensions 枚举 API，运行时检测降级为静态声明）"
+          "reason": "运行时经 EventBus emit pending:register/pending:unregister + pi.sendMessage 完成通知（代码层零 import，经 notify.ts 模块级 pi 引用投递）；未加载时通知链路缺失但 bash 后台功能完整（D16 peer 门槛：package.json peerDependencies 声明 optional 版本门槛 workspace:*，发布时解析为实际版本；pi 0.84.1 核实时点无已加载 extensions 枚举 API、后续版本未重验，运行时检测降级为静态声明）"
         }
       ]
     }

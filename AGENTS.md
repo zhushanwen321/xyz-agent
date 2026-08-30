@@ -20,12 +20,12 @@ Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构分层�
 | pi 边界可靠性（语义吸收层四支柱） | [docs/design/pi-boundary-reliability.md](docs/design/pi-boundary-reliability.md)（能力注册表 / 生效回执 / 确认式送达 / 漂移守卫；决策记录 [ADR-0064](docs/adr/0064-pi-semantic-absorption-layer.md)，约束登记 C-pi-12 / C-pi-13 / C-ext-19 / C-proc-08） |
 | 功能开发地图（启动新 Phase 前更新） | [docs/feature-map/](docs/feature-map/)（最新 2026-08-28.md） |
 | 测试策略 SSOT | [TEST-STRATEGY.md](TEST-STRATEGY.md) + [docs/testing/](docs/testing/)（00 总览入口；testid 清单/调用链/已知坑） |
-| Release Notes 写作规范 | [docs/release-notes.md](docs/release-notes.md)（merge 阶段 5 撰写 notes 前必读：三节结构 / 30 字模糊化 / 工程细节不进 note） |
+| Release Notes 写作规范 | 全局规范 SSOT `~/.agents/guide/release-notes.md`（三节结构 / 30 字模糊化 / 双语强制；merge 阶段 5 撰写 notes 前必读）+ 项目特化 [docs/release-notes.md](docs/release-notes.md)（展示位 / release.sh 草稿行为） |
 | 问题排查（日志/诊断/常见问题/历史排查规则） | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | Pi Extension 开发 | [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（指南）· [extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）· [logging-conventions.md](docs/extensions/logging-conventions.md)（日志现行 SSOT）· [glossary.md](docs/extensions/glossary.md) · [local-dev-guide.md](docs/extensions/local-dev-guide.md) |
 | 待执行架构任务 | [docs/todo/remote-use-merge-architecture.md](docs/todo/remote-use-merge-architecture.md)（合并 remote-use 后删除） |
 
-**外部依赖 pi**：[badlogic/pi-mono](https://github.com/badlogic/pi-mono) 上游（npm `@earendil-works/pi-coding-agent@0.84.1`，曾用 fork xyz-pi 已切回）。**[MANDATORY] 不修改 pi 源码、不提 PR、不 fork**——pi 没有的能力由 xyz-agent 自实现。**pi 语义断言的权威源 = node_modules 实装版**（断言前 `npm ls @earendil-works/pi-coding-agent` 核对版本，以 dist 编译 JS 为准）；clone `~/Code/git-fork/pi-mono-workspace/main/packages/`（coding-agent/src 核心逻辑、ai/src/providers provider 层）仅作可读 TS 参照，引用前须核对 clone 版本与实装一致（clone 领先/落后实装均属常态——曾因按 0.80.3 clone 断言 0.84.1 行为连产 4 条漂移 bug，审计 C #6）。不靠网络搜索。pi 版本 bump 受 C-proc-08 版本门禁机器拦截（`node scripts/check-pi-semantics.mjs`：四包版本一致 + verifiedWith 比对 + 探针族重验；升级 PR 必查 pi-ai exports 的 `./compat` 与 changelog ModelManager 迁移——登记细节以 constraints.json 为准）。
+**外部依赖 pi**：[badlogic/pi-mono](https://github.com/badlogic/pi-mono) 上游（npm `@earendil-works/pi-coding-agent@0.84.4`，曾用 fork xyz-pi 已切回）。**[MANDATORY] 不修改 pi 源码、不提 PR、不 fork**——pi 没有的能力由 xyz-agent 自实现。**pi 语义断言的权威源 = node_modules 实装版**（断言前 `npm ls @earendil-works/pi-coding-agent` 核对版本，以 dist 编译 JS 为准）；clone `~/Code/git-fork/pi-mono-workspace/main/packages/`（coding-agent/src 核心逻辑、ai/src/providers provider 层）仅作可读 TS 参照，引用前须核对 clone 版本与实装一致（clone 领先/落后实装均属常态——曾因按 0.80.3 clone 断言 0.84.1 行为连产 4 条漂移 bug，审计 C #6）。不靠网络搜索。pi 版本 bump 受 C-proc-08 版本门禁机器拦截（`node scripts/check-pi-semantics.mjs`：四包版本一致 + verifiedWith 比对 + 探针族重验；升级 PR 必查 pi-ai exports 的 `./compat` 与 changelog ModelManager 迁移——登记细节以 constraints.json 为准）。构建期派生锚点（build.yml env / prepare 脚本默认值 / 快照 / extensions peerDeps / KNOWN_PI_API_TYPES / pi-tui）由 `node scripts/check-pi-sync.mjs` 守卫跟随（约束登记 C-build-07，pre-commit 按路径触发 + CI invariants）——升级 pi 后必须执行 `pnpm gen:builtin-providers` 重生成快照并随升级 PR 提交，锚点漏同步会被守卫拦截。
 
 **Pi Extension 源码（本项目维护）**：`extensions/` 下 20 个 `@zhushanwen/pi-*` 包，按职责分两组（约定见 [extension-conventions.md](docs/extensions/extension-conventions.md)「目录分组」）+ `extensions/shared/` 共享库（llm-shared / extension-logger / file-lock），统一在本仓开发发布（旧仓 xyz-pi-extensions-workspace 已废弃，以本仓为准）。分组（package.json `xyz-agent.role` 字段必须与所在分组一致，`scripts/check-extension-dependencies.mjs` 校验）：
 
@@ -89,6 +89,7 @@ bash scripts/validate-runtime-bundle.sh    # runtime bundle 深度验证
 
 16. **Plugin System**：PluginService 是唯一适配层（WS → server.ts → PluginService）；trusted 插件跑 Worker Thread、sandbox 跑独立 fork 子进程；hook 按 priority 串行（单 handler 5s 超时放行）；sessionData 写入 debounce 缓存 + shutdown flushAll；WS 命名 Client→Server 点号（`plugin.xxx`）/ Server→Client 冒号 camelCase（`plugin:statusBarUpdate`）
 17. **Builtin pi-extensions 打包内置（现行）**： `@zhushanwen/pi-*` 包 esbuild bundle 后 staged 到 `apps/electron/resources/extensions/` 随应用打包（不走 npm 安装；数量以 `packages/shared/src/mandatory-extensions.json` SSOT 为准，不在此写死）。清单 SSOT = `packages/shared/src/mandatory-extensions.json`（infrastructure 组不可禁、feature 组可禁、都不可卸，组内包数以该 JSON 为准；守卫抛 `builtin_cannot_*`）。[HISTORICAL] 演化：builtin 依赖 → 推荐安装 → mandatory npm → 打包内置（2026-08-12）；「删除打包所需依赖致产物缺失」教训始终适用（pi binary、builtin 扩展包如 `@zhushanwen/pi-system-prompt` 同理）
+18. **子进程 env 出站契约（C-proc-09）**：进程创建点的子 env 必须经 `buildOutboundChildEnv` 构建（deny 清单剥 `XYZ_AGENT_PACKAGED` / `XYZ_RUNTIME_TOKEN`），与 `ENV_WHITELIST_PREFIXES` 入站准入正交——入站管准入、出站管外泄；守卫 `.githooks/check_spawn_env_boundary.py`，设计依据 [docs/design/env-propagation-boundary.md](docs/design/env-propagation-boundary.md)
 
 ## 测试
 
@@ -137,7 +138,7 @@ agent.md / workflow.js 归位：与 extension 强相关（tools 受限某 extens
 
 - changeset 准则（PR 阶段）：type 是初判最终人工定；body 认真写（进 CHANGELOG）；dep 传播不在 PR 声明（merge 时自动闭包）
 - **[MANDATORY] push tag 后必须验证 CI 产物**：push 发布 tag 后禁直接宣布完成，轮询 CI 验证产物直到脚本 exit 0（预发布 `prerelease-test.sh` 内置 / 正式 `bash scripts/verify-ci-release.sh v<version>`）。exit 非 0 修到 0，禁说「应该没问题」
-- **[MANDATORY] Release Notes 中英双语 + 写作规范**：`<!-- LANG:en -->` 在前 `<!-- LANG:zh -->` 在后，标记独占一行，无标记旧 release 向后兼容；内容规范（三节结构 / 每条 30 字以内面向用户模糊化 / 工程细节不进 note）见 [docs/release-notes.md](docs/release-notes.md)，撰写前必读
+- **[MANDATORY] Release Notes 中英双语 + 写作规范**：`<!-- LANG:en -->` 在前 `<!-- LANG:zh -->` 在后，标记独占一行，无标记旧 release 向后兼容；写作规范 SSOT 在全局指引 `~/.agents/guide/release-notes.md`（三节结构 / 每条 30 字以内面向用户模糊化 / 工程细节不进 note），项目特化补充见 [docs/release-notes.md](docs/release-notes.md)，撰写前必读
 
 ## 跳过检查
 

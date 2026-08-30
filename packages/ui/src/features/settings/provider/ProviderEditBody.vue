@@ -390,7 +390,8 @@ const props = defineProps<{
   oauthSupported?: boolean
 }>()
 const emit = defineEmits<{
-  saved: []
+  /** 保存成功（wroteApiKey=本次写入非空 apiKey，父组件据此做「配置完即自动启用」） */
+  saved: [payload?: { wroteApiKey: boolean }]
   cancel: []
   /** dirty 状态变化（true=有未保存改动）。父组件用于展开切换守卫 */
   dirtyChange: [value: boolean]
@@ -541,10 +542,10 @@ function onAddModel(): void {
 
 /** 保存成功 → toast 反馈 + 上抛 @saved（父组件收起展开行；状态经 onProviders 订阅推回） */
 async function onSave(): Promise<void> {
-  const ok = await save()
-  if (ok) {
+  const result = await save()
+  if (result.ok) {
     toastInfo(t('settings.saved'))
-    emit('saved')
+    emit('saved', { wroteApiKey: result.wroteApiKey })
   }
 }
 </script>

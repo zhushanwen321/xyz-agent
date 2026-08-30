@@ -40,6 +40,8 @@ const configMock = vi.hoisted(() => ({
   getSystemPrompt: vi.fn(() => Promise.resolve({ config: defaultConfig(), corrupted: false })),
   setSystemPrompt: vi.fn((cfg: SystemPromptConfig) => Promise.resolve({ config: cfg, corrupted: false })),
   listProviders: vi.fn(() => Promise.resolve({ providers: [] })),
+  // SettingsModal → ProviderPage onMounted 按需刷新远程模型目录（缺则 unhandled rejection）
+  refreshProviderCatalogs: vi.fn(() => Promise.resolve({ refreshed: [], failed: [] })),
   setSkillDirs: vi.fn(() => Promise.resolve()),
   setAgentDirs: vi.fn(() => Promise.resolve()),
   // wave-oauth：SettingsModal → ProviderPage → useProviderOAuth onMounted 订阅 4 个 auth.* 事件（缺则 TypeError 崩 mount）

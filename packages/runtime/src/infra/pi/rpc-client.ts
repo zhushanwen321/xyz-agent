@@ -3,31 +3,11 @@ import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { RpcTimeoutError } from '../../utils/errors.js'
-import { ENV_WHITELIST_PREFIXES, type ThinkingLevel, type ProviderId } from '@xyz-agent/shared'
+import type { ThinkingLevel, ProviderId } from '@xyz-agent/shared'
+// B3 出站契约唯一构建器（U3 收口点；实现本体在 @xyz-agent/shared，此处走 runtime 门面）
+import { buildOutboundChildEnv } from '../spawn-env.js'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
-
-/** 子进程允许继承的环境变量前缀白名单 — uses shared list */
-const ENV_WHITELIST = ENV_WHITELIST_PREFIXES
-
-/** 构建最小权限的环境变量：只继承白名单前缀 + 额外指定变量 */
-function buildSafeEnv(extras: Record<string, string | undefined>): Record<string, string> {
-  const safe: Record<string, string> = {}
-  for (const [key, value] of Object.entries(process.env)) {
-    // [S4] key.startsWith(prefix) 已覆盖 key === prefix 的精确匹配场景
-    // （任何字符串 s 都满足 s.startsWith(s)===true，如 PATH.startsWith('PATH')），
-    // 故无需再 `|| key === prefix`（该子句恒为冗余）。
-    // 白名单 ENV_WHITELIST_PREFIXES（PATH/HOME/USER/LANG/TERM/NODE_/...）均为「前缀」语义，
-    // 不存在「不以 prefix 开头但精确等于 prefix」的 env 名——确认无 env 丢失风险。
-    if (value !== undefined && ENV_WHITELIST.some(prefix => key.startsWith(prefix))) {
-      safe[key] = value
-    }
-  }
-  for (const [key, value] of Object.entries(extras)) {
-    if (value !== undefined) safe[key] = value
-  }
-  return safe
-}
 
 /**
  * Generic shape of a message received from pi's JSONL stdout.
@@ -175,9 +155,17 @@ export class RpcClient implements IPiEngine {
       ? undefined
       : this.options.model ?? (modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '')
 
-    const env = buildSafeEnv({
-      ...this.options.env,
-    })
+    // B3 出站契约收口（docs/design/env-propagation-boundary.md §5-U3）：白名单过滤父
+    // env 为基座 → extras 在基座之上整体覆盖 → deny 清单兜底剥除 XYZ_AGENT_PACKAGED /
+    // XYZ_RUNTIME_TOKEN。旧私有第二份 buildSafeEnv 已被共享构建器取代（重复实现漂移消灭）。
+    const outboundExtras: Record<string, string> = {}
+    for (const [key, value] of Object.entries(this.options.env ?? {})) {
+      // 旧私有实现对 undefined extras 键跳过不写（「undefined=删除」语义属 main 侧
+      // safe-env）。保留跳过行为：防上游误传 undefined 时吞掉白名单基座继承键
+      // （R2 远距离爆炸防线，如 PATH 被删 → hooks 里 command not found）。
+      if (value !== undefined) outboundExtras[key] = value
+    }
+    const env = buildOutboundChildEnv({ parentEnv: process.env, extras: outboundExtras })
 
     // xyz-pi agent 目录：~/.xyz-agent/pi/agent/
     // 开发模式和打包模式统一使用此目录，不使用系统 pi 的 ~/.pi/agent/

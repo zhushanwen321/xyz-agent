@@ -177,7 +177,31 @@ ls -la ~/.xyz-agent/run/          # dev 用 ~/.xyz-agent-dev
 lsof | grep relay-.*\.sock
 ```
 
-### 9. 升级中断手动恢复（升级脚本 staging 状态机残余窗口）
+### 9. agent 会话内执行 validate-runtime-bundle 失败："Bundled pi binary not found"
+
+**症状**：从 agent 会话内跑 `bash scripts/validate-runtime-bundle.sh` 报
+`[runtime] fatal: relay server init failed: Error: Bundled pi binary not found at <root>/pi/pi-darwin-arm64`
+被 commit 卡住；或 agent 会话内其它依赖「打包态判定」的行为异常（如 `isPackaged()` 返回错误结果）。
+
+**根因**：agent 会话的 shell 环境里泄漏了本不该存在的 `XYZ_AGENT_PACKAGED=1`（打包标记只在 main→runtime
+注入链上有意义；它一且出现在 agent 会话 env 里，会话内再起的 runtime 子进程就会误判自己运行在打包态，按打包路径解析捆绑二进制 → 必然找不到而 fatal）。历史受害链：runtime→pi 的 spawn 曾用整体替换式白名单 env 但未剥出站 deny 键，标志随继承链下潜到所有后代进程。
+
+**治理现状**：已由子进程 env 出站契约治理（C-proc-09）——六个 spawn 点接线经 `buildOutboundChildEnv`
+构建器组装（deny 剥 `XYZ_AGENT_PACKAGED` / `XYZ_RUNTIME_TOKEN`），pre-commit 守卫
+`.githooks/check_spawn_env_boundary.py` 拦截未接线的新增调用点。
+
+**如何确认**：
+```bash
+# 会话内直接查泄漏
+# 会话内直接查泄漏：有输出 = 泄漏确认（出站契约只保证会话内再 spawn 的子进程
+# 不再携带该标志，不影响本会话自身的 env 快照）
+printenv | grep XYZ_AGENT_PACKAGED
+# 旁证对照：剥除后重跑原命令应恢复正常
+env -u XYZ_AGENT_PACKAGED bash scripts/validate-runtime-bundle.sh
+```
+若仍命中，说明该调用点未经出站契约构建器（守卫漏网或存量豁免），带着报错文件行号去
+`.githooks/check_spawn_env_boundary.py` 豁免名单核对。
+### 10. 升级中断手动恢复（升级脚本 staging 状态机残余窗口）
 
 自动升级在换装阶段（备份 mv 与原子换装 mv 之间，毫秒级窗口）被断电/强杀命中时，app 无法自愈（自愈代码运行在 app 进程内，此时无执行机会）：**双击图标无反应、`/Applications` 下 `太极.app` 缺失，同时存在 `太极.app.old` / `太极.app.new`**。`(.old 与 .new 均为完整可用副本，缺失的只是正式位置的名字。)
 
@@ -269,7 +293,7 @@ pi 的 models-store.json 远端目录周期刷新（PS-11）可引入大小写�
 
 ## pi 行为观察项（未验证风险登记，2026-08-20 pi-assumption-remediation W6）
 
-pi 升级（`PI_VERSION` bump）或触碰相关模块时逐条重验；锚点均为实装版（当前 0.84.1，核对方式见 AGENTS.md pi 段查阅规则）。来源：审计报告 A/B（`.xyz-harness/2026-08-19-pi-assumption-audit/`）。
+pi 升级（`PI_VERSION` bump）或触碰相关模块时逐条重验；锚点均为实装版（当前 0.84.4，核对方式见 AGENTS.md pi 段查阅规则）。来源：审计报告 A/B（`.xyz-harness/2026-08-19-pi-assumption-audit/`）。
 
 **机器登记互链（2026-08-28 pi-boundary-reliability）**：本节是人读处置层，每条对应 [docs/pi-semantics.json](pi-semantics.json) 的 PS-xx 条目（唯一机器源：probe 型配探针测试，observe 型即本节处置建议）；pi 升级时 `node scripts/check-pi-semantics.mjs`（pre-commit + CI）自动门禁版本漂移。机制描述不双写——语义断言与 pi 锚点的权威源是 json，本节只留处置建议。
 

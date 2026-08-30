@@ -21,7 +21,7 @@
  *   never-default 分支 + case 可比性双向编译期保证（tsc --noEmit 通过即证）；运行时侧对
  *   真实 get_entries 产物做成员资格断言（pi 出现清单外新 entry 类型 → 红）。
  *
- * D5 探针定论固化（交付物 2）：真实对话 N 事件 0 条 entry_appended——「entry_appended 对
+ * D5 探针定论固化（交付物 2）：真实对话 N 事件 0 条 message 载体 entry_appended——「entry_appended 对
  * message entry 不发射」是当前契约。上游若补发射此断言红 → 触发 W21 预留的换源适配
  * （message_end 流不再是等价源），而非静默分叉。
  *
@@ -254,7 +254,7 @@ describe.skipIf(!REAL_PI_READY)(
   )
 
   it(
-    '② 事件面五事件真实发射 + D5 固化（N 事件 0 条 entry_appended）+ ③ entry 面穷举',
+    '② 事件面五事件真实发射 + D5 固化（N 事件 0 条 message 载体 entry_appended）+ ③ entry 面穷举',
     { timeout: TEST_TIMEOUT_MS },
     async () => {
       const fx = await spawnPiFixture()
@@ -297,14 +297,20 @@ describe.skipIf(!REAL_PI_READY)(
         expect(fx.collectEvents((e) => e.type === t).length).toBeGreaterThan(0)
       }
 
-      // ── D5 固化（交付物 2）：entry_appended 对 message entry 不发射是当前契约。
+      // ── D5 固化（交付物 2）：message entry 不经 entry_appended 广播是当前契约。
       //    上面整段操作（改名 → entry 持久化、切 thinking → entry 持久化、真实对话 →
-      //    message entry 持久化）产生 N 条事件流 + M 条持久化 entry，其中 entry_appended
-      //    必须为 0——上游若补发射，此断言红 → 走 W21 预留换源适配，而非静默分叉。
+      //    message entry 持久化）产生 N 条事件流 + M 条持久化 entry，其中不得出现 message
+      //    载体的 entry_appended——上游若补发射，此断言红 → 走 W21 预留换源适配，而非静默分叉。
+      //    [2026-08 pi 0.84.4 升级核实] 断言从「0 条 entry_appended」收窄为「0 条 message 载体」：
+      //    fixture 虽锁定无 --extension 参数，pi 全局扩展发现仍会加载 ~/.pi/agent 下已装扩展
+      //    （如实测环境的 cache-probe），其 appendEntry 的 custom 载体广播属 extension 行为，
+      //    不构成上游 message 语义漂移——A/B 对照（0.84.1 vs 0.84.4）确认 pi 两侧均未补发。
       const allEvents = fx.collectEvents()
       expect(allEvents.length).toBeGreaterThanOrEqual(10) // 非空转守卫（实测 ~25+）
-      const entryAppended = fx.collectEvents((e) => e.type === 'entry_appended')
-      expect(entryAppended).toHaveLength(0)
+      const messageEntryAppended = fx
+        .collectEvents((e) => e.type === 'entry_appended')
+        .filter((e) => (e['entry'] as Record<string, unknown> | undefined)?.['type'] === 'message')
+      expect(messageEntryAppended).toHaveLength(0)
 
       // ── ③ entry 面：真实 get_entries 产物 ──
       const entriesResp = await fx.sendCommand('get_entries')

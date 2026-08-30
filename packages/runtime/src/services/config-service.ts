@@ -72,6 +72,10 @@ import {
   type SetProviderInput,
 } from './provider-config-helper.js'
 import {
+  refreshProviderCatalogs as refreshProviderCatalogsImpl,
+  type CatalogRefreshResult,
+} from './provider-catalog-refresh.js'
+import {
   loadSkills as loadSkillsImpl,
   saveSkills as saveSkillsImpl,
   upsertSkill as upsertSkillImpl,
@@ -148,6 +152,18 @@ export class ConfigService implements IConfigService {
 
   listProviders(): ProviderInfo[] {
     return listProvidersImpl(this.configStore, this.authStorage, this.providerExtrasStore)
+  }
+
+  /**
+   * 远程模型目录按需刷新（settings-provider 页进入时触发）。
+   * 刷新范围 = 当前聚合列表内的 catalog provider（有凭据/已配置的才会出现在列表里）。
+   * 完成后调用方（settings-message-handler）负责 reply + broadcastProviderList。
+   */
+  async refreshProviderCatalogs(): Promise<CatalogRefreshResult> {
+    const catalogIds = this.listProviders()
+      .filter(p => p.kind === 'catalog')
+      .map(p => p.id)
+    return refreshProviderCatalogsImpl(catalogIds)
   }
 
   listBuiltinProviders(): BuiltinProviderTemplate[] {

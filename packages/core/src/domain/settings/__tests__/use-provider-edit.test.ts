@@ -278,8 +278,9 @@ describe('save 校验/成功/失败 + apiKey 哨兵', () => {
     const providerRef = ref<ProviderInfo | null>(null)
     const edit = mount(providerRef)
     await nextTick()
-    const ok = await edit.save()
-    expect(ok).toBe(false)
+    const result = await edit.save()
+    expect(result.ok).toBe(false)
+    expect(result.wroteApiKey).toBe(false)
     expect(tStub).toHaveBeenCalledWith('composable.providerNameRequired')
     expect(getTransport().setProvider).not.toHaveBeenCalled()
   })
@@ -291,8 +292,9 @@ describe('save 校验/成功/失败 + apiKey 哨兵', () => {
     edit.form.name = 'P1-renamed'
     edit.form.apiKey = ''
     edit.form.authHeader = true
-    const ok = await edit.save()
-    expect(ok).toBe(true)
+    const result = await edit.save()
+    expect(result.ok).toBe(true)
+    expect(result.wroteApiKey).toBe(false)
     expect(getTransport().setProvider).toHaveBeenCalledWith('p1', {
       name: 'P1-renamed',
       type: 'anthropic-messages',
@@ -306,22 +308,24 @@ describe('save 校验/成功/失败 + apiKey 哨兵', () => {
     })
   })
 
-  it('apiKey 哨兵 → 发送空串（清空语义 D18）', async () => {
+  it('apiKey 哨兵 → 发送空串（清空语义 D18），wroteApiKey=false（清除不是配置）', async () => {
     const providerRef = ref<ProviderInfo | null>(makeProvider())
     const edit = mount(providerRef)
     await nextTick()
     edit.form.apiKey = API_KEY_CLEAR_SENTINEL
-    await edit.save()
+    const result = await edit.save()
+    expect(result.wroteApiKey).toBe(false)
     const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
     expect(arg.apiKey).toBe('')
   })
 
-  it('apiKey 非空 → 原值透传', async () => {
+  it('apiKey 非空 → 原值透传，wroteApiKey=true（自动启用信号）', async () => {
     const providerRef = ref<ProviderInfo | null>(makeProvider())
     const edit = mount(providerRef)
     await nextTick()
     edit.form.apiKey = 'sk-xyz'
-    await edit.save()
+    const result = await edit.save()
+    expect(result.wroteApiKey).toBe(true)
     const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
     expect(arg.apiKey).toBe('sk-xyz')
   })
@@ -341,8 +345,9 @@ describe('save 校验/成功/失败 + apiKey 哨兵', () => {
     const edit = mount(providerRef)
     await nextTick()
     getTransport().setProvider = vi.fn(async () => { throw new Error('save failed') })
-    const ok = await edit.save()
-    expect(ok).toBe(false)
+    const result = await edit.save()
+    expect(result.ok).toBe(false)
+    expect(result.wroteApiKey).toBe(false)
     expect(edit.actionError.value).toBe('save failed')
     expect(edit.saving.value).toBe(false)
   })
@@ -544,8 +549,8 @@ describe('B-1 凭证形态（form.authMethod）', () => {
     await nextTick()
     edit.form.authMethod = 'api_key'
     edit.form.apiKey = '' // 未填新 key
-    const ok = await edit.save()
-    expect(ok).toBe(false)
+    const result = await edit.save()
+    expect(result.ok).toBe(false)
     expect(tStub).toHaveBeenCalledWith('composable.oauthSwitchNeedsKey')
     expect(getTransport().setProvider).not.toHaveBeenCalled()
   })
@@ -556,8 +561,9 @@ describe('B-1 凭证形态（form.authMethod）', () => {
     await nextTick()
     edit.form.authMethod = 'api_key'
     edit.form.apiKey = 'sk-new'
-    const ok = await edit.save()
-    expect(ok).toBe(true)
+    const result = await edit.save()
+    expect(result.ok).toBe(true)
+    expect(result.wroteApiKey).toBe(true)
     const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
     expect(arg.authMethod).toBe('api_key')
     expect(arg.apiKey).toBe('sk-new')
@@ -681,8 +687,8 @@ describe('B-4b 模型级字段 round-trip（load 编辑副本 + save payload 回
     const providerRef = ref<ProviderInfo | null>(makeProvider({ models: RICH_MODELS }))
     const edit = mount(providerRef)
     await nextTick()
-    const ok = await edit.save()
-    expect(ok).toBe(true)
+    const result = await edit.save()
+    expect(result.ok).toBe(true)
     const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
     const rich = (arg.models as Array<Record<string, unknown>>).find(m => m.id === 'm-rich')
     expect(rich).toMatchObject({
@@ -731,8 +737,9 @@ describe('S8 OAuth 授权完成广播 × isDirty 竞态（authMethod 单字段�
 
     // 快照 authMethod 位已重拍：保存 payload authMethod='oauth'，apiKey 空 → undefined
     // （不覆写刚登录的 oauth 凭证）
-    const ok = await edit.save()
-    expect(ok).toBe(true)
+    const result = await edit.save()
+    expect(result.ok).toBe(true)
+    expect(result.wroteApiKey).toBe(false)
     const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
     expect(arg.authMethod).toBe('oauth')
     expect(arg.apiKey).toBeUndefined()

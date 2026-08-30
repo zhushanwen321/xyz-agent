@@ -12,22 +12,18 @@
 // 编译本 schema 并断言 required/description/enum/pattern 存活——SW 自身测试环境
 // 把 typebox alias 到 mock（丢 options），SO 侧测试以真实构造为对照基准。
 //
-// 层归属：Interface（工具 schema 的家）。SLUG_MAX_LENGTH 随 schema 迁入：
-// 它的唯一语义就是 tool schema 的 maxLength（见原 execute-options-mapper 注释），
-// execution 侧经 re-export 保持既有 import 路径不变。
+// 层归属：Interface（工具 schema 的家）。SLUG_MAX_LENGTH 权威定义回归 core 侧
+// execution/execute-options-mapper.ts（subagent-core 包抽离 u1-move：core 切面不得
+// 反向 import 壳侧 interface，常量随之内化）——此处 re-export 保持既有 import 路径。
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 
-import { THINKING_ORDER } from "../shared/model-ref.ts";
+import { THINKING_ORDER } from "@zhushanwen/subagent-core/shared/model-ref.ts";
 
-/**
- * slug 最大长度（字符）。subagent/workflow 创建时 slug 超过此值会被截断。
- * subagent/workflow tool schema 的 maxLength 引用此常量（单一真相，勿再硬编码）。
- * 历史值 20 偏紧——描述性 slug 如 "audit-structured-output"（23）/"fix-subagent-wf-tools"（21）
- * 会撞上限，放宽到 35 兼顾「短到能塞进 TUI 标题行」与「容纳合理描述性 kebab-case 名」。
- */
-export const SLUG_MAX_LENGTH = 35;
+import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
+
+export { SLUG_MAX_LENGTH };
 
 // Params schema（跨包契约测试的真实 typebox 校验入口）。
 //
@@ -42,8 +38,8 @@ export const SLUG_MAX_LENGTH = 35;
 // （subagent_start / subagent_list / subagent_cancel），让每个 tool 的 schema 真实
 // 反映必填性。勿在此基础上继续堆 action 条件逻辑——要加就拆 tool。
 export const SubagentParams = Type.Object({
-  action: StringEnum(["start", "list", "cancel", "message", "close"], {
-    description: "Operation: 'start' runs a subagent, 'list' shows subagents, 'cancel' stops a background subagent, 'message' sends a follow-up to a running subagent (one-shot subagents are auto-upgraded to conversation mode on first message), 'close' ends a running subagent (conversation-mode or one-shot).",
+  action: StringEnum(["start", "list", "cancel", "message", "close", "fork-from"], {
+    description: "Operation: 'start' runs a subagent, 'list' shows subagents, 'cancel' stops a background subagent, 'message' sends a follow-up to a running subagent (one-shot subagents are auto-upgraded to conversation mode on first message), 'close' ends a running subagent (conversation-mode or one-shot), 'fork-from' spawns a NEW subagent inheriting an older one's history (recovery for restart-disconnected subagents; the old record is untouched).",
   }),
   // ── action:"start" fields (flattened to top level). task/slug REQUIRED for start. ──
   // Missing/empty task or slug throws at runtime (startHandler).
@@ -148,6 +144,17 @@ export const SubagentParams = Type.Object({
     }),
     force: Type.Optional(Type.Boolean({
       description: "If true, terminate immediately even if mid-round (in-progress work is lost). If false (default), let the current round finish, then close. When idle, the subagent closes immediately regardless.",
+    })),
+  })),
+  // action:"fork-from" → forkFromParam.sourceSubagentId REQUIRED ([v8.5 B] 断联恢复通道).
+  // 从旧 subagent 的会话历史 spawn 新 id：新进程 --fork 指向旧 session 文件（copy-on-write，
+  // 源文件只读不续写）；旧记录/状态机不动。pi 引擎限定（非 pi 在 execute 层拒绝）。
+  forkFromParam: Type.Optional(Type.Object({
+    sourceSubagentId: Type.String({
+      description: "REQUIRED for action:'fork-from'. The OLD subagentId whose conversation history becomes the inherited context of the new subagent. Works for records disconnected by a session restart or already finished; cancelled/worktree-bound/still-running ones are rejected with guidance.",
+    }),
+    prompt: Type.Optional(Type.String({
+      description: "Continuation instruction for the new subagent (what to do next on top of the inherited history). When omitted, a standard handover frame is injected: reconstruct done/decided/remaining from the inherited history, then continue to completion. Whitespace-only treated as omitted.",
     })),
   })),
 });

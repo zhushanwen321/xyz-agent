@@ -87,6 +87,31 @@ describe("builtin-ext-bundle (wave:builtin-ext-bundle)", () => {
 		expect(agentFiles.length, "agents/ 含 agent .md 文件（拷贝了内容）").toBeGreaterThan(0);
 		const skillEntries = existsSync(skillsDir) ? readdirSync(skillsDir, { withFileTypes: true }).filter((e) => e.isDirectory()) : [];
 		expect(skillEntries.length, "skills/ 含 skill 子目录（拷贝了内容）").toBeGreaterThan(0);
+
+		// staged workflows/（u1-staged 起源 packages/subagent-core/workflows/，bundle 经
+		// cp recursive 全量拷贝）与源目录文件集合一致且逐文件同字节（含 _shared/ 递归）
+		// ——对齐「逐字节一致」验收语义：拷贝环节任何过滤/截断/编码漂移在此拦截。
+		const wfSrcDir = join(REPO, "packages/subagent-core/workflows");
+		const wfStagedDir = join(swDir, "workflows");
+		expect(existsSync(wfStagedDir), "staged workflows/ 目录存在").toBe(true);
+		/** 递归收集目录下全部文件的相对路径（含子目录，如 _shared/） */
+		function listWorkflowFiles(dir, prefix = "") {
+			const out = [];
+			for (const e of readdirSync(dir, { withFileTypes: true })) {
+				const rel = prefix ? `${prefix}/${e.name}` : e.name;
+				if (e.isDirectory()) out.push(...listWorkflowFiles(join(dir, e.name), rel));
+				else out.push(rel);
+			}
+			return out;
+		}
+		const wfSrcFiles = listWorkflowFiles(wfSrcDir).sort();
+		const wfStagedFiles = listWorkflowFiles(wfStagedDir).sort();
+		expect(wfStagedFiles, "staged workflows 文件集合与源一致").toEqual(wfSrcFiles);
+		for (const f of wfSrcFiles) {
+			const srcBuf = readFileSync(join(wfSrcDir, f));
+			const stagedBuf = readFileSync(join(wfStagedDir, f));
+			expect(stagedBuf.equals(srcBuf), `workflows/${f} 逐字节一致`).toBe(true);
+		}
 	});
 });
 

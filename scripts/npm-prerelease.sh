@@ -88,6 +88,18 @@ fi
 
 log "前置检查通过: main 分支, 工作区干净, gh 已认证, changeset 已初始化"
 
+# ── 阶段 1.5: subagent-core dist 回归门（D9-②）──
+# 发布任何包前强制走 npm 消费者视角最小回路（build → require CJS dist → golden
+# 回放免 LLM）：发布带 workspace 依赖的包时 changeset 会把 workspace:* 替换为
+# 已发布版本，subagent-core dist 若已坏会随发布扩散到消费端（V7 机制产品化）。
+# 放在分支/changeset 变更之前 fail-fast——门失败时不产生任何 git/版本残留。
+# 只写 gitignored 的 dist/ 与 node_modules，不弄脏工作区。实测 ~5s。
+log "=== 阶段 1.5/6: subagent-core dist 回归门 ==="
+if ! node "$SCRIPT_DIR/smoke-core-dist.mjs"; then
+  err "subagent-core dist 回归门未通过（D9-②）——按上方输出修复后重跑"
+  exit 1
+fi
+
 # ── 阶段 2/6: 创建 dev 分支 + 生成 prerelease changeset ──
 log "=== 阶段 2/6: 生成 prerelease changeset ==="
 

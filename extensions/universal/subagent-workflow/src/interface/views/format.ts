@@ -7,10 +7,10 @@
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
-import type { AgentEventLogEntry } from "../../execution/types.ts";
-import type { ExecutionTraceNode, ToolCallEntry } from "../../orchestration/models/types.ts";
-import type { DoneReason, RunStatus } from "../../orchestration/models/types.ts";
-import { displayAgentName } from "../../shared/agent-ref.ts";
+import type { AgentEventLogEntry } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { ExecutionTraceNode, ToolCallEntry } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
+import type { DoneReason, RunStatus } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
+import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
 
 // ── Constants ─────────────────────────────────────────────────
 

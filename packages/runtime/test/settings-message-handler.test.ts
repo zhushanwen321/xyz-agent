@@ -43,6 +43,10 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     // config.setScopedModels 写入口（scoped-model design）：默认执行 handler 传入的写入函数
     modifyScopedModels: overrides.modifyScopedModels ?? vi.fn(async (fn: (current: string[]) => string[]) => fn([])),
     applyImportProviders: overrides.applyImportProviders ?? vi.fn().mockResolvedValue({ result: {} }),
+    // D9：applyImportProviders 成功路径 fire-and-forget 调 refreshProviderCatalogs（完成后二次
+    // 广播 provider 列表）。mock 缺失会在成功分支同步 TypeError 中断 handler（Gate A 曾 3 failed）。
+    // 返回形态对齐真实 configService.refreshProviderCatalogs（CatalogRefreshResult）。
+    refreshProviderCatalogs: vi.fn().mockResolvedValue({ refreshed: [], failed: [] }),
     getProvider: vi.fn().mockReturnValue(undefined),
     updateToolPermissions: vi.fn(),
     loadSkills: vi.fn().mockReturnValue([]),

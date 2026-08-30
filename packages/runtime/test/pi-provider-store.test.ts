@@ -30,6 +30,10 @@ import {
 } from '../src/infra/pi/pi-provider-store.js'
 import { setSettingsPath } from '../src/infra/pi/pi-settings-store.js'
 import { setDiscoveryPath } from '../src/infra/pi/discovery-store.js'
+import builtinData from '../src/generated/builtin-providers.json'
+
+// 快照 catalog 数据构建时刻（D5 三态测试的 staleness 判定基准）
+const GENERATED_AT = (builtinData as { catalogGeneratedAt?: number }).catalogGeneratedAt ?? 0
 
 const mkdtempP = promisify(mkdtemp)
 const rmP = promisify(rm)
@@ -39,6 +43,10 @@ let tmpDir: string
 beforeEach(async () => {
   tmpDir = await mkdtempP(join(tmpdir(), 'pi-provider-store-test-'))
   mkdirSync(join(tmpDir, 'pi', 'agent'), { recursive: true })
+  // overlay 读侧（provider-catalog-refresh）与 auth.json 读经 getDataDir()/getPiAgentDir()
+  // 实时解析 env，必须隔离到 tmpDir——否则 findValidDefaultModel 三态判定会读到真实
+  // ~/.xyz-agent 的 overlay 缓存，态归属随开发机环境漂移（非确定性测试）。
+  process.env.XYZ_AGENT_DATA_DIR = tmpDir
   setModelsPath(join(tmpDir, 'pi', 'agent', 'models.json'))
   setSettingsPath(join(tmpDir, 'pi', 'agent', 'settings.json'))
   // [HISTORICAL] discovery.json 也必须隔离，否则 setSkillPaths 写真实路径污染用户数据。
@@ -51,6 +59,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  delete process.env.XYZ_AGENT_DATA_DIR
   await rmP(tmpDir, { recursive: true, force: true })
 })
 
@@ -315,10 +324,44 @@ describe('pi-provider-store — models.json', () => {
       expect(getDefaultModel()).toEqual({ provider: 'anthropic', modelId: 'claude-opus' })
     })
 
-    it('getDefaultModel auto-fixes invalid default', () => {
+    it('D5 态 3 演进：default 无效且 overlay 从未见过 → pass-through 不改写（原「auto-fix 回退首个 model」被 D5 取代）', () => {
       setDefaultModel('anthropic' as ProviderId, 'nonexistent-model')
+      // 本用例不构造任何 overlay 条目（XYZ_AGENT_DATA_DIR 已隔离到空 tmpDir）→ anthropic
+      // 处于 never-seen 态。D5 裁定：pass-through 不判定有效性、不 auto-fix、不改写
+      // settings，`--model` 直传 pi 由执行侧解析。旧行为（回退 provider 第一个 model 并
+      // 落盘改写）正是设计文档「失败模式 A」同族：静默改写用户显式配置。
+      const settingsPath = join(tmpDir, 'pi', 'agent', 'settings.json')
+      const before = readFileSync(settingsPath, 'utf-8')
+
       const result = getDefaultModel()
-      expect(result?.modelId).toBe('claude-sonnet') // 回退到 provider 第一个 model
+
+      expect(result).toEqual({ provider: 'anthropic', modelId: 'nonexistent-model' })
+      expect(readFileSync(settingsPath, 'utf-8')).toBe(before) // settings 逐字节不变（禁改写）
+    })
+
+    it('D5 态 1 对照：overlay 新鲜 → 无效 default 仍 auto-fix 回退 override 首项（原测试意图的三态存续形态）', () => {
+      // anthropic 的 fresh overlay 条目（lastModified 晚于快照 catalogGeneratedAt）→
+      // 合并视图裁定生效：nonexistent-model 不在合并视图 → 真无效 → 允许 auto-fix，
+      // 回退 override 首项（即原断言值 claude-sonnet）
+      writeFileSync(
+        join(tmpDir, 'provider-catalog-overlay.json'),
+        JSON.stringify({
+          version: 1,
+          entries: {
+            anthropic: {
+              models: [{ id: 'claude-from-overlay' }],
+              checkedAt: 1,
+              lastModified: GENERATED_AT + 1000,
+            },
+          },
+        }),
+      )
+      setDefaultModel('anthropic' as ProviderId, 'nonexistent-model')
+
+      const result = getDefaultModel()
+
+      expect(result).toEqual({ provider: 'anthropic', modelId: 'claude-sonnet' })
+      expect(readSettings().defaultModel).toBe('claude-sonnet') // auto-fix 落盘
     })
 
     it('enabledModels round-trip', () => {

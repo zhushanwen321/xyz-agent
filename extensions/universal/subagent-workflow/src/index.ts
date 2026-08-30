@@ -20,37 +20,47 @@ import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext, SessionComp
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
-import { bestEffort } from "./execution/best-effort.ts";
+// ═══ core 宿主端口接线（subagent-core 包抽离 u0-wire；实现见 src/host/pi-host.ts） ═══
+import { configureCore } from "@zhushanwen/subagent-core/core/host-services.ts";
+import { configureNotifyDomain } from "@zhushanwen/subagent-core/core/notify-ports.ts";
+import { createPiHostServices, createPiNotifyDomainPorts } from "./host/pi-host.ts";
+
+import { bestEffort } from "@zhushanwen/subagent-core/execution/best-effort.ts";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
-import { getOrCreateChannelRegistry } from "./execution/channel-registry-access.ts";
-import { DialogGlobalQueue } from "./execution/dialog-queue.ts";
+import { getOrCreateChannelRegistry } from "@zhushanwen/subagent-core/execution/channel-registry-access.ts";
+import { DialogGlobalQueue } from "@zhushanwen/subagent-core/execution/dialog-queue.ts";
+// [engine-awareness U3] 全局 config 三态读取（检测 poll 与 session_start 基线共用）
+import { readGlobalConfig } from "@zhushanwen/subagent-core/execution/config.ts";
 // [U7] 引擎列表状态文件（registry → engines.json，GUI 引擎选择器数据源）
-import { syncEnginesFile } from "./execution/engine/engine-discovery.ts";
+import { syncEnginesFile } from "@zhushanwen/subagent-core/execution/engine/engine-discovery.ts";
 // [U7] 引擎模型段注入（defaultEngine 非 pi 时 system prompt 补 <available_<engine>_models>）
-import { buildEngineModelsPromptAppend } from "./execution/engine/model-prompt.ts";
+// [engine-awareness U3] 补恒在状态段 <current_subagent_engine>（D6，pi 引擎也声明）
+import { buildEngineModelsPromptAppend, buildSubagentEngineSection } from "@zhushanwen/subagent-core/execution/engine/model-prompt.ts";
 // [P1 引擎接线] 组合根登记 'pi' 引擎进 registry（引擎获取统一经 getEngine，缺省 id 'pi'）
-import { registerPiEngine } from "./execution/engine/engines/pi/registration.ts";
+import { registerPiEngine } from "@zhushanwen/subagent-core/execution/engine/engines/pi/registration.ts";
 // [P3 引擎接线] 组合根登记 'zcode' 引擎（spawn 单轮模式；engineDataDir 默认走
 // common/data-dir SSOT，见 engines/zcode/registration.ts）
-import { registerZcodeEngine } from "./execution/engine/engines/zcode/registration.ts";
-import { createUiRequestHandlerForMode } from "./execution/ui-request-handler-factory.ts";
+import { registerZcodeEngine } from "@zhushanwen/subagent-core/execution/engine/engines/zcode/registration.ts";
+import { createUiRequestHandlerForMode } from "@zhushanwen/subagent-core/execution/ui-request-handler-factory.ts";
 import {
   getModelConfigService,
   ModelConfigService,
   setModelConfigService,
-} from "./execution/model-config-service.ts";
-import { bindNotifyLedgerHost, getBoundNotifyLedger, type NotifyLedgerHost } from "./execution/notify-ledger.ts";
-import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "./execution/session-reconstructor.ts";
-import type { ExecutionMode, SubagentRecord } from "./execution/types.ts";
-import { maybeCleanupExpiredSessionFiles } from "./execution/session-file-gc.ts";
+} from "@zhushanwen/subagent-core/execution/model-config-service.ts";
+import { bindNotifyLedgerHost, getBoundNotifyLedger, type NotifyLedgerHost } from "@zhushanwen/subagent-core/execution/notify-ledger.ts";
+import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "@zhushanwen/subagent-core/execution/session-reconstructor.ts";
+import type { ExecutionMode, SubagentRecord } from "@zhushanwen/subagent-core/execution/types.ts";
+import { maybeCleanupExpiredSessionFiles } from "@zhushanwen/subagent-core/execution/session-file-gc.ts";
 import {
   getSubagentService,
   setSubagentService,
   SubagentService,
-} from "./execution/subagent-service.ts";
-import { killAllSpawnedChildren } from "./execution/session-runner.ts";
-import { SubprocessAgentRunner } from "./execution/subprocess-agent-runner.ts";
-import { WorktreeManager } from "./execution/worktree-manager.ts";
+} from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import { killAllSpawnedChildren } from "@zhushanwen/subagent-core/execution/session-runner.ts";
+import { SubprocessAgentRunner } from "@zhushanwen/subagent-core/execution/subprocess-agent-runner.ts";
+import { WorktreeManager } from "@zhushanwen/subagent-core/execution/worktree-manager.ts";
+// [engine-awareness U3] per-turn 引擎检测编排（D1/D1b/D2/D3/D5）
+import { normalizeEngineId, runEngineAwarenessTurn } from "./injectors/engine-awareness.ts";
 import { setupModelListInjector } from "./injectors/model-list-injector.ts";
 import { setupSubagentListInjector } from "./injectors/subagent-list-injector.ts";
 import { setupWorkflowListInjector } from "./injectors/workflow-list-injector.ts";
@@ -63,20 +73,20 @@ import { registerSubagentTool } from "./interface/subagent-tool.ts";
 import { registerSubagentsCommand } from "./interface/subagents.ts";
 import { registerWorkflowTool } from "./interface/tool-workflow.ts";
 import { registerWorkflowScriptTool } from "./interface/tool-workflow-script.ts";
-import { JsonlRunStore } from "./orchestration/jsonl-run-store.ts";
-import { clearSkillPathCache } from "./orchestration/skill-discovery.ts";
+import { JsonlRunStore } from "./jsonl-run-store.ts";
+import { clearSkillPathCache } from "@zhushanwen/subagent-core/orchestration/skill-discovery.ts";
 // ═══ orchestration/ 层（workflow engine + infra） ═══
-import type { LauncherDeps } from "./orchestration/launcher.ts";
-import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "./orchestration/launcher.ts";
+import type { LauncherDeps } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
+import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
 import {
   evictDoneRunsBeyondCap,
   MAX_RETAINED_DONE_RUNS,
   scheduleTimeBudget,
   terminateRunningRuns,
-} from "./orchestration/lifecycle.ts";
-import type { WorkflowRun } from "./orchestration/models/workflow-run.ts";
-import { WorkerHostImpl } from "./orchestration/worker-host.ts";
-import { WorkflowScriptRegistryImpl } from "./orchestration/workflow-script-registry-impl.ts";
+} from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
+import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { WorkerHostImpl } from "@zhushanwen/subagent-core/orchestration/worker-host.ts";
+import { WorkflowScriptRegistryImpl } from "@zhushanwen/subagent-core/orchestration/workflow-script-registry-impl.ts";
 
 // ── pi.__workflowRun 类型扩展（D-8 签名） ─────────────────
 
@@ -169,6 +179,14 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // 注入 pi handle 给全局 extension-logger，让深层代码（best-effort / error-recovery）
   // 的 getLogger("subagents") 也能走 appendEntry。
   setPiHandle(pi);
+
+  // [u0-wire] core 宿主端口接线：本波端口尚无 core 消费方（消费切换在 u0-log /
+  // u0-data-discovery / u0-notify 波次），接线本身零行为变化。紧随 setPiHandle——
+  // core log 桥接走 pi-extension-logger，其 pi handle 先注入则配置完成即桥接链路
+  // 完整；且先于任何可能消费 core 端口的初始化逻辑（引擎登记等）。缺省态若被消费，
+  // dataRoot 抛 core_host_not_configured（§3.4），接线后不再可达。
+  configureCore(createPiHostServices());
+  configureNotifyDomain(createPiNotifyDomainPorts());
 
   // [P1 引擎接线] 组合根登记缺省引擎：进程级 SubagentService 单例（session_start 注入）
   // 经 registry 以 'pi' 暴露——引擎获取从此统一走 getEngine(DEFAULT_ENGINE_ID)，上层
@@ -267,6 +285,10 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
        *  workflow 域启动时 fail-fast，避免后续 store.save 再次失败导致 run 状态不落地。
        *  subagent 域不依赖 store，不受此标志影响。 */
       storeHealthy: boolean;
+      /** [engine-awareness D1b] 上一次已知默认引擎（session_start 初始化，per-turn 检测
+       *  diff 基准）。undefined = 初始化时 config 读失败——首 turn 检测遇 undefined
+       *  静默基线化，不算变更、不发通知（防首 turn 伪通知）。 */
+      lastEngine?: string;
     }
   >();
 
@@ -612,6 +634,13 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       ctxModel: ctx.model ?? undefined,
     });
 
+    // [engine-awareness D1b] lastEngine 初始化：构造性同源——单次 reloadGlobalConfig
+    // 读取同时刷新 Service 路由缓存与 lastEngine 基准，消灭 initModel 与本处两次独立
+    // 读取间的分叉窗口（两读值不一致时检测走 unchanged 分支不 reload，状态段/路由
+    // 永停旧值且永不通知）。ok/absent → 归一后的当前引擎；failed → undefined（首 turn
+    // 检测静默基线化兜底，此时缓存亦保持不动）。/resume、/fork 同样走 session_start
+    // （SR-3），基线天然覆盖。
+    const engineRead = modelService.reloadGlobalConfig();
     sessionState.set(sessionId, {
       store,
       runs,
@@ -619,6 +648,8 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       runner,
       ctx,
       storeHealthy,
+      lastEngine:
+        engineRead.status === "failed" ? undefined : normalizeEngineId(engineRead.config.defaultEngine),
     });
   });
 
@@ -642,15 +673,41 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   });
 
   // ════════════════════════════════════════════════════════════
-  //  [U7] before_agent_start：引擎模型段注入（defaultEngine 非 pi 且引擎实现
-  //  listModels 时追加 <available_<engine>_models>——每 turn 重判 config，改配置
-  //  后下一 turn 即生效；fail-safe 任何异常不注入不阻塞 agent loop）
+  //  [U7 + engine-awareness U3] before_agent_start：引擎感知注入（链尾注册，D7——
+  //  段内容变化只断 system prompt 尾部 cache 前缀）。
+  //  ① per-turn 检测编排（§2.3 数据流）：三态 poll config → lastEngine diff →
+  //     变更时读取结果先行提交缓存（D2，applyGlobalConfig 纯赋值，本 turn 路由生效）
+  //     → sendMessage 通知
+  //     （D3，不设 triggerTurn——P1 探针已证此形态消息进入本 turn LLM 上下文，
+  //     证据：真机 pi rpc payload dump + 0.84.4 dist sendMessage→_appendCustomMessage
+  //     →agent.state.messages.push→createContextSnapshot 调用链）→ 更新 lastEngine。
+  //  ② 恒在状态段 <current_subagent_engine>（D6）+ 引擎清单段 <available_<engine>_models>。
+  //     apply 后 getGlobalConfig() 即新值——通知、状态段、路由三处同 turn 对齐（G2）。
+  //  段序：状态段在前（文案声明 "listed ... below"），清单段在后；provider models 段
+  //  由更早注册的 handler 注入、位于上方。fail-safe 任何异常不注入不阻塞 agent loop。
   // ════════════════════════════════════════════════════════════
-  pi.on("before_agent_start", (event: BeforeAgentStartEvent) => {
+  pi.on("before_agent_start", (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
     try {
       const service = getModelConfigService();
-      const append = service === null ? "" : buildEngineModelsPromptAppend(service.getGlobalConfig().defaultEngine);
-      if (append === "" || typeof event.systemPrompt !== "string") return undefined;
+      if (service === null || typeof event.systemPrompt !== "string") return undefined;
+      const sid = ctx.sessionManager.getSessionId();
+      runEngineAwarenessTurn({
+        readConfig: () => readGlobalConfig(getAgentDir()),
+        applyRead: (read) => service.applyGlobalConfig(read),
+        sendMessage: (message) => {
+          // D3：不设 triggerTurn——切换是用户主动行为，无需唤醒 AI 立即行动
+          pi.sendMessage(message, {});
+        },
+        getLastEngine: () => sessionState.get(sid)?.lastEngine,
+        setLastEngine: (engine) => {
+          const state = sessionState.get(sid);
+          if (state) state.lastEngine = engine;
+        },
+      });
+      const defaultEngine = service.getGlobalConfig().defaultEngine;
+      const append = [buildSubagentEngineSection(defaultEngine), buildEngineModelsPromptAppend(defaultEngine)]
+        .filter((part) => part !== "")
+        .join("\n\n");
       return { systemPrompt: `${event.systemPrompt}\n\n${append}` };
     } catch {
       return undefined;
@@ -953,4 +1010,4 @@ export {
   getOrCreateChannelRegistry,
   type UiChannelRegistry,
   type ChannelHandler,
-} from "./execution/channel-registry-access.ts";
+} from "@zhushanwen/subagent-core/execution/channel-registry-access.ts";

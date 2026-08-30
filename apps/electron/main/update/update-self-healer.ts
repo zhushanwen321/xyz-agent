@@ -31,6 +31,7 @@ import { existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, un
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import type { LaunchResult } from '@xyz-agent/shared'
+import { buildOutboundChildEnv } from '@xyz-agent/shared'
 import { compare } from 'compare-versions'
 import { app } from 'electron'
 import {
@@ -101,6 +102,7 @@ export function isUpdaterInFlight(): boolean {
     try {
       const argv = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
         encoding: 'utf8',
+        env: buildOutboundChildEnv({ parentEnv: process.env }),
       })
       if (!/\/updater(?:-linux)?\.sh(?:\s|$)/.test(argv)) {
         // PID 已被复用（占位者非 updater 脚本）→ 视为不存活，清残留 pid 后正常清理

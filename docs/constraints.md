@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 81 条（生成于 2026-08-28）。
+共 84 条（生成于 2026-08-29）。
 
 ## pi 关系（外部依赖边界）
 
@@ -72,6 +72,7 @@
 | C-state-06 | 视图切换状态驱动（settingsStore.currentView）不用 vue-router；Mock 用 VITE_MOCK 在 ws-client 层拦截（mock 不越过通信层） | packages/renderer/src/** | [AGENTS.md](../AGENTS.md) | review: review-arch-boundary |
 | C-state-07 | 领域类型 SSOT 归领域层，mock 反向 import 生产类型；禁生产代码从 mock 目录获取类型 | packages/renderer/src/**、packages/core/src/** | [0029-domain-types-ssot-in-lib](adr/0029-domain-types-ssot-in-lib.md) | review: review-type-safety |
 | C-state-08 | session 级 renderer 状态三问——存哪里（分区 store/composable）？切走谁清（cleanup 编排）？切回谁喂（恢复腿）？新增 ServerMessageType 的 renderer 消费方 / useSessionEvents 调用点时 CR 必查，三问有明确归属才放行；「onMessage 直写组件本地 ref」反模式由 taste-lint 规则 no-instance-level-session-state 机器拦截 | packages/renderer/src/** | [context-consistency-design](todo/context-consistency-design.md) · [0049-session-isolation-map-partition](adr/0049-session-isolation-map-partition.md) | hook: `taste-lint/base.mjs` + review: review-data-governance |
+| C-state-09 | panel 输入面（composer/ask-user/landing）显隐只许经 derivePanelView 纯函数派生（packages/core/src/domain/session/panel-view.ts），禁止组件内直接组合 flow/chat/session 状态判显隐；landing 判据恒为 !sessionId && isFlowActive（G2 结构免疫） | packages/renderer/src/components/panel/**、packages/core/src/domain/session/panel-view.ts | [panel-view-derivation-and-flow-lifecycle](design/panel-view-derivation-and-flow-lifecycle.md) | review: review-arch-boundary |
 
 ## extension 体系
 
@@ -107,6 +108,7 @@
 | C-build-04 | runtime/pi 日志必须落盘 + 轮转（date + size 双策略）；pi stdout tee 到 pi-<date>-<sessionId>.jsonl；新增日志库必须加 tsup noExternal | packages/runtime/src/** | [AGENTS.md](../AGENTS.md) | review: review-electron-build |
 | C-build-05 | runtime 零 Electron 依赖（纯 Node.js 可独立运行）；renderer 对 Electron 的依赖收敛 lib/ipc.ts 单一适配层（undefined 时优雅降级） | packages/runtime/**、packages/renderer/src/** | [0036-monorepo-structure-target](adr/0036-monorepo-structure-target.md) | review: review-monorepo-impact |
 | C-build-06 | 嵌入式网页一律用 WebContentsView；禁 iframe（X-Frame-Options/CSP 硬伤）与 <webview> tag（官方 discouraged） | apps/electron/** | [0054-browser-drawer-webcontentsview](adr/0054-browser-drawer-webcontentsview.md) | review: review-electron-build |
+| C-build-07 | 构建期 pi 派生锚点跟随守卫（8 项矩阵，SSOT = 守卫头注）：声明基准（根 package.json 的 pi 包声明版本）→ build.yml PI_VERSION env / prepare-pi-resources.sh 默认值 / extensions pi 依赖 range；实装基准（node_modules pi-ai）→ 快照 piAiVersion / 快照新鲜度（gen 脚本内存重生成比对）/ KNOWN_PI_API_TYPES / pi-tui 实装。与 C-proc-08 并列零重叠——其管 pi 语义登记/探针/四包版本门禁（读 pi-semantics.json），本条只管派生锚点跟随（不读 pi-semantics.json、不做包间互检）；pi 升级后执行 pnpm gen:builtin-providers 重生成快照并随升级 PR 提交 | package.json、pnpm-lock.yaml、.github/workflows/build.yml、scripts/prepare-pi-resources.sh、scripts/check-pi-sync.mjs、packages/runtime/src/generated/builtin-providers.json、packages/runtime/scripts/gen-builtin-providers.mjs、packages/shared/src/constants.ts、extensions/** | [pi-evolution-consistency-and-project-switcher](design/pi-evolution-consistency-and-project-switcher.md#32-方案对比) · [check-pi-sync.mjs](../scripts/check-pi-sync.mjs) | hook: `check-pi-sync.mjs` |
 
 ## 工程流程
 
@@ -119,6 +121,7 @@
 | C-proc-05 | 完成即提交：变更验证通过后、汇报完成前必须 git commit；「检查未过」不构成不提交理由（先修复） | global | [AGENTS.md](../AGENTS.md) | — |
 | C-proc-06 | push 发布 tag 后必须轮询验证 CI 产物直到验证脚本 exit 0（verify-ci-release.sh / prerelease-test.sh）；禁「应该没问题」 | global | [AGENTS.md](../AGENTS.md) | — |
 | C-proc-07 | ENV_WHITELIST_PREFIXES 只许定义在 packages/shared/src/constants.ts，main/runtime 只 import（pre-commit 检查） | packages/**、apps/** | [AGENTS.md](../AGENTS.md) | hook: `check_env_whitelist_sync.py` |
+| C-proc-09 | runtime 子进程 env 出站契约：进程创建点的子 env 必须经 buildOutboundChildEnv 构建（deny 清单剥 XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN）；与 ENV_WHITELIST_PREFIXES 入站准入正交共存——入站白名单管「外部环境哪些准许进来」，出站契约管「自身变量哪些允许跟随 spawn 出去」（设计文档 §3.5 D2）；B2 main→runtime 产品内部边界走 composeChildEnvBase 基座、不出 deny 兜底，deny 由下游对外边界承担 | packages/shared/src/spawn-env-contract.ts、packages/runtime/src/infra/spawn-env.ts、packages/runtime/src/infra/pi/rpc-client.ts、packages/runtime/src/infra/pi/process-manager.ts、apps/electron/main/supervisor/safe-env.ts、packages/runtime/src/infra/shell-runner.ts、packages/runtime/src/infra/git-executor.ts、packages/runtime/src/services/terminal/terminal-service.ts、packages/runtime/src/infra/relay/relay-registry.ts、packages/runtime/src/services/plugin-service/plugin-host-process.ts | [env-propagation-boundary](design/env-propagation-boundary.md) · [AGENTS.md](../AGENTS.md) | hook: `check_spawn_env_boundary.py` |
 | C-proc-08 | pi 语义依赖机器登记 + 探针 + 版本门禁：docs/pi-semantics.json（PS-xx 条目，probe/observe 分型）是唯一机器登记源，scripts/check-pi-semantics.mjs（pre-commit + CI）守 schema/探针存在性/四包版本一致（pi-coding-agent ≡ pi-ai ≡ pi-agent-core ≡ runtime pin）；pi 升级 PR 必查两项——pi-ai exports 是否移除 ./compat、changelog 是否提及 ModelManager 迁移（PS-15 时间炸弹）；探针族红 = 语义漂移，先复核锚点再更新 verifiedWith | docs/pi-semantics.json、packages/runtime/src/infra/pi/**、package.json、packages/runtime/package.json | [pi-boundary-reliability](design/pi-boundary-reliability.md#d6漂移守卫体系pi-语义依赖的机器登记--探针--版本门禁选定) | hook: `check-pi-semantics.mjs` |
 
 ## subagent-workflow（单写者不变量）

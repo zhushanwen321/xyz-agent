@@ -52,6 +52,15 @@ export * from './git'
 export * from './plugin'
 export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS, MAX_WS_PAYLOAD_BYTES, PLUGIN_NOTIFY_LIMITS, UI_TOAST_LIMITS } from './constants'
 export type { ProviderApiType } from './constants'
+// 出站 env 契约 SSOT + 子进程 env 构建器（纯常量/纯函数无 node 依赖，renderer barrel 安全）。
+// main 进程 safe-env 薄封装与 runtime infra/spawn-env.ts 门面均经此消费。
+export type { BuildOutboundChildEnvOptions, SpawnEnvForwardEntry } from './spawn-env-contract'
+export {
+  SPAWN_ENV_OUTBOUND_DENY_LIST,
+  SPAWN_ENV_FORWARD_REFERENCE,
+  composeChildEnvBase,
+  buildOutboundChildEnv,
+} from './spawn-env-contract'
 export { DEFAULT_PI_SYSTEM_PROMPT, DEFAULT_PI_SYSTEM_PROMPT_VERSION } from './pi-default-prompt'
 // 推荐扩展列表 SSOT（runtime 读取，前端经 extension.recommended WS 拉取）
 // 带类型断言：空 JSON [] 会被 TS 推断为 never[]，断言为 RecommendedExtension[] 保证未来追加条目时类型正确

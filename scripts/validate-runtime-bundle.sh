@@ -52,6 +52,9 @@ echo -e "${BLUE}[1/6] 检查 build 产物...${NC}"
 
 if [ ! -f "$BUNDLE_PATH" ] || [ ! -f "$BOOTSTRAP_PATH" ] || [ ! -f "$BOOTSTRAP_PROCESS_PATH" ] || [ ! -f "$ESM_LOADER_PATH" ]; then
     echo -e "${YELLOW}[WARN] 产物不完整，先运行 build...${NC}"
+    # runtime tsup（format cjs）对 @zhushanwen/subagent-core 走 require 条件 -> packages/subagent-core/dist/*.cjs，
+    # dist 被 .gitignore（fresh checkout 无产物），须先链式构建 core（与 electron build:runtime 同链）
+    pnpm --filter @zhushanwen/subagent-core run build
     cd "$RUNTIME_DIR" && pnpm run build
 fi
 

@@ -8,6 +8,7 @@ import { assertPiSessionFile } from './session-attach-assert.js'
 import type { IProcessManager } from '../../services/ports/pi-engine.js'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
+import { buildOutboundChildEnv } from '../spawn-env.js'
 // E-2（subagent-realtime-channel §4.2/§4.4）：findPiExecutable 抽出为共享函数
 // （relay-registry 受托 spawn 真实 pi 复用同一决策链），原调用点行为零变化。
 import { findPiExecutable } from './find-pi-executable.js'
@@ -83,7 +84,12 @@ export class ProcessManager implements IProcessManager {
     try {
       const piPath = await this.getPiPath()
       const cmd = piPath !== 'pi' ? `"${piPath}" --version` : 'pi --version'
-      const version = execSync(cmd, { encoding: 'utf-8', timeout: 5_000 }).trim()
+      const version = execSync(cmd, {
+        encoding: 'utf-8',
+        timeout: 5_000,
+        // C-proc-09：出站契约构建器组装 env（pi --version 只读探测，白名单基座保留 PATH/HOME）
+        env: buildOutboundChildEnv({ parentEnv: process.env }),
+      }).trim()
       this.piVersionCache = version || 'unknown'
     } catch (e) {
       console.warn('[process-manager] failed to detect pi version:', e)
@@ -121,7 +127,17 @@ export class ProcessManager implements IProcessManager {
     // relay server 未激活 / staged 脚本缺失 / 执行器探针失败 → 空对象（spread 无副作用，
     // 行为与现状逐字节一致）；首次调用含探针 spawn（之后 Promise 缓存，无重复开销）。
     const relayEnv = await getRelaySpawnEnv(this.projectRoot)
-    const client = new RpcClient({ cwd, sessionId, ...options, env: { XYZ_AGENT_DATA_DIR: getConfigDir(), ...pathEnv, ...relayEnv, ...options?.env }, piCommand: piPath !== 'pi' ? piPath : undefined })
+    // B3 出站注入组（docs/design/env-propagation-boundary.md §5-U3）：本对象经
+    // RpcClientOptions.env 传入，由 rpc-client start() 的 buildOutboundChildEnv 作为
+    // extras 在过滤基座之上整体覆盖；下方 spread 键序即覆盖优先级
+    // （DATA_DIR < PATH 补齐 < relay 三件套 < 调用方 options.env），与组装迁入构建器前
+    // 逐键一致。PI_CODING_AGENT_DIR 由 rpc-client 在构建器输出之上追加（同迁移前）。
+    const injectionEnv: Record<string, string> = {
+      XYZ_AGENT_DATA_DIR: getConfigDir(),
+      ...pathEnv,
+      ...relayEnv,
+    }
+    const client = new RpcClient({ cwd, sessionId, ...options, env: { ...injectionEnv, ...options?.env }, piCommand: piPath !== 'pi' ? piPath : undefined })
     try {
       await client.start()
     } catch (e) {

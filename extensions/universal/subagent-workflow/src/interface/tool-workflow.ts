@@ -31,12 +31,12 @@ import {
 } from "@xyz-agent/extension-protocol";
 import { type Static, Type } from "typebox";
 
-import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
-import { THINKING_ORDER } from "../execution/model-resolver.ts";
-import type { LauncherDeps } from "../orchestration/launcher.ts";
-import { abortRun, runWorkflow } from "../orchestration/lifecycle.ts";
-import type { RunStore } from "../orchestration/models/ports.ts";
-import type { WorkflowRun } from "../orchestration/models/workflow-run.ts";
+import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
+import { THINKING_ORDER } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
+import type { LauncherDeps } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
+import { abortRun, runWorkflow } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
+import type { RunStore } from "@zhushanwen/subagent-core/orchestration/models/ports.ts";
+import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
 import { mapRunIcon, mapRunStatus, toGuiCtx } from "./gui-mappers.ts";
 import {
   acquireReentryGuard,

@@ -29,7 +29,11 @@ import { useToast } from '@/composables/useToast'
 // vi.mock 被 vitest 提升到 import 之前，保证 ProviderPage import 时 @/api 已 mock。
 const configMock = vi.hoisted(() => ({
   listBuiltinProviders: vi.fn(async () => [] as BuiltinProviderTemplate[]),
+  // ProviderPage onMounted 按需刷新远程模型目录（缺则 unhandled rejection）
+  refreshProviderCatalogs: vi.fn(async () => ({ refreshed: [], failed: [] })),
   setProvider: vi.fn(async () => {}),
+  // apikey 自动启用链路（useApiKeyAutoEnable）：写 enabledModels 白名单
+  toggleProviderEnabled: vi.fn(async () => {}),
   onProviders: vi.fn(() => () => {}),
   listProviders: vi.fn(async () => ({ providers: [] })),
   deleteProvider: vi.fn(async () => {}),
@@ -104,8 +108,9 @@ let wrapper: ReturnType<typeof mount> | null = null
 
 beforeEach(() => {
   setActivePinia(createPinia())
-  // 集成链路用例需从零计数断言 setProvider 调用次数
+  // 集成链路用例需从零计数断言 setProvider/toggleProviderEnabled 调用次数
   configMock.setProvider.mockClear()
+  configMock.toggleProviderEnabled.mockClear()
 })
 afterEach(() => {
   wrapper?.unmount()
@@ -679,6 +684,80 @@ describe('ProviderPage 内置模板保存链路', () => {
     expect(configMock.setProvider).toHaveBeenCalledTimes(1)
     expect(useToast().toasts.value.some((t) => t.type === 'error' && t.message.includes('boom'))).toBe(true)
     expect(document.body.querySelector('[data-testid="provider-quick-setup"]')).toBeTruthy()
+  })
+
+  it('t10c QuickSetup 重配已禁用的 apikey provider → 保存即自动启用（toggleProviderEnabled + toast）', async () => {
+    configMock.listBuiltinProviders.mockResolvedValueOnce(TEMPLATES)
+    wrapper = mount(ProviderPage, {
+      props: {
+        providers: [{
+          id: 'openai',
+          name: 'OpenAI',
+          apiKeySet: true,
+          status: 'connected',
+          enabled: false, // 被禁用但凭据就绪——自动启用目标形态（setProvider 编辑分支不动白名单的缺口）
+          models: [],
+        }],
+      },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    clickBody('[data-testid="provider-template-picker"]')
+    await flushPromises()
+    clickBody('[data-testid="add-menu-builtin"]')
+    await flushPromises()
+    clickBody('[data-testid="provider-template-openai"]')
+    await flushPromises()
+
+    // 切明文模式填新 key（openai envVars 非空默认 env，需手动切）
+    clickBody('[data-testid="auth-option-plaintext"]')
+    await flushPromises()
+    setBodyInput('[data-testid="credential-apikey-input"]', 'sk-new-456')
+    await flushPromises()
+    clickBody('[data-testid="provider-quick-setup-save"]')
+    await flushPromises()
+
+    // apikey 保存 → 未启用的 provider 自动启用（写 enabledModels 白名单）+ 提示 toast
+    expect(configMock.setProvider).toHaveBeenCalledWith('openai', expect.objectContaining({ apiKey: 'sk-new-456' }))
+    expect(configMock.toggleProviderEnabled).toHaveBeenCalledWith('openai', true)
+    expect(useToast().toasts.value.some((t) => t.type === 'info' && t.message.includes('已自动启用 OpenAI'))).toBe(true)
+  })
+
+  it('t10d OAuth 形态保存（不携带 apiKey）→ 不自动启用', async () => {
+    configMock.listBuiltinProviders.mockResolvedValueOnce(TEMPLATES)
+    configMock.hasOAuth.mockResolvedValueOnce(true) // anthropic 已授权（oauth radio 可保存）
+    wrapper = mount(ProviderPage, {
+      props: {
+        providers: [{
+          id: 'anthropic',
+          name: 'Anthropic',
+          apiKeySet: true,
+          status: 'connected',
+          enabled: false,
+          models: [],
+        }],
+      },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    clickBody('[data-testid="provider-template-picker"]')
+    await flushPromises()
+    clickBody('[data-testid="add-menu-builtin"]')
+    await flushPromises()
+    clickBody('[data-testid="provider-template-anthropic"]')
+    await flushPromises()
+
+    // oauth radio（已授权可直接保存，payload 无 apiKey）
+    clickBody('[data-testid="auth-option-oauth"]')
+    await flushPromises()
+    clickBody('[data-testid="provider-quick-setup-save"]')
+    await flushPromises()
+
+    // OAuth 保存不触发自动启用（范围外：仅 apikey 模式生效）
+    expect(configMock.setProvider).toHaveBeenCalledWith('anthropic', expect.objectContaining({ authMethod: 'oauth' }))
+    expect(configMock.toggleProviderEnabled).not.toHaveBeenCalled()
   })
 
   it('t14 MF-1 残余路径：auth.json 已有 OAuth 但 models.json 无条目（未保存即关闭的授权）→ 重开默认 OAuth radio + 已授权态，保存 payload 无 apiKey', async () => {

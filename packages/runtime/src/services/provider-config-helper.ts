@@ -9,7 +9,7 @@
 // 避免运行时 fs/路径解析（打包后 asar 路径问题）。tsc 类型检查需 resolveJsonModule（tsconfig.json 已加）。
 import builtinData from '../generated/builtin-providers.json'
 import { type ProviderInfo, type BuiltinProviderTemplate, type ProviderId } from '@xyz-agent/shared'
-import { isCatalogProvider, deriveEnabled } from './provider-catalog.js'
+import { isCatalogProvider, deriveEnabled, getMergedCatalogModels } from './provider-catalog.js'
 import type { IConfigStore, ConfigModelDefinition, ConfigProviderConfig } from './ports/config.js'
 import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
 import type { XyzProviderStore } from './provider-extras-store.js'
@@ -310,7 +310,15 @@ export function listProviders(
     // 它已被用户定义覆盖；builtin 副本条目标 'builtin'。builtin 在前与 design §3.1 场景 A
     // 的混合列表形态一致（内置在前、自定义追加在后）。
     const overrideIds = new Set(overrideModels.map(m => m.id))
-    const builtinNotOverridden = (builtinP.models ?? []).filter(m => !overrideIds.has(m.id))
+    // 远程目录 overlay（settings-provider 页进入时刷新）：合并逻辑收拢在 provider-catalog
+    // 单点（D4，与 pi-provider-store 校验视图同源）——快照打底，仅 fresh 态 overlay 并入
+    // （同 id 覆盖、新 id 追加，对齐 pi mergeModels 语义；expired/never-seen 态等于纯快照），
+    // override 用户定义仍最高优先。
+    const mergedCatalog = getMergedCatalogModels(id)
+    const mergedBuiltin = new Map<string, BuiltinProviderTemplate['models'][number]>(
+      (mergedCatalog?.models ?? builtinP.models ?? []).map(m => [m.id, m]),
+    )
+    const builtinNotOverridden = [...mergedBuiltin.values()].filter(m => !overrideIds.has(m.id))
     // id 来自 models.json / auth.json 的磁盘 key（反序列化边界，design D5）→ as ProviderId 提升
     result.push({
       id: id as ProviderId,

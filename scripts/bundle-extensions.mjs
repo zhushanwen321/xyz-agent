@@ -17,6 +17,8 @@
  *  - index.js + index.js.map（所有 JS value dep inline）
  *  - package.json（pi.extensions 改指 ./index.js；源码 package.json 不动）
  *  - permission 额外含 tree-sitter-bash.wasm + web-tree-sitter.wasm（手动拷贝，与 index.js 同目录）
+ *  - subagent-workflow 额外含 relay/（独立执行零依赖脚本）+ workflows/（内置 workflow
+ *    脚本资产，u1-staged 起源在 packages/subagent-core/workflows/，见下方常量注释）
  *
  * external 边界权威源：0.84.1 pi binary virtualModules 实测（0.80.3 首测，2026-08-12
  * 随 pi 0.84.1 升级重测 10 包 get_state 加载全绿后更新；见
@@ -105,6 +107,54 @@ const PERMISSION_WASM = [
  */
 const RELAY_DIR_PACKAGES = new Set(["subagent-workflow"]);
 
+/**
+ * subagent-workflow 的内置 workflow 脚本资产（u1-staged，设计 D1）：随 subagent-core
+ * 包抽离（u1-move）物理迁至 packages/subagent-core/workflows/（内置四件 chain/
+ * parallel/map-reduce/scatter-gather + review-fix-loop 双件 + _shared/），E 包源码目录
+ * 不再持有 workflows/。源路径因此改指 C 包——pi manifest 的 workflows 字段从不参与
+ * 本拷贝（E 的 pi 字段迁移前后均只有 extensions/skills/agents，MANIFEST_RESOURCE_FIELDS
+ * 循环对 workflows 不触发；也不给 E 补该声明：E 的 npm 发布面已不含 workflows/，加了
+ * 会让 standalone pi 用户经 resource-discovery manifest 模式命中「声明路径不存在 →
+ * 整包失败占位」，npm 安装形态的 workflow 发现已由 C 作为 E 的传递依赖 + C 包约定
+ * 目录成立）。staged 布局无 node_modules 解析面，整目录复制后 worker 的
+ * workerData.scriptPath 目录锚定（require(dirname(scriptPath) + "/...-utils.cjs")，
+ * 不经 node_modules）即成立——D1 既验证模式。
+ *
+ * V1-④ staged 布局双形态探针（可复现命令，重跑 bundle 后在仓库根执行）：
+ *
+ * ① 正向（真实 scriptPath 注入 → utils 解析成功；「未知参数」报错 = utils 已解构、
+ *    白名单校验已执行，且脚本在编排段之前 fail 退出不会真跑 agent）：
+ *   node -e '
+ *     const fs = require("fs"), path = require("path");
+ *     const p = "apps/electron/resources/extensions/@zhushanwen/pi-subagent-workflow/workflows/review-fix-loop.js";
+ *     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+ *     const runner = new AsyncFunction("workerData", "$ARGS", "require", "log", fs.readFileSync(p, "utf8") + "\n");
+ *     runner({ scriptPath: path.resolve(p) }, { definitelyNotAValidKey: true }, require, () => {})
+ *       .catch((e) => { console.error(e.message); process.exit(1); });
+ *   '
+ *   期望 stderr 含「未知参数: definitelyNotAValidKey」且不含 core_module_load_failed。
+ *
+ * ② 负向（scriptPath 缺席 → fail-fast core_module_load_failed，不再 cwd 静默回退；
+ *    cwd 侧预置植入版依赖，标记出现即证明回退仍在）：
+ *   REPO=$(git rev-parse --show-toplevel); d=$(mktemp -d) && mkdir -p "$d/_shared" \
+ *     && echo 'throw new Error("PLANTED-CWD-UTILS-LOADED");' > "$d/review-fix-loop-utils.cjs" \
+ *     && echo 'throw new Error("PLANTED-CWD-UTILS-LOADED");' > "$d/_shared/agent-refs.cjs" \
+ *     && node -e '
+ *     const fs = require("fs");
+ *     const p = process.argv[1] + "/apps/electron/resources/extensions/@zhushanwen/pi-subagent-workflow/workflows/review-fix-loop.js";
+ *     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+ *     const runner = new AsyncFunction("workerData", "$ARGS", "require", "log", fs.readFileSync(p, "utf8") + "\n");
+ *     runner(undefined, { targetType: "file", target: "probe" }, require, () => {})
+ *       .catch((e) => { console.error(e.message); process.exit(1); });
+ *   ' "$REPO"; echo "exit=$?"
+ *   期望非零退出、stderr 含 core_module_load_failed（并指出 workerData/WorkerHost
+ *   注入点）、不含 PLANTED-CWD-UTILS-LOADED。
+ *   语义与 packages/subagent-core/src/orchestration/__tests__/
+ *   review-fix-loop-scriptpath-failfast.test.ts 的既有探针族同构，对象换成 staged 副本。
+ */
+const SUBAGENT_CORE_WORKFLOWS_DIR = join(REPO_ROOT, "packages", "subagent-core", "workflows");
+const WORKFLOW_DIR_PACKAGES = new Set(["subagent-workflow"]);
+
 async function bundleOne(pkgName) {
 	const short = pkgName.replace(/^@zhushanwen\/pi-/, "");
 	const srcDir = srcDirFor(pkgName);
@@ -160,6 +210,19 @@ async function bundleOne(pkgName) {
 		}
 		await cp(src, join(outDir, "relay"), { recursive: true });
 		extraAssets.push("relay/");
+	}
+
+	// 内置 workflow 脚本资产（u1-staged / 设计 D1）：源在 packages/subagent-core/workflows/
+	//（u1-move 后 E 包不再持有），整目录拷到 E staged 目录。拷贝动机与 manifest 字段的
+	// 关系、scriptPath 锚定原理、V1-④ 双形态探针命令见 WORKFLOW_DIR_PACKAGES 常量注释。
+	if (WORKFLOW_DIR_PACKAGES.has(short)) {
+		if (!existsSync(SUBAGENT_CORE_WORKFLOWS_DIR)) {
+			throw new Error(
+				`workflows dir missing: ${SUBAGENT_CORE_WORKFLOWS_DIR}（subagent-core 包 workflow 资产缺失 = 打包配置回归）`,
+			);
+		}
+		await cp(SUBAGENT_CORE_WORKFLOWS_DIR, join(outDir, "workflows"), { recursive: true });
+		extraAssets.push("workflows/");
 	}
 
 	// 改写 staged 副本 package.json：pi.extensions 指向 ./index.js（不改源码 package.json）

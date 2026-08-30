@@ -12,10 +12,10 @@
 
 import { Key, matchesKey } from "@earendil-works/pi-tui";
 
-import { getAllToolCalls, projectLiveProgress } from "../../execution/execution-record.ts";
-import type { AgentEventLogEntry } from "../../execution/types.ts";
-import type { ExecutionTraceNode } from "../../orchestration/models/types.ts";
-import type { WorkflowRun } from "../../orchestration/models/workflow-run.ts";
+import { getAllToolCalls, projectLiveProgress } from "@zhushanwen/subagent-core/execution/execution-record.ts";
+import type { AgentEventLogEntry } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
+import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
 import {
   BOX_BORDER_CHARS,
   BUDGET_TOKENS_DIVISOR,

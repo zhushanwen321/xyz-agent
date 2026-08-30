@@ -37,7 +37,7 @@
     "@zhushanwen/pi-extension-logger": "workspace:*"
   },
   "devDependencies": {
-    "@earendil-works/pi-tui": "^0.84.2",
+    "@earendil-works/pi-tui": "^0.84.4",
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^4.1.9",
     "fast-check": "^4.9.0",
@@ -45,8 +45,8 @@
     "vitest": "^4.1.8"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.1",
-    "@earendil-works/pi-tui": "^0.84.1",
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@earendil-works/pi-tui": "^0.84.4",
     "typebox": "*"
   },
   "peerDependenciesMeta": {

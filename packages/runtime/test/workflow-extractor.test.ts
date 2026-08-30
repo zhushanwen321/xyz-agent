@@ -410,7 +410,8 @@ describe('extractWorkflowsFromSessionFile', () => {
   //   腿对新 run 静默丢全部 calls sessionFile、workflow overview 对新 run 返 null
   it('三源一致性：runtime SNAPSHOT_VERSION 副本 + session-reader 两处版本判定与 extension jsonl-run-store.ts 同步', () => {
     const extSrc = readFileSync(
-      join(__dirname, '..', '..', '..', 'extensions', 'universal', 'subagent-workflow', 'src', 'orchestration', 'jsonl-run-store.ts'),
+      // u1-move（subagent-core 抽包）后 jsonl-run-store.ts 留壳迁至 src/ 顶层（原 orchestration/）
+      join(__dirname, '..', '..', '..', 'extensions', 'universal', 'subagent-workflow', 'src', 'jsonl-run-store.ts'),
       'utf-8',
     )
     const extMatch = extSrc.match(/export const SNAPSHOT_VERSION = "([^"]+)"/)

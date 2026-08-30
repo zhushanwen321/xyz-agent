@@ -12,13 +12,13 @@
     "test:equivalence": "vitest run src/__tests__/equivalence/"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.1",
+    "@earendil-works/pi-ai": "0.84.4",
     "@iarna/toml": "^2.2.5",
     "@xyz-agent/core": "workspace:*",
     "@xyz-agent/extension-protocol": "workspace:*",
     "@xyz-agent/session-delivery": "workspace:*",
     "@xyz-agent/shared": "workspace:*",
-    "@zhushanwen/pi-subagent-workflow": "workspace:*",
+    "@zhushanwen/subagent-core": "workspace:*",
     "chokidar": "^4.0.1",
     "fast-glob": "^3.3.3",
     "node-pty": "^1.0.0",

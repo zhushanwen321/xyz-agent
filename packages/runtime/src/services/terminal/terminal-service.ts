@@ -21,6 +21,7 @@
  */
 import * as pty from 'node-pty'
 import { execFileSync } from 'node:child_process'
+import { buildOutboundChildEnv } from '../../infra/spawn-env.js'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { ITerminalService } from '../ports/terminal-service.js'
 
@@ -225,28 +226,35 @@ export class TerminalService implements ITerminalService {
     return { shell: '/bin/bash', shellArgs: ['-l'] }
   }
 
-  /** 构造子进程 env（继承当前 env，确保 PATH 等可用）。 */
+  /**
+   * 构造子进程 env（B7 出站接线，docs/design/env-propagation-boundary.md §5-U4）。
+   *
+   * D5 决策：用户终端身份是「用户的 shell」，比 pi 更外部——跟随最小剥离（不走入站
+   * 白名单基座过滤，shell 需要 PATH/HOME/SHELL 等全量系统变量）：pass-all 前缀 ''
+   * 承载全量拷贝拓扑（任意 key 都满足 startsWith('')，builder 步骤 1 即不过滤），
+   * 自有语义全部经 extras 承载：TERM fallback 保持 + PR #105 三项显式删除；出站 deny
+   * 两键由构建器末步兜底。纯函数副本操作，绝不 mutate process.env 本体（R1）。
+   */
   private buildEnv(): Record<string, string> {
-    // node-pty env 需 string→string（不能 undefined）。过滤掉 undefined 值。
-    const env: Record<string, string> = {}
-    for (const [k, v] of Object.entries(process.env)) {
-      if (v !== undefined) env[k] = v
-    }
-    // TERM 让终端应用（vim/htop）正确渲染
-    env.TERM = env.TERM || 'xterm-256color'
-
-    // [HISTORICAL] 清除 Electron sidecar 内部变量，避免污染用户 terminal。
-    // ⚠️ 此修复与 quota 功能无关，是顺带修复的 terminal env 污染 bug（PR #105 一同提交）。
-    // runtime 进程是 Electron 主进程用 ELECTRON_RUN_AS_NODE=1 spawn 出来的 sidecar（打包模式，
-    // 见 process-control.ts:202-205），该变量会随 process.env 继承到 terminal shell。
-    // 用户在 terminal 里跑 `electron .` / `npm run dev` 等命令时，Electron 会因该变量退化为
-    // 纯 Node 运行，require('electron').app 为 undefined → 'Cannot read properties of
-    // undefined (reading isPackaged)' 崩溃。terminal 是给用户跑命令的，不是 sidecar 下游，
-    // 必须切断这类 Electron 实现细节变量的继承。
-    delete env.ELECTRON_RUN_AS_NODE
-    delete env.ELECTRON_NO_ASAR
-    delete env.ELECTRON_OVERRIDE_DIST_PATH
-    return env
+    return buildOutboundChildEnv({
+      parentEnv: process.env,
+      prefixes: [''],
+      extras: {
+        // TERM 让终端应用（vim/htop）正确渲染（原 env.TERM || 'xterm-256color' 语义不变）
+        TERM: process.env.TERM || 'xterm-256color',
+        // [HISTORICAL] 清除 Electron sidecar 内部变量，避免污染用户 terminal。
+        // ⚠️ 此修复与 quota 功能无关，是顺带修复的 terminal env 污染 bug（PR #105 一同提交）。
+        // runtime 进程是 Electron 主进程用 ELECTRON_RUN_AS_NODE=1 spawn 出来的 sidecar（打包模式，
+        // 见 process-control.ts:202-205），这些变量会随 process.env 继承到 terminal shell。
+        // 用户在 terminal 里跑 `electron .` / `npm run dev` 等命令时，Electron 会因该变量退化为
+        // 纯 Node 运行，require('electron').app 为 undefined → 'Cannot read properties of
+        // undefined (reading isPackaged)' 崩溃。terminal 是给用户跑命令的，不是 sidecar 下游，
+        // 必须切断这类 Electron 实现细节变量的继承。undefined 值 = 构建器显式删除语义。
+        ELECTRON_RUN_AS_NODE: undefined,
+        ELECTRON_NO_ASAR: undefined,
+        ELECTRON_OVERRIDE_DIST_PATH: undefined,
+      },
+    })
   }
 }
 
