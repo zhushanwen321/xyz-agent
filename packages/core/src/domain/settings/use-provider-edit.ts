@@ -81,6 +81,12 @@ export interface ProviderEditDeps {
   t: (key: string, params?: Record<string, unknown>) => string
 }
 
+/** save 结果：ok=是否成功；wroteApiKey=本次是否写入了非空 apiKey（明文/env 引用，哨兵清空与「不变」均 false） */
+export interface SaveResult {
+  ok: boolean
+  wroteApiKey: boolean
+}
+
 // ── 常量 ──
 
 /** 上下文窗口选项（template ctxOptions 来源） */
@@ -433,21 +439,24 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     await runDiscover('discover')
   }
 
-  // ── ④ save 持久化（校验 → transport.setProvider；D15b：name 空返回 false）──
+  // ── ④ save 持久化（校验 → transport.setProvider；D15b：name 空返回 ok:false）──
 
-  /** 保存：校验 → transport.setProvider，成功返回 true，调用方据此 emit close。 */
-  async function save(): Promise<boolean> {
+  /**
+   * 保存：校验 → transport.setProvider。调用方据 result.ok emit close；
+   * result.wroteApiKey 供父组件做「apikey 配置完成即自动启用」（ProviderPage afterApiKeySave）。
+   */
+  async function save(): Promise<SaveResult> {
     // 前端校验（D15b）：供应商名称必填
     if (!form.name.trim()) {
       actionError.value = t('composable.providerNameRequired')
-      return false
+      return { ok: false, wroteApiKey: false }
     }
     // B-1 形态切换守卫：oauth → api_key 切换后必须提供新 key——确认弹窗承诺「退出 OAuth
     // 登录」，空 key 保存会让 auth.json OAuth 凭证残留（catalog 的覆写只发生在携带 apiKey 时）
     if (snapshot.value?.authMethod === 'oauth' && form.authMethod === 'api_key'
       && resolveApiKeyForSave(form.apiKey) === undefined) {
       actionError.value = t('composable.oauthSwitchNeedsKey')
-      return false
+      return { ok: false, wroteApiKey: false }
     }
     saving.value = true
     actionError.value = ''
@@ -488,10 +497,11 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
           enabled: m.enabled,
         })),
       })
-      return true
+      // 哨兵→''、空→undefined 均为 falsy：只有本次真正写入非空 key（明文或 $ENV 引用）才 true
+      return { ok: true, wroteApiKey: Boolean(resolveApiKeyForSave(form.apiKey)) }
     } catch (e) {
       actionError.value = e instanceof Error ? e.message : String(e)
-      return false
+      return { ok: false, wroteApiKey: false }
     } finally {
       saving.value = false
     }

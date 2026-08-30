@@ -151,7 +151,7 @@
           :oauth-present="hasOauthPresence(p.id)"
           :oauth-supported="isOauthSupported(p.id)"
           @dirty-change="onBodyDirtyChange"
-          @saved="onBodySaved"
+          @saved="onEditSaved"
           @cancel="onBodyCancel"
           @oauth-login="onEditOauthLogin(p)"
           @oauth-logout="onEditOauthLogout(p)"
@@ -259,6 +259,7 @@ import {
   USE_QUOTA_CONFIGURE_KEY,
 } from '@xyz-agent/ui/features/settings'
 import { useProviderPageOauth } from '@/composables/features/settings/useProviderPageOauth'
+import { useApiKeyAutoEnable } from '@/composables/features/settings/useApiKeyAutoEnable'
 import { useAccordionGuard } from '@/composables/features/settings/useAccordionGuard'
 import { useScopedModels } from '@/composables/features/settings/useScopedModels'
 import { authBadgeClass, authBadgeTextKey } from './provider-badge'
@@ -336,6 +337,9 @@ async function onQuickSetupSave({
     await config.setProvider(providerId as ProviderId, data)
     showQuickSetup.value = false
     selectedTemplate.value = null
+    // apikey 模式（plaintext 填值 / env '$VAR' 引用）保存后：被禁用的 provider 自动启用
+    // （oauth/ambient 分支 data.apiKey 无值不触发；新建 runtime ensure 已启用 → no-op）
+    await afterApiKeySave(providerId, Boolean(data.apiKey))
     toast.info(t('settings.provider.builtinTemplate.toastSuccess', { name: data.name ?? providerId }))
   } catch (e) {
     toast.error(e instanceof Error ? e.message : String(e))
@@ -353,9 +357,6 @@ function onQuickSetupOAuthLogin(): void {
   if (!selectedTemplate.value) return
   startQuickSetupOauth(selectedTemplate.value)
 }
-
-/** toggle 中的 provider id 集合（防双击） */
-const toggling = ref<Set<string>>(new Set())
 
 const settingsStore = getSettingsStore()
 const defaultProviderId = computed(() => settingsStore.defaultModel.value?.split('/')[0] ?? '')
@@ -474,30 +475,19 @@ const renderList = computed<ProviderInfo[]>(() => {
     : props.providers
 })
 
-// ── 启用开关：乐观更新 store + config.toggleProviderEnabled 持久化（wave4 C1） ──
+// ── 启用开关：乐观更新 store + config.toggleProviderEnabled 持久化（wave4 C1）──
+// 链路收编进 useApiKeyAutoEnable（含「apikey 配置完自动启用」增强），template 解构同名不变。
 
-async function onToggleEnabled(p: ProviderInfo, enabled: boolean) {
-  if (toggling.value.has(p.id)) return
-  actionError.value = ''
-  const next = new Set(toggling.value)
-  next.add(p.id)
-  toggling.value = next
-  const old = settingsStore.setProviderEnabled(p.id, enabled)
-  try {
-    // wave4：走 toggleProviderEnabled（写 enabledModels 白名单）。旧 setProvider({enabled})
-    // 在 wave3 停用 provider 级 enabled 写入后无效。newDefault 经 onDefaults 订阅推回。
-    await config.toggleProviderEnabled(p.id, enabled)
-    if (!enabled && settingsStore.defaultModel.value.startsWith(`${p.id}/`)) {
-      settingsStore.defaultModel.value = ''
-    }
-  } catch (e) {
-    settingsStore.setProviderEnabled(p.id, old)
-    actionError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    const after = new Set(toggling.value)
-    after.delete(p.id)
-    toggling.value = after
-  }
+const { toggling, onToggleEnabled, afterApiKeySave } = useApiKeyAutoEnable({
+  providers: () => props.providers,
+  setActionError: msg => { actionError.value = msg },
+})
+
+/** 编辑体保存成功 → 收起展开行；本次写入了 apikey 且该 provider 被禁用 → 自动启用（afterApiKeySave） */
+async function onEditSaved(payload?: { wroteApiKey: boolean }): Promise<void> {
+  const savedId = expandedId.value
+  onBodySaved()
+  if (payload?.wroteApiKey && savedId) await afterApiKeySave(savedId, true)
 }
 
 // ── 删除/移除（wave4 IF3：按 ProviderInfo.kind 走 removeProviderByKind） ──
