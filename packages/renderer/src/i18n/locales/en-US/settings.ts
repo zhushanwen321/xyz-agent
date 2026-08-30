@@ -527,6 +527,12 @@ export default {
     goToDownload: 'Go to download',
     replacing: 'Replacing',
     restarting: 'Restarting',
+    // ── Manual update channel (update-network-resilience D9, UpdateCheckCard collapsible) ──
+    manualChannelTitle: 'Manual update channel',
+    manualChannelHint: 'If the download fails, manually download the installer zip from the releases page into the folder below; restart the app or retry the update to claim it',
+    manualChannelRestriction: 'Only versions the app has already detected are supported',
+    manualChannelDirLabel: 'Folder',
+    manualChannelDirUnavailable: 'Path unavailable',
     languageAppearance: 'Language & Sound',
     language: 'Language',
     languageDesc: 'UI language and regional format',

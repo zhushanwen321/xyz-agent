@@ -34,6 +34,7 @@
 | u5-checker | release-checker 接入：`doFetchGitHubLatestRelease` 与 `doFetchManifestSha256` 均换 `upgradeFetch`（直连编排保留在 checker） | `apps/electron/main/release-checker.ts` | u1 | plain | ① 单测（在现有测试文件追加或新建）：checker 经 upgradeFetch 调用、manifest fallback 路径同源；② 既有 release-checker 相关测试全绿 |
 | u6-handlers | gateway 接入：download 入口本地短路①②（版本严格相等）+ getPreloaded miss 后认领 + testProxy 双引擎 + install 响应加 `version` | `apps/electron/main/gateway/update-handlers.ts` | u1, u3 | plain | ① 单测：断网场景（mock 网络抛错）download 命中认领短路返回 downloaded；preloaded 0.9.12 vs payload 0.9.11 不短路；testProxy undici 失败 curl 成功返回 success；② 既有 update.test.ts 中 handler 用例全绿 |
 | u4b-before-quit | main.ts（或 electron main 启动入口文件）注册 `app.on('before-quit', killActiveCurlDownloads)` 接线（设计 D6：防孤儿 curl 进程） | 启动入口文件（实施时按实际入口定） | u2 | plain | ① import + 接线一行；② main 全量测试回归绿 |
+| u7b-open-manual-dir | main 侧 `update:openManualDir` handler（mkdir MANUAL_ASSET_DIR + shell.openPath）+ preload 暴露 + UpdateCheckCard「打开目录」按钮接线（D9 补完） | update-handlers.ts、preload.ts、lib/ipc.ts、UpdateCheckCard.vue（+测试） | u7 | plain | ① handler 单测（mkdir 幂等 + openPath 失败报错）；② 按钮三视角用例（点击触发 ipc）；③ main 全量 + update 套件回归绿 |
 | u7-renderer | renderer 衔接：`UpdateInstallResult` 签名同步（preload/ipc + shared 包根出口 index.ts 追加导出）+ install 返回对齐实装版本 + 设置页手动通道区（路径展示 + mkdir + openPath）+ 错误 suggestion 追加指引 + i18n 双语 | `apps/electron/preload/preload.ts`、`packages/renderer/src/lib/ipc.ts`、`packages/shared/src/index.ts`（仅追加 UpdateInstallResult 导出一行）、`packages/renderer/src/composables/features/settings/useAppUpdate.ts`、`packages/renderer/src/components/settings/UpdateCheckCard.vue`、`packages/renderer/src/i18n/locales/zh-CN/sidebar.ts`、`packages/renderer/src/i18n/locales/en-US/sidebar.ts` | u0, u6 | plain | ① `pnpm --filter @xyz-agent/frontend run test` 全绿（含新增手动通道区用例）；② `pnpm run typecheck:preload` 通过；③ 三视角用例：手动通道区渲染断言（用户可见 DOM） |
 
 ## 3 DAG 图
@@ -89,6 +90,8 @@ graph TD
 | 5 | u6 四处领地外改动（编排者裁决接受，随 u6 commit）：① `packages/shared/src/index.ts` 追加 UpdateInstallResult 导出一行（原划 u7，但 u6 的 tsc 验收前置依赖，u7 执行时跳过重复添加）；②③ `test/update-handlers(.orchestration).test.ts` install 断言补 version 字段（D 契约扩展的直接后果）；④ `test/w2-main-integration.test.ts` testProxy 用例注入假 curl runner（C 接入后该用例真实 spawn 系统 curl 联网 5s 超时挂死，注入后离线确定） | 已登记；u7 领地相应调整为不含 shared index.ts 重复改动 |
 | 6 | u4 实现级偏差（接受）：resume-state 清理收敛到校验链前单点；单段抽 downloadSingleStream 供 D10 undici 直连复用；D4 分类经 UpdateError.cause 链传递；curl 不可用判定从「仅 ENOENT」放宽为「非 UpdateError 的 spawn 错误」（方向一致略宽）；m5 作废重下 void 化 | 已登记 |
 | 7 | u4 遗留：killActiveCurlDownloads 的 before-quit 接线不在任何既有单元领地（main.ts） | 追加微单元 u4b-before-quit（见单元表末行） |
+| 8 | u7 五处偏差（接受）：① 手动通道文案落 settings.system.*（UpdateCheckCard 现有文案同节，一致性）；② 通道区默认展开（D9「常驻展示」语义，折叠能力保留）；③ version 对齐只 spread 版本字段（最小侵入）；④ w3-acceptance 两处断言跟进（D 契约扩展后果）；⑤ 手动通道区路径展示用 getDataDir 推导（与 main MANUAL_ASSET_DIR 同源规则，renderer 无该常量导出通道） | 已登记 |
+| 9 | u7 blocker：D9「打开目录」按钮需 main 侧新 IPC（open-external 拒 file://、reveal-in-folder 要绝对路径而 get-data-dir 返回 ~ 缩写）——u7 按裁决未越权建 IPC | 追加微单元 u7b-open-manual-dir（main handler + preload + 按钮）；另：前端全量存在 1 个认知外存量失败 chat-chunk-content-blocks.test.ts（根因 core 提交 abbfa0689，非本流水线，上报用户裁决） |
 
 ## 6 状态表
 
@@ -101,7 +104,7 @@ graph TD
 | u4-download | committed | 1 | 12 新用例；update 全套 170 绿；main 全量 712 绿；tsc exit 0 |
 | u5-checker | committed | 1 | 14 新用例（main/test/ 落位）；checker 既有套件回归绿 |
 | u6-handlers | committed | 1 | 13 新用例；main 全量 712 绿；含 4 处裁决领地外改动（偏差 #5） |
-| u7-renderer | pending | 0 | — |
+| u7-renderer | committed | 1 | 11 文件；update 相关 42 用例绿；preload typecheck 0；blocker 上报待 u7b |
 
 ## 7 残留风险与变更历史
 

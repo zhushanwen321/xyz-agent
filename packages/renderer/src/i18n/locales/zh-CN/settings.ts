@@ -527,6 +527,12 @@ export default {
     goToDownload: '前往下载',
     replacing: '替换中',
     restarting: '即将重启',
+    // ── 手动升级通道（update-network-resilience D9，UpdateCheckCard 折叠区）──
+    manualChannelTitle: '手动升级通道',
+    manualChannelHint: '下载或更新失败时，可从 release 页手动下载安装包 zip 放入以下目录，重启应用或重试更新即可识别安装',
+    manualChannelRestriction: '仅支持 app 已提示的新版本',
+    manualChannelDirLabel: '目录',
+    manualChannelDirUnavailable: '路径暂不可用',
     languageAppearance: '语言与声音',
     language: '语言',
     languageDesc: '界面显示语言与区域格式',

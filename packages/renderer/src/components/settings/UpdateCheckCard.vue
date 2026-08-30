@@ -142,6 +142,48 @@
       </div>
     </div>
 
+    <!-- 手动升级通道（update-network-resilience D9）：断网/代理故障时的人工逃生通道。
+         默认展开（路径属常驻引导），可折叠。目录路径与 main 侧 MANUAL_ASSET_DIR 同源
+         （<dataDir>/update/manual），「打开目录」按钮因无 main 侧通道暂缺（见 impl-plan）。 -->
+    <Collapsible
+      v-model:open="manualChannelOpen"
+      class="border-t border-border"
+      data-testid="settings-update-manual-channel"
+    >
+      <div class="flex items-center px-4 py-2">
+        <CollapsibleTrigger as-child>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-auto gap-1.5 px-2 text-[12px] text-muted hover:text-fg"
+            data-testid="settings-update-manual-toggle"
+          >
+            <ChevronDown
+              class="size-3.5 shrink-0 transition-transform duration-150"
+              :class="manualChannelOpen ? 'rotate-180' : ''"
+            />
+            {{ t('settings.system.manualChannelTitle') }}
+          </Button>
+        </CollapsibleTrigger>
+      </div>
+      <CollapsibleContent class="px-4 pb-3">
+        <p class="text-[11px] leading-relaxed text-neutral-mid" data-testid="settings-update-manual-hint">
+          {{ t('settings.system.manualChannelHint') }}
+        </p>
+        <!-- D3 已知边界：sha256 基准只认 app 已知 release，必须向用户言明限定 -->
+        <p class="mt-1 text-[11px] text-muted" data-testid="settings-update-manual-restriction">
+          {{ t('settings.system.manualChannelRestriction') }}
+        </p>
+        <div class="mt-2 flex min-w-0 items-center gap-2">
+          <span class="shrink-0 text-[11px] text-fg">{{ t('settings.system.manualChannelDirLabel') }}</span>
+          <code
+            class="min-w-0 truncate rounded-sm border border-border-strong bg-bg-input px-2 py-0.5 font-mono text-[11px] text-fg"
+            data-testid="settings-update-manual-dir"
+          >{{ manualDir ?? t('settings.system.manualChannelDirUnavailable') }}</code>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+
     <!-- 确认重启安装 Dialog -->
     <Dialog :open="showConfirmDialog" @update:open="showConfirmDialog = $event">
       <DialogContent class="sm:max-w-[400px]">
@@ -165,9 +207,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RefreshCw, Download, CheckCircle2, AlertCircle, Loader2 } from '@lucide/vue'
+import { RefreshCw, Download, CheckCircle2, AlertCircle, Loader2, ChevronDown } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -176,13 +218,32 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { useAppUpdate } from '@/composables/features/settings/useAppUpdate'
+import { getDataDir } from '@/lib/ipc'
 
 const { t } = useI18n()
 const { state, checkForUpdate, performDownload, performInstall, openFallbackUrl } = useAppUpdate()
 
 /** 确认重启安装 Dialog 开关 */
 const showConfirmDialog = ref(false)
+
+/** 手动通道折叠区开关（D9：默认展开——路径属常驻引导，用户可收起） */
+const manualChannelOpen = ref(true)
+
+/** 手动升级目录（~ 缩写展示形态；getDataDir 返回失败/无 IPC 环境为 null → 显示占位） */
+const manualDir = ref<string | null>(null)
+
+onMounted(async () => {
+  const dir = await getDataDir()
+  // 与 main 侧 MANUAL_ASSET_DIR = path.join(getDataDir(), 'update', 'manual') 同源
+  // （update/constants.ts + update/manual-claim.ts）。getDataDir 为 ~ 缩写展示形态
+  // （bridge-handlers get-data-dir），仅作展示用，不做文件系统操作。
+  if (dir) {
+    const sep = dir.includes('\\') ? '\\' : '/'
+    manualDir.value = `${dir}${sep}update${sep}manual`
+  }
+})
 
 /** idle：强制检测新版 */
 function onCheck(): void {

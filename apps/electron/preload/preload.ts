@@ -1,6 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -116,9 +116,11 @@ export interface ElectronAPI {
   /**
    * 拆分升级流程的安装阶段：从预下载产物读取 release + filePath，执行替换 + 触发重启。
    * install 权威源是预下载产物（不信任前端传入的 release，堵装错版本漏洞）。
-   * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
+   * @returns UpdateInstallResult：triggerRestart=true 表示升级已触发、app 即将退出重启；
+   *   version 为实装版本（手动认领与后台预下载并发覆写时可能与 UI 确认版本不一致，
+   *   renderer 进入 restarting 态前据此对齐 state.latestRelease——update-network-resilience D2）
    */
-  updateInstall(): Promise<{ triggerRestart: boolean }>
+  updateInstall(): Promise<UpdateInstallResult>
   /**
    * 读取预下载产物信息（供前端判断是否已下载完成）。
    * @returns 有效的 { release, filePath }，无预下载产物/损坏返回 null
