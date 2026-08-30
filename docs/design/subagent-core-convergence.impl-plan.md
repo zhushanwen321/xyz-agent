@@ -111,7 +111,15 @@ graph TD
 
 ## 5 合理偏差登记表
 
-（初始为空；执行期按 dev-flow 偏差三分类登记）
+| # | 单元 | 偏差 | 分类与依据 |
+|---|------|------|-----------|
+| 1 | C1 | grep 词表扩展 structured-output；保留 read/write/edit/bash/grep 通用职责词；README 68 行 fixAgent 同性质漂移连带修 | 合理——通用词跨平台非平台绑定；同性质漂移一次修净防 67/68 行自相矛盾 |
+| 2 | C2 | 漂移注释修扩展至 sync 链全部同类 docstring；realpath 归一优先于 stem 覆盖的极端构造取舍 | 合理——模块内文档一致性；语义取舍已测试锁定 |
+| 3 | C3 | sortByCodepoint 非变异化；opts 对象参数形态；barrel 追加 summarizeDescription + opts 类型；contextWindow 0 视为有效 | 合理——core 纯函数定位；红线 9 深路径不可达 |
+| 4 | C4 | save/delete 第三可选参数向后兼容；core 管线返回结构化结果非 throw；缺省常量出 barrel | 合理——pi 现调用形态零改动；isError 转换归宿主契约层 |
+| 5 | R1 | registry 新增 disposeEngines() 导出（设计说「killAllSpawnedChildren 先遍历 registry」的实现载体）；registry 引入 logger | 合理——语义等价封装，同步面语义按 D6① 预留 |
+| 6 | R2 | fixture 用 .mjs（本仓 eslint no-require-imports 拦 require）；buildAppServerEnv 组装器独立于 launcher | 合理——环境约束等价实现 |
+| 7 | R3 | golden「替换」实施为「并存」（stdout 语料保留）——spawn 语料消费方在 R4（probe 干跑）/R6（conformance）领地，且 D2 保留 spawn 降级路径；去留 R6 统一定。golden 帧序列为合成语料（A.2 权威+旧实现形态），真机实录待跨仓段替换。session-channel 连接崩溃收割依赖 turnTimeoutMs 兜底（connection 无 onClose 面，R4 补） | 合理——领地纪律优先；来源如实标注 |
 
 ## 6 状态表
 
@@ -120,11 +128,11 @@ graph TD
 | C1-core-assets | committed | 1 | 86b700f67（vitest 2363 绿；grep tools 全 0；README 67/68 行连带修——同性质漂移合理偏差） |
 | C2-core-discovery | committed | 1 | 5b03be26d（新增 15 用例 + pi 单条目形态快照；真机探针 IDENTICAL 落 [probe-c2.md](subagent-core-convergence.probe-c2.md)；检查点 1 定案 project-host 槽） |
 | C3-core-render | committed | 1 | 19c059bf6（33 用例全条目覆盖；barrel 追加 summarizeDescription + opts 类型为合理扩面；guide 必填注入 + 无内嵌文案 grep 证实） |
-| C4-core-script-pipeline | pending | 0 | — |
+| C4-core-script-pipeline | committed | 1 | ec1dcdf9a（24 用例；save/delete 第三可选参数向后兼容；结构化返回 {ok}|{error}，isError 转换留宿主 C5） |
 | C5-pi-rebind | pending | 0 | — |
 | R1-engine-dispose | committed | 1 | b0519eccd（24 新用例；registry disposeEngines() 导出为等价封装偏差） |
 | R2-connection | committed | 1 | db721187d（21 fake-server 用例；fixture 用 .mjs 避 eslint require 拦截；buildAppServerEnv 组装器供 R4 复用） |
-| R3-session-channel | pending | 0 | — |
+| R3-session-channel | committed | 1 | 44e2120f3（31 用例；golden 并存偏差见 §5；runTurn resolve 形态与 onClose 面缺口已交接 R4） |
 | R4-engine-wiring | pending | 0 | — |
 | R5-degrade-chain | pending | 0 | — |
 | R6-test-migration-docs | pending | 0 | — |
