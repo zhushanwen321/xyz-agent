@@ -8,6 +8,9 @@
  * 本脚本机器化该判据（docs/design/subagent-core-package-extraction.md §3.3 D9-①）。
  *
  * 检查项：
+ * 0. 版本双源一致性（残留风险 11 闭合）：src/index.ts 的 CORE_PACKAGE_VERSION 与
+ *    package.json version 两处字面量必须相等——手动同步漂移在 pre-commit/CI 拦截，
+ *    不等发布现场（smoke 门仅断言非空，不比对）。
  * 1. package.json：dependencies + peerDependencies + optionalDependencies 不含
  *    禁用依赖（@earendil-works/* 前缀通配 + 四个宿主专属包精确/子路径匹配）。
  *    optionalDependencies 同样进入发布物运行时闭包（npm 会安装），与 deps/peers
@@ -37,8 +40,13 @@
  * import 语法样式（fail-closed，修注释即可），不漏真实违规。
  *
  * 零第三方依赖（node:fs/node:path/node:module）。退出码：0 = 通过；1 = 违规。
+ *
+ * 自测模式 --self-test（残留风险 10 闭合）：以子进程跑脚本本体，注入探针违规
+ * 源码 → 断言转红（exit 1 且 stderr 指名探针）→ 移除 → 断言复绿（exit 0），
+ * 把 V6-①「守卫有牙」证据固化为可随时复现的命令。要求当前基线干净——基线
+ * 本身红时复绿段诚实失败，不绕过。
  */
-import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, statSync, writeFileSync, rmSync } from 'node:fs'
 import { join, dirname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { builtinModules } from 'node:module'
@@ -90,13 +98,61 @@ function extractSpecs(text, patterns) {
 }
 const isNodeBuiltin = (spec) => spec.startsWith('node:') || builtinModules.includes(spec)
 
-// ── 1. package.json：dependencies + peerDependencies ───────────────
+// ── 自测模式 --self-test（见头注；黑盒跑子进程，不复用本模块顶层检查） ──────────
+if (process.argv.includes('--self-test')) {
+  const { spawnSync } = await import('node:child_process')
+  const selfPath = fileURLToPath(import.meta.url)
+  const runGuard = () => spawnSync(process.execPath, [selfPath], { encoding: 'utf-8' })
+  const PROBE = join(SRC_DIR, '__closure_selftest_probe__.mjs')
+  let allOk = true
+  try {
+    writeFileSync(PROBE, 'import "@earendil-works/pi-coding-agent"\n')
+    const red = runGuard()
+    const redHit = red.status === 1 && /__closure_selftest_probe__/.test(red.stderr ?? '')
+    console.log(`  ${redHit ? '✓' : '✗'} 注入探针违规源码 → 转红（exit ${red.status}${redHit ? '，stderr 指名探针' : '，未指名探针——守卫可能无牙'}）`)
+    if (!redHit) {
+      allOk = false
+      console.error((red.stderr ?? '').split('\n').filter(Boolean).slice(0, 5).join('\n'))
+    }
+  } finally {
+    rmSync(PROBE, { force: true })
+  }
+  const green = runGuard()
+  const greenOk = green.status === 0
+  console.log(`  ${greenOk ? '✓' : '✗'} 移除探针 → 复绿（exit ${green.status}${greenOk ? '' : '——基线不干净或守卫误报'}）`)
+  if (!greenOk) {
+    allOk = false
+    console.error((green.stderr ?? '').split('\n').filter(Boolean).slice(0, 5).join('\n'))
+  }
+  if (!allOk) {
+    console.error('subagent-core 闭包守卫自测未通过（注入不转红 / 移除不复绿——扫描面或 fail 链路断裂）')
+    process.exit(1)
+  }
+  console.log('✓ 闭包守卫自测通过（注入-转红-移除-复绿全流程，V6-① 有牙证据固化为可复现命令）')
+  process.exit(0)
+}
+
+// ── 0+1. package.json：版本双源一致性 + 禁用依赖 ───────────────
 let pkg
 try {
   pkg = JSON.parse(readFileSync(PKG_FILE, 'utf-8'))
 } catch (e) {
   console.error(`  ✗ packages/subagent-core/package.json 解析失败: ${e.message}`)
   process.exit(1)
+}
+
+// 0. 版本双源一致性（残留风险 11 闭合，见头注检查项 0）：CORE_PACKAGE_VERSION 与
+//    package.json version 两处字面量必须相等，手动同步漂移在此拦截而非发布现场。
+const INDEX_TS = join(SRC_DIR, 'index.ts')
+if (!existsSync(INDEX_TS)) {
+  fail('找不到 src/index.ts（CORE_PACKAGE_VERSION 锚点文件被移动？请同步本守卫路径）')
+} else {
+  const vm = /export const CORE_PACKAGE_VERSION = "([^"]+)"/.exec(readFileSync(INDEX_TS, 'utf-8'))
+  if (!vm) {
+    fail('src/index.ts 缺少 CORE_PACKAGE_VERSION 导出字面量（版本双源断言锚点丢失）')
+  } else if (vm[1] !== pkg.version) {
+    fail(`版本双源漂移: src/index.ts CORE_PACKAGE_VERSION = "${vm[1]}" ≠ package.json version = "${pkg.version}"（两处字面量须同步修改）`)
+  }
 }
 let declaredDepCount = 0
 for (const section of ['dependencies', 'peerDependencies', 'optionalDependencies']) {

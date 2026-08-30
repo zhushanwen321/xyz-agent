@@ -202,8 +202,12 @@ graph TD
 7. **`./engines/zcode/reader` dist 依赖 node:sqlite（node≥22.5）**（u1-guards 实测发现）：node 20 消费者不可加载该子入口（主入口与其余子入口无此依赖）。P2 zcode 侧 2c 接入 engines/zcode 时需评估：zsw 宿主 node 版本面或 reader 的 sqlite 加载惰性化。已在 smoke-core-dist.mjs 头注释登记 TODO node20 runner。
 8. **C 侧 eslint 706 warnings 存量**（u1-move 验收登记）：extensions/packages 规则集差异 + 674 可 --fix 项，非阻断（0 errors）；收口留后续清理单元或随一致性审查处置。
 9. **GUI 视觉回归未覆盖**（Gate B 诚实披露）：V1-① 的四视图基线截图对比未执行——P0 开工前未采集 GUI 基线，事后无对照物；补偿证据（record entry 字段级测试 + live 重跑三例）只覆盖数据面不覆盖视觉呈现。后续做 GUI 回归前需先建基线采集机制。
-10. **守卫有牙过程建议固化自测模式**（Gate B 轻微流程瑕疵）：V6-① 有牙验证的原始输出未在仓内文件固化（证据依赖本计划变更历史记录）；建议后续给 check-subagent-core-closure.mjs 加 `--self-test` 模式（内置注入-转红-移除-复绿全流程）补固化。
-11. **CORE_PACKAGE_VERSION 与 package.json version 双源手动同步**（r2 登记）：`src/index.ts` 与 package.json 两处版本字面量当前一致，smoke 门仅断言非空——属可低成本闭合的漂移面，建议闭包守卫加 version 双源一致性断言（未实施，登记待办）。
+10. **守卫有牙过程建议固化自测模式**（Gate B 轻微流程瑕疵）：V6-① 有牙验证的原始输出未在仓内文件固化（证据依赖本计划变更历史记录）；建议后续给 check-subagent-core-closure.mjs 加 `--self-test` 模式（内置注入-转红-移除-复绿全流程）补固化。**已闭合（2026-08-30 残留收口批次）**：`--self-test` 已实装（子进程黑盒注入-转红-移除-复绿，实测双段绿）。
+11. **CORE_PACKAGE_VERSION 与 package.json version 双源手动同步**（r2 登记）：`src/index.ts` 与 package.json 两处版本字面量当前一致，smoke 门仅断言非空——属可低成本闭合的漂移面，建议闭包守卫加 version 双源一致性断言（未实施，登记待办）。**已闭合（2026-08-30 残留收口批次）**：断言已入闭包守卫检查项 0（负向验证：临时改 package.json version 即被拦，exit 1）。
 12. **E 壳测试套件依赖 C 测试树路径**（r2 登记、r3 修正影响面）：E 侧 7 个测试文件跨包深路径 import C 的 3 个测试 helper——spawn-mock（chatmode-round-notify-real-chain / contract.relay）、mock-extension-api（sdk-contract / interface/subagent-tool-path-guard）、orchestration test-mocks（jsonl-run-store 三件）。单一权威源、避免双宿主两份 mock 漂移；C 侧测试基建重组（移动/改名 helper）时需同步全部 7 处 import。
-13. **crash-recovery.test.ts:20-31 重复 vi.mock 声明**（r3 E2 附带发现）：pi-coding-agent 与 pi-ai 各存在重复注册（后者覆盖前者，无行为影响）——清理涉及「哪个声明是期望行为」的语义判断，留待下次触碰该文件时顺带处理，避免收尾阶段引入行为面变化。
+13. **crash-recovery.test.ts:20-31 重复 vi.mock 声明**（r3 E2 附带发现）：pi-coding-agent 与 pi-ai 各存在重复注册（后者覆盖前者，无行为影响）——清理涉及「哪个声明是期望行为」的语义判断，留待下次触碰该文件时顺带处理，避免收尾阶段引入行为面变化。**已闭合（2026-08-30 残留收口批次）**：核实两处重复均为逐字节相同声明（无语义歧义），各删一份，4/4 测试绿。
 14. **smoke 门 dist 行为面边界**（r3 增强后仍存）：golden 回放 26 tests 跑在 src TS 源；dist 行为断言=主入口 3 条 + `engine/paths` 子入口 2 条 + 5 入口 `.d.cts` 存在性——其余子入口「可加载但行为坏」不被拦（头注释已如实化；V7 完整 npm install 形态由 pnpm pack 消费者探针覆盖）。
+
+### 变更历史（残留收口）
+
+- 2026-08-30（残留收口三件，风险 10/11/13 闭合）：① 闭包守卫新增检查项 0——`src/index.ts` CORE_PACKAGE_VERSION 与 package.json version 双源一致性断言（负向验证：临时改 version 即拦，exit 1）；② 守卫新增 `--self-test` 自测模式（子进程黑盒注入探针→断言转红且 stderr 指名探针→移除→断言复绿，V6-①「有牙」证据固化为可复现命令）；③ crash-recovery.test.ts 重复 vi.mock 清理（两处均为逐字节相同声明，各删一份，4/4 绿）。验证：守卫正常跑 exit 0（120 文件 89 包级 import 口径不变）+ self-test 双段绿 + 版本漂移负向拦截。触发：用户指令（核心包线遗留问题修复）。

@@ -20,12 +20,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   getAgentDir: () => "/home/user/.pi/agent",
 }));
-vi.mock("@earendil-works/pi-coding-agent", () => ({
-  getAgentDir: () => "/home/user/.pi/agent",
-}));
-vi.mock("@earendil-works/pi-ai", () => ({
-  StringEnum: (values: string[]) => ({ type: "string", enum: values }),
-}));
 vi.mock("@earendil-works/pi-ai", () => ({
   StringEnum: (values: string[]) => ({ type: "string", enum: values }),
 }));
