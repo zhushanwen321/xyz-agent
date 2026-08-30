@@ -41,10 +41,10 @@
  *
  * 零第三方依赖（node:fs/node:path/node:module）。退出码：0 = 通过；1 = 违规。
  *
- * 自测模式 --self-test（残留风险 10 闭合）：以子进程跑脚本本体，注入探针违规
- * 源码 → 断言转红（exit 1 且 stderr 指名探针）→ 移除 → 断言复绿（exit 0），
- * 把 V6-①「守卫有牙」证据固化为可随时复现的命令。要求当前基线干净——基线
- * 本身红时复绿段诚实失败，不绕过。
+ * 自测模式 --self-test（残留风险 10 闭合）：以子进程跑脚本本体，双探针（D9-①
+ * import 闭包 + 检查点 5 worker 子图）各自注入违规源码 → 断言转红（exit 1 且
+ * stderr 指名违规定位）→ 移除 → 断言复绿（exit 0），把 V6-①「守卫有牙」证据
+ * 固化为可随时复现的命令。要求当前基线干净——基线本身红时复绿段诚实失败，不绕过。
  */
 import { readFileSync, readdirSync, existsSync, statSync, writeFileSync, rmSync } from 'node:fs'
 import { join, dirname, resolve, sep } from 'node:path'
@@ -103,23 +103,40 @@ if (process.argv.includes('--self-test')) {
   const { spawnSync } = await import('node:child_process')
   const selfPath = fileURLToPath(import.meta.url)
   const runGuard = () => spawnSync(process.execPath, [selfPath], { encoding: 'utf-8' })
-  const PROBE = join(SRC_DIR, '__closure_selftest_probe__.mjs')
+  // 双探针对应 V6-① 原始验证的两面：① D9-① import 闭包（命中检查项 2）；
+  // ② 检查点 5 worker 子图（命中 3a——workflows 脚本 require 触达 src/）。
+  const PHASES = [
+    {
+      label: 'D9-① import 闭包',
+      probe: join(SRC_DIR, '__closure_selftest_probe__.mjs'),
+      content: 'import "@earendil-works/pi-coding-agent"\n',
+      redPattern: /__closure_selftest_probe__/,
+    },
+    {
+      label: '检查点 5 worker 子图',
+      probe: join(WORKFLOWS_DIR, '__cp5_selftest_probe__.cjs'),
+      content: 'require("../src/core/host-services.ts")\n',
+      redPattern: /host-services/,
+    },
+  ]
   let allOk = true
-  try {
-    writeFileSync(PROBE, 'import "@earendil-works/pi-coding-agent"\n')
-    const red = runGuard()
-    const redHit = red.status === 1 && /__closure_selftest_probe__/.test(red.stderr ?? '')
-    console.log(`  ${redHit ? '✓' : '✗'} 注入探针违规源码 → 转红（exit ${red.status}${redHit ? '，stderr 指名探针' : '，未指名探针——守卫可能无牙'}）`)
-    if (!redHit) {
-      allOk = false
-      console.error((red.stderr ?? '').split('\n').filter(Boolean).slice(0, 5).join('\n'))
+  for (const { label, probe, content, redPattern } of PHASES) {
+    try {
+      writeFileSync(probe, content)
+      const red = runGuard()
+      const redHit = red.status === 1 && redPattern.test(red.stderr ?? '')
+      console.log(`  ${redHit ? '✓' : '✗'} [${label}] 注入探针 → 转红（exit ${red.status}${redHit ? '，stderr 指名违规定位' : '，未指名——守卫可能无牙'}）`)
+      if (!redHit) {
+        allOk = false
+        console.error((red.stderr ?? '').split('\n').filter(Boolean).slice(0, 5).join('\n'))
+      }
+    } finally {
+      rmSync(probe, { force: true })
     }
-  } finally {
-    rmSync(PROBE, { force: true })
   }
   const green = runGuard()
   const greenOk = green.status === 0
-  console.log(`  ${greenOk ? '✓' : '✗'} 移除探针 → 复绿（exit ${green.status}${greenOk ? '' : '——基线不干净或守卫误报'}）`)
+  console.log(`  ${greenOk ? '✓' : '✗'} 移除双探针 → 复绿（exit ${green.status}${greenOk ? '' : '——基线不干净或守卫误报'}）`)
   if (!greenOk) {
     allOk = false
     console.error((green.stderr ?? '').split('\n').filter(Boolean).slice(0, 5).join('\n'))
@@ -128,7 +145,7 @@ if (process.argv.includes('--self-test')) {
     console.error('subagent-core 闭包守卫自测未通过（注入不转红 / 移除不复绿——扫描面或 fail 链路断裂）')
     process.exit(1)
   }
-  console.log('✓ 闭包守卫自测通过（注入-转红-移除-复绿全流程，V6-① 有牙证据固化为可复现命令）')
+  console.log('✓ 闭包守卫自测通过（D9-① 与检查点 5 双探针注入-转红-移除-复绿，V6-① 有牙证据固化为可复现命令）')
   process.exit(0)
 }
 
@@ -147,11 +164,13 @@ const INDEX_TS = join(SRC_DIR, 'index.ts')
 if (!existsSync(INDEX_TS)) {
   fail('找不到 src/index.ts（CORE_PACKAGE_VERSION 锚点文件被移动？请同步本守卫路径）')
 } else {
-  const vm = /export const CORE_PACKAGE_VERSION = "([^"]+)"/.exec(readFileSync(INDEX_TS, 'utf-8'))
-  if (!vm) {
+  const vMatches = [...readFileSync(INDEX_TS, 'utf-8').matchAll(/export const CORE_PACKAGE_VERSION = "([^"]+)"/g)]
+  if (vMatches.length === 0) {
     fail('src/index.ts 缺少 CORE_PACKAGE_VERSION 导出字面量（版本双源断言锚点丢失）')
-  } else if (vm[1] !== pkg.version) {
-    fail(`版本双源漂移: src/index.ts CORE_PACKAGE_VERSION = "${vm[1]}" ≠ package.json version = "${pkg.version}"（两处字面量须同步修改）`)
+  } else if (vMatches.length > 1) {
+    fail(`src/index.ts CORE_PACKAGE_VERSION 声明出现 ${vMatches.length} 处（复制残留？锚点必须唯一——多声明会静默漏拦真实漂移）`)
+  } else if (vMatches[0][1] !== pkg.version) {
+    fail(`版本双源漂移: src/index.ts CORE_PACKAGE_VERSION = "${vMatches[0][1]}" ≠ package.json version = "${pkg.version}"（两处字面量须同步修改）`)
   }
 }
 let declaredDepCount = 0

@@ -1144,9 +1144,10 @@ fi
 # ============================================================================
 # subagent-core 依赖闭包守卫（D9-① + 检查点 5，subagent-core 包抽离 u1-guards）
 #   packages/subagent-core/** 变更时触发：scripts/check-subagent-core-closure.mjs
-#   校验 C 的 dependencies/peerDependencies/源码 import 闭包不含 pi SDK 与宿主
-#   专属依赖（@earendil-works/*、pi-extension-logger、pi-pending-notifications、
-#   session-delivery、pi-file-lock），附检查点 5 断言（worker 入口子图零
+#   校验 C 的 dependencies/peerDependencies/optionalDependencies/源码 import 闭包不含
+#   pi SDK 与宿主专属依赖（@earendil-works/*、pi-extension-logger、pi-pending-notifications、
+#   session-delivery、pi-file-lock），附版本双源一致性断言（src/index.ts
+#   CORE_PACKAGE_VERSION ≡ package.json version）与检查点 5 断言（worker 入口子图零
 #   host-services/notify-ports——worker 内零宿主服务）。守卫脚本自身变更同样触发。
 #   dist 回归门（D9-②：build + require CJS dist + golden 回放）不进 pre-commit
 #   （改构建面，秒级耗时也属发布门职责），挂发布管线 npm-prerelease.sh /
