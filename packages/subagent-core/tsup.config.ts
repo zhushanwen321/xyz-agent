@@ -27,6 +27,9 @@ export default defineConfig({
   // npm dist 仅 ESM（.mjs），node 20 下 require() 加载 ESM 不可靠——
   // 运行时面仅常量的 protocol 必须 bundle 进产物（noExternal），
   // 不让它以外部 ESM 依赖形态出现在 CJS require 链上。
+  // （一致性审查 r2 注记：当前 5 个 entry 闭包无 protocol 运行时引用——唯一 import
+  // 点 engine-discovery.ts 仅 pi 壳深路径消费，dist 实测零常量命中；noExternal 为
+  // 防御性边界，未来 entry 引入运行时引用时即生效 bundle。）
   // 降级路径（D4 既定）：bundle 边界出问题时改为全量 bundle 闭包内非 node 依赖。
   noExternal: ['@xyz-agent/extension-protocol'],
 })

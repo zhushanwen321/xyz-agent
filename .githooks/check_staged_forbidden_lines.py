@@ -30,13 +30,14 @@ DISABLE_RE = re.compile(r"eslint-disable")
 # NULL_HOST 缺省 sink）按设计 D2 即为 console——configureCore 之前宿主 appendEntry 通道
 # 不存在，该路径仅测试与库误用场景可达；设计文档 docs/design/subagent-core-package-extraction.md
 # §3.3 D2「缺省 console」，eslint 侧已有同范围 config 级 override（eslint.config.mjs）。
-# [u1-move/u1-guards] P1 物理抽包后 src/core 迁至 packages/subagent-core/src/core/
-# （旧 extensions/ 前缀随目录迁移失效，保留作历史登记）；新前缀登记同一豁免语义的
-# 现位置——规则 A 目前只扫 extensions/ 前缀（C 侧 console.warn/error 由 eslint
-# config override 管住），本条目保证规则 A 扫描面未来若扩到 packages/ 时豁免同步，
-# 与 eslint 侧 override（packages/subagent-core/src/core/**）一一对应。
+# [u1-move/u1-guards] P1 物理抽包后 src/core 迁至 packages/subagent-core/src/core/；
+# 旧 extensions/ 前缀已随迁移删除（一致性审查 r2 裁定：目录迁走后死条目只有负作用
+# ——重建同名路径写入 console.warn 会被静默豁免，历史登记由 git 历史承担，与 eslint
+# 侧「文件迁走则 glob 跟走」策略对齐）。现前缀登记同一豁免语义——规则 A 目前只扫
+# extensions/ 前缀（C 侧 console.warn/error 由 eslint config override 管住），本条目
+# 保证规则 A 扫描面未来若扩到 packages/ 时豁免同步，与 eslint 侧 override
+# （packages/subagent-core/src/core/**）一一对应。
 ALLOWED_CONSOLE_PREFIXES = (
-    "extensions/universal/subagent-workflow/src/core/",
     "packages/subagent-core/src/core/",
 )
 

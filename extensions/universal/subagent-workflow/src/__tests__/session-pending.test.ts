@@ -1,4 +1,4 @@
-// src/execution/__tests__/session-pending.test.ts
+// src/__tests__/session-pending.test.ts（P1 抽包留壳：注入 pi 真计数器锚定差集语义，见 impl-plan 偏差 #17）
 //
 // readActivePendingFromSessionFile：读 session 文件算活跃后代（pending 差集）。
 // 覆盖：差集、快速路径过滤、文件不存在/坏行/未回填 sessionFile。

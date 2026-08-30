@@ -126,7 +126,7 @@ const RELAY_DIR_PACKAGES = new Set(["subagent-workflow"]);
  *    白名单校验已执行，且脚本在编排段之前 fail 退出不会真跑 agent）：
  *   node -e '
  *     const fs = require("fs"), path = require("path");
- *     const p = "apps/electron/resources/extensions/@zhushanwen/subagent-workflow/workflows/review-fix-loop.js";
+ *     const p = "apps/electron/resources/extensions/@zhushanwen/pi-subagent-workflow/workflows/review-fix-loop.js";
  *     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
  *     const runner = new AsyncFunction("workerData", "$ARGS", "require", "log", fs.readFileSync(p, "utf8") + "\n");
  *     runner({ scriptPath: path.resolve(p) }, { definitelyNotAValidKey: true }, require, () => {})
@@ -141,7 +141,7 @@ const RELAY_DIR_PACKAGES = new Set(["subagent-workflow"]);
  *     && echo 'throw new Error("PLANTED-CWD-UTILS-LOADED");' > "$d/_shared/agent-refs.cjs" \
  *     && node -e '
  *     const fs = require("fs");
- *     const p = process.argv[1] + "/apps/electron/resources/extensions/@zhushanwen/subagent-workflow/workflows/review-fix-loop.js";
+ *     const p = process.argv[1] + "/apps/electron/resources/extensions/@zhushanwen/pi-subagent-workflow/workflows/review-fix-loop.js";
  *     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
  *     const runner = new AsyncFunction("workerData", "$ARGS", "require", "log", fs.readFileSync(p, "utf8") + "\n");
  *     runner(undefined, { targetType: "file", target: "probe" }, require, () => {})

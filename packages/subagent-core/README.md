@@ -2,7 +2,7 @@
 
 跨宿主共享的 subagent 执行层与 workflow 编排核心：pi extension（`@zhushanwen/pi-subagent-workflow`）与 zcode 插件（zsw）双宿主引用同一实现，消灭两套平行实现导致的逻辑漂移。
 
-- **双形态包（D4）**：workspace 消费 TS 源（exports 的 `import` 条件指向 `src/`），npm 消费 tsup 产物（dist ESM + CJS，`publishConfig` 在 publish 时整体替换 `exports`）。CJS 产物将 `@xyz-agent/extension-protocol` bundle 进产物——其 npm dist 仅 ESM，而 CJS 宿主（zsw，node>=20）的 require 链不能承载外部 ESM 依赖（设计 D4，见本仓 `docs/design/subagent-core-package-extraction.md` §3.3）。其余依赖（ajv / yaml / proper-lockfile）保持外部依赖形态，均为常规 CJS 可 require 的双格式包。
+- **双形态包（D4）**：workspace 消费 TS 源（exports 的 `import` 条件指向 `src/`），npm 消费 tsup 产物（dist ESM + CJS，`publishConfig` 在 publish 时整体替换 `exports`）。CJS 产物对 `@xyz-agent/extension-protocol` 设 tsup noExternal 防御性 bundle 边界——其 npm dist 仅 ESM，而 CJS 宿主（zsw，node>=20）的 require 链不能承载外部 ESM 依赖（设计 D4，见本仓 `docs/design/subagent-core-package-extraction.md` §3.3；当前 entry 闭包无 protocol 运行时引用、dist 实测零常量命中，未来一旦引入即 bundle）。其余依赖（ajv / yaml / proper-lockfile）保持外部依赖形态，均为常规 CJS 可 require 的双格式包。
 - **依赖闭包（D3）**：`@xyz-agent/extension-protocol` + `proper-lockfile` + `ajv` + `yaml`；宿主服务（日志 / 数据根 / 发现根 / 通知）经 `HostServices` 端口注入，core 闭包不含 pi SDK。
 - **workflows 资产（D1）**：内置 workflow 脚本（`.js` / `.cjs`）不参与编译，包内 `workflows/` 目录 src=dist 同字节直发，经 `./workflows/*` 子入口按原文件访问。
 - **公共 API 面即 semver 契约（D5）**：breaking 走 major；导出面收窄不放宽，新增导出走 minor。
@@ -85,7 +85,7 @@ configureCore({
     return DEFAULT_DATA_ROOT; // 或宿主自有数据根，如 path.join(os.homedir(), ".zcode", "zsw")
   },
   log(level, component, message, data) {
-    // 接宿主日志设施；最小实现可直接走 console
+    // 接宿主日志设施；最小实现可直接走 console（core 缺省 sink：warn/error 走 console、debug no-op）
     (level === "error" ? console.error : console.debug)(`[${component}] ${message}`, data ?? "");
   },
   // discoveryRoots 可选：不传则用 core 内建缺省（user 级 agents/workflows 根）

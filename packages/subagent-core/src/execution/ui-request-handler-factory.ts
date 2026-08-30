@@ -29,7 +29,9 @@ const logger = getLogger("subagents");
 
 // ── core 自持结构化 UI 上下文（subagent-core 包抽离 u1-move 类型中立化）─────────
 //
-// 检查点 1 裁定本文件进 core（dialog-queue[core] 与 index.ts[壳] 双消费），pi SDK 的
+// 检查点 1 裁定本文件进 core（本文件粘合 dialog-queue / host-mode / ui-channels /
+// ui-interaction-model 四个 core 件、唯一生产消费方是壳 index.ts——划壳将迫使壳深引
+// core 内部件并分裂 UiRequestHandler 契约；r2 修正原「双消费」措辞），pi SDK 的
 // ExtensionContext 虽仅 type import 也不得留在 core 闭包（D1 判据）——改为 core 自持
 // 的结构化窄面类型：只声明本模块实际消费的字段（mode 分流 + ui 透传方法），ui 方法
 // 签名按 SDK ExtensionUIContext 真实形状（read from
