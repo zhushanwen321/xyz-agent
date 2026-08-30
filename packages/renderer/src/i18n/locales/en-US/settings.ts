@@ -533,6 +533,7 @@ export default {
     manualChannelRestriction: 'Only versions the app has already detected are supported',
     manualChannelDirLabel: 'Folder',
     manualChannelDirUnavailable: 'Path unavailable',
+    manualChannelOpenDir: 'Open Directory',
     languageAppearance: 'Language & Sound',
     language: 'Language',
     languageDesc: 'UI language and regional format',

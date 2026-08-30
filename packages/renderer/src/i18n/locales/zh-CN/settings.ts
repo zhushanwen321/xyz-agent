@@ -533,6 +533,7 @@ export default {
     manualChannelRestriction: '仅支持 app 已提示的新版本',
     manualChannelDirLabel: '目录',
     manualChannelDirUnavailable: '路径暂不可用',
+    manualChannelOpenDir: '打开目录',
     languageAppearance: '语言与声音',
     language: '语言',
     languageDesc: '界面显示语言与区域格式',

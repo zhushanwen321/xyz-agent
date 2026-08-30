@@ -14,6 +14,8 @@
  *     miss 后尝试认领 manual/ 产物，D1 启动恢复链——app 启动即显示「已下载可安装」态）
  *   - 'update:testProxy'：代理探测（upgradeFetch 双引擎：undici 失败自动换 curl，
  *     单引擎被兜住即成功；D5 探针不参与 enginePreference 置位）
+ *   - 'update:openManualDir'：打开手动产物目录（D9 设置页手动通道「打开目录」：
+ *     首次点击先幂等建目录再 shell.openPath，用户不必手动建目录）
  *
  * [HISTORICAL] 不变量：
  * - 单 payload 对象规则：invoke payload 恒为单对象，禁止多 arg
@@ -26,7 +28,8 @@
  * 依赖方向：update-handlers → electron(app/ipcMain) + interfaces + update/types + update/proxy-config
  *   + update/manual-claim + update/upgrade-fetch
  */
-import { app, ipcMain } from 'electron'
+import { mkdirSync } from 'node:fs'
+import { app, ipcMain, shell } from 'electron'
 import type { LatestReleaseInfo, IProxyConfig, UpdateSettings, UpdateCheckResult, ProxyTestResult, UpdateInstallResult } from '@xyz-agent/shared'
 import type { IpcHandlerDeps } from '../interfaces.js'
 import { UpdateError } from '../update/types.js'
@@ -37,7 +40,7 @@ import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.
 import type { IUpdateOrchestrator, UpdateProgressCallback } from '../update/orchestrator.js'
 import { isAutoUpdateSupportedForCurrentInstall } from '../update/orchestrator.js'
 import { writePreloadedUpdate, readPreloadedUpdate, readPreloadedUpdateRaw, clearPreloadedUpdate } from '../update/preloaded-update.js'
-import { tryClaimManualAsset } from '../update/manual-claim.js'
+import { MANUAL_ASSET_DIR, tryClaimManualAsset } from '../update/manual-claim.js'
 import { upgradeFetch, CurlFetchError } from '../update/upgrade-fetch.js'
 import { classifyNetError } from '../update/net-errors.js'
 import { appendUpdateError } from '../update/error-log.js'
@@ -576,6 +579,19 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       throw new Error('Invalid settings: autoUpdate must be boolean')
     }
     setUpdateSettings(settings)
+    return { success: true }
+  })
+
+  // ── update:openManualDir（D9 设置页手动通道「打开目录」）─────────
+  // 首次点击先幂等建目录（recursive：已存在不报错），再 shell.openPath 在系统文件
+  // 管理器打开——用户不必先手动建目录。openPath 失败时返回非空错误字符串（成功为 ''），
+  // 抛 Error 携带该字符串对齐本文件既有 handler 错误风格（错误信息可操作）。
+  ipcMain.handle('update:openManualDir', async () => {
+    mkdirSync(MANUAL_ASSET_DIR, { recursive: true })
+    const openError = await shell.openPath(MANUAL_ASSET_DIR)
+    if (openError) {
+      throw new Error(`Failed to open manual asset directory: ${openError}`)
+    }
     return { success: true }
   })
 }

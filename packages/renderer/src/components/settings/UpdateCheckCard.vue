@@ -144,7 +144,8 @@
 
     <!-- 手动升级通道（update-network-resilience D9）：断网/代理故障时的人工逃生通道。
          默认展开（路径属常驻引导），可折叠。目录路径与 main 侧 MANUAL_ASSET_DIR 同源
-         （<dataDir>/update/manual），「打开目录」按钮因无 main 侧通道暂缺（见 impl-plan）。 -->
+         （<dataDir>/update/manual），「打开目录」经 main 侧 update:openManualDir
+         （幂等建目录 + shell.openPath，见 impl-plan u7b）。 -->
     <Collapsible
       v-model:open="manualChannelOpen"
       class="border-t border-border"
@@ -180,6 +181,17 @@
             class="min-w-0 truncate rounded-sm border border-border-strong bg-bg-input px-2 py-0.5 font-mono text-[11px] text-fg"
             data-testid="settings-update-manual-dir"
           >{{ manualDir ?? t('settings.system.manualChannelDirUnavailable') }}</code>
+          <!-- D9 u7b：main 侧幂等建目录后打开，路径不可用时按钮仍可用（目录由 main 创建） -->
+          <Button
+            variant="secondary"
+            size="sm"
+            class="h-6 shrink-0 gap-1 px-2 text-[11px]"
+            data-testid="settings-update-manual-open-dir"
+            @click="onOpenManualDir"
+          >
+            <FolderOpen class="size-3.5" />
+            {{ t('settings.system.manualChannelOpenDir') }}
+          </Button>
         </div>
       </CollapsibleContent>
     </Collapsible>
@@ -209,7 +221,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RefreshCw, Download, CheckCircle2, AlertCircle, Loader2, ChevronDown } from '@lucide/vue'
+import { RefreshCw, Download, CheckCircle2, AlertCircle, Loader2, ChevronDown, FolderOpen } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -220,10 +232,12 @@ import {
 } from '@/components/ui/dialog'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { useAppUpdate } from '@/composables/features/settings/useAppUpdate'
-import { getDataDir } from '@/lib/ipc'
+import { useToast } from '@/composables/useToast'
+import { getDataDir, openUpdateManualDir } from '@/lib/ipc'
 
 const { t } = useI18n()
 const { state, checkForUpdate, performDownload, performInstall, openFallbackUrl } = useAppUpdate()
+const { error: toastError } = useToast()
 
 /** 确认重启安装 Dialog 开关 */
 const showConfirmDialog = ref(false)
@@ -279,5 +293,13 @@ function onRetry(): void {
 /** unsupported：打开备用下载页 */
 function onOpenFallbackUrl(): void {
   void openFallbackUrl()
+}
+
+/** D9 u7b：打开手动产物目录（main 幂等建目录 + shell.openPath）。
+ *  打开失败 toast 提示（错误信息含 main 侧 openPath 返回的具体原因），不打断页面。 */
+function onOpenManualDir(): void {
+  openUpdateManualDir().catch((err: unknown) => {
+    toastError(err instanceof Error ? err.message : String(err))
+  })
 }
 </script>

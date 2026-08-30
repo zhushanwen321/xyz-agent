@@ -137,6 +137,12 @@ export interface ElectronAPI {
   onUpdateError(callback: (payload: UpdateErrorPayload) => void): () => void
   /** 不支持当前平台时，打开备用下载页（release 页面） */
   openUpdateFallbackUrl(url: string): Promise<void>
+  /**
+   * 打开手动升级产物目录（update-network-resilience D9 设置页手动通道）。
+   * main 侧先幂等建目录（用户无需手动创建）再 shell.openPath 打开；打开失败时 reject
+   * （Error.message 含 openPath 返回的错误字符串）。
+   */
+  openUpdateManualDir(): Promise<{ success: boolean }>
   // ── 代理配置 ────────────────────────────────────────────────────
   /** 获取当前代理配置 */
   /**
@@ -294,6 +300,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('update:error', handler)
   },
   openUpdateFallbackUrl: (url: string) => ipcRenderer.invoke('open-external', url),
+  openUpdateManualDir: () => ipcRenderer.invoke('update:openManualDir'),
   // ── 代理配置 ────────────────────────────────────────────────────
   getDataDir: () => ipcRenderer.invoke('get-data-dir'),
   // v2 §3：chooseDirectory 薄包装 pick-directory handler，返回 path（canceled→null），对齐 ui ChooseDirectoryFn 契约

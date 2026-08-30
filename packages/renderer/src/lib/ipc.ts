@@ -294,6 +294,15 @@ export function openUpdateFallbackUrl(url: string): Promise<void> {
   return api?.openUpdateFallbackUrl(url) ?? Promise.resolve()
 }
 
+/**
+ * 打开手动升级产物目录（D9 设置页手动通道「打开目录」按钮）。
+ * main 侧幂等建目录后在系统文件管理器打开；打开失败 reject（Error.message 含
+ * openPath 错误字符串），调用方自行提示。无 IPC（web/mock）时 no-op 返回 success。
+ */
+export function openUpdateManualDir(): Promise<{ success: boolean }> {
+  return api?.openUpdateManualDir() ?? Promise.resolve({ success: true })
+}
+
 // ── 代理配置 ────────────────────────────────────────────────────────
 
 /**
