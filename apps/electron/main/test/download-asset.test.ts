@@ -7,7 +7,8 @@
  *   W3TC3 sha256 undefined → 降级 size 校验；size 也匹配 → 通过
  *
  * Mock 策略：用真实 fs（temp 目录）+ mock globalThis.fetch 返回固定内容 Response。
- * UPDATE_DIR 经 XYZ_AGENT_DATA_DIR 环境变量重定向到 tmp（必须在 import constants 前设）。
+ * 升级工作目录（getUpdateDir()）经 XYZ_AGENT_DATA_DIR 环境变量重定向到 tmp
+ * （路径延迟求值，env 先设确保所有求值命中 tmp）。
  *
  * 运行：cd apps/electron/main && npx vitest run test/download-asset.test.ts
  */
@@ -43,10 +44,9 @@ vi.mock('node:fs', async (importOriginal) => {
   }
 })
 
-// ── 必须在 import 之前把 UPDATE_DIR 重定向到 tmp ──────────────────
-// constants.ts 在 import 时计算 UPDATE_DIR = path.join(getDataDir(), 'update')，
-// 而 getDataDir 读 XYZ_AGENT_DATA_DIR。此赋值必须在 import constants（间接被 download-asset import）
-// 之前执行。ESM 中顶层语句按 import 顺序执行，故此处放最前面，且下方 import 用动态 import。
+// ── env 先于一切路径求值把升级工作目录重定向到 tmp ──────────────────
+// constants.ts 现经 getUpdateDir() 延迟求值（getDataDir 读 XYZ_AGENT_DATA_DIR），
+// env 前置不再是硬约束。赋值仍放最前（无害），下方模块经动态 import 在 env 就绪后加载。
 const TMP_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'w3-download-'))
 process.env.XYZ_AGENT_DATA_DIR = TMP_DATA_DIR
 

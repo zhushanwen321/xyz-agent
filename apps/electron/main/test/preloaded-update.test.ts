@@ -9,8 +9,8 @@
  *   5. 完整性校验通过 → 返回 filePath
  *
  * Mock 策略参考 orchestrator.test.ts：
- *   - 用真实 fs（临时目录），经 XYZ_AGENT_DATA_DIR 重定向 PRELOADED_UPDATE_FILE
- *     （必须在 import constants 前设，constants.ts 顶层读 getDataDir）
+ *   - 用真实 fs（临时目录），经 XYZ_AGENT_DATA_DIR 重定向 getPreloadedUpdateFile()
+ *     落点（路径延迟求值，调用时读 getDataDir；env 先设确保所有求值命中 tmp）
  *   - process.platform 经 Object.defineProperty 桩为 'darwin'（readPreloadedUpdate 依赖
  *     process.platform 选平台 asset name），beforeEach 设、afterEach 还原
  *   - release 带 macArm64Zip asset，对应 darwin 平台
@@ -34,9 +34,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { LatestReleaseInfo, ReleaseAsset } from '@xyz-agent/shared'
 
-// ── 必须在 import constants（间接被 preloaded-update import）前设 ──────
-// constants.ts 顶层计算 PRELOADED_UPDATE_FILE = path.join(getDataDir(), 'update', ...),
-// getDataDir 读 XYZ_AGENT_DATA_DIR。赋值放最前，下方模块经动态 import 在 env 就绪后加载。
+// ── env 先于一切路径求值设置（历史形态要求 import 前设，延迟求值后非硬约束）──
+// constants.ts 现经 getPreloadedUpdateFile() 延迟求值（getDataDir 读 XYZ_AGENT_DATA_DIR）。
+// 赋值仍放最前（无害），下方模块经动态 import 在 env 就绪后加载。
 const TMP_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'preloaded-update-'))
 process.env.XYZ_AGENT_DATA_DIR = TMP_DATA_DIR
 

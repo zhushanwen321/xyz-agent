@@ -8,7 +8,7 @@
  * 仿 proxy-config.ts 的 SSOT 模式：本模块只依赖 @xyz-agent/shared + node:fs/node:path，
  * 不静态依赖 electron，gateway 层（update-handlers）调用。
  *
- * 落盘位置：<UPDATE_DIR>/update-settings.json（与升级产物同目录，便于统一清理）。
+ * 落盘位置：升级工作目录（getUpdateDir()）下 update-settings.json（与升级产物同目录，便于统一清理）。
  *
  * 依赖方向：update-settings → constants + @xyz-agent/shared + node:fs/path
  */

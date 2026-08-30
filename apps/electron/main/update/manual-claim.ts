@@ -1,9 +1,10 @@
 /**
  * 手动产物认领（G1 零网络逃生通道，设计 update-network-resilience D1/D2/D3）。
  *
- * 用户用浏览器/其他机器下载的安装包放入 MANUAL_ASSET_DIR（`<update>/manual/`），
- * 升级入口在 download 短路② / getPreloaded miss 后调本模块认领：与基准 release 的
- * 当前平台 asset 做 name + size + sha256 三重校验，通过后 move 到 UPDATE_DIR 并
+ * 用户用浏览器/其他机器下载的安装包放入手动投放目录 getManualAssetDir()
+ * （`<update>/manual/`），升级入口在 download 短路② / getPreloaded miss 后调本
+ * 模块认领：与基准 release 的当前平台 asset 做 name + size + sha256 三重校验，
+ * 通过后 move 到升级工作目录（getUpdateDir()）并
  * writePreloadedUpdate 落登记——认领后与 app 自下载产物不可区分，install 链既有
  * 防线全量复用。全程零网络依赖、零进程 spawn（认领场景恰恰是网络不可用）。
  *
@@ -50,7 +51,7 @@ function logClaimFailure(rawCause: string): void {
  * 尝试认领手动投放的安装包产物。
  *
  * @param release 认领基准 release（pending-update.json 读出的完整 release）
- * @returns 认领成功（含并发幂等）返回产物最终绝对路径（已 move 至 UPDATE_DIR）；
+ * @returns 认领成功（含并发幂等）返回产物最终绝对路径（已 move 至升级工作目录 getUpdateDir()）；
  *   无平台 asset / 无同名候选 / 校验失败返回 null
  */
 export async function tryClaimManualAsset(release: LatestReleaseInfo): Promise<string | null> {
@@ -83,7 +84,7 @@ export async function tryClaimManualAsset(release: LatestReleaseInfo): Promise<s
     return null
   }
 
-  // 三重通过 → move 到 UPDATE_DIR（与 app 自下载产物同位）
+  // 三重通过 → move 到升级工作目录 getUpdateDir()（与 app 自下载产物同位）
   const finalPath = path.join(getUpdateDir(), asset.name)
   try {
     renameSync(candidatePath, finalPath)

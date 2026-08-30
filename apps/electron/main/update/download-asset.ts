@@ -6,7 +6,7 @@
  *
  * 职责链：
  *   1. fetch asset.downloadUrl（全局 fetch，与 release-checker 一致；AbortController 60s 超时）
- *   2. 流式写到 `<UPDATE_DIR>/<name>.downloading`（mkdirSync recursive）
+ *   2. 流式写到升级工作目录（getUpdateDir()）下 `<name>.downloading`（mkdirSync recursive）
  *   3. 下载完成后读文件算 sha256（createHash）
  *   4. asset.sha256 存在则校验，不匹配抛 UpdateIntegrityError
  *   5. asset.sha256 缺失则降级：size 存在校验 size，size 也缺失抛 UpdateIntegrityError

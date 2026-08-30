@@ -132,8 +132,8 @@ export class MacUpdater implements PlatformUpdater {
 /**
  * win NSIS 升级器（cmd wrapper，设计 §3.4 批次 2）。
  *
- * 与 mac/linux 同构：prepareUpdate 内生成 updater.cmd 写盘 UPDATE_DIR 并
- * detached spawn（cmd /c，detached + ignore stdio），返回 detached-script。
+ * 与 mac/linux 同构：prepareUpdate 内生成 updater.cmd 写盘升级工作目录
+ * （getUpdateDir()）并 detached spawn（cmd /c，detached + ignore stdio），返回 detached-script。
  * sha256 强制（RM4/m5）：win 侧缺 sha256 直接 throw（对齐 mac/linux 语义），
  * 关闭「size-only 内容错的 exe 被执行」窗口——download 降级 size-only 仍可能发生，
  * 但 install 侧强制拒绝；wrapper 内 certutil 二次复验（见 win-updater-cmd.ts）。

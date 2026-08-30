@@ -133,7 +133,7 @@ interface UpdateResultData {
  * 原子写 update-result.json（[A-G1]）：先写 .tmp 再同目录 renameSync，读方不会读到
  * 半截 JSON——corrupt-json 分支会把半截 replacing 误判为「需回滚」触发误回滚。
  * tmp 命名与 orchestrator.writeUpdateResult / mac·linux·win 升级脚本模板一致
- * （`${UPDATE_RESULT_FILE}.tmp`）；写崩残留的孤儿 tmp 由 cleanupCompletedUpdate
+ * （`${getUpdateResultFile()}.tmp`）；写崩残留的孤儿 tmp 由 cleanupCompletedUpdate
  * 的 *.tmp 扫描兜底清理（[A-G2]）。
  */
 function writeResultFileAtomic(content: string): void {
@@ -387,8 +387,9 @@ function cleanupExpiredLogArchives(): void {
  * - failed / rolled-back / no-op → 清全部含 result
  * - replacing → 不归本函数（maybeRollbackInterruptedUpdate 处理）
  *
- * 路径注入防护：删除 preloaded 记录的下载 zip 前，校验其 path.resolve 结果在 UPDATE_DIR 之内，
- * 不在则 warn 跳过（防 preloaded 文件被篡改指向任意路径导致误删用户文件）。
+ * 路径注入防护：删除 preloaded 记录的下载 zip 前，校验其 path.resolve 结果在
+ * 升级工作目录（getUpdateDir()）之内，不在则 warn 跳过（防 preloaded 文件被篡改
+ * 指向任意路径导致误删用户文件）。
  *
  * 永不抛错、永不阻塞启动：整体 try/catch + console.warn。在 main.ts 的 whenReady 内、
  * maybeRollbackInterruptedUpdate 之后调用。
@@ -463,7 +464,7 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
         // preloaded 损坏：无法取得可信 filePath，仅删 json 本身（zip 留待下次或手动清理）
         console.warn('[update-self-healer] preloaded parse failed, skip zip deletion:', e)
       }
-      // 删下载 zip（路径注入防护：必须在 UPDATE_DIR 内）
+      // 删下载 zip（路径注入防护：必须在升级工作目录 getUpdateDir() 内）
       if (preloadedFilePath) {
         const resolved = path.resolve(preloadedFilePath)
         const updateDirPrefix = path.resolve(getUpdateDir()) + path.sep
@@ -503,8 +504,8 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
 
     // 3. 下载中断残留（.downloading 临时文件）+ 原子写孤儿 tmp（[A-G2]：
     //    update-result.json.tmp / resume-state.json.tmp 写崩残留后无任何读方消费，
-    //    终态清理一并扫掉；跨平台产物，与 .downloading 同属 UPDATE_DIR 扫描，
-    //    不入 getStaleArtifactPaths——那是 mac/linux 平台残留推导且 gated on .old 存在）
+    //    终态清理一并扫掉；跨平台产物，与 .downloading 同属升级工作目录
+    //    （getUpdateDir()）扫描，不入 getStaleArtifactPaths——那是 mac/linux 平台残留推导且 gated on .old 存在）
     if (existsSync(getUpdateDir())) {
       for (const f of readdirSync(getUpdateDir())) {
         if (f.endsWith('.downloading') || f.endsWith('.tmp')) {

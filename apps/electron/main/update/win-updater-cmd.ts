@@ -3,7 +3,7 @@
  *
  * 对应设计 .tmp/update-reliability.tech-design.md §3.4 批次 2：WinUpdater 从
  * 「返回参数由 orchestrator 延迟 spawn」改为与 mac/linux 同构——prepareUpdate 内
- * 写 updater.cmd 到 UPDATE_DIR 并 detached spawn（cmd /c，detached + ignore stdio）；
+ * 写 updater.cmd 到升级工作目录（getUpdateDir()）并 detached spawn（cmd /c，detached + ignore stdio）；
  * orchestrator 的 spawn-installer 延迟分支由批次 2 u2b 删除（win 返回
  * detached-script，三平台统一语义）。
  *
@@ -31,8 +31,8 @@
  *
  * cmd 转义模型与 bash 不同（无反斜杠转义引号；unquoted /D= 上下文无法安全传递
  * shell 元字符）：注入值含 " % & | < > ^ ! 任一字符时直接 throw（fail-fast），
- * 不做有损转义。注入值来自 main 侧 process.execPath / UPDATE_DIR 推导（非外部
- * 输入），正常不会命中；命中 = 路径异常，拒绝升级比静默坏安全。
+ * 不做有损转义。注入值来自 main 侧 process.execPath / 升级工作目录（getUpdateDir()）
+ * 推导（非外部输入），正常不会命中；命中 = 路径异常，拒绝升级比静默坏安全。
  *
  * [批次 5 互斥（§3.7.1）win 侧实现]：cmd 无内建变量可廉价自取进程 PID
  * （PowerShell $PID 是其自身进程而非 wrapper），updater.pid 由 main 侧

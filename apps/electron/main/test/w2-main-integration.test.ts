@@ -23,7 +23,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-// ── 重定向 UPDATE_DIR 到 tmp ────────────────────────────────────
+// ── 重定向升级工作目录（getUpdateDir()）到 tmp ────────────────────
 let tempDir: string
 
 beforeEach(() => {
@@ -456,12 +456,12 @@ describe('W2-integration-log-file JSONL 写入 + 轮转', () => {
 })
 
 // ── W2-testProxy-public-hostunreach（D2 v3 / A4）─────────────────
-// 必须放在本文件最末尾：本 describe 经 dynamic import 加载 update-handlers →
-// error-log/constants 模块图。若在其他用例之前加载，UPDATE_ERROR_LOG 路径会提前固化
-// 到当时的 tmp 目录，打破下方落盘用例「固化目录恰被其后 afterEach rmSync 清场」
-// 的自洽机制（已实测引发「写入 JSONL/多次追加」行数断言互相泄漏）。
-// 放在末尾时错误日志路径已由更早的 error-log 用例固化并清理完毕，
-// 本用例写在固化路径上的记录由自身 unlink 兑底，此后无任何消费者。
+// 排序说明（物理顺序保持在文件末尾；历史注释按「路径 import 期固化」解释排序，
+// 延迟求值后该理由已失真）：错误日志路径经 getUpdateErrorLog() 延迟求值，文件级
+// beforeEach 为每个用例各自设 XYZ_AGENT_DATA_DIR（独立 tmp 目录）+ afterEach rmSync
+// 清场，动态 import 每次现取路径，各用例落盘互不串扰。本 describe 经 dynamic import
+// 加载 update-handlers → error-log/constants 模块图，其记录写在自身用例的 tmp 内，
+// 末尾仍由自身 unlink 兜底清理，此后无任何消费者。
 const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>()
 
 vi.mock('electron', () => ({
