@@ -19,6 +19,8 @@ export default [
       'apps/electron/renderer/dist/**',
       'apps/electron/renderer/dist-new/**',
       'packages/*/dist/**',
+      // subagent-core 本地 bundle 产物（untracked、gitignored，构建后不重排 lint 代码风格）
+      'packages/*/dist.bundle/**',
       'apps/electron/preload/preload.js',
       'apps/electron/resources/pi/**',
       'apps/electron/resources/extensions/**',
