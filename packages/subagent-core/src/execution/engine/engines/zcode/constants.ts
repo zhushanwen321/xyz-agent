@@ -41,3 +41,20 @@ export const ZCODE_KILL_GRACE_MS = 5_000;
 
 /** 错误信息里保留的 stdout 尾部长度（engine_run_failed 规格：够诊断、不刷屏）。 */
 export const ZCODE_ERROR_TAIL_CHARS = 2000;
+
+/**
+ * [R2] app-server 控制面请求默认超时（ms）。依据：旧 zsw 实现 REQUEST_TIMEOUT_MS=15s
+ * （60+ fake-server 用例 + 真机 e2e 验证值）；R5 probe 冒烟用独立更短预算，不走本值。
+ */
+export const ZCODE_APPSERVER_REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * [R2] 连接崩溃错误信息附带的 stderr 尾部长度（字符）。设计 zcode-engine-appserver-
+ * resident.md §3.1 失败路径 2 / §3.3 错误规格表「进程意外退出」行：stderr 尾 400 字符。
+ */
+export const ZCODE_APPSERVER_STDERR_TAIL_CHARS = 400;
+
+/**
+ * [R2] stderr 滚动缓冲上限（字符）：只保最近内容供崩溃诊断。旧 zsw 实现同值 2048。
+ */
+export const ZCODE_APPSERVER_STDERR_TAIL_BUFFER_CHARS = 2048;
