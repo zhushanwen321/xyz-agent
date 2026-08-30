@@ -473,8 +473,11 @@ vi.mock('electron', () => ({
 }))
 
 describe('W2-testProxy-public-hostunreach 公网 EHOSTUNREACH 代理语境话术', () => {
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllGlobals()
+    // 还原 curl runner 注入（避免污染同 worker 后续用例；动态 import 保持模块图惰性加载语义）
+    const { __setCurlRunnerForTest } = await import('../update/upgrade-fetch.js')
+    __setCurlRunnerForTest(undefined)
   })
 
   it('W2-testProxy-public-hostunreach 公网代理 EHOSTUNREACH 返回代理语境话术 + 检查代理指引', async () => {
@@ -482,6 +485,11 @@ describe('W2-testProxy-public-hostunreach 公网 EHOSTUNREACH 代理语境话术
     const cause = Object.assign(new Error('connect EHOSTUNREACH 203.0.113.1:7890'), {
       code: 'EHOSTUNREACH',
     })
+    // u6（update-network-resilience D5/D8）：testProxyConnection 换 upgradeFetch 双引擎后，
+    // undici 失败会降级真实 spawn 系统 curl（联网且慢）。注入假 curl runner 模拟 curl 亦
+    // 连接失败（exit 7），保持本用例离线、确定性（双失败 → undici 侧分类语义不变）
+    const { __setCurlRunnerForTest } = await import('../update/upgrade-fetch.js')
+    __setCurlRunnerForTest(() => ({ exitCode: 7, stdout: '', stderr: 'curl: (7) Failed to connect' }))
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
