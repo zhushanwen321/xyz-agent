@@ -28,8 +28,24 @@
  *   session/create       真实协议语义（A.2）：先发反向请求 session/requestRuntime
  *                        Preferences 并等客户端应答（D9 常量表断言依据），流水记录
  *                        后回 {session:{sessionId}}
+ *   session/subscribe    应答 {subscribed:true}（R3；真实应答形状未知——会话层不校验）
+ *   session/send         按 FAKE_SESSION_SCENARIO 推送帧序列后应答（缺省 {accepted:true}）
+ *   session/read         按 FAKE_SESSION_SCENARIO 应答（缺省 {messages:[]}）
  *   session/close        应答 {closed:true}
  *   其余方法             应答 -32601（method not found）
+ *
+ * 会话场景注入（R3 会话层测试；不设 = 各方法走缺省行为，R2 连接层测试不受影响）：
+ *   FAKE_SESSION_SCENARIO=<path> 启动时读取一次的 JSON 文件：
+ *   {
+ *     createResult?: object            覆盖 create 应答（golden create 应答注入）
+ *     createError?: {code,message,data} create 应答 error 帧（-32602/-32601 注入）
+ *     sendError?:   {code,message,data} send 应答 error 帧（-32010/-32602 注入）
+ *     sendPushes?:  [frame, ...]       send 应答前逐帧推送（推送流 + 终态帧全显式
+ *                                      逐字回放，不经 withExtra 改写）
+ *     sendResult?:  object             缺省 {accepted:true}
+ *     readError?:   {code,message,data} read 应答 error 帧（read 兜底降级链断言）
+ *     readResult?:  object             覆盖 read 应答
+ *   }
  */
 
 import fs from 'node:fs';
@@ -38,6 +54,16 @@ import readline from 'node:readline';
 const STATE_FILE = process.env.FAKE_STATE_FILE;
 const EXTRA_KEYS = process.env.FAKE_EXTRA_KEYS === '1';
 const PROTOCOL_AS_PUSH = process.env.FAKE_PROTOCOL_PUSH === '1';
+
+// 会话场景（R3）：启动时读取一次（env 固化语义与其他 FAKE_ 开关一致）
+let SCENARIO = null;
+if (process.env.FAKE_SESSION_SCENARIO) {
+  try {
+    SCENARIO = JSON.parse(fs.readFileSync(process.env.FAKE_SESSION_SCENARIO, 'utf8'));
+  } catch (err) {
+    log('scenario-load-failed', { message: String(err && err.message) });
+  }
+}
 
 let seq = 0;
 function log(ev, data = {}) {
@@ -121,9 +147,29 @@ async function handleRequest(f) {
       process.exit(1);
       return; // 不可达（exit 先行），保持 switch 完整
     case 'session/create': {
+      if (SCENARIO && SCENARIO.createError) {
+        return replyErr(id, SCENARIO.createError.code, SCENARIO.createError.message, SCENARIO.createError.data);
+      }
       const answer = await sendReverse('session/requestRuntimePreferences');
       log('reverse-answer', { requested: 'session/requestRuntimePreferences', answer });
+      if (SCENARIO && SCENARIO.createResult) return reply(id, SCENARIO.createResult);
       return reply(id, { session: { sessionId: `sess_${id}` } });
+    }
+    case 'session/subscribe':
+      return reply(id, (SCENARIO && SCENARIO.subscribeResult) || { subscribed: true });
+    case 'session/send': {
+      if (SCENARIO && SCENARIO.sendError) {
+        return replyErr(id, SCENARIO.sendError.code, SCENARIO.sendError.message, SCENARIO.sendError.data);
+      }
+      // 推送帧逐字回放（不走 withExtra）：scenario 帧即 golden 语料/注入形态本身
+      for (const frame of (SCENARIO && SCENARIO.sendPushes) || []) out(frame);
+      return reply(id, (SCENARIO && SCENARIO.sendResult) || { accepted: true });
+    }
+    case 'session/read': {
+      if (SCENARIO && SCENARIO.readError) {
+        return replyErr(id, SCENARIO.readError.code, SCENARIO.readError.message, SCENARIO.readError.data);
+      }
+      return reply(id, (SCENARIO && SCENARIO.readResult) || { messages: [] });
     }
     case 'session/close':
       return reply(id, { closed: true });

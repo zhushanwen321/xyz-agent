@@ -58,3 +58,22 @@ export const ZCODE_APPSERVER_STDERR_TAIL_CHARS = 400;
  * [R2] stderr 滚动缓冲上限（字符）：只保最近内容供崩溃诊断。旧 zsw 实现同值 2048。
  */
 export const ZCODE_APPSERVER_STDERR_TAIL_BUFFER_CHARS = 2048;
+
+/**
+ * [R3] 终态判定后 session/read 兜底拉取的超时（ms）。read 是全文权威来源（不变量 1
+ * 的双来源之二），失败不抛——降级收尾帧/delta 聚合。旧 zsw 实现 READ_TIMEOUT_MS=5000。
+ */
+export const ZCODE_APPSERVER_TURN_READ_TIMEOUT_MS = 5_000;
+
+/**
+ * [R3] 任务收尾 session/close 的控制面超时（ms，best-effort——失败只 warn 不抛）。
+ * 旧 zsw 实现 RELEASE_CLOSE_TIMEOUT_MS=1500（wave2 D2，同值同语义）。
+ */
+export const ZCODE_APPSERVER_TURN_CLOSE_TIMEOUT_MS = 1_500;
+
+/**
+ * [R3] 一轮终态等待的缺省预算（ms）。终态双保险（turn.terminal 权威 + 收尾帧宽松
+ * 匹配防洪堤）之后的最后一道：全漂移/进程假死时不挂死任务。R4 接线后任务级
+ * timeout / abort 链可显式传入更贴任务的值。
+ */
+export const ZCODE_APPSERVER_TURN_DEFAULT_TIMEOUT_MS = 300_000;
