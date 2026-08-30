@@ -12,7 +12,7 @@
  * 宿主接入示例见包 README（§3.4 core_host_not_configured 恢复指引的落点）。
  */
 
-export const CORE_PACKAGE_VERSION = "0.1.0";
+export const CORE_PACKAGE_VERSION = "0.2.0";
 
 // ── 宿主端口接线面（core/）────────────────────────────────────
 // HostServices：dataRoot / log / discoveryRoots 端口 + configureCore 注入；
