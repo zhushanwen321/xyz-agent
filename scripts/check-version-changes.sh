@@ -39,7 +39,8 @@ Usage: bash scripts/check-version-changes.sh [git-diff-range]
 输出段（机器可读，apply-version.sh 解析 DEPENDENTS_OF_CHANGED 段）：
   NEEDS_VERSION=true|false
   CHANGED_PACKAGES        已在 .changeset 声明的包（将 bump）+ 声明的 type
-  UNDECLARED_PACKAGES     改了 src 但无 changeset 声明（PR 漏声明警告）
+  UNDECLARED_PACKAGES     src 实质改动但无 changeset 声明（PR 漏声明警告）
+  ANCHOR_ONLY_PACKAGES    仅 dep 范围/锚点跟随、无 src 改动（对齐 patch 先例，非警告）
   DEPENDENTS_OF_CHANGED   传递闭包：引用了已 bump 包、须 patch 重发刷新范围的包
   LINKED_GROUPS_AFFECTED  linked 组受影响参考（不强制对齐）
   WARN_DECLARED_PACKAGE_NOT_FOUND          声明了但包不存在（typo/已删）
@@ -226,6 +227,11 @@ try {
   changedFiles = []; // range 无效或无差异不算致命
 }
 const triggeringPackages = new Set(); // 因 src/dep 改动而触发的包
+// src 触发（非 package.json 的实质文件改动）：区分「PR 漏声明」（UNDECLARED，需要补
+// changeset）与「纯锚点/依赖范围跟随」（ANCHOR_ONLY，按 79e16b5b0 先例发对齐 patch，
+// 不是漏声明警告）——2026-08-30 修正：此前两者混入同一 UNDECLARED，pi 升级时每次
+// 误报一批「漏声明」
+const srcTouchedPackages = new Set();
 for (const f of changedFiles) {
   const pkg = pkgOf(f);
   if (!pkg) continue; // 不在任何可版本化包内（根文件/私有包改动）→ 不影响 npm 版本
@@ -250,11 +256,13 @@ for (const f of changedFiles) {
     const pkgFiles = readPkgIfExists(`${pkg.dir}/package.json`);
     if (pkgFiles && inFilesWhitelist(f.slice(pkg.dir.length + 1), pkgFiles.files)) {
       triggeringPackages.add(pkg.name);
+      srcTouchedPackages.add(pkg.name);
     }
   } else if (isTestOrFixture(f)) {
     // 测试/fixture 不触发
   } else {
     triggeringPackages.add(pkg.name);
+    srcTouchedPackages.add(pkg.name);
   }
 }
 
@@ -288,9 +296,11 @@ if (fs.existsSync(changesetDir)) {
 }
 
 // CHANGED_PACKAGES = 可版本化且已声明的包（= 闭包种子 = 将被 bump 的包）
-// UNDECLARED = 触发但未声明的包（PR 漏声明）
+// UNDECLARED = src 实质改动但未声明（PR 漏声明警告）
+// ANCHOR_ONLY = 仅 package.json dep 范围/锚点跟随、无 src 改动（对齐 patch 先例，非警告）
 const changedList = Object.keys(declared).filter(n => isVersionable(n) && exists(n)).sort();
-const undeclaredList = [...triggeringPackages].filter(n => !declared[n]).sort();
+const undeclaredList = [...triggeringPackages].filter(n => !declared[n] && srcTouchedPackages.has(n)).sort();
+const anchorOnlyList = [...triggeringPackages].filter(n => !declared[n] && !srcTouchedPackages.has(n)).sort();
 
 // --- 反向依赖图（仅可版本化包之间）---
 const reverseDeps = {}; // A -> [{ from, depType }]
@@ -331,7 +341,7 @@ const dependents = Object.keys(layer)
   .sort((a, b) => layer[a] - layer[b] || a.localeCompare(b));
 
 // --- linked 组受影响（参考用）---
-const affectedSet = new Set([...changedList, ...undeclaredList, ...dependents]);
+const affectedSet = new Set([...changedList, ...undeclaredList, ...anchorOnlyList, ...dependents]);
 const linkedAffected = [];
 for (const group of (config.linked || [])) {
   if (group.some(m => affectedSet.has(m))) linkedAffected.push(group);
@@ -397,7 +407,7 @@ for (const [f, meta] of Object.entries(changesetMeta)) {
 
 // --- 输出 ---
 const lines = [];
-const needs = changedList.length > 0 || undeclaredList.length > 0 || dependents.length > 0;
+const needs = changedList.length > 0 || undeclaredList.length > 0 || anchorOnlyList.length > 0 || dependents.length > 0;
 lines.push(`NEEDS_VERSION=${needs ? 'true' : 'false'}`);
 lines.push('');
 lines.push('CHANGED_PACKAGES:');
@@ -410,6 +420,17 @@ lines.push('');
 lines.push('UNDECLARED_PACKAGES:');
 if (undeclaredList.length === 0) lines.push('  (none)');
 for (const name of undeclaredList) {
+  const p = packages[name];
+  lines.push(`  ${name} (${p.dir}, current: ${p.version})`);
+}
+lines.push('');
+lines.push('ANCHOR_ONLY_PACKAGES:');
+if (anchorOnlyList.length === 0) {
+  lines.push('  (none)');
+} else {
+  lines.push('  # 仅 dep 范围/锚点跟随、无 src 改动——非漏声明；按对齐 patch 先例（79e16b5b0）发 patch 保持 npm 元数据与仓内一致');
+}
+for (const name of anchorOnlyList) {
   const p = packages[name];
   lines.push(`  ${name} (${p.dir}, current: ${p.version})`);
 }

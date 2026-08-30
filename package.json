@@ -10,10 +10,11 @@
   "scripts": {
     "dev": "pnpm --filter @xyz-agent/electron dev",
     "build": "pnpm --filter @xyz-agent/electron build",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 0",
     "prepare": "bash .githooks/install-hooks.sh",
     "postinstall": "bash scripts/fix-node-pty-permissions.sh",
     "build:e2e": "pnpm --filter @xyz-agent/electron build:e2e",
+    "test": "pnpm --filter './packages/**' --filter './apps/**' --filter './extensions/**' test",
     "test:e2e": "playwright test",
     "dev:smoke": "node scripts/dev-smoke.mjs",
     "changeset": "changeset",
