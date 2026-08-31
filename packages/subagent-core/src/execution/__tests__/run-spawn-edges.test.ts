@@ -69,7 +69,7 @@ vi.mock("../temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, computeWatchdogMs, SPAWN_WATCHDOG_ENV } from "../session-runner.ts";
+import { killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, maxTurnsToWatchdogMs, SPAWN_WATCHDOG_ENV } from "../session-runner.ts";
 import { readActivePendingFromSessionFile } from "../session-pending.ts";
 import {
   emitStdoutLine,
@@ -457,12 +457,12 @@ describe("runSpawn", () => {
       }
     });
 
-    // [MF-4] count>0 分支的动态超时：等待超时 = computeWatchdogMs(maxTurns)，非固定 2h。
+    // [MF-4] count>0 分支的动态超时：等待超时 = maxTurnsToWatchdogMs(maxTurns)，非固定 2h。
     // maxTurns=20 → 20×5min = 100min 到期 kill。若回归到固定 2h 常量，100min 处不会 kill，
-    // 本用例 advance(computeWatchdogMs − 1) 后仍不 kill、再 +1 才 kill 的断言会失败。
-    it("MF-4: agent_end（count>0）→ 等待超时 = computeWatchdogMs(maxTurns)（动态，非固定 2h）", async () => {
+    // 本用例 advance(maxTurnsToWatchdogMs − 1) 后仍不 kill、再 +1 才 kill 的断言会失败。
+    it("MF-4: agent_end（count>0）→ 等待超时 = maxTurnsToWatchdogMs(maxTurns)（动态，非固定 2h）", async () => {
       const maxTurns = 20;
-      const expected = computeWatchdogMs(maxTurns);
+      const expected = maxTurnsToWatchdogMs(maxTurns);
       mockPending.mockReturnValue({ count: 2 });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: slow-desc", makeOpts({ maxTurns }), makeCtx());
@@ -537,11 +537,11 @@ describe("runSpawn", () => {
 
     // [S-9] pending.error 分支（sessionFile 不可读 → 保守 keep-alive + re-arm dynamic watchdog）
     // 集成行为 guard：session-pending 单测覆盖 error 返回值，但 session-runner 的 no-kill +
-    // re-arm 到 computeWatchdogMs(maxTurns) 行为无集成 guard。若 re-arm 误删/误用固定超时，
+    // re-arm 到 maxTurnsToWatchdogMs(maxTurns) 行为无集成 guard。若 re-arm 误删/误用固定超时，
     // 保守 keep-alive 会退化成永久挂起或被固定超时误杀。
     it("S-9: agent_end（count=0 + error）→ 保守不 kill + watchdog re-arm 到动态超时", async () => {
       const maxTurns = 20;
-      const expected = computeWatchdogMs(maxTurns);
+      const expected = maxTurnsToWatchdogMs(maxTurns);
       mockPending.mockReturnValue({ count: 0, error: "session file unreadable: EACCES" });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: unreadable", makeOpts({ maxTurns }), makeCtx());
@@ -557,7 +557,7 @@ describe("runSpawn", () => {
         // 保守策略：sessionFile 不可读时不 kill（宁可空等也不误杀有后代的进程）
         expect(child.killed).toBe(false);
 
-        // watchdog re-arm 到动态超时（computeWatchdogMs(maxTurns)），未到期不 kill
+        // watchdog re-arm 到动态超时（maxTurnsToWatchdogMs(maxTurns)），未到期不 kill
         await vi.advanceTimersByTimeAsync(expected - 1);
         expect(child.killed).toBe(false);
 

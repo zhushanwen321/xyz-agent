@@ -129,7 +129,7 @@ const DEFAULT_GRACE_TURNS = 2;
 /** watchdog 下限：30 分钟。兜底防止子进程卡死在单个 tool 内（hang 的 bash/网络读），
  *  导致 turn_end 永不触发、maxTurns limiter 失效、background 槽位/worktree/alive marker 泄漏。
  *  [M-1] 旧实现固定 30 分钟，与 maxTurns 无关——maxTurns=100 的长任务会被误杀。
- *  现改为基于 maxTurns 动态计算（见 computeWatchdogMs）。 */
+ *  现改为基于 maxTurns 动态计算（见 maxTurnsToWatchdogMs）。 */
 const WATCHDOG_FLOOR_MINUTES = 30;
 const SPAWN_WATCHDOG_FLOOR_MS = WATCHDOG_FLOOR_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND;
 
@@ -157,28 +157,36 @@ const WATCHDOG_MS_PER_TURN = WATCHDOG_MINUTES_PER_TURN * SECONDS_PER_MINUTE * MS
 export const WAKEUP_GRACE_MS = 15_000;
 
 /**
- * [M-1] 基于 maxTurns 动态计算 watchdog 超时。
+ * [M-1] maxTurns → watchdog 毫秒换算（纯函数，可导出复用）。
+ *
+ * **换算语义（floor 文档化）**：`max(30min, maxTurns × 5min)`——按 maxTurns 线性估算，
+ * 带 30 分钟下限（floor）。maxTurns 换算结果低于 30 分钟时（含 ≤6 的整数与小数，
+ * 如 0.5）一律钳到 30 分钟：单 turn 约 5 分钟是经验值（复杂 tool + 长 LLM 响应约
+ * 3-4 分钟，留 1-2 分钟余量），maxTurns 过小时不设 floor 会把 watchdog 紧到误杀。
+ * - maxTurns=2 → 30min（floor 生效，非 2×5=10min——zsw 曾自实现无 floor 版本致该
+ *   配置被 10min 误杀，见 sink 设计 §2.1 例 1；两宿主统一消费本函数即同语义）
+ * - maxTurns=6 → 30min（恰为 floor 临界）
+ * - maxTurns=20 → 100 分钟
+ * - maxTurns=100 → 500 分钟（8 小时+，覆盖全量重构）
  *
  * 旧实现固定 30 分钟（SPAWN_WATCHDOG_MS），与 maxTurns 无关：maxTurns=100 的长任务
  * （全量重构/大规模迁移）正常需数小时，30 分钟到达即被误杀，limiter 机制形同虚设。
  *
- * 现按 maxTurns 线性估算：每 turn 约 5 分钟，下限 30 分钟。
- * - maxTurns=20 → 100 分钟
- * - maxTurns=100 → 500 分钟（8 小时+，覆盖全量重构）
- * 
- * [预算语义对齐 2026-08] maxTurns 未传/<=0 → 不挂 watchdog（不限）。旧实现按 10 turns
- * 估算出 50min 默认 SIGTERM，违背「默认不限制，显式传参才触发」的项目裁决；且显式
- * maxTurns:0 也被落回估算，任何参数都关不掉。用户须知风险：watchdog 防的是 pi 子进程
- * hang 泄漏（卡死在单个 tool 内 turn_end 永不触发，limiter 失效），默认关闭意味着
- * 无 maxTurns 的 spawn 若 hang 将永不自动回收——须用下方 SPAWN_WATCHDOG_ENV 显式兑底。
- * 
+ * [预算语义对齐 2026-08] maxTurns 未传/<=0 → 不挂 watchdog（不限）的挂载判定**不归本
+ * 函数**——本函数只做换算，挂载判定单一入口是 resolveSpawnWatchdogMs（未传时走
+ * SPAWN_WATCHDOG_ENV 兑底，显式 <=0 = 显式不限压过 env）。用户须知风险：watchdog 防
+ * 的是 pi 子进程 hang 泄漏（卡死在单个 tool 内 turn_end 永不触发，limiter 失效），
+ * 默认关闭意味着无 maxTurns 的 spawn 若 hang 将永不自动回收——须用 SPAWN_WATCHDOG_ENV
+ * 显式兑底。
+ *
  * [MF-4] 同时是 agent_end keep-alive 的「有活跃后代」等待超时（不 kill 分支），
  * 替代旧固定 2h（WAIT_DESCENDANT_TIMEOUT_MS，已删除）——wave 开发 >2h 不被误杀。
- * [export] 测试可观测（run-spawn-edges MF-4 用例断言 keep-alive 等待超时 = 动态值）。
- * 
+ * [export] 测试可观测（run-spawn-edges MF-4 用例断言 keep-alive 等待超时 = 动态值；
+ * max-turns-to-watchdog-ms.test.ts 锚定 floor/边界换算）。
+ *
  * @param maxTurns 调用方指定的 turn 上限；调用方保证 > 0（否则走 resolveSpawnWatchdogMs）
  */
-export function computeWatchdogMs(maxTurns: number): number {
+export function maxTurnsToWatchdogMs(maxTurns: number): number {
   return Math.max(SPAWN_WATCHDOG_FLOOR_MS, maxTurns * WATCHDOG_MS_PER_TURN);
 }
 
@@ -210,7 +218,7 @@ function getEnvSpawnWatchdogMs(): number | undefined {
  * 解析 spawn watchdog 超时（挂载判定的单一入口）。
  * 
  * 优先级（SP-6 参数 > env，U5）：maxTurns 显式传参时压过 env——有效（>0）按 turns
- * 估算（computeWatchdogMs）；显式 0/负 = 显式不限（不挂 watchdog）；仅 undefined/null
+ * 估算（maxTurnsToWatchdogMs）；显式 0/负 = 显式不限（不挂 watchdog）；仅 undefined/null
  * （未传）才落 SPAWN_WATCHDOG_ENV 兑底；env 也未设 → undefined（不挂 watchdog，不限）。
  * 
  * [U1] 返回值（env 兑底或 turns 估算两条路径）流入 setTimeout 前校验安全域：
@@ -235,8 +243,8 @@ export function resolveSpawnWatchdogMs(maxTurns: number | undefined | null): num
     assertSafeTimerDelay(turns, `maxTurns=${String(maxTurns)}`);
   }
   if (turns > 0) {
-    const estimated = computeWatchdogMs(turns);
-    assertSafeTimerDelay(estimated, `computeWatchdogMs(maxTurns=${maxTurns})`);
+    const estimated = maxTurnsToWatchdogMs(turns);
+    assertSafeTimerDelay(estimated, `maxTurnsToWatchdogMs(maxTurns=${maxTurns})`);
     return estimated;
   }
   return undefined;
@@ -1366,7 +1374,7 @@ function attachStdoutPump(
                 );
               }
               // 空闲等待期间不消耗 turn：清原 watchdog，换等待后代超时（每次 agent_end 重新计时）。
-              // [MF-4] 动态超时 = computeWatchdogMs(maxTurns)：真实后代在跑，慢任务（wave 开发
+              // [MF-4] 动态超时 = maxTurnsToWatchdogMs(maxTurns)：真实后代在跑，慢任务（wave 开发
               // 数小时）不能被固定 2h 误杀——2h 到点 kill 会连坐 SubagentService.dispose 的
               // killAllSpawnedChildren 杀全部子进程，L2 重派丢在途工作。maxTurns 大则超时长。
               // [预算语义对齐 + U5] maxTurns 未传且 env 未设，或显式 <=0（压过 env）→
@@ -1681,7 +1689,7 @@ export async function runSpawn(
 
     // e. watchdog：子进程整体超时兜底。卡死在单 tool 内（turn_end 永不触发）时
     //    limiter 失效，此 timer 保证最终 SIGTERM，防止 background 槽位/资源泄漏。
-    // [M-1] timeout 基于 maxTurns 动态计算（computeWatchdogMs）：旧实现固定 30 分钟
+    // [M-1] timeout 基于 maxTurns 动态计算（maxTurnsToWatchdogMs）：旧实现固定 30 分钟
     //    误杀长任务，现按 maxTurns 线性估算（每 turn ~5 分钟，下限 30 分钟）。
     // [预算语义对齐] maxTurns 未传/<=0 → 不挂 watchdog（不限，用户明确裁决——旧实现按
     //    10 turns 估出 50min 默认 SIGTERM 且 maxTurns:0 也关不掉，已废）；

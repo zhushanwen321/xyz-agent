@@ -3,7 +3,7 @@
 // timeoutMs / signal abort → child.kill 端到端路径测试。
 //
 // 背景：session-runner.ts 无独立 timeoutMs 字段——超时机制是 watchdog（基于
-// computeWatchdogMs(opts.maxTurns) 动态计算的下限 30min timer，兜底 SIGTERM）；
+// maxTurnsToWatchdogMs(opts.maxTurns) 动态计算的下限 30min timer，兜底 SIGTERM）；
 // 外部取消通过 opts.signal (AbortSignal) 传播：onAbort → child.kill("SIGTERM")。
 // 故「timeout 端到端路径」实际是 watchdog timer + signal abort → child.kill 两条链路。
 //
@@ -102,7 +102,7 @@ import * as fs from "node:fs";
 
 import { createRecord } from "../execution-record.ts";
 import {
-  computeWatchdogMs,
+  maxTurnsToWatchdogMs,
   type RunOptions,
   resolveSpawnWatchdogMs,
   runSpawn,
@@ -270,8 +270,8 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
 
   // ── 1. watchdog 到期 → child.kill ──
   //
-  // [R1] watchdog = setTimeout(() => child.kill("SIGTERM"), computeWatchdogMs(maxTurns))。
-  // computeWatchdogMs 下限 30min（SPAWN_WATCHDOG_FLOOR_MS），maxTurns=6 → max(30min, 30min)=30min。
+  // [R1] watchdog = setTimeout(() => child.kill("SIGTERM"), maxTurnsToWatchdogMs(maxTurns))。
+  // maxTurnsToWatchdogMs 下限 30min（SPAWN_WATCHDOG_FLOOR_MS），maxTurns=6 → max(30min, 30min)=30min。
   // 子进程卡死（turn_end 永不触发）时 limiter 失效，watchdog 兜底 kill 防资源泄漏。
   describe("watchdog 到期 → signal abort → child.kill", () => {
     beforeEach(() => {
@@ -282,9 +282,9 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
       vi.useRealTimers();
     });
 
-    it("watchdog 到期（超过 computeWatchdogMs 阈值）→ child.kill(SIGTERM) 被调用", async () => {
+    it("watchdog 到期（超过 maxTurnsToWatchdogMs 阈值）→ child.kill(SIGTERM) 被调用", async () => {
       const record = makeRecord();
-      // maxTurns=6 → computeWatchdogMs = max(30min, 6*5min) = 30min
+      // maxTurns=6 → maxTurnsToWatchdogMs = max(30min, 6*5min) = 30min
       // 不 await：runSpawn 内部 await 子进程 close，watchdog kill 后还需 emit close 才 resolve
       const promise = runSpawn(record, "Task: hang", makeOpts({ maxTurns: 6 }), makeCtx());
 
@@ -396,7 +396,7 @@ describe("timeoutMs / signal abort → child.kill 端到端路径", () => {
       expect(resolveSpawnWatchdogMs(0)).toBeUndefined();
       expect(resolveSpawnWatchdogMs(-5)).toBeUndefined();
       // maxTurns 有效（>0）→ turns 估算优先于 env 兑底
-      expect(resolveSpawnWatchdogMs(6)).toBe(computeWatchdogMs(6));
+      expect(resolveSpawnWatchdogMs(6)).toBe(maxTurnsToWatchdogMs(6));
       vi.stubEnv(SPAWN_WATCHDOG_ENV, "abc");
       expect(resolveSpawnWatchdogMs(undefined)).toBeUndefined();
       vi.stubEnv(SPAWN_WATCHDOG_ENV, "-1");
