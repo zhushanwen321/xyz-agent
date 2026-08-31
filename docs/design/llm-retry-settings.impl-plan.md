@@ -86,8 +86,29 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- **残留风险**：
-  - S1/S3 依赖真实网络错误（本机关闭端口 provider / 错误 apiKey），Gate B 执行时若服务商行为变化（如错误文案不命中可重试 pattern），按 §2.2 pattern 表调整触发方式，属验收手段调整非设计变更。
-  - u3 的 Section 交互细节以 demo html 为参照但不逐像素对齐（demo 定位为终态辅助理解），最终以项目 xyz-ui 规范 + 现有 Section 组件风格为准。
-- **变更历史**：
-  - 2026-08-31 计划创建（来源设计 db569f2ef + 审查记录 7881eba1e）。
+### Gate B 签收表（2026-08-31，隔离真实环境：XYZ_AGENT_DATA_DIR=/tmp/gateb/data + 真实 runtime + 真实 pi 子进程，WS 探针执行）
+
+| 场景 | verdict | 关键证据 |
+|---|---|---|
+| S1 调整退避参数真实生效 | PASS | 会话重试序列 `auto_retry_start attempt=1 delay=3000 → attempt=2 delay=6000`（baseDelayMs=3000 指数翻倍精确），2 次后 `auto_retry_end success=false` 落错误 |
+| S2 关闭重试失败直达 | PASS | enabled=false 保存后新会话 0 次重试，错误直接落 assistant 消息 |
+| S3 不可重试错误对照 | PASS | 本地 401 服务器 + enabled=true/1 次预算：0 次重试直接失败（认证类错误不受重试配置影响） |
+| S4 与 pi 子进程并发互不覆盖 | PASS | 编排 A（pi 先/xyz 后）终态 enabled=true + xyz 键正确；编排 B（xyz 先/pi 后）终态 enabled=false + xyz 的 maxRetries/baseDelayMs 未被回滚 + 未知键保留 |
+| S5 隔离体系不受影响 | PASS | `~/.pi/agent/settings.json` sha256 前后一致（bf4b9375…） |
+| S6 生效范围（P1 消解） | PASS | 配置改动后：旧会话（disabled 时期创建）再发消息仍 0 重试；新会话 1 次重试 delay=5000——运行中会话不受影响、新会话即时生效，D6 静态提示语义成立 |
+| S7 损坏自愈 | PASS | 顶层 `retry:"abc"` 与嵌套 `provider:"abc"` 均回退默认值显示；保存后文件恢复合法对象且未知键保留；越界保存被 `set_retry_config_failed` 信封拒绝（含字段/范围/值） |
+
+> 验收手段说明：S1 的「服务商限流」以本机关闭端口（fetch failed 命中可重试 pattern）等价触发——外部服务商 429 行为不可控，属计划残留风险预告过的手段调整；错误分类语义（可重试/不可重试）由 S1（网络类）与 S3（401）双向覆盖。
+
+### 残留风险
+
+- **存量（非本变更）**：renderer 全量测试中 `useChat-subagent-directive.test.ts` 2 用例失败、`MessageStream-bash.test.ts` 3 用例 skipped——涉及文件均不在本变更区间（3f7ddf4fa..HEAD 未触碰），归属并行工作线（subagent-core-convergence / turn-attribution），不阻塞本流水线交付。
+- **已知限制（登记不修）**：System 页 Section 挂载期 getRetryConfig 响应与 config.retryConfig 广播并发的瞬时竞态可能以陈旧值刷新表单（瞬时、下次广播自愈）——terminal 页范式同病的既有模式，修复会偏离既有范式，单独立项处理。
+- S1 探针环境的 provider 配置（type=openai-completions、models.json 投影）依赖手工修正 api 字段——runtime setProvider 对 type→api 投影的完整性属 provider 域既有逻辑，与本设计无关，未改动。
+
+**变更历史**：
+
+- 2026-08-31 计划创建（来源设计 db569f2ef + 审查记录 7881eba1e）。
+- 2026-08-31 u1-foundation committed（b1263dd0c）；u2-runtime committed（37b124164，含 P3 注释修正）；u3-gui committed（08b348c15 + fix 412d94305/3796e9c82）；u4 登记 committed（e5b394f2b）。
+- 2026-08-31 阶段 3 一致性审查：双区 reviewer（A approve / B request changes）→ 3 unreasonable 全修（412d94305）→ 定向复审 approve → 2 Minor 收尾（3796e9c82）+ 1 竞态条登记已知限制。
+- 2026-08-31 阶段 5 双绿：Gate A（shared 225 / runtime 4116 / renderer 3639 绿 + lint/tsc 过，存量风险登记）+ Gate B（S1-S7 全 PASS，签收表见上）。
