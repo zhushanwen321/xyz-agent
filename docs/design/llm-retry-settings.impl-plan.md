@@ -1,6 +1,6 @@
 # llm-retry-settings 实施计划
 
-基线: <回填于基线 commit> | 来源设计: docs/design/llm-retry-settings.md | 日期: 2026-08-31
+基线: 3f7ddf4fa | 来源设计: docs/design/llm-retry-settings.md | 日期: 2026-08-31
 
 ## 0 章节映射
 
@@ -71,7 +71,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u1-foundation | pending | 0 | — |
+| u1-foundation | committed | 1 | 测试：shared `npx vitest run` 22 文件 225 用例全绿（含新增 9 条）+ `tsc --noEmit` 过（dev 回报与主 agent 重跑一致）；diff 核验：4 文件 ⊆ 领地，protocol.ts 纯增量 |
 | u2-runtime | pending | 0 | — |
 | u3-gui | pending | 0 | — |
 | u4-integrate | pending | 0 | — |

@@ -47,6 +47,9 @@ export type { ToolPermission, ThemeMode, ThemePreset } from './settings'
 export type {
   PanelLeaf, WindowState,
 } from './panel'
+// LLM 重试配置域（类型 + D8 合法域常量 + 校验纯函数，renderer 表单与 runtime 写入侧共用）
+export type { LlmRetryConfig, LlmRetryProviderConfig } from './llm-retry'
+export { LLM_RETRY_DOMAIN, validateLlmRetryConfig } from './llm-retry'
 export * from './extension'
 export * from './git'
 export * from './plugin'
