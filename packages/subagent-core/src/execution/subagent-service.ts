@@ -149,7 +149,12 @@ function emitPendingUnregister(
   });
 }
 
-/** Service 构造参数（进程级）。 */
+/**
+ * Service 构造参数（进程级）。
+ *
+ * @experimental execution 运行时面（设计 docs/design/subagent-core-sink-design.md §3.3 D6）：
+ * 一个 minor 周期内允许签名微调，稳定后转常规 semver 承诺。
+ */
 export interface SubagentServiceInit {
   cwd: string;
   /** 配置/模型域 Service（execute 内部调其 resolveModel）。 */
@@ -221,6 +226,11 @@ interface ResolvedIdentity {
  *
  *   session_shutdown:
  *     service.dispose()
+ *
+ * 第三宿主不经 session_start 流程时改用 createSubagentService(init) 参数注入构造。
+ *
+ * @experimental execution 运行时面（设计 docs/design/subagent-core-sink-design.md §3.3 D6）：
+ * 一个 minor 周期内允许签名微调，稳定后转常规 semver 承诺。
  */
 export class SubagentService {
   private readonly pool: ConcurrencyPool;
@@ -2284,4 +2294,19 @@ export function getSubagentService(): SubagentService | null {
 /** 设置进程单例（session_start 首次创建时）。 */
 export function setSubagentService(service: SubagentService): void {
   getServiceSlot().current = service;
+}
+
+/**
+ * [U10① D6] 第三宿主最小构造入口：仅凭参数注入构造 SubagentService（无全局查找）。
+ *
+ * 构造依赖（modelService / getMainSessionFile / uiRequestHandler）全部经 init
+ * 参数注入；本工厂是 `new SubagentService(init)` 的薄包装，不读也不写
+ * getSubagentService/setSubagentService 的全局槽位——session_start 单例流程
+ * 行为零改动，宿主自持实例时用本工厂。构造内部行为与直接 new 逐字等价。
+ *
+ * @experimental execution 运行时面（设计 docs/design/subagent-core-sink-design.md §3.3 D6）：
+ * 一个 minor 周期内允许签名微调，稳定后转常规 semver 承诺。
+ */
+export function createSubagentService(init: SubagentServiceInit): SubagentService {
+  return new SubagentService(init);
 }

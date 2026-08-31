@@ -1402,8 +1402,9 @@ function appendSchemaRetryDirective(basePrompt: string, validationError: string)
   );
 }
 
-/** prepare 期能力拒绝的载体（code 进 message 前缀，调用方可程序化分流）。 */
-class ZcodeTaskShapeError extends Error {
+/** prepare 期能力拒绝的载体（code 进 message 前缀，调用方可程序化分流）。
+ *  [U10① D6] execution 运行时面错误族成员：export 供宿主 instanceof 分流（纯追加，零逻辑改动）。 */
+export class ZcodeTaskShapeError extends Error {
   readonly code: string;
 
   constructor(code: string, message: string) {
