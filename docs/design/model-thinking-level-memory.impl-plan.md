@@ -100,7 +100,7 @@ graph TD
 |---|---|---|---|
 | u1-foundation | committed | 1 | 12/12 绿（memory.test.ts）；registry #22 登记；deviations 3 条入 §5 |
 | u2 | committed | 1 | 17/17 绿（8 现有 + 9 新）；deviations 3 条入 §5 |
-| u3 | committed | 1 | 36/36 绿（18 现有 + 18 新，探针表 9 断言点全覆盖）；deviations 4 条入 §5 |
+| u3 | committed | 3（本体 1 + 审查修复 R1/R2） | 43/43 绿（含 UF3 保留方向 + 变异自证）；探针表全覆盖；deviations #7-#12 |
 | u4 | committed（验证性，零代码改动） | 0 | renderer typecheck exit 0；vitest 3625 passed（2 存量失败与基线一致，偏差 #10） |
 | u5 | committed | 1 | 39/39 增量 + core 全量 1358 passed；探针核对清单（checklist） Gate A 签收 |
 
@@ -117,3 +117,5 @@ graph TD
 | 日期 | 事件 |
 |---|---|
 | 2026-08-31 | 计划创建（设计文档 commit b27c175ce，4 轮审查 0 must-fix） |
+| 2026-08-31 | 基线 commit 9de8deb6a；u1-u5 开发循环完成（commit b1232f262 / a71d031f1 / f58a63a4e / — / d581d1ce7） |
+| 2026-08-31 | 一致性审查 R1（reviewer agent）：6 reasonable + 1 unreasonable + 4 doc_errors → 修复批次 bf83a5758 + 文档联动；定向复审抓到 R1 引入 critical 回归（landing 判定写后读）→ R2 修复 efdbf2f92（生产保真 harness + UF3 保留方向 + 变异自证）→ 定向复审通过，**一致性审查收敛（0 unreasonable / 0 doc_errors）**，审查者独立变异验证双重确认 |
