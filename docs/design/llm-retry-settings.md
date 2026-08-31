@@ -340,6 +340,11 @@ export interface LlmRetryConfig {
 
 **待验证检查点**（设计期无法确定，诚实标注）：
 
-- **P1**：pi 是否真无 settings 热加载旁路（如 extension 触发 reload）——S6 探针在真实环境复核，结论回写 D6。
-- **P2**：`retry` 写入是否需要同步失效 `PiSettingsStore` 3s TTL 缓存对「同进程紧随其后的读」的可见性——updateSettingsFields 锁内已 invalidate + 重读，理论上无问题，实施期以单测覆盖「写后立刻读」。
-- **P3（已消解——第 2 轮审查修正）**：S4 步骤① 的「pi 子进程必然落盘」动作已锚定 rpc `set_auto_retry`（三个候选中唯一无条件落盘，`rpc-mode.js:430` + `agent-session.js:2342-2344`）；原候选 `set_model` / `set_thinking_level` 经核实为会话级切换不落盘（`options.persist` 条件性且 rpc 入口不传，`rpc-mode.js:367-374` / `:390` + `agent-session.js:1252-1261` / `:1358-1366`），从候选移除。遗留随 U4：`pi-settings-store.ts:8` 模块头「用户 GUI 切模型/切思考档位时 pi 落盘」的说法与 0.84.4 rpc 实装不符，随实施批修正该注释。
+- **P1**：pi 是否真无 settings 热加载旁路（如 extension 触发 reload）——S6 探针在真实环境复核，结论回写 D6。（实施记录：探针执行安排在实施流水线阶段 5 Gate B，与 S1-S7 同批；结论见 Gate B 签收表）
+- **P2（已消解，实施期 u2）**：「写后立刻读」一致性已由单测覆盖（pi-retry-settings.test.ts，锁内 invalidate + 重读语义验证通过）。
+- **P3（已消解——第 2 轮审查修正）**：S4 步骤① 的「pi 子进程必然落盘」动作已锚定 rpc `set_auto_retry`（三个候选中唯一无条件落盘，`rpc-mode.js:430` + `agent-session.js:2342-2344`）；原候选 `set_model` / `set_thinking_level` 经核实为会话级切换不落盘（`options.persist` 条件性且 rpc 入口不传，`rpc-mode.js:367-374` / `:390` + `agent-session.js:1252-1261` / `:1358-1366`），从候选移除。遗留随 U4：`pi-settings-store.ts:8` 模块头「用户 GUI 切模型/切思考档位时 pi 落盘」的说法与 0.84.4 rpc 实装不符，随实施批修正该注释。（实施记录：注释已随 u2-runtime commit 修正）
+
+## 变更历史
+
+- 2026-08-31 设计交付（4 轮对抗式审查收敛 0 must-fix，见 llm-retry-settings.review.md；commit db569f2ef）。
+- 2026-08-31 实施完成：u1-foundation（b1263dd0c，shared 契约）、u2-runtime（37b124164，store scope/infra/port/helper/handler + P3 注释修正）、u3-gui（08b348c15，Section/i18n/api；3 轮 fix：fmtDur 10 倍 bug、魔法数字、类型安全）；u4 登记完成（data-source-registry.md retry 域）。S1-S7 真实场景验收在 Gate B 执行。
