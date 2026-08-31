@@ -130,13 +130,13 @@ graph TD
 | C3-core-render | committed | 1 | 19c059bf6（33 用例全条目覆盖；barrel 追加 summarizeDescription + opts 类型为合理扩面；guide 必填注入 + 无内嵌文案 grep 证实） |
 | C4-core-script-pipeline | committed | 1 | ec1dcdf9a（24 用例；save/delete 第三可选参数向后兼容；结构化返回 {ok}|{error}，isError 转换留宿主 C5） |
 | C5-pi-rebind | committed | 1 | a26b9a80c（pi-sw 918 绿；guide 新文案依据 systemPrompt 参数已移除的实测；probe-c5 五场景落证；⑦收口面达成，深路径归零转 C5b） |
-| C5b-barrel-aux | pending | 0 | —（C5 blocker 转化：core barrel 补 findWorkspaceRoot/getCachedParsed/getCachedFileContent/parseResourceMeta 4 导出，pi-sw injector 深路径归零） |
+| C5b-barrel-aux | committed | 1 | 1c92d6e74（injector 源文件深路径归零；__tests__ 4 处 vi.mock 深路径目标保留——barrel re-export 链同样被 mock 拦截，测试全绿为证） |
 | R1-engine-dispose | committed | 1 | b0519eccd（24 新用例；registry disposeEngines() 导出为等价封装偏差） |
 | R2-connection | committed | 1 | db721187d（21 fake-server 用例；fixture 用 .mjs 避 eslint require 拦截；buildAppServerEnv 组装器供 R4 复用） |
 | R3-session-channel | committed | 1 | 44e2120f3（31 用例；golden 并存偏差见 §5；runTurn resolve 形态与 onClose 面缺口已交接 R4） |
 | R4-engine-wiring | committed | 2 | a1370623c（前任 5h 限额中断于 import 面，接替续作；2519 绿；conformance contract.abort 钉 spawn 模式单点突破待 R6 知会） |
-| R5-degrade-chain | pending | 0 | — |
-| R6-test-migration-docs | pending | 0 | — |
+| R5-degrade-chain | committed | 1 | 498492df8（12 降级用例含 RA5-① 回归门；顺带修复 R4 dispose 竞态 flake；record 标注走 engineFallback 既有留痕通道） |
+| R6-test-migration-docs | committed | 1 | 4c3e87d9e（conformance 双模式 C3/C4 + live gate appserver 用例 + 文档 3 处同步 + D-014 revisit；移交决策：stdout golden 保留/probe() 维持三检/contract.abort 钉扎必要——结论见各单元 deviations） |
 
 ## 7 残留风险与变更历史
 
