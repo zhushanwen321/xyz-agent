@@ -37,9 +37,9 @@ export const ENV_SCHEMA = "PI_WORKFLOW_SCHEMA";
  *
  * 背景：PI_WORKFLOW_SCHEMA 经 spawn childEnv 注入子进程，env 块受 ARG_MAX 约束
  *（Linux E2BIG）——超大 schema 会在 spawn 调用点报难归因的失败。硬拒绝在
- * subagent-workflow 侧（session-runner 的 applySchemaEnvToChildEnv，同值上限
- * SCHEMA_ENV_MAX_BYTES = 256 * 1024，见其 src/shared/schema-env.ts [跨包契约 SSOT]
- * 注释）；本包独立 npm 不能直接 import（isObjectRootSchema 本地副本同例），常量
+ * subagent-core 侧（packages/subagent-core 的 session-runner applySchemaEnvToChildEnv，
+ * 同值上限 SCHEMA_ENV_MAX_BYTES = 256 * 1024，见其 src/shared/schema-env.ts
+ * [跨包契约 SSOT] 注释）；本包独立 npm 不能直接 import（isObjectRootSchema 本地副本同例），常量
  * 各自保留、跨包契约测试锁字节相等（tests/cross-package-contract.test.ts）。
  * 本侧职责仅可见性：注册时超限 logger.warn（无 logger API，stderr 直出惯例）提示
  * env 通道有上限，建议拆分 schema 或精简——不拒绝注册（子进程能收到 env 说明 SW
@@ -192,7 +192,7 @@ export function createDailyToolDefinition() {
 			+ "Call this tool to produce validated JSON data. "
 			+ "Pass `schema` (a JSON Schema draft-07 object) and `data` (the value to validate). "
 			+ "schema describes the shape; data fills the values; they must match.\n\n"
-			+ "✅ Correct (full call): structured_output({schema:{type:'object',properties:{name:{type:'string'},age:{type:'number'}},required:['name']}, data:{name:'Alice',age:30}})\n"
+			+ `✅ Correct (full call): ${TOOL_NAME}({schema:{type:'object',properties:{name:{type:'string'},age:{type:'number'}},required:['name']}, data:{name:'Alice',age:30}})\n`
 			+ "✅ Correct: schema={type:'array',items:{type:'string'}}, data=['a','b','c']\n"
 			+ "✅ Correct: schema={type:'string',enum:['low','medium','high']}, data='medium'\n"
 			+ "✅ Correct: schema={type:'number',minimum:0,maximum:100}, data=42\n"
@@ -200,7 +200,7 @@ export function createDailyToolDefinition() {
 			+ "❌ Wrong: putting the answer in text instead of calling this tool\n"
 			+ "❌ Wrong: data not matching schema (e.g. schema requires number but data is string)\n"
 			+ "❌ Wrong: schema={type:'object'} with data='hello' (string ≠ object)\n"
-			+ "❌ Wrong: structured_output({name:'Alice'}) — missing the schema/data envelope. Wrap as {schema:{...}, data:{name:'Alice'}}.\n"
+			+ `❌ Wrong: ${TOOL_NAME}({name:'Alice'}) — missing the schema/data envelope. Wrap as {schema:{...}, data:{name:'Alice'}}.\n`
 			+ "❌ Wrong: swapping schema and data (passing the answer as schema). The tool detects this as 'likely swapped' and rejects it.\n"
 			+ "❌ Wrong: merging schema and data into one object.\n"
 			+ "❌ Wrong: schema with no recognized JSON Schema keyword (e.g. {} or {answer:42}). The schema must describe shape via draft-07 keywords (type/properties/items/if-then-else/enum/...); a keyword-less object is rejected to prevent silent accept-all compilation.",

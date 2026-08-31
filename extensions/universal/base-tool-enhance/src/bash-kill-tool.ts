@@ -5,7 +5,8 @@
  * （查询面立即可见——kill 返回后 bash_output 即显示 killing，无「已 kill 仍 running」
  * 倒挂窗口）。实际终态（exited, reason:"killed"）由轮询器 exit 边沿收尾写——
  * bash_kill 不直接写终态（单一终态归属），也不 sendMessage（kill 调用方就在当前
- * turn 内等结果，再发 steer 通知是双发噪音——那是 M3 的规则，此处先不实现通知）。
+ * turn 内等结果，再发 steer 通知是双发噪音——按 notify.ts 的单点归属规则，kill
+ * 路径不 sendMessage，reason:"killed" 只 emit unregister，终态由 handleTaskExit 收尾）。
  *
  * kill 目标归属（§3.5）：**限定本进程单例表条目**；registry 回落限定终态条目
  * （exited/orphaned → already exited）——registry 中他进程的 running/killing 条目

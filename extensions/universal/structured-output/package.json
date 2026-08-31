@@ -1,7 +1,7 @@
 {
   "name": "@zhushanwen/pi-structured-output",
   "version": "5.1.0",
-  "description": "Structured output tool for Pi — enforces JSON Schema via tool call mechanism with Ajv validation",
+  "description": "Structured output tool for Pi — workflow schema enforcement via pi's parameter layer; interactive mode validates self-reported schemas with Ajv",
   "type": "module",
   "main": "index.ts",
   "xyz-agent": {
