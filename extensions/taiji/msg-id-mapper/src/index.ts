@@ -24,8 +24,9 @@
  * Missing mapping doesn't affect the agent main flow.
  *
  * Same package shape as @zhushanwen/pi-system-prompt (extensions/taiji/system-prompt/):
- * TypeScript source with no build step and no runtime deps (peer dep on pi only),
- * bundled as a builtin extension by scripts/bundle-extensions.mjs.
+ * TypeScript source with no build step, bundled as a builtin extension by
+ * scripts/bundle-extensions.mjs. Runtime dependency: @zhushanwen/pi-extension-logger
+ * (inlined into the builtin bundle at bundle time; pi remains a peer dep).
  */
 
 import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, MessageStartEvent, TurnEndEvent, AgentEndEvent } from '@earendil-works/pi-coding-agent'

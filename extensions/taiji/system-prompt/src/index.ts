@@ -7,9 +7,12 @@
  *  2. When `append.enabled === true` and `append.prompt` is non-blank,
  *     appends the user's text to the event's systemPrompt.
  *  3. Reads the global instructions file `~/.agents/AGENTS.md` (candidates
- *     AGENTS.md / AGENTS.MD / CLAUDE.md / CLAUDE.MD — mirroring pi's native
- *     `loadContextFileFromDir`) every turn and appends it under a labeled
- *     header. Opt-in by file existence: no file → no injection. Skipped when
+ *     AGENTS.md / AGENTS.MD / CLAUDE.md / CLAUDE.MD) every turn and appends it
+ *     under a labeled header. Modeled on pi's native `loadContextFileFromDir`
+ *     but deliberately narrower: pi 0.84.4 also probes `AGENTS.override.md`
+ *     and applies its candidate list to project dirs, whereas this list only
+ *     targets the global agents directory and never picks up override files.
+ *     Opt-in by file existence: no file → no injection. Skipped when
  *     pi was spawned with `--no-context-files` (consistent with pi's native
  *     context-file opt-out). `XYZ_GLOBAL_AGENTS_DIR` overrides the global
  *     directory (test hook / escape hatch).
@@ -56,7 +59,13 @@ function cachedReadFileSync(filePath: string): string | null {
   }
 }
 
-/** Global instruction candidates, mirroring pi's loadContextFileFromDir. */
+/**
+ * Global instruction candidates. Modeled on pi's native loadContextFileFromDir
+ * but deliberately not a strict mirror: pi 0.84.4 probes
+ * ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]
+ * against project dirs, while these candidates apply only to the global agents
+ * directory and intentionally exclude AGENTS.override.md.
+ */
 const GLOBAL_AGENTS_CANDIDATES = ['AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE.MD']
 
 /**
@@ -96,8 +105,9 @@ function resolveGlobalAgentsDir(): string {
 
 /**
  * Read the global instructions file. First candidate that exists and is a
- * regular file with non-blank content wins (mirrors pi's loadContextFileFromDir
- * semantics). Returns { path, content } or null; never throws.
+ * regular file with non-blank content wins (selection semantics consistent
+ * with pi's native loader; the candidate list itself is narrower, see
+ * GLOBAL_AGENTS_CANDIDATES). Returns { path, content } or null; never throws.
  */
 function readGlobalAgentsFile(): { path: string; content: string } | null {
   const dir = resolveGlobalAgentsDir()
@@ -149,7 +159,7 @@ function readConfig(dataDir: string): {
   }
   // Merge defensively — every field has its own default.
   // replace 字段仅防御性解析保持 config 结构完整，不参与本 hook 逻辑——
-  // replace 走 --system-prompt CLI（ADR-0038），hook 只处理 append。
+  // replace 走 --system-prompt CLI（ADR-0044），hook 只处理 append。
   return {
     version: typeof parsed.version === 'number' ? parsed.version : 1,
     replace: readSection(parsed.replace),
@@ -219,13 +229,19 @@ function buildSystemPrompt(event: BeforeAgentStartEvent): { systemPrompt: string
   return newPrompt === event.systemPrompt ? undefined : { systemPrompt: newPrompt }
 }
 
-/** 落盘诊断（pi stderr 经 rpc-client 写入 logs/pi-*.jsonl），不泄露配置内容。 */
+/**
+ * 落盘诊断，不泄露配置内容。
+ *
+ * 通道：extension-logger 的 error → appendEntry 写入 session JSONL（需 setPiHandle
+ * 注入 pi handle 后生效）；XYZ_AGENT_DEBUG=1 时另落文件日志。仅当 logger 自身抛错
+ * 时才兜底 process.stderr.write（下方 catch），不外泄到 agent loop。
+ */
 function logHookFailure(err: unknown): void {
   try {
     const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
     logger.error(`before_agent_start hook failed: ${msg}`)
   } catch (nestedErr) {
-    // best-effort：stderr 写失败的终极兜底——console 内部吞错不会抛，仍不外泄到 agent loop。
+    // best-effort：logger 抛错时的终极兜底 process.stderr.write——其内部吞错不会抛，仍不外泄到 agent loop。
     try {
       process.stderr.write(`[xyz-system-prompt-extension] logHookFailure also failed: ${String(nestedErr)}\n`)
     } catch {

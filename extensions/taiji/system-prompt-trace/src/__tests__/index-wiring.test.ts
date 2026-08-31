@@ -6,6 +6,8 @@
  *   从而验证 wiring 把基线小文件真的落在 getAgentDir() 下
  * - pi 用 Proxy 假体：捕获 on 注册的 handler 与 appendEntry 落点；handler 以 SDK 双参契约
  *   (event, ctx) 驱动；ctx 只需 index.ts 实际消费的字段（getSystemPrompt + sessionManager.getSessionId）
+ * - @zhushanwen/pi-extension-logger mock 三导出（getLogger / createLogger / setPiHandle），
+ *   setPiHandle 捕获 factory 注入（D3 接线契约），logger 方法收集供吞错断言
  * - switchStash 是模块级单例：beforeEach vi.resetModules 隔离用例；同 it 内二次 dynamic import
  *   模拟「switch 重建 extension runtime + 同进程模块缓存延续」的真实链路
  */
@@ -25,13 +27,14 @@ import type { SystemPromptTraceEntryData } from "../types.js";
 const P1 = "wiring prompt\nline-1";
 const P2 = "wiring prompt\nline-1\nline-2-added";
 
-const { loggerMock } = vi.hoisted(() => {
+const { loggerMock, setPiHandleMock } = vi.hoisted(() => {
 	const mock = { debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
-	return { loggerMock: mock };
+	return { loggerMock: mock, setPiHandleMock: vi.fn() };
 })
 vi.mock("@zhushanwen/pi-extension-logger", () => ({
 	getLogger: () => loggerMock,
 	createLogger: () => loggerMock,
+	setPiHandle: setPiHandleMock,
 }))
 
 const agentDirRef = vi.hoisted(() => ({ current: "" }));
@@ -136,6 +139,18 @@ describe("index.ts wiring SDK 契约", () => {
 			"session_start",
 			"turn_start",
 		]);
+	});
+
+	it("factory 调用 setPiHandle(pi) 注入日志通道（缺注入时 logger.error 的 appendEntry 通道是 no-op，生产完全静默）", async () => {
+		const ext = await loadExtension();
+		const h = createWiringHarness();
+		// hoisted mock 不随 resetModules 清调用历史，先清再驱动，隔离其他用例的累计调用
+		setPiHandleMock.mockClear();
+		ext(h.pi);
+		expect(setPiHandleMock).toHaveBeenCalledTimes(1);
+		// pi 是 Proxy 假体，深度相等比较不可靠，用引用相等断言
+		const injected = setPiHandleMock.mock.calls[0]?.[0];
+		expect(injected).toBe(h.pi);
 	});
 
 	it("startup（无 previousSessionFile）→ 首 turn 写 initial v1（appendEntry 形状 + 基线落 getAgentDir）；prompt 变化写 change v2 带 diff 摘要", async () => {

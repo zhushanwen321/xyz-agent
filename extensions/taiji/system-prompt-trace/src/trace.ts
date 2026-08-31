@@ -84,7 +84,7 @@ export function createSystemPromptTrace(env: TraceEnv, stash: SwitchStash): Syst
 			data.parentVersionDiffSummary = summarizePromptDiff(parentFullText, text);
 		}
 		ctx.appendEntry(SYSTEM_PROMPT_CUSTOM_TYPE, data);
-		// 落盘成功后才刷新自持久化基线（app 重启直 spawn resume 的唯一基线来源，设计 D2 路径 2）
+		// 落盘成功后才刷新自持久化基线（app 重启直 spawn resume / reload 的唯一基线来源，设计 D2 路径 3）
 		env.writePersistedBaseline(ctx.getSessionId(), hash, version);
 	};
 
@@ -92,7 +92,7 @@ export function createSystemPromptTrace(env: TraceEnv, stash: SwitchStash): Syst
 		onSessionStart(reason, previousSessionFile, ctx) {
 			sessionStartReason = normalizeSessionStartReason(reason);
 			current = null;
-			// 基线解析（设计 D2 跨重启三路径，优先级从高到低）：
+			// 基线解析（设计 D2 跨重启四路径，优先级从高到低）：
 			// 1. session_before_switch 直读目标文件（进程内 resume；stash 为模块级单例，跨 runtime 传递）
 			// 2. fork 的 previousSessionFile 直读【暂定语义，待 P2 实测定】
 			// 3. agentDir 自持久化小文件（app 重启直 spawn resume / reload——这两种链路没有 switch 事件）

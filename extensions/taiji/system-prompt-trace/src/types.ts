@@ -35,7 +35,7 @@ export interface PromptBaseline {
 	version: number;
 	/** 从 session 文件留痕 entry 直读时有值（可生成 diff 摘要）；自持久化小文件只有 hash+version。 */
 	fullText?: string;
-	/** 基线来源（三路径，见 trace.ts onSessionStart 的解析优先级）。 */
+	/** 基线来源（四路径口径，见 trace.ts onSessionStart 的解析优先级）。 */
 	source: "target-file" | "previous-session-file" | "persisted";
 }
 

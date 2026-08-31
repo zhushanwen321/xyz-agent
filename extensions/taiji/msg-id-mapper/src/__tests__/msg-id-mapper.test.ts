@@ -152,7 +152,7 @@ describe('input hook · clientUuid 提取（extractClientUuid）', () => {
     })
   })
 
-  it('畸形 event（handler 内抛错）→ 兜底 return undefined 不外抛（console.error 可观测）', () => {
+  it('畸形 event（handler 内抛错）→ 兜底 return undefined 不外抛（logger.error 可观测）', () => {
     const h = createHarness()
     const errSpy = loggerMock.error
     // event 为 null → 取 event.source 即 throw，走 catch 兜底
