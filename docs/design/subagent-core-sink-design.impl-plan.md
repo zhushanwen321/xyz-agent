@@ -163,7 +163,7 @@ graph TD
 | u-sw-misc | committed | 1 | 本波 pi-sw commit |
 | u-sw-store | committed | 1 | 本波 pi-sw commit |
 | u-sw-actions | committed | 1 | 本波 pi-sw commit |
-| u-probe-verify | pending | 0 | — |
+| u-probe-verify | committed | 1 | scripts/probe-third-host-integration.mjs + .review/sink-probe/acceptance-report.md（PASS） |
 
 ## 7 残留风险与变更历史
 
