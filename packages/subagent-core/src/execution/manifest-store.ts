@@ -3,6 +3,7 @@ import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 
 import { bestEffort } from "./best-effort.ts";
+import { writeAtomicFile } from "../shared/atomic-write.ts";
 
 export interface ManifestRecord {
   id: string;
@@ -89,54 +90,19 @@ export class ManifestStore {
   }
 
   /**
-   * 原子写：tmp → fsync → rename → fsync dir。真异步（fs.promises，不阻塞 event loop）。
+   * 原子写：tmp → fsync → rename → fsync dir（shared/atomic-write 统一原语，
+   * U6b 迁移——原逐行实现与 writeAtomicFile 逐环等值）。真异步（fs.promises，
+   * 不阻塞 event loop）。
    *
-   * rename 失败时 best-effort 清理残留 tmp（用 renamed 标志在 catch 中决定是否 unlink），
-   * 不掩盖原错误。失败向上抛——调用方（finalizeRecord）决定降级策略。
+   * 失败时原语尽力清理残留 tmp（debug 记录，不掩盖原错误）并原样上抛——
+   * 调用方（finalizeRecord）决定降级策略。
    */
   async writeManifest(record: ManifestRecord): Promise<void> {
     const filePath = path.join(this.dir, `${record.id}.json`);
-    const tmpPath = `${filePath}.tmp.${process.pid}`;
     const content = JSON.stringify(record, null, MANIFEST_INDENT_SPACES);
-
-    let renamed = false;
-    try {
-      // 1. 写 tmp → fsync 文件
-      const fh = await fsPromises.open(tmpPath, "w");
-      try {
-        await fh.writeFile(content, "utf-8");
-        await fh.sync();
-      } finally {
-        await fh.close();
-      }
-
-      // 2. rename tmp → final（放入 try：失败时 catch 清理 tmp）
-      await fsPromises.rename(tmpPath, filePath);
-      renamed = true;
-
-      // 3. fsync 目录（best-effort：POSIX 不要求，失败不否定已成功的 rename）
-      try {
-        const dirFh = await fsPromises.open(this.dir, "r");
-        try {
-          await dirFh.sync();
-        } finally {
-          await dirFh.close();
-        }
-      } catch (dirSyncErr) {
-        bestEffort(dirSyncErr, "fsync dir (writeManifest)");
-      }
-    } catch (err) {
-      // rename 未成功 → 清理残留 tmp（best-effort，不掩盖原错误）
-      if (!renamed) {
-        try {
-          await fsPromises.unlink(tmpPath);
-        } catch (cleanupErr) {
-          // best-effort：tmp 可能已被 rename 消费或从未创建。不影响主错误（下面 re-throw err）
-          bestEffort(cleanupErr, "unlink tmp (writeManifest)");
-        }
-      }
-      throw err;
-    }
+    // ensureDir:false：目录由构造函数负责创建（缺目录 = 外部删除的异常态，
+    // 维持旧实现的 fail-fast 上抛语义，不静默重建）
+    await writeAtomicFile(filePath, content, { ensureDir: false });
   }
 
   /**

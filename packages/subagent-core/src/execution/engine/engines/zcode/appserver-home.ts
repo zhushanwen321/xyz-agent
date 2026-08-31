@@ -23,6 +23,7 @@ import * as path from "node:path";
 import { getLogger } from "../../../../core/logger.ts";
 
 import { resolvePoolDir } from "../../paths.ts";
+import { writeAtomicFileSync } from "../../../../shared/atomic-write.ts";
 import {
   ZCODE_APPSERVER_LOCKFILE_NAME,
   ZCODE_APPSERVER_LOCK_HEARTBEAT_MS,
@@ -129,29 +130,15 @@ export function bootstrapAppServerConfig(opts: {
   const providerHash = hashProviderRegistry(providers);
   let wroteConfig = false;
   if (hashPoolConfigProviders(configPath) !== providerHash) {
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const providerObj: Record<string, unknown> = {};
     for (const [id, entry] of providers) providerObj[id] = entry;
     const payload = JSON.stringify({ model: { main: opts.modelRef }, provider: providerObj }, null, CONFIG_INDENT_SPACES);
-    writeAtomic(configPath, payload);
+    // tmp+rename 原子写（shared/atomic-write 统一原语，U6b 迁移）——跨进程并发下
+    // 读者永远看到完整文件；spawn 池同款纪律（ensureDir 对齐旧显式 mkdirSync）
+    writeAtomicFileSync(configPath, payload);
     wroteConfig = true;
   }
   return { configPath, wroteConfig, providerHash, providerIds: [...providers.keys()] };
-}
-
-/** tmp+rename 原子写（跨进程并发下读者永远看到完整文件；spawn 池同款纪律）。 */
-function writeAtomic(filePath: string, content: string): void {
-  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  try {
-    fs.writeFileSync(tmp, content, "utf8");
-    fs.renameSync(tmp, filePath);
-  } finally {
-    try {
-      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-    } catch (err) {
-      logger.debug(`[zcode-preparer] 原子写残留清理失败（${filePath}，best-effort）: ${errMessage(err)}`);
-    }
-  }
 }
 
 // ============================================================
@@ -339,7 +326,9 @@ export async function writeAppServerPidFile(homeDir: string, pid: number): Promi
     startedAt: Date.now(),
     ...(pid > 0 ? { lstart: await probePidLstart(pid) } : {}),
   };
-  writeAtomic(pidfilePath(homeDir), JSON.stringify(content, null, CONFIG_INDENT_SPACES));
+  // ensureDir:false：homeDir 已由 prepare 阶段 bootstrap（目录被删属异常态，
+  // 维持旧实现 fail-fast 上抛，不静默重建）
+  writeAtomicFileSync(pidfilePath(homeDir), JSON.stringify(content, null, CONFIG_INDENT_SPACES), { ensureDir: false });
 }
 
 /** 回收判定结论（诊断/测试断言面）。 */

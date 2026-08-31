@@ -18,12 +18,13 @@
 //     双向 diff，见 reconcileWithPhysical）。
 //   - 同步 IO（readFileSync/writeFileSync）持锁执行：锁内临界区毫秒级，
 //     async 锁 + sync IO 组合在单线程 event loop 内无 interleaving。
-//   - 原子写：写 .tmp → rename，防写一半崩溃产生损坏 JSON。
+//   - 原子写：tmp+rename 统一走 shared/atomic-write（U6b），防写一半崩溃产生损坏 JSON。
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { getLogger } from "../core/logger.ts";
+import { writeAtomicFileSync } from "../shared/atomic-write.ts";
 import lockfile from "proper-lockfile";
 
 import { bestEffort } from "./best-effort.ts";
@@ -35,11 +36,6 @@ export const SPAWN_GRACE_MS = 60_000;
 
 /** JSON 缩进空格数（可读性 + diff 友好）。 */
 const JSON_INDENT = 2;
-
-/** tmp 随机段：36 进制取 8 字符（跳过 "0." 前缀），与 pid 组合保证并发唯一。 */
-const TMP_RANDOM_BASE = 36;
-const TMP_RANDOM_SLICE_START = 2; // 跳过 Math.random 字符串的 "0." 前缀
-const TMP_RANDOM_SLICE_END = 10;
 
 /**
  * 锁参数：逐项对齐 extensions/shared/file-lock/src/file-lock.ts 的 withFileLock
@@ -254,18 +250,16 @@ export class WorktreeRegistry {
   }
 
   /**
-   * 原子写入全部条目。
+   * 原子写入全部条目（shared/atomic-write 统一原语，U6b 迁移——sync 档
+   * writeAtomicFileSync；写失败时原语清理残留 tmp，消除旧实现「write 成功但
+   * rename 失败漏清 tmp」缺陷）。
    * best-effort：写入失败不阻断主流程（create/cleanup 的 git 操作已执行，
    * 注册表与 git 状态的短暂不一致靠下次 reaper 对账收敛）。
    * 写盘失败时 warn 日志（带 branch/pid 上下文，补全失败可观测闭环）。
    */
   private save(entries: WorktreeEntry[], context?: { branch?: string; pid?: number }): void {
     try {
-      fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-      // tmp 名带 pid + 随机段：锁降级（无锁并发 RMW）时多进程 tmp 互不覆盖
-      const tmp = `${this.filePath}.tmp_${process.pid}_${Math.random().toString(TMP_RANDOM_BASE).slice(TMP_RANDOM_SLICE_START, TMP_RANDOM_SLICE_END)}`;
-      fs.writeFileSync(tmp, JSON.stringify({ entries }, null, JSON_INDENT), "utf-8");
-      fs.renameSync(tmp, this.filePath);
+      writeAtomicFileSync(this.filePath, JSON.stringify({ entries }, null, JSON_INDENT));
     } catch (err) {
       bestEffort(err, "worktree registry save");
       // [worktree-reaper-fix] 补全写盘失败静默吞错时，条目 pid 恒 0、60s 后被 reaper 误删

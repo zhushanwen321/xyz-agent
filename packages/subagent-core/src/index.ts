@@ -233,3 +233,250 @@ export type { ZcodeEngineDeps } from "./execution/engine/engines/zcode/registrat
 // killAllSpawnedChildren：session 关闭时批量回收 agent 子进程（宿主 shutdown
 // 钩子消费；子进程注册表在 session-runner 模块内）。
 export { killAllSpawnedChildren } from "./execution/session-runner.ts";
+
+// ═══════════════════════════════════════════════════════════════════
+// sink 下沉收口扩面（docs/design/subagent-core-sink-design.md，2026-08-31）
+//
+// D2 裁决：本分隔线以下全部为纯新增导出——上方既有导出符号与路径零变更
+//（pi 24 处深路径 import 与 zsw vendor sha256 manifest 双不受波及）。
+// 按域分组逐名列出（不使用 `export *`，沿用本文件既有纪律使 diff 可审）。
+//
+// semver 分档：运行时面一组标注 @experimental（一个 minor 周期内允许签名
+// 微调，D6）；其余各组为常规 semver 稳定面。
+// ═══════════════════════════════════════════════════════════════════
+
+// ── agent-ref 面（契约原语，U1）────────────────────────────────
+// agent 引用规范化（normalizeRef 含 `..` 段拒绝——G4 声明的唯一行为收紧，
+// ⛔2 样本集验证）+ 引用扩展名常量 + 显示名投影 + 报错文案工厂 +
+// slug 长度上限 + 进程活性探针（watchdog/孤儿判定共用）。
+export {
+  AGENT_REF_EXT,
+  displayAgentName,
+  invalidAgentRefMessage,
+  normalizeRef,
+  type InvalidAgentRefMessageOptions,
+  WORKFLOW_REF_EXT,
+} from "./shared/agent-ref.ts";
+export { SLUG_MAX_LENGTH } from "./execution/execute-options-mapper.ts";
+export { isProcessAlive } from "./execution/alive-store.ts";
+
+// ── workflow 契约面（U1）──────────────────────────────────────
+// workflow 引用规范化（名/路径二分 + 保留字裁决，knownNames 宿主注入——
+// 内置 workflow 名不 core 硬编码）+ WorkflowScript 实体与按路径加载工厂
+//（第三宿主零复刻脚本加载，G3/S5）。
+export {
+  normalizeWorkflowRef,
+  WORKFLOW_REF_RESERVED_NAMES,
+  type NormalizeWorkflowRefOptions,
+  type NormalizedWorkflowRef,
+  type WorkflowRefInvalidReason,
+} from "./shared/agent-ref.ts";
+export {
+  loadWorkflowScriptByPath,
+  WorkflowScript,
+} from "./orchestration/workflow-script-registry-impl.ts";
+
+// ── 执行预算原语（U3/U4 / D7）─────────────────────────────────
+// maxTurns→watchdog 毫秒换算（floor 语义文档化——两宿主预算一致性 S2 的函数级
+// 锚点）+ 并发池工厂（queuePolicy 缺省 priority 保 pi 行为，zsw 消费 strict-fifo
+// ——策略差异显式化而非双实现）。
+export { maxTurnsToWatchdogMs } from "./execution/session-runner.ts";
+export {
+  createConcurrencyPool,
+  type ConcurrencyPool,
+  type CreateConcurrencyPoolOptions,
+  type QueuePolicy,
+} from "./execution/concurrency-pool.ts";
+
+// ── 模型引用切分原语（U1 契约面批件）─────────────────────────
+// provider/model 引用切分与缺省值（两宿主 maxTurns/model 换算同源）；
+// 实现体内聚 zcode preparer/constants 不挪文件，barrel re-export（§5.3）。
+export {
+  DEFAULT_PROVIDER_ID,
+  hasApiKey,
+  splitZcodeModelRef,
+} from "./execution/engine/engines/zcode/preparer.ts";
+export { ZCODE_FALLBACK_DEFAULT_MODEL } from "./execution/engine/engines/zcode/constants.ts";
+
+// ── worktree git 内核（U5 / D5）───────────────────────────────
+// git 语义纯函数单源：保真读（gitRun）、SafeId 校验、dirty 谓词、
+// collectWorktreePatch（统一 add+diff 基线机制，返回结构即 patchIncomplete
+// 留痕载体）、三步容错清理、listWorktreePorcelain（原始输出供宿主 realpath
+// 对账）。锚点缺失/损坏与 add 失败两条降级路径 warn + 留痕（⛔3）。
+//
+// GitRunError 同名双类裁决（u-core-exec-export 交接）：worktree-manager.ts 与
+// worktree-git-ops.ts 各有一个 GitRunError（文案同但类独立）——barrel 只导出
+// 本组 worktree-git-ops 版（git 语义新单源）；worktree-manager 版不进 barrel，
+// 将来 manager 收缩到 git-ops 内核时随之消除。
+export {
+  assertSafeId,
+  cleanupWorktree,
+  collectWorktreePatch,
+  GitRunError,
+  gitRun,
+  isSafeId,
+  isTreeDirty,
+  listWorktreePorcelain,
+  SAFE_ID_RE,
+  type CleanupWorktreeOptions,
+  type CollectWorktreePatchOptions,
+  type ListWorktreePorcelainOptions,
+  type PatchBaselineAnchor,
+  type WorktreePatchResult,
+} from "./execution/worktree-git-ops.ts";
+
+// ── 运行时面（@experimental，U10 / D6）────────────────────────
+// SubagentService 构造依赖参数注入（modelService 等，无全局查找）+
+// record 状态查询面（RecordStore 按状态枚举/按 id；lookupRecordAnyState
+// 全态查询）+ record 落盘 entry 契约 + agent-registry 执行消费面
+//（loadByPath 直接加载）+ 动作层领域内核（六 handler 的校验/守卫链/
+// 归属判定/终态映射，产出领域对象，宿主 adapter 负责包装渲染）+
+// 错误类型族（instanceof 分流用）。
+//
+// @experimental：本组全部导出在一个 minor 周期内允许签名微调，稳定后转
+// 常规 semver 承诺（D6 语义，各源文件符号注释同款声明）。
+//
+// SubagentServiceSessionInit 刻意不出 barrel：pi session_start 注入专属
+//（引用未导出的 PiLike 签面），第三宿主不经该流程。
+export {
+  createSubagentService,
+  SubagentService,
+  type SubagentServiceInit,
+} from "./execution/subagent-service.ts";
+export {
+  RecordStore,
+  type ChangeListener,
+  type RecordStorePi,
+  type StatusFilter,
+} from "./execution/record-store.ts";
+export {
+  SUBAGENT_RECORD_CUSTOM_TYPE,
+  toSubagentRecordEntry,
+  type SubagentRecordEntryData,
+} from "./execution/record-entry.ts";
+export { AgentRegistry } from "./execution/agent-registry.ts";
+// 错误类型族（error-recovery.ts 计划路径实测不存在，实测散布于下列源文件）：
+// resurrect/fork-depth/dirty-worktree 为动作层守卫抛出点（types.ts），
+// GitRunError 见 worktree 内核组裁决。
+export {
+  DirtyWorktreeError,
+  ForkDepthExceededError,
+  ResurrectDeniedError,
+} from "./execution/types.ts";
+export {
+  BG_MESSAGE,
+  cancelHandler,
+  closeHandler,
+  DEFAULT_LIST_LIMIT,
+  endedMessageGuard,
+  FORK_FROM_DEFAULT_PROMPT,
+  forkFromHandler,
+  listHandler,
+  mapExternalState,
+  MAX_LIST_LIMIT,
+  messageHandler,
+  NOTIFY_CONTRACT,
+  recordToListItem,
+  startHandler,
+  wrapForkFromPrompt,
+  type CancelHandlerInput,
+  type CancelHandlerResult,
+  type CloseHandlerInput,
+  type CloseHandlerResult,
+  type ForkFromHandlerInput,
+  type ForkFromHandlerResult,
+  type ListHandlerInput,
+  type ListHandlerResult,
+  type MessageHandlerInput,
+  type MessageHandlerResult,
+  type StartHandlerInput,
+  type StartHandlerResult,
+} from "./execution/subagent-actions-core.ts";
+// 运行时面类型闭包（先例同 ModelInfo/SubagentStream：签名直接引用的具名类型
+// 显式导出，免宿主深路径兜圈；二阶成员类型不强制——结构化类型下实例可用）。
+export type {
+  BgResponse,
+  CancelResponse,
+  CloseResponse,
+  ExecutionRecord,
+  ExecutionStatus,
+  ExternalState,
+  ForkFromResponse,
+  ListResponse,
+  MessageResponse,
+  SubagentListItem,
+  SubagentRecord,
+} from "./execution/types.ts";
+
+// ── 快照 codec（U8 / D4）──────────────────────────────────────
+// WorkflowRun ↔ 落盘快照的单一投影：版本常量沿用 pi "wf-run-v2"（存量逐字节
+// 可读）、live 字段 strip、更高版本跳过（宿主侧 warn 可见性自决）。
+export {
+  fromRunSnapshot,
+  SNAPSHOT_VERSION,
+  toRunSnapshot,
+  type RunSnapshot,
+} from "./orchestration/run-snapshot.ts";
+
+// ── 原语（U6a）────────────────────────────────────────────────
+// atomic-write：tmp+rename 原子写单一实现（统一 tmp 命名 `.tmp.<pid>.<seq>-<rand>`、
+// 失败清理、崩溃残留扫描/清理入口）——core 内部全部写点已收敛于此（U6b）；
+// sync/async 两档耐久语义见模块头。bounded-serialize：预算内 JSON 序列化
+//（自 pi-sw helpers 平移，输出逐字节一致）。
+export {
+  atomicTmpPathFor,
+  cleanupStaleTmpFiles,
+  listStaleTmpFiles,
+  parseAtomicTmpPath,
+  writeAtomicFile,
+  writeAtomicFileSync,
+  type AtomicTmpRef,
+  type AtomicWriteFileOptions,
+  type AtomicWriteOptions,
+  type CleanupStaleTmpOptions,
+  type CleanupStaleTmpResult,
+} from "./shared/atomic-write.ts";
+export { boundedPrettySerialize } from "./shared/bounded-serialize.ts";
+
+// ── 组装层（U2 装配 + U7 生命周期 / D8）───────────────────────
+// discoverAgents：发现→宽容解析→去重→码点序（workflow 侧 discoverWorkflows
+// 对称面，第三宿主「列 agents」入口）；recoverCrashedRuns：崩溃恢复四步装配
+//（宿主事件经 hooks 外置）；runSummary/isScriptRunning：以 core WorkflowRun
+// 为准的投影（runSummary 双投影分叉收口）；WorkflowRun 聚合根随闭包出 barrel。
+export { discoverAgents } from "./execution/agents-assembly.ts";
+export {
+  recoverCrashedRuns,
+  type RecoverCrashedRunsHooks,
+} from "./orchestration/lifecycle.ts";
+export {
+  isScriptRunning,
+  runSummary,
+  type WorkflowRunSummary,
+} from "./orchestration/workflow-run-summary.ts";
+export {
+  WorkflowRun,
+  type WorkflowRunMeta,
+} from "./orchestration/models/workflow-run.ts";
+export type { DoneReason, RunStatus } from "./orchestration/models/types.ts";
+
+// ── schema 助手（U9 / D9）─────────────────────────────────────
+// workflow 资产 @pi-meta parameters 的 schema→已知键集、平铺参数检测与
+// 归一化（pi tool-workflow 消费面下沉；宿主白名单退役入口）。
+export {
+  argKeysFromMeta,
+  findFlattenedArgKeys,
+  normalizeArgsByMeta,
+  type ArgKeySet,
+  type ArgMetaOptions,
+  type ArgMetaWarning,
+  type NormalizedArgs,
+} from "./orchestration/args-meta.ts";
+
+// ── 解析面（U2 / D3）──────────────────────────────────────────
+// parseAgentProfile：宽容解析（无 frontmatter 不拒、name 缺省 stem、返回
+// body 与执行字段全量）——执行消费面单点；与严格注入投影（parseResourceMeta）
+// 双轨分离的执行侧统一入口。
+export {
+  parseAgentProfile,
+  type AgentProfile,
+} from "./execution/agent-registry.ts";

@@ -25,6 +25,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { resolvePoolDir } from "../../paths.ts";
+import { writeAtomicFileSync } from "../../../../shared/atomic-write.ts";
 import {
   ZCODE_FALLBACK_DEFAULT_MODEL,
   ZCODE_POOL_CONFIG_SUFFIX,
@@ -354,21 +355,10 @@ export function prepareZcodeHome(opts: {
   const hitSourceMtime = v2.mtimeMs;
   let wroteConfig = false;
   if (homeNeedsBootstrap(configPath, hitSourceMtime)) {
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const payload = JSON.stringify({ model: { main: modelRef }, provider: { [provider]: entry } }, null, CONFIG_INDENT_SPACES);
-    const tmp = `${configPath}.tmp-${process.pid}-${Date.now()}`;
-    try {
-      fs.writeFileSync(tmp, payload, "utf8");
-      fs.renameSync(tmp, configPath);
-    } finally {
-      // rename 成功后 tmp 已不存在；失败时清残留，避免污染 HOME 目录
-      try {
-        if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-      } catch (err) {
-        // rename 失败路径的残留清理是 best-effort——记录后继续（tmp 文件不参与读取）
-        void err;
-      }
-    }
+    // tmp+rename 原子写（shared/atomic-write 统一原语，U6b 迁移——rename 失败时
+    // 原语清残留 tmp，避免污染 HOME 目录；tmp 文件不参与读取，best-effort 语义不变）
+    writeAtomicFileSync(configPath, payload);
     wroteConfig = true;
   }
   return { modelRef, poolKey, homeDir, configPath, wroteConfig };
