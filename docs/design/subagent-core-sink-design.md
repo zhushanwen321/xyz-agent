@@ -292,11 +292,11 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 
 | # | 检查点 | 断言 | 状态 |
 |---|---|---|---|
-| ⛔1 | U12 对照探针基线 | 实施前快照生成且 S7 负面验证通过 | 实施期 |
-| ⛔2 | `..` 收紧样本集 | 样本集覆盖：`/x/../y.md` 与 `/x/../y.js`（normalizeRef 为 agent/workflow 双消费面）两宿主均拒、`~/` 合法路径不误伤、skillPath/cwd 既有 assertSafeStartPath 拒绝保持——收紧是**声明的行为变更**（现状两宿主均放行），非等值断言 | 实施期 |
-| ⛔3 | patch 机制切换对照 | zsw sidecar 场景（新文件+已提交改动+跨重启）在 core 锚点抽象下产物等价（zsw 侧验收，此处出锚点 API）+ **锚点缺失/损坏与 add 失败分支：warn 发出 + 降级裸 diff + `patchIncomplete` 留痕（返回结构见 U5）** | 实施期（跨文档） |
-| ⛔4 | 动作内核迁移守卫链等值 | pi 六 handler 行为快照（含错误文案锚）迁移前后逐项一致 | 实施期 |
-| ⛔5 | codec 存量往返等值 | pi 侧含 live 字段 run 的快照往返与实施前逐字节一致（v 字段保持 `"wf-run-v2"`；不含 budgetRef 的 run——嵌套 run 落盘少 budgetRef 脏字段已按偏差登记，见 D4 补充）；FileRunStore 存量无 v 行读取不丢数据 | 实施期 |
+| ⛔1 | U12 对照探针基线 | 实施前快照生成且 S7 负面验证通过 | 已回填（基线在位 + S7 通过；实施后对照 diff 空，Gate B 复跑一致） |
+| ⛔2 | `..` 收紧样本集 | 样本集覆盖：`/x/../y.md` 与 `/x/../y.js`（normalizeRef 为 agent/workflow 双消费面）两宿主均拒、`~/` 合法路径不误伤、skillPath/cwd 既有 assertSafeStartPath 拒绝保持——收紧是**声明的行为变更**（现状两宿主均放行），非等值断言 | 已回填（agent-ref.test 样本集断言含 ~/../x.md 逃逸与 reason=parent_segment；subagent-tool-path-guard.test 保持绿） |
+| ⛔3 | patch 机制切换对照 | zsw sidecar 场景（新文件+已提交改动+跨重启）在 core 锚点抽象下产物等价（zsw 侧验收，此处出锚点 API）+ **锚点缺失/损坏与 add 失败分支：warn 发出 + 降级裸 diff + `patchIncomplete` 留痕（返回结构见 U5）** | core 侧已回填（worktree-git-ops.test 两降级路径 43 it）；zsw sidecar 产物等价 = 跨文档（姊妹文档验收） |
+| ⛔4 | 动作内核迁移守卫链等值 | pi 六 handler 行为快照（含错误文案锚）迁移前后逐项一致 | 已回填（subagent-actions-core.test 40 it 快照；pi 壳 11 个既有等值测试全绿） |
+| ⛔5 | codec 存量往返等值 | pi 侧含 live 字段 run 的快照往返与实施前逐字节一致（v 字段保持 `"wf-run-v2"`；不含 budgetRef 的 run——嵌套 run 落盘少 budgetRef 脏字段已按偏差登记，见 D4 补充）；FileRunStore 存量无 v 行读取不丢数据 | 已回填（core run-snapshot.test golden + file-run-store 宽容读；pi jsonl-run-store-snapshot-codec.test golden 逐字节） |
 
 ### 5.5 版本与发版
 
