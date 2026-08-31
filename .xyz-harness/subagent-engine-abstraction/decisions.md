@@ -30,6 +30,7 @@ created_at: 2026-08-24
 | D-011 | 能力缺陷四级处置（自动仿真/显示降级/调用前拒绝/入口拦截），capabilities 声明是唯一分发依据，处置由能力类别决定不由引擎 id 决定 | 新引擎填好 capabilities 即继承全部处置逻辑；错误尽量先于进程创建 | `D-不可逆` | `ask_user` | `mid-plan` | [from: design §3.3.2 D11] | `confirmed` | |
 | D-012 | 新引擎接入以 engine conformance 契约套件（C1-C8）+ golden 样本库为验收门；负例元测试保套件有牙 | 「接入成本递减」由可验证机制承载不靠口号 | `D-不可逆` | `ask_user` | `mid-plan` | [from: design §3.3.2 D12] | `confirmed` | |
 | D-013 | 实施五阶段 P1 中立类型+EnginePort+PiEngine 回填 → P2 公共降级层 → P3 ZcodeEngine → P4 配置路由+capabilities+探针+conformance → P5 runtime extractor 分协议 | 先回填后新增隔离回归风险；P5 单独 commit 中改动 | `D-可逆` | `agent-opinionated` | `mid-plan` | [from: design §5] | `confirmed` | |
+| D-014 | D-010 的「zcode 首期只做 spawn 单轮」终态被超越：zcode engine 升级为 app-server 常驻（spawn 路径保留为降级兜底，EnginePort 仅新增可选 dispose/onHandleReady 两处字段级扩展，原决策记录不改写） | 常驻化收益（零冷启动/实时进度/per-session model）经独立设计论证后实施；终态决策时间 2026-08-30，出处 commit e70ca71 | `D-可逆` | `ask_user` | `post-plan` | [REVISIT of D-010] from: docs/design/zcode-engine-appserver-resident.md] | `confirmed` | |
 
 ## 示例（仅供参考，创建时删除）：revisit 链 append-only 写法
 
