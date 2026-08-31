@@ -4,6 +4,7 @@
  * 覆盖：
  *  - 首屏渲染：mock getRetryConfig 全量 → 基础区三控件显示存量值 + 预览行含「3 次」与时长；
  *  - 预览行实时性：改 maxRetries=10 / baseDelay=5 → 预览实时重算（85.25 分钟量级 → fmtDur 渲染为 1.4 小时）；
+ *    小数秒可达：baseDelay=59.999 + maxRetries=1 → 59999ms 档位边界进位渲染「1 分钟」；
  *    关闭开关 → 预览行变「自动重试已关闭」；
  *  - 高级折叠区：默认收起 → 点 toggle 后 provider 三输入可见；
  *  - 保存成功：秒转 ms 组装（baseDelay 5 秒 → baseDelayMs 5000）+ 成功 toast 含「新会话生效」；
@@ -12,6 +13,8 @@
  *  - 存量超域：maxRetries=50 → 行内警示 llm-retry-warn-maxRetries；
  *  - provider 存量超域：maxRetries=15 原样回填 → 保存被拒，错误 toast 指向 provider.maxRetries
  *    （D8：超域不得因显示为空而静默丢失）；
+ *  - provider 存量非整秒域内值：timeoutMs/maxRetryDelayMs=1500 → 回填 "1.5"/"1.5"，保存 Math.round
+ *    回存 1500（N1：小数秒输入合法化，修复前被拒「请输入合法数字」）；
  *  - provider 全未设：三输入留空 = 未设 → 保存成功，载荷 provider 键值为 undefined（留空路径回归）；
  *  - 小数秒组装：baseDelay=1.005 → baseDelayMs 1005（Math.round 消浮点尾差，校验通过）。
  *
@@ -109,6 +112,18 @@ describe('SystemLlmRetrySection（u3 LLM 调用重试）', () => {
     expect(preview).toContain('10 次')
     // 5*(2^10-1)=5115s≈85.25 分钟量级，fmtDur ≥60 分钟走小时档（85.25/60 → 渲染 1.4 小时）
     expect(preview).toContain('1.4 小时')
+  })
+
+  it('小数秒预览可达：maxRetries=1 / baseDelay=59.999 → 预览行进位为「1 分钟」', async () => {
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await setInput(wrapper, 'llm-retry-max-retries-input', '1')
+    await setInput(wrapper, 'llm-retry-base-delay-input', '59.999')
+
+    const preview = wrapper.find('[data-testid="llm-retry-preview"]').text()
+    // 59.999s × 2^0 = 59999ms：显示精度 60.0 秒 → 档位边界进位为 1 分钟（最长单次与累计同值）
+    expect(preview).toContain('1 分钟')
   })
 
   it('关闭开关 → 预览行变为「自动重试已关闭」文案', async () => {
@@ -252,6 +267,38 @@ describe('SystemLlmRetrySection（u3 LLM 调用重试）', () => {
     expect(toastMock.error.mock.calls[0][0]).toContain('超出范围')
     expect(toastMock.error.mock.calls[0][0]).toContain('15')
     expect(wrapper.find('[data-testid="llm-retry-provider-max-retries-input"]').classes()).toContain('border-warn')
+    wrapper.unmount()
+  })
+
+  it('存量非整秒域内值回存：timeoutMs=1500 / maxRetryDelayMs=1500 → 回填 "1.5"/"1.5"，保存载荷 1500/1500', async () => {
+    const fixture = defaultFixture()
+    fixture.config.provider = { timeoutMs: 1500, maxRetryDelayMs: 1500 }
+    configApiMock.getRetryConfig.mockResolvedValue(fixture)
+
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await wrapper.find('[data-testid="llm-retry-advanced-toggle"]').trigger('click')
+    await flushPromises()
+
+    // 秒口径回填保留非整秒精度（1500ms → "1.5"），且按 ms 判域 → 不出超域标注
+    expect((wrapper.find('[data-testid="llm-retry-provider-timeout-input"]').element as HTMLInputElement).value).toBe('1.5')
+    expect((wrapper.find('[data-testid="llm-retry-provider-max-delay-input"]').element as HTMLInputElement).value).toBe('1.5')
+    expect(wrapper.find('[data-testid="llm-retry-warn-provider-timeoutMs"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="llm-retry-warn-provider-maxRetryDelayMs"]').exists()).toBe(false)
+
+    // 不改输入直接保存 → Math.round(1.5×1000)=1500 原样回存，校验通过（修复前被拒「请输入合法数字」）
+    await wrapper.find('[data-testid="llm-retry-save-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(configApiMock.setRetryConfig).toHaveBeenCalledTimes(1)
+    expect(configApiMock.setRetryConfig).toHaveBeenCalledWith({
+      enabled: true,
+      maxRetries: 3,
+      baseDelayMs: 2000,
+      provider: { timeoutMs: 1500, maxRetryDelayMs: 1500 },
+    })
+    expect(toastMock.error).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -399,7 +446,9 @@ describe('SystemLlmRetrySection（u3 LLM 调用重试）', () => {
 
     await wrapper.find('[data-testid="llm-retry-advanced-toggle"]').trigger('click')
     await flushPromises()
-    await setInput(wrapper, 'llm-retry-provider-timeout-input', '1.5')
+    // N1 后 timeout 键接受小数秒（1.5 已合法），改用溢出输入 '1e999'（Number → Infinity，
+    // number input 原样保留该值）触发解析拒绝路径
+    await setInput(wrapper, 'llm-retry-provider-timeout-input', '1e999')
     await wrapper.find('[data-testid="llm-retry-save-btn"]').trigger('click')
     await flushPromises()
 

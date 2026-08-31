@@ -300,13 +300,15 @@ function applyLoaded(config: LlmRetryConfig): void {
 
 /** 时长人性化格式（参照 demo html fmtDur：<1s 毫秒 / <1min 秒 / <1h 分钟 / 小时）。 */
 function fmtDur(ms: number): string {
-  if (ms < MS_PER_SEC) return `${Math.round(ms)} ${t('settings.system.llmRetryUnitMs')}`
-  const sec = ms / MS_PER_SEC
+  // 先取整再分档：999.6ms 取整为 1000 须进位为「1 秒」，与 ≥60s/≥60min 的档位边界进位同族
+  const rounded = Math.round(ms)
+  if (rounded < MS_PER_SEC) return `${rounded} ${t('settings.system.llmRetryUnitMs')}`
+  const sec = rounded / MS_PER_SEC
   // 档位边界按显示精度进位：59999ms 显示精度为 60.0 秒，须进位为 1 分钟而非渲染「60.0 秒」
   if (Number(sec.toFixed(1)) < SEC_PER_MIN) {
     return `${Number.isInteger(sec) ? sec : sec.toFixed(1)} ${t('settings.system.llmRetryUnitSec')}`
   }
-  const min = ms / (SEC_PER_MIN * MS_PER_SEC)
+  const min = rounded / (SEC_PER_MIN * MS_PER_SEC)
   if (round1(min) < MIN_PER_HOUR) return `${round1(min)} ${t('settings.system.llmRetryUnitMin')}`
   return `${round1(min / MIN_PER_HOUR)} ${t('settings.system.llmRetryUnitHour')}`
 }
@@ -329,19 +331,25 @@ const previewText = computed<string>(() => {
   })
 })
 
-/** 「留空 = 未设」字符串输入 → 整数；解析失败标记字段并记录 label（供 toast 指明字段），返回 null。 */
+/**
+ * 「留空 = 未设」字符串输入 → 数值；解析失败标记字段并记录 label（供 toast 指明字段），返回 null。
+ * toMs 两键（provider.timeoutMs / provider.maxRetryDelayMs）接受小数秒，Math.round 秒转 ms——
+ * 与 baseDelaySec 的组装语义对齐，存量非整秒域内值（如 timeoutMs=1500 → 回填 "1.5"）可原样回存。
+ */
 let parseErrorFieldLabel: string | null = null
 function parseIntInput(input: string | number, field: string, label: string, toMs = false): number | undefined | null {
   // provider 三键 v-model 挂在 type=number 的 Input 上，非整数输入（如 1.5）经 Vue loose 转换得到 number
   const trimmed = String(input).trim()
   if (trimmed === '') return undefined
   const n = Number(trimmed)
-  if (!Number.isInteger(n)) {
+  // toMs 键放宽为有限浮点（Math.round 落 ms），NaN/Infinity 仍走拒绝路径；maxRetries 键保持仅收整数
+  const ok = toMs ? Number.isFinite(n) : Number.isInteger(n)
+  if (!ok) {
     invalidFields.add(field)
     parseErrorFieldLabel = label
     return null
   }
-  return toMs ? n * MS_PER_SEC : n
+  return toMs ? Math.round(n * MS_PER_SEC) : n
 }
 
 /** 组装保存载荷；任何字段解析失败返回 null（invalidFields 已标记）。 */
