@@ -1,6 +1,6 @@
 # subagent-core sink（下沉收口）实施计划
 
-基线: <待评审后 commit 填入> | 来源设计: docs/design/subagent-core-sink-design.md | 日期: 2026-08-31
+基线: 8baf6cb34 | 来源设计: docs/design/subagent-core-sink-design.md | 日期: 2026-08-31
 
 ## 0 章节映射
 
