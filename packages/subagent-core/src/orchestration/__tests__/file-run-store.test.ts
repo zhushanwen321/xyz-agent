@@ -232,6 +232,137 @@ describe("FileRunStore — 损坏行容错", () => {
   });
 });
 
+describe("FileRunStore — 版本衔接与 live-strip（U8 / ⛔5，D4 裁决）", () => {
+  /** core 存量形态行（U8 前：无 v 字段、live 未 strip 直接落盘）。 */
+  const LEGACY_LINE = JSON.stringify({
+    runId: "wf-legacy-1",
+    spec: {
+      scriptSource: "export function execute() { return 'legacy'; }",
+      args: { topic: "legacy" },
+      scriptName: "test-script",
+      scriptPath: "/fake/test.js",
+    },
+    state: {
+      status: "running",
+      budget: { maxTokens: 1000, usedTokens: 7, usedCost: 0.1, totalCallCount: 1 },
+      calls: [
+        {
+          id: 0,
+          opts: { prompt: "legacy work" },
+          status: "running",
+          attempts: 1,
+          traceNode: {
+            stepIndex: 0,
+            agent: "coder",
+            task: "legacy work",
+            model: "test-model",
+            status: "running",
+            live: { turns: [] },
+          },
+        },
+      ],
+      trace: [
+        {
+          stepIndex: 0,
+          agent: "coder",
+          task: "legacy work",
+          model: "test-model",
+          status: "running",
+          live: { turns: [] },
+        },
+      ],
+      errorLogs: [],
+    },
+    meta: { startedAt: "2026-08-29T00:00:00.000Z" },
+  });
+
+  it("⛔5 无 v 存量行（core 旧格式，含未 strip 的 live）宽容读取不丢数据", async () => {
+    writeStateFile("wf-legacy-1.jsonl", LEGACY_LINE + "\n");
+
+    const loaded = await store.loadAll();
+    expect(loaded).toHaveLength(1);
+    const back = loaded[0];
+    expect(back.runId).toBe("wf-legacy-1");
+    expect(back.state.status).toBe("running");
+    expect(back.state.budget.usedTokens).toBe(7);
+    expect(back.spec.args).toEqual({ topic: "legacy" });
+    // 宽容读不是降级路径：不产生 warn（版本不匹配才 warn）
+    expect(warnMessages().some((m) => m.includes("wf-legacy-1"))).toBe(false);
+  });
+
+  it("⛔5 写入补 v 字段（快照行携带 wf-run-v2）+ 宽容读行写回后自然迁移", async () => {
+    const run = makeRun("wf-vwrite-1");
+    await store.save(run);
+
+    const raw = readFileSync(store.stateFilePath("wf-vwrite-1"), "utf8").trim();
+    expect(JSON.parse(raw).v).toBe("wf-run-v2");
+
+    // 存量行宽容读 → 再 save：落盘行升级为带 v 当前版本（不做自动迁移的
+    // 渐进收敛——D4 裁决②「写入时补 v」）
+    writeStateFile("wf-legacy-2.jsonl", LEGACY_LINE + "\n");
+    const legacy = (await store.loadAll()).find((r) => r.runId === "wf-legacy-1")!;
+    await store.save(legacy);
+    const migrated = readFileSync(store.stateFilePath("wf-legacy-1"), "utf8").trim();
+    expect(JSON.parse(migrated).v).toBe("wf-run-v2");
+    expect(migrated.includes('"live"')).toBe(false);
+  });
+
+  it("⛔5 未知更高版本行跳过 + warn（消息含实际版本值，可定位）", async () => {
+    const future = JSON.parse(LEGACY_LINE);
+    future.runId = "wf-future-1";
+    future.v = "wf-run-v3";
+    const current = JSON.parse(LEGACY_LINE);
+    current.runId = "wf-current-1";
+    current.v = "wf-run-v2";
+    // 从尾向头扫描序：尾损坏行（继续向前）→ 高版本行（warn 跳过，继续向前）
+    // → 当前版本行（恢复）——单行版本不匹配不拖垮同文件其余行，warn 可见
+    writeStateFile(
+      "wf-vermix.jsonl",
+      JSON.stringify(current) + "\n" + JSON.stringify(future) + "\n" + '{"trunc',
+    );
+
+    const loaded = await store.loadAll();
+    expect(loaded.map((r) => r.runId)).toEqual(["wf-current-1"]);
+    expect(warnMessages().some((m) => m.includes("unsupported version") && m.includes("wf-run-v3"))).toBe(true);
+  });
+
+  it("⛔5 live 字段 strip 后落盘（落盘行无 live 键，内存 run 不受影响）", async () => {
+    const run = makeRun("wf-livestrip-1");
+    const node = {
+      stepIndex: 0,
+      agent: "coder",
+      task: "do work",
+      model: "test-model",
+      status: "running" as const,
+    };
+    run.state.trace.append(node);
+    const AgentCallMod = await import("../models/agent-call.ts");
+    const call = new AgentCallMod.AgentCall(0, { prompt: "do work" }, node);
+    run.state.calls.set(0, call);
+    node.live = { id: "run-0", turns: [] } as unknown as import("../../execution/types.ts").ExecutionRecord;
+
+    await store.save(run);
+
+    const raw = readFileSync(store.stateFilePath("wf-livestrip-1"), "utf8");
+    expect(raw.includes('"live"')).toBe(false);
+    // strip 产出快照副本：内存中 run 的 live 保留（save 后 run 可继续跑）
+    expect(node.live).toBeDefined();
+  });
+
+  it("pi 现网形态行（带 v）经 store 端到端恢复", async () => {
+    const piForm = JSON.parse(LEGACY_LINE);
+    piForm.runId = "wf-pi-e2e-1";
+    piForm.v = "wf-run-v2";
+    delete piForm.state.calls[0].traceNode.live;
+    delete piForm.state.trace[0].live;
+    writeStateFile("wf-pi-e2e-1.jsonl", JSON.stringify(piForm) + "\n");
+
+    const back = (await store.loadAll())[0];
+    expect(back.runId).toBe("wf-pi-e2e-1");
+    expect(back.state.calls.size).toBe(1);
+  });
+});
+
 describe("FileRunStore — stateFilePath / 端口语义", () => {
   it("路径形状 = <dataRoot>/workflow-state/<runId>.jsonl（纯计算不建目录）", () => {
     expect(store.stateFilePath("wf-x-1")).toBe(
