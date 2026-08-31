@@ -59,8 +59,16 @@
  *                          （缺省关：R2/R3 单会话用例的字节级行为不变。）
  *   session/stop           应答 {stopped:true}；按 scenario.stopBehavior 决定是否
  *                          推送终态帧（见上）。stopTerminal 推送同样受 STAMP 改写。
+ *
+ * 探针连接支持（R5 降级链——D8 冒烟探针 / D2 门控断言面）：
+ *   ZCODE_APPSERVER_PROBE_CONN=1  本进程是探针连接（引擎 runAppServerSmokeProbe 叠加
+ *                          的 env 标记）：scenario 只读 FAKE_PROBE_SCENARIO（常驻
+ *                          主连接的 FAKE_SESSION_SCENARIO 不作用于探针——故障注入可
+ *                          只命中主连接或只命中探针）；env 快照记 probe 标志。
+ *   FAKE_PROBE_SCENARIO=<path>    仅探针进程消费的 JSON：
+ *     { createError?: {code,message,data} }  探针 create 应答 error 帧（探针失败注入）
+ *     { hangCreate?: true }                   create 永不应答（预算超时注入）
  */
-
 import fs from 'node:fs';
 import readline from 'node:readline';
 
@@ -69,12 +77,22 @@ const EXTRA_KEYS = process.env.FAKE_EXTRA_KEYS === '1';
 const PROTOCOL_AS_PUSH = process.env.FAKE_PROTOCOL_PUSH === '1';
 // [R4] 多会话推送改写开关（见文件头注释）
 const STAMP_SESSION = process.env.FAKE_STAMP_SESSION === '1';
+// [R5] 探针连接判定（引擎探针在 env 叠 ZCODE_APPSERVER_PROBE_CONN=1——见 appserver-probe.ts）
+const IS_PROBE = process.env.ZCODE_APPSERVER_PROBE_CONN === '1';
 
-// 会话场景（R3）：启动时读取一次（env 固化语义与其他 FAKE_ 开关一致）
+// 会话场景（R3/R5）：启动时读取一次（env 固化语义与其他 FAKE_ 开关一致）。探针进程
+// 只读 FAKE_PROBE_SCENARIO（与主连接的故障注入互不串扰）
 let SCENARIO = null;
-if (process.env.FAKE_SESSION_SCENARIO) {
+if (process.env.FAKE_SESSION_SCENARIO && !IS_PROBE) {
   try {
     SCENARIO = JSON.parse(fs.readFileSync(process.env.FAKE_SESSION_SCENARIO, 'utf8'));
+  } catch (err) {
+    log('scenario-load-failed', { message: String(err && err.message) });
+  }
+}
+if (process.env.FAKE_PROBE_SCENARIO && IS_PROBE) {
+  try {
+    SCENARIO = JSON.parse(fs.readFileSync(process.env.FAKE_PROBE_SCENARIO, 'utf8'));
   } catch (err) {
     log('scenario-load-failed', { message: String(err && err.message) });
   }
@@ -112,6 +130,7 @@ log('env', {
   telemetry: process.env.ZCODE_MODEL_TELEMETRY_ENABLED,
   nested: process.env.ZSW_NESTED,
   unifiedNested: process.env.XYZ_AGENT_SUBAGENT,
+  probe: process.env.ZCODE_APPSERVER_PROBE_CONN,
 });
 log('boot', { pid: process.pid, argv: process.argv.slice(2) });
 if (process.env.FAKE_STDERR === '1') {
@@ -193,6 +212,8 @@ async function handleRequest(f) {
       process.exit(1);
       return; // 不可达（exit 先行），保持 switch 完整
     case 'session/create': {
+      // [R5] 探针预算超时注入：hangCreate 时永不应答（探针 deadline 收割判据）
+      if (SCENARIO && SCENARIO.hangCreate) return;
       if (SCENARIO && SCENARIO.createError) {
         return replyErr(id, SCENARIO.createError.code, SCENARIO.createError.message, SCENARIO.createError.data);
       }

@@ -113,6 +113,9 @@ function makeEngine(overrides: ScenarioOverrides = {}): EngineHandle_ {
     sources: { v2ConfigPath: v2Path },
     processEnv: {
       PATH: process.env.PATH ?? "",
+      // [R5] 钉扎 appserver 定向（定向不探不降）：本文件测常驻路径本体；缺省路径的
+      // 探针门控/降级链见 zcode-engine-degrade.test.ts
+      XYZ_ZCODE_MODE: "appserver",
       FAKE_STATE_FILE: stateFile,
       FAKE_SESSION_SCENARIO: scenarioFile,
       ...(overrides.stampSession === true ? { FAKE_STAMP_SESSION: "1" } : {}),

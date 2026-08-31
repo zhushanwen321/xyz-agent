@@ -129,3 +129,36 @@ export const ZCODE_MODE_ENV_VAR = "XYZ_ZCODE_MODE";
  * 消息含 "Model config is missing"——错误规格表第 2 行：报 engine_credential_missing）。
  */
 export const ZCODE_APPSERVER_ERR_MODEL_CONFIG_MISSING = -32603;
+
+// ============================================================
+// [R5] 降级链（D2）/ probe 冒烟（D8）
+// ============================================================
+
+/**
+ * [R5 D8] 协议冒烟探针的总预算（ms）：独立短命连接上 create 探针会话 → close →
+ * shutdown 的全部时间窗。不发模型请求（无 session/send）、不产生费用。超预算按
+ * 探针失败处理（错误规格表末行：结论 failed → 降级 spawn）。
+ */
+export const ZCODE_APPSERVER_PROBE_BUDGET_MS = 10_000;
+
+/**
+ * [R5 D2] 漂移类 RPC 错误码（错误规格表第 1 行：-32601 方法不存在 / -32602 参数
+ * 变形）。运行中命中任一 → 归档 protocol-drift：首任务降级 spawn 重跑一次 + 后续
+ * 任务直走 spawn（降级标志内存化，进程重启后重探重建）。-32004/-32010/-32603 不在
+ * 此列（任务失败上报 / 凭据缺失归类，均不降级）。
+ */
+export const ZCODE_APPSERVER_DRIFT_RPC_CODES = [-32601, -32602] as const;
+
+/**
+ * [R5 D8] 探针连接的 env 标记：探针用独立短命连接（不污染主连接），但 env 与主连接
+ * 同源（同一常驻 HOME）。此标记供 fake/诊断侧区分「探针进程」与「常驻进程」（测试
+ * 断言探针帧序、故障注入只命中探针或只命中主连接的判据）。
+ */
+export const ZCODE_APPSERVER_PROBE_CONN_ENV = "ZCODE_APPSERVER_PROBE_CONN";
+
+/**
+ * [R5] 崩溃收割确认的兜底窗口（ms）：killChain 在 `exit` 事件 resolve，而连接
+ * finalize（onClose → 在途 turn 崩溃收割）挂 `close` 事件——channel 退订前等 onClose
+ * 触发，本窗口兜底防 `close` 永不到达时 dispose/teardown 挂死。
+ */
+export const ZCODE_APPSERVER_HARVEST_GRACE_MS = 1_000;

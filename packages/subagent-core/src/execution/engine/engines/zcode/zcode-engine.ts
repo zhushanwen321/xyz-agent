@@ -10,7 +10,10 @@
 //   - appserver（缺省）：惰性常驻连接（connection.ts + session-channel.ts）上的
 //     create→subscribe→send→事件流→终态→read→close；per-session model 经 create
 //     参数透传；常驻 HOME = engines/zcode/home-appserver（D7 全量语义见 preparer.ts）；
-//   - spawn（XYZ_ZCODE_MODE=spawn 定向 / R5 降级目标）：原单轮路径**零行为改动**
+//     缺省路径带 R5 降级链门控：协议冒烟探针（appserver-probe.ts，结论与 CLI mtime
+//     绑定）失败 → 本任务起 spawn 直走；首任务命中漂移类 RPC 错误（-32601/-32602）
+//     → 本任务降级 spawn 重跑一次 + 后续任务直走 spawn（标志内存化）；
+//   - spawn（XYZ_ZCODE_MODE=spawn 定向 / 降级目标）：原单轮路径**零行为改动**
 //     保留（runViaSpawn——launcher/parser 四件套原链路）。
 //
 // 职责编排（四件套的消费方）：
@@ -60,7 +63,9 @@ import { resolvePoolDir } from "../../paths.ts";
 import {
   ZCODE_ADAPTER_VERSION,
   ZCODE_APPSERVER_ABORT_GRACE_MS,
+  ZCODE_APPSERVER_DRIFT_RPC_CODES,
   ZCODE_APPSERVER_ERR_MODEL_CONFIG_MISSING,
+  ZCODE_APPSERVER_HARVEST_GRACE_MS,
   ZCODE_APPSERVER_POOL_KEY,
   ZCODE_APPSERVER_STOP_TIMEOUT_MS,
   ZCODE_CLI_DEFAULT_PATH,
@@ -104,6 +109,7 @@ import {
   type ZcodeSourcePaths,
 } from "./preparer.ts";
 import { readZcodeSessionView } from "./reader.ts";
+import { runAppServerSmokeProbe } from "./appserver-probe.ts";
 import { AppServerConnection, buildAppServerEnv, isAppServerRpcError } from "./connection.ts";
 import { SessionChannel, type SessionCreateParams, type SessionTurnResult } from "./session-channel.ts";
 
@@ -113,20 +119,30 @@ const logger = getLogger("subagents");
 const PROBE_VERSION_TIMEOUT_MS = 15_000;
 
 // ============================================================
-// [R4] 执行模式分派（D2 骨架——降级链归 R5）
+// [R4/R5] 执行模式分派（D2：定向不探不降；缺省探 + 降）
 // ============================================================
 
 export type ZcodeRunMode = "appserver" | "spawn";
 
+/** [R5] 三态：undefined = 未定向（缺省路径，探 + 降）；定向值原样。 */
+export type ZcodeModePin = ZcodeRunMode | undefined;
+
 /**
- * 模式判定：`XYZ_ZCODE_MODE=appserver|spawn` 定向（定向时不探不降）；缺省走
- * app-server（R5 将在缺省路径插 probe 门控：探针失败 → spawn 直走 + 首败降级，
- * 本单元缺省直连不探）。deps.processEnv 可注入（测试钉扎模式）。
+ * [R5 D2④] 定向判定：`XYZ_ZCODE_MODE=appserver|spawn` 是**定向**（不探不降——失败
+ * 直接上报，不给定向者换通道）；undefined = 缺省（probe 门控 + 首败降级）。
+ * deps.processEnv 可注入（测试钉扎三态）。
+ */
+export function pinnedZcodeMode(env: NodeJS.ProcessEnv = process.env): ZcodeModePin {
+  const v = env[ZCODE_MODE_ENV_VAR];
+  return v === "appserver" || v === "spawn" ? v : undefined;
+}
+
+/**
+ * 模式判定（R4 形态保留：二值视图）。缺省/未知值走 appserver——缺省路径的探针/降级
+ * 门控由 run() 经 pinnedZcodeMode 三态编排，不经本函数。
  */
 export function resolveZcodeMode(env: NodeJS.ProcessEnv = process.env): ZcodeRunMode {
-  const v = env[ZCODE_MODE_ENV_VAR];
-  if (v === "appserver" || v === "spawn") return v;
-  return "appserver";
+  return pinnedZcodeMode(env) ?? "appserver";
 }
 
 /** ZcodeEngine 构造依赖（全部可注入——测试不依赖真机 CLI/真凭据）。 */
@@ -146,6 +162,11 @@ export interface ZcodeEngineDeps {
   launch?: (opts: { cliPath: string; args: string[]; env: NodeJS.ProcessEnv }) => ZcodeLaunchedProcess;
   /** env 基底（测试注入；缺省 process.env——模式分派与 app-server env 组装都经它）。 */
   processEnv?: NodeJS.ProcessEnv;
+  /**
+   * [R5 D8] 协议冒烟探针总预算（缺省 ZCODE_APPSERVER_PROBE_BUDGET_MS = 10s；测试
+   * 注入短预算验证超时降级路径，不真等 10s）。
+   */
+  probeBudgetMs?: number;
 }
 
 /** 常驻运行时（每引擎实例一份；dispose/凭据刷新/池变更时整件丢弃重建）。 */
@@ -176,6 +197,17 @@ export class ZcodeEngine implements EnginePort {
   private homeState: AppServerHomeState | undefined;
   /** 并发任务的首次锁获取在途 promise（重入守卫，见 ensureAppServerHome）。 */
   private homeAcquireInFlight: Promise<AppServerHomeHandle> | undefined;
+  /**
+   * [R5 D2③] 探针结论（与 CLI 文件 mtime 绑定的内存缓存）：mtime 未变不重探；
+   * zcode 升级（mtime 变化）后首个任务前重探。不落盘——进程重启后重探重建。
+   */
+  private smokeConclusion: { cliMtimeMs: number; ok: boolean; detail: string } | undefined;
+  /**
+   * [R5 D2②] 漂移降级标志（内存化，不落盘）：首任务运行中命中 -32601/-32602 后置
+   * true，本进程后续任务直走 spawn；进程重启后经探针门控重建（重探通过则恢复
+   * app-server）。
+   */
+  private driftDegraded = false;
 
   constructor(deps: ZcodeEngineDeps) {
     this.deps = deps;
@@ -296,12 +328,79 @@ export class ZcodeEngine implements EnginePort {
     };
   }
 
-  /** D1 主语义：模式分派（R4）——appserver 缺省 / spawn 定向（D2 兜底，行为零改动）。 */
+  /**
+   * D1 主语义 + [R5] D2 降级链四步：
+   *   ① 定向（XYZ_ZCODE_MODE=appserver|spawn）：不探不降——定向者要的就是这条通道，
+   *      失败直接上报（spawn 兜底原路径 / appserver 直连）；
+   *   ② 缺省 + 已漂移降级（内存标志）：后续任务直走 spawn（record 标注降级事实）；
+   *   ③ 缺省 + 探针门控（结论与 CLI mtime 绑定）：探针失败 → 本任务起直接 spawn；
+   *   ④ 缺省 + 探针通过但首任务命中漂移类 RPC 错误（-32601/-32602）→ 本任务降级
+   *      spawn 重跑一次（同一任务，结果标注降级）+ 后续任务直走 spawn。
+   */
   async run(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
     this.rejectUnsupportedTaskShapes(task);
-    const mode = resolveZcodeMode(this.deps.processEnv ?? process.env);
-    if (mode === "appserver") return this.runViaAppServer(task, ctx);
-    return this.runViaSpawn(task, ctx);
+    const pin = pinnedZcodeMode(this.deps.processEnv ?? process.env);
+    if (pin === "appserver") return (await this.runViaAppServer(task, ctx)).result;
+    if (pin === "spawn") return this.runViaSpawn(task, ctx);
+
+    // 缺省：probe 门控 + 首败降级（D2）
+    if (this.driftDegraded) {
+      return this.runViaSpawn(task, ctx, {
+        degradedReason:
+          "protocol-drift（app-server 首任务命中 -32601/-32602 漂移类错误，本进程后续任务直走 spawn；进程重启后重探重建）",
+      });
+    }
+    // pre-aborted 短路：不触发探针（不 spawn 探针进程），由常驻路径内部合成中止终态
+    if (ctx.signal?.aborted !== true) {
+      const gate = await this.appServerProbeGate(task);
+      if (!gate.ok) {
+        return this.runViaSpawn(task, ctx, {
+          degradedReason: `probe-failed（协议冒烟探针未通过：${gate.detail}；CLI mtime 变化后首个任务前重探）`,
+        });
+      }
+    }
+    const { result, driftCode } = await this.runViaAppServer(task, ctx);
+    if (driftCode === undefined) return result;
+    // D2② 首败降级：漂移错误 → 标志内存化 + 同一任务 spawn 重跑一次（结果标注）
+    this.driftDegraded = true;
+    logger.warn(
+      `[zcode-engine] app-server 漂移类错误（RPC code ${driftCode}）——本任务降级 spawn 重跑，后续任务直走 spawn`,
+      { taskId: ctx.taskId },
+    );
+    return this.runViaSpawn(task, ctx, {
+      degradedReason: `protocol-drift（首任务 app-server 命中 RPC code ${driftCode}，已降级 spawn 重跑本任务；后续任务直走 spawn）`,
+    });
+  }
+
+  /**
+   * [R5 D8] 探针门控：CLI 文件 mtime 与结论绑定——mtime 未变命中缓存不重探；变化
+   * （zcode 升级）或首次 → 独立短命连接上跑协议冒烟（appserver-probe.ts；必须用已
+   * 引导的常驻 HOME——D7 教训「先 bootstrap 再 probe 否则永远误降级」）。CLI 不存在
+   * 按探针失败处理（spawn 路径自身还有 binary 检查兜底）。
+   */
+  private async appServerProbeGate(task: AgentTaskSpec): Promise<{ ok: boolean; detail: string }> {
+    const cliPath = this.deps.cliPath ?? ZCODE_CLI_DEFAULT_PATH;
+    let cliMtimeMs: number;
+    try {
+      cliMtimeMs = fs.statSync(cliPath).mtimeMs;
+    } catch {
+      return { ok: false, detail: `zcode CLI 不存在：${cliPath}` };
+    }
+    if (this.smokeConclusion !== undefined && this.smokeConclusion.cliMtimeMs === cliMtimeMs) {
+      return this.smokeConclusion; // mtime 未变不重探（D2③）
+    }
+    const modelRef = resolveZcodeModelRef(task.model, this.deps.sources);
+    const home = await this.ensureAppServerHome(modelRef);
+    const r = await runAppServerSmokeProbe({
+      cliPath,
+      homeDir: home.homeDir,
+      baseEnv: this.deps.processEnv ?? process.env,
+      stderrLogPath: path.join(this.deps.engineDataDir(), "logs", "zcode-appserver-probe-stderr.log"),
+      ...(this.deps.probeBudgetMs !== undefined ? { budgetMs: this.deps.probeBudgetMs } : {}),
+    });
+    this.smokeConclusion = { cliMtimeMs, ok: r.ok, detail: r.detail };
+    logger.debug("[zcode-engine] appserver smoke probe", { ok: r.ok, detail: r.detail, cliMtimeMs });
+    return this.smokeConclusion;
   }
 
   // ============================================================
@@ -313,8 +412,15 @@ export class ZcodeEngine implements EnginePort {
    * 惰性连接 + runTurn（事件时序前移：text_delta 流式、终态后 message_end/turn_end）→
    * schema 仿真重试（与 spawn 同编排）→ outcome/handle。poolKey 静态常量，
    * onPoolResolved 在 prepare 期、onHandleReady 在 create 应答后（§3.4 不变量 3）。
+   *
+   * [R5] 返回附带 driftCode：末轮 attempt 以漂移类 RPC 错误（-32601/-32602）收场时
+   * 给出 code（run 编排降级 spawn 重跑）；其余终态（成功/中止/非漂移失败）为
+   * undefined——-32004/-32010/-32603 按错误规格表各自上报，不降级。
    */
-  private async runViaAppServer(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
+  private async runViaAppServer(
+    task: AgentTaskSpec,
+    ctx: RunContext,
+  ): Promise<{ result: EngineRunResult; driftCode: number | undefined }> {
     const startedAt = Date.now();
     // pre-aborted 短路：取消先于启动——不创建会话、不触发连接惰性启动（防误杀共享
     // 进程殃及在途任务；spawn 路径无此形态因每任务独占进程）
@@ -326,7 +432,7 @@ export class ZcodeEngine implements EnginePort {
         { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false },
         startedAt,
       );
-      return { handle: this.appServerHandle(ZCODE_APPSERVER_POOL_KEY, outcome), outcome };
+      return { result: { handle: this.appServerHandle(ZCODE_APPSERVER_POOL_KEY, outcome), outcome }, driftCode: undefined };
     }
 
     // ① prepare 期：模型解析（provider 体系校验——错误语义与 spawn 同为进程创建前
@@ -356,7 +462,11 @@ export class ZcodeEngine implements EnginePort {
     }
 
     const outcome = this.finalizeOutcome(task, ctx, final, usageAcc, startedAt);
-    return { handle: this.appServerHandle(home.poolKey, outcome), outcome };
+    const driftCode =
+      final.kind === "run-failed" && final.rpcCode !== undefined && isDriftRpcCode(final.rpcCode)
+        ? final.rpcCode
+        : undefined;
+    return { result: { handle: this.appServerHandle(home.poolKey, outcome), outcome }, driftCode };
   }
 
   /** 常驻路径的 handle 合成（poolKey = 常驻 HOME 实际目录名——锚定不变量载体）。 */
@@ -453,6 +563,9 @@ export class ZcodeEngine implements EnginePort {
         kind: "run-failed",
         output: syntheticAppServerOutput(null),
         message: buildAppServerRunFailedMessage(err, home),
+        // [R5] RPC code 透传给 run 编排（-32601/-32602 漂移降级判据；连接级/超时类
+        // 错误无 code 不参与降级）
+        ...(isAppServerRpcError(err) && err.code !== undefined ? { rpcCode: err.code } : {}),
       };
     } finally {
       if (currentSessionId !== undefined) rt.activeSessions.delete(currentSessionId);
@@ -602,15 +715,32 @@ export class ZcodeEngine implements EnginePort {
     const rt = this.appserverRuntime;
     if (rt === undefined) return;
     this.appserverRuntime = undefined;
-    // 退订必须在进程死亡**之后**：channel 的 onClose 崩溃收割（failAllTurns）是
-    // 在途 turn 的快速失败通道，先退订会让它们挂到 turnTimeoutMs（300s）预算耗尽
-    void rt.conn
-      .shutdown({ graceMs: ZCODE_KILL_GRACE_MS })
-      .then(undefined, (err: unknown) => {
-        logger.debug(`[zcode-engine] 常驻连接关闭失败（${reason}，best-effort）: ${errMessage(err)}`);
-      })
-      .then(() => rt.channel.dispose());
+    // 退订必须在崩溃收割**之后**：channel 的 onClose 收割（failAllTurns）是在途 turn
+    // 的快速失败通道，先退订会让它们挂到 turnTimeoutMs（300s）预算耗尽
+    void this.shutdownRuntimeAndDisposeChannel(rt).catch((err: unknown) => {
+      logger.debug(`[zcode-engine] 常驻连接关闭失败（${reason}，best-effort）: ${errMessage(err)}`);
+    });
     logger.debug(`[zcode-engine] appserver runtime torn down (${reason})`, { poolKey: rt.homePoolKey });
+  }
+
+  /**
+   * [R5 修复 R4 既有竞态] shutdown → 等崩溃收割实际发生 → channel 退订。killChain 在
+   * `exit` 事件 resolve，而连接 finalize（onClose → channel 的 failAllTurns）挂
+   * `close` 事件——两者之间有一个事件循环窗口：shutdown resolve 后立即退订，在途
+   * turn 会错过收割、挂到 turnTimeoutMs（300s）。退订前等 onClose 触发（本方法先于
+   * shutdown 订阅；channel 的订阅在构造期更早——其 failAllTurns 先于本 promise
+   * resolve 执行）；ZCODE_APPSERVER_HARVEST_GRACE_MS 兜底防 `close` 永不到达时挂死。
+   */
+  private async shutdownRuntimeAndDisposeChannel(rt: AppServerRuntime): Promise<void> {
+    const harvested = new Promise<void>((resolve) => {
+      const off = rt.conn.onClose(() => {
+        off();
+        resolve();
+      });
+    });
+    await rt.conn.shutdown({ graceMs: ZCODE_KILL_GRACE_MS });
+    await Promise.race([harvested, delayResolved(ZCODE_APPSERVER_HARVEST_GRACE_MS, undefined)]);
+    rt.channel.dispose();
   }
 
   /**
@@ -632,10 +762,10 @@ export class ZcodeEngine implements EnginePort {
       rt.conn.post("session/close", { sessionId });
     }
     // ②③ 同步 SIGTERM（killChain 前缀在 shutdown 调用内同步执行）→ grace → SIGKILL
-    //（异步面，resolve 于进程退出）。channel 退订放在死亡之后——onClose 崩溃收割
-    //（failAllTurns）是在途 turn 的快速失败通道，先退订会挂到 turnTimeoutMs。
-    await rt.conn.shutdown({ graceMs: ZCODE_KILL_GRACE_MS });
-    rt.channel.dispose();
+    //（异步面，resolve 于进程退出）。channel 退订放在崩溃收割之后（exit→close 窗口
+    //竞态的修复体，见 shutdownRuntimeAndDisposeChannel——先退订会让在途 turn 挂到
+    //turnTimeoutMs）
+    await this.shutdownRuntimeAndDisposeChannel(rt);
     // 进程已死：pidfile 成为陈旧记录，清掉（防后续 pid 复用误判）
     try {
       fs.rmSync(path.join(rt.homeDir, "appserver.pid"), { force: true });
@@ -648,8 +778,17 @@ export class ZcodeEngine implements EnginePort {
   // spawn 单轮路径（D2 兜底——R4 起仅 XYZ_ZCODE_MODE=spawn 定向 / R5 降级可达）
   // ============================================================
 
-  /** spawn 路径主编排（原 run 主体，行为零改动）：preparer → launcher → parser → 仿真重试 → outcome/handle。 */
-  private async runViaSpawn(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
+  /**
+   * spawn 路径主编排（原 run 主体，行为零改动）：preparer → launcher → parser → 仿真重试 → outcome/handle。
+   * [R5] degrade 参数：降级链落点（探针失败 / 漂移首败重跑 / 降级后直走）——结果经
+   * outcome.engineFallback 标注「degraded: spawn + 原因」（D9① 留痕面复用，record
+   * 同步投影；capabilities 声明不降级——D2 降级是任务级兜底非能力级）。
+   */
+  private async runViaSpawn(
+    task: AgentTaskSpec,
+    ctx: RunContext,
+    degrade?: { degradedReason: string },
+  ): Promise<EngineRunResult> {
     const startedAt = Date.now();
     this.rejectUnsupportedTaskShapes(task);
 
@@ -706,6 +845,16 @@ export class ZcodeEngine implements EnginePort {
         adapterVersion: ZCODE_ADAPTER_VERSION,
       },
     };
+    if (degrade !== undefined) {
+      // 降级标注：engineFallback 是 outcome 上唯一的元信息留痕面（D9① 同一通道）。
+      // ctx 已带路由级 fallback（pi→zcode）时保 from、reason 追加降级事实——两层
+      // 留痕合并不丢信息。
+      const prior = outcome.engineFallback;
+      outcome.engineFallback = {
+        from: prior?.from ?? "zcode:appserver",
+        reason: `${prior !== undefined ? `${prior.reason}；` : ""}degraded: spawn（${degrade.degradedReason}）`,
+      };
+    }
     return { handle, outcome };
   }
 
@@ -1013,7 +1162,7 @@ export class ZcodeEngine implements EnginePort {
  */
 type AttemptResult =
   | { kind: "aborted"; output: ZcodeCollectedOutput; abortMessage?: string }
-  | { kind: "run-failed"; output: ZcodeCollectedOutput; message: string }
+  | { kind: "run-failed"; output: ZcodeCollectedOutput; message: string; rpcCode?: number }
   | {
       kind: "parsed";
       output: ZcodeCollectedOutput;
@@ -1029,6 +1178,11 @@ function isPlainObject(v: unknown): v is object {
 /** 错误/日志出声用的 message 提取（非 Error 值不抛二次异常）。 */
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** [R5 D2] 漂移类 RPC code 判据（错误规格表第 1 行：-32601 方法不存在 / -32602 参数变形）。 */
+function isDriftRpcCode(code: number): boolean {
+  return (ZCODE_APPSERVER_DRIFT_RPC_CODES as readonly number[]).includes(code);
 }
 
 /** ms 后 resolve 指定值（abort 链 grace 窗口的 race 材料；unref 不阻塞进程退出）。 */
