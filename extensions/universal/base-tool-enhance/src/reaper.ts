@@ -71,22 +71,13 @@ const MS_PER_SECOND = 1000;
 const REAPER_LOCK_TARGET = "reaper";
 
 /**
- * registry 条目扩展字段（M5 reaper 引入；M3 起 spawn 侧已补写——types.ts
- * RegistryEntry 直接携带 pidStartTime，本接口保留为 reaper 视角的显式声明与
- * 存量条目（M3 前登记）的读取形状）。单位 epoch 秒（ps -o lstart= 解析值），
- * 勿混用 /proc tick 毫秒值。
+ * 读条目 start time 字段（单位 epoch 秒，ps -o lstart= 解析值，勿混用 /proc tick
+ * 毫秒值；types.ts RegistryEntry 直接携带 pidStartTime）。运行时 guard：in +
+ * typeof + 有限性，防脏数据混入比较。
  */
-export interface RegistryEntryStartTime {
-	pidStartTime?: number;
-}
-
-/** reaper 视角的 registry 条目（M2 RegistryEntry + start time 扩展字段）。 */
-export type ReaperRegistryEntry = RegistryEntry & RegistryEntryStartTime;
-
-/** 读条目扩展字段（运行时 guard：in + typeof + 有限性，防脏数据混入比较）。 */
 function readPidStartTimeSec(entry: RegistryEntry): number | undefined {
 	if ("pidStartTime" in entry) {
-		const registered = (entry as ReaperRegistryEntry).pidStartTime;
+		const registered = entry.pidStartTime;
 		if (typeof registered === "number" && Number.isFinite(registered)) {
 			return registered;
 		}
@@ -295,7 +286,7 @@ function writeOrphanedTerminal(
 	result: ReapResult,
 ): void {
 	const endedAt = Date.now();
-	const orphaned: ReaperRegistryEntry = {
+	const orphaned: RegistryEntry = {
 		...entry,
 		state: "orphaned",
 		endedAt,

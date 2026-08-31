@@ -503,10 +503,4 @@ export class SchedulerRuntime {
     const { ownerSessionFile: _o, pending: _p, history, ...rest } = task
     return { ...rest, history: history.slice() }
   }
-
-  // ── 工具方法 ──
-
-  getTaskCount(): number {
-    return this.tasks.size
-  }
 }

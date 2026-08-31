@@ -63,13 +63,9 @@ interface RegisterEntryData {
 }
 
 /** pending:unregister entry 在 entries 里的最小可识别形状。
- *  result/error/patchFile 为 subagent 完成通知携带的附加字段（T2 后由 pending-notifications
- *  消费侧读取并 sendMessage 到 LLM）。workflow 的 unregister 不携带这些字段。 */
+ *  T2 通知由 subagent-workflow 自有通道 bg-notify-render 承担，不经本事件。 */
 interface UnregisterEntryData {
 	id: unknown;
-	result?: unknown;
-	error?: unknown;
-	patchFile?: unknown;
 }
 
 /** SessionEntry 的最小可识别形状（duck-typed，避免依赖 SDK 具体类型） */

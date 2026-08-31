@@ -17,7 +17,7 @@ vi.setConfig({ testTimeout: 20000 });
 import { getRegistryPath, readRegistry, writeRegistryEntry } from "../background/registry.ts";
 import type { RegistryEntry } from "../background/types.ts";
 import { isPidAlive } from "../kill-tree.ts";
-import { getProcessStartTimeSec, reapOrphanedTasks, type RegistryEntryStartTime } from "../reaper.ts";
+import { getProcessStartTimeSec, reapOrphanedTasks } from "../reaper.ts";
 
 let dataDir: string;
 
@@ -46,7 +46,7 @@ async function waitProcessExit(pid: number, timeoutMs = 10000): Promise<void> {
 	}
 }
 
-type EntryOverrides = Partial<RegistryEntry> & Partial<RegistryEntryStartTime> & {
+type EntryOverrides = Partial<RegistryEntry> & {
 	pid: number;
 	ownerPiPid: number;
 	sessionId: string;
@@ -55,7 +55,7 @@ type EntryOverrides = Partial<RegistryEntry> & Partial<RegistryEntryStartTime> &
 /** 手写 registry 条目（走真实 writeRegistryEntry——锁内 RMW + 原子写路径）。 */
 function writeTestEntry(overrides: EntryOverrides): string {
 	const taskId = overrides.taskId ?? `bt-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-	const entry: RegistryEntry & RegistryEntryStartTime = {
+	const entry: RegistryEntry = {
 		taskId,
 		pid: overrides.pid,
 		command: overrides.command ?? "sleep 60",

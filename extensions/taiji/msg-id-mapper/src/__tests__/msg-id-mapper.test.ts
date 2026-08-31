@@ -19,7 +19,6 @@ const { loggerMock } = vi.hoisted(() => ({
 }))
 vi.mock('@zhushanwen/pi-extension-logger', () => ({
   getLogger: () => loggerMock,
-  createLogger: () => loggerMock,
 }))
 
 import createMapper from '../index'

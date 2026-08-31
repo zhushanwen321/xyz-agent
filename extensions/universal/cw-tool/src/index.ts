@@ -131,7 +131,7 @@ export default function cwToolExtension(pi: ExtensionAPI): void {
 	pi.registerTool(buildQueryTool(defaultCwSpawner));
 }
 
-// ── 导出（供测试 + 跨扩展引用）──────────────────────────────────
+// ── 导出（npm 外部 API 面）──────────────────────────────────
 
 export { executeCwAction, buildCwArgs, rejectDisallowedAction, rejectInvalidQueryOptions } from "./cw-runner.ts";
 export type { CwAction, CwDetails, CwToolOptions } from "./cw-runner.ts";

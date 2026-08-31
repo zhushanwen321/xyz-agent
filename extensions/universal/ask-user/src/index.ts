@@ -211,7 +211,7 @@ export default function (pi: ExtensionAPI): void {
 	// 注册 ask_user channel handler：把 subagent 子进程的 ask_user 请求透传到主进程 UI。
 	//
 	// 跨扩展握手协议（PR #85 #M4）：通过 globalThis Symbol.for 约定 slot 形状
-	//（CHANNEL_HANDSHAKE_KEY，与 subagent-workflow/src/execution/channel-registry-access.ts
+	//（CHANNEL_HANDSHAKE_KEY，与 packages/subagent-core/src/execution/channel-registry-access.ts
 	// 用同一字符串 key），不依赖 dynamic import npm 包名（两个扩展都通过
 	// ~/.pi/agent/extensions/ symlink 加载，互相之间无法用 npm 包名 import）。
 	//

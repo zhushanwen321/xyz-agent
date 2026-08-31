@@ -73,7 +73,5 @@ export function generateTaskId(): string {
  * 从 prompt 自动生成任务名称：取前 30 字。
  */
 export function autoName(prompt: string): string {
-  const trimmed = prompt.trim()
-  if (trimmed.length <= 30) return trimmed
-  return trimmed.slice(0, 27) + '...'
+  return truncate(prompt.trim(), 30)
 }
