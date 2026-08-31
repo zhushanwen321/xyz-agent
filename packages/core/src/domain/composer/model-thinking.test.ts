@@ -23,6 +23,7 @@ import {
   lookup,
   record,
 } from './model-thinking-memory'
+import { resolveThinkingValue } from './thinking-levels'
 import {
   providePlatform,
   __resetPlatformForTesting,
@@ -756,6 +757,76 @@ describe('useComposerModelThinking · 记录 watch 门禁（D2 双条件）', ()
     h.sessionRef.value = { modelId: 'p/X', thinkingLevel: 'm' }
     await nextTick()
     expect(lookup('p/X')).toBe('high') // 'max' 被可用性校验拦截，记忆保持
+    h.scope.stop()
+  })
+})
+
+// ══════════ [u5] 探针表补漏收口（设计 §3.3 探针表第 2/3 行缺口）══════════
+describe('useComposerModelThinking · 探针表补漏（u5 收口）', () => {
+  it('F4/已建态不受跟随影响：session 已建时跟随 watch 恒静默，localThinkingLevel 不被触碰（G3）', async () => {
+    record('p/X', 'low') // 记忆存在——若跟随误入已建态会改写 local
+    const h = mountMem({
+      sid: 's1',
+      session: { modelId: 'p/X', thinkingLevel: 'h' },
+      maps: { 'p/X': sameContentMap(), 'p/Y': sameContentMap() },
+      supported: { 'p/X': fourLevels, 'p/Y': fourLevels },
+    })
+    expect(h.result.localThinkingLevel.value).toBeUndefined() // mount 即时跟随被 sid 门禁拦截
+    // defaultModel 变化（landing 链路扰动源）与 session 模型变化均不得触发跟随
+    h.defaultModelRef.value = 'p/N'
+    await nextTick()
+    expect(h.result.localThinkingLevel.value).toBeUndefined()
+    h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'h' }
+    await nextTick()
+    expect(h.result.localThinkingLevel.value).toBeUndefined()
+    h.scope.stop()
+  })
+
+  it('C1/探针第 3 行：pi 回执钳制（记忆 max → 实际生效 high）→ 记录 watch 把记忆收敛为钳制值', async () => {
+    // Y：max 档可用（恢复会发出 max 的 value 'x'），pi 端把 max 钳制到 high（回执 value 'h2'）
+    const h = mountMem({
+      sid: 's1',
+      session: { modelId: 'p/X', thinkingLevel: 'h' },
+      maps: {
+        'p/X': sameContentMap(),
+        'p/Y': { off: 'o', low: 'l', medium: 'm', high: 'h2', max: 'x' },
+      },
+      supported: { 'p/X': fourLevels, 'p/Y': [...fourLevels, 'max'] },
+    })
+    record('p/Y', 'max')
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    h.pending[0].applyAndResolve('p/Y')
+    await p
+    // 恢复发出的是记忆 max 的 value 'x'（钳制发生在 pi 端，前端只发档位 value）
+    expect(h.setThinkingLevel).toHaveBeenCalledWith('s1', 'x')
+    // 回执钳制值写入 store（U6：回执写 store，显示恒为真值）→ 记录 watch 以回执值反查更新记忆
+    h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'h2' }
+    await nextTick()
+    // 收敛方向断言（探针第 3 行）：记忆最终 = 钳制后的生效档 'high'，而非原始记忆 'max'
+    expect(lookup('p/Y')).toBe('high')
+    expect(lookup('p/Y')).not.toBe('max')
+    h.scope.stop()
+  })
+
+  it('N1/探针第 2 行幂等边界：非单射 map（high/max 同 value）反查一次归一漂移后到达不动点，无累积漂移', async () => {
+    // 非单射 map：high 与 max 都映射 'x'——反查 value 'x' 按 entries 遍历序确定性落到 'high'
+    const nonInjectiveMap = { off: 'o', low: 'l', high: 'x', max: 'x' }
+    const h = mountMem({
+      sid: 's1',
+      session: { modelId: 'p/X', thinkingLevel: 'h' },
+      maps: { 'p/X': sameContentMap(), 'p/Y': nonInjectiveMap },
+      supported: { 'p/X': fourLevels, 'p/Y': [...fourLevels, 'max'] },
+    })
+    // 用户在 Y 上选 max（生效 value 'x'）→ 记录 watch 反查：一次归一漂移 max → 'high'
+    h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'x' }
+    await nextTick()
+    expect(lookup('p/Y')).toBe('high')
+    // 往返幂等：记忆 key 经同一 map 换算回 value 恒 'x'（恢复语义与用户原选择等效，无漂移放大）
+    expect(resolveThinkingValue(lookup('p/Y')!, nonInjectiveMap)).toBe('x')
+    // 第二轮往返（恢复 'high' → 生效 'x' → 再记录）：反查确定性 → 不动点，无累积漂移
+    h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'x' }
+    await nextTick()
+    expect(lookup('p/Y')).toBe('high')
     h.scope.stop()
   })
 })

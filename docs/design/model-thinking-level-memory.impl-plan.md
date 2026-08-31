@@ -90,6 +90,7 @@ graph TD
 | 7 | 规则 6 换绑清 watch 注册在 sync watch **之前**（设计只说「换绑即作废」未规定注册序） | 合理且必要——同一 flush 内 watch job 按注册序执行，换绑清必须先于消费检查，否则换绑到恰为 armed 目标模型的 session 会在作废前被消费为伪恢复；S8 用例锁定该次序 | model-thinking.ts 注释 + S8 用例 | 已固化 |
 | 8 | E7② 补写回调加 `onScopeDispose` disposed 守卫（设计未提） | 合理——split panel 实例可能在 KV 预载完成前销毁，死实例不应再被回调写入 | model-thinking.ts | 已固化 |
 | 9 | S5 断言判据 =「armed 目标记忆值从不发出」而非调用总次数；测试文件顶层 beforeEach/afterEach（platform stub + u1 重置） | 合理——mock 不回写 store 致既有对齐重发与 armed 无关（测试内注释差异）；顶层 stub 消除 E2 warn 噪音不改既有用例主体 | model-thinking.test.ts | 已固化 |
+| 10 | u4 接线被 u3 域内收编：sync 四个新 deps 与 loadOnce/onLoaded 触发全部在 model-thinking 内部闭合，`ModelThinkingDeps` 对外签名零变化，composer-shell 零改动 | 合理——更内聚（接线不外溢壳层）；u4 转验证性单元：renderer typecheck exit 0 + 套件 3625 passed（2 失败为 useChat-subagent-directive 存量失败，基线 b27c175ce 复现，属其他会话功能线，规则 0 不碰） | git diff b27c175ce..HEAD -- packages/renderer 为空；基线对照复跑记录 | 已固化 |
 
 ## 6 状态表
 
@@ -98,8 +99,8 @@ graph TD
 | u1-foundation | committed | 1 | 12/12 绿（memory.test.ts）；registry #21 登记；deviations 3 条入 §5 |
 | u2 | committed | 1 | 17/17 绿（8 现有 + 9 新）；deviations 3 条入 §5 |
 | u3 | committed | 1 | 36/36 绿（18 现有 + 18 新，探针表 9 断言点全覆盖）；deviations 4 条入 §5 |
-| u4 | pending | 0 | — |
-| u5 | pending | 0 | — |
+| u4 | committed（验证性，零代码改动） | 0 | renderer typecheck exit 0；vitest 3625 passed（2 存量失败与基线一致，偏差 #10） |
+| u5 | committed | 1 | 39/39 增量 + core 全量 1358 passed；探针核对清单（checklist） Gate A 签收 |
 
 ## 7 残留风险与变更历史
 
