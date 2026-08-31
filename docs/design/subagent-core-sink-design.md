@@ -129,7 +129,7 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 
 | 方案 | 长期架构 | 短期成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| codec 下沉共享：core 出 `WorkflowRunSnapshot` 编解码器（toSnapshot/fromSnapshot + 版本 guard + live-strip 防御），FileRunStore 与 pi JsonlRunStore 共同消费，各自保留 IO 策略（append-only vs rewrite、去抖归属 store 层）。**版本衔接**：版本值沿用 pi 现有字符串形态 `"wf-run-v2"`（保 pi 存量可读）；FileRunStore 存量无版本字段的行按「缺版本 = 当前版本」宽容读取（写入时补 v 字段，不做自动迁移——对齐 pi「不做兼容迁移」先例）；guard 语义 = 未知更高版本跳过该行并 warn（对齐 pi 静默跳过语义，补可见性）。FileRunStore 改 strip live 后落盘字节变化登记为内部行为变更（live 字段现无赋值点，消费面无感） | 投影单源、IO 策略宿主各异（合法差异显式化）、存量两侧均可读 | 中 | pi rewrite 模式切换行为需对照探针 | ✅ |
+| codec 下沉共享：core 出 `WorkflowRunSnapshot` 编解码器（toSnapshot/fromSnapshot + 版本 guard + live-strip 防御），FileRunStore 与 pi JsonlRunStore 共同消费，各自保留 IO 策略（append-only vs rewrite、去抖归属 store 层）。**版本衔接**：版本值沿用 pi 现有字符串形态 `"wf-run-v2"`（保 pi 存量可读）；FileRunStore 存量无版本字段的行按「缺版本 = 当前版本」宽容读取（写入时补 v 字段，不做自动迁移——对齐 pi「不做兼容迁移」先例）；guard 语义 = 未知更高版本跳过该行并 warn（对齐 pi 静默跳过语义，补可见性）。FileRunStore 改 strip live 后落盘字节变化登记为内部行为变更（live 字段 running 期存量行含 live 键，strip 同时消除旧 fromSnapshot 的重水合脏数据；消费面无合法消费方） | 投影单源、IO 策略宿主各异（合法差异显式化）、存量两侧均可读 | 中 | pi rewrite 模式切换行为需对照探针 | ✅ |
 | pi 改用 core FileRunStore（消灭 JsonlRunStore） | 完全单源 | 高（pi session 锚定语义、GUI 消费面全动） | pi 行为回归风险大，违背 G4 | ❌ |
 | 维持双 codec、加字段联动测试 | 无架构改善 | 低 | 测试锚定 ≠ 单源，漂移继续 | ❌ |
 
@@ -137,7 +137,7 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 
 | 方案 | 长期架构 | 短期成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| git-ops 纯函数内核下沉（ensureCleanTree / collectWorktreePatch / cleanupWorktree / listWorktreePorcelain / 保真读 / GitRunError），**基线锚点抽象化**（内存 baseCommit 或宿主持久锚点文件二选一注入），目录布局与孤儿判定留宿主 | git 语义单源（MF#2 类修复一处生效），锚点/布局/孤儿策略的宿主差异显式化 | 中（zsw sidecar 机制映射为持久锚点实现） | patch 产物字节级差异（intent-to-add vs add -A+cached）——两机制解同一问题（MF#2），统一到 core 现机制，zsw 侧对照验证 | ✅ |
+| git-ops 纯函数内核下沉（dirty 谓词 isTreeDirty / collectWorktreePatch / cleanupWorktree / listWorktreePorcelain / 保真读 / GitRunError；宿主组合 isTreeDirty+throw 即得 ensure 语义），**基线锚点抽象化**（内存 baseCommit 或宿主持久锚点文件二选一注入），目录布局与孤儿判定留宿主 | git 语义单源（MF#2 类修复一处生效），锚点/布局/孤儿策略的宿主差异显式化 | 中（zsw sidecar 机制映射为持久锚点实现） | patch 产物字节级差异（intent-to-add vs add -A+cached）——两机制解同一问题（MF#2），统一到 core 现机制，zsw 侧对照验证 | ✅ |
 | WorktreeManager 整类导出 + 构造注入 | 宿主改动最小 | 低 | core 类内嵌全局注册表/写队列/pi 布局假设，参数化面越挖越深 | ❌ |
 | 维持双实现 + 行为对账测试 | 无 | 低 | 机制级分叉持续（现状即证明） | ❌ |
 
@@ -170,7 +170,7 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 - **效果**：G1 的 block-scalar/maxTurns 分叉消解；zsw 手写 parser 退役；路由/执行双轨既有语义显式化防误读。
 
 **D4：快照 codec 下沉共享，IO 策略留宿主，版本衔接三裁决（选定）**
-- **采用**：core 新模块 `orchestration/run-snapshot.ts`：`toRunSnapshot(run)` / `fromRunSnapshot(s)` / 版本常量 + live-strip 防御内聚；FileRunStore 与 pi JsonlRunStore 改消费。rewrite/去抖/append 差异归属各 store。**版本衔接**：① 版本值沿用 pi 现有字符串 `"wf-run-v2"`（pi 存量逐字节可读，⛔5 得以成立）；② FileRunStore 存量行（无 v 字段）按「缺版本 = 当前版本」宽容读取，写入时补 v 字段，不做自动迁移（对齐 pi「不做兼容迁移」先例；zsw 现网 workflow-state 存量全部可恢复——姊妹文档 §4 S5 验收覆盖）；③ guard 语义 = **v 不匹配当前版本即跳过该行 + warn**（字符串版本无大小序，不引入比较逻辑；对齐 pi 静默跳过语义并补可见性）。**两 store 读 guard 差异归属**：「缺 v 宽容」仅 FileRunStore 路径，实现于 store 层预处理（读出的行先补缺省 v 再进 codec），不内聚进 codec——保 pi 侧「v1 存量静默跳过」既有语义不被宽容化误读。FileRunStore 改 strip live 属落盘字节变化：live 字段现无赋值点（消费面无感），登记为内部行为变更。
+- **采用**：core 新模块 `orchestration/run-snapshot.ts`：`toRunSnapshot(run)` / `fromRunSnapshot(s)` / 版本常量 + live-strip 防御内聚；FileRunStore 与 pi JsonlRunStore 改消费。rewrite/去抖/append 差异归属各 store。**版本衔接**：① 版本值沿用 pi 现有字符串 `"wf-run-v2"`（pi 存量逐字节可读，⛔5 得以成立）；② FileRunStore 存量行（无 v 字段）按「缺版本 = 当前版本」宽容读取，写入时补 v 字段，不做自动迁移（对齐 pi「不做兼容迁移」先例；zsw 现网 workflow-state 存量全部可恢复——姊妹文档 §4 S5 验收覆盖）；③ guard 语义 = **v 不匹配当前版本即跳过该行 + warn**（字符串版本无大小序，不引入比较逻辑；对齐 pi 静默跳过语义并补可见性）。**两 store 读 guard 差异归属**：「缺 v 宽容」仅 FileRunStore 路径，实现于 store 层预处理（读出的行先补缺省 v 再进 codec），不内聚进 codec——保 pi 侧「v1 存量静默跳过」既有语义不被宽容化误读。FileRunStore 改 strip live 属落盘字节变化：live 字段在 call 运行期有真实赋值点（error-recovery.ts node 构造处），running 期 save 的存量行含 live 键，strip 后落盘字节变化真实可见（旧 fromSnapshot 会把 live 重水合为 plain object 脏数据，strip 同时修复该缺陷）；消费面无合法消费方故无功能回归。另：core codec 剔除 spec.budgetRef（嵌套 run 的 Budget 共享引用落盘会退化为脏字段）——⛔5 的逐字节一致断言对不含 budgetRef 的 run 成立，嵌套 run 落盘少 budgetRef 脏字段已按实施计划偏差登记。
 - **被否**：pi 改用 FileRunStore——session 锚定与 GUI 消费面全动，违背 G4；双 codec+联动测试——锚定不等于单源；数值版本 + 高版本抛错——与 pi 字符串版本存量及「静默跳过」语义互斥（审查 MF-2 击穿）。
 - **证据**：两份投影字段集一致但语义细节分叉（strip live、去抖），`index.ts:209-212` barrel 注释自认双实现；pi `jsonl-run-store.ts:90` `SNAPSHOT_VERSION="wf-run-v2"` 字符串相等比较、`:217` 不匹配返回 null 静默跳过；core `file-run-store.ts:70-84` RunSnapshot 无 v 字段。
 - **效果**：WorkflowRun 字段演进单点；两侧存量数据零迁移可读；G2 成立。
@@ -206,7 +206,7 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 - **效果**：资产加参数两宿主自动可见（G1/G2）。
 
 **D10：pi 零回归由对照探针保障（选定）**
-- **采用**：实施前对 pi 真实 agentDir 跑「发现清单快照」（每条含 source 标签、胜出路径、码点序）与「注入三段 XML 快照」；实施后同目录集重跑 diff，要求逐项一致。快照探针纳入 §5 U12，作为实施期门（⛔→✅）。
+- **采用**：实施前对 pi 真实 agentDir 跑「发现清单快照」（每条含 source 标签、胜出路径、码点序）与「注入两段 XML 快照（available_subagents / available_workflows；provider_models 段因 auth 态派生属非确定字段排除，见实施计划 wave1 偏差登记）」；实施后同目录集重跑 diff，要求逐项一致。快照探针纳入 §5 U12，作为实施期门（⛔→✅）。
 - **被否**：仅靠全量单测——单测锚定的是实施后代码自身，探针锚定的是「改前=改后」这一外部事实。
 - **证据**：收口设计 W2 的 hostRoots Map→列表改造即用对照探针验收（先例有效）。
 - **效果**：G4 可证伪、可执行。
@@ -225,7 +225,7 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 
 以下场景全部使用真实依赖（真实 pi agentDir、真实 vendored 刷新、真实 git 仓），禁止 mock 替代。每个场景标注回溯目标。
 
-**S1 资产行为一致性（G1）**：在 `~/.zcode/agents/` 放置测试资产 `t-sink.md`（block-scalar description + `maxTurns: 2` + 多行 `- item` 形态的 `tools` 列表，覆盖 zsw mini parser 全部形态）。① pi 真机会话注入清单含该 agent 且 description 完整；② `zsw agents`（zsw 侧实施后）清单同一 description 与 tools 投影；③ 两平台对 `/x/../etc/passwd.md` 引用均拒绝（本设计收紧后两宿主一致——现状两宿主均放行，此为声明的共同行为变更）。通过标准：三步全过。回溯 G1。
+**S1 资产行为一致性（G1）**：在 `~/.zcode/agents/` 放置测试资产 `t-sink.md`（注：pi 宿主不扫描 `~/.zcode/agents`——S1① 的 pi 侧验证经 fixture agentDir + 真机 agentDir 注入快照承载（U12 探针）；`~/.zcode/agents` 放置仅服务 S1② zsw 侧）（block-scalar description + `maxTurns: 2` + 多行 `- item` 形态的 `tools` 列表，覆盖 zsw mini parser 全部形态）。① pi 真机会话注入清单含该 agent 且 description 完整；② `zsw agents`（zsw 侧实施后）清单同一 description 与 tools 投影；③ 两平台对 `/x/../etc/passwd.md` 引用均拒绝（本设计收紧后两宿主一致——现状两宿主均放行，此为声明的共同行为变更）。通过标准：三步全过。回溯 G1。
 
 **S2 预算一致性（G1）**：`maxTurnsToWatchdogMs(2) ≥ 1_800_000`（floor 断言，函数级真实调用）+ pi 真机短轮派发一轮断言 watchdog 挂载时长日志 ≥30min 等价值 + zsw CLI 同款。通过标准：两侧换算一致。回溯 G1。
 
@@ -273,6 +273,9 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 - `src/shared/agent-ref.ts`：normalizeRef 增 `..` 段拒绝（**对两宿主均为行为变更**——现状两宿主均放行，安全收紧已登记，见 G4 与 ⛔2）
 - `src/shared/atomic-write.ts`：新增（U6）
 - `src/execution/agent-registry.ts`：parseAgentProfile 导出形态（U2）
+- `src/execution/agents-assembly.ts`：新增（U2，discoverAgents 装配函数载体）
+- `src/shared/bounded-serialize.ts`：新增（U6a，boundedPrettySerialize 下沉目标，§2.2 B7）
+- `src/shared/resource-meta.ts` + `src/shared/meta-parser.ts`：AgentMeta 扩可选执行字段的类型与 typecheckMeta 投影落点（U2/D3）
 - `src/execution/session-runner.ts`：computeWatchdogMs 抽出为可导出纯函数（U3）
 - `src/execution/concurrency-pool.ts`：createConcurrencyPool 工厂 + queuePolicy 参数（U4）
 - `src/execution/worktree-git-ops.ts`：新增（U5）
@@ -293,7 +296,7 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 | ⛔2 | `..` 收紧样本集 | 样本集覆盖：`/x/../y.md` 与 `/x/../y.js`（normalizeRef 为 agent/workflow 双消费面）两宿主均拒、`~/` 合法路径不误伤、skillPath/cwd 既有 assertSafeStartPath 拒绝保持——收紧是**声明的行为变更**（现状两宿主均放行），非等值断言 | 实施期 |
 | ⛔3 | patch 机制切换对照 | zsw sidecar 场景（新文件+已提交改动+跨重启）在 core 锚点抽象下产物等价（zsw 侧验收，此处出锚点 API）+ **锚点缺失/损坏与 add 失败分支：warn 发出 + 降级裸 diff + `patchIncomplete` 留痕（返回结构见 U5）** | 实施期（跨文档） |
 | ⛔4 | 动作内核迁移守卫链等值 | pi 六 handler 行为快照（含错误文案锚）迁移前后逐项一致 | 实施期 |
-| ⛔5 | codec 存量往返等值 | pi 侧含 live 字段 run 的快照往返与实施前逐字节一致（v 字段保持 `"wf-run-v2"`）；FileRunStore 存量无 v 行读取不丢数据 | 实施期 |
+| ⛔5 | codec 存量往返等值 | pi 侧含 live 字段 run 的快照往返与实施前逐字节一致（v 字段保持 `"wf-run-v2"`；不含 budgetRef 的 run——嵌套 run 落盘少 budgetRef 脏字段已按偏差登记，见 D4 补充）；FileRunStore 存量无 v 行读取不丢数据 | 实施期 |
 
 ### 5.5 版本与发版
 
