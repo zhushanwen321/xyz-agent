@@ -121,11 +121,16 @@ graph TD
 | 6 | R2 | fixture 用 .mjs（本仓 eslint no-require-imports 拦 require）；buildAppServerEnv 组装器独立于 launcher | 合理——环境约束等价实现 |
 | 7 | R3 | golden「替换」实施为「并存」（stdout 语料保留）——spawn 语料消费方在 R4（probe 干跑）/R6（conformance）领地，且 D2 保留 spawn 降级路径；去留 R6 统一定。golden 帧序列为合成语料（A.2 权威+旧实现形态），真机实录待跨仓段替换。session-channel 连接崩溃收割依赖 turnTimeoutMs 兜底（connection 无 onClose 面，R4 补） | 合理——领地纪律优先；来源如实标注 |
 | 8 | C5 | subagents 段 guide 末句重写（systemPrompt 参数已在 pi 现版 tool schema 移除，旧文案主动误导；新文案 = location 路径 + 缺省 general-purpose 指引，依据实测 subagent-tool-schema.ts）——A2 等价口径相应增加该豁免（设计文档已同步） | 合理——保留过期文案才违背设计意图 |
-| 9 | C5 | 依赖下限保持 workspace:*（pack 实测发布面替换为精确 0.4.0 满足 ≥0.4.0 下限；提前写 ^0.4.0 会破坏 workspace 解析）；深路径清零按「收口面」解读（injectors + tool-workflow-script），interface 层 9 处 pre-existing 深路径不属收口范围；core 根解析锚点用 workflows/README.md 子入口（双形态同径），五场景探针落证 probe-c5.md | 合理——链路核实 + pack 实测落证（设计 W5⑦ 口径已同步收口面化） |
+| 9 | C5 | 依赖下限保持 workspace:*（pack 实测发布面替换为精确 0.4.0 满足 ≥0.4.0 下限；提前写 ^0.4.0 会破坏 workspace 解析）；深路径清零按「收口面」解读（injectors + tool-workflow-script），收口两文件 pre-existing 运行时深路径 9 处（execution/*、orchestration/*）不属收口范围，interface 层其余深路径（含 shared/agent-ref、shared/model-ref）一律不属收口，host-services/engine-awareness 为壳侧服务定位器豁免面；core 根解析锚点用 workflows/README.md 子入口（双形态同径），五场景探针落证 probe-c5.md | 合理——链路核实 + pack 实测落证（设计 W5⑦ 口径已同步收口面化） |
 | 10 | R4 | 前任 5h 限额中断于 import 面（D7 符号在 appserver-home.ts 而 zcode-engine 从 preparer import），接替续作仅修 import 路径；conformance contract.abort 钉 XYZ_ZCODE_MODE=spawn（fixture 经 deps.launch 驱动 spawn 分支，钉扎必要，R6 已核）；record-store 未改动——回填走既有 reportRecordTransition 通道 | 合理——接替程序标准路径；单点突破已 R6 核实 |
 | 11 | R5 | record 降级标注走 outcome.engineFallback 既有留痕通道（D9① 复用）；探针结论内存化（smokeConclusion 绑 CLI mtime，非落盘——进程重启重探重建，等价且免 IO）；driftDegraded 内存标志余生直走 spawn；顺带修复 R4 dispose 竞态 flake（shutdownRuntimeAndDisposeChannel 等 onClose 收割，基线 ~50% 复现转 5/5 稳定） | 合理——任务级标注语义；竞态修复有基线复现证据 |
 | 12 | R6 | 移交决策：stdout golden 保留（probe 第 3 检 + spawn 降级 parser + conformance 仍有消费方）；probe() 维持三检不迁冒烟（公共面 = 形状/版本/spawn-parser 契约，冒烟已内化为 run 门控 appserver-probe.ts，语义无缺口）；conformance 双模式（spawn 钉扎保留 + appserver 新增用例，非参数化） | 合理——消费方事实驱动 |
 | 13 | 阶段3审查修复 | R 线三 low 瑕疵修（pidfile 常量化 / pre-abort poolKey 用 homeState 锚定 / homeAcquire 并发 catch 重走）；全 2539 绿 | 一致性审查清零批次 |
+| 14 | CA2 验收 | A2 基线逐字节 diff 原未执行（Gate B S1 仅改造后现状验证），已补做并落盘 [probe-a2-baseline.md](subagent-core-convergence.probe-a2-baseline.md)（渲染函数级改造前后逐字节对比；结论：三段等价面除声明豁免外零差异） | 合理——证据缺口补齐（落盘载体 wave-1 d56940ccd） |
+| 15 | R4 | appserver-home.ts 自 preparer.ts 拆出（D7 常驻 HOME/锁/pidfile 语义单一关注点；preparer 保留 spawn 池语义，语义等价，模块头注已登记拆分缘由） | 合理——单一关注点拆分，非行为变更 |
+| 16 | R4 | 凭据刷新 hash 只覆盖 provider 注册表段，model.main 不参与（per-session model 走 create 参数传入，计入 hash 会在每次换模型时误判「凭据变更」杀掉常驻进程——appserver-home.ts hashProviderRegistry 同口径） | 合理——换模型 ≠ 凭据变更；设计文档 D7 已同步限定 hash 范围 |
+| 17 | CA3-pi 验收 | A3-pi 六步中两步（workflow 传自定义脚本路径 / @pi-meta 格式核对）Gate B 真机段后补：前者以现有单测 tool-workflow-throw-paths / tool-workflow-script-generate 佐证落档，后者静态核对一致（gateb.md S2 已补录，计数 4/4→6/6） | 合理——真机预算约束下以单测+静态核对补证，证据形态如实标注 |
+| 18 | C5b | 深路径「归零」口径收窄：injector 发现/渲染链（shared/*）深路径归零；host-services（getHostServices 为 core 服务定位器、barrel 刻意不导出）与 engine-awareness 深路径为壳侧豁免面 | 合理——壳侧服务定位器消费不属收口面；设计 W5/本表 #9/C5b 证据行三处口径统一 |
 
 ## 6 状态表
 
@@ -136,7 +141,7 @@ graph TD
 | C3-core-render | committed | 1 | 19c059bf6（33 用例全条目覆盖；barrel 追加 summarizeDescription + opts 类型为合理扩面；guide 必填注入 + 无内嵌文案 grep 证实） |
 | C4-core-script-pipeline | committed | 1 | ec1dcdf9a（24 用例；save/delete 第三可选参数向后兼容；结构化返回 {ok}|{error}，isError 转换留宿主 C5） |
 | C5-pi-rebind | committed | 1 | a26b9a80c（pi-sw 918 绿；guide 新文案依据 systemPrompt 参数已移除的实测；probe-c5 五场景落证；⑦收口面达成，深路径归零转 C5b） |
-| C5b-barrel-aux | committed | 1 | 1c92d6e74（injector 源文件深路径归零；__tests__ 4 处 vi.mock 深路径目标保留——barrel re-export 链同样被 mock 拦截，测试全绿为证） |
+| C5b-barrel-aux | committed | 1 | 1c92d6e74（injector 发现/渲染链（shared/*）深路径归零；host-services 与 engine-awareness 深路径为壳侧服务定位器豁免面——偏差 #18；__tests__ 4 处 vi.mock 深路径目标保留——barrel re-export 链同样被 mock 拦截，测试全绿为证） |
 | R1-engine-dispose | committed | 1 | b0519eccd（24 新用例；registry disposeEngines() 导出为等价封装偏差） |
 | R2-connection | committed | 1 | db721187d（21 fake-server 用例；fixture 用 .mjs 避 eslint require 拦截；buildAppServerEnv 组装器供 R4 复用） |
 | R3-session-channel | committed | 1 | 44e2120f3（31 用例；golden 并存偏差见 §5；runTurn resolve 形态与 onClose 面缺口已交接 R4） |
@@ -165,3 +170,4 @@ graph TD
 - 2026-08-31：阶段 2 完成——12 单元全部 committed（C 线 6 + R 线 6）。
 - 2026-08-31：阶段 3-4 一致性审查清零——双线独立审查（C 线：D-1~D-6 与九红线逐条通过；R 线：十决策逐条落地、G4 成立）+ 3 low 代码瑕疵修复 + 5 doc_errors 文档修订（A2 等价口径加 guide 豁免 / W5⑦ 收口面化 / appserver 检查点 5 项回填 + D10 注记 / 偏差表补至 13 条）。
 - 2026-08-31：阶段 5 双级验收——**Gate A 全绿**（core 2539 + pi-sw 918 + extensions 三连 + build:bundle 自包含 13 新导出面 + tarball 含 10 agents）；**Gate B 本仓段 5 pass / 1 blocked**（证据 [gateb.md](subagent-core-convergence.gateb.md)：S1 注入面 10 角色 location 指 core 包 ✅ / S2 契约四例（裸名拒+路径成+内置名解析+缺省 general-purpose）✅ / S3 orchestrator 去 tools 化真实派发 ✅（argv 探针弱证据如实标注）/ S4 npm pack 升级模拟 core 强制升 0.4.0 ✅ / S5 无进程残留 ✅ / **S6 = RA2-② GUI 详情页 blocked——需 pnpm dev + GUI 自动化编排，未验证，移交 GUI 验收段**）。
+- 2026-08-31：二轮对抗审查（4 分区 reviewer）清零——发现 2 med + 9 low + 5 doc_errors，修复分两波：wave-1 代码（d56940ccd，A2 基线 diff 补做落盘 + 6 low 代码修复）、wave-2 文档（本 commit，doc_errors 全部修订：A5-② 与 D2④ 矛盾消解 / D8 探针 env 标记登记 / D7 hash 范围限定 / W4 文件地图拆分如实 / W5-偏差表-C5b 三处深路径口径一致化 / gateb S2 补录 6/6）；偏差表补登 #14-#18。至此审查项全部清零。

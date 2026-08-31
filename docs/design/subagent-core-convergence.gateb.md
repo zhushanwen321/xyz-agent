@@ -34,7 +34,7 @@
   `duplicate agents "reviewer" from npm shadows npm {"shadowed":"/Users/zhushanwen/.pi/agent/npm/node_modules/@zhushanwen/pi-subagent-workflow/agents/reviewer.md","kept":"…/packages/subagent-core/agents/reviewer.md"}`
 - ③ `<available_workflows>` 与 `<available_provider_models>`：模型回答「是，两段均存在」。
 
-## S2 — CA3-pi 契约正反例：PASS（4/4）
+## S2 — CA3-pi 契约正反例：PASS（6/6）
 
 - ① 裸名反例：`subagent` 工具 `agent="reviewer"` → 工具报错（isError，模型原样复述）：
   `Invalid agent ref: reviewer. Agent refs must be absolute paths to .md files (use <location> from <available_subagents>).` —— 拒绝 + 绝对路径指引齐备。
@@ -43,6 +43,11 @@
   `Invalid args for workflow 'review-fix-loop': 2 error(s) - /: must have required property 'targetType' - /: must have required property 'target' Read the workflow script file (location from <available_workflows>) …` —— 内置名已解析到该 workflow 自身的参数 schema（报错来自该 workflow 的参数校验），证明内置名通路成立，未实际跑 workflow。
 - ④ agent 缺省：完全不传 `agent`，只传 task「回复两个字：收到」→ start record `slug":"test-no-agent"`；子代理 session 文件 `~/.pi/agent/subagents/--private-tmp-gateb-s1--/sessions/2026-08-31T01-44-15-894Z_*.jsonl` 的 `subagent-identity` entry：
   `{"id":"sa-d5001191…","agent":"general-purpose","mode":"background","task":"回复两个字：收到",…}` —— 默认落 general-purpose，产出「收到」。
+
+以下 ⑤⑥ 为 A3-pi 六步的后补两步（2026-08-31 二轮对抗审查补录；真机段未单列派发——真实模型预算约束，见下注——以单测/静态核对佐证落档，证据形态如实标注）：
+
+- ⑤ workflow 传自定义脚本路径（应成——现有行为不回退）：以现有单测佐证。`tool-workflow-throw-paths.test.ts` 以 `action:"run", name:"<.js 绝对路径>"` 形态驱动 registry 双查通路（C5③ 起 actionRun 先查内置名 `registry.get`、回落 `registry.getPath`——测试 stub 两查齐备），锁定自定义脚本路径的运行时语义：路径不可读 → not_found throw 不假启动（未假启动断言：runs 注册表不出现该 run）、平铺检测含 Correct 正例、slug 护栏；`tool-workflow-script-generate.test.ts` TC1-TC10 锁定脚本创作管线现有行为（@pi-meta 认可 + legacy const meta 过渡期 + ESM 拒 + 无 agent() 拒 + round-trip 行列报错）。W5③ 对该通路为零行为变更的严格超集（仅在 actionRun 入口前置内置名查询），现有行为不回退。
+- ⑥ 核对 `skills/workflow-script-format` 的 @pi-meta 格式描述与 W4 平移后 core 管线（`script-generate.ts`）校验规则一致：**一致（skill 所覆盖的格式规则与五道闸全部吻合）**——①CJS/require：skill「DO NOT use import/export (ESM) syntax. Use require()」↔ 闸 1 ESM import/export 拒绝（'export const meta' 例外）；②meta 声明必需：skill「Every script MUST declare meta at the top level」↔ 闸 2 接受 @pi-meta YAML 块注释（preferred）或 legacy const meta（过渡期 m0）；③agent() 必需：skill 全部模板/示例含 agent() 调用（Minimal 示例起）↔ 闸 3「A workflow must call agent() at least once」；④meta 字段口径：skill 的 name/description/phases ↔ 闸 2/round-trip 的 YAML 字段 name/description/phases/parameters?/usage?（skill 三字段为后者的子集，兼容）。**缺口如实登记（不阻塞）**：skill 文档未覆盖 @pi-meta YAML 块注释新形态的字段描述（仅写 legacy const meta 形态）——generate 管线的闸 2/round-trip 报错文案自带 @pi-meta 格式说明与常见错误指引（YAML 缩进/patternProperties 双反斜杠/stray star-slash），LLM 自纠正面在报错文案、不依赖 skill。
 
 注（预算偏差如实报告）：任务书要求真实派发控制在 S2-②/S3 两次内，但 S2-④ 的「record 展示名」断言必须真实派发才能取证，故实际派发 3 次（每次任务书均为「回复两个字：收到」量级，token 开销极小）。
 
@@ -79,7 +84,7 @@
 | 场景 | verdict |
 |------|---------|
 | S1 注入面 | pass |
-| S2 契约正反例 4/4 | pass |
+| S2 契约正反例 6/6 | pass |
 | S3 orchestrator 去 tools 化 | pass（argv 探针 blocked-argv，弱证据补强） |
 | S4 升级路径模拟 | pass |
 | S5 关闭无泄漏 | pass（zcode 引擎段 N/A） |

@@ -222,7 +222,7 @@ core 是「平台无关的 subagent 执行与 workflow 编排内核」，双形�
 | W2 | vitest 绿（含多链同文件去重、同标签多根、同 stem 撞名本体胜、子目录/node_modules 三维度对照）；pi 单条目形态改前后 `discoverResources` 输出逐项一致（对照探针，证据落盘）；`scanDirectorySync` L671 漂移注释已修 |
 | W3 | 渲染单测绿：undefined input/contextWindow 不抛不渲垃圾、provider 存在时 `<id>` 输出 `provider/id` 拼接 + (provider, id) 两段排序（A2 等价面）、provider 缺席/空串时裸 id + id 码点序（zsw 投影形态）、码点序 + 截尾、预算边界、guide 由宿主注入；barrel 导出探针（node require 逐名检查） |
 | W4 | 管线单测绿：ESM 样本拒（报错含行列）、无 meta 拒、无 agent() 拒、合法样本落 tmp；参数化目录注入生效（非 .pi 硬编码）；barrel 探针 |
-| W5 | pi-sw vitest 全绿；注入快照对比（红线 8 口径 + guide 末句豁免）；workflow run 传内置名可跑；core 包根接线实测（§5.4 检查点 2，不命中走降级并记录）；grep 断言**收口面**（`src/injectors/` 三文件 + `src/interface/tool-workflow-script.ts`）无 `@zhushanwen/subagent-core` 深路径 import（职责⑦按收口面解读——interface 层 pre-existing 深路径（agent-ref/model-ref 等 9 处）不属本设计收口范围，pi-sw workspace 形态经 `./*` 通配可达） |
+| W5 | pi-sw vitest 全绿；注入快照对比（红线 8 口径 + guide 末句豁免）；workflow run 传内置名可跑；core 包根接线实测（§5.4 检查点 2，不命中走降级并记录）；grep 断言**收口面**（`src/injectors/` 三文件 + `src/interface/tool-workflow-script.ts`）无 `@zhushanwen/subagent-core` 深路径 import（职责⑦按收口面解读——收口两文件 tool-workflow.ts + tool-workflow-script.ts 改造前 pre-existing 运行时深路径 9 处（execution/*、orchestration/*）不属本设计收口范围；interface 层其余深路径（含 shared/agent-ref、shared/model-ref 等）一律不属收口范围，pi-sw workspace 形态经 `./*` 通配可达。host-services 豁免：getHostServices 为 core 服务定位器、barrel 刻意不导出（导出仅 configureCore/类型面），src/injectors/ 的壳侧深路径消费属豁免面） |
 
 ### 4.3 完成定义（对 zsw 会话的接口契约）
 
