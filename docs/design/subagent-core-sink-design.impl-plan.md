@@ -144,11 +144,11 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u-probe-base | pending | 0 | — |
-| u-core-ref | pending | 0 | — |
-| u-core-pool | pending | 0 | — |
-| u-core-atomic | pending | 0 | — |
-| u-core-args | pending | 0 | — |
+| u-probe-base | committed | 1 | c8b399306 |
+| u-core-ref | committed | 1 | 见 wave1-progress commit |
+| u-core-pool | committed | 1 | 8261b549a |
+| u-core-atomic | committed | 1 | ff9051b25 |
+| u-core-args | committed | 1 | 51d66ee8f |
 | u-core-agent | pending | 0 | — |
 | u-core-worktree | pending | 0 | — |
 | u-core-lifecycle | pending | 0 | — |
@@ -174,3 +174,4 @@ graph TD
 - **真机冒烟依赖本机 pi CLI**：S4③ 若 pi 环境不可用，升级用户裁决（禁 mock 替代）。
 - 变更历史：
   - 2026-08-31 计划创建（来源：sink 设计 U1-U12 + code-simplify 扫描候选整合）。
+  - 2026-08-31 Wave1 完成（5/5 committed）：u-core-ref 初次派发因账户限流失败，重派后完成。合理偏差登记：u-probe-base 注入快照为两段（model 段数据源非目录集派生且非确定字段，排除以保 S7 确定性）；u-core-pool 旧名 computeWatchdogMs 删除（全仓清零核实）；u-core-ref 的 `..` 检测位选在 ~/ 展开前的原始引用串（防 ~/../x.md 逃逸）、normalizeWorkflowRef 裁决结果为 {kind: name|path|invalid, reason} 结构化形态、保留字定为 [".", ".."] 导出常量、内置 workflow 名不 core 硬编码（经 knownNames 宿主注入体现）。pi-sw 实测无测试钉住 `..` 放行行为，零测试修改。
