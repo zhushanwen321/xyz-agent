@@ -155,6 +155,8 @@ graph TD
 5. **跨仓验收依赖**：Gate B 跨仓段依赖 zsw 会话 vendor --local 刷新；RA9 与 zsw W6-W9（convergence zsw 侧）共享该前置。本仓完成定义 = 本仓可执行段全绿 + committed + 报告用户，跨仓段移交。
 6. **R2 fixture 移植来源**：fake-server 60+ 用例从 zsw 仓 `84b63a0^:lib/runner-appserver.js` 时代实现移植改造——只取测试模式与协议断言，代码逐字复制需适配 core 测试框架（vitest），防止盲目平移。
 7. **发版与 push 授权边界**：一切 push / 合并 main / npm publish 需用户另行授权。
+8. **S6（RA2-② GUI 详情页快照）未验证**：Gate B 本仓段唯一 blocked 项——需 pnpm dev 起 Electron + browser-automation 编排「zcode 引擎 subagent 运行中打开详情页验证 ②级 journal 快照」，移交 GUI 验收段（可与 RA 跨仓真机段同批）。
+9. **Gate A 观察项**（不阻塞）：extensions:lint 161 warning 存量（0 error，含 no-unsafe-cast/no-silent-catch 建议后续清理批次）；live 门真机用例（ENGINE_CONFORMANCE_LIVE/ZCODE_E2E_MODEL）未在本段执行，R 线 app-server 真机覆盖依赖发布前手动触发 live 门；zcode-engine.live.test 的 E2E_MODEL 缺省值烤死本机 provider id（文件内已注释自述）。
 
 ### 变更历史
 
@@ -162,3 +164,4 @@ graph TD
 - 2026-08-30：**扩充为双线版**——用户指令「app-server 常驻化一起开发」，并入 R 线 R1-R6（单元重命名避撞名：convergence W1-W5 → C1-C5；app-server W1-W6 → R1-R6；验收场景加 CA/RA 前缀）；版本合并为单一 core 0.4.0；Gate B 切分本仓段/跨仓段；DAG 重排 6 波。convergence 单元验收条款不变（沿用本计划前一版）。
 - 2026-08-31：阶段 2 完成——12 单元全部 committed（C 线 6 + R 线 6）。
 - 2026-08-31：阶段 3-4 一致性审查清零——双线独立审查（C 线：D-1~D-6 与九红线逐条通过；R 线：十决策逐条落地、G4 成立）+ 3 low 代码瑕疵修复 + 5 doc_errors 文档修订（A2 等价口径加 guide 豁免 / W5⑦ 收口面化 / appserver 检查点 5 项回填 + D10 注记 / 偏差表补至 13 条）。
+- 2026-08-31：阶段 5 双级验收——**Gate A 全绿**（core 2539 + pi-sw 918 + extensions 三连 + build:bundle 自包含 13 新导出面 + tarball 含 10 agents）；**Gate B 本仓段 5 pass / 1 blocked**（证据 [gateb.md](subagent-core-convergence.gateb.md)：S1 注入面 10 角色 location 指 core 包 ✅ / S2 契约四例（裸名拒+路径成+内置名解析+缺省 general-purpose）✅ / S3 orchestrator 去 tools 化真实派发 ✅（argv 探针弱证据如实标注）/ S4 npm pack 升级模拟 core 强制升 0.4.0 ✅ / S5 无进程残留 ✅ / **S6 = RA2-② GUI 详情页 blocked——需 pnpm dev + GUI 自动化编排，未验证，移交 GUI 验收段**）。
