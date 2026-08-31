@@ -129,11 +129,12 @@ graph TD
 | C2-core-discovery | committed | 1 | 5b03be26d（新增 15 用例 + pi 单条目形态快照；真机探针 IDENTICAL 落 [probe-c2.md](subagent-core-convergence.probe-c2.md)；检查点 1 定案 project-host 槽） |
 | C3-core-render | committed | 1 | 19c059bf6（33 用例全条目覆盖；barrel 追加 summarizeDescription + opts 类型为合理扩面；guide 必填注入 + 无内嵌文案 grep 证实） |
 | C4-core-script-pipeline | committed | 1 | ec1dcdf9a（24 用例；save/delete 第三可选参数向后兼容；结构化返回 {ok}|{error}，isError 转换留宿主 C5） |
-| C5-pi-rebind | pending | 0 | — |
+| C5-pi-rebind | committed | 1 | a26b9a80c（pi-sw 918 绿；guide 新文案依据 systemPrompt 参数已移除的实测；probe-c5 五场景落证；⑦收口面达成，深路径归零转 C5b） |
+| C5b-barrel-aux | pending | 0 | —（C5 blocker 转化：core barrel 补 findWorkspaceRoot/getCachedParsed/getCachedFileContent/parseResourceMeta 4 导出，pi-sw injector 深路径归零） |
 | R1-engine-dispose | committed | 1 | b0519eccd（24 新用例；registry disposeEngines() 导出为等价封装偏差） |
 | R2-connection | committed | 1 | db721187d（21 fake-server 用例；fixture 用 .mjs 避 eslint require 拦截；buildAppServerEnv 组装器供 R4 复用） |
 | R3-session-channel | committed | 1 | 44e2120f3（31 用例；golden 并存偏差见 §5；runTurn resolve 形态与 onClose 面缺口已交接 R4） |
-| R4-engine-wiring | pending | 0 | — |
+| R4-engine-wiring | committed | 2 | a1370623c（前任 5h 限额中断于 import 面，接替续作；2519 绿；conformance contract.abort 钉 spawn 模式单点突破待 R6 知会） |
 | R5-degrade-chain | pending | 0 | — |
 | R6-test-migration-docs | pending | 0 | — |
 
