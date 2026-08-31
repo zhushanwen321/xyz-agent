@@ -12,7 +12,9 @@
 // mock 返回 {count: n} 形状直接验证「适配读 .count」；session-delivery mock
 // 验证 createDelivery 透传（参数 + 返回句柄）。
 
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -72,15 +74,34 @@ describe("createPiHostServices.discoveryRoots（与现推导逐项一致）", ()
     vi.mocked(getAgentDir).mockReturnValue(AGENT_DIR);
   }
 
-  it("agents 三根：顺序与 source 标签 = user-pi → npm → npm-dev", () => {
+  it("agents 四根：user-pi → npm → npm-dev → core 包父目录（C5⑥，source npm 追加末位）", () => {
     stubAgentDir();
     const roots = createPiHostServices().discoveryRoots?.().agents;
+
+    // 期望的 core 注入根用与 pi-host.ts 相同的锚点解析（./workflows/* 子入口在
+    // workspace 与 npm dist 双形态同径；探针证据见 probe-c5.md P1/P3）
+    const require = createRequire(import.meta.url);
+    const anchor = require.resolve("@zhushanwen/subagent-core/workflows/README.md");
+    const coreParent = dirname(dirname(dirname(anchor)));
 
     expect(roots).toEqual([
       { dir: join(AGENT_DIR, "agents"), source: "user-pi" },
       { dir: join(AGENT_DIR, "npm", "node_modules"), source: "npm" },
       { dir: join(AGENT_DIR, "extensions"), source: "npm-dev" },
+      // C5⑥：core 包一级父目录（npm 槽语义：一级子项 = 包目录，无 pi manifest 扫
+      // agents/ 约定目录）；追加在既有 npm 根之后——同标签靠后者胜（新版遮蔽旧残留）
+      { dir: coreParent, source: "npm" },
     ]);
+  });
+
+  it("agents 第 4 根指向 core 包的父目录（其下 subagent-core/agents/ 存在 10 内置角色）", () => {
+    stubAgentDir();
+    const roots = createPiHostServices().discoveryRoots?.().agents;
+    const coreRoot = roots?.[3];
+
+    expect(coreRoot?.source).toBe("npm");
+    // 便捷断言：core 包根（注入 dir 的子目录）下 agents/ 真实存在
+    expect(existsSync(join(coreRoot!.dir, "subagent-core", "agents"))).toBe(true);
   });
 
   it("workflows 三根：与 agents 同构，末级目录名切换为 workflows", () => {

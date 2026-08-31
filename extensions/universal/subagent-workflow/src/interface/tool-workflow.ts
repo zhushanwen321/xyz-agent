@@ -63,7 +63,7 @@ const WORKFLOW_ACTIONS: readonly WorkflowAction[] = [
 const WorkflowParams = Type.Object({
   action: StringEnum(WORKFLOW_ACTIONS, { description: "Workflow action to execute" }),
   name: Type.Optional(
-    Type.String({ description: "Workflow ref: absolute path to the .js script (use <location> from <available_workflows>; run action)" }),
+    Type.String({ description: "Workflow ref: builtin/saved workflow name from <available_workflows> (C5: run accepts names), or absolute path to the .js script (use <location>; run action)" }),
   ),
   slug: Type.Optional(
     Type.String({
@@ -321,7 +321,7 @@ export function registerWorkflowTool(
       "<available_workflows> (injected each turn). For parameter details, read the <location> " +
       "script file (script header has @pi-meta parameters + usage + phases). Do NOT use " +
       "workflow-script generate for patterns already covered by available workflows.",
-      "run: pass the absolute .js path from <available_workflows> <location> as name, then start in background (no user confirmation needed).",
+      "run: pass the workflow ref as name — the listed <name> (builtin/saved workflow) or its <location> absolute .js path from <available_workflows> — then start in background (no user confirmation needed).",
       "Do NOT poll status after starting — results appear automatically via notifyDone.",
       "Runs are one-shot: there is no pause/resume — to stop a run early use abort; for a fresh result start a new run.",
       "Call shapes (JSON): " +
@@ -425,7 +425,17 @@ export async function actionRun(
   // 顶层（缺 args 嵌套）。args ?? {} 会静默 args={}，启动缺参 run 不报错——比 subagent
   // 平铺事故更严重。m6：先 registry.getPath（动态参数集来源——schema 即 SSOT），
   // not_found 优先返回；平铺检测报错带 Correct 正例纠正。
-  const script = await deps.registry.getPath(name);
+  //
+  // C5③（convergence D-4 pi 半边）：name 解析先查内置/已保存 workflow 名
+  // （registry.get——内置 chain/parallel/map-reduce/scatter-gather/review-fix-loop 或
+  // 用户 project/user 级脚本名，按 tmp>project>user>npm 优先级合并）——内置名命中
+  // 直接用内置脚本；未命中再走 getPath（绝对路径，~/ 展开——normalizeRef 既有）。
+  // 严格超集：现有路径用法零变化（路径串不会撞 workflow 名——名字是简单标识符），
+  // 两者都未命中仍走原 not_found 报错（建议清单不变）。
+  let script = await deps.registry.get(name);
+  if (!script) {
+    script = await deps.registry.getPath(name);
+  }
   // W4c：config-loader 的 toCachedMeta 对不可读/不存在文件返回 available:false 的
   // stub（非 undefined），仅判 !script 会绕过 not_found → 空 sourceCode 假启动
   //（W4b verifier 探针实测复现）。与下方 suggestions 分支的 wf.available 过滤口径对齐。

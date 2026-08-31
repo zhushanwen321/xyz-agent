@@ -42,11 +42,13 @@ function captureTool(deps: unknown, reentryRef: ReentryGuardRef): CapturedTool {
   return tools[0];
 }
 
-/** 最小 LauncherDeps stub：被测路径只触 registry / runs。 */
+/** 最小 LauncherDeps stub：被测路径只触 registry / runs（C5③ 起 actionRun 先查
+ *  registry.get 再 registry.getPath——两查都须在 stub 面）。 */
 function makeDeps(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     runs: new Map(),
     registry: {
+      get: vi.fn().mockResolvedValue(undefined),
       getPath: vi.fn().mockResolvedValue(undefined),
       loadAll: vi.fn().mockResolvedValue([]),
     },
@@ -84,6 +86,7 @@ describe("W4b: workflow tool 错误路径 throw 语义", () => {
     // （W4b verifier 探针实测复现）。registry 层真行为见 config-loader.ts:143-151。
     const deps = makeDeps({
       registry: {
+        get: vi.fn().mockResolvedValue(undefined),
         getPath: vi.fn().mockResolvedValue({
           name: "ghost-wf",
           path: "/tmp/no-such-workflow.js",
@@ -117,6 +120,7 @@ describe("W4b: workflow tool 错误路径 throw 语义", () => {
   it("平铺检测：args 子字段提到顶层 → throw 'Detected ... at top level'（含 Correct 正例）", async () => {
     const deps = makeDeps({
       registry: {
+        get: vi.fn().mockResolvedValue(undefined),
         getPath: vi.fn().mockResolvedValue(
           makeScript({
             type: "object",
@@ -143,6 +147,7 @@ describe("W4b: workflow tool 错误路径 throw 语义", () => {
   it("slug 护栏：slug 超 SLUG_MAX_LENGTH → throw 'slug exceeds ...'（运行时第二道）", async () => {
     const deps = makeDeps({
       registry: {
+        get: vi.fn().mockResolvedValue(undefined),
         getPath: vi.fn().mockResolvedValue(
           makeScript({
             type: "object",

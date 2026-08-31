@@ -1,8 +1,13 @@
 /**
- * actionGenerate 行为测试（m0 wave / TC1-TC7 + [P-generate-roundtrip]）
+ * actionGenerate 行为测试（m0 wave / TC1-TC7 + [P-generate-roundtrip]；C5② 改接 core 管线）
  *
- * mock node:fs（mkdirSync/writeFileSync）避免真实落盘 .pi/workflows/.tmp/。
- * parseResourceMetaDetailed 真实调用（不 mock m1）——round-trip 探针必须用真实 IF2。
+ * C5② 起五道闸校验 + tmp 写盘在 core generateWorkflowScript（barrel import）——本测试
+ * 验证宿主契约层（结构化结果 → execute-throw 转换、signal aborted、成功文案）+ 经
+ * 真实 core 管线的校验行为回归。
+ *
+ * mock node:fs（mkdirSync/writeFileSync）避免真实落盘 .pi/workflows/.tmp/（builtin
+ * 模块 mock 对 core 管线内的写盘同样生效）。save/delete 走 barrel mock（importActual
+ * 展开覆写，其余 barrel 面（含 generateWorkflowScript）保持真实）。
  *
  * 框架：vitest（禁 node:test）。
  */
@@ -11,14 +16,20 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { actionGenerate, type ScriptParams, type TextContent, registerWorkflowScriptTool } from "../tool-workflow-script.ts";
-import { deleteWorkflow, saveWorkflow } from "@zhushanwen/subagent-core/orchestration/workflow-files.ts";
+import { deleteWorkflow, saveWorkflow } from "@zhushanwen/subagent-core";
 
-vi.mock("node:fs", () => ({
+// node:fs 只覆写两个写盘函数、其余保持真实——C5② 后被测链经 barrel 拉起完整 core
+// 依赖图（importActual），core 模块对 existsSync/statSync 等的消费不能被 2 函数工厂截断
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
 }));
 
-vi.mock("@zhushanwen/subagent-core/orchestration/workflow-files.ts", () => ({
+// C5②：被测模块经 barrel 消费 save/delete/generateWorkflowScript——mock 挂 barrel，
+// importActual 展开保持 generateWorkflowScript 真实（校验管线是被测回归面）
+vi.mock("@zhushanwen/subagent-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@zhushanwen/subagent-core")>()),
   saveWorkflow: vi.fn(),
   deleteWorkflow: vi.fn(),
 }));

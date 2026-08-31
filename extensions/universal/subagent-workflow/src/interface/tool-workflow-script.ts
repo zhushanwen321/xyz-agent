@@ -10,13 +10,16 @@
  * - delete: 删除脚本（前查 isRunning 防删运行中脚本）
  * - list: 列出可用脚本（调 registry.loadAll）
  *
+ * C5②（convergence D-6）：generate 五道闸校验管线 + tmp 写盘下沉 core
+ * generateWorkflowScript（报错文案逐字平移，CA2 前提）；save/delete 改调 core
+ * barrel（第三可选目录参数缺省即 pi 布局 .pi/workflows——pi 现两参调用形态零变化）。
+ * 结构化 {ok}|{error} → pi 的 execute-throw 契约转换在本层（pi 只对 execute throw
+ * 置 isError:true）；AbortSignal 的 aborted 检查留宿主层（C4 偏差 #4 已声明）。
+ *
  * 层归属：Interface。依赖 Pi SDK + engine script-lint + infra workflow-files。
  *
  * 参考：domain-models.md §FR-5（tool 收口 4→2）。
  */
-
-import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve as pathResolve } from "node:path";
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
@@ -24,18 +27,23 @@ import { Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 
 import {
-  guiComponent,
-  type GuiContext,
-  type GuiRenderResult,
-  guiResult,
-  isGuiCapable,
+	guiComponent,
+	type GuiContext,
+	type GuiRenderResult,
+	guiResult,
+	isGuiCapable,
 } from "@xyz-agent/extension-protocol";
+// C5②/C5⑦：创作闭环统一走 core barrel（generateWorkflowScript/saveWorkflow/
+// deleteWorkflow/lintScript 均为 barrel 导出面；深路径在 npm/vendored 形态不可达）
+import {
+	deleteWorkflow,
+	generateWorkflowScript,
+	lintScript,
+	saveWorkflow,
+} from "@zhushanwen/subagent-core";
 import type { WorkflowScriptRegistry } from "@zhushanwen/subagent-core/orchestration/models/workflow-script-registry.ts";
-import { lintScript } from "@zhushanwen/subagent-core/orchestration/script-lint.ts";
-import { deleteWorkflow, saveWorkflow } from "@zhushanwen/subagent-core/orchestration/workflow-files.ts";
 import { toGuiCtx } from "./gui-mappers.ts";
 import { renderTextFallback } from "./views/format.ts";
-import { parseResourceMetaDetailed } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
 
 // ── Parameter schema ─────────────────────────────────────────
 
@@ -242,73 +250,23 @@ export function registerWorkflowScriptTool(
 
 export function actionGenerate(params: ScriptParams, signal: AbortSignal | undefined): TextContent {
   if (signal?.aborted) {
-    // throw（W4b）：pi 只对 execute throw 置 isError:true（返回值 isError 被丢弃）
+    // throw（W4b）：pi 只对 execute throw 置 isError:true（返回值 isError 被丢弃）。
+    // AbortSignal 是 pi tool 契约层关注——core 管线不含 signal 检查，宿主自留（C4 偏差 #4）
     throw new Error("Operation aborted before start");
   }
-  const name = params.name;
-  const script = params.script;
-  if (!name || !script) {
-    throw new Error("generate requires 'name' and 'script' parameters");
-  }
+  const name = params.name ?? "";
+  const script = params.script ?? "";
 
- // 1. Reject ESM syntax (Worker runs CJS); 'export const meta' 例外
-  const stripped = script.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-  if (/\bimport\s+(?:type\s+)?[\w{*]/.test(stripped)) {
-    throw new Error(
-      "Script uses ESM 'import' syntax. Workflow scripts run in a CJS Worker — use require() instead.",
-    );
+  // C5②：五道闸（ESM 拒/meta 必需/agent() 必需/语法/@pi-meta round-trip）+ tmp 写盘
+  // 全部在 core generateWorkflowScript（缺省 tmpDir 即 pi 布局 .pi/workflows/.tmp，
+  // 相对 cwd resolve——与旧本地实现一致）。结构化 {ok}|{error} → execute-throw 契约
+  // 转换在此（报错文案逐字平移自 pi 旧版，含 round-trip 行列信息）。
+  const result = generateWorkflowScript(name, script);
+  if (!result.ok) {
+    throw new Error(result.error);
   }
-  const hasExportMeta = /\bexport\s+const\s+meta\s*=/.test(stripped);
-  const otherExports = stripped.match(/\bexport\s+(?:const|let|var|function|default|\{)/g);
-  if (otherExports && !hasExportMeta) {
-    throw new Error(
-      "Script uses ESM 'export' (non-meta). Use 'const meta = {...}' at top level instead.",
-    );
-  }
-
- // 2. Validate meta declaration (/* @pi-meta */ new format preferred; legacy const meta accepted during transition — m0)
-  const hasPiMeta = /\/\*\s*@pi-meta\s*\n/.test(script);
-  const hasLegacyMeta = script.includes("const meta") || script.includes("export const meta");
-  if (!hasPiMeta && !hasLegacyMeta) {
-    throw new Error(
-      "Script must contain a meta declaration: a /* @pi-meta */ YAML block comment (preferred) or legacy const meta = { ... }. The block has the form: a block comment starting with /* @pi-meta followed by YAML (name/description/phases/parameters?/usage?), closed by */ on its own line.",
-    );
-  }
-
- // 3. Check agent usage
-  if (!/\bagent\s*\(/.test(stripped)) {
-    throw new Error(
-      "Script does not contain any agent() calls. A workflow must call agent() at least once.",
-    );
-  }
-
- // 4. Syntax check (wrap in async IIFE like runtime)
-  const cjsScript = script.replace(/\bexport\s+const\s+meta\b/, "const meta");
-  try {
-    new Function(`(async () => { ${cjsScript} })();`);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Syntax error in script: ${msg}`);
-  }
-
- // 4b. Round-trip: validate /* @pi-meta */ YAML before writing (v5 §4.7 / ERR4 — report linePos, don't write bad files)
-  if (hasPiMeta) {
-    const detailed = parseResourceMetaDetailed(script, "workflow");
-    if (!detailed.ok) {
-      const loc = "linePos" in detailed && detailed.linePos
-        ? ` (line ${detailed.linePos.line}, col ${detailed.linePos.col})`
-        : "";
-      throw new Error(
-        `Generated /* @pi-meta */ YAML cannot be parsed${loc}: ${detailed.error}. Common causes: YAML indent errors, patternProperties regex must use double backslash (\\d not \d), or a stray star-slash inside the YAML body. Fix the meta block and retry.`,
-      );
-    }
-  }
-
- // 5. Write to .tmp directory
-  const tmpDir = pathResolve(".pi/workflows/.tmp");
-  mkdirSync(tmpDir, { recursive: true });
-  const filePath = pathResolve(tmpDir, `${name}.js`);
-  writeFileSync(filePath, script, "utf-8");
+  // result.ok ⇒ name/script 非空（core 对空入参返回 error）
+  const filePath = result.path;
 
   return {
     content: [
