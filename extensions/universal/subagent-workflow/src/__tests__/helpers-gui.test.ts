@@ -10,14 +10,24 @@
  *   - label 格式含 slug（I#3 对齐）
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { GuiRenderResult } from "@xyz-agent/extension-protocol";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   MAX_NOTIFIED_RUN_IDS,
   notifyDone,
   trackNotifiedRunId,
-  type WorkflowNotifyDetails,
 } from "../interface/helpers.ts";
+
+/** notifyDone details 内联镜像（helpers.ts WorkflowNotifyDetails 已去 export 为模块私有）。 */
+type WorkflowNotifyDetails = {
+  runId: string;
+  name: string;
+  status: string;
+  reason: string | undefined;
+  traceLength: number;
+  __gui__?: GuiRenderResult;
+};
 
 /** 最小 WorkflowRun mock（duck typing，notifyDone 只访问这些字段）。 */
 type RunMock = {

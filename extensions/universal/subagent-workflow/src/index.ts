@@ -49,7 +49,7 @@ import {
 } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
 import { bindNotifyLedgerHost, getBoundNotifyLedger, type NotifyLedgerHost } from "@zhushanwen/subagent-core/execution/notify-ledger.ts";
 import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "@zhushanwen/subagent-core/execution/session-reconstructor.ts";
-import type { ExecutionMode, SubagentRecord } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { ExecutionMode } from "@zhushanwen/subagent-core/execution/types.ts";
 import { maybeCleanupExpiredSessionFiles } from "@zhushanwen/subagent-core/execution/session-file-gc.ts";
 import {
   getSubagentService,
@@ -59,8 +59,10 @@ import {
 import { killAllSpawnedChildren } from "@zhushanwen/subagent-core/execution/session-runner.ts";
 import { SubprocessAgentRunner } from "@zhushanwen/subagent-core/execution/subprocess-agent-runner.ts";
 import { WorktreeManager } from "@zhushanwen/subagent-core/execution/worktree-manager.ts";
-// [engine-awareness U3] per-turn 引擎检测编排（D1/D1b/D2/D3/D5）
-import { normalizeEngineId, runEngineAwarenessTurn } from "./injectors/engine-awareness.ts";
+// [engine-awareness U3] per-turn 引擎检测编排（D1/D1b/D2/D3/D5）；normalizeEngineId
+// 单一权威源在 core registry（原经 engine-awareness 再导出，导入面已折叠直连）
+import { normalizeEngineId } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
+import { runEngineAwarenessTurn } from "./injectors/engine-awareness.ts";
 import { setupModelListInjector } from "./injectors/model-list-injector.ts";
 import { setupSubagentListInjector } from "./injectors/subagent-list-injector.ts";
 import { setupWorkflowListInjector } from "./injectors/workflow-list-injector.ts";
@@ -105,42 +107,6 @@ declare module "@earendil-works/pi-coding-agent" {
 
 // 模块级 logger（setPiHandle 注入后自动走 appendEntry）
 const logger = getLogger("subagents");
-
-// ── subagent 状态快照格式化 ──
-//
-// [v4 A-6] before_agent_start 注入 hook 已删（活跃 subagent 清单改由 agent 按需调
-// action:'list' 拉取，消除每 loop 注入的上下文税与盲点）。本函数保留为纯格式化工具：
-// before-agent-start-injection / parent-child-matrix 测试覆盖其正确性，未来 list
-// 视图或其他注入点可复用。
-
-/** 活跃 subagent 数量上限（超过截断显示）。 */
-const MAX_STATUS_INJECTION = 10;
-
-/**
- * 将活跃 subagent record 格式化为一行一条的快照文本。
- *
- * 格式：
- *   [subagent-status] N active subagents:
- *   - sa-xxx (slug): running, rounds 0
- *   - sa-yyy (slug): idle, rounds 3
- *   +2 more, use action:'list'
- *
- * @param records 已筛选的活跃 record（running + idle）
- */
-export function formatSubagentStatusSnapshot(records: SubagentRecord[]): string {
-  const lines = [`[subagent-status] ${records.length} active subagent${records.length === 1 ? "" : "s"}:`];
-  const shown = records.slice(0, MAX_STATUS_INJECTION);
-  for (const r of shown) {
-    const slug = r.slug || r.agent;
-    const roundPart = r.round !== undefined && r.round > 0 ? `, rounds ${r.round}` : "";
-    lines.push(`- ${r.id} (${slug}): ${r.status}${roundPart}`);
-  }
-  const remaining = records.length - MAX_STATUS_INJECTION;
-  if (remaining > 0) {
-    lines.push(`+${remaining} more, use action:'list'`);
-  }
-  return lines.join("\n");
-}
 
 // ═══ [V2 决策 7 防线 i] process 级 shutdown hook ═══
 //
@@ -248,12 +214,10 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     }
   }
 
-  // resources_discover：不再注入额外 skill 目录（ADR-031 废弃 discovery.json）。
-  // pi 核心 auto-discovery 已覆盖 .agents/skills 等标准目录，子 session 的
-  // --skill 由 agent({skill}) 调用方显式传入，无需 extension 额外补充。
-  pi.on("resources_discover", (_event, _ctx: ExtensionContext) => {
-    return {};
-  });
+  // resources_discover：不再注册 handler（v4 决策：不再注入额外 skill 目录，
+  // ADR-031 废弃 discovery.json）。pi 核心 auto-discovery 已覆盖 .agents/skills
+  // 等标准目录，子 session 的 --skill 由 agent({skill}) 调用方显式传入，无需
+  // extension 额外补充。
 
   // ════════════════════════════════════════════════════════════
   //  workflow 域：tools + command + pi.__workflowRun + state
@@ -997,17 +961,8 @@ function getOrCreateDialogQueue(): DialogGlobalQueue {
   return queue;
 }
 
-// ============================================================
-// Public cross-extension API（channel handler 注册入口）
-// ============================================================
-//
-// 跨扩展消费者（ask-user 等）通过包根 import 注册 channel handler，
-// 让 subagent 子进程的 UI 请求（ask_user 等）透传到主进程渲染。
-// 重新导出 channel-registry-access 的公开 API——稳定 surface，
-// 内部存储实现演进不影响消费者。
-
-export {
-  getOrCreateChannelRegistry,
-  type UiChannelRegistry,
-  type ChannelHandler,
-} from "@zhushanwen/subagent-core/execution/channel-registry-access.ts";
+// 跨扩展 channel handler 注册入口已收口到 core 深路径
+// `@zhushanwen/subagent-core/execution/channel-registry-access.ts`
+// （getOrCreateChannelRegistry / UiChannelRegistry / ChannelHandler）。
+// 历史上的包根 re-export 已删：ask-user 等跨扩展消费者经 globalThis 握手
+// （DIALOG_QUEUE_KEY 同款进程级单例），不再经包根 import 消费本模块。
