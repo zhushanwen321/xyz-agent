@@ -1,5 +1,7 @@
 # 0008-extension-bridge-for-navigate-tree
 
+> **Superseded（2026-08-31）**：本 ADR 设计的 `/xyz-navigate` 桥接命令已随 runtime 侧桥接对端（navigate-result 消费端，monorepo 时代删除）一并移除，agent-ext 不再注册该命令。正文保留作历史参考。
+
 ## Context
 
 pi 的 RPC 模式不暴露 `get_tree` 和 `navigate_tree` 命令。navigateTree 有 LLM 调用副作用（summarize），且结果通过 `extensionRunner.emit()` 返回而非 `session._emit()`，不会到达 RPC 客户端。

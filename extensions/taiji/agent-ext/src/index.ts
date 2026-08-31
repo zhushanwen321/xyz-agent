@@ -1,12 +1,14 @@
 /**
- * xyz-agent extension for Pi — session tree navigation.
+ * xyz-agent extension for Pi — internal commands for the host.
  *
- * Registers the `/xyz-navigate` command. The command handler calls
- * `ctx.navigateTree()` to move the session leaf.
- *
- * Also registers `/__xyz_reload__` internal command for host-triggered
+ * Registers `/__xyz_reload__` internal command for host-triggered
  * skill/extension reload, and `/__xyz_get_system_prompt__` for the Trace
  * view fetch-current button.
+ *
+ * [HISTORICAL] The former `/xyz-navigate` session tree command was removed
+ * (2026-08-31): its bridge consumer on the runtime side was deleted in the
+ * monorepo era, so the command had no reachable caller. See
+ * docs/adr/0008-extension-bridge-for-navigate-tree.md for the original design.
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -19,16 +21,6 @@ export default function (pi: ExtensionAPI): void {
     description: 'Internal: reload skills/extensions/prompts (triggered by host on skill file change)',
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
       await ctx.reload();
-    },
-  });
-
-  pi.registerCommand("xyz-navigate", {
-    description: "Navigate the session tree to a specified entry",
-    handler: async (args: string, ctx: ExtensionCommandContext) => {
-      const entryId = args.trim();
-      if (!entryId) return;
-
-      await ctx.navigateTree(entryId, { summarize: false });
     },
   });
 

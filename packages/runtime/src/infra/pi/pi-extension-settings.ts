@@ -43,27 +43,27 @@ function createAutoUpgradeStore(path: string): JsonStore<AutoUpgradeRecord> {
 }
 
 /**
- * F6: disabled-packages.json 的单一读取入口。
+ * F6: disabled-packages.json 的单一读取入口（模块私有）。
  *
- * 此前 extension-resolver.readDisabledPackages 直接 readFileSync + JSON.parse，
- * 与本模块的 JsonStore 读同一文件——同进程两读路径是 split-brain 风险。
- * 现统一：所有读取方（PiExtensionSettings 实例 + resolver）都经此函数，
- * 共享 JsonStore 的 ENOENT 容错 + 解析逻辑。
+ * [HISTORICAL] 引入时 extension-resolver 也直接 readFileSync + JSON.parse 读同一文件，
+ * 同进程两读路径有 split-brain 风险，故收敛到此处共享 JsonStore 的 ENOENT 容错 + 解析逻辑。
+ * 现 resolver 已是纯发现层（不读 disabled），本函数仅本模块内部（PiExtensionSettings 的
+ * getDisabled / setEnabled 等读取）使用。
  *
  * @param settingsDir pi agent 配置目录（disabled-packages.json 所在地）
  * @returns 禁用的 source 字符串数组（文件缺失/解析失败时返回 []）
  */
-export function readDisabledPackages(settingsDir: string): string[] {
+function readDisabledPackages(settingsDir: string): string[] {
   return createDisabledStore(join(settingsDir, DISABLED_FILE)).read().disabled
 }
 
 /**
- * auto-upgrade-packages.json 的单一读取入口。
+ * auto-upgrade-packages.json 的单一读取入口（模块私有，仅本模块内部使用）。
  *
  * @param settingsDir pi agent 配置目录
  * @returns 启用自动升级的 source 字符串数组（文件缺失/解析失败时返回 []）
  */
-export function readAutoUpgradePackages(settingsDir: string): string[] {
+function readAutoUpgradePackages(settingsDir: string): string[] {
   return createAutoUpgradeStore(join(settingsDir, AUTO_UPGRADE_FILE)).read().autoUpgrade
 }
 
@@ -121,7 +121,7 @@ export class PiExtensionSettings implements IExtensionSettings {
   // ── disabled-packages.json ──
 
   getDisabled(): string[] {
-    // F6: 经共享单一读取入口（与 extension-resolver 同源，杜绝 split-brain）。
+    // F6: 经共享单一读取入口（本模块私有函数，杜绝分散直读文件）。
     return readDisabledPackages(this.settingsDir)
   }
 
@@ -133,11 +133,6 @@ export class PiExtensionSettings implements IExtensionSettings {
     } else {
       next = current.includes(source) ? current : [...current, source]
     }
-    this.disabledStore.write({ disabled: next })
-  }
-
-  async removeDisabled(source: string): Promise<void> {
-    const next = readDisabledPackages(this.settingsDir).filter(d => d !== source)
     this.disabledStore.write({ disabled: next })
   }
 
@@ -155,11 +150,6 @@ export class PiExtensionSettings implements IExtensionSettings {
     } else {
       next = current.filter(d => d !== source)
     }
-    this.autoUpgradeStore.write({ autoUpgrade: next })
-  }
-
-  async removeAutoUpgrade(source: string): Promise<void> {
-    const next = readAutoUpgradePackages(this.settingsDir).filter(d => d !== source)
     this.autoUpgradeStore.write({ autoUpgrade: next })
   }
 }
