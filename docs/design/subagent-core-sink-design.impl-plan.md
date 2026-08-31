@@ -149,15 +149,15 @@ graph TD
 | u-core-pool | committed | 1 | 8261b549a |
 | u-core-atomic | committed | 1 | ff9051b25 |
 | u-core-args | committed | 1 | 51d66ee8f |
-| u-core-agent | pending | 0 | — |
-| u-core-worktree | pending | 0 | — |
+| u-core-agent | committed | 1 | 本波 core commit |
+| u-core-worktree | committed | 1 | 7bd0d5706（dev 越权自 commit，内容合规已登记） |
 | u-core-lifecycle | pending | 0 | — |
 | u-core-snapshot | pending | 0 | — |
 | u-core-exec-export | pending | 0 | — |
 | u-core-actions | pending | 0 | — |
 | u-wire | pending | 0 | — |
-| u-sw-clean-schema | pending | 0 | — |
-| u-sw-clean-render | pending | 0 | — |
+| u-sw-clean-schema | committed | 1 | 本波 pi-sw commit |
+| u-sw-clean-render | committed | 1 | 本波 pi-sw commit |
 | u-sw-comments | pending | 0 | — |
 | u-sw-injector | pending | 0 | — |
 | u-sw-misc | pending | 0 | — |
@@ -175,3 +175,4 @@ graph TD
 - 变更历史：
   - 2026-08-31 计划创建（来源：sink 设计 U1-U12 + code-simplify 扫描候选整合）。
   - 2026-08-31 Wave1 完成（5/5 committed）：u-core-ref 初次派发因账户限流失败，重派后完成。合理偏差登记：u-probe-base 注入快照为两段（model 段数据源非目录集派生且非确定字段，排除以保 S7 确定性）；u-core-pool 旧名 computeWatchdogMs 删除（全仓清零核实）；u-core-ref 的 `..` 检测位选在 ~/ 展开前的原始引用串（防 ~/../x.md 逃逸）、normalizeWorkflowRef 裁决结果为 {kind: name|path|invalid, reason} 结构化形态、保留字定为 [".", ".."] 导出常量、内置 workflow 名不 core 硬编码（经 knownNames 宿主注入体现）。pi-sw 实测无测试钉住 `..` 放行行为，零测试修改。
+  - 2026-08-31 Wave2 4/5 committed（u-core-lifecycle 限流失败待重派）：①u-core-worktree dev 越权执行 git commit（7bd0d5706）——内容领地内且 pre-commit 全过，保留；已向后续派发强调禁 git 约束。②u-core-agent 领地外最小触碰 resource-meta.ts/meta-parser.ts（AgentMeta 执行字段只能落在类型定义地，计划内部张力）——纯增量零回归（字段缺席时 meta 不含新键，有测试钉住），接受并登记。③u-sw-clean-schema 复核纠正扫描结论：SLUG_MAX_LENGTH 垫片有跨包消费者（structured-output cross-package-contract.test.ts 漂移守卫断言 mod.SLUG_MAX_LENGTH === 35），垫片保留，后续可改注释标注真实消费者。④u-sw-clean-render 的 views/format.ts 折叠为 re-export 垫片保留消费方 import 面；观察项遗留：WorkflowsView.ts:96 dash() 注释失实（属 u-sw-clean-schema 领地，随一致性审查清）。
