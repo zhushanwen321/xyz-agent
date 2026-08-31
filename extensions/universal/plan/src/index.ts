@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import { registerPlanCommand, startPlanMode } from "./command.js";
+import { registerPlanCommand } from "./command.js";
 import { type PlanSessionMap, reconstructPlanState } from "./state.js";
 import { registerPlanTool } from "./tool.js";
 import { updatePlanWidget } from "./widget.js";
@@ -15,13 +15,6 @@ export default function planExtension(pi: ExtensionAPI) {
   // Register tool and command
   registerPlanTool(pi, sessions);
   registerPlanCommand(pi, sessions);
-
-  // External API: __planStart（allow other extensions to start plan mode programmatically, #9）
-  // 交叉类型单步断言（ExtensionAPI 可赋给 ExtensionAPI & { __planStart? }，无需 unknown 中转）
-  const api = pi as ExtensionAPI & { __planStart?: (requirement: string, ctx: ExtensionContext) => boolean };
-  api.__planStart = (requirement: string, ctx: ExtensionContext): boolean => {
-    return startPlanMode(pi, sessions, ctx, requirement);
-  };
 
   // Dynamic import compact handlers — avoids cross-group static import
   import("./compact.js").then(({ registerPlanEventHandlers }) => {

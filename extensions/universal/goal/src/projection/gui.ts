@@ -37,7 +37,7 @@ import { formatTokens } from "./widget";
  * 维度说明：status→severity（本函数）与 percent→color（widget.getBudgetColor）输入输出
  * 双维度不同，不合并——本函数只管「状态语义」的严重度。
  */
-export function goalStatusSeverity(status: GoalStatus): "ok" | "warn" | "danger" {
+function goalStatusSeverity(status: GoalStatus): "ok" | "warn" | "danger" {
 	switch (status) {
 		case "active":
 		case "complete":

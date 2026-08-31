@@ -247,7 +247,7 @@ describe("E1 全链路集成：goal_control create 数组 → 落盘 → 重载 
 
 			// 5. contextInjectionPrompt → <successCriteria> 段含编号行（plan 需求 3：编号列表）
 			const state = reloaded.state!;
-			const prompt = contextInjectionPrompt(state, state.timeUsedSeconds);
+			const prompt = contextInjectionPrompt(state);
 			expect(prompt).toContain("<successCriteria>");
 			expect(prompt).toContain("1. e2e cond a");
 			expect(prompt).toContain("2. e2e cond b");

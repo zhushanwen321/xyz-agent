@@ -42,6 +42,7 @@ import { updateWidget } from "../projection/widget";
 import { createGoal, finalizeAndPersist, persistState, type ServicePorts, tickState } from "../service";
 import type { GoalSession } from "../session";
 import { buildPorts } from "./ports";
+import { CRITERIA_HINTS_TOOL, validateSuccessCriteriaItems } from "./success-criteria";
 
 // ── Params schema（discriminated union，C3）────────────
 
@@ -156,7 +157,8 @@ function requireCreateObjective(params: GoalControlParamsT): string {
 
 /**
  * create 的 successCriteria 校验：必填 + 非空数组 + 逐条 string/非空/单行，返回 trim 后数组。
- * 从 handleCreate 提取（圈复杂度拆分），校验顺序与错误消息不变。
+ * 逐条校验共享 validateSuccessCriteriaItems（与 /goal update 同规则），tool 通道正例
+ * 见 CRITERIA_HINTS_TOOL；校验顺序与错误消息不变。
  */
 function requireCreateSuccessCriteria(params: GoalControlParamsT): string[] {
 	if (params.successCriteria === undefined) {
@@ -168,30 +170,7 @@ function requireCreateSuccessCriteria(params: GoalControlParamsT): string[] {
 			"'successCriteria' must be a non-empty array of 1~8 checkable conditions. Correct: {\"action\":\"create\",\"slug\":\"refactor-auth\",\"objective\":\"...\",\"successCriteria\":[\"tests pass\",\"tsc clean\",\"src/auth.ts uses JWT\"]}",
 		);
 	}
-	const successCriteria: string[] = [];
-	for (const item of successCriteriaRaw) {
-		// 运行时 typeof 防御（U28②）：测试/直调可能绕过 schema 传脏元素，
-		// 此处给业务错误而非让下方 .trim() 抛 TypeError
-		if (typeof item !== "string") {
-			throw new Error(
-				"'successCriteria' must be an array of strings. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":[\"<condition 1>\",\"<condition 2>\"]}",
-			);
-		}
-		const trimmed = item.trim();
-		if (!trimmed) {
-			throw new Error(
-				"'successCriteria' items must not be empty. Each condition should be a short, single-line, checkable statement. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":[\"tests pass\",\"tsc clean\"]}",
-			);
-		}
-		// 换行校验（U7）：/[\r\n]/ 覆盖 \n / \r\n / \r 三形态，schema pattern ^[^\r\n]+$ 的 handler 兜底
-		if (/[\r\n]/.test(trimmed)) {
-			throw new Error(
-				"'successCriteria' items must be single-line (no line breaks). Split multi-line text into separate array items, one condition per item. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":[\"line 1\",\"line 2\"]}",
-			);
-		}
-		successCriteria.push(trimmed);
-	}
-	return successCriteria;
+	return validateSuccessCriteriaItems(successCriteriaRaw, CRITERIA_HINTS_TOOL);
 }
 
 /** create 的 budget 解析：非法预算直接拒绝（不静默截断），未提供时返回空配置。 */

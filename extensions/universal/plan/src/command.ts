@@ -3,7 +3,7 @@ import * as path from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import type { PlanSessionMap } from "./state.js";
+import type { PlanSessionMap, PlanState } from "./state.js";
 import { getPlanState, persistPlanState, resetPlanState } from "./state.js";
 import { updatePlanWidget } from "./widget.js";
 
@@ -88,7 +88,7 @@ async function handleAbort(
   sessions: PlanSessionMap,
   sessionId: string,
   ctx: ExtensionContext,
-  state: PlanSessionMap extends Map<string, infer V> ? V : never,
+  state: PlanState,
 ): Promise<void> {
   if (!state.isActive) {
     ctx.ui.notify("No active plan mode.", "info");
@@ -104,7 +104,7 @@ async function handleAbort(
 /** Handle /plan status subcommand */
 function handleStatus(
   ctx: ExtensionContext,
-  state: PlanSessionMap extends Map<string, infer V> ? V : never,
+  state: PlanState,
 ): void {
   if (!state.isActive) {
     ctx.ui.notify("No active plan mode.", "info");
@@ -136,7 +136,7 @@ function handleEnterPlanMode(
   sessions: PlanSessionMap,
   sessionId: string,
   ctx: ExtensionContext,
-  state: PlanSessionMap extends Map<string, infer V> ? V : never,
+  state: PlanState,
   requirement: string,
 ): void {
   const slug = requirement
@@ -185,25 +185,4 @@ function handleEnterPlanMode(
     `2. Call plan tool (complete) with isolation method (compact/tree/direct).\n` +
     `3. After plan complete: check subagent capability → suggest goal + wave or single-agent execution.`,
   );
-}
-
-/**
- * Programmatic entry to start plan mode (for `pi.__planStart`).
- *
- * Mirrors the `/plan` command's enter logic. Returns false if plan mode is
- * already active (caller can then surface a message or wait).
- *
- * @returns true if plan mode started; false if already active
- */
-export function startPlanMode(
-  pi: ExtensionAPI,
-  sessions: PlanSessionMap,
-  ctx: ExtensionContext,
-  requirement: string,
-): boolean {
-  const sessionId = ctx.sessionManager.getSessionId();
-  const state = getPlanState(sessions, sessionId, ctx);
-  if (state.isActive) return false;
-  handleEnterPlanMode(pi, sessions, sessionId, ctx, state, requirement);
-  return true;
 }
