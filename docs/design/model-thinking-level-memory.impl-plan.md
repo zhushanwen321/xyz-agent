@@ -87,6 +87,9 @@ graph TD
 | 4 | armed 访问器含 `at` 字段 + 导出 `ArmedModelSwitchIntent` 切片与 `ARMED_EXPIRY_MS=5000`（任务建议形状漏 at，规则 1 过期判定必需） | 合理——契约必需，u3 复用同一阈值常量 | thinking-level-sync.ts 导出 | 已固化 |
 | 5 | 四个新 deps 字段全部可选 | 合理——现有 8 用例与 u4 接线前调用方不注入新字段，必填即挂 typecheck；armed null 零副作用有回归基线用例锁定 | thinking-level-sync.test.ts 回归基线用例 | 已固化 |
 | 6 | `eslint --fix` 重排 watch 回调既有代码缩进（48 个 indent warning 为存量技术债，新增行延续既有风格被一并检出） | 合理——按 pre-commit「含存量全修」红线执行；`git diff -w` 证实既有代码忽略空白后零变化，纯缩进无逻辑改动 | git diff -w 复核（主 agent 核验） | 已固化 |
+| 7 | 规则 6 换绑清 watch 注册在 sync watch **之前**（设计只说「换绑即作废」未规定注册序） | 合理且必要——同一 flush 内 watch job 按注册序执行，换绑清必须先于消费检查，否则换绑到恰为 armed 目标模型的 session 会在作废前被消费为伪恢复；S8 用例锁定该次序 | model-thinking.ts 注释 + S8 用例 | 已固化 |
+| 8 | E7② 补写回调加 `onScopeDispose` disposed 守卫（设计未提） | 合理——split panel 实例可能在 KV 预载完成前销毁，死实例不应再被回调写入 | model-thinking.ts | 已固化 |
+| 9 | S5 断言判据 =「armed 目标记忆值从不发出」而非调用总次数；测试文件顶层 beforeEach/afterEach（platform stub + u1 重置） | 合理——mock 不回写 store 致既有对齐重发与 armed 无关（测试内注释差异）；顶层 stub 消除 E2 warn 噪音不改既有用例主体 | model-thinking.test.ts | 已固化 |
 
 ## 6 状态表
 
@@ -94,7 +97,7 @@ graph TD
 |---|---|---|---|
 | u1-foundation | committed | 1 | 12/12 绿（memory.test.ts）；registry #21 登记；deviations 3 条入 §5 |
 | u2 | committed | 1 | 17/17 绿（8 现有 + 9 新）；deviations 3 条入 §5 |
-| u3 | pending | 0 | — |
+| u3 | committed | 1 | 36/36 绿（18 现有 + 18 新，探针表 9 断言点全覆盖）；deviations 4 条入 §5 |
 | u4 | pending | 0 | — |
 | u5 | pending | 0 | — |
 

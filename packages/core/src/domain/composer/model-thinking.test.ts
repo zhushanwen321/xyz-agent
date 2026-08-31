@@ -5,13 +5,30 @@
  * 改为构造 ModelThinkingDeps 注入。覆盖：currentModelId/currentThinkingLevel 派生、per-session 隔离、
  * onModelSelect/onThinkingSelect 三分支（staging/landing/已建）、Staging Mode 快照。
  *
+ * [u3] 追加记忆恢复套件（设计 model-thinking-level-memory.md D2/D3 探针表）：
+ * - armed 序列族 9 断言点：armed 为内部状态，全部经行为序列断言（恢复 RPC 是否发出 =
+ *   token 设立/保留/消费/清除的可观测投影），用真实 u1 memory API（record 预置记忆）
+ * - 跟随三行为 / 双路径污染反例（gated KV 控制预载完成时刻）/ 记录门禁（真实 memory Map 断言）
+ *
  * 注意副作用：useThinkingLevelSync 的 immediate watch 在挂载时同步触发——若 currentThinkingLevel
  * 无值会调 onReset→onThinkingSelect（landing 设 localThinkingLevel、已建调 setThinkingLevel）。
  * 测试通过 sessionState 带初值或 mockClear 规避其对断言的干扰。
  */
-import { describe, it, expect, vi } from 'vitest'
-import { computed, effectScope, ref } from 'vue'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { computed, effectScope, nextTick, ref, type Ref } from 'vue'
 import { useComposerModelThinking, type ModelThinkingDeps } from './model-thinking'
+import {
+  MODEL_THINKING_MEMORY_KEY,
+  __resetModelThinkingMemoryForTesting,
+  lookup,
+  record,
+} from './model-thinking-memory'
+import {
+  providePlatform,
+  __resetPlatformForTesting,
+  type KVStorage,
+  type PlatformPort,
+} from '../../platform/port'
 
 type Spy = ReturnType<typeof vi.fn>
 
@@ -59,6 +76,173 @@ function mount(
   const scope = effectScope()
   const result = scope.run(() => useComposerModelThinking(sessionId, deps))!
   return { result, spies, scope }
+}
+
+// ══════════ [u3] 记忆恢复套件公共基建 ══════════
+
+/** 平面 KV stub：u1 memory 模块写穿落点（避免无 platform 时 E2 warn 噪音） */
+class MemKV implements KVStorage {
+  private map = new Map<string, string>()
+  async get(key: string): Promise<string | null> {
+    return this.map.get(key) ?? null
+  }
+  async set(key: string, value: string): Promise<void> {
+    this.map.set(key, value)
+  }
+  async remove(key: string): Promise<void> {
+    this.map.delete(key)
+  }
+}
+
+/**
+ * 可控时序 KV：closeGate 挂起 get、openGateNow 放行——控制 u1 预载完成时刻
+ * （P2 晚到补写场景：跟随落在 KV 加载前 → 加载完成回调补一次重设，E7②）。
+ * initialTable 预置在权威 key 下的整表数据。
+ */
+class GatedKV extends MemKV {
+  private gate: Promise<void> | null = null
+  private open: (() => void) | null = null
+  private raw: string | null
+  constructor(initialTable?: Record<string, string>) {
+    super()
+    this.raw = initialTable ? JSON.stringify(initialTable) : null
+    if (initialTable) void this.set(MODEL_THINKING_MEMORY_KEY, this.raw)
+  }
+  closeGate(): void {
+    this.gate = new Promise((resolve) => {
+      this.open = resolve
+    })
+  }
+  openGateNow(): void {
+    this.open?.()
+    this.open = null
+  }
+  override async get(key: string): Promise<string | null> {
+    if (this.gate) await this.gate
+    return super.get(key)
+  }
+}
+
+function provideMockPlatform(storage: KVStorage): void {
+  const port: PlatformPort = {
+    kind: 'mock',
+    storage,
+    // 本文件只走 storage 端口；webSocket 被触达即测试写错，抛错暴露
+    webSocket: {
+      create: () => {
+        throw new Error('stub: WebSocketFactory 未在本测试使用')
+      },
+    },
+    ipc: null,
+  }
+  providePlatform(port)
+}
+
+// u1 memory 是模块级单例（KV 经 platform 注入）——每用例重置模块态 + 干净 KV，
+// 避免跨用例记忆泄漏；既有用例的 record 写穿也由此落到内存 KV（无 E2 warn 噪音）
+beforeEach(() => {
+  provideMockPlatform(new MemKV())
+  __resetModelThinkingMemoryForTesting()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  __resetPlatformForTesting()
+  __resetModelThinkingMemoryForTesting()
+})
+
+/**
+ * 同内容异身份 map 工厂：identity 变化触发 sync watch（观察源按 Object.is 比较），
+ * 内容恒等使既有对齐分支天然静默（同体系 + value 不变 → 不发 RPC）——
+ * 「是否有恢复 onReset」因此可被干净断言（恢复是唯一会调 setThinkingLevel 的路径）。
+ */
+const sameContentMap = () => ({ off: 'o', low: 'l', medium: 'm', high: 'h' })
+const fourLevels = ['off', 'low', 'medium', 'high']
+
+/** switchModel 手动可控调用：applyAndResolve 模拟壳层「applySnapshot 同步执行 + RPC resolve」时序 */
+interface SwitchCall {
+  provider: string
+  modelId: string
+  /**
+   * 先同步 applySnapshot(生效模型)（watch flush 微任务在此入队）再 resolve（await 续段
+   * 后入队）——对齐 D3 证据②时序：flush 总是先于 onModelSelect 的规则 5 续段。
+   */
+  applyAndResolve: (effectiveModelId: string) => void
+  reject: (err: unknown) => void
+}
+
+/**
+ * armed/记忆套件 harness：响应式 sessionState / defaultModel / currentModel / providers
+ * （既有 makeDeps 的 vi.fn 闭包非响应式，无法模拟 applySnapshot / defaultModel 晚到 /
+ * providers 刷新——这些恰是 armed 序列族的驱动源）。
+ */
+function mountMem(opts: {
+  sid?: string | null
+  session?: { modelId: string; thinkingLevel?: string } | null
+  defaultModel?: string
+  currentModel?: string | null
+  maps?: Record<string, Record<string, string | null>>
+  supported?: Record<string, string[]>
+} = {}) {
+  const sessionRef = ref<{ modelId: string; thinkingLevel?: string } | null>(opts.session ?? null)
+  const defaultModelRef = ref(opts.defaultModel ?? '')
+  const currentModelRef = ref<string | null>(opts.currentModel ?? null)
+  const providersRef = ref<Record<string, Record<string, string | null>>>(opts.maps ?? {})
+  const supportedRef = ref<Record<string, string[]>>(opts.supported ?? {})
+  const pending: SwitchCall[] = []
+  const switchModel = vi.fn(
+    (_sid: string, provider: string, modelId: string) =>
+      new Promise<void>((resolve, reject) => {
+        pending.push({
+          provider,
+          modelId,
+          applyAndResolve: (effective: string) => {
+            sessionRef.value = {
+              modelId: effective,
+              thinkingLevel: sessionRef.value?.thinkingLevel,
+            }
+            resolve()
+          },
+          reject,
+        })
+      }),
+  )
+  const setThinkingLevel = vi.fn().mockResolvedValue(undefined)
+  const setPendingModel = vi.fn()
+  const deps: ModelThinkingDeps = {
+    getSessionState: () => (sessionRef.value ? { ...sessionRef.value } : null),
+    defaultModel: computed(() => defaultModelRef.value),
+    currentModel: computed(() => currentModelRef.value),
+    setPendingModel,
+    switchModel,
+    setThinkingLevel,
+    getThinkingLevelMap: (id: string) => providersRef.value[id],
+    getSupportedLevels: (id: string) => supportedRef.value[id],
+  }
+  const sessionId = ref<string | null>(opts.sid ?? null)
+  const scope = effectScope()
+  const result = scope.run(() => useComposerModelThinking(sessionId, deps))!
+  return {
+    result,
+    sessionId,
+    sessionRef,
+    defaultModelRef,
+    currentModelRef,
+    providersRef,
+    switchModel,
+    setThinkingLevel,
+    setPendingModel,
+    pending,
+    scope,
+  }
+}
+
+/** 刷新某模型 map 的 identity（内容不变）——模拟 providers 数组刷新触发的无关 watch 回调 */
+function refreshProviderIdentity(
+  providersRef: Ref<Record<string, Record<string, string | null>>>,
+  modelId: string,
+): void {
+  providersRef.value = { ...providersRef.value, [modelId]: { ...providersRef.value[modelId] } }
 }
 
 describe('useComposerModelThinking · currentModelId 派生', () => {
@@ -268,5 +452,310 @@ describe('useComposerModelThinking · Staging Mode（ADR-0056）', () => {
     result.exitStagingMode()
     expect(result.getStagingConfig()).toEqual({})
     scope.stop()
+  })
+})
+
+// ══════════ [u3] armed 序列族（设计 §3.3 探针表第 1 行，D3 六防线设立侧）══════════
+//
+// 断言策略：armed 是内部状态，全部经行为序列断言——记忆恢复是「同内容异身份 map」下
+// 唯一会调 setThinkingLevel 的路径（既有对齐分支静默），故「恢复 RPC 是否发出」即
+// token 设立/保留/消费/清除的可观测投影。预置记忆用真实 u1 record()。
+// 已建态基线：s1 =（p/X，'h'），X/Y/Z 同体系（sameContentMap 异身份 + fourLevels）。
+function mountArmedBaseline() {
+  return mountMem({
+    sid: 's1',
+    session: { modelId: 'p/X', thinkingLevel: 'h' },
+    maps: { 'p/X': sameContentMap(), 'p/Y': sameContentMap(), 'p/Z': sameContentMap() },
+    supported: { 'p/X': fourLevels, 'p/Y': fourLevels, 'p/Z': fourLevels },
+  })
+}
+
+describe('useComposerModelThinking · armed 序列族（D3 六防线）', () => {
+  it('S1/(a) RPC 失败 → 规则 4 清自己 token；换绑到同模型 session 不误恢复', async () => {
+    const h = mountArmedBaseline()
+    record('p/Y', 'low') // 恢复值 'l'——若失败 token 残留，换绑后会以 'l' 伪恢复
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    h.pending[0].reject(new Error('rpc fail'))
+    await expect(p).rejects.toThrow('rpc fail')
+    // 换绑到 s2（模型恰为 armed 目标 Y，档位 'm'）——armed 已被规则 4 清除，不得恢复
+    h.sessionId.value = 's2'
+    h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'm' }
+    await nextTick()
+    expect(h.setThinkingLevel).not.toHaveBeenCalled()
+    h.scope.stop()
+  })
+
+  it('S2/(b) 并发连切重叠窗口：第一调用成功清不误清后来者 token，恢复只发生在第二调用目标', async () => {
+    const h = mountArmedBaseline()
+    record('p/Y', 'low') // Y 的恢复值 'l'
+    record('p/Z', 'medium') // Z 的恢复值 'm'——两值区分「哪个 token 消费了」
+    const p1 = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    const p2 = h.result.onModelSelect({ modelId: 'Z', provider: 'p' }) // armed 覆盖为 Z（所有权转移）
+    // 第一调用回包（生效 Y）：armed={Z} 不匹配 → 规则 3 保留；规则 5 只清 id1 → 不误清 Z
+    h.pending[0].applyAndResolve('p/Y')
+    await p1
+    expect(h.setThinkingLevel).not.toHaveBeenCalled() // Y 的恢复未发生（token 已是 Z 的）
+    // 第二调用回包（生效 Z）：Z token 存活至自己的回包 → 匹配消费恢复
+    h.pending[1].applyAndResolve('p/Z')
+    await p2
+    expect(h.setThinkingLevel).toHaveBeenCalledTimes(1)
+    expect(h.setThinkingLevel).toHaveBeenCalledWith('s1', 'm') // Z 的记忆值，非 Y 的 'l'
+    h.scope.stop()
+  })
+
+  it("S3/(b') providers 刷新触发无关回调 → 规则 3 保留 token，恢复不丢失", async () => {
+    const h = mountArmedBaseline()
+    record('p/Y', 'low')
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' }) // RPC 在途，armed={Y}
+    // runtime 推 config.providers 广播：数组引用变化触发 watch，但模型尚未到达目标
+    refreshProviderIdentity(h.providersRef, 'p/X')
+    await nextTick()
+    expect(h.setThinkingLevel).not.toHaveBeenCalled() // 不匹配 → 不消费也不清
+    // RPC 回包生效 Y → 匹配消费恢复（token 在无关触发中存活）
+    h.pending[0].applyAndResolve('p/Y')
+    await p
+    expect(h.setThinkingLevel).toHaveBeenCalledWith('s1', 'l')
+    h.scope.stop()
+  })
+
+  it('S4/跨模型换绑基线（G3）：无 armed 时换绑跨模型 session → 不恢复，各 session 档位保持', async () => {
+    const h = mountArmedBaseline()
+    record('p/Y', 'low')
+    // 无任何显式切模型（armed 恒 null）→ 从 s1（X）换绑到 s2（Y，档位 'm'）
+    h.sessionId.value = 's2'
+    h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'm' }
+    await nextTick()
+    // 记忆 Y='low' 存在且可用，但无 armed 门禁放行 → 不得改写 s2 档位
+    expect(h.setThinkingLevel).not.toHaveBeenCalled()
+    expect(h.sessionRef.value?.thinkingLevel).toBe('m')
+    h.scope.stop()
+  })
+
+  it('S5/E9 静默换模：请求 Y 生效 Z → 既有对齐处理 Z，规则 5 清残留 token，无延迟伪恢复', async () => {
+    // Z 用两档体系（与 X 跨体系）：既有对齐会重置到最高可用档——「对齐处理了 Z」可观测
+    const h = mountMem({
+      sid: 's1',
+      session: { modelId: 'p/X', thinkingLevel: 'h' },
+      maps: { 'p/X': sameContentMap(), 'p/Y': sameContentMap(), 'p/Z': { off: 'zo', low: 'zl' } },
+      supported: { 'p/X': fourLevels, 'p/Y': fourLevels, 'p/Z': ['off', 'low'] },
+    })
+    record('p/Y', 'low')
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    h.pending[0].applyAndResolve('p/Z') // pi 静默换模：请求 Y 生效 Z
+    await p
+    // armed={Y} vs current p/Z 不匹配（规则 3 保留）→ 既有跨体系对齐重置 Z 档位
+    // highestAvailableLevel(['off','low']) = 'low' → resolve('low', Z map) = 'zl'
+    expect(h.setThinkingLevel).toHaveBeenCalledWith('s1', 'zl')
+    // 规则 5 已清残留 token：后续无关触发（providers 刷新）不再延迟伪恢复——
+    // 判据 = armed 目标 Y 的记忆值 'l' 永不发出（mock setThinkingLevel 不回写 store，
+    // 无关触发会重发对齐值 'zl'，属既有行为与 armed 无关，故不断言总次数）
+    refreshProviderIdentity(h.providersRef, 'p/Z')
+    await nextTick()
+    expect(h.setThinkingLevel).not.toHaveBeenCalledWith('s1', 'l')
+    h.scope.stop()
+  })
+
+  it('S6/E10 慢 RPC（>5s）回包：in-flight 豁免窗内正常匹配消费，规则 1 不误杀', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] }) // 只伪造 Date.now（armed.at 与规则 1 的时钟），微任务时序保持真实
+    try {
+      const h = mountArmedBaseline()
+      record('p/Y', 'low')
+      const t0 = Date.now()
+      const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' }) // armed.at = t0
+      vi.setSystemTime(t0 + 6000) // 回包时刻已超 5s 保险丝
+      h.pending[0].applyAndResolve('p/Y')
+      await p
+      // flush 发生在 finally 撤销 in-flight 之前（D3 证据②）：计数仍为 1 → 过期不生效 → 正常消费
+      expect(h.setThinkingLevel).toHaveBeenCalledWith('s1', 'l')
+      h.scope.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('S7/re-select 同模型：watch 不触发 → token 未消费，规则 5 成功清，无残留伪恢复', async () => {
+    const h = mountArmedBaseline()
+    record('p/X', 'low') // 同模型也有记忆——若 token 残留，后续触发会以 'l' 伪恢复
+    const p = h.result.onModelSelect({ modelId: 'X', provider: 'p' }) // re-select 同模型
+    h.pending[0].applyAndResolve('p/X') // modelId 不变 → 观察源不变 → watch 不触发
+    await p
+    expect(h.setThinkingLevel).not.toHaveBeenCalled()
+    // 规则 5 清除后，无关触发不得消费陈旧 token
+    refreshProviderIdentity(h.providersRef, 'p/X')
+    await nextTick()
+    expect(h.setThinkingLevel).not.toHaveBeenCalled()
+    h.scope.stop()
+  })
+
+  it('S8/规则 6 换绑清：RPC 在途时换绑 → armed 先清后消费检查，目标模型 session 不被改写', async () => {
+    const h = mountArmedBaseline()
+    record('p/Y', 'low')
+    void h.result.onModelSelect({ modelId: 'Y', provider: 'p' }) // RPC 永不回包（在途）
+    // 换绑到 s2（模型恰为 armed 目标 Y，档位 'm'）——换绑即作废全部未消费意图
+    h.sessionId.value = 's2'
+    h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'm' }
+    await nextTick()
+    // 若换绑清晚于消费检查（注册序错误），此处会以记忆 'l' 伪恢复 s2 的档位
+    expect(h.setThinkingLevel).not.toHaveBeenCalled()
+    h.scope.stop()
+  })
+
+  it('S9/基础序列：设立 → 匹配消费 → 恢复记忆档位经 onReset 通路（G1 happy path）', async () => {
+    const h = mountArmedBaseline()
+    record('p/Y', 'low')
+    const p = h.result.onModelSelect({ modelId: 'Y', provider: 'p' })
+    h.pending[0].applyAndResolve('p/Y')
+    await p
+    // 规则 2：match + 命中 + 'l' ≠ 'h' → setThinkingLevel(s1, 'l')；既有分支被 return 跳过
+    expect(h.setThinkingLevel).toHaveBeenCalledTimes(1)
+    expect(h.setThinkingLevel).toHaveBeenCalledWith('s1', 'l')
+    // 消费即清（一次性 token）：后续无关触发不再重复恢复
+    refreshProviderIdentity(h.providersRef, 'p/Y')
+    await nextTick()
+    expect(h.setThinkingLevel).toHaveBeenCalledTimes(1)
+    h.scope.stop()
+  })
+})
+
+// ══════════ [u3] landing 跟随三行为 + 双路径污染反例（设计探针表第 2 行，D2）══════════
+function mountLanding(opts: { defaultModel?: string } = {}) {
+  return mountMem({
+    sid: null,
+    defaultModel: opts.defaultModel ?? '',
+    maps: { 'p/M': sameContentMap(), 'p/N': sameContentMap() },
+    supported: { 'p/M': fourLevels, 'p/N': fourLevels },
+  })
+}
+
+describe('useComposerModelThinking · landing 跟随（D2 memory-aware）', () => {
+  it('F1/早到 + memory 命中：immediate 跟随重设为记忆档位（sync auto 值被覆盖）；后续模型变化仍跟随（auto 不置 authored）', async () => {
+    record('p/M', 'low')
+    record('p/N', 'medium')
+    const h = mountLanding({ defaultModel: 'p/M' })
+    // sync immediate 先设最高档 'h'，follow immediate 随后覆盖为记忆值 'l'——
+    // 若 onReset 误走用户入口（置位 authored），此处会停留在 'h'（D2 拆分入口锁定）
+    expect(h.result.currentThinkingLevel.value).toBe('l')
+    // 模型变化再跟随一次：证明 auto 初始化没有冻结跟随（authored 仍为 false）
+    h.defaultModelRef.value = 'p/N'
+    await nextTick()
+    expect(h.result.currentThinkingLevel.value).toBe('m')
+    h.scope.stop()
+  })
+
+  it('F2/晚到 + memory 命中：defaultModel 从空串到达 → 变化触发跟随重设', async () => {
+    record('p/M', 'low')
+    const h = mountLanding({ defaultModel: '' }) // 挂载时模型 ''（defaultModel 晚到路径）
+    expect(h.result.currentThinkingLevel.value).toBe('high') // 无模型 → 最高可用档（value=key）
+    h.defaultModelRef.value = 'p/M'
+    await nextTick()
+    expect(h.result.currentThinkingLevel.value).toBe('l')
+    h.scope.stop()
+  })
+
+  it('F3/authored 后冻结：用户显式选档后，模型变化不再跟随，用户值保持', async () => {
+    record('p/M', 'low')
+    record('p/N', 'medium')
+    const h = mountLanding({ defaultModel: 'p/M' })
+    expect(h.result.currentThinkingLevel.value).toBe('l')
+    await h.result.onThinkingSelect('h') // 用户显式入口 → authored 置位
+    h.defaultModelRef.value = 'p/N'
+    await nextTick()
+    expect(h.result.currentThinkingLevel.value).toBe('h') // 不被 memory[N] 'm' 改写
+    h.scope.stop()
+  })
+})
+
+describe('useComposerModelThinking · 双路径污染反例（D2 被否③ 击穿序列）', () => {
+  it('P1/早到路径：landing auto 值 = 记忆值，经首发透传建 session 后 memory 不被最高档覆写', async () => {
+    record('p/M', 'low')
+    const h = mountLanding({ defaultModel: 'p/M' })
+    // 首发透传的值 = local（若跟随失效会是 auto 'h'，污染经记录 watch 覆写 memory）
+    expect(h.result.currentThinkingLevel.value).toBe('l')
+    // 模拟 submitFirstMessage：session create + flow apply local 值
+    h.sessionId.value = 's1'
+    h.sessionRef.value = { modelId: 'p/M', thinkingLevel: 'l' }
+    await nextTick()
+    expect(lookup('p/M')).toBe('low') // 终态：未被 auto 最高档 'high' 覆写
+    h.scope.stop()
+  })
+
+  it('P2/晚到路径（E7②）：预载完成前跟随落最高档，加载完成回调补写为记忆值，首发后 memory 不被覆写', async () => {
+    // 记忆只存在于 KV（未加载）：模拟 app 冷启动，预载慢于 composer 组装
+    const gated = new GatedKV({ 'p/M': 'low' })
+    gated.closeGate()
+    provideMockPlatform(gated)
+    __resetModelThinkingMemoryForTesting()
+    const h = mountLanding({ defaultModel: 'p/M' })
+    // E7① 窗口：KV 在途 → lookup 未命中 → 跟随落最高档（与现状一致）
+    expect(h.result.currentThinkingLevel.value).toBe('h')
+    // KV 预载完成（宏任务边界落地加载链）→ onLoaded 补一次跟随重设（E7② 消灭窗口）
+    gated.openGateNow()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(h.result.currentThinkingLevel.value).toBe('l')
+    // 首发建 session（透传补写后的记忆值）→ memory 保持 'low'
+    h.sessionId.value = 's1'
+    h.sessionRef.value = { modelId: 'p/M', thinkingLevel: 'l' }
+    await nextTick()
+    expect(lookup('p/M')).toBe('low')
+    h.scope.stop()
+  })
+})
+
+// ══════════ [u3] 记录 watch 双条件门禁（D2）══════════
+describe('useComposerModelThinking · 记录 watch 门禁（D2 双条件）', () => {
+  it('R1/landing 悬空值不入表：模型/档位变化均不写记忆', async () => {
+    const h = mountLanding({ defaultModel: 'p/M' })
+    expect(h.result.currentThinkingLevel.value).toBe('h') // sync auto 最高档经 map 映射（无记忆）
+    h.defaultModelRef.value = 'p/N'
+    await nextTick()
+    expect(lookup('p/M')).toBeUndefined()
+    expect(lookup('p/N')).toBeUndefined()
+    h.scope.stop()
+  })
+
+  it('R2/staging 试选值不入表：快照模型/档位不写记忆，源 session 记忆不被扰动', async () => {
+    const h = mountMem({
+      sid: 's1',
+      session: { modelId: 'p/X', thinkingLevel: 'h' },
+      maps: { 'p/X': { off: 'o', high: 'h' }, 'p/Y': { off: 'o', high: 'h' } },
+      supported: { 'p/X': ['off', 'high'], 'p/Y': ['off', 'high'] },
+    })
+    // mount 即记录载入的既有状态（条件 b：session 加载既有状态）
+    expect(lookup('p/X')).toBe('high')
+    h.result.enterStagingMode()
+    await h.result.onModelSelect({ modelId: 'Y', provider: 'p' }) // 只写暂存快照
+    await h.result.onThinkingSelect('o') // 暂存档位
+    expect(lookup('p/Y')).toBeUndefined() // staging 快照不入表
+    expect(lookup('p/X')).toBe('high') // 源 session 记忆不变
+    h.scope.stop()
+  })
+
+  it('R3/已建态入表：生效档位经 map 反查为 UI key 记录（D1 存 key 非 value），变化即更新', async () => {
+    const h = mountMem({
+      sid: 's1',
+      session: { modelId: 'p/X', thinkingLevel: 'h' },
+      maps: { 'p/X': { off: 'o', low: 'l', high: 'h' } },
+      supported: { 'p/X': ['off', 'low', 'high'] },
+    })
+    expect(lookup('p/X')).toBe('high') // value 'h' → UI key 'high'
+    h.sessionRef.value = { modelId: 'p/X', thinkingLevel: 'l' }
+    await nextTick()
+    expect(lookup('p/X')).toBe('low')
+    h.scope.stop()
+  })
+
+  it('R4/体系外值拦截（E5 防线）：map 反查出的 key 不在模型可用集 → 不入表', async () => {
+    const h = mountMem({
+      sid: 's1',
+      session: { modelId: 'p/X', thinkingLevel: 'h' },
+      // map 含 max:'m'，但 supportedLevels 体系外不含 max——'m' 反查为 'max' 应被拦
+      maps: { 'p/X': { off: 'o', high: 'h', max: 'm' } },
+      supported: { 'p/X': ['off', 'high'] },
+    })
+    expect(lookup('p/X')).toBe('high')
+    h.sessionRef.value = { modelId: 'p/X', thinkingLevel: 'm' }
+    await nextTick()
+    expect(lookup('p/X')).toBe('high') // 'max' 被可用性校验拦截，记忆保持
+    h.scope.stop()
   })
 })
