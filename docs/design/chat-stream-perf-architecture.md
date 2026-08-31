@@ -1,8 +1,8 @@
 # 聊天链路性能架构改造（A/B/D 三候选 + C 撤销登记）
 
-> **一句话结论**：针对性能扫描产出的 4 条架构级候选，经评估后实施 3 条——消息分组尾部快车道（O(n_msgs)→O(delta)）、entry 重放 transient fold（O(n²)→O(n)）、useSidebar 双轨绞杀收尾（删 567 行副本），并撤销 1 条已被前期修复消解的候选（railTurns 跨包改造）登记；全部已实施并验证通过（commits `3fa710aee` / `3c099d409` / `af96fa94c`）。
+> **一句话结论**：针对性能扫描产出的 4 条架构级候选，经评估后实施 3 条——消息分组尾部快车道（O(n_msgs)→O(delta)）、entry 重放 transient fold（O(n²)→O(n)）、useSidebar 双轨绞杀收尾（删 567 行副本），并撤销 1 条已被前期修复消解的候选（railTurns 跨包改造）登记；全部已实施，行为等价验证通过（测试级；G1/G2 收益实证待 §4.2 S1-S5 执行，时点见 §4.2 引言与 §5.2）（commits `3fa710aee` / `3c099d409` / `af96fa94c`）。
 >
-> **文档状态**：设计已实施（事后设计记录——grilling 决策与方案对比的事后沉淀，代码先行）。**审查跳过**（用户指示；如需审查可后续补 `chat-stream-perf-architecture.review.md`）。层性质：技术方案层（接口/数据模型层，层敏感准则全适用）。关联：上游 scan/fix 见本仓 git 历史（c5b82db0f…45b78c1ba、e28495e0b）；架构范式依据 ADR-0039 / ADR-0049 / ADR-0062。
+> **文档状态**：设计已实施（事后设计记录——grilling 决策与方案对比的事后沉淀，代码先行）。**已审查**（2026-09-01 对抗式审查，主 agent 会话内执行、报告未落盘：0 must-fix / 3 suggestion 本轮全修；§5.2 自报三攻击面全部独立重演闭合）。层性质：技术方案层（接口/数据模型层，层敏感准则全适用）。关联：上游 scan/fix 见本仓 git 历史（c5b82db0f…45b78c1ba、e28495e0b）；架构范式依据 ADR-0039 / ADR-0049 / ADR-0062。
 
 ## 1. 背景目标
 
@@ -55,7 +55,7 @@ turn 分组函数的快路径条件是 `cache.lastSourceRef === sourceMessages`�
 
 ### 2.4 候选 D：useSidebar 双轨冻结态
 
-w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进行到 90% 后冻结：新轨 `useSidebarNew`（core createUseSession + 壳端口适配）已有 11 个消费方，旧轨 `useSidebar`（567 行独立重复实现）剩 2 个运行时消费点（useChatViewDeps 的 fork/handoff、useTraceJump 的 selectSession）。三类持续成本有实证：① selectSession 12 步编排两处各一份，修 bug 必须双打（commit `266754c09` 即一次真实双打）；② 新功能只进新轨（restoreSession / assignSessionToProject / 重连重拉），旧轨已是行为落后副本；③ 登记未清的回退债务（useSidebarNew 的 deleteSession wasActive 回退走 core headless selectSession，缺 ensureStreamSubscription）已在活跃路径。运行时双订阅本身成本可忽略（低频广播 × 幂等 applySnapshot）——**真正的成本是编排双份维护与漂移**。
+w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进行到 90% 后冻结：新轨 `useSidebarNew`（core createUseSession + 壳端口适配）已有 10 个静态消费方，旧轨 `useSidebar`（567 行独立重复实现）剩 2 个运行时消费点（useChatViewDeps 的 fork/handoff 静态 import、useTraceJump 的 selectSession 动态 import）。三类持续成本有实证：① selectSession 12 步编排两处各一份，修 bug 必须双打（commit `266754c09` 即一次真实双打）；② 新功能只进新轨（restoreSession / assignSessionToProject / 重连重拉），旧轨已是行为落后副本；③ 登记未清的回退债务（useSidebarNew 的 deleteSession wasActive 回退走 core headless selectSession，缺 ensureStreamSubscription）已在活跃路径。运行时双订阅本身成本可忽略（低频广播 × 幂等 applySnapshot）——**真正的成本是编排双份维护与漂移**。
 
 ### 2.5 候选 C：railTurns 跨包改造（评估后撤销）
 
@@ -92,6 +92,7 @@ w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进�
 - **D-A2 尾部重建起点 = 末位 turn 的源数组起始下标**（cache 新增内部字段 `turnStartOffsets`）。该点具有「分组状态归零」性质：该处消息只可能是 user 锚 / 隐藏完成通知边界 / assistant 自启，三者都以 openTurn 起始（处理时 current 必为 null），所以**子数组从 current=null 重跑与全量路径在该区间逐字一致**——三车道共享同一分组函数（`groupRenderInput` 加 `from` 参数），零第二份分组语义。运行时断言：✅已测（36 个既有用例零修改全绿 + 8 个新车道用例全部断言与全量路径 deepEqual）。
 - **D-A3 车道①条件从「仅末条不同」放宽为「前 n-1 项相等」**（实施期兼容扩展）：末条相同但数组引用不同时，子重跑判定 unchanged → 整体引用恒等复用，正是设计承诺语义的零成本超集。
 - **D-A4 拒绝「给共享类型 MessageTurn 加 idx 字段」**（对照前期 rail 优化决策）：侵入共享 domain 类型换局部便利不值，WeakMap 索引已够。
+- **D-A5 tail 快车道省略 `filterInvisibleItems` 是有意省略（2026-09-01 审查补登）**。依据：display===false 消息在分组层必被规则 2（隐藏完成通知边界）或透明分支消化，static 槽位（规则 4 退化 / 规则 5）结构性不含 display:false——全量路径（车道③）的 `filterInvisibleItems` 是不变量守卫（自证零命中），tail 路径省略它与全量逐字等价，等价性由「每步 deepEqual 全量」测试形态锁定。**已知不对称登记**：未来若新增绕过 display 检查的 static 产出分支，车道③兜底而快车道漏防——新增 static 分支的同步义务 = 在 `rebuildTailFromLastTurn` 补 O(tail) 同款过滤（或在函数注释显式声明分支顺序不变量）。
 
 ### 3.2 候选 B：entry 重放 transient fold
 
@@ -115,7 +116,7 @@ w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进�
 
 ### 3.3 候选 D：双轨一次性收尾
 
-**终态**（消费方视角）：session 编排只有一个入口 `useSidebar`（重命名后的新轨：core createUseSession + 壳端口适配），13 个消费方 + 全部测试单轨；编排修复单点化，新轨能力（restoreSession 等）成为唯一事实。旧轨 567 行删除。
+**终态**（消费方视角）：session 编排只有一个入口 `useSidebar`（重命名后的新轨：core createUseSession + 壳端口适配），12 个消费方（迁移前 10 新轨静态 + 2 旧轨运行时消费点合流）+ 全部测试单轨；编排修复单点化，新轨能力（restoreSession 等）成为唯一事实。旧轨 567 行删除。
 
 **方案对比**：
 
@@ -155,6 +156,8 @@ w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进�
 
 ### 4.2 真实场景验收（待执行，不阻塞——行为等价已由测试锁定，以下是收益实证项）
 
+> 执行时点登记（2026-09-01 审查补登）：S1-S4 随下次 prerelease 真机验收一并执行，执行后回写 §5.2 销账；S5 随本分支首次 push 后的 CI（截至登记时三主 commit 尚未 push 到任何远端分支）。
+
 | 场景 | 步骤 | 通过标准 | 回溯 |
 |------|------|---------|------|
 | S1 长会话 streaming 派生成本 | Playwright 连 dev app（:9222），构造 2000+ 消息会话，发起 streaming，Performance profile 30s | 火焰图中 `groupRenderInput` 全量调用仅出现在低频形态（load-more/hydrate），streaming 批只有尾部重建；对比改造前 profile 单帧派生耗时有量级下降 | G1 |
@@ -187,7 +190,8 @@ w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进�
 
 ### 5.2 残留与后续
 
-- **real-pi 池待 CI 终检**（§4.2 S5）：本地未跑（需真实 pi 子进程 + LLM 轮次）；对外 API 与产物结构零变化，风险低但须盯 CI。
+- **real-pi 池待 CI 终检**（§4.2 S5）：本地未跑（需真实 pi 子进程 + LLM 轮次）；对外 API 与产物结构零变化，风险低但须盯 CI。触发 = 本分支首次 push（截至 2026-09-01 三主 commit 未 push 到任何远端分支）。
+- **S1-S4 真机实证待执行**（§4.2）：行为等价已由测试锁定，此为 G1/G2/G3 的收益实证项；触发 = 下次 prerelease 真机验收一并执行，执行后回写本节销账。
 - **候选 C 重启信号**（§3.4）已登记于本文，后续审查者以此为准，不再重复提议数据流改造。
 - **perf plan 08-render-layer 文档不在本仓**（cw harness 目录）：A 是其 D-4「可选优化第三期」的兑现，本文即仓内登记载体。
-- **本篇未经对抗式审查**（用户指示跳过）。若后续补审查，建议重点攻击面：A 车道②「append 归属既有末位 turn」的边界序列（连续边界 notify 同组 + 末位 turn 换型）；B collector 读口在并发/重入 fold 下的假设；D 端口注入顺序（selectSessionFallback 引用壳内函数的初始化时序）。
+- **对抗式审查已执行**（2026-09-01，主 agent 会话内，报告未落盘）：0 must-fix / 3 suggestion（本轮全修：消费方计数口径、本节执行时点登记、D-A5 补登）。自报三攻击面全部独立重演闭合——A：空 trigger turn 经收尾 closeTurn 折叠永不入 cache，`turnStartOffsets` 末位恒指向分组状态归零重启点，恒等判定含尾部剩余项检查兜底；B：collector 每次 fold 新建闭包、`dispatchEntry` 无回调 fold 的路径，重入结构上不可能，`replayEntries` 生产唯一调用方 `convertPiHistory` 不传 initial（D-B2 披露差异无观察者属实）；D：`selectSessionFallback` 以箭头函数延迟解析壳 selectSession，调用时机远晚于 setup 完成，无初始化时序窗口。
