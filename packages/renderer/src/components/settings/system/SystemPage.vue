@@ -17,6 +17,7 @@
     <SystemShortcutSection :system="system" @update="emit('update', $event)" />
     <SystemAutoRenameSection :system="system" @update="emit('update', $event)" />
     <SystemSmartContextSection :system="system" @update="emit('update', $event)" />
+    <SystemLlmRetrySection />
   </div>
 </template>
 
@@ -27,6 +28,7 @@ import SystemSoundSection from './SystemSoundSection.vue'
 import SystemShortcutSection from './SystemShortcutSection.vue'
 import SystemAutoRenameSection from './SystemAutoRenameSection.vue'
 import SystemSmartContextSection from './SystemSmartContextSection.vue'
+import SystemLlmRetrySection from './SystemLlmRetrySection.vue'
 import type { SystemSettings } from '@xyz-agent/core'
 
 defineProps<{

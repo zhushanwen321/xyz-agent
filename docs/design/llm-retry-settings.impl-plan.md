@@ -76,7 +76,7 @@ graph TD
 |---|---|---|---|
 | u1-foundation | committed | 1 | 测试：shared `npx vitest run` 22 文件 225 用例全绿（含新增 9 条）+ `tsc --noEmit` 过（dev 回报与主 agent 重跑一致）；diff 核验：4 文件 ⊆ 领地，protocol.ts 纯增量 |
 | u2-runtime | committed | 1 | 测试：新增 3 测试文件 26 用例全绿（merge/configured/handler case/P2 写后立刻读）+ services/transport 回归 27 文件 325 用例全绿 + runtime `tsc --noEmit` 过；主 agent 抽查 helper D3/D7 实现、handler 范式合格；偏差 3 条见登记表 |
-| u3-gui | pending | 0 | — |
+| u3-gui | committed | 2（dev 1 + fix 1） | 测试：新增 llm-retry-section.test.ts 8 用例全绿（三视角 DOM 断言：预览行实时重算/折叠/保存 RPC 组装/越界拦截/configured 徽标/超域行内标注）+ settings 套件 23 文件 166 用例全绿；fix 轮修 fmtDur 小时档 10 倍放大 bug（min/6→min/60，85.25 分钟正确渲染 1.4 小时）；renderer 全量 tsc 的 useCommandPopoverTrigger.ts 报错为存量（该文件未改动），与本单元无关 |
 | u4-integrate | pending | 0 | — |
 
 ## 7 残留风险与变更历史

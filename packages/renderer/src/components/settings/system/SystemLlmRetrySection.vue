@@ -1,0 +1,364 @@
+<template>
+  <GroupCard :title="t('settings.system.llmRetryTitle')">
+    <div class="px-2.5 pt-1 pb-2" data-testid="llm-retry-section">
+      <!-- 基础区三键（D5）：enabled / maxRetries / baseDelayMs（秒输入，内部存 ms） -->
+      <SettingRow :label="t('settings.system.llmRetryEnable')" :desc="t('settings.system.llmRetryEnableDesc')">
+        <Switch
+          data-testid="llm-retry-enabled-switch"
+          :model-value="enabled"
+          @update:model-value="enabled = $event"
+        />
+      </SettingRow>
+      <SettingRow :label="t('settings.system.llmRetryMaxRetriesLabel')" :desc="t('settings.system.llmRetryMaxRetriesDesc')">
+        <span v-if="warnings.maxRetries" class="text-[11px] text-warn" data-testid="llm-retry-warn-maxRetries">
+          {{ warnings.maxRetries }}
+        </span>
+        <Input
+          data-testid="llm-retry-max-retries-input"
+          v-model.number="maxRetries"
+          type="number"
+          :min="0"
+          :max="20"
+          :step="1"
+          class="h-8 w-[72px] px-2 text-right font-mono text-xs"
+          :class="invalidFields.has('maxRetries') ? 'border-warn' : ''"
+        />
+        <span class="text-neutral-dim text-xs">{{ t('settings.system.llmRetryUnitTimes') }}</span>
+      </SettingRow>
+      <SettingRow :label="t('settings.system.llmRetryBaseDelayLabel')" :desc="t('settings.system.llmRetryBaseDelayDesc')">
+        <span v-if="warnings.baseDelayMs" class="text-[11px] text-warn" data-testid="llm-retry-warn-baseDelayMs">
+          {{ warnings.baseDelayMs }}
+        </span>
+        <Input
+          data-testid="llm-retry-base-delay-input"
+          v-model.number="baseDelaySec"
+          type="number"
+          :min="0"
+          :max="600"
+          :step="1"
+          class="h-8 w-[72px] px-2 text-right font-mono text-xs"
+          :class="invalidFields.has('baseDelayMs') ? 'border-warn' : ''"
+        />
+        <span class="text-neutral-dim text-xs">{{ t('settings.system.llmRetryUnitSec') }}</span>
+      </SettingRow>
+
+      <!-- 高级折叠区（D5）：provider 层三键，默认收起 -->
+      <Collapsible v-model:open="advancedOpen" class="border-t border-hairline" data-testid="llm-retry-advanced">
+        <div class="flex items-center px-1.5 py-2.5">
+          <CollapsibleTrigger as-child>
+            <Button
+              variant="ghost"
+              size="sm"
+              class="h-auto gap-1.5 px-2 text-[12px] text-muted hover:text-fg"
+              data-testid="llm-retry-advanced-toggle"
+            >
+              <ChevronDown
+                class="size-3.5 shrink-0 transition-transform duration-150"
+                :class="advancedOpen ? 'rotate-180' : ''"
+              />
+              {{ t('settings.system.llmRetryAdvancedTitle') }}
+            </Button>
+          </CollapsibleTrigger>
+        </div>
+        <CollapsibleContent>
+          <p class="px-1.5 pb-1 text-[11px] text-neutral-mid" data-testid="llm-retry-advanced-hint">
+            {{ t('settings.system.llmRetryAdvancedHint') }}
+          </p>
+          <SettingRow :label="t('settings.system.llmRetryProviderMaxRetriesLabel')" :desc="t('settings.system.llmRetryProviderMaxRetriesDesc')">
+            <span v-if="warnings['provider.maxRetries']" class="text-[11px] text-warn" data-testid="llm-retry-warn-provider-maxRetries">
+              {{ warnings['provider.maxRetries'] }}
+            </span>
+            <Input
+              data-testid="llm-retry-provider-max-retries-input"
+              v-model="providerMaxRetriesInput"
+              type="number"
+              :min="0"
+              :max="10"
+              :step="1"
+              :placeholder="t('settings.system.llmRetryEmptyAsZero')"
+              class="h-8 w-[88px] px-2 text-right font-mono text-xs"
+              :class="invalidFields.has('provider.maxRetries') ? 'border-warn' : ''"
+            />
+          </SettingRow>
+          <SettingRow :label="t('settings.system.llmRetryProviderTimeoutLabel')" :desc="t('settings.system.llmRetryProviderTimeoutDesc')">
+            <span v-if="warnings['provider.timeoutMs']" class="text-[11px] text-warn" data-testid="llm-retry-warn-provider-timeoutMs">
+              {{ warnings['provider.timeoutMs'] }}
+            </span>
+            <Input
+              data-testid="llm-retry-provider-timeout-input"
+              v-model="providerTimeoutSecInput"
+              type="number"
+              :min="1"
+              :max="600"
+              :step="1"
+              :placeholder="t('settings.system.llmRetryTimeoutPlaceholder')"
+              class="h-8 w-[88px] px-2 text-right font-mono text-xs"
+              :class="invalidFields.has('provider.timeoutMs') ? 'border-warn' : ''"
+            />
+          </SettingRow>
+          <SettingRow :label="t('settings.system.llmRetryProviderMaxDelayLabel')" :desc="t('settings.system.llmRetryProviderMaxDelayDesc')">
+            <span v-if="warnings['provider.maxRetryDelayMs']" class="text-[11px] text-warn" data-testid="llm-retry-warn-provider-maxRetryDelayMs">
+              {{ warnings['provider.maxRetryDelayMs'] }}
+            </span>
+            <Input
+              data-testid="llm-retry-provider-max-delay-input"
+              v-model="providerMaxDelaySecInput"
+              type="number"
+              :min="0"
+              :max="3600"
+              :step="1"
+              class="h-8 w-[88px] px-2 text-right font-mono text-xs"
+              :class="invalidFields.has('provider.maxRetryDelayMs') ? 'border-warn' : ''"
+            />
+          </SettingRow>
+        </CollapsibleContent>
+      </Collapsible>
+
+      <!-- 预览行（G3）：随输入实时重算指数退避后果 -->
+      <p data-testid="llm-retry-preview" class="border-t border-hairline px-1.5 pt-2 text-xs leading-relaxed text-neutral-dim">
+        {{ previewText }}
+      </p>
+
+      <!-- 显式保存 + 生效范围固定提示（D6） -->
+      <div class="flex items-center gap-3 px-1.5 pt-2">
+        <Button
+          size="sm"
+          class="h-7 px-3 text-[12px]"
+          data-testid="llm-retry-save-btn"
+          :disabled="saving"
+          @click="onSave"
+        >
+          {{ t('settings.system.llmRetrySave') }}
+        </Button>
+        <span class="text-[11px] text-neutral-mid" data-testid="llm-retry-effective-hint">
+          {{ t('settings.system.llmRetryEffectiveHint') }}
+        </span>
+        <span
+          v-if="configured"
+          class="rounded-sm border border-border bg-surface-2 px-1.5 py-0.5 text-[11px] text-neutral-mid"
+          data-testid="llm-retry-configured-badge"
+        >
+          {{ t('settings.system.llmRetryConfiguredBadge') }}
+        </span>
+      </div>
+    </div>
+  </GroupCard>
+</template>
+
+<script setup lang="ts">
+/**
+ * System · LLM 调用重试 Section（llm-retry-settings u3）。
+ * 数据层：config.getRetryConfig / setRetryConfig（RPC，整体保存为显式按钮触发）。
+ * 校验域：直接消费 shared LLM_RETRY_DOMAIN / validateLlmRetryConfig（禁另写一套域）。
+ * 存量超域/坏值（D7/D8）：加载值超出合法域或类型不可用时，对应行显示行内标注。
+ */
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { ChevronDown } from '@lucide/vue'
+import { Switch } from '@/components/ui/switch'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import { GroupCard } from '@xyz-agent/ui/features/settings'
+import SettingRow from '../SettingRow.vue'
+import { getRetryConfig, setRetryConfig } from '@/api/domains/config'
+import { useToast } from '@/composables/useToast'
+import {
+  LLM_RETRY_DOMAIN,
+  validateLlmRetryConfig,
+  type LlmRetryConfig,
+  type LlmRetryProviderConfig,
+} from '@xyz-agent/shared'
+
+const { t } = useI18n()
+const { info: toastInfo, error: toastError } = useToast()
+
+const MS_PER_SEC = 1000
+const SEC_PER_MIN = 60
+const MIN_PER_HOUR = 60
+const EXP_BACKOFF_BASE = 2
+const ROUND_ONE = 10
+// pi 默认，见设计文档 §2.2
+const PI_DEFAULT_MAX_RETRIES = 3
+const PI_DEFAULT_BASE_DELAY_SEC = 2
+const PI_DEFAULT_BASE_DELAY_MS = 2000
+
+/** 保留一位小数。 */
+function round1(v: number): number {
+  return Math.round(v * ROUND_ONE) / ROUND_ONE
+}
+
+// ── 表单状态（provider 三键用 string 承载「留空 = 未设」语义）──
+const enabled = ref(true)
+const maxRetries = ref<number | ''>(PI_DEFAULT_MAX_RETRIES)
+const baseDelaySec = ref<number | ''>(PI_DEFAULT_BASE_DELAY_SEC)
+const advancedOpen = ref(false)
+const providerMaxRetriesInput = ref('')
+const providerTimeoutSecInput = ref('')
+const providerMaxDelaySecInput = ref('')
+
+const configured = ref(false)
+const saving = ref(false)
+/** 保存失败时标红的字段名集合（validateLlmRetryConfig error 信封字段名）。 */
+const invalidFields = reactive(new Set<string>())
+/** 加载期存量超域/坏值的行内标注（D7/D8），字段名 → 提示文本。 */
+const warnings = reactive<Record<string, string>>({})
+
+onMounted(async () => {
+  try {
+    const res = await getRetryConfig()
+    configured.value = res.configured
+    applyLoaded(res.config)
+  } catch (e) {
+    // best-effort：加载失败保持默认值（保存时以输入为准），不打扰用户
+    console.warn('[SystemLlmRetrySection] failed to load retry config:', e)
+  }
+})
+
+/** 数值域检查：返回 [是否合法, 展示值（超域时原样展示存量值）]。类型不可用按默认值展示。 */
+function checkDomain(
+  value: unknown,
+  min: number,
+  max: number,
+  fallbackDisplay: number,
+): { ok: boolean; display: number | string; raw: string } {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    // D7 坏值承接：表单显示默认值，行内同款标注
+    return { ok: false, display: fallbackDisplay, raw: String(value) }
+  }
+  const ok = Number.isInteger(value) && value >= min && value <= max
+  return { ok, display: value, raw: String(value) }
+}
+
+function warnText(raw: string): string {
+  return t('settings.system.llmRetryOutOfDomain', { value: raw })
+}
+
+/** 加载值落到表单：合法值直接显示；超域值原样显示；坏值回落默认显示。超域/坏值均加行内标注。 */
+function applyLoaded(config: LlmRetryConfig): void {
+  const mr = checkDomain(config.maxRetries, LLM_RETRY_DOMAIN.maxRetries.min, LLM_RETRY_DOMAIN.maxRetries.max, PI_DEFAULT_MAX_RETRIES)
+  maxRetries.value = typeof mr.display === 'number' ? mr.display : ''
+  if (!mr.ok) warnings.maxRetries = warnText(mr.raw)
+
+  const bd = checkDomain(config.baseDelayMs, LLM_RETRY_DOMAIN.baseDelayMs.min, LLM_RETRY_DOMAIN.baseDelayMs.max, PI_DEFAULT_BASE_DELAY_MS)
+  baseDelaySec.value = typeof bd.display === 'number' ? bd.display / MS_PER_SEC : ''
+  if (!bd.ok) warnings.baseDelayMs = warnText(bd.raw)
+
+  const p = config.provider ?? {}
+  const pmr = checkDomain(p.maxRetries, LLM_RETRY_DOMAIN.providerMaxRetries.min, LLM_RETRY_DOMAIN.providerMaxRetries.max, 0)
+  providerMaxRetriesInput.value = pmr.ok ? String(pmr.display) : ''
+  if (p.maxRetries !== undefined && !pmr.ok) warnings['provider.maxRetries'] = warnText(pmr.raw)
+
+  const pt = checkDomain(p.timeoutMs, LLM_RETRY_DOMAIN.providerTimeoutMs.min, LLM_RETRY_DOMAIN.providerTimeoutMs.max, 0)
+  providerTimeoutSecInput.value = pt.ok ? String((pt.display as number) / MS_PER_SEC) : ''
+  if (p.timeoutMs !== undefined && !pt.ok) warnings['provider.timeoutMs'] = warnText(pt.raw)
+
+  // maxRetryDelayMs 合法域特殊：0（不限制）或 1000-3600000
+  const pdRaw = p.maxRetryDelayMs
+  if (pdRaw !== undefined) {
+    const ok = typeof pdRaw === 'number' && Number.isInteger(pdRaw) &&
+      (pdRaw === 0 || (pdRaw >= LLM_RETRY_DOMAIN.providerMaxRetryDelayMs.minNonZero && pdRaw <= LLM_RETRY_DOMAIN.providerMaxRetryDelayMs.max))
+    providerMaxDelaySecInput.value = ok ? String(pdRaw / MS_PER_SEC) : ''
+    if (!ok) warnings['provider.maxRetryDelayMs'] = warnText(String(pdRaw))
+  }
+}
+
+/** 时长人性化格式（参照 demo html fmtDur：<1s 毫秒 / <1min 秒 / <1h 分钟 / 小时）。 */
+function fmtDur(ms: number): string {
+  if (ms < MS_PER_SEC) return `${Math.round(ms)} ${t('settings.system.llmRetryUnitMs')}`
+  if (ms < SEC_PER_MIN * MS_PER_SEC) {
+    const sec = ms / MS_PER_SEC
+    return `${Number.isInteger(sec) ? sec : sec.toFixed(1)} ${t('settings.system.llmRetryUnitSec')}`
+  }
+  const min = ms / (SEC_PER_MIN * MS_PER_SEC)
+  if (min < MIN_PER_HOUR) return `${round1(min)} ${t('settings.system.llmRetryUnitMin')}`
+  return `${round1(min / MIN_PER_HOUR)} ${t('settings.system.llmRetryUnitHour')}`
+}
+
+/** 预览行（G3）：enabled=false 时展示关闭语义；开启时实时重算指数退避后果。 */
+const previewText = computed<string>(() => {
+  if (!enabled.value) return t('settings.system.llmRetryPreviewOff')
+  const n = typeof maxRetries.value === 'number' ? maxRetries.value : Number.NaN
+  const base = typeof baseDelaySec.value === 'number' ? baseDelaySec.value : Number.NaN
+  if (!Number.isFinite(n) || !Number.isFinite(base) || n < 0 || base < 0) {
+    // 输入未完成时避免渲染无意义数字，退回关闭文案以外的中性占位（保存会被校验拦下）
+    return t('settings.system.llmRetryInvalidInput')
+  }
+  const totalMs = base * (EXP_BACKOFF_BASE ** n - 1) * MS_PER_SEC
+  const longestMs = n === 0 ? 0 : base * EXP_BACKOFF_BASE ** (n - 1) * MS_PER_SEC
+  return t('settings.system.llmRetryPreviewOn', {
+    n: String(n),
+    longest: fmtDur(longestMs),
+    total: fmtDur(totalMs),
+  })
+})
+
+/** 「留空 = 未设」字符串输入 → 整数；解析失败返回 null。 */
+function parseIntInput(input: string, field: string, toMs = false): number | undefined | null {
+  const trimmed = input.trim()
+  if (trimmed === '') return undefined
+  const n = Number(trimmed)
+  if (!Number.isInteger(n)) {
+    invalidFields.add(field)
+    return null
+  }
+  return toMs ? n * MS_PER_SEC : n
+}
+
+/** 组装保存载荷；任何字段解析失败返回 null（invalidFields 已标记）。 */
+function buildConfig(): LlmRetryConfig | null {
+  invalidFields.clear()
+  const provider: LlmRetryProviderConfig = {}
+  const pmr = parseIntInput(providerMaxRetriesInput.value, 'provider.maxRetries')
+  if (pmr === null) return null
+  if (pmr !== undefined) provider.maxRetries = pmr
+  const pt = parseIntInput(providerTimeoutSecInput.value, 'provider.timeoutMs', true)
+  if (pt === null) return null
+  if (pt !== undefined) provider.timeoutMs = pt
+  const pd = parseIntInput(providerMaxDelaySecInput.value, 'provider.maxRetryDelayMs', true)
+  if (pd === null) return null
+  if (pd !== undefined) provider.maxRetryDelayMs = pd
+
+  if (typeof maxRetries.value !== 'number' || typeof baseDelaySec.value !== 'number') {
+    invalidFields.add(maxRetries.value === '' || typeof maxRetries.value !== 'number' ? 'maxRetries' : 'baseDelayMs')
+    return null
+  }
+  return {
+    enabled: enabled.value,
+    maxRetries: maxRetries.value,
+    baseDelayMs: baseDelaySec.value * MS_PER_SEC,
+    provider: Object.keys(provider).length > 0 ? provider : undefined,
+  }
+}
+
+/** 保存：先前端同规则校验（shared validateLlmRetryConfig），失败 toast + 标红不发 RPC。 */
+async function onSave(): Promise<void> {
+  if (saving.value) return
+  const config = buildConfig()
+  if (config === null) {
+    toastError(t('settings.system.llmRetryInvalidInput'))
+    return
+  }
+  const res = validateLlmRetryConfig(config)
+  if (!res.ok) {
+    // error 信封格式「<字段名> 超出范围(...)：<值>」，前缀即字段名
+    invalidFields.add(res.error.split(' ')[0])
+    toastError(res.error)
+    return
+  }
+  saving.value = true
+  try {
+    await setRetryConfig(config)
+    toastInfo(t('settings.system.llmRetrySavedToast'))
+  } catch (e) {
+    console.warn('[SystemLlmRetrySection] failed to save retry config:', e)
+    toastError(t('settings.system.llmRetrySaveFailed'))
+  } finally {
+    saving.value = false
+  }
+}
+</script>
