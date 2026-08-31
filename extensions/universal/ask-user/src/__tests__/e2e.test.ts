@@ -1,7 +1,7 @@
 // src/__tests__/e2e.test.ts
 // E2E test cases for ask_user. Drives tool.execute() → real AskUserComponent
 // → simulated keypresses → asserts on final execute() result contract.
-// Spec: .xyz-harness/2026-06-15-ask-user/e2e-test-cases.md
+// （原始 spec 文件已不在仓内——用例自包含，编号 E2E-x 沿用原始 spec 命名）
 
 import { describe, expect, it } from "vitest";
 
