@@ -177,7 +177,7 @@ export class ProviderModelSelectorComponent extends Container {
 	/** provider stage items：'Auto' + 各 provider（含 model 数量）。 */
 	private buildProviderItems(): SelectItem[] {
 		const items: SelectItem[] = [
-			{ value: AUTO_VALUE, label: "Auto", description: "auto-select cheapest available model" },
+			{ value: AUTO_VALUE, label: "Auto", description: "select first available model" },
 		];
 		for (const provider of this.providers) {
 			const models = this.modelsByProvider.get(provider) ?? [];

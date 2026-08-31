@@ -24,7 +24,8 @@ export interface PermissionPalette {
  * theme.fg(token, text) 是 Pi 的语义着色 API（token 如 "dim"/"text"/"success"）。
  * 本地包装为 PermissionPalette 接口，便于 footer renderer 与测试共用纯函数。
  *
- * @param theme Pi Theme 对象（ctx.ui.theme，需含 fg 函数）
+ * @param theme Pi Theme 对象（需含 fg 函数）。不由 ctx.ui.theme 提供——由 pi-statusline
+ *     每次 render 时经 render(ctx, theme) 第二参传入（见 index.ts footer renderer 装配）。
  */
 export function paletteFromTheme(theme: { fg(token: string, text: string): string }): PermissionPalette {
 	return {

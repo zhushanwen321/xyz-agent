@@ -244,7 +244,7 @@ async function rpcSelectCommand(
 	return preset?.cmd ?? cmdChoice;
 }
 
-/** RPC edit flow：选择 action（edit fields / delete）。 */
+/** RPC edit flow：仅支持删除已有规则（Delete / Cancel，不支持改字段）。 */
 async function rpcEditFlow(
 	select: (title: string, options: string[]) => Promise<string | undefined>,
 	_input: (title: string, placeholder?: string) => Promise<string | undefined>,

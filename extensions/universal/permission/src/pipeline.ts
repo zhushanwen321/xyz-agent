@@ -219,6 +219,10 @@ export function applyAutoApproveOverrides(
  * 此处再叠一层：AI 赢且 outcome 是 allow/deny 时，先 abort 再 resolveUser，
  * 保证 UI factory 看到 aborted 状态短路。
  *
+ * classifier.enabled=false：AI 层被用户显式关闭 → 跳过 classifier 与 racing，直接人工审批
+ * （复用 askUser 路径）。headless 下 requestUserApproval 走 requestHeadless 立即 fail-closed
+ * deny，与 AI 判定 ask 时的短路 deny 语义一致。
+ *
  * @param deps 注入依赖（classifier + requestUserApproval）
  * @param ctx 工具调用上下文
  * @param config classifier 配置
@@ -233,6 +237,10 @@ export async function runLayer3WithRacing(
 	outerSignal: AbortSignal | undefined,
 	trigger: string = "awaiting approval (auto mode: AI classifier racing with user prompt)",
 ): Promise<PermissionDecision> {
+	// classifier.enabled=false → AI 层关闭，直接人工审批（不启动 AI promise，不进入 racing）
+	if (config.enabled === false) {
+		return await askUser(deps, ctx, "AI classifier disabled (classifier.enabled=false)", outerSignal);
+	}
 	const controller = new AbortController();
 	// 外层 abort 传播到内层
 	if (outerSignal) {
@@ -392,7 +400,8 @@ export async function runLayer3WithRacing(
  *
  * 四档模式分支：
  *  - yolo：完全放行（return allow，source='mode'）。不跑任何层。
- *  - auto：AST → 规则（allow 通过 / deny 拒绝 / ask → 层 3 Racing AI+用户）。
+ *  - auto：AST → 规则（allow 通过 / deny 拒绝 / ask → 层 3 Racing AI+用户；
+ *    classifier.enabled=false 时 ask → 直接人工审批，无 AI）。
  *  - approve：AST → 规则（allow 通过 / deny+ask → 人工审批，无 AI）。
  *  - strict：全部人工审批（不跑 AST/规则/AI）。
  *

@@ -13,7 +13,7 @@
  *  用 `new RegExp(pattern, 'i')` 编译；其余（builtin-safe/user）是 OpenCode
  *  wildcard，用 `wildcardToRegExp(pattern)` 编译。resolvePattern 按 source 分发。
  *
- *  ── G3: 24+5 白名单用函数（C3 修正：不再短路）──
+ *  ── G3: 50+9 白名单用函数（C3 修正：不再短路）──
  *  matchRulesForArgv 先遍历 rules（last-match-wins）；若无 deny/allow 命中（ask），
  *  再查 isKnownSafeCommand(argv) 兜底返回 allow。白名单不再短路：用户 deny 规则
  *  可覆盖白名单。白名单不进 Rule[] 数组（Codex flag 子检查无法用单条 wildcard 表达）。
