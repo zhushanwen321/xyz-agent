@@ -25,7 +25,7 @@
 //     batch1="/path/reviewer-a.md,/path/reviewer-b.md" autoCommit=true（pi 宿主语法）
 //   workflow run review-fix-loop --args targetType=file target=/path/to/doc.md \
 //     batch1="/path/doc-reviewer.md" autoCommit=false（pi 宿主语法）
-//   zsw workflow --workflow review-fix-loop --task "<任务书>" --workdir <绝对路径>（zsw 宿主直参语法；per-workflow 参数用 zsw 专属 flag --target-type/--target/--batch1 等，语义见 @pi-meta parameters）
+//   zsw workflow --workflow review-fix-loop --task "<任务书>" --workdir <绝对路径>（zsw 宿主直参语法；`zsw` 为 CLI 简写，实际执行以 SessionStart 注入段的 node "<绝对路径>/bin/zsw.js" 形态为准；per-workflow 参数用 zsw 专属 flag --target-type/--target/--batch1 等，语义见 @pi-meta parameters）
 //
 // S4 路径统一：batch1..batchN/fixAgent 值 = agentRef（.md 绝对路径，<available_subagents> 的
 // <location>）；fallowScan=true 独立参数前置插入静态分析批次（不占 batchN）。
@@ -77,7 +77,7 @@ usage: |
   - fixAgent：fix 阶段执行者（agentRef），缺省用通用 subagent + 内联 fixPrompt
   - fallowScan=true 仅 targetType=git-diff 合法（前置静态分析批次，不占 batchN）
   - 示例（pi 宿主语法）：workflow run review-fix-loop --args targetType=git-diff target=main batch1="/path/fallow-agent.md,/path/reviewer.md" autoCommit=true
-  - 示例（zsw 宿主直参语法）：zsw workflow --workflow review-fix-loop --task "<任务书>" --workdir <绝对路径>（per-workflow 参数用 zsw 专属 flag --target-type/--target/--batch1 等，语义见 @pi-meta parameters）
+  - 示例（zsw 宿主直参语法；`zsw` 为 CLI 简写，实际以注入段 node "<绝对路径>/bin/zsw.js" 形态为准）：zsw workflow --workflow review-fix-loop --task "<任务书>" --workdir <绝对路径>（per-workflow 参数用 zsw 专属 flag --target-type/--target/--batch1 等，语义见 @pi-meta parameters）
 */
 
 // ── 参数解析 + 白名单校验（fail-fast） ────────────────────────────
