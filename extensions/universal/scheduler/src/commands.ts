@@ -48,7 +48,7 @@ export function registerScheduleCommand(
   getService: () => SchedulerService | null,
 ) {
   pi.registerCommand('schedule', {
-    description: 'Manage scheduled tasks. No args opens TUI. /schedule <schedule> <prompt> to create.',
+    description: 'Manage scheduled tasks. /schedule <schedule> <prompt> to create; /schedule list to see tasks.',
     getArgumentCompletions(prefix: string) {
       const service = getService()
       const trimmed = prefix.trimStart()

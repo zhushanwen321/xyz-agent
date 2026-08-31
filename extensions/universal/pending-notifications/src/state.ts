@@ -36,7 +36,7 @@ export type PendingStatus = "active" | "completed" | "failed" | "cancelled" | "e
 
 /** 一个异步操作的完整描述（= pending:register entry 的 data 字段） */
 export interface PendingEntry {
-	/** 操作唯一标识（workflow runId / subagent id） */
+	/** 操作唯一标识（workflow runId / subagent id / bash 后台任务 id） */
 	id: string;
 	/** 操作来源类型 */
 	type: PendingType;

@@ -137,7 +137,8 @@ export class SchedulerService {
   /**
    * 立即执行任务。语义细分：
    * 任务不存在 → TASK_NOT_FOUND；任务存在但 dispatch no-op
-   * （disabled / busy / rate-limited / 同任务 dispatch 在途）→ DISPATCH_SKIPPED。
+   * （disabled / rate-limited / 同任务入队已在 TTL 窗口内）→ DISPATCH_SKIPPED。
+   * busy 不再是 no-op：非 force 任务入队 delivery 内核即成功（park 等后续投递）。
    * 修复了旧实现把 no-op 误报为 not found 的混同。
    */
   async run(id: string | undefined): Promise<ServiceResult> {
@@ -152,7 +153,7 @@ export class SchedulerService {
       return {
         success: false,
         errorCode: 'DISPATCH_SKIPPED',
-        message: `Task ${id} not dispatched (busy, disabled, rate-limited, or a dispatch already in flight).`,
+        message: `Task ${id} not dispatched (disabled, rate-limited, or already queued for delivery).`,
       }
     }
     return { success: true, message: `Task ${id} executed.` }

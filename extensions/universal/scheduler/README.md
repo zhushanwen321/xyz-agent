@@ -57,7 +57,7 @@ session_start
 
 ## /schedule 命令用法
 
-注册为 `/schedule` 命令。无参数时显示 usage；第一个参数匹配子命令关键词则走子命令分支，否则尝试创建任务。
+注册为 `/schedule` 命令。无参数时返回 TUI 未实现提示（用 `/schedule list` 查看任务）；第一个参数匹配子命令关键词则走子命令分支，否则尝试创建任务。
 
 ### 子命令
 
@@ -90,7 +90,7 @@ session_start
 
 ### duration（间隔调度）
 
-`<数字><单位>`，数字与单位间可有空格，**大小写不敏感**：
+`<数字><单位>`，数字与单位间不留空格，**大小写不敏感**：
 
 | 单位 | 含义 | 乘数 |
 |------|------|------|
@@ -163,14 +163,14 @@ session_start
 | 默认过期 | **7 天**（`DEFAULT_EXPIRY_MS`） | recurring 任务缺省 `expires` 时；`expires: 'never'` 关闭 |
 | once 任务 | 触发后自动删除 | 不参与后续调度 |
 | cron 失效 | 任务停用 + `lastStatus=failed` + `lastError='cron expression invalid'` | 不会用 `now()` 兜底导致每 tick 重触发死循环 |
-| 忙时 dispatch | 非 force 任务在 agent 忙（非 idle / 有 pending 消息）时跳过，延迟到下次 tick | force=true 可绕过 |
+| 忙时 dispatch | 非 force 任务经 session delivery 内核 park 模式：忙时消息入队等待（等 agent 空闲的 settled 边沿 / 下个 tick flush 投递），不丢弃 | force=true 绕过内核队列直投 |
 | history | 保留最近 **20** 条执行记录 | 超出丢弃最旧；重放折叠时同样裁剪 |
 | 持久化 | custom entry append 到 session JSONL（dispatch 成功后立即 append advance 记录执行） | 任务随 owner session 持久化，resume 后重放恢复，无需额外写盘 |
 | 交付语义 | **at-least-once**（至少一次） | dispatch 成功后内存更新 nextRunAt 并 append advance；append 之前若进程崩溃可能重复注入一次（无精确一次保证，可接受） |
 | 延迟写入窗口 | 新 session 首 turn 内建任务后进程崩溃可能丢失 | pi 延迟写入：首条 assistant 消息前不 flush。窗口窄、概率极低、无恢复手段 |
 | 触发条件 | pi 进程需存活且 session 打开 | 电脑睡眠 / pi 进程未运行 = 不触发（非系统 cron，无后台守护） |
 
-错误语义：创建时 schedule 解析失败 → `INVALID_SCHEDULE`；`run`/`toggle`/`delete` 引用不存在的 id → `TASK_NOT_FOUND`；`run` 时任务 disabled / busy / rate-limited → `DISPATCH_SKIPPED`（message 含 `busy, disabled, or rate-limited`）。
+错误语义：创建时 schedule 解析失败 → `INVALID_SCHEDULE`；`run`/`toggle`/`delete` 引用不存在的 id → `TASK_NOT_FOUND`；`run` 时任务 disabled / rate-limited / 同任务已在投递队列（TTL 窗口内）→ `DISPATCH_SKIPPED`（message 含 `disabled, rate-limited, or already queued for delivery`）。
 
 ## 数据存储位置
 

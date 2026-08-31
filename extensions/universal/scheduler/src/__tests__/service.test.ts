@@ -191,7 +191,7 @@ describe('SchedulerService', () => {
       expect(result).toEqual({
         success: false,
         errorCode: 'DISPATCH_SKIPPED',
-        message: `Task ${id} not dispatched (busy, disabled, rate-limited, or a dispatch already in flight).`,
+        message: `Task ${id} not dispatched (disabled, rate-limited, or already queued for delivery).`,
       })
     })
 
