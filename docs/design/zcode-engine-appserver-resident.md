@@ -103,7 +103,7 @@ task ─┘                    │ ① session/create {workspace, mode, model, .
 
 **成功路径（xyz-agent GUI 用户）**：chat 域发起 zcode 引擎 subagent，任务运行中途打开详情页——record entry 在 journal writer 创建后即已回填 ②级读取钥匙（W4 回填机制，create 应答后并入 sessionId），详情页可见打开时刻的进度快照（journal 已增量落盘的 text_delta）；任务进行中刷新/重开 session，详情页渲染与 live 所见一致（读取链 ①级 sqlite / ②级 journal 无论哪级命中，内容一致）。GUI 内的逐字实时推送属 relay 通道建设（out of scope，见 G2 边界）。
 
-**失败路径 1（协议漂移）**：zcode 升级后 `session/create` 返回 `-32602`（参数校验失败）。引擎按错误分类归档 `protocol-drift`，本任务自动降级 spawn 单轮重跑（结果 record 标注 `degraded: spawn`），后续任务直接走 spawn；probe 结论落盘，下次 zcode 版本变更（mtime 变化）时重新真探。用户在任务输出中看到降级标注与「升级冒烟失败，已回退 spawn 通道」提示，恢复动作 = core 修协议适配后自动恢复（无需用户干预）。
+**失败路径 1（协议漂移）**：zcode 升级后 `session/create` 返回 `-32602`（参数校验失败）。引擎按错误分类归档 `protocol-drift`，本任务自动降级 spawn 单轮重跑（结果 record 标注 `degraded: spawn`），后续任务直接走 spawn。降级标志（`driftDegraded`）为引擎内存态且判定先于探针门控——CLI mtime 变化不触发重探，恢复 = 宿主进程重启后经探针门控重建（zsw daemon 常驻场景 = 需重启 daemon），core 修复协议适配后重启即恢复。用户在任务输出中看到降级标注与「升级冒烟失败，已回退 spawn 通道」提示。注意区分：探针失败降级（另一路径，probe 未过、无漂移命中）的探针结论为内存缓存、与 CLI mtime 绑定，mtime 变化后首个任务前重新真探——mtime 重探语义仅属该路径，不构成漂移降级的自动恢复。
 
 **失败路径 2（常驻进程崩溃）**：进程意外退出 → 连接 onClose → 全部在途任务 fail（错误信息附 stderr 尾部 400 字符）→ 用户重试任务 → 下一次 `engine.run` 自动重建进程。单任务失败语义与 spawn 现状等价（进程死 = 任务失败），不劣化。
 
@@ -224,7 +224,7 @@ task ─┘                    │ ① session/create {workspace, mode, model, .
 | A2 | stream 事件流出 + 快照一致性 | ①zsw 真机跑 workflow，观察终端 live 输出实时刷新；②xyz-agent dev 起 zcode 引擎 subagent，任务运行中打开详情页、任务中途重开 session | ①workflow live 输出随任务运行实时出现（非终态一次性）；②详情页打开可见当时进度快照，重开后渲染与 live 一致（①级 sqlite / ②级 journal 无论哪级命中，内容一致） | G2 |
 | A3 | per-session model | 同进程上并发两任务：任务 A `model: glm-5.3`，任务 B `model: mimo-v2.5` | 两任务各自成功、响应面无串线（sessionId/usage 各归各）；record 各自留痕正确 model | G3 |
 | A4 | abort 不连坐 | 两任务并发在途，取消其一 | 被取消任务终态 exitCode=null；另一任务正常完成不受影响（session/stop 只作用于目标会话） | G1/G3 |
-| A5 | 漂移降级 + 自动恢复 | 三层：①单测 fixture 注入 `-32602`（回归门）；②真机首败降级——**缺省模式（不设 `XYZ_ZCODE_MODE`，走 D2①② probe 门控路径）** + `XYZ_ZCODE_CLI` 指向包装脚本（转发真 CLI；wrapper 按探针 env 标记 `ZCODE_APPSERVER_PROBE_CONN=1` 识别探针连接并放行——标记语义见 D8，定向时不探不降（D2④）故不可用 `XYZ_ZCODE_MODE=appserver` 定向构造本场景——仅对主连接的首个 create 注入一次 `-32602`），跑真实任务；③真机 mtime 重探——`touch` 真 CLI 文件本体（非 wrapper，避免与 ② 混跑歧义）伪造 mtime 变化后跑下一任务 | ①降级 spawn 重跑成功、record 标注、后续直走 spawn；②真连接上首败降级全链成立（错误分类 → 池/HOME 切换 → spawn 重跑 → record 标注）；③mtime 变化触发重探（日志可见 probe 重跑）；另真机显式 `XYZ_ZCODE_MODE=spawn`（无 wrapper 直连）通道全绿（兜底始终可用） | G5 |
+| A5 | 漂移降级 + 重探重建 | 三层：①单测 fixture 注入 `-32602`（回归门）；②真机首败降级——**缺省模式（不设 `XYZ_ZCODE_MODE`，走 D2①② probe 门控路径）** + `XYZ_ZCODE_CLI` 指向包装脚本（转发真 CLI；wrapper 按探针 env 标记 `ZCODE_APPSERVER_PROBE_CONN=1` 识别探针连接并放行——标记语义见 D8，定向时不探不降（D2④）故不可用 `XYZ_ZCODE_MODE=appserver` 定向构造本场景——仅对主连接的首个 create 注入一次 `-32602`），跑真实任务；③真机 mtime 重探——`touch` 真 CLI 文件本体（非 wrapper，避免与 ② 混跑歧义）伪造 mtime 变化后跑下一任务（须独立新进程实例——漂移降级标志随进程重启清零，同进程残留降级态会直走 spawn、不进探针门控） | ①降级 spawn 重跑成功、record 标注、后续直走 spawn；②真连接上首败降级全链成立（错误分类 → 池/HOME 切换 → spawn 重跑 → record 标注）；③mtime 变化触发重探（日志可见 probe 重跑）；另真机显式 `XYZ_ZCODE_MODE=spawn`（无 wrapper 直连）通道全绿（兜底始终可用） | G5 |
 | A6 | 崩溃重建 | 任务运行中 `kill -9` 常驻进程 | 在途任务失败（错误含 stderr 尾）；紧接的下一任务自动重建进程并成功 | G1 |
 | A7 | 无孤儿进程（三种退出形态） | ①zsw daemon 正常退出（现役 shutdown 链零改动——异步面现役消费方为空，实际生效的是同步 SIGTERM 面，见 D6①）；②宿主 SIGKILL 后重启宿主，**跑一个 zcode 任务（或触发 probe）后再 ps**（引擎惰性实例化，回收挂在引擎初始化而非宿主启动，见 D6③）；③pi 壳 session 关闭触发同步 dispose | ①②每次之后 `ps` 无残留 `app-server` 进程——②的判据为**重启并触发引擎初始化后完成 stale 回收**（pidfile 机制）；③SIGTERM 已随 dispose 同步发出、session 内无泄漏（grace→SIGKILL 兜底边界见 D6 子决策①） | G4 |
 | A8 | conformance 全绿 | 跑 engine conformance 套件（真机 gate）+ zcode 单测族迁移后全量 | C1-C8 适配后全绿；golden 帧序列语料 diff 通过；pi 引擎测试零改动零回归 | G4/G5 |

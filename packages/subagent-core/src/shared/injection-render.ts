@@ -3,8 +3,9 @@
 // 三段 XML 注入渲染（<available_subagents> / <available_workflows> /
 // <available_provider_models>）——从 pi-sw 插件层下沉的平台无关纯函数
 // （convergence D-3）。渲染骨架 escapeXml/renderXmlSection 见同目录
-// xml-injection.ts。pi 侧原函数在 extensions/universal/subagent-workflow/
-// src/injectors/ 三 injector（C5 改接前短暂双份，计划已知过渡态）。
+// xml-injection.ts。pi 侧原函数曾内嵌于三 injector（基线 5557e109b，C5 起改调
+// 本模块，逐字节等价证据见
+// docs/design/subagent-core-convergence.probe-a2-baseline.md）。
 //
 // 与 pi-sw 原实现的差异（本模块定约）：
 // - guide 文案必填注入：core 不内嵌任何平台文案，宿主（pi-sw / zsw）各自传入；

@@ -3,9 +3,9 @@
 基线: fef05eb41（convergence 设计）| 日期: 2026-08-30
 来源设计：① [subagent-core-convergence.md](subagent-core-convergence.md)（xyz 侧收口，两轮对抗审查 0 MF 终态）② [zcode-engine-appserver-resident.md](zcode-engine-appserver-resident.md)（zcode engine app-server 常驻化，三轮审查收敛「设计就绪」，审查轨迹见其文档头部）
 
-**范围声明**：本计划覆盖 xyz-agent 仓两条正交线的全部 11 个单元——C 线（convergence 收口，C1-C5，原 W1-W5）与 R 线（app-server 常驻化，R1-R6，设计文档原 W1-W6）。两线在 core 仓内领地互斥（C 线 `src/shared|orchestration|agents/` + barrel；R 线 `src/execution/**`，barrel 为 type re-export 不需改），按波次并行推进。zsw 侧 W6-W9（convergence）由另一会话执行；R 线不涉及 zsw 仓改动（G4 宿主零改动）。
+**范围声明**：本计划覆盖 xyz-agent 仓两条正交线的全部 12 个单元——C 线（convergence 收口，C1-C5 + C5b，原 W1-W5；C5b 为 wave-4 从 C5 blocker 增补，无设计文档 W 编号对应）与 R 线（app-server 常驻化，R1-R6，设计文档原 W1-W6）。两线在 core 仓内领地互斥（C 线 `src/shared|orchestration|agents/` + barrel；R 线 `src/execution/**`，barrel 为 type re-export 不需改），按波次并行推进。zsw 侧 W6-W9（convergence）由另一会话执行；R 线不涉及 zsw 仓改动（G4 宿主零改动）。
 
-**单元编号映射**：C1-C5 = convergence 设计 §5.1 的 W1-W5；R1-R6 = app-server 设计 §5 的 W1-W6。验收场景编号：CA2/CA3-pi/CA9 = convergence 设计 §4.1（上游 A2/A3-pi/A9）；RA1-RA9 = app-server 设计 §4。
+**单元编号映射**：C1-C5 = convergence 设计 §5.1 的 W1-W5；R1-R6 = app-server 设计 §5 的 W1-W6；C5b-barrel-aux 无设计文档编号——wave-4 从 C5 blocker 增补（55dc457ab），职责与领地见 §2 单元表。验收场景编号：CA2/CA3-pi/CA9 = convergence 设计 §4.1（上游 A2/A3-pi/A9）；RA1-RA9 = app-server 设计 §4。
 
 **版本决策（用户 2026-08-30「一起开发」指令，取代 app-server 设计 §5 的「先行/顺延」建议）**：两线合并落 **core 0.4.0 单一 minor**（capabilities 声明变化 + 资产/导出/参数化新增均为 minor 级）。收尾时创建单一 changeset，正文合并描述两线内容——不创建两个 minor changeset（会叠加成两个版本）。
 
@@ -41,7 +41,8 @@
 | C2-core-discovery | async 链 realpath 去重 + project host 槽 + hostRoots 同标签多根（Map→列表+硬编码槽合并，原根后置）+ 漂移注释修 + barrel 发现面 | `packages/subagent-core/src/shared/resource-discovery.ts`；`packages/subagent-core/src/index.ts`；`packages/subagent-core/src/shared/__tests__/` | — | plain | ① vitest 绿（多链同文件去重 / 同标签多根 / 同 stem 撞名本体胜 / 子目录·node_modules 三维度）② pi 单条目形态改前后 `discoverResources` 输出逐项一致（对照探针跑 pi 真实 agentDir，证据落 `docs/design/subagent-core-convergence.probe-c2.md`）③ scanDirectorySync L671 注释修 ④ barrel 逐名探针 ⑤ hostRoots 端口签名不变 |
 | C3-core-render | 三 format 函数 + Entry 下沉；ModelEntry 并集（provider? 本仓补充）+ 守卫；分段预算；sortByCodepoint；guide 参数化；xml-injection 出 barrel | `packages/subagent-core/src/shared/`（新渲染模块）；`packages/subagent-core/src/index.ts`；`packages/subagent-core/src/shared/__tests__/` | C2（barrel 串行） | plain | ① 单测：undefined input/contextWindow 守卫、provider 存在 `provider/id` 拼接+(provider,id) 排序、缺席/空串裸 id+id 码点序、码点序+截尾、预算边界 15/10、guide 宿主注入 ② barrel 逐名探针 ③ 渲染源码无内嵌平台文案 |
 | C4-core-script-pipeline | getTmpDir/getSavedDir 参数化；generate 校验管线（ESM/meta/agent()/语法/round-trip）+ tmp 写盘下沉；save/delete/generate 出 barrel | `packages/subagent-core/src/orchestration/workflow-files.ts`；`packages/subagent-core/src/orchestration/`（新管线模块）；`packages/subagent-core/src/index.ts`；`packages/subagent-core/src/orchestration/__tests__/` | C3（barrel 串行） | plain | ① 单测：ESM 拒（含行列）/无 meta 拒/无 agent() 拒/合法落 tmp ② 目录参数注入生效（源码无 `.pi` 硬编码 grep）③ barrel 逐名探针 |
-| C5-pi-rebind | pi-sw 七项改接：① injector 调 core format（pi 版 guide）② workflow-script 调 core 管线 ③ run 放开内置名 ④ 依赖下限 ⑤ CHANGELOG ⑥ core 包根接线（不命中走 hostRoots 降级）⑦ import 统一 barrel | `extensions/universal/subagent-workflow/src/injectors/`（3 文件）；`src/interface/tool-workflow.ts`；`src/interface/tool-workflow-script.ts`；`package.json`；`CHANGELOG.md`；`README.md` | C1、C3、C4 | plain | ① pi-sw vitest 全绿 ② 注入快照除 10 内置角色 location 前缀外逐字节等价 ③ run 内置名可跑 ⑥④ core 包根接线实测（convergence §5.4 检查点 2）⑦ grep 无 `subagent-core/shared/` 深路径 import ⑧ CHANGELOG 含 tools 行为变化+逃生门；README 角色数 10 |
+| C5-pi-rebind | pi-sw 七项改接：① injector 调 core format（pi 版 guide）② workflow-script 调 core 管线 ③ run 放开内置名 ④ 依赖下限 ⑤ CHANGELOG ⑥ core 包根接线（不命中走 hostRoots 降级）⑦ import 统一 barrel | `extensions/universal/subagent-workflow/src/injectors/`（3 文件）；`src/interface/tool-workflow.ts`；`src/interface/tool-workflow-script.ts`；`package.json`；`CHANGELOG.md`；`README.md` | C1、C3、C4 | plain | ① pi-sw vitest 全绿 ② 注入快照除 10 内置角色 location 前缀外逐字节等价 ③ run 内置名可跑 ⑥④ core 包根接线实测（convergence §5.4 检查点 2）⑦ grep 断言收口面（injectors 三文件 + tool-workflow-script.ts）无 `@zhushanwen/subagent-core` 深路径 import（口径见偏差 #9/#18）⑧ CHANGELOG 含 tools 行为变化+逃生门；README 角色数 10 |
+| C5b-barrel-aux | C5 blocker 转化（wave-4 增补，55dc457ab）：core barrel 补 findWorkspaceRoot/getCachedParsed/getCachedFileContent/parseResourceMeta 4 辅助导出 + pi-sw injector 发现链深路径归零 | `packages/subagent-core/src/index.ts`；`extensions/universal/subagent-workflow/src/injectors/subagent-list-injector.ts`；`extensions/universal/subagent-workflow/src/injectors/workflow-list-injector.ts`（1c92d6e74 实际领地） | C5 | plain | ① 4 导出 barrel 逐名可达 ② injector 无 `@zhushanwen/subagent-core` 深路径 import（host-services/engine-awareness 豁免面见偏差 #18）③ core + pi-sw vitest 全绿（2531 绿） |
 
 ### R 线（app-server 常驻化）
 
@@ -52,7 +53,7 @@
 | R3-session-channel | 会话层：create/subscribe/send/终态判定（turn.terminal 权威+宽松匹配防洪堤）/read 四层兜底/close；golden 帧序列语料替换 | `packages/subagent-core/src/execution/engine/engines/zcode/session-channel.ts`（新）；`golden-sample.ts`（语料替换）；`engines/zcode/__tests__/` | R2 | plain | ① 单测：A.2 帧序列逐字断言（create 参数 strict 对象/subscribe deliveryKind 必填/send content 字段/收尾帧 usage→message_end.usage）、终态判定（turn.terminal 权威 + 缺失时宽松匹配兜底）、read 四层兜底、close ② golden 双副本 diff 机制保留且新语料四类样本（create 应答/推送流/终态帧/read 应答）③ `-32602` strict 拒收注入用例（RA5-① 回归门的地基） |
 | R4-engine-wiring | 引擎接线：launcher 双模式分派、run 重写（事件时序前移）、abort 链 D3（stop→grace→killChain）、capabilities D5（仅 eventGranularity→stream）、per-session model 透传、poolKey='home-appserver' 锚定+journal 同池+凭据刷新（内容 hash）+目录锁/派生（D7 全量语义）+pidfile 孤儿自愈（D6③ 三重判据）、RunContext 可选 `onHandleReady` + 编排层回填 record.engineHandle 落 entry | `engines/zcode/launcher.ts`、`zcode-engine.ts`、`preparer.ts`、`constants.ts`、`registration.ts`、`parser.ts`（退场或收敛）；`engine/port.ts`（RunContext 增可选回调）；`execution/subagent-service.ts`、`record-store.ts`（回填接线）；persona-router 调用点（zcode 目录内）；相关 `__tests__` | R1、R2、R3 | plain | ① 单测：锚定不变量 poolDir==HOME==db（poolKey 静态常量 + 派生目录记实际名）、目录锁（O_EXCL/pid 活即持有/双接管者竞争闭环/心跳不参与否决）、凭据刷新（hash 不一致→重写+重建连接）、abort 序（stop→grace→kill）、capabilities 仅 eventGranularity 变 ② onHandleReady 回填：create 应答后经回调→record.engineHandle→entry 落盘链单测（record-store 上报通道）③ `eventGranularity` 生产零消费方断言维持（翻转无下游破坏）④ spawn 降级路径行为不回归（D2 兜底与常驻并存） |
 | R5-degrade-chain | 降级链：probe 冒烟改写（独立连接 create→close→shutdown、10s、不发模型请求、结论记 CLI mtime）、首败失效降级（-32601/-32602→spawn 重跑一次+后续直走+record 标注 degraded）、`XYZ_ZCODE_MODE=appserver|spawn` 定向（定向时不探不降） | `engines/zcode/zcode-engine.ts`、`probe 相关文件`（zcode 目录内）；相关 `__tests__` | R4（zcode-engine.ts 同文件串行） | plain | ① 单测 RA5-① 回归门：fixture 注入 `-32602` → 降级 spawn 重跑成功 + record 标注 + 后续直走 spawn ② probe 冒烟：fake server 上 create/close/shutdown 序 + 10s 预算 + mtime 记录与重探触发 ③ env 定向三态（缺省探+降/appserver 不探/spawn 不探不降）④ 错误分类表（设计 §3.3 错误规格 8 行）单测覆盖 |
-| R6-test-migration-docs | zcode 单测族迁移（~40+ 用例）+ conformance C3/C4 口径适配 + golden 双副本 + live gate 4 用例改写 + 文档同步 | `src/execution/engine/__tests__/conformance/`（8 文件）；`engines/zcode/__tests__/`；`docs/architecture/subagent-engine-abstraction.md`；`docs/design/subagent-core-package-extraction.md`；`.xyz-harness/subagent-engine-abstraction/decisions.md` | R4、R5 | plain | ① core `pnpm vitest run` 全量绿（迁移后零跳过零删用例——只迁移不瘦身）② conformance C3（stream 粒度：text_delta 拼接==read 全文等）C4（kill-only 维持）口径适配后全绿 ③ live gate 4 用例改写后 CI 形态正确（live 环境跑属 RA8 跨仓段）④ 文档 3 处 diff 签收（D-010 追加 revisit 行不改写原文）⑤ zsw 仓决策记录状态更新 = 跨仓项，登记移交不阻塞 |
+| R6-test-migration-docs | zcode 单测族迁移（~40+ 用例）+ conformance C3/C4 口径适配 + golden 双副本 + live gate 4 用例改写 + 文档同步 | `src/execution/engine/__tests__/conformance/`（9 文件，实施期增补后实数）；`engines/zcode/__tests__/`；`docs/architecture/subagent-engine-abstraction.md`；`docs/design/subagent-core-package-extraction.md`；`.xyz-harness/subagent-engine-abstraction/decisions.md` | R4、R5 | plain | ① core `pnpm vitest run` 全量绿（迁移后零跳过零删用例——只迁移不瘦身）② conformance C3（stream 粒度：text_delta 拼接==read 全文等）C4（kill-only 维持）口径适配后全绿 ③ live gate 4 用例改写后 CI 形态正确（live 环境跑属 RA8 跨仓段）④ 文档 3 处 diff 签收（D-010 追加 revisit 行不改写原文）⑤ zsw 仓决策记录状态更新 = 跨仓项，登记移交不阻塞 |
 
 ## 3 DAG 图
 
@@ -73,6 +74,7 @@ graph TD
   end
   subgraph Wv4[Wave 4]
     C5["C5-pi-rebind"]
+    C5b["C5b-barrel-aux"]
     R4["R4-engine-wiring"]
   end
   subgraph Wv5[Wave 5]
@@ -86,6 +88,7 @@ graph TD
   C3 -->|"barrel 同文件串行"| C4
   C3 --> C5
   C4 --> C5
+  C5 -->|"C5 blocker 转化，同波追加"| C5b
   R1 --> R2 --> R3 --> R4 -->|"zcode-engine.ts 同文件串行"| R5 --> R6
   R4 --> R6
 ```
@@ -121,15 +124,15 @@ graph TD
 | 6 | R2 | fixture 用 .mjs（本仓 eslint no-require-imports 拦 require）；buildAppServerEnv 组装器独立于 launcher | 合理——环境约束等价实现 |
 | 7 | R3 | golden「替换」实施为「并存」（stdout 语料保留）——spawn 语料消费方在 R4（probe 干跑）/R6（conformance）领地，且 D2 保留 spawn 降级路径；去留 R6 统一定。golden 帧序列为合成语料（A.2 权威+旧实现形态），真机实录待跨仓段替换。session-channel 连接崩溃收割依赖 turnTimeoutMs 兜底（connection 无 onClose 面，R4 补） | 合理——领地纪律优先；来源如实标注 |
 | 8 | C5 | subagents 段 guide 末句重写（systemPrompt 参数已在 pi 现版 tool schema 移除，旧文案主动误导；新文案 = location 路径 + 缺省 general-purpose 指引，依据实测 subagent-tool-schema.ts）——A2 等价口径相应增加该豁免（设计文档已同步） | 合理——保留过期文案才违背设计意图 |
-| 9 | C5 | 依赖下限保持 workspace:*（pack 实测发布面替换为精确 0.4.0 满足 ≥0.4.0 下限；提前写 ^0.4.0 会破坏 workspace 解析）；深路径清零按「收口面」解读（injectors + tool-workflow-script），收口两文件 pre-existing 源码深路径 9 处（execution/*、orchestration/*，其中 type-only import 3 处）不属收口范围，interface 层其余深路径（含 shared/agent-ref、shared/model-ref）一律不属收口，host-services/engine-awareness 为壳侧服务定位器豁免面；core 根解析锚点用 workflows/README.md 子入口（双形态同径），五场景探针落证 probe-c5.md | 合理——链路核实 + pack 实测落证（设计 W5⑦ 口径已同步收口面化） |
+| 9 | C5 | 依赖下限保持 workspace:*（pack 实测发布面替换为精确 0.4.0 满足 ≥0.4.0 下限；提前写 ^0.4.0 会破坏 workspace 解析）；深路径清零按「收口面」解读（injectors + tool-workflow-script），收口两文件 pre-existing 源码深路径 9 处（execution/*、orchestration/*，其中 type-only import 4 处）不属收口范围，interface 层其余深路径（含 shared/agent-ref、shared/model-ref）一律不属收口，host-services/engine-awareness 为壳侧服务定位器豁免面；core 根解析锚点用 workflows/README.md 子入口（双形态同径），五场景探针落证 probe-c5.md | 合理——链路核实 + pack 实测落证（设计 W5⑦ 口径已同步收口面化） |
 | 10 | R4 | 前任 5h 限额中断于 import 面（D7 符号在 appserver-home.ts 而 zcode-engine 从 preparer import），接替续作仅修 import 路径；conformance contract.abort 钉 XYZ_ZCODE_MODE=spawn（fixture 经 deps.launch 驱动 spawn 分支，钉扎必要，R6 已核）；record-store 未改动——回填走既有 reportRecordTransition 通道 | 合理——接替程序标准路径；单点突破已 R6 核实 |
-| 11 | R5 | record 降级标注走 outcome.engineFallback 既有留痕通道（D9① 复用）；探针结论内存化（smokeConclusion 绑 CLI mtime，非落盘——进程重启重探重建，等价且免 IO）；driftDegraded 内存标志余生直走 spawn；顺带修复 R4 dispose 竞态 flake（shutdownRuntimeAndDisposeChannel 等 onClose 收割，基线 ~50% 复现转 5/5 稳定） | 合理——任务级标注语义；竞态修复有基线复现证据 |
+| 11 | R5 | record 降级标注走 outcome.engineFallback 既有留痕通道（D9① 复用）；探针结论内存化（smokeConclusion 绑 CLI mtime，非落盘——进程重启重探重建，等价且免 IO）；driftDegraded 内存标志余生直走 spawn；顺带修复 R4 dispose 竞态 flake（shutdownRuntimeAndDisposeChannel 等 onClose 收割，基线 ~50% 复现转 5/5 稳定） | 合理——任务级标注语义；竞态修复有基线复现证据；与 §3.1 原表述的差异已回写设计文档（用户裁决 2026-08-31） |
 | 12 | R6 | 移交决策：stdout golden 保留（probe 第 3 检 + spawn 降级 parser + conformance 仍有消费方）；probe() 维持三检不迁冒烟（公共面 = 形状/版本/spawn-parser 契约，冒烟已内化为 run 门控 appserver-probe.ts，语义无缺口）；conformance 双模式（spawn 钉扎保留 + appserver 新增用例，非参数化） | 合理——消费方事实驱动 |
 | 13 | 阶段3审查修复 | R 线三 low 瑕疵修（pidfile 常量化 / pre-abort poolKey 用 homeState 锚定 / homeAcquire 并发 catch 重走）；全 2539 绿 | 一致性审查清零批次 |
 | 14 | CA2 验收 | A2 基线逐字节 diff 原未执行（Gate B S1 仅改造后现状验证），已补做并落盘 [probe-a2-baseline.md](subagent-core-convergence.probe-a2-baseline.md)（渲染函数级改造前后逐字节对比；结论：三段等价面除声明豁免外零差异） | 合理——证据缺口补齐（落盘载体 wave-1 d56940ccd） |
 | 15 | R4 | appserver-home.ts 自 preparer.ts 拆出（D7 常驻 HOME/锁/pidfile 语义单一关注点；preparer 保留 spawn 池语义，语义等价，模块头注已登记拆分缘由） | 合理——单一关注点拆分，非行为变更 |
 | 16 | R4 | 凭据刷新 hash 只覆盖 provider 注册表段，model.main 不参与（per-session model 走 create 参数传入，计入 hash 会在每次换模型时误判「凭据变更」杀掉常驻进程——appserver-home.ts hashProviderRegistry 同口径） | 合理——换模型 ≠ 凭据变更；设计文档 D7 已同步限定 hash 范围 |
-| 17 | CA3-pi 验收 | A3-pi 六步中两步（workflow 传自定义脚本路径 / @pi-meta 格式核对）Gate B 真机段后补：前者以现有单测 tool-workflow-throw-paths / tool-workflow-script-generate 佐证落档，后者静态核对一致（gateb.md S2 已补录，计数 4/4→6/6） | 合理——真机预算约束下以单测+静态核对补证，证据形态如实标注 |
+| 17 | CA3-pi 验收 | A3-pi 六步中两步（workflow 传自定义脚本路径 / meta 格式描述核对）Gate B 真机段后补：前者以现有单测 tool-workflow-throw-paths / tool-workflow-script-generate 佐证落档，后者静态核对一致（gateb.md S2 已补录，计数 4/4→6/6） | 合理——真机预算约束下以单测+静态核对补证，证据形态如实标注 |
 | 18 | C5b | 深路径「归零」口径收窄：injector 发现/渲染链（shared/*）深路径归零；host-services（getHostServices 为 core 服务定位器、barrel 刻意不导出）与 engine-awareness 深路径为壳侧豁免面 | 合理——壳侧服务定位器消费不属收口面；设计 W5/本表 #9/C5b 证据行三处口径统一 |
 
 ## 6 状态表
@@ -153,12 +156,12 @@ graph TD
 
 ### 残留风险
 
-1. **分支认知外提交**：基线 `88d7eadc6` 后其他任务线提交持续增长（2026-08-30 核实 26 个），与两线领地交集为 0。每波派发前复核 `git log --name-only` 与 `git status`；工作区现存认知外变更（`apps/electron/package.json`、暂无其他）不碰不裹挟。
-2. **版本合并决策**：两线共用 core 0.4.0 单 minor（用户「一起开发」指令取代 app-server 设计 §5 先行/顺延建议）；收尾创建单一 changeset。若 core 0.3.0（host-surface changeset 已备）届时仍未发布，与用户确认是否合并 minor。
-3. **R 线实施期检查点**（app-server 设计 §5 末 5 项）：--surface/--stdio 矩阵（D10 留白，R4 实施期定案）、stream.chunk 文本字段、-32022 错误码、read tokens 结构、GUI ①级锚定——结论回填设计文档检查点段并登记偏差表。
-4. **C 线实施期检查点**（convergence §5.4 前两项）：project 槽 API 形态（C2）、dev 拓扑扫描确认（C5⑥）——probe 文档落证。
+1. **分支认知外提交**：基线 `88d7eadc6` 后其他任务线提交持续增长（2026-08-30 核实 26 个），与两线领地交集为 0。每波派发前复核 `git log --name-only` 与 `git status`；工作区认知外变更以 git status 实时输出为准，不碰不裹挟（登记时点快照会过时；最近核实 2026-08-31：未提交改动为 renderer/runtime 的 llm-retry 任务线，与两线领地交集 0）。
+2. **版本合并决策——已裁决（2026-08-31 用户确认）**：0.3.0 未发布（npm 发布面仍 0.2.0），「0.3.0 届时仍未发布」触发条件已命中；裁决为 0.3.0 并入 0.4.0 单一 changeset（合并 host-surface 与 C 线 + R 线内容；合并已落盘：`.changeset/subagent-core-convergence-0.4.0.md`（旧 host-surface 与 pi-sw-rebind 两文件已删除并入）），发版仍待用户授权。
+3. **R 线实施期检查点**（app-server 设计 §5 末 5 项）——**主体已闭环（389cce3f3 回填实施后注）**：D10 定案基线不带 flag、stream.chunk 宽容双形态兜底、read tokens 宽容解析、GUI ①级锚定实现面落齐（回填见 app-server 设计 D10 实施后注与「待验证检查点」段）；真未决仅跨仓真机段子项：D10 三态矩阵补验、-32022 当前版本错误码确认。
+4. **C 线实施期检查点**（convergence §5.4 前两项）——**已闭环**：project 槽 API 形态定案 project-host 槽（probe-c2.md §7，状态表 C2 已记录）、dev 拓扑扫描确认（probe-c5.md 五场景，含接线落点实施）。
 5. **跨仓验收依赖**：Gate B 跨仓段依赖 zsw 会话 vendor --local 刷新；RA9 与 zsw W6-W9（convergence zsw 侧）共享该前置。本仓完成定义 = 本仓可执行段全绿 + committed + 报告用户，跨仓段移交。
-6. **R2 fixture 移植来源**：fake-server 60+ 用例从 zsw 仓 `84b63a0^:lib/runner-appserver.js` 时代实现移植改造——只取测试模式与协议断言，代码逐字复制需适配 core 测试框架（vitest），防止盲目平移。
+6. **R2 fixture 移植来源——已消解（随 R2 db721187d 落地）**：fake-server 用例从 zsw 仓 `84b63a0^:lib/runner-appserver.js` 时代实现移植改造完成，只取测试模式与协议断言并适配 vitest（21 fake-server 用例，状态表 R2 行）。
 7. **发版与 push 授权边界**：一切 push / 合并 main / npm publish 需用户另行授权。
 8. **S6（RA2-② GUI 详情页快照）未验证**：Gate B 本仓段唯一 blocked 项——需 pnpm dev 起 Electron + browser-automation 编排「zcode 引擎 subagent 运行中打开详情页验证 ②级 journal 快照」，移交 GUI 验收段（可与 RA 跨仓真机段同批）。
 9. **Gate A 观察项**（不阻塞）：extensions:lint 161 warning 存量（0 error，含 no-unsafe-cast/no-silent-catch 建议后续清理批次）；live 门真机用例（ENGINE_CONFORMANCE_LIVE/ZCODE_E2E_MODEL）未在本段执行，R 线 app-server 真机覆盖依赖发布前手动触发 live 门；zcode-engine.live.test 的 E2E_MODEL 缺省值烤死本机 provider id（文件内已注释自述）。
@@ -170,4 +173,5 @@ graph TD
 - 2026-08-31：阶段 2 完成——12 单元全部 committed（C 线 6 + R 线 6）。
 - 2026-08-31：阶段 3-4 一致性审查清零——双线独立审查（C 线：D-1~D-6 与九红线逐条通过；R 线：十决策逐条落地、G4 成立）+ 3 low 代码瑕疵修复 + 5 doc_errors 文档修订（A2 等价口径加 guide 豁免 / W5⑦ 收口面化 / appserver 检查点 5 项回填 + D10 注记 / 偏差表补至 13 条）。
 - 2026-08-31：阶段 5 双级验收——**Gate A 全绿**（core 2539 + pi-sw 918 + extensions 三连 + build:bundle 自包含 13 新导出面 + tarball 含 10 agents）；**Gate B 本仓段 5 pass / 1 blocked**（证据 [gateb.md](subagent-core-convergence.gateb.md)：S1 注入面 10 角色 location 指 core 包 ✅ / S2 契约四例（裸名拒+路径成+内置名解析+缺省 general-purpose）✅ / S3 orchestrator 去 tools 化真实派发 ✅（argv 探针弱证据如实标注）/ S4 npm pack 升级模拟 core 强制升 0.4.0 ✅ / S5 无进程残留 ✅ / **S6 = RA2-② GUI 详情页 blocked——需 pnpm dev + GUI 自动化编排，未验证，移交 GUI 验收段**）。
-- 2026-08-31：二轮对抗审查（4 分区 reviewer）清零——发现 2 med + 9 low + 5 doc_errors，修复分两波：wave-1 代码（d56940ccd，A2 基线 diff 补做落盘 + 6 low 代码修复）、wave-2 文档（本 commit，doc_errors 全部修订：A5-② 与 D2④ 矛盾消解 / D8 探针 env 标记登记 / D7 hash 范围限定 / W4 文件地图拆分如实 / W5-偏差表-C5b 三处深路径口径一致化 / gateb S2 补录 6/6）；偏差表补登 #14-#18。至此审查项全部清零。
+- 2026-08-31：二轮对抗审查（4 分区 reviewer）清零——发现 2 med + 9 low + 5 doc_errors，修复分两波：wave-1 代码（d56940ccd，A2 基线 diff 补做落盘 + 6 low 代码修复）、wave-2 文档（本 commit，doc_errors 全部修订：A5-② 与 D2④ 矛盾消解 / D8 探针 env 标记登记 / D7 hash 范围限定 / W4 文件地图拆分如实 / W5-偏差表-C5b 三处深路径口径一致化 / gateb S2 补录 6/6）；偏差表补登 #14-#18。审查项清零（其后深路径措辞经定向复审再精确化一次，见下行）。
+- 2026-08-31：targeted re-review closure（b9c3ee38d）——偏差 #9/设计 §4.2 W5 深路径措辞源码级精确化（「运行时深路径」收窄为「源码深路径」），纯文档（两文件各 1 行），无代码改动。

@@ -13,7 +13,7 @@ created_at: 2026-08-24
 
 ## 决策账本（append-only，一行一条决策）
 
-> 表头与字段顺序固定（check 脚本/下游引用依赖）。`superseded_by` 空列留空；有值时原行 `status` 必须同步改 `revisited`。
+> 表头与字段顺序固定（check 脚本/下游引用依赖）。`superseded_by` 空列留空；有值时原行 `status` 必须同步改 `revisited`。豁免：`source` 列标注 `[REVISIT of X]` 形态的追加行，原行 `status` 可保持 `confirmed` 不翻（追加行自带溯源，审计原文不动）。
 
 | id | decision | rationale | classification | confirmed_by | stage | source | status | superseded_by |
 |----|----------|-----------|----------------|--------------|-------|--------|--------|---------------|

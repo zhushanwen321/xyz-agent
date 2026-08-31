@@ -39,13 +39,22 @@ This is enforced by `lintScript`:
 
 ## Required: Meta Declaration
 
-Every script MUST declare `meta` at the top level:
+Every script MUST declare its metadata as a `/* @pi-meta */` YAML block comment at the top level — NOT a `const meta` variable:
 
 ```javascript
-const meta = { name: 'workflow-name', description: '...', phases: ['phase1', 'phase2'] };
+/* @pi-meta
+name: workflow-name
+description: One-line description of what the workflow does
+phases: ['phase1', 'phase2']
+*/
 ```
 
-`name` must match the filename stem. `phases` is for display only.
+- `name` must match the filename stem. `phases` is for display only.
+- Optional fields: `parameters` (JSON Schema for `$ARGS`) and `usage` (markdown).
+- The YAML body starts on the line after `/* @pi-meta`; the closing `*/` must sit alone at column 0.
+- `generate` round-trip-validates the YAML and reports line/col on error (common pitfall: patternProperties regex must use double backslash `\\d`, not `\d`).
+
+> **Legacy `const meta = { ... }` (transition only):** `generate` still accepts a legacy top-level `const meta` during the transition window, but the core discovery chain does NOT recognize it (no legacy fallback) — such scripts stay invisible to discovery and get no metadata injection. Always use `/* @pi-meta */` for new scripts.
 
 ## [MANDATORY] Display: description + phase
 
@@ -59,11 +68,11 @@ TUI `/workflows` 视图按**运行时 `phase()` 调用**分组（非 `meta.phase
 ### Minimal 示例（三者齐备）
 
 ```javascript
-const meta = {
-  name: 'review-fix',
-  description: 'review then fix',
-  phases: ['review', 'fix'],
-};
+/* @pi-meta
+name: review-fix
+description: review then fix
+phases: ['review', 'fix']
+*/
 
 phase('review');
 const r = await agent({ prompt: 'review diff', description: 'review-diff' });
@@ -201,7 +210,7 @@ const results = await parallel(
 );
 ```
 
-> 内置通用编排 workflow（chain / parallel / scatter-gather / map-reduce，可直接 `workflow run`，用 `agent()` 自包含实现）见 `extensions/universal/subagent-workflow/workflows/`。本段教 `workflow()` 嵌套 API，workflows 目录是开箱即用的通用编排工具（用 `agent()` 而非 `workflow()` 嵌套）。
+> 内置通用编排 workflow（chain / parallel / scatter-gather / map-reduce / review-fix-loop，可直接 `workflow run`，用 `agent()` 自包含实现）见 `extensions/universal/subagent-workflow/workflows/`。本段教 `workflow()` 嵌套 API，workflows 目录是开箱即用的通用编排工具（用 `agent()` 而非 `workflow()` 嵌套）。
 
 ### Other globals
 
@@ -249,7 +258,11 @@ agent({ prompt: '...', description: 'review-business-logic' });
 ## Complete Example
 
 ```javascript
-const meta = { name: 'review-fix-loop', description: 'Loop: review → fix → commit until clean', phases: ['review-fix'] };
+/* @pi-meta
+name: review-fix-loop
+description: "Loop: review → fix → commit until clean"
+phases: ['review-fix']
+*/
 
 const MAX_ROUNDS = 10;
 let round = 0;

@@ -7,8 +7,9 @@
  *
  * 改造点：
  * - P4：发现路径由自实现扫 4 目录改为同包 ADR-031 统一发现 discoverResources
- *   （覆盖 7 源：user-pi/user-agents/npm/npm-dev/project-pi/project-agents + manifest
- *   模式 + 优先级合并）。discoverResources 只返回 DiscoveredResource（path/source/
+ *   （P4 时点覆盖 7 源；C2 扩源后为统一发现全源 9 值 ResourceSource，含
+ *   user-extension-paths/project-pi-tmp/project-host——序见 resource-discovery.ts
+ *   模块头注 + 优先级合并）。discoverResources 只返回 DiscoveredResource（path/source/
  *   available），不含 name/description——保留 parseAgentFrontmatter 解析每个 .md 的
  *   frontmatter 提取 name+description。
  * - P3：注入段引导语含正向触发引导（何时该 delegate）+ 名字约束（文案见

@@ -10,7 +10,7 @@
 // 4. manifest 路径存在性校验：声明的路径不存在 → 该包发现失败，不 fallback
 // 5. 废弃 discovery.json：扫描路径完全由代码内推导，无外部依赖
 //
-// 优先级（低→高）：user .pi/agent → user .agents → npm global → npm dev → project .pi → project .pi/.tmp(仅workflow) → project-host(宿主注入槽) → project .agents
+// 优先级（低→高）：user .pi/agent → user .agents → npm global → npm dev → ext-paths(XYZ_EXTENSION_PATHS/dev-link) → project .pi → project .pi/.tmp(仅workflow) → project-host(宿主注入槽) → project .agents
 
 import * as fsSync from "node:fs";
 import { access, readdir, readFile, realpath, stat } from "node:fs/promises";

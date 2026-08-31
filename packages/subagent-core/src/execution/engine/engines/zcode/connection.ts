@@ -18,8 +18,9 @@
 //     记入 protocolInfo 后忽略，不抛。
 //
 // 与 R4 的接线边界（本模块刻意保持的解耦）：
-//   - 启动参数矩阵（D10 的 --stdio/--surface）不在此层——基线 argv 恒
-//     `node <cliPath> app-server --cwd <dir>`，R4 实施期定案后如需加 flag 在接线处组装；
+//   - 启动参数矩阵（D10 的 --stdio/--surface）不在此层——D10 已定案：基线 argv 恒
+//     `node <cliPath> app-server --cwd <dir>`，不带 --stdio/--surface（三态矩阵补验
+//     留跨仓真机段）；
 //   - env 全量从构造参数注入（buildAppServerEnv 是沿用 launcher 惯例的便捷组装器，
 //     R4 也可复用 launcher 的 buildZcodeEnv 自行组装后传入——本模块不 import launcher）；
 //   - stderr tee 路径参数化（引擎数据目录由 R4 注入；测试用 tmp 目录）；

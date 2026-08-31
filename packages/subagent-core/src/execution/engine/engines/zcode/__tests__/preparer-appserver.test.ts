@@ -3,6 +3,8 @@
 // 不参与否决、双接管者竞争闭环、派生后缀）/ pidfile 孤儿自愈三重判据（D6③）。
 // 进程形态用真实短命 node 子进程（活 pid / 死 pid / 命令行形态匹配全真实验证，
 // macOS 本机 ps 可用——CI 同构）。
+// 文件名系 appserver-home.ts 自 preparer.ts 拆分前遗留——被测对象（import 面）为
+// appserver-home.ts，与 preparer.ts 现行 spawn 池语义无关。
 
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";

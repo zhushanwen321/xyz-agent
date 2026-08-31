@@ -211,7 +211,7 @@ core 是「平台无关的 subagent 执行与 workflow 编排内核」，双形�
 | # | 场景 | 步骤 | 通过标准 | 回溯 |
 |---|---|---|---|---|
 | A2 | pi 侧回归 | ① **W5 动工前**在 dev 链接环境落改造前三段注入快照（对比基线，落盘保存）；② W5 完成后正常会话 + `/subagents` 面板 + 跑一个 `workflow run`（内置名）；③ 升级路径模拟（本设计不发版，用 pack 产物构造）：临时副本（core 副本全目录 copy 自已完成 §4.3-1 构建的包目录，含 dist/dist.bundle——最小化副本会产出缺 dist 的残包）中 bump core 版本至 0.4.0、pi-sw 依赖改 `^0.4.0`（模拟发布面 manifest——`workspace:*` 直接 pack 会替换成现版本 0.2.0，验证不了下限），两包分别 `npm pack`；干净临时 agent 目录先装已发布的 pi-sw 8.7.0（自带精确 core 0.2.0），再**同批**安装两个本地 tarball（registry 无 0.4.0，单装 pi-sw tarball 必 404 失败——同批安装是刻意设计非绕过），验收后丢弃临时副本、不污染工作区 | 注入三段格式与改造前逐字节等价，豁免仅两处（10 内置角色 location 前缀 + subagents 段 guide 末句的 systemPrompt 过期文案修正，见 §3.1；红线 8 的 location 豁免收窄口径不变）；内置 workflow 按名可跑（D-4 pi 半边）；10 个角色仍可发现（来源变 core 包）；升级路径下 npm 因已装精确版本 `0.2.0` 不满足 `^0.4.0` 下限而强制拉入本地 core 0.4.0 tarball，10 角色随依赖到达 | G1/G2/G6 |
-| A3-pi | 契约统一（pi 半边） | pi 侧跑：agent 传路径（应成，现有行为不回退）；agent 传名字（应拒——报错产自 core `agent-registry`/`agent-ref`，改造不动它）；agent 缺省（应走 general-purpose）；workflow 传内置名（应成——新行为）；workflow 传自定义脚本路径（应成——现有行为）；核对 `skills/workflow-script-format` 的 @pi-meta 格式描述与 W4 平移后 core 管线校验规则一致 | 成功路径行为与改造前一致；新增内置名路径可用；agent 名字拒绝报错与改造前逐字节一致（core 单实现未被触碰）；缺省角色不变 | G2 |
+| A3-pi | 契约统一（pi 半边） | pi 侧跑：agent 传路径（应成，现有行为不回退）；agent 传名字（应拒——报错产自 core `agent-registry`/`agent-ref`，改造不动它）；agent 缺省（应走 general-purpose）；workflow 传内置名（应成——新行为）；workflow 传自定义脚本路径（应成——现有行为）；核对 `skills/workflow-script-format` 的 meta 格式描述与 W4 平移后 core 管线校验规则一致 | 成功路径行为与改造前一致；新增内置名路径可用；agent 名字拒绝报错与改造前逐字节一致（core 单实现未被触碰）；缺省角色不变 | G2 |
 | A9 | pi 侧 D-5 行为验收 | pi 侧真实派发一次 orchestrator 委派（去 tools 化后），观察子进程完成情况与产出；抓子进程 argv 确认 `--tools` 未传 | 子进程正常完成、产出质量无肉眼劣化、无异常工具调用行为（argv 探针只证 flag 未传，行为可接受性需真实场景确认） | G1/G6 |
 
 ### 4.2 单元级测试门（每单元完成的判据，vitest）
@@ -222,7 +222,7 @@ core 是「平台无关的 subagent 执行与 workflow 编排内核」，双形�
 | W2 | vitest 绿（含多链同文件去重、同标签多根、同 stem 撞名本体胜、子目录/node_modules 三维度对照）；pi 单条目形态改前后 `discoverResources` 输出逐项一致（对照探针，证据落盘）；`scanDirectorySync` L671 漂移注释已修 |
 | W3 | 渲染单测绿：undefined input/contextWindow 不抛不渲垃圾、provider 存在时 `<id>` 输出 `provider/id` 拼接 + (provider, id) 两段排序（A2 等价面）、provider 缺席/空串时裸 id + id 码点序（zsw 投影形态）、码点序 + 截尾、预算边界、guide 由宿主注入；barrel 导出探针（node require 逐名检查） |
 | W4 | 管线单测绿：ESM 样本拒（报错含行列）、无 meta 拒、无 agent() 拒、合法样本落 tmp；参数化目录注入生效（非 .pi 硬编码）；barrel 探针 |
-| W5 | pi-sw vitest 全绿；注入快照对比（红线 8 口径 + guide 末句豁免）；workflow run 传内置名可跑；core 包根接线实测（§5.4 检查点 2，不命中走降级并记录）；grep 断言**收口面**（`src/injectors/` 三文件 + `src/interface/tool-workflow-script.ts`）无 `@zhushanwen/subagent-core` 深路径 import（职责⑦按收口面解读——收口两文件 tool-workflow.ts + tool-workflow-script.ts 改造前 pre-existing 源码深路径 9 处（execution/*、orchestration/*，其中 type-only import 3 处）不属本设计收口范围；interface 层其余深路径（含 shared/agent-ref、shared/model-ref 等）一律不属收口范围，pi-sw workspace 形态经 `./*` 通配可达。host-services 豁免：getHostServices 为 core 服务定位器、barrel 刻意不导出（导出仅 configureCore/类型面），src/injectors/ 的壳侧深路径消费属豁免面） |
+| W5 | pi-sw vitest 全绿；注入快照对比（红线 8 口径 + guide 末句豁免）；workflow run 传内置名可跑；core 包根接线实测（§5.4 检查点 2，不命中走降级并记录）；grep 断言**收口面**（`src/injectors/` 三文件 + `src/interface/tool-workflow-script.ts`）无 `@zhushanwen/subagent-core` 深路径 import（职责⑦按收口面解读——收口两文件 tool-workflow.ts + tool-workflow-script.ts 改造前 pre-existing 源码深路径 9 处（execution/*、orchestration/*，其中 type-only import 4 处）不属本设计收口范围；interface 层其余深路径（含 shared/agent-ref、shared/model-ref 等）一律不属收口范围，pi-sw workspace 形态经 `./*` 通配可达。host-services 豁免：getHostServices 为 core 服务定位器、barrel 刻意不导出（导出仅 configureCore/类型面），src/injectors/ 的壳侧深路径消费属豁免面） |
 
 ### 4.3 完成定义（对 zsw 会话的接口契约）
 

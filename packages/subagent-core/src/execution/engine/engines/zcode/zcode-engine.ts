@@ -9,7 +9,7 @@
 // 双模式分派（R4；D2 降级链的骨架）：
 //   - appserver（缺省）：惰性常驻连接（connection.ts + session-channel.ts）上的
 //     create→subscribe→send→事件流→终态→read→close；per-session model 经 create
-//     参数透传；常驻 HOME = engines/zcode/home-appserver（D7 全量语义见 preparer.ts）；
+//     参数透传；常驻 HOME = engines/zcode/home-appserver（D7 全量语义见 appserver-home.ts）；
 //     缺省路径带 R5 降级链门控：协议冒烟探针（appserver-probe.ts，结论与 CLI mtime
 //     绑定）失败 → 本任务起 spawn 直走；首任务命中漂移类 RPC 错误（-32601/-32602）
 //     → 本任务降级 spawn 重跑一次 + 后续任务直走 spawn（标志内存化）；
@@ -401,7 +401,7 @@ export class ZcodeEngine implements EnginePort {
   // ============================================================
 
   /**
-   * 常驻路径主编排：常驻 HOME（锁/派生/孤儿回收/凭据刷新——preparer D7 全量）→
+   * 常驻路径主编排：常驻 HOME（锁/派生/孤儿回收/凭据刷新——appserver-home D7 全量）→
    * 惰性连接 + runTurn（事件时序前移：text_delta 流式、终态后 message_end/turn_end）→
    * schema 仿真重试（与 spawn 同编排）→ outcome/handle。poolKey 静态常量，
    * onPoolResolved 在 prepare 期、onHandleReady 在 create 应答后（§3.4 不变量 3）。
@@ -418,6 +418,13 @@ export class ZcodeEngine implements EnginePort {
     // pre-aborted 短路：取消先于启动——不创建会话、不触发连接惰性启动（防误杀共享
     // 进程殃及在途任务；spawn 路径无此形态因每任务独占进程）
     if (ctx.signal?.aborted === true) {
+      // poolKey 锚定：已持有 HOME（含派生场景）用其真实 poolKey；首次即 abort 尚无
+      // HOME 可用，退回静态常量（此刻确实无派生事实可锚定）
+      const poolKey = this.homeState?.poolKey ?? ZCODE_APPSERVER_POOL_KEY;
+      // 对齐点③（不变量 3）：onPoolResolved 必须先于首个事件 emit——本分支
+      // finalizeOutcome 经 applyAbortedOutcome emit error 事件，缺本调用会把事件落
+      // shared 占位池，与 handle.poolKey 漂移（契约同正常路径 prepare 期声明）
+      ctx.onPoolResolved?.(poolKey);
       const outcome = this.finalizeOutcome(
         task,
         ctx,
@@ -425,9 +432,6 @@ export class ZcodeEngine implements EnginePort {
         { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false },
         startedAt,
       );
-      // poolKey 锚定：已持有 HOME（含派生场景）用其真实 poolKey；首次即 abort 尚无
-      // HOME 可用，退回静态常量（此刻确实无派生事实可锚定）
-      const poolKey = this.homeState?.poolKey ?? ZCODE_APPSERVER_POOL_KEY;
       return { result: { handle: this.appServerHandle(poolKey, outcome), outcome }, driftCode: undefined };
     }
 
@@ -768,9 +772,21 @@ export class ZcodeEngine implements EnginePort {
     if (rt === undefined) return;
     this.appserverRuntime = undefined;
     // ①fire 全部在途会话的 session/close 帧（不等待应答——D6① 顺序规定：close 帧
-    // 必须先于 SIGTERM，否则对面来不及处理即被杀）
-    for (const sessionId of [...rt.activeSessions]) {
-      rt.conn.post("session/close", { sessionId });
+    // 必须先于 SIGTERM，否则对面来不及处理即被杀）。进程已死（child=null，如崩溃
+    // 收割与 activeSessions 清理之间的微拍）则整体跳过：post 会经 ensureStarted 惰性
+    // 拉起新进程再被同次 dispose 杀掉——无意义的 spawn+kill 循环（D6 dispose=防泄漏
+    // 语义不制造新进程），且对面进程已不在，close 帧也没有送达对象。同步循环内
+    // alive 不会中途翻转（进程退出是异步事件，本轮循环不可重入）
+    // ①fire 全部在途会话的 session/close 帧（不等待应答——D6① 顺序规定：close 帧
+    // 必须先于 SIGTERM，否则对面来不及处理即被杀）。进程已死（child=null，如崩溃
+    // 收割与 activeSessions 清理之间的微拍）则整体跳过：post 会经 ensureStarted 惰性
+    // 拉起新进程再被同次 dispose 杀掉——无意义的 spawn+kill 循环（D6 dispose=防泄漏
+    // 语义不制造新进程），且对面进程已不在，close 帧也没有送达对象。同步循环内
+    // alive 不会中途翻转（进程退出是异步事件，本轮循环不可重入）
+    if (rt.conn.alive) {
+      for (const sessionId of [...rt.activeSessions]) {
+        rt.conn.post("session/close", { sessionId });
+      }
     }
     // ②③ 同步 SIGTERM（killChain 前缀在 shutdown 调用内同步执行）→ grace → SIGKILL
     //（异步面，resolve 于进程退出）。channel 退订放在崩溃收割之后（exit→close 窗口

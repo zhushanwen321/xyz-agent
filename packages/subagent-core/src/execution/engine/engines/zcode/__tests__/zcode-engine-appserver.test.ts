@@ -23,6 +23,8 @@ import type { AgentEvent, AgentTaskSpec } from "../../../types.ts";
 import { resolvePoolDir } from "../../../paths.ts";
 import { ZCODE_APPSERVER_POOL_KEY, ZCODE_POOL_CONFIG_SUFFIX } from "../constants.ts";
 import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
+import { AppServerConnection } from "../connection.ts";
+import { SessionChannel } from "../session-channel.ts";
 import { ZcodeEngine, pinnedZcodeMode, type ZcodeEngineDeps } from "../zcode-engine.ts";
 
 const FAKE_CLI = fileURLToPath(new URL("./__fixtures__/fake-appserver.mjs", import.meta.url));
@@ -456,14 +458,26 @@ describe("abort 链（D3）", () => {
     expect(bootCount(stateFile)).toBe(2);
   }, 40_000);
 
-  it("pre-aborted signal：短路返回中止终态——不建会话不发任何帧（防误杀共享进程）", async () => {
+  it("pre-aborted signal：短路返回中止终态——不建会话不发任何帧（防误杀共享进程）；onPoolResolved 先于 error 事件（不变量 3）", async () => {
     const { engine, stateFile, workspace } = makeEngine();
     const controller = new AbortController();
     controller.abort();
-    const { handle, outcome } = await engine.run(makeTask({ cwd: workspace }), makeCtx({ signal: controller.signal }));
+    const order: string[] = [];
+    const { handle, outcome } = await engine.run(
+      makeTask({ cwd: workspace }),
+      makeCtx({
+        signal: controller.signal,
+        onPoolResolved: (k) => order.push(`pool:${k}`),
+        onEvent: (e) => order.push(`event:${e.type}`),
+      }),
+    );
     expect(outcome.exitCode).toBeNull();
     expect(outcome.error).toContain("session/stop");
     expect(handle.data.sessionRef["sessionId"]).toBeUndefined();
+    // 不变量 3：poolKey 声明先于首个事件（error）——journal writer 重定向先于落盘，
+    // 落盘池与 handle.poolKey 同值同源（短路分支不满足即落 shared 占位池漂移）
+    expect(order).toEqual([`pool:${ZCODE_APPSERVER_POOL_KEY}`, "event:error"]);
+    expect(handle.data.poolKey).toBe(ZCODE_APPSERVER_POOL_KEY);
     expect(readState(stateFile)).toHaveLength(0); // 连惰性启动都没触发
   }, 10_000);
 
@@ -555,6 +569,41 @@ describe("dispose", () => {
     expect(second.outcome.error).toBeUndefined();
     expect(second.outcome.content).toBe(GOLDEN_FULL_TEXT);
     expect(bootCount(stateFile)).toBe(2);
+  }, 15_000);
+
+  it("窄竞态守卫：进程已死（child=null）但 activeSessions 残留时，dispose 不经 post 惰性拉起新进程（D6 防泄漏）", async () => {
+    // 真实微拍窗口（进程死亡收割与 activeSessions 清理之间的 microtask）不可从公开
+    // 面同步注入——白盒构造同形态快照：runtime 的 conn 无活进程、activeSessions 非空。
+    // 守卫缺失时 dispose 循环 post("session/close") 会 ensureStarted 惰性 spawn 一代新
+    // 进程再被同次 dispose 杀掉（onSpawned 同步触发）；守卫生效时永不 spawn。
+    // 观测面用 conn.onSpawned（spawnGeneration 内同步调用）而非 fake 侧 boot 计数：
+    // post 后紧接 SIGTERM，新进程来不及写 boot 即死，写盘时序不可靠。
+    const { engine } = makeEngine();
+    let spawned = false;
+    const conn = new AppServerConnection({
+      cliPath: FAKE_CLI,
+      cwd: tmpRoot,
+      env: {
+        PATH: process.env.PATH ?? "",
+        FAKE_STATE_FILE: path.join(tmpRoot, "state-dispose-guard.jsonl"),
+        FAKE_SESSION_SCENARIO: path.join(tmpRoot, "scenario-dispose-guard.json"),
+      },
+      stderrLogPath: path.join(dataDir, "logs", "dispose-guard-stderr.log"),
+      onSpawned: () => {
+        spawned = true;
+      },
+    });
+    const ghostRt = {
+      conn,
+      channel: new SessionChannel(conn),
+      homePoolKey: ZCODE_APPSERVER_POOL_KEY,
+      homeDir: resolvePoolDir(dataDir, "zcode", ZCODE_APPSERVER_POOL_KEY),
+      activeSessions: new Set<string>(["sess_ghost"]),
+    };
+    (engine as unknown as { appserverRuntime: unknown }).appserverRuntime = ghostRt;
+    expect(conn.alive).toBe(false); // 快照前置：无活进程
+    await engine.dispose();
+    expect(spawned).toBe(false); // 守卫生效：close 帧循环跳过，零惰性 spawn
   }, 15_000);
 });
 
