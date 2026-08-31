@@ -4,7 +4,7 @@
  * 分层约定（同 scheduler/cw-tool）：本文件零 pi 依赖——agentDir 作参数注入，
  * 不调用 getAgentDir()，可完全单测；pi 注册与 getAgentDir() 调用在 index.ts。
  *
- * 按 action 分发到 8 条路径，串联 M1 core（parser/tree/turns/render）+ M2 discovery
+ * 按 action 分发到 9 条路径，串联 M1 core（parser/tree/turns/render）+ M2 discovery
  *（find/subagents）。content 给 LLM 读（人类可读摘要），details 供程序化消费/测试断言。
  *
  * 错误规格 F1-F6：handler 抛 Error（message 含 👉 恢复指引），index.ts 的 execute 闭包
@@ -327,7 +327,7 @@ function formatSessionGc(record: RecordManifest): string {
 /** ES2（SA_ID_NO_MATCH）：sa-id 无精确匹配（可能仍在运行 / 片段输入）。 */
 function formatSaIdNotFound(saId: string): string {
   return (
-    `subagent "${saId}" 无匹配 record（可能仍在运行——终态 record 在 completed/failed 后才写）。` +
+    `subagent "${saId}" 无匹配 record（若刚启动，record 可能尚未落盘）。` +
     `\n👉 用 session_read { action:"family" } 查活跃/已完成的 subagent；` +
     `若是片段输入，请用完整 sa- id 或 action:"find" 重试。`
   )
@@ -424,7 +424,7 @@ function formatOutlineText(r: OutlineResult): string {
     `${r.stats.totalTurns} turns · ${r.stats.totalEntries} entries · ~${r.tokenEstimate} tokens${
       r.stats.skippedLines > 0 ? ` · ${r.stats.skippedLines} skipped lines` : ''
     }`,
-    r.truncated ? `[还有 ${r.truncated} 轮未显示，用 detail 或调大 budget]` : '',
+    r.truncated ? `[还有 ${r.truncated} 轮未显示，用 detail 的 turns 参数看指定 turn 范围]` : '',
   ]
     .filter(Boolean)
     .join('\n')
@@ -650,7 +650,7 @@ async function doFamily(params: SessionReadParams, agentDir: string): Promise<To
       tree = await buildExecutionTree(resolved.sessionId, agentDir, resolved.fileName)
     } catch (e) {
       throw err(
-        `构建执行树失败：${resolved.sessionId}（${e instanceof Error ? e.message : String(e)}）。👉 检查 session 或用 find 重新定位，或改用 recursive:false 看 flat family 兑底。`,
+        `构建执行树失败：${resolved.sessionId}（${e instanceof Error ? e.message : String(e)}）。👉 检查 session 或用 find 重新定位，或改用 recursive:false 看 flat family 兜底。`,
       )
     }
     return {
@@ -671,7 +671,7 @@ async function doFamily(params: SessionReadParams, agentDir: string): Promise<To
   return { content: [{ type: 'text', text: formatFamilyText(family) }], details: family }
 }
 
-/** outline：turn 级全貌 TOC（design §3.4 outline，~500 token）。 */
+/** outline：turn 级全貌 TOC（design §3.4 outline，~1500 token；render budget 硬编码 2000）。 */
 async function doOutline(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
   const resolved = await resolveSessionId(params.session, 'outline', agentDir, params.source)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
@@ -1330,8 +1330,9 @@ interface SkippedRun {
  * session 会抛「session not found in family index」）——resolveSessionId 已把 session 解析到
  * 真实文件（kind==='ok' 保证文件存在，三形态：绝对路径/sa-id 均 existsSync 校验，片段匹配
  * 来自实际 fs 扫描），直接用 resolved.fileName 构造单条目 sessionIdToPath 调 resolveWorkflows
- *（与 buildFamilyFromFs 步骤 6 的 workflow 腿同源）。pathToRef 仅含目标 session，call 引用
- * 走 sessionRefFromPath 文件名最小回退（sessionId+fileName，足够 LLM 跳 outline/detail 深读）。
+ *（与 buildFamilyFromFs 步骤 6 的 workflow 腿同源）。pathToRef 传空 Map（单条目链路无其他
+ * 文件可反查），call 引用 100% 走 sessionRefFromPath 文件名最小回退（sessionId+fileName，
+ * 足够 LLM 跳 outline/detail 深读）。
  *
  * 错误契约（C2）：workflow 概览探索语义，三类错误均返回 ToolResult 不抛错。
  * step 的 call sessionId/sessionFile 是 LLM 跳 outline/detail 的入口（m0 resolveSessionId
@@ -1413,7 +1414,7 @@ async function doWorkflow(params: SessionReadParams, agentDir: string): Promise<
   if (requestedRunId !== undefined) details.requestedRunId = requestedRunId
   if (skippedRuns.length > 0) details.skippedRuns = skippedRuns
 
-  // 全部 run 都跳过的兑底提示（ES-wf-snapshot-read-fail 末段）
+  // 全部 run 都跳过的兜底提示（ES-wf-snapshot-read-fail 末段）
   let text: string
   if (runs.length === 0) {
     text =

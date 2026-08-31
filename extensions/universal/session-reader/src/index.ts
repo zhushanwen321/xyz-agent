@@ -15,8 +15,6 @@ import { createSessionCommand } from './tui/session-command.js'
  *   （错误直接 throw 给 pi——pi-agent-core agent-loop 只对 execute throw 置
  *   isError:true，返回值里的 isError 字段被丢弃；W4 修复，锚点
  *   agent-loop.js:453-483/525-547，pi 自带 bash 工具同范式）
- *
- * M4 将在此 addAutocompleteProvider（TUI # 补全，ctx.mode === 'tui' 时）。
  */
 
 // ---- TypeBox 参数 schema（design §3.4 14 字段）----
@@ -32,7 +30,7 @@ const SessionReadSchema = Type.Object({
   session: Type.Optional(
     Type.String({
       description:
-        'Session id, uuid fragment (e.g. e6c96), subagent record id (sa-xxx, precise lookup), or absolute .jsonl path (~ or ~/ allowed). Required for family/outline/expand/detail/search/export/workflow. # prefix auto-stripped.',
+        'Session id, uuid fragment (e.g. e6c96), subagent record id (sa-xxx, precise lookup), or absolute .jsonl path (~ or ~/ allowed). Required for family/outline/expand/detail/search/export/extract/workflow. # prefix auto-stripped.',
     }),
   ),
   query: Type.Optional(
@@ -43,7 +41,7 @@ const SessionReadSchema = Type.Object({
   ),
   turns: Type.Optional(
     Type.String({
-      description: 'detail action: turn range, "T013-T015" or "T013".',
+      description: 'detail/extract action: turn range, "T013-T015" or "T013".',
     }),
   ),
   turn: Type.Optional(
@@ -74,7 +72,8 @@ const SessionReadSchema = Type.Object({
   ),
   allBranches: Type.Optional(
     Type.Boolean({
-      description: 'outline/family: include abandoned side-branches. Default false.',
+      description:
+        "outline (and export's outline section): include abandoned side-branches. Not supported by family. Default false.",
     }),
   ),
   granularity: Type.Optional(
@@ -87,7 +86,8 @@ const SessionReadSchema = Type.Object({
   ),
   source: Type.Optional(
     StringEnum(['main', 'subagent'], {
-      description: 'find action: filter by source. "main" = sessions/, "subagent" = subagents/. Default both (merged).',
+      description:
+        'find and session-resolving actions: filter by source. "main" = sessions/, "subagent" = subagents/. Default both (merged).',
     }),
   ),
   limit: Type.Optional(
@@ -123,8 +123,8 @@ const SessionReadSchema = Type.Object({
 // ---- guidelines（注入 LLM，design §3.4）----
 
 const guidelines = [
-  'Progressive reading: outline (~500 token overview) → expand (one turn) → detail (full text). Default omits toolResult/thinking noise.',
-  'find first to locate a session by uuid fragment or name. TUI #references are uuid fragments.',
+  'Progressive reading: outline (~1500 token overview) → expand (one turn) → detail (full text). Default omits toolResult/thinking noise.',
+  'find first to locate a session by uuid fragment or name. TUI #references are full uuids.',
   'outline before detail. Never read raw .jsonl files—use this tool.',
   'family traces fork parents/children, subagent sessions, and workflow runs.',
   'extract what=<type> to pull user messages / commands / files / commits / tool results across turns (optional tool= filter for commands/tool-results).',
@@ -134,7 +134,7 @@ const guidelines = [
 
 // ---- 工具 description（design §3.4，照搬措辞）----
 
-const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Nine actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail). Progressive reading: outline → expand → detail. Do NOT use for the current session (use get_messages) or to edit sessions (pi has /resume /fork).`
+const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Nine actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~1500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail). Progressive reading: outline → expand → detail. Do NOT use for the current session (the host provides current-session access) or to edit sessions (pi has /resume /fork).`
 
 /**
  * 已注册过 TUI provider/command 的 pi 实例集合。
