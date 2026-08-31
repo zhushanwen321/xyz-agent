@@ -14,7 +14,7 @@
  * - immediate 首次回调在 useThinkingLevelSync 调用时同步执行（断言无需 await）
  * - 后续 currentModelId 变化触发的回调异步（await nextTick 等待 flush）
  *
- * 运行：cd packages/core && npx vitest run src/domain/composer/thinking-level-sync.test.ts
+ * 运行：cd packages/core && pnpm vitest run src/domain/composer/thinking-level-sync.test.ts
  */
 import { describe, it, expect, vi } from 'vitest'
 import { nextTick, ref } from 'vue'

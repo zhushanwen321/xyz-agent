@@ -30,7 +30,7 @@
 | u1-foundation | 记忆存储模块：reactive Map + 惰性异步预载 + `record/lookup/onLoaded` API + KV 写穿（key `xyz-agent:model-thinking-memory`）+ E1 损坏回退空表 / E6 非法值丢弃 / E7② 加载完成回调补写 | `packages/core/src/domain/composer/model-thinking-memory.ts`<br>`packages/core/src/domain/composer/model-thinking-memory.test.ts`<br>`packages/core/src/domain/composer/index.ts`（仅追加一行 export） | 无 | plain | `cd packages/core && pnpm vitest run src/domain/composer/model-thinking-memory.test.ts` 绿：KV round-trip / 损坏 JSON 回退空表 / 非法档位值丢弃 / KV 写失败内存表存活 / 加载完成回调触发 / key 值格式校验 |
 | u2 | sync 消费侧扩展：`ThinkingLevelSyncDeps` 增 `getRememberedLevel`；watch 回调顶部 armed 消费——规则 1（过期 >5s 且 in-flight 计数为零）/ 规则 2（匹配幂等消费：命中且可用且 value≠当前 → onReset+return；否则清 armed 走既有分支）/ 规则 3（不匹配保留） | `packages/core/src/domain/composer/thinking-level-sync.ts`<br>`packages/core/src/domain/composer/thinking-level-sync.test.ts` | u1 | plain | `cd packages/core && pnpm vitest run src/domain/composer/thinking-level-sync.test.ts` 绿：规则 1/2/3 各自行为断言 + 命中恢复经 onReset + 未命中/不可用回落既有分支 + 幂等不发声 + 既有对齐行为不回归（现有用例全绿） |
 | u3 | model-thinking 意图侧扩展：armed 设立（三分支，含 `{modelId, at, callId}`）+ 规则 4 失败清 / 规则 5 成功清（均 callId 归属校验）+ in-flight callId 引用计数 + 规则 6 sessionIdRef 换绑清 + `localAuthored` 标志 + landing 跟随 watch（immediate + 变化触发，D2）+ 记录 watch（双条件门禁 + 可用性校验） | `packages/core/src/domain/composer/model-thinking.ts`<br>`packages/core/src/domain/composer/model-thinking.test.ts` | u1, u2 | plain | `cd packages/core && pnpm vitest run src/domain/composer/model-thinking.test.ts` 绿：探针表第 1 行 armed 9 断言点序列族 + 第 2 行跟随三行为 + 早到/晚到双路径污染反例 + 记录门禁（landing/staging 不入表、已建态入表）+ 现有用例全绿 |
-| u4 | 壳层接线：composer-shell 组装新 deps（memory 模块惰性加载在此触发；`getRememberedLevel` 透传） | `packages/renderer/src/composables/panel/composer-shell.ts` | u1, u2, u3 | plain | `pnpm -C packages/core typecheck` 过；`pnpm -C packages/renderer typecheck` 过；`pnpm -C packages/renderer vitest run -- silent related 或现有 composer 相关测试` 不回归 |
+| u4 | 壳层接线：composer-shell 组装新 deps（memory 模块惰性加载在此触发；`getRememberedLevel` 透传）（已由偏差 #10 收编为验证性单元，零代码改动） | `packages/renderer/src/composables/panel/composer-shell.ts` | u1, u2, u3 | plain | `pnpm -C packages/core typecheck` 过；`pnpm -C packages/renderer typecheck` 过；`pnpm -C packages/renderer vitest run -- silent related 或现有 composer 相关测试` 不回归 |
 | u5 | 测试收口：探针表逐项核对 + composer 域全量回归 + 交叉单元用例补漏（串行末位，领地时间轴不重叠） | `packages/core/src/domain/composer/model-thinking.test.ts`（补漏）<br>`packages/core/src/domain/composer/model-thinking-memory.test.ts`（补漏） | u1-u4 | plain | 探针表三条实施期门逐项核对清单（9 断言点 + 跟随双路径 + 非单射幂等边界）签收；`cd packages/core && pnpm test` 全绿 |
 
 ## 3 DAG 图
@@ -47,7 +47,7 @@ graph TD
     U3["u3 model-thinking 意图侧<br/>领地: model-thinking.ts(+test)"]
   end
   subgraph W4[Wave4]
-    U4["u4 壳层接线<br/>领地: renderer/composer-shell.ts"]
+    U4["u4 壳层接线（偏差 #10 收编为验证性单元，零改动）<br/>领地: renderer/composer-shell.ts"]
   end
   subgraph W5[Wave5]
     U5["u5 测试收口<br/>领地: 两测试文件补漏 + 全量运行"]
@@ -106,11 +106,11 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-**残留风险**：
+**残留风险**：无在途条目——下列 3 条均已随 Gate B 消化（2026-08-31 design-code-sync 第 1 轮清账，等价模型对 GLM-5.2/MiMo-V2.5-Pro；条目保留作追溯）：
 
-1. 实施环境真实模型对的 supportedLevels 同体系性未知（设计 §5 检查点 2）——影响 A1 中「无记忆首切」落点表现，不影响断言；随 Gate B 确认
-2. landing memory-aware 依赖 `currentModelId` 的 landing 分支真值链（flow.currentModel / defaultModel）——u3 单测以 mock 驱动，真实链路差一步由 Gate B A2 双路径兜底
-3. Gate B A1-A6 需要真实 provider 双模型环境（如 builtin:bigmodel-coding-plan 下 GLM-5.3 / GLM-5.3-Flash）——若实施环境模型不满足，以实际可用模型对等价替换（断言结构不变）
+1. 实施环境真实模型对的 supportedLevels 同体系性未知（设计 §5 检查点 2）——影响 A1 中「无记忆首切」落点表现，不影响断言 → 已消化：Gate B A1 pass（pi 会话文件 thinking_level_change 序列断言实证落点表现）
+2. landing memory-aware 依赖 `currentModelId` 的 landing 分支真值链（flow.currentModel / defaultModel）——u3 单测以 mock 驱动 → 已消化：Gate B A2 双路径（先切再回 / 直接建 session）均 pass，真实链路验证闭合
+3. Gate B A1-A6 需要真实 provider 双模型环境（如 builtin:bigmodel-coding-plan 下 GLM-5.3 / GLM-5.3-Flash），若实施环境模型不满足以等价替换 → 已消化：等价替换实际执行（GLM-5.2 / MiMo-V2.5-Pro，断言结构不变）
 
 **Gate B 验收发现（非阻塞）**：
 
@@ -126,3 +126,4 @@ graph TD
 | 2026-08-31 | 基线 commit 9de8deb6a；u1-u5 开发循环完成（commit b1232f262 / a71d031f1 / f58a63a4e / — / d581d1ce7） |
 | 2026-08-31 | 一致性审查 R1（reviewer agent）：6 reasonable + 1 unreasonable + 4 doc_errors → 修复批次 bf83a5758 + 文档联动；定向复审抓到 R1 引入 critical 回归（landing 判定写后读）→ R2 修复 efdbf2f92（生产保真 harness + UF3 保留方向 + 变异自证）→ 定向复审通过，**一致性审查收敛（0 unreasonable / 0 doc_errors）**，审查者独立变异验证双重确认 |
 | 2026-08-31 | 双级验收：Gate A 通过（core 全量 1362 绿 / 双 typecheck 绿 / composer 域 213 绿 / eslint 0 error / 覆盖矩阵无未认领区 / 零容忍检查干净；renderer 2 失败为存量，基线复现）。Gate B 真实 app 验收（pnpm dev + browser-automation 连 9222，模型对等价替换为 GLM-5.2/MiMo-V2.5-Pro）：A1 记忆恢复 pass（pi 会话文件 thinking_level_change 序列断言：off/high/max/high，恢复值=记忆值）/ A2 跨重启 pass / A3 session 切换不误伤 pass（终态≠记忆值，记忆未参与改写）/ A4 注毒回落 pass（medium → 回落最高档）/ A6 清除兜底 pass / A5 landing pass、staging blocked（fork/handoff 需在用户真实仓库产生产物，操作风险大于收益；UF1b 单测覆盖 staging 分支路由）→ **Gate A + Gate B 双绿（1 blocked 如实登记）** |
+| 2026-08-31 | design-code-sync 第 1 轮（审查 6 条全修）：设计文档 D3 采用项/规则 5 补 landing/staging re-select 跳过 armed 例外（对齐偏差 #11，涟漪同步被否②/探针表/§3.4 数据流图/§5 拆分清单口径）；本文档残留风险 3 条随 Gate B 清账、§2 u4 与 §3 DAG U4 补偏差 #10 收编括注；代码注释 2 处修正（model-thinking-memory loadOnce 触发点、thinking-level-sync.test 运行命令 npx→pnpm）；设计文档 §2.2 标注行号基线 9de8deb6a |

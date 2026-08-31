@@ -64,6 +64,8 @@
 
 ### 2.2 现有链路（取自代码）
 
+> 注：本文档引用的源码行号均为基线 commit 9de8deb6a 时点，当前 HEAD 行号可能漂移，以符号名为准（引用的符号均仍存在，无悬空标识符）。
+
 模型切换与档位对齐的完整链路（文件均为真实路径）：
 
 ```
@@ -204,17 +206,17 @@
 - **效果**：G1 延伸到新任务默认档位；G3 完整（staging 取消值、已建 session 初值均不被记忆触碰）；「新建任务不碰档位直接发送」默认流程不再污染记忆表。
 
 **D3：恢复只在用户显式切模型时发生——armed 门禁，生命周期六防线（选定）**
-- **采用**：`onModelSelect` 三个分支（staging / landing / 已建）各设一次性标志 `armed = { modelId: 目标复合串, at: 时间戳, callId: 本次调用唯一 id }`。消费点在 sync watch 回调**顶部**（先于所有既有分支分发，含「无档位」与「首触发」分支），规则（规则 4/5 及 in-flight 均以 callId 归属校验为前提——并发快速连切时后一次调用覆盖 armed，先回包的调用只允许操作**自己设立**的 token，禁止误清后来者的）：
+- **采用**：`onModelSelect` 三个分支（staging / landing / 已建）各设一次性标志 `armed = { modelId: 目标复合串, at: 时间戳, callId: 本次调用唯一 id }`。**例外（一致性审查 R1 收编，impl-plan 偏差 #11）**：landing / staging 分支 re-select 同模型跳过 armed 设立——两分支无 RPC、无规则 5「成功清」兜底，按字面实现会留下悬留 token（5s 内 providers 刷新经规则 2 匹配分支覆写用户 authored 值），从源头消灭悬留窗口。消费点在 sync watch 回调**顶部**（先于所有既有分支分发，含「无档位」与「首触发」分支），规则（规则 4/5 及 in-flight 均以 callId 归属校验为前提——并发快速连切时后一次调用覆盖 armed，先回包的调用只允许操作**自己设立**的 token，禁止误清后来者的）：
   1. **过期清**：`now - at > 5s` 且 in-flight 计数为零（in-flight 按 callId 引用计数，per-call 置位/撤销——并发下先回包调用不得提前关闭仍在途调用的豁免窗；5s 为兜底保险丝，正常链路由规则 4/5/6 先行清理）→ 清 armed，走既有分支；
   2. **匹配即消费（含幂等跳过）**：`currentModelId === armed.modelId` → 记忆命中且可用，且换算后 value ≠ 当前档位，则 `onReset(记忆值)` 后直接 return（跳过既有分支，防双重 onReset）；value 相同（幂等）或未命中或不可用，则清 armed，继续走既有分支（回落规则，与既有分支的「value 未变不 RPC」行为对齐）；
   3. **不匹配则保留**：模型尚未到达目标（RPC 在途 / providers 刷新等无关触发）→ 不动 armed，等待匹配触发；
   4. **失败清**：已建态 `onModelSelect` 对 `switchModel` 做 try/catch，RPC 失败立即清除**自己 callId** 的 armed（arm 后被后续调用覆盖时不清除，所有权已转移）；
-  5. **成功清**：已建态 `switchModel` 成功返回后，**自己 callId** 的 armed 若仍未被消费则直接清除。微任务次序依据：`applySnapshot` 在 `switchModel` 内同步执行，watch flush 微任务于 applySnapshot 时刻入队，`await` 续段（本规则）晚于 flush——watch 回调总是先跑。故本规则只对「回调未能消费」的路径生效：pi 静默换模（请求 Y 生效 Z，回调以 armed={Y} 判不匹配、既有对齐已处理 Z）与 re-select 同模型（watch 未触发）——两者清除后不再残留 armed，杜绝陈旧 token 被后续无关触发延迟消费（chip 突跳伪恢复）；静默换模场景的档位由既有对齐分支负责（语义：恢复只发生在「请求模型 = 生效模型」的常规切换，不迟到恢复）；
+  5. **成功清**：已建态 `switchModel` 成功返回后，**自己 callId** 的 armed 若仍未被消费则直接清除。微任务次序依据：`applySnapshot` 在 `switchModel` 内同步执行，watch flush 微任务于 applySnapshot 时刻入队，`await` 续段（本规则）晚于 flush——watch 回调总是先跑。故本规则只对「回调未能消费」的路径生效：pi 静默换模（请求 Y 生效 Z，回调以 armed={Y} 判不匹配、既有对齐已处理 Z）与 re-select 同模型（watch 未触发——**仅已建态**经此兜底：landing/staging 分支 re-select 在设立时即跳过，见采用项例外，不存在待清 token）——两者清除后不再残留 armed，杜绝陈旧 token 被后续无关触发延迟消费（chip 突跳伪恢复）；静默换模场景的档位由既有对齐分支负责（语义：恢复只发生在「请求模型 = 生效模型」的常规切换，不迟到恢复）；
   6. **换绑清**：watch `sessionIdRef`，panel 换绑 session 瞬间清 armed（无论 callId 归属——换绑即作废全部未消费意图）——切模型意图绑定发起时的 session，换绑即作废。
 
   session 切换不设 armed → 走既有逻辑，行为与现状一致。
 - **被否 ①**：sync watch 里无条件查记忆——击穿反例：session B1（模型 Y + high）与 B2（模型 Y + low）并存，memory[Y]=high；用户从模型 X 的 session 换绑到 B2 → currentModelId X→Y 触发 watch → 无条件恢复把 B2 的 low 改写成 high（非用户切模型，却改写 session 状态）。
-- **被否 ②**：「watch 触发时无论命中与否都清除」的早期消费规则——被三条事件序列击穿：(a) RPC 失败致 armed 残留（旧 E4 语义），用户随后换绑到恰好同模型的 session → 匹配误恢复，被否 ① 的反例经残留绕过门禁；(b) 快速连切 Y→Z，RPC-Y 回包触发「不匹配 → 清除」把 armed=Z 误清 → Z 的恢复静默丢失；(b') 单次切换在途时 runtime 推 `config.providers` 广播刷新 providers 数组（composer-shell.ts:165-180 直读 `settingsStore.providers.value`），watch 观察源引用变化触发无关回调 → armed 被清除 → 恢复丢失；(c) 消费点若放在「model-change 分支」内部，providers 未加载时的「首触发」分支不经过它 → armed 悬空。序列与防线的对应：序列 (a) 由规则 4 消灭；(b)(b') 由规则 3 消灭——**第 4 轮终检回归补注**：规则 5「成功清」引入后，(b) 的重叠窗口内先回包调用的成功清会误清后来者的 token，故 (b) 的消灭依赖规则 4/5 的 callId 归属校验（只清自己设立的 token）；(c) 由消费点位置（分支分发之前）消灭——重演验证通过。第 2 轮复审发现四规则的两条有界残留暴露面，第 3 轮复审进一步击穿其初版修复（成功校正）并定稿：(i) pi 静默换模致 `armed={请求值}` 永不匹配、5s 窗口内换绑到恰为请求模型的 session 误恢复，初版「校正为生效值」又被微任务次序击穿（校正晚于 watch flush，重新武装陈旧 token → 延迟伪恢复）→ 定稿为规则 5「成功清」；(ii) >5s 慢 RPC 回包被规则 1 过期清误杀 → 定稿为规则 1 的 in-flight 豁免（finally 清标志晚于 flush，回包触发的消费在豁免窗内）；re-select 同模型 armed 悬空 → 规则 5 兜住（清除，不再依赖规则 6——规则 6 只覆盖 rebind）。
+- **被否 ②**：「watch 触发时无论命中与否都清除」的早期消费规则——被三条事件序列击穿：(a) RPC 失败致 armed 残留（旧 E4 语义），用户随后换绑到恰好同模型的 session → 匹配误恢复，被否 ① 的反例经残留绕过门禁；(b) 快速连切 Y→Z，RPC-Y 回包触发「不匹配 → 清除」把 armed=Z 误清 → Z 的恢复静默丢失；(b') 单次切换在途时 runtime 推 `config.providers` 广播刷新 providers 数组（composer-shell.ts:165-180 直读 `settingsStore.providers.value`），watch 观察源引用变化触发无关回调 → armed 被清除 → 恢复丢失；(c) 消费点若放在「model-change 分支」内部，providers 未加载时的「首触发」分支不经过它 → armed 悬空。序列与防线的对应：序列 (a) 由规则 4 消灭；(b)(b') 由规则 3 消灭——**第 4 轮终检回归补注**：规则 5「成功清」引入后，(b) 的重叠窗口内先回包调用的成功清会误清后来者的 token，故 (b) 的消灭依赖规则 4/5 的 callId 归属校验（只清自己设立的 token）；(c) 由消费点位置（分支分发之前）消灭——重演验证通过。第 2 轮复审发现四规则的两条有界残留暴露面，第 3 轮复审进一步击穿其初版修复（成功校正）并定稿：(i) pi 静默换模致 `armed={请求值}` 永不匹配、5s 窗口内换绑到恰为请求模型的 session 误恢复，初版「校正为生效值」又被微任务次序击穿（校正晚于 watch flush，重新武装陈旧 token → 延迟伪恢复）→ 定稿为规则 5「成功清」；(ii) >5s 慢 RPC 回包被规则 1 过期清误杀 → 定稿为规则 1 的 in-flight 豁免（finally 清标志晚于 flush，回包触发的消费在豁免窗内）；re-select 同模型 armed 悬空 → 规则 5 兜住（清除，不再依赖规则 6——规则 6 只覆盖 rebind；R1 修订：此兜底仅已建态需要，landing/staging 分支 re-select 直接跳过设立——见 D3 采用项例外）。
 - **证据**：currentModelId 派生自 `sessionState(sessionId).modelId`（model-thinking.ts:110-125）——session 换绑与显式切模型在 watch 眼里是同一信号，必须以 armed 区分意图来源。两条时序基线可分析判定，无需探针：① armed 同步赋值必然先于 watch 回调（Vue 默认 flush:'pre'，watch 回调异步于当前同步任务）；② watch flush 微任务先于 `await` 续段执行（flush 于 applySnapshot 同步时刻入队，续段后入队——规则 5「成功清」的正确性依据）。需探针的是六防线在具体事件序列下的行为（见 §3.3 探针表）。
 - **效果**：G3「不误伤」成立（B3 场景行为与现状一致）；恢复不被无关触发或残留吞掉（G1 完整）。
 
@@ -240,7 +242,7 @@
 
 | 断言 | 探针 | 降级路径 |
 |---|---|---|
-| armed 六防线能区分「显式切模型」与「session 换绑」，且不被无关触发/残留/静默换模击穿 | ⛔ 实施期门：U5 单测覆盖序列族——D3 被否 ② 的 (a)(b)(b') 三序列 + 跨模型换绑基线 + 静默换模（断言既有对齐处理 Z 且**无延迟伪恢复**：armed 清除后无关触发不再消费）+ 慢 RPC（in-flight 豁免下正常消费）+ re-select 同模型（armed 被成功清，无残留）+ 换绑清 + 并发连切 callId 归属（序列 (b) 重叠窗口：第二调用的 armed 存活至自己的回包、第一调用的成功清/失败清不误清）（共 9 断言点），断言 armed 的设立/保留/消费/清除 | 探针失败说明消费规则与 Vue watch 触发时序不匹配，退回 D4 被否谱系重设计恢复落点 |
+| armed 六防线能区分「显式切模型」与「session 换绑」，且不被无关触发/残留/静默换模击穿 | ⛔ 实施期门：U5 单测覆盖序列族——D3 被否 ② 的 (a)(b)(b') 三序列 + 跨模型换绑基线 + 静默换模（断言既有对齐处理 Z 且**无延迟伪恢复**：armed 清除后无关触发不再消费）+ 慢 RPC（in-flight 豁免下正常消费）+ re-select 同模型（已建态：armed 设立后被规则 5 成功清、无残留；landing/staging：设立即跳过——D3 采用项例外，UF1a/UF1b 锁定）+ 换绑清 + 并发连切 callId 归属（序列 (b) 重叠窗口：第二调用的 armed 存活至自己的回包、第一调用的成功清/失败清不误清）（共 9 断言点），断言 armed 的设立/保留/消费/清除 | 探针失败说明消费规则与 Vue watch 触发时序不匹配，退回 D4 被否谱系重设计恢复落点 |
 | landing memory-aware：未 authored 的 local 跟随模型变化重设（**immediate 触发覆盖 defaultModel 早到路径** + 变化触发覆盖晚到路径 `'' → M`，双路径均 memory 命中）；用户显式选择（authored）后不再跟随；已建态不受影响 | ⛔ 实施期门：U5 单测断言跟随 watch 三行为 + D2 反例序列（landing auto 值经首发透传后 memory 不被覆写，**早到/晚到双路径**）+ 幂等往返断言（含非单射 map 归一不动点边界） | 跟随机制不可靠时退回 D2 被否 ④（authored 打标方案）重设计 |
 | 记忆恢复后 pi 回执钳制（如记忆 max、pi 实际降为 high）时，记忆表最终收敛为钳制值 | ⛔ 实施期门：U5 单测以回执值驱动记录 watch 断言 | 钳制值本身是「最后生效」语义（D2），无需降级；探针仅验证收敛方向 |
 | transient 窗口（模型已变、档位未对齐）的记录不产生错误持久状态 | ✅ 已验证机制成立：记录可用性校验拦体系外值（U6 权威 supportedLevels）；体系重叠拦不住的窗口值，对齐完成后被同一 watch 的后写覆盖；对齐 RPC 失败时残留值 = 失败时刻显示态，忠实于 D2 语义（详见错误规格 E5） | — |
@@ -269,6 +271,7 @@
 └──────────────────────────────────────────────────────────────┘
 ┌─ 恢复（前置查询，仅显式切模型）──────────────────────────────┐
 │ onModelSelect → armed = { modelId: 目标复合串, at, callId }   │
+│   （landing/staging re-select 同模型跳过设立，见 D3 采用项例外）│
 │   已建态：switchModel 失败 → catch 清自己 callId 的 armed     │
 │            （规则 4）；成功 → 自己 callId 的 armed 仍未消费   │
 │            则直接清（规则 5「成功清」，watch flush 先于       │
@@ -351,7 +354,7 @@
 |---|---|---|---|
 | U1 记忆存储模块 | reactive Map + 惰性加载 + record/lookup API + KV 写穿 + E1/E6 防护；KVStorage经 `getPlatform().storage` | 新增 `packages/core/src/domain/composer/model-thinking-memory.ts` | 独立纯模块，可先行单测（KV round-trip / 损坏回退 / 非法值丢弃）；放 composer 域因唯一消费方是 composer 行为，机制上仅依赖 platform/port（core 内合法依赖） |
 | U2 sync 扩展 | `ThinkingLevelSyncDeps` 增 `getRememberedLevel(modelId)`；watch 回调顶部 armed 消费（过期/匹配幂等/保留 + 分支跳过，D3 规则 1-3）+ 记忆查询（D5） | `packages/core/src/domain/composer/thinking-level-sync.ts` | 恢复逻辑的唯一落点（单一写入者）；deps 注入保持 core 零 store 依赖（W3 迁移约束延续） |
-| U3 model-thinking 扩展 | `onModelSelect` 三分支设 armed（含 callId；已建态 RPC 失败清 + 成功清均按 callId 归属校验，规则 4/5；in-flight 按 callId 引用计数，规则 1）；watch `sessionIdRef` 换绑清（规则 6）；landing memory-aware：`localAuthored` 标志（用户显式入口置位，onReset 指向内部对齐函数）+ 跟随 watch（immediate + 变化触发，D2）；记录 watch（D2 双条件门禁 + 可用性校验）；对外暴露不变 | `packages/core/src/domain/composer/model-thinking.ts` | armed 的意图源头与生命周期防线集中在显式切换动作处，与恢复消费点分离；对外 API 零变化，composer-shell 接线面最小 |
+| U3 model-thinking 扩展 | `onModelSelect` 三分支设 armed（含 callId；landing/staging re-select 同模型跳过设立——D3 采用项例外；已建态 RPC 失败清 + 成功清均按 callId 归属校验，规则 4/5；in-flight 按 callId 引用计数，规则 1）；watch `sessionIdRef` 换绑清（规则 6）；landing memory-aware：`localAuthored` 标志（用户显式入口置位，onReset 指向内部对齐函数）+ 跟随 watch（immediate + 变化触发，D2）；记录 watch（D2 双条件门禁 + 可用性校验）；对外暴露不变 | `packages/core/src/domain/composer/model-thinking.ts` | armed 的意图源头与生命周期防线集中在显式切换动作处，与恢复消费点分离；对外 API 零变化，composer-shell 接线面最小 |
 | U4 壳层接线（已由 U3 域内收编） | 实施演化：sync 四个新 deps 与 loadOnce/onLoaded 触发全部在 U3 的 model-thinking 内部闭合（同域 import u1 模块），`ModelThinkingDeps` 对外签名零变化，composer-shell 零改动——本单元退化为验证性验收（renderer typecheck + 测试回归） | `packages/renderer/src/composables/panel/composer-shell.ts`（零改动） | 壳层是 core deps 的唯一组装点（ADR-0028 分层），接线不外溢壳层是更内聚的演化；实施记录见 impl-plan 偏差 #10 |
 | U5 测试 | U1 模块单测；U2/U3 行为单测（armed 9 断言点序列族含 callId 并发归属、landing memory-aware 跟随三行为 + 污染反例含 defaultModel 早到/晚到双路径 + 幂等往返含非单射边界、记忆命中/回落、三态 onReset 路由、D2 双条件门禁、钳制收敛）——实施期门（§3.3 探针）；框架 vitest、子包目录运行 | `model-thinking.test.ts` 扩展 + 新增 `model-thinking-memory.test.ts` | 现有测试文件就近扩展，覆盖 §3.3 前三条探针断言 |
 

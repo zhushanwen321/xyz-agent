@@ -50,7 +50,7 @@ let persistChain: Promise<void> = Promise.resolve()
 
 /**
  * 触发惰性预载（fire-and-forget，幂等：重复调用不重复读 KV）。
- * 由首个消费方组装时调用（composer-shell，u4）；加载完成前 lookup 返回
+ * 由首个消费方组装时调用（model-thinking 组装点，域内收编见 impl-plan 偏差 #10）；加载完成前 lookup 返回
  * undefined（E7①「无记忆」，下游自然回落现有对齐规则）。
  */
 export function loadOnce(): void {
