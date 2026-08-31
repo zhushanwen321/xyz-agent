@@ -321,10 +321,16 @@ export function useComposerModelThinking(
     }
     // landing 态延迟 create：记 pendingModel，submitFirstMessage create session 后 apply
     if (!sessionId.value) {
+      // [R2-fix-1] re-select 判定读必须先于 setPendingModel 写：生产接线
+      // （composer-shell → flow.setPendingModel）是同步 ref 写，pendingModel →
+      // currentModel → currentModelId 经同步 computed 传播——写后读恒「已到达目标」，
+      // armed 将从不设立（记忆恢复整体失效）。镜像 staging 分支的写前判定。
+      const reselect = targetModelId === currentModelId.value
       setPendingModel(targetModelId)
-      // [U-fix-1] re-select 同模型不设 armed（理由同 staging 分支）——landing 侧悬留 token
-      // 被无关触发消费时还会覆写用户已 authored 的 local 值（恢复通路不检查 localAuthored）
-      if (targetModelId !== currentModelId.value) {
+      // re-select 同模型不设 armed（理由同 staging 分支）——无反应性变化 watch 必不触发，
+      // 悬留 token 被 5s 内无关刷新经规则 2 消费会把记忆值写回 local（恢复通路不检查
+      // localAuthored，会覆写用户 authored 值）= D3 规则 5 要消灭的「chip 突跳伪恢复」形态
+      if (!reselect) {
         armed.value = { modelId: targetModelId, at: Date.now(), callId }
       }
       return

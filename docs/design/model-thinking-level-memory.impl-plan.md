@@ -92,6 +92,7 @@ graph TD
 | 9 | S5 断言判据 =「armed 目标记忆值从不发出」而非调用总次数；测试文件顶层 beforeEach/afterEach（platform stub + u1 重置） | 合理——mock 不回写 store 致既有对齐重发与 armed 无关（测试内注释差异）；顶层 stub 消除 E2 warn 噪音不改既有用例主体 | model-thinking.test.ts | 已固化 |
 | 10 | u4 接线被 u3 域内收编：sync 四个新 deps 与 loadOnce/onLoaded 触发全部在 model-thinking 内部闭合，`ModelThinkingDeps` 对外签名零变化，composer-shell 零改动 | 合理——更内聚（接线不外溢壳层）；u4 转验证性单元：renderer typecheck exit 0 + 套件 3625 passed（2 失败为 useChat-subagent-directive 存量失败，基线 b27c175ce 复现，属其他会话功能线，规则 0 不碰） | git diff b27c175ce..HEAD -- packages/renderer 为空；基线对照复跑记录 | 已固化 |
 | 11 | 一致性审查 R1 修复批次：landing/staging 分支 re-select 同模型跳过 armed 设立（源头消灭悬留窗口——审查者发现的伪恢复暴露面：5s 内 providers 刷新经规则 2 匹配覆写 authored 值）；跟随路径补 E3/D5 可用性校验（设计 D2 公式同步更新）；已建态不加同型跳过（有规则 5 成功清兜底，S7 锁定） | 合理——审查打回定向修，实现+用例+文档三方同步 | UF1a/UF1b/UF2 用例；设计文档 D2 公式与 §4 A3 同体系约束；registry #22（原 #21 重复 ID 更正，d1 doc_error） | 已闭环 |
+| 12 | 一致性审查 R2 修复批次（定向复审抓到 R1 修复引入的 critical 回归）：landing 分支 re-select 判定原置于 setPendingModel **写之后**——生产接线 flow.setPendingModel 同步 ref 写经 computed 链传播，判定恒 false → landing 从不设 armed、记忆恢复整体失效；且 mountMem harness 的 setPendingModel 为 no-op mock（与生产发散）掩盖回归、UF1a 无反向判别力。修复：判定提到写之前（镜像 staging 分支）；harness 改生产保真（setPendingModel 真实写 currentModelRef，逐一核对既有用例零假设破裂）；新增 UF3 保留方向探针（authored M → 真实切 N → 恢复 'l'），**变异自证**：判定临时变异为写后读形态时 UF3 必红（Expected "l"/Received "h"），实证判别力 | 合理——审查闭环；教训登记：mock 与生产接缝发散是时序类回归的盲区，关键路径断言须配保留方向用例 + 变异自证 | UF3 用例 + 变异验证记录；model-thinking.ts 判定时序注释 | 已闭环 |
 
 ## 6 状态表
 

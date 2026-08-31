@@ -210,7 +210,12 @@ function mountMem(opts: {
       }),
   )
   const setThinkingLevel = vi.fn().mockResolvedValue(undefined)
-  const setPendingModel = vi.fn()
+  // [R2-fix-2] 生产保真：flow.setPendingModel 是同步 ref 写（flow.ts:366-369），经
+  // pendingModel → currentModel → currentModelId 同步 computed 传播——no-op mock 会
+  // 掩盖「写后读」时序类回归（R2-fix-1 教训）。vi.fn 包真实写，保留调用断言能力。
+  const setPendingModel = vi.fn((m: string) => {
+    currentModelRef.value = m
+  })
   const deps: ModelThinkingDeps = {
     getSessionState: () => (sessionRef.value ? { ...sessionRef.value } : null),
     defaultModel: computed(() => defaultModelRef.value),
@@ -876,6 +881,23 @@ describe('useComposerModelThinking · 一致性审查修复（U-fix-1/2）', () 
     // 可用(lookup) ?? 最高档：'max' 失效 → 回落 'high'（经 map 映射 value 'h'），
     // 不短暂显示不可用档（E3/D5 可用性回落防线延伸到跟随路径）
     expect(h.result.currentThinkingLevel.value).toBe('h')
+    h.scope.stop()
+  })
+
+  it('UF3/保留方向（R2-fix-2）：生产保真 harness 下 authored 后真实切换 M→N → armed 设立 → 恢复记忆值', async () => {
+    // 生产保真前提：setPendingModel 同步写 currentModel（与 flow.ts 同构），re-select
+    // 判定若错放在写之后，此处会因「恒 re-select」不 arm → 恢复失效 → 断言必红
+    record('p/N', 'low')
+    const h = mountLanding({ defaultModel: 'p/M' })
+    expect(h.result.currentThinkingLevel.value).toBe('h') // M 无记忆 → 跟随落最高档
+    await h.result.onThinkingSelect('h') // 用户 authored（置位 localAuthored）
+    await h.result.onModelSelect({ modelId: 'N', provider: 'p' }) // 真实切换（非 re-select）
+    await nextTick() // 等 sync watch flush 消费 armed
+    // armed 已设立且被规则 2 消费：记忆 N='low' → onReset('l') → landing 分支写 local
+    //（恢复通路不检查 localAuthored——显式切模型即恢复，authored 只冻结「跟随」）
+    expect(h.result.currentThinkingLevel.value).toBe('l')
+    expect(h.setPendingModel).toHaveBeenCalledWith('p/N') // pendingModel 照常记
+    expect(h.setThinkingLevel).not.toHaveBeenCalled() // landing 无 RPC
     h.scope.stop()
   })
 })
