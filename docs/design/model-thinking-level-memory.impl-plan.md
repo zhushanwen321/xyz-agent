@@ -84,13 +84,16 @@ graph TD
 | 1 | `lookup` 返回类型收窄为 `ThinkingLevel \| undefined`（契约写 `string \| undefined`） | 合理——子类型兼容，下游 u2/u3 免二次断言 | model-thinking-memory.ts lookup 签名 | 已固化 |
 | 2 | `record` 在预载完成前挂起写穿、加载完成后补写收敛（契约只说「同步内存 + 异步写穿」未规定窗口时序） | 合理且必要——防局部快照覆写 KV 整表静默清除未知条目；测试锁定该语义 | model-thinking-memory.test.ts「加载窗口 record」用例 + registry #21 例外列 | 已固化 |
 | 3 | taste 豁免注解 W24-EX-B（require-data-owner-annotation error 级，登记表在 u1 领地外） | 合理——主 agent 已补登记 registry #21 并同步注解为非草稿 | docs/architecture/data-source-registry.md #21 | 已闭环 |
+| 4 | armed 访问器含 `at` 字段 + 导出 `ArmedModelSwitchIntent` 切片与 `ARMED_EXPIRY_MS=5000`（任务建议形状漏 at，规则 1 过期判定必需） | 合理——契约必需，u3 复用同一阈值常量 | thinking-level-sync.ts 导出 | 已固化 |
+| 5 | 四个新 deps 字段全部可选 | 合理——现有 8 用例与 u4 接线前调用方不注入新字段，必填即挂 typecheck；armed null 零副作用有回归基线用例锁定 | thinking-level-sync.test.ts 回归基线用例 | 已固化 |
+| 6 | `eslint --fix` 重排 watch 回调既有代码缩进（48 个 indent warning 为存量技术债，新增行延续既有风格被一并检出） | 合理——按 pre-commit「含存量全修」红线执行；`git diff -w` 证实既有代码忽略空白后零变化，纯缩进无逻辑改动 | git diff -w 复核（主 agent 核验） | 已固化 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
 | u1-foundation | committed | 1 | 12/12 绿（memory.test.ts）；registry #21 登记；deviations 3 条入 §5 |
-| u2 | pending | 0 | — |
+| u2 | committed | 1 | 17/17 绿（8 现有 + 9 新）；deviations 3 条入 §5 |
 | u3 | pending | 0 | — |
 | u4 | pending | 0 | — |
 | u5 | pending | 0 | — |
