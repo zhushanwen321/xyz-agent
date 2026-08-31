@@ -22,6 +22,7 @@ import { createI18n } from 'vue-i18n'
 const configApiMock = vi.hoisted(() => ({
   getRetryConfig: vi.fn(),
   setRetryConfig: vi.fn(),
+  onRetryConfig: vi.fn(() => () => {}),
 }))
 const toastMock = vi.hoisted(() => ({
   info: vi.fn(),
@@ -196,6 +197,67 @@ describe('SystemLlmRetrySection（u3 LLM 调用重试）', () => {
     expect(warn.text()).toContain('超出推荐范围')
     // 超域存量原样展示
     expect((wrapper.find('[data-testid="llm-retry-max-retries-input"]').element as HTMLInputElement).value).toBe('50')
+    wrapper.unmount()
+  })
+
+  it('广播订阅：configured=true 回调刷新表单值；unmount 调用清理函数', async () => {
+    const unsub = vi.fn()
+    let handler: ((payload: { config: unknown; configured: boolean }) => void) | null = null
+    configApiMock.onRetryConfig.mockImplementation((h: typeof handler) => {
+      handler = h
+      return unsub
+    })
+
+    const wrapper = mountSection()
+    await flushPromises()
+    expect(handler).not.toBeNull()
+
+    // 本地改动（如输入 10）后收到其他窗口保存的广播 → 表单刷新为广播值
+    await setInput(wrapper, 'llm-retry-max-retries-input', '10')
+    handler!({
+      configured: true,
+      config: { enabled: false, maxRetries: 5, baseDelayMs: 4000 },
+    })
+    await flushPromises()
+
+    expect((wrapper.find('[data-testid="llm-retry-max-retries-input"]').element as HTMLInputElement).value).toBe('5')
+    expect((wrapper.find('[data-testid="llm-retry-base-delay-input"]').element as HTMLInputElement).value).toBe('4')
+    expect(wrapper.find('[data-testid="llm-retry-enabled-switch"]').attributes('data-state')).toBe('unchecked')
+    expect(wrapper.find('[data-testid="llm-retry-configured-badge"]').exists()).toBe(true)
+
+    wrapper.unmount()
+    expect(unsub).toHaveBeenCalledTimes(1)
+  })
+
+  it('maxRetries 与 baseDelay 同时为空 → 两键各自标红（border-warn）', async () => {
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await setInput(wrapper, 'llm-retry-max-retries-input', '')
+    await setInput(wrapper, 'llm-retry-base-delay-input', '')
+    await wrapper.find('[data-testid="llm-retry-save-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(configApiMock.setRetryConfig).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="llm-retry-max-retries-input"]').classes()).toContain('border-warn')
+    expect(wrapper.find('[data-testid="llm-retry-base-delay-input"]').classes()).toContain('border-warn')
+    wrapper.unmount()
+  })
+
+  it('provider 输入解析失败 → 错误 toast 指明字段（含「单请求超时」标签）', async () => {
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await wrapper.find('[data-testid="llm-retry-advanced-toggle"]').trigger('click')
+    await flushPromises()
+    await setInput(wrapper, 'llm-retry-provider-timeout-input', '1.5')
+    await wrapper.find('[data-testid="llm-retry-save-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(configApiMock.setRetryConfig).not.toHaveBeenCalled()
+    expect(toastMock.error).toHaveBeenCalledTimes(1)
+    expect(toastMock.error.mock.calls[0][0]).toContain('单请求超时')
+    expect(toastMock.error.mock.calls[0][0]).toContain('合法数字')
     wrapper.unmount()
   })
 })

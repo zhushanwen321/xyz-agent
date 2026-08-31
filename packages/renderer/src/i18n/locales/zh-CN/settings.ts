@@ -605,6 +605,7 @@ export default {
     llmRetryPreviewOn: '按当前配置，单次失败请求最长自动重试 {n} 次，最长单次等待 {longest}，累计等待约 {total}。保存后对新会话生效',
     llmRetryOutOfDomain: '当前值 {value} 超出推荐范围，保存前需一并修正',
     llmRetryInvalidInput: '请输入合法数字',
+    llmRetryInvalidFieldInput: '「{field}」请输入合法数字',
     llmRetrySave: '保存',
     llmRetrySavedToast: '已保存，新会话生效',
     llmRetrySaveFailed: '保存失败，请重试',

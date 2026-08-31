@@ -69,6 +69,11 @@ graph TD
 | u2-runtime | 领地补列 `packages/runtime/src/services/worktree/worktree-service.test.ts`（mockConfigService 补 retry 两 stub） | 上行接口变更的连带必要改动：mock IConfigService 不补齐则该测试类型/运行失败 | 2026-08-31 |
 | u2-runtime | infra 实现形态为 class PiRetrySettings（实现 ILlmRetrySettings），helper 纯函数承载 D3/D7 逻辑 | 同 PiExtensionSettings 先例 + D17 分层（infra 只做 I/O 编排）；行为与设计无差 | 2026-08-31 |
 | 执行方式 | 单元拆小为子步串行派发（u2a1→u2b…；u3 拆 component/tests 两步），DAG 波次语义不变 | zsw zcode 引擎单轮 300s 终态观察窗为硬编码上限（ZCODE_APPSERVER_TURN_DEFAULT_TIMEOUT_MS），原 u2/u3 单任务体量单轮跑不完；u1 实测 4min 已近边缘 | 2026-08-31 |
+| u2-runtime | ConfigService 对 port 采用可选注入 + 未注入抛错（生产 index.ts 恒注入，行为无差；保住既有 ConfigService 测试不破坏） | 一致性审查 A 区 reasonable；可选注入非设计字面「单行委托」但有先例且生产行为无差 | 2026-08-31 |
+| u1/u2 | D8 校验纯函数最终落位 shared/llm-retry.ts（设计 §3.4 原文「放 shared 或 runtime helper，实施期定」的实现选型） | renderer 表单与 runtime 写侧编译期共享同一常量，杜绝两端漂移（SG-1 预防的更优实现） | 2026-08-31 |
+| u3-gui | provider 三键用 string 输入承载「留空 = 未设」；maxRetryDelayMs 缺省显示为空 + i18n 提示默认 60000（与 D8 表「缺省显示值 60000」形式差异、语义等价且可回退） | 一致性审查 B 区 reasonable；设计 §3.4 已补注 | 2026-08-31 |
+| u3-gui | Switch 用 :model-value + @update:model-value（非 v-model 简写） | 与 SystemSmartContextSection 既有组件族范式一致 | 2026-08-31 |
+| u3-gui | 预览行额外展示「最长单次等待」（设计只要求累计等待） | G3 后果可见性增强 | 2026-08-31 |
 
 ## 6 状态表
 
@@ -76,8 +81,8 @@ graph TD
 |---|---|---|---|
 | u1-foundation | committed | 1 | 测试：shared `npx vitest run` 22 文件 225 用例全绿（含新增 9 条）+ `tsc --noEmit` 过（dev 回报与主 agent 重跑一致）；diff 核验：4 文件 ⊆ 领地，protocol.ts 纯增量 |
 | u2-runtime | committed | 1 | 测试：新增 3 测试文件 26 用例全绿（merge/configured/handler case/P2 写后立刻读）+ services/transport 回归 27 文件 325 用例全绿 + runtime `tsc --noEmit` 过；主 agent 抽查 helper D3/D7 实现、handler 范式合格；偏差 3 条见登记表 |
-| u3-gui | committed | 2（dev 1 + fix 1） | 测试：新增 llm-retry-section.test.ts 8 用例全绿（三视角 DOM 断言：预览行实时重算/折叠/保存 RPC 组装/越界拦截/configured 徽标/超域行内标注）+ settings 套件 23 文件 166 用例全绿；fix 轮修 fmtDur 小时档 10 倍放大 bug（min/6→min/60，85.25 分钟正确渲染 1.4 小时）；renderer 全量 tsc 的 useCommandPopoverTrigger.ts 报错为存量（该文件未改动），与本单元无关 |
-| u4-integrate | pending | 0 | — |
+| u3-gui | committed | 2（dev 1 + fix 1） | 测试：新增 llm-retry-section.test.ts 8 用例全绿（三视角 DOM 断言：预览行实时重算/折叠/保存 RPC 组装/越界拦截/configured 徽标/超域行内标注）+ settings 套件 23 文件 166 用例全绿；fix 轮修 fmtDur 小时档 10 倍放大 bug（min/6→min/60，85.25 分钟正确渲染 1.4 小时）；renderer 全量 tsc 的 useCommandPopoverTrigger.ts 报错为存量（该文件未改动），与本单元无关（后经并行线修复，vue-tsc 全量 exit 0） |
+| u4-integrate | committed（登记部分） | 1 | data-source-registry.md:97 retry 域条目 + 设计文档变更历史（commit e5b394f2b）；S1-S7 真实场景验收（含 S4/S6 探针）deferred to Gate B——见阶段 5 签收表 |
 
 ## 7 残留风险与变更历史
 

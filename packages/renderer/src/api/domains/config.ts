@@ -353,6 +353,13 @@ export async function setRetryConfig(config: LlmRetryConfig): Promise<{ config: 
   return command('config.setRetryConfig', { config })
 }
 
+/** 订阅 LLM 重试配置广播（多窗口同步，同 terminal 范式）。 */
+export function onRetryConfig(handler: (payload: { config: LlmRetryConfig; configured: boolean }) => void): () => void {
+  return events.onGlobalType('config.retryConfig', (msg) => {
+    handler(msg.payload)
+  })
+}
+
 // ── OAuth Login（路径 B · slice design I1/I2/I4）──
 // RPC/事件契约见 shared protocol.ts（config.oauthLogin/oauthCancel reply + auth.* 事件）。
 // 事件 payload 必带 providerId（前端按 providerId 路由，支持并发多 provider）；

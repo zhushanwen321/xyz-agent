@@ -605,6 +605,7 @@ export default {
     llmRetryPreviewOn: 'With the current config, a failed request retries up to {n} times, longest single wait {longest}, total wait about {total}. Applies to new sessions after saving',
     llmRetryOutOfDomain: 'Current value {value} is out of the recommended range; fix it before saving',
     llmRetryInvalidInput: 'Please enter a valid number',
+    llmRetryInvalidFieldInput: '"{field}" requires a valid number',
     llmRetrySave: 'Save',
     llmRetrySavedToast: 'Saved, applies to new sessions',
     llmRetrySaveFailed: 'Save failed, please retry',

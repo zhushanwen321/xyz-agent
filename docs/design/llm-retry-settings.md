@@ -171,7 +171,7 @@
 - **采用**：`SCOPE_FIELDS` 增加 `retry: ['retry']`；写入走既有 `updateSettingsFields('retry', mutator)`（锁内 RMW + 域外字段取锁内最新读）。
 - **被否**：`full` scope——既有白名单仅 pi-maintenance 启动迁移一个调用点，模块注释明确「新代码禁止使用 full scope」；绕过锁直接 `writeSettings`——该函数注释明确「生产写路径必须走 updateSettingsFields」。
 - **证据**：`pi-settings-store.ts:84-88`（SCOPE_FIELDS）、`:77-79`（full 禁令）、`:147-153`（writeSettings 禁令）。
-- **效果**：G2 成立——pi 子进程经自身 SettingsManager 的落盘与 GUI 保存 retry 互不覆盖。pi 侧写回实装是「持锁 + 锁内重读文件 + 仅 patch modified 字段/嵌套键」（`persistScopedSettings`），即使双方同写 `retry` 域也是键级 merge（双向保护，见 §2.2 末条 rpc 写点事实与 S4 同域并发场景）；跨进程锁协议本身已有探针验证（`pi-settings-store.ts:14-34`，✅已测）。注：`pi-settings-store.ts:8` 模块头「用户 GUI 切模型/切思考档位时 pi 落盘」的说法与 0.84.4 rpc 实装不符（见 §2.2 末条），本设计不沿用；该注释修正随实施批带上（登记项，见 §5 U4）。
+- **效果**：G2 成立——pi 子进程经自身 SettingsManager 的落盘与 GUI 保存 retry 互不覆盖。pi 侧写回实装是「持锁 + 锁内重读文件 + 仅 patch modified 字段/嵌套键」（`persistScopedSettings`），即使双方同写 `retry` 域也是键级 merge（双向保护，见 §2.2 末条 rpc 写点事实与 S4 同域并发场景）；跨进程锁协议本身已有探针验证（`pi-settings-store.ts:14-34`，✅已测）。注：`pi-settings-store.ts:8` 模块头「用户 GUI 切模型/切思考档位时 pi 落盘」的说法与 0.84.4 rpc 实装不符（见 §2.2 末条），本设计不沿用；该注释修正已随 u2-runtime 实施批完成（2026-08-31）。
 
 **D3：`retry` 域内做嵌套字段级 merge，只 patch xyz 已知的键（选定）**
 - **采用**：mutator 里对 `retry` 对象做二级 merge——读取锁内最新 `retry` 对象，仅覆盖 `{enabled, maxRetries, baseDelayMs, provider.timeoutMs, provider.maxRetries, provider.maxRetryDelayMs}` 六个已知键，pi 未来新增的 retry 子字段原样保留。这是顶层字段域 merge（D1b）在嵌套层的复刻。**非 plain object 规则（任何层级统一）**：任意层级遇到非 plain object 值（string / number / boolean / array / null）时，该层不做 merge，直接以「仅含该层已知键的新对象」整体替换——禁止对非对象值做 spread（字符串会展开成 `{0:'a',1:'b',…}` 索引键垃圾结构；number/boolean 时 spread 虽侥幸产出空对象，但依赖 spread 语义细节的安全不是设计出来的安全）。覆盖两个层级：`retry` 本身非对象 → 整体换成六键新对象；`retry.provider` 非对象 → 换成 `{timeoutMs?, maxRetries?, maxRetryDelayMs?}` 三键新对象。
@@ -253,12 +253,12 @@ export interface LlmRetryConfig {
 | type | payload | reply / 副作用 |
 |---|---|---|
 | `config.getRetryConfig` | `{}` | reply `config.retryConfig` `{ config: LlmRetryConfig; configured: boolean }` |
-| `config.setRetryConfig` | `{ config: LlmRetryConfig }` | 校验：失败 → `sendError set_retry_config_failed`；成功 → reply + broadcast `config.retryConfig`（多窗口同步，同 terminal 范式） |
+| `config.setRetryConfig` | `{ config: LlmRetryConfig }` | 校验：失败 → `sendError set_retry_config_failed`；成功 → reply + broadcast `config.retryConfig`（多窗口同步，同 terminal 范式；payload 为请求 config 的回显——enabled 必落盘故 configured=true 恒准确，非文件重读快照） |
 
 **runtime 内部分层**（D17 三层，services 不直接 import infra）：
 
 - services 层新 port `ILlmRetrySettings`（`services/ports/` 下窄 port，同 `IExtensionSettings` 分域理由）：`getRetryConfig(): { config; configured }` / `setRetryConfig(config): { ok; error? }`。
-- infra 层新模块 `infra/pi/pi-retry-settings.ts`：经 `pi-settings-store.updateSettingsFields('retry', …)` 实现读写 + D3 嵌套 merge + D8 校验纯函数。
+- infra 层新模块 `infra/pi/pi-retry-settings.ts`：经 `pi-settings-store.updateSettingsFields('retry', …)` 实现读写 + D3 嵌套 merge + D8 校验（校验纯函数最终定在 shared `llm-retry.ts`，renderer 表单与 runtime 写侧共用同一域常量——U1 实施选型）。
 - `ConfigService` 单行委托（同 terminal helper 挂载方式；新逻辑放独立 helper 文件，控 config-service max-lines 500）。
 
 ---

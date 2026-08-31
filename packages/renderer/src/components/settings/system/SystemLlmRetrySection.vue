@@ -152,7 +152,7 @@
  * 校验域：直接消费 shared LLM_RETRY_DOMAIN / validateLlmRetryConfig（禁另写一套域）。
  * 存量超域/坏值（D7/D8）：加载值超出合法域或类型不可用时，对应行显示行内标注。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown } from '@lucide/vue'
 import { Switch } from '@/components/ui/switch'
@@ -165,7 +165,7 @@ import {
 } from '@/components/ui/collapsible'
 import { GroupCard } from '@xyz-agent/ui/features/settings'
 import SettingRow from '../SettingRow.vue'
-import { getRetryConfig, setRetryConfig } from '@/api/domains/config'
+import { getRetryConfig, setRetryConfig, onRetryConfig } from '@/api/domains/config'
 import { useToast } from '@/composables/useToast'
 import {
   LLM_RETRY_DOMAIN,
@@ -208,7 +208,16 @@ const invalidFields = reactive(new Set<string>())
 /** 加载期存量超域/坏值的行内标注（D7/D8），字段名 → 提示文本。 */
 const warnings = reactive<Record<string, string>>({})
 
+// 多窗口同步（设计 §3.4，同 terminal 范式）：configured=true 的广播刷新表单。
+// 自保存的回声也走此回调：applyLoaded 与已保存值幂等（无闪烁），无需自触发判别。
+let unsubscribeRetryConfig: (() => void) | null = null
+
 onMounted(async () => {
+  unsubscribeRetryConfig = onRetryConfig((payload) => {
+    if (!payload.configured) return
+    configured.value = true
+    applyLoaded(payload.config)
+  })
   try {
     const res = await getRetryConfig()
     configured.value = res.configured
@@ -217,6 +226,11 @@ onMounted(async () => {
     // best-effort：加载失败保持默认值（保存时以输入为准），不打扰用户
     console.warn('[SystemLlmRetrySection] failed to load retry config:', e)
   }
+})
+
+onUnmounted(() => {
+  unsubscribeRetryConfig?.()
+  unsubscribeRetryConfig = null
 })
 
 /** 数值域检查：返回 [是否合法, 展示值（超域时原样展示存量值）]。类型不可用按默认值展示。 */
@@ -240,6 +254,9 @@ function warnText(raw: string): string {
 
 /** 加载值落到表单：合法值直接显示；超域值原样显示；坏值回落默认显示。超域/坏值均加行内标注。 */
 function applyLoaded(config: LlmRetryConfig): void {
+  // 广播刷新可重复进入：先清上轮行内标注，避免已修复字段的残留警示
+  for (const key of Object.keys(warnings)) delete warnings[key]
+  enabled.value = config.enabled
   const mr = checkDomain(config.maxRetries, LLM_RETRY_DOMAIN.maxRetries.min, LLM_RETRY_DOMAIN.maxRetries.max, PI_DEFAULT_MAX_RETRIES)
   maxRetries.value = typeof mr.display === 'number' ? mr.display : ''
   if (!mr.ok) warnings.maxRetries = warnText(mr.raw)
@@ -297,13 +314,16 @@ const previewText = computed<string>(() => {
   })
 })
 
-/** 「留空 = 未设」字符串输入 → 整数；解析失败返回 null。 */
-function parseIntInput(input: string, field: string, toMs = false): number | undefined | null {
-  const trimmed = input.trim()
+/** 「留空 = 未设」字符串输入 → 整数；解析失败标记字段并记录 label（供 toast 指明字段），返回 null。 */
+let parseErrorFieldLabel: string | null = null
+function parseIntInput(input: string | number, field: string, label: string, toMs = false): number | undefined | null {
+  // provider 三键 v-model 挂在 type=number 的 Input 上，非整数输入（如 1.5）经 Vue loose 转换得到 number
+  const trimmed = String(input).trim()
   if (trimmed === '') return undefined
   const n = Number(trimmed)
   if (!Number.isInteger(n)) {
     invalidFields.add(field)
+    parseErrorFieldLabel = label
     return null
   }
   return toMs ? n * MS_PER_SEC : n
@@ -312,21 +332,22 @@ function parseIntInput(input: string, field: string, toMs = false): number | und
 /** 组装保存载荷；任何字段解析失败返回 null（invalidFields 已标记）。 */
 function buildConfig(): LlmRetryConfig | null {
   invalidFields.clear()
+  parseErrorFieldLabel = null
   const provider: LlmRetryProviderConfig = {}
-  const pmr = parseIntInput(providerMaxRetriesInput.value, 'provider.maxRetries')
+  const pmr = parseIntInput(providerMaxRetriesInput.value, 'provider.maxRetries', t('settings.system.llmRetryProviderMaxRetriesLabel'))
   if (pmr === null) return null
   if (pmr !== undefined) provider.maxRetries = pmr
-  const pt = parseIntInput(providerTimeoutSecInput.value, 'provider.timeoutMs', true)
+  const pt = parseIntInput(providerTimeoutSecInput.value, 'provider.timeoutMs', t('settings.system.llmRetryProviderTimeoutLabel'), true)
   if (pt === null) return null
   if (pt !== undefined) provider.timeoutMs = pt
-  const pd = parseIntInput(providerMaxDelaySecInput.value, 'provider.maxRetryDelayMs', true)
+  const pd = parseIntInput(providerMaxDelaySecInput.value, 'provider.maxRetryDelayMs', t('settings.system.llmRetryProviderMaxDelayLabel'), true)
   if (pd === null) return null
   if (pd !== undefined) provider.maxRetryDelayMs = pd
 
-  if (typeof maxRetries.value !== 'number' || typeof baseDelaySec.value !== 'number') {
-    invalidFields.add(maxRetries.value === '' || typeof maxRetries.value !== 'number' ? 'maxRetries' : 'baseDelayMs')
-    return null
-  }
+  // 两键独立检查：同时为空时两键各自标红，不遗漏
+  if (typeof maxRetries.value !== 'number') invalidFields.add('maxRetries')
+  if (typeof baseDelaySec.value !== 'number') invalidFields.add('baseDelayMs')
+  if (typeof maxRetries.value !== 'number' || typeof baseDelaySec.value !== 'number') return null
   return {
     enabled: enabled.value,
     maxRetries: maxRetries.value,
@@ -340,7 +361,12 @@ async function onSave(): Promise<void> {
   if (saving.value) return
   const config = buildConfig()
   if (config === null) {
-    toastError(t('settings.system.llmRetryInvalidInput'))
+    // 解析失败时指明字段（provider 三键）；基础键为空走通用文案
+    toastError(
+      parseErrorFieldLabel !== null
+        ? t('settings.system.llmRetryInvalidFieldInput', { field: parseErrorFieldLabel })
+        : t('settings.system.llmRetryInvalidInput'),
+    )
     return
   }
   const res = validateLlmRetryConfig(config)
