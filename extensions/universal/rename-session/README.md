@@ -42,10 +42,12 @@ pi install npm:@zhushanwen/pi-rename-session
 
 ## 开关优先级（重要）
 
-`enabled` 有两层来源，优先级从高到低：
+`enabled` 有四层来源，优先级从高到低（`src/pure.ts` `loadRenameConfig`）：
 
-1. **`<agentDir>/auto-rename-enabled` flag 文件**（存在 = 开）：xyz-agent runtime 的开关契约——桌面端 SystemPage 开关、首启默认开启都写这个文件。**xyz-agent 用户请通过桌面端开关或 `/auto-rename` 命令管理，不要手改 JSON 的 `enabled`**（flag 存在时永远视为开，手改会被覆盖）。
-2. **config 的 `enabled` 字段**（默认 false）：flag 不存在时生效，是原生 pi CLI 用户的开关。
+1. **`PI_RENAME_*` 环境变量**（最高，live 读取）：`PI_RENAME_ENABLED=true/false` 显式设置时最终生效，flag 文件也被覆盖（仅显式设置该变量时压制 flag）。适用于容器化部署、CI/CD 等场景。
+2. **`<agentDir>/auto-rename-enabled` flag 文件**（存在 = 开）：xyz-agent runtime 的开关契约——桌面端 SystemPage 开关、首启默认开启都写这个文件。**xyz-agent 用户请通过桌面端开关或 `/auto-rename` 命令管理，不要手改 JSON 的 `enabled`**（flag 存在时视为开，手改会被覆盖）。
+3. **config 的 `enabled` 字段**（默认 false）：环境变量未设 `PI_RENAME_ENABLED` 且 flag 不存在时生效，是原生 pi CLI 用户的开关。
+4. **默认值**（false）：以上三层均未设置时。
 
 ## 命令
 
@@ -79,9 +81,14 @@ rename 是 best-effort 副作用，任何失败静默跳过、绝不阻断 agent
 | 落库前发现已有手动名 | skip（name exists），不覆盖 |
 | 标题模型不可用 | 记日志静默跳过 |
 
-### debug 证据链（`XYZ_AGENT_DEBUG=1`）
+### 日志通道（appendEntry 常开 + debug 文件日志）
 
-`console.warn` 输出，前缀 `[rename-session]`。下列 8 条 debug 日志的**文案字面值是 E2E 断言硬契约**（变更须同步 `e2e/` 场景脚本与单测）：
+所有日志经 `@zhushanwen/pi-extension-logger` 输出，两个通道：
+
+- **appendEntry（session entry，常开）**：`logger.warn` / `logger.error` 写入 session JSONL 的 custom entry（`type: "custom"`、`customType: "rename-session:log"`），不进 LLM 上下文、不显 TUI。`data.message` 由 logger 自动补 `[rename-session]` 前缀，格式为 `msg + 结构化 data`（error 等详情在 entry `data.data` 字段，不冒号拼接进 message）。
+- **文件日志（`XYZ_AGENT_DEBUG=1` 时）**：`<agentDir>/logs/rename-session-<date>.log`。
+
+下列 8 条 debug 日志（仅 `XYZ_AGENT_DEBUG=1` 时经 `logger.warn` 发出）的**文案字面值是 E2E 断言硬契约**（断言对象 = appendEntry entry 的 message 内容；变更须同步 `e2e/` 场景脚本与单测）：
 
 | # | 日志 | 发出侧 | 含义 |
 |---|---|---|---|
@@ -94,7 +101,7 @@ rename 是 best-effort 副作用，任何失败静默跳过、绝不阻断 agent
 | 7 | `LLM request messages: <JSON>` | llm | 传给 callLLM 的 messages 内省（role + text 的 head 200 码点 + … + tail 100 码点预览，截断单位与 truncateForTitle 统一为 Unicode 码点），在请求发起前打出 |
 | 8 | `rename with model <provider>/<id>` | llm | 成功路径模型记录（原常开日志；为避免污染 Pi 输入框改为 debug 输出，带 t=ISO 时间戳） |
 
-另有两条**非 debug 常开**日志：`rename LLM call failed: <err>`（调用失败/超时；超时时 llm-shared callLLM 内部的 extractText 将空错误文本归一为 `unknown error`——extension 侧 `result.error ?? "unknown error"` 只兜 null/undefined，空串兜底发生在 llm-shared 层）、`model not available, skipping`（选模失败）。handler 侧日志带 `t=<ISO时间>` 与 `turnIndex`；llm 侧带 `t=<ISO时间>`、无 turnIndex。
+另有两条**非 debug 常开**日志（无条件经 `logger.warn` 落 appendEntry entry）：`rename LLM call failed`（`logger.warn(msg, { error })` 形态，error 详情在结构化 data 字段；超时时 llm-shared callLLM 内部的 extractText 将空错误文本归一为 `unknown error`——extension 侧 `result.error ?? "unknown error"` 只兜 null/undefined，空串兜底发生在 llm-shared 层）、`model not available, skipping`（选模失败）。handler 侧日志 message 带 `t=<ISO时间>` 与 `turnIndex`；llm 侧带 `t=<ISO时间>`、无 turnIndex。
 
 ## E2E 验收
 
@@ -136,7 +143,7 @@ rename-session/
 ├── skills/rename-session-ext-config/SKILL.md   # 配置指南（pi 内 agent 可发现）
 └── src/
     ├── index.ts          # 工厂入口（注册 turn_end handler + /auto-rename 命令）
-    ├── commands.ts       # /auto-rename on|off|status 命令
+    ├── commands.ts       # /auto-rename on|off|status 命令（enable/disable 别名）
     ├── llm.ts            # callRenameLLM / 两段输入构造 / debug 内省 / 超时
     ├── pure.ts           # 纯函数（配置 / 首轮计数 / cleanTitle）
     └── __tests__/        # 单测（pure / commands / llm mock / index 集成）

@@ -36,7 +36,7 @@ import {
 } from "../llm.js";
 import { type RenameSessionConfig } from "../pure.js";
 
-// 每用例收尾统一还原：console spy 恢复 + stub 的 XYZ_AGENT_DEBUG 还原，
+// 每用例收尾统一还原：logger mock 恢复 + stub 的 XYZ_AGENT_DEBUG 还原，
 // 防泄漏到后续用例（debug 开关 live 读 process.env，依赖 stubEnv/unstubAllEnvs 成对）
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -558,7 +558,7 @@ describe("callRenameLLM A1 日志", () => {
 		vi.clearAllMocks();
 	});
 
-	it("TC1: resolveModel null → console 输出 '[rename-session] model not available, skipping'，返回 null", async () => {
+	it("TC1: resolveModel null → logger.warn('model not available, skipping')（前缀由真实 logger 补），返回 null", async () => {
 		loggerMock.warn.mockClear();
 		vi.mocked(resolveModel).mockReturnValue(null);
 		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
@@ -566,7 +566,7 @@ describe("callRenameLLM A1 日志", () => {
 		expect(loggerMock.warn).toHaveBeenCalledWith("model not available, skipping");
 	});
 
-	it("TC2: callLLM {ok:false} → console 输出 '[rename-session] rename LLM call failed: <error>'，返回 null", async () => {
+	it("TC2: callLLM {ok:false} → logger.warn('rename LLM call failed', {error})（前缀由真实 logger 补），返回 null", async () => {
 		loggerMock.warn.mockClear();
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom" });

@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
 import { registerAutoRenameCommand } from "./commands.js";
 import { callRenameLLM, debugLog as llmDebugLog, isSubagentSession } from "./llm.js";
@@ -26,6 +26,11 @@ interface TurnEndLikeEvent {
  * 新 session 首个成功 turn 完成后，用独立模型生成会话标题并 setSessionName 落库。
  */
 export default function renameSessionExtension(pi: ExtensionAPI): void {
+	// 日志通道注入（extension-logger 两阶段初始化：工厂拿 pi → setPiHandle，最早期调用）。
+	// 不注入则 logger.warn/error 只有文件日志通道（XYZ_AGENT_DEBUG=1），appendEntry
+	// （session entry，README「debug 证据链」的 E2E 断言数据源）不生效。
+	setPiHandle(pi);
+
 	registerAutoRenameCommand(pi);
 
 	pi.on("turn_end", async (event: TurnEndLikeEvent, ctx: ExtensionContext) => {

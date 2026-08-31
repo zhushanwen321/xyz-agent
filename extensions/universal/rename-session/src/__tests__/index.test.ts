@@ -36,7 +36,7 @@ import { callLLM, resolveModel } from "@zhushanwen/pi-llm-shared";
 import renameSessionExtension from "../index";
 import { type RenameSessionConfig, loadRenameConfig } from "../pure.js";
 
-// 每用例收尾统一还原：console spy 恢复 + stub 的 XYZ_AGENT_DEBUG 还原，
+// 每用例收尾统一还原：logger mock 恢复 + stub 的 XYZ_AGENT_DEBUG 还原，
 // 防泄漏到后续用例（debug 开关 live 读 process.env，依赖 stubEnv/unstubAllEnvs 成对）
 afterEach(() => {
 	vi.restoreAllMocks();

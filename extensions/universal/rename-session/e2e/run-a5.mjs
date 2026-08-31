@@ -8,10 +8,11 @@
  * - config/rename-session-ext-config.json 写 model ref 指向 stub
  * 主对话 --model mimo-v2.5-pro 不受影响。
  *
- * 断言：主 round 正常完成（turn_end stop）；rename LLM 调用约 30s 超时后 stderr 出现
- * 子串 `rename LLM call failed:`（探针 5：超时路径 error 为空串 → 文案落 unknown error
- * 兜底，故只匹配该子串不匹配具体文案）；从 LLM request 到失败日志 ≥25s（区分超时路径与
- * 连接错误路径）；无自动 session_info；pi 存活（getState 正常响应）。
+ * 断言：主 round 正常完成（turn_end stop）；rename LLM 调用约 30s 超时后 session JSONL 出现
+ * 子串 `rename LLM call failed`（logger.warn(msg,{error}) 形态——error 详情在 entry 的结构化
+ * data 字段，message 本体不含冒号拼接；探针 5：超时路径 error 为空串 → 归一为 unknown error，
+ * 故只匹配该子串不匹配具体文案）；从 LLM request 到失败日志 ≥25s（区分超时路径与连接错误路径）；
+ * 无自动 session_info；pi 存活（getState 正常响应）。
  */
 
 import {
@@ -70,15 +71,15 @@ export async function runA5() {
 			log("主 round 正常完成（turn_end stopReason=stop）");
 
 			// rename LLM request 发出（指向 hang server）
-			const llmReq = await pi.rpc.waitForStderr(LLM_REQUEST_MARKER, { timeoutMs: 30_000 });
-			// 等 ≥30s 超时失败日志（子串匹配 includes；探针 5：约 30s，上限 45s 含余量）
-			const fail = await pi.rpc.waitForStderr("rename LLM call failed:", { timeoutMs: 45_000 });
+			const llmReq = await pi.rpc.waitForSessionLog(LLM_REQUEST_MARKER, { timeoutMs: 30_000 });
+			// 等 ≥30s 超时失败日志 entry（message 子串匹配 includes；探针 5：约 30s，上限 45s 含余量）
+			const fail = await pi.rpc.waitForSessionLog("rename LLM call failed", { timeoutMs: 45_000 });
 			const hangMs = fail.t - llmReq.t;
 			assert(
 				hangMs >= 25_000,
-				`失败日志过早（LLM request 后 ${hangMs}ms < 25s，可能是连接错误路径而非超时路径）: ${fail.line}`,
+				`失败日志过早（LLM request 后 ${hangMs}ms < 25s，可能是连接错误路径而非超时路径）: ${fail.message}`,
 			);
-			log(`rename 超时失败（LLM request 后 ${(hangMs / 1000).toFixed(1)}s）: ${fail.line}`);
+			log(`rename 超时失败（LLM request 后 ${(hangMs / 1000).toFixed(1)}s）: ${fail.message}`);
 
 			await sleep(600);
 			const lines = await pi.readSessionLines();
