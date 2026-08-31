@@ -13,8 +13,7 @@
   ],
   "license": "MIT",
   "files": [
-    "src/",
-    "index.ts"
+    "src/"
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.4"

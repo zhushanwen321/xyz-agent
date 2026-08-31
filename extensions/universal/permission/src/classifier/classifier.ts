@@ -8,7 +8,7 @@
  * 关键设计：
  *   - 依赖注入 ClassifierDeps（callLLM 注入，便于测试 mock，不直接 import）
  *   - C1a 收口：LLM 调用走 llm-shared callLLM（内部完成凭证 getApiKeyAndHeaders +
- *     completeSimple + stopReason 归一化：error/aborted → {ok:false, recoverable:true,
+ *     completeSimple + stopReason 归一化：error/aborted → {ok:false,
  *     stopReason 透传}），不再走 production.ts 的 streamSimple
  *   - G3 修正（由 callLLM 承接）：completeSimple 的 EventStream.result() 只 resolve 不 reject，
  *     error/aborted 也 resolve（带 stopReason）。callLLM 已把 error/aborted 归一为 ok:false +
@@ -90,7 +90,7 @@ function raceResultWithDeadline(
 			(result) => ({ kind: "ok" as const, result }),
 			(error) => ({
 				kind: "ok" as const,
-				result: { ok: false as const, error: error instanceof Error ? error.message : String(error), recoverable: true },
+				result: { ok: false as const, error: error instanceof Error ? error.message : String(error) },
 			}),
 		),
 	];

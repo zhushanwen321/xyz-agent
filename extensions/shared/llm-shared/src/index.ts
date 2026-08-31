@@ -3,6 +3,6 @@
 // call: LLM 调用（completeSimple + 凭证 + 文本提取）
 // config: 泛型配置读写（mtime 缓存 + 原子写）
 export { resolveModel, getCurrentModelId, type ModelSelector } from "./resolve.ts";
-export { callLLM, extractText, type CallLLMOptions, type CallLLMResult } from "./call.ts";
+export { callLLM, type CallLLMOptions, type CallLLMResult } from "./call.ts";
 export { getConfigPath, loadConfig, saveConfig, clearConfigCache } from "./config.ts";
 export { migrateLegacyConfig, type MigrationResult } from "./migrate.ts";

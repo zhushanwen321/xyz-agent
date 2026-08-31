@@ -192,7 +192,7 @@ describe("resolveModel 装配（resolveModel + callLLM）", () => {
 
 	it("TC5: callLLM 返回 ok:false（LLM 调用失败）→ classifier fail-closed fallback（不 throw）", async () => {
 		vi.mocked(resolveModelShared).mockReturnValue(MOCK_MODEL_A);
-		vi.mocked(callLLMShared).mockResolvedValue({ ok: false, error: "token expired", recoverable: true });
+		vi.mocked(callLLMShared).mockResolvedValue({ ok: false, error: "token expired" });
 		const classifier = createProductionClassifier(makeMockCtx());
 		const result = await classifier.classifyRisk(CTX, CFG_REF);
 		expect(result.outcome).toBe("ask");

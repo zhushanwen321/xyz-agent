@@ -47,13 +47,12 @@ export interface CallLLMOptions {
 /**
  * callLLM 出参。
  * - ok:true → content 为提取并 trim 的文本
- * - ok:false → recoverable 表示可恢复性（C2b：当前实现统一 true，细分待未来有消费者）；
- *   stopReason 是独立透传字段（失败原因维度，不映射 recoverable），供调用方保留
+ * - ok:false → stopReason 是独立透传字段（失败原因维度），供调用方保留
  *   error/aborted 的日志区分（如 permission classifier 的 G3 语义）。
  */
 export type CallLLMResult =
 	| { ok: true; content: string }
-	| { ok: false; error: string; recoverable: boolean; stopReason?: "error" | "aborted" };
+	| { ok: false; error: string; stopReason?: "error" | "aborted" };
 
 // ──────────────────────── 文本提取 ────────────────────────
 
@@ -84,10 +83,10 @@ export function extractText(resp: {
  *    保证 reject 归一为 {ok:false}，调用方日志前缀一致）
  * 2. 调用：completeSimple(model, {systemPrompt, messages, tools:[]}, {apiKey, headers?, env?, signal?, maxTokens?, timeoutMs?, sessionId?})
  * 3. 检查 resp.stopReason：error/aborted（completeSimple 对错误/中止也 resolve 带 stopReason，G3）
- *    → {ok:false, error: 提取错误文本, recoverable:true, stopReason}（不再当正常内容提取）
+ *    → {ok:false, error: 提取错误文本, stopReason}（不再当正常内容提取）
  * 4. 提取 text → {ok:true, content}
- * 5. throw（getApiKeyAndHeaders reject / 网络 / 超时 / 解析）→ catch → {ok:false, error:String(e), recoverable:true}
- *    （C2b：catch 路径不细分 recoverable，统一 true；stopReason 不设——错误原因不可知）
+ * 5. throw（getApiKeyAndHeaders reject / 网络 / 超时 / 解析）→ catch → {ok:false, error:String(e)}
+ *    （stopReason 不设——错误原因不可知）
  *
  * tools 显式传 []（不塞工具）—— 本库用于标题生成等 best-effort 场景，不需要工具调用。
  */
@@ -96,13 +95,13 @@ export async function callLLM(
 	opts: CallLLMOptions,
 ): Promise<CallLLMResult> {
 	// 整个流程纳入 try：getApiKeyAndHeaders / completeSimple 任一 reject/throw 都归一为
-	// {ok:false, recoverable:true}，保证调用方日志前缀一致（B5：凭证注入原在 try 外，reject 时
+	// {ok:false}，保证调用方日志前缀一致（B5：凭证注入原在 try 外，reject 时
 	// callLLM 直接 reject，上游走外层 .catch 输出不一致前缀，如 [pi-rename-session] 而非 [rename-session]）。
 	try {
 		// 1. 凭证（判别联合必须 narrow）：返回 {ok:false} → 提前返回；reject（抛异常）→ 进 catch
 		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(opts.model);
 		if (!auth.ok) {
-			return { ok: false, error: auth.error, recoverable: true };
+			return { ok: false, error: auth.error };
 		}
 
 		// 2. 调用 completeSimple（字段名经探针⑤对齐：Context{systemPrompt?,messages,tools?},
@@ -126,13 +125,13 @@ export async function callLLM(
 		};
 		const resp = await completeSimple(opts.model, context, options);
 		// G3/C1a：completeSimple 对 error/aborted 也 resolve（带 stopReason，不 reject）。
-		// 归一为 ok:false + stopReason 独立透传（recoverable 统一 true，与 C2b 一致不触发细分）。
+		// 归一为 ok:false + stopReason 独立透传。
 		if (resp.stopReason === "error" || resp.stopReason === "aborted") {
 			const errorText = extractText(resp) || "unknown error";
-			return { ok: false, error: errorText, recoverable: true, stopReason: resp.stopReason };
+			return { ok: false, error: errorText, stopReason: resp.stopReason };
 		}
 		return { ok: true, content: extractText(resp) };
 	} catch (error) {
-		return { ok: false, error: error instanceof Error ? error.message : String(error), recoverable: true };
+		return { ok: false, error: error instanceof Error ? error.message : String(error) };
 	}
 }

@@ -14,8 +14,7 @@
   ],
   "license": "MIT",
   "files": [
-    "src/",
-    "index.ts"
+    "src/"
   ],
   "scripts": {
     "typecheck": "npx tsc --noEmit",

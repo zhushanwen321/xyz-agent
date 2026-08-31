@@ -324,7 +324,7 @@ describe("callRenameLLM", () => {
 
 	it("callLLM 返回 {ok:false} → 返回 null（静默跳过，不抛错）", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
-		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
+		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom" });
 		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 		expect(result).toBeNull();
 	});
@@ -498,7 +498,7 @@ describe("callRenameLLM", () => {
 
 	it("TC7: callLLM ok:false（超时/模型错误）→ 返回 null 不抛错（失败归一静默跳过）", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
-		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "timeout", recoverable: true });
+		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "timeout" });
 		await expect(callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE)).resolves.toBeNull();
 	});
 
@@ -569,7 +569,7 @@ describe("callRenameLLM A1 日志", () => {
 	it("TC2: callLLM {ok:false} → console 输出 '[rename-session] rename LLM call failed: <error>'，返回 null", async () => {
 		loggerMock.warn.mockClear();
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
-		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
+		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom" });
 		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 		expect(result).toBeNull();
 		expect(loggerMock.warn).toHaveBeenCalledWith("rename LLM call failed", { error: "boom" });
@@ -578,7 +578,7 @@ describe("callRenameLLM A1 日志", () => {
 	it("TC2b: callLLM {ok:false} → 不输出 'rename with model' 成功日志（B2 位置修正：成功日志已移到 result.ok 分支后），但仍输出 failed 日志", async () => {
 		loggerMock.warn.mockClear();
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
-		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
+		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom" });
 		const result = await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
 		expect(result).toBeNull();
 		// 失败分支仍输出 failed 日志
