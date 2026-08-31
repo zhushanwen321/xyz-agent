@@ -55,7 +55,7 @@ turn 分组函数的快路径条件是 `cache.lastSourceRef === sourceMessages`�
 
 ### 2.4 候选 D：useSidebar 双轨冻结态
 
-w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进行到 90% 后冻结：新轨 `useSidebarNew`（core createUseSession + 壳端口适配）已有 10 个静态消费方，旧轨 `useSidebar`（567 行独立重复实现）剩 2 个运行时消费点（useChatViewDeps 的 fork/handoff 静态 import、useTraceJump 的 selectSession 动态 import）。三类持续成本有实证：① selectSession 12 步编排两处各一份，修 bug 必须双打（commit `266754c09` 即一次真实双打）；② 新功能只进新轨（restoreSession / assignSessionToProject / 重连重拉），旧轨已是行为落后副本；③ 登记未清的回退债务（useSidebarNew 的 deleteSession wasActive 回退走 core headless selectSession，缺 ensureStreamSubscription）已在活跃路径。运行时双订阅本身成本可忽略（低频广播 × 幂等 applySnapshot）——**真正的成本是编排双份维护与漂移**。
+w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进行到 90% 后冻结：新轨 useSidebarNew（core createUseSession + 壳端口适配）已有 10 个静态消费方，旧轨 `useSidebar`（567 行独立重复实现）剩 2 个运行时消费点（useChatViewDeps 的 fork/handoff 静态 import、useTraceJump 的 selectSession 动态 import）。三类持续成本有实证：① selectSession 12 步编排两处各一份，修 bug 必须双打（commit `266754c09` 即一次真实双打）；② 新功能只进新轨（restoreSession / assignSessionToProject / 重连重拉），旧轨已是行为落后副本；③ 登记未清的回退债务（useSidebarNew 的 deleteSession wasActive 回退走 core headless selectSession，缺 ensureStreamSubscription）已在活跃路径。运行时双订阅本身成本可忽略（低频广播 × 幂等 applySnapshot）——**真正的成本是编排双份维护与漂移**。
 
 ### 2.5 候选 C：railTurns 跨包改造（评估后撤销）
 
@@ -89,8 +89,8 @@ w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进�
 **关键决策**：
 
 - **D-A1 车道判定用「逐项引用比对」而非上游 commit 模式标记**。被否：store 侧标记 commit 形态——引入跨模块耦合，且 ADR-0039 已保证引用相等即内容相等，自证式判定无需任何人声明。证据：四种变化形态中 streaming 100% 落在尾部两种，前缀比对 O(n) 指针比较零分配（3000 项约 1-3µs）。
-- **D-A2 尾部重建起点 = 末位 turn 的源数组起始下标**（cache 新增内部字段 `turnStartOffsets`）。该点具有「分组状态归零」性质：该处消息只可能是 user 锚 / 隐藏完成通知边界 / assistant 自启，三者都以 openTurn 起始（处理时 current 必为 null），所以**子数组从 current=null 重跑与全量路径在该区间逐字一致**——三车道共享同一分组函数（`groupRenderInput` 加 `from` 参数），零第二份分组语义。运行时断言：✅已测（36 个既有用例零修改全绿 + 8 个新车道用例全部断言与全量路径 deepEqual）。
-- **D-A3 车道①条件从「仅末条不同」放宽为「前 n-1 项相等」**（实施期兼容扩展）：末条相同但数组引用不同时，子重跑判定 unchanged → 整体引用恒等复用，正是设计承诺语义的零成本超集。
+- **D-A2 尾部重建起点 = 末位 turn 的源数组起始下标**（cache 新增内部字段 `turnStartOffsets`）。该点具有「分组状态归零」性质：该处消息只可能是 user 锚 / 隐藏完成通知边界 / assistant 自启，三者都以 openTurn 起始（处理时 current 必为 null），所以**子数组从 current=null 重跑与全量路径在该区间逐字一致**——三车道共享同一分组函数（`groupRenderInput` 加 `from` 参数），零第二份分组语义。运行时断言：✅已测（35 个既有用例零修改全绿 + 9 个新车道用例全部断言与全量路径 deepEqual）。
+- **D-A3 车道①条件从「仅末条不同」放宽为「前 n-1 项相等」**（实施期兼容扩展）：末条相同但数组引用不同时，子重跑判定 unchanged → 整体引用恒等复用，正是设计承诺语义的零成本超集。恒等复用同时覆盖车道②的透明消息 append / 空 trigger turn 折叠形态（实施优于登记的合理超集，测试已锁定）。
 - **D-A4 拒绝「给共享类型 MessageTurn 加 idx 字段」**（对照前期 rail 优化决策）：侵入共享 domain 类型换局部便利不值，WeakMap 索引已够。
 - **D-A5 tail 快车道省略 `filterInvisibleItems` 是有意省略（2026-09-01 审查补登）**。依据：display===false 消息在分组层必被规则 2（隐藏完成通知边界）或透明分支消化，static 槽位（规则 4 退化 / 规则 5）结构性不含 display:false——全量路径（车道③）的 `filterInvisibleItems` 是不变量守卫（自证零命中），tail 路径省略它与全量逐字等价，等价性由「每步 deepEqual 全量」测试形态锁定。**已知不对称登记**：未来若新增绕过 display 检查的 static 产出分支，车道③兜底而快车道漏防——新增 static 分支的同步义务 = 在 `rebuildTailFromLastTurn` 补 O(tail) 同款过滤（或在函数注释显式声明分支顺序不变量）。
 
@@ -130,8 +130,8 @@ w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进�
 **关键决策**：
 
 - **D-D1 先清回退债务再切换（步骤硬序）**：core `use-session` 新增可选端口 `selectSessionFallback`，壳注入完整 12 步 selectSession——deleteSession/deleteFolder 的 was-active 回退从 core headless（缺 ensureStreamSubscription，有 handoff 回复丢失同款回归前科）升级为壳版。缺省仍走 headless（headless/mobile 形态不变）。
-- **D-D2 空态出口承接（实施期发现补齐）**：core 空态分支原本只 push 路由，旧轨删除路径空态出口另有 D7 startFlow 承接（flow=idle 时面板会落入无输入面死态）。不补齐则删除旧轨即行为回退——新增 `enterEmptyChatState` helper，core 既有测试零破坏。
-- **D-D3 重命名兑现头注释承诺**：`useSidebarNew` → `useSidebar`（其头注释自述「消费方切换完成后重命名取代」），测试 reset 函数对齐旧轨习惯名。部分消费方与 mock 文件因此零改动（路径重命名后恰好解析到新实现）。
+- **D-D2 空态出口承接（实施期发现补齐）**：core 空态分支原本只 push 路由，旧轨删除路径空态出口另有 D7 startFlow 承接（flow=idle 时面板会落入无输入面死态）。不补齐则删除旧轨即行为回退——新增 `enterEmptyChatState` helper，core 既有测试零破坏。newSession 的延迟 create 分支**有意不**复用该 helper：无参 startFlow 的 pendingCwd=null 会清掉 newSession 刚回灌的 fallback cwd（分支排除理由登记，防未来误改）。
+- **D-D3 重命名兑现头注释承诺**：useSidebarNew → `useSidebar`（其头注释自述「消费方切换完成后重命名取代」），测试 reset 函数对齐旧轨习惯名。部分消费方与 mock 文件因此零改动（路径重命名后恰好解析到新实现）。
 - **D-D4 启动时序差异查实非回归**：新轨 initApp 在 newSession 前多 `await projectStore.init()`（D14 归属约束）；生产环境 Landing.vue 的 onMounted idle 兜底 startFlow 双入口幂等覆盖该窗口，仅测试环境需显式推进微任务。
 
 ### 3.4 候选 C：撤销登记（防重复提议）
@@ -148,9 +148,9 @@ w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进�
 
 | 验证 | 覆盖 | 回溯 |
 |------|------|------|
-| core 全量 vitest | 94 文件 / 1397 passed（A：36 既有零修改 + 8 新车道用例；B：fold≡reduce 元断言 + 确定性 + 10k 序列；D：core session 60 tests 含 4 新端口用例） | G1/G2 的行为等价基线 |
+| core 全量 vitest | 94 文件 / 1397 passed（A：35 既有零修改 + 9 新车道用例；B：fold≡reduce 元断言 + 确定性 + 10k 序列；D：core session 60 tests 含 4 新端口用例） | G1/G2 的行为等价基线 |
 | renderer 受影响面 | 27 文件 / 206 tests（sidebar 全家 + app-bootstrap + MessageStream.wire + rail + 各 mock 迁移文件） | G3 行为保持 |
-| runtime 增量 | message-converter / session-history 等 81 tests（经 convertPiHistory 间接覆盖 replayEntries 新路径） | G2 |
+| runtime 增量 | message-converter / session-history 相关 7 文件合计 76 tests（经 convertPiHistory 间接覆盖 replayEntries 新路径）；一致性审查期另实跑 runtime 全量 4115 passed（含 real-pi 池，见 §5.2） | G2 |
 | 三包 typecheck + `dev-smoke` exit 0 | D 的 import 结构改动（模块加载期闸门） | G3 |
 | `check-doc-symbol-drift` | 零悬空引用（D 的改名清扫） | G3 |
 
@@ -190,7 +190,7 @@ w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进�
 
 ### 5.2 残留与后续
 
-- **real-pi 池待 CI 终检**（§4.2 S5）：本地未跑（需真实 pi 子进程 + LLM 轮次）；对外 API 与产物结构零变化，风险低但须盯 CI。触发 = 本分支首次 push（截至 2026-09-01 三主 commit 未 push 到任何远端分支）。
+- **real-pi 池 CI 终检**（§4.2 S5）：**本地已预验全绿**（2026-09-01 一致性审查期实跑 runtime 全量 4115 passed，含 chaos / pi-protocol-contract / session-manager-full-e2e 等 real-pi 池；唯一失败 workflow-extractor 属 extensions 领地的并行改动，与本波次无关）。S5 剩余价值 = push 后 CI 独立环境复检；触发 = 本分支首次 push（截至 2026-09-01 三主 commit 未 push 到任何远端分支）。
 - **S1-S4 真机实证待执行**（§4.2）：行为等价已由测试锁定，此为 G1/G2/G3 的收益实证项；触发 = 下次 prerelease 真机验收一并执行，执行后回写本节销账。
 - **候选 C 重启信号**（§3.4）已登记于本文，后续审查者以此为准，不再重复提议数据流改造。
 - **perf plan 08-render-layer 文档不在本仓**（cw harness 目录）：A 是其 D-4「可选优化第三期」的兑现，本文即仓内登记载体。

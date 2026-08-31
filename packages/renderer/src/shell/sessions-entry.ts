@@ -16,7 +16,7 @@ import type { BatchDeleteResult, SessionSummary } from '@xyz-agent/shared'
 /**
  * 新壳 sidebar/session 挂载点消费的句柄形状。
  *
- * 对齐 useSidebar 返回签名（packages/renderer/src/composables/features/useSidebar.ts）
+ * 对齐 useSidebar 返回签名（packages/renderer/src/composables/features/sidebar/useSidebar.ts）
  * 的挂载点消费子集——P4 contribution 路由升级时，ExtensionHost 经此契约拿到 sidebar/session
  * 入口所需的 session 管理能力。D5 占位期壳直接消费 useSidebar 实例（不经本接口），本接口
  * 是 P4 切换「换实现（contribution 注入）不改契约」的前置声明。

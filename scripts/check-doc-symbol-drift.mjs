@@ -41,6 +41,8 @@ const PROJECT_ROOT = path.resolve(new URL('.', import.meta.url).pathname, '..')
 const DOC_MODULE_MAP = {
   'docs/design/update-network-resilience.md': ['apps/electron/main/update', 'apps/electron/main/gateway/update-handlers.ts'],
   'docs/design/update-network-resilience.impl-plan.md': ['apps/electron/main/update', 'apps/electron/main/gateway/update-handlers.ts'],
+  'docs/design/chat-stream-perf-architecture.md': ['packages/core/src/domain/chat', 'packages/core/src/domain/session', 'packages/renderer/src/composables/features/sidebar', 'packages/renderer/src/composables/features/trace'],
+  'docs/design/chat-stream-perf-architecture.impl-plan.md': ['packages/core/src/domain/chat', 'packages/core/src/domain/session', 'packages/renderer/src/composables/features/sidebar', 'packages/renderer/src/composables/features/trace'],
 }
 
 /** 环境变量名白名单（非导出符号，文档合法引用）：项目 env 前缀 */

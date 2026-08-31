@@ -270,6 +270,9 @@ function appendInlineNotice(
  * toRenderItems（全量版）与 toRenderItemsIncremental（增量版）共享的分组 SSOT——
  * 两处分组逻辑漂移会导致增量输出与全量输出不等价。
  *
+ * 分组不变量（设计文档 D-A5）：static 槽位结构性不含 display:false 消息，依赖分支顺序
+ * （透明分支先于 isInlineNotice 与规则 5 拦截）——新增 static 产出分支须同步尾部快车道过滤义务。
+ *
  * from = 起始下标（尾部快车道 D-4 用：从末位 turn 的起始下标重跑子数组分组——该下标处
  * 分组状态归零，子重跑与全量路径在该区间逐字一致）。starts = 各 turn 组的最早成员下标
  * （与 groups 等长对齐，供下次尾部快车道定位重受影响区）。分组规则分支本体不感知 from/
