@@ -157,7 +157,7 @@ function handleEnterPlanMode(
   persistPlanState(pi, state);
   updatePlanWidget(ctx, state);
 
-  // Restrict tools to read-only set during plan mode
+  // Restrict tools to the plan-mode set (includes bash — file-write constraints come from the injected plan mode prompt below)
   pi.setActiveTools(["read", "bash", "grep", "find", "ls", "plan"]);
 
   // Inject plan mode system prompt inline
@@ -183,6 +183,6 @@ function handleEnterPlanMode(
     `## Phase D: Completion\n` +
     `1. Ask user to review the complete plan.\n` +
     `2. Call plan tool (complete) with isolation method (compact/tree/direct).\n` +
-    `3. After plan complete: check subagent capability → suggest goal + wave or single-agent execution.`,
+    `3. After plan complete: the user picks an execution path (subagent-driven / goal-driven / single-agent) via the completion dialog.`,
   );
 }

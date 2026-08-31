@@ -77,7 +77,7 @@ function buildQueryTool(spawner: CwSpawner): ToolDefinition<typeof parameters, C
 
 参数：action / unitId（→ --unit，仅 status・report）/ rootId（→ --root，仅 report，与 unitId 互斥）/ json（→ --json，仅 status・frontier）。
 
-本工具只读——推进流程（建 unit、交证据、跑 runner）经 bash 调 cw 命令，用法以 cw-cli skill 为权威源。返回 details.ok 区分成功/失败；成功时 details.stdout 为 cw 原始输出（--json 时 details.data 为解析后的 JSON）。`,
+本工具只读——推进流程（建 unit、交证据、跑 runner）经 bash 调 cw 命令，用法以 cw-cli skill 为权威源。返回 details.ok 区分成功/失败；成功时 details.stdout 为 cw 原始输出，stdout 可解析为 JSON 时 details.data 为解析结果。`,
 		executionMode: "sequential",
 		parameters,
 		async execute(

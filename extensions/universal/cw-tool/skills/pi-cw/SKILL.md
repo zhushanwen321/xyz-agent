@@ -7,7 +7,7 @@ description: "cw 2.0 runner 的 pi 环境实操指南：大型多 agent 并行�
 
 cw 2.0 runner 的 pi 环境实操指南（薄封装）。多 agent 并行开发不再需要主 agent 手动编排——`cw run --spawn pi` 一条命令调度到根 unit closed：runner 按 frontier 并行 spawn 无头 pi 进程（designer 写 spec / developer 实现 / 独立 reviewer 审查），每 unit 独立 worktree，机器验证裁决完成。
 
-> **cw 2.0 适配说明**：本 skill 的 1.x 形态（epic→feature→slice→wave 四层递归树 + planning/wave/dev/review/merge 5 个编排 agent + 4 个角色受限 cw_* 工具）已退役——cw 2.0 把编排智能收进引擎，「层主不能自审」由账本层硬保证（review submit 必须 `--role reviewer`）。适配设计见 xyz-agent 仓 `docs/todo/pi-cw-cw2-adaptation.md`。
+> **cw 2.0 适配说明**：本 skill 的 1.x 形态（epic→feature→slice→wave 四层递归树 + planning/wave/dev/review/merge 5 个编排 agent + 4 个角色受限 cw_* 工具）已退役——cw 2.0 把编排智能收进引擎，「层主不能自审」由账本层硬保证（review submit 必须 `--role reviewer`）。
 
 **分工边界**：cw 命令面（create / evidence / review / verify 的参数与 gate 规则）、模式分流表、手动流程、spec 格式——以 **cw-cli skill 为唯一权威源**（SSOT），本 skill 不重复，只教 pi 环境的 runner 实操差异。
 

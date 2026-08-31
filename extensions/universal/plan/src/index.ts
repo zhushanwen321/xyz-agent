@@ -29,7 +29,7 @@ export default function planExtension(pi: ExtensionAPI) {
     const state = reconstructPlanState(ctx);
     sessions.set(sessionId, state);
     updatePlanWidget(ctx, state);
-    // If plan mode was active, re-restrict tools to read-only set
+    // If plan mode was active, re-restrict tools to the plan-mode set (includes bash — file-write constraints come from the injected plan mode prompt)
     if (state.isActive) {
       pi.setActiveTools(["read", "bash", "grep", "find", "ls", "plan"]);
     }

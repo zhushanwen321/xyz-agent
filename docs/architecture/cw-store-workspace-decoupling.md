@@ -1,6 +1,6 @@
 # cw-tool 侧 store/workspace 解耦协调需求（差异文档）
 
-> **[HISTORICAL] cw 2.0 已废止本文描述的协调面**：cw 2.0（2026-08-20）完全重写 store 布局为 `~/.cw/<encoded-cwd>/`（per-cwd、无 `--workspace` 参数），cw-tool 侧的 `detectRepoWorkspace` / 版本门控 / `--workspace` 透传代码已随 Phase 2-B 适配删除（见 `docs/todo/pi-cw-cw2-adaptation.md`）。本文仅作 1.x 时代的决策追溯保留。
+> **[HISTORICAL] cw 2.0 已废止本文描述的协调面**：cw 2.0（2026-08-20）完全重写 store 布局为 `~/.cw/<encoded-cwd>/`（per-cwd、无 `--workspace` 参数），cw-tool 侧的 `detectRepoWorkspace` / 版本门控 / `--workspace` 透传代码已随 Phase 2-B 适配删除。本文仅作 1.x 时代的决策追溯保留。
 
 > **定位**：本文是 xyz-agent 侧（`@zhushanwen/pi-cw-tool`，cw-cli 的 pi extension 封装层）对「cw store 归属与 workspace 解耦」问题的**差异补充**。**引擎层完整设计 SSOT** 在 coding-workflow 仓库：`fix-cw-cwd-worktree/docs/cw-store-workspace-decoupling.md`（commit `aa4949b`，含自身对抗审查）。本文不重述引擎层决策，只记录 xyz-agent 侧独有的：cw-tool 协调改动、版本门控契约、本仓实测数据、ADR-0061 修订、反哺引擎层的两条。
 >
