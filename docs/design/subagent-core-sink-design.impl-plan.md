@@ -151,7 +151,7 @@ graph TD
 | u-core-args | committed | 1 | 51d66ee8f |
 | u-core-agent | committed | 1 | 本波 core commit |
 | u-core-worktree | committed | 1 | 7bd0d5706（dev 越权自 commit，内容合规已登记） |
-| u-core-lifecycle | pending | 0 | — |
+| u-core-lifecycle | committed | 1 | 本波 core commit（限流重派后完成） |
 | u-core-snapshot | pending | 0 | — |
 | u-core-exec-export | pending | 0 | — |
 | u-core-actions | pending | 0 | — |
