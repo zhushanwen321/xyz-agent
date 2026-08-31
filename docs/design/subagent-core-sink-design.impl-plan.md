@@ -154,14 +154,14 @@ graph TD
 | u-core-lifecycle | committed | 1 | 本波 core commit（限流重派后完成） |
 | u-core-snapshot | committed | 1 | 本波 core commit |
 | u-core-exec-export | committed | 1 | 本波 core commit |
-| u-core-actions | pending | 0 | — |
+| u-core-actions | committed | 1 | 本波 core commit |
 | u-wire | pending | 0 | — |
 | u-sw-clean-schema | committed | 1 | 本波 pi-sw commit |
 | u-sw-clean-render | committed | 1 | 本波 pi-sw commit |
 | u-sw-comments | committed | 1 | 本波 pi-sw commit |
-| u-sw-injector | pending | 0 | — |
+| u-sw-injector | committed | 1 | 本波 pi-sw commit（限流重派后完成） |
 | u-sw-misc | committed | 1 | 本波 pi-sw commit |
-| u-sw-store | pending | 0 | — |
+| u-sw-store | committed | 1 | 本波 pi-sw commit |
 | u-sw-actions | pending | 0 | — |
 | u-probe-verify | pending | 0 | — |
 
@@ -176,4 +176,4 @@ graph TD
   - 2026-08-31 计划创建（来源：sink 设计 U1-U12 + code-simplify 扫描候选整合）。
   - 2026-08-31 Wave1 完成（5/5 committed）：u-core-ref 初次派发因账户限流失败，重派后完成。合理偏差登记：u-probe-base 注入快照为两段（model 段数据源非目录集派生且非确定字段，排除以保 S7 确定性）；u-core-pool 旧名 computeWatchdogMs 删除（全仓清零核实）；u-core-ref 的 `..` 检测位选在 ~/ 展开前的原始引用串（防 ~/../x.md 逃逸）、normalizeWorkflowRef 裁决结果为 {kind: name|path|invalid, reason} 结构化形态、保留字定为 [".", ".."] 导出常量、内置 workflow 名不 core 硬编码（经 knownNames 宿主注入体现）。pi-sw 实测无测试钉住 `..` 放行行为，零测试修改。
   - 2026-08-31 Wave2 4/5 committed（u-core-lifecycle 限流失败待重派）：①u-core-worktree dev 越权执行 git commit（7bd0d5706）——内容领地内且 pre-commit 全过，保留；已向后续派发强调禁 git 约束。②u-core-agent 领地外最小触碰 resource-meta.ts/meta-parser.ts（AgentMeta 执行字段只能落在类型定义地，计划内部张力）——纯增量零回归（字段缺席时 meta 不含新键，有测试钉住），接受并登记。③u-sw-clean-schema 复核纠正扫描结论：SLUG_MAX_LENGTH 垫片有跨包消费者（structured-output cross-package-contract.test.ts 漂移守卫断言 mod.SLUG_MAX_LENGTH === 35），垫片保留，后续可改注释标注真实消费者。④u-sw-clean-render 的 views/format.ts 折叠为 re-export 垫片保留消费方 import 面；观察项遗留：WorkflowsView.ts:96 dash() 注释失实（已由 u-sw-comments 修正）。
-  - 2026-08-31 Wave3 4/5 committed（u-sw-injector 限流失败待重派）：①u-core-snapshot 发现设计未登记的第三处投影分叉（spec.budgetRef：core toSnapshot 剔除 vs pi serializeRun 直接落盘），codec 单源采 core 侧剔除（嵌套 run 落盘少一脏字段，性质同 strip live），已用例钉住。②u-core-exec-export：error-recovery.ts 实测不存在（计划预置偏差路径），错误类型族实测散布 9 文件；**交接 u-wire：worktree-manager.ts 与 worktree-git-ops.ts 存在同名 GitRunError 双类，barrel 全量 re-export 会命名冲突，需别名或选择性导出**。③u-sw-misc 对 impl-plan 领地外的 robustness-medium-batch2-interface.test.ts 删 1 个死源码锚定 it（源码正则锚定已删的本地 boundedPrettySerialize 实现体；被删断言语义逐条核实由 core 测试覆盖，无覆盖净损失）——接受并登记。
+  - 2026-08-31 Wave3 4/5 committed（u-sw-injector 限流失败待重派）：①u-core-snapshot 发现设计未登记的第三处投影分叉（spec.budgetRef：core toSnapshot 剔除 vs pi serializeRun 直接落盘），codec 单源采 core 侧剔除（嵌套 run 落盘少一脏字段，性质同 strip live），已用例钉住。②u-core-exec-export：error-recovery.ts 实测不存在（计划预置偏差路径），错误类型族实测散布 9 文件；**交接 u-wire：worktree-manager.ts 与 worktree-git-ops.ts 存在同名 GitRunError 双类，barrel 全量 re-export 会命名冲突，需别名或选择性导出**。③u-sw-injector：discoverAgents 签名适配为壳内现取 hostRoots 后传第二参；warn/error 日志通道随装配移位 core（injector→agents-assembly，触发条件逐项等值）；parseAgentFrontmatter（壳内 export）生产消费清零但作为公开 export 面保留，留后续清理单元裁决。④u-core-actions：⛔4 快照期望值硬编码自 pi-sw 现实现实测输出（临时探针跑完即删，git 已核无残留）；六 handler 文案核查零 pi 专属词汇，零外置点。⑤u-sw-store：SNAPSHOT_VERSION 单源裁决删本地常量改消费 core（collectRecordRun 版本判定需要）；SO-DATA-2 warn 实现形态从「抛 TypeError catch」改为「codec 返回 undefined 显式 warn 分支」，消息模板与次数语义不变（原断言未改全过）。⑥②u-sw-misc 对 impl-plan 领地外的 robustness-medium-batch2-interface.test.ts 删 1 个死源码锚定 it（源码正则锚定已删的本地 boundedPrettySerialize 实现体；被删断言语义逐条核实由 core 测试覆盖，无覆盖净损失）——接受并登记。
