@@ -207,7 +207,7 @@ function sortedRuns(runs: Map<string, WorkflowRun>): WorkflowRun[] {
  * 打开 WorkflowsView（三级导航 TUI），注入 lifecycle ViewActions。
  *
  * ViewActions 通过 deps 调 lifecycle（abort），与 view 解耦——
- * view 单测可注入 mock actions（见 workflows-view.test.ts）。
+ * view 单测可注入 mock actions（见 views/__tests__/WorkflowsView-signature.test.ts）。
  */
 async function openView(
   run: WorkflowRun,

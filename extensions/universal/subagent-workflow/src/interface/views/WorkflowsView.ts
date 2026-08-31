@@ -85,7 +85,7 @@ const PRINTABLE_CHAR_MIN = 32;
 function b(theme: ThemeLike, s: string): string {
   return theme.fg("borderMuted", s);
 }
-/** 着色单字符填充用的 ─（供 segFillColored 的 fillStyled）。 */
+/** 着色单字符填充用的 ─（本文件 dashes() 满宽填充复用）。 */
 function dash(theme: ThemeLike): string {
   return theme.fg("borderMuted", "─");
 }
