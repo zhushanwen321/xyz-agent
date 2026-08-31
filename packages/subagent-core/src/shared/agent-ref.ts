@@ -148,15 +148,17 @@ export function normalizeWorkflowRef(
   if (looksLikePath) {
     const path = normalizeRef(trimmed, WORKFLOW_REF_EXT);
     if (path !== null) return { kind: "path", path };
-    // 失败原因细分（normalizeRef 返回 null 不带原因——此处按同一判据重放；
-    // `..` 段对原始串检测，与 normalizeRef 的展开前判位一致）
+    // 失败原因细分（normalizeRef 返回 null 不带原因——此处按同一判据重放；重放
+    // 顺序与 normalizeRef 判序逐位对齐：parent_segment 先于 not_absolute，否则
+    // `a/../b.js` 类「相对路径 + 含 .. 段」被误归因 not_absolute，指引改绝对路径
+    // 后仍被 .. 段拒绝——两步误导。`..` 段对原始串检测，与展开前判位一致）
     const expanded = trimmed.startsWith(HOME_DIR_PREFIX)
       ? join(homedir(), trimmed.slice(HOME_DIR_PREFIX.length))
       : trimmed;
-    const reason: WorkflowRefInvalidReason = !isAbsolute(expanded)
-      ? "not_absolute"
-      : hasParentSegment(trimmed)
-        ? "parent_segment"
+    const reason: WorkflowRefInvalidReason = hasParentSegment(trimmed)
+      ? "parent_segment"
+      : !isAbsolute(expanded)
+        ? "not_absolute"
         : "bad_ext";
     return { kind: "invalid", ref, reason };
   }

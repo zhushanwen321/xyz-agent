@@ -194,6 +194,22 @@ body`,
     expect(meta).toBeNull();
   });
 
+  it("disallowedTools/skills 空数组 → 键保留为 []（与 tools: [] 空列表语义一致）", () => {
+    const meta = parseResourceMeta(
+      "---\nname: x\ndescription: y\ntools: []\ndisallowedTools: []\nskills: []\n---\nbody",
+      "agent",
+    );
+    expect(meta).not.toBeNull();
+    if (meta?.kind !== "agent") return fail("kind 应为 agent");
+    expect("disallowedTools" in meta).toBe(true);
+    expect(meta.disallowedTools).toEqual([]);
+    expect("skills" in meta).toBe(true);
+    expect(meta.skills).toEqual([]);
+    // 同 fixture 的 tools 基准：空数组三字段族同语义
+    expect("tools" in meta).toBe(true);
+    expect(meta.tools).toEqual([]);
+  });
+
   it("workflow meta 含 agent 专属新字段 → 串类 reject", () => {
     const meta = parseResourceMeta(
       "/* @pi-meta\nname: wf\ndescription: d\nphases: [a]\nmaxTurns: 2\n*/\ncode",

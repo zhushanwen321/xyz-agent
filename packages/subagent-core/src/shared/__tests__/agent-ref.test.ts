@@ -218,6 +218,16 @@ describe("normalizeWorkflowRef 三分裁决", () => {
     });
   });
 
+  it("路径分支失败原因优先级：.. 段先于绝对路径判定（重放顺序对齐 normalizeRef 判序）", () => {
+    // 相对路径 + 含 .. 段：normalizeRef 实际因 parent_segment 先判拒绝，归因
+    // 不得误报 not_absolute（否则指引改绝对路径后仍被 .. 段拒绝——两步误导）
+    expect(normalizeWorkflowRef("a/../b.js")).toEqual({
+      kind: "invalid",
+      ref: "a/../b.js",
+      reason: "parent_segment",
+    });
+  });
+
   it("裸名与路径天然二分：名字是简单标识符，含分隔符即归路径分支（对齐 pi 现行为）", () => {
     // 名字不撞路径：knownNames 命中不受路径分支影响
     expect(normalizeWorkflowRef("chain", { knownNames: ["chain"] }).kind).toBe("name");
