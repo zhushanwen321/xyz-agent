@@ -163,7 +163,7 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
   const family = resolveFamily(sessionId, index)
 
   // ---- 6. 补 M1 占位字段（fileName / subagent cwd）+ workflows ----
-  enrichRefs(family, sessionIdToPath, pathToRef)
+  enrichRefs(family, pathToRef)
   family.workflows = await resolveWorkflows(sessionId, sessionIdToPath, pathToRef)
 
   return family
@@ -395,11 +395,7 @@ export function extractSessionIdFromFilename(name: string): string {
  *（identity 无 cwd）。此处用已扫描的真实文件信息补全：alive 的 ref 补 fileName + cwd；
  * cleanedUp 孤儿（无文件）保持占位。
  */
-function enrichRefs(
-  family: Family,
-  sessionIdToPath: Map<string, string>,
-  pathToRef: Map<string, SessionRef>,
-): void {
+function enrichRefs(family: Family, pathToRef: Map<string, SessionRef>): void {
   // sessionId → 完整 ref（含真实 fileName/cwd），由 pathToRef 反建
   const bySid = new Map<string, SessionRef>()
   for (const ref of pathToRef.values()) bySid.set(ref.sessionId, ref)
@@ -426,6 +422,4 @@ function enrichRefs(
       cwd: full.cwd || s.cwd,
     } as SubagentRef
   })
-  // sessionIdToPath 仅用于类型完整性占位引用，避免未用警告（实际路径信息已在 pathToRef）
-  void sessionIdToPath
 }

@@ -24,7 +24,6 @@ export interface SessionRef {
   cwd: string
   /** fork 文件指向来源的路径（来自 header 的 parentSession，原始文件路径字符串） */
   parentSession?: string
-  name?: string
 }
 
 export interface SubagentRef extends SessionRef {

@@ -28,6 +28,7 @@ import {
   renderOutline,
   renderExpand,
   renderDetail,
+  formatBytesMarker,
   type OutlineOptions,
   type OutlineResult,
   type EntryBrief,
@@ -115,12 +116,6 @@ function formatDate(ms: number): string {
 function shortCwd(cwd: string): string {
   const parts = cwd.split('/').filter(Boolean)
   return parts.slice(-2).join('/')
-}
-
-function formatOmitted(bytes: number): string {
-  if (bytes <= 0) return ''
-  if (bytes < 1024) return `[${bytes}B omitted]`
-  return `[${Math.round(bytes / 1024)}KB omitted]`
 }
 
 /** F5 必填参数校验。 */
@@ -419,7 +414,7 @@ function formatOutlineText(r: OutlineResult): string {
     if (b.toolSummary) parts.push(b.toolSummary)
     // v2 O1：补 assistant 结论行（→ ）让 outline 单独可决策
     if (b.assistantBrief) parts.push('→ ' + b.assistantBrief)
-    const om = formatOmitted(b.omittedBytes)
+    const om = formatBytesMarker(b.omittedBytes)
     if (om) parts.push(om)
     if (b.branch) parts.push('[旁支]')
     return parts.join(' · ')
@@ -440,7 +435,7 @@ function formatExpandText(turn: string, entries: EntryBrief[]): string {
   const lines = entries.map(
     (e) =>
       `  [${e.index}] ${e.type}${e.role ? '/' + e.role : ''} ${e.brief}${
-        e.omittedBytes > 0 ? ' ' + formatOmitted(e.omittedBytes) : ''
+        e.omittedBytes > 0 ? ' ' + formatBytesMarker(e.omittedBytes) : ''
       }`,
   )
   return `${turn}\n${lines.join('\n')}`
