@@ -149,7 +149,7 @@ w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进�
 | 验证 | 覆盖 | 回溯 |
 |------|------|------|
 | core 全量 vitest | 94 文件 / 1397 passed（A：35 既有零修改 + 9 新车道用例；B：fold≡reduce 元断言 + 确定性 + 10k 序列；D：core session 60 tests 含 4 新端口用例） | G1/G2 的行为等价基线 |
-| renderer 受影响面 | 27 文件 / 206 tests（sidebar 全家 + app-bootstrap + MessageStream.wire + rail + 各 mock 迁移文件） | G3 行为保持 |
+| renderer 受影响面 | 27 文件 / 138 tests（受影响面子集实测；另 renderer 全量 3663 passed 覆盖，其中 3 失败经归因为基线既有/认知外，见 impl-plan R4）（sidebar 全家 + app-bootstrap + MessageStream.wire + rail + 各 mock 迁移文件） | G3 行为保持 |
 | runtime 增量 | message-converter / session-history 相关 7 文件合计 76 tests（经 convertPiHistory 间接覆盖 replayEntries 新路径）；一致性审查期另实跑 runtime 全量 4115 passed（含 real-pi 池，见 §5.2） | G2 |
 | 三包 typecheck + `dev-smoke` exit 0 | D 的 import 结构改动（模块加载期闸门） | G3 |
 | `check-doc-symbol-drift` | 零悬空引用（D 的改名清扫） | G3 |
@@ -160,7 +160,7 @@ w3-w5 绞杀者迁移（旧实现逐步替换为新实现、共存过渡）进�
 
 | 场景 | 步骤 | 通过标准 | 回溯 |
 |------|------|---------|------|
-| S1 长会话 streaming 派生成本 | Playwright 连 dev app（:9222），构造 2000+ 消息会话，发起 streaming，Performance profile 30s | 火焰图中 `groupRenderInput` 全量调用仅出现在低频形态（load-more/hydrate），streaming 批只有尾部重建；对比改造前 profile 单帧派生耗时有量级下降 | G1 |
+| S1 长会话 streaming 派生成本 | Playwright 连 dev app（:9222），构造 2000+ 消息会话，发起 streaming，Performance profile 30s。**对比基线获取方式**：临时 checkout `1fe7f4626`（改造前）同场景重跑 profile，再回 HEAD 对比——两份 profile 都存档后出结论 | 火焰图中 `groupRenderInput` 全量调用仅出现在低频形态（load-more/hydrate），streaming 批只有尾部重建；对比改造前 profile 单帧派生耗时有量级下降 | G1 |
 | S2 冷切入超长会话 | dev 环境构造 10k entry session 文件，冷启动后切入该会话，console.time 打点 getHistory | 重放耗时个位数 ms 级（改造前数百 ms） | G2 |
 | S3 load-more 翻历史 | 同会话连续点击加载更多 5 次，每次打点 | 单次重放无随页数增长的延迟劣化 | G2 |
 | S4 双轨删除后日常使用 | 真实使用：新建/切换/删除/fork/handoff/deleteFolder（含删除活跃 session 的回退与空态）、重连 | 全部行为与删除前一致；删除活跃 session 回退后消息流正常订阅（无「切回后流停滞」） | G3 |
