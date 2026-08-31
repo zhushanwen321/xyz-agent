@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AppServerConnection,
@@ -669,6 +669,49 @@ describe("resolve 时序（不变量 2）", () => {
       "resolve",
     ]);
     expect(r.response).toBe(GOLDEN_FULL_TEXT);
+  }, 10_000);
+});
+
+// ============================================================
+// [R4] 连接崩溃收割（onClose 面 → failAllTurns——不再挂到 turnTimeoutMs）
+// ============================================================
+
+describe("连接崩溃收割（R4 onClose 面）", () => {
+  it("进程崩溃（test/suicide）→ 在途 turn 立即 reject（崩溃 reason 含 stderr 尾）——不等 turnTimeoutMs", async () => {
+    // 挂起场景（无终态）+ 长预算：崩溃收割前 turnTimeoutMs 兜底永远不会到
+    const onlyRunning = [ZCODE_APPSERVER_GOLDEN.pushStream[0]];
+    const { ch, conn, stateFile, workspacePath } = makeChannel({ replaceSendPushes: onlyRunning });
+    const turn = ch.runTurn({ workspacePath, mode: "yolo" }, "做点什么", {
+      turnTimeoutMs: 60_000,
+    });
+    // 等 send 已达（fake 流水可观测）后在同一连接上触发自杀（崩溃收割的触发面）
+    await vi.waitFor(() => {
+      expect(sentFrames(stateFile, "session/send")).toHaveLength(1);
+    }, { timeout: 5_000 });
+    // suicide 不回应答——崩溃时该请求随 pending 一起 reject（预期，吞掉）
+    await conn.request("test/suicide").then(
+      () => undefined,
+      () => undefined,
+    );
+    const err = await turn.then(
+      () => {
+        throw new Error("should reject");
+      },
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(String((err as Error).message)).toContain("app-server");
+    expect(String((err as Error).message)).toMatch(/进程退出|spawn 失败|CRASH-MARK-TAIL/);
+  }, 10_000);
+
+  it("post：fire-and-forget 帧不等待应答（活连接 true；返回布尔不抛）", async () => {
+    const { conn } = makeChannel();
+    expect(typeof conn.post).toBe("function");
+    expect(conn.post("session/close", { sessionId: "sess_x" })).toBe(true);
+    await conn.shutdown({ graceMs: 1_000 });
+    // 死连接：ensureStarted 重建一代（D1 重建语义）→ post 复又可用；不抛即可
+    expect(typeof conn.post("session/close", { sessionId: "sess_x" })).toBe("boolean");
+    await conn.shutdown({ graceMs: 1_000 });
   }, 10_000);
 });
 

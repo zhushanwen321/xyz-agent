@@ -152,6 +152,12 @@ export interface AppServerConnectionOptions {
   requestTimeoutMs?: number;
   /** 反向请求 handler 表（缺省 D9 常量表；测试注入故障 handler 用）。 */
   reverseHandlers?: Readonly<Record<string, (params: unknown) => unknown>>;
+  /**
+   * [R4] 每代进程 spawn 成功后的同步回调（engine 写 pidfile / 采集 pid 的唯一时点）。
+   * 与 RunContext.onChildSpawned 无关：常驻进程不进宿主 spawnedChildren（D6——
+   * 其生命周期归引擎 dispose）。不抛保证：回调异常吞掉记 warn，不影响帧泵。
+   */
+  onSpawned?: (child: ChildProcess) => void;
 }
 
 /** request() 的单次可选项。 */
@@ -183,6 +189,7 @@ export class AppServerConnection {
   private readonly nodeBin: string;
   private readonly requestTimeoutMs: number;
   private readonly reverseHandlers: Readonly<Record<string, (params: unknown) => unknown>>;
+  private readonly onSpawned: ((child: ChildProcess) => void) | undefined;
 
   /** 当前代子进程；null = 无活进程（未启动或已死，下次使用重建）。 */
   private child: ChildProcess | null = null;
@@ -197,6 +204,8 @@ export class AppServerConnection {
   private killStarted = false;
   private generation = 0;
   private readonly pushHandlers = new Map<string, Set<(params: unknown) => void>>();
+  /** [R4] 连接级崩溃通知面（onClose 订阅者集合；与 pushHandlers 同构的 refCount 形态）。 */
+  private readonly closeHandlers = new Set<(reason: string) => void>();
   private capturedProtocolInfo: Readonly<Record<string, unknown>> | null = null;
 
   constructor(opts: AppServerConnectionOptions) {
@@ -207,6 +216,7 @@ export class AppServerConnection {
     this.nodeBin = opts.nodeBin ?? "node";
     this.requestTimeoutMs = opts.requestTimeoutMs ?? ZCODE_APPSERVER_REQUEST_TIMEOUT_MS;
     this.reverseHandlers = opts.reverseHandlers ?? DEFAULT_REVERSE_HANDLERS;
+    this.onSpawned = opts.onSpawned;
   }
 
   /** 当前代进程 pid（未启动/已死为 undefined）。 */
@@ -240,6 +250,31 @@ export class AppServerConnection {
       set?.delete(handler);
       if (set && set.size === 0) this.pushHandlers.delete(method);
     };
+  }
+
+  /**
+   * [R4] 订阅连接崩溃/关闭通知：当前代进程退出（崩溃、spawn 失败、我方杀链收尾）时
+   * 回调一次（reason 含 stderr 尾部——失败路径 2 的错误素材）。时序保证：在途
+   * pending 全部 reject **之后**触发（订阅方可安全假定「在途请求已死」）。仅在
+   * 「有进程死亡」时触发——从未启动过的连接不通知。
+   *
+   * @returns 退订函数
+   */
+  onClose(handler: (reason: string) => void): () => void {
+    this.closeHandlers.add(handler);
+    return () => {
+      this.closeHandlers.delete(handler);
+    };
+  }
+
+  /**
+   * [R4] 发一个客户端请求帧但不等待应答（fire-and-forget）。dispose 编排用：
+   * 停机时 session/close 帧「发出即算」不阻塞在应答上（对面进程可能正被并发收割，
+   * 等应答会让 dispose 挂到请求超时）。不登记 pending——迟到应答按无匹配 id 忽略。
+   */
+  post(method: string, params?: unknown): boolean {
+    this.ensureStarted();
+    return this.writeFrame({ id: ++this.reqSeq, method, params });
   }
 
   /**
@@ -322,6 +357,13 @@ export class AppServerConnection {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child = child;
+    if (this.onSpawned !== undefined) {
+      try {
+        this.onSpawned(child);
+      } catch (err) {
+        logger.warn(`onSpawned 回调异常（忽略）: ${errMessage(err)}`);
+      }
+    }
 
     let finalized = false;
     // 收割当前代：关闭 tee 流、child 置空（触发下次重建）、全部 pending reject。
@@ -338,6 +380,14 @@ export class AppServerConnection {
         entry.reject(err);
       }
       this.pending.clear();
+      // pending 全部 reject 后才通知崩溃订阅方（onClose 契约：触发时在途已死）
+      for (const fn of [...this.closeHandlers]) {
+        try {
+          fn(reason);
+        } catch (err) {
+          logger.warn(`close handler 异常: ${errMessage(err)}`);
+        }
+      }
     };
 
     child.stdout.setEncoding("utf8");

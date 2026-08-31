@@ -7,8 +7,9 @@
 // 字段级扩展登记（接上文纪律——先改设计文档再扩接口）：
 //   - [R1 已实施 2026-08-30] EnginePort.dispose?()——引擎停机面。权威源：
 //     docs/design/zcode-engine-appserver-resident.md §3.3 D6 / §3.4 不变量 4。
-//   - [R4 预告，本单元未实施] RunContext.onHandleReady——运行中句柄回填通道
-//     （同设计 §3.4 不变量 3），接口形态由 R4-engine-wiring 单元落地，此处先登记。
+//   - [R4 已实施 2026-08-30] RunContext.onHandleReady——运行中句柄回填通道
+//     （同设计 §3.4 不变量 3：sessionRef 在 create 应答后经本回调送达编排层，
+//     与 onPoolResolved 分立两个时点）。
 //
 // 四个能力面（D1）：
 //   run        —— 主语义：一次性 fire-to-completion 任务执行；
@@ -28,6 +29,7 @@ import type {
   AgentTaskSpec,
   EngineCapabilities,
   EngineHandle,
+  EngineHandleData,
   InteractAction,
   InteractResult,
   ProbeReport,
@@ -87,6 +89,16 @@ export interface RunContext {
    * 未来流式引擎需在事件出口前调用）。
    */
   onPoolResolved?: (poolKey: string) => void;
+  /**
+   * [R4 §3.4 不变量 3] 运行中句柄回填通道：引擎在「session/create 应答到达后」
+   * 立即回调（早于 run resolve——stream 引擎的 run 生命周期远长于会话建立）。
+   * 与 onPoolResolved 分立两个时点：poolKey 在 prepare 期（onPoolResolved，连接
+   * 建立前即可知），sessionRef 在 create 应答后（本回调）。编排层收到后立即回填
+   * record.engineHandle 并落 entry——运行中的 GUI 经 entry 重建 record 即拿到
+   * ①②级读取钥匙，不再等 run resolve 后的终态回填。可选回调：不支持运行中回填
+   * 的引擎（spawn 单轮、终态即回填）不调用，宿主语义不受影响。
+   */
+  onHandleReady?: (partial: Pick<EngineHandleData, "sessionRef" | "poolKey">) => void;
   /**
    * [U0 D10] 引擎 spawn 的子进程句柄注册钩子（宿主终止链记账）。引擎在 spawn 成功后
    * 同步回调（与 pi runSpawn 的 spawnedChildren.set 同构时机）；宿主据此把 child 注册进

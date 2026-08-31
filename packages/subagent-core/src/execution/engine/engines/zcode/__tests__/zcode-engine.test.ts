@@ -1,6 +1,8 @@
 // zcode-engine.test.ts —— EnginePort 四面单测（fake launcher/源 config，不依赖真机
 // CLI 与真凭据；真机链路见 zcode-engine.live.test.ts 的手动门）。覆盖验收 6 的
 // capabilities/probe 部分 + run 错误语义三条（§3.3.5）。
+// [R4] 本文件钉扎 spawn 单轮路径（processEnv 显式 XYZ_ZCODE_MODE=spawn——D2 兜底
+// 行为零改动回归；缺省已切 app-server 常驻，见 zcode-engine-appserver.test.ts）。
 
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
@@ -84,7 +86,8 @@ function makeEngine(overrides?: Partial<ZcodeEngineDeps>): ZcodeEngine {
   return new ZcodeEngine({
     engineDataDir: () => dataDir,
     sources: { v2ConfigPath: v2Path },
-    processEnv: { PATH: "/usr/bin" },
+    // [R4] 钉扎 spawn 模式（缺省已是 appserver 常驻——本文件是 spawn 兜底路径的回归）
+    processEnv: { PATH: "/usr/bin", XYZ_ZCODE_MODE: "spawn" },
     ...overrides,
   });
 }
@@ -99,14 +102,14 @@ function makeCtx(overrides?: Partial<RunContext>): RunContext {
 
 // ── capabilities ──
 
-describe("capabilities（D3 声明，验收 6）", () => {
-  it("zcode 首期十项声明", () => {
+describe("capabilities（D3 声明，验收 6；R4 D5：eventGranularity 升 stream）", () => {
+  it("zcode 十项声明（spawn 路径钉扎下声明同为 stream——能力位是引擎级，不随模式分派）", () => {
     expect(makeEngine().capabilities()).toEqual({
       schemaEnforcement: "emulated",
       steer: "unsupported",
       conversation: "unsupported",
       personaInjection: "prompt",
-      eventGranularity: "coarse",
+      eventGranularity: "stream",
       sandbox: "none",
       sessionRead: "full",
       resume: "cold",

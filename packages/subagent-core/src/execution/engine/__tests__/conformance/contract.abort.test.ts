@@ -79,7 +79,7 @@ describe("conformance C4：abort 行为（运行中 cancel → 合成终态、�
     const engine = new ZcodeEngine({
       engineDataDir: () => dataDir,
       sources: { v2ConfigPath: v2Path },
-      processEnv: { PATH: "/usr/bin" },
+      processEnv: { PATH: "/usr/bin", XYZ_ZCODE_MODE: "spawn" },
       launch: fake.launch,
     });
 

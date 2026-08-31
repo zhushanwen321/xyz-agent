@@ -28,7 +28,12 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（真实 LLM 调用）", () 
 
   beforeAll(() => {
     fs.mkdirSync(WORK_CWD, { recursive: true });
-    engine = new ZcodeEngine({ engineDataDir: () => DATA_ROOT });
+    engine = new ZcodeEngine({
+      engineDataDir: () => DATA_ROOT,
+      // [R4] 钉扎 spawn 单轮（本门原为 spawn 链路实录；app-server 常驻真机门由 R6
+      // live gate 改写接入——两模式各自的真机覆盖不合并）
+      processEnv: { ...process.env, XYZ_ZCODE_MODE: "spawn" },
+    });
   });
 
   afterAll(() => {

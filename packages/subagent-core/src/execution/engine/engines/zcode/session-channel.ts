@@ -27,9 +27,10 @@
 //   且与 turn.terminal 常在同一 stdout 批次到达）；迟到 delta 不再触发回调
 //   （不变量 2 的另一半：resolve 后不再发事件）。
 //
-// 连接崩溃的 turn 收割边界（登记）：AppServerConnection（R2）无连接级 onClose
-// 通知面（connection.ts 属 R4 领地，本层不可改），崩溃时无在途 request 的 turn 依赖
-// turnTimeoutMs 兜底收割；R4 接线时如补 onClose 面可再收紧。
+// 连接崩溃的 turn 收割（R4 已补齐）：SessionChannel 在构造时订阅 AppServerConnection
+// 的 onClose 面——进程死亡（崩溃/我方杀链）时立即 fail 全部在途 turn（错误即连接层
+// 的崩溃 reason，含 stderr 尾部），不再依赖 turnTimeoutMs 兜底挂满预算才收割。
+// （onClose 由连接层保证在全部在途 request reject 之后触发。）
 
 import { createHash } from "node:crypto";
 
@@ -255,6 +256,12 @@ export interface SessionTurnUsage {
 export interface SessionTurnCallbacks {
   /** payload.delta 实时文本增量（A.2 ④：文本在 session/event，stream.chunk 无文本）。 */
   onTextDelta?: (delta: string) => void;
+  /**
+   * [R4] create 应答后立即回调（sessionId 已知、早于 subscribe/send/终态）。引擎
+   * 编排层的 onHandleReady 回填（§3.4 不变量 3）与 abort 链的 session/stop 目标
+   * 都挂在这个时点——runTurn 的 resolve 形态在终态前拿不到 sessionId。
+   */
+  onSessionCreated?: (sessionId: string) => void;
 }
 
 export interface SessionTurnOptions extends SessionTurnCallbacks {
@@ -322,12 +329,25 @@ export class SessionChannel {
       conn.onNotification("v4/telemetry/event", (params) =>
         this.handleTelemetry(params)
       ),
+      // 连接崩溃收割：进程死亡（崩溃/我方杀链）立即 fail 全部在途 turn——
+      // onClose 契约保证触发时连接层在途 request 已全部 reject，此处补齐
+      // 「无在途 request 的 turn」的收割（否则挂到 turnTimeoutMs 预算耗尽）
+      conn.onClose((reason) => this.failAllTurns(`app-server ${reason}`)),
     ];
   }
 
   /** 退订连接推送（R4 引擎 dispose 面的配套；不影响连接自身生命周期）。 */
   dispose(): void {
     for (const off of this.offHandlers.splice(0)) off();
+  }
+
+  /** 连接死亡收割：全部在途 turn 立即 reject（reason 即连接层崩溃错误）。 */
+  private failAllTurns(reason: string): void {
+    const err = new Error(reason);
+    for (const turn of [...this.activeTurns.values()]) {
+      turn.fail(err);
+      this.activeTurns.delete(turn.sessionId);
+    }
   }
 
   /**
@@ -389,9 +409,11 @@ export class SessionChannel {
   /**
    * session/close（A.2 ⑦，D4 用后即毁——回收引擎驻留内存，SQLite 持久化保留）。
    * best-effort：失败只 warn 不抛（会话已终态，close 失败只泄漏一个驻留会话，
-   * 不应炸掉已成功/已失败的任务结论）。
+   * 不应炸掉已成功/已失败的任务结论）。连接已死时跳过——close 是 request 语义，
+   * 对死连接发请求会触发惰性重建（凭空 spawn 一代无人使用的进程）。
    */
   async closeSession(sessionId: string): Promise<void> {
+    if (!this.conn.alive) return;
     try {
       await this.conn.request(
         "session/close",
@@ -421,6 +443,9 @@ export class SessionChannel {
     if (content === "")
       throw new Error("runTurn: content 必填（session/send 空投递无意义）");
     const sessionId = await this.createSession(params);
+    // create 应答后立即回调（§3.4 不变量 3 的 sessionRef 时点；引擎的
+    // onHandleReady 回填与 abort 链 stop 目标都从这里取 sessionId）
+    opts.onSessionCreated?.(sessionId);
     const opened = this.openTurn(sessionId, opts);
     try {
       await this.subscribe(sessionId);
@@ -588,8 +613,10 @@ export class SessionChannel {
     }
   }
 
-  /** 终态后 read（A.2 ⑥）。失败/超时不抛——降级链由 runTurn 收口（read 只兜底不致命）。 */
+  /** 终态后 read（A.2 ⑥）。失败/超时不抛——降级链由 runTurn 收口（read 只兜底不致命）。
+   *  连接已死时跳过（与 closeSession 同判——对死连接发请求会凭空重建进程）。 */
   private async readBestEffort(sessionId: string): Promise<unknown> {
+    if (!this.conn.alive) return undefined;
     try {
       return await this.conn.request(
         "session/read",

@@ -1723,6 +1723,23 @@ export class SubagentService {
     const retargetJournal = (poolKey: string): void => {
       journal.retarget(resolveJournalPath(getEngineDataDir(), engine.id, poolKey, record.id));
     };
+    // [R4 §3.4 不变量 3] 运行中句柄回填：create 应答后（远早于 run resolve）回填
+    // record.engineHandle 并经 reportRecordTransition 落 entry——运行中的 GUI 经 entry
+    // 重建 record 即拿到 ①②级读取钥匙（sessionRef/dbPath/poolKey/journalPath），
+    // 不再等终态回填（详情页中途打开可见当时进度快照）。journalPath 此时已是
+    // retarget 后的最终路径（onPoolResolved 在 prepare 期先行触发）。仅 chat 域接线
+    // ——workflow 域 SAR 无运行中 record 读取方，刻意不做同类回填（防误扩展）。
+    const backfillEngineHandle = (partial: { sessionRef: Record<string, string>; poolKey: string }): void => {
+      if (record.engineHandle !== undefined && record.engineHandle.sessionRef["sessionId"] !== undefined) {
+        return; // 幂等守卫：终态回填已落（迟到重复回调不覆盖）
+      }
+      record.engineHandle = {
+        sessionRef: partial.sessionRef,
+        poolKey: partial.poolKey,
+        journalPath: journal.path,
+      };
+      this.store.reportRecordTransition(record);
+    };
     // 对齐点③：journal 路径权威 = 引擎声明的池 key（writer 初始用占位，retarget 后
     // 与 handle.poolKey 同源）。模式对齐 SAR 的 journalingOnEvent：先落盘再转发。
     const runCtx: RunContext = {
@@ -1732,6 +1749,7 @@ export class SubagentService {
       ctxModel: opts.ctxModel,
       onEvent: (event) => journal.append(event),
       onPoolResolved: retargetJournal,
+      onHandleReady: backfillEngineHandle,
       // D9①：路由层 fallback 留痕投影进 outcome（zcode 无独立 record 通路）
       ...(record.engineFallback !== undefined ? { engineFallback: record.engineFallback } : {}),
       // D10 终止链：engine spawn 的子进程注册进 spawnedChildren 记账
@@ -1740,7 +1758,8 @@ export class SubagentService {
     };
     try {
       const { handle, outcome } = await engine.run(executeOptionsToEngineTaskSpec(opts), runCtx);
-      // engineHandle 完整回填（U2：终态迁移落 entry 前）。sessionRef 整体透传——
+      // engineHandle 终态回填（U2：终态迁移落 entry 前；R4 起为兜底面——运行中回填
+      // 已由 onHandleReady 提前落 entry，此处覆写终态权威值）。sessionRef 整体透传——
       // 失败终态 sessionId 缺失时也回填已有部分（dbPath/poolKey），读侧①级降②级
       // 的防御形态；journalPath 取 retarget 后的实际落盘路径（writer 是路径权威）。
       record.engineHandle = {

@@ -16,6 +16,9 @@
 // 同一 HOME 但模型不同时，config.json 的 model.main 会出现「后写覆盖先写」的串池——
 // zsub 的 per-model HOME 池正是防这个；本引擎以 provider+model 为隔离粒度，agent 维度
 // 的池化留给宿主 refs.json（W3 对齐点）。
+//
+// [R4 D7] app-server 常驻 HOME 语义（锁/派生/pidfile 孤儿回收/allProviders 引导/
+// 凭据内容 hash 刷新）拆至同目录 appserver-home.ts——单一关注点分立。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -67,16 +70,16 @@ interface SourceConfig {
 }
 
 /** unknown 的 Record 窄化 guard（替代 as 全可选断言——taste/no-unsafe-cast）。 */
-function isRecord(v: unknown): v is Record<string, unknown> {
+export function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** provider 条目一律按 ZcodeProviderEntry 消费（索引签名形态，无需逐键校验）。 */
-function isProviderEntry(v: unknown): v is ZcodeProviderEntry {
+export function isProviderEntry(v: unknown): v is ZcodeProviderEntry {
   return isRecord(v);
 }
 
-function readSourceConfig(absPath: string): SourceConfig {
+export function readSourceConfig(absPath: string): SourceConfig {
   const empty: SourceConfig = { providers: new Map(), mtimeMs: 0 };
   let raw: string;
   try {
@@ -119,7 +122,12 @@ function providerOf(ref: string): string {
   return ref.slice(0, ref.lastIndexOf("/"));
 }
 
-function hasApiKey(entry: ZcodeProviderEntry): boolean {
+/** [R4] 规范化全名 provider/model → create 参数的 per-session model 拆分（A.2 ① strict 对象）。 */
+export function splitZcodeModelRef(modelRef: string): { providerId: string; modelId: string } {
+  return { providerId: providerOf(modelRef), modelId: modelShort(modelRef) };
+}
+
+export function hasApiKey(entry: ZcodeProviderEntry): boolean {
   const key = entry.options?.apiKey;
   return typeof key === "string" && key !== "";
 }
@@ -129,7 +137,7 @@ export interface ZcodeSourcePaths {
   v2ConfigPath?: string;
 }
 
-function defaultV2ConfigPath(): string {
+export function defaultV2ConfigPath(): string {
   return path.join(os.homedir(), ...ZCODE_V2_CONFIG_PATH_SUFFIX);
 }
 
@@ -297,7 +305,7 @@ function homeNeedsBootstrap(configPath: string, sourceMtimeMs: number): boolean 
 }
 
 /** 池 config.json 缩进（人读友好——与 zsub 产出的文件形态一致）。 */
-const CONFIG_INDENT_SPACES = 2;
+export const CONFIG_INDENT_SPACES = 2;
 
 /**
  * 引导隔离 HOME 的 provider 配置（spawn 前调用）。
@@ -361,3 +369,4 @@ export function prepareZcodeHome(opts: {
   }
   return { modelRef, poolKey, homeDir, configPath, wroteConfig };
 }
+

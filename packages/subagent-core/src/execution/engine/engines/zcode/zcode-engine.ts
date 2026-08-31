@@ -1,25 +1,35 @@
 // src/execution/engine/engines/zcode/zcode-engine.ts
 //
-// ZcodeEngine（P3）：zcode CLI spawn 单轮模式的 EnginePort 实现。设计权威源：
-// docs/architecture/subagent-engine-abstraction.md D10（MVP 引擎集 + zcode 首期只做
-// spawn 单轮）、§3.3.4（reviewer@zcode 物理数据流）、§3.3.5（run 错误语义三条）。
+// ZcodeEngine（P3 → R4 双模式）：zcode CLI 的 EnginePort 实现。设计权威源：
+// docs/architecture/subagent-engine-abstraction.md D10（MVP 引擎集）/ §3.3.4（reviewer@zcode
+// 物理数据流）/ §3.3.5（run 错误语义三条）；docs/design/zcode-engine-appserver-resident.md
+// §3.3 D1（每引擎实例一条连接）/ D3（abort 链）/ D4（会话自包含）/ D5（capabilities
+// 升级序）/ D6（停机面 + 孤儿自愈）/ D7（常驻 HOME）/ §3.4 不变量 1-4。
+//
+// 双模式分派（R4；D2 降级链的骨架）：
+//   - appserver（缺省）：惰性常驻连接（connection.ts + session-channel.ts）上的
+//     create→subscribe→send→事件流→终态→read→close；per-session model 经 create
+//     参数透传；常驻 HOME = engines/zcode/home-appserver（D7 全量语义见 preparer.ts）；
+//   - spawn（XYZ_ZCODE_MODE=spawn 定向 / R5 降级目标）：原单轮路径**零行为改动**
+//     保留（runViaSpawn——launcher/parser 四件套原链路）。
 //
 // 职责编排（四件套的消费方）：
 //   preparer（隔离 HOME 池 + 凭据 config）→ launcher（argv/env/spawn/杀链）
 //   → parser（stdout 收集 + 终 JSON + coarse 事件合成）→ reader（read 第①级 sqlite）。
 //
-// run 错误语义（设计 §3.3.5）：
+// run 错误语义（设计 §3.3.5，两模式共用）：
 //   ① prepare 期错误（credential_missing / model_not_available / prompt_too_large /
 //      capability 拒绝）在进程创建前 reject，不产生 handle；
 //   ② 运行中失败不 reject——合成 engine_run_failed outcome + 正常 handle 返回
 //      （record 必须收尾）；
-//   ③ abort 走杀链（SIGTERM→grace→SIGKILL，interrupt: kill-only 无原生中断）后同 ②
-//      （exitCode=null + error 含杀链标记）。
+//   ③ abort：appserver 走 D3 链（session/stop → grace → killChain 连坐共享进程）；
+//      spawn 走公共杀链（SIGTERM→grace→SIGKILL）——终态同为 exitCode=null + 杀链标记。
 //
-// schema 仿真接线（D4 emulated 侧）：common/schema-emulation.ts（并行任务 P2 交付，
-// 2026-08-25 已就绪并接线）——spawn 前拼 prompt 仿真段、终态后三级容错提取 + ajv
-// 校验、失败强化重试一次、仍失败报 schema_emulation_failed。read 第②级 journal 降级
-// 已接线（P4 对齐点①：common/journal-replay 复用 live reducer）。
+// schema 仿真接线（D4 emulated 侧）：common/schema-emulation.ts——spawn 前拼 prompt
+// 仿真段、终态后三级容错提取 + ajv 校验、失败强化重试一次、仍失败报
+// schema_emulation_failed（appserver 路径同接线：prompt 组装共享 buildPrompt，
+// 校验/重试编排共享 run 级重试轮）。read 第②级 journal 降级已接线（对齐点①：
+// common/journal-replay 复用 live reducer）。
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
@@ -49,10 +59,15 @@ import type {
 import { resolvePoolDir } from "../../paths.ts";
 import {
   ZCODE_ADAPTER_VERSION,
+  ZCODE_APPSERVER_ABORT_GRACE_MS,
+  ZCODE_APPSERVER_ERR_MODEL_CONFIG_MISSING,
+  ZCODE_APPSERVER_POOL_KEY,
+  ZCODE_APPSERVER_STOP_TIMEOUT_MS,
   ZCODE_CLI_DEFAULT_PATH,
   ZCODE_ENGINE_ID,
   ZCODE_ERROR_TAIL_CHARS,
   ZCODE_KILL_GRACE_MS,
+  ZCODE_MODE_ENV_VAR,
   ZCODE_POOL_DB_RELATIVE_PATH,
 } from "./constants.ts";
 import { ZCODE_GOLDEN_STDOUT } from "./golden-sample.ts";
@@ -66,18 +81,53 @@ import {
 import {
   buildRunFailedMessage,
   collectZcodeOutput,
+  mapZcodeOutcomeUsage,
+  mapZcodeUsage,
   parseZcodeTerminal,
   synthesizeCoarseEvents,
   type ZcodeCollectedOutput,
   type ZcodeTerminalPayload,
 } from "./parser.ts";
-import { listZcodeModels, prepareZcodeHome, resolveZcodeModelRef, type ZcodeSourcePaths } from "./preparer.ts";
+import {
+  acquireAppServerHome,
+  bootstrapAppServerConfig,
+  isLockHeldByUs,
+  startLockHeartbeat,
+  writeAppServerPidFile,
+  type AppServerHomeHandle,
+} from "./appserver-home.ts";
+import {
+  listZcodeModels,
+  prepareZcodeHome,
+  resolveZcodeModelRef,
+  splitZcodeModelRef,
+  type ZcodeSourcePaths,
+} from "./preparer.ts";
 import { readZcodeSessionView } from "./reader.ts";
+import { AppServerConnection, buildAppServerEnv, isAppServerRpcError } from "./connection.ts";
+import { SessionChannel, type SessionCreateParams, type SessionTurnResult } from "./session-channel.ts";
 
 const logger = getLogger("subagents");
 
 /** probe 的版本探测超时（ms）——二进制无响应按探针失败处理，不静默挂死。 */
 const PROBE_VERSION_TIMEOUT_MS = 15_000;
+
+// ============================================================
+// [R4] 执行模式分派（D2 骨架——降级链归 R5）
+// ============================================================
+
+export type ZcodeRunMode = "appserver" | "spawn";
+
+/**
+ * 模式判定：`XYZ_ZCODE_MODE=appserver|spawn` 定向（定向时不探不降）；缺省走
+ * app-server（R5 将在缺省路径插 probe 门控：探针失败 → spawn 直走 + 首败降级，
+ * 本单元缺省直连不探）。deps.processEnv 可注入（测试钉扎模式）。
+ */
+export function resolveZcodeMode(env: NodeJS.ProcessEnv = process.env): ZcodeRunMode {
+  const v = env[ZCODE_MODE_ENV_VAR];
+  if (v === "appserver" || v === "spawn") return v;
+  return "appserver";
+}
 
 /** ZcodeEngine 构造依赖（全部可注入——测试不依赖真机 CLI/真凭据）。 */
 export interface ZcodeEngineDeps {
@@ -94,8 +144,26 @@ export interface ZcodeEngineDeps {
   probeVersion?: (cliPath: string) => Promise<string | undefined>;
   /** spawn 执行器（测试注入 fake 进程）。 */
   launch?: (opts: { cliPath: string; args: string[]; env: NodeJS.ProcessEnv }) => ZcodeLaunchedProcess;
-  /** env 基底（测试注入；缺省 process.env）。 */
+  /** env 基底（测试注入；缺省 process.env——模式分派与 app-server env 组装都经它）。 */
   processEnv?: NodeJS.ProcessEnv;
+}
+
+/** 常驻运行时（每引擎实例一份；dispose/凭据刷新/池变更时整件丢弃重建）。 */
+interface AppServerRuntime {
+  conn: AppServerConnection;
+  channel: SessionChannel;
+  homePoolKey: string;
+  homeDir: string;
+  /** 在途会话登记（dispose 时 fire session/close 的目标集；settle 后移除）。 */
+  activeSessions: Set<string>;
+}
+
+/** 已持有的常驻 HOME 记账（锁心跳归属；dispose 不释放——锁随宿主进程存活）。 */
+interface AppServerHomeState {
+  poolKey: string;
+  homeDir: string;
+  lockPath: string;
+  stopHeartbeat: () => void;
 }
 
 /** zcode 引擎适配器。 */
@@ -104,35 +172,42 @@ export class ZcodeEngine implements EnginePort {
 
   private readonly deps: ZcodeEngineDeps;
   private probeCache: ProbeReport | undefined;
+  private appserverRuntime: AppServerRuntime | undefined;
+  private homeState: AppServerHomeState | undefined;
+  /** 并发任务的首次锁获取在途 promise（重入守卫，见 ensureAppServerHome）。 */
+  private homeAcquireInFlight: Promise<AppServerHomeHandle> | undefined;
 
   constructor(deps: ZcodeEngineDeps) {
     this.deps = deps;
   }
 
   /**
-   * zcode 链路首期实际接通的能力（D3 链路口径）。声明升级（如 schema 仿真段接入
-   * common 层后仍为 emulated；app-server 常驻化后 eventGranularity 升 stream）必须
-   * 先改链路再改声明。
+   * zcode 链路实际接通的能力（D3 链路口径；R4 D5 升级序：eventGranularity
+   * coarse→stream——链路先行〔session/event payload.delta → text_delta 实时流出，
+   * turn.terminal → turn_end，收尾帧 usage → message_end.usage〕，其余能力位维持
+   * 现值。声明升级必须先改链路再改声明（C4 原则）。
    */
   capabilities(): EngineCapabilities {
     return {
       // 无 --json-schema 类通道；公共 schema 仿真层（prompt 约定 + 容错提取 + ajv）
       schemaEnforcement: "emulated",
-      // argv-only spawn，无运行中插话通道（app-server 属引擎内部优化，首期不接）
+      // send-while-running 恒 -32010 硬错误（旧实测）——app-server 常驻化不改变此判据
       steer: "unsupported",
-      // 无同进程 idle 复用；--resume 是冷启动
+      // 无同进程 idle 复用（D4：每任务自包含 create→run→close）；--resume 是冷启动
       conversation: "unsupported",
       // 无 --append-system-prompt flag（实测拒收）——persona 只能拼进 prompt
       personaInjection: "prompt",
-      // stdout 只有终态单 JSON（message_end/turn_end 合成）
-      eventGranularity: "coarse",
+      // app-server 推送流实时流出（R4）；spawn 降级路径退化为终态两事件（D2 声明不降级
+      // ——降级是任务级兜底非能力级，record 留痕降级事实）
+      eventGranularity: "stream",
       // 首期未接 worktree 隔离（公共层 worktree-manager 接入后升 emulated）
       sandbox: "none",
       // sqlite 三级 JOIN 完整重建 turns（reader 实测）
       sessionRead: "full",
       // --resume 冷启动可用（实测）
       resume: "cold",
-      // 无原生中断——AbortSignal 走公共杀链（SIGTERM→grace→SIGKILL）
+      // abort 走 D3 链（stop→grace→killChain）但声明维持 kill-only 不升级（改链路
+      // 先于改声明；stop 链路经 conformance 真机验证后再评估升 native）
       interrupt: "kill-only",
       // --mode build/edit/plan/yolo 原生权限档位
       permissionMode: "native",
@@ -221,8 +296,360 @@ export class ZcodeEngine implements EnginePort {
     };
   }
 
-  /** D1 主语义：preparer → launcher → parser →（schema 仿真校验 + 一次重试）→ outcome/handle。 */
+  /** D1 主语义：模式分派（R4）——appserver 缺省 / spawn 定向（D2 兜底，行为零改动）。 */
   async run(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
+    this.rejectUnsupportedTaskShapes(task);
+    const mode = resolveZcodeMode(this.deps.processEnv ?? process.env);
+    if (mode === "appserver") return this.runViaAppServer(task, ctx);
+    return this.runViaSpawn(task, ctx);
+  }
+
+  // ============================================================
+  // [R4] app-server 常驻路径（D1/D3/D4/D7）
+  // ============================================================
+
+  /**
+   * 常驻路径主编排：常驻 HOME（锁/派生/孤儿回收/凭据刷新——preparer D7 全量）→
+   * 惰性连接 + runTurn（事件时序前移：text_delta 流式、终态后 message_end/turn_end）→
+   * schema 仿真重试（与 spawn 同编排）→ outcome/handle。poolKey 静态常量，
+   * onPoolResolved 在 prepare 期、onHandleReady 在 create 应答后（§3.4 不变量 3）。
+   */
+  private async runViaAppServer(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
+    const startedAt = Date.now();
+    // pre-aborted 短路：取消先于启动——不创建会话、不触发连接惰性启动（防误杀共享
+    // 进程殃及在途任务；spawn 路径无此形态因每任务独占进程）
+    if (ctx.signal?.aborted === true) {
+      const outcome = this.finalizeOutcome(
+        task,
+        ctx,
+        abortedAppServerAttempt(ctx),
+        { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false },
+        startedAt,
+      );
+      return { handle: this.appServerHandle(ZCODE_APPSERVER_POOL_KEY, outcome), outcome };
+    }
+
+    // ① prepare 期：模型解析（provider 体系校验——错误语义与 spawn 同为进程创建前
+    // reject）+ 常驻 HOME（锁判定/派生/pidfile 孤儿回收/config 内容 hash 刷新）
+    const modelRef = resolveZcodeModelRef(task.model, this.deps.sources);
+    const home = await this.ensureAppServerHome(modelRef);
+    // 对齐点③（不变量 3）：poolKey 在 prepare 期声明（静态常量或派生目录名），
+    // 早于连接建立与首个事件
+    ctx.onPoolResolved?.(home.poolKey);
+
+    const cwd = task.cwd ?? process.cwd();
+    const schema = isPlainObject(task.schema) ? task.schema : undefined;
+    const basePrompt = this.buildPrompt(task, schema);
+
+    // ② 首轮执行；schema 任务校验失败时重试一次（强化 JSON 输出指令——与 spawn/
+    // structured-output 的重试语义对齐）。重试轮是独立会话的独立 LLM 调用：token
+    // 计入 outcome.usage 总量；事件面 text_delta 按实际流出（含失败轮——journal 记录
+    // 真实流水），message_end/turn_end 只在最终轮终态后合成（不变量 2/5）。
+    const usageAcc = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false };
+    let final = await this.attemptAppServerTurn(task, ctx, home, modelRef, cwd, basePrompt);
+    accumulateUsage(usageAcc, final);
+    if (final.kind === "parsed" && final.schemaResult !== undefined && !final.schemaResult.ok && schema !== undefined) {
+      const retryPrompt = appendSchemaRetryDirective(basePrompt, final.schemaResult.error);
+      const retry = await this.attemptAppServerTurn(task, ctx, home, modelRef, cwd, retryPrompt);
+      accumulateUsage(usageAcc, retry);
+      final = retry;
+    }
+
+    const outcome = this.finalizeOutcome(task, ctx, final, usageAcc, startedAt);
+    return { handle: this.appServerHandle(home.poolKey, outcome), outcome };
+  }
+
+  /** 常驻路径的 handle 合成（poolKey = 常驻 HOME 实际目录名——锚定不变量载体）。 */
+  private appServerHandle(poolKey: string, outcome: AgentOutcome): EngineHandle {
+    return {
+      data: {
+        v: 1,
+        engineId: ZCODE_ENGINE_ID,
+        sessionRef: {
+          dbPath: ZCODE_POOL_DB_RELATIVE_PATH,
+          ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
+        },
+        poolKey,
+        ...(this.probeCache?.engineVersion !== undefined && this.probeCache.engineVersion !== ""
+          ? { engineVersion: this.probeCache.engineVersion }
+          : {}),
+        adapterVersion: ZCODE_ADAPTER_VERSION,
+      },
+    };
+  }
+
+  /**
+   * 单轮常驻执行：runTurn 组合面 + D3 abort 链 + 事件前移（text_delta 实时流出；
+   * 终态数据经 read 兜底收口后才 resolve——不变量 1/2）。产出三态与 spawn 同构。
+   */
+  private async attemptAppServerTurn(
+    task: AgentTaskSpec,
+    ctx: RunContext,
+    home: AppServerHomeHandle,
+    modelRef: string,
+    cwd: string,
+    prompt: string,
+  ): Promise<AttemptResult> {
+    const rt = this.ensureAppServerRuntime(home);
+    const { providerId, modelId } = splitZcodeModelRef(modelRef);
+    const denyTools = (task.denyTools ?? []).filter((t) => typeof t === "string" && t.trim() !== "");
+    const createParams: SessionCreateParams = {
+      workspacePath: cwd,
+      mode: "yolo",
+      // per-session model（G3）：create 参数透传（A.2 ① strict 对象）——同进程任务
+      // 各用各的模型，互不干扰
+      model: { providerId, modelId },
+      ...(denyTools.length > 0 ? { toolDenylist: denyTools } : {}),
+    };
+
+    let currentSessionId: string | undefined;
+    let signalSessionCreated: (() => void) | undefined;
+    const sessionCreated = new Promise<void>((resolve) => {
+      signalSessionCreated = resolve;
+    });
+    const turn = rt.channel.runTurn(createParams, prompt, {
+      // 事件时序前移：payload.delta → text_delta 实时流出（stream 粒度，D5）
+      onTextDelta: (delta) => ctx.onEvent?.({ type: "text_delta", delta }),
+      onSessionCreated: (sessionId) => {
+        currentSessionId = sessionId;
+        rt.activeSessions.add(sessionId);
+        signalSessionCreated?.();
+        // §3.4 不变量 3：create 应答后立即回填（早于 subscribe/send/终态/run resolve）
+        ctx.onHandleReady?.({
+          sessionRef: { dbPath: ZCODE_POOL_DB_RELATIVE_PATH, sessionId },
+          poolKey: home.poolKey,
+        });
+      },
+    });
+
+    // D3 abort 链：signal abort → ① session/stop {sessionId} ② grace 窗口确认终态
+    // ③ stop 失败/超时 → killChain 杀共享进程（接受连坐——协议已不可信）→ 在途
+    // 其他任务走崩溃路径。capabilities.interrupt 维持 kill-only 不升级（C4）。
+    const onAbort = (): void => {
+      void this.appServerAbortChain(rt, turn, () => currentSessionId, sessionCreated);
+    };
+    if (ctx.signal !== undefined) {
+      if (ctx.signal.aborted) onAbort();
+      else ctx.signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    try {
+      const r = await turn;
+      // stop 优雅生效（终态在 grace 内到达）：宿主已取消——按中止终态收口（record
+      // 终态迁移由编排层 CAS 决定，engine 侧保持与 spawn abort 同构语义）
+      if (ctx.signal?.aborted === true) return abortedAppServerAttempt(ctx);
+      const schema = isPlainObject(task.schema) ? task.schema : undefined;
+      return {
+        kind: "parsed",
+        output: syntheticAppServerOutput(0),
+        payload: turnResultToPayload(r),
+        ...(schema !== undefined
+          ? { schemaResult: extractAndValidateStructuredOutput(r.response, schema) }
+          : {}),
+      };
+    } catch (err) {
+      if (ctx.signal?.aborted === true) return abortedAppServerAttempt(ctx);
+      return {
+        kind: "run-failed",
+        output: syntheticAppServerOutput(null),
+        message: buildAppServerRunFailedMessage(err, home),
+      };
+    } finally {
+      if (currentSessionId !== undefined) rt.activeSessions.delete(currentSessionId);
+      if (ctx.signal !== undefined) ctx.signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /**
+   * D3 abort 链执行体（fire-and-forget——与 turn promise 并行推进）：
+   * stop 帧（超时 ZCODE_APPSERVER_STOP_TIMEOUT_MS）→ grace 窗口内 turn 落定即止
+   * （不杀共享进程）→ 超时 killChain（conn.shutdown 全序：SIGTERM→grace→SIGKILL）。
+   * turn 的最终落定由 attempt 主路径 await 收口，本链不直接产出终态。abort 与
+   * create 竞态（signal 先到、session 未建立）：等会话建立（带上限）再发 stop——
+   * 否则 stop 永远发不出，直接连坐杀共享进程。
+   */
+  private async appServerAbortChain(
+    rt: AppServerRuntime,
+    turn: Promise<SessionTurnResult>,
+    getSessionId: () => string | undefined,
+    sessionCreated: Promise<void>,
+  ): Promise<void> {
+    let sessionId = getSessionId();
+    if (sessionId === undefined) {
+      await Promise.race([sessionCreated, delayResolved(ZCODE_APPSERVER_STOP_TIMEOUT_MS, undefined)]);
+      sessionId = getSessionId();
+    }
+    if (sessionId !== undefined) {
+      try {
+        await rt.conn.request("session/stop", { sessionId }, { timeoutMs: ZCODE_APPSERVER_STOP_TIMEOUT_MS });
+      } catch (err) {
+        logger.debug(
+          `[zcode-engine] session/stop 失败（${errMessage(err)}）——grace 后走 killChain 兜底`,
+        );
+      }
+    }
+    const settled = await Promise.race([
+      turn.then(
+        () => true,
+        () => true,
+      ),
+      delayResolved(ZCODE_APPSERVER_ABORT_GRACE_MS, false),
+    ]);
+    if (settled) return; // stop 生效：终态在 grace 窗口内到达，共享进程不杀
+    logger.warn(
+      `[zcode-engine] abort grace 窗口内未见终态——killChain 收割共享进程（接受连坐，在途任务走崩溃路径）`,
+    );
+    await rt.conn.shutdown({ graceMs: ZCODE_KILL_GRACE_MS });
+  }
+
+  // ── 常驻 HOME 与运行时管理（D1/D6/D7）──────────────────────
+
+  /**
+   * 每任务的常驻 HOME 保障：已持有（lockfile.pid=本进程）→ 只做凭据刷新比对
+   * （config 内容 hash；不一致重写 + 重建连接——在途任务走崩溃路径，换取凭据变更
+   * 下一任务生效）；未持有（首任务/锁被夺）→ acquireAppServerHome 全量（锁判定/
+   * 派生/接管 + pidfile 孤儿回收/引导）+ 启动锁心跳。
+   */
+  private async ensureAppServerHome(modelRef: string): Promise<AppServerHomeHandle> {
+    const engineDataDir = this.deps.engineDataDir();
+    // 并发任务重入守卫：首任务在途的锁获取只跑一次（同进程并发 run 各自走判定循环
+    // 会把「自己的活锁」误判成他人活持有 → 派生 -2 → poolKey 漂移触发 teardown 杀
+    // 活连接）。在途完成后落回已持有路径（含凭据刷新比对）。
+    if (this.homeAcquireInFlight !== undefined) await this.homeAcquireInFlight;
+    if (this.homeState !== undefined && isLockHeldByUs(this.homeState.lockPath)) {
+      const boot = bootstrapAppServerConfig({
+        homeDir: this.homeState.homeDir,
+        modelRef,
+        sources: this.deps.sources,
+      });
+      if (boot.wroteConfig) this.teardownAppServerRuntime("credential-refresh");
+      return {
+        poolKey: this.homeState.poolKey,
+        homeDir: this.homeState.homeDir,
+        lockPath: this.homeState.lockPath,
+        tookOver: false,
+        orphanReap: "not-applicable",
+        ...boot,
+      };
+    }
+    const acquire = (async () => {
+      const fresh = await acquireAppServerHome({ engineDataDir, modelRef, sources: this.deps.sources });
+      if (this.homeState !== undefined) this.homeState.stopHeartbeat();
+      this.homeState = {
+        poolKey: fresh.poolKey,
+        homeDir: fresh.homeDir,
+        lockPath: fresh.lockPath,
+        stopHeartbeat: startLockHeartbeat(fresh.lockPath),
+      };
+      logger.debug("[zcode-engine] appserver home acquired", {
+        poolKey: fresh.poolKey,
+        tookOver: fresh.tookOver,
+        orphanReap: fresh.orphanReap,
+        wroteConfig: fresh.wroteConfig,
+        providers: fresh.providerIds.length,
+      });
+      if (fresh.wroteConfig || (this.appserverRuntime !== undefined && this.appserverRuntime.homePoolKey !== fresh.poolKey)) {
+        this.teardownAppServerRuntime(fresh.wroteConfig ? "credential-refresh" : "home-pool-changed");
+      }
+      return fresh;
+    })();
+    this.homeAcquireInFlight = acquire;
+    try {
+      return await acquire;
+    } finally {
+      this.homeAcquireInFlight = undefined;
+    }
+  }
+
+  /**
+   * 惰性获取常驻运行时（D1：每引擎实例一条连接，全任务共享）。池 key 未变直接复用
+   * （连接自身的崩溃重建在 connection 层内部完成——同一条代码路径，§3.4 不变量 4）；
+   * 池变更（派生目录名变化）→ 旧运行时整件丢弃（shutdown fire）+ 新建。常驻进程
+   **不进**宿主 spawnedChildren、不调 onChildSpawned（D6——生命周期归 dispose）。
+   */
+  private ensureAppServerRuntime(home: AppServerHomeHandle): AppServerRuntime {
+    if (this.appserverRuntime !== undefined && this.appserverRuntime.homePoolKey === home.poolKey) {
+      return this.appserverRuntime;
+    }
+    if (this.appserverRuntime !== undefined) this.teardownAppServerRuntime("home-pool-changed");
+    const conn = new AppServerConnection({
+      cliPath: this.deps.cliPath ?? ZCODE_CLI_DEFAULT_PATH,
+      // 进程级 --cwd 用稳定 HOME（连接跨任务共享，工作区由 create 的
+      // workspace.workspacePath 按任务传递——D10 基线不预设任务级进程 cwd）
+      cwd: home.homeDir,
+      env: buildAppServerEnv(home.homeDir, this.deps.processEnv ?? process.env),
+      stderrLogPath: path.join(this.deps.engineDataDir(), "logs", "zcode-appserver-stderr.log"),
+      // 每代进程 spawn 后写 pidfile（D6③ 孤儿回收的数据源；崩溃重建的代同样覆盖写）
+      onSpawned: (child) => {
+        void writeAppServerPidFile(home.homeDir, child.pid ?? -1).catch((err: unknown) => {
+          logger.debug(`[zcode-engine] pidfile 写入失败（best-effort）: ${errMessage(err)}`);
+        });
+      },
+    });
+    const rt: AppServerRuntime = {
+      conn,
+      channel: new SessionChannel(conn),
+      homePoolKey: home.poolKey,
+      homeDir: home.homeDir,
+      activeSessions: new Set<string>(),
+    };
+    this.appserverRuntime = rt;
+    return rt;
+  }
+
+  /** 丢弃当前常驻运行时（凭据刷新/池变更）：shutdown fire（killChain 全序），在途任务走崩溃路径。 */
+  private teardownAppServerRuntime(reason: string): void {
+    const rt = this.appserverRuntime;
+    if (rt === undefined) return;
+    this.appserverRuntime = undefined;
+    // 退订必须在进程死亡**之后**：channel 的 onClose 崩溃收割（failAllTurns）是
+    // 在途 turn 的快速失败通道，先退订会让它们挂到 turnTimeoutMs（300s）预算耗尽
+    void rt.conn
+      .shutdown({ graceMs: ZCODE_KILL_GRACE_MS })
+      .then(undefined, (err: unknown) => {
+        logger.debug(`[zcode-engine] 常驻连接关闭失败（${reason}，best-effort）: ${errMessage(err)}`);
+      })
+      .then(() => rt.channel.dispose());
+    logger.debug(`[zcode-engine] appserver runtime torn down (${reason})`, { poolKey: rt.homePoolKey });
+  }
+
+  /**
+   * [R1 D6/R4 主体] 引擎停机面：①fire 全部在途会话的 session/close 帧（不等待
+   * 应答——D6① 顺序规定：close 帧必须先于 SIGTERM，否则对面来不及处理即被杀）→
+   * ②同步 SIGTERM（conn.shutdown 调用内 killChain 前缀同步执行——同步面在返回
+   * Promise 前完成）→ ③grace → SIGKILL（异步面，Promise resolve 于进程退出）。
+   * 幂等：运行时字段取走即置空，二次调用零副作用；dispose 后首个 run 经
+   * ensureAppServerRuntime 自动重建（与崩溃重建同一代码路径，不变量 4）。
+   * 锁不释放（随宿主进程存活——活宿主持有语义；进程死锁自然无主可接管）。
+   */
+  async dispose(): Promise<void> {
+    const rt = this.appserverRuntime;
+    if (rt === undefined) return;
+    this.appserverRuntime = undefined;
+    // ①fire 全部在途会话的 session/close 帧（不等待应答——D6① 顺序规定：close 帧
+    // 必须先于 SIGTERM，否则对面来不及处理即被杀）
+    for (const sessionId of [...rt.activeSessions]) {
+      rt.conn.post("session/close", { sessionId });
+    }
+    // ②③ 同步 SIGTERM（killChain 前缀在 shutdown 调用内同步执行）→ grace → SIGKILL
+    //（异步面，resolve 于进程退出）。channel 退订放在死亡之后——onClose 崩溃收割
+    //（failAllTurns）是在途 turn 的快速失败通道，先退订会挂到 turnTimeoutMs。
+    await rt.conn.shutdown({ graceMs: ZCODE_KILL_GRACE_MS });
+    rt.channel.dispose();
+    // 进程已死：pidfile 成为陈旧记录，清掉（防后续 pid 复用误判）
+    try {
+      fs.rmSync(path.join(rt.homeDir, "appserver.pid"), { force: true });
+    } catch (err) {
+      logger.debug(`[zcode-engine] dispose 后 pidfile 清理失败（best-effort）: ${errMessage(err)}`);
+    }
+  }
+
+  // ============================================================
+  // spawn 单轮路径（D2 兜底——R4 起仅 XYZ_ZCODE_MODE=spawn 定向 / R5 降级可达）
+  // ============================================================
+
+  /** spawn 路径主编排（原 run 主体，行为零改动）：preparer → launcher → parser → 仿真重试 → outcome/handle。 */
+  private async runViaSpawn(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
     const startedAt = Date.now();
     this.rejectUnsupportedTaskShapes(task);
 
@@ -325,12 +752,14 @@ export class ZcodeEngine implements EnginePort {
     // 对齐点④：宿主超时（mergeTimeoutSignal 的 timeout abort）统一走公共合成终态
     // （common/kill-chain.synthesizeTimeoutOutcome——engine_timeout 文案 SSOT：stdout
     // 尾部 + 「可用 engine: pi 重跑」建议）；用户主动 cancel 维持 engine_run_failed
-    // 中止标记（非超时语义，不冒充超时）。?? 兜底是类型收窄（合成器恒写 error）
+    // 中止标记（非超时语义，不冒充超时）。?? 兜底是类型收窄（合成器恒写 error）。
+    // appserver 路径经 abortMessage 描述 D3 链形态（与 spawn 杀链文案分立）
     outcome.error = isHostTimeoutAbort(ctx)
       ? synthesizeTimeoutOutcome(task, final.output.stdoutText, ZCODE_ENGINE_ID).error ??
         engineTimeoutDetail(final.output.stdoutText)
-      : `engine_run_failed: zcode 任务被中止（杀链 SIGTERM→${ZCODE_KILL_GRACE_MS}ms→SIGKILL，宿主合成终态）。` +
-        `stdout 尾部: ${final.output.stdoutText.slice(-ZCODE_ERROR_TAIL_CHARS)}`;
+      : final.abortMessage ??
+        `engine_run_failed: zcode 任务被中止（杀链 SIGTERM→${ZCODE_KILL_GRACE_MS}ms→SIGKILL，宿主合成终态）。` +
+          `stdout 尾部: ${final.output.stdoutText.slice(-ZCODE_ERROR_TAIL_CHARS)}`;
     emit({ type: "error", message: outcome.error });
   }
 
@@ -578,9 +1007,12 @@ export class ZcodeEngine implements EnginePort {
 
 // ── 模块级辅助（run 的重试编排件） ──
 
-/** attemptOnce 的三态产物（run 按序编排重试与终态合成）。 */
+/**
+ * attempt 的三态产物（两模式共用；run 按序编排重试与终态合成）。appserver 路径的
+ * output 为合成形态（stdoutText 恒空——其失败素材在 message/abortMessage 内）。
+ */
 type AttemptResult =
-  | { kind: "aborted"; output: ZcodeCollectedOutput }
+  | { kind: "aborted"; output: ZcodeCollectedOutput; abortMessage?: string }
   | { kind: "run-failed"; output: ZcodeCollectedOutput; message: string }
   | {
       kind: "parsed";
@@ -592,6 +1024,71 @@ type AttemptResult =
 /** Record 形状 guard（task.schema 的运行时窄化——Record<string, unknown> 不满足 ajv 的 object 入参）。 */
 function isPlainObject(v: unknown): v is object {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** 错误/日志出声用的 message 提取（非 Error 值不抛二次异常）。 */
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** ms 后 resolve 指定值（abort 链 grace 窗口的 race 材料；unref 不阻塞进程退出）。 */
+function delayResolved<T>(ms: number, value: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const t = setTimeout(() => resolve(value), ms);
+    if (typeof t.unref === "function") t.unref();
+  });
+}
+
+/** appserver 路径的合成 output（无 stdout 可收集——exitCode 语义：0=正常轮；null=中止/连接级失败）。 */
+function syntheticAppServerOutput(exitCode: number | null): ZcodeCollectedOutput {
+  return { exitCode, stdoutText: "", stderrTail: "" };
+}
+
+/** appserver 路径的 aborted 三态（abortMessage 描述 D3 链形态——与 spawn 杀链文案分立）。 */
+function abortedAppServerAttempt(ctx: RunContext): AttemptResult {
+  void ctx;
+  return {
+    kind: "aborted",
+    output: syntheticAppServerOutput(null),
+    abortMessage:
+      `engine_run_failed: zcode 任务被中止（app-server abort 链：session/stop → ${ZCODE_APPSERVER_ABORT_GRACE_MS}ms grace 确认 → ` +
+      `超时 killChain SIGTERM→${ZCODE_KILL_GRACE_MS}ms→SIGKILL 收割共享进程，在途任务走崩溃路径）。`,
+  };
+}
+
+/** runTurn 终态 → parser 载荷形态（usage 映射与 spawn 路径同源：parser.mapZcodeUsage 一族）。 */
+function turnResultToPayload(r: SessionTurnResult): ZcodeTerminalPayload {
+  return {
+    response: r.response,
+    sessionId: r.sessionId,
+    ...(mapZcodeUsage(r.usage) !== undefined ? { usage: mapZcodeUsage(r.usage) } : {}),
+    ...(mapZcodeOutcomeUsage(r.usage, undefined) !== undefined
+      ? { outcomeUsage: mapZcodeOutcomeUsage(r.usage, undefined) }
+      : {}),
+  };
+}
+
+/**
+ * appserver 路径运行中失败的结构化文案（错误规格表）：-32603 "Model config is
+ * missing" → engine_credential_missing（与 prepare 期同码——错误定位常驻 HOME config）；
+ * 其余（连接崩溃/会话失败/漂移类透传——漂移降级归 R5）→ engine_run_failed + 恢复指引。
+ */
+function buildAppServerRunFailedMessage(err: unknown, home: AppServerHomeHandle): string {
+  if (
+    isAppServerRpcError(err) &&
+    err.code === ZCODE_APPSERVER_ERR_MODEL_CONFIG_MISSING &&
+    /Model config is missing/.test(err.message)
+  ) {
+    return (
+      `engine_credential_missing: app-server 报 "Model config is missing"（常驻 HOME ${home.homeDir} 的 config.json ` +
+      `无可用模型配置）。恢复指引：在 ZCode 桌面端登录并配置 provider 凭据后重跑本任务（引擎将在下任务重写常驻 config 并重建连接）。`
+    );
+  }
+  const code = isAppServerRpcError(err) && err.code !== undefined ? `（code ${err.code}）` : "";
+  return (
+    `engine_run_failed: app-server 会话执行失败${code}: ${errMessage(err).slice(-ZCODE_ERROR_TAIL_CHARS)}。` +
+    `恢复指引：直接重跑本任务（连接崩溃后自动重建进程）；若持续失败，跑 probe 核对协议漂移（R5 降级链）或改用 engine: pi。`
+  );
 }
 
 /** 跨重试轮累计 token 用量（重试的 LLM 调用真实发生）。 */

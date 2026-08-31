@@ -45,7 +45,20 @@
  *     sendResult?:  object             缺省 {accepted:true}
  *     readError?:   {code,message,data} read 应答 error 帧（read 兜底降级链断言）
  *     readResult?:  object             覆盖 read 应答
+ *     stopBehavior?: 'terminal'|'none'  session/stop 的行为（R4 abort 链断言面）：
+ *                                      'terminal'（缺省）= stop 时推送该会话的
+ *                                      turn.terminal 终态帧（stop 优雅生效——不杀
+ *                                      进程的 abort 路径）；'none' = 只应答不推终态
+ *                                      （grace 窗口耗尽 → killChain 兜底路径）
  *   }
+ *
+ * 多会话支持（R4 引擎接线 / RA3 双会话地基）：
+ *   FAKE_STAMP_SESSION=1   session/send 的推送帧回放时把 params.sessionId 统一改写
+ *                          为「当前 send 的目标会话」，telemetry 帧（无 sid）补记
+ *                          sessionId——并发两会话各自收到归因正确的推送流，不串线。
+ *                          （缺省关：R2/R3 单会话用例的字节级行为不变。）
+ *   session/stop           应答 {stopped:true}；按 scenario.stopBehavior 决定是否
+ *                          推送终态帧（见上）。stopTerminal 推送同样受 STAMP 改写。
  */
 
 import fs from 'node:fs';
@@ -54,6 +67,8 @@ import readline from 'node:readline';
 const STATE_FILE = process.env.FAKE_STATE_FILE;
 const EXTRA_KEYS = process.env.FAKE_EXTRA_KEYS === '1';
 const PROTOCOL_AS_PUSH = process.env.FAKE_PROTOCOL_PUSH === '1';
+// [R4] 多会话推送改写开关（见文件头注释）
+const STAMP_SESSION = process.env.FAKE_STAMP_SESSION === '1';
 
 // 会话场景（R3）：启动时读取一次（env 固化语义与其他 FAKE_ 开关一致）
 let SCENARIO = null;
@@ -82,6 +97,13 @@ const replyErr = (id, code, message, data) =>
 // 协议自报（A.1：首帧 {protocol:{...}}；推送形态显式开关——两种到达形态都要被忽略）
 if (PROTOCOL_AS_PUSH) out({ method: 'protocol', params: { name: 'ZCode Protocol', version: 1 } });
 else out({ protocol: { name: 'ZCode Protocol', version: 1 } });
+
+// SIGTERM 优雅窗口：默认终止会丢弃「已写入管道但尚未读到」的帧——延迟退出让
+// stdin 排空后收尾（dispose 的 close-帧-先于-SIGTERM 顺序在本侧可观测：
+// killChain 的 grace 远大于本窗口，不会升级 SIGKILL）
+process.on('SIGTERM', () => {
+  setTimeout(() => process.exit(0), 100);
+});
 
 // env 快照 + boot 流水（惰性启动 / argv 形态 / env 惯例断言的数据源）
 log('env', {
@@ -115,6 +137,30 @@ function onClientAnswer(frame) {
     settle({ id: frame.id, result: frame.result, error: frame.error });
   }
 }
+
+// 推送帧回放（scenario 帧即 golden 语料/注入形态本身，不走 withExtra）。STAMP_SESSION
+// 开启时统一改写/补记 params.sessionId 为目标会话（RA3 双会话地基：并发两会话各自
+// 收到归因正确的推送流——真服务端推送本就按会话归因，telemetry 帧不带 sid 属协议
+// 实测形态，stamp 是 fake 侧的确定性等价物）。
+function pushFrames(frames, targetSessionId) {
+  for (const frame of frames || []) {
+    if (!STAMP_SESSION || !targetSessionId) {
+      out(frame);
+      continue;
+    }
+    const stamped = JSON.parse(JSON.stringify(frame));
+    if (stamped && typeof stamped.params === 'object' && stamped.params !== null) {
+      stamped.params.sessionId = targetSessionId;
+    }
+    out(stamped);
+  }
+}
+
+// [R4] stop 触发的终态推送（stopBehavior 缺省 'terminal'——abort 优雅生效路径）
+const TURN_TERMINAL_FRAME = {
+  method: 'v4/telemetry/event',
+  params: { kind: 'turn.terminal', status: 'success' },
+};
 
 async function handleRequest(f) {
   const { id, method } = f;
@@ -161,9 +207,17 @@ async function handleRequest(f) {
       if (SCENARIO && SCENARIO.sendError) {
         return replyErr(id, SCENARIO.sendError.code, SCENARIO.sendError.message, SCENARIO.sendError.data);
       }
-      // 推送帧逐字回放（不走 withExtra）：scenario 帧即 golden 语料/注入形态本身
-      for (const frame of (SCENARIO && SCENARIO.sendPushes) || []) out(frame);
+      // 推送帧逐字回放（STAMP_SESSION 时按目标会话归因改写）
+      pushFrames(SCENARIO && SCENARIO.sendPushes, String(params.sessionId || ''));
       return reply(id, (SCENARIO && SCENARIO.sendResult) || { accepted: true });
+    }
+    case 'session/stop': {
+      // [R4] abort 链断言面：缺省推终态（stop 优雅生效）；stopBehavior:'none' 只应答
+      const behavior = (SCENARIO && SCENARIO.stopBehavior) || 'terminal';
+      if (behavior === 'terminal') {
+        pushFrames([TURN_TERMINAL_FRAME], String(params.sessionId || ''));
+      }
+      return reply(id, { stopped: true });
     }
     case 'session/read': {
       if (SCENARIO && SCENARIO.readError) {

@@ -77,3 +77,55 @@ export const ZCODE_APPSERVER_TURN_CLOSE_TIMEOUT_MS = 1_500;
  * timeout / abort 链可显式传入更贴任务的值。
  */
 export const ZCODE_APPSERVER_TURN_DEFAULT_TIMEOUT_MS = 300_000;
+
+// ============================================================
+// [R4] app-server 常驻 HOME（D7）/ abort 链（D3）/ 孤儿自愈（D6③）
+// ============================================================
+
+/**
+ * [R4 D7] 常驻 HOME 的池 key（固定名）。锚定不变量 poolDir == HOME == db 所在目录：
+ * HOME = resolvePoolDir(engineDataDir, 'zcode', 'home-appserver')，SQLite 落
+ * HOME/.zcode/cli/db/db.sqlite，journal 同落该池目录。锁被活宿主持有时派生
+ * `home-appserver-2`… 后缀目录，handle.poolKey 记实际目录名。
+ */
+export const ZCODE_APPSERVER_POOL_KEY = "home-appserver";
+
+/** [R4 D7] 目录锁文件名（HOME 内；O_EXCL 创建，内容 {pid}=持锁宿主进程 pid）。 */
+export const ZCODE_APPSERVER_LOCKFILE_NAME = "lockfile";
+
+/** [R4 D6③/D7] app-server 进程 pidfile 文件名（HOME 内；与 lockfile.pid 严格分离）。 */
+export const ZCODE_APPSERVER_PIDFILE_NAME = "appserver.pid";
+
+/** [R4 D7] 目录锁心跳间隔（ms）：仅刷新 lockfile mtime，不参与活持有否决。 */
+export const ZCODE_APPSERVER_LOCK_HEARTBEAT_MS = 30_000;
+
+/** [R4 D7] 派生目录后缀上限（home-appserver-2 … -N）——极端并发场景防无限循环。 */
+export const ZCODE_APPSERVER_MAX_DERIVED_HOMES = 8;
+
+/**
+ * [R4 D3] abort 链第一级：session/stop 的控制面超时（ms）。stop 失败/超时即落
+ * killChain（协议此时已不可信）。
+ */
+export const ZCODE_APPSERVER_STOP_TIMEOUT_MS = 3_000;
+
+/**
+ * [R4 D3] abort 链第二级：stop 送达后的终态确认 grace 窗口（ms）。窗口内终态
+ * 到达 → 不杀共享进程；超时 → killChain 连坐。
+ */
+export const ZCODE_APPSERVER_ABORT_GRACE_MS = 3_000;
+
+/** [R4 D6③] 孤儿回收的 SIGTERM→SIGKILL grace 窗口（ms）。 */
+export const ZCODE_APPSERVER_PIDFILE_GRACE_MS = 2_000;
+
+/**
+ * [R4/R5] 执行模式定向 env（appserver | spawn）。定向时不探不降；缺省走 app-server
+ * （R5 降级链在缺省路径插 probe 门控）。spawn 降级路径（D2 兜底）继续用
+ * home-<provider>-<model> 池。
+ */
+export const ZCODE_MODE_ENV_VAR = "XYZ_ZCODE_MODE";
+
+/**
+ * [R4] app-server 内部错误码中「模型配置缺失」的归类判据（A.3：-32603 内部错误族，
+ * 消息含 "Model config is missing"——错误规格表第 2 行：报 engine_credential_missing）。
+ */
+export const ZCODE_APPSERVER_ERR_MODEL_CONFIG_MISSING = -32603;
