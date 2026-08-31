@@ -244,7 +244,7 @@ export function buildReinjectSection(contents: ReadonlyArray<{ path: string; con
 // ──────────────────────── subagent 识别（R6） ────────────────────────
 
 /**
- * subagent 子进程检测（D9/R6）：subagent-workflow 无条件注入 PI_SUBAGENT_ROOT_SESSION_ID。
+ * subagent 子进程检测（D9/R6）：subagent-core session-runner 无条件注入 PI_SUBAGENT_ROOT_SESSION_ID。
  * 命中 → 本进程不注册工具、不提醒（宁缺勿污）。
  */
 export function isSubagentProcess(env: NodeJS.ProcessEnv = process.env): boolean {
