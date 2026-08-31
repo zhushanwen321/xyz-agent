@@ -1,6 +1,6 @@
 # model-thinking-level-memory 实施计划
 
-基线: <待用户评审后 commit 回填> | 来源设计: docs/design/model-thinking-level-memory.md | 日期: 2026-08-31
+基线: 9de8deb6a | 来源设计: docs/design/model-thinking-level-memory.md | 日期: 2026-08-31
 
 ## 0 章节映射
 
@@ -81,13 +81,15 @@ graph TD
 
 | # | 偏差内容 | 判定 | 证据 | 状态 |
 |---|---|---|---|---|
-| （空） | | | | |
+| 1 | `lookup` 返回类型收窄为 `ThinkingLevel \| undefined`（契约写 `string \| undefined`） | 合理——子类型兼容，下游 u2/u3 免二次断言 | model-thinking-memory.ts lookup 签名 | 已固化 |
+| 2 | `record` 在预载完成前挂起写穿、加载完成后补写收敛（契约只说「同步内存 + 异步写穿」未规定窗口时序） | 合理且必要——防局部快照覆写 KV 整表静默清除未知条目；测试锁定该语义 | model-thinking-memory.test.ts「加载窗口 record」用例 + registry #21 例外列 | 已固化 |
+| 3 | taste 豁免注解 W24-EX-B（require-data-owner-annotation error 级，登记表在 u1 领地外） | 合理——主 agent 已补登记 registry #21 并同步注解为非草稿 | docs/architecture/data-source-registry.md #21 | 已闭环 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u1-foundation | pending | 0 | — |
+| u1-foundation | committed | 1 | 12/12 绿（memory.test.ts）；registry #21 登记；deviations 3 条入 §5 |
 | u2 | pending | 0 | — |
 | u3 | pending | 0 | — |
 | u4 | pending | 0 | — |
