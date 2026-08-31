@@ -34,9 +34,13 @@ import type {
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { getHostServices } from "@zhushanwen/subagent-core/core/host-services.ts";
-// C5①/C5⑦/C5b：发现与渲染统一走 core barrel——含发现链辅助
-// （findWorkspaceRoot/getCachedFileContent/getCachedParsed/parseResourceMeta，
-// C5b 起随 barrel 发现面导出），深路径 import 归零。
+// C5①/C5⑦/C5b：发现与渲染统一走 core barrel——发现链辅助
+// （resource-discovery/meta-parser 面：findWorkspaceRoot/getCachedFileContent/
+// getCachedParsed/parseResourceMeta）深路径 import 已归零。上方 getHostServices
+// 深路径刻意保留：core 服务定位器（core 内模块统一经它取用宿主端口），barrel
+// 刻意不导出（D5 exports 面即 semver 契约、逐名列出，未列名的内部件不经
+// barrel——见 subagent-core src/index.ts 头注），壳侧深路径消费经包
+// `./*` -> src 通配豁免。
 import {
 	type AgentEntry,
 	discoverResources,

@@ -1,4 +1,4 @@
-// connection.test.ts —— R2 连接层测试：全部跑 __fixtures__/fake-appserver.cjs 子进程
+// connection.test.ts —— R2 连接层测试：全部跑 __fixtures__/fake-appserver.mjs 子进程
 // （移植自 zsw 仓 84b63a0^ fake-server 测试模式，vitest 形态改造），绝不 spawn 真
 // zcode.cjs。覆盖验收条款：四帧型分发逐型 / 请求-应答 id 关联（并发不串）/
 // requestRuntimePreferences 常量应答逐字段 / 未知反向回空 result / onClose 全部在途
@@ -427,6 +427,25 @@ describe("关闭原语", () => {
     expect(r).toEqual({ reborn: true });
     expect(readState(stateFile).filter((e) => e.ev === "boot")).toHaveLength(2);
   }, 15_000);
+
+  it("close() 后调 shutdown()：await close 发起的同一杀链，resolve 不早于进程退出（幂等——同一 promise）", async () => {
+    const { conn, stateFile } = makeConnection();
+    await conn.request("test/echo", {});
+    const pid = conn.pid;
+    conn.close();
+    let shutdownSettled = false;
+    const shutdownPromise = conn.shutdown().then(() => {
+      shutdownSettled = true;
+    });
+    await shutdownPromise;
+    expect(shutdownSettled).toBe(true);
+    // killChain 挂 exit 事件 resolve（Node exit 前已收尸）——shutdown resolve 时进程
+    // 必已退出：kill(0) 探活抛 ESRCH 即「resolve 不早于杀链完成」的机制性证据
+    expect(() => process.kill(pid ?? -1, 0)).toThrow(/ESRCH/);
+    // 幂等：再次 shutdown 复用同一 promise，无新杀链、无新进程
+    await conn.shutdown();
+    expect(readState(stateFile).filter((e) => e.ev === "boot")).toHaveLength(1);
+  }, 10_000);
 });
 
 // ------------------------------------------- protocol 自报与宽容解析

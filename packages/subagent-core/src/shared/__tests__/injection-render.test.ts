@@ -496,6 +496,10 @@ describe("barrel exports probe", () => {
 			"escapeXml",
 			"renderXmlSection",
 			"discoverResources",
+			"findWorkspaceRoot",
+			"getCachedFileContent",
+			"getCachedParsed",
+			"parseResourceMeta",
 		] as const;
 		const barrel = subagentCore as Record<string, unknown>;
 		for (const name of valueExports) {

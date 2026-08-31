@@ -24,7 +24,8 @@
 //     R4 也可复用 launcher 的 buildZcodeEnv 自行组装后传入——本模块不 import launcher）；
 //   - stderr tee 路径参数化（引擎数据目录由 R4 注入；测试用 tmp 目录）；
 //   - dispose 完整编排（close 全部会话 → 杀链）归 R4 引擎层——本模块只提供连接自身
-//     的关闭原语（close 同步 SIGTERM 面 / shutdown 完整杀链面，均幂等）。
+//     的关闭原语（close 同步 SIGTERM 面 / shutdown 完整杀链面，均幂等；close 后调
+//     shutdown 等待同一杀链完成再 resolve——resolve 于进程退出的契约不因入口顺序而破）。
 //
 // 重建语义（D1 + §3.4 不变量 4）：进程死亡（崩溃 / 我方 shutdown / spawn 失败）→
 // 当前代全部 pending reject（错误附 stderr 尾 400 字符）→ child 置空 → 下次
@@ -200,8 +201,13 @@ export class AppServerConnection {
   private stderrTail = "";
   private stderrStream: fs.WriteStream | null = null;
   private stderrStreamFailed = false;
-  /** 本代我方杀链是否已发起（close/shutdown 幂等守卫）。 */
-  private killStarted = false;
+  /**
+   * 本代我方杀链 promise（close/shutdown 共用）。入口顺序不破「shutdown resolve 于
+   * 进程退出」契约：close 先行发起时 shutdown await 同一 promise 而非直接 return。
+   * killChain 永不 reject（内部 raceTimeout 吞 reject）——close 的 fire-and-forget
+   * 无 unhandled rejection 面。
+   */
+  private killChainPromise: Promise<"terminated" | "killed"> | undefined;
   private generation = 0;
   private readonly pushHandlers = new Map<string, Set<(params: unknown) => void>>();
   /** [R4] 连接级崩溃通知面（onClose 订阅者集合；与 pushHandlers 同构的 refCount 形态）。 */
@@ -313,25 +319,29 @@ export class AppServerConnection {
 
   /**
    * 同步关闭面（R4 dispose 编排的原语）：立即发 SIGTERM（同步系统调用，返回前信号
-   * 已发出），grace→SIGKILL 升级由后台杀链跟进（fire-and-forget）。幂等；对未启动
-   * 连接是零成本 no-op。
+   * 已发出），grace→SIGKILL 升级由杀链 promise 跟进（fire-and-forget）。幂等；对未启动
+   * 连接是零成本 no-op。close 之后调 shutdown 会 await 同一杀链再 resolve（见
+   * killChainPromise 字段注释）。
    */
   close(): void {
     const child = this.child;
-    if (child === null || this.killStarted) return;
-    this.killStarted = true;
-    void killChain(child, { graceMs: ZCODE_KILL_GRACE_MS });
+    if (child === null || this.killChainPromise !== undefined) return;
+    this.killChainPromise = killChain(child, { graceMs: ZCODE_KILL_GRACE_MS });
   }
 
   /**
    * 异步完整关闭面：SIGTERM → grace → SIGKILL 杀链走完（含收尸），resolve 于进程
-   * 退出。幂等。之后首个 request() 自动重建（与崩溃重建同路径，§3.4 不变量 4）。
+   * 退出。幂等：与 close 共享同一杀链 promise——close 先行时 await 它再 resolve，
+   * 不另起杀链（graceMs 取首次发起值）。之后首个 request() 自动重建（与崩溃重建
+   * 同路径，§3.4 不变量 4）。
    */
   async shutdown(opts?: { graceMs?: number }): Promise<void> {
-    const child = this.child;
-    if (child === null || this.killStarted) return;
-    this.killStarted = true;
-    await killChain(child, { graceMs: opts?.graceMs ?? ZCODE_KILL_GRACE_MS });
+    if (this.killChainPromise === undefined) {
+      const child = this.child;
+      if (child === null) return;
+      this.killChainPromise = killChain(child, { graceMs: opts?.graceMs ?? ZCODE_KILL_GRACE_MS });
+    }
+    await this.killChainPromise;
   }
 
   // ============================================================
@@ -348,7 +358,7 @@ export class AppServerConnection {
     this.pending = new Map();
     this.reqSeq = 0;
     this.stderrTail = "";
-    this.killStarted = false;
+    this.killChainPromise = undefined;
     this.generation += 1;
     const gen = this.generation;
 

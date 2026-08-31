@@ -138,14 +138,6 @@ export function pinnedZcodeMode(env: NodeJS.ProcessEnv = process.env): ZcodeMode
   return v === "appserver" || v === "spawn" ? v : undefined;
 }
 
-/**
- * 模式判定（R4 形态保留：二值视图）。缺省/未知值走 appserver——缺省路径的探针/降级
- * 门控由 run() 经 pinnedZcodeMode 三态编排，不经本函数。
- */
-export function resolveZcodeMode(env: NodeJS.ProcessEnv = process.env): ZcodeRunMode {
-  return pinnedZcodeMode(env) ?? "appserver";
-}
-
 /** ZcodeEngine 构造依赖（全部可注入——测试不依赖真机 CLI/真凭据）。 */
 export interface ZcodeEngineDeps {
   /**
@@ -566,10 +558,14 @@ export class ZcodeEngine implements EnginePort {
       return {
         kind: "run-failed",
         output: syntheticAppServerOutput(null),
-        message: buildAppServerRunFailedMessage(err, home),
+        message: buildAppServerRunFailedMessage(err, home, currentSessionId),
         // [R5] RPC code 透传给 run 编排（-32601/-32602 漂移降级判据；连接级/超时类
         // 错误无 code 不参与降级）
         ...(isAppServerRpcError(err) && err.code !== undefined ? { rpcCode: err.code } : {}),
+        // 错误规格表 -32004 行「按任务失败上报（含会话 id）」：create 成功后运行中失败
+        // （-32004/-32010 等）时留痕会话 id——经 applyRunFailedOutcome 落 outcome.sessionId
+        // 与 handle.sessionRef（create 阶段失败无会话，缺省不带）
+        ...(currentSessionId !== undefined ? { sessionId: currentSessionId } : {}),
       };
     } finally {
       if (currentSessionId !== undefined) rt.activeSessions.delete(currentSessionId);
@@ -927,13 +923,18 @@ export class ZcodeEngine implements EnginePort {
     emit({ type: "error", message: outcome.error });
   }
 
-  /** run-failed 合成终态：错误信息由 buildRunFailedMessage 产出（已含恢复指引），直接透传。 */
+  /**
+   * run-failed 合成终态：错误信息由 buildRunFailedMessage 产出（已含恢复指引）直接透传；
+   * appserver 路径附带的会话 id 落 outcome.sessionId（错误规格表 -32004 行「含会话 id」
+   * ——appServerHandle 据此写 handle.sessionRef，run-failed 不再恒缺）。
+   */
   private applyRunFailedOutcome(
     outcome: AgentOutcome,
     final: Extract<AttemptResult, { kind: "run-failed" }>,
     emit: (event: AgentEvent) => void,
   ): void {
     outcome.exitCode = final.output.exitCode;
+    if (final.sessionId !== undefined) outcome.sessionId = final.sessionId;
     outcome.error = final.message;
     emit({ type: "error", message: outcome.error });
   }
@@ -1177,7 +1178,14 @@ export class ZcodeEngine implements EnginePort {
  */
 type AttemptResult =
   | { kind: "aborted"; output: ZcodeCollectedOutput; abortMessage?: string }
-  | { kind: "run-failed"; output: ZcodeCollectedOutput; message: string; rpcCode?: number }
+  | {
+      kind: "run-failed";
+      output: ZcodeCollectedOutput;
+      message: string;
+      rpcCode?: number;
+      /** appserver 路径失败时已建立的会话 id（错误规格表 -32004 行：按任务失败上报含会话 id）。 */
+      sessionId?: string;
+    }
   | {
       kind: "parsed";
       output: ZcodeCollectedOutput;
@@ -1240,9 +1248,11 @@ function turnResultToPayload(r: SessionTurnResult): ZcodeTerminalPayload {
 /**
  * appserver 路径运行中失败的结构化文案（错误规格表）：-32603 "Model config is
  * missing" → engine_credential_missing（与 prepare 期同码——错误定位常驻 HOME config）；
- * 其余（连接崩溃/会话失败/漂移类透传——漂移降级归 R5）→ engine_run_failed + 恢复指引。
+ * -32010 → 单会话一任务是结构保证（busy 不排队不打断），文案引导附带 sessionId/state
+ * 流水报告；其余（连接崩溃/会话失败/漂移类透传——漂移降级归 R5）→ engine_run_failed +
+ * 恢复指引。sessionId 已建立时随文案透出（错误规格表 -32004 行「按任务失败上报含会话 id」）。
  */
-function buildAppServerRunFailedMessage(err: unknown, home: AppServerHomeHandle): string {
+function buildAppServerRunFailedMessage(err: unknown, home: AppServerHomeHandle, sessionId?: string): string {
   if (
     isAppServerRpcError(err) &&
     err.code === ZCODE_APPSERVER_ERR_MODEL_CONFIG_MISSING &&
@@ -1253,9 +1263,18 @@ function buildAppServerRunFailedMessage(err: unknown, home: AppServerHomeHandle)
       `无可用模型配置）。恢复指引：在 ZCode 桌面端登录并配置 provider 凭据后重跑本任务（引擎将在下任务重写常驻 config 并重建连接）。`
     );
   }
+  if (isAppServerRpcError(err) && err.code === -32010) {
+    // -32010 无 constants 常量（constants.ts 常量按行登记；本分支文案自描述 code 语义）
+    const sid = sessionId !== undefined ? `（会话 id: ${sessionId}）` : "";
+    return (
+      `engine_run_failed: app-server 报 -32010${sid}（send 时该会话已有轮在跑，busy 不排队不打断）。` +
+      `单会话一任务是结构保证，出现即 bug；请附带 sessionId 与 state 流水（连接/会话事件日志）上报问题。`
+    );
+  }
   const code = isAppServerRpcError(err) && err.code !== undefined ? `（code ${err.code}）` : "";
+  const sid = sessionId !== undefined ? `（会话 ${sessionId}）` : "";
   return (
-    `engine_run_failed: app-server 会话执行失败${code}: ${errMessage(err).slice(-ZCODE_ERROR_TAIL_CHARS)}。` +
+    `engine_run_failed: app-server 会话执行失败${code}${sid}: ${errMessage(err).slice(-ZCODE_ERROR_TAIL_CHARS)}。` +
     `恢复指引：直接重跑本任务（连接崩溃后自动重建进程）；若持续失败，跑 probe 核对协议漂移（R5 降级链）或改用 engine: pi。`
   );
 }

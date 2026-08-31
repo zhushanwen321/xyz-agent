@@ -324,6 +324,16 @@ describe("probe 冒烟（D8）", () => {
     expect(fakeLaunch.calls).toHaveLength(1);
     // 探针失败短路：常驻主连接从未建立（boot 全部来自探针）
     expect(bootCount(stateFile)).toBe(probeBootCount(stateFile));
+    // 失败结论同样绑 mtime 缓存（smokeConclusion 缓存命中不分成败）：同一 CLI mtime 下
+    // 第二任务不重探（探针 boot 冻结）且仍直走 spawn，不再触碰主连接
+    const probeBootsAfter1 = probeBootCount(stateFile);
+    const bootsAfter1 = bootCount(stateFile);
+    const r2 = await engine.run(makeTask({ cwd: workspace }), makeCtx());
+    expect(r2.outcome.error).toBeUndefined();
+    expect(r2.outcome.engineFallback?.reason).toContain("probe-failed");
+    expect(fakeLaunch.calls).toHaveLength(2);
+    expect(probeBootCount(stateFile)).toBe(probeBootsAfter1);
+    expect(bootCount(stateFile)).toBe(bootsAfter1);
   }, 20_000);
 });
 

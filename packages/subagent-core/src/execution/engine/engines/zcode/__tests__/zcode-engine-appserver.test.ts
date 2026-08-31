@@ -23,7 +23,7 @@ import type { AgentEvent, AgentTaskSpec } from "../../../types.ts";
 import { resolvePoolDir } from "../../../paths.ts";
 import { ZCODE_APPSERVER_POOL_KEY, ZCODE_POOL_CONFIG_SUFFIX } from "../constants.ts";
 import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
-import { ZcodeEngine, resolveZcodeMode, type ZcodeEngineDeps } from "../zcode-engine.ts";
+import { ZcodeEngine, pinnedZcodeMode, type ZcodeEngineDeps } from "../zcode-engine.ts";
 
 const FAKE_CLI = fileURLToPath(new URL("./__fixtures__/fake-appserver.mjs", import.meta.url));
 const PROVIDER = "test-provider";
@@ -75,6 +75,8 @@ interface ScenarioOverrides {
   dropTurnTerminal?: boolean;
   replaceSendPushes?: string[];
   createError?: RpcErrorSpec;
+  /** send 应答 error 帧（运行中失败注入——-32004 会话 id 留痕用例）。 */
+  sendError?: RpcErrorSpec;
   stopBehavior?: "terminal" | "none";
   stampSession?: boolean;
   /** 覆盖 read 应答（read 是全文权威来源——schema 用例须与收尾帧一致）。 */
@@ -106,6 +108,7 @@ function makeEngine(overrides: ScenarioOverrides = {}): EngineHandle_ {
     sendPushes: pushes,
     ...(overrides.stopBehavior !== undefined ? { stopBehavior: overrides.stopBehavior } : {}),
     ...(overrides.createError !== undefined ? { createError: overrides.createError } : {}),
+    ...(overrides.sendError !== undefined ? { sendError: overrides.sendError } : {}),
   });
   const deps: ZcodeEngineDeps = {
     engineDataDir: () => dataDir,
@@ -189,11 +192,11 @@ function makeCtx(overrides?: Partial<RunContext>): RunContext {
 // ============================================================
 
 describe("模式分派（XYZ_ZCODE_MODE）", () => {
-  it("定向值原样返回；缺省/未知值走 appserver（R5 将在缺省路径插 probe 门控）", () => {
-    expect(resolveZcodeMode({ XYZ_ZCODE_MODE: "spawn" })).toBe("spawn");
-    expect(resolveZcodeMode({ XYZ_ZCODE_MODE: "appserver" })).toBe("appserver");
-    expect(resolveZcodeMode({})).toBe("appserver");
-    expect(resolveZcodeMode({ XYZ_ZCODE_MODE: "garbage" })).toBe("appserver");
+  it("pinnedZcodeMode 三态：定向值原样；缺省/未知值 undefined（undefined → 缺省 appserver 路径的探针门控 run 分派由 degrade 套件覆盖）", () => {
+    expect(pinnedZcodeMode({ XYZ_ZCODE_MODE: "spawn" })).toBe("spawn");
+    expect(pinnedZcodeMode({ XYZ_ZCODE_MODE: "appserver" })).toBe("appserver");
+    expect(pinnedZcodeMode({})).toBeUndefined();
+    expect(pinnedZcodeMode({ XYZ_ZCODE_MODE: "garbage" })).toBeUndefined();
   });
 
   it("spawn 定向：launch 通道走原 spawn 路径（不 spawn app-server——boot 计数 0）", async () => {
@@ -367,6 +370,19 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     const { outcome } = await engine.run(makeTask({ cwd: workspace }), makeCtx());
     expect(outcome.error).toContain("engine_run_failed");
     expect(outcome.error).toContain("-32602");
+  }, 15_000);
+
+  it("-32004 运行中失败 → outcome/handle/错误文案携带会话 id（错误规格表：按任务失败上报含会话 id）", async () => {
+    // create 成功（golden 会话）后 send 阶段失败——会话已建立，失败上报必须留痕 id
+    const { engine, workspace } = makeEngine({
+      sendError: { code: -32004, message: "Session is not active" },
+    });
+    const { handle, outcome } = await engine.run(makeTask({ cwd: workspace }), makeCtx());
+    expect(outcome.error).toContain("engine_run_failed");
+    expect(outcome.error).toContain("-32004");
+    expect(outcome.error).toContain(GOLDEN_SESSION_ID);
+    expect(outcome.sessionId).toBe(GOLDEN_SESSION_ID);
+    expect(handle.data.sessionRef).toEqual({ sessionId: GOLDEN_SESSION_ID, dbPath: ".zcode/cli/db/db.sqlite" });
   }, 15_000);
 });
 
