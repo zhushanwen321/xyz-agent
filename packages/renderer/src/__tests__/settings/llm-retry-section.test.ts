@@ -229,6 +229,70 @@ describe('SystemLlmRetrySection（u3 LLM 调用重试）', () => {
     expect(unsub).toHaveBeenCalledTimes(1)
   })
 
+  it('带 warnings（超域标注）状态下广播到达 → 合法 config 清除标注（红框与警示文本均消失）', async () => {
+    const unsub = vi.fn()
+    let handler: ((payload: { config: unknown; configured: boolean }) => void) | null = null
+    configApiMock.onRetryConfig.mockImplementation((h: typeof handler) => {
+      handler = h
+      return unsub
+    })
+    // 加载超域存量：maxRetries=50 → 出现行内标注
+    const fixture = defaultFixture()
+    fixture.config.maxRetries = 50
+    configApiMock.getRetryConfig.mockResolvedValue(fixture)
+
+    const wrapper = mountSection()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="llm-retry-warn-maxRetries"]').exists()).toBe(true)
+
+    // 其他窗口保存合法值 → 广播到达后标注被清除
+    handler!({ configured: true, config: { enabled: true, maxRetries: 5, baseDelayMs: 2000 } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="llm-retry-warn-maxRetries"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('超出推荐范围')
+    // 保存失败残留的红框也随广播清除
+    await setInput(wrapper, 'llm-retry-base-delay-input', '99999')
+    await wrapper.find('[data-testid="llm-retry-save-btn"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="llm-retry-base-delay-input"]').classes()).toContain('border-warn')
+    handler!({ configured: true, config: { enabled: true, maxRetries: 5, baseDelayMs: 2000 } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="llm-retry-base-delay-input"]').classes()).not.toContain('border-warn')
+    wrapper.unmount()
+  })
+
+  it('自保存回声：保存成功后广播回显同值 → 表单状态保持且无异常（幂等回归保护）', async () => {
+    const unsub = vi.fn()
+    let handler: ((payload: { config: unknown; configured: boolean }) => void) | null = null
+    configApiMock.onRetryConfig.mockImplementation((h: typeof handler) => {
+      handler = h
+      return unsub
+    })
+
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await setInput(wrapper, 'llm-retry-base-delay-input', '5')
+    await wrapper.find('[data-testid="llm-retry-save-btn"]').trigger('click')
+    await flushPromises()
+    expect(configApiMock.setRetryConfig).toHaveBeenCalledTimes(1)
+
+    // 回声广播携带刚保存的同值 → 表单保持保存后的值，无异常
+    handler!({
+      configured: true,
+      config: { enabled: true, maxRetries: 3, baseDelayMs: 5000, provider: { maxRetries: 0, maxRetryDelayMs: 60000 } },
+    })
+    await flushPromises()
+
+    expect((wrapper.find('[data-testid="llm-retry-max-retries-input"]').element as HTMLInputElement).value).toBe('3')
+    expect((wrapper.find('[data-testid="llm-retry-base-delay-input"]').element as HTMLInputElement).value).toBe('5')
+    expect(wrapper.find('[data-testid="llm-retry-configured-badge"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('超出推荐范围')
+    expect(toastMock.error).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('maxRetries 与 baseDelay 同时为空 → 两键各自标红（border-warn）', async () => {
     const wrapper = mountSection()
     await flushPromises()

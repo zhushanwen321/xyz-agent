@@ -216,6 +216,8 @@ onMounted(async () => {
   unsubscribeRetryConfig = onRetryConfig((payload) => {
     if (!payload.configured) return
     configured.value = true
+    // 其他窗口保存的合法值到达后，本窗口过期的校验红框不应残留
+    invalidFields.clear()
     applyLoaded(payload.config)
   })
   try {
