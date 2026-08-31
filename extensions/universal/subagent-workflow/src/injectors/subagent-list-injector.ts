@@ -17,6 +17,10 @@
  * - C5①（convergence D-3）：formatAgentList/sortByCodepoint 下沉 core，本文件改调
  *   core barrel（渲染骨架与条目模板逐字节同 pi 旧本地实现——CA2 快照验收前提）；
  *   guide 文案是 pi 宿主注入（core 不内嵌平台文案）。
+ * - U11（sink 设计）：装配循环（发现→解析→去重→排序 + warn/error 口径）整体改
+ *   消费 core discoverAgents（execution/agents-assembly，U2/A6）——壳侧收缩为
+ *   「宿主注入根现取 + 委托」，语义等值口径见 agents-assembly.ts 头注（⛔1 探针
+ *   对照注入 XML diff 为空验收）。
  *
  * 归位原因：injector 是 subagent-workflow 的内聚功能壳——事件接线与数据获取留
  * 在插件层（before_agent_start / modelRegistry），解析/渲染算法消费 core。
@@ -35,23 +39,20 @@ import type {
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { getHostServices } from "@zhushanwen/subagent-core/core/host-services.ts";
-// C5①/C5⑦/C5b：发现与渲染统一走 core barrel——发现链辅助
-// （resource-discovery/meta-parser 面：findWorkspaceRoot/getCachedFileContent/
-// getCachedParsed/parseResourceMeta）深路径 import 已归零。上方 getHostServices
-// 深路径刻意保留：core 服务定位器（core 内模块统一经它取用宿主端口），barrel
-// 刻意不导出（D5 exports 面即 semver 契约、逐名列出，未列名的内部件不经
-// barrel——见 subagent-core src/index.ts 头注），壳侧深路径消费经包
+// U11（sink 设计）：agent 装配循环单源 core discoverAgents（U2/A6 装配函数，
+// 深路径消费）；渲染（formatAgentList）与 workspace 根推导（findWorkspaceRoot）
+// 走 barrel，parseResourceMeta 仍服务 parseAgentFrontmatter（严格注入投影语义锚）。
+// 上方 getHostServices 深路径刻意保留：core 服务定位器（core 内模块统一经它取用
+// 宿主端口），barrel 刻意不导出（D5 exports 面即 semver 契约、逐名列出，未列名
+// 的内部件不经 barrel——见 subagent-core src/index.ts 头注），壳侧深路径消费经包
 // `./*` -> src 通配豁免。
 import {
 	type AgentEntry,
-	discoverResources,
 	findWorkspaceRoot,
 	formatAgentList,
-	getCachedFileContent,
-	getCachedParsed,
 	parseResourceMeta,
-	sortByCodepoint,
 } from "@zhushanwen/subagent-core";
+import { discoverAgents } from "@zhushanwen/subagent-core/execution/agents-assembly.ts";
 
 const logger = getLogger("injector");
 
@@ -112,61 +113,29 @@ export function parseAgentFrontmatter(content: string): AgentEntry | null {
 }
 
 /**
- * 用统一资源发现（ADR-031）发现所有可用 agent。
+ * 发现所有可用 agent（注入清单装配入口）。
  *
- * discoverResources 返回按文件名 stem 去重、优先级合并后的 DiscoveredResource[]
- * （project > user > builtin，返回顺序低→高优先级——Map 后写覆盖依赖此序，不可在
- * 发现层重排）。此处逐个解析 frontmatter 提取 name+description（经 getCachedParsed
- * mtime 级缓存），再按 agent name 去重（高优先级靠后，Map.set 后者覆盖前者，故最终
- * 保留最高优先级同名 agent）。
+ * U11（sink 设计）：原手写装配循环（discoverResources 逐个 parseAgentFrontmatter
+ * 解析 → agent name 去重（高优先级靠后 Map 后写胜）→ name 码点序排序 + warn/error
+ * 口径）整体改消费 core `discoverAgents`（U2/A6 装配函数）——解析/去重/排序/warn
+ * 口径单源 core，第三宿主免复刻（G3/S5）。等值口径（IF1 严格层可见性、warn 仅限
+ * 「有 frontmatter 但解析失败」、KV-cache 码点序契约：注入段进每 turn system
+ * prompt，顺序与 readdir 枚举序解耦，目录内容不变时任意重建渲染逐字节一致）登记见
+ * core execution/agents-assembly.ts 头注。
  *
- * 输出按 name 码点序排序（KV-cache 契约）：注入段进每 turn system prompt，顺序必须
- * 与文件系统枚举序（readdir 无契约）解耦——目录内容不变时，session_start / fallback /
- * resume 任意重建的渲染结果逐字节一致；仅条目增减时文本才变化。
+ * 壳侧保留职责：签名（workspaceRoot 单参）与宿主注入根现取（pi 壳 discoveryRoots
+ * 每次现取 getAgentDir，实例隔离；agentDir 形参已删——其唯一用途就是喂 ScanConfig，
+ * u0-data-discovery 偏差 #7）。
  *
  * 永不抛错——发现本身 fail-safe，单个文件读失败仅记日志。
  */
 export async function discoverAllAgents(
 	workspaceRoot: string,
 ): Promise<AgentEntry[]> {
-	const resources = await discoverResources({
-		kind: "agents",
+	return discoverAgents(
 		workspaceRoot,
-		// 宿主注入根现取（pi 壳 discoveryRoots 每次现取 getAgentDir，实例隔离）；
-		// agentDir 形参已删——其唯一用途就是喂 ScanConfig（u0-data-discovery 偏差 #7）
-		hostRoots: getHostServices().discoveryRoots?.()?.agents ?? [],
-	});
-
-	const agentMap = new Map<string, AgentEntry>();
-	for (const resource of resources) {
-		if (!resource.available) continue;
-		try {
-			const agent = getCachedParsed(resource.path, parseAgentFrontmatter);
-			if (agent) {
-				agentMap.set(agent.name, { ...agent, path: resource.path });
-			} else if (startsWithFrontmatter(resource.path)) {
-				// m5（评审 M3/F2 + minor-5）：仅「有 frontmatter 但解析失败」才 warn
-				// （缺 name/description/examples 单条非法致整体 reject）——README 等
-				// 无 frontmatter 的 .md 不刷 warn（每 turn 扫描）。
-				logger.warn(
-					`[subagent-list-injector] ${resource.path}: agent frontmatter 解析失败（IF1 校验不通过）——agent 未注入`,
-				);
-			}
-		} catch (err) {
-			// 单个文件读失败不阻断整条 agent 列表注入
-			logger.error(
-				`[subagent-list-injector] skip unreadable agent file ${resource.path}`,
-				{ reason: err instanceof Error ? err.message : String(err) },
-			);
-		}
-	}
-	// C5①：码点序排序改用 core barrel（非变异副本——core 版不重排入参，返回排序副本）
-	return sortByCodepoint([...agentMap.values()], (a) => a.name);
-}
-
-/** 内容以 frontmatter 分隔符开头（解析失败才值得 warn 的判据）。 */
-function startsWithFrontmatter(filePath: string): boolean {
-	return (getCachedFileContent(filePath) ?? "").trimStart().startsWith("---");
+		getHostServices().discoveryRoots?.()?.agents ?? [],
+	);
 }
 
 /**

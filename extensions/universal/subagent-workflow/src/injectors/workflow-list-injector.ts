@@ -47,6 +47,9 @@ import {
 	summarizeDescription,
 	type WorkflowEntry,
 } from "@zhushanwen/subagent-core";
+// U11（sink 设计）：注入清单排序码点序单源——深路径消费 core sortByCodepoint
+// （与 barrel 版同一实现，深路径遵循任务指定消费形态；`./*` -> src 通配豁免）。
+import { sortByCodepoint } from "@zhushanwen/subagent-core/shared/injection-render.ts";
 
 const logger = getLogger("injector");
 
@@ -124,9 +127,9 @@ export async function discoverAllWorkflows(
 			);
 		}
 	}
-	return [...map.values()].sort((a, b) =>
-		a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
-	);
+	// U11：内联码点序 sort 折叠为 core sortByCodepoint（实现逐字等价——同比较器
+	// 语义：ka < kb ? -1 : ka > kb ? 1 : 0，非变异副本排序）
+	return sortByCodepoint([...map.values()], (a) => a.name);
 }
 
 /**
