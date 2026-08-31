@@ -26,7 +26,7 @@
 | G1 | **同一资产同一行为**：任一 agent .md / workflow 脚本在两宿主的解析、校验、预算、执行语义一致（含边界：block-scalar、`..`、maxTurns 换算） | §4 S1/S2 |
 | G2 | **修复单源化**：core 修正任一下沉域的 bug，两宿主刷新后自动受益，无双实现同步负担 | §4 S3 |
 | G3 | **第三宿主可达**：新宿主仅凭 barrel 导出面即可完成「列 agents / run workflow / 崩溃恢复」三件事，零复刻 | §4 S6 |
-| G4 | **pi 零回归**：pi-sw 全部既有行为（含注入清单、工具面、TUI）语义不变——唯一例外为下述一项**声明的安全收紧**：agent ref 的 `..` 段校验（现状两宿主均放行，见 §2.1 例 2；收紧对 pi 是行为变更，⛔2 以样本集验证而非等值断言） | §4 S4 |
+| G4 | **pi 零回归**：pi-sw 全部既有行为（含注入清单、工具面、TUI）语义不变——唯一例外为下述一项**声明的安全收紧**：normalizeRef 的 `..` 段校验（agent .md 与 workflow .js 引用同受此面，现状两宿主均放行，见 §2.1 例 2；收紧对 pi 是行为变更，⛔2 以样本集验证而非等值断言） | §4 S4 |
 | G5 | **发版一次到位**：全部新导出面落同一 core minor（0.4.0），无二次破坏性扩面 | §5 版本节 |
 
 ### 1.4 Scope
@@ -43,7 +43,7 @@
 
 **例 2（安全校验双缺失）**：用户（或被诱导的模型）传 agent 引用 `/proj/../../etc/passwd.md`。pi 侧：`assertSafeStartPath` 仅守卫 skillPath/cwd（`subagent-tool.ts:316-317`），agent 参数直达 `normalizeRef`——`isAbsolute("/a/../b")` 为 true 直接**放行**（`agent-ref.ts:25-36` 无 `..` 校验）。zsw 侧：`agent-discovery.js:202-212` 仅校验绝对路径 + `.md` 后缀，同样放行。两宿主对该引用均无防御——本设计统一收紧（见 D3/⛔2，登记为两宿主共同的行为变更）。
 
-**例 3（资产解析分叉）**：内置角色 `researcher.md` 的 frontmatter 使用 YAML block-scalar 写长 description。pi 路径：core `parseResourceMeta`（eemeli/yaml）正确解析 → 清单完整。zsw 路径：手写 mini parser（`agent-discovery.js:293-313`，仅支持 key: value / 行内数组）→ **description 被丢弃**。同一份 core 分发的资产，两平台注入清单内容不同。
+**例 3（资产解析能力分叉）**：用户自建 agent .md（或未来 core 内置资产演进）使用 YAML block-scalar 写长 description。pi 路径：core `parseResourceMeta`（eemeli/yaml）正确解析 → 清单完整。zsw 路径：手写 mini parser（`agent-discovery.js:293-313`，仅支持 key: value / 行内数组）→ **description 被丢弃**。解析能力两侧不等：现 vendored 内置 10 角色均为单行 description 故内置资产暂未受害，但任何含标准 YAML 形态的资产（用户自建或资产演进）在 zcode 平台必然丢字段——这是能力缺口而非已发生的内置资产漂移。
 
 ### 2.2 双实现全清单（审查三报告聚合，20 条主题）
 
@@ -58,7 +58,7 @@
 | A | A7 | 全量 frontmatter 解析（宽容变体） | 严格层（meta-parser）+ 宽容层（agent-registry）均未以 profile 形态导出 | 已收敛 parseResourceMeta（仅注入投影） | 手写 mini parser（第三份） |
 | A | A8 | 模型引用切分原语 | zcode preparer 内部（自认「zsub 同构」） | — | model-router 各持一份 |
 | A | A9 | isProcessAlive（EPERM 判活） | alive-store 已有未导出 | — | 两处内联 |
-| A | A10 | SLUG_MAX_LENGTH | execute-options-mapper:22 未导出 | 深路径消费 | 无闸 |
+| A | A10 | SLUG_MAX_LENGTH | execute-options-mapper:21 未导出 | 深路径消费 | 无闸 |
 | B 组装层缺失 | B1 | 崩溃恢复装配（loadAll→failed→save→evict） | 只给了零件 | index.ts:578-627 手写 | recoverOrphans 手写（逐行同构） |
 | B | B2 | WorkflowRun 快照 codec | FileRunStore 自带一份投影 | jsonl-run-store 另一份（strip live + 去抖） | 消费 FileRunStore | 
 | B | B3 | 参数 schema→键集映射 | args-validator 只做校验 | argKeysFromMeta 动态构建 | normalizeRunParams 双份硬编码 |
@@ -170,13 +170,13 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 - **效果**：G1 的 block-scalar/maxTurns 分叉消解；zsw 手写 parser 退役；路由/执行双轨既有语义显式化防误读。
 
 **D4：快照 codec 下沉共享，IO 策略留宿主，版本衔接三裁决（选定）**
-- **采用**：core 新模块 `orchestration/run-snapshot.ts`：`toRunSnapshot(run)` / `fromRunSnapshot(s)` / 版本常量 + live-strip 防御内聚；FileRunStore 与 pi JsonlRunStore 改消费。rewrite/去抖/append 差异归属各 store。**版本衔接**：① 版本值沿用 pi 现有字符串 `"wf-run-v2"`（pi 存量逐字节可读，⛔5 得以成立）；② FileRunStore 存量行（无 v 字段）按「缺版本 = 当前版本」宽容读取，写入时补 v 字段，不做自动迁移（对齐 pi「不做兼容迁移」先例；zsw 现网 workflow-state 存量全部可恢复——姊妹文档 §4 S5 验收覆盖）；③ guard 语义 = 未知更高版本跳过该行 + warn（对齐 pi 静默跳过语义并补可见性，不做数值比较抛错）。FileRunStore 改 strip live 属落盘字节变化：live 字段现无赋值点（消费面无感），登记为内部行为变更。
+- **采用**：core 新模块 `orchestration/run-snapshot.ts`：`toRunSnapshot(run)` / `fromRunSnapshot(s)` / 版本常量 + live-strip 防御内聚；FileRunStore 与 pi JsonlRunStore 改消费。rewrite/去抖/append 差异归属各 store。**版本衔接**：① 版本值沿用 pi 现有字符串 `"wf-run-v2"`（pi 存量逐字节可读，⛔5 得以成立）；② FileRunStore 存量行（无 v 字段）按「缺版本 = 当前版本」宽容读取，写入时补 v 字段，不做自动迁移（对齐 pi「不做兼容迁移」先例；zsw 现网 workflow-state 存量全部可恢复——姊妹文档 §4 S5 验收覆盖）；③ guard 语义 = **v 不匹配当前版本即跳过该行 + warn**（字符串版本无大小序，不引入比较逻辑；对齐 pi 静默跳过语义并补可见性）。**两 store 读 guard 差异归属**：「缺 v 宽容」仅 FileRunStore 路径，实现于 store 层预处理（读出的行先补缺省 v 再进 codec），不内聚进 codec——保 pi 侧「v1 存量静默跳过」既有语义不被宽容化误读。FileRunStore 改 strip live 属落盘字节变化：live 字段现无赋值点（消费面无感），登记为内部行为变更。
 - **被否**：pi 改用 FileRunStore——session 锚定与 GUI 消费面全动，违背 G4；双 codec+联动测试——锚定不等于单源；数值版本 + 高版本抛错——与 pi 字符串版本存量及「静默跳过」语义互斥（审查 MF-2 击穿）。
 - **证据**：两份投影字段集一致但语义细节分叉（strip live、去抖），`index.ts:209-212` barrel 注释自认双实现；pi `jsonl-run-store.ts:90` `SNAPSHOT_VERSION="wf-run-v2"` 字符串相等比较、`:217` 不匹配返回 null 静默跳过；core `file-run-store.ts:70-84` RunSnapshot 无 v 字段。
 - **效果**：WorkflowRun 字段演进单点；两侧存量数据零迁移可读；G2 成立。
 
-**D5：worktree 走 git-ops 纯函数内核 + 基线锚点抽象，锚点丢失降级留痕（选定）**
-- **采用**：core 新模块 `execution/worktree-git-ops.ts`：保真读（stdout 不 trim）、GitRunError/SafeId、dirty 谓词、`collectWorktreePatch(anchor)`（统一 add -A + diff 基线机制）、三步容错清理、`listWorktreePorcelain`（输出保持 git 原始形态，供宿主 realpath 对账——zsw 的 /var→/private/var 归账依赖原始输出）。`anchor` 为基线锚点抽象：内存 baseCommit 或宿主持久锚点文件（zsw sidecar 语义）由宿主实现注入——core baseCommit 本就持久化于 worktrees.json 注册表（`worktree-manager.ts:155-220`），两形态均有真实先例。**锚点丢失语义（对 zsw 现状两级静默降级的改造裁决）**：锚点缺失/损坏 → **显著 warn + 降级裸 diff（仅未提交改动）+ outcome 留痕 `patchIncomplete: true`**——不采 fail-fast（任务已完成的执行工作不应因 patch 收集作废），也绝不维持现状的纯静默（静默丢已提交改动使上层拿到残缺 patch 无法察觉；warn+留痕保证可判断）。prepare 阶段写锚点失败不阻断任务启动（维持 zsw 现可用性语义）。目录布局、孤儿判定策略留宿主。
+**D5：worktree 走 git-ops 纯函数内核 + 基线锚点抽象，降级路径显式留痕（选定）**
+- **采用**：core 新模块 `execution/worktree-git-ops.ts`：保真读（stdout 不 trim）、GitRunError/SafeId、dirty 谓词、`collectWorktreePatch(anchor): Promise<{ patchFile, written, patchIncomplete?: boolean }>`（统一 add + diff 基线机制；返回结构即 `patchIncomplete` 留痕载体，宿主透传至 record/summary 的责任在姊妹文档 V6）、三步容错清理、`listWorktreePorcelain`（输出保持 git 原始形态，供宿主 realpath 对账——zsw 的 /var→/private/var 归账依赖原始输出）。`anchor` 为基线锚点抽象：内存 baseCommit 或宿主持久锚点文件（zsw sidecar 语义）由宿主实现注入——core baseCommit 本就持久化于 worktrees.json 注册表（`worktree-manager.ts:155-220`），两形态均有真实先例。**两条降级路径显式化（对 zsw 现状静默降级的改造裁决）**：① 锚点缺失/损坏 → **显著 warn + 降级裸 diff（仅未提交改动）+ 留痕 `patchIncomplete: true`**——不采 fail-fast（任务已完成的执行工作不应因 patch 收集作废），也绝不维持现状的纯静默（静默丢已提交改动使上层拿到残缺 patch 无法察觉；warn+留痕保证可判断）；② add 步骤失败 → 非致命继续 diff（裸 diff）+ warn + 留痕 `patchIncomplete: true`，对齐 zsw 现状（`worktree.js:188-192`）——add 已内聚于本函数，宿主不可自行维持容错，故契约必须显式（审查 F17）。prepare 阶段写锚点失败不阻断任务启动（维持 zsw 现可用性语义）。目录布局、孤儿判定策略留宿主。
 - **被否**：WorktreeManager 整类导出——内嵌注册表/写队列/pi 布局，参数化面不可控；维持双实现——patch 机制分叉持续；锚点丢失 fail-fast（初版方案）——被审查击穿：zsw 现网存在 prepare 写 sidecar 前崩溃的真实命中路径（`worktree.js:164-169`），fail-fast 使该场景从「部分 patch」变为「任务作废」，损害大于收益（记入被否谱系）。
 - **证据**：patch 收集两机制（intent-to-add+工作树 diff vs add -A+cached diff）解同一问题（MF#2：新文件+已提交改动必须进 diff）；zsw sidecar 持久锚点是跨 daemon 重启的真实需求（`worktree.js:10-33` 铁律）。
 - **效果**：git 语义单源；zsw 289 行收缩为锚点+布局适配（zsw 侧文档承载）；锚点异常从静默变为可观察。
@@ -187,8 +187,8 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 - **证据**：`subagent-actions.ts:293-705` 六 handler 经逐行核实仅依赖 SubagentService + 纯数据变换（审查复测确认零 pi-API）；zsw manager 815 行中约 60% 与 pi 动作层语义同构（RT3-F3 对照）。
 - **效果**：pi 动作适配层收敛为壳、第三宿主零复刻动作层；**zsw manager 本 wave 不动**（record 迁移 out of scope），zsw 侧动作双实现的最终收敛在姊妹文档 V 系列完成——本 wave 达成的是「供给面就绪」。
 
-**D7：ConcurrencyPool 导出 + 排队策略参数化（选定）**
-- **采用**：barrel 导出 ConcurrencyPool，构造参数 `queuePolicy: 'priority' | 'strict-fifo'`（缺省 priority 维持 pi 行为）；zsw slots 消费 strict-fifo（zsw 侧文档承载）。
+**D7：并发池导出 + 排队策略参数化（选定）**
+- **采用**：barrel 导出工厂 `createConcurrencyPool({ maxConcurrent, queuePolicy: 'priority' | 'strict-fifo' })`（与 U4 定稿签名一致，缺省 priority 维持 pi 行为）；zsw slots 消费 strict-fifo（zsw 侧文档承载）。
 - **被否**：维持 slots 独立——分层公式与下限常量双份维护（公式已逐字同源，注释互抄即漂移前兆）。
 - **证据**：`concurrency-pool.ts:24-26` 接口注释与 `slots.js:29-31` 公式同源；排队策略差异是宿主声明过的有意决策（保留为参数而非消灭）。
 - **效果**：并发预算语义单源、策略差异显式化。
@@ -217,7 +217,8 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 |---|---|---|
 | vendored 副本缺新导出符号 | 宿主未刷新即升级代码 | core-ref 符号守卫报错（模式已有）：重跑 vendor --local / --npm 刷新 + sha256 自检（npm/marketplace 形态用户恢复指引 = 升级插件包版本，姊妹文档 §3.1 分众承载） |
 | parseAgentProfile 遇不可解析 .md | 资产损坏 | 返回 `{ name: stem, body, warnings[] }` 宽容降级，不抛——与 zsw 现行为一致，pi 投影面不受影响（仍走严格层） |
-| collectWorktreePatch 锚点缺失/损坏 | 宿主锚点文件缺失（prepare 期未写成）或损坏 | **显著 warn + 降级裸 diff（仅未提交改动）+ outcome 留痕 `patchIncomplete: true`**；`listWorktreePorcelain` 供人工对账。不做 fail-fast（任务执行成果不应因 patch 收集作废），不做纯静默（现状缺陷，审查 MF-4 击穿后改裁决，被否谱系见 D5） |
+| collectWorktreePatch 锚点缺失/损坏 | 宿主锚点文件缺失（prepare 期未写成）或损坏 | **显著 warn + 降级裸 diff（仅未提交改动）+ 留痕 `patchIncomplete: true`**（返回结构定义见 U5）；`listWorktreePorcelain` 供人工对账。不做 fail-fast（任务执行成果不应因 patch 收集作废），不做纯静默（现状缺陷，审查 MF-4 击穿后改裁决，被否谱系见 D5） |
+| collectWorktreePatch add 步骤失败 | git add 非致命错误（如索引锁冲突瞬时态） | 非致命继续 diff（裸 diff）+ warn + 留痕 `patchIncomplete: true`（对齐 zsw 现状 `worktree.js:188-192`；add 已内聚于 core 函数，宿主不可自行维持容错——审查 F17 补契约） |
 | codec 版本高于代码 | 快照行 v 字段为未知更高版本 | fromRunSnapshot 跳过该行 + warn（对齐 pi 静默跳过语义，补可见性）；缺 v 字段（FileRunStore 存量）按当前版本宽容读取，不做自动迁移 |
 
 ## 4 验收
@@ -257,7 +258,7 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 | U2 | `parseAgentProfile` 宽容解析 + AgentMeta 可选执行字段（maxTurns/disallowedTools/skills）+ **`discoverAgents(workspaceRoot, hostRoots): Promise<AgentEntry[]>` 装配函数**（发现→parseAgentProfile→frontmatter name 去重→码点序，warn 口径内聚；workflow 侧 discoverWorkflows 的对称面） | D3 裁决落地 + A6 装配缺口裁决为「做」（审查 MF-1 指出初版决策悬空；G3/S5 的「列 agents」硬依赖）；zsw 第三份 parser 退役的前置（A7） |
 | U3 | computeWatchdogMs 导出（语义化名 `maxTurnsToWatchdogMs`，floor 语义文档化） | 漂移已发生（floor 丢失），独立小单元先行（A3） |
 | U4 | 并发池导出：工厂 `createConcurrencyPool({ maxConcurrent, queuePolicy: 'priority' \| 'strict-fifo' })`（缺省 priority 保 pi 行为；避免暴露 DefaultConcurrencyPool 类名与位置参数构造） | 策略差异显式化，pi 缺省零回归；签名定稿消解跨文档不一致（A4/D7/R2-F9） |
-| U5 | worktree-git-ops 模块（D5 裁决全量：保真读/GitRunError/dirty 谓词/collectWorktreePatch(anchor)/cleanup/listWorktreePorcelain 原始形态输出） | 机制分叉收敛，锚点抽象使 zsw sidecar 语义可保留（A5） |
+| U5 | worktree-git-ops 模块（D5 裁决全量：保真读/GitRunError/dirty 谓词/`collectWorktreePatch(anchor): Promise<{ patchFile, written, patchIncomplete?: boolean }>`（返回结构即 patchIncomplete 留痕载体，宿主透传至 record/summary 的责任在姊妹文档 V6）/cleanup/listWorktreePorcelain 原始形态输出） | 机制分叉收敛，锚点抽象使 zsw sidecar 语义可保留（A5） |
 | U6 | `shared/atomic-write.ts` 原子写原语 + core 内部 6-7 处迁移 | 横切原语，tmp 命名统一后崩溃残留扫描可共享（B6） |
 | U7 | recoverCrashedRuns（含 hooks 回调参数外置宿主事件，pi pending:unregister 先例）+ FileRunStore.pruneStateFilesBeyondCap + runSummary/isScriptRunning | 三个组装/投影函数同属「宿主各写一遍」域（B1/B5/C1/D8） |
 | U8 | run-snapshot codec（toRunSnapshot/fromRunSnapshot/版本常量 `"wf-run-v2"` 衔接语义 + live-strip），FileRunStore 切换消费（缺版本存量宽容读 + 写入补 v + strip live） | D4 裁决落地（含审查 MF-2 版本衔接三裁决）；pi JsonlRunStore 切换在 U11（B2） |
@@ -268,7 +269,7 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 
 ### 5.3 文件改动地图（core）
 
-- `src/index.ts`：+7 组导出（U1-U10）
+- `src/index.ts`：+6 组导出（U1-U10，组划分见 §3.3 D2）
 - `src/shared/agent-ref.ts`：normalizeRef 增 `..` 段拒绝（**对两宿主均为行为变更**——现状两宿主均放行，安全收紧已登记，见 G4 与 ⛔2）
 - `src/shared/atomic-write.ts`：新增（U6）
 - `src/execution/agent-registry.ts`：parseAgentProfile 导出形态（U2）
@@ -289,8 +290,8 @@ core src/**.ts ──tsup──▶ dist/index.cjs（bundle）
 | # | 检查点 | 断言 | 状态 |
 |---|---|---|---|
 | ⛔1 | U12 对照探针基线 | 实施前快照生成且 S7 负面验证通过 | 实施期 |
-| ⛔2 | `..` 收紧样本集 | 样本集覆盖：`/x/../y.md` 两宿主均拒、`~/` 合法路径不误伤、skillPath/cwd 既有 assertSafeStartPath 拒绝保持——agent ref 收紧是**声明的行为变更**（现状两宿主均放行），非等值断言 | 实施期 |
-| ⛔3 | patch 机制切换对照 | zsw sidecar 场景（新文件+已提交改动+跨重启）在 core 锚点抽象下产物等价（zsw 侧验收，此处出锚点 API）+ **锚点缺失/损坏分支：warn 发出 + 降级裸 diff + `patchIncomplete` 留痕** | 实施期（跨文档） |
+| ⛔2 | `..` 收紧样本集 | 样本集覆盖：`/x/../y.md` 与 `/x/../y.js`（normalizeRef 为 agent/workflow 双消费面）两宿主均拒、`~/` 合法路径不误伤、skillPath/cwd 既有 assertSafeStartPath 拒绝保持——收紧是**声明的行为变更**（现状两宿主均放行），非等值断言 | 实施期 |
+| ⛔3 | patch 机制切换对照 | zsw sidecar 场景（新文件+已提交改动+跨重启）在 core 锚点抽象下产物等价（zsw 侧验收，此处出锚点 API）+ **锚点缺失/损坏与 add 失败分支：warn 发出 + 降级裸 diff + `patchIncomplete` 留痕（返回结构见 U5）** | 实施期（跨文档） |
 | ⛔4 | 动作内核迁移守卫链等值 | pi 六 handler 行为快照（含错误文案锚）迁移前后逐项一致 | 实施期 |
 | ⛔5 | codec 存量往返等值 | pi 侧含 live 字段 run 的快照往返与实施前逐字节一致（v 字段保持 `"wf-run-v2"`）；FileRunStore 存量无 v 行读取不丢数据 | 实施期 |
 
