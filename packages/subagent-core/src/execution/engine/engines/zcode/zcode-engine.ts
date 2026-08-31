@@ -120,6 +120,13 @@ const logger = getLogger("subagents");
 /** probe 的版本探测超时（ms）——二进制无响应按探针失败处理，不静默挂死。 */
 const PROBE_VERSION_TIMEOUT_MS = 15_000;
 
+/**
+ * [RX2-F1] 常见 thoughtLevel 档位（仅作提示基准，非权威值域）：pi 全 7 档
+ * （off/minimal/low/medium/high/xhigh/max）恒等透传不拦截——core 引擎层不掌握各模型
+ * 真实值域，禁止硬编码枚举做拒收或映射；不在此列的档位只触发一行提示（warnThoughtLevelUncommon）。
+ */
+const COMMON_THOUGHT_LEVELS: readonly string[] = ["low", "high", "max"];
+
 // ============================================================
 // [R4/R5] 执行模式分派（D2：定向不探不降；缺省探 + 降）
 // ============================================================
@@ -355,7 +362,9 @@ export class ZcodeEngine implements EnginePort {
     }
     const { result, driftCode } = await this.runViaAppServer(task, ctx);
     if (driftCode === undefined) return result;
-    // D2② 首败降级：漂移错误 → 标志内存化 + 同一任务 spawn 重跑一次（结果标注）
+    // D2② 首败降级：漂移错误 → 标志内存化 + 同一任务 spawn 重跑一次（结果标注）。
+    // [RX2-F3] skipCtxModelWarn：appserver 首跑已出声过 ctxModel 忽略留痕，同任务
+    // spawn 重跑再 warn 一遍是噪音（探针场景同款自我要求）——重跑侧跳过。
     this.driftDegraded = true;
     logger.warn(
       `[zcode-engine] app-server 漂移类错误（RPC code ${driftCode}）——本任务降级 spawn 重跑，后续任务直走 spawn`,
@@ -363,6 +372,7 @@ export class ZcodeEngine implements EnginePort {
     );
     return this.runViaSpawn(task, ctx, {
       degradedReason: `protocol-drift（首任务 app-server 命中 RPC code ${driftCode}，已降级 spawn 重跑本任务；后续任务直走 spawn）`,
+      skipCtxModelWarn: true,
     });
   }
 
@@ -440,6 +450,9 @@ export class ZcodeEngine implements EnginePort {
     // reject）+ 常驻 HOME（锁判定/派生/pidfile 孤儿回收/config 内容 hash 刷新）
     const modelRef = resolveZcodeModelRef(task.model, this.deps.sources);
     this.warnIgnoredCtxModel(task, ctx, modelRef);
+    // [RX2-F1] 非常见档位出声一行（不拦截透传）；放主编排而非 attemptAppServerTurn——
+    // schema 重试轮会二次进 attempt，warn 只应随任务出声一次
+    this.warnThoughtLevelUncommon(task, ctx);
     const home = await this.ensureAppServerHome(modelRef);
     // 对齐点③（不变量 3）：poolKey 在 prepare 期声明（静态常量或派生目录名），
     // 早于连接建立与首个事件
@@ -810,11 +823,16 @@ export class ZcodeEngine implements EnginePort {
    * [R5] degrade 参数：降级链落点（探针失败 / 漂移首败重跑 / 降级后直走）——结果经
    * outcome.engineFallback 标注「degraded: spawn + 原因」（D9① 留痕面复用，record
    * 同步投影；capabilities 声明不降级——D2 降级是任务级兜底非能力级）。
+   * [RX2-F3] degrade.skipCtxModelWarn（内部标志）：漂移首败重跑场景置 true——该任务
+   * 的 appserver 首跑已输出过 ctxModel 忽略留痕，spawn 重跑侧跳过防同 taskId 双份
+   * 相同 warn；warnEffortUnsupportedBySpawn 不受此标志影响（降级重跑时最终结果出自
+   * spawn，其出声合理，保持现状）。探针失败/降级直走两个落点不置位——任务此前未走
+   * 过 appserver，spawn 侧的 warn 是首次出声。
    */
   private async runViaSpawn(
     task: AgentTaskSpec,
     ctx: RunContext,
-    degrade?: { degradedReason: string },
+    degrade?: { degradedReason: string; skipCtxModelWarn?: boolean },
   ): Promise<EngineRunResult> {
     const startedAt = Date.now();
     this.rejectUnsupportedTaskShapes(task);
@@ -822,7 +840,7 @@ export class ZcodeEngine implements EnginePort {
 
     // ① prepare 期：模型解析（provider 体系校验）+ 隔离 HOME 池引导（凭据 + model.main）
     const modelRef = resolveZcodeModelRef(task.model, this.deps.sources);
-    this.warnIgnoredCtxModel(task, ctx, modelRef);
+    if (degrade?.skipCtxModelWarn !== true) this.warnIgnoredCtxModel(task, ctx, modelRef);
     const prepared = prepareZcodeHome({
       engineDataDir: this.deps.engineDataDir(),
       modelRef,
@@ -1192,6 +1210,24 @@ export class ZcodeEngine implements EnginePort {
   }
 
   /**
+   * [RX2-F1] appserver 路径的非常见档位提示：effort → thoughtLevel 恒等透传（F15a），
+   * 全 7 档放行不拦截——但部分档位（off/minimal/medium/xhigh 等）不在部分模型的合法
+   * 值域内（如 GLM-5.3 仅接受 low/high/max），app-server 侧对不支持的档位 warn-skip
+   * （会话照常但档位静默失效），调用方无从察觉。此处仅对 COMMON_THOUGHT_LEVELS 之外
+   * 的档位出声一行提示（措辞是「若不支持将被忽略/回落」的或然警告，非无效断言）；
+   * 是否真不支持由目标模型决定，core 不做权威校验（引擎层不掌握各模型值域）。
+   */
+  private warnThoughtLevelUncommon(task: AgentTaskSpec, ctx: RunContext): void {
+    const thoughtLevel = task.effort?.trim();
+    if (thoughtLevel === undefined || thoughtLevel === "") return;
+    if (COMMON_THOUGHT_LEVELS.includes(thoughtLevel)) return;
+    logger.warn(
+      `[zcode-engine] effort=${thoughtLevel} 已透传为 thoughtLevel（非常见档位）：若目标模型不支持该档位将被忽略/回落到模型缺省推理档位（常见档位：${COMMON_THOUGHT_LEVELS.join("/")}）；档位是否生效以模型实际行为为准`,
+      { taskId: ctx.taskId },
+    );
+  }
+
+  /**
    * [F16b] ctxModel 忽略留痕：ctxModel 是 pi 链路的第三层兜底（port.ts 契约——
    * 依赖 pi resolveModel 链的引擎才消费它），zcode 自带 provider 体系与缺省模型
    * （resolveZcodeModelRef：requested > ZCODE_FALLBACK_DEFAULT_MODEL），不消费
@@ -1199,7 +1235,9 @@ export class ZcodeEngine implements EnginePort {
    * 实际落引擎缺省模型（含实际 model id）——防静默降档无据可查。只在「ctx 有模型
    * 但被忽略」场景输出：显式 task.model 走正常解析链、ctx 本就无模型属预期缺省，
    * 均不出声（避免噪音）。探针期（appServerProbeGate）不调用——同一任务的正式
-   * run 链路必经此处，双份输出是噪音。
+   * run 链路必经此处，双份输出是噪音。[RX2-F3] 漂移首败的 spawn 重跑同理由调用方
+   * 带 degrade.skipCtxModelWarn 跳过——appserver 首跑已出声过，同任务双份相同 warn
+   * 是噪音（与探针场景同一自我要求）。
    */
   private warnIgnoredCtxModel(task: AgentTaskSpec, ctx: RunContext, modelRef: string): void {
     if (ctx.ctxModel === undefined) return;

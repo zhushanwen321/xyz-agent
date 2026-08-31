@@ -342,6 +342,42 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect("thoughtLevel" in create.params).toBe(false);
   }, 15_000);
 
+  it("effort=medium（非常见档位）→ warn 一行提示且 thoughtLevel 键仍透传（RX2-F1：提示不拦截）", async () => {
+    const { engine, stateFile, workspace } = makeEngine();
+    const warns: string[] = [];
+    const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
+      warns.push(msg);
+    }) as typeof subagentsLogger.warn);
+    try {
+      await engine.run(makeTask({ cwd: workspace, effort: "medium" }), makeCtx());
+    } finally {
+      warnSpy.mockRestore();
+    }
+    // 提示恰一行；措辞是「若不支持将被忽略/回落」的或然警告（core 不做权威值域断言）
+    const hits = warns.filter((m) => m.includes("thoughtLevel"));
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain("medium");
+    expect(hits[0]).toContain("将被忽略/回落");
+    expect(hits[0]).toContain("low/high/max");
+    // 透传不拦截：create 帧仍带原值（off/minimal/medium/xhigh 全放行）
+    const create = sentFrames(stateFile, "session/create")[0];
+    expect(create.params["thoughtLevel"]).toBe("medium");
+  }, 15_000);
+
+  it("effort=high（常见档位）→ 零 thoughtLevel 提示（RX2-F1：常见档位不出声）", async () => {
+    const { engine, workspace } = makeEngine();
+    const warns: string[] = [];
+    const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
+      warns.push(msg);
+    }) as typeof subagentsLogger.warn);
+    try {
+      await engine.run(makeTask({ cwd: workspace, effort: "high" }), makeCtx());
+    } finally {
+      warnSpy.mockRestore();
+    }
+    expect(warns.filter((m) => m.includes("thoughtLevel"))).toHaveLength(0);
+  }, 15_000);
+
   it("task.model 缺省 + ctx.ctxModel 存在 → 出声留痕（F16b：ctxModel 是 pi 链路兜底，zcode 落自身缺省链）", async () => {
     // v2 config 补缺省模型 provider 条目——ZCODE_FALLBACK_DEFAULT_MODEL 的解析链才可校验通过
     writeJson(v2Path, {

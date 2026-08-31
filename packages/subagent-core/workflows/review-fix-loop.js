@@ -190,11 +190,17 @@ const skipCleanAgents = coerceBool($ARGS.skipCleanAgents, true);
 // 全批，clean agent 走限定 prompt（buildScopedRecheckPrompt，只审 modifiedFiles，5.5）。
 const recheckAfterFix = coerceBool($ARGS.recheckAfterFix, false);
 // fixAgent（5.3）：值 = .md 绝对路径（同 batchN 的 agent 项值域）；`fallow-scan` 是
-// fallowScan 参数的内部保留字，不属于 fixAgent 值域。解析复用 resolveAgentDefs 白名单与
-// 加载逻辑。传入时 fix 阶段用 agent({agent: ...}) 派发（代码场景的 verify 命令写在该
-// agent.md 内）；未传保持现状（通用 subagent + 内联 prompt）。
+// fallowScan 参数的内部保留字，显式拒收（RX2-F2）——resolveAgentDefs 对它会静默映射
+// 为内置工具型 FALLOW_DEF（无 path），fix 派发即退化为通用 subagent + 内联 prompt，
+// 与「不属于 fixAgent 值域」相悖，故在解析前 fail-fast。其余合法值解析复用
+// resolveAgentDefs 白名单与加载逻辑：传入时 fix 阶段用 agent({agent: ...}) 派发
+// （代码场景的 verify 命令写在该 agent.md 内）；未传保持现状（通用 subagent + 内联 prompt）。
 const FIX_AGENT_RAW = typeof $ARGS.fixAgent === "string" && $ARGS.fixAgent.trim()
   ? $ARGS.fixAgent.trim() : undefined;
+if (FIX_AGENT_RAW === "fallow-scan") {
+  fail("fixAgent=fallow-scan 是内部保留字：fallow-scan 是 fallowScan 前置批次的内部标记，不属于 fixAgent 值域。" +
+    "要跑 fallow 静态分析前置批请用参数 fallowScan=true（需 targetType=git-diff）；要指定 fix 执行者请传 agent .md 绝对路径。");
+}
 const FIX_DEF = FIX_AGENT_RAW ? resolveAgentDefs([FIX_AGENT_RAW])[0] : null;
 // 5.7 收敛终止参数：maxFixAttempts（needs-redesign 阈值，RC-7）/ convergeNewIssues +
 // convergeRounds（新发现率收敛阈值）

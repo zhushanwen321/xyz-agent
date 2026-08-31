@@ -12,11 +12,14 @@
 //         （旧实现不排除 error 分支，agent 失败被误诊为引擎透传未上线并烧掉 once 名额）
 //   - A11：model 缺省回退 "(default)"（请求时参数语义）
 //   - A12：promptMode=null（aggregator/fixer）必须保持 null，不被 || 误转 "full"
-import { readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import vm from "node:vm";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const WORKFLOW_SOURCE = readFileSync(
   join(__dirname, "..", "..", "workflows", "review-fix-loop.js"),
@@ -284,5 +287,90 @@ describe("review-fix-loop.js 模块形态约束", () => {
     // （CRAP 覆盖估算）。顶层 return / require 决定了 import 必然 reject——这是
     // workflow 脚本的固有形态，抽取测试法（本文件）因此是唯一可行的直测途径。
     await expect(import("../../workflows/review-fix-loop.js")).rejects.toThrow();
+  });
+});
+
+// ── RX2-F2：fixAgent=fallow-scan 显式拒收（脚本顶层参数校验，非函数段） ──
+// 拒收逻辑位于脚本顶层（FIX_AGENT_RAW 解析后、resolveAgentDefs 前），函数段抽取法
+// 覆盖不到；改用 review-fix-loop-scriptpath-failfast.test.ts 同款「AsyncFunction 包装
+// + node -e 真实子进程」探针跑整脚本顶层副本。拒收点在 RUN_ROOT 落盘 / lockReviewBase
+// 之前，探针无文件系统副作用、恒非零退出。
+describe("review-fix-loop.js fixAgent=fallow-scan 显式拒收（RX2-F2）", () => {
+  const run = promisify(execFile);
+
+  /** execFile reject 侧的最小形状（Node ExecException 子集）。 */
+  interface ExecFailure extends Error {
+    code?: number | string;
+    stderr?: string;
+  }
+
+  function isExecFailure(e: unknown): e is ExecFailure {
+    return e instanceof Error;
+  }
+
+  let sandboxDir = "";
+
+  beforeEach(() => {
+    sandboxDir = mkdtempSync(join(tmpdir(), "rfl-fixagent-guard-"));
+    const workflowsDir = join(__dirname, "..", "..", "workflows");
+    // 副本以 .cjs 落 sandbox（require 解析形态对齐 worker 宿主）；utils 锚定加载经
+    // workerData.scriptPath（副本同目录），白名单校验前即需要它
+    copyFileSync(join(workflowsDir, "review-fix-loop.js"), join(sandboxDir, "review-fix-loop.cjs"));
+    copyFileSync(join(workflowsDir, "review-fix-loop-utils.cjs"), join(sandboxDir, "review-fix-loop-utils.cjs"));
+  });
+
+  afterEach(() => {
+    rmSync(sandboxDir, { recursive: true, force: true });
+  });
+
+  /** -e 探针体：AsyncFunction 复刻 worker 模板宿主形态（workerData/$ARGS/log 注入）。 */
+  function probeCode(argsJson: string): string {
+    const copyPath = join(sandboxDir, "review-fix-loop.cjs");
+    return [
+      "const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;",
+      "const src = require('fs').readFileSync(" + JSON.stringify(copyPath) + ", 'utf8');",
+      "const runner = new AsyncFunction('workerData', '$ARGS', 'require', 'log', src + '\\n');",
+      "const workerData = { scriptPath: " + JSON.stringify(join(sandboxDir, "review-fix-loop.cjs")) + " };",
+      "const $ARGS = " + argsJson + ";",
+      // $MODEL 是 worker 模板全局（主模型注入）——对照用例会推进到 fixAgent 解析之后
+      // 的 MODEL = $MODEL 行（:204），缺席会 ReferenceError 而非到达批次校验
+      "const $MODEL = 'probe-model';",
+      "runner(workerData, $ARGS, require, function () {}).catch(function (e) {",
+      "  require('fs').writeSync(2, String((e && e.message) || e) + '\\n');",
+      "  process.exit(1);",
+      "});",
+    ].join("\n");
+  }
+
+  async function runProbeExpectFailure(argsJson: string): Promise<string> {
+    const outcome = await run(process.execPath, ["-e", probeCode(argsJson)], {
+      cwd: sandboxDir,
+      timeout: 30_000,
+    }).then(
+      (): ExecFailure | null => null,
+      (e: unknown): ExecFailure | null => (isExecFailure(e) ? e : null),
+    );
+    if (outcome === null) {
+      throw new Error("expected non-zero exit, but node exited 0 with args: " + argsJson);
+    }
+    return String(outcome.stderr ?? "");
+  }
+
+  it("fixAgent=fallow-scan → 非零退出 + 保留字错误 + fallowScan=true 恢复指引", async () => {
+    const stderr = await runProbeExpectFailure(
+      '{ targetType: "file", target: "probe", fixAgent: "fallow-scan" }',
+    );
+    expect(stderr).toContain("内部保留字");
+    expect(stderr).toContain("fallowScan=true");
+    // 旧实现静默映射 FALLOW_DEF（fix 派发退化为通用 subagent）——不会到达此处报错
+  });
+
+  it("对照：合法形态 fixAgent（.md 路径）不触发保留字拒收（后续批次校验照常 fail）", async () => {
+    const stderr = await runProbeExpectFailure(
+      '{ targetType: "file", target: "probe", fixAgent: "/tmp/rx2-f2-fake-agent.md" }',
+    );
+    // 推进到批次解析才失败（缺批次参数）——证明拒收只对字面值 fallow-scan 触发
+    expect(stderr).toContain("缺少批次参数");
+    expect(stderr).not.toContain("内部保留字");
   });
 });

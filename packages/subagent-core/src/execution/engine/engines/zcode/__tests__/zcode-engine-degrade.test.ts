@@ -21,10 +21,11 @@ import * as path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RunContext } from "../../../port.ts";
 import type { AgentTaskSpec } from "../../../types.ts";
+import { getLogger } from "../../../../../core/logger.ts";
 import { resolvePoolDir } from "../../../paths.ts";
 import { ZCODE_APPSERVER_GOLDEN, ZCODE_GOLDEN_STDOUT } from "../golden-sample.ts";
 import type { ZcodeLaunchedProcess } from "../launcher.ts";
@@ -32,6 +33,9 @@ import { ZcodeEngine, pinnedZcodeMode, type ZcodeEngineDeps } from "../zcode-eng
 
 const FAKE_CLI = fileURLToPath(new URL("./__fixtures__/fake-appserver.mjs", import.meta.url));
 const PROVIDER = "test-provider";
+
+/** 与 zcode-engine.ts 同一 facade 单例引用（spy 它的方法即拦截引擎的 warn 出声）。 */
+const subagentsLogger = getLogger("subagents");
 
 const GOLDEN_SESSION_ID = "sess_golden_r3_01";
 
@@ -247,6 +251,41 @@ describe("首败漂移降级（RA5-① 回归门）", () => {
     expect(r2.outcome.error).toBeUndefined();
     expect(recvFrames(stateFile, "session/create").length).toBe(createsAfter1);
     expect(fakeLaunch.calls).toHaveLength(2);
+  }, 20_000);
+
+  it("RX2-F3：ctxModel 忽略 warn 在降级链仅一次（appserver 首跑出声，spawn 重跑不重复）", async () => {
+    // task.model 缺省走 ZCODE_FALLBACK_DEFAULT_MODEL 解析链——v2 config 需含其 provider
+    writeJson(v2Path, {
+      provider: {
+        [PROVIDER]: { options: { apiKey: "k", baseURL: "https://t.example" }, models: { m1: {} } },
+        "builtin:bigmodel-coding-plan": { options: { apiKey: "k" }, models: { "GLM-5.3": {} } },
+      },
+    });
+    const { engine, fakeLaunch } = makeDegradeEngine({
+      createError: { code: -32602, message: "Invalid params", data: [{ path: ["model"] }] },
+    });
+    const warns: string[] = [];
+    const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
+      warns.push(msg);
+    }) as typeof subagentsLogger.warn);
+    let r1: Awaited<ReturnType<typeof engine.run>>;
+    try {
+      r1 = await engine.run(
+        makeTask({ model: undefined }),
+        makeCtx({ taskId: "d-ctxmodel", ctxModel: { id: "main-model", name: "Main", provider: "p", reasoning: false } }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+    // 降级重跑成功（spawn golden 单轮）
+    expect(r1.outcome.error).toBeUndefined();
+    expect(fakeLaunch.calls).toHaveLength(1);
+    // 旧实现：appserver 首跑 + spawn 重跑各 warn 一次 = 同 taskId 双份相同 warn（本断言会红）
+    const ctxModelWarns = warns.filter((m) => m.includes("ctxModel"));
+    expect(ctxModelWarns).toHaveLength(1);
+    expect(ctxModelWarns[0]).toContain("main-model");
+    // 降级宣告 warn 不受抑制（漂移降级本身仍出声）
+    expect(warns.some((m) => m.includes("漂移类错误"))).toBe(true);
   }, 20_000);
 });
 
