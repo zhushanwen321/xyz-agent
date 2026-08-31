@@ -214,6 +214,65 @@ describe('applySubagentEntries（E-4 entry 帧消费）', () => {
     expect((messages[0]?.content as Array<{ type: string; text: string }>)[0]?.text).toBe('任务')
   })
 
+  it('基线投影截断：超限 toolResult 截断后，后续帧再投影截断值逐字节稳定（引用短路不改输出）', () => {
+    const bigOutput = 'x'.repeat(10_000)
+    sut.store.applySubagentEntries(VIRTUAL_ID, [
+      messageEntry({
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'tc-1', name: 'read', arguments: { path: '/x' } }],
+        timestamp: 1000,
+      }),
+    ])
+    sut.store.applySubagentEntries(VIRTUAL_ID, [
+      messageEntry({
+        role: 'toolResult',
+        toolCallId: 'tc-1',
+        toolName: 'read',
+        content: [{ type: 'text', text: bigOutput }],
+        timestamp: 3000,
+      }),
+    ])
+    // reducer 回填保留全量原文，基线投影负责截断（含标记 ≤ 4KB）
+    const truncated = sut.store.getMessages(VIRTUAL_ID)[0]?.toolCalls?.[0]?.output
+    expect(truncated).toBeDefined()
+    expect(new TextEncoder().encode(truncated!).length).toBeLessThanOrEqual(4096)
+    expect(truncated!.endsWith('\n\n[...output truncated...]')).toBe(true)
+
+    // 后续帧（新 user entry，历史消息 reducer 引用不变）触发全量投影：历史消息
+    // 截断值不二次截断、marker 不叠加、逐字节等于首次投影结果
+    sut.store.applySubagentEntries(VIRTUAL_ID, [
+      messageEntry({ role: 'user', content: [{ type: 'text', text: '下一轮' }], timestamp: 4000 }),
+    ])
+    const messages = sut.store.getMessages(VIRTUAL_ID)
+    expect(messages).toHaveLength(2)
+    expect(messages[0]?.toolCalls?.[0]?.output).toBe(truncated)
+  })
+
+  it('重复投影幂等：无新 entry 的重复触发输出与上次逐值一致（已见引用短路语义）', () => {
+    sut.store.applySubagentEntries(VIRTUAL_ID, [
+      messageEntry({ role: 'user', content: [{ type: 'text', text: '任务' }], timestamp: 1000 }),
+      messageEntry({
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'tc-1', name: 'bash', arguments: { cmd: 'ls' } }],
+        timestamp: 2000,
+      }),
+    ])
+    sut.store.applySubagentEntries(VIRTUAL_ID, [
+      messageEntry({
+        role: 'toolResult',
+        toolCallId: 'tc-1',
+        toolName: 'bash',
+        content: [{ type: 'text', text: 'out'.repeat(2000) }],
+        timestamp: 3000,
+      }),
+    ])
+    const afterEntries = sut.store.getMessages(VIRTUAL_ID)
+
+    // 空帧（无 entry 无 toolCall form）= 纯重投影：输出 deep equal，历史值不漂移
+    sut.store.applySubagentEntries(VIRTUAL_ID, [])
+    expect(sut.store.getMessages(VIRTUAL_ID)).toEqual(afterEntries)
+  })
+
   it('disposeSession 清理 reducer 累积态：后续帧从空分区重新累积', () => {
     sut.store.applySubagentEntries(VIRTUAL_ID, [
       messageEntry({ role: 'user', content: [{ type: 'text', text: '任务' }], timestamp: 1000 }),

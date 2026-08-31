@@ -6,7 +6,7 @@
  */
 import { computed, onScopeDispose, ref, shallowRef, type ComputedRef, type ShallowRef } from 'vue'
 import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from './mutations'
-import { truncateToolOutputBatch } from './truncate-tool-output'
+import { truncateToolOutputBatch, truncateToolOutputBatchCached } from './truncate-tool-output'
 import { dispatchMessageEvent } from './effects/registry'
 import {
   applyEntry,
@@ -790,15 +790,28 @@ export function createChatStore() {
    * store 不互 import 铁律：本方法经 routeInbound InboundEffects 回调链消费
    * （renderer useMessageEffects 注入），subagent 虚拟分区 id 由调用方经 shared 工厂构造。
    */
+  /**
+   * [E-4] subagent 基线投影的产物缓存（truncateToolOutputBatchCached 的短路表：
+   * 输入消息引用 → 上次投影产物）。
+   *
+   * per-factory 簿记（对齐 entryStates 判据，[ADR-0049 例外]）：投影是纯变换，同引用必得
+   * 同结果（ADR-0039 引用恒等 ⇒ 内容恒等），随 factory 实例隔离只为测试隔离。弱引用：
+   * 消息对象随分区销毁 / LRU 驱逐 GC 后条目自动回收，disposeSession / 驱逐**无需清理挂点**
+   * （重进分区 reducer 重建新对象，不命中即照常截断判定，无陈旧复用风险）。
+   */
+  const subagentProjectedCache = new WeakMap<Message, Message>()
+
   function applySubagentEntries(virtualId: string, entries: Array<PiEntry | PiToolCallEntryForm>): void {
     // PiEntry 先喂 reducer（fold 顺序敏感：assistant 定稿 → toolResult 的窗口配对回填依赖顺序）
     for (const entry of entries) {
       if (entry.type !== 'toolCall') applyEntryFrame(virtualId, entry)
     }
-    // 基线投影（无 PiEntry 的纯 toolCall 帧不触发投影——分区保持，overlay 直接操作 ref）
+    // 基线投影（无 PiEntry 的纯 toolCall 帧不触发投影——分区保持，overlay 直接操作 ref）。
+    // 已投影过的消息引用直接复用上次产物（reducer 不截断、历史 toolCall 原文 MB 级时
+    // 每帧全量重编码是投影热开销），输出形态与 truncateToolOutputBatch(map 浅拷贝) 逐值一致
     const state = entryStates.get(virtualId)
     if (state) {
-      commitMessages(messages, virtualId, truncateToolOutputBatch(state.messages.map((m) => ({ ...m }))))
+      commitMessages(messages, virtualId, truncateToolOutputBatchCached(state.messages, subagentProjectedCache))
     }
     // toolCall overlay 后置：基于投影后分区操作，保证挂载目标是基线末位 assistant
     for (const form of entries) {
