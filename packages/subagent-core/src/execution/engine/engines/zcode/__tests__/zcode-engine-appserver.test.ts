@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EngineRunResult, RunContext } from "../../../port.ts";
 import type { AgentEvent, AgentTaskSpec } from "../../../types.ts";
+import { getLogger } from "../../../../../core/logger.ts";
 import { resolvePoolDir } from "../../../paths.ts";
 import { ZCODE_APPSERVER_POOL_KEY, ZCODE_POOL_CONFIG_SUFFIX } from "../constants.ts";
 import { ZCODE_APPSERVER_GOLDEN } from "../golden-sample.ts";
@@ -29,6 +30,9 @@ import { ZcodeEngine, pinnedZcodeMode, type ZcodeEngineDeps } from "../zcode-eng
 
 const FAKE_CLI = fileURLToPath(new URL("./__fixtures__/fake-appserver.mjs", import.meta.url));
 const PROVIDER = "test-provider";
+
+/** 与 zcode-engine.ts 同一 facade 单例引用（spy 它的方法即拦截引擎的 warn 出声）。 */
+const subagentsLogger = getLogger("subagents");
 
 const GOLDEN_SESSION_ID = "sess_golden_r3_01";
 const GOLDEN_FULL_TEXT = "你好，任务完成";
@@ -322,6 +326,72 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(create.params["toolDenylist"]).toEqual(["bash"]); // 空串过滤
     expect(create.params["workspace"]).toMatchObject({ workspacePath: workspace });
     expect(create.params["mode"]).toBe("yolo");
+  }, 15_000);
+
+  it("effort → create 帧 thoughtLevel 透传（F15a：spec.effort 映射协议通道）", async () => {
+    const { engine, stateFile, workspace } = makeEngine();
+    await engine.run(makeTask({ cwd: workspace, effort: "high" }), makeCtx());
+    const create = sentFrames(stateFile, "session/create")[0];
+    expect(create.params["thoughtLevel"]).toBe("high");
+  }, 15_000);
+
+  it("effort 未传/空白 → create 帧无 thoughtLevel 键（A.2 ① strict 对象不设空键，防 -32602）", async () => {
+    const { engine, stateFile, workspace } = makeEngine();
+    await engine.run(makeTask({ cwd: workspace, effort: "  " }), makeCtx());
+    const create = sentFrames(stateFile, "session/create")[0];
+    expect("thoughtLevel" in create.params).toBe(false);
+  }, 15_000);
+
+  it("task.model 缺省 + ctx.ctxModel 存在 → 出声留痕（F16b：ctxModel 是 pi 链路兜底，zcode 落自身缺省链）", async () => {
+    // v2 config 补缺省模型 provider 条目——ZCODE_FALLBACK_DEFAULT_MODEL 的解析链才可校验通过
+    writeJson(v2Path, {
+      provider: {
+        [PROVIDER]: { options: { apiKey: "k", baseURL: "https://t.example" }, models: { m1: {} } },
+        "builtin:bigmodel-coding-plan": { options: { apiKey: "k" }, models: { "GLM-5.3": {} } },
+      },
+    });
+    const { engine, workspace } = makeEngine();
+    const warns: Array<{ msg: string; data: unknown }> = [];
+    const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string, data: unknown) => {
+      warns.push({ msg, data });
+    }) as typeof subagentsLogger.warn);
+    try {
+      const { outcome } = await engine.run(
+        makeTask({ cwd: workspace, model: undefined }),
+        makeCtx({ ctxModel: { id: "main-model", name: "Main", provider: "p", reasoning: false } }),
+      );
+      expect(outcome.error).toBeUndefined(); // 信号不阻断任务
+      const hit = warns.find((w) => w.msg.includes("ctxModel"));
+      expect(hit).toBeDefined();
+      expect(hit?.msg).toContain("main-model");
+      expect(hit?.msg).toContain("builtin:bigmodel-coding-plan/GLM-5.3");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  }, 15_000);
+
+  it("显式 task.model 或 ctx 无 ctxModel → 零 ctxModel 信号（F16b：只在「ctx 有模型但被忽略」时出声）", async () => {
+    // 第二段 run（model 缺省）走引擎缺省链——v2 config 需含 ZCODE_FALLBACK_DEFAULT_MODEL 的 provider
+    writeJson(v2Path, {
+      provider: {
+        [PROVIDER]: { options: { apiKey: "k", baseURL: "https://t.example" }, models: { m1: {} } },
+        "builtin:bigmodel-coding-plan": { options: { apiKey: "k" }, models: { "GLM-5.3": {} } },
+      },
+    });
+    const { engine, workspace } = makeEngine();
+    const warns: string[] = [];
+    const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
+      warns.push(msg);
+    }) as typeof subagentsLogger.warn);
+    try {
+      // 显式 task.model + ctxModel：走正常解析链，不出声
+      await engine.run(makeTask({ cwd: workspace }), makeCtx({ ctxModel: { id: "main-model", name: "Main", provider: "p", reasoning: false } }));
+      // model 缺省 + ctx 无 ctxModel：预期缺省链，不出声
+      await engine.run(makeTask({ cwd: workspace, model: undefined }), makeCtx());
+      expect(warns.filter((m) => m.includes("ctxModel"))).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
   }, 15_000);
 
   it("schema 任务：appserver 路径同接 schema 仿真（合法 JSON → parsedOutput）", async () => {

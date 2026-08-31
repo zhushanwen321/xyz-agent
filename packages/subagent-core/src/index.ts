@@ -14,7 +14,10 @@
  * 宿主接入示例见包 README（§3.4 core_host_not_configured 恢复指引的落点）。
  */
 
-export const CORE_PACKAGE_VERSION = "0.2.0";
+// 0.3.0 = 0.2.0 同号不同物污染（npm 已有旧产物）后的跳号基线（2026-08-30 裁决：
+// 0.3.0 永不单独发布，+ minor changeset 收口面落 0.4.0）；与 package.json version
+// 的一致性由 src/__tests__/smoke.test.ts 动态守护，改版本须两处同步。
+export const CORE_PACKAGE_VERSION = "0.3.0";
 
 // ── 宿主端口接线面（core/）────────────────────────────────────
 // HostServices：dataRoot / log / discoveryRoots 端口 + configureCore 注入；

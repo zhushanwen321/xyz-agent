@@ -56,9 +56,9 @@ workflow run map-reduce --args itemsJson=/path/to/items.json --args operation=".
 
 ```
 workflow run review-fix-loop --args targetType=git-diff target=main \
-  --args batch1=fallow-scan --args batch2=reviewer --args autoCommit=true
+  --args fallowScan=true --args batch1=/path/to/reviewer.md --args autoCommit=true
 workflow run review-fix-loop --args targetType=file target=/path/to/doc.md \
-  --args batch1=doc-reviewer
+  --args batch1=/path/to/doc-reviewer.md
 ```
 
 - `targetType` 枚举：`git-diff`（target=base ref）/ `file`（target=路径）/ `dir`（target=目录）/ `text`（target=自由描述）
@@ -72,10 +72,10 @@ workflow run review-fix-loop --args targetType=file target=/path/to/doc.md \
 
 ## 编排 API
 
-这些 workflow 内部使用的编排函数（`agent()` / `parallel()` / `pipeline()` / `workflow()`）由 worker 线程注入，完整 API 参考见 `skills/workflow-script-format/SKILL.md`。
+这些 workflow 内部使用的编排函数（`agent()` / `parallel()` / `pipeline()` / `workflow()`）由 worker 线程注入，完整 API 参考见 workflow-script-format SKILL.md——该文档位于 pi 侧 subagent-workflow extension 内（`extensions/universal/subagent-workflow/skills/workflow-script-format/SKILL.md`，相对 pi extension 包根解析），**不是本包资产**，本包内无对应路径。
 
 ## 相关文档
 
-- `skills/workflow-script-format/SKILL.md` — workflow script 完整 API（agent/parallel/pipeline/workflow 签名、$ARGS/$BUDGET、lint 规则）
-- `docs/extensions/adr/pi-ext-030-subagents-workflow-merge.md` — 合并决策（决策 3 分层配额 + workflow 嵌套）
-- `docs/extensions/adr/pi-ext-032-builtin-orchestration-workflows.md` — 从"参考模板"改为"内置通用编排 workflow"的决策
+- workflow-script-format SKILL.md（位于 pi 侧 subagent-workflow extension，`extensions/universal/subagent-workflow/skills/workflow-script-format/`，非本包资产）— workflow script 完整 API（agent/parallel/pipeline/workflow 签名、$ARGS/$BUDGET、lint 规则）
+- `docs/extensions/adr/pi-ext-030-subagents-workflow-merge.md`（位于 workspace 仓根，非本包内路径）— 合并决策（决策 3 分层配额 + workflow 嵌套）
+- `docs/extensions/adr/pi-ext-032-builtin-orchestration-workflows.md`（位于 workspace 仓根，非本包内路径）— 从"参考模板"改为"内置通用编排 workflow"的决策

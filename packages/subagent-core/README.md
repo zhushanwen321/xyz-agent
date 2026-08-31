@@ -137,7 +137,7 @@ pnpm run typecheck
 
 `dist.bundle/index.cjs` 是**单文件自包含 CJS 产物**：tsup `noExternal` 把全部运行时依赖（`@xyz-agent/*`、`ajv`、`yaml`、`proper-lockfile`）内联进产物，require 链上只剩 node 内建模块。
 
-用途：**无 node_modules 解析面的宿主 vendoring**——典型是 zcode 插件（zsw）：插件目录被整体复制进 marketplace 缓存 / inline 加载，没有依赖安装链，`require("@zhushanwen/subagent-core")` 无从解析。这类宿主把 `dist.bundle/index.cjs` 复制进自身目录后直接 `require("./vendor/subagent-core/index.cjs")`，只认文件不认解析链。
+用途：**无 node_modules 解析面的宿主 vendoring**——典型是 zcode 插件（zsw）：插件目录被整体复制进 marketplace 缓存 / inline 加载，没有依赖安装链，`require("@zhushanwen/subagent-core")` 无从解析。这类宿主把 `dist.bundle/index.cjs` 复制进自身目录后直接 `require("./vendor/subagent-core/dist/index.cjs")`（vendored 落位统一为 `vendor/subagent-core/dist/`），只认文件不认解析链。
 
 与常规 `dist/` 的分工：`dist/` 面向有正常 node_modules 解析面的消费者（npm 安装形态，依赖留外部）；`dist.bundle/` 面向 vendoring 形态。两档构建按 script 名分流（`tsup.config.ts` 读 `npm_lifecycle_event`）：`build` 行为不变，`build:bundle` 独立产出。
 
@@ -148,7 +148,7 @@ vendoring 宿主接入片段：
 const {
   configureCore, getLogger, FileRunStore, WorkerHostImpl,
   runWorkflow, abortRun, terminateRunningRuns, discoverWorkflows,
-} = require("./vendor/subagent-core/dist.bundle/index.cjs");
+} = require("./vendor/subagent-core/dist/index.cjs");
 
 configureCore({
   dataRoot() { return "/path/to/host/data-root"; }, // FileRunStore 落 <dataRoot>/workflow-state/

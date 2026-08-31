@@ -45,6 +45,7 @@ import {
   extractAndValidateStructuredOutput,
 } from "../../common/schema-emulation.ts";
 import { HOST_TIMEOUT_ABORT_REASON, synthesizeTimeoutOutcome } from "../../common/kill-chain.ts";
+import { applyPersona } from "../../common/persona-router.ts";
 import { engineTimeoutDetail } from "../../common/errors.ts";
 import { replayJournalToSessionView } from "../../common/journal-replay.ts";
 import type { EnginePort, EngineRunResult, RunContext } from "../../port.ts";
@@ -438,6 +439,7 @@ export class ZcodeEngine implements EnginePort {
     // ① prepare 期：模型解析（provider 体系校验——错误语义与 spawn 同为进程创建前
     // reject）+ 常驻 HOME（锁判定/派生/pidfile 孤儿回收/config 内容 hash 刷新）
     const modelRef = resolveZcodeModelRef(task.model, this.deps.sources);
+    this.warnIgnoredCtxModel(task, ctx, modelRef);
     const home = await this.ensureAppServerHome(modelRef);
     // 对齐点③（不变量 3）：poolKey 在 prepare 期声明（静态常量或派生目录名），
     // 早于连接建立与首个事件
@@ -503,12 +505,16 @@ export class ZcodeEngine implements EnginePort {
     const rt = this.ensureAppServerRuntime(home);
     const { providerId, modelId } = splitZcodeModelRef(modelRef);
     const denyTools = (task.denyTools ?? []).filter((t) => typeof t === "string" && t.trim() !== "");
+    // effort → thoughtLevel（A.2 ① 键集内）：空白串归一为不设键——strict 对象下
+    // 空值键位无语义且防 -32602 变形拒收（与 denyTools 空清单不设键同款纪律）
+    const thoughtLevel = task.effort?.trim();
     const createParams: SessionCreateParams = {
       workspacePath: cwd,
       mode: "yolo",
       // per-session model（G3）：create 参数透传（A.2 ① strict 对象）——同进程任务
       // 各用各的模型，互不干扰
       model: { providerId, modelId },
+      ...(thoughtLevel !== undefined && thoughtLevel !== "" ? { thoughtLevel } : {}),
       ...(denyTools.length > 0 ? { toolDenylist: denyTools } : {}),
     };
 
@@ -812,9 +818,11 @@ export class ZcodeEngine implements EnginePort {
   ): Promise<EngineRunResult> {
     const startedAt = Date.now();
     this.rejectUnsupportedTaskShapes(task);
+    this.warnEffortUnsupportedBySpawn(task, ctx);
 
     // ① prepare 期：模型解析（provider 体系校验）+ 隔离 HOME 池引导（凭据 + model.main）
     const modelRef = resolveZcodeModelRef(task.model, this.deps.sources);
+    this.warnIgnoredCtxModel(task, ctx, modelRef);
     const prepared = prepareZcodeHome({
       engineDataDir: this.deps.engineDataDir(),
       modelRef,
@@ -1168,12 +1176,56 @@ export class ZcodeEngine implements EnginePort {
   }
 
   /**
+   * [F15b] spawn 路径的 effort 丢弃信号：spawn CLI 无 thoughtLevel 类 flag（协议
+   * 通道是 appserver 路径专属），effort 只能丢弃——但静默丢弃会让调用方误以为推理
+   * 档位已生效，故出声留痕（引擎现成信号风格：logger.warn，同漂移降级先例）。
+   * 诊断语义：effort 是可忽略档位（降档不改变任务正确性），warn 留痕而非硬拒绝
+   * （与 maxTurns「传了上限却失控」的假象不同质性）。
+   */
+  private warnEffortUnsupportedBySpawn(task: AgentTaskSpec, ctx: RunContext): void {
+    const effort = task.effort?.trim();
+    if (effort === undefined || effort === "") return;
+    logger.warn(
+      `[zcode-engine] effort=${effort} 被忽略：zcode spawn 不支持 thoughtLevel 通道（CLI 无对应 flag），任务按引擎缺省推理档位执行；需要 effort 请走 appserver 模式`,
+      { taskId: ctx.taskId },
+    );
+  }
+
+  /**
+   * [F16b] ctxModel 忽略留痕：ctxModel 是 pi 链路的第三层兜底（port.ts 契约——
+   * 依赖 pi resolveModel 链的引擎才消费它），zcode 自带 provider 体系与缺省模型
+   * （resolveZcodeModelRef：requested > ZCODE_FALLBACK_DEFAULT_MODEL），不消费
+   * ctxModel。「调用方给了 ctxModel 但 task.model 未显式指定」时出声一行，说明
+   * 实际落引擎缺省模型（含实际 model id）——防静默降档无据可查。只在「ctx 有模型
+   * 但被忽略」场景输出：显式 task.model 走正常解析链、ctx 本就无模型属预期缺省，
+   * 均不出声（避免噪音）。探针期（appServerProbeGate）不调用——同一任务的正式
+   * run 链路必经此处，双份输出是噪音。
+   */
+  private warnIgnoredCtxModel(task: AgentTaskSpec, ctx: RunContext, modelRef: string): void {
+    if (ctx.ctxModel === undefined) return;
+    const requested = task.model?.trim();
+    if (requested !== undefined && requested !== "") return;
+    logger.warn(
+      `[zcode-engine] ctx.ctxModel（${ctx.ctxModel.id}）被忽略——ctxModel 是 pi 链路兜底，zcode 不消费；` +
+        `task.model 未显式指定，实际使用引擎缺省模型 ${modelRef}`,
+      { taskId: ctx.taskId },
+    );
+  }
+
+  /**
    * persona 拼接后的完整 prompt（personaInjection: 'prompt'——zcode 无 flag 通道）：
-   * appendSystemPrompt 段在前（人设/约束语境），task 正文居中，schema 仿真段尾置
-   * （common/schema-emulation 公共层产出，D4 emulated 侧——zcode 无 native schema 通道）。
+   * persona 段经 common/persona-router.applyPersona 按 capabilities 路由产出
+   * （agentRef/skillPath 引用行 + appendSystemPrompt 正文统一拼装，S5 接线——替换
+   * 原手拼 appendSystemPrompt 段，skillPath/agentRef 不再丢弃），task 正文居中，
+   * schema 仿真段尾置（common/schema-emulation 公共层产出，D4 emulated 侧——zcode
+   * 无 native schema 通道）。
    */
   private buildPrompt(task: AgentTaskSpec, schema: object | undefined): string {
-    const segments: string[] = [...(task.persona?.appendSystemPrompt ?? [])];
+    const segments: string[] = [];
+    if (task.persona !== undefined) {
+      const routed = applyPersona(task.persona, this.capabilities());
+      if (routed.promptSegment !== "") segments.push(routed.promptSegment);
+    }
     segments.push(task.task);
     if (schema !== undefined) segments.push(buildSchemaEmulationSegment(schema));
     return segments.join("\n\n");

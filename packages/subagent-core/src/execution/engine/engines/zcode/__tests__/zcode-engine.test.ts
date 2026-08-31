@@ -15,12 +15,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RunContext } from "../../../port.ts";
 import type { AgentEvent, AgentTaskSpec, EngineHandle } from "../../../types.ts";
+import { getLogger } from "../../../../../core/logger.ts";
 import { HOST_TIMEOUT_ABORT_REASON } from "../../../common/kill-chain.ts";
 import { ZCODE_GOLDEN_STDOUT } from "../golden-sample.ts";
 import type { ZcodeLaunchedProcess } from "../launcher.ts";
 import { ZcodeEngine, type ZcodeEngineDeps } from "../zcode-engine.ts";
 
 const PROVIDER = "test-provider";
+
+/** 与 zcode-engine.ts 同一 facade 单例引用（spy 它的方法即拦截引擎的 warn 出声）。 */
+const subagentsLogger = getLogger("subagents");
 
 let tmpRoot: string;
 let dataDir: string;
@@ -274,9 +278,36 @@ describe("run ② 成功路径：golden stdout → outcome/handle/事件合成",
     expect(call.args).toContain("--cwd");
     expect(call.args[call.args.indexOf("--cwd") + 1]).toBe("/work/dir");
     expect(call.args).toContain("--disallowed-tools");
-    // prompt = persona 段在前 + task 正文在后（personaInjection: 'prompt'）
+    // prompt = persona 段在前 + task 正文在后（personaInjection: 'prompt'）。
+    // [S5] persona 段现经 common/persona-router.applyPersona 统一拼装（## Persona
+    // 结构头 + appendSystemPrompt 正文 join "\n"）——旧断言 "PERSONA A\n\nPERSONA B"
+    // 锚定的是被本次接线推翻的手拼形态。
     const promptIdx = call.args.indexOf("--prompt");
-    expect(call.args[promptIdx + 1]).toBe("PERSONA A\n\nPERSONA B\n\nTASK BODY");
+    expect(call.args[promptIdx + 1]).toBe("## Persona\nPERSONA A\nPERSONA B\n\nTASK BODY");
+  });
+
+  it("persona 的 agentRef/skillPath 引用行拼进 prompt（S5：prompt 通道不再丢弃，zcode 无 --skill flag）", async () => {
+    const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
+    const engine = makeEngine({ launch: fake.launch });
+    await engine.run(
+      makeTask({
+        task: "TASK BODY",
+        persona: { agentRef: "reviewer", skillPath: "/skills/review.md", appendSystemPrompt: ["RULE X"] },
+      }),
+      makeCtx(),
+    );
+    const promptIdx = fake.calls[0]!.args.indexOf("--prompt");
+    expect(fake.calls[0]!.args[promptIdx + 1]).toBe(
+      "## Persona\n# Agent: reviewer\nSkill context: /skills/review.md\nRULE X\n\nTASK BODY",
+    );
+  });
+
+  it("persona 全空：prompt 不带 Persona 段（applyPersona 空载体不拼空段）", async () => {
+    const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
+    const engine = makeEngine({ launch: fake.launch });
+    await engine.run(makeTask({ task: "BARE TASK", persona: {} }), makeCtx());
+    const promptIdx = fake.calls[0]!.args.indexOf("--prompt");
+    expect(fake.calls[0]!.args[promptIdx + 1]).toBe("BARE TASK");
   });
 
   it("preparer 池 config 已落盘（无 plugins 块）", async () => {
@@ -287,6 +318,102 @@ describe("run ② 成功路径：golden stdout → outcome/handle/事件合成",
     const written = JSON.parse(fs.readFileSync(poolConfig, "utf8")) as Record<string, unknown>;
     expect(written["model"]).toEqual({ main: `${PROVIDER}/m1` });
     expect("plugins" in written).toBe(false);
+  });
+});
+
+// ── prepare 期可见信号（F15b/F16b：spawn 路径 effort 丢弃 / ctxModel 忽略留痕）──
+
+describe("run prepare 期可见信号（F15b/F16b）", () => {
+  it("F15b: effort 在 spawn 路径被忽略并出声（文案含 effort 值与不支持语义，不阻断任务）", async () => {
+    const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
+    const engine = makeEngine({ launch: fake.launch });
+    const warns: string[] = [];
+    const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
+      warns.push(msg);
+    }) as typeof subagentsLogger.warn);
+    try {
+      const { outcome } = await engine.run(makeTask({ effort: "high" }), makeCtx());
+      expect(outcome.error).toBeUndefined(); // 信号只留痕，不改变任务结论
+      const hit = warns.find((m) => m.includes("effort"));
+      expect(hit).toBeDefined();
+      expect(hit).toContain("effort=high");
+      expect(hit).toContain("zcode spawn 不支持");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("F15b: effort 未传/空白 → 零 effort 信号（避免噪音）", async () => {
+    const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
+    const engine = makeEngine({ launch: fake.launch });
+    const warns: string[] = [];
+    const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
+      warns.push(msg);
+    }) as typeof subagentsLogger.warn);
+    try {
+      await engine.run(makeTask({ effort: "  " }), makeCtx());
+      await engine.run(makeTask(), makeCtx());
+      expect(warns.filter((m) => m.includes("effort"))).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("F16b: task.model 缺省 + ctx.ctxModel 存在 → 出声留痕（含被忽略的 ctx 模型与实际引擎缺省模型）", async () => {
+    // v2 config 补缺省模型 provider 条目——ZCODE_FALLBACK_DEFAULT_MODEL 的解析链才可校验通过
+    writeJson(v2Path, {
+      provider: {
+        [PROVIDER]: { options: { apiKey: "k", baseURL: "https://t.example" }, models: { m1: {} } },
+        "builtin:bigmodel-coding-plan": { options: { apiKey: "k" }, models: { "GLM-5.3": {} } },
+      },
+    });
+    const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
+    const engine = makeEngine({ launch: fake.launch });
+    const warns: string[] = [];
+    const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
+      warns.push(msg);
+    }) as typeof subagentsLogger.warn);
+    try {
+      const { outcome } = await engine.run(
+        makeTask({ model: undefined }),
+        makeCtx({ ctxModel: { id: "main-model", name: "Main", provider: "p", reasoning: false } }),
+      );
+      expect(outcome.error).toBeUndefined(); // 信号只留痕，不改变任务结论
+      const hit = warns.find((m) => m.includes("ctxModel"));
+      expect(hit).toBeDefined();
+      expect(hit).toContain("main-model");
+      expect(hit).toContain("builtin:bigmodel-coding-plan/GLM-5.3");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("F16b: 显式 task.model 或 ctx 无 ctxModel → 零 ctxModel 信号（只在「ctx 有模型但被忽略」时出声）", async () => {
+    // 第二段 run（model 缺省）走引擎缺省链——v2 config 需含 ZCODE_FALLBACK_DEFAULT_MODEL 的 provider
+    writeJson(v2Path, {
+      provider: {
+        [PROVIDER]: { options: { apiKey: "k", baseURL: "https://t.example" }, models: { m1: {} } },
+        "builtin:bigmodel-coding-plan": { options: { apiKey: "k" }, models: { "GLM-5.3": {} } },
+      },
+    });
+    const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
+    const engine = makeEngine({ launch: fake.launch });
+    const warns: string[] = [];
+    const warnSpy = vi.spyOn(subagentsLogger, "warn").mockImplementation(((msg: string) => {
+      warns.push(msg);
+    }) as typeof subagentsLogger.warn);
+    try {
+      // 显式 task.model + ctxModel：走正常解析链，不出声
+      await engine.run(
+        makeTask(),
+        makeCtx({ ctxModel: { id: "main-model", name: "Main", provider: "p", reasoning: false } }),
+      );
+      // model 缺省 + ctx 无 ctxModel：预期缺省链，不出声
+      await engine.run(makeTask({ model: undefined }), makeCtx());
+      expect(warns.filter((m) => m.includes("ctxModel"))).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 

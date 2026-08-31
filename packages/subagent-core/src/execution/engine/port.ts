@@ -57,7 +57,13 @@ export interface RunContext {
   signal?: AbortSignal;
   /** 事件流出口（host 消费后统一落 journal，D6 第②级）。 */
   onEvent?: (event: AgentEvent) => void;
-  /** model 解析第三层兼底（现有 D-008 语义不变）。 */
+  /**
+   * model 解析第三层兜底（现有 D-008 语义不变）——**pi 链路专属兜底**：经
+   * taskSpecToExecuteOptions → resolveModel 第三层消费（PiEngine 直通）。自带
+   * provider 体系与缺省模型的引擎（如 zcode：requested > 引擎缺省常量链）按自身
+   * 默认链解析，不消费本字段（zcode 侧在「ctx 有模型但被忽略」时出声留痕，
+   * zcode-engine.warnIgnoredCtxModel）。
+   */
   ctxModel?: ModelInfo;
   /**
    * text_delta streaming 通道（宿主侧 UI widget）。与 onEvent 平行的 text_delta 出口：
