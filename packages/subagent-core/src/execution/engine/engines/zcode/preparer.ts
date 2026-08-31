@@ -141,8 +141,12 @@ export function defaultV2ConfigPath(): string {
   return path.join(os.homedir(), ...ZCODE_V2_CONFIG_PATH_SUFFIX);
 }
 
-/** 短名（无 provider 前缀）解析的默认 provider（zsub DEFAULT_PROVIDER_ID 同构）。 */
-const DEFAULT_PROVIDER_ID = "builtin:bigmodel-coding-plan";
+/**
+ * 短名（无 provider 前缀）解析的默认 provider（zsub DEFAULT_PROVIDER_ID 同构）。
+ * 导出（sink 设计 U1 模型切分四件之一）：barrel re-export 供第三宿主模型路由消费，
+ * 实现体内聚本文件不挪。
+ */
+export const DEFAULT_PROVIDER_ID = "builtin:bigmodel-coding-plan";
 
 /**
  * 短名模型（如 "GLM-5.3"）的默认 provider 决策。让位条件（对齐点⑦）：显式默认引擎
