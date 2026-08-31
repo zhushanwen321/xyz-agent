@@ -65,14 +65,17 @@ graph TD
 
 | Unit | 偏差 | 理由 | 登记时间 |
 |---|---|---|---|
-| （空） | | | |
+| u2-runtime | 领地补列 `packages/runtime/src/interfaces.ts`（IConfigService 接口声明 get/setRetryConfig） | ConfigService 单行委托必须同步接口声明，计划文件地图漏列；改动内容为接口方法声明，必要且无副作用 | 2026-08-31 |
+| u2-runtime | 领地补列 `packages/runtime/src/services/worktree/worktree-service.test.ts`（mockConfigService 补 retry 两 stub） | 上行接口变更的连带必要改动：mock IConfigService 不补齐则该测试类型/运行失败 | 2026-08-31 |
+| u2-runtime | infra 实现形态为 class PiRetrySettings（实现 ILlmRetrySettings），helper 纯函数承载 D3/D7 逻辑 | 同 PiExtensionSettings 先例 + D17 分层（infra 只做 I/O 编排）；行为与设计无差 | 2026-08-31 |
+| 执行方式 | 单元拆小为子步串行派发（u2a1→u2b…；u3 拆 component/tests 两步），DAG 波次语义不变 | zsw zcode 引擎单轮 300s 终态观察窗为硬编码上限（ZCODE_APPSERVER_TURN_DEFAULT_TIMEOUT_MS），原 u2/u3 单任务体量单轮跑不完；u1 实测 4min 已近边缘 | 2026-08-31 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
 | u1-foundation | committed | 1 | 测试：shared `npx vitest run` 22 文件 225 用例全绿（含新增 9 条）+ `tsc --noEmit` 过（dev 回报与主 agent 重跑一致）；diff 核验：4 文件 ⊆ 领地，protocol.ts 纯增量 |
-| u2-runtime | pending | 0 | — |
+| u2-runtime | committed | 1 | 测试：新增 3 测试文件 26 用例全绿（merge/configured/handler case/P2 写后立刻读）+ services/transport 回归 27 文件 325 用例全绿 + runtime `tsc --noEmit` 过；主 agent 抽查 helper D3/D7 实现、handler 范式合格；偏差 3 条见登记表 |
 | u3-gui | pending | 0 | — |
 | u4-integrate | pending | 0 | — |
 

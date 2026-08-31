@@ -142,6 +142,9 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     // Terminal config stubs
     getTerminalConfig: vi.fn(() => ({ config: { version: 1, shell: '/bin/zsh', shellArgs: [], fontSize: 14, fontFamily: 'monospace', scrollback: 1000, cursorStyle: 'block' as const, bell: false }, corrupted: false })),
     setTerminalConfig: vi.fn(() => ({ ok: true })),
+    // LLM retry config stubs
+    getRetryConfig: vi.fn(() => ({ config: { enabled: true, maxRetries: 3, baseDelayMs: 2000, provider: { maxRetries: 0, maxRetryDelayMs: 60000 } }, configured: false })),
+    setRetryConfig: vi.fn(() => ({ ok: true })),
   }
 }
 

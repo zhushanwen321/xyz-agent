@@ -424,6 +424,31 @@ export class SettingsMessageHandler {
         })
         return true
       }
+      case 'config.getRetryConfig': {
+        // llm-retry-settings：读 retry 域。缺省键已合并为 pi 默认值；configured 区分
+        // 「显式配置」与「未配置（显示默认）」（D7），坏文件由 store schema guard 兜底。
+        const result = this.ctx.configService.getRetryConfig()
+        this.ctx.reply(ws, msg.id, 'config.retryConfig', result)
+        return true
+      }
+      case 'config.setRetryConfig': {
+        // llm-retry-settings：写 retry 域。校验失败（D8 越界）按 D10 错误信封回复，
+        // 不广播不落盘；成功 reply + 广播 config.retryConfig（多窗口同步，同 terminal 范式）。
+        // configured=true：六键刚显式写入。
+        const { config } = msg.payload
+        const result = this.ctx.configService.setRetryConfig(config)
+        if (!result.ok) {
+          this.ctx.sendError(ws, 'set_retry_config_failed', result.error ?? 'unknown error', msg.id)
+          return true
+        }
+        this.ctx.reply(ws, msg.id, 'config.retryConfig', { config, configured: true })
+        this.ctx.broadcast({
+          type: 'config.retryConfig',
+          id: this.ctx.nextPushId(),
+          payload: { config, configured: true },
+        })
+        return true
+      }
       case 'session.setThinkingLevel': {
         const { sessionId: sid, level } = msg.payload
         // P3（final gate）：reply 生效值而非请求值——pi 会钳制模型族不支持的档位

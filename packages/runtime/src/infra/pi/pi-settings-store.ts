@@ -5,7 +5,9 @@
  * 无法拆分成多个文件（pi 只认一个 schema/路径）。写方有两类进程：
  *   - xyz runtime（本模块的调用方：model 域经 pi-provider-store、extension 域经
  *     IExtensionSettings port、skills 投影经 pi-skill-paths）
- *   - pi 子进程（用户 GUI 切模型/切思考档位时，pi 经自身 SettingsManager 落盘）
+ *   - pi 子进程（rpc 面落盘写点仅 set_auto_retry 无条件 persist；set_model /
+ *     set_thinking_level 是会话级切换不落盘——persist 是 options 条件分支且 rpc 入口
+ *     不传，pi 0.84.4 rpc-mode.js:367-374/:390、agent-session.js:1252-1261/:1358-1366）
  *
  * 本模块是 settings.json 的**单一所有者**：
  *   - 唯一读写点：read() / write() / updateSettingsFields()，模块外不直接碰文件。
@@ -62,6 +64,10 @@ export interface PiSettings {
   // ── extension 域（extension-service 管理）──
   packages?: string[]
   extensions?: string[]
+  // ── retry 域（pi-retry-settings 管理）──
+  // 透传类型：pi 侧 schema 可含未知子字段且可能为坏值（D3/D7 容错），结构由消费方
+  // pi-retry-settings 解析，store 不做形状假设。
+  retry?: unknown
   // ── pi 其他未知字段（透传，不破坏）──
   [key: string]: unknown
 }
@@ -74,17 +80,20 @@ export interface PiSettings {
  *   - model     = defaultProvider / defaultModel / defaultThinkingLevel / enabledModels
  *   - skills    = skills（discovery 投影专写）
  *   - extension = packages（extension-service 域）
+ *   - retry     = retry（LLM 重试配置域，pi-retry-settings 管理；域内嵌套键级
+ *     merge 见 pi-retry-settings 的 D3 规则）
  *   - full      = 全部。**白名单仅一个调用点**：pi-maintenance.ts 启动迁移
  *     （无并发 pi 进程窗口）。新代码禁止使用 full scope（review checklist 项，
  *     见 docs/architecture/data-source-registry.md 跨进程文件登记表）。
  */
-export type SettingsFieldScope = 'model' | 'skills' | 'extension' | 'full'
+export type SettingsFieldScope = 'model' | 'skills' | 'extension' | 'retry' | 'full'
 
 /** 各 scope 覆盖的顶层字段（full 走全量，不在此表）。 */
 const SCOPE_FIELDS: Record<Exclude<SettingsFieldScope, 'full'>, readonly string[]> = {
   model: ['defaultProvider', 'defaultModel', 'defaultThinkingLevel', 'enabledModels'],
   skills: ['skills'],
   extension: ['packages'],
+  retry: ['retry'],
 }
 
 /**
