@@ -131,6 +131,7 @@ describe("session_start handler", () => {
 
 	it("does not throw when ctx.ui is undefined (headless / RPC session)", () => {
 		// [HISTORICAL] headless 会话 ctx.ui 为 undefined，旧实现直接 ctx.ui.notify 会 NPE。
+		// pi 现版本 ctx.ui 恒为对象（runner 默认 noOpUIContext），本用例仅保留防御。
 		const pi = createMockPi();
 		const ctx = { ui: undefined } as unknown as HookContext;
 

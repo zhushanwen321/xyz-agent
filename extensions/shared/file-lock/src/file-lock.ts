@@ -101,7 +101,7 @@ export async function withFileLock<T>(
 			await release();
 		} catch (unlockErr) {
 			// 锁已 compromised（被 stale 夺取）时 unlock 必然失败且可忽略——
-			// 记录留痕（对齐 pi finally 的 catch 语义：不外抛、不静默）。
+			// 不外抛；DEBUG 开启时留痕（pi 上游为静默吞掉，本实现略强）。
 			logger.debug("unlock failed after compromise (ignorable)", { detail: { err: unlockErr instanceof Error ? unlockErr.message : String(unlockErr) } });
 		}
 	}

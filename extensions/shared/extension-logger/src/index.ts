@@ -62,7 +62,7 @@ interface RateLimiterEntry {
  * 同进程所有 logger 实例共享（模块级 singleton）。
  *
  * ⚠️ 生命周期与进程一致——xyz-agent 每 session 一个独立 pi 进程
- * （process-manager.ts L142-143），故不存在跨 session 残留问题。
+ * （见 runtime process-manager.ts 的类注释），故不存在跨 session 残留问题。
  */
 const rateLimiterState = new Map<string, RateLimiterEntry>();
 

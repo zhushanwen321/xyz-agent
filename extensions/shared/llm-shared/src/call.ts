@@ -37,9 +37,12 @@ export interface CallLLMOptions {
 	/** 透传给 SimpleStreamOptions.sessionId（provider 用于 session 缓存 / 路由）。review TF1 新增。 */
 	sessionId?: string;
 	/**
-	 * thinking/reasoning 级别，透传给 SimpleStreamOptions.reasoning（pi 的 THINKING_ORDER SSOT：
-	 * minimal/low/medium/high/xhigh/max）。"off" 表示关闭 thinking，由本库映射为「不传 reasoning 字段」
-	 * （provider 默认行为）；不传 = 同样 provider 默认。
+	 * thinking/reasoning 级别，透传给 SimpleStreamOptions.reasoning。值域源自 pi 的
+	 * ThinkingLevel 类型（pi-ai：ThinkingLevel = minimal/low/medium/high/xhigh/max，
+	 * ModelThinkingLevel = "off" | ThinkingLevel；pi 无 THINKING_ORDER 符号——该常量的
+	 * SSOT 在本仓 subagent-core src/shared/model-ref.ts，值集与本类型一致）。"off" 表示
+	 * 关闭 thinking，由本库映射为「不传 reasoning 字段」（provider 默认行为）；不传 = 同样
+	 * provider 默认。
 	 */
 	reasoning?: ModelThinkingLevel;
 }

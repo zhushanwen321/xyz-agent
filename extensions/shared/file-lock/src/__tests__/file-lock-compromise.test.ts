@@ -4,7 +4,7 @@
 //   - onCompromised 标记：持锁期间 lockfile 被外部删除 → proper-lockfile 的 mtime
 //     保活定时器 stat 发现 ENOENT → setLockAsCompromised → onCompromised 回调
 //   - unlock 失败留痕：compromised 后 release() 拒绝（ERELEASED）→ finally catch 记
-//     logger.debug「不外抛、不静默」——fn 结果不受影响
+//     logger.debug（不外抛；DEBUG 开启时落盘，pi 上游为静默吞掉）——fn 结果不受影响
 //
 // 时序依据（proper-lockfile@4.1.2 lib/lockfile.js）：保活间隔 update =
 // max(min(stale/2, stale/2), 1000)，staleMs: 2000 时 = 1000ms——fn 内删锁后等待
