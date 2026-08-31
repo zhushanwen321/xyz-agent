@@ -32,7 +32,7 @@ import i18n from '@/i18n'
 
 const t = i18n.global.t
 
-/** useSearchJump 注入依赖（壳装配层提供）。selectSession 是 useSidebarNew 实例方法（Sidebar 已实例化），
+/** useSearchJump 注入依赖（壳装配层提供）。selectSession 是 useSidebar 实例方法（Sidebar 已实例化），
  *  由调用方传入避免 search 域值 import sidebar 域（§7.4 域级双向依赖修复，同 useSearchModalDeps ShellDeps 模式）。 */
 export interface UseSearchJumpOptions {
   selectSession: (id: string) => Promise<void>
@@ -126,7 +126,7 @@ export function useSearchJump(options: UseSearchJumpOptions) {
    * 但 SearchItem 只有 title/sub。优先复用 sessionApi.list() 按 title（session.label）反查 id，
    * 命中后调 selectSession(id)。反查未命中 / switch reject → {ok:false}（AC-6.6）。
    *
-   * 备注：selectSession（useSidebarNew.selectSession，壳注入）内部已对 switchSession reject 抛错
+   * 备注：selectSession（useSidebar.selectSession，壳注入）内部已对 switchSession reject 抛错
    *（mock id 不存在时），错误在此 catch。
    */
   async function confirmSession(item: SearchItem): Promise<JumpResult> {

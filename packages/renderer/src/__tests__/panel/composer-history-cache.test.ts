@@ -40,8 +40,8 @@ vi.mock('@/api', () => ({
   session: { setThinkingLevel: vi.fn() },
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
 }))
-vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
-  useSidebarNew: () => ({ forkSessionAsk: vi.fn(), forkSession: vi.fn() }),
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
+  useSidebar: () => ({ forkSessionAsk: vi.fn(), forkSession: vi.fn() }),
 }))
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], applySnapshot: vi.fn() }),

@@ -176,7 +176,7 @@ export function createSessionStore() {
   }
 
   /**
-   * 重置 session 为 idle（重开进程后调，useSidebarNew.restoreSession 编排）。
+   * 重置 session 为 idle（重开进程后调，useSidebar.restoreSession 编排）。
    * 同为 applySnapshot 薄壳；dead→idle guard（读判定，非写旁路）保留原语义——
    * 非 dead（如 runtime 广播的 active/streaming 真态）不被本地 revive 覆盖。
    */

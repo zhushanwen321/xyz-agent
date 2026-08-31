@@ -118,7 +118,7 @@ import Landing from '@/components/new-task/Landing.vue'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
 import { usePanelView } from '@/composables/features/panel/usePanelView'
 import { useChatStore } from '@/stores/chat'
-import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{
@@ -135,8 +135,8 @@ const { t } = useI18n()
 const chat = useChatStore()
 const { error: toastError } = useToast()
 
-/** dead session 重开：显式调 useSidebarNew.restoreSession（setup 内解构，避免事件回调调 composable 触发 useI18n 报错） */
-const { restoreSession, retryHistory, deleteSession } = useSidebarNew()
+/** dead session 重开：显式调 useSidebar.restoreSession（setup 内解构，避免事件回调调 composable 触发 useI18n 报错） */
+const { restoreSession, retryHistory, deleteSession } = useSidebar()
 
 /** restore 失败的错误 code（ghost session 判据）：SESSION_NOT_FOUND 时显示删除入口 */
 const restoreErrorCode = ref<string | null>(null)
@@ -200,12 +200,12 @@ const historyError = computed(() =>
   props.sessionId ? chat.failedHistory.has(props.sessionId) : false,
 )
 
-/** Landing 重试 → useSidebarNew.retryHistory（#2 AC-2.6） */
+/** Landing 重试 → useSidebar.retryHistory（#2 AC-2.6） */
 function onRetryHistory(): void {
   if (props.sessionId) void retryHistory(props.sessionId)
 }
 
-/** dead session「重新打开」：调 useSidebarNew.restoreSession（显式 restore RPC），成功后内部已 revive */
+/** dead session「重新打开」：调 useSidebar.restoreSession（显式 restore RPC），成功后内部已 revive */
 async function onReviveSession(): Promise<void> {
   if (!props.sessionId) return
   restoreErrorCode.value = null

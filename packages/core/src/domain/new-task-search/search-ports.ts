@@ -8,7 +8,7 @@
  * 裁决标注：
  * - C-W3-1：细粒度端口接口（SearchDataPort/FileReadPort/FileCandidatesPort/SessionListPort/
  *   SessionSelectPort/FileChangeWatchPort/AppCommandActionsPort）+ SearchPorts 聚合（IF6 契约）。
- * - C-W3-2：SessionSelectPort 契约在本域定义，接收点归实现域（壳适配 useSidebarNew().selectSession），
+ * - C-W3-2：SessionSelectPort 契约在本域定义，接收点归实现域（壳适配 useSidebar().selectSession），
  *   不依赖 domain/session selectSession 就绪。
  * - C-W3-3：FileChangeWatchPort 替代 chatStore.messages watch（stale cache 防护端口化）。
  * - C-W3-4：recents localStorage → storage 端口（KVStorage async）。
@@ -58,7 +58,7 @@ export interface SessionListPort {
 
 /**
  * session 跳转端口（AC-6.6：switchSession reject 由编排层 catch → {ok:false}）。
- * 壳适配 renderer useSidebarNew().selectSession（C-W3-2 端口契约，接收点归实现域）。
+ * 壳适配 renderer useSidebar().selectSession（C-W3-2 端口契约，接收点归实现域）。
  */
 export interface SessionSelectPort {
   selectSession(id: string): Promise<void>
@@ -80,9 +80,9 @@ export interface FileChangeWatchPort {
 
 /**
  * 应用命令 actions 端口（C-W3-5 四项全注入，打破循环 import 先例）。
- * 壳适配 renderer useSidebarNew/useSidebar initApp 注入：
- * - newSession：useSidebarNew().newSession（新建任务）
- * - goOverview：useSidebarNew().goOverview（进入概览）
+ * 壳适配 renderer useSidebar/useSidebar initApp 注入：
+ * - newSession：useSidebar().newSession（新建任务）
+ * - goOverview：useSidebar().goOverview（进入概览）
  * - toggleSidebar：useSidebarStore().toggleCollapsed（原 useAppCommands 直调，收编端口）
  * - requestPresetOpen：usePresetStore().requestOpen（原 useAppCommands 直调，收编端口）
  */
@@ -122,7 +122,7 @@ export interface SearchPorts {
  * search 编排全部注入依赖（IF6 deps）。
  * 端口 + store 实例 + 持久化存储 + 应用命令 actions。
  * 壳（w5）组装：createCommandStore(getPlatform().storage) / createFileSearchStore() /
- * getPlatform().storage / useSidebarNew 适配 actions。
+ * getPlatform().storage / useSidebar 适配 actions。
  */
 export interface SearchDeps {
   ports: SearchPorts
@@ -134,6 +134,6 @@ export interface SearchDeps {
   storage: KVStorage
   /** file tree 端口（file 跳转 selectFile；壳适配 fileTreeStore.selectFile，C-NT-3） */
   fileTree: FileTreePort
-  /** 应用命令 actions（壳适配 useSidebarNew/useSidebarStore/usePresetStore，C-W3-5） */
+  /** 应用命令 actions（壳适配 useSidebar/useSidebarStore/usePresetStore，C-W3-5） */
   appCommandActions: AppCommandActionsPort
 }

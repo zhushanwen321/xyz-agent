@@ -5,7 +5,7 @@
  * 供 SegmentedTab 渲染数量徽标 + SubagentList/WorkflowList 列表数据。
  *
  * 依赖 fileTreeStore / subagentStore / workflowStore / panelStore（pinia 单例 store，
- * composable 内部安全调用）。focusedSessionId 由调用方注入（来自 useSidebarNew）。
+ * composable 内部安全调用）。focusedSessionId 由调用方注入（来自 useSidebar）。
  */
 import { computed } from 'vue'
 import type { Ref } from 'vue'

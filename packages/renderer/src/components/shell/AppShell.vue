@@ -31,7 +31,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import { useSettingsShell } from '@/composables/shell/useSettingsShell'
-import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import AppNavControls from './AppNavControls.vue'
 import AsideRegion from './AsideRegion.vue'
 import MainPanel from './MainPanel.vue'
@@ -75,7 +75,7 @@ provide(LAZY_RETRY_KEY, () => {
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const sidebar = useSidebarStore()
-const { syncSessionToPanel } = useSidebarNew()
+const { syncSessionToPanel } = useSidebar()
 
 /** Settings modal 开关（⌘, / sidebar 用户区触发） */
 const settingsOpen = ref(false)

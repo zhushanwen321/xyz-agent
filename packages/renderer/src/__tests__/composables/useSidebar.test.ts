@@ -1,5 +1,5 @@
 /**
- * TC-1..TC-4：useSidebarNew 接缝 composable 集成测试（w5）。
+ * TC-1..TC-4：useSidebar 接缝 composable 集成测试（w5）。
  *
  * TC-1 selectSession 全编排（renderer 专属步骤 + core 步骤时序，关键不变量：ensureStreamSubscription
  *   先于 panel.loadSession；hydrate 首次触发二次跳过；focusedSessionId 派生）
@@ -7,7 +7,7 @@
  * TC-3 loadSessions 双分支（成功填 groups / 失败 setListLoadError）
  * TC-4 返回签名对齐 useSidebar（含全字段 + toggleCollapse/goOverview 行为）
  *
- * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useSidebarNew.test.ts
+ * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useSidebar.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
@@ -122,7 +122,7 @@ vi.mock('@/composables/features/fork-handoff/useHandoffActions', () => ({
 }))
 // registerAppCommands 经 commandStore（真实），不需 mock
 
-import { useSidebarNew, resetSidebarNewForTest } from '@/composables/features/sidebar/useSidebarNew'
+import { useSidebar, resetAppBootstrap } from '@/composables/features/sidebar/useSidebar'
 
 function summary(id: string, cwd = '/a'): SessionSummary {
   return { id, label: `label-${id}`, cwd, status: 'idle', lastActiveAt: 1, modelId: '' }
@@ -131,15 +131,15 @@ function group(sessions: SessionSummary[], cwd = '/a'): SessionGroup {
   return { cwd, label: cwd, sessions }
 }
 
-describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
+describe('useSidebar 接缝（TC-1..TC-4）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    resetSidebarNewForTest()
+    resetAppBootstrap()
     vi.clearAllMocks()
   })
 
   it('TC-1 selectSession 全编排：ensureStreamSubscription 先于 panel.loadSession；首次 hydrate；focusedSessionId 派生', async () => {
-    const sidebar = useSidebarNew()
+    const sidebar = useSidebar()
     // seed 接缝本地 store（C-W5-5 raw createSessionStore 实例）
     useSessionStore().applySnapshot({ groups: [group([summary('s1'), summary('s2')])] })
     // panel 绑定模拟：selectSession 内 syncSessionToPanel 调 panel.loadSession(activePanelId, id)
@@ -169,7 +169,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
   })
 
   it('TC-1c 已 hydrate 切入的尾读 reconcile 同步刷新 truncated 标记（load-more 可恢复）', async () => {
-    const sidebar = useSidebarNew()
+    const sidebar = useSidebar()
     useSessionStore().applySnapshot({ groups: [group([summary('s1')])] })
 
     // 首次切入 hydrate（try 分支，truncated=false）
@@ -202,7 +202,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
       currentSession: { value: null },
       presetCwd: vi.fn(),
     } as unknown as ReturnType<typeof useNewTaskFlow>)
-    const sidebar = useSidebarNew()
+    const sidebar = useSidebar()
     useSessionStore().applySnapshot({ groups: [group([summary('s1')])] })
 
     await sidebar.selectSession('s1')
@@ -213,7 +213,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
   it('TC-2 deleteSession 代理 core：api.remove 调 + S3 清理 + wasActive 回退 selectSession', async () => {
     const removeMock = (await import('@/api/domains/session')).remove as ReturnType<typeof vi.fn>
     removeMock.mockResolvedValue(undefined)
-    const sidebar = useSidebarNew()
+    const sidebar = useSidebar()
     useSessionStore().applySnapshot({ groups: [group([summary('s1'), summary('s2')])] })
     // 先 select s1 使其 active（触发 wasActive 回退路径）
     await sidebar.selectSession('s1')
@@ -230,7 +230,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
   })
 
   it('TC-3 loadSessions 成功填 groups 清 error；失败 setListLoadError 不抛', async () => {
-    const sidebar = useSidebarNew()
+    const sidebar = useSidebar()
     mocks.list.mockResolvedValueOnce([group([summary('s1')])])
     await sidebar.loadSessions()
     expect(useSessionStore().getList().length).toBe(1)
@@ -243,7 +243,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
   })
 
   it('TC-4 返回签名对齐 useSidebar（含全字段）+ toggleCollapse/goOverview 行为', () => {
-    const sidebar = useSidebarNew()
+    const sidebar = useSidebar()
     const keys = Object.keys(sidebar)
     const expected = [
       'focusedSessionId', 'focusedSession', 'selectSession', 'newSession', 'retryHistory',
@@ -286,7 +286,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
     getWorkflowsMock.mockClear()
     getSubagentsMock.mockResolvedValueOnce([record])
 
-    const sidebar = useSidebarNew()
+    const sidebar = useSidebar()
     useSessionStore().applySnapshot({ groups: [group([summary('s1')])] })
     await sidebar.selectSession('s1')
     getSubagentsMock.mockClear()
@@ -308,7 +308,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
   it('TC-5b 重连时空焦点（无聚焦 session）不触发重拉', async () => {
     const sessionDomain = await import('@/api/domains/session')
     const getSubagentsMock = sessionDomain.getSubagents as ReturnType<typeof vi.fn>
-    const sidebar = useSidebarNew()
+    const sidebar = useSidebar()
 
     await sidebar.onConnected() // 首连（initApp，空态无 session）
     await sidebar.onConnected() // 重连（focusedSessionId=null）

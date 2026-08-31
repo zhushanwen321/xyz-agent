@@ -51,7 +51,7 @@
 | B5 | 包级链 | Worth | 包名统一 frontend vs renderer | W5 |
 | B6 | 包级链 | Speculative | composer-shell 越层直连 dom-core 裁决 | W5 |
 | B7 | 包级链 | Speculative | mobile sync 文档 gap 清理 | ⏸️ 暂缓（前提反转，remote 合并后协同） |
-| C1 | renderer | Strong | useSidebar 绞杀残留死壳删除（565 行旧壳 → useSidebarNew） | W0 |
+| C1 | renderer | Strong | useSidebar 绞杀残留死壳删除（565 行旧壳删除，useSidebarNew 重命名接管原名，2026-08-31 收尾） | W0 |
 | C2 | renderer | Strong | Feature 层 vue 直连 lib/ipc 归位到域 composable | ⏸️ 暂缓（归位位置 vs COPY_MAP 待裁决） |
 | C3 | renderer | Strong | 剪贴板 4 份 + resize 订阅 N 份收敛为 useClipboard/useWindowResize | W2 |
 | C4 | renderer | Strong | summarizeTurn dead code + guiComponent 注释失真 | W0 |

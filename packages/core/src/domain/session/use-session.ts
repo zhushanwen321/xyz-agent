@@ -133,6 +133,13 @@ export interface UseSessionDeps {
   hooks: SessionCleanupHooks
   /** 新建任务流程（可选；缺省时 newSession 返回 null——壳未接线状态，w5 必须接线） */
   flow?: NewTaskFlowPort
+  /**
+   * wasActive 回退路径的壳版 selectSession（可选，C-W5-1 债务清偿）。
+   * deleteSession/deleteFolder 删 active 后回退 list[0] 时优先走本端口——壳（useSidebar）
+   * 注入含 renderer 时序（ensureStreamSubscription 须先于 panel 载入，2026-07-29 handoff
+   * 回复丢失事故）的 selectSession；缺省走 core headless selectSession（headless/mobile 形态）。
+   */
+  selectSessionFallback?: (id: string) => Promise<void>
 }
 
 // ── session.list server-push 订阅（#7 方案 A；CLAUDE.md 规则 #2 防重复注册）──
@@ -172,7 +179,7 @@ export function resetSessionListSubForTest(): void {
 /**
  * createUseSession factory —— session 管理编排（IF4 落地）。
  *
- * 使用方式：壳（w5）注入六端口 + 可选 flow，包装为 renderer composable（useSidebarNew）；
+ * 使用方式：壳（w5）注入六端口 + 可选 flow，包装为 renderer composable（useSidebar）；
  * 测试注入 mock 端口断言编排（见 __tests__/use-session.test.ts）。
  */
 export function createUseSession(deps: UseSessionDeps) {
@@ -355,13 +362,26 @@ export function createUseSession(deps: UseSessionDeps) {
   }
 
   /**
+   * [D7 空态承接] 删除路径的空态出口统一编排（deleteSession/deleteFolder 专用）：
+   * push chat 空态 + 显式 startFlow——终态下 landing 渲染需 flow 活跃，flow=idle 时
+   * 面板落入无输入面死态 empty（旧壳 enterEmptyChatState 同构上收）。
+   * flow 未接线（headless 形态）时只 push。不用于 newSession 延迟 create 分支——
+   * 无参 startFlow 的 pendingCwd=null 会清掉 newSession 刚回灌的 fallback cwd。
+   */
+  function enterEmptyChatState(): void {
+    navigation.push({ view: 'chat' })
+    void deps.flow?.startFlow()
+  }
+
+  /**
    * 删除 session（API + 本地状态清理）。
    * 删除当前 active 时回退到列表首项（若无则停留空态）。
    *
    * S3 跨 store 清理由 cleanupSessionState 统一承担（panel 解绑 + 全部 per-session 分区释放）。
    * S4 / ES1 fallback：删 active 后 selectSession(next) 失败兜底——cleanupSessionState 已把
-   * activeId 回退到 list[0]，若随后的 selectSession(next) 因网络抖动 reject，activeId=next 但
-   * panel 空载 → 跨 store 撕裂。失败时 fallback 到 navigation.push({ view: 'chat' }) 空态。
+   * activeId 回退到 list[0]，若随后的回退 selectSession 因网络抖动 reject，activeId=next 但
+   * panel 空载 → 跨 store 撕裂。失败时 fallback 到 [D7] 空态承接：push chat + startFlow
+   * （flow 未接线时只 push——headless 形态无 landing 承接需求）。
    */
   async function deleteSession(id: string): Promise<void> {
     await api.remove(id)
@@ -371,13 +391,13 @@ export function createUseSession(deps: UseSessionDeps) {
       const next = store.getList()[0]
       if (next) {
         try {
-          await selectSession(next.id)
+          await (deps.selectSessionFallback ?? selectSession)(next.id)
         } catch {
-          // selectSession 失败（网络抖动）→ fallback 到 chat 空态，避免 activeId=next 但 panel 空载撕裂（S4）
-          navigation.push({ view: 'chat' })
+          // 回退 selectSession 失败（网络抖动）→ [D7] 空态承接，避免 activeId=next 但 panel 空载撕裂（S4）
+          enterEmptyChatState()
         }
       } else {
-        navigation.push({ view: 'chat' })
+        enterEmptyChatState()
       }
     }
   }
@@ -404,12 +424,12 @@ export function createUseSession(deps: UseSessionDeps) {
       const next = store.getList()[0]
       if (next) {
         try {
-          await selectSession(next.id)
+          await (deps.selectSessionFallback ?? selectSession)(next.id)
         } catch {
-          navigation.push({ view: 'chat' })
+          enterEmptyChatState()
         }
       } else {
-        navigation.push({ view: 'chat' })
+        enterEmptyChatState()
       }
     }
     return res

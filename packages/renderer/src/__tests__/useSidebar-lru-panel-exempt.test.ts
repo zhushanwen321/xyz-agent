@@ -73,7 +73,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
   },
 }))
 
-import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { useChatStore } from '@/stores/chat'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 
@@ -86,7 +86,7 @@ function makeMessage(id: string): Message {
 }
 
 // seed pinia session store（ADR-0059：useSessionStore 单例）
-function seedSessions(_sidebar: ReturnType<typeof useSidebarNew>, ids: string[]): void {
+function seedSessions(_sidebar: ReturnType<typeof useSidebar>, ids: string[]): void {
   const group: SessionGroup = { cwd: '/proj', sessions: ids.map(makeSummary) }
   useSessionStore().applySnapshot({ groups: [group] })
 }
@@ -126,7 +126,7 @@ describe('lru-panel-exempt-fix 方案 C：panel 绑定 session 不被 LRU 误驱
   describe('AC-2: 单 panel LRU 基线不退化（最旧被驱逐）', () => {
     it('单 panel 下切 9 个 session，最旧的 session 被驱逐', async () => {
       const scope = effectScope()
-      const sidebar = scope.run(() => useSidebarNew())!
+      const sidebar = scope.run(() => useSidebar())!
       const ids = Array.from({ length: 9 }, (_, i) => `s${i}`)
       seedSessions(sidebar, ids)
 

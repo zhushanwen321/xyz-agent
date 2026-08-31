@@ -71,7 +71,9 @@ interface Fixture {
   dispose: () => void
 }
 
-function makeFixture(opts: { withFlow?: boolean } = {}): Fixture {
+function makeFixture(
+  opts: { withFlow?: boolean; selectSessionFallback?: (id: string) => Promise<void> } = {},
+): Fixture {
   const scope = effectScope(true)
   const log: string[] = []
   const store = scope.run(() => createSessionStore())!
@@ -107,6 +109,7 @@ function makeFixture(opts: { withFlow?: boolean } = {}): Fixture {
   const deps: UseSessionDeps = {
     store, api, panel, navigation, chat, hooks,
     ...(opts.withFlow ? { flow } : {}),
+    ...(opts.selectSessionFallback ? { selectSessionFallback: opts.selectSessionFallback } : {}),
   }
   const session = scope.run(() => createUseSession(deps))!
   return { session, store, api, panel, navigation, chat, flow, hooks, log, dispose: () => scope.stop() }
@@ -265,6 +268,46 @@ describe('deleteSession', () => {
     expect(f.hooks.disposeChat).toHaveBeenCalledWith('b')
     f.dispose()
   })
+
+  it('selectSessionFallback 注入：wasActive 回退走壳版端口（core headless selectSession 不触达）', async () => {
+    // C-W5-1 债务清偿：壳（useSidebar）注入含 ensureStreamSubscription 时序的 selectSession，
+    // 删 active 回退不再走 core headless 路径（否则回退后流式订阅缺失，handoff 回复丢失事故同源）
+    const fallback = vi.fn<(id: string) => Promise<void>>().mockResolvedValue(undefined)
+    const f = makeFixture({ selectSessionFallback: fallback })
+    seed(f.store, [{ cwd: '/a', sessions: [summary('a'), summary('b')] }])
+    f.store.activeId.value = 'a'
+
+    await f.session.deleteSession('a')
+    expect(fallback).toHaveBeenCalledTimes(1)
+    expect(fallback).toHaveBeenCalledWith('b')
+    expect(f.api.switchSession).not.toHaveBeenCalled()
+    // 成功回退无空态出口
+    expect(f.navigation.push).not.toHaveBeenCalled()
+    f.dispose()
+  })
+
+  it('[D7] 空态承接：flow 接线时删空 → push chat + startFlow（landing 需 flow 活跃）', async () => {
+    const f = makeFixture({ withFlow: true })
+    seed(f.store, [{ cwd: '/a', sessions: [summary('del')] }])
+    f.store.activeId.value = 'del'
+
+    await f.session.deleteSession('del')
+    expect(f.navigation.push).toHaveBeenCalledWith({ view: 'chat' })
+    expect(f.flow.startFlow).toHaveBeenCalledTimes(1)
+    f.dispose()
+  })
+
+  it('[D7] S4 兜底：回退失败 + flow 接线 → push chat + startFlow，不抛', async () => {
+    const f = makeFixture({ withFlow: true })
+    seed(f.store, [{ cwd: '/a', sessions: [summary('a'), summary('b')] }])
+    f.store.activeId.value = 'a'
+    f.api.switchSession.mockRejectedValue(new Error('net'))
+
+    await expect(f.session.deleteSession('a')).resolves.toBeUndefined()
+    expect(f.navigation.push).toHaveBeenCalledWith({ view: 'chat' })
+    expect(f.flow.startFlow).toHaveBeenCalledTimes(1)
+    f.dispose()
+  })
 })
 
 describe('deleteFolder', () => {
@@ -305,6 +348,25 @@ describe('deleteFolder', () => {
     expect(f.api.switchSession).not.toHaveBeenCalled()
     expect(f.navigation.push).not.toHaveBeenCalled()
     expect(f.hooks.clearFileTree).toHaveBeenCalledWith('a1')
+    f.dispose()
+  })
+
+  it('selectSessionFallback 注入：wasActiveInFolder 回退走壳版端口', async () => {
+    const fallback = vi.fn<(id: string) => Promise<void>>().mockResolvedValue(undefined)
+    const f = makeFixture({ selectSessionFallback: fallback })
+    seed(f.store, [
+      { cwd: '/a', sessions: [summary('a1'), summary('a2')] },
+      { cwd: '/b', sessions: [summary('b1', '/b')] },
+    ])
+    f.store.activeId.value = 'a1'
+    f.api.removeByCwd.mockResolvedValue({ cwd: '/a', deleted: ['a1', 'a2'], failed: [] })
+
+    const returned = await f.session.deleteFolder('/a')
+    expect(returned.deleted).toEqual(['a1', 'a2'])
+    // 回退 list[0]='b1' 走壳版端口，core headless 不触达
+    expect(fallback).toHaveBeenCalledTimes(1)
+    expect(fallback).toHaveBeenCalledWith('b1')
+    expect(f.api.switchSession).not.toHaveBeenCalled()
     f.dispose()
   })
 })

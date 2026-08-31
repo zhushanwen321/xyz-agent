@@ -88,10 +88,10 @@
 <script setup lang="ts">
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/composables/useToast'
-import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 
 const { toasts, remove, pause, resume } = useToast()
-const { selectSession } = useSidebarNew()
+const { selectSession } = useSidebar()
 
 /** toast 类型 → 边框强调色（背景统一 bg-surface，克制：色彩只落在 icon 与正文） */
 function toastClass(type: 'error' | 'info' | 'warning'): string {

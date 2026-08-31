@@ -12,7 +12,7 @@
 
 ### MF-1：A2 验收场景「新建 session 从未跑 turn」不可构造
 
-「新建不发言」的 session 没有 sessionId——NewTaskFlow 延迟 create（`useSidebarNew.ts` newSession 的 `if (!created)` 分支：首发消息才建实体）。按原 A2 字面验收会看到「零 RPC」，误判为接线缺陷。
+「新建不发言」的 session 没有 sessionId——NewTaskFlow 延迟 create（`useSidebar.ts` newSession 的 `if (!created)` 分支：首发消息才建实体）。按原 A2 字面验收会看到「零 RPC」，误判为接线缺陷。
 
 **修复**：A2 改用「手动 compact 有历史 session 后不发言」构造 no-value（pi `contextUsage.tokens = null` → fetchContext 返回 null → reply `{sessionId}`）；A1 场景对 B 的描述同步修正。已落实。
 

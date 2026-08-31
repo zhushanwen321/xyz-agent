@@ -1,13 +1,14 @@
 <!--
   SessionsShellSm —— w5 首屏冒烟临时测试壳组件（TC-6 渲染 gate）。
-  setup 调 useSidebarNew()，渲染 session 列表 + focused chip，defineExpose sidebar 供测试读状态。
-  非生产组件——仅 w5 冒烟测试消费，消费方切换 wave 后随 useSidebarNew 一并归位/删除。
+  setup 调 useSidebar()，渲染 session 列表 + focused chip，defineExpose sidebar 供测试读状态。
+  非生产组件——仅冒烟测试消费；2026-08-31 双轨收尾后 useSidebar 已是新轨唯一实现（原
+  useSidebarNew 重命名接管），本组件随之归位，后续冒烟形态演进时可删除。
 -->
 <script setup lang="ts">
-import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { useSessionStore } from '@/stores/session'
 
-const sidebar = useSidebarNew()
+const sidebar = useSidebar()
 const sessionStore = useSessionStore()
 
 function pick(id: string): void {
