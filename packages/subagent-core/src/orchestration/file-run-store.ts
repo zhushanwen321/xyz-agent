@@ -19,7 +19,7 @@
 // workflow run 快照是宿主编排状态，语义归属宿主数据根本身，宿主 configureCore
 // 注入什么就落什么，不引入第二条 env 覆盖链。
 
-import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import { getHostServices } from "../core/host-services.ts";
@@ -37,6 +37,18 @@ const logger = getLogger("file-run-store");
 
 /** run 状态目录名（<dataRoot> 下的固定分量）。 */
 const STATE_DIR_NAME = "workflow-state";
+
+// ── 磁盘保留（C1，语义对齐 pi jsonl-run-store mtime 裁剪） ─────────
+
+/** run state 文件名 glob：runId 形如 `wf-<ts>-<rand>`（lifecycle.ts 生成），只删命中者。
+ *  同目录可能存在的非 state 文件永不碰（对齐 pi STATE_FILE_GLOB）。 */
+const STATE_FILE_GLOB = /^wf-.*\.jsonl$/;
+
+/** Node fs 错误 code 判定（ENOENT = 路径不存在，并发删除场景；对齐 pi isEnoentError）。 */
+function isEnoentError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err &&
+    (err as { code?: unknown }).code === "ENOENT";
+}
 
 // ── 快照形状（一行 JSON） ────────────────────────────────────
 
@@ -270,5 +282,78 @@ export class FileRunStore implements RunStore {
       return undefined;
     }
     return run;
+  }
+
+  /**
+   * 把 workflow-state 目录裁剪到上限个最新 state 文件（mtime 升序删最旧，C1）。
+   *
+   * 语义对齐 pi jsonl-run-store.pruneStateFilesBeyondCap（逐段同构）：
+   * - 只删本目录内命中 {@link STATE_FILE_GLOB} 的文件；任何失败都不抛（清理是
+   *   旁路维护，不能拖垮持久化主链路）：readdir 失败静默放弃本轮（ENOENT =
+   *   从未持久化，正常态），单个 unlink 失败（非 ENOENT）warn 留证后继续删
+   *   其余——ENOENT 视为并发删除竞态下的已达成目标，不告警；
+   * - stat 全集取 mtime，allSettled 部分降级——单文件 stat 失败（并发删除
+   *   ENOENT 等）静默跳过该文件，不阻断本轮裁剪。
+   *
+   * 上限解析（envName 通道，对齐 pi getEnvStateMaxRuns 解析规则）：
+   * - `envName` 提供 → opt-in 通道：`process.env[envName]` 未设/空/非有限数/≤0
+   *   → no-op（**默认关**，pi B1 opt-in 语义）；设了有限正数 → 上限 = env 值
+   *   （env 值即上限，对齐 pi env 语义）；
+   * - `envName` 缺省 → 无 env 通道，直接按 `max` 参数裁剪（上限 = max，调用方
+   *   自管启用时机）。
+   *
+   * 本方法只做磁盘裁剪，不动内存 runs Map（内存侧淘汰归
+   * lifecycle.evictDoneRunsBeyondCap，两域独立）。
+   *
+   * @param max 上限（envName 缺省时生效；env 通道启用时被 env 值覆盖）
+   * @param envName opt-in 开关 + 上限覆盖 env 变量名（可选；pi 先例
+   *   `XYZ_SUBAGENT_STATE_MAX_RUNS`）
+   */
+  async pruneStateFilesBeyondCap(max: number, envName?: string): Promise<void> {
+    let cap = max;
+    if (envName !== undefined) {
+      // 解析规则逐条对齐 pi getEnvStateMaxRuns：未设/空/非有限数/≤0 → 不启用
+      const raw = process.env[envName];
+      if (!raw) return;
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || parsed <= 0) return;
+      cap = parsed;
+    }
+
+    const stateDir = this.stateDir();
+    let names: string[];
+    try {
+      names = await readdir(stateDir);
+    } catch (err) {
+      if (!isEnoentError(err)) {
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.warn(`[file-run-store] state retention: readdir ${stateDir} failed: ${reason}`);
+      }
+      return;
+    }
+    const stateFiles = names.filter((n) => STATE_FILE_GLOB.test(n)).sort();
+    if (stateFiles.length <= cap) return;
+
+    // stat 全集取 mtime；allSettled 部分降级（单文件失败静默跳过，不阻断本轮）
+    const settled = await Promise.allSettled(
+      stateFiles.map(async (name) => {
+        const full = join(stateDir, name);
+        return { full, mtimeMs: (await stat(full)).mtimeMs };
+      }),
+    );
+    const byMtimeAsc = settled
+      .flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
+      .sort((a, b) => a.mtimeMs - b.mtimeMs);
+    const victims = byMtimeAsc.slice(0, byMtimeAsc.length - cap);
+    for (const victim of victims) {
+      try {
+        await unlink(victim.full);
+        logger.debug(`[file-run-store] state retention: pruned ${victim.full}`);
+      } catch (err) {
+        if (isEnoentError(err)) continue; // 并发删除已达成目标
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.warn(`[file-run-store] state retention: failed to delete ${victim.full}: ${reason}`);
+      }
+    }
   }
 }

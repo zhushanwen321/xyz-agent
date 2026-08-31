@@ -10,6 +10,9 @@
  * - evictDoneRunsBeyondCap(runs, keepDone) → number（done run 内存淘汰）
  * - scheduleTimeBudget(runId, deps, budgetTimeMs) → timer（C.7 时间预算）
  *
+ * 第 6 个导出：recoverCrashedRuns(store, runs, reason, hooks?) —— 崩溃恢复四步
+ * 装配（loadAll→failed→save→evict，D8/B1），宿主专属事件经 hooks 外置。
+ *
  * 私有 makeHandlers(run, deps) → WorkerHandlers：
  * - onMessage → handleWorkerMessage(run, raw, deps, handlers)
  * - onError → handleWorkerError(run, err, deps, handlers) + workerErrorCount++
@@ -43,7 +46,7 @@ import {
   handleWorkerMessage,
 } from "./error-recovery.ts";
 import { Budget } from "./models/budget.ts";
-import type { LifecycleDeps, WorkerHandlers } from "./models/ports.ts";
+import type { LifecycleDeps, RunStore, WorkerHandlers } from "./models/ports.ts";
 import { RunRuntime } from "./models/run-runtime.ts";
 import type { RunSpec } from "./models/run-spec.ts";
 import { Trace } from "./models/trace.ts";
@@ -396,4 +399,94 @@ export function evictDoneRunsBeyondCap(
     runs.delete(r.runId);
   }
   return excess;
+}
+
+// ── recoverCrashedRuns（kill-9/崩溃恢复四步装配，D8/B1） ────────────────
+
+/**
+ * 崩溃恢复循环的宿主事件外置 hooks（core 平台中立，宿主注入专属行为）。
+ *
+ * pi 宿主在 onRunRecovered 中发射 `pending:unregister` 事件（pending-notifications
+ * 扩展的注销信号灯）；zsw/第三宿主可接自己的通知通道。不注入 = 无宿主事件，
+ * 恢复语义（failed 转换 + 落盘 + 淘汰）不受影响。
+ */
+export interface RecoverCrashedRunsHooks {
+  /**
+   * 每个 running → done,failed 转换的 run 恰好调用一次。
+   *
+   * payload 形状对齐 pi `pending:unregister` 事件：`{ id: runId, reason: "failed" }`
+   * ——宿主可直接把 payload 转发到自己的事件总线。
+   */
+  onRunRecovered?: (payload: { id: string; reason: string }) => void;
+}
+
+/**
+ * 崩溃恢复四步装配（设计 D8/B1）：loadAll → failed → save → evict。
+ *
+ * 平移自 pi 壳 session_start 恢复循环（subagent-workflow index.ts:578-627）与
+ * zsw orchestration-host recoverOrphans（逐行同构，pending:unregister 为唯一
+ * 宿主差异点——经 {@link RecoverCrashedRunsHooks} 外置）。
+ *
+ * 步骤语义：
+ * 1. **loadAll**：从 store 全量重水合。失败向上抛——fail-fast 策略（pi 的
+ *    storeHealthy=false 停初始化）是宿主职责，调用方 catch 后自行决定；
+ * 2. **failed**：残留 running run（进程被杀，worker 必死）逐个
+ *    `state.error = reason` → `transition("done","failed")`（A4：transition 内部
+ *    先 releaseRuntime），并发宿主事件（hooks）；done run 原样保留；
+ * 3. **save**：转换后的 run 落盘（恢复终态必须持久化，不 save 则下次启动重水合
+ *    仍见 running，侧栏永久卡 running）。单 run save 失败仅记日志不中断其余
+ *    run——恢复天然幂等，下次启动重开重试；
+ * 4. **evict**：全量重水合后立即 `evictDoneRunsBeyondCap(runs,
+ *    MAX_RETAINED_DONE_RUNS)`（K=20）——done run 内存有界性；只 delete 内存
+ *    Map 条目，磁盘 state 文件不动（对齐 pi，历史审计保留）。
+ *
+ * 所有 loaded run（含 done）都注册进 runs Map（runId → WorkflowRun）——与 pi
+ * 一致，done run 也入 Map 供列表/查询消费。
+ *
+ * @param store RunStore port（loadAll/save）
+ * @param runs per-session 的 run 注册表（原地写入 + 淘汰）
+ * @param reason 恢复原因（写入 running run 的 state.error，如
+ *   "Process killed (kill-9 or crash recovery)"）
+ * @param hooks 宿主事件外置（可选）
+ * @throws store.loadAll 失败时原样抛出（步骤 1）
+ */
+export async function recoverCrashedRuns(
+  store: RunStore,
+  runs: Map<string, WorkflowRun>,
+  reason: string,
+  hooks?: RecoverCrashedRunsHooks,
+): Promise<void> {
+  // 步骤 1：loadAll（失败上抛，宿主决定 fail-fast 策略）
+  const loaded = await store.loadAll();
+
+  for (const run of loaded) {
+    if (run.state.status === "running") {
+      // 步骤 2：running → done,failed（顺序对齐 pi：set error → transition → 宿主事件）
+      run.state.error = reason;
+      run.transition("done", "failed");
+      // 宿主事件外置点：pi 发 pending:unregister，位置在 transition 后、save 前
+      // （对齐 pi emit 位置——先解除挂起通知再落盘，事件观察者不依赖落盘完成）
+      hooks?.onRunRecovered?.({ id: run.runId, reason: "failed" });
+      // 步骤 3：恢复终态落盘（单 run 失败不中断其余 run——幂等恢复，下次重试）
+      try {
+        await store.save(run);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(
+          `[workflow] recoverCrashedRuns store.save failed for run ${run.runId}: ${msg} (reason: ${reason})`,
+        );
+      }
+    }
+    runs.set(run.runId, run);
+  }
+
+  // 步骤 4：done run 内存有界性（K=20）。kill-9 恢复转换出的 failed run
+  // completedAt 为 transition 时刻（全局最新）必在保留端；多条恢复 run 同 ms
+  // completedAt → tie 稳定排序（evictDoneRunsBeyondCap 契约）。
+  const evicted = evictDoneRunsBeyondCap(runs, MAX_RETAINED_DONE_RUNS);
+  if (evicted > 0) {
+    logger.debug(
+      `[workflow] recoverCrashedRuns evicted ${evicted} done runs beyond cap (keep=${MAX_RETAINED_DONE_RUNS})`,
+    );
+  }
 }
