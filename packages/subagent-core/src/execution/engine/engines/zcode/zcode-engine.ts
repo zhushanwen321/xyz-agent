@@ -777,12 +777,6 @@ export class ZcodeEngine implements EnginePort {
     // 拉起新进程再被同次 dispose 杀掉——无意义的 spawn+kill 循环（D6 dispose=防泄漏
     // 语义不制造新进程），且对面进程已不在，close 帧也没有送达对象。同步循环内
     // alive 不会中途翻转（进程退出是异步事件，本轮循环不可重入）
-    // ①fire 全部在途会话的 session/close 帧（不等待应答——D6① 顺序规定：close 帧
-    // 必须先于 SIGTERM，否则对面来不及处理即被杀）。进程已死（child=null，如崩溃
-    // 收割与 activeSessions 清理之间的微拍）则整体跳过：post 会经 ensureStarted 惰性
-    // 拉起新进程再被同次 dispose 杀掉——无意义的 spawn+kill 循环（D6 dispose=防泄漏
-    // 语义不制造新进程），且对面进程已不在，close 帧也没有送达对象。同步循环内
-    // alive 不会中途翻转（进程退出是异步事件，本轮循环不可重入）
     if (rt.conn.alive) {
       for (const sessionId of [...rt.activeSessions]) {
         rt.conn.post("session/close", { sessionId });

@@ -88,11 +88,17 @@ return { done: true };
 // ❌ agent() 无 description → TUI 显示 unnamed agent
 await agent({ prompt: 'review diff' });
 
-// ❌ meta.phases 用对象数组 → 引擎忽略，全部归入 (unnamed)
-const meta = { name: 'x', phases: [{ title: 'review' }, { title: 'fix' }] };
+// ❌ phases 用对象数组 → 引擎忽略，全部归入 (unnamed)
+/* @pi-meta
+name: x
+phases: [{ title: 'review' }, { title: 'fix' }]
+*/
 
 // ❌ 声明了 phases 但从不 phase() 调用 → 运行时分组失效
-const meta = { name: 'x', phases: ['review', 'fix'] };
+/* @pi-meta
+name: x
+phases: ['review', 'fix']
+*/
 // ... 直接 await agent(...) 从不调 phase('review') / phase('fix')
 ```
 

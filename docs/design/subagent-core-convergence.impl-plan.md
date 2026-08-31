@@ -158,7 +158,7 @@ graph TD
 
 1. **分支认知外提交**：基线 `88d7eadc6` 后其他任务线提交持续增长（2026-08-30 核实 26 个），与两线领地交集为 0。每波派发前复核 `git log --name-only` 与 `git status`；工作区认知外变更以 git status 实时输出为准，不碰不裹挟（登记时点快照会过时；最近核实 2026-08-31：未提交改动为 renderer/runtime 的 llm-retry 任务线，与两线领地交集 0）。
 2. **版本合并决策——已裁决（2026-08-31 用户确认）**：0.3.0 未发布（npm 发布面仍 0.2.0），「0.3.0 届时仍未发布」触发条件已命中；裁决为 0.3.0 并入 0.4.0 单一 changeset（合并 host-surface 与 C 线 + R 线内容；合并已落盘：`.changeset/subagent-core-convergence-0.4.0.md`（旧 host-surface 与 pi-sw-rebind 两文件已删除并入）），发版仍待用户授权。
-3. **R 线实施期检查点**（app-server 设计 §5 末 5 项）——**主体已闭环（389cce3f3 回填实施后注）**：D10 定案基线不带 flag、stream.chunk 宽容双形态兜底、read tokens 宽容解析、GUI ①级锚定实现面落齐（回填见 app-server 设计 D10 实施后注与「待验证检查点」段）；真未决仅跨仓真机段子项：D10 三态矩阵补验、-32022 当前版本错误码确认。
+3. **R 线实施期检查点**（app-server 设计 §5 末 5 项）——**主体已闭环（389cce3f3 回填实施后注）**：D10 定案基线不带 flag、stream.chunk 宽容双形态兜底、read tokens 宽容解析、GUI ①级锚定实现面落齐（回填见 app-server 设计 D10 实施后注与「待验证检查点」段）；真未决为跨仓真机段子项：D10 三态矩阵补验（①）、stream.chunk 真机实录替换合成语料（②）、-32022 当前版本错误码确认（③）、GUI RA2-② 真机验证（⑤）——②④实现面已兜底（宽容双形态/宽容解析），但语料替换与真机确认仍属跨仓段范围。
 4. **C 线实施期检查点**（convergence §5.4 前两项）——**已闭环**：project 槽 API 形态定案 project-host 槽（probe-c2.md §7，状态表 C2 已记录）、dev 拓扑扫描确认（probe-c5.md 五场景，含接线落点实施）。
 5. **跨仓验收依赖**：Gate B 跨仓段依赖 zsw 会话 vendor --local 刷新；RA9 与 zsw W6-W9（convergence zsw 侧）共享该前置。本仓完成定义 = 本仓可执行段全绿 + committed + 报告用户，跨仓段移交。
 6. **R2 fixture 移植来源——已消解（随 R2 db721187d 落地）**：fake-server 用例从 zsw 仓 `84b63a0^:lib/runner-appserver.js` 时代实现移植改造完成，只取测试模式与协议断言并适配 vitest（21 fake-server 用例，状态表 R2 行）。
