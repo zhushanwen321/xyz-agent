@@ -27,7 +27,7 @@ export const MODEL_THINKING_MEMORY_KEY = 'xyz-agent:model-thinking-memory'
  * 内存表：模块级单例（多 composer 实例 / split panel 共享，D6）。
  * reactive 使下游 watch 记忆变化成为可能；本模块自身不建立 watch。
  */
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，已登记 data-source-registry #21 非草稿）：模型档位记忆表单例（UI 偏好内存镜像，权威源 = KVStorage 持久化整表，12 类未覆盖）
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，已登记 data-source-registry #22 非草稿）：模型档位记忆表单例（UI 偏好内存镜像，权威源 = KVStorage 持久化整表，12 类未覆盖）
 const memory = reactive(new Map<string, ThinkingLevel>())
 
 type LoadState = 'idle' | 'loading' | 'loaded'

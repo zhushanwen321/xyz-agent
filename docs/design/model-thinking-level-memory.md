@@ -193,7 +193,7 @@
 - **条件 a（态轴）**：已建 session 态且非 staging 快照——`sessionId 非空 && stagingModel === null`。landing 档位是悬空值不入表；staging 快照是「试选值」（用户在 fork/handoff 暂存态操作，取消退出时不该入表），其生效时点（fork/handoff 新 session 建立）必然进入已建态、由门禁通过后补上。
 - **条件 b（来源语义）**：值最终生效于已建 session 即记录，不区分是否用户手动——含用户手动选档、切模型自动对齐、session 加载既有状态。记录时带一行可用性校验（key ∈ 该模型可用集）拦截体系外脏值（见错误规格 E5）。
 
-**landing 自动初值 memory-aware（有意的行为变更）**：landing 挂载时 sync watch「无档位」分支现状自动设最高可用档（thinking-level-sync.ts:85-89），该自动值经首发无条件透传（send.ts:179 透传 `localThinkingLevel` → flow.ts:269,276-277 apply 给新 session）会以「用户从未选择」的身份进入已建态——纯态轴门禁挡不住它（判别轴错位：门禁轴是「态」，污染轴是「值是否用户 authored」）。故 landing 态的自动初值改为 memory-aware：**未 authored 的 local 档位跟随模型变化重设为 `memory[当前模型] ?? 最高可用档`**（含 defaultModel 晚到的 `'' → 真实模型` 路径——不能依赖 sync `!current` 分支重跑：该分支要求 current 为 undefined，挂载 immediate 触发时已被 `''` 模型消费过一次，defaultModel 到达后 current 已 defined、走「首触发」分支，包装层无介入点）。实现：model-thinking 层设 `localAuthored` 标志（onThinkingSelect 的**用户显式入口**置位；sync onReset 通路指向内部对齐函数、不置位）+ landing 跟随 watch（`sessionId 为空 && !localAuthored` → 重设 local = `memory[当前模型] ?? 最高可用档`，**`{ immediate: true }` 且模型变化触发**——immediate 覆盖 defaultModel **早到**路径（挂载时模型已就绪且后续不变，非 immediate 则永不触发、auto 值透传覆写 memory），变化触发覆盖**晚到**路径，两路径缺一即间歇性缺陷）。**仅 landing 态生效**——已建但无档位的 session 初值行为保持现状（最高可用档），记忆表绝不主动触碰已建 session（G3）。
+**landing 自动初值 memory-aware（有意的行为变更）**：landing 挂载时 sync watch「无档位」分支现状自动设最高可用档（thinking-level-sync.ts:85-89），该自动值经首发无条件透传（send.ts:179 透传 `localThinkingLevel` → flow.ts:269,276-277 apply 给新 session）会以「用户从未选择」的身份进入已建态——纯态轴门禁挡不住它（判别轴错位：门禁轴是「态」，污染轴是「值是否用户 authored」）。故 landing 态的自动初值改为 memory-aware：**未 authored 的 local 档位跟随模型变化重设为 `可用(lookup(当前模型)) ?? 最高可用档`**（E3/D5 可用性校验延伸到跟随路径——能力注册表变化致记忆键失效时回落最高档而非显示不可用档；含 defaultModel 晚到的 `'' → 真实模型` 路径——不能依赖 sync `!current` 分支重跑：该分支要求 current 为 undefined，挂载 immediate 触发时已被 `''` 模型消费过一次，defaultModel 到达后 current 已 defined、走「首触发」分支，包装层无介入点）。实现：model-thinking 层设 `localAuthored` 标志（onThinkingSelect 的**用户显式入口**置位；sync onReset 通路指向内部对齐函数、不置位）+ landing 跟随 watch（`sessionId 为空 && !localAuthored` → 重设 local，**`{ immediate: true }` 且模型变化触发**——immediate 覆盖 defaultModel **早到**路径（挂载时模型已就绪且后续不变，非 immediate 则永不触发、auto 值透传覆写 memory），变化触发覆盖**晚到**路径，两路径缺一即间歇性缺陷）。**仅 landing 态生效**——已建但无档位的 session 初值行为保持现状（最高可用档），记忆表绝不主动触碰已建 session（G3）。
 
 - **被否 ①**：只记用户手动选择（初版）——需来源标注，且自动对齐场景「同一路径两次结果不同」，不可预期。
 - **被否 ②**：任何态都记录（初版）——landing 挂载自动值确定性污染（§2.2 事实 ⑤ 放大：重启后默认模型即最后切换的模型）。
@@ -322,7 +322,7 @@
 
 **A3 负面：session 切换不触发恢复（G3）**
 
-- 场景构造要点：切换的两个 session 必须**模型不同**——跨模型换绑才会触发 sync watch（同模型双 session 的 map/supported 不变，watch 根本不触发，测不出守护目标）；且记忆表中目标模型的记忆值 ≠ 前台 session 的实际档位。
+- 场景构造要点：切换的两个 session 必须**模型不同且同体系**（跨模型换绑才触发 sync watch——同模型双 session 的 map/supported 不变，watch 根本不触发，测不出守护目标；同体系约束是因为跨体系换绑本身会触发既有对齐重置（§1 Out of scope 既有行为），会使「S2 档位保持原值」因与本设计无关的原因失败）；且记忆表中目标模型的记忆值 ≠ 前台 session 的实际档位。
 - 步骤：① 建 session S1（模型 X + 档位 low）；② 建 session S2（模型 Y + 档位 high）；③ 建 session S3，用模型 Y + 档位「中」（使 memory[Y] = 中）；④ 焦点从 S1 切到 S2（侧边栏点击），来回数次。
 - 通过标准：每次切换后 S2 档位保持「高」，不被记忆值「中」改写（若无 armed 门禁，此序列会把 S2 改成「中」，可检测）；S1 档位保持「低」。
 
@@ -352,7 +352,7 @@
 | U1 记忆存储模块 | reactive Map + 惰性加载 + record/lookup API + KV 写穿 + E1/E6 防护；KVStorage经 `getPlatform().storage` | 新增 `packages/core/src/domain/composer/model-thinking-memory.ts` | 独立纯模块，可先行单测（KV round-trip / 损坏回退 / 非法值丢弃）；放 composer 域因唯一消费方是 composer 行为，机制上仅依赖 platform/port（core 内合法依赖） |
 | U2 sync 扩展 | `ThinkingLevelSyncDeps` 增 `getRememberedLevel(modelId)`；watch 回调顶部 armed 消费（过期/匹配幂等/保留 + 分支跳过，D3 规则 1-3）+ 记忆查询（D5） | `packages/core/src/domain/composer/thinking-level-sync.ts` | 恢复逻辑的唯一落点（单一写入者）；deps 注入保持 core 零 store 依赖（W3 迁移约束延续） |
 | U3 model-thinking 扩展 | `onModelSelect` 三分支设 armed（含 callId；已建态 RPC 失败清 + 成功清均按 callId 归属校验，规则 4/5；in-flight 按 callId 引用计数，规则 1）；watch `sessionIdRef` 换绑清（规则 6）；landing memory-aware：`localAuthored` 标志（用户显式入口置位，onReset 指向内部对齐函数）+ 跟随 watch（immediate + 变化触发，D2）；记录 watch（D2 双条件门禁 + 可用性校验）；对外暴露不变 | `packages/core/src/domain/composer/model-thinking.ts` | armed 的意图源头与生命周期防线集中在显式切换动作处，与恢复消费点分离；对外 API 零变化，composer-shell 接线面最小 |
-| U4 壳层接线 | composer-shell 组装新 deps（memory 模块惰性加载在此触发）；i18n 无新增 | `packages/renderer/src/composables/panel/composer-shell.ts` | 壳层是 core deps 的唯一组装点（ADR-0028 分层），core 不碰 storage 之外的 renderer 事实 |
+| U4 壳层接线（已由 U3 域内收编） | 实施演化：sync 四个新 deps 与 loadOnce/onLoaded 触发全部在 U3 的 model-thinking 内部闭合（同域 import u1 模块），`ModelThinkingDeps` 对外签名零变化，composer-shell 零改动——本单元退化为验证性验收（renderer typecheck + 测试回归） | `packages/renderer/src/composables/panel/composer-shell.ts`（零改动） | 壳层是 core deps 的唯一组装点（ADR-0028 分层），接线不外溢壳层是更内聚的演化；实施记录见 impl-plan 偏差 #10 |
 | U5 测试 | U1 模块单测；U2/U3 行为单测（armed 9 断言点序列族含 callId 并发归属、landing memory-aware 跟随三行为 + 污染反例含 defaultModel 早到/晚到双路径 + 幂等往返含非单射边界、记忆命中/回落、三态 onReset 路由、D2 双条件门禁、钳制收敛）——实施期门（§3.3 探针）；框架 vitest、子包目录运行 | `model-thinking.test.ts` 扩展 + 新增 `model-thinking-memory.test.ts` | 现有测试文件就近扩展，覆盖 §3.3 前三条探针断言 |
 
 **待验证检查点**（设计阶段无法确定，实施期核实）：

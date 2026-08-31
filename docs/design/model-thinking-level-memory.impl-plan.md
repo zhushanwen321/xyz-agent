@@ -82,8 +82,8 @@ graph TD
 | # | 偏差内容 | 判定 | 证据 | 状态 |
 |---|---|---|---|---|
 | 1 | `lookup` 返回类型收窄为 `ThinkingLevel \| undefined`（契约写 `string \| undefined`） | 合理——子类型兼容，下游 u2/u3 免二次断言 | model-thinking-memory.ts lookup 签名 | 已固化 |
-| 2 | `record` 在预载完成前挂起写穿、加载完成后补写收敛（契约只说「同步内存 + 异步写穿」未规定窗口时序） | 合理且必要——防局部快照覆写 KV 整表静默清除未知条目；测试锁定该语义 | model-thinking-memory.test.ts「加载窗口 record」用例 + registry #21 例外列 | 已固化 |
-| 3 | taste 豁免注解 W24-EX-B（require-data-owner-annotation error 级，登记表在 u1 领地外） | 合理——主 agent 已补登记 registry #21 并同步注解为非草稿 | docs/architecture/data-source-registry.md #21 | 已闭环 |
+| 2 | `record` 在预载完成前挂起写穿、加载完成后补写收敛（契约只说「同步内存 + 异步写穿」未规定窗口时序） | 合理且必要——防局部快照覆写 KV 整表静默清除未知条目；测试锁定该语义 | model-thinking-memory.test.ts「加载窗口 record」用例 + registry #22 例外列 | 已固化 |
+| 3 | taste 豁免注解 W24-EX-B（require-data-owner-annotation error 级，登记表在 u1 领地外） | 合理——主 agent 已补登记 registry #22 并同步注解为非草稿 | docs/architecture/data-source-registry.md #22 | 已闭环 |
 | 4 | armed 访问器含 `at` 字段 + 导出 `ArmedModelSwitchIntent` 切片与 `ARMED_EXPIRY_MS=5000`（任务建议形状漏 at，规则 1 过期判定必需） | 合理——契约必需，u3 复用同一阈值常量 | thinking-level-sync.ts 导出 | 已固化 |
 | 5 | 四个新 deps 字段全部可选 | 合理——现有 8 用例与 u4 接线前调用方不注入新字段，必填即挂 typecheck；armed null 零副作用有回归基线用例锁定 | thinking-level-sync.test.ts 回归基线用例 | 已固化 |
 | 6 | `eslint --fix` 重排 watch 回调既有代码缩进（48 个 indent warning 为存量技术债，新增行延续既有风格被一并检出） | 合理——按 pre-commit「含存量全修」红线执行；`git diff -w` 证实既有代码忽略空白后零变化，纯缩进无逻辑改动 | git diff -w 复核（主 agent 核验） | 已固化 |
@@ -91,12 +91,13 @@ graph TD
 | 8 | E7② 补写回调加 `onScopeDispose` disposed 守卫（设计未提） | 合理——split panel 实例可能在 KV 预载完成前销毁，死实例不应再被回调写入 | model-thinking.ts | 已固化 |
 | 9 | S5 断言判据 =「armed 目标记忆值从不发出」而非调用总次数；测试文件顶层 beforeEach/afterEach（platform stub + u1 重置） | 合理——mock 不回写 store 致既有对齐重发与 armed 无关（测试内注释差异）；顶层 stub 消除 E2 warn 噪音不改既有用例主体 | model-thinking.test.ts | 已固化 |
 | 10 | u4 接线被 u3 域内收编：sync 四个新 deps 与 loadOnce/onLoaded 触发全部在 model-thinking 内部闭合，`ModelThinkingDeps` 对外签名零变化，composer-shell 零改动 | 合理——更内聚（接线不外溢壳层）；u4 转验证性单元：renderer typecheck exit 0 + 套件 3625 passed（2 失败为 useChat-subagent-directive 存量失败，基线 b27c175ce 复现，属其他会话功能线，规则 0 不碰） | git diff b27c175ce..HEAD -- packages/renderer 为空；基线对照复跑记录 | 已固化 |
+| 11 | 一致性审查 R1 修复批次：landing/staging 分支 re-select 同模型跳过 armed 设立（源头消灭悬留窗口——审查者发现的伪恢复暴露面：5s 内 providers 刷新经规则 2 匹配覆写 authored 值）；跟随路径补 E3/D5 可用性校验（设计 D2 公式同步更新）；已建态不加同型跳过（有规则 5 成功清兜底，S7 锁定） | 合理——审查打回定向修，实现+用例+文档三方同步 | UF1a/UF1b/UF2 用例；设计文档 D2 公式与 §4 A3 同体系约束；registry #22（原 #21 重复 ID 更正，d1 doc_error） | 已闭环 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u1-foundation | committed | 1 | 12/12 绿（memory.test.ts）；registry #21 登记；deviations 3 条入 §5 |
+| u1-foundation | committed | 1 | 12/12 绿（memory.test.ts）；registry #22 登记；deviations 3 条入 §5 |
 | u2 | committed | 1 | 17/17 绿（8 现有 + 9 新）；deviations 3 条入 §5 |
 | u3 | committed | 1 | 36/36 绿（18 现有 + 18 新，探针表 9 断言点全覆盖）；deviations 4 条入 §5 |
 | u4 | committed（验证性，零代码改动） | 0 | renderer typecheck exit 0；vitest 3625 passed（2 存量失败与基线一致，偏差 #10） |

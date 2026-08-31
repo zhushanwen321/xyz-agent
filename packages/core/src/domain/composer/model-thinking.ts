@@ -229,18 +229,25 @@ export function useComposerModelThinking(
 
   // ── [u3·D2] landing memory-aware：跟随 watch + 预载触发 + E7② 补写 ──────────
   /**
-   * landing 未 authored 的 local 档位跟随模型重设：memory[当前模型] ?? 最高可用档（value 形态，
-   * localThinkingLevel 存 value——§2.2 关键事实①）。
+   * landing 未 authored 的 local 档位跟随模型重设：可用(lookup(当前模型)) ?? 最高可用档
+   * （value 形态，localThinkingLevel 存 value——§2.2 关键事实①）。
    * 为什么需要：landing 挂载时 sync watch 的「无档位」分支会自动设最高可用档，该 auto 值经
    * 首发透传（send → flow apply）会以「用户从未选择」的身份进入已建态记录 watch——纯态轴
    * 门禁挡不住它（D2 被否③：判别轴错位，污染只是从挂载时点换到首发时点）。跟随重设让
    * auto 值本身 memory-aware，污染在源头消灭；顺带让新任务默认档贴合用户习惯（G1 延伸）。
+   * 为什么记忆要过可用性校验（一致性审查 U-fix-2 同步，D2 公式）：能力注册表变化致记忆键
+   * 失效时（如 max 档被下线），不过校验会让 landing 短暂显示不可用档——E3/D5 的可用性
+   * 回落防线延伸到跟随路径，失效即回落最高可用档。
    */
   function followRememberedOrDefault(): void {
     if (sessionId.value || localAuthored.value) return
+    const supported = getSupportedLevels(currentModelId.value)
+    const remembered = lookup(currentModelId.value)
+    // 可用(lookup) ?? 最高档：命中且可用才用记忆键，未命中/失效均回落最高可用档
     const key =
-      lookup(currentModelId.value) ??
-      highestAvailableLevel(getSupportedLevels(currentModelId.value))
+      remembered && normalizeSupportedLevels(supported).includes(remembered)
+        ? remembered
+        : highestAvailableLevel(supported)
     localThinkingLevel.value = resolveThinkingValue(key, getThinkingLevelMap(currentModelId.value))
   }
 
@@ -300,16 +307,26 @@ export function useComposerModelThinking(
     const targetModelId = `${payload.provider}/${payload.modelId}`
     // Staging Mode：只写暂存快照，不影响当前源 session
     if (stagingModel.value !== null) {
+      // [U-fix-1] re-select 判定必须在写快照之前（写后 currentModelId 即为 target，恒「匹配」）
+      const reselect = targetModelId === currentModelId.value
       stagingModel.value = targetModelId
       // armed 同步设立（staging 分支）：恢复经同一 onReset 通路写入暂存快照（B5——暂存态
-      // 恢复不另设通路）；无 RPC，token 由消费侧规则 2 或后续显式动作处置
-      armed.value = { modelId: targetModelId, at: Date.now(), callId }
+      // 恢复不另设通路）；无 RPC。re-select 同模型不设——无反应性变化 watch 必不触发，
+      // 设了必然悬留，5s 内一次 providers 刷新的无关触发会经规则 2 匹配分支把记忆值写回
+      // 快照（D3 规则 5 要消灭的「chip 突跳伪恢复」形态，staging 无 RPC 无成功清兜底，源头跳过）
+      if (!reselect) {
+        armed.value = { modelId: targetModelId, at: Date.now(), callId }
+      }
       return
     }
     // landing 态延迟 create：记 pendingModel，submitFirstMessage create session 后 apply
     if (!sessionId.value) {
       setPendingModel(targetModelId)
-      armed.value = { modelId: targetModelId, at: Date.now(), callId }
+      // [U-fix-1] re-select 同模型不设 armed（理由同 staging 分支）——landing 侧悬留 token
+      // 被无关触发消费时还会覆写用户已 authored 的 local 值（恢复通路不检查 localAuthored）
+      if (targetModelId !== currentModelId.value) {
+        armed.value = { modelId: targetModelId, at: Date.now(), callId }
+      }
       return
     }
     // 已建态：RPC + 乐观更新（编排逻辑归壳层 useModel，ADR-0028）

@@ -11,8 +11,9 @@
  * - 跟随三行为 / 双路径污染反例（gated KV 控制预载完成时刻）/ 记录门禁（真实 memory Map 断言）
  *
  * 注意副作用：useThinkingLevelSync 的 immediate watch 在挂载时同步触发——若 currentThinkingLevel
- * 无值会调 onReset→onThinkingSelect（landing 设 localThinkingLevel、已建调 setThinkingLevel）。
- * 测试通过 sessionState 带初值或 mockClear 规避其对断言的干扰。
+ * 无值会调 onReset→routeThinkingLevel（内部对齐路由，不置 localAuthored；landing 设
+ * localThinkingLevel、已建调 setThinkingLevel）。测试通过 sessionState 带初值或 mockClear
+ * 规避其对断言的干扰。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { computed, effectScope, nextTick, ref, type Ref } from 'vue'
@@ -827,6 +828,54 @@ describe('useComposerModelThinking · 探针表补漏（u5 收口）', () => {
     h.sessionRef.value = { modelId: 'p/Y', thinkingLevel: 'x' }
     await nextTick()
     expect(lookup('p/Y')).toBe('high')
+    h.scope.stop()
+  })
+})
+
+// ══════════ [一致性审查第 1 轮修复] U-fix-1 / U-fix-2 ══════════
+describe('useComposerModelThinking · 一致性审查修复（U-fix-1/2）', () => {
+  it('UF1a/landing re-select 同模型不设 armed：后续 providers 无关刷新不覆写用户 authored 值', async () => {
+    record('p/M', 'low') // 记忆可用且 ≠ 用户值——若 armed 误设，刷新会把 local 覆写为 'l'
+    const h = mountLanding({ defaultModel: 'p/M' })
+    expect(h.result.currentThinkingLevel.value).toBe('l') // 跟随先落记忆值
+    await h.result.onThinkingSelect('h') // 用户显式选档 → authored
+    // re-select 同模型：无反应性变化，watch 必不触发——armed 源头跳过（U-fix-1）
+    await h.result.onModelSelect({ modelId: 'M', provider: 'p' })
+    expect(h.setPendingModel).toHaveBeenCalledWith('p/M') // pendingModel 照常记
+    // 人为触发一次无关 providers 变化：若 armed 悬留，规则 2 匹配分支会经 onReset
+    // 写回记忆值 'l'（恢复通路不检查 localAuthored）= chip 突跳伪恢复（D3 规则 5 要消灭的形态）
+    refreshProviderIdentity(h.providersRef, 'p/M')
+    await nextTick()
+    expect(h.result.currentThinkingLevel.value).toBe('h') // authored 值保持
+    expect(h.setThinkingLevel).not.toHaveBeenCalled()
+    h.scope.stop()
+  })
+
+  it('UF1b/staging re-select 同模型不设 armed：后续 providers 无关刷新不覆写暂存快照', async () => {
+    const h = mountMem({
+      sid: 's1',
+      session: { modelId: 'p/X', thinkingLevel: 'h' },
+      maps: { 'p/X': sameContentMap(), 'p/Y': sameContentMap() },
+      supported: { 'p/X': fourLevels, 'p/Y': fourLevels },
+    })
+    record('p/X', 'low')
+    h.result.enterStagingMode() // currentModelId 切读快照 'p/X'
+    await h.result.onModelSelect({ modelId: 'X', provider: 'p' }) // re-select 同模型 → 不设 armed
+    // 无关刷新：若 armed 悬留，规则 2 会 onReset('l') 写入 stagingThinking（伪恢复）
+    refreshProviderIdentity(h.providersRef, 'p/X')
+    await nextTick()
+    expect(h.result.currentThinkingLevel.value).toBe('h') // 暂存快照保持
+    expect(h.setThinkingLevel).not.toHaveBeenCalled()
+    h.scope.stop()
+  })
+
+  it('UF2/跟随可用性校验（U-fix-2，D2 公式）：记忆键失效（不在可用集）→ 跟随回落最高可用档', async () => {
+    // 记忆 'max' 存在，但 M 的 supportedLevels（fourLevels）不含 max——能力注册表变化场景
+    record('p/M', 'max')
+    const h = mountLanding({ defaultModel: 'p/M' })
+    // 可用(lookup) ?? 最高档：'max' 失效 → 回落 'high'（经 map 映射 value 'h'），
+    // 不短暂显示不可用档（E3/D5 可用性回落防线延伸到跟随路径）
+    expect(h.result.currentThinkingLevel.value).toBe('h')
     h.scope.stop()
   })
 })
