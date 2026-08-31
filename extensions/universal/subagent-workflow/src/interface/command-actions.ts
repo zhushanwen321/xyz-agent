@@ -22,20 +22,9 @@ export type SubagentRpcAction =
 /** /workflows RPC action 判别联合。 */
 export type WorkflowRpcAction =
   | { action: "abort"; runId: string }
-  | { action: "lifecycle-missing-id"; verb: LifecycleVerb }
+  | { action: "lifecycle-missing-id"; verb: "abort" }
   | { action: "lifecycle-removed"; verb: "pause" | "resume" }
   | { action: "noop" };
-
-/** workflow lifecycle verb 类型。 */
-type LifecycleVerb = "abort";
-
-/** workflow lifecycle verb 集合。 */
-const LIFECYCLE_VERBS: ReadonlySet<LifecycleVerb> = new Set(["abort"]);
-
-/** verb 是否为 lifecycle action（类型守卫，收窄到 LifecycleVerb）。 */
-function isLifecycleVerb(verb: string): verb is LifecycleVerb {
-  return LIFECYCLE_VERBS.has(verb as LifecycleVerb);
-}
 
 /**
  * 已移除的 lifecycle verb 集合（pause/resume——run 一次性生命周期化后删除，
@@ -152,9 +141,10 @@ export function parseWorkflowRpcCommand(argsStr: string): WorkflowRpcAction {
   if (isRemovedLifecycleVerb(verb)) {
     return { action: "lifecycle-removed", verb };
   }
-  if (isLifecycleVerb(verb)) {
-    if (!runId) return { action: "lifecycle-missing-id", verb };
-    return { action: verb, runId };
+  // abort 是 lifecycle verb 单成员（pause/resume 已移除，见上），直判即可，无需集合机件
+  if (verb === "abort") {
+    if (!runId) return { action: "lifecycle-missing-id", verb: "abort" };
+    return { action: "abort", runId };
   }
   return { action: "noop" };
 }
