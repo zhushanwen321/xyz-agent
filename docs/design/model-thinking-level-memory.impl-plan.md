@@ -110,7 +110,13 @@ graph TD
 
 1. 实施环境真实模型对的 supportedLevels 同体系性未知（设计 §5 检查点 2）——影响 A1 中「无记忆首切」落点表现，不影响断言；随 Gate B 确认
 2. landing memory-aware 依赖 `currentModelId` 的 landing 分支真值链（flow.currentModel / defaultModel）——u3 单测以 mock 驱动，真实链路差一步由 Gate B A2 双路径兜底
-3.Gate B A1-A6 需要真实 provider 双模型环境（如 builtin:bigmodel-coding-plan 下 GLM-5.3 / GLM-5.3-Flash）——若实施环境模型不满足，以实际可用模型对等价替换（断言结构不变）
+3. Gate B A1-A6 需要真实 provider 双模型环境（如 builtin:bigmodel-coding-plan 下 GLM-5.3 / GLM-5.3-Flash）——若实施环境模型不满足，以实际可用模型对等价替换（断言结构不变）
+
+**Gate B 验收发现（非阻塞）**：
+
+1. **既有跨体系重置的破坏力实证**：换绑 session 焦点时既有对齐规则真实改写了前台 session 档位（会话 2 的「关」被重置为「开」、会话 3 的「高」被重置为「最高」）——§1 Out of scope 登记的既有行为，非本设计引入；记忆恢复全程未参与（A3 断言）。建议另行立项修复
+2. **UI 菜单与 pi 真实能力不同源**：GLM-5.2 档位菜单显示「最高」但 pi 回执钳制为 high（pi 会话文件 max→high 双 entry 实证）——记忆表记录回执生效值 high（E8 语义正确）；「用户选最高、切回得到高」符合「最后生效」语义，但 UI 菜单显示与真实能力的差异属既有 popover 数据源问题
+3. **切模型窗口多余幂等 RPC**：providers/map 在切换窗口二次变化时，armed 恢复完成后既有分支可能多发一条幂等 RPC（最终态正确）；概率低（需 providers 恰在切换窗口刷新），无正确性影响
 
 **变更历史**：
 
@@ -119,3 +125,4 @@ graph TD
 | 2026-08-31 | 计划创建（设计文档 commit b27c175ce，4 轮审查 0 must-fix） |
 | 2026-08-31 | 基线 commit 9de8deb6a；u1-u5 开发循环完成（commit b1232f262 / a71d031f1 / f58a63a4e / — / d581d1ce7） |
 | 2026-08-31 | 一致性审查 R1（reviewer agent）：6 reasonable + 1 unreasonable + 4 doc_errors → 修复批次 bf83a5758 + 文档联动；定向复审抓到 R1 引入 critical 回归（landing 判定写后读）→ R2 修复 efdbf2f92（生产保真 harness + UF3 保留方向 + 变异自证）→ 定向复审通过，**一致性审查收敛（0 unreasonable / 0 doc_errors）**，审查者独立变异验证双重确认 |
+| 2026-08-31 | 双级验收：Gate A 通过（core 全量 1362 绿 / 双 typecheck 绿 / composer 域 213 绿 / eslint 0 error / 覆盖矩阵无未认领区 / 零容忍检查干净；renderer 2 失败为存量，基线复现）。Gate B 真实 app 验收（pnpm dev + browser-automation 连 9222，模型对等价替换为 GLM-5.2/MiMo-V2.5-Pro）：A1 记忆恢复 pass（pi 会话文件 thinking_level_change 序列断言：off/high/max/high，恢复值=记忆值）/ A2 跨重启 pass / A3 session 切换不误伤 pass（终态≠记忆值，记忆未参与改写）/ A4 注毒回落 pass（medium → 回落最高档）/ A6 清除兜底 pass / A5 landing pass、staging blocked（fork/handoff 需在用户真实仓库产生产物，操作风险大于收益；UF1b 单测覆盖 staging 分支路由）→ **Gate A + Gate B 双绿（1 blocked 如实登记）** |
