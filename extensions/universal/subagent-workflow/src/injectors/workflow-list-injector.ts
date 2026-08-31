@@ -32,20 +32,18 @@ import type {
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { getHostServices } from "@zhushanwen/subagent-core/core/host-services.ts";
-// C5①/C5⑦：发现与渲染统一走 core barrel（discoverResources/formatWorkflowList/
-// summarizeDescription + WorkflowEntry 类型均为 barrel 导出面）；barrel 未覆盖的
-// 发现链辅助（findWorkspaceRoot/mtime 缓存解析/meta 解析）暂留深路径——core 补导出后归零
+// C5①/C5⑦/C5b：发现与渲染统一走 core barrel——含发现链辅助
+// （findWorkspaceRoot/getCachedParsed/parseResourceMeta，C5b 起随 barrel 发现面
+// 导出），深路径 import 归零。
 import {
 	discoverResources,
+	findWorkspaceRoot,
 	formatWorkflowList,
+	getCachedParsed,
+	parseResourceMeta,
 	summarizeDescription,
 	type WorkflowEntry,
 } from "@zhushanwen/subagent-core";
-import {
-	findWorkspaceRoot,
-	getCachedParsed,
-} from "@zhushanwen/subagent-core/shared/resource-discovery.ts";
-import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
 
 const logger = getLogger("injector");
 

@@ -91,6 +91,20 @@ export type {
   ResourceSource,
   ScanConfig,
 } from "./shared/resource-discovery.ts";
+// 发现链辅助（C5b）：discoverResources 之外被发现消费方逐文件消费的三个原语——
+// findWorkspaceRoot（project 源根定位）、getCachedParsed/getCachedFileContent
+// （mtime 缓存读取）。发现链消费方（pi-sw injector 等宿主接线）逐条解析
+// DiscoveredResource 的 frontmatter/meta 需要它们，深路径在 npm/vendored 发布
+// 形态不可达，故随发现面出 barrel。
+export {
+  findWorkspaceRoot,
+  getCachedFileContent,
+  getCachedParsed,
+} from "./shared/resource-discovery.ts";
+// parseResourceMeta：.md frontmatter / workflow @pi-meta 的统一 meta 解析
+// （fail-safe null）——发现链消费方从 DiscoveredResource 提取 name/description
+// 的解析入口，与上面发现链辅助同属一个消费面，深路径同样不可达。
+export { parseResourceMeta } from "./shared/meta-parser.ts";
 
 // ── 注入渲染面（shared/injection-render + shared/xml-injection，W3）──
 // 三段 XML（<available_subagents>/<available_workflows>/<available_provider_models>）
