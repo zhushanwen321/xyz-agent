@@ -51,5 +51,5 @@ DAG：u-A ∥ u-B ∥ u-D（并行实施，文件集不重叠）→ u-doc（事�
 - **残留风险 R1**：u-B 的 real-pi 池——**已降级**：本地预验全绿（P3），剩余 = push 后 CI 独立环境复检（S5）。
 - **残留风险 R2**：本 worktree 存在并行会话的活跃提交与认知外改动（extensions/、`packages/shared/src/mandatory-extensions.json`、`scripts/probe-third-host-integration.mjs`）——不在本计划领地，Gate A 若因之出 failures 须归因区分，不计入本计划单元失败。
 - **残留风险 R3**：S1-S4 真实场景收益实证未执行（登记时点：随下次 prerelease）——交付口径为「行为等价已锁定（测试级），收益实证待 S1-S5」。
-- **残留风险 R4（基线既有失败，非本波次，建议用户独立裁决）**：① `useChat-subagent-directive.test.ts` 2 例——`8f93d7feb`（whitespace 去 trim 保真）使 sendSubagentDirective 的 text/task 可能携带前导空格直达 extension，与 U2b 测试 trim 期望冲突。这是**真实语义疑点**：定向通道应局部 trim，还是更新 U2b 期望（保真语义下空格属用户输入）。② `system-page-rename-model.test.ts` 全量并发 5s 超时（单跑过，mount 1066ms 偏慢）——建议独立优化 mock 链路。
+- **残留风险 R4（基线既有失败——2026-09-01 用户指示修复，已清零）**：① `useChat-subagent-directive.test.ts` 2 例——核实发现 `8f93d7feb` 本身已做出语义裁决（同 commit 更新了同款断言期望为带前导空格并注明「chip→text 边界补格保真随行发出」），仅漏改本文件的 2 处期望；修复 = 对齐该裁决补齐期望（`' 展开讲讲'` / `' 帮我修 bug'`），零生产行为变化。② `system-page-rename-model.test.ts` 全量并发超时——SystemPage 集成 mount 固有重（单跑 ~1.1s），并发 CPU 争抢偶发击穿 5s 默认值；修复 = 文件级 `vi.setConfig({ testTimeout: 20_000 })` 资源竞争容差。验证：两文件单跑 8/8 + renderer 全量 **355 文件 / 3666 passed，0 failed**。
 - **残留风险 R5（执行注意项）**：S4 的「与删除前一致」基线依赖执行人认知（旧轨已删无法同机 A/B 对比），prerelease 执行时按 §4.2 S4 的 7 类操作清单 + 回退订阅断言核对。
