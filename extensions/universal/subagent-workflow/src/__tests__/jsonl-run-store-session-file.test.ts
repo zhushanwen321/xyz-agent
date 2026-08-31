@@ -708,6 +708,35 @@ describe("W7: flushPendingSaves / dispose / 串行链", () => {
     expect(debugDump).toContain("run-w2tc10");
   });
 
+  it("W2TC10b: dispose 进行中（pending flush 未落定）新 save 立即被拦截（disposed 同步置位先于 flush 收集）", async () => {
+    const run = makeRunningRun("run-w2tc10b");
+    await store.save(run); // 首写
+    // 时序控制：dispose 收批 flush 的 writeFile 挂 gate（dispose 久久不 settle）
+    vi.spyOn(fs.promises, "mkdir").mockResolvedValue(undefined);
+    let gateResolve!: () => void;
+    const gate = new Promise<void>((r) => {
+      gateResolve = r;
+    });
+    const wfSpy = vi.spyOn(fs.promises, "writeFile");
+    wfSpy.mockImplementationOnce(() => gate);
+
+    run.state.trace.append(makeTraceNode(1));
+    const pHot = store.save(run); // 热批 pending
+    const d = store.dispose(); // 同步段：disposed=true → flushPendingSaves 收批挂链；flush#1 在 gate 上挂起
+
+    // dispose 窗口内（d 未 settle）迟到 save：disposed 已置位 → R5 静默 no-op，
+    // 不产生第二次写盘（折叠前内联实现同等时序）
+    run.transition("done", "completed");
+    await expect(store.save(run)).resolves.toBeUndefined();
+    expect(wfSpy).toHaveBeenCalledTimes(1); // 仅 dispose 收批的那次 flush 在写
+
+    gateResolve();
+    await d;
+    await pHot; // 收批 settlers（含热批）settle
+    expect(wfSpy).toHaveBeenCalledTimes(1); // 窗口内 save 未追加写
+    expect(readStateFile(tmpDir, "run-w2tc10b").state.status).toBe("running");
+  });
+
   it("W2TC11: per-runId 串行 flush 链——前一 flush in-flight 时后续 flush 排队，无并发 writeFile", async () => {
     const run = makeRunningRun("run-w2tc11");
     await store.save(run); // 首写

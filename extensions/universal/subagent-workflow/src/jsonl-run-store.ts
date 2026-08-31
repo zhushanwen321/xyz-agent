@@ -35,10 +35,13 @@
  * - dispose()：幂等（缓存自身 Promise）；刷全部 pending 批 + await 全部 in-flight
  *   链后返回。dispose 后 save 静默 no-op + debug 日志（session_shutdown 编排收尾）。
  *
- * 序列化策略：
- * - WorkflowRun 是带方法的 class 聚合根——序列化只取公共字段快照。
- * - Budget/Trace/AgentCall 都有公共构造器或 fromArray 工厂，反序列化时重建实例。
- * - Snapshot 形态用 SnapshotVersion 守护（D-5：格式识别）。
+ * 序列化策略（下沉收口 D4 后）：
+ * - 快照投影/重水合/版本 guard 全部消费 core run-snapshot codec（toRunSnapshot/
+ *   fromRunSnapshot）——字段演进单点（G2）；本 store 只保留 IO 策略（rewrite/
+ *   去抖/append，D4 裁决：IO 差异归属宿主 store 层）。
+ * - 版本值沿用 core SNAPSHOT_VERSION "wf-run-v2"（D4 裁决①：pi 存量逐字节可读）。
+ * - pi 侧版本不匹配静默跳过语义保持（D-5）；「缺 v 宽容」是 core FileRunStore
+ *   侧的存量预处理职责，不内聚进 codec（D4 裁决②），故本侧零改动即保持。
  *
  * [S3 查证结论] pi 0.84.1 实装（node_modules/@earendil-works/pi-coding-agent/dist，
  * core/session-manager.js，PS-19）的 session 生命周期管理不含自动 GC：
@@ -64,74 +67,13 @@ import * as path from "node:path";
 import type { CustomEntry, ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/subagent-core/core/logger.ts";
 
-import { AgentCall } from "@zhushanwen/subagent-core/orchestration/models/agent-call.ts";
-import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
-import type { RunSpec } from "@zhushanwen/subagent-core/orchestration/models/run-spec.ts";
-import type { RunState } from "@zhushanwen/subagent-core/orchestration/models/run-state.ts";
-import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
-import type { DoneReason, RunStatus, WorkerLogEntry } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import type { AgentCallOpts, AgentResult, ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import type { WorkflowRunMeta } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
 import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-
-// ── Snapshot format (D-5 version guard) ──────────────────────
-
-/**
- * 快照格式版本。D-5：旧 session（无此字段或值不匹配）被 loadAll 忽略。
- *
- * 版本历史：
- * - wf-run-v1：status 三态（含 paused）、meta 含 pausedAt。
- * - wf-run-v2（当前）：status 两态（running/done）、meta 无 pausedAt（随一次性
- *   生命周期收窄，F6/F8）。v1 文件 loadAll 静默跳过——含 v1 running 残留跳过 =
- *   静默消失不显示，接受（父文档 D-5 边界声明：旧 run 历史价值低，不做兼容迁移）。
- *
- * 升级格式时 bump 此常量并在 deserializeRun 中适配——旧文件返回 null（被 loadAll 跳过）。
- */
-export const SNAPSHOT_VERSION = "wf-run-v2" as const;
-
-/**
- * 持久化快照形态——WorkflowRun 公共字段的 JSON 可序列化投影。
- *
- * calls 序列化为数组（Map 不能直接 JSON.stringify）；反序列化时重建 Map。
- * budget/trace 在 deserialize 时重建实例（带方法的 class）。
- */
-interface RunSnapshot {
-  v: typeof SNAPSHOT_VERSION;
-  runId: string;
-  spec: RunSpec;
-  state: {
-    status: RunStatus;
-    reason?: DoneReason;
-    budget: {
-      maxTokens?: number;
-      maxCost?: number;
-      maxTimeMs?: number;
-      usedTokens: number;
-      usedCost: number;
-      totalCallCount: number;
-    };
-    calls: Array<{
-      id: number;
-      opts: AgentCallOpts;
-      status: "pending" | "running" | "done";
-      attempts: number;
-      result?: AgentResult;
-      sessionId?: string;
-      sessionFile?: string;
-      traceNode: ExecutionTraceNode;
-    }>;
-    trace: ExecutionTraceNode[];
-    errorLogs: WorkerLogEntry[];
-    error?: string;
-    scriptResult?: unknown;
-  };
-  meta: {
-    startedAt: string;
-    completedAt?: string;
-    workerErrorCount?: number;
-    scriptErrorCount?: number;
-  };
-}
+import {
+  SNAPSHOT_VERSION,
+  fromRunSnapshot,
+  toRunSnapshot,
+  type RunSnapshot,
+} from "@zhushanwen/subagent-core/orchestration/run-snapshot.ts";
 
 // ── Workflow-record self-describing entry (W17, D4) ─────────
 
@@ -147,7 +89,7 @@ export const WORKFLOW_RECORD_CUSTOM_TYPE = "workflow-record";
  *
  * = 完整 RunSnapshot 快照（runId/status/calls/trace 等全部重建需要的字段）+ 版本号。
  * 读取方无需逆向解析 state 文件或指针（D4 自描述原则）；snapshot 内部自带 D-5
- * snapshotVersion guard（deserializeRun 检查），entry 层 v 与 snapshot 层 v 是两级
+ * snapshotVersion guard（fromRunSnapshot 检查），entry 层 v 与 snapshot 层 v 是两级
  * 独立版本（entry schema 演化 vs 快照格式演化）。
  */
 // 模块内类型（不导出：无外部消费方，fallow unused_types/private_type_leaks 双轨判定；
@@ -166,117 +108,25 @@ function toWorkflowRecordEntryData(snapshot: RunSnapshot): WorkflowRecordEntryDa
   return { v: 1, snapshot, updatedAt: new Date().toISOString() };
 }
 
-// ── Serialization ────────────────────────────────────────────
-
-function serializeRun(run: WorkflowRun): RunSnapshot {
-  return {
-    v: SNAPSHOT_VERSION,
-    runId: run.runId,
-    spec: run.spec,
-    state: {
-      status: run.state.status,
-      reason: run.state.reason,
-      budget: {
-        maxTokens: run.state.budget.maxTokens,
-        maxCost: run.state.budget.maxCost,
-        maxTimeMs: run.state.budget.maxTimeMs,
-        usedTokens: run.state.budget.usedTokens,
-        usedCost: run.state.budget.usedCost,
-        totalCallCount: run.state.budget.totalCallCount,
-      },
-      calls: Array.from(run.state.calls.values()).map((c) => {
-        // strip live（同 trace 序列化，不持久化运行期对象）
-        const { live: _live, ...traceNodeRest } = c.traceNode;
-        return {
-          id: c.id,
-          opts: c.opts,
-          status: c.status,
-          attempts: c.attempts,
-          result: c.result,
-          sessionId: c.sessionId,
-          sessionFile: c.sessionFile,
-          traceNode: traceNodeRest,
-        };
-      }),
-      // trace 节点浅拷贝时 strip live 字段——ExecutionRecord 含可变 turns[]/controller，
-      // 不适合序列化；live 是运行期对象（done 时由 dispatchAgentCall 清除，重跑时重建）。
-      trace: run.state.trace.toArray().map(({ live: _live, ...rest }) => rest),
-      errorLogs: run.state.errorLogs,
-      error: run.state.error,
-      scriptResult: run.state.scriptResult,
-    },
-    meta: run.meta,
-  };
-}
-
-/**
- * 反序列化快照为 WorkflowRun。D-5：版本不匹配返回 null（旧 session）。
- */
-function deserializeRun(snapshot: RunSnapshot): WorkflowRun | null {
- // D-5 version guard
-  if (snapshot.v !== SNAPSHOT_VERSION) return null;
-
-  const budget = new Budget({
-    maxTokens: snapshot.state.budget.maxTokens,
-    maxCost: snapshot.state.budget.maxCost,
-    maxTimeMs: snapshot.state.budget.maxTimeMs,
-    usedTokens: snapshot.state.budget.usedTokens,
-    usedCost: snapshot.state.budget.usedCost,
-  });
-  budget.totalCallCount = snapshot.state.budget.totalCallCount;
-
-  const calls = new Map<number, AgentCall>();
-  for (const c of snapshot.state.calls) {
-    const call = new AgentCall(c.id, c.opts, c.traceNode);
-    call.status = c.status;
-    call.attempts = c.attempts;
- // Restore result directly — bypasses markRunning/markDone state-machine guards
- // because we're reconstructing a known-good persisted state, not transitioning.
-    if (c.result !== undefined) {
-      call.result = c.result;
-    }
-    if (c.sessionId !== undefined) {
-      call.setSessionId(c.sessionId);
-    }
-    if (c.sessionFile !== undefined) {
-      call.setSessionFile(c.sessionFile);
-    }
-    calls.set(c.id, call);
-  }
-
-  const trace = Trace.fromArray(snapshot.state.trace);
-
-  const state: RunState = {
-    status: snapshot.state.status,
-    reason: snapshot.state.reason,
-    budget,
-    calls,
-    trace,
-    errorLogs: snapshot.state.errorLogs,
-    error: snapshot.state.error,
-    scriptResult: snapshot.state.scriptResult,
-  };
-
-  const meta: WorkflowRunMeta = {
-    startedAt: snapshot.meta.startedAt,
-    completedAt: snapshot.meta.completedAt,
-    workerErrorCount: snapshot.meta.workerErrorCount,
-    scriptErrorCount: snapshot.meta.scriptErrorCount,
-  };
-
- // WorkflowRun.reconstruct 跳过 I1 校验——持久化的 running 状态没有 worker
- // （进程被杀后 worker 不可能还活着），违反 I1。D-4 kill-9 恢复在 session_start
- // 时把残留 running 转 done,failed，恢复 I1（见 index.ts session_start handler）。
-  return WorkflowRun.reconstruct(snapshot.runId, snapshot.spec, state, meta);
-}
+// ── Serialization → core codec（下沉收口 D4）──────────────────
+//
+// serializeRun/deserializeRun 本地投影已退役：快照投影/重水合/版本 guard 单源消费
+// core run-snapshot codec（toRunSnapshot/fromRunSnapshot）。键序与 strip live 语义
+// 与原本地实现逐字节一致（⛔5 快照锚定：__tests__/jsonl-run-store-snapshot-codec.test.ts）；
+// 唯一投影差异 = spec.budgetRef 剔除（codec 单源裁决，嵌套 run 落盘少一脏字段，
+// 性质同 strip live——同偏差登记）。
 
 /** workflow-record entry → 重建 run 写入 recordRuns（v1 entry guard + D-5 版本不匹配
  *  跳过；同 runId 后写覆盖 = 最后一条 entry 胜出）。返回 entry 是否命中该类型。
  *
- *  [SO-DATA-2] per-entry 隔离：deserializeRun 在 v guard 之后直接读 snapshot.state.budget
- *  等嵌套字段，残缺 entry（截断/手改/半写）抛 TypeError 会沿 collectEntrySources 穿透
- *  loadAll 的 catch → 返回空——单条损坏让全部 run 不可见。现单条 try/catch：损坏
- *  entry 跳过 + warn 留证（含 entry 索引与原因），其余 entry 正常重建。
+ *  版本可见性分层（D4 裁决③宿主侧落地）：v 不匹配（v1 存量/未来版本）→ 静默跳过
+ *  （既有语义）；v 匹配但形状损坏（codec 返回 undefined——codec 形状校验不抛）→
+ *  warn 留证。
+ *
+ *  [SO-DATA-2] per-entry 隔离：残缺 entry（截断/手改/半写）不得让 loadAll 返回空。
+ *  原实现靠「deserializeRun 抛 TypeError → catch → warn」；codec 收敛后形状损坏
+ *  走 undefined 返回（warn 分支保持同等留证），try/catch 保留兜底 codec 唯一抛点
+ *  （done 快照缺 reason 的 WorkflowRun I2 不变式）。
  */
 function collectRecordRun(entry: CustomEntry, entryIndex: number, recordRuns: Map<string, WorkflowRun>): boolean {
   if (entry.customType !== WORKFLOW_RECORD_CUSTOM_TYPE) return false;
@@ -284,9 +134,17 @@ function collectRecordRun(entry: CustomEntry, entryIndex: number, recordRuns: Ma
   const data = entry.data as WorkflowRecordEntryData | undefined;
   if (data?.v !== 1 || !data.snapshot) return true;
   try {
-    const run = deserializeRun(data.snapshot);
-    // D-5: null = old snapshot format / version mismatch — skip silently
-    if (run) recordRuns.set(run.runId, run); // 后写覆盖 = 最后一条 entry 胜出
+    if (data.snapshot.v === SNAPSHOT_VERSION) {
+      const run = fromRunSnapshot(data.snapshot);
+      if (run) {
+        recordRuns.set(run.runId, run); // 后写覆盖 = 最后一条 entry 胜出
+      } else {
+        logger.warn(
+          `[subagent-workflow] workflow-record entry #${entryIndex} corrupted, skipped run rebuild: snapshot shape invalid`,
+        );
+      }
+    }
+    // D-5: 版本不匹配 = old snapshot format / future version — skip silently
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     logger.warn(
@@ -325,17 +183,17 @@ function collectEntrySources(entries: SessionEntry[]): {
   return { recordRuns, pointers };
 }
 
-/** 旧 link 指针指向的 state 文件读取：末行 JSON 解析重建。损坏/不可读返回 null
- *  （单文件失败不阻断其余 run 重建）。 */
+/** 旧 link 指针指向的 state 文件读取：末行 JSON 解析重建。损坏/不可读/版本不匹配
+ *  返回 null（单文件失败不阻断其余 run 重建；D-5 静默跳过语义保持）。 */
 async function loadRunFromStateFile(filePath: string): Promise<WorkflowRun | null> {
   try {
     const content = await fs.promises.readFile(filePath, "utf8");
     const lines = content.split("\n").filter((l) => l.trim());
     const lastLine = lines[lines.length - 1];
     if (!lastLine) return null;
-    const parsed = JSON.parse(lastLine) as RunSnapshot;
-    // D-5: null = old format / version mismatch — skip silently
-    return deserializeRun(parsed);
+    const parsed: unknown = JSON.parse(lastLine);
+    // D-5: undefined = old format / version mismatch / corrupt shape — skip silently
+    return fromRunSnapshot(parsed) ?? null;
   } catch {
     // Corrupt/unreadable state file — skip (don't crash loadAll).
     return null;
@@ -412,9 +270,9 @@ const logger = getLogger("subagents");
  * save 去抖窗口默认值（ms）。区间 100-250 内取值——agent-call 间隔秒级，
  * 200ms 足以合并同一 call 周期内的多次状态 mutation，又不至于让崩溃窗口
  * （未 flush 的 running 尾部丢失，等价崩溃链由 kill-9 恢复收编）明显放大。
- * export 供测试边界构造（对齐 TRACE_RESULT_MAX_CHARS export 先例）。
+ * 模块私有：无外部消费方（构造参数 saveDebounceMs 可调窗口，测试经其注入）。
  */
-export const DEFAULT_SAVE_DEBOUNCE_MS = 200;
+const DEFAULT_SAVE_DEBOUNCE_MS = 200;
 
 /**
  * 磁盘保留清理的 opt-in 开关 env（B1）：workflow-state 目录内 run state 文件上限。
@@ -453,7 +311,7 @@ interface PendingSaveBatch {
   settlers: Array<{ resolve: () => void; reject: (e: unknown) => void }>;
 }
 
-export interface JsonlRunStoreOptions {
+interface JsonlRunStoreOptions {
   /** Session directory root (state files live under <sessionDir>/workflow-state/). */
   sessionDir: string;
   /** Pi ExtensionAPI for workflow-record appendEntry writes (optional for testing). */
@@ -646,7 +504,7 @@ export class JsonlRunStore {
         throw err;
       }
       // serialize-at-flush：写 flush 时刻的最新聚合状态（latestRun 语义）
-      const snapshot = serializeRun(run);
+      const snapshot = toRunSnapshot(run);
       await fs.promises.writeFile(filePath, JSON.stringify(snapshot) + "\n", "utf8");
       // W17 [D4]：每次成功 flush 同步 append 自描述 workflow-record entry（同一份
       // snapshot，entry 与 state 文件内容一致）。pi 文件是 workflow 数据持久化权威
@@ -711,15 +569,13 @@ export class JsonlRunStore {
 
   private async doDispose(): Promise<void> {
     // 同步置位：阻断新 save 进入去抖/冷路径（R5 no-op 分支接住 shutdown 后
-    // in-flight 链的迟到 save）。doDispose 被调用后同步执行到第一个 await 前。
+    // in-flight 链的迟到 save）。置位必须先于 flushPendingSaves——async 函数体
+    // 在调用时同步执行到第一个 await，批收集发生在置位后的同一同步段，时序与
+    // 折叠前的内联收集逐分支等值。
     this.disposed = true;
-    const flushes: Promise<void>[] = [];
-    for (const [runId, batch] of Array.from(this.pending.entries())) {
-      clearTimeout(batch.timer);
-      this.pending.delete(runId);
-      flushes.push(this.enqueueFlush(runId, batch.latestRun, batch.settlers, false));
-    }
-    await Promise.allSettled(flushes);
+    // 复用 flushPendingSaves（批收集循环与 await allSettled 与折叠前内联实现逐行等价；
+    // flushPendingSaves 自身不动 disposed——dispose 语义仍由本方法的置位与缓存 Promise 承担）
+    await this.flushPendingSaves();
     // await 全部 in-flight 链（ES4：flush 全部落定后才返回）
     await Promise.allSettled(Array.from(this.chains.values()));
   }
@@ -729,8 +585,8 @@ export class JsonlRunStore {
  *
  * 1. 优先扫描自描述 `workflow-record` entry（重建源——同一 runId 多条时最后一条
  *    胜出，等价「最后一次成功 flush」）。entry 层 v1 guard：不认识的版本跳过而非
- *    猜测；snapshot 层 D-5 snapshotVersion guard 保持（版本不匹配 → deserializeRun
- *    返回 null → 跳过，不做兼容迁移）。
+ *    猜测；snapshot 层 D-5 snapshotVersion guard 保持（版本不匹配 → fromRunSnapshot
+ *    返回 undefined → 跳过，不做兼容迁移）。
  * 2. 旧 `workflow-state-link` 指针 entry 兼容读取（优先级低——存量 run 不静默
  *    丢失，父文档 #9 踩坑）：entry 未覆盖的 runId 经指针读 state 文件最后行。
  *

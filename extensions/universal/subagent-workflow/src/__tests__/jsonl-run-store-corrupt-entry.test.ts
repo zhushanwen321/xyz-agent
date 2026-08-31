@@ -36,7 +36,8 @@ import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
 import type { RunSpec } from "@zhushanwen/subagent-core/orchestration/models/run-spec.ts";
 import type { ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
 import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-import { JsonlRunStore, SNAPSHOT_VERSION, WORKFLOW_RECORD_CUSTOM_TYPE } from "../jsonl-run-store.ts";
+import { SNAPSHOT_VERSION } from "@zhushanwen/subagent-core/orchestration/run-snapshot.ts";
+import { JsonlRunStore, WORKFLOW_RECORD_CUSTOM_TYPE } from "../jsonl-run-store.ts";
 import { mkCtx, mkPi } from "@zhushanwen/subagent-core/orchestration/__tests__/test-mocks.ts";
 
 function makeSpec(): RunSpec {
