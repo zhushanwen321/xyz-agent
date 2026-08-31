@@ -14,7 +14,7 @@
  *  - provider 存量超域：maxRetries=15 原样回填 → 保存被拒，错误 toast 指向 provider.maxRetries
  *    （D8：超域不得因显示为空而静默丢失）；
  *  - provider 存量非整秒域内值：timeoutMs/maxRetryDelayMs=1500 → 回填 "1.5"/"1.5"，保存 Math.round
- *    回存 1500（N1：小数秒输入合法化，修复前被拒「请输入合法数字」）；
+ *    回存 1500（小数秒输入合法化，修复前被拒「请输入合法数字」）；
  *  - provider 全未设：三输入留空 = 未设 → 保存成功，载荷 provider 键值为 undefined（留空路径回归）；
  *  - 小数秒组装：baseDelay=1.005 → baseDelayMs 1005（Math.round 消浮点尾差，校验通过）。
  *
@@ -446,7 +446,7 @@ describe('SystemLlmRetrySection（u3 LLM 调用重试）', () => {
 
     await wrapper.find('[data-testid="llm-retry-advanced-toggle"]').trigger('click')
     await flushPromises()
-    // N1 后 timeout 键接受小数秒（1.5 已合法），改用溢出输入 '1e999'（Number → Infinity，
+    // timeout 键接受小数秒（1.5 已合法），改用溢出输入 '1e999'（Number → Infinity，
     // number input 原样保留该值）触发解析拒绝路径
     await setInput(wrapper, 'llm-retry-provider-timeout-input', '1e999')
     await wrapper.find('[data-testid="llm-retry-save-btn"]').trigger('click')

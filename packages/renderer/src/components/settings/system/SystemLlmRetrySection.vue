@@ -239,13 +239,13 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
-/** 数值域检查：返回 [是否合法, 展示值（超域时原样展示存量值）]。类型不可用按默认值展示。 */
+/** 数值域检查：返回 { ok 是否域内, display 表单展示值（超域原样展示存量值，类型不可用时为 fallbackDisplay）, raw 原值字符串 }。display 恒为 number，仅基础两键回填消费；provider 各键回填走调用点独立 isFiniteNumber 路径（D8 超域原样回填），ms 键警示因需 ms→秒换算走 warnTextForMs(原值) 而弃用 raw。 */
 function checkDomain(
   value: unknown,
   min: number,
   max: number,
   fallbackDisplay: number,
-): { ok: boolean; display: number | string; raw: string } {
+): { ok: boolean; display: number; raw: string } {
   if (!isFiniteNumber(value)) {
     // D7 坏值承接：表单显示默认值，行内同款标注
     return { ok: false, display: fallbackDisplay, raw: String(value) }
@@ -260,8 +260,7 @@ function warnText(raw: string): string {
 
 /** ms 时长键警示文本：换算为秒展示（输入框为秒口径，避免 ms 原值与秒输入并排单位不符）；坏值原样展示。 */
 function warnTextForMs(raw: unknown): string {
-  const value = isFiniteNumber(raw) ? String(raw / MS_PER_SEC) : String(raw)
-  return t('settings.system.llmRetryOutOfDomain', { value })
+  return warnText(isFiniteNumber(raw) ? String(raw / MS_PER_SEC) : String(raw))
 }
 
 /** 加载值落到表单：合法值直接显示；超域值原样显示；坏值回落默认显示。超域/坏值均加行内标注。 */
@@ -270,11 +269,11 @@ function applyLoaded(config: LlmRetryConfig): void {
   for (const key of Object.keys(warnings)) delete warnings[key]
   enabled.value = config.enabled
   const mr = checkDomain(config.maxRetries, LLM_RETRY_DOMAIN.maxRetries.min, LLM_RETRY_DOMAIN.maxRetries.max, PI_DEFAULT_MAX_RETRIES)
-  maxRetries.value = typeof mr.display === 'number' ? mr.display : ''
+  maxRetries.value = mr.display
   if (!mr.ok) warnings.maxRetries = warnText(mr.raw)
 
   const bd = checkDomain(config.baseDelayMs, LLM_RETRY_DOMAIN.baseDelayMs.min, LLM_RETRY_DOMAIN.baseDelayMs.max, PI_DEFAULT_BASE_DELAY_MS)
-  baseDelaySec.value = typeof bd.display === 'number' ? bd.display / MS_PER_SEC : ''
+  baseDelaySec.value = bd.display / MS_PER_SEC
   if (!bd.ok) warnings.baseDelayMs = warnTextForMs(config.baseDelayMs)
 
   const p = config.provider ?? {}
