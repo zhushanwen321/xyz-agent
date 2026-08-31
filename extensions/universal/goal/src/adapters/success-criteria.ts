@@ -3,9 +3,10 @@
  * - slash 通道：/goal update --criteria（command-adapter.ts handleUpdate）
  * - tool 通道：goal_control create（goal-control-adapter.ts requireCreateSuccessCriteria）
  *
- * 三条校验规则（typeof string / trim 非空 / 单行）与错误消息前半句在两通道逐字一致，
- * 仅「Correct:」恢复正例随通道不同（slash 用法提示 vs tool JSON 正例），
- * 经 CriteriaUsageHints 参数化。校验顺序与错误文案与折叠前完全一致。
+ * 三条校验规则（typeof string / trim 非空 / 单行）与错误消息前半句在两通道逐字一致；
+ * 「Correct:」恢复正例经 CriteriaUsageHints 参数化——notString/empty 两通道都是 JSON 形式
+ * （action 字段区分 update/create），仅 multiline 的 Correct 正例随通道不同
+ * （slash 用法提示 vs tool JSON 正例）。校验顺序与错误文案与折叠前完全一致。
  */
 
 /** 各通道的恢复正例（「Correct:」之后的部分） */

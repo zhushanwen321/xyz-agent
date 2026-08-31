@@ -1,5 +1,6 @@
 // 提示词质量回归：todo tool 的 description 与 runtime 纠错文案必须是
-// "弱模型友好"的——条件必填字段在 schema 层强约束（见 schema.test.ts），双形陷阱
+// "弱模型友好"的——条件必填字段（add 缺 texts、delete 缺 ids）在 handler 运行时校验
+// （schema 扁平化后字段全 Optional，见 tool.ts 头注释），双形陷阱
 // （text/texts、id/ids）的 throw 要带 Correct 纠错正例让模型自我纠正。
 //
 // 本测试用源码文本断言锁定这些约束，防止后续重构把纠错文案删掉或弱化。读源码而非

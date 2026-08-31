@@ -10,6 +10,8 @@
   - Legacy single-string goals migrate transparently: criteria are split by lines with defensive normalization, no user action needed
   - Plan-initiated goals display one summary line plus numbered step previews instead of one long concatenated string
 
+  > Erratum (post-release, 2026-08-31): the "numbered checklist with per-item completion status" wording above does not match the shipped rendering. The TUI widget renders criteria as one truncated line joined with `"; "` and the RPC GUI renders them as an unnumbered list-tree with no per-item status; per-item numbered display exists only in `/goal status`.
+
 ## 0.10.0
 
 ### Minor Changes

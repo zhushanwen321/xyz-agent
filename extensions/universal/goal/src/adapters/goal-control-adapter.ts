@@ -44,7 +44,7 @@ import type { GoalSession } from "../session";
 import { buildPorts } from "./ports";
 import { CRITERIA_HINTS_TOOL, validateSuccessCriteriaItems } from "./success-criteria";
 
-// ── Params schema（discriminated union，C3）────────────
+// ── Params schema（扁平 Type.Object，OpenAI 兼容）────────────
 
 /**
  * goal_control 参数 schema。扁平 Type.Object + action 字段级 Type.Union（等价 enum）。

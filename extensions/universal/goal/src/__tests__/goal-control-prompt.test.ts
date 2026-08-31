@@ -3,8 +3,8 @@
 //
 // agent（LLM）唯一能看到的 tool 元信息就是 description + 报错文案。description 用中文
 // 重写（动作 create/complete/report_blocked + 规则 + §2.5 终态语义），删除英文 Examples/Don't
-// 段；runtime throw 保留 .trim() 空串校验 + 'Correct:' 纠正正例（缺失必填已前移到 schema
-// discriminated union 层拒绝，C3）。
+// 段；runtime throw 保留 .trim() 空串校验 + 'Correct:' 纠正正例（schema 为扁平 Type.Object
+// + action 字段级 union，字段全部 Optional——缺失必填由 handler 运行时校验兜底）。
 //
 // 本测试用源码断言（读 .ts 文件文本）锁定这些约束，防止后续重构把中文语义/纠错文案/
 // union 结构删掉。读源码而非 import，避免 mock 链（goal-control-adapter.ts 依赖
@@ -55,8 +55,8 @@ describe("goal_control description — 删除 Examples/Don't 英文段", () => {
 	});
 });
 
-describe("goal_control schema — discriminated union（C3）", () => {
-	it("Type.Union + 各分支 additionalProperties:false + 无 timeBudgetMinutes", () => {
+describe("goal_control schema — 扁平 Type.Object（OpenAI 兼容）+ handler 运行时校验", () => {
+	it("字段级 Type.Union + additionalProperties:false + 无 timeBudgetMinutes", () => {
 		expect(ADAPTER_SRC).toMatch(/Type\.Union\(/);
 		expect(ADAPTER_SRC).toContain("additionalProperties: false");
 		expect(ADAPTER_SRC).not.toMatch(/timeBudgetMinutes/);

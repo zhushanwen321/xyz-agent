@@ -110,7 +110,7 @@ function makeRunningState(overrides?: Partial<GoalRuntimeState>): GoalRuntimeSta
 // ── handleAgentEnd：ESC 守卫 ──────────────────────────
 
 describe("handleAgentEnd — FR-6.7 ESC 守卫", () => {
-	it("aborted=true：不发 continuation、不递增 stall、不做 budget 检查、goal 保持 active", async () => {
+	it("aborted=true：不发 continuation、不做 budget 检查、goal 保持 active", async () => {
 		const { pi, calls: piCalls, states } = makeFakePi();
 		const { ctx, calls: ctxCalls } = makeFakeCtx({ aborted: true });
 		const session = createGoalSession();

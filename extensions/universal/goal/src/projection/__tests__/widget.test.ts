@@ -3,8 +3,8 @@
  *
  * 覆盖：
  * - toSingleLine: 多行压缩
- * - renderStatusLine: 状态后缀 + cancelled 短路 + 预算/停滞指标
- * - renderWidgetLines: cancelled 短路 + objective + 预算进度条
+ * - renderStatusLine: slug 标题（fallback objective 截断）+ 状态后缀 + cancelled 短路 + token/耗时显示
+ * - renderWidgetLines: cancelled 短路 + 标题行 + criteria 摘要单行 + 预算进度条（Objective 全文行已移除，GAP-8）
  * - renderTerminalStatusLine: 终态单行 + cancelled 短路
  * - updateWidget: FR-6.6 hasUI 守卫 + 终态折叠 + cancelled 清除
  *
