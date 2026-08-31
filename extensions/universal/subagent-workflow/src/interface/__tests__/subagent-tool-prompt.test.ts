@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { dirname,join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 import { describe, expect, it } from "vitest";
 
@@ -153,12 +154,14 @@ describe("subagent tool runtime handler — 错误文案含纠正正例", () => 
   // 让弱模型撞错后第二次能直接照抄正确形态。
   // 拍平后：startParam envelope 删除，平铺 task/slug 是合法形态；
   // 平铺检测 guard（hasFlattenedStartFields）已删除，源码不应再含此表达式。
-  it("subagent-actions.ts startHandler throw 含 Correct 纠正正例（平铺形态）", () => {
+  it("startHandler throw 含 Correct 纠正正例（平铺形态）", () => {
+    // [D6②] startHandler 内核（含 Correct 文案）已下沉 core subagent-actions-core，
+    // 断言目标跟随文案权威源（resolve 方式同 prompt-quality-batch1 U4 先例）。
     const actionsSrc = readFileSync(
-      join(__dirname, "../subagent-actions.ts"),
+      createRequire(import.meta.url).resolve("@zhushanwen/subagent-core/execution/subagent-actions-core.ts"),
       "utf-8",
     );
-    // 三处 throw（input 缺失 / task 空白 / slug 空白）都应含 Correct 正例。
+    // 四处 throw（input 缺失 / task 空白 / slug 空白 / slug 超长）都应含 Correct 正例。
     // 用 occurrences 计数——至少 3 处。
     const occurrences = (actionsSrc.match(/Correct: \{"action":"start"/g) ?? []).length;
     expect(occurrences).toBeGreaterThanOrEqual(3);

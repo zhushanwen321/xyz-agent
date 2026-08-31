@@ -10,7 +10,8 @@
  * 'auto-injected' 关键词；description 源码含 'auto-injected'/'do not poll' 关键词。
  *
  * adapter import 不依赖 pi SDK（纯函数），可直接调用。description 测试用源码断言
- * （与 subagent-tool-prompt.test.ts 一致策略）。
+ * （与 subagent-tool-prompt.test.ts 一致策略）；BG_MESSAGE [D6②] 权威源下沉 core
+ * 后改为运行时断言（core 侧另有精确值快照）。
  */
 
 import { readFileSync } from "node:fs";
@@ -21,6 +22,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ListHandlerResult } from "../interface/subagent-actions.ts";
 import { adapter } from "../interface/subagent-actions.ts";
+import { BG_MESSAGE } from "@zhushanwen/subagent-core/execution/subagent-actions-core.ts";
 
 // ── adapter reminder test fixtures ──
 
@@ -28,11 +30,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const SUBAGENT_TOOL_SRC = readFileSync(
 	join(__dirname, "../interface/subagent-tool.ts"),
-	"utf-8",
-);
-
-const SUBAGENT_ACTIONS_SRC = readFileSync(
-	join(__dirname, "../interface/subagent-actions.ts"),
 	"utf-8",
 );
 
@@ -81,18 +78,12 @@ describe("subagent-actions adapter list action reminder (FR-4/AC-4)", () => {
 });
 
 describe("BG_MESSAGE 强化 (FR-5)", () => {
-	/** 从源码里提取 const BG_MESSAGE = "..." 的字符串值。 */
-	function extractBgMessage(src: string): string {
-		const m = src.match(/const\s+BG_MESSAGE\s*=\s*"([^"]*)"/);
-		if (!m) throw new Error("BG_MESSAGE constant not found");
-		return m[1];
-	}
-
-	it("subagent-actions.ts 源码 BG_MESSAGE 字符串含 'auto-injected' 或 'do not poll' 关键词", () => {
-		// [B9] 防回退守护测试：验证源码文本常量 BG_MESSAGE 不被误改/弱化（如有人删掉
-		// 'auto-injected' 提示词），非运行时行为断言。运行时行为由 adapter list reminder 测试覆盖。
-		const value = extractBgMessage(SUBAGENT_ACTIONS_SRC);
-		expect(value).toMatch(/auto-injected|do not poll/i);
+	it("BG_MESSAGE 字符串含 'auto-injected' 或 'do not poll' 关键词", () => {
+		// [B9] 防回退守护测试：BG_MESSAGE 不被误改/弱化（如有人删掉 'auto-injected'
+		// 提示词）。[D6②] 常量权威源已随领域内核下沉 core subagent-actions-core
+		//（原为读 subagent-actions.ts 源码文本提取，实现位置迁移后改运行时断言——
+		// 行为等值，core 侧另有精确值快照）。运行时行为由 adapter list reminder 测试覆盖。
+		expect(BG_MESSAGE).toMatch(/auto-injected|do not poll/i);
 	});
 });
 
