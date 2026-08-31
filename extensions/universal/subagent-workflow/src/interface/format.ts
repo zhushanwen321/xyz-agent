@@ -1,4 +1,4 @@
-// src/tui/format.ts
+// src/interface/format.ts
 //
 // 纯格式化函数.零 Pi 依赖、零 runtime 依赖,可单测.
 //
@@ -217,9 +217,8 @@ export function sanitizeLabel(label: string): string {
 /**
  * 取文本首个非空行(多行压成首行).
  *
- * 仅做"取首行"——不 sanitize.三处调用方的 sanitize 末步不同
- * (tool-render 调 sanitizeLabel、bg-notify-render 压 \r\t、list-view 不处理),
- * 故共享此基础函数,各自按需 wrap.
+ * 仅做"取首行"——不 sanitize.需要压平残余 \r/\t 的调用方用 firstLineSanitized
+ * (下方);list-component 直接消费本函数(标题/错误行由外层 truncLine 再压平).
  *
  *   firstLine("a\nb\nc") → "a"
  *   firstLine("\n\nb") → "b"
@@ -228,6 +227,18 @@ export function sanitizeLabel(label: string): string {
 export function firstLine(text?: string): string {
   if (!text) return "";
   return text.split("\n").find((l) => l.trim())?.trim() ?? "";
+}
+
+/**
+ * firstLine + sanitize 组合:取首个非空行后压平残余 \r/\t.
+ *
+ * tool-render(content 错误回显)与 bg-notify-render(结果/错误正文)共用,
+ * 取代两侧各自维护的 wrapper.tool-render 旧版走 sanitizeLabel(\t→两空格)、
+ * bg-notify-render 旧版压 \r\t 为单空格——差异无测试钉住,统一取
+ * sanitizeLabel 口径(与 eventLog 行处理一致).
+ */
+export function firstLineSanitized(text?: string): string {
+  return sanitizeLabel(firstLine(text));
 }
 
 /**

@@ -1,4 +1,4 @@
-// src/tui/tool-render.ts
+// src/interface/tool-render.ts
 //
 // 对话流 tool block 渲染。renderCall（标题行）+ renderResult（背景色 block）。
 //
@@ -28,9 +28,8 @@ import type {
 import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
 import {
   extractAgentName,
-  firstLine,
+  firstLineSanitized,
   formatElapsedSeconds,
-  sanitizeLabel,
   statusGlyph,
   type ThemeLike,
   truncLine,
@@ -304,7 +303,7 @@ function shortSessionLabel(file: string): string {
  * execute 抛错（如 hub disposed / task 缺失）时，subagents handler 不 catch，
  * Pi 框架会把 error.message 塞进 result.content[0].text。renderResult 的 fallback
  * 分支用它把真实原因显示出来，避免只显「no details available」让 AI 盲猜。
- * content 可能多行，只取首行（用共享 firstLine 裁断 + sanitize）。
+ * content 可能多行，只取首行（共享 firstLineSanitized 裁断 + sanitize）。
  */
 function extractResultError(content: AgentToolResult<SubagentToolResult>["content"]): string | undefined {
   if (!Array.isArray(content)) return undefined;
@@ -320,15 +319,6 @@ function getStringText(item: unknown): string | undefined {
   if (typeof item !== "object" || item === null) return undefined;
   const val = (item as Record<string, unknown>).text;
   return typeof val === "string" && val.trim().length > 0 ? val : undefined;
-}
-
-/**
- * 取文本首个非空行（多行压成首行展示），并 sanitize。
- * 用于 done/failed 的交付物预览。
- * 共享 firstLine（./format.ts）取首行，本 wrapper 叠加 sanitizeLabel。
- */
-function firstLineSanitized(text?: string): string {
-  return sanitizeLabel(firstLine(text));
 }
 
 // ============================================================

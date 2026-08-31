@@ -56,6 +56,9 @@ describe("formatElapsedSeconds", () => {
 
   it("shows Xh Ym at 3600+", () => {
     expect(formatElapsedSeconds(3600)).toBe("1h0m");
+    // 3700 → "1h1m"（单源锚断言）：views/format.ts 旧版无小时档曾输出 "61m40s"，
+    // U11 宿主内合并后两侧统一取本实现的小时档语义。
+    expect(formatElapsedSeconds(3700)).toBe("1h1m");
     expect(formatElapsedSeconds(3661)).toBe("1h1m");
     expect(formatElapsedSeconds(7325)).toBe("2h2m");
   });

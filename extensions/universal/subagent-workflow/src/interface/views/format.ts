@@ -12,6 +12,8 @@ import type { ExecutionTraceNode, ToolCallEntry } from "@zhushanwen/subagent-cor
 import type { DoneReason, RunStatus } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
 import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
 
+import type { ThemeLike as BaseThemeLike } from "../format.ts";
+
 // ── Constants ─────────────────────────────────────────────────
 
 export const SIDEBAR_WIDTH = 24;
@@ -53,10 +55,12 @@ type StatusText =
 
 // ── Theme interface (avoids importing Pi runtime) ─────────────
 
-export interface ThemeLike {
-  fg(token: string, text: string): string;
-  bold(text: string): string;
-}
+/**
+ * views 侧主题形状：仅 fg/bold——本文件所有函数只消费这两个方法。
+ * 单源派生自 src/interface/format.ts 的 ThemeLike（Pick 收窄），不再独立声明；
+ * 保留窄形状是为了让只有 fg/bold 的 duck-typed theme（含测试 stub）可直接传入。
+ */
+export type ThemeLike = Pick<BaseThemeLike, "fg" | "bold">;
 
 // ── Status helpers ────────────────────────────────────────────
 
@@ -128,17 +132,7 @@ export function formatElapsed(startedAt?: string, now: number = Date.now()): str
   return `${mins}m${remSecs}s`;
 }
 
-/**
- * Format elapsed time from integer seconds（live 路径用）。
- * 与 formatElapsed 输出格式一致，但输入是 computeElapsedSeconds 的秒数（非时间戳）。
- */
-export function formatElapsedSeconds(seconds: number): string {
-  if (seconds < 1) return "0s";
-  if (seconds < SECS_PER_MIN) return `${seconds}s`;
-  const mins = Math.floor(seconds / SECS_PER_MIN);
-  const remSecs = seconds % SECS_PER_MIN;
-  return `${mins}m${remSecs}s`;
-}
+// formatElapsedSeconds 单源自 src/interface/format.ts（见文末「单源折叠垫片」）。
 
 /**
  * Format a live eventLog entry（live 路径 Activity 区用）。
@@ -204,48 +198,15 @@ export function formatActivityLine(entry: ToolCallEntry, maxWidth: number): stri
   return `${entry.name}(${truncated})`;
 }
 
-// ── ANSI helpers ──────────────────────────────────────────────
-
-/** Measure visible width of a string (strips ANSI escapes, handles CJK/emoji).
- *  Delegates to pi-tui's visibleWidth for accurate width calculation.
- */
-export function visibleLen(s: string): number {
-  return visibleWidth(s);
-}
-
-/** Pad an ANSI-escaped string to a target *visible* width.
- *  只 pad 不截断：超宽时原样返回（调用方负责先截断）。
- *  对齐 subagents 的 padToVisible 语义。
- */
-export function padVisible(s: string, width: number): string {
-  const vl = visibleLen(s);
-  if (vl >= width) return s;
-  return s + " ".repeat(width - vl);
-}
-
-/**
- * 分段着色版填充：title 和 fill 都已着色（含 ANSI），拼接时各自 ANSI 延续。
- * 解决 ANSI 嵌套失色：若用 fg("c1", fill(title, "─", n))，
- * title 内的 \x1b[0m 会重置外层 c1，导致 title 之后的 ─ 失去 c1。
- * 改成 title + fill.repeat(后)，fill 整段保持自己的 ANSI，不依赖外层包裹。
- *
- * 对齐 subagents format.ts segFillColored（同源移植）。
- */
-export function segFillColored(
-  titleStyled: string | undefined,
-  fillStyled: string,
-  width: number,
-): string {
-  if (width <= 0) return "";
-  const fillW = visibleLen(fillStyled);
-  if (!titleStyled || fillW === 0) {
-    return fillStyled.repeat(width);
-  }
-  const tw = visibleLen(titleStyled);
-  if (tw >= width) return truncateToWidth(titleStyled, width);
-  const fillCount = width - tw;
-  return titleStyled + fillStyled.repeat(fillCount);
-}
+// ── 单源折叠垫片（设计 U11 宿主内合并）─────────────────────────
+// 通用文本 helper 已折叠单源到 src/interface/format.ts——truncLine 为自研
+// ANSI 安全实现（pi-tui truncateToWidth 会在省略号处插 \x1b[0m 断裂背景色，
+// 见 interface/format.ts truncLine 注释），统一取 interface 侧实现。
+// 此处按原名 re-export：WorkflowsView / detail-content（本 wave 只读）的
+// import 面不变即完成单源切换。segFillColored 无 views 侧消费方，直接删除。
+export { formatElapsedSeconds } from "../format.ts";
+export { padToVisible as padVisible } from "../format.ts";
+export { visibleWidth as visibleLen } from "@earendil-works/pi-tui";
 
 // ── Phase group (filters empty phases) ────────────────────────
 
@@ -290,7 +251,7 @@ export function formatPhaseLine(
  // pointer(2) + dot(1) + space(1)
   const PHASE_PREFIX_WIDTH = 4;
   const budget = maxWidth - PHASE_PREFIX_WIDTH;
-  const truncated = visibleLen(label) > budget
+  const truncated = visibleWidth(label) > budget
     ? truncateToWidth(label, budget - 1) + ELLIPSIS
     : label;
   return `${pointer}${dot} ${truncated}`;
