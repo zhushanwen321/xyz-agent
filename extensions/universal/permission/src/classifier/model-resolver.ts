@@ -64,14 +64,11 @@ export interface ResolvedModelEntry {
  * 「无可选模型」提示）。
  *
  * @param ctx 含 modelRegistry 的上下文（model 列表 + auth 判定）
- * @param onWarning 保留参数位（契约兼容；E2 后无文件读取，无警告源）
  * @returns Map<providerName, ResolvedModelEntry[]>
  */
 export function listAvailableModels(
 	ctx: ListAvailableModelsCtx,
-	onWarning?: (msg: string) => void,
 ): Map<string, ResolvedModelEntry[]> {
-	void onWarning; // 无警告源（不再读文件），保留参数位兼容调用方
 	const entries: ResolvedModelEntry[] = [];
 	for (const m of ctx.modelRegistry.getAll()) {
 		if (!ctx.modelRegistry.hasConfiguredAuth(m)) continue;

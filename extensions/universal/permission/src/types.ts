@@ -140,25 +140,6 @@ export const DEFAULT_CONFIG: PermissionConfig = {
 
 // ──────────────────────── 后续 wave 用的类型（W1 声明，W2-W5 import） ────────────────────────
 
-/** 权限检查输入（I1 checkPermission 参数） */
-export interface PermissionCheckInput {
-	toolName: string;
-	command?: string;
-	path?: string;
-	toolInput?: unknown;
-	cwd: string;
-	agentName?: string;
-}
-
-/** 权限上下文（I1 checkPermission 参数，含当前模式 + 规则 + classifier 配置） */
-export interface PermissionContext {
-	mode: PermissionMode;
-	rules: Rule[];
-	classifier: ClassifierConfig;
-	enabled: boolean;
-	signal?: AbortSignal;
-}
-
 /** bash 结构分析结果（I2 analyzeBashStructure 返回，W2 实现） */
 export interface BashAnalysis {
 	/** 是否只有白名单结构（干净 SimpleCommand） */
@@ -198,7 +179,6 @@ export interface ToolInvocationContext {
 export interface UserDecision {
 	approved: boolean;
 	reason?: string;
-	scope?: "once" | "session" | "always";
 }
 
 // ──────────────────────── W6 T8: 从 pipeline.ts 迁移的类型 ────────────────────────

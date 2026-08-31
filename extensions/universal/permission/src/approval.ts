@@ -137,7 +137,7 @@ async function requestRpc(
 		return { approved: false, reason: "user dismissed the prompt" };
 	}
 	if (choice.startsWith("Approve")) {
-		return { approved: true, reason: "approved via rpc", scope: "once" };
+		return { approved: true, reason: "approved via rpc" };
 	}
 	// W6 T9 G3：Reject-with-Reason。用户选 Deny 后，若 ctx.ui.input 存在则采集真实理由。
 	// 「受阻」可观测条件：typeof ctx.ui.input === 'function'。
@@ -294,7 +294,7 @@ export class ApprovalComponent implements Component {
 		this._resolved = true;
 		// TODO: spec 未要求 session/always scope，当前硬编码 "once"。未来如需扩展，
 		// 增加 handleInput 对应键位（如 's' → session、'a' → always）并透传 UserDecision.scope。
-		this.done({ approved: true, reason: "approved via tui", scope: "once" });
+		this.done({ approved: true, reason: "approved via tui" });
 	}
 
 	private deny(): void {

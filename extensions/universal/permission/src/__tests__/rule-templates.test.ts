@@ -4,7 +4,6 @@
  * 覆盖：
  *  - PRESET_COMMANDS 结构（31 命令，7 类 + Other）
  *  - 5 个模板 build（G4 wildcard pattern）
- *  - classifyRuleTemplate（FAMILY_RE / SUBCMD_RE + action 映射）
  *  - applyOps（add / edit / delete，纯函数）
  *  - makeNextIdCounter（从已有规则提取最大 user-N）
  */
@@ -15,7 +14,6 @@ import {
 	allowSubcmdTemplate,
 	applyOps,
 	askBeforeTemplate,
-	classifyRuleTemplate,
 	customTemplate,
 	denyFamilyTemplate,
 	makeNextIdCounter,
@@ -142,38 +140,6 @@ describe("RT2: 模板 build（G4 wildcard pattern）", () => {
 		expect(built.pattern).not.toContain("\\b");
 		expect(built.pattern).not.toContain("\\s");
 		expect(built.pattern).toBe("git push *");
-	});
-});
-
-// ──────────────────────── classifyRuleTemplate ────────────────────────
-
-describe("RT3: classifyRuleTemplate", () => {
-	it("npm * + allow → allow-family", () => {
-		expect(classifyRuleTemplate(makeRule({ pattern: "npm *", action: "allow" }))).toBe("allow-family");
-	});
-
-	it("git * + deny → deny-family（any）", () => {
-		expect(classifyRuleTemplate(makeRule({ pattern: "git *", action: "deny" }))).toBe("deny-family");
-	});
-
-	it("git push * + deny → deny-family（specific）", () => {
-		expect(classifyRuleTemplate(makeRule({ pattern: "git push *", action: "deny" }))).toBe("deny-family");
-	});
-
-	it("docker * + ask → ask-before", () => {
-		expect(classifyRuleTemplate(makeRule({ pattern: "docker *", action: "ask" }))).toBe("ask-before");
-	});
-
-	it("git status * + allow → allow-subcmd", () => {
-		expect(classifyRuleTemplate(makeRule({ pattern: "git status *", action: "allow" }))).toBe("allow-subcmd");
-	});
-
-	it("不匹配已知格式 → custom", () => {
-		expect(classifyRuleTemplate(makeRule({ pattern: "rm -rf /tmp/*", action: "deny" }))).toBe("custom");
-	});
-
-	it("* alone + allow → custom（不匹配 FAMILY_RE，无 cmd 前缀）", () => {
-		expect(classifyRuleTemplate(makeRule({ pattern: "*", action: "allow" }))).toBe("custom");
 	});
 });
 

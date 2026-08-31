@@ -78,10 +78,8 @@ interface ToolCallResult {
  */
 export default function permissionExtension(pi: ExtensionAPI): void {
 	// W7：注入 listAvailableModels 真实实现（model-picker.ts 默认返回空 Map）。
-	// E2 签名：(ctx, onWarning?) → ctx.modelRegistry.getAll() + hasConfiguredAuth 过滤；warning 透传到 console.warn。
-	setDefaultListAvailableModels((ctx, onWarning) =>
-		listAvailableModels(ctx, onWarning ?? defaultConfigWarn),
-	);
+	// E2 签名：(ctx) → ctx.modelRegistry.getAll() + hasConfiguredAuth 过滤。
+	setDefaultListAvailableModels((ctx) => listAvailableModels(ctx));
 
 	// ──────────────────────── 配置读取（读时刷新，回归 llm-shared 框架） ────────────────────────
 	// 不持有跨调用缓存：每次需要配置直接 loadAndWatchConfig()，llm-shared 内部 mtime+size 去重，
@@ -187,7 +185,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 					},
 					config,
 					{
-						listModels: (pickerCtx) => listAvailableModels(pickerCtx, (m) => logger.warn(m)),
+						listModels: (pickerCtx) => listAvailableModels(pickerCtx),
 						save: (newConfig) => {
 							const r = saveConfig(newConfig);
 							if (r.success) requestFooterRender();

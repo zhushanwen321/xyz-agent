@@ -23,16 +23,7 @@ import {
 	type TemplateSelections,
 } from "./rule-templates.js";
 import type { PermissionAction, Rule } from "./types.js";
-
-// ──────────────────────── DEFAULT_SELECT_THEME ────────────────────────
-
-const THEME: SelectListTheme = {
-	selectedPrefix: (t: string): string => "\u25B6 " + t,
-	selectedText: (t: string): string => t,
-	description: (t: string): string => t,
-	scrollInfo: (t: string): string => t,
-	noMatch: (t: string): string => t,
-};
+import { DEFAULT_SELECT_THEME } from "./select-theme.js";
 
 const MAX_VISIBLE = 12;
 
@@ -111,7 +102,7 @@ export class RuleEditorComponent extends Container {
 		initialRules: readonly Rule[],
 		sessionIdCounter: () => string,
 		done: (ops: RuleOp[]) => void,
-		theme: SelectListTheme = THEME,
+		theme: SelectListTheme = DEFAULT_SELECT_THEME,
 	) {
 		super();
 		this.initialRules = initialRules;
