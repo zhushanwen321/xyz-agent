@@ -66,6 +66,7 @@ import {
   ZCODE_APPSERVER_DRIFT_RPC_CODES,
   ZCODE_APPSERVER_ERR_MODEL_CONFIG_MISSING,
   ZCODE_APPSERVER_HARVEST_GRACE_MS,
+  ZCODE_APPSERVER_PIDFILE_NAME,
   ZCODE_APPSERVER_POOL_KEY,
   ZCODE_APPSERVER_STOP_TIMEOUT_MS,
   ZCODE_CLI_DEFAULT_PATH,
@@ -432,7 +433,10 @@ export class ZcodeEngine implements EnginePort {
         { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false },
         startedAt,
       );
-      return { result: { handle: this.appServerHandle(ZCODE_APPSERVER_POOL_KEY, outcome), outcome }, driftCode: undefined };
+      // poolKey 锚定：已持有 HOME（含派生场景）用其真实 poolKey；首次即 abort 尚无
+      // HOME 可用，退回静态常量（此刻确实无派生事实可锚定）
+      const poolKey = this.homeState?.poolKey ?? ZCODE_APPSERVER_POOL_KEY;
+      return { result: { handle: this.appServerHandle(poolKey, outcome), outcome }, driftCode: undefined };
     }
 
     // ① prepare 期：模型解析（provider 体系校验——错误语义与 spawn 同为进程创建前
@@ -628,7 +632,18 @@ export class ZcodeEngine implements EnginePort {
     // 并发任务重入守卫：首任务在途的锁获取只跑一次（同进程并发 run 各自走判定循环
     // 会把「自己的活锁」误判成他人活持有 → 派生 -2 → poolKey 漂移触发 teardown 杀
     // 活连接）。在途完成后落回已持有路径（含凭据刷新比对）。
-    if (this.homeAcquireInFlight !== undefined) await this.homeAcquireInFlight;
+    if (this.homeAcquireInFlight !== undefined) {
+      try {
+        await this.homeAcquireInFlight;
+      } catch (err) {
+        // 共享失败不击穿并发任务：首任务 acquire 失败（如凭据缺失）后 homeState 未落，
+        // 落到下方自行重走 acquire 一次——成功则本任务正常推进，仍失败则报本任务自身
+        // 的错误语义（而非继承首任务的异常实例）
+        logger.debug(
+          `[zcode-engine] 并发等待的首任务 home acquire 失败（${errMessage(err)}）——自行重走 acquire`,
+        );
+      }
+    }
     if (this.homeState !== undefined && isLockHeldByUs(this.homeState.lockPath)) {
       const boot = bootstrapAppServerConfig({
         homeDir: this.homeState.homeDir,
@@ -768,7 +783,7 @@ export class ZcodeEngine implements EnginePort {
     await this.shutdownRuntimeAndDisposeChannel(rt);
     // 进程已死：pidfile 成为陈旧记录，清掉（防后续 pid 复用误判）
     try {
-      fs.rmSync(path.join(rt.homeDir, "appserver.pid"), { force: true });
+      fs.rmSync(path.join(rt.homeDir, ZCODE_APPSERVER_PIDFILE_NAME), { force: true });
     } catch (err) {
       logger.debug(`[zcode-engine] dispose 后 pidfile 清理失败（best-effort）: ${errMessage(err)}`);
     }

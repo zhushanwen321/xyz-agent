@@ -189,7 +189,7 @@ task ─┘                    │ ① session/create {workspace, mode, model, .
 - 选择：`session/requestRuntimePreferences` 回固定常量（`nativeSearchEnhancementsEnabled: true, memoryEnabled: false, askUserQuestionAutoResolutionEnabled: true, modelContextBudgetStrategy: 'preflight-v1'`）；其他一切反向请求（如 `permission/request`）回 `{id, result: {}}`。
 - 依据：反向请求不答 15s 超时并**拖死共享连接上全部会话**（旧实测 `-32022`；当前版本错误码存疑，见附录 A.5 未确认项，但「必须应答」行为已验证）；常量表逐字来自旧实现实测。
 
-**D10 启动参数 = 实施期探针矩阵定案**
+**D10 启动参数 = 实施期探针矩阵定案**（实施后注：R4 已按基线不带 flag 落地，三态矩阵留待跨仓真机段补验——见 §5 检查点回填）
 - 现状：0.16.5 全局参数 schema 实测含 `stdio:{type:"boolean"}` 与 `surface:{type:"string"}`（`--surface` 取值归一 `terminal`/`zcode_desktop`，作用于 headless prompts/app-server）；旧实现两者皆未传也能用（r1 审查修正：`--stdio` 字符串在 bundle 全局参数 schema 中存在，旧调研「GUI 用 app-server --stdio」并非无据）。
 - 选择：实施期探针矩阵（基线不带 flag / `--surface terminal` / `--stdio` 三态 × create/send/流式三链路）确认后定案；设计上不预设。启动基线 = `node <cliPath> app-server --cwd <dir>` + env（隔离 HOME、`ZCODE_MODEL_TELEMETRY_ENABLED=false`、nesting guard 剥离注入沿用）。
 - 标注：这是唯一留白到实施期的决策，不影响结构。
@@ -252,7 +252,7 @@ A1/A2/A3/A4/A6/A7 为必过门（真机）；A5 的 ①为回归门、②③为�
 
 **版本与排序**：core 当前待发 0.3.0（host-surface，changeset 已备）。本设计落 **core 0.4.0**（capabilities 声明变化 = 消费方可见语义变化，minor）。与 convergence 设计（原计划 0.4.0，W1-W9）的先后排序是**用户决策点**：本设计与 convergence 正交（决策记录 §5 已论证），推荐本设计先行（用户当前优先级），convergence 顺延 0.5.0；两设计无文件级冲突面（convergence 不动引擎）。
 
-**待验证检查点（实施期）**：①`--surface` / `--stdio` 矩阵（D10）；②stream.chunk 帧真机是否偶发携带文本字段（附录 A.5）；③`-32022` 当前版本实际错误码；④`session/read` 应答在 0.16.5 的 `step-finish` tokens 结构复核；⑤**GUI ①级锚定验证**：新 record 的 handle.poolKey='home-appserver'（或派生目录名）经 runtime `readZcodeNativeTier` 的 `isStrictlyUnder` 白名单真实命中 SQLite 重建（thinking/toolCalls 完整），不静默降 ②级。
+**待验证检查点（实施期，R1-R6 落地后 2026-08-31 回填）**：①`--surface` / `--stdio` 矩阵（D10）——**已定案基线不带 flag**（connection.ts 落地，旧 runner 不带实测可用的依据），三态矩阵留待跨仓真机段补验；②stream.chunk 帧是否偶发携带文本字段——实现已做宽容双形态兜底（session-channel 推送泵对带文本的 stream.chunk 一并消费），真机实录待跨仓段替换合成语料；③`-32022` 当前版本错误码——未确认，实现按「连接 onClose + 全部在途 reject」形态处理（与错误码无关），真机待验；④`session/read` 的 `step-finish` tokens 结构——实现按宽容解析（usage 权威取收尾帧，read step-finish 仅兜底，字段缺席不抛）；⑤**GUI ①级锚定**——实现面已落（poolKey 静态常量 + 派生目录记实际名 + read 侧 resolvePoolDir 重定位；live 用例已写入 zcode-engine.live.test），真机验证（RA2-②）属跨仓验收段。
 
 ---
 

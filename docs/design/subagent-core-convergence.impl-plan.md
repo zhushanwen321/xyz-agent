@@ -120,6 +120,12 @@ graph TD
 | 5 | R1 | registry 新增 disposeEngines() 导出（设计说「killAllSpawnedChildren 先遍历 registry」的实现载体）；registry 引入 logger | 合理——语义等价封装，同步面语义按 D6① 预留 |
 | 6 | R2 | fixture 用 .mjs（本仓 eslint no-require-imports 拦 require）；buildAppServerEnv 组装器独立于 launcher | 合理——环境约束等价实现 |
 | 7 | R3 | golden「替换」实施为「并存」（stdout 语料保留）——spawn 语料消费方在 R4（probe 干跑）/R6（conformance）领地，且 D2 保留 spawn 降级路径；去留 R6 统一定。golden 帧序列为合成语料（A.2 权威+旧实现形态），真机实录待跨仓段替换。session-channel 连接崩溃收割依赖 turnTimeoutMs 兜底（connection 无 onClose 面，R4 补） | 合理——领地纪律优先；来源如实标注 |
+| 8 | C5 | subagents 段 guide 末句重写（systemPrompt 参数已在 pi 现版 tool schema 移除，旧文案主动误导；新文案 = location 路径 + 缺省 general-purpose 指引，依据实测 subagent-tool-schema.ts）——A2 等价口径相应增加该豁免（设计文档已同步） | 合理——保留过期文案才违背设计意图 |
+| 9 | C5 | 依赖下限保持 workspace:*（pack 实测发布面替换为精确 0.4.0 满足 ≥0.4.0 下限；提前写 ^0.4.0 会破坏 workspace 解析）；深路径清零按「收口面」解读（injectors + tool-workflow-script），interface 层 9 处 pre-existing 深路径不属收口范围；core 根解析锚点用 workflows/README.md 子入口（双形态同径），五场景探针落证 probe-c5.md | 合理——链路核实 + pack 实测落证（设计 W5⑦ 口径已同步收口面化） |
+| 10 | R4 | 前任 5h 限额中断于 import 面（D7 符号在 appserver-home.ts 而 zcode-engine 从 preparer import），接替续作仅修 import 路径；conformance contract.abort 钉 XYZ_ZCODE_MODE=spawn（fixture 经 deps.launch 驱动 spawn 分支，钉扎必要，R6 已核）；record-store 未改动——回填走既有 reportRecordTransition 通道 | 合理——接替程序标准路径；单点突破已 R6 核实 |
+| 11 | R5 | record 降级标注走 outcome.engineFallback 既有留痕通道（D9① 复用）；探针结论内存化（smokeConclusion 绑 CLI mtime，非落盘——进程重启重探重建，等价且免 IO）；driftDegraded 内存标志余生直走 spawn；顺带修复 R4 dispose 竞态 flake（shutdownRuntimeAndDisposeChannel 等 onClose 收割，基线 ~50% 复现转 5/5 稳定） | 合理——任务级标注语义；竞态修复有基线复现证据 |
+| 12 | R6 | 移交决策：stdout golden 保留（probe 第 3 检 + spawn 降级 parser + conformance 仍有消费方）；probe() 维持三检不迁冒烟（公共面 = 形状/版本/spawn-parser 契约，冒烟已内化为 run 门控 appserver-probe.ts，语义无缺口）；conformance 双模式（spawn 钉扎保留 + appserver 新增用例，非参数化） | 合理——消费方事实驱动 |
+| 13 | 阶段3审查修复 | R 线三 low 瑕疵修（pidfile 常量化 / pre-abort poolKey 用 homeState 锚定 / homeAcquire 并发 catch 重走）；全 2539 绿 | 一致性审查清零批次 |
 
 ## 6 状态表
 
@@ -154,3 +160,5 @@ graph TD
 
 - 2026-08-30：计划创建（convergence 单线 W1-W5，基线 commit e0c73266c）。
 - 2026-08-30：**扩充为双线版**——用户指令「app-server 常驻化一起开发」，并入 R 线 R1-R6（单元重命名避撞名：convergence W1-W5 → C1-C5；app-server W1-W6 → R1-R6；验收场景加 CA/RA 前缀）；版本合并为单一 core 0.4.0；Gate B 切分本仓段/跨仓段；DAG 重排 6 波。convergence 单元验收条款不变（沿用本计划前一版）。
+- 2026-08-31：阶段 2 完成——12 单元全部 committed（C 线 6 + R 线 6）。
+- 2026-08-31：阶段 3-4 一致性审查清零——双线独立审查（C 线：D-1~D-6 与九红线逐条通过；R 线：十决策逐条落地、G4 成立）+ 3 low 代码瑕疵修复 + 5 doc_errors 文档修订（A2 等价口径加 guide 豁免 / W5⑦ 收口面化 / appserver 检查点 5 项回填 + D10 注记 / 偏差表补至 13 条）。
