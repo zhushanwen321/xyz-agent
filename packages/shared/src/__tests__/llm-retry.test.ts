@@ -78,6 +78,20 @@ describe('validateLlmRetryConfig', () => {
     }
   })
 
+  it('provider 非 plain object 拒绝（null / 字符串 / 数组）', () => {
+    for (const provider of [null, 'abc', []]) {
+      const r = validateLlmRetryConfig({ ...valid(), provider } as unknown as LlmRetryConfig)
+      expect(r.ok, `provider=${String(provider)}`).toBe(false)
+      if (!r.ok) {
+        expect(r.error).toContain('provider')
+        expect(r.error).toContain('类型必须是对象')
+      }
+    }
+    // 合法路径不受影响：普通对象（含空对象）与未设仍通过
+    expect(validateLlmRetryConfig({ ...valid(), provider: {} })).toEqual({ ok: true })
+    expect(validateLlmRetryConfig(valid())).toEqual({ ok: true })
+  })
+
   it('多字段越界时报第一个（校验顺序 enabled → maxRetries → baseDelayMs → provider.*）', () => {
     const r = validateLlmRetryConfig({ enabled: true, maxRetries: 100, baseDelayMs: -5, provider: { timeoutMs: 0 } })
     expect(r.ok).toBe(false)

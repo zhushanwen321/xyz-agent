@@ -9,7 +9,11 @@
  *  - 保存成功：秒转 ms 组装（baseDelay 5 秒 → baseDelayMs 5000）+ 成功 toast 含「新会话生效」；
  *  - 保存越界：baseDelay=99999 → setRetryConfig 不被调 + 错误 toast 含「超出范围」+ 输入框标红 class；
  *  - configured 徽标：false 无 / true 有「已自定义」；
- *  - 存量超域：maxRetries=50 → 行内警示 llm-retry-warn-maxRetries。
+ *  - 存量超域：maxRetries=50 → 行内警示 llm-retry-warn-maxRetries；
+ *  - provider 存量超域：maxRetries=15 原样回填 → 保存被拒，错误 toast 指向 provider.maxRetries
+ *    （D8：超域不得因显示为空而静默丢失）；
+ *  - provider 全未设：三输入留空 = 未设 → 保存成功，载荷 provider 键值为 undefined（留空路径回归）；
+ *  - 小数秒组装：baseDelay=1.005 → baseDelayMs 1005（Math.round 消浮点尾差，校验通过）。
  *
  * mock 策略：vi.mock('@/api/domains/config') 替换读写 RPC；toast 走 useToast mock 捕获。
  *
@@ -36,6 +40,7 @@ vi.mock('@/composables/useToast', () => ({
 
 import SystemLlmRetrySection from '@/components/settings/system/SystemLlmRetrySection.vue'
 import zhCN from '@/i18n/locales/zh-CN/settings'
+import type { LlmRetryConfig } from '@xyz-agent/shared'
 
 function makeI18n() {
   return createI18n({
@@ -45,7 +50,7 @@ function makeI18n() {
   })
 }
 
-function defaultFixture() {
+function defaultFixture(): { configured: boolean; config: LlmRetryConfig } {
   return {
     configured: false,
     config: {
@@ -131,6 +136,7 @@ describe('SystemLlmRetrySection（u3 LLM 调用重试）', () => {
     expect(wrapper.find('[data-testid="llm-retry-provider-max-delay-input"]').exists()).toBe(true)
     // 存量 provider 值落表单：maxRetries=0；timeout 未设 → 空；maxDelay 60000ms → 60 秒
     expect((wrapper.find('[data-testid="llm-retry-provider-max-retries-input"]').element as HTMLInputElement).value).toBe('0')
+    expect((wrapper.find('[data-testid="llm-retry-provider-timeout-input"]').element as HTMLInputElement).value).toBe('')
     expect((wrapper.find('[data-testid="llm-retry-provider-max-delay-input"]').element as HTMLInputElement).value).toBe('60')
   })
 
@@ -151,6 +157,25 @@ describe('SystemLlmRetrySection（u3 LLM 调用重试）', () => {
       provider: { maxRetries: 0, maxRetryDelayMs: 60000 },
     })
     expect(toastMock.info).toHaveBeenCalledWith('已保存，新会话生效')
+  })
+
+  it('小数秒组装：baseDelay=1.005 → baseDelayMs 1005（Math.round 消浮点尾差，校验通过保存成功）', async () => {
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await setInput(wrapper, 'llm-retry-base-delay-input', '1.005')
+    await wrapper.find('[data-testid="llm-retry-save-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(configApiMock.setRetryConfig).toHaveBeenCalledTimes(1)
+    expect(configApiMock.setRetryConfig).toHaveBeenCalledWith({
+      enabled: true,
+      maxRetries: 3,
+      baseDelayMs: 1005,
+      provider: { maxRetries: 0, maxRetryDelayMs: 60000 },
+    })
+    expect(toastMock.error).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('保存越界：baseDelay=99999 → setRetryConfig 不被调 + toast 含「超出范围」+ 输入框标红', async () => {
@@ -197,6 +222,66 @@ describe('SystemLlmRetrySection（u3 LLM 调用重试）', () => {
     expect(warn.text()).toContain('超出推荐范围')
     // 超域存量原样展示
     expect((wrapper.find('[data-testid="llm-retry-max-retries-input"]').element as HTMLInputElement).value).toBe('50')
+    wrapper.unmount()
+  })
+
+  it('provider 存量超域：maxRetries=15 原样回填 → 保存被拒，错误 toast 指向 provider.maxRetries', async () => {
+    const fixture = defaultFixture()
+    fixture.config.provider = { maxRetries: 15 }
+    configApiMock.getRetryConfig.mockResolvedValue(fixture)
+
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await wrapper.find('[data-testid="llm-retry-advanced-toggle"]').trigger('click')
+    await flushPromises()
+
+    // 超域数值原样回填（不再显示为空），且行内标注指向该字段
+    expect((wrapper.find('[data-testid="llm-retry-provider-max-retries-input"]').element as HTMLInputElement).value).toBe('15')
+    const warn = wrapper.find('[data-testid="llm-retry-warn-provider-maxRetries"]')
+    expect(warn.exists()).toBe(true)
+    expect(warn.text()).toContain('15')
+
+    await wrapper.find('[data-testid="llm-retry-save-btn"]').trigger('click')
+    await flushPromises()
+
+    // 用户未改任何字段直接保存 → 校验拒绝且错误指向超域字段（D8：超域不得静默丢失）
+    expect(configApiMock.setRetryConfig).not.toHaveBeenCalled()
+    expect(toastMock.error).toHaveBeenCalledTimes(1)
+    expect(toastMock.error.mock.calls[0][0]).toContain('provider.maxRetries')
+    expect(toastMock.error.mock.calls[0][0]).toContain('超出范围')
+    expect(toastMock.error.mock.calls[0][0]).toContain('15')
+    expect(wrapper.find('[data-testid="llm-retry-provider-max-retries-input"]').classes()).toContain('border-warn')
+    wrapper.unmount()
+  })
+
+  it('provider 全未设：三输入留空 = 未设 → 保存成功，载荷 provider 为 undefined（留空路径回归）', async () => {
+    const fixture = defaultFixture()
+    fixture.config.provider = undefined
+    configApiMock.getRetryConfig.mockResolvedValue(fixture)
+
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await wrapper.find('[data-testid="llm-retry-advanced-toggle"]').trigger('click')
+    await flushPromises()
+    // 未设 → 三个 provider 输入均为空（不回填超域值）
+    expect((wrapper.find('[data-testid="llm-retry-provider-max-retries-input"]').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.find('[data-testid="llm-retry-provider-timeout-input"]').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.find('[data-testid="llm-retry-provider-max-delay-input"]').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.find('[data-testid="llm-retry-warn-provider-maxRetries"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="llm-retry-save-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(configApiMock.setRetryConfig).toHaveBeenCalledTimes(1)
+    expect(configApiMock.setRetryConfig).toHaveBeenCalledWith({
+      enabled: true,
+      maxRetries: 3,
+      baseDelayMs: 2000,
+      provider: undefined,
+    })
+    expect(toastMock.error).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

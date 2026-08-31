@@ -80,9 +80,9 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
 | u1-foundation | committed | 1 | 测试：shared `npx vitest run` 22 文件 225 用例全绿（含新增 9 条）+ `tsc --noEmit` 过（dev 回报与主 agent 重跑一致）；diff 核验：4 文件 ⊆ 领地，protocol.ts 纯增量 |
-| u2-runtime | committed | 1 | 测试：新增 3 测试文件 26 用例全绿（merge/configured/handler case/P2 写后立刻读）+ services/transport 回归 27 文件 325 用例全绿 + runtime `tsc --noEmit` 过；主 agent 抽查 helper D3/D7 实现、handler 范式合格；偏差 3 条见登记表 |
-| u3-gui | committed | 2（dev 1 + fix 1） | 测试：新增 llm-retry-section.test.ts 8 用例全绿（三视角 DOM 断言：预览行实时重算/折叠/保存 RPC 组装/越界拦截/configured 徽标/超域行内标注）+ settings 套件 23 文件 166 用例全绿；fix 轮修 fmtDur 小时档 10 倍放大 bug（min/6→min/60，85.25 分钟正确渲染 1.4 小时）；renderer 全量 tsc 的 useCommandPopoverTrigger.ts 报错为存量（该文件未改动），与本单元无关（后经并行线修复，vue-tsc 全量 exit 0） |
-| u4-integrate | committed（登记部分） | 1 | data-source-registry.md:97 retry 域条目 + 设计文档变更历史（commit e5b394f2b）；S1-S7 真实场景验收（含 S4/S6 探针）deferred to Gate B——见阶段 5 签收表 |
+| u2-runtime | committed | 1 | 测试：新增 3 测试文件 26 用例全绿（merge/configured/handler case/P2 写后立刻读）+ services/transport 回归 27 文件 325 用例全绿 + runtime `tsc --noEmit` 过；主 agent 抽查 helper D3/D7 实现、handler 范式合格；偏差见 §5 登记表；验收条款③由 Gate B 真实环境 WS 探针覆盖（S1/S4/S7 等），见 §7 签收表 |
+| u3-gui | committed | 2（dev 1 + fix 1） | 测试：新增 llm-retry-section.test.ts 8 用例全绿（三视角 DOM 断言：预览行实时重算/折叠/保存 RPC 组装/越界拦截/configured 徽标/超域行内标注）+ settings 套件 23 文件 166 用例全绿；fix 轮修 fmtDur 小时档 10 倍放大 bug（min/6→min/60，85.25 分钟正确渲染 1.4 小时）；renderer 全量 tsc 的 useCommandPopoverTrigger.ts 报错为存量（该文件未改动），与本单元无关（后经并行线修复，vue-tsc 全量 exit 0）；验收条款②由 Gate B 真实环境 WS 探针覆盖（S1/S4/S7 等），见 §7 签收表 |
+| u4-integrate | committed（含 Gate B 探针，S1-S7 全 PASS 见 §7 签收表，commit 4de5a992c） | 1 | data-source-registry.md:97 retry 域条目 + 设计文档变更历史（commit e5b394f2b）；S4/S6 探针证据见 §7 Gate B 签收表 |
 
 ## 7 残留风险与变更历史
 

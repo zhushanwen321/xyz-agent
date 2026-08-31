@@ -45,6 +45,11 @@ export function validateLlmRetryConfig(config: LlmRetryConfig): { ok: true } | {
     return { ok: false, error: `baseDelayMs 超出范围(整数 0-600000): ${String(baseDelayMs)}` }
   }
   if (provider !== undefined) {
+    // 对象性守卫：null 解构抛 TypeError（写路径校验在 try 外，会以 handler_error 逃逸而非
+    // set_retry_config_failed 信封）；string/array 解构静默得 undefined，被当「全未设」丢字段。
+    if (provider === null || typeof provider !== 'object' || Array.isArray(provider)) {
+      return { ok: false, error: `provider 类型必须是对象或未设: ${String(provider)}` }
+    }
     const { timeoutMs, maxRetries: pMaxRetries, maxRetryDelayMs } = provider
     if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < LLM_RETRY_DOMAIN.providerTimeoutMs.min || timeoutMs > LLM_RETRY_DOMAIN.providerTimeoutMs.max)) {
       return { ok: false, error: `provider.timeoutMs 超出范围(整数 1-600000 或未设，禁止 0): ${String(timeoutMs)}` }

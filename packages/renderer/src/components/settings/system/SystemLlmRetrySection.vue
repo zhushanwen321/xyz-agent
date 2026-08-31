@@ -235,6 +235,10 @@ onUnmounted(() => {
   unsubscribeRetryConfig = null
 })
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
 /** 数值域检查：返回 [是否合法, 展示值（超域时原样展示存量值）]。类型不可用按默认值展示。 */
 function checkDomain(
   value: unknown,
@@ -242,7 +246,7 @@ function checkDomain(
   max: number,
   fallbackDisplay: number,
 ): { ok: boolean; display: number | string; raw: string } {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  if (!isFiniteNumber(value)) {
     // D7 坏值承接：表单显示默认值，行内同款标注
     return { ok: false, display: fallbackDisplay, raw: String(value) }
   }
@@ -252,6 +256,12 @@ function checkDomain(
 
 function warnText(raw: string): string {
   return t('settings.system.llmRetryOutOfDomain', { value: raw })
+}
+
+/** ms 时长键警示文本：换算为秒展示（输入框为秒口径，避免 ms 原值与秒输入并排单位不符）；坏值原样展示。 */
+function warnTextForMs(raw: unknown): string {
+  const value = isFiniteNumber(raw) ? String(raw / MS_PER_SEC) : String(raw)
+  return t('settings.system.llmRetryOutOfDomain', { value })
 }
 
 /** 加载值落到表单：合法值直接显示；超域值原样显示；坏值回落默认显示。超域/坏值均加行内标注。 */
@@ -265,36 +275,39 @@ function applyLoaded(config: LlmRetryConfig): void {
 
   const bd = checkDomain(config.baseDelayMs, LLM_RETRY_DOMAIN.baseDelayMs.min, LLM_RETRY_DOMAIN.baseDelayMs.max, PI_DEFAULT_BASE_DELAY_MS)
   baseDelaySec.value = typeof bd.display === 'number' ? bd.display / MS_PER_SEC : ''
-  if (!bd.ok) warnings.baseDelayMs = warnText(bd.raw)
+  if (!bd.ok) warnings.baseDelayMs = warnTextForMs(config.baseDelayMs)
 
   const p = config.provider ?? {}
   const pmr = checkDomain(p.maxRetries, LLM_RETRY_DOMAIN.providerMaxRetries.min, LLM_RETRY_DOMAIN.providerMaxRetries.max, 0)
-  providerMaxRetriesInput.value = pmr.ok ? String(pmr.display) : ''
+  // D8：超域数值原样回填（与基础键行为对齐），使保存时 validateLlmRetryConfig 拒绝并指向该字段，
+  // 而非显示为空 → 提交 undefined → 校验跳过 → runtime 静默删除存量键；未设/坏值仍留空（「留空 = 未设」）
+  providerMaxRetriesInput.value = isFiniteNumber(p.maxRetries) ? String(p.maxRetries) : ''
   if (p.maxRetries !== undefined && !pmr.ok) warnings['provider.maxRetries'] = warnText(pmr.raw)
 
   const pt = checkDomain(p.timeoutMs, LLM_RETRY_DOMAIN.providerTimeoutMs.min, LLM_RETRY_DOMAIN.providerTimeoutMs.max, 0)
-  providerTimeoutSecInput.value = pt.ok ? String((pt.display as number) / MS_PER_SEC) : ''
-  if (p.timeoutMs !== undefined && !pt.ok) warnings['provider.timeoutMs'] = warnText(pt.raw)
+  providerTimeoutSecInput.value = isFiniteNumber(p.timeoutMs) ? String(p.timeoutMs / MS_PER_SEC) : ''
+  if (p.timeoutMs !== undefined && !pt.ok) warnings['provider.timeoutMs'] = warnTextForMs(p.timeoutMs)
 
   // maxRetryDelayMs 合法域特殊：0（不限制）或 1000-3600000
   const pdRaw = p.maxRetryDelayMs
   if (pdRaw !== undefined) {
     const ok = typeof pdRaw === 'number' && Number.isInteger(pdRaw) &&
       (pdRaw === 0 || (pdRaw >= LLM_RETRY_DOMAIN.providerMaxRetryDelayMs.minNonZero && pdRaw <= LLM_RETRY_DOMAIN.providerMaxRetryDelayMs.max))
-    providerMaxDelaySecInput.value = ok ? String(pdRaw / MS_PER_SEC) : ''
-    if (!ok) warnings['provider.maxRetryDelayMs'] = warnText(String(pdRaw))
+    providerMaxDelaySecInput.value = isFiniteNumber(pdRaw) ? String(pdRaw / MS_PER_SEC) : ''
+    if (!ok) warnings['provider.maxRetryDelayMs'] = warnTextForMs(pdRaw)
   }
 }
 
 /** 时长人性化格式（参照 demo html fmtDur：<1s 毫秒 / <1min 秒 / <1h 分钟 / 小时）。 */
 function fmtDur(ms: number): string {
   if (ms < MS_PER_SEC) return `${Math.round(ms)} ${t('settings.system.llmRetryUnitMs')}`
-  if (ms < SEC_PER_MIN * MS_PER_SEC) {
-    const sec = ms / MS_PER_SEC
+  const sec = ms / MS_PER_SEC
+  // 档位边界按显示精度进位：59999ms 显示精度为 60.0 秒，须进位为 1 分钟而非渲染「60.0 秒」
+  if (Number(sec.toFixed(1)) < SEC_PER_MIN) {
     return `${Number.isInteger(sec) ? sec : sec.toFixed(1)} ${t('settings.system.llmRetryUnitSec')}`
   }
   const min = ms / (SEC_PER_MIN * MS_PER_SEC)
-  if (min < MIN_PER_HOUR) return `${round1(min)} ${t('settings.system.llmRetryUnitMin')}`
+  if (round1(min) < MIN_PER_HOUR) return `${round1(min)} ${t('settings.system.llmRetryUnitMin')}`
   return `${round1(min / MIN_PER_HOUR)} ${t('settings.system.llmRetryUnitHour')}`
 }
 
@@ -353,7 +366,7 @@ function buildConfig(): LlmRetryConfig | null {
   return {
     enabled: enabled.value,
     maxRetries: maxRetries.value,
-    baseDelayMs: baseDelaySec.value * MS_PER_SEC,
+    baseDelayMs: Math.round(baseDelaySec.value * MS_PER_SEC),
     provider: Object.keys(provider).length > 0 ? provider : undefined,
   }
 }

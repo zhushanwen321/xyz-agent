@@ -106,7 +106,7 @@
        │ 请求失败：provider 层 retryProviderRequest（SDK 级）
        │ 仍失败 → agent 层 _prepareRetry（turn 级，发 auto_retry_* 事件）
        ▼
-  runtime event-adapter → 协议 message.auto_retry_start/end（protocol.ts:1389）
+  runtime event-adapter → 协议 message.auto_retry_start/end（protocol.ts:1396-1397）
        ▼
   renderer chat store → Composer RetryIndicator（重试进度 UI，已上线）
 ```
@@ -152,7 +152,7 @@
 
 | 方案 | 长期架构 | 短期成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| **A（选）：跟随 pi schema，写 `~/.xyz-agent/pi/agent/settings.json` 的 `retry` 字段**（PiSettingsStore 新增 `retry` scope + `config.get/setRetryConfig` RPC + System 页分组） | 与 model/skills/extension 域同构，pi 升级新增 retry 子字段时嵌套 merge 自动保留；单一数据源，无第二份配置可漂移 | 小：约 2 个新文件 + 6 处既有文件增量修改（见 §5 地图），全部有同构先例可抄 | 与 pi 子进程写并发——既有跨进程锁协议覆盖（`pi-settings-store.ts:14-34`，探针已验证） | ✅ |
+| **A（选）：跟随 pi schema，写 `~/.xyz-agent/pi/agent/settings.json` 的 `retry` 字段**（PiSettingsStore 新增 `retry` scope + `config.get/setRetryConfig` RPC + System 页分组） | 与 model/skills/extension 域同构，pi 升级新增 retry 子字段时嵌套 merge 自动保留；单一数据源，无第二份配置可漂移 | 小：约 2 个新文件 + 6 处既有文件增量修改（见 §5 地图），全部有同构先例可抄 | 与 pi 子进程写并发——既有跨进程锁协议覆盖（`pi-settings-store.ts:16-36`，探针已验证） | ✅ |
 | **B：xyz config.json 自建存储 + spawn 时透传给 pi** | 出现第二份真相源，与 pi settings.json 必然漂移 | 中：除 GUI 外还要做透传通道 | **不成立**：pi CLI 无任何 retry 启动 flag、无 env 覆盖（已 grep 实装 0.84.4 cli.js），透传通道根本不存在——造出来的会是一份 pi 读不到的假配置。若用它，§3.1 用户保存后新会话行为**毫无变化** | ❌ |
 | **C：不建 GUI，设置页放「说明卡」引导用户手编 settings.json** | 零代码，但失败模式 A/C/D（配错文件、坏 schema、叠加爆炸）原样保留且永久化 | 极小 | G1/G3 两条目标直接不达成；用户本次诉求就是消除手编 | ❌ |
 | **D：GUI 直连文件读写（renderer 经 Electron IPC 读写 JSON）** | 绕开 PiSettingsStore 唯一读写层（D17 收口），与 pi 子进程写回竞态重新裸奔；架构倒退 | 中：要新造一条 IPC 通道 | 违反项目既有收口决策；若用它，§2.3 数据流图里「唯一读写层」节点被旁路，§4 的并发场景（S4）无法保证 | ❌ |
@@ -170,13 +170,13 @@
 **D2：写入通道 = `PiSettingsStore` 新增 `retry` 字段域 scope（选定）**
 - **采用**：`SCOPE_FIELDS` 增加 `retry: ['retry']`；写入走既有 `updateSettingsFields('retry', mutator)`（锁内 RMW + 域外字段取锁内最新读）。
 - **被否**：`full` scope——既有白名单仅 pi-maintenance 启动迁移一个调用点，模块注释明确「新代码禁止使用 full scope」；绕过锁直接 `writeSettings`——该函数注释明确「生产写路径必须走 updateSettingsFields」。
-- **证据**：`pi-settings-store.ts:84-88`（SCOPE_FIELDS）、`:77-79`（full 禁令）、`:147-153`（writeSettings 禁令）。
-- **效果**：G2 成立——pi 子进程经自身 SettingsManager 的落盘与 GUI 保存 retry 互不覆盖。pi 侧写回实装是「持锁 + 锁内重读文件 + 仅 patch modified 字段/嵌套键」（`persistScopedSettings`），即使双方同写 `retry` 域也是键级 merge（双向保护，见 §2.2 末条 rpc 写点事实与 S4 同域并发场景）；跨进程锁协议本身已有探针验证（`pi-settings-store.ts:14-34`，✅已测）。注：`pi-settings-store.ts:8` 模块头「用户 GUI 切模型/切思考档位时 pi 落盘」的说法与 0.84.4 rpc 实装不符（见 §2.2 末条），本设计不沿用；该注释修正已随 u2-runtime 实施批完成（2026-08-31）。
+- **证据**：`pi-settings-store.ts:92-97`（SCOPE_FIELDS）、`:85-87`（full 禁令）、`:156-158`（writeSettings 禁令）。
+- **效果**：G2 成立——pi 子进程经自身 SettingsManager 的落盘与 GUI 保存 retry 互不覆盖。pi 侧写回实装是「持锁 + 锁内重读文件 + 仅 patch modified 字段/嵌套键」（`persistScopedSettings`），即使双方同写 `retry` 域也是键级 merge（双向保护，见 §2.2 末条 rpc 写点事实与 S4 同域并发场景）；跨进程锁协议本身已有探针验证（`pi-settings-store.ts:16-36`，✅已测）。注：`pi-settings-store.ts:8` 模块头「用户 GUI 切模型/切思考档位时 pi 落盘」的说法与 0.84.4 rpc 实装不符（见 §2.2 末条），本设计不沿用；该注释修正已随 u2-runtime 实施批完成（2026-08-31）。
 
 **D3：`retry` 域内做嵌套字段级 merge，只 patch xyz 已知的键（选定）**
 - **采用**：mutator 里对 `retry` 对象做二级 merge——读取锁内最新 `retry` 对象，仅覆盖 `{enabled, maxRetries, baseDelayMs, provider.timeoutMs, provider.maxRetries, provider.maxRetryDelayMs}` 六个已知键，pi 未来新增的 retry 子字段原样保留。这是顶层字段域 merge（D1b）在嵌套层的复刻。**非 plain object 规则（任何层级统一）**：任意层级遇到非 plain object 值（string / number / boolean / array / null）时，该层不做 merge，直接以「仅含该层已知键的新对象」整体替换——禁止对非对象值做 spread（字符串会展开成 `{0:'a',1:'b',…}` 索引键垃圾结构；number/boolean 时 spread 虽侥幸产出空对象，但依赖 spread 语义细节的安全不是设计出来的安全）。覆盖两个层级：`retry` 本身非对象 → 整体换成六键新对象；`retry.provider` 非对象 → 换成 `{timeoutMs?, maxRetries?, maxRetryDelayMs?}` 三键新对象。
 - **被否**：整个 `retry` 对象替换写——今天六键恰好覆盖 pi 全部字段，但 pi 升级加子字段时（例如未来的 jitter 开关）xyz 写一次就静默抹掉一个用户配置，且无报错。
-- **证据**：顶层 merge 的设计动机原文「分区……升级为 API 强制」（`pi-settings-store.ts:36-37`）；pi 曾做过 `retry.maxDelayMs → retry.provider.maxRetryDelayMs` 迁移（`settings-manager.js:239-255`），证明该对象 schema 会演化。
+- **证据**：顶层 merge 的设计动机原文「分区……升级为 API 强制」（`pi-settings-store.ts:38-39`）；pi 曾做过 `retry.maxDelayMs → retry.provider.maxRetryDelayMs` 迁移（`settings-manager.js:239-255`），证明该对象 schema 会演化。
 - **效果**：长期架构合理性（方案 A 表格首栏）成立的具体机制；pi 升级兼容性不依赖「恰好没人加字段」的运气。
 
 **D4：GUI 位置 = System 页新 Section，数据路径独立于 SystemSettings（选定）**
@@ -195,13 +195,13 @@
 - **采用**：保存成功 toast 与分组说明行固定标注生效范围；不做活跃会话清单比对，不做一键重启。
 - **被否**：动态生效范围提示（列出哪些运行中会话仍用旧值）——需要 runtime 维护「会话 → settings 快照版本」映射，为一个提示引入跨模块状态；一键重启会话——侵入会话生命周期编排，属另一层需求。
 - **已知能力登记（v1 不采用）**：pi rpc 暴露 `set_auto_retry` 命令（`rpc-mode.js:430-432` → `setAutoRetryEnabled` → pi 经自身 SettingsManager 把 `retry.enabled` 落盘，`settings-manager.js:584-590`），理论上可对运行中会话热切「自动重试」开关。v1 不采用的理由：仅覆盖 `enabled` 单字段（其余五键仍只有新会话生效，热切换造成「部分字段即时、部分字段新会话」的混合语义，比统一静态提示更难理解），且需要 runtime 维护「活跃会话 → rpc fan-out」编排。若未来要做热生效，应以此为基座整体设计，而非单点接入。
-- **证据**：pi 每会话一进程（`rpc-client.ts:190`）+ SettingsManager 构造期加载、无 file watcher、rpc-entry 无 reload 命令（dist 编译 JS 已核实）；⛔实施期门探针 P1（见 §4 S6）将在真实环境复核「运行中会话不受影响」。
+- **证据**：pi 每会话一进程（`rpc-client.ts:190`）+ SettingsManager 构造期加载、无 file watcher、rpc-entry 无 reload 命令（dist 编译 JS 已核实）；真实环境复核已完成——Gate B S6 探针 PASS，「运行中会话不受影响」成立（P1 消解，签收表见 impl-plan §7，commit 4de5a992c）。
 - **效果**：G4 成立；守住减法原则（不造 pi 能力之外的机制）。
 
 **D7：校验与容错——写入期范围校验 + 结构自愈，v1 不做 corrupted 横幅（选定）**
 - **采用**：`setRetryConfig` 写入期校验（越界返回 `ok:false + error`，error 含字段名/合法范围/当前值，同 `setTerminalConfig` 错误信封范式）；`getRetryConfig` 把「字段缺省」合并为 pi 默认值后返回，并附 `configured` 标记供 GUI 区分「显式配置」与「未配置（显示默认）」——**`configured` 取值定义**：六个已知键中**任一**在文件 `retry` 域显式存在即为 `true`，全部缺省才为 `false`；**键存在但值不可用**（类型不符，如 `"maxRetries": "abc"`）仍计 `true`——`configured` 表达的是「文件里有显式配置意图」这一事实，坏值本身由 D3 替换规则与表单默认值显示承接（S7 含该状态断言：configured=true 且该键表单显示默认值，不构成「已配置徽标 + 全默认表单」的误导——徽标旁若该键为坏值合并，行内按存量超域值同款标注提示）。半配置状态——如本设计 motivation 里用户手工写入的仅 `provider.maxRetryDelayMs` 一键——按 `true` 处理，与其「文件里确实有显式配置」的事实一致。整文件级 JSON 损坏由 `PiSettingsStore` 既有 schema guard 兜底（回落 `{}` + warn 日志），GUI 侧不需要 terminal.json 那样的 corrupted 横幅。字段级坏值（如 `"retry": "abc"`、`"retry": {"provider": "abc"}`）被 D3 非 plain object 替换规则 + 保存自愈。
 - **被否**：① GUI corrupted 横幅（terminal.json 有）——terminal.json 是 xyz 自有文件、损坏无人兜底所以需要横幅；settings.json 的损坏兜底已由 PiSettingsStore 承担，重复建设横幅需要给 store 加损坏探测 API，收益不抵改动面；② 读侧深度 schema 校验——pi 自己都用 `?.`/`??` 容忍坏值，xyz 读侧从严只会造出「pi 能跑但 GUI 报错」的新不一致。
-- **证据**：`pi-settings-store.ts:105-111`（schema guard 回落 `{}`）；`terminal-config-helper.ts:41-77`（校验 + 错误信封范式）；pi 容错链 `settings-manager.js:581-596`。
+- **证据**：`pi-settings-store.ts:114-119`（schema guard 回落 `{}`）；`terminal-config-helper.ts:41-77`（校验 + 错误信封范式）；pi 容错链 `settings-manager.js:581-596`。
 - **效果**：§3.1 失败路径两条（越界、损坏自愈）成立。
 
 **D8：数值合法域（设计期约定，实施期按此实现）**
@@ -331,8 +331,8 @@ export interface LlmRetryConfig {
 | `packages/runtime/src/services/ports/llm-retry-settings.ts` | **新增**：`ILlmRetrySettings` 窄 port |
 | `packages/runtime/src/services/config-service.ts`（+ `llm-retry-config-helper.ts` 新增） | 单行委托；helper 承载逻辑（控 max-lines 500，先例 `terminal-config-helper.ts`） |
 | `packages/runtime/src/transport/settings-message-handler.ts` | +2 case（get/set） |
-| `packages/runtime/src/index.ts` | port→infra 注装（同 IExtensionSettings 模式，`:221`） |
-| `packages/renderer/src/api/domains/config.ts` | +2 转发函数（先例 `:325` getTerminalConfig） |
+| `packages/runtime/src/index.ts` | port→infra 注装（同 IExtensionSettings 模式，`:222`） |
+| `packages/renderer/src/api/domains/config.ts` | +2 转发函数（先例 `:326` getTerminalConfig） |
 | `packages/renderer/src/components/settings/system/SystemLlmRetrySection.vue` | **新增** |
 | `packages/renderer/src/components/settings/system/SystemPage.vue` | +1 行挂载 |
 | `packages/renderer/src/i18n/locales/{zh-CN,en-US}/settings.ts` | 新增分组/字段/提示键 |
@@ -340,7 +340,7 @@ export interface LlmRetryConfig {
 
 **待验证检查点**（设计期无法确定，诚实标注）：
 
-- **P1**：pi 是否真无 settings 热加载旁路（如 extension 触发 reload）——S6 探针在真实环境复核，结论回写 D6。（实施记录：探针执行安排在实施流水线阶段 5 Gate B，与 S1-S7 同批；结论见 Gate B 签收表）
+- **P1**：pi 是否真无 settings 热加载旁路（如 extension 触发 reload）——S6 探针在真实环境复核，结论回写 D6。（实施记录：Gate B 探针已执行，S6 PASS——P1 消解：运行中会话不受影响、新会话即时生效，D6 静态提示语义成立；签收表见 impl-plan §7，commit 4de5a992c）
 - **P2（已消解，实施期 u2）**：「写后立刻读」一致性已由单测覆盖（pi-retry-settings.test.ts，锁内 invalidate + 重读语义验证通过）。
 - **P3（已消解——第 2 轮审查修正）**：S4 步骤① 的「pi 子进程必然落盘」动作已锚定 rpc `set_auto_retry`（三个候选中唯一无条件落盘，`rpc-mode.js:430` + `agent-session.js:2342-2344`）；原候选 `set_model` / `set_thinking_level` 经核实为会话级切换不落盘（`options.persist` 条件性且 rpc 入口不传，`rpc-mode.js:367-374` / `:390` + `agent-session.js:1252-1261` / `:1358-1366`），从候选移除。遗留随 U4：`pi-settings-store.ts:8` 模块头「用户 GUI 切模型/切思考档位时 pi 落盘」的说法与 0.84.4 rpc 实装不符，随实施批修正该注释。（实施记录：注释已随 u2-runtime commit 修正）
 
@@ -348,3 +348,4 @@ export interface LlmRetryConfig {
 
 - 2026-08-31 设计交付（4 轮对抗式审查收敛 0 must-fix，见 llm-retry-settings.review.md；commit db569f2ef）。
 - 2026-08-31 实施完成：u1-foundation（b1263dd0c，shared 契约）、u2-runtime（37b124164，store scope/infra/port/helper/handler + P3 注释修正）、u3-gui（08b348c15，Section/i18n/api；3 轮 fix：fmtDur 10 倍 bug、魔法数字、类型安全）；u4 登记完成（data-source-registry.md retry 域）。S1-S7 真实场景验收在 Gate B 执行。
+- 2026-08-31 Gate B 双绿：S1-S7 全 PASS（签收表见 impl-plan §7）；P1 消解——运行中会话不受影响、新会话即时生效，D6 静态提示语义成立（commit 4de5a992c）。

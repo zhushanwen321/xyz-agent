@@ -585,7 +585,6 @@ export default {
     smartContextExcludedRemove: '移除',
     // ── LLM 调用重试（SystemLlmRetrySection，llm-retry-settings）──
     llmRetryTitle: 'LLM 调用',
-    llmRetryDesc: '请求失败的自动重试策略（指数退避）',
     llmRetryConfiguredBadge: '已自定义',
     llmRetryEnable: '自动重试',
     llmRetryEnableDesc: '关闭后请求失败将直接作为错误消息落入对话流',
@@ -600,7 +599,7 @@ export default {
     llmRetryProviderTimeoutLabel: '单请求超时',
     llmRetryProviderTimeoutDesc: '单次请求的超时（秒，1-600；留空 = 跟随全局，禁止 0）',
     llmRetryProviderMaxDelayLabel: '服务端等待上限',
-    llmRetryProviderMaxDelayDesc: '单次重试的最长等待（秒，0 = 不限制，1000-3600000；留空 = 默认 60000）',
+    llmRetryProviderMaxDelayDesc: '单次重试的最长等待（秒，0 = 不限制，1-3600；留空 = 默认 60 秒）',
     llmRetryPreviewOff: '自动重试已关闭：请求失败将直接作为错误消息落入对话流。保存后对新会话生效',
     llmRetryPreviewOn: '按当前配置，单次失败请求最长自动重试 {n} 次，最长单次等待 {longest}，累计等待约 {total}。保存后对新会话生效',
     llmRetryOutOfDomain: '当前值 {value} 超出推荐范围，保存前需一并修正',

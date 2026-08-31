@@ -434,7 +434,9 @@ export class SettingsMessageHandler {
       case 'config.setRetryConfig': {
         // llm-retry-settings：写 retry 域。校验失败（D8 越界）按 D10 错误信封回复，
         // 不广播不落盘；成功 reply + 广播 config.retryConfig（多窗口同步，同 terminal 范式）。
-        // configured=true：六键刚显式写入。
+        // configured=true 的依据：mergeRetryConfig 无条件落盘顶层必填三键（enabled/maxRetries/
+        // baseDelayMs），读侧键存在判定恒成立；provider 三键未设时被 patchKey 删除（= 采纳
+        // pi 默认语义，未写入），不影响 configured 判定。
         const { config } = msg.payload
         const result = this.ctx.configService.setRetryConfig(config)
         if (!result.ok) {

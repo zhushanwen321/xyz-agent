@@ -11,7 +11,7 @@ import type { LlmRetryConfig } from '@xyz-agent/shared'
 import type { ILlmRetrySettings, LlmRetryConfigSnapshot } from '../../services/ports/llm-retry-settings.js'
 import { mergeRetryConfig, resolveRetryConfig, validateRetryConfigForWrite } from '../../services/llm-retry-config-helper.js'
 import { getPiAgentDir } from './pi-paths.js'
-import { readSettings, setSettingsPath, updateSettingsFields } from './pi-settings-store.js'
+import { readSettings, setSettingsPath, updateSettingsFields, invalidateSettingsCache } from './pi-settings-store.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
 /**
@@ -27,7 +27,10 @@ export class PiRetrySettings implements ILlmRetrySettings {
   }
 
   getRetryConfig(): LlmRetryConfigSnapshot {
-    // updateSettingsFields 写后刷新缓存，正常读直接命中；坏文件由 store schema guard 兜底 {}。
+    // 读前失效缓存（同 PiExtensionSettings.getPackages 先例）：pi 子进程 set_auto_retry 直接
+    // 落盘、不经本 store 写路径，读前失效保证 GUI 打开分组必见 pi 最新落盘值，不吃 3s TTL 陈旧值。
+    // invalidate 只丢内存缓存不触盘；坏文件由 store schema guard 兜底 {}。
+    invalidateSettingsCache()
     return resolveRetryConfig(readSettings().retry)
   }
 

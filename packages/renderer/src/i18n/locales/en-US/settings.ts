@@ -585,7 +585,6 @@ export default {
     smartContextExcludedRemove: 'Remove',
     // ── LLM retry (SystemLlmRetrySection, llm-retry-settings) ──
     llmRetryTitle: 'LLM Calls',
-    llmRetryDesc: 'Automatic retry strategy for failed requests (exponential backoff)',
     llmRetryConfiguredBadge: 'Customized',
     llmRetryEnable: 'Auto retry',
     llmRetryEnableDesc: 'When off, failed requests fall into the conversation as error messages directly',
@@ -600,7 +599,7 @@ export default {
     llmRetryProviderTimeoutLabel: 'Request timeout',
     llmRetryProviderTimeoutDesc: 'Timeout per request (seconds, 1-600; empty = follow global, 0 forbidden)',
     llmRetryProviderMaxDelayLabel: 'Server wait cap',
-    llmRetryProviderMaxDelayDesc: 'Max wait per retry (seconds, 0 = unlimited, 1000-3600000; empty = default 60000)',
+    llmRetryProviderMaxDelayDesc: 'Max wait per retry (seconds, 0 = unlimited, 1-3600; empty = default 60s)',
     llmRetryPreviewOff: 'Auto retry is off: failed requests will fall into the conversation as error messages directly. Applies to new sessions after saving',
     llmRetryPreviewOn: 'With the current config, a failed request retries up to {n} times, longest single wait {longest}, total wait about {total}. Applies to new sessions after saving',
     llmRetryOutOfDomain: 'Current value {value} is out of the recommended range; fix it before saving',
