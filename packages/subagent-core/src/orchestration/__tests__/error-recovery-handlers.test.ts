@@ -31,6 +31,7 @@ import type { AgentResult } from "../models/types.ts";
 import { WorkflowRun } from "../models/workflow-run.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../models/ports.ts";
 import type { WorkerHandle } from "../worker-handle.ts";
+import { flushMicrotasks } from "./helpers/flush-microtasks.ts";
 
 // ── helpers ──────────────────────────────────────────────────
 
@@ -479,14 +480,6 @@ function createDeferred<T>(): Deferred<T> {
     reject = rej;
   });
   return { promise, resolve, reject };
-}
-
-/** flush 微任务队列（dispatch 的 fire-and-forget promise 链推进到稳定态）。 */
-async function flushMicrotasks(ticks = 10): Promise<void> {
-  for (let i = 0; i < ticks; i++) {
-    // eslint-disable-next-line no-await-in-loop -- 排空微任务队列的固定 tick 循环（fire-and-forget promise 链推进到稳定态），非逐项等待
-    await Promise.resolve();
-  }
 }
 
 /** 构造真实 WorkflowRun（真实状态机/replaceRuntime/Trace/Budget）+ 初始 RunRuntime。 */
