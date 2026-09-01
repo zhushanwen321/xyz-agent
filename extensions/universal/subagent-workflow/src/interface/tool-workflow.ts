@@ -33,6 +33,10 @@ import { type Static, Type } from "typebox";
 
 import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
 import { THINKING_ORDER } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
+import {
+  argKeysFromMeta,
+  findFlattenedArgKeys,
+} from "@zhushanwen/subagent-core/orchestration/args-meta.ts";
 import type { LauncherDeps } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
 import { abortRun, runWorkflow } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
 import type { RunStore } from "@zhushanwen/subagent-core/orchestration/models/ports.ts";
@@ -105,8 +109,12 @@ const RUNID_SHORT = 8;
  * tool 自身顶层键（workflow params schema 键）——workflow 参数名与 tool 键撞名时
  * （如 workflow 声明参数 name），顶层同名键是 tool 参数而非平铺（m6 评审 M-3）。
  * 未来新增 tool 顶层键需同步此集合。
+ *
+ * D9 下沉后作为 core args-meta 的 reservedKeys 注入（ArgMetaOptions）——core 缺省
+ * 空集，不注入则撞名保护失效（run 调用顶层必有 action/name，会被误判平铺）。
+ * export 供 detectors.test 复用同一集合防漂移。
  */
-const TOOL_TOP_LEVEL = new Set([
+export const TOOL_TOP_LEVEL = new Set([
   "action",
   "name",
   "slug",
@@ -124,76 +132,11 @@ const TOOL_TOP_LEVEL = new Set([
 ]);
 
 /**
- * 从 workflow 参数 schema 动态构建平铺检测的已知键集（m6：schema 即 SSOT——
- * 替代 21 键硬编码 KNOWN_ARG_KEYS，消除与参数定义的漂移面）。
- *
- * - exact：properties keys（精确匹配）
- * - patterns：patternProperties 原样转正则数组（如 /^batch\\d+$/——与旧
- *   KNOWN_ARG_KEY_PREFIXES 语义一致，自动兼容 \\d{2} 等变体；schema pattern 已是
- *   正则源码，直接 new RegExp 即可）
- * - 构建时排除 TOOL_TOP_LEVEL（撞名保护）
+ * core args-meta 的宿主差异注入项（D9 下沉）：reservedKeys = TOOL_TOP_LEVEL。
+ * core 版 argKeysFromMeta / findFlattenedArgKeys 缺省 reservedKeys 为空集（core
+ * 中性形态），不传此项则失去撞名保护、行为不等值——调用点必须携带（等值契约）。
  */
-export function argKeysFromMeta(
-  parameters: Record<string, unknown> | undefined,
-): { exact: ReadonlySet<string>; patterns: readonly RegExp[] } {
-  const exact = new Set<string>();
-  const patterns: RegExp[] = [];
-  if (parameters === undefined || parameters === null || typeof parameters !== "object") {
-    return { exact, patterns };
-  }
-  const props = parameters.properties;
-  if (props !== null && typeof props === "object") {
-    for (const k of Object.keys(props as Record<string, unknown>)) {
-      if (!TOOL_TOP_LEVEL.has(k)) exact.add(k);
-    }
-  }
-  const pp = parameters.patternProperties;
-  if (pp !== null && typeof pp === "object") {
-    for (const p of Object.keys(pp as Record<string, unknown>)) {
-      try {
-        const re = new RegExp(p); // schema pattern 已是正则源码
-        // S1（m6 exec-review）：跳过能命中 tool 顶层键的 pattern——否则
-        // ^run.*$ 类 pattern 会匹配 runId/name 等 tool 键，合法调用恒误报
-        if ([...TOOL_TOP_LEVEL].some((tk) => re.test(tk))) continue;
-        patterns.push(re);
-      } catch (err) {
-        // 非法 pattern（schema 校验 m3 已保证合法，双保险）——跳过并记录
-        logger.warn(`[tool-workflow] patternProperties 非法正则跳过: ${p}`, {
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-  }
-  return { exact, patterns };
-}
-
-/**
- * 检测弱模型把 args 子字段平铺到 workflow params 顶层（P0 静默失败防护）。
- * 返回被平铺的键名列表（空 = 未平铺）。export 供 behavioral 测试（trigger/no-trigger/edge）。
- * 参数取 unknown 以便测试构造任意对象、并解耦 WorkflowToolParams 的 index-signature 限制。
- *
- * knownKeys/knownPatterns 由 argKeysFromMeta 动态构建（m6）——匹配谓词：
- * knownKeys.has(k) || knownPatterns.some(re => re.test(k))（pattern 自带数字后缀
- * 语义——loose startsWith 会误报 batchl/target1）；保留 args-排除（顶层 + args
- * 内共存不算平铺）。
- */
-export function findFlattenedArgKeys(
-  params: unknown,
-  knownKeys: ReadonlySet<string>,
-  knownPatterns: readonly RegExp[],
-): string[] {
-  if (typeof params !== "object" || params === null) return [];
-  const p = params as Record<string, unknown>;
-  const args = typeof p.args === "object" && p.args !== null ? p.args : undefined;
-  const isKnownKey = (k: string) =>
-    knownKeys.has(k) || knownPatterns.some((re) => re.test(k));
-  // hasOwnProperty.call 而非 in（原型链——constructor/toString 类参数名不被继承键掩盖）
-  return Object.keys(p).filter(
-    (k) =>
-      isKnownKey(k) &&
-      !(args !== undefined && Object.prototype.hasOwnProperty.call(args, k)),
-  );
-}
+const ARGS_META_OPTIONS = { reservedKeys: TOOL_TOP_LEVEL };
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -454,7 +397,10 @@ export async function actionRun(
 
   // m6：动态参数集（schema 即 SSOT）→ 平铺检测；无 parameters → 单次 warn + 跳过
   // （legacy const-meta 类永久无检测——D1 无 adapter 声明）
-  const { exact: knownKeys, patterns: knownPatterns } = argKeysFromMeta(script.meta.parameters);
+  const { exact: knownKeys, patterns: knownPatterns } = argKeysFromMeta(
+    script.meta.parameters,
+    ARGS_META_OPTIONS,
+  );
   if (knownKeys.size === 0 && knownPatterns.length === 0) {
     // M-2 显式信号：无参数契约（未声明/解析空）→ 单次 warn——静默退化变显式
     // （m6 exec-review M1：原实现排除 undefined 与设计相反）
@@ -462,7 +408,9 @@ export async function actionRun(
       `[tool-workflow] ${script.name}: 未声明参数契约（或解析为空）——平铺检测跳过，args 不校验`,
     );
   }
-  const flattened = findFlattenedArgKeys(params, knownKeys, knownPatterns);
+  // core 版接收 meta 内联构建键集（签名与本地版键集三参不同，判定谓词逐字同源）——
+  // 键集构建两次（此处 + core 内部）仅为 M-2 空契约信号，成本每 run 一次可忽略
+  const flattened = findFlattenedArgKeys(params, script.meta.parameters, ARGS_META_OPTIONS);
   if (flattened.length > 0) {
     throw new Error(
       `Detected ${flattened.join(", ")} at top level — they belong inside 'args'. ` +
