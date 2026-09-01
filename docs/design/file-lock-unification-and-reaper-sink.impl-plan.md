@@ -109,7 +109,7 @@ graph TD
 
 | 编号 | 偏差 | 依据 | 登记时间 |
 |------|------|------|---------|
-| D-01 | 设计 §3.3/§5 写挂点「server.ts」，实际 runtime 无此文件，onSessionDestroyed 汇聚点在 `packages/runtime/src/services/session/session-service.ts`（grep 核实） | 设计笔误修正，语义不变 | 计划期 |
+| D-01 | 设计 §3.3/§5 写挂点「server.ts」——services 层无此文件；transport/server.ts 是 onSessionDestroyed 的注册方而非汇聚点本体，挂接落在汇聚点本体 `session-service.ts` 的 removeSessionEntry（一致性审查 DE2 修正原表述：不依赖 RuntimeServer 装配顺序，语义等价且更稳） | 设计笔误修正，语义不变 | 计划期（2026-09-02 修正表述） |
 | D-02 | 设计 U3-3 与 U3-4 合并为 u-observability 单元（两者共改 rpc-client.ts，同文件不可同波） | dag-authoring 同文件共改→串行；合并优于加边 | 计划期 |
 | D-03 | 设计 U3-2（10 extension 排查+接入）拆为 u-audit（只读排查+清单）与 u-audit-fix（动态领地接入）两单元 | 排查结论未知无法预枚举接入领地；拆后各自验收客观可判 | 计划期 |
 | D-04 | u-bte-remove 领地扩至包内 8 个伴生文件（kill-tree.ts 平移 reaper 的 2 个被生产消费方引用的 helper、types.ts re-export 契约 alias、bash-kill-tool.ts import 改道、background/ 5 文件注释级更新、kill-tree.test.ts 等价恢复 6 条） | 纯删 reaper.ts 会断 typecheck；helper 属进程内自防御非收殓语义；alias 保包内短名与 import 路径稳定 | 执行期（2026-09-02） |
@@ -143,4 +143,5 @@ graph TD
 
 **变更历史**：
 
-- 2026-09-01 计划基线建立（commit 待填）。
+- 2026-09-01 计划基线建立（commit af7794056）。
+- 2026-09-02 一致性审查（三区并行独立 reviewer）：锁统一区 8R/1U-low/5D、收殓下沉区 8R/0U/3D、守卫观测区 12R/1U-low/2D，合计 28R/2U/10D。处置：2U（消费方 JSDoc 残留 + S6 真机观测方案注明）与注释级 D1-D4（signal-exit 边界/被夺取后误删他方锁二阶后果/探针 update 措辞/parity 注释理由）走修复批次；设计文档侧 10D 中 DE1（pi uninstall 命令形态）/DE2（挂点澄清）/DE3（行号漂移）/D5（extension 数 SSOT）/D-ERR-2（U3-1 flag 替换路径）+ 实质性 R（setImmediate 形态/硬序不传成败/probe 旁注）由主 agent 同批回写设计文档（含状态行更新）。28 条 reasonable 全数与 impl-plan 状态表既有登记对得上（reviewer 逐条核对），无新增未登记偏差。

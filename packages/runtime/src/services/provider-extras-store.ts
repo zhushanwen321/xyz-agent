@@ -6,8 +6,9 @@
  * models[].enabled 转化的 modelStates），models.json 只留 pi schema 内字段——
  * pi 升级收紧 schema 时 xyz 配置零迁移风险（provider-config-quota 架构 G3/D4）。
  *
- * 并发安全：读-改-写全程 proper-lockfile 锁（与 auth-storage.ts 的 AuthStorage 同模式、
- * 同参数——pi 侧/多实例并发写 providers.json 时 RMW 后写者基于陈旧读覆盖先写者）；
+ * 并发安全：读-改-写全程统一 mkdir 锁 @zhushanwen/pi-file-lock/core（与 auth-storage.ts
+ * 的 AuthStorage 同模式、磁盘协议与 pi 内嵌锁兼容——pi 侧/多实例并发写 providers.json
+ * 时 RMW 后写者基于陈旧读覆盖先写者）；
  * 写走 atomicWrite（tmp + rename）。损坏容错复用 quarantineCorruptFile（rename 为
  * `<path>.corrupt-<ts>` 保留取证 + 按空配置继续，与 JsonStore 隔离行为同源）。
  *
@@ -51,10 +52,12 @@ const JSON_INDENT = 2
 const SCHEMA_SNIPPET_MAX = 120
 
 /**
- * 跨进程写锁：锁协议（proper-lockfile 参数 + compromised 语义）单点在 utils/file-lock.ts
- * 的 withFileLockAsync（与 AuthStorage 同模式）——pi 侧/多实例并发写 providers.json 时
- * RMW 后写者基于陈旧读覆盖先写者。锁前 ensureFileExists 建空结构（写路径专用；
- * 读路径不持锁不物化文件）。
+ * 跨进程写锁：锁协议（统一 mkdir 锁 @zhushanwen/pi-file-lock/core 参数 + 指数退避
+ * 重试）单点在 utils/file-lock.ts 的 withFileLockAsync（与 AuthStorage 同模式，
+ * 磁盘协议与 pi 内嵌锁兼容同一把锁）——pi 侧/多实例并发写 providers.json 时 RMW
+ * 后写者基于陈旧读覆盖先写者。旧版锁的 onCompromised 保活检测已随锁统一移除
+ * （无 compromise 检测，行为变化声明见 file-lock.ts 模块头）。锁前 ensureFileExists
+ * 建空结构（写路径专用；读路径不持锁不物化文件）。
  */
 async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
   return withFileLockAsync(
@@ -64,7 +67,9 @@ async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<
   )
 }
 
-/** 锁前保证文件存在（proper-lockfile realpath 需要）。同时确保 config/ 父目录存在。 */
+/** 锁前保证文件存在（统一锁 realpath:false、加锁不依赖目标文件存在，物化空结构是
+ * 对齐 pi 侧 ensureFileExists 惯例而非加锁前置条件，见 withFileLock 注释）。
+ * 同时确保 config/ 父目录存在。 */
 function ensureFileExists(filePath: string): void {
   const dir = dirname(filePath)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })

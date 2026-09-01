@@ -18,8 +18,10 @@
 //   - 判死检查中锁目录 ENOENT（他方刚释放/刚夺取）→ 以 stale:0 重试（跳过判死直接
 //     mkdir，失败即 ELOCKED），照抄防无限递归的结构
 //   - 释放 = rmdir，容忍 ENOENT（照抄 removeLock）
-//   - graceful exit 兜底：process.on('exit') 配对 rmdirSync（对齐 proper-lockfile 的
-//     signal-exit 清理语义），避免优雅退出后锁残留要等 30s stale 才能夺取
+//   - graceful exit 兜底：process.on('exit') 配对 rmdirSync，避免优雅退出后锁残留
+//     要等 30s stale 才能夺取。覆盖范围边界：'exit' 只覆盖正常退出与 process.exit；
+//     信号默认终止（SIGINT/SIGTERM 无 handler）场景 'exit' 不触发（proper-lockfile
+//     经 signal-exit 额外覆盖该路径），锁残留回退 30s stale 夺取（同 SIGKILL 崩溃路径）
 //
 // 与 proper-lockfile 的行为边界（设计显式决策，非遗漏）：
 //   - 不做周期 utimes 保活（proper-lockfile 的 updateLock 定时器）：现有契约临界区
@@ -27,6 +29,11 @@
 //     mkdir 时刻，此后不变
 //   - 因此无 compromise 检测（保活定时器 stat/utimes 失败路径不存在）；release 对
 //     锁目录已被外部删除的场景静默成功（ENOENT 容忍）
+//   - 被夺取后 release 的二阶后果：本方持锁被对端 stale 夺取后，本方 release 的
+//     rmdir（及 exit-hook）会删除夺取者新建的锁目录——proper-lockfile 同场景由
+//     updateLock 发现 mtime 非 ours 而拒绝 unlock，自实现无保活故无此防线。
+//     触发前提 = 临界区违约超 stale 30s（契约要求毫秒级，违约 30000 倍才可达），
+//     风险接受（设计显式决策，此处显式声明）
 //
 // 零依赖约束（D1-A）：本文件不得 import 任何项目内包或第三方包——extension-logger
 // 携带 pi SDK peerDep 链，经 runtime re-export 会穿越 pi 边界。诊断日志走 opts.log

@@ -70,7 +70,7 @@ export class QuotaMessageHandler {
           this.ctx.sendError(ws, 'invalid_payload', 'providerId required', msg.id)
           return
         }
-        // A1-5：configure 持久化走 providers.json（proper-lockfile RMW），await 防止
+        // A1-5：configure 持久化走 providers.json（统一 mkdir 锁 RMW），await 防止
         // reply 先于落盘（handler 返回时配置已持久，broadcast/后续读不拿 stale）
         const result = await this.ctx.quotaService.configure(providerId, enabled, cookie, fetcher, apiKey)
         // 成功后广播 provider 列表：quota 配置进 providers.json extras，renderer 的

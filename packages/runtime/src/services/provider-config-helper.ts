@@ -761,8 +761,9 @@ function pickEnabledDefaultModel(
  * 设计约束：auth.json 清理是 provider 删除的「附带卫生操作」（主语义是 models.json
  * 条目/override 删除），凭据清理失败不应阻断删除主流程，故 try-catch 吞错只记 warn。
  *
- * 必须 await（而非 fire-and-forget）：AuthStorage.remove 内部 withFileLock（proper-lockfile）
- * 是真异步，fire-and-forget 时锁尚未获取、auth.json 未改写，紧随其后的 broadcastProviderList
+ * 必须 await（而非 fire-and-forget）：AuthStorage.remove 内部 withFileLock（统一
+ * mkdir 锁 @zhushanwen/pi-file-lock/core，无 compromise 检测）是真异步，
+ * fire-and-forget 时锁尚未获取、auth.json 未改写，紧随其后的 broadcastProviderList
  * → listProviders 会读到旧凭据，导致 catalog provider 删除后首次广播仍含该 provider。
  */
 async function cleanAuthCredential(

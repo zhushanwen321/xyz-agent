@@ -9,10 +9,10 @@
  * 真互斥（一侧持锁时另一侧按预算 fail-fast，释放后可获取）——后者同时守护
  * lockfile 路径推导不漂移。
  *
- * import 取舍：extension 包不是 runtime 的依赖（不能经包名 import、不引入
- * devDependency 改 lockfile），对照测试以相对路径直连其 workspace 源码；若
- * extension 包移位，本测试的 import 会先于任何参数漂移红掉，额外起到
- * 「孪生实现位置契约」的护栏作用。
+ * import 取舍：经包名主入口 import 会拉 extension-logger→pi SDK peer 链进
+ * runtime 测试图（runtime 生产仅经 /core 零依赖子入口），对照测试以相对路径
+ * 直连其 workspace 源码；若 extension 包移位，本测试的 import 会先于任何参数
+ * 漂移红掉，兼作「孪生适配层位置契约」的护栏。
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * S3 锁互操作集成探针（锁统一设计 §4 S3 / §3.2 D1-A，u-lock-probe 实施期门）：
@@ -25,7 +25,9 @@
  * @0.84.4 内嵌同版本，设计 §3.2 D1-A 探针基线），取参照抄 pi auth-storage.js
  * acquireLockAsyncWithRetry（realpath:false / retries:0 / stale:30s + 调用方退避）。
  * utimes 精度边界（检查点 1 原文）：两侧在该参数形态下都不做周期 utimes touch
- * （pi 不传 update、自实现无 touch），本探针行使的是 mkdir/rmdir/stat 判死全协议。
+ * （pi 不传 update → proper-lockfile 默认间隔 stale/2=15s，临界区毫秒级且 release
+ * 即 clearTimeout，touch 不发生；自实现无 touch），本探针行使的是 mkdir/rmdir/stat
+ * 判死全协议。
  * worker 脚本在 scripts/probe/（领地约束），进程内并发 + fake timers 均不适用
  * （真实文件系统竞争，vitest 默认真实定时器）。
  */

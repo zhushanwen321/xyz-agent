@@ -11,7 +11,8 @@
 // 取参忠实于 pi 真实驱动形态（node_modules/@earendil-works/pi-coding-agent/dist/core/
 // auth-storage.js acquireLockAsyncWithRetry）：lock(path, { realpath: false, retries: 0,
 // stale: 30_000 }) + 调用方退避循环 baseDelay = min(10·2^retry, 1000)、
-// delay = round(base·(1+random))、30s deadline。pi 侧不传 update（无周期 utimes touch）。
+// delay = round(base·(1+random))、30s deadline。pi 不传 update → proper-lockfile
+// 默认间隔 stale/2=15s，临界区毫秒级且 release 即 clearTimeout，touch 不发生。
 //
 // 临界区协议与自实现侧 worker 对称（read-validate-append-write）——撕裂行/丢行在
 // 当轮即失败。产物：stdout 末行 JSON 结果（consumed by test/file-lock-parity.test.ts）。

@@ -14,7 +14,8 @@
  *   - 分区：每个域只经自己的字段读写，物理上同一个文件，逻辑上各管各的 key。
  *
  * 🔒 跨进程锁（D1a，integrity-hardening.md §3.1；协议已在 /tmp/w1-probe 探针验证）：
- * updateSettingsFields 的 RMW 全程持 proper-lockfile 锁（lockfile 路径 <settings.json>.lock，
+ * updateSettingsFields 的 RMW 全程持统一 mkdir 锁 @zhushanwen/pi-file-lock/core
+ * （磁盘协议与 pi 内嵌 proper-lockfile 兼容；lockfile 路径 <settings.json>.lock，
  * 与 pi 同一把锁）。pi 侧真实锁形态（实装 0.84.1 settings-manager.js
  * acquireLockSyncWithRetry，设计期已 read 源码核实）：
  *   - lockSync(path, { realpath: false })，ELOCKED 时 CPU 自旋 20ms × 最多 10 次

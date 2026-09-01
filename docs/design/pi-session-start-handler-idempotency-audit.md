@@ -59,6 +59,16 @@
 - **⑪语义留痕（如实）**：结果缓存形态下，双派发的第二组 handler 不再从磁盘重载恢复出的 failed runs 进本组 runs Map（sessionState 同 key 覆盖后当次会话内存展示不含恢复条目）；文件面终态以首组落盘为准，重启后 loadAll 仍可读回。属「粒度边界」列既定裁量内的推论，非静默偏差。
 - **日志面（S6 探针形态的「第二轮日志无新增 cleanup/recovery 行」）**：`XYZ_AGENT_EXT_LOG=1` 真机观测属 Gate B（设计 §4 S6 守卫版）签收范围，单测层以上述入口计数 + 构造性蕴含覆盖。
 
+### S6 真机签收观测方案（factory 二调，效果导向证据）
+
+Gate B 对 factory 二调（factory 调用 ×2）的真机观测采用效果导向证据，不新做探针 extension：
+
+- **handler 派发 ×2 的观测通道**：base-tool-enhance 的 `session_start maintenance dispatch` debug 日志——`XYZ_AGENT_DEBUG=1` 下按派发逐条出现（每次派发恰好一条、无条件不短路，形态已由 `extensions/universal/base-tool-enhance/src/__tests__/maintenance-once.test.ts:117-137` 证明）。
+- **switch 场景复现**：`scripts/probe/s1-switch-session-repro.mjs`（S1 受控复现脚本：spawn pi 建立首 session → switch_session 到同 cwd 的另一 session 文件 → 触发 extension 模块缓存命中的 factory 二调路径）。
+- **蕴含链**：派发 ×2 由 handler 累积造成、handler 累积由 factory 二调造成——真机观测到同一 session_start 派发 ×2 即证 factory 二调发生，效果链蕴含成立，无需为「factory 调用次数」本身单独设探针。
+
+**替代选择与理由**：本方案替代设计 §5 U3-2 的「S6 探针 extension 通用化」（逐项探针 extension 记录 handler 派发与目标操作执行次数）。理由：单测层已按本节两表覆盖「包装后跨 session 操作各执行 1 次」（入口计数 + 构造性蕴含），真机层只缺「factory 二调真实发生」一环；效果导向证据（现成 dispatch 日志 ×2 + 现成 S1 复现脚本）恰好补齐该环且零新增工件——在此注明该选择，避免 Gate B 执行者临时发明观测工具。
+
 ## 3. 结论汇总
 
 - **必须接入：2 个** —— permission（迁移操作）、subagent-workflow（syncEnginesFile / startGcTimer / maybeCleanupExpiredSessionFiles / recoverManifestTmpFiles / WorktreeManager.scan / recoverCrashedRuns 六项；③④⑤⑥⑫ 明确不包装，见依据列粒度边界）。
