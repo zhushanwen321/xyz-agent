@@ -109,7 +109,7 @@ graph TD
 
 | 编号 | 偏差 | 依据 | 登记时间 |
 |------|------|------|---------|
-| D-01 | 设计 §3.3/§5 写挂点「server.ts」——services 层无此文件；transport/server.ts 是 onSessionDestroyed 的注册方而非汇聚点本体，挂接落在汇聚点本体 `session-service.ts` 的 removeSessionEntry（一致性审查 DE2 修正原表述：不依赖 RuntimeServer 装配顺序，语义等价且更稳） | 设计笔误修正，语义不变 | 计划期（2026-09-02 修正表述） |
+| D-01 | 设计 §3.2/§5 写挂点「server.ts」——services 层无此文件；transport/server.ts 是 onSessionDestroyed 的注册方而非汇聚点本体，挂接落在汇聚点本体 `session-service.ts` 的 removeSessionEntry（一致性审查 DE2 修正原表述：不依赖 RuntimeServer 装配顺序，语义等价且更稳） | 设计笔误修正，语义不变 | 计划期（2026-09-02 修正表述） |
 | D-02 | 设计 U3-3 与 U3-4 合并为 u-observability 单元（两者共改 rpc-client.ts，同文件不可同波） | dag-authoring 同文件共改→串行；合并优于加边 | 计划期 |
 | D-03 | 设计 U3-2（10 extension 排查+接入）拆为 u-audit（只读排查+清单）与 u-audit-fix（动态领地接入）两单元 | 排查结论未知无法预枚举接入领地；拆后各自验收客观可判 | 计划期 |
 | D-04 | u-bte-remove 领地扩至包内 8 个伴生文件（kill-tree.ts 平移 reaper 的 2 个被生产消费方引用的 helper、types.ts re-export 契约 alias、bash-kill-tool.ts import 改道、background/ 5 文件注释级更新、kill-tree.test.ts 等价恢复 6 条） | 纯删 reaper.ts 会断 typecheck；helper 属进程内自防御非收殓语义；alias 保包内短名与 import 路径稳定 | 执行期（2026-09-02） |
@@ -119,9 +119,9 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u-lock-core | committed | 1 | 26 tests passed（4 files）+ 协议互操作探针 7/7（自实现 × proper-lockfile 4.1.2 实库）+ 消费方无波及（llm-shared 50 / bte 244 / runtime parity 3）；deviations: pnpm-lock 伴生 / compromise 测试改写为 external-removal（设计声明无周期 touch 故 compromise 机制不存在）/ 参照按 4.1.2 实装内联位置 / setFileLockLogger 注入装配点 / stale clamp 2000 照抄 |
+| u-lock-core | committed | 1 | 26 tests passed（4 files）+ 协议互操作探针 7/7（自实现 × proper-lockfile 4.1.2 实库）+ 消费方无波及（llm-shared 50 / bte 244 / runtime parity 3）；deviations: pnpm-lock 伴生 / compromise 测试改写为 external-removal（设计声明无周期 touch 故 compromise 机制不存在）/ 参照按 4.1.2 实装内联位置 / setFileLockLogger 注入装配点 / stale clamp 2000 照抄 / src 级相对 import 无 .ts 后缀（TS5097 跨配置兼容，665c1f939）/ 测试 resolve-hook（node strip-types worker） |
 | u-bte-guard | committed | 1 | 244 tests passed (13 files)；deviations: index.test.ts 一行模拟失真修复（handler 现读 event.reason）+ reap 抛错不重置 flag（失败兜底交批次 2 触发面 B，注释声明） |
-| u-runtime-lock | committed | 1 | 待验证检查点 3 通过：./core 子入口经 esbuild 编译 TS 源内联进 bundle（降级路径未启用）；parity 3 + 消费方 123 + session-service 136 绿；产物断言 bundle 无 proper-lockfile require；deviations: 保留 proper-lockfile devDep（3 个测试文件作对端持锁者，与 S3 同向）/ auth-service.ts JSDoc 过时字符串留 u-doc-sync / sync 版删父目录预建（core 已兜底） |
+| u-runtime-lock | committed | 1 | 待验证检查点 3 通过：./core 子入口经 esbuild 编译 TS 源内联进 bundle（降级路径未启用）；parity 3 + 消费方 123 + session-service 136 绿；产物断言 bundle 无 proper-lockfile require；deviations: 保留 proper-lockfile devDep（3 个测试文件作对端持锁者，与 S3 同向）/ auth-service.ts JSDoc 过时字符串（实际由 b2bb3c295 doc-followup 完成并扩至 auth-storage.ts） / sync 版删父目录预建（core 已兜底） |
 | u-observability | committed | 1 | extension-logger 32 / rpc-client-observability 9 / logger 20 全绿 + check_spawn_env_boundary 违规 0；deviations: stderr 全量内存累计 + 1MB 硬上限（truncated 标注，弃 tee 磁盘）/ writeCrashLogIfNeeded best-effort try-catch（8 个既有测试 mock 缺新导出键，不动领地外）/ writePiCrashLog 复用 createPiStreamWriter（既有 grep 断言禁 appendFileSync） |
 | u-audit | committed | 1 | 清单 5 节落盘：必须接入 2（permission 迁移 / subagent-workflow 六项）·豁免 8（逐包行号级论证）；准则外发现 2 条留痕（system-prompt-trace turn_start 双注册、notify ledger 重复投递窗口——均超出 D3 session_start 守卫语义，后续另案） |
 | u-lock-probe | committed | 1 | **待验证检查点 1 通过**：S3 双方各 100 次真并发竞争绿（重叠>0 + 交替≥2 + 200 行零交错 + 负向验证证检测器敏感）；S1 脚本三形态实测（最小/staged 全量 17/崩溃捕获 exit1+stderr 落盘）；deviations: worker 在 scripts/probe/（领地）／19→17 按 mandatory-extensions.json SSOT／PL 侧参数照抄 pi auth-storage 真实形态 |
@@ -130,7 +130,7 @@ graph TD
 | u-bte-remove | committed | 1 | bte 236 tests（12 files）+ extensions 三连全绿（24 包）；触发面消失双断言（reaper 模块 import rejects + withFileLock 不触发）+ reconcile 每 session_start 三派发断言；deviations: 领地扩包内 8 文件伴生（reaper 2 个 helper 被生产消费方引用平移 kill-tree.ts / types.ts re-export alias 保短名 / bash_kill hint 文案同步新机制 / helper 测试等价恢复 6 条） |
 | u-doc-sync | committed | 1 | symbol-drift 过；卸载指引落 docs/release-notes.md 待发布草稿节（changeset 属发版流程排除）；**事实修正**：pi 0.84.4 无 `pi extension uninstall` 子命令，实装形态 `pi uninstall npm:<pkg>`（unified-hooks 先例同形）——设计 §3.3 D2 该点待一致性审查回写 |
 | u-guards-pkg | committed | 1 | 6 tests 绿 + extensions 三连过（新包零告警）+ check-extension-dependencies 过（21 entries，shared 组天然跳过登记——反向核实任务书预期不成立）；deviations: shared 先例无 role 字段不照加 / 单入口形态 / bte 通读确认无跨 session 副作用操作不接入（守卫包供 u-audit-fix 消费） |
-| u-audit-fix | committed | 1 | permission 578（27 files）+ subagent-workflow 926（73 files）全绿；三连过 + 清单一致 + symbol-drift 过；探针实测记录入清单 §2.5（真机 mtime/日志面归 Gate B S6）；deviations: 4 个既有测试 resetModules 适配（模块级 Map 跨用例污染）/ ⑪ 结果缓存语义留痕 / ⑨ 过时注释随接入删除 |
+| u-audit-fix | committed | 1 | permission 578（27 files）+ subagent-workflow 926（73 files）全绿；三连过 + 清单一致 + symbol-drift 过；效果导向证据链实测记录入清单 §2.5（通用化探针 extension 未建，见设计 §5 U3-2 实施修正旁注；真机 mtime/日志面归 Gate B S6）；deviations: 4 个既有测试 resetModules 适配（模块级 Map 跨用例污染）/ ⑪ 结果缓存语义留痕 / ⑨ 过时注释随接入删除 |
 
 ## 7 残留风险与变更历史
 
@@ -147,6 +147,7 @@ graph TD
 **变更历史**：
 
 - 2026-09-01 计划基线建立（commit af7794056）。
+- 2026-09-02 doc-followup（commit b2bb3c295）：D-05 承诺的独立回写兑现——R5 豁免登记回写 docs/design/env-propagation-boundary.md（reaper 3 个 spawnSync 调用点）+ auth-service.ts / auth-storage.ts 过时 proper-lockfile JSDoc 刷新为统一 mkdir-lock 表述。
 - 2026-09-02 一致性审查（三区并行独立 reviewer）：锁统一区 8R/1U-low/5D、收殓下沉区 8R/0U/3D、守卫观测区 12R/1U-low/2D，合计 28R/2U/10D。处置：2U（消费方 JSDoc 残留 + S6 真机观测方案注明）与注释级 D1-D4（signal-exit 边界/被夺取后误删他方锁二阶后果/探针 update 措辞/parity 注释理由）走修复批次；设计文档侧 10D 中 DE1（pi uninstall 命令形态）/DE2（挂点澄清）/DE3（行号漂移）/D5（extension 数 SSOT）/D-ERR-2（U3-1 flag 替换路径）+ 实质性 R（setImmediate 形态/硬序不传成败/probe 旁注）由主 agent 同批回写设计文档（含状态行更新）。28 条 reasonable 全数与 impl-plan 状态表既有登记对得上（reviewer 逐条核对），无新增未登记偏差。
 - 2026-09-02 Gate A 全量：12 命令 10 项原生绿；2 项存量失败（根 lint 6 errors probe 死代码 + workflow-extractor SNAPSHOT_VERSION 守卫未随 subagent-core 抽包更新）按零容忍纪律修复（guard 反而升级：权威源改指 + 防分叉双断言 + 路径注释同批清扫）——修复后根 lint 0 errors、runtime 4153/4153 全绿。零绕过检查（SKIP/.skip/eslint-disable 新增）零命中。
 - 2026-09-02 Gate B 真实场景七条全收口：S1 ×10 全绿（exitCode 0 / switchOk / 无 TypeError）；S2 dev app 真机冷启动首点（UI 无 toast + spawn/switch 日志 + EXT_LOG INFO dispatch startup/resume 真机在场）；S3 探针绿；S4a create 路径 forceQuit→A 面三连日志 + orphaned + kill（附 restore 存量差异 F2）；S4b 主形态 B 面收殓 + 硬序变体两轮实证（发现同周期竞态 F1）+ B 面兜住 A 面错时序孤儿的额外实证；S5 spawn 列表纯净（staged/源码/项目级，无 npm 全局）；S6 受控段 dispatch×3 + 4ms 双 resume + unregister 恰一次；S7 pi-crash 完整现场 + EXT_LOG INFO 落盘 + code=null 真机 + 裸 pi no-op。测试产物全清。

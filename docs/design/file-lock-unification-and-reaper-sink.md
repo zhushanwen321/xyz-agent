@@ -120,7 +120,7 @@ A 的关键约束（不是自由设计）：
 
 | 方案 | 长期架构合理性 | 短期成本 | 风险 |
 |---|---|---|---|
-| A（推荐）双触发面：① 生命周期收殓挂 runtime `onSessionDestroyed` 汇聚点（server.ts，覆盖主动删/进程退出/forceQuit/restore 清场），fire-and-forget 不阻塞销毁收敛链；② 启动期全量兜底扫描挂 startup-background-init 后台序列（与 reapOrphanPiProcesses 同序列，**硬序在其完成后执行**，时序论证见 §2.3）——旧 reaper 全局扫描的三类兜底对象（跨运行遗留孤儿、启动期被收殓 pi 的 detached 任务、从未激活即删的 session）由此等价承接。extension 删 session_start reaper（reconcile 对账保留，见 D3） | 收殓发生在「该 session 的 pi 确认死亡」的精确时点；跨运行遗留有启动期等价兜底；extension 不再做运行期全局扫描/全局锁；registry 契约入 `@xyz-agent/extension-protocol`（跨层契约 SSOT 有 session-manager 先例） | 中（~180 行：判定逻辑移植自 reaper.ts 三分支 + 契约定义 + 双挂点接线） | 扫描成本（启动期一次 readdir + 逐 registry 读取，毫秒级×session 数，fire-and-forget）；新旧共存见 §3.3 过渡窗口 |
+| A（推荐）双触发面：① 生命周期收殓挂 runtime `onSessionDestroyed` 汇聚点（汇聚点本体 session-service.ts removeSessionEntry，覆盖主动删/进程退出/forceQuit/restore 清场，见 §5 U2-2 DE2 澄清），fire-and-forget 不阻塞销毁收敛链；② 启动期全量兜底扫描挂 startup-background-init 后台序列（与 reapOrphanPiProcesses 同序列，**硬序在其完成后执行**，时序论证见 §2.3）——旧 reaper 全局扫描的三类兜底对象（跨运行遗留孤儿、启动期被收殓 pi 的 detached 任务、从未激活即删的 session）由此等价承接。extension 删 session_start reaper（reconcile 对账保留，见 D3） | 收殓发生在「该 session 的 pi 确认死亡」的精确时点；跨运行遗留有启动期等价兜底；extension 不再做运行期全局扫描/全局锁；registry 契约入 `@xyz-agent/extension-protocol`（跨层契约 SSOT 有 session-manager 先例） | 中（~180 行：判定逻辑移植自 reaper.ts 三分支 + 契约定义 + 双挂点接线） | 扫描成本（启动期一次 readdir + 逐 registry 读取，毫秒级×session 数，fire-and-forget）；新旧共存见 §3.3 过渡窗口 |
 | B extension 侧保留 reaper 仅加幂等守卫 | 职责仍错层，全局锁/全局扫描仍在；触发面靠 D1 兜底而非消失 | 低 | 治标 |
 | B' 仅生命周期收殓、无启动期兜底（Round 0 原案） | 跨运行遗留孤儿永久无人收殓——G2「有孤儿时收殓仍然发生」因果链断裂（旧 reaper 立项场景「SIGKILL 后 detached 任务被 init 收养」静默丢失） | 低 | 功能回归 |
 | C 收殓挂 Electron main | pi 生命周期所有者是 runtime，跨层绕路 | 高 | 引入新链路故障面 |
@@ -169,7 +169,7 @@ A 的关键约束（不是自由设计）：
 | S6（G3） | factory 二调下维护链单跑 | 目标 session **预埋一条僵尸 pending:register**（registry 存一条 running 终态可判条目 + pi entries 含对应未抵消 register；**id 必须带 `bt-` 前缀**——`collectUnsettledTaskIds` 只认 `BTE_TASK_ID_PREFIX`，非 bt- 前缀会被差集忽略致预埋失效）。用本次调查的探针 extension（观测 factory 调用与 handler 派发）跑 switch；观测通道 = `XYZ_AGENT_DEBUG=1` 的 extension 日志（U1-4 在 runSessionStartMaintenance 入口加无条件 debug 日志） | factory 调用 ×2、resume 的 handler 派发 ×2（探针可测）；**效果导向断言**：僵尸的 `pending:unregister` entry 恰好追加一次、无重复条目；维护链入口日志按 handler 派发次数出现、reap 类跨 session 操作只在首个派发执行（批 1）/不再执行（批 2 后） |
 | S7（G4） | 崩溃可观测 | 人为制造 pi 崩溃（注入一个必抛异常的临时 extension）→ 查数据目录 | `<logsDir>/pi-crash-*.log` 含完整 stderr；xyz 托管 pi 进程的 extension 日志文件存在且含该 extension 的 INFO 输出；未注入 XYZ_AGENT_EXT_LOG 的裸 pi 环境 extension 日志保持 no-op |
 
-批次对应：批次 1 验收 = S1/S2/S3（+S6 的内联版）；批次 2 = S4a/S4b/S5；批次 3 = S6（守卫包版 + 逐 extension 探针，见 §5 U3-2）/S7。每批独立可验收、可发版。
+批次对应：批次 1 验收 = S1/S2/S3（+S6 的内联版）；批次 2 = S4a/S4b/S5；批次 3 = S6（守卫包版 + 逐 extension 探针验证点，实施形态见 §5 U3-2 实施修正旁注）/S7。每批独立可验收、可发版。
 
 ## 5. 下一层拆分
 
@@ -196,7 +196,7 @@ A 的关键约束（不是自由设计）：
 | 单元 | 内容 | 文件 | justification / 验收挂钩 |
 |---|---|---|---|
 | U3-1 守卫包 | `@zhushanwen/pi-ext-guards`：`oncePerProcess(key, fn)`（结果缓存形态：同 key 重放首次结果/Promise 实例、fn 抛错不吞不释放 key）；~~U1-4 内联 flag 替换为守卫调用~~（实施修正：该 flag 随 U2-3 reaper 删除一并消失，bte 无跨 session 操作不接守卫；守卫包实际消费者 = u-audit-fix 判定的 permission / subagent-workflow） | `extensions/shared/ext-guards/`（新包）、base-tool-enhance index.ts（实施后无需改动） | 防线集中（P3）；S6 |
-| U3-2 影响面排查 | 按 §3.2-D3 准则排查其余 **10 个** session_start extension（ask-user / system-prompt-trace / pending-notifications / cache-probe / permission / goal / plan / subagent-workflow / smart-context / todo），非幂等者接入守卫，豁免者清单留痕；**每个「必须接入」项给一个探针验证点**（S6 探针 extension 通用化：记录 handler 派发与目标操作执行次数） | 10 个 extension 源文件 + 排查清单文档（附 PR） | P3 系统性收口；S6 逐项 |
+| U3-2 影响面排查 | 按 §3.2-D3 准则排查其余 **10 个** session_start extension（ask-user / system-prompt-trace / pending-notifications / cache-probe / permission / goal / plan / subagent-workflow / smart-context / todo），非幂等者接入守卫，豁免者清单留痕；**每个「必须接入」项给一个探针验证点**（S6 探针 extension 通用化：记录 handler 派发与目标操作执行次数）（实施修正：以 docs/design/pi-session-start-handler-idempotency-audit.md §2.5 的效果导向证据链替代——单测入口计数 + bte dispatch 日志 ×N + S1 复现脚本，通用化探针 extension 未建） | 10 个 extension 源文件 + 排查清单文档（附 PR） | P3 系统性收口；S6 逐项 |
 | U3-3 extension 日志 xyz 托管默认落盘 | extension-logger 支持 `XYZ_AGENT_EXT_LOG=1`（INFO 落盘 + 7 天清理；未注入保持 no-op）；runtime spawn env 注入（buildOutboundChildEnv extras，env-propagation-boundary 出站契约） | `extensions/shared/extension-logger/src/index.ts`、`packages/runtime/src/infra/pi/rpc-client.ts`（env extras） | P4；S7（含裸 pi 环境 no-op 验证） |
 | U3-4 pi 崩溃 stderr 落盘 | rpc-client 异常退出分支（code≠0 且非主动 kill）全量写 `pi-crash-<date>-<sid>.log`（logger.ts helper） | `packages/runtime/src/infra/pi/rpc-client.ts`、`infra/logger.ts` | P4；S7 |
 
