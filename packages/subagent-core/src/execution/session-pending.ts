@@ -40,17 +40,27 @@ export interface ActivePendingResult {
 
 /**
  * [perf] per-file 增量游标：session 文件 append-only，同文件重复判定（层主被多个
- * 后代唤醒 N 次 → N 次 agent_end）只需读上次 offset 之后的新增行，累计 entries
- * 差集语义与全量读完全一致。fork 继承的大 session（数十 MB）从「每次整读」降为
- * 「首读全量 + 后续增量」。
+ * 后代唤醒 N 次 → N 次 agent_end）只需读上次 offset 之后的新增行。fork 继承的大
+ * session（数十 MB）从「每次整读」降为「首读全量 + 后续增量」。
  * truncate/重建防御：size < offset → 重置全读。EOF 半行（写入竞态）不入账，
  * offset 只推进到完整行边界，下次补读。
- * 内存量级：每 sessionFile 一条（offset + 后代 entries，均有限）；测试隔离用
- * clearPendingCursors()。
+ *
+ * [LC-6/T6②] entries 只留 register−unregister 差集的**活跃**条目（activeRegisters
+ * Map，id → 原始 register entry），不累积全量历史 pending 行——长寿命 orchestrator
+ * 的内存从「随 pending 行总数无界涨」收敛为「随活跃后代数有界」（差集化同时把每次
+ * 判定的端口/list 重扫从 O(历史行数) 降为 O(活跃数)）。unregister 抵消已内联完成，
+ * 下游 countActiveFromEntries 端口（TTL/跨 session 过滤作用于 register entry 本体）
+ * 与 list 差集口径的语义与全量读完全一致；latestUnregisterMs（60s 唤醒窗口判据）
+ * 独立在 cursor 字段上，不受差集化影响。缺 data.id 的畸形行丢弃（对齐坏行跳过层级，
+ * 契约上 register/unregister 必带 data.id）。
+ *
+ * 剪枝：文件 stat/read 失败（含删除）即删 cursor（下次成功读时全量重建，增量只是
+ * 优化不是事实源）；进程 close 后由调用方调 prunePendingCursor 显式回收。
+ * 测试隔离用 clearPendingCursors()。
  */
 interface PendingReadCursor {
   offset: number;
-  entries: unknown[];
+  activeRegisters: Map<string, unknown>;
   latestUnregisterMs: number;
 }
 
@@ -61,6 +71,17 @@ export function clearPendingCursors(): void {
   cursors.clear();
 }
 
+/**
+ * [LC-6/T6②] 剪枝单个 sessionFile 的增量游标（子进程 close / session 终态化时调）。
+ *
+ * 进程死后其 sessionFile 不再有 agent_end 判定，cursor 条目（offset + 活跃后代 Map）
+ * 只会滞留不再更新——进程退出路径调用本函数回收。文件删除侧的自动剪枝在
+ * accumulatePendingEntries（stat/read 失败即删）。不存在时 no-op。
+ */
+export function prunePendingCursor(sessionFile: string): void {
+  cursors.delete(sessionFile);
+}
+
 /** [taste/no-unsafe-cast] pending 行的最小结构守卫：非 null object 即可（字段访问
  *  侧均做了 undefined 检查，全可选类型断言无校验意义，改守卫带运行时检查）。 */
 function isPendingLineLike(v: unknown): v is { customType?: string; timestamp?: string } {
@@ -69,9 +90,9 @@ function isPendingLineLike(v: unknown): v is { customType?: string; timestamp?: 
 
 /**
  * [内部共享] 读 session 文件并把 pending register/unregister 行累积进 per-file 增量
- * 游标（见 PendingReadCursor）。readActivePendingFromSessionFile（count 口径）与
- * listActivePendingFromSessionFile（清单口径，T2-②）共用同一 cursor——两个口径交错
- * 调用同一文件时 entries 累积不错位、不重复读已消费区间。
+ * 游标的**活跃差集**（见 PendingReadCursor）。readActivePendingFromSessionFile（count
+ * 口径）与 listActivePendingFromSessionFile（清单口径，T2-②）共用同一 cursor——两个
+ * 口径交错调用同一文件时差集不错位、不重复读已消费区间。
  *
  * 快速路径：行内含 pending 值（`"pending:register"` / `"pending:unregister"`）才解析，
  * 大量 message 行只付 includes 扫描跳过 JSON.parse。
@@ -80,22 +101,25 @@ function isPendingLineLike(v: unknown): v is { customType?: string; timestamp?: 
  * 静默失效 → recursive tree 被杀、steer 丢失。值字符串本身不受序列化空格影响。
  *
  * 文件不存在（sessionFile 未回填/首次 assistant 前）→ error（调用方保守不 kill）。
- * 坏行跳过（append 中途崩溃的截断行）。
+ * [LC-6] stat/read 失败（含文件被删）剪枝 cursor——下次成功读时全量重建（增量只是
+ * 优化不是事实源），防「已删文件 cursor 永久滞留」。坏行跳过（append 中途崩溃的截断行）。
  */
 function accumulatePendingEntries(
   sessionFile: string | undefined,
-): { entries: unknown[]; latestUnregisterMs: number; error?: string } {
+): { activeRegisters: Map<string, unknown>; latestUnregisterMs: number; error?: string } {
+  const emptyAcc = { activeRegisters: new Map<string, unknown>(), latestUnregisterMs: 0 };
   if (!sessionFile) {
-    return { entries: [], latestUnregisterMs: 0, error: "no sessionFile (handshake not settled)" };
+    return { ...emptyAcc, error: "no sessionFile (handshake not settled)" };
   }
 
   let size: number;
   try {
     size = fs.statSync(sessionFile).size;
   } catch (err) {
+    // [LC-6] 读失败（含 ENOENT 文件被删）→ 剪枝，防已删文件 cursor 永久滞留
+    cursors.delete(sessionFile);
     return {
-      entries: [],
-      latestUnregisterMs: 0,
+      ...emptyAcc,
       error: `session file unreadable: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
@@ -103,7 +127,7 @@ function accumulatePendingEntries(
   let cursor = cursors.get(sessionFile);
   if (cursor === undefined || size < cursor.offset) {
     // 首次（全量）或文件被 truncate/重建（offset 越界）→ 重置从头读
-    cursor = { offset: 0, entries: [], latestUnregisterMs: 0 };
+    cursor = { offset: 0, activeRegisters: new Map<string, unknown>(), latestUnregisterMs: 0 };
   }
 
   let chunk: string;
@@ -127,9 +151,10 @@ function accumulatePendingEntries(
       }
     }
   } catch (err) {
+    // [LC-6] 读失败（含 ENOENT 文件被删）→ 剪枝（同 stat 失败路径）
+    cursors.delete(sessionFile);
     return {
-      entries: [],
-      latestUnregisterMs: 0,
+      ...emptyAcc,
       error: `session file unreadable: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
@@ -148,8 +173,20 @@ function accumulatePendingEntries(
     try {
       const entry: unknown = JSON.parse(line);
       if (!isPendingLineLike(entry)) continue;
-      cursor.entries.push(entry);
-      if (entry.customType === "pending:unregister" && entry.timestamp) {
+      // [LC-6] 差集内联：register 入活跃 Map（同 id 重 register 覆盖 = 差集语义），
+      // unregister 抵消移除。缺 data.id 的畸形行丢弃（契约必带 id，对齐坏行跳过层级）。
+      const customType = entry.customType;
+      const data = (entry as { data?: unknown }).data;
+      const id =
+        typeof data === "object" && data !== null && typeof (data as { id?: unknown }).id === "string"
+          ? (data as { id: string }).id
+          : undefined;
+      if (customType === "pending:register" && id !== undefined) {
+        cursor.activeRegisters.set(id, entry);
+      } else if (customType === "pending:unregister" && id !== undefined) {
+        cursor.activeRegisters.delete(id);
+      }
+      if (customType === "pending:unregister" && entry.timestamp) {
         const ts = Date.parse(entry.timestamp);
         if (Number.isFinite(ts) && ts > cursor.latestUnregisterMs) cursor.latestUnregisterMs = ts;
       }
@@ -159,11 +196,11 @@ function accumulatePendingEntries(
     }
   }
 
-  return { entries: cursor.entries, latestUnregisterMs: cursor.latestUnregisterMs };
+  return { activeRegisters: cursor.activeRegisters, latestUnregisterMs: cursor.latestUnregisterMs };
 }
 
 /**
- * 读 session 文件计算活跃 pending 数（增量读，见 PendingReadCursor）。
+ * 读 session 文件计算活跃 pending 数（增量读 + 差集，见 PendingReadCursor）。
  */
 export function readActivePendingFromSessionFile(
   sessionFile: string | undefined,
@@ -175,9 +212,10 @@ export function readActivePendingFromSessionFile(
 
   // 计数器经通知域窄端口解析（缺省实现恒 0 = 零活跃，pending 门全开——安全侧缺省
   // 收敛在端口层，见 core/notify-ports.ts DEFAULT_NOTIFY_PORTS；此处 `?? 0` 仅防御
-  // 宿主注入部分端口对象的形态）。
+  // 宿主注入部分端口对象的形态）。[LC-6] 入参是差集后的活跃 register 集合（unregister
+  // 抵消已内联），端口语义（TTL/跨 session 过滤作用于 register entry 本体）不受影响。
   const countActive = getNotifyDomainPorts().countActiveFromEntries;
-  const active = countActive ? countActive(acc.entries) : 0;
+  const active = countActive ? countActive([...acc.activeRegisters.values()]) : 0;
   return {
     count: active,
     recentUnregister:
@@ -220,13 +258,13 @@ function isPendingEntryDataLike(v: unknown): v is PendingEntryDataLike {
 }
 
 /**
- * [T2-② / P-T2b 主路径] 读 session 文件列出活跃 pending 清单（差集：register −
- * unregister，按 data.id）。与 readActivePendingFromSessionFile 共享 per-file 增量
- * 游标（count 与 list 交错调用不错位）。
+ * [T2-② / P-T2b 主路径] 读 session 文件列出活跃 pending 清单（register − unregister
+ * 差集，按 data.id）。与 readActivePendingFromSessionFile 共享 per-file 增量游标的
+ * 活跃差集（count 与 list 交错调用不错位）。
  *
  * 与 count 口径的两点刻意差异（后代补杀语境）：
  * 1. 不经 countActiveFromEntries 端口——补杀需要「谁还活着」的 id/sessionId 线索，
- *    端口只给数量；差集算法对齐 extension state.ts 的 id Set 语义。
+ *    端口只给数量（差集本身已由游标内联完成，此处直接遍历活跃 register）。
  * 2. 不套用端口的 TTL/跨 session 过期语义——层主死后，TTL 过期或跨 session 的后代
  *    同样是无人管理的孤儿进程，列入补杀正是本函数的目的而非误杀。
  */
@@ -238,23 +276,11 @@ export function listActivePendingFromSessionFile(
     return { items: [], error: acc.error };
   }
 
-  const unregistered = new Set<string>();
-  const registers = new Map<string, PendingEntryDataLike>();
-  for (const raw of acc.entries) {
+  const items: ActivePendingItem[] = [];
+  for (const [id, raw] of acc.activeRegisters) {
     if (!isPendingLineLike(raw)) continue;
-    const customType = (raw as { customType?: unknown }).customType;
     const data = (raw as { data?: unknown }).data;
     if (!isPendingEntryDataLike(data)) continue;
-    if (customType === "pending:unregister") {
-      if (typeof data.id === "string") unregistered.add(data.id);
-    } else if (customType === "pending:register") {
-      if (typeof data.id === "string") registers.set(data.id, data);
-    }
-  }
-
-  const items: ActivePendingItem[] = [];
-  for (const [id, data] of registers) {
-    if (unregistered.has(id)) continue;
     items.push({
       id,
       sessionId: typeof data.sessionId === "string" ? data.sessionId : undefined,

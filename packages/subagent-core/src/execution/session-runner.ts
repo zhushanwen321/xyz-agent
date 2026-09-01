@@ -20,6 +20,7 @@ import { disposeEngines } from "./engine/registry.ts";
 import { armIdleTimer, DEFAULT_IDLE_TIMEOUT_MS } from "./lifecycle-manager.ts";
 import {
   listActivePendingFromSessionFile,
+  prunePendingCursor,
   readActivePendingFromSessionFile,
 } from "./session-pending.ts";
 
@@ -901,8 +902,48 @@ export function applySchemaEnvToChildEnv(
 /** buildEnvBlock 的 git 命令超时（ms）。 */
 const ENV_GIT_TIMEOUT_MS = 2000;
 
-/** git branch 缓存（key=cwd）——避免每次 session 创建都 spawn git。 */
+/**
+ * git branch 缓存的 LRU 上限 [LC-8/T6③]。
+ *
+ * 缓存 key 是 cwd——worktree 场景每次路径唯一，无上限则条目按 path 永久累积（长寿命
+ * orchestrator 内存无界，设计 §4.3 LC-8「实锤·轻微」）。64 对「同 cwd 高频 session
+ * 创建」的缓存收益零影响（活跃 worktree 数远小于此），仅封顶最坏形态。
+ */
+export const BRANCH_CACHE_MAX_ENTRIES = 64;
+
+/** git branch 缓存（key=cwd）——避免每次 session 创建都 spawn git。[LC-8] LRU 有界。 */
 const branchCache = new Map<string, string>();
+
+/** [LC-8] get 命中刷新 LRU 序：重插至 Map 尾（Map 迭代序 = 插入序，首元素即最旧）。 */
+function getCachedBranch(cwd: string): string | undefined {
+  const branch = branchCache.get(cwd);
+  if (branch !== undefined) {
+    branchCache.delete(cwd);
+    branchCache.set(cwd, branch);
+  }
+  return branch;
+}
+
+/** [LC-8] set 入缓存并淘汰超限的最旧条目（重 set 前先删，已存在时刷新 LRU 序）。 */
+function setCachedBranch(cwd: string, branch: string): void {
+  branchCache.delete(cwd);
+  branchCache.set(cwd, branch);
+  while (branchCache.size > BRANCH_CACHE_MAX_ENTRIES) {
+    const oldest = branchCache.keys().next();
+    if (oldest.done === true) break; // 防御：空 Map 但 size 判定异常时退出
+    branchCache.delete(oldest.value);
+  }
+}
+
+/** 测试钩子：清空 branchCache（模块级单例状态隔离，对齐 _resetLifecycleState 先例）。 */
+export function _resetBranchCacheForTest(): void {
+  branchCache.clear();
+}
+
+/** 测试钩子：branchCache 当前条目数（LRU 上界断言的观察点）。 */
+export function _getBranchCacheSizeForTest(): number {
+  return branchCache.size;
+}
 
 /**
  * 构建环境信息块（P7 防注入：环境数据标记为 data，非指令）。
@@ -936,7 +977,7 @@ export async function buildEnvBlock(
   if (depth > 0) {
     lines.push(`Depth: ${depth}/${MAX_FORK_DEPTH}`);
   }
-  let branch = branchCache.get(cwd);
+  let branch = getCachedBranch(cwd);
   if (branch === undefined) {
     // catch 兜底一切失败（含 execFile 未被 mock 的测试环境）：branch 静默为空，
     // env block 省略 Git branch 行——与旧同步版语义一致
@@ -961,7 +1002,7 @@ export async function buildEnvBlock(
       );
       branch = "";
     }
-    branchCache.set(cwd, branch);
+    setCachedBranch(cwd, branch);
   }
   if (branch) lines.push(`Git branch: ${branch}`);
   lines.push("--- end environment ---");
@@ -2062,6 +2103,14 @@ function waitForChildExit(
       // await 立即返回（上方已 settle）：保证 header 加速路径或 get_state response 已
       // 完成的回填结果对后续 identity 写入可见。
       await pump.handshakeSettled;
+      // [LC-6/T6②] 进程 close 回收其 sessionFile 的 pending 增量游标（cursors Map 按
+      // 「进程 close」剪枝的接线点，设计 §7.2 T6②）：进程死后该文件不再有 agent_end
+      // 判定，cursor 只会滞留。必须放在 handshakeSettled 之后——sessionFile 回填完成才
+      // 拿得到剪枝键；未回填（快速失败）跳过，此时也不存在 cursor（判定从未发生）。
+      // error 事件路径不重复剪：spawn 失败时 Node 必发 close，此处单点覆盖。
+      if (state.record.sessionFile) {
+        prunePendingCursor(state.record.sessionFile);
+      }
       // 处理 stdout 末尾残留行
       pump.processTrailingLine();
       resolve(code ?? 0);

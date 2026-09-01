@@ -63,6 +63,7 @@ vi.mock("../alive-store.ts", () => ({
 // keep-alive 判定：本文件统一 count>0（有活跃后代 → keep-alive 分支）。
 vi.mock("../session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 1, recentUnregister: false })),
+  prunePendingCursor: vi.fn(),
   listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
 }));
 

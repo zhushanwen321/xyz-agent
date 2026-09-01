@@ -72,6 +72,7 @@ vi.mock("../alive-store.ts", () => ({
 // [recursive-orchestration] agent_end 后代判定独立 mock（判定函数本身在 session-pending.test.ts 单独测）。
 vi.mock("../session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 0 })),
+  prunePendingCursor: vi.fn(),
 }));
 
 vi.mock("../temp-prompt.ts", () => ({

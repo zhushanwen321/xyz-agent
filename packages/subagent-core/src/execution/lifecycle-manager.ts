@@ -148,8 +148,18 @@ export function armIdleTimer(
   // 刷新：先清旧 timer，避免同一 record 叠加多个 armed timer。
   disarmIdleTimer(recordId);
 
-  const timer = setTimeout(() => {
-    idleTimers.delete(recordId);
+  // [LC-5/T6①] 超时回调按值守卫（对齐同包 session-runner.ts removeChildRegistration
+  // 的按句守卫先例）：clearTimeout 对「已到期、回调已入 macrotask 队列」的 timer 无效
+  //（Node 语义：fire 后不可撤销），若此刻同 recordId 发生 disarm + re-arm（agent_settled
+  // 刷新与旧 timer 到点同轮交错），旧回调无条件 delete(recordId) 会误删**新** timer 条目
+  // ——新 timer 脱管，后续 disarm 失效 → turn 中途被 idle GC 误杀。回调捕获自己的 timer
+  // 引用，仅当 Map 当前条目仍是自己（未被 re-arm 覆盖）才删除。设计 §11-2：fake-timer
+  // 模型内无法复现「旧回调迟到于 re-arm」的精确交错（sinon clock 同步 tick 消除了该
+  // 中间态），身份比对按防御性守卫保留（成本一行）。
+  const timer: NodeJS.Timeout = setTimeout(() => {
+    if (idleTimers.get(recordId)?.timer === timer) {
+      idleTimers.delete(recordId);
+    }
     onTimeout();
   }, resolved);
   // node 默认 setTimeout 返回的 timer 会被事件循环 keep-alive；unref 让它不阻塞

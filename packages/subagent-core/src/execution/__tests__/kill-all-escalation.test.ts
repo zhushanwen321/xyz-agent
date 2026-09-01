@@ -53,6 +53,7 @@ vi.mock("node:fs", async () => {
 vi.mock("../alive-store.ts", () => ({ writeAliveMarker: vi.fn() }));
 vi.mock("../session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 0, recentUnregister: false })),
+  prunePendingCursor: vi.fn(),
   listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
 }));
 vi.mock("../temp-prompt.ts", () => ({

@@ -746,9 +746,19 @@ export class RecordStore {
     this.indexHigherVersion = false;
   }
 
-  /** /resume /fork /new 后复活（dispose 的逆操作）。 */
+  /**
+   * /resume /fork /new 后复活（dispose 的逆操作）。
+   *
+   * [PS-10/T6④] 同步复位 orphanJudged 防重缓存：resumable 形态（IO-error 保守分支 /
+   * chatMode 分流）没有 .finalized sidecar 锚，重判资格完全由本缓存承载——dispose 时
+   * 有 clear（session 结束），但 revive 此前不复位，导致「同进程内曾经的 IO 失败记录
+   * 永久停留 resumable」，与本文件 recoverOrphanRecords 注释承诺的「IO 恢复后重开可重判」
+   * 不符。/new 复活正是「重开」语义：IO 已恢复的记录下次 recoverOrphanRecords 重新判定
+   * 收敛终态；仍不可读的记录重判再落一次 resumable entry（幂等，末条语义不变）。
+   */
   revive(): void {
     this._disposed = false;
+    this.orphanJudged.clear();
   }
 
   // ── 内部 ──────────────────────────────────────────────────

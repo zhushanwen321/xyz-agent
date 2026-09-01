@@ -69,6 +69,7 @@ vi.mock("../alive-store.ts", () => ({
 // 场景 ① 依赖 keep-alive 分支命中：count=1（有活跃后代 → 不 kill → 重挂 watchdog）
 vi.mock("../session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 1 })),
+  prunePendingCursor: vi.fn(),
 }));
 
 vi.mock("../temp-prompt.ts", () => ({

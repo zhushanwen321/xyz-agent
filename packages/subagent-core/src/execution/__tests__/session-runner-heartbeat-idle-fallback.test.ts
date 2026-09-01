@@ -72,6 +72,7 @@ vi.mock("../alive-store.ts", () => ({
 // keep-alive 心跳用例：count=1（有活跃后代 → keep-alive 分支）。
 vi.mock("../session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 1, recentUnregister: false })),
+  prunePendingCursor: vi.fn(),
   listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
 }));
 

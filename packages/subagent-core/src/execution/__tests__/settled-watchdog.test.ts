@@ -65,6 +65,7 @@ vi.mock("../alive-store.ts", () => ({ writeAliveMarker: vi.fn() }));
 // chatMode agent_end 早返回（continue），不读 session-pending；统一 count=0 防干扰。
 vi.mock("../session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 0, recentUnregister: false })),
+  prunePendingCursor: vi.fn(),
   listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
 }));
 
