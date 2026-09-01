@@ -121,7 +121,7 @@ graph TD
 | u-bte-guard | committed | 1 | 244 tests passed (13 files)；deviations: index.test.ts 一行模拟失真修复（handler 现读 event.reason）+ reap 抛错不重置 flag（失败兜底交批次 2 触发面 B，注释声明） |
 | u-runtime-lock | pending | 0 | — |
 | u-observability | pending | 0 | — |
-| u-audit | pending | 0 | — |
+| u-audit | committed | 1 | 清单 5 节落盘：必须接入 2（permission 迁移 / subagent-workflow 六项）·豁免 8（逐包行号级论证）；准则外发现 2 条留痕（system-prompt-trace turn_start 双注册、notify ledger 重复投递窗口——均超出 D3 session_start 守卫语义，后续另案） |
 | u-lock-probe | pending | 0 | — |
 | u-protocol | committed | 1 | 87 tests passed（6 files，新增 13）；deviations: 符号带 BackgroundTask 前缀（session-manager 先例）+ 导出 isGuard/active/terminal helper（u-runtime-reaper 读侧防御）+ MAX_TERMINAL_REGISTRY_ENTRIES 入契约（写终态 RMW 规则） |
 | u-runtime-reaper | pending | 0 | — |
