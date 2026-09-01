@@ -11,7 +11,7 @@
  * 运行：cd packages/runtime && npx vitest run src/infra/pi/__tests__/pi-retry-settings.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PiRetrySettings } from '../pi-retry-settings.js'
@@ -153,5 +153,20 @@ describe('PiRetrySettings · setRetryConfig（D3 嵌套 merge + 落盘）', () =
     const result = retrySettings.setRetryConfig({ ...VALID, provider: { timeoutMs: 0 } })
     expect(result.ok).toBe(false)
     expect(result.error).toContain('provider.timeoutMs')
+  })
+
+  it('写路径 I/O 失败（锁目录创建被拒）→ D10 错误信封 ok:false + error，不抛、不落盘', () => {
+    // settings 目录只读 → updateSettingsFields 取锁（mkdir lockfile）即 EACCES
+    chmodSync(dir, 0o555)
+    try {
+      const result = retrySettings.setRetryConfig(VALID)
+      expect(result.ok).toBe(false)
+      expect(typeof result.error).toBe('string')
+      expect(result.error!.length).toBeGreaterThan(0)
+      // 写失败无残留：settings.json 不被创建/改写
+      expect(existsSync(settingsPath)).toBe(false)
+    } finally {
+      chmodSync(dir, 0o755)
+    }
   })
 })

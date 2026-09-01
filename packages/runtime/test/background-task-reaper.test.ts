@@ -608,4 +608,21 @@ describe('触发面 B 挂接（startup-background-init 硬序）', () => {
       vi.useRealTimers()
     }
   })
+
+  it('B 扫描自身失败（reject）→ 链尾 catch 兜底 warn，不外抛、不影响启动序列', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      vi.mocked(reapOrphanPiProcesses).mockResolvedValueOnce({ scanned: 0, reaped: [], failed: [], unsupported: false })
+      vi.mocked(reapAllSessionsBackgroundTasks).mockRejectedValueOnce(new Error('scan boom'))
+
+      await runStartupBackgroundInit(makeStartupDeps())
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      expect(warnSpy).toHaveBeenCalledWith('[runtime] background task reap-all failed unexpectedly:', expect.any(Error))
+    } finally {
+      warnSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
 })
