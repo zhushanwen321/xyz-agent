@@ -91,7 +91,7 @@ import {
   SPAWN_WATCHDOG_ENV,
 } from "../session-runner.ts";
 import { listActivePendingFromSessionFile, readActivePendingFromSessionFile } from "../session-pending.ts";
-import { isProcessAlive, readAliveMarker } from "../alive-store.ts";
+import { isProcessAlive, readAliveMarker, writeAliveMarker } from "../alive-store.ts";
 import {
   emitStdoutLine,
   type FakeChild,
@@ -106,6 +106,7 @@ const mockSpawn = vi.mocked(spawn);
 const mockPending = vi.mocked(readActivePendingFromSessionFile);
 const mockListPending = vi.mocked(listActivePendingFromSessionFile);
 const mockReadAliveMarker = vi.mocked(readAliveMarker);
+const mockWriteAliveMarker = vi.mocked(writeAliveMarker);
 const mockIsProcessAlive = vi.mocked(isProcessAlive);
 const mockReaddirSync = vi.mocked(fs.readdirSync);
 
@@ -309,6 +310,9 @@ describe("[T2-①] keep-alive 裸缺省无进展检测上界（P-T2 降级路径
     const { child, finish } = await spawnAndReachKeepAlive();
     expect(child.killed).toBe(false);
 
+    // [A1-2 补修] 清掉 agent_end 处置写点的心跳基线：只统计 fire 重挂分支随行的心跳
+    mockWriteAliveMarker.mockClear();
+
     // 第 1 次连续静默 30min fire：复核发现存活后代 → 重挂不处置
     //（「直接后代跑 >30min、层主静默」的合法形态，P-T2 数据 85/89 parent-shutdown）
     await vi.advanceTimersByTimeAsync(KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS);
@@ -317,6 +321,16 @@ describe("[T2-①] keep-alive 裸缺省无进展检测上界（P-T2 降级路径
     // 第 2 个 30min 再 fire（固定复核节奏直到后代死光）：后代仍活 → 仍不处置
     await vi.advanceTimersByTimeAsync(KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS);
     expect(child.killed).toBe(false);
+
+    // [A1-2 补修] 每次复核重挂随行一次心跳：合法化形态「层主静默 + 后代长跑数小时」
+    // 期间层主无 agent_end（原心跳写点不再触达），重挂分支是唯一心跳源——缺失则
+    // marker 超 1h 软超时判陈旧 → 透明重生放行双写 / 孤儿恢复误终态活 record
+    expect(mockWriteAliveMarker).toHaveBeenCalledTimes(2);
+    // 心跳写点 = 层主 sessionFile + 子进程 pid（marker 软超时基准刷新语义）
+    expect(mockWriteAliveMarker).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ pid: child.pid }),
+    );
 
     await finish();
   });

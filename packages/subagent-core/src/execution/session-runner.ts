@@ -329,8 +329,9 @@ export function resolveSpawnWatchdogMs(maxTurns: number | undefined | null): num
  *   c. resolveSpawnWatchdogMs throw 的 F-R2 降级 → 不挂任何 timer（fail-fast 不静默
  *      换兜底）。
  * env 存在性用原始 process.env 判（不经 getEnvSpawnWatchdogMs 的 parse）——避免与
- * resolveSpawnWatchdogMs 内部的 invalid-env warn 重复出声；env 已设（含非法值）即
- * 「显式配置」语义，非裸缺省。
+ * resolveSpawnWatchdogMs 内部的 invalid-env warn 重复出声。判据是 raw falsy（undefined
+ * 或空串都算未设），与 getEnvSpawnWatchdogMs 对 raw 的判定逐字一致；env 已设且非空
+ *（含非法值如 "abc"）即「显式配置」语义，非裸缺省。
  */
 function isBareDefaultKeepAlive(maxTurns: number | undefined | null): boolean {
   return (maxTurns === undefined || maxTurns === null) && !process.env[SPAWN_WATCHDOG_ENV];
@@ -1415,6 +1416,14 @@ function hasLiveActiveDescendant(sessionFile: string | undefined, sessionDir: st
  * [A1-2] 到期不立即处置：层主 stdout 静默 ≠ 无进展（fire 回调内先复核存活后代，
  * 见 hasLiveActiveDescendant）。无存活后代才真静默处置：SIGTERM→killChildWithEscalation
  * + 置 sweepDescendantsOnClose（T2-② 后代级联补杀的两步时序前半）。
+ *
+ * [A1-2 补修] 重挂分支随行心跳（touchAliveMarkerForHeartbeat）：本 timer 合法化的
+ * 目标形态「层主静默 + 后代长跑数小时」期间层主无 agent_end，原心跳写点（agent_end
+ * 处置）不再触达——marker.startedAt 停在最后一次 agent_end，超 ALIVE_SOFT_TIMEOUT_MS
+ * （1h）被判陈旧 → findForeignLiveInstance 放行透明重生（活层主被双写）+ record-store
+ * 孤儿恢复误终态活 record（正是 T5②/PS-7a 心跳要防的失效）。复核发现存活后代本身就是
+ * 「层主仍被需要」的活跃证明，每次重挂刷新软超时基准。sessionFile 为空由心跳函数
+ * 自身守卫跳过（与既有写点同语义）。
  */
 function armKeepAliveNoProgressTimer(
   state: SpawnRunState,
@@ -1427,6 +1436,8 @@ function armKeepAliveNoProgressTimer(
     // [A1-2] fire 惰性复核：有存活活跃后代 = 有进展 → 重挂（固定 30min 再复核，
     // 直到后代死光才落处置分支）。
     if (hasLiveActiveDescendant(state.record.sessionFile, sessionDir)) {
+      // [A1-2 补修] 重挂 = 层主仍被需要：随行心跳刷新 marker 软超时基准（详见函数 doc）。
+      touchAliveMarkerForHeartbeat(state.record.sessionFile, child.pid, state.record.id);
       logger.debug(
         `[session-runner] keep-alive no-progress re-check: live descendant(s) present for ${state.record.id}, re-arm (cadence ${
           KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE
