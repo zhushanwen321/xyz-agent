@@ -28,6 +28,11 @@ function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
+/** 有限正数判定（provider.timeoutMs 读侧专用）：0 是写侧必拒值（合法域 1-600000），读侧清为未设。 */
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
 /**
  * 读侧解析（D7）：把文件 retry 域（可能缺省/坏值/非对象）合并为完整 LlmRetryConfig。
  * - configured = 六已知键（enabled/maxRetries/baseDelayMs/provider.timeoutMs/
@@ -50,11 +55,11 @@ export function resolveRetryConfig(raw: unknown): LlmRetryConfigSnapshot {
     maxRetryDelayMs: numberOr(providerRaw?.['maxRetryDelayMs'], PI_RETRY_DEFAULTS.providerMaxRetryDelayMs),
   }
   const timeoutMs = providerRaw?.['timeoutMs']
-  // 0 特判：写侧 validateLlmRetryConfig 必拒 0（合法域整数 1-600000），0 不是合法
-  // 超域值而是「写侧不可能产出」的值——读侧清为未设（不出现键 = 跟随全局
-  // httpIdleTimeoutMs 语义），闭合写读往返对称；>600000 的超域存量值仍按 D7
-  // 原样返回不改。
-  if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+  // 0 特判（isPositiveFiniteNumber）：写侧 validateLlmRetryConfig 必拒 0（合法域整数
+  // 1-600000），0 不是合法超域值而是「写侧不可能产出」的值——读侧清为未设（不出现
+  // 键 = 跟随全局 httpIdleTimeoutMs 语义），闭合写读往返对称；>600000 的超域存量值
+  // 仍按 D7 原样返回不改。
+  if (isPositiveFiniteNumber(timeoutMs)) {
     provider.timeoutMs = timeoutMs
   }
 
