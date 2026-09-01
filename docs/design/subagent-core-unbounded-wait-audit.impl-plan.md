@@ -132,8 +132,8 @@ graph TD
 | u-t3 | committed | 1 | 六项 + OR-6 主线程半边全绿：orchestration 37 files 504 passed 重跑实证、全量 2868 passed、typecheck 绿、extensions 三连绿 |
 | u-t1 | committed | 1 | 双管落地：execution 88 files 1254 passed（48 重跑实证）+ 全量 2879 passed + typecheck 绿；PS-9 同源性闭环（§11-5 不降级） |
 | u-t2a | committed | 1 | 四项落地：35 新用例重跑实证 + 全量 2915 四连绿 + typecheck 绿；keep-alive 无进展语义（P-T2 降级 B）+ settled-watchdog 原语（settled-watchdog.ts）+ 后代级联 + killed 收紧；两项裁决登记偏差表 |
-| u-t2b-d | pending | 0 | — |
-| u-t4-n | pending | 0 | — |
+| u-t2b-d | committed | 1 | dialog 三件套落地：4 文件 54 tests 重跑实证（含竞态恰一次/默认上界/队列不卡死）；「明确错误 settle」因 pi 协议 RpcExtensionUIResponse 封闭联合无 error 形态 → settle {cancelled:true} + 错误消息与恢复指引落 logger.warn（未扩协议，OR-3 先例）；非法 timeout 回落默认/超大 clamp MAX_TIMER_DELAY_MS（防 1ms 塌缩语义反转） |
+| u-t4-n | committed | 1 | 重投上限落地：NOTIFY_REDELIVERY_MAX_ATTEMPTS=5（attempts 含首次，同条通知最多 5 次投递尝试）；放弃终态 = customType 'subagent-bg-notify-abandoned' entry（三列差集 ledger−ack−abandoned，恢复不复活、compaction 补写闭环）+ warn 含恢复指引；notifier.ts 零改动（同通道 warn 已覆盖）；extension 壳侧 41 tests 回归绿 |
 | u-t6-s | pending | 0 | — |
 | u-svc | pending | 0 | — |
 | u-t6-c | pending | 0 | — |
