@@ -8,6 +8,8 @@
 //     → 断言 warn 发出 + 裸 diff + patchIncomplete:true
 //   - ⛔3 降级路径②add 失败（真实 index.lock 冲突构造）→ 同上断言
 //   - 新文件 + 已提交改动场景：完整机制 patch 含两者（`diff --cached <base>`）
+//   - 大 diff maxBuffer：缺省 1MB 超限形态如实登记（GitRunError 上抛 + ⛔3① git
+//     层降级 warn）/ 32MB 放宽后 gitRun 与 collectWorktreePatch 完整产出
 //   - cleanupWorktree 三步容错（remove 失败不阻断 / onRemoved 抛错不 reject）
 //   - listWorktreePorcelain 原始输出保真（与 execFileSync 原始输出逐字节全等）
 //   - 保真读 / GitRunError / SafeId / dirty 谓词
@@ -184,6 +186,86 @@ describe("worktree-git-ops", { timeout: 30_000 }, () => {
       expect(result.written).toBe(false);
       expect(result.patchIncomplete).toBeUndefined();
       expect(fs.existsSync(out)).toBe(false);
+      expect(warnCalls()).toHaveLength(0);
+    });
+  });
+
+  // ============================================================
+  // 大 diff maxBuffer：Node execFile 缺省 1MB 超限 / 宿主 32MB 放宽
+  // ============================================================
+
+  describe("大 diff maxBuffer（缺省 1MB 超限 / 宿主 32MB）", () => {
+    /** ~1.5MB 多行文本（30000 行 × ~51B），贴近批量重构的大 diff 真实场景。 */
+    const BIG_CONTENT = Array.from(
+      { length: 30_000 },
+      (_, i) => `line-${i} ${"x".repeat(40)}`,
+    ).join("\n");
+
+    /** 在 worktree 给已跟踪 base.txt 追加 ~1.5MB（30000 行 × ~51B）。
+     * 用已跟踪文件修改而非 untracked 新文件：纯 `git diff`（工作区 vs index）
+     * 不含 untracked，直接 diff 用例才有大输出（贴近批量重构改既有文件场景）。 */
+    function stageBigDiff(): void {
+      fs.appendFileSync(path.join(worktree, "base.txt"), `\n${BIG_CONTENT}\n`, "utf-8");
+    }
+
+    it("gitRun 不传 maxBuffer：stdout 超 1MB → GitRunError（Node execFile 缺省行为不变）", async () => {
+      stageBigDiff();
+
+      await expect(gitRun(["diff"], { cwd: worktree })).rejects.toThrow(GitRunError);
+    });
+
+    it("gitRun 传 maxBuffer 32MB：超 1MB stdout 完整返回", async () => {
+      stageBigDiff();
+
+      const out = await gitRun(["diff"], { cwd: worktree, maxBuffer: 32 * 1024 * 1024 });
+
+      expect(out.length).toBeGreaterThan(1_500_000);
+      expect(out).toContain("diff --git a/base.txt b/base.txt");
+    });
+
+    it(
+      "collectWorktreePatch 缺省：大 diff → GitRunError 原样上抛" +
+        "（如实登记：diff --cached 超限先被 ⛔3① git 层按「锚点被拒」降级 warn，" +
+        "降级裸 diff HEAD 再超限、无 catch 上抛）",
+      async () => {
+        stageBigDiff();
+
+        const err = await collectWorktreePatch({
+          worktreePath: worktree,
+          patchFile: patchFile(),
+          anchor: commitAnchor(),
+        }).catch((e: unknown) => e);
+
+        // 终态：降级裸 diff HEAD 同样超限（该路径无 catch），GitRunError 原样上抛，
+        // patch 文件不产出
+        expect(err).toBeInstanceOf(GitRunError);
+        expect((err as GitRunError).message).toContain("git diff failed");
+        expect(fs.existsSync(patchFile())).toBe(false);
+        // 中间留痕：diff --cached 超限 ≠ 锚点损坏，但 ⛔3① git 层按既有 catch
+        // 语义降级（最小修复不改降级判定），warn 如实发出
+        const warns = warnCalls();
+        expect(warns).toHaveLength(1);
+        expect(warns[0].message).toContain("rejected by git");
+      },
+    );
+
+    it("collectWorktreePatch 传 maxBuffer 32MB：大 diff 完整成 patch（无降级留痕）", async () => {
+      stageBigDiff();
+
+      const result = await collectWorktreePatch({
+        worktreePath: worktree,
+        patchFile: patchFile(),
+        anchor: commitAnchor(),
+        maxBuffer: 32 * 1024 * 1024,
+      });
+
+      expect(result.written).toBe(true);
+      expect(result.patchIncomplete).toBeUndefined();
+      const patch = fs.readFileSync(result.patchFile, "utf-8");
+      expect(patch).toContain("diff --git a/base.txt b/base.txt");
+      // patch 完整：全文行进 diff（内容 + diff 前缀 > 1.5MB，远超 1MB 缺省）
+      expect(patch.length).toBeGreaterThan(1_500_000);
+      expect(patch.endsWith("\n")).toBe(true);
       expect(warnCalls()).toHaveLength(0);
     });
   });

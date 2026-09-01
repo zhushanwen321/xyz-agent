@@ -93,17 +93,29 @@ export function isTreeDirty(statusPorcelain: string): boolean {
  * 裁掉尾换行会产出 `git apply` 拒绝的 corrupt patch（worktree-manager.ts 头注释
  * 2026-08-16 门 4 实测）。需要干净文本的消费点自行 trim。
  *
+ * maxBuffer（execFile stdout 上限）：不传 = Node execFile 缺省 1MB（1024 * 1024），
+ * 超限以 ERR_CHILD_PROCESS_STDIO_MAXBUFFER 失败（reject GitRunError）。大输出命令
+ * （如批量重构的大 diff）由调用方显式提高，宿主建议 32 * 1024 * 1024（对齐旧 zsw
+ * 宿主 GIT_MAX_BUFFER）。以条件展开实现而非 `maxBuffer: opts.maxBuffer` 直透：
+ * Node 先铺缺省再展开 options，显式 undefined 会覆盖缺省为无界（实测探针），
+ * 与「不传即 1MB 缺省」相悖。
+ *
  * 失败 reject GitRunError。无 per-repo 写串行（编排职责留宿主，见文件头注释）。
  */
 export function gitRun(
   args: string[],
-  opts: { cwd: string; timeout?: number },
+  opts: { cwd: string; timeout?: number; maxBuffer?: number },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       "git",
       args,
-      { cwd: opts.cwd, timeout: opts.timeout ?? GIT_TIMEOUT_MS, encoding: "utf-8" },
+      {
+        cwd: opts.cwd,
+        timeout: opts.timeout ?? GIT_TIMEOUT_MS,
+        ...(opts.maxBuffer !== undefined ? { maxBuffer: opts.maxBuffer } : {}),
+        encoding: "utf-8",
+      },
       (err, stdout, stderr) => {
         if (err) {
           const execErr = err as Error & { code?: unknown; killed?: boolean; signal?: string };
@@ -145,6 +157,15 @@ export interface CollectWorktreePatchOptions {
   readonly anchor: PatchBaselineAnchor;
   /** git 命令超时（ms），缺省 30_000。 */
   readonly timeout?: number;
+  /**
+   * execFile maxBuffer（字节）＝ diff 输出上限，缺省 1MB（1024 * 1024，Node execFile
+   * 缺省）。超限即 GitRunError（先经 ⛔3① git 层触发降级 warn，降级裸 diff 同样
+   * 超限后原样上抛——实测形态，见 worktree-git-ops.test.ts 大 diff 用例）。批量
+   * 重构等大 diff 场景宿主建议 32 * 1024 * 1024（对齐旧 zsw 宿主 GIT_MAX_BUFFER）。
+   * 仅透传至产生大输出的 diff 调用（`diff --cached` 与降级裸 diff）；`add -A`
+   * 等小输出命令不透传。
+   */
+  readonly maxBuffer?: number;
 }
 
 /**
@@ -244,6 +265,7 @@ export async function collectWorktreePatch(
       diff = await gitRun(["diff", "--cached", baseline], {
         cwd: worktreePath,
         timeout: opts.timeout,
+        maxBuffer: opts.maxBuffer,
       });
     } catch (err) {
       // ⛔3 路径①的 git 层：锚点内容不被 git 认（损坏形态二：文件在、内容非合法
@@ -257,7 +279,11 @@ export async function collectWorktreePatch(
           detail: err instanceof Error ? err.message : String(err),
         },
       );
-      diff = await gitRun(["diff", "HEAD"], { cwd: worktreePath, timeout: opts.timeout });
+      diff = await gitRun(["diff", "HEAD"], {
+        cwd: worktreePath,
+        timeout: opts.timeout,
+        maxBuffer: opts.maxBuffer,
+      });
       return finishPatch(diff, patchFile, patchIncomplete);
     }
     return finishPatch(diff, patchFile, patchIncomplete);
@@ -265,7 +291,11 @@ export async function collectWorktreePatch(
 
   // 降级形态（⛔3①/②）：裸 diff HEAD，仅未提交改动（add 成功时含已暂存新文件；
   // add 失败时 untracked 新文件不进 patch——两条路径损失面不同，留痕同一标记）。
-  const diff = await gitRun(["diff", "HEAD"], { cwd: worktreePath, timeout: opts.timeout });
+  const diff = await gitRun(["diff", "HEAD"], {
+    cwd: worktreePath,
+    timeout: opts.timeout,
+    maxBuffer: opts.maxBuffer,
+  });
   return finishPatch(diff, patchFile, patchIncomplete);
 }
 
