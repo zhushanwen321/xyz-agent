@@ -233,7 +233,9 @@ export async function doFinalizeRecord(
  *
  * MF-2：设 record.result = result.text（否则 notifier idle 回复正文恒为 "(empty)"，
  *   G1/G2 多轮回复送达不成立）。失败轮次（result.success=false，MF-6 回退 idle 路径）
- *   的 result.text 可能为空，用 result.error 兜底让 notify 可读。
+ *   error 优先于 text：collectResult 恒带 getFullText 全量正文，text 优先会把失败的
+ *   恢复指引覆盖成轮内旧正文（Gate B S-B-1 实测：settled watchdog kill 后宿主收到
+ *   成功形态通知，无从得知挂死与恢复方式）。
  *
  * 状态：record.status = "idle"（覆盖 tryTransition 设的 done/failed），record.round += 1。
  * 各步骤 best-effort 互不阻断（参照 doFinalizeRecord 的 bestEffort 用法）。
@@ -247,7 +249,9 @@ export async function doFinalizeRoundToIdle(
   result: AgentResult,
 ): Promise<void> {
   // MF-2：设 record.result 供 notifier idle 回复正文（否则恒 "(empty)"，G1/G2 不成立）。
-  // MF-6 兜底：失败轮次（success=false）的 result.text 可能为空，用 error 让 notify 可读。
+  // [T2-③ / LC-1] 失败轮 error 优先：collectResult 恒带 getFullText 全量正文（即使
+  // success=false），text 优先会把 watchdog 等失败的恢复指引覆盖成轮内正文（半成品 /
+  // 回补值），宿主无从得知失败与恢复方式（S-B-1 首轮 settled watchdog 实测）。
   // [R2-1] 轮终写点恒写非空：one-shot 空文本成功完成（collectResult getFullText 返回 ""、
   // success=true、真实可达，本写点被 subagent-service runAndFinalize 的成功分支共用）首轮
   // result 前值 undefined，兜底补 "(empty)" 占位——措辞与 notifier buildLlmContent 的
@@ -259,10 +263,10 @@ export async function doFinalizeRoundToIdle(
   // "(no output this round)"（D5：增量语义下沿用旧 record.result = 上一轮增量，本轮通知
   // 正文 = 上一轮内容，父 agent 误读为原样重复回复）。
   let nextResult: string | undefined;
-  if (result.text) {
-    nextResult = result.text;
-  } else if (result.error) {
+  if (result.error && (!result.success || !result.text)) {
     nextResult = `round did not complete: ${result.error}`;
+  } else if (result.text) {
+    nextResult = result.text;
   } else if (record.chatMode) {
     nextResult = "(no output this round)";
   } else {

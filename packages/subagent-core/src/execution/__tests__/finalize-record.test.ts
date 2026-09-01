@@ -407,6 +407,22 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     expect(record.result).toBe("round did not complete: spawn timeout");
   });
 
+  it("T2-③/LC-1: 失败轮 text 与 error 并存时 error 优先——collectResult 恒带 getFullText 正文，text 优先会覆盖恢复指引（S-B-1 首轮 settled watchdog 实测）", async () => {
+    const record = makeMinimalRecord({ id: "rec-result-err-text", chatMode: true });
+    record.status = "closed";
+    const result = makeMinimalResult();
+    // runSpawn settledWatchdogFired 分支的 collectResult 形态：正文（T1 回补采集）与
+    // watchdog 错误并存
+    result.text = "DONE";
+    result.success = false;
+    result.error =
+      "subagent did not reach agent_settled within 10 min (settled watchdog); the process was terminated to bound the wait. Recovery: check state with subagents action:'list', then re-send your message to continue.";
+    await doFinalizeRoundToIdle(makeDeps(), record, result);
+    // 失败的 record.result（= 通知正文）必须携带失败原因与恢复指引，不得回显轮内旧正文
+    expect(record.result).toBe(`round did not complete: ${result.error}`);
+    expect(record.result).not.toBe("DONE");
+  });
+
   it("C1TC10: chatMode 空增量轮占位——record.result 固定 (no output this round)，不含上一轮文本（D5）", async () => {
     const record = makeMinimalRecord({ id: "rec-increment-empty", chatMode: true });
     record.status = "closed";
