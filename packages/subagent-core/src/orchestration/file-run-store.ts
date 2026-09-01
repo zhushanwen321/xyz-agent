@@ -39,6 +39,40 @@ const STATE_DIR_NAME = "workflow-state";
  *  同目录可能存在的非 state 文件永不碰（对齐 pi STATE_FILE_GLOB）。 */
 const STATE_FILE_GLOB = /^wf-.*\.jsonl$/;
 
+/**
+ * 磁盘保留默认上限（OR-5 跨 run 保留修复）：envName 通道在 env 未设/空时生效。
+ *
+ * OR-5 将「STATE_MAX_RUNS opt-in 默认关」（无界累积）改为默认开：跨 run state
+ * 文件按 mtime 裁剪到本上限。取值 50 是无真实 run 体积分布数据下的保守值
+ * （设计 §11-4：标定待 S-A 验收后复核）——偏大不碍事（有界即达标），偏小会
+ * 误删仍被引用的 run 缓存，故取保守端。env 显式设置（有效正数）优先于本值；
+ * 显式非法值是 opt-out 通道（不清理，见 pruneStateFilesBeyondCap）。
+ */
+export const DEFAULT_STATE_MAX_RUNS = 50;
+
+// ── save 节流（OR-5 单 run 快照 O(n²) 主修） ──────────────────
+
+/**
+ * 同一 run 两次快照落盘的最小间隔（ms）。OR-5 单 run O(n²) 主修参数：现状每
+ * 次 save 都 append 全量快照（快照体积 O(calls) × save 次数 O(calls)），节流后
+ * 落盘次数有界为 ceil(run 时长 / 本间隔)（§11-4 量级推演见 impl-plan 偏差登记：
+ * 100-call run 从 ~200 次落盘 / ~50MB 降到 ~17 次 / ~8MB，增量 append diff 需
+ * 改造两宿主共享 codec（基线+delta 行 + loadAll 重放 + 版本兼容），收益不抵
+ * 复杂度，节流即终案）。取值对齐 jsonl-run-store 去抖同款考量：agent-call 间隔
+ * 秒级，60s 窗口把快照次数压到与「分钟级 run 时长」同量级，又不让崩溃窗口
+ * （未落盘的 running 尾部丢失，等价崩溃链由恢复路径收编）超出分钟级。
+ */
+export const DEFAULT_SAVE_MIN_INTERVAL_MS = 60_000;
+
+/** FileRunStore 构造参数（全部可选；缺省即生产形态）。 */
+export interface FileRunStoreOptions {
+  /**
+   * save 节流最小间隔（ms）；0 = 禁用节流（每次 save 都落盘）。缺省
+   * {@link DEFAULT_SAVE_MIN_INTERVAL_MS}。测试经此注入小窗口（fake timers 推进）。
+   */
+  saveMinIntervalMs?: number;
+}
+
 /** Node fs 错误 code 判定（ENOENT = 路径不存在，并发删除场景；对齐 pi isEnoentError）。 */
 function isEnoentError(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err &&
@@ -58,8 +92,10 @@ function isEnoentError(err: unknown): boolean {
 /**
  * RunStore port 的宿主无关文件实现（port 见 models/ports.ts）。
  *
- * - save：append-only——每次状态变更追加一行全量快照（不覆写；崩溃时旧快照仍在，
- *   loadAll 取最后一条有效行即可恢复到崩溃前最后一致状态）。
+ * - save：append-only + 节流——快照行仍全量（崩溃时旧快照仍在，loadAll 取最后
+ *   一条有效行恢复到最后一致状态），但同一 running run 两次落盘有最小间隔
+ *   （OR-5 ⑥a：节流前每次状态变更都 append 全量快照，快照体积 O(calls) ×
+ *   save 次数 O(calls) = 单 run 磁盘 O(n²)；节流参数与语义见 save 注释）。
  * - loadAll：扫 <dataRoot>/workflow-state/*.jsonl，每文件从尾向头取第一条形状
  *   有效的快照行；损坏行（JSON.parse 失败 / 形状校验不过 / 版本不匹配）跳过并
  *   warn——单行损坏不拖垮整个 run 的恢复（与 pi 壳 kill-9 恢复同容忍度）。
@@ -77,17 +113,54 @@ export class FileRunStore implements RunStore {
     return join(getHostServices().dataRoot(), STATE_DIR_NAME);
   }
 
+  /** save 节流最小间隔（ms），0 = 禁用。 */
+  private readonly saveMinIntervalMs: number;
+  /**
+   * per-runId 上次实际落盘时刻（节流判据）。终态落盘成功即删（终态后 runId 不再
+   * save）；残留条目只出现在「running 中 run 消失（崩溃/宿主弃用）」场景，单条
+   * ~100B 可忽略（对齐 jsonl-run-store chains「每 runId 残留 settled Promise」
+   * 的取舍先例）。时间源 Date.now()（fake timers 下可推进，测试友好）。
+   */
+  private readonly lastSavedAt = new Map<string, number>();
+
+  constructor(opts?: FileRunStoreOptions) {
+    this.saveMinIntervalMs = Math.max(0, opts?.saveMinIntervalMs ?? DEFAULT_SAVE_MIN_INTERVAL_MS);
+  }
+
   stateFilePath(runId: string): string {
     return join(this.stateDir(), `${runId}.jsonl`);
   }
 
+  /**
+   * 快照落盘（OR-5 ⑥a 节流后）：
+   * - 首写（该 runId 尚无落盘记录）永不节流——保证新 run 至少一条快照，
+   *   loadAll 重水合可发现；
+   * - 终态（status 非 running）永不节流——最终状态必落盘，末行即终态快照；
+   * - running 中间态距上次落盘不足 {@link saveMinIntervalMs} → 跳过本次 append
+   *   （状态仍在调用方内存 runs Map，下次落盘带全量最新快照；本文件最后一条
+   *   快照因此最多落后真实状态一个节流窗口——崩溃语义与 jsonl-run-store 去抖
+   *   同源：未落盘的 running 尾部丢失，等价崩溃链由恢复路径收编）。
+   *
+   * 节流判据在落盘成功后才更新（IO 失败不吞下一次重试机会）。
+   */
   async save(run: WorkflowRun): Promise<void> {
+    const isTerminal = run.state.status !== "running";
+    const now = Date.now();
+    const last = this.lastSavedAt.get(run.runId);
+    if (!isTerminal && last !== undefined && now - last < this.saveMinIntervalMs) {
+      return; // 节流窗口内：跳过本次全量快照 append
+    }
     // mkdir recursive 每次 save 前执行：幂等零成本（目录已存在时仅一次 stat），
     // 且免「构造时预建」——构造时建会在宿主尚未 configureCore 的窗口抛错。
     await mkdir(this.stateDir(), { recursive: true });
     // toRunSnapshot 补 v 字段（D4 裁决②写入侧）+ strip live 落盘
     const line = JSON.stringify(toRunSnapshot(run));
     await appendFile(this.stateFilePath(run.runId), line + "\n", "utf8");
+    if (isTerminal) {
+      this.lastSavedAt.delete(run.runId);
+    } else {
+      this.lastSavedAt.set(run.runId, now);
+    }
   }
 
   async loadAll(): Promise<WorkflowRun[]> {
@@ -183,12 +256,15 @@ export class FileRunStore implements RunStore {
    * - stat 全集取 mtime，allSettled 部分降级——单文件 stat 失败（并发删除
    *   ENOENT 等）静默跳过该文件，不阻断本轮裁剪。
    *
-   * 上限解析（envName 通道，对齐 pi getEnvStateMaxRuns 解析规则）：
-   * - `envName` 提供 → opt-in 通道：`process.env[envName]` 未设/空/非有限数/≤0
-   *   → no-op（**默认关**，pi B1 opt-in 语义）；设了有限正数 → 上限 = env 值
-   *   （env 值即上限，对齐 pi env 语义）；
-   * - `envName` 缺省 → 无 env 通道，直接按 `max` 参数裁剪（上限 = max，调用方
-   *   自管启用时机）。
+ * 上限解析（envName 通道，OR-5 ⑥b 默认开；显式非法值 opt-out 对齐 pi 解析风格）：
+ * - `envName` 提供 → env 通道：`process.env[envName]` 未设/空 → 按默认上限
+ *   {@link DEFAULT_STATE_MAX_RUNS} 裁剪（**默认开**——OR-5 修复前的 opt-in
+ *   「默认关」正是跨 run 无界累积缺陷本身）；设了有限正数 → 上限 = env 值
+ *   （env 值即上限）；设了非法值（非有限数/≤0）→ 不清理（显式 opt-out 通道：
+ *   用户意图不明时不动磁盘——对齐本方法 readdir/stat 失败一律放弃的保守哲学，
+ *   宿主如需自管保留可设足够大的正数值）；
+ * - `envName` 缺省 → 无 env 通道，直接按 `max` 参数裁剪（上限 = max，调用方
+ *   自管启用时机）。
    *
    * 本方法只做磁盘裁剪，不动内存 runs Map（内存侧淘汰归
    * lifecycle.evictDoneRunsBeyondCap，两域独立）。
@@ -200,12 +276,16 @@ export class FileRunStore implements RunStore {
   async pruneStateFilesBeyondCap(max: number, envName?: string): Promise<void> {
     let cap = max;
     if (envName !== undefined) {
-      // 解析规则逐条对齐 pi getEnvStateMaxRuns：未设/空/非有限数/≤0 → 不启用
+      // 未设/空 → 默认开（OR-5 ⑥b：DEFAULT_STATE_MAX_RUNS）；非法/≤0 → 不清理
+      // （显式 opt-out 通道，见方法注释）；有效正数 → env 值覆盖
       const raw = process.env[envName];
-      if (!raw) return;
-      const parsed = Number(raw);
-      if (!Number.isFinite(parsed) || parsed <= 0) return;
-      cap = parsed;
+      if (raw === undefined || raw === "") {
+        cap = DEFAULT_STATE_MAX_RUNS;
+      } else {
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed) || parsed <= 0) return;
+        cap = parsed;
+      }
     }
 
     const stateDir = this.stateDir();

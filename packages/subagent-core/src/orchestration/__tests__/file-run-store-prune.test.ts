@@ -1,12 +1,14 @@
-// file-run-store-prune.test.ts —— FileRunStore.pruneStateFilesBeyondCap 磁盘保留测试（U7/C1/D8）。
+// file-run-store-prune.test.ts —— FileRunStore.pruneStateFilesBeyondCap 磁盘保留测试（U7/C1/D8 + OR-5 ⑥b）。
 //
 // 语义对齐 pi jsonl-run-store mtime 裁剪实现（逐段平移）：mtime 升序删最旧、
 // 只碰 wf-*.jsonl、旁路容错（任何失败不抛）。
 //
-// 覆盖（验收条款②③）：
+// 覆盖（验收条款②③ + OR-5 ⑥b 默认开）：
 // - 超 cap 裁剪最旧（mtime 递增序列，剩最新的 cap 个）
 // - 未超 cap 不动
-// - envName 语义：env 未设/非法 → no-op（默认关）；有效值 → 上限 = env 值（覆盖 max 参数）
+// - envName 语义（OR-5 ⑥b 默认开）：env 未设/空 → 按默认上限 DEFAULT_STATE_MAX_RUNS
+//   裁剪（修复前「默认关」即跨 run 无界累积缺陷本身）；有效值 → 上限 = env 值；
+//   非法值（非有限数/≤0）→ 不清理（显式 opt-out 通道）
 // - 非 state 文件（不命中 glob）永不碰；目录不存在静默 no-op
 //
 // dataRoot 经 configureCore(tmp) 注入（对齐 file-run-store.test.ts 配置态隔离模式）。
@@ -18,7 +20,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { configureCore, resetCoreForTests, type HostServices } from "../../core/host-services.ts";
-import { FileRunStore } from "../file-run-store.ts";
+import { DEFAULT_STATE_MAX_RUNS, FileRunStore } from "../file-run-store.ts";
 
 const ENV_NAME = "XYZ_SUBAGENT_STATE_MAX_RUNS";
 
@@ -109,17 +111,29 @@ describe("FileRunStore.pruneStateFilesBeyondCap — max 直接裁剪", () => {
   });
 });
 
-describe("FileRunStore.pruneStateFilesBeyondCap — envName 语义", () => {
-  it("env 未设：no-op（默认关，pi B1 opt-in 语义）", async () => {
-    writeDatedStateFiles(4, 1_000_000);
-    delete process.env[ENV_NAME];
+describe("FileRunStore.pruneStateFilesBeyondCap — envName 语义（OR-5 ⑥b 默认开）", () => {
+  it("env 未设：按默认上限 DEFAULT_STATE_MAX_RUNS 裁剪（默认开，OR-5 修复）", async () => {
+    writeDatedStateFiles(DEFAULT_STATE_MAX_RUNS + 1, 1_000_000);
 
     await store.pruneStateFilesBeyondCap(2, ENV_NAME);
 
-    expect(listDir()).toEqual(["wf-1.jsonl", "wf-2.jsonl", "wf-3.jsonl", "wf-4.jsonl"]);
+    // 默认上限生效：51 → 50，最旧的 wf-1 被删（修复前此处为 no-op = 无界累积）
+    const rest = listDir();
+    expect(rest).toHaveLength(DEFAULT_STATE_MAX_RUNS);
+    expect(rest).not.toContain("wf-1.jsonl");
+    expect(rest).toContain(`wf-${DEFAULT_STATE_MAX_RUNS + 1}.jsonl`);
   });
 
-  it("env 设有效值：上限 = env 值（覆盖 max 参数）", async () => {
+  it("env 设空串：视同未设，按默认上限裁剪", async () => {
+    writeDatedStateFiles(DEFAULT_STATE_MAX_RUNS + 1, 1_000_000);
+    process.env[ENV_NAME] = "";
+
+    await store.pruneStateFilesBeyondCap(2, ENV_NAME);
+
+    expect(listDir()).toHaveLength(DEFAULT_STATE_MAX_RUNS);
+  });
+
+  it("env 设有效值：上限 = env 值（覆盖默认值与 max 参数）", async () => {
     writeDatedStateFiles(5, 1_000_000);
     process.env[ENV_NAME] = "2";
 
@@ -129,8 +143,8 @@ describe("FileRunStore.pruneStateFilesBeyondCap — envName 语义", () => {
     expect(listDir()).toEqual(["wf-4.jsonl", "wf-5.jsonl"]);
   });
 
-  it("env 非法值（非有限数 / 0 / 负数）：no-op（对齐 pi getEnvStateMaxRuns 解析）", async () => {
-    for (const bad of ["abc", "0", "-1", ""]) {
+  it("env 显式非法值（非有限数 / 0 / 负数）：不清理（显式 opt-out 通道）", async () => {
+    for (const bad of ["abc", "0", "-1"]) {
       writeDatedStateFiles(4, 1_000_000);
       process.env[ENV_NAME] = bad;
 
@@ -144,7 +158,7 @@ describe("FileRunStore.pruneStateFilesBeyondCap — envName 语义", () => {
     }
   });
 
-  it("envName 缺省：直接按 max 裁剪（调用方自管启用时机）", async () => {
+  it("envName 缺省：直接按 max 裁剪（调用方自管启用时机，env 无关）", async () => {
     writeDatedStateFiles(4, 1_000_000);
 
     await store.pruneStateFilesBeyondCap(1);

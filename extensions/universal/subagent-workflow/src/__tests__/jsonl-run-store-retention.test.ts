@@ -1,12 +1,14 @@
 // src/__tests__/jsonl-run-store-retention.test.ts
 //
-// [B1] workflow-state 磁盘保留清理（opt-in，默认关）。
+// workflow-state 磁盘保留清理（OR-5 ⑥b 默认开；原 B1 opt-in 形态已由修复取代）。
 //
 // 锁定的语义：
-// - 默认关：XYZ_SUBAGENT_STATE_MAX_RUNS 未设/空/0/负数/非数值 → 永不删除
-//   （「limits 默认关」裁决基线，watchdog 风格解析）；
-// - opt-in：每次新 run state 文件首写成功后，目录内 wf-*.jsonl 按 mtime 升序
-//   裁剪到上限（删最旧）；上限 3 写 5 个 → 剩最新 3；
+// - 默认开：XYZ_SUBAGENT_STATE_MAX_RUNS 未设/空串 → 按 DEFAULT_STATE_MAX_RUNS
+//   （core 单源常量，保守值 50）裁剪（OR-5 修复前「默认关」即跨 run 无界累积
+//   缺陷本身）；
+// - opt-out：显式非法值（0/负数/非数值）→ 不清理（用户意图不明时不动磁盘）；
+// - 显式覆盖：有效正数 → 上限 = env 值，每次新 run state 文件首写成功后，
+//   目录内 wf-*.jsonl 按 mtime 升序裁剪到上限（删最旧）；上限 3 写 5 个 → 剩最新 3；
 // - glob 外文件（非 wf- 前缀 / 非 .jsonl）与父目录 session JSONL 永不误删；
 // - 单个删除失败（unlink 目录 → EPERM，非 ENOENT）logger.warn 留证不抛，
 //   save 主链路不受影响。
@@ -31,6 +33,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { DEFAULT_STATE_MAX_RUNS } from "@zhushanwen/subagent-core/orchestration/file-run-store.ts";
 import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
 import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
 import type { RunSpec } from "@zhushanwen/subagent-core/orchestration/models/run-spec.ts";
@@ -79,7 +82,7 @@ function pinMtime(fullPath: string, i: number, base: number): void {
   fs.utimesSync(fullPath, t, t);
 }
 
-describe("B1: workflow-state 保留清理（opt-in XYZ_SUBAGENT_STATE_MAX_RUNS）", () => {
+describe("workflow-state 保留清理（OR-5 ⑥b 默认开 XYZ_SUBAGENT_STATE_MAX_RUNS）", () => {
   let tmpDir: string;
   let stateDir: string;
 
@@ -116,21 +119,39 @@ describe("B1: workflow-state 保留清理（opt-in XYZ_SUBAGENT_STATE_MAX_RUNS�
     expect(loggerMock.warn).not.toHaveBeenCalled();
   });
 
-  it("未设 / 空 / 0 / 负数 / 非数值 → 不清理（默认关语义锁定）", async () => {
+  it("未设 / 空 → 默认上限 DEFAULT_STATE_MAX_RUNS 生效（默认开，OR-5 修复）", async () => {
+    const store = new JsonlRunStore({ sessionDir: tmpDir });
+    const total = DEFAULT_STATE_MAX_RUNS + 1;
+
+    // 写默认上限 + 1 个 run：每轮首写成功都触发 prune
+    for (let i = 0; i < total; i++) {
+      await store.save(makeRunningRun(runIdAt(i)));
+    }
+
+    // 修复前（默认关）51 个全保留；现在裁到 50，最旧的 runIdAt(0) 被删
+    // （runId ts 段递增 → 文件名字典序 = 创建序 = mtime 升序，排序确定性不依赖 pin）
+    const rest = fs.readdirSync(stateDir).sort();
+    expect(rest).toHaveLength(DEFAULT_STATE_MAX_RUNS);
+    expect(rest).not.toContain(`${runIdAt(0)}.jsonl`);
+    expect(rest).toContain(`${runIdAt(total - 1)}.jsonl`);
+    expect(loggerMock.warn).not.toHaveBeenCalled();
+    await store.dispose();
+  });
+
+  it("显式非法值（0 / 负数 / 非数值）→ 不清理（opt-out 通道）", async () => {
     const store = new JsonlRunStore({ sessionDir: tmpDir });
 
-    // 未设：写 5 个全保留（无上限即无删除）
     for (let i = 0; i < 5; i++) {
       await store.save(makeRunningRun(runIdAt(i)));
     }
     expect(fs.readdirSync(stateDir)).toHaveLength(5);
 
-    // 显式非法值同样不启用（解析回落 undefined）：继续写、文件只增不减
-    for (const value of ["", "0", "-2", "abc", "NaN", "Infinity"]) {
+    // 显式非法值同样不启用（解析回落 undefined = opt-out）：继续写、文件只增不减
+    for (const value of ["0", "-2", "abc", "NaN", "Infinity"]) {
       process.env[STATE_MAX_RUNS_ENV] = value;
       await store.save(makeRunningRun(runIdAt(5)));
     }
-    // runIdAt(5) 首写（冷路径）flush 落盘第 6 个文件；后续 5 次为 running 热路径
+    // runIdAt(5) 首写（冷路径）flush 落盘第 6 个文件；后续 4 次为 running 热路径
     // 去抖批（未 flush）——磁盘 6 个文件且全程无删除
     expect(fs.readdirSync(stateDir)).toHaveLength(6);
     expect(loggerMock.warn).not.toHaveBeenCalled();

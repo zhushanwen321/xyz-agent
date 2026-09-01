@@ -52,9 +52,10 @@
  * 里用户手动删除选中的单个顶层 session 文件（trash CLI → unlink fallback，
  * dist/modes/interactive/components/session-selector.js:539-550），非自动、
  * 不递归子目录。**推论：workflow-state state 文件无限累积，
- * 保留策略由本包自担**——磁盘侧保留现为 opt-in（B1）：设 {@link STATE_MAX_RUNS_ENV}
- * 后每次新 run state 文件首写成功即按 mtime 裁剪到上限（默认关，见
- * pruneStateFilesBeyondCap）；内存侧由 evictDoneRunsBeyondCap 淘汰。W17 后 state 文件
+ * 保留策略由本包自担**——磁盘侧保留默认开（OR-5 ⑥b）：每次新 run state 文件首写
+ * 成功即按 mtime 裁剪到上限（未设 {@link STATE_MAX_RUNS_ENV} 时取
+ * {@link DEFAULT_STATE_MAX_RUNS} 默认值，见 pruneStateFilesBeyondCap；显式非法值
+ * 是 opt-out 通道）；内存侧由 evictDoneRunsBeyondCap 淘汰。W17 后 state 文件
  * 已降级为纯性能缓存（权威数据在 session JSONL 的 workflow-record entry），随 session
  * 文件被用户删除时一并消失。
  *
@@ -65,6 +66,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import type { CustomEntry, ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_STATE_MAX_RUNS } from "@zhushanwen/subagent-core/orchestration/file-run-store.ts";
 import { getLogger } from "@zhushanwen/subagent-core/core/logger.ts";
 
 import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
@@ -200,7 +202,7 @@ async function loadRunFromStateFile(filePath: string): Promise<WorkflowRun | nul
   }
 }
 
-// ── State file retention (B1, opt-in) ────────────────────────
+// ── State file retention (OR-5 ⑥b, default-on) ───────────────
 
 /** run state 文件名 glob：runId 形如 `wf-<ts>-<rand>`（lifecycle.ts 生成），只删命中者。
  *  同目录可能存在的非 state 文件（及 session JSONL——在父目录，本就不在扫描范围）永不碰。 */
@@ -275,11 +277,16 @@ const logger = getLogger("subagents");
 const DEFAULT_SAVE_DEBOUNCE_MS = 200;
 
 /**
- * 磁盘保留清理的 opt-in 开关 env（B1）：workflow-state 目录内 run state 文件上限。
+ * 磁盘保留清理的上限 env（OR-5 ⑥b 默认开）：workflow-state 目录内 run state
+ * 文件上限。
  *
- * 默认关——未设/空/非有限数/≤0 都不清理（「limits 默认关」裁决；解析对齐
- * session-runner 的 SPAWN_WATCHDOG_ENV watchdog 风格：Number() + Number.isFinite
- * 过滤，非法值回落 undefined = 不启用，而非抛错或取默认上限）。
+ * 解析语义与 core FileRunStore envName 通道一致（两实现面单源 {@link
+ * DEFAULT_STATE_MAX_RUNS}）：
+ * - 未设/空 → 按默认上限 {@link DEFAULT_STATE_MAX_RUNS} 裁剪（**默认开**——
+ *   OR-5 修复前的 opt-in「默认关」正是跨 run 无界累积缺陷本身）；
+ * - 有限正数 → 上限 = env 值（显式覆盖默认值）；
+ * - 非法值（非有限数/≤0）→ 不清理（显式 opt-out 通道：用户意图不明时不动
+ *   磁盘，对齐 prune 内部「任何失败都不抛」的保守哲学）。
  *
  * 用 XYZ_ 前缀而非 PI_：本 env 是 pi 进程内读的配置 env，xyz-agent 桌面 spawn 链按
  * ENV_WHITELIST_PREFIXES（只有 XYZ_ 等）过滤，PI_ 前缀在桌面场景被静默丢弃——
@@ -287,10 +294,10 @@ const DEFAULT_SAVE_DEBOUNCE_MS = 200;
  */
 export const STATE_MAX_RUNS_ENV = "XYZ_SUBAGENT_STATE_MAX_RUNS";
 
-/** 解析保留上限；env 未设/非法/≤0 返回 undefined（调用方不清理）。 */
+/** 解析保留上限；env 未设/空 → 默认上限，显式非法/≤0 → undefined（不清理）。 */
 function getEnvStateMaxRuns(): number | undefined {
   const raw = process.env[STATE_MAX_RUNS_ENV];
-  if (!raw) return undefined;
+  if (raw === undefined || raw === "") return DEFAULT_STATE_MAX_RUNS;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
   return parsed;
@@ -513,7 +520,7 @@ export class JsonlRunStore {
         WORKFLOW_RECORD_CUSTOM_TYPE,
         toWorkflowRecordEntryData(snapshot),
       );
-      // B1 磁盘保留清理（opt-in）：新 run state 文件首写成功后触发（rollbackFirstWrite
+      // OR-5 ⑥b 磁盘保留清理（默认开）：新 run state 文件首写成功后触发（rollbackFirstWrite
       // 即 save() 冷路径传入的 isFirstWrite——「本实例首次写该 runId」≈ 新文件落盘时刻，
       // 每个 run 只清一次，热路径 flush 不重复扫描目录）。prune 内部吞错不抛，
       // 在串行链上 await：save 返回即清理已定，测试可同步断言目录终态。

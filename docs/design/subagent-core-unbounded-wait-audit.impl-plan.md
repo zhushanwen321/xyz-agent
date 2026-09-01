@@ -113,6 +113,7 @@ graph TD
 | **P-T2 探针否定 30min 裸缺省默认值**：历史 89 样本 96.6% keep-alive 窗口 >30min（P50=24.5min/P95=71.6min/max≈95.5h，85/89 parent-shutdown 正常收敛）→ 按设计 P-T2 降级路径 B 裁决：**u-t2a 的 keep-alive 上界采用无进展检测语义**（keep-alive 期间子进程事件/后代集合变化刷新计时，仅连续静默达阈值才 kill；静默阈值 30min 量级） | u-p2 | 设计内合法降级（探针门正常工作）；裸缺省挂载限定不变 | **u-t2a 依据** |
 | P-T2b 结论：pi SIGTERM 不级联孤儿后台后代（形态 B 三次复现 NO-CASCADE；仅 bash 前台窗口有 CASCADE）→ 后代补杀为主路径（设计已按此形态） | u-p2 | 与实装源码 killTrackedDetachedChildren 覆盖面互证 | u-t2a 依据 |
 | P-T2c 结论：6 轮真实会话 agent_end→settled 间隔全部 0ms（<1-2ms 同 chunk），显式 compact 30 万 tokens 耗时 40.1s → **10min settled 硬上限维持**（余量 4 个数量级） | u-p2 | 含大上下文样本 | 定案 |
+| jsonl-run-store.ts 物理路径在 extensions/universal/subagent-workflow/src/（u-m0b tool-workflow.ts 同款漂移）；DEFAULT_STATE_MAX_RUNS=50 单源定义在 core file-run-store.ts，extension import；STATE_MAX_RUNS 显式非法值 = 显式 opt-out 通道不清理（补充裁决：设计只规定默认值未规定非法值走向，取保守不动磁盘） | u-t6-s | 按先例落实际文件；标定推演待 S-A 复核 | 已处置 |
 | 探针均以 pi --no-extensions 形态运行（本机全局 npm 版 pi-subagent-workflow exports 漂移致扩展加载 fatal，环境噪音非本单元处置范围）；P-T2c auto-compact 场景以显式 compact 命令实测作量级代理（400KB 未达该模型阈值） | u-p2 | 报告如实标注；settled 窗口是 core 语义，无扩展形态为最小变量基线 | 已登记 |
 | u-t1 越领地 additive：subagent-service.ts 注入 sessionDir（字段 + 两处 FinalizeDeps.sessionDir，10 行）——ExecutionRecord 无 cwd、ModelConfigService 不暴露 cwd，PS-9 反查的 sessionDir 只能由 SubagentService 注入 | u-t1（违领地但必要性成立，主 agent 核验 diff 仅 3 处 additive 后接受） | u-t1 领地补登 subagent-service.ts 注入点；u-t2b/u-t4/u-t5 共改时以此为基础续作 | 已处置 |
 | agent_end 处置决策点异步化（runAgentEndDisposition fire-and-forget，三分支逐行迁移）：设计未规定同步/异步形态，决策延迟 ≤1s（P-T1 实测 0.3-0.4ms），requestGetStateOnce 永不 reject | u-t1 | 实现形态选择，行为不劣化 | 已处置 |
@@ -134,7 +135,7 @@ graph TD
 | u-t2a | committed | 1 | 四项落地：35 新用例重跑实证 + 全量 2915 四连绿 + typecheck 绿；keep-alive 无进展语义（P-T2 降级 B）+ settled-watchdog 原语（settled-watchdog.ts）+ 后代级联 + killed 收紧；两项裁决登记偏差表 |
 | u-t2b-d | committed | 1 | dialog 三件套落地：4 文件 54 tests 重跑实证（含竞态恰一次/默认上界/队列不卡死）；「明确错误 settle」因 pi 协议 RpcExtensionUIResponse 封闭联合无 error 形态 → settle {cancelled:true} + 错误消息与恢复指引落 logger.warn（未扩协议，OR-3 先例）；非法 timeout 回落默认/超大 clamp MAX_TIMER_DELAY_MS（防 1ms 塌缩语义反转） |
 | u-t4-n | committed | 1 | 重投上限落地：NOTIFY_REDELIVERY_MAX_ATTEMPTS=5（attempts 含首次，同条通知最多 5 次投递尝试）；放弃终态 = customType 'subagent-bg-notify-abandoned' entry（三列差集 ledger−ack−abandoned，恢复不复活、compaction 补写闭环）+ warn 含恢复指引；notifier.ts 零改动（同通道 warn 已覆盖）；extension 壳侧 41 tests 回归绿 |
-| u-t6-s | pending | 0 | — |
+| u-t6-s | committed | 1 | 三文件落地：aging 升级 warn（4 周期含清理指引+结构化字段+自愈清零）+ 节流 60s（高频 10 save 落 1 行、done 强制落盘）+ STATE_MAX_RUNS 默认 50（两实现面单源常量 core 定义 extension import）；jsonl-run-store.ts 物理路径在 extension 侧（u-m0b tool-workflow.ts 同款漂移）；§11-4 标定 = 代码模型推演（本机无真实数据，~50MB→~8.5MB/run），节流即终案待 S-A 复核；19+5 tests 重跑实证 |
 | u-svc | pending | 0 | — |
 | u-t6-c | pending | 0 | — |
 | u-t2b | （重组拆分，见 u-t2b-d/u-svc） | — | — |
