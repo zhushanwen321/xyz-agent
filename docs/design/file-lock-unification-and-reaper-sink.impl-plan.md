@@ -128,8 +128,8 @@ graph TD
 | u-protocol | committed | 1 | 87 tests passed（6 files，新增 13）；deviations: 符号带 BackgroundTask 前缀（session-manager 先例）+ 导出 isGuard/active/terminal helper（u-runtime-reaper 读侧防御）+ MAX_TERMINAL_REGISTRY_ENTRIES 入契约（写终态 RMW 规则） |
 | u-runtime-reaper | committed | 1 | 23 新测试 + 22 文件 342 回归绿 + typecheck/eslint 0；deviations: 入口 async+setImmediate（同步 void 会阻塞事件循环拍，测试断言不 await）/ stale lock mtime>30s 判据 fresh 保留 / 硬序先后不传成败（pi 收殓失败仍扫描）/ 移植源 ownerPiPid===pid 分支被 isPidAlive 蕴含（注释声明）/ staleLocksRemoved 观测字段 |
 | u-bte-remove | committed | 1 | bte 236 tests（12 files）+ extensions 三连全绿（24 包）；触发面消失双断言（reaper 模块 import rejects + withFileLock 不触发）+ reconcile 每 session_start 三派发断言；deviations: 领地扩包内 8 文件伴生（reaper 2 个 helper 被生产消费方引用平移 kill-tree.ts / types.ts re-export alias 保短名 / bash_kill hint 文案同步新机制 / helper 测试等价恢复 6 条） |
-| u-doc-sync | pending | 0 | — |
-| u-guards-pkg | pending | 0 | — |
+| u-doc-sync | committed | 1 | symbol-drift 过；卸载指引落 docs/release-notes.md 待发布草稿节（changeset 属发版流程排除）；**事实修正**：pi 0.84.4 无 `pi extension uninstall` 子命令，实装形态 `pi uninstall npm:<pkg>`（unified-hooks 先例同形）——设计 §3.3 D2 该点待一致性审查回写 |
+| u-guards-pkg | committed | 1 | 6 tests 绿 + extensions 三连过（新包零告警）+ check-extension-dependencies 过（21 entries，shared 组天然跳过登记——反向核实任务书预期不成立）；deviations: shared 先例无 role 字段不照加 / 单入口形态 / bte 通读确认无跨 session 副作用操作不接入（守卫包供 u-audit-fix 消费） |
 | u-audit-fix | pending | 0 | — |
 
 ## 7 残留风险与变更历史
