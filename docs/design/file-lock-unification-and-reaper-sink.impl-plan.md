@@ -122,9 +122,9 @@ graph TD
 | u-runtime-lock | committed | 1 | 待验证检查点 3 通过：./core 子入口经 esbuild 编译 TS 源内联进 bundle（降级路径未启用）；parity 3 + 消费方 123 + session-service 136 绿；产物断言 bundle 无 proper-lockfile require；deviations: 保留 proper-lockfile devDep（3 个测试文件作对端持锁者，与 S3 同向）/ auth-service.ts JSDoc 过时字符串留 u-doc-sync / sync 版删父目录预建（core 已兜底） |
 | u-observability | committed | 1 | extension-logger 32 / rpc-client-observability 9 / logger 20 全绿 + check_spawn_env_boundary 违规 0；deviations: stderr 全量内存累计 + 1MB 硬上限（truncated 标注，弃 tee 磁盘）/ writeCrashLogIfNeeded best-effort try-catch（8 个既有测试 mock 缺新导出键，不动领地外）/ writePiCrashLog 复用 createPiStreamWriter（既有 grep 断言禁 appendFileSync） |
 | u-audit | committed | 1 | 清单 5 节落盘：必须接入 2（permission 迁移 / subagent-workflow 六项）·豁免 8（逐包行号级论证）；准则外发现 2 条留痕（system-prompt-trace turn_start 双注册、notify ledger 重复投递窗口——均超出 D3 session_start 守卫语义，后续另案） |
-| u-lock-probe | pending | 0 | — |
+| u-lock-probe | committed | 1 | **待验证检查点 1 通过**：S3 双方各 100 次真并发竞争绿（重叠>0 + 交替≥2 + 200 行零交错 + 负向验证证检测器敏感）；S1 脚本三形态实测（最小/staged 全量 17/崩溃捕获 exit1+stderr 落盘）；deviations: worker 在 scripts/probe/（领地）／19→17 按 mandatory-extensions.json SSOT／PL 侧参数照抄 pi auth-storage 真实形态 |
 | u-protocol | committed | 1 | 87 tests passed（6 files，新增 13）；deviations: 符号带 BackgroundTask 前缀（session-manager 先例）+ 导出 isGuard/active/terminal helper（u-runtime-reaper 读侧防御）+ MAX_TERMINAL_REGISTRY_ENTRIES 入契约（写终态 RMW 规则） |
-| u-runtime-reaper | pending | 0 | — |
+| u-runtime-reaper | committed | 1 | 23 新测试 + 22 文件 342 回归绿 + typecheck/eslint 0；deviations: 入口 async+setImmediate（同步 void 会阻塞事件循环拍，测试断言不 await）/ stale lock mtime>30s 判据 fresh 保留 / 硬序先后不传成败（pi 收殓失败仍扫描）/ 移植源 ownerPiPid===pid 分支被 isPidAlive 蕴含（注释声明）/ staleLocksRemoved 观测字段 |
 | u-bte-remove | pending | 0 | — |
 | u-doc-sync | pending | 0 | — |
 | u-guards-pkg | pending | 0 | — |
