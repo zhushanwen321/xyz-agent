@@ -30,7 +30,6 @@ function resolvePi() {
   }
 }
 const PI_BIN = resolvePi();
-const PHASE_TIMEOUT_MS = 180_000;
 const TOTAL_BUDGET_MS = 600_000;
 const STARTED = Date.now();
 
@@ -362,22 +361,19 @@ function writeResults(code) {
   }, 1000);
 }
 
-// 串行：A → B；支持 --phase B 只跑指定形态（调试用，正式运行跑全量）
+// 串行：A → B；支持 --phase B 只跑指定形态（调试用，正式运行跑全量）。
+// runPhase 的裁决数据写 results.phases（writeResults 从中读取），返回值不引用
 const onlyPhase = process.argv.includes("--phase") ? process.argv[process.argv.indexOf("--phase") + 1] : null;
-const phaseA =
-  onlyPhase && onlyPhase !== "A"
-    ? null
-    : await runPhase("A-foreground-bash", "sleep 240", "sleep 240", {
-        prompt: PROMPT_A,
-        waitForSettled: false,
-      });
-const phaseB =
-  onlyPhase && onlyPhase !== "B"
-    ? null
-    : await runPhase("B-background-descendant", PROMPT_B_FINAL, "GRANDCHILD_PID", {
-        prompt: PROMPT_B_FINAL,
-        waitForSettled: true,
-      });
+if (!onlyPhase || onlyPhase === "A")
+  await runPhase("A-foreground-bash", "sleep 240", "sleep 240", {
+    prompt: PROMPT_A,
+    waitForSettled: false,
+  });
+if (!onlyPhase || onlyPhase === "B")
+  await runPhase("B-background-descendant", PROMPT_B_FINAL, "GRANDCHILD_PID", {
+    prompt: PROMPT_B_FINAL,
+    waitForSettled: true,
+  });
 
 log("all phases done");
 writeResults(0);

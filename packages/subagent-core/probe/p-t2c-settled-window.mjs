@@ -14,7 +14,6 @@
 
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 const MODEL = "xiaomi-token-plan-cn/mimo-v2.5-pro";
 // pi 路径动态解析（后台 shell PATH 可能不含 nvm bin；禁止写死个人绝对路径）
