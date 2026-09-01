@@ -223,12 +223,24 @@ export async function runWorkflow(
  // 构造 handlers + runtime（worker + controller）
   const handlers = makeHandlers(run, deps);
   const controller = new AbortController();
-  const worker = deps.workerHost.start(spec, spec.args, handlers);
  // C.7：run 级时间预算计时器（spec.budgetTimeMs > 0 时启用，到期 abortRun time_limited）。
+ // OR-1 顺序修复（unbounded-wait-audit §4.1）：调度先于 workerHost.start——
+ // budgetTimeMs 越界（>2^31-1）的 fail-fast throw（assertSafeTimerDelay）发生在
+ // 任何副作用（worker 启动、runs 注册）之前，杜绝「worker 已跑、run 永不可达」
+ // 的孤儿窗口（此前 runs.set 在最末，fail-fast 后连 abortRun 都抛 not found）。
   const timeBudgetTimer =
     spec.budgetTimeMs && spec.budgetTimeMs > 0
       ? scheduleTimeBudget(runId, deps, spec.budgetTimeMs)
       : undefined;
+  let worker: WorkerHandle;
+  try {
+    worker = deps.workerHost.start(spec, spec.args, handlers);
+  } catch (err) {
+    // 前移的代价：start 抛错时已挂的 timeBudget timer 会残留，到期对从未注册的
+    // runId 触发 abortRun（必抛 not found）——本路径 runs.set 未到，须就地清理。
+    if (timeBudgetTimer) clearTimeout(timeBudgetTimer);
+    throw err;
+  }
   const runtime = new RunRuntime(worker, controller, timeBudgetTimer);
 
  // assignRuntime（注入 runtime，恢复 I1：running ⟺ runtime!==undefined）
@@ -236,7 +248,7 @@ export async function runWorkflow(
 
  // 注册到 deps.runs（assignRuntime 之后——构造到 assignRuntime 之间 run 处于
  // I1 跳过窗口（running 而 runtime undefined），后移保证窗口对外不可见；
- // worker.start 抛错时 run 未注册，无孤儿 run 残留）
+ // scheduleTimeBudget/worker.start 抛错时 run 未注册，无孤儿 run 残留）
   deps.runs.set(runId, run);
 
   await deps.store.save(run);

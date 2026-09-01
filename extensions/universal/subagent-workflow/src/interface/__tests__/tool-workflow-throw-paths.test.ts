@@ -172,6 +172,37 @@ describe("W4b: workflow tool 错误路径 throw 语义", () => {
     );
   });
 
+  it("OR-1 入口校验：time 超 setTimeout 上限 → throw 含上限 2147483647 与实际值，run 未启动", async () => {
+    const deps = makeDeps({
+      registry: {
+        get: vi.fn().mockResolvedValue(undefined),
+        getPath: vi.fn().mockResolvedValue(
+          makeScript({
+            type: "object",
+            properties: { task: { type: "string" } },
+            required: ["task"],
+          }),
+        ),
+      },
+    });
+    const tool = captureTool(deps, { isProcessing: false });
+    // LLM 对「跑久一点」完全可能生成 1e12——超 2^31-1 的典型形态（schema Type.Number
+    // 直通无上界，用户入口 fail-fast 不依赖 lifecycle 内层 assertSafeTimerDelay）
+    await expect(
+      tool.execute(
+        "id",
+        { action: "run", name: "/abs/demo-wf.js", args: { task: "do work" }, time: 1_000_000_000_000 },
+        undefined,
+        undefined,
+        {},
+      ),
+    ).rejects.toThrow(
+      "time budget 1000000000000 ms exceeds the maximum of 2147483647 ms (~24.8 days). Retry with a smaller \"time\", or omit it for unlimited.",
+    );
+    // fail-fast 于 runWorkflow 之前：runs 无条目（abortRun not found 语义保持）
+    expect((deps.runs as Map<string, unknown>).size).toBe(0);
+  });
+
   it("throw 后 reentry guard 经 finally 正常释放（成功路径回归）", async () => {
     // abort not_found throw 穿透 execute try/finally：guard 必须复位，否则后续命令全部 busy
     const guard: ReentryGuardRef = { isProcessing: false };

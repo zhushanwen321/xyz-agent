@@ -33,6 +33,7 @@ import { type Static, Type } from "typebox";
 
 import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
 import { THINKING_ORDER } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
+import { MAX_TIMER_DELAY_MS } from "@zhushanwen/subagent-core/shared/timer-delay.ts";
 import {
   argKeysFromMeta,
   findFlattenedArgKeys,
@@ -427,6 +428,16 @@ export async function actionRun(
   const args = params.args ?? {};
   const tokens = params.tokens;
   const time = params.time;
+  // OR-1 入口 fail-fast（unbounded-wait-audit §7.2 T3①）：schema 的 time 是
+  // Type.Number 直通（无上界）——超 setTimeout 安全域的值会穿透到 lifecycle 内层
+  // 防线（assertSafeTimerDelay），而入口拦截让它永不进入副作用链。错误带合法上限
+  // 与实际传入值，LLM 可据消息自纠（clamp 或省略走 unlimited 语义）。
+  if (time !== undefined && time > MAX_TIMER_DELAY_MS) {
+    throw new Error(
+      `time budget ${time} ms exceeds the maximum of ${MAX_TIMER_DELAY_MS} ms (~24.8 days). ` +
+        `Retry with a smaller "time", or omit it for unlimited.`,
+    );
+  }
 
  // 构建 RunSpec + 启动（m3：parameters 从 script.meta 拷贝——chokepoint 校验用；
  // 校验失败 → ArgsValidationError 直接 throw 给 pi（W4：err.message 含 §5.3 指引，
