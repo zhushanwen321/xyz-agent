@@ -136,8 +136,8 @@ graph TD
 | u-t2b-d | committed | 1 | dialog 三件套落地：4 文件 54 tests 重跑实证（含竞态恰一次/默认上界/队列不卡死）；「明确错误 settle」因 pi 协议 RpcExtensionUIResponse 封闭联合无 error 形态 → settle {cancelled:true} + 错误消息与恢复指引落 logger.warn（未扩协议，OR-3 先例）；非法 timeout 回落默认/超大 clamp MAX_TIMER_DELAY_MS（防 1ms 塌缩语义反转） |
 | u-t4-n | committed | 1 | 重投上限落地：NOTIFY_REDELIVERY_MAX_ATTEMPTS=5（attempts 含首次，同条通知最多 5 次投递尝试）；放弃终态 = customType 'subagent-bg-notify-abandoned' entry（三列差集 ledger−ack−abandoned，恢复不复活、compaction 补写闭环）+ warn 含恢复指引；notifier.ts 零改动（同通道 warn 已覆盖）；extension 壳侧 41 tests 回归绿 |
 | u-t6-s | committed | 1 | 三文件落地：aging 升级 warn（4 周期含清理指引+结构化字段+自愈清零）+ 节流 60s（高频 10 save 落 1 行、done 强制落盘）+ STATE_MAX_RUNS 默认 50（两实现面单源常量 core 定义 extension import）；jsonl-run-store.ts 物理路径在 extension 侧（u-m0b tool-workflow.ts 同款漂移）；§11-4 标定 = 代码模型推演（本机无真实数据，~50MB→~8.5MB/run），节流即终案待 S-A 复核；19+5 tests 重跑实证 |
-| u-svc | pending | 0 | — |
-| u-t6-c | pending | 0 | — |
+| u-svc | committed | 1 | 12 项措施全落地（T2④⑥⑧+③热路径、T4①②④、T5①②③④）：6 新测试文件 31 用例重跑实证 + 全量 2971 passed + extensions:typecheck 绿；P-T5 探针主路径心跳（4747 session 回溯，写盘开销可忽略 4 个数量级）。T5① 判据登记修正：实现为 PI_SUBAGENT_SELF_RECORD_ID env 存在性判定（与设计「sessionRootId=ROOT」语义等价，仅被父 spawn 的子进程持有该 env——R3-D4） |
+| u-t6-c | committed | 1 | 四项 + close 剪枝接线（补线轮）：5 文件 20 tests 重跑实证 + execution 105 files 1358 passed + typecheck 绿；LC-5 OS 迟回调窗口客观存在按防御性身份比对落地 |
 | u-t2b | （重组拆分，见 u-t2b-d/u-svc） | — | — |
 | u-t4 | （重组拆分，见 u-t4-n/u-svc） | — | — |
 | u-t5 | （重组拆分，并入 u-svc） | — | — |

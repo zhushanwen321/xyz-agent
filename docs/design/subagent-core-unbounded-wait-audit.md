@@ -248,9 +248,9 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 
 ### 6.2 失败路径（带恢复指引）
 
-- **子进程 wedged（连 get_state 都答不出）**：keep-alive 默认上限（30 分钟）到期 → SIGTERM → 30s 未退 SIGKILL → 层主确认死亡后采集活跃后代清单（冻结快照）并迭代展开至叶逐个 escalation kill → record 落 `closedReason:"watchdog"`，workflow 该 call 以明确错误失败。👉 恢复：错误消息含 sessionId 与 `subagents action:"list"` 指引，可人工复查后重跑该 call。
-- **chatMode agent_settled 永不到达（LC-1 形态）**：settled 等待窗口固定硬上限（默认 10 分钟）到期 → SIGTERM→30s 未退 SIGKILL。首轮窗口：runSpawn 以错误返回；续聊轮窗口（runSpawn 已返回）：进程被杀 + 该轮以失败通知用户，record 按 `closedReason:"watchdog"` 终态化。👉 恢复：`subagents action:"list"` 复查后重跑。
-- **dialog（ask_user）30 分钟无响应**：以明确错误 settle → agent 收到超时错误，可继续推进或重新发起提问；用户事后回来看到「问题已超时」的说明而非无限挂起。需要更长等待的调用方显式传 timeout 覆盖。
+- **子进程 wedged（连 get_state 都答不出）**：keep-alive 无进展上界（静默 30 分钟，stdout 活动刷新）到期 → 复核存活活跃后代（差集 + pid 探测，与 sweep 同源判据）：有存活后代 → 重挂再等一周期（不误杀合法长等待）；无 → SIGTERM → 30s 未退 SIGKILL → 层主确认死亡后采集后代清单（冻结快照）并迭代展开至叶逐个 escalation kill → 终态原因经错误消息携带 watchdog 标记（closedReason 枚举封闭不扩值），workflow 该 call 以明确错误失败。👉 恢复：错误消息含 sessionId 与 `subagents action:"list"` 指引，可人工复查后重跑该 call。
+- **chatMode agent_settled 永不到达（LC-1 形态）**：settled 等待窗口固定硬上限（默认 10 分钟，prompt 发出起算）到期 → SIGTERM→30s 未退 SIGKILL。首轮窗口：runSpawn 以错误返回；续聊轮窗口（runSpawn 已返回）：进程被杀 + 该轮以失败通知用户，chatMode record 回退 running-resumable（可冷路径复活）。终态原因经错误消息携带 'settled watchdog' 标记 + 恢复指引（closedReason 枚举封闭不扩值）。👉 恢复：`subagents action:"list"` 复查后重跑。
+- **dialog（ask_user）30 分钟无响应**：settle 为 cancelled（协议响应为封闭联合、无 error 形态），完整错误消息（等待时长 + 重新发起提问指引）落父进程日志 warn → agent 收到 cancelled 可继续推进或重新发起提问；用户事后回来看日志说明而非无限挂起。需要更长等待的调用方显式传合法正数 timeout 覆盖（非法值两层一致回落默认上界）。
 - **budgetTimeMs 非法**：runWorkflow 在**首个副作用前** fail-fast：`time 超过上限 2147483647（约 24.8 天）`。👉 恢复：错误消息给出合法范围，修正参数重试。
 - **worker 崩溃且重建失败**：计入重试矩阵，耗尽后 run 收敛 `done,failed`（不卡 running）。👉 恢复：`workflow status <runId>` 可查失败原因，重新 run。
 - **notify 确认不可达**：watchdog 重投达上限（如 5 次）后放弃并 warn。👉 恢复：warn 日志指向 `subagents action:"list"` 手动核对后代状态。
@@ -284,15 +284,15 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
   - ①keep-alive 分支在 maxTurns/env 双缺省时挂**保守默认上限**（30 分钟，对齐旧 WATCHDOG_FLOOR 量级），显式 opt-out 而非 opt-in；
   - ②①的上限 kill 的是层主进程，处置分两步：层主确认死亡（close）**后**采集其活跃后代清单——此刻层主 sessionFile 冻结为最终快照、pending entries 最完整，避开「kill 前采集」的垂死窗口漏项；随后对清单内每个后代**迭代展开至叶**（递归读各后代的 pending 差集）并逐个 escalation kill。kill 前先做存活校验 + cmdline 含 `pi`/`--mode rpc` 校验（防层主死后窗口内 pid 被操作系统复用而误杀无关进程）。个别后代 pid 反查失败时兜底为 T5 的 marker 机制（如实标注残余窗口：marker 失真时该后代可能被孤儿恢复误终态）——不押注「SIGTERM 会让 pi 自行级联杀后代」这一未验证断言，⛔探针 P-T2b 实测 pi 级联行为（证实则后代补杀退化为 no-op 一致性校验，证否则补杀即主路径，设计不变）；
   - ③chatMode **任意一轮**等待 `agent_settled` 的窗口挂**固定硬上限**（默认 10 分钟，标定依据见探针 P-T2c；settled 到达、close 即清）。覆盖两个位置：runSpawn 首轮等待窗口（resolve 前，含 resolveRun）与后续轮次热路径（deliverMessage 发出新一轮 prompt 后同挂）——后者现状是「settled 不 arm 则 idle timer 不挂、runSpawn 已在首轮返回、spawn watchdog 默认关」的三无窗口，LC-1 的同族变体，单修首轮护不住。不采用事件刷新语义——该窗口的正常语义是 post-run 收尾（compact 检查等，秒级完成），窗口内的任何输出都不能证明 settled 终将到达，「刷新」反而会让「wedged 但仍有周期性输出」的进程无限续命（LC-9 已证 stdout 可有调试行）；固定上界 by construction 覆盖静默与非静默两种 wedged 形态。多轮会话中每轮窗口独立计时；**两个挂载位置共用同一原语——同一常量、同一挂载/清除 helper，仅两个调用点**（两处各写一套恰是本主题被否的「散布姿势」微缩复发）。与 idle timer 互补：idle timer 管 settled 已到达后的空闲，本上界管 settled 永不到达的 wedged——LC-1 的挂点（连保守分支都没有）由此获得独立回收通道；
-  - ④服务侧三条裸 SIGTERM（`subagent-service.ts:1320/1374/2034`）收敛到 `killChildWithEscalation`；
+  - ④服务侧三条裸 SIGTERM（`subagent-service.ts:1320/1374/2034`）收敛到 escalation kill（实施为 recordId 形态导出 `killRecordChildWithEscalation`——原 `killChildWithEscalation` 签名持 SpawnRunState，服务侧调用方无该状态，语义等价）；
   - ⑤`killAllSpawnedChildren` 的 `child.killed` 跳过改为「killed 且已 close 才跳过」（或对 killed 进程补 escalation 检查）；
   - ⑥disposeAllRecords（/new、/fork 路径）补齐三回收面：controller.abort + kill（同④收敛到 killChildWithEscalation）+ disarmIdleTimer——PS-1 是 kill **时机**遗漏（「record 已关」≠「执行已处置」），④⑤ 只收敛 kill 方式，覆盖不了它；
-  - ⑦dialog 队列接线协议已有的 timeout 字段；请求方**未传** timeout 的 dialog 同样挂默认上界（30 分钟），到点以明确错误 settle（消息含「重新发起提问」恢复指引）——LC-3 的两种形态（host UI 通道挂死 / 用户永不回答）都收敛有界。30 分钟是**裁决值**（产品语义：ask_user 挂起 30 分钟无响应视为放弃），不随 P-T2（keep-alive 分布，等后代）标定——那是无关总体；请求方需要更长等待时显式传 timeout 覆盖（协议字段本就支持）。「等用户无限久」改为默认有界是有意的行为变更；
+  - ⑦dialog 队列接线协议已有的 timeout 字段；请求方**未传** timeout 的 dialog 同样挂默认上界（30 分钟），到点 settle 为 cancelled（协议响应为封闭联合、无 error 形态），完整错误消息（等待时长 + 「重新发起提问」恢复指引）落父进程日志 warn——LC-3 的两种形态（host UI 通道挂死 / 用户永不回答）都收敛有界。30 分钟是**裁决值**（产品语义：ask_user 挂起 30 分钟无响应视为放弃），不随 P-T2（keep-alive 分布，等后代）标定——那是无关总体；请求方需要更长等待时显式传合法正数 timeout 覆盖（非法值两层一致回落默认上界）。「等用户无限久」改为默认有界是有意的行为变更；
   - ⑧deliverMessage 非 EPIPE 失败路径 re-arm idle timer 或转 cold close（PS-3）。
 - **被否**：给每个等待点各自加 env 开关——继续 C 模式的散布姿势，第 33 条还会犯。
 - **证据**：`session-runner.ts:1380-1401`（不限时注释）、`:1353-1360`（chatMode agent_end 纯 continue）、`:997-1027`（idle timer 仅 settled arm）、`dialog-queue.ts:267-283`（无上界 await）、`ui-request-queue.ts:182`（timeout 解析后无人消费）、`subagent-service.ts:467-499` vs `:543-549`（dispose 双标对照）。
 - **效果**：§6.2 的 wedged 回收路径成立（含后代级联）；S-B/S-C 验收判据的来源 timer 全部就位（S-B←③、S-C←⑥）；兜底触发率预期趋近零（正常路径已被 T1 修好）。
-- **边界**：这是全方案中唯一「默认开启的上界」，默认值按最长合法任务标定——wave keep-alive 数小时是合法形态，故 keep-alive 默认上限只挂在「无 maxTurns 无 env」的裸缺省情形，且 30min 下限对齐旧 floor 语义，⛔探针 P-T2 验证真实 wave 场景不误杀（降级路径见 P-T2 行，两级均可执行）；③只作用于 agent_end→settled 的收尾窗口（正常秒级、默认 10min 已是量级余量），不触及 turn 执行期本身，长任务不受影响（⛔P-T2c 标定）。
+- **边界**：这是全方案中唯一「默认开启的上界」，默认值按最长合法任务标定——wave keep-alive 数小时是合法形态，故 keep-alive 默认上界只挂在「无 maxTurns 无 env」的裸缺省情形（显式 maxTurns<=0 与 env 设置均为合法 opt-out，不挂任何 timer；⛔探针 P-T2 实测分布否定了固定 30min——96.6% 历史窗口超限，已按其降级路径 B 落地为**无进展检测**：静默阈值 30min，层主 stdout 活动刷新计时，到期时先复核存活活跃后代——有则重挂再等一周期，无则处置，详见 §7.3 P-T2 行）；③为固定 10min 硬上限（⛔P-T2c 实测间隔 <2ms、compact 30 万 tokens 40.1s，4 个数量级余量），**窗口从 prompt 发出起算**（整轮含 turn 执行与收尾都在窗内——续聊轮 turn hang 形态由此覆盖；>10min 的 chatMode 单轮会被回收，该形态应改用 one-shot/background，如确需更长调 SETTLED_WATCHDOG_TIMEOUT_MS）。
 
 #### T3【决策】workflow run/worker 生命周期闭合（覆盖 OR-1/OR-2/OR-3/OR-4/OR-7/OR-8）
 
@@ -309,7 +309,7 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 
 #### T5【决策】多进程共享文件：孤儿恢复收窄到主进程 + marker 心跳（覆盖 PS-7/PS-8/PS-13）
 
-- **采用**：①子进程 initSession 跳过 recoverOrphanRecords（sessionRootId=ROOT 判定：只有根进程做扫描者，PS-8）；②alive marker 增加心跳刷新（keep-alive 期间每次 agent_end 重触）或软超时与 maxTurnsToWatchdogMs 对齐（PS-7a）；③running 候选冷查补 findForeignLiveInstance 探针（PS-7b）；④recoverTmpFiles 循环内 per-file try（PS-13）。
+- **采用**：①子进程 initSession 跳过 recoverOrphanRecords（实施判据：`PI_SUBAGENT_SELF_RECORD_ID` env 存在性——仅被父 spawn 的子进程持有，与「只有根进程做扫描者」语义等价）；②alive marker 增加心跳刷新（keep-alive 期间每次 agent_end 重触）或软超时与 maxTurnsToWatchdogMs 对齐（PS-7a，⛔探针 P-T5 实测心跳主路径）；③running 候选冷查补 findForeignLiveInstance 探针（PS-7b）；④recoverTmpFiles 循环内 per-file try（PS-13）。
 - **被否**：跨进程文件锁——引入锁等于新的运行时断言面（准则 8：减法优先），「只有根进程扫描」by construction 消除互写。
 - **证据**：`subagent-service.ts:395-419`（env 贯穿使子进程成扫描者）；`alive-store.ts:23`（1h 无刷新）。
 - **效果**：双写者窗口与活记录误终态消除。
@@ -317,7 +317,7 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 
 #### T6【决策】有界化与竞态收口（覆盖 LC-5/LC-6/LC-8/PS-10/PS-12/OR-5）
 
-- **采用**：①armIdleTimer 回调加身份比对（对齐 removeChildRegistration 按值守卫先例，LC-5）；②session-pending cursors 按「文件删除/进程 close」剪枝 + entries 只留 register/unregister 差集计数而非全量行（LC-6）；③branchCache 加 LRU 上限（LC-8）；④orphanJudged 在 revive() 复位（落实 `record-store.ts:623-628` 注释承诺，PS-10）；⑤worktree 对账「保守跳过」加老化处置（连续 N 周期无对应 → 升级 warn 级并给人工清理指引，PS-12）；⑥OR-5 的两个**正交**子缺陷各配各的修法，不可互替：**单 run 快照 O(n²)**（`file-run-store.ts:89-90` 每次 append 全量）主修增量 append（实施期先验证节流是否已足够，见 §11-4）；**跨 run 保留无界**（STATE_MAX_RUNS 默认关）给默认值（数值待 §11 统计标定）。
+- **采用**：①armIdleTimer 回调加身份比对（对齐 removeChildRegistration 按值守卫先例，LC-5）；②session-pending cursors 按「文件删除/进程 close」剪枝 + entries 只留 register/unregister 差集（保留活跃 entry 本体供端口差集计数消费，上界随活跃后代数，LC-6）；③branchCache 加 LRU 上限（LC-8）；④orphanJudged 在 revive() 复位（落实 `record-store.ts:623-628` 注释承诺，PS-10）；⑤worktree 对账「保守跳过」加老化处置（连续 N 周期无对应 → 升级 warn 级并给人工清理指引，PS-12）；⑥OR-5 的两个**正交**子缺陷各配各的修法，不可互替：**单 run 快照 O(n²)**（每次 append 全量）主修 60s 节流（FileRunStore 与生产面 JsonlRunStore 两实现面一致，终态强制落盘；实施期先验证节流是否已足够，见 §11-4）；**跨 run 保留无界**（STATE_MAX_RUNS 默认关）给默认值 50（数值待 §11 统计标定复核）。
 - **证据**：各条目 file:line 见 §4.2/§4.3。
 - **效果**：长寿命进程内存有界；保守分支都有重新评估时机。
 
@@ -330,13 +330,13 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 
 | ID | 验证的行为断言 | 探针 | 状态 | 失败时降级路径 |
 |---|---|---|---|---|
-| P-T1 | agent_end 时子进程（已完成 turn、idle）对 get_state 毫秒级应答 | 受控复现：并发 6 路 spawn + 人为抑制首次握手，断言惰性重试 < 1s 返回 sessionFile | ⛔ T1 实施前 | 失败 → 退回「sessionDir 后缀扫描 + 无 sessionFile 时按 leaf 短路」组合 |
-| P-T2 | 30min keep-alive 默认上限不误杀真实 wave 场景（数小时 keep-alive 合法） | 真实 cw wave 开发任务跑全程，统计 keep-alive 持续时间分布 | ⛔ T2 默认值定案前 | 失败 → 两级降级均为可执行动作：**降级 A** 上限值改为 P-T2 实测分布的安全倍数（P95×2，下限仍 30min，输入即探针自身产出）；**降级 B** 上限语义从固定时长改为「无进展检测」（keep-alive 期间任何子进程事件/后代集合变化刷新计时，仅连续静默达阈值才 kill），不依赖任何固定时长假设 |
-| P-T2b | pi 子进程收 SIGTERM 后是否自行级联 kill 其活跃后代（session_shutdown → killAllSpawnedChildren 链是否存在） | 本地起嵌套 subagent（父 keep-alive 且有活跃后代），向父进程发 SIGTERM，观察后代进程存活与终态 | ⛔ T2-② 实施期 | 证实级联 → 后代补杀退化为 no-op 一致性校验；证否 → 后代补杀为主路径（设计已按此形态，无方案变更） |
-| P-T2c | chatMode post-run（agent_end → agent_settled）真实时长分布——T2-③ 的 10min 默认硬上限标定依据 | 真实 pi 会话多轮对话，统计每轮 agent_end→settled 间隔（含大 session compact 场景） | ⛔ T2-③ 默认值定案前 | 分布 P99 远小于 10min → 维持；接近或超过 → 上限上调至 P99×10 量级并复核 compact 场景（仍为固定硬上限，仅调值） |
+| P-T1 | agent_end 时子进程（已完成 turn、idle）对 get_state 毫秒级应答 | 受控复现：并发 6 路 spawn + 人为抑制首次握手，断言惰性重试 < 1s 返回 sessionFile | **已执行 PASS**：6 路 0.3-0.4ms（预算 1s，2500 倍余量），T1 惰性回补主路径成立 | 失败路径（sessionDir 后缀扫描 + leaf 短路）未启用，保留为 LC-4/PS-9 修复面 |
+| P-T2 | 30min keep-alive 固定默认上限不误杀真实 wave 场景（数小时 keep-alive 合法） | 真实数据回溯：扫历史 subagent session/record 中 keep-alive 窗口分布（89 个有效 closed 样本） | **已执行**：96.6% 样本 >30min（P50=24.5min/P95=71.6min/max≈95.5h）→ 固定 30min 被否定，**按降级路径 B 落地**：无进展检测（静默阈值 30min + stdout 活动刷新 + 到期复核存活活跃后代，有则重挂再等一周期，无则处置）——「直接后代长跑、层主静默」形态由复核节奏覆盖，不误杀 | 降级 A（P95×2 固定上限）保留为后备；复核判据与 sweep 同源（差集 + pid 探测），探不出 pid 的形态与 sweep 同盲区、归 T5 marker 兜底 |
+| P-T2b | pi 子进程收 SIGTERM 后是否自行级联 kill 其活跃后代（session_shutdown → killAllSpawnedChildren 链是否存在） | 本地起嵌套 subagent（父 keep-alive 且有活跃后代），向父进程发 SIGTERM，观察后代进程存活与终态 | **已执行**：后台孤儿后代形态三跑稳定 NO-CASCADE（仅 bash 前台窗口 CASCADE） | 裁决：后代补杀为主路径（设计已按此形态，无方案变更） |
+| P-T2c | chatMode post-run（agent_end → agent_settled）真实时长分布——T2-③ 的 10min 默认硬上限标定依据 | 真实 pi 会话多轮对话（3 短 + 60KB/120KB/400KB），统计每轮 agent_end→settled 间隔；附显式 compact 30 万 tokens 实验 | **已执行**：6 轮间隔全部 <2ms（同 chunk）；compact 40.1s | 10min 硬上限维持（4 个数量级余量） |
 | P-SD | S-D 子场景②的注入手段可行：测试钩子 env（`XYZ_SUBAGENT_TEST_INJECT_REBUILD_FAILURE=1`）使 rebuildRuntime 第 N 次抛错，配合脚本内 `process.exit` 制造 worker 崩溃。**安全约束**：钩子仅显式设置时激活、激活即在启动日志 warn 留痕（对齐 T7① 可见性原则），杜绝静默生效 | 真实 pi 环境 + 注入 env 跑一个先崩后重建的 workflow | ⛔ S-D 验收前 | 失败 → 该子场景降级为集成级验证，验收记录如实标注缺口（ulimit 方案已否：user 级限制同时约束主进程/子进程/首个 worker，无法精确制造「首轮成功、重建失败」时序） |
 | P-T3 | 主线程 → worker 的 `{type:"abort"}` 广播在 terminate 竞态下不产 unhandledRejection | fake-worker 测试：abort 广播与 worker 自然退出交错 | ⛔ T3 实施期 | 失败 → 退化为 terminate 杀线程（现状），pending 条目随 worker 死亡清理 |
-| P-T5 | marker 心跳（每次 agent_end 写盘）在长 wave 下写盘频率可接受 | 真实 wave 场景统计 agent_end 频率与写盘开销 | ⛔ T5 实施前 | 失败 → 改为软超时与 maxTurnsToWatchdogMs 对齐（无新写盘） |
+| P-T5 | marker 心跳（每次 agent_end 写盘）在真实分布下写盘开销可接受 | 历史回溯 4747 个 subagent session 的 agent_end 密度（P95≈10 次/分钟上界）+ 单次 56 字节覆盖写基准 | **已执行**：0.0315ms/次，开销可忽略 4 个数量级 | 心跳主路径落地；软超时降级未启用 |
 | P-RC1 | RC-1 触发条件实锤：并发 6 路 spawn 时 pi 子进程 7s 内答不出 get_state 的原因（机器负载 vs 协议缺陷） | 受控并发复现 + 子进程侧日志时间戳对比 | ⛔ 修复验收时 | 无论结论如何 T1 方案都成立（惰性回补不依赖触发条件成立），仅影响是否需要额外的 spawn 限速 |
 
 ## 8. 验收（真实场景，非单测非 mock）
@@ -352,7 +352,7 @@ if (record.sessionFile) {              // ← 守卫条件恰等于它要兜底�
 | 场景 | 回溯 §2 目标 | 真实流程（具体业务例子） | 通过标准 |
 |---|---|---|---|
 | S-A 生产复跑 | 目标 2（修正常路径） | carbon 上真实跑 weekly + monthly 各一轮（真实 LLM、真实 6 路并发、真实数据）。**观测预检**：正式验收前先注入一个挂死 call 手动触发一次 600s 守卫，确认其降级痕迹实际落在哪（errorLogs / call 终态 / 守卫自身日志）——「守卫必落 call 级记录」未经验证，以预检确认的位置为准。**观测点**：call 清单与终态从 `workflow status <runId>` 及 run store 持久化文件读取（file-run-store 快照 + session JSONL append） | wf state 0 个 call 停 `running`；最后一笔 call 完成到 run `.finalized` < 5s（时间戳取 run store 持久化条目）；**守卫降级条目计数 = 0**（按预检确认的位置计数）；全程无 rpc-client 5400s 外层超时 |
-| S-B 故障注入挂死有界 | 目标 3（兜底归位） | 真实 pi 环境跑一个 chatMode subagent。**注入方式**：spawn 命令包一层 stdout 过滤 wrapper（`node filter.js -- pi --mode rpc`，filter.js 丢弃 `agent_settled` 事件行、其余透传）——子进程与其余链路全真实，仅事件行被滤。**两个子场景**：①首轮窗口（spawn 后即滤）；②热路径窗口（先正常跑完一轮使 wrapper 透传 settled、续聊第二轮起再滤）——覆盖 T2③ 的两个挂载点。观察 settled 等待硬上限的回收 | 默认上限内进程被 SIGTERM→SIGKILL 回收，record 落明确 closedReason（`"watchdog"`）；子场景①runSpawn 以错误返回，子场景②该轮以失败通知用户且 record 终态化；错误消息均含恢复指引 |
+| S-B 故障注入挂死有界 | 目标 3（兜底归位） | 真实 pi 环境跑一个 chatMode subagent。**注入方式**：spawn 命令包一层 stdout 过滤 wrapper（`node filter.js -- pi --mode rpc`，filter.js 丢弃 `agent_settled` 事件行、其余透传）——子进程与其余链路全真实，仅事件行被滤。**两个子场景**：①首轮窗口（spawn 后即滤）；②热路径窗口（先正常跑完一轮使 wrapper 透传 settled、续聊第二轮起再滤）——覆盖 T2③ 的两个挂载点。观察 settled 等待硬上限的回收 | 默认上限内进程被 SIGTERM→SIGKILL 回收，错误消息携带 'settled watchdog' 标记与恢复指引（closedReason 枚举封闭不扩值）；子场景①runSpawn 以错误返回，子场景②该轮以失败通知用户且 record 回退 resumable；错误消息均含恢复指引 |
 | S-C /new 在途处置 | 目标 2/3 | pi CLI 真实会话：起 2 个 background subagent，执行中 /new | 旧 session 子进程被 abort+kill（非仅 record 关闭）；新 session **不收到**「closed due to parent-new」的 triggerTurn 注入；`ps` 无孤儿 pi 进程 |
 | S-D workflow 故障注入 | 目标 3 | 真实 run 两个子场景：①`time: 1e12`（非法预算）；②「worker 崩溃后重建失败」用测试钩子注入（`XYZ_SUBAGENT_TEST_INJECT_REBUILD_FAILURE=1` 使 rebuildRuntime 抛错；worker 崩溃用脚本内 `process.exit` 制造；钩子安全约束见 P-SD——仅显式设置激活 + 激活 warn 留痕），注入可行性先经探针 P-SD 验证——ulimit 方案已否（见 P-SD 行） | 前者在 worker 启动前 fail-fast 且错误含合法范围；后者 run 收敛 done,failed 而非卡 running（`workflow status` 可查失败原因）；宿主进程全程不崩（无 unhandledRejection） |
 | S-E 通知止损 | 目标 2 | 真实双 agent 场景：让回执 entry 不可匹配（模拟 compaction 清除），观察 watchdog 重投 | 重投达上限后放弃 + warn 日志（extension 日志 `~/.pi/agent/logs/` 可查，`XYZ_AGENT_DEBUG=1`）；同一条完成通知不无限重复注入（修复前是每 120s 一次无限循环） |
