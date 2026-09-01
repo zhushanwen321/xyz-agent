@@ -2,9 +2,10 @@
 // Extension GUI 渲染协议：类型 + helper 函数，零运行时依赖。
 //
 // 包结构：
-// - core/          通用协议层（所有 extension 共用：GuiComponent + 布局原语 + 传输编码）
-// - extensions/    有运行时定制逻辑的 extension（marker + helper）
-//   - ask-user/    富交互（select 通道 + marker）
+// - core/             通用协议层（所有 extension 共用：GuiComponent + 布局原语 + 传输编码）
+// - extensions/       有运行时定制逻辑的 extension（marker + helper）
+//   - ask-user/       富交互（select 通道 + marker）
+// - background-task   base-tool-enhance 后台任务 registry.json 文件契约（src 平级文件）
 //
 // core 只保留结构性、中性的通用原语（card/stats-line/progress-bar/list-tree/
 // columns/tab-bar/ansi-text）。特定 extension 的领域数据结构不进协议层——
@@ -86,3 +87,20 @@ export type {
   SubagentEngineConfigView,
 } from './extensions/subagent-engine/contract'
 export { SUBAGENTS_ENGINES_FILENAME } from './extensions/subagent-engine/contract'
+
+// ── background-task 协议（base-tool-enhance 后台任务 registry.json 契约；写侧实现在 extensions/universal/base-tool-enhance，收殓读侧在 runtime）──
+export type {
+  BackgroundTaskState,
+  BackgroundTaskEndReason,
+  BackgroundTaskRegistryFile,
+  BackgroundTaskRegistryEntry,
+} from './background-task'
+export {
+  BACKGROUND_TASK_REGISTRY_FILENAME,
+  BASE_TOOL_ENHANCE_DIRNAME,
+  BACKGROUND_TASK_REGISTRY_VERSION,
+  MAX_TERMINAL_REGISTRY_ENTRIES,
+  isActiveBackgroundTaskState,
+  isTerminalBackgroundTaskState,
+  isBackgroundTaskRegistryEntry,
+} from './background-task'

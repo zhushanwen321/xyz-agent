@@ -123,7 +123,7 @@ graph TD
 | u-observability | pending | 0 | — |
 | u-audit | pending | 0 | — |
 | u-lock-probe | pending | 0 | — |
-| u-protocol | pending | 0 | — |
+| u-protocol | committed | 1 | 87 tests passed（6 files，新增 13）；deviations: 符号带 BackgroundTask 前缀（session-manager 先例）+ 导出 isGuard/active/terminal helper（u-runtime-reaper 读侧防御）+ MAX_TERMINAL_REGISTRY_ENTRIES 入契约（写终态 RMW 规则） |
 | u-runtime-reaper | pending | 0 | — |
 | u-bte-remove | pending | 0 | — |
 | u-doc-sync | pending | 0 | — |
