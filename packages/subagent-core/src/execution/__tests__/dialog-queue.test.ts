@@ -26,7 +26,18 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DialogGlobalQueue, type UiRequest, type UiResponse } from "../dialog-queue.ts";
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: {
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+vi.mock("../../core/logger.ts", () => ({
+  getLogger: () => loggerMock,
+}));
+
+import { DEFAULT_DIALOG_TIMEOUT_MS, DialogGlobalQueue, type UiRequest, type UiResponse } from "../dialog-queue.ts";
 
 // ── 类型助手 ────────────────────────────────────────────────
 // UiRequest 最小形状（method + id）。dialog 类：select/confirm/input/editor。
@@ -44,6 +55,8 @@ function fireAndForgetReq(id: string): UiRequest {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  loggerMock.warn.mockClear();
+  loggerMock.error.mockClear();
 });
 
 afterEach(() => {
@@ -294,6 +307,147 @@ describe("DialogGlobalQueue — #19 单一推进点 + child close 集成语义",
     await expect(p1).resolves.toEqual({ cancelled: true });
     await expect(p2).resolves.toEqual({ cancelled: true });
     await expect(p3).resolves.toEqual({ cancelled: true });
+    expect(queue.size).toBe(0);
+  });
+});
+
+// ── LC-3/T2⑦：dialog 超时上界（有意的行为变更：「等用户无限久」→ 默认 30min 有界）──
+// 设计权威源：docs/design/subagent-core-unbounded-wait-audit.md §7.2 T2 措施⑦。
+// 覆盖：①传 timeout 按传值 settle（错误消息含恢复指引与已等待时长）②未传挂 30min 默认上界
+// ③超时后队列继续（L2 processing 释放，不全局卡死）④handler 与队列级竞态 settle 恰一次。
+
+describe("DialogGlobalQueue — dialog 超时上界（LC-3/T2⑦）", () => {
+  /** 探测 pending 是否已 settle（fake timers 下不能直接 await 未定 Promise）。 */
+  function probe(pending: Promise<UiResponse>): { settled: () => boolean } {
+    const state = { settled: false };
+    void pending.then(() => {
+      state.settled = true;
+    });
+    return { settled: () => state.settled };
+  }
+
+  it("请求方传 timeout → 按传值超时 settle cancelled，日志含恢复指引与已等待时长", async () => {
+    const queue = new DialogGlobalQueue();
+    const handler = vi.fn((): Promise<UiResponse> => new Promise<UiResponse>(() => {}));
+    const p = queue.enqueue({ ...dialogReq("r1"), timeout: 1000 }, handler);
+
+    // 999ms（未到点）：不 settle
+    await vi.advanceTimersByTimeAsync(999);
+    const before = probe(p);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(before.settled()).toBe(false);
+
+    // 第 1000ms：到点 settle cancelled（不 reject——enqueue 公共契约 Promise 不 reject）
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(p).resolves.toEqual({ cancelled: true });
+
+    // 完整错误消息承载在父进程日志：含已等待时长 + 「重新发起提问」恢复指引
+    expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+    const msg = loggerMock.warn.mock.calls[0][0] as string;
+    expect(msg).toContain("1000ms");
+    expect(msg).toContain("重新发起提问");
+    // 队列状态已释放
+    expect(queue.size).toBe(0);
+  });
+
+  it("未传 timeout → 挂 DEFAULT_DIALOG_TIMEOUT_MS（30min）默认上界 settle cancelled", async () => {
+    const queue = new DialogGlobalQueue();
+    const handler = vi.fn((): Promise<UiResponse> => new Promise<UiResponse>(() => {}));
+    const p = queue.enqueue(dialogReq("r1"), handler);
+
+    // 30min - 1ms：不 settle（原行为是永不 settle，此处锁死「有上界」语义）
+    await vi.advanceTimersByTimeAsync(DEFAULT_DIALOG_TIMEOUT_MS - 1);
+    const before = probe(p);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(before.settled()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(p).resolves.toEqual({ cancelled: true });
+    expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+    const msg = loggerMock.warn.mock.calls[0][0] as string;
+    expect(msg).toContain(`${DEFAULT_DIALOG_TIMEOUT_MS}ms`);
+    expect(msg).toContain("重新发起提问");
+  });
+
+  it("timeout 非法（<=0）→ 回落默认上界（不因脏参数拆掉上界回到无界）", async () => {
+    const queue = new DialogGlobalQueue();
+    const handler = vi.fn((): Promise<UiResponse> => new Promise<UiResponse>(() => {}));
+    const p = queue.enqueue({ ...dialogReq("r1"), timeout: 0 }, handler);
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_DIALOG_TIMEOUT_MS - 1);
+    const before = probe(p);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(before.settled()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(p).resolves.toEqual({ cancelled: true });
+  });
+
+  it("超时后 L2 processing 释放，队列继续处理后续项（不全局卡死）", async () => {
+    const queue = new DialogGlobalQueue();
+    const blocking = vi.fn((): Promise<UiResponse> => new Promise<UiResponse>(() => {}));
+    const nextHandler = vi.fn(async (): Promise<UiResponse> => ({ value: "r2-ok" }));
+
+    // r1 永挂（host UI promise 挂死形态），带 timeout:1000；r2 排队
+    const p1 = queue.enqueue({ ...dialogReq("r1"), timeout: 1000 }, blocking);
+    const p2 = queue.enqueue(dialogReq("r2"), nextHandler);
+    expect(nextHandler).toHaveBeenCalledTimes(0);
+
+    // r1 超时 → settle + 推进 r2
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(p1).resolves.toEqual({ cancelled: true });
+    expect(nextHandler).toHaveBeenCalledTimes(1);
+    await expect(p2).resolves.toEqual({ value: "r2-ok" });
+  });
+
+  it("竞态恰一次（超时先到）：超时 settle 后迟到的 handler 结果不覆盖，队列不重复推进", async () => {
+    const queue = new DialogGlobalQueue();
+    let resolveHandler: ((v: UiResponse) => void) | undefined;
+    const handler = vi.fn(
+      (): Promise<UiResponse> =>
+        new Promise<UiResponse>((resolve) => {
+          resolveHandler = resolve;
+        }),
+    );
+    const nextHandler = vi.fn(async (): Promise<UiResponse> => ({ value: "next-ok" }));
+
+    const p1 = queue.enqueue({ ...dialogReq("r1"), timeout: 1000 }, handler);
+    const p2 = queue.enqueue(dialogReq("r2"), nextHandler);
+
+    // 超时先 settle
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(p1).resolves.toEqual({ cancelled: true });
+    expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+
+    // 迟到的 handler 结果不覆盖（Promise 恰 settle 一次），r2 也已被推进恰一次
+    resolveHandler!({ value: "late" });
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(p1).resolves.toEqual({ cancelled: true });
+    expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+    expect(nextHandler).toHaveBeenCalledTimes(1);
+    await expect(p2).resolves.toEqual({ value: "next-ok" });
+  });
+
+  it("竞态恰一次（handler 先到）：handler 正常完成后迟到超时点不触发第二次 settle 与超时日志", async () => {
+    const queue = new DialogGlobalQueue();
+    let resolveHandler: ((v: UiResponse) => void) | undefined;
+    const handler = vi.fn(
+      (): Promise<UiResponse> =>
+        new Promise<UiResponse>((resolve) => {
+          resolveHandler = resolve;
+        }),
+    );
+
+    const p = queue.enqueue({ ...dialogReq("r1"), timeout: 1000 }, handler);
+    resolveHandler!({ value: "fast" });
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(p).resolves.toEqual({ value: "fast" });
+    expect(loggerMock.warn).toHaveBeenCalledTimes(0);
+
+    // 越过原超时点：timer 已被 clearTimeout，无第二次 settle、无超时日志
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(p).resolves.toEqual({ value: "fast" });
+    expect(loggerMock.warn).toHaveBeenCalledTimes(0);
     expect(queue.size).toBe(0);
   });
 });
