@@ -451,3 +451,47 @@ describe("DialogGlobalQueue — dialog 超时上界（LC-3/T2⑦）", () => {
     expect(queue.size).toBe(0);
   });
 });
+
+// ── A2-2：reject/rejectAll 抢先 settle 后超时 timer 必须撤下 ────────────────
+// 修复前：clearTimeout 只在 processNext 的 handler settle/throw 两路径——handler 永挂时
+// await 永不 resume，rejectChildDialogs/rejectAll 抢先 settle 后 timer 仍 armed 到期，
+// 触发虚假「dialog timed out」warn + 句柄滞留至超时点（30min~24.8 天）。
+
+describe("DialogGlobalQueue — reject 抢先 settle 后超时 timer 清理（A2-2）", () => {
+  it("current 被 rejectChildDialogs 抢先 settle → timer 撤下，到期无虚假 warn、无句柄滞留", async () => {
+    const queue = new DialogGlobalQueue();
+    // host UI promise 永挂（rejectChildDialogs 的设计触发场景）
+    const handler = vi.fn((): Promise<UiResponse> => new Promise<UiResponse>(() => {}));
+    const p = queue.enqueue({ ...dialogReq("r1"), timeout: 1000 }, handler, { child: { pid: 42 } });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handler).toHaveBeenCalledTimes(1); // 已成 current，超时 timer 已 armed
+    expect(vi.getTimerCount()).toBe(1);
+
+    // child close：抢先 settle 为 cancelled
+    queue.rejectChildDialogs({ pid: 42 });
+    await expect(p).resolves.toEqual({ cancelled: true });
+    expect(vi.getTimerCount()).toBe(0); // timer 已随 settle 清除，无句柄滞留
+
+    // 越过原超时点：不触发虚假「dialog timed out」warn、无第二次 settle
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(p).resolves.toEqual({ cancelled: true });
+    expect(loggerMock.warn).not.toHaveBeenCalled();
+  });
+
+  it("rejectAll 抢先 settle current → 同样撤下 timer（无虚假 warn、无句柄滞留）", async () => {
+    const queue = new DialogGlobalQueue();
+    const handler = vi.fn((): Promise<UiResponse> => new Promise<UiResponse>(() => {}));
+    const p = queue.enqueue({ ...dialogReq("r1"), timeout: 1000 }, handler);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(1);
+
+    queue.rejectAll();
+    await expect(p).resolves.toEqual({ cancelled: true });
+    expect(vi.getTimerCount()).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(loggerMock.warn).not.toHaveBeenCalled();
+  });
+});

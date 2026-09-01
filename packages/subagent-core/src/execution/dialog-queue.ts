@@ -57,11 +57,19 @@ export const DEFAULT_DIALOG_TIMEOUT_MS =
  * Node 塌缩为 1ms 立即触发（语义反转：刚入队就超时）。
  */
 function resolveDialogTimeoutMs(timeout: number | undefined): number {
-  const resolved =
-    typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0
-      ? timeout
-      : DEFAULT_DIALOG_TIMEOUT_MS;
+  const resolved = isValidDialogTimeout(timeout) ? timeout : DEFAULT_DIALOG_TIMEOUT_MS;
   return Math.min(resolved, MAX_TIMER_DELAY_MS);
+}
+
+/**
+ * dialog req.timeout 合法域判定（单一权威源，A2-3）：合法正数（finite 且 > 0）才参与
+ * 超时语义——队列层据此决定上界取值（非法回落 DEFAULT_DIALOG_TIMEOUT_MS），
+ * factory 层据此决定是否透传 SDK 第三参（非法不透传，数组为空，由队列层默认上界兜底）。
+ * 两处共用本函数，禁止各写一份判定（此前两处不一致：SDK 层把 0/负数/NaN 原样透传，
+ * 队列层判非法回落默认）。
+ */
+export function isValidDialogTimeout(timeout: number | undefined): timeout is number {
+  return typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0;
 }
 
 /** 超时 settle 的日志消息（恢复指引 + 已等待时长，父进程日志是完整错误消息的承载面——
@@ -172,6 +180,11 @@ interface QueueItem {
   childPid: number | undefined;
   /** 是否已 settle（防 handler 完成 / rejectChildDialogs 重复 resolve）。 */
   settled: boolean;
+  /** 队列级超时 timer 句柄（processNext 使 item 成为 current 时挂上）。
+   *  settleItem 统一 clearTimeout——handler 永挂时 processNext 的 await 永不 resume，
+   *  其内联 clearTimeout 不可达，reject/rejectAll 抢先 settle 的路径只能靠这里清理
+   *  （A2-2：否则 timer armed 到期触发虚假「dialog timed out」warn + 句柄滞留）。 */
+  timeoutTimer?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -259,18 +272,26 @@ export class DialogGlobalQueue {
   }
 
   /**
-   * settle 一个 item（幂等）。handler 完成 / rejectChildDialogs / rejectAll 都通过本方法，
-   * settled 标志保证只 settle 一次（防竞争）。
+   * settle 一个 item（幂等）。handler 完成 / rejectChildDialogs / rejectAll / 超时 timer
+   * 都通过本方法，settled 标志保证只 settle 一次（防竞争）。
    *
    * #19 单一推进点：本方法 settle Promise + 清状态后，**唯一**调 processNext 推进队列。
    * processNext 尾部不再调 processNext（旧代码双重推进，虽靠 processing 标志幂等，但语义混乱）。
    * 为什么推进必须在 settleItem 而非 processNext 尾部：rejectChildDialogs 取消一个永不 settle
    * 的 current（handler 等用户输入卡死）时，processNext 的 `await item.handler` 永不 resume，
    * 尾部不会执行；只有 settleItem 里的 processNext 才能打破死锁，推进下一个。
+   *
+   * [A2-2] 超时 timer 清理也统一收口在这里：任何路径抢先 settle（reject/rejectAll/超时
+   * 自身）都必须撤下 armed timer——handler 永挂时 processNext 内联的 clearTimeout 不可达，
+   * 不在这里清则 timer 到期触发虚假「dialog timed out」warn 且句柄滞留至超时点。
    */
   private settleItem(item: QueueItem, resp: UiResponse): void {
     if (item.settled) return;
     item.settled = true;
+    if (item.timeoutTimer) {
+      clearTimeout(item.timeoutTimer);
+      item.timeoutTimer = undefined;
+    }
     item.resolve(resp);
     // 若是正在处理的项，清空 current/processing 并推进队列（唯一推进点）。
     // 非当前项（队列中被 reject）只 settle Promise，不影响 current/推进。
@@ -338,9 +359,13 @@ export class DialogGlobalQueue {
     this.current = item;
     const timeoutMs = resolveDialogTimeoutMs(item.req.timeout);
     const timer = setTimeout(() => {
+      // [A2-2] 已被抢先 settle（正常 settle 时 timer 已被 settleItem 清除，这里是防御性
+      // 兜底）：静默返回，不发虚假「dialog timed out」warn、不重复 settle。
+      if (item.settled) return;
       logger.warn(dialogTimeoutLogMessage(item.req, timeoutMs));
       this.settleItem(item, { cancelled: true });
     }, timeoutMs);
+    item.timeoutTimer = timer;
     try {
       const resp = await item.handler(item.req);
       clearTimeout(timer);

@@ -186,10 +186,14 @@ export const WAKEUP_GRACE_MS = 15_000;
  * 活动刷新计时，仅**连续静默**达此阈值才处置（SIGTERM→SIGKILL 升级）。
  *
  * 阈值取 30min（对齐 SPAWN_WATCHDOG_FLOOR_MS 的旧 floor 量级）：真实 keep-alive 的
- * 合法性由「仍在活动」定义而非「不超过某时长」，静默 30min 的层主已无任何后代管理
- * 迹象（后代完成会经 notifier 唤醒产生 stdout 事件）。挂载面严格限定裸缺省
- *（maxTurns/env 双缺省才挂）——显式配置走既有固定时长等待，行为不变（opt-out 保留）。
- * [export] 测试可观测（keep-alive-no-progress 用例锚定静默阈值与刷新语义）。
+ * 合法性由「仍在活动」定义而非「不超过某时长」。层主 stdout 静默 ≠ 无进展——
+ *「直接后代跑 >30min、层主静默」是合法形态（P-T2 数据 85/89 parent-shutdown 即此类，
+ * 层主侧 stdout 刷新面看不到后代集合变化），故 fire 时不立即处置：先惰性复核层主是否
+ * 有存活活跃后代（pending 差集 + 后代 pid 存活，与 descendant sweep 同源判据），有 →
+ * 视为有进展重挂本 timer（固定 30min 复核节奏直到后代死光），无 → 真静默才处置。
+ * 挂载面严格限定裸缺省（maxTurns/env 双缺省才挂）——显式 maxTurns<=0（显式不限时）
+ * 与 resolveSpawnWatchdogMs fail-fast 降级不挂任何 timer（opt-out 保留）。
+ * [export] 测试可观测（keep-alive-no-progress 用例锚定静默阈值、刷新与 fire 复核语义）。
  */
 export const KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS = SPAWN_WATCHDOG_FLOOR_MS;
 
@@ -314,6 +318,22 @@ export function resolveSpawnWatchdogMs(maxTurns: number | undefined | null): num
     return estimated;
   }
   return undefined;
+}
+
+/**
+ * [A1-1] keep-alive 无进展 timer 的挂载资格：仅「裸缺省」（maxTurns 未传且 env 未设）。
+ *
+ * resolveSpawnWatchdogMs 返回 undefined 有三种来源，语义不同：
+ *   a. 裸缺省（本函数为 true）→ 挂无进展检测上界（T2-① 降级 B）；
+ *   b. 显式 maxTurns<=0（显式不限时，压过 env，U5）→ 不挂任何 timer（opt-out 保留）；
+ *   c. resolveSpawnWatchdogMs throw 的 F-R2 降级 → 不挂任何 timer（fail-fast 不静默
+ *      换兜底）。
+ * env 存在性用原始 process.env 判（不经 getEnvSpawnWatchdogMs 的 parse）——避免与
+ * resolveSpawnWatchdogMs 内部的 invalid-env warn 重复出声；env 已设（含非法值）即
+ * 「显式配置」语义，非裸缺省。
+ */
+function isBareDefaultKeepAlive(maxTurns: number | undefined | null): boolean {
+  return (maxTurns === undefined || maxTurns === null) && !process.env[SPAWN_WATCHDOG_ENV];
 }
 
 /** stderr 累积上限——按字符截断（.slice 语义），非字节；64K 规模沿自原实现。
@@ -1225,10 +1245,10 @@ interface SpawnRunState {
    */
   resolveRun: ((code: number) => void) | undefined;
   /**
-   * [T2-① / P-T2 降级 B] keep-alive 裸缺省的无进展检测 timer（仅 maxTurns/env 双缺省
+   * [T2-① / P-T2 降级 B] keep-alive 裸缺省的无进展检测 timer（仅 isBareDefaultKeepAlive
    * 的 keep-alive 分支挂载）：子进程 stdout 活动刷新计时，连续静默
-   * KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 才处置。undefined = 未挂载（显式配置走既有
-   * 固定时长 state.watchdog，不挂本 timer）。
+   * KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 且 fire 时惰性复核无存活后代才处置。undefined =
+   * 未挂载（显式配置走既有固定时长 state.watchdog / 显式 opt-out 不挂任何 timer）。
    */
   keepAliveNoProgressTimer: NodeJS.Timeout | undefined;
   /**
@@ -1351,22 +1371,74 @@ export function _resetServiceKillStateForTest(): void {
 }
 
 /**
+ * [A1-2] 层主是否有「存活且活跃」的直接后代（no-progress fire 时的惰性复核）。
+ *
+ * 与 descendant sweep（sweepDescendantsOfSession）同源判据：层主 sessionFile 的
+ * pending register−unregister 差集（listActivePendingFromSessionFile）给出活跃后代
+ * 清单，逐个经 sessionId 反查后代 sessionFile → readAliveMarker 取 pid → isProcessAlive
+ * 探活；任一后代 pid 存活即视为有进展。刻意不做 sweep kill 前双校验的另一半
+ *（cmdline pi 形态校验）——本函数只决定「不杀层主、再等一个复核周期」，pid 复用误报
+ * 只延后节奏 30min（方向安全）；pid 探不出的后代（register 缺 sessionId / 文件未
+ * flush / 无 marker）不计入存活——与 sweep 同盲区，归 T5 marker 兜底，不以此永久豁免
+ * 层主的无进展上界。
+ *
+ * 复核失败（层主 sessionFile 读不出）→ false（按无后代处置）+ warn 留痕。方向与
+ * readActivePendingFromSessionFile 调用方的既有保守约定（error = 不杀）相反是刻意的：
+ * 此处的「不确定」发生在已坐实的 30min 无进展之后，处置走 killChildWithEscalation
+ * 升级链，外部 signal / dispose 兜底通道仍在，warn 保证行为可见。
+ */
+function hasLiveActiveDescendant(sessionFile: string | undefined, sessionDir: string): boolean {
+  const list = listActivePendingFromSessionFile(sessionFile);
+  if (list.error) {
+    logger.warn(
+      `[session-runner] keep-alive no-progress re-check failed (treating as no live descendants): ${list.error}`,
+    );
+    return false;
+  }
+  for (const item of list.items) {
+    if (!item.sessionId) continue;
+    const childFile = findSessionFileByHeaderId(sessionDir, item.sessionId);
+    if (!childFile) continue;
+    const marker = readAliveMarker(childFile);
+    if (marker && isProcessAlive(marker.pid)) return true;
+  }
+  return false;
+}
+
+/**
  * [T2-① / P-T2 降级 B] 挂载（或刷新）keep-alive 裸缺省无进展检测 timer。
  *
- * 仅在 keep-alive 分支的裸缺省形态（resolveSpawnWatchdogMs 返回 undefined：无 maxTurns
- * 无 env）挂载。到期 = 连续静默 KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS → 处置（SIGTERM→
- * killChildWithEscalation）。刷新机制：stdout pump 的每次 data 事件经
- * refreshKeepAliveNoProgressTimer 重挂（先清旧）——「连续静默」由「每次活动重置计时」
- * 实现；重复 arm 不叠加（旧 timer 先 clear）。
+ * 仅在 keep-alive 分支的裸缺省形态（isBareDefaultKeepAlive：无 maxTurns 无 env）挂载。
+ * 刷新机制：stdout pump 的每次 data 事件经 refreshKeepAliveNoProgressTimer 重挂（先清旧）
+ * ——「连续静默」由「每次活动重置计时」实现；重复 arm 不叠加（旧 timer 先 clear）。
  *
- * 到期处置同时置 sweepDescendantsOnClose（T2-② 后代级联补杀的两步时序前半）。
+ * [A1-2] 到期不立即处置：层主 stdout 静默 ≠ 无进展（fire 回调内先复核存活后代，
+ * 见 hasLiveActiveDescendant）。无存活后代才真静默处置：SIGTERM→killChildWithEscalation
+ * + 置 sweepDescendantsOnClose（T2-② 后代级联补杀的两步时序前半）。
  */
-function armKeepAliveNoProgressTimer(state: SpawnRunState, child: ChildProcess): void {
+function armKeepAliveNoProgressTimer(
+  state: SpawnRunState,
+  child: ChildProcess,
+  sessionDir: string,
+): void {
   if (state.keepAliveNoProgressTimer) clearTimeout(state.keepAliveNoProgressTimer);
   assertSafeTimerDelay(KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS, "keep-alive no-progress watchdog");
   state.keepAliveNoProgressTimer = setTimeout(() => {
+    // [A1-2] fire 惰性复核：有存活活跃后代 = 有进展 → 重挂（固定 30min 再复核，
+    // 直到后代死光才落处置分支）。
+    if (hasLiveActiveDescendant(state.record.sessionFile, sessionDir)) {
+      logger.debug(
+        `[session-runner] keep-alive no-progress re-check: live descendant(s) present for ${state.record.id}, re-arm (cadence ${
+          KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE
+        } min)`,
+      );
+      armKeepAliveNoProgressTimer(state, child, sessionDir);
+      return;
+    }
     logger.warn(
-      `[session-runner] keep-alive no-progress watchdog fired for ${state.record.id}: no child output for ${KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min (bare-default keep-alive without maxTurns/env), terminating`,
+      `[session-runner] keep-alive no-progress watchdog fired for ${state.record.id}: no child output for ${
+        KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE
+      } min and no live descendant (bare-default keep-alive without maxTurns/env), terminating`,
     );
     // [T2-②] 同 keep-alive watchdog 处置：层主 close 确认死亡后级联补杀活跃后代。
     state.sweepDescendantsOnClose = true;
@@ -1378,12 +1450,16 @@ function armKeepAliveNoProgressTimer(state: SpawnRunState, child: ChildProcess):
 /**
  * [T2-①] 子进程有 stdout 活动 → 刷新静默计时。
  *
- * 未挂载（显式 maxTurns/env 的固定时长等待、非 keep-alive 阶段）时 no-op——刷新面
- * 严格限定在裸缺省上界，显式配置的行为不变（opt-out 语义保留）。
+ * 未挂载（显式 maxTurns/env 的固定时长等待、显式 opt-out、非 keep-alive 阶段）时
+ * no-op——刷新面严格限定在裸缺省上界，显式配置的行为不变（opt-out 语义保留）。
  */
-function refreshKeepAliveNoProgressTimer(state: SpawnRunState, child: ChildProcess): void {
+function refreshKeepAliveNoProgressTimer(
+  state: SpawnRunState,
+  child: ChildProcess,
+  sessionDir: string,
+): void {
   if (!state.keepAliveNoProgressTimer) return;
-  armKeepAliveNoProgressTimer(state, child);
+  armKeepAliveNoProgressTimer(state, child, sessionDir);
 }
 
 /** [T2-①] 清除无进展检测 timer（keep-alive 重评估 / 收尾清理；未挂载时 no-op）。 */
@@ -1781,6 +1857,13 @@ async function runAgentEndDisposition(
     }
   }
 
+  // [A1-3] 回补 await 的异步窗口内 child 可能已死（close / abort / watchdog）。进程已死
+  // 则 close 收尾已完成 timer 清理与句柄移除，三分支不再执行——否则 keep-alive 分支会
+  // re-arm 泄漏 timer、touch marker 向死 pid 写心跳，final kill / warn 在已收尾进程上
+  // 误导排查。存活判据用 exitCode/signalCode 双 null（close 后即非 null），不用
+  // child.killed——它只表示「收到过 kill 请求」，close 之后恒 true，区分不了生死。
+  if (child.exitCode !== null || child.signalCode !== null) return;
+
   // ── 以下三分支与同步化前逐行一致（仅随函数迁移）──
   const pending = readActivePendingFromSessionFile(record.sessionFile);
   if (pending.count > 0 || pending.error) {
@@ -1800,14 +1883,20 @@ async function runAgentEndDisposition(
     // [MF-4] 动态超时 = maxTurnsToWatchdogMs(maxTurns)：真实后代在跑，慢任务（wave 开发
     // 数小时）不能被固定 2h 误杀——2h 到点 kill 会连坐 SubagentService.dispose 的
     // killAllSpawnedChildren 杀全部子进程，L2 重派丢在途工作。maxTurns 大则超时长。
-    // [预算语义对齐 + U5] maxTurns 未传且 env 未设，或显式 <=0（压过 env）→
-    // 原语义「不 re-arm（等待后代不限时）」——[T2-① / P-T2 降级 B] 现改为挂无进展
-    // 检测上界（见下方裸缺省分支）；显式 maxTurns/env 行为不变（opt-out 语义保留）。
+    // [A1-1 挂载面三分] keepAliveMs === undefined 的三种来源语义不同，只有裸缺省挂
+    // 无进展上界：显式 maxTurns>0 → 固定时长动态 watchdog（不变）；裸缺省（maxTurns
+    // 未传且 env 未设）→ [T2-① / P-T2 降级 B] 挂无进展检测上界（见下方裸缺省分支）；
+    // 显式 maxTurns<=0（显式不限时，压过 env，U5）与 resolveSpawnWatchdogMs fail-fast
+    // 降级 → 维持旧「不 re-arm（等待后代不限时）」语义——opt-out 通道保留，无进展
+    // timer 的挂载面严格限定裸缺省（isBareDefaultKeepAlive）。
     // [F-R2] resolveSpawnWatchdogMs → assertSafeTimerDelay fail-fast 的 throw 不升级为
-    // 进程崩溃：包 try/catch 降级为「不 re-arm」（与 keepAliveMs === undefined 的既有
-    // 降级语义一致），错误经 bestEffort("error") 可见。
+    // 进程崩溃：包 try/catch 降级为「不 re-arm」（与显式 opt-out 同归「不挂 timer」，
+    // 不落入裸缺省分支），错误经 bestEffort("error") 可见。
     clearTimeout(state.watchdog);
     disarmKeepAliveNoProgressTimer(state);
+    // 裸缺省判定必须在 try 之前做：env 原始存在性检查（不经 parse），resolveSpawnWatchdogMs
+    // 内部的 invalid-env warn 不因此重复出声。
+    const bareDefaultKeepAlive = isBareDefaultKeepAlive(opts.maxTurns);
     let keepAliveMs: number | undefined;
     try {
       keepAliveMs = resolveSpawnWatchdogMs(opts.maxTurns);
@@ -1825,14 +1914,15 @@ async function runAgentEndDisposition(
         killChildWithEscalation(state, child, "keep-alive watchdog");
       }, keepAliveMs);
       state.watchdog.unref();
-    } else {
+    } else if (bareDefaultKeepAlive) {
       // [T2-① / P-T2 降级路径 B] 裸缺省（无 maxTurns 无 env）：挂无进展检测上界。
       // P-T2 探针实证固定 30min 上限会误杀 96.6% 真实 keep-alive（长尾 95.5h 合法），
-      // 上界语义改为「连续静默达 KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 才处置」——子进程
-      // stdout 活动（含后代经 notifier 唤醒产生的全部事件流）刷新计时，真实活动的
-      // keep-alive 不被时长上限误杀，纯静默的 wedged 层主仍有界回收。回收由外部
-      // signal / dispose / 后代自然完成驱动的旧兜底通道全部保留。
-      armKeepAliveNoProgressTimer(state, child);
+      // 上界语义改为「连续静默达 KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 且复核无存活后代
+      // 才处置」——子进程 stdout 活动刷新计时，后代集合变化由 fire 时惰性复核承接
+      //（hasLiveActiveDescendant），真实 keep-alive 不被时长上限误杀，纯静默且无
+      // 存活后代的 wedged 层主仍有界回收。回收由外部 signal / dispose / 后代自然完成
+      // 驱动的旧兜底通道全部保留。
+      armKeepAliveNoProgressTimer(state, child, sessionDir);
     }
   } else if (pending.recentUnregister) {
     // 差集 0 但最近有 unregister：后代刚完成，notify 唤醒可能在路上（竞态窗口），
@@ -1933,10 +2023,11 @@ function attachStdoutPump(
     // [T2-① / P-T2 降级 B] 子进程有输出 = keep-alive 仍有进展迹象：刷新静默计时。
     // 任何 stdout 活动（header / 事件行 / invalid 调试行）都算——keep-alive 的合法性
     // 由「仍在活动」定义（P-T2 探针裁决：真实 keep-alive 96.6% 超 30min，合法性不看
-    // 时长看活动）。后代集合变化的层主侧观测信号（后代完成 → notifier 唤醒 → 新
-    // agent_end → keep-alive 分支重评估 + 唤醒后的 stdout 事件流）被同一刷新面天然
-    // 覆盖，无需额外轮询 sessionFile。未挂载（显式 maxTurns/env）时 no-op。
-    refreshKeepAliveNoProgressTimer(state, child);
+    // 时长看活动）。[A1-2] stdout 刷新面只覆盖「层主自己有输出」半边：「直接后代跑
+    // >30min、层主静默」的合法形态刷新不到——由 no-progress fire 时的惰性复核承接
+    //（armKeepAliveNoProgressTimer 内 hasLiveActiveDescendant）。未挂载（显式
+    // maxTurns/env / opt-out）时 no-op。
+    refreshKeepAliveNoProgressTimer(state, child, sessionDir);
     stdoutBuffer += data;
     const lines = stdoutBuffer.split("\n");
     stdoutBuffer = lines.pop() ?? ""; // 保留最后未完整行

@@ -2261,7 +2261,15 @@ export class SubagentService {
       });
   }
 
-  /** 取消 background record。CAS 抢锁——抢到则 notify + 写 tombstone。 */
+  /**
+   * 取消 background record。CAS 抢锁（tryTransition）——抢到则 notify + 写 tombstone；
+   * 没抢到（detached 已 finalize，record 已终态）返回 false，不触碰任何收尾副作用。
+   *
+   * stop 手段（abort/kill/disarm）无条件先执行：对已终态 record 幂等无害，且保证
+   * cancel 语义 = 进程必死；收尾副作用（completeRecord/tombstone/archive/notify）只归
+   * CAS 赢家。[A2-1] 此前 CAS 被误删，cancel 可在 doFinalizeRecord Step 0 await 窗口
+   * 命中已终态 record——覆写终态 + tombstone/finalized 双标 + notify 双发 + 谎报 true。
+   */
   private cancelBackground(record: ExecutionRecord): boolean {
     record.controller?.abort();
     // [M6] 显式 kill + disarm：chatMode 首轮 agent_settled 后 runSpawn 提前 resolveRun(0)
@@ -2278,6 +2286,13 @@ export class SubagentService {
     killRecordChildWithEscalation(record.id, "cancelBackground");
     disarmIdleTimer(record.id);
     disarmSettledWatchdog(record.id);
+    // [A2-1] CAS 抢锁防重复收尾：running 才放行。doFinalizeRecord Step 0 await 窗口内
+    // record 可能已被终态化（closed）但尚未 archive——没抢到说明 detached 已 finalize，
+    // cancel 来晚了，闭嘴返回 false（completeRecord 会覆写终态 + tombstone/finalized
+    // 双标 + notify 双发，绝不可执行）。
+    if (!tryTransition(record, "closed", "cancelled")) {
+      return false; // detached 已 finalize，cancel 来晚了
+    }
     // 抢到锁：completeRecord（用空 result 填 cancelled）+ archive（立即移出内存）+ notify。
     // 写 cancelled tombstone：session.jsonl 被 abort 截断，cancelled 状态靠 sidecar 标记，
     // collectRecords 重建时 override status=cancelled。durationMs 用真实耗时（startedAt → now）。

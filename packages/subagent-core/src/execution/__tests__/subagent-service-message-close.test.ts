@@ -284,6 +284,59 @@ describe("closeSubagent 行为分流", () => {
 });
 
 // ============================================================
+// [A2-1] cancel 迟到：record 已终态（detached 已 finalize）→ CAS 拒绝
+// ============================================================
+
+describe("cancelBackground CAS 抢锁（A2-1）——cancel 迟到不覆写已完成 record", () => {
+  let agentDir: string;
+  let service: SubagentService;
+  let store: RecordStore;
+  let pi: MockPi;
+
+  beforeEach(() => {
+    ({ agentDir, service, store, pi } = setup());
+  });
+
+  afterEach(() => {
+    service.dispose();
+    fs.rmSync(agentDir, { recursive: true, force: true });
+  });
+
+  it("record 已 closed 未 archive（doFinalizeRecord Step 0 await 窗口形态）→ cancel 返回 false，不覆写终态/不写 tombstone/不 notify/不 archive", () => {
+    const sessionFile = path.join(agentDir, "late-cancel.jsonl");
+    const record = makeRecord({ status: "closed", sessionFile });
+    // 模拟 detached 已 finalize 的终态快照（closedReason=gc 正常完成，非 cancelled）
+    record.closedReason = "gc";
+    record.endedAt = 5555;
+    record.result = "detached final result";
+    store.register(record); // 未 archive：恰好处于 finalize await 窗口（收尾后段才 archive）
+
+    const cancelled = service.cancel(record.id);
+
+    expect(cancelled).toBe(false); // CAS 没抢到——不谎报 true
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("gc"); // 不被 completeRecord 改写为 cancelled
+    expect(record.endedAt).toBe(5555); // finalize 冻结的终态值不被重写
+    expect(record.result).toBe("detached final result"); // 不被空 cancelled result 覆写
+    // 不写 cancelled tombstone（与 finalized marker 双标 = record 双重终态化）
+    expect(fs.existsSync(`${sessionFile}.cancelled`)).toBe(false);
+    expect(store.getMutable(record.id)).toBe(record); // 不 archive（record 留内存）
+    expect(pi.sendMessage).not.toHaveBeenCalled(); // 不重复 notify（detached finalize 已发）
+  });
+
+  it("record running → cancel 返回 true 且终态化（CAS 正常路径不回归）", () => {
+    const sessionFile = path.join(agentDir, "cancel-ok.jsonl");
+    const record = makeRecord({ status: "running", sessionFile });
+    store.register(record);
+
+    expect(service.cancel(record.id)).toBe(true);
+    expect(record.status).toBe("closed");
+    expect(record.closedReason).toBe("cancelled");
+    expect(store.getMutable(record.id)).toBeUndefined(); // archived
+  });
+});
+
+// ============================================================
 // [M5] closeAfterRound 消费点：onRoundSettled（chatMode 热路径轮完成）
 // ============================================================
 

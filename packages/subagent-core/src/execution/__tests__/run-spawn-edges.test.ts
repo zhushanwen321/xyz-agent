@@ -70,8 +70,11 @@ vi.mock("../alive-store.ts", () => ({
 }));
 
 // [recursive-orchestration] agent_end 后代判定独立 mock（判定函数本身在 session-pending.test.ts 单独测）。
+// listActivePendingFromSessionFile：[A1-2] keep-alive 无进展 fire 时的存活后代惰性复核
+// 消费（差集清单 + pid 探活）；默认空清单 = 无存活后代 → fire 照旧处置（既有用例语义不变）。
 vi.mock("../session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 0 })),
+  listActivePendingFromSessionFile: vi.fn(() => ({ items: [] })),
   prunePendingCursor: vi.fn(),
 }));
 
@@ -1016,6 +1019,56 @@ describe("runSpawn", () => {
         expect(record.sessionFile).toBe(expected);
         // findSessionFileByHeaderId 真实执行过（readdirSync 收到 sessionDir）
         expect(mockReaddirSync).toHaveBeenCalledWith(sessionDir);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // ④ [A1-3] 回补 await 的异步窗口内 close 竞态：continuation 在三分支前复核进程生死，
+    // 已死直接 return——否则 keep-alive 分支 re-arm 泄漏 timer + touch marker 向死 pid
+    // 写心跳。本用例让回补窗口（1s 预算）内进程死亡，回补超时 continuation 恢复时
+    // 进程已 close 收尾：断言无 marker 写入、无任何新 kill 信号。
+    it("④ A1-3: 回补等待窗口内 kill → close → continuation 不触达三分支（不 touch marker / 不挂 timer）", async () => {
+      // 若守卫缺失（回归），continuation 会以 count=1 走 keep-alive 分支：
+      // touchAliveMarkerForHeartbeat 写 marker + 裸缺省 arm 无进展 timer（30min 后 kill）
+      mockPending.mockReturnValue({ count: 1 });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: lazy-race-close", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+      const killSpy = vi.spyOn(child, "kill");
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        // 不 emit header（RPC mode 形态）→ record.sessionFile 缺失 → agent_end 触发惰性回补
+        emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+        // stdin flush 依赖真实事件循环：惰性 get_state 已写出，continuation 阻塞在 await
+        await new Promise((r) => setImmediate(r));
+        expect(child.killed).toBe(false);
+
+        // await 窗口内进程死亡：kill + close（真 ChildProcess close 后 exitCode 非 null，
+        // FakeChild 需手动赋值模拟该语义——A1-3 守卫读取的就是它）
+        child.kill("SIGTERM");
+        child.exitCode = 143;
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 143);
+        await promise; // close 收尾完成（timer 清理 / 句柄移除）
+
+        // 给 record 补 sessionFile：让回归路径（守卫缺失时 continuation 触达 keep-alive
+        // 分支）的 touchAliveMarkerForHeartbeat 可观测（无 sessionFile 它会提前 no-op）
+        record.sessionFile = "/tmp/fake-race-session.jsonl";
+
+        // 回补预算到期 → continuation 恢复：应命中 A1-3 守卫直接 return
+        await vi.advanceTimersByTimeAsync(1000);
+
+        // 无 marker 写入（守卫缺失时 touchAliveMarkerForHeartbeat 会写）
+        expect(mockWriteAliveMarker).not.toHaveBeenCalled();
+        // 无任何 timer 触发的 kill（守卫缺失时无进展 timer 30min 后会二次 kill）
+        await vi.advanceTimersByTimeAsync(KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS + WAKEUP_GRACE_MS);
+        expect(killSpy).toHaveBeenCalledTimes(1); // 仅手动 kill 那一次
+        expect(child.killSignal).toBe("SIGTERM");
       } finally {
         vi.useRealTimers();
       }

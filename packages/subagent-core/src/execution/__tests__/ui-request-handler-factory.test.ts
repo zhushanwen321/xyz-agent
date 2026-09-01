@@ -440,4 +440,24 @@ describe("createUiRequestHandlerForMode — dialog timeout 协同（LC-3/T2⑦�
     await expect(p).resolves.toEqual({ cancelled: true });
     expect(loggerMock.warn).not.toHaveBeenCalled();
   });
+
+  // [A2-3] 非法 timeout 与队列层判定对齐：不透传 SDK 第三参（语义反转的 opts
+  // （<=0 可能立即 auto-dismiss）不进 SDK），由队列层默认上界兜底 settle。
+  it.each([-1, 0, Number.NaN])(
+    "timeout 非法（%p）→ SDK 不收第三参（参数个数 2），队列层按默认上界 settle（A2-3）",
+    async (badTimeout) => {
+      const ctx = makeCtxWithUi();
+      ctx.ui.select.mockReturnValue(new Promise(() => {})); // host UI 挂死，暴露队列层兜底
+      const handler = createUiRequestHandlerForMode(ctx, createUiChannelRegistry(), new DialogGlobalQueue())!;
+
+      const p = handler({ method: "select", id: "t1", title: "q", options: ["a"], timeout: badTimeout });
+      // 第三参不出现：toHaveBeenCalledWith 逐参精确匹配，两参断言即锁死参数个数为 2
+      expect(ctx.ui.select).toHaveBeenCalledWith("q", ["a"]);
+      expect(ctx.ui.select).toHaveBeenCalledTimes(1);
+
+      // 队列层把非法值回落默认上界（30min）：到点 settle cancelled
+      await vi.advanceTimersByTimeAsync(DEFAULT_DIALOG_TIMEOUT_MS);
+      await expect(p).resolves.toEqual({ cancelled: true });
+    },
+  );
 });

@@ -28,6 +28,7 @@ vi.mock( "@zhushanwen/subagent-core/execution/session-runner.ts", () => {
   return {
     runSpawn: vi.fn(),
     killAllSpawnedChildren: vi.fn(),
+    killRecordChildWithEscalation: vi.fn(),
     spawnedChildren,
     getChildByRecord: (id: string): unknown => spawnedChildren.get(id),
   };
