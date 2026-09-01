@@ -1108,7 +1108,7 @@ export function buildSpawnArgs(
   //
   // [单写者不变量·MF-8｜第五轮元审查结论] session JSONL 完整性依赖「每 session
   // 单写进程」架构不变量：子进程写独立 subagent sessionDir（getSubagentSessionDir
-  // 编码隔离），主 session 仅本进程单线程写。pi 0.84.1 写入原语（dist/core/
+  // 编码隔离），主 session 仅本进程单线程写。pi 0.84.4 写入原语（dist/core/
   // session-manager.js，机制登记 PS-18）只在「唯一写者」前提下原子：_persist
   //（:724-753）首写用 wx flag 整体落盘缓冲 entry（:739），此后一律 appendFileSync
   // 追加（:730/:751）；运行时 compaction 走 appendCompaction（:803-818）→
@@ -2329,7 +2329,7 @@ export async function runSpawn(
   //
   // [单写者不变量·MF-8｜第五轮元审查结论] session JSONL 完整性依赖「每 session 单写
   // 进程」架构不变量：本目录是子进程专属 sessionDir，session 文件写入方仅此子进程
-  //（单进程单线程）；主进程只读（扫描/重建/统计），绝不写。pi 0.84.1 的写入原语
+  //（单进程单线程）；主进程只读（扫描/重建/统计），绝不写。pi 0.84.4 的写入原语
   //（session-manager.js，完整锚点见 buildSpawnArgs 注释 / PS-18）：_persist
   //（:724-753）首写 wx flag + 后续 appendFileSync 追加；compaction 为 append-only
   // 追加（appendCompaction :803-818），截断重写 _rewriteFile（:693-705）只在加载期

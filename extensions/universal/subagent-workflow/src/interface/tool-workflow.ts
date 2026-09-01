@@ -88,7 +88,7 @@ const WorkflowParams = Type.Object({
     }),
   ),
   tokens: Type.Optional(Type.Number({ description: "Max token budget — ONLY set when user explicitly requests a limit; omit = unlimited (default)" })),
-  time: Type.Optional(Type.Number({ description: "Max time budget in ms — ONLY set when user explicitly requests a limit; omit = unlimited (default)" })),
+  time: Type.Optional(Type.Number({ description: `Max time budget in ms — ONLY set when user explicitly requests a limit; omit = unlimited (default; hard ceiling ${MAX_TIMER_DELAY_MS} ms — larger values fail fast at entry)` })),
   error: Type.Optional(
     Type.String({ description: "Error/reason message (optional, used with abort)" }),
   ),

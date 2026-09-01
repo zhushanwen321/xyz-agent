@@ -63,17 +63,19 @@ builtin（包内 agents/）< npm global < user .pi/agent < user .agents
 < project .pi < project .agents        ← 最高，可覆盖内置同名 agent
 ```
 
-**接入内置 workflow 的方式**：项目级 agent 放 `.agents/agents/<name>.md`，`batch1=<name>` 传入即可。AgentRegistry 自动发现，优先级高于内置。
+**接入内置 workflow 的方式**：项目级 agent 放 `.agents/agents/<name>.md`，`batch1` 传该 agent 的 `.md` 绝对路径——即 `<available_subagents>` 注入的 `<location>`（裸名会被 resolveAgentDefs 拒收）。同名覆盖关系由 AgentRegistry 发现优先级决定：项目级源优先级高于内置，覆盖发生在注入 `<location>` 的解析时，调用侧无需感知。
 
 ## 4. 防平铺守卫（弱模型兼容）
 
 弱模型常把 workflow args 子字段（`task`/`target`/`batchN`）平铺到 params 顶层，导致 `args={}` 静默启动缺参 run（P0）。
 
-两处清单**必须同步**：
-- `src/interface/tool-workflow.ts` 的 `KNOWN_ARG_KEYS`（registerTool 层检测）
-- `workflows/<name>-utils.cjs` 的 `VALID_ARG_KEYS`（workflow 层白名单校验）
+known keys 的来源是 **schema 即 SSOT**：workflow 资产在脚本头 `@pi-meta parameters` 声明参数 schema，宿主经 `argKeysFromMeta`（`packages/subagent-core/src/orchestration/args-meta.ts`）自动派生（exact 属性 + patternProperties），无需人工维护检测清单；tool 顶层键（`action`/`name`/`args` 等）由宿主作为 reservedKeys 注入（`tool-workflow.ts` 的 `TOOL_TOP_LEVEL`），workflow 声明同名参数不会被误判为平铺。
 
-新增 workflow 参数时，**两处都加**，否则检测有缺口。检测命中时带 Correct JSON 示例纠正（见 `findFlattenedArgKeys`）。
+新增 workflow 参数时：
+1. 在 workflow 资产的 `@pi-meta parameters` 里声明 schema——known keys 随之自动派生
+2. 若该 workflow 有配套 `workflows/<name>-utils.cjs`，**手动同步**其 `VALID_ARG_KEYS` 白名单（如 `packages/subagent-core/workflows/review-fix-loop-utils.cjs`）——utils 是零依赖 .cjs，读不到 schema，白名单只能手维护
+
+检测命中时带 Correct JSON 示例纠正（见 `findFlattenedArgKeys`）。
 
 ## 5. workflow meta.description 格式
 
@@ -87,9 +89,9 @@ builtin（包内 agents/）< npm global < user .pi/agent < user .agents
 
 ## 参考实现
 
-- `extensions/universal/subagent-workflow/agents/doc-reviewer.md` — schema-only review agent 范例（四遍方法论 + 完成定义 + 防注入 + schema 契约声明）
-- `extensions/universal/subagent-workflow/agents/reviewer.md` — write 型 review agent 范例
-- `extensions/universal/subagent-workflow/workflows/review-fix-loop.js` — 编排 workflow + 配套 utils.cjs
+- `packages/subagent-core/agents/doc-reviewer.md` — schema-only review agent 范例（四遍方法论 + 完成定义 + 防注入 + schema 契约声明）
+- `packages/subagent-core/agents/reviewer.md` — write 型 review agent 范例
+- `packages/subagent-core/workflows/review-fix-loop.js` — 编排 workflow + 配套 utils.cjs
 
 ## 审查
 

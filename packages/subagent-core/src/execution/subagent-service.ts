@@ -140,7 +140,7 @@ interface PiLike {
     options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" }, // g4-allow: 类型注解——PiLike 接口形状（pi.sendMessage 签面子集），非投递调用
   ): void;
   /** 订阅 pi 事件（D8：notifier 的 settled 边沿订阅用 'agent_settled'）。
-   *  pi 0.84.1 的 on 返回 void 且无 off——退订语义由调用侧 disposed 标志包装兑现。
+   *  pi 0.84.4 的 on 返回 void 且无 off——退订语义由调用侧 disposed 标志包装兑现。
    *  可选：旧测试 mock pi 可能未实现 on，缺省时 notifier 退化为内核退避路径。 */
   on?(event: "agent_settled", handler: () => void): void;
 }

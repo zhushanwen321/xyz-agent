@@ -50,7 +50,11 @@ export function resolveRetryConfig(raw: unknown): LlmRetryConfigSnapshot {
     maxRetryDelayMs: numberOr(providerRaw?.['maxRetryDelayMs'], PI_RETRY_DEFAULTS.providerMaxRetryDelayMs),
   }
   const timeoutMs = providerRaw?.['timeoutMs']
-  if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs)) {
+  // 0 特判：写侧 validateLlmRetryConfig 必拒 0（合法域整数 1-600000），0 不是合法
+  // 超域值而是「写侧不可能产出」的值——读侧清为未设（不出现键 = 跟随全局
+  // httpIdleTimeoutMs 语义），闭合写读往返对称；>600000 的超域存量值仍按 D7
+  // 原样返回不改。
+  if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
     provider.timeoutMs = timeoutMs
   }
 

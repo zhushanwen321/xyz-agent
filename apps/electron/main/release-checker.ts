@@ -381,7 +381,17 @@ export class ReleaseChecker implements IReleaseChecker {
         }
         return null
       }
-      return JSON.parse(result.bodyText ?? '') as GitHubRelease
+      const release = JSON.parse(result.bodyText ?? '') as GitHubRelease
+      // 最小结构守卫：合法 JSON 但形态异常（如代理/网关劫持页返回 200 JSON）时就地
+      // 降级 null——不把错误推迟到下游消费点（buildLatestReleaseInfo 只容忍字段
+      // 缺失，不认错形状的 tag_name/assets）。null 与 404/非 2xx 共用既有降级语义。
+      if (typeof release?.tag_name !== 'string' || !Array.isArray(release.assets)) {
+        console.warn(
+          `[release-checker] latest release response has unexpected shape (tag_name=${String(release?.tag_name)}, assets=${Array.isArray(release.assets) ? 'array' : typeof release.assets}), ignoring`,
+        )
+        return null
+      }
+      return release
     } catch (err) {
       // 限流信号直接向上传播（若被此处包装成普通 Error，退避逻辑将失效）
       if (err instanceof ReleaseRateLimitedError) throw err

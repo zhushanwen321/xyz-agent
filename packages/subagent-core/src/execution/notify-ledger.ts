@@ -137,7 +137,7 @@ export interface NotifyLedgerHost {
   /** 主 agent 是否空闲（发送前二次复查用；ctx.isIdle()）。 */
   isIdle(): boolean;
   /** 订阅 settled 边沿（pi.on("agent_settled")——无退订语义：createExtensionAPI.on
-   *  只 push 进 extension.handlers、无 off（pi 0.84.1 loader.js:209-214），由 ledger
+   *  只 push 进 extension.handlers、无 off（pi 0.84.4 loader.js:209-214），由 ledger
    *  disposed 标志包装）。注意与 ctx.events.on(channel) 消歧：后者走 eventBus、有
    *  trackEventBusSubscription 退订通路（loader.js:174、:338），语义不同。 */
   onAgentSettled(handler: () => void): void;
@@ -568,7 +568,7 @@ export function createNotifyLedger(
   // （P-B0 相邻机制已源码级锚定，agent-session.js:327-331，PS-07）。
   // [MF-5] registerSettledListener=false（bind 路径）时跳过注册：pi.on("agent_settled")
   // 无退订语义——createExtensionAPI.on 只 push 进 extension.handlers、无 off
-  //（pi 0.84.1 dist/core/extensions/loader.js:209-214）。注意消歧两类订阅面：此处的
+  //（pi 0.84.4 dist/core/extensions/loader.js:209-214）。注意消歧两类订阅面：此处的
   // pi.on 是生命周期事件订阅（无退订）；ctx.events.on(channel) 走 eventBus、有
   // trackEventBusSubscription 退订通路（loader.js:174、:338）——勿按后者的可退订
   // 语义「修复」此处。per-bind 注册会随 session 切换累积死 handler

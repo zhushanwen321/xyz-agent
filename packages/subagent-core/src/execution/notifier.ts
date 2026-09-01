@@ -95,9 +95,9 @@ export interface NotifierHost {
   isIdle?: () => boolean;
   /**
    * 原生 settled 事件订阅能力（D8）：注册 handler 监听主 agent settled 边沿。
-   * 无退订语义（pi 0.84.1 的 `pi.on(...)` 全部重载返回 void、无 off——实装锚点：
+   * 无退订语义（pi 0.84.4 的 `pi.on(...)` 全部重载返回 void、无 off——实装锚点：
    * node_modules `@earendil-works/pi-coding-agent` dist/core/extensions/types.d.ts
-   * `on()` 系列重载，0.84.1 实测）——退订由本模块的 disposed
+   * `on()` 系列重载，0.84.4 实测）——退订由本模块的 disposed
    * 标志包装兑现（见下方 port 装配）。可选：未注入时内核退化退避轮询（busy 消息
    * 靠退避达上限强发，不走 settled 边沿驱动）。
    */
@@ -226,14 +226,14 @@ export function createNotifier(host: NotifierHost): BgNotifier {
       host.onAgentSettled === undefined
         ? undefined
         : (cb) => {
-            let disposed = false;
-            host.onAgentSettled?.(() => {
-              if (!disposed) cb();
-            });
-            return () => {
-              disposed = true;
-            };
-          },
+          let disposed = false;
+          host.onAgentSettled?.(() => {
+            if (!disposed) cb();
+          });
+          return () => {
+            disposed = true;
+          };
+        },
     send: (msg, _intent) => {
       // D5 单通道：投递意图唯一化——steer/followUp/nextTurn 多通道全部删除，
       // 唯一发送形态 = sendCustomMessage({triggerTurn:true})。busy 场景由 ledger
