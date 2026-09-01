@@ -60,6 +60,21 @@ describe("withFileLock (async)", () => {
 		await expect(withFileLock(target, async () => "ok")).resolves.toBe("ok");
 	});
 
+	it("嵌套取锁 → ELOCKED（retries:0 首试失败即抛，带 code；外层 finally 释放后可再锁）", async () => {
+		await expect(
+			withFileLock(
+				target,
+				() =>
+					withFileLock(target, async () => "never", {
+						retries: 0,
+						staleMs: 60_000, // stale 远大于临界区，锁不会被夺取
+					}),
+			),
+		).rejects.toMatchObject({ code: "ELOCKED" });
+		// 外层 finally 已释放 → 同一 target 立即可再锁
+		await expect(withFileLock(target, async () => "ok", { retries: 0 })).resolves.toBe("ok");
+	});
+
 	it("锁内 RMW：并发各 +1 一百次，文件终值 100（丢更新=锁失效）", async () => {
 		fs.writeFileSync(target, JSON.stringify({ n: 0 }), "utf-8");
 		const bump = (): Promise<void> =>

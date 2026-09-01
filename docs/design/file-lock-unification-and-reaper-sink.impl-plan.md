@@ -117,7 +117,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u-lock-core | pending | 0 | — |
+| u-lock-core | committed | 1 | 26 tests passed（4 files）+ 协议互操作探针 7/7（自实现 × proper-lockfile 4.1.2 实库）+ 消费方无波及（llm-shared 50 / bte 244 / runtime parity 3）；deviations: pnpm-lock 伴生 / compromise 测试改写为 external-removal（设计声明无周期 touch 故 compromise 机制不存在）/ 参照按 4.1.2 实装内联位置 / setFileLockLogger 注入装配点 / stale clamp 2000 照抄 |
 | u-bte-guard | committed | 1 | 244 tests passed (13 files)；deviations: index.test.ts 一行模拟失真修复（handler 现读 event.reason）+ reap 抛错不重置 flag（失败兜底交批次 2 触发面 B，注释声明） |
 | u-runtime-lock | pending | 0 | — |
 | u-observability | pending | 0 | — |

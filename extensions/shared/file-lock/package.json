@@ -1,9 +1,13 @@
 {
   "name": "@zhushanwen/pi-file-lock",
   "version": "0.1.2",
-  "description": "Shared async cross-process file lock for Pi extensions — proper-lockfile wrapper with stale takeover and exponential-backoff retries, aligned with the runtime-side lock protocol (shared library, not a Pi extension).",
+  "description": "Shared cross-process file lock for Pi extensions — zero-dependency self-implemented mkdir lock (protocol-compatible with proper-lockfile 4.1.2) with stale takeover and exponential-backoff retries, aligned with the runtime-side lock protocol (shared library, not a Pi extension).",
   "type": "module",
   "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./core": "./src/lock-core.ts"
+  },
   "keywords": [
     "pi-package",
     "pi",
@@ -21,8 +25,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@zhushanwen/pi-extension-logger": "workspace:*",
-    "proper-lockfile": "^4.1.2"
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
