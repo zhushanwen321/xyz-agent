@@ -130,6 +130,26 @@ EXEMPT_CALLSITES = [
         "仅读系统进程表，不向下游传递任何数据（设计文档 §3.6 R5 点名）",
     ),
     (
+        "services/session/background-task-reaper.ts",
+        "spawnSync('ps'",
+        "后台任务收殓的进程 start time 只读探测（pid 复用防御，判定逻辑移植自 "
+        "extension reaper）：数组参数不经 shell、显式 timeout，仅读系统进程表，"
+        "不向下游传递任何数据（与 reap-orphan-pi.ts ps 探测先例同构，"
+        "设计文档 §3.6 R5 同源场景）",
+    ),
+    (
+        "services/session/background-task-reaper.ts",
+        "spawnSync('pgrep'",
+        "收殓补杀的子孙 pid 只读枚举（kill 树兜底残留清理）：数组参数不经 shell，"
+        "仅读进程表，无 env 出站面（与 reap-orphan-pi.ts 先例同构）",
+    ),
+    (
+        "services/session/background-task-reaper.ts",
+        "taskkill",
+        "Windows 进程树终止（孤儿任务补杀）：数组参数不经 shell、stdio ignore，"
+        "kill 处置无数据回流通路（与 supervisor/windows-process.ts taskkill.exe 先例同构）",
+    ),
+    (
         "services/plugin-service/plugin-host.ts",
         "new Worker(bootstrapPath",
         "node:worker_threads 的 Worker 是同进程线程而非 OS 子进程，不存在 env 出站边界；"
