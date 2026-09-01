@@ -107,7 +107,7 @@ graph TD
 |------|------|------|------|
 | u-m0a | committed | 1 | u-m0a commit（本轮）；核验：151 tests passed 重跑实证（6 文件）+ 全量 2826 passed + typecheck 绿；grep dropFileCache 无残留 |
 | u-m0b | committed | 1 | u-m0b commit（本轮）；dev 报告 JSON 见会话；核验：lifecycle.test.ts 27 passed + tool-workflow-throw-paths.test.ts 7 passed 重跑实证 |
-| u-p1 | pending | 0 | — |
+| u-p1 | committed | 1 | P-T1 PASS：6 路并发 0.3-0.4ms 应答（预算 1s，2500 倍余量），⛔门放行 u-t1；probe/p-t1-{lazy-getstate.mjs,report.md} |
 | u-p2 | pending | 0 | — |
 | u-t3 | pending | 0 | — |
 | u-t1 | pending | 0 | — |
