@@ -63,7 +63,7 @@ describe("baseToolEnhanceExtension entry", () => {
 		expect(pi.on).toHaveBeenCalledWith("tool_execution_end", expect.any(Function));
 	});
 
-	it("registers a session_start handler (reaper + reconcile chain, M5/M3)", () => {
+	it("registers a session_start handler (reconcile chain, M3)", () => {
 		setupOfficialFactory();
 		const pi = createMockPi();
 
@@ -73,10 +73,10 @@ describe("baseToolEnhanceExtension entry", () => {
 	});
 });
 
-describe("session_start chain: reaper first, reconcile after (M3)", () => {
-	it("settles a zombie register via appendEntry on the SAME pi reference after reaper", async () => {
+describe("session_start chain: reconcile (M3, reap sunk into runtime by u-bte-remove)", () => {
+	it("settles a zombie register via appendEntry on the SAME pi reference", async () => {
 		setupOfficialFactory();
-		// 独立临时 dataDir：reaper 对空目录 no-op，registry 预置终态僵尸条目
+		// 独立临时 dataDir（维护链只读不扫：收殓已下沉 runtime），registry 预置终态僵尸条目
 		const dataDir = mkdtempSync(join(tmpdir(), "bte-index-"));
 		dataDirRef.dir = dataDir;
 		try {
@@ -100,7 +100,7 @@ describe("session_start chain: reaper first, reconcile after (M3)", () => {
 			) => void;
 			expect(handler).toBeDefined();
 			// pi runner emit session_start 必带事件（SessionStartEvent.reason 必填，
-			// pi 0.84.4 实装核实）——维护链入口日志与 reaper once 判定消费 reason
+			// pi 0.84.4 实装核实）——维护链入口日志消费 reason
 			handler({ type: "session_start", reason: "resume" }, {
 				sessionManager: {
 					getSessionId: () => sessionId,
@@ -113,7 +113,7 @@ describe("session_start chain: reaper first, reconcile after (M3)", () => {
 				},
 			});
 
-			// handler 是 fire-and-forget（内部 await reaper 后同步对账）——等待落定
+			// handler 同步直跑对账（u-bte-remove 后无 reap await）——等待落定
 			await vi.waitFor(() =>
 				expect(pi.appendEntry).toHaveBeenCalledWith("pending:unregister", {
 					id: "bt-1700000000-idx001",

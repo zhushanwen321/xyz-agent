@@ -7,8 +7,8 @@
  *
  * 条目唯一来源 = 本进程 execute 的 spawn（registerSpawnedTask 全仓唯一调用点 =
  * spawn-background.ts）。他进程 / 历史 session 的 running 条目**永不进表**——
- * 零恢复零接管，处置权统一归 M5 reaper 属主裁决；终态条目可从 registry 读，
- * 仅供 bash_output 查历史。
+ * 零恢复零接管，孤儿处置权统一归收殓侧（u-bte-remove 后 = xyz-agent runtime）
+ * 按属主裁决；终态条目可从 registry 读，仅供 bash_output 查历史。
  *
  * 终态条目 LRU 上限 MAX_TERMINAL_ENTRIES（与 registry 对称），淘汰后 bash_output
  * 回落 registry 查询。

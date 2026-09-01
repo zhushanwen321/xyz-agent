@@ -112,6 +112,8 @@ graph TD
 | D-01 | 设计 §3.3/§5 写挂点「server.ts」，实际 runtime 无此文件，onSessionDestroyed 汇聚点在 `packages/runtime/src/services/session/session-service.ts`（grep 核实） | 设计笔误修正，语义不变 | 计划期 |
 | D-02 | 设计 U3-3 与 U3-4 合并为 u-observability 单元（两者共改 rpc-client.ts，同文件不可同波） | dag-authoring 同文件共改→串行；合并优于加边 | 计划期 |
 | D-03 | 设计 U3-2（10 extension 排查+接入）拆为 u-audit（只读排查+清单）与 u-audit-fix（动态领地接入）两单元 | 排查结论未知无法预枚举接入领地；拆后各自验收客观可判 | 计划期 |
+| D-04 | u-bte-remove 领地扩至包内 8 个伴生文件（kill-tree.ts 平移 reaper 的 2 个被生产消费方引用的 helper、types.ts re-export 契约 alias、bash-kill-tool.ts import 改道、background/ 5 文件注释级更新、kill-tree.test.ts 等价恢复 6 条） | 纯删 reaper.ts 会断 typecheck；helper 属进程内自防御非收殓语义；alias 保包内短名与 import 路径稳定 | 执行期（2026-09-02） |
+| D-05 | u-runtime-reaper 的 3 个 spawnSync 调用点（ps/pgrep/taskkill）经编排方评审按 reap-orphan-pi 先例登记 EXEMPT_CALLSITES 豁免 + R5 设计文档回写（独立 doc-followup commit）；S1 脚本 stderr 写点 runDir 作用域收敛使 R1 B② 锚点可回溯 | 进程表只读探测/信号处置无 env 出站面；变量本就该函数局部 | 执行期（2026-09-02） |
 
 ## 6 状态表
 
@@ -125,7 +127,7 @@ graph TD
 | u-lock-probe | committed | 1 | **待验证检查点 1 通过**：S3 双方各 100 次真并发竞争绿（重叠>0 + 交替≥2 + 200 行零交错 + 负向验证证检测器敏感）；S1 脚本三形态实测（最小/staged 全量 17/崩溃捕获 exit1+stderr 落盘）；deviations: worker 在 scripts/probe/（领地）／19→17 按 mandatory-extensions.json SSOT／PL 侧参数照抄 pi auth-storage 真实形态 |
 | u-protocol | committed | 1 | 87 tests passed（6 files，新增 13）；deviations: 符号带 BackgroundTask 前缀（session-manager 先例）+ 导出 isGuard/active/terminal helper（u-runtime-reaper 读侧防御）+ MAX_TERMINAL_REGISTRY_ENTRIES 入契约（写终态 RMW 规则） |
 | u-runtime-reaper | committed | 1 | 23 新测试 + 22 文件 342 回归绿 + typecheck/eslint 0；deviations: 入口 async+setImmediate（同步 void 会阻塞事件循环拍，测试断言不 await）/ stale lock mtime>30s 判据 fresh 保留 / 硬序先后不传成败（pi 收殓失败仍扫描）/ 移植源 ownerPiPid===pid 分支被 isPidAlive 蕴含（注释声明）/ staleLocksRemoved 观测字段 |
-| u-bte-remove | pending | 0 | — |
+| u-bte-remove | committed | 1 | bte 236 tests（12 files）+ extensions 三连全绿（24 包）；触发面消失双断言（reaper 模块 import rejects + withFileLock 不触发）+ reconcile 每 session_start 三派发断言；deviations: 领地扩包内 8 文件伴生（reaper 2 个 helper 被生产消费方引用平移 kill-tree.ts / types.ts re-export alias 保短名 / bash_kill hint 文案同步新机制 / helper 测试等价恢复 6 条） |
 | u-doc-sync | pending | 0 | — |
 | u-guards-pkg | pending | 0 | — |
 | u-audit-fix | pending | 0 | — |

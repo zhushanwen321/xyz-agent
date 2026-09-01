@@ -10,17 +10,17 @@
  *
  * kill 目标归属（§3.5）：**限定本进程单例表条目**；registry 回落限定终态条目
  * （exited/orphaned → already exited）——registry 中他进程的 running/killing 条目
- * **不可 kill**（跨进程边界：处置权归发起进程，孤儿由 reaper 属主判定收殓）。
+ * **不可 kill**（跨进程边界：处置权归发起进程；孤儿收殓已下沉 xyz-agent runtime，
+ * u-bte-remove 后由 background-task-reaper 按 ownerPiPid 属主判定处置）。
  * kill 前校验 pid 判活 + start time 匹配（防陈旧条目遇 pid 复用误杀无关进程，
- * 宁不杀勿误杀，同 reaper 原则 §3.6）。
+ * 宁不杀勿误杀，§3.6 收殓侧同原则）。
  */
 
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { isPidAlive, killProcessTree } from "./kill-tree.ts";
-import { getProcessStartTimeSec } from "./reaper.ts";
+import { getProcessStartTimeSec, isPidAlive, killProcessTree } from "./kill-tree.ts";
 import { ensurePollerRunning } from "./background/poller.ts";
 import { getRegistryPath, readRegistry, taskToRegistryEntry, writeRegistryEntry } from "./background/registry.ts";
 import { getAllTasks, markKillingIntent } from "./background/task-store.ts";
@@ -76,12 +76,12 @@ export function createBashKillToolDefinition() {
 					);
 				}
 				// registry-only 活跃条目 = 他进程任务（本进程活跃任务必在单例表）——跨进程
-				// 不可 kill：处置权归发起进程；属主若已死，孤儿由 reaper 在下次 session
-				// 启动时收殓（属主判定）
+				// 不可 kill：处置权归发起进程；属主若已死，孤儿由 xyz-agent runtime 在
+				// session 销毁时或启动期兜底扫描时收殓（属主判定，u-bte-remove 下沉）
 				return killedFalse(
 					"cross-process running task owned by another pi process",
 					"the task is managed by the pi process that started it (bash_kill from that session); " +
-						"if that process is gone, the reaper will collect the orphan at the next session start",
+						"if that process is gone, the owning xyz-agent runtime will collect the orphan when its session ends or on app restart",
 				);
 			}
 			if (isTerminalState(fromStore.state)) {
@@ -90,7 +90,7 @@ export function createBashKillToolDefinition() {
 				);
 			}
 
-			// pid 复用防御（§3.6 同 reaper 原则，宁不杀勿误杀）：
+			// pid 复用防御（§3.6 宁不杀勿误杀）：
 			//  - pid 已死 → already exited 风格返回，不发 kill（终态由轮询边沿收尾）
 			//  - 有 pidStartTime 字段 → 校验实际进程 start time 匹配；不匹配/读不到 =
 			//    复用嫌疑，拒绝 kill 并说明

@@ -1,21 +1,23 @@
-// src/__tests__/maintenance-once.test.ts —— M5 幂等止血（实施单元 u-bte-guard，
-// 设计 docs/design/file-lock-unification-and-reaper-sink.md §3.2 D3「守卫粒度」/
-// §4 S6 内联版）：
-//  - 同一进程内 session_start 双派发（pi factory 二调 handler 累积 + startup/resume
-//    双发的真实形态）→ reapOrphanedTasks 仅首个派发执行（进程级 once flag）
-//  - reconcilePendingEntries 是 session 级豁免类，不挂 flag，每次派发都执行
-//  - 入口无条件 debug 日志按派发次数出现，含 reason 与 reapSkipped（S6 观测通道）
-// 断言方式：reaper / reconcile / logger 全部间谍注入，观察调用次数与参数；
-// once flag 是 index.ts 模块级状态，用 vi.resetModules + 动态 import 每用例重置。
+// src/__tests__/maintenance-once.test.ts —— 收殓下沉后的 session_start 维护链
+// 语义（实施单元 u-bte-remove，设计 docs/design/file-lock-unification-and-reaper-
+// sink.md §3.2 D2「extension 删 session_start reaper」/ §3.3 D3 粒度段 / §4 S6
+// 「批 2 后 reap 类操作不再执行」）：
+//  - reconcilePendingEntries 是 session 级豁免类，每 session_start 派发都执行
+//    （startup/resume/new 多派发 ×N——含 factory 二调 handler 累积的真实形态）
+//  - 触发面消失：reaper.ts 已删除（import 即失败）+ 维护链不再触发全局文件锁
+//    （withFileLock——原 reapOrphanedTasks 的 reaper.lock 路径）
+//  - 入口无条件 debug 日志按派发次数出现，detail 仅含 reason（reapSkipped 字段
+//    随 reap 调用移除，S6 观测通道语义更新）
+// 断言方式：reconcile / logger / file-lock 全部间谍注入，观察调用次数与参数。
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const { reapOrphanedTasksMock, reconcileMock, loggerMock, officialBashFactoryMock, dataDirRef } =
+const { reconcileMock, loggerMock, officialBashFactoryMock, dataDirRef, withFileLockMock } =
 	vi.hoisted(() => ({
-		reapOrphanedTasksMock: vi.fn(),
 		reconcileMock: vi.fn(),
 		loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 		officialBashFactoryMock: vi.fn(),
 		dataDirRef: { dir: "/tmp/bte-fake-agent-dir" },
+		withFileLockMock: vi.fn(),
 	}));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
@@ -25,20 +27,19 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 vi.mock("@zhushanwen/pi-extension-logger", () => ({
 	getLogger: () => loggerMock,
 }));
-vi.mock("../reaper.ts", () => ({
-	reapOrphanedTasks: reapOrphanedTasksMock,
+// 全局扫描探针：withFileLock 是原 reapOrphanedTasks 持 reaper.lock 的唯一锁路径
+// （registry 写走的是 withFileLockSync）——维护链触发它 = 全局扫描回流
+vi.mock("@zhushanwen/pi-file-lock", () => ({
+	withFileLock: withFileLockMock,
+	withFileLockSync: vi.fn(() => {
+		throw new Error("unexpected registry write in maintenance chain");
+	}),
 }));
 vi.mock("../background/pending-reconcile.ts", () => ({
 	reconcilePendingEntries: reconcileMock,
 }));
 
 import type { ExtensionAPI, SessionStartEvent } from "@earendil-works/pi-coding-agent";
-
-/** 重新解析 index.ts 模块图——模块级 once flag 随之归零。 */
-async function loadExtensionWithFreshFlag() {
-	vi.resetModules();
-	return import("../index.ts");
-}
 
 function createMockPi() {
 	return {
@@ -66,9 +67,11 @@ function makeCtx() {
 	};
 }
 
+async function loadExtension() {
+	return import("../index.ts");
+}
+
 beforeEach(() => {
-	reapOrphanedTasksMock.mockReset();
-	reapOrphanedTasksMock.mockResolvedValue(undefined);
 	reconcileMock.mockReset();
 	// 官方 bash 工厂返回最小工具定义（override 定义 spread initial.name）
 	officialBashFactoryMock.mockReset();
@@ -79,57 +82,74 @@ beforeEach(() => {
 		parameters: {},
 		execute: vi.fn(),
 	});
+	withFileLockMock.mockReset();
 	loggerMock.debug.mockClear();
 	loggerMock.warn.mockClear();
 	loggerMock.error.mockClear();
 });
 
-describe("session_start maintenance once-per-process guard (u-bte-guard)", () => {
-	it("runs reapOrphanedTasks only on the first dispatch; reconcilePendingEntries on every dispatch", async () => {
-		const mod = await loadExtensionWithFreshFlag();
+describe("session_start maintenance chain after reap sink (u-bte-remove)", () => {
+	it("no longer ships a reaper: the module is gone from the extension (trigger surface removed)", async () => {
+		await expect(import("../reaper.ts")).rejects.toThrow();
+	});
+
+	it("runs reconcilePendingEntries on EVERY session_start dispatch (session-scoped exempt, D3)", async () => {
+		const mod = await loadExtension();
 		const pi = createMockPi();
 		mod.default(pi as unknown as ExtensionAPI);
 		const handler = getSessionStartHandler(pi);
 		const ctx = makeCtx();
 
-		// 首个派发（startup）：reap 执行一次
+		// 多派发覆盖真实形态：startup + resume 双发（桌面端每次激活）+ new；
+		// factory 二调 handler 累积时同一事件被多组 handler 各跑一次，同理多次执行
 		handler(makeEvent("startup"), ctx);
-		await vi.waitFor(() => expect(reconcileMock).toHaveBeenCalledTimes(1));
-		expect(reapOrphanedTasksMock).toHaveBeenCalledTimes(1);
-		expect(reapOrphanedTasksMock).toHaveBeenCalledWith(dataDirRef.dir);
-
-		// 后续派发（resume / new）：reap 被 once flag 跳过，对账照常执行。
-		// resume 双发是事故场景本体——factory 二调下同一事件被两组 handler 各跑一次
 		handler(makeEvent("resume"), ctx);
-		await vi.waitFor(() => expect(reconcileMock).toHaveBeenCalledTimes(2));
 		handler(makeEvent("new"), ctx);
-		await vi.waitFor(() => expect(reconcileMock).toHaveBeenCalledTimes(3));
 
-		expect(reapOrphanedTasksMock).toHaveBeenCalledTimes(1);
 		expect(reconcileMock).toHaveBeenCalledTimes(3);
+		expect(reconcileMock).toHaveBeenNthCalledWith(1, expect.anything(), dataDirRef.dir, "sid-once", []);
+		expect(reconcileMock).toHaveBeenLastCalledWith(expect.anything(), dataDirRef.dir, "sid-once", []);
+		// 无全局扫描：维护链不触发原 reaper 的跨进程锁路径，也无告警
+		expect(withFileLockMock).not.toHaveBeenCalled();
 		expect(loggerMock.warn).not.toHaveBeenCalled();
 	});
 
-	it("emits the unconditional entry debug log per dispatch with reason and reapSkipped (S6 observation channel)", async () => {
-		const mod = await loadExtensionWithFreshFlag();
+	it("emits the unconditional entry debug log per dispatch with reason only (S6 observation channel)", async () => {
+		const mod = await loadExtension();
 		const pi = createMockPi();
 		mod.default(pi as unknown as ExtensionAPI);
 		const handler = getSessionStartHandler(pi);
 		const ctx = makeCtx();
 
 		handler(makeEvent("startup"), ctx);
-		await vi.waitFor(() => expect(reconcileMock).toHaveBeenCalledTimes(1));
 		handler(makeEvent("resume"), ctx);
-		await vi.waitFor(() => expect(reconcileMock).toHaveBeenCalledTimes(2));
 
-		// 每次派发恰好一条入口日志（无条件 = 不以任何条件短路），reason 取自事件，
-		// reapSkipped 反映 once flag 状态：首个派发 false（将执行），其后 true（跳过）
+		// 每次派发恰好一条入口日志（无条件 = 不以任何条件短路），reason 取自事件；
+		// reapSkipped 字段已随 reap 下沉移除（u-bte-remove 变更登记，S6「批 2 后
+		// reap 类操作不再执行」）
 		expect(loggerMock.debug).toHaveBeenCalledTimes(2);
 		expect(loggerMock.debug).toHaveBeenNthCalledWith(1, "session_start maintenance dispatch", {
-			detail: { reason: "startup", reapSkipped: false },
+			detail: { reason: "startup" },
 		});
 		expect(loggerMock.debug).toHaveBeenNthCalledWith(2, "session_start maintenance dispatch", {
-			detail: { reason: "resume", reapSkipped: true },
+			detail: { reason: "resume" },
 		});
+	});
+
+	it("keeps reconcile failures non-fatal: warn logged, dispatch chain not throwing", async () => {
+		reconcileMock.mockImplementation(() => {
+			throw new Error("reconcile boom");
+		});
+		const mod = await loadExtension();
+		const pi = createMockPi();
+		mod.default(pi as unknown as ExtensionAPI);
+		const handler = getSessionStartHandler(pi);
+
+		// 对账抛错被维护链吞掉记 warn（僵尸停留差集，下一 session_start 幂等重查）
+		expect(() => handler(makeEvent("resume"), makeCtx())).not.toThrow();
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			"session_start pending reconcile failed; zombies retried next session start",
+			expect.objectContaining({ detail: expect.objectContaining({ err: "reconcile boom" }) }),
+		);
 	});
 });

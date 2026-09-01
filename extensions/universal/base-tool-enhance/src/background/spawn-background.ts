@@ -14,8 +14,7 @@ import { randomBytes } from "node:crypto";
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import { killProcessTree } from "../kill-tree.ts";
-import { getProcessStartTimeSec, pidStartMatchesRegistered } from "../reaper.ts";
+import { getProcessStartTimeSec, killProcessTree, pidStartMatchesRegistered } from "../kill-tree.ts";
 import { emitPendingRegister } from "./notify.ts";
 import { ensurePollerRunning } from "./poller.ts";
 import { getRegistryPath, taskToRegistryEntry, writeRegistryEntry } from "./registry.ts";
@@ -187,8 +186,8 @@ export function spawnBackgroundTask(opts: SpawnBackgroundOptions): SpawnBackgrou
 		return { ok: false, error: "Failed to start background command: no pid acquired" };
 	}
 
-	// M3 补写 M5 预告字段：spawn 后立即读子进程 start time（epoch 秒），供 reaper
-	// 精确比较防 pid 复用误杀。读取失败省略（undefined 不进条目）——reaper 降级走
+	// M3 补写字段：spawn 后立即读子进程 start time（epoch 秒），供收殓/kill 侧
+	// 精确比较防 pid 复用误杀。读取失败省略（undefined 不进条目）——消费方降级走
 	// startedAt 秒级校验兜底，不报错不阻断 spawn
 	const pidStartTime = getProcessStartTimeSec(child.pid);
 
@@ -211,8 +210,9 @@ export function spawnBackgroundTask(opts: SpawnBackgroundOptions): SpawnBackgrou
 	}
 
 	// 登记顺序（§3.5 数据流 ③④⑤）：单例表（运行时权威）→ registry（持久化）→
-	// pending:register emit。registry 写失败不阻断（条目停留 running 由 M5 reaper
-	// 兜底，§3.5）；emit 失败同样无害（peer 未加载/引用未注入时无 listener，通知
+	// pending:register emit。registry 写失败不阻断（条目停留 running 由 runtime
+	// 收殓器兜底——孤儿判定按 ownerPiPid，§3.5；u-bte-remove 下沉后不再依赖本包
+	// 扫描）；emit 失败同样无害（peer 未加载/引用未注入时无 listener，通知
 	// 链路缺失不影响任务本体）
 	registerSpawnedTask(task);
 	writeRegistryEntry(registryPath, taskToRegistryEntry(task));
@@ -228,7 +228,7 @@ export function spawnBackgroundTask(opts: SpawnBackgroundOptions): SpawnBackgrou
  */
 function armBackgroundTimeout(task: BackgroundTask, timeoutSec: number): void {
 	const timer = setTimeout(() => {
-		// pid 复用防御（§3.6，同 reaper reapEntrySync / bash_kill 范式，宁不杀勿误杀）：
+		// pid 复用防御（§3.6，同 bash_kill 范式，宁不杀勿误杀）：
 		// 任务早已退出（exit 边沿未被轮询器收尾或竞态未及）且 pid 在到点前被系统复用
 		// 时，直接 killProcessTree 会杀掉复用 pid 上的无辜进程（整进程组 SIGKILL）。
 		if (!isRecordedPidStillOriginal(task)) {
@@ -254,8 +254,8 @@ function armBackgroundTimeout(task: BackgroundTask, timeoutSec: number): void {
 
 /**
  * 到点 pid 身份校验：true = 登记时的原进程仍占用该 pid（可安全 kill-tree）。
- * 判据（精确比较 / startedAt 秒级降级 / 读不到保守 false）单点定义于 reaper
- * 的 pidStartMatchesRegistered，与 reapEntrySync 孤儿补杀共用同一份。
+ * 判据（精确比较 / startedAt 秒级降级 / 读不到保守 false）单点定义于 kill-tree.ts
+ * 的 pidStartMatchesRegistered（原 reaper.ts 单点，收殓下沉后随删除平移）。
  */
 function isRecordedPidStillOriginal(task: BackgroundTask): boolean {
 	const actualStartSec = getProcessStartTimeSec(task.pid);
