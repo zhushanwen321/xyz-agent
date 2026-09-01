@@ -61,7 +61,6 @@ export interface ConcurrencyPool {
  *   仍 ≥ 条目 effective 时，单次释放也可能授予该条目（pi 运行时既有行为，
  *   concurrency-pool.test T-A2 锚定）。需要严格分层隔离的宿主应在条目侧
  *   自行保证，勿依赖 release 时点复查。
- */
  *
  * 类保留内部消费（subagent-service 深路径）；对外导出面走 createConcurrencyPool
  * 工厂（对象参数 + 策略枚举，不暴露本类名与位置参数构造——D7/U4 裁决）。
