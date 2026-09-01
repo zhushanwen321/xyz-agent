@@ -13,7 +13,7 @@ import {
 	withFileLockSync,
 	type FileLockOptions,
 	type SyncFileLockOptions,
-} from "./file-lock.ts";
+} from "./file-lock";
 
 const logger = getLogger("file-lock");
 setFileLockLogger((msg) => logger.debug(msg));

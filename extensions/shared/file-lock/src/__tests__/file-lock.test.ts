@@ -137,7 +137,7 @@ describe("真实跨进程互斥（D5a/D1e 验收形态）", () => {
 		const target = path.join(tmpDir, "shared.json");
 		fs.writeFileSync(target, JSON.stringify({ n: 0 }), "utf-8");
 		try {
-			// 子进程脚本：--experimental-strip-types 直接跑 TS（Node >= 22.6），
+			// 子进程脚本：--experimental-strip-types 直接跑 TS 源码（Node >= 22.6），
 			// 循环 50 次锁内读-改-写。exitCode 非 0 = 子进程自身失败（锁/IO 异常）。
 			const worker = `
 import * as fs from "node:fs";
@@ -151,16 +151,41 @@ for (let i = 0; i < 50; i++) {
 	});
 }
 `;
+			// src 内相对 import 无 .ts 后缀（runtime tsc 无 allowImportingTsExtensions 的
+			// 兼容形态，见 file-lock.ts 头注释），而 Node strip-types 的 ESM 严格扩展名解析
+			// 要求显式后缀——resolve 钩子在 ERR_MODULE_NOT_FOUND 时补 .ts，两个约束的交集。
+			// 纯 JS（钩子自身不经 strip-types），只对相对 specifier 生效。
+			const resolveHook = `
+export async function resolve(specifier, context, next) {
+	if (specifier.startsWith("./") || specifier.startsWith("../")) {
+		try {
+			return await next(specifier, context);
+		} catch (err) {
+			if (err && err.code === "ERR_MODULE_NOT_FOUND") return next(specifier + ".ts", context);
+			throw err;
+		}
+	}
+	return next(specifier, context);
+}
+`;
+			const registerScript = `
+import { register } from "node:module";
+register("./resolve-hook.mjs", import.meta.url);
+`;
+			fs.writeFileSync(path.join(tmpDir, "resolve-hook.mjs"), resolveHook, "utf-8");
+			fs.writeFileSync(path.join(tmpDir, "register-hooks.mjs"), registerScript, "utf-8");
 			const workerFile = path.join(tmpDir, "worker.ts");
 			fs.writeFileSync(workerFile, worker, "utf-8");
 			const procs = [1, 2].map(() =>
-				spawnSync(process.execPath, ["--experimental-strip-types", workerFile, target], {
-					encoding: "utf-8",
-					timeout: 60_000,
-				}),
+				spawnSync(
+					process.execPath,
+					["--experimental-strip-types", "--import", path.join(tmpDir, "register-hooks.mjs"), workerFile, target],
+					{ encoding: "utf-8", timeout: 60_000 },
+				),
 			);
 			for (const p of procs) {
-				expect(p.status).toBe(0);
+				// 失败消息带出 worker stderr/stdout，保证非零退出时调试信息不丢
+				expect(p.status, `worker stderr: ${p.stderr} stdout: ${p.stdout}`).toBe(0);
 			}
 			expect((JSON.parse(fs.readFileSync(target, "utf-8")) as { n: number }).n).toBe(100);
 		} finally {

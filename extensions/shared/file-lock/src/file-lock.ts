@@ -39,7 +39,7 @@ import {
 	acquireLockSync,
 	DEFAULT_STALE_MS,
 	type LockRelease,
-} from "./lock-core.ts";
+} from "./lock-core";
 
 export { DEFAULT_STALE_MS };
 
