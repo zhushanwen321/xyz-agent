@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import { getLogger } from "../core/logger.ts";
 import { bestEffort } from "./best-effort.ts";
 import { disposeEngines } from "./engine/registry.ts";
-import { armIdleTimer } from "./lifecycle-manager.ts";
+import { armIdleTimer, DEFAULT_IDLE_TIMEOUT_MS } from "./lifecycle-manager.ts";
 import {
   listActivePendingFromSessionFile,
   readActivePendingFromSessionFile,
@@ -1122,6 +1122,30 @@ function writeAliveMarkerBestEffort(sessionFile: string, pid: number, id: string
   }
 }
 
+/**
+ * [T5② / PS-7a] keep-alive 期 agent_end 心跳：覆盖写 .alive marker 刷新软超时基准。
+ *
+ * 1h 软超时（ALIVE_SOFT_TIMEOUT_MS）的隐含假设是「marker 写后进程短命」——被 keep-alive
+ * 打破（MF-4 数小时 keep-alive 是设计内可达态）后，活记录会被异进程孤儿恢复误盖
+ * .finalized sidecar（PS-7a）。keep-alive 的每次 agent_end 重写 marker，把「实例活跃」
+ * 的证明持续推新，软超时只在进程真死后才可能到期。
+ *
+ * [P-T5 探针裁决] 主路径成立（probe/p-t5-report.md）：历史 4747 个 subagent session 回溯，
+ * agent_end 密度 P95 ≈10 次/分钟，单次覆盖写 0.0315ms（56 字节）——开销可忽略，不降级
+ * 软超时对齐。
+ *
+ * [语义登记] marker.startedAt 语义由「实例启动时刻」扩展为「最后一次活跃证明时刻」：
+ * 三处软超时消费方（record-store buildRecord 活态分支 ×2 + findForeignLiveInstance）
+ * 判据 `now - startedAt < ALIVE_SOFT_TIMEOUT_MS` 语义统一收紧为「最后心跳后 1h 内算活」，
+ * 活跃实例不再被误判陈旧（方向安全）；marker 的 pid/id 字段保持不变（id 取现有 marker
+ * 值，缺失时兜底 record.id，与 finishHandshake 写点兜底一致）。
+ */
+function touchAliveMarkerForHeartbeat(sessionFile: string | undefined, pid: number | undefined, recordId: string): void {
+  if (!sessionFile || !pid) return;
+  const existingId = readAliveMarker(sessionFile)?.id ?? recordId;
+  writeAliveMarkerBestEffort(sessionFile, pid, existingId);
+}
+
 // ============================================================
 // [SPAWN 改造] runSpawn 的阶段拆分（max-lines-per-function 383 > 300）
 // ============================================================
@@ -1227,6 +1251,62 @@ function killChildWithEscalation(state: SpawnRunState, child: ChildProcess, sour
   escalation.unref();
   child.once("exit", () => clearTimeout(escalation));
   state.escalationTimer = escalation;
+}
+
+/**
+ * [T2-④ / LC-2] 服务侧 kill 收敛入口：无 SpawnRunState 的调用方（subagent-service 的
+ * closeChatIdle / closeAfterRoundSettled / cancelBackground / disposeAllRecords）经本函数
+ * 发 SIGTERM + 武装 30s SIGKILL 升级——替代四处裸 `child.kill("SIGTERM")`。
+ *
+ * 背景（LC-2）：SIGTERM 可能被无视（子进程卡死在不可中断 native 调用 / SIGTERM handler
+ * 挂死），裸 SIGTERM 后进程不退 → record 已终态归档 → 幽灵进程，且 dispose 兜底
+ * killAllSpawnedChildren 的升级检查也可能不再触达（Map 条目已随 close 移除前的窗口）。
+ * 服务侧 kill 时机都在「record 即将/已经终态化」——此后再无其他回收通道，必须有升级。
+ *
+ * 与 runSpawn 内 killChildWithEscalation 的差异：调用方没有 SpawnRunState（runSpawn 已
+ * 返回 / 从未在本进程跑），升级 timer 记账在模块级 Map（recordId → timer），子进程 exit
+ * 自动清除（对齐 state.escalationTimer 的 exit-clear 语义）；同 record 重复调用先清旧
+ * 升级 timer 防叠加。child 不在 spawnedChildren（已 close 移除 / 从未注册）或已发过
+ * kill 请求（killed=true，升级窗口已由先前路径武装）时 no-op——与旧 `child && !child.killed`
+ * 守卫语义逐字对齐，仅补升级。
+ */
+const serviceEscalationTimers = new Map<string, NodeJS.Timeout>();
+
+export function killRecordChildWithEscalation(recordId: string, source: string): void {
+  const child = spawnedChildren.get(recordId);
+  if (!child || child.killed) return;
+  child.kill("SIGTERM");
+  assertSafeTimerDelay(SIGKILL_ESCALATION_MS, `SIGKILL escalation (${source})`);
+  if (serviceEscalationTimers.has(recordId)) {
+    clearTimeout(serviceEscalationTimers.get(recordId));
+  }
+  const escalation = setTimeout(
+    () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        logger.warn(
+          `[session-runner] child ${recordId} still alive ${SIGKILL_ESCALATION_MS / MS_PER_SECOND}s after SIGTERM, escalating to SIGKILL (source: ${source})`,
+        );
+        child.kill("SIGKILL");
+      }
+    },
+    SIGKILL_ESCALATION_MS,
+  );
+  escalation.unref();
+  child.once("exit", () => {
+    clearTimeout(escalation);
+    if (serviceEscalationTimers.get(recordId) === escalation) {
+      serviceEscalationTimers.delete(recordId);
+    }
+  });
+  serviceEscalationTimers.set(recordId, escalation);
+}
+
+/** [T2-④] 测试隔离：清空服务侧升级 timer 记账（命名对齐 _resetSettledWatchdogsForTest）。 */
+export function _resetServiceKillStateForTest(): void {
+  for (const timer of serviceEscalationTimers.values()) {
+    clearTimeout(timer);
+  }
+  serviceEscalationTimers.clear();
 }
 
 /**
@@ -1340,20 +1420,35 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
         disarmSettledWatchdog(record.id);
         // [F-R2] 本闭包经 stdout data 回调同步调用（handleSdkEvent ← attachStdoutPump）：
         // armIdleTimer → assertSafeTimerDelay fail-fast 的 throw 若逃出回调 = uncaughtException
-        // 崩宿主。包 try/catch 降级为「不挂 idle timer」（进程回收由外部 signal / dispose 驱动），
-        // 错误经 bestEffort("error") 可见但不升级为进程崩溃；后续 limiter.reset /
-        // onRoundSettled / resolveRun 照常执行（本轮完成通知不因 GC timer 故障丢失）。
+        // 崩宿主。包 try/catch 降级，错误经 bestEffort("error") 可见但不升级为进程崩溃；
+        // 后续 limiter.reset / onRoundSettled / resolveRun 照常执行（本轮完成通知不因 GC
+        // timer 故障丢失）。
+        // [T4② / PS-4] 降级语义修正：旧降级「不挂 idle timer」保住了「不崩进程」，却丢掉
+        // timer 承载的两个下游不变量——isIdle 放行门（hasIdleTimer=false → 轮次完成通知被
+        // lifecycle-predicates 吞）与进程回收（进程活着却无 timer 永久泄漏）。现降级改为
+        // 「挂 DEFAULT_IDLE_TIMEOUT_MS + warn 留痕」：非配置替换（配置错误已在 spawn 入口
+        // fail-fast，见 subagent-service），此处是防御性兜底，兜底必须可见且保住不变量。
+        const armIdleTimerOnTimeout = (): void => {
+          // onTimeout 复用现有 kill 路径：child.kill("SIGTERM") 触发 close → close handler
+          // 统一 cleanup（spawnedChildren.delete / get_stateListeners.clear / resolve）。
+          // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
+          // [race-F4] 升级：idle timer SIGTERM 后挂住 → 30s 后 SIGKILL。
+          const child = getChildByRecord(record.id);
+          if (child && !child.killed) killChildWithEscalation(state, child, "idle timer");
+        };
         try {
-          armIdleTimer(record.id, () => {
-            // onTimeout 复用现有 kill 路径：child.kill("SIGTERM") 触发 close → close handler
-            // 统一 cleanup（spawnedChildren.delete / get_stateListeners.clear / resolve）。
-            // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
-            // [race-F4] 升级：idle timer SIGTERM 后挂住 → 30s 后 SIGKILL。
-            const child = getChildByRecord(record.id);
-            if (child && !child.killed) killChildWithEscalation(state, child, "idle timer");
-          }, record.idleTimeoutMs);
+          armIdleTimer(record.id, armIdleTimerOnTimeout, record.idleTimeoutMs);
         } catch (err) {
           bestEffort(err, "armIdleTimer (agent_settled chatMode)", "error");
+          try {
+            armIdleTimer(record.id, armIdleTimerOnTimeout, DEFAULT_IDLE_TIMEOUT_MS);
+            logger.warn(
+              `[session-runner] idleTimeoutMs invalid for ${record.id}, fell back to DEFAULT_IDLE_TIMEOUT_MS (${DEFAULT_IDLE_TIMEOUT_MS}ms) — idle GC and round notification gate stay active`,
+            );
+          } catch (fallbackErr) {
+            // 双重失败（理论上不可达：DEFAULT 恒在安全域内）——退回旧「不挂」语义但留痕。
+            bestEffort(fallbackErr, "armIdleTimer fallback (agent_settled chatMode)", "error");
+          }
         }
         // [SP-9] chatMode 每轮 reset turn-limiter：新一轮开始（续聊）时，
         // maxTurns/graceTurns 不跨轮累计（续聊本质是无限轮，累计上限违背 G1）。
@@ -1648,6 +1743,9 @@ async function runAgentEndDisposition(
   // ── 以下三分支与同步化前逐行一致（仅随函数迁移）──
   const pending = readActivePendingFromSessionFile(record.sessionFile);
   if (pending.count > 0 || pending.error) {
+    // [T5② / PS-7a] keep-alive 心跳：决定保活即刷新 .alive marker（软超时基准推新，
+    // 防 keep-alive 数小时的活记录被异进程孤儿恢复误终态；P-T5 探针裁决写盘开销可忽略）。
+    touchAliveMarkerForHeartbeat(record.sessionFile, child.pid, record.id);
     if (pending.error) {
       logger.warn(
         `[session-runner] agent_end: keep alive (sessionFile unreadable, conservative): ${pending.error}`,
@@ -1698,6 +1796,8 @@ async function runAgentEndDisposition(
   } else if (pending.recentUnregister) {
     // 差集 0 但最近有 unregister：后代刚完成，notify 唤醒可能在路上（竞态窗口），
     // 保持进程——父被唤醒后的下一次 agent_end 会正常判定。
+    // [T5② / PS-7a] 保活分支同样心跳（进程仍活，软超时基准应推新）。
+    touchAliveMarkerForHeartbeat(record.sessionFile, child.pid, record.id);
     // [MF-3] 秒级宽限：此分支在每层「最终 turn」必命中（closeout 的 agent_end 距
     // 最后一次 unregister <60s），挂长超时 = 空等 2h 才 kill + 冒牌完成通知级联。
     // 15s 内无新 agent_end（未被唤醒）即 kill；被唤醒后下一次 agent_end 重新评估。

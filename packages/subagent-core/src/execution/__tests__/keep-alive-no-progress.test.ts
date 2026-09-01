@@ -53,7 +53,12 @@ vi.mock("node:fs", async () => {
   };
 });
 
-vi.mock("../alive-store.ts", () => ({ writeAliveMarker: vi.fn() }));
+vi.mock("../alive-store.ts", () => ({
+  writeAliveMarker: vi.fn(),
+  // [T5②] keep-alive 心跳刷新读取现有 marker id（缺失兜底 record.id）
+  readAliveMarker: vi.fn(() => undefined),
+  isProcessAlive: vi.fn(() => false),
+}));
 
 // keep-alive 判定：本文件统一 count>0（有活跃后代 → keep-alive 分支）。
 vi.mock("../session-pending.ts", () => ({

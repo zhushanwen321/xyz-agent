@@ -11,13 +11,21 @@ import type { ExtensionMode } from "./host-mode.ts";
 
 import type { AgentResult as WorkflowAgentResult } from "../orchestration/models/types.ts";
 import { displayAgentName } from "../shared/agent-ref.ts";
+import { MAX_TIMER_DELAY_MS } from "../shared/timer-delay.ts";
 // D-A10: workflow 侧 AgentResult 映射（executeAndAwait 出口）
 import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
 import { removeAliveMarker, findForeignLiveInstance, writeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
 // [V2 决策 3] lifecycle-manager idle timer：chatMode 统一投递新 turn disarm（防误杀活进程）。
 // [M3] hasIdleTimer：piAdapter.hasRunningBackground 排除等待续聊（timer armed）的 record。
-import { acquireActivateLock, disarmIdleTimer, hasIdleTimer } from "./lifecycle-manager.ts";
+// [T4②] DEFAULT_IDLE_TIMEOUT_MS：deliverMessage 非 EPIPE 失败 re-arm 的防御性兜底时长。
+import {
+  acquireActivateLock,
+  armIdleTimer,
+  disarmIdleTimer,
+  hasIdleTimer,
+  DEFAULT_IDLE_TIMEOUT_MS,
+} from "./lifecycle-manager.ts";
 import { type ConcurrencyPool,DefaultConcurrencyPool } from "./concurrency-pool.ts";
 import type { DialogGlobalQueue, UiRequestHandler } from "./dialog-queue.ts";
 import {
@@ -45,11 +53,26 @@ import type { ModelConfigService } from "./model-config-service.ts";
 import type { AgentConfig, ModelInfo, ResolvedModel } from "./model-resolver.ts";
 import type { BgNotifyRecord, BgNotifier, NotifierHost } from "./notifier.ts";
 import { createNotifier } from "./notifier.ts";
+import { getBoundNotifyLedger, NOTIFY_LEDGER_CUSTOM_TYPE } from "./notify-ledger.ts";
 import { getSubagentRecordsDir, getSubagentSessionDir } from "./path-encoding.ts";
 import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
-import { getChildByRecord, killAllSpawnedChildren, registerSpawnedChildForRecord, runSpawn, spawnedChildren, type SessionRunnerContext, type SpawnResumeOpts } from "./session-runner.ts";
+import {
+  getChildByRecord,
+  killAllSpawnedChildren,
+  killRecordChildWithEscalation,
+  registerSpawnedChildForRecord,
+  runSpawn,
+  spawnedChildren,
+  type SessionRunnerContext,
+  type SpawnResumeOpts,
+} from "./session-runner.ts";
+import {
+  armSettledWatchdog,
+  disarmSettledWatchdog,
+  SETTLED_WATCHDOG_TIMEOUT_MS,
+} from "./settled-watchdog.ts";
 import { isIdle, isResumable, hasLiveProcessHandle } from "./lifecycle-predicates.ts";
 import { startIdleGc } from "./idle-gc.ts";
 import {
@@ -194,6 +217,30 @@ export interface SubagentServiceSessionInit {
 
 /** background 优先级（保留 priority 排序机制，单一值）。 */
 const PRIORITY_BACKGROUND = 1000;
+
+/** 时间换算常数（settled watchdog 分钟数展示用；与 session-runner 同名常量同语义）。 */
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+
+/** [T4① / PS-2] notify 门拦截集：disposeAllRecords 因这两类原因关闭的 record，其迟到的
+ *  kickOffBackground.then 完成回注不得注入新 session——/new、/fork 的决策（[v4 A-6]）
+ *  是「被关 record 的告知改由 list 的 closedReason 表达」，不主动通知；旧门只排除
+ *  cancelled，parent-new/parent-fork 放行 → 新对话被「Subagent X failed: closed due to
+ *  parent-new」的僵尸回执 triggerTurn 唤醒，已废弃会话的通知注入新上下文。 */
+const NOTIFY_BLOCKED_CLOSED_REASONS: ReadonlySet<ClosedReason> = new Set(["parent-new", "parent-fork"]);
+
+/**
+ * [T4① / PS-2] kickOffBackground.then 完成回注的 notify 门（按 closedReason 白名单放行）。
+ *
+ * cancelled（cancelBackground 自己 notify）与 parent-new/parent-fork（编排性关闭，
+ * 告知由 list 的 closedReason 表达）不放行；其余（undefined = 本路径抢到 CAS 尚未
+ * 终态化的迟到回调、user-close/gc 等真实终态）照旧回注。导出供测试与未来调用点复用。
+ */
+export function notifyGateAllowsDelivery(closedReason: ClosedReason | undefined): boolean {
+  if (closedReason === undefined) return true;
+  if (closedReason === "cancelled") return false;
+  return !NOTIFY_BLOCKED_CLOSED_REASONS.has(closedReason);
+}
 
 /** 跨进程身份贯穿的 env 名（父进程 spawn 子进程时注入，子进程 initSession 读取）。
  *  仿照 PI_SUBAGENT_FORK_DEPTH 机制，让递归 subagent 的身份（rootSessionId / parentRecordId / depth）
@@ -424,7 +471,20 @@ export class SubagentService {
     // 终态 entry 的 record 在此判定落盘（否则侧栏永久 running）。放 initSession 末尾：
     // setPi 已注入（appendEntry 可用），sessionRootId 已建立（过滤当前根的 record）。
     // 幂等不 throw，失败不阻断 session_start。
-    this.recoverOrphanRecords();
+    //
+    // [T5① / PS-8] 只有根进程做扫描者：恢复机制假设「单扫描者」，但子进程 sessionRootId
+    // 经 env 与父同值（过滤域 = 整树共享的 sessions/records 目录），env 贯穿让每个子进程
+    // 都成了扫描者——递归编排中任一子进程启动时，恰有兄弟记录 marker 缺失或超软超时
+    //（hours-long wave 必然命中）→ 活记录被无关进程盖 .finalized sidecar，closed entry
+    // 写进别的进程的 session 文件（跨进程互写，无任何锁）。子进程身份判据 = env
+    // PI_SUBAGENT_SELF_RECORD_ID（父 spawn 时注入的「子进程自己的 record id」，仅子进程
+    // 非空）——与 execCtxBaseline 同源。根进程恢复语义不变。
+    const isChildProcess = (process.env[ENV_SELF_RECORD_ID] ?? "") !== "";
+    if (!isChildProcess) {
+      this.recoverOrphanRecords();
+    } else if (process.env.XYZ_AGENT_DEBUG) {
+      logger.debug("[subagents] child process detected (PI_SUBAGENT_SELF_RECORD_ID set), skipping orphan recovery scan");
+    }
   }
 
   /** 孤儿终态恢复委托（RecordStore.recoverOrphanRecords 的唯一公开入口，维持 store
@@ -466,6 +526,15 @@ export class SubagentService {
    *  遍历 store 中所有 running record，逐个 CAS 转终态 + completeRecord + archive。
    *  对有 worktreeHandle 的 record 触发 worktreeManager.cleanup（T3: worktree 绑定清理）。
    *
+   *  [T2⑥ / PS-1] 补齐三回收面（对照 dispose() 的既有形态，消除同文件双标）：
+   *  controller.abort + kill（收敛到 killChildWithEscalation）+ disarmIdleTimer +
+   *  disarmSettledWatchdog。旧实现只关 record 不中止执行——「record 已关」≠「执行已
+   *  处置」：在途子进程继续跑且无任何用户可及的取消通道（cancel 只查内存 running，
+   *  archive 后恒 false），若挂死唯一上界是默认关闭的 spawn watchdog → 泄漏至宿主退出。
+   *  abort/kill/timer 三面对已终态/已死 record 均幂等 no-op，dispose() 先行的
+   *  abortRunningControllers + killAllSpawnedChildren 不受影响（parent-shutdown 路径
+   *  双保险）。
+   *
    *  [v4 A-6] 旧实现的 recentlyCascaded 收集（供已删除的 before_agent_start 注入告知）
    *  与 drainCascaded 已一并移除——被关 record 的告知改由 list 的 closedReason 表达。
    *
@@ -476,6 +545,14 @@ export class SubagentService {
     const activeRecords = this.store.listAllActive();
     let count = 0;
     for (const record of activeRecords) {
+      // [T2⑥/PS-1] 回收面 i：abort 在途 controller（排队的 acquire / 在途 signal listener
+      // 立即感知取消）。幂等：已 aborted 的 controller.abort() 是 no-op。
+      record.controller?.abort();
+      // 回收面 ii：回收子进程（SIGTERM + 30s SIGKILL 升级，收敛 T2④同款）。
+      // 回收面 iii：disarm idle timer + settled watchdog（进程回收后 timer 只会误触发）。
+      killRecordChildWithEscalation(record.id, `disposeAllRecords (${reason})`);
+      disarmIdleTimer(record.id);
+      disarmSettledWatchdog(record.id);
       // tryTransition 只对 running 生效；idle 需要直接 completeRecord（无 CAS 保护）。
       // 与 closeChatIdle 对称：idle 无在途 AgentResult，构造合成 result。
       if (record.status === "running") {
@@ -560,10 +637,49 @@ export class SubagentService {
     // [review MF1] 在途 resume 守卫清空（正常由 runAndFinalize finally 清除；此处兜底
     // abort/kill 后仍挂着的条目，防跨 session 复活时残留）
     this.resumesInFlight.clear();
-    // flush 待发通知后 dispose（防丢失）
+    // flush 待发通知（session_shutdown 尽力投递一次）。
     this.notifier.flushPendingNotifications();
+    // [T4④ / PS-5] flush 被 isIdle 门拦时的丢失面闭合：attemptDeliver 的 isIdle 二次
+    // 复查失败时 pending 挂在 ledger 内存态，随后 dispose 销毁——旧注释「flush 后 dispose
+    // （防丢失）」的承诺与行为不符。现把未投递 pending 经 ledger entry 通道复写落盘
+    // （notifyId 幂等，重复 entry 由恢复扫描后写覆盖吸收），重启 recoverFromSession 按
+    // 账面差集重放补投——「不丢」由落盘账本承接而非本次 flush。
+    this.persistUndeliveredNotificationsForReplay();
     this.notifier.dispose();
     this.store.dispose();
+  }
+
+  /**
+   * [T4④ / PS-5] shutdown flush 被门拦时把未投递 pending 复写落盘（供重启 replay）。
+   *
+   * 触发条件：flushPendingNotifications 后 ledger 仍有 pending（isIdle 门拦 / sendDelivery
+   * 受理失败的残留）且主 agent 非 idle——即本次 shutdown 注定投不出去。落盘动作 =
+   * pi.appendEntry 重写 NOTIFY_LEDGER_CUSTOM_TYPE entry（与 ledger.record 同通道同 schema，
+   * notifyId 幂等：恢复扫描按后写覆盖 + ack/abandoned 差集去重，重复账面不产生重复投递）。
+   * 主 agent idle 时 flush 已投出，无需复写（零开销）。
+   */
+  private persistUndeliveredNotificationsForReplay(): void {
+    try {
+      const ledger = getBoundNotifyLedger();
+      const pending = ledger?.pendingEntries() ?? [];
+      if (pending.length === 0) return;
+      if (this.isIdleFn?.() !== false) return; // idle：flush 已投出（或无 gate 场景照旧）
+      for (const item of pending) {
+        this.pi?.appendEntry(NOTIFY_LEDGER_CUSTOM_TYPE, {
+          v: 1,
+          notifyId: item.notifyId,
+          content: item.content,
+          record: item.record,
+        });
+      }
+      logger.warn(
+        `[subagents] shutdown flush blocked by busy main agent: ${pending.length} pending notification(s) persisted to ledger for replay on next session_start`,
+        { count: pending.length },
+      );
+    } catch (err) {
+      // 落盘复写是防丢失增强，失败不阻断 dispose（账本原 entry 仍随 pi flush 落盘）。
+      bestEffort(err, "persistUndeliveredNotificationsForReplay", "error");
+    }
   }
 
   // ── 执行（subagent-tool 调）────────────────────────────
@@ -692,6 +808,8 @@ export class SubagentService {
    */
   async execute(opts: ExecuteOptions): Promise<ExecutionHandle> {
     this.assertReady();
+    // [T4② / PS-4] idleTimeoutMs 配置错误在首个副作用前同步 fail-fast（错误含合法范围）。
+    this.assertIdleTimeoutMsSafe(opts);
 
     // 通用嵌套深度护栏（D-033）：execCtxAls 记录所有 subagent 嵌套层级（fork + 非 fork），
     // 每层 +1。MAX_FORK_DEPTH 同时限 fork 链与通用嵌套——非 fork 递归虽不累积 session 体积，
@@ -1032,6 +1150,14 @@ export class SubagentService {
         record.result = undefined;
         record.resumable = undefined;
         this.store.reportRecordTransition(record);
+        // [T2③ / LC-1] 热路径轮 settled 等待固定硬上限（双挂载原语之热路径调用点，
+        // 首轮调用点在 session-runner runSpawn）。prompt 发出即起算（整轮含 turn 执行与
+        // 收尾都在窗口内，impl-plan §5 窗口口径裁决），settled 到达（session-runner
+        // handleSdkEvent 的 disarm，幂等生效于热路径轮）/ 进程 close（waitForChildExit
+        // 的 disarm）/ 本方终态化处置后即清——settled 永不到达（事件行丢失 / 子进程
+        // wedged）时本 timer 是唯一独立回收通道：现状「settled 不 arm 则 idle timer 不挂、
+        // runSpawn 已在首轮返回、spawn watchdog 默认关」的三无窗口由此收敛。
+        armSettledWatchdog(record.id, () => this.onHotPathSettledWatchdogTimeout(record));
       } catch (err) {
         // EPIPE 兜底：stdin 管道已断，进程实际已死但 close 事件尚未到达。
         // 检测 EPIPE 关键词 → 进程按 dead 处理 → 自动转冷路径 resume + 消息重放。
@@ -1063,6 +1189,13 @@ export class SubagentService {
           this.resumeRound(record, text);
           return;
         }
+        // [T2⑧ / PS-3] 非 EPIPE 写失败（如 ERR_STREAM_DESTROYED——错误分类只认 "EPIPE"
+        // 子串，过窄）：deliverMessage 入口已无条件 disarmIdleTimer，旧实现直接 rethrow
+        // 不 re-arm——「timer armed」这个防泄漏前提在失败路径永久丢失：进程无人回收
+        //（无 timer、无轮、record=running）泄漏至宿主退出，hasRunningBackground 恒真
+        // 还会顺延其他完成通知。修复：rethrow 前再武装 idle timer（含防御性降级），恢复
+        // 进程回收通道 + 通知放行门；调用方错误语义不变（仍 rethrow）。
+        this.rearmIdleTimerAfterHotPathFailure(record, err);
         // 非 EPIPE 错误——不应发生，重新抛出让调用方处理
         throw err;
       }
@@ -1079,6 +1212,76 @@ export class SubagentService {
         releaseLock();
       }
     }
+  }
+
+  /**
+   * [T2③] 热路径轮 settled watchdog 到期处置（对齐 u-t2a 首轮形态：kill + 该轮失败
+   * 终态化 + 失败通知，error 含 'settled watchdog' 标记与恢复指引）。
+   *
+   * 与首轮的差异：runSpawn 已返回（无收尾链路承接 settledWatchdogFired 标记），失败
+   * 终态化在本回调内完成。chatMode 按 MF-6 语义回退 running-resumable（与首轮 watchdog
+   * 经 runAndFinalize 失败分支的最终形态一致——对话可冷路径复活）；非 chatMode 终态
+   * 销毁。CAS（tryTransition closed+gc）防与 cancel/dispose 双收尾，抢锁失败即跳过。
+   *
+   * 回调在 timer 触发的同步上下文执行：同步段只做 kill + CAS（不抛），异步收尾
+   * fire-and-forget 且 catch 归 bestEffort——错误逃出回调 = uncaughtException 崩宿主。
+   */
+  private onHotPathSettledWatchdogTimeout(record: ExecutionRecord): void {
+    logger.warn(
+      `[subagents] settled watchdog fired for ${record.id}: no agent_settled within ` +
+        `${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min of hot-path prompt, terminating (LC-1 wedge recovery)`,
+    );
+    killRecordChildWithEscalation(record.id, "settled watchdog (hot path)");
+    const failedResult: AgentResult = {
+      text: "",
+      turns: record.turnCount,
+      durationMs: Date.now() - record.startedAt,
+      success: false,
+      error:
+        `subagent did not reach agent_settled within ${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min (settled watchdog); ` +
+        `the process was terminated to bound the wait. ` +
+        `Recovery: check state with subagents action:'list', then re-send your message to continue.`,
+      sessionId: record.id,
+      toolCalls: [],
+    };
+    if (!tryTransition(record, "closed", "gc")) {
+      return; // 已被 cancel/dispose 抢先终态化——不重复收尾（watchdog disarm 由对方承接）
+    }
+    const finalize = record.chatMode
+      ? this.finalizeRoundToIdle(record, failedResult)
+      : this.finalizeRecord(record, failedResult, "closed", "gc");
+    void finalize
+      .then(() => this.notifyComplete(record))
+      .catch((err: unknown) => bestEffort(err, "settled watchdog hot-path finalize", "error"));
+  }
+
+  /**
+   * [T2⑧ / PS-3] 非 EPIPE 热路径失败后的 idle timer 再武装（防泄漏底线）。
+   *
+   * record.idleTimeoutMs 已在 spawn 入口经 assertIdleTimeoutMsSafe 校验（T4②），此处
+   * armIdleTimer 理论不 throw；降级链仍保底：非法 → 挂 DEFAULT_IDLE_TIMEOUT_MS + warn
+   * （兜底可见，对齐 session-runner agent_settled 侧的 T4② 降级形态），双重失败退回
+   * 「不挂」但留 error 痕。
+   */
+  private rearmIdleTimerAfterHotPathFailure(record: ExecutionRecord, cause: unknown): void {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    const onTimeout = (): void => {
+      killRecordChildWithEscalation(record.id, "idle timer (hot-path failure fallback)");
+    };
+    try {
+      armIdleTimer(record.id, onTimeout, record.idleTimeoutMs);
+    } catch {
+      try {
+        armIdleTimer(record.id, onTimeout, DEFAULT_IDLE_TIMEOUT_MS);
+      } catch (fallbackErr) {
+        bestEffort(fallbackErr, "rearmIdleTimer fallback (deliverMessage non-EPIPE failure)", "error");
+        return;
+      }
+    }
+    logger.warn(
+      `[subagents] deliverMessage hot path failed for ${record.id}; idle timer re-armed to keep process recovery bounded`,
+      { detail },
+    );
   }
 
   // ── 对话模式 message/close action 支持（M2-B3）──────────────
@@ -1144,15 +1347,35 @@ export class SubagentService {
    *  @returns 重建的 record；磁盘也无则 undefined
    *  @throws ResurrectDeniedError 可重连候选被 worktree/异进程活实例守卫拦截 */
   /** 冷查候选定位（coldLookupForAction 步骤 1）：idToFile 索引直查 running 命中，
-   *  未命中再全目录 collectRecords 兜底（running，或 allowReconnect 且可重连 closed）。 */
+   *  未命中再全目录 collectRecords 兜底（running，或 allowReconnect 且可重连 closed）。
+   *
+   *  [T5③ / PS-7b] running 候选异进程活实例守卫：冷查 running 候选（跨重启 / 内存重建）
+   *  此前不经任何探针直接 resurrect + resume spawn——若其 .alive marker 仍指向活着的
+   *  异进程实例（父进程重启后旧子进程尚存的窗口），resume 会 spawn 第二个 pi 子进程
+   *  写同一 session JSONL（本代码最忌惮的双写者形态，v4 A-5/P7 事故模式）。closed 候选
+   *  的同款守卫已在 assertReconnectAllowed（v8.5 D）；本守卫闭合 running 候选的防御
+   *  不对称。marker 的 pid 是子进程 pi 的 pid（非父进程），本进程持有的 running record
+   *  恒在内存（archive 才移出），可达本冷查分支的 running 候选必然来自磁盘重建——
+   *  探针命中即拒绝（ResurrectDeniedError，与 closed 候选守卫同异常类型，错误含 pid
+   *  与恢复指引）。 */
   private findColdLookupCandidate(id: string, allowReconnect: boolean): SubagentRecord | undefined {
     const direct = this.store.findLightById(id);
-    return (
+    const found =
       (direct?.status === "running" ? direct : undefined) ??
       this.store
         .collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined)
-        .find((r) => r.id === id && (r.status === "running" || (allowReconnect && this.isReconnectableClosed(r))))
-    );
+        .find((r) => r.id === id && (r.status === "running" || (allowReconnect && this.isReconnectableClosed(r))));
+    if (found?.status === "running" && found.sessionFile) {
+      const foreign = findForeignLiveInstance(found.sessionFile);
+      if (foreign) {
+        throw new ResurrectDeniedError(
+          `subagent ${id} is currently running in another process instance (pid ${foreign.pid}, ` +
+            `startedAt=${new Date(foreign.startedAt).toISOString()}); resuming here would double-write ${found.sessionFile}. ` +
+            `Recovery: retry once that process exits; if it never exits, action:'close' this subagent, then action:'start' a fresh one.`,
+        );
+      }
+    }
+    return found;
   }
 
   /** 可重连守卫（coldLookupForAction 步骤 2，[v8.5 D]）：先于任何状态突变与注册。
@@ -1322,10 +1545,14 @@ export class SubagentService {
    * completeRecord 直接覆盖 status，与 cancelBackground 对 record 的处理同构）。
    */
   private async closeChatIdle(record: ExecutionRecord): Promise<void> {
-    // [M5] Path A：回收保活进程 + disarm idle timer（终态化后无其他 kill 路径）
+    // [M5] Path A：回收保活进程 + disarm idle timer（终态化后无其他 kill 路径）。
+    // [T2④ / LC-2] 裸 SIGTERM 收敛到 killRecordChildWithEscalation：SIGTERM 被无视时
+    // 30s 升级 SIGKILL——终态化后 record 已 archive，此前裸 SIGTERM 挂住 = 幽灵进程
+    // 无任何后续回收通道。同时 disarm settled watchdog（本路径终态化 = settled 等待
+    // 窗口终结，防 watchdog 误杀后续同 id 资源）。
     disarmIdleTimer(record.id);
-    const child = getChildByRecord(record.id);
-    if (child && !child.killed) child.kill("SIGTERM");
+    disarmSettledWatchdog(record.id);
+    killRecordChildWithEscalation(record.id, "closeChatIdle");
     // 合成 closed result（无在途 AgentResult，对齐 closeAfterRoundSettled 的
     // `record.result ?? ""` 模式）。[W16 P-1 修复] text 必须沿用轮终真实 result：
     // completeRecord 会执行 record.result = result.text，合成空串会把轮终真实值抹空，
@@ -1377,10 +1604,12 @@ export class SubagentService {
    * 60s dedup 吞（不与下方终态通知叠加成第三条——后者 key 是裸 id）。
    */
   private async closeAfterRoundSettled(record: ExecutionRecord): Promise<void> {
-    // 回收保活进程（Path A：轮次完成后进程仍活）+ disarm idle timer（终态化后无其他 kill 路径）
+    // 回收保活进程（Path A：轮次完成后进程仍活）+ disarm idle timer（终态化后无其他 kill 路径）。
+    // [T2④ / LC-2] 裸 SIGTERM 收敛到 killRecordChildWithEscalation（30s 升级 SIGKILL，
+    // 终态化后无后续回收通道）；settled 等待窗口同步终结（disarm 幂等）。
     disarmIdleTimer(record.id);
-    const child = getChildByRecord(record.id);
-    if (child && !child.killed) child.kill("SIGTERM");
+    disarmSettledWatchdog(record.id);
+    killRecordChildWithEscalation(record.id, "closeAfterRoundSettled");
     if (!tryTransition(record, "closed", "user-close")) {
       return; // 已被 cancel/finalize 抢先（CAS 失败），标志已消费即可——不发终态通知（幂等）
     }
@@ -1417,6 +1646,8 @@ export class SubagentService {
     stream?: SubagentStream,
   ): Promise<WorkflowAgentResult> {
     this.assertReady();
+    // [T4② / PS-4] 与 execute() 同款入口校验（两入口共享 runAndFinalize → armIdleTimer 链）。
+    this.assertIdleTimeoutMsSafe(opts);
 
     // ── BC-12 嵌套护栏：复用 execute() 的 execCtxAls 深度检查 ──
     // [ALS 断裂修复] getStore() 可能读空，基线兜底（与 execute 同）。
@@ -2010,9 +2241,11 @@ export class SubagentService {
       undefined, stream, resume,
     )
       .then(() => {
-        // background 回注：仅当本路径抢到 CAS（closedReason 非 cancelled）才 notify。
-        // cancel 抢先时 closedReason='cancelled'，cancelBackground 自己 notify，此处跳过。
-        if (record.closedReason !== "cancelled") {
+        // background 回注：仅当本路径抢到 CAS 才 notify。cancel 抢先时 closedReason=
+        // 'cancelled'（cancelBackground 自己 notify）；[T4①/PS-2] parent-new/parent-fork
+        // 是 disposeAllRecords 的编排性关闭（record 已关、告知由 list 的 closedReason
+        // 表达）——迟到的完成回注不注入（可能已切换的）新 session。
+        if (notifyGateAllowsDelivery(record.closedReason)) {
           this.notifyComplete(record);
         }
       })
@@ -2037,14 +2270,14 @@ export class SubagentService {
     // 进 runSpawn。此后 cancel 只有 controller.abort() 无人响应——record 已终态化 cancelled
     // 但子进程继续跑完当前 turn（工具副作用继续发生），之后 agent_settled 还对已 archived
     // record 触发脏通知（round+1 → 新 dedup key → "finished a round"），最终靠 5min idle
-    // timer 兜底 kill。故 cancel 必须显式 SIGTERM + disarm idle timer。非 chatMode 路径
+    // timer 兜底 kill。故 cancel 必须显式 kill + disarm idle timer。非 chatMode 路径
     // listener 仍在（abort 已 kill 一次），此处对已 killed child 是 no-op，无副作用。
-    const child = getChildByRecord(record.id);
-    if (child && !child.killed) child.kill("SIGTERM");
+    // [T2④ / LC-2] 裸 SIGTERM 收敛到 killRecordChildWithEscalation：SIGTERM 被无视时
+    // 30s 升级 SIGKILL——cancel 语义 = 进程必死，不能赌 SIGTERM 生效（record 已终态化，
+    // 此后无其他回收通道）。settled watchdog 同步撤下（等待窗口随取消终结，幂等）。
+    killRecordChildWithEscalation(record.id, "cancelBackground");
     disarmIdleTimer(record.id);
-    if (!tryTransition(record, "closed", "cancelled")) {
-      return false; // detached 已 finalize，cancel 来晚了
-    }
+    disarmSettledWatchdog(record.id);
     // 抢到锁：completeRecord（用空 result 填 cancelled）+ archive（立即移出内存）+ notify。
     // 写 cancelled tombstone：session.jsonl 被 abort 截断，cancelled 状态靠 sidecar 标记，
     // collectRecords 重建时 override status=cancelled。durationMs 用真实耗时（startedAt → now）。
@@ -2176,6 +2409,34 @@ export class SubagentService {
         "subagents service disposed (session ended). " +
           "This happens after session shutdown when the follow-up session_start did not arrive. " +
           "Recovery: start a new session or run /new to revive the subagents runtime.",
+      );
+    }
+  }
+
+  /**
+   * [T4② / PS-4] idleTimeoutMs 合法域入口校验（>2^31-1 / 非有限值 fail-fast）。
+   *
+   * 旧链路：非法值穿透到 agent_settled 回调里的 armIdleTimer → assertSafeTimerDelay
+   * throw 被异步 catch 降级——配置错误被吞成静默语义变更（每轮完成通知被 isIdle 放行门
+   * 吞 + 进程无回收 timer）。对齐 shared/timer-delay「不静默 clamp」既有裁决：配置错误
+   * 显式暴露，错误消息含合法范围（0/负数 = 显式禁用是合法语义，不在本校验域；env 非法值
+   * 由 lifecycle-manager 的 warn 回落承接）。execute/executeAndAwait 两入口共用。
+   */
+  private assertIdleTimeoutMsSafe(opts: ExecuteOptions): void {
+    const v = opts.idleTimeoutMs;
+    if (v === undefined) return;
+    if (!Number.isFinite(v)) {
+      throw new Error(
+        `subagent idleTimeoutMs = ${v} is not a finite number (NaN/±Infinity). ` +
+          `Valid range: a positive millisecond number up to ${MAX_TIMER_DELAY_MS} (2^31-1, Node setTimeout limit), or 0/negative to disable idle GC. ` +
+          "Recovery: fix the idleTimeoutMs value and retry.",
+      );
+    }
+    if (v > MAX_TIMER_DELAY_MS) {
+      throw new Error(
+        `subagent idleTimeoutMs = ${v} exceeds the Node setTimeout limit ` +
+          `(${MAX_TIMER_DELAY_MS} ms = 2^31-1); larger delays silently collapse to 1ms and would kill the subagent immediately. ` +
+          `Recovery: pass idleTimeoutMs <= ${MAX_TIMER_DELAY_MS}, or omit it for the default (${DEFAULT_IDLE_TIMEOUT_MS}ms), or use 0/negative to disable idle GC.`,
       );
     }
   }

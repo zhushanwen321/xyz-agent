@@ -2,8 +2,12 @@ import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 
+import { getLogger } from "../core/logger.ts";
+
 import { bestEffort } from "./best-effort.ts";
 import { writeAtomicFile } from "../shared/atomic-write.ts";
+
+const logger = getLogger("subagents");
 
 export interface ManifestRecord {
   id: string;
@@ -178,10 +182,16 @@ export class ManifestStore {
    * 1. manifest 已存在 → 删 tmp（陈旧）
    * 2. tmp 合法 + manifest 缺失 → rename tmp 为 manifest
    * 3. tmp 非法 + manifest 缺失 → 删 tmp
+   *
+   * [T5④ / PS-13] per-file 容错：单个 tmp 文件操作失败（ENOENT——并发回收/外部清理
+   * 抢先、EACCES 等）只 warn + 跳过该文件，不再中断整轮——旧实现单文件 ENOENT 即抛，
+   * 剩余 tmp 本轮不再处理，自愈但不可见（残留顺延下次启动）。跳过数经 warn 汇总留痕，
+   * 调用方返回值形态不变（跳过者不计数）。
    */
   async recoverTmpFiles(): Promise<{ deleted: number; recovered: number }> {
     let deleted = 0;
     let recovered = 0;
+    let failed = 0;
 
     const files = fs.readdirSync(this.dir);
     const tmpFiles = files.filter((f) => f.includes(".json.tmp."));
@@ -191,30 +201,45 @@ export class ManifestStore {
       const manifestId = tmpFile.split(".json.tmp.")[0];
       const manifestPath = path.join(this.dir, `${manifestId}.json`);
 
-      if (fs.existsSync(manifestPath)) {
-        // 分支 1: manifest 已存在，删 tmp
-        fs.unlinkSync(tmpPath);
-        deleted++;
-      } else {
-        // 试解析 tmp
-        try {
-          const content = fs.readFileSync(tmpPath, "utf-8");
-          const parsed: unknown = JSON.parse(content);
-          if (isValidManifest(parsed)) {
-            // 分支 2: tmp 是合法 manifest，rename 为正式文件
-            fs.renameSync(tmpPath, manifestPath);
-            recovered++;
-          } else {
-            // 分支 3b: 合法 JSON 但非合法 manifest（缺必填字段），删
+      try {
+        if (fs.existsSync(manifestPath)) {
+          // 分支 1: manifest 已存在，删 tmp
+          fs.unlinkSync(tmpPath);
+          deleted++;
+        } else {
+          // 试解析 tmp
+          try {
+            const content = fs.readFileSync(tmpPath, "utf-8");
+            const parsed: unknown = JSON.parse(content);
+            if (isValidManifest(parsed)) {
+              // 分支 2: tmp 是合法 manifest，rename 为正式文件
+              fs.renameSync(tmpPath, manifestPath);
+              recovered++;
+            } else {
+              // 分支 3b: 合法 JSON 但非合法 manifest（缺必填字段），删
+              fs.unlinkSync(tmpPath);
+              deleted++;
+            }
+          } catch {
+            // 分支 3a: JSON.parse 失败，删
             fs.unlinkSync(tmpPath);
             deleted++;
           }
-        } catch {
-          // 分支 3a: JSON.parse 失败，删
-          fs.unlinkSync(tmpPath);
-          deleted++;
         }
+      } catch (fileErr) {
+        // [T5④/PS-13] 单文件失败不中断整轮：warn 留痕（含文件名与原因）后继续处理
+        // 剩余 tmp。常见于 tmp 已被并发回收/外部清理删除（ENOENT）——自愈场景不再放大。
+        failed++;
+        logger.warn(`[subagents] recoverTmpFiles: failed to recover ${tmpFile}, skipping (leftovers retry on next startup)`, {
+          detail: fileErr instanceof Error ? fileErr.message : String(fileErr),
+        });
       }
+    }
+
+    if (failed > 0) {
+      logger.warn(
+        `[subagents] recoverTmpFiles: ${failed} of ${tmpFiles.length} tmp file(s) could not be recovered`,
+      );
     }
 
     return { deleted, recovered };

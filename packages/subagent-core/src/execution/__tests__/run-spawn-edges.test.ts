@@ -64,6 +64,9 @@ vi.mock("node:fs", async () => {
 
 vi.mock("../alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
+  // [T5②] keep-alive 心跳刷新读取现有 marker id（缺失兜底 record.id）
+  readAliveMarker: vi.fn(() => undefined),
+  isProcessAlive: vi.fn(() => false),
 }));
 
 // [recursive-orchestration] agent_end 后代判定独立 mock（判定函数本身在 session-pending.test.ts 单独测）。

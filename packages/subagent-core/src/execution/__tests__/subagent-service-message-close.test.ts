@@ -13,8 +13,9 @@ import type { ChildProcess } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // mock logger（doFinalizeRecord manifest 写入降级路径用）
-const { loggerMock } = vi.hoisted(() => ({
+const { loggerMock, killEscalationSpy } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  killEscalationSpy: vi.fn(),
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
@@ -23,6 +24,9 @@ vi.mock("../session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),
+  registerSpawnedChildForRecord: vi.fn(),
+  killRecordChildWithEscalation: killEscalationSpy,
+  spawnedChildren: new Map(),
 }));
 
 import { createRecord, updateFromEvent } from "../execution-record.ts";
@@ -32,6 +36,9 @@ import { SubagentService } from "../subagent-service.ts";
 import type { PiLike } from "../subagent-service.ts";
 import type { ExecutionRecord } from "../types.ts";
 import { getChildByRecord } from "../session-runner.ts";
+
+// [T2④] kill 收敛入口 spy（工厂引用，断言服务侧三条路径收敛到它）
+const killRecordChildWithEscalationMock = killEscalationSpy;
 import {
   armIdleTimer,
   disarmIdleTimer,
@@ -207,9 +214,8 @@ describe("closeSubagent 行为分流", () => {
     // 旧代码 Path A 走 else 置 closeAfterRound，但 chatMode 轮完成恒经 agent_settled →
     // onRoundSettled → runAndFinalize early return（isIdle 恒 true），标志无人消费，
     // tool 却返回 {closed:true}（谎报）。
-    const killFn = vi.fn(() => true);
-    const child = { killed: false, kill: killFn } as unknown as ChildProcess;
-    vi.mocked(getChildByRecord).mockReturnValueOnce(child);
+    // [T2④] closeChatIdle 的 kill 收敛到 killRecordChildWithEscalation（recordId 入口），
+    // 不再读 child 句柄——无 child mock（Once mock 不被消费会泄漏劫持后续用例）
     const record = makeRecord({ status: "running", round: 1 });
     record.sessionFile = path.join(agentDir, "path-a.jsonl");
     store.register(record);
@@ -226,7 +232,8 @@ describe("closeSubagent 行为分流", () => {
     expect(record.status).toBe("closed");
     expect(record.closedReason).toBe("user-close");
     expect(store.getMutable(record.id)).toBeUndefined(); // archived
-    expect(killFn).toHaveBeenCalledWith("SIGTERM"); // 保活进程回收
+    // [T2④] kill 收敛到 killRecordChildWithEscalation（SIGTERM + 30s SIGKILL 升级）
+    expect(killRecordChildWithEscalationMock).toHaveBeenCalledWith(record.id, "closeChatIdle");
     expect(hasIdleTimer(record.id)).toBe(false); // timer disarmed
   });
 
@@ -253,9 +260,8 @@ describe("closeSubagent 行为分流", () => {
   it("[M6] running + force:true + 活进程（热路径轮中）→ cancelBackground 显式 SIGTERM + disarm idle timer", async () => {
     // chatMode 首轮 agent_settled 后 runSpawn 提前 resolveRun(0) 返回，
     // abort→kill listener 已被 removeEventListener——热路径轮中 cancel 只能靠显式 kill。
-    const killFn = vi.fn(() => true);
-    const child = { killed: false, kill: killFn } as unknown as ChildProcess;
-    vi.mocked(getChildByRecord).mockReturnValueOnce(child);
+    // [T2④] cancelBackground 的 kill 收敛到 killRecordChildWithEscalation（recordId 入口），
+    // 不再读 child 句柄
     const record = makeRecord({ status: "running", sessionFile: path.join(agentDir, "hot.jsonl") });
     record.controller = new AbortController();
     store.register(record);
@@ -268,7 +274,8 @@ describe("closeSubagent 行为分流", () => {
       disarmIdleTimer(record.id); // 断言失败路径的兜底清理
     }
 
-    expect(killFn).toHaveBeenCalledWith("SIGTERM"); // 子进程收到 kill
+    // [T2④] kill 收敛到 killRecordChildWithEscalation（SIGTERM + 升级）
+    expect(killRecordChildWithEscalationMock).toHaveBeenCalledWith(record.id, "cancelBackground");
     expect(record.status).toBe("closed");
     expect(record.closedReason).toBe("cancelled");
     expect(hasIdleTimer(record.id)).toBe(false); // timer disarmed
@@ -325,7 +332,8 @@ describe("[M5] closeAfterRound 消费点挂 onRoundSettled（chatMode 轮完成�
     expect(record.closeAfterRound).toBeUndefined(); // 标志已消费
     expect(record.status).toBe("closed");
     expect(record.closedReason).toBe("user-close");
-    expect(killFn).toHaveBeenCalledWith("SIGTERM"); // 保活进程回收
+    // [T2④] kill 收敛到 killRecordChildWithEscalation（SIGTERM + 升级）
+    expect(killRecordChildWithEscalationMock).toHaveBeenCalledWith(record.id, "closeAfterRoundSettled");
     expect(hasIdleTimer(record.id)).toBe(false);
   });
 

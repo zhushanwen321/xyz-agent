@@ -177,6 +177,13 @@ export interface NotifyLedger {
   compactionCheck(): number;
   /** 诊断/测试：pending（已记账未投递）条数。 */
   pendingCount(): number;
+  /**
+   * [T4④/PS-5] pending 只读快照（notifyId/content/record，副本非活引用）：
+   * 供 SubagentService.dispose 在「shutdown flush 被 isIdle 门拦」时把未投递
+   * pending 复写落盘（同一 ledger entry 通道，notifyId 幂等）供重启 replay。
+   * 消费侧配合面仅此只读方法——不改变 attemptDeliver/abandon 既有语义。
+   */
+  pendingEntries(): ReadonlyArray<{ notifyId: string; content: string; record: object }>;
   /** 诊断/测试：已投递待回执条数。 */
   waitingReceiptCount(): number;
   /** U4 诊断：三桶计数快照（副本；增量同时经 extensionLogger 通道落日志）。 */
@@ -402,6 +409,16 @@ export function createNotifyLedger(
         if (item.sentAt === undefined) n += 1;
       }
       return n;
+    },
+
+    pendingEntries(): ReadonlyArray<{ notifyId: string; content: string; record: object }> {
+      const out: Array<{ notifyId: string; content: string; record: object }> = [];
+      for (const item of items.values()) {
+        if (item.sentAt !== undefined) continue;
+        // 逐条浅拷贝：消费方（dispose 落盘复写）不得持有内部可变态。
+        out.push({ notifyId: item.notifyId, content: item.content, record: { ...item.record } });
+      }
+      return out;
     },
 
     waitingReceiptCount(): number {
