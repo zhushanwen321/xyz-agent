@@ -16,6 +16,15 @@ import * as fs from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// [LC-9/T7②] Mock 共享 logger：stdout invalid 行的 debug 留痕可被断言
+//（对齐 channel-registry-handshake.test.ts 模式；vi.mock 自动 hoist 到 import 前）。
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("../../core/logger.ts", () => ({
+  getLogger: () => loggerMock,
+}));
+
 vi.mock("node:child_process", async () => {
   const { FakeChild } = await import("./helpers/spawn-mock.ts");
   return {
@@ -258,10 +267,11 @@ describe("runSpawn", () => {
   //
   // [M8] runSpawn 的 stdout 解析容错：
   //   - parseSpawnLine 对「非法 JSON」「合法 JSON 但缺 type 字段」归为 kind:"invalid"。
-  //   - runSpawn 的 data 处理器只认 header/event 两类，invalid 行静默忽略（L559 注释
-  //     "invalid 行忽略"）——单行损坏不应中断整个事件流。
+  //   - runSpawn 的 data 处理器只认 header/event 两类，invalid 行不中断事件流。
+  //     [LC-9/T7②] 起不再静默：per-child 计数 + debug 级前 3 条样本留痕，close 时
+  //     聚合输出总数与样本（「事件行损坏被静默丢弃」曾使 LC-1 形态 (c) 无法排查）。
   //   - close 前 stdoutBuffer 若残留未以 \n 结尾的合法 event 行，close handler 会再 parse
-  //     一次（L574-579）——覆盖子进程末行漏 \n 的场景。
+  //     一次（L574-579）——覆盖子进程末行漏 \n 的场景；残留 invalid 行同计统计。
   describe("stdout 边界：损坏行 + 残留尾行 (M8)", () => {
     it("stdout 夹杂非法 JSON 行 → 该行被忽略，合法 turn_end 正常计数（不抛错）", async () => {
       const record = makeRecord();
@@ -283,6 +293,89 @@ describe("runSpawn", () => {
 
       expect(result.success).toBe(true);
       expect(record.turnCount).toBe(1); // 非法行被忽略，仅 turn_end 计数
+    });
+
+    // [LC-9/T7②] invalid 行可观测性：计数 + debug 样本 + close 聚合，不再零可见。
+    it("[LC-9] invalid 行计数留痕：前 3 条逐条 debug 样本 + close 聚合总数（不刷屏）", async () => {
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: invalid-obs", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      emitStdoutLine(child, sessionHeader());
+      child.stdout.write("garbage-line-1\n");
+      child.stdout.write('{"foo":"bar"}\n'); // 缺 type 字段的合法 JSON，同归 invalid
+      child.stdout.write("garbage-line-3\n");
+      emitStdoutLine(child, { type: "turn_end" });
+      child.stdout.end();
+      child.emit("close", 0);
+
+      const result = await promise;
+      expect(result.success).toBe(true);
+      expect(record.turnCount).toBe(1); // 容错行为不变：invalid 不中断事件流
+
+      const debugMsgs = loggerMock.debug.mock.calls.map((c) => String(c[0]));
+      // 前 3 条逐条样本（含原始行内容，可定位是哪行损坏）
+      const sampleMsgs = debugMsgs.filter((m) => m.includes("stdout invalid line #"));
+      expect(sampleMsgs).toHaveLength(3);
+      expect(sampleMsgs[0]).toContain("#1");
+      expect(sampleMsgs[0]).toContain("garbage-line-1");
+      expect(sampleMsgs[1]).toContain('{"foo":"bar"}');
+      expect(sampleMsgs[2]).toContain("garbage-line-3");
+      // close 聚合：总数一次暴露（processTrailingLine 由 close handler 必经）
+      const aggMsgs = debugMsgs.filter((m) => m.includes("invalid line(s) dropped in total"));
+      expect(aggMsgs).toHaveLength(1);
+      expect(aggMsgs[0]).toContain("3 invalid line(s)");
+    });
+
+    it("[LC-9] invalid 行超过样本上限（5 条）→ 样本 debug 恰 3 条（防刷屏）+ 聚合仍报全量 5", async () => {
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: invalid-flood", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      emitStdoutLine(child, sessionHeader());
+      for (let i = 1; i <= 5; i++) {
+        child.stdout.write(`flood-${i}\n`);
+      }
+      emitStdoutLine(child, { type: "turn_end" });
+      child.stdout.end();
+      child.emit("close", 0);
+
+      const result = await promise;
+      expect(result.success).toBe(true);
+
+      const debugMsgs = loggerMock.debug.mock.calls.map((c) => String(c[0]));
+      const sampleMsgs = debugMsgs.filter((m) => m.includes("stdout invalid line #"));
+      expect(sampleMsgs).toHaveLength(3); // MAX_INVALID_LINE_SAMPLES=3，第 4/5 条仅累计
+      const aggMsgs = debugMsgs.filter((m) => m.includes("invalid line(s) dropped in total"));
+      expect(aggMsgs).toHaveLength(1);
+      expect(aggMsgs[0]).toContain("5 invalid line(s)"); // 聚合不丢全量计数
+    });
+
+    it("[LC-9] 残留尾行为 invalid（无 \\n 结尾的损坏行）→ close handler 同计统计", async () => {
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: tail-invalid", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      emitStdoutLine(child, sessionHeader());
+      // 无 \n 的损坏行：同步 emit（同上方残留用例的时序原理）残留在 stdoutBuffer，
+      // 由 close handler 的 processTrailingLine 再 parse。
+      child.stdout.emit("data", "not-json-tail");
+      child.emit("close", 0);
+
+      const result = await promise;
+      expect(result.success).toBe(true);
+
+      const debugMsgs = loggerMock.debug.mock.calls.map((c) => String(c[0]));
+      const aggMsgs = debugMsgs.filter((m) => m.includes("invalid line(s) dropped in total"));
+      expect(aggMsgs).toHaveLength(1);
+      expect(aggMsgs[0]).toContain("1 invalid line(s)");
+      expect(aggMsgs[0]).toContain("not-json-tail"); // 聚合携带样本
     });
 
     it("stdout 夹杂合法 JSON 但缺 type 字段 → 该行被忽略，不抛错", async () => {

@@ -141,7 +141,12 @@ function _safePost(msg, context) {
   function phase(name) { _currentPhase = String(name); }
 
   function log(msg) {
-    try { parentPort.postMessage({ type: "log", phase: _currentPhase, message: String(msg) }); } catch(e) { /* swallow */ }
+    var _logText = String(msg);
+    // [OR-6/T7④] 同时记入 _workerLogs：主线程对 {type:"log"} 消息暂无消费 case
+    //（error-recovery handleWorkerMessage switch），独立 log 消息会被忽略；记入
+    // _workerLogs 后随 return/error 消息带回主线程落 errorLogs，脚本 log 不再零可见。
+    try { _pushWorkerLog("log", [_logText]); } catch(e) { /* swallow */ }
+    try { parentPort.postMessage({ type: "log", phase: _currentPhase, message: _logText }); } catch(e) { /* swallow */ }
   }
 
   async function agent(firstArg, secondArg) {

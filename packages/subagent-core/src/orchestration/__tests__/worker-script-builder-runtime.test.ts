@@ -53,6 +53,12 @@ interface ErrorMsg {
   error: string;
   workerLogs?: unknown[];
 }
+/** log 消息：脚本 log() 全局发出的独立诊断消息（协议见 worker-script-builder 头注释）。 */
+interface LogMsg {
+  type: "log";
+  phase?: string;
+  message?: string;
+}
 
 // ── 类型守卫：从 unknown 收窄到判别联合 ──
 // 共享 hasType 辅助：避免每个守卫重复 `(m as {type?:string})` 断言（taste/no-unsafe-catch）。
@@ -74,16 +80,23 @@ function isReturn(m: unknown): m is ReturnMsg {
 function isError(m: unknown): m is ErrorMsg {
   return hasType(m, "error");
 }
+function isLog(m: unknown): m is LogMsg {
+  return hasType(m, "log");
+}
 
 // ── 测试辅助：起一个真实 Worker 跑 buildWorkerScript 产物 ──────────────
 
 interface RunResult {
   /** 收到的 return 消息的 result 字段（脚本正常结束时）。 */
   returnValue?: unknown;
+  /** return 消息带回的 workerLogs（[OR-6/T7④] log() 内容经此通路回主线程）。 */
+  returnWorkerLogs?: unknown[];
   /** 收到的 error 消息的 error 字段（脚本 throw 时）。 */
   errorMessage?: string;
   /** error 消息带回的 workerLogs（验证诊断不丢）。 */
   errorWorkerLogs?: unknown[];
+  /** 收到的 {type:"log"} 独立消息列表（协议通路不断回）。 */
+  logMessages: LogMsg[];
   /** Worker exit code（0=正常，1=崩溃）。 */
   exitCode?: number;
   /** Worker 'error' 事件的错误消息（uncaught exception，正常应为 undefined）。 */
@@ -144,7 +157,7 @@ function runWorker(userScript: string, opts: RunOptions = {}): Promise<RunResult
     // S8：创建后立即登记，afterEach 兜底清理（防止 promise 泄漏导致 Worker 未终止）
     createdWorkers.push(worker);
 
-    const result: RunResult = { agentCalls: [], workflowCalls: [] };
+    const result: RunResult = { agentCalls: [], workflowCalls: [], logMessages: [] };
     let agentCallIdx = 0;
     let resolved = false;
     const timer = setTimeout(() => {
@@ -181,8 +194,13 @@ function runWorker(userScript: string, opts: RunOptions = {}): Promise<RunResult
         result.workflowCalls.push(raw);
         const wfResult = opts.handleWorkflowCall ? opts.handleWorkflowCall(raw) : { ok: true };
         worker.postMessage({ type: "workflow-result", callId: raw.callId, result: wfResult });
+      } else if (isLog(raw)) {
+        // [OR-6/T7④] 独立 log 消息收集（主线程真实 runtime 当前无消费 case，测试
+        // harness 收集以断言「协议消息仍发出」通路不被回退）。
+        result.logMessages.push(raw);
       } else if (isReturn(raw)) {
         result.returnValue = raw.result;
+        result.returnWorkerLogs = raw.workerLogs;
         finish(result);
       } else if (isError(raw)) {
         result.errorMessage = raw.error;
@@ -376,6 +394,56 @@ describe("buildWorkerScript runtime — 之前缺失的路径覆盖", () => {
       expect.arrayContaining([
         expect.objectContaining({ level: "log", message: "step-1" }),
         expect.objectContaining({ level: "warn", message: "step-2-warning" }),
+      ]),
+    );
+    expect(res.exitCode).not.toBe(1);
+  });
+});
+
+// ── OR-6/T7④：log() 全局函数的双通路可观测性 ─────────────────────────
+// 修复前：log() 只 post 独立 {type:"log"} 消息，主线程 handleWorkerMessage switch
+// 无该 case → 脚本 log 静默丢弃（设计 §4.3 OR-6「协议文档与实现漂移零可观测」）。
+// 修复后：log() 同时记入 _workerLogs，随 return/error 消息带回主线程（落
+// run.state.errorLogs）；独立 {type:"log"} 消息保留（协议不回退，留给主线程接线）。
+
+describe("buildWorkerScript runtime — OR-6 log() 双通路", () => {
+  it("log() 内容随 return 消息的 workerLogs 带回（不再静默丢弃）", async () => {
+    const script = `
+      phase("build");
+      log("hello from script");
+      return { ok: true };
+    `;
+    const res = await runWorker(script);
+    expect(res.workerError).toBeUndefined();
+    // 通路 1（新增）：workerLogs 随 return 带回，含 phase 信息缺失时的文本本体
+    expect(res.returnWorkerLogs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ level: "log", message: "hello from script" }),
+      ]),
+    );
+    expect(res.exitCode).not.toBe(1);
+  });
+
+  it("独立 {type:\"log\"} 消息仍发出且携带 phase（协议通路不回退）", async () => {
+    const script = `
+      phase("build");
+      log("hello from script");
+      return { ok: true };
+    `;
+    const res = await runWorker(script);
+    expect(res.logMessages).toEqual([{ type: "log", phase: "build", message: "hello from script" }]);
+  });
+
+  it("脚本 throw 时 log() 内容也随 error 消息 workerLogs 带回（诊断不丢）", async () => {
+    const script = `
+      log("before-crash");
+      throw new Error("boom");
+    `;
+    const res = await runWorker(script);
+    expect(res.errorMessage).toBe("boom");
+    expect(res.errorWorkerLogs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ level: "log", message: "before-crash" }),
       ]),
     );
     expect(res.exitCode).not.toBe(1);

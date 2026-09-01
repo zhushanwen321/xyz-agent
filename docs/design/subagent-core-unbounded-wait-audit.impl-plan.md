@@ -32,7 +32,7 @@
 | u-m0b | OR-1 顺序修复：scheduleTimeBudget 前移到 workerHost.start 之前 + tool-workflow 入口 time 上界校验 | `src/orchestration/lifecycle.ts`、`extensions/universal/subagent-workflow/src/interface/tool-workflow.ts`（**路径修正**：该文件在 extension 侧非 core 包内，设计引用的 `interface/tool-workflow.ts` 即此文件，core 无此目录——u-m0b 实施时发现并登记） | 无 | plain | typecheck 绿；新增测试：time>2^31-1 在 worker 启动前 fail-fast 且 runs Map 无残留条目 |
 | u-p1 | 探针 P-T1：agent_end 时（子进程 idle）get_state 应答延迟实证。探针脚本放 `probe/`（随计划提交，S-A 复跑复用） | `probe/p-t1-lazy-getstate.mjs`（新建，只读 src 行为） | 无 | plain | 探针报告落盘：受控并发 spawn + 抑制首次握手场景下 idle 应答 < 1s；失败 → 设计 T1 降级路径（sessionDir 后缀扫描 + leaf 短路）并登记合理偏差 |
 | u-p2 | 探针组：P-T2 keep-alive 时长分布（优先回溯历史 session 数据，不足再补真实任务）/ P-T2b pi SIGTERM 后代级联行为 / P-T2c post-run（agent_end→settled）间隔分布 | `probe/p-t2-keepalive-dist.mjs`、`probe/p-t2b-sigterm-cascade.mjs`、`probe/p-t2c-settled-window.mjs`（新建） | 无 | plain | 三份分布/行为记录落盘；P-T2c P99 与 P-T2 分布决定 u-t2a 两个默认上限值（30min/10min 定案或按降级调整并登记） |
-| u-t3 | T3 剩余五条：OR-2 rebuild 失败回灌矩阵耗尽收敛 done,failed / OR-3 worker pending 接线 per-call timeout + 接通 abort 广播（P-SD 钩子 env + 安全约束）/ OR-4 终态三路径 M12 同款围栏 / OR-7 abort listener run 终态移除 / OR-8 run done 残留 in-flight 收口 cancelled | `src/orchestration/error-recovery.ts`、`src/orchestration/lifecycle.ts`、`src/orchestration/worker-script-builder.ts`、`extensions/universal/subagent-workflow/src/interface/tool-workflow.ts`（路径修正同 u-m0b） | u-m0b（lifecycle.ts 共改）、u-m0a（worker-script-builder.ts 共改） | plain | typecheck 绿；测试：rebuild 抛错→重试计数→耗尽 done,failed；pending 超时 resolve 错误；emit 围栏不产 unhandledRejection；钩子 env 激活时 warn 留痕断言 |
+| u-t3 | T3 剩余五条 + OR-6 主线程半边（u-m0a blocker 裁决并入）：error-recovery.ts handleWorkerMessage switch 补 default 留痕 + "log" case（workerLogs 已在 u-m0a 侧接线，此为消息面补充防线）。其余：OR-2 rebuild 失败回灌矩阵耗尽收敛 done,failed / OR-3 worker pending 接线 per-call timeout + 接通 abort 广播（P-SD 钩子 env + 安全约束）/ OR-4 终态三路径 M12 同款围栏 / OR-7 abort listener run 终态移除 / OR-8 run done 残留 in-flight 收口 cancelled | `src/orchestration/error-recovery.ts`、`src/orchestration/lifecycle.ts`、`src/orchestration/worker-script-builder.ts`、`extensions/universal/subagent-workflow/src/interface/tool-workflow.ts`（路径修正同 u-m0b） | u-m0b（lifecycle.ts 共改）、u-m0a（worker-script-builder.ts 共改） | plain | typecheck 绿；测试：rebuild 抛错→重试计数→耗尽 done,failed；pending 超时 resolve 错误；emit 围栏不产 unhandledRejection；钩子 env 激活时 warn 留痕断言；switch default 留痕 + log case 断言 |
 | u-t1 | T1：agent_end 决策链惰性回补——sessionFile 缺失现场重试 get_state；LC-4 findSessionFileByHeaderId 兜底移出 `if (record.sessionFile)` 守卫；PS-9 finalize marker 清理增 sessionDir 反查 | `src/execution/session-runner.ts`、`src/execution/get-state-handshake.ts`、`src/execution/finalize-record.ts` | u-m0a（session-runner.ts 共改）、u-p1（⛔P-T1 门） | plain | typecheck 绿；测试：握手失败→agent_end 惰性重试回填→正常三分支；守卫移出后 sessionId-有-sessionFile-无形态可达兜底；finalize 反查落 marker |
 | u-t2a | T2 进程侧上界四项：①keep-alive 裸缺省默认上限 30min（opt-out）②后代级联 kill（层主死后采集冻结快照→迭代至叶→存活+cmdline 校验，P-T2b 结果决定 no-op 或主路径）③settled 等待固定硬上限 10min（任意一轮、双挂载、同一原语：同一常量+同一挂载/清除 helper）⑤killAllSpawnedChildren「killed 且已 close 才跳过」 | `src/execution/session-runner.ts`、`src/execution/lifecycle-manager.ts`、`src/execution/session-pending.ts`（只读复用，若需导出辅助函数则改动入领地） | u-t1（session-runner.ts 共改）、u-p2（⛔P-T2/P-T2c/P-T2b 门） | plain | typecheck 绿；测试：裸缺省挂 30min timer 且 opt-out 可关；settled 上界双挂载同一常量断言；后代级联清单迭代至叶 + pid 校验；killed-not-closed 不跳过 |
 | u-t2b | T2 服务侧四项：④三条裸 SIGTERM 收敛 killChildWithEscalation ⑥disposeAllRecords 补三回收面（abort+kill+disarmIdleTimer）⑦dialog timeout 接线 + 未传 timeout 默认 30min 上界 + 超时明确错误 settle ⑧deliverMessage 非 EPIPE 失败 re-arm idle timer 或转 cold close | `src/execution/subagent-service.ts`、`src/execution/dialog-queue.ts`、`src/execution/ui-request-queue.ts`、`src/execution/ui-request-handler-factory.ts` | u-t2a（③原语被 deliverMessage 热路径消费） | plain | typecheck 绿；测试：disposeAllRecords 调用三回收面 mock 断言；dialog 未传 timeout 默认上界 settle 错误含恢复指引；非 EPIPE 失败路径 timer re-arm |
@@ -97,12 +97,15 @@ graph TD
 | 偏差 | 来源 | 处置 | 状态 |
 |------|------|------|------|
 | tool-workflow.ts 物理路径在 extension 侧（extensions/universal/subagent-workflow/src/interface/），非 packages/subagent-core 内；设计文档 §4.1 OR-1 与 §10 文件改动地图的 `interface/tool-workflow.ts` 系简写 | u-m0b | 修改落实际文件 + 从 core 导入既有 MAX_TIMER_DELAY_MS 常量（不重复造）；impl-plan u-m0b/u-t3 领地已修正 | 已处置 |
+| OR-6 log() 接线形态：workerLogs 通道挂载点在 worker-script-builder.ts 内（module 级 _workerLogs 数组随 return/error 带回），log 内容经 workerLogs→errorLogs 通路可见；独立 {type:"log"} postMessage 保留双通路 | u-m0a | 领地内实质消解静默丢弃；主线程 switch default 留痕 + log case 裁决并入 u-t3（blocker 处置） | u-t3 待办 |
+| LC-9 计数暴露形态：StdoutPumpHandles.invalidLineCount() 访问器 + close 时聚合 debug（前 3 条样本 + 总数，防刷屏） | u-m0a | 设计未规定暴露形态，实现选择已登记 | 已处置 |
+| worker 模板 byte-identical 快照因 log() 有意变更同批重生成（diff 仅 log() 段 6 行） | u-m0a | 快照护栏随源码变更同步，其余逐字节不变已核验 | 已处置 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|------|
-| u-m0a | pending | 0 | — |
+| u-m0a | committed | 1 | u-m0a commit（本轮）；核验：151 tests passed 重跑实证（6 文件）+ 全量 2826 passed + typecheck 绿；grep dropFileCache 无残留 |
 | u-m0b | committed | 1 | u-m0b commit（本轮）；dev 报告 JSON 见会话；核验：lifecycle.test.ts 27 passed + tool-workflow-throw-paths.test.ts 7 passed 重跑实证 |
 | u-p1 | pending | 0 | — |
 | u-p2 | pending | 0 | — |

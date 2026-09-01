@@ -977,7 +977,10 @@ export class RecordStore {
       })
       .catch((err: unknown) => {
         this.indexDirty = true; // 失败恢复 dirty，下轮过窗重试
-        logger.debug("[subagents] sessions-index write failed", {
+        // [PS-14/T7③] 升 warn：索引反复写失败（权限/磁盘满）曾仅 debug 级，排障时
+        // 无线索。失败会跨轮重试（dirty 恢复），warn 每次过窗写失败都会出现——
+        // 正是「反复写失败需要可见」的信号面。
+        logger.warn("[subagents] sessions-index write failed", {
           detail: { dir: encDir, error: err instanceof Error ? err.message : String(err) },
         });
       });
@@ -1177,14 +1180,9 @@ export class RecordStore {
     return rec;
   }
 
-  /** 从缓存与索引移除某文件（文件删除时；负缓存条目无 id，仅删缓存项）。 */
-  private dropFileCache(file: string): void {
-    const entry = this.fileCache.get(file);
-    if (entry) {
-      if (!entry.negative) this.idToFile.delete(entry.light.id);
-      this.fileCache.delete(file);
-    }
-  }
+  // [PS-15/T7⑤] 「从缓存与索引移除单文件」的旧私有方法已整体删除：全仓无调用方
+  // 的死代码（设计 §4.3 PS-15 实锤，顺手清理，无行为影响）。「文件删除时移除缓存」
+  // 的职责实际由 reconstructAll 的消失文件修剪路径承担。
 
   /** 排序比较器：status priority（running<failed<cancelled<done）+ startedAt desc。 */
   private static compareRecords(a: SubagentRecord, b: SubagentRecord): number {

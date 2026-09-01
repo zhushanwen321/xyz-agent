@@ -30,6 +30,11 @@
  * { type: "return", runId: string, result: unknown }
  * { type: "error", runId: string, error: string }
  * { type: "log", phase: string, message: string }
+ *   —— [OR-6/T7④] log() 消息当前在主线程 handleWorkerMessage 的 switch 中**无消费
+ *   case**（接收即被忽略）；为不丢诊断，log() 同时把内容记入 _workerLogs，随
+ *   return/error 消息的 workerLogs 字段带回主线程落 run.state.errorLogs。
+ *   两条通路并存：独立 log 消息留给未来主线程接线（协议不回退），workerLogs
+ *   通路保证当下不静默丢弃。
  *
  * Main → Worker (parentPort.on("message")):
  * { type: "agent-result", callId: number, result: AgentResult, cached: boolean }
@@ -197,7 +202,12 @@ const WORKER_TEMPLATE_PRE = [
     '',
  // ── log global ──
     '  function log(msg) {',
-    '    try { parentPort.postMessage({ type: "log", phase: _currentPhase, message: String(msg) }); } catch(e) { /* swallow */ }',
+    '    var _logText = String(msg);',
+    '    // [OR-6/T7④] 同时记入 _workerLogs：主线程对 {type:"log"} 消息暂无消费 case',
+    '    //（error-recovery handleWorkerMessage switch），独立 log 消息会被忽略；记入',
+    '    // _workerLogs 后随 return/error 消息带回主线程落 errorLogs，脚本 log 不再零可见。',
+    '    try { _pushWorkerLog("log", [_logText]); } catch(e) { /* swallow */ }',
+    '    try { parentPort.postMessage({ type: "log", phase: _currentPhase, message: _logText }); } catch(e) { /* swallow */ }',
     '  }',
     '',
  // ── agent global — CC-compatible multi-signature ──

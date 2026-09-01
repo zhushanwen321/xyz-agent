@@ -24,7 +24,12 @@
 // 设计参考：session-runner 的 MF-3/MF-4 setTimeout→SIGTERM 骨架（复用 timer 形态，
 // 触发条件重构）；spawnedChildren Map 的模块级单例模式。
 
+import { getLogger } from "../core/logger.ts";
 import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
+
+// core/logger 无本地状态依赖（不 import execution/orchestration 层），与本模块
+// 「可独立编译 + 单测」约束兼容；不 import session-runner / subagent-service（循环依赖）。
+const logger = getLogger("subagents");
 
 // ============================================================
 // 默认常量
@@ -48,6 +53,10 @@ export const DEFAULT_IDLE_TIMEOUT_MS = IDLE_TIMEOUT_MINUTES * SECONDS_PER_MINUTE
  * 从环境变量 XYZ_SUBAGENT_IDLE_TIMEOUT_MS 读取全局默认超时。
  * 返回 undefined 表示 env 未设置或非法（调用方回落 DEFAULT_IDLE_TIMEOUT_MS）。
  *
+ * [LC-7/T7①] env 已设但非法（非数字/<=0）回落默认值时必须 warn 留痕——「以为设了
+ * 极长保活、实际回落 5min」的静默语义漂移不可见（设计 §4.3 LC-7），生效行为必须
+ * 可见。禁用语义不认 env（禁用只能显式传参 <=0，见 armIdleTimer 注释）。
+ *
  * [review 修复] 原 PI_ 前缀（PI_SUBAGENT_IDLE_TIMEOUT_MS）不在 ENV_WHITELIST_PREFIXES
  * 白名单（packages/shared/src/constants.ts 只有 XYZ_ 等，无 PI_），xyz-agent 桌面
  * spawn 链（safe-env 过滤）会丢弃该 env，配置口在桌面场景静默失效——已改名 XYZ_
@@ -59,7 +68,12 @@ function getEnvIdleTimeoutMs(): number | undefined {
   const raw = process.env.XYZ_SUBAGENT_IDLE_TIMEOUT_MS;
   if (!raw) return undefined;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    logger.warn(
+      `[lifecycle-manager] XYZ_SUBAGENT_IDLE_TIMEOUT_MS="${raw}" is invalid (expected a positive millisecond number) — falling back to DEFAULT_IDLE_TIMEOUT_MS (${DEFAULT_IDLE_TIMEOUT_MS}ms); set a plain ms value (e.g. 1800000) to override`,
+    );
+    return undefined;
+  }
   return parsed;
 }
 

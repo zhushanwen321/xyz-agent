@@ -10,6 +10,15 @@
 // 纯函数换算，无 timer 参与，无需 fake timers。
 import { describe, expect, it, vi } from "vitest";
 
+// [LC-7/T7①] Mock 共享 logger：非法 env 值的 warn 留痕可被断言
+//（对齐 channel-registry-handshake.test.ts 模式；vi.mock 自动 hoist 到 import 前）。
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("../../core/logger.ts", () => ({
+  getLogger: () => loggerMock,
+}));
+
 import {
   maxTurnsToWatchdogMs,
   resolveSpawnWatchdogMs,
@@ -59,6 +68,45 @@ describe("maxTurnsToWatchdogMs（U3 watchdog 换算，floor 语义）", () => {
       expect(resolveSpawnWatchdogMs(undefined)).toBeUndefined();
       expect(resolveSpawnWatchdogMs(null)).toBeUndefined();
     } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // [LC-7/T7①] env 非法值不再静默失效：warn 留痕（env 名 + 实际值 + 生效行为）。
+  it("[LC-7] env 设非法值（'30m' 非纯数字）→ undefined（不挂 watchdog）且 warn 留痕", () => {
+    vi.stubEnv(SPAWN_WATCHDOG_ENV, "30m");
+    try {
+      expect(resolveSpawnWatchdogMs(undefined)).toBeUndefined();
+      expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+      const msg = String(loggerMock.warn.mock.calls[0]?.[0] ?? "");
+      expect(msg).toContain("XYZ_SUBAGENT_SPAWN_WATCHDOG_MS"); // env 变量名
+      expect(msg).toContain("30m"); // 实际值
+      expect(msg).toContain("NOT armed"); // 生效行为：等价关闭，运维可诊断「以为有兜底、实际裸奔」
+    } finally {
+      loggerMock.warn.mockClear();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("[LC-7] env 设 <=0 → 同样 warn 留痕（不挂 watchdog，语义与非法值一致可见）", () => {
+    vi.stubEnv(SPAWN_WATCHDOG_ENV, "-5");
+    try {
+      expect(resolveSpawnWatchdogMs(undefined)).toBeUndefined();
+      expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+      expect(String(loggerMock.warn.mock.calls[0]?.[0] ?? "")).toContain("-5");
+    } finally {
+      loggerMock.warn.mockClear();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("[LC-7] env 未设（空串）→ 静默 undefined，零 warn（未配置不是异常，不制造噪音）", () => {
+    vi.stubEnv(SPAWN_WATCHDOG_ENV, "");
+    try {
+      expect(resolveSpawnWatchdogMs(undefined)).toBeUndefined();
+      expect(loggerMock.warn).not.toHaveBeenCalled();
+    } finally {
+      loggerMock.warn.mockClear();
       vi.unstubAllEnvs();
     }
   });

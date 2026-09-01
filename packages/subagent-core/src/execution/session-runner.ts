@@ -205,12 +205,32 @@ export function maxTurnsToWatchdogMs(maxTurns: number): number {
  */
 export const SPAWN_WATCHDOG_ENV = "XYZ_SUBAGENT_SPAWN_WATCHDOG_MS";
 
-/** 解析 spawn watchdog 毫秒数；env 未设/非法返回 undefined（调用方不挂 timer）。 */
+/**
+ * [LC-9/T7②] stdout invalid 行样本留痕上限：前 N 条逐条 debug，其后仅累计计数
+ *（防长尾调试输出刷屏）；总数与样本在 close 聚合一次性输出。
+ */
+const MAX_INVALID_LINE_SAMPLES = 3;
+/** 单条样本截断长度（pi 调试行可能超长，截断保日志可用）。 */
+const INVALID_LINE_SAMPLE_MAX_LENGTH = 160;
+
+/**
+ * 解析 spawn watchdog 毫秒数；env 未设返回 undefined（调用方不挂 timer）。
+ *
+ * [LC-7/T7①] env 已设但非法（非数字/<=0）同样返回 undefined——watchdog 不挂载 =
+ * **等价关闭**，但必须 warn 留痕：运维设 `XYZ_SUBAGENT_SPAWN_WATCHDOG_MS="30m"`
+ * 本意加兜底，静默失效会造成「以为有兜底、实际裸奔」（设计 §4.3 LC-7），
+ * 生效行为必须可见。
+ */
 function getEnvSpawnWatchdogMs(): number | undefined {
   const raw = process.env[SPAWN_WATCHDOG_ENV];
   if (!raw) return undefined;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    logger.warn(
+      `[session-runner] ${SPAWN_WATCHDOG_ENV}="${raw}" is invalid (expected a positive millisecond number) — spawn watchdog NOT armed, equivalent to disabled; set a plain ms value (e.g. 1800000) to enable`,
+    );
+    return undefined;
+  }
   return parsed;
 }
 
@@ -1248,6 +1268,8 @@ interface StdoutPumpHandles {
   readonly handshakeSettled: Promise<void>;
   /** 处理 stdout 末尾残留行（无换行结尾的最后一段，close handler 用）。 */
   processTrailingLine(): void;
+  /** [LC-9/T7②] 本子进程生命周期内 stdout invalid 行累计数（可观测性出口）。 */
+  invalidLineCount(): number;
   /** 清空 get_state 监听器（子进程已退出，无更多 response）。 */
   clearGetStateListeners(): void;
 }
@@ -1273,6 +1295,29 @@ function attachStdoutPump(
   // parseSpawnLine 返回 kind:"response" 时，按 command+id 匹配 resolver。
   const get_stateListeners = new Map<string, (data: unknown) => void>();
   let stdoutBuffer = "";
+
+  // [LC-9/T7②] stdout invalid 行可见性：per-child 计数 + debug 级前 N 条样本留痕。
+  // 容错原则不变（invalid 行不中断流——stdout 可能有调试输出），但「事件行损坏被
+  // 静默丢弃」曾使 LC-1 形态 (c) 完全不可排查（设计 §4.3 LC-9）。前 N 条逐条 debug，
+  // 之后仅累计（防刷屏）；总数与样本在 close 路径（processTrailingLine）聚合输出，
+  // 并经 StdoutPumpHandles.invalidLineCount() 暴露给测试/调用方。
+  let invalidLineCount = 0;
+  const invalidLineSamples: string[] = [];
+  const recordInvalidLine = (line: string, reason: string): void => {
+    invalidLineCount++;
+    const truncated =
+      line.length > INVALID_LINE_SAMPLE_MAX_LENGTH
+        ? `${line.slice(0, INVALID_LINE_SAMPLE_MAX_LENGTH)}…`
+        : line;
+    if (invalidLineSamples.length < MAX_INVALID_LINE_SAMPLES) {
+      invalidLineSamples.push(truncated);
+    }
+    if (invalidLineCount <= MAX_INVALID_LINE_SAMPLES) {
+      logger.debug(
+        `[session-runner] stdout invalid line #${invalidLineCount} dropped (${reason}): ${truncated}`,
+      );
+    }
+  };
 
   // [#18] 握手状态变量在 stdout handler 注册之前定义，消除"handler 闭包依赖同 tick
   // 后续 const 初始化"的隐式顺序假设——handler 现在直接引用已初始化的变量，不靠
@@ -1432,8 +1477,12 @@ function attachStdoutPump(
       } else if (parsed.kind === "extension_ui_request") {
         // W3: 子进程发 UI 请求（ask_user）。入队 FIFO 串行处理，防止并发询问用户。
         enqueueUiRequest(parsed.id, parsed.request);
+      } else {
+        // [LC-9/T7②] invalid 行（非法 JSON / 缺 type 字段）：不中断流（stdout 可能有
+        // 调试输出），但不再静默——计数 + debug 样本留痕（防刷屏：前 N 条逐条、
+        // 其后仅累计），close 时聚合输出总数。
+        recordInvalidLine(parsed.raw, parsed.error);
       }
-      // invalid 行忽略（stdout 可能有调试输出）
     }
   });
 
@@ -1451,9 +1500,21 @@ function attachStdoutPump(
         const parsed = parseSpawnLine(stdoutBuffer);
         if (parsed?.kind === "event" && isSdkEvent(parsed.event)) {
           handleSdkEvent(parsed.event);
+        } else if (parsed?.kind === "invalid") {
+          // [LC-9/T7②] 残留行同计 invalid 统计（处理行为不变：event 以外仍不分发）。
+          recordInvalidLine(parsed.raw, parsed.error);
         }
       }
+      // [LC-9/T7②] close 聚合：本子进程生命周期的 invalid 行总数在此暴露一次
+      //（processTrailingLine 由 close handler 必经调用），样本随行——LC-1 形态 (c)
+      //「事件行损坏被静默丢弃」的排查入口。
+      if (invalidLineCount > 0) {
+        logger.debug(
+          `[session-runner] stdout had ${invalidLineCount} invalid line(s) dropped in total; sample(s): ${invalidLineSamples.join(" | ")}`,
+        );
+      }
     },
+    invalidLineCount: () => invalidLineCount,
     clearGetStateListeners: () => {
       get_stateListeners.clear();
     },

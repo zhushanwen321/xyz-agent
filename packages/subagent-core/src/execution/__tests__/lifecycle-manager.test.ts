@@ -9,6 +9,15 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// [LC-7/T7①] Mock 共享 logger：env 非法值回落默认的 warn 留痕可被断言
+//（对齐 channel-registry-handshake.test.ts 模式；vi.mock 自动 hoist 到 import 前）。
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("../../core/logger.ts", () => ({
+  getLogger: () => loggerMock,
+}));
+
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
   DEFAULT_MAX_ALIVE_PROCESSES,
@@ -30,6 +39,9 @@ describe("lifecycle-manager — V2 §5.2 模块 1", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     _resetLifecycleState();
+    loggerMock.debug.mockClear();
+    loggerMock.warn.mockClear();
+    loggerMock.error.mockClear();
     // [F-4 同源修复] env 隔离：「默认超时」用例依赖 XYZ_SUBAGENT_IDLE_TIMEOUT_MS
     // 未设基线（getEnvIdleTimeoutMs 会覆盖 DEFAULT），宿主 export 即假红。空串 = 未设。
     vi.stubEnv("XYZ_SUBAGENT_IDLE_TIMEOUT_MS", "");
@@ -137,6 +149,33 @@ describe("lifecycle-manager — V2 §5.2 模块 1", () => {
       const onTimeout = vi.fn();
       expect(() => armIdleTimer("sa-env-overflow", onTimeout)).toThrowError(/2147483647/);
       expect(hasIdleTimer("sa-env-overflow")).toBe(false);
+    });
+
+    // [LC-7/T7①] env 非法值回落默认不再静默：warn 留痕（env 名 + 实际值 + 生效行为）。
+    // 「以为设了极长保活、实际回落 5min」的语义漂移必须可诊断。
+    it("[LC-7] env 非法值（'30m' 非纯数字）→ 回落 DEFAULT_IDLE_TIMEOUT_MS 且 warn 留痕", () => {
+      vi.stubEnv("XYZ_SUBAGENT_IDLE_TIMEOUT_MS", "30m");
+      const onTimeout = vi.fn();
+      armIdleTimer("sa-lc7-invalid", onTimeout); // 不传 timeoutMs → env（非法）→ DEFAULT
+
+      // 生效行为 = 默认 5min（非法值没有按字面 '30m' 也不按禁用处理）
+      vi.advanceTimersByTime(DEFAULT_IDLE_TIMEOUT_MS - 1);
+      expect(onTimeout).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onTimeout).toHaveBeenCalledTimes(1);
+
+      expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+      const msg = String(loggerMock.warn.mock.calls[0]?.[0] ?? "");
+      expect(msg).toContain("XYZ_SUBAGENT_IDLE_TIMEOUT_MS"); // env 变量名
+      expect(msg).toContain("30m"); // 实际值
+      expect(msg).toContain("DEFAULT_IDLE_TIMEOUT_MS"); // 生效行为：回落默认
+    });
+
+    it("[LC-7] env 未设（空串基线）→ 静默走 DEFAULT，零 warn（未配置不是异常）", () => {
+      const onTimeout = vi.fn();
+      armIdleTimer("sa-lc7-clean", onTimeout);
+      expect(hasIdleTimer("sa-lc7-clean")).toBe(true);
+      expect(loggerMock.warn).not.toHaveBeenCalled();
     });
   });
 

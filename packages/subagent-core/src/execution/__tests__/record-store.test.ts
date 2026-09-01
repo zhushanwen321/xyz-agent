@@ -17,6 +17,24 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// [PS-14/T7③ / LC-9 等 T7 可观测性] Mock 共享 logger：sessions-index 写失败的
+// warn 留痕可被断言（对齐 channel-registry-handshake.test.ts 模式）。
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("../../core/logger.ts", () => ({
+  getLogger: () => loggerMock,
+}));
+
+// [PS-14] saveIndex 可注入失败（默认 resolve，零影响既有用例；loadIndex/常量保留 actual）。
+const { saveIndexMock } = vi.hoisted(() => ({
+  saveIndexMock: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("../sessions-index.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../sessions-index.ts")>();
+  return { ...actual, saveIndex: saveIndexMock };
+});
+
 import { writeAliveMarker } from "../alive-store.ts";
 import { completeRecord, createRecord, tryTransition } from "../execution-record.ts";
 import { writeFinalized } from "../finalized-marker.ts";
@@ -106,6 +124,12 @@ describe("RecordStore", () => {
   afterEach(() => {
     // maxRetries：fire-and-forget 的 sessions-index 写可能与删除并发（ENOTEMPTY 竞态）
     fs.rmSync(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    // [PS-14] 恢复 saveIndex 默认 resolve 实现 + 清 logger 断言（用例间隔离）
+    saveIndexMock.mockReset();
+    saveIndexMock.mockImplementation(() => Promise.resolve());
+    loggerMock.debug.mockClear();
+    loggerMock.warn.mockClear();
+    loggerMock.error.mockClear();
   });
 
   // ============================================================
@@ -1052,6 +1076,65 @@ describe("RecordStore", () => {
       expect(() => store.register(r)).not.toThrow();
       expect(() => store.archive(r)).not.toThrow();
       expect(() => store.reportRecordTransition(r)).not.toThrow();
+    });
+  });
+
+  // ============================================================
+  // [PS-14/T7③] sessions-index 写失败可观测（warn 而非仅 debug）
+  // ============================================================
+  // flushIndexAfterScan 触发链：collectRecords 全量扫描（首扫 dirStamp===null）→
+  // scanFile 探测置 indexDirty → 扫描尾 flush（lastIndexWriteAt=0 天然过 60s 节流窗）
+  // → saveIndex（mock reject）→ .catch 恢复 dirty + warn。
+  describe("PS-14: sessions-index 写失败可观测", () => {
+    it("saveIndex reject → warn（不再仅 debug），detail 含 dir 与 error", async () => {
+      saveIndexMock.mockRejectedValueOnce(new Error("EACCES: permission denied"));
+      writeSessionJsonl(path.join(tmpDir, "sa-ps14.jsonl"), {
+        id: "ps14",
+        agent: "worker",
+        mode: "sync",
+        task: "t",
+        startedAt: 1000,
+      });
+
+      const store = new RecordStore(tmpDir);
+      const records = store.collectRecords();
+      expect(records).toHaveLength(1); // 扫描本身不受索引写失败影响
+
+      // fire-and-forget saveIndex：等 .catch 执行
+      await vi.waitFor(() => {
+        expect(loggerMock.warn).toHaveBeenCalledWith(
+          expect.stringContaining("sessions-index write failed"),
+          expect.objectContaining({
+            detail: expect.objectContaining({
+              error: expect.stringContaining("EACCES: permission denied"),
+            }),
+          }),
+        );
+      });
+      // 升级语义：warn 而非 debug（debug 层不再承载该信号）
+      const debugIndexMsgs = loggerMock.debug.mock.calls.filter((c) =>
+        String(c[0]).includes("sessions-index write failed"),
+      );
+      expect(debugIndexMsgs).toHaveLength(0);
+    });
+
+    it("saveIndex 成功 → 零 warn（正常路径不制造噪音）", async () => {
+      writeSessionJsonl(path.join(tmpDir, "sa-ps14-ok.jsonl"), {
+        id: "ps14ok",
+        agent: "worker",
+        mode: "sync",
+        task: "t",
+        startedAt: 1000,
+      });
+
+      const store = new RecordStore(tmpDir);
+      store.collectRecords();
+      await vi.waitFor(() => expect(saveIndexMock).toHaveBeenCalled());
+
+      const warnIndexMsgs = loggerMock.warn.mock.calls.filter((c) =>
+        String(c[0]).includes("sessions-index write failed"),
+      );
+      expect(warnIndexMsgs).toHaveLength(0);
     });
   });
 });
