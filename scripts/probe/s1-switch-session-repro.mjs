@@ -140,14 +140,15 @@ if (credentialIssue) {
   process.exit(2)
 }
 
-// ──────────────────────── 主序列（运行目录与 pi 子进程状态全部 main 作用域） ────────────────────────
+// ──────────────────────── 主序列（运行目录与 pi 子进程状态按阶段收敛：目录脚手架归
+// prepareRunDir 返回值、子进程 RPC 状态归 createPiHarness 工厂闭包；main 只编排） ────────────────────────
 
-async function main() {
-  // 运行目录（系统临时目录，不进仓库）。runId 用确定性构造（时间戳+pid）而非
-  // mkdtemp 随机后缀：下方两处 stderr 落盘目标须以 join(tmpdir(), runId, …) 形态
-  // 在各写点就近单跳构造——pi 直写守卫 B② 豁免要求写目标赋值行本身可见 tmpdir()
-  // 锚点（.githooks/check_pi_direct_write.py，单跳回溯 10 行窗口），锚点是真实
-  // 派生路径而非装饰（stderr log 确实落在 tmpdir 下同一 runId 目录）。
+/** 运行目录脚手架（系统临时目录，不进仓库）+ 凭证文件拷贝。runId 用确定性构造（时间
+ *  戳+pid）而非 mkdtemp 随机后缀：后续两处 stderr 落盘目标须以 join(tmpdir(), runId, …)
+ *  形态在各写点就近单跳构造——pi 直写守卫 B② 豁免要求写目标赋值行本身可见 tmpdir()
+ *  锚点（.githooks/check_pi_direct_write.py，单跳回溯 10 行窗口），锚点是真实派生
+ *  路径而非装饰（stderr log 确实落在 tmpdir 下同一 runId 目录）。 */
+function prepareRunDir(sourceAgentDir) {
   const runId = `s1-repro-${Date.now()}-${process.pid}`
   const runDir = join(tmpdir(), runId)
   const sessionDir = join(runDir, 'sessions')
@@ -161,17 +162,20 @@ async function main() {
     const src = join(sourceAgentDir, name)
     if (existsSync(src)) copyFileSync(src, join(agentDir, name))
   }
+  return { runId, runDir, sessionDir, cwdDir, agentDir }
+}
 
-  const t0 = Date.now()
+/** pi 启动参数：rpc 模式 + staged extensions 显式注入（--no-extensions 关默认发现）。 */
+function buildSpawnArgs(sessionDir) {
   const args = ['--mode', 'rpc', '--no-extensions', '--approve', '--session-dir', sessionDir, '--model', opts.model]
   for (const ext of extensionDirs) args.push('--extension', ext)
+  return args
+}
 
-  const proc = spawn(PI_BIN, args, {
-    cwd: cwdDir,
-    env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
-
+/** pi RPC 子进程装具：stderr 全量捕获、response/事件收发、优雅退出与最新 session 文件
+ *  定位。子进程交互状态（stderrText / exited / exitCode / pending / events）全部收敛在
+ *  本工厂闭包内，main 只经返回句柄编排。 */
+function createPiHarness(proc, sessionDir) {
   let stderrText = ''
   let exited = false
   let exitCode = null
@@ -285,81 +289,117 @@ async function main() {
     return join(sessionDir, newest)
   }
 
+  return {
+    sendCommand,
+    waitForEvent,
+    waitExit,
+    newestSessionFile,
+    stderrText: () => stderrText,
+    hasExited: () => exited,
+  }
+}
+
+/** 主序列步骤 1-4：初始 prompt turn → 复制 switch 目标 → switch_session → 优雅退出。 */
+async function runSwitchScenario(proc, harness, sessionDir) {
+  // 1) 初始 prompt：等 response + agent_end（session 建立、startup session_start 已跑、
+  //    session 文件已 flush——pi 首条 assistant 消息后落盘）
+  const promptSentAt = Date.now()
+  await harness.sendCommand('s1-prompt', 'prompt', { message: 'Reply with exactly: ok' }, opts.turnTimeoutMs)
+  await harness.waitForEvent((e) => e.type === 'agent_end', opts.turnTimeoutMs)
+  const turnMs = Date.now() - promptSentAt
+
+  // 2) switch 目标 = 初始 session 文件字节副本（sessionPath 不同、内嵌 cwd 不变 = cwdDir）
+  const switchTarget = join(sessionDir, 'switch-target.jsonl')
+  copyFileSync(harness.newestSessionFile(), switchTarget)
+
+  // 3) switch_session：修复前在 resume session_start 双跑 reaper 处崩溃（exit 先于 response）
+  let switchOk = false
+  const switchSentAt = Date.now()
+  try {
+    await harness.sendCommand('s1-switch', 'switch_session', { sessionPath: switchTarget }, SWITCH_TIMEOUT_MS)
+    switchOk = true
+  } catch (err) {
+    // 崩溃形态 = exit 先于 response（进程已死）；其余（超时/success:false）保留原错误向上抛
+    if (!harness.hasExited()) throw err
+  }
+  const switchMs = Date.now() - switchSentAt
+
+  // 4) 优雅退出（stdin end → pi shutdown(0)），取 exit code
+  proc.stdin.end()
+  const finalCode = await harness.waitExit()
+  return { turnMs, switchMs, switchOk, finalCode }
+}
+
+/** 成功路径收尾：stderr 落盘 → 结果 JSON + 人读摘要 → 按需收殓运行目录 → 退出。 */
+function reportSuccessAndExit({ runId, runDir, harness, t0, turnMs, switchMs, switchOk, finalCode }) {
+  const stderrText = harness.stderrText()
+  const stderrPath = join(tmpdir(), runId, 'pi-stderr.log')
+  writeFileSync(stderrPath, stderrText || '(empty stderr)')
+  const hasTypeError = stderrText.includes('TypeError')
+  const durationMs = Date.now() - t0
+
+  const result = {
+    scenario: 'S1-cold-start-first-click-switch',
+    exitCode: finalCode,
+    switchResponseSuccess: switchOk,
+    stderrTypeError: hasTypeError,
+    stderrBytes: stderrText.length,
+    turnMs,
+    switchMs,
+    durationMs,
+    extensionCount: extensionDirs.length,
+    model: opts.model,
+    stderrLog: stderrPath,
+    runDir,
+  }
+  console.log(JSON.stringify(result))
+  console.error(
+    `[s1-repro] exitCode=${finalCode} switchOk=${switchOk} stderrTypeError=${hasTypeError} ` +
+      `duration=${durationMs}ms (turn=${turnMs}ms switch=${switchMs}ms)`,
+  )
+  console.error(`[s1-repro] stderr 全量: ${stderrPath}`)
+  if (!opts.keep && finalCode === 0 && switchOk) {
+    // 成功且未要求保留时收殓运行目录（失败现场无条件保留供取证）
+    rmSync(runDir, { recursive: true, force: true })
+    console.error('[s1-repro] 成功运行的临时目录已清理（--keep 可强制保留）')
+  }
+  const pass = finalCode === 0 && switchOk && !hasTypeError
+  process.exit(pass ? 0 : 1)
+}
+
+/** 失败路径收尾：stderr 全量落盘 + 现场保留（与成功路径同根同锚点构造落盘目标）。 */
+function reportFailureAndExit(runId, runDir, harness, err) {
+  const stderrText = harness.stderrText()
+  const stderrPath = join(tmpdir(), runId, 'pi-stderr.log')
+  try {
+    writeFileSync(stderrPath, stderrText || '(empty stderr)')
+  } catch {
+    /* runDir 不可写时仍要输出结论 */
+  }
+  console.error(`[s1-repro] FAILED: ${err instanceof Error ? err.message : String(err)}`)
+  console.error(`[s1-repro] stderr 全量: ${stderrPath}（runDir 保留: ${runDir}）`)
+  process.exit(1)
+}
+
+async function main() {
+  const { runId, runDir, sessionDir, cwdDir, agentDir } = prepareRunDir(sourceAgentDir)
+  const t0 = Date.now()
+  const proc = spawn(PI_BIN, buildSpawnArgs(sessionDir), {
+    cwd: cwdDir,
+    env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  const harness = createPiHarness(proc, sessionDir)
+
   try {
     console.error(`[s1-repro] pi=${PI_BIN}`)
     console.error(`[s1-repro] extensions=${extensionDirs.length} 个（${opts.exts ? '子集' : 'staged 全量'}）: ${extensionNames.join(', ')}`)
     console.error(`[s1-repro] runDir=${runDir}`)
 
-    // 1) 初始 prompt：等 response + agent_end（session 建立、startup session_start 已跑、
-    //    session 文件已 flush——pi 首条 assistant 消息后落盘）
-    const promptSentAt = Date.now()
-    await sendCommand('s1-prompt', 'prompt', { message: 'Reply with exactly: ok' }, opts.turnTimeoutMs)
-    await waitForEvent((e) => e.type === 'agent_end', opts.turnTimeoutMs)
-    const turnMs = Date.now() - promptSentAt
-
-    // 2) switch 目标 = 初始 session 文件字节副本（sessionPath 不同、内嵌 cwd 不变 = cwdDir）
-    const switchTarget = join(sessionDir, 'switch-target.jsonl')
-    copyFileSync(newestSessionFile(), switchTarget)
-
-    // 3) switch_session：修复前在 resume session_start 双跑 reaper 处崩溃（exit 先于 response）
-    let switchOk = false
-    const switchSentAt = Date.now()
-    try {
-      await sendCommand('s1-switch', 'switch_session', { sessionPath: switchTarget }, SWITCH_TIMEOUT_MS)
-      switchOk = true
-    } catch (err) {
-      // 崩溃形态 = exit 先于 response（进程已死）；其余（超时/success:false）保留原错误向上抛
-      if (!exited) throw err
-    }
-    const switchMs = Date.now() - switchSentAt
-
-    // 4) 优雅退出（stdin end → pi shutdown(0)），取 exit code
-    proc.stdin.end()
-    const finalCode = await waitExit()
-
-    const stderrPath = join(tmpdir(), runId, 'pi-stderr.log')
-    writeFileSync(stderrPath, stderrText || '(empty stderr)')
-    const hasTypeError = stderrText.includes('TypeError')
-    const durationMs = Date.now() - t0
-
-    const result = {
-      scenario: 'S1-cold-start-first-click-switch',
-      exitCode: finalCode,
-      switchResponseSuccess: switchOk,
-      stderrTypeError: hasTypeError,
-      stderrBytes: stderrText.length,
-      turnMs,
-      switchMs,
-      durationMs,
-      extensionCount: extensionDirs.length,
-      model: opts.model,
-      stderrLog: stderrPath,
-      runDir,
-    }
-    console.log(JSON.stringify(result))
-    console.error(
-      `[s1-repro] exitCode=${finalCode} switchOk=${switchOk} stderrTypeError=${hasTypeError} ` +
-        `duration=${durationMs}ms (turn=${turnMs}ms switch=${switchMs}ms)`,
-    )
-    console.error(`[s1-repro] stderr 全量: ${stderrPath}`)
-    if (!opts.keep && finalCode === 0 && switchOk) {
-      // 成功且未要求保留时收殓运行目录（失败现场无条件保留供取证）
-      rmSync(runDir, { recursive: true, force: true })
-      console.error('[s1-repro] 成功运行的临时目录已清理（--keep 可强制保留）')
-    }
-    const pass = finalCode === 0 && switchOk && !hasTypeError
-    process.exit(pass ? 0 : 1)
+    const { turnMs, switchMs, switchOk, finalCode } = await runSwitchScenario(proc, harness, sessionDir)
+    reportSuccessAndExit({ runId, runDir, harness, t0, turnMs, switchMs, switchOk, finalCode })
   } catch (err) {
-    // 失败路径：stderr 全量落盘 + 现场保留（与成功路径同根同锚点构造落盘目标）
-    const stderrPath = join(tmpdir(), runId, 'pi-stderr.log')
-    try {
-      writeFileSync(stderrPath, stderrText || '(empty stderr)')
-    } catch {
-      /* runDir 不可写时仍要输出结论 */
-    }
-    console.error(`[s1-repro] FAILED: ${err instanceof Error ? err.message : String(err)}`)
-    console.error(`[s1-repro] stderr 全量: ${stderrPath}（runDir 保留: ${runDir}）`)
-    process.exit(1)
+    reportFailureAndExit(runId, runDir, harness, err)
   }
 }
 

@@ -4,11 +4,15 @@
 // 「批 2 后 reap 类操作不再执行」）：
 //  - reconcilePendingEntries 是 session 级豁免类，每 session_start 派发都执行
 //    （startup/resume/new 多派发 ×N——含 factory 二调 handler 累积的真实形态）
-//  - 触发面消失：reaper.ts 已删除（import 即失败）+ 维护链不再触发全局文件锁
-//    （withFileLock——原 reapOrphanedTasks 的 reaper.lock 路径）
+//  - 触发面消失：reaper.ts 模块文件已删除（文件级断言，见首条用例）+ 维护链不再触发
+//    全局文件锁（withFileLock——原 reapOrphanedTasks 的 reaper.lock 路径）
 //  - 入口无条件 debug 日志按派发次数出现，detail 仅含 reason（reapSkipped 字段
 //    随 reap 调用移除，S6 观测通道语义更新）
 // 断言方式：reconcile / logger / file-lock 全部间谍注入，观察调用次数与参数。
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const { reconcileMock, loggerMock, officialBashFactoryMock, dataDirRef, withFileLockMock } =
@@ -89,8 +93,13 @@ beforeEach(() => {
 });
 
 describe("session_start maintenance chain after reap sink (u-bte-remove)", () => {
-	it("no longer ships a reaper: the module is gone from the extension (trigger surface removed)", async () => {
-		await expect(import("../reaper.ts")).rejects.toThrow();
+	it("no longer ships a reaper: the module is gone from the extension (trigger surface removed)", () => {
+		// 等价改写（fallow unresolved-import）：原断言动态 import 已删除模块期待
+		// rejects——静态分析无法理解故意性。模块文件不存在 ⟹ import 必 rejects，
+		// 蕴含成立，断言价值不变（触发面消失），文件级判定更直接。路径用 join 逐段
+		// 拼装：fallow 会把 ../reaper.ts 形态的相对路径字符串按 import specifier 扫描
+		const reaperModulePath = join(dirname(fileURLToPath(import.meta.url)), "..", "reaper.ts");
+		expect(existsSync(reaperModulePath)).toBe(false);
 	});
 
 	it("runs reconcilePendingEntries on EVERY session_start dispatch (session-scoped exempt, D3)", async () => {
