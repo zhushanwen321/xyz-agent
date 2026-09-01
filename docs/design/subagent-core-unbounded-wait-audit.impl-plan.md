@@ -100,6 +100,15 @@ graph TD
 | OR-6 log() 接线形态：workerLogs 通道挂载点在 worker-script-builder.ts 内（module 级 _workerLogs 数组随 return/error 带回），log 内容经 workerLogs→errorLogs 通路可见；独立 {type:"log"} postMessage 保留双通路 | u-m0a | 领地内实质消解静默丢弃；主线程 switch default 留痕 + log case 裁决并入 u-t3（blocker 处置） | u-t3 待办 |
 | LC-9 计数暴露形态：StdoutPumpHandles.invalidLineCount() 访问器 + close 时聚合 debug（前 3 条样本 + 总数，防刷屏） | u-m0a | 设计未规定暴露形态，实现选择已登记 | 已处置 |
 | worker 模板 byte-identical 快照因 log() 有意变更同批重生成（diff 仅 log() 段 6 行） | u-m0a | 快照护栏随源码变更同步，其余逐字节不变已核验 | 已处置 |
+| OR-4 围栏扩至同文件全部 6 处终态路径（设计证据列 3 处；补 handleWorkerExit、finalizeTimeBudgetExhausted，收敛为共享 helper emitTerminalSideEffects） | u-t3 | 「同族收尾不对称设防」闭合需要全覆盖 | 已处置 |
+| OR-8 收口表达：状态枚举无 cancelled 值，以 call=done + trace=failed + 固定文案承载（不新增枚举避免 TUI/summary 波动）；收口站点扩至全部终态转换（error-recovery 6 处 + lifecycle abortRun/terminateRunningRuns/recoverCrashedRuns） | u-t3 | 枚举封闭是既有契约；「先收口再落盘」实现落盘前语义 | 已处置 |
+| OR-3 workflow() 未接 per-call 超时：协议无 timeout 字段（AC-4 契约面不擅自扩），其 pending 由 abort 广播兜底；agent() string+secondArg 分支补 timeoutMs 透传（此前丢弃该字段） | u-t3 | 协议扩展需走契约变更流程，abort 兜底已覆盖 | 已处置 |
+| P-SD 钩子语义取「第 N 次及以后每次抛错」（仅一次会在重试预算内自愈，S-D 验收不可证伪）；附 resetRebuildFailureInjectionForTest | u-t3 | 验收可证伪性优先 | 已处置 |
+| OR-7 移除机制：lifecycle.ts 内 WeakMap 注册表 + makeHandlers 包装 onRunDone 覆盖全部消息面终态（workflow-run.ts 不在领地且避免 lifecycle↔error-recovery 循环依赖） | u-t3 | ports.ts 解耦决策保持 | 已处置 |
+| **P-T2 探针否定 30min 裸缺省默认值**：历史 89 样本 96.6% keep-alive 窗口 >30min（P50=24.5min/P95=71.6min/max≈95.5h，85/89 parent-shutdown 正常收敛）→ 按设计 P-T2 降级路径 B 裁决：**u-t2a 的 keep-alive 上界采用无进展检测语义**（keep-alive 期间子进程事件/后代集合变化刷新计时，仅连续静默达阈值才 kill；静默阈值 30min 量级） | u-p2 | 设计内合法降级（探针门正常工作）；裸缺省挂载限定不变 | **u-t2a 依据** |
+| P-T2b 结论：pi SIGTERM 不级联孤儿后台后代（形态 B 三次复现 NO-CASCADE；仅 bash 前台窗口有 CASCADE）→ 后代补杀为主路径（设计已按此形态） | u-p2 | 与实装源码 killTrackedDetachedChildren 覆盖面互证 | u-t2a 依据 |
+| P-T2c 结论：6 轮真实会话 agent_end→settled 间隔全部 0ms（<1-2ms 同 chunk），显式 compact 30 万 tokens 耗时 40.1s → **10min settled 硬上限维持**（余量 4 个数量级） | u-p2 | 含大上下文样本 | 定案 |
+| 探针均以 pi --no-extensions 形态运行（本机全局 npm 版 pi-subagent-workflow exports 漂移致扩展加载 fatal，环境噪音非本单元处置范围）；P-T2c auto-compact 场景以显式 compact 命令实测作量级代理（400KB 未达该模型阈值） | u-p2 | 报告如实标注；settled 窗口是 core 语义，无扩展形态为最小变量基线 | 已登记 |
 
 ## 6 状态表
 
@@ -108,8 +117,8 @@ graph TD
 | u-m0a | committed | 1 | u-m0a commit（本轮）；核验：151 tests passed 重跑实证（6 文件）+ 全量 2826 passed + typecheck 绿；grep dropFileCache 无残留 |
 | u-m0b | committed | 1 | u-m0b commit（本轮）；dev 报告 JSON 见会话；核验：lifecycle.test.ts 27 passed + tool-workflow-throw-paths.test.ts 7 passed 重跑实证 |
 | u-p1 | committed | 1 | P-T1 PASS：6 路并发 0.3-0.4ms 应答（预算 1s，2500 倍余量），⛔门放行 u-t1；probe/p-t1-{lazy-getstate.mjs,report.md} |
-| u-p2 | pending | 0 | — |
-| u-t3 | pending | 0 | — |
+| u-p2 | committed | 1 | P-T2c 定案 10min 维持 / P-T2b NO-CASCADE 后代补杀主路径 / P-T2 否定 30min → 降级 B 裁决（见偏差表）；probe/ 11 文件 |
+| u-t3 | committed | 1 | 六项 + OR-6 主线程半边全绿：orchestration 37 files 504 passed 重跑实证、全量 2868 passed、typecheck 绿、extensions 三连绿 |
 | u-t1 | pending | 0 | — |
 | u-t2a | pending | 0 | — |
 | u-t2b | pending | 0 | — |

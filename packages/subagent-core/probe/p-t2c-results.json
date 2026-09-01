@@ -1,0 +1,74 @@
+{
+  "probe": "P-T2c",
+  "model": "xiaomi-token-plan-cn/mimo-v2.5-pro",
+  "startedAt": "2026-09-01T05:51:14.932Z",
+  "rounds": [
+    {
+      "id": "r1",
+      "label": "short-1",
+      "promptSentAt": "2026-09-01T05:51:16.436Z",
+      "promptBytes": 40,
+      "agentEndToSettledMs": 0,
+      "settledAt": "2026-09-01T05:51:18.700Z"
+    },
+    {
+      "id": "r2",
+      "label": "short-2",
+      "promptSentAt": "2026-09-01T05:51:18.700Z",
+      "promptBytes": 40,
+      "agentEndToSettledMs": 0,
+      "settledAt": "2026-09-01T05:51:21.616Z"
+    },
+    {
+      "id": "r3",
+      "label": "short-3",
+      "promptSentAt": "2026-09-01T05:51:21.616Z",
+      "promptBytes": 40,
+      "agentEndToSettledMs": 0,
+      "settledAt": "2026-09-01T05:51:23.242Z"
+    },
+    {
+      "id": "r4",
+      "label": "long-60KB",
+      "promptSentAt": "2026-09-01T05:51:23.242Z",
+      "promptBytes": 61998,
+      "agentEndToSettledMs": 0,
+      "settledAt": "2026-09-01T05:51:28.774Z"
+    },
+    {
+      "id": "r5",
+      "label": "long-120KB",
+      "promptSentAt": "2026-09-01T05:51:28.774Z",
+      "promptBytes": 123823,
+      "agentEndToSettledMs": 0,
+      "settledAt": "2026-09-01T05:51:50.996Z"
+    },
+    {
+      "id": "r6",
+      "label": "long-400KB-compact-attempt",
+      "promptSentAt": "2026-09-01T05:51:50.997Z",
+      "promptBytes": 412335,
+      "agentEndToSettledMs": 0,
+      "settledAt": "2026-09-01T05:52:27.538Z"
+    }
+  ],
+  "invalidLines": 0,
+  "abortedReason": null,
+  "summary": {
+    "sampleCount": 6,
+    "gapsMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "minMs": 0,
+    "maxMs": 0,
+    "p50Ms": 0,
+    "p99Ms": 0,
+    "p99Note": "样本数 <100，P99 为最近邻保守值（≈max）",
+    "cap10minComparison": "0.00min max vs 10min cap = 0.000x"
+  }
+}
