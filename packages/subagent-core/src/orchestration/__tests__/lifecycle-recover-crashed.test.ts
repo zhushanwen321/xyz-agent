@@ -10,9 +10,11 @@
 // - done run 原样保留（不重复 save）但也注册进 runs Map
 // - hooks 每 running run 恰好一次、参数 {id, reason:"failed"}；无 hooks 不炸
 // - 单 run save 失败不中断其余 run（幂等恢复）；loadAll 失败向上抛
+// - onRunRecovered 同步 throw 被围栏捕获（warn 留痕），不中断其余 run 恢复
 // - evict 步：超 MAX_RETAINED_DONE_RUNS 的 done run 被淘汰（最旧优先）
 import { describe, expect, it, vi } from "vitest";
 
+import { configureCore, resetCoreForTests } from "../../core/host-services.ts";
 import {
   MAX_RETAINED_DONE_RUNS,
   recoverCrashedRuns,
@@ -178,6 +180,45 @@ describe("recoverCrashedRuns — 四步序列（loadAll→failed→save→evict�
     expect(r1.state.status).toBe("done");
     expect(r2.state.status).toBe("done");
     expect(saves.map((r) => r.runId)).toEqual(["wf-ok"]);
+  });
+
+  it("onRunRecovered 同步 throw 被围栏捕获（warn 留痕），不中断其余 run 恢复", async () => {
+    // warn 断言经宿主 log 端口 spy 捕获（logger facade 每次调用动态解析宿主实现，
+    // 对齐 file-run-store.test.ts 的配置态隔离模式）
+    resetCoreForTests();
+    const logSpy = vi.fn();
+    configureCore({ dataRoot: () => "/fake", log: logSpy });
+
+    const r1 = makeRun("wf-hook-throw", { status: "running" });
+    const r2 = makeRun("wf-after-throw", { status: "running" });
+    const { store, saves } = makeStore([r1, r2]);
+    const seen: string[] = [];
+
+    await expect(
+      recoverCrashedRuns(store, new Map(), "crashed", {
+        onRunRecovered: (payload) => {
+          seen.push(payload.id);
+          if (payload.id === "wf-hook-throw") {
+            throw new Error("host notification channel down");
+          }
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    // 循环未中断：后续 run 的 hook 仍被调用；两 run 状态机转换 + 落盘照常
+    //（含 throw 的 r1——围栏包住整个迭代的宿主事件点，save 不受牵连）
+    expect(seen).toEqual(["wf-hook-throw", "wf-after-throw"]);
+    expect(r1.state.status).toBe("done");
+    expect(r2.state.status).toBe("done");
+    expect(saves.map((r) => r.runId)).toEqual(["wf-hook-throw", "wf-after-throw"]);
+    // 围栏可见性：warn 已发出且定位到出错的 run
+    expect(
+      logSpy.mock.calls.some(
+        (c) => c[0] === "warn" && String(c[2]).includes("wf-hook-throw"),
+      ),
+    ).toBe(true);
+
+    resetCoreForTests();
   });
 
   it("loadAll 失败向上抛（fail-fast 策归宿主决定）", async () => {

@@ -28,11 +28,19 @@ const logger = getLogger("agents-assembly");
  * 按 frontmatter name 去重（高优先级靠后覆盖，Map 后写胜）→ name 码点序输出
  * （KV-cache 契约：顺序与 readdir 枚举序解耦，重建结果逐字节一致）。
  *
- * 永不抛错：单文件读失败仅记日志跳过；目录不存在返回空列表。
+ * 抛错面（如实声明）：单文件读失败仅记日志跳过；目录不存在返回空列表；但底层
+ * discoverResources 的不可恢复扫描错误会原样向上传播（readdir 遇权限拒绝、
+ * EMFILE 竞态等——resource-discovery 自述 "Throws on unrecoverable scan errors"，
+ * Promise.all 首个 reject 即整体拒绝），调用方需自行兜底。
  *
  * @param workspaceRoot 项目根（findWorkspaceRoot 推导结果）
  * @param hostRoots 宿主注入发现根（pi 壳 = getAgentDir 三根；无则传 []——
- *                  user-agents/project-agents 硬编码槽仍生效，与 ScanConfig 语义一致）
+ *                  user-agents/project-agents 硬编码槽仍生效，与 ScanConfig 语义一致）。
+ *                  注意：hostRoots 之外还有四个硬编码根恒进入扫描，无法经参数关闭——
+ *                  `~/.agents/agents`、`<workspaceRoot>/.pi/agents`、
+ *                  `<workspaceRoot>/.agents/agents` 与 `XYZ_EXTENSION_PATHS`
+ *                  环境变量展开的扩展源码路径（resource-discovery buildScanTargets
+ *                  固定槽位，注入 hostRoots 只是增列而非替换扫描面）
  */
 export async function discoverAgents(
   workspaceRoot: string,

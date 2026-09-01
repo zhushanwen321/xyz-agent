@@ -416,6 +416,10 @@ export interface RecoverCrashedRunsHooks {
    *
    * payload 形状对齐 pi `pending:unregister` 事件：`{ id: runId, reason: "failed" }`
    * ——宿主可直接把 payload 转发到自己的事件总线。
+   *
+   * 错误围栏：回调同步 throw 经 core logger facade warn 留痕后被吞掉，恢复循环
+   * 继续其余 run（转换/落盘不受影响）——与 save 步骤「单 run 失败不中断其余」
+   * 容错口径对称。
    */
   onRunRecovered?: (payload: { id: string; reason: string }) => void;
 }
@@ -465,8 +469,18 @@ export async function recoverCrashedRuns(
       run.state.error = reason;
       run.transition("done", "failed");
       // 宿主事件外置点：pi 发 pending:unregister，位置在 transition 后、save 前
-      // （对齐 pi emit 位置——先解除挂起通知再落盘，事件观察者不依赖落盘完成）
-      hooks?.onRunRecovered?.({ id: run.runId, reason: "failed" });
+      // （对齐 pi emit 位置——先解除挂起通知再落盘，事件观察者不依赖落盘完成）。
+      // 错误围栏：宿主回调同步 throw 只 warn 不中断循环——与步骤 3 save 的
+      // 「单 run 失败不中断其余」容错口径对称（通知通道故障不等价于恢复失败；
+      // 恢复天然幂等，未送达的通知随下次启动重试，见步骤 3 注释）。
+      try {
+        hooks?.onRunRecovered?.({ id: run.runId, reason: "failed" });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `[workflow] recoverCrashedRuns onRunRecovered hook failed for run ${run.runId} (recovery continues): ${msg}`,
+        );
+      }
       // 步骤 3：恢复终态落盘（单 run 失败不中断其余 run——幂等恢复，下次重试）
       try {
         await store.save(run);

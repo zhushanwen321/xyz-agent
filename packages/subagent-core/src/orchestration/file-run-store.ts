@@ -159,7 +159,7 @@ export class FileRunStore implements RunStore {
         rec.v = SNAPSHOT_VERSION;
       } else if (rec.v !== SNAPSHOT_VERSION) {
         logger.warn(
-          `[file-run-store] skip snapshot with unsupported version ${display}:${lineNo}: v=${JSON.stringify(rec.v)}`,
+          `[file-run-store] skip snapshot with unsupported version ${display}:${lineNo}: v=${JSON.stringify(rec.v)} (this build only reads v=${JSON.stringify(SNAPSHOT_VERSION)}; the run line is skipped). To recover: upgrade @zhushanwen/subagent-core, or migrate/delete this state file if its runs are no longer needed`,
         );
         return undefined;
       }

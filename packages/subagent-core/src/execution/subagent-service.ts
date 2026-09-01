@@ -219,7 +219,7 @@ interface ResolvedIdentity {
  * 执行编排 Service。进程级单例。
  *
  *   session_start:
- *     1. modelService = getModelConfigService() ?? new ModelConfigService({homeDir, agentDir})
+ *     1. modelService = getModelConfigService() ?? new ModelConfigService({cwd, agentDir})
  *     2. service = getSubagentService() ?? new SubagentService({cwd, modelService})
  *     3. modelService.initModel({modelRegistry, sessionId, entries})
  *     4. service.initSession({pi, sessionId})

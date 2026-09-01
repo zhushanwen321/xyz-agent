@@ -19,6 +19,9 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// MF-4：barrel 可达性用例的命名空间导入——「仅凭 src/index.ts 导入」的字面载体
+//（不经深路径），证明第三宿主按文档用法可构造。
+import * as subagentCore from "../../index.ts";
 import { EngineError } from "../engine/common/errors.ts";
 import { EngineNotFoundError } from "../engine/registry.ts";
 import { ZcodePrepareError } from "../engine/engines/zcode/preparer.ts";
@@ -46,7 +49,8 @@ function makeAgentDir(): string {
 }
 
 function makeModelService(agentDir: string): ModelConfigService {
-  return new ModelConfigService({ agentDir });
+  // cwd 为 ModelConfigServiceInit 必填键（与 agentDir 同指 tmp 目录；构造期仅消费 agentDir）
+  return new ModelConfigService({ agentDir, cwd: agentDir });
 }
 
 /** 最小 PiLike duck-type（initSession 场景用；本文件不触发真实 pi 调用）。 */
@@ -237,6 +241,32 @@ describe("execution 运行时面（U10① D6）", () => {
       });
       expect(entry.v).toBe(1);
       expect(entry.id).toBe("r1");
+    });
+  });
+
+  // ============================================================
+  // ⑤ barrel 可达性（MF-4）：仅凭 src/index.ts 导入完成第三宿主构造
+  //    （SubagentServiceInit.modelService: ModelConfigService——构造依赖
+  //    与 jsdoc 示例引用的访问器必须全部从 barrel 可达）
+  // ============================================================
+  describe("barrel 可达性（仅凭 src/index.ts 导入，MF-4）", () => {
+    it("ModelConfigService / getModelConfigService / createSubagentService 从 barrel 可达并可构造", () => {
+      // 符号面：类与访问器均为函数（导出存在性）
+      expect(typeof subagentCore.ModelConfigService).toBe("function");
+      expect(typeof subagentCore.getModelConfigService).toBe("function");
+
+      // 进程单例槽位未被本文件写入（同 ① 的全局查找断言口径）
+      expect(subagentCore.getModelConfigService()).toBeNull();
+
+      // 运行时可达：仅凭 barrel 符号完成参数注入构造（ModelConfigServiceInit
+      // = { cwd, agentDir }，指向 tmp 目录——loadGlobalConfig 对不存在文件
+      // 返回默认配置，AgentRegistry 空目录安全，同文件头既有 stub 口径）
+      const modelService = new subagentCore.ModelConfigService({ cwd: agentDir, agentDir });
+      const service = subagentCore.createSubagentService({ cwd: agentDir, modelService });
+
+      // 构造产物可用（实例方法存在），且不写进程单例槽位（第三宿主自持实例）
+      expect(typeof service.lookupRecordAnyState).toBe("function");
+      expect(subagentCore.getModelConfigService()).toBeNull();
     });
   });
 });

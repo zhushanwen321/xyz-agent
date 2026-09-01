@@ -136,7 +136,12 @@ export interface CollectWorktreePatchOptions {
   readonly worktreePath: string;
   /** patch 输出绝对路径（须在 worktree 之外——cleanup 不会删除）。 */
   readonly patchFile: string;
-  /** 基线锚点。 */
+  /**
+   * 基线锚点。anchor-file 形态的 path 须在 worktree 之外（同 patchFile 约束）：
+   * 落在 worktree 内会被本机制的 `git add -A` 一并暂存、混入 diff 产物——patch
+   * 被锚点文件自身污染（路径与内容进入 patch），且该形态无任何 warn 或
+   * patchIncomplete 留痕（不在 ⛔3 降级规格内，属静默污染）。
+   */
   readonly anchor: PatchBaselineAnchor;
   /** git 命令超时（ms），缺省 30_000。 */
   readonly timeout?: number;

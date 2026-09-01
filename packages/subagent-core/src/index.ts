@@ -338,6 +338,17 @@ export {
 //
 // SubagentServiceSessionInit 刻意不出 barrel：pi session_start 注入专属
 //（引用未导出的 PiLike 签面），第三宿主不经该流程。
+//
+// ModelConfigService：SubagentServiceInit.modelService 的构造依赖（MF-4：jsdoc
+// 示例 `new ModelConfigService({cwd, agentDir})` 的类此前不在导出面——第三宿主
+// 按文档用法不可构造）。getModelConfigService 同为 SubagentService 类 jsdoc
+// session_start 示例的引用符号，随之可达；setModelConfigService 是 pi 壳
+// session_start 专属的进程单例写入点，第三宿主参数注入构造不需要，刻意不出 barrel。
+export {
+  getModelConfigService,
+  ModelConfigService,
+  type ModelConfigServiceInit,
+} from "./execution/model-config-service.ts";
 export {
   createSubagentService,
   SubagentService,
