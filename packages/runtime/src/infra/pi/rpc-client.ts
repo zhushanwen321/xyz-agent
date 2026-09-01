@@ -7,7 +7,7 @@ import type { ThinkingLevel, ProviderId } from '@xyz-agent/shared'
 // B3 出站契约唯一构建器（U3 收口点；实现本体在 @xyz-agent/shared，此处走 runtime 门面）
 import { buildOutboundChildEnv } from '../spawn-env.js'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
-import { createPiSessionLog, type PiSessionLog } from '../logger.js'
+import { createPiSessionLog, writePiCrashLog, type PiSessionLog } from '../logger.js'
 
 /**
  * Generic shape of a message received from pi's JSONL stdout.
@@ -95,7 +95,15 @@ const SLOW_TIMEOUT_MS = 120_000
 const STARTUP_DELAY_MS = 500
 /** timedOutIds 条目存活时间（S6：超时后迟到响应的防御窗口，5s 后清理避免 Set 无界增长） */
 const TIMED_OUT_ID_TTL_MS = 5_000
-const STDERR_BUFFER_MAX_LINES = 50
+/**
+ * stderr 崩溃取证缓冲的字节上限（D4/G4：异常退出全量落盘的内存防御边界）。
+ *
+ * 常态累计全量（替代旧 50 行 ring buffer——崩溃现场曾被截到只剩 2 行）；真实事故
+ * stderr 仅几十行 KB 级，常态内存增量可忽略；上限仅防御异常洪泛（崩溃循环打印等），
+ * 超限丢最旧并在 crash log 头部标注 truncated。
+ */
+const STDERR_CRASH_MAX_BYTES = 1_000_000
+/** 错误消息 / exitCallback 载荷里的 stderr 尾部行数（展示路径，D4 后语义不变） */
 const STDERR_TAIL_LINES = 10
 
 /**
@@ -140,8 +148,20 @@ export class RpcClient implements IPiEngine {
    * 曾因此被迫轮询 exited 绕开）。改 Set + onExit 返回 unsubscribe，与 onEvent 对称。
    */
   private exitCallbacks = new Set<(code: number | null, stderr: string) => void>()
-  /** 收集 pi 进程的 stderr 输出，用于在启动失败时提供具体错误信息 */
+  /**
+   * 收集 pi 进程的 stderr 输出：展示路径取尾部（getStderrTail），崩溃路径取全量。
+   *
+   * D4/G4 改造：旧实现 50 行 ring buffer（shift 截断）在崩溃时只留尾部——本次事故
+   * 现场只剩 2 行，TypeError 之上的输出全部丢失。现为全量累计 + STDERR_CRASH_MAX_BYTES
+   * 字节硬上限（超限丢最旧并置 stderrTruncated，crash log 头部标注）。策略取舍：
+   * 「崩溃前已累计全量」而非「常态 tee 磁盘」——tee 与「正常退出不写 crash 文件」
+   * 冲突（临时文件生命周期/句柄常驻/残留清理是新失败面），内存上限制常态增量可忽略。
+   */
   private stderrChunks: string[] = []
+  /** stderrChunks 当前累计字节数（上限判定用，避免每次重算） */
+  private stderrTotalBytes = 0
+  /** 是否发生过超限丢弃（crash log 头部标注「非全量」用） */
+  private stderrTruncated = false
   /** pi stdout JSONL 原始流落盘（架构约定 #4，诊断 pi 卡死的决定性证据） */
   private piSessionLog: PiSessionLog | null = null
 
@@ -165,6 +185,12 @@ export class RpcClient implements IPiEngine {
       // （R2 远距离爆炸防线，如 PATH 被删 → hooks 里 command not found）。
       if (value !== undefined) outboundExtras[key] = value
     }
+    // D4/G4 观测补齐（file-lock-unification-and-reaper-sink §3.2-D4 / U3-3）：xyz 托管
+    // 环境恒注入 extension 日志开关——extension-logger 见此变量即落盘 INFO 级日志
+    // （XYZ_AGENT_DEBUG=1 的 DEBUG 全量语义不变，两变量并存取更详细；均未注入的裸 pi
+    // 独立用户保持 no-op，零磁盘影响）。走 extras 通道随构建器出站（C-proc-09 唯一
+    // 构建点，不绕过直接拼 env）；托管语义恒为 '1'，不开放 options.env 覆盖。
+    outboundExtras.XYZ_AGENT_EXT_LOG = '1'
     const env = buildOutboundChildEnv({ parentEnv: process.env, extras: outboundExtras })
 
     // xyz-pi agent 目录：~/.xyz-agent/pi/agent/
@@ -285,6 +311,7 @@ export class RpcClient implements IPiEngine {
       // For normal kill flow (_killing=true), rejectAll is called in kill()
       // via a separate safety net to avoid leaving callers hanging until CMD_TIMEOUT_MS.
       if (!this._killing) {
+        this.writeCrashLogIfNeeded(code)
         this.rejectAll(new Error(`pi process exited with code ${code}${this.formatStderrSuffix()}`))
         for (const cb of this.exitCallbacks) {
           cb(code, this.getStderrTail())
@@ -335,14 +362,19 @@ export class RpcClient implements IPiEngine {
 
     // 收集 stderr 用于错误诊断，同时转发到日志
     this.stderrChunks = []
+    this.stderrTotalBytes = 0
+    this.stderrTruncated = false
     if (proc.stderr) {
       proc.stderr.on('data', (data: Buffer) => {
         const text = data.toString().trimEnd()
         console.error('[rpc:stderr]', text)
-        // 只保留最后 N 行，避免内存泄漏
+        // 全量累计（D4/G4 崩溃取证），超字节上限丢最旧（防异常洪泛无界内存）
         this.stderrChunks.push(text)
-        if (this.stderrChunks.length > STDERR_BUFFER_MAX_LINES) {
-          this.stderrChunks.shift()
+        this.stderrTotalBytes += Buffer.byteLength(text, 'utf8')
+        while (this.stderrTotalBytes > STDERR_CRASH_MAX_BYTES && this.stderrChunks.length > 1) {
+          const dropped = this.stderrChunks.shift()!
+          this.stderrTotalBytes -= Buffer.byteLength(dropped, 'utf8')
+          this.stderrTruncated = true
         }
       })
       // W2：同 stdout，stderr stream 的 'error' 独立于 proc.on('error')。
@@ -524,6 +556,35 @@ export class RpcClient implements IPiEngine {
   onEvent(listener: PiEventListener): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
+  }
+
+  /**
+   * 异常退出时把累计 stderr 全量落盘（D4/G4，file-lock-unification-and-reaper-sink
+   * §3.2-D4 / U3-4）。
+   *
+   * 触发条件：code≠0 且非主动 kill（调用点在 exit handler 的 !this._killing 分支内）。
+   * code=null（信号死亡，如管道断裂后的 SIGKILL）同属异常退出，落盘。
+   * 正常退出（code=0）与主动 kill 流程不写。
+   * 文件：<logsDir>/pi-crash-<date>-<sid>.log（logger.ts writePiCrashLog，复用 pi-*
+   * 命名惯例，保留期清理自动覆盖）。
+   *
+   * best-effort 观测路径：任何失败（logger 未初始化 / 宿主环境未接线该能力，如
+   * 单元测试部分 mock logger 模块）都不得影响 exit 主流程（rejectAll / exitCallbacks
+   * 通知链）——与 logger 模块自身的容错契约同档。失败经 console.error 出声（console
+   * 已被 logger patch，tee 进 runtime 主日志），不静默。
+   */
+  private writeCrashLogIfNeeded(code: number | null): void {
+    if (code === 0) return
+    try {
+      const header = [
+        `pi crashed with code ${code} at ${new Date().toISOString()}`,
+        this.stderrTruncated ? '(stderr truncated: earliest lines dropped, crash buffer exceeded 1MB)' : '',
+        '',
+      ].filter(Boolean).join('\n')
+      writePiCrashLog(this.options.sessionId, `${header}${this.stderrChunks.join('\n')}`)
+    } catch (crashErr) {
+      console.error('[rpc] write pi crash log failed:', crashErr)
+    }
   }
 
   /** 将收集到的 pi stderr 格式化为可读后缀，附到错误消息末尾 */

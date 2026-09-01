@@ -120,7 +120,7 @@ graph TD
 | u-lock-core | committed | 1 | 26 tests passed（4 files）+ 协议互操作探针 7/7（自实现 × proper-lockfile 4.1.2 实库）+ 消费方无波及（llm-shared 50 / bte 244 / runtime parity 3）；deviations: pnpm-lock 伴生 / compromise 测试改写为 external-removal（设计声明无周期 touch 故 compromise 机制不存在）/ 参照按 4.1.2 实装内联位置 / setFileLockLogger 注入装配点 / stale clamp 2000 照抄 |
 | u-bte-guard | committed | 1 | 244 tests passed (13 files)；deviations: index.test.ts 一行模拟失真修复（handler 现读 event.reason）+ reap 抛错不重置 flag（失败兜底交批次 2 触发面 B，注释声明） |
 | u-runtime-lock | pending | 0 | — |
-| u-observability | pending | 0 | — |
+| u-observability | committed | 1 | extension-logger 32 / rpc-client-observability 9 / logger 20 全绿 + check_spawn_env_boundary 违规 0；deviations: stderr 全量内存累计 + 1MB 硬上限（truncated 标注，弃 tee 磁盘）/ writeCrashLogIfNeeded best-effort try-catch（8 个既有测试 mock 缺新导出键，不动领地外）/ writePiCrashLog 复用 createPiStreamWriter（既有 grep 断言禁 appendFileSync） |
 | u-audit | committed | 1 | 清单 5 节落盘：必须接入 2（permission 迁移 / subagent-workflow 六项）·豁免 8（逐包行号级论证）；准则外发现 2 条留痕（system-prompt-trace turn_start 双注册、notify ledger 重复投递窗口——均超出 D3 session_start 守卫语义，后续另案） |
 | u-lock-probe | pending | 0 | — |
 | u-protocol | committed | 1 | 87 tests passed（6 files，新增 13）；deviations: 符号带 BackgroundTask 前缀（session-manager 先例）+ 导出 isGuard/active/terminal helper（u-runtime-reaper 读侧防御）+ MAX_TERMINAL_REGISTRY_ENTRIES 入契约（写终态 RMW 规则） |

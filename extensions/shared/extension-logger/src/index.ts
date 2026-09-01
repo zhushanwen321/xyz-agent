@@ -10,13 +10,25 @@
 // 三层通道：
 //   1. AI 实时    → tool result / block reason（pi 原生，本模块不涉及）
 //   2. 事后排查   → pi.appendEntry（custom entry 不进 LLM 上下文，不显 TUI）
-//   3. 开发者调试 → 文件日志（XYZ_AGENT_DEBUG=1 时写 ~/.pi/agent/logs/，默认 no-op）
+//   3. 开发者调试 → 文件日志，双开关分级（写 <agentDir>/logs/，均未注入默认 no-op）：
+//        - XYZ_AGENT_DEBUG=1 → DEBUG 全量（现状语义，level 原样标注）
+//        - XYZ_AGENT_EXT_LOG=1 → INFO 级落盘（xyz 托管环境由 runtime spawn 时经
+//          buildOutboundChildEnv extras 注入，设计 file-lock-unification-and-reaper-sink
+//          §3.2-D4 / U3-3）+ 7 天保留期清理；debug() 调用此模式下重标 info 写入
+//        - 两变量同时注入按更详细的生效（DEBUG 全量优先）
+//      裸 pi 独立用户（两个变量都未注入）保持 no-op，零磁盘/行为影响。
 //
 // notify（用户操作反馈）刻意不封装——它是 UI 决策，留给各 extension 在命令/视图层
 // 直接调 ctx.ui.notify。
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { appendFileSync, mkdirSync } from "node:fs";
+import {
+	appendFileSync,
+	mkdirSync,
+	readdirSync,
+	statSync,
+	unlinkSync,
+} from "node:fs";
 import { join } from "node:path";
 
 // ============================================================
@@ -32,7 +44,7 @@ import { join } from "node:path";
 //   - key = msg 原文（不包含 data 参数）。若调用方把动态 id 拼进 msg
 //     （如 `session=${id}`），每条 msg 不同则限流不命中。根治靠调用方把
 //     动态值放 data 参数（D4 已声明）。
-//   - fileLog 通道全量不限流（XYZ_AGENT_DEBUG=1 时所有日志写文件）。
+//   - fileLog 通道全量不限流（XYZ_AGENT_DEBUG=1 / XYZ_AGENT_EXT_LOG=1 时日志写文件）。
 //   - Map cap 512 超限时全量清空（简化策略，对齐 cap-1024 先例），
 //     等价于所有 key 窗口重置，防无界增长。
 //
@@ -141,15 +153,19 @@ export interface PiLike {
 	appendEntry?(customType: string, data?: unknown): void;
 }
 
-/** 日志级别。debug = 开发调试；warn/error = 内部降级与失败（事后排查价值）。 */
-export type LogLevel = "debug" | "warn" | "error";
+/** 日志级别。debug = 开发调试；info = XYZ_AGENT_EXT_LOG 模式下 debug() 的落盘标注；warn/error = 内部降级与失败（事后排查价值）。 */
+export type LogLevel = "debug" | "info" | "warn" | "error";
 
 /**
  * Extension logger 接口。方法名即语义——不做运行时 level filtering（pi 不支持，
  * 自建太重）。warn/error 走 appendEntry 持久化；debug 默认 no-op。
  */
 export interface ExtensionLogger {
-	/** 开发调试日志。默认 no-op；XYZ_AGENT_DEBUG=1 时写文件日志。不进 appendEntry。 */
+	/**
+	 * 开发调试日志。默认 no-op；XYZ_AGENT_DEBUG=1 时写文件日志（原级标注）；
+	 * XYZ_AGENT_EXT_LOG=1（无 DEBUG）时以 info 级落盘（托管环境 INFO 观测档）。
+	 * 不进 appendEntry。
+	 */
 	debug(msg: string, data?: unknown): void;
 	/** 内部降级/竞态/IO 失败——appendEntry 持久化，不显 TUI，不进 LLM。 */
 	warn(msg: string, data?: unknown): void;
@@ -326,31 +342,99 @@ function prefixMsg(extName: string, msg: string): string {
 	return msg.startsWith(tag) ? msg : `${tag} ${msg}`;
 }
 
+// ============================================================
+// XYZ_AGENT_EXT_LOG 托管观测档 + 保留期清理
+// ============================================================
+
+/** 托管观测档（XYZ_AGENT_EXT_LOG=1）的日志保留天数，超期文件在首次落盘时清理。 */
+const EXT_LOG_KEEP_DAYS = 7;
+// 一天的毫秒数（数字分隔符形式对齐 session-reader hash-provider 的时间常量惯例）
+const MS_PER_DAY = 86_400_000;
+/** ISO 日期前 10 字符 = "YYYY-MM-DD" */
+const ISO_DATE_PREFIX_LEN = 10;
+
+/**
+ * 保留期清理是否已执行（进程级 once）。
+ *
+ * pi 进程按 session 短命（runtime 每 session 一个独立 pi），进程生命周期清理一次
+ * 足够；无需 timer——惰性挂在首次实际落盘时执行，未落盘（两个开关都没开）则
+ * 永不触发任何 fs 调用（no-op 契约：裸 pi 独立用户零磁盘影响）。
+ */
+let extLogCleanupDone = false;
+
+/**
+ * 清理 `<logDir>` 下超保留期（EXT_LOG_KEEP_DAYS 天）的本包日志文件。
+ *
+ * 只清本包命名惯例内的文件（`<extName>-YYYY-MM-DD.log`，日期后缀 pattern 精确匹配），
+ * 不触碰目录内其他产物。逐文件 best-effort：单个 stat/unlink 失败（并发删除/权限）
+ * 不影响其余文件。读目录失败（目录刚创建为空等）整体跳过。
+ */
+function cleanExpiredExtLogsOnce(logDir: string): void {
+	if (extLogCleanupDone) return;
+	extLogCleanupDone = true;
+	let entries: string[];
+	try {
+		entries = readdirSync(logDir);
+	} catch (readErr) {
+		// 目录不存在/不可读：无清理对象，跳过（首次 mkdir 由调用方完成，此处兜底）
+		void readErr;
+		return;
+	}
+	const cutoff = Date.now() - EXT_LOG_KEEP_DAYS * MS_PER_DAY;
+	for (const name of entries) {
+		if (!/^.+-\d{4}-\d{2}-\d{2}\.log$/.test(name)) continue;
+		const full = join(logDir, name);
+		try {
+			if (statSync(full).mtimeMs < cutoff) {
+				unlinkSync(full);
+			}
+		} catch (fileErr) {
+			// 单文件清理失败不阻断（best-effort，与 fileLog 主路径容错同档）
+			void fileErr;
+		}
+	}
+}
+
+/**
+ * 重置保留期清理的 once 标记（测试用导出，生产代码不调用）。
+ * 对齐 clearRateLimiterState 的测试出口先例——模块级状态跨用例需可重置。
+ */
+export function resetExtLogCleanupForTest(): void {
+	extLogCleanupDone = false;
+}
+
 /**
  * 写文件日志到 `<agentDir>/logs/<extName>-YYYY-MM-DD.log`。
  *
- * 仅在 XYZ_AGENT_DEBUG 环境变量为 "1" 时写入（默认 no-op，生产环境零开销）。
+ * 双开关分级（设计 file-lock-unification-and-reaper-sink §3.2-D4）：
+ * - XYZ_AGENT_DEBUG=1 → DEBUG 全量，level 原样标注（现状语义不变）；
+ * - 仅 XYZ_AGENT_EXT_LOG=1 → INFO 级落盘：debug() 调用重标 info 写入，warn/error 照写；
+ * - 均未注入 → no-op（零 fs 调用，裸 pi 独立用户零磁盘/行为影响）。
  * agentDir 通过 pi 的 SSOT `getAgentDir()` 推导（读
  * `PI_CODING_AGENT_DIR`/`${APP_NAME}_CODING_AGENT_DIR`，默认 `~/.pi/agent`），
  * 与其它 extension 的路径派生保持一致。
+ * 首次实际落盘时顺带执行一次保留期清理（进程级 once）。
  * 写失败静默吞错（文件日志是 best-effort，不应影响主流程）。
  *
  * 线程安全：appendFileSync 保证单次写入原子性；多 worker 并发写同文件时
  * 行可能交错（可接受——debug 日志不要求严格顺序）。
  */
 function fileLog(extName: string, level: LogLevel, msg: string, data?: unknown): void {
-	if (process.env.XYZ_AGENT_DEBUG !== "1") return;
+	const debugMode = process.env.XYZ_AGENT_DEBUG === "1";
+	const extLogMode = !debugMode && process.env.XYZ_AGENT_EXT_LOG === "1";
+	if (!debugMode && !extLogMode) return;
+	// 托管观测档：debug() 调用降档标注为 info（INFO 级观测，非 DEBUG 全量）
+	const effectiveLevel: LogLevel = extLogMode && level === "debug" ? "info" : level;
 	try {
 		const agentDir = getAgentDir();
 		const logDir = join(agentDir, "logs");
 		mkdirSync(logDir, { recursive: true });
-		// ISO 日期前 10 字符 = "YYYY-MM-DD"
-		const ISO_DATE_PREFIX_LEN = 10;
+		cleanExpiredExtLogsOnce(logDir);
 		const today = new Date().toISOString().slice(0, ISO_DATE_PREFIX_LEN);
 		const logFile = join(logDir, `${extName}-${today}.log`);
 		const ts = new Date().toISOString();
 		const dataStr = data !== undefined ? " " + safeStringify(data) : "";
-		appendFileSync(logFile, `${ts} [${level}] ${msg}${dataStr}\n`);
+		appendFileSync(logFile, `${ts} [${effectiveLevel}] ${msg}${dataStr}\n`);
 	} catch (fileErr) {
 		// 文件日志 best-effort：磁盘满/权限问题等不阻断主流程
 		void fileErr;
