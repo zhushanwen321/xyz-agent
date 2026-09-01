@@ -307,6 +307,13 @@ export class SubagentService {
 
   private readonly manifestStore: ManifestStore;
 
+  /**
+   * [T1/PS-9] subagent sessionDir（getSubagentSessionDir 推导，与 store 同源同一 rootCwd）。
+   * 传给 doFinalizeRecord 的 FinalizeDeps.sessionDir——record.sessionFile 缺失时 finalize
+   * 用它做磁盘 identity 反查（marker/alive 清理的依据）。
+   */
+  private readonly sessionsDir: string;
+
   constructor(init: SubagentServiceInit) {
     this.cwd = init.cwd;
     this.modelService = init.modelService;
@@ -323,6 +330,7 @@ export class SubagentService {
     this.rootCwd = envRootCwd && envRootCwd !== "" ? envRootCwd : init.cwd;
     const sessionsDir = getSubagentSessionDir(this.modelService.getAgentDir(), this.rootCwd);
     const recordsDir = getSubagentRecordsDir(this.modelService.getAgentDir(), this.rootCwd);
+    this.sessionsDir = sessionsDir;
     this.manifestStore = new ManifestStore(recordsDir);
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined);
     this.notifier = createNotifier(this.piAdapter());
@@ -1339,6 +1347,7 @@ export class SubagentService {
         modelService: this.modelService,
         pi: this.pi,
         emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
+        sessionDir: this.sessionsDir,
       },
       record,
       doneResult,
@@ -2090,6 +2099,7 @@ export class SubagentService {
         modelService: this.modelService,
         pi: this.pi,
         emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
+        sessionDir: this.sessionsDir,
       },
       record,
       result,

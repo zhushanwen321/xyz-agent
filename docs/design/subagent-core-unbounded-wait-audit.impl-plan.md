@@ -109,6 +109,9 @@ graph TD
 | P-T2b 结论：pi SIGTERM 不级联孤儿后台后代（形态 B 三次复现 NO-CASCADE；仅 bash 前台窗口有 CASCADE）→ 后代补杀为主路径（设计已按此形态） | u-p2 | 与实装源码 killTrackedDetachedChildren 覆盖面互证 | u-t2a 依据 |
 | P-T2c 结论：6 轮真实会话 agent_end→settled 间隔全部 0ms（<1-2ms 同 chunk），显式 compact 30 万 tokens 耗时 40.1s → **10min settled 硬上限维持**（余量 4 个数量级） | u-p2 | 含大上下文样本 | 定案 |
 | 探针均以 pi --no-extensions 形态运行（本机全局 npm 版 pi-subagent-workflow exports 漂移致扩展加载 fatal，环境噪音非本单元处置范围）；P-T2c auto-compact 场景以显式 compact 命令实测作量级代理（400KB 未达该模型阈值） | u-p2 | 报告如实标注；settled 窗口是 core 语义，无扩展形态为最小变量基线 | 已登记 |
+| u-t1 越领地 additive：subagent-service.ts 注入 sessionDir（字段 + 两处 FinalizeDeps.sessionDir，10 行）——ExecutionRecord 无 cwd、ModelConfigService 不暴露 cwd，PS-9 反查的 sessionDir 只能由 SubagentService 注入 | u-t1（违领地但必要性成立，主 agent 核验 diff 仅 3 处 additive 后接受） | u-t1 领地补登 subagent-service.ts 注入点；u-t2b/u-t4/u-t5 共改时以此为基础续作 | 已处置 |
+| agent_end 处置决策点异步化（runAgentEndDisposition fire-and-forget，三分支逐行迁移）：设计未规定同步/异步形态，决策延迟 ≤1s（P-T1 实测 0.3-0.4ms），requestGetStateOnce 永不 reject | u-t1 | 实现形态选择，行为不劣化 | 已处置 |
+| PS-9 同源性观察（计划 §7 待办闭环）：marker 与 sessionFile 非同生同灭（marker 写点以 sessionFile 回填为前提，但 record 序列化/跨进程重建窗口可丢失 sessionFile 而 marker 留存磁盘）→ 反查增益成立，不降优先级 | u-t1 | 设计 §11-5 的答案：不适用同源降级条款 | 已闭环 |
 
 ## 6 状态表
 
@@ -119,7 +122,7 @@ graph TD
 | u-p1 | committed | 1 | P-T1 PASS：6 路并发 0.3-0.4ms 应答（预算 1s，2500 倍余量），⛔门放行 u-t1；probe/p-t1-{lazy-getstate.mjs,report.md} |
 | u-p2 | committed | 1 | P-T2c 定案 10min 维持 / P-T2b NO-CASCADE 后代补杀主路径 / P-T2 否定 30min → 降级 B 裁决（见偏差表）；probe/ 11 文件 |
 | u-t3 | committed | 1 | 六项 + OR-6 主线程半边全绿：orchestration 37 files 504 passed 重跑实证、全量 2868 passed、typecheck 绿、extensions 三连绿 |
-| u-t1 | pending | 0 | — |
+| u-t1 | committed | 1 | 双管落地：execution 88 files 1254 passed（48 重跑实证）+ 全量 2879 passed + typecheck 绿；PS-9 同源性闭环（§11-5 不降级） |
 | u-t2a | pending | 0 | — |
 | u-t2b | pending | 0 | — |
 | u-t4 | pending | 0 | — |

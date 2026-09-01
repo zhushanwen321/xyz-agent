@@ -26,6 +26,7 @@ import type { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import type { RecordStore } from "./record-store.ts";
+import { readIdentityHeader, readIdentityTail } from "./session-reconstructor.ts";
 import { writeCancelledTombstone } from "./tombstone-store.ts";
 import type { AgentResult, ClosedReason, ExecutionRecord } from "./types.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
@@ -42,8 +43,46 @@ export interface FinalizeDeps {
   pi: { appendEntry?: (type: string, data: unknown) => void } | null;
   /** pending-notifications 终态注销（绑定 pi.events.emit，由调用方闭包提供）。 */
   emitUnregister(id: string, status: string): void;
+  /**
+   * [T1/PS-9] subagent sessionDir（getSubagentSessionDir(agentDir, rootCwd)，调用方注入）。
+   *
+   * record.sessionFile 缺失（RC-1 握手失败 + LC-4 反查也未命中的残余形态）时用于磁盘
+   * 反查：按 identity（record.id）扫目录找真实 session 文件，作为 tombstone/finalized
+   * sidecar 与 removeAliveMarker 的依据——消除「sessionFile 缺失 → 终态原因丢失 +
+   * alive marker 残留」。undefined = 调用方无法提供（反查跳过，行为退回修复前）。
+   */
+  sessionDir?: string;
   // [review 修复] 已删除 redeliverPending 回调（MF-1 消费确认制补投）：pendingMessages
   // 三段消费链随 deliverToRunning 一并移除（无生产调用方，死机制）。
+}
+
+/**
+ * [T1/PS-9] 按 record 身份在 sessionDir 反查 session 文件（record.sessionFile 缺失时用）。
+ *
+ * 匹配依据：session JSONL 的 identity custom entry 携带 record id（子进程 session_start
+ * hook 写入），探测函数与 RecordStore 列表扫描同源（readIdentityHeader 头部 64KB →
+ * readIdentityTail 尾部 64KB；续聊场景 identity 靠尾）。readIdentityAnywhere 需全文读，
+ * 本反查是收尾路径的 best-effort，不做。
+ *
+ * @returns 匹配到的 session 文件绝对路径；目录不可读 / 无匹配返回 undefined（不抛）。
+ */
+function findSessionFileByRecordIdentity(
+  sessionDir: string,
+  recordId: string,
+): string | undefined {
+  let names: string[];
+  try {
+    names = fs.readdirSync(sessionDir);
+  } catch {
+    return undefined; // 目录缺失/不可读 → 反查跳过，行为退回无反查
+  }
+  for (const name of names) {
+    if (!name.endsWith(".jsonl")) continue;
+    const full = path.join(sessionDir, name);
+    const recon = readIdentityHeader(full) ?? readIdentityTail(full);
+    if (recon?.id === recordId) return full;
+  }
+  return undefined;
 }
 
 /**
@@ -60,6 +99,21 @@ export async function doFinalizeRecord(
   status: "closed",
   closedReason?: ClosedReason,
 ): Promise<void> {
+  // [T1/PS-9] sessionFile 缺失时 sessionDir 反查（放在一切步骤前，让 archive 投影 /
+  // Step 3 marker / Step 4 manifest 统一受益）。RC-1（握手失败）+ LC-4（收尾反查未命中）
+  // 的残余形态下，磁盘上 session 文件仍可能真实存在（identity 携带 record.id）——
+  // 反查命中则 tombstone/finalized sidecar 与 removeAliveMarker 有了依据，终态原因
+  // 不再丢失、alive marker 不再残留；未命中则保持旧行为（best-effort 跳过）。
+  if (!record.sessionFile && deps.sessionDir) {
+    const resolved = findSessionFileByRecordIdentity(deps.sessionDir, record.id);
+    if (resolved) {
+      record.sessionFile = resolved;
+      logger.warn(
+        `[subagent] finalizeRecord: sessionFile was missing, resolved via sessionDir identity lookup: ${resolved}`,
+      );
+    }
+  }
+
   // ── Step 0: collectPatch（best-effort）──
   // [MF#3] patchFile 写到 worktree 之外（sessionsDir/<branch>.patch），避免被 cleanup 删除；
   //        路径回填 record.patchFile，供调用方（tool result / /subagents list）应用。

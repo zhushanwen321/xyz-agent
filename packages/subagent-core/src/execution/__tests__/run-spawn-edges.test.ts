@@ -13,6 +13,7 @@
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -79,6 +80,8 @@ vi.mock("../temp-prompt.ts", () => ({
 }));
 
 import { killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, maxTurnsToWatchdogMs, SPAWN_WATCHDOG_ENV } from "../session-runner.ts";
+import { writeAliveMarker } from "../alive-store.ts";
+import { getSubagentSessionDir } from "../path-encoding.ts";
 import { readActivePendingFromSessionFile } from "../session-pending.ts";
 import {
   emitStdoutLine,
@@ -775,6 +778,216 @@ describe("runSpawn", () => {
       expect(result.success).toBe(true);
       // turn_end 被处理 → turnCount=1
       expect(record.turnCount).toBe(1);
+    });
+  });
+
+  // ── 4. [T1/RC-1+RC-2] agent_end 惰性回补 + [T1/LC-4] 收尾反查 ──
+  //
+  // RC-1：RPC mode 的 get_state 握手一次性（7s 预算耗尽永不再试），sessionFile 成为
+  // 永久缺失。T1 双管：
+  //   ① agent_end 决策点发现 sessionFile 缺失 → 现场单次 get_state（idle 子进程毫秒级
+  //      应答，探针 P-T1）回填后走正常三分支；
+  //   ② 回补失败不重试 → 既有保守分支（行为不劣化）；
+  //   ③ close 收尾 findSessionFileByHeaderId 兜底移出 if (record.sessionFile) 守卫——
+  //      「sessionId 有、sessionFile 无」形态（两字段独立采集）也做 sessionDir 反查。
+  //
+  // 测试形态：不 emit header（RPC mode）→ record.sessionFile 只能靠 get_state 回填。
+  // stdin 上第 1 个 get_state 是 spawn 握手（测试不回应 = 握手失败），第 2 个是 agent_end
+  // 惰性回补（按用例决定回应与否）。
+  describe("[T1] agent_end 惰性回补 + LC-4 收尾反查", () => {
+    const mockPending = vi.mocked(readActivePendingFromSessionFile);
+    const mockWriteAliveMarker = vi.mocked(writeAliveMarker);
+    const mockReaddirSync = vi.mocked(fs.readdirSync);
+
+    /** 统计 stdin 收到的 get_state 请求数（握手 1 次 + agent_end 惰性回补 1 次）。 */
+    function countGetStateRequests(child: FakeChild): { seen: number } {
+      const counter = { seen: 0 };
+      child.stdin.on("data", (data: Buffer | string) => {
+        const text = typeof data === "string" ? data : data.toString();
+        for (const line of text.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            if ((JSON.parse(line) as { type?: string }).type === "get_state") counter.seen++;
+          } catch {
+            // prompt 命令等非 JSON 行忽略
+          }
+        }
+      });
+      return counter;
+    }
+
+    /** 只对第 N 次（1-based）get_state 回应 response（其余不回应 = 握手失败）。 */
+    function respondToNthGetState(
+      child: FakeChild,
+      nth: number,
+      data: Record<string, unknown>,
+    ): void {
+      let seen = 0;
+      child.stdin.on("data", (chunk: Buffer | string) => {
+        const text = typeof chunk === "string" ? chunk : chunk.toString();
+        for (const line of text.split("\n")) {
+          if (!line.trim()) continue;
+          let cmd: { type?: string; id?: string };
+          try {
+            cmd = JSON.parse(line) as { type?: string; id?: string };
+          } catch {
+            continue;
+          }
+          if (cmd.type !== "get_state" || !cmd.id) continue;
+          seen++;
+          if (seen === nth) {
+            emitStdoutLine(child, {
+              type: "response",
+              command: "get_state",
+              success: true,
+              id: cmd.id,
+              data,
+            });
+          }
+        }
+      });
+    }
+
+    /** 轮询等待条件（真实 timers；vi.waitFor 在本 vitest 版本下偶发过早，见 spawn-mock 注释）。 */
+    async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (!cond()) {
+        if (Date.now() > deadline) throw new Error("condition not met within timeout");
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    }
+
+    // ① 握手失败（sessionFile 空）→ agent_end 惰性 get_state 回填 → 正常三分支（final kill）
+    it("① 握手失败 sessionFile 缺失 → agent_end 惰性 get_state 回填 → 无后代走 final kill（非保守不杀）", async () => {
+      // 回补成功后判定：无活跃后代 → final kill 分支（若仍走保守分支则不会 kill，断言失败）
+      mockPending.mockReturnValue({ count: 0 });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: lazy-backfill", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+      const counter = countGetStateRequests(child);
+      // 第 1 个 get_state（spawn 握手）不回应；第 2 个（agent_end 惰性回补）回应完整数据
+      const expectedSessionFile =
+        "/tmp/test/agents/subagents/--tmp-test--/sessions/lazy-backfill.jsonl";
+      respondToNthGetState(child, 2, {
+        sessionFile: expectedSessionFile,
+        sessionId: "lazy-sess",
+      });
+
+      // 不 emit header（RPC mode 形态）：agent_end 时 record.sessionFile 缺失
+      emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+
+      // 决策点异步：惰性 get_state → 回填 → readActivePending(count=0) → final kill
+      await waitFor(() => child.killed);
+      expect(child.killSignal).toBe("SIGTERM");
+
+      // 回填落地：record.sessionFile + alive marker（对齐 finishHandshake 回填面）
+      expect(record.sessionFile).toBe(expectedSessionFile);
+      expect(mockWriteAliveMarker).toHaveBeenCalledWith(
+        expectedSessionFile,
+        expect.objectContaining({ pid: child.pid, id: "lazy-sess" }),
+      );
+      // 惰性请求确实发出：握手 1 次 + agent_end 惰性 1 次
+      expect(counter.seen).toBeGreaterThanOrEqual(2);
+
+      // 收尾：close 让 runSpawn resolve
+      child.stdout.end();
+      child.stderr.end();
+      child.emit("close", 143);
+      const result = await promise;
+      expect(result.success).toBe(true);
+      expect(result.sessionFile).toBe(expectedSessionFile);
+    });
+
+    // ② 回补超时/失败 → 仍走保守分支（行为不劣化）
+    it("② 回补无响应超时 → record.sessionFile 仍缺失 → 保守不杀（不劣化为 final kill）", async () => {
+      // mock 判定：sessionFile 缺失形态返回 error（真实现语义，见 session-pending.ts:85）
+      mockPending.mockReturnValue({ count: 0, error: "no sessionFile (handshake not settled)" });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: lazy-timeout", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+      const counter = countGetStateRequests(child);
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+        // stdin flush 依赖真实事件循环（setImmediate 不 fake）：决策点已发出惰性 get_state
+        await new Promise((r) => setImmediate(r));
+        // 惰性请求已发出（握手 1 + 惰性 1），但无人回应
+        expect(counter.seen).toBe(2);
+        expect(child.killed).toBe(false);
+
+        // 1s 回补预算到期：空结果 → 不重试 → readActivePending error → 保守分支
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(record.sessionFile).toBeUndefined();
+        expect(child.killed).toBe(false); // 保守不杀
+
+        // maxTurns 未传（opts 默认）+ env 未设 → 保守分支不 re-arm watchdog，不限时等待
+        await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+        expect(child.killed).toBe(false);
+
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 143);
+        const result = await promise;
+        // 进程最终由 close 收尾（保守分支不吞掉 runSpawn 的完成）
+        expect(result.success).toBe(true);
+        expect(record.sessionFile).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // ③ [T1/LC-4] sessionId 有 + sessionFile 无 → close 收尾 findSessionFileByHeaderId 可达
+    // 形态说明：握手只回 sessionId 时握手自身 7s 预算耗尽才 settle（其 timer 创建于
+    // useFakeTimers 之前，fake advance 驱不动）——本用例经 agent_end 惰性回补只回
+    // sessionId，同产「handshakeResult.sessionId 有、record.sessionFile 无」形态，
+    // 且顺带覆盖惰性回补的 sessionId 补入 handshakeResult 分支（close 收尾 lookupId 源）。
+    it("③ LC-4: 惰性回补只回 sessionId（sessionFile 仍无）→ close 收尾 sessionDir 反查修正 record.sessionFile", async () => {
+      // sessionFile 缺失 → 决策点惰性回补；回补判定保守（error → 不杀）
+      mockPending.mockReturnValue({ count: 0, error: "no sessionFile (handshake not settled)" });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: lc4-lookup", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+      // 第 2 个 get_state（惰性回补）只回 sessionId（两字段独立采集的 RC-1 残余形态）
+      respondToNthGetState(child, 2, { sessionId: "sess-lc4" });
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+        // flush：惰性 get_state 写出 + response 回流 → 回补拿到 sessionId（无 sessionFile）
+        await new Promise((r) => setImmediate(r));
+        await new Promise((r) => setImmediate(r));
+        await vi.advanceTimersByTimeAsync(1000); // 回补预算到期兜底（response 已先行到达）
+
+        // 保守分支：sessionFile 仍缺失 → 不杀（LC-4 修复前的死路：无任何反查可达）
+        expect(record.sessionFile).toBeUndefined();
+        expect(child.killed).toBe(false);
+
+        // 兜底查找的目录命中项：文件名格式 <timestamp>_<sessionId>.jsonl
+        const ctx = makeCtx();
+        const sessionDir = getSubagentSessionDir(ctx.agentDir, ctx.rootCwd);
+        const matchedName = "20260901T12000000_sess-lc4.jsonl";
+        mockReaddirSync.mockReturnValue([matchedName, "unrelated_other.jsonl"]);
+
+        // close 收尾：lookupId = handshakeResult.sessionId（惰性回补补入）→ 反查命中
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 0);
+        await promise;
+
+        const expected = path.join(sessionDir, matchedName);
+        expect(record.sessionFile).toBe(expected);
+        // findSessionFileByHeaderId 真实执行过（readdirSync 收到 sessionDir）
+        expect(mockReaddirSync).toHaveBeenCalledWith(sessionDir);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
