@@ -42,6 +42,8 @@ import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
 import { validateRunArgs } from "./args-validator.ts";
 import {
   closeOutInFlightCalls,
+  emitPendingUnregister,
+  emitTerminalSideEffects,
   handleWorkerError,
   handleWorkerExit,
   handleWorkerMessage,
@@ -265,20 +267,6 @@ export async function runWorkflow(
     { startedAt: new Date().toISOString() },
   );
 
- // signal abort → abortRun（[OR-7] 命名 listener + run 终态移除，注册表
- // signalAbortDisposers；触发时自移除 = 显式 once 语义）
-  if (signal) {
-    const onAbort = (): void => {
-      disposeSignalAbortListener(run);
-      void abortRun(runId, deps, "External signal aborted").catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.error(`[workflow] abortRun on signal failed: ${msg}`);
-      });
-    };
-    signal.addEventListener("abort", onAbort);
-    signalAbortDisposers.set(run, () => signal.removeEventListener("abort", onAbort));
-  }
-
  // 构造 handlers + runtime（worker + controller）
   const handlers = makeHandlers(run, deps);
   const controller = new AbortController();
@@ -309,6 +297,26 @@ export async function runWorkflow(
  // I1 跳过窗口（running 而 runtime undefined），后移保证窗口对外不可见；
  // scheduleTimeBudget/worker.start 抛错时 run 未注册，无孤儿 run 残留）
   deps.runs.set(runId, run);
+
+ // signal abort → abortRun（[OR-7] 命名 listener + run 终态移除，注册表
+ // signalAbortDisposers；触发时自移除 = 显式 once 语义）。
+ // [B-2] 注册点后移到全部 fail-fast throw（assertSafeTimerDelay / workerHost.start）
+ // 成功之后——旧实现先注册 listener，scheduleTimeBudget/start 两条 throw 路径 run
+ // 永不到终态，disposeSignalAbortListener 永不被调，同 signal 重试每次泄漏一个
+ // listener（MaxListeners 告警面）。移后 throw 路径天然未注册，零泄漏；首个真正
+ // 副作用前完成校验的语义保持（addEventListener 本身也是设计意义上的副作用）。
+ // 注册点到 store.save 之间无 await（同步段），signal 在此窗口 abort 不可能丢失。
+  if (signal) {
+    const onAbort = (): void => {
+      disposeSignalAbortListener(run);
+      void abortRun(runId, deps, "External signal aborted").catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`[workflow] abortRun on signal failed: ${msg}`);
+      });
+    };
+    signal.addEventListener("abort", onAbort);
+    signalAbortDisposers.set(run, () => signal.removeEventListener("abort", onAbort));
+  }
 
   await deps.store.save(run);
   deps.log?.("debug", "workflow:lifecycle", "run saved", { runId, status: run.state.status });
@@ -376,10 +384,10 @@ export async function abortRun(
   await deps.store.save(run);
   deps.log?.("debug", "workflow:lifecycle", "abortRun transition done", { runId, reason: run.state.reason });
  // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
-  deps.log?.("debug", "workflow:lifecycle", "emit pending:unregister", { runId, reason: run.state.reason });
-  deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
-  deps.log?.("debug", "workflow:lifecycle", "emit pending:unregister done", { runId });
-  deps.onRunDone?.(run);
+ // [OR-4][B-4] M12 同款围栏（emit pending:unregister + onRunDone 各自独立 try）——
+ // listener 同步抛错不再跳过 onRunDone 或把错误抛给 abort 调用方；错误 error 留痕后
+ // 本函数仍按 abort 成功语义正常返回（内存态已终态）。
+  emitTerminalSideEffects(run, deps, `abortRun (done,${doneReason})`);
 }
 
 // ── terminateRunningRuns（session 切换/关闭：终止全部 running run） ────────
@@ -428,8 +436,10 @@ export async function terminateRunningRuns(
       // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
       closeOutInFlightCalls(run);
       await deps.store.save(run);
-      // C-4: run 到达 done 终态 → 注销 pending-notification（reason 固定 "failed"）
-      deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: "failed" });
+      // C-4: run 到达 done 终态 → 注销 pending-notification（reason 固定 "failed"）。
+      // [B-4] M12 同款围栏：emit 单独 try（listener 同步抛错 error 留痕不中断本 run
+      // 收尾日志与其余 run 的终止；本路径不调 onRunDone——session 离开语境不发完成通知）。
+      emitPendingUnregister(run, deps, "terminateRunningRuns");
       deps.log?.("debug", "workflow:lifecycle", "run terminated", { runId: run.runId, reason: run.state.reason });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

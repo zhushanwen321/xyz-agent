@@ -397,6 +397,25 @@ describe("abortRun", () => {
     expect(deps.onRunDone).not.toHaveBeenCalled();
   });
 
+  it("[B-4] eventBus listener 抛错 → abortRun 不向调用方抛错、onRunDone 仍执行", async () => {
+    const { run, terminate } = makeRunningRealRun("wf-abort-fence");
+    const deps = makeDeps();
+    deps.eventBus.emit = vi.fn(() => {
+      throw new Error("listener exploded");
+    });
+    deps.runs.set("wf-abort-fence", run);
+
+    // 旧实现裸调 emit：listener 抛错 → 异常上抛给 tool 调用方 + 跳过 onRunDone
+    await expect(abortRun("wf-abort-fence", deps, "abort with broken bus")).resolves.toBeUndefined();
+
+    // abort 成功语义保持：终态转换/terminate 照常完成
+    expect(run.state.status).toBe("done");
+    expect(run.state.reason).toBe("aborted");
+    expect(terminate).toHaveBeenCalledTimes(1);
+    // 独立围栏：onRunDone 不被 emit 故障跳过
+    expect(deps.onRunDone).toHaveBeenCalledTimes(1);
+  });
+
   it("自定义 doneReason（time_limited）", async () => {
     const { run } = makeRunningRealRun("wf-abort-3");
     const deps = makeDeps();
@@ -472,6 +491,26 @@ describe("terminateRunningRuns", () => {
     expect(terminate).toHaveBeenCalledTimes(1);
     expect(deps.store.save).toHaveBeenCalledTimes(1);
     expect(deps.store.save).toHaveBeenCalledWith(run);
+  });
+
+  it("[B-4] eventBus listener 抛错 → 不向调用方抛错、本 run 收尾完成、其余 run 继续终止", async () => {
+    const { run: a, terminate: terminateA } = makeRunningRealRun("wf-term-fence-a");
+    const { run: b, terminate: terminateB } = makeRunningRealRun("wf-term-fence-b");
+    const deps = makeDeps();
+    deps.runs.set("wf-term-fence-a", a);
+    deps.runs.set("wf-term-fence-b", b);
+    // 仅 runA 的 emit 抛错（按 payload id 判别模拟坏 listener）
+    deps.eventBus.emit = vi.fn((_event: string, payload: { id: string }) => {
+      if (payload.id === "wf-term-fence-a") throw new Error("listener exploded");
+    });
+
+    await expect(terminateRunningRuns(deps, "Session switched: run terminated")).resolves.toBeUndefined();
+
+    // 两个 run 都走到终态（runA 的 emit 故障不中断批量收尾）
+    expect(a.state.reason).toBe("failed");
+    expect(b.state.reason).toBe("failed");
+    expect(terminateA).toHaveBeenCalledTimes(1);
+    expect(terminateB).toHaveBeenCalledTimes(1);
   });
 
   it("单 run save 抛错不中断其余（其余 run 仍落盘 + unregister）", async () => {

@@ -17,6 +17,9 @@
  *   快照 entry（pi.appendEntry）——pi 文件（session JSONL）是 workflow 数据持久化
  *   权威，state 文件降级为纯性能缓存（读序 = entry > state 文件 > 空，写路径保留）。
  *   旧 `workflow-state-link` 指针 entry 退役（loadAll 保留兼容读，存量 run 不丢）。
+ *   [B-1/OR-5 同源] entry append 按 runId 节流（见 save 注释「entry append 节流」），
+ *   pi session JSONL 是 append-only 文件，节流前每次 flush 全量 append 会随 run
+ *   时长累积出单 run O(n²) 磁盘占用。
  *
  * save 去抖语义（cw swf-perf wave2）：
  * - **热路径**（running 中间态，本实例已写过）：per-runId pending 批合并——窗口内
@@ -27,9 +30,13 @@
  *   同步挂链 flush 绕过 timer——首写立即可见（跨 session 重启后 loadAll 从 entry
  *   发现 run）、done 立即落盘（终态优先持久化：transition("done") 后的 save
  *   不进去抖批，去抖窗口内的崩溃不吞终态）。
- * - workflow-record entry 每次成功 flush 都 append（含热路径中间态 flush）——
- *   entry 流 = 落盘历史（最后一条 = 最后一次成功 flush，崩溃丢失边界语义与
- *   state 文件路径一致）；去抖已把 flush 频率控制在与 agent-call 周期同量级。
+ * - workflow-record entry append 节流（[B-1]，语义对齐 core FileRunStore.save
+ *   的 OR-5 ⑥a 节流，间隔常量单源复用 core DEFAULT_SAVE_MIN_INTERVAL_MS）：
+ *   running 中间态的 entry append 有最小间隔（缺省 60s；0 = 禁用），终态 flush
+ *   的 entry 永不节流（最终状态必进 pi 权威文件，loadAll/恢复不丢终态）；
+ *   state 文件 writeFile 不节流（rewrite mode 覆盖写，无累积）。节流窗口内的
+ *   entry 跳过 = pi 文件最后一条 entry 最多落后真实状态一个窗口，崩溃语义与
+ *   未落盘 running 尾部丢失同源（kill-9 恢复收编）。
  * - per-runId 串行 flush 链：同 runId 的 flush 排队顺序执行（不跳过、永不并发
  *   writeFile），链尾吞错防断链——错误只经各 save() Promise 的 settlers 传播。
  * - dispose()：幂等（缓存自身 Promise）；刷全部 pending 批 + await 全部 in-flight
@@ -66,7 +73,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import type { CustomEntry, ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_STATE_MAX_RUNS } from "@zhushanwen/subagent-core/orchestration/file-run-store.ts";
+import {
+  DEFAULT_SAVE_MIN_INTERVAL_MS,
+  DEFAULT_STATE_MAX_RUNS,
+} from "@zhushanwen/subagent-core/orchestration/file-run-store.ts";
 import { getLogger } from "@zhushanwen/subagent-core/core/logger.ts";
 
 import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
@@ -327,6 +337,12 @@ interface JsonlRunStoreOptions {
   ctx?: ExtensionContext;
   /** save 去抖窗口（ms），默认 {@link DEFAULT_SAVE_DEBOUNCE_MS}。 */
   saveDebounceMs?: number;
+  /**
+   * workflow-record entry append 节流最小间隔（ms）；0 = 禁用节流。缺省
+   * {@link DEFAULT_SAVE_MIN_INTERVAL_MS}（单源复用 core 常量）。测试经此注入小窗口
+   * （fake timers 推进）。
+   */
+  entryAppendMinIntervalMs?: number;
 }
 
 export class JsonlRunStore {
@@ -334,10 +350,19 @@ export class JsonlRunStore {
   private readonly pi?: ExtensionAPI;
   private readonly ctx?: ExtensionContext;
   private readonly saveDebounceMs: number;
+  /** workflow-record entry append 节流最小间隔（ms），0 = 禁用。 */
+  private readonly entryAppendMinIntervalMs: number;
   /** per-runId 去抖批（热路径）。 */
   private readonly pending = new Map<string, PendingSaveBatch>();
   /** 本实例已至少成功发起过一次 flush 的 runId（冷/热路径判据）。 */
   private readonly writtenOnce = new Set<string>();
+  /**
+   * per-runId 上次 workflow-record entry append 时刻（节流判据，时间源 Date.now()——
+   * fake timers 下可推进）。终态 append 后删（终态后 runId 不再 save）；残留条目
+   * 只出现在 running 中 run 消失场景，单条可忽略（对齐 core FileRunStore.lastSavedAt
+   * 的取舍先例）。
+   */
+  private readonly lastEntryAppendAt = new Map<string, number>();
   /**
    * per-runId 串行 flush 链。同 runId 的 flush 排队顺序执行（排队不跳过——
    * 跳过会丢最新状态且打破后写覆盖前写的单调性），不同 runId 互不阻塞。
@@ -353,6 +378,10 @@ export class JsonlRunStore {
     this.pi = opts.pi;
     this.ctx = opts.ctx;
     this.saveDebounceMs = opts.saveDebounceMs ?? DEFAULT_SAVE_DEBOUNCE_MS;
+    this.entryAppendMinIntervalMs = Math.max(
+      0,
+      opts.entryAppendMinIntervalMs ?? DEFAULT_SAVE_MIN_INTERVAL_MS,
+    );
   }
 
   /** State directory: <sessionDir>/workflow-state/ */
@@ -513,13 +542,33 @@ export class JsonlRunStore {
       // serialize-at-flush：写 flush 时刻的最新聚合状态（latestRun 语义）
       const snapshot = toRunSnapshot(run);
       await fs.promises.writeFile(filePath, JSON.stringify(snapshot) + "\n", "utf8");
-      // W17 [D4]：每次成功 flush 同步 append 自描述 workflow-record entry（同一份
-      // snapshot，entry 与 state 文件内容一致）。pi 文件是 workflow 数据持久化权威
-      //（loadAll 优先从 entry 重建），state 文件降级纯性能缓存。pi 未注入（测试）时跳过。
-      this.pi?.appendEntry(
-        WORKFLOW_RECORD_CUSTOM_TYPE,
-        toWorkflowRecordEntryData(snapshot),
-      );
+      // W17 [D4]：成功 flush 同步 append 自描述 workflow-record entry（同一份 snapshot，
+      // entry 与 state 文件内容一致）。pi 文件是 workflow 数据持久化权威（loadAll 优先
+      // 从 entry 重建），state 文件降级纯性能缓存。pi 未注入（测试）时跳过。
+      // [B-1] entry append 节流（语义对齐 core FileRunStore.save OR-5 ⑥a）：running
+      // 中间态距上次 append 不足间隔 → 跳过（pi session JSONL append-only，节流前
+      // 每次 flush 全量 append 累积单 run O(n²) 磁盘）；终态永不节流（最终状态必进
+      // pi 权威文件）；间隔 0 禁用。判据在 append 成功后更新——本调用点位于 writeFile
+      // 成功之后，writeFile 抛错时判据不更新，不吞下一次重试机会。
+      const isTerminal = run.state.status !== "running";
+      const now = Date.now();
+      const lastAppendAt = this.lastEntryAppendAt.get(runId);
+      if (
+        this.entryAppendMinIntervalMs <= 0 ||
+        isTerminal ||
+        lastAppendAt === undefined ||
+        now - lastAppendAt >= this.entryAppendMinIntervalMs
+      ) {
+        this.pi?.appendEntry(
+          WORKFLOW_RECORD_CUSTOM_TYPE,
+          toWorkflowRecordEntryData(snapshot),
+        );
+        if (isTerminal) {
+          this.lastEntryAppendAt.delete(runId);
+        } else {
+          this.lastEntryAppendAt.set(runId, now);
+        }
+      }
       // OR-5 ⑥b 磁盘保留清理（默认开）：新 run state 文件首写成功后触发（rollbackFirstWrite
       // 即 save() 冷路径传入的 isFirstWrite——「本实例首次写该 runId」≈ 新文件落盘时刻，
       // 每个 run 只清一次，热路径 flush 不重复扫描目录）。prune 内部吞错不抛，

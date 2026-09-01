@@ -11,6 +11,8 @@
  *   触发时自清的泄漏（同 signal 连续多 run 泄漏 listener）
  * - [OR-8] abortRun 收口残留 in-flight call（先收口再落盘）
  */
+import { getEventListeners } from "node:events";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -314,5 +316,42 @@ describe("[OR-7] signal abort listener run 终态移除", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(deps.runs.get(runId)?.state.reason).toBe("completed");
     expect(deps.store.save).toHaveBeenCalledTimes(2); // runWorkflow 启动 + return 各 1 次
+  });
+});
+
+// ── [B-2] fail-fast throw 路径不泄漏 signal abort listener ──────────────
+
+describe("[B-2] runWorkflow fail-fast throw 路径不泄漏 signal abort listener", () => {
+  /** signal 上当前真实挂载的 abort listener 数（EventTarget 权威查询，非 spy 计数）。 */
+  function liveListenerCount(signal: AbortSignal): number {
+    return getEventListeners(signal).length;
+  }
+
+  it("budgetTimeMs 越界 fail-fast 重试 12 次 → 每次拒绝后 listener 计数归零（无 MaxListeners 累积）", async () => {
+    const deps = makeDeps();
+    const controller = new AbortController();
+    // 越界值（>2^31-1）→ assertSafeTimerDelay 在 scheduleTimeBudget 内 fail-fast throw
+    const spec: RunSpec = { ...makeSpec(), budgetTimeMs: 3_000_000_000 };
+
+    for (let i = 0; i < 12; i++) {
+      await expect(runWorkflow(spec, deps, controller.signal)).rejects.toThrow(/2147483647/);
+      // 旧实现 listener 先注册、throw 路径不 dispose——12 次重试后泄漏 12 个
+      expect(liveListenerCount(controller.signal)).toBe(0);
+    }
+    expect(deps.runs.size).toBe(0); // fail-fast：无孤儿 run
+  });
+
+  it("workerHost.start 抛错重试 12 次 → 每次拒绝后 listener 计数归零", async () => {
+    const deps = makeDeps();
+    deps.workerHost.start = vi.fn(() => {
+      throw new Error("worker boot failed");
+    });
+    const controller = new AbortController();
+
+    for (let i = 0; i < 12; i++) {
+      await expect(runWorkflow(makeSpec(), deps, controller.signal)).rejects.toThrow("worker boot failed");
+      expect(liveListenerCount(controller.signal)).toBe(0);
+    }
+    expect(deps.runs.size).toBe(0);
   });
 });

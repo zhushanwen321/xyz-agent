@@ -149,10 +149,9 @@ function _safePost(msg, context) {
 
   function log(msg) {
     var _logText = String(msg);
-    // [OR-6/T7④] 同时记入 _workerLogs：主线程对 {type:"log"} 消息暂无消费 case
-    //（error-recovery handleWorkerMessage switch），独立 log 消息会被忽略；记入
-    // _workerLogs 后随 return/error 消息带回主线程落 errorLogs，脚本 log 不再零可见。
-    try { _pushWorkerLog("log", [_logText]); } catch(e) { /* swallow */ }
+    // [B-3] 单通路：只发独立 {type:"log"} 消息，主线程 handleWorkerLog 即时消费
+    //（push 进 errorLogs）。不再同时记入 _workerLogs——旧双通路让同一日志随
+    // return/error 的 workerLogs 再带回一份，errorLogs 占两格、TUI 双份。
     try { parentPort.postMessage({ type: "log", phase: _currentPhase, message: _logText }); } catch(e) { /* swallow */ }
   }
 
@@ -264,7 +263,11 @@ function _safePost(msg, context) {
           if (opts.returnMeta === true) {
             _pending.resolve({ value: "", error: _timeoutMsg });
           } else {
-            _pending.resolve({ content: "", error: _timeoutMsg });
+            // [B-5] 非 returnMeta 超时 resolve 单值错误消息字符串（对齐 agent-result
+            // 失败路径 resolve 单值 _value = parsedOutput ?? content 的形态）——
+            // 旧实现 resolve {content:"", error} 对象，字符串消费型脚本（r.trim() 类）
+            // 在超时路径 TypeError。
+            _pending.resolve(_timeoutMsg);
           }
         }, opts.timeoutMs);
         if (_pending.timer && typeof _pending.timer.unref === "function") { _pending.timer.unref(); }

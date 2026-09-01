@@ -89,13 +89,13 @@ function isLog(m: unknown): m is LogMsg {
 interface RunResult {
   /** 收到的 return 消息的 result 字段（脚本正常结束时）。 */
   returnValue?: unknown;
-  /** return 消息带回的 workerLogs（[OR-6/T7④] log() 内容经此通路回主线程）。 */
+  /** return 消息带回的 workerLogs（[B-3] 起只含 console.* 捕获条目，log() 不再走此通路）。 */
   returnWorkerLogs?: unknown[];
   /** 收到的 error 消息的 error 字段（脚本 throw 时）。 */
   errorMessage?: string;
   /** error 消息带回的 workerLogs（验证诊断不丢）。 */
   errorWorkerLogs?: unknown[];
-  /** 收到的 {type:"log"} 独立消息列表（协议通路不断回）。 */
+  /** 收到的 {type:"log"} 独立消息列表（[B-3] 起 log() 的唯一通路）。 */
   logMessages: LogMsg[];
   /** Worker exit code（0=正常，1=崩溃）。 */
   exitCode?: number;
@@ -105,6 +105,15 @@ interface RunResult {
   agentCalls: AgentCallMsg[];
   /** 收到的 workflow-call 消息列表。 */
   workflowCalls: WorkflowCallMsg[];
+}
+
+/** workerLogs 条目守卫收窄 + message 包含判定（元素类型 unknown，断言前先收窄）。 */
+function someLogMessageContains(logs: unknown[] | undefined, text: string): boolean {
+  return (logs ?? []).some((l) => {
+    if (typeof l !== "object" || l === null) return false;
+    const message = (l as { message?: unknown }).message;
+    return typeof message === "string" && message.includes(text);
+  });
 }
 
 interface RunOptions {
@@ -400,14 +409,14 @@ describe("buildWorkerScript runtime — 之前缺失的路径覆盖", () => {
   });
 });
 
-// ── OR-6/T7④：log() 全局函数的双通路可观测性 ─────────────────────────
-// 修复前：log() 只 post 独立 {type:"log"} 消息，主线程 handleWorkerMessage switch
-// 无该 case → 脚本 log 静默丢弃（设计 §4.3 OR-6「协议文档与实现漂移零可观测」）。
-// 修复后：log() 同时记入 _workerLogs，随 return/error 消息带回主线程（落
-// run.state.errorLogs）；独立 {type:"log"} 消息保留（协议不回退，留给主线程接线）。
+// ── [B-3] log() 单通路可观测性 ─────────────────────────────────────
+// 旧双通路（log() 同时 post 独立消息 + 记入 _workerLogs 随 return/error 带回）让
+// 同一日志在主线程 errorLogs 占两格、TUI 双份。修复后 log() 只发独立 {type:"log"}
+// 消息，主线程 handleWorkerLog 即时消费（error-recovery.ts）；崩溃场景丢 log 条目
+// 可接受（log 是 T7 补充可观测）。
 
-describe("buildWorkerScript runtime — OR-6 log() 双通路", () => {
-  it("log() 内容随 return 消息的 workerLogs 带回（不再静默丢弃）", async () => {
+describe("buildWorkerScript runtime — [B-3] log() 单通路", () => {
+  it("log() 发出独立 {type:\"log\"} 消息且携带 phase（主线程即时消费的唯一通路）", async () => {
     const script = `
       phase("build");
       log("hello from script");
@@ -415,38 +424,38 @@ describe("buildWorkerScript runtime — OR-6 log() 双通路", () => {
     `;
     const res = await runWorker(script);
     expect(res.workerError).toBeUndefined();
-    // 通路 1（新增）：workerLogs 随 return 带回，含 phase 信息缺失时的文本本体
-    expect(res.returnWorkerLogs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ level: "log", message: "hello from script" }),
-      ]),
-    );
+    expect(res.logMessages).toEqual([{ type: "log", phase: "build", message: "hello from script" }]);
     expect(res.exitCode).not.toBe(1);
   });
 
-  it("独立 {type:\"log\"} 消息仍发出且携带 phase（协议通路不回退）", async () => {
+  it("log() 内容不再随 return 消息的 workerLogs 带回（双份入账已退役）", async () => {
     const script = `
       phase("build");
       log("hello from script");
       return { ok: true };
     `;
     const res = await runWorker(script);
-    expect(res.logMessages).toEqual([{ type: "log", phase: "build", message: "hello from script" }]);
+    expect(res.workerError).toBeUndefined();
+    // workerLogs 中不得出现 log() 的条目（否则主线程 log case + workerLogs 双份入账）
+    expect(someLogMessageContains(res.returnWorkerLogs, "hello from script")).toBe(false);
   });
 
-  it("脚本 throw 时 log() 内容也随 error 消息 workerLogs 带回（诊断不丢）", async () => {
+  it("log() 内容不再随 error 消息的 workerLogs 带回（console.* 捕获通路不受影响）", async () => {
     const script = `
       log("before-crash");
+      console.error("crash-context");
       throw new Error("boom");
     `;
     const res = await runWorker(script);
     expect(res.errorMessage).toBe("boom");
+    // log() 的条目不在 error workerLogs（单通路）
+    expect(someLogMessageContains(res.errorWorkerLogs, "before-crash")).toBe(false);
+    // console.* 捕获通路保持（workerLogs 仍带回 console.error 条目）
     expect(res.errorWorkerLogs).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ level: "log", message: "before-crash" }),
+        expect.objectContaining({ level: "error", message: "crash-context" }),
       ]),
     );
-    expect(res.exitCode).not.toBe(1);
   });
 });
 

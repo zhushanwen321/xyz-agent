@@ -207,25 +207,46 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * [OR-4] 终态收尾副作用围栏：emit pending:unregister + onRunDone（M12 同款 try 围栏）。
+ * [OR-4][B-4] pending:unregister emit 围栏（M12 同款 try 围栏）。
  *
- * 这两个是真实副作用（通知注销 + Interface 层完成回调，后者内部含 evictDoneRunsBeyondCap
- * 内存淘汰）——listener 同步抛错或 onRunDone 抛错不得经 worker-host 绑定处的
- * `void handlers.onXxx(...)` 变 unhandledRejection 崩宿主。catch 后 error 留痕，
- * 调用方继续（内存态已终态；本函数自身不重试不上抛）。
- *
- * 旧实现四处裸调（handleReturn / handleWorkerError / handleScriptError /
- * handleWorkerExit 的终态路径）与 budget 分支的内联围栏不对称——统一收敛到本函数。
+ * eventBus 是通知总线（pending-notifications 注销信号灯）——listener 同步抛错不得
+ * 经 worker-host 绑定处的 `void handlers.onXxx(...)` 变 unhandledRejection 崩宿主。
+ * catch 后 error 留痕，调用方继续。lifecycle.terminateRunningRuns 的 emit（无
+ * onRunDone 的终态路径）也消费本函数——围栏语义两处单源。
  */
-function emitTerminalSideEffects(run: WorkflowRun, deps: LifecycleDeps, context: string): void {
+export function emitPendingUnregister(run: WorkflowRun, deps: LifecycleDeps, context: string): void {
   try {
     deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
     deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
     deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    logger.error(`[workflow] pending:unregister emit failed (${context}): ${m}`);
+  }
+}
+
+/**
+ * [OR-4] 终态收尾副作用围栏：emit pending:unregister + onRunDone，各自独立 M12 同款
+ * try 围栏。
+ *
+ * 这两个是真实副作用（通知注销 + Interface 层完成回调，后者内部含 evictDoneRunsBeyondCap
+ * 内存淘汰）——任一同步抛错不得经 worker-host 绑定处的 `void handlers.onXxx(...)`
+ * 变 unhandledRejection 崩宿主，各自 catch 后 error 留痕，调用方继续。
+ *
+ * [B-4] 拆分为两个独立围栏（旧实现同一 try：emit 抛错会跳过 onRunDone）——通知总线
+ * 故障不得吞掉 Interface 层完成回调（runAndWait 轮询依赖 onRunDone 语义收口，被跳过
+ * 即悬挂）。本函数自身不重试不上抛。
+ *
+ * 旧实现四处裸调（handleReturn / handleWorkerError / handleScriptError /
+ * handleWorkerExit 的终态路径）与 budget 分支的内联围栏不对称——统一收敛到本函数。
+ */
+export function emitTerminalSideEffects(run: WorkflowRun, deps: LifecycleDeps, context: string): void {
+  emitPendingUnregister(run, deps, context);
+  try {
     deps.onRunDone?.(run);
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
-    logger.error(`[workflow] onRunDone/emit failed (${context}): ${m}`);
+    logger.error(`[workflow] onRunDone failed (${context}): ${m}`);
   }
 }
 

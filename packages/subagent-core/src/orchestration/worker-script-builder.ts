@@ -30,11 +30,11 @@
  * { type: "return", runId: string, result: unknown }
  * { type: "error", runId: string, error: string }
  * { type: "log", phase: string, message: string }
- *   —— [OR-6/T7④] log() 消息当前在主线程 handleWorkerMessage 的 switch 中**无消费
- *   case**（接收即被忽略）；为不丢诊断，log() 同时把内容记入 _workerLogs，随
- *   return/error 消息的 workerLogs 字段带回主线程落 run.state.errorLogs。
- *   两条通路并存：独立 log 消息留给未来主线程接线（协议不回退），workerLogs
- *   通路保证当下不静默丢弃。
+ *   —— log() 的唯一通路：主线程 handleWorkerMessage 的 log case 即时消费（push 进
+ *   run.state.errorLogs + debug 留痕，error-recovery.ts）。[B-3] 旧实现同时把内容
+ *   记入 _workerLogs 随 return/error 消息再带回一份——同一日志在 errorLogs 占两格、
+ *   TUI 双份，已退役。崩溃场景（return/error 消息未发出）丢 log 条目可接受：
+ *   log 是 T7 补充可观测，非持久化权威。
  *
  * Main → Worker (parentPort.on("message")):
  * { type: "agent-result", callId: number, result: AgentResult, cached: boolean }
@@ -221,10 +221,9 @@ const WORKER_TEMPLATE_PRE = [
  // ── log global ──
     '  function log(msg) {',
     '    var _logText = String(msg);',
-    '    // [OR-6/T7④] 同时记入 _workerLogs：主线程对 {type:"log"} 消息暂无消费 case',
-    '    //（error-recovery handleWorkerMessage switch），独立 log 消息会被忽略；记入',
-    '    // _workerLogs 后随 return/error 消息带回主线程落 errorLogs，脚本 log 不再零可见。',
-    '    try { _pushWorkerLog("log", [_logText]); } catch(e) { /* swallow */ }',
+    '    // [B-3] 单通路：只发独立 {type:"log"} 消息，主线程 handleWorkerLog 即时消费',
+    '    //（push 进 errorLogs）。不再同时记入 _workerLogs——旧双通路让同一日志随',
+    '    // return/error 的 workerLogs 再带回一份，errorLogs 占两格、TUI 双份。',
     '    try { parentPort.postMessage({ type: "log", phase: _currentPhase, message: _logText }); } catch(e) { /* swallow */ }',
     '  }',
     '',
@@ -337,7 +336,11 @@ const WORKER_TEMPLATE_PRE = [
     '          if (opts.returnMeta === true) {',
     '            _pending.resolve({ value: "", error: _timeoutMsg });',
     '          } else {',
-    '            _pending.resolve({ content: "", error: _timeoutMsg });',
+    '            // [B-5] 非 returnMeta 超时 resolve 单值错误消息字符串（对齐 agent-result',
+    '            // 失败路径 resolve 单值 _value = parsedOutput ?? content 的形态）——',
+    '            // 旧实现 resolve {content:"", error} 对象，字符串消费型脚本（r.trim() 类）',
+    '            // 在超时路径 TypeError。',
+    '            _pending.resolve(_timeoutMsg);',
     '          }',
     '        }, opts.timeoutMs);',
     '        if (_pending.timer && typeof _pending.timer.unref === "function") { _pending.timer.unref(); }',

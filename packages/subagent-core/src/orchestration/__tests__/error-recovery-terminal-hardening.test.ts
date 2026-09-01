@@ -146,7 +146,8 @@ describe("[OR-4] 终态收尾 emit/onRunDone 围栏（不产 unhandledRejection�
 
     expect(run.state.status).toBe("done");
     expect(deps.store.save).toHaveBeenCalledTimes(1);
-    expect(deps.onRunDone).not.toHaveBeenCalled(); // emit 抛错在其前，跳过
+    // [B-4] 独立围栏：emit 故障不再跳过 onRunDone（旧实现同一 try 会跳过）
+    expect(deps.onRunDone).toHaveBeenCalledTimes(1);
   });
 
   it("handleReturn：onRunDone 同步抛错 → promise resolve + error 留痕", async () => {
@@ -204,7 +205,8 @@ describe("[OR-4] 终态收尾 emit/onRunDone 围栏（不产 unhandledRejection�
 
     expect(run.state.reason).toBe("time_limited");
     expect(deps.store.save).toHaveBeenCalledTimes(1);
-    expect(deps.onRunDone).not.toHaveBeenCalled();
+    // [B-4] 独立围栏：emit 故障不再跳过 onRunDone（旧实现同一 try 会跳过）
+    expect(deps.onRunDone).toHaveBeenCalledTimes(1);
   });
 
   it("围栏捕获后 error 留痕（shared logger）", async () => {
@@ -215,7 +217,20 @@ describe("[OR-4] 终态收尾 emit/onRunDone 围栏（不产 unhandledRejection�
     await handleWorkerMessage(run, { type: "return", result: 1 }, deps, makeHandlers());
 
     const errLogs = errorSpy.mock.calls.map((c) => String(c[0]));
-    expect(errLogs.some((m) => m.includes("onRunDone/emit failed") && m.includes("onRunDone exploded"))).toBe(true);
+    expect(errLogs.some((m) => m.includes("onRunDone failed") && m.includes("onRunDone exploded"))).toBe(true);
+  });
+
+  it("[B-4] emit 抛错 → onRunDone 仍执行（独立围栏，完成回调不被通知总线故障吞掉）", async () => {
+    const errorSpy = vi.spyOn(getLogger("subagents"), "error");
+    const run = makeRealRun("wf-fence-8");
+    const deps = makeDeps({ emitThrows: true });
+
+    await handleWorkerMessage(run, { type: "return", result: 1 }, deps, makeHandlers());
+
+    expect(run.state.reason).toBe("completed");
+    expect(deps.onRunDone).toHaveBeenCalledTimes(1); // 旧实现同一 try：emit 抛错会跳过
+    const errLogs = errorSpy.mock.calls.map((c) => String(c[0]));
+    expect(errLogs.some((m) => m.includes("pending:unregister emit failed") && m.includes("listener exploded"))).toBe(true);
   });
 });
 
@@ -252,6 +267,25 @@ describe("[OR-6] log 消息消费 + 未知类型 default 留痕", () => {
     expect(run.state.errorLogs).toHaveLength(MAX_ERROR_LOGS);
     expect(run.state.errorLogs.at(-1)).toEqual({ level: "log", message: "the-latest" });
     expect(run.state.errorLogs[0]).toEqual({ level: "log", message: "pre-1" }); // 头部被裁
+  });
+
+  it("[B-3] log 单通路：log 消息即时入账 + return workerLogs（仅 console.* 条目）→ 同一日志恰一份", async () => {
+    // worker 侧 [B-3] 后的产出形态（worker-script-builder-runtime.test.ts 锁定）：
+    // log() 只发独立 {type:"log"} 消息，return 的 workerLogs 只含 console.* 捕获条目。
+    // 主线程两条消息各走各的入账 → 同一日志在 errorLogs 恰一份（旧双通路为 2 份）。
+    const run = makeRealRun("wf-log-dup");
+    const deps = makeDeps();
+
+    await handleWorkerMessage(run, { type: "log", phase: "build", message: "step-1" }, deps, makeHandlers());
+    await handleWorkerMessage(
+      run,
+      { type: "return", result: { ok: true }, workerLogs: [{ level: "error", message: "console-entry" }] },
+      deps,
+      makeHandlers(),
+    );
+
+    expect(run.state.errorLogs.filter((l) => l.message === "step-1")).toHaveLength(1);
+    expect(run.state.errorLogs.filter((l) => l.message === "console-entry")).toHaveLength(1);
   });
 
   it("未知消息类型：warn 留痕后丢弃（协议漂移防线），不写状态不终态", async () => {

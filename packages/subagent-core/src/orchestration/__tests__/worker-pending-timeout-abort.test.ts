@@ -143,7 +143,7 @@ function trackUnhandledRejections(): { reasons: unknown[]; dispose: () => void }
 // ── [OR-3] per-call timeoutMs（消息层自己的超时） ─────────────
 
 describe("[OR-3] agent() pending per-call timeoutMs", () => {
-  it("主线程不回话 + timeoutMs=50 → pending 以错误 resolve（content 为空 + error 含 timed out）", async () => {
+  it("主线程不回话 + timeoutMs=50 → pending 以错误 resolve（[B-5] 单值错误消息字符串）", async () => {
     const script = `
       const r = await agent("never answered", { timeoutMs: 50 });
       return { got: r };
@@ -154,10 +154,13 @@ describe("[OR-3] agent() pending per-call timeoutMs", () => {
     expect(res.errorMessage).toBeUndefined();
     expect(res.workerError).toBeUndefined();
     expect(res.agentCallCount).toBe(1);
-    const got = (res.returnValue as { got: { content: string; error: string } }).got;
-    expect(got.content).toBe("");
-    expect(got.error).toContain("timed out after 50ms");
-    expect(got.error).toContain("no agent-result received");
+    // [B-5] 非 returnMeta 超时 resolve 单值字符串（对齐 agent-result 失败路径
+    // resolve _value = parsedOutput ?? content 的形态）——字符串消费型脚本
+    // （r.trim() 类）不再 TypeError
+    const got = (res.returnValue as { got: string }).got;
+    expect(typeof got).toBe("string");
+    expect(got).toContain("timed out after 50ms");
+    expect(got).toContain("no agent-result received");
     // 超时 warn 记入 _workerLogs（诊断可见）
     expect(res.workerLogs.some((l) => l.level === "warn" && l.message.includes("timed out after 50ms"))).toBe(true);
   });
@@ -171,6 +174,20 @@ describe("[OR-3] agent() pending per-call timeoutMs", () => {
 
     expect(res.errorMessage).toBeUndefined();
     expect(res.returnValue).toEqual({ value: "", error: expect.stringContaining("timed out after 50ms") });
+  });
+
+  it("[B-5] 字符串消费型脚本（r.trim()）在超时路径不 TypeError（resolve 单值字符串）", async () => {
+    // 旧实现超时 resolve {content:"", error} 对象 → r.trim() 抛 TypeError →
+    // 脚本 error → 放大成 rebuild；修复后 resolve 字符串，脚本按普通失败文本消费
+    const script = `
+      const r = await agent("never answered", { timeoutMs: 40 });
+      return { trimmed: r.trim().length > 0 };
+    `;
+    const res = await runWorker(script);
+
+    expect(res.errorMessage).toBeUndefined();
+    expect(res.workerError).toBeUndefined();
+    expect(res.returnValue).toEqual({ trimmed: true });
   });
 
   it("string+secondArg 分支：timeoutMs 透传到 agent-call 消息 opts（此前该分支丢弃该字段）", async () => {

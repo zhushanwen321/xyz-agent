@@ -610,7 +610,9 @@ describe("W6: workflow-record entry 计数（= flush 次数；save 级不放大�
 
   it("W2TC6(W17): entry 计数 = flush 次数：首写+终态各 1、中间去抖批合并（N save → 1 entry）、终态 entry 含 done", async () => {
     const mockPi = mkPi();
-    const store6 = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi });
+    // entryAppendMinIntervalMs=0 禁用 [B-1] 节流：本用例锁定「去抖批合并 → save 级
+    // 不放大」的 entry 计数语义；running 中间态 append 节流由 jsonl-run-store-throttle.test.ts 锁定
+    const store6 = new JsonlRunStore({ sessionDir: tmpDir, pi: mockPi, entryAppendMinIntervalMs: 0 });
     const run = makeRunningRun("run-w2tc6");
 
     // 创建首写 flush → 1 条 entry
@@ -885,6 +887,9 @@ describe("W8: 去抖窗口崩溃语义与 timer unref", () => {
       sessionDir: tmpDir,
       pi: mockPi,
       ctx: mockCtx,
+      // entryAppendMinIntervalMs=0 禁用 [B-1] 节流：本用例锁定去抖窗口的崩溃丢失边界；
+      // 节流窗口（entry 追加落后真实状态）由 jsonl-run-store-throttle.test.ts 锁定
+      entryAppendMinIntervalMs: 0,
     });
     const run = makeRunningRun("run-w2tc13");
     await storeA.save(run); // 首写冷路径落盘 + 创建指针
