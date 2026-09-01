@@ -68,7 +68,10 @@ function isPendingLineLike(v: unknown): v is { customType?: string; timestamp?: 
 }
 
 /**
- * 读 session 文件计算活跃 pending 数（增量读，见 PendingReadCursor）。
+ * [内部共享] 读 session 文件并把 pending register/unregister 行累积进 per-file 增量
+ * 游标（见 PendingReadCursor）。readActivePendingFromSessionFile（count 口径）与
+ * listActivePendingFromSessionFile（清单口径，T2-②）共用同一 cursor——两个口径交错
+ * 调用同一文件时 entries 累积不错位、不重复读已消费区间。
  *
  * 快速路径：行内含 pending 值（`"pending:register"` / `"pending:unregister"`）才解析，
  * 大量 message 行只付 includes 扫描跳过 JSON.parse。
@@ -79,11 +82,11 @@ function isPendingLineLike(v: unknown): v is { customType?: string; timestamp?: 
  * 文件不存在（sessionFile 未回填/首次 assistant 前）→ error（调用方保守不 kill）。
  * 坏行跳过（append 中途崩溃的截断行）。
  */
-export function readActivePendingFromSessionFile(
+function accumulatePendingEntries(
   sessionFile: string | undefined,
-): ActivePendingResult {
+): { entries: unknown[]; latestUnregisterMs: number; error?: string } {
   if (!sessionFile) {
-    return { count: 0, recentUnregister: false, error: "no sessionFile (handshake not settled)" };
+    return { entries: [], latestUnregisterMs: 0, error: "no sessionFile (handshake not settled)" };
   }
 
   let size: number;
@@ -91,8 +94,8 @@ export function readActivePendingFromSessionFile(
     size = fs.statSync(sessionFile).size;
   } catch (err) {
     return {
-      count: 0,
-      recentUnregister: false,
+      entries: [],
+      latestUnregisterMs: 0,
       error: `session file unreadable: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
@@ -108,10 +111,10 @@ export function readActivePendingFromSessionFile(
     if (cursor.offset === 0) {
       chunk = fs.readFileSync(sessionFile, "utf-8");
     } else {
+      const len = size - cursor.offset;
+      const buf = Buffer.alloc(len);
       const fd = fs.openSync(sessionFile, "r");
       try {
-        const len = size - cursor.offset;
-        const buf = Buffer.alloc(len);
         let total = 0;
         while (total < len) {
           const n = fs.readSync(fd, buf, total, len - total, cursor.offset + total);
@@ -125,8 +128,8 @@ export function readActivePendingFromSessionFile(
     }
   } catch (err) {
     return {
-      count: 0,
-      recentUnregister: false,
+      entries: [],
+      latestUnregisterMs: 0,
       error: `session file unreadable: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
@@ -156,15 +159,107 @@ export function readActivePendingFromSessionFile(
     }
   }
 
+  return { entries: cursor.entries, latestUnregisterMs: cursor.latestUnregisterMs };
+}
+
+/**
+ * 读 session 文件计算活跃 pending 数（增量读，见 PendingReadCursor）。
+ */
+export function readActivePendingFromSessionFile(
+  sessionFile: string | undefined,
+): ActivePendingResult {
+  const acc = accumulatePendingEntries(sessionFile);
+  if (acc.error) {
+    return { count: 0, recentUnregister: false, error: acc.error };
+  }
+
   // 计数器经通知域窄端口解析（缺省实现恒 0 = 零活跃，pending 门全开——安全侧缺省
   // 收敛在端口层，见 core/notify-ports.ts DEFAULT_NOTIFY_PORTS；此处 `?? 0` 仅防御
   // 宿主注入部分端口对象的形态）。
   const countActive = getNotifyDomainPorts().countActiveFromEntries;
-  const active = countActive ? countActive(cursor.entries) : 0;
+  const active = countActive ? countActive(acc.entries) : 0;
   return {
     count: active,
     recentUnregister:
-      cursor.latestUnregisterMs > 0 &&
-      Date.now() - cursor.latestUnregisterMs < RECENT_UNREGISTER_WINDOW_MS,
+      acc.latestUnregisterMs > 0 &&
+      Date.now() - acc.latestUnregisterMs < RECENT_UNREGISTER_WINDOW_MS,
   };
+}
+
+/** 活跃 pending 清单条目（T2-② 后代补杀的 id/sessionId 线索）。 */
+export interface ActivePendingItem {
+  /** pending 操作 id（register − unregister 差集的键，id 全局唯一）。 */
+  id: string;
+  /**
+   * 注册时的后代 pi session id（pending:register entry data.sessionId）——
+   * 反查后代 sessionFile 的线索。缺失（异常形态）时 undefined，调用方降级处理。
+   */
+  sessionId: string | undefined;
+  /** 操作来源类型（workflow / session / process），诊断用。 */
+  type: string | undefined;
+}
+
+/** listActivePendingFromSessionFile 的结果（error 非空时 items 为空）。 */
+export interface ActivePendingListResult {
+  items: ActivePendingItem[];
+  /** 读取/解析失败的原因（undefined = 成功）。 */
+  error?: string;
+}
+
+/** pending:register/unregister entry 的 data 最小形状（对齐 pending-notifications
+ *  extension 的 RegisterEntryData/UnregisterEntryData：id 均在 data.id）。 */
+interface PendingEntryDataLike {
+  id?: unknown;
+  sessionId?: unknown;
+  type?: unknown;
+}
+
+/** entry.data 的运行时守卫（[taste/no-unsafe-cast]：字段访问前校验）。 */
+function isPendingEntryDataLike(v: unknown): v is PendingEntryDataLike {
+  return typeof v === "object" && v !== null;
+}
+
+/**
+ * [T2-② / P-T2b 主路径] 读 session 文件列出活跃 pending 清单（差集：register −
+ * unregister，按 data.id）。与 readActivePendingFromSessionFile 共享 per-file 增量
+ * 游标（count 与 list 交错调用不错位）。
+ *
+ * 与 count 口径的两点刻意差异（后代补杀语境）：
+ * 1. 不经 countActiveFromEntries 端口——补杀需要「谁还活着」的 id/sessionId 线索，
+ *    端口只给数量；差集算法对齐 extension state.ts 的 id Set 语义。
+ * 2. 不套用端口的 TTL/跨 session 过期语义——层主死后，TTL 过期或跨 session 的后代
+ *    同样是无人管理的孤儿进程，列入补杀正是本函数的目的而非误杀。
+ */
+export function listActivePendingFromSessionFile(
+  sessionFile: string | undefined,
+): ActivePendingListResult {
+  const acc = accumulatePendingEntries(sessionFile);
+  if (acc.error) {
+    return { items: [], error: acc.error };
+  }
+
+  const unregistered = new Set<string>();
+  const registers = new Map<string, PendingEntryDataLike>();
+  for (const raw of acc.entries) {
+    if (!isPendingLineLike(raw)) continue;
+    const customType = (raw as { customType?: unknown }).customType;
+    const data = (raw as { data?: unknown }).data;
+    if (!isPendingEntryDataLike(data)) continue;
+    if (customType === "pending:unregister") {
+      if (typeof data.id === "string") unregistered.add(data.id);
+    } else if (customType === "pending:register") {
+      if (typeof data.id === "string") registers.set(data.id, data);
+    }
+  }
+
+  const items: ActivePendingItem[] = [];
+  for (const [id, data] of registers) {
+    if (unregistered.has(id)) continue;
+    items.push({
+      id,
+      sessionId: typeof data.sessionId === "string" ? data.sessionId : undefined,
+      type: typeof data.type === "string" ? data.type : undefined,
+    });
+  }
+  return { items };
 }

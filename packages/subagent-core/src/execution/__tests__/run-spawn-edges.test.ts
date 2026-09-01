@@ -79,7 +79,7 @@ vi.mock("../temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, maxTurnsToWatchdogMs, SPAWN_WATCHDOG_ENV } from "../session-runner.ts";
+import { KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS, killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, maxTurnsToWatchdogMs, SPAWN_WATCHDOG_ENV } from "../session-runner.ts";
 import { writeAliveMarker } from "../alive-store.ts";
 import { getSubagentSessionDir } from "../path-encoding.ts";
 import { readActivePendingFromSessionFile } from "../session-pending.ts";
@@ -594,10 +594,13 @@ describe("runSpawn", () => {
       }
     });
 
-    // [MF-4b] 预算语义对齐：maxTurns 未传且无兑底 env → count>0 分支不 re-arm watchdog，
-    // 不限时等待后代。若误回旧 50min 估算默认，51min 处会 kill，本用例失败。
-    it("MF-4b: agent_end（count>0）+ maxTurns 未传 → 不 re-arm watchdog（不限时等待）", async () => {
-      // hermetic：确保兑底 env 未设（若外层 shell 误设会让「不限时」断言失效）
+    // [MF-4b] 预算语义对齐 + [T2-① / P-T2 降级 B]：maxTurns 未传且无兑底 env → count>0
+    // 分支不 re-arm 固定时长 watchdog，改挂**无进展检测上界**——连续静默达
+    // KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 才处置，期间任何 stdout 活动刷新计时。
+    // 原守护意图保留：若误回旧 50min 估算默认（固定时长、不刷新），活动刷新后 51min
+    // 处早已 kill，本用例失败。
+    it("MF-4b: agent_end（count>0）+ maxTurns 未传 → 无进展检测上界（活动刷新不限时，纯静默有界）", async () => {
+      // hermetic：确保兑底 env 未设（若外层 shell 误设会让「裸缺省」断言失效）
       const prevWatchdogEnv = process.env[SPAWN_WATCHDOG_ENV];
       delete process.env[SPAWN_WATCHDOG_ENV];
       mockPending.mockReturnValue({ count: 2 });
@@ -615,9 +618,31 @@ describe("runSpawn", () => {
         // keep alive：不 kill
         expect(child.killed).toBe(false);
 
-        // 超过旧 50min 估算默认仍不 kill = watchdog 未 re-arm
-        await vi.advanceTimersByTimeAsync(51 * 60 * 1000);
+        // 静默 29min：未达无进展阈值，不 kill
+        await vi.advanceTimersByTimeAsync(KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS - 60_000);
         expect(child.killed).toBe(false);
+
+        // 子进程活动（输出一行）：静默计时刷新。若误回旧 50min 估算默认（固定时长
+        // 不刷新），此点之后不久会 kill——51min 断言守护该回归
+        emitStdoutLine(child, { type: "message_end", message: {} });
+        await new Promise((r) => setImmediate(r));
+        await vi.advanceTimersByTimeAsync(KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS - 60_000);
+        expect(child.killed).toBe(false);
+
+        // 再次活动刷新（此刻距上次活动 29min < 30min 阈值），随后静默 21min——总时钟
+        // 已 >51min 仍不 kill = 无固定时长上限（原守护点：误回旧 50min 估算默认则此处
+        // 已 kill）；距最近一次活动静默 21min < 30min 阈值。
+        emitStdoutLine(child, { type: "message_end", message: {} });
+        await new Promise((r) => setImmediate(r));
+        await vi.advanceTimersByTimeAsync(21 * 60 * 1000);
+        expect(child.killed).toBe(false);
+
+        // 连续静默达阈值（最后一次活动后 30min 无任何输出）：有界回收（新契约）。
+        // 本段 advance 跨过 SIGTERM 后的 30s 升级点（escalation 语义：FakeChild 未退出），
+        // killSignal 已升级为 SIGKILL。
+        await vi.advanceTimersByTimeAsync(KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS);
+        expect(child.killed).toBe(true);
+        expect(child.killSignal).toBe("SIGKILL");
 
         child.stdout.end();
         child.stderr.end();
@@ -925,8 +950,10 @@ describe("runSpawn", () => {
         expect(record.sessionFile).toBeUndefined();
         expect(child.killed).toBe(false); // 保守不杀
 
-        // maxTurns 未传（opts 默认）+ env 未设 → 保守分支不 re-arm watchdog，不限时等待
-        await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+        // maxTurns 未传（opts 默认）+ env 未设 → 保守分支挂无进展检测上界
+        // [T2-① / P-T2 降级 B] 不再「不限时」：连续静默达阈值才处置；此处静默
+        // 29min（< 30min 阈值）不 kill——保守 keep-alive 仍有界但不被时长误杀
+        await vi.advanceTimersByTimeAsync(KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS - 60_000);
         expect(child.killed).toBe(false);
 
         child.stdout.end();

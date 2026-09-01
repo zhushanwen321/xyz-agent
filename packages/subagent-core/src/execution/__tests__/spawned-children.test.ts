@@ -5,9 +5,14 @@
 // M2-B1 把 spawnedChildren 从 Set<ChildProcess> 改为 Map<recordId, ChildProcess>，
 // 建立 record→child 映射（busy 投递定位活进程用，设计决策 6）。本文件测 Map API 核心行为：
 //   - getChildByRecord：set 后能查到；delete 后查不到；未注册返回 undefined
-//   - killAllSpawnedChildren：遍历 .values() kill + clear；跳过 child.killed=true；单 child kill 抛错不阻断
+//   - killAllSpawnedChildren：遍历 .values() kill + clear；单 child kill 抛错不阻断
 //   - [R1 D6③] killAllSpawnedChildren 编排扩容：先触发 engine registry dispose（触发不等待），
 //     后杀 per-record children——dispose 全部先于任何 kill（D6① 时序）
+//
+// [T2-⑤ / LC-2] 跳过条件变更（原「跳过 child.killed=true」契约已废止）：killed=发过
+// kill 请求 ≠ 已死，只有 exitCode/signalCode 非 null（已确认死亡）才跳过；killed 但
+// 未确认死亡的 child 补 SIGKILL 升级（SIGTERM 可能被无视）。新契约的完整行为矩阵见
+// kill-all-escalation.test.ts（runSpawn 集成面），本文件保留纯 Map 遍历面的正/反例。
 //
 // 直接操作模块级 spawnedChildren（afterEach clear 防泄漏），不依赖 runSpawn/spawn/fs。
 
@@ -26,9 +31,17 @@ import type { EnginePort } from "../engine/port.ts";
 import { clearEngines, getEngine, registerEngine } from "../engine/registry.ts";
 import { getChildByRecord, killAllSpawnedChildren, spawnedChildren } from "../session-runner.ts";
 
-/** 假 child：只关心 killed 标记 + kill 调用（killAllSpawnedChildren 遍历用）。 */
-function makeFakeChild(killed = false): ChildProcess & { kill: ReturnType<typeof vi.fn> } {
-  return { killed, kill: vi.fn() } as unknown as ChildProcess & { kill: ReturnType<typeof vi.fn> };
+/**
+ * 假 child：只关心 killed 标记 + kill 调用（killAllSpawnedChildren 遍历用）。
+ * extra 可注入 exitCode/signalCode（模拟已确认死亡的形态）。
+ */
+function makeFakeChild(
+  killed = false,
+  extra: Partial<Pick<ChildProcess, "exitCode" | "signalCode">> = {},
+): ChildProcess & { kill: ReturnType<typeof vi.fn> } {
+  return { killed, kill: vi.fn(), ...extra } as unknown as ChildProcess & {
+    kill: ReturnType<typeof vi.fn>;
+  };
 }
 
 /** 带 dispose 的假引擎（编排测试用——dispose 触发顺序记进 events，与 child kill 事件共序）。 */
@@ -96,17 +109,29 @@ describe("spawnedChildren Map + getChildByRecord (M2-B1)", () => {
     expect(spawnedChildren.size).toBe(0);
   });
 
-  it("killAllSpawnedChildren 跳过 child.killed=true（不重复 kill 已 kill 的）", () => {
+  it("[T2-⑤] killed 但未确认死亡 → 不跳过，补 SIGKILL 升级（killed=发过请求≠已死）", () => {
     const alive = makeFakeChild(false);
-    const alreadyKilled = makeFakeChild(true);
+    const killedNotClosed = makeFakeChild(true); // SIGTERM 已发、exit/signal 仍 null
     spawnedChildren.set("rec-1", alive);
-    spawnedChildren.set("rec-2", alreadyKilled);
+    spawnedChildren.set("rec-2", killedNotClosed);
 
     const n = killAllSpawnedChildren();
 
-    expect(n).toBe(1);
-    expect(alive.kill).toHaveBeenCalledTimes(1);
-    expect(alreadyKilled.kill).not.toHaveBeenCalled();
+    expect(n).toBe(2);
+    expect(alive.kill).toHaveBeenCalledWith("SIGTERM");
+    // dispose 是最后兜底，对 killed-not-closed 直接升级 SIGKILL（不再赌 SIGTERM 生效）
+    expect(killedNotClosed.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(spawnedChildren.size).toBe(0);
+  });
+
+  it("[T2-⑤] killed 且已确认死亡（signalCode 非 null）→ 跳过，不重复发信号", () => {
+    const dead = makeFakeChild(true, { signalCode: "SIGTERM" });
+    spawnedChildren.set("rec-1", dead);
+
+    const n = killAllSpawnedChildren();
+
+    expect(n).toBe(0);
+    expect(dead.kill).not.toHaveBeenCalled();
     expect(spawnedChildren.size).toBe(0);
   });
 

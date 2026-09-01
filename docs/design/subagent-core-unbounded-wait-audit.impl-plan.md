@@ -35,10 +35,15 @@
 | u-t3 | T3 剩余五条 + OR-6 主线程半边（u-m0a blocker 裁决并入）：error-recovery.ts handleWorkerMessage switch 补 default 留痕 + "log" case（workerLogs 已在 u-m0a 侧接线，此为消息面补充防线）。其余：OR-2 rebuild 失败回灌矩阵耗尽收敛 done,failed / OR-3 worker pending 接线 per-call timeout + 接通 abort 广播（P-SD 钩子 env + 安全约束）/ OR-4 终态三路径 M12 同款围栏 / OR-7 abort listener run 终态移除 / OR-8 run done 残留 in-flight 收口 cancelled | `src/orchestration/error-recovery.ts`、`src/orchestration/lifecycle.ts`、`src/orchestration/worker-script-builder.ts`、`extensions/universal/subagent-workflow/src/interface/tool-workflow.ts`（路径修正同 u-m0b） | u-m0b（lifecycle.ts 共改）、u-m0a（worker-script-builder.ts 共改） | plain | typecheck 绿；测试：rebuild 抛错→重试计数→耗尽 done,failed；pending 超时 resolve 错误；emit 围栏不产 unhandledRejection；钩子 env 激活时 warn 留痕断言；switch default 留痕 + log case 断言 |
 | u-t1 | T1：agent_end 决策链惰性回补——sessionFile 缺失现场重试 get_state；LC-4 findSessionFileByHeaderId 兜底移出 `if (record.sessionFile)` 守卫；PS-9 finalize marker 清理增 sessionDir 反查 | `src/execution/session-runner.ts`、`src/execution/get-state-handshake.ts`、`src/execution/finalize-record.ts` | u-m0a（session-runner.ts 共改）、u-p1（⛔P-T1 门） | plain | typecheck 绿；测试：握手失败→agent_end 惰性重试回填→正常三分支；守卫移出后 sessionId-有-sessionFile-无形态可达兜底；finalize 反查落 marker |
 | u-t2a | T2 进程侧上界四项：①keep-alive 裸缺省默认上限 30min（opt-out）②后代级联 kill（层主死后采集冻结快照→迭代至叶→存活+cmdline 校验，P-T2b 结果决定 no-op 或主路径）③settled 等待固定硬上限 10min（任意一轮、双挂载、同一原语：同一常量+同一挂载/清除 helper）⑤killAllSpawnedChildren「killed 且已 close 才跳过」 | `src/execution/session-runner.ts`、`src/execution/lifecycle-manager.ts`、`src/execution/session-pending.ts`（只读复用，若需导出辅助函数则改动入领地） | u-t1（session-runner.ts 共改）、u-p2（⛔P-T2/P-T2c/P-T2b 门） | plain | typecheck 绿；测试：裸缺省挂 30min timer 且 opt-out 可关；settled 上界双挂载同一常量断言；后代级联清单迭代至叶 + pid 校验；killed-not-closed 不跳过 |
-| u-t2b | T2 服务侧四项：④三条裸 SIGTERM 收敛 killChildWithEscalation ⑥disposeAllRecords 补三回收面（abort+kill+disarmIdleTimer）⑦dialog timeout 接线 + 未传 timeout 默认 30min 上界 + 超时明确错误 settle ⑧deliverMessage 非 EPIPE 失败 re-arm idle timer 或转 cold close | `src/execution/subagent-service.ts`、`src/execution/dialog-queue.ts`、`src/execution/ui-request-queue.ts`、`src/execution/ui-request-handler-factory.ts` | u-t2a（③原语被 deliverMessage 热路径消费） | plain | typecheck 绿；测试：disposeAllRecords 调用三回收面 mock 断言；dialog 未传 timeout 默认上界 settle 错误含恢复指引；非 EPIPE 失败路径 timer re-arm |
-| u-t4 | T4 通知四条：①notify 门 closedReason 白名单（parent-new/fork 不注入）②idleTimeoutMs 入口 fail-fast + armIdleTimer catch 降级挂默认+warn ③重投 attempts 上限+放弃语义 ④shutdown flush 被门拦落盘 pending 供 replay | `src/execution/notify-ledger.ts`、`src/execution/notifier.ts`、`src/execution/subagent-service.ts` | u-t2b（subagent-service.ts 共改） | plain | typecheck 绿；测试：parent-new 不注入新 session；非法 idleTimeoutMs 入口拒绝含合法范围；重投达上限放弃+warn；flush 拦截时 pending 落盘 |
-| u-t5 | T5 多进程四条：①子进程 initSession 跳过 recoverOrphanRecords（sessionRootId=ROOT 判定）②alive marker 心跳刷新（P-T5 门：不可接受则降级软超时对齐）③running 候选冷查补 findForeignLiveInstance ④recoverTmpFiles per-file try | `src/execution/subagent-service.ts`、`src/execution/record-store.ts`、`src/execution/alive-store.ts`、`src/execution/manifest-store.ts` | u-t4（subagent-service.ts 共改）；P-T5 探针在本单元内先跑（真实 wave 写盘频率，或历史数据回溯） | plain | typecheck 绿；测试：非根进程跳过扫描；marker 心跳触发点；冷查带 foreign 守卫；单 tmp ENOENT 不中断整轮 |
-| u-t6 | T6 有界化六条：①armIdleTimer 回调身份比对 ②session-pending 游标剪枝+差集计数 ③branchCache LRU ④orphanJudged revive() 复位 ⑤worktree 对账老化升级 ⑥OR-5 两正交子缺陷（增量 append 治单 run O(n²)，实施期先验证节流是否足够；STATE_MAX_RUNS 默认值按 §11-4 统计标定） | `src/execution/lifecycle-manager.ts`、`src/execution/session-pending.ts`、`src/execution/session-runner.ts`、`src/execution/record-store.ts`、`src/execution/worktree-manager.ts`、`src/orchestration/file-run-store.ts`、`src/orchestration/jsonl-run-store.ts` | u-t5（record-store.ts 共改）、u-t2a（session-runner.ts / lifecycle-manager.ts 共改） | plain | typecheck 绿；测试：旧 timer 到期不误删新条目（fake-timer 交错）；LRU 上界；revive 复位；连续 N 周期跳过升级 warn |
+| u-t2b | ~~原单单元~~ 已并行化重组（用户要求最大化并行）：dialog 部分拆为 u-t2b-d 立即并行；subagent-service 部分（④⑥⑧+③热路径接线）并入 u-svc 合并单元 | 见重组行 | u-t2a（③原语） | plain | 见 u-t2b-d / u-svc |
+| u-t2b-d | **重组新增**（并行切片）：T2⑦ dialog 三件套——timeout 字段接线 + 未传 timeout 默认 30min 上界 + 超时明确错误 settle（含重新发起指引）+ 超时后队列继续 | `src/execution/dialog-queue.ts`、`src/execution/ui-request-queue.ts`、`src/execution/ui-request-handler-factory.ts`、对应 __tests__ | 无（与 u-t2a 领地互斥，立即并行） | plain | typecheck 绿；测试覆盖传值/默认/队列不卡死/settle 恰一次/字段透传 |
+| u-t4 | ~~原单单元~~ 已并行化重组：ledger/notifier 部分拆为 u-t4-n 并行；subagent-service 部分（①②④）并入 u-svc | 见重组行 | — | plain | 见 u-t4-n / u-svc |
+| u-t4-n | **重组新增**（并行切片）：T4③ notify-ledger 重投 attempts 上限（默认 5）+ 放弃语义（终态不复活）+ warn 含恢复指引 | `src/execution/notify-ledger.ts`、`src/execution/notifier.ts`、对应 __tests__ | 无（领地互斥，立即并行） | plain | typecheck 绿；测试覆盖上限放弃/不复活/未达上限不变 |
+| u-t5 | ~~原单单元~~ 已并行化重组：manifest-store 部分并入 u-t6-s？否——manifest per-file try 并入 u-svc；subagent-service/alive-store/record-store 部分并入 u-svc；P-T5 探针（心跳写盘频率，历史回溯）在 u-svc 内先跑 | 见重组行 | — | plain | 见 u-svc |
+| u-t6 | ~~原单单元~~ 已并行化重组：worktree/file-run-store/jsonl-run-store 部分拆为 u-t6-s 立即并行；lifecycle-manager/session-pending/session-runner/record-store 部分（①②③④）为收尾单元 u-t6-c | 见重组行 | — | plain | 见 u-t6-s / u-t6-c |
+| u-t6-s | **重组新增**（并行切片）：T6⑤ worktree 对账老化（连续 N 周期升级 warn+清理指引）+ T6⑥ OR-5 两正交子缺陷（节流治单 run O(n²)，实施期验证足够性；STATE_MAX_RUNS 默认值） | `src/execution/worktree-manager.ts`、`src/orchestration/file-run-store.ts`、`src/orchestration/jsonl-run-store.ts`、对应 __tests__ | 无（领地互斥，立即并行） | plain | typecheck 绿；测试覆盖老化升级/节流有界+终态强制/默认值淘汰 |
+| u-svc | **重组新增**（subagent-service 瓶颈合并单元，u-t2a 释放后派发）：T2 ④三条裸 SIGTERM 收敛 killChildWithEscalation ⑥disposeAllRecords 三回收面（abort+kill+disarm）⑧deliverMessage 非 EPIPE 失败 re-arm ③热路径挂载 settled 原语；T4 ①notify 门 closedReason 白名单 ②idleTimeoutMs 入口 fail-fast + armIdleTimer catch 降级挂默认+warn ④shutdown flush 被门拦落盘 pending；T5 ①子进程 initSession 跳过 recoverOrphanRecords（sessionRootId=ROOT 判定）②alive marker 心跳（⛔P-T5 探针先行：历史回溯 agent_end 频率与写盘开销，不可接受则降级软超时对齐）③running 候选冷查补 findForeignLiveInstance ④recoverTmpFiles per-file try；alive-store 心跳触发点接线（session-runner agent_end 处一行） | `src/execution/subagent-service.ts`、`src/execution/alive-store.ts`、`src/execution/manifest-store.ts`、`src/execution/session-runner.ts`（仅心跳接线行）、`src/execution/record-store.ts`（仅 T5 需要时）、对应 __tests__ | u-t2a（session-runner 释放 + ③原语）、u-t2b-d（无依赖仅波次错峰） | plain | typecheck 绿；各措施测试齐（见原 u-t2b/u-t4/u-t5 条款） |
+| u-t6-c | **重组新增**（收尾单元）：T6①armIdleTimer 回调身份比对 ②session-pending 游标剪枝+差集计数 ③branchCache LRU ④orphanJudged revive() 复位 | `src/execution/lifecycle-manager.ts`、`src/execution/session-pending.ts`、`src/execution/session-runner.ts`、`src/execution/record-store.ts`、对应 __tests__ | u-t2a、u-svc（session-runner/lifecycle-manager/record-store 释放） | plain | typecheck 绿；fake-timer 交错误删用例/LRU 上界/revive 复位 |
 
 ## 3 DAG
 
@@ -111,6 +116,9 @@ graph TD
 | 探针均以 pi --no-extensions 形态运行（本机全局 npm 版 pi-subagent-workflow exports 漂移致扩展加载 fatal，环境噪音非本单元处置范围）；P-T2c auto-compact 场景以显式 compact 命令实测作量级代理（400KB 未达该模型阈值） | u-p2 | 报告如实标注；settled 窗口是 core 语义，无扩展形态为最小变量基线 | 已登记 |
 | u-t1 越领地 additive：subagent-service.ts 注入 sessionDir（字段 + 两处 FinalizeDeps.sessionDir，10 行）——ExecutionRecord 无 cwd、ModelConfigService 不暴露 cwd，PS-9 反查的 sessionDir 只能由 SubagentService 注入 | u-t1（违领地但必要性成立，主 agent 核验 diff 仅 3 处 additive 后接受） | u-t1 领地补登 subagent-service.ts 注入点；u-t2b/u-t4/u-t5 共改时以此为基础续作 | 已处置 |
 | agent_end 处置决策点异步化（runAgentEndDisposition fire-and-forget，三分支逐行迁移）：设计未规定同步/异步形态，决策延迟 ≤1s（P-T1 实测 0.3-0.4ms），requestGetStateOnce 永不 reject | u-t1 | 实现形态选择，行为不劣化 | 已处置 |
+| T2③ 窗口起算口径裁决：设计正文「deliverMessage 发出 prompt 后同挂」vs 边界句「不触及 turn 执行期」张力——实施取**正文口径**（prompt 发出即起算，整轮含 turn 执行与收尾都在 10min 窗内），更强覆盖（续聊轮 turn hang 也能回收）；风险 = >10min 的 chatMode 单轮被误杀（P-T2c 实测正常轮次 <2ms/compact 40s，chatMode 对话形态单轮分钟级，风险罕见；如遇误杀调 SETTLED_WATCHDOG_TIMEOUT_MS） | u-t2a（主 agent 复核裁决） | design-code-sync 阶段回写设计边界句 | 待回写 |
+| settled watchdog 终态 closedReason:'watchdog' 未落：ClosedReason 枚举封闭（OR-8 同款契约），裁决**不扩枚举**——终态原因经 AgentResult.error 携带 'settled watchdog' 标记 + 恢复指引承接；S-B 判据相应理解为「error 含 watchdog 标记与恢复指引」 | u-t2a（主 agent 裁决） | design-code-sync 阶段回写 §6.2/S-B | 待回写 |
+| 包级全量首跑 1 例未复现 flake（随后连续 4 次 2915 全绿） | u-t2a | Gate A 复跑留意捕获 | 已登记 |
 | PS-9 同源性观察（计划 §7 待办闭环）：marker 与 sessionFile 非同生同灭（marker 写点以 sessionFile 回填为前提，但 record 序列化/跨进程重建窗口可丢失 sessionFile 而 marker 留存磁盘）→ 反查增益成立，不降优先级 | u-t1 | 设计 §11-5 的答案：不适用同源降级条款 | 已闭环 |
 
 ## 6 状态表
@@ -123,11 +131,16 @@ graph TD
 | u-p2 | committed | 1 | P-T2c 定案 10min 维持 / P-T2b NO-CASCADE 后代补杀主路径 / P-T2 否定 30min → 降级 B 裁决（见偏差表）；probe/ 11 文件 |
 | u-t3 | committed | 1 | 六项 + OR-6 主线程半边全绿：orchestration 37 files 504 passed 重跑实证、全量 2868 passed、typecheck 绿、extensions 三连绿 |
 | u-t1 | committed | 1 | 双管落地：execution 88 files 1254 passed（48 重跑实证）+ 全量 2879 passed + typecheck 绿；PS-9 同源性闭环（§11-5 不降级） |
-| u-t2a | pending | 0 | — |
-| u-t2b | pending | 0 | — |
-| u-t4 | pending | 0 | — |
-| u-t5 | pending | 0 | — |
-| u-t6 | pending | 0 | — |
+| u-t2a | committed | 1 | 四项落地：35 新用例重跑实证 + 全量 2915 四连绿 + typecheck 绿；keep-alive 无进展语义（P-T2 降级 B）+ settled-watchdog 原语（settled-watchdog.ts）+ 后代级联 + killed 收紧；两项裁决登记偏差表 |
+| u-t2b-d | pending | 0 | — |
+| u-t4-n | pending | 0 | — |
+| u-t6-s | pending | 0 | — |
+| u-svc | pending | 0 | — |
+| u-t6-c | pending | 0 | — |
+| u-t2b | （重组拆分，见 u-t2b-d/u-svc） | — | — |
+| u-t4 | （重组拆分，见 u-t4-n/u-svc） | — | — |
+| u-t5 | （重组拆分，并入 u-svc） | — | — |
+| u-t6 | （重组拆分，见 u-t6-s/u-t6-c） | — | — |
 
 ## 7 残留风险与变更历史
 
@@ -137,4 +150,5 @@ graph TD
 - zsw vendor 侧同步随 core 发版节奏（设计 §11-6，Out-of-scope）
 
 ### 变更历史
-- 2026-09-01 计划创建（基线 commit 后回填 hash）
+- 2026-09-01 计划创建（基线 8e0bb4e0b）
+- 2026-09-01 并行化重组（用户要求最大化并行，Wave4 起生效）：原 8 波串行中 subagent-service 三环链（u-t2b→u-t4→u-t5）合并为单单元 u-svc；无领地冲突的切片（dialog 三件套 u-t2b-d、ledger/notifier u-t4-n、worktree/run-store u-t6-s）与 u-t2a 并行（4 路并发）；T6 剩余项收尾为 u-t6-c。原则不变：同文件单元不并行（commit 粒度干净），不同文件单元最大化并行

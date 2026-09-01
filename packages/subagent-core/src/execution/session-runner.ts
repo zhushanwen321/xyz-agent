@@ -5,19 +5,28 @@
 // spawn 改造后：session 在独立子进程跑（进程隔离），事件经 stdout JSON 流回流。
 // runSpawn 是唯一执行入口（sync/background 共用）。mode 分叉在 Runtime.execute 顶部。
 
-import { type ChildProcess, type ChildProcessWithoutNullStreams, execFile, spawn } from "node:child_process";
+import {
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams,
+  execFile,
+  spawn,
+  spawnSync,
+} from "node:child_process";
 import * as fs from "node:fs";
 
 import { getLogger } from "../core/logger.ts";
 import { bestEffort } from "./best-effort.ts";
 import { disposeEngines } from "./engine/registry.ts";
 import { armIdleTimer } from "./lifecycle-manager.ts";
-import { readActivePendingFromSessionFile } from "./session-pending.ts";
+import {
+  listActivePendingFromSessionFile,
+  readActivePendingFromSessionFile,
+} from "./session-pending.ts";
 
 import type { ExtensionMode } from "./host-mode.ts";
 
 import { type MirrorFlags, mirrorMainProcessFlags } from "./argv-mirror.ts";
-import { writeAliveMarker } from "./alive-store.ts";
+import { isProcessAlive, readAliveMarker, writeAliveMarker } from "./alive-store.ts";
 import { type DialogGlobalQueue, type UiRequestHandler } from "./dialog-queue.ts";
 import { updateFromEvent } from "./execution-record.ts";
 import {
@@ -39,6 +48,11 @@ import {
   schemaEnvByteLength,
 } from "../shared/schema-env.ts";
 import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
+import {
+  armSettledWatchdog,
+  disarmSettledWatchdog,
+  SETTLED_WATCHDOG_TIMEOUT_MS,
+} from "./settled-watchdog.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import {
@@ -160,6 +174,23 @@ const WATCHDOG_MS_PER_TURN = WATCHDOG_MINUTES_PER_TURN * SECONDS_PER_MINUTE * MS
  *  + 冒牌完成通知级联。
  *  [export] 测试可观测（run-spawn-edges MF-3 用例用 fake timers 断言 15s 后 kill）。 */
 export const WAKEUP_GRACE_MS = 15_000;
+
+/**
+ * [T2-① / P-T2 降级路径 B] keep-alive 裸缺省无进展检测的连续静默阈值（30min）。
+ *
+ * P-T2 探针裁决（probe/p-t2-report.md）：历史 89 样本 96.6% keep-alive 窗口 >30min
+ * （P50=24.5min、长尾 95.5h、85/89 由 parent-shutdown 合法收敛）——固定 30min 上限
+ * 会大面积误杀，「wave keep-alive 数小时是合法形态」被数据证实。按设计降级路径 B
+ * 落地：上界语义从固定时长改为**无进展检测**——keep-alive 期间任何子进程 stdout
+ * 活动刷新计时，仅**连续静默**达此阈值才处置（SIGTERM→SIGKILL 升级）。
+ *
+ * 阈值取 30min（对齐 SPAWN_WATCHDOG_FLOOR_MS 的旧 floor 量级）：真实 keep-alive 的
+ * 合法性由「仍在活动」定义而非「不超过某时长」，静默 30min 的层主已无任何后代管理
+ * 迹象（后代完成会经 notifier 唤醒产生 stdout 事件）。挂载面严格限定裸缺省
+ *（maxTurns/env 双缺省才挂）——显式配置走既有固定时长等待，行为不变（opt-out 保留）。
+ * [export] 测试可观测（keep-alive-no-progress 用例锚定静默阈值与刷新语义）。
+ */
+export const KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS = SPAWN_WATCHDOG_FLOOR_MS;
 
 /**
  * [T1/RC-1] agent_end 决策点惰性回补的单次 get_state 超时预算（ms）。
@@ -390,15 +421,23 @@ export const spawnedChildren = new Map<string, ChildProcess>();
  * 周期完全归引擎 dispose 管理（边界声明见 RunContext.onChildSpawned）。常驻进程的
  * 注册/回收问题在引擎层解决（R4），此处只立 Map 模态契约。
  *
- * 遍历 spawnedChildren Map 的 values()，对每个未 killed 的子进程发 `child.kill(signal)`。
+ * 遍历 spawnedChildren Map 的 values()，对每个「未确认死亡」的子进程发信号。
  * 已退出的子进程在 close/error 事件时已从 Map 移除（按句守卫 removeChildRegistration——
  * Map 当前值仍是该 child 才删，防误删 resume spawn 的新注册），故 Map 中只剩「活着的」
- * 或「已被 kill 但 close 事件尚未回调的」。后者用 `child.killed`
- * 跳过——避免对一个已 kill 的子进程重复 kill。
+ * 或「已被 kill 但 close 事件尚未回调的」。
+ *
+ * [T2-⑤ / LC-2] 死亡判定按 exitCode/signalCode 而非 killed 标记——killed=true 只表示
+ * 「发过 kill 请求」，不等于「已死」：SIGTERM 可能被无视（卡死在不可中断 native 调用），
+ * 旧实现按 killed 跳过会让这类进程脱离最后一次回收窗口。现规则：
+ *   - 已确认死亡（exitCode/signalCode 任一非 null）→ 跳过（无论 killed 与否）；
+ *   - killed 但未确认死亡（SIGTERM 已发、进程仍在）→ 直接升级 SIGKILL（dispose 是
+ *     最后兜底，没有 30s 升级窗口可等——killAllSpawnedChildren 保持快速返回契约）；
+ *   - 未 killed 且未确认死亡 → 发调用方指定 signal。
  *
  * 用于 SubagentService.dispose（进程退出路径）：覆盖 sync 子进程（controller 为 undefined，
  * abortRunningControllers 跳过它们）。background 子进程此时已被 abortRunningControllers 经
- * controller.abort 路径 kill，本函数对它们的二次 kill 是无害 noop（已 killed）。
+ * controller.abort 路径 kill，本函数对它们的再处理是 SIGKILL 升级检查（T2-⑤ 语义），
+ * 对已死句柄 child.kill 返回 false 无害。
  *
  * 不 await 子进程退出（dispose 要快速返回）。
  *
@@ -410,12 +449,16 @@ export function killAllSpawnedChildren(signal: NodeJS.Signals = "SIGTERM"): numb
   disposeEngines();
   let n = 0;
   for (const child of spawnedChildren.values()) {
-    // 跳过已 kill 的（killed=true 表示已调过 child.kill；已退出的在 close/error 时已从 Set 移除）。
-    // 不依赖 exitCode/signalCode：close 事件回调可能晚于 dispose，此时它们仍为 null，但子进程
-    // 可能已被 controller.abort 路径 kill（killed=true）。
-    if (child.killed) continue;
+    // [T2-⑤ / LC-2] killed=发过 kill 请求 ≠ 已死：只有 exitCode/signalCode 非 null
+    //（进程已确认死亡）才跳过。close 事件回调可能晚于 dispose 到达，此时两个字段
+    // 仍为 null 但进程可能已被 controller.abort 路径 kill（killed=true）——不跳过，
+    // 走下方 SIGKILL 升级检查（SIGTERM 可能被无视，不能赌它生效）。
+    // 字段缺失（?? null 兜底，如 test double）按「无法确认死亡」保守视为存活，
+    // 进入 kill 分支——宁多发一次无害信号，不漏一个未死进程。
+    const confirmedDead = (child.exitCode ?? null) !== null || (child.signalCode ?? null) !== null;
+    if (confirmedDead) continue;
     try {
-      child.kill(signal);
+      child.kill(child.killed ? "SIGKILL" : signal);
       n++;
     } catch (err) {
       // best-effort：单个 kill 失败不影响其他子进程（常见于进程刚退出、句柄竞态），
@@ -429,8 +472,8 @@ export function killAllSpawnedChildren(signal: NodeJS.Signals = "SIGTERM"): numb
   }
   // dispose 全量清理；正常路径的 close/error 事件 delete 保留作 per-child 精细清理，
   // 这里兑底防 close 事件漏触发的极端累积（主进程崩溃后 close 回调可能不再触发，
-  // 不 clear 则下次 dispose 会重复向已 kill 的 child 发信号——虽然 killed=true 跳过，
-  // 但 Set 无限增长泄漏内存）。
+  // 不 clear 则下次 dispose 会重复向已 kill 的 child 发信号——虽然已确认死亡者被
+  // 跳过，但 Map 无限增长泄漏内存）。
   spawnedChildren.clear();
   return n;
 }
@@ -478,6 +521,204 @@ export function registerSpawnedChildForRecord(recordId: string, child: ChildProc
   spawnedChildren.set(recordId, child);
   child.once("close", () => removeChildRegistration(recordId, child));
   child.once("error", () => removeChildRegistration(recordId, child));
+}
+
+// ============================================================
+// [T2-② / P-T2b 主路径] 后代级联补杀 sweep
+// ============================================================
+//
+// 背景（设计 §7.2 T2-② + 探针 probe/p-t2b-report.md）：keep-alive 上界 kill 的是层主
+// 进程，其后台化 pi 后代不会随层主 SIGTERM 级联死亡（P-T2b 三次稳定复现 NO-CASCADE，
+// 实装机制层 rpc-mode SIGTERM handler 只 kill tracked detached children，agent_end 后
+// bash 已 untrack）。补杀时序分两步：层主确认死亡（close）后从其 sessionFile 冻结
+// 快照采集活跃后代清单（此刻 pending entries 最完整，避开「kill 前采集」的垂死窗口
+// 漏项），再对清单内每个后代迭代展开至叶（递归读各后代的 pending 差集）逐个
+// escalation kill。
+
+/** sweep 内 ps -p <pid> -o command= 探测的超时（处置路径一次性调用，防 ps 挂死拖住收尾）。 */
+const DESCENDANT_CMDLINE_PROBE_TIMEOUT_MS = 3000;
+
+/**
+ * 读目标 pid 的完整命令行（macOS + Linux 通用的 `ps -p <pid> -o command=`）。
+ * 返回 undefined：ps 失败 / 超时 / 空输出（进程刚死等）——调用方按「校验不过」保守跳过。
+ */
+function readProcessCmdline(pid: number): string | undefined {
+  try {
+    const r = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf-8",
+      timeout: DESCENDANT_CMDLINE_PROBE_TIMEOUT_MS,
+    });
+    if (r.error || r.status !== 0) return undefined;
+    const out = typeof r.stdout === "string" ? r.stdout.trim() : "";
+    return out.length > 0 ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * cmdline 校验：目标进程须是 pi --mode rpc 形态才允许 kill。
+ *
+ * [防误杀] 层主死后窗口内 pid 可能被操作系统复用给无关进程——存活校验（isProcessAlive）
+ * 只证明「有进程」，cmdline 校验进一步证明「是 pi rpc 子进程」才动手（P-T2b 实测后代
+ * 即以 `pi --mode rpc` 形态存活，可命中）。
+ *
+ * [export] 测试可观测（descendant-sweep 用例断言 pi 形态命中 / 无关进程拒绝）。
+ */
+export function looksLikePiRpcProcess(cmdline: string): boolean {
+  // pi 词形：裸命令 "pi"、路径段 ".../pi"、带扩展名的入口脚本 ".../pi.js"。
+  const hasPi = /(^|[\s/])pi(\.js|\.cjs|\.mjs)?(\s|$)/.test(cmdline);
+  // --mode rpc：分离参数（"--mode rpc"）与连写（"--mode=rpc"）两形态。
+  const hasRpcMode = /(^|\s)--mode[=\s]rpc(\s|$)/.test(cmdline);
+  return hasPi && hasRpcMode;
+}
+
+/**
+ * 对外部 pid（无 ChildProcess 句柄的后代进程）发 SIGTERM 并武装 SIGKILL 升级：
+ * PID_KILL_ESCALATION 后仍存活则 SIGKILL。语义对齐 killChildWithEscalation，
+ * 但后代是 detached 孤儿（非本进程 spawn 的句柄），只能按 pid 操作。
+ */
+function killPidWithEscalation(pid: number, label: string): void {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (err) {
+    // SIGTERM 发送即失败（进程恰死 / 权限）：无需升级，诊断留痕
+    logger.debug(
+      `[session-runner] ${label}: SIGTERM to pid ${pid} failed (best-effort continue): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return;
+  }
+  assertSafeTimerDelay(SIGKILL_ESCALATION_MS, `descendant SIGKILL escalation (${label})`);
+  const escalation = setTimeout(() => {
+    if (isProcessAlive(pid)) {
+      logger.warn(
+        `[session-runner] ${label}: descendant pid ${pid} still alive ${
+          SIGKILL_ESCALATION_MS / MS_PER_SECOND
+        }s after SIGTERM, escalating to SIGKILL`,
+      );
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // 进程在窗口内自行退出：目标已达成
+      }
+    }
+  }, SIGKILL_ESCALATION_MS);
+  escalation.unref();
+}
+
+/** 后代补杀结果（诊断/测试可观测）。 */
+export interface DescendantSweepResult {
+  /** 已发 SIGTERM（挂升级）的后代 pid。 */
+  killed: number[];
+  /** 被守卫拦下的后代（pid 反查失败 / 已死 / 非 pi 形态），reason 面向排查。 */
+  skipped: Array<{ sessionId: string; pid?: number; reason: string }>;
+}
+
+/**
+ * 从层主 sessionFile 出发迭代补杀全部活跃后代（迭代至叶）。
+ *
+ * 采集：层主 sessionFile 的 pending register−unregister 差集（listActivePendingFromSessionFile，
+ * 与 keep-alive 判定的 count 口径共享增量游标）给出活跃后代的 sessionId 清单；每个
+ * sessionId 经 findSessionFileByHeaderId 反查后代 sessionFile，其自身差集继续展开
+ * （BFS + visited 防环）直至叶。
+ *
+ * kill 前双校验（防 pid 复用误杀）：readAliveMarker 取后代 pid → isProcessAlive 存活
+ * 校验 → readProcessCmdline + looksLikePiRpcProcess 形态校验，通过才 escalation kill。
+ *
+ * 残余窗口（设计如实标注）：个别后代 pid 反查失败时归 T5 marker 机制兜底（见下
+ * TODO 锚点）——marker 失真时该后代可能被孤儿恢复误终态，本函数不押注 marker 精确性。
+ *
+ * 同步实现：后代树规模有限、每步有界（ps 探测 3s 超时、文件读取增量游标），调用方
+ * （runSpawn 收尾）一次性执行不悬挂。
+ */
+export function sweepDescendantsOfSession(
+  rootSessionFile: string | undefined,
+  sessionDir: string,
+  source: string,
+): DescendantSweepResult {
+  const result: DescendantSweepResult = { killed: [], skipped: [] };
+  if (!rootSessionFile) return result;
+
+  const visited = new Set<string>();
+  const queue: string[] = [rootSessionFile];
+  while (queue.length > 0) {
+    const sessionFile = queue.shift() as string;
+    if (visited.has(sessionFile)) continue;
+    visited.add(sessionFile);
+
+    const list = listActivePendingFromSessionFile(sessionFile);
+    if (list.error) {
+      // 差集读不出 = 无法证明有活跃后代：保守跳过该分支（不杀不在清单内的进程）
+      logger.debug(
+        `[session-runner] descendant sweep (${source}): pending list unreadable for ${sessionFile}: ${list.error}`,
+      );
+      continue;
+    }
+
+    for (const item of list.items) {
+      if (!item.sessionId) {
+        // TODO(T5 marker fallback)：register entry 缺 sessionId，pid/sessionFile 反查
+        // 无门。兜底归 T5 的 marker 机制（后续单元实施：按 pending id 关联 alive
+        // marker 反查）；当前仅留痕——该后代成为孤儿后由 marker/孤儿恢复收敛，存在
+        // 设计已标注的「marker 失真残余窗口」。
+        result.skipped.push({
+          sessionId: item.id,
+          reason: "pending register entry has no sessionId (marker-based fallback pending T5)",
+        });
+        continue;
+      }
+      const childFile = findSessionFileByHeaderId(sessionDir, item.sessionId);
+      if (!childFile) {
+        // TODO(T5 marker fallback)：sessionDir 反查失败（session 文件未 flush / 非本
+        // store 树）。同上归 T5 marker 机制兜底，当前留痕。
+        result.skipped.push({
+          sessionId: item.sessionId,
+          reason: "session file not found in sessionDir (marker-based fallback pending T5)",
+        });
+        continue;
+      }
+      // 迭代至叶：后代自身的 pending 差集在后续轮次继续展开（visited 防环）。
+      queue.push(childFile);
+
+      const marker = readAliveMarker(childFile);
+      if (!marker) {
+        // 后代 sessionFile 存在但无 .alive sidecar：无法定位 pid。TODO(T5 marker
+        // fallback) 同上——marker 机制实施后按 record 关联补齐。
+        result.skipped.push({ sessionId: item.sessionId, reason: "no alive marker for session file" });
+        continue;
+      }
+      if (!isProcessAlive(marker.pid)) {
+        // 存活校验不过：后代已死（自然完成 / 随层主 cascade），无需补杀。
+        result.skipped.push({
+          sessionId: item.sessionId,
+          pid: marker.pid,
+          reason: "pid not alive (already exited)",
+        });
+        continue;
+      }
+      const cmdline = readProcessCmdline(marker.pid);
+      if (cmdline === undefined || !looksLikePiRpcProcess(cmdline)) {
+        // [防误杀] pid 复用守卫：探测失败或非 pi --mode rpc 形态一律不动手。
+        result.skipped.push({
+          sessionId: item.sessionId,
+          pid: marker.pid,
+          reason:
+            cmdline === undefined
+              ? "cmdline probe failed (ps unavailable)"
+              : `cmdline is not pi --mode rpc (pid reuse guard): ${cmdline}`,
+        });
+        continue;
+      }
+      logger.warn(
+        `[session-runner] descendant sweep (${source}): killing orphan descendant pid=${marker.pid} session=${item.sessionId} (${item.id})`,
+      );
+      killPidWithEscalation(marker.pid, `descendant sweep (${source})`);
+      result.killed.push(marker.pid);
+    }
+  }
+  return result;
 }
 
 // ============================================================
@@ -918,6 +1159,25 @@ interface SpawnRunState {
    * 是 no-op（Promise 只 resolve 一次）。
    */
   resolveRun: ((code: number) => void) | undefined;
+  /**
+   * [T2-① / P-T2 降级 B] keep-alive 裸缺省的无进展检测 timer（仅 maxTurns/env 双缺省
+   * 的 keep-alive 分支挂载）：子进程 stdout 活动刷新计时，连续静默
+   * KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 才处置。undefined = 未挂载（显式配置走既有
+   * 固定时长 state.watchdog，不挂本 timer）。
+   */
+  keepAliveNoProgressTimer: NodeJS.Timeout | undefined;
+  /**
+   * [T2-② / P-T2b 主路径] keep-alive 上界处置层主后置 true：runSpawn 收尾（层主
+   * close 确认死亡 + sessionFile 冻结为最终快照）时对活跃后代做级联补杀 sweep。
+   */
+  sweepDescendantsOnClose: boolean;
+  /**
+   * [T2-③ / LC-1] chatMode 首轮 settled 等待固定硬上限（timer 句柄记账在
+   * settled-watchdog.ts 的 armedTimers Map，按 recordId arm/disarm；双挂载原语，
+   * 热路径挂载在 subagent-service deliverMessage，u-t2b 接线）。
+   */
+  /** [T2-③] settled watchdog 已触发——runSpawn 收尾据此转 failed + 恢复指引（非正常完成）。 */
+  settledWatchdogFired: boolean;
 }
 
 /**
@@ -967,6 +1227,50 @@ function killChildWithEscalation(state: SpawnRunState, child: ChildProcess, sour
   escalation.unref();
   child.once("exit", () => clearTimeout(escalation));
   state.escalationTimer = escalation;
+}
+
+/**
+ * [T2-① / P-T2 降级 B] 挂载（或刷新）keep-alive 裸缺省无进展检测 timer。
+ *
+ * 仅在 keep-alive 分支的裸缺省形态（resolveSpawnWatchdogMs 返回 undefined：无 maxTurns
+ * 无 env）挂载。到期 = 连续静默 KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS → 处置（SIGTERM→
+ * killChildWithEscalation）。刷新机制：stdout pump 的每次 data 事件经
+ * refreshKeepAliveNoProgressTimer 重挂（先清旧）——「连续静默」由「每次活动重置计时」
+ * 实现；重复 arm 不叠加（旧 timer 先 clear）。
+ *
+ * 到期处置同时置 sweepDescendantsOnClose（T2-② 后代级联补杀的两步时序前半）。
+ */
+function armKeepAliveNoProgressTimer(state: SpawnRunState, child: ChildProcess): void {
+  if (state.keepAliveNoProgressTimer) clearTimeout(state.keepAliveNoProgressTimer);
+  assertSafeTimerDelay(KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS, "keep-alive no-progress watchdog");
+  state.keepAliveNoProgressTimer = setTimeout(() => {
+    logger.warn(
+      `[session-runner] keep-alive no-progress watchdog fired for ${state.record.id}: no child output for ${KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min (bare-default keep-alive without maxTurns/env), terminating`,
+    );
+    // [T2-②] 同 keep-alive watchdog 处置：层主 close 确认死亡后级联补杀活跃后代。
+    state.sweepDescendantsOnClose = true;
+    killChildWithEscalation(state, child, "keep-alive no-progress watchdog");
+  }, KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS);
+  state.keepAliveNoProgressTimer.unref();
+}
+
+/**
+ * [T2-①] 子进程有 stdout 活动 → 刷新静默计时。
+ *
+ * 未挂载（显式 maxTurns/env 的固定时长等待、非 keep-alive 阶段）时 no-op——刷新面
+ * 严格限定在裸缺省上界，显式配置的行为不变（opt-out 语义保留）。
+ */
+function refreshKeepAliveNoProgressTimer(state: SpawnRunState, child: ChildProcess): void {
+  if (!state.keepAliveNoProgressTimer) return;
+  armKeepAliveNoProgressTimer(state, child);
+}
+
+/** [T2-①] 清除无进展检测 timer（keep-alive 重评估 / 收尾清理；未挂载时 no-op）。 */
+function disarmKeepAliveNoProgressTimer(state: SpawnRunState): void {
+  if (state.keepAliveNoProgressTimer) {
+    clearTimeout(state.keepAliveNoProgressTimer);
+    state.keepAliveNoProgressTimer = undefined;
+  }
 }
 
 /**
@@ -1030,6 +1334,10 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
     // 非 chatMode：忽略（agent_end handler 的一次性 kill 已处理，进程不会活到 agent_settled）。
     if (isAgentSettledEvt(raw)) {
       if (record.chatMode) {
+        // [T2-③ / LC-1] settled 到达：本轮等待窗口结束，固定硬上限即清（resolveRun
+        // 在本分支同点调用，天然同清）。清除必须先于后续逻辑——idle timer / 回调 /
+        // resolve 抛错时 watchdog 已确保撤下，不会误杀下一个正常轮次。
+        disarmSettledWatchdog(record.id);
         // [F-R2] 本闭包经 stdout data 回调同步调用（handleSdkEvent ← attachStdoutPump）：
         // armIdleTimer → assertSafeTimerDelay fail-fast 的 throw 若逃出回调 = uncaughtException
         // 崩宿主。包 try/catch 降级为「不挂 idle timer」（进程回收由外部 signal / dispose 驱动），
@@ -1354,11 +1662,13 @@ async function runAgentEndDisposition(
     // 数小时）不能被固定 2h 误杀——2h 到点 kill 会连坐 SubagentService.dispose 的
     // killAllSpawnedChildren 杀全部子进程，L2 重派丢在途工作。maxTurns 大则超时长。
     // [预算语义对齐 + U5] maxTurns 未传且 env 未设，或显式 <=0（压过 env）→
-    // 不 re-arm（等待后代不限时）；回收由外部 signal / dispose / 后代自然完成驱动。
+    // 原语义「不 re-arm（等待后代不限时）」——[T2-① / P-T2 降级 B] 现改为挂无进展
+    // 检测上界（见下方裸缺省分支）；显式 maxTurns/env 行为不变（opt-out 语义保留）。
     // [F-R2] resolveSpawnWatchdogMs → assertSafeTimerDelay fail-fast 的 throw 不升级为
     // 进程崩溃：包 try/catch 降级为「不 re-arm」（与 keepAliveMs === undefined 的既有
     // 降级语义一致），错误经 bestEffort("error") 可见。
     clearTimeout(state.watchdog);
+    disarmKeepAliveNoProgressTimer(state);
     let keepAliveMs: number | undefined;
     try {
       keepAliveMs = resolveSpawnWatchdogMs(opts.maxTurns);
@@ -1367,11 +1677,23 @@ async function runAgentEndDisposition(
       keepAliveMs = undefined;
     }
     if (keepAliveMs !== undefined) {
-      state.watchdog = setTimeout(
-        () => killChildWithEscalation(state, child, "keep-alive watchdog"),
-        keepAliveMs,
-      );
+      state.watchdog = setTimeout(() => {
+        // [T2-② / P-T2b 主路径] keep-alive 上界处置层主的两步时序前半：kill 层主；
+        // close（确认死亡 + sessionFile 冻结为最终快照）后由 runSpawn 收尾 sweep
+        // 活跃后代（后半）。SIGTERM 对后台化 pi 后代无级联（P-T2b NO-CASCADE 三次
+        // 复现），补杀必须显式做，不能押注子进程自行级联。
+        state.sweepDescendantsOnClose = true;
+        killChildWithEscalation(state, child, "keep-alive watchdog");
+      }, keepAliveMs);
       state.watchdog.unref();
+    } else {
+      // [T2-① / P-T2 降级路径 B] 裸缺省（无 maxTurns 无 env）：挂无进展检测上界。
+      // P-T2 探针实证固定 30min 上限会误杀 96.6% 真实 keep-alive（长尾 95.5h 合法），
+      // 上界语义改为「连续静默达 KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 才处置」——子进程
+      // stdout 活动（含后代经 notifier 唤醒产生的全部事件流）刷新计时，真实活动的
+      // keep-alive 不被时长上限误杀，纯静默的 wedged 层主仍有界回收。回收由外部
+      // signal / dispose / 后代自然完成驱动的旧兜底通道全部保留。
+      armKeepAliveNoProgressTimer(state, child);
     }
   } else if (pending.recentUnregister) {
     // 差集 0 但最近有 unregister：后代刚完成，notify 唤醒可能在路上（竞态窗口），
@@ -1383,12 +1705,14 @@ async function runAgentEndDisposition(
       "[session-runner] agent_end: keep alive, recent descendant completion (wake-up in flight)",
     );
     clearTimeout(state.watchdog);
+    disarmKeepAliveNoProgressTimer(state);
     state.watchdog = setTimeout(
       () => killChildWithEscalation(state, child, "wakeup grace timer"),
       WAKEUP_GRACE_MS,
     );
     state.watchdog.unref();
   } else {
+    disarmKeepAliveNoProgressTimer(state);
     killChildWithEscalation(state, child, "agent_end final kill");
   }
 }
@@ -1465,6 +1789,13 @@ function attachStdoutPump(
   };
 
   child.stdout.on("data", (data: string) => {
+    // [T2-① / P-T2 降级 B] 子进程有输出 = keep-alive 仍有进展迹象：刷新静默计时。
+    // 任何 stdout 活动（header / 事件行 / invalid 调试行）都算——keep-alive 的合法性
+    // 由「仍在活动」定义（P-T2 探针裁决：真实 keep-alive 96.6% 超 30min，合法性不看
+    // 时长看活动）。后代集合变化的层主侧观测信号（后代完成 → notifier 唤醒 → 新
+    // agent_end → keep-alive 分支重评估 + 唤醒后的 stdout 事件流）被同一刷新面天然
+    // 覆盖，无需额外轮询 sessionFile。未挂载（显式 maxTurns/env）时 no-op。
+    refreshKeepAliveNoProgressTimer(state, child);
     stdoutBuffer += data;
     const lines = stdoutBuffer.split("\n");
     stdoutBuffer = lines.pop() ?? ""; // 保留最后未完整行
@@ -1619,6 +1950,9 @@ function waitForChildExit(
       // [C1] 子进程已退出，从 orphan-tracking Map 移除（dispose 兜底无需再 kill 它）。
       // [M4] 按值守卫：close 事件晚于 resume spawn 到达时不误删新 child 注册。
       removeChildRegistration(state.record.id, child);
+      // [T2-③ / LC-1] close：settled 等待窗口必然结束（含首轮 settled watchdog 自身
+      // 触发 kill 后的 close——timer 已触发执行完毕，clear 幂等无害）。
+      disarmSettledWatchdog(state.record.id);
       // FR-4: 清理 get_state 监听器（子进程已退出，无更多 response）
       pump.clearGetStateListeners();
       // FR-4: 子进程已退出，get_state response 不会再来。若握手仍未 settle，立即放弃
@@ -1687,6 +2021,9 @@ export async function runSpawn(
     sessionHeader: undefined,
     handshakeResult: undefined,
     resolveRun: undefined,
+    keepAliveNoProgressTimer: undefined,
+    sweepDescendantsOnClose: false,
+    settledWatchdogFired: false,
   };
 
   // a/b. 事件累积器（pendingTools 寄存器 + turnLimiter + handleSdkEvent/agentEvent 闭包）
@@ -1817,6 +2154,22 @@ export async function runSpawn(
     // 时机安全：pipe 内核缓冲不丢；pi 在 rebindSession 后才挂 stdin reader。
     sendPromptCommand(child, task);
 
+    // [T2-③ / LC-1] chatMode 首轮 settled 等待固定硬上限（双挂载原语之首轮调用点；
+    // 热路径调用点在 subagent-service deliverMessage，u-t2b 接线）。prompt 发出后挂、
+    // settled 到达（handleSdkEvent）/ close（waitForChildExit）/ resolveRun 任一发生
+    // 即清——settled 永不到达（事件行丢失 / 子进程 wedged）时本 timer 是唯一独立
+    // 回收通道。到期处置：kill 层主 + settledWatchdogFired 标记（收尾据此转 failed
+    // + 恢复指引，见下方 success 判定），与被信号终止视为正常完成的既有语义区分。
+    if (record.chatMode) {
+      armSettledWatchdog(record.id, () => {
+        logger.warn(
+          `[session-runner] settled watchdog fired for ${record.id}: no agent_settled within ${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min of first-round prompt, terminating (LC-1 wedge recovery)`,
+        );
+        state.settledWatchdogFired = true;
+        killChildWithEscalation(state, child, "settled watchdog");
+      });
+    }
+
     // d. signal → proc.kill 监听（一次性，替代 session.abort）
     // [race-F4] 用户取消同样升级：SIGTERM 后挂住 → 30s 后 SIGKILL 兑现取消语义。
     const onAbort = (): void => {
@@ -1894,6 +2247,9 @@ export async function runSpawn(
     // [race-F4] 兑底清升级 timer（exit 事件自动 clear 的双保险：close 先于升级触发的
     // 竞态窗口内不误杀下一个占用同 state 的子进程）
     clearTimeout(state.escalationTimer);
+    // [T2-①③] 收尾兜底清新增 timer（正常清除点已覆盖；防收尾路径遗漏泄漏）
+    disarmKeepAliveNoProgressTimer(state);
+    disarmSettledWatchdog(record.id);
 
     // [持久化 A] sessionFile 兜底校验。
     // identity custom entry 已改由子进程 session_start hook 写（M4 / V2 决策 5），
@@ -1917,10 +2273,40 @@ export async function runSpawn(
       }
     }
 
+    // [T2-② / P-T2b 主路径] keep-alive 上界处置层主的两步时序后半：此刻 close 已发生
+    //（waitForChildExit 已 resolve = 层主确认死亡），且 sessionFile 已完成 LC-4 反查
+    // = 冻结为最终快照（pending entries 最完整，避开「kill 前采集」的垂死窗口漏项）。
+    // 从层主 sessionFile 差集采集活跃后代清单，对清单内每个后代迭代展开至叶（递归读
+    // 各后代的 pending 差集），kill 前做存活 + cmdline（pi/--mode rpc）校验防 pid 复用
+    // 误杀，逐个 escalation kill（SIGTERM→SIGKILL）。同步执行：后代树规模有限 + 每
+    // 步有界（ps 探测 3s 超时），不阻塞 runSpawn 收尾的可感时长。
+    if (state.sweepDescendantsOnClose) {
+      try {
+        const sweep = sweepDescendantsOfSession(record.sessionFile, sessionDir, "keep-alive watchdog");
+        if (sweep.killed.length > 0 || sweep.skipped.length > 0) {
+          logger.warn(
+            `[session-runner] descendant sweep (keep-alive watchdog): killed=[${sweep.killed.join(", ")}] skipped=${JSON.stringify(sweep.skipped)}`,
+          );
+        }
+      } catch (err) {
+        // sweep 整体失败不掩盖层主自身的收尾结果（best-effort 可见）
+        bestEffort(err, "descendant sweep (keep-alive watchdog)", "error");
+      }
+    }
+
     // 判定成功/失败（三来源：exitCode + record.lastError + abort 原因）
     let success: boolean;
     let error: string | undefined;
-    if (record.lastError) {
+    if (state.settledWatchdogFired) {
+      // [T2-③ / LC-1] settled 硬上限到期回收 ≠ 正常完成：被信号终止视为正常完成的
+      // 既有语义（maxTurns 达限 kill）不适用于本形态——runSpawn 以错误返回（设计
+      // §6.2），错误消息含恢复指引（S-B 验收判据）。closedReason 的 "watchdog" 映射
+      // 由 finalize 侧按 error 标记承接（ClosedReason 枚举封闭，不在此擅自扩枚举）。
+      success = false;
+      error =
+        `subagent did not reach agent_settled within ${SETTLED_WATCHDOG_TIMEOUT_MS / MS_PER_SECOND / SECONDS_PER_MINUTE} min (settled watchdog); the process was terminated to bound the wait. ` +
+        `Recovery: check state with subagents action:'list', then re-send your message to continue.`;
+    } else if (record.lastError) {
       // LLM/provider error 或 abort error 已收口进 record.lastError
       success = false;
       error = record.lastError;
