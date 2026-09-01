@@ -273,6 +273,7 @@ rg -n 'spawn\(|execFile\(|fork\(|pty\.spawn' packages/runtime/src apps/electron/
 
 - **R5 与既有守卫脚本共存。**
   新检查脚本按 `.githooks/check_*.py` 命名法并在 install-hooks.sh 与其他检查同构注册；豁免名单硬编码在脚本内逐条注明理由（reap-orphan-pi ps 只读、relay-env 探针特殊 env、构建器自身实现处）。
+  豁免增量登记（后台任务收殓 `services/session/background-task-reaper.ts` 三调用点）：① `spawnSync('ps')` 进程 start time 只读探测——pid 复用防御（判定逻辑移植自 extension reaper），数组参数不经 shell、显式 timeout，仅读系统进程表、不向下游传递任何数据，与 reap-orphan-pi ps 探测先例同构；② `spawnSync('pgrep')` 收殓补杀的子孙 pid 只读枚举（kill 树兜底残留清理）——数组参数不经 shell，仅读进程表，无 env 出站面，同 reap-orphan-pi 先例；③ `taskkill` Windows 进程树终止（孤儿任务补杀）——数组参数不经 shell、stdio ignore，kill 处置无数据回流通路，同 supervisor/windows-process.ts taskkill.exe 先例。
 
 ---
 
