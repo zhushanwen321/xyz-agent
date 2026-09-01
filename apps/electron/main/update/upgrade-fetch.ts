@@ -375,6 +375,9 @@ function safeReadFile(path: string): string {
 /**
  * curl 引擎执行（D6 规格）。
  *
+ * 阶段拆分（结构性重构，行为不变）：buildCurlArgs（参数构造）→ runner 执行 →
+ * throwCurlRunFailure（失败形态结构化抛出）/ buildCurlFetchResult（成功结果组装）。
+ *
  * @param undiciError 触发降级的 undici 原始错误（直连 curl 路径不传）——
  *   curl 失败时挂到 CurlFetchError 供编排层按 D8 报 undici 分类。
  */
@@ -390,59 +393,90 @@ async function runCurlEngine(
   const headerFile = join(workDir, 'headers.txt')
   const bodyFile = join(workDir, 'body.txt')
   try {
-    const args: string[] = ['-f']
-    if (method === 'HEAD') args.push('-I')
-    // -L 必带：GitHub release URL 实测 302 两跳至 CDN 签名 URL；
-    // -sS：静默进度表但保留错误输出到 stderr
-    args.push('-L', '-sS')
-    args.push('--connect-timeout', String(CURL_CONNECT_TIMEOUT_S))
-    args.push('--max-time', String(Math.ceil(timeoutMs / MS_PER_SECOND)))
-    args.push('-w', '%{http_code}')
-    args.push('-D', headerFile)
-    if (method === 'GET') args.push('-o', bodyFile)
-    if (opts.proxyUrl) args.push('-x', opts.proxyUrl)
-    for (const [k, v] of Object.entries(buildHeaders(opts.headers))) {
-      args.push('-H', `${k}: ${v}`)
-    }
-    args.push(url)
-
+    const args = buildCurlArgs(url, opts, method, timeoutMs, headerFile, bodyFile)
     const runner = curlRunnerOverride ?? defaultCurlRunner
     const r = await runner(curlExecutable(), args)
 
-    if (r.spawnError) {
-      throw new CurlFetchError({ kind: 'spawn-failed', spawnError: r.spawnError, undiciError })
+    if (r.spawnError || r.exitCode !== 0) {
+      throwCurlRunFailure(r, undiciError)
     }
-    if (r.exitCode !== 0) {
-      const exitCode = r.exitCode ?? -1
-      // exit 22（-f 语义）时 -w '%{http_code}' 仍输出最终状态码（D6）
-      const httpStatusCode =
-        exitCode === CURL_EXIT_KIND_HTTP ? Number.parseInt(r.stdout.trim(), 10) : undefined
-      throw new CurlFetchError({
-        kind: CURL_EXIT_KIND_MAP[exitCode] ?? 'unknown',
-        exitCode,
-        stderr: r.stderr,
-        httpStatusCode: Number.isFinite(httpStatusCode) ? httpStatusCode : undefined,
-        undiciError,
-      })
-    }
-    const status = Number.parseInt(r.stdout.trim(), 10)
-    if (!Number.isFinite(status) || status <= 0) {
-      throw new CurlFetchError({
-        kind: 'unknown',
-        exitCode: r.exitCode ?? undefined,
-        stderr: `unparseable -w output: ${JSON.stringify(r.stdout)}`,
-        undiciError,
-      })
-    }
-    return {
-      ok: status >= HTTP_OK_MIN && status < HTTP_OK_MAX_EXCLUSIVE,
-      status,
-      headers: parseCurlHeaderFile(safeReadFile(headerFile)),
-      bodyText: method === 'GET' ? safeReadFile(bodyFile) : undefined,
-      usedEngine: 'curl',
-    }
+    return buildCurlFetchResult(r, method, headerFile, bodyFile, undiciError)
   } finally {
     rmSync(workDir, { recursive: true, force: true })
+  }
+}
+
+/** 构造 curl 参数数组（D6 规格：-f/-I/-L/-sS/超时/-w/-D/-o/-x/-H，URL 收尾）。 */
+function buildCurlArgs(
+  url: string,
+  opts: UpgradeFetchOptions,
+  method: 'GET' | 'HEAD',
+  timeoutMs: number,
+  headerFile: string,
+  bodyFile: string,
+): string[] {
+  const args: string[] = ['-f']
+  if (method === 'HEAD') args.push('-I')
+  // -L 必带：GitHub release URL 实测 302 两跳至 CDN 签名 URL；
+  // -sS：静默进度表但保留错误输出到 stderr
+  args.push('-L', '-sS')
+  args.push('--connect-timeout', String(CURL_CONNECT_TIMEOUT_S))
+  args.push('--max-time', String(Math.ceil(timeoutMs / MS_PER_SECOND)))
+  args.push('-w', '%{http_code}')
+  args.push('-D', headerFile)
+  if (method === 'GET') args.push('-o', bodyFile)
+  if (opts.proxyUrl) args.push('-x', opts.proxyUrl)
+  for (const [k, v] of Object.entries(buildHeaders(opts.headers))) {
+    args.push('-H', `${k}: ${v}`)
+  }
+  args.push(url)
+  return args
+}
+
+/**
+ * curl 失败形态结构化抛出（D8 exit code 映射）：spawn 失败 / 非零退出码两类。
+ * 恒 throw。
+ */
+function throwCurlRunFailure(r: CurlRunResult, undiciError?: unknown): never {
+  if (r.spawnError) {
+    throw new CurlFetchError({ kind: 'spawn-failed', spawnError: r.spawnError, undiciError })
+  }
+  const exitCode = r.exitCode ?? -1
+  // exit 22（-f 语义）时 -w '%{http_code}' 仍输出最终状态码（D6）
+  const httpStatusCode =
+    exitCode === CURL_EXIT_KIND_HTTP ? Number.parseInt(r.stdout.trim(), 10) : undefined
+  throw new CurlFetchError({
+    kind: CURL_EXIT_KIND_MAP[exitCode] ?? 'unknown',
+    exitCode,
+    stderr: r.stderr,
+    httpStatusCode: Number.isFinite(httpStatusCode) ? httpStatusCode : undefined,
+    undiciError,
+  })
+}
+
+/** curl 成功退出（exit 0）后的结果组装：解析 -w 状态码 + 读落盘 header/body。 */
+function buildCurlFetchResult(
+  r: CurlRunResult,
+  method: 'GET' | 'HEAD',
+  headerFile: string,
+  bodyFile: string,
+  undiciError?: unknown,
+): UpgradeFetchResult {
+  const status = Number.parseInt(r.stdout.trim(), 10)
+  if (!Number.isFinite(status) || status <= 0) {
+    throw new CurlFetchError({
+      kind: 'unknown',
+      exitCode: r.exitCode ?? undefined,
+      stderr: `unparseable -w output: ${JSON.stringify(r.stdout)}`,
+      undiciError,
+    })
+  }
+  return {
+    ok: status >= HTTP_OK_MIN && status < HTTP_OK_MAX_EXCLUSIVE,
+    status,
+    headers: parseCurlHeaderFile(safeReadFile(headerFile)),
+    bodyText: method === 'GET' ? safeReadFile(bodyFile) : undefined,
+    usedEngine: 'curl',
   }
 }
 

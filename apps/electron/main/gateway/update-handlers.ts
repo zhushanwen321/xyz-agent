@@ -257,6 +257,150 @@ async function preloadUpdateSilently(
 }
 
 /**
+ * update:download 的本地短路链（D1 短路①②，纯本地零网络）。命中任一短路返回
+ * `{ downloaded: true }`；miss 返回 null 由调用方继续原链（网络解析 + 下载）。
+ */
+async function resolveUpdateDownloadShortCircuit(
+  currentVersion: string,
+  requestedVersion: string,
+): Promise<{ downloaded: true } | null> {
+  // [D1 短路①] preloaded 本地短路（纯本地，断网可用）：preloaded.release.version 与
+  // 请求版本**严格相等**才短路——防静默装旧版（preloaded 0.9.12 vs 请求 0.9.11 不
+  // 短路）。顺带修复「断网时快路径（resolveByVersion 之后的 readPreloadedUpdate）
+  // 也走不到」的缺陷。短路不触发下载进度事件。
+  const preloadedRaw = await readPreloadedUpdateRaw(currentVersion)
+  if (preloadedRaw && preloadedRaw.release.version === requestedVersion) {
+    console.log(
+      `[update:download] preloaded v${preloadedRaw.release.version} matches requested version, skip download (local short-circuit)`,
+    )
+    return { downloaded: true }
+  }
+
+  // [D1 短路② / D3] pending 认领短路（零网络）：以上次成功检测持久化的 pending
+  // release 为基准（含 assets + sha256），与请求版本严格相等时尝试认领 manual/
+  // 目录内手动投放的产物（断网逃生通道，G1）。认领 miss（无候选/校验失败）或异常
+  // 均静默继续原链；认领成功由 manual-claim 内部写 preloaded 登记（source
+  // 'manual-claim' 的 mismatch 落盘也在该模块内，handler 不重复落盘）。
+  const pending = readPendingUpdate(currentVersion)
+  if (pending && pending.version === requestedVersion) {
+    const claimedPath = await tryClaimManualAssetSafe(pending)
+    if (claimedPath) {
+      console.log(`[update:download] claimed manual asset v${pending.version} at ${claimedPath}, skip download`)
+      return { downloaded: true }
+    }
+  }
+  return null
+}
+
+/**
+ * update:download 失败收尾：构造 errorPayload（UpdateError 用户友好形态 / 通用形态）、
+ * D7 落盘、推 update:error 事件后 throw 可序列化对象（与 install catch 一致）。
+ * 恒 throw。
+ */
+function reportUpdateDownloadError(deps: IpcHandlerDeps, err: unknown): never {
+  const win = deps.getMainWindow()
+  let errorPayload
+  if (err instanceof UpdateError) {
+    const f = err.toUserFriendly()
+    errorPayload = { stage: f.stage, message: f.message, errorCode: f.code, suggestion: f.suggestion }
+    // D7: download 失败落盘
+    appendUpdateError({
+      at: new Date().toISOString(),
+      source: 'download',
+      stage: f.stage,
+      errorCode: f.code,
+      rawCause: err.rawCause,
+      proxyUrl: resolveProxyUrl(readProxyConfig()),
+    })
+  } else {
+    errorPayload = {
+      stage: 'downloading' as const,
+      message: err instanceof Error ? err.message : String(err),
+      errorCode: undefined,
+      suggestion: '请重试或联系技术支持',
+    }
+    appendUpdateError({
+      at: new Date().toISOString(),
+      source: 'download',
+      stage: 'downloading',
+      rawCause: err instanceof Error ? err.message : String(err),
+      proxyUrl: resolveProxyUrl(readProxyConfig()),
+    })
+  }
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('update:error', errorPayload)
+  }
+  throw { message: errorPayload.message, stage: errorPayload.stage, errorCode: errorPayload.errorCode, suggestion: errorPayload.suggestion }
+}
+
+/**
+ * update:download handler 主体（行内箭头提取为具名函数，行为不变）。
+ *
+ * [SECURITY · 批次 3 RC1] 契约版本号化：renderer 只传意图（version 字符串），
+ * release 数据由 main 权威解析（resolveByVersion：缓存 / force check）——旧契约的
+ * 完整 release payload（含 downloadUrl/sha256）不再过边界，能被下载执行的永远
+ * 是 GitHub 本仓库 latest release 的官方 asset。格式非法 / STALE / 网络失败在
+ * resolver 内拒绝，60s 节流防 API 放大。
+ */
+async function handleUpdateDownload(
+  deps: IpcHandlerDeps,
+  payload: { version: string },
+): Promise<{ downloaded: boolean }> {
+  if (!deps.updateOrchestrator) {
+    throw new Error('updateOrchestrator not configured')
+  }
+  if (!deps.releaseChecker) {
+    throw new Error('releaseChecker not configured')
+  }
+  try {
+    const shortCircuit = await resolveUpdateDownloadShortCircuit(app.getVersion(), payload.version)
+    if (shortCircuit) {
+      return shortCircuit
+    }
+
+    // [MUST-FIX #1] 若后台预下载仍在进行，先 await 它：预下载持有 orchestrator 的
+    // downloading 锁，直接走 download 路径会被拒（'download already in progress'）。
+    // await 到锁释放后再决定走快路径（预下载成功写入了产物）还是 download 路径。
+    const inFlight = preDownloadPromise
+    if (inFlight) {
+      console.log('[update:download] background preload in progress, waiting')
+      await inFlight
+    }
+
+    // 权威解析（缓存命中 / force check / 网络失败抛错 / 格式校验 + 60s 节流）
+    const release = await deps.updateOrchestrator.resolveByVersion(payload.version, {
+      currentVersion: app.getVersion(),
+      releaseChecker: deps.releaseChecker,
+    })
+
+    // 快路径：已有有效预下载产物（同版本 + 文件存在 + 完整性通过）→ 不重复下载
+    const preloadedFile = await readPreloadedUpdate(release)
+    if (preloadedFile) {
+      console.log(`[update:download] preloaded file exists for v${release.version}, skip download`)
+      return { downloaded: true }
+    }
+
+    // 下载阶段 onProgress → update:progress 事件（stage='downloading'）
+    console.log(`[update:download] downloading v${release.version}...`)
+    const { filePath } = await deps.updateOrchestrator.downloadUpdate(release, (percent) => {
+      const win = deps.getMainWindow()
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('update:progress', { stage: 'downloading', percent })
+      }
+    })
+
+    // 写 preloaded（供 update:install 和 update:getPreloaded 读）
+    writePreloadedUpdate(release, filePath)
+    console.log(`[update:download] downloaded v${release.version} to ${filePath}`)
+    return { downloaded: true }
+  } catch (err) {
+    // 错误处理与 install catch 一致：推 update:error + throw 可序列化对象。
+    // download 失败不清 preloaded（此时 preloaded 未写或是历史残留，由 readPreloadedUpdate 自管）。
+    reportUpdateDownloadError(deps, err)
+  }
+}
+
+/**
  * 注册自动升级 IPC handler（update:check + update:download/install + getPending + getSettings/setSettings）。
  *
  * @param deps 注入依赖（releaseChecker / updateOrchestrator / getMainWindow）
@@ -316,119 +460,10 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   // 供 update:install 读取（install 权威源是 preloaded，不信任前端传入的 release）。
   // 复刻原一键路径的 inFlight-await（避免与后台预下载争抢 downloading 锁）+
   // 快路径（已有有效预下载产物 → 跳过重复下载）+ 错误转 update:error 事件。
-  ipcMain.handle('update:download', async (_event, payload: { version: string }) => {
-    if (!deps.updateOrchestrator) {
-      throw new Error('updateOrchestrator not configured')
-    }
-    if (!deps.releaseChecker) {
-      throw new Error('releaseChecker not configured')
-    }
-    try {
-      // [SECURITY · 批次 3 RC1] 契约版本号化：renderer 只传意图（version 字符串），
-      // release 数据由 main 权威解析（resolveByVersion：缓存 / force check）——旧契约的
-      // 完整 release payload（含 downloadUrl/sha256）不再过边界，能被下载执行的永远
-      // 是 GitHub 本仓库 latest release 的官方 asset。格式非法 / STALE / 网络失败在
-      // resolver 内拒绝，60s 节流防 API 放大。
-
-      // [D1 短路①] preloaded 本地短路（纯本地，断网可用）：preloaded.release.version 与
-      // 请求版本**严格相等**才短路——防静默装旧版（preloaded 0.9.12 vs 请求 0.9.11 不
-      // 短路）。顺带修复「断网时快路径（resolveByVersion 之后的 readPreloadedUpdate）
-      // 也走不到」的缺陷。短路不触发下载进度事件。
-      const preloadedRaw = await readPreloadedUpdateRaw(app.getVersion())
-      if (preloadedRaw && preloadedRaw.release.version === payload.version) {
-        console.log(
-          `[update:download] preloaded v${preloadedRaw.release.version} matches requested version, skip download (local short-circuit)`,
-        )
-        return { downloaded: true }
-      }
-
-      // [D1 短路② / D3] pending 认领短路（零网络）：以上次成功检测持久化的 pending
-      // release 为基准（含 assets + sha256），与请求版本严格相等时尝试认领 manual/
-      // 目录内手动投放的产物（断网逃生通道，G1）。认领 miss（无候选/校验失败）或异常
-      // 均静默继续原链；认领成功由 manual-claim 内部写 preloaded 登记（source
-      // 'manual-claim' 的 mismatch 落盘也在该模块内，handler 不重复落盘）。
-      const pending = readPendingUpdate(app.getVersion())
-      if (pending && pending.version === payload.version) {
-        const claimedPath = await tryClaimManualAssetSafe(pending)
-        if (claimedPath) {
-          console.log(`[update:download] claimed manual asset v${pending.version} at ${claimedPath}, skip download`)
-          return { downloaded: true }
-        }
-      }
-
-      // [MUST-FIX #1] 若后台预下载仍在进行，先 await 它：预下载持有 orchestrator 的
-      // downloading 锁，直接走 download 路径会被拒（'download already in progress'）。
-      // await 到锁释放后再决定走快路径（预下载成功写入了产物）还是 download 路径。
-      const inFlight = preDownloadPromise
-      if (inFlight) {
-        console.log('[update:download] background preload in progress, waiting')
-        await inFlight
-      }
-
-      // 权威解析（缓存命中 / force check / 网络失败抛错 / 格式校验 + 60s 节流）
-      const release = await deps.updateOrchestrator.resolveByVersion(payload.version, {
-        currentVersion: app.getVersion(),
-        releaseChecker: deps.releaseChecker,
-      })
-
-      // 快路径：已有有效预下载产物（同版本 + 文件存在 + 完整性通过）→ 不重复下载
-      const preloadedFile = await readPreloadedUpdate(release)
-      if (preloadedFile) {
-        console.log(`[update:download] preloaded file exists for v${release.version}, skip download`)
-        return { downloaded: true }
-      }
-
-      // 下载阶段 onProgress → update:progress 事件（stage='downloading'）
-      console.log(`[update:download] downloading v${release.version}...`)
-      const { filePath } = await deps.updateOrchestrator.downloadUpdate(release, (percent) => {
-        const win = deps.getMainWindow()
-        if (win && !win.isDestroyed()) {
-          win.webContents.send('update:progress', { stage: 'downloading', percent })
-        }
-      })
-
-      // 写 preloaded（供 update:install 和 update:getPreloaded 读）
-      writePreloadedUpdate(release, filePath)
-      console.log(`[update:download] downloaded v${release.version} to ${filePath}`)
-      return { downloaded: true }
-    } catch (err) {
-      // 错误处理与 install catch 一致：推 update:error + throw 可序列化对象。
-      // download 失败不清 preloaded（此时 preloaded 未写或是历史残留，由 readPreloadedUpdate 自管）。
-      const win = deps.getMainWindow()
-      let errorPayload
-      if (err instanceof UpdateError) {
-        const f = err.toUserFriendly()
-        errorPayload = { stage: f.stage, message: f.message, errorCode: f.code, suggestion: f.suggestion }
-        // D7: download 失败落盘
-        appendUpdateError({
-          at: new Date().toISOString(),
-          source: 'download',
-          stage: f.stage,
-          errorCode: f.code,
-          rawCause: err.rawCause,
-          proxyUrl: resolveProxyUrl(readProxyConfig()),
-        })
-      } else {
-        errorPayload = {
-          stage: 'downloading' as const,
-          message: err instanceof Error ? err.message : String(err),
-          errorCode: undefined,
-          suggestion: '请重试或联系技术支持',
-        }
-        appendUpdateError({
-          at: new Date().toISOString(),
-          source: 'download',
-          stage: 'downloading',
-          rawCause: err instanceof Error ? err.message : String(err),
-          proxyUrl: resolveProxyUrl(readProxyConfig()),
-        })
-      }
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('update:error', errorPayload)
-      }
-      throw { message: errorPayload.message, stage: errorPayload.stage, errorCode: errorPayload.errorCode, suggestion: errorPayload.suggestion }
-    }
-  })
+  // 主体在 handleUpdateDownload（行内箭头提取为具名函数，复杂度门禁）。
+  ipcMain.handle('update:download', async (_event, payload: { version: string }) =>
+    handleUpdateDownload(deps, payload),
+  )
 
   // ── update:install（拆分后的安装阶段）─────────────────────────
   // install 权威源是 preloaded-update.json（不是前端传入）：从 readPreloadedUpdateRaw 读取

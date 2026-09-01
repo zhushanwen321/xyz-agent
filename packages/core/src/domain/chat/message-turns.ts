@@ -361,6 +361,41 @@ function signatureEquals(a: Message[], b: Message[]): boolean {
   return true
 }
 
+/** turn 组成员引用签名（[user?, ...assistants, ...notices]；首条 assistant 自启/触发
+ *  turn 无 user 位，notice 追加改变签名触发重建）。尾部快车道与全量重扫共用同一构造。 */
+function turnSignature(g: TurnGroup): Message[] {
+  return [...(g.user ? [g.user] : []), ...g.assistants, ...(g.notices ?? [])]
+}
+
+/** turn 对象解析（尾部快车道与全量重扫共用的复用判定）：abs = 该组在 turnObjects 全序
+ *  中的绝对下标。同位置签名逐引用对齐 → 复用上次 turn 对象。成员（含 notices）未变 →
+ *  hasFoldable/user/assistants/notices/trigger 必然不变，只需校正 isStreaming
+ *  （末位地位变化 / forceWorking 翻转会让上次值过期，不可变替换）。否则整组重建。 */
+function reuseOrRebuildTurn(
+  cache: TurnRenderCache,
+  sig: Message[],
+  g: TurnGroup,
+  abs: number,
+  isLastTurn: boolean,
+  forceWorking: boolean,
+): MessageTurn {
+  const prevSig = abs < cache.turnSignatures.length ? cache.turnSignatures[abs] : undefined
+  const prevTurn = abs < cache.turnObjects.length ? cache.turnObjects[abs] : undefined
+  if (prevTurn && prevSig && signatureEquals(sig, prevSig)) {
+    const expected = computeIsStreaming(g.assistants, isLastTurn, forceWorking)
+    return prevTurn.isStreaming === expected ? prevTurn : { ...prevTurn, isStreaming: expected }
+  }
+  return {
+    index: abs + 1,
+    user: g.user,
+    assistants: g.assistants,
+    notices: g.notices,
+    trigger: g.trigger,
+    isStreaming: computeIsStreaming(g.assistants, isLastTurn, forceWorking),
+    hasFoldable: computeHasFoldable(g.assistants),
+  }
+}
+
 /**
  * 快路径（源数组引用未变 = 本 sid 无新 commit）：按当前 forceWorking 重驱动末位 turn 的
  * isStreaming——消费方的 forceWorking 翻转（虚拟 session 的 subagent streaming 判定）在
@@ -412,6 +447,42 @@ function staticMessageOf(item: RenderItem): Message | null {
   return item.kind === 'turn' ? null : item.message
 }
 
+/** 尾部 turn 槽位与上次产出恒等判定：新旧项同为 turn 且复用后的 turn 对象引用相等 */
+function turnSlotUnchanged(oldItem: RenderItem | undefined, turn: MessageTurn): boolean {
+  return oldItem !== undefined && oldItem.kind === 'turn' && oldItem.turn === turn
+}
+
+/** 尾部 static 槽位与上次产出恒等判定：kind 相同且 message 引用相等（引用相等 = 内容
+ *  相等，ADR-0039）。防御 staticMessageOf 为 null（静态项必带 message，正常不可达）。 */
+function staticSlotUnchanged(oldItem: RenderItem | undefined, newItem: RenderItem): boolean {
+  if (oldItem === undefined) return false
+  const newMsg = staticMessageOf(newItem)
+  return (
+    newMsg !== null && staticMessageOf(oldItem) === newMsg && oldItem.kind === newItem.kind
+  )
+}
+
+/** 尾部快车道重跑起点定位：末位 turn 组的缓存下标（baseTurnIdx，即缓存三数组的截断点）、
+ *  源数组起始下标（from，分组状态归零点）与旧产出中首个尾部项下标（tailStart）。无缓存
+ *  turn 时全部取 0（= 从头重跑，expectedGroupCount 0 → 恒等判定期望零个 turn 组）。 */
+function tailRebuildOrigin(cache: TurnRenderCache): {
+  baseTurnIdx: number
+  from: number
+  tailStart: number
+  expectedGroupCount: number
+} {
+  if (cache.turnObjects.length === 0) {
+    return { baseTurnIdx: 0, from: 0, tailStart: 0, expectedGroupCount: 0 }
+  }
+  const lastTurnIdx = cache.turnObjects.length - 1
+  return {
+    baseTurnIdx: lastTurnIdx,
+    from: cache.turnStartOffsets[lastTurnIdx],
+    tailStart: lastTurnItemIndexOf(cache.cachedItems),
+    expectedGroupCount: 1,
+  }
+}
+
 /**
  * 尾部快车道（D-4 三车道形态①/②共用，08-render-layer §3.3.1 perf W21 演进；登记文档在
  * cw harness 侧，落地说明以此注释为准）：miss 形态判定通过后，从 cache 末位 turn 的源数组
@@ -438,18 +509,15 @@ function rebuildTailFromLastTurn(
   forceWorking: boolean,
 ): RenderItem[] {
   const oldItems = cache.cachedItems
-  const hasTurns = cache.turnObjects.length > 0
-  const from = hasTurns ? cache.turnStartOffsets[cache.turnStartOffsets.length - 1] : 0
-  const baseTurnIdx = hasTurns ? cache.turnObjects.length - 1 : 0
-  const tailStart = hasTurns ? lastTurnItemIndexOf(oldItems) : 0
+  const { baseTurnIdx, from, tailStart, expectedGroupCount } = tailRebuildOrigin(cache)
   const { slots: tailSlots, groups: tailGroups, starts: tailStarts } = groupRenderInput(
     sourceMessages,
     from,
   )
   const absLastTurn = baseTurnIdx + tailGroups.length - 1
-  // hasTurns 时旧尾部恰含 1 个 turn 组（起始下标性质：末位 turn 起点之后不再开新组）；
+  // 有缓存 turn 时旧尾部恰含 1 个 turn 组（起始下标性质：末位 turn 起点之后不再开新组）；
   // 子重跑组数不同 = 结构变化（新开 turn / 消息换型），不可能恒等
-  let unchanged = tailGroups.length === (hasTurns ? 1 : 0)
+  let unchanged = tailGroups.length === expectedGroupCount
 
   const newTail: RenderItem[] = []
   const newSigs: Message[][] = []
@@ -461,41 +529,15 @@ function rebuildTailFromLastTurn(
     if (s.slot === 'turn') {
       const g = tailGroups[s.group]
       const abs = baseTurnIdx + s.group
-      const sig = [...(g.user ? [g.user] : []), ...g.assistants, ...(g.notices ?? [])]
-      const prevSig = abs < cache.turnSignatures.length ? cache.turnSignatures[abs] : undefined
-      const prevTurn = abs < cache.turnObjects.length ? cache.turnObjects[abs] : undefined
-      const expected = computeIsStreaming(g.assistants, abs === absLastTurn, forceWorking)
-      let turn: MessageTurn
-      if (prevTurn && prevSig && signatureEquals(sig, prevSig)) {
-        // 成员引用未变 → 派生字段必然不变，仅 isStreaming 期望可能过期（不可变替换校正）
-        turn =
-          prevTurn.isStreaming === expected ? prevTurn : { ...prevTurn, isStreaming: expected }
-      } else {
-        turn = {
-          index: abs + 1,
-          user: g.user,
-          assistants: g.assistants,
-          notices: g.notices,
-          trigger: g.trigger,
-          isStreaming: expected,
-          hasFoldable: computeHasFoldable(g.assistants),
-        }
-      }
+      const sig = turnSignature(g)
+      const turn = reuseOrRebuildTurn(cache, sig, g, abs, abs === absLastTurn, forceWorking)
       newSigs.push(sig)
       newTurns.push(turn)
       newStarts.push(tailStarts[s.group])
-      if (unchanged && (oldItem === undefined || oldItem.kind !== 'turn' || oldItem.turn !== turn)) {
-        unchanged = false
-      }
+      unchanged = unchanged && turnSlotUnchanged(oldItem, turn)
       newTail.push({ kind: 'turn', turn })
     } else {
-      if (unchanged) {
-        const oldMsg = oldItem !== undefined ? staticMessageOf(oldItem) : null
-        const newMsg = staticMessageOf(s.item)
-        if (oldItem === undefined || newMsg === null || oldMsg !== newMsg || oldItem.kind !== s.item.kind) {
-          unchanged = false
-        }
-      }
+      unchanged = unchanged && staticSlotUnchanged(oldItem, s.item)
       newTail.push(s.item)
     }
     tailIdx += 1
@@ -523,16 +565,64 @@ function rebuildTailFromLastTurn(
   return items
 }
 
+/** miss 形态判定（尾部快车道资格，O(n) 指针比较零分配——ADR-0039 不可变替换下
+ *  引用相等 = 内容相等）：
+ *  ① 同长度仅末条替换（streaming 合帧 commit）——比前 n-1 项（n=0 退化全量）；
+ *  ② 尾部 append（新消息追加）——比前 oldLen 项（含首次 oldLen=0）。 */
+function isTailAppendOrReplace(old: Message[] | null, sourceMessages: Message[]): boolean {
+  const oldLen = old !== null ? old.length : 0
+  const n = sourceMessages.length
+  const sameLen = n === oldLen
+  const prefixLen = sameLen ? n - 1 : oldLen
+  return (
+    old !== null &&
+    (sameLen ? n > 0 : n > oldLen) &&
+    (prefixLen <= 0 || refsEqualUpTo(old, sourceMessages, prefixLen))
+  )
+}
+
+/** ③ 全量重扫（低频形态兜底，行为与历史版本逐字一致）：分组规则 v2 消费全量数组，
+ *  同位置签名对齐的 turn 复用上次对象（reuseOrRebuildTurn），只重建成员变化的 turn。
+ *  首版只做同位置匹配（位置平移的 turn 重算，成本 O(turn 数)，可接受——08 §3.3.1
+ *  失效条件 2）。非 turn 项在重扫路径重建（构造便宜、数量少），经 cachedItems 随快路径
+ *  整体复用。 */
+function fullRescan(
+  cache: TurnRenderCache,
+  sourceMessages: Message[],
+  forceWorking: boolean,
+): RenderItem[] {
+  const { slots, groups, starts } = groupRenderInput(sourceMessages)
+  const lastGroupIdx = groups.length - 1
+  const turnObjects: MessageTurn[] = new Array<MessageTurn>(groups.length)
+  const signatures: Message[][] = new Array<Message[]>(groups.length)
+
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i]
+    const sig = turnSignature(g)
+    signatures[i] = sig
+    turnObjects[i] = reuseOrRebuildTurn(cache, sig, g, i, i === lastGroupIdx, forceWorking)
+  }
+
+  const items = filterInvisibleItems(
+    slots.map((s) => (s.slot === 'turn' ? { kind: 'turn', turn: turnObjects[s.group] } : s.item)),
+  )
+
+  cache.lastSourceRef = sourceMessages
+  cache.turnSignatures = signatures
+  cache.turnObjects = turnObjects
+  cache.turnStartOffsets = starts
+  cache.cachedItems = items
+  return items
+}
+
 /**
  * toRenderItemsIncremental（增量版，D-4，08 §3.3.1 perf W21；三车道演进见 rebuildTailFromLastTurn）：
  * - 快路径：源数组引用未变 → 零重算（仅按 forceWorking 重驱动末位 isStreaming）
- * - miss 形态判定（逐项引用比较 O(n) 零分配——ADR-0039 不可变替换下引用相等 = 内容相等）：
+ * - miss 形态判定（isTailAppendOrReplace，逐项引用比较 O(n) 零分配）：
  *   ① 同长度仅末条替换（streaming 合帧 commit）/ ② 尾部 append → 尾部快车道
  *   （rebuildTailFromLastTurn：从末位 turn 起始下标重跑子数组，其余部分引用恒等复用）
- * - ③ 其余形态（前插/中删/引用全变等低频）→ 全量重扫（分组规则 v2 消费全量数组），
- *   同位置签名对齐的 turn 复用上次对象，只重建成员变化的 turn。首版只做同位置匹配
- *   （位置平移的 turn 重算，成本 O(turn 数)，可接受——08 §3.3.1 失效条件 2）。非 turn 项
- *   在重扫路径重建（构造便宜、数量少），经 cachedItems 随快路径整体复用。
+ * - ③ 其余形态（前插/中删/引用全变等低频）→ 全量重扫（fullRescan，分组规则 v2 消费
+ *   全量数组）。
  * - 上次末位 turn 的 streaming 态在末位地位变化时过期（如追加新 turn），复用分支
  *   按「期望 isStreaming」校正——不一致时不可变替换。
  *
@@ -551,69 +641,10 @@ export function toRenderItemsIncremental(
   if (cache.lastSourceRef === sourceMessages) {
     return redriveLastTurnStreaming(cache, forceWorking)
   }
-
-  // ── miss 形态判定（O(n) 指针比较，零分配）──
-  const old = cache.lastSourceRef
-  const oldLen = old !== null ? old.length : 0
-  const n = sourceMessages.length
-  const sameLen = n === oldLen
-  // ① 同长度比前 n-1 项（n=0 退化全量）；② 增长比前 oldLen 项（含首次 oldLen=0）
-  const prefixLen = sameLen ? n - 1 : oldLen
-  if (
-    old !== null &&
-    (sameLen ? n > 0 : n > oldLen) &&
-    (prefixLen <= 0 || refsEqualUpTo(old, sourceMessages, prefixLen))
-  ) {
+  if (isTailAppendOrReplace(cache.lastSourceRef, sourceMessages)) {
     return rebuildTailFromLastTurn(cache, sourceMessages, forceWorking)
   }
-
-  // ③ 全量重扫（低频形态兜底，行为与历史版本逐字一致）
-  const { slots, groups, starts } = groupRenderInput(sourceMessages)
-  const lastGroupIdx = groups.length - 1
-  const turnObjects: MessageTurn[] = new Array<MessageTurn>(groups.length)
-  const signatures: Message[][] = new Array<Message[]>(groups.length)
-
-  for (let i = 0; i < groups.length; i++) {
-    const g = groups[i]
-    const sig: Message[] = [
-      ...(g.user ? [g.user] : []),
-      ...g.assistants,
-      ...(g.notices ?? []),
-    ]
-    signatures[i] = sig
-    const prevSig = cache.turnSignatures[i]
-    const prevTurn = cache.turnObjects[i]
-    const isLastTurn = i === lastGroupIdx
-    // 同位置签名逐引用对齐 → 复用上次 turn 对象。成员（含 notices）未变 →
-    // hasFoldable/user/assistants/notices/trigger 必然不变，只需校正 isStreaming
-    // （末位地位变化 / forceWorking 翻转会让上次值过期）。
-    if (prevTurn && prevSig && signatureEquals(sig, prevSig)) {
-      const expected = computeIsStreaming(g.assistants, isLastTurn, forceWorking)
-      turnObjects[i] =
-        prevTurn.isStreaming === expected ? prevTurn : { ...prevTurn, isStreaming: expected }
-    } else {
-      turnObjects[i] = {
-        index: i + 1,
-        user: g.user,
-        assistants: g.assistants,
-        notices: g.notices,
-        trigger: g.trigger,
-        isStreaming: computeIsStreaming(g.assistants, isLastTurn, forceWorking),
-        hasFoldable: computeHasFoldable(g.assistants),
-      }
-    }
-  }
-
-  const items = filterInvisibleItems(
-    slots.map((s) => (s.slot === 'turn' ? { kind: 'turn', turn: turnObjects[s.group] } : s.item)),
-  )
-
-  cache.lastSourceRef = sourceMessages
-  cache.turnSignatures = signatures
-  cache.turnObjects = turnObjects
-  cache.turnStartOffsets = starts
-  cache.cachedItems = items
-  return items
+  return fullRescan(cache, sourceMessages, forceWorking)
 }
 
 export function toRenderItems(

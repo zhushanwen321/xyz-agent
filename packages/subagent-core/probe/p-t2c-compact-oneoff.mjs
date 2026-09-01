@@ -36,7 +36,43 @@ const child = spawn(
 let buf = "";
 let compactStartAt = null;
 const timeline = [];
-child.stdout.on("data", (chunk) => {
+
+/** compaction_start / compaction_end 打点（compact 耗时测量的主事件）。 */
+function handleCompactionEvent(ev, now) {
+  if (ev.type === "compaction_start") {
+    compactStartAt = now;
+    timeline.push({ event: "compaction_start", t: now - STARTED });
+    log("compaction_start");
+  }
+  if (ev.type === "compaction_end") {
+    timeline.push({ event: "compaction_end", t: now - STARTED, durationMs: compactStartAt ? now - compactStartAt : null });
+    log(`compaction_end (duration=${compactStartAt ? now - compactStartAt : "?"}ms)`);
+  }
+}
+
+/** agent_settled 打点。 */
+function handleAgentSettledEvent(now) {
+  timeline.push({ event: "agent_settled", t: now - STARTED });
+  log("agent_settled");
+}
+
+/** response 应答按 command 分打点（compact / prompt 拒绝 / session stats）。 */
+function handleResponseEvent(ev, now) {
+  if (ev.command === "compact") {
+    timeline.push({ event: "compact response", t: now - STARTED, success: ev.success, error: ev.error ?? null });
+    log(`compact response success=${ev.success} ${ev.error ?? ""}`);
+  }
+  if (ev.command === "prompt" && !ev.success) {
+    log(`prompt rejected: ${ev.error}`);
+  }
+  if (ev.command === "get_session_stats") {
+    timeline.push({ event: "session_stats", t: now - STARTED, data: ev.data });
+    log(`session stats: ${JSON.stringify(ev.data).slice(0, 300)}`);
+  }
+}
+
+/** stdout 分帧：拆行 → JSON.parse（坏行丢弃）→ 按事件类别分派（类型互斥）。 */
+function onStdoutChunk(chunk) {
   buf += chunk.toString();
   let idx;
   while ((idx = buf.indexOf("\n")) !== -1) {
@@ -50,32 +86,13 @@ child.stdout.on("data", (chunk) => {
       continue;
     }
     const now = Date.now();
-    if (ev.type === "compaction_start") {
-      compactStartAt = now;
-      timeline.push({ event: "compaction_start", t: now - STARTED });
-      log("compaction_start");
-    }
-    if (ev.type === "compaction_end") {
-      timeline.push({ event: "compaction_end", t: now - STARTED, durationMs: compactStartAt ? now - compactStartAt : null });
-      log(`compaction_end (duration=${compactStartAt ? now - compactStartAt : "?"}ms)`);
-    }
-    if (ev.type === "agent_settled") {
-      timeline.push({ event: "agent_settled", t: now - STARTED });
-      log("agent_settled");
-    }
-    if (ev.type === "response" && ev.command === "compact") {
-      timeline.push({ event: "compact response", t: now - STARTED, success: ev.success, error: ev.error ?? null });
-      log(`compact response success=${ev.success} ${ev.error ?? ""}`);
-    }
-    if (ev.type === "response" && ev.command === "prompt" && !ev.success) {
-      log(`prompt rejected: ${ev.error}`);
-    }
-    if (ev.type === "response" && ev.command === "get_session_stats") {
-      timeline.push({ event: "session_stats", t: now - STARTED, data: ev.data });
-      log(`session stats: ${JSON.stringify(ev.data).slice(0, 300)}`);
-    }
+    if (ev.type === "compaction_start" || ev.type === "compaction_end") handleCompactionEvent(ev, now);
+    else if (ev.type === "agent_settled") handleAgentSettledEvent(now);
+    else if (ev.type === "response") handleResponseEvent(ev, now);
   }
-});
+}
+
+child.stdout.on("data", onStdoutChunk);
 
 function send(cmd) {
   child.stdin.write(JSON.stringify(cmd) + "\n");

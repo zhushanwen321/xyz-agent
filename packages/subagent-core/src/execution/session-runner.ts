@@ -22,6 +22,7 @@ import {
   listActivePendingFromSessionFile,
   prunePendingCursor,
   readActivePendingFromSessionFile,
+  type ActivePendingResult,
 } from "./session-pending.ts";
 
 import type { ExtensionMode } from "./host-mode.ts";
@@ -1848,24 +1849,10 @@ async function runAgentEndDisposition(
   sessionDir: string,
   registerGetStateListener: AddGetStateResponseListener,
 ): Promise<void> {
-  const { record, opts } = state;
+  const { record } = state;
 
   if (!record.sessionFile && !child.killed) {
-    const r = await requestGetStateOnce(child, registerGetStateListener, LAZY_GET_STATE_TIMEOUT_MS);
-    // 仅当本次回补拿到且此前仍缺失时回填（与 finishHandshake 的 !record.sessionFile 守卫一致）。
-    if (r.sessionFile && !record.sessionFile) {
-      record.sessionFile = r.sessionFile;
-      if (child.pid) {
-        writeAliveMarkerBestEffort(r.sessionFile, child.pid, r.sessionId ?? record.id);
-      }
-      logger.warn(
-        `[session-runner] agent_end: sessionFile backfilled via lazy get_state (spawn handshake had failed): ${r.sessionFile}`,
-      );
-    }
-    // sessionId 一并补入 handshakeResult：close 路径 LC-4 兜底查找的 lookupId 来源。
-    if (r.sessionId && !state.handshakeResult?.sessionId) {
-      state.handshakeResult = { ...state.handshakeResult, sessionId: r.sessionId };
-    }
+    await backfillSessionFileViaGetState(state, child, registerGetStateListener);
   }
 
   // [A1-3] 回补 await 的异步窗口内 child 可能已死（close / abort / watchdog）。进程已死
@@ -1878,85 +1865,136 @@ async function runAgentEndDisposition(
   // ── 以下三分支与同步化前逐行一致（仅随函数迁移）──
   const pending = readActivePendingFromSessionFile(record.sessionFile);
   if (pending.count > 0 || pending.error) {
-    // [T5② / PS-7a] keep-alive 心跳：决定保活即刷新 .alive marker（软超时基准推新，
-    // 防 keep-alive 数小时的活记录被异进程孤儿恢复误终态；P-T5 探针裁决写盘开销可忽略）。
-    touchAliveMarkerForHeartbeat(record.sessionFile, child.pid, record.id);
-    if (pending.error) {
-      logger.warn(
-        `[session-runner] agent_end: keep alive (sessionFile unreadable, conservative): ${pending.error}`,
-      );
-    } else {
-      logger.debug(
-        `[session-runner] agent_end: keep alive, ${pending.count} active descendant(s) pending`,
-      );
-    }
-    // 空闲等待期间不消耗 turn：清原 watchdog，换等待后代超时（每次 agent_end 重新计时）。
-    // [MF-4] 动态超时 = maxTurnsToWatchdogMs(maxTurns)：真实后代在跑，慢任务（wave 开发
-    // 数小时）不能被固定 2h 误杀——2h 到点 kill 会连坐 SubagentService.dispose 的
-    // killAllSpawnedChildren 杀全部子进程，L2 重派丢在途工作。maxTurns 大则超时长。
-    // [A1-1 挂载面三分] keepAliveMs === undefined 的三种来源语义不同，只有裸缺省挂
-    // 无进展上界：显式 maxTurns>0 → 固定时长动态 watchdog（不变）；裸缺省（maxTurns
-    // 未传且 env 未设）→ [T2-① / P-T2 降级 B] 挂无进展检测上界（见下方裸缺省分支）；
-    // 显式 maxTurns<=0（显式不限时，压过 env，U5）与 resolveSpawnWatchdogMs fail-fast
-    // 降级 → 维持旧「不 re-arm（等待后代不限时）」语义——opt-out 通道保留，无进展
-    // timer 的挂载面严格限定裸缺省（isBareDefaultKeepAlive）。
-    // [F-R2] resolveSpawnWatchdogMs → assertSafeTimerDelay fail-fast 的 throw 不升级为
-    // 进程崩溃：包 try/catch 降级为「不 re-arm」（与显式 opt-out 同归「不挂 timer」，
-    // 不落入裸缺省分支），错误经 bestEffort("error") 可见。
-    clearTimeout(state.watchdog);
-    disarmKeepAliveNoProgressTimer(state);
-    // 裸缺省判定必须在 try 之前做：env 原始存在性检查（不经 parse），resolveSpawnWatchdogMs
-    // 内部的 invalid-env warn 不因此重复出声。
-    const bareDefaultKeepAlive = isBareDefaultKeepAlive(opts.maxTurns);
-    let keepAliveMs: number | undefined;
-    try {
-      keepAliveMs = resolveSpawnWatchdogMs(opts.maxTurns);
-    } catch (err) {
-      bestEffort(err, "resolveSpawnWatchdogMs (agent_end keep-alive re-arm)", "error");
-      keepAliveMs = undefined;
-    }
-    if (keepAliveMs !== undefined) {
-      state.watchdog = setTimeout(() => {
-        // [T2-② / P-T2b 主路径] keep-alive 上界处置层主的两步时序前半：kill 层主；
-        // close（确认死亡 + sessionFile 冻结为最终快照）后由 runSpawn 收尾 sweep
-        // 活跃后代（后半）。SIGTERM 对后台化 pi 后代无级联（P-T2b NO-CASCADE 三次
-        // 复现），补杀必须显式做，不能押注子进程自行级联。
-        state.sweepDescendantsOnClose = true;
-        killChildWithEscalation(state, child, "keep-alive watchdog");
-      }, keepAliveMs);
-      state.watchdog.unref();
-    } else if (bareDefaultKeepAlive) {
-      // [T2-① / P-T2 降级路径 B] 裸缺省（无 maxTurns 无 env）：挂无进展检测上界。
-      // P-T2 探针实证固定 30min 上限会误杀 96.6% 真实 keep-alive（长尾 95.5h 合法），
-      // 上界语义改为「连续静默达 KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 且复核无存活后代
-      // 才处置」——子进程 stdout 活动刷新计时，后代集合变化由 fire 时惰性复核承接
-      //（hasLiveActiveDescendant），真实 keep-alive 不被时长上限误杀，纯静默且无
-      // 存活后代的 wedged 层主仍有界回收。回收由外部 signal / dispose / 后代自然完成
-      // 驱动的旧兜底通道全部保留。
-      armKeepAliveNoProgressTimer(state, child, sessionDir);
-    }
+    keepAliveOnAgentEnd(state, child, sessionDir, pending);
   } else if (pending.recentUnregister) {
-    // 差集 0 但最近有 unregister：后代刚完成，notify 唤醒可能在路上（竞态窗口），
-    // 保持进程——父被唤醒后的下一次 agent_end 会正常判定。
-    // [T5② / PS-7a] 保活分支同样心跳（进程仍活，软超时基准应推新）。
-    touchAliveMarkerForHeartbeat(record.sessionFile, child.pid, record.id);
-    // [MF-3] 秒级宽限：此分支在每层「最终 turn」必命中（closeout 的 agent_end 距
-    // 最后一次 unregister <60s），挂长超时 = 空等 2h 才 kill + 冒牌完成通知级联。
-    // 15s 内无新 agent_end（未被唤醒）即 kill；被唤醒后下一次 agent_end 重新评估。
-    logger.debug(
-      "[session-runner] agent_end: keep alive, recent descendant completion (wake-up in flight)",
-    );
-    clearTimeout(state.watchdog);
-    disarmKeepAliveNoProgressTimer(state);
-    state.watchdog = setTimeout(
-      () => killChildWithEscalation(state, child, "wakeup grace timer"),
-      WAKEUP_GRACE_MS,
-    );
-    state.watchdog.unref();
+    keepAliveForWakeupGrace(state, child);
   } else {
     disarmKeepAliveNoProgressTimer(state);
     killChildWithEscalation(state, child, "agent_end final kill");
   }
+}
+
+/**
+ * [T1/RC-1+RC-2] 惰性回补：record.sessionFile 缺失时向 idle 子进程单次 get_state，
+ * 回填 sessionFile + 写 alive marker + 补 handshakeResult.sessionId（对齐
+ * finishHandshake 的回填面）。回补失败不重试（决策点不变成第二个重试循环）。
+ */
+async function backfillSessionFileViaGetState(
+  state: SpawnRunState,
+  child: ChildProcessWithoutNullStreams,
+  registerGetStateListener: AddGetStateResponseListener,
+): Promise<void> {
+  const { record } = state;
+  const r = await requestGetStateOnce(child, registerGetStateListener, LAZY_GET_STATE_TIMEOUT_MS);
+  // 仅当本次回补拿到且此前仍缺失时回填（与 finishHandshake 的 !record.sessionFile 守卫一致）。
+  if (r.sessionFile && !record.sessionFile) {
+    record.sessionFile = r.sessionFile;
+    if (child.pid) {
+      writeAliveMarkerBestEffort(r.sessionFile, child.pid, r.sessionId ?? record.id);
+    }
+    logger.warn(
+      `[session-runner] agent_end: sessionFile backfilled via lazy get_state (spawn handshake had failed): ${r.sessionFile}`,
+    );
+  }
+  // sessionId 一并补入 handshakeResult：close 路径 LC-4 兜底查找的 lookupId 来源。
+  if (r.sessionId && !state.handshakeResult?.sessionId) {
+    state.handshakeResult = { ...state.handshakeResult, sessionId: r.sessionId };
+  }
+}
+
+/**
+ * keep-alive 分支（有活跃后代 / 读不出保守不杀）：心跳 + 清原 watchdog 换等待后代超时。
+ * 空闲等待期间不消耗 turn（每次 agent_end 重新计时）。
+ * [MF-4] 动态超时 = maxTurnsToWatchdogMs(maxTurns)：真实后代在跑，慢任务（wave 开发
+ * 数小时）不能被固定 2h 误杀——2h 到点 kill 会连坐 SubagentService.dispose 的
+ * killAllSpawnedChildren 杀全部子进程，L2 重派丢在途工作。maxTurns 大则超时长。
+ * [A1-1 挂载面三分] keepAliveMs === undefined 的三种来源语义不同，只有裸缺省挂
+ * 无进展上界：显式 maxTurns>0 → 固定时长动态 watchdog（不变）；裸缺省（maxTurns
+ * 未传且 env 未设）→ [T2-① / P-T2 降级 B] 挂无进展检测上界；显式 maxTurns<=0（显式
+ * 不限时，压过 env，U5）与 resolveSpawnWatchdogMs fail-fast 降级 → 维持旧「不
+ * re-arm（等待后代不限时）」语义——opt-out 通道保留，无进展 timer 的挂载面严格
+ * 限定裸缺省（isBareDefaultKeepAlive）。
+ * [F-R2] resolveSpawnWatchdogMs → assertSafeTimerDelay fail-fast 的 throw 不升级为
+ * 进程崩溃：包 try/catch 降级为「不 re-arm」（与显式 opt-out 同归「不挂 timer」，
+ * 不落入裸缺省分支），错误经 bestEffort("error") 可见。
+ */
+function keepAliveOnAgentEnd(
+  state: SpawnRunState,
+  child: ChildProcessWithoutNullStreams,
+  sessionDir: string,
+  pending: ActivePendingResult,
+): void {
+  const { record, opts } = state;
+  // [T5② / PS-7a] keep-alive 心跳：决定保活即刷新 .alive marker（软超时基准推新，
+  // 防 keep-alive 数小时的活记录被异进程孤儿恢复误终态；P-T5 探针裁决写盘开销可忽略）。
+  touchAliveMarkerForHeartbeat(record.sessionFile, child.pid, record.id);
+  if (pending.error) {
+    logger.warn(
+      `[session-runner] agent_end: keep alive (sessionFile unreadable, conservative): ${pending.error}`,
+    );
+  } else {
+    logger.debug(
+      `[session-runner] agent_end: keep alive, ${pending.count} active descendant(s) pending`,
+    );
+  }
+  clearTimeout(state.watchdog);
+  disarmKeepAliveNoProgressTimer(state);
+  // 裸缺省判定必须在 try 之前做：env 原始存在性检查（不经 parse），resolveSpawnWatchdogMs
+  // 内部的 invalid-env warn 不因此重复出声。
+  const bareDefaultKeepAlive = isBareDefaultKeepAlive(opts.maxTurns);
+  let keepAliveMs: number | undefined;
+  try {
+    keepAliveMs = resolveSpawnWatchdogMs(opts.maxTurns);
+  } catch (err) {
+    bestEffort(err, "resolveSpawnWatchdogMs (agent_end keep-alive re-arm)", "error");
+    keepAliveMs = undefined;
+  }
+  if (keepAliveMs !== undefined) {
+    state.watchdog = setTimeout(() => {
+      // [T2-② / P-T2b 主路径] keep-alive 上界处置层主的两步时序前半：kill 层主；
+      // close（确认死亡 + sessionFile 冻结为最终快照）后由 runSpawn 收尾 sweep
+      // 活跃后代（后半）。SIGTERM 对后台化 pi 后代无级联（P-T2b NO-CASCADE 三次
+      // 复现），补杀必须显式做，不能押注子进程自行级联。
+      state.sweepDescendantsOnClose = true;
+      killChildWithEscalation(state, child, "keep-alive watchdog");
+    }, keepAliveMs);
+    state.watchdog.unref();
+  } else if (bareDefaultKeepAlive) {
+    // [T2-① / P-T2 降级路径 B] 裸缺省（无 maxTurns 无 env）：挂无进展检测上界。
+    // P-T2 探针实证固定 30min 上限会误杀 96.6% 真实 keep-alive（长尾 95.5h 合法），
+    // 上界语义改为「连续静默达 KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 且复核无存活后代
+    // 才处置」——子进程 stdout 活动刷新计时，后代集合变化由 fire 时惰性复核承接
+    //（hasLiveActiveDescendant），真实 keep-alive 不被时长上限误杀，纯静默且无
+    // 存活后代的 wedged 层主仍有界回收。回收由外部 signal / dispose / 后代自然完成
+    // 驱动的旧兜底通道全部保留。
+    armKeepAliveNoProgressTimer(state, child, sessionDir);
+  }
+}
+
+/**
+ * recentUnregister 分支：差集 0 但最近有 unregister——后代刚完成，notify 唤醒可能
+ * 在路上（竞态窗口），保持进程——父被唤醒后的下一次 agent_end 会正常判定。
+ */
+function keepAliveForWakeupGrace(
+  state: SpawnRunState,
+  child: ChildProcessWithoutNullStreams,
+): void {
+  const { record } = state;
+  // [T5② / PS-7a] 保活分支同样心跳（进程仍活，软超时基准应推新）。
+  touchAliveMarkerForHeartbeat(record.sessionFile, child.pid, record.id);
+  // [MF-3] 秒级宽限：此分支在每层「最终 turn」必命中（closeout 的 agent_end 距
+  // 最后一次 unregister <60s），挂长超时 = 空等 2h 才 kill + 冒牌完成通知级联。
+  // 15s 内无新 agent_end（未被唤醒）即 kill；被唤醒后下一次 agent_end 重新评估。
+  logger.debug(
+    "[session-runner] agent_end: keep alive, recent descendant completion (wake-up in flight)",
+  );
+  clearTimeout(state.watchdog);
+  disarmKeepAliveNoProgressTimer(state);
+  state.watchdog = setTimeout(
+    () => killChildWithEscalation(state, child, "wakeup grace timer"),
+    WAKEUP_GRACE_MS,
+  );
+  state.watchdog.unref();
 }
 
 /**

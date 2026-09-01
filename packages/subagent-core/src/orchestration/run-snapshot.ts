@@ -157,6 +157,76 @@ export function toRunSnapshot(run: WorkflowRun): RunSnapshot {
 
 // ── 重水合 ──────────────────────────────────────────────────
 
+/** 「truthy 且 typeof object」——与原内联守卫 `!x || typeof x !== "object"` 拒绝集一致。 */
+function isPresentObject(v: unknown): v is object {
+  return !!v && typeof v === "object";
+}
+
+/** 通过形状校验的快照视图：顶层必填字段（v/runId/spec/state/meta）均已验存在。 */
+interface ValidatedSnapshot {
+  v: typeof SNAPSHOT_VERSION;
+  runId: string;
+  spec: RunSpec;
+  state: NonNullable<RunSnapshot["state"]>;
+  meta: WorkflowRunMeta;
+}
+
+/**
+ * 顶层形状校验（检查顺序与原内联守卫逐条一致）。
+ *
+ * 含 D4 裁决③ version guard（字符串相等，无大小序）：v 不等于当前版本即拒
+ * （含缺版本——「缺 v 宽容」是 FileRunStore 层预处理职责，不内聚进本 codec；
+ * pi 侧对 v1 存量行的静默跳过语义依赖此拒绝行为）。
+ */
+function isValidSnapshotShape(s: Partial<RunSnapshot>): s is ValidatedSnapshot {
+  if (s.v !== SNAPSHOT_VERSION) return false;
+  if (typeof s.runId !== "string" || !s.runId) return false;
+  if (!isPresentObject(s.spec)) return false;
+  const st = s.state;
+  if (!isPresentObject(st)) return false;
+  if (st.status !== "running" && st.status !== "done") return false;
+  if (!isPresentObject(st.budget)) return false;
+  if (!Array.isArray(st.calls) || !Array.isArray(st.trace)) return false;
+  if (!isPresentObject(s.meta)) return false;
+  return true;
+}
+
+/** call.traceNode → Trace 节点回链（D-10 尽力恢复，匹配不到退化为独立浅拷贝）。 */
+function linkTraceNode(c: CallSnapshot, trace: Trace): ExecutionTraceNode | undefined {
+  return (
+    trace.toArray().find((n) => n.stepIndex === c.traceNode?.stepIndex) ??
+    (c.traceNode ? { ...c.traceNode } : undefined)
+  );
+}
+
+/**
+ * 单条 CallSnapshot → AgentCall。残缺条目（非对象 / id 非数 / traceNode 缺失）
+ * 返回 undefined，由调用方跳过——不炸整个 run。
+ */
+function rehydrateCall(c: CallSnapshot, trace: Trace): AgentCall | undefined {
+  if (c === null || typeof c !== "object" || typeof c.id !== "number") return undefined;
+  const linked = linkTraceNode(c, trace);
+  if (!linked) return undefined;
+  const call = new AgentCall(c.id, c.opts, linked);
+  call.status = c.status;
+  call.attempts = c.attempts;
+  // Restore result directly — bypasses markRunning/markDone state-machine guards
+  // because we're reconstructing a known-good persisted state, not transitioning.
+  if (c.result !== undefined) call.result = c.result;
+  if (c.sessionId !== undefined) call.sessionId = c.sessionId;
+  if (c.sessionFile !== undefined) call.sessionFile = c.sessionFile;
+  return call;
+}
+
+function rehydrateCalls(snapshots: CallSnapshot[], trace: Trace): Map<number, AgentCall> {
+  const calls = new Map<number, AgentCall>();
+  for (const c of snapshots) {
+    const call = rehydrateCall(c, trace);
+    if (call) calls.set(c.id, call);
+  }
+  return calls;
+}
+
 /**
  * 快照 → WorkflowRun 重水合。
  *
@@ -170,51 +240,26 @@ export function toRunSnapshot(run: WorkflowRun): RunSnapshot {
 export function fromRunSnapshot(snap: unknown): WorkflowRun | undefined {
   if (snap === null || typeof snap !== "object") return undefined;
   const s = snap as Partial<RunSnapshot>;
-  // D4 裁决③ version guard（字符串相等，无大小序）
-  if (s.v !== SNAPSHOT_VERSION) return undefined;
-  if (typeof s.runId !== "string" || !s.runId) return undefined;
-  if (!s.spec || typeof s.spec !== "object") return undefined;
-  const st = s.state;
-  if (!st || typeof st !== "object") return undefined;
-  if (st.status !== "running" && st.status !== "done") return undefined;
-  if (!st.budget || typeof st.budget !== "object") return undefined;
-  if (!Array.isArray(st.calls) || !Array.isArray(st.trace)) return undefined;
-  if (!s.meta || typeof s.meta !== "object") return undefined;
+  if (!isValidSnapshotShape(s)) return undefined;
 
   // Trace 先重建：calls 的 traceNode 回链到 Trace 副本（D-10 尽力恢复——
   // fromArray 拷贝节点，按 stepIndex 匹配使 call.traceNode 与 trace.nodes
   // 共享同一副本引用；匹配不到（快照数据漂移）退化为独立浅拷贝，仅保构造不炸。
-  const trace = Trace.fromArray(st.trace);
-  const calls = new Map<number, AgentCall>();
-  for (const c of st.calls) {
-    if (c === null || typeof c !== "object" || typeof c.id !== "number") continue;
-    const linked =
-      trace.toArray().find((n) => n.stepIndex === c.traceNode?.stepIndex) ??
-      (c.traceNode ? { ...c.traceNode } : undefined);
-    if (!linked) continue; // traceNode 缺失的残缺 call 条目跳过，不炸整个 run
-    const call = new AgentCall(c.id, c.opts, linked);
-    call.status = c.status;
-    call.attempts = c.attempts;
-    // Restore result directly — bypasses markRunning/markDone state-machine guards
-    // because we're reconstructing a known-good persisted state, not transitioning.
-    if (c.result !== undefined) call.result = c.result;
-    if (c.sessionId !== undefined) call.sessionId = c.sessionId;
-    if (c.sessionFile !== undefined) call.sessionFile = c.sessionFile;
-    calls.set(c.id, call);
-  }
+  const trace = Trace.fromArray(s.state.trace);
+  const calls = rehydrateCalls(s.state.calls, trace);
 
   return WorkflowRun.reconstruct(
     s.runId,
     s.spec,
     {
-      status: st.status,
-      reason: st.reason,
-      budget: new Budget(st.budget),
+      status: s.state.status,
+      reason: s.state.reason,
+      budget: new Budget(s.state.budget),
       calls,
       trace,
-      errorLogs: Array.isArray(st.errorLogs) ? st.errorLogs : [],
-      error: st.error,
-      scriptResult: st.scriptResult,
+      errorLogs: Array.isArray(s.state.errorLogs) ? s.state.errorLogs : [],
+      error: s.state.error,
+      scriptResult: s.state.scriptResult,
     },
     s.meta,
   );

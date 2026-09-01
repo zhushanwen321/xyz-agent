@@ -263,10 +263,16 @@ function warnTextForMs(raw: unknown): string {
   return warnText(isFiniteNumber(raw) ? String(raw / MS_PER_SEC) : String(raw))
 }
 
-/** 加载值落到表单：合法值直接显示；超域值原样显示；坏值回落默认显示。超域/坏值均加行内标注。 */
+/** 加载值落到表单：合法值直接显示；超域值原样显示；坏值回落默认显示。超域/坏值均加行内标注。按字段域拆分（applyBasicKeys / applyProviderKeys）。 */
 function applyLoaded(config: LlmRetryConfig): void {
   // 广播刷新可重复进入：先清上轮行内标注，避免已修复字段的残留警示
   for (const key of Object.keys(warnings)) delete warnings[key]
+  applyBasicKeys(config)
+  applyProviderKeys(config)
+}
+
+/** 基础区三键回填：enabled / maxRetries / baseDelayMs（秒显示，内部存 ms）。 */
+function applyBasicKeys(config: LlmRetryConfig): void {
   enabled.value = config.enabled
   const mr = checkDomain(config.maxRetries, LLM_RETRY_DOMAIN.maxRetries.min, LLM_RETRY_DOMAIN.maxRetries.max, PI_DEFAULT_MAX_RETRIES)
   maxRetries.value = mr.display
@@ -275,7 +281,10 @@ function applyLoaded(config: LlmRetryConfig): void {
   const bd = checkDomain(config.baseDelayMs, LLM_RETRY_DOMAIN.baseDelayMs.min, LLM_RETRY_DOMAIN.baseDelayMs.max, PI_DEFAULT_BASE_DELAY_MS)
   baseDelaySec.value = bd.display / MS_PER_SEC
   if (!bd.ok) warnings.baseDelayMs = warnTextForMs(config.baseDelayMs)
+}
 
+/** provider 高级区三键回填（D8：超域数值原样回填，未设/坏值留空「留空 = 未设」）。 */
+function applyProviderKeys(config: LlmRetryConfig): void {
   const p = config.provider ?? {}
   const pmr = checkDomain(p.maxRetries, LLM_RETRY_DOMAIN.providerMaxRetries.min, LLM_RETRY_DOMAIN.providerMaxRetries.max, 0)
   // D8：超域数值原样回填（与基础键行为对齐），使保存时 validateLlmRetryConfig 拒绝并指向该字段，
@@ -287,7 +296,11 @@ function applyLoaded(config: LlmRetryConfig): void {
   providerTimeoutSecInput.value = isFiniteNumber(p.timeoutMs) ? String(p.timeoutMs / MS_PER_SEC) : ''
   if (p.timeoutMs !== undefined && !pt.ok) warnings['provider.timeoutMs'] = warnTextForMs(p.timeoutMs)
 
-  // maxRetryDelayMs 合法域特殊：0（不限制）或 1000-3600000
+  applyProviderMaxDelayKey(p)
+}
+
+/** provider.maxRetryDelayMs 回填：合法域特殊——0（不限制）或 1000-3600000；未设跳过。 */
+function applyProviderMaxDelayKey(p: LlmRetryProviderConfig): void {
   const pdRaw = p.maxRetryDelayMs
   if (pdRaw !== undefined) {
     const ok = typeof pdRaw === 'number' && Number.isInteger(pdRaw) &&

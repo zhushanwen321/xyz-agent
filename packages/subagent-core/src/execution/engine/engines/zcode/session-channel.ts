@@ -549,13 +549,25 @@ export class SessionChannel {
     const payload =
       isRecord(params) && isRecord(params.payload) ? params.payload : undefined;
     if (payload === undefined) return;
+    if (this.applyFinalFrame(turn, payload)) return;
+    this.applyStreamDelta(turn, payload);
+  }
+
+  /**
+   * 收尾帧判定与吸收（A.2 ⑤ 两种形态：payload.response / stopReason+content 变体）。
+   * 命中任一形态则落 finalText/finalUsage 并以 final-frame 宽松终态收口，返回 true。
+   */
+  private applyFinalFrame(
+    turn: ActiveTurn,
+    payload: Record<string, unknown>
+  ): boolean {
     if (typeof payload.response === "string" && payload.response !== "") {
       // 收尾帧（A.2 ⑤）：全文 + usage。终态落定后到达仍吸收数据（它常与
       // turn.terminal 同批次、且是 usage 权威来源——属终态数据不是增量回调）
       turn.finalText = payload.response;
       if (isRecord(payload.usage)) turn.finalUsage = payload.usage;
       turn.settle({ status: "success", source: "final-frame" });
-      return;
+      return true;
     }
     if (
       payload.stopReason === "stop" &&
@@ -566,23 +578,30 @@ export class SessionChannel {
       turn.finalText = payload.content;
       if (isRecord(payload.usage)) turn.finalUsage = payload.usage;
       turn.settle({ status: "success", source: "final-frame" });
+      return true;
+    }
+    return false;
+  }
+
+  /** 增量 delta 分发：非空 delta 入账 + 回调；终态后迟到丢弃（不变量 2）。 */
+  private applyStreamDelta(
+    turn: ActiveTurn,
+    payload: Record<string, unknown>
+  ): void {
+    if (typeof payload.delta !== "string" || payload.delta === "") return;
+    if (turn.settled) {
+      logger.warn(
+        `终态后迟到的 delta 丢弃（会话 ${
+          turn.sessionId
+        }，不变量 2：resolve 后不再发事件）: ${payload.delta.slice(
+          0,
+          DELTA_LOG_CHARS
+        )}`
+      );
       return;
     }
-    if (typeof payload.delta === "string" && payload.delta !== "") {
-      if (turn.settled) {
-        logger.warn(
-          `终态后迟到的 delta 丢弃（会话 ${
-            turn.sessionId
-          }，不变量 2：resolve 后不再发事件）: ${payload.delta.slice(
-            0,
-            DELTA_LOG_CHARS
-          )}`
-        );
-        return;
-      }
-      turn.deltas.push(payload.delta);
-      turn.callbacks.onTextDelta?.(payload.delta);
-    }
+    turn.deltas.push(payload.delta);
+    turn.callbacks.onTextDelta?.(payload.delta);
   }
 
   private handleTelemetry(params: unknown): void {

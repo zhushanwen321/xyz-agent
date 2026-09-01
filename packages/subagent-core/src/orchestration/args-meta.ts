@@ -40,6 +40,43 @@ export interface ArgMetaOptions {
 }
 
 /**
+ * properties → exact 精确键集（排除 reservedKeys——workflow 参数名与保留键撞名时，
+ * 顶层同名键是信封参数而非平铺，m6 评审 M-3）。非对象形状（含 undefined/null）
+ * 返回空集。
+ */
+function collectExactKeys(props: unknown, reserved: ReadonlySet<string>): Set<string> {
+  const exact = new Set<string>();
+  if (props === null || typeof props !== "object") return exact;
+  for (const k of Object.keys(props as Record<string, unknown>)) {
+    if (!reserved.has(k)) exact.add(k);
+  }
+  return exact;
+}
+
+/**
+ * patternProperties → 正则数组（schema pattern 已是正则源码，直接 new RegExp；
+ * 自动兼容 \d{2} 等变体）。跳过能命中保留键的 pattern——否则 ^run.*$ 类 pattern
+ * 会匹配 runId/name 等信封键，合法调用恒误报（m6 exec-review S1）。非法 pattern
+ * （schema 校验 m3 已保证合法，双保险）跳过并 warn。
+ */
+function compilePatterns(pp: unknown, reserved: ReadonlySet<string>): RegExp[] {
+  const patterns: RegExp[] = [];
+  if (pp === null || typeof pp !== "object") return patterns;
+  for (const p of Object.keys(pp as Record<string, unknown>)) {
+    try {
+      const re = new RegExp(p);
+      if ([...reserved].some((tk) => re.test(tk))) continue;
+      patterns.push(re);
+    } catch (err) {
+      logger.warn(`[args-meta] patternProperties 非法正则跳过: ${p}`, {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return patterns;
+}
+
+/**
  * 从 workflow 参数 schema（@pi-meta parameters）动态构建平铺检测的已知键集。
  *
  * - exact：properties keys（精确匹配，排除 reservedKeys）
@@ -52,36 +89,14 @@ export function argKeysFromMeta(
   options?: ArgMetaOptions,
 ): ArgKeySet {
   const reserved = options?.reservedKeys ?? EMPTY_RESERVED_KEYS;
-  const exact = new Set<string>();
-  const patterns: RegExp[] = [];
   if (meta === undefined || meta === null || typeof meta !== "object") {
-    return { exact, patterns };
+    return { exact: new Set<string>(), patterns: [] };
   }
   const schema = meta as Record<string, unknown>;
-  const props = schema.properties;
-  if (props !== null && typeof props === "object") {
-    for (const k of Object.keys(props as Record<string, unknown>)) {
-      if (!reserved.has(k)) exact.add(k);
-    }
-  }
-  const pp = schema.patternProperties;
-  if (pp !== null && typeof pp === "object") {
-    for (const p of Object.keys(pp as Record<string, unknown>)) {
-      try {
-        const re = new RegExp(p); // schema pattern 已是正则源码
-        // 跳过能命中保留键的 pattern——否则 ^run.*$ 类 pattern 会匹配 runId/name
-        // 等信封键，合法调用恒误报（m6 exec-review S1）
-        if ([...reserved].some((tk) => re.test(tk))) continue;
-        patterns.push(re);
-      } catch (err) {
-        // 非法 pattern（schema 校验 m3 已保证合法，双保险）——跳过并记录
-        logger.warn(`[args-meta] patternProperties 非法正则跳过: ${p}`, {
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-  }
-  return { exact, patterns };
+  return {
+    exact: collectExactKeys(schema.properties, reserved),
+    patterns: compilePatterns(schema.patternProperties, reserved),
+  };
 }
 
 /**

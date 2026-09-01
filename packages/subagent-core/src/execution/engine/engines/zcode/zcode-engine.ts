@@ -429,21 +429,7 @@ export class ZcodeEngine implements EnginePort {
     // pre-aborted 短路：取消先于启动——不创建会话、不触发连接惰性启动（防误杀共享
     // 进程殃及在途任务；spawn 路径无此形态因每任务独占进程）
     if (ctx.signal?.aborted === true) {
-      // poolKey 锚定：已持有 HOME（含派生场景）用其真实 poolKey；首次即 abort 尚无
-      // HOME 可用，退回静态常量（此刻确实无派生事实可锚定）
-      const poolKey = this.homeState?.poolKey ?? ZCODE_APPSERVER_POOL_KEY;
-      // 对齐点③（不变量 3）：onPoolResolved 必须先于首个事件 emit——本分支
-      // finalizeOutcome 经 applyAbortedOutcome emit error 事件，缺本调用会把事件落
-      // shared 占位池，与 handle.poolKey 漂移（契约同正常路径 prepare 期声明）
-      ctx.onPoolResolved?.(poolKey);
-      const outcome = this.finalizeOutcome(
-        task,
-        ctx,
-        abortedAppServerAttempt(ctx),
-        { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false },
-        startedAt,
-      );
-      return { result: { handle: this.appServerHandle(poolKey, outcome), outcome }, driftCode: undefined };
+      return this.abortedAppServerRun(task, ctx, startedAt);
     }
 
     // ① prepare 期：模型解析（provider 体系校验——错误语义与 spawn 同为进程创建前
@@ -462,11 +448,54 @@ export class ZcodeEngine implements EnginePort {
     const schema = isPlainObject(task.schema) ? task.schema : undefined;
     const basePrompt = this.buildPrompt(task, schema);
 
-    // ② 首轮执行；schema 任务校验失败时重试一次（强化 JSON 输出指令——与 spawn/
-    // structured-output 的重试语义对齐）。重试轮是独立会话的独立 LLM 调用：token
-    // 计入 outcome.usage 总量；事件面 text_delta 按实际流出（含失败轮——journal 记录
-    // 真实流水），message_end/turn_end 只在最终轮终态后合成（不变量 2/5）。
+    // ② 首轮执行 + schema 仿真重试（重试语义与不变量注释见 runAppServerAttemptsWithRetry）
     const usageAcc = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false };
+    const final = await this.runAppServerAttemptsWithRetry(task, ctx, home, modelRef, cwd, basePrompt, schema, usageAcc);
+
+    const outcome = this.finalizeOutcome(task, ctx, final, usageAcc, startedAt);
+    return { result: { handle: this.appServerHandle(home.poolKey, outcome), outcome }, driftCode: driftCodeOf(final) };
+  }
+
+  /** pre-aborted 短路收口（常驻路径专用）：合成中止 outcome + 池锚定 handle。 */
+  private abortedAppServerRun(
+    task: AgentTaskSpec,
+    ctx: RunContext,
+    startedAt: number,
+  ): { result: EngineRunResult; driftCode: number | undefined } {
+    // poolKey 锚定：已持有 HOME（含派生场景）用其真实 poolKey；首次即 abort 尚无
+    // HOME 可用，退回静态常量（此刻确实无派生事实可锚定）
+    const poolKey = this.homeState?.poolKey ?? ZCODE_APPSERVER_POOL_KEY;
+    // 对齐点③（不变量 3）：onPoolResolved 必须先于首个事件 emit——本分支
+    // finalizeOutcome 经 applyAbortedOutcome emit error 事件，缺本调用会把事件落
+    // shared 占位池，与 handle.poolKey 漂移（契约同正常路径 prepare 期声明）
+    ctx.onPoolResolved?.(poolKey);
+    const outcome = this.finalizeOutcome(
+      task,
+      ctx,
+      abortedAppServerAttempt(ctx),
+      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false },
+      startedAt,
+    );
+    return { result: { handle: this.appServerHandle(poolKey, outcome), outcome }, driftCode: undefined };
+  }
+
+  /**
+   * 首轮执行 + schema 仿真重试编排（常驻路径）：schema 任务校验失败时重试一次（强化
+   * JSON 输出指令——与 spawn/structured-output 的重试语义对齐）。重试轮是独立会话的
+   * 独立 LLM 调用：token 计入 outcome.usage 总量；事件面 text_delta 按实际流出（含
+   * 失败轮——journal 记录真实流水），message_end/turn_end 只在最终轮终态后合成
+   * （不变量 2/5）。
+   */
+  private async runAppServerAttemptsWithRetry(
+    task: AgentTaskSpec,
+    ctx: RunContext,
+    home: AppServerHomeHandle,
+    modelRef: string,
+    cwd: string,
+    basePrompt: string,
+    schema: object | undefined,
+    usageAcc: { input: number; output: number; cacheRead: number; cacheWrite: number; has: boolean },
+  ): Promise<AttemptResult> {
     let final = await this.attemptAppServerTurn(task, ctx, home, modelRef, cwd, basePrompt);
     accumulateUsage(usageAcc, final);
     if (final.kind === "parsed" && final.schemaResult !== undefined && !final.schemaResult.ok && schema !== undefined) {
@@ -475,13 +504,7 @@ export class ZcodeEngine implements EnginePort {
       accumulateUsage(usageAcc, retry);
       final = retry;
     }
-
-    const outcome = this.finalizeOutcome(task, ctx, final, usageAcc, startedAt);
-    const driftCode =
-      final.kind === "run-failed" && final.rpcCode !== undefined && isDriftRpcCode(final.rpcCode)
-        ? final.rpcCode
-        : undefined;
-    return { result: { handle: this.appServerHandle(home.poolKey, outcome), outcome }, driftCode };
+    return final;
   }
 
   /** 常驻路径的 handle 合成（poolKey = 常驻 HOME 实际目录名——锚定不变量载体）。 */
@@ -517,19 +540,7 @@ export class ZcodeEngine implements EnginePort {
   ): Promise<AttemptResult> {
     const rt = this.ensureAppServerRuntime(home);
     const { providerId, modelId } = splitZcodeModelRef(modelRef);
-    const denyTools = (task.denyTools ?? []).filter((t) => typeof t === "string" && t.trim() !== "");
-    // effort → thoughtLevel（A.2 ① 键集内）：空白串归一为不设键——strict 对象下
-    // 空值键位无语义且防 -32602 变形拒收（与 denyTools 空清单不设键同款纪律）
-    const thoughtLevel = task.effort?.trim();
-    const createParams: SessionCreateParams = {
-      workspacePath: cwd,
-      mode: "yolo",
-      // per-session model（G3）：create 参数透传（A.2 ① strict 对象）——同进程任务
-      // 各用各的模型，互不干扰
-      model: { providerId, modelId },
-      ...(thoughtLevel !== undefined && thoughtLevel !== "" ? { thoughtLevel } : {}),
-      ...(denyTools.length > 0 ? { toolDenylist: denyTools } : {}),
-    };
+    const createParams = buildAppServerCreateParams(task, providerId, modelId, cwd);
 
     let currentSessionId: string | undefined;
     let signalSessionCreated: (() => void) | undefined;
@@ -567,29 +578,10 @@ export class ZcodeEngine implements EnginePort {
       // stop 优雅生效（终态在 grace 内到达）：宿主已取消——按中止终态收口（record
       // 终态迁移由编排层 CAS 决定，engine 侧保持与 spawn abort 同构语义）
       if (ctx.signal?.aborted === true) return abortedAppServerAttempt(ctx);
-      const schema = isPlainObject(task.schema) ? task.schema : undefined;
-      return {
-        kind: "parsed",
-        output: syntheticAppServerOutput(0),
-        payload: turnResultToPayload(r),
-        ...(schema !== undefined
-          ? { schemaResult: extractAndValidateStructuredOutput(r.response, schema) }
-          : {}),
-      };
+      return parsedAppServerAttempt(task, r);
     } catch (err) {
       if (ctx.signal?.aborted === true) return abortedAppServerAttempt(ctx);
-      return {
-        kind: "run-failed",
-        output: syntheticAppServerOutput(null),
-        message: buildAppServerRunFailedMessage(err, home, currentSessionId),
-        // [R5] RPC code 透传给 run 编排（-32601/-32602 漂移降级判据；连接级/超时类
-        // 错误无 code 不参与降级）
-        ...(isAppServerRpcError(err) && err.code !== undefined ? { rpcCode: err.code } : {}),
-        // 错误规格表 -32004 行「按任务失败上报（含会话 id）」：create 成功后运行中失败
-        // （-32004/-32010 等）时留痕会话 id——经 applyRunFailedOutcome 落 outcome.sessionId
-        // 与 handle.sessionRef（create 阶段失败无会话，缺省不带）
-        ...(currentSessionId !== undefined ? { sessionId: currentSessionId } : {}),
-      };
+      return failedAppServerAttempt(err, home, currentSessionId);
     } finally {
       if (currentSessionId !== undefined) rt.activeSessions.delete(currentSessionId);
       if (ctx.signal !== undefined) ctx.signal.removeEventListener("abort", onAbort);
@@ -860,11 +852,36 @@ export class ZcodeEngine implements EnginePort {
     const schema = isPlainObject(task.schema) ? task.schema : undefined;
     const basePrompt = this.buildPrompt(task, schema);
 
-    // ②-④ 首轮执行；schema 任务校验失败时重试一次（强化 JSON 输出指令——与
-    // structured-output 的重试语义对齐，设计 §3.3.3 schema_emulation_failed 行）。
-    // 重试轮产生的新 session 是独立 LLM 调用：token 计入 outcome.usage 总量，
-    // 事件只在最终轮终态后一次性合成（不变量 5：事件 emit 完成先于 run resolve）。
+    // ②-④ 首轮执行 + schema 仿真重试（重试语义与不变量注释见 runSpawnAttemptsWithRetry）
     const usageAcc = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false };
+    const final = await this.runSpawnAttemptsWithRetry(task, ctx, prepared, cwd, basePrompt, schema, usageAcc);
+
+    const outcome = this.finalizeOutcome(task, ctx, final, usageAcc, startedAt);
+
+    const handle: EngineHandle = this.buildSpawnEngineHandle(prepared, outcome);
+    if (degrade !== undefined) {
+      // 降级标注（engineFallback 留痕面合并语义见 applyDegradeFallback）
+      applyDegradeFallback(outcome, degrade.degradedReason);
+    }
+    return { handle, outcome };
+  }
+
+  /**
+   * 首轮执行 + schema 仿真重试编排（spawn 路径）：schema 任务校验失败时重试一次（强化
+   * JSON 输出指令——与 structured-output 的重试语义对齐，设计 §3.3.3
+   * schema_emulation_failed 行）。重试轮产生的新 session 是独立 LLM 调用：token 计入
+   * outcome.usage 总量，事件只在最终轮终态后一次性合成（不变量 5：事件 emit 完成先于
+   * run resolve）。
+   */
+  private async runSpawnAttemptsWithRetry(
+    task: AgentTaskSpec,
+    ctx: RunContext,
+    prepared: ReturnType<typeof prepareZcodeHome>,
+    cwd: string,
+    basePrompt: string,
+    schema: object | undefined,
+    usageAcc: { input: number; output: number; cacheRead: number; cacheWrite: number; has: boolean },
+  ): Promise<AttemptResult> {
     let final = await this.attemptOnce(task, ctx, prepared, cwd, basePrompt);
     accumulateUsage(usageAcc, final);
     if (final.kind === "parsed" && final.schemaResult !== undefined && !final.schemaResult.ok && schema !== undefined) {
@@ -873,10 +890,15 @@ export class ZcodeEngine implements EnginePort {
       accumulateUsage(usageAcc, retry);
       final = retry;
     }
+    return final;
+  }
 
-    const outcome = this.finalizeOutcome(task, ctx, final, usageAcc, startedAt);
-
-    const handle: EngineHandle = {
+  /** spawn 路径的 handle 合成（poolKey = 隔离池目录名；探针版本可留痕）。 */
+  private buildSpawnEngineHandle(
+    prepared: ReturnType<typeof prepareZcodeHome>,
+    outcome: AgentOutcome,
+  ): EngineHandle {
+    return {
       data: {
         v: 1,
         engineId: ZCODE_ENGINE_ID,
@@ -892,17 +914,6 @@ export class ZcodeEngine implements EnginePort {
         adapterVersion: ZCODE_ADAPTER_VERSION,
       },
     };
-    if (degrade !== undefined) {
-      // 降级标注：engineFallback 是 outcome 上唯一的元信息留痕面（D9① 同一通道）。
-      // ctx 已带路由级 fallback（pi→zcode）时保 from、reason 追加降级事实——两层
-      // 留痕合并不丢信息。
-      const prior = outcome.engineFallback;
-      outcome.engineFallback = {
-        from: prior?.from ?? "zcode:appserver",
-        reason: `${prior !== undefined ? `${prior.reason}；` : ""}degraded: spawn（${degrade.degradedReason}）`,
-      };
-    }
-    return { handle, outcome };
   }
 
   /** 终态合成（extension-conventions 函数 80 行上限，从 run 提取）：aborted / run-failed / parsed 三分支。 */
@@ -1400,6 +1411,77 @@ function appendSchemaRetryDirective(basePrompt: string, validationError: string)
     "Answer again. Output ONLY the JSON value conforming to the schema above — " +
     "no prose, no markdown fences, no extra text."
   );
+}
+
+/** create 参数组装（A.2 ① strict 键集：空白 thoughtLevel / 空 deny 清单不设键）。 */
+function buildAppServerCreateParams(
+  task: AgentTaskSpec,
+  providerId: string,
+  modelId: string,
+  cwd: string,
+): SessionCreateParams {
+  const denyTools = (task.denyTools ?? []).filter((t) => typeof t === "string" && t.trim() !== "");
+  // effort → thoughtLevel（A.2 ① 键集内）：空白串归一为不设键——strict 对象下
+  // 空值键位无语义且防 -32602 变形拒收（与 denyTools 空清单不设键同款纪律）
+  const thoughtLevel = task.effort?.trim();
+  return {
+    workspacePath: cwd,
+    mode: "yolo",
+    // per-session model（G3）：create 参数透传（A.2 ① strict 对象）——同进程任务
+    // 各用各的模型，互不干扰
+    model: { providerId, modelId },
+    ...(thoughtLevel !== undefined && thoughtLevel !== "" ? { thoughtLevel } : {}),
+    ...(denyTools.length > 0 ? { toolDenylist: denyTools } : {}),
+  };
+}
+
+/** appserver 轮成功收口的 parsed 三态（read 兜底后的 response + schema 校验）。 */
+function parsedAppServerAttempt(task: AgentTaskSpec, r: SessionTurnResult): AttemptResult {
+  const schema = isPlainObject(task.schema) ? task.schema : undefined;
+  return {
+    kind: "parsed",
+    output: syntheticAppServerOutput(0),
+    payload: turnResultToPayload(r),
+    ...(schema !== undefined
+      ? { schemaResult: extractAndValidateStructuredOutput(r.response, schema) }
+      : {}),
+  };
+}
+
+/** appserver 轮失败收口的 run-failed 三态（结构化文案 + RPC code 透传 + 会话 id 留痕）。 */
+function failedAppServerAttempt(
+  err: unknown,
+  home: AppServerHomeHandle,
+  currentSessionId: string | undefined,
+): AttemptResult {
+  return {
+    kind: "run-failed",
+    output: syntheticAppServerOutput(null),
+    message: buildAppServerRunFailedMessage(err, home, currentSessionId),
+    // [R5] RPC code 透传给 run 编排（-32601/-32602 漂移降级判据；连接级/超时类
+    // 错误无 code 不参与降级）
+    ...(isAppServerRpcError(err) && err.code !== undefined ? { rpcCode: err.code } : {}),
+    // 错误规格表 -32004 行「按任务失败上报（含会话 id）」：create 成功后运行中失败
+    // （-32004/-32010 等）时留痕会话 id——经 applyRunFailedOutcome 落 outcome.sessionId
+    // 与 handle.sessionRef（create 阶段失败无会话，缺省不带）
+    ...(currentSessionId !== undefined ? { sessionId: currentSessionId } : {}),
+  };
+}
+
+/** [R5] 末轮 attempt 的漂移类 RPC code 提取（-32601/-32602 → run 编排降级判据；其余 undefined）。 */
+function driftCodeOf(final: AttemptResult): number | undefined {
+  return final.kind === "run-failed" && final.rpcCode !== undefined && isDriftRpcCode(final.rpcCode)
+    ? final.rpcCode
+    : undefined;
+}
+
+/** 降级留痕（outcome.engineFallback 唯一通道；路由级 fallback 已存在时合并不覆盖）。 */
+function applyDegradeFallback(outcome: AgentOutcome, degradedReason: string): void {
+  const prior = outcome.engineFallback;
+  outcome.engineFallback = {
+    from: prior?.from ?? "zcode:appserver",
+    reason: `${prior !== undefined ? `${prior.reason}；` : ""}degraded: spawn（${degradedReason}）`,
+  };
 }
 
 /** prepare 期能力拒绝的载体（code 进 message 前缀，调用方可程序化分流）。

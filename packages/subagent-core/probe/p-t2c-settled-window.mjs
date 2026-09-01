@@ -108,6 +108,65 @@ child.stderr.on("data", (c) => {
   if (s) log(`stderr: ${s.slice(0, 200)}`);
 });
 
+/** prompt 应答：success 记 ack；失败标记该轮失败并推进下一轮。 */
+function handlePromptResponse(ev, now) {
+  if (!(ev.type === "response" && ev.command === "prompt")) return false;
+  if (ev.success) {
+    log(`round ${currentRound?.id ?? "?"} prompt ack (${now - STARTED}ms since start)`);
+  } else {
+    // 单轮拒绝（如上下文超限）不中止探针：标记该轮失败，已完成轮次仍有效
+    log(`round ${currentRound?.id ?? "?"} prompt FAILED: ${ev.error}`);
+    if (currentRound) {
+      currentRound.error = `prompt rejected: ${ev.error}`;
+      results.rounds.push(currentRound);
+      currentRound = null;
+      agentEndAt = null;
+      sendNextRound();
+    }
+  }
+  return true;
+}
+
+/** agent_end：当前轮首个 agent_end 打点（后续重复事件忽略）。 */
+function handleAgentEnd(ev, now) {
+  if (!(ev.type === "agent_end" && currentRound && agentEndAt === null)) return false;
+  agentEndAt = now;
+  log(`round ${currentRound.id} agent_end`);
+  return true;
+}
+
+/** compaction 事件打点：判定 settled 窗口内是否含 auto-compact（设计要标的最坏形态）。 */
+function handleCompactionEvent(ev, now) {
+  if (!((ev.type === "compaction_start" || ev.type === "compaction_end") && currentRound)) return false;
+  currentRound.compactionEvents ??= [];
+  currentRound.compactionEvents.push({
+    type: ev.type,
+    atMsFromAgentEnd: agentEndAt !== null ? now - agentEndAt : null,
+  });
+  log(`round ${currentRound.id} ${ev.type}`);
+  return true;
+}
+
+/** agent_settled（已见 agent_end）：记录 gap、收轮、推进下一轮。 */
+function handleAgentSettled(ev, now) {
+  if (!(ev.type === "agent_settled" && currentRound && agentEndAt !== null)) return false;
+  const gap = now - agentEndAt;
+  currentRound.agentEndToSettledMs = gap;
+  currentRound.settledAt = new Date(now).toISOString();
+  log(`round ${currentRound.id} agent_settled (gap=${gap}ms)`);
+  results.rounds.push(currentRound);
+  currentRound = null;
+  agentEndAt = null;
+  sendNextRound();
+  return true;
+}
+
+/** settled 在 agent_end 打点前到达（理论上不该发生）——记录为异常样本。 */
+function warnSettledWithoutAgentEnd(ev) {
+  if (!(ev.type === "agent_settled" && currentRound && agentEndAt === null)) return;
+  log(`WARN: agent_settled without prior agent_end in round ${currentRound.id}`);
+}
+
 function handleLine(line) {
   let ev;
   try {
@@ -117,53 +176,11 @@ function handleLine(line) {
     return;
   }
   const now = Date.now();
-
-  if (ev.type === "response" && ev.command === "prompt") {
-    if (ev.success) {
-      log(`round ${currentRound?.id ?? "?"} prompt ack (${now - STARTED}ms since start)`);
-    } else {
-      // 单轮拒绝（如上下文超限）不中止探针：标记该轮失败，已完成轮次仍有效
-      log(`round ${currentRound?.id ?? "?"} prompt FAILED: ${ev.error}`);
-      if (currentRound) {
-        currentRound.error = `prompt rejected: ${ev.error}`;
-        results.rounds.push(currentRound);
-        currentRound = null;
-        agentEndAt = null;
-        sendNextRound();
-      }
-    }
-    return;
-  }
-  if (ev.type === "agent_end" && currentRound && agentEndAt === null) {
-    agentEndAt = now;
-    log(`round ${currentRound.id} agent_end`);
-    return;
-  }
-  // compaction 事件打点：判定 settled 窗口内是否含 auto-compact（设计要标的最坏形态）
-  if ((ev.type === "compaction_start" || ev.type === "compaction_end") && currentRound) {
-    currentRound.compactionEvents ??= [];
-    currentRound.compactionEvents.push({
-      type: ev.type,
-      atMsFromAgentEnd: agentEndAt !== null ? now - agentEndAt : null,
-    });
-    log(`round ${currentRound.id} ${ev.type}`);
-    return;
-  }
-  if (ev.type === "agent_settled" && currentRound && agentEndAt !== null) {
-    const gap = now - agentEndAt;
-    currentRound.agentEndToSettledMs = gap;
-    currentRound.settledAt = new Date(now).toISOString();
-    log(`round ${currentRound.id} agent_settled (gap=${gap}ms)`);
-    results.rounds.push(currentRound);
-    currentRound = null;
-    agentEndAt = null;
-    sendNextRound();
-    return;
-  }
-  if (ev.type === "agent_settled" && currentRound && agentEndAt === null) {
-    // settled 在 agent_end 打点前到达（理论上不该发生）——记录为异常样本
-    log(`WARN: agent_settled without prior agent_end in round ${currentRound.id}`);
-  }
+  if (handlePromptResponse(ev, now)) return;
+  if (handleAgentEnd(ev, now)) return;
+  if (handleCompactionEvent(ev, now)) return;
+  if (handleAgentSettled(ev, now)) return;
+  warnSettledWithoutAgentEnd(ev);
 }
 
 function sendNextRound() {

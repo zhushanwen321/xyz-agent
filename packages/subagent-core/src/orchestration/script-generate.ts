@@ -44,6 +44,69 @@ export type GenerateWorkflowScriptResult =
   | { ok: true; path: string }
   | { ok: false; error: string };
 
+// ── 校验闸（每闸返回 error 文案；undefined = 通过。文案逐字对齐 pi 现版） ──
+
+/** 闸 0：参数完备（缺 name/script 即拒）。 */
+function checkRequiredParams(name: string, script: string): string | undefined {
+  if (!name || !script) {
+    return "generate requires 'name' and 'script' parameters";
+  }
+  return undefined;
+}
+
+/** 闸 1：ESM 语法拒绝（Worker 跑 CJS）；'export const meta' 例外。stripped = 注释剥离后源码。 */
+function checkEsamSyntax(stripped: string): string | undefined {
+  if (/\bimport\s+(?:type\s+)?[\w{*]/.test(stripped)) {
+    return "Script uses ESM 'import' syntax. Workflow scripts run in a CJS Worker — use require() instead.";
+  }
+  const hasExportMeta = /\bexport\s+const\s+meta\s*=/.test(stripped);
+  const otherExports = stripped.match(/\bexport\s+(?:const|let|var|function|default|\{)/g);
+  if (otherExports && !hasExportMeta) {
+    return "Script uses ESM 'export' (non-meta). Use 'const meta = {...}' at top level instead.";
+  }
+  return undefined;
+}
+
+// 闸 2：meta 声明必需（/* @pi-meta */ YAML 块注释或 legacy const meta，过渡期 m0）
+function checkMetaDeclaration(script: string, hasPiMeta: boolean): string | undefined {
+  const hasLegacyMeta = script.includes("const meta") || script.includes("export const meta");
+  if (!hasPiMeta && !hasLegacyMeta) {
+    return "Script must contain a meta declaration: a /* @pi-meta */ YAML block comment (preferred) or legacy const meta = { ... }. The block has the form: a block comment starting with /* @pi-meta followed by YAML (name/description/phases/parameters?/usage?), closed by */ on its own line.";
+  }
+  return undefined;
+}
+
+/** 闸 3：agent() 调用必需。 */
+function checkAgentUsage(stripped: string): string | undefined {
+  if (!/\bagent\s*\(/.test(stripped)) {
+    return "Script does not contain any agent() calls. A workflow must call agent() at least once.";
+  }
+  return undefined;
+}
+
+/** 闸 4：语法检查（包 async IIFE，与 runtime 包裹形态一致）。 */
+function checkSyntax(script: string): string | undefined {
+  const cjsScript = script.replace(/\bexport\s+const\s+meta\b/, "const meta");
+  try {
+    new Function(`(async () => { ${cjsScript} })();`);
+    return undefined;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Syntax error in script: ${msg}`;
+  }
+}
+
+/** 闸 4b：round-trip——@pi-meta 存在时 parseResourceMetaDetailed 校验 YAML（报行列）。 */
+function checkMetaRoundTrip(script: string, hasPiMeta: boolean): string | undefined {
+  if (!hasPiMeta) return undefined;
+  const detailed = parseResourceMetaDetailed(script, "workflow");
+  if (detailed.ok) return undefined;
+  const loc = "linePos" in detailed && detailed.linePos
+    ? ` (line ${detailed.linePos.line}, col ${detailed.linePos.col})`
+    : "";
+  return `Generated /* @pi-meta */ YAML cannot be parsed${loc}: ${detailed.error}. Common causes: YAML indent errors, patternProperties regex must use double backslash (\\d not \d), or a stray star-slash inside the YAML body. Fix the meta block and retry.`;
+}
+
 /**
  * 校验并落盘一个 AI 生成的 workflow 临时脚本。
  *
@@ -56,72 +119,32 @@ export function generateWorkflowScript(
   script: string,
   options?: GenerateWorkflowScriptOptions,
 ): GenerateWorkflowScriptResult {
-  if (!name || !script) {
-    return { ok: false, error: "generate requires 'name' and 'script' parameters" };
-  }
+  const paramError = checkRequiredParams(name, script);
+  if (paramError) return { ok: false, error: paramError };
 
- // 1. Reject ESM syntax (Worker runs CJS); 'export const meta' 例外
+  // 1. Reject ESM syntax (Worker runs CJS); 'export const meta' 例外
   const stripped = script.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-  if (/\bimport\s+(?:type\s+)?[\w{*]/.test(stripped)) {
-    return {
-      ok: false,
-      error:
-        "Script uses ESM 'import' syntax. Workflow scripts run in a CJS Worker — use require() instead.",
-    };
-  }
-  const hasExportMeta = /\bexport\s+const\s+meta\s*=/.test(stripped);
-  const otherExports = stripped.match(/\bexport\s+(?:const|let|var|function|default|\{)/g);
-  if (otherExports && !hasExportMeta) {
-    return {
-      ok: false,
-      error:
-        "Script uses ESM 'export' (non-meta). Use 'const meta = {...}' at top level instead.",
-    };
-  }
+  const esamError = checkEsamSyntax(stripped);
+  if (esamError) return { ok: false, error: esamError };
 
- // 2. Validate meta declaration (/* @pi-meta */ new format preferred; legacy const meta accepted during transition — m0)
+  // 2. Validate meta declaration (/* @pi-meta */ new format preferred; legacy const meta accepted during transition — m0)
   const hasPiMeta = /\/\*\s*@pi-meta\s*\n/.test(script);
-  const hasLegacyMeta = script.includes("const meta") || script.includes("export const meta");
-  if (!hasPiMeta && !hasLegacyMeta) {
-    return {
-      ok: false,
-      error:
-        "Script must contain a meta declaration: a /* @pi-meta */ YAML block comment (preferred) or legacy const meta = { ... }. The block has the form: a block comment starting with /* @pi-meta followed by YAML (name/description/phases/parameters?/usage?), closed by */ on its own line.",
-    };
-  }
+  const metaError = checkMetaDeclaration(script, hasPiMeta);
+  if (metaError) return { ok: false, error: metaError };
 
- // 3. Check agent usage
-  if (!/\bagent\s*\(/.test(stripped)) {
-    return {
-      ok: false,
-      error: "Script does not contain any agent() calls. A workflow must call agent() at least once.",
-    };
-  }
+  // 3. Check agent usage
+  const agentError = checkAgentUsage(stripped);
+  if (agentError) return { ok: false, error: agentError };
 
- // 4. Syntax check (wrap in async IIFE like runtime)
-  const cjsScript = script.replace(/\bexport\s+const\s+meta\b/, "const meta");
-  try {
-    new Function(`(async () => { ${cjsScript} })();`);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: `Syntax error in script: ${msg}` };
-  }
+  // 4. Syntax check (wrap in async IIFE like runtime)
+  const syntaxError = checkSyntax(script);
+  if (syntaxError) return { ok: false, error: syntaxError };
 
- // 4b. Round-trip: validate /* @pi-meta */ YAML before writing (v5 §4.7 / ERR4 — report linePos, don't write bad files)
-  if (hasPiMeta) {
-    const detailed = parseResourceMetaDetailed(script, "workflow");
-    if (!detailed.ok) {
-      const loc = "linePos" in detailed && detailed.linePos
-        ? ` (line ${detailed.linePos.line}, col ${detailed.linePos.col})`
-        : "";
-      return {
-        ok: false,
-        error: `Generated /* @pi-meta */ YAML cannot be parsed${loc}: ${detailed.error}. Common causes: YAML indent errors, patternProperties regex must use double backslash (\\d not \d), or a stray star-slash inside the YAML body. Fix the meta block and retry.`,
-      };
-    }
-  }
+  // 4b. Round-trip: validate /* @pi-meta */ YAML before writing (v5 §4.7 / ERR4 — report linePos, don't write bad files)
+  const roundTripError = checkMetaRoundTrip(script, hasPiMeta);
+  if (roundTripError) return { ok: false, error: roundTripError };
 
- // 5. Write to tmp directory
+  // 5. Write to tmp directory
   const tmpDir = resolve(options?.tmpDir ?? DEFAULT_WORKFLOW_TMP_DIR);
   mkdirSync(tmpDir, { recursive: true });
   const filePath = resolve(tmpDir, `${name}.js`);

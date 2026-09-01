@@ -55,6 +55,57 @@ export function boundedPrettySerialize(value: unknown, budget: number): string {
     exceeded = true;
   }
 
+  /** 数组分支：元素逐个缩进序列化（(d) undefined/function/symbol → "null"）。 */
+  function serializeArray(
+    arr: unknown[],
+    depth: number,
+    childIndent: string,
+    closeIndent: string,
+  ): void {
+    if (arr.length === 0) {
+      append("[]");
+      return;
+    }
+    append("[\n");
+    for (let i = 0; i < arr.length && !exceeded; i++) {
+      if (i > 0) append(",\n");
+      append(childIndent);
+      const el = arr[i];
+      // (d) 数组元素 undefined/function/symbol → "null"
+      if (el === undefined || typeof el === "function" || typeof el === "symbol") {
+        append("null");
+      } else {
+        serialize(el, depth + 1);
+      }
+    }
+    append("\n" + closeIndent + "]");
+  }
+
+  /** 对象分支：(c) 属性 undefined/function/symbol 跳过后逐对序列化。 */
+  function serializeObject(
+    obj: object,
+    depth: number,
+    childIndent: string,
+    closeIndent: string,
+  ): void {
+    // (c) 对象属性 undefined/function/symbol 跳过（Object.entries 同原生：
+    // 只取 own enumerable，symbol 键天然不出现；getter 求值语义与原生一致）
+    const entries = Object.entries(obj).filter(
+      ([, val]) => val !== undefined && typeof val !== "function" && typeof val !== "symbol",
+    );
+    if (entries.length === 0) {
+      append("{}");
+      return;
+    }
+    append("{\n");
+    for (let i = 0; i < entries.length && !exceeded; i++) {
+      if (i > 0) append(",\n");
+      append(childIndent + JSON.stringify(entries[i][0]) + ": ");
+      serialize(entries[i][1], depth + 1);
+    }
+    append("\n" + closeIndent + "}");
+  }
+
   function serialize(v: unknown, depth: number): void {
     if (exceeded) return;
     const t = typeof v;
@@ -79,41 +130,9 @@ export function boundedPrettySerialize(value: unknown, budget: number): string {
       const childIndent = " ".repeat(JSON_INDENT * (depth + 1));
       const closeIndent = " ".repeat(JSON_INDENT * depth);
       if (Array.isArray(obj)) {
-        const arr = obj as unknown[];
-        if (arr.length === 0) {
-          append("[]");
-        } else {
-          append("[\n");
-          for (let i = 0; i < arr.length && !exceeded; i++) {
-            if (i > 0) append(",\n");
-            append(childIndent);
-            const el = arr[i];
-            // (d) 数组元素 undefined/function/symbol → "null"
-            if (el === undefined || typeof el === "function" || typeof el === "symbol") {
-              append("null");
-            } else {
-              serialize(el, depth + 1);
-            }
-          }
-          append("\n" + closeIndent + "]");
-        }
+        serializeArray(obj as unknown[], depth, childIndent, closeIndent);
       } else {
-        // (c) 对象属性 undefined/function/symbol 跳过（Object.entries 同原生：
-        // 只取 own enumerable，symbol 键天然不出现；getter 求值语义与原生一致）
-        const entries = Object.entries(obj).filter(
-          ([, val]) => val !== undefined && typeof val !== "function" && typeof val !== "symbol",
-        );
-        if (entries.length === 0) {
-          append("{}");
-        } else {
-          append("{\n");
-          for (let i = 0; i < entries.length && !exceeded; i++) {
-            if (i > 0) append(",\n");
-            append(childIndent + JSON.stringify(entries[i][0]) + ": ");
-            serialize(entries[i][1], depth + 1);
-          }
-          append("\n" + closeIndent + "}");
-        }
+        serializeObject(obj, depth, childIndent, closeIndent);
       }
       ancestors.delete(obj);
       return;

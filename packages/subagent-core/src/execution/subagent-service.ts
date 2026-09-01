@@ -426,10 +426,30 @@ export class SubagentService {
     if (init.dialogQueue !== undefined) {
       this.dialogQueue = init.dialogQueue;
     }
-    // [SPAWN fork depth 跨进程传递] 子进程被父 spawn 时，父通过 env
-    // PI_SUBAGENT_FORK_DEPTH 传入当前 fork 链深度。子进程 session_start 时
-    // 读取作为 forkDepthAls 基线，使后续嵌套 spawn fork 能从正确深度递增。
-    // 未设置（顶层主 session）→ 基线 0。enterWith 贯穿整个 session 生命周期。
+    this.initForkDepthBaseline();
+    // [递归可见性] 跨进程身份贯穿（设计 recursive-subagent-visibility.md）。
+    // 父进程 spawn 时注入 env 描述「子进程自己的身份」（rootSessionId / selfRecordId /
+    // depth / rootCwd），语义与基线建立见 initExecContextBaseline。根进程无 env →
+    // sessionRootId = init.sessionId（自己是 root），execCtxAls 不 enterWith（顶层）。
+    const envRoot = process.env[ENV_ROOT_SESSION_ID];
+    this.sessionRootId = envRoot ?? init.sessionId;
+    this.initExecContextBaseline(envRoot, init.sessionId);
+    // revive（dispose 的逆操作：/resume /fork /new 后复活）
+    this._disposed = false;
+    this.store.revive();
+    this.notifier.revive();
+    // 孤儿终态恢复（放 initSession 末尾：setPi 已注入（appendEntry 可用）、
+    // sessionRootId 已建立（过滤当前根的 record）；单扫描者判据见 recoverOrphansIfRootProcess）
+    this.recoverOrphansIfRootProcess();
+  }
+
+  /**
+   * [SPAWN fork depth 跨进程传递] fork 链深度基线：子进程被父 spawn 时，父通过 env
+   * PI_SUBAGENT_FORK_DEPTH 传入当前 fork 链深度。子进程 session_start 时读取作为
+   * forkDepthAls 基线，使后续嵌套 spawn fork 能从正确深度递增。未设置（顶层主
+   * session）→ 基线 0。enterWith 贯穿整个 session 生命周期。
+   */
+  private initForkDepthBaseline(): void {
     const envDepth = process.env.PI_SUBAGENT_FORK_DEPTH;
     if (envDepth !== undefined && envDepth !== "") {
       const base = Number.parseInt(envDepth, 10);
@@ -438,17 +458,14 @@ export class SubagentService {
         this.forkDepthBaseline = base;
       }
     }
-    // [递归可见性] 跨进程身份贯穿（设计 recursive-subagent-visibility.md）。
-    // 父进程 spawn 时注入这 4 个 env 描述「子进程自己的身份」：
-    //   - rootSessionId：所属根 session（贯穿真 ROOT，子进程不覆盖）
-    //   - selfRecordId：子进程自己的 record id（孙 subagent 的直接父）
-    //   - depth：子进程的嵌套深度
-    //   - rootCwd：真 ROOT 的 cwd（[MF-3] 落盘目录编码键，worktree 下与自身 cwd 不同）
-    // 子进程读 env 建立基线后，createRecordForMode 读 execCtxAls 自动正确（孙挂到子名下）。
-    // 根进程无 env → sessionRootId = init.sessionId（自己是 root），execCtxAls 不 enterWith（顶层）。
-    // enterWith 贯穿整个 session 生命周期（与 forkDepthAls 同构，决策 4）。
-    const envRoot = process.env[ENV_ROOT_SESSION_ID];
-    this.sessionRootId = envRoot ?? init.sessionId;
+  }
+
+  /**
+   * [递归可见性] exec 上下文基线：子进程读 env PI_SUBAGENT_SELF_RECORD_ID / DEPTH
+   * 建立身份基线后，createRecordForMode 读 execCtxAls 自动正确（孙挂到子名下）。
+   * enterWith 贯穿整个 session 生命周期（与 forkDepthAls 同构，决策 4）。
+   */
+  private initExecContextBaseline(envRoot: string | undefined, sessionId: string): void {
     const envSelfRecord = process.env[ENV_SELF_RECORD_ID];
     if (envSelfRecord !== undefined && envSelfRecord !== "") {
       const envNestingDepth = Number.parseInt(process.env[ENV_DEPTH] ?? "0", 10);
@@ -459,26 +476,26 @@ export class SubagentService {
       this.execCtxAls.enterWith({ recordId: envSelfRecord, depth: nestingDepth });
       if (process.env.XYZ_AGENT_DEBUG) {
         logger.debug(
-          `[subagents] execCtxAls initialized: recordId=${envSelfRecord} depth=${nestingDepth} rootSessionId=${envRoot ?? init.sessionId}`,
+          `[subagents] execCtxAls initialized: recordId=${envSelfRecord} depth=${nestingDepth} rootSessionId=${envRoot ?? sessionId}`,
         );
       }
     }
-    // revive（dispose 的逆操作：/resume /fork /new 后复活）
-    this._disposed = false;
-    this.store.revive();
-    this.notifier.revive();
-    // 孤儿终态恢复（residual-fixes）：session_start 主动触发一次——父扩展死后再无人写
-    // 终态 entry 的 record 在此判定落盘（否则侧栏永久 running）。放 initSession 末尾：
-    // setPi 已注入（appendEntry 可用），sessionRootId 已建立（过滤当前根的 record）。
-    // 幂等不 throw，失败不阻断 session_start。
-    //
-    // [T5① / PS-8] 只有根进程做扫描者：恢复机制假设「单扫描者」，但子进程 sessionRootId
-    // 经 env 与父同值（过滤域 = 整树共享的 sessions/records 目录），env 贯穿让每个子进程
-    // 都成了扫描者——递归编排中任一子进程启动时，恰有兄弟记录 marker 缺失或超软超时
-    //（hours-long wave 必然命中）→ 活记录被无关进程盖 .finalized sidecar，closed entry
-    // 写进别的进程的 session 文件（跨进程互写，无任何锁）。子进程身份判据 = env
-    // PI_SUBAGENT_SELF_RECORD_ID（父 spawn 时注入的「子进程自己的 record id」，仅子进程
-    // 非空）——与 execCtxBaseline 同源。根进程恢复语义不变。
+  }
+
+  /**
+   * 孤儿终态恢复（residual-fixes）：session_start 主动触发一次——父扩展死后再无人写
+   * 终态 entry 的 record 在此判定落盘（否则侧栏永久 running）。幂等不 throw，失败不
+   * 阻断 session_start。
+   *
+   * [T5① / PS-8] 只有根进程做扫描者：恢复机制假设「单扫描者」，但子进程 sessionRootId
+   * 经 env 与父同值（过滤域 = 整树共享的 sessions/records 目录），env 贯穿让每个子进程
+   * 都成了扫描者——递归编排中任一子进程启动时，恰有兄弟记录 marker 缺失或超软超时
+   *（hours-long wave 必然命中）→ 活记录被无关进程盖 .finalized sidecar，closed entry
+   * 写进别的进程的 session 文件（跨进程互写，无任何锁）。子进程身份判据 = env
+   * PI_SUBAGENT_SELF_RECORD_ID（父 spawn 时注入的「子进程自己的 record id」，仅子进程
+   * 非空）——与 execCtxBaseline 同源。根进程恢复语义不变。
+   */
+  private recoverOrphansIfRootProcess(): void {
     const isChildProcess = (process.env[ENV_SELF_RECORD_ID] ?? "") !== "";
     if (!isChildProcess) {
       this.recoverOrphanRecords();

@@ -49,6 +49,8 @@ const DOC_MODULE_MAP = {
 const ENV_NAME_ALLOW_RE = /^(XYZ_|PI_|NODE_|ELECTRON_)[A-Z0-9_]+$/
 /** undici errno 字符串族（文档描述错误分类的字符串字面量，非本项目符号） */
 const ERRNO_STRING_ALLOW_RE = /^(UND_ERR_|E[A-Z]{3,})/
+/** export 声明的 5 种节点类别（对应 ts.isFunctionDeclaration 等类型守卫） */
+const EXPORTED_DECL_KINDS = ['FunctionDeclaration', 'ClassDeclaration', 'InterfaceDeclaration', 'TypeAliasDeclaration', 'EnumDeclaration']
 
 // ─── 源码侧：收集合法符号表 ─────────────────────────────────────────
 
@@ -79,38 +81,49 @@ function extractExportedSymbols(sourceFile) {
   const symbols = new Set()
   const objKeys = new Set()
 
-  function visit(node) {
-    // 模块级 const/let/var（export 与否均收：存在性检查）
-    if (ts.isVariableStatement(node) && node.parent === sourceFile) {
-      const isExport = node.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)
-      for (const decl of node.declarationList.declarations) {
-        if (ts.isIdentifier(decl.name)) {
-          symbols.add(decl.name.text)
-          // 一层属性键：export const MESSAGES = { CODE: ... } → CODE 合法
-          if (isExport && ts.isObjectLiteralExpression(decl.initializer)) {
-            for (const prop of decl.initializer.properties) {
-              if (ts.isPropertyAssignment(prop)) {
-                if (ts.isIdentifier(prop.name)) objKeys.add(prop.name.text)
-                else if (ts.isStringLiteral(prop.name)) objKeys.add(prop.name.text)
-              }
+  // 模块级 const/let/var（export 与否均收：存在性检查）
+  function collectVariableStatement(node) {
+    if (!(ts.isVariableStatement(node) && node.parent === sourceFile)) return
+    const isExport = node.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)
+    for (const decl of node.declarationList.declarations) {
+      if (ts.isIdentifier(decl.name)) {
+        symbols.add(decl.name.text)
+        // 一层属性键：export const MESSAGES = { CODE: ... } → CODE 合法
+        if (isExport && ts.isObjectLiteralExpression(decl.initializer)) {
+          for (const prop of decl.initializer.properties) {
+            if (ts.isPropertyAssignment(prop)) {
+              if (ts.isIdentifier(prop.name)) objKeys.add(prop.name.text)
+              else if (ts.isStringLiteral(prop.name)) objKeys.add(prop.name.text)
             }
           }
         }
       }
     }
-    // export function/class/interface/type/enum
-    for (const kind of ['FunctionDeclaration', 'ClassDeclaration', 'InterfaceDeclaration', 'TypeAliasDeclaration', 'EnumDeclaration']) {
+  }
+
+  // export function/class/interface/type/enum
+  function collectExportedDeclaration(node) {
+    for (const kind of EXPORTED_DECL_KINDS) {
       const fn = ts[`is${kind}`]
       if (fn && fn(node) && node.name && node.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)) {
         symbols.add(node.name.text)
       }
     }
-    // export { a, b as c }
+  }
+
+  // export { a, b as c }
+  function collectNamedExports(node) {
     if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) {
       for (const el of node.exportClause.elements) {
         symbols.add((el.propertyName ?? el.name).text)
       }
     }
+  }
+
+  function visit(node) {
+    collectVariableStatement(node)
+    collectExportedDeclaration(node)
+    collectNamedExports(node)
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)

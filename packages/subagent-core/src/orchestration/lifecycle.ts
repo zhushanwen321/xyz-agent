@@ -211,6 +211,120 @@ export function scheduleTimeBudget(
 // ── runWorkflow ──────────────────────────────────────────────
 
 /**
+ * rfl 仪表（tier-1 §7.1）：向 spec.args 原地注入稳定 _runId。runAndWait 与
+ * executeNestedWorkflow 两个 args 入口都经 runWorkflow 这一 choke point；
+ * rebuildRuntime 复用 run.spec.args 同一对象（error-recovery.ts），worker rebuild
+ * 后脚本侧 $ARGS._runId 不漂移——修复「rebuild 回退 run-<Date.now()> 导致同一
+ * 逻辑 run 碎裂到多个 state 目录」。注入在 validateRunArgs 之后，不参与脚本
+ * 参数 schema 校验（引擎内部字段）。
+ */
+function injectRunId(spec: RunSpec, runId: string): void {
+  if (spec.args && typeof spec.args === "object") {
+    spec.args._runId = runId;
+  }
+}
+
+/** P1-2: pre-aborted signal → fail fast（run 创建前抛，zero side effects）。 */
+function assertSignalNotAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new Error("Workflow run aborted before start");
+  }
+}
+
+/** 创建 running 态 WorkflowRun（budget 共享引用优先，否则按 spec 上限新建）。 */
+function createRunningRun(runId: string, spec: RunSpec): WorkflowRun {
+  return new WorkflowRun(
+    runId,
+    spec,
+    {
+      status: "running",
+      budget: spec.budgetRef ?? new Budget({
+        maxTokens: spec.budgetTokens,
+        maxTimeMs: spec.budgetTimeMs,
+      }),
+      calls: new Map(),
+      trace: new Trace(),
+      errorLogs: [],
+    },
+    { startedAt: new Date().toISOString() },
+  );
+}
+
+/**
+ * C.7：run 级时间预算计时器（spec.budgetTimeMs > 0 时启用，到期 abortRun
+ * time_limited）。OR-1 顺序修复（unbounded-wait-audit §4.1）：调度先于
+ * workerHost.start——budgetTimeMs 越界（>2^31-1）的 fail-fast throw
+ * （assertSafeTimerDelay）发生在任何副作用（worker 启动、runs 注册）之前，
+ * 杜绝「worker 已跑、run 永不可达」的孤儿窗口（此前 runs.set 在最末，
+ * fail-fast 后连 abortRun 都抛 not found）。
+ */
+function armTimeBudgetTimer(
+  runId: string,
+  deps: LifecycleDeps,
+  spec: RunSpec,
+): ReturnType<typeof setTimeout> | undefined {
+  return spec.budgetTimeMs && spec.budgetTimeMs > 0
+    ? scheduleTimeBudget(runId, deps, spec.budgetTimeMs)
+    : undefined;
+}
+
+/**
+ * 启动 worker；失败时清理已挂的 timeBudget timer——前移的代价：start 抛错时
+ * 已挂的 timer 会残留，到期对从未注册的 runId 触发 abortRun（必抛 not found）
+ * ——该路径 runs.set 未到，须就地清理。
+ */
+function startWorkerGuarded(
+  spec: RunSpec,
+  deps: LifecycleDeps,
+  handlers: WorkerHandlers,
+  timeBudgetTimer: ReturnType<typeof setTimeout> | undefined,
+): WorkerHandle {
+  try {
+    return deps.workerHost.start(spec, spec.args, handlers);
+  } catch (err) {
+    if (timeBudgetTimer) clearTimeout(timeBudgetTimer);
+    throw err;
+  }
+}
+
+/**
+ * signal abort → abortRun（[OR-7] 命名 listener + run 终态移除，注册表
+ * signalAbortDisposers；触发时自移除 = 显式 once 语义）。
+ * [B-2] 注册点后移到全部 fail-fast throw（assertSafeTimerDelay / workerHost.start）
+ * 成功之后——旧实现先注册 listener，scheduleTimeBudget/start 两条 throw 路径 run
+ * 永不到终态，disposeSignalAbortListener 永不被调，同 signal 重试每次泄漏一个
+ * listener（MaxListeners 告警面）。移后 throw 路径天然未注册，零泄漏；首个真正
+ * 副作用前完成校验的语义保持（addEventListener 本身也是设计意义上的副作用）。
+ * 注册点到 store.save 之间无 await（同步段），signal 在此窗口 abort 不可能丢失。
+ */
+function registerSignalAbortListener(
+  run: WorkflowRun,
+  runId: string,
+  deps: LifecycleDeps,
+  signal: AbortSignal | undefined,
+): void {
+  if (!signal) return;
+  const onAbort = (): void => {
+    disposeSignalAbortListener(run);
+    void abortRun(runId, deps, "External signal aborted").catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[workflow] abortRun on signal failed: ${msg}`);
+    });
+  };
+  signal.addEventListener("abort", onAbort);
+  signalAbortDisposers.set(run, () => signal.removeEventListener("abort", onAbort));
+}
+
+/** pending-notifications: run 启动 → 注册（所有 workflow 启动路径的单一汇聚点）。 */
+function emitPendingRegister(runId: string, deps: LifecycleDeps, spec: RunSpec): void {
+  deps.eventBus?.emit("pending:register", {
+    id: runId,
+    type: "workflow",
+    name: spec.slug || spec.scriptName || runId,
+  });
+}
+
+/**
  * 启动一个 workflow run。
  *
  * 流程：创建 WorkflowRun（running，I1 构造期跳过）+ makeHandlers + 构建 RunRuntime
@@ -236,99 +350,37 @@ export async function runWorkflow(
   validateRunArgs(spec);
 
   const runId = generateRunId();
-  // rfl 仪表（tier-1 §7.1）：注入稳定 _runId。runAndWait 与 executeNestedWorkflow
-  // 两个 args 入口都经本 choke point；rebuildRuntime 复用 run.spec.args 同一对象
-  // （error-recovery.ts），worker rebuild 后脚本侧 $ARGS._runId 不漂移——修复
-  // 「rebuild 回退 run-<Date.now()> 导致同一逻辑 run 碎裂到多个 state 目录」。
-  // 注入在 validateRunArgs 之后，不参与脚本参数 schema 校验（引擎内部字段）。
-  if (spec.args && typeof spec.args === "object") {
-    spec.args._runId = runId;
-  }
+  injectRunId(spec, runId);
   deps.log?.("debug", "workflow:lifecycle", "runWorkflow start", { runId, scriptName: spec.scriptName });
 
- // P1-2: pre-aborted signal → fail fast
-  if (signal?.aborted) {
-    throw new Error("Workflow run aborted before start");
-  }
+  // P1-2: pre-aborted signal → fail fast
+  assertSignalNotAborted(signal);
 
-  const run = new WorkflowRun(
-    runId,
-    spec,
-    {
-      status: "running",
-      budget: spec.budgetRef ?? new Budget({
-        maxTokens: spec.budgetTokens,
-        maxTimeMs: spec.budgetTimeMs,
-      }),
-      calls: new Map(),
-      trace: new Trace(),
-      errorLogs: [],
-    },
-    { startedAt: new Date().toISOString() },
-  );
+  const run = createRunningRun(runId, spec);
 
- // 构造 handlers + runtime（worker + controller）
+  // 构造 handlers + runtime（worker + controller）
   const handlers = makeHandlers(run, deps);
   const controller = new AbortController();
- // C.7：run 级时间预算计时器（spec.budgetTimeMs > 0 时启用，到期 abortRun time_limited）。
- // OR-1 顺序修复（unbounded-wait-audit §4.1）：调度先于 workerHost.start——
- // budgetTimeMs 越界（>2^31-1）的 fail-fast throw（assertSafeTimerDelay）发生在
- // 任何副作用（worker 启动、runs 注册）之前，杜绝「worker 已跑、run 永不可达」
- // 的孤儿窗口（此前 runs.set 在最末，fail-fast 后连 abortRun 都抛 not found）。
-  const timeBudgetTimer =
-    spec.budgetTimeMs && spec.budgetTimeMs > 0
-      ? scheduleTimeBudget(runId, deps, spec.budgetTimeMs)
-      : undefined;
-  let worker: WorkerHandle;
-  try {
-    worker = deps.workerHost.start(spec, spec.args, handlers);
-  } catch (err) {
-    // 前移的代价：start 抛错时已挂的 timeBudget timer 会残留，到期对从未注册的
-    // runId 触发 abortRun（必抛 not found）——本路径 runs.set 未到，须就地清理。
-    if (timeBudgetTimer) clearTimeout(timeBudgetTimer);
-    throw err;
-  }
+  const timeBudgetTimer = armTimeBudgetTimer(runId, deps, spec);
+  const worker = startWorkerGuarded(spec, deps, handlers, timeBudgetTimer);
   const runtime = new RunRuntime(worker, controller, timeBudgetTimer);
 
- // assignRuntime（注入 runtime，恢复 I1：running ⟺ runtime!==undefined）
+  // assignRuntime（注入 runtime，恢复 I1：running ⟺ runtime!==undefined）
   run.assignRuntime(runtime);
 
- // 注册到 deps.runs（assignRuntime 之后——构造到 assignRuntime 之间 run 处于
- // I1 跳过窗口（running 而 runtime undefined），后移保证窗口对外不可见；
- // scheduleTimeBudget/worker.start 抛错时 run 未注册，无孤儿 run 残留）
+  // 注册到 deps.runs（assignRuntime 之后——构造到 assignRuntime 之间 run 处于
+  // I1 跳过窗口（running 而 runtime undefined），后移保证窗口对外不可见；
+  // scheduleTimeBudget/worker.start 抛错时 run 未注册，无孤儿 run 残留）
   deps.runs.set(runId, run);
 
- // signal abort → abortRun（[OR-7] 命名 listener + run 终态移除，注册表
- // signalAbortDisposers；触发时自移除 = 显式 once 语义）。
- // [B-2] 注册点后移到全部 fail-fast throw（assertSafeTimerDelay / workerHost.start）
- // 成功之后——旧实现先注册 listener，scheduleTimeBudget/start 两条 throw 路径 run
- // 永不到终态，disposeSignalAbortListener 永不被调，同 signal 重试每次泄漏一个
- // listener（MaxListeners 告警面）。移后 throw 路径天然未注册，零泄漏；首个真正
- // 副作用前完成校验的语义保持（addEventListener 本身也是设计意义上的副作用）。
- // 注册点到 store.save 之间无 await（同步段），signal 在此窗口 abort 不可能丢失。
-  if (signal) {
-    const onAbort = (): void => {
-      disposeSignalAbortListener(run);
-      void abortRun(runId, deps, "External signal aborted").catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.error(`[workflow] abortRun on signal failed: ${msg}`);
-      });
-    };
-    signal.addEventListener("abort", onAbort);
-    signalAbortDisposers.set(run, () => signal.removeEventListener("abort", onAbort));
-  }
+  registerSignalAbortListener(run, runId, deps, signal);
 
   await deps.store.save(run);
   deps.log?.("debug", "workflow:lifecycle", "run saved", { runId, status: run.state.status });
 
- // pending-notifications: run 启动 → 注册（所有 workflow 启动路径的单一汇聚点：
- // runAndWait / actionRun / 未来入口全覆盖）
+  // pending-notifications: run 启动 → 注册（runAndWait / actionRun / 未来入口全覆盖）
   deps.log?.("debug", "workflow:lifecycle", "emit pending:register", { runId });
-  deps.eventBus?.emit("pending:register", {
-    id: runId,
-    type: "workflow",
-    name: spec.slug || spec.scriptName || runId,
-  });
+  emitPendingRegister(runId, deps, spec);
   deps.log?.("debug", "workflow:lifecycle", "emit pending:register done", { runId });
 
   return runId;

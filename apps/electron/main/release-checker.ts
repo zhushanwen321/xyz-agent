@@ -509,6 +509,9 @@ export class ReleaseChecker implements IReleaseChecker {
    * 经 upgradeFetch 双引擎执行（设计 §2.1 关键事实：本路径原为裸 undici 无降级，
    * 现与 latest 检测路径同源接入双引擎降级）。
    *
+   * 阶段拆分（结构性重构，行为不变）：HTTP 状态分流 closeManifestHttpError +
+   * manifest 解析 parseManifestAssets（模块级辅助）。
+   *
    * @param proxyUrl 代理 URL；undefined 表示直连
    * @returns Map<filename, sha256hex>；
    *          HTTP 错误返回 null（403/429 除外——undici ok:false 与 curl exit 22
@@ -524,30 +527,9 @@ export class ReleaseChecker implements IReleaseChecker {
         timeoutMs: FETCH_TIMEOUT_MS,
       })
       if (!result.ok) {
-        // 403/429 重建 RateLimited（与 latest undici 分支同款）——消除两引擎漂移：
-        // curl 引擎 exit 22 携带 httpStatusCode 的同形态同退避（GitHub secondary
-        // rate limit 下退避方向更正确）；其他 HTTP 错误仍 return null（404 语义）
-        if (
-          result.status === HTTP_STATUS_FORBIDDEN ||
-          result.status === HTTP_STATUS_TOO_MANY_REQUESTS
-        ) {
-          throw new ReleaseRateLimitedError()
-        }
-        return null
+        return closeManifestHttpError(result.status)
       }
-      const manifest = JSON.parse(result.bodyText ?? '') as {
-        assets?: Record<string, { sha256?: unknown }>
-      }
-      const assetsMap = manifest?.assets
-      if (!assetsMap || typeof assetsMap !== 'object') return null
-      const map = new Map<string, string>()
-      for (const [name, info] of Object.entries(assetsMap)) {
-        const sha = info?.sha256
-        if (typeof sha === 'string' && /^[0-9a-f]{64}$/i.test(sha)) {
-          map.set(name, sha)
-        }
-      }
-      return map.size > 0 ? map : null
+      return parseManifestAssets(result.bodyText)
     } catch (err) {
       // 限流信号直通（undici !ok 分支在 try 内 throw，若无此保护会被下方包装成
       // 'fetch failed' 网络错误吞掉退避语义——与 latest doFetch catch 同款首行守卫）
@@ -556,19 +538,51 @@ export class ReleaseChecker implements IReleaseChecker {
       // 的 CurlFetchError = 服务器已响应——403/429 重建 RateLimited 供外层记退避且
       // 不触发直连重试；404/5xx 按 manifest null 语义收口（同样不触发直连重试）
       if (isCurlHttpStatusError(err)) {
-        if (
-          err.httpStatusCode === HTTP_STATUS_FORBIDDEN ||
-          err.httpStatusCode === HTTP_STATUS_TOO_MANY_REQUESTS
-        ) {
-          throw new ReleaseRateLimitedError()
-        }
-        return null
+        return closeManifestHttpError(err.httpStatusCode)
       }
       // 网络错误（含不带 httpStatusCode 的 CurlFetchError——双引擎均网络失败）与
       // 非法 JSON 均抛出，供调用方做通道维度降级
       throw new Error('fetch failed')
     }
   }
+}
+
+/**
+ * manifest HTTP 错误状态分流（两引擎同款，D8 无漂移）：403/429 重建
+ * ReleaseRateLimitedError（与 latest undici 分支同款——curl 引擎 exit 22
+ * 携带 httpStatusCode 的同形态同退避，GitHub secondary rate limit 下退避
+ * 方向更正确）；其他 HTTP 错误按 manifest null 语义收口（404 语义）。
+ */
+function closeManifestHttpError(status: number): null {
+  if (
+    status === HTTP_STATUS_FORBIDDEN ||
+    status === HTTP_STATUS_TOO_MANY_REQUESTS
+  ) {
+    throw new ReleaseRateLimitedError()
+  }
+  return null
+}
+
+/**
+ * 解析 manifest.json 响应体为 Map<filename, sha256hex>。
+ *
+ * 结构非法（无 assets / 空 map）返回 null；body 非法 JSON 时 JSON.parse 原样
+ * 上抛（由调用方 catch 包装网络错误，对齐旧实现语义）。
+ */
+function parseManifestAssets(bodyText: string | undefined): Map<string, string> | null {
+  const manifest = JSON.parse(bodyText ?? '') as {
+    assets?: Record<string, { sha256?: unknown }>
+  }
+  const assetsMap = manifest?.assets
+  if (!assetsMap || typeof assetsMap !== 'object') return null
+  const map = new Map<string, string>()
+  for (const [name, info] of Object.entries(assetsMap)) {
+    const sha = info?.sha256
+    if (typeof sha === 'string' && /^[0-9a-f]{64}$/i.test(sha)) {
+      map.set(name, sha)
+    }
+  }
+  return map.size > 0 ? map : null
 }
 
 /**

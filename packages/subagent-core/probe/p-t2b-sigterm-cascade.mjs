@@ -110,27 +110,13 @@ function waitFor(pid, predicate, timeoutMs, label) {
   });
 }
 
-async function runPhase(phaseLabel, bashCommand, anchorText, opts) {
-  log(`=== phase ${phaseLabel} ===`);
-  const phase = { phase: phaseLabel, startedAt: ts(), bashCommand, timeline: [] };
-  results.phases.push(phase);
-  const { dir, child } = spawnParent(phaseLabel);
-  const parentPid = child.pid;
-  log(`parent pi pid=${parentPid} dir=${dir}`);
-  // exit 监听前置（pi 若在 SIGTERM 前自退也要捕获）
-  let parentExit = null;
-  child.on("exit", (code, signal) => {
-    parentExit = { t: ts(), code, signal };
-  });
-  child.on("error", (err) => {
-    phase.timeline.push({ t: ts(), event: `parent spawn error: ${err.message}` });
-  });
-
-  // 收 stdout 行，锚定 bash 命令已开始 / 抓 GRANDCHILD_PID
+/**
+ * 收 stdout 行，锚定 bash 命令已开始 / 抓 GRANDCHILD_PID。
+ * 捕获状态（bashStarted 去重标记 / grandchildPid）挂在 state 上供后续阶段读取。
+ */
+function attachAnchorWatcher(child, phase, anchorText, state) {
   let buf = "";
-  let grandchildPid = null;
-  let bashStarted = false;
-  const lineHandler = (chunk) => {
+  child.stdout.on("data", (chunk) => {
     buf += chunk.toString();
     let idx;
     while ((idx = buf.indexOf("\n")) !== -1) {
@@ -138,33 +124,33 @@ async function runPhase(phaseLabel, bashCommand, anchorText, opts) {
       buf = buf.slice(idx + 1);
       if (!line.trim()) continue;
       if (!line.includes(anchorText)) continue;
-      if (!bashStarted) {
-        bashStarted = true;
+      if (!state.bashStarted) {
+        state.bashStarted = true;
         phase.timeline.push({ t: ts(), event: "bash command observed in event stream" });
         log(`bash command observed (anchor matched)`);
       }
       const m = line.match(/GRANDCHILD_PID=(\d+)/);
-      if (m && !grandchildPid) {
-        grandchildPid = Number(m[1]);
-        log(`grandchild pid captured from bash output: ${grandchildPid}`);
+      if (m && !state.grandchildPid) {
+        state.grandchildPid = Number(m[1]);
+        log(`grandchild pid captured from bash output: ${state.grandchildPid}`);
       }
     }
-  };
-  child.stdout.on("data", lineHandler);
+  });
   child.stderr.on("data", () => {});
+}
 
-  child.stdin.write(JSON.stringify({ type: "prompt", message: opts.prompt, id: `${phaseLabel}-1` }) + "\n");
-  log(`prompt sent`);
-
-  // 等 bash 命令真实开始。
-  // 形态 A（前台 bash）：以「父进程后代进程树非空」为 bash 已启动的权威判据。
-  // 形态 B（后台化后代）：后代是 detached 孤儿、不在父树中——以 bash 输出捕获的
-  // grandchildPid 为判据（NO-CASCADE 的本质即「父树里看不到后代」）。
-  const started = await waitFor(
+/**
+ * 等 bash 命令真实开始。
+ * 形态 A（前台 bash）：以「父进程后代进程树非空」为 bash 已启动的权威判据。
+ * 形态 B（后台化后代）：后代是 detached 孤儿、不在父树中——以 bash 输出捕获的
+ * grandchildPid 为判据（NO-CASCADE 的本质即「父树里看不到后代」）。
+ */
+function waitForBashStart(parentPid, opts, getGrandchildPid) {
+  return waitFor(
     parentPid,
     () => {
       if (opts.waitForSettled) {
-        return grandchildPid ? { hit: true, via: "grandchild pid from bash output" } : { hit: false };
+        return getGrandchildPid() ? { hit: true, via: "grandchild pid from bash output" } : { hit: false };
       }
       const desc = descendants(parentPid);
       return desc.length > 0 ? { hit: true, descendants: desc } : { hit: false };
@@ -172,34 +158,24 @@ async function runPhase(phaseLabel, bashCommand, anchorText, opts) {
     120_000,
     "bash start",
   );
-  if (!started.hit) {
-    phase.timeline.push({ t: ts(), event: "ERROR: bash start not observed within 120s" });
-    phase.conclusion = "inconclusive: bash never started";
-    try {
-      child.kill("SIGKILL");
-    } catch {}
-    rmSync(dir, { recursive: true, force: true });
-    return phase;
-  }
+}
 
-  if (opts.waitForSettled) {
-    // 形态 B：等 bash 返回 + agent 轮次收尾（settled 后 bash 工具已 untrack）
-    let settled = false;
-    child.stdout.on("data", (c) => {
-      if (c.toString().includes('"type":"agent_settled"')) settled = true;
-    });
-    const s = await waitFor(parentPid, () => ({ hit: settled }), 120_000, "agent_settled");
-    phase.timeline.push({
-      t: ts(),
-      event: s.hit ? "agent_settled observed (bash tool finished, untracked)" : "TIMEOUT waiting settled",
-    });
-    await new Promise((r) => setTimeout(r, 3000));
-  } else {
-    // 形态 A：bash 前台执行中，多等 3s 让 shell 树稳定
-    await new Promise((r) => setTimeout(r, 3000));
-  }
+/** 形态 B：等 bash 返回 + agent 轮次收尾（settled 后 bash 工具已 untrack）。 */
+async function waitAgentSettled(child, phase, parentPid) {
+  let settled = false;
+  child.stdout.on("data", (c) => {
+    if (c.toString().includes('"type":"agent_settled"')) settled = true;
+  });
+  const s = await waitFor(parentPid, () => ({ hit: settled }), 120_000, "agent_settled");
+  phase.timeline.push({
+    t: ts(),
+    event: s.hit ? "agent_settled observed (bash tool finished, untracked)" : "TIMEOUT waiting settled",
+  });
+  await new Promise((r) => setTimeout(r, 3000));
+}
 
-  // 快照：后代清单
+/** 快照后代清单并汇总本阶段的 target 后代 pid 集合。 */
+function collectTargetDescendants(phase, parentPid, dir, grandchildPid, opts) {
   const descBefore = descendants(parentPid);
   phase.timeline.push({
     t: ts(),
@@ -221,18 +197,21 @@ async function runPhase(phaseLabel, bashCommand, anchorText, opts) {
     } catch {}
   }
   phase.grandchildPids = targetDescendants;
+  return targetDescendants;
+}
 
-  // SIGTERM 前验活：形态 B 的后代必须确认稳定存活（防 stdin-EOF 自退类假阳性）
-  if (opts.waitForSettled && targetDescendants.length > 0) {
-    await new Promise((r) => setTimeout(r, 4000)); // 启动稳定窗
-    const aliveCheck = {};
-    for (const pid of targetDescendants) aliveCheck[pid] = psAlive(pid);
-    phase.timeline.push({ t: ts(), event: "grandchild alive verification BEFORE SIGTERM", aliveCheck });
-    log(`pre-SIGTERM grandchild alive: ${JSON.stringify(Object.fromEntries(Object.entries(aliveCheck).map(([k, v]) => [k, v.alive])))}`);
-    phase.grandchildAliveBeforeSigterm = Object.values(aliveCheck).some((v) => v.alive);
-  }
+/** SIGTERM 前验活：形态 B 的后代必须确认稳定存活（防 stdin-EOF 自退类假阳性）。 */
+async function verifyGrandchildrenAlive(phase, targetDescendants) {
+  await new Promise((r) => setTimeout(r, 4000)); // 启动稳定窗
+  const aliveCheck = {};
+  for (const pid of targetDescendants) aliveCheck[pid] = psAlive(pid);
+  phase.timeline.push({ t: ts(), event: "grandchild alive verification BEFORE SIGTERM", aliveCheck });
+  log(`pre-SIGTERM grandchild alive: ${JSON.stringify(Object.fromEntries(Object.entries(aliveCheck).map(([k, v]) => [k, v.alive])))}`);
+  phase.grandchildAliveBeforeSigterm = Object.values(aliveCheck).some((v) => v.alive);
+}
 
-  // 发 SIGTERM
+/** 发 SIGTERM 并等父退出（exit 监听已在 spawn 后前置注册）。 */
+async function sigtermAndWaitExit(phase, child, parentPid, getParentExit) {
   phase.timeline.push({ t: ts(), event: "SIGTERM sent to parent" });
   log(`sending SIGTERM to parent ${parentPid}`);
   const sigtermAt = Date.now();
@@ -242,8 +221,8 @@ async function runPhase(phaseLabel, bashCommand, anchorText, opts) {
     phase.timeline.push({ t: ts(), event: `SIGTERM failed: ${e.message}` });
   }
 
-  // 等父退出（exit 监听已在 spawn 后前置注册）
-  await waitFor(parentPid, () => ({ hit: parentExit !== null }), 30_000, "parent exit");
+  await waitFor(parentPid, () => ({ hit: getParentExit() !== null }), 30_000, "parent exit");
+  const parentExit = getParentExit();
   if (parentExit) {
     parentExit.elapsedMs = Date.now() - sigtermAt;
     phase.timeline.push({ t: ts(), event: "parent exit observed", ...parentExit });
@@ -255,8 +234,11 @@ async function runPhase(phaseLabel, bashCommand, anchorText, opts) {
       child.kill("SIGKILL");
     } catch {}
   }
+  return parentExit;
+}
 
-  // 核对后代存活：+2s 与 +8s 两轮（留进程组 kill 宽限）
+/** 核对后代存活：+2s 与 +8s 两轮（留进程组 kill 宽限）。 */
+async function checkDescendantsAfterSigterm(phase, targetDescendants) {
   for (const waitMs of [2000, 8000]) {
     await new Promise((r) => setTimeout(r, waitMs === 2000 ? 2000 : 6000));
     const status = {};
@@ -267,33 +249,38 @@ async function runPhase(phaseLabel, bashCommand, anchorText, opts) {
     log(`+${waitMs}ms descendant status: ${JSON.stringify(Object.fromEntries(Object.entries(status).map(([k, v]) => [k, v.alive])))}`);
     phase[`descendantsAliveAfter${waitMs}ms`] = Object.entries(status).filter(([, v]) => v.alive).map(([k]) => Number(k));
   }
+}
 
-  phase.parentExit = parentExit;
+/** 裁决本 phase 结论（形态 B 验活失败 → invalid trial，不算 NO-CASCADE）。 */
+function concludePhase(phase, opts, targetDescendants) {
   const aliveAfter8s = phase.descendantsAliveAfter8000ms ?? [];
-  phase.conclusion =
+  return (
     targetDescendants.length === 0
       ? "inconclusive: no descendants identified"
       : opts.waitForSettled && !phase.grandchildAliveBeforeSigterm
         ? "inconclusive: grandchild not stably alive before SIGTERM (invalid trial)"
         : aliveAfter8s.length === 0
           ? "CASCADE: all descendants killed after parent SIGTERM"
-          : `NO-CASCADE: descendants still alive 8s after parent SIGTERM: [${aliveAfter8s.join(", ")}]`;
-  log(`phase ${phaseLabel} conclusion: ${phase.conclusion}`);
+          : `NO-CASCADE: descendants still alive 8s after parent SIGTERM: [${aliveAfter8s.join(", ")}]`
+  );
+}
 
-  // 清理本阶段残余：父 pid + 其子进程树全杀（macOS 非交互 shell 后台 job 不成新组，
-  // 组杀对 bash -c 管道链无效；管道写端 tail 不随 pi 死亡，必须显式收集）
-  function killTreeDeep(pid) {
-    try {
-      const kids = execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf8" })
-        .split("\n")
-        .map(Number)
-        .filter(Boolean);
-      for (const k of kids) killTreeDeep(k);
-    } catch {}
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  }
+// 清理本阶段残余：父 pid + 其子进程树全杀（macOS 非交互 shell 后台 job 不成新组，
+// 组杀对 bash -c 管道链无效；管道写端 tail 不随 pi 死亡，必须显式收集）
+function killTreeDeep(pid) {
+  try {
+    const kids = execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf8" })
+      .split("\n")
+      .map(Number)
+      .filter(Boolean);
+    for (const k of kids) killTreeDeep(k);
+  } catch {}
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
+}
+
+function cleanupPhaseResiduals(child, dir, targetDescendants) {
   for (const pid of targetDescendants) {
     try {
       process.kill(-pid, "SIGKILL");
@@ -304,6 +291,61 @@ async function runPhase(phaseLabel, bashCommand, anchorText, opts) {
     child.kill("SIGKILL");
   } catch {}
   setTimeout(() => rmSync(dir, { recursive: true, force: true }), 1000);
+}
+
+async function runPhase(phaseLabel, bashCommand, anchorText, opts) {
+  log(`=== phase ${phaseLabel} ===`);
+  const phase = { phase: phaseLabel, startedAt: ts(), bashCommand, timeline: [] };
+  results.phases.push(phase);
+  const { dir, child } = spawnParent(phaseLabel);
+  const parentPid = child.pid;
+  log(`parent pi pid=${parentPid} dir=${dir}`);
+  // exit 监听前置（pi 若在 SIGTERM 前自退也要捕获）
+  let parentExit = null;
+  child.on("exit", (code, signal) => {
+    parentExit = { t: ts(), code, signal };
+  });
+  child.on("error", (err) => {
+    phase.timeline.push({ t: ts(), event: `parent spawn error: ${err.message}` });
+  });
+
+  const anchorState = { bashStarted: false, grandchildPid: null };
+  attachAnchorWatcher(child, phase, anchorText, anchorState);
+
+  child.stdin.write(JSON.stringify({ type: "prompt", message: opts.prompt, id: `${phaseLabel}-1` }) + "\n");
+  log(`prompt sent`);
+
+  const started = await waitForBashStart(parentPid, opts, () => anchorState.grandchildPid);
+  if (!started.hit) {
+    phase.timeline.push({ t: ts(), event: "ERROR: bash start not observed within 120s" });
+    phase.conclusion = "inconclusive: bash never started";
+    try {
+      child.kill("SIGKILL");
+    } catch {}
+    rmSync(dir, { recursive: true, force: true });
+    return phase;
+  }
+
+  if (opts.waitForSettled) {
+    await waitAgentSettled(child, phase, parentPid);
+  } else {
+    // 形态 A：bash 前台执行中，多等 3s 让 shell 树稳定
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+
+  const targetDescendants = collectTargetDescendants(phase, parentPid, dir, anchorState.grandchildPid, opts);
+
+  if (opts.waitForSettled && targetDescendants.length > 0) {
+    await verifyGrandchildrenAlive(phase, targetDescendants);
+  }
+
+  const parentExitResult = await sigtermAndWaitExit(phase, child, parentPid, () => parentExit);
+  await checkDescendantsAfterSigterm(phase, targetDescendants);
+
+  phase.parentExit = parentExitResult;
+  phase.conclusion = concludePhase(phase, opts, targetDescendants);
+  log(`phase ${phaseLabel} conclusion: ${phase.conclusion}`);
+  cleanupPhaseResiduals(child, dir, targetDescendants);
   return phase;
 }
 

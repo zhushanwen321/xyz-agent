@@ -216,8 +216,76 @@ function probeLane(index, model) {
     // performGetStateHandshake），直接发 prompt。prompt 写入即计时参照。
     child.stdin.write(JSON.stringify({ id: randomUUID(), type: "prompt", message: TASK }) + "\n");
 
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
+    /** agent_end 到达：记录 turn 计时并现场发 get_state（T1 惰性回补决策现场）。 */
+    function handleAgentEndEvt(obj) {
+      // willRetry=true 是 agent 层重试信号，非本轮完成（session-runner isAgentEndEvt 同判定）。
+      if (obj.willRetry === true) return;
+      if (rec.agentEndAt !== undefined) return; // 只认首个自然 agent_end
+      rec.agentEndAt = performance.now();
+      rec.turnDurationMs = rec.agentEndAt - rec.spawnAt;
+      // ---- T1 惰性回补决策现场：此刻 sessionFile 从未采集（RC-1 抑制），现场发 get_state ----
+      get_state_reqId = randomUUID();
+      rec.get_state_sentAt = performance.now();
+      try {
+        child.stdin.write(JSON.stringify({ id: get_state_reqId, type: "get_state" }) + "\n");
+      } catch (err) {
+        rec.failure ??= `stdin write on get_state failed: ${err?.message ?? err}`;
+        finish();
+        return;
+      }
+      waitTimer = setTimeout(() => {
+        rec.failure ??=
+          `get_state no response within ${GET_STATE_WAIT_TIMEOUT_MS}ms after agent_end (idle process silent — T1 lazy retry assumption broken)`;
+        finish();
+      }, GET_STATE_WAIT_TIMEOUT_MS);
+    }
+
+    /** get_state 应答与本路请求 id 匹配（迟到/错路 response 不认）。 */
+    function isGetStateResponse(obj) {
+      return (
+        obj.type === "response" &&
+        obj.command === "get_state" &&
+        typeof obj.id === "string" &&
+        obj.id === get_state_reqId
+      );
+    }
+
+    /** 采集 get_state 应答字段到 rec（宽松形态校验：非字符串/空串归 undefined）。 */
+    function recordGetStateFields(obj) {
+      rec.get_state_latencyMs = performance.now() - rec.get_state_sentAt;
+      const d = obj.data && typeof obj.data === "object" ? obj.data : {};
+      rec.sessionFile = typeof d.sessionFile === "string" && d.sessionFile.length > 0 ? d.sessionFile : undefined;
+      rec.sessionId = typeof d.sessionId === "string" && d.sessionId.length > 0 ? d.sessionId : undefined;
+      rec.isStreaming = d.isStreaming;
+      rec.messageCount = d.messageCount;
+    }
+
+    /** 四段判定（success / sessionFile 非空 / 预算 / 落盘），失败形态写 rec.failure。 */
+    function judgeGetStateOutcome(obj) {
+      if (obj.success !== true) {
+        rec.failure ??= `get_state responded success=false (error: ${obj.error ?? "n/a"})`;
+      } else if (!rec.sessionFile) {
+        rec.failure ??= "get_state responded but data.sessionFile empty — sessionFile cannot be backfilled";
+      } else if (rec.get_state_latencyMs >= PASS_BUDGET_MS) {
+        rec.failure ??= `latency ${rec.get_state_latencyMs.toFixed(1)}ms >= ${PASS_BUDGET_MS}ms budget`;
+      } else {
+        rec.sessionFileExists = fs.existsSync(rec.sessionFile);
+        if (!rec.sessionFileExists) {
+          rec.failure ??= `sessionFile reported but not on disk: ${rec.sessionFile}`;
+        }
+      }
+    }
+
+    /** get_state 应答到达：采集字段 → 判定 → 终态。 */
+    function handleGetStateResponse(obj) {
+      recordGetStateFields(obj);
+      judgeGetStateOutcome(obj);
+      rec.pass = rec.failure === undefined;
+      finish();
+    }
+
+    /** stdout 分帧：拆行 → JSON.parse（坏行入 stdoutSample）→ 按事件类别分派。 */
+    function onStdoutChunk(chunk) {
       buf += chunk;
       let nl;
       while ((nl = buf.indexOf("\n")) >= 0) {
@@ -232,61 +300,19 @@ function probeLane(index, model) {
           continue;
         }
         if (settled) continue;
-
         if (obj.type === "agent_end") {
-          // willRetry=true 是 agent 层重试信号，非本轮完成（session-runner isAgentEndEvt 同判定）。
-          if (obj.willRetry === true) continue;
-          if (rec.agentEndAt !== undefined) continue; // 只认首个自然 agent_end
-          rec.agentEndAt = performance.now();
-          rec.turnDurationMs = rec.agentEndAt - rec.spawnAt;
-          // ---- T1 惰性回补决策现场：此刻 sessionFile 从未采集（RC-1 抑制），现场发 get_state ----
-          get_state_reqId = randomUUID();
-          rec.get_state_sentAt = performance.now();
-          try {
-            child.stdin.write(JSON.stringify({ id: get_state_reqId, type: "get_state" }) + "\n");
-          } catch (err) {
-            rec.failure ??= `stdin write on get_state failed: ${err?.message ?? err}`;
-            finish();
-            continue;
-          }
-          waitTimer = setTimeout(() => {
-            rec.failure ??=
-              `get_state no response within ${GET_STATE_WAIT_TIMEOUT_MS}ms after agent_end (idle process silent — T1 lazy retry assumption broken)`;
-            finish();
-          }, GET_STATE_WAIT_TIMEOUT_MS);
+          handleAgentEndEvt(obj);
           continue;
         }
-
-        if (
-          obj.type === "response" &&
-          obj.command === "get_state" &&
-          typeof obj.id === "string" &&
-          obj.id === get_state_reqId
-        ) {
-          rec.get_state_latencyMs = performance.now() - rec.get_state_sentAt;
-          const d = obj.data && typeof obj.data === "object" ? obj.data : {};
-          rec.sessionFile = typeof d.sessionFile === "string" && d.sessionFile.length > 0 ? d.sessionFile : undefined;
-          rec.sessionId = typeof d.sessionId === "string" && d.sessionId.length > 0 ? d.sessionId : undefined;
-          rec.isStreaming = d.isStreaming;
-          rec.messageCount = d.messageCount;
-          if (obj.success !== true) {
-            rec.failure ??= `get_state responded success=false (error: ${obj.error ?? "n/a"})`;
-          } else if (!rec.sessionFile) {
-            rec.failure ??= "get_state responded but data.sessionFile empty — sessionFile cannot be backfilled";
-          } else if (rec.get_state_latencyMs >= PASS_BUDGET_MS) {
-            rec.failure ??= `latency ${rec.get_state_latencyMs.toFixed(1)}ms >= ${PASS_BUDGET_MS}ms budget`;
-          } else {
-            rec.sessionFileExists = fs.existsSync(rec.sessionFile);
-            if (!rec.sessionFileExists) {
-              rec.failure ??= `sessionFile reported but not on disk: ${rec.sessionFile}`;
-            }
-          }
-          rec.pass = rec.failure === undefined;
-          finish();
+        if (isGetStateResponse(obj)) {
+          handleGetStateResponse(obj);
           continue;
         }
       }
-    });
+    }
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", onStdoutChunk);
 
     child.once("close", (code, signal) => {
       closed = true;

@@ -112,16 +112,9 @@ function accumulatePendingEntries(
     return { ...emptyAcc, error: "no sessionFile (handshake not settled)" };
   }
 
-  let size: number;
-  try {
-    size = fs.statSync(sessionFile).size;
-  } catch (err) {
-    // [LC-6] 读失败（含 ENOENT 文件被删）→ 剪枝，防已删文件 cursor 永久滞留
-    cursors.delete(sessionFile);
-    return {
-      ...emptyAcc,
-      error: `session file unreadable: ${err instanceof Error ? err.message : String(err)}`,
-    };
+  const size = statPendingFileSize(sessionFile);
+  if (typeof size !== "number") {
+    return { ...emptyAcc, error: size.error };
   }
 
   let cursor = cursors.get(sessionFile);
@@ -130,33 +123,9 @@ function accumulatePendingEntries(
     cursor = { offset: 0, activeRegisters: new Map<string, unknown>(), latestUnregisterMs: 0 };
   }
 
-  let chunk: string;
-  try {
-    if (cursor.offset === 0) {
-      chunk = fs.readFileSync(sessionFile, "utf-8");
-    } else {
-      const len = size - cursor.offset;
-      const buf = Buffer.alloc(len);
-      const fd = fs.openSync(sessionFile, "r");
-      try {
-        let total = 0;
-        while (total < len) {
-          const n = fs.readSync(fd, buf, total, len - total, cursor.offset + total);
-          if (n <= 0) break;
-          total += n;
-        }
-        chunk = buf.toString("utf-8", 0, total);
-      } finally {
-        fs.closeSync(fd);
-      }
-    }
-  } catch (err) {
-    // [LC-6] 读失败（含 ENOENT 文件被删）→ 剪枝（同 stat 失败路径）
-    cursors.delete(sessionFile);
-    return {
-      ...emptyAcc,
-      error: `session file unreadable: ${err instanceof Error ? err.message : String(err)}`,
-    };
+  const chunk = readPendingChunk(sessionFile, cursor, size);
+  if (typeof chunk !== "string") {
+    return { ...emptyAcc, error: chunk.error };
   }
 
   // 只消费到最后一个完整行：EOF 半行（append 写入竞态）不入账，offset 不推进，
@@ -165,38 +134,99 @@ function accumulatePendingEntries(
   const complete = lastNl === -1 ? "" : chunk.slice(0, lastNl);
   cursor.offset += Buffer.byteLength(complete, "utf-8");
   cursors.set(sessionFile, cursor);
+  consumePendingLines(complete, cursor, sessionFile);
 
+  return { activeRegisters: cursor.activeRegisters, latestUnregisterMs: cursor.latestUnregisterMs };
+}
+
+/** stat + 失败剪枝的统一文案（stat/read 两路 [LC-6] 剪枝共用）。 */
+function pendingFileUnreadableMessage(err: unknown): string {
+  return `session file unreadable: ${err instanceof Error ? err.message : String(err)}`;
+}
+
+/** stat 文件大小；失败（含 ENOENT 文件被删）剪枝 cursor 并返回错误（防已删文件 cursor 永久滞留）。 */
+function statPendingFileSize(sessionFile: string): number | { error: string } {
+  try {
+    return fs.statSync(sessionFile).size;
+  } catch (err) {
+    cursors.delete(sessionFile);
+    return { error: pendingFileUnreadableMessage(err) };
+  }
+}
+
+/** 按 cursor.offset 增量读 chunk（首次全量）；读失败剪枝 cursor（同 stat 失败路径）。 */
+function readPendingChunk(
+  sessionFile: string,
+  cursor: PendingReadCursor,
+  size: number,
+): string | { error: string } {
+  try {
+    if (cursor.offset === 0) {
+      return fs.readFileSync(sessionFile, "utf-8");
+    }
+    return readPendingChunkFrom(sessionFile, cursor.offset, size - cursor.offset);
+  } catch (err) {
+    cursors.delete(sessionFile);
+    return { error: pendingFileUnreadableMessage(err) };
+  }
+}
+
+/** offset 起的定长读（短读循环补齐到 EOF）；异常由 readPendingChunk 的 catch 统一接。 */
+function readPendingChunkFrom(sessionFile: string, offset: number, len: number): string {
+  const buf = Buffer.alloc(len);
+  const fd = fs.openSync(sessionFile, "r");
+  try {
+    let total = 0;
+    while (total < len) {
+      const n = fs.readSync(fd, buf, total, len - total, offset + total);
+      if (n <= 0) break;
+      total += n;
+    }
+    return buf.toString("utf-8", 0, total);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** 完整行逐条入账差集（值匹配快速路径 + 坏行跳过，见 accumulatePendingEntries 的 [S-4] 注）。 */
+function consumePendingLines(complete: string, cursor: PendingReadCursor, sessionFile: string): void {
   for (const line of complete.split("\n")) {
     // [S-4] 按值匹配：countActiveFromEntries 只消费 register/unregister 两种 customType，
     // 故只需检测这两个值字符串；冒号前后空格变化不影响（值始终是连续子串）。
     if (!line.includes('"pending:register"') && !line.includes('"pending:unregister"')) continue;
-    try {
-      const entry: unknown = JSON.parse(line);
-      if (!isPendingLineLike(entry)) continue;
-      // [LC-6] 差集内联：register 入活跃 Map（同 id 重 register 覆盖 = 差集语义），
-      // unregister 抵消移除。缺 data.id 的畸形行丢弃（契约必带 id，对齐坏行跳过层级）。
-      const customType = entry.customType;
-      const data = (entry as { data?: unknown }).data;
-      const id =
-        typeof data === "object" && data !== null && typeof (data as { id?: unknown }).id === "string"
-          ? (data as { id: string }).id
-          : undefined;
-      if (customType === "pending:register" && id !== undefined) {
-        cursor.activeRegisters.set(id, entry);
-      } else if (customType === "pending:unregister" && id !== undefined) {
-        cursor.activeRegisters.delete(id);
-      }
-      if (customType === "pending:unregister" && entry.timestamp) {
-        const ts = Date.parse(entry.timestamp);
-        if (Number.isFinite(ts) && ts > cursor.latestUnregisterMs) cursor.latestUnregisterMs = ts;
-      }
-    } catch {
-      // 截断行/坏行跳过——不影响其余 entry 的差集判定（罕见：append 中途崩溃）
-      logger.debug("skipped malformed pending line", { sessionFile });
-    }
+    applyPendingLine(line, cursor, sessionFile);
   }
+}
 
-  return { activeRegisters: cursor.activeRegisters, latestUnregisterMs: cursor.latestUnregisterMs };
+/** 单行 register/unregister 入账（差集内联 + latestUnregister 窗口判据；坏行 catch 跳过）。 */
+function applyPendingLine(line: string, cursor: PendingReadCursor, sessionFile: string): void {
+  try {
+    const entry: unknown = JSON.parse(line);
+    if (!isPendingLineLike(entry)) return;
+    // [LC-6] 差集内联：register 入活跃 Map（同 id 重 register 覆盖 = 差集语义），
+    // unregister 抵消移除。缺 data.id 的畸形行丢弃（契约必带 id，对齐坏行跳过层级）。
+    const customType = entry.customType;
+    const id = extractPendingEntryId((entry as { data?: unknown }).data);
+    if (customType === "pending:register" && id !== undefined) {
+      cursor.activeRegisters.set(id, entry);
+    } else if (customType === "pending:unregister" && id !== undefined) {
+      cursor.activeRegisters.delete(id);
+    }
+    if (customType === "pending:unregister" && entry.timestamp) {
+      const ts = Date.parse(entry.timestamp);
+      if (Number.isFinite(ts) && ts > cursor.latestUnregisterMs) cursor.latestUnregisterMs = ts;
+    }
+  } catch {
+    // 截断行/坏行跳过——不影响其余 entry 的差集判定（罕见：append 中途崩溃）
+    logger.debug("skipped malformed pending line", { sessionFile });
+  }
+}
+
+/** entry.data.id 的运行时守卫提取（[taste/no-unsafe-cast] 字段访问前校验）。 */
+function extractPendingEntryId(data: unknown): string | undefined {
+  return typeof data === "object" && data !== null && typeof (data as { id?: unknown }).id === "string"
+    ? (data as { id: string }).id
+    : undefined;
 }
 
 /**
