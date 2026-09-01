@@ -186,7 +186,16 @@ vi.mock("../interface/commands.ts", () => ({
 // ── import 被测工厂 ──
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import subagentsExtension from "../index.ts";
+// resetModules 每用例重新加载 index.ts 副本，factory 体内的 process 信号 hook
+//（SIGTERM/SIGINT/beforeExit 收割防线）随之叠加注册——本文件 11 用例超 Node 默认
+// listener 阈值 10 触发误报警告，抬高上限（生产单副本恒 3 个 listener，无此形态）。
+process.setMaxListeners(50);
+
+// session_start 的六项跨 session 副作用操作经 oncePerProcess 守卫（u-audit-fix），
+// 守卫 Map 是模块级状态：beforeEach resetModules + 动态 import 每用例取新鲜模块实例，
+// 否则首用例消费 key 后，后续用例的 recoverManifestTmpFiles / recoverCrashedRuns
+// （loadAll 淘汰、storeHealthy）等断言静默失真。
+let subagentsExtension: typeof import("../index.ts").default;
 import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
 import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
 import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
@@ -267,10 +276,12 @@ function createMockCtx(mode: "tui" | "rpc" | "json" | "print", entries?: unknown
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  vi.resetModules();
   vi.clearAllMocks();
   mockLoadAll.mockResolvedValue([]);
   existingServiceRef.current = null;
+  subagentsExtension = (await import("../index.ts")).default;
 });
 
 // ── tests ──

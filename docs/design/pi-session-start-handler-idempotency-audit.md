@@ -27,6 +27,38 @@
 | smart-context | `extensions/universal/smart-context/src/index.ts:89` | `state = createSessionState()`（闭包引用覆盖重建：takeover + firedThresholds 全新对象） | 豁免 | 纯内存覆盖赋值。单行 handler，无任何文件/定时器/扫描/进程操作；双跑终态与单跑一致 | — |
 | todo | `extensions/universal/todo/src/handlers.ts:133` | ① `reconstructState(state, ctx)`：重置 state 字段 + `getEntries()` 正序回放 todo toolResult（`handlers.ts:59-92`，纯读不写 entry）② `refreshDisplay(ctx)`：ctx.ui.setStatus/setWidget（UI，`index.ts:53-73` makeRefreshDisplay） | 豁免 | 全部纯内存 + UI。回放只读 entries（filter-copy），重建结果由 entries 唯一决定，双跑幂等；无文件写/定时器/扫描/进程操作 | — |
 
+## 2.5 实测记录（u-audit-fix 接入验证，2026-09-01）
+
+两包接入 `oncePerProcess`（permission 删内联 `configMigrationChecked` flag 收编；subagent-workflow 六项逐项包装，③④⑤⑥⑫ 保持不包装）后的探针验证点实测。双派发形态统一为「同一 factory 闭包直接调 handler 两次」（本节 a 项探针形态）。
+
+### permission（`extensions/universal/permission/src/__tests__/session-start-once-guard.test.ts`，2 用例）
+
+| 探针验证点 | 实测用例 | 断言结果 |
+|----|----|----|
+| a) 双派发 spy `migrateLegacyConfig` 调用 = 1 | 「双派发下 migrateLegacyConfig 仅执行一次：spy = 1，文件面首次迁移到位、第二次 mtime/内容不变」 | spy（vi.mock 透传真实实现，计数与文件面同源）`toHaveBeenCalledTimes(1)` 通过 |
+| b) 文件面：旧文件消失 + 新路径出现、第二次后 mtime/内容不变 | 同上 | 首派发后旧路径不存在、新路径出现且 mode=strict；二派发（预重建旧路径文件模拟外部残留）后旧文件原样保留、新路径 `mtimeMs` 严格相等、内容逐字节一致 |
+| c) migrated warn 仅一条 | 构造性蕴含于 a | warn 在 `migrateLegacyConfig` 调用点内部（llm-shared migrate.ts "migrated" 分支），调用 = 1 ⟹ warn ≤ 1，不另设断言 |
+| 豁免项反向（footer 注册不包装） | 「豁免项防误伤：footer 注册不包装，双派发仍每次执行（pending push ×2）」 | footer slot pending 长度 = 2、id = pi-permission（纯内存初始化保持每 session_start 执行） |
+
+既有迁移接线用例（`index-integration.test.ts`「session_start 配置路径迁移接线」4 用例）在 flag→守卫替换后全部复验通过（resetModules 每用例重建守卫 Map，原 once flag 语义等价保持）。
+
+### subagent-workflow（`extensions/universal/subagent-workflow/src/__tests__/session-start-once-guard.test.ts`，2 用例）
+
+| 探针验证点 | 实测用例 | 断言结果 |
+|----|----|----|
+| a) handler 体双派发、包装后跨 session 操作各执行 1 次 | 「双派发下六项跨 session 副作用操作各执行 1 次，pending:unregister 仅 emit 1 条」 | ①syncEnginesFile / ⑦startGcTimer / ⑧maybeCleanupExpiredSessionFiles / ⑨recoverManifestTmpFiles / ⑩WorktreeManager.scan / ⑪recoverCrashedRuns 各 `toHaveBeenCalledTimes(1)`；双派发真实发生由下一行防误伤断言的 ×2 证明 |
+| b) engines.json 写次数 = 1 | 同上 | mockSyncEnginesFile ×1（engines.json 写发生在函数内部，入口 =1 ⟹ 写 ≤1；真机 mtime 面归 Gate B S6 签收） |
+| c) setInterval 注册 = 1 | 同上 | mockStartGcTimer ×1（interval 注册在 idle-gc 内部，入口 =1 ⟹ 注册 ≤1） |
+| d) unlink / git 操作各仅一轮 | 同上 | mockMaybeCleanup ×1、mockRecoverManifestTmpFiles ×1、mockScan ×1（扫描与 unlink/git 进程操作均发生在函数内部） |
+| e) running run 落盘 failed 仅一次、pending:unregister emit 仅一次 | 同上 | mockRecoverCrashedRuns ×1（loadAll→转 failed→save 落盘链入口）+ `pi.events` 过滤 "pending:unregister" 恰 1 条（onRunRecovered 回调只在首次执行内触发，第二派发重放 Promise 不重放回调） |
+| 粒度边界反向（③④⑥不包装，防误伤） | 「防误伤：③identity appendEntry / ④bindNotifyLedger / ⑥initSession 每 session_start 执行（双派发 ×2）」 | 子进程 env 注入下 identity appendEntry ×2；bindNotifyLedgerHost / recoverFromSession ×2；initSession / initModel ×2 |
+
+### 附带说明
+
+- **既有测试适配**：oncePerProcess 的 Map 是模块级状态，同文件多用例派发 session_start 会跨用例消费 key——`crash-recovery` / `index-session-start` / `index-session-start-identity` / `session-start-reaper` 四个既有测试文件改为 beforeEach `vi.resetModules()` + 动态 import 每用例取新鲜模块实例。其中 `session-start-reaper` 的「scan 抛错不阻断」用例如不隔离会**静默失真**（守卫重放首用例的成功结果，抛错路径不再被测到）；`index-session-start` 因 11 用例叠加 factory 副本的 process 信号 hook 超 listener 阈值，测试进程 `setMaxListeners(50)`（生产单副本恒 3 个，无此形态）。
+- **⑪语义留痕（如实）**：结果缓存形态下，双派发的第二组 handler 不再从磁盘重载恢复出的 failed runs 进本组 runs Map（sessionState 同 key 覆盖后当次会话内存展示不含恢复条目）；文件面终态以首组落盘为准，重启后 loadAll 仍可读回。属「粒度边界」列既定裁量内的推论，非静默偏差。
+- **日志面（S6 探针形态的「第二轮日志无新增 cleanup/recovery 行」）**：`XYZ_AGENT_EXT_LOG=1` 真机观测属 Gate B（设计 §4 S6 守卫版）签收范围，单测层以上述入口计数 + 构造性蕴含覆盖。
+
 ## 3. 结论汇总
 
 - **必须接入：2 个** —— permission（迁移操作）、subagent-workflow（syncEnginesFile / startGcTimer / maybeCleanupExpiredSessionFiles / recoverManifestTmpFiles / WorktreeManager.scan / recoverCrashedRuns 六项；③④⑤⑥⑫ 明确不包装，见依据列粒度边界）。

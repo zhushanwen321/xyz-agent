@@ -60,6 +60,7 @@
   "dependencies": {
     "@xyz-agent/extension-protocol": "workspace:*",
     "@xyz-agent/session-delivery": "workspace:*",
+    "@zhushanwen/pi-ext-guards": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*",
     "@zhushanwen/subagent-core": "workspace:*"
   },

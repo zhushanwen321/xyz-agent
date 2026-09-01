@@ -122,7 +122,10 @@ vi.mock("../interface/commands.ts", () => ({
 // ── import 被测工厂 ──
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import subagentsExtension from "../index.ts";
+// session_start 的 recoverCrashedRuns 经 oncePerProcess 守卫（u-audit-fix），守卫 Map
+// 是模块级状态：beforeEach resetModules + 动态 import 每用例取新鲜模块实例，否则首用例
+// 消费 key 后，后续用例的恢复链静默不执行（storeHealthy=false 等断言失真）。
+let subagentsExtension: typeof import("../index.ts").default;
 import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
 import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
 import type { WorkflowRun as WorkflowRunType } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
@@ -224,9 +227,11 @@ function createMockCtx(): Record<string, unknown> {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  vi.resetModules();
   vi.clearAllMocks();
   mockLoadAll.mockResolvedValue([]);
+  subagentsExtension = (await import("../index.ts")).default;
 });
 
 // ── tests ──

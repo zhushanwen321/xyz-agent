@@ -18,6 +18,7 @@ import {
 	type ExtensionContext,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+import { oncePerProcess } from "@zhushanwen/pi-ext-guards";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { migrateLegacyConfig } from "@zhushanwen/pi-llm-shared";
 
@@ -44,8 +45,9 @@ import { paletteFromTheme, type PermissionPalette } from "./statusline-palette.j
 // Added in v1.0.0. Remove after v2.0.0 (one major past).
 // session_start 首次触发时把旧路径 permission-config.json 迁到 config/permission-ext-config.json。
 // 幂等、best-effort（migrateLegacyConfig 见 @zhushanwen/pi-llm-shared）。
-// 模块级 once flag 防同进程重复触发；agentDir 由 getAgentDir() 推导（尊重 PI_CODING_AGENT_DIR）。
-let configMigrationChecked = false;
+// 写 agentDir 全局配置文件属跨 session 副作用——oncePerProcess 守卫防 factory 二调/handler
+// 累积双跑（u-audit-fix 收编原内联 once flag；key 带包名前缀避撞，见 pi-ext-guards JSDoc）。
+// agentDir 由 getAgentDir() 推导（尊重 PI_CODING_AGENT_DIR）。
 
 /** 默认配置 warning 回调（loadAndWatchConfig 共用，透传 logger.warn）。 */
 const defaultConfigWarn = (msg: string): void => logger.warn(msg);
@@ -90,10 +92,9 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 	// ──────────────────────── session_start：迁移旧路径配置 ────────────────────────
 	pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
 		// [MIGRATION] Added in v1.0.0. Remove after v2.0.0.
-		if (!configMigrationChecked) {
-			configMigrationChecked = true;
+		oncePerProcess("permission:migrate-legacy-config", () => {
 			migrateLegacyConfig(getAgentDir(), "permission-config.json", "config/permission-ext-config.json");
-		}
+		});
 		// 无需手动刷新：去闭包后每次 loadAndWatchConfig 读时刷新；迁移改写文件后下次读取自动生效。
 		// 注册 footer line renderer（consumer 端握手，pi-statusline 是 canonical owner）。
 		// renderer 无状态：render 时用 statusline 传入的 theme + loadAndWatchConfig 读最新 config。

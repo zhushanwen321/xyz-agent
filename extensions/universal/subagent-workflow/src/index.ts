@@ -25,6 +25,7 @@ import { configureCore } from "@zhushanwen/subagent-core/core/host-services.ts";
 import { configureNotifyDomain } from "@zhushanwen/subagent-core/core/notify-ports.ts";
 import { createPiHostServices, createPiNotifyDomainPorts } from "./host/pi-host.ts";
 
+import { oncePerProcess } from "@zhushanwen/pi-ext-guards";
 import { bestEffort } from "@zhushanwen/subagent-core/execution/best-effort.ts";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
 import { getOrCreateChannelRegistry } from "@zhushanwen/subagent-core/execution/channel-registry-access.ts";
@@ -346,8 +347,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     lsRef.lastSessionId = sessionId;
 
     // [U7] 引擎列表同步 engines.json（幂等零写 + fail-safe；组合根注册已在
-    // extension 工厂体完成，此处 registry 已含全部引擎）
-    syncEnginesFile(agentDir);
+    // extension 工厂体完成，此处 registry 已含全部引擎）。写 agentDir 全局文件属
+    // 跨 session 副作用——oncePerProcess 守卫防 factory 二调/handler 累积双跑（u-audit-fix）。
+    oncePerProcess("subagent-workflow:sync-engines-file", () => syncEnginesFile(agentDir));
 
     // skill 路径两级缓存 session 级失效：pi 同进程可能有多个 session（TUI /new、/fork），
     // 运行中安装的 skill 需对新 session 可见（含曾 miss 缓存的 undefined 条目与 npm 新装
@@ -492,21 +494,27 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       setSubagentService(service);
     }
 
-    // S-2: 启动 idle record GC 定时器（30 天 TTL，每小时检查一次）
-    service.startGcTimer();
+    // S-2: 启动 idle record GC 定时器（30 天 TTL，每小时检查一次）。
+    // 注册 setInterval 属进程级副作用——oncePerProcess 守卫防双跑（u-audit-fix）。
+    oncePerProcess("subagent-workflow:start-gc-timer", () => service.startGcTimer());
 
     try {
-      maybeCleanupExpiredSessionFiles(agentDir, cwd);
+      // 递归扫描 <agentDir>/subagents + unlink 超 TTL 跨 session 文件属进程级维护
+      // ——oncePerProcess 守卫防双跑（u-audit-fix）。
+      oncePerProcess("subagent-workflow:cleanup-expired-session-files", () =>
+        maybeCleanupExpiredSessionFiles(agentDir, cwd));
     } catch (err) {
       logger.warn("[subagents] expired session file cleanup failed", {
         reason: err instanceof Error ? err.message : String(err),
       });
     }
 
-    // ADR-035 启动恢复：扫描 manifest tmp 残留（崩溃打断的 writeManifest 留下），
-    // 每次 session_start 都调（与上方 maybeCleanupExpiredSessionFiles 一致）。
+    // ADR-035 启动恢复：扫描 manifest tmp 残留（崩溃打断的 writeManifest 留下，promote/unlink）。
+    // 扫描属进程级维护——oncePerProcess 守卫防双跑（u-audit-fix）；第二派发重放首次
+    // Promise（结果缓存语义），recovered 计数日志可能重打，无文件副作用。
     try {
-      const recovered = await service.recoverManifestTmpFiles();
+      const recovered = await oncePerProcess("subagent-workflow:recover-manifest-tmp-files", () =>
+        service.recoverManifestTmpFiles());
       if (recovered.recovered > 0 || recovered.deleted > 0) {
         logger.warn(`[subagents] manifest tmp recovery: ${recovered.recovered} promoted, ${recovered.deleted} deleted`);
       }
@@ -517,8 +525,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     }
 
     try {
-      const wtm = new WorktreeManager(agentDir);
-      await wtm.scan();
+      // 孤儿 worktree 清理（git/rm 进程操作 + 注册表/目录扫描）属进程级维护
+      // ——oncePerProcess 守卫防双跑（u-audit-fix）。
+      await oncePerProcess("subagent-workflow:worktree-scan", () => new WorktreeManager(agentDir).scan());
     } catch (err) {
       logger.warn("[subagents] worktree reaper scan failed", {
         reason: err instanceof Error ? err.message : String(err),
@@ -547,15 +556,22 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     // （storeHealthy=false 停初始化）是宿主职责，core 原样上抛、这里 catch 兜住。
     let storeHealthy = true;
     try {
-      await recoverCrashedRuns(
-        store,
-        runs,
-        "Process killed (kill-9 or crash recovery)",
-        {
-          onRunRecovered: (payload) => {
-            pi.events.emit("pending:unregister", payload);
-          },
-        },
+      // 崩溃恢复 loadAll 扫 cwd 共享 sessionDir（同 cwd 跨 session 共享）并把 running run
+      // 转 failed 落盘——写非本 session 的 run state 文件属跨 session 副作用，oncePerProcess
+      // 守卫防双跑（u-audit-fix）。第二派发重放首次 Promise：不再落盘、不再 emit。
+      await oncePerProcess(
+        "subagent-workflow:recover-crashed-runs",
+        () =>
+          recoverCrashedRuns(
+            store,
+            runs,
+            "Process killed (kill-9 or crash recovery)",
+            {
+              onRunRecovered: (payload) => {
+                pi.events.emit("pending:unregister", payload);
+              },
+            },
+          ),
       );
     } catch (err) {
       // QMF-4 fix: store.loadAll 失败是关键路径错误，workflow 域将未初始化

@@ -130,7 +130,7 @@ graph TD
 | u-bte-remove | committed | 1 | bte 236 tests（12 files）+ extensions 三连全绿（24 包）；触发面消失双断言（reaper 模块 import rejects + withFileLock 不触发）+ reconcile 每 session_start 三派发断言；deviations: 领地扩包内 8 文件伴生（reaper 2 个 helper 被生产消费方引用平移 kill-tree.ts / types.ts re-export alias 保短名 / bash_kill hint 文案同步新机制 / helper 测试等价恢复 6 条） |
 | u-doc-sync | committed | 1 | symbol-drift 过；卸载指引落 docs/release-notes.md 待发布草稿节（changeset 属发版流程排除）；**事实修正**：pi 0.84.4 无 `pi extension uninstall` 子命令，实装形态 `pi uninstall npm:<pkg>`（unified-hooks 先例同形）——设计 §3.3 D2 该点待一致性审查回写 |
 | u-guards-pkg | committed | 1 | 6 tests 绿 + extensions 三连过（新包零告警）+ check-extension-dependencies 过（21 entries，shared 组天然跳过登记——反向核实任务书预期不成立）；deviations: shared 先例无 role 字段不照加 / 单入口形态 / bte 通读确认无跨 session 副作用操作不接入（守卫包供 u-audit-fix 消费） |
-| u-audit-fix | pending | 0 | — |
+| u-audit-fix | committed | 1 | permission 578（27 files）+ subagent-workflow 926（73 files）全绿；三连过 + 清单一致 + symbol-drift 过；探针实测记录入清单 §2.5（真机 mtime/日志面归 Gate B S6）；deviations: 4 个既有测试 resetModules 适配（模块级 Map 跨用例污染）/ ⑪ 结果缓存语义留痕 / ⑨ 过时注释随接入删除 |
 
 ## 7 残留风险与变更历史
 

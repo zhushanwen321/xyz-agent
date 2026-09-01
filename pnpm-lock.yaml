@@ -370,6 +370,9 @@ importers:
 
   extensions/universal/permission:
     dependencies:
+      '@zhushanwen/pi-ext-guards':
+        specifier: workspace:*
+        version: link:../../shared/ext-guards
       '@zhushanwen/pi-extension-logger':
         specifier: workspace:*
         version: link:../../shared/extension-logger
@@ -588,6 +591,9 @@ importers:
       '@xyz-agent/session-delivery':
         specifier: workspace:*
         version: link:../../../packages/session-delivery
+      '@zhushanwen/pi-ext-guards':
+        specifier: workspace:*
+        version: link:../../shared/ext-guards
       '@zhushanwen/pi-extension-logger':
         specifier: workspace:*
         version: link:../../shared/extension-logger
