@@ -118,7 +118,7 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | u-lock-core | pending | 0 | — |
-| u-bte-guard | pending | 0 | — |
+| u-bte-guard | committed | 1 | 244 tests passed (13 files)；deviations: index.test.ts 一行模拟失真修复（handler 现读 event.reason）+ reap 抛错不重置 flag（失败兜底交批次 2 触发面 B，注释声明） |
 | u-runtime-lock | pending | 0 | — |
 | u-observability | pending | 0 | — |
 | u-audit | pending | 0 | — |

@@ -99,7 +99,9 @@ describe("session_start chain: reaper first, reconcile after (M3)", () => {
 				ctx: { sessionManager: { getSessionId: () => string; getEntries: () => unknown[] } },
 			) => void;
 			expect(handler).toBeDefined();
-			handler(undefined, {
+			// pi runner emit session_start 必带事件（SessionStartEvent.reason 必填，
+			// pi 0.84.4 实装核实）——维护链入口日志与 reaper once 判定消费 reason
+			handler({ type: "session_start", reason: "resume" }, {
 				sessionManager: {
 					getSessionId: () => sessionId,
 					getEntries: () => [
