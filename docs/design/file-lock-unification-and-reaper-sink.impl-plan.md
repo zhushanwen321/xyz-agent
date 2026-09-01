@@ -134,14 +134,19 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-**残留风险**（承接设计 + 计划期新增）：
+**残留风险**（承接设计 + 计划期 + 验收期新增）：
 
-1. 待验证检查点 1（S3 互斥探针实跑结果）——u-lock-probe 实施期门，不过则 D1 不算完成。
-2. 待验证检查点 3（./core 子入口打包可达性）——u-runtime-lock 实施期门，失败走设计 §5 降级路径并升级用户。
-3. u-audit-fix 领地动态——派发前主 agent 按 u-audit 清单填入并核对互斥。
+1. ~~待验证检查点 1（S3 互斥探针实跑结果）~~ **已通过**（u-lock-probe：双方各 100 次真并发竞争绿，负向验证证检测器敏感）。
+2. ~~待验证检查点 3（./core 子入口打包可达性）~~ **已通过**（u-runtime-lock：esbuild 编译 TS 源内联进 bundle，降级路径未启用）。
+3. u-audit-fix 领地动态——已按 u-audit 清单落地为 permission + subagent-workflow 两包。
 4. 发版不在本计划内：builtin staged 已随代码刷新，npm 发版（changeset）与 release note 正式发布走用户流程。
+5. **[Gate B finding F1]（S4b 硬序同周期竞态，建议另案）**：孤儿 pi 被本周期 reap-orphan-pi SIGKILL 后的僵尸窗口内（父进程已死、init 尚未 reap，kill(pid,0) 仍成功），链式 B 扫描判「属主活」跳过其 detached 任务——同周期漏收，下周期启动 B 扫描确定性收殓（真机两轮实证：T0 周期 killed=0 无动作、T1 周期 killed=1 转 orphaned）。设计 §2.3「完成后执行」在实现中是「SIGKILL 发出」而非「确认死亡」。自愈型延迟（非永久丢失），修复方向 = reap-orphan-pi.ts SIGKILL 后等死透（属既有模块，不在本设计领地）。
+6. **[Gate B finding F2]（restore 路径存量差异，建议另案排查）**：经 restoreSession 激活的 session（01a01c22 实测）在 pm.processes 无 key、sessions Map 无条目 → forceQuit/getContext 报 not active、pi 被外部 kill 后 exit 处理器 sessions.get 早退 → 无 session.exited 通知、无销毁收敛、A 面收殓不触发；create 路径全部正常（create→forceQuit→A 面三连日志真机验证）。非本次改动引入（restore/pm 注册链未被本设计触碰），影响「进程退出路径 A 面收殓」在 restore-session 场景的覆盖，B 面启动兜底可承接。
+7. **[观察] pi-crash log 对外部 SIGKILL（code=null）同样落盘**——符合 D4「信号死亡属异常退出」设计，真机实证（kill -9 场景 crash log 在场）。
 
 **变更历史**：
 
 - 2026-09-01 计划基线建立（commit af7794056）。
 - 2026-09-02 一致性审查（三区并行独立 reviewer）：锁统一区 8R/1U-low/5D、收殓下沉区 8R/0U/3D、守卫观测区 12R/1U-low/2D，合计 28R/2U/10D。处置：2U（消费方 JSDoc 残留 + S6 真机观测方案注明）与注释级 D1-D4（signal-exit 边界/被夺取后误删他方锁二阶后果/探针 update 措辞/parity 注释理由）走修复批次；设计文档侧 10D 中 DE1（pi uninstall 命令形态）/DE2（挂点澄清）/DE3（行号漂移）/D5（extension 数 SSOT）/D-ERR-2（U3-1 flag 替换路径）+ 实质性 R（setImmediate 形态/硬序不传成败/probe 旁注）由主 agent 同批回写设计文档（含状态行更新）。28 条 reasonable 全数与 impl-plan 状态表既有登记对得上（reviewer 逐条核对），无新增未登记偏差。
+- 2026-09-02 Gate A 全量：12 命令 10 项原生绿；2 项存量失败（根 lint 6 errors probe 死代码 + workflow-extractor SNAPSHOT_VERSION 守卫未随 subagent-core 抽包更新）按零容忍纪律修复（guard 反而升级：权威源改指 + 防分叉双断言 + 路径注释同批清扫）——修复后根 lint 0 errors、runtime 4153/4153 全绿。零绕过检查（SKIP/.skip/eslint-disable 新增）零命中。
+- 2026-09-02 Gate B 真实场景七条全收口：S1 ×10 全绿（exitCode 0 / switchOk / 无 TypeError）；S2 dev app 真机冷启动首点（UI 无 toast + spawn/switch 日志 + EXT_LOG INFO dispatch startup/resume 真机在场）；S3 探针绿；S4a create 路径 forceQuit→A 面三连日志 + orphaned + kill（附 restore 存量差异 F2）；S4b 主形态 B 面收殓 + 硬序变体两轮实证（发现同周期竞态 F1）+ B 面兜住 A 面错时序孤儿的额外实证；S5 spawn 列表纯净（staged/源码/项目级，无 npm 全局）；S6 受控段 dispatch×3 + 4ms 双 resume + unregister 恰一次；S7 pi-crash 完整现场 + EXT_LOG INFO 落盘 + code=null 真机 + 裸 pi no-op。测试产物全清。
