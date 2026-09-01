@@ -911,6 +911,9 @@ importers:
       '@xyz-agent/shared':
         specifier: workspace:*
         version: link:../shared
+      '@zhushanwen/pi-file-lock':
+        specifier: workspace:*
+        version: link:../../extensions/shared/file-lock
       '@zhushanwen/subagent-core':
         specifier: workspace:*
         version: link:../subagent-core
@@ -923,9 +926,6 @@ importers:
       node-pty:
         specifier: ^1.0.0
         version: 1.1.0
-      proper-lockfile:
-        specifier: 4.1.2
-        version: 4.1.2
       semver:
         specifier: ^6.3.1
         version: 6.3.1
@@ -951,6 +951,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.9
         version: 4.1.9(vitest@4.1.9)
+      proper-lockfile:
+        specifier: 4.1.2
+        version: 4.1.2
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.16)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
