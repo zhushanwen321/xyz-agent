@@ -41,6 +41,7 @@ import { getLogger } from "../core/logger.ts";
 import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
 import { validateRunArgs } from "./args-validator.ts";
 import {
+  closeOutInFlightCalls,
   handleWorkerError,
   handleWorkerExit,
   handleWorkerMessage,
@@ -76,6 +77,52 @@ function generateRunId(): string {
   return `wf-${Date.now()}-${Math.random().toString(RUNID_RADIX).slice(RUNID_SLICE_START, RUNID_SLICE_END)}`;
 }
 
+// ── OR-7：signal abort listener 终态移除 ─────────────────────
+
+/**
+ * run → signal abort listener 收口句柄注册表。
+ *
+ * [OR-7] 旧实现 `{ once: true }` 只在 abort 触发时自清——run 经 return / error /
+ * abortRun / terminate 等任何终态路径收敛后，listener 仍挂在（可能长生命周期的）
+ * 外部 signal 上，同 signal 连续跑多 run 时每次泄漏一个（超 11 个触发
+ * MaxListeners 告警；tool-workflow 的 run action 传的是 pi 会话级 signal，泄漏
+ * 真实可达）。对齐 launcher.ts L-2 修复形态：命名 handler + run 终态
+ * removeEventListener。
+ *
+ * WeakMap：run 被 GC 时条目随之消亡——即使未来新增终态路径漏调 dispose，
+ * 注册表本身也不成为新的无界泄漏面。
+ */
+const signalAbortDisposers = new WeakMap<WorkflowRun, () => void>();
+
+/** 移除 run 关联的 signal abort listener（幂等；未注册 run 为 no-op）。 */
+function disposeSignalAbortListener(run: WorkflowRun): void {
+  const dispose = signalAbortDisposers.get(run);
+  if (!dispose) return;
+  signalAbortDisposers.delete(run);
+  dispose();
+}
+
+/**
+ * [OR-3] 向 worker 广播 {type:"abort"}——终止 run 时先于 transition（= releaseRuntime
+ * → worker.terminate）通知 worker 优雅解阻：worker 侧 pending Map 全部 reject
+ * （WorkflowAbortedError，worker-script-builder 既有 abort 分支），脚本 catch 后自然
+ * 收尾退出，不再依赖 terminate 硬杀。
+ *
+ * P-T3 语义：广播与 worker 自然退出交错不产 unhandledRejection——postMessage 同步抛错
+ * （worker 已退出/通道关闭）只 debug 留痕不中断 abort 主流程（pendings 随 worker 死亡
+ * 清理；WorkerHandle.postMessage 对已 terminate handle 本身 no-op）；transition 必须继续。
+ */
+function broadcastAbortToWorker(run: WorkflowRun, reason: string): void {
+  try {
+    run.runtime?.worker.postMessage({ type: "abort", reason });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug(
+      `[workflow] abort broadcast to worker failed (runId=${run.runId}, worker likely already exited): ${msg}`,
+    );
+  }
+}
+
 // ── makeHandlers（路由 worker 事件到 error-recovery handle* 函数） ──────
 
 /**
@@ -94,20 +141,32 @@ function generateRunId(): string {
  * 实际 handleWorkerError 会做最终计数（含重试上限判断），onError 不重复递增。
  */
 function makeHandlers(run: WorkflowRun, deps: LifecycleDeps): WorkerHandlers {
+ // [OR-7] per-run deps 视图：包装 onRunDone，把「run 终态」转译为「移除 signal abort
+ // listener」。error-recovery 全部终态路径（handleReturn / handleWorkerError /
+ // handleScriptError / handleWorkerExit / 预算终止 / time_limited / [OR-2] rebuild
+ // 失败收敛）都经 handlers 调用链消费本视图——消息面终态在此统一收口；
+ // abortRun / terminateRunningRuns 两个 lifecycle 自有终态路径另行显式 dispose。
+  const depsWithTerminalCleanup: LifecycleDeps = {
+    ...deps,
+    onRunDone: (doneRun: WorkflowRun): void => {
+      disposeSignalAbortListener(run);
+      deps.onRunDone?.(doneRun);
+    },
+  };
  // 自引用——error-recovery rebuildRuntime 需要 handlers 参数（handlers 引用自身）
   const handlers: WorkerHandlers = {
     async onMessage(raw: unknown): Promise<void> {
-      await handleWorkerMessage(run, raw, deps, handlers);
+      await handleWorkerMessage(run, raw, depsWithTerminalCleanup, handlers);
     },
     async onError(err: Error): Promise<void> {
-      await handleWorkerError(run, err, deps, handlers);
+      await handleWorkerError(run, err, depsWithTerminalCleanup, handlers);
     },
     async onExit(code: number, handle: WorkerHandle): Promise<void> {
  // H-2：用 worker-host 传入的 handle（即真正触发 exit 的那个 handle），而非
  // run.runtime?.worker——重试竞态下 runtime.worker 可能已被 replaceRuntime 替换
  // 为新 handle，导致 handleWorkerExit 内的 isCurrent 检查误判（漏判 stale exit 或
  // 误杀新 worker）。G-025 检查仍在 handleWorkerExit 内（handle.isCurrent）。
-      await handleWorkerExit(run, code, handle, deps, handlers);
+      await handleWorkerExit(run, code, handle, depsWithTerminalCleanup, handlers);
     },
   };
   return handlers;
@@ -206,18 +265,18 @@ export async function runWorkflow(
     { startedAt: new Date().toISOString() },
   );
 
- // signal abort → abortRun（一次性监听）
+ // signal abort → abortRun（[OR-7] 命名 listener + run 终态移除，注册表
+ // signalAbortDisposers；触发时自移除 = 显式 once 语义）
   if (signal) {
-    signal.addEventListener(
-      "abort",
-      () => {
-        void abortRun(runId, deps, "External signal aborted").catch((err: unknown) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          logger.error(`[workflow] abortRun on signal failed: ${msg}`);
-        });
-      },
-      { once: true },
-    );
+    const onAbort = (): void => {
+      disposeSignalAbortListener(run);
+      void abortRun(runId, deps, "External signal aborted").catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`[workflow] abortRun on signal failed: ${msg}`);
+      });
+    };
+    signal.addEventListener("abort", onAbort);
+    signalAbortDisposers.set(run, () => signal.removeEventListener("abort", onAbort));
   }
 
  // 构造 handlers + runtime（worker + controller）
@@ -304,8 +363,16 @@ export async function abortRun(
   if (reason) {
     run.state.error = reason;
   }
+ // [OR-3] 先广播 abort 再 transition（transition 内 releaseRuntime→terminate，
+ // terminate 之后广播发不进去）——worker 侧 pending 优雅解阻
+  broadcastAbortToWorker(run, reason ?? `Workflow aborted (${doneReason})`);
  // A4: transition 内部 releaseRuntime（cleanup before mutate）
   run.transition("done", doneReason);
+ // [OR-7] run 终态：移除 signal abort listener（幂等；abort 由 signal 触发时
+ // listener 已在 onAbort 内自移除，此处为其余 abort 入口的收口）
+  disposeSignalAbortListener(run);
+ // [OR-8] 终态收口残留 in-flight call（先收口再落盘——快照不再含 running 节点）
+  closeOutInFlightCalls(run);
   await deps.store.save(run);
   deps.log?.("debug", "workflow:lifecycle", "abortRun transition done", { runId, reason: run.state.reason });
  // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
@@ -351,8 +418,15 @@ export async function terminateRunningRuns(
     try {
       deps.log?.("debug", "workflow:lifecycle", "terminateRunningRuns", { runId: run.runId, reason });
       run.state.error = reason;
+      // [OR-3] 同 abortRun：先广播 abort 再 transition（worker 侧 pending 优雅解阻）
+      broadcastAbortToWorker(run, reason);
       // A4: transition 内部先 releaseRuntime（cleanup before mutate）
       run.transition("done", "failed");
+      // [OR-7] run 终态：移除 signal abort listener（terminateRunningRuns 不走
+      // onRunDone——本路径显式收口）
+      disposeSignalAbortListener(run);
+      // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+      closeOutInFlightCalls(run);
       await deps.store.save(run);
       // C-4: run 到达 done 终态 → 注销 pending-notification（reason 固定 "failed"）
       deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: "failed" });
@@ -496,6 +570,9 @@ export async function recoverCrashedRuns(
       // 步骤 2：running → done,failed（顺序对齐 pi：set error → transition → 宿主事件）
       run.state.error = reason;
       run.transition("done", "failed");
+      // [OR-8] 重水合 running 快照可携带 in-flight call（崩溃瞬间的 running 节点）——
+      // 终态收口为 cancelled，先收口再落盘
+      closeOutInFlightCalls(run);
       recovered += 1;
       // 宿主事件外置点：pi 发 pending:unregister，位置在 transition 后、save 前
       // （对齐 pi emit 位置——先解除挂起通知再落盘，事件观察者不依赖落盘完成）。

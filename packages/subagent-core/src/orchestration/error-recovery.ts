@@ -4,7 +4,7 @@
  * Worker 失败处理 free functions（D-12）。
  *
  * 4 个导出函数（domain-models.md §失败处理矩阵）：
- * - handleWorkerMessage(run, raw, deps, handlers) — 路由 agent_call/return/error
+ * - handleWorkerMessage(run, raw, deps, handlers) — 路由 agent_call/return/error/log
  * - handleWorkerError(run, err, deps, handlers) — worker uncaught error
  * - handleWorkerExit(run, code, handle, deps, handlers) — worker exit
  * - handleScriptError(run, msg, deps, handlers) — type:"error" from worker
@@ -13,6 +13,11 @@
  * - worker error/exit（非零）→ 3 次重试 + 指数退避 1s/2s/4s；超限 failed
  * - script error → 3 次重试 + 指数退避；超限 failed
  * - 重试前 rebuildRuntime（G3-001：整个 RunRuntime 重建：worker+controller）
+ * - [OR-2] 重建动作本身失败（workerHost.start 抛错）回灌本矩阵：计入
+ *   workerErrorCount，未超限再走退避+重建，超限收敛 done,failed（见
+ *   scheduleRebuild / handleRebuildStartFailure）——恢复机制不得在它自己的
+ *   恢复路径上开口（旧实现裸调 rebuildRuntime → run 永久 running +
+ *   rejection 经 void 变 unhandledRejection）
  *
  * 关键不变式：
  * - 重试前必须 rebuildRuntime（worker+controller 整体重建，避免孤儿资源）。
@@ -67,6 +72,22 @@ const MAX_ERROR_LOGS = 500;
 const MALFORMED_MSG_LOG_PREVIEW_CHARS = 200;
 
 /**
+ * [OR-8] run 到达 done 终态时残留 in-flight call 的收口文案。
+ *
+ * trace/call 状态枚举封闭（无 "cancelled" 态），以 failed + 本固定文案表达
+ * 「run 终态前被收口」——GUI/快照侧不再出现 done run 含 running 节点的不一致。
+ */
+const IN_FLIGHT_CALL_CANCELLED_MSG =
+  "Cancelled: run reached terminal state while this call was in flight";
+
+/**
+ * [P-SD/S-D] 测试钩子 env（设计 §7.3 P-SD）：设为正整数 N 时 rebuildRuntime
+ * 第 N 次及以后的每次调用抛错，供 S-D「worker 崩溃后重建失败」验收注入。
+ * 安全约束：仅显式设置时激活 + 激活即 warn 留痕（见 resolveRebuildFailureInjectionThreshold）。
+ */
+const REBUILD_FAILURE_INJECT_ENV = "XYZ_SUBAGENT_TEST_INJECT_REBUILD_FAILURE";
+
+/**
  * [F1] worker 交付前退出（无终态消息）的归因文案。
  *
  * 最常见根因：execute() 返回值含 function/Symbol/循环引用等不可克隆成员 → worker 侧
@@ -114,7 +135,14 @@ interface WorkflowCallMsg {
   args: Record<string, unknown>;
 }
 
-type WorkerMsg = AgentCallMsg | WorkflowCallMsg | ReturnMsg | ErrorMsg;
+/** 脚本 log() 全局发出的独立诊断消息（协议见 worker-script-builder 头注释，OR-6）。 */
+interface LogMsg {
+  type: "log";
+  phase?: string;
+  message: string;
+}
+
+type WorkerMsg = AgentCallMsg | WorkflowCallMsg | ReturnMsg | ErrorMsg | LogMsg;
 
 // ── 内部 helper ──────────────────────────────────────────────
 
@@ -178,7 +206,83 @@ function delay(ms: number): Promise<void> {
   });
 }
 
+/**
+ * [OR-4] 终态收尾副作用围栏：emit pending:unregister + onRunDone（M12 同款 try 围栏）。
+ *
+ * 这两个是真实副作用（通知注销 + Interface 层完成回调，后者内部含 evictDoneRunsBeyondCap
+ * 内存淘汰）——listener 同步抛错或 onRunDone 抛错不得经 worker-host 绑定处的
+ * `void handlers.onXxx(...)` 变 unhandledRejection 崩宿主。catch 后 error 留痕，
+ * 调用方继续（内存态已终态；本函数自身不重试不上抛）。
+ *
+ * 旧实现四处裸调（handleReturn / handleWorkerError / handleScriptError /
+ * handleWorkerExit 的终态路径）与 budget 分支的内联围栏不对称——统一收敛到本函数。
+ */
+function emitTerminalSideEffects(run: WorkflowRun, deps: LifecycleDeps, context: string): void {
+  try {
+    deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
+    deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
+    deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
+    deps.onRunDone?.(run);
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    logger.error(`[workflow] onRunDone/emit failed (${context}): ${m}`);
+  }
+}
+
 // ── rebuildRuntime（G3-001 整重建） ─────────────────────────
+
+/** [P-SD] rebuildRuntime 进程级调用计数（注入阈值「第 N 次」的判定基准）。 */
+let rebuildRuntimeInvocationCount = 0;
+/** [P-SD] 钩子激活/非法值 warn 是否已发（多轮 rebuild 只留痕一次，防刷屏）。 */
+let rebuildFailureHookWarned = false;
+
+/**
+ * [P-SD/S-D] 读取重建失败注入阈值：env XYZ_SUBAGENT_TEST_INJECT_REBUILD_FAILURE=<N>
+ * 使 rebuildRuntime 第 N 次及以后的每次调用抛错（配合脚本内 process.exit 制造
+ * 「worker 崩溃后重建失败」的 S-D 验收场景）。
+ *
+ * 安全约束（设计 §7.3 P-SD，对齐 T7① 可见性原则）：
+ * - 仅显式设置时激活；未设置/空串 = 钩子完全不激活（零行为差）；
+ * - 首次读取到该 env（无论合法非法）即 logger.warn 留痕一次，杜绝静默生效；
+ * - 非法值（非正整数）不激活且 warn 指明原值，杜绝「以为注入了、实际没有」的
+ *   静默失效（LC-7 同族教训）。
+ *
+ * 语义取「第 N 次及以后每次」而非「仅第 N 次」：S-D 验收要求 run 收敛 done,failed——
+ * 仅注入一次会在重试预算（MAX_WORKER_RETRIES）耗尽前放行后续重建，run 可能正常完成，
+ * 验收不可证伪。连续注入让重试矩阵确定性走完：耗尽后经 handleRebuildStartFailure
+ * 收敛 done,failed。
+ *
+ * @returns 注入阈值（调用序数 >= 阈值的 rebuild 抛错）；undefined = 未激活
+ */
+function resolveRebuildFailureInjectionThreshold(): number | undefined {
+  const raw = process.env[REBUILD_FAILURE_INJECT_ENV];
+  if (raw === undefined || raw === "") return undefined;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    if (!rebuildFailureHookWarned) {
+      rebuildFailureHookWarned = true;
+      logger.warn(
+        `[workflow] ${REBUILD_FAILURE_INJECT_ENV}="${raw}" is not a positive integer — ` +
+          "test hook INACTIVE, no rebuild failure will be injected",
+      );
+    }
+    return undefined;
+  }
+  if (!rebuildFailureHookWarned) {
+    rebuildFailureHookWarned = true;
+    logger.warn(
+      `[workflow] ${REBUILD_FAILURE_INJECT_ENV}=${raw} ACTIVE — rebuildRuntime invocations ` +
+        `#${parsed} and later will throw (S-D test hook; NEVER set in production)`,
+    );
+  }
+  return parsed;
+}
+
+/** 测试辅助：重置注入计数与 warn 状态（仅 __tests__ 导入，生产勿用）。 */
+export function resetRebuildFailureInjectionForTest(): void {
+  rebuildRuntimeInvocationCount = 0;
+  rebuildFailureHookWarned = false;
+}
 
 /**
  * 移除 run 中未真正完成的在飞 call（status !== "done"）及其 trace 节点。
@@ -199,6 +303,50 @@ function discardInFlightCalls(run: WorkflowRun): number[] {
   for (const callId of inFlight) {
     run.state.calls.delete(callId);
     run.state.trace.removeByStepIndex(callId);
+  }
+  return inFlight.sort((a, b) => a - b);
+}
+
+/**
+ * [OR-8] run 到达 done 终态时，把 calls Map 残留的 in-flight call（status !== "done"）
+ * 收口为取消终态（不删除条目——保留调用痕迹，快照/GUI 不再出现 done run 含
+ * running 节点的不一致）。
+ *
+ * 场景：脚本 fire-and-forget agent()（不 await）后 return；或 worker 死亡/abort 时
+ * 已 dispatch 未完成的 call。旧实现 trace 节点永久 "running" 并原样落盘
+ * （run-snapshot 序列化不做状态修正）。
+ *
+ * 收口语义（trace/call 状态枚举封闭，无 "cancelled" 态）：
+ * - AgentCall 补齐 pending→running→done 状态机（markDone 要求 running 前置），
+ *   result 以 IN_FLIGHT_CALL_CANCELLED_MSG 承载取消原因；
+ * - trace 节点置 failed + 固定取消文案 + completedAt（「failed + Cancelled 文案」
+ *   即取消的既有表达形态，不新增状态枚举）；
+ * - node.live 清除（终态 run 无 TUI 轮询，防 ExecutionRecord 滞留）。
+ *
+ * 调用点约定：每个 transition("done") 成功后、store.save 之前——先收口再落盘，
+ * 内存态与持久化快照在同一时点收敛（「run-snapshot 落盘前」的实现形态）。
+ * 返回被收口的 callId 数组（升序）供调用方记日志。
+ */
+export function closeOutInFlightCalls(run: WorkflowRun): number[] {
+  const inFlight: number[] = [];
+  for (const [callId, call] of run.state.calls) {
+    if (call.status !== "done") inFlight.push(callId);
+  }
+  const completedAt = new Date().toISOString();
+  for (const callId of inFlight) {
+    const call = run.state.calls.get(callId);
+    if (!call) continue; // 防御：迭代后被删（正常路径不可达）
+    if (call.status === "pending") call.markRunning();
+    if (call.status === "running") {
+      call.markDone({ content: "", error: IN_FLIGHT_CALL_CANCELLED_MSG });
+    }
+    call.traceNode.live = undefined;
+    run.state.trace.update(callId, {
+      status: "failed",
+      result: { content: "", error: IN_FLIGHT_CALL_CANCELLED_MSG },
+      error: IN_FLIGHT_CALL_CANCELLED_MSG,
+      completedAt,
+    });
   }
   return inFlight.sort((a, b) => a - b);
 }
@@ -244,12 +392,11 @@ async function finalizeTimeBudgetExhausted(run: WorkflowRun, deps: LifecycleDeps
     void te;
   }
   if (!transitioned) return;
-  await deps.store.save(run).catch((e: unknown) => {
-    const m = e instanceof Error ? e.message : String(e);
-    logger.error(`[workflow] store.save failed (time budget exhausted): ${m}`);
-  });
-  deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "time_limited" });
-  deps.onRunDone?.(run);
+ // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+  closeOutInFlightCalls(run);
+  await saveRunBestEffort(run, deps, "finalizeTimeBudgetExhausted (done,time_limited)");
+ // [OR-4] M12 同款围栏（终态副作用不经 void 变 unhandledRejection）
+  emitTerminalSideEffects(run, deps, "finalizeTimeBudgetExhausted (done,time_limited)");
 }
 
 /**
@@ -275,6 +422,16 @@ export function rebuildRuntime(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): void {
+ // [P-SD] 测试钩子注入点：先于任何副作用（模拟 workerHost.start 抛错）。抛错由
+ // scheduleRebuild 的 catch 接住回灌重试矩阵（[OR-2]），不再裸抛。
+  rebuildRuntimeInvocationCount += 1;
+  const injectThreshold = resolveRebuildFailureInjectionThreshold();
+  if (injectThreshold !== undefined && rebuildRuntimeInvocationCount >= injectThreshold) {
+    throw new Error(
+      `[S-D test hook] injected rebuildRuntime failure ` +
+        `(invocation #${rebuildRuntimeInvocationCount}, ${REBUILD_FAILURE_INJECT_ENV}>=${injectThreshold})`,
+    );
+  }
  // OB3（可观察性）：rebuild 关键节点 debug 日志——此前函数体 0 处 deps.log，
  // 崩溃自愈只能靠行为证据诊断（L1 入口 / L2 重排 / L3 discard / L4 完成）。
   deps.log?.("debug", "workflow:error-recovery", "runtime rebuild start", {
@@ -339,6 +496,11 @@ export function rebuildRuntime(
  * agent_call → 派发 executeAgentCall（异步，不 await——立即返回让 worker 继续发消息）
  * return → transition done,completed（脚本正常返回）
  * error → handleScriptError（脚本主动抛错）
+ * log → 计入 run.state.errorLogs + debug 留痕（[OR-6/T7④] 主线程半边——worker 侧
+ *   log() 双通路的独立消息面消费点；u-m0a 已接 workerLogs 随 return/error 带回，
+ *   本 case 消费独立 {type:"log"} 消息，与 worker-script-builder 协议注释对齐）
+ * default → warn 留痕后丢弃（[OR-6/T7④] 协议漂移防线——协议文档与实现漂移零
+ *   可观测的反面；未知类型静默丢弃会让协议单方面演化不可发现）
  *
  * 终态（done）下的 stale 消息丢弃（P0-1）。
  */
@@ -380,7 +542,44 @@ export async function handleWorkerMessage(
         handlers,
       );
       return;
+    case "log":
+      handleWorkerLog(run, msg, deps);
+      return;
+    default:
+      // [OR-6/T7④] 协议漂移防线：未知消息类型 warn 留痕后丢弃。畸形消息（M7 形状
+      // 校验之上、已知类型之外的 type）此前静默穿过 switch——协议注释新增消息类型
+      // 而主线程未接线时，这里提供可观测信号（而非零痕迹丢弃）。
+      logger.warn(
+        `[workflow] unknown worker message type dropped (runId=${run.runId}): ` +
+          `${JSON.stringify((msg as { type?: unknown }).type)}`,
+      );
+      deps.log?.("warn", "workflow:error-recovery", "unknown worker message type", {
+        runId: run.runId,
+        type: (msg as { type?: unknown }).type,
+      });
+      return;
   }
+}
+
+/**
+ * 消费 worker 的独立 log 消息（[OR-6/T7④] 主线程半边）。
+ *
+ * 计入 run.state.errorLogs（与 workerLogs 通路的 L9 追加/上限语义一致——该容器
+ * 本就承载全级别 worker 日志，"log" 级条目已在其中）+ deps.log debug 留痕
+ * （含 phase，协议字段不落 WorkerLogEntry 但排查时可见）。
+ * 终态守卫（isTerminal）已由 handleWorkerMessage 前置——此处只管写入。
+ */
+function handleWorkerLog(run: WorkflowRun, msg: LogMsg, deps: LifecycleDeps): void {
+  const message = typeof msg.message === "string" ? msg.message : String(msg.message);
+  run.state.errorLogs.push({ level: "log", message });
+  if (run.state.errorLogs.length > MAX_ERROR_LOGS) {
+    run.state.errorLogs = run.state.errorLogs.slice(-MAX_ERROR_LOGS);
+  }
+  deps.log?.("debug", "workflow:error-recovery", "worker log", {
+    runId: run.runId,
+    phase: msg.phase,
+    message,
+  });
 }
 
 /**
@@ -577,21 +776,16 @@ function dispatchAgentCall(
           void te;
         }
         if (transitioned) {
+          // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+          closeOutInFlightCalls(run);
           deps.store.save(run).catch((e: unknown) => {
             const m = e instanceof Error ? e.message : String(e);
             logger.error(`[workflow] store.save failed (budget done): ${m}`);
           });
           deps.log?.("debug", "workflow:error-recovery", "run saved after budget done", { runId: run.runId, reason: run.state.reason });
           // M12: onRunDone/emit 单独 try——这些是真实副作用，错误不应被静默吞掉
-          try {
-            deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
-            deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
-            deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
-            deps.onRunDone?.(run);
-          } catch (err) {
-            const m = err instanceof Error ? err.message : String(err);
-            logger.error(`[workflow] onRunDone/emit failed (budget done): ${m}`);
-          }
+          //（[OR-4] 围栏收敛到共享 helper，语义与原内联围栏一致）
+          emitTerminalSideEffects(run, deps, "budget done");
         }
       }
     })
@@ -805,14 +999,15 @@ async function handleReturn(
   }
   run.state.scriptResult = msg.result;
   run.transition("done", "completed");
+ // [OR-8] 脚本 return 时可能仍有 fire-and-forget 的 in-flight call（不 await）——
+ // 终态收口为 cancelled，先收口再落盘（快照不再含 running 节点）
+  closeOutInFlightCalls(run);
   // [SW-DATA-3] save 失败不阻断终态推进（原 await 裸抛 → unhandledRejection + 幽灵注销）
   await saveRunBestEffort(run, deps, "handleReturn (done,completed)");
   deps.log?.("debug", "workflow:error-recovery", "run saved after return", { runId: run.runId, reason: run.state.reason });
  // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
-  deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
-  deps.onRunDone?.(run);
+ // [OR-4] M12 同款围栏（此前裸调——listener 同步抛错经 void 变 unhandledRejection）
+  emitTerminalSideEffects(run, deps, "handleReturn (done,completed)");
 }
 
 // ── handleWorkerError ────────────────────────────────────────
@@ -862,14 +1057,14 @@ export async function handleWorkerError(
   run.state.error = err.message;
   deps.log?.("debug", "workflow:error-recovery", "handleWorkerError retries exceeded, transition done", { runId: run.runId, count });
   run.transition("done", "failed");
+ // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+  closeOutInFlightCalls(run);
   // [SW-DATA-3] save 失败不阻断终态推进
   await saveRunBestEffort(run, deps, "handleWorkerError (done,failed)");
   deps.log?.("debug", "workflow:error-recovery", "run saved after worker error", { runId: run.runId, reason: run.state.reason });
  // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
-  deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
-  deps.onRunDone?.(run);
+ // [OR-4] M12 同款围栏
+  emitTerminalSideEffects(run, deps, "handleWorkerError (done,failed)");
 }
 
 // ── handleWorkerExit ─────────────────────────────────────────
@@ -910,13 +1105,13 @@ export async function handleWorkerExit(
     deps.log?.("debug", "workflow:error-recovery", "worker exited without terminal message, transition done", { runId: run.runId });
     run.state.error = WORKER_EXITED_WITHOUT_RESULT_MSG;
     run.transition("done", "failed");
+ // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+    closeOutInFlightCalls(run);
     await saveRunBestEffort(run, deps, "handleWorkerExit (done,failed, no terminal message)");
     deps.log?.("debug", "workflow:error-recovery", "run saved after exit without result", { runId: run.runId, reason: run.state.reason });
     // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
-    deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
-    deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
-    deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
-    deps.onRunDone?.(run);
+ // [OR-4] M12 同款围栏
+    emitTerminalSideEffects(run, deps, "handleWorkerExit (done,failed, no terminal message)");
     return;
   }
 
@@ -971,14 +1166,14 @@ export async function handleScriptError(
   run.state.error = `Workflow failed after ${MAX_WORKER_RETRIES} retries: ${errorMsg}`;
   deps.log?.("debug", "workflow:error-recovery", "handleScriptError retries exceeded, transition done", { runId: run.runId, count });
   run.transition("done", "failed");
+ // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+  closeOutInFlightCalls(run);
   // [SW-DATA-3] save 失败不阻断终态推进
   await saveRunBestEffort(run, deps, "handleScriptError (done,failed)");
   deps.log?.("debug", "workflow:error-recovery", "run saved after script error", { runId: run.runId, reason: run.state.reason });
  // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
-  deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
-  deps.onRunDone?.(run);
+ // [OR-4] M12 同款围栏
+  emitTerminalSideEffects(run, deps, "handleScriptError (done,failed)");
 }
 
 // ── scheduleRebuild（退避 + 重建） ──────────────────────────
@@ -988,6 +1183,13 @@ export async function handleScriptError(
  *
  * 退避期间 run 可能被 abort（转终态 done）——rebuildRuntime 前重检状态，终态时
  * 跳过重建（避免给已终止的 run 启新 worker）。
+ *
+ * [OR-2] rebuildRuntime 抛错（workerHost.start 失败：线程/内存耗尽、eval 编译失败等）
+ * 不再裸抛——裸抛会沿 handleWorkerError/handleScriptError 的 await 链冒泡到
+ * worker-host 的 `void handlers.onXxx(...)` 变 unhandledRejection，且 run 卡 running
+ * （旧 worker 已死、新 worker 未建，再无任何事件可达）。本函数 catch 后回灌重试矩阵
+ * （handleRebuildStartFailure）：计入 workerErrorCount，未超限再退避重建，超限收敛
+ * done,failed——恢复机制在它自己的恢复路径上不再开口。
  */
 async function scheduleRebuild(
   run: WorkflowRun,
@@ -1014,5 +1216,52 @@ async function scheduleRebuild(
     return;
   }
 
-  rebuildRuntime(run, deps, handlers);
+  try {
+    rebuildRuntime(run, deps, handlers);
+  } catch (err) {
+    await handleRebuildStartFailure(run, err, deps, handlers);
+  }
+}
+
+/**
+ * [OR-2] rebuildRuntime 抛错回灌重试矩阵。
+ *
+ * 重建动作本身失败按 worker 家族计数（重建的就是 worker）——计入 run.meta.workerErrorCount
+ * （跨 runtime 存活的重试计数载体），与既有 handleWorkerError 共用同一上限
+ * MAX_WORKER_RETRIES 与退避序列：
+ * - count <= MAX → 递归 scheduleRebuild（天然复用退避 / isTerminal 重检 / 预算折算守卫；
+ *   每轮计数 +1，递归深度有界 ≤ MAX_WORKER_RETRIES）；
+ * - count > MAX → 收敛 done,failed（transition + 收口 in-flight + 持久化 + 围栏副作用），
+ *   run 不再卡 running。
+ *
+ * 终态路径顺序与其余 handle* 对齐：transition → closeOut → save → 围栏 emit/onRunDone。
+ */
+async function handleRebuildStartFailure(
+  run: WorkflowRun,
+  err: unknown,
+  deps: LifecycleDeps,
+  handlers: WorkerHandlers,
+): Promise<void> {
+  if (isTerminal(run)) return;
+  const message = err instanceof Error ? err.message : String(err);
+  const count = (run.meta.workerErrorCount ?? 0) + 1;
+  run.meta.workerErrorCount = count;
+  logger.error(
+    `[workflow] rebuildRuntime failed (runId=${run.runId}, attempt ${count}/${MAX_WORKER_RETRIES}): ${message}`,
+  );
+
+  if (count <= MAX_WORKER_RETRIES) {
+    await scheduleRebuild(run, deps, handlers);
+    return;
+  }
+
+ // 耗尽 → 收敛 done,failed（不卡 running）
+  run.state.error = `Runtime rebuild failed after ${MAX_WORKER_RETRIES} retries: ${message}`;
+  deps.log?.("debug", "workflow:error-recovery", "rebuild retries exhausted, transition done", { runId: run.runId, count });
+  run.transition("done", "failed");
+ // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+  closeOutInFlightCalls(run);
+  await saveRunBestEffort(run, deps, "handleRebuildStartFailure (done,failed)");
+ // [OR-4] M12 同款围栏
+  emitTerminalSideEffects(run, deps, "handleRebuildStartFailure (done,failed)");
 }
