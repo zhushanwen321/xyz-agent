@@ -41,6 +41,7 @@ import type { LauncherDeps } from "@zhushanwen/subagent-core/orchestration/launc
 import { abortRun, runWorkflow } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
 import type { RunStore } from "@zhushanwen/subagent-core/orchestration/models/ports.ts";
 import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { runSummary } from "@zhushanwen/subagent-core/orchestration/workflow-run-summary.ts";
 import { mapRunIcon, mapRunStatus, toGuiCtx } from "./gui-mappers.ts";
 import {
   acquireReentryGuard,
@@ -526,19 +527,12 @@ async function actionLifecycle(
 
 // ── helpers ──────────────────────────────────────────────────
 
-/** WorkflowRun → 摘要（status action 用）。 */
+/** WorkflowRun → 摘要（status action 用）：core runSummary 单源投影 + 宿主扩展 stateFile。
+ *
+ * 字段集不再本地维护（runSummary 双投影分叉的收口点，D8/B5）；stateFile 依赖
+ * RunStore 实例，属宿主扩展——core 投影刻意不依赖具体 store。 */
 function toRunSummary(run: WorkflowRun, store: RunStore): RunSummary {
-  return {
-    runId: run.runId,
-    name: run.spec.scriptName,
-    slug: run.spec.slug,
-    status: run.state.status,
-    reason: run.state.reason,
-    startedAt: run.meta.startedAt,
-    completedAt: run.meta.completedAt,
-    error: run.state.error,
-    stateFile: store.stateFilePath(run.runId),
-  };
+  return { ...runSummary(run), stateFile: store.stateFilePath(run.runId) };
 }
 
 // W4b：原 textResult(text, isError) helper 已删除——23 处错误路径全部改 throw

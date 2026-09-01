@@ -83,6 +83,7 @@ import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "@zhus
 import {
   evictDoneRunsBeyondCap,
   MAX_RETAINED_DONE_RUNS,
+  recoverCrashedRuns,
   scheduleTimeBudget,
   terminateRunningRuns,
 } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
@@ -539,49 +540,23 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     // resolveIdentity），无需经 state 透传——modelService 是唯一 registry 源。
 
     // MF-1: store 健康度跟踪。loadAll 失败 → storeHealthy=false，workflow 域启动时 fail-fast。
+    // 崩溃恢复四步（loadAll → failed → save → evict）收口到 core recoverCrashedRuns（D8：
+    // 宿主各写一遍正是 failure-mode-B）；pending:unregister 经 hooks 外置发射（位置在
+    // transition 后、save 前，对齐原内联实现）；save 走 store 冷路径（done 绕过去抖）——
+    // 冷路径语义在 JsonlRunStore.save 内，不随循环归属转移。loadAll 失败的 fail-fast
+    // （storeHealthy=false 停初始化）是宿主职责，core 原样上抛、这里 catch 兜住。
     let storeHealthy = true;
     try {
-      const loaded = await store.loadAll();
-      for (const run of loaded) {
-        if (run.state.status === "running") {
-          run.state.error = "Process killed (kill-9 or crash recovery)";
-          run.transition("done", "failed");
-          pi.events.emit("pending:unregister", {
-            id: run.runId,
-            reason: "failed",
-          });
-          // 恢复终态必须落盘：save 走冷路径（done 绕过去抖）同步写 state 文件 +
-          // append 终态 workflow-record entry——entry_appended 事件驱动 runtime 派生
-          // 缓存失效重拉（无 triggerTurn 副作用）。不 save 则 entry/state 双双停留
-          // running，侧栏永久卡 running。失败仅记日志不阻断其余 run 的恢复（下次
-          // session_start 重开重试，恢复循环天然幂等）。
-          try {
-            await store.save(run);
-          } catch (err) {
-            logger.error("[subagent-workflow] kill-9 recovery store.save failed", {
-              runId: run.runId,
-              reason: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-        runs.set(run.runId, run);
-      }
-      // done run 内存有界性：loadAll 全量重水合后立即裁剪到 K。kill-9 恢复（上方
-      // running → transition("done","failed")）的 run completedAt 为 transition 时刻
-      // （当前时间=全局最新）参与排序且必在保留端；多条恢复 run 同 ms completedAt →
-      // tie 稳定排序。淘汰只 delete runs Map 条目——磁盘 state 文件与
-      // workflow-state-link 指针条目均不动（历史审计保留）；下次 session_start loadAll
-      // 从指针全量重水合后再次裁剪，该循环每次 session 启动重复且可接受：内存峰值只在
-      // 启动期，常驻 O(K + 活跃 run)。消除启动峰值需指针 compaction，属 append+replay
-      // 长期方案问题域，非本范围。
-      const evicted = evictDoneRunsBeyondCap(runs, MAX_RETAINED_DONE_RUNS);
-      if (evicted > 0) {
-        logger.debug("[subagent-workflow] evicted done runs beyond cap after loadAll", {
-          evicted,
-          keep: MAX_RETAINED_DONE_RUNS,
-          sessionId,
-        });
-      }
+      await recoverCrashedRuns(
+        store,
+        runs,
+        "Process killed (kill-9 or crash recovery)",
+        {
+          onRunRecovered: (payload) => {
+            pi.events.emit("pending:unregister", payload);
+          },
+        },
+      );
     } catch (err) {
       // QMF-4 fix: store.loadAll 失败是关键路径错误，workflow 域将未初始化
       logger.error("[subagent-workflow] store.loadAll failed, workflow domain uninitialized", {

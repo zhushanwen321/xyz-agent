@@ -458,6 +458,7 @@ export { discoverAgents } from "./execution/agents-assembly.ts";
 export {
   recoverCrashedRuns,
   type RecoverCrashedRunsHooks,
+  type RecoverCrashedRunsResult,
 } from "./orchestration/lifecycle.ts";
 export {
   isScriptRunning,

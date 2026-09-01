@@ -214,6 +214,11 @@ async function pollRunToResult(
  * @param timeoutMs 超时上限（可选）。[预算语义对齐 + U2] 未传或 <=0 = 不限（轮询至 done /
  *  abort 为止，不限时由 XYZ_SUBAGENT_RUN_WATCHDOG_MS 兜底）——旧实现默认 10 分钟会误杀长任务，
  *  且 0/负值会落成立即超时；仅显式正数才限时。
+ * @param model Run 级 model override（可选）。[host-surface] 经 spec.model → workerData →
+ *  $MODEL → agent() fallback（RunSpec Option B 同一路径）。缺省不覆盖——宿主未显式指定
+ *  model 时维持脚本内 agent() 显式参数 / agent .md / 引擎默认的既有解析序。此前该入口
+ *  无 model 通道，消费方（zsw CLI --model）只能丢弃该参数——行为劈叉于走 buildSpec 的
+ *  异步入口。
  * @returns WorkflowRunResult（status 恒 "done"）
  */
 export async function runAndWait(
@@ -222,6 +227,7 @@ export async function runAndWait(
   deps: LauncherDeps,
   signal?: AbortSignal,
   timeoutMs?: number,
+  model?: string,
 ): Promise<WorkflowRunResult> {
  // 1. registry 查找脚本（workflowRef = 绝对路径，S2 路径统一）
   const script = await deps.registry.getPath(name);
@@ -249,10 +255,13 @@ export async function runAndWait(
  // 实施 timeout，并产出「Workflow timed out after Xms」的具体错误信息。spec 级
  // 时间预算（lifecycle.scheduleTimeBudget）服务于 fire-and-forget 的交互式 run
  // （tool-workflow actionRun），若在此也设会与轮询 deadline 同时触发产生竞态。
+ // model 是例外：时间预算必须二选一（竞态），model 只有单通道（spec Option B），
+ // 调用方显式传入即透传，不与任何轮询面竞争。
   const spec: RunSpec = {
     scriptSource: script.toExecutable(),
     args,
     budgetTokens: undefined,
+    model,
     scriptName: script.name,
     scriptPath: script.path,
     description: script.meta.description,

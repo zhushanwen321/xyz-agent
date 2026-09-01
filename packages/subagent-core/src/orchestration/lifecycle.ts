@@ -425,6 +425,20 @@ export interface RecoverCrashedRunsHooks {
 }
 
 /**
+ * recoverCrashedRuns 的计数结果（宿主启动日志/健康面用）。
+ *
+ * `recovered` 只计 running 遗留被转换为 done,failed 的条数；`loaded` 是 loadAll
+ * 重水合的全量数（含 done 历史快照）——两者分开口径，避免宿主把「重水合 N 条」
+ * 误报为「恢复 N 条」。
+ */
+export interface RecoverCrashedRunsResult {
+  /** loadAll 重水合的 run 总数（含 done 历史快照）。 */
+  loaded: number;
+  /** running 遗留被转换为 done,failed 的条数（0 = 无崩溃遗留）。 */
+  recovered: number;
+}
+
+/**
  * 崩溃恢复四步装配（设计 D8/B1）：loadAll → failed → save → evict。
  *
  * 平移自 pi 壳 session_start 恢复循环（subagent-workflow index.ts:578-627）与
@@ -452,6 +466,7 @@ export interface RecoverCrashedRunsHooks {
  * @param reason 恢复原因（写入 running run 的 state.error，如
  *   "Process killed (kill-9 or crash recovery)"）
  * @param hooks 宿主事件外置（可选）
+ * @returns 计数 `{ loaded, recovered }`——recovered 只计 running→failed 转换条数
  * @throws store.loadAll 失败时原样抛出（步骤 1）
  */
 export async function recoverCrashedRuns(
@@ -459,15 +474,17 @@ export async function recoverCrashedRuns(
   runs: Map<string, WorkflowRun>,
   reason: string,
   hooks?: RecoverCrashedRunsHooks,
-): Promise<void> {
+): Promise<RecoverCrashedRunsResult> {
   // 步骤 1：loadAll（失败上抛，宿主决定 fail-fast 策略）
   const loaded = await store.loadAll();
+  let recovered = 0;
 
   for (const run of loaded) {
     if (run.state.status === "running") {
       // 步骤 2：running → done,failed（顺序对齐 pi：set error → transition → 宿主事件）
       run.state.error = reason;
       run.transition("done", "failed");
+      recovered += 1;
       // 宿主事件外置点：pi 发 pending:unregister，位置在 transition 后、save 前
       // （对齐 pi emit 位置——先解除挂起通知再落盘，事件观察者不依赖落盘完成）。
       // 错误围栏：宿主回调同步 throw 只 warn 不中断循环——与步骤 3 save 的
@@ -503,4 +520,5 @@ export async function recoverCrashedRuns(
       `[workflow] recoverCrashedRuns evicted ${evicted} done runs beyond cap (keep=${MAX_RETAINED_DONE_RUNS})`,
     );
   }
+  return { loaded: loaded.length, recovered };
 }

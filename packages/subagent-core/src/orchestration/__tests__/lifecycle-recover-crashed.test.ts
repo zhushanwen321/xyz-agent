@@ -95,7 +95,11 @@ describe("recoverCrashedRuns — 四步序列（loadAll→failed→save→evict�
     const { store, saves } = makeStore([running, done]);
     const runs = new Map<string, WorkflowRun>();
 
-    await recoverCrashedRuns(store, runs, "Process killed (kill-9 or crash recovery)");
+    const result = await recoverCrashedRuns(store, runs, "Process killed (kill-9 or crash recovery)");
+
+    // 返回计数口径：loaded 含 done 历史快照，recovered 只计 running→failed 转换
+    expect(result.loaded).toBe(2);
+    expect(result.recovered).toBe(1);
 
     // 步骤 2：running → done,failed（I2：done 必有 reason）
     expect(running.state.status).toBe("done");
@@ -174,7 +178,7 @@ describe("recoverCrashedRuns — 四步序列（loadAll→failed→save→evict�
 
     await expect(
       recoverCrashedRuns(store, new Map(), "crashed"),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ loaded: 2, recovered: 2 });
 
     // 失败 run 状态机转换已发生（内存终态），仅落盘失败
     expect(r1.state.status).toBe("done");
@@ -203,7 +207,7 @@ describe("recoverCrashedRuns — 四步序列（loadAll→failed→save→evict�
           }
         },
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ loaded: 2, recovered: 2 });
 
     // 循环未中断：后续 run 的 hook 仍被调用；两 run 状态机转换 + 落盘照常
     //（含 throw 的 r1——围栏包住整个迭代的宿主事件点，save 不受牵连）
