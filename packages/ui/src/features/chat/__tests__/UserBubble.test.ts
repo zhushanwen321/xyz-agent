@@ -163,9 +163,9 @@ describe('W4TC3: UserBubble 编辑态', () => {
     expect(buttons.length).toBe(2)
     // 点编辑按钮
     await buttons[1].trigger('click')
-    // emit edit-state-change
+    // emit edit-state-change（D2：负载携带 turnKey = turnStableId(turn) = 'u1'）
     expect(wrapper.emitted('edit-state-change')).toBeTruthy()
-    expect(wrapper.emitted('edit-state-change')![0]).toEqual([{ editing: true }])
+    expect(wrapper.emitted('edit-state-change')![0]).toEqual([{ editing: true, turnKey: 'u1' }])
   })
 
   it('编辑态渲染 textarea', async () => {
@@ -187,8 +187,24 @@ describe('W4TC3: UserBubble 编辑态', () => {
     const cancelBtn = editButtons.find(b => b.text().includes('panel.message.cancel'))
     expect(cancelBtn).toBeDefined()
     await cancelBtn!.trigger('click')
-    // 最后一次 emit 是 false
+    // 最后一次 emit 是 false（D2：负载携带 turnKey）
     const events = wrapper.emitted('edit-state-change')!
-    expect(events[events.length - 1]).toEqual([{ editing: false }])
+    expect(events[events.length - 1]).toEqual([{ editing: false, turnKey: 'u1' }])
+  })
+
+  // D3 卸载清理（C2 检查点）：编辑态中组件卸载时必须补发解除信号——切 session 等
+  // 路径卸载本组件时 watch 随作用域失效、显式清理动作不会执行，父组件钉扎状态
+  // 只能靠这条 emit 复位。C2 实测：onUnmounted 内 emit 父监听器可达。
+  it('编辑态中卸载 → 父组件收到 { editing: false, turnKey }（D3 卸载清理）', async () => {
+    const wrapper = mountBubble({ canEdit: true, isSessionEditable: false })
+    const actions = wrapper.find('.group\\/user .opacity-0')
+    const buttons = actions.findAll('button')
+    await buttons[1].trigger('click')
+    expect(wrapper.emitted('edit-state-change')!.length).toBe(1)
+    // 不退出编辑直接卸载（模拟切 session 时 UserBubble 被连根卸载）
+    wrapper.unmount()
+    // test-utils 的 wrapper.unmount() 会先 removeEventHistory 清掉卸载前的 emit 记录，
+    // 故数组里只剩卸载流程中钩子补发的那一条——恰好证明它来自卸载清理而非先前操作
+    expect(wrapper.emitted('edit-state-change')).toEqual([[{ editing: false, turnKey: 'u1' }]])
   })
 })
