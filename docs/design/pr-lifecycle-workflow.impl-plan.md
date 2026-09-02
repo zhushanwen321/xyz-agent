@@ -64,13 +64,13 @@ graph TD
 | 1 | 脚本拆为入口 `pr-lifecycle.js` + 纯逻辑库 `pr-lifecycle/lib.cjs`（设计文件地图只列单文件） | 引擎 worker 内联执行入口脚本；纯逻辑入库可被 node 直测（守卫/walker 的单测必要性来自设计 §5 拆分 2「独立可验证」）；`.cjs` 后缀 + 子目录不进 workflow 顶层 `*.js` 扫描 | 待实施验证 |
 | 2 | 探针 P3/P4/P6 降级（dry-run / 实现断言 / 代码读+验收覆盖） | 探针期空跑全量插桩测试（P4）与真实 PR 更新（P3 全量）成本高且验收场景 1/4 天然覆盖 | 已确认 |
 | 3 | `pr-lifecycle/lib.cjs` 单测用 `node test/run-tests.js` 直跑，偏离仓级「vitest 禁 node:test」红线 | 测试对象是 `.agents/workflows/` 下的独立 .cjs 脚本，不在任何 pnpm 子包内、无 vitest 配置可挂载；运行器为自写 node 断言脚本（非 node:test 框架），mock runner 依赖注入即可覆盖，引入子包 vitest 配置反而扩大变更面 | 已确认 |
-| 4 | （预留）u-env 探针发现的引擎契约偏差 | 发现即登记，联动设计文档措辞 | — |
+| 4 | （预留）u-env 探针发现的引擎契约偏差 | 发现即登记，联动设计文档措辞 | 见变更历史 2026-09-03 探针结论第 6 条 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u-env | pending | — | — |
+| u-env | committed | 1 | 变更历史 2026-09-03 探针结论（config 清理 + P1/P2/P3/P5 全过；P4/P6 按偏差 2 顺延）；嵌套 loop 产物 `~/.review-fix-loop/Users-zhushanwen-Code-xyz-agent-workspace-dev-0.9.13/wf-1788373060688-ll4ys7/` |
 | u1 | pending | — | — |
 | u2 | pending | — | — |
 | u3 | pending | — | — |
@@ -80,6 +80,8 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- **风险**：① 1.2.0 对项目 `.agents/workflows/*.js` 的自动发现未证实——兜底 = SKILL 文档化绝对路径调用（引擎原生支持）；② daemon/CLI 发起与完成通知形态未定——u-env 探针②定案前 u1 不做发起侧假设；③ P1 需真实派发 8 个 review agent（微型 diff + maxRounds=1 控制成本）；④ Gate B 场景 1 建真实 PR 属对外动作，已列入执行前用户确认项。
+- **风险**：① ~~1.2.0 对项目 `.agents/workflows/*.js` 的自动发现未证实~~ **已证实为不发现**（scripts 用户面为空）——SKILL 文档化绝对路径调用为主路径（非兜底）；② ~~发起/通知形态未定~~ **已定案**：CLI run 恒本地同步（无后台模式），发起 = CLI + Bash run_in_background 包裹，完成 = 读 CLI 输出/stateFile；③ Gate B 场景 1 建真实 PR 属对外动作，已列入执行前用户确认项（另：当前 dev-0.9.13 分支已存在 PR #196，验收须用独立测试分支）。
 - **变更历史**：
   - 2026-09-03 初始计划（对齐设计 §5 七单元；P3/P4/P6 降级；lib 拆分登记偏差 1/2）。
+  - 2026-09-03 **u-env 探针结论**：① `~/.zcode/cli/config.json` plugins.dirs 残留项已移除（唯一条目指向已删除的 feat-app-server-refactor worktree，移除后数组为空）。② zsw 1.2.0 CLI 可用：`node <cache>/bin/zsw.js workflow …`；run 恒本地同步、同步面强制 lint；支持 `.js` 绝对路径 / 内置名；废弃 flag 显式报错。③ **P1 通过**：嵌套 `workflow('review-fix-loop', {targetType:'git-diff', target, batch1:<8 个 .md 逗号拼接>, maxRounds, autoCommit, skipCleanAgents})` 真实派发 8 reviewer 并行 + 聚合 + fix，`terminated=max-rounds` 正常返回；嵌套返回 `{content, parsedOutput}`，`parsedOutput` 含 `terminated/batches/totalFixed/runDir/message`；嵌套 run 有独立 engineRunId 与 `~/.review-fix-loop/<slug>/<id>/` 产物目录（待验证③落定）。**D2 降级门不触发**。④ **P2 通过**：CLI 未知 flag 透传 `$ARGS`（`--runId prw-probe-test-1` → `args.runId`）；引擎 runId 注入 `args._runId`；worker 内 `agent()` 可用。⑤ **P3 通过**（dry-run 两跑一致）：已存在 PR 检测 + 仅内容变化时 `gh pr edit` + `pr_url` 解析正常；create 路径留验收场景 1。⑥ **新引擎契约（u1 必遵）**：`@pi-meta` 块缺 `phases` 数组 → `available=false` 拒跑（typecheckMeta 强制）；lint 入口检查要求脚本直接调用 `agent()/parallel()/pipeline()` 至少一处（仅 `workflow()` 不满足）；脚本返回值必须可 structured-clone。⑦ **P5 通过**：引擎 state 文件 `~/.zcode/zsw/workflow-state/<engineRunId>.jsonl`，JSONL 每行 `{v,runId,spec,state,meta}`，活性判定读末行 `state.status`（已实证 `running`/`done`，`reason=completed`）。⑧ P4（maxBuffer）/P6（real-pi skip 标记）按偏差 2 顺延至 u1 实现断言与 Gate B。
+  - 2026-09-03 P1 探针 loop 的 fix agent 对本计划的修订（基线 hash 回填 + 偏差 #3 测试运行器说明）随 commit `a9de4b4b4` 入库。
