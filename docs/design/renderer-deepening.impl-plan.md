@@ -79,7 +79,7 @@ graph TD
   U13 -->|"route-inbound 静态 import 依赖 u1.3 回直形态"| U21
   U13 -->|"composer 不依赖 u1 但按 D12 波次序（W1 先行清场）"| U31
   U31 -->|"同文件后改（窄契约定性后泛化）"| U32
-  U13 -->|"route-inbound.ts u4.2 在 u1.3 动态 import 回直后动同文件"| U41
+  U13 -->|"route-inbound.ts u4.2 在 u1.3 终态（动态 import 保留，P5 回退）基础上动同文件"| U41
   U41 -->|"gate 函数接口被 applySeqGap 调用点消费"| U42
   U42 -->|"按 D12：组5 依赖组4 完成"| U51
   U51 -->|"core 全链先行，壳代理化消费其接口"| U52
@@ -106,6 +106,8 @@ graph TD
 |---|------|------|------|
 | 1 | 设计 §5 原文「u1.1 与 u1.2 无文件交集可并行」——实际两者领地都含 use-connection.ts（D10① 工厂 vs D11 toast 删） | 计划级修正 | W1 内三单元全串行（u1.1→u1.2→u1.3），已在 DAG 边标注原因 |
 | 2 | 设计 u5.2 原为单单元（6 测试改指+删除）；v4 修正消费面后为 2 生产+16 测试，超单 subagent 规模 | 计划级拆分（v4 已回写设计） | 拆 u5.2（生产+隔离型 7 测试）/u5.3（mock 型 9 测试+删除） |
+| 3 | u1.3 ③ 动态 import 回直：P5 探针失败（renderer api 层 8 文件 39 用例红——静态图解析绕开 ws-client mock 拦截） | 设计预授权降级（D9 联动条款 + §5 P5 行） | 回退保留动态 import，:358 [HISTORICAL] 注释记录实证与失败清单；u4.1/u4.2 DAG 边原因改为「route-inbound.ts u4.2 在 u1.3 终态（动态 import 保留）基础上动同文件」 |
+| 4 | u1.3 clear-pending 测试的 pending 消 mock 用 vi.spyOn(rejectAll) 而非注入 | 实现级合理偏差：use-connection 对 pendingApi.rejectAll 是顶层直接调用，注入消不掉 | spyOn 透传真实实现，断言语义 100% 保持，vi.mock 计数仍 ≤1 |
 
 ## 6 状态表
 
@@ -113,7 +115,7 @@ graph TD
 |------|------|------|----------|
 | u1.1 | committed | 1 | commit 8fa0ac7d1（u1.1）；core 1280 绿 + renderer 3601 绿；grep b/c/d 全过（自回引残余 1 处为注释文本非 import） |
 | u1.2 | committed | 1 | commit 8795046ba（u1.2）；core 1275 绿 + renderer 3601 绿 + mobile 21 绿；死面 grep 零命中；计划路径笔误修正（shell/useConnection → composables/useConnection）；连带授权：builtin-contributions.ts 注释锚点、mock-ws 第三 ipc 注入点 |
-| u1.3 | pending | 0 | — |
+| u1.3 | committed | 1 | commit 6f5759e19（u1.3）；core 1275 绿 + renderer 3601 绿；vi.mock 各文件 1 处；③ P5 探针失败走设计预授权降级（动态 import 保留 + route-inbound.ts:358 [HISTORICAL] 实证），u4.x 以动态 import 保留形态为基线 |
 | u2.1 | pending | 0 | — |
 | u3.1 | pending | 0 | — |
 | u3.2 | pending | 0 | — |
