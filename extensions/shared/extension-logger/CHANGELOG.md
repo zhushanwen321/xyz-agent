@@ -1,5 +1,20 @@
 # @zhushanwen/pi-extension-logger
 
+## 0.4.0
+
+### Minor Changes
+
+- 7b33e6f00: **extension-logger: XYZ_AGENT_EXT_LOG info-level sink; ext-guards: first release of the oncePerProcess guard package**
+
+  - `@zhushanwen/pi-extension-logger`: a new `XYZ_AGENT_EXT_LOG=1` environment variable makes extensions log at INFO level to `<agentDir>/logs/<ext>-<date>.log` with 7-day retention, for hosts (xyz-agent runtime) that inject the variable when spawning pi. Without any of the logging variables the logger stays a zero-disk no-op — standalone pi users see no behavior change. `XYZ_AGENT_DEBUG=1` keeps full DEBUG logging unchanged; when both are set the more verbose wins.
+  - `@zhushanwen/pi-ext-guards` (new shared package): `oncePerProcess(key, fn)` — a process-level dedup wrapper for cross-session side effects in session_start handlers. Rationale: pi's extension cache is keyed by cwd, so a `switch_session` to a session with the same cwd re-invokes the extension factory and accumulates handler registrations — the same event is dispatched once per registration group. `oncePerProcess` caches the first result (value/Promise/error all replayed as the same instance, a rejected Promise does not release the key, and fn errors are re-thrown unwrapped), which makes "at most once per process" semantics explicit instead of relying on each extension's ad-hoc inline flags.
+
+- 7b33e6f00: **shared libs: remove dead package-root barrels and llm-shared dead API surface**
+
+  - The package-root `index.ts` in `@zhushanwen/pi-extension-logger`, `@zhushanwen/pi-file-lock`, and `@zhushanwen/pi-llm-shared` is deleted. Each package's `main` points at `src/index.ts` and none of the root barrels was ever resolved (zero deep imports across the repo), so resolution behavior is unchanged. The `index.ts` entry is dropped from `files` (publish surface shrink) and from the two tsconfigs' `include` that listed it.
+  - `@zhushanwen/pi-llm-shared`: the `recoverable` field is removed from the `CallLLMResult` failure variant. All three construction sites in `src/call.ts` hardcoded `true`, the sole production constructor outside the library (`permission` classifier) never read it, and no consumer branched on it — the field was pure noise on every `ok:false` result. The `CallLLMResult`-typed test fixtures are updated accordingly.
+  - `@zhushanwen/pi-llm-shared`: `extractText` is no longer re-exported from `src/index.ts` (zero external consumers; same-named helpers elsewhere in the repo are deliberate local implementations). The function itself stays in `src/call.ts` for internal use, so deep imports of `../call.ts` are unaffected.
+
 ## 0.3.1
 
 ### Patch Changes
