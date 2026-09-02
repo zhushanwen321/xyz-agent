@@ -111,7 +111,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1.1 | pending | 0 | — |
+| u1.1 | committed | 1 | commit 8fa0ac7d1（u1.1）；core 1280 绿 + renderer 3601 绿；grep b/c/d 全过（自回引残余 1 处为注释文本非 import） |
 | u1.2 | pending | 0 | — |
 | u1.3 | pending | 0 | — |
 | u2.1 | pending | 0 | — |
