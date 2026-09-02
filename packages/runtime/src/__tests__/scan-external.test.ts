@@ -13,7 +13,7 @@
  * 断言锚定外部夹具事实：期望值只来自手写 JSONL 内容，不从实现内部状态断言。
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -114,6 +114,37 @@ describe('scanExternalSessions', () => {
     const { items, rootDir: echoed } = await scanExternalSessions(join(rootDir, 'no-such-dir'))
     expect(items).toEqual([])
     expect(echoed).toBe(join(rootDir, 'no-such-dir'))
+  })
+
+  it('205 文件分批让出：批间 setImmediate >= ceil(205/100)-1 次，且分批不丢文件（D3/MF-3）', async () => {
+    // 独立目录：205 个文件只服务本用例的计数断言，不污染共享 rootDir 的其他用例
+    const batchDir = mkdtempSync(join(tmpdir(), 'scan-external-batch-'))
+    // spy 默认透传原实现（行为零改变，promise 照常 resolve），只计数批间让出。
+    // 不用 fake timers：vi.useFakeTimers 会接管 setImmediate 需手动推进 tick，且与
+    // fs/promises 的真实线程池 I/O（readdir/stat 回调）交互会引入推进顺序耦合。
+    const spy = vi.spyOn(globalThis, 'setImmediate')
+    try {
+      const TOTAL = 205
+      const expectedIds = new Set<string>()
+      for (let i = 0; i < TOTAL; i++) {
+        const id = `id-batch-${String(i).padStart(3, '0')}`
+        expectedIds.add(id)
+        writeSessionJsonl(join(batchDir, `batch-${String(i).padStart(3, '0')}.jsonl`), id, '/tmp/batch', `Batch${i}`)
+      }
+      const { items } = await scanExternalSessions(batchDir, { force: true })
+      // 分批不丢文件：205 个全部扫出（批切分对结果集无影响）
+      expect(items).toHaveLength(TOTAL)
+      const scannedIds = new Set(items.map((m) => m.id))
+      for (const id of expectedIds) {
+        expect(scannedIds.has(id)).toBe(true)
+      }
+      // 批间让出下界：205 文件 / 批 100 → 3 批 → 至少 2 次批间 setImmediate 让出
+      //（实现每次让出恰 1 次调用；用下界断言容许 fs/promises 等无关路径的偶发调用）
+      expect(spy.mock.calls.length).toBeGreaterThanOrEqual(Math.ceil(TOTAL / 100) - 1)
+    } finally {
+      spy.mockRestore()
+      rmSync(batchDir, { recursive: true, force: true })
+    }
   })
 })
 
