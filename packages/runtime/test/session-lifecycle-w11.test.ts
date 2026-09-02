@@ -51,12 +51,10 @@ function makeEnv() {
     getLaunchPresetOptions: vi.fn(async () => undefined),
     toSummary: vi.fn(() => makeSummary('s-restore')),
     findScannedSession: vi.fn(() => undefined),
-    getSession: vi.fn(() => undefined),
-    detachSession: vi.fn(),
     removeSessionEntry: vi.fn(),
     fetchAndBroadcastContext: vi.fn(async () => undefined),
     notifySessionCreated: vi.fn(),
-    // S2 ISP 化：结构性满足 lifecycle 窄接口（S3 后 12 方法 = 实际消费面），无强转
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（S3 后 10 方法 = 实际消费面），无强转
     getActiveSummaries: vi.fn(() => []),
   }
   const pm = {

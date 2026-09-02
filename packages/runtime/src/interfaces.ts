@@ -195,7 +195,8 @@ export interface ISessionService {
    */
   getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]>
   /**
-   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 _findAgentCallFile）。
+   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 record 查找路径
+   * ——subagentId → record.sessionFile，见 session-records.ts）。
    * 找不到返回空串（展示型功能，不 throw）。
    */
   getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string>

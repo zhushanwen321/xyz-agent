@@ -91,7 +91,12 @@ export interface SessionRecordsDeps {
   hasSession(sessionId: string): boolean
   /** MessageBus 当前值（Facade setter 晚期注入，未注入时 null → 广播 no-op）。 */
   getMessageBus(): IMessageBus | null
-  /** 扩展路径解析（readDeclaredEnginesFallback 定位 subagent-workflow 安装目录；Facade getExtensionPaths 委托面）。 */
+  /**
+   * 扩展路径解析（readDeclaredEnginesFallback 定位 subagent-workflow 安装目录）。
+   * 组合根直连 extensionService 注入（session-service.ts 装配点，同迁移前形态）——
+   * 不经 Facade getExtensionPaths 的 resolveExtensionPaths 包装（BUILTIN_EXTENSIONS_MISSING
+   * fail-fast / 其余降级空表），错误直接冒泡。
+   */
   getExtensionPaths(): Promise<string[]>
 }
 

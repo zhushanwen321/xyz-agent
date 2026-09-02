@@ -113,15 +113,13 @@ function makeLifecycle(opts: MakeOpts = {}) {
       lastModified: 1, timestamp: '', size: 0, outcome: null,
     })),
     // FR-20: forkSession 读源 active session 的 sessionFilePath 判断 parentSession fallback。
-    // mock 返回 undefined（源未活跃 / 已落盘），走 source.filePath 主路径。
-    getSession: vi.fn(() => undefined),
+    // 源未注册进 Map（未活跃 / 已落盘），走 source.filePath 主路径。
     toSummary: vi.fn((): SessionSummary => ({
       id: session.id, cwd: session.cwd, label: session.label, status: 'idle',
       lastActiveAt: 1, tokenCount: 0, modelId: 'p/m',
     })),
     fetchAndBroadcastContext: vi.fn(async () => {}),
-    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
-    detachSession: vi.fn(),
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转
     removeSessionEntry: vi.fn(),
     notifySessionCreated: vi.fn(),
     getActiveSummaries: vi.fn(() => []),

@@ -4,7 +4,8 @@
  * import 不含 session-service）。
  *
  * 内容三块：
- * - 纯函数：buildTraceSnapshotFromFile 用例（原 session-trace.test.ts 随迁）。
+ * - 纯函数：buildTraceSnapshotFromFile 用例（原 session-trace.test.ts 随迁）+
+ *   parseTraceHeaderLine fork 血缘透传用例（u-S4 补覆盖）。
  * - 编排层：getTraceEntries（RPC 混合路由）/ syncTraceEntries（增量腿串行链）/
  *   fetchCurrentSystemPrompt（现取轮询）/ onSessionDisposed（销毁清理）——原经 Facade 的
  *   session-trace.test.ts 用例改由本文件直测模块（同一实现代码路径），并补充此前
@@ -25,7 +26,7 @@ import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
-import { TraceSync, buildTraceSnapshotFromFile } from '../trace-sync.js'
+import { TraceSync, buildTraceSnapshotFromFile, parseTraceHeaderLine } from '../trace-sync.js'
 import { EventInterpreter } from '../event-interpreter.js'
 import { MessageBus } from '../../message-bus/message-bus.js'
 import { readFirstJsonlLine, readSessionEndMeta } from '../../../infra/pi/session-file-utils.js'
@@ -179,6 +180,31 @@ describe('纯函数：buildTraceSnapshotFromFile（路径 B 文件直读）', ()
   it('路径未知（filePath=null）→ empty 空态，不读文件不抛错', () => {
     const snapshot = buildTraceSnapshotFromFile('sid-no-path', null, makeSessionStore([]))
     expect(snapshot).toEqual({ sessionId: 'sid-no-path', source: 'empty', entries: [], malformed: [] })
+  })
+})
+
+// ── 纯函数：parseTraceHeaderLine（fork header parentSession 两形态透传，u-S4 补覆盖）──
+
+describe('纯函数：parseTraceHeaderLine（header 首行 → SessionTraceHeaderPayload 纯透传）', () => {
+  it('fork header：parentSession / forkEntryId 原样透传（真实录制首行，零改写零筛选）', () => {
+    // fixture 首行是 pi 真实录制的 fork 产物 header（含血缘指针 parentSession/forkEntryId）；
+    // 透传 = 解析结果与 JSON.parse 逐字段一致——TraceSync 不筛选/不改写 fork 血缘字段
+    //（SessionTraceSnapshot.header 契约：parentSession 两形态原样透传）。
+    const line = readFirstJsonlLine(join(FIXTURES, 'get-entries-3-fork-header.jsonl'))
+    expect(line).toBeDefined()
+    const header = parseTraceHeaderLine(line)
+    expect(header).toEqual(JSON.parse(line as string))
+    expect(header?.parentSession).toBe('s-fork-src')
+    expect(header?.forkEntryId).toBe('a1')
+  })
+
+  it('普通 header（非 fork 产物）：无 parentSession / forkEntryId → 缺省透传，不注入字段', () => {
+    const raw = { type: 'session', version: 3, id: 'plain-sid', timestamp: '2026-08-20T00:00:00.000Z', cwd: '/tmp' }
+    const header = parseTraceHeaderLine(JSON.stringify(raw))
+    expect(header).toEqual(raw)
+    expect(header?.parentSession).toBeUndefined()
+    expect('parentSession' in (header ?? {})).toBe(false)
+    expect('forkEntryId' in (header ?? {})).toBe(false)
   })
 })
 

@@ -84,8 +84,6 @@ function makeEnv() {
   const clientMap = new Map<string, MockClient>()
   // withEphemeralPi mock 交给 fn 的受控 client（断言组 4 断言其 RPC 调用）
   const ephemeralClient = makeClient()
-  // svc.getSession 的数据源（活跃 session 视图）
-  const sessionMap = new Map<string, IManagedSessionView>()
 
   const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => [] as string[]),
@@ -97,11 +95,9 @@ function makeEnv() {
       lastActiveAt: 1, modelId: 'p/m', tokenCount: 0,
     })),
     findScannedSession: vi.fn(() => undefined),
-    getSession: vi.fn((id: string) => sessionMap.get(id)),
     fetchAndBroadcastContext: vi.fn(async () => {}),
     notifySessionCreated: vi.fn(),
-    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
-    detachSession: vi.fn(),
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转
     removeSessionEntry: vi.fn(),
     getActiveSummaries: vi.fn(() => []),
   }
@@ -152,7 +148,7 @@ function makeEnv() {
   const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
 
   return {
-    lifecycle, svc, pm, sessionStore, clientMap, sessionMap, ephemeralClient,
+    lifecycle, svc, pm, sessionStore, clientMap, ephemeralClient,
     /**
      * 手动挂载活跃 session + client（rename 用例直入活跃分支）。
      * S3 迁移：挂载从 svc.getSession stub 数据源随迁为真 registerSession（Map 所有者），

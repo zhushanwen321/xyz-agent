@@ -56,10 +56,8 @@ function makeCreateEnv() {
     })),
     notifySessionCreated: vi.fn(),
     findScannedSession: vi.fn(() => undefined),
-    getSession: vi.fn(() => undefined),
     getLaunchPresetOptions: vi.fn(async () => undefined),
     fetchAndBroadcastContext: vi.fn(async () => undefined),
-    detachSession: vi.fn(),
     removeSessionEntry: vi.fn(),
     getActiveSummaries: vi.fn(() => []),
   }

@@ -2,11 +2,11 @@
  * Facade 暴露给 session/ 子模块（lifecycle / dispatcher / scanner）的内部协议。
  *
  * ISP 化终态（session-service-deepening 设计 D2①/S2）：按逐文件去重调用点实测
- * （grep 'this.svc.'）拆三个窄接口——lifecycle 13 / dispatcher 6 / scanner 2 方法。
- * 跨消费者共享 4 方法（detachSession / getSession / removeSessionEntry 为
- * lifecycle+dispatcher 共用，getActiveSummaries 为 lifecycle+scanner 共用）按消费者
- * 在多个窄接口**重复声明、单一实现**——SessionService implements 三窄接口即编译期
- * 防签名漂移守卫（真 ISP：每个消费者可见面 = 实际消费面）。
+ * （grep 'this.svc.'）拆三个窄接口——lifecycle 10 / dispatcher 6 / scanner 2 方法。
+ * 跨消费者共享 2 方法（removeSessionEntry 为 lifecycle+dispatcher 共用，
+ * getActiveSummaries 为 lifecycle+scanner 共用）按消费者在多个窄接口**重复声明、
+ * 单一实现**——SessionService implements 三窄接口即编译期防签名漂移守卫
+ * （真 ISP：每个消费者可见面 = 实际消费面）。
  *
  * 原宽接口 21 方法中 4 个不进任何窄接口：applyContextUpdate（声明于 ISessionService，
  * 组合根以具体类接线）、handleTurnUsageSideEffects / handleTurnEndSideEffects
@@ -82,18 +82,18 @@ export interface ISessionRegisterDeps {
 }
 
 /**
- * lifecycle 消费的窄接口（SessionLifecycle.svc，12 方法，调用点实测）。
+ * lifecycle 消费的窄接口（SessionLifecycle.svc，10 方法，调用点实测）。
  *
  * S3 写点归位（设计 D2②）：initializeManagedSession 移出本接口——注册逻辑迁入
  * SessionLifecycle.registerSession（sessions Map 所有者内部直调），lifecycle 不再
  * 经 svc 回调 Facade 完成注册（「回调 hub」引力以新形式残留的被否形态）。
+ * detachSession / getSession 同理不在本接口——S3 后 lifecycle 经所有权自查收口
+ * （this.detachSession / this.get，Registry 面），两者仅 dispatcher+组合根消费。
  *
- * 含跨消费者共享方法（重复声明、单一实现）：detachSession / getSession /
- * removeSessionEntry（dispatcher 共用）、getActiveSummaries（scanner 共用）。
+ * 含跨消费者共享方法（重复声明、单一实现）：removeSessionEntry（dispatcher
+ * 共用）、getActiveSummaries（scanner 共用）。
  */
 export interface ILifecycleSessionOps {
-  /** Detach adapter（按 id 查 Map）。pi 事件订阅经 EventAdapter 唯一持有，detach 即收口。 */
-  detachSession(sessionId: string): void
   /** 将 ManagedSession 转为对外 SessionSummary（含 git 信息）。 */
   toSummary(s: IManagedSessionView): SessionSummary
   /** 从 scanPiSessions 结果中按 id 查找持久化 session。 */
@@ -115,8 +115,6 @@ export interface ILifecycleSessionOps {
    * fire-and-forget 语义：失败不阻塞 session 恢复（前端主动拉是主路径）。
    */
   fetchAndBroadcastContext(sessionId: string): Promise<void>
-  /** 只读查 Map，返回 managed session 视图（active 判定 + 字段读改）。 */
-  getSession(sessionId: string): IManagedSessionView | undefined
   /** 从 Map 删除条目（仅删条目，不 detach adapter / 不 destroy 进程）。 */
   removeSessionEntry(sessionId: string): void
   /**
@@ -132,8 +130,8 @@ export interface ILifecycleSessionOps {
 /**
  * dispatcher 消费的窄接口（MessageDispatcher.svc，6 方法，调用点实测）。
  *
- * 含跨消费者共享方法（重复声明、单一实现）：detachSession / getSession /
- * removeSessionEntry（lifecycle 共用）。
+ * 含跨消费者共享方法（重复声明、单一实现）：removeSessionEntry（lifecycle 共用）。
+ * detachSession / getSession 仅本接口+组合根消费（S3 后 lifecycle 走所有权自查）。
  */
 export interface IDispatcherSessionOps {
   /** 确保会话活跃，必要时自动 restore。 */

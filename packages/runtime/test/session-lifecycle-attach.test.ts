@@ -84,12 +84,10 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
         lastModified: Date.now(), timestamp: header.timestamp, size: 0,
       } as ScannedSession
     }),
-    getSession: vi.fn(() => undefined),
-    detachSession: vi.fn(),
     removeSessionEntry: vi.fn(),
     fetchAndBroadcastContext: vi.fn(async () => undefined),
     notifySessionCreated: vi.fn(),
-    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转
     getActiveSummaries: vi.fn(() => []),
   }
   const pm = {

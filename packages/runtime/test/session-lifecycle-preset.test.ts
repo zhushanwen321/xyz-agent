@@ -106,10 +106,8 @@ function makeMocks(opts: {
     notifySessionCreated: vi.fn(),
     findScannedSession: vi.fn(() => undefined),
     fetchAndBroadcastContext: vi.fn(async () => undefined),
-    detachSession: vi.fn(),
     removeSessionEntry: vi.fn(),
-    getSession: vi.fn(() => undefined),
-    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转
     getActiveSummaries: vi.fn(() => []),
   }
 
@@ -311,7 +309,6 @@ describe('session-lifecycle preset integration', () => {
 
     // 非 active 路径
     unlinkMock.mockClear()
-    ;(svc.getSession as ReturnType<typeof vi.fn>).mockReturnValue(undefined)
     ;(svc.findScannedSession as ReturnType<typeof vi.fn>).mockReturnValue({
       id: 's2', filePath: '/tmp/s2.jsonl', cwd: '/repo',
     })

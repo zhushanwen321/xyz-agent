@@ -349,11 +349,6 @@ export class TraceSync {
    * 无参全量拉取（'' 不是合法 entry id，下传 pi 当 since 用会 Entry not found / 空结果，
    * `?? undefined` 只处理 null/undefined 挡不住 ''）；真实 leafId / undefined 原样透传 since。
    */
-  /**
-   * 哨兵感知 get_entries 调用：baseline === ''（空 session 基线——已建立但当时无叶子）时
-   * 无参全量拉取（'' 不是合法 entry id，下传 pi 当 since 用会 Entry not found / 空结果，
-   * `?? undefined` 只处理 null/undefined 挡不住 ''）；真实 leafId / undefined 原样透传 since。
-   */
   private getEntriesSince(client: IPiEngine, baseline: string | undefined): Promise<EntriesSinceResult> {
     // pi 响应是动态 JSON（PiMessage=unknown，ports 层「类型系统认输」既定语义）——收窄
     // 责任收敛到本单点，两处消费点直接拿 EntriesSinceResult（原先各自 as 收窄）。

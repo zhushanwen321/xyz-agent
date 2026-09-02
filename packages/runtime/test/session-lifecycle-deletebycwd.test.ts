@@ -35,11 +35,10 @@ function makeHarness(deleteImpl?: (id: string) => Promise<void>) {
     scanSessions: vi.fn((): ScannedSessionMeta[] => []),
     refreshAll: vi.fn(),
   } as unknown as ISessionStore
-  // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法），无强转；deleteByCwd 只真实消费
+  // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法），无强转；deleteByCwd 只真实消费
   // getActiveSummaries（delete 被下方 spy 覆盖，不走其余成员），空 vi.fn 仅为满足接口面
   const svc: ILifecycleSessionOps = {
     getActiveSummaries: vi.fn((): SessionSummary[] => []),
-    detachSession: vi.fn(),
     toSummary: vi.fn(),
     findScannedSession: vi.fn(),
     getSkillPaths: vi.fn(),
@@ -47,7 +46,6 @@ function makeHarness(deleteImpl?: (id: string) => Promise<void>) {
     getReplaceSystemPrompt: vi.fn(),
     getLaunchPresetOptions: vi.fn(),
     fetchAndBroadcastContext: vi.fn(),
-    getSession: vi.fn(),
     removeSessionEntry: vi.fn(),
     notifySessionCreated: vi.fn(),
   }

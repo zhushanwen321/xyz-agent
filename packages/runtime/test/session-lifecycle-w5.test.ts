@@ -62,11 +62,9 @@ function makeMocks() {
     })),
     // S3-W2：创建入口收敛点（lifecycle 三处 return 前调用）
     notifySessionCreated: vi.fn(),
-    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转
     getLaunchPresetOptions: vi.fn(async () => undefined),
     findScannedSession: vi.fn(() => undefined),
-    getSession: vi.fn(() => undefined),
-    detachSession: vi.fn(),
     removeSessionEntry: vi.fn(),
     fetchAndBroadcastContext: vi.fn(async () => undefined),
     getActiveSummaries: vi.fn(() => []),

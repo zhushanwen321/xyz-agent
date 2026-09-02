@@ -434,8 +434,9 @@ export interface PiAutoRetryEndEvent extends PiBaseMessage {
 export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /**
- * ThinkingLevel 值域双向防漂移锁（S6 自 services/session/launch-params.ts 迁入——比对双方
- * 是本文件的 Pi 侧类型与 shared 常量，概念自然家在 Pi 边界镜像文件）。锁定的两个漂移方向：
+ * ThinkingLevel 值域双向防漂移锁（S6 自 services/session/session-lifecycle.ts 迁入——比对双方
+ * 是本文件的 Pi 侧类型与 shared 常量，概念自然家在 Pi 边界镜像文件；launch-params.ts
+ * 从未承载此锁）。锁定的两个漂移方向：
  * - 方向①（Expect<typeof PI_THINKING_LEVELS extends readonly PiThinkingLevel[]>）：
  *   shared 常量出现 pi-protocol 之外的值（shared 手改常量与本手写 union 漂移）→ 违
  *   Expect 的 true 约束 → 编译错；

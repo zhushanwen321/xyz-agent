@@ -12,7 +12,7 @@
  * Facade（组装根在 Facade 构造器,按迁移前体内顺序执行 registerReplicatedStates →
  * ensureRecordEntriesCache → reconciler）,S5/S6 后换成 projection/record 模块自身。
  *
- * 其余 Facade 协作经 ILifecycleSessionOps 窄接口（12 方法,调用点实测,见
+ * 其余 Facade 协作经 ILifecycleSessionOps 窄接口（10 方法,调用点实测,见
  * session-internal.ts）;adapterFactory/send 闭包经 ISessionRegisterDeps 窄依赖注入
  * （send 对 Facade 晚期注入状态的读经 getter 动态解析,语义与原内联闭包等价）。
  *

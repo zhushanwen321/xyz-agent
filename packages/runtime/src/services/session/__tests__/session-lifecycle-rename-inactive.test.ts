@@ -28,15 +28,13 @@ import type { ScannedSession } from '../types.js'
 
 /**
  * 构造最小 lifecycle 环境（renameSession 非活跃分支路径）：svc 只需
- * findScannedSession/getSession；pm 只需 withEphemeralPi（附着瞬间读文件供断言）。
+ * findScannedSession；pm 只需 withEphemeralPi（附着瞬间读文件供断言）。
  */
 function makeEnv(scanned?: ScannedSession) {
-  // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转。
-  // 本测试路径只真实消费 findScannedSession/getSession，其余空 vi.fn 仅为满足接口面
+  // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转。
+  // 本测试路径只真实消费 findScannedSession，其余空 vi.fn 仅为满足接口面
   const svc: ILifecycleSessionOps = {
     findScannedSession: vi.fn(() => scanned ?? undefined),
-    getSession: vi.fn(() => undefined),
-    detachSession: vi.fn(),
     toSummary: vi.fn(),
     getSkillPaths: vi.fn(),
     getExtensionPaths: vi.fn(),

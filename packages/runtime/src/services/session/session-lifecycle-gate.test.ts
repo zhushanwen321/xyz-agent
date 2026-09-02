@@ -41,7 +41,7 @@ function makeFakeAdapter(): IEventAdapter {
  * S2 ISP 化（设计 §4.2 场景 B 主验收点）：svc 结构性满足 lifecycle 窄接口，svc stub 强转彻底消失。
  * S3 写点归位：initializeManagedSession 从 svc stub 移除（接口已删）——注册走真
  * registerSession（sessions Map 所有权在 lifecycle），装配依赖经 registerDeps 注入
- * fake adapterFactory；svc stub 面收窄为 12 方法 = 现接口实际消费面。
+ * fake adapterFactory；svc stub 面收窄为 10 方法 = 现接口实际消费面。
  */
 function makeEnv() {
   const svc: ILifecycleSessionOps = {
@@ -53,9 +53,7 @@ function makeEnv() {
     // S3-W2：创建入口收敛点（lifecycle 三处 return 前调用）
     notifySessionCreated: vi.fn(),
     findScannedSession: vi.fn(() => undefined),
-    getSession: vi.fn(() => undefined),
     fetchAndBroadcastContext: vi.fn(async () => undefined),
-    detachSession: vi.fn(),
     removeSessionEntry: vi.fn(),
     getActiveSummaries: vi.fn(() => []),
   }

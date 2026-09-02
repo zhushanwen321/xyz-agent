@@ -124,12 +124,10 @@ function makeLifecycleEnv() {
       lastActiveAt: Date.now(), modelId: 'p/m', tokenCount: 0,
     })),
     findScannedSession: vi.fn((): ScannedSession | undefined => undefined),
-    getSession: vi.fn(() => undefined),
     fetchAndBroadcastContext: vi.fn(async () => undefined),
     // S3-W2 被测收敛点
     notifySessionCreated: vi.fn(),
-    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
-    detachSession: vi.fn(),
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转
     removeSessionEntry: vi.fn(),
     getActiveSummaries: vi.fn(() => []),
   }

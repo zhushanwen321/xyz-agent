@@ -32,9 +32,7 @@ function makeEnv() {
     toSummary: vi.fn(),
     notifySessionCreated: vi.fn(),
     findScannedSession: vi.fn(() => undefined),
-    getSession: vi.fn(() => undefined),
     fetchAndBroadcastContext: vi.fn(async () => undefined),
-    detachSession: vi.fn(),
     removeSessionEntry: vi.fn(),
     getActiveSummaries: vi.fn(() => []),
   }
