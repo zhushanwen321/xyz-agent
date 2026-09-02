@@ -261,9 +261,9 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
     process.env[ENV_DEPTH] = "0";
 
     const { service, store } = setup({});
-    const execCtxAls = Reflect.get(service, "execCtxAls") as ExecCtxAls;
+    const execNesting = Reflect.get(service, "execNesting") as ExecCtxAls;
 
-    const handle = await execCtxAls.run({ recordId: "sa-inline-parent", depth: 3 }, () =>
+    const handle = await execNesting.run({ recordId: "sa-inline-parent", depth: 3 }, () =>
       service.execute({ task: "inline nested", ctxModel }),
     );
 

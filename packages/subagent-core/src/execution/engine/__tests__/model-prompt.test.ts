@@ -16,7 +16,7 @@ import { buildEngineModelsPromptAppend, buildSubagentEngineSection } from "../mo
 function fakeEngine(id: string, models: Array<{ id: string; name?: string }> | null): EnginePort {
   return {
     id,
-    capabilities: () => ({ conversation: "unsupported", steer: "unsupported", sandbox: "none" }),
+    capabilities: () => ({ conversation: "unsupported", steer: "unsupported", sandbox: "none", maxTurns: false }),
     probe: async () => ({ ok: true, engineVersion: "test" }),
     run: async () => {
       throw new Error("not used in this test");

@@ -195,6 +195,8 @@ export class PiEngine implements EnginePort {
       interrupt: "kill-only",
       // argv-mirror 镜像主进程 --approve 等 flag
       permissionMode: "native",
+      // [D3-④] turn limiter + spawn watchdog 估算兑现轮数上限（预检 gate 据此放行）
+      maxTurns: true,
     };
   }
 

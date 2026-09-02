@@ -31,16 +31,16 @@ import {
   tryTransition,
 } from "./execution-record.ts";
 import { doFinalizeRecord, doFinalizeRoundToIdle } from "./finalize-record.ts";
-import { getEngineDataDir } from "./engine/common/data-dir.ts";
-import { EngineError } from "./engine/common/errors.ts";
-import { JournalWriter } from "./engine/common/event-journal.ts";
-import { resolveJournalPath } from "./engine/paths.ts";
+import { assertTaskShapeSupported } from "./engine/common/capability-gate.ts";
+import { ExecutionNestingContext } from "./engine/common/nesting-guard.ts";
+import { JOURNAL_INITIAL_POOL_KEY, wireEventJournal } from "./engine/common/journal-wiring.ts";
 import { executeOptionsToEngineTaskSpec } from "./engine/host-task-spec.ts";
-import { PI_POOL_KEY, PiEngine } from "./engine/engines/pi/pi-engine.ts";
+import { PiEngine } from "./engine/engines/pi/pi-engine.ts";
+import { PI_POOL_KEY } from "./engine/engines/pi/pi-engine.ts";
 import type { ChatRoundTicket, PiEngineService } from "./engine/engines/pi/pi-engine.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
 import { DEFAULT_ENGINE_ID, getEngine } from "./engine/registry.ts";
-import { type EngineRouteResult, resolveEngineRouting, routeEngine } from "./engine/routing.ts";
+import { type EngineRouteResult, routeEngineForHost } from "./engine/routing.ts";
 import type { AgentOutcome } from "./engine/types.ts";
 import { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
@@ -242,16 +242,12 @@ export class SubagentService {
    *  （collectRecords filter 用，与 createRecordForMode 的 rootSessionId 盖章同源——子进程
    *  因此看到整棵 ROOT 树）。设计见 recursive-subagent-visibility.md 决策 3。 */
   private sessionRootId: string | null = null;
-  /** 进程级执行上下文基线（不依赖 ALS 贯穿——pi RPC mode 的 stdin JSONL 是事件回调式
-   *  （attachJsonlLineReader stream.on("data")），每个命令是独立异步链，initSession 里
-   *  execCtxAls.enterWith 的 store 不会贯穿到后续 tool 调用事件（实测：递归第二层
-   *  parentRecordId/depth 丢失而 rootSessionId 正确——rootSessionId 是实例字段所以不受影响）。
-   *  基线 = 本进程自己的身份（initSession 从 env 读取，与 sessionRootId 同机制）：
-   *  读 ALS store 失败时兜底，保证「本进程派发的 subagent 都是本进程记录的孩子」
-   *  这一跨进程树形关系成立。
-   *  initSession 设置：有 env PI_SUBAGENT_SELF_RECORD_ID → {recordId: env 值, depth: env DEPTH}；
-   *  无 env（根进程）→ null（顶层）。 */
-  private execCtxBaseline: { recordId: string | undefined; depth: number } | null = null;
+  /**
+   * [D3-⑤ 嵌套防护合一] 进程内执行嵌套上下文（原 execCtxAls 私有字段下沉公共层
+   * common/nesting-guard.ts ExecutionNestingContext——机制注释含 ALS 断裂基线兜底）。
+   * 实例 per-Service：基线随宿主进程身份而异（initSession 从 env 建立）。
+   */
+  private readonly execNesting = new ExecutionNestingContext();
   /** fork 深度基线（同 ALS 断裂问题：forkDepthAls.getStore() 兜底用）。根进程=0。 */
   private forkDepthBaseline = 0;
   /** [MF-3] 所属根进程 cwd（sessions/records 落盘目录编码键）。
@@ -275,11 +271,10 @@ export class SubagentService {
    *  [MF#2] 旧实现用单实例字段跨执行链共享 → 并发下 A 还原深度后 B 读到被压低值 → 护栏失效。 */
   private readonly forkDepthAls = new AsyncLocalStorage<number>();
 
-  /** subagent 执行上下文按 async 调用链传递（当前正在跑的 record 身份 + 递归深度）。
-   *  B run() 期间包此 ALS，B 内创建 C 时 createRecordForMode 读到 B 的 recordId/depth，
-   *  据此设 C.parentRecordId=B.id、C.depth=B.depth+1。主 session 链上无 store → 顶层。
-   *  与 forkDepthAls 独立：后者只数 fork 链（fork=true 才递增），本 ALS 数所有 subagent 嵌套。 */
-  private readonly execCtxAls = new AsyncLocalStorage<{ recordId: string | undefined; depth: number }>();
+  // [D3-⑤] subagent 执行上下文（record 身份 + 递归深度）的 ALS 传递已下沉公共层
+  // （execNesting 字段，common/nesting-guard.ts）——「B run() 期间挂身份，B 内创建 C
+  // 时读到 B」的机制与 ALS 断裂基线兜底注释见该文件。与 forkDepthAls 独立：后者只数
+  // fork 链（fork=true 才递增），嵌套上下文数所有 subagent 嵌套。
 
   /** [review MF1] record 级在途 resume 守卫。冷路径续轮（resumeChatRound）全部守卫通过后
    *  add，runAndFinalize 结束（finally，覆盖轮次完成 / MF-6 失败回退 / abort / 终态化所有
@@ -384,8 +379,8 @@ export class SubagentService {
     //   - selfRecordId：子进程自己的 record id（孙 subagent 的直接父）
     //   - depth：子进程的嵌套深度
     //   - rootCwd：真 ROOT 的 cwd（[MF-3] 落盘目录编码键，worktree 下与自身 cwd 不同）
-    // 子进程读 env 建立基线后，createRecordForMode 读 execCtxAls 自动正确（孙挂到子名下）。
-    // 根进程无 env → sessionRootId = init.sessionId（自己是 root），execCtxAls 不 enterWith（顶层）。
+    // 子进程读 env 建立基线后，createRecordForMode 读嵌套上下文自动正确（孙挂到子名下）。
+    // 根进程无 env → sessionRootId = init.sessionId（自己是 root），嵌套上下文不 enterWith（顶层）。
     // enterWith 贯穿整个 session 生命周期（与 forkDepthAls 同构，决策 4）。
     const envRoot = process.env[ENV_ROOT_SESSION_ID];
     this.sessionRootId = envRoot ?? init.sessionId;
@@ -393,13 +388,14 @@ export class SubagentService {
     if (envSelfRecord !== undefined && envSelfRecord !== "") {
       const envNestingDepth = Number.parseInt(process.env[ENV_DEPTH] ?? "0", 10);
       const nestingDepth = Number.isNaN(envNestingDepth) ? 0 : envNestingDepth;
-      // [ALS 断裂修复] 基线兜底：enterWith 在 pi 事件回调模型下不可靠（见 execCtxBaseline 注释），
-      // 基线是 createRecordForMode / 护栏读 ALS store 失败时的权威回退。
-      this.execCtxBaseline = { recordId: envSelfRecord, depth: nestingDepth };
-      this.execCtxAls.enterWith({ recordId: envSelfRecord, depth: nestingDepth });
+      // [ALS 断裂修复] 基线兜底：enterWith 在 pi 事件回调模型下不可靠（机制注释见
+      // common/nesting-guard.ts ExecutionNestingContext），基线是 createRecordForMode /
+      // 护栏读 ALS store 失败时的权威回退。
+      this.execNesting.setBaseline({ recordId: envSelfRecord, depth: nestingDepth });
+      this.execNesting.enterWith({ recordId: envSelfRecord, depth: nestingDepth });
       if (process.env.XYZ_AGENT_DEBUG) {
         logger.debug(
-          `[subagents] execCtxAls initialized: recordId=${envSelfRecord} depth=${nestingDepth} rootSessionId=${envRoot ?? init.sessionId}`,
+          `[subagents] execNesting initialized: recordId=${envSelfRecord} depth=${nestingDepth} rootSessionId=${envRoot ?? init.sessionId}`,
         );
       }
     }
@@ -682,13 +678,14 @@ export class SubagentService {
   async execute(opts: ExecuteOptions): Promise<ExecutionHandle> {
     this.assertReady();
 
-    // 通用嵌套深度护栏（D-033）：execCtxAls 记录所有 subagent 嵌套层级（fork + 非 fork），
-    // 每层 +1。MAX_FORK_DEPTH 同时限 fork 链与通用嵌套——非 fork 递归虽不累积 session 体积，
-    // 但耗资源且 LLM 易陷入「委派→再委派」死循环。在所有副作用之前拦截，错误直达调用方。
+    // 通用嵌套深度护栏（D-033）：嵌套上下文（[D3-⑤] 公共层 ExecutionNestingContext）
+    // 记录所有 subagent 嵌套层级（fork + 非 fork），每层 +1。MAX_FORK_DEPTH 同时限
+    // fork 链与通用嵌套——非 fork 递归虽不累积 session 体积，但耗资源且 LLM 易陷入
+    // 「委派→再委派」死循环。在所有副作用之前拦截，错误直达调用方。
     // 计数基准：顶层 nestingDepth=0，nestingDepth>MAX 被拒。与 fork 体积护栏（parentForkDepth 检查）
     // 互补：本护栏更严（计所有嵌套），混合链下先生效；两者共享 MAX_FORK_DEPTH 上限不漂移。
-    // [ALS 断裂修复] getStore() 在 pi 事件回调模型下可能读空（enterWith 不贯穿），基线兜底。
-    const parentNesting = this.execCtxAls.getStore() ?? this.execCtxBaseline;
+    // [ALS 断裂修复] current() 内含基线兜底（pi 事件回调模型下 enterWith 不贯穿）。
+    const parentNesting = this.execNesting.current();
     const nestingDepth = parentNesting ? parentNesting.depth + 1 : 0;
     if (nestingDepth > MAX_FORK_DEPTH) {
       throw new ForkDepthExceededError(
@@ -702,44 +699,27 @@ export class SubagentService {
     // ── 1. IDENTITY 解析（确认 → agentConfig → resolveModel）──
     const identity = await this.resolveIdentity(opts);
 
-    // ── 1.5 引擎路由（D2 单轨：全引擎统一 executeViaEngine，无 pi 特判主路径）──
-    // 三层解析（调用参数 > agent frontmatter > config.json defaultEngine）仍是同步纯
-    // 函数。pi（缺省/显式 pi）走本地 DI 引擎实例同步短路——不经 routeEngine 的
-    // await/probe（pi 恒免探，缺省路径时序与旧 pi 主路径一致）；非 pi 经 routeEngine
-    // （probe 编排 + fallback 三守卫），兜底回 pi 时携带 engineFallback 留痕并把引擎
-    // 实例换回本地绑定。时机选择：路由（含 probe）在 record 创建前完成——兜底时
-    // record 按 pi 语义创建 + engineFallback 留痕（D5 字节级守护只约束「无 fallback
-    // 的纯缺省路径」，兜底路径的 entry 允许含 engine/engineFallback 字段）；守卫
-    // 命中/strict 时 routeEngine 在此 throw，不产生孤儿 record。
+    // ── 1.5 引擎路由（D2 单轨 + D3-② 路由单点：统一经 routeEngineForHost）──
+    // 唯一实现在 engine/routing.ts（pi 同步短路 + registry 注入 + 兜底回本地 pi 实例
+    // 收敛于此）；本调用点只装配三层输入与注入件。时机：路由（含 probe）在 record
+    // 创建前完成——兜底时 record 按 pi 语义创建 + engineFallback 留痕（D5 字节级守护
+    // 只约束「无 fallback 的纯缺省路径」）；守卫命中/strict 时在此 throw，不产生孤儿
+    // record。pi 请求路径同步短路（routed 非 Promise，零微任务——缺省路径时序不变）。
     const routingInput = {
       callEngine: opts.engine,
       agentEngine: identity.agentConfig?.engine,
       globalDefaultEngine: this.modelService.getGlobalConfig().defaultEngine,
     };
-    const routing = resolveEngineRouting(routingInput);
-    let route: EngineRouteResult;
-    if (routing.engineId === DEFAULT_ENGINE_ID) {
-      route = {
-        engine: this.chatPiEngine,
-        engineId: DEFAULT_ENGINE_ID,
-        requestedEngineId: DEFAULT_ENGINE_ID,
-        source: routing.source,
-      };
-    } else {
-      const resolved = await routeEngine({
-        routing: routingInput,
-        // 守卫 c 判据只看调用方显式指定的 model（resolved model 含 ctxModel 兼底，
-        // 恒非空会把一切兜底误判为 model 绑定命中）
-        taskModel: opts.model,
-        strict: this.modelService.getGlobalConfig().engineRouting?.strict === true,
-        probe: (engineId) => getEngine(engineId).probe(),
-      });
-      route = resolved.engineId === DEFAULT_ENGINE_ID
-        // 兜底成功（典型：默认路由 + probe 失败 + 无守卫命中）→ pi 本地 DI 实例接管
-        //（registry 'pi' 单例绑进程级全局服务定位器，与本实例可能不同源）
-        ? { ...resolved, engine: this.chatPiEngine }
-        : resolved;
-    }
+    const routed = routeEngineForHost({
+      routing: routingInput,
+      // 守卫 c 判据只看调用方显式指定的 model（resolved model 含 ctxModel 兼底，
+      // 恒非空会把一切兜底误判为 model 绑定命中）
+      taskModel: opts.model,
+      strict: this.modelService.getGlobalConfig().engineRouting?.strict === true,
+      probe: (engineId) => getEngine(engineId).probe(),
+      piEngine: this.chatPiEngine,
+    });
+    const route: EngineRouteResult = routed instanceof Promise ? await routed : routed;
     return this.executeViaEngine(opts, identity, route, mode);
   }
 
@@ -990,12 +970,12 @@ export class SubagentService {
     }
     // [v4 A-5 / P7] 直接父校验：rootSessionId 已确认 record 属于本 session 树，但递归场景下
     // 孙级 record（parentRecordId = 某子进程的 self recordId）的子进程句柄只存在于其直接父
-    // 进程内存。主进程（execCtxBaseline=null）若仅凭 rootSessionId 通过就 message 孙级，会走
+    // 进程内存。主进程（基线 null）若仅凭 rootSessionId 通过就 message 孙级，会走
     // 冷路径重新 spawn → 双写同一 session 文件（P7 双写者窗口）。统一用 baseline recordId 校验：
     //   - 主进程 baseline=undefined → 只能操作 parentRecordId=undefined 的根层 record
     //   - 子进程 baseline="sa-X"    → 只能操作 parentRecordId="sa-X" 的直接孩子
     // record.parentRecordId===undefined 视作根层，仅主进程可操作（身份缺省的旧/异常 record 归此）。
-    const baselineRecordId = this.execCtxBaseline?.recordId ?? undefined;
+    const baselineRecordId = this.execNesting.baseline()?.recordId ?? undefined;
     if (record.parentRecordId !== baselineRecordId) {
       throw new Error(
         `subagent ${id} is owned by its direct parent; message it through that parent ` +
@@ -1118,7 +1098,7 @@ export class SubagentService {
     if (found.rootSessionId !== this.sessionRootId) {
       return undefined;
     }
-    const baselineRecordId = this.execCtxBaseline?.recordId ?? undefined;
+    const baselineRecordId = this.execNesting.baseline()?.recordId ?? undefined;
     if (found.parentRecordId !== baselineRecordId) {
       throw new Error(
         `subagent ${id} is owned by its direct parent; message it through that parent ` +
@@ -1287,9 +1267,9 @@ export class SubagentService {
   ): Promise<WorkflowAgentResult> {
     this.assertReady();
 
-    // ── BC-12 嵌套护栏：复用 execute() 的 execCtxAls 深度检查 ──
-    // [ALS 断裂修复] getStore() 可能读空，基线兜底（与 execute 同）。
-    const parentNesting = this.execCtxAls.getStore() ?? this.execCtxBaseline;
+    // ── BC-12 嵌套护栏：复用 execute() 的嵌套上下文深度检查 ──
+    // [ALS 断裂修复] current() 内含基线兜底（与 execute 同）。
+    const parentNesting = this.execNesting.current();
     const nestingDepth = parentNesting ? parentNesting.depth + 1 : 0;
     if (nestingDepth > MAX_FORK_DEPTH) {
       throw new ForkDepthExceededError(
@@ -1450,11 +1430,11 @@ export class SubagentService {
     const controller = new AbortController();
 
     // 从 async 调用链读父执行上下文：主 session 链上无 store → 顶层 record；
-    // B run() 期间包了 execCtxAls，B 内创建 C 时读到 B → C.parentRecordId=B.id, C.depth=B.depth+1。
+    // B run() 期间包了嵌套上下文，B 内创建 C 时读到 B → C.parentRecordId=B.id, C.depth=B.depth+1。
     // depth 语义：顶层（无父）=0；有父=父 depth+1。靠 recordId 是否存在区分，不用负数魔数。
-    // [ALS 断裂修复] getStore() 在 pi 事件回调模型下可能读空（enterWith 不贯穿），
-    // 基线兜底——本进程的身份在 initSession 已确定（env 注入），任何上下文下都能正确挂父链。
-    const parentCtx = this.execCtxAls.getStore() ?? this.execCtxBaseline;
+    // [ALS 断裂修复] current() 内含基线兜底——本进程的身份在 initSession 已确定（env 注入），
+    // 任何上下文下都能正确挂父链。
+    const parentCtx = this.execNesting.current();
     const parentRecordId = parentCtx?.recordId;
     const depth = parentCtx ? parentCtx.depth + 1 : 0;
 
@@ -1492,9 +1472,9 @@ export class SubagentService {
   // ── 引擎分支（D4/D10：非 pi 引擎的 chat 域执行骨架，U0）──────────
 
   /**
-   * chat 域统一执行入口（D2 单轨：全引擎——含 pi——经此进入 EnginePort）。routeEngine
-   * /pi 同步短路（注册表校验 + probe/守卫）已由 execute 完成——这里只剩 unsupported
-   * 预检 → record 创建+盖章 → worktree → detached 引擎 run。
+   * chat 域统一执行入口（D2 单轨：全引擎——含 pi——经此进入 EnginePort）。路由
+   *（routeEngineForHost：三层 + pi 同步短路 + probe/守卫）已由 execute 完成——这里
+   * 只剩 unsupported 预检 → record 创建+盖章 → worktree → detached 引擎 run。
    * 全部同步拒绝发生在 record 创建前（不产生孤儿 record）。
    */
   private async executeViaEngine(
@@ -1504,7 +1484,12 @@ export class SubagentService {
     mode: ExecutionMode,
   ): Promise<ExecutionHandle> {
     const engine = route.engine;
-    this.assertEngineParamSupport(engine, opts);
+    // [D3-④ 预检 capabilities 化] 唯一实现 = common/capability-gate（capabilities
+    // 驱动，含 maxTurns 扩位）。检查点钉死：execute/executeViaEngine 同步段、record
+    // 创建前（engine.capabilities() 同步可得）——承接「全部同步拒绝发生在 record
+    // 创建前、不产生孤儿 record」不变量（其后的 kickOffEngineRun 是 fire-and-forget，
+    // 检查若只落在 engine.run 内则拒绝异步化为「派发成功 + 静默失败 record」）。
+    assertTaskShapeSupported(engine.id, engine.capabilities(), opts);
     // record 盖章路由结果（D5 字节级守护的执行侧落点）：
     //   - pi 纯缺省/显式 pi：不盖 engine 键（pi record entry 序列化产物不得新增 engine
     //     键，undefined 经 JSON 省略）——与旧 pi 主路径 piOpts 剥离语义逐字节一致；
@@ -1576,46 +1561,6 @@ export class SubagentService {
   }
 
   /**
-   * 引擎的 unsupported 参数预检（D11 处置「调用前拒绝」的判据 = capabilities）。
-   * conversation / fork / worktree 三参数对首期接入的非 pi 引擎（zcode）均不可用：
-   * conversation 依赖同进程 idle 复用、fork 依赖父 pi session 上下文继承、worktree 依赖
-   * 文件隔离（capabilities.sandbox='none'）。同步 throw，文案含 capabilities 依据与恢复指引。
-   *
-   * pi 直通（D2 单轨后 chat 域全引擎过此预检）：三参数均为 pi 已支持能力
-   *（conversation/resume='native'、sandbox='emulated'、fork=pi session 上下文继承），
-   * 且 D5 字节级守护要求纯缺省 pi 路径零拦截——u-2b（D3-④）预检 capabilities 化
-   *（EngineCapabilities 扩位 + 单点拦截 module）后此直通由能力位判据取代。
-   */
-  private assertEngineParamSupport(engine: EnginePort, opts: ExecuteOptions): void {
-    if (engine.id === DEFAULT_ENGINE_ID) return;
-    const caps = engine.capabilities();
-    if (opts.conversation === true && caps.conversation === "unsupported") {
-      throw new EngineError(
-        "engine_capability_unsupported",
-        `engine '${engine.id}' 不支持 conversation（capabilities.conversation = 'unsupported'，` +
-          `spawn 单轮模式无同进程 idle 复用，message/close 交互控制面不可用）`,
-        `改用 engine: pi（支持 conversation 续聊），或不传该参数（一次性任务默认形态）`,
-      );
-    }
-    if (opts.fork === true || opts.forkFromSessionFile !== undefined) {
-      throw new EngineError(
-        "engine_capability_unsupported",
-        `engine '${engine.id}' 不支持 fork${opts.forkFromSessionFile !== undefined ? "（fork-from 同为父 pi session 上下文继承）" : ""}（fork 依赖父 pi session 上下文继承，` +
-          `capabilities.steer = '${caps.steer}'——非 pi 引擎无父 session 分叉通道）`,
-        `把所需父上下文写进 task 正文后不传 fork，或改用 engine: pi`,
-      );
-    }
-    if ((opts.worktree === true || typeof opts.worktree === "object") && caps.sandbox === "none") {
-      throw new EngineError(
-        "engine_capability_unsupported",
-        `engine '${engine.id}' 不支持 worktree 隔离（capabilities.sandbox = 'none'，` +
-          `引擎未接文件系统隔离层）`,
-        `改用 engine: pi（worktree 隔离可用），或不传该参数（在 parent cwd 执行）`,
-      );
-    }
-  }
-
-  /**
    * 非 pi 引擎的 detached 执行编排（与 pi 轮次 kick-off 同构的 background 语义）：
    * pool 并发槽（maxConcurrent 对非 pi 引擎同样生效）→ journal 接线（D6 第②级：
    * taskId=record.id，初始池 key 占位 'shared'，onPoolResolved retarget 到引擎实际
@@ -1664,23 +1609,19 @@ export class SubagentService {
     engine: EnginePort,
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    const journal = new JournalWriter({
-      path: resolveJournalPath(getEngineDataDir(), engine.id, "shared", record.id),
-      taskId: record.id,
-      engineId: engine.id,
-    });
-    const retargetJournal = (poolKey: string): void => {
-      journal.retarget(resolveJournalPath(getEngineDataDir(), engine.id, poolKey, record.id));
-    };
+    // [D3-③ journal 接线合一] writer + retarget + 路径权威收敛 common/journal-wiring
+    //（与 SAR 同一实现）。chat 域无下游 onEvent 消费者——journal 是事件唯一出口，
+    // 不传 forwardEvents。
+    const journal = wireEventJournal({ engineId: engine.id, taskId: record.id });
     // 对齐点③：journal 路径权威 = 引擎声明的池 key（writer 初始用占位，retarget 后
-    // 与 handle.poolKey 同源）。模式对齐 SAR 的 journalingOnEvent：先落盘再转发。
+    // 与 handle.poolKey 同源）。
     const runCtx: RunContext = {
       taskId: record.id,
-      poolKey: "shared",
+      poolKey: JOURNAL_INITIAL_POOL_KEY,
       signal,
       ctxModel: opts.ctxModel,
-      onEvent: (event) => journal.append(event),
-      onPoolResolved: retargetJournal,
+      onEvent: journal.onEvent,
+      onPoolResolved: journal.onPoolResolved,
       // D9①：路由层 fallback 留痕投影进 outcome（zcode 无独立 record 通路）
       ...(record.engineFallback !== undefined ? { engineFallback: record.engineFallback } : {}),
       // D10 终止链：engine spawn 的子进程注册进 spawnedChildren 记账
@@ -1782,10 +1723,10 @@ export class SubagentService {
 
     let result: AgentResult;
     try {
-      // execCtxAls 包在 forkDepthAls 内层：B run() 期间它的 store={recordId:B.id,depth:B.depth}，
+      // 嵌套上下文包在 forkDepthAls 内层：B run() 期间挂 {recordId:B.id,depth:B.depth}，
       // B 内创建 C 时 createRecordForMode 读到 B → C 挂到 B 名下。两层 ALS 独立但同生命周期。
       result = await this.forkDepthAls.run(effectiveDepth, () =>
-        this.execCtxAls.run(
+        this.execNesting.run(
           { recordId: record.id, depth: record.depth },
           () => runSpawn(record, opts.task, {
             resolved: identity.resolved,

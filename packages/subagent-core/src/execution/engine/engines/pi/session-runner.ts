@@ -12,6 +12,7 @@ import { getLogger } from "../../../../core/logger.ts";
 import { bestEffort } from "../../../best-effort.ts";
 import { armIdleTimer } from "../../../lifecycle-manager.ts";
 import { readActivePendingFromSessionFile } from "../../../session-pending.ts";
+import { killChain } from "../../common/kill-chain.ts";
 
 import type { ExtensionMode } from "../../../host-mode.ts";
 
@@ -845,9 +846,6 @@ interface SpawnRunState {
   proc: ChildProcess | undefined;
   /** watchdog timer（stdout handler 的 agent_end keep-alive 分支重挂，收尾统一 clearTimeout）。 */
   watchdog: NodeJS.Timeout | undefined;
-  /** [race-F4] SIGKILL 升级 timer（killChildWithEscalation 挂载；exit 事件自动 clear，
-   *  收尾统一 clearTimeout 兑底）。 */
-  escalationTimer: NodeJS.Timeout | undefined;
   /** stdout 首行 header（json mode 才有；RPC mode 恒 undefined）——收尾 sessionFile 兜底查找用。 */
   sessionHeader: SpawnSessionHeader | undefined;
   /** get_state 握手结果（RPC mode）——收尾 sessionFile 兜底查找用。 */
@@ -869,45 +867,31 @@ interface SpawnRunState {
  */
 
 /**
- * [race-F4] SIGTERM 后升级 SIGKILL 的等待窗口：30s 未见 exit 视为 SIGTERM 被无视，强杀。
+ * [D3-① 杀链合一] pi 侧杀链参数（现状值，[race-F4]）：SIGTERM 优雅窗口 30s——
+ * 超窗未见 exit 视为 SIGTERM 被无视，升级 SIGKILL。
  */
-const SIGKILL_ESCALATION_SECONDS = 30;
-const SIGKILL_ESCALATION_MS = SIGKILL_ESCALATION_SECONDS * MS_PER_SECOND;
+const PI_KILL_GRACE_MS = 30 * MS_PER_SECOND;
 
 /**
- * [race-F4] 发 SIGTERM 并武装 SIGKILL 升级 timer：SIGKILL_ESCALATION_MS 后子进程
- * 仍未退出（exitCode/signalCode 双 null）则 SIGKILL。
+ * [D3-① 杀链合一 + race-F4] 杀 pi 子进程：发 SIGTERM，30s 优雅窗口后仍存活则 SIGKILL。
  *
- * 背景：watchdog/limiter/idle timer/abort 触发只发一次 SIGTERM——子进程若无视
- * SIGTERM（卡死在不可中断的 native 调用 / SIGTERM handler 挂死），close 永不触发
- * → runSpawn 悬挂、background 槽位/worktree/alive marker 泄漏，旧实现永不回收。
+ * 唯一实现 = common/kill-chain.killChain（本函数只是 pi 参数装配：grace 30s、timer
+ * unref（不阻止主进程退出，dispose 路径 killAllSpawnedChildren 兜底）、SIGKILL 升级
+ * warn 留痕含 record id 与来源）。fire-and-forget：调用方不 await 结果（子进程 close
+ * 事件驱动后续收尾），killChain 内部 exit 事件自动清升级 timer。
  *
- * - 升级 timer unref（不阻止主进程退出；dispose 路径 killAllSpawnedChildren 兜底）
- * - assertSafeTimerDelay：包内 timer 挂载入口统一校验（常量 30s 恒通过，防未来改
- *   可配置时静默引入 1ms 溢出语义反转）
- * - child exit 事件 clear 升级 timer（自然退出/被 SIGTERM 杀死均不升级）
- * - state.escalationTimer 记录句柄：watchdog re-arm 场景先清旧升级窗口，收尾兜底 clear
+ * 背景（race-F4）：watchdog/limiter/idle timer/abort 触发只发一次 SIGTERM——子进程若
+ * 无视 SIGTERM（卡死在不可中断的 native 调用 / SIGTERM handler 挂死），close 永不触发
+ * → runSpawn 悬挂、background 槽位/worktree/alive marker 泄漏。
  *
  * @param source 升级来源标识（warn 日志定位用，如 "spawn watchdog" / "turn limiter"）
  */
-function killChildWithEscalation(state: SpawnRunState, child: ChildProcess, source: string): void {
-  child.kill("SIGTERM");
-  if (state.escalationTimer) clearTimeout(state.escalationTimer);
-  assertSafeTimerDelay(SIGKILL_ESCALATION_MS, `SIGKILL escalation (${source})`);
-  const escalation = setTimeout(
-    () => {
-      if (child.exitCode === null && child.signalCode === null) {
-        logger.warn(
-          `[session-runner] child ${state.record.id} still alive ${SIGKILL_ESCALATION_MS / MS_PER_SECOND}s after SIGTERM, escalating to SIGKILL (source: ${source})`,
-        );
-        child.kill("SIGKILL");
-      }
-    },
-    SIGKILL_ESCALATION_MS,
-  );
-  escalation.unref();
-  child.once("exit", () => clearTimeout(escalation));
-  state.escalationTimer = escalation;
+function killPiChild(child: ChildProcess, recordId: string, source: string): void {
+  void killChain(child, {
+    graceMs: PI_KILL_GRACE_MS,
+    unrefTimers: true,
+    escalationNote: `child ${recordId} (source: ${source})`,
+  });
 }
 
 /**
@@ -935,7 +919,7 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
     },
     abort: () => {
       // [race-F4] 升级路径：SIGTERM 后 30s 未 exit 则 SIGKILL（挂住子进程永不回收防线）
-      if (state.proc) killChildWithEscalation(state, state.proc, "turn limiter abort");
+      if (state.proc) killPiChild(state.proc, record.id, "turn limiter abort");
     },
   });
 
@@ -983,7 +967,7 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
             // 与 agent_end handler 现有 SIGTERM 分支一致，不新造 cleanup。
             // [race-F4] 升级：idle timer SIGTERM 后挂住 → 30s 后 SIGKILL。
             const child = getChildByRecord(record.id);
-            if (child && !child.killed) killChildWithEscalation(state, child, "idle timer");
+            if (child && !child.killed) killPiChild(child, record.id, "idle timer");
           }, record.idleTimeoutMs);
         } catch (err) {
           bestEffort(err, "armIdleTimer (agent_settled chatMode)", "error");
@@ -1369,7 +1353,7 @@ function attachStdoutPump(
               }
               if (keepAliveMs !== undefined) {
                 state.watchdog = setTimeout(
-                  () => killChildWithEscalation(state, child, "keep-alive watchdog"),
+                  () => killPiChild(child, state.record.id, "keep-alive watchdog"),
                   keepAliveMs,
                 );
                 state.watchdog.unref();
@@ -1385,12 +1369,12 @@ function attachStdoutPump(
               );
               clearTimeout(state.watchdog);
               state.watchdog = setTimeout(
-                () => killChildWithEscalation(state, child, "wakeup grace timer"),
+                () => killPiChild(child, state.record.id, "wakeup grace timer"),
                 WAKEUP_GRACE_MS,
               );
               state.watchdog.unref();
             } else {
-              killChildWithEscalation(state, child, "agent_end final kill");
+              killPiChild(child, state.record.id, "agent_end final kill");
             }
           }
         }
@@ -1518,7 +1502,6 @@ export async function runSpawn(
     ctx,
     proc: undefined,
     watchdog: undefined,
-    escalationTimer: undefined,
     sessionHeader: undefined,
     handshakeResult: undefined,
     resolveRun: undefined,
@@ -1655,7 +1638,7 @@ export async function runSpawn(
     // d. signal → proc.kill 监听（一次性，替代 session.abort）
     // [race-F4] 用户取消同样升级：SIGTERM 后挂住 → 30s 后 SIGKILL 兑现取消语义。
     const onAbort = (): void => {
-      killChildWithEscalation(state, child, "abort signal");
+      killPiChild(child, record.id, "abort signal");
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     // 前置检查：signal 在 spawn 前已 aborted 时 addEventListener 不会触发 onAbort，
@@ -1675,7 +1658,7 @@ export async function runSpawn(
     const watchdogMs = resolveSpawnWatchdogMs(opts.maxTurns);
     if (watchdogMs !== undefined) {
       state.watchdog = setTimeout(
-        () => killChildWithEscalation(state, child, "spawn watchdog"),
+        () => killPiChild(child, record.id, "spawn watchdog"),
         watchdogMs,
       );
       state.watchdog.unref();
@@ -1726,9 +1709,9 @@ export async function runSpawn(
 
     opts.signal?.removeEventListener("abort", onAbort);
     clearTimeout(state.watchdog);
-    // [race-F4] 兑底清升级 timer（exit 事件自动 clear 的双保险：close 先于升级触发的
-    // 竞态窗口内不误杀下一个占用同 state 的子进程）
-    clearTimeout(state.escalationTimer);
+    // [D3-①] SIGKILL 升级 timer 的清理由公共 kill-chain 内部承担（exit 事件 settle
+    // 等待 promise → raceTimeout clearTimeout；且链持有 child 闭包，不误伤后续同
+    // state 子进程）——旧 escalationTimer 兑底句柄随旧私有杀链一并删除。
 
     // [持久化 A] sessionFile 兜底校验。
     // identity custom entry 已改由子进程 session_start hook 写（M4 / V2 决策 5），

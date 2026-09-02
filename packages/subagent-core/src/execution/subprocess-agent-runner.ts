@@ -8,8 +8,11 @@
 // 接线层级：
 //   [跨模块 port] implements AgentRunner（orchestration/models/ports.ts）
 //   [模块内直调] mapToExecuteOptions + mergeTimeoutSignal（execute-options-mapper）
-//   [P4 路由层]  engine/routing.ts routeEngine（三层优先级 + probe + fallback 三守卫，D9）
+//   [P4 路由层]  engine/routing.ts routeEngineForHost（D3-② 路由单点：三层优先级 +
+//                pi 同步短路 + probe + fallback 三守卫，D9）
+//   [公共预检]   engine/common/capability-gate（D3-④：capabilities 驱动的调用前拒绝）
 //   [引擎层]     EnginePort.run（pi = 本地 DI 绑定实例；非 pi = registry.getEngine 动态获取）
+//   [公共 journal] engine/common/journal-wiring（D3-③：writer + retarget + 回填单实现）
 //   [模块内直调] this.subagentService.executeAndAwait（PiEngine 内部委托目标）
 //
 // 设计基线：
@@ -19,15 +22,14 @@
 import type { AgentRunner } from "../orchestration/models/ports.ts";
 import type { AgentCallOpts, AgentResult } from "../orchestration/models/types.ts";
 import type { AgentEvent } from "../shared/agent-event.ts";
-import { getEngineDataDir } from "./engine/common/data-dir.ts";
-import { JournalWriter } from "./engine/common/event-journal.ts";
-import { createPiEngine, PI_POOL_KEY } from "./engine/engines/pi/registration.ts";
+import { assertTaskShapeSupported } from "./engine/common/capability-gate.ts";
+import { JOURNAL_INITIAL_POOL_KEY, wireEventJournal } from "./engine/common/journal-wiring.ts";
+import { createPiEngine } from "./engine/engines/pi/registration.ts";
 import { executeOptionsToTaskSpec } from "./engine/engines/pi/task-spec-mapper.ts";
-import { resolveJournalPath } from "./engine/paths.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
-import { routeEngine, resolveEngineRouting, type EngineRouteResult, type EngineRoutingInput } from "./engine/routing.ts";
-import { getEngine, hasEngine, listEngines } from "./engine/registry.ts";
-import type { AgentOutcome, EngineHandle } from "./engine/types.ts";
+import { routeEngineForHost, type EngineRouteResult, type EngineRoutingInput } from "./engine/routing.ts";
+import { getEngine } from "./engine/registry.ts";
+import type { AgentOutcome } from "./engine/types.ts";
 import { mapToExecuteOptions, mergeTimeoutSignal } from "./execute-options-mapper.ts";
 import { getModelConfigService } from "./model-config-service.ts";
 import type { ModelInfo } from "./model-resolver.ts";
@@ -71,10 +73,12 @@ export interface SubprocessAgentRunnerDeps {
  * 非 pi 引擎（P4 路由可达：frontmatter/调用参数/全局默认指定）经 registry.getEngine
  * 动态获取——「引擎身份」的归属边界在注册表，SAR 不感知具体引擎实现。
  *
- * [P4 配置路由] 每次运行经 engine/routing.ts 解析三层优先级（调用参数 opts.engine >
- * agent frontmatter engine > 全局默认 'pi'）+ probe + fallback 三守卫（D9）。路由失败
- * （engine_not_found / engine_probe_failed / model_not_available）不 reject，入
- * result.error——与 executeAgentCall 契约一致。
+ * [P4 配置路由] 每次运行经 engine/routing.ts 的 routeEngineForHost（D3-② 路由单点：
+ * 唯一实现承载三层优先级（调用参数 opts.engine > agent frontmatter engine > 全局默认
+ * 'pi'）+ pi 同步短路 + registry 注入 + probe/fallback 三守卫，D9；本类与
+ * SubagentService.execute 是其仅有的两调用点）。路由失败（engine_not_found /
+ * engine_probe_failed / model_not_available）与预检命中（engine_capability_unsupported，
+ * D3-④）不 reject，入 result.error——与 executeAgentCall 契约一致。
  */
 export class SubprocessAgentRunner implements AgentRunner {
   private readonly subagentService: SubagentService;
@@ -99,16 +103,20 @@ export class SubprocessAgentRunner implements AgentRunner {
   }
 
   /**
-   * 执行单次 agent 调用：路由（P4）→ EnginePort.run → PiEngine 委托
+   * 执行单次 agent 调用：路由（P4）→ 预检（D3-④）→ EnginePort.run → PiEngine 委托
    * SubagentService.executeAndAwait。
    *
    * 接线链路：
-   *   routeEngine（三层 + probe + 守卫）→ mergeTimeoutSignal → mapToExecuteOptions →
-   *   AgentTaskSpec → engine.run（PiEngine：spec → ExecuteOptions 还原 + engine 留痕）→
-   *   executeAndAwait → AgentOutcome → AgentResult
+   *   routeEngineForHost（D3-② 路由单点：三层 + pi 同步短路 + probe + 守卫）→
+   *   assertTaskShapeSupported（D3-④ 预检 capabilities 化）→ mergeTimeoutSignal →
+   *   mapToExecuteOptions → AgentTaskSpec → engine.run（PiEngine：spec → ExecuteOptions
+   *   还原 + engine 留痕）→ executeAndAwait → AgentOutcome → AgentResult
    *
    * 错误处理：不 reject。
    *   - 路由失败（未注册 id / probe 失败 + 守卫或 strict）→ AgentResult.error（错误码前缀）
+   *   - 预检命中（capabilities 不支持的任务形状参数）→ AgentResult.error
+   *     （engine_capability_unsupported——[D3-④] workflow 域 zcode+worktree 由漏拦变
+   *     拦截，本单元唯一有意行为变化；拒绝在 journal/run 之前，无进程无 journal 产物）
    *   - executeAndAwait 内部失败 → 返回 AgentResult(success:false) → 已映射 error 字段
    *   - executeAndAwait throw（嵌套超限 BC-12）→ catch → AgentResult.error
    *   - spawn 级失败已由 runSpawn 内部收口为 failed AgentResult（不逃逸）
@@ -121,69 +129,47 @@ export class SubprocessAgentRunner implements AgentRunner {
   ): Promise<AgentResult> {
     const startedAt = Date.now();
 
-    // ── P4 路由：三层优先级 + probe + fallback 三守卫（D9①/D7）──
-    // 路由在最前——引擎身份决定 journal 路径与后续一切执行面；失败（未注册 id /
-    // probe 失败 + strict/守卫）按「不 reject」契约转 result.error。
-    // pi 快路径同步短路（不经 routeEngine 的 await）：pi 恒免探、无 fallback 可言、
-    // engineFor('pi') 本地 DI 绑定恒可用——不引入微任务边界，缺省路径时序与 P1 接线
-    // 前完全一致（下游依赖「run 内首个 await 前已触达 executeAndAwait」的时序契约）。
-    let routingInput: EngineRoutingInput;
+    // ── P4 路由（D3-② 单点：routeEngineForHost）+ D3-④ 预检 ──
+    // 路由在最前——引擎身份决定 journal 路径与后续一切执行面。pi 快路径同步短路
+    //（routed 非 Promise，零微任务——缺省路径时序与 P1 接线前完全一致，下游依赖
+    // 「run 内首个 await 前已触达 executeAndAwait」的时序契约）。路由失败（未注册
+    // id / probe 失败 + strict/守卫）与预检命中（capabilities 驱动，含 worktree——
+    // workflow 域漏拦缺口修复）一并按「不 reject」契约转 result.error。
     let route: EngineRouteResult;
+    let mappedOpts: ExecuteOptions;
     try {
-      routingInput = this.buildRoutingInput(opts);
-      const routing = resolveEngineRouting(routingInput);
-      if (routing.engineId === "pi") {
-        route = {
-          engine: this.piEngine,
-          engineId: "pi",
-          requestedEngineId: "pi",
-          source: routing.source,
-        };
-      } else {
-        route = await routeEngine({
-          routing: routingInput,
-          taskModel: opts.model,
-          strict: getModelConfigService()?.getGlobalConfig().engineRouting?.strict === true,
-          probe: (engineId) => this.engineFor(engineId).probe(),
-          getEngineFn: (engineId) => this.engineFor(engineId),
-          // pi 经本地 DI 绑定恒可用（不依赖 registry 全局注册态——SAR 持有服务引用），
-          // has/list 注入同一口径，engine_not_found 文案不会把本地 pi 漏报成未注册
-          hasEngineFn: (engineId) => engineId === "pi" || hasEngine(engineId),
-          listEnginesFn: () => (hasEngine("pi") ? listEngines() : ["pi", ...listEngines()]),
-        });
-      }
+      const routed = routeEngineForHost({
+        routing: this.buildRoutingInput(opts),
+        taskModel: opts.model,
+        strict: getModelConfigService()?.getGlobalConfig().engineRouting?.strict === true,
+        probe: (engineId) => this.engineFor(engineId).probe(),
+        piEngine: this.piEngine,
+      });
+      route = routed instanceof Promise ? await routed : routed;
+      // [D3-④] SAR 路径预检调用点（run 前同模块调用；唯一实现 = common/capability-gate）。
+      // pi 全参数放行（V4⑤ 反向守护）；zcode 拦 fork/conversation/maxTurns/worktree。
+      mappedOpts = mapToExecuteOptions(opts, this.ctxModel);
+      assertTaskShapeSupported(route.engineId, route.engine.capabilities(), mappedOpts);
     } catch (err) {
-      // buildRoutingInput 的 agent 解析期校验（未注册 frontmatter engine）与路由失败
-      // （probe + strict/守卫）一并在此收口——「不 reject」契约
+      // buildRoutingInput 的 agent 解析期校验（未注册 frontmatter engine）、路由失败
+      //（probe + strict/守卫）与预检拒绝（engine_capability_unsupported）一并在此
+      // 收口——「不 reject」契约
       return errorResult(err, startedAt);
     }
 
     // ── P2 event journal 接线（设计 D6 第②级；对齐点③：路径权威 = 引擎池 key）──
-    // host 在 onEvent 回调内统一落盘（全引擎免费获得②级数据源）。初始 poolKey 用 pi
-    // 缺省占位（pi 恒 'shared'）；非池化稳定引擎（zcode）在 prepare 期经
-    // RunContext.onPoolResolved 声明实际池 key → writer.retarget——保证 journal 落盘
-    // 路径与 handle.poolKey 同源（handle.journalPath 由本方法 run 返回后回填）。
+    // [D3-③] writer + retarget + 回填收敛 common/journal-wiring（与 chat 域同一实现）：
+    // 初始 poolKey 占位 'shared'（pi 恒终值）；非池化稳定引擎（zcode）在 prepare 期经
+    // RunContext.onPoolResolved 声明实际池 key → retarget——保证 journal 落盘路径与
+    // handle.poolKey 同源（handle.journalPath 由本方法 run 返回后回填）。
     //
     // taskId 为宿主侧任务标识（journal 文件名与池引用计数 key）——executeAndAwait
     // 不外露内部 record id（取真实 id 需 hook record store 且改 createRecordForMode
     // 签名，影响面大；P4 决策：保留占位，`sa-` 前缀与 record id 同构。影响面：record
-    // GC 时无法按 taskId 联动删 journal（journal 依赖 30 天 TTL 自然回收），read ②级
-    // 经 handle.journalPath 自描述定位不受影响）。
+    // GC 时无法按 taskId 联动删 journal（journal 依赖 TTL 兜底回收，见 D8 分域裁决），
+    // read ②级经 handle.journalPath 自描述定位不受影响）。
     const taskId = `sa-${crypto.randomUUID()}`;
-    const journal = new JournalWriter({
-      path: resolveJournalPath(getEngineDataDir(), route.engineId, PI_POOL_KEY, taskId),
-      taskId,
-      engineId: route.engineId,
-    });
-    const retargetJournal = (poolKey: string): void => {
-      journal.retarget(resolveJournalPath(getEngineDataDir(), route.engineId, poolKey, taskId));
-    };
-    // 包装：先写 journal 再转发原 onEvent（原 onEvent 未传时也恒传包装版——
-    // 下游 onEvent 通道是事件生成后的纯转发，无行为分支，仅多一次入队）
-    const journalingOnEvent = (event: AgentEvent): void => {
-      journal.append(event);
-      onEvent?.(event);
-    };
+    const journal = wireEventJournal({ engineId: route.engineId, taskId, forwardEvents: onEvent });
 
     try {
       // ── [U1 D2] RunContext.modelRef 接入：ctxModel 继承路径的孪生守卫 ──
@@ -202,18 +188,15 @@ export class SubprocessAgentRunner implements AgentRunner {
       // ── D-A9: timeoutMs 合并 signal（超时 abort 带 HOST_TIMEOUT_ABORT_REASON 标记）──
       const mergedSignal = mergeTimeoutSignal(signal, opts.timeoutMs);
 
-      // ── D-A2 + D-008: AgentCallOpts → ExecuteOptions 映射 ──
-      const mappedOpts: ExecuteOptions = mapToExecuteOptions(opts, this.ctxModel);
-
       // ── P1/P4 引擎接线：EnginePort.run ──
       const runCtx: RunContext = {
         taskId,
-        poolKey: PI_POOL_KEY,
+        poolKey: JOURNAL_INITIAL_POOL_KEY,
         signal: mergedSignal,
-        onEvent: journalingOnEvent,
+        onEvent: journal.onEvent,
         ctxModel: this.ctxModel,
         ...(route.engineFallback !== undefined ? { engineFallback: route.engineFallback } : {}),
-        onPoolResolved: retargetJournal,
+        onPoolResolved: journal.onPoolResolved,
         // [U0 D10] 终止链路径①：引擎 spawn 的子进程注册进 session-runner 的
         // spawnedChildren 记账（dispose killAll 收割兜底对 workflow 域引擎任务生效）；
         // taskId（'sa-' 前缀）即记账 key，与 chat 域 kickOffEngineRun 的 record.id 同构
@@ -231,7 +214,7 @@ export class SubprocessAgentRunner implements AgentRunner {
       );
       // handle.journalPath 回填（§3.3.6：read ②级的自描述定位符——运行期落盘路径
       // 权威在 writer，handle 记录最终路径供跨重启 read 消费）
-      backfillJournalPath(handle, journal.path);
+      journal.backfillHandle(handle);
       return outcomeToRunnerResult(outcome);
     } catch (err) {
       // executeAndAwait throw（嵌套超限 ForkDepthExceededError，BC-12）或未预期异常 → 不 reject，入 error。
@@ -252,9 +235,11 @@ export class SubprocessAgentRunner implements AgentRunner {
   // ── 内部 ──
 
   /**
-   * 引擎获取：pi 走 per-session DI 绑定（mock 语义 + 生产同单例，P1 行为零变化）；
-   * 非 pi 经 registry.getEngine 动态获取（P4：引擎身份归属注册表，未注册 id 抛
-   * EngineNotFoundError——路由期已前置校验，这里是防御性兜底）。
+   * 引擎获取（routeEngineForHost 的 probe 注入体）：pi 走 per-session DI 绑定（mock
+   * 语义 + 生产同单例，P1 行为零变化）；非 pi 经 registry.getEngine 动态获取（P4：
+   * 引擎身份归属注册表，未注册 id 抛 EngineNotFoundError——路由期已前置校验，这里
+   * 是防御性兜底）。[D3-②] get/has/list 的路由期注入已由 routeEngineForHost 内部
+   * 承载（本地 pi 恒可用口径），本方法只剩 probe 一个消费点（pi 请求同步短路恒免探）。
    */
   private engineFor(engineId: string): EnginePort {
     if (engineId === "pi") return this.piEngine;
@@ -280,7 +265,7 @@ export class SubprocessAgentRunner implements AgentRunner {
   }
 }
 
-/** 路由期错误 → AgentResult.error（错误码前缀格式保留——engine_not_found 等）。 */
+/** 路由期/预检错误 → AgentResult.error（错误码前缀格式保留——engine_not_found 等）。 */
 function errorResult(err: unknown, startedAt: number): AgentResult {
   return {
     content: "",
@@ -288,11 +273,6 @@ function errorResult(err: unknown, startedAt: number): AgentResult {
     error: err instanceof Error ? err.message : String(err),
     toolCalls: [],
   };
-}
-
-/** handle.journalPath 回填（一次写者：SAR 是 handle 的首个消费者）。 */
-function backfillJournalPath(handle: EngineHandle, journalPath: string): void {
-  handle.data.journalPath = journalPath;
 }
 
 /**

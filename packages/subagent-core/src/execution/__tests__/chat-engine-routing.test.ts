@@ -86,7 +86,7 @@ const mockSpawn = vi.mocked(spawn);
 // 假引擎（EnginePort 最小实现；run 行为由每个用例注入）
 // ============================================================
 
-/** zcode 形态 capabilities（conversation/steer unsupported、sandbox none）。 */
+/** zcode 形态 capabilities（conversation/steer unsupported、sandbox none、maxTurns false）。 */
 const ZCODE_LIKE_CAPS: EngineCapabilities = {
   schemaEnforcement: "emulated",
   steer: "unsupported",
@@ -98,6 +98,7 @@ const ZCODE_LIKE_CAPS: EngineCapabilities = {
   resume: "cold",
   interrupt: "kill-only",
   permissionMode: "native",
+  maxTurns: false,
 };
 
 interface CapturedRun {
@@ -355,6 +356,38 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     );
     expect(zcode.runs.length).toBe(0);
     expect(service.collectRecords(10, "all")).toHaveLength(0);
+  });
+
+  it("[D3-④] zcode + maxTurns → 同步拒绝（record 创建前，不产生孤儿 record）——旧形态的 engine.run 内异步拒绝废弃", async () => {
+    // 旧形态：Service 层预检不查 maxTurns → record 创建 + kickOffEngineRun →
+    // zcode run 内硬编码 shape 检查 throw → failed record（异步化）。
+    // D3-④ 检查点钉死后：capabilities.maxTurns 位驱动，record 创建前同步 throw。
+    const { service, zcode } = setup(agentDir);
+    const err = await service
+      .execute(baseOpts(agentDir, { engine: "zcode", maxTurns: 5 }))
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain("engine_capability_unsupported");
+    expect((err as Error).message).toContain("maxTurns");
+    expect((err as { recovery?: string }).recovery).toContain("engine: pi");
+    // 「不产生孤儿 record」断言落点（V4④）：store 无新增条目、引擎未被触达
+    expect(zcode.runs.length).toBe(0);
+    expect(service.collectRecords(10, "all")).toHaveLength(0);
+  });
+
+  it("[V4⑤ 反向] pi + maxTurns/fork/conversation/worktree → 零拦截（pi 既有合法能力无回归）", async () => {
+    const { service, zcode } = setup(agentDir);
+    // maxTurns=3（V4⑤ 场景原样）：正常进入 pi 轮次（spawn 被调），无同步拒绝
+    const handle = await service.execute(baseOpts(agentDir, { maxTurns: 3 }));
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+    expect(zcode.runs.length).toBe(0);
+    expect(service.collectRecords(10, "running").find((r) => r.id === handle.subagentId)).toBeDefined();
+    // fork / conversation 组合同样直通（第二次 spawn 被调，无 engine_capability_unsupported）
+    await service.execute(baseOpts(agentDir, { fork: true, conversation: true }));
+    await vi.waitFor(() => expect(mockSpawn.mock.calls.length).toBeGreaterThanOrEqual(2));
+    // pi + worktree：预检放行（caps.sandbox='emulated'）——execute 不因能力被拒而
+    // reject（worktree 创建成败是另一维度，与拦截无关）
+    await expect(service.execute(baseOpts(agentDir, { worktree: true }))).resolves.toBeTypeOf("object");
   });
 
   // ============================================================

@@ -17,7 +17,7 @@ import type { EngineCapabilities } from "../../types.ts";
 const CAPS_FILE: EngineCapabilities = {
   schemaEnforcement: "emulated", steer: "unsupported", conversation: "unsupported",
   personaInjection: "file", eventGranularity: "coarse", sandbox: "none",
-  sessionRead: "partial", resume: "cold", interrupt: "kill-only", permissionMode: "native",
+  sessionRead: "partial", resume: "cold", interrupt: "kill-only", permissionMode: "native", maxTurns: false,
 };
 const CAPS_FLAG: EngineCapabilities = { ...CAPS_FILE, personaInjection: "flag" };
 const CAPS_PROMPT: EngineCapabilities = { ...CAPS_FILE, personaInjection: "prompt" };

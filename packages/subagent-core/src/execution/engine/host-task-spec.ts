@@ -9,8 +9,9 @@
 // 的中立直译（task/slug/agent/model 原样；thinkingLevel → effort；skillPath +
 // appendSystemPrompt → persona；schema/maxTurns/graceTurns/worktree/cwd 原样透传）。
 //
-// conversation/fork 在调用本 mapper 前已被 assertEngineParamSupport 预检拒绝（非 pi 引擎
-// unsupported），透传仅保持映射完整性——未来引擎支持时无需改本函数。
+// conversation/fork 在调用本 mapper 前已被 capability-gate 预检拒绝（[D3-④]
+// capabilities 驱动的调用前拒绝，非 pi 引擎 unsupported），透传仅保持映射完整性——
+// 未来引擎支持时无需改本函数。
 
 import type { ExecuteOptions } from "../types.ts";
 import type { AgentTaskSpec, PersonaSpec } from "./types.ts";

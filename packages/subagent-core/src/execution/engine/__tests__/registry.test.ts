@@ -32,6 +32,7 @@ function makeFakeEngine(id: string): EnginePort {
       resume: "unsupported",
       interrupt: "kill-only",
       permissionMode: "fixed",
+      maxTurns: false,
     }),
     probe: () =>
       Promise.resolve({ ok: true, engineVersion: "0.0.0-test", checks: [{ name: "stub", ok: true }] }),

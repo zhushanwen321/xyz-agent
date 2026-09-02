@@ -225,8 +225,8 @@ describe("TC-3: PI_SUBAGENT_ROOT_SESSION_ID env 贯穿正确", () => {
     const sessionRootId = Reflect.get(service, "sessionRootId") as string;
     expect(sessionRootId).toBe("root-main-session");
 
-    // B 的 execCtxBaseline 记录了 B 自己的身份（recordId + depth）
-    const baseline = Reflect.get(service, "execCtxBaseline") as { recordId: string; depth: number };
+    // B 的嵌套基线记录了 B 自己的身份（recordId + depth；[D3-⑤] execNesting 公共层）
+    const baseline = (Reflect.get(service, "execNesting") as { baseline(): { recordId: string; depth: number } | null }).baseline();
     expect(baseline.recordId).toBe("sa-a-record");
     expect(baseline.depth).toBe(1);
   });

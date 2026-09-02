@@ -46,6 +46,7 @@ function makeFakeZcodeEngine(probeOk: boolean): { engine: EnginePort; calls: Fak
       resume: "cold",
       interrupt: "kill-only",
       permissionMode: "native",
+      maxTurns: false,
     }),
     probe: () => {
       calls.probed++;
@@ -306,5 +307,56 @@ describe("SAR 路由集成（P4 验收 1/2/3）", () => {
     // 子进程退出（真实 close 事件）后记账按句移除——不残留死句柄
     await new Promise<void>((resolve) => child.once("close", () => resolve()));
     expect(getChildByRecord(ctx.taskId)).toBeUndefined();
+  });
+
+  // ── [D3-④] SAR 路径预检（capabilities 驱动；唯一有意行为变化 = zcode+worktree）──
+
+  it("[D3-④] zcode + worktree:true → engine_capability_unsupported（workflow 域漏拦缺口修复），无 engine.run、无 journal 产物", async () => {
+    const agentRef = writeAgentMd("reviewer", "name: reviewer\ndescription: d\nengine: zcode");
+    installModelService();
+    const { engine, calls } = makeFakeZcodeEngine(true);
+    registerEngine("zcode", () => engine);
+    const pi = makeMockPiService();
+    const sar = new SubprocessAgentRunner({ subagentService: pi.service });
+
+    const result = await sar.run(makeOpts({ agent: agentRef, worktree: true }), new AbortController().signal);
+
+    expect(result.error).toContain("engine_capability_unsupported");
+    expect(result.error).toContain("worktree");
+    // 无进程创建 + 无 journal 落盘（拒绝在 wiring/run 之前）
+    expect(calls.runs).toHaveLength(0);
+    expect(pi.executeAndAwait).not.toHaveBeenCalled();
+    const enginesRoot = path.join(tmpRoot, "engine-data", "engines");
+    expect(fs.existsSync(enginesRoot) ? fs.readdirSync(enginesRoot) : []).toEqual([]);
+  });
+
+  it("[D3-④] zcode + maxTurns / fork → engine_capability_unsupported（现状行为保持的正向守护）", async () => {
+    const agentRef = writeAgentMd("reviewer", "name: reviewer\ndescription: d\nengine: zcode");
+    installModelService();
+    const { engine, calls } = makeFakeZcodeEngine(true);
+    registerEngine("zcode", () => engine);
+    const pi = makeMockPiService();
+    const sar = new SubprocessAgentRunner({ subagentService: pi.service });
+
+    const maxTurnsResult = await sar.run(makeOpts({ agent: agentRef, maxTurns: 5 }), new AbortController().signal);
+    expect(maxTurnsResult.error).toContain("engine_capability_unsupported");
+    expect(maxTurnsResult.error).toContain("maxTurns");
+    expect(maxTurnsResult.error).toContain("capabilities.maxTurns = false");
+
+    const forkResult = await sar.run(makeOpts({ agent: agentRef, fork: true }), new AbortController().signal);
+    expect(forkResult.error).toContain("engine_capability_unsupported");
+    expect(forkResult.error).toContain("fork");
+    expect(calls.runs).toHaveLength(0);
+  });
+
+  it("[V4⑤ 反向] pi + maxTurns → 直通不拦（pi 既有合法能力零回归），executeAndAwait 收到 maxTurns", async () => {
+    installModelService();
+    const pi = makeMockPiService();
+    const sar = new SubprocessAgentRunner({ subagentService: pi.service });
+
+    const result = await sar.run(makeOpts({ maxTurns: 3 }), new AbortController().signal);
+
+    expect(result.content).toBe("from-pi");
+    expect(pi.executeOpts[0]?.maxTurns).toBe(3);
   });
 });

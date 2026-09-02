@@ -91,14 +91,15 @@ export interface AgentTaskSpec {
   schema?: Record<string, unknown>;
   /**
    * 原样（ExecuteOptions.maxTurns）。pi 引擎专属（turn limiter + spawn watchdog
-   * 估算依赖 pi 的 turn_end 事件流）；其他引擎 prepare 期显式拒绝（U4，同 fork 模式）。
+   * 估算依赖 pi 的 turn_end 事件流）；其他引擎在宿主调用前预检按 capabilities.maxTurns
+   * 显式拒绝（U4 语义不变，D3-④ 后拒绝点 = common/capability-gate，record/进程创建前）。
    * 显式 0 压过 SPAWN_WATCHDOG_ENV 兑底（SP-6 参数 > env，U5）；undefined 未传才由
    * env 兑底。
    */
   maxTurns?: number;
   /** 原样（ExecuteOptions.graceTurns）。 */
   graceTurns?: number;
-  /** 原样（ExecuteOptions.fork）。pi 专属；其他引擎 prepare 期按 capabilities 拒绝。 */
+  /** 原样（ExecuteOptions.fork）。pi 专属；其他引擎在宿主预检按 capabilities 拒绝（D3-④）。 */
   fork?: boolean;
   /**
    * 原样（ExecuteOptions.worktree）。公共层职责（worktree-manager），非引擎职责——
@@ -281,6 +282,15 @@ export interface EngineCapabilities {
   interrupt: "native" | "kill-only";
   /** kimi headless 固定 auto = ignored；GUI 据此隐藏/提示。 */
   permissionMode: "native" | "fixed" | "ignored";
+  /**
+   * [D3-④ r3 裁定] maxTurns 轮数上限的执行能力位（pi = true：turn limiter + spawn
+   * watchdog 估算兑现；zcode = false：无 turn_end 语义，静默丢弃会造成「传了上限却
+   * 失控」假象）。调用前预检（common/capability-gate）按本位拦「声明不支持的能力」
+   * ——pi 不拦 maxTurns（已支持能力，由 turn-limiter 执行）、zcode 同步拒绝。
+   * 现状 11 个能力位无可承载 maxTurns 的语义位（fork 拦截可借 session 分叉通道族判，
+   * maxTurns 无可借位），故扩位而非保留引擎内硬编码 shape 检查。
+   */
+  maxTurns: boolean;
 }
 
 // ============================================================

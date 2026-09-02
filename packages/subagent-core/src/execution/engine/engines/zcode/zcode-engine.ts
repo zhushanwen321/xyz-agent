@@ -9,12 +9,15 @@
 //   → parser（stdout 收集 + 终 JSON + coarse 事件合成）→ reader（read 第①级 sqlite）。
 //
 // run 错误语义（设计 §3.3.5）：
-//   ① prepare 期错误（credential_missing / model_not_available / prompt_too_large /
-//      capability 拒绝）在进程创建前 reject，不产生 handle；
+//   ① prepare 期错误（credential_missing / model_not_available / prompt_too_large）
+//      在进程创建前 reject，不产生 handle；
 //   ② 运行中失败不 reject——合成 engine_run_failed outcome + 正常 handle 返回
 //      （record 必须收尾）；
 //   ③ abort 走杀链（SIGTERM→grace→SIGKILL，interrupt: kill-only 无原生中断）后同 ②
 //      （exitCode=null + error 含杀链标记）。
+//   [D3-④] capability 拒绝（fork/conversation/maxTurns）不再在本引擎：上提到宿主
+//   调用前预检（common/capability-gate，两调用点 = chat 域 executeViaEngine 同步段 +
+//   SAR run 前）——拒绝语义不变（engine_capability_unsupported + 无进程创建）。
 //
 // schema 仿真接线（D4 emulated 侧）：common/schema-emulation.ts（并行任务 P2 交付，
 // 2026-08-25 已就绪并接线）——spawn 前拼 prompt 仿真段、终态后三级容错提取 + ajv
@@ -136,6 +139,8 @@ export class ZcodeEngine implements EnginePort {
       interrupt: "kill-only",
       // --mode build/edit/plan/yolo 原生权限档位
       permissionMode: "native",
+      // [D3-④] 无 turn_end 语义，轮数上限不可兑现（预检 gate 据此同步拒绝）
+      maxTurns: false,
     };
   }
 
@@ -224,7 +229,9 @@ export class ZcodeEngine implements EnginePort {
   /** D1 主语义：preparer → launcher → parser →（schema 仿真校验 + 一次重试）→ outcome/handle。 */
   async run(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
     const startedAt = Date.now();
-    this.rejectUnsupportedTaskShapes(task);
+    // [D3-④] fork/conversation/maxTurns 的能力拒绝已上提到宿主调用前预检
+    //（common/capability-gate，capabilities.maxTurns 扩位承载）——引擎内不再做
+    // shape 检查（拦截逻辑单点化，重演双轨根因的形态被删除）。
 
     // ① prepare 期：模型解析（provider 体系校验）+ 隔离 HOME 池引导（凭据 + model.main）
     const modelRef = resolveZcodeModelRef(task.model, this.deps.sources);
@@ -536,37 +543,6 @@ export class ZcodeEngine implements EnginePort {
   // ── 内部 ──
 
   /**
-   * prepare 期的能力拒绝（进程创建前）：fork 是 pi 专属（AgentTaskSpec.fork 契约：
-   * 其他引擎按 capabilities 拒绝）；conversation 是 interact 控制面的 task 标志，
-   * zcode 无此面（A11：同步拒绝 + 可操作建议，无进程创建）；maxTurns 是 pi 引擎
-   * 专属（turn limiter + spawn watchdog 估算依赖 pi 的 turn_end 事件流）——zcode
-   * 无 turn_end 语义，静默丢弃会造成「传了上限却失控」的假象，显式拒绝（U4，
-   * 同 fork 模式）。
-   */
-  private rejectUnsupportedTaskShapes(task: AgentTaskSpec): void {
-    if (task.fork === true) {
-      throw new ZcodeTaskShapeError(
-        "engine_capability_unsupported",
-        "zcode 引擎不支持 fork（pi 专属会话分叉语义）。恢复指引：去掉 fork 参数重派，或使用 engine: 'pi'。",
-      );
-    }
-    if (task.conversation === true) {
-      throw new ZcodeTaskShapeError(
-        "engine_capability_unsupported",
-        "zcode 引擎不支持 conversation 模式（spawn 单轮，无同进程 idle 复用）。" +
-          "恢复指引：改用单次调用（去掉 conversation），或使用 engine: 'pi'。",
-      );
-    }
-    if (task.maxTurns !== undefined) {
-      throw new ZcodeTaskShapeError(
-        "engine_capability_unsupported",
-        "zcode 引擎不支持 maxTurns（pi 引擎专属 turn limiter；zcode 无 turn_end 语义，无法兑现轮数上限）。" +
-          "恢复指引：去掉 maxTurns 参数重派，或使用 engine: 'pi'。",
-      );
-    }
-  }
-
-  /**
    * persona 拼接后的完整 prompt（personaInjection: 'prompt'——zcode 无 flag 通道）：
    * appendSystemPrompt 段在前（人设/约束语境），task 正文居中，schema 仿真段尾置
    * （common/schema-emulation 公共层产出，D4 emulated 侧——zcode 无 native schema 通道）。
@@ -618,17 +594,6 @@ function appendSchemaRetryDirective(basePrompt: string, validationError: string)
     "Answer again. Output ONLY the JSON value conforming to the schema above — " +
     "no prose, no markdown fences, no extra text."
   );
-}
-
-/** prepare 期能力拒绝的载体（code 进 message 前缀，调用方可程序化分流）。 */
-class ZcodeTaskShapeError extends Error {
-  readonly code: string;
-
-  constructor(code: string, message: string) {
-    super(`[${code}] ${message}`);
-    this.name = "ZcodeTaskShapeError";
-    this.code = code;
-  }
 }
 
 /** 宿主超时 abort 判别（对齐点④）：signal.reason 带超时标记 = 超时杀链合成终态路径。 */

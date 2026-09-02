@@ -112,6 +112,7 @@ describe("capabilities（D3 声明，验收 6）", () => {
       resume: "cold",
       interrupt: "kill-only",
       permissionMode: "native",
+      maxTurns: false,
     });
   });
 });
@@ -185,33 +186,20 @@ describe("run ① prepare 期错误：进程创建前 reject、不产生 handle"
     expect(fake.calls).toHaveLength(0);
   });
 
-  it("conversation 任务标志 → engine_capability_unsupported（A11：无进程创建）", async () => {
+  it("[D3-④ 重定位] conversation/fork/maxTurns 不再被引擎 run 拒绝——拒绝上提宿主预检（common/capability-gate，capabilities.maxTurns 扩位承载），引擎零 shape 检查", async () => {
+    // 旧实现（引擎内硬编码 shape 检查）在 run 内拦 fork/conversation/maxTurns；
+    // D3-④ 后唯一拦截点 = 宿主调用前预检（chat 域 executeViaEngine 同步段 / SAR run 前），
+    // 拦截矩阵由 capability-gate.test + subprocess-agent-runner-routing.test /
+    // chat-engine-routing.test 守护。此处钉死「引擎侧无第二套拦截」——直接 run 走通
+    //（fake launcher，golden stdout），不抛 engine_capability_unsupported。
     const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
     const engine = makeEngine({ launch: fake.launch });
-    await expect(engine.run(makeTask({ conversation: true }), makeCtx())).rejects.toThrowError(
-      /engine_capability_unsupported/,
+    const { outcome } = await engine.run(
+      makeTask({ conversation: true, fork: true, maxTurns: 10 }),
+      makeCtx(),
     );
-    expect(fake.calls).toHaveLength(0);
-  });
-
-  it("fork（pi 专属）→ engine_capability_unsupported", async () => {
-    const engine = makeEngine();
-    await expect(engine.run(makeTask({ fork: true }), makeCtx())).rejects.toThrowError(
-      /engine_capability_unsupported/,
-    );
-  });
-
-  it("maxTurns（pi 专属）→ engine_capability_unsupported，不调 launch（U4：静默丢弃会造成假上限）", async () => {
-    const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
-    const engine = makeEngine({ launch: fake.launch });
-    await expect(engine.run(makeTask({ maxTurns: 10 }), makeCtx())).rejects.toThrowError(
-      /engine_capability_unsupported/,
-    );
-    // 恢复指引：去掉 maxTurns 或改用 pi 引擎
-    await expect(engine.run(makeTask({ maxTurns: 10 }), makeCtx())).rejects.toThrowError(
-      /maxTurns|engine: 'pi'/,
-    );
-    expect(fake.calls).toHaveLength(0);
+    expect(outcome.error).toBeUndefined();
+    expect(fake.calls).toHaveLength(1);
   });
 });
 

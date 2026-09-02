@@ -7,7 +7,8 @@ import type { EnginePort, RunContext } from "../port.ts";
 import { DEFAULT_ENGINE_ID, EngineNotFoundError } from "../registry.ts";
 import { EngineError } from "../common/errors.ts";
 import type { AgentTaskSpec, ProbeReport, SessionView } from "../types.ts";
-import { resolveEngineRouting, routeEngine, type EngineRouteOptions } from "../routing.ts";
+import { resolveEngineRouting, routeEngine, routeEngineForHost, type EngineRouteOptions, type HostRouteOptions } from "../routing.ts";
+import type { EngineRouteResult } from "../routing.ts";
 
 /** 最小可运行假引擎（probe 结果可注入）。 */
 function makeFakeEngine(id: string, probeOk: boolean): EnginePort {
@@ -24,6 +25,7 @@ function makeFakeEngine(id: string, probeOk: boolean): EnginePort {
       resume: "cold",
       interrupt: "kill-only",
       permissionMode: "native",
+      maxTurns: false,
     }),
     probe: () =>
       Promise.resolve(
@@ -227,5 +229,110 @@ describe("routeEngine：路由 + 探针 + 守卫编排（验收 1/2）", () => {
     expect(result.engine).toBe(engines.get("claude"));
     expect(result.engineId).toBe("claude");
     expect(result.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
+  });
+});
+
+// ============================================================
+// routeEngineForHost（D3-② 路由单点：宿主两调用点的统一编排）
+// ============================================================
+
+describe("routeEngineForHost：宿主统一路由（D3-②）", () => {
+  /** 本地 pi 引擎实例替身（chat 域 = chatPiEngine / workflow 域 = SAR per-session DI）。 */
+  function makeLocalPi(): EnginePort {
+    return makeFakeEngine("local-pi", true);
+  }
+
+  /** 装配 host 路由参数（registry 面复用 makeRoute 的注入件）。 */
+  function makeHostRoute(overrides?: Parameters<typeof makeRoute>[0]): {
+    hostOpts: HostRouteOptions;
+    probeCalls: string[];
+    engines: Map<string, EnginePort>;
+    piEngine: EnginePort;
+  } {
+    const { opts, probeCalls, engines } = makeRoute(overrides);
+    const piEngine = makeLocalPi();
+    const { routing, ...rest } = opts;
+    return { hostOpts: { ...rest, routing: routing ?? {}, piEngine }, probeCalls, engines, piEngine };
+  }
+
+  it("pi 请求（缺省）：同步短路——返回值不是 Promise（零微任务，缺省路径时序契约）且免探", () => {
+    const { hostOpts, piEngine, probeCalls } = makeHostRoute();
+    const routed = routeEngineForHost(hostOpts);
+    expect(routed).not.toBeInstanceOf(Promise);
+    const route = routed as EngineRouteResult;
+    expect(route.engine).toBe(piEngine); // 本地 pi 实例接管，不经 registry
+    expect(route.engineId).toBe("pi");
+    expect(route.source).toBe("default");
+    expect(probeCalls).toEqual([]); // pi 免探（D7 轻量口径，缺省路径零 probe 开销）
+  });
+
+  it("显式 engine='pi'：同步短路同形（call source 留痕）", () => {
+    const { hostOpts, piEngine } = makeHostRoute({ routing: { callEngine: "pi" } });
+    const routed = routeEngineForHost(hostOpts);
+    expect(routed).not.toBeInstanceOf(Promise);
+    const route = routed as EngineRouteResult;
+    expect(route.engine).toBe(piEngine);
+    expect(route.source).toBe("call");
+  });
+
+  it("非 pi 请求（frontmatter zcode + probe ok）：返回 Promise，resolve 经注入获取引擎", async () => {
+    const { hostOpts, engines } = makeHostRoute({ routing: { agentEngine: "zcode" } });
+    const routed = routeEngineForHost(hostOpts);
+    expect(routed).toBeInstanceOf(Promise);
+    const route = await routed;
+    expect(route.engine).toBe(engines.get("zcode"));
+    expect(route.engineId).toBe("zcode");
+  });
+
+  it("probe 失败兜底回 pi：本地 pi 实例接管（不依赖 registry 的 pi 注册态）+ fallback 留痕", async () => {
+    const { hostOpts, piEngine } = makeHostRoute({
+      zcodeProbeOk: false,
+      routing: { agentEngine: "zcode" },
+    });
+    const route = await routeEngineForHost(hostOpts);
+    expect(route.engine).toBe(piEngine);
+    expect(route.engineId).toBe("pi");
+    expect(route.requestedEngineId).toBe("zcode");
+    expect(route.engineFallback).toEqual({ from: "zcode", reason: "engine_probe_failed" });
+  });
+
+  it("registry 面未注册 pi：兜底/清单两口径都不把本地 pi 漏报（SAR 单测 mock 形态）", async () => {
+    // registry 面只含 zcode（probe 失败）——模拟「本地 pi 不在全局注册表」的注入形态
+    const engines = new Map<string, EnginePort>([["zcode", makeFakeEngine("zcode", false)]]);
+    const probeCalls: string[] = [];
+    const piEngine = makeLocalPi();
+    const mkOpts = (): HostRouteOptions => ({
+      routing: { agentEngine: "zcode" },
+      strict: false,
+      probe: (id) => {
+        probeCalls.push(id);
+        return engines.get(id)!.probe();
+      },
+      piEngine,
+      getEngineFn: (id) => {
+        const e = engines.get(id);
+        if (e === undefined) throw new EngineNotFoundError(id, [...engines.keys()]);
+        return e;
+      },
+      hasEngineFn: (id) => engines.has(id),
+      listEnginesFn: () => [...engines.keys()],
+    });
+    // probe 失败 + 无守卫 → 兜底回 pi：本地实例接管，不触 registry 的 pi 缺失
+    const route = await routeEngineForHost(mkOpts());
+    expect(route.engine).toBe(piEngine);
+    expect(route.engineId).toBe("pi");
+    expect(probeCalls).toEqual(["zcode"]);
+    // 未注册 id：engine_not_found 文案清单含 pi（本地 pi 恒可用，不漏报）
+    const ghostOpts: HostRouteOptions = {
+      ...mkOpts(),
+      routing: { callEngine: "ghost" },
+    };
+    const err = await routeEngineForHost(ghostOpts).then(
+      (r) => r,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain("engine_not_found");
+    expect((err as EngineNotFoundError).registered).toContain("pi");
   });
 });

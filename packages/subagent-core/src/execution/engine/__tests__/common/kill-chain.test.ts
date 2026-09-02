@@ -88,6 +88,33 @@ describe("killChain", () => {
   });
 });
 
+describe("killChain grace 参数化（D3-① 杀链合一：pi=30s / zcode=5s，现状语义逐字节保持）", () => {
+  it("pi 参数形态（graceMs=30s + unrefTimers + escalationNote）：29s 未升级，越 30s 窗口 SIGKILL", async () => {
+    const { child, signals } = makeFakeChild();
+    const p = killChain(child, {
+      graceMs: 30_000,
+      unrefTimers: true,
+      escalationNote: "child sa-x (source: spawn watchdog)",
+    });
+    expect(signals).toEqual(["SIGTERM"]); // SIGTERM 同步发出（信号序不变）
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(signals).toEqual(["SIGTERM"]); // 窗口内不升级（非贴边断言）
+    await vi.advanceTimersByTimeAsync(1_100); // 越过 30s 优雅窗口
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]); // 升级 SIGKILL（race-F4 语义）
+    await vi.advanceTimersByTimeAsync(10_000); // 有界收尸窗口
+    expect(await p).toBe("killed");
+  });
+
+  it("escalationNote 缺省（zcode 现状形态）：graceMs=5s 越窗 SIGKILL，升级路径同构", async () => {
+    const { child, signals } = makeFakeChild();
+    const p = killChain(child, { graceMs: 5_000 });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await p).toBe("killed");
+  });
+});
+
 describe("synthesizeTimeoutOutcome", () => {
   it("合成 engine_timeout 终态：error 含 slug + stdout 尾部 + engine: pi 重跑建议；exitCode=null", () => {
     const outcome = synthesizeTimeoutOutcome(

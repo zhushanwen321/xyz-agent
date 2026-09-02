@@ -15,7 +15,7 @@ import { clearEngines, registerEngine } from "../registry.ts";
 function stubEngine(id: string): EnginePort {
   return {
     id,
-    capabilities: () => ({ conversation: "unsupported", steer: "unsupported", sandbox: "none" }),
+    capabilities: () => ({ conversation: "unsupported", steer: "unsupported", sandbox: "none", maxTurns: false }),
     probe: async () => ({ ok: true, engineVersion: "test" }),
     run: async () => {
       throw new Error("unused");

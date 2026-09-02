@@ -242,7 +242,8 @@ function setup(): SetupResult {
 
 const ctxModel: ModelInfo = { id: "m", name: "M", provider: "p", reasoning: false };
 
-/** execCtxAls.run 的 duck-type（绕过 import AsyncLocalStorage，足够本组用例）。 */
+/** [D3-⑤] execNesting（公共层 ExecutionNestingContext）.run 的 duck-type（绕过
+ * import AsyncLocalStorage，足够本组用例——私字段经 Reflect 取，机制与旧 execCtxAls 同构）。 */
 interface ExecCtxAls {
   run: <T>(store: { recordId: string | undefined; depth: number }, cb: () => T) => T;
 }
@@ -283,10 +284,10 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
   it("[D-033] execCtxAls depth=MAX 时 execute 抛错（nestingDepth=MAX+1 被拒）", async () => {
     const { service } = setup();
 
-    const execCtxAls = Reflect.get(service, "execCtxAls") as ExecCtxAls;
+    const execNesting = Reflect.get(service, "execNesting") as ExecCtxAls;
 
     await expect(
-      execCtxAls.run({ recordId: "parent", depth: MAX_FORK_DEPTH }, () =>
+      execNesting.run({ recordId: "parent", depth: MAX_FORK_DEPTH }, () =>
         service.execute({ task: "too deep", ctxModel }),
       ),
     ).rejects.toThrow(/nesting depth/);
@@ -300,9 +301,9 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
   it("[D-033] execCtxAls depth=MAX-1 时 execute 不抛（nestingDepth=MAX 允许）", async () => {
     const { service } = setup();
 
-    const execCtxAls = Reflect.get(service, "execCtxAls") as ExecCtxAls;
+    const execNesting = Reflect.get(service, "execNesting") as ExecCtxAls;
 
-    const execPromise = execCtxAls.run({ recordId: "parent", depth: MAX_FORK_DEPTH - 1 }, () =>
+    const execPromise = execNesting.run({ recordId: "parent", depth: MAX_FORK_DEPTH - 1 }, () =>
       service.execute({ task: "at limit", ctxModel }),
     );
     await waitForSpawn(mockSpawn);

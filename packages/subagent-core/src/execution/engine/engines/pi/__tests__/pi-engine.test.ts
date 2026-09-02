@@ -179,6 +179,7 @@ describe("PiEngine.capabilities（D3 链路接通口径）", () => {
       resume: "native", // 同进程 idle 复用 + --session 冷续写
       interrupt: "kill-only", // 现链路 abort = SIGTERM，rpc abort 未接通
       permissionMode: "native", // argv-mirror 镜像主进程 flag
+      maxTurns: true, // [D3-④] turn limiter 兑现
     });
   });
 });
