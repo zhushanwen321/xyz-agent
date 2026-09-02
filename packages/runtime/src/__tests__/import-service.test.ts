@@ -22,6 +22,20 @@ import { join } from 'node:path'
 // copyFile 失败注入开关（vi.hoisted：vi.mock 工厂提升后仍可引用）。
 const copyFailureState = vi.hoisted(() => ({ failNext: false }))
 
+// getPiGlobalAgentDir 定向覆盖（缺省 rootDir 用例）：真实推导在 XYZ_AGENT_DATA_DIR 指向
+// dev/真实数据目录时会解析到 ~/.pi/agent（用户 pi CLI 目录）——fs-guard 会正确拦截。
+// 用例改由 mock 定向指到 tmp fixture，精确测「缺省 rootDir = getPiGlobalAgentDir()/sessions」
+// 的接线逻辑，不依赖运行时 env 巧合（vi.hoisted 同上）。
+const piGlobalDirState = vi.hoisted(() => ({ dir: '' }))
+
+vi.mock('../infra/pi/pi-maintenance.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../infra/pi/pi-maintenance.js')>()
+  return {
+    ...actual,
+    getPiGlobalAgentDir: () => piGlobalDirState.dir,
+  }
+})
+
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
@@ -83,8 +97,10 @@ beforeAll(() => {
 
 afterAll(() => {
   rmSync(fixturesRoot, { recursive: true, force: true })
-  // ImportService 落盘目标（globalSetup tmp dataDir 下的太极 sessions 根）一并清理
-  rmSync(getSessionsDir(), { recursive: true, force: true })
+  // [HISTORICAL] 2026-09-02 会话丢失事故修复：此处原有 rmSync(getSessionsDir(), { recursive: true })——
+  // 删除共享推导路径（落在哪个 dataDir 由 env 决定，env 异常时等于删用户真实会话目录，
+  // 当日即删光 ~/.xyz-agent/pi/sessions 致三个 pi 进程 ENOENT 崩溃）。ImportService 的
+  // 落盘目标在 globalSetup 注入的 tmp dataDir 下，由 global-setup teardown 统一回收。
 })
 
 describe('ImportService.listCandidates', () => {
@@ -170,7 +186,8 @@ describe('ImportService.listCandidates', () => {
   })
 
   it('rootDir 缺省 = pi 全局 sessions（getPiGlobalAgentDir 动态推导）', async () => {
-    const defaultRoot = join(getPiGlobalAgentDir(), 'sessions')
+    piGlobalDirState.dir = join(fixturesRoot, 'pi-global-agent')
+    const defaultRoot = join(piGlobalDirState.dir, 'sessions')
     mkdirSync(defaultRoot, { recursive: true })
     writeSessionJsonl(join(defaultRoot, 'def.jsonl'), 'def-id-0000001', '/tmp/def-cwd', 'DefaultRoot')
     const svc = makeImportService()
