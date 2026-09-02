@@ -2,7 +2,7 @@
  * useSearchJump（#6）—— 选中项跳转编排（type switch 分发）。
  *
  * 接线层级：跨模块（type switch 调 commandStore + file/session domain + useDetailPane + useRecents）。
- * 依赖方向：api（file/session domain）+ composables（useRecents）+ stores/command + stores/fileTree。
+ * 依赖方向：api（file/session domain）+ composables（useRecents）+ core command 单例壳适配（D7 收口）+ stores/fileTree。
  * selectSession 经 options 注入（壳装配层传入，对齐 useSearchModalDeps 的 ShellDeps 模式），
  * 破 search → sidebar 域级依赖（§7.4 域依赖方向一致）。
  *
@@ -26,7 +26,7 @@
 import type { SearchItem, JumpCtx, JumpResult, RecentEntry } from '@xyz-agent/core'
 import { file as fileApi, session as sessionApi } from '@/api'
 import { useRecents } from '@/composables/features/new-task/useRecents'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore } from '@/composables/features/command/useCommandStore'
 import { useFileTreeStore } from '@/stores/fileTree'
 import i18n from '@/i18n'
 
@@ -80,8 +80,8 @@ export function useSearchJump(options: UseSearchJumpOptions) {
           sessionId: ctx.activeSessionId,
         })
       } else {
-        // 应用命令：commandStore.appCommands 取 action 执行
-        const cmd = commandStore.appCommands.find((c) => c.name === item.title)
+        // 应用命令：commandStore.appCommands 取 action 执行（core 实例 ref 需 .value）
+        const cmd = commandStore.appCommands.value.find((c) => c.name === item.title)
         if (!cmd) {
           return { ok: false, error: t('search.commandNotFound', { title: item.title }) }
         }

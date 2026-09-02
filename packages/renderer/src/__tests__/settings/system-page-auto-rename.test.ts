@@ -13,7 +13,6 @@
  * mock 策略：
  *  - vi.mock('@xyz-agent/core/transport/api/domains/settings') 捕获 getAutoRenameEnabled / setAutoRenameEnabled。
  *  - vi.mock('@/composables/useToast') 隔离 toast 全局副作用。
- *  - vi.mock('@/stores/command') 避免 useCommandStore 真实 pinia store 初始化报错（容器用例挂 SystemShortcutSection 需要）。
  *  - vi.mock('@/lib/ipc') mock listSystemSounds（容器用例挂 SystemSoundSection onMounted 调用）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/settings/system-page-auto-rename.test.ts

@@ -5,7 +5,7 @@
  * 跨 store+domain 编排。domain 严格只调 transport+pending 的铁律不变。
  *
  * 接线层级：跨模块（调 matchFilter + commandStore + fileSearchStore + composer/session domain + WS race）。
- * 依赖方向：lib（match-engine/search-types）+ stores（command/fileSearch）+ api（composer/session domain）+ useCommandRegistry/useRecents。
+ * 依赖方向：lib（match-engine/search-types）+ core 单例壳适配（command/fileSearch，D7 收口）+ api（composer/session domain）+ useCommandRegistry/useRecents。
  *
  * 数据流：SearchModal.watch(query) → debounce 120ms → query(q, ctx) →
  *   allSettled 并行查 3 源（命令内存 / file WS 缓存优先 / session WS）→
@@ -34,10 +34,10 @@ import { useCommandRegistry } from '@/composables/features/command/useCommandReg
 import type { UnifiedCommand } from '@/composables/features/command/useCommandRegistry'
 import { useRecents } from '@/composables/features/new-task/useRecents'
 import { useFileSearch } from '@/composables/features/search/useFileSearch'
-import { useFileSearchStore } from '@/stores/fileSearch'
+import { useFileSearchStore } from '@/composables/features/search/useFileSearchStore'
 import { composer as composerApi, session as sessionApi } from '@/api'
 import * as mockApi from '@xyz-agent/core/transport/mock'
-import type { SessionCommand } from '@/stores/command'
+import type { SessionCommand } from '@xyz-agent/core'
 
 /**
  * AC-5.2 mock 轨判断：search 无 real WS domain（D-026），api/index.ts 已删 search 导出。

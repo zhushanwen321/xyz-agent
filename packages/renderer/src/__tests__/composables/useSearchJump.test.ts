@@ -3,7 +3,7 @@
  *
  * 覆盖：
  * - T2.2 选中应用命令执行 + 写 recents：confirm({type:'command',title:'新建'}) → action 调用 + recents.write + {ok:true}
- * - U7 选中 slash 命令注入：confirm({type:'command',title:'/commit'}) → commandStore.pendingSlash 写入 + {ok:true}
+ * - U7 选中 slash 命令注入：confirm({type:'command',title:'/commit'}) → commandStore.pendingSlash.value 写入 + {ok:true}
  * - T2.6（AC-6.8）command action 抛错：action throw → {ok:false,error}（浮层保持打开）
  * - T2.7 跳转成功关闭：confirm 成功 → {ok:true}
  * - T3.4（AC-6.5/6.9）file.read 失败：fileApi.read reject → {ok:false,error} + 未调 openPreview（grep 验收）
@@ -13,7 +13,7 @@
  * - T4.7 跳转成功 active session 切换：confirm session 成功 → {ok:true}
  * - T5.3（D-001）symbol 选中不跳转：confirm({type:'symbol'}) → {ok:false,error:'符号搜索暂不可用'}（不调 domain/store）
  *
- * 环境：vitest happy-dom + pinia（useCommandStore/useFileTreeStore 需 pinia）。
+ * 环境：vitest happy-dom + pinia（useFileTreeStore 需 pinia；commandStore 为 core 单例壳适配，D7 收口）。
  * selectSession 经 options 注入（壳装配层模式，§7.4 破 search→sidebar 域级依赖），测试直接传 mock。
  * 禁止 node:test。运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useSearchJump.test.ts
  */
@@ -46,11 +46,14 @@ vi.mock('@/composables/features/new-task/useRecents', () => ({
 }))
 
 import { useSearchJump } from '@/composables/features/search/useSearchJump'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 import type { AppCommand, SearchItem } from '@xyz-agent/core'
 
 beforeEach(() => {
+  // pinia 仍被 useFileTreeStore（file 跳转 selectFile）与 useSearchJump 模块链需要
   setActivePinia(createPinia())
+  // core command 单例（D7 收口）：reset 隔离用例间 appCommands/pendingSlash 状态
+  __resetCommandStoreForTesting()
   vi.clearAllMocks()
 })
 
@@ -77,7 +80,7 @@ describe('T2.2 选中应用命令执行 + 写 recents', () => {
   })
 })
 
-describe('U7 选中 slash 命令 → 写 commandStore.pendingSlash（icon 从 item.icon 透传）', () => {
+describe('U7 选中 slash 命令 → 写 commandStore.pendingSlash.value（icon 从 item.icon 透传）', () => {
   it('confirm(slash 命令带 icon:wrench) → {ok:true} + pendingSlash.icon===wrench（非 terminal，证明从 item.icon 透传）+ recents 写入', async () => {
     const commandStore = useCommandStore()
     const { confirm } = useSearchJump({ selectSession: selectSessionMock })
@@ -89,11 +92,11 @@ describe('U7 选中 slash 命令 → 写 commandStore.pendingSlash（icon 从 it
 
     expect(result).toEqual({ ok: true })
     // pendingSlash 已写入，icon 从 item.icon 透传（wrench 非 terminal）
-    expect(commandStore.pendingSlash).not.toBeNull()
-    expect(commandStore.pendingSlash!.command).toBe('commit')
-    expect(commandStore.pendingSlash!.icon).toBe('wrench')
-    expect(commandStore.pendingSlash!.sessionId).toBe('s1')
-    expect(typeof commandStore.pendingSlash!.ts).toBe('number')
+    expect(commandStore.pendingSlash.value).not.toBeNull()
+    expect(commandStore.pendingSlash.value!.command).toBe('commit')
+    expect(commandStore.pendingSlash.value!.icon).toBe('wrench')
+    expect(commandStore.pendingSlash.value!.sessionId).toBe('s1')
+    expect(typeof commandStore.pendingSlash.value!.ts).toBe('number')
     // AC-6.4：跳转成功后写 recents
     expect(recentsWriteMock).toHaveBeenCalledTimes(1)
   })
@@ -109,7 +112,7 @@ describe('U8 landing 态放行（修现有 bug：原返「无活动会话」错�
 
     // landing 态放行（不再返「无活动会话」错误）
     expect(result).toEqual({ ok: true })
-    expect(commandStore.pendingSlash!.sessionId).toBe(null)
+    expect(commandStore.pendingSlash.value!.sessionId).toBe(null)
     // 放行走 ok 路径，recents 被写（与原返错不写 recents 的行为变化需锁定）
     expect(recentsWriteMock).toHaveBeenCalledTimes(1)
   })
@@ -124,7 +127,7 @@ describe('U9 icon undefined 透传（缺省态）', () => {
     const result = await confirm(item, { activeSessionId: 's1' })
 
     expect(result).toEqual({ ok: true })
-    expect(commandStore.pendingSlash!.icon).toBeUndefined()
+    expect(commandStore.pendingSlash.value!.icon).toBeUndefined()
   })
 })
 
@@ -152,7 +155,7 @@ describe('U11 应用命令分支不受影响（回归）', () => {
     expect(result).toEqual({ ok: true })
     expect(action).toHaveBeenCalledTimes(1)
     // 应用命令走 action 不写 pendingSlash
-    expect(commandStore.pendingSlash).toBeNull()
+    expect(commandStore.pendingSlash.value).toBeNull()
   })
 })
 
