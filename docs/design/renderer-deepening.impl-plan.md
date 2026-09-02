@@ -116,6 +116,7 @@ graph TD
 | 10 | 概念性注释漂移（行为零影响）：transport/api/events.ts:125 仍提 FALLBACK 有 sid 分支、renderer 三处 + subscription-replay.test.ts:224 仍用 CROSS_SESSION_TYPES 措辞——符号已删概念仍成立 | 历史锚点未随结构改名刷新 | 一致性审查期统一刷新（约 5 处） |
 | 11 | u5.2 restoreSession 处置超出任务字面：core 未导出 runEntryChain 且 core 不在领地，保留壳侧链拷贝会复活双载体 | 合理偏差（G1 优先）| 落实为 restore RPC + core.selectSession 全链 + revive；两处等价已核验（cancelActiveFlow 对该路径 no-op；补发一次 session.switch 对已存在 session 是纯 getSummary+reply，runtime session-message-handler.ts:230-246）；一致性审查期核 runEntryChain 是否需导出供 restoreSession 精确复用（消除冗余 RPC 与 no-op 步） |
 | 12 | u5.2 use-chat-view-deps.test 提前改指（原属 u5.3 领地）：生产切换架空其 legacy vi.mock，2 用例红 | 达成验收 d 的最小必要 | u5.3 mock/动态型残余清单 9→8；D7-U 系列断言按 D5 声明行为调整（startFlow 兜底放弃） |
+| 13 | u6.1 四处连带：core 2 测试文件改指（设计漏数——D6① 只列 renderer 2 个，core store.test/custom-start-equivalence 经公共面消费逃生舱）、新规则打出 SubagentTab 真实误用 → 编排下沉新 composable useSubagentTabData、store.ts max-lines 豁免（既有 override 块内追加）、facet 断言类型 export（noUnusedLocals） | 规则不得为绿弱化的正面处置 + 机械必然 | SubagentTab 迁移行为逐字等价（renderer 3579 绿含 subagent-tab 用例）；一致性审查期复核迁移等价性与 max-lines 豁免 |
 
 ## 6 状态表
 
@@ -132,7 +133,7 @@ graph TD
 | u5.1 | committed | 1 | commit 93945c2fd（u5.1）；sessionEntry 六端口全可选（?? noop）；12 步链 = 壳版时序（D4 行为变化即时生效于 core 三消费路径）；新增 6 接口级用例（精确全序/短路/失败尾部）；core 1315 绿 + renderer typecheck 绿；结构裁量：selectSession(1-3) + runEntryChain(4-12) 镜像壳分段 |
 | u5.2 | committed | 1 | commit 9d941fc4c（u5.2）；legacy 生产消费归零；restoreSession 偏差处置（restore RPC + core 全链 + 双等价核验：cancelActiveFlow no-op / 补发 switch RPC 无副作用已核 runtime handler）；use-chat-view-deps.test 提前改指（u5.3 残余 9→8）；context.md 术语登记；renderer 3579 绿 + core 1315 绿 |
 | u5.3 | committed | 1 | commit 6699e8e4a（u5.3）；legacy 567 行删除；8 mock/动态型测试改指（5 死 mock 零风险 + fork-notice mock 恢复拦截 + useHandoffEffect 仅注释刷新）；三口径 grep + resetAppBootstrap 全仓零命中；renderer 3579 绿 |
-| u6.1 | pending | 0 | — |
+| u6.1 | committed | 1 | commit 5e9743658（u6.1）；testInternals 收编（timer 三件套 + 2 逃生舱，4 测试连带改指含 core 2 个设计漏数文件）；facet 双类型 + 编译期完备/互斥断言；taste-lint 新规则 9 用例；A8 双向过（fixture 报错指向 facet SSOT → 删后复绿）；规则打出真实误用 SubagentTab → 编排下沉 useSubagentTabData；core 1315 + renderer 3579 + root lint 全绿 |
 | u6.2 | pending | 0 | — |
 
 ## 7 残留风险与变更历史
