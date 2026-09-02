@@ -33,6 +33,7 @@ import {
 } from '../coordination/route-inbound'
 import { resubscribeAll } from '../coordination/subscription-state'
 import * as pendingApi from './api/pending'
+import { transportUnavailableError } from './errors'
 import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
 
 // ── 端口契约（§10.2 D-1：renderer 装配点注入实现） ─────────────────
@@ -274,9 +275,8 @@ export function useConnection() {
       // timer（避免到期二次触发）。
       if (newState === 'restarting' || newState === 'failed') {
         pendingApi.rejectAll(
-          Object.assign(
-            new Error(ports.t(newState === 'restarting' ? 'connection.runtimeRestarting' : 'connection.runtimeUnavailable')),
-            { code: 'disconnected' },
+          transportUnavailableError(
+            ports.t(newState === 'restarting' ? 'connection.runtimeRestarting' : 'connection.runtimeUnavailable'),
           ),
         )
         clearDisconnectGrace()
@@ -285,10 +285,9 @@ export function useConnection() {
       }
       if (oldState === 'connected' && newState !== 'connected') {
         // 网络断连路径（ws onclose → disconnected/reconnecting）：code='disconnected' 供调用方
-        // （useFileTree catch 等）识别传输断开类失败（对齐 request.ts send-fail reject）。
-        pendingApi.rejectAll(
-          Object.assign(new Error(ports.t('connection.disconnectedError')), { code: 'disconnected' }),
-        )
+        // （useFileTree catch 等）识别传输断开类失败——构造统一走 transport/errors 工厂单点
+        // （与 request.ts send-fail reject 同源，D10①）。
+        pendingApi.rejectAll(transportUnavailableError(ports.t('connection.disconnectedError')))
         // 在途流不立即收口：等重连结果（ring 回放补齐终态），DISCONNECT_GRACE_MS 超时兜底。
         // 语义论证见 armDisconnectGrace 注释。
         armDisconnectGrace()
@@ -302,16 +301,13 @@ export function useConnection() {
     // pre-auth 队列丢弃 → 立即 reject 对应 pending（任何模式都安装，对齐 stateWatch 体例）。
     // 队列消息与 request 层 pending 一一对应：TCP open → auth.result 窗口内 send() 入队的
     // 消息在 auth 失败 / 断连清队时永无 reply，若不在此 reject，pending 要等 request 层
-    // 65s sweep 才收口。错误构造对齐 stateWatch 断连分支（code='disconnected' 供调用方
+    // 65s sweep 才收口。错误构造走 transport/errors 工厂单点（code='disconnected' 供调用方
     // 识别传输断开类失败）；无 id 消息（非 RPC 型，如 flush 前 close 的 notify）无 pending 可收，跳过。
     if (!removeQueueDropListener) {
       removeQueueDropListener = onQueueDrop((msgs) => {
         for (const msg of msgs) {
           if (typeof msg.id !== 'string') continue
-          pendingApi.reject(
-            msg.id,
-            Object.assign(new Error(ports.t('connection.disconnectedError')), { code: 'disconnected' }),
-          )
+          pendingApi.reject(msg.id, transportUnavailableError(ports.t('connection.disconnectedError')))
         }
       })
     }

@@ -14,6 +14,7 @@
 import type { ClientMessage, ClientMessageMap, ReplyPayloadMap } from '@xyz-agent/shared'
 import * as pending from './pending'
 import { send } from '../ws-client'
+import { transportUnavailableError } from '../errors'
 
 /**
  * 发送 RPC 请求并等待 reply（类型化原语）。
@@ -53,10 +54,7 @@ export async function command<K extends keyof ReplyPayloadMap>(
     // 请求发出时本就处于断开态则后续永不触发，promise 只能等 65s sweep 超时——期间调用方
     // 的 in-flight 标记（如文件树 inFlight/loading）持续拦截用户操作（V8 实测：runtime
     // 重启窗口内点击目录零反馈，reload 才恢复）。立即 reject 让调用方进入可重试的 error 态。
-    pending.reject(
-      id,
-      Object.assign(new Error('transport unavailable (ws not open)'), { code: 'disconnected' }),
-    )
+    pending.reject(id, transportUnavailableError('transport unavailable (ws not open)'))
   }
   return result
 }

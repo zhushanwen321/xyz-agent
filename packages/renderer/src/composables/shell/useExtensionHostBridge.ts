@@ -28,6 +28,7 @@ import { reactive, shallowReactive, watch } from 'vue'
 import {
   ContributionRegistry,
   createSessionScopedMap,
+  EXTENSION_BRIDGE_TYPES,
   InternalEventBus,
   MessageBusBridge,
   MountPointRegistry,
@@ -69,17 +70,11 @@ import type { ContributionRecord } from '@xyz-agent/core'
 /** 把 renderer 的 WS 消息流（events 通道的 plugin:/extension: 下行）适配成 PluginMessageSource。 */
 
 /**
- * extension:* 下行进 bridge 的精确白名单（与 core MessageBusBridge 的 EXTENSION_HANDLERS
- * 5 个 key 一致，见 message-bus-bridge.ts）。plugin:* 前缀全放行，extension:* 只放行白名单内 type——
- * 其余（如 extension.error）由 source filter 静默丢弃，不进 bridge（source 职责边界）。
+ * extension:* 下行进 bridge 的精确白名单——core 导出 SSOT（D10②，派生自
+ * message-bus-bridge.ts EXTENSION_HANDLERS 的 keys），本文件 import 同一份。
+ * plugin:* 前缀全放行，extension:* 只放行白名单内 type——其余（如 extension.error）
+ * 由 source filter 静默丢弃，不进 bridge（source 职责边界）。
  */
-export const EXTENSION_BRIDGE_TYPES: readonly string[] = [
-  'extension:widget',
-  'extension:widgetGui',
-  'extension:status',
-  'extension:notify',
-  'extension.ui_request',
-]
 
 /**
  * 过滤条件：plugin:* 前缀 OR EXTENSION_BRIDGE_TYPES 精确白名单。

@@ -16,10 +16,10 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { computed, nextTick } from 'vue'
-import { InternalEventBus, MessageBusBridge, providePlatform, registerMountPoints, type ContributionRegistry } from '@xyz-agent/core'
+import { EXTENSION_BRIDGE_TYPES, InternalEventBus, MessageBusBridge, providePlatform, registerMountPoints, type ContributionRegistry } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
 import { dispatchCrossSession, dispatchGlobal } from '@xyz-agent/core/transport/api'
-import { createWsPluginMessageSource, EXTENSION_BRIDGE_TYPES, initExtensionHostBridge } from '../useExtensionHostBridge'
+import { createWsPluginMessageSource, initExtensionHostBridge } from '../useExtensionHostBridge'
 import {
   DIALOG_REQUEST_SOURCE_KEY,
   UI_RESPONSE_TRANSPORT_KEY,
@@ -164,7 +164,8 @@ describe('createWsPluginMessageSource 过滤条件（FR1/AC1）', () => {
   })
 
   it('TC5: EXTENSION_BRIDGE_TYPES 字面量 5 项 + 每项行为级验证（进 bridge 产出非 error 事件）', () => {
-    // 字面量锁：与 core EXTENSION_HANDLERS（message-bus-bridge.ts）的 5 个 key 精确一致
+    // 字面量锁：EXTENSION_BRIDGE_TYPES 已是 core SSOT（派生自 EXTENSION_HANDLERS keys），
+    // 锁 5 项防 handlers 增删时白名单悄悄漂移（消费方 source filter 行为随之变化无信号）
     expect(EXTENSION_BRIDGE_TYPES).toEqual([
       'extension:widget',
       'extension:widgetGui',

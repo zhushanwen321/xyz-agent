@@ -329,6 +329,14 @@ const EXTENSION_HANDLERS: Record<string, (msg: IncomingPluginMessage) => Interna
   'extension.ui_request': parseExtensionUiRequest,
 }
 
+/**
+ * extension:* 下行进 bridge 的精确白名单（renderer-deepening D10② SSOT）。
+ * 从 EXTENSION_HANDLERS keys 派生——新增 handler 自动进白名单，壳的 source filter
+ * import 同一份（此前壳持手抄数组靠注释对齐，双写必漂移）。plugin:* 前缀全放行、
+ * 其余 extension:* 由 source filter 静默丢弃的职责边界不变（见壳 useExtensionHostBridge）。
+ */
+export const EXTENSION_BRIDGE_TYPES: readonly string[] = Object.keys(EXTENSION_HANDLERS)
+
 export class MessageBusBridge {
   private readonly bus: InternalEventBus
   private unsubscribe: (() => void) | null = null

@@ -20,12 +20,9 @@
  * 但 goal 要求保留；留待 P6-residual-deletion cleanup wave 删除）。
  */
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
-import type {
-  PlatformPort,
-  WebSocketLike,
-  KVStorage,
-} from '@xyz-agent/core'
-import { WS_READY_STATE } from '@xyz-agent/core'
+// 相对路径直达定义处（platform/port.ts）：经 '@xyz-agent/core' barrel 回引会成环，ESM 序隐患
+import type { PlatformPort, WebSocketLike, KVStorage } from '../../platform/port'
+import { WS_READY_STATE } from '../../platform/port'
 
 // ── 旧导出（过渡兼容，shim 化后无生产消费方，保留待 P6 cleanup）──────────
 

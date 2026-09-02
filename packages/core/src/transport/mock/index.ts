@@ -32,7 +32,8 @@ import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from 
 import { fixtureProviders, fixtureSkills, fixtureAgents, fixtureExtensions, toCandidate } from './settings-data'
 import { MOCK_MODELS, mockModelToInfo, MENTION_CANDIDATES, FILE_CANDIDATES } from './composer-data'
 import { SEARCH_MOCK, SEARCH_RECENTS, SEARCH_SUGGESTED_COUNT, type SearchItem } from './search-data'
-import type { Section } from '@xyz-agent/core'
+// 相对路径直达定义处（new-task-search/types.ts）：经 '@xyz-agent/core' barrel 回引会成环，ESM 序隐患
+import type { Section } from '../../domain/new-task-search/types'
 import { runSendStream, type Timing } from './run-send-stream'
 import { makeMockSubscription, type GlobalHandler } from './subscription'
 import * as events from '../api/events'

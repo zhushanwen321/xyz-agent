@@ -22,7 +22,9 @@
  * 驱逐前 double-check streaming 状态（SR8 竞态防护）。
  */
 
-import { deleteMessages } from '@xyz-agent/core'
+// 相对路径直达定义处（mutations.ts）：经 '@xyz-agent/core' barrel 回引会成环
+// （index re-export 本模块，本模块又 import index），ESM 序隐患
+import { deleteMessages } from './mutations'
 
 /**
  * LRU 保留阈值：最近 8 个 session（D6）。

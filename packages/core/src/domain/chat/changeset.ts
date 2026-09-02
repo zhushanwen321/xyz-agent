@@ -22,7 +22,8 @@ import { ref } from 'vue'
 import type { Ref } from 'vue'
 import type { ChangeSetStatus, FileChange } from '@xyz-agent/shared'
 import { findLastAssistantIndex } from './chunk-processor'
-import { commitMessages, type MessagesRef } from '@xyz-agent/core'
+// 相对路径直达定义处（mutations.ts）：经 '@xyz-agent/core' barrel 回引会成环，ESM 序隐患
+import { commitMessages, type MessagesRef } from './mutations'
 
 /** 审查态集合（单向守卫内拦 ready 覆盖用）：用户交互驱动的终态，runtime 帧不得改写 */
 const REVIEW_STATUSES: ReadonlySet<ChangeSetStatus> = new Set(['partially-reviewed', 'resolved', 'superseded'])

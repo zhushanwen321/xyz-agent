@@ -7,7 +7,8 @@
  * D-028 架构修复：SearchType/SearchItem 定义迁至 @/lib/search-types（领域 SSOT），
  * mock 反向 import（mock 依赖领域类型，方向正确）。
  */
-import type { SearchItem, SearchType } from '@xyz-agent/core'
+// 相对路径直达定义处（new-task-search/types.ts）：经 '@xyz-agent/core' barrel 回引会成环，ESM 序隐患
+import type { SearchItem, SearchType } from '../../domain/new-task-search/types'
 // re-export 保持 mock 内部消费方（mock/index.ts）无需改导入路径
 export type { SearchItem, SearchType }
 
