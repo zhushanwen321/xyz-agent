@@ -23,15 +23,15 @@ import {
   formatActivityLine,
   formatElapsed,
   formatElapsedSeconds,
-  formatEventLine,
   formatTokenStat,
+  formatTraceEventLine,
   MAX_TOOL_CALLS_DISPLAY,
   OUTPUT_TRUNCATE_BYTES,
   PAGE_SCROLL_DEFAULT,
   PROMPT_FOLD_LINES,
   statusDotStr,
   type ThemeLike,
-} from "./format.ts";
+} from "../format.ts";
 
 // ── 共享常量（BOX_BORDER_CHARS / BUDGET_TOKENS_DIVISOR / MAX_TOOL_CALLS_DISPLAY
 //    已上移到 format.ts，供 WorkflowsView + detail-content 共用，避免重复定义）──
@@ -232,7 +232,7 @@ function renderActivitySection(
     const start = eventLog.length - showCount;
     for (let i = start; i < eventLog.length; i++) {
       const entry = eventLog[i] as AgentEventLogEntry;
-      rightLines.push(theme.fg("dim", `  ${formatEventLine(entry, theme)}`.slice(0, mainWidth - BOX_BORDER_CHARS)));
+      rightLines.push(theme.fg("dim", `  ${formatTraceEventLine(entry, theme)}`.slice(0, mainWidth - BOX_BORDER_CHARS)));
     }
     if (totalCount === 0 && !live.currentActivity) {
       rightLines.push(theme.fg("dim", "  (starting...)"));

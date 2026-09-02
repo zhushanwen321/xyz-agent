@@ -8,14 +8,17 @@
 import { describe, expect, it } from "vitest";
 
 import { buildDetailContent } from "../detail-content.ts";
-import type { ThemeLike } from "../format.ts";
+import type { ThemeLike } from "../../format.ts";
 import type { ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
 import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
 
-/** plain theme: fg/bold 直接返回原文，无 ANSI 色码——测试断言纯文本。 */
+/** plain theme: 着色方法直接返回原文，无 ANSI 色码——测试断言纯文本。
+ *  bg/underline 为宽 ThemeLike 接口的 no-op 实现（workflow 渲染面只用 fg/bold）。 */
 const plainTheme: ThemeLike = {
+  bg: (_color: string, text: string) => text,
   fg: (_tag: string, text: string) => text,
   bold: (text: string) => text,
+  underline: (text: string) => text,
 };
 
 function makeNode(overrides: Partial<ExecutionTraceNode> = {}): ExecutionTraceNode {

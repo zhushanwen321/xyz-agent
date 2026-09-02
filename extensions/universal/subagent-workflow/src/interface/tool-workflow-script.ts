@@ -34,7 +34,7 @@ import type { WorkflowScriptRegistry } from "@zhushanwen/subagent-core/orchestra
 import { lintScript } from "@zhushanwen/subagent-core/orchestration/script-lint.ts";
 import { deleteWorkflow, saveWorkflow } from "@zhushanwen/subagent-core/orchestration/workflow-files.ts";
 import { toGuiCtx } from "./gui-mappers.ts";
-import { renderTextFallback } from "./views/format.ts";
+import { renderTextFallback } from "./format.ts";
 import { parseResourceMetaDetailed } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
 
 // ── Parameter schema ─────────────────────────────────────────

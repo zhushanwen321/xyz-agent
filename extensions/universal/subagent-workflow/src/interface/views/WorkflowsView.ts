@@ -27,7 +27,7 @@ import { join as pathJoin } from "node:path";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey } from "@earendil-works/pi-tui";
+import { Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
   countAllToolCalls,
@@ -49,13 +49,12 @@ import {
   formatElapsedSeconds,
   formatPhaseLine,
   formatStatusBadge,
-  padVisible,
+  padToVisible,
   SIDEBAR_WIDTH,
   statusDotStr,
   TERM_ROWS_FALLBACK,
   type ThemeLike,
-  visibleLen,
-} from "./format.ts";
+} from "../format.ts";
 
 // L2 详情内容构建 + 滚动按键（纯函数）抽到 detail-content.ts；此处 re-export 保持
 // view 的对外 API 不变（测试仍从 WorkflowsView 导入）。
@@ -107,7 +106,7 @@ function plainBorder(theme: ThemeLike, left: string, right: string, contentWidth
 }
 /** 内容行墙：│ + 内容(pad 到 contentWidth) + │，墙字符 borderMuted。 */
 function walled(theme: ThemeLike, content: string, contentWidth: number): string {
-  return `${b(theme, "│")}${padVisible(content, contentWidth)}${b(theme, "│")}`;
+  return `${b(theme, "│")}${padToVisible(content, contentWidth)}${b(theme, "│")}`;
 }
 
 // ── Minimal TUI duck-types（避免直接 import TUI/KeybindingsManager 类型 ──
@@ -649,12 +648,12 @@ function renderHeader(
   lines.push(walled(theme, nameLine, contentWidth));
 
   if (run.spec.description) {
-    const maxDesc = contentWidth - visibleLen(rightPart) - 1;
+    const maxDesc = contentWidth - visibleWidth(rightPart) - 1;
     const descText = run.spec.description.length > maxDesc
       ? run.spec.description.slice(0, maxDesc - 1) + ELLIPSIS
       : run.spec.description;
     const descPart = theme.fg("dim", descText);
-    const padLen = Math.max(0, contentWidth - visibleLen(descPart) - visibleLen(rightPart));
+    const padLen = Math.max(0, contentWidth - visibleWidth(descPart) - visibleWidth(rightPart));
     lines.push(`${b(theme, "│")}${descPart}${" ".repeat(padLen)}${rightPart}${b(theme, "│")}`);
   } else {
     lines.push(walled(theme, rightPart, contentWidth));
@@ -699,7 +698,7 @@ function mergeBody(
 ): void {
   const bodyHeightVal = Math.max(leftLines.length, rightLines.length);
   for (let i = 0; i < bodyHeightVal; i++) {
-    const left = padVisible(leftLines[i] ?? "", SIDEBAR_WIDTH);
+    const left = padToVisible(leftLines[i] ?? "", SIDEBAR_WIDTH);
     lines.push(left + b(theme, "│") + (rightLines[i] ?? ""));
   }
 }
@@ -865,7 +864,7 @@ function renderLevel2(
     const pointer = i === state.agentIdx ? "❯ " : "  ";
     const maxNameWidth = SIDEBAR_WIDTH - AGENT_NAME_BUDGET;
     const agentRef = displayAgentName(a.agent);
-    const agentName = visibleLen(agentRef) > maxNameWidth
+    const agentName = visibleWidth(agentRef) > maxNameWidth
       ? agentRef.slice(0, maxNameWidth - 1) + ELLIPSIS
       : agentRef;
     leftLines.push(`${pointer}${agentName}`);

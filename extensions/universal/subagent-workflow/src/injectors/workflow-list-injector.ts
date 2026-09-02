@@ -7,55 +7,22 @@
  * 背景：此前只有 `<available_subagents>`，自定义 workflow 只能靠 list 发现，
  * 与 subagent 不对称。补全后模型可直接 `run` 已列出的 workflow，无需先 list。
  *
- * 实现要点：
- * - 发现走同包 ADR-031 统一发现 discoverResources({kind:"workflows", includeTmp:true})
- *   （includeTmp 覆盖 .pi/workflows/.tmp/，即 workflow-script generate 的产物）
- * - 解析每个 workflow 的 `const meta = {name, description, ...}` 提取 name+description
- * - description 截断为 prompt 友好的摘要（builtin 的 review-fix-loop 描述超长，全量
- *   注入每 turn 会膨胀 prompt）
+ * D7-②（dual-track convergence）：同构骨架（缓存对/唯一写点/发现/三 handler）收敛到
+ * 同目录 resource-list-injector.ts 工厂，本文件只保留 workflow 侧真差异：
+ * - summarizeDescription：description 截断为 prompt 友好摘要（builtin 的
+ *   review-fix-loop 描述超长，全量注入每 turn 会膨胀 prompt）
+ * - parseWorkflowMeta：.js @pi-meta 块 → WorkflowEntry（m2 收敛改调 shared/meta-parser
+ *   parseResourceMeta，仅认 @pi-meta 新格式）
+ * - formatWorkflowList：注入段渲染（引导语通用化：不写死内置名）
+ * - includeTmp：发现覆盖 .pi/workflows/.tmp/（workflow-script generate 的产物）
  */
 
 
 
-import type {
-	BeforeAgentStartEvent,
-	BeforeAgentStartEventResult,
-	ExtensionAPI,
-	ExtensionContext,
-	SessionShutdownEvent,
-	SessionStartEvent,
-} from "@earendil-works/pi-coding-agent";
-import { getLogger } from "@zhushanwen/pi-extension-logger";
-
-import { getHostServices } from "@zhushanwen/subagent-core/core/host-services.ts";
-
-import {
-	discoverResources,
-	findWorkspaceRoot,
-	getCachedParsed,
-} from "@zhushanwen/subagent-core/shared/resource-discovery.ts";
 import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
 import { escapeXml, renderXmlSection } from "@zhushanwen/subagent-core/shared/xml-injection.ts";
 
-const logger = getLogger("injector");
-
-/**
- * Session 级 workflow 列表缓存（per-process = per-session），与 agentCache 对称。
- * 见 subagent-list-injector.ts 的 agentCache 注释。
- */
-let workflowCache: WorkflowEntry[] | null = null;
-
-/**
- * 注入块渲染缓存（与 workflowCache 同步更新）：before_agent_start 每个 turn 都要注入，
- * formatWorkflowList 在数据不变时输出完全相同——渲染一次随缓存复用。
- */
-let workflowInjectionCache: string | null = null;
-
-/** workflowCache 唯一写点：数据与渲染缓存同步更新（null 清空两者）。 */
-function setWorkflowCache(entries: WorkflowEntry[] | null): void {
-	workflowCache = entries;
-	workflowInjectionCache = entries !== null ? formatWorkflowList(entries) : null;
-}
+import { createResourceListInjector } from "./resource-list-injector.ts";
 
 /** 注入段中单个 workflow 的最大描述长度（控制每 turn prompt 体积） */
 const MAX_DESC_LEN = 160;
@@ -95,52 +62,13 @@ export function summarizeDescription(
 
 /**
  * 解析 workflow .js 文件的 meta（name + description），经 IF1 parseResourceMeta。
- *
- * m2 收敛：删 extractMetaBlock/extractMetaField（本地 brace-match parser），
- * 改调 shared/meta-parser.ts parseResourceMeta（统一 parser）。仅认 @pi-meta 新格式。
  * 投影到 WorkflowEntry {name, description(summarized)} 注入用。
  */
 export function parseWorkflowMeta(content: string): WorkflowEntry | null {
 	const meta = parseResourceMeta(content, "workflow");
 	if (!meta || meta.kind !== "workflow") return null;
-	// path 由 discoverAllWorkflows 从 DiscoveredResource.path 填充
+	// path 由工厂 discover 从 DiscoveredResource.path 填充
 	return { name: meta.name, description: summarizeDescription(meta.description), path: "" };
-}
-
-/**
- * 用统一资源发现发现所有可用 workflow（includeTmp 覆盖 generate 产物）。
- * 解析经 getCachedParsed mtime 级缓存；输出按 name 码点序排序（KV-cache 契约，
- * 见 subagent-list-injector.ts discoverAllAgents 注释）。
- * 永不抛错——单文件读失败仅记日志。
- */
-export async function discoverAllWorkflows(
-	workspaceRoot: string,
-): Promise<WorkflowEntry[]> {
-	const resources = await discoverResources({
-		kind: "workflows",
-		workspaceRoot,
-		// 宿主注入根现取（pi 壳 discoveryRoots 每次现取 getAgentDir，实例隔离）；
-		// agentDir 形参已删——其唯一用途就是喂 ScanConfig（u0-data-discovery 偏差 #7）
-		hostRoots: getHostServices().discoveryRoots?.()?.workflows ?? [],
-		includeTmp: true,
-	});
-
-	const map = new Map<string, WorkflowEntry>();
-	for (const resource of resources) {
-		if (!resource.available) continue;
-		try {
-			const wf = getCachedParsed(resource.path, parseWorkflowMeta);
-			if (wf) map.set(wf.name, { ...wf, path: resource.path });
-		} catch (err) {
-			logger.error(
-				`[workflow-list-injector] skip unreadable workflow file ${resource.path}`,
-				{ reason: err instanceof Error ? err.message : String(err) },
-			);
-		}
-	}
-	return [...map.values()].sort((a, b) =>
-		a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
-	);
 }
 
 /**
@@ -165,63 +93,17 @@ export function formatWorkflowList(workflows: WorkflowEntry[]): string {
 	});
 }
 
-/**
- * 注册 session 生命周期 handler，注入 `<available_workflows>` 段。
- *
- * 与 setupSubagentListInjector 对称：session_start 发现+缓存，before_agent_start
- * 读缓存（miss fallback）渲染注入，session_shutdown 清缓存。与 subagent 注入
- * handler 链式（pi 串联多 handler 的 systemPrompt 返回值）。
- */
-export function setupWorkflowListInjector(pi: ExtensionAPI): void {
-	pi.on(
-		"session_start",
-		async (_event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
-			try {
-				setWorkflowCache(
-					await discoverAllWorkflows(
-						findWorkspaceRoot(ctx.cwd),
-					),
-				);
-			} catch (err) {
-				// fail-safe：发现异常不阻断 session，缓存保持 null（before_agent_start 会 fallback）
-				logger.error("[workflow-list-injector] session_start discover failed", {
-					reason: err instanceof Error ? err.message : String(err),
-				});
-			}
-		},
-	);
+/** workflow 清单实例：缓存生命周期 / 发现 / 三 handler 全部经工厂骨架。 */
+const injector = createResourceListInjector<WorkflowEntry>({
+	kind: "workflows",
+	logTag: "[workflow-list-injector]",
+	parse: parseWorkflowMeta,
+	format: formatWorkflowList,
+	includeTmp: true,
+});
 
-	pi.on(
-		"before_agent_start",
-		async (
-			event: BeforeAgentStartEvent,
-			ctx: ExtensionContext,
-		): Promise<BeforeAgentStartEventResult | void> => {
-			try {
-				// 读缓存；miss（session_start 未触发/缓存被清）则 fallback 重新发现+赋值
-				if (workflowCache === null) {
-					setWorkflowCache(
-						await discoverAllWorkflows(
-							findWorkspaceRoot(ctx.cwd),
-						),
-					);
-				}
-				// workflowInjectionCache 与 workflowCache 不变量同步（setWorkflowCache 保证），直接复用
-				const injection = workflowInjectionCache;
-				if (!injection) return;
-				return { systemPrompt: event.systemPrompt + injection };
-			} catch (err) {
-				logger.error("[workflow-list-injector] before_agent_start failed", {
-					reason: err instanceof Error ? err.message : String(err),
-				});
-			}
-		},
-	);
+/** 用统一资源发现发现所有可用 workflow（includeTmp 覆盖 generate 产物；骨架与排序契约见工厂）。 */
+export const discoverAllWorkflows = injector.discover;
 
-	pi.on(
-		"session_shutdown",
-		(_event: SessionShutdownEvent, _ctx: ExtensionContext): void => {
-			setWorkflowCache(null);
-		},
-	);
-}
+/** 注册 session 生命周期 handler，注入 `<available_workflows>` 段（与 subagent 注入 handler 链式）。 */
+export const setupWorkflowListInjector = injector.setup;

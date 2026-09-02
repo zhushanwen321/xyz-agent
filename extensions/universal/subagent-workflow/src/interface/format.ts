@@ -12,10 +12,17 @@
 
 import os from "node:os";
 
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import type { AgentEventLogEntry, DisplayItem, ExecutionStatus } from "@zhushanwen/subagent-core/execution/types.ts";
 import { DEFAULT_AGENT_NAME } from "@zhushanwen/subagent-core/execution/types.ts";
+import type {
+  DoneReason,
+  ExecutionTraceNode,
+  RunStatus,
+  ToolCallEntry,
+} from "@zhushanwen/subagent-core/orchestration/models/types.ts";
+import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
 
 /**
  * ThemeLike:TUI 语义 token 着色接口(duck-typed,兼容 Pi Theme).
@@ -538,4 +545,257 @@ export function wrapText(text: string, maxWidth: number): string[] {
     if (line.length > 0) result.push(line);
   }
   return result;
+}
+
+// ============================================================
+// Workflow view 格式化（WorkflowsView / detail-content 专用差异段）
+//
+// 自 views/format.ts 并入（D7-① 双轨合并）：workflow 视图特有的 badge/phase/
+// trace 行格式化在此作差异段保留。并入时收敛的同构构件——ThemeLike、
+// formatElapsedSeconds（本文件版含小时分支，>1h 显示 "1h15m" 而非 "75m30s"）、
+// segFillColored、padToVisible——直接复用上方单定义，views 版副本不再存在。
+// ============================================================
+
+// ── Workflow view 布局常量 ────────────────────────────────────
+
+export const SIDEBAR_WIDTH = 24;
+export const PROMPT_FOLD_LINES = 3;
+export const OUTPUT_TRUNCATE_BYTES = 100_000;
+export const ELLIPSIS = "\u2026"; // U+2026
+
+// L2 详情滚动常量（对齐 subagents list-view.ts）。
+/** terminal.rows 读不到时的翻页兜底步长（防 NaN）。 */
+export const PAGE_SCROLL_DEFAULT = 10;
+/** tui.terminal.rows 兜底行数（duck-type 失败时，对齐 subagents TERM_ROWS_FALLBACK）。 */
+export const TERM_ROWS_FALLBACK = 24;
+
+// 跨 view 共享的布局常量（WorkflowsView + detail-content 都用）。
+/** box 左右边框字符宽度（│ x 2），用于内容行截断预算。 */
+export const BOX_BORDER_CHARS = 2;
+/** token 数 → k 单位的除数。 */
+export const BUDGET_TOKENS_DIVISOR = 1000;
+/** Activity 区最多显示的 tool call 条数。 */
+export const MAX_TOOL_CALLS_DISPLAY = 3;
+
+/** formatElapsed 的毫秒→秒换算。 */
+const MS_PER_SEC = 1000;
+
+/**
+ * 可显示的状态文本集合。
+ *
+ * 包含 RunStatus（"running"|"done" 不直接显示，转 reason）+ DoneReason
+ * （completed/failed/aborted/budget_limited/time_limited）+ ExecutionTraceNode.status
+ * （含 "pending"——trace 节点的初始态）。
+ *
+ * 收窄自 string → 显式联合，编译器会在新增 status 时强制 switch 补齐分支。
+ */
+type StatusText =
+  | RunStatus
+  | DoneReason
+  | "pending";
+
+// ── Workflow status helpers ──────────────────────────────────
+
+/** status → 语义颜色 token（用于给任意文本染色，不含符号）。 */
+function statusColorToken(
+  status: StatusText,
+): "success" | "warning" | "error" | "muted" {
+  switch (status) {
+    case "completed": return "success";
+    case "running": return "warning";
+    case "failed": case "aborted": return "error";
+    default: return "muted";
+  }
+}
+
+export function statusDotStr(
+  status: StatusText,
+  theme: ThemeLike,
+): string {
+  return theme.fg(statusColorToken(status), "●");
+}
+
+/** Format a status badge with color for the header area. */
+export function formatStatusBadge(
+  status: StatusText,
+  theme: ThemeLike,
+): string {
+  switch (status) {
+    case "running": return theme.fg("warning", "\u25CF running");
+    case "completed": return theme.fg("success", "\u2713 completed");
+    case "failed": return theme.fg("error", "\u2717 failed");
+    case "aborted": return theme.fg("error", "\u2717 aborted");
+    case "budget_limited": return theme.fg("error", "\u26A0 budget");
+    case "time_limited": return theme.fg("error", "\u26A0 timeout");
+    default: return theme.fg("muted", status);
+  }
+}
+
+// ── Workflow 时间 / 统计格式化 ────────────────────────────────
+
+/** Format elapsed time string from startedAt. */
+export function formatElapsed(startedAt?: string, now: number = Date.now()): string {
+  if (!startedAt) return "-";
+  const ms = now - new Date(startedAt).getTime();
+  if (ms < MS_PER_SEC) return "0s";
+  const secs = Math.floor(ms / MS_PER_SEC);
+  if (secs < SECS_PER_MINUTE) return `${secs}s`;
+  const mins = Math.floor(secs / SECS_PER_MINUTE);
+  const remSecs = secs % SECS_PER_MINUTE;
+  return `${mins}m${remSecs}s`;
+}
+
+/**
+ * Format a live eventLog entry（live 路径 Activity 区用）。
+ *
+ *   tool_start → "→ {label}"
+ *   tool_end   → "← {label}"（done）/ "✗ {label}"（failed）
+ *   turn_end   → "∘ {label}"（turn 摘要）
+ *   error      → "✗ {label}"
+ *
+ * 对齐上方 subagents formatEventLine 的视觉风格，但语义域是 workflow trace
+ * （前缀符号不同、label 不 sanitize）——与 formatEventLine 是两个概念域的实现，
+ * 同文件共存故以 Trace 前缀区分命名。
+ */
+export function formatTraceEventLine(entry: AgentEventLogEntry, theme: ThemeLike): string {
+  switch (entry.type) {
+    case "tool_start":
+      return `→ ${entry.label}`;
+    case "tool_end":
+      return entry.status === "failed"
+        ? theme.fg("error", `✗ ${entry.label}`)
+        : `✓ ${entry.label}`;
+    case "turn_end":
+      return theme.fg("dim", `∘ ${entry.label}`);
+    case "error":
+      return theme.fg("error", `✗ ${entry.label}`);
+    default:
+      return entry.label;
+  }
+}
+
+/** Format token + tool call statistics. */
+export function formatTokenStat(
+  usage?: { input: number; output: number },
+  toolCalls?: ToolCallEntry[],
+  elapsed?: string,
+): string {
+  const tokens = usage ? usage.input + usage.output : 0;
+  const tools = toolCalls?.length ?? 0;
+  const base = `${tokens} tok · ${tools} tool calls`;
+  return elapsed ? `${base} · ${elapsed}` : base;
+}
+
+/**
+ * renderResult 的文本兜底：从 result.content[0] 提取纯文本。
+ * 多处 tool 的 renderResult 曾各自内联此逻辑，提取后统一调用。
+ */
+export function renderTextFallback(
+  result: { content?: Array<{ type: string; text?: string }> },
+): string {
+  const first = result.content?.[0];
+  return first?.type === "text" ? (first.text ?? "") : "";
+}
+
+/** Format a single activity line: ToolName(argsPreview). */
+export function formatActivityLine(entry: ToolCallEntry, maxWidth: number): string {
+  // 语义阈值与开销：低于此宽度只显名称；括号占 2 字符 (name)。
+  const MIN_ACTIVITY_WIDTH = 10;
+  const PARENS_OVERHEAD = 2;
+  if (maxWidth < MIN_ACTIVITY_WIDTH) return entry.name;
+  const argsBudget = maxWidth - entry.name.length - PARENS_OVERHEAD;
+  if (argsBudget <= 0) return truncateToWidth(entry.name, maxWidth);
+  const truncated = entry.input.length > argsBudget
+    ? entry.input.slice(0, argsBudget - 1) + ELLIPSIS
+    : entry.input;
+  return `${entry.name}(${truncated})`;
+}
+
+// ── Workflow phase group（filters empty phases）──────────────
+
+export interface PhaseGroup {
+  name: string;
+  nodes: ExecutionTraceNode[];
+  doneCount: number;
+}
+
+/** Group trace nodes by phase. Nodes without phase go to "(no phase)". */
+function groupByPhase(nodes: ExecutionTraceNode[]): Map<string, ExecutionTraceNode[]> {
+  const map = new Map<string, ExecutionTraceNode[]>();
+  for (const node of nodes) {
+    const phase = node.phase || "(default)";
+    let arr = map.get(phase);
+    if (!arr) {
+      arr = [];
+      map.set(phase, arr);
+    }
+    arr.push(node);
+  }
+  // Sort within each phase by stepIndex ascending (FR-3.2)
+  for (const arr of map.values()) {
+    arr.sort((a, b) => a.stepIndex - b.stepIndex);
+  }
+  return map;
+}
+
+/** The fallback phase name when node has no explicit phase. */
+const NO_PHASE = "(default)";
+
+/** Build phase groups. Nodes without a phase are placed in an unnamed group. */
+export function buildPhaseGroups(nodes: ExecutionTraceNode[]): PhaseGroup[] {
+  const map = groupByPhase(nodes);
+  const result: PhaseGroup[] = [];
+  for (const [name, phaseNodes] of map) {
+    if (phaseNodes.length > 0) {
+      result.push({
+        name: name === NO_PHASE ? "" : name,
+        nodes: phaseNodes,
+        doneCount: phaseNodes.filter((n) => n.status === "completed").length,
+      });
+    }
+  }
+  return result;
+}
+
+// ── Workflow sidebar phase line formatter ────────────────────
+
+export function formatPhaseLine(
+  pg: PhaseGroup,
+  idx: number,
+  isSelected: boolean,
+  theme: ThemeLike,
+  maxWidth: number,
+): string {
+  const pointer = isSelected ? "❯ " : "  ";
+  const dot = statusDotStr(pg.doneCount === pg.nodes.length ? "completed" : "running", theme);
+  const name = pg.name || "(unnamed)";
+  const label = `${idx + 1} ${name} ${pg.doneCount}/${pg.nodes.length}`;
+  // pointer(2) + dot(1) + space(1)
+  const PHASE_PREFIX_WIDTH = 4;
+  const budget = maxWidth - PHASE_PREFIX_WIDTH;
+  const truncated = visibleWidth(label) > budget
+    ? truncateToWidth(label, budget - 1) + ELLIPSIS
+    : label;
+  return `${pointer}${dot} ${truncated}`;
+}
+
+// ── Workflow agent one-liner for overview right panel ────────
+
+const TOKEN_K = 1000;
+
+export function formatAgentOneLiner(node: ExecutionTraceNode, theme: ThemeLike): string {
+  const dot = statusDotStr(node.status, theme);
+  const elapsed = formatElapsed(
+    node.startedAt,
+    node.completedAt ? new Date(node.completedAt).getTime() : Date.now(),
+  );
+  const tok = node.result?.usage;
+  const tokStr = tok
+    ? `${Math.round((tok.input + tok.output) / TOKEN_K)}k tok`
+    : "";
+  const tcCount = node.result?.toolCalls?.length ?? 0;
+  const parts = [dot, displayAgentName(node.agent), node.model];
+  if (tokStr) parts.push(`${tokStr} · ${tcCount} tools`);
+  parts.push(elapsed);
+  return parts.join("    ");
 }

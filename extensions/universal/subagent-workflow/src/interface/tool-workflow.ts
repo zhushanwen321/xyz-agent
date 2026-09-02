@@ -44,7 +44,7 @@ import {
   type ReentryGuardRef,
   releaseReentryGuard,
 } from "./reentry-guard.ts";
-import { formatElapsed, renderTextFallback } from "./views/format.ts";
+import { formatElapsed, renderTextFallback } from "./format.ts";
 
 // ── Parameter schema ─────────────────────────────────────────
 
