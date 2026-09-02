@@ -31,6 +31,31 @@ export interface GetStateResult {
 }
 
 /**
+ * get_state response 监听器注册函数形态（stdout pump / 测试注入）。
+ *
+ * 返回值：注销函数（从监听表移除该 resolver），可省略——performGetStateHandshake
+ * 忽略返回值（既有语义：迟到 response 靠 resolved 标志自弃，条目由 close 统一清）；
+ * requestGetStateOnce 消费返回值做单次请求的自清理（不依赖 close 兜底）。
+ */
+export type AddGetStateResponseListener = (
+  id: string,
+  resolver: (data: unknown) => void,
+) => void | (() => void);
+
+/** 从 get_state response data 提取 sessionFile/sessionId（提取规则单一来源，握手与惰性重试共用）。 */
+function extractGetStateFields(data: unknown, into: GetStateResult): void {
+  if (data && typeof data === "object") {
+    const d = data as Record<string, unknown>;
+    if (typeof d.sessionFile === "string" && d.sessionFile.length > 0) {
+      into.sessionFile = d.sessionFile;
+    }
+    if (typeof d.sessionId === "string" && d.sessionId.length > 0) {
+      into.sessionId = d.sessionId;
+    }
+  }
+}
+
+/**
  * FR-4: 通过 get_state RPC 查询子进程获取 sessionFile/sessionId。
  *
  * 当 stdout header 未获取到 sessionFile 时，尝试通过 get_state RPC 查询。
@@ -43,7 +68,7 @@ export interface GetStateResult {
  */
 export function performGetStateHandshake(
   child: ChildProcess,
-  addResponseListener: (id: string, resolver: (data: unknown) => void) => void,
+  addResponseListener: AddGetStateResponseListener,
 ): Promise<GetStateResult> {
   return new Promise<GetStateResult>((resolve) => {
     const collected: GetStateResult = {};
@@ -81,15 +106,7 @@ export function performGetStateHandshake(
         // [#15] 闭包清理本次 tryOnce 的 timer（2s 超时 + 排队中的 retry），不碰其他 reqId 的 timer。
         clearTimeout(timer);
         if (pendingRetry) clearTimeout(pendingRetry);
-        if (data && typeof data === "object") {
-          const d = data as Record<string, unknown>;
-          if (typeof d.sessionFile === "string" && d.sessionFile.length > 0) {
-            collected.sessionFile = d.sessionFile;
-          }
-          if (typeof d.sessionId === "string" && d.sessionId.length > 0) {
-            collected.sessionId = d.sessionId;
-          }
-        }
+        extractGetStateFields(data, collected);
         // sessionFile 已获取——立即 resolve（无需更多重试）
         if (collected.sessionFile) {
           resolved = true;
@@ -100,5 +117,63 @@ export function performGetStateHandshake(
     }
 
     tryOnce();
+  });
+}
+
+/**
+ * [T1/RC-1] 单次 get_state 请求（agent_end 决策点惰性回补专用）。
+ *
+ * 与 performGetStateHandshake 的关系：复用同一消息构造（sendGetStateCommand）与同一
+ * 字段提取（extractGetStateFields），但**不做重试循环、不 share 握手语义**——调用方
+ * （session-runner agent_end 处置）在子进程 idle 时现场补一次查询（探针 P-T1 实证
+ * 应答 0.3-0.4ms），超时/失败即放弃，由调用方走既有保守分支（行为不劣化）。
+ *
+ * 结果契约与 performGetStateHandshake 一致：resolve GetStateResult（可能为空对象），
+ * 永不 reject——stdin 已断（EPIPE/ERR_STREAM_DESTROYED）的同步写失败按「回补失败」
+ * 处理 resolve 空对象，调用方无需 try/catch。
+ *
+ * 自清理：超时或 response 到达后从监听表移除本请求的 resolver（消费注册器的返回值），
+ * 不留迟到条目；注册器不返回注销函数时退化为 no-op（与握手同形态，靠 close 统一清）。
+ *
+ * @param child 子进程（stdin 写入 get_state 命令）
+ * @param addResponseListener 注册 response 监听器的函数（stdout pump 中调用）
+ * @param timeoutMs 单次超时（决策点预算 1s 量级；P-T1 实测 idle 应答亚毫秒）
+ */
+export function requestGetStateOnce(
+  child: ChildProcess,
+  addResponseListener: AddGetStateResponseListener,
+  timeoutMs: number,
+): Promise<GetStateResult> {
+  return new Promise<GetStateResult>((resolve) => {
+    let settled = false;
+    let removeListener: () => void = () => {};
+
+    const finish = (r: GetStateResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      removeListener();
+      resolve(r);
+    };
+
+    let reqId: string;
+    try {
+      reqId = sendGetStateCommand(child);
+    } catch {
+      // stdin 已断等同步写失败 = 回补失败，空结果走调用方保守分支（同超时语义）
+      resolve({});
+      return;
+    }
+    removeListener =
+      addResponseListener(reqId, (data: unknown) => {
+        const r: GetStateResult = {};
+        extractGetStateFields(data, r);
+        // response 已到达：无论是否含目标字段都不再等（单次语义，无重试）
+        finish(r);
+      }) ?? (() => {});
+    // [#15] 同款时序模式：timer 在 resolver 注册后创建，resolver/finish 闭包引用它——
+    // 两者都只在 timer 初始化之后才可能被调用（response 到达是异步事件）。
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => finish({}), timeoutMs);
+    timer.unref();
   });
 }

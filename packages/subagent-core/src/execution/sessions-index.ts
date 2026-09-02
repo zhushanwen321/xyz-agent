@@ -21,12 +21,11 @@
 // 无状态纯函数模块：不依赖 RecordStore 任何内部状态。
 
 import * as fs from "node:fs";
-import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 
 import { getLogger } from "../core/logger.ts";
+import { writeAtomicFile } from "../shared/atomic-write.ts";
 
-import { bestEffort } from "./best-effort.ts";
 import type { ExecutionMode } from "./types.ts";
 
 const logger = getLogger("subagents");
@@ -43,13 +42,6 @@ export const INDEX_VERSION = 1;
 
 /** 两次成功落盘的最小墙钟间隔（节流：overlay 打开期间的高频扫描不放大磁盘写）。 */
 export const INDEX_WRITE_MIN_INTERVAL_MS = 60_000;
-
-/** tmp 文件单调计数：同一进程内并发的 saveIndex 各用独立 tmp。节流基准只在写成功后
- *  推进——W1 在途时新一轮过窗扫描可再 dispatch W2，共用同一 tmp 会交错（W2 truncate
- *  落在 W1 write 与 rename 之间 → 半成品被 rename / rename 后失败 → 假失败日志）。
- *  pid+seq 双后缀保证 tmp 唯一：交错 rename 的终态必为某次完整快照（last-writer-wins，
- *  与跨进程 pid 隔离同语义；陈旧快照胜出时下轮戳不匹配自愈）。 */
-let tmpSeq = 0;
 
 // ============================================================
 // 类型（DM1 磁盘顶层 + DM2 条目）
@@ -245,60 +237,23 @@ export function loadIndex(encDir: string): LoadedSessionsIndex {
 // ============================================================
 
 /**
- * 原子写索引（tmp(pid+seq) → fsync → rename → fsync 目录；逐环复刻
- * ManifestStore.writeManifest 的生产模式）。tmp 带 pid+单调序号双后缀：pid 防两进程
- * 共用同一 tmp，seq 防同进程内并发 saveIndex（节流基准在写成功后才推进，W1 在途时
- * 新一轮过窗扫描可 dispatch W2）共用同一 tmp；rename 原子性保证读侧看到旧版或完整
- * 新版，绝无半成品。
+ * 原子写索引（shared/atomic-write 统一原语，U6b 迁移：tmp → fsync → rename →
+ * fsync 目录）。原逐行实现（逐环复刻 ManifestStore.writeManifest 的生产模式）
+ * 与 writeAtomicFile 逐环等值；tmp 带 pid+单调序号双后缀防撞的语义由原语的
+ * atomicTmpPathFor 接管（pid 防两进程共用同一 tmp，seq+rand 防同进程并发
+ * saveIndex 共用同一 tmp）。rename 原子性保证读侧看到旧版或完整新版，绝无半成品。
+ * ensureDir:false——旧实现无 mkdir（目录由 sessionsDir 布局保证），缺目录维持
+ * fail-fast 上抛（调用方 .catch 兜底），不静默重建。
  *
  * 失败向上抛——RecordStore 的 flushIndexAfterScan 以 fire-and-forget .catch 消费
- * （写失败不影响任何扫描结果，恢复 dirty 待下轮过窗重试）。
+ *（写失败不影响任何扫描结果，恢复 dirty 待下轮过窗重试）。
  */
 export async function saveIndex(encDir: string, data: SessionsIndexData): Promise<void> {
   const filePath = path.join(encDir, INDEX_FILENAME);
-  const tmpPath = `${filePath}.tmp.${process.pid}.${++tmpSeq}`;
   const file: SessionsIndexFile = {
     version: INDEX_VERSION,
     pid: process.pid,
     entries: Object.fromEntries(data.entries),
   };
-  const content = JSON.stringify(file);
-
-  let renamed = false;
-  try {
-    // 1. 写 tmp → fsync 文件
-    const fh = await fsPromises.open(tmpPath, "w");
-    try {
-      await fh.writeFile(content, "utf-8");
-      await fh.sync();
-    } finally {
-      await fh.close();
-    }
-
-    // 2. rename tmp → final（放在 try 内：失败时 catch 清理 tmp）
-    await fsPromises.rename(tmpPath, filePath);
-    renamed = true;
-
-    // 3. fsync 目录（best-effort：POSIX 不要求，失败不否定已成功的 rename）
-    try {
-      const dirFh = await fsPromises.open(encDir, "r");
-      try {
-        await dirFh.sync();
-      } finally {
-        await dirFh.close();
-      }
-    } catch (dirSyncErr) {
-      bestEffort(dirSyncErr, "fsync dir (saveIndex)");
-    }
-  } catch (err) {
-    // rename 未成功 → 清理残留 tmp（best-effort，不掩盖原错误）
-    if (!renamed) {
-      try {
-        await fsPromises.unlink(tmpPath);
-      } catch (cleanupErr) {
-        bestEffort(cleanupErr, "unlink tmp (saveIndex)");
-      }
-    }
-    throw err;
-  }
+  await writeAtomicFile(filePath, JSON.stringify(file), { ensureDir: false });
 }

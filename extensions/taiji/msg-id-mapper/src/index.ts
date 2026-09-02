@@ -24,8 +24,9 @@
  * Missing mapping doesn't affect the agent main flow.
  *
  * Same package shape as @zhushanwen/pi-system-prompt (extensions/taiji/system-prompt/):
- * TypeScript source with no build step and no runtime deps (peer dep on pi only),
- * bundled as a builtin extension by scripts/bundle-extensions.mjs.
+ * TypeScript source with no build step, bundled as a builtin extension by
+ * scripts/bundle-extensions.mjs. Runtime dependency: @zhushanwen/pi-extension-logger
+ * (inlined into the builtin bundle at bundle time; pi remains a peer dep).
  */
 
 import type { ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, MessageStartEvent, TurnEndEvent, AgentEndEvent } from '@earendil-works/pi-coding-agent'
@@ -92,7 +93,7 @@ export default function (pi: ExtensionAPI): void {
   /** 写映射并清空 pending 状态。leafId 未就绪时静默返回，等下一个 hook 重试。 */
   const writeMapping = (ctx: ExtensionContext): void => {
     if (!pendingClientUuid) return
-    // 类型已保证 sessionManager.getLeafId 必有（pi 0.84.1 ReadonlySessionManager，
+    // 类型已保证 sessionManager.getLeafId 必有（pi 0.84.4 ReadonlySessionManager，
     // 返回 string | null）；运行时异常由 flush 的 catch 兜底。
     const userEntryId = ctx.sessionManager.getLeafId()
     if (!userEntryId) return // leafId 还没更新，等下一个 hook

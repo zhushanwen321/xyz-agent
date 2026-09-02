@@ -22,7 +22,7 @@ import {
  * 测试框架 vitest（禁止 node:test/tsx）。直接调 handleSessionRead（纯逻辑，agentDir 注入），
  * 传真实 `/Users/zhushanwen/.pi/agent` 作 agentDir——用本机真实历史 session 数据，无需 mock。
  *
- * 覆盖 7 action 主路径 + F1(find 零匹配)/F4(turn 越界)/F5(缺参)/resolveSessionId 片段等价。
+ * 覆盖 9 action 主路径 + F1(find 零匹配)/F4(turn 越界)/F5(缺参)/resolveSessionId 片段等价。
  *
  * 真实数据用例全部带 skipIf 守卫（CI 无本机 ~/.pi/agent → skip，不硬失败）；
  * renderExtractItems F9 截断是纯 fixture，无条件跑。
@@ -782,7 +782,7 @@ describe('resolveSessionId ② sa-id 形态（w2 TC7-TC10 + CQ3）', () => {
       await handleSessionRead({ action: 'outline', session: 'sa-nonexist-9999' }, dir)
     } catch (e) {
       const msg = (e as Error).message
-      expect(msg).toContain('可能仍在运行')
+      expect(msg).toContain('可能尚未落盘')
       expect(msg).toContain('action:"family"')
       expect(msg).toContain('👉')
     }

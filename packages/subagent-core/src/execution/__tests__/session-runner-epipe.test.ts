@@ -54,6 +54,7 @@ vi.mock("../alive-store.ts", () => ({ writeAliveMarker: vi.fn() }));
 
 vi.mock("../session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 0 })),
+  prunePendingCursor: vi.fn(),
 }));
 
 vi.mock("../temp-prompt.ts", () => ({

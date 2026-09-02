@@ -33,10 +33,16 @@ import { type Static, Type } from "typebox";
 
 import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
 import { THINKING_ORDER } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
+import { MAX_TIMER_DELAY_MS } from "@zhushanwen/subagent-core/shared/timer-delay.ts";
+import {
+  argKeysFromMeta,
+  findFlattenedArgKeys,
+} from "@zhushanwen/subagent-core/orchestration/args-meta.ts";
 import type { LauncherDeps } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
 import { abortRun, runWorkflow } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
 import type { RunStore } from "@zhushanwen/subagent-core/orchestration/models/ports.ts";
 import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { runSummary } from "@zhushanwen/subagent-core/orchestration/workflow-run-summary.ts";
 import { mapRunIcon, mapRunStatus, toGuiCtx } from "./gui-mappers.ts";
 import {
   acquireReentryGuard,
@@ -63,7 +69,7 @@ const WORKFLOW_ACTIONS: readonly WorkflowAction[] = [
 const WorkflowParams = Type.Object({
   action: StringEnum(WORKFLOW_ACTIONS, { description: "Workflow action to execute" }),
   name: Type.Optional(
-    Type.String({ description: "Workflow ref: absolute path to the .js script (use <location> from <available_workflows>; run action)" }),
+    Type.String({ description: "Workflow ref: builtin/saved workflow name from <available_workflows> (C5: run accepts names), or absolute path to the .js script (use <location>; run action)" }),
   ),
   slug: Type.Optional(
     Type.String({
@@ -82,7 +88,7 @@ const WorkflowParams = Type.Object({
     }),
   ),
   tokens: Type.Optional(Type.Number({ description: "Max token budget — ONLY set when user explicitly requests a limit; omit = unlimited (default)" })),
-  time: Type.Optional(Type.Number({ description: "Max time budget in ms — ONLY set when user explicitly requests a limit; omit = unlimited (default)" })),
+  time: Type.Optional(Type.Number({ description: `Max time budget in ms — ONLY set when user explicitly requests a limit; omit = unlimited (default; hard ceiling ${MAX_TIMER_DELAY_MS} ms — larger values fail fast at entry)` })),
   error: Type.Optional(
     Type.String({ description: "Error/reason message (optional, used with abort)" }),
   ),
@@ -105,8 +111,12 @@ const RUNID_SHORT = 8;
  * tool 自身顶层键（workflow params schema 键）——workflow 参数名与 tool 键撞名时
  * （如 workflow 声明参数 name），顶层同名键是 tool 参数而非平铺（m6 评审 M-3）。
  * 未来新增 tool 顶层键需同步此集合。
+ *
+ * D9 下沉后作为 core args-meta 的 reservedKeys 注入（ArgMetaOptions）——core 缺省
+ * 空集，不注入则撞名保护失效（run 调用顶层必有 action/name，会被误判平铺）。
+ * export 供 detectors.test 复用同一集合防漂移。
  */
-const TOOL_TOP_LEVEL = new Set([
+export const TOOL_TOP_LEVEL = new Set([
   "action",
   "name",
   "slug",
@@ -124,76 +134,11 @@ const TOOL_TOP_LEVEL = new Set([
 ]);
 
 /**
- * 从 workflow 参数 schema 动态构建平铺检测的已知键集（m6：schema 即 SSOT——
- * 替代 21 键硬编码 KNOWN_ARG_KEYS，消除与参数定义的漂移面）。
- *
- * - exact：properties keys（精确匹配）
- * - patterns：patternProperties 原样转正则数组（如 /^batch\\d+$/——与旧
- *   KNOWN_ARG_KEY_PREFIXES 语义一致，自动兼容 \\d{2} 等变体；schema pattern 已是
- *   正则源码，直接 new RegExp 即可）
- * - 构建时排除 TOOL_TOP_LEVEL（撞名保护）
+ * core args-meta 的宿主差异注入项（D9 下沉）：reservedKeys = TOOL_TOP_LEVEL。
+ * core 版 argKeysFromMeta / findFlattenedArgKeys 缺省 reservedKeys 为空集（core
+ * 中性形态），不传此项则失去撞名保护、行为不等值——调用点必须携带（等值契约）。
  */
-export function argKeysFromMeta(
-  parameters: Record<string, unknown> | undefined,
-): { exact: ReadonlySet<string>; patterns: readonly RegExp[] } {
-  const exact = new Set<string>();
-  const patterns: RegExp[] = [];
-  if (parameters === undefined || parameters === null || typeof parameters !== "object") {
-    return { exact, patterns };
-  }
-  const props = parameters.properties;
-  if (props !== null && typeof props === "object") {
-    for (const k of Object.keys(props as Record<string, unknown>)) {
-      if (!TOOL_TOP_LEVEL.has(k)) exact.add(k);
-    }
-  }
-  const pp = parameters.patternProperties;
-  if (pp !== null && typeof pp === "object") {
-    for (const p of Object.keys(pp as Record<string, unknown>)) {
-      try {
-        const re = new RegExp(p); // schema pattern 已是正则源码
-        // S1（m6 exec-review）：跳过能命中 tool 顶层键的 pattern——否则
-        // ^run.*$ 类 pattern 会匹配 runId/name 等 tool 键，合法调用恒误报
-        if ([...TOOL_TOP_LEVEL].some((tk) => re.test(tk))) continue;
-        patterns.push(re);
-      } catch (err) {
-        // 非法 pattern（schema 校验 m3 已保证合法，双保险）——跳过并记录
-        logger.warn(`[tool-workflow] patternProperties 非法正则跳过: ${p}`, {
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-  }
-  return { exact, patterns };
-}
-
-/**
- * 检测弱模型把 args 子字段平铺到 workflow params 顶层（P0 静默失败防护）。
- * 返回被平铺的键名列表（空 = 未平铺）。export 供 behavioral 测试（trigger/no-trigger/edge）。
- * 参数取 unknown 以便测试构造任意对象、并解耦 WorkflowToolParams 的 index-signature 限制。
- *
- * knownKeys/knownPatterns 由 argKeysFromMeta 动态构建（m6）——匹配谓词：
- * knownKeys.has(k) || knownPatterns.some(re => re.test(k))（pattern 自带数字后缀
- * 语义——loose startsWith 会误报 batchl/target1）；保留 args-排除（顶层 + args
- * 内共存不算平铺）。
- */
-export function findFlattenedArgKeys(
-  params: unknown,
-  knownKeys: ReadonlySet<string>,
-  knownPatterns: readonly RegExp[],
-): string[] {
-  if (typeof params !== "object" || params === null) return [];
-  const p = params as Record<string, unknown>;
-  const args = typeof p.args === "object" && p.args !== null ? p.args : undefined;
-  const isKnownKey = (k: string) =>
-    knownKeys.has(k) || knownPatterns.some((re) => re.test(k));
-  // hasOwnProperty.call 而非 in（原型链——constructor/toString 类参数名不被继承键掩盖）
-  return Object.keys(p).filter(
-    (k) =>
-      isKnownKey(k) &&
-      !(args !== undefined && Object.prototype.hasOwnProperty.call(args, k)),
-  );
-}
+const ARGS_META_OPTIONS = { reservedKeys: TOOL_TOP_LEVEL };
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -321,7 +266,7 @@ export function registerWorkflowTool(
       "<available_workflows> (injected each turn). For parameter details, read the <location> " +
       "script file (script header has @pi-meta parameters + usage + phases). Do NOT use " +
       "workflow-script generate for patterns already covered by available workflows.",
-      "run: pass the absolute .js path from <available_workflows> <location> as name, then start in background (no user confirmation needed).",
+      "run: pass the workflow ref as name — the listed <name> (builtin/saved workflow) or its <location> absolute .js path from <available_workflows> — then start in background (no user confirmation needed).",
       "Do NOT poll status after starting — results appear automatically via notifyDone.",
       "Runs are one-shot: there is no pause/resume — to stop a run early use abort; for a fresh result start a new run.",
       "Call shapes (JSON): " +
@@ -425,7 +370,17 @@ export async function actionRun(
   // 顶层（缺 args 嵌套）。args ?? {} 会静默 args={}，启动缺参 run 不报错——比 subagent
   // 平铺事故更严重。m6：先 registry.getPath（动态参数集来源——schema 即 SSOT），
   // not_found 优先返回；平铺检测报错带 Correct 正例纠正。
-  const script = await deps.registry.getPath(name);
+  //
+  // C5③（convergence D-4 pi 半边）：name 解析先查内置/已保存 workflow 名
+  // （registry.get——内置 chain/parallel/map-reduce/scatter-gather/review-fix-loop 或
+  // 用户 project/user 级脚本名，按 tmp>project>user>npm 优先级合并）——内置名命中
+  // 直接用内置脚本；未命中再走 getPath（绝对路径，~/ 展开——normalizeRef 既有）。
+  // 严格超集：现有路径用法零变化（路径串不会撞 workflow 名——名字是简单标识符），
+  // 两者都未命中仍走原 not_found 报错（建议清单不变）。
+  let script = await deps.registry.get(name);
+  if (!script) {
+    script = await deps.registry.getPath(name);
+  }
   // W4c：config-loader 的 toCachedMeta 对不可读/不存在文件返回 available:false 的
   // stub（非 undefined），仅判 !script 会绕过 not_found → 空 sourceCode 假启动
   //（W4b verifier 探针实测复现）。与下方 suggestions 分支的 wf.available 过滤口径对齐。
@@ -444,7 +399,10 @@ export async function actionRun(
 
   // m6：动态参数集（schema 即 SSOT）→ 平铺检测；无 parameters → 单次 warn + 跳过
   // （legacy const-meta 类永久无检测——D1 无 adapter 声明）
-  const { exact: knownKeys, patterns: knownPatterns } = argKeysFromMeta(script.meta.parameters);
+  const { exact: knownKeys, patterns: knownPatterns } = argKeysFromMeta(
+    script.meta.parameters,
+    ARGS_META_OPTIONS,
+  );
   if (knownKeys.size === 0 && knownPatterns.length === 0) {
     // M-2 显式信号：无参数契约（未声明/解析空）→ 单次 warn——静默退化变显式
     // （m6 exec-review M1：原实现排除 undefined 与设计相反）
@@ -452,7 +410,9 @@ export async function actionRun(
       `[tool-workflow] ${script.name}: 未声明参数契约（或解析为空）——平铺检测跳过，args 不校验`,
     );
   }
-  const flattened = findFlattenedArgKeys(params, knownKeys, knownPatterns);
+  // core 版接收 meta 内联构建键集（签名与本地版键集三参不同，判定谓词逐字同源）——
+  // 键集构建两次（此处 + core 内部）仅为 M-2 空契约信号，成本每 run 一次可忽略
+  const flattened = findFlattenedArgKeys(params, script.meta.parameters, ARGS_META_OPTIONS);
   if (flattened.length > 0) {
     throw new Error(
       `Detected ${flattened.join(", ")} at top level — they belong inside 'args'. ` +
@@ -468,6 +428,16 @@ export async function actionRun(
   const args = params.args ?? {};
   const tokens = params.tokens;
   const time = params.time;
+  // OR-1 入口 fail-fast（unbounded-wait-audit §7.2 T3①）：schema 的 time 是
+  // Type.Number 直通（无上界）——超 setTimeout 安全域的值会穿透到 lifecycle 内层
+  // 防线（assertSafeTimerDelay），而入口拦截让它永不进入副作用链。错误带合法上限
+  // 与实际传入值，LLM 可据消息自纠（clamp 或省略走 unlimited 语义）。
+  if (time !== undefined && time > MAX_TIMER_DELAY_MS) {
+    throw new Error(
+      `time budget ${time} ms exceeds the maximum of ${MAX_TIMER_DELAY_MS} ms (~24.8 days). ` +
+        `Retry with a smaller "time", or omit it for unlimited.`,
+    );
+  }
 
  // 构建 RunSpec + 启动（m3：parameters 从 script.meta 拷贝——chokepoint 校验用；
  // 校验失败 → ArgsValidationError 直接 throw 给 pi（W4：err.message 含 §5.3 指引，
@@ -568,19 +538,12 @@ async function actionLifecycle(
 
 // ── helpers ──────────────────────────────────────────────────
 
-/** WorkflowRun → 摘要（status action 用）。 */
+/** WorkflowRun → 摘要（status action 用）：core runSummary 单源投影 + 宿主扩展 stateFile。
+ *
+ * 字段集不再本地维护（runSummary 双投影分叉的收口点，D8/B5）；stateFile 依赖
+ * RunStore 实例，属宿主扩展——core 投影刻意不依赖具体 store。 */
 function toRunSummary(run: WorkflowRun, store: RunStore): RunSummary {
-  return {
-    runId: run.runId,
-    name: run.spec.scriptName,
-    slug: run.spec.slug,
-    status: run.state.status,
-    reason: run.state.reason,
-    startedAt: run.meta.startedAt,
-    completedAt: run.meta.completedAt,
-    error: run.state.error,
-    stateFile: store.stateFilePath(run.runId),
-  };
+  return { ...runSummary(run), stateFile: store.stateFilePath(run.runId) };
 }
 
 // W4b：原 textResult(text, isError) helper 已删除——23 处错误路径全部改 throw

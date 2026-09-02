@@ -14,8 +14,8 @@ describe('sessions-entry (TC-7)', () => {
     expect(SESSIONS_SHELL_MOUNT_POINT).toBe('sessions')
   })
 
-  it('SessionsShellMountPoint 接口签名对齐 useSidebarNew 挂载点消费子集', () => {
-    // 类型层断言：构造一个对齐 useSidebarNew 返回签名子集的对象赋给 SessionsShellMountPoint，
+  it('SessionsShellMountPoint 接口签名对齐 useSidebar 挂载点消费子集', () => {
+    // 类型层断言：构造一个对齐 useSidebar 返回签名子集的对象赋给 SessionsShellMountPoint，
     // 编译期通过即证明接口形状正确（focus/select/new/load/rename/delete/deleteFolder/retry）
     const mp: SessionsShellMountPoint = {
       focusedSessionId: (() => null) as unknown as SessionsShellMountPoint['focusedSessionId'],

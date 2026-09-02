@@ -11,7 +11,7 @@ import type { Entry } from './parser.js'
  * - SessionRef.mtime/sizeBytes：从 fileStats 取（M1 key=sessionId），取不到为 0
  * - SubagentRef.sessionId：identity entry 不含 subagent session 的 id → 占位用 entry.id
  * - SubagentRef.cwd：identity entry（custom 类型）无 cwd → 占位空串
- * - fileStats 的 key：M1 用 sessionId（M2 改用真实文件路径），cleanedUp 逻辑 M1/M2 通用
+ * - fileStats 的 key：sessionId（M2 实现沿用此 key，cleanedUp 按 sessionId 命中），逻辑通用
  *
  * 隔代关联规则（design §3.3 D-7 Q1）见 resolveFamily 注释。
  */
@@ -24,7 +24,6 @@ export interface SessionRef {
   cwd: string
   /** fork 文件指向来源的路径（来自 header 的 parentSession，原始文件路径字符串） */
   parentSession?: string
-  name?: string
 }
 
 export interface SubagentRef extends SessionRef {
@@ -194,7 +193,7 @@ export function buildFamilyIndex(
       mtime: stat?.mtime ?? 0,
       sizeBytes: stat?.size ?? 0,
       cwd: '', // identity entry 无 cwd；M2 从 subagent 文件 header 补
-      // M1: fileStats key=sessionId；M2 改用 subagent 真实文件路径（SubagentRef.fileName）查 fileStats
+      // fileStats key=sessionId（buildFamilyFromFs 以 header.id 写入），cleanedUp 按 sessionId 命中
       cleanedUp: !fileStats.has(ident.id),
       // U4 富字段：从 identity data 读（manifest 主/P-fallback 由 buildFamilyFromFs 组装时决定）
       task: ident.data.task,

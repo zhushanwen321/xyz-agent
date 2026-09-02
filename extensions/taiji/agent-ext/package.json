@@ -1,8 +1,7 @@
 {
   "name": "@zhushanwen/pi-agent-ext",
-  "version": "1.1.2",
-  "description": "xyz-agent extension for Pi — session tree navigation and internal reload command",
-  "type": "module",
+"version": "1.1.2",
+  "description": "xyz-agent extension for Pi — internal host commands for extension reload and system prompt fetch",  "type": "module",
   "main": "src/index.ts",
   "xyz-agent": {
     "role": "taiji"
@@ -16,7 +15,6 @@
     "pi-package",
     "extension",
     "agent",
-    "navigate",
     "reload"
   ],
   "license": "MIT",

@@ -43,7 +43,7 @@ interface PermissionConfig {
 }
 
 interface ClassifierConfig {
-  enabled: boolean;           // AI 层开关，默认 true
+  enabled: boolean;           // AI 层开关，默认 true；false 时 auto 模式跳过 AI 直接人工审批
   model: string;              // 'auto' 或 'provider/model-id'，默认 "auto"
   timeout: number;            // 超时秒，默认 90
   autoApproveLowRisk: boolean;   // 低风险自动放行，默认 true
@@ -71,15 +71,16 @@ interface ClassifierConfig {
 
 ### auto 模式的风险判定（autoApproveLowRisk / autoDenyHighRisk）
 
-AI classifier 输出三档风险，对应处理：
+AI classifier 输出 `outcome`（allow/deny/ask）+ `risk_level`（low/medium/high），**outcome 直接生效**：allow 自动放行、deny 直接拒绝、ask 转人工。两个开关只拨动两条边界 override：
 
-| 风险 | autoApproveLowRisk=true | autoDenyHighRisk=true | 实际动作 |
-|---|---|---|---|
-| low | ✓ 自动放行 | — | allow |
-| **medium** | — | — | **ask（转人工审批）** |
-| high | — | ✓ 转人工审批 | ask |
+| AI 输出 | override 条件 | 实际动作 |
+|---|---|---|
+| allow + low | `autoApproveLowRisk=false` | 改 **ask**（转人工）；默认 true 时自动放行 |
+| allow + high | `autoDenyHighRisk=true` | 改 **deny**（不问人，直接拒绝）；false 时自动放行 |
+| allow + medium | — | **自动放行**（不经人工，不受这两个开关影响） |
+| deny / ask（任意风险） | — | 原样生效（deny 拒绝；ask 转人工） |
 
-> medium 风险**总是转人工审批**，不受这两个开关影响。两个开关只拨动 low/high 的边界。
+> 也就是说：medium + allow 会自动放行；只有 low+allow 与 high+allow 这两个边界会被开关改写。想让 medium 也转人工做不到（AI 说 allow 就放行），只能换 `approve` 模式去掉 AI 层。
 
 ## 默认值
 
@@ -139,7 +140,7 @@ auto 模式 + 指定 classifier 用 glm-4-flash + 自定义危险规则：
 
 每条规则：`{ id?, tool, pattern, action, source, description? }`
 - tool：工具名（`*` 匹配全部，`bash` 精确）
-- pattern：命令模式（wildcard，仅 bash 用）
+- pattern：bash 工具对命令行匹配；非 bash 工具对文件路径匹配（path 缺省时对工具名）（wildcard）
 - action：`allow` | `deny` | `ask`
 - source：`user`（用户规则；内置规则 builtin-safe/builtin-danger 在代码里不进配置）
 - id 省略时自动分配 `user-<n>`

@@ -193,7 +193,7 @@ async function handleContinuation(
 	}
 	// 发 continuation（FR-8.7: 去 debounce 后才发）
 	ports.messaging.sendContextMessage(
-		continuationPrompt(state, state.timeUsedSeconds),
+		continuationPrompt(state),
 		"followUp",
 	);
 }

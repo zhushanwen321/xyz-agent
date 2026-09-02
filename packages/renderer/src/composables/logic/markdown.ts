@@ -89,14 +89,29 @@ export function getHighlighter(): Promise<Highlighter> {
   return highlighterPromise
 }
 
-/** UTF-8 安全 base64 编码（兼顾含中文/emoji 的代码与 mermaid 源码） */
+/**
+ * UTF-8 codec 单例：encodeBase64/decodeBase64 高频调用（fence 规则对每个代码块各一次，
+ * 大代码块 finalize 帧可累计数万次），每次 new TextEncoder/TextDecoder 是纯分配开销。
+ * TextEncoder.encode 无状态；TextDecoder.decode 不传 stream 选项时按规范自重置，
+ * 单例复用无状态残留风险。
+ */
+const textEncoder = new TextEncoder()
+const textDecoder = new TextDecoder()
+
+/**
+ * UTF-8 安全 base64 编码（兼顾含中文/emoji 的代码与 mermaid 源码）。
+ * TextEncoder 产出 UTF-8 字节 → 分块 String.fromCharCode 批量转 binary 字符串 →
+ * 单次 btoa。分块范式同 useImageAttachment.fileBytesToBase64（0x8000 每块：低于
+ * Function.prototype.apply 参数个数下限（Safari 65536），防爆栈/RangeError）；
+ * base64 以 3 字节为一组，必须整体编码后单次 btoa，不可逐块 btoa（块长非 3 倍数会错位）。
+ */
 function encodeBase64(text: string): string {
-  // TextEncoder 产出 UTF-8 字节，再 btoa；解码侧用 atob + TextDecoder 对称还原
-  const bytes = new TextEncoder().encode(text)
+  const bytes = textEncoder.encode(text)
   let binary = ''
-  bytes.forEach((b) => {
-    binary += String.fromCharCode(b)
-  })
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)))
+  }
   return btoa(binary)
 }
 
@@ -552,11 +567,11 @@ export async function renderMarkdownSegments(content: string, env?: MarkdownEnv)
   return segments
 }
 
-/** base64 解码（UTF-8 安全，与 encodeBase64 对称） */
+/** base64 解码（UTF-8 安全，与 encodeBase64 对称；TextDecoder 用模块级单例） */
 export function decodeBase64(b64: string): string {
   const binary = atob(b64)
   const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0))
-  return new TextDecoder().decode(bytes)
+  return textDecoder.decode(bytes)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

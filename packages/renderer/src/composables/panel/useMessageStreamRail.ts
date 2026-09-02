@@ -57,10 +57,38 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   /** rail 状态接入 useTurnExpansion（与 Turn.vue 共享同一 session Map）。 */
   const { toggle } = useTurnExpansion(sessionId)
 
-  /** rail 节点数据源：renderItems 中所有 turn（rail 列表渲染 + jump/toggle 索引空间）。 */
-  const railTurns = computed<MessageTurn[]>(() =>
-    renderItems.value.filter((item) => item.kind === 'turn').map((item) => item.turn),
-  )
+  /**
+   * rail 节点数据源：renderItems 中所有 turn（rail 列表渲染 + jump/toggle 索引空间）。
+   *
+   * 引用恒等（streaming perf）：renderItems 每条流式 delta 替换数组引用（ADR-0039 不可变
+   * 替换），filter/map 每次重算产出新数组——即使 turn 成员引用一个都没变，下游 TurnRail 的
+   * turns prop / expandedTurns 的依赖也会因引用变更连带重算/重渲。末尾逐项 === 比对：
+   * 长度相等且每项引用相同 → 返回上次数组引用（下游 props 不变 → Vue 跳过 patch）；
+   * 任一 turn 引用变化（streaming 末位 turn 重建 / 消息增删）→ 照常产出新数组，行为不变。
+   * lastRailTurns 用 per-instance 闭包持有（split mode 多实例各自 railTurns，禁模块级共享）。
+   */
+  let lastRailTurns: MessageTurn[] = []
+  /**
+   * turn → railTurns 下标索引：updateActiveTurnIndex 每滚动帧查询，替代 findIndex 线性扫描
+   * （O(n) → O(1)）。仅在 railTurns 数组引用变化时随求值同步重建（内容未变则下标不变，
+   * 无需重建）；被替换的 turn 旧键失去引用后由 GC 回收。查询前先读 railTurns.value 保证
+   * 索引与本次数组同步（见 updateActiveTurnIndex）。
+   */
+  let railIndexByTurn = new WeakMap<MessageTurn, number>()
+  const railTurns = computed<MessageTurn[]>(() => {
+    const next = renderItems.value.filter((item) => item.kind === 'turn').map((item) => item.turn)
+    if (lastRailTurns.length === next.length && lastRailTurns.every((turn, i) => turn === next[i])) {
+      return lastRailTurns
+    }
+    const index = new WeakMap<MessageTurn, number>()
+    // first-wins 对齐 findIndex 语义（同 turn 引用重复出现理论不可达，防御性保持等价）
+    next.forEach((turn, i) => {
+      if (!index.has(turn)) index.set(turn, i)
+    })
+    lastRailTurns = next
+    railIndexByTurn = index
+    return next
+  })
 
   /**
    * 派生当前 session 已展开的 turn 稳定 key 集合（TurnRail toggle 图标方向依据）。
@@ -103,6 +131,7 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   /**
    * 按 virtua scrollOffset 精确定位当前激活 turn 下标（viewport indicator 跟随滚动）。
    * [cw wave w4] 单一 virtua 路径：vlistRef.findItemIndex(scrollOffset) 反查当前可见首项。
+   * 下标映射走 railIndexByTurn O(1) 索引（railTurns 求值时同步重建），不再每帧 findIndex 线性扫描。
    */
   function updateActiveTurnIndex(): void {
     const v = deps.vlistRef.value
@@ -113,7 +142,12 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
     // 若 renderItems[renderIdx] 是 system 项，保持上次 activeTurnIndex 不变。
     const item = renderItems.value[renderIdx]
     if (item?.kind === 'turn') {
-      activeTurnIndex.value = railTurns.value.findIndex((t) => t === item.turn)
+      // railTurns.value 读在前：正常时序（onVirtuaScroll）下 virtua 已渲染 ⇒ 模板已读过
+      // railTurns ⇒ 索引必已建；此读兜底任何未求值路径——惰性求值顺带同步重建索引。
+      const turns = railTurns.value
+      // miss 兜底 findIndex：索引与数组恒同步（同求值同重建），不变式被未来重构打破时
+      // 行为退回线性扫描，与旧实现完全一致。
+      activeTurnIndex.value = railIndexByTurn.get(item.turn) ?? turns.findIndex((t) => t === item.turn)
     }
   }
 

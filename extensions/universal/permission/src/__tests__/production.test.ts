@@ -4,12 +4,12 @@
  * C1a 收口后 createProductionClassifier(ctx) 的 resolveModel 注入走 llm-shared resolveModel
  * （不再预检凭证），callLLM 注入闭包捕获 ctx（凭证在 callLLM 内部 getApiKeyAndHeaders）。
  * 测试用 mock ctx.modelRegistry + vi.mock llm-shared（resolveModel + callLLM）精确控制，覆盖：
- *  - TC1/TC2: toSelector 映射（'auto'→scoped / 'provider/model-id'→ref）
- *  - TC3: scoped 全空 fail-closed（resolveModel null → classifyRisk fallback，不触达 callLLM）
+ *  - TC1: toSelector 任意字符串 → ref 精确选择器（'auto' 不走 selector，由 resolveModel 注入层本地处理）
+ *  - TC3: 'auto' 且 getAvailable 空 → resolveModel 返回 null → fail-closed ask（不触达 callLLM）
  *  - TC4（静态断言）: production.ts 收口完成——无 getApiProvider/streamSimple/@ts-ignore，走 callLLM
  *  - TC4（装配）: resolveModel 命中 → callLLM 收到 model → ok:true 正常分类（链路通）
  *  - TC5: callLLM 返回 ok:false（LLM 调用失败）→ classifier fail-closed fallback
- *  - TC7: scoped 空 fallback available（CL-scoped-fallback 退化防护）
+ *  - TC7: 'auto' 直接取 getAvailable() 首个（permission 本地解析，不经过 llm-shared 非精确 selector）
  *  - m1: 每次 createPipelineDeps 创建独立 classifier（CL-classifier-singleton）
  */
 import { readFileSync } from "node:fs";
@@ -192,7 +192,7 @@ describe("resolveModel 装配（resolveModel + callLLM）", () => {
 
 	it("TC5: callLLM 返回 ok:false（LLM 调用失败）→ classifier fail-closed fallback（不 throw）", async () => {
 		vi.mocked(resolveModelShared).mockReturnValue(MOCK_MODEL_A);
-		vi.mocked(callLLMShared).mockResolvedValue({ ok: false, error: "token expired", recoverable: true });
+		vi.mocked(callLLMShared).mockResolvedValue({ ok: false, error: "token expired" });
 		const classifier = createProductionClassifier(makeMockCtx());
 		const result = await classifier.classifyRisk(CTX, CFG_REF);
 		expect(result.outcome).toBe("ask");

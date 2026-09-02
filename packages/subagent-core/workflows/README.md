@@ -1,6 +1,6 @@
 # 内置通用编排 Workflow
 
-4 个开箱即用的通用 subagent 编排 workflow，覆盖日常常见的多 agent 协作模式。每个脚本用 `agent()`/`parallel()` 自包含实现，`workflow run <name>` 直接执行，无需额外定义子 workflow。
+5 个开箱即用的通用 subagent 编排 workflow，覆盖日常常见的多 agent 协作模式。每个脚本用 `agent()`/`parallel()` 自包含实现，`workflow run <name>` 直接执行，无需额外定义子 workflow。
 
 ## 文件清单
 
@@ -56,26 +56,26 @@ workflow run map-reduce --args itemsJson=/path/to/items.json --args operation=".
 
 ```
 workflow run review-fix-loop --args targetType=git-diff target=main \
-  --args batch1=fallow-scan --args batch2=reviewer --args autoCommit=true
+  --args fallowScan=true --args batch1=/path/to/reviewer.md --args autoCommit=true
 workflow run review-fix-loop --args targetType=file target=/path/to/doc.md \
-  --args batch1=doc-reviewer
+  --args batch1=/path/to/doc-reviewer.md
 ```
 
 - `targetType` 枚举：`git-diff`（target=base ref）/ `file`（target=路径）/ `dir`（target=目录）/ `text`（target=自由描述）
 - `batch1..batchN`：批串行，批内并行 review → aggregate → fix → 重审直到 clean；批次用于前置依赖（如 `fallow-scan` 静态分析先行，后续审查才有意义）
 - 批内某 agent 无 must-fix 后后续轮跳过（`skipCleanAgents` 默认 true + `recheckAfterFix` 默认 false）：clean agent 下轮跳过不重派；显式传 `recheckAfterFix=true` 启用强回归模式——fix 后重派全批，clean agent 走限定 prompt（只审 modifiedFiles ∪ 自检关联点，不诱导全量重扫）
-- agent 项支持：AgentRegistry 名（如 `reviewer`）/ 自定义 .md 文件路径（如 `batch1=/path/to/reviewer.md`）/ 内置 `fallow-scan` / **内置 `doc-reviewer`**（文档场景推荐：`targetType=file/dir` + `batch1=doc-reviewer`，四遍审查方法论：事实锚点核实/逻辑断言验证/落地清单完备性/边界与迁移；无 write 工具，报告经 schema 返回由 workflow 落盘）
-- `fixAgent`（可选）：fix 阶段加载指定 agent（内置名或 .md 路径）；代码场景可在该 agent.md 内写 verify 命令（typecheck/test 实测）当轮拦截编译类回归。⚠️ agent.md 内写的 verify 命令**必须确认能在目标项目可运行**（target 的包管理器/目录结构未知），否则命令失败会误报 fix 状态
+- agent 项仅支持 .md 文件绝对路径（如 `batch1=/path/to/reviewer.md`，`~/` 前缀可展开；内置角色取 <available_subagents> 注入的 <location> 路径，名字只是展示标签，裸名会被拒）；`fallow-scan` 静态分析不走 agent 项——由独立参数 `fallowScan=true` 前置插入首批（不占 batchN）；**内置 `doc-reviewer`**（文档场景推荐：`targetType=file/dir` + `batch1=<doc-reviewer.md 的注入路径>`，四遍审查方法论：事实锚点核实/逻辑断言验证/落地清单完备性/边界与迁移；不写文件，报告经 schema 返回由 workflow 落盘）
+- `fixAgent`（可选）：fix 阶段加载指定 agent（.md 绝对路径，值语义同 batchN 的 agent 项）；代码场景可在该 agent.md 内写 verify 命令（typecheck/test 实测）当轮拦截编译类回归。⚠️ agent.md 内写的 verify 命令**必须确认能在目标项目可运行**（target 的包管理器/目录结构未知），否则命令失败会误报 fix 状态
 - `maxFixAttempts`（可选，默认 2）：needs-redesign 阈值。问题经 maxFixAttempts 次修复仍未收敛（regressed）→ 终止该批，terminated="needs-redesign"（结构性问题需人工介入，非继续补丁能解决）
 - `convergeNewIssues`（可选，默认 1）+ `convergeRounds`（可选，默认 2）：新发现率收敛阈值。连续 convergeRounds 轮新发现问题 ≤ convergeNewIssues **且**无 open/regressed 活跃条目 → terminated="converged"（推进下一批）。收敛不等于问题全清——需同时满足无活跃条目才终止
 - ⚠️ **fix 阶段会修改文件；`autoCommit` 默认 false（不 commit）**，需要提交时显式 `autoCommit=true`
 
 ## 编排 API
 
-这些 workflow 内部使用的编排函数（`agent()` / `parallel()` / `pipeline()` / `workflow()`）由 worker 线程注入，完整 API 参考见 `skills/workflow-script-format/SKILL.md`。
+这些 workflow 内部使用的编排函数（`agent()` / `parallel()` / `pipeline()` / `workflow()`）由 worker 线程注入，完整 API 参考见 workflow-script-format SKILL.md——该文档位于 pi 侧 subagent-workflow extension 内（`extensions/universal/subagent-workflow/skills/workflow-script-format/SKILL.md`，相对 pi extension 包根解析），**不是本包资产**，本包内无对应路径。
 
 ## 相关文档
 
-- `skills/workflow-script-format/SKILL.md` — workflow script 完整 API（agent/parallel/pipeline/workflow 签名、$ARGS/$BUDGET、lint 规则）
-- `docs/extensions/adr/pi-ext-030-subagents-workflow-merge.md` — 合并决策（决策 3 分层配额 + workflow 嵌套）
-- `docs/extensions/adr/pi-ext-032-builtin-orchestration-workflows.md` — 从"参考模板"改为"内置通用编排 workflow"的决策
+- workflow-script-format SKILL.md（位于 pi 侧 subagent-workflow extension，`extensions/universal/subagent-workflow/skills/workflow-script-format/`，非本包资产）— workflow script 完整 API（agent/parallel/pipeline/workflow 签名、$ARGS/$BUDGET、lint 规则）
+- `docs/extensions/adr/pi-ext-030-subagents-workflow-merge.md`（位于 workspace 仓根，非本包内路径）— 合并决策（决策 3 分层配额 + workflow 嵌套）
+- `docs/extensions/adr/pi-ext-032-builtin-orchestration-workflows.md`（位于 workspace 仓根，非本包内路径）— 从"参考模板"改为"内置通用编排 workflow"的决策

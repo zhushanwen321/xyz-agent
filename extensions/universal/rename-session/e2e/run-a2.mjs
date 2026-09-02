@@ -67,12 +67,12 @@ async function runOneCase(c, log) {
 		await pi.rpc.prompt(c.prompt);
 		await settledP;
 		// 显式等 renamed to（多 iteration 工具型 prompt 会先产生 skip: stopReason=toolUse 日志）
-		const renameRes = await pi.rpc.waitForStderr('renamed to "', { timeoutMs: 45_000 });
+		const renameRes = await pi.rpc.waitForSessionLog('renamed to "', { timeoutMs: 45_000 });
 		// 轮询等落盘（pi append→flush 有延迟，固定 sleep 慢日不够）
 		const info = await pi.waitSessionInfoEntry(10_000);
 		const title = info?.name ?? null;
 		assert(typeof title === "string" && title.length > 0, "session_info.name 为空");
-		assertLogTitleMatches(renameRes.line, title);
+		assertLogTitleMatches(renameRes.message, title);
 		log(`[${c.label}] 标题: ${title}`);
 		return { label: c.label, prompt: c.prompt, title };
 	} finally {

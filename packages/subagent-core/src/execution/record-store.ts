@@ -352,6 +352,12 @@ export type RecordStorePi = {
  * 读时从 sessions/*.jsonl 重建（[perf] light 头部扫描 + per-file 缓存）。
  *
  * 任何 mutate → notifyChange()（仅通知监听器；磁盘缓存靠 stat 戳自校验，不清空）。
+ *
+ * record 状态查询面（U10① D6）：按状态枚举 listRunning/collectRecords(statusFilter)、
+ * 按 id 查询 getMutable/findLightById/getFullRecord——方法签名即导出形态，本类零改动。
+ *
+ * @experimental execution 运行时面（设计 docs/design/subagent-core-sink-design.md §3.3 D6）：
+ * 一个 minor 周期内允许签名微调，稳定后转常规 semver 承诺。
  */
 export class RecordStore {
   private readonly records = new Map<string, ExecutionRecord>();
@@ -740,9 +746,19 @@ export class RecordStore {
     this.indexHigherVersion = false;
   }
 
-  /** /resume /fork /new 后复活（dispose 的逆操作）。 */
+  /**
+   * /resume /fork /new 后复活（dispose 的逆操作）。
+   *
+   * [PS-10/T6④] 同步复位 orphanJudged 防重缓存：resumable 形态（IO-error 保守分支 /
+   * chatMode 分流）没有 .finalized sidecar 锚，重判资格完全由本缓存承载——dispose 时
+   * 有 clear（session 结束），但 revive 此前不复位，导致「同进程内曾经的 IO 失败记录
+   * 永久停留 resumable」，与本文件 recoverOrphanRecords 注释承诺的「IO 恢复后重开可重判」
+   * 不符。/new 复活正是「重开」语义：IO 已恢复的记录下次 recoverOrphanRecords 重新判定
+   * 收敛终态；仍不可读的记录重判再落一次 resumable entry（幂等，末条语义不变）。
+   */
   revive(): void {
     this._disposed = false;
+    this.orphanJudged.clear();
   }
 
   // ── 内部 ──────────────────────────────────────────────────
@@ -971,7 +987,10 @@ export class RecordStore {
       })
       .catch((err: unknown) => {
         this.indexDirty = true; // 失败恢复 dirty，下轮过窗重试
-        logger.debug("[subagents] sessions-index write failed", {
+        // [PS-14/T7③] 升 warn：索引反复写失败（权限/磁盘满）曾仅 debug 级，排障时
+        // 无线索。失败会跨轮重试（dirty 恢复），warn 每次过窗写失败都会出现——
+        // 正是「反复写失败需要可见」的信号面。
+        logger.warn("[subagents] sessions-index write failed", {
           detail: { dir: encDir, error: err instanceof Error ? err.message : String(err) },
         });
       });
@@ -1171,14 +1190,9 @@ export class RecordStore {
     return rec;
   }
 
-  /** 从缓存与索引移除某文件（文件删除时；负缓存条目无 id，仅删缓存项）。 */
-  private dropFileCache(file: string): void {
-    const entry = this.fileCache.get(file);
-    if (entry) {
-      if (!entry.negative) this.idToFile.delete(entry.light.id);
-      this.fileCache.delete(file);
-    }
-  }
+  // [PS-15/T7⑤] 「从缓存与索引移除单文件」的旧私有方法已整体删除：全仓无调用方
+  // 的死代码（设计 §4.3 PS-15 实锤，顺手清理，无行为影响）。「文件删除时移除缓存」
+  // 的职责实际由 reconstructAll 的消失文件修剪路径承担。
 
   /** 排序比较器：status priority（running<failed<cancelled<done）+ startedAt desc。 */
   private static compareRecords(a: SubagentRecord, b: SubagentRecord): number {

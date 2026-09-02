@@ -34,6 +34,8 @@ vi.mock("../session-runner.ts", () => {
   return {
     runSpawn: vi.fn(),
     killAllSpawnedChildren: vi.fn(),
+    registerSpawnedChildForRecord: vi.fn(),
+    killRecordChildWithEscalation: vi.fn(),
     spawnedChildren,
     getChildByRecord: (id: string): unknown => spawnedChildren.get(id),
   };

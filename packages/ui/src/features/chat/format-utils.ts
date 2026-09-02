@@ -77,11 +77,25 @@ export function shortenForHeader(text: string, opts?: { home?: string }): string
 
 /**
  * 取末 n 行（W3）。
+ *
+ * 2026-08 性能优化：尾部扫描替代全文 split——消费点（Block.vue thinking/tool 尾行视口）
+ * 对几十 KB streaming 文本每 commit 调用，全文 split 逐次 O(len)；尾部扫描从尾倒找第 n 个
+ * '\n' 后只对尾部分片 split。与 split('\n').slice(-n) 逐 case 等价（对拍测试
+ * format-utils.test.ts）。
  */
 export function tailLines(text: string, n: number): string[] {
   if (!text) return []
-  const lines = text.split('\n')
-  return lines.length <= n ? lines : lines.slice(-n)
+  if (n <= 0) return text.split('\n').slice(-n) // 非正 n 非预期入参，兜底复刻旧语义保持逐 case 等价
+  let idx = text.length
+  for (let count = 0; count < n; count++) {
+    // idx===0 时上次迭代已定位到首字符换行，前方无更多换行（换行数 < n → 全部行）。
+    // 不能依赖 lastIndexOf 返回 -1 判定：负 fromIndex 会被按 0 处理导致重复计数。
+    if (idx === 0) return text.split('\n')
+    idx = text.lastIndexOf('\n', idx - 1)
+    if (idx === -1) return text.split('\n')
+  }
+  // idx = 第 n 个（从尾数）换行位置：其后分片按 '\n' 切分恰为全部行的末 n 行
+  return text.slice(idx + 1).split('\n')
 }
 
 /**

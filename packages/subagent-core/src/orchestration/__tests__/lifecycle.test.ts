@@ -251,6 +251,44 @@ describe("runWorkflow", () => {
     expect(deps.eventBus.emit).not.toHaveBeenCalled();
   });
 
+  // OR-1 顺序修复（unbounded-wait-audit §4.1）：budgetTimeMs 溢出的 fail-fast
+  // 必须发生在首个副作用（workerHost.start）之前——旧顺序 worker 先启动、
+  // scheduleTimeBudget 后 throw，产生「worker 已跑、run 永不可达」的孤儿。
+  it("OR-1: budgetTimeMs 溢出（>2^31-1）→ worker 启动前 fail-fast（zero side effects）", async () => {
+    const deps = makeDeps();
+    const spec = makeSpec({ budgetTimeMs: 3_000_000_000 });
+
+    await expect(runWorkflow(spec, deps)).rejects.toThrow(/2147483647/);
+
+    // fail-fast 先于全部副作用：worker 未启动、run 未注册、未落盘、未通知
+    expect(deps.workerHost.start).not.toHaveBeenCalled();
+    expect(deps.runs.size).toBe(0);
+    expect(deps.store.save).not.toHaveBeenCalled();
+    expect(deps.eventBus.emit).not.toHaveBeenCalled();
+  });
+
+  // OR-1 前移的代价：start 抛错时已挂的 timeBudget timer 会残留（到期对从未注册的
+  // runId 触发 abortRun → not found）——start 抛错路径必须就地 clearTimeout。
+  it("OR-1: budgetTimeMs 有效但 worker.start 抛错 → timeBudget timer 被清理（无残留）", async () => {
+    const deps = makeDeps();
+    deps.workerHost.start = vi.fn(() => {
+      throw new Error("worker boot failed");
+    });
+
+    // fake timers：用例开始时无 pending 计时器（beforeEach 全新安装）
+    expect(vi.getTimerCount()).toBe(0);
+
+    await expect(
+      runWorkflow(makeSpec({ budgetTimeMs: 60_000 }), deps),
+    ).rejects.toThrow("worker boot failed");
+
+    // timer 挂载（scheduleTimeBudget）发生在 start 之前 → 抛错路径必须回收：
+    // 无 pending 计时器残留（若漏清理此处为 1，到期会误 abort 幽灵 runId）
+    expect(vi.getTimerCount()).toBe(0);
+    // 既有行为不回归：runs Map 无该 runId 条目（abortRun not found 语义保持）
+    expect(deps.runs.size).toBe(0);
+  });
+
   it("带 budgetTimeMs 时调度时间预算计时器（真实消费：挂载 + 到期 time_limited）", async () => {
     const deps = makeDeps();
     const spec = makeSpec({ budgetTimeMs: 3000 });
@@ -359,6 +397,25 @@ describe("abortRun", () => {
     expect(deps.onRunDone).not.toHaveBeenCalled();
   });
 
+  it("[B-4] eventBus listener 抛错 → abortRun 不向调用方抛错、onRunDone 仍执行", async () => {
+    const { run, terminate } = makeRunningRealRun("wf-abort-fence");
+    const deps = makeDeps();
+    deps.eventBus.emit = vi.fn(() => {
+      throw new Error("listener exploded");
+    });
+    deps.runs.set("wf-abort-fence", run);
+
+    // 旧实现裸调 emit：listener 抛错 → 异常上抛给 tool 调用方 + 跳过 onRunDone
+    await expect(abortRun("wf-abort-fence", deps, "abort with broken bus")).resolves.toBeUndefined();
+
+    // abort 成功语义保持：终态转换/terminate 照常完成
+    expect(run.state.status).toBe("done");
+    expect(run.state.reason).toBe("aborted");
+    expect(terminate).toHaveBeenCalledTimes(1);
+    // 独立围栏：onRunDone 不被 emit 故障跳过
+    expect(deps.onRunDone).toHaveBeenCalledTimes(1);
+  });
+
   it("自定义 doneReason（time_limited）", async () => {
     const { run } = makeRunningRealRun("wf-abort-3");
     const deps = makeDeps();
@@ -434,6 +491,26 @@ describe("terminateRunningRuns", () => {
     expect(terminate).toHaveBeenCalledTimes(1);
     expect(deps.store.save).toHaveBeenCalledTimes(1);
     expect(deps.store.save).toHaveBeenCalledWith(run);
+  });
+
+  it("[B-4] eventBus listener 抛错 → 不向调用方抛错、本 run 收尾完成、其余 run 继续终止", async () => {
+    const { run: a, terminate: terminateA } = makeRunningRealRun("wf-term-fence-a");
+    const { run: b, terminate: terminateB } = makeRunningRealRun("wf-term-fence-b");
+    const deps = makeDeps();
+    deps.runs.set("wf-term-fence-a", a);
+    deps.runs.set("wf-term-fence-b", b);
+    // 仅 runA 的 emit 抛错（按 payload id 判别模拟坏 listener）
+    deps.eventBus.emit = vi.fn((_event: string, payload: { id: string }) => {
+      if (payload.id === "wf-term-fence-a") throw new Error("listener exploded");
+    });
+
+    await expect(terminateRunningRuns(deps, "Session switched: run terminated")).resolves.toBeUndefined();
+
+    // 两个 run 都走到终态（runA 的 emit 故障不中断批量收尾）
+    expect(a.state.reason).toBe("failed");
+    expect(b.state.reason).toBe("failed");
+    expect(terminateA).toHaveBeenCalledTimes(1);
+    expect(terminateB).toHaveBeenCalledTimes(1);
   });
 
   it("单 run save 抛错不中断其余（其余 run 仍落盘 + unregister）", async () => {

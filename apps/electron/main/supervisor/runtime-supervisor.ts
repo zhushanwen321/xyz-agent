@@ -129,6 +129,13 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
     this._port = port
     // 重启成功 → 记录（稳定窗口后清零计数）
     this.policy.recordSuccess()
+    // [HISTORICAL] 复位 stopping：上方 `await this.stop()`（清旧进程）曾 markStopping，
+    // 成功启动后若不复位，运行期崩溃的 exit 会被 onRuntimeExit 误判「主动停止」短路
+    // 自动重启，只能等 liveness 探针 30s×3 兜底（实测 68-91s 恢复延迟，Gate B AC-3b，
+    // 日志特征：exit 137 后紧跟 "during graceful stop — no restart"）。start() 进行中
+    // 保持 stopping=true 仍是对的（spawn 后 waitForHealth 期间 exit 由 start 自身失败
+    // 路径处理，防双路重启）；此处成功落定即回到「可崩溃重启」态。
+    this.policy.reset()
 
     // [HISTORICAL] W5 改动 3：启动存活探针，监测 runtime「半活」状态。
     // 探针在 stop() 时关闭，不会泄漏 timer。连续失败达阈值调 forceRestartForLiveness。

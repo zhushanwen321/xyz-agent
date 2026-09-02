@@ -43,4 +43,4 @@ python3 extensions/universal/cache-probe/analyze.py ~/.pi/agent/sessions ~/.xyz-
 
 - 校验：`cd extensions/universal/cache-probe && pnpm typecheck && pnpm test`（或仓库级 `pnpm extensions:typecheck && pnpm extensions:test`）
 - 每日检查：跑一次 analyze.py，确认 `sessions_with_probe` 增长、`error entries` 为 0 或已知原因
-- 采集满 200 turn 后 analyze.py 第 5 部分给出快照方案 GO/NO-GO 倾向；结论与后续动作记录回设计文档
+- 归因矩阵内有效 turn（analyze.py 第 3 部分 core 过滤：排除间隔>30min、模型切换、探针未覆盖的 turn）满 200 后，analyze.py 第 5 部分给出快照方案 GO/NO-GO 倾向；结论与后续动作记录回设计文档

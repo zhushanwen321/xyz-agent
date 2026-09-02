@@ -20,6 +20,7 @@ import type {
   SkillDirConfig,
   SystemPromptConfig,
   TerminalConfig,
+  LlmRetryConfig,
   SourceDetectResult,
   ProviderSource,
   BuiltinProviderTemplate,
@@ -337,6 +338,25 @@ export async function setTerminalConfig(config: TerminalConfig): Promise<{ confi
 export function onTerminalConfig(handler: (config: TerminalConfig, corrupted: boolean) => void): () => void {
   return events.onGlobalType('config.terminalConfig', (msg) => {
     handler(msg.payload.config, msg.payload.corrupted ?? false)
+  })
+}
+
+// ── LLM retry config（llm-retry-settings u3；契约见 shared protocol.ts config.retryConfig）──
+
+/** 读取 LLM 重试配置。configured=false 表示文件无显式 retry 配置（config 为后端合并 pi 默认后的值）。 */
+export async function getRetryConfig(): Promise<{ config: LlmRetryConfig; configured: boolean }> {
+  return command('config.getRetryConfig', {})
+}
+
+/** 保存 LLM 重试配置（整体保存为显式按钮触发）。越界时 runtime 返回 error envelope，command 会 reject。 */
+export async function setRetryConfig(config: LlmRetryConfig): Promise<{ config: LlmRetryConfig; configured: boolean }> {
+  return command('config.setRetryConfig', { config })
+}
+
+/** 订阅 LLM 重试配置广播（多窗口同步，同 terminal 范式）。 */
+export function onRetryConfig(handler: (payload: { config: LlmRetryConfig; configured: boolean }) => void): () => void {
+  return events.onGlobalType('config.retryConfig', (msg) => {
+    handler(msg.payload)
   })
 }
 

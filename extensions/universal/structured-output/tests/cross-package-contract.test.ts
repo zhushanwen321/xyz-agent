@@ -45,8 +45,15 @@ async function dynamicImportRelative(spec: string): Promise<unknown> {
 
 // ── ① schema env 契约（PI_WORKFLOW_SCHEMA / 256KiB 上限）─────────────────
 
-/** SW 侧叶子模块候选路径（相对本文件）。SW 侧调整叶子布局时在此追加候选。 */
-const SW_SCHEMA_ENV_CANDIDATES = ["../../subagent-workflow/src/shared/schema-env.ts"];
+/**
+ * 对端叶子模块候选路径（相对本文件）。对端调整叶子布局时在此追加候选。
+ * schema-env.ts 已从 subagent-workflow 包迁至 packages/subagent-core（session-runner
+ * 所在包）——首候选指向新位置，旧 SW 路径保留兜底（对端再迁移时不丢守卫）。
+ */
+const SW_SCHEMA_ENV_CANDIDATES = [
+	"../../../../packages/subagent-core/src/shared/schema-env.ts",
+	"../../subagent-workflow/src/shared/schema-env.ts",
+];
 
 async function tryImportSwSchemaEnv(): Promise<Record<string, unknown> | undefined> {
 	for (const spec of SW_SCHEMA_ENV_CANDIDATES) {

@@ -1,8 +1,7 @@
 /**
  * Steering prompt 模板（projection 层）
  *
- * 类型 import 自 engine/types.ts；时间计算参数化（调用方传
- * timeUsedSeconds，不调 Date.now()）。FR-3.4：formatBudget 单一出口。
+ * 类型 import 自 engine/types.ts。FR-3.4：formatBudget 单一出口。
  *
  * 设计原则（来自 Codex 调研）：
  * - Completion audit: 逐项证据验证，intent/partial progress 不是 evidence
@@ -55,15 +54,12 @@ export type BudgetFormatStyle = "percent" | "line";
  * - "line"     → ` | Tokens: remaining/total`（continuationPrompt 用）
  *
  * @param state runtime state（读 budget / tokensUsed）
- * @param timeUsedSeconds 累计耗时秒数（保留位，FR-3.4 统一签名；percent/line 当前不消费）
  * @param style 输出形式
  */
 export function formatBudget(
 	state: GoalRuntimeState,
-	timeUsedSeconds: number,
 	style: BudgetFormatStyle,
 ): string {
-	void timeUsedSeconds; // FR-3.4 统一签名占位（percent/line 不消费，保留以便未来样式扩展）
 	if (style === "percent") {
 		return formatBudgetPercent(state);
 	}
@@ -88,9 +84,9 @@ function formatBudgetLine(state: GoalRuntimeState): string {
 
 // ── Continuation Prompt ───────────────────────────────
 
-export function continuationPrompt(state: GoalRuntimeState, timeUsedSeconds: number): string {
+export function continuationPrompt(state: GoalRuntimeState): string {
 	const objective = escapeXmlText(state.objective);
-	const budgetLine = formatBudget(state, timeUsedSeconds, "line");
+	const budgetLine = formatBudget(state, "line");
 	const criteria = successCriteriaBlock(state);
 
 	return (
@@ -192,12 +188,9 @@ export function objectiveUpdatedPrompt(
  * turn 末详述），避免两 prompt 重复。
  * 删 planAvailable 参数（恒 true 死分支；plan 引导收敛到 continuation）。
  */
-export function contextInjectionPrompt(
-	state: GoalRuntimeState,
-	timeUsedSeconds: number,
-): string {
+export function contextInjectionPrompt(state: GoalRuntimeState): string {
 	const objective = escapeXmlText(state.objective);
-	const budgetInfo = formatBudget(state, timeUsedSeconds, "percent");
+	const budgetInfo = formatBudget(state, "percent");
 	const criteria = successCriteriaBlock(state);
 
 	return (

@@ -33,7 +33,7 @@ description: "使用或排查 @zhushanwen/pi-scheduler（定时任务调度）�
 
 - **`schedule`**（创建）：参数 `prompt`（必填，到期注入的消息）、`schedule`（必填，duration 或 cron）、`kind`（`once`/`recurring`，默认 `recurring`）、`name`（可选，缺省从 prompt 自动截取前 30 字）、`expires`（可选，默认 7 天；传 `"never"` 关闭过期）、`force`（可选，默认 `false`）。
 - **`schedule_control`**（管理）：`action` = `list`/`toggle`/`delete`/`run`，`id`（toggle/delete/run 必填），`enabled`（toggle 必填）。
-- 两个工具的返回都是结构化 `{content: [{type:'text', text}], details, isError?}`，业务失败返回 `isError:true` + `details.errorCode`（不抛异常）。
+- 两个工具的返回都是结构化 `{content: [{type:'text', text}], details}`；业务失败以异常抛出（pi 只对 execute throw 置 `isError:true`，错误 message 作为 toolResult content 返回），不通过返回值表达失败。
 
 > 创建/管理操作无需 agent idle——只有**到期 dispatch** 才受 idle/速率限制约束（见「运行限制与 dispatch 行为」）。
 
@@ -52,7 +52,7 @@ description: "使用或排查 @zhushanwen/pi-scheduler（定时任务调度）�
 | `h` | `hr`/`hour`/`hours` | 3_600_000 |
 | `d` | `day`/`days` | 86_400_000 |
 
-示例：`5m`、`2h`、`1d`、`30seconds`。正则 `/^(\d+)\s*(s|sec|...)$/i`，不匹配则解析失败。
+示例：`5m`、`2h`、`1d`、`30seconds`。正则 `/^(\d+)\s*(s|sec|...)$/i`（注意：含空格的输入在 parseSchedule 分流时一律走 cron 分支，duration 实际不允许空格，`5 m` 解析失败）。
 
 ### cron（cron 表达式）
 
@@ -119,7 +119,7 @@ description: "使用或排查 @zhushanwen/pi-scheduler（定时任务调度）�
 
 dispatch 触发条件（`dispatchTask`）：
 
-- **非 force 任务**：仅在 `ctx.isIdle() && !ctx.hasPendingMessages()` 时触发；否则**延迟到下个 tick**（不丢弃，标记 `pending`，下个 30s tick 重试）。
+- **非 force 任务**：走统一 session delivery 内核（park 模式）——到期即入队，agent 忙时消息 park 在内核队列，等 agent 空闲的 settled 边沿投递，scheduler 每 30s tick 触发一次 flush 兜底重试；不丢弃。
 - **force=true 任务**：即使 agent busy 也立即触发（用于必须准点执行的场景）。
 - dispatch 成功后：recurring 推进 `nextRunAt` 并 append `advance`；once 删除任务并 append `delete`；失败（`sendMessage` 抛错）记 `lastStatus='failed'` 不 rethrow，下个 tick 重试（transient 失败重试语义，不 append advance）。
 - 注入的消息：`{content: task.prompt, customType: 'pi-scheduler:dispatched', display: true}`，`deliverAs: 'followUp'` + `triggerTurn: true`（排进 followUp 队列并唤醒 agent 开新 turn）。
@@ -137,7 +137,7 @@ dispatch 触发条件（`dispatchTask`）：
 - `force`：是否在 agent busy 时强制 dispatch。
 - `createdAt` / `nextRunAt` / `expiresAt?`：时间戳（ms）。
 - `runCount` / `lastRunAt?` / `lastStatus?`（`success`|`failed`）/ `lastError?`：执行统计。
-- `history`：最近 20 条 `ExecutionRecord`（`{at, status, snippet?}`，snippet 为 agent 回复前 100 字）。
+- `history`：最近 20 条 `ExecutionRecord`（`{at, status}`）。
 - `ownerSessionFile?`：归属 session JSONL 路径（fork 过滤用，非持久化业务字段）。
 - `pending?`：运行时标记「到期待 dispatch」，非持久化（与 `enabled` 正交）。
 

@@ -7,7 +7,7 @@
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -258,9 +258,11 @@ export function updateDownload(version: string): Promise<{ downloaded: boolean }
 
 /**
  * 触发安装阶段（替换 + 重启）。依赖已下载产物（updateDownload 成功后调用）。
- * @returns triggerRestart=true 表示替换完成、app 即将退出重启
+ * @returns UpdateInstallResult：triggerRestart=true 表示替换完成、app 即将退出重启；
+ *   version 为实装版本（install 权威源是预下载产物，手动认领与后台预下载并发覆写时
+ *   可能与 UI 确认版本不一致，调用方据此对齐展示——update-network-resilience D2）
  */
-export function updateInstall(): Promise<{ triggerRestart: boolean }> {
+export function updateInstall(): Promise<UpdateInstallResult> {
   return api?.updateInstall() ?? Promise.resolve({ triggerRestart: false })
 }
 
@@ -290,6 +292,15 @@ export function getLaunchResult(): Promise<LaunchResult | null> {
 /** 不支持当前平台时，打开备用下载页（release 页面）。无 IPC 时 no-op */
 export function openUpdateFallbackUrl(url: string): Promise<void> {
   return api?.openUpdateFallbackUrl(url) ?? Promise.resolve()
+}
+
+/**
+ * 打开手动升级产物目录（D9 设置页手动通道「打开目录」按钮）。
+ * main 侧幂等建目录后在系统文件管理器打开；打开失败 reject（Error.message 含
+ * openPath 错误字符串），调用方自行提示。无 IPC（web/mock）时 no-op 返回 success。
+ */
+export function openUpdateManualDir(): Promise<{ success: boolean }> {
+  return api?.openUpdateManualDir() ?? Promise.resolve({ success: true })
 }
 
 // ── 代理配置 ────────────────────────────────────────────────────────

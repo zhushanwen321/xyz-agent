@@ -51,8 +51,8 @@ vi.mock('@/composables/features/settings/useProjectSkills', () => ({
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], applySnapshot: vi.fn() }),
 }))
-vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
-  useSidebarNew: () => ({ forkSessionAsk: vi.fn(), forkSession: vi.fn() }),
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
+  useSidebar: () => ({ forkSessionAsk: vi.fn(), forkSession: vi.fn() }),
 }))
 
 // ── ComposerInput mock（fork-mode 范式：defineExpose 最小集）──

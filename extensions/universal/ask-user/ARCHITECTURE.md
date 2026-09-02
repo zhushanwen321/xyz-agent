@@ -69,14 +69,14 @@ Encoding is **one-way** — the old `parseAnswerParts` text reverse-parsing was 
 
 | Step | Check | Returns | Why this order |
 |------|-------|---------|----------------|
-| 1 | `validateInput(questions)` | `isError:true` + fix hint | Pure function, no side effects — cheapest gate. Reject before any UI/state work. |
-| 2 | `!ctx.hasUI` (headless) | `isError:true` + **`setActiveTools` removes ask_user** | Must run before the agent can retry. Physically removing the tool breaks a function-calling retry loop that plain `isError` cannot. |
+| 1 | `validateInput(questions)` | `throw` (Pi marks `isError:true`, empty `details`) + fix hint | Pure function, no side effects — cheapest gate. Reject before any UI/state work. |
+| 2 | `ctx.mode !== "tui" && ctx.mode !== "rpc"` (headless) | `throw` + **`setActiveTools` removes ask_user** | Must run before the agent can retry. Physically removing the tool breaks a function-calling retry loop that a thrown error cannot. |
 | 3 | `signal?.aborted` | `cancelled:true` | O(1) short-circuit before the expensive blocking `ctx.ui.custom` call. |
-| 4 | `try { ctx.ui.custom(...) } catch` | `isError:true` + `{ error }` | `ctx.ui.custom` is the only call that runs user interaction / editor construction / theme reads — the largest blast radius, so it is the only thing wrapped. |
+| 4 | `try { ctx.ui.custom(...) } catch` | `throw` (Pi marks `isError:true`, empty `details`) | `ctx.ui.custom` is the only call that runs user interaction / editor construction / theme reads — the largest blast radius, so it is the only thing wrapped. |
 | 5 | `result === null \|\| result.cancelled` | `cancelled:true` | Component resolved to cancel. |
 | 6 | normal | `{ answers }` | Compose the summary. |
 
-**The order is load-bearing**: swapping 1↔2 wastes a UI check on invalid params; swapping 2↔3 lets an aborted agent enter a blocking UI; moving 4's try/catch wider catches nothing extra. The headless branch's `setActiveTools` is the key insight — returning `isError` alone does not stop an LLM from calling the tool again in the same turn, so the tool is removed from the session's active set and the error text says "do not retry".
+**The order is load-bearing**: swapping 1↔2 wastes a UI check on invalid params; swapping 2↔3 lets an aborted agent enter a blocking UI; moving 4's try/catch wider catches nothing extra. Business outcomes (answers / cancellation) are returned as normal results — only validation failures and unexpected exceptions `throw` (Pi converts a throw into an `isError:true` tool result with empty `details`). The headless branch's `setActiveTools` is the key insight — even an `isError` tool result does not stop an LLM from calling the tool again in the same turn, so the tool is removed from the session's active set and the error text says "do not retry".
 
 ## `QuestionState` machine
 
@@ -122,7 +122,7 @@ If you add a new path that changes the answer set, audit both directions of this
 
 ### `autoConfirmIfAnswered` trigger
 
-Called only from `gotoTab()` — when the user navigates between tabs via Tab/Shift+Tab without pressing Enter. It promotes an implicitly-answered tab (toggled but not confirmed) to `confirmed`. A Tab navigation intent should not force a confirm prompt — only the Enter path confirms via `afterConfirm`.
+Called only from `gotoTab()` — when the user navigates between tabs via `←/→` (Tab is not a tab-navigation key: on the Submit tab it toggles Submit/Cancel focus, and `Shift+Tab` is deliberately unused because Pi's global `app.thinking.cycle` intercepts it). It promotes an implicitly-answered tab (toggled but not confirmed) to `confirmed`. A navigation intent should not force a confirm prompt — only the Enter path confirms via `afterConfirm`.
 
 ## Race guards
 
@@ -132,7 +132,7 @@ Three independent guards protect against three different races. They are dimensi
 |-------|------|----------|----------|-----------|
 | `_resolved` | `boolean` field | `component.ts` | **Double `done()`**: user already submitted/cancelled, then a signal-abort listener or a late keypress fires `done` again → Pi receives two resolves. | `submit()`/`cancel()` set `_resolved = true` before `done(...)`; **both `handleInput` and `cancel()` itself early-return if already set** — so a signal-abort firing after resolution (the listener calls `comp.cancel()`) is a no-op (see `execute` step 4). |
 | `pendingCancel` | `boolean` field | `component.ts` | **Accidental cancel losing answers**: Esc on the first question (or single question) cancelling outright would discard everything. | Two-step confirm: first Esc sets `pendingCancel = true` and shows an overlay; a second Esc truly cancels; any other key exits the overlay and keeps the form. The Submit-tab Cancel button bypasses this (already at the terminus). |
-| `autoConfirmIfAnswered` | **method** (not a field) | `component.ts` | **Zombie unanswered tab**: in multi-question mode, toggling an option then Tab-ing away leaves a tab "answered but not confirmed", so the Submit gate (`allConfirmed()`) stays false and the user cannot tell why Submit is blocked. | `gotoTab()` calls it before switching; if the current state has an answer but `!confirmed`, it sets `confirmed = true`. |
+| `autoConfirmIfAnswered` | **method** (not a field) | `component.ts` | **Zombie unanswered tab**: in multi-question mode, toggling an option then navigating away (`←/→`) leaves a tab "answered but not confirmed", so the Submit gate (`allConfirmed()`) stays false and the user cannot tell why Submit is blocked. | `gotoTab()` calls it before switching; if the current state has an answer but `!confirmed`, it sets `confirmed = true`. |
 
 ## Three-layer rendering
 
@@ -164,7 +164,7 @@ Constants: `SPLIT_PANE_MIN_WIDTH = 84`, `SPLIT_PANE_LEFT_MIN = 32`, `SPLIT_PANE_
 
 ## Spec cross-reference
 
-Design spec: `.xyz-harness/2026-06-15-ask-user/spec.md` (FR = functional requirement, AC = acceptance criterion). Implementation anchors:
+The original spec files (`.xyz-harness/2026-06-15-ask-user/`) are no longer in the repo — this table is self-contained (FR = functional requirement from the original spec). Implementation anchors:
 
 | Spec | Implemented in |
 |------|----------------|

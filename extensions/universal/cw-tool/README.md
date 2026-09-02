@@ -1,6 +1,6 @@
 # @zhushanwen/pi-cw-tool
 
-cw 2.0 的 pi extension 薄封装（Phase 2-B 适配，见 xyz-agent 仓 `docs/todo/pi-cw-cw2-adaptation.md`）：
+cw 2.0 的 pi extension 薄封装（Phase 2-B 适配）：
 
 - **cw_query 工具**：只读查询透传（`status` / `frontier` / `tree` / `report`，参数面 `--unit` / `--root` / `--json` 按 cw 2.0 修正）。写命令（create / evidence submit / review submit / verify / run）不在工具面——经 bash 调 `cw`，用法以 cw-cli skill 为 SSOT。
 - **pi-cw skill**：runner 实操指南（多 unit 任务 `cw run --spawn pi` 的后台运行、监控、escalation 处置、收尾回流）。

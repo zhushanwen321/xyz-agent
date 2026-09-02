@@ -109,13 +109,12 @@ export const ResultSchema = Type.Object({
 
 export type Result = Static<typeof ResultSchema>;
 
-/** execute 意外异常时返回的错误 details（区别于 Result.cancelled 的业务取消） */
-export interface ErrorDetails {
-	error: string;
-}
-
-/** execute 返回的 details 联合：正常/取消/校验失败走 Result，意外异常走 ErrorDetails */
-export type AskUserDetails = Result | ErrorDetails;
+/**
+ * execute 返回的 details 形状：正常/取消/校验失败都复用 Result。
+ * 错误路径已全部改为 throw（W4）——pi 对 throw 生成 isError:true 且 details 为空对象，
+ * 不存在「错误 details」形态；曾有的 ErrorDetails 死类型随不可达分支一并删除。
+ */
+export type AskUserDetails = Result;
 
 // ── 跨模块共享的交互状态类型 ─────────────────────────
 // 放这里（而非 component.ts）是为了让 question-view.ts / submit-view.ts

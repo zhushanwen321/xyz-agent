@@ -9,7 +9,7 @@
  * - -nc / --no-context-files 守卫：global 注入跳过、append 不受影响
  * - global 候选选择：候选序优先、空白内容跳过继续找、目录缺失降级
  * - fail-safe：handler 全程 throw → return undefined + logger.error 可观测；logger 自身抛错的
- *   终极兜底 console.debug；systemPrompt 非法类型的旧 quirk 锚定
+ *   终极兜底 process.stderr.write；systemPrompt 非法类型的旧 quirk 锚定
  *
  * mock 策略（参照 msg-id-mapper 测试模式）：pi SDK import type 零运行时解析，
  * ExtensionAPI 用结构化桩；node:fs mock 后按路径分流（env 指向假目录，不碰真实文件系统）。

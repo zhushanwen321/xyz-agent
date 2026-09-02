@@ -10,6 +10,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -207,7 +208,14 @@ You are a worker.`);
 // ============================================================
 
 describe("builtin agents 数据合规", () => {
-  const AGENTS_DIR = path.resolve(__dirname, "../../agents");
+  // C5 过渡态收口：10 模板已迁 @zhushanwen/subagent-core/agents/（C1/D-1）——经
+  // ./workflows/* 子入口锚点解析 core 包根（与 src/host/pi-host.ts corePackageNpmRoot
+  // 同一锚，workspace 与发布形态同径），数据面断言随资产指向 core。
+  const CORE_PKG_ROOT = path.resolve(
+    path.dirname(createRequire(import.meta.url).resolve("@zhushanwen/subagent-core/workflows/README.md")),
+    "..",
+  );
+  const AGENTS_DIR = path.join(CORE_PKG_ROOT, "agents");
   const CORE = ["explorer", "coder", "reviewer", "debugger", "analyst", "planner", "researcher", "orchestrator", "general-purpose", "doc-reviewer"];
 
   it("agents/*.md 全部 IF1 解析成功", () => {
@@ -231,26 +239,20 @@ describe("builtin agents 数据合规", () => {
     }
   });
 
-  it("loadByPath 直接加载包内 agent（内置 = 路径文件，无名字查找）", () => {
+  it("loadByPath 直接加载 core 包内 agent（内置 = 路径文件，无名字查找）", () => {
     const reg = new AgentRegistry();
     const coder = reg.loadByPath(path.join(AGENTS_DIR, "coder.md"));
     expect(coder?.name).toBe("coder");
     expect(coder?.systemPrompt.length).toBeGreaterThan(0);
-    // tools 字段精确匹配：未声明的为 undefined，声明的为具体数组。
-    // 改 frontmatter 时这里会立即报错，拦住拼写错误或字段遗漏。
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "explorer.md"))?.tools).toEqual(
-      ["read", "bash", "grep", "find", "structured-output"],
-    );
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "researcher.md"))?.tools).toEqual(["read", "bash"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "orchestrator.md"))?.tools).toEqual([
-      "todo", "goal_control", "workflow", "subagent", "ask_user",
-    ]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "reviewer.md"))?.tools).toEqual(["read", "bash", "grep", "find", "structured-output"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "planner.md"))?.tools).toEqual(["read", "bash", "grep", "find", "structured-output"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "coder.md"))?.tools).toEqual(["read", "write", "edit", "bash", "grep", "find", "structured-output"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "debugger.md"))?.tools).toEqual(["read", "write", "edit", "bash", "grep", "find", "structured-output"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "analyst.md"))?.tools).toEqual(["read", "bash", "grep", "find", "structured-output"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "doc-reviewer.md"))?.tools).toEqual(["read", "grep", "structured-output"]);
+    // D-5（C1）去 tools 化：模板不再声明 tools 白名单——全部 undefined（工具约束
+    // 回归宿主默认面；想要白名单在 <ws>/.agents/agents/ 放同名 .md 覆写）。
+    // 本断言拦「tools 字段回流」——模板侧任何 tools 重新声明会在此立即报错。
+    for (const name of CORE) {
+      expect(
+        reg.loadByPath(path.join(AGENTS_DIR, `${name}.md`))?.tools,
+        `${name} 模板不应声明 tools`,
+      ).toBeUndefined();
+    }
   });
 });
 

@@ -112,7 +112,7 @@ describe('ExtensionResolver', () => {
     it('returns empty when package.json does not exist', () => {
       mockedExistsSync.mockReturnValue(false)
 
-      const result = resolver.scanNpmExtensions('/project', false)
+      const result = resolver.scanNpmExtensions('/project')
       expect(result.size).toBe(0)
     })
 
@@ -127,7 +127,7 @@ describe('ExtensionResolver', () => {
         throw new Error('not found')
       })
 
-      const result = resolver.scanNpmExtensions('/project', false)
+      const result = resolver.scanNpmExtensions('/project')
       expect(result.size).toBe(0)
     })
   })

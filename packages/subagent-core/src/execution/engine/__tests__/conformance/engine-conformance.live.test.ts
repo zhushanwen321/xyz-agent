@@ -66,6 +66,32 @@ describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () =
     expect(report.ok).toBe(true);
     expect(report.engineVersion).toMatch(/^0\.\d+\.\d+$/);
   }, 60_000);
+
+  // [R6] 常驻通道的 conformance run 层（RA8「C1-C8 适配后全绿」的 live 面）：
+  // XYZ_ZCODE_MODE=appserver 定向（不探不降）跑最小任务——C2 outcome + C3 stream
+  // 不变量（app-server 设计 §3.4 不变量 1）。更深断言（schema/abort/进程锚定）由
+  // engines/zcode/__tests__/zcode-engine.live.test.ts 的 [R6] app-server 段承载。
+  it("zcode：app-server 常驻通道 run 全链（C2 outcome 无 error + C3 stream 事件不变量）", async (testCtx) => {
+    const model = process.env["ZCODE_E2E_MODEL"];
+    if (model === undefined || model === "") {
+      testCtx.skip("ZCODE_E2E_MODEL 未设置（需真实 provider/model 凭据）——appserver live run 面跳过");
+      return;
+    }
+    const engine = new ZcodeEngine({
+      engineDataDir: () => "/tmp/zcode-conformance-live-appserver",
+      processEnv: { ...process.env, XYZ_ZCODE_MODE: "appserver" },
+    });
+    const events: AgentEvent[] = [];
+    const { outcome } = await engine.run(
+      { task: "Reply with the single word: ok", slug: "live-appserver-c2", model, cwd: "/tmp" },
+      { taskId: "sa-live-zcode-appserver", poolKey: "", onEvent: (e) => events.push(e) },
+    );
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.content.trim().length).toBeGreaterThan(0);
+    expect(outcome.sessionId).toMatch(/^sess_/);
+    assertAgentEventInvariants(events, { granularity: "stream", content: outcome.content });
+    await engine.dispose().catch(() => undefined);
+  }, 180_000);
 });
 
 // ── relay 变体（E 方案 §2.3：同一契约 × 不同 spawn 通道，手动门内的手动门）──

@@ -14,9 +14,25 @@ interface QueueEntry {
   signal?: AbortSignal;
 }
 
+/**
+ * 排队策略（D7/U4）：release 时从等待队列放行哪个条目。策略差异是宿主声明的
+ * 有意决策（pi=priority / zsw=strict-fifo），保留为参数而非消灭（见 sink 设计
+ * subagent-core-sink-design.md §3.3 D7）。
+ *
+ * - `"priority"`（缺省）：priority 值最小（0=最高）者优先，同优先级按入队序（FIFO）。
+ *   与 pi 既有行为等值。
+ * - `"strict-fifo"`：忽略 priority，严格按入队顺序（seq）放行。纯 FIFO 语义，
+ *   供 zsw 侧等需要「先到先得、不许插队」语义的宿主消费。
+ */
+export type QueuePolicy = "priority" | "strict-fifo";
+
 /** 并发池接口（可注入，便于测试 mock）。 */
 export interface ConcurrencyPool {
-  /** 按优先级排队获取槽位（0=最高）。可选 effectiveMaxConcurrent 覆盖实例级默认配额。可选 AbortSignal 在 abort 时 reject 排队条目。 */
+  /**
+   * 排队获取槽位（priority 0=最高；"strict-fifo" 策略下该值仅记录不参与出队选择，
+   * 见 createConcurrencyPool）。可选 effectiveMaxConcurrent 覆盖实例级默认配额。
+   * 可选 AbortSignal 在 abort 时 reject 排队条目。
+   */
   acquire(priority: number, effectiveMaxConcurrent?: number, signal?: AbortSignal): Promise<void>;
   /** 归还槽位。必须无条件执行（finally）。 */
   release(): void;
@@ -27,27 +43,40 @@ export interface ConcurrencyPool {
 }
 
 /**
- * 默认实现：maxConcurrent 槽位 + 优先级队列。
+ * 默认实现：maxConcurrent 槽位 + 可策略化排队队列。
  *
  *   acquire(priority, effectiveMaxConcurrent?):
  *     effective = effectiveMaxConcurrent ?? maxConcurrent
  *     active < effective → active++, resolve
- *     否则 → 入队 { priority, resolve, seq }, 队列按 priority 升序 + seq FIFO
+ *     否则 → 入队 { priority, resolve, seq }
  *
  *   release():
- *     queue 非空 → 出队最高优先级 resolve（active 不变）
+ *     queue 非空 → 按 queuePolicy 选一个条目出队 resolve（active 不变）：
+ *       - "priority"：priority 升序 + 同优先级 seq FIFO
+ *       - "strict-fifo"：纯 seq FIFO（priority 仅记录）
  *     queue 空 → active--（防下溢）
+ *
+ *   已知契约边界（审查 S-2 登记）：分层配额（effectiveMaxConcurrent）仅在
+ *   acquire 时点判定；release 授予排队条目时不复查其 effective——即活跃数
+ *   仍 ≥ 条目 effective 时，单次释放也可能授予该条目（pi 运行时既有行为，
+ *   concurrency-pool.test T-A2 锚定）。需要严格分层隔离的宿主应在条目侧
+ *   自行保证，勿依赖 release 时点复查。
+ *
+ * 类保留内部消费（subagent-service 深路径）；对外导出面走 createConcurrencyPool
+ * 工厂（对象参数 + 策略枚举，不暴露本类名与位置参数构造——D7/U4 裁决）。
  */
 export class DefaultConcurrencyPool implements ConcurrencyPool {
   private _active = 0;
   private readonly queue: QueueEntry[] = [];
   private seqCounter = 0;
+  private readonly queuePolicy: QueuePolicy;
 
   /** 下限 1——maxConcurrent=0 会让 acquire 永久排队死锁（C3 修复）。 */
   readonly maxConcurrent: number;
 
-  constructor(maxConcurrent: number) {
+  constructor(maxConcurrent: number, queuePolicy: QueuePolicy = "priority") {
     this.maxConcurrent = Math.max(1, maxConcurrent);
+    this.queuePolicy = queuePolicy;
   }
 
   acquire(priority: number, effectiveMaxConcurrent?: number, signal?: AbortSignal): Promise<void> {
@@ -86,14 +115,24 @@ export class DefaultConcurrencyPool implements ConcurrencyPool {
     });
   }
 
+  /**
+   * 出队候选比较：cur 是否优于 best（release 时选谁获得释放的槽位）。
+   * 策略单一分派点——新增策略只需在此分支，acquire/abort/clamp 逻辑策略无关。
+   */
+  private isBetterCandidate(cur: QueueEntry, best: QueueEntry): boolean {
+    if (this.queuePolicy === "strict-fifo") {
+      // 纯 FIFO：seq 单调递增，先入队者 seq 必更小——priority 完全不参与
+      return cur.seq < best.seq;
+    }
+    // priority：取优先级最高（priority 最小）的；同优先级 FIFO（seq 最小）
+    return cur.priority < best.priority || (cur.priority === best.priority && cur.seq < best.seq);
+  }
+
   release(): void {
     if (this.queue.length > 0) {
-      // 取优先级最高（priority 最小）的；同优先级 FIFO（seq 最小）
       let bestIdx = 0;
       for (let i = 1; i < this.queue.length; i++) {
-        const cur = this.queue[i];
-        const best = this.queue[bestIdx];
-        if (cur.priority < best.priority || (cur.priority === best.priority && cur.seq < best.seq)) {
+        if (this.isBetterCandidate(this.queue[i], this.queue[bestIdx])) {
           bestIdx = i;
         }
       }
@@ -113,4 +152,27 @@ export class DefaultConcurrencyPool implements ConcurrencyPool {
   get active(): number {
     return this._active;
   }
+}
+
+/** createConcurrencyPool 选项（对象参数构造——导出面禁止位置参数歧义，D7/U4）。 */
+export interface CreateConcurrencyPoolOptions {
+  /** 实例级最大并发配额。0/负数 clamp 到 1（防 acquire 永久排队死锁，C3 修复语义）。 */
+  maxConcurrent: number;
+  /**
+   * 排队策略（见 QueuePolicy）。缺省 `"priority"`——与 pi 既有消费
+   * （`new DefaultConcurrencyPool(n)`）行为逐点等值，缺省即零回归。
+   */
+  queuePolicy?: QueuePolicy;
+}
+
+/**
+ * 并发池工厂（D7/U4 导出面）：宿主经此创建并发池，无需感知实现类。
+ *
+ * 返回 ConcurrencyPool 接口而非 DefaultConcurrencyPool——barrel 导出面只认
+ * 「对象参数 + 策略枚举」，实现类可内部替换，策略差异（pi=priority /
+ * zsw=strict-fifo）显式化为参数而非两份复刻实现（深度分层公式与下限常量单源，
+ * 公式见类注释与 slots 消费方）。
+ */
+export function createConcurrencyPool(options: CreateConcurrencyPoolOptions): ConcurrencyPool {
+  return new DefaultConcurrencyPool(options.maxConcurrent, options.queuePolicy ?? "priority");
 }

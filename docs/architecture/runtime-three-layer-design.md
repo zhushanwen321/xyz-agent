@@ -199,6 +199,18 @@ infra/      ← pi 适配（实现 ports，连接 + 翻译合并）
 
 > **新增 services→infra import 时的判断准则**：logger 类横切关注点（无业务语义、process-wide 单例）可直接 import；kernel 类纯函数（无状态、无副作用、无 IO，与 shared 同性质）——含 pi-paths 路径解析、git-status-parser/ignore-parser 等纯解析/匹配函数——可直接 import。其余 infra 模块——含 pi 协议类型、RPC 子进程、有状态/有 IO 的文件操作、安装器等——一律经 port 访问，不得直接 import。
 
+#### ④ node:fs / node:child_process 直用 —— 基线债登记（非合规例外，R3 收编）
+
+> 与 ①-③ 不同：本条登记的**不是**受控例外，而是与目标态存在差距的未收编基线债。登记目的是让架构审查遇到下述形态时有豁免依据，不误报为「新增违规」；债本身待 R3 统一清偿。
+
+**现状**：services 层 45 个生产文件 value import `node:fs`（2026-09-01 实测；复核命令 `grep -rl "from 'node:fs'" packages/runtime/src/services/ | grep -v '\.test\.ts'`，含 `node:fs/promises` 前缀命中），与 C-comm-03 正文「services 层 IO 一律经 port」的目标态存在长期差距——这是**未收编的基线债，不是合规形态**。
+
+**机器防线现状**：`check_services_infra_import.py` 只拦截 services→infra 方向的 value import（白名单与基线模块清单见该脚本 docstring）；node:fs 直用**无机器拦截**，目前仅靠 review-arch-boundary 审查面把关（本轮 must-fix 即由该审查面报出后回落到本登记）。
+
+**本批显式列入清单**：`services/session/background-task-reaper.ts`（555 行，直用 node:fs + node:child_process spawnSync）。它是后台收殓任务（孤儿后台任务补杀 + registry 终态回写），横切基础设施性质与 ① logger 同类，不在业务请求路径上；判定逻辑已有测试覆盖 175/175 行（runtime incremental coverage）。裁决理由：单独 ports 化这一个文件将与存量 45 文件形成 1:45 双轨，违反一致性；留待 R3 ports 收编统一治理。
+
+**收编路线**：新增 services 代码优先经 port 接口访问文件系统；存量文件随阶段 R3（ports 接口落地）分批迁移；迁移完成前，本登记作为架构审查对该形态的豁免依据。
+
 **依赖方向**：`transport → services ← infra`（services 定义 ports，infra 实现 ports，箭头都指向接口）。**无环**。
 
 ---

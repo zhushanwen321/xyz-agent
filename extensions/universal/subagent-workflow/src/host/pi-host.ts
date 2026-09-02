@@ -16,7 +16,9 @@
 //     buildScanTargets、orchestration/skill-discovery.ts resolveSkillPath 的现推导
 //     逐项一致（user-pi / npm / npm-dev 字面即现 ResourceSource 标签）。
 //     project/workspace 根不在壳侧提供——core 消费方按 workspaceRoot 自行推导
-//     （u0-data-discovery 波次接注入消费）。
+//     （u0-data-discovery 波次接注入消费）。C5⑥ 起 agents kind 追加第 4 根：
+//     core 包一级父目录（source "npm"）——core agents/ 资产进 pi 发现面，见
+//     corePackageNpmRoot 注释。
 //   - countActiveFromEntries 适配：pi 侧真函数返回 CountActiveResult 对象，core
 //     端口契约是 number（core 消费面只读 .count，notify-ports.ts 契约注释）——
 //     foundation 单元登记给本单元的适配责任。
@@ -25,7 +27,8 @@
 //     是结构超集成员，多不碍兼容）——结构兼容由本注入点 typecheck 守护，上游签名
 //     漂移即红（notify-ports.ts「闭包红线」段）。
 
-import { join } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
@@ -36,12 +39,50 @@ import type { DiscoveryRoot, HostServices } from "@zhushanwen/subagent-core/core
 import type { LogLevel } from "@zhushanwen/subagent-core/core/logger.ts";
 import type { NotifyDomainPorts } from "@zhushanwen/subagent-core/core/notify-ports.ts";
 
+/**
+ * core 包（@zhushanwen/subagent-core）agents/ 资产进 pi 发现面的注入根（C5⑥，
+ * convergence §5.4 检查点 2；探针证据 docs/design/subagent-core-convergence.probe-c5.md）。
+ *
+ * 解析锚点 = `@zhushanwen/subagent-core/workflows/README.md`：`./workflows/*` 子入口
+ * 在 workspace TS 直引与 npm dist 两种发布形态下同径（publishConfig 保留该子入口），
+ * README.md 是两形态都必在的资产文件。core 包根 = 锚点上两级；npm 槽注入其一级
+ * 父目录——npm 槽语义：dir 下一级子项 = 包目录，core 无 pi manifest → 扫 agents/
+ * 约定目录命中 10 内置角色。
+ *
+ * 布局覆盖（探针 P2-P5 实测）：dev workspace（core 在仓库 packages/ 下）与发布态
+ * 嵌套布局（core 在本包 node_modules 内）下这是唯一命中通路；发布态平铺布局
+ * （core 与本包同层）下既有 npm 根已命中，本注入是幂等兜底（重复发现被 core
+ * realpath 去重吸收）。
+ *
+ * 每次调用现解析（不 memo）：发现调用点稀疏（session_start + 缓存 miss），解析
+ * 成本可忽略；失败（异常布局/解析器不可用）降级为不注入并 warn——绝不因资产
+ * 接线失败阻断发现主链。
+ */
+function corePackageNpmRoot(): string | undefined {
+  try {
+    // createRequire 锚定本模块（jiti 加载器下 import.meta.url 可用；不可用则随
+    // catch 降级）。require.resolve 沿 pi-sw 自身的依赖解析链——workspace 与发布态
+    // 都从本包出发命中 core。
+    const require = createRequire(import.meta.url);
+    const anchor = require.resolve("@zhushanwen/subagent-core/workflows/README.md");
+    return dirname(dirname(dirname(anchor)));
+  } catch (err) {
+    // getLogger 惰性调用（catch 是冷路径——测试环境对 pi-extension-logger 的
+    // module-level mock 可能返回 undefined，模块级持有会在 import 期踩 undefined）
+    getLogger("pi-host").warn(
+      "[pi-host] core 包 agents/ 注入根解析失败——10 内置角色可能不可发现",
+      { reason: err instanceof Error ? err.message : String(err) },
+    );
+    return undefined;
+  }
+}
+
 /** agents/workflows 共享的 agentDir 派生根（末级目录名由 kind 决定）。
  *  顺序与 source 标签逐项对齐 resource-discovery.ts buildScanTargets 的
  *  user-pi → npm → npm-dev 段（根列表按优先级低→高排列，D2 语义边界）。 */
 function agentDirKindRoots(kind: "agents" | "workflows"): DiscoveryRoot[] {
   const agentDir = getAgentDir();
-  return [
+  const roots: DiscoveryRoot[] = [
     // 1. user .pi/agent/<kind>/
     { dir: join(agentDir, kind), source: "user-pi" },
     // 2. npm global: agentDir/npm/node_modules/*/<pkg>/
@@ -49,6 +90,19 @@ function agentDirKindRoots(kind: "agents" | "workflows"): DiscoveryRoot[] {
     // 3. npm dev symlink: agentDir/extensions/*/<pkg>/
     { dir: join(agentDir, "extensions"), source: "npm-dev" },
   ];
+  // 4. core 包根（C5⑥，仅 agents kind）：追加在既有 npm 根之后——同标签多根依注入
+  //    序扫描 + last-writer-wins，core（随本包依赖分发的新模板）遮蔽同 agentDir 内
+  //    旧版残留副本；序位仍在 user 级之上、npm-dev/project 级之下（红线 1）。
+  //    workflows kind 刻意不注入：<available_workflows> 的 <location> 是 CA2 快照
+  //    不豁免面（红线 8 豁免仅限 10 内置 agent 角色路径前缀），注入会翻转内置
+  //    workflow 的胜出路径。
+  if (kind === "agents") {
+    const coreNpmRoot = corePackageNpmRoot();
+    if (coreNpmRoot !== undefined) {
+      roots.push({ dir: coreNpmRoot, source: "npm" });
+    }
+  }
+  return roots;
 }
 
 /** skills 的 agentDir 派生根。对齐 skill-discovery.ts resolveSkillPath 的两处

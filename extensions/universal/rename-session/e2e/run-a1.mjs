@@ -4,10 +4,10 @@
  *
  * 流程：真实 pi + mimo，在有 ts 文件的 fixture 目录发「列出当前目录的 ts 文件并统计行数」
  * （触发多 iteration 工具调用），round 完成后等 rename 落库，然后五重断言：
- *   ① 流序判别（主）：交错时间轴上 LLM request 行之后无任何 turn_start/message_start/
- *      message_end/turn_end 事件（中途触发的特征是其后仍有后续 turn 事件）；时刻辅助
- *      t(LLM request) ≥ t(最终 message_end) − 1s；round 中间 iteration 的 turn_end 后
- *      仅 skip: stopReason=toolUse 类 stderr 日志
+ *   ① 流序判别（主）：session JSONL 中 LLM request 日志 entry 时刻之后，stdout 时间轴上无
+ *      turn_start/message_start/message_end 事件（中途触发的特征是其时刻之后仍有后续 turn
+ *      事件）；时刻辅助 t(LLM request) ≥ t(最终 message_end) − 1s；round 中间 iteration 的
+ *      turn_end 后仅 skip: stopReason=toolUse 类日志
  *   ② 仅一条 LLM request，user 段含「ts 文件」，结构为 [user, assistant, user] 三条
  *   ③ 内容匹配（主判别器）：日志 assistant 段（preview 截断后）与 session JSONL 最后一条
  *      stop assistant message 文本经 rebuildPreview 同构重构后一致
@@ -15,7 +15,8 @@
  *      （从实际 toolResult 内容选「仅原始输出才有的形态」——已剔除会出现在结论里的行）
  *   ⑤ session_info 行位于 round 全部 message entry 之后且 name 非空（行序佐证）
  *
- * 断言依据的探针事实见 e2e/README.md（P0）。
+ * 断言依据的探针事实见 e2e/README.md（P0）。rename 日志 entry 数据源 = session JSONL 的
+ * extension-logger appendEntry 通道（customType rename-session:log），不写 pi 进程 stderr。
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -27,6 +28,7 @@ import {
 	assert,
 	assertLogTitleMatches,
 	extractLastStopAssistant,
+	extractRenameLogEntries,
 	parseJsonlEntries,
 	parseLogMessages,
 	rebuildPreview,
@@ -86,32 +88,34 @@ export async function runA1() {
 			await settledP;
 			// 等 rename 最终结果（显式等 renamed to 终态标记——宽松匹配 skip 日志会命中
 			// 中间 iteration 的 skip: stopReason=toolUse 提前返回，那不是最终结果）
-			const renameRes = await pi.rpc.waitForStderr('renamed to "', { timeoutMs: 45_000 });
+			const renameRes = await pi.rpc.waitForSessionLog('renamed to "', { timeoutMs: 45_000 });
 			// 轮询等 session_info 落盘再读全量行（pi append→flush 有延迟，日志先于落库）
 			await pi.waitSessionInfoEntry(10_000);
 
 			const timeline = pi.timeline.all();
+			// rename 日志 entry（extension-logger appendEntry 落 session JSONL）
+			const lines = await pi.readSessionLines();
+			assert(Array.isArray(lines), "session JSONL 不存在或不可读");
+			const logEntries = extractRenameLogEntries(lines);
 
 			// ── ② 仅一条 LLM request ──
-			const llmReqEntries = timeline.filter(
-				(e) => e.stream === "err" && e.line.includes(LLM_REQUEST_MARKER),
-			);
+			const llmReqEntries = logEntries.filter((e) => e.message.includes(LLM_REQUEST_MARKER));
 			assert(
 				llmReqEntries.length === 1,
 				`期望仅 1 条 LLM request 日志，实际 ${llmReqEntries.length} 条`,
 			);
 			const llmReq = llmReqEntries[0];
-			const llmReqIdx = timeline.indexOf(llmReq);
 
 			// ── ① 流序判别（主）+ 时刻辅助 ──
-			// 断言集 = 设计 §8.3 A1① 的 turn_start/message_start/message_end（不含 turn_end：
-			// pi 先调 turn_end handler 再向 stdout 写事件，最终 turn_end 滞后 LLM request 日志
-			// 1ms 级是通道顺序伪影非中途触发；中途触发的真特征是其后仍有下一 iteration 事件）
+			// 锚点 = session JSONL 中 LLM request entry 的时刻（data.timestamp，与时间轴同为
+			// 本机 epoch ms 可比较）。断言集 = 设计 §8.3 A1① 的 turn_start/message_start/
+			// message_end（不含 turn_end：pi 先调 turn_end handler 再向 stdout 写事件，最终
+			// turn_end 滞后 LLM request 1ms 级是通道顺序伪影非中途触发；中途触发的真特征是
+			// 其时刻之后仍有下一 iteration 事件）
 			const turnEventTypes = new Set(["turn_start", "message_start", "message_end"]);
 			const lateTurnEvents = [];
 			let finalStopEndT = null;
-			for (let i = 0; i < timeline.length; i++) {
-				const e = timeline[i];
+			for (const e of timeline) {
 				if (e.stream !== "out") continue;
 				let ev;
 				try {
@@ -122,7 +126,7 @@ export async function runA1() {
 				if (ev?.type === "message_end" && ev.message?.role === "assistant" && ev.message?.stopReason === "stop") {
 					finalStopEndT = e.t;
 				}
-				if (i > llmReqIdx && turnEventTypes.has(ev?.type)) {
+				if (e.t > llmReq.t && turnEventTypes.has(ev?.type)) {
 					lateTurnEvents.push(`${ev.type}@t=${e.t}`);
 				}
 			}
@@ -137,20 +141,18 @@ export async function runA1() {
 			);
 
 			// ── ① 补：中间 iteration turn_end 后仅 skip: stopReason=toolUse 类日志 ──
-			const skipBefore = timeline.filter(
-				(e, i) => e.stream === "err" && e.line.includes("skip: ") && i < llmReqIdx,
-			);
+			const skipBefore = logEntries.filter((e) => e.message.includes("skip: ") && e.t < llmReq.t);
 			assert(skipBefore.length >= 1, `期望多 iteration 场景至少 1 条 toolUse skip 日志，实际 ${skipBefore.length} 条`);
 			for (const e of skipBefore) {
 				assert(
-					/skip: stopReason=toolUse\b/.test(e.line),
-					`LLM request 前出现非 toolUse 类 skip 日志: ${e.line}`,
+					/skip: stopReason=toolUse\b/.test(e.message),
+					`LLM request 前出现非 toolUse 类 skip 日志: ${e.message}`,
 				);
 			}
 			log(`round 中间 iteration skip 日志 ${skipBefore.length} 条（均 stopReason=toolUse）`);
 
 			// ── ② 补：user 段内容 + 结构 ──
-			const messages = parseLogMessages(llmReq.line);
+			const messages = parseLogMessages(llmReq.message);
 			assert(messages !== null, "LLM request 行 JSON 解析失败");
 			assert(
 				messages.length === 3 &&
@@ -163,8 +165,6 @@ export async function runA1() {
 			assert(messages[2].text.includes("slug"), `instruction 段不含「slug」特征: ${messages[2].text}`);
 
 			// ── ③ 内容匹配（主判别器）──
-			const lines = await pi.readSessionLines();
-			assert(Array.isArray(lines), "session JSONL 不存在或不可读");
 			const finalText = extractLastStopAssistant(lines);
 			assert(
 				typeof finalText === "string" && finalText.length > 0,
@@ -212,7 +212,7 @@ export async function runA1() {
 			);
 			const lastInfo = entries[infoIdx[infoIdx.length - 1]];
 			assert(typeof lastInfo.name === "string" && lastInfo.name.length > 0, "session_info.name 为空");
-			assertLogTitleMatches(renameRes.line, lastInfo.name);
+			assertLogTitleMatches(renameRes.message, lastInfo.name);
 			log(`标题: ${lastInfo.name}`);
 			log(
 				`证据链: 流序①OK / 仅1条request+user段②OK / 内容匹配③OK（preview ${messages[1].text.length} 字符）/ 负向④OK（${features.length} 条特征行零泄漏）/ 行序⑤OK`,

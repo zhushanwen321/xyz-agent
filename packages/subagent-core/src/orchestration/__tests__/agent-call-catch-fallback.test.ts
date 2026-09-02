@@ -17,6 +17,7 @@ import type { LifecycleDeps, WorkerHandlers } from "../models/ports.ts";
 import { Trace } from "../models/trace.ts";
 import type { WorkflowRun } from "../models/workflow-run.ts";
 import type { AgentResult } from "../models/types.ts";
+import { flushMicrotasks } from "./helpers/flush-microtasks.ts";
 
 // ── helpers ──────────────────────────────────────────────────
 
@@ -189,10 +190,7 @@ describe("U7b: AbortError 不回发 agent-result", () => {
       // 先 flush 微任务队列（多次确保 withSlot promise 已 settle），
       // 再断言断言期内无 agent-result。vi.waitFor 用反向断言会一满足就 return，
       // 故采用：跑若干 microtask tick 后静态断言。
-      for (let i = 0; i < 5; i++) {
-        // eslint-disable-next-line no-await-in-loop -- 排空微任务队列的固定 tick 循环（vi.waitFor 反向断言会一满足即返回，不适用），非逐项等待
-        await Promise.resolve();
-      }
+      await flushMicrotasks(5);
       const posted = findAgentResultPost(postMessage, 3);
       expect(posted).toBeUndefined();
     } finally {

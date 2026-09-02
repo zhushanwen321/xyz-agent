@@ -59,6 +59,20 @@ export interface AgentMeta extends ResourceMetaBase {
    * 与 model 字段同风格——路由字段（不进 system prompt），执行侧（P4 路由层）消费。
    */
   engine?: string;
+  /**
+   * 执行预算：turn 上限（sink 设计 D3 新增可选执行字段之一）。
+   * 消费优先级：显式参数 > 本字段 > 缺省——pi 工具参数 maxTurns 语义不变（本字段
+   * 对 pi 是清单元数据），zsw 决策链 timeoutMs > profile.maxTurns > 缺省。
+   */
+  maxTurns?: number;
+  /** tool denylist（D3 可选执行字段）：spawn 侧剔除，与 tools allowlist 正交。 */
+  disallowedTools?: string[];
+  /**
+   * agent 声明依赖的 skill 名清单（D3 可选执行字段）。注意与本文件头注
+   * 「skills 归 pi core」的 skills（资源种类）不同物：此处是 agent frontmatter 的
+   * 执行配置字段，不是 ResourceKind。
+   */
+  skills?: string[];
 }
 
 /** 判别联合（kind 判别）。 */

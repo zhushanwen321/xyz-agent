@@ -174,7 +174,6 @@ function collectRelatedRecords(
 // ============================================================
 
 /** 建树过程的共享可变状态（避免递归函数参数爆炸，封装为 context）。 */
-/** 建树过程的共享可变状态（避免递归函数参数爆炸，封装为 context）。 */
 interface BuildContext {
   rootSessionId: string
   related: RecordManifest[]

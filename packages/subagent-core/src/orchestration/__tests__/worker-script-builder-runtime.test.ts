@@ -53,6 +53,12 @@ interface ErrorMsg {
   error: string;
   workerLogs?: unknown[];
 }
+/** log 消息：脚本 log() 全局发出的独立诊断消息（协议见 worker-script-builder 头注释）。 */
+interface LogMsg {
+  type: "log";
+  phase?: string;
+  message?: string;
+}
 
 // ── 类型守卫：从 unknown 收窄到判别联合 ──
 // 共享 hasType 辅助：避免每个守卫重复 `(m as {type?:string})` 断言（taste/no-unsafe-catch）。
@@ -74,16 +80,23 @@ function isReturn(m: unknown): m is ReturnMsg {
 function isError(m: unknown): m is ErrorMsg {
   return hasType(m, "error");
 }
+function isLog(m: unknown): m is LogMsg {
+  return hasType(m, "log");
+}
 
 // ── 测试辅助：起一个真实 Worker 跑 buildWorkerScript 产物 ──────────────
 
 interface RunResult {
   /** 收到的 return 消息的 result 字段（脚本正常结束时）。 */
   returnValue?: unknown;
+  /** return 消息带回的 workerLogs（[B-3] 起只含 console.* 捕获条目，log() 不再走此通路）。 */
+  returnWorkerLogs?: unknown[];
   /** 收到的 error 消息的 error 字段（脚本 throw 时）。 */
   errorMessage?: string;
   /** error 消息带回的 workerLogs（验证诊断不丢）。 */
   errorWorkerLogs?: unknown[];
+  /** 收到的 {type:"log"} 独立消息列表（[B-3] 起 log() 的唯一通路）。 */
+  logMessages: LogMsg[];
   /** Worker exit code（0=正常，1=崩溃）。 */
   exitCode?: number;
   /** Worker 'error' 事件的错误消息（uncaught exception，正常应为 undefined）。 */
@@ -92,6 +105,15 @@ interface RunResult {
   agentCalls: AgentCallMsg[];
   /** 收到的 workflow-call 消息列表。 */
   workflowCalls: WorkflowCallMsg[];
+}
+
+/** workerLogs 条目守卫收窄 + message 包含判定（元素类型 unknown，断言前先收窄）。 */
+function someLogMessageContains(logs: unknown[] | undefined, text: string): boolean {
+  return (logs ?? []).some((l) => {
+    if (typeof l !== "object" || l === null) return false;
+    const message = (l as { message?: unknown }).message;
+    return typeof message === "string" && message.includes(text);
+  });
 }
 
 interface RunOptions {
@@ -144,7 +166,7 @@ function runWorker(userScript: string, opts: RunOptions = {}): Promise<RunResult
     // S8：创建后立即登记，afterEach 兜底清理（防止 promise 泄漏导致 Worker 未终止）
     createdWorkers.push(worker);
 
-    const result: RunResult = { agentCalls: [], workflowCalls: [] };
+    const result: RunResult = { agentCalls: [], workflowCalls: [], logMessages: [] };
     let agentCallIdx = 0;
     let resolved = false;
     const timer = setTimeout(() => {
@@ -181,8 +203,13 @@ function runWorker(userScript: string, opts: RunOptions = {}): Promise<RunResult
         result.workflowCalls.push(raw);
         const wfResult = opts.handleWorkflowCall ? opts.handleWorkflowCall(raw) : { ok: true };
         worker.postMessage({ type: "workflow-result", callId: raw.callId, result: wfResult });
+      } else if (isLog(raw)) {
+        // [OR-6/T7④] 独立 log 消息收集（主线程真实 runtime 当前无消费 case，测试
+        // harness 收集以断言「协议消息仍发出」通路不被回退）。
+        result.logMessages.push(raw);
       } else if (isReturn(raw)) {
         result.returnValue = raw.result;
+        result.returnWorkerLogs = raw.workerLogs;
         finish(result);
       } else if (isError(raw)) {
         result.errorMessage = raw.error;
@@ -379,6 +406,56 @@ describe("buildWorkerScript runtime — 之前缺失的路径覆盖", () => {
       ]),
     );
     expect(res.exitCode).not.toBe(1);
+  });
+});
+
+// ── [B-3] log() 单通路可观测性 ─────────────────────────────────────
+// 旧双通路（log() 同时 post 独立消息 + 记入 _workerLogs 随 return/error 带回）让
+// 同一日志在主线程 errorLogs 占两格、TUI 双份。修复后 log() 只发独立 {type:"log"}
+// 消息，主线程 handleWorkerLog 即时消费（error-recovery.ts）；崩溃场景丢 log 条目
+// 可接受（log 是 T7 补充可观测）。
+
+describe("buildWorkerScript runtime — [B-3] log() 单通路", () => {
+  it("log() 发出独立 {type:\"log\"} 消息且携带 phase（主线程即时消费的唯一通路）", async () => {
+    const script = `
+      phase("build");
+      log("hello from script");
+      return { ok: true };
+    `;
+    const res = await runWorker(script);
+    expect(res.workerError).toBeUndefined();
+    expect(res.logMessages).toEqual([{ type: "log", phase: "build", message: "hello from script" }]);
+    expect(res.exitCode).not.toBe(1);
+  });
+
+  it("log() 内容不再随 return 消息的 workerLogs 带回（双份入账已退役）", async () => {
+    const script = `
+      phase("build");
+      log("hello from script");
+      return { ok: true };
+    `;
+    const res = await runWorker(script);
+    expect(res.workerError).toBeUndefined();
+    // workerLogs 中不得出现 log() 的条目（否则主线程 log case + workerLogs 双份入账）
+    expect(someLogMessageContains(res.returnWorkerLogs, "hello from script")).toBe(false);
+  });
+
+  it("log() 内容不再随 error 消息的 workerLogs 带回（console.* 捕获通路不受影响）", async () => {
+    const script = `
+      log("before-crash");
+      console.error("crash-context");
+      throw new Error("boom");
+    `;
+    const res = await runWorker(script);
+    expect(res.errorMessage).toBe("boom");
+    // log() 的条目不在 error workerLogs（单通路）
+    expect(someLogMessageContains(res.errorWorkerLogs, "before-crash")).toBe(false);
+    // console.* 捕获通路保持（workerLogs 仍带回 console.error 条目）
+    expect(res.errorWorkerLogs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ level: "error", message: "crash-context" }),
+      ]),
+    );
   });
 });
 

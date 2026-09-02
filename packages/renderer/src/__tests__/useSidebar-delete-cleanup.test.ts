@@ -39,7 +39,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
   },
 }))
 
-import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
@@ -50,7 +50,7 @@ function makeSummary(id: string): SessionSummary {
 }
 
 // seed pinia session store（ADR-0059：useSessionStore 单例）
-function seedSessions(_sidebar: ReturnType<typeof useSidebarNew>, ids: string[]): void {
+function seedSessions(_sidebar: ReturnType<typeof useSidebar>, ids: string[]): void {
   const group: SessionGroup = { cwd: '/proj', sessions: ids.map(makeSummary) }
   useSessionStore().applySnapshot({ groups: [group] })
 }
@@ -67,7 +67,7 @@ beforeEach(() => {
 describe('useSidebar deleteSession 跨 store 清理（W1 / S3）', () => {
   it('U3: deleteSession 调用 fileTree.clearSession + useChat.disposeSession', async () => {
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebarNew())!
+    const sidebar = scope.run(() => useSidebar())!
     seedSessions(sidebar, ['s1', 's2'])
     const panel = usePanelStore()
     panel.loadSession(ROOT_PANEL_ID, 's1')
@@ -85,7 +85,7 @@ describe('useSidebar deleteSession 跨 store 清理（W1 / S3）', () => {
 describe('useSidebar deleteSession 删 active 后 fallback（W1 / S4）', () => {
   it('U4: 删 active session 后 selectSession(next) reject → navigation.push({ view: chat })', async () => {
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebarNew())!
+    const sidebar = scope.run(() => useSidebar())!
     seedSessions(sidebar, ['s1', 's2'])
     const panel = usePanelStore()
     panel.loadSession(ROOT_PANEL_ID, 's1')
@@ -110,7 +110,7 @@ describe('useSidebar deleteSession 删 active 后 fallback（W1 / S4）', () => 
 
   it('删 active session 后 list 为空 → navigation.push({ view: chat })', async () => {
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebarNew())!
+    const sidebar = scope.run(() => useSidebar())!
     seedSessions(sidebar, ['s1'])
     useSessionStore().setActiveId('s1')
 
@@ -128,7 +128,7 @@ describe('useSidebar deleteSession 删 active 后 fallback（W1 / S4）', () => 
 describe('useSidebar deleteSession 触发 session-scoped cleanup（W5 / ADR-0049）', () => {
   it('U5: deleteSession 调 triggerSessionCleanups(id)，注册的 cleanup 被执行', async () => {
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebarNew())!
+    const sidebar = scope.run(() => useSidebar())!
     seedSessions(sidebar, ['s1'])
 
     // 注册 sentinel cleanup，捕获 deleteSession 是否编排了 triggerSessionCleanups。

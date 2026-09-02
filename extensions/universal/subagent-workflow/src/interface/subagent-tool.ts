@@ -63,7 +63,7 @@ type SubagentRenderResultCb = (
 // schema 常量经真实 typebox 编译校验（SW 自身 vitest 把 typebox alias 到 mock，
 // 丢 options——required/description 断言必须以真实构造为基准）。
 
-// extractAgentName 已上移到 ../tui/format.ts 共享（tool-render / subagent-tool 复用）。
+// extractAgentName 已上移到 ./format.ts 共享（tool-render / subagent-tool 复用）。
 
 /** exhaustiveness 承重 helper：default 分支把 action 收敛为 never，新增 action 时 tsc 报错。 */
 function assertNever(value: never): string {

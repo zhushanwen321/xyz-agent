@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/subagent-core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Cross-host shared subagent execution layer and workflow orchestration core (dual-form npm package: TS source for workspace, dist ESM+CJS for npm)",
   "type": "module",
   "license": "MIT",
@@ -144,10 +144,13 @@
   "files": [
     "src/",
     "workflows/",
-    "dist/"
+    "agents/",
+    "dist/",
+    "dist.bundle/"
   ],
   "scripts": {
     "build": "tsup",
+    "build:bundle": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

@@ -26,7 +26,10 @@ export interface GoalHistoryEntry {
 // ── PersistencePort ──────────────────────────────────
 
 export interface PersistencePort {
-	/** 写入 goal-state entry（最新 1 条，GC 由 session 层管） */
+	/**
+	 * 写入 goal-state entry。无 GC：session entries append-only，每次追加完整 snapshot，
+	 * 不轮转、不删旧 entry（重建时只读最新一条，旧 entry 留存）。
+	 */
 	appendState(state: GoalRuntimeState): void;
 	/** 写入 goal-history 归档 entry */
 	appendHistory(entry: GoalHistoryEntry): void;

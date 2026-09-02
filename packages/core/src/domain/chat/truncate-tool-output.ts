@@ -48,6 +48,9 @@ const TRUNCATION_MARKER = '\n\n[...output truncated...]'
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder('utf-8', { fatal: false })
 
+/** 省略标记的 UTF-8 字节长度（常量串，模块级预算一次——避免每次 truncateToolCall 重复编码） */
+const TRUNCATION_MARKER_BYTES = textEncoder.encode(TRUNCATION_MARKER).length
+
 /**
  * 判断 toolName 是否需要截断（D12 MCP 前缀兼容）。
  * mcp__server__read 按末段匹配 read。
@@ -72,13 +75,12 @@ const UTF8_CONTINUATION_MASK = 0xC0
 const UTF8_CONTINUATION_PREFIX = 0x80
 
 /**
- * 按 UTF-8 字节截断字符串，在 codepoint 边界对齐（AC-11/D10）。
- * 不切断多字节字符（如 CJK 3 字节字符不会被切成半个）。
- *
- * 用 TextEncoder 代替 Node.js Buffer（浏览器端无 Buffer 全局）。
+ * 已持有 UTF-8 编码结果时的截断内联变体：边界对齐逻辑与 truncateToBytes 完全一致，
+ * 编码 bytes 由调用方传入复用——truncateToolCall 判定超限与执行截断共用一次编码，
+ * 避免同一字符串二次 encode（MB 级 output 单次 encode ≈ 1-2ms）。bytes 必须是 str
+ * 的 UTF-8 编码（TextEncoder 确定性：同输入编码字节恒全等，复用安全）。
  */
-export function truncateToBytes(str: string, maxBytes: number): string {
-  const bytes = textEncoder.encode(str)
+function truncateEncodedBytes(str: string, bytes: Uint8Array, maxBytes: number): string {
   if (bytes.length <= maxBytes) return str
 
   // 从 maxBytes 往前找 codepoint 边界
@@ -90,6 +92,16 @@ export function truncateToBytes(str: string, maxBytes: number): string {
     cutPos--
   }
   return textDecoder.decode(bytes.subarray(0, cutPos))
+}
+
+/**
+ * 按 UTF-8 字节截断字符串，在 codepoint 边界对齐（AC-11/D10）。
+ * 不切断多字节字符（如 CJK 3 字节字符不会被切成半个）。
+ *
+ * 用 TextEncoder 代替 Node.js Buffer（浏览器端无 Buffer 全局）。
+ */
+export function truncateToBytes(str: string, maxBytes: number): string {
+  return truncateEncodedBytes(str, textEncoder.encode(str), maxBytes)
 }
 
 /**
@@ -105,21 +117,21 @@ export function truncateToolCall<T extends import('@xyz-agent/shared').ToolCall>
 
   let truncated = false
   const next: Partial<T> = {}
-  const markerBytes = textEncoder.encode(TRUNCATION_MARKER).length
   // 截断体预算 = MAX - marker，保证含标记后总长 ≤ MAX
-  const bodyBudget = TOOL_OUTPUT_MAX_BYTES - markerBytes
+  const bodyBudget = TOOL_OUTPUT_MAX_BYTES - TRUNCATION_MARKER_BYTES
 
   if (tc.output !== undefined) {
-    const byteLen = textEncoder.encode(tc.output).length
-    if (byteLen > TOOL_OUTPUT_MAX_BYTES) {
-      next.output = truncateToBytes(tc.output, bodyBudget) + TRUNCATION_MARKER
+    // 判定与截断共用同一次编码结果（MB 级 output 下省掉截断路径的二次 encode）
+    const encoded = textEncoder.encode(tc.output)
+    if (encoded.length > TOOL_OUTPUT_MAX_BYTES) {
+      next.output = truncateEncodedBytes(tc.output, encoded, bodyBudget) + TRUNCATION_MARKER
       truncated = true
     }
   }
   if (tc.outputRaw !== undefined) {
-    const byteLen = textEncoder.encode(tc.outputRaw).length
-    if (byteLen > TOOL_OUTPUT_MAX_BYTES) {
-      next.outputRaw = truncateToBytes(tc.outputRaw, bodyBudget) + TRUNCATION_MARKER
+    const encoded = textEncoder.encode(tc.outputRaw)
+    if (encoded.length > TOOL_OUTPUT_MAX_BYTES) {
+      next.outputRaw = truncateEncodedBytes(tc.outputRaw, encoded, bodyBudget) + TRUNCATION_MARKER
       truncated = true
     }
   }
@@ -168,4 +180,34 @@ export function truncateToolOutputBatch(messages: Message[]): Message[] {
     return truncated
   })
   return anyTruncated ? result : messages
+}
+
+/**
+ * 批量截断 + 已投影产物缓存（subagent 基线投影专用，applySubagentEntries §6.1）。
+ *
+ * cache 命中的消息直接复用上次投影产物——引用恒等 ⇒ 内容恒等 ⇒ 截断结果恒等
+ * （ADR-0039 消息不可变替换 + 本模块纯函数，构造性成立），跳过重判定的重复 encode；
+ * 未命中消息走 truncateToolOutput 并记账产物。消除 subagent 活跃期间每帧投影对分区
+ * 全部历史消息 toolCall 原文（reducer 侧不截断，保留 stripAnsi 后全量）的重复 encode。
+ *
+ * 输出形态对齐调用方既有链路 `truncateToolOutputBatch(messages.map((m) => ({ ...m })))`：
+ * 恒返回新数组；未命中消息 = 浅拷贝经 truncateToolOutput 判定（截断换新 toolCalls 数组，
+ * 无截断返回浅拷贝）；命中消息 = 上次产物原引用（逐值恒等于重跑判定——重跑幂等收敛到
+ * 首次截断结果，复用产物只是免掉重跑 encode）。cache 只记账「输入引用 → 产物」（WeakMap
+ * 弱引用，消息对象随分区销毁 GC 后条目自动回收，无需清理挂点；重进分区 reducer 重建的
+ * 新对象不命中，照常判定）。**注意截断产物不回写输入源**（reducer state.messages 保持
+ * 全量原文权威镜像），产物只用于投影输出复用。
+ *
+ * **前置条件**：messages 来自同一权威累积源且不可变替换（reducer state.messages——
+ * 引用复用即内容复用）。不满足时（入参可能被 mutate / 跨源复用同引用异内容）用
+ * truncateToolOutputBatch。
+ */
+export function truncateToolOutputBatchCached(messages: Message[], cache: WeakMap<Message, Message>): Message[] {
+  return messages.map((m) => {
+    const cached = cache.get(m)
+    if (cached !== undefined) return cached
+    const truncated = truncateToolOutput({ ...m })
+    cache.set(m, truncated)
+    return truncated
+  })
 }

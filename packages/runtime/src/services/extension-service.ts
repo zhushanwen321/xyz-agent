@@ -387,12 +387,12 @@ export class ExtensionService {
       // （toggleExtension 只拦 infrastructure，extension-filter loadable 尊重 disabled），
       // feature 包的 disabled 记录是用户合法状态，每次 boot 无条件清除会静默重新启用。
       // infrastructure 不可禁（toggleExtension 抛错），其 disabled 记录只可能是旧版
-      // mandatory 机制/手动编辑残留，清除无语义冲突。removePackage/removeAutoUpgrade
+      // mandatory 机制/手动编辑残留，清除无语义冲突。removePackage / setAutoUpgrade(false)
       // 对所有包继续执行（builtin 不可安装/不可升级，这两类记录永远不该存在）。
       if (ext.tier === 'infrastructure') {
-        await this.extSettings.removeDisabled(source)
+        await this.extSettings.setEnabled(source, true)
       }
-      await this.extSettings.removeAutoUpgrade(source)
+      await this.extSettings.setAutoUpgrade(source, false)
     }
   }
 
@@ -476,11 +476,11 @@ export class ExtensionService {
       // 从 settings packages[] 移除（经 port → pi-settings-store 互斥 RMW）
       await this.extSettings.removePackage(source)
 
-      // 从 disabled-packages.json 清理（经 port）
-      await this.extSettings.removeDisabled(source)
+      // 从 disabled-packages.json 清理（经 port；setEnabled(source, true) ≡ 移除禁用记录）
+      await this.extSettings.setEnabled(source, true)
 
-      // 从 auto-upgrade-packages 清理（经 port，与 removeDisabled 对称）
-      await this.extSettings.removeAutoUpgrade(source)
+      // 从 auto-upgrade-packages 清理（经 port；setAutoUpgrade(source, false) ≡ 移除记录）
+      await this.extSettings.setAutoUpgrade(source, false)
 
       // Remove from node_modules (经 IInstaller port)
       const nodeModulesDir = join(npmDir, 'node_modules')

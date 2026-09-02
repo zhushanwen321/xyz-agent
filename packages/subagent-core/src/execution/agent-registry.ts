@@ -18,7 +18,7 @@ import {
 import { normalizeRef, AGENT_REF_EXT } from "../shared/agent-ref.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
 import { lintAgentMeta } from "../orchestration/script-lint.ts";
-import type { AgentMeta } from "../shared/resource-meta.ts";
+import type { AgentMeta, RoutingExample } from "../shared/resource-meta.ts";
 import type { AgentConfig } from "./model-resolver.ts";
 import { hasEngine, listEngines, EngineNotFoundError } from "./engine/registry.ts";
 
@@ -136,6 +136,230 @@ function extractYamlField(yaml: string, key: string): string | undefined {
     value = value.slice(1, -1);
   }
   return value || undefined;
+}
+
+// ============================================================
+// 宽容解析（sink 设计 D3 / U2）
+// ============================================================
+
+/**
+ * agent .md 的宽容解析结果（执行消费面全字段投影）。
+ *
+ * 双轨语义（D3 定稿）：本结构是**执行可用性**面（可用即跑），严格路由面仍是
+ * AgentMeta（注入清单可见性：缺 name/description 不进清单，由 meta !== null 表达）。
+ * 两轨分离是两宿主既有设计，本类型只是把执行侧第三份手写实现（zsw mini parser）
+ * 收敛到 core 单点。
+ */
+export interface AgentProfile {
+  /** 宽容 name：frontmatter name，缺省文件 stem（宽松语义不拒）。 */
+  name: string;
+  /** 宽容 description：frontmatter description，缺省空串（宽松语义不拒）。 */
+  description: string;
+  /** frontmatter 后正文（trim）——即 systemPrompt。 */
+  body: string;
+  /** 路由提示（严格层投影；IF1 未通过时经 legacy fallback 也不取——该资产不进清单）。 */
+  when?: string;
+  examples?: RoutingExample[];
+  // ── 执行字段全量（与 AgentConfig / AgentMeta 同名同语义）──
+  model?: string;
+  tools?: string[];
+  /** 执行引擎 id（D9 per-agent）。 */
+  engine?: string;
+  thinkingLevel?: string;
+  defaultBackground?: boolean;
+  /** turn 预算上限（D3 可选执行字段；消费优先级：显式参数 > 本字段 > 缺省）。 */
+  maxTurns?: number;
+  /** tool denylist（D3 可选执行字段，与 tools allowlist 正交）。 */
+  disallowedTools?: string[];
+  /** agent 声明依赖的 skill 名清单（D3 可选执行字段）。 */
+  skills?: string[];
+  /**
+   * IF1 严格层 meta：null = 无 frontmatter / 未闭合 / 严格校验未通过。
+   * 注入清单可见性判定归它（discoverAgents 只放行 meta 非 null 的条目——
+   * 与 pi 现装配循环口径等值）。
+   */
+  meta: AgentMeta | null;
+  /**
+   * 宽容解析降级说明（legacy fallback 生效等）。宽容语义不抛——资产异常时
+   * 返回尽力解析结果 + warnings，调用方决定呈现（错误规格表：`{ name: stem, body,
+   * warnings[] }` 宽容降级）。
+   */
+  warnings: string[];
+}
+
+/**
+ * agent .md 宽容解析（D3/U2 定稿）：无 frontmatter 不拒、name 缺省 stem、
+ * description 缺省空串、返回 body 与执行字段全量，**永不抛**。
+ *
+ * 实现基础（D3 字段形态覆盖矩阵）：
+ * - 主路径 = parseResourceMeta（eemeli/yaml 全量解析）：原生支持单行 key:value、
+ *   行内数组、block-scalar、多行 `- item` 列表；
+ * - meta=null 时（无 frontmatter / 未闭合 / yaml 整体解析失败 / IF1 严格校验未通过）
+ *   经 extractYamlField legacy fallback（仅单行 key:value 形态）兜底取执行字段，
+ *   保证「可用即跑」不因资产格式瑕疵丢失配置（先例：parseAgentWithMeta 的 MF-3
+ *   fallback）。fallback 触达时写入 warnings（warn 可见，调用方决定呈现）。
+ *
+ * 与 parseAgentWithMeta 的关系：本函数是新增导出面（执行消费面），既有
+ * parseAgentWithMeta/loadByPath 语义零改动（含 engine 未注册 throw 的解析期校验）。
+ * 本函数宽容语义不抛，故不做 engine 注册校验（执行校验归执行路径）。
+ */
+export function parseAgentProfile(text: string, filePath: string): AgentProfile {
+  const stem = path.basename(filePath, ".md");
+  const warnings: string[] = [];
+
+  // 阶段 1：结构切分（无 frontmatter / 未闭合 / 闭合三态）
+  const fm = splitAgentFrontmatter(text);
+  // 无 frontmatter → 整个内容作为 body（宽容：README 等普通 .md 也是合法 profile）
+  if (fm.kind === "none") {
+    return {
+      name: stem,
+      description: "",
+      body: text.trim(),
+      meta: null,
+      warnings,
+    };
+  }
+  if (fm.kind === "unclosed") {
+    // 未闭合 frontmatter：name 经 legacy fallback，其余全文作 body（与 parseAgentWithMeta 同判）
+    warnings.push(
+      `[agent-registry] ${filePath}: frontmatter 未闭合——name 经 legacy fallback（仅单行 key:value），全文作 body`,
+    );
+    return {
+      name: extractYamlField(fm.yamlBlock, "name") ?? stem,
+      description: "",
+      body: text.trim(),
+      meta: null,
+      warnings,
+    };
+  }
+
+  // 阶段 2：主路径 = IF1 严格层（eemeli/yaml 全量解析）
+  const meta = parseResourceMeta(text, "agent");
+  const agentMeta = meta?.kind === "agent" ? meta : null;
+  if (agentMeta !== null) {
+    return profileFromStrictMeta(agentMeta, fm.yamlBlock, fm.body, warnings);
+  }
+
+  // 阶段 3：meta=null（yaml 解析失败或 IF1 未通过）→ legacy fallback 仅单行 key:value，
+  // 执行字段不静默丢失（MF-3 先例收敛）。宽松语义：name 缺省 stem、description 缺省空串。
+  warnings.push(
+    `[agent-registry] ${filePath}: agent frontmatter 未通过严格校验（IF1：yaml 解析失败或缺 name/description）` +
+      "——执行字段经 legacy fallback（仅单行 key:value 形态）生效，结构化路由不可见，建议补 name/description",
+  );
+  return profileFromLegacyFallback(fm.yamlBlock, fm.body, stem, filePath, warnings);
+}
+
+/** 宽容解析阶段 1 的切分产物（frontmatter 结构三态）。 */
+type AgentFrontmatterSlice =
+  | { kind: "none" }
+  | { kind: "unclosed"; yamlBlock: string }
+  | { kind: "closed"; yamlBlock: string; body: string };
+
+/** frontmatter 结构切分（与 parseAgentWithMeta 同款定位逻辑，产出三态供分派）。 */
+function splitAgentFrontmatter(text: string): AgentFrontmatterSlice {
+  if (!text.startsWith(FM_DELIM)) return { kind: "none" };
+  const closeIdx = text.indexOf(FM_DELIM, FM_DELIM.length);
+  if (closeIdx === -1) {
+    return { kind: "unclosed", yamlBlock: text.slice(FM_DELIM.length) };
+  }
+  return {
+    kind: "closed",
+    yamlBlock: text.slice(FM_DELIM.length, closeIdx),
+    body: text.slice(closeIdx + FM_DELIM.length).trim(),
+  };
+}
+
+/** 严格层（IF1 通过）的 profile 投影：AgentMeta 路由/执行字段 + 单行提取的执行配置。 */
+function profileFromStrictMeta(
+  agentMeta: AgentMeta,
+  yamlBlock: string,
+  body: string,
+  warnings: string[],
+): AgentProfile {
+  // thinkingLevel/defaultBackground 是执行配置（非 AgentMeta 字段），与
+  // parseAgentWithMeta 同位经单行提取（严格层资产同样携带这两字段的现实先例）
+  const thinkingLevelRaw = extractYamlField(yamlBlock, "thinkingLevel");
+  const defaultBackgroundRaw = extractYamlField(yamlBlock, "defaultBackground");
+  return {
+    name: agentMeta.name,
+    description: agentMeta.description,
+    body,
+    ...(agentMeta.when !== undefined ? { when: agentMeta.when } : {}),
+    ...(agentMeta.examples !== undefined ? { examples: agentMeta.examples } : {}),
+    ...(agentMeta.model !== undefined ? { model: agentMeta.model } : {}),
+    ...nonEmptyArraySpread("tools", agentMeta.tools),
+    ...(agentMeta.engine !== undefined ? { engine: agentMeta.engine } : {}),
+    ...(thinkingLevelRaw !== undefined ? { thinkingLevel: thinkingLevelRaw } : {}),
+    ...(defaultBackgroundRaw === "true" ? { defaultBackground: true } : {}),
+    ...(agentMeta.maxTurns !== undefined ? { maxTurns: agentMeta.maxTurns } : {}),
+    ...nonEmptyArraySpread("disallowedTools", agentMeta.disallowedTools),
+    ...nonEmptyArraySpread("skills", agentMeta.skills),
+    meta: agentMeta,
+    warnings,
+  };
+}
+
+/** legacy fallback 的 profile 投影（仅单行 key:value 提取；warnings 同引用收集）。 */
+function profileFromLegacyFallback(
+  yamlBlock: string,
+  body: string,
+  stem: string,
+  filePath: string,
+  warnings: string[],
+): AgentProfile {
+  const nameFallback = extractYamlField(yamlBlock, "name") ?? stem;
+  const modelFallback = extractYamlField(yamlBlock, "model");
+  const toolsFallback = parseCommaListFallback(extractYamlField(yamlBlock, "tools"));
+  const maxTurnsFallback = parseNumberFallback(extractYamlField(yamlBlock, "maxTurns"), filePath, "maxTurns", warnings);
+  const disallowedToolsFallback = parseCommaListFallback(extractYamlField(yamlBlock, "disallowedTools"));
+  const skillsFallback = parseCommaListFallback(extractYamlField(yamlBlock, "skills"));
+  const thinkingLevelFallback = extractYamlField(yamlBlock, "thinkingLevel");
+  const defaultBackgroundRaw = extractYamlField(yamlBlock, "defaultBackground");
+  const engineFallback = extractYamlField(yamlBlock, "engine");
+
+  return {
+    name: nameFallback,
+    description: "",
+    body,
+    ...(modelFallback !== undefined ? { model: modelFallback } : {}),
+    ...nonEmptyArraySpread("tools", toolsFallback),
+    ...(engineFallback !== undefined ? { engine: engineFallback } : {}),
+    ...(thinkingLevelFallback !== undefined ? { thinkingLevel: thinkingLevelFallback } : {}),
+    ...(defaultBackgroundRaw === "true" ? { defaultBackground: true } : {}),
+    ...(maxTurnsFallback !== undefined ? { maxTurns: maxTurnsFallback } : {}),
+    ...nonEmptyArraySpread("disallowedTools", disallowedToolsFallback),
+    ...nonEmptyArraySpread("skills", skillsFallback),
+    meta: null,
+    warnings,
+  };
+}
+
+/** 可选数组字段非空才带键（tools/disallowedTools/skills 的条件展开收敛，键序随展开位不变）。 */
+function nonEmptyArraySpread<T>(key: string, v: T[] | undefined): Record<string, T[]> {
+  return v !== undefined && v.length > 0 ? { [key]: v } : {};
+}
+
+/** legacy fallback 的逗号分隔列表解析（`tools: read, bash` 约定，与 parseAgentWithMeta 同构）。 */
+function parseCommaListFallback(raw: string | undefined): string[] | undefined {
+  return raw
+    ? raw.split(",").map((s) => s.trim()).filter(Boolean)
+    : undefined;
+}
+
+/** legacy fallback 的数字解析（extractYamlField 只出字符串，`maxTurns: 2` 需换算）。 */
+function parseNumberFallback(
+  raw: string | undefined,
+  filePath: string,
+  field: string,
+  warnings: string[],
+): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    warnings.push(`[agent-registry] ${filePath}: ${field} 值 "${raw}" 不是有限数字，忽略`);
+    return undefined;
+  }
+  return n;
 }
 
 // ============================================================

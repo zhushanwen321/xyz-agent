@@ -40,7 +40,7 @@ const AbortSessionParams = Type.Object({
 
 // ── select 通道辅助 ──
 
-/** select 超时（ms）：工具等待 runtime handler respond 的最大时间（read/create 走长链路放宽） */
+/** select 超时（ms）：工具等待 runtime handler respond 的最大时间（create/history 走长链路放宽） */
 const SELECT_TIMEOUT_MS: Record<SessionManagerAction, number> = {
 	create: 60_000,
 	send: 30_000,
@@ -215,7 +215,7 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	registerSessionTool(pi, {
 		name: "get_session_status",
 		label: "Get Session Status",
-		description: "Get the current status of a managed session (running, idle, error, etc.) and its model info.",
+		description: "Get the current status of a managed session (active, idle, error, etc.) and its model info.",
 		parameters: GetSessionStatusParams,
 		action: "status",
 		toParams: (p) => ({ sessionId: p.sessionId }),
@@ -224,7 +224,7 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	registerSessionTool(pi, {
 		name: "abort_session",
 		label: "Abort Session",
-		description: "Abort a running managed session. The session will stop processing and enter aborted state.",
+		description: "Abort a running managed session. The session stops processing; its final status will be 'stopped'.",
 		parameters: AbortSessionParams,
 		action: "abort",
 		toParams: (p) => ({ sessionId: p.sessionId }),

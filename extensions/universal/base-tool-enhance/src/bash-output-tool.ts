@@ -32,7 +32,7 @@ const JSON_INDENT = 2;
 const BASH_OUTPUT_DESCRIPTION = [
 	"Fetch output and status of a background bash task started with bash {background:true}.",
 	"Provide task_id to get task detail: state (running|killing|exited|orphaned), exitCode, reason, duration and tail output (last 2000 lines / 50KB).",
-	"Omit task_id to list all background tasks of this session.",
+	"Omit task_id to list known background tasks (process-wide; may include tasks started under earlier sessions).",
 ].join("\n");
 
 /** list 视图条目（§3.5：command 前 80 字符）。 */
@@ -122,7 +122,7 @@ export function createBashOutputToolDefinition() {
 			const task = findTask(args.task_id, registry);
 			if (task === undefined) {
 				throw new Error(
-					`No such task: ${args.task_id}. Use bash_output without task_id to list all background tasks.`,
+					`No such task: ${args.task_id}. Use bash_output without task_id to list known background tasks.`,
 				);
 			}
 			return textResult(taskDetailText(task));

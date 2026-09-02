@@ -2,8 +2,8 @@
  * 生产装配层（W5 集成层）。
  *
  * P3 收口：classifier 的 model 解析改走 llm-shared resolveModel（三源合并含 OAuth/env/auth.json），
- * 废弃自读 models.json。'auto' 保留作 scoped 别名（向后兼容），scoped 空时 fallback
- * available（CL-scoped-fallback）。
+ * 废弃自读 models.json。'auto' 由 permission 本地处理：直接取 ctx.modelRegistry.getAvailable()[0]
+ * （不经过 llm-shared 的非精确 selector），与下方 createProductionClassifier JSDoc 一致。
  *
  * C1a 收口：classifier 的 LLM 调用改走 llm-shared callLLM（凭证 getApiKeyAndHeaders +
  * completeSimple + stopReason 归一化都在 callLLM 内部完成），删除 getApiProvider +

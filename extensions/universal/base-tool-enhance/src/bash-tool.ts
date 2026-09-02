@@ -37,7 +37,7 @@ import { compileForcePatterns, describeForceMatch, matchForceBackground } from "
 const enhancedBashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
 	timeout: Type.Optional(
-		Type.Number({ description: "Timeout in seconds (optional, no default timeout)" }),
+		Type.Number({ description: "Timeout in seconds (optional; if omitted, the configured default timeout applies when set)" }),
 	),
 	background: Type.Optional(
 		Type.Boolean({
@@ -60,10 +60,10 @@ const enhancedBashSchema = Type.Object({
 const ENHANCED_BASH_DESCRIPTION = [
 	"Execute a bash command in the current working directory. Returns stdout and stderr.",
 	"Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file.",
-	"Optionally provide a timeout in seconds; an explicit timeout is respected, except when a whitelisted long-running command is force-routed to background.",
+	"Optionally provide a timeout in seconds; an explicit timeout is respected, except when a whitelisted long-running command is force-routed to background. If no timeout is given, a configured default timeout applies when set.",
 	"",
 	"Background mode: set background: true to start the command without waiting for it. The tool returns immediately with a task_id, the pid, and an output file path, and you can continue other work while it runs.",
-	"Poll progress and fetch output with bash_output {task_id} (omit task_id to list all background tasks); terminate a task with bash_kill {task_id}.",
+	"Poll progress and fetch output with bash_output {task_id} (omit task_id to list known background tasks); terminate a task with bash_kill {task_id}.",
 	"",
 	"Commands matching the force-background whitelist (test suites, dev servers, watch jobs and similar long-running commands) are automatically routed to background even when background was not requested; in that case the result carries a task_id to poll.",
 ].join("\n");

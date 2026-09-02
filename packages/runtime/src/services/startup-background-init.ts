@@ -15,7 +15,9 @@
  *   skillRegistry.initGlobal → pluginService.initialize → ensureAutoRenameDefault。
  * 全串行的取舍：约束零竞态面 + best-effort 语义最易保持；代价 = 后台总完成时间为各段之和。
  * ⑨ 孤儿 pi 收殓（integrity-hardening §3.4 D4a）不在串行链上——独立 5s 定时器，
- * 调度点在序列最前（宽限从启动起计，见函数体注释）。
+ * 调度点在序列最前（宽限从启动起计，见函数体注释）。⑨b 后台任务收殓触发面 B
+ * （file-lock-unification D2）在同一 5s 定时器内链式 await ⑨ 完成后执行（硬序
+ * 论证见函数体注释）。
  *
  * 每步独立 try/catch：任一步失败不阻塞其余（与改造前 best-effort 语义一致），
  * 无 rejection 逃逸。
@@ -27,6 +29,7 @@ import { getSessionsDir, getPiAgentDir } from '../infra/pi/pi-paths.js'
 import { ensureAutoRenameDefault } from './worktree-config-helper.js'
 import { ensureDeclaredStartupConfigs } from './extension-startup-config.js'
 import { ORPHAN_REAP_DELAY_MS, reapOrphanPiProcesses } from './reap-orphan-pi.js'
+import { reapAllSessionsBackgroundTasks } from './session/background-task-reaper.js'
 import type { PiConfigStore } from '../infra/pi/pi-config-store.js'
 import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
 import type { ExtensionService } from './extension-service.js'
@@ -65,10 +68,25 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
   // 内部全 catch 不抛，外层再兜一层 catch，异常不可能外溢影响其他启动步。
   // 5s 为初值（设计 D4a ⛔实施期门：宽限值待 S6 真机实测调整）——给 pi 的 stdin-EOF
   // 自杀链留优雅退出时间。
+  //
+  // ⑨b 后台任务收殓触发面 B（file-lock-unification D2，设计 §2.3）：同一 5s 定时器内
+  // **链式 await** 孤儿 pi 收殓完成后执行全量 registry 扫描（reapAllSessionsBackgroundTasks）。
+  // 硬序理由（设计 §2.3 时序论证）：若扫描先行，扫描时遗留 pi 尚活、其 detached 后台
+  // 任务被三分支①（属主活）跳过；+5s 孤儿 pi 被杀后这些任务才真正孤儿化，且此后无任何
+  // 销毁事件可触达（不在本次运行的 SessionService Map 内）——漏收一个 app 周期。
+  // 实现形态在「链式 await 其结果」与「并入同一定时器」中选前者：孤儿收殓已有独立
+  // 定时器 + unref 语义，链式追加改动面最小且时序由 Promise 链构造性保证。
+  // pi 收殓失败（catch 兜底后）仍继续扫描——B 处置 registry 遗留，与 pi 收殓成败解耦，
+  // 硬序只约束先后不约束成败传递。整体 fire-and-forget：不阻塞本启动序列。
   const reapTimer = setTimeout(() => {
-    void reapOrphanPiProcesses({ sessionsDir: getSessionsDir(), ownPid: process.pid }).catch((e) => {
-      console.warn('[runtime] orphan pi reap failed unexpectedly:', e)
-    })
+    void reapOrphanPiProcesses({ sessionsDir: getSessionsDir(), ownPid: process.pid })
+      .catch((e) => {
+        console.warn('[runtime] orphan pi reap failed unexpectedly:', e)
+      })
+      .then(() => reapAllSessionsBackgroundTasks(getPiAgentDir()))
+      .catch((e) => {
+        console.warn('[runtime] background task reap-all failed unexpectedly:', e)
+      })
   }, ORPHAN_REAP_DELAY_MS)
   // unref：不让收殓定时器独自挂住进程生命周期（正常场景 runtime 长活，仅测试/工具受益）。
   reapTimer.unref()

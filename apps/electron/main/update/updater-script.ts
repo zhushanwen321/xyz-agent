@@ -187,7 +187,7 @@ echo "[$(date)] start update to {{TARGET_VERSION}} (updater pid $$)"
 
 # ── 跨进程互斥（设计 §3.7.1）：启动即写 pid 文件，退出（含失败路径）时清理 ──
 # 检查方：新实例启动序列读此文件判断 updater 存活 → defer 回滚清理。
-# PID 文件与 update-result.json 同目录（UPDATE_DIR），由结果路径推导零新增注入点。
+# PID 文件与 update-result.json 同目录（升级工作目录），由结果路径推导零新增注入点。
 PID_FILE="$(dirname "{{RESULT_PATH}}")/updater.pid"
 echo $$ > "$PID_FILE"
 # trap EXIT 覆盖所有退出路径（成功/fail/意外错误）；kill -9 不触发 → 残留 pid
@@ -333,7 +333,7 @@ exec > "{{LOG_PATH}}" 2>&1
 echo "[\$(date)] start AppImage update to {{TARGET_VERSION}} (updater pid \$\$)"
 
 # ── 跨进程互斥（设计 §3.7.1）：启动即写 pid 文件，退出时清理（与 mac 同语义）──
-# PID 文件与 update-result.json 同目录（UPDATE_DIR），由结果路径推导零新增注入点
+# PID 文件与 update-result.json 同目录（升级工作目录），由结果路径推导零新增注入点
 PID_FILE="\$(dirname "{{RESULT_PATH}}")/updater.pid"
 echo \$\$ > "$PID_FILE"
 trap 'rm -f "$PID_FILE"' EXIT

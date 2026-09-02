@@ -8,8 +8,8 @@
  *   4. readPendingUpdate 文件损坏（JSON 解析失败）→ 返回 null + 文件被清除
  *
  * Mock 策略参考 orchestrator.test.ts：用真实 fs（临时目录），经
- * XYZ_AGENT_DATA_DIR 重定向 PENDING_UPDATE_FILE（必须在 import constants 前设，
- * constants.ts 顶层读 getDataDir）。env 设好后动态 import 模块拿独立实例。
+ * XYZ_AGENT_DATA_DIR 重定向 getPendingUpdateFile() 落点（路径延迟求值，
+ * env 先设确保所有求值命中 tmp）。env 设好后动态 import 模块拿独立实例。
  *
  * 运行：cd apps/electron/main && npx vitest run test/pending-update.test.ts
  */
@@ -19,9 +19,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 
-// ── 必须在 import constants（间接被 pending-update import）前设 ──────
-// constants.ts 顶层计算 PENDING_UPDATE_FILE = path.join(getDataDir(), 'update', ...),
-// getDataDir 读 XYZ_AGENT_DATA_DIR。赋值放最前，下方模块经动态 import 在 env 就绪后加载。
+// ── env 先于一切路径求值设置（历史形态要求 import 前设，延迟求值后非硬约束）──
+// constants.ts 现经 getPendingUpdateFile() 延迟求值（getDataDir 读 XYZ_AGENT_DATA_DIR）。
+// 赋值仍放最前（无害），下方模块经动态 import 在 env 就绪后加载。
 const TMP_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'pending-update-'))
 process.env.XYZ_AGENT_DATA_DIR = TMP_DATA_DIR
 

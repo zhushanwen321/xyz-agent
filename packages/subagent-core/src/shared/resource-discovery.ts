@@ -10,10 +10,10 @@
 // 4. manifest 路径存在性校验：声明的路径不存在 → 该包发现失败，不 fallback
 // 5. 废弃 discovery.json：扫描路径完全由代码内推导，无外部依赖
 //
-// 优先级（低→高）：user .pi/agent → user .agents → npm global → npm dev → project .pi → project .pi/.tmp(仅workflow) → project .agents
+// 优先级（低→高）：user .pi/agent → user .agents → npm global → npm dev → ext-paths(XYZ_EXTENSION_PATHS/dev-link) → project .pi → project .pi/.tmp(仅workflow) → project-host(宿主注入槽) → project .agents
 
 import * as fsSync from "node:fs";
-import { access, readdir, readFile, stat } from "node:fs/promises";
+import { access, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
@@ -56,7 +56,19 @@ export interface DiscoveredResource {
 }
 
 /** 资源来源层级 */
-export type ResourceSource = "user-pi" | "user-agents" | "npm" | "npm-dev" | "user-extension-paths" | "project-pi" | "project-pi-tmp" | "project-agents";
+export type ResourceSource =
+  | "user-pi"
+  | "user-agents"
+  | "npm"
+  | "npm-dev"
+  | "user-extension-paths"
+  | "project-pi"
+  | "project-pi-tmp"
+  // project-host（W2②）：宿主注入的项目级根（如 zsw 的 <ws>/.zcode/agents）。
+  // 序位刻意压在 project-agents 之下——zsw 现语义项目 .agents > .zcode，
+  // project-host 承接 zcode 项目根，project-agents 仍是项目级最高逃生门。
+  | "project-host"
+  | "project-agents";
 
 /** 扫描配置 */
 export interface ScanConfig {
@@ -65,8 +77,14 @@ export interface ScanConfig {
   /** 项目根目录（findWorkspaceRoot 推导结果） */
   workspaceRoot: string;
   /** 宿主注入的发现根（DiscoveryRoot.dir 已含 kind 末级目录与安装布局，
-   *  source 为宿主语义标签——pi 壳 = user-pi/npm/npm-dev 三根）。buildScanTargets
-   *  按标签查表填充对应槽位，宿主未提供某标签根时该槽位条目整体缺席。 */
+   *  source 为宿主语义标签——pi 壳 = user-pi/npm/npm-dev 三根，zsw 壳可另注入
+   *  project-host 等）。buildScanTargets 按标签填充对应槽位，宿主未提供某标签
+   *  根时该槽位条目整体缺席。
+   *  同标签多根语义（W2④）：同标签多条目依注入序全部保留、同序位依次扫描——
+   *  宿主（zsw）把「目录 symlink 展开目标 + 本体根」按注入序注入同标签，core
+   *  合并 last-writer-wins 下靠后者胜，本体根必须注入在展开目标之后（本体胜，
+   *  红线 2）。user-agents/project-agents 硬编码槽与同标签注入合并时硬编码根
+   *  自动后置（同为「本体在后」语义）。 */
   hostRoots: DiscoveryRoot[];
   /** 是否包含 tmp 源（仅 workflow 用 .pi/workflows/.tmp/） */
   includeTmp?: boolean;
@@ -82,11 +100,12 @@ const MACHINE_SOURCES: ReadonlySet<ResourceSource> = new Set<ResourceSource>([
   "user-extension-paths",
   "project-pi",
   "project-pi-tmp",
+  "project-host",
   "project-agents",
 ]);
 
 /** 判断 source 是否属于机器源（安装拓扑常态，同名重复降 debug）。
- *  导出仅为测试穷举断言用（封闭 8 值枚举 × 分级边界）。 */
+ *  导出仅为测试穷举断言用（封闭 9 值枚举 × 分级边界）。 */
 export function isMachineSource(source: ResourceSource): boolean {
   return MACHINE_SOURCES.has(source);
 }
@@ -518,38 +537,44 @@ function readExtensionPaths(): string[] {
  * 构建所有扫描源（按优先级低→高排列）。
  *
  * agent 和 workflow 共享相同的前缀体系。宿主注入根（config.hostRoots）按 source
- * 标签查表填充三个槽位条目——标签字面是 core 编排的槽位键（同时是 ResourceSource
+ * 标签填充槽位条目——标签字面是 core 编排的槽位键（同时是 ResourceSource
  * 枚举成员，报告输出与历史值逐字一致）；宿主未提供某标签根时该条目跳过（该源在
  * 遮蔽序中自然缺席），其余条目（core 自建：homedir/env/workspaceRoot 推导）留原位
  * 原序，遮蔽优先级语义与注入化前逐字一致。
+ *
+ * 同标签多根（W2④，Map→列表）：同标签多条目依注入序全部保留、同序位依次扫描
+ * （旧实现 Map(source→dir) 同标签靠后者整体覆盖，多根语义缺失）。硬编码槽
+ * （user-agents/project-agents）与 hostRoots 同标签注入合并——硬编码根（本体根）
+ * 排在注入条目之后：core 合并 last-writer-wins 靠后者胜，本体在后 = 本体胜（红线 2
+ * 「注入/合并序语义」）。pi 单条目形态（每标签恰好一条或无注入）下 targets 序与
+ * 旧实现逐项一致（回归红线，见 __tests__ pi 单条目形态快照用例）。
  */
 function buildScanTargets(config: ScanConfig): ScanTarget[] {
   const { kind, workspaceRoot, hostRoots, includeTmp } = config;
   const home = homedir();
 
-  // 同标签多条目时取列表靠后者（hostRoots 按优先级低→高，靠后 = 宿主侧更高优先级）
-  const hostDirBySource = new Map<string, string>(
-    hostRoots.map((root): [string, string] => [root.source, root.dir]),
-  );
+  // 同标签多条目依注入序全部保留（W2④ 列表语义）：宿主把「展开目标 + 本体根」
+  // 按注入序注入同标签，core 同序位依次扫描；本体靠后 → last-writer-wins 本体胜。
+  const hostDirsBySource = new Map<string, string[]>();
+  for (const root of hostRoots) {
+    const list = hostDirsBySource.get(root.source);
+    if (list) list.push(root.dir);
+    else hostDirsBySource.set(root.source, [root.dir]);
+  }
+  const hostTargets = (source: ResourceSource): ScanTarget[] =>
+    (hostDirsBySource.get(source) ?? []).map((dir) => ({ dir, source, enabled: true }));
 
   const targets: ScanTarget[] = [];
   // 1. user .pi/agent/{kind}/（宿主注入，pi 壳 source "user-pi"）
-  const userPiDir = hostDirBySource.get("user-pi");
-  if (userPiDir !== undefined) {
-    targets.push({ dir: userPiDir, source: "user-pi", enabled: true });
-  }
-  // 2. user .agents/{kind}/（core 自建：homedir 推导，非宿主依赖）
+  targets.push(...hostTargets("user-pi"));
+  // 2. user .agents/{kind}/（硬编码根 = homedir 推导 + 宿主可选注入合并，硬编码
+  //    本体根后置 → 注入的展开目标在前、本体在后，last-writer-wins 本体胜）
+  targets.push(...hostTargets("user-agents"));
   targets.push({ dir: join(home, ".agents", kind), source: "user-agents", enabled: true });
   // 3. npm global: <agentDir>/npm/node_modules/*/<pkg>/（宿主注入，pi 壳 source "npm"）
-  const npmDir = hostDirBySource.get("npm");
-  if (npmDir !== undefined) {
-    targets.push({ dir: npmDir, source: "npm", enabled: true });
-  }
+  targets.push(...hostTargets("npm"));
   // 4. npm dev symlink: <agentDir>/extensions/*/<pkg>/（宿主注入，pi 壳 source "npm-dev"）
-  const npmDevDir = hostDirBySource.get("npm-dev");
-  if (npmDevDir !== undefined) {
-    targets.push({ dir: npmDevDir, source: "npm-dev", enabled: true });
-  }
+  targets.push(...hostTargets("npm-dev"));
   // user extension paths (XYZ_EXTENSION_PATHS, dev-link): each path is a package dir,
   // 走 processPackage 读 pi.{kind} manifest 或扫 {kind}/ 目录。优先级高于 npm/npm-dev
   // （dev-link 是开发版 override），低于 project（项目正式资源优先）。
@@ -568,7 +593,13 @@ function buildScanTargets(config: ScanConfig): ScanTarget[] {
     });
   }
 
-  // 7. project .agents/{kind}/
+  // 6.5 project host 根（宿主注入，W2②）：承接宿主自有项目级布局（如 zsw 的
+  //     <ws>/.zcode/agents）。序位在 project-agents 之下（.agents 是项目级最高
+  //     逃生门）；未注入该标签时槽位缺席（与 user-pi/npm/npm-dev 同语义）。
+  targets.push(...hostTargets("project-host"));
+
+  // 7. project .agents/{kind}/（硬编码根 + 宿主可选注入合并，本体根后置同槽 2）
+  targets.push(...hostTargets("project-agents"));
   targets.push({
     dir: join(workspaceRoot, ".agents", kind),
     source: "project-agents",
@@ -585,6 +616,12 @@ function buildScanTargets(config: ScanConfig): ScanTarget[] {
  *
  * 按优先级低→高扫描所有源，同名资源靠后覆盖靠前（last-writer-wins）。
  * npm/dev 包内：有 manifest 只走 manifest（路径不存在则失败），无 manifest 扫约定目录。
+ *
+ * realpath 归一去重（W2①，仅 async 链）：多个不同名 symlink 指向同一物理文件时
+ * （多链同文件），stem 去重防不住——清单按物理文件归一只留一条（首遇者，位置
+ * 固定语义与 stem 合并一致）；同 stem 不同物理文件的遮蔽语义不受影响（仍按
+ * last-writer-wins 覆盖）。realpath 解析失败（扫描后竞态删除/ELOOP 深链）回退
+ * 原 path，属预期失败不抛。
  *
  * Throws on unrecoverable scan errors——未捕获异常向上抛（Promise.all 首个 reject
  * 即整体拒绝，与串行版 discoverResourcesSync 的传播语义一致，见实现内 [perf] 注释）。
@@ -624,13 +661,35 @@ export async function discoverResources(config: ScanConfig): Promise<DiscoveredR
     }),
   );
 
+  // [W2①] realpath 归一键（仅 async 链）：与 allBySource 同构的二维数组（源序×
+  // 源内资源序）。源级并行解析（每资源一次 realpath，资源量级为个位/十位数）；
+  // 失败回退原 path——扫描与 realpath 之间竞态删除/ELOOP 属预期失败，不抛
+  // （对齐 scanDirectory 的 stat().catch 吞错面）。
+  const realpathKeys: string[][] = await Promise.all(
+    allBySource.map(async ({ resources }) =>
+      Promise.all(resources.map((r) => realpath(r.path).catch(() => r.path))),
+    ),
+  );
+
   // 按优先级合并：targets 数组顺序即优先级（低→高），高优先级后写覆盖
   // 用文件名 stem 作为去重 key（与旧逻辑一致：同名资源高优先级覆盖）
   const merged = new Map<string, DiscoveredResource>();
+  // realpath → 已入清单 stem key：多链同文件（不同名 symlink 指向同一物理文件）
+  // 时后到链 skip——清单按物理文件只留一条，不计入遮蔽（同一文件无遮蔽语义）。
+  const realpathOwner = new Map<string, string>();
 
-  for (const { resources } of allBySource) {
-    for (const r of resources) {
+  for (let si = 0; si < allBySource.length; si++) {
+    const { resources } = allBySource[si]!;
+    for (let ri = 0; ri < resources.length; ri++) {
+      const r = resources[ri]!;
       const key = stem(r.path);
+      const rp = realpathKeys[si]![ri]!;
+      // 同物理文件已以另一 stem 入清单 → 多链重复，跳过（不影响 stem 遮蔽语义：
+      // 同 stem 不同物理文件仍走下方 last-writer-wins）
+      const owner = realpathOwner.get(rp);
+      if (owner !== undefined && owner !== key) {
+        continue;
+      }
       const existing = merged.get(key);
       // available=false 的占位不覆盖已有的 available=true
       if (!r.available && existing) {
@@ -661,6 +720,7 @@ export async function discoverResources(config: ScanConfig): Promise<DiscoveredR
         }
       }
       merged.set(key, r);
+      realpathOwner.set(rp, key);
     }
   }
 
@@ -668,10 +728,12 @@ export async function discoverResources(config: ScanConfig): Promise<DiscoveredR
 }
 
 /**
- * 同步版：扫描单个目录下的资源文件路径（供 agent-registry 的 mtime 缓存模式使用）。
+ * 同步版：扫描单个目录下的资源文件路径。
  *
- * agent .md 发现需要 mtime 缓存（hot-reload），不能走 async 全量扫描。
- * 此函数提供目录级同步扫描，npm/dev 包内发现仍需 async（agent-registry 用 builtin 兜底）。
+ * 消费关系（W2⑤ 漂移修正）：当前无非测试调用方——agent-registry 只 import
+ * getCachedFile（mtime 缓存），不消费 sync 扫描。保留作 async scanDirectory 的
+ * 对称 API / 测试用；生产 agent/workflow 发现统一走 async discoverResources
+ * （红线 4：修对生产面）。npm/dev 包内发现仍需 async（scanNpmDir）。
  */
 export function scanDirectorySync(dirPath: string, kind: ResourceKind): string[] {
   try {
@@ -697,7 +759,8 @@ export function scanDirectorySync(dirPath: string, kind: ResourceKind): string[]
 
 /**
  * 同步版：读取 package.json 的 pi.{kind} manifest。
- * 供 agent-registry 同步路径使用。与 async 版共享 manifestCache（双读者同一 Map）。
+ * 当前无非测试调用方（W2⑤ 漂移修正，保留作对称 API/测试用）。与 async 版
+ * 共享 manifestCache（双读者同一 Map）。
  */
 export function readPackageManifestSync(pkgDir: string, kind: ResourceKind): string[] | undefined {
   const pkgJsonPath = resolve(pkgDir, "package.json");
@@ -725,7 +788,7 @@ export function readPackageManifestSync(pkgDir: string, kind: ResourceKind): str
 
 /**
  * 同步版：处理单个 npm/dev 包。
- * 供 agent-registry 同步路径使用。
+ * 当前无非测试调用方（W2⑤ 漂移修正，保留作对称 API/测试用）。
  */
 export function processPackageSync(pkgDir: string, kind: ResourceKind): DiscoveredResource[] {
   const manifestPaths = readPackageManifestSync(pkgDir, kind);
@@ -767,7 +830,7 @@ export function processPackageSync(pkgDir: string, kind: ResourceKind): Discover
 
 /**
  * 同步版：扫描 npm node_modules 目录。
- * 供 agent-registry 同步路径使用。
+ * 当前无非测试调用方（W2⑤ 漂移修正，保留作对称 API/测试用）。
  */
 export function scanNpmDirSync(nodeModulesDir: string, kind: ResourceKind): DiscoveredResource[] {
   let entries: string[];
@@ -800,10 +863,14 @@ export function scanNpmDirSync(nodeModulesDir: string, kind: ResourceKind): Disc
 }
 
 /**
- * 同步版：发现所有资源（agent-registry 专用，支持 mtime 缓存的 hot-reload）。
+ * 同步版：发现所有资源。
  *
- * 与 discoverResources 对应的同步实现，扫描相同的源。
- * 返回所有源的资源（未去重，调用方按需处理优先级）。
+ * 当前无非测试调用方（W2⑤ 漂移修正：agent-registry 只 import getCachedFile，
+ * 不消费本族；保留作 async discoverResources 的对照实现/测试用——两版输出等价
+ * 由既有快照用例锁定）。
+ *
+ * 与 discoverResources 对应的同步实现，扫描相同的源，同 stem last-writer-wins
+ * 合并（不含 async 链的 realpath 去重——sync 链无非测试调用方，勿扩面，红线 4）。
  */
 export function discoverResourcesSync(config: ScanConfig): DiscoveredResource[] {
   const targets = buildScanTargets(config);

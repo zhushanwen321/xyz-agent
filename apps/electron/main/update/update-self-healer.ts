@@ -35,17 +35,17 @@ import { buildOutboundChildEnv } from '@xyz-agent/shared'
 import { compare } from 'compare-versions'
 import { app } from 'electron'
 import {
-  LINUX_UPDATER_LOG_PATH,
-  LINUX_UPDATER_SCRIPT_PATH,
-  PENDING_UPDATE_FILE,
-  PRELOADED_UPDATE_FILE,
-  UPDATE_DIR,
-  UPDATE_RESULT_FILE,
-  UPDATER_LOG_PATH,
-  UPDATER_PID_FILE,
-  UPDATER_SCRIPT_PATH,
-  WIN_UPDATER_LOG_PATH,
-  WIN_UPDATER_SCRIPT_PATH,
+  getLinuxUpdaterLogPath,
+  getLinuxUpdaterScriptPath,
+  getPendingUpdateFile,
+  getPreloadedUpdateFile,
+  getUpdateDir,
+  getUpdateResultFile,
+  getUpdaterLogPath,
+  getUpdaterPidFile,
+  getUpdaterScriptPath,
+  getWinUpdaterLogPath,
+  getWinUpdaterScriptPath,
 } from './constants.js'
 import type { UpdateResultStatus } from './types.js'
 
@@ -69,10 +69,11 @@ import type { UpdateResultStatus } from './types.js'
  *     良性且下次启动补做；误判不存活才危险）
  */
 export function isUpdaterInFlight(): boolean {
-  if (!existsSync(UPDATER_PID_FILE)) return false
+  const pidFile = getUpdaterPidFile()
+  if (!existsSync(pidFile)) return false
   let pid: number
   try {
-    pid = Number.parseInt(readFileSync(UPDATER_PID_FILE, 'utf-8').trim(), 10)
+    pid = Number.parseInt(readFileSync(pidFile, 'utf-8').trim(), 10)
   } catch {
     return false
   }
@@ -88,7 +89,7 @@ export function isUpdaterInFlight(): boolean {
   if (!alive) {
     // 残留 pid（脚本已退出但 trap 未及清理，如 kill -9）：自愈清理
     try {
-      unlinkSync(UPDATER_PID_FILE)
+      unlinkSync(pidFile)
     } catch (err) {
       // best-effort：清理失败无害——残留 pid 文件下次启动会再次检测并重试清理
       console.warn('[update-self-healer] cleanup stale pid file failed:', err)
@@ -108,7 +109,7 @@ export function isUpdaterInFlight(): boolean {
       if (!/\/updater(?:-linux)?\.sh(?:\s|$)/.test(argv)) {
         // PID 已被复用（占位者非 updater 脚本）→ 视为不存活，清残留 pid 后正常清理
         try {
-          unlinkSync(UPDATER_PID_FILE)
+          unlinkSync(pidFile)
         } catch (err) {
           // best-effort：PID 复用清理失败无害——下次启动重新检测到复用会再清
           console.warn('[update-self-healer] cleanup reused pid file failed:', err)
@@ -136,13 +137,14 @@ interface UpdateResultData {
  * 原子写 update-result.json（[A-G1]）：先写 .tmp 再同目录 renameSync，读方不会读到
  * 半截 JSON——corrupt-json 分支会把半截 replacing 误判为「需回滚」触发误回滚。
  * tmp 命名与 orchestrator.writeUpdateResult / mac·linux·win 升级脚本模板一致
- * （`${UPDATE_RESULT_FILE}.tmp`）；写崩残留的孤儿 tmp 由 cleanupCompletedUpdate
+ * （`${getUpdateResultFile()}.tmp`）；写崩残留的孤儿 tmp 由 cleanupCompletedUpdate
  * 的 *.tmp 扫描兜底清理（[A-G2]）。
  */
 function writeResultFileAtomic(content: string): void {
-  const tmpPath = `${UPDATE_RESULT_FILE}.tmp`
+  const resultFile = getUpdateResultFile()
+  const tmpPath = `${resultFile}.tmp`
   writeFileSync(tmpPath, content)
-  renameSync(tmpPath, UPDATE_RESULT_FILE)
+  renameSync(tmpPath, resultFile)
 }
 
 /**
@@ -161,13 +163,13 @@ export async function maybeRollbackInterruptedUpdate(): Promise<boolean> {
     return false
   }
 
-  if (!existsSync(UPDATE_RESULT_FILE)) return false
+  if (!existsSync(getUpdateResultFile())) return false
 
   // 读取与解析分开 try：解析失败时 catch 仍能访问 raw 内容，
   // 据此判断是否是「写入中断的半截 replacing JSON」并尝试回滚。
   let raw: string
   try {
-    raw = readFileSync(UPDATE_RESULT_FILE, 'utf-8')
+    raw = readFileSync(getUpdateResultFile(), 'utf-8')
   } catch (e) {
     // 读文件本身失败（权限/IO 错误）：记录但不阻塞启动
     console.error('[update-self-healer] read result failed:', e)
@@ -346,7 +348,7 @@ function getStaleArtifactPaths(): string[] {
  * 清理抹掉，排障依据）；同日多次失败覆盖同名归档（保留最新）。done / no-op 不处理。
  */
 function archiveUpdaterLogs(dateStamp: string): void {
-  for (const logPath of [UPDATER_LOG_PATH, LINUX_UPDATER_LOG_PATH, WIN_UPDATER_LOG_PATH]) {
+  for (const logPath of [getUpdaterLogPath(), getLinuxUpdaterLogPath(), getWinUpdaterLogPath()]) {
     if (!existsSync(logPath)) continue
     try {
       const dir = path.dirname(logPath)
@@ -363,11 +365,12 @@ function archiveUpdaterLogs(dateStamp: string): void {
 
 /** m14：清理超过保留期的归档日志（>7 天） */
 function cleanupExpiredLogArchives(): void {
-  if (!existsSync(UPDATE_DIR)) return
+  const updateDir = getUpdateDir()
+  if (!existsSync(updateDir)) return
   const cutoff = Date.now() - LOG_RETENTION_MS
-  for (const f of readdirSync(UPDATE_DIR)) {
+  for (const f of readdirSync(updateDir)) {
     if (!LOG_ARCHIVE_RE.test(f)) continue
-    const full = path.join(UPDATE_DIR, f)
+    const full = path.join(updateDir, f)
     try {
       if (statSync(full).mtimeMs < cutoff) {
         unlinkSync(full)
@@ -394,8 +397,9 @@ function cleanupExpiredLogArchives(): void {
  * - failed / rolled-back / no-op → 清全部含 result
  * - replacing → 不归本函数（maybeRollbackInterruptedUpdate 处理）
  *
- * 路径注入防护：删除 preloaded 记录的下载 zip 前，校验其 path.resolve 结果在 UPDATE_DIR 之内，
- * 不在则 warn 跳过（防 preloaded 文件被篡改指向任意路径导致误删用户文件）。
+ * 路径注入防护：删除 preloaded 记录的下载 zip 前，校验其 path.resolve 结果在
+ * 升级工作目录（getUpdateDir()）之内，不在则 warn 跳过（防 preloaded 文件被篡改
+ * 指向任意路径导致误删用户文件）。
  *
  * 永不抛错、永不阻塞启动：整体 try/catch + console.warn。在 main.ts 的 whenReady 内、
  * maybeRollbackInterruptedUpdate 之后调用。
@@ -411,11 +415,11 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
       return null
     }
 
-    if (!existsSync(UPDATE_RESULT_FILE)) return null
+    if (!existsSync(getUpdateResultFile())) return null
 
     let data: UpdateResultData
     try {
-      data = JSON.parse(readFileSync(UPDATE_RESULT_FILE, 'utf-8')) as UpdateResultData
+      data = JSON.parse(readFileSync(getUpdateResultFile(), 'utf-8')) as UpdateResultData
     } catch {
       // 文件读失败（existsSync 与 read 间竞态/权限）/ JSON 解析失败（半截写入）：均视为无可清理，no-op
       return null
@@ -455,10 +459,10 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
 
     // ── 清理产物 ────────────────────────────────────────────────
     // 1. preloaded-update.json：先读其 filePath（指向下载 zip），再删 json + zip
-    if (existsSync(PRELOADED_UPDATE_FILE)) {
+    if (existsSync(getPreloadedUpdateFile())) {
       let preloadedFilePath: string | null = null
       try {
-        const pre = JSON.parse(readFileSync(PRELOADED_UPDATE_FILE, 'utf-8')) as unknown
+        const pre = JSON.parse(readFileSync(getPreloadedUpdateFile(), 'utf-8')) as unknown
         if (
           pre &&
           typeof pre === 'object' &&
@@ -470,25 +474,25 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
         // preloaded 损坏：无法取得可信 filePath，仅删 json 本身（zip 留待下次或手动清理）
         console.warn('[update-self-healer] preloaded parse failed, skip zip deletion:', e)
       }
-      // 删下载 zip（路径注入防护：必须在 UPDATE_DIR 内）
+      // 删下载 zip（路径注入防护：必须在升级工作目录 getUpdateDir() 内）
       if (preloadedFilePath) {
         const resolved = path.resolve(preloadedFilePath)
-        const updateDirPrefix = path.resolve(UPDATE_DIR) + path.sep
+        const updateDirPrefix = path.resolve(getUpdateDir()) + path.sep
         if (resolved.startsWith(updateDirPrefix)) {
           ignoreENOENT(resolved)
         } else {
           console.warn(`[update-self-healer] skip download zip outside UPDATE_DIR: ${resolved}`)
         }
       }
-      ignoreENOENT(PRELOADED_UPDATE_FILE)
+      ignoreENOENT(getPreloadedUpdateFile())
     }
 
     // 2. 其余产物（固定路径，无注入风险）。三平台脚本同清：mac updater.sh /
     //    linux updater-linux.sh / win updater.cmd（批次 2 产物，同入清理矩阵）
-    ignoreENOENT(PENDING_UPDATE_FILE)
-    ignoreENOENT(UPDATER_SCRIPT_PATH)
-    ignoreENOENT(LINUX_UPDATER_SCRIPT_PATH)
-    ignoreENOENT(WIN_UPDATER_SCRIPT_PATH)
+    ignoreENOENT(getPendingUpdateFile())
+    ignoreENOENT(getUpdaterScriptPath())
+    ignoreENOENT(getLinuxUpdaterScriptPath())
+    ignoreENOENT(getWinUpdaterScriptPath())
 
     // 2.5 m13：升级残留矩阵（.old/.broken/.new/staging）——终态时全是垃圾，
     // .old 不再跨启动存活（消除陈旧 .old 回滚风险）。可能是目录（.broken/.staging），
@@ -500,9 +504,9 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
     // 2.6 m14：日志保留策略（三平台同口径）——仅 done 删日志；failed/rolled-back
     // 归档保留；no-op 保留原样（无实质事件）。归档旧档（>7 天）在此一并清理。
     if (status === 'done') {
-      ignoreENOENT(UPDATER_LOG_PATH)
-      ignoreENOENT(LINUX_UPDATER_LOG_PATH)
-      ignoreENOENT(WIN_UPDATER_LOG_PATH)
+      ignoreENOENT(getUpdaterLogPath())
+      ignoreENOENT(getLinuxUpdaterLogPath())
+      ignoreENOENT(getWinUpdaterLogPath())
     } else if (status === 'failed' || status === 'rolled-back') {
       archiveUpdaterLogs(new Date().toISOString().slice(0, ISO_DATE_LENGTH))
     }
@@ -510,18 +514,18 @@ export async function cleanupCompletedUpdate(): Promise<LaunchResult | null> {
 
     // 3. 下载中断残留（.downloading 临时文件）+ 原子写孤儿 tmp（[A-G2]：
     //    update-result.json.tmp / resume-state.json.tmp 写崩残留后无任何读方消费，
-    //    终态清理一并扫掉；跨平台产物，与 .downloading 同属 UPDATE_DIR 扫描，
-    //    不入 getStaleArtifactPaths——那是 mac/linux 平台残留推导且 gated on .old 存在）
-    if (existsSync(UPDATE_DIR)) {
-      for (const f of readdirSync(UPDATE_DIR)) {
+    //    终态清理一并扫掉；跨平台产物，与 .downloading 同属升级工作目录
+    //    （getUpdateDir()）扫描，不入 getStaleArtifactPaths——那是 mac/linux 平台残留推导且 gated on .old 存在）
+    if (existsSync(getUpdateDir())) {
+      for (const f of readdirSync(getUpdateDir())) {
         if (f.endsWith('.downloading') || f.endsWith('.tmp')) {
-          ignoreENOENT(path.join(UPDATE_DIR, f))
+          ignoreENOENT(path.join(getUpdateDir(), f))
         }
       }
     }
 
     // 4. result 自身最后删（标记本次清理完成；下次启动无 result → no-op）
-    ignoreENOENT(UPDATE_RESULT_FILE)
+    ignoreENOENT(getUpdateResultFile())
 
     return launchResult
   } catch (e) {

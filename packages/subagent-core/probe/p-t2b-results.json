@@ -1,0 +1,155 @@
+{
+  "probe": "P-T2b",
+  "model": "xiaomi-token-plan-cn/mimo-v2.5-pro",
+  "startedAt": "2026-09-01T06:12:22.755Z",
+  "phases": [
+    {
+      "phase": "A-foreground-bash",
+      "startedAt": "2026-09-01T06:12:22.757Z",
+      "bashCommand": "sleep 240",
+      "timeline": [
+        {
+          "t": "2026-09-01T06:12:23.656Z",
+          "event": "bash command observed in event stream"
+        },
+        {
+          "t": "2026-09-01T06:12:32.136Z",
+          "event": "descendant snapshot before SIGTERM",
+          "parentPid": 72280,
+          "descendants": [
+            72418
+          ],
+          "grandchildPidFromOutput": null
+        },
+        {
+          "t": "2026-09-01T06:12:32.136Z",
+          "event": "SIGTERM sent to parent"
+        },
+        {
+          "t": "2026-09-01T06:12:32.143Z",
+          "event": "parent exit observed",
+          "code": 143,
+          "signal": null,
+          "elapsedMs": 700
+        },
+        {
+          "t": "2026-09-01T06:12:34.841Z",
+          "event": "descendant check +2000ms after SIGTERM",
+          "status": {
+            "72418": {
+              "alive": false
+            }
+          }
+        },
+        {
+          "t": "2026-09-01T06:12:40.844Z",
+          "event": "descendant check +8000ms after SIGTERM",
+          "status": {
+            "72418": {
+              "alive": false
+            }
+          }
+        }
+      ],
+      "grandchildPids": [
+        72418
+      ],
+      "descendantsAliveAfter2000ms": [],
+      "descendantsAliveAfter8000ms": [],
+      "parentExit": {
+        "t": "2026-09-01T06:12:32.143Z",
+        "code": 143,
+        "signal": null,
+        "elapsedMs": 700
+      },
+      "conclusion": "CASCADE: all descendants killed after parent SIGTERM"
+    },
+    {
+      "phase": "B-background-descendant",
+      "startedAt": "2026-09-01T06:12:40.861Z",
+      "bashCommand": "Use the bash tool to run exactly this command and do nothing else (do not modify it): bash -c 'tail -f /dev/null | nohup /Users/zhushanwen/.nvm/versions/node/v24.11.1/bin/pi --mode rpc --no-extensions --session-dir /tmp/p-t2b-grandchild-55pWRn >/dev/null 2>&1' & echo GRANDCHILD_PID=$!",
+      "timeline": [
+        {
+          "t": "2026-09-01T06:12:41.366Z",
+          "event": "bash command observed in event stream"
+        },
+        {
+          "t": "2026-09-01T06:12:49.269Z",
+          "event": "agent_settled observed (bash tool finished, untracked)"
+        },
+        {
+          "t": "2026-09-01T06:12:52.289Z",
+          "event": "descendant snapshot before SIGTERM",
+          "parentPid": 72729,
+          "descendants": [],
+          "grandchildPidFromOutput": 72918
+        },
+        {
+          "t": "2026-09-01T06:12:56.293Z",
+          "event": "grandchild alive verification BEFORE SIGTERM",
+          "aliveCheck": {
+            "72918": {
+              "alive": true,
+              "detail": "72918 S    00:10 bash -c tail -f /dev/null | nohup /Users/zhushanwen/.nvm/versions/node/v24.11.1/bin/pi --mode rpc --no-extensions --session-dir /tmp/p-t2b-gran"
+            }
+          }
+        },
+        {
+          "t": "2026-09-01T06:12:56.293Z",
+          "event": "SIGTERM sent to parent"
+        },
+        {
+          "t": "2026-09-01T06:12:56.299Z",
+          "event": "parent exit observed",
+          "code": 143,
+          "signal": null,
+          "elapsedMs": 701
+        },
+        {
+          "t": "2026-09-01T06:12:58.997Z",
+          "event": "descendant check +2000ms after SIGTERM",
+          "status": {
+            "72918": {
+              "alive": true,
+              "detail": "72918 S    00:12 bash -c tail -f /dev/null | nohup /Users/zhushanwen/.nvm/versions/node/v24.11.1/bin/pi --mode rpc --no-extensions --session-dir /tmp/p-t2b-gran"
+            }
+          }
+        },
+        {
+          "t": "2026-09-01T06:13:05.009Z",
+          "event": "descendant check +8000ms after SIGTERM",
+          "status": {
+            "72918": {
+              "alive": true,
+              "detail": "72918 S    00:19 bash -c tail -f /dev/null | nohup /Users/zhushanwen/.nvm/versions/node/v24.11.1/bin/pi --mode rpc --no-extensions --session-dir /tmp/p-t2b-gran"
+            }
+          }
+        }
+      ],
+      "grandchildPids": [
+        72918
+      ],
+      "grandchildAliveBeforeSigterm": true,
+      "descendantsAliveAfter2000ms": [
+        72918
+      ],
+      "descendantsAliveAfter8000ms": [
+        72918
+      ],
+      "parentExit": {
+        "t": "2026-09-01T06:12:56.299Z",
+        "code": 143,
+        "signal": null,
+        "elapsedMs": 701
+      },
+      "conclusion": "NO-CASCADE: descendants still alive 8s after parent SIGTERM: [72918]"
+    }
+  ],
+  "abortedReason": null,
+  "finishedAt": "2026-09-01T06:13:05.105Z",
+  "verdict": {
+    "phaseA": "CASCADE: all descendants killed after parent SIGTERM",
+    "phaseB": "NO-CASCADE: descendants still alive 8s after parent SIGTERM: [72918]",
+    "ruling": "后代补杀为主路径（SIGTERM 无级联）"
+  }
+}

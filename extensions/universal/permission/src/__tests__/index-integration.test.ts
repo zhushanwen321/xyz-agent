@@ -374,8 +374,9 @@ describe("footer line 注册", () => {
 });
 
 // ──────────────────────── session_start 配置路径迁移接线（index.ts migrateLegacyConfig 调用）────────────────────────
-// 模块级 once flag（configMigrationChecked）跨用例残留：用 vi.resetModules() + 动态 import
-// 取新鲜模块实例，否则前面用例已触发过 session_start，迁移分支永不执行（静默不测）。
+// 迁移经 oncePerProcess 守卫（u-audit-fix 收编原内联 once flag），守卫的模块级 Map
+// 跨用例残留：用 vi.resetModules() + 动态 import 取新鲜模块实例，否则前面用例已触发过
+// session_start，迁移分支永不执行（静默不测）。
 describe("session_start 配置路径迁移接线", () => {
 	const LEGACY_PATH = join(AGENT_DIR, "permission-config.json");
 
@@ -414,7 +415,7 @@ describe("session_start 配置路径迁移接线", () => {
 		expect(existsSync(LEGACY_PATH)).toBe(false);
 	});
 
-	it("once flag：同进程第二次 session_start 不重复迁移（重建旧文件不动）", async () => {
+	it("once 守卫：同进程第二次 session_start 不重复迁移（重建旧文件不动）", async () => {
 		rmSync(CONFIG_PATH, { force: true });
 		writeLegacyConfig("auto");
 
@@ -425,7 +426,7 @@ describe("session_start 配置路径迁移接线", () => {
 		handler({}, makeCtx("json"));
 		expect(existsSync(LEGACY_PATH)).toBe(false); // 首次已迁移
 
-		// 重建旧文件（模拟外部残留），再次触发 session_start → once flag 跳过迁移
+		// 重建旧文件（模拟外部残留），再次触发 session_start → oncePerProcess 守卫跳过迁移
 		writeLegacyConfig("yolo");
 		handler({}, makeCtx("json"));
 		expect(existsSync(LEGACY_PATH)).toBe(true); // 未被再次消费

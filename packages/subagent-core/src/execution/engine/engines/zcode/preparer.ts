@@ -16,12 +16,16 @@
 // 同一 HOME 但模型不同时，config.json 的 model.main 会出现「后写覆盖先写」的串池——
 // zsub 的 per-model HOME 池正是防这个；本引擎以 provider+model 为隔离粒度，agent 维度
 // 的池化留给宿主 refs.json（W3 对齐点）。
+//
+// [R4 D7] app-server 常驻 HOME 语义（锁/派生/pidfile 孤儿回收/allProviders 引导/
+// 凭据内容 hash 刷新）拆至同目录 appserver-home.ts——单一关注点分立。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import { resolvePoolDir } from "../../paths.ts";
+import { writeAtomicFileSync } from "../../../../shared/atomic-write.ts";
 import {
   ZCODE_FALLBACK_DEFAULT_MODEL,
   ZCODE_POOL_CONFIG_SUFFIX,
@@ -67,16 +71,16 @@ interface SourceConfig {
 }
 
 /** unknown 的 Record 窄化 guard（替代 as 全可选断言——taste/no-unsafe-cast）。 */
-function isRecord(v: unknown): v is Record<string, unknown> {
+export function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** provider 条目一律按 ZcodeProviderEntry 消费（索引签名形态，无需逐键校验）。 */
-function isProviderEntry(v: unknown): v is ZcodeProviderEntry {
+export function isProviderEntry(v: unknown): v is ZcodeProviderEntry {
   return isRecord(v);
 }
 
-function readSourceConfig(absPath: string): SourceConfig {
+export function readSourceConfig(absPath: string): SourceConfig {
   const empty: SourceConfig = { providers: new Map(), mtimeMs: 0 };
   let raw: string;
   try {
@@ -119,7 +123,12 @@ function providerOf(ref: string): string {
   return ref.slice(0, ref.lastIndexOf("/"));
 }
 
-function hasApiKey(entry: ZcodeProviderEntry): boolean {
+/** [R4] 规范化全名 provider/model → create 参数的 per-session model 拆分（A.2 ① strict 对象）。 */
+export function splitZcodeModelRef(modelRef: string): { providerId: string; modelId: string } {
+  return { providerId: providerOf(modelRef), modelId: modelShort(modelRef) };
+}
+
+export function hasApiKey(entry: ZcodeProviderEntry): boolean {
   const key = entry.options?.apiKey;
   return typeof key === "string" && key !== "";
 }
@@ -129,12 +138,16 @@ export interface ZcodeSourcePaths {
   v2ConfigPath?: string;
 }
 
-function defaultV2ConfigPath(): string {
+export function defaultV2ConfigPath(): string {
   return path.join(os.homedir(), ...ZCODE_V2_CONFIG_PATH_SUFFIX);
 }
 
-/** 短名（无 provider 前缀）解析的默认 provider（zsub DEFAULT_PROVIDER_ID 同构）。 */
-const DEFAULT_PROVIDER_ID = "builtin:bigmodel-coding-plan";
+/**
+ * 短名（无 provider 前缀）解析的默认 provider（zsub DEFAULT_PROVIDER_ID 同构）。
+ * 导出（sink 设计 U1 模型切分四件之一）：barrel re-export 供第三宿主模型路由消费，
+ * 实现体内聚本文件不挪。
+ */
+export const DEFAULT_PROVIDER_ID = "builtin:bigmodel-coding-plan";
 
 /**
  * 短名模型（如 "GLM-5.3"）的默认 provider 决策。让位条件（对齐点⑦）：显式默认引擎
@@ -297,7 +310,7 @@ function homeNeedsBootstrap(configPath: string, sourceMtimeMs: number): boolean 
 }
 
 /** 池 config.json 缩进（人读友好——与 zsub 产出的文件形态一致）。 */
-const CONFIG_INDENT_SPACES = 2;
+export const CONFIG_INDENT_SPACES = 2;
 
 /**
  * 引导隔离 HOME 的 provider 配置（spawn 前调用）。
@@ -342,22 +355,12 @@ export function prepareZcodeHome(opts: {
   const hitSourceMtime = v2.mtimeMs;
   let wroteConfig = false;
   if (homeNeedsBootstrap(configPath, hitSourceMtime)) {
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const payload = JSON.stringify({ model: { main: modelRef }, provider: { [provider]: entry } }, null, CONFIG_INDENT_SPACES);
-    const tmp = `${configPath}.tmp-${process.pid}-${Date.now()}`;
-    try {
-      fs.writeFileSync(tmp, payload, "utf8");
-      fs.renameSync(tmp, configPath);
-    } finally {
-      // rename 成功后 tmp 已不存在；失败时清残留，避免污染 HOME 目录
-      try {
-        if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-      } catch (err) {
-        // rename 失败路径的残留清理是 best-effort——记录后继续（tmp 文件不参与读取）
-        void err;
-      }
-    }
+    // tmp+rename 原子写（shared/atomic-write 统一原语，U6b 迁移——rename 失败时
+    // 原语清残留 tmp，避免污染 HOME 目录；tmp 文件不参与读取，best-effort 语义不变）
+    writeAtomicFileSync(configPath, payload);
     wroteConfig = true;
   }
   return { modelRef, poolKey, homeDir, configPath, wroteConfig };
 }
+

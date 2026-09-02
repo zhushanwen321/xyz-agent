@@ -5,16 +5,19 @@
  * - spawnPi：隔离环境起真实 pi（RPC mode + rename-session extension），tmp 初始化
  *   （auth 迁移 / settings.json / auto-rename flag / 可选 models.json 与 ext-config 覆盖）
  * - 交错时间轴：stdout + stderr 两流 tee 到同一 timeline.ndjson，每行 {t, stream, line}
- *   （同步追加写，保到达序；A1 流序断言的数据源）
- * - RPC client：stdin JSONL 写命令、按 id 关联响应、waitFor(eventType)、waitForStderr(pattern)、
+ *   （同步追加写，保到达序；pi 自身 stderr 输出（崩溃堆栈等）仍可在此排查）
+ * - RPC client：stdin JSONL 写命令、按 id 关联响应、waitFor(eventType)、waitForSessionLog(pattern)、
  *   setSessionName / getState / prompt helper
  * - 断言纯函数（场景脚本与 harness.test.mjs 单测共用）：
- *   rebuildPreview / parseLogMessages / extractLastStopAssistant / assertTitleGuards / classifyFailure
+ *   rebuildPreview / parseLogMessages / extractRenameLogEntries / extractLastStopAssistant /
+ *   assertTitleGuards / classifyFailure
  * - 清理：按 PID kill + tmp 目录删除（E2E_KEEP_TMP=1 保留现场）
  *
  * 探针结论依据见 e2e/README.md（P0）：xiaomi-token-plan-cn 为 pi-ai 内置 provider，
  * auth 迁移 = 复制 auth.json；RPC 严格 JSONL（手写 LF splitter，readline 不合规）；
- * turn_end 原始事件不带 turnIndex（断言 turnIndex 走 stderr 日志）。
+ * turn_end 原始事件不带 turnIndex（断言 turnIndex 走 session JSONL 的 rename-session:log entry）。
+ * rename 扩展日志走 extension-logger 的 appendEntry 通道（session custom entry），不写
+ * pi 进程 stderr——等待扩展日志一律用 waitForSessionLog，不用 stderr。
  */
 
 import { spawn } from "node:child_process";
@@ -41,13 +44,13 @@ export const E2E_MODEL = "xiaomi-token-plan-cn/mimo-v2.5-pro";
 const E2E_DIR = fileURLToPath(new URL(".", import.meta.url));
 /** 本 extension 目录（--extension 参数目标）。 */
 const EXT_DIR = join(E2E_DIR, "..");
-/** 仓库根（node_modules 内 pi cli 与各场景 cwd 用）。 */
-const REPO_ROOT = join(EXT_DIR, "..", "..");
+/** 仓库根（node_modules 内 pi cli 与各场景 cwd 用）。e2e 位于 <root>/extensions/universal/<pkg>/e2e/，上溯 3 层（包移入 universal/ 分组后多一层目录）。 */
+const REPO_ROOT = join(EXT_DIR, "..", "..", "..");
 
 /** pi cli 真身（node_modules/.bin/pi 是指向它的 symlink；直接 require 真身避开 shebang/权限问题）。 */
 const PI_CLI = join(REPO_ROOT, "node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
 
-/** rename LLM 超时（D7 固定 30s）+ 余量，waitForStderr 等 rename 结果日志的默认上限。 */
+/** rename LLM 超时（D7 固定 30s）+ 余量，waitForSessionLog 等 rename 结果日志的默认上限。 */
 const RENAME_SETTLE_TIMEOUT_MS = 45_000;
 
 // ──────────────────────── 错误与失败分类 ────────────────────────
@@ -142,6 +145,43 @@ export function parseJsonlEntries(lines) {
 const PREVIEW_MAX_CODE_POINTS = 300;
 const PREVIEW_HEAD_CODE_POINTS = 200;
 const PREVIEW_TAIL_CODE_POINTS = 100;
+
+// rename 扩展日志 entry 的 customType（extension-logger appendEntry 通道，createLogger(extName) 的 extName 前缀）
+export const RENAME_LOG_CUSTOM_TYPE = "rename-session:log";
+
+/**
+ * 从 session JSONL 行数组提取 rename-session 的日志 entry（extension-logger appendEntry 通道）。
+ *
+ * entry 形状（pi session-manager appendCustomEntry × extension-logger createLogger.warn/error）：
+ *   { type: "custom", customType: "rename-session:log",
+ *     data: { timestamp: <epoch ms>, level: "warn"|"error",
+ *             message: "[rename-session] t=... <文案>", data?: unknown },
+ *     id, parentId, timestamp: <ISO> }
+ * （权威源：extensions/shared/extension-logger/src/index.ts + pi dist/core/session-manager.js）
+ *
+ * @param {string[]} lines session JSONL 行数组（坏行跳过）
+ * @returns {Array<{t: number, level: string, message: string}>} 按文件行序（= append 时序）；
+ *   t 优先取 data.timestamp（epoch ms，pi 内部时钟），缺失回落 entry.timestamp 解析
+ */
+export function extractRenameLogEntries(lines) {
+	if (!Array.isArray(lines)) throw new TypeError("extractRenameLogEntries: expects string[]");
+	const entries = [];
+	for (const line of lines) {
+		let entry;
+		try {
+			entry = JSON.parse(line);
+		} catch {
+			continue; // 坏行跳过（session 文件按行独立）
+		}
+		if (entry?.type !== "custom" || entry?.customType !== RENAME_LOG_CUSTOM_TYPE) continue;
+		const data = entry.data;
+		if (typeof data?.message !== "string") continue; // 缺 message 的畸形 entry 不参与匹配
+		let t = typeof data.timestamp === "number" ? data.timestamp : Date.parse(entry.timestamp);
+		if (!Number.isFinite(t)) t = 0;
+		entries.push({ t, level: typeof data.level === "string" ? data.level : "warn", message: data.message });
+	}
+	return entries;
+}
 
 /**
  * 与 llm.ts previewText 同构的预览重构（A1 内容匹配主判别器）：
@@ -472,7 +512,6 @@ export async function spawnPi(opts = {}) {
 	let reqSeq = 0;
 	const pending = new Map(); // id → {resolve, reject}
 	const eventWaiters = []; // {match(ev), resolve, reject, timer}
-	const stderrWaiters = []; // {match(line), resolve, timer}
 	let piAlive = true;
 	let exitInfo = null;
 
@@ -484,13 +523,6 @@ export async function spawnPi(opts = {}) {
 			w.reject(err);
 		}
 		eventWaiters.length = 0;
-		// stderr 等待同批 reject：pi 意外退出时，waitForStderr 若只靠自身 timer 超时，
-		// 失败会被误分类为 timeout 而非 pi-crash，误导诊断
-		for (const w of stderrWaiters) {
-			clearTimeout(w.timer);
-			w.reject(err);
-		}
-		stderrWaiters.length = 0;
 	};
 
 	proc.on("exit", (code, signal) => {
@@ -526,17 +558,10 @@ export async function spawnPi(opts = {}) {
 		}
 	});
 
-	// stderr：extension debug 日志（rename 证据链）
+	// stderr：tee 进时间轴（pi 自身输出，崩溃堆栈等排查用）。扩展 rename 日志不走此流
+	//（extension-logger appendEntry 落 session JSONL），等待日志用 waitForSessionLog。
 	attachJsonlReader(proc.stderr, (line) => {
 		timeline.push("err", line);
-		for (let i = stderrWaiters.length - 1; i >= 0; i--) {
-			const w = stderrWaiters[i];
-			if (w.match(line)) {
-				clearTimeout(w.timer);
-				stderrWaiters.splice(i, 1);
-				w.resolve({ line, t: Date.now() });
-			}
-		}
 	});
 
 	/** 写一条 RPC 命令。 */
@@ -590,25 +615,45 @@ export async function spawnPi(opts = {}) {
 			eventWaiters.push(w);
 		});
 
-	/** 等待匹配的 stderr 日志行（pattern: string 子串或 RegExp）。 */
-	const waitForStderr = (pattern, { timeoutMs = RENAME_SETTLE_TIMEOUT_MS } = {}) =>
+	/** 等待 session JSONL 中出现匹配的 rename-session 日志 entry（extension-logger appendEntry 通道）。
+	 *  pattern: string 子串或 RegExp，匹配 entry 的 message（`[rename-session] t=... <文案>`）。
+	 *  轮询实现（appendEntry 是 pi 内部同步落盘，无需事件通知）；晚注册不丢早到的 entry
+	 *  （每轮全量重读）。返回 { message, t }（t = data.timestamp，间隔计时用）。
+	 *  pi 进程退出时按 pi-crash 拒绝（不等满 timeout，保分类正确）。 */
+	const waitForSessionLog = (pattern, { timeoutMs = RENAME_SETTLE_TIMEOUT_MS } = {}) =>
 		new Promise((resolve, reject) => {
 			const match =
-				typeof pattern === "string" ? (line) => line.includes(pattern) : (line) => pattern.test(line);
-			// 时间轴里已有的行先查（晚注册不丢早到的日志）
-			for (const e of timeline.all()) {
-				if (e.stream === "err" && match(e.line)) {
-					resolve({ line: e.line, t: e.t });
+				typeof pattern === "string" ? (m) => m.includes(pattern) : (m) => pattern.test(m);
+			const deadline = Date.now() + timeoutMs;
+			const poll = async () => {
+				if (!piAlive) {
+					reject(
+						new HarnessError(
+							"pi-crash",
+							`pi 进程退出（${JSON.stringify(exitInfo)}），waitForSessionLog(${pattern}) 中止`,
+						),
+					);
 					return;
 				}
-			}
-			const timer = setTimeout(() => {
-				const i = stderrWaiters.indexOf(w);
-				if (i >= 0) stderrWaiters.splice(i, 1);
-				reject(new HarnessError("timeout", `waitForStderr(${pattern}) 超时 ${timeoutMs}ms`));
-			}, timeoutMs);
-			const w = { match, resolve, reject, timer };
-			stderrWaiters.push(w);
+				try {
+					const lines = await readSessionLines();
+					for (const entry of lines ? extractRenameLogEntries(lines) : []) {
+						if (match(entry.message)) {
+							resolve({ message: entry.message, t: entry.t });
+							return;
+						}
+					}
+				} catch (err) {
+					reject(err);
+					return;
+				}
+				if (Date.now() >= deadline) {
+					reject(new HarnessError("timeout", `waitForSessionLog(${pattern}) 超时 ${timeoutMs}ms`));
+					return;
+				}
+				setTimeout(poll, 250);
+			};
+			void poll();
 		});
 
 	// ── 高层 helper ──
@@ -684,7 +729,7 @@ export async function spawnPi(opts = {}) {
 			send,
 			request,
 			waitFor,
-			waitForStderr,
+			waitForSessionLog,
 			prompt,
 			setSessionName,
 			getState,

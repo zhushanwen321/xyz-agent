@@ -51,8 +51,8 @@ vi.mock('@/stores/session', () => ({
 }))
 // ── mock useSidebar：forkSessionAsk（W2 新增，当前不存在）──
 const forkSessionAskMock = vi.fn(() => Promise.resolve())
-vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
-  useSidebarNew: () => ({ forkSessionAsk: forkSessionAskMock, forkSession: vi.fn() }),
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
+  useSidebar: () => ({ forkSessionAsk: forkSessionAskMock, forkSession: vi.fn() }),
 }))
 
 // ── ComposerInput mock：defineExpose + emit（同 composer-three-states 范式）──

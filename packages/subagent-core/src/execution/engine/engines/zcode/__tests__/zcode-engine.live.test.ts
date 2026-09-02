@@ -16,7 +16,10 @@ import * as path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolvePoolDir } from "../../../paths.ts";
+import type { AgentEvent } from "../../../types.ts";
+import { ZCODE_APPSERVER_POOL_KEY } from "../constants.ts";
 import { ZcodeEngine } from "../zcode-engine.ts";
+import { assertAgentEventInvariants } from "../../../__tests__/conformance/agent-event-invariants.ts";
 
 const LIVE = process.env["ENGINE_CONFORMANCE_LIVE"] === "1";
 const E2E_MODEL = process.env["ZCODE_E2E_MODEL"] ?? "e512d53e-0bfc-4915-9081-860d4aa13cd0/mimo-v2.5-pro";
@@ -28,7 +31,12 @@ describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（真实 LLM 调用）", () 
 
   beforeAll(() => {
     fs.mkdirSync(WORK_CWD, { recursive: true });
-    engine = new ZcodeEngine({ engineDataDir: () => DATA_ROOT });
+    engine = new ZcodeEngine({
+      engineDataDir: () => DATA_ROOT,
+      // [R4] 钉扎 spawn 单轮（本门原为 spawn 链路实录；app-server 常驻真机门由 R6
+      // live gate 改写接入——两模式各自的真机覆盖不合并）
+      processEnv: { ...process.env, XYZ_ZCODE_MODE: "spawn" },
+    });
   });
 
   afterAll(() => {
@@ -125,3 +133,113 @@ function listZcodeProcessesForCwd(cwd: string): string[] {
     return [];
   }
 }
+
+// ============================================================
+// [R6] app-server 常驻真机门（RA1/RA2/RA4 的本仓可测形态）：真实 zcode.cjs +
+// 真实凭据 + 真实 app-server 进程，XYZ_ZCODE_MODE=appserver 定向（不探不降）。
+// 与上方 spawn 门分立（两模式各自的真机覆盖不合并）；跨仓 live gate（RA8 live /
+// zsw 真机）另由跨仓段承载。skip 条件与 spawn 门一致（ENGINE_CONFORMANCE_LIVE）。
+// ============================================================
+
+const AS_DATA_ROOT = path.join(fs.realpathSync(os.tmpdir()), "zcode-r6-appserver-e2e-data");
+const AS_WORK_CWD = path.join(fs.realpathSync(os.tmpdir()), "zcode-r6-appserver-e2e-cwd");
+
+describe.skipIf(!LIVE)("ZcodeEngine 端到端真机（app-server 常驻，[R6] live gate 改写）", () => {
+  let engine: ZcodeEngine;
+
+  beforeAll(() => {
+    fs.mkdirSync(AS_WORK_CWD, { recursive: true });
+    engine = new ZcodeEngine({
+      engineDataDir: () => AS_DATA_ROOT,
+      // 定向 appserver（D2①）：不探不降——常驻路径本体；缺省路径门控真机另由
+      // RA5-②③（跨仓段）承载
+      processEnv: { ...process.env, XYZ_ZCODE_MODE: "appserver" },
+    });
+  });
+
+  afterAll(async () => {
+    // dispose 是常驻进程的唯一收割入口（D6）——先 dispose 再清目录
+    await engine.dispose().catch(() => undefined);
+    for (const dir of [AS_DATA_ROOT, AS_WORK_CWD]) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // 尽力清理
+      }
+    }
+  });
+
+  it("run：常驻通道全链（RA2——stream 事件流出 + read①级 native + poolKey 锚定 home-appserver）", async () => {
+    const events: AgentEvent[] = [];
+    const { handle, outcome } = await engine.run(
+      {
+        task: 'Verify this arithmetic check: 2 + 2 = 4. If it is correct the verdict must be "ok", otherwise "bad".',
+        slug: "e2e-appserver",
+        model: E2E_MODEL,
+        cwd: AS_WORK_CWD,
+        schema: {
+          type: "object",
+          properties: { verdict: { type: "string", enum: ["ok", "bad"] } },
+          required: ["verdict"],
+          additionalProperties: false,
+        },
+      },
+      { taskId: "sa-live-appserver", poolKey: "", onEvent: (e) => events.push(e) },
+    );
+
+    // C2：outcome 正确
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.sessionId).toMatch(/^sess_/);
+    expect(outcome.parsedOutput).toEqual({ verdict: "ok" });
+    expect(outcome.usage?.input).toBeGreaterThan(0);
+
+    // C3 stream 口径（RA2-①断言面）：text_delta 实时流出（非终态一次性）+ 不变量五条
+    // （3a 拼接 == read 全文——content 来自 read 兜底/收尾帧，同源比对）
+    expect(events.some((e) => e.type === "text_delta")).toBe(true);
+    assertAgentEventInvariants(events, { granularity: "stream", content: outcome.content });
+
+    // handle 锚定（RA2-②断言面）：poolKey=home-appserver，①级读取钥匙随 handle 走
+    expect(handle.data.poolKey).toBe(ZCODE_APPSERVER_POOL_KEY);
+
+    // read 第①级：SQLite 完整重建（非降级）
+    const view = await engine.read(handle);
+    expect(view.source).toBe("native");
+    expect(view.turns.length).toBeGreaterThanOrEqual(1);
+  }, 300_000);
+
+  it("abort：长任务中途取消（RA4）→ stop 链合成终态 exitCode=null + 常驻进程不残留 + 后续任务可用", async () => {
+    const controller = new AbortController();
+    const runPromise = engine.run(
+      {
+        task:
+          "Write an extremely detailed 5000-word technical essay about distributed systems consistency models. Do not stop early.",
+        slug: "e2e-appserver-abort",
+        model: E2E_MODEL,
+        cwd: AS_WORK_CWD,
+      },
+      { taskId: "sa-live-appserver-abort", poolKey: "", signal: controller.signal },
+    );
+    // 等 send 已发（会话在途），再中途 abort——覆盖 stop 链而非 pre-abort 短路
+    await new Promise((r) => setTimeout(r, 4_000));
+    controller.abort();
+    const { outcome } = await runPromise;
+
+    expect(outcome.exitCode).toBeNull();
+    expect(outcome.error).toContain("session/stop");
+
+    // 无残留：常驻 HOME 锚定的 app-server 进程在 dispose 前应 ≤1（abort 不误杀共享
+    // 进程；杀的是本仓 HOME，与其他 zcode 实例区分靠 --cwd HOME 路径）
+    const homeDir = resolvePoolDir(AS_DATA_ROOT, "zcode", ZCODE_APPSERVER_POOL_KEY);
+    const leftovers = listZcodeProcessesForCwd(homeDir);
+    expect(leftovers.length).toBeLessThanOrEqual(1);
+
+    // 崩溃/中止后下一任务自动重建或复用（不变量 4 同路径）——abort 不污染常驻进程
+    const second = await engine.run(
+      { task: "Reply with the single word: ok", slug: "e2e-appserver-after-abort", model: E2E_MODEL, cwd: AS_WORK_CWD },
+      { taskId: "sa-live-appserver-after-abort", poolKey: "" },
+    );
+    expect(second.outcome.error).toBeUndefined();
+    expect(second.outcome.content.trim().length).toBeGreaterThan(0);
+  }, 300_000);
+});

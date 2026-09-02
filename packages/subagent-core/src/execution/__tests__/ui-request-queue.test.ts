@@ -131,3 +131,28 @@ describe("UI 请求队列", () => {
     expect(callOrder).toEqual(["Q1", "Q2"]);
   });
 });
+
+// ── LC-3/T2⑦ 验收⑤：timeout 字段透传链路（L1 队列 → handler 段）──
+// 下游段（handler → dialogQueue 消费）由 dialog-queue.test.ts / ui-request-handler-factory.test.ts 锁死。
+
+describe("UI 请求队列 — timeout 字段透传（LC-3/T2⑦）", () => {
+  it("ExtensionUiRequest.timeout 经 handleUiRequest 到达 uiRequestHandler 收到的 UiRequest", async () => {
+    const received: UiRequest[] = [];
+    const handler: UiRequestHandler = (req: UiRequest) => {
+      received.push(req);
+      return Promise.resolve<UiResponse>({ value: "ok" });
+    };
+
+    const child = makeFakeChild();
+    const ctx = { uiRequestHandler: handler } as Parameters<
+      typeof createUiRequestQueue
+    >[1];
+    const enqueue = createUiRequestQueue(child, ctx);
+
+    enqueue("r1", { ...makeSelectReq("Q1"), timeout: 5000 });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(received).toHaveLength(1);
+    expect(received[0].timeout).toBe(5000);
+  });
+});

@@ -1,4 +1,4 @@
-// src/tui/list-component.ts
+// src/interface/list-component.ts
 //
 // /subagents list 全屏带框左右分屏组件实现。
 // 从 list-view.ts 抽出（文件行数控制）：list-view.ts 保留 factory / key 处理，

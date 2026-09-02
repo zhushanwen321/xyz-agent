@@ -47,8 +47,6 @@ const AGE_NUM_DIGITS = 2
 export interface AutocompleteCandidate {
   /** 显示文本（满宽 label）。`${age} ${预览/name}`，如 "01m 看看 pi-session-reader..." */
   label: string
-  /** 副信息（次列）。本 provider 不设（undefined）——触发 SelectList 满宽 label 分支 */
-  description?: string
   /** 插入编辑器，如 "#019e6c96-aaaa-bbbb-cccc-dddddddddddd"（design D-3：完整 uuid，非名称；不显示给用户看） */
   insertText: string
 }
@@ -203,7 +201,6 @@ export function createHashAutocompleteProvider(
       const items: AutocompleteItem[] = candidates.map((c) => ({
         value: c.insertText,
         label: c.label,
-        description: c.description,
       }))
       // prefix = 光标前匹配到的整段（# 及片段），applyCompletion 据此定位替换区间
       return { items, prefix: `#${fragment}` }

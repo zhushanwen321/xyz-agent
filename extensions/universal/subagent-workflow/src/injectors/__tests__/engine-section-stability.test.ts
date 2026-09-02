@@ -26,7 +26,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { formatModelList, setupModelListInjector, type ModelEntry } from "../model-list-injector.ts";
+// C5①：formatModelList/ModelEntry 下沉 core barrel（setupModelListInjector 留 injector）
+import { formatModelList, type ModelEntry } from "@zhushanwen/subagent-core";
+import { MODEL_LIST_GUIDE, setupModelListInjector } from "../model-list-injector.ts";
 import type { EnginePort } from "@zhushanwen/subagent-core/execution/engine/port.ts";
 import { clearEngines, registerEngine } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
 import {
@@ -80,7 +82,7 @@ const APPEND_SEPARATOR = "\n\n";
 
 /** 合成一个 turn 的 system prompt 尾部：BASE + provider models 段 + engine 追加段。 */
 function composeTurn(defaultEngine: string | undefined): string {
-	const providerSection = formatModelList(PROVIDER_ENTRIES);
+	const providerSection = formatModelList(PROVIDER_ENTRIES, { guide: MODEL_LIST_GUIDE });
 	const afterProvider = providerSection === "" ? BASE : BASE + providerSection;
 	const append = composeEngineAppend(defaultEngine);
 	return append === "" ? afterProvider : `${afterProvider}${APPEND_SEPARATOR}${append}`;
@@ -190,7 +192,7 @@ describe("段渲染确定性（D7：同输入恒同输出）", () => {
  *   - 切换后的引擎追加段恰居 prompt 尾部。
  */
 function expectOnlyTailDiffers(from: string | undefined, to: string | undefined): void {
-	const stableHead = BASE + formatModelList(PROVIDER_ENTRIES);
+	const stableHead = BASE + formatModelList(PROVIDER_ENTRIES, { guide: MODEL_LIST_GUIDE });
 	const before = composeTurn(from);
 	const after = composeTurn(to);
 	const beforeAppend = composeEngineAppend(from);
@@ -279,7 +281,7 @@ describe("段序守护：engine 段恒链尾（D7）", () => {
 		// 恒链尾：engine 追加段是 prompt 的最后内容
 		expect(prompt.endsWith(`${APPEND_SEPARATOR}${composeEngineAppend(defaultEngine)}`)).toBe(true);
 		// model list handler 注入形态锚定（BASE + injection 无分隔，生产 handler 同款）
-		expect(prompt.startsWith(BASE + formatModelList(PROVIDER_ENTRIES))).toBe(true);
+		expect(prompt.startsWith(BASE + formatModelList(PROVIDER_ENTRIES, { guide: MODEL_LIST_GUIDE }))).toBe(true);
 	});
 
 	it("对照：注册序颠倒（engine 先、model list 后）时段序断言必失败——守护有判别力", async () => {

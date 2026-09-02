@@ -19,7 +19,6 @@
   },
   "files": [
     "index.ts",
-    "agents/",
     "skills/",
     "scripts/",
     "relay/",
@@ -51,9 +50,6 @@
     ],
     "skills": [
       "./skills"
-    ],
-    "agents": [
-      "./agents"
     ]
   },
   "scripts": {
@@ -64,6 +60,7 @@
   "dependencies": {
     "@xyz-agent/extension-protocol": "workspace:*",
     "@xyz-agent/session-delivery": "workspace:*",
+    "@zhushanwen/pi-ext-guards": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*",
     "@zhushanwen/subagent-core": "workspace:*"
   },

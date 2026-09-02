@@ -5,7 +5,7 @@
  *
  * 职责链：
  *   1. 缓存命中检查（1h，force 可绕过；批次 4 负缓存：「无新版」也写缓存，TTL 同 1h）
- *   2. fetch GitHub /releases/latest（AbortController 10s 超时）
+ *   2. fetch GitHub /releases/latest（upgradeFetch 双引擎，10s 超时）
  *   3. 三重 prerelease 防御：
  *      a. API 语义层：/releases/latest 端点天然排除 prerelease（仅最近 stable）
  *      b. release.prerelease / draft 字段校验
@@ -28,16 +28,19 @@
  * - sha256 来源：优先 GitHub asset.digest；digest 缺失（老 release / 某些情况下 undefined）
  *   时 fetch manifest.json（CI generate-manifest.sh 产物）作为 fallback
  * - manifest fallback 仅在至少一个 asset 缺 sha256 时 fetch 一次（lazy），全失败则 sha256 留 undefined
- * - D6：代理优先 + 失败降级直连（mode=manual/system 且解析出代理 URL 时；
- *   fetch 失败用无 dispatcher 直连重试一次；10s 超时各一次，总最坏 20s）
+ * - D6/D10（双维度正交）：通道维度「代理优先 + 失败降级直连」编排保留在 checker
+ *   （mode=manual/system 且解析出代理 URL 时先带 proxyUrl 请求，网络失败后不带
+ *   proxyUrl 直连重试一次）；引擎维度（undici → curl）降级内嵌在 upgradeFetch——
+ *   checker 两步 × 每步内引擎降级两试 = 最坏 4 试（flag 置位后收敛为 2 试）；
+ *   10s 超时（FETCH_TIMEOUT_MS）对齐既有语义
  *
- * 依赖方向：release-checker → @xyz-agent/shared + compare-versions + 全局 fetch + undici ProxyAgent
+ * 依赖方向：release-checker → @xyz-agent/shared + compare-versions + upgrade-fetch（双引擎）
  */
 import { compare } from 'compare-versions'
-import { ProxyAgent } from 'undici'
 import type { LatestReleaseInfo, ReleaseAsset } from '@xyz-agent/shared'
 import type { IReleaseChecker } from './interfaces.js'
 import { readProxyConfig, resolveProxyUrl } from './update/proxy-config.js'
+import { upgradeFetch, isCurlHttpStatusError } from './update/upgrade-fetch.js'
 
 /** GitHub /releases/latest API 端点 */
 const GITHUB_LATEST_RELEASE_URL =
@@ -218,6 +221,19 @@ export class ReleaseChecker implements IReleaseChecker {
   }
 
   /**
+   * 记录限流退避窗口（RM2.3：2h）并输出诊断日志。
+   *
+   * latest / manifest 两路径的三个识别位共用（latest 编排 rethrow 汇点 + manifest
+   * 两步各自的就地识别），保证 ReleaseRateLimitedError 无论从哪一步冒出都必被记录。
+   */
+  private recordRateLimitBackoff(context: string): void {
+    this.rateLimitedUntil = Date.now() + RATE_LIMIT_BACKOFF_MS
+    console.warn(
+      `[release-checker] rate limited by GitHub (${context}), backing off until ${new Date(this.rateLimitedUntil).toISOString()}`,
+    )
+  }
+
+  /**
    * 缓存命中检查（force 可绕过；负缓存的 info=null 同样命中）。
    *
    * @returns 命中返回缓存 info（null = 负缓存「已确认无新版」）；
@@ -241,11 +257,9 @@ export class ReleaseChecker implements IReleaseChecker {
       return await this.fetchGitHubLatestRelease()
     } catch (err) {
       if (err instanceof ReleaseRateLimitedError) {
-        // 403/429：记退避窗口（2h），窗口内后续调用直接短路零联网
-        this.rateLimitedUntil = Date.now() + RATE_LIMIT_BACKOFF_MS
-        console.warn(
-          `[release-checker] rate limited by GitHub, backing off until ${new Date(this.rateLimitedUntil).toISOString()}`,
-        )
+        // 403/429：记退避窗口（2h），窗口内后续调用直接短路零联网。
+        // latest 编排（含直连重试第二步）的 RateLimited rethrow 均汇于此记退避
+        this.recordRateLimitBackoff('latest')
         return null
       }
       throw err
@@ -296,11 +310,13 @@ export class ReleaseChecker implements IReleaseChecker {
    * 三重 prerelease 防御 a：/releases/latest 端点本身只返回最近 stable，
    * 天然排除 prerelease（GitHub API 文档语义）。
    *
-   * D6：代理优先 + 失败降级直连。
-   * - mode=manual/system 且解析出代理 URL 时，先用 ProxyAgent 走代理
-   * - fetch 失败（网络错误，如 EHOSTUNREACH）且用了代理时，降级直连重试一次
+   * D6/D10 双维度正交：通道维度「代理优先 + 失败降级直连」在本方法编排
+   * （第一步带 proxyUrl、网络失败后第二步不带）；引擎维度（undici → curl）
+   * 降级内嵌在 upgradeFetch 内部发生，本方法不感知。
+   * - mode=manual/system 且解析出代理 URL 时，先经代理请求
+   * - 网络错误（EHOSTUNREACH 等）且用了代理时，降级直连重试一次
    * - HTTP 错误（404/500）不触发降级（服务器已响应，重试无意义）
-   * - 10s 超时各一次（总最坏 20s，EHOSTUNREACH 类快速失败下降级延迟 <2s）
+   * - 10s 超时（FETCH_TIMEOUT_MS）对齐既有语义
    */
   private async fetchGitHubLatestRelease(): Promise<GitHubRelease | null> {
     // 读代理配置，决定是否走代理
@@ -319,7 +335,11 @@ export class ReleaseChecker implements IReleaseChecker {
         // 降级：用了代理但网络失败时，直连重试一次（无 dispatcher）
         try {
           return await this.doFetchGitHubLatestRelease(undefined)
-        } catch {
+        } catch (directErr) {
+          // 直连重试撞 403/429（服务器已响应限流，undici ok:false / curl exit 22
+          // 重建均以 RateLimited 上抛）：rethrow 汇至 fetchLatestReleaseHandling
+          // RateLimit 记退避，不得被裸 catch 吞掉（否则每周期照打 API）
+          if (directErr instanceof ReleaseRateLimitedError) throw directErr
           // 直连也失败 → 返回 null
           return null
         }
@@ -332,53 +352,66 @@ export class ReleaseChecker implements IReleaseChecker {
   /**
    * 执行单次 fetch GitHub /releases/latest。
    *
-   * @param proxyUrl 代理 URL；undefined 表示直连（无 dispatcher）
+   * 经 upgradeFetch 双引擎执行：引擎维度（undici → curl）降级在封装内发生，
+   * 本方法只按返回的 status 做既有 HTTP 语义分支。
+   *
+   * @param proxyUrl 代理 URL；undefined 表示直连（upgradeFetch 内不建 ProxyAgent）
    * @returns 解析后的 GitHubRelease；
-   *          HTTP 错误（404/500 等）返回 null；网络错误抛出（供降级逻辑捕获）
-   * @throws 网络错误（EHOSTUNREACH/ECONNREFUSED/超时等）——调用方据此决定是否降级
+   *          HTTP 错误（404/500 等已响应形态，含 curl 引擎携带 httpStatusCode 的
+   *          CurlFetchError）返回 null；网络错误抛出（供降级逻辑捕获）
+   * @throws 网络错误（EHOSTUNREACH/ECONNREFUSED/超时/双引擎均网络失败的
+   *         CurlFetchError——不带 httpStatusCode 的 exit 7/28 等形态）——调用方
+   *         据此决定是否降级；限流信号抛 ReleaseRateLimitedError（D8 重建）
    */
   private async doFetchGitHubLatestRelease(proxyUrl?: string): Promise<GitHubRelease | null> {
-    let dispatcher: ProxyAgent | undefined
-    if (proxyUrl) {
-      try {
-        dispatcher = new ProxyAgent(proxyUrl)
-      } catch {
-        // ProxyAgent 构造失败（URL 格式非法等）→ 降级直连
-        dispatcher = undefined
-      }
-    }
-
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
     try {
-      const options: RequestInit = {
-        headers: GITHUB_HEADERS,
-        signal: controller.signal,
-      }
-      if (dispatcher) {
-        // undici 扩展的 RequestInit 含 dispatcher 字段，经 as RequestInit 适配全局类型
-        (options as Record<string, unknown>).dispatcher = dispatcher
-      }
-      const response = await fetch(GITHUB_LATEST_RELEASE_URL, options)
-      if (!response.ok) {
+      const result = await upgradeFetch(GITHUB_LATEST_RELEASE_URL, {
+        headers: { ...GITHUB_HEADERS },
+        proxyUrl,
+        timeoutMs: FETCH_TIMEOUT_MS,
+      })
+      if (!result.ok) {
         // 批次 4 RM2.3：403/429 是服务器明确限流/拒绝 → 抛可区分信号（不并入 null，
         // 也不降级直连——重试无意义）；其他 HTTP 错误仍 return null
-        if (response.status === HTTP_STATUS_FORBIDDEN || response.status === HTTP_STATUS_TOO_MANY_REQUESTS) {
+        if (
+          result.status === HTTP_STATUS_FORBIDDEN ||
+          result.status === HTTP_STATUS_TOO_MANY_REQUESTS
+        ) {
           throw new ReleaseRateLimitedError()
         }
         return null
       }
-      const data = (await response.json()) as GitHubRelease
-      return data
+      const release = JSON.parse(result.bodyText ?? '') as GitHubRelease
+      // 最小结构守卫：合法 JSON 但形态异常（如代理/网关劫持页返回 200 JSON）时就地
+      // 降级 null——不把错误推迟到下游消费点（buildLatestReleaseInfo 只容忍字段
+      // 缺失，不认错形状的 tag_name/assets）。null 与 404/非 2xx 共用既有降级语义。
+      if (typeof release?.tag_name !== 'string' || !Array.isArray(release.assets)) {
+        console.warn(
+          `[release-checker] latest release response has unexpected shape (tag_name=${String(release?.tag_name)}, assets=${Array.isArray(release.assets) ? 'array' : typeof release.assets}), ignoring`,
+        )
+        return null
+      }
+      return release
     } catch (err) {
       // 限流信号直接向上传播（若被此处包装成普通 Error，退避逻辑将失效）
       if (err instanceof ReleaseRateLimitedError) throw err
-      // 网络/超时错误 → 抛出供调用方降级；AbortError（超时）也视为网络错误
+      // D8 curl 引擎 HTTP 状态交互规则：-f 使 HTTP ≥400 以携带 httpStatusCode 的
+      // CurlFetchError 上抛（服务器已响应），据此重建 undici 引擎的 status 分支语义——
+      // 403/429 → RateLimited（RM2.3 退避两引擎等价）；其他（404/5xx）→ 非 2xx null
+      // 收口。两者均不触发外层「代理→直连」通道重试（服务器已响应，换通道无意义）
+      if (isCurlHttpStatusError(err)) {
+        if (
+          err.httpStatusCode === HTTP_STATUS_FORBIDDEN ||
+          err.httpStatusCode === HTTP_STATUS_TOO_MANY_REQUESTS
+        ) {
+          throw new ReleaseRateLimitedError()
+        }
+        return null
+      }
+      // 网络/超时错误（含不带 httpStatusCode 的 CurlFetchError——exit 7/28 等网络级
+      // 失败仍归网络错误桶）→ 抛出供调用方做通道维度降级；body 非法 JSON 也按失败收口
+      // （对齐旧实现 response.json() 抛错被 catch 包装的语义）
       throw new Error('fetch failed')
-    } finally {
-      clearTimeout(timer)
-      // ProxyAgent 持有连接池，显式关闭避免句柄泄漏
-      await dispatcher?.close().catch(() => {})
     }
   }
 
@@ -435,9 +468,11 @@ export class ReleaseChecker implements IReleaseChecker {
    *
    * manifest 由 CI generate-manifest.sh 生成，结构：
    *   { version, releasedAt, assets: { "<filename>": { sha256, size } } }
-   * 失败（网络/超时/解析/404）一律返回 null（不阻塞，sha256 留 undefined 由调用方降级）。
+   * 失败（网络/超时/解析/404）一律返回 null（不阻塞，sha256 留 undefined 由调用方降级）；
+   * 403/429 额外记录 2h 限流退避（两引擎同形态）后同样返回 null。
    *
-   * D6：代理优先 + 失败降级直连（与 fetchGitHubLatestRelease 同策略）。
+   * D6/D10：代理优先 + 失败降级直连（与 fetchGitHubLatestRelease 同策略，通道维度
+   * 编排保留在 checker；引擎降级内嵌 upgradeFetch——消灭裸 undici 无降级路径）。
    *
    * @returns Map<filename, sha256hex>；不可用时返回 null
    */
@@ -450,13 +485,27 @@ export class ReleaseChecker implements IReleaseChecker {
     try {
       // 第一次尝试：代理优先
       return await this.doFetchManifestSha256(useProxy ? proxyUrl : undefined)
-    } catch {
+    } catch (err) {
+      // D8：403/429 重建的限流信号——服务器已响应，不触发通道维度直连
+      // 重试（对齐 latest 路径对 RateLimited 的处理位），记退避窗口后按 manifest
+      // 失败收口（null → sha256 留 undefined，不阻塞 release 组装）
+      if (err instanceof ReleaseRateLimitedError) {
+        this.recordRateLimitBackoff('manifest')
+        return null
+      }
       // 网络错误
       if (useProxy) {
         // 降级直连重试
         try {
           return await this.doFetchManifestSha256(undefined)
-        } catch {
+        } catch (directErr) {
+          // 直连重试撞 403/429：就地记退避后收口 null——此处不能 rethrow（本
+          // catch 位于外层 catch 块内，rethrow 会直接冒泡出 fetchManifestSha256，
+          // 破坏「manifest 失败不阻塞 checkForLatestRelease」契约，外层识别位
+          // 无法再捕获），退避必须在此记录
+          if (directErr instanceof ReleaseRateLimitedError) {
+            this.recordRateLimitBackoff('manifest direct')
+          }
           return null
         }
       }
@@ -467,51 +516,83 @@ export class ReleaseChecker implements IReleaseChecker {
   /**
    * 执行单次 fetch manifest.json。
    *
+   * 经 upgradeFetch 双引擎执行（设计 §2.1 关键事实：本路径原为裸 undici 无降级，
+   * 现与 latest 检测路径同源接入双引擎降级）。
+   *
+   * 阶段拆分（结构性重构，行为不变）：HTTP 状态分流 closeManifestHttpError +
+   * manifest 解析 parseManifestAssets（模块级辅助）。
+   *
    * @param proxyUrl 代理 URL；undefined 表示直连
    * @returns Map<filename, sha256hex>；
-   *          HTTP 错误返回 null；网络错误抛出（供降级逻辑捕获）
-   * @throws 网络错误——调用方据此决定是否降级
+   *          HTTP 错误返回 null（403/429 除外——undici ok:false 与 curl exit 22
+   *          携带 httpStatusCode 两形态同抛 RateLimited，D8 两引擎无漂移）；
+   *          网络错误抛出（供降级逻辑捕获）
+   * @throws 网络错误（含不带 httpStatusCode 的 CurlFetchError）与限流信号
+   *         ReleaseRateLimitedError（外层记退避后收口 null）
    */
   private async doFetchManifestSha256(proxyUrl?: string): Promise<Map<string, string> | null> {
-    let dispatcher: ProxyAgent | undefined
-    if (proxyUrl) {
-      try {
-        dispatcher = new ProxyAgent(proxyUrl)
-      } catch {
-        dispatcher = undefined
-      }
-    }
-
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
     try {
-      const options: RequestInit = { signal: controller.signal }
-      if (dispatcher) {
-        (options as Record<string, unknown>).dispatcher = dispatcher
+      const result = await upgradeFetch(MANIFEST_URL, {
+        proxyUrl,
+        timeoutMs: FETCH_TIMEOUT_MS,
+      })
+      if (!result.ok) {
+        return closeManifestHttpError(result.status)
       }
-      const resp = await fetch(MANIFEST_URL, options)
-      if (!resp.ok) return null
-      const manifest = (await resp.json()) as {
-        assets?: Record<string, { sha256?: unknown }>
+      return parseManifestAssets(result.bodyText)
+    } catch (err) {
+      // 限流信号直通（undici !ok 分支在 try 内 throw，若无此保护会被下方包装成
+      // 'fetch failed' 网络错误吞掉退避语义——与 latest doFetch catch 同款首行守卫）
+      if (err instanceof ReleaseRateLimitedError) throw err
+      // D8 curl 引擎 HTTP 状态交互规则（与 latest 路径同款重建）：携带 httpStatusCode
+      // 的 CurlFetchError = 服务器已响应——403/429 重建 RateLimited 供外层记退避且
+      // 不触发直连重试；404/5xx 按 manifest null 语义收口（同样不触发直连重试）
+      if (isCurlHttpStatusError(err)) {
+        return closeManifestHttpError(err.httpStatusCode)
       }
-      const assetsMap = manifest?.assets
-      if (!assetsMap || typeof assetsMap !== 'object') return null
-      const map = new Map<string, string>()
-      for (const [name, info] of Object.entries(assetsMap)) {
-        const sha = info?.sha256
-        if (typeof sha === 'string' && /^[0-9a-f]{64}$/i.test(sha)) {
-          map.set(name, sha)
-        }
-      }
-      return map.size > 0 ? map : null
-    } catch {
-      // 网络错误抛出供调用方降级
+      // 网络错误（含不带 httpStatusCode 的 CurlFetchError——双引擎均网络失败）与
+      // 非法 JSON 均抛出，供调用方做通道维度降级
       throw new Error('fetch failed')
-    } finally {
-      clearTimeout(timer)
-      await dispatcher?.close().catch(() => {})
     }
   }
+}
+
+/**
+ * manifest HTTP 错误状态分流（两引擎同款，D8 无漂移）：403/429 重建
+ * ReleaseRateLimitedError（与 latest undici 分支同款——curl 引擎 exit 22
+ * 携带 httpStatusCode 的同形态同退避，GitHub secondary rate limit 下退避
+ * 方向更正确）；其他 HTTP 错误按 manifest null 语义收口（404 语义）。
+ */
+function closeManifestHttpError(status: number): null {
+  if (
+    status === HTTP_STATUS_FORBIDDEN ||
+    status === HTTP_STATUS_TOO_MANY_REQUESTS
+  ) {
+    throw new ReleaseRateLimitedError()
+  }
+  return null
+}
+
+/**
+ * 解析 manifest.json 响应体为 Map<filename, sha256hex>。
+ *
+ * 结构非法（无 assets / 空 map）返回 null；body 非法 JSON 时 JSON.parse 原样
+ * 上抛（由调用方 catch 包装网络错误，对齐旧实现语义）。
+ */
+function parseManifestAssets(bodyText: string | undefined): Map<string, string> | null {
+  const manifest = JSON.parse(bodyText ?? '') as {
+    assets?: Record<string, { sha256?: unknown }>
+  }
+  const assetsMap = manifest?.assets
+  if (!assetsMap || typeof assetsMap !== 'object') return null
+  const map = new Map<string, string>()
+  for (const [name, info] of Object.entries(assetsMap)) {
+    const sha = info?.sha256
+    if (typeof sha === 'string' && /^[0-9a-f]{64}$/i.test(sha)) {
+      map.set(name, sha)
+    }
+  }
+  return map.size > 0 ? map : null
 }
 
 /**

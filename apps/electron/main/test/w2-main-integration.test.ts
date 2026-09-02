@@ -23,7 +23,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-// ── 重定向 UPDATE_DIR 到 tmp ────────────────────────────────────
+// ── 重定向升级工作目录（getUpdateDir()）到 tmp ────────────────────
 let tempDir: string
 
 beforeEach(() => {
@@ -265,7 +265,7 @@ describe('W2-downloadPart-classify downloadPart 分类', () => {
 describe('W2-handler-error-log appendUpdateError 落盘', () => {
   it('W2-handler-error-log appendUpdateError 写入 JSONL 文件', async () => {
     const { appendUpdateError } = await import('../update/error-log.js')
-    const { UPDATE_ERROR_LOG } = await import('../update/constants.js')
+    const { getUpdateErrorLog } = await import('../update/constants.js')
     appendUpdateError({
       at: new Date().toISOString(),
       source: 'test-proxy',
@@ -274,8 +274,8 @@ describe('W2-handler-error-log appendUpdateError 落盘', () => {
       rawCause: 'EHOSTUNREACH',
       proxyUrl: 'http://192.168.1.202:7890',
     })
-    expect(existsSync(UPDATE_ERROR_LOG)).toBe(true)
-    const content = readFileSync(UPDATE_ERROR_LOG, 'utf-8')
+    expect(existsSync(getUpdateErrorLog())).toBe(true)
+    const content = readFileSync(getUpdateErrorLog(), 'utf-8')
     const lines = content.trim().split('\n')
     expect(lines.length).toBe(1)
     const entry = JSON.parse(lines[0])
@@ -286,7 +286,7 @@ describe('W2-handler-error-log appendUpdateError 落盘', () => {
 
   it('W2-handler-error-log appendUpdateError 多次追加', async () => {
     const { appendUpdateError } = await import('../update/error-log.js')
-    const { UPDATE_ERROR_LOG } = await import('../update/constants.js')
+    const { getUpdateErrorLog } = await import('../update/constants.js')
     for (let i = 0; i < 5; i++) {
       appendUpdateError({
         at: new Date().toISOString(),
@@ -294,7 +294,7 @@ describe('W2-handler-error-log appendUpdateError 落盘', () => {
         stage: 'downloading',
       })
     }
-    const content = readFileSync(UPDATE_ERROR_LOG, 'utf-8')
+    const content = readFileSync(getUpdateErrorLog(), 'utf-8')
     const lines = content.trim().split('\n')
     expect(lines.length).toBe(5)
   })
@@ -400,28 +400,29 @@ describe('W2-preload-types 类型签名含 suggestion', () => {
 describe('W2-integration-log-file JSONL 写入 + 轮转', () => {
   it('W2-integration-log-file 轮转：超 512KB 时重命名 .log.1', async () => {
     const { appendUpdateError } = await import('../update/error-log.js')
-    const { UPDATE_ERROR_LOG } = await import('../update/constants.js')
+    const { getUpdateErrorLog } = await import('../update/constants.js')
+    const errorLogPath = getUpdateErrorLog()
     const bigData = 'x'.repeat(600 * 1024)
-    mkdirSync(path.dirname(UPDATE_ERROR_LOG), { recursive: true })
-    writeFileSync(UPDATE_ERROR_LOG, bigData)
+    mkdirSync(path.dirname(errorLogPath), { recursive: true })
+    writeFileSync(errorLogPath, bigData)
     appendUpdateError({
       at: new Date().toISOString(),
       source: 'test-rotate',
       stage: 'downloading',
     })
-    const rotatedPath = `${UPDATE_ERROR_LOG}.1`
+    const rotatedPath = `${errorLogPath}.1`
     expect(existsSync(rotatedPath)).toBe(true)
-    const newContent = readFileSync(UPDATE_ERROR_LOG, 'utf-8')
+    const newContent = readFileSync(errorLogPath, 'utf-8')
     const entry = JSON.parse(newContent.trim())
     expect(entry.source).toBe('test-rotate')
   })
 
   it('W2-integration-log-file JSONL 每行可解析', async () => {
     const { appendUpdateError } = await import('../update/error-log.js')
-    const { UPDATE_ERROR_LOG } = await import('../update/constants.js')
-    if (existsSync(UPDATE_ERROR_LOG)) {
+    const { getUpdateErrorLog } = await import('../update/constants.js')
+    if (existsSync(getUpdateErrorLog())) {
       const { unlinkSync } = await import('node:fs')
-      unlinkSync(UPDATE_ERROR_LOG)
+      unlinkSync(getUpdateErrorLog())
     }
     appendUpdateError({
       at: '2026-01-01T00:00:00.000Z',
@@ -436,7 +437,7 @@ describe('W2-integration-log-file JSONL 写入 + 轮转', () => {
       stage: 'downloading',
       rawCause: 'fetch failed',
     })
-    const content = readFileSync(UPDATE_ERROR_LOG, 'utf-8')
+    const content = readFileSync(getUpdateErrorLog(), 'utf-8')
     const lines = content.trim().split('\n')
     expect(lines.length).toBe(2)
     for (const line of lines) {
@@ -447,20 +448,20 @@ describe('W2-integration-log-file JSONL 写入 + 轮转', () => {
     }
   })
 
-  // 区分力：constants.ts 必须定义 UPDATE_ERROR_LOG 常量（w2 产物，但 w1 已有——补充验证路径）
-  it('W2-integration-log-file constants.ts 定义 UPDATE_ERROR_LOG', () => {
+  // 区分力：constants.ts 必须以延迟求值函数定义 getUpdateErrorLog（w2 产物，但 w1 已有——补充验证路径）
+  it('W2-integration-log-file constants.ts 定义 getUpdateErrorLog', () => {
     const src = readSource('apps/electron/main/update/constants.ts')
-    expect(src).toMatch(/export const UPDATE_ERROR_LOG/)
+    expect(src).toMatch(/export function getUpdateErrorLog/)
   })
 })
 
 // ── W2-testProxy-public-hostunreach（D2 v3 / A4）─────────────────
-// 必须放在本文件最末尾：本 describe 经 dynamic import 加载 update-handlers →
-// error-log/constants 模块图。若在其他用例之前加载，UPDATE_ERROR_LOG 路径会提前固化
-// 到当时的 tmp 目录，打破下方落盘用例「固化目录恰被其后 afterEach rmSync 清场」
-// 的自洽机制（已实测引发「写入 JSONL/多次追加」行数断言互相泄漏）。
-// 放在末尾时错误日志路径已由更早的 error-log 用例固化并清理完毕，
-// 本用例写在固化路径上的记录由自身 unlink 兑底，此后无任何消费者。
+// 排序说明（物理顺序保持在文件末尾；历史注释按「路径 import 期固化」解释排序，
+// 延迟求值后该理由已失真）：错误日志路径经 getUpdateErrorLog() 延迟求值，文件级
+// beforeEach 为每个用例各自设 XYZ_AGENT_DATA_DIR（独立 tmp 目录）+ afterEach rmSync
+// 清场，动态 import 每次现取路径，各用例落盘互不串扰。本 describe 经 dynamic import
+// 加载 update-handlers → error-log/constants 模块图，其记录写在自身用例的 tmp 内，
+// 末尾仍由自身 unlink 兜底清理，此后无任何消费者。
 const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>()
 
 vi.mock('electron', () => ({
@@ -473,8 +474,11 @@ vi.mock('electron', () => ({
 }))
 
 describe('W2-testProxy-public-hostunreach 公网 EHOSTUNREACH 代理语境话术', () => {
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllGlobals()
+    // 还原 curl runner 注入（避免污染同 worker 后续用例；动态 import 保持模块图惰性加载语义）
+    const { __setCurlRunnerForTest } = await import('../update/upgrade-fetch.js')
+    __setCurlRunnerForTest(undefined)
   })
 
   it('W2-testProxy-public-hostunreach 公网代理 EHOSTUNREACH 返回代理语境话术 + 检查代理指引', async () => {
@@ -482,6 +486,11 @@ describe('W2-testProxy-public-hostunreach 公网 EHOSTUNREACH 代理语境话术
     const cause = Object.assign(new Error('connect EHOSTUNREACH 203.0.113.1:7890'), {
       code: 'EHOSTUNREACH',
     })
+    // u6（update-network-resilience D5/D8）：testProxyConnection 换 upgradeFetch 双引擎后，
+    // undici 失败会降级真实 spawn 系统 curl（联网且慢）。注入假 curl runner 模拟 curl 亦
+    // 连接失败（exit 7），保持本用例离线、确定性（双失败 → undici 侧分类语义不变）
+    const { __setCurlRunnerForTest } = await import('../update/upgrade-fetch.js')
+    __setCurlRunnerForTest(() => ({ exitCode: 7, stdout: '', stderr: 'curl: (7) Failed to connect' }))
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
@@ -515,8 +524,8 @@ describe('W2-testProxy-public-hostunreach 公网 EHOSTUNREACH 代理语境话术
     expect(result.suggestion).toContain('检查代理')
     expect(result.suggestion).not.toContain('本地网络')
 
-    // 兑底清理：清掉本用例经 handler 落在固化 UPDATE_ERROR_LOG 路径上的记录
-    const { UPDATE_ERROR_LOG } = await import('../update/constants.js')
-    if (existsSync(UPDATE_ERROR_LOG)) unlinkSync(UPDATE_ERROR_LOG)
+    // 兑底清理：清掉本用例经 handler 落在 update-error.log 路径上的记录
+    const { getUpdateErrorLog } = await import('../update/constants.js')
+    if (existsSync(getUpdateErrorLog())) unlinkSync(getUpdateErrorLog())
   })
 })

@@ -23,7 +23,8 @@ import { resolveWorkflows } from './workflows.js'
  *   是 records/<sa-id>.json manifest（subagent 创建时写入，持久存在）。故 manifest 是孤儿/
  *   cleanedUp 的来源（design §3.3 D-7 "records/*.json manifest 作孤儿补充"）。
  * - workflows：M1 resolveFamily 恒返回 []。M2 在此单独读目标 session 的 workflow-state-link
- *   custom entry → link.data.path（wf-state 文件绝对路径）→ 读该文件最后一行（最新快照）取 calls。
+ *   custom entry → link.data.path（wf-state 文件绝对路径）→ 从文件尾向头找首个非空且
+ *   JSON.parse 成功的行（最新快照，容错尾半截 JSON）取 calls。
  *
  * @throws sessionId 不在任意 main session header → Error（M3 tool-adapter 层转 F1 恢复指引）
  */
@@ -87,7 +88,7 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
       // manifest 主（TC-u4-manifest-enrich）：透 task/slug/model/status/sessionFile 全字段
       data = {
         rootSessionId: manifest.rootSessionId,
-        slug: manifest.slug ?? '', // slug 兼容旧 manifest（缺→空串兑底，m0 契约）
+        slug: manifest.slug ?? '', // slug 兼容旧 manifest（缺→空串兜底，m0 契约）
         task: manifest.task,
         agent: manifest.agentName, // 同语义异名：manifest.agentName ↔ identity.data.agent
         model: manifest.model,
@@ -163,7 +164,7 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
   const family = resolveFamily(sessionId, index)
 
   // ---- 6. 补 M1 占位字段（fileName / subagent cwd）+ workflows ----
-  enrichRefs(family, sessionIdToPath, pathToRef)
+  enrichRefs(family, pathToRef)
   family.workflows = await resolveWorkflows(sessionId, sessionIdToPath, pathToRef)
 
   return family
@@ -330,11 +331,6 @@ function isRecordManifest(v: unknown): v is RecordManifest {
   )
 }
 
-/**
- * 扫描 subagents/<cwdSlug>/records/*.json —— subagent 注册清单。
- * 每个 manifest 在 subagent 创建时写入，持久存在即使 .jsonl 被 GC。坏 manifest（缺必填字段
- * /JSON 损坏）跳过，不中断扫描。
- */
 /** 读单个 manifest 文件并校验；坏 manifest（JSON 损坏/缺必填字段）返回 undefined。 */
 async function tryReadManifest(path: string): Promise<RecordManifest | undefined> {
   try {
@@ -345,6 +341,11 @@ async function tryReadManifest(path: string): Promise<RecordManifest | undefined
   }
 }
 
+/**
+ * 扫描 subagents/<cwdSlug>/records/*.json —— subagent 注册清单。
+ * 每个 manifest 在 subagent 创建时写入，持久存在即使 .jsonl 被 GC。坏 manifest（缺必填字段
+ * /JSON 损坏）跳过，不中断扫描。
+ */
 export async function listRecordManifests(agentDir: string): Promise<RecordManifest[]> {
   const root = join(agentDir, 'subagents')
   const out: RecordManifest[] = []
@@ -395,11 +396,7 @@ export function extractSessionIdFromFilename(name: string): string {
  *（identity 无 cwd）。此处用已扫描的真实文件信息补全：alive 的 ref 补 fileName + cwd；
  * cleanedUp 孤儿（无文件）保持占位。
  */
-function enrichRefs(
-  family: Family,
-  sessionIdToPath: Map<string, string>,
-  pathToRef: Map<string, SessionRef>,
-): void {
+function enrichRefs(family: Family, pathToRef: Map<string, SessionRef>): void {
   // sessionId → 完整 ref（含真实 fileName/cwd），由 pathToRef 反建
   const bySid = new Map<string, SessionRef>()
   for (const ref of pathToRef.values()) bySid.set(ref.sessionId, ref)
@@ -426,6 +423,4 @@ function enrichRefs(
       cwd: full.cwd || s.cwd,
     } as SubagentRef
   })
-  // sessionIdToPath 仅用于类型完整性占位引用，避免未用警告（实际路径信息已在 pathToRef）
-  void sessionIdToPath
 }

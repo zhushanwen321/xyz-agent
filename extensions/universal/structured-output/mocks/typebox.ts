@@ -11,10 +11,6 @@ export const Type = {
 		({ type: "object", properties }),
 	String: (_options?: Record<string, unknown>) => ({ type: "string" }),
 	Optional: (schema: unknown) => ({ ...(schema as Record<string, unknown>), optional: true }),
-	Number: (_options?: Record<string, unknown>) => ({ type: "number" }),
-	Boolean: (_options?: Record<string, unknown>) => ({ type: "boolean" }),
-	Array: (_item: unknown, _options?: Record<string, unknown>) => ({ type: "array" }),
-	Record: (_key: unknown, _value: unknown) => ({ type: "object" }),
 	Unknown: (_options?: Record<string, unknown>) => ({ type: "unknown" }),
 	Unsafe: <T>(schema: T) => schema,
 };

@@ -329,6 +329,82 @@ describe("checkPermission: auto 模式（AST + 规则 + AI Racing）", () => {
 	});
 });
 
+// ──────────────────────── A2: classifier.enabled=false（AI 层关闭，跳过 racing） ────────────────────────
+
+describe("A2: classifier.enabled=false（AI 层关闭，直接人工审批）", () => {
+	it("auto + 规则 ask + enabled=false → 直接人工审批（不调 classifyRisk）", async () => {
+		const classify = vi.fn(() => Promise.resolve(allowClassifier()));
+		const approve = vi.fn(() => Promise.resolve<UserDecision>({ approved: true, reason: "user-ok" }));
+		const deps = makeDeps({
+			analyze: () => Promise.resolve(cleanAnalysis([["curl"]])),
+			matchArgv: () => ({ action: "ask", matchedRule: undefined }),
+			classify,
+			approve,
+		});
+		const decision = await checkPermission(
+			"bash",
+			{ command: "curl example.com" },
+			"auto",
+			{ ...DEFAULT_CFG, enabled: false },
+			[],
+			deps,
+			ctxBase,
+		);
+		expect(decision.action).toBe("allow");
+		expect(decision.source).toBe("user");
+		expect(classify).not.toHaveBeenCalled(); // AI 层被关闭，classifier 不启动
+		expect(approve).toHaveBeenCalledOnce(); // 直接走人工审批
+	});
+
+	it("enabled=false + 用户拒绝 → deny（source=user）", async () => {
+		const classify = vi.fn(() => Promise.resolve(denyClassifier("high")));
+		const deps = makeDeps({
+			analyze: () => Promise.resolve(cleanAnalysis([["curl"]])),
+			matchArgv: () => ({ action: "ask", matchedRule: undefined }),
+			classify,
+			approve: () => Promise.resolve<UserDecision>({ approved: false, reason: "no" }),
+		});
+		const decision = await checkPermission(
+			"bash",
+			{ command: "curl example.com" },
+			"auto",
+			{ ...DEFAULT_CFG, enabled: false },
+			[],
+			deps,
+			ctxBase,
+		);
+		expect(decision.action).toBe("deny");
+		expect(decision.source).toBe("user");
+		expect(decision.reason).toBe("no");
+		expect(classify).not.toHaveBeenCalled();
+	});
+
+	it("enabled=false + headless → 人工审批路径立即 fail-closed deny（无 AI 可兜底）", async () => {
+		const classify = vi.fn(() => Promise.resolve(allowClassifier()));
+		const approve = vi.fn(() => Promise.resolve<UserDecision>({ approved: false, reason: "headless auto-deny" }));
+		const deps = makeDeps({
+			analyze: () => Promise.resolve(cleanAnalysis([["curl"]])),
+			matchArgv: () => ({ action: "ask", matchedRule: undefined }),
+			classify,
+			approve,
+			isHeadless: () => true,
+		});
+		const decision = await checkPermission(
+			"bash",
+			{ command: "curl example.com" },
+			"auto",
+			{ ...DEFAULT_CFG, enabled: false },
+			[],
+			deps,
+			ctxBase,
+		);
+		expect(decision.action).toBe("deny");
+		expect(decision.source).toBe("user");
+		expect(classify).not.toHaveBeenCalled(); // 不等 AI（enabled=false 时无 AI 层可兜底）
+		expect(approve).toHaveBeenCalledOnce();
+	});
+});
+
 // ──────────────────────── G1: matchNonBashTool ────────────────────────
 
 describe("G1: matchNonBashTool（非 bash 工具规则匹配，M5 pattern 对 path 匹配）", () => {

@@ -10,7 +10,10 @@
  * - 组2：展开后文本 ≠ 提交原文时仍按条数取出（本 wave 核心回归——文本匹配必挂场景）
  * - 组3：深度对账——pendingBuffer 与 pendingMessageCount 偏差 1（模拟扩展注入例外）
  *   → 下一次 queue_update 到达后偏差收敛（D6 残余风险边界的行为规格）
- * - 组4：buffer > 深度（队列被外部清空）→ reconcilePending 裁剪僵尸暂存
+ * - 组4：buffer > 深度（队列被外部清空）的僵尸——[steer-bubble u2/D4] 投递侧不再裁，
+ *   改由 G-023 时点（message_start(assistant)）清残量
+ * - 组6/组7：[steer-bubble u2/D4] 投递侧不裁剪回归——drain 后 buffer 残量保留到
+ *   message_end（腿 2 includes 兜底消费回填 segments）
  *
  * 端到端：真 createChatStore + applyMessageEvent（真 registry dispatch 链，非 ctx mock）。
  * 纯数据层（fake timers 不需要——queue_update 路径不挂 timer）。
@@ -133,20 +136,32 @@ describe('W14 pendingBuffer 计数 FIFO（queue_update 差集驱动，D6）', ()
     expect(bufferLen()).toBe(0)
   })
 
-  it('组4: 深度对账——buffer > 深度（队列被外部清空）→ 裁剪僵尸暂存到深度', () => {
-    sut.store.pushPending(sid, textToSegments('will stay'), 'steer')
+  it('组4: [steer-bubble u2/D4] 僵尸——queue_update 投递侧不裁，G-023 时点（message_start(assistant)）清残量', () => {
+    const segStay: Segment[] = textToSegments('will stay')
+    sut.store.pushPending(sid, segStay, 'steer')
     sut.store.pushPending(sid, textToSegments('zombie'), 'steer')
 
     // 帧1：首帧数组只 1 条（深度 1 < buffer 2，模拟 pi 队列内容被外部清掉一条——
-    // 僵尸暂存永不被投递且污染后续 FIFO 计数）→ reconcilePending 裁剪到深度
+    // 僵尸暂存永不被投递且污染后续 FIFO 计数）。[u2/D4] 投递侧 reconcilePending 裁剪
+    // 已移除——buffer 残量保留（旧行为在此处裁到 1，会吃掉腿 2 还没回填的 segments）
     queueUpdate({ steering: ['will stay'], pendingMessageCount: 1 })
+    expect(bufferLen()).toBe(2)
+
+    // G-023（message_start(assistant)）：快照深度 1 → 保留快照（F4 条件清）+
+    // 僵尸清理裁残量到深度 1（保留最早的，与 FIFO 取出顺序一致）
+    sut.store.applyMessageEvent(sid, { type: 'message.message_start', payload: { sessionId: sid, messageId: 'a1' } } as ServerMessage)
     const buf = sut.store.pendingBuffer.value.get(sid) ?? []
     expect(buf).toHaveLength(1)
     expect(buf[0].text).toBe('will stay')
+    expect(toRaw(buf[0].segments)).toBe(segStay)
+    // 快照保留（深度 1 > 0，F4）——其投递时腿 1 prev 在场
+    expect(sut.store.getQueueState(sid)).toEqual({ steering: ['will stay'] })
 
     // 帧2：投递 → 取出唯一暂存，结构归零
     queueUpdate({ steering: [], pendingMessageCount: 0 })
-    expect(sut.store.getMessages(sid)).toHaveLength(1)
+    const users = sut.store.getMessages(sid).filter((m) => m.role === 'user')
+    expect(users).toHaveLength(1)
+    expect(rawContent(users[0].content)).toBe(segStay)
     expect(bufferLen()).toBe(0)
   })
 
@@ -156,6 +171,60 @@ describe('W14 pendingBuffer 计数 FIFO（queue_update 差集驱动，D6）', ()
 
     queueUpdate({ steering: [], pendingMessageCount: 0 })
     // 空数组 = 无内容 → queueStates 清除（QueueBubble 消失）
+    expect(sut.store.getQueueState(sid)).toBeUndefined()
+  })
+
+  // ── [steer-bubble u2 / D4] 投递侧不裁剪回归：buffer 在两腿间存活到 message_end ──
+
+  /** 广播一帧 message_end(user)（payload.entry 为 event-adapter 重构形态，content parts 数组） */
+  function userEnd(text: string): ServerMessage {
+    return {
+      type: 'message.message_end',
+      payload: {
+        sessionId: sid,
+        entry: {
+          type: 'message',
+          parentId: null,
+          timestamp: new Date(0).toISOString(),
+          message: { role: 'user', content: [{ type: 'text', text }], timestamp: 0 },
+        },
+      },
+    } as ServerMessage
+  }
+
+  it('组6: [u2/D4] prev 缺失的 drain 空帧不再裁空 buffer（F3 不可逆丢失回归）', () => {
+    const seg: Segment[] = textToSegments('A')
+    sut.store.pushPending(sid, seg, 'steer')
+
+    // F3 断连场景：入队帧被 ring 冲掉 → 前端快照空，收到的第一帧就是 drain 后空帧
+    //（prev 缺失 → 腿 1 不插入）。旧行为：同帧 reconcilePending(sid, 0) 把 buffer [A]
+    // 裁空——暂存 segments 永久删除（不可逆放大器）；新行为：残量保留（等重连快照
+    // 重建后腿 1 消费，或 message_end 到达时腿 2 includes 兜底消费，见组7）
+    queueUpdate({ steering: [], pendingMessageCount: 0 })
+
+    expect(sut.store.getMessages(sid).filter((m) => m.role === 'user')).toHaveLength(0)
+    expect(bufferLen()).toBe(1)
+  })
+
+  it('组7: [u2/D4+D2] buffer 残量保留到 message_end——快照重建后腿 2 消费回填 segments（非纯文本降级）', () => {
+    const seg: Segment[] = textToSegments('A')
+    sut.store.pushPending(sid, seg, 'steer')
+    // 组6 前置：空帧（prev 缺失）不裁，buffer 残量存活
+    queueUpdate({ steering: [], pendingMessageCount: 0 })
+    // 重连 ring 回放入队帧 → queueStates 快照重建（prev 无 → 不触发 drain 差集）
+    queueUpdate({ steering: ['A'], pendingMessageCount: 1 })
+    expect(sut.store.getQueueState(sid)).toEqual({ steering: ['A'] })
+
+    // message_end(user) 到达：腿 1 未消费（inflight 0）→ includes 命中 ['A'] →
+    // drainN 消费 buffer 残量 → segments 原引用入流（G2：投递侧不裁剪保证 segments
+    // 存活到此刻——若被裁空，此处只剩帧内文本纯文本降级）
+    sut.store.applyMessageEvent(sid, userEnd('A'))
+
+    const users = sut.store.getMessages(sid).filter((m) => m.role === 'user')
+    expect(users).toHaveLength(1)
+    expect(rawContent(users[0].content)).toBe(seg)
+    expect(bufferLen()).toBe(0)
+    // 消费后快照剔实例 → steering 剔空 → 条目删除（对齐空帧语义）
     expect(sut.store.getQueueState(sid)).toBeUndefined()
   })
 })

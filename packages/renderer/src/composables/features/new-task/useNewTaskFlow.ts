@@ -3,7 +3,7 @@
  *
  * [归位] w2 core flow.ts 迁入 core 域后，本文件改写为壳：构造 NewTaskFlowDeps
  * （12 端口适配 renderer api/stores/composables，与旧实现逐条对齐）+ 模块级单例缓存
- * core useNewTaskFlow 实例。Landing.vue 与 useSidebarNew 都调本壳拿同一 core 实例
+ * core useNewTaskFlow 实例。Landing.vue 与 useSidebar 都调本壳拿同一 core 实例
  * （core flow-state 是 core 包模块级单例，renderer 旧 useNewTaskFlowState 是 renderer 包
  * 模块级单例，两套互不相通——双状态机会断裂，故必须统一实例）。
  *
@@ -54,7 +54,7 @@ export { resetNewTaskFlow } from '@xyz-agent/core'
 /**
  * 构建 SessionApiPort 适配（createSessionFlow ctx.api 注入用）。
  *
- * 与 useSidebarNew.buildSessionApiPort 同一套适配——createSessionFlow 运行时只调
+ * 与 useSidebar.buildSessionApiPort 同一套适配——createSessionFlow 运行时只调
  * create + migrateImage，但 SessionApiPort 类型要求全方法，故全量代理（零转换透传
  * 现 api/domains/session）。
  */
@@ -73,7 +73,7 @@ function buildCreateFlowApiPort(): SessionApiPort {
   }
 }
 
-/** 模块级单例（Landing 与 useSidebarNew 共享同一 core flow 实例）。 */
+/** 模块级单例（Landing 与 useSidebar 共享同一 core flow 实例）。 */
 let cachedFlow: ReturnType<typeof useCoreNewTaskFlow> | null = null
 
 /** 仅测试用：重置单例（pinia 重建后旧实例捕获的 store 引用失效，beforeEach 调；对齐 core reset 先例）。 */

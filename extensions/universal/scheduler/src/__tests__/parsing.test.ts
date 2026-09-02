@@ -84,16 +84,11 @@ describe('formatDuration', () => {
 
 describe('normalizeCronExpression', () => {
   it('prepends seconds field for 5-field cron', () => {
-    const result = normalizeCronExpression('*/10 * * * *')
-    expect(result).toEqual({
-      expression: '0 */10 * * * *',
-      note: 'Auto-prepended seconds field (0)',
-    })
+    expect(normalizeCronExpression('*/10 * * * *')).toBe('0 */10 * * * *')
   })
 
   it('keeps 6-field cron as-is', () => {
-    const result = normalizeCronExpression('0 */10 * * * *')
-    expect(result).toEqual({ expression: '0 */10 * * * *' })
+    expect(normalizeCronExpression('0 */10 * * * *')).toBe('0 */10 * * * *')
   })
 
   it('returns undefined for invalid field count', () => {

@@ -13,7 +13,7 @@
  *   useComposerContextChips / useComposerDragDrop / useComposerRestore / useComposerForkMode /
  *   useComposerHandoffMode / useComposerStaging / useComposerBash / useComposerSubmit / useComposerSend
  * - renderer store/composable：useChatStore / useSessionStore / useSettingsStore / useNewTaskFlow /
- *   useModel / useHandoffActions / useCompactQueue / useSidebarNew / useToast / useForkModeChannel /
+ *   useModel / useHandoffActions / useCompactQueue / useSidebar / useToast / useForkModeChannel /
  *   useHandoffModeChannel / useImageAttachment / useI18n
  *
  * 视觉派生（D1「视觉派生留壳」）：useComposerBoxClass + useComposerModeVisual 的逻辑并入本文件
@@ -23,7 +23,7 @@
 import { computed, type ComputedRef, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GitFork, Upload } from '@lucide/vue'
-import type { Segment } from '@xyz-agent/shared'
+import type { Segment, Message } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
 import {
   useComposerModelThinking,
@@ -50,7 +50,7 @@ import { useChat } from '@/composables/features/chat/useChat'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useModel } from '@/composables/features/model/useModel'
 import { useHandoffActions } from '@/composables/features/fork-handoff/useHandoffActions'
-import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { useCompactQueue } from './useCompactQueue'
 import { useToast } from '@/composables/useToast'
 import { useForkModeChannel } from './useForkModeChannel'
@@ -103,11 +103,26 @@ export interface ComposerShellParams {
 }
 
 /**
+ * 历史派生的引用键缓存（ADR-0039 兑现）：chat store 消息不可变替换（commitMessages 整体
+ * 替换分区内层 ref，无原地写入）⇒ 源数组引用同则内容同。↑/↓ 长按导航（~30Hz keydown）下
+ * 跳过全量 messages 重遍历 + 每条 normalizeContent 重建。键为源数组本身（WeakMap 弱引用）：
+ * 分区数组被替换后旧键随 GC 回收，无 per-session 生命周期管理；getMessages 空分区每次
+ * 新建 []，天然 miss（重算 O(1) 无害）。
+ */
+// @data-owner #7 —— #7 消息列表的 composer 历史派生缓存（引用键纯派生，非第二写方）
+const historyDeriveCache = new WeakMap<Message[], string[]>()
+
+/**
  * 历史条目派生（替代 chatStore.getMessages 直读，core history 模块经 deps 注入）。
  * 倒序 + role==='user' + status==='complete' + 去重连续相同文本（原 shim 逻辑平移）。
+ * 结果按源数组引用缓存（见 historyDeriveCache）并返回缓存实例——消费方
+ * （core input/history computed）只读遍历（.length / 索引读取），实例复用安全。
+ * 导出供单测（缓存刷新语义）。
  */
-function deriveHistoryFromChatStore(chatStore: ReturnType<typeof useChatStore>, sid: string): string[] {
+export function deriveHistoryFromChatStore(chatStore: ReturnType<typeof useChatStore>, sid: string): string[] {
   const msgs = chatStore.getMessages(sid)
+  const cached = historyDeriveCache.get(msgs)
+  if (cached) return cached
   const result: string[] = []
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i]
@@ -116,6 +131,7 @@ function deriveHistoryFromChatStore(chatStore: ReturnType<typeof useChatStore>, 
     if (result.length > 0 && result[result.length - 1] === text) continue
     result.push(text)
   }
+  historyDeriveCache.set(msgs, result)
   return result
 }
 
@@ -135,7 +151,7 @@ export function useComposerShell(params: ComposerShellParams) {
   const { handoff: handoffAction, abortHandoff: abortHandoffAction } = useHandoffActions(sessionIdRef)
   const { switchModel, setThinkingLevel } = useModel()
   const compactQueue = useCompactQueue()
-  const sidebar = useSidebarNew()
+  const sidebar = useSidebar()
   const { signal: forkEnterSignal } = useForkModeChannel()
   const { signal: handoffEnterSignal } = useHandoffModeChannel()
 

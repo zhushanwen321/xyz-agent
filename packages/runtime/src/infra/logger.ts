@@ -470,7 +470,34 @@ export function createPiRelayLog(recordId: string): PiSessionLog {
 }
 
 /**
- * pi 原始流写入器的共享实现（createPiSessionLog / createPiRelayLog 共用）：
+ * pi 崩溃 stderr 全量落盘（设计 file-lock-unification-and-reaper-sink §3.2-D4 / U3-4，
+ * rpc-client exit handler 的异常退出分支调用）。
+ *
+ * 文件名 `pi-crash-<date>-<sessionId>.log`：复用 pi-*.jsonl 命名惯例（pi- 前缀使
+ * cleanExpiredLogs 的保留期清理自动覆盖，无需改过滤规则）；date + sessionId 防同日
+ * 多 session / 跨天冲突。sessionId 缺失（无 session 的早期 spawn 崩溃）用 'nosid' 占位。
+ *
+ * 写入复用 createPiStreamWriter（WriteStream 缓冲 + 惰性打开 + closeLogger 退出 flush
+ * 覆盖 + 流错误自愈）而非 appendFileSync——logger.ts 写入路径禁同步 append 是
+ * logger.test.ts 的源码硬保证（grep 断言），且崩溃落盘后 runtime 可能很快 shutdown，
+ * 注册进 openPiStreams 保证 closeLogger 等待其落盘完成。
+ *
+ * 未初始化（单元测试）no-op；重复调用（同 session 多次崩溃理论上不可能，防御性
+ * 支持）append 语义不覆盖历史。内容为 best-effort：写失败不向上抛（调用方在 exit
+ * 主流程上，观测增强不得影响 rejectAll / exitCallbacks 通知链）。
+ */
+export function writePiCrashLog(sessionId: string | undefined, content: string): void {
+  if (!logsDir || !currentLevel) return
+  const date = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
+  // 文件名安全化与 createPiSessionLog 同规则；空清洗结果（如全非法字符）回落 'nosid'
+  const safeSid = (sessionId ?? 'nosid').replace(/[^a-zA-Z0-9-]/g, '').slice(0, SESSION_ID_MAX_LENGTH) || 'nosid'
+  const writer = createPiStreamWriter(join(logsDir, `pi-crash-${date}-${safeSid}.log`))
+  writer.write(content.endsWith('\n') ? content : content + '\n')
+  writer.end()
+}
+
+/**
+ * pi 原始流写入器的共享实现（createPiSessionLog / createPiRelayLog / writePiCrashLog 共用）：
  * WriteStream 缓冲写 + 惰性打开 + destroyed 自愈重建，条目注册进 openPiStreams 由
  * closeLogger 统一等待退出 flush。失败语义 best-effort：同步异常静默吞、异步流错误由
  * attachStreamErrorHandler 记一次 warn——绝不向上抛（调用方是数据转发热路径）。

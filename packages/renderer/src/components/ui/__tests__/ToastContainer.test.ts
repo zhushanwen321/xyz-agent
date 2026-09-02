@@ -8,7 +8,7 @@
  *    容器 max-w 收敛（不再被长消息撑宽）
  * 3. hover 暂停：mouseenter 后超时 advance toast 仍留存，mouseleave 恢复到期移除
  *
- * useSidebarNew 重依赖（导航栈/sessionApi/LRU 编排），mock 只出 selectSession spy。
+ * useSidebar 重依赖（导航栈/sessionApi/LRU 编排），mock 只出 selectSession spy。
  * 进出场过渡的源码级回归守卫见 ToastContainer.transition.test.ts（不重复覆盖）。
  *
  * 运行：cd packages/renderer && npx vitest run src/components/ui/__tests__/ToastContainer.test.ts
@@ -21,8 +21,8 @@ import ToastContainer from '@/components/ui/ToastContainer.vue'
 import { useToast } from '@/composables/useToast'
 
 const selectSessionSpy = vi.fn()
-vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
-  useSidebarNew: () => ({ selectSession: selectSessionSpy }),
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
+  useSidebar: () => ({ selectSession: selectSessionSpy }),
 }))
 
 beforeEach(() => {

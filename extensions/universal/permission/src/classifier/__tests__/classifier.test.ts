@@ -60,7 +60,7 @@ function okResult(content: string): CallLLMResult {
 }
 
 function failResult(error: string, stopReason?: "error" | "aborted"): CallLLMResult {
-	return { ok: false, error, recoverable: true, ...(stopReason !== undefined ? { stopReason } : {}) };
+	return { ok: false, error, ...(stopReason !== undefined ? { stopReason } : {}) };
 }
 
 /** 构造「永不 resolve」的 mock callLLM（用于 timeout/abort 测试） */

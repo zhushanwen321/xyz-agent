@@ -4,8 +4,9 @@
  *
  * 3a 静态：先 setSessionName「我的手动名字」再发 prompt；等 rename settled 后再等 ≥10s，
  *         最后 session_info 仍为手动名 + 日志 skip: name exists。
- * 3b 竞态：发 prompt 后等 stderr 出现 LLM request 日志（rename LLM 调用进行中、尚未返回）
- *         立即 setSessionName「竞态命名」；等 rename settled 后断言 skip: name exists + 名字未被覆盖。
+ * 3b 竞态：发 prompt 后等 session JSONL 出现 LLM request 日志 entry（rename LLM 调用进行中、
+ *         尚未返回）立即 setSessionName「竞态命名」；等 rename settled 后断言 skip: name exists
+ *         + 名字未被覆盖。
  *         known-flaky（设计 C3）：rename 返回快于「轮询 + RPC 往返」时断言 miss，重跑上限 2 次。
  * 3c 一次性：3a 完成后（同一 session）发第二条 prompt；断言无新 LLM request、无新自动
  *         session_info、正向证据 skip: count=2（堵「handler 未被调用」的假通过）。
@@ -17,6 +18,7 @@ import {
 	HarnessError,
 	LLM_REQUEST_MARKER,
 	assert,
+	extractRenameLogEntries,
 	lastSessionInfoEntry,
 	parseJsonlEntries,
 	runScenario,
@@ -25,9 +27,11 @@ import {
 	spawnPi,
 } from "./harness.mjs";
 
-/** 时间轴中 LLM request 日志条数（3c「无新 LLM request」断言用）。 */
-function countLlmRequests(pi) {
-	return pi.timeline.all().filter((e) => e.stream === "err" && e.line.includes(LLM_REQUEST_MARKER)).length;
+/** session JSONL 中 LLM request 日志 entry 条数（3c「无新 LLM request」断言用）。 */
+async function countLlmRequests(pi) {
+	const lines = await pi.readSessionLines();
+	return extractRenameLogEntries(lines ?? []).filter((e) => e.message.includes(LLM_REQUEST_MARKER))
+		.length;
 }
 
 /** session JSONL 中 session_info 条数（3c「无新自动 session_info」断言用）。 */
@@ -47,19 +51,20 @@ async function seg3aAnd3c(log) {
 		await settled1P;
 		// 显式等 skip: name exists 精确文案——宽松匹配 skip 日志可能命中中间 iteration 的
 		// skip: stopReason=toolUse 提前返回，那不是 rename 的最终决定
-		await pi.rpc.waitForStderr("skip: name exists", { timeoutMs: 45_000 });
+		await pi.rpc.waitForSessionLog("skip: name exists", { timeoutMs: 45_000 });
 		await sleep(10_500); // ≥10s 观察窗口（迟到覆盖检测）
 		assert(lastSessionInfoEntry(await pi.readSessionLines())?.name === MANUAL, "3a 等待 10s 后手动名被覆盖");
 		log(`3a OK: skip: name exists + 10s 后仍为「${MANUAL}」`);
 
 		// ── 3c 一次性（同 session 第二轮）──
-		const llmBefore = countLlmRequests(pi);
+		const llmBefore = await countLlmRequests(pi);
 		const infoBefore = await countSessionInfos(pi);
 		const settled2P = pi.rpc.waitAgentSettled(180_000);
 		await pi.rpc.prompt("2+2等于几？只回答数字");
 		await settled2P;
-		await pi.rpc.waitForStderr("skip: count=2", { timeoutMs: 45_000 });
-		assert(countLlmRequests(pi) === llmBefore, `3c 出现新 LLM request（${llmBefore} → ${countLlmRequests(pi)}）`);
+		await pi.rpc.waitForSessionLog("skip: count=2", { timeoutMs: 45_000 });
+		const llmAfter = await countLlmRequests(pi);
+		assert(llmAfter === llmBefore, `3c 出现新 LLM request（${llmBefore} → ${llmAfter}）`);
 		assert(
 			(await countSessionInfos(pi)) === infoBefore,
 			`3c 出现新自动 session_info（${infoBefore} → ${await countSessionInfos(pi)}）`,
@@ -78,8 +83,8 @@ async function seg3bOnce(log) {
 	try {
 		const settledP = pi.rpc.waitAgentSettled(180_000);
 		await pi.rpc.prompt("3+5等于几？只回答数字");
-		// 等 LLM request 日志（debug 内省在 callLLM 之前打出——此刻 rename LLM 调用进行中）
-		const llmReq = await pi.rpc.waitForStderr(LLM_REQUEST_MARKER, { timeoutMs: 180_000 });
+		// 等 LLM request 日志 entry（debug 内省在 callLLM 之前打出——此刻 rename LLM 调用进行中）
+		const llmReq = await pi.rpc.waitForSessionLog(LLM_REQUEST_MARKER, { timeoutMs: 180_000 });
 		// 立即抢入手动命名（竞态窗口内，llmReq.t 到 rename 返回通常 1-3s）
 		const tGrab = Date.now();
 		await pi.rpc.setSessionName(RACE_NAME);
@@ -88,10 +93,10 @@ async function seg3bOnce(log) {
 		// rename 终态时序（日志契约更新后）：`renamed to` 在 handler .then() 的 setSessionName
 		// 之后打出——竞态命中防覆盖时提前 return 打 `skip: name exists`，renamed to 不出现。
 		// 故成功防覆盖 = skip: name exists；renamed to 出现 = 标题已抢先落库（miss），交重跑
-		const outcome = await pi.rpc.waitForStderr(/skip: name exists|renamed to "/, { timeoutMs: 45_000 });
+		const outcome = await pi.rpc.waitForSessionLog(/skip: name exists|renamed to "/, { timeoutMs: 45_000 });
 		assert(
-			outcome.line.includes("skip: name exists"),
-			`3b 竞态 miss：rename 先于手动命名落库（${outcome.line}）`,
+			outcome.message.includes("skip: name exists"),
+			`3b 竞态 miss：rename 先于手动命名落库（${outcome.message}）`,
 		);
 		await sleep(10_500); // ≥10s 观察窗口
 		assert(lastSessionInfoEntry(await pi.readSessionLines())?.name === RACE_NAME, "3b 等待 10s 后竞态命名被覆盖");

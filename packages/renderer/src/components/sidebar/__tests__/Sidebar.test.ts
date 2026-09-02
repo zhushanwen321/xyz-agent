@@ -40,12 +40,12 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ error: vi.fn(), info: vi.fn(), warning: vi.fn() }),
 }))
 
-vi.mock('@/composables/features/sidebar/useSidebarNew', async () => {
+vi.mock('@/composables/features/sidebar/useSidebar', async () => {
   const { ref } = await import('vue')
   const focusedSessionId = ref<string | null>(null)
   sidebarMocks.focusedSessionId = focusedSessionId
   return {
-    useSidebarNew: () => ({
+    useSidebar: () => ({
       ...sidebarMocks,
       focusedSessionId,
       focusedSession: ref(null),

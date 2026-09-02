@@ -285,7 +285,7 @@ function formatHHMM(timestamp?: string): string {
   return m ? `${m[1]}:${m[2]}` : ''
 }
 
-function formatBytesMarker(bytes: number): string {
+export function formatBytesMarker(bytes: number): string {
   if (bytes <= 0) return ''
   if (bytes < BYTES_PER_KB) return `[${bytes}B omitted]`
   return `[${Math.round(bytes / BYTES_PER_KB)}KB omitted]`

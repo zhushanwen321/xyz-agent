@@ -4,6 +4,13 @@
 // §3.3.5「EnginePort 完整签名」——本文件是可编码落地的契约层，后续 wave（公共降级层
 // P2 / zcode 引擎 P3 / 配置路由 P4）以本接口为实现契约，字段级变更须先改设计文档。
 //
+// 字段级扩展登记（接上文纪律——先改设计文档再扩接口）：
+//   - [R1 已实施 2026-08-30] EnginePort.dispose?()——引擎停机面。权威源：
+//     docs/design/zcode-engine-appserver-resident.md §3.3 D6 / §3.4 不变量 4。
+//   - [R4 已实施 2026-08-30] RunContext.onHandleReady——运行中句柄回填通道
+//     （同设计 §3.4 不变量 3：sessionRef 在 create 应答后经本回调送达编排层，
+//     与 onPoolResolved 分立两个时点）。
+//
 // 四个能力面（D1）：
 //   run        —— 主语义：一次性 fire-to-completion 任务执行；
 //   interact   —— 交互控制面（chatMode 的 message/close/cancel + idle，可选能力面，
@@ -22,6 +29,7 @@ import type {
   AgentTaskSpec,
   EngineCapabilities,
   EngineHandle,
+  EngineHandleData,
   InteractAction,
   InteractResult,
   ProbeReport,
@@ -49,7 +57,13 @@ export interface RunContext {
   signal?: AbortSignal;
   /** 事件流出口（host 消费后统一落 journal，D6 第②级）。 */
   onEvent?: (event: AgentEvent) => void;
-  /** model 解析第三层兼底（现有 D-008 语义不变）。 */
+  /**
+   * model 解析第三层兜底（现有 D-008 语义不变）——**pi 链路专属兜底**：经
+   * taskSpecToExecuteOptions → resolveModel 第三层消费（PiEngine 直通）。自带
+   * provider 体系与缺省模型的引擎（如 zcode：requested > 引擎缺省常量链）按自身
+   * 默认链解析，不消费本字段（zcode 侧在「ctx 有模型但被忽略」时出声留痕，
+   * zcode-engine.warnIgnoredCtxModel）。
+   */
   ctxModel?: ModelInfo;
   /**
    * text_delta streaming 通道（宿主侧 UI widget）。与 onEvent 平行的 text_delta 出口：
@@ -82,11 +96,26 @@ export interface RunContext {
    */
   onPoolResolved?: (poolKey: string) => void;
   /**
+   * [R4 §3.4 不变量 3] 运行中句柄回填通道：引擎在「session/create 应答到达后」
+   * 立即回调（早于 run resolve——stream 引擎的 run 生命周期远长于会话建立）。
+   * 与 onPoolResolved 分立两个时点：poolKey 在 prepare 期（onPoolResolved，连接
+   * 建立前即可知），sessionRef 在 create 应答后（本回调）。编排层收到后立即回填
+   * record.engineHandle 并落 entry——运行中的 GUI 经 entry 重建 record 即拿到
+   * ①②级读取钥匙，不再等 run resolve 后的终态回填。可选回调：不支持运行中回填
+   * 的引擎（spawn 单轮、终态即回填）不调用，宿主语义不受影响。
+   */
+  onHandleReady?: (partial: Pick<EngineHandleData, "sessionRef" | "poolKey">) => void;
+  /**
    * [U0 D10] 引擎 spawn 的子进程句柄注册钩子（宿主终止链记账）。引擎在 spawn 成功后
    * 同步回调（与 pi runSpawn 的 spawnedChildren.set 同构时机）；宿主据此把 child 注册进
    * session-runner 的 spawnedChildren Map（cancel SIGTERM / dispose 收割兜底 / killAll
    * 全量清理对非 pi 引擎 record 生效）。close/error 后由宿主按句守卫移除。可选：引擎
    * 内部不 spawn 进程（如未来常驻 driver host 实现）时不调用，宿主记账自然为空。
+   *
+   * 边界声明（R1 D6）：本钩子只用于 per-record 一次性 spawn（一任务一进程模态）。
+   * 引擎持有的常驻进程（跨任务共享，如 app-server 常驻连接）不经本钩子注册、不进
+   * spawnedChildren Map——其生命周期完全归引擎 dispose 管理（防 per-record 重复
+   * SIGTERM / 单任务 abort 误杀共享进程）。
    */
   onChildSpawned?: (child: ChildProcess) => void;
 }
@@ -150,4 +179,15 @@ export interface EnginePort {
    * 侧零改动。
    */
   listModels?(): Array<{ id: string; name?: string }> | null;
+
+  /**
+   * [R1 D6] 可选停机面：释放引擎持有的常驻资源（如 app-server 常驻进程 / 长连接）。
+   * 幂等契约（§3.4 不变量 4）：重复调用无副作用；dispose 后首个 run 自动重建（与
+   * 「进程死后重建」同一代码路径）。可选成员保持向后兼容——无常驻资源的引擎（pi
+   * 现状 spawn 单轮）不必实现。等待策略（D6①「触发不等待」）：宿主收割入口
+   * （registry disposeEngines → killAllSpawnedChildren）只同步调用拿 Promise 不
+   * await，引擎实现须自行保证同步面（立即 fire close 帧 + 同步 SIGTERM）在返回
+   * Promise 前完成；grace→SIGKILL 升级序列属异步面（promise 段）。
+   */
+  dispose?(): Promise<void>;
 }

@@ -2,13 +2,15 @@
 //
 // registry 专属测试（P1 验收 4）：注册/获取/listEngines/hasEngine/
 // 未注册 id 报 engine_not_found（错误文案含已注册清单——错误规格表第 1 行契约）。
+// [R1 D6] 追加：重注册先 dispose 旧单例（D6②）+ disposeEngines 收割遍历（D6③）。
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EnginePort, RunContext } from "../port.ts";
 import {
   clearEngines,
   DEFAULT_ENGINE_ID,
+  disposeEngines,
   EngineNotFoundError,
   getEngine,
   hasEngine,
@@ -116,5 +118,92 @@ describe("engine registry", () => {
 
   it("DEFAULT_ENGINE_ID 缺省为 'pi'（D9：回填期零风险默认）", () => {
     expect(DEFAULT_ENGINE_ID).toBe("pi");
+  });
+
+  // ── [R1 D6②] 重注册同名：先 dispose 已实例化的旧单例（防常驻资源泄漏）──
+
+  it("重注册同名：已实例化的旧单例 dispose 被调用一次，新工厂实例生效", () => {
+    const dispose = vi.fn(() => Promise.resolve());
+    registerEngine("fake", () => ({ ...makeFakeEngine("fake"), dispose }));
+    getEngine("fake"); // 实例化旧引擎（未实例化 = 无常驻资源可回收）
+    registerEngine("fake", () => makeFakeEngine("fake-v2"));
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(getEngine("fake").id).toBe("fake-v2");
+  });
+
+  it("重注册同名：旧实例 dispose 同步 throw 不阻断替换（best-effort）", () => {
+    const dispose = vi.fn(() => {
+      throw new Error("dispose boom");
+    });
+    registerEngine("fake", () => ({ ...makeFakeEngine("fake"), dispose }));
+    getEngine("fake");
+    expect(() => registerEngine("fake", () => makeFakeEngine("fake-v2"))).not.toThrow();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(getEngine("fake").id).toBe("fake-v2");
+  });
+
+  it("重注册同名：旧实例 dispose 异步 reject 不阻断替换、不产生 unhandledRejection", async () => {
+    const dispose = vi.fn(() => Promise.reject(new Error("dispose async boom")));
+    registerEngine("fake", () => ({ ...makeFakeEngine("fake"), dispose }));
+    getEngine("fake");
+    expect(() => registerEngine("fake", () => makeFakeEngine("fake-v2"))).not.toThrow();
+    expect(getEngine("fake").id).toBe("fake-v2");
+    // flush macrotask：reject 必须已被 registry 侧 catch 吞掉——否则 vitest 以
+    // unhandledRejection 判本文件失败，用例即失效
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  });
+
+  it("重注册同名：旧引擎仅注册工厂未实例化时不触发 dispose（惰性单例无资源）", () => {
+    const dispose = vi.fn(() => Promise.resolve());
+    registerEngine("fake", () => ({ ...makeFakeEngine("fake"), dispose }));
+    // 不 getEngine——singletons 无记录
+    registerEngine("fake", () => makeFakeEngine("fake-v2"));
+    expect(dispose).not.toHaveBeenCalled();
+  });
+
+  it("重注册同名：旧实例未实现 dispose（可选成员）时直接替换不抛", () => {
+    registerEngine("fake", () => makeFakeEngine("fake"));
+    getEngine("fake");
+    expect(() => registerEngine("fake", () => makeFakeEngine("fake-v2"))).not.toThrow();
+  });
+
+  // ── [R1 D6③] disposeEngines：宿主收割（killAllSpawnedChildren）前的触发遍历 ──
+
+  describe("disposeEngines（D6③）", () => {
+    it("只对已实例化的引擎触发 dispose（绝不实例化未用引擎）", () => {
+      const instantiated = vi.fn(() => Promise.resolve());
+      const neverInstantiated = vi.fn(() => Promise.resolve());
+      registerEngine("used", () => ({ ...makeFakeEngine("used"), dispose: instantiated }));
+      registerEngine("unused", () => ({ ...makeFakeEngine("unused"), dispose: neverInstantiated }));
+      getEngine("used");
+      disposeEngines();
+      expect(instantiated).toHaveBeenCalledTimes(1);
+      expect(neverInstantiated).not.toHaveBeenCalled();
+    });
+
+    it("未实现 dispose 的引擎（可选面）跳过不抛", () => {
+      registerEngine("plain", () => makeFakeEngine("plain"));
+      getEngine("plain");
+      expect(() => disposeEngines()).not.toThrow();
+    });
+
+    it("dispose 幂等（实现承诺）：disposeEngines 重复调用不抛、逐次触发", async () => {
+      const dispose = vi.fn(() => Promise.resolve());
+      registerEngine("fake", () => ({ ...makeFakeEngine("fake"), dispose }));
+      getEngine("fake");
+      expect(() => disposeEngines()).not.toThrow();
+      expect(() => disposeEngines()).not.toThrow();
+      // 幂等语义由引擎实现承诺（不变量 4），本断言只验证 registry 重复触发不抛
+      expect(dispose).toHaveBeenCalledTimes(2);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    });
+
+    it("dispose 后单例保留（run 自动重建归引擎承诺，registry 不删——不变量 4 边界）", () => {
+      const dispose = vi.fn(() => Promise.resolve());
+      registerEngine("fake", () => ({ ...makeFakeEngine("fake"), dispose }));
+      const engine = getEngine("fake");
+      disposeEngines();
+      expect(getEngine("fake")).toBe(engine);
+    });
   });
 });

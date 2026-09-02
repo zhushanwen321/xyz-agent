@@ -15,7 +15,7 @@ import { TodoListComponent } from "./component";
 /** 注册 /todos 命令到 pi */
 export function registerTodosCommand(pi: ExtensionAPI, state: TodoSessionState): void {
 	pi.registerCommand("todos", {
-		description: "View all todos for the current branch",
+		description: "View all todos for the current session",
 		handler: async (_args: string | undefined, ctx: ExtensionCommandContext) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("/todos requires interactive mode", "error");

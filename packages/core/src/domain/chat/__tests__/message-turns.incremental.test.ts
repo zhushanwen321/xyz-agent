@@ -728,3 +728,199 @@ describe('groupRenderInput 分组规则 v2 —— 纯函数等价性（W6 等价
     expect(turnOf(r2[0]).notices?.map((m) => m.id)).toEqual(['bash-1'])
   })
 })
+
+// ── 尾部快车道（D-4 三车道演进：形态①同长度仅末条替换 / ②尾部 append / ③全量兜底）──
+// 正确性锚：任何车道产出与全量路径 deepEqual（既有等价断言形态，新车道同覆盖）。
+
+describe('toRenderItemsIncremental —— ⑥ 尾部快车道形态①（同长度仅末条替换，streaming 合帧 commit）', () => {
+  it('末条 assistant 不可变替换：历史 turn toBe 恒等、末位 turn 重建，输出与全量版 deepEqual', () => {
+    const cache = createTurnRenderCache()
+    const u1 = makeMsg({ id: 'u1', role: 'user', content: 'q1' })
+    const a1 = makeMsg({ id: 'a1', role: 'assistant', content: 'r1' })
+    const u2 = makeMsg({ id: 'u2', role: 'user', content: 'q2' })
+    const a2v1 = makeMsg({ id: 'a2', role: 'assistant', content: '部分', status: 'streaming' })
+    const r1 = toRenderItemsIncremental([u1, a1, u2, a2v1], false, cache)
+    // delta-coalescer 合帧 commit：末条 token 推进 = 新对象替换（D-1 不可变语义）
+    const a2v2 = makeMsg({ id: 'a2', role: 'assistant', content: '部分回复', status: 'streaming' })
+    const src = [u1, a1, u2, a2v2]
+    const r2 = toRenderItemsIncremental(src, false, cache)
+    expect(turnOf(r2[0])).toBe(turnOf(r1[0])) // 历史 turn 引用恒等（子重跑起点之前的零重算）
+    expect(turnOf(r2[1])).not.toBe(turnOf(r1[1])) // 末位 turn 重建（末位成员引用变化）
+    expect(turnOf(r2[1]).user).toBe(u2) // 重建但成员引用保留
+    expect(turnOf(r2[1]).assistants[0].content).toBe('部分回复')
+    expect(turnOf(r2[1]).isStreaming).toBe(true)
+    expect(r2).toEqual(toRenderItems(src, false)) // 正确性锚：deepEqual 全量路径
+  })
+
+  it('恒等特例：末条替换为透明消息（display:false 非通知 / 隐藏完成通知折叠）→ 引用恒等复用', () => {
+    const cache = createTurnRenderCache()
+    const u1 = makeMsg({ id: 'u1', role: 'user', content: 'q' })
+    const a1 = makeMsg({ id: 'a1', role: 'assistant', content: 'r1' })
+    const h1 = makeMsg({ id: 'h1', role: 'system', customType: 'todo-context', display: false, content: 'ctx' })
+    const r1 = toRenderItemsIncremental([u1, a1, h1], false, cache)
+    // 末条透明消息换成另一条透明消息（引用不同、产出不变）
+    const h1b = makeMsg({ id: 'h1', role: 'system', customType: 'todo-context', display: false, content: 'ctx' })
+    const src = [u1, a1, h1b]
+    const r2 = toRenderItemsIncremental(src, false, cache)
+    expect(r2).toBe(r1) // 引用恒等（零重算承诺）
+    expect(r2).toEqual(toRenderItems(src, false))
+    // 隐藏完成通知同长度替换：空 trigger turn 数组末折叠，产出不变 → 恒等
+    const cache2 = createTurnRenderCache()
+    const n1 = notifyMsg('n1')
+    const r3 = toRenderItemsIncremental([u1, a1, n1], false, cache2)
+    const r4 = toRenderItemsIncremental([u1, a1, notifyMsg('n1')], false, cache2)
+    expect(r4).toBe(r3)
+    expect(r4).toEqual(toRenderItems([u1, a1, notifyMsg('n1')], false))
+  })
+
+  it('防御形态：末条从 assistant 换成可见 system（turn 项 → static 项结构变化）与全量版 deepEqual', () => {
+    const cache = createTurnRenderCache()
+    const u1 = makeMsg({ id: 'u1', role: 'user', content: 'q' })
+    const a1 = makeMsg({ id: 'a1', role: 'assistant', content: 'r1' })
+    const a2 = makeMsg({ id: 'a2', role: 'assistant', content: 'r2' })
+    const r1 = toRenderItemsIncremental([u1, a1, a2], false, cache)
+    expect(r1.map((i) => i.kind)).toEqual(['turn'])
+    const c1 = makeMsg({ id: 'c1', role: 'system', content: '压缩记录' })
+    const src = [u1, a1, c1]
+    const r2 = toRenderItemsIncremental(src, false, cache)
+    expect(r2.map((i) => i.kind)).toEqual(['turn', 'systemNotice'])
+    expect(turnOf(r2[0]).assistants.map((m) => m.id)).toEqual(['a1'])
+    expect(r2).toEqual(toRenderItems(src, false))
+  })
+})
+
+describe('toRenderItemsIncremental —— ⑥ 尾部快车道形态②（尾部 append）', () => {
+  it('连续两次 append 归既有末位 turn：每步 deepEqual、user/assistants 成员引用保留', () => {
+    const cache = createTurnRenderCache()
+    const u1 = makeMsg({ id: 'u1', role: 'user', content: 'q' })
+    const r1 = toRenderItemsIncremental([u1], false, cache)
+    const a1 = makeMsg({ id: 'a1', role: 'assistant', content: 'r1' })
+    const s2 = [u1, a1]
+    const r2 = toRenderItemsIncremental(s2, false, cache)
+    const a2 = makeMsg({ id: 'a2', role: 'assistant', content: 'r2' })
+    const s3 = [u1, a1, a2]
+    const r3 = toRenderItemsIncremental(s3, false, cache)
+    expect(turnOf(r2[0])).not.toBe(turnOf(r1[0])) // 签名 [u1] → [u1,a1] 重建
+    expect(turnOf(r3[0])).not.toBe(turnOf(r2[0])) // 第二次 append 续建同 turn
+    expect(turnOf(r3[0]).user).toBe(u1) // 成员引用保留
+    expect(turnOf(r3[0]).assistants[0]).toBe(a1)
+    expect(turnOf(r3[0]).assistants.map((m) => m.id)).toEqual(['a1', 'a2'])
+    expect(r2).toEqual(toRenderItems(s2, false))
+    expect(r3).toEqual(toRenderItems(s3, false))
+  })
+
+  it('append bash notice 进末位 turn（notices 参与签名）+ 连续 notice 到达：deepEqual、notices 序正确', () => {
+    const cache = createTurnRenderCache()
+    const u1 = makeMsg({ id: 'u1', role: 'user', content: 'q' })
+    const a1 = makeMsg({ id: 'a1', role: 'assistant', content: 'r1' })
+    const r1 = toRenderItemsIncremental([u1, a1], false, cache)
+    const b1 = bashMsg('bash-1')
+    const s2 = [u1, a1, b1]
+    const r2 = toRenderItemsIncremental(s2, false, cache)
+    expect(r2.map((i) => i.kind)).toEqual(['turn']) // notice 不出独立项
+    expect(turnOf(r2[0])).not.toBe(turnOf(r1[0]))
+    expect(turnOf(r2[0]).user).toBe(u1)
+    expect(turnOf(r2[0]).assistants[0]).toBe(a1)
+    expect(turnOf(r2[0]).notices?.map((m) => m.id)).toEqual(['bash-1'])
+    expect(r2).toEqual(toRenderItems(s2, false))
+    const w1 = liveWarnMsg('w1')
+    const s3 = [u1, a1, b1, w1]
+    const r3 = toRenderItemsIncremental(s3, false, cache)
+    expect(turnOf(r3[0]).notices?.map((m) => m.id)).toEqual(['bash-1', 'w1'])
+    expect(r3).toEqual(toRenderItems(s3, false))
+  })
+
+  it('append 挂起空 trigger turn 被新消息填实：trigger turn 产出正确，前位 turn 引用复用', () => {
+    const cache = createTurnRenderCache()
+    const u1 = makeMsg({ id: 'u1', role: 'user', content: 'q' })
+    const a1 = makeMsg({ id: 'a1', role: 'assistant', content: 'r1' })
+    const n1 = notifyMsg('n1')
+    // 数组末空 trigger turn 折叠 → 产出仅前位 turn
+    const r1 = toRenderItemsIncremental([u1, a1, n1], false, cache)
+    expect(r1.map((i) => i.kind)).toEqual(['turn'])
+    // append 续跑 assistant 填实 trigger turn（子重跑起点 = 前位 turn 起始下标 0）
+    const a2 = makeMsg({ id: 'a2', role: 'assistant', content: '续跑', status: 'streaming' })
+    const src = [u1, a1, n1, a2]
+    const r2 = toRenderItemsIncremental(src, false, cache)
+    expect(r2.map((i) => i.kind)).toEqual(['turn', 'turn'])
+    expect(turnOf(r2[0])).toBe(turnOf(r1[0])) // 前位 turn 引用恒等
+    expect(turnOf(r2[1]).trigger).toBe('bg-notify')
+    expect(turnOf(r2[1]).assistants.map((m) => m.id)).toEqual(['a2'])
+    expect(r2).toEqual(toRenderItems(src, false))
+  })
+})
+
+describe('toRenderItemsIncremental —— ⑥ 全量兜底车道③（前插 / 引用全变等低频形态）', () => {
+  it('前插（prefix 断裂）走全量车道：输出与全量版 deepEqual，同位置 turn 按现状签名对齐复用', () => {
+    const cache = createTurnRenderCache()
+    const u1 = makeMsg({ id: 'u1', role: 'user', content: 'q1' })
+    const a1 = makeMsg({ id: 'a1', role: 'assistant', content: 'r1' })
+    const r1 = toRenderItemsIncremental([u1, a1], false, cache)
+    // 头部前插可见 system：prefix 第 0 位断裂 → 不满足尾部快车道前置 → 车道③
+    const sys0 = makeMsg({ id: 'sys0', role: 'system', content: 'notice' })
+    const src = [sys0, u1, a1]
+    const r2 = toRenderItemsIncremental(src, false, cache)
+    expect(r2.map((i) => i.kind)).toEqual(['systemNotice', 'turn'])
+    // turn 组在新旧产出同为位置 0、签名 [u1,a1] 对齐 → 车道③现状语义复用对象
+    expect(turnOf(r2[1])).toBe(turnOf(r1[0]))
+    expect(turnOf(r2[1]).index).toBe(1)
+    expect(turnOf(r2[1]).user).toBe(u1)
+    expect(r2).toEqual(toRenderItems(src, false))
+  })
+
+  it('同长度引用全变（prefix 断裂）走全量车道：输出与全量版 deepEqual', () => {
+    const cache = createTurnRenderCache()
+    const r1 = toRenderItemsIncremental(
+      [makeMsg({ id: 'u1', role: 'user', content: 'q' }), makeMsg({ id: 'a1', role: 'assistant', content: 'r' })],
+      false,
+      cache,
+    )
+    // 同 id 全新对象（fork/replay 形态）：长度相等但前缀引用断裂 → 车道③
+    const src = [
+      makeMsg({ id: 'u1', role: 'user', content: 'q' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'r' }),
+    ]
+    const r2 = toRenderItemsIncremental(src, false, cache)
+    expect(r2).not.toBe(r1)
+    expect(turnOf(r2[0])).not.toBe(turnOf(r1[0]))
+    expect(r2).toEqual(toRenderItems(src, false))
+    expect(r2).toEqual(r1) // 内容等价（引用相等 = 内容相等，同 id 同内容）
+  })
+
+  it('长会话高频形态串联（turn 前缀 + ① + ② + ③ 混合序列）：每步与全量版 deepEqual', () => {
+    const cache = createTurnRenderCache()
+    const u1 = makeMsg({ id: 'u1', role: 'user', content: 'q1' })
+    const a1 = makeMsg({ id: 'a1', role: 'assistant', content: 'r1' })
+    const u2 = makeMsg({ id: 'u2', role: 'user', content: 'q2' })
+    const a2v1 = makeMsg({ id: 'a2', role: 'assistant', content: '部分', status: 'streaming' })
+    const base = [u1, a1, u2, a2v1]
+    const r1 = toRenderItemsIncremental(base, false, cache)
+    expect(r1.map((i) => i.kind)).toEqual(['turn', 'turn'])
+    const steps: Message[][] = [
+      // ① 合帧 commit：末条 token 推进（×2 轮）
+      [u1, a1, u2, makeMsg({ id: 'a2', role: 'assistant', content: '部分回复', status: 'streaming' })],
+      [u1, a1, u2, makeMsg({ id: 'a2', role: 'assistant', content: '完整回复', status: 'complete' })],
+      // ② append bash notice 进末位 turn
+      [u1, a1, u2, makeMsg({ id: 'a2', role: 'assistant', content: '完整回复', status: 'complete' }), bashMsg('bash-1')],
+      // ② append 新 user turn（末位地位转移：旧末位 isStreaming 校正）
+      [
+        u1,
+        a1,
+        u2,
+        makeMsg({ id: 'a2', role: 'assistant', content: '完整回复', status: 'complete' }),
+        bashMsg('bash-1'),
+        makeMsg({ id: 'u3', role: 'user', content: 'q3' }),
+        makeMsg({ id: 'a3', role: 'assistant', content: 'r3', status: 'streaming' }),
+      ],
+      // ③ 中删末位 turn（prefix 前缀相等但长度缩短 → 车道③）
+      [u1, a1, u2, makeMsg({ id: 'a2', role: 'assistant', content: '完整回复', status: 'complete' }), bashMsg('bash-1')],
+    ]
+    for (const step of steps) {
+      const next = toRenderItemsIncremental(step, false, cache)
+      expect(next).toEqual(toRenderItems(step, false)) // 每步正确性锚
+    }
+    // 串联末态：前位 turn（u1/a1）跨全程引用恒等（尾部车道零重算承诺）
+    const last = toRenderItemsIncremental(steps[steps.length - 1], false, cache)
+    expect(turnOf(last[0])).toBe(turnOf(r1[0]))
+  })
+})

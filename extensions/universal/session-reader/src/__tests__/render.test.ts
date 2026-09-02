@@ -93,7 +93,7 @@ describe('renderOutline', () => {
   })
 
   it('2a. 降级：单行 toolSummary 过长超 perTurnBudget → 砍 toolSummary，保 userBrief 骨架', () => {
-    // L1 行不含 assistantBrief（design §3.5 算法1 step2）；budget=40, 3 turns → perTurnCharBudget≈53
+    // 预算紧张降级后 L1 行不含 assistantBrief（预算充足 level 0 行含）；budget=40, 3 turns → perTurnCharBudget≈53
     // 行 = head + userBrief(10) + toolSummary(20 个工具名≈63 chars) → ~80 > 53 → 砍 toolSummary
     const toolCalls = Array.from({ length: 20 }, (_, k) => ({ name: `t${String(k).padStart(2, '0')}` }))
     const turns = [0, 1, 2].map((i) =>
@@ -183,7 +183,7 @@ describe('renderOutline', () => {
     // stats 完整性
     expect(result.stats.totalTurns).toBe(32)
     // totalEntries 近似（leaf+branch+orphan）不含 session header（segmentTurns 规则1 跳过）；
-    // 准确值由 M2 工具层用 ParseResult.totalEntries 覆盖。M1 验量级。
+    // 工具层仅覆盖 stats.totalBytes 与 skippedLines（ParseResult 无 totalEntries 字段）。M1 验量级。
     expect(result.stats.totalEntries).toBeGreaterThan(1000)
     // 5.6MB 全量解析在并发/高负载下可能超 vitest 默认 5s，显式放宽
   }, 60000)

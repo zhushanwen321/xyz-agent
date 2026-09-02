@@ -310,10 +310,16 @@ function normIssueId(s) {
  * fix 阶段（fix-attempted/deferred 标记）与 ES3 校验共用——精确键查表会把
  * "mf-1"/"MF-1 (fixed)" 等漂移 ID 判为未追踪，导致 fix-attempted → fixed/regressed
  * → needs-redesign 状态链静默失效；deferred 侧漂移则创建幽灵条目（原条目仍 open 阻塞收敛）。
+ *
+ * 首查必须 Object.hasOwn（上收 zsw 侧同款修复）：truthy 查表（issues[issueId]）会让
+ * 原型链键（"__proto__"/"toString"/"constructor"）误命中——ID 来自 LLM 产出，攻击面
+ * 真实存在；误命中会把非 own 键当台账键返回，后续 issues[key].severity 读取原型
+ * 成员（undefined 或函数）污染 fix 对账。归一化回退段的 Object.keys 只枚举 own 键，
+ * 本就无此问题。
  */
 function findIssueKey(issues, issueId) {
   if (!issues || typeof issueId !== "string" || !issueId) return undefined;
-  if (issues[issueId]) return issueId;
+  if (Object.hasOwn(issues, issueId)) return issueId;
   const norm = normIssueId(issueId);
   if (!norm) return undefined;
   for (const key of Object.keys(issues)) {
@@ -785,7 +791,9 @@ function resolveIssueIdentity(entry, { issues, dormant }) {
  */
 function translateId(idMap, id, issues) {
   if (typeof id !== "string" || !id) return id;
-  if (issues && issues[id]) return id;
+  // Object.hasOwn：truthy 查表会让原型链键（"__proto__"/"toString"）误判为台账键
+  // 直接返回，跳过 idMap 翻译（与 findIssueKey 同款加固，nextFreeId 键空间同理）。
+  if (issues && Object.hasOwn(issues, id)) return id;
   if (idMap && Object.prototype.hasOwnProperty.call(idMap, id)) return idMap[id];
   return id;
 }
@@ -1417,7 +1425,10 @@ const FALLOW_DEF = { name: "fallow-scan", title: "FALLOW STATIC ANALYSIS", repor
  *
  * - def 只含标识（path/name/report/title），**不读文件**——agent 内容的加载与 systemPrompt
  *   注入由主线程 resolveAgentOpts（agent-call 按 path 加载）统一完成
- * - `fallow-scan` 是脚本内部保留字（fallowScan 参数前置插入的首批），非用户参数值域
+ * - `fallow-scan` 是脚本内部保留字（fallowScan 参数前置插入的首批），非用户参数值域：
+ *   本函数对字面值仍静默映射 FALLOW_DEF（fallowScan 前置批与 batchN 兼容形态依赖此
+ *   映射），用户参数侧的拒收在脚本层——fixAgent=fallow-scan 由 review-fix-loop.js
+ *   在调用本函数前 fail-fast（RX2-F2），防 fix 派发静默退化为通用 subagent
  * @param batchNames 批内 agentRef 路径数组
  */
 function resolveAgentDefs(batchNames) {

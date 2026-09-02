@@ -36,7 +36,7 @@ export function createSessionCommand(
   handler(args: string, ctx: ExtensionCommandContext): Promise<void>
 } {
   return {
-    description: 'Pick a session and insert a #uuid-fragment reference into the editor.',
+    description: 'Pick a session and insert a #uuid reference into the editor.',
     async getArgumentCompletions(argumentPrefix) {
       const trimmed = argumentPrefix.trim()
       const all = await SessionManager.listAll(getCwdSessionDir())

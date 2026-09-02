@@ -60,6 +60,7 @@ vi.mock("../alive-store.ts", () => ({
 // 非 chatMode 用例 ④ 的 agent_end 走正常 kill 分支（count=0 → SIGTERM）。
 vi.mock("../session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 0 })),
+  prunePendingCursor: vi.fn(),
 }));
 
 vi.mock("../temp-prompt.ts", () => ({

@@ -282,7 +282,8 @@ describe('u3b: update:install validateRelease（m11 防御纵深）', () => {
 
     const handler = handlers.get('update:install')!
     const result = await handler({}, {})
-    expect(result).toEqual({ triggerRestart: true })
+    // u6（update-network-resilience D2）：install 响应增加实装 version 字段
+    expect(result).toEqual({ triggerRestart: true, version: '0.9.0' })
     expect(installUpdate).toHaveBeenCalledTimes(1)
     expect(installUpdate).toHaveBeenCalledWith(FIXTURE, '/tmp/pre.zip', expect.any(Function))
   })

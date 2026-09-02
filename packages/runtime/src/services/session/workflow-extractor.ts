@@ -17,10 +17,11 @@
  * SessionService.getAgentCallHistory 按 sessionId 全局查找 JSONL 文件
  * （scanPiSessions 扫所有 encodedCwd 子目录）。
  *
- * 参考扩展源码：
- * - extensions/universal/subagent-workflow/src/orchestration/jsonl-run-store.ts（RunSnapshot 格式 + SNAPSHOT_VERSION + workflow-record entry data schema）
- * - extensions/universal/subagent-workflow/src/orchestration/models/workflow-run.ts（WorkflowRun 聚合根）
- * - extensions/universal/subagent-workflow/src/orchestration/models/types.ts（RunStatus/DoneReason/AgentResult）
+ * 参考扩展源码（[u1-move] core 切面抽至 packages/subagent-core，extension 侧留壳）：
+ * - packages/subagent-core/src/orchestration/run-snapshot.ts（RunSnapshot 格式 + SNAPSHOT_VERSION 权威定义）
+ * - extensions/universal/subagent-workflow/src/jsonl-run-store.ts（workflow-record entry data schema W17 v1 写点，快照 codec 留壳消费 core）
+ * - packages/subagent-core/src/orchestration/models/workflow-run.ts（WorkflowRun 聚合根）
+ * - packages/subagent-core/src/orchestration/models/types.ts（RunStatus/DoneReason/AgentResult）
  */
 
 import { readFileSync } from 'node:fs'
@@ -36,9 +37,10 @@ import type {
 /**
  * RunSnapshot 格式版本。版本不匹配跳过（D-5）。
  *
- * 注意：这是 extension 侧 SNAPSHOT_VERSION 的本地副本——跨包依赖方向不允许 runtime
- * import extensions/ 源码，只能复制字面量。权威源：extensions/universal/subagent-workflow/src/
- * orchestration/jsonl-run-store.ts 的 SNAPSHOT_VERSION（export const，当前 'wf-run-v2'）。
+ * 注意：这是 SNAPSHOT_VERSION 的本地副本——跨包依赖方向不允许 runtime import
+ * 其他包源码，只能复制字面量。权威源（[u1-move] 随 core 切面迁入 subagent-core）：
+ * packages/subagent-core/src/orchestration/run-snapshot.ts 的 SNAPSHOT_VERSION
+ * （export const，当前 'wf-run-v2'；extension 侧 jsonl-run-store.ts 留壳 import 消费）。
  * extension 升级格式时必须同步 bump 此处，否则版本守卫会把新快照全部判为不匹配跳过
  * （renderer WorkflowList 对新 run 显示为空）。
  */
@@ -182,7 +184,7 @@ function parseSelfDescribedWorkflowSnapshot(entry: unknown): RunSnapshot | null 
     console.warn(
       `[workflow-extractor] workflow-record entry schema version '${String(d.v)}' unsupported (expected 1) — ` +
         `extension/runtime version skew, skip this entry. Fix: align schema with ` +
-        `extensions/universal/subagent-workflow/src/orchestration/jsonl-run-store.ts (W17 v1).`,
+        `extensions/universal/subagent-workflow/src/jsonl-run-store.ts (W17 v1).`,
     )
     return null
   }
@@ -315,7 +317,8 @@ function mapValidatedSnapshot(runId: string, parsed: unknown, stateFilePath: str
       `[workflow-extractor] snapshot version '${String(snapshot.v)}' unsupported (expected '${SNAPSHOT_VERSION}') — ` +
         `extension/runtime version skew, skip run ${runId} (${stateFilePath || 'workflow-record entry'}). ` +
         `Fix: bump SNAPSHOT_VERSION in workflow-extractor.ts to match ` +
-        `extensions/universal/subagent-workflow/src/orchestration/jsonl-run-store.ts (see header comment).`,
+        `packages/subagent-core/src/orchestration/run-snapshot.ts (consumed via ` +
+        `extensions/universal/subagent-workflow/src/jsonl-run-store.ts; see header comment).`,
     )
     return null
   }

@@ -1,6 +1,12 @@
 // contract.abort.test.ts —— conformance C4（abort 行为）：运行中 cancel → 宿主合成
 // 终态（exitCode=null）、无悬挂 promise（run 正常 resolve、exited 收口）、错误事件
 // 先于终态 emit（不变量 5 的事件面）。fake launcher 注入（不依赖真机）。
+//
+// [R6] 双模式口径：spawn 钉扎用例（deps.launch 驱动——launch 是 spawn 路径专属 dep，
+// 钉 XYZ_ZCODE_MODE=spawn 使 fixture 生效，必要性核验成立）+ app-server 常驻用例
+// （fake-appserver.mjs 挂起场景，stop 链优先于杀链——D3）。两形态各自覆盖：
+// capabilities.interrupt 维持 kill-only 声明（D5——改链路先于改声明，stop 链路经
+// conformance 真机验证后再评估升 native）。
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
@@ -8,12 +14,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { PassThrough } from "node:stream";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RunContext } from "../../port.ts";
 import type { AgentEvent, AgentTaskSpec } from "../../types.ts";
 import { ZcodeEngine, type ZcodeEngineDeps } from "../../engines/zcode/zcode-engine.ts";
 import type { ZcodeLaunchedProcess } from "../../engines/zcode/launcher.ts";
+import { makeAppserverHarness, sentMethodNames } from "./zcode-appserver-harness.ts";
 
 const PROVIDER = "provider-x";
 
@@ -79,7 +86,7 @@ describe("conformance C4：abort 行为（运行中 cancel → 合成终态、�
     const engine = new ZcodeEngine({
       engineDataDir: () => dataDir,
       sources: { v2ConfigPath: v2Path },
-      processEnv: { PATH: "/usr/bin" },
+      processEnv: { PATH: "/usr/bin", XYZ_ZCODE_MODE: "spawn" },
       launch: fake.launch,
     });
 
@@ -106,4 +113,44 @@ describe("conformance C4：abort 行为（运行中 cancel → 合成终态、�
     expect(fake.proc()?.killedByUs()).toBe(true);
     expect(handle.data.engineId).toBe("zcode");
   }, 15_000);
+
+  // [R6] app-server 常驻形态：abort 走 D3 链（stop → grace → killChain）。挂起场景
+  // （只推 state.updated，turn 永不落定）+ stopBehavior 缺省 terminal = stop 优雅
+  // 生效路径——不杀共享进程，run 正常 resolve（C4 的常驻通道面）。
+  it("app-server 模式：abort → stop 帧先发 → 优雅收口（run resolve、exitCode=null、error 事件先于终态、kill-only 声明维持）", async () => {
+    const h = makeAppserverHarness({ hangOnly: true });
+    try {
+      // capabilities.interrupt 维持 kill-only（D5——升级序里 interrupt 不动）
+      expect(h.engine.capabilities().interrupt).toBe("kill-only");
+
+      const controller = new AbortController();
+      const events: AgentEvent[] = [];
+      const runP = h.engine.run(
+        { task: "hang", slug: "abort-appserver", model: "conformance-provider/m1", cwd: h.workspace },
+        { taskId: "sa-c4-appserver", poolKey: "", signal: controller.signal, onEvent: (e) => events.push(e) },
+      );
+      // 推进到 send 已达（create+send 帧落 fake 流水）再 abort——abort 先于 create 会
+      // 走 pre-aborted 短路面，覆盖不到 stop 链
+      await vi.waitFor(
+        () => expect(sentMethodNames(h.stateFile)).toContain("session/send"),
+        { timeout: 5_000 },
+      );
+      controller.abort();
+      const { outcome } = await runP; // 必须正常 resolve（stop 优雅收口，不悬挂）
+
+      expect(outcome.exitCode).toBeNull();
+      expect(outcome.error).toContain("session/stop");
+      // 错误事件先于终态 emit（不变量 5 的事件面——journal 可重放出失败事实）。abort
+      // 终态不合成 turn_end（与 spawn 钉扎用例同语义：只断言 error 事件到达，且其后
+      // 无任何非 error 事件流出）
+      const errorIdx = events.findIndex((e) => e.type === "error");
+      expect(errorIdx).toBeGreaterThanOrEqual(0);
+      expect(events.slice(errorIdx + 1).every((e) => e.type === "error")).toBe(true);
+      // D3 序：stop 帧先于任何杀链动作（优雅路径下进程未被杀）
+      const methods = sentMethodNames(h.stateFile);
+      expect(methods.indexOf("session/stop")).toBeGreaterThan(methods.indexOf("session/send"));
+    } finally {
+      await h.dispose();
+    }
+  }, 20_000);
 });

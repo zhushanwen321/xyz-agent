@@ -21,7 +21,9 @@ import type {
 } from "./types.ts";
 
 /** 自描述 record entry 的 customType。写点字面量与本常量的等值由
- *  __tests__/record-store.test.ts 断言钉住（消费方引用本常量，勿用裸字符串）。 */
+ *  __tests__/record-store.test.ts 断言钉住（消费方引用本常量，勿用裸字符串）。
+ *
+ * @experimental execution 运行时面（U10① D6）：一个 minor 周期内允许签名微调。 */
 export const SUBAGENT_RECORD_CUSTOM_TYPE = "subagent-record";
 
 /**
@@ -34,6 +36,8 @@ export const SUBAGENT_RECORD_CUSTOM_TYPE = "subagent-record";
  *   - worktreeHandle：不可 JSON 序列化的运行时句柄（布尔投影 worktree 保留）。
  *
  * undefined 字段经 JSON.stringify 自然缺省（与 SubagentRecord 重建侧语义一致）。
+ *
+ * @experimental execution 运行时面（U10① D6）：一个 minor 周期内允许签名微调。
  */
 export interface SubagentRecordEntryData {
   /** schema 版本（W16 起 v1）。消费方按 v 判别解析，不认识的版本跳过而非猜测。 */
@@ -95,7 +99,9 @@ export interface SubagentRecordEntryData {
   engineHandle?: { sessionRef: Record<string, string>; journalPath?: string; poolKey: string };
 }
 
-/** SubagentRecord → 自描述 entry data（快照投影，不 mutate 源）。 */
+/** SubagentRecord → 自描述 entry data（快照投影，不 mutate 源）。
+ *
+ * @experimental execution 运行时面（U10① D6）：一个 minor 周期内允许签名微调。 */
 export function toSubagentRecordEntry(record: SubagentRecord): SubagentRecordEntryData {
   return {
     v: 1,

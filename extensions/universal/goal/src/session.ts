@@ -1,5 +1,5 @@
 /**
- * Session 层 — 运行时句柄 + 状态重建 + entry GC
+ * Session 层 — 运行时句柄 + 状态重建（entry 不做 GC，只读最新一条）
  *
  * GoalSession 是进程内瞬态句柄（不持久化）。
  * reconstructGoalState 从 entry 恢复状态（session_start 时调）。

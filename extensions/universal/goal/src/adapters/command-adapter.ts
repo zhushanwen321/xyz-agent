@@ -33,6 +33,7 @@ import type { GoalHistoryEntry } from "../ports";
 import type { GoalSession } from "../session";
 import { clearGoalSession } from "../session";
 import { buildPorts } from "./ports";
+import { CRITERIA_HINTS_SLASH, validateSuccessCriteriaItems } from "./success-criteria";
 
 // ── Orchestrator ──────────────────────────────────────
 
@@ -282,29 +283,11 @@ function handleUpdate(
 		return;
 	}
 	// 校验前置（mutate state 之前）：任一条目非法 → throw，objective 等重塑字段全部不动。
-	// 规则与 handleCreate 一致（typeof string / trim 非空 / 单行），文案带 Correct: 正例。
+	// 逐条规则（typeof string / trim 非空 / 单行）与 goal_control create 共享
+	// validateSuccessCriteriaItems，slash 通道正例见 CRITERIA_HINTS_SLASH。
 	let validatedCriteria: string[] | undefined;
 	if (criteria !== undefined && criteria.length > 0) {
-		validatedCriteria = [];
-		for (const item of criteria) {
-			if (typeof item !== "string") {
-				throw new Error(
-					"'successCriteria' must be an array of strings. Correct: {\"action\":\"update\",\"objective\":\"...\",\"successCriteria\":[\"<condition 1>\",\"<condition 2>\"]}",
-				);
-			}
-			const trimmed = item.trim();
-			if (!trimmed) {
-				throw new Error(
-					"'successCriteria' items must not be empty. Each condition should be a short, single-line, checkable statement. Correct: {\"action\":\"update\",\"objective\":\"...\",\"successCriteria\":[\"tests pass\",\"tsc clean\"]}",
-				);
-			}
-			if (/[\r\n]/.test(trimmed)) {
-				throw new Error(
-					"'successCriteria' items must be single-line (no line breaks). Split multi-line text into separate semicolon-separated items, one condition per item. Correct: /goal update <objective> --criteria \"line 1; line 2\"",
-				);
-			}
-			validatedCriteria.push(trimmed);
-		}
+		validatedCriteria = validateSuccessCriteriaItems(criteria, CRITERIA_HINTS_SLASH);
 	}
 	const state = session.state;
 	const oldObjective = state.objective;

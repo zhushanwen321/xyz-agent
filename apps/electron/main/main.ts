@@ -70,6 +70,7 @@ import { ReleaseChecker } from './release-checker.js'
 import { MockReleaseChecker, DEV_MOCK_UPDATE_ENABLED } from './dev/mock-release-checker.js'
 import { updateOrchestrator } from './update/orchestrator.js'
 import { maybeRollbackInterruptedUpdate, cleanupCompletedUpdate } from './update/update-self-healer.js'
+import { killActiveCurlDownloads } from './update/curl-download.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
@@ -319,6 +320,9 @@ let isQuitting = false
 app.on('before-quit', (event) => {
   if (isQuitting) return // 第二次进入（app.quit() 触发），放行
   isQuitting = true
+  // D6：curl 子进程非 detached，退出前同步清杀防孤儿进程继续占用带宽
+  // （无活跃下载时 no-op；半下载产物由 .downloading 后缀 + sha256 校验兜底）
+  killActiveCurlDownloads()
   event.preventDefault()
   // W-Proc2 + W2：runtime stop 已 end() stderrSink；此处 flush 等 'finish' 落盘后再 quit。
   // stop() 路径未触发（runtime 自然退出）时此 flush 是落盘的唯一保障。

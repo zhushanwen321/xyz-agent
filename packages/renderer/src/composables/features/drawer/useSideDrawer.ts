@@ -32,7 +32,7 @@
  *   { useSideDrawer, type SideDrawerTab }——chat-w6 迁移后改指向 core API。
  * D 可平滑迁移（改 import 指向 '@xyz-agent/core/domain/drawer' 即可，~11 生产 + ~14 测试）：
  *   生产：useMarkdownInteractions.ts / useRunInTerminal.ts / useCloseShortcut.ts
- *   （isOpen/close）/ useDetailPane.ts（detailFilePath）/ useSidebarNew.ts（open）/ stores/chat.ts
+ *   （isOpen/close）/ useDetailPane.ts（detailFilePath）/ useSidebar.ts（open）/ stores/chat.ts
  *   （open('tasks') + setPendingOpenForSid）/ FileTreeRow.vue / Sidebar.vue（open）/ GitPanel.vue /
  *   CommandDocPanel.vue（selectedCommandName）/ lib/search-types.ts（类型 re-export）。
  *   测试：useSideDrawer.test.ts（兼容层自身）/ useDetailPane.test.ts / useCloseShortcut.test.ts /

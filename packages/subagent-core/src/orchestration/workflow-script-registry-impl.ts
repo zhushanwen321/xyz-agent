@@ -29,6 +29,28 @@ import {
   type WorkflowScanConfig,
 } from "./config-loader.ts";
 
+// ── barrel 导出面（sink 设计 U1：WorkflowScript 实体 + 按路径加载工厂）──
+
+// WorkflowScript 类（实体：sourceCode/validate/toExecutable 收敛）导出给 barrel
+// re-export——第三宿主仅凭导出面即可消费实体（G3），不再鸭子复刻整类（§2.2 A2）。
+export { WorkflowScript };
+
+/**
+ * 按绝对路径加载单个 workflow 脚本的自由函数工厂（U1）。
+ *
+ * 与 `new WorkflowScriptRegistryImpl().getPath(path)` 等价的无状态形态：barrel
+ * 消费面（zsw vendor / 第三宿主）不暴露 registry 实例时的一次性加载入口。底层走
+ * getWorkflowByPath 的 60s TTL 缓存与 m5 mtime 缓存层，重复调用不重复读盘。
+ *
+ * 返回 undefined：引用非法（相对路径 / 非 .js / 含 `..` 段——normalizeRef 拒绝）。
+ * 返回 available=false 的 stub：文件不可读或 meta 提取失败（loader never throws）。
+ */
+export async function loadWorkflowScriptByPath(
+  path: string,
+): Promise<WorkflowScript | undefined> {
+  return new WorkflowScriptRegistryImpl().getPath(path);
+}
+
 // ── WorkflowScriptRegistryImpl ───────────────────────────────
 
 /**

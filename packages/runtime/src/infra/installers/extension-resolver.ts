@@ -23,9 +23,6 @@ import { readSettings } from '../pi/pi-settings-store.js'
 import { mandatoryExtensions } from '@xyz-agent/shared'
 import type { IExtensionResolver, ExtensionPaths, DiscoveredExtension, ExtensionSource } from '../../services/ports/installer.js'
 
-// re-export ExtensionPaths 供历史 import 此文件的消费者使用（类型归属 ports）
-export type { ExtensionPaths }
-
 const log = {
   info: (...args: unknown[]) => console.log('[extension-resolver]', ...args),
   warn: (...args: unknown[]) => console.warn('[extension-resolver]', ...args),
@@ -40,8 +37,8 @@ type SourceName = (typeof PRIORITY_ORDER)[number]
 /** 扫描结果：extension name → 目录绝对路径 */
 type ExtensionMap = Map<string, string>
 
-// ExtensionPaths 定义在 services/ports.ts（依赖倒置：infra 实现接口，类型归属 service 契约）。
-// 文件顶部已 re-export，此处不再重复。
+// ExtensionPaths 定义在 services/ports/installer.ts（依赖倒置：infra 实现接口，类型归属 service 契约）。
+// 本文件只 import 使用，不再 re-export（无消费者经此文件取该类型）。
 
 export interface SourceMap {
   source: SourceName
@@ -81,7 +78,7 @@ export class ExtensionResolver implements IExtensionResolver {
     if (discoveryExtDirs.length > 0) {
       sources.push({ source: 'discovery', extensions: this.scanDiscoveryExtensions(discoveryExtDirs) })
     }
-    sources.push({ source: 'npm', extensions: this.scanNpmExtensions(projectRoot, packaged) })
+    sources.push({ source: 'npm', extensions: this.scanNpmExtensions(projectRoot) })
 
     const deduped = this.deduplicate(sources)
     log.info(`[extension-resolver] resolved ${deduped.size} extensions from ${sources.length} sources`)
@@ -90,7 +87,7 @@ export class ExtensionResolver implements IExtensionResolver {
   }
 
   /**
-   * 扫描 npm extension：用户手动 npm 安装的扩展（dev 模式从 package.json dependencies
+   * 扫描 npm extension：用户手动 npm 安装的扩展（从 package.json dependencies
    * 白名单 resolve）。
    *
    * builtin @zhushanwen/pi-* 不经此方法：现行 staged 打包内置——esbuild bundle 到
@@ -102,32 +99,15 @@ export class ExtensionResolver implements IExtensionResolver {
    * [HISTORICAL] builtin 机制演化：builtin 依赖（随产物 node_modules 打包）→ Settings
    * 推荐安装不打包进产物（2026-07-04，electron-builder.yml 曾移除 @zhushanwen
    * extraResources 拷贝）→ mandatory npm 安装 → staged 打包内置（2026-08-12，现行）。
-   * 打包模式下此方法扫描 Resources/node_modules/@zhushanwen/（演化第一阶段的遗留
-   * 兜底路径，现行打包不产出该目录，existsSync 不存在即返回空 Map）；开发模式下
+   * 演化第一阶段的 packaged 分支（扫描 Resources/node_modules/@zhushanwen/ 兜底路径）
+   * 已删除——现行打包不产出该目录（electron-builder.yml files 白名单不含 @zhushanwen，
+   * extraResources 只拷 resources/extensions），分支恒返回空 Map，无行为。
    * projectRoot = apps/electron（runtime cwd），读 apps/electron/package.json。
    */
-  scanNpmExtensions(projectRoot: string, packaged: boolean): ExtensionMap {
+  scanNpmExtensions(projectRoot: string): ExtensionMap {
     const result: ExtensionMap = new Map()
 
-    // 打包模式：不用读 package.json，直接从 extraResources 拷贝的 node_modules 扫描
-    if (packaged) {
-      const bundledNmDir = join(projectRoot, 'node_modules', '@zhushanwen')
-      if (!existsSync(bundledNmDir)) return result
-      try {
-        const entries = readdirSync(bundledNmDir)
-        for (const entry of entries) {
-          const pkgDir = join(bundledNmDir, entry)
-          if (!statSync(pkgDir).isDirectory()) continue
-          if (!this.isValidPiExtension(pkgDir)) continue
-          result.set(this.readExtName(pkgDir), pkgDir)
-        }
-      } catch (e) {
-        log.warn(`[extension-resolver] failed to scan packaged node_modules: ${e}`)
-      }
-      return result
-    }
-
-    // 开发模式：从 package.json dependencies 白名单 resolve
+    // 从 package.json dependencies 白名单 resolve
     const pkgJsonPath = join(projectRoot, 'package.json')
     if (!existsSync(pkgJsonPath)) return result
 

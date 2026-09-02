@@ -51,6 +51,8 @@ export default {
     // RM2.3：GitHub API 限额退避中的非侵入提示（非错误，不进 error 态）
     rateLimited: '检查更新接口已被 GitHub 限额，约 2 小时内暂停自动检查',
     staleRelease: '检测到更新的版本，已为你刷新更新信息',
+    // update-network-resilience D9：网络/代理类错误的 suggestion 末尾追加手动下载逃生通道指引
+    manualDownloadHint: '也可从 release 页手动下载安装包，放入手动升级目录后重试（目录路径见 设置 → 更新 → 手动升级通道）',
   },
   sessionItem: {
     rename: '重命名',

@@ -1,4 +1,4 @@
-// src/tui/bg-notify-render.ts
+// src/interface/bg-notify-render.ts
 //
 // background 完成通知的对话流渲染器。
 // pi.registerMessageRenderer("subagent-bg-notify", ...) 注册。
@@ -27,7 +27,7 @@ import { deriveOutcome } from "@zhushanwen/subagent-core/execution/execution-rec
 import { CLOSED_REASONS } from "@zhushanwen/subagent-core/execution/types.ts";
 import type { ClosedReason, ExecutionOutcome } from "@zhushanwen/subagent-core/execution/types.ts";
 import {
-  firstLine,
+  firstLineSanitized,
   padToVisible,
   shortId,
   statusGlyph,
@@ -66,8 +66,6 @@ interface BgNotifyRecord {
   model?: string;
   result?: string;
   error?: string;
-  /** 对话轮次计数（仅 idle 有意义）。 */
-  round?: number;
   /** [MF#1] worktree background 完成通知携带的 patch 文件路径。 */
   patchFile?: string;
 }
@@ -119,10 +117,8 @@ export function renderBgNotifyMessage(
  * 它是全局重置会清除背景色（背景框内省略号后失去背景的根因）。
  * 本组件在施加背景前，把行内全局 reset 替换为只重置前景/粗体/斜体/下划线
  * 的精确 reset（不含背景 `\x1b[49m`），确保背景不断裂。
- *
- * 导出以便其他 message renderer 复用边框样式。
  */
-export class BorderedBgBox implements Component {
+class BorderedBgBox implements Component {
   private lines: string[];
   private t: ThemeLike;
   private cache: { width: number; lines: string[] } | undefined;
@@ -319,13 +315,7 @@ function extractBgNotifyRecord(details: unknown): BgNotifyRecord | undefined {
     error: typeof d.error === "string" ? d.error : undefined,
     closedReason: toClosedReason(d.closedReason),
     outcome: toOutcome(d.outcome),
-    round: typeof d.round === "number" ? d.round : undefined,
     // [MF#1] 提取 patchFile（worktree background 完成通知携带）。
     patchFile: typeof d.patchFile === "string" ? d.patchFile : undefined,
   };
-}
-
-// firstLine 取首非空行（共享自 ./format.ts）；本文件额外压 \r\t 防多行展开。
-function firstLineSanitized(text: string): string {
-  return firstLine(text).replace(/[\r\t]+/g, " ");
 }

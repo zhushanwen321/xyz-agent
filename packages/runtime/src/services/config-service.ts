@@ -28,6 +28,7 @@ import {
   type ProviderImportResult,
   type SkillDirConfig,
   type ProviderId,
+  type LlmRetryConfig,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore } from './ports/config.js'
@@ -98,6 +99,7 @@ import {
   getTerminalConfig as getTerminalConfigImpl,
   setTerminalConfig as setTerminalConfigImpl,
 } from './terminal-config-helper.js'
+import type { ILlmRetrySettings, LlmRetryConfigSnapshot } from './ports/llm-retry-settings.js'
 
 // ── Service ─────────────────────────────────────────────────────
 
@@ -124,6 +126,12 @@ export class ConfigService implements IConfigService {
      * 能力分域见 provider-config-helper.ts 的 ProviderExtras* 类型注释。
      */
     private providerExtrasStore?: ProviderExtrasServiceDeps,
+    /**
+     * LLM 重试配置域 port（pi settings.json 的 retry 字段，设计 llm-retry-settings §3.4）。
+     * infra 实现 PiRetrySettings 在组合根注入。可选注入：未注入时 get/set 抛错
+     * （生产恒注入；既有测试不关心 retry 域可不传）。
+     */
+    private llmRetrySettings?: ILlmRetrySettings,
   ) {}
 
   /**
@@ -467,5 +475,22 @@ export class ConfigService implements IConfigService {
 
   setTerminalConfig(config: TerminalConfig): { ok: boolean; error?: string } {
     return setTerminalConfigImpl(this.configStore.getConfigDir(), config)
+  }
+
+  // ── LLM retry config（llm-retry-settings 设计，单行委托注入 port）──
+  // pi settings.json 的 retry 域：读写/校验/D3 merge 逻辑在 port 实现（PiRetrySettings）。
+
+  getRetryConfig(): LlmRetryConfigSnapshot {
+    if (!this.llmRetrySettings) {
+      throw new Error('[config-service] llmRetrySettings not available (getRetryConfig)')
+    }
+    return this.llmRetrySettings.getRetryConfig()
+  }
+
+  setRetryConfig(config: LlmRetryConfig): { ok: boolean; error?: string } {
+    if (!this.llmRetrySettings) {
+      throw new Error('[config-service] llmRetrySettings not available (setRetryConfig)')
+    }
+    return this.llmRetrySettings.setRetryConfig(config)
   }
 }

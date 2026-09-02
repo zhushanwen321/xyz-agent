@@ -79,13 +79,16 @@ describe('W3-A2-error-suggestion-state-vitest', () => {
       suggestion: 'macOS 未授予「本地网络」权限。恢复指引：系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」，重启应用后重试',
     })
 
-    // 验证 state.errorSuggestion 被正确设置
+    // 验证 state.errorSuggestion 被正确设置（UPDATE_PROXY_UNREACHABLE 属网络类 → 末尾追加
+    // 手动下载指引，D9；本文件 mock i18n t 返回 key，追加段为 key 本身）
     expect(state.state).toBe('error')
     expect(state.errorMessage).toBe('无法连接代理 (EHOSTUNREACH)')
-    expect(state.errorSuggestion).toBe('macOS 未授予「本地网络」权限。恢复指引：系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」，重启应用后重试')
+    expect(state.errorSuggestion).toBe(
+      'macOS 未授予「本地网络」权限。恢复指引：系统设置 → 隐私与安全性 → 本地网络 → 允许「太极」，重启应用后重试\nsidebar.update.manualDownloadHint',
+    )
   })
 
-  it('W3-A2-error-suggestion-state-vitest: 无 suggestion 时 errorSuggestion 为空', async () => {
+  it('W3-A2-error-suggestion-state-vitest: 无 suggestion 的网络类错误 → errorSuggestion 为手动下载指引', async () => {
     let errorCallback: ((e: { stage: string; message: string; errorCode?: string; suggestion?: string }) => void) | null = null
     onUpdateErrorMock.mockImplementation((cb: typeof errorCallback) => {
       errorCallback = cb
@@ -95,17 +98,18 @@ describe('W3-A2-error-suggestion-state-vitest', () => {
     const { useAppUpdate } = await import('@/composables/features/settings/useAppUpdate')
     const { state } = useAppUpdate()
 
-    // 模拟 main 进程推送错误事件（无 suggestion）
+    // 模拟 main 进程推送错误事件（无 suggestion；UPDATE_NETWORK_FAILED 属网络类 →
+    // D9 追加手动下载指引作为唯一 suggestion 内容）
     errorCallback!({
       stage: 'downloading',
       message: '网络连接失败',
       errorCode: 'UPDATE_NETWORK_FAILED',
     })
 
-    // 验证 state.errorSuggestion 为空
+    // 验证 state.errorSuggestion 为追加的手动下载指引（mock t 返回 key）
     expect(state.state).toBe('error')
     expect(state.errorMessage).toBe('网络连接失败')
-    expect(state.errorSuggestion).toBe('')
+    expect(state.errorSuggestion).toBe('sidebar.update.manualDownloadHint')
   })
 })
 

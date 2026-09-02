@@ -6,7 +6,7 @@
  */
 import { computed, onScopeDispose, ref, shallowRef, type ComputedRef, type ShallowRef } from 'vue'
 import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from './mutations'
-import { truncateToolOutputBatch } from './truncate-tool-output'
+import { truncateToolOutputBatch, truncateToolOutputBatchCached } from './truncate-tool-output'
 import { dispatchMessageEvent } from './effects/registry'
 import {
   applyEntry,
@@ -103,6 +103,133 @@ function attachRunningToolCall(prev: Message[], form: PiToolCallEntryForm): Mess
 }
 
 /**
+ * [steer-bubble u3 / docs/design/steer-followup-user-bubble-display.md D3]
+ * 基线（服务端 getHistory 快照）与 live 分区的两步合并——reconcileHistory 与 hydrate
+ * 共用同一函数（设计 U3：live ≡ reload，两条历史刷新入口语义同源）。
+ *
+ * 背景（F2）：切入 session 的 getHistory 存在一次本地 RPC 往返窗口——快照取得时消息
+ * 未投递、返回前 pi 恰好投递（drain 帧 → appendUser 入流），旧快照整量替换会抹掉已
+ * 显示的用户气泡（G4 违背）。
+ *
+ * 步骤① 尾部保护段收集：从分区尾向前收集「streaming assistant（pi 无对应 entry 的
+ * 进行中实体，直接替换会让后续 text_delta 被守卫丢弃、流永久停滞）或 user
+ * （piEntryId 缺失或不在基线 id 集——live overlay 的结构性特征：appendUser 剥除
+ * piEntryId 且 id 为客户端 u-<uuid>，与基线 entry 派生 uuidv7 永不相等）」的连续段，
+ * 遇其他已确认消息即停——已确认部分由基线接管（基线是准确相）。
+ *
+ * 步骤② user 正序-尾窗对齐去重：a = min(保护段 user 数 n, 基线尾部连续 user 数 k)，
+ * 保护段**正数**第 1..a 条 ↔ 基线尾部正数第 k−a+1..k 条逐位对齐，对齐上的保护段
+ * user 剔除（基线版本已含该消息），其余 n−a 条保留。方向依据：投递序 = 落盘序
+ * （pi session 文件 appendFileSync 按投递序追加），基线滞后时缺的是尾部新消息
+ * （后缀），对齐必然从保护段头部（先投递）对起。**不能倒序**：k < n 时倒序会把
+ * 保护段最新条（基线没有）错配到基线最新条（较旧）——剔掉基线没有的、留下基线
+ * 已有的，恰好双计反转（设计 D3 被否项）。
+ *
+ * 已知边界（设计 D3，可接受）：跨 turn 重发相同文本时数量对齐可能误剔新 overlay——
+ * 表现为该消息暂以基线旧版本显示（位置在历史区），不丢消息不重复，新 entry 落盘后
+ * 下一轮 reconcile 自然收敛。
+ */
+/**
+ * user 消息文本投影（mergeBaselineWithLive 文本多重集判据用）：基线（pi 文本经
+ * textToSegments 重派生）与 live overlay（原始 segments）两侧同函数转换，纯文本
+ * 逐字节同源（P2 探针），富文本 badge 维度两态一致（segmentsToText 往返）。
+ */
+function userMessageText(m: Message): string {
+  const c = m.content
+  if (typeof c === 'string') return c
+  if (Array.isArray(c)) return segmentsToText(c as Segment[])
+  return ''
+}
+
+function mergeBaselineWithLive(baseline: Message[], partition: Message[]): Message[] {
+  // 基线身份集：piEntryId 与 id 双收（user/assistant 消息带 piEntryId；system 族无
+  // piEntryId 字段但 id 即 entry 派生 uuidv7——与 hydrate 锚取值 `piEntryId ?? id` 对称）。
+  // 分区 user 的已确认判据 = 身份任一命中：piEntryId 命中覆盖真实基线投影（前轮
+  // reconcile/hydrate 注入的消息），id 命中兜底同 id 形态；live overlay 的 u-<uuid> id
+  // 与基线 uuidv7 是两个永不相等的 id 空间（mutations.ts prependHistory 同款论证），
+  // 不会被误判已确认。
+  const baselineIds = new Set<string>()
+  for (const m of baseline) {
+    if (m.piEntryId !== undefined) baselineIds.add(m.piEntryId)
+    baselineIds.add(m.id)
+  }
+  // [steer-bubble Gate B 修复 2026-08-30] user 文本多重集判据（第三判据）：
+  // AC-2 实跑暴露的结构性竞态——pi 文件（基线源）对「message_end(user) 帧已落盘但帧
+  // 仍在途」的消息领先于 live 帧流，此时 overlay（乐观/腿 1 投递插入，身份判据结构性
+  // 永假：piEntryId 剥除 + id 空间不相交）会被当 live-only 保护保留，与基线权威副本
+  // 双计（实测 R3-PROMPT 前端 2 条 / pi 1 条；触发形态 = 基线尾部为 assistant（k=0）
+  // 时数量尾窗对齐 a=0 失去去重能力）。文本判据：pi 存储文本与提交 segmentsToText
+  // 输出同源恒等（P2 探针：pi 不 trim，纯文本逐字节保留；富文本 badge 经
+  // segmentsToText→pi→textToSegments 往返同文），skill 展开消息（pi 文本 ≠ 提交文本）
+  // 自然失配 → 落回身份+数量对齐现状。多重集按分区正序（= 投递序 = pi 落盘序）消费，
+  // 每条基线副本至多抵消一条 overlay；被消费的基线副本同步从步骤②的尾窗 k 中排除
+  // （消费按序 = 基线 user 序前缀，尾部遇 consumed 即止），防同文本双投递场景
+  // （AC-2b：[T,T] overlay、基线只含 1×T）被数量对齐二次错剔未落盘副本。
+  const baselineUserIdxByText = new Map<string, number[]>()
+  baseline.forEach((m, i) => {
+    if (m.role !== 'user') return
+    const t = userMessageText(m)
+    if (!t) return
+    const q = baselineUserIdxByText.get(t)
+    if (q) q.push(i)
+    else baselineUserIdxByText.set(t, [i])
+  })
+  const consumedBaselineIdx = new Set<number>()
+  const consumeBaselineUserText = (t: string): boolean => {
+    if (!t) return false
+    const q = baselineUserIdxByText.get(t)
+    if (!q || q.length === 0) return false
+    consumedBaselineIdx.add(q.shift()!)
+    return true
+  }
+  const identityConfirmed = (m: Message): boolean =>
+    (m.piEntryId !== undefined && baselineIds.has(m.piEntryId)) || baselineIds.has(m.id)
+  // 预计算整分区三态确认标记（正序消费多重集——尾部 walk 的逆序调用序会把同文本
+  // 新 overlay 错配到基线旧副本上，AC-2b 同文本双投递场景实测暴露）：
+  // 'identity' = 前轮合并注入的基线投影；'text' = 与基线副本文本同源的 dup overlay；
+  // false = 未确认（live-only 候选）。
+  type ConfirmKind = 'identity' | 'text' | false
+  const confirmKinds: ConfirmKind[] = partition.map((m) => {
+    if (identityConfirmed(m)) return 'identity'
+    if (m.role === 'user' && consumeBaselineUserText(userMessageText(m))) return 'text'
+    return false
+  })
+
+  // 步骤①：尾部保护段。'text' 确认的 dup overlay **透明跳过**（丢弃但不停止 walk——
+  // 它前面的 streaming assistant 仍可能 live-only，F2 组合形态 [streaming, dup-overlay]
+  // 若在 dup 处停止会把 streaming 实体踢出保护、流被基线替换后 delta 守卫丢弃）；
+  // 'identity' 确认或 complete assistant（非 streaming 的已定稿消息）才停止。
+  const protectedSeg: Message[] = []
+  for (let i = partition.length - 1; i >= 0; i--) {
+    const kind = confirmKinds[i]!
+    if (kind === 'text') continue
+    const m = partition[i]!
+    if (kind === 'identity') break
+    const isLiveStreaming = m.role === 'assistant' && m.status === 'streaming'
+    const isUnconfirmedUser = m.role === 'user'
+    if (!isLiveStreaming && !isUnconfirmedUser) break
+    protectedSeg.unshift(m)
+  }
+
+  // 步骤②：user 正序-尾窗对齐去重（剔除保护段头部 a 条 user——它们已被基线尾部覆盖）
+  let k = 0
+  while (k < baseline.length) {
+    const idx = baseline.length - 1 - k
+    if (baseline[idx]!.role !== 'user') break
+    if (consumedBaselineIdx.has(idx)) break
+    k++
+  }
+  const protectedUserIdx: number[] = []
+  for (let i = 0; i < protectedSeg.length; i++) {
+    if (protectedSeg[i]!.role === 'user') protectedUserIdx.push(i)
+  }
+  const a = Math.min(protectedUserIdx.length, k)
+  const alignedIdx = new Set(protectedUserIdx.slice(0, a))
+  const keptTail = protectedSeg.filter((_, i) => !alignedIdx.has(i))
+  return [...baseline.map((m) => ({ ...m })), ...keptTail]
+}
+
+/**
  * 读 streaming 超时阈值（D-003 阈值可配置 + D-016 IPC）。
  * [D-016] 经 IPC 读主进程 env（非 import.meta.env，Vite 不暴露 XYZ_ 前缀）。
  * 留在模块作用域以控制 setup 函数行数（max-lines-per-function）。
@@ -168,6 +295,28 @@ export function createChatStore() {
    * 恢复机制留在 store（SSOT 检查点 2 裁决：不强行并入统一视图）。
    */
   const pendingBuffer = ref<Map<string, PendingItem[]>>(new Map())
+  /**
+   * [steer-bubble u0 / docs/design/steer-followup-user-bubble-display.md D2]
+   * per-session inflight 投递确认计数（Map 分区，对齐 queueStates/pendingBuffer 惯例，
+   * 不可变写保证响应式）。
+   *
+   * 语义 = **已显示待确认的投递数**：steer/followUp 气泡已进对话流（腿 1 drain 消费）
+   * 或 send 乐观插入，但其确认帧 message_end(user) 未到。不变式 inflight ≥ 0
+   * （decrementInflight 钳制，配额漂移不产生负值）；正常路径逐投递归零——pi 投递
+   * 时序保证 drain 帧先于 message_end，无欠账可累积。
+   *
+   * 三个维护点（本单元只建 state 与 action 面，不接线调用方——后续单元接）：
+   * 1. 腿 1 消费：queue_update drain 帧 drainN 实取 m 条 → +m（drain 帧即投递证据，
+   *    未显示的不确认，u2 接）
+   * 2. send 乐观：appendUser 乐观插入 +1 / RPC 失败 catch 回滚 −1（挂 useChat send
+   *    调用点，不在 appendUser 内防双计，u2 接）
+   * 3. message_end(user) 确认：−1（inflight > 0 抵消跳过腿 2 兜底，u1 接）
+   *
+   * 清零挂点（D4 生命周期闭合）：abort（message.complete{stopReason:'aborted'}）与
+   * disposeSession——pi 队列确定性作废后确认基线一并作废，防残留吞掉后续投递的确认
+   * 配额。LRU 驱逐与断连收口**刻意不清**（D4 豁免，见 lruEvictDeps 处声明注释）。
+   */
+  const inflightCounts = ref<Map<string, number>>(new Map())
   /**
    * [W21] per-session reducer state（实时 feed 喂入 applyEntry 的累积态）。
    *
@@ -319,7 +468,14 @@ export function createChatStore() {
    *  W19 review Fix-2：deleteChangeSetStatusesFor 注入——删 messages 分区时同步清该 sid 的
    *  changeSetStatuses 前缀条目（此前仅 disposeSession 清理，LRU 驱逐不清 → map 泄漏）。
    *  W21：同回调内联清 entryStates 分区（reducer 累积态随 messages 分区同生共死——驱逐重进后
-   *  由 hydrate 全量重放重建，残留旧累积会造成 W22 对账基线陈旧）。 */
+   *  由 hydrate 全量重放重建，残留旧累积会造成 W22 对账基线陈旧）。
+   *  [steer-bubble D4 豁免声明] 本驱逐回调刻意**不**清 pendingBuffer / queueStates /
+   *  inflightCounts——与「disposeSession 同点全清」的既有清理惯例不一致是有意为之
+   *  （docs/design/steer-followup-user-bubble-display.md D4「刻意保留」）：这三者是不可
+   *  重建状态（segments 暂存与 inflight 确认基线仅存在于前端，清了即永久丢失/漂移），
+   *  且驱逐重进后腿 1 暂存与腿 2 判定仍依赖它们；entryStates/anchors/hydrated 是重建型
+   *  （hydrate 重放可恢复）才随驱逐清理。断连收口（clearIndependentTransient）同理豁免
+   *  pendingBuffer 与 inflight，见该处注释。后续维护勿按惯例顺手补清。 */
   const lruEvictDeps = makeLruEvictDeps(
     messages,
     hydrated,
@@ -364,15 +520,26 @@ export function createChatStore() {
     failedHistory.value = next
   }
 
-  /** 注入历史（首入 session）。W2 H3 截断回流（AC-10），W3 touchLru。 */
+  /**
+   * 注入历史（首入 session）。W2 H3 截断回流（AC-10），W3 touchLru。
+   *
+   * [steer-bubble u3/D3] 未 hydrate 的分区也可能持有 live 实体（send 乐观插入 /
+   * steer 投递 overlay 先于 hydrate 到达）——快照不含它们时整量替换会抹掉已显示
+   * 气泡（F2 的首入窗口，G4）。与 reconcileHistory 走同一合并函数（设计 U3：
+   * live ≡ reload，两条历史刷新入口语义同源）。分区为空时合并结果 = 基线本身，
+   * 与旧的整量替换行为逐字等价。
+   */
   function hydrate(sessionId: string, history: Message[]): void {
     if (hydrated.value.has(sessionId)) return
-    const cloned = truncateToolOutputBatch(history.map((m) => ({ ...m })))
-    commitMessages(messages, sessionId, cloned)
+    const cur = messages.value.get(sessionId)?.value ?? []
+    commitMessages(messages, sessionId, truncateToolOutputBatch(mergeBaselineWithLive(history, cur)))
     // [W5 D5] hydrate 尾窗锚：hydrate 守卫保证每 session 只在此写一次；
     // disposeSession / LRU 驱逐清 hydrated 后重 hydrate 到这里 → set 覆盖旧锚。
     // 空 history（新 session）不记锚——此时无 load-more（truncated=false），锚缺失走兜底。
-    const anchorMsg = cloned[0]
+    // [steer-bubble u3] 锚取**基线**首条（非 merged 首条）：合并追加的尾部保护段是
+    // live 实体（客户端 id，非文件侧身份），锚是 load-more 对全量历史的切分依据，
+    // 必须锚定在文件侧消息上。
+    const anchorMsg = history[0]
     if (anchorMsg) hydrateAnchors.set(sessionId, anchorMsg.piEntryId ?? anchorMsg.id)
     hydrated.value = new Set(hydrated.value).add(sessionId)
     lruTouch(sessionId) // W3: LRU recency
@@ -384,7 +551,7 @@ export function createChatStore() {
   }
 
   /**
-   * 切入 reconcile：entry 历史（服务端 getHistory 全量）与 live 分区合并。
+   * 切入 reconcile：entry 历史（服务端 getHistory 快照）与 live 分区合并。
    *
    * [背景 session-reconcile 2026-08-22] 后台 session（agent-managed 子 session）在
    * 前端不在场时推进/完成 turn——hydrate 的一次性守卫会让切入后的新 entry 永不出现
@@ -393,9 +560,11 @@ export function createChatStore() {
    * 守卫丢弃 → 流永久停滞。合并方向（登记表 #7 切入 reconcile 规则）：
    * **entry 历史为基线，分区尾部 streaming 实体追加其后**（live 真相优先于 entry 快照）。
    *
-   * - 未 hydrate → 等价 hydrate（原语义：全量替换 + 锚 + 标记）
-   * - 已 hydrate → 基线替换 + 保留尾部 streaming assistant（进行中轮次不断链）；
-   *   turn 已结束（无 streaming 实体）则纯刷新到最新 entries
+   * - 未 hydrate → 等价 hydrate（原语义：合并注入 + 锚 + 标记）
+   * - 已 hydrate → 基线替换 + 保留尾部保护段（streaming assistant + 未确认 user，
+   *   [steer-bubble u3/D3] 两步合并：尾部保护段收集 + user 正序-尾窗对齐去重，见
+   *   mergeBaselineWithLive——快照滞后窗口不丢已投递气泡、不双计；turn 已结束（无
+   *   保护段）则纯刷新到最新 entries
    */
   function reconcileHistory(sessionId: string, history: Message[]): void {
     if (!hydrated.value.has(sessionId)) {
@@ -403,16 +572,7 @@ export function createChatStore() {
       return
     }
     const cur = messages.value.get(sessionId)?.value ?? []
-    // 尾部连续 streaming assistant（live 进行中实体，pi 无对应 entry）。一个 turn 至多
-    // 一条 streaming assistant；从尾向前截，遇非 streaming 即止。
-    let cut = cur.length
-    while (cut > 0 && cur[cut - 1].role === 'assistant' && cur[cut - 1].status === 'streaming') {
-      cut--
-    }
-    const trailing = cur.slice(cut)
-    const merged = trailing.length > 0
-      ? [...history.map((m) => ({ ...m })), ...trailing]
-      : history.map((m) => ({ ...m }))
+    const merged = mergeBaselineWithLive(history, cur)
     commitMessages(messages, sessionId, truncateToolOutputBatch(merged))
     lruTouch(sessionId) // W3: LRU recency（切入刷新视同活跃访问）
   }
@@ -509,8 +669,18 @@ export function createChatStore() {
   /**
    * [W14] 深度结构性对账（D6：深度权威 = pi pendingMessageCount）。
    *
+   * [steer-bubble u2 / docs/design/steer-followup-user-bubble-display.md D4] **投递侧
+   * （queue_update 每帧）裁剪已移除**：drain 后立即裁到深度会吃掉腿 2（message_end(user)）
+   * 还没回填的 segments，且是丢消息的不可逆放大器（F3：断连 prev 缺失时以本帧深度裁空
+   * buffer，内容永久删除）。现调用点（均经 ctx 注入 registry，非 queue_update）：
+   * - G-023 时点（message_start(assistant)）僵尸清理：buffer 存量 > 快照深度时裁残量
+   *   （深度 0 = 快照已空/无条目形态，对账到零）。
+   *
+   * [steer-bubble D4 修订 2026-08-30] abort 调用点已移除：pi abort() 不清队列（Gate B
+   * 实测残余投递），pendingBuffer 随 pi 存活队列保留，两腿在下一 prompt 照常消费。
+   *
    * 不变式：renderer 提交数 − pi 队列深度 = 已投递数，pendingBuffer 存量 = 提交数 −
-   * 已投递数 = 深度。每帧 queue_update（drain 处理后）对账 pendingBuffer 长度 vs 深度：
+   * 已投递数 = 深度。偏差语义：
    * - buffer > 深度：队列中已不存在的暂存（僵尸项——永不被投递且污染后续 FIFO 计数），
    *   裁剪到深度（保留最早的，与 FIFO 取出顺序一致）。
    * - buffer < 深度：pi 队列存在 renderer 未提交的条目（扩展 deliverAs 注入，D6 已知
@@ -542,6 +712,45 @@ export function createChatStore() {
     )
     if (idx === -1) return
     pendingBuffer.value = new Map(pendingBuffer.value).set(sessionId, prev.filter((_, i) => i !== idx))
+  }
+
+  // ── inflight 投递确认计数（[steer-bubble u0/D2] 契约层：state 见上，调用方接线归 u1/u2）──
+
+  /** 读 per-session inflight 计数。无记录 = 0（归零即删条目，正常路径 Map 多数时间无该 sid）。 */
+  function getInflight(sessionId: string): number {
+    return inflightCounts.value.get(sessionId) ?? 0
+  }
+
+  /**
+   * inflight += n（默认 1）。腿 1 消费按 drainN 实取数传 m（u2），send 乐观 +1（u2）。
+   * n ≤ 0 no-op——实取数为 0（drain 差集 > 0 但暂存无匹配货）时不产生零值条目。
+   */
+  function incrementInflight(sessionId: string, n = 1): void {
+    if (n <= 0) return
+    inflightCounts.value = new Map(inflightCounts.value).set(sessionId, getInflight(sessionId) + n)
+  }
+
+  /**
+   * inflight -= n（默认 1）。message_end(user) 确认 −1（u1）/ send 失败回滚 −1（u2）。
+   * 钳制到 0（不变式 ≥ 0）：负值在「inflight > 0」判定上行为与 0 等同，钳制保证值域
+   * 始终符合语义声明。归零即删条目（Map 不积累零值）。
+   */
+  function decrementInflight(sessionId: string, n = 1): void {
+    if (n <= 0) return
+    const next = Math.max(0, getInflight(sessionId) - n)
+    if (next === 0) clearInflight(sessionId)
+    else inflightCounts.value = new Map(inflightCounts.value).set(sessionId, next)
+  }
+
+  /**
+   * inflight 清零（abort / disposeSession 挂点，D4：abort 后已显示未确认条目不会再有
+   * message_end → 确认基线作废；disposeSession 分区整体销毁）。幂等。
+   */
+  function clearInflight(sessionId: string): void {
+    if (!inflightCounts.value.has(sessionId)) return
+    const next = new Map(inflightCounts.value)
+    next.delete(sessionId)
+    inflightCounts.value = next
   }
 
   /**
@@ -581,15 +790,28 @@ export function createChatStore() {
    * store 不互 import 铁律：本方法经 routeInbound InboundEffects 回调链消费
    * （renderer useMessageEffects 注入），subagent 虚拟分区 id 由调用方经 shared 工厂构造。
    */
+  /**
+   * [E-4] subagent 基线投影的产物缓存（truncateToolOutputBatchCached 的短路表：
+   * 输入消息引用 → 上次投影产物）。
+   *
+   * per-factory 簿记（对齐 entryStates 判据，[ADR-0049 例外]）：投影是纯变换，同引用必得
+   * 同结果（ADR-0039 引用恒等 ⇒ 内容恒等），随 factory 实例隔离只为测试隔离。弱引用：
+   * 消息对象随分区销毁 / LRU 驱逐 GC 后条目自动回收，disposeSession / 驱逐**无需清理挂点**
+   * （重进分区 reducer 重建新对象，不命中即照常截断判定，无陈旧复用风险）。
+   */
+  const subagentProjectedCache = new WeakMap<Message, Message>()
+
   function applySubagentEntries(virtualId: string, entries: Array<PiEntry | PiToolCallEntryForm>): void {
     // PiEntry 先喂 reducer（fold 顺序敏感：assistant 定稿 → toolResult 的窗口配对回填依赖顺序）
     for (const entry of entries) {
       if (entry.type !== 'toolCall') applyEntryFrame(virtualId, entry)
     }
-    // 基线投影（无 PiEntry 的纯 toolCall 帧不触发投影——分区保持，overlay 直接操作 ref）
+    // 基线投影（无 PiEntry 的纯 toolCall 帧不触发投影——分区保持，overlay 直接操作 ref）。
+    // 已投影过的消息引用直接复用上次产物（reducer 不截断、历史 toolCall 原文 MB 级时
+    // 每帧全量重编码是投影热开销），输出形态与 truncateToolOutputBatch(map 浅拷贝) 逐值一致
     const state = entryStates.get(virtualId)
     if (state) {
-      commitMessages(messages, virtualId, truncateToolOutputBatch(state.messages.map((m) => ({ ...m }))))
+      commitMessages(messages, virtualId, truncateToolOutputBatchCached(state.messages, subagentProjectedCache))
     }
     // toolCall overlay 后置：基于投影后分区操作，保证挂载目标是基线末位 assistant
     for (const form of entries) {
@@ -617,6 +839,10 @@ export function createChatStore() {
         drainN,
         reconcilePending,
         applyEntryFrame,
+        getInflight,
+        incrementInflight,
+        decrementInflight,
+        clearInflight,
       },
       sessionId,
       msg,
@@ -830,7 +1056,9 @@ export function createChatStore() {
     // retryStates/queueStates 是深 ref，此写法同样正确触发。统一用"构造新 Map → delete → 赋值"范式。
     // 显式结构类型（对齐原 disposeSession 编排参数）：数组元素统一为 Map<string, unknown>，
     // 避免 TS 将不同 Map 元素推断为具体联合类型导致 new Map(ref.value) 不兼容。
-    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, compactingReasons]
+    // inflightCounts（[steer-bubble D4]）：disposeSession 同步清 inflight——确认基线随分区
+    // 销毁作废（与 LRU 驱逐的刻意豁免不同，见 lruEvictDeps 处声明注释）。
+    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, inflightCounts, compactingReasons]
     const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, compactingSessions, handingOffSessions, failedHistory]
     for (const ref of mapRefs) {
       if (ref.value.has(sessionId)) {
@@ -873,6 +1101,7 @@ export function createChatStore() {
     retryStates,
     queueStates,
     pendingBuffer,
+    inflightCounts,
     changeSetStatuses,
     failedHistory,
     hydrated,
@@ -892,6 +1121,10 @@ export function createChatStore() {
     drainN,
     reconcilePending,
     abortPending,
+    getInflight,
+    incrementInflight,
+    decrementInflight,
+    clearInflight,
     applyMessageEvent,
     isGenerating,
     isActive,

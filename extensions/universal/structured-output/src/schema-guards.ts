@@ -96,6 +96,10 @@ export function isToolExecutionEndEvent(
 	return typeof e === "object" && e !== null && "toolName" in e && "isError" in e;
 }
 
-/** swap 检测 + keyword-less schema 拒绝的纠错文案前缀，所有相关错误共用。 */
+/**
+ * swap 检测 + keyword-less schema 拒绝的纠错文案前缀，所有相关错误共用。
+ * 工具名逐字拼写（非 ${TOOL_NAME} 引用）：本模块是纯逻辑叶节点（零业务依赖），
+ * 反向 import tool-definition 会成环。
+ */
 export const CORRECT_USAGE_HINT =
-	"Correct: structured_output({schema:{type:'object',properties:{...}}, data:{...actual values}}). ";
+	"Correct: structured-output({schema:{type:'object',properties:{...}}, data:{...actual values}}). ";

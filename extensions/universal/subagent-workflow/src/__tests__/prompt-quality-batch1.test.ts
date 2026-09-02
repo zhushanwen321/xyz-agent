@@ -9,6 +9,7 @@
 import { readdirSync,readFileSync } from "node:fs";
 import { dirname,join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 import { describe, expect, it } from "vitest";
 
@@ -65,7 +66,12 @@ describe("U2: notifyDone 终止性原因追加防偷懒收尾", () => {
 describe("U3: not-found 错误含退路指引", () => {
   const toolWorkflowSrc = readSrc("src/interface/tool-workflow.ts");
   const toolWorkflowScriptSrc = readSrc("src/interface/tool-workflow-script.ts");
-  const subagentActionsSrc = readSrc("src/interface/subagent-actions.ts");
+  // [D6②] cancel not-found 文案权威源已随领域内核下沉 core subagent-actions-core
+  //（读 core 源文件——resolve 方式同下方 U4 的 createRequire 先例，exports ./* → src/*）
+  const subagentActionsCoreSrc = readFileSync(
+    createRequire(import.meta.url).resolve("@zhushanwen/subagent-core/execution/subagent-actions-core.ts"),
+    "utf-8",
+  );
 
   it("tool-workflow.ts: not-found 错误含 action:status 指引", () => {
     // abort 的 not-found 错误应有 action:status 指引（pause/resume 已随一次性生命周期移除）
@@ -79,23 +85,29 @@ describe("U3: not-found 错误含退路指引", () => {
     expect(toolWorkflowScriptSrc).toMatch(/Available:/);
   });
 
-  it("subagent-actions.ts: cancel not-found 含 includeFinished 指引", () => {
-    expect(subagentActionsSrc).toContain("includeFinished");
+  it("cancel not-found 含 includeFinished 指引", () => {
+    expect(subagentActionsCoreSrc).toContain("includeFinished");
   });
 });
 
 // ── U4: agent .md 无无效 frontmatter 键 ────────────────────────
 
 describe("U4: agent .md 无无效 frontmatter 键", () => {
-  const agentsDir = join(PKG_ROOT, "agents");
-  const agentFiles = readdirSync(agentsDir).filter((f) => f.endsWith(".md"));
+  // C5 过渡态收口：模板已迁 @zhushanwen/subagent-core/agents/（C1/D-1）——经
+  // ./workflows/* 子入口锚点解析 core 包根（与 src/host/pi-host.ts 同一锚）
+  const coreAgentsDir = join(
+    dirname(createRequire(import.meta.url).resolve("@zhushanwen/subagent-core/workflows/README.md")),
+    "..",
+    "agents",
+  );
+  const agentFiles = readdirSync(coreAgentsDir).filter((f) => f.endsWith(".md"));
 
   it("agents 目录有 ≥7 个 .md 文件", () => {
     expect(agentFiles.length).toBeGreaterThanOrEqual(7);
   });
 
   it.each(agentFiles)("%s 不含 extensions: 和 category: 行", (filename) => {
-    const src = readSrc(`agents/${filename}`);
+    const src = readFileSync(join(coreAgentsDir, filename), "utf-8");
     const lines = src.split("\n");
     // frontmatter 在第一个 --- 和第二个 --- 之间
     const fmStart = lines.indexOf("---");

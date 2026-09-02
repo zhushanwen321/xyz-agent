@@ -63,4 +63,68 @@ describe('tailLines', () => {
     expect(tailLines('l1\nl2', 3)).toEqual(['l1', 'l2'])
     expect(tailLines('', 3)).toEqual([])
   })
+
+  // ── 尾部扫描实现对拍（2026-08 性能优化：全文 split → 尾部倒找第 n 个换行）──
+  // tailLinesRef = 优化前实现（内联作参照基准），对拍保证逐 case 等价。
+  function tailLinesRef(text: string, n: number): string[] {
+    if (!text) return []
+    const lines = text.split('\n')
+    return lines.length <= n ? lines : lines.slice(-n)
+  }
+
+  /** 线性同余伪随机（seeded，可复现，不引第三方库） */
+  function makeLcg(seed: number): () => number {
+    let s = seed >>> 0
+    return () => {
+      s = (s * 1664525 + 1013904223) >>> 0
+      return s / 4294967296
+    }
+  }
+
+  /** 生成随机文本：可打印字符行 + 随机换行（含连续换行/尾随换行/换行开头） */
+  function randomText(rand: () => number, targetLen: number): string {
+    const chars = 'abcdefghij klmn\nop qrst\nuv wxyz0123\n456789'
+    let out = ''
+    while (out.length < targetLen) {
+      out += chars[Math.floor(rand() * chars.length)]
+    }
+    return out
+  }
+
+  it('对拍: 边界 case 等价（空串/单行/尾随换行/连续换行/换行开头/行数=n-1,n,n+1）', () => {
+    const texts = ['', 'abc', 'a\n', '\n', '\n\n', '\na', '\nb\nc', 'a\nb', 'a\nb\nc', 'a\n\nc\n', '\n\n\n\na\n\nb\n']
+    for (const text of texts) {
+      for (const n of [1, 2, 3, 5, 100]) {
+        expect(tailLines(text, n)).toEqual(tailLinesRef(text, n))
+      }
+    }
+  })
+
+  it('对拍: 非正 n 兜底等价（n=0 全部行 / n<0 前缀 slice）', () => {
+    for (const text of ['abc', 'a\nb\nc', '\n\n']) {
+      for (const n of [0, -1, -2]) {
+        expect(tailLines(text, n)).toEqual(tailLinesRef(text, n))
+      }
+    }
+  })
+
+  it('对拍: 随机长文本（50KB 级）多 n 等价', () => {
+    const rand = makeLcg(42)
+    for (let i = 0; i < 5; i++) {
+      const text = randomText(rand, 50000)
+      for (const n of [1, 2, 3, 7, 50, 1000]) {
+        expect(tailLines(text, n)).toEqual(tailLinesRef(text, n))
+      }
+    }
+  })
+
+  it('对拍: 随机短文本密集 n 扫描等价', () => {
+    const rand = makeLcg(7)
+    for (let i = 0; i < 50; i++) {
+      const text = randomText(rand, rand() < 0.5 ? 12 : 120)
+      for (let n = 1; n <= 10; n++) {
+        expect(tailLines(text, n)).toEqual(tailLinesRef(text, n))
+      }
+    }
+  })
 })
