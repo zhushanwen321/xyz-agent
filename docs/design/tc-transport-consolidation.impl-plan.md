@@ -175,3 +175,21 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 - v12：2026-09-02 u6 派发前领地细化（现状全量盘清）：① initConnection 真实现形态——core bootstrap.ts 直 import use-connection（`useConnection().init()`，resolve 即编排提交）；② core `__tests__/bootstrap.test.ts` 入领地（makeOptions:20 删 connectionMode + spy 适配，ES1 断言不动）；③ 探针①（dev 实跑）**移至阶段 5 Gate B 统一执行**——dev 环境跑 Electron 受限，本单元交付日志顺序编号可观察性；④ App.vue ES1 catch 最小形态（接现有 connection error 展示路径）；⑤ bridge 删行号更新 :259-260（u4 改锚后行号偏移）。
 - v13：2026-09-02 u6 完成后追认（5 deviations 全批，见偏差登记 17-21）：① resolvePlatform 独立模块（platform/resolve-platform.ts）批准——App.vue 反向 import main.ts 会拉启动副作用进测试并成环；② 领地外 useExtensionHostBridge.test.ts 适配追认（同族先例）；③ commandRegistry 改 ensureCommandDeclarationsSync 重放范式批准——§11-5 自查发现的真实缺陷（builtin slash 声明会随注册收敛丢失）；④ §11-5 时序结论采纳：维持 onMounted，step4/5 微任务结构性先于 connected 宏任务，fallback 不需要。**状态表全 committed，进入阶段 3 一致性审查。**
 - v14：2026-09-02 一致性审查与修复循环记录（四区并行：unreasonable 1 + doc_errors 5，全部清零）：① U1（App.vue ES1 catch 未落地 §5.2 降级 UI——计划 v12 ④ 软化失误）已修复：catch 内 setFailed() → 现有 failed 态 UI + 重试入口自动渲染；② pending.ts:9 注释漂移与 ws-send 白名单僵尸条目一并修正；③ 设计文档 v6 回写（§7 双树修订 + D1 settings 拆分修订声明）；④ 状态表 u5 统计口径修正（111 M + 19 D + 1 R091）。修复批次验收：frontend typecheck + 348 文件 3601 基线 + 守卫 exit 0。**审查清零，进入阶段 5 双级验收。**
+
+## 8. 阶段 5 双级验收记录（2026-09-02）
+
+**Gate A（全量测试）**：根 `pnpm test`（34 有 test 包）+ `pnpm lint`（--max-warnings 0 零告警）。34 包全部执行完毕（首败中止后补跑余包）。**唯一持久失败**：subagent-core `resource-discovery.test.ts > findWorkspaceRoot` 1 例——根因 `$TMPDIR/.pi/agent` 环境污染（用户侧 pi 实验产物，与 /tmp/v6-fixture-noperm 同期痕迹）+ 测试隔离缺口；交付领地 diff 为空、非本次引入（**待用户签认的残留风险**）。flaky 2 例（runtime 1 例 Gate A 当场复跑全绿、frontend 2 例 u5 期复跑全绿）。skipped/todo 全部清点非本次引入。uncovered 3 项（App.vue 降级分支 / resolve-platform.ts / main.ts）由 Gate B 实跑覆盖。
+
+**Gate B（端到端，dev 实跑 + CDP）**：
+
+| 场景 | verdict | evidence |
+|---|---|---|
+| A1 真实对话流 | pass | 真实 runtime + GLM-5.3：「列出当前目录文件」→ 思考×2 + 工具×1（bash 列出 ~ 真实文件）+ 流式逐字渲染（24.7K/7s）；切走切回 session 历史一致（live ≡ reload） |
+| A2 mock 模式 | pass | VITE_MOCK=true dev：mock 流式标记文案渲染 + 思考/工具块 + 变更集 fixture（+39/-5）+ mock 模型标识；取消/E2E 分支由 fg1/fg5/fg6 基线背书 |
+| A3 断连恢复 | pass | kill runtime PID → supervisor 自动重启 → renderer 自动重连 → 新消息正常往返（新 session jsonl 落盘）；断连窗口 pending reject 由 core 单测覆盖（ws-client.invariants/use-connection-clear-pending） |
+| A4 挂载点上报 | pass | CDP 帧拦截：`auth:1` 后 `plugin.mountPoints.sync:1`——auth 握手完成后发出且恰一次；连接后 RPC 流正常（subscribe×6 等） |
+| A5 启动编排 | pass | 五步日志实证 `[bootstrap] step 1/5 → 5/5` 顺序执行、providePlatform 先于连接编排、连接建立（authenticated）；reload 场景 2 条 Vue onScopeDispose warn 为存量行为（来源代码不在交付 diff，App.vue:94 历史注释为证）；**违反态实验按设计为临时实验不落终态代码，以 await 链代码顺序 + bootstrap.test ES1 断言 + R3/R4 审查证据代替** |
+| A6 回归门 | pass | u5 完成（主 agent 复核）+ Gate A 全量背书 |
+| A7 mock 不进生产包 | pass | u3 + 一致性审查 R2 + 主 agent 三方独立复验：生产产物 mock 标识串零命中，且优于迁移前基线（存量泄漏修复） |
+
+**双绿达成。交付完成。**
