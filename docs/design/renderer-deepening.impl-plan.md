@@ -110,6 +110,7 @@ graph TD
 | 4 | u1.3 clear-pending 测试的 pending 消 mock 用 vi.spyOn(rejectAll) 而非注入 | 实现级合理偏差：use-connection 对 pendingApi.rejectAll 是顶层直接调用，注入消不掉 | spyOn 透传真实实现，断言语义 100% 保持，vi.mock 计数仍 ≤1 |
 | 5 | u2.1 三处领地机械扩展：useSearchModalDeps.ts（私有 core 实例改共享壳适配，防双实例缓存分桶）、新建 useFileSearchStore.ts（共享壳适配必然产物）、slashIcons.ts 1 行死引用注释 | 达成「切换后同一数据源」目标条款的最小必要动作 | 已随 u2.1 commit；发现 CommandPopover slash 链已在 core 轨（设计例 4 描述部分过时——一致性审查期回写设计） |
 | 6 | u3.1 定性偏离设计预判：send/submit 的 {getSegments} 字段不在权威接口（权威面=context 消费面），Pick 不可行，扩权收编被否（波及 dom-core/ui-mock） | 实证修正设计预期，符合设计「不追求全部合一、消灭无名分复制」精神 | 落实为保留局部声明 + 名分注释；一致性审查期回写设计 D8 措辞 |
+| 7 | u3.2 净行数 +108 vs 设计 D8 效果条款「消约 300 行」：镜像重复归零（结构目标）达成，差额为类型契约 + 决策记录注释 | 设计效果估计失准，非实现偏离 | 一致性审查期回写设计 D8 效果措辞（结构目标口径替代绝对行数） |
 
 ## 6 状态表
 
@@ -120,7 +121,7 @@ graph TD
 | u1.3 | committed | 1 | commit 6f5759e19（u1.3）；core 1275 绿 + renderer 3601 绿；vi.mock 各文件 1 处；③ P5 探针失败走设计预授权降级（动态 import 保留 + route-inbound.ts:358 [HISTORICAL] 实证），u4.x 以动态 import 保留形态为基线 |
 | u2.1 | committed | 1 | commit e3c09d834（u2.1）；P1 通过（清单 docs/design/renderer-deepening.p1-parity.md，core 零补齐）；renderer 345 文件/3579 绿（-22 = 删除壳测试 7+4+11，dev 汇报导误报 8 已核正）；grep 零命中 |
 | u3.1 | committed | 1 | commit a3e19bec3（u3.1）；定性：send/submit/context-chips 保留（字段不在权威面，Pick 不可行，扩权被否）+ 名分注释；fork/handoff Pick<'focus'> 化；injection 已被 ADR-0058 前序收敛（仅清注释）；core 1275 绿 + renderer typecheck 绿 |
-| u3.2 | pending | 0 | — |
+| u3.2 | committed | 1 | commit 69cdb61f1（u3.2）；P2 过门完全泛化（20 段 diff：13 段同构骨架 + 7 类差异全部可配置，未触发降级）；staging-mode.ts 287 行 + 25 等价用例；fork 239→150 / handoff 278→192；导出面逐符号不变；core 1300 绿；净行数 +108（设计「消约 300 行」估计失准，结构目标达成） |
 | u4.1 | pending | 0 | — |
 | u4.2 | pending | 0 | — |
 | u5.1 | pending | 0 | — |
