@@ -19,7 +19,7 @@ vi.mock('../../../../core/src/transport/api/request', () => ({
   command: (...args: unknown[]) => commandMock(...args),
 }))
 
-import { removeByCwd } from '@/api/domains/session'
+import { removeByCwd } from '@xyz-agent/core/transport/api/domains/session'
 
 beforeEach(() => {
   vi.clearAllMocks()

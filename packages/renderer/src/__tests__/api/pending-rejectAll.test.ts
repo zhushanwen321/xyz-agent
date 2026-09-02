@@ -8,7 +8,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/api/pending-rejectAll.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import * as pending from '@/api/pending'
+import * as pending from '@xyz-agent/core/transport/api'
 
 describe('pending.rejectAll', () => {
   beforeEach(() => {

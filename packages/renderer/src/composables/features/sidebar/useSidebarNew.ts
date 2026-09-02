@@ -38,7 +38,7 @@ import type {
   NewTaskFlowPort,
 } from '@xyz-agent/core'
 import { chat as chatApi, session as sessionApi, extension as extensionApi } from '@/api'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'

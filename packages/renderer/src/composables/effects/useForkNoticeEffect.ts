@@ -24,7 +24,7 @@
 import { onScopeDispose, readonly, ref, shallowRef, watch, type DeepReadonly, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { ServerMessage, SessionGroup } from '@xyz-agent/shared'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { useSessionStore } from '@/stores/session'
 import { useForkBranchNotify, type BranchChangeKind, type BranchStatusChange } from '@/composables/features/fork-handoff/useForkBranchNotify'
 

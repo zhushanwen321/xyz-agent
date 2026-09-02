@@ -62,8 +62,8 @@ import {
 import { SLASH_COMMAND_SOURCE_KEY } from '@/components/panel/command-popover-source'
 import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
 import type { ServerMessage } from '@xyz-agent/shared'
-import { onCrossSession, onGlobal } from '@/api/events'
-import { onPlugins } from '@/api/domains/plugin'
+import { onCrossSession, onGlobal } from '@xyz-agent/core/transport/api'
+import { onPlugins } from '@xyz-agent/core/transport/api/domains/plugin'
 import { createNotifyToastHandler } from './notify-toast'
 import type { ContributionRecord } from '@xyz-agent/core'
 

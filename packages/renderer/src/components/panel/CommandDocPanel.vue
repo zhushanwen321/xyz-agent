@@ -122,7 +122,7 @@ import { useCommandStore } from '@/composables/features/command/useCommandStore'
 import { getSettingsStore } from '@xyz-agent/core'
 import { useSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
-import * as fileApi from '@/api/domains/file'
+import * as fileApi from '@xyz-agent/core/transport/api/domains/file'
 import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 import { useCopy } from '@/composables/panel/useCopy'
 // [w6 chat-ui-and-shell T7] MarkdownRenderer 迁 ui 包（经 ChatViewDeps inject 消费 renderMarkdown）

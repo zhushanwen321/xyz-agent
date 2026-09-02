@@ -17,7 +17,7 @@ vi.mock('../../../../core/src/transport/api/request', () => ({
   command: (...args: unknown[]) => commandMock(...args),
 }))
 
-import { send } from '@/api/domains/chat'
+import { send } from '@xyz-agent/core/transport/api/domains/chat'
 
 beforeEach(() => {
   vi.clearAllMocks()

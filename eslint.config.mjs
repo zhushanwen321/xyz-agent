@@ -51,8 +51,10 @@ export default [
   // settings/workspace/composer 共 9 个域），天然需要超 500 行。拆分到 per-domain 文件需要重构
   // 内部共享函数（pushSession/emit/sleep/fixtureSessions 等），收益不抵成本。fixture 数据已拆到
   // data.ts/settings-data.ts/composer-data.ts/workflow-data.ts。
+  // [tc-transport-consolidation u3→u5] 文件已迁 core（原 packages/renderer/src/api/mock/index.ts），
+  // 豁免 glob 跟随真源路径。
   {
-    files: ['packages/renderer/src/api/mock/index.ts'],
+    files: ['packages/core/src/transport/mock/index.ts'],
     rules: {
       'max-lines': 'off',
     },

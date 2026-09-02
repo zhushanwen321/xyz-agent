@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import * as events from '../api/events'
+import * as events from '@xyz-agent/core/transport/api'
 
 describe('events 全局通道', () => {
   it('onGlobalType 注册后，dispatchGlobal 同 type 触发 handler，off 后不再触发', () => {

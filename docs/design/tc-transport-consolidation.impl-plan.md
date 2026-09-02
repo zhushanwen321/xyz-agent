@@ -112,6 +112,10 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 | 10 | u4 | core 测试适配范围超领地清单：4 文件 → 实际 8 文件（transport/__tests__/ 下 7 个 use-connection 系列测试均构造三字段须改 vi.mock 模块级拦截，断言不动；coordination 3 测试 + ws-client.invariants 零改动） | ConnectionPorts 删字段的必然连带（同 u2 #4 先例） | 已追认（v9） |
 | 11 | u4 | route-inbound defaultPorts.subscribe 用动态 import 惰性解析（非顶层静态值使用）——静态使用会拉进 ws-client 静态链破坏 renderer 测试 mock 拦截（bisect 五轮实证，回填 §7 风险 2）；pending/events 静态使用无害 | 设计 D3「生产直连」语义不变，仅 subscribe 解析时机惰性化（运行时仍 core 真源） | 已批准 |
 | 12 | u4 | use-connection-seq-gap.test TC4 断言包 vi.waitFor()（flush 机制适配，断言语义逐字不动，route-inbound.test:199 先例）；check_no_direct_ws_send.py 排除规则修正目录段匹配（修误报，AGENTS.md 规则本体修正原则）；route-inbound.test 新增 1 个默认路径用例（core 1276→1277） | 预期内最小适配 | 已批准 |
+| 13 | u5 | settings 混合拆分实测不存在——UpdatePage.vue:178 纯 IPC（零改动留壳路径）、WorktreePage/SystemAutoRename/SystemSmartContext 纯 WS（整行改 core）；useAppUpdate.ts 实测直连 '@/lib/ipc' 不消费 settings 桥（派发预判失实，按 grep 实测处理） | 事实修正，终态等价（IPC 门面留壳、WS 归 core） | 已批准 |
+| 14 | u5 | 派发盘点外连带修复：3 处相对路径桥引用补漏（events-global:2 / extension-upgrade:24 / rpc-type-pairing:22——后者的目录扫描守卫对象跟随真源迁移，防扫描面静默缩为壳剩 IPC 门面）；eslint.config.mjs 的 mock max-lines 豁免 glob 跟随迁移改指 core（u3 遗留被 A6 门暴露，正面修复非新增豁免）；usage-forcequit 挪位连带桥 import 改锚 | 「检出问题全部正面修复」原则 | 已批准 |
+| 15 | u5 | 约 15 处注释内散文式路径描述未批量重写（部分含行号引用需核对，批量改写会显著扩大 diff）——留组 2 清理 | 非本波 scope（注释非行为） | 已登记 |
+| 16 | u5 | frontend 全量第 2 轮 2 例间歇失败（未捕获用例名），同代码状态复跑两轮全绿 + 基线亦绿，判定环境负载 flaky；u5 为纯说明符替换无逻辑/时序改动 | flaky 记录，A6 以最终两轮连续全绿计 | 已登记 |
 
 预登记两条口径差异（非偏差，数字校准）：设计「测试 62 处/50 文件」实测 **58 处/48 文件**（子路径口径，另 barrel 12 处不动）；设计「3 个测试改路径」（lib shim）实测 **5 个测试文件**（useExtensionHostBridge.test / ws-client-send-boolean / session-workflow-update-fallback / session-exited / session-subagents-fallback）。以实测为准执行，不回改设计文档（±4 处属设计期统计与 HEAD 漂移）。
 
@@ -123,6 +127,7 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 | u2 | committed | 2（首轮零改动 blocker 上报三处派发事实失实 + v4 裁决续作全绿） | 同 u1 基线全绿不回归；22 领地文件 + 3 追认测试（v5）；commit 见 git log `refactor(core)` u2 条目 |
 | u3 | committed | 1（一次通过） | 双包基线一致（core 1276 / frontend 3601）+ 探针门③ build 后产物 grep 10 个 mock 标识串零命中（**优于基线**：迁移前 HEAD 实测存在 fixture 泄漏）+ E2E 注入跨包验证；6 追认测试（v7）；commit 见 git log u3 条目 |
 | u4 | committed | 1（一次通过，5 deviations 全批/追认） | core 93 文件 1277 passed（+1 默认路径用例）/ 6 todo + frontend 348 文件 3601 | 3 skipped 基线一致；TransportPorts 壳层非注释行零命中；transport.ts/lib shim 已删；白名单守卫 exit 0；commit 见 git log u4 条目 |
+| u5 | committed | 1（一次通过，8 deviations 全批/追认） | A6 回归门全绿（双包 typecheck 三连 + core 1277 / frontend 3601 基线 + 根 lint 零告警，主 agent 独立复跑确认）；131 项改动（110 M + 20 D + 1 挪位）；api/ 终态 index.ts + domains/settings.ts（IPC 门面）；commit 见 git log u5 条目 |
 | u3 | pending | 0 | — |
 | u4 | pending | 0 | — |
 | u5 | pending | 0 | — |
@@ -153,3 +158,4 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 - v8：2026-09-02 u4 派发前领地细化（事实全量盘清）：① **`.githooks/check_no_direct_ws_send.py` WS_WHITELIST 更新入 u4 领地**——bridge 改锚 `from '@xyz-agent/core/transport/ws-client'` 命中白名单正则（说明符以 ws-client 结尾），须移除已删除的 api/transport.ts、加入两 bridge 文件（设计 D5 批准形态）；② use-connection 内部用法定位（:176-177 透传 + :277/:290/:312 ports.pending 直调）；③ useConnection 装配瘦身定位（:32-34 import + :69-71 三字段）；④ 剩余 vi.mock transport 实测 2 文件（extension-host-dialog.test / useExtensionHostBridge.test，非 3）；⑤ TransportPorts 验收口径修正为「非注释行零命中」（u1 桥注释提及该词，桥 u5 删）。
 - v9：2026-09-02 u4 完成后追认与回填：① core 测试适配 4→8 文件追认（7 个 use-connection 系列测试构造三字段的必然连带）；② **subscribe 动态 import 惰性解析批准**——静态值使用拉进 ws-client 静态链破坏 renderer 测试 mock 拦截（bisect 五轮实证），结论回填 §7 风险 2 第 ④ 点；③ seq-gap TC4 waitFor flush 适配 + 白名单排除规则目录段匹配修正（规则本体修误报）+ 新增默认路径用例（core 1276→1277）批准。
 - v10：2026-09-02 u5 派发前领地细化（改写面全量盘清）：① 实测改写面——生产 41 处/33 文件（含 8 .vue）+ 测试 55 处 + facade 15 处；② **settings 终态修正**——壳 settings.ts 保留为纯 IPC 门面文件（桥段删除、5 函数保留不删文件），混合消费者拆分 import（WS 行改 core、IPC 行留壳路径），验收②③ 口径相应修正；③ usage-forcequit 测试挪 `src/__tests__/api/`（api/__tests__/ 目录删除）；④ vitest.config.ts:32 死 coverage exclude 清理入领地；⑤ vi.mock 同步规则明确（说明符与生产 import 一致才拦截）。
+- v11：2026-09-02 u5 完成后追认与记录（8 deviations 全批，见偏差登记 13-16）：① settings 实测无混合行（UpdatePage 纯 IPC 留壳、三文件纯 WS 改 core），useAppUpdate 直连 lib/ipc 不涉桥——派发预判失实按 grep 实测处理；② 3 处相对路径补漏 + rpc-type-pairing 扫描守卫跟随 + eslint 豁免 glob 跟随（A6 门暴露的 u3 遗留正面修复）；③ .vue 实测 10 个（派发清单 8）；④ 15 处散文注释与 2 例 flaky 登记不改（记录在案）；⑤ A6 门含根 lint（--max-warnings 0）首次全绿。

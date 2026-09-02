@@ -38,7 +38,7 @@ import {
   bindTraceSessionId,
   setTraceView,
 } from '@/composables/features/trace/useSessionTrace'
-import type { ExtensionUIRequest } from '@/api/domains/extension'
+import type { ExtensionUIRequest } from '@xyz-agent/core/transport/api/domains/extension'
 import type { SessionSummary } from '@xyz-agent/shared'
 
 // ── vi.hoisted：mock 状态在 vi.mock 工厂执行前就绪，且可在 it 中改值（普通 { value } 等价 Ref） ──

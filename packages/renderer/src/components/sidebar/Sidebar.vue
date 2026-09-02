@@ -222,7 +222,7 @@ import { useAppUpdate } from '@/composables/features/settings/useAppUpdate'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 
 const { t } = useI18n()
 const { formatKbd } = usePlatformShortcut()

@@ -39,7 +39,7 @@ vi.mock('../../../../core/src/transport/api/pending', () => ({
   reject: vi.fn(),
 }))
 
-import { create } from '@/api/domains/session'
+import { create } from '@xyz-agent/core/transport/api/domains/session'
 
 beforeEach(() => {
   transportMock.sent.length = 0

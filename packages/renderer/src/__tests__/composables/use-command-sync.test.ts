@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { defineComponent, h, ref, nextTick } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { __resetCommandStoreForTesting, useCommandStore } from '@/composables/features/command/useCommandStore'
 import {
   useCommandSync,
@@ -25,10 +25,10 @@ import type { ServerMessage } from '@xyz-agent/shared'
 
 // ── mock 边界：getCommands RPC mock 掉；门面 session 重指回 mock 的 domain ──
 const getCommandsMock = vi.hoisted(() => vi.fn())
-vi.mock('@/api/domains/session', () => ({ getCommands: getCommandsMock }))
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({ getCommands: getCommandsMock }))
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
 

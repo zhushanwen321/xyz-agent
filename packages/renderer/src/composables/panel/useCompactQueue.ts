@@ -15,7 +15,7 @@ import { reactive, ref } from 'vue'
 import type { Ref } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
 import { chat as chatApi } from '@/api'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
 
 /** 待发消息条目（D1 继承自 slice） */

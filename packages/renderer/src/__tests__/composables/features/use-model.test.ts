@@ -17,10 +17,10 @@ const mocks = vi.hoisted(() => ({
   switchModel: vi.fn(),
 }))
 
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   setThinkingLevel: mocks.setThinkingLevel,
 }))
-vi.mock('@/api/domains/model', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/model', () => ({
   switchModel: mocks.switchModel,
   onModels: vi.fn(() => () => {}),
   listModels: vi.fn(),
@@ -29,8 +29,8 @@ vi.mock('@/api/domains/model', () => ({
 // 门面重定向（api index → domains，与 submit-firstmessage-pull.test.ts 同款）
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
-  const model = await import('@/api/domains/model')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
+  const model = await import('@xyz-agent/core/transport/api/domains/model')
   return { ...actual, session, model }
 })
 

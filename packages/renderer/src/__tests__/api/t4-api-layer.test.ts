@@ -35,14 +35,14 @@ vi.mock('../../../../core/src/transport/api/pending', () => ({
   reject: vi.fn(),
 }))
 
-import { worktreeApi } from '@/api/domains/worktree'
-import { detect, detectBare } from '@/api/domains/workspace'
+import { worktreeApi } from '@xyz-agent/core/transport/api/domains/worktree'
+import { detect, detectBare } from '@xyz-agent/core/transport/api/domains/workspace'
 import {
   setWorktreeRootDir,
   getWorktreeRootDir,
   setSetupScript,
   getSetupScript,
-} from '@/api/domains/settings'
+} from '@xyz-agent/core/transport/api/domains/settings'
 
 beforeEach(() => {
   vi.clearAllMocks()

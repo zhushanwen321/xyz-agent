@@ -42,7 +42,7 @@ vi.mock('../../../../core/src/transport/api/pending', () => ({
   reject: vi.fn(),
 }))
 
-import { list, getDefault, setDefault, create, update, remove } from '@/api/domains/preset'
+import { list, getDefault, setDefault, create, update, remove } from '@xyz-agent/core/transport/api/domains/preset'
 
 beforeEach(() => {
   transportMock.sent.length = 0

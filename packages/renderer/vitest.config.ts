@@ -29,7 +29,6 @@ export default defineConfig({
       exclude: [
         'src/__tests__/**',
         'src/**/*.d.ts',
-        'src/mock/**',
         'src/main.ts',
       ],
     },

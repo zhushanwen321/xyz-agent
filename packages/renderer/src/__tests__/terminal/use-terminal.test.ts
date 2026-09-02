@@ -24,7 +24,7 @@ const terminalApiMock = vi.hoisted(() => ({
   kill: vi.fn(() => Promise.resolve()),
   attach: vi.fn(() => Promise.resolve()),
 }))
-vi.mock('@/api/domains/terminal', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/terminal', () => ({
   terminalApi: terminalApiMock,
 }))
 

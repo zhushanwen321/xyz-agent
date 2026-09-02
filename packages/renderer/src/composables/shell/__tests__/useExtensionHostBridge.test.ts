@@ -18,7 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { computed, nextTick } from 'vue'
 import { InternalEventBus, MessageBusBridge, providePlatform, type ContributionRegistry } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
-import { dispatchCrossSession, dispatchGlobal } from '@/api/events'
+import { dispatchCrossSession, dispatchGlobal } from '@xyz-agent/core/transport/api'
 import { createWsPluginMessageSource, EXTENSION_BRIDGE_TYPES, initExtensionHostBridge } from '../useExtensionHostBridge'
 import {
   DIALOG_REQUEST_SOURCE_KEY,

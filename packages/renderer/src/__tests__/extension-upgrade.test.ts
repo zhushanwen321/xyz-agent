@@ -21,7 +21,7 @@ vi.mock('../../../core/src/transport/api/pending', () => ({
   reject: vi.fn(),
 }))
 
-import * as extension from '../api/domains/extension'
+import * as extension from '@xyz-agent/core/transport/api/domains/extension'
 import * as transport from '@xyz-agent/core/transport/ws-client'
 import * as pending from '../../../core/src/transport/api/pending'
 

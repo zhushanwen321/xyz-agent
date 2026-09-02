@@ -29,7 +29,7 @@ vi.mock('../../../../core/src/transport/api/pending', () => ({
   reject: vi.fn(),
 }))
 
-import { getFileCandidates, getMentionCandidates } from '@/api/domains/composer'
+import { getFileCandidates, getMentionCandidates } from '@xyz-agent/core/transport/api/domains/composer'
 
 beforeEach(() => {
   vi.clearAllMocks()

@@ -31,7 +31,7 @@ import type {
   TraceSessionHeader,
 } from '@xyz-agent/core/domain/session-trace'
 import { session as sessionApi } from '@/api'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 
 /** 主区视图态（SegmentedTab「对话 | Trace」，D5a；默认对话）。 */
 export type TraceMainView = 'chat' | 'trace'

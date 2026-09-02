@@ -198,7 +198,7 @@ describe('session.exited 事件端到端反馈链路', () => {
     await initAndConnect()
     // resetModules 后动态加载（与 useConnection/useMessageEffects 共享同一模块实例）
     const chatMod = await import('@/composables/features/chat/useChat')
-    const events = await import('@/api/events')
+    const events = await import('@xyz-agent/core/transport/api')
     const { getSubscriptionState } = await import('../../../core/src/coordination/subscription-state')
     const wsSend = vi.mocked((await import('../../../core/src/transport/ws-client')).send)
 

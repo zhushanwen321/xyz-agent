@@ -61,7 +61,7 @@ vi.mock('@/lib/ipc', () => ({
 }))
 
 // mock sessionApi（subagent store 内部 import；首拉 RPC getSubagents 返回空）
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   getSubagents: vi.fn(async () => []),
   getSubagentHistory: vi.fn(async () => []),
   // useConnection.ensureDispatcher 经 sessionApi.subscribe 注入 ports（T2 后）
@@ -73,7 +73,7 @@ vi.mock('@/api/domains/session', () => ({
 // 保证 store 与断言用的是同一个 vi.fn()（同 subagent-push.test.ts:21-25）。
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
 

@@ -10,9 +10,9 @@
  */
 import type { SettingsTransport, DiscoverModelsRequest, DiscoverModelsResponse } from '@xyz-agent/core/domain/settings'
 import type { ProviderId } from '@xyz-agent/shared'
-import * as configApi from '@/api/domains/config'
-import * as modelApi from '@/api/domains/model'
-import * as extensionApi from '@/api/domains/extension'
+import * as configApi from '@xyz-agent/core/transport/api/domains/config'
+import * as modelApi from '@xyz-agent/core/transport/api/domains/model'
+import * as extensionApi from '@xyz-agent/core/transport/api/domains/extension'
 
 /**
  * 构造 SettingsTransport 实现：逐方法转发 @/api。

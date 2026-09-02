@@ -125,7 +125,7 @@ import {
   isAgentCallVirtualId,
   extractAgentCallSessionId,
 } from '@/stores/workflow'
-import { getAgentCallHistory } from '@/api/domains/session'
+import { getAgentCallHistory } from '@xyz-agent/core/transport/api/domains/session'
 import type { Message, SubagentRecord, WorkflowAgentCall } from '@xyz-agent/shared'
 import MessageStream from './MessageStream.vue'
 import { DEFAULT_ENGINE_ID } from '@/constants/engine-icons'

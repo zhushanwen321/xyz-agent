@@ -126,7 +126,7 @@ import { useDrawerControl, openSubagent } from '@xyz-agent/core/domain/drawer'
 import { agentCallVirtualId } from '@/stores/workflow'
 import { useWorkflowStore } from '@/stores/workflow'
 import { usePanelStore } from '@/stores/panel'
-import { workflowAction } from '@/api/domains/session'
+import { workflowAction } from '@xyz-agent/core/transport/api/domains/session'
 import { useToast } from '@/composables/useToast'
 import type { WorkflowRunRecord, WorkflowAgentCall } from '@xyz-agent/shared'
 

@@ -21,9 +21,9 @@ import type {
   UiResponseTransport,
 } from '@xyz-agent/ui/extension-host'
 import type { ExtensionInteractMethod } from '@xyz-agent/shared'
-import { onCrossSession } from '@/api/events'
+import { onCrossSession } from '@xyz-agent/core/transport/api'
 import { send } from '@xyz-agent/core/transport/ws-client'
-import { sendExtensionUIResponse } from '@/api/domains/extension'
+import { sendExtensionUIResponse } from '@xyz-agent/core/transport/api/domains/extension'
 
 type UiRequestEvent = Extract<InternalEvent, { kind: 'ui-request' }>
 

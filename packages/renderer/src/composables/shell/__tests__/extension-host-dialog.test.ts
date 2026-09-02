@@ -12,18 +12,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { InternalEventBus } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
-import { dispatchCrossSession } from '@/api/events'
+import { dispatchCrossSession } from '@xyz-agent/core/transport/api'
 
 vi.mock('@xyz-agent/core/transport/ws-client', () => ({
   send: vi.fn(),
 }))
 
-vi.mock('@/api/domains/extension', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/extension', () => ({
   sendExtensionUIResponse: vi.fn(),
 }))
 
 import { send } from '@xyz-agent/core/transport/ws-client'
-import { sendExtensionUIResponse } from '@/api/domains/extension'
+import { sendExtensionUIResponse } from '@xyz-agent/core/transport/api/domains/extension'
 import {
   convertToDialogRequest,
   createDialogRequestSource,

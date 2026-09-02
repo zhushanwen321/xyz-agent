@@ -16,10 +16,12 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ClientMessageMap, ReplyPayloadMap, ServerMessageMap } from '@xyz-agent/shared'
-import { command } from '@/api/request'
+import { command } from '@xyz-agent/core/transport/api'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const domainsDir = resolve(__dirname, '../../api/domains')
+// [tc-transport-consolidation u5] domain 真源已迁 core（壳 api/domains 仅剩 settings IPC 门面），
+// 扫描目标跟随真源，守卫强度不变。
+const domainsDir = resolve(__dirname, '../../../../core/src/transport/api/domains')
 
 /**
  * 类型用例的运行时调用统一包装：测试环境无 WS 连接，transport.send 必然 fast-fail

@@ -21,7 +21,7 @@
  */
 import { onBeforeUnmount, watch, getCurrentInstance, type Ref } from 'vue'
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 
 /** 单 type 的窄化 handler（msg.type 已收窄为 T，payload 按 ServerMessageMap[T] 解析）
  *  第二参数 sid 是消息所属 session（订阅时捕获，不随当前 sid 变化），供 handler 调

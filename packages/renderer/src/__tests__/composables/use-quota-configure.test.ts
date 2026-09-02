@@ -9,7 +9,7 @@
  * - reset：testFailReason 清空
  * - authKinds：fetcherId 优先、fallback 自动匹配 preset（B-3）
  *
- * mock 策略：vi.mock('@/api/domains/quota') 替换 RPC 层（composable 直连 domain，
+ * mock 策略：vi.mock('@xyz-agent/core/transport/api/domains/quota') 替换 RPC 层（composable 直连 domain，
  * 对齐 provider-edit-body-phase-b.test.ts）；pinia 提供 useQuotaStore。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/use-quota-configure.test.ts
@@ -20,14 +20,14 @@ import { ref } from 'vue'
 import type { NormalizedQuotaRow, ProviderInfo, QuotaPreset } from '@xyz-agent/shared'
 import { QUOTA_PRESETS, matchQuotaPreset } from '@xyz-agent/shared'
 
-vi.mock('@/api/domains/quota', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/quota', () => ({
   getCached: vi.fn(),
   fetchQuota: vi.fn(),
   refreshQuota: vi.fn(),
   configure: vi.fn(async () => ({ ok: true })),
 }))
 
-import * as quotaApi from '@/api/domains/quota'
+import * as quotaApi from '@xyz-agent/core/transport/api/domains/quota'
 import { useQuotaConfigure } from '@/composables/features/model/useQuotaConfigure'
 import { useToast } from '@/composables/useToast'
 

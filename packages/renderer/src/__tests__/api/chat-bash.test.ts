@@ -20,7 +20,7 @@ vi.mock('../../../../core/src/transport/api/request', () => ({
   command: commandMock,
 }))
 
-import { bash, abortBash } from '@/api/domains/chat'
+import { bash, abortBash } from '@xyz-agent/core/transport/api/domains/chat'
 
 beforeEach(() => {
   commandMock.mockClear()

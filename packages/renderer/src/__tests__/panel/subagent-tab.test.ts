@@ -23,7 +23,7 @@ import { useSubagentStore, subagentVirtualId } from '@/stores/subagent'
 import { openSubagent, bindDrawerSessionId, _resetDrawerForTest } from '@xyz-agent/core/domain/drawer'
 import SubagentTab from '@/components/panel/SubagentTab.vue'
 import type { Message, SubagentRecord } from '@xyz-agent/shared'
-import * as events from '@/api/events'
+import * as events from '@xyz-agent/core/transport/api'
 
 vi.mock('virtua/vue', async () => {
   const { vi: vitest } = await import('vitest')
@@ -97,7 +97,7 @@ vi.mock('@/composables/features/sidebar/useSidebar', () => ({
 }))
 
 // sessionApi mock：fetchAndInject 内部调 getSubagentHistory（快照腿）
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   getSubagentHistory: vi.fn(),
   getSubagents: vi.fn().mockResolvedValue([]),
   subagentAction: vi.fn(),
@@ -109,11 +109,11 @@ vi.mock('@/api/domains/session', () => ({
 // 保证 store 与断言用的是同一个 vi.fn()（同 stores/subagent.test.ts 手法）。
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
 // events mock：断言恒订阅（subscribeStream 双键注册）
-vi.mock('@/api/events', () => ({
+vi.mock('@xyz-agent/core/transport/api', () => ({
   on: vi.fn(() => vi.fn()),
   off: vi.fn(),
   dispatch: vi.fn(),
@@ -125,7 +125,7 @@ vi.mock('@/api/events', () => ({
   dispatchCrossSession: vi.fn(),
 }))
 
-import * as sessionApi from '@/api/domains/session'
+import * as sessionApi from '@xyz-agent/core/transport/api/domains/session'
 
 // happy-dom 不提供真实 ResizeObserver 布局测量
 class NoopResizeObserver {

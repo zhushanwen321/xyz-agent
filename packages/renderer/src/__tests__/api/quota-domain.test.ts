@@ -39,7 +39,7 @@ vi.mock('../../../../core/src/transport/api/pending', () => ({
   reject: vi.fn(),
 }))
 
-import { getCached, fetchQuota, refreshQuota, configure } from '@/api/domains/quota'
+import { getCached, fetchQuota, refreshQuota, configure } from '@xyz-agent/core/transport/api/domains/quota'
 
 beforeEach(() => {
   transportMock.sent.length = 0

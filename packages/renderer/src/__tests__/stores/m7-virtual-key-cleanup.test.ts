@@ -25,13 +25,13 @@ import { useWorkflowStore } from '@/stores/workflow'
 import type { Message } from '@xyz-agent/shared'
 
 // mock sessionApi（FR-2/FR-5 数据加载用）
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   getWorkflows: vi.fn(),
   getAgentCallHistory: vi.fn().mockResolvedValue([]),
 }))
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
 

@@ -55,7 +55,7 @@ vi.mock('@/lib/ipc', () => ({
 }))
 
 // mock sessionApi：getWorkflows 用 vi.fn()，用例内 mockResolvedValueOnce 控制返回值
-vi.mock('@/api/domains/session', () => ({
+vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   getWorkflows: vi.fn(),
   getAgentCallHistory: vi.fn(),
   // useConnection.ensureDispatcher 经 sessionApi.subscribe 注入 ports（T2 后）
@@ -66,7 +66,7 @@ vi.mock('@/api/domains/session', () => ({
 // workflow store 经 @/api 门面导入 session，门面指回 domains 命名空间，保证 store 与断言用同一 vi.fn()。
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
-  const session = await import('@/api/domains/session')
+  const session = await import('@xyz-agent/core/transport/api/domains/session')
   return { ...actual, session }
 })
 
@@ -74,7 +74,7 @@ let useConnection: typeof import('@/composables/useConnection').useConnection
 let usePanelStore: typeof import('@/stores/panel').usePanelStore
 let useSessionStore: typeof import('@/stores/session').useSessionStore
 let useWorkflowStore: typeof import('@/stores/workflow').useWorkflowStore
-let sessionApi: typeof import('@/api/domains/session')
+let sessionApi: typeof import('@xyz-agent/core/transport/api/domains/session')
 
 beforeEach(async () => {
   setActivePinia(createPinia())
@@ -88,7 +88,7 @@ beforeEach(async () => {
   usePanelStore = (await import('@/stores/panel')).usePanelStore
   useSessionStore = (await import('@/stores/session')).useSessionStore
   useWorkflowStore = (await import('@/stores/workflow')).useWorkflowStore
-  sessionApi = await import('@/api/domains/session')
+  sessionApi = await import('@xyz-agent/core/transport/api/domains/session')
 
   // 初始化 session store 含 session A + 另一个 session B
   const sessionStore = useSessionStore()
