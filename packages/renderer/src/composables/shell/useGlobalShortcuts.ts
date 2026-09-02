@@ -23,6 +23,11 @@ import { useSidebarStore } from '@/stores/sidebar'
 export interface UseGlobalShortcutsOptions {
   /** ⌘N 新建 session（来自 session actions composable 的 onNewSession） */
   onNewSession: () => void
+  /**
+   * ⌘I 打开「导入会话」对话框（import-session u6）。可选：Sidebar.vue 注入
+   * （open 状态由其持有），既有调用方（测试）不注入时不注册副作用之外的破坏。
+   */
+  onOpenImportSession?: () => void
   /** ⌘G 从末条 assistant 后台 fork（来自 useSidebarNew） */
   forkFromLastAssistant: () => void | Promise<void>
   /** ⌘⇧G 进 composer fork 模式（来自 useSidebarNew） */
@@ -52,6 +57,7 @@ interface KeymapEntry {
  *
  * - ⌘K toggle 搜索浮层（AC-7.1 变更项：再按关闭，原 =true 改 !searchOpen）
  * - ⌘N 新建 session（shell spec §五）
+ * - ⌘I 打开「导入会话」对话框（import-session 设计 §1 In-scope 入口）
  * - ⌘B 折叠侧栏（shell spec §⌘B；v1 只做 toggle 前两态，G-033 第 3 态 DEFERRED）
  * - ⌘⇧P 打开启动预设选择 Popover
  * - ⌘G / ⌘⇧G fork
@@ -63,7 +69,7 @@ interface KeymapEntry {
  * 在 setup 顶层同步调用：useEventListener 需在活跃 effect scope 内绑定，组件卸载时自动解绑。
  */
 export function useGlobalShortcuts(options: UseGlobalShortcutsOptions): void {
-  const { onNewSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant, navigation, openSettings } = options
+  const { onNewSession, onOpenImportSession = () => {}, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant, navigation, openSettings } = options
   const searchModal = useSearchModal()
   const sidebar = useSidebarStore()
   const commandStore = useCommandStore()
@@ -71,6 +77,11 @@ export function useGlobalShortcuts(options: UseGlobalShortcutsOptions): void {
   const keymap: KeymapEntry[] = [
     { key: 'k', action: () => { searchModal.toggle() } },
     { key: 'n', commandId: 'new-session', action: () => { void onNewSession() } },
+    // ⌘I 打开「导入会话」对话框（import-session 设计 §1 In-scope 入口；对话框 open 状态
+    // 由 Sidebar.vue 持有，经 onOpenImportSession 注入回调派发）。硬编码快捷键、不挂
+    // commandId——useAppCommands 未注册 import-session 命令，shortcutOverrides 不适用
+    //（同 ⌘G/⌘J/⌘[ 家族）。
+    { key: 'i', action: () => { onOpenImportSession() } },
     { key: 'b', commandId: 'toggle-sidebar', action: () => { sidebar.toggleCollapsed() } },
     // FR-16：⌘⇧P 打开启动预设选择 Popover（与 useAppCommands 注册的 open-preset-select 同源）。
     // commandId 让 shortcutOverrides 生效（设置页可重录）；shift 守卫确保仅 ⌘⇧P 触发，避免 ⌘P 误命中。

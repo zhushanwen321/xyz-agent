@@ -1,7 +1,7 @@
 <template>
   <!--
     容器组件 · L1 Sidebar（sidebar/spec.md 四态）。
-    分层（自上而下）：Brand → 主操作 nav（新建 ⌘N / 搜索 ⌘K）→ segmented tab（会话|文件|Agents|Flows|Plugins）→ 子视图区 → 用户区。
+    分层（自上而下）：Brand → 主操作 nav（新建 ⌘N / 导入会话 ⌘I / 搜索 ⌘K）→ segmented tab（会话|文件|Agents|Flows|Plugins）→ 子视图区 → 用户区。
     注：v6 D14 nav 重构移除 Overview 入口按钮，go-overview 仅经 SearchModal 命令面板可达（useAppCommands 注册）。
     折叠态 C：整体隐藏（width:0 + opacity:0），spec §收起态。
     File View 内容 G2-003 defer。
@@ -20,7 +20,7 @@
         </template>
       </Brand>
 
-      <!-- 主操作 nav：新建任务 ⌘N（primary 主操作）/ 搜索 ⌘K（ghost 次操作）。
+      <!-- 主操作 nav：新建任务 ⌘N（primary 主操作）/ 导入会话 ⌘I / 搜索 ⌘K（ghost 次操作）。
            v6-master-spec §6.2 NavItem：primary=accent 实色 / ghost=透明 双层级。 -->
       <nav class="flex flex-col gap-1 px-1">
         <Button
@@ -31,6 +31,19 @@
           <Plus class="size-[15px] text-accent-fg" />
           <span class="flex-1 text-left">{{ t('sidebar.newTask') }}</span>
           <kbd class="font-mono text-[length:var(--text-3xs)] text-accent-fg opacity-70">{{ formatKbd('n') }}</kbd>
+        </Button>
+        <!-- 导入会话入口（import-session 设计 §3.1 / demo 方案 A is-entry）：外部 pi session
+             纳入管理。ghost 次操作 + accent-ring 内描边标注入口；open 状态本组件持有，
+             ⌘I 经 useGlobalShortcuts 注入的 onOpenImportSession 派发同一状态。 -->
+        <Button
+          variant="ghost"
+          data-testid="sidebar-import-session-btn"
+          class="group h-8 w-full justify-start gap-2.5 rounded-md px-3 text-[length:var(--text-xs)] text-neutral-mid ring-1 ring-inset ring-accent-ring transition-colors hover:bg-surface-hover hover:text-neutral-fg"
+          @click="importOpen = true"
+        >
+          <Download class="size-[15px] text-neutral-dim transition-colors group-hover:text-neutral-mid" />
+          <span class="flex-1 text-left">{{ t('importSession.title') }}</span>
+          <kbd class="rounded-sm border border-border-strong px-1.5 py-0.5 font-mono text-[length:var(--text-3xs)] text-neutral-dim">{{ formatKbd('i') }}</kbd>
         </Button>
         <Button
           variant="ghost"
@@ -185,12 +198,16 @@
       :session-id="targetSessionId"
       @confirm="onConfirmRename"
     />
+
+    <!-- 导入会话对话框（u5 组件，u6 入口接线）：成功导入后 runtime 广播 session.list，
+         侧边栏经既有链路刷新，无需在此监听 imported 做补偿动作 -->
+    <ImportSessionDialog v-model:open="importOpen" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
-import { Plus, Search, Settings, FolderOpen, AlertCircle, Puzzle } from '@lucide/vue'
+import { Plus, Search, Settings, FolderOpen, AlertCircle, Puzzle, Download } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { SearchModal } from '@xyz-agent/ui'
 import { PluginViewContainer } from '@xyz-agent/ui/extension-host'
@@ -209,6 +226,7 @@ import SubagentList from './SubagentList.vue'
 import WorkflowList from './WorkflowList.vue'
 import WorkflowDetail from './WorkflowDetail.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
+import ImportSessionDialog from './ImportSessionDialog.vue'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentListSync } from '@/composables/features/chat/useSubagentListSync'
@@ -239,12 +257,14 @@ const piVersion = ref('')
 const versionLabel = computed(() => piVersion.value ? `v${__APP_VERSION__} · pi v${piVersion.value}` : `v${__APP_VERSION__}`)
 const renameOpen = ref(false)
 const targetSessionId = ref('')
+/** 「导入会话」对话框 open 状态（入口按钮 + ⌘I 双通道派发同一状态） */
+const importOpen = ref(false)
 const { subagentRunningCount, subagentList, workflowRunningCount, workflowList, currentWorkflow } = useSidebarCounts(focusedSessionId)
 const { derivedStatus } = useSessionDerivations()
 function statusOf(id: string) { return derivedStatus(id).value }
 const { onSelectSession, onNewSession, onNewSessionInFolder, onRenameSession, onDeleteSession, onDeleteFolder, onStopBranch, onForceQuitSession, onConfirmRename, onAssignProject, onRetryLoadSessions, onRetryWorkflows, onRetrySubagents, searchDeps, onOpenSearchDrawer } = useSidebarSessionActions({ focusedSessionId, selectSession, restoreSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, assignSessionToProject, renameOpen, targetSessionId })
 const { onSelectSubagent, onCancelSubagent, onSelectWorkflow, onWorkflowBack, onSelectAgentCall, onWorkflowAction } = useSidebarSubagentActions(focusedSessionId)
-useGlobalShortcuts({ onNewSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant, navigation: useNavigationStore(), openSettings })
+useGlobalShortcuts({ onNewSession, onOpenImportSession: () => { importOpen.value = true }, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant, navigation: useNavigationStore(), openSettings })
 onMounted(() => {
   void loadSessions()
   events.onGlobalType('app.info', (msg) => { piVersion.value = msg.payload.piVersion })
