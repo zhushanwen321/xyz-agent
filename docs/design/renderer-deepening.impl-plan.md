@@ -131,7 +131,7 @@ graph TD
 | u4.2 | committed | 2 | 阶段 A commit 076e31ffe（骨架：声明式 schema + 8 条 crossSession + dispatcher 唯一 prologue + 守卫两类分置）+ 阶段 B commit 84398af0b（error 单条目合并 + 默认路径纯兜底）；route-inbound 34 用例（原 28 断言零弱化 + 新 6）；core 1309 绿；ROUTE_TABLE 导出保留为内部测试 seam（D2-b 组合契约探针必需） |
 | u5.1 | committed | 1 | commit 93945c2fd（u5.1）；sessionEntry 六端口全可选（?? noop）；12 步链 = 壳版时序（D4 行为变化即时生效于 core 三消费路径）；新增 6 接口级用例（精确全序/短路/失败尾部）；core 1315 绿 + renderer typecheck 绿；结构裁量：selectSession(1-3) + runEntryChain(4-12) 镜像壳分段 |
 | u5.2 | committed | 1 | commit 9d941fc4c（u5.2）；legacy 生产消费归零；restoreSession 偏差处置（restore RPC + core 全链 + 双等价核验：cancelActiveFlow no-op / 补发 switch RPC 无副作用已核 runtime handler）；use-chat-view-deps.test 提前改指（u5.3 残余 9→8）；context.md 术语登记；renderer 3579 绿 + core 1315 绿 |
-| u5.3 | pending | 0 | — |
+| u5.3 | committed | 1 | commit 6699e8e4a（u5.3）；legacy 567 行删除；8 mock/动态型测试改指（5 死 mock 零风险 + fork-notice mock 恢复拦截 + useHandoffEffect 仅注释刷新）；三口径 grep + resetAppBootstrap 全仓零命中；renderer 3579 绿 |
 | u6.1 | pending | 0 | — |
 | u6.2 | pending | 0 | — |
 
