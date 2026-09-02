@@ -149,6 +149,93 @@ describe('scanExternalSessions', () => {
   })
 })
 
+describe('scanExternalSessions name 三级定位（D3 二次修订轻量提取）', () => {
+  /** 头块/尾块预算与实现一致（64KB）；用例构造以此为边界前提。 */
+  const NAME_BLOCK = 64 * 1024
+
+  it('尾块命中：同文件多条 session_info 取最后一条（rename append 尾部覆盖创建期命名）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'scan-external-name-tail-'))
+    try {
+      // 小文件：尾块（64KB）覆盖全文件，无残行丢弃
+      writeFileSync(join(dir, 'tail.jsonl'), [
+        JSON.stringify({ type: 'session', id: 'id-name-tail', cwd: '/tmp/nt', timestamp: '2026-01-01T00:00:00.000Z' }),
+        JSON.stringify({ type: 'session_info', name: 'OldName' }),
+        JSON.stringify({ type: 'message', m: 'x' }),
+        JSON.stringify({ type: 'session_info', name: 'NewName' }),
+        '',
+      ].join('\n'))
+      const { items } = await scanExternalSessions(dir, { force: true })
+      expect(items.find((m) => m.id === 'id-name-tail')?.name).toBe('NewName')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('尾块未命中 → 头块第一个 session_info（创建期写入 + 长对话把 session_info 留在头部）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'scan-external-name-head-'))
+    try {
+      const head = [
+        JSON.stringify({ type: 'session', id: 'id-name-head', cwd: '/tmp/nh', timestamp: '2026-01-01T00:00:00.000Z' }),
+        JSON.stringify({ type: 'session_info', name: 'HeadName' }),
+      ].map((l) => l + '\n').join('')
+      // > 128KB 的 message 行：尾块（最后 64KB）只含 message，session_info 只在头块
+      const msgLine = JSON.stringify({ type: 'message', text: 'x'.repeat(200) }) + '\n'
+      const count = Math.ceil(((NAME_BLOCK * 2 + 8 * 1024) - head.length) / msgLine.length)
+      writeFileSync(join(dir, 'head.jsonl'), head + msgLine.repeat(count))
+      const { items } = await scanExternalSessions(dir, { force: true })
+      const meta = items.find((m) => m.id === 'id-name-head')
+      expect(meta).toBeDefined()
+      expect(meta!.name).toBe('HeadName')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('两块均未命中 → name=null 且条目仍收录（header 合法即收录，UI 回退目录名显示）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'scan-external-name-null-'))
+    try {
+      const head = JSON.stringify({ type: 'session', id: 'id-name-null', cwd: '/tmp/nn', timestamp: '2026-01-01T00:00:00.000Z' }) + '\n'
+      const msgLine = JSON.stringify({ type: 'message', text: 'x'.repeat(200) }) + '\n'
+      const count = Math.ceil(((NAME_BLOCK * 2 + 8 * 1024) - head.length) / msgLine.length)
+      writeFileSync(join(dir, 'null.jsonl'), head + msgLine.repeat(count))
+      const { items } = await scanExternalSessions(dir, { force: true })
+      const meta = items.find((m) => m.id === 'id-name-null')
+      expect(meta).toBeDefined()
+      expect(meta!.name).toBe(null)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('跨 64KB 头块边界的残行不参与 name 定位（半个 JSON 行 skip，对齐 readTailEntries 残行语义）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'scan-external-name-cut-'))
+    try {
+      // 整行 = 合法 session_info + 80 空格 + 另一个 JSON 值：整行 JSON.parse 失败（一行两个值），
+      // 但被 64KB 边界切断后的前缀（首对象 + 若干空格）trim 后可独立 parse——若头块不丢弃
+      // 末残行，会错误命中 name='CutOk'；正确行为是丢弃残行 → 头块无完整 session_info → null
+      const header = JSON.stringify({ type: 'session', id: 'id-name-cut', cwd: '/tmp/nc', timestamp: '2026-01-01T00:00:00.000Z' }) + '\n'
+      const straddle =
+        JSON.stringify({ type: 'session_info', name: 'CutOk' }) + ' '.repeat(80) +
+        JSON.stringify({ type: 'message', m: 'second-value-makes-full-line-invalid' })
+      // 让 straddle 行起于 64KB-50：首对象（38B）落在边界前，切点落在其后的空格区
+      const lineStart = NAME_BLOCK - 50
+      const padLine = 'p'.repeat(63) + '\n'
+      let pad = ''
+      while (header.length + pad.length + padLine.length <= lineStart) pad += padLine
+      const remain = lineStart - header.length - pad.length
+      if (remain > 0) pad += 'p'.repeat(remain - 1) + '\n'
+      // 末尾 message 行（非合法 JSON）确保文件收尾，也验证畸形行被跳过
+      writeFileSync(join(dir, 'cut.jsonl'), header + pad + straddle + '\n' + 'm'.repeat(100) + '\n')
+      const { items } = await scanExternalSessions(dir, { force: true })
+      const meta = items.find((m) => m.id === 'id-name-cut')
+      expect(meta).toBeDefined()
+      expect(meta!.name).toBe(null)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('cleanupTmpMigrateResidue（.tmp-import- 家族扩展）', () => {
   it('.tmp-import- 残留与 .tmp-migrate- 同规则清扫：过期删、新鲜留、正常文件不碰', () => {
     const dir = mkdtempSync(join(tmpdir(), 'scan-external-cleanup-'))

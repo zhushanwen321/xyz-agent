@@ -30,13 +30,12 @@ import type {
 } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import { encodeCwd, getSessionsDir } from '../../infra/pi/pi-paths.js'
-import { scanExternalSessions } from '../../infra/pi/session-file-external-scan.js'
+import { scanExternalSessions, type ExternalSessionMeta } from '../../infra/pi/session-file-external-scan.js'
 import {
   invalidateScanDirCache,
   persistProjectBinding,
   readProjectBinding,
   scanPiSessions,
-  type ScannedSessionMeta,
 } from '../../infra/pi/session-file-utils.js'
 
 /** 导入领域错误：handler（u3）按 code 转 error envelope（同 GitError 模式）。 */
@@ -200,7 +199,8 @@ export class ImportService {
     return { total, items: filtered.slice(0, limit), dirs }
   }
 
-  private toCandidate(rootDir: string, m: ScannedSessionMeta, importedIds: Set<string>): ImportCandidate {
+  /** 轻量 meta（D3 二次修订）：字段集 = id/name/cwd/filePath/lastModified/size，与 toCandidate 消费面一致。 */
+  private toCandidate(rootDir: string, m: ExternalSessionMeta, importedIds: Set<string>): ImportCandidate {
     return {
       sessionId: m.id,
       name: m.name,
