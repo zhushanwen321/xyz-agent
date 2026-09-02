@@ -186,10 +186,11 @@
                 <span class="min-w-0 flex-1 truncate text-sm text-neutral-fg">
                   {{ item.name || item.dirLabel }}
                 </span>
+                <!-- 降维徽标（demo badge-dim：surface-2/neutral-mid）区分于 fresh「导入」accent 形态 -->
                 <span
                   v-if="item.alreadyImported"
                   data-testid="import-item-imported"
-                  class="shrink-0 rounded-sm bg-accent-soft px-1 py-0.5 text-[length:var(--text-3xs)] leading-none text-accent"
+                  class="shrink-0 rounded-sm bg-surface-2 px-1 py-0.5 text-[length:var(--text-3xs)] leading-none text-neutral-mid"
                 >{{ t('importSession.importedBadge') }}</span>
                 <span class="shrink-0 font-mono text-[length:var(--text-3xs)] text-neutral-dim">
                   {{ formatSize(item.size) }} · {{ formatRelativeTime(item.lastModified) }}

@@ -265,14 +265,23 @@
   .row.sel .r-t { color: var(--accent); }
   .row.dis { opacity: 0.42; cursor: not-allowed; }
   .row.dis:hover { background: transparent; }
-  .row > svg { width: 14px; height: 14px; color: var(--neutral-dim); flex: none; }
-  .row.sel > svg { color: var(--accent); }
   .r-main { flex: 1; min-width: 0; }
   .r-t { font-size: var(--text-sm); color: var(--neutral-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 终态两行条目（§3.1 2026-09-02 阶段 3 修订）：行1 = 短 ID + 名称 + 已导入徽标 + 大小·时间 + 行内导入；行2 = 原工作目录 + 死 cwd 标注 */
+  .r-l1 { display: flex; align-items: center; gap: 8px; }
+  .r-l1 .id { font-family: var(--font-mono); font-size: 10.5px; color: var(--neutral-dim); flex: none; }
+  .r-l1 .r-t { flex: 1; min-width: 0; }
+  .r-l1 .meta { font-family: var(--font-mono); font-size: 10.5px; color: var(--neutral-dim); flex: none; white-space: nowrap; }
+  .r-l1 .imp {
+    display: inline-flex; align-items: center; height: 24px; padding: 0 10px; flex: none;
+    border-radius: var(--radius-sm); border: 1px solid var(--border); font-size: var(--text-xs);
+    color: var(--neutral-mid); transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .r-l1 .imp:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+  .r-l1 .imp:disabled { opacity: 0.5; cursor: not-allowed; }
   .r-s { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 10.5px; color: var(--neutral-mid); }
-  .r-s .id { font-family: var(--font-mono); }
-  .r-s .sep-dot { width: 2px; height: 2px; border-radius: 50%; background: var(--neutral-faint); }
-  .r-side { display: flex; align-items: center; gap: 8px; flex: none; font-size: 10.5px; color: var(--neutral-dim); }
+  .r-s .cwd { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); color: var(--neutral-dim); text-align: left; }
+  .r-s .warn { flex: none; color: var(--warn); }
   .modal-ft {
     display: flex; align-items: center; gap: 8px; padding: 12px 18px;
     border-top: 1px solid var(--hairline); background: var(--bg-elevated);
@@ -493,7 +502,7 @@
     经典导入对话框：搜索框 + 目录筛选 + 日期分组列表 + 底部导入选 project。<b>信息密度与状态覆盖最全</b>，路径明确（完成或取消才离开），是通用默认形态。目录筛选在标题栏下方以 chip 呈现，「选择其他目录」走系统对话框兜底。
   </p>
   <div class="cp-row">
-    <span class="cp cp-new"><b>交互</b>点「导入会话」打开；输入即过滤；↑↓ 选择，⏎ 导入</span>
+    <span class="cp cp-new"><b>交互</b>点「导入会话」打开；输入即过滤；↑↓ 选择，⏎ 导入（键盘流为 demo 演示形态，未含在本次交付）</span>
     <span class="cp cp-note"><b>试一试</b>输入 01a044 / kimi / /Users/…/xx.jsonl 分别看三种命中</span>
     <span class="cp cp-note"><b>project</b>底部下拉，默认当前激活 project，可改</span>
   </div>
@@ -537,7 +546,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8 4-4h5l2 2h7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z"/></svg>
             选择其他目录
           </button>
-          <span class="grow" data-count>4,615 个 session · 按时间排序</span>
+          <span class="grow" data-count>可见 12 / 共 4,615</span>
         </div>
         <div class="modal-list" data-list></div>
         <div class="modal-ft">
@@ -704,7 +713,7 @@
       </tr>
       <tr>
         <td>键盘流</td>
-        <td>可用（↑↓ ⏎）鼠标为主</td>
+        <td>鼠标为主（键盘流未含在本次交付）</td>
         <td class="rec">全键盘（↑↓ Tab ⏎ Esc）</td>
         <td>鼠标为主</td>
       </tr>
@@ -766,7 +775,7 @@ const SESSIONS = [
     first:'今天 write 工具又失败了一次，逐字对比后发现是 markdown 表格分隔行的 dash 数量不一致。把这个教训回写到 lessons 文件里。' },
   { short:'019e88', full:'019e88ad-2e58-79c1-b44a-9999c5f66fe2', title:'provider 层 ModelManager 迁移核对', dir:'mono', dirLabel:'pi-mono-workspace/main', grp:'更早', time:'8 月 8 日', msgs:168, model:'Kimi K3', size:'6.7 MB', compacted:true, imported:false,
     first:'pi 升级到 0.84 之后 ai 包的 ModelManager 接口变了，对照 changelog 逐项核对我们的适配层，列出需要改的调用点。' },
-  { short:'019e95', full:'019e95c1-d617-7d72-b5f0-cb53ec5e00c6', title:'主题样式调整：字号档位校准', dir:'chat', dirLabel:'blog', grp:'更早', time:'8 月 10 日', msgs:8, model:'GLM-5.3-Flash', size:'0.1 MB', compacted:false, imported:true,
+  { short:'019e95', full:'019e95c1-d617-7d72-b5f0-cb53ec5e00c6', title:'主题样式调整：字号档位校准', dir:'chat', dirLabel:'blog', grp:'更早', time:'8 月 10 日', msgs:8, model:'GLM-5.3-Flash', size:'0.1 MB', compacted:false, imported:true, cwdMissing:true,
     first:'正文字号在小屏上看太小了，把 base 从 13 调到 14，其他档位跟着 scale 走。' },
   { short:'019ea0', full:'019ea087-f2bb-7e26-9612-2d4eecaeabc5', title:'回测框架搭建：均线策略 v2', dir:'Stock', dirLabel:'Stock', grp:'更早', time:'8 月 6 日', msgs:76, model:'MiMo-V2.5-Pro', size:'2.9 MB', compacted:false, imported:false,
     first:'在现有回测框架上加双均线策略，参数网格搜素 5/10/20/60 四组窗口，注意 lookahead bias，信号要用前收盘价。' },
@@ -979,19 +988,14 @@ class ModalVariant {
   }
   renderDirs() {
     const menu = $('[data-dirmenu]', this.ovl);
+    /* 终态：菜单仅承载目录筛选；「选择其他目录」是对话框内独立按钮（[data-sysdir]），不在菜单尾部 */
     menu.innerHTML = DIRS.map(d => `
       <button class="mi ${d.id === this.dir ? 'on' : ''}" data-dir="${d.id}" type="button">
         ${ICONS.folder}<span class="n">${esc(d.n)}</span><span class="c">${d.c}</span>
-      </button>`).join('') + `
-      <div class="sep"></div>
-      <button class="mi" data-dir="sys" type="button">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8 4-4h5l2 2h7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z"/></svg>
-        <span class="n" style="font-family:var(--font-sans);">选择其他目录…</span>
-      </button>`;
+      </button>`).join('');
     $$('[data-dir]', menu).forEach(mi => mi.addEventListener('click', e => {
       e.stopPropagation();
       menu.classList.remove('open');
-      if (mi.dataset.dir === 'sys') { toast(this.frame, '系统目录选择对话框（demo 示意）'); return; }
       this.dir = mi.dataset.dir;
       $('[data-dir-label]', this.ovl).textContent = DIRS.find(d => d.id === this.dir).n;
       this.renderDirs();
@@ -1036,7 +1040,7 @@ class ModalVariant {
     const items = this.visible();
     if (this.sel && (!items.includes(this.sel) || this.sel.imported)) this.sel = null;
     if (!this.sel) this.sel = items.find(s => !s.imported) || null;
-    $('[data-count]', this.ovl).textContent = `${items.length.toLocaleString()} / 4,615 个 session · 按时间排序`;
+    $('[data-count]', this.ovl).textContent = `可见 ${items.length.toLocaleString()} / 共 4,615`;
     if (!items.length) {
       this.listEl.innerHTML = `
         <div class="empty">
@@ -1059,26 +1063,34 @@ class ModalVariant {
           this.render();
         });
       });
+      /* 行内导入按钮（终态 §3.1 行1 合理 UI 增项）：直达导入，不占用底部选中态 */
+      $$('.imp', this.listEl).forEach(b => b.addEventListener('click', e => {
+        e.stopPropagation();
+        const hit = SESSIONS.find(x => x.full === b.dataset.imp);
+        if (hit && !hit.imported) this.importSession(hit);
+      }));
     }
     const btn = $('[data-import]', this.ovl);
     btn.disabled = !this.sel;
   }
   rowHTML(s, sel) {
+    /* 终态两行（§3.1 2026-09-02 阶段 3 修订后）：
+       行1 = 短 ID（mono）+ 会话名称（无标题回退目录名）+ 已导入徽标 + 大小·时间 + 行内导入按钮
+       行2 = 原工作目录 + 死 cwd 标注（cwdExists=false 时） */
     return `
       <div class="row ${sel ? 'sel' : ''} ${s.imported ? 'dis' : ''}" data-sid="${s.full}">
-        ${sel ? ICONS.check : ICONS.file}
         <div class="r-main">
-          <div class="r-t">${esc(s.title)}</div>
-          <div class="r-s">
+          <div class="r-l1">
             <span class="id">${s.short}</span>
-            <span class="sep-dot"></span>
-            <span>${esc(s.dirLabel)}</span>
-            ${s.untitled ? '<span class="badge badge-dim">无标题</span>' : ''}
+            <span class="r-t">${s.untitled ? esc(s.dirLabel) : esc(s.title)}</span>
+            ${s.imported ? '<span class="badge badge-dim">已导入</span>' : ''}
+            <span class="meta">${s.size} · ${s.grp} ${s.time}</span>
+            <button class="imp" data-imp="${s.full}" type="button" ${s.imported ? 'disabled' : ''}>导入</button>
           </div>
-        </div>
-        <div class="r-side">
-          ${s.imported ? '<span class="badge badge-dim">已导入</span>' : ''}
-          <span>${s.time}</span>
+          <div class="r-s">
+            <span class="cwd">${esc(s.dirLabel)}</span>
+            ${s.cwdMissing ? '<span class="warn">原目录已不存在，续聊将在主目录执行</span>' : ''}
+          </div>
         </div>
       </div>`;
   }

@@ -32,13 +32,13 @@
           <span class="flex-1 text-left">{{ t('sidebar.newTask') }}</span>
           <kbd class="font-mono text-[length:var(--text-3xs)] text-accent-fg opacity-70">{{ formatKbd('n') }}</kbd>
         </Button>
-        <!-- 导入会话入口（import-session 设计 §3.1 / demo 方案 A is-entry）：外部 pi session
-             纳入管理。ghost 次操作 + accent-ring 内描边标注入口；open 状态本组件持有，
+        <!-- 导入会话入口（import-session 设计 §3.1）：外部 pi session
+             纳入管理。ghost 次操作；open 状态本组件持有，
              ⌘I 经 useGlobalShortcuts 注入的 onOpenImportSession 派发同一状态。 -->
         <Button
           variant="ghost"
           data-testid="sidebar-import-session-btn"
-          class="group h-8 w-full justify-start gap-2.5 rounded-md px-3 text-[length:var(--text-xs)] text-neutral-mid ring-1 ring-inset ring-accent-ring transition-colors hover:bg-surface-hover hover:text-neutral-fg"
+          class="group h-8 w-full justify-start gap-2.5 rounded-md px-3 text-[length:var(--text-xs)] text-neutral-mid transition-colors hover:bg-surface-hover hover:text-neutral-fg"
           @click="importOpen = true"
         >
           <Download class="size-[15px] text-neutral-dim transition-colors group-hover:text-neutral-mid" />

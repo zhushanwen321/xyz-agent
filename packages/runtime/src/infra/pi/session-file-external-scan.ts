@@ -7,8 +7,8 @@
  * 本模块单向依赖；session-file-utils 不 re-export 本模块（避免循环依赖），消费方直接 import 本文件。
  *
  * 为何不复用 scanSessionMeta（Gate B P-scan-perf 实测回填，D3 二次修订）：scanSessionMeta
- * 六读合一（header/name/outcome/handoff/preset/project sidecar），外部候选仅消费
- * header+name+stat 三项，其余四读零消费；且 findLastEntryField 尾读未命中即 fallback 全量
+ * 多读合一（header/name/outcome/handoff/preset/project/agent binding 七处提取），外部
+ * 候选仅消费 header+name+stat 三项，其余五读零消费；且 findLastEntryField 尾读未命中即 fallback 全量
  * readFileSync——未 rename 的 session 其 session_info 在文件头部，触发整文件读（本机实测
  * 4,616 文件/2.1GB：23.3s 首扫 + maxBlock 1,947ms 双超标）。本模块改走外部侧专用轻量提取
  * （全 async：stat + header 首行 + name 三级定位），IO 总量从「全量读」收敛到每文件
@@ -78,7 +78,7 @@ let scanExternalLastNow = 0
 
 /**
  * 轻量版文件级缓存（键 = filePath + (mtimeMs, size)，与 sessionMetaCache 同键语义，
- * D3 二次修订：轻量提取不共用 sessionMetaCache——该缓存条目类型是六读合一的
+ * D3 二次修订：轻量提取不共用 sessionMetaCache——该缓存条目类型是多读合一的
  * ScannedSessionMeta，混存轻量形态会污染太极根扫描路径，故模块内独立存放）。
  * 命中免读：同文件二次扫描（TTL 过期后的重扫 / force 重扫）只付一次 stat 的代价。
  */
@@ -281,8 +281,12 @@ async function readFirstLineViaHandle(fh: FileHandle): Promise<string | null> {
 }
 
 /**
- * 解析首行为 session header（与 parseSessionHeader 同收录语义：type==='session' 即收录，
- * id/cwd/timestamp 结构字段宽松——旧 session 可缺，运行时以 undefined 读出）。
+ * 解析首行为 session header（import-session D1 字段清单对齐：type==='session' 且 id/cwd
+ * 均为非空字符串才收录）。缺 id/cwd 的文件不进候选列表——导入侧（import-service 的
+ * parseHeaderFromFirstLine）按同清单拒绝（import_invalid_session），收录它们只会产出
+ * 导入必失败的候选；且缺 id 的条目会让 matchesQuery 的短 ID 匹配（sessionId.slice）
+ * TypeError，令任意搜索词下 listCandidates 整体崩溃。
+ * timestamp 是零消费的对齐保留字段（toCandidate 不取），宽松读出：缺省以 '' 读出。
  * 首行非合法 JSON / 非 object / type 非 session → null（该文件不收录）。
  */
 function parseHeaderFromFirstLine(firstLine: string): { id: string; cwd: string; timestamp: string } | null {
@@ -296,11 +300,9 @@ function parseHeaderFromFirstLine(firstLine: string): { id: string; cwd: string;
     return null
   }
   const e = entry as Record<string, unknown>
-  return {
-    ...(typeof e.id === 'string' ? { id: e.id } : {}),
-    ...(typeof e.cwd === 'string' ? { cwd: e.cwd } : {}),
-    ...(typeof e.timestamp === 'string' ? { timestamp: e.timestamp } : {}),
-  } as { id: string; cwd: string; timestamp: string }
+  if (typeof e.id !== 'string' || e.id === '') return null
+  if (typeof e.cwd !== 'string' || e.cwd === '') return null
+  return { id: e.id, cwd: e.cwd, timestamp: typeof e.timestamp === 'string' ? e.timestamp : '' }
 }
 
 /**

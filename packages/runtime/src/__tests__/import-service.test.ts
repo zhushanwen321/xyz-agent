@@ -163,6 +163,30 @@ describe('ImportService.listCandidates', () => {
     expect((await svc.listCandidates({ rootDir: root, limit: 1 })).items).toHaveLength(1)
   })
 
+  it('候选含 header 缺 id 的 jsonl 时 query 搜索不崩、结果不含该文件（宽松收录回归）', async () => {
+    // 回归锚：修复前 external-scan 宽松收录缺 id header（ExternalSessionMeta.id===undefined），
+    // matchesQuery 的 item.sessionId.slice(0, SHORT_ID_LENGTH) TypeError → 任意 query 下
+    // listCandidates 整体崩溃（RPC 兜底 import_failed，搜索功能不可用）；无 query 打开
+    // 列表不崩，故本用例必须带 query 触发崩溃路径
+    const root = join(fixturesRoot, 'no-id-query-root')
+    mkdirSync(root, { recursive: true })
+    writeSessionJsonl(join(root, 'good.jsonl'), 'noidq-good-0001', '/tmp/noidq-cwd', 'GoodSession')
+    writeFileSync(join(root, 'no-id.jsonl'), [
+      JSON.stringify({ type: 'session', version: 1, cwd: '/tmp/noidq-cwd', timestamp: '2026-01-01T00:00:00.000Z' }),
+      '',
+    ].join('\n'))
+
+    const svc = makeImportService()
+    // 任意搜索词：不抛错（修复前在此 TypeError）
+    const reply = await svc.listCandidates({ rootDir: root, query: 'xx' })
+    expect(reply.items).toEqual([])
+    // 无 query 的全集同样不含该文件（候选侧前置拒收，与导入侧 import_invalid_session 同清单）
+    const full = await svc.listCandidates({ rootDir: root })
+    expect(full.total).toBe(1)
+    expect(full.items.some((i) => i.sourcePath.endsWith('no-id.jsonl'))).toBe(false)
+    expect(full.items[0].sessionId).toBe('noidq-good-0001')
+  })
+
   it('alreadyImported：导入后立即翻转（invalidateScanDirCache 生效）', async () => {
     const root = join(fixturesRoot, 'mark-root')
     mkdirSync(root, { recursive: true })

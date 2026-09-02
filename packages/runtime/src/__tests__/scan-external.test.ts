@@ -3,6 +3,8 @@
  *
  * 锁定行为：
  * - 正常 .jsonl（首行合法 session header）被扫出，id/cwd/name 字段取自文件内容
+ * - header 缺 id / 缺 cwd / id 空串的 .jsonl 不收录（D1 字段清单：缺 id 会让
+ *   matchesQuery 短 ID 匹配 TypeError 令搜索整体崩溃，候选侧前置拒收）
  * - `.tmp-migrate-` / `.tmp-import-` 标记文件被 isScannableSessionFile 过滤
  *   （D1/r2-S1：候选侧与清扫侧同规则，扫描器从机制上看不到任何非 final 名文件）
  * - 一层子目录内文件被扫出；两层深目录静默跳过（D3/S8 深度假设）
@@ -65,6 +67,30 @@ describe('scanExternalSessions', () => {
     writeFileSync(join(rootDir, 'notes.jsonl'), 'not a session header line\n')
     const { items } = await scanExternalSessions(rootDir, { force: true })
     expect(items.some((m) => m.filePath.endsWith('notes.jsonl'))).toBe(false)
+  })
+
+  it('header 缺 id / 缺 cwd / id 空串的 .jsonl 不收录（D1 字段清单，正常文件不受波及）', async () => {
+    // 缺 id：修复前会被宽松收录为 id===undefined，令 import-service.matchesQuery 的
+    // sessionId.slice(0, 6) TypeError（任意搜索词下 listCandidates 整体崩溃）
+    writeFileSync(join(rootDir, 'no-id.jsonl'), [
+      JSON.stringify({ type: 'session', version: 1, cwd: '/tmp/no-id', timestamp: '2026-01-01T00:00:00.000Z' }),
+      '',
+    ].join('\n'))
+    // 缺 cwd：同清单拒绝（encodeCwd(undefined) 会 TypeError，导入侧本来也拒）
+    writeFileSync(join(rootDir, 'no-cwd.jsonl'), [
+      JSON.stringify({ type: 'session', version: 1, id: 'no-cwd-id-0001', timestamp: '2026-01-01T00:00:00.000Z' }),
+      '',
+    ].join('\n'))
+    // id 空串：非空字符串校验
+    writeFileSync(join(rootDir, 'empty-id.jsonl'), [
+      JSON.stringify({ type: 'session', version: 1, id: '', cwd: '/tmp/empty-id', timestamp: '2026-01-01T00:00:00.000Z' }),
+      '',
+    ].join('\n'))
+    const { items } = await scanExternalSessions(rootDir, { force: true })
+    expect(items.some((m) => m.filePath.endsWith('no-id.jsonl'))).toBe(false)
+    expect(items.some((m) => m.filePath.endsWith('no-cwd.jsonl'))).toBe(false)
+    expect(items.some((m) => m.filePath.endsWith('empty-id.jsonl'))).toBe(false)
+    expect(items.some((m) => m.id === 'id-alpha-111')).toBe(true)
   })
 
   it('一层子目录内文件被扫出，两层深目录静默跳过', async () => {
