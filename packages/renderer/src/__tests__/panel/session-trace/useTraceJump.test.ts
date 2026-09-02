@@ -8,7 +8,7 @@
  * - 目标 trace 加载失败（error 态）→ load_failed
  *
  * selectSession mock 为 panel focusedSessionId 切换（生产里 selectSession 内部
- * syncSessionToPanel 同步做同一件事），避免拉起 useSidebar 的重依赖链。
+ * syncSessionToPanel 同步做同一件事），避免拉起 useSidebarNew 的重依赖链。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/session-trace/useTraceJump.test.ts
  */
@@ -25,10 +25,10 @@ vi.mock('@/api', () => ({
   session: { getTraceEntries: apiMock.getTraceEntries },
 }))
 
-// ── mock useSidebar：selectSession 记录调用 + 模拟 focusedSessionId 切换 ──
+// ── mock useSidebarNew：selectSession 记录调用 + 模拟 focusedSessionId 切换 ──
 const sidebarMock = vi.hoisted(() => ({ selectSession: vi.fn() }))
-vi.mock('@/composables/features/sidebar/useSidebar', () => ({
-  useSidebar: () => ({ selectSession: sidebarMock.selectSession }),
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
+  useSidebarNew: () => ({ selectSession: sidebarMock.selectSession }),
 }))
 
 import { jumpToParentSession } from '@/composables/features/trace/useTraceJump'

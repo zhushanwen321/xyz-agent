@@ -3,14 +3,14 @@
  *
  * 关键约束：**不 mock useNewTaskFlow**（之前的盲区就在这——组件层 83 测试绿但真实运行时
  * 暴露 state 停 idle）。本测试只 mock 最外层 @/api（session/chat）+ 间接依赖，
- * 让真实 useNewTaskFlow 状态机 + useSidebar.initApp 编排跑通，验证启动后 state 真正进 landing。
+ * 让真实 useNewTaskFlow 状态机 + useSidebarNew.initApp 编排跑通，验证启动后 state 真正进 landing。
  *
  * 防护对象（任一回归立刻红）：
  * - 问题1：首次打开 APP 不是新建任务页（App 启动未自动 startFlow → state 停 idle）
  * - 问题3：目录/分支 chip 点击不生效（state=idle 时 transition('dir-popover') 非法抛错回 idle）
  * 两问题同源：state 从未离开 idle。本测试断言 state==='landing'（不是 idle）。
  *
- * 触发链路模拟：App.vue watch connectionState==='connected' → useSidebar.initApp()。
+ * 触发链路模拟：App.vue watch connectionState==='connected' → useSidebarNew.initApp()。
  * 测试直接调 initApp()（等价于 connected 后），绕过 ws-client 真实握手。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/app-bootstrap.test.ts
@@ -60,15 +60,15 @@ vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: vi.fn(() => workspaceStoreMock),
 }))
 
-// useNewTaskFlow / useSidebar 均用真实实现（不 mock）——这是本测试的核心价值
-import { useSidebar, resetAppBootstrap } from '@/composables/features/sidebar/useSidebar'
+// useNewTaskFlow / useSidebarNew 均用真实实现（不 mock）——这是本测试的核心价值
+import { useSidebarNew, resetSidebarNewForTest } from '@/composables/features/sidebar/useSidebarNew'
 import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
 
 beforeEach(() => {
   setActivePinia(createPinia())
   resetNewTaskFlow()
-  resetAppBootstrap()
+  resetSidebarNewForTest()
   vi.clearAllMocks()
   sessionCtrl.switchSession.mockResolvedValue(undefined)
   sessionCtrl.remove.mockResolvedValue(undefined)
@@ -94,7 +94,7 @@ function mkSession(over: Partial<SessionSummary>): SessionSummary {
 describe('App 启动编排（initApp：连接建立后始终进 landing 落地页）', () => {
   it('首次启动（无 session）：initApp → startFlow 延迟 create → state=landing（不是 idle）→ chip 可点', async () => {
     sessionCtrl.list.mockResolvedValue([]) // 无历史 → resolveDefaultCwd=undefined → 延迟 create
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
 
     const flow = useNewTaskFlow()
     // 问题1+3 回归防护核心：state 必须离开 idle 进 landing（state 停 idle = 两 bug 同时复现）
@@ -109,7 +109,7 @@ describe('App 启动编排（initApp：连接建立后始终进 landing 落地�
 
   it('首次启动：非 git 目录下 branch chip 守卫生效（gitInfo=null → openBranchPopover 抛守卫错，非 state 死锁）', async () => {
     sessionCtrl.list.mockResolvedValue([])
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
 
     const flow = useNewTaskFlow()
     expect(flow.state.value).toBe('landing')
@@ -128,7 +128,7 @@ describe('App 启动编排（initApp：连接建立后始终进 landing 落地�
     ])
     // W3: 设置 workspaceStore.defaultCwd 模拟工作区记录
     workspaceStoreMock.defaultCwd = '/b'
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
 
     const flow = useNewTaskFlow()
     // G1.1 字面意：有历史也进新任务落地页（不恢复整个会话对话）
@@ -145,11 +145,11 @@ describe('App 启动编排（initApp：连接建立后始终进 landing 落地�
 
   it('HMR/重连幂等：appBootstrapped 守卫，第二次 initApp 直接 return 不重复编排', async () => {
     sessionCtrl.list.mockResolvedValue([])
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
     expect(sessionCtrl.list).toHaveBeenCalledTimes(1)
 
     // 模拟 HMR 重连 / 断线重连后 state 再次变 connected → App.vue 再次触发 initApp
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
     expect(sessionCtrl.list).toHaveBeenCalledTimes(1) // 幂等，未重复 loadSessions
   })
 
@@ -157,12 +157,12 @@ describe('App 启动编排（initApp：连接建立后始终进 landing 落地�
     // startFlow 先于 loadSessions 同步进 landing → 即使 loadSessions reject，state 仍 landing
     // （landing 页可用，比回 idle 死锁更好）。appBootstrapped 在 catch 重置，下次 connected 可重试。
     sessionCtrl.list.mockRejectedValueOnce(new Error('runtime not ready'))
-    await useSidebar().initApp() // 首次失败（newSession 先进 landing，loadSessions reject）
+    await useSidebarNew().initApp() // 首次失败（newSession 先进 landing，loadSessions reject）
     const flow = useNewTaskFlow()
     expect(flow.state.value).toBe('landing') // 留 landing（startFlow 已跑），不回 idle
 
     sessionCtrl.list.mockResolvedValue([]) // 重连后 list 可用
-    await useSidebar().initApp() // 重试（startFlow 幂等：已 landing 不翻 state，只刷新）
+    await useSidebarNew().initApp() // 重试（startFlow 幂等：已 landing 不翻 state，只刷新）
     expect(useNewTaskFlow().state.value).toBe('landing') // 重试后仍 landing
   })
 
@@ -178,10 +178,11 @@ describe('App 启动编排（initApp：连接建立后始终进 landing 落地�
         resolveList = r
       }),
     )
-    const initPromise = useSidebar().initApp()
-    // 让 newSession()（同步进 landing）的微任务跑完，但 loadSessions() 仍 pending（await 未返回）
-    await Promise.resolve()
-    await Promise.resolve()
+    const initPromise = useSidebarNew().initApp()
+    // 让 newSession()（同步进 landing）前的编排微任务跑完（useSidebarNew.initApp 在 newSession 前
+    // 多一个 await projectStore.init()——D14 归属透传时序，多 flush 数轮），但 loadSessions() 仍
+    // pending（deferred list 未 resolve，await 未返回）
+    for (let i = 0; i < 10; i++) await Promise.resolve()
 
     const flow = useNewTaskFlow()
     // 核心：loadSessions 仍在途，但 state 已离开 idle 进 landing → chip 可点不抛错
@@ -198,7 +199,7 @@ describe('App 启动编排（initApp：连接建立后始终进 landing 落地�
 describe('onConnected：首次 vs 重连 connected 的 workspace 刷新（W8）', () => {
   it('首次 connected（hasConnectedBefore=false）→ 调 initApp（含 load），load 仅经 initApp 调 1 次', async () => {
     sessionCtrl.list.mockResolvedValue([])
-    await useSidebar().onConnected()
+    await useSidebarNew().onConnected()
     // initApp 内部调了 load（INV-6 时序）
     expect(workspaceStoreMock.load).toHaveBeenCalledTimes(1)
     // state 进 landing（initApp 正常执行）
@@ -208,10 +209,10 @@ describe('onConnected：首次 vs 重连 connected 的 workspace 刷新（W8）'
   it('重连 connected（hasConnectedBefore=true）→ initApp 被守卫跳过，额外调 load 刷新 stale records', async () => {
     sessionCtrl.list.mockResolvedValue([])
     // 首次
-    await useSidebar().onConnected()
+    await useSidebarNew().onConnected()
     expect(workspaceStoreMock.load).toHaveBeenCalledTimes(1)
     // 重连
-    await useSidebar().onConnected()
+    await useSidebarNew().onConnected()
     // 重连后再调一次 load（刷新 stale），共 2 次
     expect(workspaceStoreMock.load).toHaveBeenCalledTimes(2)
     // 核心（must_fix 断言）：重连时 sessionCtrl.list 不再被调（initApp 被 appBootstrapped 守卫跳过）
@@ -220,11 +221,11 @@ describe('onConnected：首次 vs 重连 connected 的 workspace 刷新（W8）'
 
   it('重连 connected 不重复 startFlow（state 保持 landing，不翻动）', async () => {
     sessionCtrl.list.mockResolvedValue([])
-    await useSidebar().onConnected()
+    await useSidebarNew().onConnected()
     const flow = useNewTaskFlow()
     expect(flow.state.value).toBe('landing')
     // 重连
-    await useSidebar().onConnected()
+    await useSidebarNew().onConnected()
     // state 仍 landing（initApp 守卫跳过，未重复编排）
     expect(flow.state.value).toBe('landing')
   })

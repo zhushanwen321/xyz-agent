@@ -61,15 +61,15 @@ vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: vi.fn(() => workspaceStoreMock),
 }))
 
-// useNewTaskFlow / useSidebar 真实实现（不 mock）
-import { useSidebar, resetAppBootstrap } from '@/composables/features/sidebar/useSidebar'
+// useNewTaskFlow / useSidebarNew 真实实现（不 mock）
+import { useSidebarNew, resetSidebarNewForTest } from '@/composables/features/sidebar/useSidebarNew'
 import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
 
 beforeEach(() => {
   setActivePinia(createPinia())
   resetNewTaskFlow()
-  resetAppBootstrap()
+  resetSidebarNewForTest()
   vi.clearAllMocks()
   sessionCtrl.switchSession.mockResolvedValue(undefined)
   sessionCtrl.remove.mockResolvedValue(undefined)
@@ -102,7 +102,7 @@ describe('initApp presetCwd：默认选中上次 session 目录（W3）', () => 
     // 故意把 defaultCwd 设成与最大 session 不同的值，证明预设源是 session 而非 workspace
     workspaceStoreMock.defaultCwd = '/fallback-from-workspace'
 
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
 
     const flow = useNewTaskFlow()
     expect(flow.state.value).toBe('landing')
@@ -126,7 +126,7 @@ describe('initApp presetCwd：默认选中上次 session 目录（W3）', () => 
       },
     ])
 
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
 
     // 最大 lastActiveAt=999 → /alpha（不是 defaultCwd，也不是第一个 session）
     expect(useNewTaskFlow().currentCwd.value).toBe('/alpha')
@@ -136,7 +136,7 @@ describe('initApp presetCwd：默认选中上次 session 目录（W3）', () => 
     sessionCtrl.list.mockResolvedValue([])
     workspaceStoreMock.defaultCwd = '/workspace-default'
 
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
 
     const flow = useNewTaskFlow()
     expect(flow.state.value).toBe('landing')
@@ -150,7 +150,7 @@ describe('initApp presetCwd：默认选中上次 session 目录（W3）', () => 
     ])
     workspaceStoreMock.defaultCwd = '/from-workspace'
 
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
 
     // 优先 session 的 cwd
     expect(useNewTaskFlow().currentCwd.value).toBe('/from-session')
@@ -160,7 +160,7 @@ describe('initApp presetCwd：默认选中上次 session 目录（W3）', () => 
     sessionCtrl.list.mockResolvedValue([])
     workspaceStoreMock.defaultCwd = undefined
 
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
 
     const flow = useNewTaskFlow()
     expect(flow.state.value).toBe('landing')
@@ -171,7 +171,7 @@ describe('initApp presetCwd：默认选中上次 session 目录（W3）', () => 
     sessionCtrl.list.mockResolvedValue([
       { cwd: '/x', sessions: [mkSession({ id: 'x1', cwd: '/x', lastActiveAt: 42 })] },
     ])
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
 
     // sessionStore.list（flatMap 后所有 session）应反映 loadSessions 拉取的数据
     const allSessions = useSessionStore().list
@@ -186,7 +186,7 @@ describe('initApp presetCwd：默认选中上次 session 目录（W3）', () => 
       { cwd: '/second', sessions: [mkSession({ id: 'second', cwd: '/second', lastActiveAt: 300 })] },
     ])
 
-    await useSidebar().initApp()
+    await useSidebarNew().initApp()
 
     expect(useNewTaskFlow().currentCwd.value).toBe('/first')
   })

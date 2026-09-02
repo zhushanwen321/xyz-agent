@@ -8,7 +8,7 @@
  * - sessionDigest：末条 assistant 文本 + 回合计数（空 session 摘要为空）
  * - formatRelativeTime 四个分桶（今天/昨天/7 天内/更早）
  *
- * useSidebar 走 @/api 门面，测试用 vi.mock 替换为 mock 实现（避免 transport 挂起）。
+ * useSidebarNew 走 @/api 门面，测试用 vi.mock 替换为 mock 实现（避免 transport 挂起）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/fg6-overview.test.ts
  */
@@ -19,12 +19,12 @@ import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
-import { useSidebar } from '@/composables/features/sidebar/useSidebar'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { useChat } from '@/composables/features/chat/useChat'
 import { useSessionDerivations } from '@/composables/features/chat/useSessionDerivations'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 
-/** useSidebar 经 @/api 门面调真实 transport 会挂起；测试统一替成 mock 实现。
+/** useSidebarNew 经 @/api 门面调真实 transport 会挂起；测试统一替成 mock 实现。
  *  selectSession 触发 loadTree（文件树预加载，并行拉 file.tree + git.status），补 file/git domain mock 避免 unhandled rejection。 */
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   session: mockApi.session,
@@ -41,7 +41,7 @@ describe('FG6 Overview 进入/退出 + sessionDigest', () => {
 
   it('Overview 进入：goOverview push view:overview，current.view 切换', () => {
     const navigation = useNavigationStore()
-    const { goOverview } = useSidebar()
+    const { goOverview } = useSidebarNew()
     expect(navigation.current.view).toBe('chat')
     goOverview()
     expect(navigation.current.view).toBe('overview')
@@ -49,7 +49,7 @@ describe('FG6 Overview 进入/退出 + sessionDigest', () => {
 
   it('基本退出：back 回上一个 chat view', () => {
     const navigation = useNavigationStore()
-    const { goOverview } = useSidebar()
+    const { goOverview } = useSidebarNew()
     navigation.push({ view: 'chat', sessionId: 's1' })
     goOverview()
     expect(navigation.current.view).toBe('overview')
@@ -61,7 +61,7 @@ describe('FG6 Overview 进入/退出 + sessionDigest', () => {
 
   it('canBack 守卫：栈空时 back 不越界（仍停在 overview）', () => {
     const navigation = useNavigationStore()
-    const { goOverview } = useSidebar()
+    const { goOverview } = useSidebarNew()
     goOverview()
     expect(navigation.canBack).toBe(false)
     navigation.back() // 栈空 no-op
@@ -71,7 +71,7 @@ describe('FG6 Overview 进入/退出 + sessionDigest', () => {
   it('点卡片载入 session：selectSession push chat + 更新 activeId + focusedSessionId', async () => {
     const navigation = useNavigationStore()
     const session = useSessionStore()
-    const { selectSession, focusedSessionId } = useSidebar()
+    const { selectSession, focusedSessionId } = useSidebarNew()
     await selectSession('s1')
     expect(navigation.current.view).toBe('chat')
     expect(navigation.current.sessionId).toBe('s1')
@@ -87,7 +87,7 @@ describe('FG6 Overview 进入/退出 + sessionDigest', () => {
     const historySpy = vi
       .spyOn(mockApi.chat, 'getHistory')
       .mockResolvedValue({ messages: [], historyTruncated: true })
-    const { selectSession } = useSidebar()
+    const { selectSession } = useSidebarNew()
     await selectSession('s1') // 首进 hydrate
     await selectSession('s1') // 已 hydrate 切入 → else 分支 reconcile + 标记刷新
     expect(useChat().hasMoreHistory('s1')).toBe(true)
@@ -102,7 +102,7 @@ describe('FG6 Overview 进入/退出 + sessionDigest', () => {
   }, 10_000)
 
   it('sessionDigest：s1 fixture 末条 assistant 摘要 + 回合计数', async () => {
-    const { selectSession } = useSidebar()
+    const { selectSession } = useSidebarNew()
     const { sessionDigest } = useSessionDerivations()
     await selectSession('s1')
     const digest = sessionDigest('s1').value

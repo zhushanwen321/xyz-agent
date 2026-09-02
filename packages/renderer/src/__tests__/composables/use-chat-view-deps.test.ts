@@ -13,10 +13,11 @@ import { useChatStore } from '@/stores/chat'
 import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 
 // ── mock：sidebar.handoff（RPC spy）/ toast（错误 toast spy）/ useChat ──
+// （u5.2 生产切换 useChatViewDeps → useSidebarNew，mock 同步改指——原 legacy mock 已被架空）
 const handoffMock = vi.fn(() => Promise.resolve())
 const toastErrorMock = vi.fn()
-vi.mock('@/composables/features/sidebar/useSidebar', () => ({
-  useSidebar: () => ({ handoff: handoffMock, forkSession: vi.fn(() => Promise.resolve()) }),
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
+  useSidebarNew: () => ({ handoff: handoffMock, forkSession: vi.fn(() => Promise.resolve()) }),
 }))
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ error: toastErrorMock, info: vi.fn(), warning: vi.fn() }),

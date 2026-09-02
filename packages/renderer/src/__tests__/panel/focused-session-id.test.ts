@@ -32,7 +32,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
   },
 }))
 
-import { useSidebar } from '@/composables/features/sidebar/useSidebar'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 
@@ -57,7 +57,7 @@ describe('focusedSessionId 派生（单 panel：session 切换 → UI 焦点 ses
     panel.loadSession(ROOT_PANEL_ID, 's1')
 
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebar())!
+    const sidebar = scope.run(() => useSidebarNew())!
     expect(sidebar.focusedSessionId.value).toBe('s1')
     scope.stop()
   })
@@ -68,7 +68,7 @@ describe('focusedSessionId 派生（单 panel：session 切换 → UI 焦点 ses
     panel.loadSession(ROOT_PANEL_ID, 's1')
 
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebar())!
+    const sidebar = scope.run(() => useSidebarNew())!
     expect(sidebar.focusedSession.value?.label).toBe('session-s1')
     // focusedSessionId 指向不存在的 session → focusedSession=null
     panel.loadSession(ROOT_PANEL_ID, 'nonexistent')

@@ -16,7 +16,7 @@
  * - chatStore（getMessages/isActive/isHandingOff/getChangeSetStatus）→ useChatStore
  * - useChat（abortBash/editAndResend）→ createUseChat 薄包装
  * - useTurnExpansion（isExpanded/toggle/collapse）→ turn-expansion store per-session 分区
- * - useSidebar（forkSession/handoff）+ triggerEnterForkMode/triggerEnterHandoffMode → fork/handoff 4 回调
+ * - useSidebarNew（forkSession/handoff）+ triggerEnterForkMode/triggerEnterHandoffMode → fork/handoff 4 回调
  * - useSideDrawer（open）→ openDrawer
  * - useFileTreeStore（selectFile）→ onFileClick
  * - useFileSearch（load）+ collectFilePaths/collectBasenames → loadFileCandidates + renderMarkdown env
@@ -31,7 +31,7 @@ import type { ChatViewDeps } from '@xyz-agent/ui'
 import { useChatStore } from '@/stores/chat'
 import { useChat } from '@/composables/features/chat/useChat'
 import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
-import { useSidebar } from '@/composables/features/sidebar/useSidebar'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { useSideDrawer, type SideDrawerTab } from '@/composables/features/drawer/useSideDrawer'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useFileSearch } from '@/composables/features/search/useFileSearch'
@@ -60,7 +60,7 @@ export function useChatViewDeps(sessionId: Ref<string>): ChatViewDeps {
   const chat = useChatStore()
   const { abortBash, editAndResend } = useChat()
   const turnExpansion = useTurnExpansion(sessionId)
-  const { forkSession, handoff } = useSidebar()
+  const { forkSession, handoff } = useSidebarNew()
   const drawer = useSideDrawer()
   const fileTreeStore = useFileTreeStore()
   const { load: loadFileCandidates } = useFileSearch()

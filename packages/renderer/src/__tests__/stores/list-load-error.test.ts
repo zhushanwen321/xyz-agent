@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { WorkflowRunRecord } from '@xyz-agent/shared'
 
-// ── mock api 域（workflow/subagent store 用 @/api/domains/session，useSidebar 用 @/api）──
+// ── mock api 域（workflow/subagent store 用 @/api/domains/session，useSidebarNew 用 @/api）──
 const listMock = vi.hoisted(() => vi.fn(() => Promise.resolve([])))
 const getWorkflowsMock = vi.hoisted(() => vi.fn(() => Promise.resolve([])))
 const getSubagentsMock = vi.hoisted(() => vi.fn(() => Promise.resolve([])))
@@ -51,7 +51,7 @@ vi.mock('@xyz-agent/core/transport/api', () => ({
 import { useSessionStore } from '@/stores/session'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentStore } from '@/stores/subagent'
-import { useSidebar } from '@/composables/features/sidebar/useSidebar'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { effectScope } from 'vue'
 
 function makeWorkflow(id: string): WorkflowRunRecord {
@@ -72,13 +72,13 @@ beforeEach(() => {
 describe('U5: session store listLoadError（W2 / S5）', () => {
   it('loadSessions 失败后 session.listLoadError 为非空错误消息', async () => {
     const scope = effectScope()
-    scope.run(() => useSidebar())
+    scope.run(() => useSidebarNew())
     const session = useSessionStore()
 
     listMock.mockRejectedValue(new Error('server down'))
-    // loadSessions 是 useSidebar 内部函数，通过重新调用触发
-    // 需要直接调 useSidebar().loadSessions()
-    const sidebar = scope.run(() => useSidebar())!
+    // loadSessions 是 useSidebarNew 内部函数，通过重新调用触发
+    // 需要直接调 useSidebarNew().loadSessions()
+    const sidebar = scope.run(() => useSidebarNew())!
     await sidebar.loadSessions()
 
     expect(session.listLoadError).toBe('server down')
@@ -87,7 +87,7 @@ describe('U5: session store listLoadError（W2 / S5）', () => {
 
   it('loadSessions 成功后 listLoadError 清空为 null', async () => {
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebar())!
+    const sidebar = scope.run(() => useSidebarNew())!
     const session = useSessionStore()
 
     // 先失败

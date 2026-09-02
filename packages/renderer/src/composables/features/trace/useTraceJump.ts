@@ -72,11 +72,11 @@ export async function jumpToParentSession(
   const sessionStore = useSessionStore()
   const target = resolveTraceParentSession(parentSession, sessionStore.list)
   if (!target) return { ok: false, reason: 'target_not_found' }
-  // useSidebar 动态加载：它的模块链（useChat → '@/api'.chat）在 import 期就要完整 '@/'api 门面，
-  // 静态引用会迫使所有 mount TraceView 的测试 mock 全量 api。延迟到真正跳转时加载，
-  // import 期零重依赖。
-  const { useSidebar } = await import('@/composables/features/sidebar/useSidebar')
-  const { selectSession } = useSidebar()
+  // useSidebarNew 动态加载（原 useSidebar 同理，D5 迁移改指）：它的模块链（useChat → '@/api'.chat）
+  // 在 import 期就要完整 '@/'api 门面，静态引用会迫使所有 mount TraceView 的测试 mock 全量 api。
+  // 延迟到真正跳转时加载，import 期零重依赖。
+  const { useSidebarNew } = await import('@/composables/features/sidebar/useSidebarNew')
+  const { selectSession } = useSidebarNew()
   await selectSession(target.id)
   // 切到 Trace 视图 + 清过滤（contextOnly/chips/搜索可能隐藏 forkEntryId 行）
   setTraceView(target.id, 'trace')
