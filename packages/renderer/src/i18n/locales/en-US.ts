@@ -11,6 +11,7 @@ import shell from './en-US/shell'
 import extensionUI from './en-US/extensionUI'
 import search from './en-US/search'
 import composable from './en-US/composable'
+import importSession from './en-US/importSession'
 
 export default {
   common,
@@ -26,4 +27,5 @@ export default {
   extensionUI,
   search,
   composable,
+  importSession,
 }
