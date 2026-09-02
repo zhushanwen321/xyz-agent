@@ -94,7 +94,6 @@ function makePorts(): ConnectionPorts {
     // 非 mock 路径：init 才注册 onRuntimePort/onRuntimeRestarting/onRuntimeFailed 监听
     env: { isMock: false, isDev: false },
     effects: {},
-    toast: { error: vi.fn() },
     t: mockT,
     onRuntimeUnavailable: mockRuntimeCleanup,
   }

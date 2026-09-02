@@ -9,9 +9,8 @@
  * - tasks（goal/todo，s5 落地 plugin 实体）：
  *   slashCommands 声明（goal/todo，name 不含前导 /，对齐 s1 schema v2 形状），执行仍由 pi extension 承担（§8 边界）
  *
- * 与 packages/core/src/extension-host/builtin/tasks/manifest.ts（s5 W3 的插件实体级 manifest）
- * 语义层级不同（本文件是 ContributionRegistry 的扁平贡献源），两者允许共存——
- * s2 消费侧以本文件扁平结构为消费真相（s5 manifest 注释已声明此关系）。
+ * 本文件是 ContributionRegistry 的扁平贡献源，也是消费侧唯一真相（曾并存的插件
+ * 实体级 manifest builtin/tasks/manifest.ts 已随 D11 死面清理删除——形状漂移且生产零消费）。
  */
 import type { BuiltinContribution } from './types'
 

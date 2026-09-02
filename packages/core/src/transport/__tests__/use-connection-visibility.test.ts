@@ -51,7 +51,6 @@ const mockDispatchSession = vi.fn()
 const mockDispatchGlobal = vi.fn()
 const mockEffects = vi.fn()
 const mockRuntimeCleanup = vi.fn()
-const mockToastError = vi.fn()
 const mockT = vi.fn((key: string) => `[${key}]`)
 
 // ── 三件套模块 mock（D3 后 dispatcher 缺省直连 transport/api 真实模块，不再经
@@ -125,7 +124,6 @@ function makePorts(): ConnectionPorts {
       onWorkflowUpdate: mockEffects,
       onGlobalError: mockEffects,
     },
-    toast: { error: (...args: unknown[]) => mockToastError(...args) },
     t: mockT,
     onRuntimeUnavailable: mockRuntimeCleanup,
   }

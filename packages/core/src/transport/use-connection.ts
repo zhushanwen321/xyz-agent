@@ -46,7 +46,7 @@ import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
  * - visibility → visibilityState + visibilitychange 监听（壳层 DOM 实现）
  * - env → VITE_MOCK / DEV（core 不能读构建环境标志，由壳读）
  * - effects → useMessageEffects（renderer 层 store 副作用，§11.4）
- * - toast/t → 壳层 UI/i18n
+ * - t → 壳层 i18n
  * - onRuntimeUnavailable → runtime 崩溃/重启用尽时的对话流清理
  *
  * pending/events/subscribe 三件套已删除（D3）：入站分发与 pending 清理直连
@@ -75,7 +75,6 @@ export interface ConnectionPorts {
     isDev: boolean
   }
   effects: InboundEffects
-  toast: { error(message: string): void }
   t(key: string, params?: Record<string, unknown>): string
   /** runtime 崩溃/重启用尽清理（renderer 实现：chat finalize + extension UI pending 清理） */
   onRuntimeUnavailable(reason: 'restart' | 'disconnect'): void

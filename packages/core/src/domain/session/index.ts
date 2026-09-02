@@ -11,7 +11,6 @@ export * from './store'
 export * from './api-port'
 // panel-view：PanelView/derivePanelView（渲染视图派生契约，T3 renderer usePanelView 消费）
 export * from './panel-view'
-export type { PanelOrchestrationPort } from './effects/panel-orchestration'
 // w3 use-session：IF4 编排 factory + 端口/hook 类型
 export { createUseSession, resetSessionListSubForTest } from './use-session'
 export type {

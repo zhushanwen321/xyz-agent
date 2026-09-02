@@ -118,7 +118,6 @@ function makePorts(): ConnectionPorts {
     // mock 分支：dispatcher 在 mock return 前安装（ensureDispatcher 先于 mock 分支）
     env: { isMock: true, isDev: false },
     effects: {},
-    toast: { error: vi.fn() },
     t: vi.fn((key: string) => `[${key}]`),
     onRuntimeUnavailable: vi.fn(),
   }

@@ -2,7 +2,7 @@
  * Events 层 —— ServerMessage 订阅分发。
  *
  * 三条独立通道：
- * - session 通道（on/off/dispatch/dispatchSession）：按 sessionId 路由。CLAUDE.md line 98
+ * - session 通道（on/off/dispatchSession）：按 sessionId 路由。CLAUDE.md line 98
  *   要求 session 级消息必须含 sessionId。隔离规则不变。
  * - global 通道（onGlobal/onGlobalType/dispatchGlobal）：无 sessionId 的 server-push
  *   （config.providers / model.list / config.skills / config.agents / config.plugins /
@@ -54,11 +54,6 @@ export function on(sessionId: string, handler: MessageHandler): () => void {
 /** 取消订阅（按 sessionId + handler） */
 export function off(sessionId: string, handler: MessageHandler): void {
   sessionHandlers.get(sessionId)?.delete(handler)
-}
-
-/** 旧名兼容：转发到 dispatchSession */
-export function dispatch(sessionId: string, msg: ServerMessage): void {
-  dispatchSession(sessionId, msg)
 }
 
 export function dispatchSession(sessionId: string, msg: ServerMessage): void {

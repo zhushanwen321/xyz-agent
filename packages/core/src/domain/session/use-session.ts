@@ -26,8 +26,7 @@
 import { computed, onScopeDispose } from 'vue'
 import type { BatchDeleteResult, Message, SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import { triggerSessionCleanups } from '../../foundation/use-session-scoped-state'
-import type { SessionApiPort } from './api-port'
-import type { PanelOrchestrationPort } from './effects/panel-orchestration'
+import type { SessionApiPort, PanelOrchestrationPort } from './api-port'
 import type { createSessionStore } from './store'
 
 /**

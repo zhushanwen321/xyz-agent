@@ -73,7 +73,6 @@ function makePorts(): ConnectionPorts {
     },
     env: { isMock: false, isDev: false },
     effects: {},
-    toast: { error: vi.fn() },
     t: mockT,
     onRuntimeUnavailable: mockRuntimeCleanup,
   }

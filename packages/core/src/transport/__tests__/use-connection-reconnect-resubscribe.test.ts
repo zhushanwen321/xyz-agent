@@ -101,7 +101,6 @@ function makePorts(): ConnectionPorts {
     },
     env: { isMock: true, isDev: false },
     effects: {},
-    toast: { error: vi.fn() },
     t: vi.fn((key: string) => `[${key}]`),
     onRuntimeUnavailable: vi.fn(),
   }

@@ -5,7 +5,7 @@
  * 零 DOM / 零 import.meta / 零 store import，DOM 经 visibility 端口、env 经端口、
  * store 副作用经 useMessageEffects 注入）。本文件只做三件事：
  *
- * 1. 构建 ConnectionPorts 实现（从 renderer 取 ipc / visibility / env / toast / t /
+ * 1. 构建 ConnectionPorts 实现（从 renderer 取 ipc / visibility / env / t /
  *    useMessageEffects——D3 后 pending/events/subscribe 三件套已删，core 直连
  *    transport/api 真实模块，壳不再注入）
  * 2. setConnectionPorts 注入（模块级一次，幂等）
@@ -13,7 +13,7 @@
  *    { state, init, teardown, retryRuntime } 接口不变）
  *
  * 依赖方向：useConnection（装配）→ core use-connection + lib/ipc + useMessageEffects
- *   + i18n + useToast。
+ *   + i18n。
  */
 import {
   useConnection as useCoreConnection,
@@ -30,16 +30,14 @@ import {
   onRuntimeFailed,
   restartRuntime,
 } from '../lib/ipc'
-import { useToast } from './useToast'
 import { createInboundEffects, handleRuntimeUnavailable } from './effects/useMessageEffects'
-
 // i18n.global.t 的类型窄化 cast：vue-i18n 的 t 是复杂重载签名，ConnectionPorts.t 只需
 // `(key, params?) => string`。cast 保持调用方用法不变（t('connection.runtimeExited', { reason })）。
 const t = i18n.global.t as (key: string, params?: Record<string, unknown>) => string
 
 /**
  * 装配点：构建 core ConnectionPorts 实现（模块级一次构建，引用全部稳定：
- * ipc 模块级函数、effects 工厂返回稳定函数引用、useToast 模块级单例）。
+ * ipc 模块级函数、effects 工厂返回稳定函数引用）。
  */
 const connectionPorts: ConnectionPorts = {
   ipc: {
@@ -65,7 +63,6 @@ const connectionPorts: ConnectionPorts = {
     isDev: Boolean(import.meta.env.DEV),
   },
   effects: createInboundEffects(),
-  toast: useToast(),
   t,
   onRuntimeUnavailable: handleRuntimeUnavailable,
 }

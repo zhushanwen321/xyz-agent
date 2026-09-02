@@ -133,13 +133,11 @@ function createMockWebSocket(_url: string): WebSocketLike {
  * - kind: 'mock'
  * - storage: 最小 in-memory KVStorage
  * - webSocket: WebSocketFactory（create 返回复刻旧 mock 语义的桩）
- * - ipc: null（mock 无 electron IPC）
  */
 export function createMockPlatform(): PlatformPort {
   return {
     kind: 'mock',
     storage: createInMemoryStorage(),
     webSocket: { create: createMockWebSocket },
-    ipc: null,
   }
 }
