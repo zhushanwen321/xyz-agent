@@ -216,16 +216,22 @@ function applyBashExecutionMessage(
   return { ...state, messages: [...state.messages, msg] }
 }
 
-/** compactionSummary role → system 消息 + compactionSummary 字段。 */
-function applyCompactionSummaryMessage(
+// ── compaction / branchSummary 双形态共享投影 builder（D13 联动 u6.2，行为逐字等价收敛）──
+//
+// message entry 的特殊 role（compactionSummary / branchSummary）与专用 entry 类型
+// （compaction / branch_summary）双形态存储（见 applyMessageEntry 注释）——两对 apply*
+// handler 仅「id / ts 来源 + 字段归一」异源（调用方算好传入），Message 构造与 append
+// 逐字同构，收敛为共享 builder；fromId 归一留在调用方（role 形态 typeof 收窄 vs
+// entry 形态类型直传，两形态语义刻意不同构）。
+
+/** compaction 投影（双形态共用）：summary 缺失 → 中文 fallback「上下文已压缩」。 */
+function appendCompactionSummaryMessage(
   state: ChatViewState,
-  body: PiMessageBody,
   baseId: string,
-  fallbackTs: number,
+  ts: number,
+  summary: string | undefined,
+  tokensBefore: number | undefined,
 ): ChatViewState {
-  const ts = body.timestamp ?? fallbackTs
-  const summary = typeof body.summary === 'string' ? body.summary : undefined
-  const tokensBefore = typeof body.tokensBefore === 'number' ? body.tokensBefore : undefined
   const msg: Message = {
     id: baseId,
     role: 'system',
@@ -235,6 +241,40 @@ function applyCompactionSummaryMessage(
     timestamp: ts,
   }
   return { ...state, messages: [...state.messages, msg] }
+}
+
+/** branchSummary 投影（双形态共用）：content 缺失 fallback 空串（summary 原值透传，'' 保留 ''）。 */
+function appendBranchSummaryMessage(
+  state: ChatViewState,
+  baseId: string,
+  ts: number,
+  fields: { summary: string | undefined; fromId: string | undefined },
+): ChatViewState {
+  const msg: Message = {
+    id: baseId,
+    role: 'system',
+    content: fields.summary ?? '',
+    status: 'complete',
+    branchSummary: { summary: fields.summary, fromId: fields.fromId, timestamp: ts },
+    timestamp: ts,
+  }
+  return { ...state, messages: [...state.messages, msg] }
+}
+
+/** compactionSummary role → system 消息 + compactionSummary 字段。 */
+function applyCompactionSummaryMessage(
+  state: ChatViewState,
+  body: PiMessageBody,
+  baseId: string,
+  fallbackTs: number,
+): ChatViewState {
+  return appendCompactionSummaryMessage(
+    state,
+    baseId,
+    body.timestamp ?? fallbackTs,
+    typeof body.summary === 'string' ? body.summary : undefined,
+    typeof body.tokensBefore === 'number' ? body.tokensBefore : undefined,
+  )
 }
 
 /**
@@ -268,21 +308,10 @@ function applyBranchSummaryRoleMessage(
   baseId: string,
   fallbackTs: number,
 ): ChatViewState {
-  const ts = body.timestamp ?? fallbackTs
-  const rawSummary = typeof body.summary === 'string' ? body.summary : undefined
-  const msg: Message = {
-    id: baseId,
-    role: 'system',
-    content: rawSummary ?? '',
-    status: 'complete',
-    branchSummary: {
-      summary: rawSummary,
-      fromId: typeof body.fromId === 'string' ? body.fromId : undefined,
-      timestamp: ts,
-    },
-    timestamp: ts,
-  }
-  return { ...state, messages: [...state.messages, msg] }
+  return appendBranchSummaryMessage(state, baseId, body.timestamp ?? fallbackTs, {
+    summary: typeof body.summary === 'string' ? body.summary : undefined,
+    fromId: typeof body.fromId === 'string' ? body.fromId : undefined,
+  })
 }
 
 /** user/assistant role → convertMessageBody 转换 + lastAssistantWithToolCalls 簿记更新。 */
@@ -343,41 +372,22 @@ function applyMessageEntry(state: ChatViewState, entry: PiMessageEntry): ChatVie
 
 /** compaction entry：pi 压缩记录 → system 消息 + compactionSummary 字段（SystemNotice「上下文已压缩」）。 */
 function applyCompactionEntry(state: ChatViewState, entry: PiCompactionEntry): ChatViewState {
-  const ts = toMs(entry.timestamp)
-  const summary = typeof entry.summary === 'string' ? entry.summary : undefined
-  const tokensBefore = typeof entry.tokensBefore === 'number' ? entry.tokensBefore : undefined
-  const msg: Message = {
-    id: deriveBaseId(entry, state),
-    role: 'system',
-    content: summary ?? '上下文已压缩',
-    status: 'complete',
-    compactionSummary: {
-      summary,
-      tokensBefore,
-      timestamp: ts,
-    },
-    timestamp: ts,
-  }
-  return { ...state, messages: [...state.messages, msg] }
+  return appendCompactionSummaryMessage(
+    state,
+    deriveBaseId(entry, state),
+    toMs(entry.timestamp),
+    typeof entry.summary === 'string' ? entry.summary : undefined,
+    typeof entry.tokensBefore === 'number' ? entry.tokensBefore : undefined,
+  )
 }
 
 /** branch_summary entry：summary 原值透传（'' 保留 ''，缺失 → undefined），content 缺失 fallback 空字符串。 */
 function applyBranchSummaryEntry(state: ChatViewState, entry: PiBranchSummaryEntry): ChatViewState {
-  const ts = toMs(entry.timestamp)
-  const rawSummary = typeof entry.summary === 'string' ? entry.summary : undefined
-  const msg: Message = {
-    id: deriveBaseId(entry, state),
-    role: 'system',
-    content: rawSummary ?? '',
-    status: 'complete',
-    branchSummary: {
-      summary: rawSummary,
-      fromId: entry.fromId,
-      timestamp: ts,
-    },
-    timestamp: ts,
-  }
-  return { ...state, messages: [...state.messages, msg] }
+  return appendBranchSummaryMessage(state, deriveBaseId(entry, state), toMs(entry.timestamp), {
+    summary: typeof entry.summary === 'string' ? entry.summary : undefined,
+    // entry 形态 fromId 类型直传（role 形态 typeof 收窄——两形态归一差异见 builder 注释）
+    fromId: entry.fromId,
+  })
 }
 
 /**

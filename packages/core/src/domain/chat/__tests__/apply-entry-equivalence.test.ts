@@ -492,6 +492,101 @@ describe('live ≡ reload 构造性等价（W6 全类型）', () => {
     expect(liveState.messages[0]).toMatchObject({ role: 'system', content: '' })
     expect(replayState.messages[0]).toMatchObject({ role: 'system', content: '' })
   })
+
+  it('E5: branchSummary 处置（D13 entry 化）——live 帧构造 branch_summary entry 与 replay pi entry 经 reducer 产出归一 deep-equal', () => {
+    // live 侧：registry branchSummary handler 从帧构造的 entry（br- 前缀客户端 id，
+    // 形态契约见 handler 注释——summary/fromId 帧值透传，timestamp 帧 ms → ISO）
+    const liveBranch: PiEntry = {
+      type: 'branch_summary',
+      id: 'br-00000009-0000-4000-8000-000000000009',
+      parentId: null,
+      timestamp: ts(6000),
+      summary: '分支摘要',
+      fromId: 'msg-9',
+    }
+    // replay 侧：pi 持久化 branch_summary entry（uuidv7 id）
+    const replayBranch: PiEntry = {
+      type: 'branch_summary',
+      id: piId(9),
+      parentId: null,
+      timestamp: ts(6000),
+      summary: '分支摘要',
+      fromId: 'msg-9',
+    }
+    expect(normalizeIds(replayEntries([liveBranch]))).toEqual(normalizeIds(replayEntries([replayBranch])))
+    // 用户可见行为：分支记录作 system 消息（content = summary，branchSummary 字段完整）
+    const [m] = normalizeIds(replayEntries([liveBranch])).messages
+    expect(m).toMatchObject({
+      role: 'system',
+      content: '分支摘要',
+      status: 'complete',
+      branchSummary: { summary: '分支摘要', fromId: 'msg-9', timestamp: 6000 },
+    })
+    // 分组语义：branchSummary 作 boundary systemNotice 独立行（W3 规则 5，同 compaction E4）
+    const items = toRenderItems(normalizeIds(replayEntries([liveBranch])).messages)
+    expect(items).toHaveLength(1)
+    expect(items[0]!.kind).toBe('systemNotice')
+  })
+
+  it("E5b: branchSummary summary-less 处置（D13——无摘要两侧同产空串行，live 'Branched' 占位消灭）", () => {
+    // 语义链（renderer-deepening D13，本设计第二处有意行为变化）：live 侧原直插
+    // `summary ?? 'Branched'` 与 reload 侧 reducer `rawSummary ?? ''` 分叉（live 显示
+    // 'Branched'、重开为空串）。entry 化后两侧共用 reducer branch_summary case——
+    // summary 缺失（undefined）时同走 `?? ''` 空串投影，行为不一致消灭。
+    // live 侧：帧构造 entry（br- 前缀客户端 id，无 summary 字段）
+    const liveBranch: PiEntry = {
+      type: 'branch_summary',
+      id: 'br-00000010-0000-4000-8000-000000000010',
+      parentId: null,
+      timestamp: ts(9600),
+      fromId: 'n-1',
+    }
+    // replay 侧：pi 持久化 entry（uuidv7 id，同样无 summary 字段）
+    const replayBranch: PiEntry = {
+      type: 'branch_summary',
+      id: piId(10),
+      parentId: null,
+      timestamp: ts(9600),
+      fromId: 'n-1',
+    }
+    const liveState = normalizeIds(replayEntries([liveBranch]))
+    const replayState = normalizeIds(replayEntries([replayBranch]))
+    expect(liveState).toEqual(replayState)
+    // 用户可见行为：两侧都产出空串行（原 live 'Branched' 的差异消灭）
+    expect(liveState.messages).toHaveLength(1)
+    expect(liveState.messages[0]).toMatchObject({
+      role: 'system',
+      content: '',
+      status: 'complete',
+      branchSummary: { summary: undefined, fromId: 'n-1', timestamp: 9600 },
+    })
+  })
+
+  it("E5c: branchSummary 空串 summary 处置（readBranchSummary 空串门——'' 保留 '' 不丢成 undefined，两侧同值同路径）", () => {
+    // 与 E4c（compaction 空串）同族：readBranchSummary 的 `s !== undefined` 门透传 ''，
+    // reducer `'' ?? ''` 不触发——两侧同保留空行，与 E5b 的 undefined 形态对照。
+    const liveBranch: PiEntry = {
+      type: 'branch_summary',
+      id: 'br-00000011-0000-4000-8000-000000000011',
+      parentId: null,
+      timestamp: ts(9700),
+      summary: '',
+      fromId: 'n-2',
+    }
+    const replayBranch: PiEntry = {
+      type: 'branch_summary',
+      id: piId(11),
+      parentId: null,
+      timestamp: ts(9700),
+      summary: '',
+      fromId: 'n-2',
+    }
+    const liveState = normalizeIds(replayEntries([liveBranch]))
+    const replayState = normalizeIds(replayEntries([replayBranch]))
+    expect(liveState).toEqual(replayState)
+    expect(liveState.messages[0]).toMatchObject({ role: 'system', content: '', branchSummary: { summary: '', fromId: 'n-2' } })
+    expect(replayState.messages[0]).toMatchObject({ role: 'system', content: '' })
+  })
 })
 
 // ── 双入口等价（R1-S1 修复锁定 / R2-TC S1）──────────────────────────────────────
