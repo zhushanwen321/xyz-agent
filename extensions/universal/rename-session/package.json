@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-rename-session",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "type": "module",
   "main": "index.ts",
   "xyz-agent": {
@@ -10,7 +10,10 @@
         "path": "config/rename-session-ext-config.json",
         "content": {
           "enabled": false,
-          "model": { "type": "ref", "ref": "" },
+          "model": {
+            "type": "ref",
+            "ref": ""
+          },
           "maxTitleLength": 50,
           "thinkingLevel": "off"
         }

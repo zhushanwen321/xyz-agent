@@ -184,11 +184,11 @@ async function pollRunToResult(
   return finalRun
     ? toResult(finalRun)
     : {
-        status: "done",
-        reason: "time_limited",
-        error: `Workflow timed out after ${explicitTimeoutMs}ms`,
-        runId,
-      };
+      status: "done",
+      reason: "time_limited",
+      error: `Workflow timed out after ${explicitTimeoutMs}ms`,
+      runId,
+    };
 }
 
 // ── runAndWait ───────────────────────────────────────────────
@@ -229,7 +229,7 @@ export async function runAndWait(
   timeoutMs?: number,
   model?: string,
 ): Promise<WorkflowRunResult> {
- // 1. registry 查找脚本（workflowRef = 绝对路径，S2 路径统一）
+  // 1. registry 查找脚本（workflowRef = 绝对路径，S2 路径统一）
   const script = await deps.registry.getPath(name);
   if (!script) {
     return {
@@ -240,7 +240,7 @@ export async function runAndWait(
     };
   }
 
- // 2. lint 校验（失败抛错——脚本本身有问题，不应静默吞）
+  // 2. lint 校验（失败抛错——脚本本身有问题，不应静默吞）
   const lintResult = script.validate();
   if (!lintResult.valid) {
     const errors = lintResult.findings
@@ -250,13 +250,13 @@ export async function runAndWait(
     throw new Error(`Workflow script '${name}' has lint errors: ${errors}`);
   }
 
- // 3. 构建 RunSpec
- // 不设 budgetTimeMs：runAndWait 自身用轮询 deadline（pollRunToResult 内 while + safeAbort）
- // 实施 timeout，并产出「Workflow timed out after Xms」的具体错误信息。spec 级
- // 时间预算（lifecycle.scheduleTimeBudget）服务于 fire-and-forget 的交互式 run
- // （tool-workflow actionRun），若在此也设会与轮询 deadline 同时触发产生竞态。
- // model 是例外：时间预算必须二选一（竞态），model 只有单通道（spec Option B），
- // 调用方显式传入即透传，不与任何轮询面竞争。
+  // 3. 构建 RunSpec
+  // 不设 budgetTimeMs：runAndWait 自身用轮询 deadline（pollRunToResult 内 while + safeAbort）
+  // 实施 timeout，并产出「Workflow timed out after Xms」的具体错误信息。spec 级
+  // 时间预算（lifecycle.scheduleTimeBudget）服务于 fire-and-forget 的交互式 run
+  // （tool-workflow actionRun），若在此也设会与轮询 deadline 同时触发产生竞态。
+  // model 是例外：时间预算必须二选一（竞态），model 只有单通道（spec Option B），
+  // 调用方显式传入即透传，不与任何轮询面竞争。
   const spec: RunSpec = {
     scriptSource: script.toExecutable(),
     args,
@@ -268,11 +268,11 @@ export async function runAndWait(
     parameters: script.meta.parameters,
   };
 
- // 4. 启动 workflow + 5. 轮询至 done（含 6. timeout → abortRun，C.7）
- // pending-notification 的 register/unregister 由 runWorkflow（启动注册）+
- // transition("done") 路径（完成注销）统一处理，runAndWait 不再重复 emit。
- // m3：chokepoint 校验失败（ArgsValidationError）→ 返回 invalid_args 结果（run 从未
- // 创建，runId 恒 ''），非 ArgsValidationError 保持传播。
+  // 4. 启动 workflow + 5. 轮询至 done（含 6. timeout → abortRun，C.7）
+  // pending-notification 的 register/unregister 由 runWorkflow（启动注册）+
+  // transition("done") 路径（完成注销）统一处理，runAndWait 不再重复 emit。
+  // m3：chokepoint 校验失败（ArgsValidationError）→ 返回 invalid_args 结果（run 从未
+  // 创建，runId 恒 ''），非 ArgsValidationError 保持传播。
   let runId: string;
   try {
     runId = await runWorkflow(spec, deps, signal);
@@ -305,7 +305,7 @@ async function safeAbort(
   try {
     await abortRun(runId, deps, reason, doneReason);
   } catch (err) {
- // run 可能已终态或不存在——忽略，调用方据 toResult 判断
+    // run 可能已终态或不存在——忽略，调用方据 toResult 判断
     void err;
   }
 }
@@ -341,7 +341,7 @@ export async function executeNestedWorkflow(
   parentRun: WorkflowRun,
   deps: LauncherDeps,
 ): Promise<{ content: string; parsedOutput?: unknown; error?: string }> {
- // Step 1: 循环检测——parentWorkflowChain 不存在时为 []（顶层 run）
+  // Step 1: 循环检测——parentWorkflowChain 不存在时为 []（顶层 run）
   const chain = [
     ...(parentRun.spec.parentWorkflowChain ?? []),
     parentRun.spec.scriptName,
@@ -353,9 +353,9 @@ export async function executeNestedWorkflow(
     };
   }
 
- // Step 2: signal 继承——子 run 响应父 run abort
- // [L-2] 提取命名 onParentAbort 以便 finally removeEventListener，防子 run 完成后
- //  parentSignal 上残留 listener（多次嵌套调用会累积）。
+  // Step 2: signal 继承——子 run 响应父 run abort
+  // [L-2] 提取命名 onParentAbort 以便 finally removeEventListener，防子 run 完成后
+  //  parentSignal 上残留 listener（多次嵌套调用会累积）。
   const childController = new AbortController();
   const parentSignal = parentRun.runtime?.controller.signal;
   const onParentAbort = (): void => childController.abort();
@@ -367,10 +367,10 @@ export async function executeNestedWorkflow(
     }
   }
 
- // Step 3+：registry 查找 + lint + RunSpec + runWorkflow + poll 全程 try（m3 E8——
- // try 起点提到 Step 2 的 listener 注册之后，覆盖 Step 3-6。runWorkflow throw
- // （含 chokepoint ArgsValidationError）与 not found/lint 早返回均走 finally 移除
- // parentSignal listener——修复原 try 外 runWorkflow 的泄漏路径）。
+  // Step 3+：registry 查找 + lint + RunSpec + runWorkflow + poll 全程 try（m3 E8——
+  // try 起点提到 Step 2 的 listener 注册之后，覆盖 Step 3-6。runWorkflow throw
+  // （含 chokepoint ArgsValidationError）与 not found/lint 早返回均走 finally 移除
+  // parentSignal listener——修复原 try 外 runWorkflow 的泄漏路径）。
   try {
     // Step 3: registry 查找 + lint（失败返回 error result，不抛错）
     const script = await deps.registry.getPath(name);

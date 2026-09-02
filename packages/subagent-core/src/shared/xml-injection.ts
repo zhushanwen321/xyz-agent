@@ -9,12 +9,12 @@
  * XML 结构——全部字段过一遍转义防注入段破碎）。
  */
 export function escapeXml(str: string): string {
-	return str
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&apos;");
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 /**
@@ -29,7 +29,7 @@ export function renderXmlSection(section: {
 	guide: string;
 	items: string[];
 }): string {
-	if (section.items.length === 0) return "";
-	const lines = [`\n\n<${section.tag}>`, section.guide, ...section.items, `</${section.tag}>`];
-	return lines.join("\n");
+  if (section.items.length === 0) return "";
+  const lines = [`\n\n<${section.tag}>`, section.guide, ...section.items, `</${section.tag}>`];
+  return lines.join("\n");
 }

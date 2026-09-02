@@ -87,14 +87,14 @@ export interface ModelListFormatOptions {
  * 非变异：返回排序副本，入参数组不动（core 纯函数定位；截尾语义依赖此序）。
  */
 export function sortByCodepoint<T>(
-	items: readonly T[],
-	key: (item: T) => string,
+  items: readonly T[],
+  key: (item: T) => string,
 ): T[] {
-	return [...items].sort((a, b) => {
-		const ka = key(a);
-		const kb = key(b);
-		return ka < kb ? -1 : ka > kb ? 1 : 0;
-	});
+  return [...items].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
 }
 
 /** 注入段中单个 workflow 的最大描述长度（控制每 turn prompt 体积） */
@@ -108,21 +108,21 @@ const DESC_BOUNDARY_MIN_RATIO = 0.4;
  * 优先在 limit 内的最后一个句末标点处断句；无合适断点则硬截断 + 省略号。
  */
 export function summarizeDescription(
-	desc: string,
-	maxLen = MAX_DESC_LEN,
+  desc: string,
+  maxLen = MAX_DESC_LEN,
 ): string {
-	const trimmed = desc.trim();
-	if (trimmed.length <= maxLen) return trimmed;
-	const slice = trimmed.slice(0, maxLen);
-	const boundary = Math.max(
-		slice.lastIndexOf("。"),
-		slice.lastIndexOf("；"),
-		slice.lastIndexOf(";"),
-		slice.lastIndexOf(". "),
-	);
-	// 断点过靠前（< 阈值比例）时不采用，改硬截断保留更多信息
-	if (boundary > maxLen * DESC_BOUNDARY_MIN_RATIO) return slice.slice(0, boundary + 1);
-	return `${slice}…`;
+  const trimmed = desc.trim();
+  if (trimmed.length <= maxLen) return trimmed;
+  const slice = trimmed.slice(0, maxLen);
+  const boundary = Math.max(
+    slice.lastIndexOf("。"),
+    slice.lastIndexOf("；"),
+    slice.lastIndexOf(";"),
+    slice.lastIndexOf(". "),
+  );
+  // 断点过靠前（< 阈值比例）时不采用，改硬截断保留更多信息
+  if (boundary > maxLen * DESC_BOUNDARY_MIN_RATIO) return slice.slice(0, boundary + 1);
+  return `${slice}…`;
 }
 
 /**
@@ -130,13 +130,13 @@ export function summarizeDescription(
  * 红线 7：内置条目无截断豁免——不做「内置优先保留」两段式。
  */
 function applyEntryBudget<T>(
-	sorted: T[],
-	maxEntries: number | undefined,
+  sorted: T[],
+  maxEntries: number | undefined,
 ): { kept: T[]; truncated: boolean } {
-	if (maxEntries === undefined || sorted.length <= maxEntries) {
-		return { kept: sorted, truncated: false };
-	}
-	return { kept: sorted.slice(0, maxEntries), truncated: true };
+  if (maxEntries === undefined || sorted.length <= maxEntries) {
+    return { kept: sorted, truncated: false };
+  }
+  return { kept: sorted.slice(0, maxEntries), truncated: true };
 }
 
 /**
@@ -147,38 +147,38 @@ function applyEntryBudget<T>(
  * （不注入）；预算截断发生时在段末追加宿主注入的兜底指引行（缺省不追加）。
  */
 export function formatAgentList(
-	agents: AgentEntry[],
-	opts: ListFormatOptions,
+  agents: AgentEntry[],
+  opts: ListFormatOptions,
 ): string {
-	if (agents.length === 0) return "";
+  if (agents.length === 0) return "";
 
-	const sorted = sortByCodepoint(agents, (a) => a.name);
-	const { kept, truncated } = applyEntryBudget(sorted, opts.maxEntries);
+  const sorted = sortByCodepoint(agents, (a) => a.name);
+  const { kept, truncated } = applyEntryBudget(sorted, opts.maxEntries);
 
-	const items = kept.map((agent) => {
-		let block = `  <agent><name>${escapeXml(agent.name)}</name><description>${escapeXml(agent.description)}</description>`;
-		// 路由样本（when + examples 正反原样渲染——negative 的 action 由作者写
-		// 「不调用（原因）」，渲染器不硬编码；全部内容 escapeXml 防 XML 注入段破坏）
-		if (agent.when) {
-			block += `<when>${escapeXml(agent.when)}</when>`;
-		}
-		if (agent.examples && agent.examples.length > 0) {
-			const exampleLines = agent.examples.map(
-				(e) => `      - "${escapeXml(e.match)}" → ${escapeXml(e.action)}`,
-			);
-			block += `\n    <examples>\n${exampleLines.join("\n")}\n    </examples>`;
-		}
-		block += `<location>${escapeXml(agent.path)}</location></agent>`;
-		return block;
-	});
-	if (truncated && opts.truncationNotice !== undefined) {
-		items.push(opts.truncationNotice);
-	}
-	return renderXmlSection({
-		tag: "available_subagents",
-		guide: opts.guide,
-		items,
-	});
+  const items = kept.map((agent) => {
+    let block = `  <agent><name>${escapeXml(agent.name)}</name><description>${escapeXml(agent.description)}</description>`;
+    // 路由样本（when + examples 正反原样渲染——negative 的 action 由作者写
+    // 「不调用（原因）」，渲染器不硬编码；全部内容 escapeXml 防 XML 注入段破坏）
+    if (agent.when) {
+      block += `<when>${escapeXml(agent.when)}</when>`;
+    }
+    if (agent.examples && agent.examples.length > 0) {
+      const exampleLines = agent.examples.map(
+        (e) => `      - "${escapeXml(e.match)}" → ${escapeXml(e.action)}`,
+      );
+      block += `\n    <examples>\n${exampleLines.join("\n")}\n    </examples>`;
+    }
+    block += `<location>${escapeXml(agent.path)}</location></agent>`;
+    return block;
+  });
+  if (truncated && opts.truncationNotice !== undefined) {
+    items.push(opts.truncationNotice);
+  }
+  return renderXmlSection({
+    tag: "available_subagents",
+    guide: opts.guide,
+    items,
+  });
 }
 
 /**
@@ -188,30 +188,30 @@ export function formatAgentList(
  * （不注入）；截断时追加宿主注入的兜底指引行（缺省不追加）。
  */
 export function formatWorkflowList(
-	workflows: WorkflowEntry[],
-	opts: ListFormatOptions,
+  workflows: WorkflowEntry[],
+  opts: ListFormatOptions,
 ): string {
-	if (workflows.length === 0) return "";
+  if (workflows.length === 0) return "";
 
-	const sorted = sortByCodepoint(workflows, (w) => w.name);
-	const { kept, truncated } = applyEntryBudget(sorted, opts.maxEntries);
+  const sorted = sortByCodepoint(workflows, (w) => w.name);
+  const { kept, truncated } = applyEntryBudget(sorted, opts.maxEntries);
 
-	const items = kept.map((wf) =>
-		`  <workflow><name>${escapeXml(wf.name)}</name><description>${escapeXml(wf.description)}</description><location>${escapeXml(wf.path)}</location></workflow>`,
-	);
-	if (truncated && opts.truncationNotice !== undefined) {
-		items.push(opts.truncationNotice);
-	}
-	return renderXmlSection({
-		tag: "available_workflows",
-		guide: opts.guide,
-		items,
-	});
+  const items = kept.map((wf) =>
+    `  <workflow><name>${escapeXml(wf.name)}</name><description>${escapeXml(wf.description)}</description><location>${escapeXml(wf.path)}</location></workflow>`,
+  );
+  if (truncated && opts.truncationNotice !== undefined) {
+    items.push(opts.truncationNotice);
+  }
+  return renderXmlSection({
+    tag: "available_workflows",
+    guide: opts.guide,
+    items,
+  });
 }
 
 /** 码点序比较（显式契约，禁 localeCompare——同 sortByCodepoint 注释） */
 function compareByCodepoint(a: string, b: string): number {
-	return a < b ? -1 : a > b ? 1 : 0;
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 /**
@@ -221,11 +221,11 @@ function compareByCodepoint(a: string, b: string): number {
  * 排最前（空串码点最小），口径确定可复现。
  */
 function compareModelEntries(a: ModelEntry, b: ModelEntry): number {
-	const pa = a.provider ?? "";
-	const pb = b.provider ?? "";
-	return pa === pb
-		? compareByCodepoint(a.id, b.id)
-		: compareByCodepoint(pa, pb);
+  const pa = a.provider ?? "";
+  const pb = b.provider ?? "";
+  return pa === pb
+    ? compareByCodepoint(a.id, b.id)
+    : compareByCodepoint(pa, pb);
 }
 
 /**
@@ -235,10 +235,10 @@ function compareModelEntries(a: ModelEntry, b: ModelEntry): number {
  * TypeError，本仓 L73 已核实）。
  */
 function formatCaps(entry: ModelEntry): string {
-	const caps: string[] = [];
-	if (entry.reasoning) caps.push("reasoning");
-	if (entry.input?.includes("image") ?? false) caps.push("vision");
-	return caps.join(",");
+  const caps: string[] = [];
+  if (entry.reasoning) caps.push("reasoning");
+  if (entry.input?.includes("image") ?? false) caps.push("vision");
+  return caps.join(",");
 }
 
 /**
@@ -251,29 +251,29 @@ function formatCaps(entry: ModelEntry): string {
  * provider 缺席/空串时 id 裸渲染。
  */
 export function formatModelList(
-	models: ModelEntry[],
-	opts: ModelListFormatOptions,
+  models: ModelEntry[],
+  opts: ModelListFormatOptions,
 ): string {
-	if (models.length === 0) return "";
+  if (models.length === 0) return "";
 
-	const sorted = [...models].sort(compareModelEntries);
+  const sorted = [...models].sort(compareModelEntries);
 
-	const items = sorted.map((m) => {
-		const caps = formatCaps(m);
-		const idText = m.provider ? `${m.provider}/${m.id}` : m.id;
-		return (
-			`  <model><id>${escapeXml(idText)}</id>`
+  const items = sorted.map((m) => {
+    const caps = formatCaps(m);
+    const idText = m.provider ? `${m.provider}/${m.id}` : m.id;
+    return (
+      `  <model><id>${escapeXml(idText)}</id>`
 				+ `<name>${escapeXml(m.name)}</name>`
 				+ (caps ? `<caps>${caps}</caps>` : "")
 				+ (m.contextWindow !== undefined
-					? `<contextWindow>${m.contextWindow}</contextWindow>`
-					: "")
+				  ? `<contextWindow>${m.contextWindow}</contextWindow>`
+				  : "")
 				+ `</model>`
-		);
-	});
-	return renderXmlSection({
-		tag: "available_provider_models",
-		guide: opts.guide,
-		items,
-	});
+    );
+  });
+  return renderXmlSection({
+    tag: "available_provider_models",
+    guide: opts.guide,
+    items,
+  });
 }

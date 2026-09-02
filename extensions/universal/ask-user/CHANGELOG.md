@@ -1,5 +1,11 @@
 # @zhushanwen/pi-ask-user
 
+## 7.0.16
+
+### Patch Changes
+
+- 837f2faf6: (no changeset body; patch version bump)
+
 ## 7.0.15
 
 ### Patch Changes

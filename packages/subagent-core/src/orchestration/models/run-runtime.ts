@@ -30,15 +30,15 @@ export type ReleaseMode = "terminal";
 // ── RunRuntime ───────────────────────────────────────────────
 
 export class RunRuntime {
- /** Worker 线程句柄。 */
+  /** Worker 线程句柄。 */
   readonly worker: WorkerHandle;
- /** per-running-segment AbortController（一次性，无法复用——G3-001）。 */
+  /** per-running-segment AbortController（一次性，无法复用——G3-001）。 */
   readonly controller: AbortController;
- /** Run 级墙钟时间预算计时器（spec.budgetTimeMs > 0 时由 lifecycle 调度，
+  /** Run 级墙钟时间预算计时器（spec.budgetTimeMs > 0 时由 lifecycle 调度，
    * 到期 abortRun time_limited）。release 时清理，避免 abort/replaceRuntime
    * 后孤儿计时器仍触发（rebuildRuntime 会重排一个全新的计时器，旧的不应残留）。 */
   readonly timeBudgetTimer?: ReturnType<typeof setTimeout>;
- /**
+  /**
  * 本 runtime 代际是否已收到 worker 的终态消息（return / error）。
  *
  * [F1] worker exit(0) 且本标记为 false = worker 静默退出、未交付任何终态——最常见根因
@@ -57,7 +57,7 @@ export class RunRuntime {
  * rebuildRuntime 构造新 RunRuntime 自然重置。
  */
   receivedTerminalMessage = false;
- /** 防止 release 重复执行（幂等）。 */
+  /** 防止 release 重复执行（幂等）。 */
   private released = false;
 
   constructor(
@@ -70,7 +70,7 @@ export class RunRuntime {
     this.timeBudgetTimer = timeBudgetTimer;
   }
 
- /**
+  /**
  * 释放所有资源：terminate worker + abort controller。
  *
  * 幂等——重复调用安全（第二次起 no-op，released flag 守卫）。
@@ -86,18 +86,18 @@ export class RunRuntime {
   release(_mode: ReleaseMode): void {
     if (this.released) return;
     this.released = true;
- // 清理 run 级时间预算计时器——abort/terminate/replaceRuntime 后它不应再触发
- // （rebuildRuntime 会重排全新计时器；孤儿触发会把已终态的 run 误转 done）。
+    // 清理 run 级时间预算计时器——abort/terminate/replaceRuntime 后它不应再触发
+    // （rebuildRuntime 会重排全新计时器；孤儿触发会把已终态的 run 误转 done）。
     if (this.timeBudgetTimer) clearTimeout(this.timeBudgetTimer);
- // worker.terminate 异步但幂等——不 await（release 是同步签名，调用方
- // 不应被底层线程关闭阻塞；worker 收到 terminate 后自行清理）。
+    // worker.terminate 异步但幂等——不 await（release 是同步签名，调用方
+    // 不应被底层线程关闭阻塞；worker 收到 terminate 后自行清理）。
     void this.worker.terminate();
- // controller.abort 触发 listener（kill agent subprocess、中止在飞调用）。
- // 一次性语义——已 aborted 的 controller 重复 abort 无副作用。
+    // controller.abort 触发 listener（kill agent subprocess、中止在飞调用）。
+    // 一次性语义——已 aborted 的 controller 重复 abort 无副作用。
     this.controller.abort();
   }
 
- /** 是否已 release（测试 + 诊断用）。 */
+  /** 是否已 release（测试 + 诊断用）。 */
   get isReleased(): boolean {
     return this.released;
   }

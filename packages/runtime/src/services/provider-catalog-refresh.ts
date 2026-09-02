@@ -25,10 +25,17 @@ import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { getDataDir, getPiAgentDir } from '@xyz-agent/shared/paths'
 import builtinData from '../generated/builtin-providers.json'
+import { logger } from '../infra/logger.js'
 
 const CATALOG_BASE_URL = 'https://pi.dev'
 const REQUEST_TIMEOUT_MS = 4000
 const CACHE_VERSION = 1
+/** JSON 落盘缩进（全仓 JSON_INDENT = 2 约定）。 */
+const JSON_INDENT = 2
+// 远程目录协商的状态码语义（对齐 pi remote-catalog-provider，详见 refreshProviderCatalogs 注释）
+const HTTP_NOT_MODIFIED = 304
+const HTTP_NOT_FOUND = 404
+const HTTP_NOT_IMPLEMENTED = 501
 
 /** overlay 条目模型（pi.dev 返回形状的宽松子集，仅要求 merge/展示所需字段存在）。 */
 export type OverlayModel = {
@@ -194,7 +201,7 @@ async function persistOwnCache(entries: Record<string, OverlayEntry>): Promise<v
   await mkdir(dirname(path), { recursive: true })
   const payload: OverlayCache = { version: CACHE_VERSION, entries }
   const tmp = `${path}.tmp`
-  await writeFile(tmp, JSON.stringify(payload, null, 2), 'utf-8')
+  await writeFile(tmp, JSON.stringify(payload, null, JSON_INDENT), 'utf-8')
   await rename(tmp, path)
 }
 
@@ -248,12 +255,12 @@ async function refreshOneProvider(
       headers,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
-    if (res.status === 304 && prev) {
+    if (res.status === HTTP_NOT_MODIFIED && prev) {
       entries[providerId] = { ...prev, checkedAt: Date.now() }
       refreshed.push(providerId)
       return
     }
-    if (res.status === 404 || res.status === 501) {
+    if (res.status === HTTP_NOT_FOUND || res.status === HTTP_NOT_IMPLEMENTED) {
       // 远程声明无此 provider 目录：永久失效 overlay（回纯快照），直到远程恢复
       entries[providerId] = { models: [], checkedAt: Date.now(), lastModified: 0 }
       refreshed.push(providerId)
@@ -285,15 +292,18 @@ export async function refreshProviderCatalogs(providerIds: string[]): Promise<Ca
   const refreshed: string[] = []
   const failed: CatalogRefreshResult['failed'] = []
 
-  await Promise.all(
+  await Promise.allSettled(
     providerIds.map(providerId => refreshOneProvider(providerId, entries, refreshed, failed)),
   )
 
   if (refreshed.length > 0) {
     try {
       await persistOwnCache(entries)
-    } catch {
+    } catch (e) {
       // 落盘失败不阻断 reply：本次内存外无持久化，下次进入页面重刷
+      logger.warn('[provider-catalog-refresh] persist overlay cache failed', {
+        error: e instanceof Error ? e.message : String(e),
+      })
     }
     overlaySnapshot = null // 失效内存缓存，合并展示立即读到新数据
   }

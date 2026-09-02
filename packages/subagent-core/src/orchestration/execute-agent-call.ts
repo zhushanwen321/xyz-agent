@@ -203,44 +203,44 @@ export async function executeAgentCall(
 
   const result = await runner.run(call.opts, signal, onEvent, stream);
 
- // 累加 usage（加权由 budget.consume 内部按权重常量处理，见 budget.ts）
+  // 累加 usage（加权由 budget.consume 内部按权重常量处理，见 budget.ts）
   if (result.usage) {
     budget.consume(result.usage);
   }
 
- // stale-context：不重试（P1-5）
+  // stale-context：不重试（P1-5）
   if (result.error !== undefined && isStaleContextErrorMsg(result.error)) {
     finalizeCall(call, result, trace, isOrphaned);
     budget.incrementCallCount();
     return;
   }
 
- // [MF-1] 确定性 schema 失败：不重试（gate 终止/不可满足 schema 同 schema 重试必同
- // 结果——重试纯烧钱；三态可重试性矩阵见 DETERMINISTIC_SCHEMA_FAILURE_PREFIX）
+  // [MF-1] 确定性 schema 失败：不重试（gate 终止/不可满足 schema 同 schema 重试必同
+  // 结果——重试纯烧钱；三态可重试性矩阵见 DETERMINISTIC_SCHEMA_FAILURE_PREFIX）
   if (result.error !== undefined && isDeterministicSchemaFailureMsg(result.error)) {
     finalizeCall(call, result, trace, isOrphaned);
     budget.incrementCallCount();
     return;
   }
 
- // signal 已 abort：调用方终止，不重试（避免无意义的递归）
+  // signal 已 abort：调用方终止，不重试（避免无意义的递归）
   if (signal.aborted) {
     finalizeCall(call, result, trace, isOrphaned);
     budget.incrementCallCount();
     return;
   }
 
- // 预算超限：不重试（重试只会突破预算且无意义）
+  // 预算超限：不重试（重试只会突破预算且无意义）
   if (result.error !== undefined && budget.isExceeded()) {
     finalizeCall(call, result, trace, isOrphaned);
     budget.incrementCallCount();
     return;
   }
 
- // 可重试失败：退避后递归
+  // 可重试失败：退避后递归
   if (result.error !== undefined && call.attempts < MAX_ATTEMPTS) {
     await delay(backoffDelay(call.attempts));
- // 退避期间 signal 可能 abort
+    // 退避期间 signal 可能 abort
     if (signal.aborted) {
       finalizeCall(call, result, trace, isOrphaned);
       budget.incrementCallCount();
@@ -250,7 +250,7 @@ export async function executeAgentCall(
     return;
   }
 
- // 终态（成功或达到重试上限的失败）
+  // 终态（成功或达到重试上限的失败）
   finalizeCall(call, result, trace, isOrphaned);
   budget.incrementCallCount();
 }

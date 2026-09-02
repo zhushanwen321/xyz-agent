@@ -28,7 +28,7 @@ import { buildWorkerScript } from "./worker-script-builder.ts";
 // ── WorkerHostImpl ───────────────────────────────────────────
 
 export class WorkerHostImpl implements WorkerHost {
- /**
+  /**
  * 启动一个 Worker thread 运行 workflow 脚本。
  *
  * 1. 用 buildWorkerScript(spec.scriptSource) 包装用户脚本（注入 agent/parallel/
@@ -59,9 +59,9 @@ export class WorkerHostImpl implements WorkerHost {
           name: spec.scriptName,
           description: spec.description,
         },
- // D-12 regression fix (round-2 #1)：注入 budget，否则 worker 内 $BUDGET.total 恒为 0。
- // 旧 agent-call-handler.ts 删除时同时丢失了 budget 注入和 budget-update 发送方，
- // 导致依赖 $BUDGET 做动态预算分支的脚本静默得到全 0。
+        // D-12 regression fix (round-2 #1)：注入 budget，否则 worker 内 $BUDGET.total 恒为 0。
+        // 旧 agent-call-handler.ts 删除时同时丢失了 budget 注入和 budget-update 发送方，
+        // 导致依赖 $BUDGET 做动态预算分支的脚本静默得到全 0。
         budget: {
           maxTokens: spec.budgetTokens,
           usedTokens: 0,
@@ -77,9 +77,9 @@ export class WorkerHostImpl implements WorkerHost {
 
     const handle = new WorkerHandle(worker);
 
- // 绑定事件——WorkerHandle 内部用 isCurrent 守卫，terminate 后回调 no-op（G-025）。
- // handlers 的 onMessage/onError/onExit 都是 async，这里 void 掉 promise（worker 事件
- // 不能 await，且 handler 内部错误由 lifecycle 统一捕获）。
+    // 绑定事件——WorkerHandle 内部用 isCurrent 守卫，terminate 后回调 no-op（G-025）。
+    // handlers 的 onMessage/onError/onExit 都是 async，这里 void 掉 promise（worker 事件
+    // 不能 await，且 handler 内部错误由 lifecycle 统一捕获）。
     handle.onMessage((raw) => {
       void handlers.onMessage(raw);
     });
@@ -87,9 +87,9 @@ export class WorkerHostImpl implements WorkerHost {
       void handlers.onError(err);
     });
     handle.onExit((code) => {
- // C.3 修复：传 handle 给 onExit，调用方用 handle.isCurrent 做竞态防护。
- // 注意：此时 handle.isCurrent 仍为 true（onExit 回调仅在 isCurrent 时触发，
- // WorkerHandle 的内部守卫已过滤掉 terminate 后的 stale exit）。
+      // C.3 修复：传 handle 给 onExit，调用方用 handle.isCurrent 做竞态防护。
+      // 注意：此时 handle.isCurrent 仍为 true（onExit 回调仅在 isCurrent 时触发，
+      // WorkerHandle 的内部守卫已过滤掉 terminate 后的 stale exit）。
       void handlers.onExit(code, handle);
     });
 

@@ -198,10 +198,11 @@ bash scripts/check-version-changes.sh "${PR_MERGE}^1..${PR_MERGE}"
 - `NEEDS_VERSION=true|false`（false = 本次无源码改动，跳过 4N）
 - `CHANGED_PACKAGES`：已声明 changeset 的包 + 声明的 type（只显示不采纳）
 - `UNDECLARED_PACKAGES`：改了 src 但无 changeset（PR 漏声明警告）—— 非空则补写 `.changeset/<slug>.md` 后重跑
+- `ANCHOR_ONLY_PACKAGES`：仅 package.json dep 范围/锚点跟随（如 pi peer ^0.84.1→^0.84.4）、无 src 改动——**不是漏声明**；按对齐 patch 先例（79e16b5b0，pi 0.84.1 对齐发 18 个纯锚点 patch）纳入 4N.2 人工定 type（通常 patch），保持 npm 元数据与仓内一致
 - `DEPENDENTS_OF_CHANGED`：**传递闭包**，自己没改 src 但通过 workspace: 直接/间接引用了已 bump 包、须 patch 重发刷新 tarball 范围的包（标注层数与触发链路）
 - `LINKED_GROUPS_AFFECTED`：linked 组受影响参考（不强制对齐）
 
-**决策面 = `CHANGED_PACKAGES` ∪ `DEPENDENTS_OF_CHANGED`**，两者都要进 4N.2/4N.3。
+**决策面 = `CHANGED_PACKAGES` ∪ `ANCHOR_ONLY_PACKAGES` ∪ `DEPENDENTS_OF_CHANGED`**，三者都要进 4N.2/4N.3。
 
 #### 4N.2 人工定 type [MANDATORY 人工决策]
 

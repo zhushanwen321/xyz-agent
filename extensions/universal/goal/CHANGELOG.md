@@ -1,5 +1,11 @@
 # @zhushanwen/pi-goal
 
+## 0.11.1
+
+### Patch Changes
+
+- 837f2faf6: (no changeset body; patch version bump)
+
 ## 0.11.0
 
 ### Minor Changes

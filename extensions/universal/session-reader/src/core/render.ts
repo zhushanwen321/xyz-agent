@@ -3,6 +3,35 @@ import { extractToolCalls, formatToolCallSummary, type ToolCallInfo } from './to
 import type { Turn } from './turns.js'
 import type { TreeView } from './tree.js'
 
+// ---------------------------------------------------------------------------
+// 模块常量（渲染口径：截断宽度 / 换算基数 / 降级档位）
+// ---------------------------------------------------------------------------
+
+/** bytes→KB 换算基数（omitted 字节 / read 结果规模的 KB 显示）。 */
+const BYTES_PER_KB = 1024
+/** userBrief 截断字符数（TurnBrief.userBrief 文档口径「截 60 字符」）。 */
+const USER_BRIEF_MAX_CHARS = 60
+/** assistantBrief 截断字符数（TurnBrief.assistantBrief 文档口径「截 80 字符」）。 */
+const ASSISTANT_BRIEF_MAX_CHARS = 80
+/** L2 expand 单 entry brief 截断字符数。 */
+const ENTRY_BRIEF_MAX_CHARS = 100
+/** turn 索引显示宽度（T013 三位补零）。 */
+const TURN_INDEX_WIDTH = 3
+/** outline 默认 token 预算（OutlineOptions.budget 缺省值）。 */
+const OUTLINE_DEFAULT_BUDGET_TOKENS = 2000
+/** token 估算换算基数（chars/4，与 tokenEstimate 口径一致）。 */
+const CHARS_PER_TOKEN = 4
+/** toolResult 摘要头行数（O3 摘要态展示前 N 行）。 */
+const SUMMARY_HEAD_LINE_COUNT = 3
+/** toolResult 摘要单头行截断字符数。 */
+const SUMMARY_HEAD_LINE_MAX_CHARS = 80
+
+/** 行渲染降级档位（design §3.5 算法 1 step3）：0=全有 / 1=砍 assistantBrief / 2=再砍 toolSummary（骨架）。 */
+const LINE_LEVEL_FULL = 0
+const LINE_LEVEL_NO_ASSISTANT = 1
+const LINE_LEVEL_SKELETON = 2
+type LineLevel = typeof LINE_LEVEL_FULL | typeof LINE_LEVEL_NO_ASSISTANT | typeof LINE_LEVEL_SKELETON
+
 /**
  * L1 outline 的单行 turn 摘要（design §3.5 算法 1 的渲染单元，冻结接口）。
  *
@@ -163,7 +192,7 @@ function formatToolResultSummary(
   }
   if (toolName === 'read') {
     if (resultText === '') return base
-    const kb = Math.max(1, Math.round(utf8Bytes(resultText) / 1024))
+    const kb = Math.max(1, Math.round(utf8Bytes(resultText) / BYTES_PER_KB))
     return `${base} (${kb}KB)`
   }
   return base
@@ -216,7 +245,7 @@ function computeBrief(turn: Turn): TurnBrief {
   if (turn.isCompaction) {
     const first = turn.entries[0]
     const summaryStr = typeof first?.summary === 'string' ? first.summary : ''
-    userBrief = truncate('[compaction] ' + summaryStr, 60)
+    userBrief = truncate('[compaction] ' + summaryStr, USER_BRIEF_MAX_CHARS)
   } else {
     let userText = ''
     for (const entry of turn.entries) {
@@ -225,7 +254,7 @@ function computeBrief(turn: Turn): TurnBrief {
         userText += extractText(msg.content)
       }
     }
-    userBrief = truncate(userText, 60)
+    userBrief = truncate(userText, USER_BRIEF_MAX_CHARS)
   }
 
   return {
@@ -233,7 +262,7 @@ function computeBrief(turn: Turn): TurnBrief {
     startTime: turn.startTime,
     userBrief,
     toolSummary: formatToolSummary(toolCounts),
-    assistantBrief: truncate(assistantText, 80),
+    assistantBrief: truncate(assistantText, ASSISTANT_BRIEF_MAX_CHARS),
     omittedBytes: omitted,
   }
 }
@@ -258,8 +287,8 @@ function formatHHMM(timestamp?: string): string {
 
 export function formatBytesMarker(bytes: number): string {
   if (bytes <= 0) return ''
-  if (bytes < 1024) return `[${bytes}B omitted]`
-  return `[${Math.round(bytes / 1024)}KB omitted]`
+  if (bytes < BYTES_PER_KB) return `[${bytes}B omitted]`
+  return `[${Math.round(bytes / BYTES_PER_KB)}KB omitted]`
 }
 
 /**
@@ -268,14 +297,14 @@ export function formatBytesMarker(bytes: number): string {
  * level: 0=全有（toolSummary + assistantBrief）/ 1=砍 assistantBrief / 2=再砍 toolSummary（骨架）。
  * userBrief + omittedBytes 骨架永保。assistantBrief 格式 `→ <结论>`，在 toolSummary 后、omitted 前。
  */
-function formatLine(b: TurnBrief, level: 0 | 1 | 2, branchSize?: number): string {
+function formatLine(b: TurnBrief, level: LineLevel, branchSize?: number): string {
   const parts: string[] = []
-  const head = `T${String(b.index).padStart(3, '0')}`
+  const head = `T${String(b.index).padStart(TURN_INDEX_WIDTH, '0')}`
   const time = formatHHMM(b.startTime)
   parts.push(time ? `${head} ${time}` : head)
   if (b.userBrief) parts.push(b.userBrief)
-  if (level <= 1 && b.toolSummary) parts.push(b.toolSummary)
-  if (level <= 0 && b.assistantBrief) parts.push(`→ ${b.assistantBrief}`)
+  if (level <= LINE_LEVEL_NO_ASSISTANT && b.toolSummary) parts.push(b.toolSummary)
+  if (level <= LINE_LEVEL_FULL && b.assistantBrief) parts.push(`→ ${b.assistantBrief}`)
   const marker = formatBytesMarker(b.omittedBytes)
   if (marker) parts.push(marker)
   if (branchSize !== undefined && branchSize > 0) parts.push(`[旁支 ${branchSize} entries]`)
@@ -306,7 +335,7 @@ export function renderOutline(
   tree: TreeView,
   options?: OutlineOptions,
 ): OutlineResult {
-  const budget = options?.budget ?? 2000
+  const budget = options?.budget ?? OUTLINE_DEFAULT_BUDGET_TOKENS
   const allBranches = options?.allBranches ?? false
   const granularity = options?.granularity ?? 'turn'
 
@@ -344,20 +373,20 @@ export function renderOutline(
   }
 
   // 2. perTurnBudget（token → chars×4）
-  const perTurnCharBudget = (budget / turns.length) * 4
+  const perTurnCharBudget = (budget / turns.length) * CHARS_PER_TOKEN
 
   // 3. 降级序：level 0 全有；超预算降到 level 1 砍 assistantBrief；仍超降到 level 2 砍 toolSummary（骨架）。design §3.5 算法 1 step3
   const lineCache: string[] = []
   for (const b of briefs) {
     const branchSize = b.branch !== undefined ? tree.branches.get(b.branch) : undefined
-    let line = formatLine(b, 0, branchSize)
+    let line = formatLine(b, LINE_LEVEL_FULL, branchSize)
     if (line.length > perTurnCharBudget) {
       // 超预算：先砍 assistantBrief（level 1），仍超再砍 toolSummary（level 2，骨架）
       b.assistantBrief = ''
-      line = formatLine(b, 1, branchSize)
+      line = formatLine(b, LINE_LEVEL_NO_ASSISTANT, branchSize)
       if (line.length > perTurnCharBudget) {
         b.toolSummary = ''
-        line = formatLine(b, 2, branchSize)
+        line = formatLine(b, LINE_LEVEL_SKELETON, branchSize)
       }
     }
     lineCache.push(line)
@@ -366,9 +395,9 @@ export function renderOutline(
   // 4. 总预算截断（从尾部丢弃）
   let totalChars = lineCache.reduce((s, l) => s + l.length, 0)
   let truncated: number | undefined
-  if (totalChars / 4 > budget) {
+  if (totalChars / CHARS_PER_TOKEN > budget) {
     let kept = lineCache.length
-    while (kept > 0 && totalChars / 4 > budget) {
+    while (kept > 0 && totalChars / CHARS_PER_TOKEN > budget) {
       kept--
       totalChars -= lineCache[kept].length
     }
@@ -377,7 +406,7 @@ export function renderOutline(
     briefs.length = kept
   }
 
-  const tokenEstimate = Math.ceil(totalChars / 4)
+  const tokenEstimate = Math.ceil(totalChars / CHARS_PER_TOKEN)
   return { turns: briefs, stats, tokenEstimate, truncated }
 }
 
@@ -405,7 +434,7 @@ function renderEntryGranularity(
       const b: TurnBrief = {
         index: entryIdx++,
         startTime: e.timestamp,
-        userBrief: truncate(text, 60) || `[${e.type}]`,
+        userBrief: truncate(text, USER_BRIEF_MAX_CHARS) || `[${e.type}]`,
         toolSummary: formatToolSummary(counts),
         assistantBrief: '',
         omittedBytes: entryOmittedBytes(e),
@@ -416,13 +445,13 @@ function renderEntryGranularity(
   }
 
   const lines = briefs.map((b) =>
-    formatLine(b, 0, b.branch !== undefined ? tree.branches.get(b.branch) : undefined),
+    formatLine(b, LINE_LEVEL_FULL, b.branch !== undefined ? tree.branches.get(b.branch) : undefined),
   )
   let totalChars = lines.reduce((s, l) => s + l.length, 0)
   let truncated: number | undefined
-  if (totalChars / 4 > budget) {
+  if (totalChars / CHARS_PER_TOKEN > budget) {
     let kept = lines.length
-    while (kept > 0 && totalChars / 4 > budget) {
+    while (kept > 0 && totalChars / CHARS_PER_TOKEN > budget) {
       kept--
       totalChars -= lines[kept].length
     }
@@ -433,7 +462,7 @@ function renderEntryGranularity(
   return {
     turns: briefs,
     stats,
-    tokenEstimate: Math.ceil(totalChars / 4),
+    tokenEstimate: Math.ceil(totalChars / CHARS_PER_TOKEN),
     truncated,
   }
 }
@@ -459,7 +488,7 @@ function entryBrief(e: Entry, tcMap?: Map<string, ToolCallInfo>): string {
   const msg = e.message
   if (msg !== undefined) {
     if (msg.role === 'user' || msg.role === 'assistant') {
-      return truncate(extractText(msg.content), 100) || `[${msg.role}]`
+      return truncate(extractText(msg.content), ENTRY_BRIEF_MAX_CHARS) || `[${msg.role}]`
     }
     if (msg.role === 'toolResult') {
       const toolCallId = msg.toolCallId
@@ -469,7 +498,7 @@ function entryBrief(e: Entry, tcMap?: Map<string, ToolCallInfo>): string {
   }
   if (e.type === 'compaction') {
     const s = typeof e.summary === 'string' ? e.summary : '[compaction]'
-    return truncate(s, 100)
+    return truncate(s, ENTRY_BRIEF_MAX_CHARS)
   }
   if (e.type === 'custom') return `[custom:${e.customType ?? 'unknown'}]`
   return `[${e.type}]`
@@ -479,7 +508,7 @@ export function renderExpand(turn: Turn): {
   turn: string
   entries: EntryBrief[]
 } {
-  const head = `T${String(turn.index).padStart(3, '0')}`
+  const head = `T${String(turn.index).padStart(TURN_INDEX_WIDTH, '0')}`
   const bits = [`${turn.entries.length} entries`]
   if (turn.startTime !== undefined) bits.push(`started ${formatHHMM(turn.startTime)}`)
   if (turn.isCompaction) bits.push('compaction')
@@ -559,7 +588,7 @@ export function renderDetail(
           // 空文本口径与 formatToolResultSummary 一致：空结果 = 0 行
           //（''.split('\n') 返 [''] length=1，会与 summary 的 (0行) 自相矛盾）
           const lines = text === '' ? [] : text.split('\n')
-          const headLines = lines.slice(0, 3).map((l) => truncate(l, 80)).join(' | ')
+          const headLines = lines.slice(0, SUMMARY_HEAD_LINE_COUNT).map((l) => truncate(l, SUMMARY_HEAD_LINE_MAX_CHARS)).join(' | ')
           out.push({
             type: 'toolResultSummary',
             id: e.id,

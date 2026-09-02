@@ -145,18 +145,27 @@ export interface SpawnRuntimeResult {
   token: string
 }
 
+/** runtime WS auth token 熵：32 字节 = 256 bit（hex 编码后 64 字符）。 */
+const RUNTIME_TOKEN_BYTES = 32
+
+/**
+ * runtime-token 文件权限：owner 读写（0600）。token 等同 WS 凭据，
+ * 禁 group/other 读取，防同机其他用户窃取后直连 runtime。
+ */
+const RUNTIME_TOKEN_FILE_MODE = 0o600
+
 /**
  * 生成新 token 并写入 <dataDir>/runtime-token（0600，mkdir -p 数据目录）。
  * writeFileSync 的 mode 仅创建时生效；chmodSync 兜底「文件已存在但被外部放宽权限」的场景
  * （重写不收紧既有文件权限是 writeFileSync 语义）。
  */
 function issueRuntimeToken(): string {
-  const token = randomBytes(32).toString('hex')
+  const token = randomBytes(RUNTIME_TOKEN_BYTES).toString('hex')
   const dataDir = getDataDir()
   mkdirSync(dataDir, { recursive: true })
   const tokenFile = path.join(dataDir, 'runtime-token')
-  writeFileSync(tokenFile, token, { mode: 0o600 })
-  chmodSync(tokenFile, 0o600)
+  writeFileSync(tokenFile, token, { mode: RUNTIME_TOKEN_FILE_MODE })
+  chmodSync(tokenFile, RUNTIME_TOKEN_FILE_MODE)
   return token
 }
 
@@ -228,7 +237,7 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
     // 定位 tsx 真实位置——isolated → .pnpm/tsx@x.y.z/...；hoisted → 向上遍历到 repoRoot。
     // 与打包模式用 dist/runtime/index.cjs 同思路（解析包内 JS 入口，不依赖 .bin 或固定
     // node_modules 形态），跨 linker 模式稳定，merge 到 main（hoisted）不坏。
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- 运行时按 Node 解析算法动态定位 tsx 包路径（适配 isolated node-linker），不引入静态依赖；vite CJS 输出下 require 原生可用
+     
     const tsxPkgPath = require.resolve('tsx/package.json', { paths: [projectRoot] })
     const tsxPath = path.join(path.dirname(tsxPkgPath), 'dist', 'cli.mjs')
 

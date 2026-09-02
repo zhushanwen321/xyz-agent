@@ -704,11 +704,11 @@ export class RecordStore {
       ...(chatMode
         ? { resumable: true }
         : {
-            status: "closed" as const,
-            closedReason: "gc" as const,
-            endedAt: Date.now(),
-            error: "orphan recovery: no child session file (spawn interrupted or file removed externally)",
-          }),
+          status: "closed" as const,
+          closedReason: "gc" as const,
+          endedAt: Date.now(),
+          error: "orphan recovery: no child session file (spawn interrupted or file removed externally)",
+        }),
     });
   }
 

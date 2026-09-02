@@ -40,7 +40,7 @@ const logger = getLogger("subagents");
  * 同 chunk 到达）；30 万 tokens 上下文显式 compaction 耗时 40.1s——10min 上限余量
  * 4 个数量级以上（probe/p-t2c-report.md）。维持设计默认值，仅此一处定义。
  */
-export const SETTLED_WATCHDOG_TIMEOUT_MS = 10 * 60 * 1000;
+export const SETTLED_WATCHDOG_TIMEOUT_MS = 600_000;
 
 /** recordId → armed settled watchdog timer。仅在等待窗口内 armed（挂载/清除成对）。 */
 const armedTimers = new Map<string, NodeJS.Timeout>();

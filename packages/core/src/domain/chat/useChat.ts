@@ -78,6 +78,12 @@ export interface UseChatDeps {
 }
 
 /**
+ * subagent 占位 chip 自动 slug 的进制（base36：0-9a-z）——时间戳编码更紧凑；
+ * slug 仅作展示/唯一标识（用户无感自动生成），无需可读性。
+ */
+const SUBAGENT_SLUG_RADIX = 36
+
+/**
  * 会话级流式订阅表（sessionId → 取消函数）。
  *
  * [HISTORICAL] 为什么不能 per-send 订阅：
@@ -506,7 +512,7 @@ export function createUseChat(deps: UseChatDeps) {
         // 新建占位 chip（§3.1.3 场景 2）：subagentId 空串。slug 自动生成（用户无感）——
         // chip 上的 slug 可能是 U2a 的 i18n 占位文案（如「新任务」），是展示占位不可作 id，
         // 一律用自动 slug 覆盖。
-        const slug = 'chat-' + Date.now().toString(36)
+        const slug = 'chat-' + Date.now().toString(SUBAGENT_SLUG_RADIX)
         await deps.chatApi.subagentAction(sid, 'start', { slug, task: text })
       }
     } catch (e) {

@@ -72,6 +72,14 @@ interface ToolCallResult {
 	reason?: string;
 }
 
+/**
+ * ctx.ui.select / ctx.ui.input 的 opts 参数索引（第 3 个参数，0-based）。
+ * 类型位置提取 opts 时用 `Parameters<typeof ...>[typeof _UI_OPTIONS_PARAM_INDEX]`
+ * （字面量索引会触发 no-magic-numbers，typeof 常量索引语义等价）。
+ * 仅类型位置使用、运行时无值引用，按项目约定加 `_` 前缀豁免 no-unused-vars。
+ */
+const _UI_OPTIONS_PARAM_INDEX = 2;
+
 // ──────────────────────── 扩展工厂 ────────────────────────
 
 /**
@@ -134,7 +142,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 						mode: ctx.mode,
 						ui: {
 							notify: (msg: string, type?: "info" | "warning" | "error") => ctx.ui.notify(msg, type),
-							select: (title: string, options: string[], opts?: Parameters<typeof ctx.ui.select>[2]) =>
+							select: (title: string, options: string[], opts?: Parameters<typeof ctx.ui.select>[typeof _UI_OPTIONS_PARAM_INDEX]) =>
 								ctx.ui.select(title, options, opts),
 							custom: <T,>(
 								factory: (tui: unknown, theme: unknown, kb: unknown, done: (result: T) => void) => unknown,
@@ -144,7 +152,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 							// 连接 ctx.ui.input（rule-editor custom 模板文本输入用）。
 							// approval.ts 已声明可选 input（SDK 提供，mock 可能缺失）。
 							...(typeof ctx.ui.input === "function"
-								? { input: (title: string, placeholder?: string, opts?: Parameters<typeof ctx.ui.input>[2]) => ctx.ui.input(title, placeholder, opts) }
+								? { input: (title: string, placeholder?: string, opts?: Parameters<typeof ctx.ui.input>[typeof _UI_OPTIONS_PARAM_INDEX]) => ctx.ui.input(title, placeholder, opts) }
 								: {}),
 						},
 					},
@@ -171,7 +179,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 						modelRegistry: ctx.modelRegistry,
 						ui: {
 							notify: (msg: string, type?: "info" | "warning" | "error") => ctx.ui.notify(msg, type),
-							select: (title: string, options: string[], opts?: Parameters<typeof ctx.ui.select>[2]) =>
+							select: (title: string, options: string[], opts?: Parameters<typeof ctx.ui.select>[typeof _UI_OPTIONS_PARAM_INDEX]) =>
 								ctx.ui.select(title, options, opts),
 							custom: <T,>(
 								factory: (tui: unknown, theme: unknown, kb: unknown, done: (result: T) => void) => unknown,
@@ -180,7 +188,7 @@ export default function permissionExtension(pi: ExtensionAPI): void {
 								ctx.ui.custom<T>(factory as Parameters<typeof ctx.ui.custom<T>>[0], options),
 							// 连接 ctx.ui.input（与 rule handler 一致；model picker 当前不用，但保持 ctx 对称）。
 							...(typeof ctx.ui.input === "function"
-								? { input: (title: string, placeholder?: string, opts?: Parameters<typeof ctx.ui.input>[2]) => ctx.ui.input(title, placeholder, opts) }
+								? { input: (title: string, placeholder?: string, opts?: Parameters<typeof ctx.ui.input>[typeof _UI_OPTIONS_PARAM_INDEX]) => ctx.ui.input(title, placeholder, opts) }
 								: {}),
 						},
 					},
@@ -314,7 +322,7 @@ async function processToolCall(
 		mode: ctx.mode,
 		ui: {
 			notify: (msg: string, type?: "info" | "warning" | "error") => ctx.ui.notify(msg, type),
-			select: (title: string, options: string[], opts?: Parameters<typeof ctx.ui.select>[2]) => ctx.ui.select(title, options, opts),
+			select: (title: string, options: string[], opts?: Parameters<typeof ctx.ui.select>[typeof _UI_OPTIONS_PARAM_INDEX]) => ctx.ui.select(title, options, opts),
 			custom: <T,>(
 				factory: (tui: unknown, theme: unknown, kb: unknown, done: (result: T) => void) => unknown,
 				options?: { overlay?: boolean },
@@ -323,7 +331,7 @@ async function processToolCall(
 			// W6 T9 G3：Reject-with-Reason。ctx.ui.input 存在则透传（采集真实拒绝理由）。
 			// approval.ts 的 collectRejectReason 会用 typeof 判断是否可用，不可用则 fallback。
 			...(typeof ctx.ui.input === "function"
-				? { input: (title: string, placeholder?: string, opts?: Parameters<typeof ctx.ui.input>[2]) => ctx.ui.input(title, placeholder, opts) }
+				? { input: (title: string, placeholder?: string, opts?: Parameters<typeof ctx.ui.input>[typeof _UI_OPTIONS_PARAM_INDEX]) => ctx.ui.input(title, placeholder, opts) }
 				: {}),
 		},
 	};

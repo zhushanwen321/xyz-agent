@@ -149,8 +149,9 @@ export function writePersistedBaseline(
 			// 条目；对齐 quota-providers atomicWriteJson）；清理失败不掩盖原错误
 			try {
 				if (existsSync(tmpPath)) unlinkSync(tmpPath);
-			} catch {
+			} catch (cleanupErr) {
 				// 清理失败仅残留一个小文件，原错误优先上抛
+				void cleanupErr;
 			}
 			throw err;
 		}

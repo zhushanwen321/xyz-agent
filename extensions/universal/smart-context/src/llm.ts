@@ -79,8 +79,8 @@ export interface SameModelCallOptions {
 	sessionId?: string;
 	/** 工具投影与 LLM 调用的依赖注入（单测 mock 点）。 */
 	deps?: {
-		getApiKeyAndHeaders?: (model: unknown) => Promise<{ ok: true; apiKey?: string; headers?: Record<string, string>; env?: Record<string, string> } | { ok: false; error: string }>;
-		call?: (model: unknown, context: LlmContext, options: SimpleStreamOptions) => Promise<SimpleResponseLike>;
+		getApiKeyAndHeaders?: (model: Model<never> | Model<string>) => Promise<{ ok: true; apiKey?: string; headers?: Record<string, string>; env?: Record<string, string> } | { ok: false; error: string }>;
+		call?: (model: Model<never> | Model<string>, context: LlmContext, options: SimpleStreamOptions) => Promise<SimpleResponseLike>;
 	};
 }
 
@@ -102,8 +102,8 @@ export async function callSameModelCompaction(
 	opts: SameModelCallOptions,
 ): Promise<SameModelCallResult> {
 	const deps = opts.deps ?? {};
-	const getAuth = deps.getApiKeyAndHeaders ?? ((m: unknown) => ctx.modelRegistry.getApiKeyAndHeaders(m as never));
-	const call = deps.call ?? ((m: unknown, c: LlmContext, o: SimpleStreamOptions) => completeSimple(m as never, c, o));
+	const getAuth = deps.getApiKeyAndHeaders ?? ((m: Model<never> | Model<string>) => ctx.modelRegistry.getApiKeyAndHeaders(m));
+	const call = deps.call ?? ((m: Model<never> | Model<string>, c: LlmContext, o: SimpleStreamOptions) => completeSimple(m, c, o));
 	try {
 		if (!opts.model) {
 			return { ok: false, error: "no current model" };

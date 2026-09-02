@@ -10,7 +10,7 @@
  */
 
 import { buildSessionContext, compact as nativeCompact, convertToLlm } from "@earendil-works/pi-coding-agent";
-import type { CompactionResult } from "@earendil-works/pi-coding-agent";
+import type { CompactionResult, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "@zhushanwen/pi-extension-logger";
 import { resolveModel } from "@zhushanwen/pi-llm-shared";
@@ -95,17 +95,30 @@ export interface SmartContextDetails {
 	mode: "same-model" | "cross-model";
 }
 
+/** sessionManager 上会话文件字段/方法的宽松形状（D13-4，消费侧可选链兜底）。 */
+interface SessionManagerSessionFileLike {
+	getSessionFile?: () => string | undefined;
+	sessionFile?: string;
+}
+
+/**
+ * sessionManager 会话文件访问形状的运行时守卫（D13-4）：
+ * 只收窄到对象（字段存在性/类型由消费侧可选链 + ?? 兜底，与原语义一致）。
+ */
+function isSessionManagerSessionFileLike(sm: unknown): sm is SessionManagerSessionFileLike {
+	return typeof sm === "object" && sm !== null;
+}
+
 /**
  * session 文件路径（transcript 回查指针用，D13-4）：从 sessionManager 推导。
  * getSessionFile 若不可得则返回空串（指针省略，不失败）。
  */
 function getSessionFilePath(ctx: ExtensionContext): string {
-	const sm = ctx.sessionManager as unknown as {
-		getSessionFile?: () => string | undefined;
-		sessionFile?: string;
-	};
+	// 经 unknown 再守卫：sessionFile 是 sessionManager 的类型未暴露字段（宽于其声明）
+	const sm: unknown = ctx.sessionManager;
+	const accessor = isSessionManagerSessionFileLike(sm) ? sm : undefined;
 	try {
-		return sm.getSessionFile?.() ?? sm.sessionFile ?? "";
+		return accessor?.getSessionFile?.() ?? accessor?.sessionFile ?? "";
 	} catch {
 		return "";
 	}
@@ -165,7 +178,7 @@ async function generateSameMode(
 	}
 	// AgentMessage[]（含 bash/custom 等扩展消息）→ 标准 Message[]（与主会话请求同源转换，
 	// convertToLlm 是 pi host 默认实现——同样的输入产生同样的输出，前缀缓存对齐的前提）
-	const fullMessages = convertToLlm(buildSessionContext(event.branchEntries as never).messages);
+	const fullMessages = convertToLlm(buildSessionContext(event.branchEntries as SessionEntry[]).messages);
 	const instructionMessage = {
 		role: "user" as const,
 		content: [{ type: "text" as const, text: buildSameModelInstruction(event.customInstructions) }],
@@ -237,9 +250,11 @@ async function generateCrossMode(
 			Object.entries(auth.headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
 		)
 		: undefined;
+	// preparation：BeforeCompactLikeEvent 的宽松形状是 nativeCompact 入参（CompactionPreparation，
+	// 含 settings 等未消费字段）的结构子集——运行时是 pi 原生事件对象，此处单层收窄断言
 	const result = await nativeCompact(
-		event.preparation as never,
-		model as never,
+		event.preparation as Parameters<typeof nativeCompact>[0],
+		model,
 		auth.apiKey,
 		headers,
 		event.customInstructions,

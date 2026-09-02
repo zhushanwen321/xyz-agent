@@ -41,6 +41,9 @@ const AUTO_VALUE = "__auto__";
 /** SelectList 最大可见行数（picker overlay 不超过终端高度）。 */
 const MAX_VISIBLE_ITEMS = 10;
 
+/** box 边框左右各占用 1 列（│ × 2）。 */
+const BORDER_OVERHEAD = 2;
+
 // ──────────────────────── 辅助组件（inline Component stub，避免依赖 Box 的 padding/bg） ────────────────────────
 
 /**
@@ -115,14 +118,11 @@ export class ProviderModelSelectorComponent extends Container {
 		this.currentList?.handleInput(data);
 	}
 
-	/** box 边框左右各占用 1 列（│ × 2） */
-	private static readonly BORDER_OVERHEAD = 2;
-
 	/**
 	 * 重写 render：用 box 边框包裹 Container 子组件的输出。
 	 */
 	override render(width: number): string[] {
-		const innerWidth = Math.max(0, width - ProviderModelSelectorComponent.BORDER_OVERHEAD);
+		const innerWidth = Math.max(0, width - BORDER_OVERHEAD);
 		const inner = super.render(innerWidth);
 		const lines: string[] = [];
 		lines.push(`\u250C${"\u2500".repeat(innerWidth)}\u2510`);

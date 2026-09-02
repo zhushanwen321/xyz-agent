@@ -1,5 +1,11 @@
 # @zhushanwen/pi-rename-session
 
+## 0.5.4
+
+### Patch Changes
+
+- 837f2faf6: (no changeset body; patch version bump)
+
 ## 0.5.3
 
 ### Patch Changes

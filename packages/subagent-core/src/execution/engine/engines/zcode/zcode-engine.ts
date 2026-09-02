@@ -65,6 +65,7 @@ import {
   ZCODE_ADAPTER_VERSION,
   ZCODE_APPSERVER_ABORT_GRACE_MS,
   ZCODE_APPSERVER_DRIFT_RPC_CODES,
+  ZCODE_APPSERVER_ERR_BUSY_SESSION,
   ZCODE_APPSERVER_ERR_MODEL_CONFIG_MISSING,
   ZCODE_APPSERVER_HARVEST_GRACE_MS,
   ZCODE_APPSERVER_PIDFILE_NAME,
@@ -1374,8 +1375,7 @@ function buildAppServerRunFailedMessage(err: unknown, home: AppServerHomeHandle,
       `无可用模型配置）。恢复指引：在 ZCode 桌面端登录并配置 provider 凭据后重跑本任务（引擎将在下任务重写常驻 config 并重建连接）。`
     );
   }
-  if (isAppServerRpcError(err) && err.code === -32010) {
-    // -32010 无 constants 常量（constants.ts 常量按行登记；本分支文案自描述 code 语义）
+  if (isAppServerRpcError(err) && err.code === ZCODE_APPSERVER_ERR_BUSY_SESSION) {
     const sid = sessionId !== undefined ? `（会话 id: ${sessionId}）` : "";
     return (
       `engine_run_failed: app-server 报 -32010${sid}（send 时该会话已有轮在跑，busy 不排队不打断）。` +

@@ -53,6 +53,9 @@ const THINKING_LEVELS: ReadonlySet<string> = new Set([
 /** 环境变量前缀（避免与其他配置冲突）。 */
 const ENV_PREFIX = "PI_RENAME_";
 
+/** "provider/model" 格式按 "/" 拆分后的合法段数（modelEnv 校验用）。 */
+const MODEL_REF_PART_COUNT = 2;
+
 /**
  * 从环境变量读取配置覆盖值（live 读取，每次调用查 process.env）。
  *
@@ -84,7 +87,7 @@ function getEnvOverrides(): Partial<RenameSessionConfig> {
 	if (modelEnv !== undefined && typeof modelEnv === "string") {
 		// 支持 "provider/model" 格式（最常用场景）
 		const parts = modelEnv.split("/");
-		if (parts.length === 2 && parts[0] && parts[1]) {
+		if (parts.length === MODEL_REF_PART_COUNT && parts[0] && parts[1]) {
 			overrides.model = { type: "ref", ref: modelEnv };
 		}
 		// 其他格式静默忽略（复杂 ModelSelector 请用配置文件）

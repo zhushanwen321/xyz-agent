@@ -228,29 +228,29 @@ async function preloadUpdateSilently(
     writePreloadedUpdate(release, filePath)
     console.log(`[preload] pre-downloaded v${release.version} to ${filePath}`)
   } catch (err) {
-      // D7: 预下载失败落盘（本诊断环境每次检查更新都会发生的第一失败现场）
-      const proxyConfig = readProxyConfig()
-      const proxyUrl = resolveProxyUrl(proxyConfig)
-      if (err instanceof UpdateError) {
-        appendUpdateError({
-          at: new Date().toISOString(),
-          source: 'preload',
-          stage: err.stage,
-          errorCode: err.errorCode,
-          rawCause: err.rawCause,
-          proxyUrl,
-        })
-      } else {
-        appendUpdateError({
-          at: new Date().toISOString(),
-          source: 'preload',
-          stage: 'downloading',
-          rawCause: err instanceof Error ? err.message : String(err),
-          proxyUrl,
-        })
-      }
-      console.warn(`[preload] background pre-download failed for v${release.version}:`, err)
-    } finally {
+    // D7: 预下载失败落盘（本诊断环境每次检查更新都会发生的第一失败现场）
+    const proxyConfig = readProxyConfig()
+    const proxyUrl = resolveProxyUrl(proxyConfig)
+    if (err instanceof UpdateError) {
+      appendUpdateError({
+        at: new Date().toISOString(),
+        source: 'preload',
+        stage: err.stage,
+        errorCode: err.errorCode,
+        rawCause: err.rawCause,
+        proxyUrl,
+      })
+    } else {
+      appendUpdateError({
+        at: new Date().toISOString(),
+        source: 'preload',
+        stage: 'downloading',
+        rawCause: err instanceof Error ? err.message : String(err),
+        proxyUrl,
+      })
+    }
+    console.warn(`[preload] background pre-download failed for v${release.version}:`, err)
+  } finally {
     preDownloading = false
     preDownloadPromise = null
   }

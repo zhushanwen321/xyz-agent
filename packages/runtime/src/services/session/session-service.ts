@@ -149,6 +149,9 @@ export interface SessionReplicatedStates {
 const FETCH_CURRENT_PROMPT_POLL_MS = 250
 const FETCH_CURRENT_PROMPT_TIMEOUT_MS = 8000
 
+/** JSON 落盘缩进（全仓 JSON_INDENT = 2 约定）。 */
+const JSON_INDENT = 2
+
 /**
  * 定向消息文本的换行编码（composer 四符号 §3.3.3 / 探针 P3 转义协议）。
  *
@@ -620,8 +623,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       if (m && typeof m.id === 'string' && m.id !== '' && typeof m.provider === 'string' && m.provider !== '') {
         effectiveModelId = `${m.provider}/${m.id}`
       }
-    } catch {
+    } catch (e) {
       // 读回失败保持请求值（下游 markDirty 防抖重拉 get_state 仍会收敛到权威值）
+      console.warn(`[session-service] switchModel get_state read-back failed for ${sessionId}, keeping requested model: ${toErrorMessage(e)}`)
     }
     // W7：switchModel RPC 成功响应 = modelId 实例的失效源（RPC 响应驱动，「事件只做失效」的
     // 补充合法形态，D7）。markDirty 防抖重拉 get_state，实例快照与 pi 权威值收敛（行为级
@@ -1098,8 +1102,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       if (Array.isArray(parsed.engines) && parsed.engines.every((e) => typeof e === 'string') && parsed.engines.length > 0) {
         engines = parsed.engines
       }
-    } catch {
+    } catch (e) {
       // 缺失/损坏 → 走静态声明回退
+      console.warn(`[session-service] read engines.json failed, falling back to static declaration: ${toErrorMessage(e)}`)
     }
     if (engines === undefined) {
       engines = await this.readDeclaredEnginesFallback()
@@ -1110,8 +1115,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       if (typeof conf.defaultEngine === 'string' && conf.defaultEngine.trim() !== '') {
         defaultEngine = conf.defaultEngine.trim()
       }
-    } catch {
+    } catch (e) {
       // 无 config / 坏 JSON → 缺省 pi（extension 侧同缺省语义）
+      console.warn(`[session-service] read subagents config.json failed, defaulting engine to pi: ${toErrorMessage(e)}`)
     }
     return { engines, defaultEngine }
   }
@@ -1133,8 +1139,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       if (Array.isArray(declared) && declared.every((e) => typeof e === 'string') && declared.length > 0) {
         return declared as string[]
       }
-    } catch {
+    } catch (e) {
       // 回退链的回退——静默到 ['pi']
+      console.warn(`[session-service] read declared engines fallback failed, defaulting to pi: ${toErrorMessage(e)}`)
     }
     return ['pi']
   }
@@ -1169,7 +1176,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       // （无锁时代这行 mkdir 承重，引入锁后成为死代码）。原子写单点走 fs-utils.atomicWrite
       // （tmp+rename）；写失败时 .tmp 残留不被清理——与 worktree-config-helper ext-config
       // 先例同款取舍，磁盘孤儿文件无害，不在此另复制一份清理逻辑
-      atomicWrite(configPath, JSON.stringify(conf, null, 2), `${process.pid}-${Date.now()}`)
+      atomicWrite(configPath, JSON.stringify(conf, null, JSON_INDENT), `${process.pid}-${Date.now()}`)
     })
   }
 

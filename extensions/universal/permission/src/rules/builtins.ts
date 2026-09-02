@@ -117,6 +117,9 @@ function executableNameLookupKey(raw: string): string | undefined {
 
 // ── 合并短 flag 检查工具（G4: 合并 flag 如 -fo 需检测任意位置的 -o）──
 
+/** 短 flag 簇（`-x`）的最小长度：`-` + 至少 1 个 flag 字符。 */
+const MIN_SHORT_FLAG_CLUSTER_LENGTH = 2;
+
 /**
  * 检查短 flag 簇中是否含某个字符（如 `-fo` 含 `o`）。
  *
@@ -129,7 +132,7 @@ function executableNameLookupKey(raw: string): string | undefined {
  */
 function shortFlagClusterHasChar(arg: string, flagChar: string): boolean {
 	// 只处理短 flag 簇：单个 - 开头，非 --，长度 ≥ 2
-	if (!arg.startsWith("-") || arg.startsWith("--") || arg.length < 2) return false;
+	if (!arg.startsWith("-") || arg.startsWith("--") || arg.length < MIN_SHORT_FLAG_CLUSTER_LENGTH) return false;
 	// arg 去掉开头的 -，检查剩余字符
 	return arg.slice(1).includes(flagChar);
 }

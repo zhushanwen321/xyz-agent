@@ -34,11 +34,11 @@ export class AgentCall {
   status: AgentCallStatus = "pending";
   attempts = 0;
   result?: AgentResult;
- /** Pi subprocess session ID（uuidv7，G-017 归此）。 */
+  /** Pi subprocess session ID（uuidv7，G-017 归此）。 */
   sessionId?: string;
- /** Session JSONL 绝对路径（finalizeCall 后从 result.sessionFile 填入，对齐 sessionId 模式）。 */
+  /** Session JSONL 绝对路径（finalizeCall 后从 result.sessionFile 填入，对齐 sessionId 模式）。 */
   sessionFile?: string;
- /** 与 Trace 共享的节点引用（D-10 单源）。AgentCall 不直接改其字段。 */
+  /** 与 Trace 共享的节点引用（D-10 单源）。AgentCall 不直接改其字段。 */
   readonly traceNode: ExecutionTraceNode;
 
   constructor(id: number, opts: AgentCallOpts, traceNode: ExecutionTraceNode) {
@@ -47,7 +47,7 @@ export class AgentCall {
     this.traceNode = traceNode;
   }
 
- /**
+  /**
  * 标记进入 running 状态（dispatch 前）。attempts++（含首次）。
  * @throws 若已 done（不可重启）
  */
@@ -59,7 +59,7 @@ export class AgentCall {
     this.attempts += 1;
   }
 
- /**
+  /**
  * 标记完成（成功或失败均调用——result.error 区分）。
  * @throws 若当前非 running（pending 不能直接跳 done，必须先 markRunning）
  */
@@ -71,12 +71,12 @@ export class AgentCall {
     this.status = "done";
   }
 
- /** 记录 pi subprocess session ID（dispatch 成功后）。 */
+  /** 记录 pi subprocess session ID（dispatch 成功后）。 */
   setSessionId(sessionId: string): void {
     this.sessionId = sessionId;
   }
 
- /** 记录 session JSONL 绝对路径（finalizeCall 后，对齐 setSessionId 模式）。 */
+  /** 记录 session JSONL 绝对路径（finalizeCall 后，对齐 setSessionId 模式）。 */
   setSessionFile(sessionFile: string): void {
     this.sessionFile = sessionFile;
   }

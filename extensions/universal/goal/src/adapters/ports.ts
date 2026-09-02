@@ -53,7 +53,12 @@ export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePort
 			// host 侧 event-adapter 检测 marker 解码还原。guiSetWidget 无 isGui 守卫
 			// （helpers.ts 仅查 ctx.ui?.setWidget 存在性），isGui 判定在 updateWidget
 			// 外层（projection/widget.ts）。
-			guiSetWidget(ctx as unknown as GuiContext, name, result);
+			//
+			// 断言根因：pi ExtensionUIContext.custom 是泛型方法（返回 Promise<T>），
+			// 与 GuiContext.ui.custom 的具体返回类型静态不兼容，但 mode/hasUI/ui 其余
+			// 成员形状一致（ExtensionMode 与 GuiContext.mode union 完全相同）——
+			// 单层直接断言可过 tsc（guiSetWidget 仅读 ui.setWidget，custom 不参与）。
+			guiSetWidget(ctx as GuiContext, name, result);
 		},
 		setStatus(name: string, text: string | undefined): void {
 			ctx.ui.setStatus(name, text);
@@ -65,8 +70,9 @@ export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePort
 			return Boolean(ctx.hasUI);
 		},
 		get isGui(): boolean {
-			// RPC 模式 = GUI 渲染通道有效；TUI/json/print 走 pi 原生渲染
-			return isGuiCapable(ctx as unknown as GuiContext);
+			// RPC 模式 = GUI 渲染通道有效；TUI/json/print 走 pi 原生渲染。
+			// 断言同 setGuiWidget：custom 泛型签名静态不兼容，mode 单字段运行时可靠。
+			return isGuiCapable(ctx as GuiContext);
 		},
 		// ThemeLike 形状：透传 ctx.ui.theme 的 fg/bold。
 		// Theme.fg 只接受 ThemeColor 字面量 union（SDK 契约）；projection 层保证传入 union 内字面量，

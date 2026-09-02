@@ -244,8 +244,9 @@ function logHookFailure(err: unknown): void {
     // best-effort：logger 抛错时的终极兜底 process.stderr.write——其内部吞错不会抛，仍不外泄到 agent loop。
     try {
       process.stderr.write(`[xyz-system-prompt-extension] logHookFailure also failed: ${String(nestedErr)}\n`)
-    } catch {
-      /* 完全静默：两层兑底都失败时无处可写 */
+    } catch (finalErr) {
+      /* 完全静默：两层兜底都失败时无处可写 */
+      void finalErr
     }
   }
 }

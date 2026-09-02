@@ -413,10 +413,10 @@ async function finalizeTimeBudgetExhausted(run: WorkflowRun, deps: LifecycleDeps
     void te;
   }
   if (!transitioned) return;
- // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+  // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
   closeOutInFlightCalls(run);
   await saveRunBestEffort(run, deps, "finalizeTimeBudgetExhausted (done,time_limited)");
- // [OR-4] M12 同款围栏（终态副作用不经 void 变 unhandledRejection）
+  // [OR-4] M12 同款围栏（终态副作用不经 void 变 unhandledRejection）
   emitTerminalSideEffects(run, deps, "finalizeTimeBudgetExhausted (done,time_limited)");
 }
 
@@ -443,8 +443,8 @@ export function rebuildRuntime(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): void {
- // [P-SD] 测试钩子注入点：先于任何副作用（模拟 workerHost.start 抛错）。抛错由
- // scheduleRebuild 的 catch 接住回灌重试矩阵（[OR-2]），不再裸抛。
+  // [P-SD] 测试钩子注入点：先于任何副作用（模拟 workerHost.start 抛错）。抛错由
+  // scheduleRebuild 的 catch 接住回灌重试矩阵（[OR-2]），不再裸抛。
   rebuildRuntimeInvocationCount += 1;
   const injectThreshold = resolveRebuildFailureInjectionThreshold();
   if (injectThreshold !== undefined && rebuildRuntimeInvocationCount >= injectThreshold) {
@@ -453,26 +453,26 @@ export function rebuildRuntime(
         `(invocation #${rebuildRuntimeInvocationCount}, ${REBUILD_FAILURE_INJECT_ENV}>=${injectThreshold})`,
     );
   }
- // OB3（可观察性）：rebuild 关键节点 debug 日志——此前函数体 0 处 deps.log，
- // 崩溃自愈只能靠行为证据诊断（L1 入口 / L2 重排 / L3 discard / L4 完成）。
+  // OB3（可观察性）：rebuild 关键节点 debug 日志——此前函数体 0 处 deps.log，
+  // 崩溃自愈只能靠行为证据诊断（L1 入口 / L2 重排 / L3 discard / L4 完成）。
   deps.log?.("debug", "workflow:error-recovery", "runtime rebuild start", {
     runId: run.runId,
     budgetTimeMs: run.spec.budgetTimeMs,
   });
   const controller = new AbortController();
   const worker = deps.workerHost.start(run.spec, run.spec.args, handlers);
- // D-12 regression fix (round-2 #2)：重新调度 run 级墙钟预算计时器。
- // replaceRuntime 释放旧 runtime 时 clearTimeout 了旧计时器（run-runtime.release），
- // 新 runtime 必须重排，否则带 budgetTimeMs 的 run 命中一次 worker/script 错误重试后
- // 时间预算静默失效（直到 rebuildRuntime 才重排——本函数即唯一重排点）。
- // deps.scheduleTimeBudget 由 Interface 层注入；未注入时（旧测试）跳过重排（兼容，
- // 不影响无时间预算的 run）。
- // 重排分支改为 if——语义与原三元一致（同一条件调 scheduleTimeBudget），仅为在
- // 分支内记 L2 日志，控制流/异常语义零变化。
- // [race-F3] 重排值改为剩余墙钟（remainingTimeBudgetMs）而非满额——重试不重置预算；
- // L2 日志 payload 同步报实际重排值（排障时与 setTimeout 对得上）。remaining > 0
- // 由调用方 scheduleRebuild 保证（耗尽在那里转 time_limited，不进本函数）；本处
- // remaining <= 0 时不挂 timer（防御直调，宁可不挂也不能挂出 0ms 立即触发）。
+  // D-12 regression fix (round-2 #2)：重新调度 run 级墙钟预算计时器。
+  // replaceRuntime 释放旧 runtime 时 clearTimeout 了旧计时器（run-runtime.release），
+  // 新 runtime 必须重排，否则带 budgetTimeMs 的 run 命中一次 worker/script 错误重试后
+  // 时间预算静默失效（直到 rebuildRuntime 才重排——本函数即唯一重排点）。
+  // deps.scheduleTimeBudget 由 Interface 层注入；未注入时（旧测试）跳过重排（兼容，
+  // 不影响无时间预算的 run）。
+  // 重排分支改为 if——语义与原三元一致（同一条件调 scheduleTimeBudget），仅为在
+  // 分支内记 L2 日志，控制流/异常语义零变化。
+  // [race-F3] 重排值改为剩余墙钟（remainingTimeBudgetMs）而非满额——重试不重置预算；
+  // L2 日志 payload 同步报实际重排值（排障时与 setTimeout 对得上）。remaining > 0
+  // 由调用方 scheduleRebuild 保证（耗尽在那里转 time_limited，不进本函数）；本处
+  // remaining <= 0 时不挂 timer（防御直调，宁可不挂也不能挂出 0ms 立即触发）。
   let timeBudgetTimer: ReturnType<typeof setTimeout> | undefined;
   const remainingBudgetMs = remainingTimeBudgetMs(run);
   if (remainingBudgetMs !== undefined && remainingBudgetMs > 0 && deps.scheduleTimeBudget) {
@@ -483,21 +483,21 @@ export function rebuildRuntime(
     });
   }
   run.replaceRuntime(new RunRuntime(worker, controller, timeBudgetTimer));
- // 清除被旧 runtime abort 的在飞 call——必须在 replaceRuntime 之后同步执行（无
- // await 间隔）：replaceRuntime 同步 abort 旧 controller + terminate 旧 worker，
- // 在飞 executeAgentCall 的 finalize 发生在 `await runner.run` resolve 后的
- // microtask，此刻在飞 call 仍为 "running"/"pending"（status !== "done"）可精确
- // 清理；genuinely-done 的 call 保留（重跑 replay）。放 delay 退避之前会误删退避
- // 期间自然完成的真结果（重跑重复耗 token）；放任何 await 之后，假失败已 finalize
- // 为 "done" 挡不住——重跑 replay 会把 abort 错误当真结果回放，静默污染输出。
- // 注意：discard 只清 Map/trace 条目，旧 executeAgentCall 的 promise 链仍会醒来
- // finalize。markDone 在孤儿实例上无害，但后续投递并非 no-op——postAgentResult
- // 会投给 run.runtime（已是新 worker）的同 callId pending，劫持重跑调用（实测
- // S7-second 竞态：旧失败结果被 worker 侧 resolve 为空串 → 脚本假成功）；
- // finalizeCall 的 trace.update 在重跑已 append 同 stepIndex 新节点时命中新节点
- // （瞬时污染，由重跑完成时的 update 覆盖）。该投递由 dispatchAgentCall 的
- // 孤儿守卫（isOrphanedCall）拦截，trace.update 的瞬时污染由 executeAgentCall
- // 的 isOrphaned 谓词（OB2）拦截，此处不重复设防。
+  // 清除被旧 runtime abort 的在飞 call——必须在 replaceRuntime 之后同步执行（无
+  // await 间隔）：replaceRuntime 同步 abort 旧 controller + terminate 旧 worker，
+  // 在飞 executeAgentCall 的 finalize 发生在 `await runner.run` resolve 后的
+  // microtask，此刻在飞 call 仍为 "running"/"pending"（status !== "done"）可精确
+  // 清理；genuinely-done 的 call 保留（重跑 replay）。放 delay 退避之前会误删退避
+  // 期间自然完成的真结果（重跑重复耗 token）；放任何 await 之后，假失败已 finalize
+  // 为 "done" 挡不住——重跑 replay 会把 abort 错误当真结果回放，静默污染输出。
+  // 注意：discard 只清 Map/trace 条目，旧 executeAgentCall 的 promise 链仍会醒来
+  // finalize。markDone 在孤儿实例上无害，但后续投递并非 no-op——postAgentResult
+  // 会投给 run.runtime（已是新 worker）的同 callId pending，劫持重跑调用（实测
+  // S7-second 竞态：旧失败结果被 worker 侧 resolve 为空串 → 脚本假成功）；
+  // finalizeCall 的 trace.update 在重跑已 append 同 stepIndex 新节点时命中新节点
+  // （瞬时污染，由重跑完成时的 update 覆盖）。该投递由 dispatchAgentCall 的
+  // 孤儿守卫（isOrphanedCall）拦截，trace.update 的瞬时污染由 executeAgentCall
+  // 的 isOrphaned 谓词（OB2）拦截，此处不重复设防。
   const discardedCallIds = discardInFlightCalls(run);
   deps.log?.("debug", "workflow:error-recovery", "in-flight calls discarded", {
     runId: run.runId,
@@ -531,10 +531,10 @@ export async function handleWorkerMessage(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): Promise<void> {
- // 终态（done）丢弃 stale 消息（P0-1）
+  // 终态（done）丢弃 stale 消息（P0-1）
   if (isTerminal(run)) return;
 
- // M7: 形状校验——防畸形 IPC 消息（worker 崩溃/发非对象）导致下游 TypeError
+  // M7: 形状校验——防畸形 IPC 消息（worker 崩溃/发非对象）导致下游 TypeError
   if (typeof raw !== "object" || raw === null) return;
   const msg = raw as WorkerMsg;
   switch (msg.type) {
@@ -552,7 +552,7 @@ export async function handleWorkerMessage(
       await handleReturn(run, msg, deps);
       return;
     case "error":
- // M1: 传 handlers（rebuildRuntime 需要）
+      // M1: 传 handlers（rebuildRuntime 需要）
       // [F1] 同 return——error 也是终态消息，标记本代际已交付（同上防误判）。
       if (run.runtime) run.runtime.receivedTerminalMessage = true;
       await handleScriptError(
@@ -638,7 +638,7 @@ function dispatchAgentCall(
     return;
   }
 
- // 已缓存的调用直接 replay（跨 rebuild——崩溃重建后重跑脚本，已完成调用按 callId 命中缓存）
+  // 已缓存的调用直接 replay（跨 rebuild——崩溃重建后重跑脚本，已完成调用按 callId 命中缓存）
   const cached = run.state.calls.get(msg.callId);
   if (cached && cached.status === "done") {
     postAgentResult(run, msg.callId, cached.result!, true);
@@ -673,8 +673,8 @@ function dispatchAgentCall(
   };
   run.state.trace.append(node);
 
- // 构建 AgentCall（opts 形状对齐 AgentCallOpts；schema: unknown → Record）
- // 跨进程 IPC 边界的 schema 为 unknown，窄化前加 typeof guard 兜底。
+  // 构建 AgentCall（opts 形状对齐 AgentCallOpts；schema: unknown → Record）
+  // 跨进程 IPC 边界的 schema 为 unknown，窄化前加 typeof guard 兜底。
   const rawSchema = msg.opts.schema;
   const opts: AgentCallOpts = {
     ...msg.opts,
@@ -684,11 +684,11 @@ function dispatchAgentCall(
         : undefined,
   };
 
- // BL-1：解析 skill/schema → skillPath / schemaEnv / appendSystemPrompt。
- // M2 修正后 resolveAgentOpts 单参数，只处理 schema SO 指令（内容直传）+ skill。
- // agent ref 处理（systemPrompt/model/thinkingLevel）交 resolveIdentity（经
- // getAgentConfig + resolveModel 完整覆盖），消除双重注入与 model 层级混乱。
- // 解析失败（skill 未找到）走 error 路径，不发 slot、不 spawn。
+  // BL-1：解析 skill/schema → skillPath / schemaEnv / appendSystemPrompt。
+  // M2 修正后 resolveAgentOpts 单参数，只处理 schema SO 指令（内容直传）+ skill。
+  // agent ref 处理（systemPrompt/model/thinkingLevel）交 resolveIdentity（经
+  // getAgentConfig + resolveModel 完整覆盖），消除双重注入与 model 层级混乱。
+  // 解析失败（skill 未找到）走 error 路径，不发 slot、不 spawn。
   const resolved = resolveAgentOpts(opts);
   if (resolved.error) {
     const call = new AgentCall(msg.callId, opts, node);
@@ -713,14 +713,14 @@ function dispatchAgentCall(
   const call = new AgentCall(msg.callId, resolved.opts, node);
   run.state.calls.set(msg.callId, call);
 
- // C-3：agent call 执行入口。
- // （原经 gate.withSlot 包装，并发门闩 gate 已删——no-op 抽象，实际并发由
- // SubagentService ConcurrencyPool 管理；仅保留其 pre-abort 检查语义，见下方
- // dispatchCall 内 signal.aborted 分支。）executeAgentCall 管 retry/budget/stale-context；
- // runner（runner.run）管 spawn pi 子进程。
- // assignRuntime/replaceRuntime 保证 status==="running" ⟺ runtime defined，
- // 故 run.runtime 在此必存在（dispatchAgentCall 仅从 handleWorkerMessage 调用，
- // 后者已守 terminal（isTerminal）早期 return）。fallback new AbortController 已移除。
+  // C-3：agent call 执行入口。
+  // （原经 gate.withSlot 包装，并发门闩 gate 已删——no-op 抽象，实际并发由
+  // SubagentService ConcurrencyPool 管理；仅保留其 pre-abort 检查语义，见下方
+  // dispatchCall 内 signal.aborted 分支。）executeAgentCall 管 retry/budget/stale-context；
+  // runner（runner.run）管 spawn pi 子进程。
+  // assignRuntime/replaceRuntime 保证 status==="running" ⟺ runtime defined，
+  // 故 run.runtime 在此必存在（dispatchAgentCall 仅从 handleWorkerMessage 调用，
+  // 后者已守 terminal（isTerminal）早期 return）。fallback new AbortController 已移除。
   const runtime = run.runtime!;
   const signal = runtime.controller.signal;
   // D-005: onEvent 签名升级——executeAndAwait 直接出 AgentEvent（强类型，
@@ -736,8 +736,8 @@ function dispatchAgentCall(
   const stream = deps.streamSink
     ? new SubagentStream(`${run.runId}-${msg.callId}`, deps.streamSink)
     : undefined;
- // 原 gate.withSlot(fn, signal) 语义内联：pre-aborted 时 reject AbortError（
- // 下方 .catch 依赖此约定不记错），否则直接执行——并发调度归 ConcurrencyPool。
+  // 原 gate.withSlot(fn, signal) 语义内联：pre-aborted 时 reject AbortError（
+  // 下方 .catch 依赖此约定不记错），否则直接执行——并发调度归 ConcurrencyPool。
   const dispatchCall = async (): Promise<void> => {
     if (signal.aborted) {
       const abortErr = new Error("Operation aborted before start");
@@ -745,9 +745,9 @@ function dispatchAgentCall(
       throw abortErr;
     }
     try {
- // OB2（S7 残留）：isOrphaned 谓词注入——旧代际 finalize 在 trace.update 前被
- // 拦截（判定语义与下方 .then/.catch 守卫同一 isOrphanedCall，详见
- // execute-agent-call.ts finalizeCall 文档注释）。
+      // OB2（S7 残留）：isOrphaned 谓词注入——旧代际 finalize 在 trace.update 前被
+      // 拦截（判定语义与下方 .then/.catch 守卫同一 isOrphanedCall，详见
+      // execute-agent-call.ts finalizeCall 文档注释）。
       await executeAgentCall(call, deps.runner, run.state.budget, signal, run.state.trace, onEvent, stream, () => isOrphanedCall(run, msg.callId, call));
     } finally {
       stream?.dispose();
@@ -755,35 +755,35 @@ function dispatchAgentCall(
   };
   void dispatchCall()
     .then(() => {
- // 清除 live record：终态已由 executeAgentCall → finalizeCall 写入 node.result，
- // live 不再需要（且含可变状态，不保留）。无论 stale 与否都清，避免内存泄漏。
- // M4: 必须在 stale guard 之前清，否则跨 rebuild 的迟到 completion 会累积 live record。
+      // 清除 live record：终态已由 executeAgentCall → finalizeCall 写入 node.result，
+      // live 不再需要（且含可变状态，不保留）。无论 stale 与否都清，避免内存泄漏。
+      // M4: 必须在 stale guard 之前清，否则跨 rebuild 的迟到 completion 会累积 live record。
       node.live = undefined;
- // run 终止（终态）后到达的 stale completion 不写 state
+      // run 终止（终态）后到达的 stale completion 不写 state
       if (run.state.status !== "running") return;
- // 孤儿 call 守卫（S7-second 竞态）：rebuild 的 discardInFlightCalls 已移除本
- // call、或重跑 dispatch 已用新实例替换同 callId 条目时，本 completion 属于旧
- // runtime 代际。postAgentResult 的投递目标是 run.runtime（已是新 worker），
- // 迟到结果会劫持新 worker 内重跑 agent() 的 pending Promise——跳过投递 /
- // budget 同步 / 持久化，仅留日志。executeAgentCall 内 finalizeCall 的
- // trace.update 若已命中重跑新节点（瞬时污染），由重跑完成时的 update 覆盖。
+      // 孤儿 call 守卫（S7-second 竞态）：rebuild 的 discardInFlightCalls 已移除本
+      // call、或重跑 dispatch 已用新实例替换同 callId 条目时，本 completion 属于旧
+      // runtime 代际。postAgentResult 的投递目标是 run.runtime（已是新 worker），
+      // 迟到结果会劫持新 worker 内重跑 agent() 的 pending Promise——跳过投递 /
+      // budget 同步 / 持久化，仅留日志。executeAgentCall 内 finalizeCall 的
+      // trace.update 若已命中重跑新节点（瞬时污染），由重跑完成时的 update 覆盖。
       if (isOrphanedCall(run, msg.callId, call)) {
         deps.log?.("debug", "workflow:error-recovery", "orphan agent call completion dropped", { runId: run.runId, callId: msg.callId });
         return;
       }
       if (call.result) postAgentResult(run, msg.callId, call.result, false);
- // D-12 regression fix (round-2 #1)：executeAgentCall 内 consume/incrementCallCount
- // 后同步 worker $BUDGET（否则 $BUDGET.spent()/remaining() 恒为 0）
+      // D-12 regression fix (round-2 #1)：executeAgentCall 内 consume/incrementCallCount
+      // 后同步 worker $BUDGET（否则 $BUDGET.spent()/remaining() 恒为 0）
       postBudgetUpdate(run);
       deps.store.save(run).catch((e: unknown) => {
         const m = e instanceof Error ? e.message : String(e);
         logger.error(`[workflow] store.save failed (agent call ${msg.callId}): ${m}`);
       });
 
- // C-2：budget 超限 → 终止整个 run（避免继续 spawn 烧预算）
- // 内联 terminate（不调 lifecycle.abortRun 避免 engine 内循环依赖）：
- // 若 run 仍非终态，transition done,budget_limited + 持久化。
- // 上方 status !== "running" 已保证此处非 done（且 transition 内含 done no-op 守卫）。
+      // C-2：budget 超限 → 终止整个 run（避免继续 spawn 烧预算）
+      // 内联 terminate（不调 lifecycle.abortRun 避免 engine 内循环依赖）：
+      // 若 run 仍非终态，transition done,budget_limited + 持久化。
+      // 上方 status !== "running" 已保证此处非 done（且 transition 内含 done no-op 守卫）。
       if (run.state.budget.isExceeded()) {
         run.state.error = run.state.error ?? "Budget exceeded";
         deps.log?.("debug", "workflow:error-recovery", "budget exceeded, transition done", { runId: run.runId });
@@ -811,36 +811,36 @@ function dispatchAgentCall(
       }
     })
     .catch((err: unknown) => {
- // pre-abort 检查（原 gate.withSlot 语义）在 dispatchCall 入口 reject AbortError——预期，不记错。
+      // pre-abort 检查（原 gate.withSlot 语义）在 dispatchCall 入口 reject AbortError——预期，不记错。
       if (err instanceof Error && err.name === "AbortError") return;
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`[workflow] agent call ${msg.callId} failed: ${message}`);
- // 兜底回发：executeAgentCall 抛非 Abort 异常时（如 runner undefined 的 TypeError、
- // dispatchCall 内部 bug）原 catch 仅 console.error，worker 内对 callId 的 pending
- // Promise 永不 resolve → agent() 永久 await → worker 脚本挂死。构造 failed AgentResult
- //（与 resolveAgentOpts 失败路径 L262-275 一致的模式）postAgentResult 回 worker，
- // 让 pending Promise resolve（结果为 error），脚本可继续或失败退出。
- // 孤儿 call 守卫（与 .then 对称，S7-second 竞态）：rebuild 后本 call 已被 discard
- // 移除/替换——markDone 虽在孤儿实例上无害，但 trace.update 会污染重跑新建的同
- // stepIndex 节点、postAgentResult 会劫持新 worker 的同 callId pending。孤儿时只
- // 留日志，全部跳过。node.live 无条件先清（旧节点已脱离 trace，防御性统一）。
+      // 兜底回发：executeAgentCall 抛非 Abort 异常时（如 runner undefined 的 TypeError、
+      // dispatchCall 内部 bug）原 catch 仅 console.error，worker 内对 callId 的 pending
+      // Promise 永不 resolve → agent() 永久 await → worker 脚本挂死。构造 failed AgentResult
+      //（与 resolveAgentOpts 失败路径 L262-275 一致的模式）postAgentResult 回 worker，
+      // 让 pending Promise resolve（结果为 error），脚本可继续或失败退出。
+      // 孤儿 call 守卫（与 .then 对称，S7-second 竞态）：rebuild 后本 call 已被 discard
+      // 移除/替换——markDone 虽在孤儿实例上无害，但 trace.update 会污染重跑新建的同
+      // stepIndex 节点、postAgentResult 会劫持新 worker 的同 callId pending。孤儿时只
+      // 留日志，全部跳过。node.live 无条件先清（旧节点已脱离 trace，防御性统一）。
       node.live = undefined;
       if (isOrphanedCall(run, msg.callId, call)) {
         deps.log?.("debug", "workflow:error-recovery", "orphan agent call failure dropped", { runId: run.runId, callId: msg.callId });
         return;
       }
       const errorResult: AgentResult = { content: "", error: message };
- // call 已 done（executeAgentCall 内 finalizeCall 已 markDone）时跳过，避免重复 markDone。
- // status 理论上必为 running（executeAgentCall L130 markRunning 先于 reject），pending
- // 分支为防御性保护。非 running/done 意外态：跳过 markDone（markDone 要求 running）。
+      // call 已 done（executeAgentCall 内 finalizeCall 已 markDone）时跳过，避免重复 markDone。
+      // status 理论上必为 running（executeAgentCall L130 markRunning 先于 reject），pending
+      // 分支为防御性保护。非 running/done 意外态：跳过 markDone（markDone 要求 running）。
       if (call.status !== "done") {
         if (call.status === "pending") call.markRunning();
         call.markDone(errorResult);
       }
- // state 一致性三件套（与 resolveAgentOpts 失败 L268-276 / .then L319-325 对等）：
- // trace 标 failed + 清 live record（防泄漏）+ 持久化（catch 恰是最需留证的场景）。
- // stale 终态（run 已 done）时 run.runtime 为 undefined，postAgentResult 用
- // optional chaining 跳过 worker 回发；trace/state 写入仍执行（无害，终态快照已存）。
+      // state 一致性三件套（与 resolveAgentOpts 失败 L268-276 / .then L319-325 对等）：
+      // trace 标 failed + 清 live record（防泄漏）+ 持久化（catch 恰是最需留证的场景）。
+      // stale 终态（run 已 done）时 run.runtime 为 undefined，postAgentResult 用
+      // optional chaining 跳过 worker 回发；trace/state 写入仍执行（无害，终态快照已存）。
       run.state.trace.update(msg.callId, {
         status: "failed",
         result: errorResult,
@@ -1010,7 +1010,7 @@ async function handleReturn(
   deps: LifecycleDeps,
 ): Promise<void> {
   deps.log?.("debug", "workflow:error-recovery", "handleReturn", { runId: run.runId, status: run.state.status });
- // 捕获 worker 诊断日志（P2-2）
+  // 捕获 worker 诊断日志（P2-2）
   // L9: 追加而非覆盖——保留重试历史的诊断日志（各 worker 实例的 console 输出）
   if (msg.workerLogs && msg.workerLogs.length > 0) {
     run.state.errorLogs.push(...msg.workerLogs);
@@ -1020,14 +1020,14 @@ async function handleReturn(
   }
   run.state.scriptResult = msg.result;
   run.transition("done", "completed");
- // [OR-8] 脚本 return 时可能仍有 fire-and-forget 的 in-flight call（不 await）——
- // 终态收口为 cancelled，先收口再落盘（快照不再含 running 节点）
+  // [OR-8] 脚本 return 时可能仍有 fire-and-forget 的 in-flight call（不 await）——
+  // 终态收口为 cancelled，先收口再落盘（快照不再含 running 节点）
   closeOutInFlightCalls(run);
   // [SW-DATA-3] save 失败不阻断终态推进（原 await 裸抛 → unhandledRejection + 幽灵注销）
   await saveRunBestEffort(run, deps, "handleReturn (done,completed)");
   deps.log?.("debug", "workflow:error-recovery", "run saved after return", { runId: run.runId, reason: run.state.reason });
- // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
- // [OR-4] M12 同款围栏（此前裸调——listener 同步抛错经 void 变 unhandledRejection）
+  // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
+  // [OR-4] M12 同款围栏（此前裸调——listener 同步抛错经 void 变 unhandledRejection）
   emitTerminalSideEffects(run, deps, "handleReturn (done,completed)");
 }
 
@@ -1051,18 +1051,18 @@ export async function handleWorkerError(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): Promise<void> {
- // 与 handleWorkerMessage 对称——终态（done）丢弃 stale error。
- // 否则终态后到达的 worker error 仍会 workerErrorCount++（污染跨 runtime 计数）。
+  // 与 handleWorkerMessage 对称——终态（done）丢弃 stale error。
+  // 否则终态后到达的 worker error 仍会 workerErrorCount++（污染跨 runtime 计数）。
   if (isTerminal(run)) return;
 
- // [R4-F1] 同代际幂等守卫：worker 崩溃时 error + exit(1) 双事件各派发一次
- // handleWorkerError（onError 先到，exit 非 0 经 handleWorkerExit 委托二次到达）——
- // 旧实现单次崩溃 workerErrorCount +2、两个 scheduleRebuild 并行交错（双 rebuild
- // 各自 new Worker，旧 handle 的 terminate/exit 事件与新 handle 的生命周期互相踩踏）。
- // 复用 R4 的 receivedTerminalMessage 代际标志（RunRuntime 字段，rebuild 自然重置）：
- // 进入处理前置 true 标记「本代际已有 error/terminal 处理」，第二个事件（无论
- // onError 直达还是 exit(1) 委托）命中标志直接跳过。新代际的 handleWorkerError
- // 不受影响（新 RunRuntime 的标志为 false）。
+  // [R4-F1] 同代际幂等守卫：worker 崩溃时 error + exit(1) 双事件各派发一次
+  // handleWorkerError（onError 先到，exit 非 0 经 handleWorkerExit 委托二次到达）——
+  // 旧实现单次崩溃 workerErrorCount +2、两个 scheduleRebuild 并行交错（双 rebuild
+  // 各自 new Worker，旧 handle 的 terminate/exit 事件与新 handle 的生命周期互相踩踏）。
+  // 复用 R4 的 receivedTerminalMessage 代际标志（RunRuntime 字段，rebuild 自然重置）：
+  // 进入处理前置 true 标记「本代际已有 error/terminal 处理」，第二个事件（无论
+  // onError 直达还是 exit(1) 委托）命中标志直接跳过。新代际的 handleWorkerError
+  // 不受影响（新 RunRuntime 的标志为 false）。
   if (run.runtime?.receivedTerminalMessage) return;
   if (run.runtime) run.runtime.receivedTerminalMessage = true;
 
@@ -1074,17 +1074,17 @@ export async function handleWorkerError(
     return;
   }
 
- // 超限 → failed
+  // 超限 → failed
   run.state.error = err.message;
   deps.log?.("debug", "workflow:error-recovery", "handleWorkerError retries exceeded, transition done", { runId: run.runId, count });
   run.transition("done", "failed");
- // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+  // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
   closeOutInFlightCalls(run);
   // [SW-DATA-3] save 失败不阻断终态推进
   await saveRunBestEffort(run, deps, "handleWorkerError (done,failed)");
   deps.log?.("debug", "workflow:error-recovery", "run saved after worker error", { runId: run.runId, reason: run.state.reason });
- // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
- // [OR-4] M12 同款围栏
+  // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
+  // [OR-4] M12 同款围栏
   emitTerminalSideEffects(run, deps, "handleWorkerError (done,failed)");
 }
 
@@ -1112,7 +1112,7 @@ export async function handleWorkerExit(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): Promise<void> {
- // G-025: stale exit 事件丢弃（handle 已不是当前 runtime 的 worker）
+  // G-025: stale exit 事件丢弃（handle 已不是当前 runtime 的 worker）
   if (!handle.isCurrent) return;
   if (isTerminal(run)) return;
 
@@ -1126,17 +1126,17 @@ export async function handleWorkerExit(
     deps.log?.("debug", "workflow:error-recovery", "worker exited without terminal message, transition done", { runId: run.runId });
     run.state.error = WORKER_EXITED_WITHOUT_RESULT_MSG;
     run.transition("done", "failed");
- // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+    // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
     closeOutInFlightCalls(run);
     await saveRunBestEffort(run, deps, "handleWorkerExit (done,failed, no terminal message)");
     deps.log?.("debug", "workflow:error-recovery", "run saved after exit without result", { runId: run.runId, reason: run.state.reason });
     // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
- // [OR-4] M12 同款围栏
+    // [OR-4] M12 同款围栏
     emitTerminalSideEffects(run, deps, "handleWorkerExit (done,failed, no terminal message)");
     return;
   }
 
- // 非零 exit → 委托 handleWorkerError（C.3: onExit 传 handle 用于竞态防护）
+  // 非零 exit → 委托 handleWorkerError（C.3: onExit 传 handle 用于竞态防护）
   await handleWorkerError(
     run,
     new Error(`Worker exited with code ${code}`),
@@ -1163,10 +1163,10 @@ export async function handleScriptError(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): Promise<void> {
- // 与 handleWorkerMessage/handleWorkerError 对称——终态守卫前置。
+  // 与 handleWorkerMessage/handleWorkerError 对称——终态守卫前置。
   if (isTerminal(run)) return;
 
- // P2-2: 捕获 worker 诊断日志
+  // P2-2: 捕获 worker 诊断日志
   // L9: 追加而非覆盖
   if (workerLogs.length > 0) {
     run.state.errorLogs.push(...workerLogs);
@@ -1183,17 +1183,17 @@ export async function handleScriptError(
     return;
   }
 
- // 超限 → failed
+  // 超限 → failed
   run.state.error = `Workflow failed after ${MAX_WORKER_RETRIES} retries: ${errorMsg}`;
   deps.log?.("debug", "workflow:error-recovery", "handleScriptError retries exceeded, transition done", { runId: run.runId, count });
   run.transition("done", "failed");
- // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+  // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
   closeOutInFlightCalls(run);
   // [SW-DATA-3] save 失败不阻断终态推进
   await saveRunBestEffort(run, deps, "handleScriptError (done,failed)");
   deps.log?.("debug", "workflow:error-recovery", "run saved after script error", { runId: run.runId, reason: run.state.reason });
- // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
- // [OR-4] M12 同款围栏
+  // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
+  // [OR-4] M12 同款围栏
   emitTerminalSideEffects(run, deps, "handleScriptError (done,failed)");
 }
 
@@ -1217,20 +1217,20 @@ async function scheduleRebuild(
   deps: LifecycleDeps,
   handlers: WorkerHandlers,
 ): Promise<void> {
- // 用当前重试计数算退避（workerErrorCount 或 scriptErrorCount 已递增）
+  // 用当前重试计数算退避（workerErrorCount 或 scriptErrorCount 已递增）
   const retryIndex = Math.max(
     run.meta.workerErrorCount ?? 0,
     run.meta.scriptErrorCount ?? 0,
   );
   await delay(backoffDelay(retryIndex));
 
- // 退避期间状态可能变化——重检
+  // 退避期间状态可能变化——重检
   if (isTerminal(run)) return;
 
- // [race-F3] 时间预算折算后已耗尽 → 不再 rebuild 重试，直接 time_limited 终态。
- // 必须在退避 delay 之后、rebuildRuntime 之前检查：检查前移会在「退避期间耗尽」的
- // 窗口漏判（rebuild 挂不出 timer，run 预算静默失效）；检查点与 rebuildRuntime 的
- // 计时器挂载之间无 await，remaining > 0 判定不会失效。
+  // [race-F3] 时间预算折算后已耗尽 → 不再 rebuild 重试，直接 time_limited 终态。
+  // 必须在退避 delay 之后、rebuildRuntime 之前检查：检查前移会在「退避期间耗尽」的
+  // 窗口漏判（rebuild 挂不出 timer，run 预算静默失效）；检查点与 rebuildRuntime 的
+  // 计时器挂载之间无 await，remaining > 0 判定不会失效。
   const remainingMs = remainingTimeBudgetMs(run);
   if (remainingMs !== undefined && remainingMs <= 0) {
     await finalizeTimeBudgetExhausted(run, deps);
@@ -1276,13 +1276,13 @@ async function handleRebuildStartFailure(
     return;
   }
 
- // 耗尽 → 收敛 done,failed（不卡 running）
+  // 耗尽 → 收敛 done,failed（不卡 running）
   run.state.error = `Runtime rebuild failed after ${MAX_WORKER_RETRIES} retries: ${message}`;
   deps.log?.("debug", "workflow:error-recovery", "rebuild retries exhausted, transition done", { runId: run.runId, count });
   run.transition("done", "failed");
- // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
+  // [OR-8] 终态收口残留 in-flight call（先收口再落盘）
   closeOutInFlightCalls(run);
   await saveRunBestEffort(run, deps, "handleRebuildStartFailure (done,failed)");
- // [OR-4] M12 同款围栏
+  // [OR-4] M12 同款围栏
   emitTerminalSideEffects(run, deps, "handleRebuildStartFailure (done,failed)");
 }

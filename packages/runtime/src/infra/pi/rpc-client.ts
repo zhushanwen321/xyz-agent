@@ -583,6 +583,7 @@ export class RpcClient implements IPiEngine {
       ].filter(Boolean).join('\n')
       writePiCrashLog(this.options.sessionId, `${header}${this.stderrChunks.join('\n')}`)
     } catch (crashErr) {
+      // best-effort：崩溃日志落盘失败不掩盖/干扰原始崩溃路径（exit code 已由上层消费），仅控制台留痕
       console.error('[rpc] write pi crash log failed:', crashErr)
     }
   }

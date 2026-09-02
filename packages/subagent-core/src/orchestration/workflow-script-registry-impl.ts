@@ -62,7 +62,7 @@ export async function loadWorkflowScriptByPath(
 export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
   constructor(private readonly config?: WorkflowScanConfig) {}
 
- /**
+  /**
 	 * 扫描所有 workflow 脚本（project + user + tmp），按 tmp>project>user 优先级
 	 * 去重，返回 WorkflowScript 实体数组（含 available=false 的解析失败项）。
 	 *
@@ -75,7 +75,7 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
     return metas.map((m) => this.toScript(m));
   }
 
- /**
+  /**
 	 * 按名查单个脚本。精确匹配。
 	 * 返回 undefined 当 name 不存在。
 	 *
@@ -92,7 +92,7 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
     return meta ? this.toScript(meta) : undefined;
   }
 
- /**
+  /**
   * 按绝对路径加载单个脚本（S2 路径统一）。任意路径（不限扫描源）。
   * 供 workflow tool 的 run/info（name 参数 = workflowRef）。
   */
@@ -101,12 +101,12 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
     return meta ? this.toScript(meta) : undefined;
   }
 
- /** 失效缓存——下次 loadAll/get 重新扫描文件系统。 */
+  /** 失效缓存——下次 loadAll/get 重新扫描文件系统。 */
   invalidate(): void {
     invalidateCache();
   }
 
- /**
+  /**
  * 把 CachedWorkflowMeta 转换为 WorkflowScript 实体。
  *
  * m2：整对象透传——m 已是 WorkflowMeta（CachedWorkflowMeta extends WorkflowMeta），
@@ -117,8 +117,8 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
  * available：meta 提取失败或文件不可读时为 false。
  */
   private toScript(m: CachedWorkflowMeta): WorkflowScript {
- // FR-2: registry 是唯一读文件处。readFileSync 填 sourceCode —— 这样 launcher/tool
- // 直接调 toExecutable/validate 即可，无需各自 readFile（避免重复读，60s TTL 缓存生效）。
+    // FR-2: registry 是唯一读文件处。readFileSync 填 sourceCode —— 这样 launcher/tool
+    // 直接调 toExecutable/validate 即可，无需各自 readFile（避免重复读，60s TTL 缓存生效）。
     let sourceCode = "";
     let available = m.available;
     if (available) {
@@ -133,8 +133,8 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
           sourceCode = cachedContent;
         }
       } catch {
- // 文件不可读（race condition 删除、权限等）——标 available=false，
- // 与 meta 提取失败的现有语义一致（loader "never throws"）。
+        // 文件不可读（race condition 删除、权限等）——标 available=false，
+        // 与 meta 提取失败的现有语义一致（loader "never throws"）。
         sourceCode = "";
         available = false;
       }

@@ -92,7 +92,10 @@ export interface ToolResult {
 // 小工具
 // ---------------------------------------------------------------------------
 
-const pad = (n: number): string => String(n).padStart(3, '0')
+/** turn 索引显示宽度（T013 三位补零）。 */
+const TURN_INDEX_WIDTH = 3
+
+const pad = (n: number): string => String(n).padStart(TURN_INDEX_WIDTH, '0')
 
 /** 构造带 👉 恢复指引的 Error（handler 抛出，由 execute 闭包 catch）。 */
 function err(message: string): Error {
@@ -104,18 +107,24 @@ function stripHash(s: string): string {
   return s.replace(/^#+/, '')
 }
 
+/** formatDate 日期段（月/日）补零宽度。 */
+const DATE_FIELD_WIDTH = 2
+
 function formatDate(ms: number): string {
   if (!ms) return ''
   const d = new Date(ms)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(DATE_FIELD_WIDTH, '0')}-${String(
     d.getDate(),
-  ).padStart(2, '0')}`
+  ).padStart(DATE_FIELD_WIDTH, '0')}`
 }
+
+/** shortCwd 保留的目录末段数。 */
+const SHORT_CWD_SEGMENTS = 2
 
 /** cwd 取末两段缩短显示（完整 cwd 在 details 里）。 */
 function shortCwd(cwd: string): string {
   const parts = cwd.split('/').filter(Boolean)
-  return parts.slice(-2).join('/')
+  return parts.slice(-SHORT_CWD_SEGMENTS).join('/')
 }
 
 /** F5 必填参数校验。 */
@@ -146,13 +155,16 @@ function parseTurnIndex(raw: string): number {
   return parseInt(m[1], 10)
 }
 
+/** turns 范围 "T013-T015" 的段数。 */
+const TURNS_RANGE_PARTS = 2
+
 function parseTurnsRange(raw: string): { start: number; end: number } {
   const parts = raw.split('-').map((s) => s.trim())
   if (parts.length === 1) {
     const i = parseTurnIndex(parts[0])
     return { start: i, end: i }
   }
-  if (parts.length === 2) {
+  if (parts.length === TURNS_RANGE_PARTS) {
     const start = parseTurnIndex(parts[0])
     const end = parseTurnIndex(parts[1])
     if (end < start) {
@@ -344,10 +356,15 @@ function formatSaIdAmbiguous(saId: string, records: RecordManifest[]): string {
   )
 }
 
+/** sessionId 列表行内的短显前缀长度。 */
+const SESSION_ID_PREFIX_LEN = 8
+/** 消歧提示的 uuid 片段长度（比短显略长，引导输入更长片段消歧）。 */
+const HINT_ID_PREFIX_LEN = 12
+
 /** F1 无匹配 message（含最近 10 + 👉）。 */
 function formatNoMatch(query: string, recent: MatchedSession[]): string {
   const lines: string[] = recent.length
-    ? recent.map((m, i) => `  ${i + 1}. ${m.sessionId.slice(0, 8)}… ${m.firstMessagePreview ?? ''}`.trimEnd())
+    ? recent.map((m, i) => `  ${i + 1}. ${m.sessionId.slice(0, SESSION_ID_PREFIX_LEN)}… ${m.firstMessagePreview ?? ''}`.trimEnd())
     : ['  （无历史 session）']
   return (
     `无匹配 session："${query}"。最近 ${recent.length} 个 session：\n${lines.join('\n')}\n` +
@@ -363,7 +380,7 @@ function disambiguate(query: string, candidates: MatchedSession[]): ToolResult {
   )
   const hint =
     candidates[0] !== undefined
-      ? `（如 ${candidates[0].sessionId.slice(0, 12)}）`
+      ? `（如 ${candidates[0].sessionId.slice(0, HINT_ID_PREFIX_LEN)}）`
       : ''
   const text =
     `${candidates.length} 个匹配 "${query}"：\n${lines.join('\n')}\n` +
@@ -395,7 +412,7 @@ function formatFindContent(
   truncated: boolean,
 ): string {
   const lines = matches.map((m, i) => {
-    const parts = [`${i + 1}. ${m.sessionId.slice(0, 8)}…`, formatDate(m.mtime)]
+    const parts = [`${i + 1}. ${m.sessionId.slice(0, SESSION_ID_PREFIX_LEN)}…`, formatDate(m.mtime)]
     if (m.cwd) parts.push(shortCwd(m.cwd))
     if (m.firstMessagePreview) parts.push(m.firstMessagePreview)
     return parts.join(' · ')
@@ -499,10 +516,10 @@ function formatDetailText(
     .map((e) => {
       if (isToolResultSummary(e)) {
         // v2 O3：摘要态渲染（summary + 头 3 行 + 看全文提示）
-        return `---\ntoolResultSummary (${e.id.slice(0, 8)})\n${e.summary}\n     │ 共 ${e.totalLines} 行，前 3 行：${e.headLines}\n     │ （+ includeToolResult:true 看全文）`
+        return `---\ntoolResultSummary (${e.id.slice(0, SESSION_ID_PREFIX_LEN)})\n${e.summary}\n     │ 共 ${e.totalLines} 行，前 3 行：${e.headLines}\n     │ （+ includeToolResult:true 看全文）`
       }
       const role = e.message ? `/${e.message.role}` : ''
-      return `---\n${e.type}${role} (${e.id.slice(0, 8)})\n${entryReadableText(e)}`
+      return `---\n${e.type}${role} (${e.id.slice(0, SESSION_ID_PREFIX_LEN)})\n${entryReadableText(e)}`
     })
     .join('\n')
   return `${head}\n${body}`
@@ -512,15 +529,15 @@ function formatFamilyText(f: Family): string {
   const lines: string[] = []
   lines.push(`root: ${f.root.sessionId} (${formatDate(f.root.mtime)})`)
   if (f.parents.length)
-    lines.push(`parents: ${f.parents.map((p) => p.sessionId.slice(0, 8)).join(', ')}`)
+    lines.push(`parents: ${f.parents.map((p) => p.sessionId.slice(0, SESSION_ID_PREFIX_LEN)).join(', ')}`)
   if (f.forks.length)
-    lines.push(`forks: ${f.forks.map((p) => p.sessionId.slice(0, 8)).join(', ')}`)
+    lines.push(`forks: ${f.forks.map((p) => p.sessionId.slice(0, SESSION_ID_PREFIX_LEN)).join(', ')}`)
   if (f.subagents.length)
     lines.push(
       `subagents:\n${f.subagents
         .map(
           (s) =>
-            `  ${s.sessionId.slice(0, 8)} root=${s.rootSessionId.slice(0, 8)} slug=${s.slug}${
+            `  ${s.sessionId.slice(0, SESSION_ID_PREFIX_LEN)} root=${s.rootSessionId.slice(0, SESSION_ID_PREFIX_LEN)} slug=${s.slug}${
               s.cleanedUp ? ' [已清理]' : ''
             }`,
         )
@@ -595,9 +612,12 @@ function searchableText(content: unknown): string {
   return safeStringify(content)
 }
 
+/** search 命中片段的前后上下文字符数。 */
+const SNIPPET_CONTEXT_CHARS = 20
+
 function snippet(text: string, idx: number, len: number): string {
-  const start = Math.max(0, idx - 20)
-  const end = Math.min(text.length, idx + len + 20)
+  const start = Math.max(0, idx - SNIPPET_CONTEXT_CHARS)
+  const end = Math.min(text.length, idx + len + SNIPPET_CONTEXT_CHARS)
   return (
     (start > 0 ? '…' : '') +
     text.slice(start, end).replace(/\s+/g, ' ').trim() +
@@ -609,12 +629,15 @@ function snippet(text: string, idx: number, len: number): string {
 // 各 action 实现
 // ===========================================================================
 
+/** find action 的默认匹配数上限。 */
+const FIND_DEFAULT_LIMIT = 20
+
 /** find：按片段/名称/recent 定位 session（design §3.4 find）。零匹配不抛，返回提示。 */
 async function doFind(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
   const query = requireStr(params.query, 'query', 'find')
   const { matches, truncated } = await findSessions(query, agentDir, {
     cwd: params.cwd,
-    limit: params.limit ?? 20,
+    limit: params.limit ?? FIND_DEFAULT_LIMIT,
     ...(params.source ? { source: params.source } : {}),
   })
   if (matches.length === 0) {
@@ -740,6 +763,9 @@ async function doDetail(params: SessionReadParams, agentDir: string): Promise<To
   }
 }
 
+/** search action 的默认命中数上限。 */
+const SEARCH_DEFAULT_LIMIT = 20
+
 /** search：session 内全文检索（design §3.4 search，M3 新实现）。 */
 async function doSearch(
   params: SessionReadParams,
@@ -750,7 +776,7 @@ async function doSearch(
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const pattern = requireStr(params.pattern, 'pattern', 'search')
   const scope = params.scope ?? 'all'
-  const limit = params.limit ?? 20
+  const limit = params.limit ?? SEARCH_DEFAULT_LIMIT
   const { entries } = await safeParse(resolved.fileName)
   const tree = buildTreeView(entries)
   const turns = segmentTurns(entries, new Set(tree.leafPath))
@@ -795,6 +821,9 @@ async function doSearch(
   return { content: [{ type: 'text', text }], details: { hits: sliced, truncated } }
 }
 
+/** export full 模式的 entry 分隔线（'=' 重复）宽度。 */
+const EXPORT_SEPARATOR_LEN = 40
+
 /** export：物化摘要到 <agentDir>/tmp/session-view-<id>.md（design §3.4 export，D-8）。 */
 async function doExport(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
   const format = params.format ?? 'outline'
@@ -825,9 +854,9 @@ async function doExport(params: SessionReadParams, agentDir: string): Promise<To
     text = det
       .map((e) => {
         if (isToolResultSummary(e)) {
-          return `${'='.repeat(40)}\ntoolResultSummary (${e.id.slice(0, 8)})\n${entryReadableText(e)}`
+          return `${'='.repeat(EXPORT_SEPARATOR_LEN)}\ntoolResultSummary (${e.id.slice(0, SESSION_ID_PREFIX_LEN)})\n${entryReadableText(e)}`
         }
-        return `${'='.repeat(40)}\n${e.type}${e.message ? '/' + e.message.role : ''} (${e.id.slice(0, 8)})\n${entryReadableText(e)}`
+        return `${'='.repeat(EXPORT_SEPARATOR_LEN)}\n${e.type}${e.message ? '/' + e.message.role : ''} (${e.id.slice(0, SESSION_ID_PREFIX_LEN)})\n${entryReadableText(e)}`
       })
       .join('\n')
     label = 'full'
@@ -922,10 +951,13 @@ function truncateText(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max) + '…'
 }
 
+/** turnsLabel 展示的 turn 数上限（超出折叠为 +N）。 */
+const TURNS_LABEL_HEAD_COUNT = 5
+
 /** turns 数组紧凑标签（前 5 个 + +N，避免一行过长撑爆预算）。 */
 function turnsLabel(turns: number[]): string {
-  const head = turns.slice(0, 5).map((n) => `T${pad(n)}`)
-  const suffix = turns.length > 5 ? `+${turns.length - 5}` : ''
+  const head = turns.slice(0, TURNS_LABEL_HEAD_COUNT).map((n) => `T${pad(n)}`)
+  const suffix = turns.length > TURNS_LABEL_HEAD_COUNT ? `+${turns.length - TURNS_LABEL_HEAD_COUNT}` : ''
   return head.join(',') + suffix
 }
 
@@ -950,9 +982,12 @@ function computeToolDistribution(
     .sort((a, b) => b.count - a.count)
 }
 
+/** F8 提示展示的工具分布条数上限。 */
+const TOOL_DISTRIBUTION_LIMIT = 10
+
 /** F8：commands/tool-results 的 tool 过滤零匹配 → 返回工具分布 + 👉（不抛错，design §3.3 F8）。 */
 function f8ToolNoMatch(what: ExtractWhat, tool: string, turns: Turn[]): ToolResult {
-  const dist = computeToolDistribution(turns).slice(0, 10)
+  const dist = computeToolDistribution(turns).slice(0, TOOL_DISTRIBUTION_LIMIT)
   const distStr = dist.map((d) => `${d.name}×${d.count}`).join(', ')
   const text = `what=${what} tool="${tool}" 无匹配。该 session 工具：${distStr}。👉 用存在的工具名重试。`
   return { content: [{ type: 'text', text }], details: { what, tool, toolDistribution: dist } }
@@ -970,6 +1005,12 @@ function f8ToolNoMatch(what: ExtractWhat, tool: string, turns: Turn[]): ToolResu
  *
  * getTurns：从 item 提取 turn 列表（files 是 turns 数组，其余单值包数组），供 F9 文案报 turn 范围。
  */
+
+/** UTF8 单字符最大字节数（预算字节→字符的保守换算基数，防多字节字符被切半）。 */
+const UTF8_MAX_BYTES_PER_CHAR = 3
+/** token 估算换算基数（bytes/4 口径，与 render 层 chars/4 同近似）。 */
+const CHARS_PER_TOKEN = 4
+
 export function renderExtractItems<I>(
   what: ExtractWhat,
   items: I[],
@@ -994,7 +1035,7 @@ export function renderExtractItems<I>(
     if (bytes + lineBytes > EXTRACT_BUDGET_BYTES) {
       // 超预算：对当前 line 内部截断到剩余预算（首项超大也截断，但保留截断后的内容）
       const remainingBytes = EXTRACT_BUDGET_BYTES - bytes
-      const charBudget = Math.floor(remainingBytes / 3) // 字节→字符 ×3 近似防 UTF8 切半
+      const charBudget = Math.floor(remainingBytes / UTF8_MAX_BYTES_PER_CHAR) // 字节→字符 ×3 近似防 UTF8 切半
       if (charBudget > 0) {
         const sliced = line.slice(0, charBudget) + '…'
         shown.push(item)
@@ -1026,7 +1067,7 @@ export function renderExtractItems<I>(
     shownTurns.length > 0
       ? `（T${pad(Math.min(...shownTurns))}-T${pad(Math.max(...shownTurns))}）`
       : ''
-  const actualTokens = Math.round(Buffer.byteLength(body, 'utf8') / 4)
+  const actualTokens = Math.round(Buffer.byteLength(body, 'utf8') / CHARS_PER_TOKEN)
   const text =
     body +
     `\n[what=${what} 已显示 ${shown.length}/${items.length} 项${turnRange}，约 ${actualTokens} token 达预算上限。👉 用较小 turns 范围（如 T000-T005）缩小，或换 what 重试。]`
@@ -1143,6 +1184,9 @@ function extractFiles(turns: Turn[]): ToolResult {
  *（git 操作未被 toolResult 捕获）或误报（git log 输出里的其他 hex）。每条标注来源 turn
  * + source + context，agent 可快速辨认。完全语义判断需 LLM，本工具零 LLM 依赖。
  */
+/** commits 提取的 hash 前后上下文字符数（次路径关键词判定窗口）。 */
+const COMMIT_CONTEXT_CHARS = 30
+
 function extractCommits(turns: Turn[]): ToolResult {
   // 建 toolCallId → bash command 映射（用于判定 toolResult 是否来自 git 命令）
   const bashCmds = new Map<string, string>()
@@ -1179,7 +1223,7 @@ function extractCommits(turns: Turn[]): ToolResult {
         const hash = m[0]
         const idx = m.index ?? 0
         const ctx = text
-          .slice(Math.max(0, idx - 30), idx + hash.length + 30)
+          .slice(Math.max(0, idx - COMMIT_CONTEXT_CHARS), idx + hash.length + COMMIT_CONTEXT_CHARS)
           .replace(/\s+/g, ' ')
           .trim()
         if (isGitBash) {
@@ -1214,6 +1258,9 @@ function extractCommits(turns: Turn[]): ToolResult {
   )
 }
 
+/** tool-results 正文截断上限（防爆）。 */
+const TOOL_RESULT_TEXT_MAX_CHARS = 500
+
 /**
  * 预设 5：tool-results——role==='toolResult' 文本（design §3.3 D3）。
  * text 截断到 500 字防爆；可选 tool 过滤（msg.toolName）；过滤零匹配 → F8。
@@ -1226,7 +1273,7 @@ function extractToolResults(turns: Turn[], tool: string | undefined): ToolResult
       if (e.message?.role !== 'toolResult') continue
       const tn = e.message.toolName ?? '?'
       if (tool !== undefined && tn !== tool) continue
-      const text = truncateText(extractContentText(e.message.content), 500)
+      const text = truncateText(extractContentText(e.message.content), TOOL_RESULT_TEXT_MAX_CHARS)
       items.push({ turn: t.index, index: ei, toolName: tn, text })
     }
   }

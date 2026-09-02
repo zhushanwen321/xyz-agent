@@ -5,7 +5,7 @@ import type { DeliveryHandle, DeliveryMessage } from '@xyz-agent/session-deliver
 
 import type { SchedulerBackend } from './backend.js'
 import { autoName, generateTaskId } from './format.js'
-import { computeNextRunAt, parseDuration } from './parsing.js'
+import { computeNextRunAt, MS_PER_DAY, MS_PER_MINUTE, parseDuration } from './parsing.js'
 import type {
   AddOptions,
   ScheduledTask,
@@ -17,11 +17,13 @@ import type {
 const logger = getLogger('scheduler')
 
 const MAX_TASKS = 50
-// 入队防重标记 TTL（合批非首条任务无终态回调，过期后放行重投；10 min >> 合批窗口）
-const QUEUE_DEDUPE_TTL_MS = 10 * 60 * 1000
+// 入队防重标记 TTL 分钟数（合批非首条任务无终态回调，过期后放行重投；10 min >> 合批窗口）
+const QUEUE_DEDUPE_TTL_MINUTES = 10
+const QUEUE_DEDUPE_TTL_MS = QUEUE_DEDUPE_TTL_MINUTES * MS_PER_MINUTE
 const RATE_LIMIT_PER_MINUTE = 6
 const TICK_INTERVAL_MS = 30_000
-const DEFAULT_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+const DEFAULT_EXPIRY_DAYS = 7
+const DEFAULT_EXPIRY_MS = DEFAULT_EXPIRY_DAYS * MS_PER_DAY // 7 days
 const HISTORY_LIMIT = 20 // 与 replayFoldEntries 的裁剪上限一致（advance 折叠 / dispatch 累积共用）
 // pi ExtensionRunner 在 session 替换后访问 stale ctx 时抛出的错误文案片段。
 // 兜底通道（防御纵深）：G1 模块级代际检测（isCtxStale）为主判，覆盖同模块环境内的 session
@@ -466,7 +468,7 @@ export class SchedulerRuntime {
   }
 
   private hasDispatchCapacity(now: number): boolean {
-    const oneMinuteAgo = now - 60_000
+    const oneMinuteAgo = now - MS_PER_MINUTE
     this.dispatchTimestamps = this.dispatchTimestamps.filter(t => t > oneMinuteAgo)
     return this.dispatchTimestamps.length < RATE_LIMIT_PER_MINUTE
   }

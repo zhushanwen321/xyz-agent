@@ -1,5 +1,10 @@
-import { formatDuration } from './parsing.js'
+import { formatDuration, MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE, MS_PER_SECOND } from './parsing.js'
 import type { ScheduleSpec, TaskKind } from './types.js'
+
+/** 相对时间显示的"现在"判定窗口（±5s 内视为 now）。 */
+const NOW_THRESHOLD_MS = 5000
+/** 省略号 "..." 的字符数（truncate 截断预留宽度）。 */
+const ELLIPSIS_LENGTH = 3
 
 /** Format ScheduleSpec to readable string. kind 区分 once/recurring（once 显示 'once in X' 而非误导性的 'every X'）。 */
 export function formatSchedule(spec: ScheduleSpec, kind?: TaskKind): string {
@@ -25,14 +30,14 @@ export function formatRelativeTime(timestamp: number, now?: number): string {
   const diff = timestamp - currentTime
 
   // 5秒内视为"现在"
-  if (Math.abs(diff) < 5000) return 'now'
+  if (Math.abs(diff) < NOW_THRESHOLD_MS) return 'now'
 
   const absDiff = Math.abs(diff)
   const units: [string, number][] = [
-    ['d', 86_400_000],
-    ['h', 3_600_000],
-    ['m', 60_000],
-    ['s', 1000],
+    ['d', MS_PER_DAY],
+    ['h', MS_PER_HOUR],
+    ['m', MS_PER_MINUTE],
+    ['s', MS_PER_SECOND],
   ]
 
   let formatted = ''
@@ -45,7 +50,7 @@ export function formatRelativeTime(timestamp: number, now?: number): string {
   }
 
   if (!formatted) {
-    formatted = `${Math.round(absDiff / 1000)}s`
+    formatted = `${Math.round(absDiff / MS_PER_SECOND)}s`
   }
 
   return diff > 0 ? `in ${formatted}` : `${formatted} ago`
@@ -56,22 +61,31 @@ export function formatRelativeTime(timestamp: number, now?: number): string {
  */
 export function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text
-  if (maxLen <= 3) return text.slice(0, maxLen)
-  return text.slice(0, maxLen - 3) + '...'
+  if (maxLen <= ELLIPSIS_LENGTH) return text.slice(0, maxLen)
+  return text.slice(0, maxLen - ELLIPSIS_LENGTH) + '...'
 }
+
+/** 生成任务 ID 的随机字节数（8 位 hex = 4 字节）。 */
+const TASK_ID_RANDOM_BYTES = 4
+const HEX_RADIX = 16
+/** 每字节展开的 hex 字符数（padStart 宽度）。 */
+const HEX_CHARS_PER_BYTE = 2
 
 /**
  * 生成任务 ID：8 位 hex。
  */
 export function generateTaskId(): string {
-  const bytes = new Uint8Array(4)
+  const bytes = new Uint8Array(TASK_ID_RANDOM_BYTES)
   crypto.getRandomValues(bytes)
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+  return Array.from(bytes, b => b.toString(HEX_RADIX).padStart(HEX_CHARS_PER_BYTE, '0')).join('')
 }
+
+/** autoName 任务名最大长度。 */
+const AUTO_NAME_MAX_LENGTH = 30
 
 /**
  * 从 prompt 自动生成任务名称：取前 30 字。
  */
 export function autoName(prompt: string): string {
-  return truncate(prompt.trim(), 30)
+  return truncate(prompt.trim(), AUTO_NAME_MAX_LENGTH)
 }

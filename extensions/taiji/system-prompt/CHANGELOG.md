@@ -1,5 +1,11 @@
 # @zhushanwen/pi-system-prompt
 
+## 1.1.2
+
+### Patch Changes
+
+- 837f2faf6: (no changeset body; patch version bump)
+
 ## 1.1.1
 
 ### Patch Changes

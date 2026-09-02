@@ -145,7 +145,7 @@ export function formatSchemaInstruction(schema: Record<string, unknown>): string
 export function resolveAgentOpts(opts: AgentCallOpts): ResolveResult {
   const appendSystemPrompt: string[] = [];
 
- // Resolve skill name to SKILL.md path
+  // Resolve skill name to SKILL.md path
   if (opts.skill) {
     const skillPath = resolveSkillPath(opts.skill);
     if (!skillPath) {
@@ -154,17 +154,17 @@ export function resolveAgentOpts(opts: AgentCallOpts): ResolveResult {
     opts = { ...opts, skillPath };
   }
 
- // Inject schema as structured-output instruction into appendSystemPrompt (content,
- // not temp file) and set environment variable for conditional tool + hook activation.
- // M2 fix: previously wrote the instruction to a temp file and pushed the FILE PATH,
- // which got concatenated into the final append file as path garbage — the SO instruction
- // never reached the subprocess. Now the instruction content is pushed directly.
+  // Inject schema as structured-output instruction into appendSystemPrompt (content,
+  // not temp file) and set environment variable for conditional tool + hook activation.
+  // M2 fix: previously wrote the instruction to a temp file and pushed the FILE PATH,
+  // which got concatenated into the final append file as path garbage — the SO instruction
+  // never reached the subprocess. Now the instruction content is pushed directly.
   if (opts.schema) {
     // IF7(#13)：formatSchemaInstruction 与 schemaEnv 对同一 schema 对象引用共享
     // WeakMap 缓存条目（compact stringify 整个 dispatch 只发生一次）
     appendSystemPrompt.push(formatSchemaInstruction(opts.schema));
 
- // Set env var for structured-output extension to activate tool + hook
+    // Set env var for structured-output extension to activate tool + hook
     opts = { ...opts, schemaEnv: stringifySchemaCached(opts.schema, "compact") };
   }
 

@@ -19,23 +19,47 @@ export interface Component {
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
-// Unicode 宽字符区间常量（East Asian Width = Wide / Fullwidth 等近似）。
-// 这些区间定义是字符宽度判断的语义本身，不再进一步命名。
+// Unicode 宽字符区间边界（East Asian Width = Wide / Fullwidth 等近似），
+// 按 Unicode 区块语义命名；区间判断见下方 WIDE_RANGES。
+const HANGUL_JAMO_START = 0x1100;
+const HANGUL_JAMO_END = 0x115f;
+const CJK_IDEOGRAPHS_START = 0x2e80; // 覆盖 CJK Radicals、假名、CJK 统一表意、彝文等
+const CJK_IDEOGRAPHS_END = 0xa4cf;
+const HANGUL_SYLLABLES_START = 0xac00;
+const HANGUL_SYLLABLES_END = 0xd7a3;
+const CJK_COMPATIBILITY_IDEOGRAPHS_START = 0xf900;
+const CJK_COMPATIBILITY_IDEOGRAPHS_END = 0xfaff;
+const VERTICAL_FORMS_START = 0xfe10;
+const VERTICAL_FORMS_END = 0xfe19;
+const CJK_COMPATIBILITY_FORMS_START = 0xfe30;
+const CJK_COMPATIBILITY_FORMS_END = 0xfe6f;
+const FULLWIDTH_ASCII_START = 0xff00;
+const FULLWIDTH_ASCII_END = 0xff60;
+const FULLWIDTH_SYMBOLS_START = 0xffe0;
+const FULLWIDTH_SYMBOLS_END = 0xffe6;
+const EMOJI_PICTOGRAPHS_START = 0x1f300; // Misc Symbols & Pictographs + Emoticons
+const EMOJI_PICTOGRAPHS_END = 0x1f64f;
+const SUPPLEMENTAL_PICTOGRAPHS_START = 0x1f900;
+const SUPPLEMENTAL_PICTOGRAPHS_END = 0x1f9ff;
+
 const WIDE_RANGES: ReadonlyArray<readonly [number, number]> = [
-  [0x1100, 0x115f], // Hangul Jamo
-  [0x2e80, 0xa4cf], // CJK Unified Ideographs + extensions, Yi
-  [0xac00, 0xd7a3], // Hangul Syllables
-  [0xf900, 0xfaff], // CJK Compatibility Ideographs
-  [0xfe10, 0xfe19], // Vertical forms
-  [0xfe30, 0xfe6f], // CJK Compatibility forms
-  [0xff00, 0xff60], // Fullwidth ASCII variants
-  [0xffe0, 0xffe6], // Fullwidth symbol variants
-  [0x1f300, 0x1f64f], // Emoticons / Misc Symbols & Pictographs
-  [0x1f900, 0x1f9ff], // Supplemental Symbols and Pictographs
+  [HANGUL_JAMO_START, HANGUL_JAMO_END],
+  [CJK_IDEOGRAPHS_START, CJK_IDEOGRAPHS_END],
+  [HANGUL_SYLLABLES_START, HANGUL_SYLLABLES_END],
+  [CJK_COMPATIBILITY_IDEOGRAPHS_START, CJK_COMPATIBILITY_IDEOGRAPHS_END],
+  [VERTICAL_FORMS_START, VERTICAL_FORMS_END],
+  [CJK_COMPATIBILITY_FORMS_START, CJK_COMPATIBILITY_FORMS_END],
+  [FULLWIDTH_ASCII_START, FULLWIDTH_ASCII_END],
+  [FULLWIDTH_SYMBOLS_START, FULLWIDTH_SYMBOLS_END],
+  [EMOJI_PICTOGRAPHS_START, EMOJI_PICTOGRAPHS_END],
+  [SUPPLEMENTAL_PICTOGRAPHS_START, SUPPLEMENTAL_PICTOGRAPHS_END],
 ];
 
 const FULL_WIDTH = 2;
 const HALF_WIDTH = 1;
+
+// 左右两侧各一份 padding，innerW = width - paddingX * HORIZONTAL_PADDING_SIDES
+const HORIZONTAL_PADDING_SIDES = 2;
 
 function isWideCodePoint(code: number): boolean {
   for (const [start, end] of WIDE_RANGES) {
@@ -113,7 +137,7 @@ export class Text {
     if (!this.text || this.text.trim() === "") {
       return [];
     }
-    const innerW = Math.max(1, width - this.paddingX * 2);
+    const innerW = Math.max(1, width - this.paddingX * HORIZONTAL_PADDING_SIDES);
     // 对齐真实 pi-tui 的 wrapTextWithAnsi：按 \n 分割成多行
     const inputLines = this.text.split("\n");
     const lines: string[] = [];
@@ -159,7 +183,7 @@ export class Box {
   invalidate(): void {}
 
   render(width: number): string[] {
-    const innerW = Math.max(1, width - this.paddingX * 2);
+    const innerW = Math.max(1, width - this.paddingX * HORIZONTAL_PADDING_SIDES);
     const lines: string[] = [];
     for (let i = 0; i < this.paddingY; i++) {
       lines.push(this.bgFn ? this.bgFn(" ".repeat(width)) : " ".repeat(width));

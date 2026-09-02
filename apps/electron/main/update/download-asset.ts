@@ -139,14 +139,20 @@ const MS_PER_SECOND = 1000
 const HTTP_PARTIAL_CONTENT = 206
 
 /**
+ * 1 MiB 的字节数（字节阈值常量的组合基元）。
+ * [NOTE] 保持单一字面量形式（不用 1024 * 1024）：no-magic-numbers 对
+ * 「单一字面量整初始值的 const 声明」豁免，表达式初始值则逐字面量报。
+ */
+const BYTES_PER_MIB = 1_048_576
+
+/**
  * 断点续传状态保存阈值：每超过上次保存点 N 字节才落盘一次。
  *
  * 替代旧的 `downloaded % 1MB === 0` 整除判断——后者在续传场景
  * （downloaded 从非 1MB 整数倍起步）几乎永远不再命中，导致中途崩溃
  * state 仍是旧值。改用阈值比较保证进度稳步落盘且不过频写文件。
  */
-// eslint-disable-next-line no-magic-numbers -- 1MB 的字节数，语义即常量名
-const SAVE_INTERVAL_BYTES = 1024 * 1024
+const SAVE_INTERVAL_BYTES = BYTES_PER_MIB
 
 /**
  * totalBytes 一致性校验容差：续传时新请求拿到的 content-length 与
@@ -167,13 +173,13 @@ const DOWNLOAD_USER_AGENT = 'xyz-agent-updater'
  */
 const MULTI_PART_COUNT = 4
 
-/** 只有文件大于此阈值才启用多段（小文件拆分收益低、连接开销占比大）。 */
-// eslint-disable-next-line no-magic-numbers -- 10MB 的字节数，语义即常量名
-const MIN_MULTI_PART_SIZE = 10 * 1024 * 1024
+/** 多段启用阈值（MiB）：只有文件大于此值才启用多段（小文件拆分收益低、连接开销占比大）。 */
+const MIN_MULTI_PART_MIB = 10
+const MIN_MULTI_PART_SIZE = MIN_MULTI_PART_MIB * BYTES_PER_MIB
 
-/** 每段至少 2MB，防止段数过多。 */
-// eslint-disable-next-line no-magic-numbers -- 2MB 的字节数，语义即常量名
-const MIN_BYTES_PER_PART = 2 * 1024 * 1024
+/** 每段最小体积（MiB），防止段数过多。 */
+const MIN_BYTES_PER_PART_MIB = 2
+const MIN_BYTES_PER_PART = MIN_BYTES_PER_PART_MIB * BYTES_PER_MIB
 
 /** 进度回调节流间隔：同一段下载内最多每 N ms 推一次进度，降低 IPC 压力。 */
 const PROGRESS_THROTTLE_MS = 200
@@ -891,7 +897,8 @@ function buildFetchOptions(
     try {
       options.dispatcher = new ProxyAgent(proxyUrl)
     } catch (err) {
-      // best-effort 降级：ProxyAgent 构造失败按直连继续请求，不阻断下载
+      // best-effort 降级：ProxyAgent 构造失败（如非法代理 URL）回退直连继续下载，
+      // 不把代理配置问题升级为下载失败——直连可用性优于直接失败
       console.warn('[download] proxy agent init failed, fallback to direct:', err)
     }
   }

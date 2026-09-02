@@ -44,6 +44,11 @@ const TMP_NAME_PATTERN = /^(.+)\.tmp\.(\d+)\.[0-9A-Za-z-]+$/;
 /** 同进程内 tmp 单调序号（与随机段联合防并发写同目标撞名）。 */
 let tmpSeq = 0;
 
+/** 随机段生成参数：base36 编码去掉「0.x」前缀后取 6 字符。 */
+const RAND_RADIX = 36;
+const RAND_SLICE_START = 2;
+const RAND_SLICE_END = 8;
+
 /**
  * 目标文件的原子写 tmp 路径（统一约定：`<最终路径>.tmp.<pid>.<seq>-<rand>`）。
  *
@@ -52,7 +57,7 @@ let tmpSeq = 0;
  */
 export function atomicTmpPathFor(filePath: string): string {
   tmpSeq += 1;
-  const rand = Math.random().toString(36).slice(2, 8);
+  const rand = Math.random().toString(RAND_RADIX).slice(RAND_SLICE_START, RAND_SLICE_END);
   return `${filePath}${TMP_MARKER}${process.pid}.${tmpSeq}-${rand}`;
 }
 

@@ -62,8 +62,10 @@ async function scanJsonlRecursive(
         try {
           const s = await stat(full)
           results.push({ path: full, mtime: s.mtimeMs, size: s.size })
-        } catch {
-          // 文件并发删除等致 stat 失败 → 跳过（不中断整体扫描）
+        } catch (err) {
+          // 文件并发删除等致 stat 失败 → 跳过（不中断整体扫描）；
+          // 本模块零 pi 依赖（无 logger 可用），不留 void err 以外的语句
+          void err
         }
       }
     }

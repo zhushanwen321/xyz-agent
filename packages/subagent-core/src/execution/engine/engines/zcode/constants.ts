@@ -147,7 +147,15 @@ export const ZCODE_APPSERVER_PROBE_BUDGET_MS = 10_000;
  * 任务直走 spawn（降级标志内存化，进程重启后重探重建）。-32004/-32010/-32603 不在
  * 此列（任务失败上报 / 凭据缺失归类，均不降级）。
  */
-export const ZCODE_APPSERVER_DRIFT_RPC_CODES = [-32601, -32602] as const;
+const RPC_METHOD_NOT_FOUND = -32601;
+const RPC_INVALID_PARAMS = -32602;
+export const ZCODE_APPSERVER_DRIFT_RPC_CODES = [RPC_METHOD_NOT_FOUND, RPC_INVALID_PARAMS] as const;
+
+/**
+ * [R5] app-server 内部错误码「会话忙」：send 时该会话已有轮在跑（busy 不排队不打断）。
+ * 单会话一任务是结构保证，运行中命中即 bug（错误文案引导上报 sessionId 与 state 流水）。
+ */
+export const ZCODE_APPSERVER_ERR_BUSY_SESSION = -32010;
 
 /**
  * [R5 D8] 探针连接的 env 标记：探针用独立短命连接（不污染主连接），但 env 与主连接

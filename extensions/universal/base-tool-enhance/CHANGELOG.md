@@ -1,5 +1,11 @@
 # @zhushanwen/pi-base-tool-enhance
 
+## 0.3.1
+
+### Patch Changes
+
+- 837f2faf6: (no changeset body; patch version bump)
+
 ## 0.3.0
 
 ### Minor Changes

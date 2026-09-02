@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-smart-context",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "main": "index.ts",
   "xyz-agent": {
@@ -10,8 +10,15 @@
         "path": "config/smart-context-ext-config.json",
         "content": {
           "enabled": true,
-          "compactModel": { "type": "ref", "ref": "" },
-          "reminderThresholds": [200000, 400000, 600000],
+          "compactModel": {
+            "type": "ref",
+            "ref": ""
+          },
+          "reminderThresholds": [
+            200000,
+            400000,
+            600000
+          ],
           "excludedModels": []
         }
       }

@@ -116,8 +116,11 @@ function normalizeConfig(raw: unknown): PermissionConfig {
 
 // ──────────────────────── 默认配置文件创建 ────────────────────────
 
+/** 默认配置文件 JSON 序列化的缩进空格数。 */
+const CONFIG_JSON_INDENT_SPACES = 2;
+
 function createDefaultConfigContent(): string {
-	return `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`;
+	return `${JSON.stringify(DEFAULT_CONFIG, null, CONFIG_JSON_INDENT_SPACES)}\n`;
 }
 
 function ensureConfigFile(configPath: string, onWarning?: (msg: string) => void): void {

@@ -32,6 +32,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { logger } from '../infra/logger.js'
 
+/** 首建文件的 JSON 缩进（2 空格，与 extension 侧 llm-shared saveConfig 的 JSON_INDENT 一致——见文件头「首建形态」）。 */
+const JSON_INDENT = 2
+
 /** package.json `xyz-agent.startupConfig` 单条声明的运行时形状（校验后）。 */
 export interface DeclaredStartupConfigEntry {
   /** 目标文件路径，相对 pi agentDir（禁止绝对路径 / `..` 逃逸）。 */
@@ -151,7 +154,7 @@ export function ensureDeclaredStartupConfigs(
       // existsSync 与 write 之间被并发首建（extension 惰性 ensure 同窗口）时 EEXIST
       // 而非覆盖。EEXIST + target 此刻存在 = 另一写者已建同内容文件，等价跳过计
       // skipped；mkdir 的 EEXIST（父路径被同名文件占住，target 不存在）归 failed。
-      writeFileSync(target, `${JSON.stringify(entry.content, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600, flag: 'wx' })
+      writeFileSync(target, `${JSON.stringify(entry.content, null, JSON_INDENT)}\n`, { encoding: 'utf-8', mode: 0o600, flag: 'wx' })
       report.ensured++
     } catch (e) {
       const code = e instanceof Error ? (e as NodeJS.ErrnoException).code : undefined

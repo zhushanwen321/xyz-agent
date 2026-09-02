@@ -623,8 +623,9 @@ function killPidWithEscalation(pid: number, label: string): void {
       );
       try {
         process.kill(pid, "SIGKILL");
-      } catch {
-        // 进程在窗口内自行退出：目标已达成
+      } catch (killErr) {
+        // 进程在窗口内自行退出：目标已达成，ESRCH 是预期终态
+        void killErr;
       }
     }
   }, SIGKILL_ESCALATION_MS);

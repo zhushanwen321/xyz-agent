@@ -75,7 +75,7 @@ export class Trace {
   /** stepIndex 倒排索引（查询加速 O(1)；值与 nodes 元素引用共享）。 */
   private readonly byIndex = new Map<number, ExecutionTraceNode>();
 
- /**
+  /**
  * 从已有节点数组重建 Trace（用于 RunStore 反序列化重水合）。
  *
  * 防御性拷贝——传入数组不被持有，外部 mutation 不影响 Trace。
@@ -96,7 +96,7 @@ export class Trace {
     return trace;
   }
 
- /**
+  /**
  * Append a trace node（append-only，不改已有节点）。
  *
  * 入口裁剪：超长 result.content 先 mutate 入参节点的 result 字段，
@@ -109,7 +109,7 @@ export class Trace {
     this.byIndex.set(node.stepIndex, node);
   }
 
- /**
+  /**
  * Update a trace node by stepIndex (callId) with a partial patch.
  *
  * 只改 patch 中提供的字段（status/result/error/completedAt/sessionId）。
@@ -129,7 +129,7 @@ export class Trace {
     if (patch.sessionFile !== undefined) node.sessionFile = patch.sessionFile;
   }
 
- /**
+  /**
  * 查找指定 stepIndex 的节点（byIndex O(1)，trace 中 stepIndex 应唯一）。
  *
  * 语义差异声明（旧线性扫 first-match → Map last-wins）：仅在破坏
@@ -145,12 +145,12 @@ export class Trace {
     return this.byIndex.get(stepIndex);
   }
 
- /** 按节点引用删除（仅用于测试或 run 重建场景；正常运行不调用）。 */
+  /** 按节点引用删除（仅用于测试或 run 重建场景；正常运行不调用）。 */
   find(stepIndex: number): ExecutionTraceNode | undefined {
     return this.findByStepIndex(stepIndex);
   }
 
- /**
+  /**
  * 按 stepIndex 移除节点（崩溃重建清理在飞 call 用）。
  *
  * 正常运行不调用（append-only 不变式）。仅 error-recovery 的 discardInFlightCalls
@@ -167,7 +167,7 @@ export class Trace {
     this.byIndex.delete(stepIndex);
   }
 
- /**
+  /**
  * readonly 视图——返回内部 nodes 数组引用（仅类型级 readonly，运行时无
  * 防御）。消费方禁止结构化 mutate（push/splice/重排/覆盖元素）：byIndex
  * 引入后外部结构化 mutate 会使 nodes 与倒排索引 desync。字段级变更走 update()。
@@ -176,7 +176,7 @@ export class Trace {
     return this.nodes;
   }
 
- /** 当前节点数。 */
+  /** 当前节点数。 */
   get length(): number {
     return this.nodes.length;
   }

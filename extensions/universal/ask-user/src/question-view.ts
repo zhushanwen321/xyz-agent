@@ -18,6 +18,8 @@ const SPLIT_PANE_LEFT_RATIO = 0.42;
 const DESCRIPTION_INDENT_MULTI = 10;
 const DESCRIPTION_INDENT_SINGLE = 8;
 const PREVIEW_MIN_WIDTH = 10;
+/** 分屏右列（详情预览）最小行数（左列较短时占位，避免预览区域过矮）。 */
+const PREVIEW_MIN_LINES = 8;
 const QUESTION_TEXT_MARGIN = 2;
 
 export interface DisplayOption {
@@ -238,7 +240,7 @@ function buildSplitPane(
 	const leftCtx: RenderContext = { ...ctx, width: split.left };
 	const rightCtx: RenderContext = { ...ctx, width: split.right };
 	const leftLines = buildOptionLines(leftCtx, true);
-	const rightLines = buildPreviewLines(rightCtx, Math.max(leftLines.length, 8));
+	const rightLines = buildPreviewLines(rightCtx, Math.max(leftLines.length, PREVIEW_MIN_LINES));
 	const rowCount = Math.max(leftLines.length, rightLines.length);
 	const sep = t.fg("dim", SPLIT_PANE_SEPARATOR);
 	for (let i = 0; i < rowCount; i++) {

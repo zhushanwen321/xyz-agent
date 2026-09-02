@@ -1,5 +1,11 @@
 # @zhushanwen/pi-structured-output
 
+## 5.1.1
+
+### Patch Changes
+
+- 837f2faf6: (no changeset body; patch version bump)
+
 ## 5.1.0
 
 ### Minor Changes
