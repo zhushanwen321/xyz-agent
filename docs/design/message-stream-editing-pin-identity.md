@@ -231,7 +231,7 @@ session 切换（消费侧防线，D8）
 
 | 单元 | 内容 | justification | 验收挂钩 |
 |---|---|---|---|
-| U0 | failing test 先行（真复现形态）：扩展 MessageStream-kind.test.ts 的 virtua mock，使其**模拟 virtua keepMounted 渲染语义**——对 keepMounted 数组 ∪ 可视范围的每个索引调用 `slot({item: data[idx], index: idx})`（越界时 item=undefined，与 virtua 实装行为一致）；同时解除 Turn/UserBubble 的无事件 stub（改为可 emit `edit-state-change` 的 stub 或 unstub，chatDepsMock 已有 isActive/editAndResend 可支撑），打通 UserBubble → Turn → MessageStream 事件链。用例：编辑 → 切短会话 → 断言 mount 不抛。确认红 | TDD 探针门（P5）：mock 复现的是崩溃路径本身（slot 收到 undefined item），非「断言派生值有界」的旁路——旁路测的是结论不是崩溃机理 | 单测护栏第 2 条（先红） |
+| U0 | failing test 先行（真复现形态）：扩展 MessageStream-kind.test.ts 的 virtua mock，使其**模拟 virtua keepMounted 渲染语义**——对 keepMounted 数组 ∪ 可视范围的每个索引调用 `slot({item: data[idx], index: idx})`（越界时 item=undefined，与 virtua 实装行为一致）；同时升级 Turn 的无事件 stub（其模板不含 UserBubble，事件链断于此——UserBubble 本就未被 stub 也未被实例化）为可 emit `edit-state-change` 的 stub，打通 UserBubble → Turn → MessageStream 事件链。用例：编辑 → 切短会话 → 断言 mount 不抛。确认红 | TDD 探针门（P5）：mock 复现的是崩溃路径本身（slot 收到 undefined item），非「断言派生值有界」的旁路——旁路测的是结论不是崩溃机理 | 单测护栏第 2 条（先红） |
 | U1 | `useStreamingPin.ts`：入参 `editingTurnIdx` 改 `editingTurnKey: Ref<string \| null>`；pinnedIndexes 反查（显式 null guard：`editingTurnKey == null` 不反查，不依赖 `'t-' + null` 拼接巧合）+ clamp | 钉扎派生单一归口，纯 computed 可独立单测 | 单测护栏第 1 条 |
 | U2 | `UserBubble.vue`：emit 协议 +`turnKey`；`onUnmounted` 编辑态清理 | 谁置位谁清理（D3） | 单测护栏第 3 条 |
 | U3 | `Turn.vue` emits 类型扩展；`MessageStream.vue` 状态改 `editingTurnKey` + `onEditStateChange` 适配（index 参数删除；**handler 显式按 editing 分支**：`editing ? turnKey : null`，false 恒置 null，禁止无分支透传 turnKey——见 D8 幂等性推演）+ `watch(sessionId)` 清零（D8） | 协议贯通（D2/D7/D8） | U0 用例转绿 + A1/A2 |
@@ -249,7 +249,7 @@ session 切换（消费侧防线，D8）
 | `packages/renderer/src/components/panel/MessageStream.vue` | U3 | `editingTurnIdx: ref(-1)` → `editingTurnKey: ref<string\|null>(null)`、handler 适配、`watch(sessionId)` 清零（D8） |
 | `packages/renderer/src/__tests__/effects/use-streaming-pin.test.ts` | U1 | 三类新用例（驱动器已有，改喂 turnKey） |
 | `packages/renderer/src/__tests__/components/MessageStream-kind.test.ts` | U0/U3 | virtua mock 扩展 keepMounted 渲染语义 + Turn/UserBubble 事件链打通 + 越界崩溃复现用例 |
-| `packages/ui/src/features/chat/__tests__/UserBubble.test.ts` | U2 | 新增卸载清理用例；**既有三处 emit 严格相等断言适配**（`toEqual([{editing: true}])` → `toEqual([{editing: true, turnKey: 'u1'}])` 等，167-168/191-192 行附近——协议加字段后原断言必红，属 D2 的连带改动） |
+| `packages/ui/src/features/chat/__tests__/UserBubble.test.ts` | U2 | 新增卸载清理用例；**既有两处 emit 严格相等断言适配**（`toEqual([{editing: true}])` → `toEqual([{editing: true, turnKey: 'u1'}])` 等，168/192 行——协议加字段后原断言必红，属 D2 的连带改动） |
 
 待验证检查点（实施期必须回答，不通过则回设计）：
 

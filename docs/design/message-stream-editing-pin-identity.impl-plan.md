@@ -68,16 +68,20 @@ graph TD
 
 | Unit | 偏差 | 理由 | 登记时间 |
 |------|------|------|---------|
-| （空） | | | |
+| U1+U3 | 合并为单 commit 6ce11cfc2 | U1 新签名单独提交时 MessageStream.vue 仍传旧参（TS2353）编译红，无可编译中间态；按领地拆分会产出编译失败的 commit | 2026-09-02 |
+| U2 | 审查报告称三处 emit 断言，实为两处（168/192 行） | 以源码为准；两处均已适配（设计文档 §5 文件地图已同步订正） | 2026-09-02 |
+| U2 | 新增卸载用例断言形态：`toEqual([[{editing:false, turnKey:'u1'}]])`（数组唯一一条）而非「unmount 前后长度差」 | test-utils 的 unmount() 先清空 emitted 记录再卸载，长度差断言不可行；唯一性断言更强（恰好证明 emit 来自卸载钩子） | 2026-09-02 |
+| U3 | P5 用例断言升级为双通道取证（编辑中 keepMounted 含编辑索引 + 切换后全部有界），超设计「断言不抛」要求 | 排除断路假绿形态（旧参被静默忽略 → 钉扎不工作 → 不崩但没钉） | 2026-09-02 |
+| U3 | mock Virtualizer 用 flatMap + keyed children 复刻真实 virtua 实例复用行为 | 嵌套数组 children 会逐位置 diff 全量重建 stub（编辑态丢失）；keyed 扁平使 A2 用例的编辑态保持断言可信 | 2026-09-02 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | U0 | committed | 1 | c08334b8b：新用例红（`reading 'kind'` 复现）+ 既有 6 用例绿 + 生产代码零改动（vitest 输出与 git diff 已核验） |
-| U1 | pending | 0 | — |
-| U2 | pending | 0 | — |
-| U3 | pending | 0 | — |
+| U1 | committed | 1 | 6ce11cfc2（与 U3 合并 commit，见偏差登记表第 1 条）；vitest 21 绿（主 agent 复验） |
+| U2 | committed | 1 | eccfd2bb1；vitest 40 绿（UserBubble 13 + Turn 27）+ ui typecheck 0 错（主 agent 复验）；C2 结论：onUnmounted 可达（test-utils unmount 先清 emitted 记录再卸载，探针实证），无需降级 |
+| U3 | committed | 1 | 6ce11cfc2；kind 测试 8 绿（U0 转绿 + A2 白盒，P5 用例含非断路取证：编辑中 keepMounted 含编辑索引）+ renderer/ui typecheck 0 错（主 agent 复验）；D3/D8 消融实验各自单独充分 |
 | U4 | pending | 0 | — |
 
 ## 7 残留风险与变更历史
@@ -86,3 +90,4 @@ graph TD
 - virtua 上游 issue：随 U4 附带评估是否提交（out-of-scope，不阻塞验收）。
 - 变更历史：
   - 2026-09-02 计划创建。
+  - 2026-09-02 阶段 3 一致性审查（1 轮收敛）：unreasonable 清零（1 条 low 流程项=状态回写随本次 commit 解决）；doc_errors 3 条主 agent 已修——设计 §5 U0「解除 Turn/UserBubble stub」改为「升级 Turn stub（其模板不含 UserBubble，事件链断于此）」、文件地图「三处断言」订正「两处」、UserBubble.vue C2 注释版本号 2.4.6→2.4.11；reasonable 5 条中 2 条落偏差登记表（P5 双通道取证、mock keyed 扁平）。

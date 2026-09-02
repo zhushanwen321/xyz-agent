@@ -207,7 +207,7 @@ watch(isEditingThisUser, (editing) => {
 // 的解除只能在这里发——watch 随组件作用域失效不再触发，cancelEdit/submitEdit 两个
 // 显式动作也不会执行。缺此清理会让父组件钉扎状态残留，keepMounted 越界渲染崩溃
 // （编辑身份改为 turnKey 反查后此 emit 是反查失效的信号源）。
-// C2 实测（happy-dom + @vue/test-utils 2.4.6 探针）：onUnmounted 内 emit 父监听器
+// C2 实测（happy-dom + @vue/test-utils 2.4.11）：onUnmounted 内 emit 父监听器
 // 仍可达，wrapper.emitted 能收到该条记录——无需降级 onBeforeUnmount。
 onUnmounted(() => {
   if (editingUserId.value !== null) {
