@@ -20,23 +20,15 @@
  *   去掉 renderer import，改为 HandoffDeps 字段注入（core 零 renderer 依赖）
  * - import 路径 `@/composables/panel/staging-types` StagingAction → `../types`
  * - ComposerInput.vue 实例类型 → 局部 ComposerInputInstance 结构类型（{focus}，与 input/types.ts
- *   的完整实例契约互补——壳层 ComposerInput.vue 的 defineExpose 同时满足两者，结构类型）
+ *   的完整实例契约互补——壳层 ComposerInput.vue 的 defineExpose 同时满足两者，结构类型；
+ *   u3.1 起收敛为从域级 types.ts 权威接口 Pick 派生，不再局部声明）
  * - handleHandoffEsc 参数 KeyboardEvent → KeyboardEventLike（core 零 DOM 约束，真实 KeyboardEvent 兼容）
  * - isInProgress 派生：原 chatStore.isHandingOff(...) → deps.isHandingOff(...)（dep 注入）
  * 逻辑 byte-level 保持。
  */
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Component } from 'vue'
-import type { KeyboardEventLike, StagingAction, StagingConfig } from '../types'
-
-/**
- * ComposerInput 实例最小契约（focus 经 defineExpose 暴露）。
- * 用结构类型避免 import .vue 文件（循环依赖 + 类型推断复杂），同 useComposerSubmit /
- * useComposerContextChips 范式。与 input/types.ts 的完整实例契约互补。
- */
-interface ComposerInputInstance {
-  focus?: () => void
-}
+import type { ComposerInputInstance, KeyboardEventLike, StagingAction, StagingConfig } from '../types'
 
 /** useComposerHandoffMode 返回类型（从函数内联类型提取为命名 interface，便于复用 + 阅读） */
 export interface ComposerHandoffModeReturn {
@@ -62,8 +54,13 @@ export interface ComposerHandoffModeReturn {
 
 /** handoff 发送副作用依赖（由 Composer 注入，避免重复持有 draft/isSending 真源） */
 export interface HandoffDeps {
-  /** ComposerInput 实例 ref：enterHandoffMode 聚焦输入框用 */
-  inputRef: Ref<ComposerInputInstance | null>
+  /**
+   * ComposerInput 实例 ref：enterHandoffMode 聚焦输入框用。
+   * 本模块视角的最小契约——从域级权威接口（../types）Pick 仅 focus，耦合面显式
+   * 受控于权威定义（权威 focus 必选，真实实例 defineExpose 必有；调用点 focus 的
+   * 二级可选链按零行为变化原则原样保留，运行时骗类型的低配桩仍不炸）。
+   */
+  inputRef: Ref<Pick<ComposerInputInstance, 'focus'> | null>
   /** 发送中标志位 setter（handoff 发送期间置 true，结束复位） */
   setSending: (value: boolean) => void
   /** 发送成功后清空输入区（DOM + draft + 持久化草稿） */
