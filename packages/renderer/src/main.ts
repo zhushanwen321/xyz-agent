@@ -3,9 +3,8 @@ import { createPinia } from 'pinia'
 import 'katex/dist/katex.min.css' // KaTeX 公式样式（第三方库 CSS，随 bundle 打包；math_inline/math_block 渲染产出 .katex/.katex-display 节点依赖此样式）
 import i18n from './i18n'
 import App from './App.vue'
-import { provideDesktopPlatform } from './platform/desktop-platform'
-import { createMockPlatform } from '@xyz-agent/core/transport/mock/mock-ws'
-import { providePlatform, provideDevMode } from '@xyz-agent/core'
+import { provideDevMode } from '@xyz-agent/core'
+import { resolvePlatform } from './platform/resolve-platform'
 import { initExtensionHostBridge, getExtensionBus } from './composables/shell/useExtensionHostBridge'
 import { initPermissionRequest } from './composables/shell/usePermissionRequest'
 import './style.css'
@@ -17,14 +16,11 @@ provideDevMode(Boolean(import.meta.env.DEV))
 // [HISTORICAL] 2026-08-04 bootstrap 时序：platform 注入必须先于连接编排（useConnection.init）。
 // 原注入点在 AppShell setup（useSettingsShell），但 AppShell 仅在连接成功后渲染（App.vue v-if）——
 // core ws-client.connect 第一步 getPlatform() fail-fast 需要 platform → 死锁（永远「连接中」）。
-// 对齐架构 §11.0.3：main.ts 挂载前注入，AppShell 内重复调用幂等无害。
-// mock 模式（VITE_MOCK=true）注入 createMockPlatform（webSocket.create 返回 mock 桩，
-// 否则 connect('mock://') 会因原生 WebSocket 不支持 mock scheme 抛错）。
-if (import.meta.env.VITE_MOCK === 'true') {
-  providePlatform(createMockPlatform())
-} else {
-  provideDesktopPlatform()
-}
+// 时序约束现由 bootstrap await 链结构化保证（首步 providePlatform 先于第 2 步 initConnection，
+// App.vue onMounted 触发）；main.ts 早期注入保留是 setup 期消费点防线：App.vue setup 的
+// settings init（settings-lifecycle getSystem(getPlatform().storage)）先于 onMounted 执行，
+// HMR 场景也依赖 platform 已注入。分叉唯一装配点 = resolvePlatform()（VITE_MOCK 三元，memoized）。
+resolvePlatform()
 
 const app = createApp(App)
 // ExtensionHost bridge 装配（audit §12.1）：WS plugin:* 消息 → bus → ViewHostStore/StatusBarController →

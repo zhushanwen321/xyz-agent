@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { computed, nextTick } from 'vue'
-import { InternalEventBus, MessageBusBridge, providePlatform, type ContributionRegistry } from '@xyz-agent/core'
+import { InternalEventBus, MessageBusBridge, providePlatform, registerMountPoints, type ContributionRegistry } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
 import { dispatchCrossSession, dispatchGlobal } from '@xyz-agent/core/transport/api'
 import { createWsPluginMessageSource, EXTENSION_BRIDGE_TYPES, initExtensionHostBridge } from '../useExtensionHostBridge'
@@ -45,6 +45,17 @@ vi.mock('@xyz-agent/core/transport/ws-client', async (importOriginal) => {
     send: (...args: unknown[]) => transportSendSpy(...args),
   }
 })
+
+/**
+ * 模拟 bootstrap step 4（u6 注册收敛）：bridge 装配后不再自行触发注册，生产由 App.vue
+ * onMounted 的 bootstrap 第 4 步执行；测试显式调用补齐该前置。registerMountPoints 读
+ * setExtensionRegistries 最新注入的实例（幂等）；ensureMountPointsSync 的模块级守卫使
+ * watch 闭包引用首次装配的 mountPoints 实例——各装配点统一补注册，watch 无论引用哪个
+ * 实例 list() 均为全量挂载点。
+ */
+async function simulateBootstrapRegistration(): Promise<void> {
+  await registerMountPoints()
+}
 
 function makeBridge() {
   const bus = new InternalEventBus()
@@ -202,6 +213,7 @@ describe('initExtensionHostBridge provide CompanionBand 契约（FR2/FR7，TC10�
 
     const result = initExtensionHostBridge(app as never)
     bridge = result.bridge
+    void simulateBootstrapRegistration()
 
     const sourceProvided = provided.find((p) => p.key === DIALOG_REQUEST_SOURCE_KEY)
     const transportProvided = provided.find((p) => p.key === UI_RESPONSE_TRANSPORT_KEY)
@@ -242,6 +254,7 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
     }
     const result = initExtensionHostBridge(app as never)
     bridge = result.bridge
+    void simulateBootstrapRegistration()
     const viewHostSource = provided.find((p) => p.key === VIEW_HOST_SOURCE_KEY)?.value as ViewHostSource
     const statusBarSource = provided.find((p) => p.key === STATUS_BAR_SOURCE_KEY)?.value as StatusBarSource
     const viewsSource = provided.find((p) => p.key === VIEWS_SOURCE_KEY)?.value as PluginViewsSource
@@ -400,6 +413,10 @@ describe('MF-1 挂载点上报时序（mountPoints.sync 连接就绪后发送）
     }
     const result = initExtensionHostBridge(app as never)
     bridge = result.bridge
+    // 装配后补 bootstrap step 4 前置（见 simulateBootstrapRegistration 注释）——本组用例
+    // 焦点是「已注册挂载点在 connected 时补发」的上报时序，非注册本身。注册不发 send，
+    // 不影响「未连接不发送」断言。
+    void simulateBootstrapRegistration()
   }
 
   it('TC11: 初始未连接不发送；首次建连进入 connected 后补发全量挂载点', async () => {

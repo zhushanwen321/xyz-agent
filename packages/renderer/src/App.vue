@@ -48,16 +48,19 @@ import { bootstrapSettingsCore } from '@/composables/shell/useSettingsShell'
 import { usePermissionRequest } from '@/composables/shell/usePermissionRequest'
 import { PermissionRequestDialog } from '@xyz-agent/ui/extension-host'
 import { useSettings, isDevMode } from '@xyz-agent/core'
+import { bootstrap } from '@xyz-agent/core/bootstrap'
+import { resolvePlatform } from '@/platform/resolve-platform'
 import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
 import { bindHandoffEffect } from '@/composables/effects/useHandoffEffect'
 import { bindSessionStreamSync } from '@/composables/effects/useSessionStreamSync'
 import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 
-// 应用挂载即初始化连接（mock 模式 200ms 直进 connected；真 runtime 走端口发现）。
-// settings 域核心初始化（platform + transport + 订阅注册）必须在 WS 连接前完成：
+// 应用挂载（onMounted bootstrap 第 2 步）即提交连接编排（mock 模式 200ms 直进 connected；真 runtime 走端口发现）。
+// settings 域核心初始化（transport + 订阅注册）必须在 WS 连接前完成：
 // AppShell 仅在 connected 后渲染，若订阅注册留在 AppShell setup 会晚于 sendInitialState 首推 →
 // 首条 model.list / config.defaults 丢失 → settingsStore.models / defaultModel 永空
-// （模型选择器下拉空 + landing 按钮文案空，[HISTORICAL] 2026-08-05）。
+// （模型选择器下拉空 + landing 按钮文案空，[HISTORICAL] 2026-08-05）。platform 注入归
+// main.ts resolvePlatform()（setup 期 settings init 消费点先于 onMounted）。
 bootstrapSettingsCore()
 
 const { t, locale } = useI18n()
@@ -67,10 +70,11 @@ const { t, locale } = useI18n()
 watch(locale, () => {
   document.title = t('app.title') + (isDevMode() ? ' - dev' : '')
 }, { immediate: true })
-const { state: connectionState, init, teardown, retryRuntime } = useConnection()
+const { state: connectionState, teardown, retryRuntime } = useConnection()
 // 启动编排（#1/#3）：连接建立后自动进 new-task landing（首次）或恢复最近 session。
-// useConnection.init 是 fire-and-forget（connect 异步），return 时连接未握手指；state==='connected'
-// 是「连接成功」唯一可靠信号——watch 它触发 onConnected，appBootstrapped 守卫保证 HMR/重连幂等。
+// 五步 bootstrap（onMounted）第 2 步 initConnection 提交连接编排——resolve = 编排已提交
+// 而非 connected（connectWs 异步握手不等待，D2 裁决②）；state==='connected' 是「连接成功」
+// 唯一可靠信号——watch 它触发 onConnected，appBootstrapped 守卫保证 HMR/重连幂等。
 const { onConnected } = useSidebarNew()
 // settings 订阅的 dispose（HMR/App 卸载销毁）+ models 兜底拉取（防订阅时序竞态）。
 // 订阅注册在 bootstrapSettingsCore（上见），此处只持有 dispose/refreshModels 句柄。
@@ -93,7 +97,14 @@ useCompactQueue()
 // permissionRequest 全局弹窗状态（bus plugin-permission-request 驱动，session 无关）。
 // App 根挂载 PermissionRequestDialog，复用 ExtensionHost bridge 的 bus 单例。
 const perm = usePermissionRequest()
-onMounted(() => { void init() })
+// 五步启动编排（core bootstrap：providePlatform → initConnection → restoreSessions →
+// registerMountPoints → scanContributions）。ES1 最小 catch：任一步 reject 上抛在此可见
+// （错误不静默），connected 驱动的视图初始化走下方 watch（bootstrap 不等待 connected）。
+onMounted(() => {
+  void bootstrap({ platform: resolvePlatform() }).catch((err) => {
+    console.error('[App] bootstrap failed', err)
+  })
+})
 // [W8] onConnected 内部用模块级 hasConnectedBefore 区分首次 vs 重连：
 // - 首次 connected → initApp（内部含 workspaceStore.load + presetCwd）
 // - 重连 connected → initApp 因 appBootstrapped 守卫直接 return，records 停留在断连前 stale 数据
