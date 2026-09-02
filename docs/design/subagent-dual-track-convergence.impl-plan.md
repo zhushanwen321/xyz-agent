@@ -96,14 +96,20 @@ graph TD
 
 ## 5 合理偏差登记表
 
-初始为空。格式：`| 日期 | 单元 | 偏差 | 合理性论证 | 处置 |`
+| 日期 | 单元 | 偏差 | 合理性论证 | 处置 |
+|------|------|------|-----------|------|
+| 2026-09-02 | u-1a | 投影输出类型为 core 自有结构兼容类型 HistoryMessage（非 import @xyz-agent/shared 的 Message） | shared 是 workspace private 包、subagent-core 是 npm 发布包，import 会拖 private 依赖进发布闭包；投影逻辑仍全量上移 core（未触发设计降级路径），结构兼容由 runtime 签名类型检查 + 两侧测试守护 | 已固化（deviations 详录） |
+| 2026-09-02 | u-1a | session-view-service 的 DEFAULT_ENGINE_ID='pi' 本地锚定（非 import registry） | import registry 会连带 port→stream-sink 的 .ts 后缀值 import 链进 runtime tsc 图；对齐 engines/pi/reader.ts 的 PI_ENGINE_ID 先例，锚定一致性有守护测试 | 已固化 |
+| 2026-09-02 | u-1a | runtime 删除量 ~430 行 > 设计估计 ~150 行 | 设计只计 reducer switch 本体，实际同文件投影/降级读取/白名单函数随迁 core 一并消灭——超额是收敛更彻底，非范围蔓延 | 已固化 |
+| 2026-09-02 | u-1b | views 版 formatEventLine 改名 formatTraceEventLine 迁入（同名不同实现的真差异，设计 D7-① 未显式裁决） | 两版语义不同（subagent 对话流风格 vs workflow trace 风格），同文件无法双同名导出；唯一消费点 detail-content.ts:235 同步改名 | 已固化 |
+| 2026-09-02 | u-1b | 「~150 行同构消失」实际净 -70（三文件口径） | 逐字同构骨架一份副本（~115-130 行）整体消除，但工厂新增 ~30 行参数化接口 + 两份重复机制文档合并保留一份；含 index.ts 接线 -26 行后整单元 diff +186/-426 | 已固化 |
 
 ## 6 状态表
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|--------------------------------------------|------|---------|
-| u-1a | pending | 0 | — |
-| u-1b | pending | 0 | — |
+| u-1a | committed | 1 | core 2346 passed（干净 TMPDIR）/ runtime 4095 passed / runtime typecheck exit 0（tsconfig +allowImportingTsExtensions 一行，授权项）/ tsup build success / V1④ 代码断言：runtime 手写 reducer 符号 rg 零命中、ZCODE_ENGINE_ID 硬编码删除；实施期门①闭包复核过（7 文件零 pi 包）、门② golden 样本补录 3 个（JournalWriter 真实落盘） |
+| u-1b | committed | 1 | extensions 三连全绿（typecheck/lint EXIT=0 + subagent-workflow 69 files/902 tests）；rg formatSubagentStatusSnapshot 零命中；views/format.ts 不存在；injector 骨架符号仅存工厂文件；model-list-injector 零 diff；两段派发（全局文件数约束），偏差登记表 2 条 |
 | u-1c | pending | 0 | — |
 | u-2a | pending | 0 | — |
 | u-2b | pending | 0 | — |
