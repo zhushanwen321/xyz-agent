@@ -110,7 +110,8 @@ vi.mock('../src/services/session-history.js', () => ({
 
 // ── Mock 之后再 import 被测对象 ─────────────────────────────────────
 
-import { SessionService, encodeDirectiveText } from '../src/services/session/session-service.js'
+import { SessionService } from '../src/services/session/session-service.js'
+import { encodeDirectiveText } from '../src/services/session/session-records.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
 

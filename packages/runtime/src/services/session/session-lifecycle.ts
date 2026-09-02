@@ -23,18 +23,17 @@ import { basename } from 'node:path'
 import { existsSync, unlinkSync, readFileSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import type { SessionSummary, BatchDeleteResult, ThinkingLevel, ServerMessage } from '@xyz-agent/shared'
-import { BUILTIN_PRESET_IDS, PI_THINKING_LEVELS } from '@xyz-agent/shared'
-import type { PiThinkingLevel } from '../../infra/pi/pi-protocol.js'
+import type { SessionSummary, BatchDeleteResult, ServerMessage } from '@xyz-agent/shared'
+import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { ILifecycleSessionOps, ISessionRegistry, ISessionRegisterDeps, IManagedSessionRecord } from './session-internal.js'
-import type { IManagedSessionView, ScannedSession } from './types.js'
-import type { PresetResolution } from '../preset-service.js'
+import type { IManagedSessionView } from './types.js'
+import { buildPresetClientOptions } from './launch-params.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND } from '../../utils/errors.js'
-import { createForkedSessionFile } from './session-fork.js'
+import { createForkedSessionFile, resolveEntryIdByTimestamp } from './session-fork.js'
 
 // [arch 技术债登记，R3 ports 依赖倒置待收口] 下方四个 infra/pi 值 import（getSessionsDir /
 // normalizeSessionFileInPlace + cleanupMigrateResidues / assertPiSessionFile / hydrateBindingMeta）
@@ -136,22 +135,6 @@ export function applyHeaderCwdFallback(jsonlContent: string, fallbackCwd: string
     return jsonlContent
   }
 }
-
-/**
- * thinkingLevel 合法值集合（S-RT-5；W2 值域 SSOT 派生，A-03 修复）。
- *
- * 值 = shared PI_THINKING_LEVELS（pi 0.84.1 全集 7 值，锚点见 pi-preset.ts），
- * 不再手写数组——手写值域曾缺 'max' 导致 composer 最高档被静默丢弃。
- * 用 readonly 数组做运行时校验：lifecycle 透传 thinkingOverride 到 pi 前先校验，
- * 非法值 warn 后忽略（不传给 pi，避免 pi 报错或行为异常）。
- *
- * 类型标注同时做编译期双向防漂移（shared 不能反向 import runtime，由本文件——
- * 唯一同时 import 两边者——锁定一致性）：
- * - `readonly PiThinkingLevel[]`：shared 全集出现 pi-protocol 之外的值 → 编译错；
- * - `& AssertSharedCoversPi`：pi-protocol 全集有而 shared 缺（pi 升级加档位未同步）→ 编译错。
- */
-type AssertSharedCoversPi = [Exclude<PiThinkingLevel, ThinkingLevel>] extends [never] ? unknown : never
-const VALID_THINKING_LEVELS: readonly PiThinkingLevel[] & AssertSharedCoversPi = PI_THINKING_LEVELS
 
 // D8-3 迁移 promise gate（06 §3.3，perf W29）：provider 迁移（apiKey → auth.json +
 // enabledModels 白名单）完成前禁止 spawn pi——迁移窗口内 spawn 的 session 会读到迁移前
@@ -356,60 +339,6 @@ export class SessionLifecycle implements ISessionRegistry {
     }
   }
 
-  /**
-   * 构建 create/restoreSession/forkSession 三处共用的 preset + override client options 子集（S-RT-4）。
-   *
-   * 三处原先用完全相同的 spread 模式（toolArgs/flags/modelOverride/thinkingOverride 条件 spread），
-   * 抽 helper 消除重复，保证三处 preset 字段映射逻辑完全一致（避免一处改动另两处漏改）。
-   *
-   * 输入：
-   *  - resolution：PresetService.resolve 的结果（可能 undefined → 返回空对象，仅 override 生效）。
-   *  - modelOverride / thinkingOverride：Landing Chip 传入值，覆盖 preset 的同名字段（C-RL-6 优先级）。
-   *
-   * 输出：PiSessionOptions 的子集（preset 相关字段），调用方再与 skillPaths/extensionPaths/systemPrompt
-   * 等基础字段合并 spread 进 createSession。返回的子集字段都是可选的，undefined 字段不出现（条件 spread）。
-   *
-   * S-RT-5：thinkingOverride 校验合法值，非法值 warn 后忽略（不透传给 pi）。
-   */
-  private buildPresetClientOptions(
-    resolution: PresetResolution | undefined,
-    modelOverride: string | undefined,
-    thinkingOverride: string | undefined,
-  ): {
-    tools?: string[]
-    excludeTools?: string[]
-    noTools?: boolean
-    noSkills?: boolean
-    noContextFiles?: boolean
-    model?: string
-    thinkingLevel?: ThinkingLevel
-  } {
-    // C-RL-6 优先级（设计文档 §5.2）：Landing 传入 > preset 字段。
-    // model 不校验值域（provider/modelId 形式自由，pi 报错由用户感知）。
-    const effectiveModel = modelOverride ?? resolution?.modelOverride
-    // S-RT-5：thinkingLevel 校验合法值。Landing 传入与 preset 字段都可能是非法值
-    //（如前端未约束 / preset JSON 手改），透传给 pi 会触发 pi 报错或静默忽略，统一在此拦截。
-    const rawThinking = thinkingOverride ?? resolution?.thinkingLevel
-    // widening cast（与 shared isPiLaunchPreset 的 TOOL_MODES 同款惯例）：includes 收窄参数类型，
-    // 此处本意就是对任意 string 做白名单判定。
-    const knownThinking = rawThinking !== undefined && (VALID_THINKING_LEVELS as readonly string[]).includes(rawThinking)
-    const effectiveThinking = knownThinking ? rawThinking : undefined
-    if (rawThinking !== undefined && !knownThinking) {
-      console.warn(`[lifecycle] invalid thinking level: ${rawThinking}, ignored`)
-    }
-
-    return {
-      // preset 字段（resolution 存在时才设，条件 spread 避免 undefined 覆盖默认）
-      ...(resolution?.toolArgs.tools && { tools: resolution.toolArgs.tools }),
-      ...(resolution?.toolArgs.excludeTools && { excludeTools: resolution.toolArgs.excludeTools }),
-      ...(resolution?.toolArgs.noTools && { noTools: true }),
-      ...(resolution?.flags.noSkills && { noSkills: true }),
-      ...(resolution?.flags.noContextFiles && { noContextFiles: true }),
-      ...(effectiveModel && { model: effectiveModel }),
-      ...(effectiveThinking && { thinkingLevel: effectiveThinking as ThinkingLevel }),
-    }
-  }
-
   async create(cwd?: string, label?: string, options?: {
     hidden?: boolean
     /** Launch preset id（设计文档 §5，绑定到新 session 并解析为 pi 启动参数）。 */
@@ -454,7 +383,7 @@ export class SessionLifecycle implements ISessionRegistry {
     const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
     // preset + override 字段经 buildPresetClientOptions 统一构建（S-RT-4 消除三处重复），
     // 含 C-RL-6 优先级（Landing 传入 > preset 字段）与 thinkingLevel 合法值校验（S-RT-5）。
-    const presetClientOptions = this.buildPresetClientOptions(
+    const presetClientOptions = buildPresetClientOptions(
       resolution, options?.modelOverride, options?.thinkingOverride,
     )
     // D8-3（perf W29）：迁移完成前 spawn pi 会读到未迁移配置——gate 等待。
@@ -825,7 +754,7 @@ export class SessionLifecycle implements ISessionRegistry {
     // 只在创建时生效——附着路径的模型终态由 pi 从 model_change entry 恢复（见下方
     // inheritSessionModel），presetClientOptions.model 在此处被显式清空；thinking 仍透传
     // preset（launch 档位；session 内切档由 thinking_level_change entry 承载）。
-    const presetClientOptions = this.buildPresetClientOptions(resolution, undefined, undefined)
+    const presetClientOptions = buildPresetClientOptions(resolution, undefined, undefined)
     // D8-3（perf W29）：restore 同样 spawn pi——gate 等待（启动时恢复路径与 create 一致过 gate）。
     await migrationGate
     const client = await this.pm.createSession(id, sessionCwd, {
@@ -913,10 +842,14 @@ export class SessionLifecycle implements ISessionRegistry {
    */
   async forkSession(
     srcSessionId: string,
-    fromPiEntryId: string,
+    fromPiEntryId: string | undefined,
     includeFrom: boolean,
     label?: string,
     options?: {
+      /** RPC 路径加载的 session 无 piEntryId 时，按前端消息 timestamp 匹配 fork 点（S6 随 Facade 编排迁入）。 */
+      fromMessageTimestamp?: number
+      /** timestamp 匹配的 role 限定（用户/助手侧消息消歧）。 */
+      fromMessageRole?: string
       /**
        * Staging Mode（ADR-0056）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。
        * undefined 时 fork 仅继承源 preset（旧行为）。
@@ -924,23 +857,29 @@ export class SessionLifecycle implements ISessionRegistry {
       modelOverride?: string
       /** Staging Mode（ADR-0056）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
       thinkingOverride?: string
-      /**
-       * wave:perf-w26（微项 12 find 合并）：调用方（SessionService.forkSession facade）已解析的
-       * 源 session 扫描结果。传入时本方法不再自扫（同 handler 单次 scanSessions）；
-       * 直接调用方（测试）未传时保持原行为自行扫描。
-       */
-      source?: ScannedSession
     },
   ): Promise<SessionSummary> {
-    if (!this.configStore.getDefaultModel()) {
-      throw errorWithCode('No model configured. Please configure a provider and model in Settings before forking a session.', MODEL_NOT_CONFIGURED)
-    }
-
-    // 1. 查源 session 文件路径（scanSessions 合并磁盘 + 内存 active）
-    // wave:perf-w26（微项 12）：facade 传入 source 时复用（find 合并），未传时自扫（force 旁路 TTL）。
-    const source = options?.source ?? this.svc.findScannedSession(srcSessionId)
+    // 【S6 迁入的 Facade 编排半截】wave:perf-w26（微项 12 find 合并）：整个 fork 只扫一次磁盘。
+    // 原链路 resolveEntryIdByTimestamp 与本方法各自 scanSessions().find()（同 handler 两次
+    // 全量扫描），合并为单次解析后贯穿使用。findScannedSession 内部 force：路径解析消费方
+    // （fork 源文件定位，正确性敏感，plan M-3）。顺序与迁移前 Facade 链路逐一等价
+    // （find → source 守卫 → entry 解析 → model 门禁）。
+    const source = this.svc.findScannedSession(srcSessionId)
     if (!source) {
       throw new Error(`fork: source session not found: ${srcSessionId}`)
+    }
+    // piEntryId 缺失（RPC 路径读取的 session）时，读 JSONL 按 timestamp + role 匹配 entryId
+    let resolvedEntryId = fromPiEntryId
+    if (!resolvedEntryId) {
+      resolvedEntryId = await resolveEntryIdByTimestamp(
+        source.filePath,
+        options?.fromMessageTimestamp,
+        options?.fromMessageRole,
+      )
+    }
+
+    if (!this.configStore.getDefaultModel()) {
+      throw errorWithCode('No model configured. Please configure a provider and model in Settings before forking a session.', MODEL_NOT_CONFIGURED)
     }
 
     // FR-20 parentSession fallback：源 session 可能尚未落盘（pi 延迟写入窗口，
@@ -956,10 +895,10 @@ export class SessionLifecycle implements ISessionRegistry {
     try {
       forked = await createForkedSessionFile(
         source.filePath,
-        fromPiEntryId,
+        resolvedEntryId,
         includeFrom,
         getSessionsDir(),
-        fromPiEntryId,
+        resolvedEntryId,
         fallbackParentId,
       )
     } catch (e) {
@@ -996,7 +935,7 @@ export class SessionLifecycle implements ISessionRegistry {
     const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
     // Staging Mode（ADR-0056）：override 优先于源 preset 的 modelOverride/thinkingLevel（见 buildPresetClientOptions
     // 内 C-RL-6 优先级）。undefined 时仅继承源 preset（旧行为），不影响现有 fork。
-    const presetClientOptions = this.buildPresetClientOptions(
+    const presetClientOptions = buildPresetClientOptions(
       forkResolution,
       options?.modelOverride,
       options?.thinkingOverride,
@@ -1058,7 +997,7 @@ export class SessionLifecycle implements ISessionRegistry {
       // 元数据 modelId 反映实际启动模型（override > 源 preset.modelOverride）。
       session = await this.registerSession(
         forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
-        undefined, parentSessionKey, fromPiEntryId, presetClientOptions.model,
+        undefined, parentSessionKey, resolvedEntryId, presetClientOptions.model,
       )
     } catch (initErr) {
       // L5: registerSession 失败时清理孤儿 fork 文件（已写出但 session 未进 Map）
@@ -1087,4 +1026,5 @@ export class SessionLifecycle implements ISessionRegistry {
     this.svc.notifySessionCreated(forkedSummary)
     return forkedSummary
   }
+
 }
