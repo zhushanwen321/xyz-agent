@@ -35,6 +35,11 @@ export interface KillableChild {
   once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
 }
 
+// 毫秒→秒换算（SIGKILL 升级 warn 日志的秒数显示）。文件内私有定义：工程内 MS_PER_SECOND
+// 惯例是各使用文件私有常量（execution-record / lifecycle-manager / session-file-gc /
+// session-runner 四处先例），无共享导出源可 import，保持同惯例不另立导出点。
+const MS_PER_SECOND = 1_000;
+
 /** SIGTERM 优雅窗口默认值（ms）。实测校准点：设计 §5 待验证检查点⑤（zcode 对 SIGTERM 的响应时序）。 */
 export const DEFAULT_KILL_GRACE_MS = 5_000;
 
@@ -89,7 +94,7 @@ export async function killChain(
 
   if (opts.escalationNote !== undefined) {
     logger.warn(
-      `[kill-chain] ${opts.escalationNote} still alive ${opts.graceMs / 1_000}s after SIGTERM, escalating to SIGKILL`,
+      `[kill-chain] ${opts.escalationNote} still alive ${opts.graceMs / MS_PER_SECOND}s after SIGTERM, escalating to SIGKILL`,
     );
   }
   safeKill(child, "SIGKILL");

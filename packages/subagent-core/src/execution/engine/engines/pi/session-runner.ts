@@ -868,9 +868,12 @@ interface SpawnRunState {
 
 /**
  * [D3-① 杀链合一] pi 侧杀链参数（现状值，[race-F4]）：SIGTERM 优雅窗口 30s——
- * 超窗未见 exit 视为 SIGTERM 被无视，升级 SIGKILL。
+ * 超窗未见 exit 视为 SIGTERM 被无视，升级 SIGKILL。秒数单提命名常量再组合 ms：
+ * no-magic-numbers 豁免 const init 单字面量但不豁免乘法表达式中的裸字面量
+ * （对齐上方 watchdog 系列的常量组合写法）。
  */
-const PI_KILL_GRACE_MS = 30 * MS_PER_SECOND;
+const PI_KILL_GRACE_SECS = 30;
+const PI_KILL_GRACE_MS = PI_KILL_GRACE_SECS * MS_PER_SECOND;
 
 /**
  * [D3-① 杀链合一 + race-F4] 杀 pi 子进程：发 SIGTERM，30s 优雅窗口后仍存活则 SIGKILL。

@@ -369,11 +369,15 @@ export default [
   // 在原域合规（≤1000）的文件不应因路径迁移即触发拆分。抽离已显著瘦身（旧位行数：
   // subagent-service 2141→1245、session-runner 1781→844、record-store 1234→800），
   // 进一步拆分属独立重构任务，长期方向登记于 subagent-core 抽离 impl-plan 残留风险。
+  //
+  // [u-2a] session-runner.ts 再从 execution/ 根物理迁入 engines/pi/（pi 执行轨道下沉，
+  // A1 零回归约束 = rename 级搬运不拆分），override 路径同步跟随（1111891ce rename
+  // 先例同型）。长期拆分方向：interact 交接 / stdin 写入等可按轴再拆，待独立重构。
   {
     files: [
       'packages/subagent-core/src/execution/execution-record.ts',
+      'packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts',
       'packages/subagent-core/src/execution/record-store.ts',
-      'packages/subagent-core/src/execution/session-runner.ts',
       'packages/subagent-core/src/orchestration/worker-message-pump.ts',
       'packages/subagent-core/src/shared/resource-discovery.ts',
     ],
