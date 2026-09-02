@@ -27,6 +27,7 @@
 | Unit | 职责 | 领地（精确文件路径） | 依赖 | 隔离 | 验收条款 |
 |------|------|---------------------|------|------|---------|
 | u0-foundation | shared RPC 契约类型（ImportCandidate/ImportCandidatesReply/ImportReply/warning 联合 + 错误码字面量联合） | `packages/shared/src/import-session.ts`（新）；`packages/shared/src/index.ts`（加一行 export） | — | plain | `pnpm --filter @xyz-agent/shared typecheck` 绿；runtime/renderer 可 import |
+| u0b-protocol-reg | protocol.ts 协议 Map 登记两命令（5 处：ClientMessageType/ClientMessageMap/ServerMessageType/ServerMessageBase/ReplyPayloadMap） | `packages/shared/src/protocol.ts` | u0 | plain | shared + renderer typecheck 绿（u4 methods 依赖此登记） |
 | u1-scan-utils | `scanExternalSessions(dir)` 异步分批扫描（readdir async + 复用 scanSessionMeta 每批 100 后 setImmediate）；外部根独立 TTL 缓存；`isScannableSessionFile`/`cleanupTmpMigrateResidue` 扩展 `.tmp-import-`；export `readProjectBinding` | `packages/runtime/src/infra/pi/session-file-utils.ts`；`packages/runtime/src/__tests__/`（新增 scan-external 测试文件） | u0 | plain | runtime vitest 新测试绿：外部目录样本扫描/tmp+marker 文件不可见/分批让出（fake timers 或批计数断言） |
 | u2-import-service | `ImportService`：listCandidates（query 语义 D5/cwdExists/alreadyImported TTL 读）+ importSession（全局互斥 then(work,work)、互斥区内 header 异步读校验/标记校验/双检 id-first/mkdir/tmp+rename/sidecar+readback/失效双缓存）；rootDir 缺省 getPiGlobalAgentDir 推导 | `packages/runtime/src/services/session/import-service.ts`（新）+ 同目录 `__tests__/import-service.test.ts`（新）；`packages/runtime/src/services/session/session-service.ts`（仅：把 importService 挂到对外访问点，若组合根直接 new 则改 `packages/runtime/src/index.ts`）；`packages/runtime/src/infra/pi/pi-maintenance.ts`（仅 export getPiGlobalAgentDir 一行） | u0, u1 | plain | runtime vitest：幂等三类反例（同 id 异 target/同 target 异 id→import_target_conflict/双击连点）、原子性（copy 中途失败无残留 + copy_failed 后第二跳成功）、错误码矩阵（marker/invalid/missing/project_invalid 含空串）、sidecar readback warning 路径 |
 | u3-rpc-wiring | `session.importCandidates`/`session.import` 两个 case + ctx 类型/装配 + 组合根注入 | `packages/runtime/src/transport/session-message-handler.ts`；`packages/runtime/src/transport/server.ts`（optional services 类型+字段）；`packages/runtime/src/index.ts`（实例化/传入）；transport `__tests__`（case 分发测试） | u2 | plain | runtime vitest：RPC payload→reply 映射、错误 envelope、import 成功后 broadcastSessionList 被调 |
@@ -77,17 +78,18 @@ graph TD
 
 | 偏差 | 设计位置 | 实现落点 | 理由 | 裁决 |
 |------|---------|---------|------|------|
-| （空） | | | | |
+| protocol.ts 协议 Map 未在 impl-plan 覆盖 | §2 u0/u3/u4 领地边界 | u0b-protocol-reg 补丁单元（shared/src/protocol.ts） | u4 typecheck 被 protocol.ts 未登记阻断；u0 领地仅含 import-session.ts 类型，不含 protocol.ts | 已裁决：增设 u0b 补丁单元（领地=protocol.ts），与 u0/W2 并行安全 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | u0-foundation | committed | 1 | shared typecheck 绿（tsc --noEmit exit 0）+ runtime/renderer 消费方 typecheck 绿；commit 5a6e4d729 |
+| u0b-protocol-reg | protocol.ts 协议 Map 登记两命令（5 处：ClientMessageType/ClientMessageMap/ServerMessageType/ServerMessageBase/ReplyPayloadMap） | `packages/shared/src/protocol.ts` | u0 | plain | shared + renderer typecheck 绿（u4 methods 依赖此登记） |
 | u1-scan-utils | pending | 0 | — |
 | u2-import-service | pending | 0 | — |
 | u3-rpc-wiring | pending | 0 | — |
-| u4-renderer-api | pending | 0 | — |
+| u4-renderer-api | committed | 1 | renderer vue-tsc 绿；commit 702d9cbd0 |
 | u5-dialog | pending | 0 | — |
 | u6-entry | pending | 0 | — |
 
