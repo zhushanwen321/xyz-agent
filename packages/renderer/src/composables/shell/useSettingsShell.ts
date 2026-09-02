@@ -40,7 +40,7 @@ import {
 } from '@xyz-agent/ui/features/settings'
 import { createSettingsTransport } from './settings-transport-adapter'
 import { provideDesktopPlatform } from '@/platform/desktop-platform'
-import { createMockPlatform } from '@/mock/mock-ws'
+import { createMockPlatform } from '@xyz-agent/core/transport/mock/mock-ws'
 import { providePlatform } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
 import { useQuotaConfigure } from '@/composables/features/model/useQuotaConfigure'

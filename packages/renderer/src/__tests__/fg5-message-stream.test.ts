@@ -18,7 +18,7 @@ import {
   hasFailedTool,
 } from '@/composables/logic/messageTurns'
 import { useChatStore } from '@/stores/chat'
-import * as mockApi from '@/api/mock'
+import * as mockApi from '@xyz-agent/core/transport/mock'
 import type { Message } from '@xyz-agent/shared'
 import { textToSegments } from '@xyz-agent/shared'
 

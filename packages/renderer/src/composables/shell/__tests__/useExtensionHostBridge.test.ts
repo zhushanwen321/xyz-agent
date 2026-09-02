@@ -31,7 +31,7 @@ import {
   type PluginViewsSource,
 } from '@xyz-agent/ui/extension-host'
 import { connect, disconnect } from '@/lib/ws-client'
-import { createMockPlatform } from '@/mock/mock-ws'
+import { createMockPlatform } from '@xyz-agent/core/transport/mock/mock-ws'
 
 // mock transport：MF-4 断言 mountPoints.sync 发送（真实 transport.send 在单测环境不可观测、
 // 且会裸调 ws-client）。模式对齐 usePermissionRequest.test.ts（顶层 vi.fn + 工厂转发）。

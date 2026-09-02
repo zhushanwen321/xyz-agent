@@ -25,9 +25,15 @@ import * as realWorkspace from './domains/workspace'
 import * as realQuota from './domains/quota'
 import * as realPreset from './domains/preset'
 import * as realProject from './domains/project'
-import * as mockApi from './mock'
+import * as mockApi from '@xyz-agent/core/transport/mock'
 
 const isMock = import.meta.env.VITE_MOCK === 'true'
+
+// [tc-transport-consolidation u3] core mock 不读 import.meta.env——VITE_E2E 构建期值在此注入。
+// isMock 构建期常量分支包裹：生产构建下整句随死分支 DCE，mock 模块链整体摇除（A7 探针门）。
+if (isMock) {
+  mockApi.setMockE2E(import.meta.env.VITE_E2E === 'true')
+}
 
 export const session = isMock ? mockApi.session : realSession
 export const chat = isMock ? mockApi.chat : realChat

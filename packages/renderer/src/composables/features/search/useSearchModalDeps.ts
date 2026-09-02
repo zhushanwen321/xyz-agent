@@ -25,7 +25,7 @@ import type { SearchDeps } from '@xyz-agent/core'
 import * as fileApi from '@/api/domains/file'
 import * as composerApi from '@/api/domains/composer'
 import * as sessionApi from '@/api/domains/session'
-import * as mockApi from '@/api/mock'
+import * as mockApi from '@xyz-agent/core/transport/mock'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
 import { useFileTree } from '@/composables/features/file-tree/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
@@ -50,11 +50,16 @@ export function useSearchModalDeps(shell: SearchModalShellDeps): SearchDeps {
   const presetStore = usePresetStore()
   const fileTreeStore = useFileTreeStore()
 
+  // [tc-transport-consolidation D4-②] isMock 构建期常量：searchMock 引用点整体条件化——
+  // 生产构建（VITE_MOCK 非 true）下 mockApi.search 属性引用随死分支 DCE，mock 模块链
+  // 摇除（A7 探针门）；mock 构建下注入 core mock fixture（SearchPorts.searchMock 可选）。
+  const isMock = import.meta.env.VITE_MOCK === 'true'
+
   return {
     ports: {
-      isMock: import.meta.env.VITE_MOCK === 'true',
+      isMock,
       isMac: navigator.platform.includes('Mac'),
-      searchMock: mockApi.search.query,
+      searchMock: isMock ? mockApi.search.query : undefined,
       fileRead: (path, sessionId) => fileApi.read(path, sessionId).then(() => {}),
       fileCandidates: composerApi.getFileCandidates,
       sessionList: sessionApi.list,

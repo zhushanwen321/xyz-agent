@@ -106,6 +106,9 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 | 4 | u2 | 领地外 3 测试文件追认（chat-bash / chat-send-images / session-removebycwd）：vi.mock('@/api/request') 同族失拦截（桥不转发 mock），与 v4 裁决 B1 同根因同模式，说明符改锚 core request 跨包相对路径，断言与 factory 零改动 | 计划 v4 B1 裁决先例（设计 §11-2） | 已追认（v5） |
 | 5 | u2 | usage-forcequit 改锚形态：command 级断言（commandMock）直指 core request 模块文件（preset 的 send 级改法不适用——断言层级不同）；「断言零改动优先」裁决 | u1 偏差 #2「直指模块文件」模式 | 已批准 |
 | 6 | u2 | extension.ts transport.send 实际 1 处（:190；v3/v4 计划文字「6 处」为 grep -o 计数把非调用行计入的沿袭错误）；ws-client 相对深度 '../../'（domains/ 比 api/ 深一层）；core settings.ts 两处历史注释随 IPC 剔除同步修正 | 事实修正，无设计冲突 | 已批准 |
+| 7 | u3 | isE2E 参数化用 `let isE2E + setMockE2E()` setter 而非全量工厂——mock/index.ts 持模块级单例状态（streamHandlers/mockQueues 等），工厂形态会令 facade/useSearch/fg 测试各自实例化隔离副本破坏共享状态可见性；setter 保单例语义 + 全部消费者导出签名零改动 | 设计 D4「工厂参数由壳注入」的等价机制（注入语义达成，形态适配单例约束） | 已批准 |
+| 8 | u3 | 6 个测试文件单行 import/vi.mock 说明符改锚（fg1/fg5/fg6/usage-forcequit → core mock；useExtensionHostBridge.test/useSettingsShell.test → core mock/mock-ws）——删目录与源码改锚后消费方必须同步，派发事实漏盘 | u2 偏差 #4 同款先例（v5 追认） | 已追认（v7） |
+| 9 | u3 | 残留上报：vitest.config.ts:32 coverage exclude 'src/mock/**' 指向已删目录（零行为影响，留 u5 清理）；lib/ws-client.ts:8 等注释提旧 mock 路径（u4 删该文件自然消亡） | 待 u4/u5 收尾 | 已登记 |
 
 预登记两条口径差异（非偏差，数字校准）：设计「测试 62 处/50 文件」实测 **58 处/48 文件**（子路径口径，另 barrel 12 处不动）；设计「3 个测试改路径」（lib shim）实测 **5 个测试文件**（useExtensionHostBridge.test / ws-client-send-boolean / session-workflow-update-fallback / session-exited / session-subagents-fallback）。以实测为准执行，不回改设计文档（±4 处属设计期统计与 HEAD 漂移）。
 
@@ -115,6 +118,7 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 |------|------|------|----------|
 | u1 | committed | 2（首轮 core 侧 + 续轮 6 测试 mock 改锚，计划 v2 修订） | core test 1276 passed/6 todo + frontend test 348 文件 3601 passed/3 skipped + 双包 typecheck 绿；commit 见 git log `refactor(core)` u1 条目 |
 | u2 | committed | 2（首轮零改动 blocker 上报三处派发事实失实 + v4 裁决续作全绿） | 同 u1 基线全绿不回归；22 领地文件 + 3 追认测试（v5）；commit 见 git log `refactor(core)` u2 条目 |
+| u3 | committed | 1（一次通过） | 双包基线一致（core 1276 / frontend 3601）+ 探针门③ build 后产物 grep 10 个 mock 标识串零命中（**优于基线**：迁移前 HEAD 实测存在 fixture 泄漏）+ E2E 注入跨包验证；6 追认测试（v7）；commit 见 git log u3 条目 |
 | u3 | pending | 0 | — |
 | u4 | pending | 0 | — |
 | u5 | pending | 0 | — |
@@ -141,3 +145,4 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 - v4：2026-09-02 u2 首轮零改动 blocker 上报后裁决（三处派发事实失实，dev 证据行号级核实）：① **B2 桥形态**——10 个同名导出冲突（preset/session 的 list/create/remove；settings re-export config/extension 的 onProviders/onSkills/onAgents/onDefaults/onExtensions/listProviders/setProvider）使「barrel + 单行桥 + 消费者零改动」不可同构，且 `'@/api/domains'` 目录 barrel 本不存在（17 文件外无 index.ts）——裁决：不建 barrel，core exports 增 `"./transport/api/domains/*"` 通配一条覆盖 17 域（即 u5 codemod 终态锚点，消费者改锚纯前缀替换），删 u1 预置的 `./transport/api/domains` barrel 条目，壳桥直指单域子路径；② **B1**——usage-forcequit-domains.test.ts:15-18 的 vi.mock('@/api/request') 桥化后失拦截（同 u1 v2 根因），mock 改锚前移进 u2 领地；③ **B3**——settings.ts:15-21 的 5 个 Electron IPC 函数（'@/lib/ipc'）属壳平台门面（settings.ts 注释自述「不走 runtime WS」），core 仅迁 WS 部分、壳保留 IPC 5 函数与桥合并导出。次要校准：barrel facade 消费 57 处（v1 口径 45，HEAD 漂移）。
 - v5：2026-09-02 u2 完成后追认：① 3 个领地外测试文件（chat-bash / chat-send-images / session-removebycwd）的 vi.mock('@/api/request') 同族失拦截改锚——v4 裁决意图覆盖此类，dev 按先例处理正确，追认入账（教训：派发前应全量 grep vi.mock 同族消费者一次盘清，避免逐波发现）；② extension.ts transport.send 实际 1 处（:190），v3「6 处」为 grep -o 计数错误；③ usage-forcequit 为 command 级断言，改锚直指 core request 模块（preset 的 send 级改法不适用）。
 - v6：2026-09-02 u3 派发前领地修订（依赖事实派发前全量盘清）：① main.ts:7 / useSettingsShell.ts:43 的 mock-ws import 改锚（各一行）入 u3 领地（mock-ws 并入 core 后原文件删除，消费方必须同步改锚；useSettingsShell :65-70 兜底注入段仍归 u6）；② core exports 追加 `"./transport/mock/*"` 通配（u1 预置的 `./transport/mock` 条目保留，facade 引用）；③ facade real 侧 `'./domains/xxx'` 桥引用留给 u5 codemod（u2 后经桥已解析 core，u3 只动 mock 侧一行）；④ searchMock 测试口径修正——grep renderer 测试零命中，「3 测试类型适配」为设计期保守预估，以实测为准；⑤ mock/index.ts:40 `'@/lib/ws-client'` 改锚 `'../ws-client'`（:67 getState 用法）写入领地。
+- v7：2026-09-02 u3 完成后追认与记录：① 6 个测试文件单行改锚（fg1/fg5/fg6/usage-forcequit → core mock；useExtensionHostBridge.test/useSettingsShell.test → core mock/mock-ws）追认——同 u2 v5 先例，派发事实两处漏盘（mock-ws 测试消费方 + '@/api/mock' 测试消费方）；② setMockE2E setter 形态批准（等价机制：保模块级单例语义，工厂形态会隔离 fg 测试与 facade 的共享状态）；③ 探针门③实测**优于基线**——迁移前 HEAD 生产包存在 search-data fixture 泄漏（useSearchModalDeps:57 无条件引用，设计 D4 诊断确认），迁移后 10 个标识串零命中，G4 单一真源目标超额达成；④ E2E 注入链路跨包验证通过（vite define 作用于 core 模块 + setMockE2E）；⑤ 残留：vitest.config.ts:32 coverage exclude 指向已删目录留 u5 清理。

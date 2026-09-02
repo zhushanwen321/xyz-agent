@@ -4,7 +4,7 @@ import 'katex/dist/katex.min.css' // KaTeX 公式样式（第三方库 CSS，随
 import i18n from './i18n'
 import App from './App.vue'
 import { provideDesktopPlatform } from './platform/desktop-platform'
-import { createMockPlatform } from './mock/mock-ws'
+import { createMockPlatform } from '@xyz-agent/core/transport/mock/mock-ws'
 import { providePlatform, provideDevMode } from '@xyz-agent/core'
 import { initExtensionHostBridge, getExtensionBus } from './composables/shell/useExtensionHostBridge'
 import { initPermissionRequest } from './composables/shell/usePermissionRequest'

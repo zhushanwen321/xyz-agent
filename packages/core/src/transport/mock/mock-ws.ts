@@ -1,4 +1,4 @@
-/* eslint-disable no-magic-numbers */
+/* eslint-disable no-magic-numbers -- mock WS 桩的握手延迟/状态码等字面量属桩行为参数，非逻辑魔数 */
 /**
  * Mock WebSocket —— VITE_MOCK=true 时替代真实 WS 连接。
  *

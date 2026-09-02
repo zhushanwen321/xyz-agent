@@ -23,7 +23,7 @@ vi.mock('../../../../core/src/transport/api/request', () => ({
 
 import { getUsageStats } from '@/api/domains/usage'
 import { forceQuit, subagentAction } from '@/api/domains/session'
-import { session as mockSession } from '@/api/mock'
+import { session as mockSession } from '@xyz-agent/core/transport/mock'
 
 beforeEach(() => {
   commandMock.mockReset()

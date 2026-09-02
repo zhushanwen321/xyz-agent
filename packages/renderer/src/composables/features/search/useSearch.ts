@@ -36,12 +36,14 @@ import { useRecents } from '@/composables/features/new-task/useRecents'
 import { useFileSearch } from '@/composables/features/search/useFileSearch'
 import { useFileSearchStore } from '@/stores/fileSearch'
 import { composer as composerApi, session as sessionApi } from '@/api'
-import * as mockApi from '@/api/mock'
+import * as mockApi from '@xyz-agent/core/transport/mock'
 import type { SessionCommand } from '@/stores/command'
 
 /**
  * AC-5.2 mock 轨判断：search 无 real WS domain（D-026），api/index.ts 已删 search 导出。
  * 编排归 useSearch：mock 模式走 mockApi.search fixture（E2E 可用）；real 模式走真实 3 源聚合。
+ * [tc-transport-consolidation D4-②] mockApi 已迁 core（transport/mock），顶层静态 import +
+ * 引用点全部收在 isMock 构建期常量分支内（生产构建 DCE 摇除 mock 模块链，A7 探针门）。
  */
 const isMock = import.meta.env.VITE_MOCK === 'true'
 import type { FileNode, SessionGroup, SessionSummary } from '@xyz-agent/shared'
