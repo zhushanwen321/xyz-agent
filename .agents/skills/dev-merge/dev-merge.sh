@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # dev-merge.sh — 将当前 feat worktree 的分支合并到兄弟 dev-x.x.x 集成 worktree。
 #
-# 用法（cwd 必须在待合并 feat worktree 根目录；旧 base 的 worktree 可能未检出本脚本，一律用绝对路径调用）：
-#   bash /Users/zhushanwen/Code/xyz-agent-workspace/dev-0.9.10/.agents/skills/dev-merge/dev-merge.sh merge   <dev-branch>   # 预检 + 合并
-#   bash /Users/zhushanwen/Code/xyz-agent-workspace/dev-0.9.10/.agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>   # 确认已合并后删当前 worktree + 分支
+# 用法（cwd 必须在待合并 feat worktree 根目录）：
+#   bash .agents/skills/dev-merge/dev-merge.sh merge   <dev-branch>   # 预检 + 合并
+#   bash .agents/skills/dev-merge/dev-merge.sh cleanup <dev-branch>   # 确认已合并后删当前 worktree + 分支
 #
 # 退出码：
 #   0  成功
