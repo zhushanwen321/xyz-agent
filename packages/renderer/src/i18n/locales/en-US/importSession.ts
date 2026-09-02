@@ -6,7 +6,8 @@
  */
 export default {
   title: 'Import Session',
-  description: 'Import historical sessions from the pi global sessions directory and continue chatting',
+  dialogTitle: 'Import pi Session',
+  description: 'Bring in pi session records from disk and continue chatting',
   searchPlaceholder: 'Search by name or Session ID (supports 01a044-style short ID), or paste a .jsonl absolute path',
   allDirs: 'All directories',
   chooseDirBtn: 'Choose other directory',
@@ -26,13 +27,15 @@ export default {
   importBtn: 'Import',
   importing: 'Importing…',
   defaultProjectName: 'Default project',
-  loading: 'Loading…',
-  emptyResult: 'No matching session files found',
+  emptyTitle: 'No matching sessions',
+  emptyHint: 'Try a different keyword, or paste the absolute path of a .jsonl file',
   pathImportBtn: 'Import this file',
   pathNoMatch: 'No matching session file found',
   loadFailed: 'Failed to load candidates',
   retry: 'Retry',
-  toastSidecarFailed: 'Session imported, but project assignment failed: reassign the session to a project manually in the sidebar',
+  toastImported: 'Imported "{name}" to {project} · continue chatting',
+  toastWarnSidecar: 'Project assignment failed: reassign the session to a project manually in the sidebar',
+  freshBadge: 'Imported',
   errors: {
     import_source_missing: 'Source file is missing or unreadable: confirm it has not been moved or deleted and retry, or use "Choose other directory" to relocate the sessions directory',
     import_invalid_session: 'Not a valid pi session file (first line lacks a session header): pick a .jsonl session file produced by pi',

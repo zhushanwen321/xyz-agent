@@ -1,13 +1,14 @@
 /**
- * ImportSessionDialog 组件测试（import-session U5 验收 8 项 + 阶段 3 修复批，三视角）。
+ * ImportSessionDialog 组件测试（import-session U5 验收 8 项 + 阶段 3 修复批 + u7 打磨，三视角）。
  *
  * 覆盖（impl-plan u5 验收条款；每条至少一个用户可见 DOM 断言）：
- *  1. 默认列表：打开即拉候选 + 日期分组渲染 + 目录 chip 分组过滤
+ *  1. 默认列表：打开即拉候选 + 日期分组渲染 + 目录下拉菜单分组过滤（u7 对齐 demo dir-menu）
  *  2. 搜索过滤三通道：名称 / 完整+短 Session ID / .jsonl 绝对路径前缀
  *  3. 路径模式切换：query 以 '/' '~' 开头时列表隐藏、路径行展示命中元信息（demo 方案 A path-bar）
  *  4. 已导入候选项禁用：徽标 + 行按钮 disabled + 选中后底部导入仍不可用
  *  5. 选目标 project：下拉默认当前活跃 project、可改、导入 payload 跟随
- *  6. 导入成功 emit('imported') + sidecar_failed 走 toast warning 通道（非 error）
+ *  6. 导入成功 emit('imported') + 结果 toast（u7：info 成功 / warning 预警合并——
+ *     sidecar_failed 与死 cwd 追加同一条消息；显示名回退短 ID）
  *  7. 错误内联恢复指引：error envelope code → i18n 文案（含恢复动作）可见，不弹系统对话框
  *  8. cwdExists=false 标注：「原目录已不存在…」降级提示可见
  *  9. 目录切换（V8）：「选择其他目录」→ pickDirectory 选中根 → RPC 带新 rootDir
@@ -18,9 +19,11 @@
  * 12. 计数「可见 N / 共 total」（阶段 3 修复③）：items 截断时自然呈现截断提示
  * 13. 日期分组四档（阶段 3 修复④）：今天/昨天/本周/更早，日历周（周一起始）分桶，
  *     昨天优先于本周
+ * 14. u7 demo 对齐走查：标题「导入 pi 会话」/ 搜索框 icon + Esc kbd / 骨架屏（非转圈
+ *     纯文本）/ 空态两条出路引导
  *
- * mock 策略：vi.mock('@/api')（session 两方法模拟 runtime D5 S7 匹配语义 + project save
- * 供 store 持久化 watch）+ vi.mock('@/composables/useToast')（捕获 warning 通道）
+ * mock 策略：vi.mock('@/api'（session 两方法模拟 runtime D5 S7 匹配语义 + project save
+ * 供 store 持久化 watch）+ vi.mock('@/composables/useToast')（捕获 info/warning 通道）
  * + vi.mock('@/lib/ipc')（pickDirectory 目录选择器，useCommandPopoverTrigger 先例）。
  * vue-i18n 由 vitest-i18n-setup.ts 全局 mock（zh-CN 取值）。Dialog 经 reka DialogPortal
  * teleport 到 body：DOM 断言统一走 document.body（project-switcher.test.ts 先例）。
@@ -272,7 +275,7 @@ afterEach(() => {
 })
 
 describe('ImportSessionDialog（U5 验收）', () => {
-  it('首屏冒烟：对话框结构元素齐备（观察者视角）', async () => {
+  it('首屏冒烟：对话框结构元素齐备（观察者视角，含 u7 demo 对齐细节）', async () => {
     await mountDialog()
 
     for (const testid of [
@@ -287,8 +290,14 @@ describe('ImportSessionDialog（U5 验收）', () => {
     ]) {
       expect(byTestId(testid), `${testid} 应存在`).not.toBeNull()
     }
-    expect(bodyText()).toContain(zhCN.title)
+    // u7 demo 对齐：标题「导入 pi 会话」+ 副标题 + 搜索框 icon / Esc kbd（demo searchbox）
+    expect(bodyText()).toContain(zhCN.dialogTitle)
+    expect(bodyText()).toContain(zhCN.description)
     expect(byTestId('import-search-input')!.attributes('placeholder')).toBe(zhCN.searchPlaceholder)
+    const inputEl = byTestId('import-search-input')!.element as HTMLElement
+    expect(inputEl.previousElementSibling?.tagName.toLowerCase()).toBe('svg')
+    const kbd = inputEl.parentElement?.querySelector('kbd')
+    expect(kbd?.textContent).toBe('Esc')
     expect(bodyText()).toContain(zhCN.importTo)
   })
 
@@ -299,11 +308,12 @@ describe('ImportSessionDialog（U5 验收）', () => {
       // 构建者：打开即拉，payload 无 query（全量）
       expect(apiMocks.importCandidates).toHaveBeenCalledTimes(1)
       expect(apiMocks.importCandidates).toHaveBeenCalledWith({})
-      // 使用者：5 条候选渲染；目录 chip = 全部目录 + 2 个子目录
+      // 使用者：5 条候选渲染；目录 chip = 单个「全部目录 ▾」（u7 下拉形态，选项见下一用例）
       expect(allByTestId('import-item')).toHaveLength(5)
-      expect(allByTestId('import-dir-chip')).toHaveLength(3)
-      expect(bodyText()).toContain(zhCN.allDirs)
-      expect(bodyText()).toContain(STOCK_DIR)
+      expect(allByTestId('import-dir-chip')).toHaveLength(1)
+      expect(byTestId('import-dir-chip')!.text()).toContain(zhCN.allDirs)
+      // 条目行可见原工作目录（目录名 dirLabel 已移入下拉菜单，见下一用例）
+      expect(bodyText()).toContain('/Users/test/Stock')
       // 观察者：四档分组按序渲染且归属正确——9-01（周二）在本周内但归「昨天」（昨天优先）；
       // 8-31（周一）归「本周」；8-25 归「更早」
       const buckets = groupBuckets()
@@ -321,19 +331,40 @@ describe('ImportSessionDialog（U5 验收）', () => {
       expect(byTestId('import-count')!.text()).toBe('可见 5 / 共 5')
     })
 
-    it('目录 chip 点击 → 客户端按 dirLabel 过滤（不发新 RPC），再点切回全部', async () => {
+    it('目录下拉菜单（u7 对齐 demo dir-menu）：选项含全部+各子目录带计数；选子目录过滤列表，选全部恢复', async () => {
       await mountDialog()
-      const chip = allByTestId('import-dir-chip').find((c) => c.text() === XYZ_DIR)
-      expect(chip, 'XYZ 目录 chip 应存在').toBeTruthy()
-      await chip!.trigger('click')
-      await flushPromises()
 
-      // 使用者：只剩 XYZ 目录的 2 条 + 计数联动（可见数随过滤变化，total 保持全量）
+      // 打开菜单（Popover 触发）
+      await byTestId('import-dir-chip')!.trigger('click')
+      await flushPromises()
+      const options = allByTestId('import-dir-option')
+      // 观察者：菜单项 = 全部目录 + 2 个子目录，每项带计数（全部 = total，子目录 = dirs.count）
+      expect(options).toHaveLength(3)
+      expect(options[0].text()).toContain(zhCN.allDirs)
+      expect(options[0].text()).toContain('5')
+      expect(options[1].text()).toContain(STOCK_DIR)
+      expect(options[1].text()).toContain('3')
+      expect(options[2].text()).toContain(XYZ_DIR)
+      expect(options[2].text()).toContain('2')
+
+      // 使用者：选 XYZ 子目录 → 菜单收起、chip 文案切换、列表客户端过滤（不发新 RPC）
+      await options[2].trigger('click')
+      await flushPromises()
+      expect(byTestId('import-dir-menu')).toBeNull()
+      expect(byTestId('import-dir-chip')!.text()).toContain(XYZ_DIR)
       expect(allByTestId('import-item')).toHaveLength(2)
       expect(byTestId('import-count')!.text()).toBe('可见 2 / 共 5')
       expect(bodyText()).not.toContain('clickhouse 日线迁移')
       // 构建者：目录过滤纯客户端，不重复发 RPC
       expect(apiMocks.importCandidates).toHaveBeenCalledTimes(1)
+
+      // 重开菜单选「全部目录」→ 恢复全量
+      await byTestId('import-dir-chip')!.trigger('click')
+      await flushPromises()
+      await allByTestId('import-dir-option')[0].trigger('click')
+      await flushPromises()
+      expect(allByTestId('import-item')).toHaveLength(5)
+      expect(byTestId('import-dir-chip')!.text()).toContain(zhCN.allDirs)
     })
   })
 
@@ -538,8 +569,48 @@ describe('ImportSessionDialog（U5 验收）', () => {
     })
   })
 
-  describe('验收6：导入成功 emit + toast warning 通道', () => {
-    it('sidecar_failed warning：toast.warning（非 error）+ imported emit 单 payload + 对话框请求关闭', async () => {
+  describe('验收6：导入成功 emit + 结果 toast（u7：info 成功 / warning 预警合并）', () => {
+    it('无预警的成功：toast.info 展示「已导入「名」到 project · 可继续对话」，不走 warning/error', async () => {
+      await mountDialog()
+
+      await importViaRowButton(0)
+
+      // 使用者：成功 toast 可见（info 命令回显通道）
+      expect(toastMocks.info).toHaveBeenCalledTimes(1)
+      expect(toastMocks.info).toHaveBeenCalledWith(
+        zhCN.toastImported.replace('{name}', 'clickhouse 日线迁移').replace('{project}', 'Stock'),
+      )
+      expect(toastMocks.warning).not.toHaveBeenCalled()
+      expect(toastMocks.error).not.toHaveBeenCalled()
+      // 构建者：emit 单 payload 对象（项目规则：emit 只传单 payload）
+      const imported = wrapper!.emitted('imported')
+      expect(imported).toHaveLength(1)
+      expect(imported![0][0]).toMatchObject({
+        sessionId: 'imported-new-session-id',
+        sessionName: 'clickhouse 日线迁移',
+        projectName: 'Stock',
+      })
+      expect(imported![0][0]).not.toHaveProperty('warning', 'sidecar_failed')
+    })
+
+    it('无名称候选（cwd 正常）：toast 显示名回退短 ID（uuid 前 6 位，目录编码名不可读），走 info 通道', async () => {
+      // 单条 name=null + cwdExists=true 候选：无预警 → info 通道 + 短 ID 回退
+      apiMocks.importCandidates.mockImplementationOnce(async () => ({
+        total: 1,
+        items: [makeCandidate({ name: null, cwdExists: true })],
+        dirs: [],
+      }))
+      await mountDialog()
+
+      await importViaRowButton(0)
+
+      expect(toastMocks.info).toHaveBeenCalledWith(
+        zhCN.toastImported.replace('{name}', '01a044').replace('{project}', 'Stock'),
+      )
+      expect(toastMocks.warning).not.toHaveBeenCalled()
+    })
+
+    it('sidecar_failed warning：成功文案 + 降级预警合并单条 warning toast（非 error），emit payload 携带 warning', async () => {
       await mountDialog()
       apiMocks.importSession.mockResolvedValueOnce({
         sessionId: 'sid-new',
@@ -549,11 +620,15 @@ describe('ImportSessionDialog（U5 验收）', () => {
 
       await importViaRowButton(0)
 
-      // 使用者：降级 toast 可见（warning 通道，非 error 弹窗）
+      // 使用者：一条 warning toast 同时含成功文案与恢复指引（一次导入一个结果块）
       expect(toastMocks.warning).toHaveBeenCalledTimes(1)
-      expect(toastMocks.warning).toHaveBeenCalledWith(zhCN.toastSidecarFailed)
+      const warned = toastMocks.warning.mock.calls[0][0] as string
+      expect(warned).toContain('clickhouse 日线迁移')
+      expect(warned).toContain(zhCN.toastWarnSidecar)
+      expect(warned.indexOf('可继续对话')).toBeLessThan(warned.indexOf(zhCN.toastWarnSidecar))
+      expect(toastMocks.info).not.toHaveBeenCalled()
       expect(toastMocks.error).not.toHaveBeenCalled()
-      // 构建者：emit 单 payload 对象（项目规则：emit 只传单 payload）
+      // 构建者：emit 单 payload 对象
       const imported = wrapper!.emitted('imported')
       expect(imported).toHaveLength(1)
       expect(imported![0]).toEqual([
@@ -570,18 +645,34 @@ describe('ImportSessionDialog（U5 验收）', () => {
       expect(openEvents?.[openEvents.length - 1]).toEqual([false])
     })
 
-    it('无 warning 的成功：不触发 warning toast，payload.warning 为 undefined', async () => {
+    it('死 cwd（cwdExists=false，V9）：toast 追加「原目录已不存在」预警（warning 通道）', async () => {
+      await mountDialog()
+
+      // fixture[2] cwdExists=false（原目录不存在的降级场景）
+      await importViaRowButton(2)
+
+      expect(toastMocks.warning).toHaveBeenCalledTimes(1)
+      const warned = toastMocks.warning.mock.calls[0][0] as string
+      expect(warned).toContain(zhCN.toastImported.replace('{name}', 'bb22cc').replace('{project}', 'Stock'))
+      expect(warned).toContain(zhCN.cwdMissing)
+      expect(toastMocks.info).not.toHaveBeenCalled()
+    })
+
+    it('死 cwd + sidecar_failed 双预警：合并同一条 warning（分号分隔，两条预警均可见）', async () => {
       await mountDialog()
       apiMocks.importSession.mockResolvedValueOnce({
-        sessionId: 'sid-clean',
-        targetPath: '/target/clean.jsonl',
+        sessionId: 'sid-both',
+        targetPath: '/target/both.jsonl',
+        warning: 'sidecar_failed',
       })
 
-      await importViaRowButton(0)
+      await importViaRowButton(2)
 
-      expect(toastMocks.warning).not.toHaveBeenCalled()
-      const imported = wrapper!.emitted('imported')
-      expect(imported![0][0]).toMatchObject({ sessionId: 'sid-clean', warning: undefined })
+      expect(toastMocks.warning).toHaveBeenCalledTimes(1)
+      const warned = toastMocks.warning.mock.calls[0][0] as string
+      expect(warned).toContain(zhCN.cwdMissing)
+      expect(warned).toContain(zhCN.toastWarnSidecar)
+      expect(warned).toContain('bb22cc')
     })
 
     it('导入进行中：按钮呈导入中态并禁用；完成后关闭', async () => {
@@ -721,11 +812,16 @@ describe('ImportSessionDialog（U5 验收）', () => {
       // 使用者：当前扫描根可见（chip 区更新）+ 按钮仍在
       expect(byTestId('import-root-dir')!.text()).toBe(CUSTOM_ROOT)
       expect(bodyText()).toContain(zhCN.chooseDirBtn)
-      // 列表重载为新根数据：1 条 + 新子目录 chip（全部目录 + 1）+ 计数正确
+      // 列表重载为新根数据：1 条 + 目录菜单只含新子目录（u7：全部 + 1 项）+ 计数正确
       expect(allByTestId('import-item')).toHaveLength(1)
       expect(bodyText()).toContain('其他目录的会话')
-      expect(allByTestId('import-dir-chip')).toHaveLength(2)
-      expect(bodyText()).toContain(CUSTOM_DIR)
+      await byTestId('import-dir-chip')!.trigger('click')
+      await flushPromises()
+      const options = allByTestId('import-dir-option')
+      expect(options).toHaveLength(2)
+      expect(options[0].text()).toContain(zhCN.allDirs)
+      expect(options[1].text()).toContain(CUSTOM_DIR)
+      expect(options[1].text()).toContain('1')
       expect(byTestId('import-count')!.text()).toBe('可见 1 / 共 1')
     })
 
@@ -836,6 +932,34 @@ describe('ImportSessionDialog（U5 验收）', () => {
 
       expect(allByTestId('import-item')).toHaveLength(3)
       expect(byTestId('import-count')!.text()).toBe('可见 3 / 共 4615')
+    })
+  })
+
+  describe('验收14：u7 demo 对齐走查（骨架屏 + 空态两条出路）', () => {
+    it('加载态：骨架屏占位（demo §4「不用转圈」）——三行三段 animate-pulse 块，无加载文本', async () => {
+      // pending 中的 RPC：loading 常驻直到 resolve（flushPromises 不推进未决 promise）
+      apiMocks.importCandidates.mockImplementationOnce(() => new Promise(() => {}))
+      await mountDialog()
+
+      const skeleton = byTestId('import-loading')
+      expect(skeleton, '骨架屏容器应存在').not.toBeNull()
+      expect(skeleton!.attributes('aria-busy')).toBe('true')
+      // 观察者：3 行 × 3 段占位块（icon 块 / 标题行 / 尾部元信息块），shimmer 动画
+      const bars = skeleton!.findAll('.animate-pulse')
+      expect(bars).toHaveLength(9)
+      expect(document.body.textContent).not.toContain('加载中')
+    })
+
+    it('空结果：两条出路可见——换关键词 / 粘贴 .jsonl 绝对路径（demo empty 形态）', async () => {
+      await mountDialog()
+      await typeSearch('zzz-不存在的关键词')
+
+      expect(allByTestId('import-item')).toHaveLength(0)
+      const empty = byTestId('import-empty')
+      expect(empty, '空态容器应存在').not.toBeNull()
+      // 使用者：主文案 + 出路提示（引导到路径粘贴通道）
+      expect(empty!.text()).toContain(zhCN.emptyTitle)
+      expect(empty!.text()).toContain(zhCN.emptyHint)
     })
   })
 

@@ -8,10 +8,16 @@
  * 文案在组件层）。无 per-session 状态（ADR-0049 不适用：对话框是全局单例 UI，
  * 非 session 隔离域）。
  *
+ * 模块级导出（跨组件共享的导入瞬时信号）：
+ *  - 成功 toast 组装在 importSession 内（对话框关闭后 toast 仍需展示）
+ *  - markImportedFresh / isImportedFresh：fresh「导入」徽标状态机（Sidebar 标记、
+ *    SessionItem 消费——与 useSessionMarkers.isUnread 同款模块级状态范式，避免
+ *    Sidebar → SessionList → SessionItem 逐层透传 prop）
+ *
  * 竞态防护：快速连续输入时 debounce 触发的并发请求用递增 seq 守卫——仅最新
  * 一次请求允许写回 items/dirs/total，stale 响应静默丢弃（避免旧结果覆盖新结果）。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import type {
   ImportCandidate,
   ImportCandidateDir,
@@ -28,6 +34,80 @@ const t = i18n.global.t
 
 /** 搜索输入到发起候选查询的防抖间隔（D5：renderer 侧 debounce 250ms） */
 export const IMPORT_SEARCH_DEBOUNCE_MS = 250
+
+/** 短 ID = uuid 前 6 位（D5 匹配语义同款截断；toast 显示名回退用，组件列表行复用） */
+export const IMPORT_SHORT_ID_LENGTH = 6
+
+// ── fresh「导入」徽标状态机（模块级，Sidebar 写 / SessionItem 读）──
+
+/** fresh 徽标生命周期：visible（实显）→ fading（200ms 淡出过渡）→ 移除 */
+export type ImportFreshState = 'visible' | 'fading'
+
+/**
+ * fresh 徽标开始淡出前的实显时长（demo doImport 3.2s 后加 fade class；
+ * ForkGroup FRESH_FADE_MS 同值——侧边栏 fresh 信号统一节奏）。
+ */
+export const IMPORT_FRESH_VISIBLE_MS = 3_200
+
+/** 淡出过渡时长（demo --dur: 200ms；SessionItem transition-opacity duration-200 对应） */
+export const IMPORT_FRESH_FADE_MS = 200
+
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：导入 fresh 徽标状态（sessionId → 生命周期阶段）
+const freshImports = shallowRef(new Map<string, ImportFreshState>())
+
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：fresh 徽标计时器句柄表，非 GUI 数据
+/** 每 sessionId 两个 timer（实显 → fading / fading → 移除），重复标记时清旧 */
+const freshTimers = new Map<string, ReturnType<typeof setTimeout>[]>()
+
+/**
+ * 标记某 session 为「刚导入」（Sidebar 在 imported 事件中调用）。
+ * 已在集合中时重置计时（先清旧 timer）；3.2s 后转 fading、再 200ms 后移除——
+ * SessionItem 的 computed 经 isImportedFresh 订阅 freshImports 响应式更新。
+ */
+export function markImportedFresh(sessionId: string): void {
+  for (const timer of freshTimers.get(sessionId) ?? []) clearTimeout(timer)
+  setFreshState(sessionId, 'visible')
+  const fadeTimer = setTimeout(() => {
+    setFreshState(sessionId, 'fading')
+    freshTimers.set(sessionId, [
+      setTimeout(() => {
+        removeFresh(sessionId)
+      }, IMPORT_FRESH_FADE_MS),
+    ])
+  }, IMPORT_FRESH_VISIBLE_MS)
+  freshTimers.set(sessionId, [fadeTimer])
+}
+
+/** 查询 session 的 fresh 状态（null = 无徽标）。computed 内调用可建立响应式依赖。 */
+export function isImportedFresh(sessionId: string): ImportFreshState | null {
+  return freshImports.value.get(sessionId) ?? null
+}
+
+function setFreshState(sessionId: string, state: ImportFreshState): void {
+  const next = new Map(freshImports.value)
+  next.set(sessionId, state)
+  freshImports.value = next
+}
+
+function removeFresh(sessionId: string): void {
+  const next = new Map(freshImports.value)
+  next.delete(sessionId)
+  freshImports.value = next
+  const timers = freshTimers.get(sessionId)
+  if (timers) {
+    for (const timer of timers) clearTimeout(timer)
+    freshTimers.delete(sessionId)
+  }
+}
+
+/** 测试隔离：清空 fresh 集合与计时器（fake timers 下次 advance 不再触发旧链） */
+export function __resetImportedFreshForTest(): void {
+  for (const timers of freshTimers.values()) {
+    for (const timer of timers) clearTimeout(timer)
+  }
+  freshTimers.clear()
+  freshImports.value = new Map()
+}
 
 /**
  * error envelope 透传到 Error.code 的合法值集合：ImportErrorCode 全集（不含
@@ -252,8 +332,9 @@ export function useImportSession(options: UseImportSessionOptions = {}) {
 
   /**
    * 执行导入（列表行按钮 / 底部确认共用）。
-   * 成功：warning='sidecar_failed' 走降级 toast（文件已落地不回滚，引导手动归类）
-   * → onImported 回调 → 关闭；失败：error envelope code 归一化后内联展示（组件层映射文案）。
+   * 成功：组装结果 toast（info 无事发生 / warning 带预警——死 cwd 追加与 sidecar
+   * 降级合并展示；文件已落地不回滚）→ onImported 回调 → 关闭；失败：error
+   * envelope code 归一化后内联展示（组件层映射文案）。
    */
   async function importSession(candidate: ImportCandidate): Promise<void> {
     if (importing.value || candidate.alreadyImported) return
@@ -264,9 +345,7 @@ export function useImportSession(options: UseImportSessionOptions = {}) {
         sourcePath: candidate.sourcePath,
         projectId: selectedProjectId.value,
       })
-      if (reply.warning === 'sidecar_failed') {
-        toast.warning(t('importSession.toastSidecarFailed'))
-      }
+      notifyImportResult(candidate, reply.warning)
       options.onImported?.({
         sessionId: reply.sessionId,
         sessionName: candidate.name || candidate.dirLabel,
@@ -282,6 +361,22 @@ export function useImportSession(options: UseImportSessionOptions = {}) {
     } finally {
       importing.value = false
     }
+  }
+
+  /**
+   * 导入结果 toast（V1/V9 验收依赖）。文案骨架 = 设计 §3.1「已导入「<名称>」到
+   * <project> · 可继续对话」；显示名回退短 ID（目录编码名对用户不可读，toast 又有
+   * 单行宽度约束）。预警（V9 死 cwd + sidecar 降级）追加在同一条消息里用分号分隔
+   * ——一次导入一个结果块，拆多条 toast 会竞态闪烁；有预警走 warning 通道
+   * （8s 停留，给用户足够阅读时间），否则 info（4s 命令回显节奏）。
+   */
+  function notifyImportResult(candidate: ImportCandidate, warning: ImportWarning | undefined): void {
+    const name = candidate.name || candidate.sessionId.slice(0, IMPORT_SHORT_ID_LENGTH)
+    const parts = [t('importSession.toastImported', { name, project: selectedProjectName.value })]
+    if (!candidate.cwdExists) parts.push(t('importSession.cwdMissing'))
+    if (warning === 'sidecar_failed') parts.push(t('importSession.toastWarnSidecar'))
+    if (parts.length > 1) toast.warning(parts.join('; '))
+    else toast.info(parts[0])
   }
 
   return {

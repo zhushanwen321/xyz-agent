@@ -5,7 +5,8 @@
  */
 export default {
   title: '导入会话',
-  description: '从 pi 全局会话目录导入历史会话，导入后可继续对话',
+  dialogTitle: '导入 pi 会话',
+  description: '来自磁盘上的 pi session 记录，导入后可继续对话',
   searchPlaceholder: '搜索名称或 Session ID（支持 01a044 式短 ID），或粘贴 .jsonl 绝对路径',
   allDirs: '全部目录',
   chooseDirBtn: '选择其他目录',
@@ -25,13 +26,15 @@ export default {
   importBtn: '导入',
   importing: '导入中…',
   defaultProjectName: '默认项目',
-  loading: '加载中…',
-  emptyResult: '未找到匹配的会话文件',
+  emptyTitle: '没有匹配的 session',
+  emptyHint: '换个关键词，或直接粘贴 .jsonl 文件绝对路径',
   pathImportBtn: '导入此文件',
   pathNoMatch: '未找到匹配的 session 文件',
   loadFailed: '候选列表加载失败',
   retry: '重试',
-  toastSidecarFailed: '会话已导入，但项目归属写入失败：请在侧边栏手动将该会话归类到项目',
+  toastImported: '已导入「{name}」到 {project} · 可继续对话',
+  toastWarnSidecar: '项目归属写入失败：请在侧边栏手动将该会话归类到项目',
+  freshBadge: '导入',
   errors: {
     import_source_missing: '源文件不存在或不可读：请确认文件未被移动或删除后重试，或用「选择其他目录」重新定位 sessions 目录',
     import_invalid_session: '不是有效的 pi 会话文件（首行缺少 session header）：请选择 pi 产生的 .jsonl 会话文件',

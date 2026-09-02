@@ -200,8 +200,9 @@
     />
 
     <!-- 导入会话对话框（u5 组件，u6 入口接线）：成功导入后 runtime 广播 session.list，
-         侧边栏经既有链路刷新，无需在此监听 imported 做补偿动作 -->
-    <ImportSessionDialog v-model:open="importOpen" />
+         侧边栏经既有链路刷新；imported 事件在此驱动 fresh「导入」徽标（u7，会话条目
+         数秒后淡出，无需其他补偿动作） -->
+    <ImportSessionDialog v-model:open="importOpen" @imported="onSessionImported" />
   </div>
 </template>
 
@@ -227,6 +228,10 @@ import WorkflowList from './WorkflowList.vue'
 import WorkflowDetail from './WorkflowDetail.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
 import ImportSessionDialog from './ImportSessionDialog.vue'
+import {
+  markImportedFresh,
+  type ImportSessionImportedPayload,
+} from '@/composables/features/sidebar/useImportSession'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentListSync } from '@/composables/features/chat/useSubagentListSync'
@@ -259,6 +264,10 @@ const renameOpen = ref(false)
 const targetSessionId = ref('')
 /** 「导入会话」对话框 open 状态（入口按钮 + ⌘I 双通道派发同一状态） */
 const importOpen = ref(false)
+/** 导入成功 → 新会话条目挂 fresh「导入」徽标（设计 §3.1：数秒后淡出） */
+function onSessionImported(payload: ImportSessionImportedPayload): void {
+  markImportedFresh(payload.sessionId)
+}
 const { subagentRunningCount, subagentList, workflowRunningCount, workflowList, currentWorkflow } = useSidebarCounts(focusedSessionId)
 const { derivedStatus } = useSessionDerivations()
 function statusOf(id: string) { return derivedStatus(id).value }

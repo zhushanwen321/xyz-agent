@@ -1,11 +1,13 @@
 /**
- * Sidebar「导入会话」入口接线测试（import-session u6）。
+ * Sidebar「导入会话」入口接线测试（import-session u6 + u7 fresh 徽标接线）。
  *
- * 验证（impl-plan §2 u6 验收条款）：
+ * 验证（impl-plan §2 u6 验收条款 + u7）：
  *  - TC1: 「导入会话」ghost 按钮渲染在「新建任务」之后、「搜索」之前（nav 顺序断言）
  *  - TC2: ⌘I（meta+i）经 useGlobalShortcuts（真实执行，未 mock）触发 → ImportSessionDialog
  *         props open=true；无 mod 修饰的裸 i 不触发
  *  - TC3: 点击入口按钮 → ImportSessionDialog props open=true
+ *  - TC4: ImportSessionDialog emit imported → Sidebar 驱动 fresh「导入」徽标状态机
+ *         （markImportedFresh；数秒后淡出移除——设计 §3.1 / demo doImport 时序）
  *
  * mock 策略对齐 sidebar-assign-project-wiring.test.ts 范式（Sidebar.vue 整体 mount 依赖
  * 10+ store/composable，shallowMount + store/composable mock）。差异点：Button 用显式
@@ -130,6 +132,13 @@ vi.mock('@/api/events', () => ({
 
 import Sidebar from '@/components/sidebar/Sidebar.vue'
 import ImportSessionDialog from '@/components/sidebar/ImportSessionDialog.vue'
+import {
+  isImportedFresh,
+  __resetImportedFreshForTest,
+  IMPORT_FRESH_VISIBLE_MS,
+  IMPORT_FRESH_FADE_MS,
+  type ImportSessionImportedPayload,
+} from '@/composables/features/sidebar/useImportSession'
 
 /** shallowMount Sidebar，Button 用显式 slot stub（真实 <button> 元素 + slot 文本可见） */
 function mountSidebar() {
@@ -155,6 +164,7 @@ function fireKey(options: { key: string; metaKey?: boolean }): void {
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
+  __resetImportedFreshForTest()
 })
 
 describe('Sidebar 导入会话入口接线（import-session u6）', () => {
@@ -204,6 +214,36 @@ describe('Sidebar 导入会话入口接线（import-session u6）', () => {
       expect(wrapper.getComponent(ImportSessionDialog).props('open')).toBe(true)
     } finally {
       wrapper.unmount()
+    }
+  })
+
+  it('TC4: imported 事件 → Sidebar 驱动 fresh「导入」徽标状态机（u7：实显 → 淡出 → 移除）', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountSidebar()
+    try {
+      const payload: ImportSessionImportedPayload = {
+        sessionId: 'imported-fresh-sid',
+        sessionName: '会话名',
+        projectName: 'Stock',
+        targetPath: '/target/copied.jsonl',
+      }
+      wrapper.getComponent(ImportSessionDialog).vm.$emit('imported', payload)
+      await nextTick()
+
+      // 构建者：Sidebar 接线 → markImportedFresh 生效（visible 实显）
+      expect(isImportedFresh('imported-fresh-sid')).toBe('visible')
+      // 其他 session 不受影响
+      expect(isImportedFresh('other-sid')).toBeNull()
+
+      // 观察者：3.2s 后进入淡出阶段，再 200ms 移除（demo doImport 时序）
+      vi.advanceTimersByTime(IMPORT_FRESH_VISIBLE_MS)
+      expect(isImportedFresh('imported-fresh-sid')).toBe('fading')
+      vi.advanceTimersByTime(IMPORT_FRESH_FADE_MS)
+      expect(isImportedFresh('imported-fresh-sid')).toBeNull()
+    } finally {
+      wrapper.unmount()
+      __resetImportedFreshForTest()
+      vi.useRealTimers()
     }
   })
 })
