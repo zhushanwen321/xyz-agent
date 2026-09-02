@@ -58,6 +58,7 @@
     --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; } /* 类规则 display 会覆盖 hidden 属性的 UA 样式（path-bar 踩过） */
   html { background: var(--bg-stage); }
   body {
     font-family: var(--font-sans);
@@ -426,7 +427,8 @@
     background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
     padding: 28px; display: flex; gap: 40px; align-items: flex-start; flex-wrap: wrap;
   }
-  .entry-zoom { display: flex; flex-direction: column; gap: 6px; width: 320px; transform: scale(1.25); transform-origin: left top; }
+  .entry-zoom { display: flex; flex-direction: column; gap: 6px; width: 320px; zoom: 1.25; }
+  /* zoom 而非 transform:scale：zoom 参与布局，缩放后右侧注释不会被溢出遮挡（视觉审查 #1） */
   .entry-note { flex: 1; min-width: 300px; display: flex; flex-direction: column; gap: 10px; font-size: var(--text-xs); color: var(--neutral-mid); line-height: 1.8; }
   .entry-note b { color: var(--neutral-fg); font-weight: 600; }
   .entry-note .pair { display: flex; gap: 10px; align-items: baseline; }
