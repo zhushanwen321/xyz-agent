@@ -9,6 +9,7 @@
 
 import type { GuiRenderResult } from "@xyz-agent/extension-protocol";
 
+import type { AgentFailureKind } from "../orchestration/models/types.ts";
 import type { ModelInfo, ModelRegistryLike } from "./model-resolver.ts";
 
 // ============================================================
@@ -318,6 +319,12 @@ export interface AgentResult {
   durationMs: number;
   success: boolean;
   error?: string;
+  /**
+   * [D5-③] 失败分诊结构化标签（类型 SSOT 在 orchestration/models/types.ts 的
+   * AgentFailureKind——消费语义「unknown=可重试」与其文档同源）。collectResult 对
+   * 最终 error 分类后写入；缺省 = unknown（可重试）。type-only 引用零运行时依赖。
+   */
+  failureKind?: AgentFailureKind;
   sessionId: string;
   toolCalls: ToolCall[];
   usage?: AgentUsageTotal;

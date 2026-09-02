@@ -10,7 +10,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { handleWorkerMessage } from "../error-recovery.ts";
+import { handleWorkerMessage } from "../worker-message-pump.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../models/ports.ts";
 import type { WorkflowRun } from "../models/workflow-run.ts";
 

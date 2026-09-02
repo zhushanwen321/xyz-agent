@@ -1,4 +1,4 @@
-// src/orchestration/__tests__/error-recovery-postmessage-defense.test.ts
+// src/orchestration/__tests__/worker-message-pump-postmessage-defense.test.ts
 //
 // W2: 主线程层 postMessage 防御测试。
 //
@@ -35,13 +35,13 @@ vi.mock("../../core/logger.ts", () => ({
   getLogger: () => loggerMock,
 }));
 
-import { handleWorkerMessage, postBudgetUpdate } from "../error-recovery.ts";
+import { handleWorkerMessage, postBudgetUpdate } from "../worker-message-pump.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../models/ports.ts";
 import type { WorkflowRun } from "../models/workflow-run.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ERROR_RECOVERY_SRC = readFileSync(
-  join(__dirname, "../error-recovery.ts"),
+const WORKER_MESSAGE_PUMP_SRC = readFileSync(
+  join(__dirname, "../worker-message-pump.ts"),
   "utf-8",
 );
 
@@ -273,7 +273,7 @@ describe("W2b: dispatchWorkflowCall postResult 防御 DataCloneError", () => {
 // 子进程）。利用这一点构造行为测试——往 cached.result 里塞不可克隆值（function），
 // mock postMessage 在首次发送 agent-result 时抛 DataCloneError，验证 fallback 路径。
 //
-// 另外补充：验证 error-recovery.ts 源码中三处 postMessage 调用点都有 try/catch 包裹，
+// 另外补充：验证 worker-message-pump.ts 源码中三处 postMessage 调用点都有 try/catch 包裹，
 // 防止未来重构误删防御（类似 worker-script-builder.test.ts 的源码字符串断言模式）。
 
 /** 构造 status="running" 且 calls 已含一个 done 结果（含不可克隆成员）的 mock run。
@@ -376,7 +376,7 @@ describe("W2c: postAgentResult 防御（源码结构断言）", () => {
   }
 
   it("postAgentResult 包含 try/catch + fallback result", () => {
-    const match = ERROR_RECOVERY_SRC.match(/function postAgentResult\([\s\S]*?\n\}/);
+    const match = WORKER_MESSAGE_PUMP_SRC.match(/function postAgentResult\([\s\S]*?\n\}/);
     expect(match, "postAgentResult 函数定义应存在").toBeTruthy();
     expect(hasTryCatchAroundPostMessage(match![0])).toBe(true);
     // fallback 通过共享工厂 makeSerializeFailedResult 构造纯字符串 result（必可克隆）
@@ -387,14 +387,14 @@ describe("W2c: postAgentResult 防御（源码结构断言）", () => {
   });
 
   it("postBudgetUpdate 包含 try/catch", () => {
-    const match = ERROR_RECOVERY_SRC.match(/export function postBudgetUpdate\([\s\S]*?\n\}/);
+    const match = WORKER_MESSAGE_PUMP_SRC.match(/export function postBudgetUpdate\([\s\S]*?\n\}/);
     expect(match, "postBudgetUpdate 函数定义应存在").toBeTruthy();
     expect(hasTryCatchAroundPostMessage(match![0])).toBe(true);
   });
 
   it("dispatchWorkflowCall postResult 闭包包含 try/catch + fallback", () => {
     // postResult 是 const 闭包，匹配到下一个 }; 结尾
-    const match = ERROR_RECOVERY_SRC.match(/const postResult = \(result[\s\S]*?\n  \};/);
+    const match = WORKER_MESSAGE_PUMP_SRC.match(/const postResult = \(result[\s\S]*?\n  \};/);
     expect(match, "postResult 闭包定义应存在").toBeTruthy();
     expect(hasTryCatchAroundPostMessage(match![0])).toBe(true);
     expect(match![0]).toContain("Workflow result serialization failed");

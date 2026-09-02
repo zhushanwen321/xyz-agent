@@ -3,7 +3,7 @@
  *
  * 同一 schema 对象引用的重复 JSON.stringify 消除：resolver（compact，instruction
  * 与 schemaEnv 复用同串，formatSchemaInstruction 现居 resolver）在单次 agent call
- * 内对同一 schema 对象各 stringify 一次；error-recovery 重试路径再加一次。本
+ * 内对同一 schema 对象各 stringify 一次；worker-message-pump 重试路径再加一次。本
  * helper 用 WeakMap 按对象引用缓存两种格式，命中返回缓存串。
  *
  * 返回值与直接 JSON.stringify 逐字节一致（compact = JSON.stringify(x)、

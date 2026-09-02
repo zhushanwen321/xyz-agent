@@ -7,13 +7,13 @@
 //（run.state.errorLogs = ...），每次重试的诊断日志都被最后一次覆盖丢失。
 // 修复：改为 push + 截断（MAX_ERROR_LOGS=500 防无界增长）。
 //
-// 测试搭建方式参照 error-recovery-handlers.test.ts（mock LifecycleDeps + WorkflowRun）。
+// 测试搭建方式参照 worker-message-pump-handlers.test.ts（mock LifecycleDeps + WorkflowRun）。
 // - handleScriptError 是 export 的 async function，直接 import 调用
 // - handleReturn 不是 export 的——通过 handleWorkerMessage 发 { type: "return", ... } 触发
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { handleScriptError, handleWorkerMessage } from "../orchestration/error-recovery.ts";
+import { handleScriptError, handleWorkerMessage } from "../orchestration/worker-message-pump.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../orchestration/models/ports.ts";
 import type { WorkflowRun } from "../orchestration/models/workflow-run.ts";
 

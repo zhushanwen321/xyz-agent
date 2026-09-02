@@ -1,7 +1,12 @@
 /**
- * Workflow Extension — error-recovery
+ * Workflow Extension — worker-message-pump（原 error-recovery，D5-① 更名）
  *
- * Worker 失败处理 free functions（D-12）。
+ * Worker 消息泵 + 失败恢复 free functions（D-12）。承载四类职责：
+ * 1. 消息路由：handleWorkerMessage 分发 agent-call / workflow-call / return / error
+ * 2. IPC 序列化防御：postMessage 的 DataCloneError 拦截 + fallback 回发（W2）
+ * 3. retry/重建：worker/script 错误的指数退避重试 + rebuildRuntime（G3-001）
+ * 4. 终态化：finalizeRun ——「transition → save → pending:unregister → onRunDone」
+ *    四步终态序列的唯一定义点（D5-② 单点化，收敛原 8 处逐字复制）
  *
  * 4 个导出函数（domain-models.md §失败处理矩阵）：
  * - handleWorkerMessage(run, raw, deps, handlers) — 路由 agent_call/return/error
@@ -38,7 +43,7 @@ import { AgentCall } from "./models/agent-call.ts";
 import type { LifecycleDeps, WorkerHandlers } from "./models/ports.ts";
 import { RunRuntime } from "./models/run-runtime.ts";
 import type { WorkerLogEntry } from "./models/types.ts";
-import type { AgentCallOpts, AgentResult, ExecutionTraceNode } from "./models/types.ts";
+import type { AgentCallOpts, AgentResult, DoneReason, ExecutionTraceNode } from "./models/types.ts";
 import type { WorkflowRun } from "./models/workflow-run.ts";
 import type { WorkerHandle } from "./worker-handle.ts";
 
@@ -171,6 +176,82 @@ async function saveRunBestEffort(
   }
 }
 
+// ── finalizeRun（D5-② 终态 coda 单写点） ──────────────────────
+
+/** finalizeRun 的可调项。 */
+export interface FinalizeRunOptions {
+  /** store.save 失败日志的上下文标记（OB3 排障定位，如 "handleReturn (done,completed)"）。 */
+  context: string;
+  /**
+   * 是否调 deps.onRunDone（Interface 层完成通知）。缺省 true。
+   * terminateRunningRuns 传 false——session 切换/关闭语境下主 agent 已离开本
+   * session，注入完成通知只会把消息发给已离开的 session（对齐 session_start
+   * 恢复先例：只发 unregister、不发 onRunDone）。
+   */
+  notifyDone?: boolean;
+}
+
+/**
+ * Run 终态四步 coda 的唯一定义点（D5-②）：
+ * transition(done) → save（best-effort）→ pending:unregister → onRunDone。
+ *
+ * 收敛前 8 处逐字复制（本文件 6 处 + lifecycle 2 处）已全部改走本函数。原各副本
+ * 的三处微差统一为规范形态（收敛裁决，非行为回归）：
+ * - transition 失败（M12）：一律吞掉并中止后续步骤——并发 abort/terminate 抢先
+ *   终态化时 illegal-transition 是预期事件，本路径的 unregister/onRunDone 语义已
+ *   由抢先方兑现，重复执行只会造成重复注销/重复通知。
+ * - save 失败（SW-DATA-3）：一律 best-effort——save 抛错若向上抛，handle* 的
+ *   调用方（worker-host 绑定处 `void handlers.onXxx(...)`）无人接 →
+ *   unhandledRejection + pending:unregister / onRunDone 不执行 → pending 通知
+ *   幽灵注销（列表残留永不清理的 running 条目）。
+ * - unregister reason：`run.state.reason ?? doneReason`——transition 成功后
+ *   reason 恒有值（不变式 I2），兜底仅防御异常形态，取本路径的 doneReason 语义
+ *   最贴近（原各副本 `?? "completed"` / 固定 "failed" / `?? "time_limited"` 三种
+ *   死兜底等价收敛）。
+ *
+ * @returns 是否成功 transition（false = 转移前已被并发终态化，四步未执行）
+ */
+export async function finalizeRun(
+  run: WorkflowRun,
+  deps: LifecycleDeps,
+  doneReason: DoneReason,
+  options: FinalizeRunOptions,
+): Promise<boolean> {
+  try {
+    run.transition("done", doneReason);
+  } catch (te: unknown) {
+    // M12：并发 abort/terminate 导致 illegal-transition 是预期的，可忽略——
+    // 抢先方已兑现 unregister/onRunDone，本路径让位（debug 日志留痕）。
+    void te;
+    deps.log?.("debug", "workflow:worker-message-pump", "finalize skipped: run already terminal", {
+      runId: run.runId,
+      doneReason,
+      context: options.context,
+    });
+    return false;
+  }
+  await saveRunBestEffort(run, deps, options.context);
+  deps.log?.("debug", "workflow:worker-message-pump", "run finalized", {
+    runId: run.runId,
+    reason: run.state.reason,
+    context: options.context,
+  });
+  // M12: unregister/onRunDone 单独 try——这些是真实副作用，错误不应被静默吞掉
+  try {
+    deps.eventBus?.emit("pending:unregister", {
+      id: run.runId,
+      reason: run.state.reason ?? doneReason,
+    });
+    if (options.notifyDone !== false) {
+      deps.onRunDone?.(run);
+    }
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    logger.error(`[workflow] unregister/onRunDone failed (${options.context}): ${m}`);
+  }
+  return true;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
@@ -226,30 +307,15 @@ function remainingTimeBudgetMs(run: WorkflowRun): number | undefined {
  * 重试前发现时间预算已耗尽的收尾：不 rebuild，直接 done,time_limited 终态。
  *
  * 副作用与 handleWorkerError 超限路径对齐：transition + 持久化 + 注销
- * pending-notification + onRunDone。transition 单独 try（M12）——并发 abort 导致
- * illegal-transition 是预期的，可忽略。
+ * pending-notification + onRunDone（D5-② 收敛为 finalizeRun 单写点）。
  */
 async function finalizeTimeBudgetExhausted(run: WorkflowRun, deps: LifecycleDeps): Promise<void> {
-  deps.log?.("debug", "workflow:error-recovery", "time budget exhausted on rebuild, transition done", {
+  deps.log?.("debug", "workflow:worker-message-pump", "time budget exhausted on rebuild, transition done", {
     runId: run.runId,
     budgetTimeMs: run.spec.budgetTimeMs,
   });
   run.state.error = run.state.error ?? `Time budget exhausted (${run.spec.budgetTimeMs} ms wall clock) before retry rebuild`;
-  let transitioned = false;
-  try {
-    run.transition("done", "time_limited");
-    transitioned = true;
-  } catch (te: unknown) {
-    // run 可能在检查后、transition 前被并发 abort——预期，不记错
-    void te;
-  }
-  if (!transitioned) return;
-  await deps.store.save(run).catch((e: unknown) => {
-    const m = e instanceof Error ? e.message : String(e);
-    logger.error(`[workflow] store.save failed (time budget exhausted): ${m}`);
-  });
-  deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "time_limited" });
-  deps.onRunDone?.(run);
+  await finalizeRun(run, deps, "time_limited", { context: "time budget exhausted on rebuild" });
 }
 
 /**
@@ -277,7 +343,7 @@ export function rebuildRuntime(
 ): void {
   // OB3（可观察性）：rebuild 关键节点 debug 日志——此前函数体 0 处 deps.log，
   // 崩溃自愈只能靠行为证据诊断（L1 入口 / L2 重排 / L3 discard / L4 完成）。
-  deps.log?.("debug", "workflow:error-recovery", "runtime rebuild start", {
+  deps.log?.("debug", "workflow:worker-message-pump", "runtime rebuild start", {
     runId: run.runId,
     budgetTimeMs: run.spec.budgetTimeMs,
   });
@@ -299,7 +365,7 @@ export function rebuildRuntime(
   const remainingBudgetMs = remainingTimeBudgetMs(run);
   if (remainingBudgetMs !== undefined && remainingBudgetMs > 0 && deps.scheduleTimeBudget) {
     timeBudgetTimer = deps.scheduleTimeBudget(run.runId, remainingBudgetMs);
-    deps.log?.("debug", "workflow:error-recovery", "time budget rescheduled", {
+    deps.log?.("debug", "workflow:worker-message-pump", "time budget rescheduled", {
       runId: run.runId,
       budgetTimeMs: remainingBudgetMs,
     });
@@ -321,12 +387,12 @@ export function rebuildRuntime(
   // 孤儿守卫（isOrphanedCall）拦截，trace.update 的瞬时污染由 executeAgentCall
   // 的 isOrphaned 谓词（OB2）拦截，此处不重复设防。
   const discardedCallIds = discardInFlightCalls(run);
-  deps.log?.("debug", "workflow:error-recovery", "in-flight calls discarded", {
+  deps.log?.("debug", "workflow:worker-message-pump", "in-flight calls discarded", {
     runId: run.runId,
     callIds: discardedCallIds,
     count: discardedCallIds.length,
   });
-  deps.log?.("debug", "workflow:error-recovery", "runtime rebuild complete", {
+  deps.log?.("debug", "workflow:worker-message-pump", "runtime rebuild complete", {
     runId: run.runId,
   });
 }
@@ -548,7 +614,7 @@ function dispatchAgentCall(
       // budget 同步 / 持久化，仅留日志。executeAgentCall 内 finalizeCall 的
       // trace.update 若已命中重跑新节点（瞬时污染），由重跑完成时的 update 覆盖。
       if (isOrphanedCall(run, msg.callId, call)) {
-        deps.log?.("debug", "workflow:error-recovery", "orphan agent call completion dropped", { runId: run.runId, callId: msg.callId });
+        deps.log?.("debug", "workflow:worker-message-pump", "orphan agent call completion dropped", { runId: run.runId, callId: msg.callId });
         return;
       }
       if (call.result) postAgentResult(run, msg.callId, call.result, false);
@@ -563,36 +629,11 @@ function dispatchAgentCall(
       // C-2：budget 超限 → 终止整个 run（避免继续 spawn 烧预算）
       // 内联 terminate（不调 lifecycle.abortRun 避免 engine 内循环依赖）：
       // 若 run 仍非终态，transition done,budget_limited + 持久化。
-      // 上方 status !== "running" 已保证此处非 done（且 transition 内含 done no-op 守卫）。
+      // 上方 status !== "running" 已保证此处非 done（且 finalizeRun 内含 done 让位守卫）。
       if (run.state.budget.isExceeded()) {
         run.state.error = run.state.error ?? "Budget exceeded";
-        deps.log?.("debug", "workflow:error-recovery", "budget exceeded, transition done", { runId: run.runId });
-        // M12: transition 单独 try——并发 abort 导致 illegal-transition 是预期的，可忽略
-        let transitioned = false;
-        try {
-          run.transition("done", "budget_limited");
-          transitioned = true;
-        } catch (te: unknown) {
-          // run 可能在 budget 检查后、transition 前被并发 abort——预期，不记错
-          void te;
-        }
-        if (transitioned) {
-          deps.store.save(run).catch((e: unknown) => {
-            const m = e instanceof Error ? e.message : String(e);
-            logger.error(`[workflow] store.save failed (budget done): ${m}`);
-          });
-          deps.log?.("debug", "workflow:error-recovery", "run saved after budget done", { runId: run.runId, reason: run.state.reason });
-          // M12: onRunDone/emit 单独 try——这些是真实副作用，错误不应被静默吞掉
-          try {
-            deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
-            deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
-            deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
-            deps.onRunDone?.(run);
-          } catch (err) {
-            const m = err instanceof Error ? err.message : String(err);
-            logger.error(`[workflow] onRunDone/emit failed (budget done): ${m}`);
-          }
-        }
+        deps.log?.("debug", "workflow:worker-message-pump", "budget exceeded, transition done", { runId: run.runId });
+        void finalizeRun(run, deps, "budget_limited", { context: "agent call budget done" });
       }
     })
     .catch((err: unknown) => {
@@ -611,7 +652,7 @@ function dispatchAgentCall(
       // 留日志，全部跳过。node.live 无条件先清（旧节点已脱离 trace，防御性统一）。
       node.live = undefined;
       if (isOrphanedCall(run, msg.callId, call)) {
-        deps.log?.("debug", "workflow:error-recovery", "orphan agent call failure dropped", { runId: run.runId, callId: msg.callId });
+        deps.log?.("debug", "workflow:worker-message-pump", "orphan agent call failure dropped", { runId: run.runId, callId: msg.callId });
         return;
       }
       const errorResult: AgentResult = { content: "", error: message };
@@ -646,7 +687,7 @@ function dispatchAgentCall(
  * postResult（workflow-call）与 postAgentResult（agent-call）各自前缀不同，故 prefix 参数化，
  * 共享返回类型与构造逻辑，避免字面量重复导致形状漂移。
  *
- * W2 防御关键纯函数——export 供独立单测（error-recovery-serialize-failed-result.test.ts）验证
+ * W2 防御关键纯函数——export 供独立单测（worker-message-pump-serialize-failed-result.test.ts）验证
  * 返回 shape `{content:"", error:"<prefix>: <errMsg>"}`，确保两条 fallback 路径（workflow-call /
  * agent-call）共享同一构造逻辑不漂移。
  */
@@ -766,7 +807,7 @@ function postAgentResult(
  * 更新 spent()/remaining()）。每次 agent 调用消费 usage 后发送，保持 worker 内 $BUDGET
  * 与主线程 Budget 值对象同步。
  *
- * D-12 regression fix (round-2 #1)：重建 budget-update 发送方。被 error-recovery 主路径调用
+ * D-12 regression fix (round-2 #1)：重建 budget-update 发送方。被 worker-message-pump 主路径调用
  * （dispatch 后同步 worker $BUDGET）——单一实现，避免消息形状漂移。
  */
 export function postBudgetUpdate(run: WorkflowRun): void {
@@ -794,7 +835,7 @@ async function handleReturn(
   msg: ReturnMsg,
   deps: LifecycleDeps,
 ): Promise<void> {
-  deps.log?.("debug", "workflow:error-recovery", "handleReturn", { runId: run.runId, status: run.state.status });
+  deps.log?.("debug", "workflow:worker-message-pump", "handleReturn", { runId: run.runId, status: run.state.status });
   // 捕获 worker 诊断日志（P2-2）
   // L9: 追加而非覆盖——保留重试历史的诊断日志（各 worker 实例的 console 输出）
   if (msg.workerLogs && msg.workerLogs.length > 0) {
@@ -804,15 +845,9 @@ async function handleReturn(
     }
   }
   run.state.scriptResult = msg.result;
-  run.transition("done", "completed");
-  // [SW-DATA-3] save 失败不阻断终态推进（原 await 裸抛 → unhandledRejection + 幽灵注销）
-  await saveRunBestEffort(run, deps, "handleReturn (done,completed)");
-  deps.log?.("debug", "workflow:error-recovery", "run saved after return", { runId: run.runId, reason: run.state.reason });
   // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
-  deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
-  deps.onRunDone?.(run);
+  // （D5-② 四步 coda 收敛为 finalizeRun 单写点，含 SW-DATA-3 save 兜底）
+  await finalizeRun(run, deps, "completed", { context: "handleReturn (done,completed)" });
 }
 
 // ── handleWorkerError ────────────────────────────────────────
@@ -860,16 +895,10 @@ export async function handleWorkerError(
 
   // 超限 → failed
   run.state.error = err.message;
-  deps.log?.("debug", "workflow:error-recovery", "handleWorkerError retries exceeded, transition done", { runId: run.runId, count });
-  run.transition("done", "failed");
-  // [SW-DATA-3] save 失败不阻断终态推进
-  await saveRunBestEffort(run, deps, "handleWorkerError (done,failed)");
-  deps.log?.("debug", "workflow:error-recovery", "run saved after worker error", { runId: run.runId, reason: run.state.reason });
+  deps.log?.("debug", "workflow:worker-message-pump", "handleWorkerError retries exceeded, transition done", { runId: run.runId, count });
   // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
-  deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
-  deps.onRunDone?.(run);
+  // （D5-② 四步 coda 收敛为 finalizeRun 单写点）
+  await finalizeRun(run, deps, "failed", { context: "handleWorkerError (done,failed)" });
 }
 
 // ── handleWorkerExit ─────────────────────────────────────────
@@ -907,16 +936,11 @@ export async function handleWorkerExit(
     // [F1] 无终态消息的 exit(0) = worker 静默退出（不可克隆 return 被吞 / 脚本直调
     // process.exit(0) 等）。置 failed 保证 runAndWait 必有终态。不重试：rebuild 重跑
     // 脚本对确定性根因（不可克隆 return）无意义，且 belt 路径优先给用户明确归因。
-    deps.log?.("debug", "workflow:error-recovery", "worker exited without terminal message, transition done", { runId: run.runId });
+    deps.log?.("debug", "workflow:worker-message-pump", "worker exited without terminal message, transition done", { runId: run.runId });
     run.state.error = WORKER_EXITED_WITHOUT_RESULT_MSG;
-    run.transition("done", "failed");
-    await saveRunBestEffort(run, deps, "handleWorkerExit (done,failed, no terminal message)");
-    deps.log?.("debug", "workflow:error-recovery", "run saved after exit without result", { runId: run.runId, reason: run.state.reason });
     // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
-    deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
-    deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
-    deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
-    deps.onRunDone?.(run);
+    // （D5-② 四步 coda 收敛为 finalizeRun 单写点）
+    await finalizeRun(run, deps, "failed", { context: "handleWorkerExit (done,failed, no terminal message)" });
     return;
   }
 
@@ -969,16 +993,10 @@ export async function handleScriptError(
 
   // 超限 → failed
   run.state.error = `Workflow failed after ${MAX_WORKER_RETRIES} retries: ${errorMsg}`;
-  deps.log?.("debug", "workflow:error-recovery", "handleScriptError retries exceeded, transition done", { runId: run.runId, count });
-  run.transition("done", "failed");
-  // [SW-DATA-3] save 失败不阻断终态推进
-  await saveRunBestEffort(run, deps, "handleScriptError (done,failed)");
-  deps.log?.("debug", "workflow:error-recovery", "run saved after script error", { runId: run.runId, reason: run.state.reason });
+  deps.log?.("debug", "workflow:worker-message-pump", "handleScriptError retries exceeded, transition done", { runId: run.runId, count });
   // C-4: run 到达 done 终态 → 注销 pending-notification + 通知 Interface 层
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister", { runId: run.runId, reason: run.state.reason });
-  deps.eventBus?.emit("pending:unregister", { id: run.runId, reason: run.state.reason ?? "completed" });
-  deps.log?.("debug", "workflow:error-recovery", "emit pending:unregister done", { runId: run.runId });
-  deps.onRunDone?.(run);
+  // （D5-② 四步 coda 收敛为 finalizeRun 单写点）
+  await finalizeRun(run, deps, "failed", { context: "handleScriptError (done,failed)" });
 }
 
 // ── scheduleRebuild（退避 + 重建） ──────────────────────────

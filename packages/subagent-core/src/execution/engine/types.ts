@@ -21,7 +21,7 @@
 //      ——record 内部投影，保持原名不动。
 // 引擎层终态命名 AgentOutcome，与两者不同名，消除「同名不同义」。
 
-import type { AgentUsage, ToolCallEntry } from "../../orchestration/models/types.ts";
+import type { AgentFailureKind, AgentUsage, ToolCallEntry } from "../../orchestration/models/types.ts";
 import type { AgentUsageTotal, ToolCall, WorktreeHandle } from "../types.ts";
 
 // AgentEvent 8 种事件原样保留，唯一权威定义仍是 execution/types.ts——引擎层 re-export
@@ -136,6 +136,13 @@ export interface AgentTaskSpec {
 export interface AgentOutcome {
   /** 原样（AgentResult.content）。 */
   content: string;
+  /**
+   * 原样（AgentResult.failureKind，D5-③ 失败分诊结构化标签）。产出侧唯一识别点 =
+   * engines/pi/output-collector（collectResult 分类写入）；缺省 = unknown = 可重试
+   * （消费侧 executeAgentCall 只读字段分诊，不扫 error 文案）。非 pi 引擎不产出，
+   * 恒缺省（unknown 语义）。
+   */
+  failureKind?: AgentFailureKind;
   /**
    * 原样（AgentResult.parsedOutput）。native 引擎直传 / 仿真层 ajv 产出（D4 硬分流：
    * native 路径公共层不做二次校验、不改写其结果）。

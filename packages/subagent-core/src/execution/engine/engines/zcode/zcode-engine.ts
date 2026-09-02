@@ -231,6 +231,9 @@ export class ZcodeEngine implements EnginePort {
     const prepared = prepareZcodeHome({
       engineDataDir: this.deps.engineDataDir(),
       modelRef,
+      // D8 池引用计数接线：taskId（chat 域 = record.id）经 RunContext 透传给 preparer
+      // 作 refs.json 登记 key（与 journal 文件名同源）
+      taskId: ctx.taskId,
       sources: this.deps.sources,
     });
     // 对齐点③：把实际池 key 声明给宿主（journal writer 重定向到 handle.poolKey 同源

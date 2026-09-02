@@ -33,6 +33,15 @@ vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   spawnedChildren: new Map(),
 }));
 
+// [D8] idle-gc 归档时释放引擎池引用（releasePoolRef 经 getEngineDataDir 解析
+// dataDir）——测试钉到模块级 holder（vi.mock factory 闭包只能引用模块级变量），
+// beforeEach 刷新为当前 tmp agentDir，防触碰真实数据目录。
+let gcDataDirHolder = "";
+vi.mock("../engine/common/data-dir.ts", () => ({
+  getEngineDataDir: () => gcDataDirHolder,
+}));
+
+import { acquirePool } from "../engine/common/pool-manager.ts";
 import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
 import { createRecord } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";
@@ -95,6 +104,7 @@ describe("[M8] idle record GC 定时器（startGcTimer）", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "gc-timer-"));
+    gcDataDirHolder = agentDir;
     const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session" });
@@ -180,5 +190,48 @@ describe("[M8] idle record GC 定时器（startGcTimer）", () => {
     vi.advanceTimersByTime(GC_INTERVAL_MS * 10);
 
     expect(store.getMutable("sa-after-dispose")).toBeDefined();
+  });
+
+  it("[D8] 归档超 TTL record 时释放引擎池引用：journal 跟随删除、refs 移除、归零删池原生状态", () => {
+    // 建池（engine 缺省投影 'pi' + poolKey 'shared'——与 runEngineTask 回填形态一致）
+    const poolDir = acquirePool(agentDir, "pi", "shared", "sa-pool-1");
+    fs.mkdirSync(path.join(poolDir, "native-state"), { recursive: true });
+    fs.writeFileSync(path.join(poolDir, "native-state", "db.sqlite"), "x");
+    fs.writeFileSync(path.join(poolDir, "journal-sa-pool-1.jsonl"), "{}\n");
+    fs.writeFileSync(path.join(poolDir, "journal-sa-pool-2.jsonl"), "{}\n"); // 他人 journal（refs 无条目）
+
+    const fireAt = Date.now() + GC_INTERVAL_MS;
+    const record = makeIdleRecord("sa-pool-1", fireAt - IDLE_TTL_MS - 1);
+    record.engineHandle = { sessionRef: {}, poolKey: "shared" };
+    store.register(record);
+
+    service.startGcTimer();
+    vi.advanceTimersByTime(GC_INTERVAL_MS);
+
+    expect(store.getMutable("sa-pool-1")).toBeUndefined(); // 已归档
+    // release 语义：自己的 journal 删、他人 journal 保留、归零删原生状态、目录保留（剩 journal）
+    expect(fs.existsSync(path.join(poolDir, "journal-sa-pool-1.jsonl"))).toBe(false);
+    expect(fs.existsSync(path.join(poolDir, "journal-sa-pool-2.jsonl"))).toBe(true);
+    expect(fs.existsSync(path.join(poolDir, "native-state"))).toBe(false);
+    expect(fs.existsSync(poolDir)).toBe(true);
+    // refs 归零后随池清理（无残留幻影引用）
+    const refsPath = path.join(poolDir, "refs.json");
+    if (fs.existsSync(refsPath)) {
+      expect(Object.keys((JSON.parse(fs.readFileSync(refsPath, "utf8")) as { refs: object }).refs)).toEqual([]);
+    }
+  });
+
+  it("[D8] 无 engineHandle 的 record 归档不触碰引擎池（存量 record 零影响）", () => {
+    const poolDir = acquirePool(agentDir, "pi", "shared", "sa-plain");
+    fs.writeFileSync(path.join(poolDir, "journal-sa-plain.jsonl"), "{}\n");
+
+    const fireAt = Date.now() + GC_INTERVAL_MS;
+    store.register(makeIdleRecord("sa-plain", fireAt - IDLE_TTL_MS - 1)); // 无 engineHandle
+
+    service.startGcTimer();
+    vi.advanceTimersByTime(GC_INTERVAL_MS);
+
+    expect(store.getMutable("sa-plain")).toBeUndefined(); // 正常归档
+    expect(fs.existsSync(path.join(poolDir, "journal-sa-plain.jsonl"))).toBe(true); // 池/journal 不动
   });
 });

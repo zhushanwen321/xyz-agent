@@ -21,7 +21,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { resolvePoolDir } from "../../paths.ts";
+import { acquirePool } from "../../common/pool-manager.ts";
 import {
   ZCODE_FALLBACK_DEFAULT_MODEL,
   ZCODE_POOL_CONFIG_SUFFIX,
@@ -311,11 +311,15 @@ const CONFIG_INDENT_SPACES = 2;
 export function prepareZcodeHome(opts: {
   engineDataDir: string;
   modelRef: string;
+  /** 池引用计数 key（refs.json 登记，§3.3.9）——chat 域 = record.id，journal 文件名同源。 */
+  taskId: string;
   sources?: ZcodeSourcePaths;
 }): ZcodePreparedHome {
-  const { engineDataDir, modelRef } = opts;
+  const { engineDataDir, modelRef, taskId } = opts;
   const poolKey = computeZcodePoolKey(modelRef);
-  const homeDir = resolvePoolDir(engineDataDir, "zcode", poolKey);
+  // D8 接线：建池必须经 acquirePool（mkdir + refs.json 登记），不经 acquire 直接
+  // resolvePoolDir 建目录会让池引用计数脱锚（refs 无记录 → release 永无归零证据）
+  const homeDir = acquirePool(engineDataDir, "zcode", poolKey, taskId);
   const configPath = path.join(homeDir, ...ZCODE_POOL_CONFIG_SUFFIX);
 
   const v2Path = opts.sources?.v2ConfigPath ?? defaultV2ConfigPath();

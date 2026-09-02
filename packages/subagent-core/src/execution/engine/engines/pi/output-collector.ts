@@ -20,15 +20,97 @@ import {
   getFullText,
   getTotalUsage,
 } from "../../../execution-record.ts";
-// [F-R1] 值引用 stale-context 分诊 pattern 表（SSOT 在 execute-agent-call，消费点
-// isStaleContextErrorMsg 同源）。execution → orchestration 值引用有先例
-// （agent-registry.ts → script-lint.ts），且 execute-agent-call 对 execution 仅剩
-// type-only import（已擦除），无运行时循环。
-// [MF-1] 同向引用确定性失败标记前缀（SSOT 同在 execute-agent-call，同一布局理由）。
-import {
-  DETERMINISTIC_SCHEMA_FAILURE_PREFIX,
-  STALE_CONTEXT_PATTERNS,
-} from "../../../../orchestration/execute-agent-call.ts";
+// AgentFailureKind 类型 SSOT 在 orchestration/models/types.ts（消费语义「unknown=
+// 可重试」与其文档同源）；type-only 引用，编译期擦除，零运行时依赖。
+import type { AgentFailureKind } from "../../../../orchestration/models/types.ts";
+// [D5-③ 词表归属声明] 分诊识别词表（STALE_CONTEXT_PATTERNS /
+// DETERMINISTIC_SCHEMA_FAILURE_PREFIX）SSOT 在本模块（产出侧包内单点识别）——
+// collectResult 识别 pi 错误文案后写 AgentResult.failureKind 结构化字段，消费侧
+// （execute-agent-call）只读字段分诊、不再扫文案子串。文案词表依存并未消除，而是
+// 从「跨模块消费 seam」收窄为「产出侧包内单点识别」；词表漂移的失效模式是
+// failureKind=unknown → 保守重试（安全默认），不再是静默漏诊。
+// （原 SSOT 在 execute-agent-call，2026-09 D5-③ 迁入——execution → orchestration
+// 的值引用随之消除，方向反转为测试/消费侧零依赖。）
+
+// ============================================================
+// 失败分诊词表（D5-③，产出侧单点）
+// ============================================================
+
+/**
+ * Stale context 检测模式（P1-5；W4b 对齐 pi 0.84.x 真实文案）。
+ *
+ * pi session context 被 compact/cancel 时报告的模式。这种情况下重试无意义——
+ * 同样的 call 会再次失败。分诊产出 failureKind="stale_context"（消费侧不重试）。
+ *
+ * W4b：原 "stale context"/"stalecontext" 与 pi 真实文案零匹配（真实文案为
+ * "This extension ctx is stale after session replacement or reload. ..."
+ * ——runner.ts:544（dist runner.js:352），词序是 "ctx is stale" 而非 "stale
+ * context"），stale 分诊对真实文案失效。现对齐：
+ * - "ctx is stale"：真实文案核心子串（词序修正）
+ * - "stale after session replacement"：scheduler 已验证 marker（runtime.ts
+ *   STALE_CTX_MARKER，同文案锚定）
+ * - "context canceled"/"aborted"：保留——abort 族错误同样不重试（signal.aborted
+ *   分支的先行分诊，防边界竞态漏网），删除会放宽重试语义。
+ */
+export const STALE_CONTEXT_PATTERNS = [
+  "ctx is stale",
+  "stale after session replacement",
+  "context canceled",
+  "aborted",
+] as const;
+
+/**
+ * 判断错误信息是否表示 stale/canceled pi session context。
+ * 命中时分诊 failureKind="stale_context"——重试只会再次失败（P1-5）。
+ */
+export function isStaleContextErrorMsg(msg: string | undefined): boolean {
+  if (!msg) return false;
+  const lower = msg.toLowerCase();
+  return STALE_CONTEXT_PATTERNS.some((p) => lower.includes(p));
+}
+
+/**
+ * [MF-1] 确定性 schema 失败标记（error 文本前缀，产出方 = 本模块的
+ * describeMissingParsedOutput）。
+ *
+ * 标记词逐字核对不命中 STALE_CONTEXT_PATTERNS 任一 pattern 与
+ * isStaleContextErrorMsg 的子串匹配（否则归因 error 被误诊 stale-context，
+ * 虽然同样不重试但归因语义被污染；output-collector.test 有交叉锁定）。
+ *
+ * 三态可重试性矩阵（F-1 归因）：
+ * | 归因态                     | 带本标记 | 分诊                | 可重试性 | 理由 |
+ * |----------------------------|---------|---------------------|---------|------|
+ * | ① 从未调用 SO tool         | 是      | schema_deterministic | 不可重试 | 缺 extension 是环境确定性（C1 安装盲区），同环境重试必同结果 |
+ * | ② SO 调用 isError（gate 终止/不可满足 schema） | 是 | schema_deterministic | 不可重试 | 同 schema 重试必同结果（第五轮实测：3 attempts/4 子进程/235s 纯烧钱） |
+ * | ③ 调用过但无 details        | 否      | unknown             | 可重试   | 可能瞬态（details 提取/序列化异常），保留既有重试语义 |
+ */
+export const DETERMINISTIC_SCHEMA_FAILURE_PREFIX = "Structured output failed deterministically:";
+
+/**
+ * [MF-1] 判断错误信息是否为确定性 schema 失败（命中标记前缀）。
+ * 命中时分诊 failureKind="schema_deterministic"——同 schema 重试必同结果
+ * （矩阵见 DETERMINISTIC_SCHEMA_FAILURE_PREFIX）。
+ */
+export function isDeterministicSchemaFailureMsg(msg: string | undefined): boolean {
+  if (!msg) return false;
+  return msg.includes(DETERMINISTIC_SCHEMA_FAILURE_PREFIX);
+}
+
+/**
+ * [D5-③] 错误文案 → 结构化失败分诊标签（产出侧唯一识别点）。
+ *
+ * 判定优先级与收敛前的消费侧子串分诊一致（stale 在前）：标记词与 stale 词表
+ * 零交集（交叉锁定测试守护），两序等价。未命中任何词表 → unknown——消费侧
+ * 默认退避重试（语义守恒，r1 MF4）。
+ */
+export function classifyFailureKind(
+  msg: string | undefined,
+): AgentFailureKind | undefined {
+  if (msg === undefined) return undefined;
+  if (isStaleContextErrorMsg(msg)) return "stale_context";
+  if (isDeterministicSchemaFailureMsg(msg)) return "schema_deterministic";
+  return "unknown";
+}
 
 // ============================================================
 // Result 收集
@@ -87,9 +169,8 @@ export function extractParsedOutput(toolCalls: ToolCall[]): unknown {
  * 静态文案，已逐字核对无任何 pattern 命中，且由 output-collector.test.ts 的
  * "messages avoid STALE_CONTEXT_PATTERNS substrings" 用例锁定；动态段是
  * 模型/provider 的原始错误文本（可含 "aborted"/"ctx is stale" 等），不受本模块
- * 控制。不中和的话，拼接结果经 collectResult → result.error 流到
- * execute-agent-call 的 isStaleContextErrorMsg 分诊，SO 失败归因被误诊为
- * stale-context → 跳过重试。
+ * 控制。不中和的话，拼接结果经 collectResult 的 classifyFailureKind 分诊会被
+ * 误标为 stale_context（SO 失败归因被误诊），终态虽同样不重试但归因语义被污染。
  *
  * 导出以便直接单测（纯函数契约）。
  */
@@ -110,16 +191,16 @@ export function neutralizeStalePatterns(text: string): string {
  * 返回 undefined 表示 toolCalls 里有可用的 parsedOutput（无需归因）。
  * 三态判定优先级：校验失败（有 isError 调用）> 从未调用 SO tool > 调用过但无 details。
  *
- * [MF-1] 三态可重试性矩阵（标记 SSOT 与消费端判定见 execute-agent-call 的
- * DETERMINISTIC_SCHEMA_FAILURE_PREFIX / isDeterministicSchemaFailureMsg）：
+ * [MF-1] 三态可重试性矩阵（标记 SSOT 与分类判定均在本模块——D5-③ 收敛为产出侧
+ * 单点，消费端 execute-agent-call 只读 failureKind 字段）：
  * | 归因态                        | 带标记 | 可重试性 | 理由 |
  * |------------------------------|-------|---------|------|
  * | ① 从未调用 SO tool            | 是    | 不可重试 | 缺 extension 是环境确定性（C1 安装盲区），同环境重试必同结果 |
  * | ② SO 调用 isError（gate 终止/不可满足 schema） | 是 | 不可重试 | 同 schema 重试必同结果（第五轮实测 retry 放大回归：3 attempts/4 子进程/235s） |
  * | ③ 调用过但无 details           | 否    | 可重试   | 可能瞬态（details 提取/序列化异常），保留既有重试语义 |
  *
- * 文案约束：不得命中 execute-agent-call 的 STALE_CONTEXT_PATTERNS（"aborted" 等
- * 子串）——命中会被误诊为 stale-context 跳过重试。固定前缀（含 MF-1 标记词）静态
+ * 文案约束：不得命中本模块的 STALE_CONTEXT_PATTERNS（"aborted" 等
+ * 子串）——命中会被 classifyFailureKind 误标 stale_context。固定前缀（含 MF-1 标记词）静态
  * 无命中（测试锁定）；动态段经 neutralizeStalePatterns 中和（F-R1）。
  *
  * 导出以便直接单测（纯函数契约）。
@@ -223,6 +304,14 @@ export function collectResult(
   if (args.schemaExpected === true && result.success && parsedOutput === undefined) {
     result.success = false;
     result.error = describeMissingParsedOutput(toolCalls) ?? result.error;
+  }
+  // [D5-③] 失败分诊结构化：error 最终确定后（含 F-1 归因覆写）一次分类写入。
+  // 消费侧（executeAgentCall）读 failureKind 字段分诊，不再扫 error 文案子串；
+  // 缺省（成功路径/上游未写）= unknown = 可重试（语义守恒）。H4 合成文案
+  // （agent-result-mapper 对 !success && !error 的 abort fallback）在此之后产生，
+  // 不经本分类——该场景 signal.aborted 检查兜底，不依赖分诊。
+  if (result.error !== undefined) {
+    result.failureKind = classifyFailureKind(result.error);
   }
   return result;
 }

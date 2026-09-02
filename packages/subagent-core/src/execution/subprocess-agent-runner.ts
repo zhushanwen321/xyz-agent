@@ -305,6 +305,9 @@ function backfillJournalPath(handle: EngineHandle, journalPath: string): void {
 function outcomeToRunnerResult(outcome: AgentOutcome): AgentResult {
   return {
     content: outcome.content,
+    // [D5-③] 失败分诊标签透传（pi 引擎产出；zcode 不产 failureKind，缺省 =
+    // unknown = 可重试）。成功路径 undefined 不落键。
+    ...(outcome.failureKind !== undefined ? { failureKind: outcome.failureKind } : {}),
     parsedOutput: outcome.parsedOutput,
     usage: outcome.usage,
     durationMs: outcome.durationMs,

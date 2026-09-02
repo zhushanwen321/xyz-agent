@@ -190,6 +190,24 @@ export interface ToolCallEntry {
 }
 
 /**
+ * 失败分诊结构化标签（D5-③，r1 MF4 钉正语义）。
+ *
+ * - stale_context：pi session context 被 compact/cancel/替换——重试无意义（同 call
+ *   再次失败），不重试。
+ * - schema_deterministic：确定性 schema 失败（SO tool 从未调用 / gate 终止 /
+ *   不可满足 schema）——同 schema 重试必同结果，不重试。
+ * - unknown：其余一切失败（瞬态 provider 错误、spawn 失败等）——**默认可重试**。
+ *
+ * **语义守恒（最高优先约束）**：unknown（含字段缺省）= 可重试——保持收敛前的
+ * 默认重试语义；仅 stale_context 与 schema_deterministic 两态维持不重试特判。
+ * 词表归属（产出侧单点识别）：stale_context / schema_deterministic 的识别词表
+ * （stale 词表与确定性 schema 失败标记前缀）保留在产出侧
+ * execution/engine/engines/pi/output-collector.ts 包内——词表漂移的失效模式是
+ * failureKind=unknown → 保守重试（安全默认），不再是静默漏诊。
+ */
+export type AgentFailureKind = "stale_context" | "schema_deterministic" | "unknown";
+
+/**
  * 单次 agent 调用的结果（统一形态）。
  *
  * Engine 直接消费 SubprocessAgentRunner 返回值；callCache replay 时 worker
@@ -198,6 +216,16 @@ export interface ToolCallEntry {
 export interface AgentResult {
  /** Raw text output from the agent. */
   content: string;
+ /**
+ * [D5-③] 失败分诊结构化标签（AgentFailureKind）。产出侧唯一识别点 =
+ * execution/engine/engines/pi/output-collector.ts（collectResult 对最终 error
+ * 分类后写入，经 agent-result-mapper / AgentOutcome 透传到本形态）；消费侧
+ * execute-agent-call 读本字段分诊，不再扫 error 文案子串。
+ *
+ * 仅在 error !== undefined 时有意义（成功时缺省）；缺省视为 unknown = 可重试
+ * （语义守恒，见 AgentFailureKind）。
+ */
+  failureKind?: AgentFailureKind;
  /**
  * Parsed structured output.
  * Present when `schema` was provided and the output was valid JSON.

@@ -109,6 +109,11 @@ graph TD
 | 2026-09-02 | u-2a | reader.ts 裁决 = 保留 + 文件头标注（实施期门②） | EnginePort.read 是非可选能力面（capabilities.sessionRead='full'、conformance read 降级契约①级实现）；删除使 pi read 面空心化并与终态图四件套矛盾；不构成第三个 SessionView 装配（u-1a session-view-service 对 pi 分支防御性空返回，零交叠） | 已固化 |
 | 2026-09-02 | u-2a | 领地外追认 2 处：engine/types.ts InteractAction +interrupt?: boolean（加性）；subagent-actions.ts deliverMessage→deliverChatMessage 重命名清扫（8 处，1 代码 + 7 注释） | 前者不加则 chat 域 interrupt:true 语义经 engine.interact 后丢失 = 回归（D1 §3.3.5 预留扩展位的兑现）；后者为 Service 方法删除后的编译强制 + 零逻辑变化 | 主 agent 追认 |
 | 2026-09-02 | u-2a | chat 域 pi 轮次不接 event journal | 迁移前基线无 journal 产物（A1 一致性要求）；journal 接线保留给非 pi 引擎 chat 路径与 workflow 域 SAR | 已固化 |
+| 2026-09-02 | u-1c | 门①盘点 6 项触发点归并两类（archive 保留类 ①②④同构 / 文件 TTL 类 ③），真删除锚点 ≤2 未触发降级；实际接线面 = idle-gc release + session-file-gc TTL 兜底 + preparer acquire（disposeAllRecords/user-close 为 archive 保留语义不接） | 设计门①判据「≥3 处且语义各异」按归并后语义判定；record 未死的 archive 类接线会误删活数据源 | 已固化 |
+| 2026-09-02 | u-1c | 门②判深：workflow 域维持 TTL 回收（SAR 零改动）；**doc_error 已回写设计文档 D8**：原「journal 现依赖 30 天 TTL 自然回收」为假许诺（session-file-gc 不扫 engines/），u-1c 以 cleanupExpiredPoolRefs 落地真 TTL | SAR 注释自认打通需 hook record store + 改 createRecordForMode 签名，命中判深判据 | 已固化（设计文档同步） |
+| 2026-09-02 | u-1c | 领地外追认 1 处：zcode-engine.ts :231 prepareZcodeHome 加 taskId 参数（编译强制机械适配）；API sync 化（acquire/release/cleanup 从 async 改 sync——原 async 签名零生产调用方）；进程内计数 Map 删除（refs.json 唯一权威）；release 对无 refs 条目仍删 journal（record 死亡是充分条件）；done record 近似语义（一次性 done record journal 由 TTL 兜底） | 详见 u-1c deviations——主 agent 逐条审核通过 | 追认/已固化 |
+| 2026-09-02 | u-3a | 只更名不拆文件（worker-message-pump.ts 四职责共享 WorkerMsg/守卫/闭包，物理拆分切断共享语义）；finalizeRun 签名加 doneReason 必要参数；coda 微差统一 ×3（transition 统一吞+中止 / save 统一 best-effort / emit 统一 try-catch——收敛裁决非回归，lifecycle.test 契约同步改写） | 名实不符根源是文件名；设计示意签名无法承载各路径不同 doneReason；微差统一是单点化的必然结果 | 已固化 |
+| 2026-09-02 | u-3a | 领地外追认 6 处：failureKind 穿过 5 个 intermediate 类型点（execution/types + agent-result-mapper + engine/types + pi-engine 一行透传 + SAR 一行透传——纯加性可选字段）+ eslint.config.mjs 更名跟随；zcode 不产 failureKind 恒 unknown=可重试（原 zcode error 文案含 aborted 子串会不重试——理论漂移方向与 V5④ 安全默认一致，abort 场景由 signal.aborted 检查兜底） | failureKind 进程内契约物理穿过 intermediate 类型；zcode 无产出侧词表识别能力 | 追认/已固化 |
 
 ## 6 状态表
 
@@ -116,11 +121,11 @@ graph TD
 |------|--------------------------------------------|------|---------|
 | u-1a | committed | 1 | core 2346 passed（干净 TMPDIR）/ runtime 4095 passed / runtime typecheck exit 0（tsconfig +allowImportingTsExtensions 一行，授权项）/ tsup build success / V1④ 代码断言：runtime 手写 reducer 符号 rg 零命中、ZCODE_ENGINE_ID 硬编码删除；实施期门①闭包复核过（7 文件零 pi 包）、门② golden 样本补录 3 个（JournalWriter 真实落盘） |
 | u-1b | committed | 1 | extensions 三连全绿（typecheck/lint EXIT=0 + subagent-workflow 69 files/902 tests）；rg formatSubagentStatusSnapshot 零命中；views/format.ts 不存在；injector 骨架符号仅存工厂文件；model-list-injector 零 diff；两段派发（全局文件数约束），偏差登记表 2 条 |
-| u-1c | pending | 0 | — |
+| u-1c | committed | 1 | 门①未触发降级（6 触发点归并 2 类语义）/ 门②判深（workflow 域维持 TTL）；接线面 = preparer acquire + idle-gc release + session-file-gc TTL 兜底（cleanupExpiredPoolRefs）+ refs.json 唯一权威计数；core 合流态 2388 passed（含 pool-manager 19 新用例）；resolvePoolDir 代码调用零命中；doc_error（TTL 假许诺）已回写设计文档 D8；偏差登记 +3 条 |
 | u-2a | committed | 1 | 两段派发（段 1 机械迁移 74 文件 import / 段 2 删旧轨 + interact 下沉）；core 2348 passed（+2 新用例）/ runtime 4095 passed / extensions 三连全绿（902）/ tsc + tsup exit 0 / validate-runtime-bundle exit 0 / staged 产物符号探针（kickOffBackground=0、新符号齐）；rg kickOffBackground 与 Service 协议符号（deliverMessage/resumeRound/sendPromptCommand）代码零命中；假兑现 B 解除（interactRecord 生产调用 subagent-service.ts:820）；A1 终验：迁移后 chat 域重采基线 diff——record 机器字段形态逐字段一致（字段集/status/agentName/model/task），差异全部归因模型非确定性（slug 为模型自填参数、调用次数差异），rootSessionId 属 volatile 白名单；偏差登记表 +5 条（ChatRoundTicket / interactRecord 形态 / reader 保留 / 追认 2 项 / journal 不接） |
 | u-2b | pending | 0 | — |
 | u-2c | pending | 0 | — |
-| u-3a | pending | 0 | — |
+| u-3a | committed | 1 | worker-message-pump.ts 更名落地（error-recovery.ts 不存在）/ finalizeRun 唯一定义 + 源码 8 调用点收敛 / failureKind 三态分诊（消费侧 DETERMINISTIC_SCHEMA_FAILURE_PREFIX 零命中，词表留产出侧）/ V5④ 语义守恒测试（unknown+缺省=退避重试）；core 合流态 2388 passed（含 finalize-run + 三态分诊新用例）；壳侧 902 全绿；偏差登记 +2 条（含追认 6 处 intermediate 类型点） |
 | u-3b | pending | 0 | — |
 
 ## 7 残留风险与变更历史

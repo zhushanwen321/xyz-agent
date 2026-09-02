@@ -5,7 +5,7 @@
  * （./engines/zcode/reader、./engines/zcode/constants、./engine/paths、./relay-env）
  * + ./workflows/* 资产子入口。exports 面即 semver 契约（D5）：收窄不放宽——
  * 新增导出走 minor，本文件刻意不使用 `export *`，逐名列出以使 diff 可审。
- * 内部实现细节（registry / error-recovery / execution 编排件等）不经 barrel 导出，
+ * 内部实现细节（registry / worker-message-pump / execution 编排件等）不经 barrel 导出，
  * 仓内壳侧深路径消费（`./*` -> src 通配）不受本文件约束。
  *
  * 设计权威源：docs/design/subagent-core-package-extraction.md §3.3 D5；

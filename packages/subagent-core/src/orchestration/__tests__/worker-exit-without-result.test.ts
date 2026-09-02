@@ -18,7 +18,7 @@
  * `void handlers.onXxx(...)` 无人接 → unhandledRejection + pending:unregister / onRunDone
  * 不执行（pending 通知幽灵注销）。修复后 save 失败仅 logger.error，状态机继续推进。
  *
- * mock 构建参考 error-recovery-handlers.test.ts（plain-object WorkflowRun mock）。
+ * mock 构建参考 worker-message-pump-handlers.test.ts（plain-object WorkflowRun mock）。
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -27,16 +27,16 @@ import {
   handleWorkerMessage,
   handleScriptError,
   handleWorkerError,
-} from "../error-recovery.ts";
+} from "../worker-message-pump.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../models/ports.ts";
 import type { WorkflowRun } from "../models/workflow-run.ts";
 import type { WorkerHandle } from "../worker-handle.ts";
 
-/** [F1] 归因文案——与 error-recovery.ts 常量一致（不直接 import 常量以锚定对外文案）。 */
+/** [F1] 归因文案——与 worker-message-pump.ts 常量一致（不直接 import 常量以锚定对外文案）。 */
 const EXITED_WITHOUT_RESULT_MSG =
   "worker exited before delivering a result (return value may not be structured-cloneable)";
 
-// ── helpers（对齐 error-recovery-handlers.test.ts）─────────────────
+// ── helpers（对齐 worker-message-pump-handlers.test.ts）─────────────────
 
 interface RunMockOpts {
   workerErrorCount?: number;

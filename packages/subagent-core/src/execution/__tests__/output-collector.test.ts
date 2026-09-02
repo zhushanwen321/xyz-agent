@@ -5,8 +5,17 @@
 // （usage 收口进 getTotalUsage，text 收口进 getFullText，均在 execution-record.test 测）。
 import { describe, expect, it } from "vitest";
 
-import { isStaleContextErrorMsg, DETERMINISTIC_SCHEMA_FAILURE_PREFIX, isDeterministicSchemaFailureMsg, STALE_CONTEXT_PATTERNS } from "../../orchestration/execute-agent-call.ts";
-import { collectResult, describeMissingParsedOutput, extractParsedOutput, neutralizeStalePatterns } from "../engine/engines/pi/output-collector.ts";
+import {
+  classifyFailureKind,
+  collectResult,
+  describeMissingParsedOutput,
+  DETERMINISTIC_SCHEMA_FAILURE_PREFIX,
+  extractParsedOutput,
+  isDeterministicSchemaFailureMsg,
+  isStaleContextErrorMsg,
+  neutralizeStalePatterns,
+  STALE_CONTEXT_PATTERNS,
+} from "../engine/engines/pi/output-collector.ts";
 import type { ExecutionRecord, ToolCall } from "../types.ts";
 
 // ============================================================
@@ -162,9 +171,9 @@ describe("describeMissingParsedOutput", () => {
   // ── [F-R1] 态2（isError 分支）错误摘要拼接段中和 ──
   //
   // 动态错误文本（模型/provider 原始错误）可能携带 "aborted"/"ctx is stale" 等
-  // STALE_CONTEXT_PATTERNS 词；不中和则归因 error 经 collectResult → result.error
-  // 流到 execute-agent-call 的 isStaleContextErrorMsg 分诊，被误诊为 stale-context
-  // 跳过重试。固定前缀静态无命中（上一用例锁定），中和只针对动态段。
+  // STALE_CONTEXT_PATTERNS 词；不中和则归因 error 经 collectResult 的
+  // classifyFailureKind 分诊被误标 stale_context（归因语义被污染）。
+  // 固定前缀静态无命中（上一用例锁定），中和只针对动态段。
   describe("F-R1: 态2 错误摘要 STALE_CONTEXT_PATTERNS 中和", () => {
     function failedSoCallsWith(text: string): ToolCall[] {
       return [
@@ -233,7 +242,7 @@ describe("describeMissingParsedOutput", () => {
 // ============================================================
 
 describe("MF-1: 三态可重试性矩阵（确定性失败标记）", () => {
-  // 矩阵（SSOT 注释在 execute-agent-call DETERMINISTIC_SCHEMA_FAILURE_PREFIX 与
+  // 矩阵（SSOT 注释在本模块 DETERMINISTIC_SCHEMA_FAILURE_PREFIX 与
   // describeMissingParsedOutput JSDoc，本 describe 是执行面锁定）：
   //   态① 从未调用 SO            → 带标记 → 不可重试（环境确定性，C1 安装盲区）
   //   态② SO isError（gate 终止/不可满足 schema）→ 带标记 → 不可重试（同 schema 重试必同结果）
@@ -354,5 +363,107 @@ describe("collectResult — F-1 schemaExpected 失败标注", () => {
     expect(result.success).toBe(false);
     expect(result.error).toBeDefined();
     expect(isDeterministicSchemaFailureMsg(result.error)).toBe(true);
+  });
+});
+
+// ============================================================
+// D5-③: failureKind 分类（产出侧单点识别）
+// ============================================================
+
+describe("classifyFailureKind（词表 → 结构化标签）", () => {
+  it("pi 真实 stale 文案 → stale_context", () => {
+    const piRealStale =
+      "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession().";
+    expect(classifyFailureKind(piRealStale)).toBe("stale_context");
+  });
+
+  it("abort 族（context canceled / aborted）→ stale_context", () => {
+    expect(classifyFailureKind("Request context canceled by provider")).toBe("stale_context");
+    expect(classifyFailureKind("Subprocess aborted by runtime shutdown")).toBe("stale_context");
+  });
+
+  it("确定性 schema 失败标记前缀 → schema_deterministic", () => {
+    expect(classifyFailureKind(
+      `${DETERMINISTIC_SCHEMA_FAILURE_PREFIX} Agent finished without producing a structured output`,
+    )).toBe("schema_deterministic");
+  });
+
+  it("未知文案（词表零命中，pi 升级改写文案后的形态）→ unknown（安全默认，可重试）", () => {
+    expect(classifyFailureKind("provider 503 service unavailable")).toBe("unknown");
+    expect(classifyFailureKind("spawn EAGAIN")).toBe("unknown");
+    expect(classifyFailureKind("extension runtime was superseded by a newer orchestration epoch")).toBe("unknown");
+  });
+
+  it("undefined（成功路径）→ undefined（不落失败分诊）", () => {
+    expect(classifyFailureKind(undefined)).toBeUndefined();
+  });
+
+  it("标记词与 stale 词表零交集（分诊优先级无歧义）", () => {
+    expect(classifyFailureKind(DETERMINISTIC_SCHEMA_FAILURE_PREFIX)).toBe("schema_deterministic");
+  });
+});
+
+describe("collectResult — D5-③ failureKind 产出", () => {
+  /** 最小 ExecutionRecord stub（collectResult 只读 turns/toolCalls 派生面）。 */
+  function makeRecordWithCalls(calls: ToolCall[]): ExecutionRecord {
+    return {
+      id: "rec-fk",
+      turns: [{ toolCalls: calls, text: "done", turnCount: 1, closed: true }],
+      turnCount: 1,
+    } as unknown as ExecutionRecord;
+  }
+
+  const baseArgs = {
+    startTime: Date.now(),
+    sessionId: "s-fk",
+    sessionFile: undefined,
+  };
+
+  it("error 命中 stale 词表 → failureKind=stale_context", () => {
+    const record = makeRecordWithCalls([]);
+    const result = collectResult(record, {
+      ...baseArgs,
+      success: false,
+      error: "This extension ctx is stale after session replacement or reload.",
+    });
+    expect(result.failureKind).toBe("stale_context");
+  });
+
+  it("F-1 归因覆写（态①②确定性标记）→ failureKind=schema_deterministic", () => {
+    const record = makeRecordWithCalls([]);
+    const result = collectResult(record, { ...baseArgs, success: true, error: undefined, schemaExpected: true });
+    expect(result.error).toBeDefined();
+    expect(result.failureKind).toBe("schema_deterministic");
+  });
+
+  it("态③归因（调用过但无 details，无标记）→ failureKind=unknown（可重试，矩阵保留）", () => {
+    const record = makeRecordWithCalls([
+      { toolName: "structured-output", result: { content: [] } },
+    ]);
+    const result = collectResult(record, { ...baseArgs, success: true, error: undefined, schemaExpected: true });
+    expect(result.error).toBeDefined();
+    expect(result.failureKind).toBe("unknown");
+  });
+
+  it("普通 provider 错误 → failureKind=unknown", () => {
+    const record = makeRecordWithCalls([]);
+    const result = collectResult(record, { ...baseArgs, success: false, error: "provider boom 5xx" });
+    expect(result.failureKind).toBe("unknown");
+  });
+
+  it("成功路径（error undefined）→ failureKind 不写（缺省 = unknown = 可重试，消费侧语义）", () => {
+    const record = makeRecordWithCalls([]);
+    const result = collectResult(record, { ...baseArgs, success: true, error: undefined });
+    expect(result.failureKind).toBeUndefined();
+  });
+
+  it("词表漂移失效模式：未知文案（未来 pi 形态）→ failureKind=unknown（保守重试，非静默漏诊）", () => {
+    const record = makeRecordWithCalls([]);
+    const result = collectResult(record, {
+      ...baseArgs,
+      success: false,
+      error: "extension runtime was superseded by a newer orchestration epoch",
+    });
+    expect(result.failureKind).toBe("unknown");
   });
 });

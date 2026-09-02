@@ -144,6 +144,7 @@ describe("prepareZcodeHome（验收 3）", () => {
     const prepared = prepareZcodeHome({
       engineDataDir: dataDir,
       modelRef: `${PROVIDER_A}/GLM-5.3`,
+      taskId: "bg-1",
       sources: { v2ConfigPath: v2Path },
     });
     expect(prepared.wroteConfig).toBe(true);
@@ -168,6 +169,7 @@ describe("prepareZcodeHome（验收 3）", () => {
     const opts = {
       engineDataDir: dataDir,
       modelRef: `${PROVIDER_A}/GLM-5.3`,
+      taskId: "bg-2",
       sources: { v2ConfigPath: v2Path },
     };
     const first = prepareZcodeHome(opts);
@@ -182,6 +184,7 @@ describe("prepareZcodeHome（验收 3）", () => {
     const opts = {
       engineDataDir: dataDir,
       modelRef: `${PROVIDER_A}/GLM-5.3`,
+      taskId: "bg-3",
       sources: { v2ConfigPath: v2Path },
     };
     prepareZcodeHome(opts);
@@ -196,6 +199,7 @@ describe("prepareZcodeHome（验收 3）", () => {
     const opts = {
       engineDataDir: dataDir,
       modelRef: `${PROVIDER_A}/GLM-5.3`,
+      taskId: "bg-4",
       sources: { v2ConfigPath: v2Path },
     };
     const first = prepareZcodeHome(opts);
@@ -209,6 +213,7 @@ describe("prepareZcodeHome（验收 3）", () => {
     const prepared = prepareZcodeHome({
       engineDataDir: dataDir,
       modelRef: `${PROVIDER_B}/mimo-v2.5-pro`,
+      taskId: "bg-5",
       sources: { v2ConfigPath: v2Path },
     });
     const written = JSON.parse(fs.readFileSync(prepared.configPath, "utf8")) as {
@@ -219,10 +224,44 @@ describe("prepareZcodeHome（验收 3）", () => {
 
   it("模型引用在 v2 不存在 → model_not_available", () => {
     try {
-      prepareZcodeHome({ engineDataDir: dataDir, modelRef: "ghost/m", sources: { v2ConfigPath: v2Path } });
+      prepareZcodeHome({ engineDataDir: dataDir, modelRef: "ghost/m", taskId: "bg-6", sources: { v2ConfigPath: v2Path } });
       expect.unreachable("should throw");
     } catch (err) {
       expect((err as ZcodePrepareError).code).toBe("model_not_available");
     }
+  });
+});
+
+describe("prepareZcodeHome 池引用接线（D8）", () => {
+  it("建池经 acquirePool：refs.json 落盘登记 taskId（幂等刷新）", () => {
+    const opts = {
+      engineDataDir: dataDir,
+      modelRef: `${PROVIDER_A}/GLM-5.3`,
+      taskId: "bg-7-pool",
+      sources: { v2ConfigPath: v2Path },
+    };
+    const first = prepareZcodeHome(opts);
+    const refsPath = path.join(first.homeDir, "refs.json");
+    expect(fs.existsSync(refsPath)).toBe(true);
+    const refs1 = JSON.parse(fs.readFileSync(refsPath, "utf8")) as {
+      v: number;
+      refs: Record<string, { taskId: string; ts: number }>;
+    };
+    expect(refs1.v).toBe(1);
+    expect(Object.keys(refs1.refs)).toEqual(["bg-7-pool"]);
+
+    // 幂等：同 taskId 重复 acquire（chatMode 续轮）不新增条目
+    prepareZcodeHome(opts);
+    const refs2 = JSON.parse(fs.readFileSync(refsPath, "utf8")) as {
+      refs: Record<string, { taskId: string; ts: number }>;
+    };
+    expect(Object.keys(refs2.refs)).toEqual(["bg-7-pool"]);
+
+    // 不同 taskId（同池并发）登记为独立引用
+    prepareZcodeHome({ ...opts, taskId: "bg-8-pool" });
+    const refs3 = JSON.parse(fs.readFileSync(refsPath, "utf8")) as {
+      refs: Record<string, { taskId: string; ts: number }>;
+    };
+    expect(Object.keys(refs3.refs).sort()).toEqual(["bg-7-pool", "bg-8-pool"]);
   });
 });

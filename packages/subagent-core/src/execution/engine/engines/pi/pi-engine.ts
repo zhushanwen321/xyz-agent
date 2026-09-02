@@ -654,6 +654,9 @@ function chatResultToOutcome(
 function workflowResultToOutcome(wf: WorkflowAgentResult, ctx?: RunContext): AgentOutcome {
   return {
     content: wf.content,
+    // [D5-③] 失败分诊标签透传（产出侧 output-collector → mapper → 此处 → SAR →
+    // executeAgentCall 读字段分诊）。成功路径 undefined 不落键。
+    ...(wf.failureKind !== undefined ? { failureKind: wf.failureKind } : {}),
     parsedOutput: wf.parsedOutput,
     usage: wf.usage,
     durationMs: wf.durationMs,

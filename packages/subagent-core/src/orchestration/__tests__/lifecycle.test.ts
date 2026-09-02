@@ -436,7 +436,7 @@ describe("terminateRunningRuns", () => {
     expect(deps.store.save).toHaveBeenCalledWith(run);
   });
 
-  it("单 run save 抛错不中断其余（其余 run 仍落盘 + unregister）", async () => {
+  it("单 run save 抛错不中断其余（save best-effort：unregister 仍发 + 其余 run 照常落盘）", async () => {
     const { run: bad } = makeRunningRealRun("wf-term-err");
     const { run: good } = makeRunningRealRun("wf-term-ok");
     const deps = makeDeps();
@@ -448,10 +448,12 @@ describe("terminateRunningRuns", () => {
 
     await terminateRunningRuns(deps, "Session shutdown: run terminated");
 
-    // 抛错的 run：transition 先于 save，状态已转 done，但 unregister 被 save 失败短路
+    // [D5-② finalizeRun 收敛] save 失败 best-effort（SW-DATA-3 统一）：transition 先于
+    // save，状态已转 done；与收敛前不同，unregister 不再被 save 失败短路——否则
+    // pending 通知幽灵注销（列表残留永不清理的 running 条目）
     expect(bad.state.status).toBe("done");
     expect(bad.state.reason).toBe("failed");
-    expect(deps.eventBus.emit).not.toHaveBeenCalledWith("pending:unregister", {
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("pending:unregister", {
       id: "wf-term-err",
       reason: "failed",
     });
