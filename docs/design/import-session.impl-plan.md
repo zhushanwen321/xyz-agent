@@ -81,6 +81,9 @@ graph TD
 | protocol.ts 协议 Map 未在 impl-plan 覆盖 | §2 u0/u3/u4 领地边界 | u0b-protocol-reg 补丁单元（shared/src/protocol.ts） | u4 typecheck 被 protocol.ts 未登记阻断；u0 领地仅含 import-session.ts 类型，不含 protocol.ts | 已裁决：增设 u0b 补丁单元（领地=protocol.ts），与 u0/W2 并行安全 |
 | u5 领地外 mock 门面 +11 行 | §2 u5 领地 | packages/renderer/src/api/mock/index.ts | mock 轨道门面三元要求与 real domain 同接口，缺 importCandidates/importSession 会破 mock 轨道 | 已裁决：合理偏差，随 u5 commit |
 | 设计 In-scope「选择其他目录」未拆入任何 unit | 设计 §1 In-scope + §3.1 line 107 + §4 V8 | u5 领地内补齐（Dialog 目录 chip + 按钮 + rootDir 切换重载，复用 lib/ipc pickDirectory） | impl-plan 拆分遗漏（u5 验收条款漏列此项），V8 为 Gate B 必签场景 | 已裁决：doc_error 级修正，u5 续修轮补入，RPC rootDir 参数契约已就位 |
+| u5 行内「导入」按钮（每条目行直接导入） | 设计 §3.1 交互样例仅「点选条目→底部导入」；demo 方案 A 条目行无导入按钮 | ImportSessionDialog.vue 每行 import-item-import-btn | 降低选中-导入操作步长，不破坏底部主路径（选中+project+导入） | 已裁决（阶段 3）：合理 UI 增项，保留并登记 |
+| 目录 chip 平铺行（每子目录一个 chip，无下拉无计数） | 设计 §3.1「全部目录 ▾」+ demo dir-menu 弹出菜单带计数 | ImportSessionDialog.vue chip 行 | 前任实现形态；V8 功能面（切根重载）不受影响 | 已裁决（阶段 3）：u7-polish 对齐 demo 下拉形态（含计数） |
+| cwdExists 标注文案「主目录」替代「~」 | 设计 §3.1/V9「续聊将在 ~ 执行」 | zh-CN/en-US importSession.ts | 「主目录」对用户更可读，语义等价 | 已裁决（阶段 3）：合理演化；设计文档已同步「主目录」措辞 |
 
 ## 6 状态表
 
@@ -94,11 +97,17 @@ graph TD
 | u4-renderer-api | committed | 1 | renderer vue-tsc 绿；commit 702d9cbd0 |
 | u5-dialog | committed | 2 | vitest 36/36（32 项验收 8 条 + 4 项 V8 目录切换：选目录切根重载/取消不动/切根+搜索组合/重开回默认根）+ vue-tsc 绿 + 定向 eslint 干净 + pre-commit 全绿（i18n 双侧对齐/CJK 无残留）；commits 75323596f（含 mock 门面领地外偏差）；微观决策：重开回默认根/切根保留搜索词/自定义根路径标注（deviations 已在状态记录） |
 | u6-entry | committed | 1 | vitest 3/3（按钮位置在新建任务后/⌘I 打开/点击打开）+ 32 项回归（shortcuts/sidebar 五套件）+ u5 组件 39 回归 + vue-tsc 绿 + 定向 eslint 干净；commit a3f43c2da；成功 toast 与 fresh 徽标归设计 §5 M3 打磨（未拆 unit，阶段 3 裁决）；i18n 复用 importSession.title（u6 领地不含 i18n 文件） |
+| u7-polish | committed | 1 | 六项全落地：成功 toast（无预警 info/带预警 warning 合并、死 cwd+sidecar 追加）、fresh 徽标（模块级状态机 3.2s+200ms 淡出，Sidebar 写/SessionItem 读）、空态两条出路、骨架屏（animate-pulse 三段）、目录 chip「全部目录 ▾」+ Popover 菜单含计数、demo 走查（标题/副标题/搜索 icon/Esc kbd/path icon）；vitest 55/55（47+4+4）+ sidebar 全回归 254/254 + vue-tsc + eslint 绿 |
 
 ## 7 残留风险与变更历史
 
-- 残留风险：P-model 行为待 M2 实测回填（设计 §3.4/§5 待验证检查点）；u2/u3 对 `session-service.ts`/`index.ts` 的挂载点以组合根实际结构为准（若发现更优挂载点，记入 §5 偏差表）
+- 残留风险：P-model 行为待 M2 实测回填（设计 §3.4/§5 待验证检查点）；P-scan-perf（4,615 文件 <5s + 事件循环阻塞 <100ms）待 Gate B 实测回填（阶段 3 审查 U2 登记：M1 已 committed 但无实测记录）；M1 的「ws-client 脚本直调验证」并入 Gate B 执行
 - 2026-09-02 计划创建（基线 f47e00b05）
 - 2026-09-02 中断恢复校准：前序会话在 W3 中断，u2/u3/u5 半成品留在工作区（无 commit 证据）。主 agent 核验：runtime tsc 绿 + renderer vue-tsc 绿；u2 vitest 11/12（target 冲突双检失败）；u3 case 分发缺失；u5 组件测试缺失。按接替程序补派 dev 续作。另：u0b 状态行此前误贴单元表格式（未标 committed），本次一并修正
 - 2026-09-02 文档笔误登记：§2/§4 中 `pnpm --filter @xyz-agent/renderer` 实际包名为 `@xyz-agent/frontend`（u4 committed 时已用正确名验证）
 - 2026-09-02 W3/W4 执行完成：u2（077f0b9fe，含架构守卫修复轮：getRootDir 构造注入）、u3（28d0cec43）、u5（75323596f，两轮：32 用例 + V8 目录切换 4 用例）、u6（a3f43c2da）。全部 8 unit committed，转入阶段 3 一致性审查。待审查裁决项：设计 §5 M3 打磨（fresh 徽标淡出/成功 toast/空态骨架/demo 对齐走查）未拆 unit——impl-plan 拆分时仅覆盖 M1+M2（V1-V9 验收面），M3 是否补 unit 待一致性审查裁决
+- 2026-09-02 阶段 3 一致性审查（runtime/renderer 两区独立 reviewer）：共 10 unreasonable + 7 doc_errors。裁决与处置：
+  - doc_errors 全部由主 agent 修订设计文档：错误规格表补 import_unsupported/import_failed 两行（+表外兜底码说明）、D3 外部根缓存失效因果修正、删「N 条消息」（scanSessionMeta 无此字段，补字段与 P-scan-perf 冲突；demo 的 msgs/compacted badge 同步裁决删除）、already_imported 展示形态统一内联（表行 + V5）、V6 场景 1 重写为 stale 竞态可达构造、§3.1 失败样例同步修正、M3 阶段空档消除（toast 提前至 u7-polish）、「主目录」措辞同步（3 处）
+  - unreasonable 处置：①【高】candidates RPC 失败错误码被吞（import_dir_unreadable 内联指引不可达）→ batch-renderer 定向修（d631e358c）；②【中】成功 toast/fresh 徽标缺失（V1/V9 依赖）→ 增设 u7-polish 单元；③【低】目录 chip 形态 → u7-polish 对齐 demo；④【低】日期分组缺「本周」档 → batch-renderer 补；⑤【低】行2 显示 sourcePath 而非原工作目录（cwd 字段零引用）→ batch-renderer 修；⑥【低】行内导入按钮 → 登记合理偏差（保留）；⑦【低】total 存而不用 → batch-renderer「可见 N / 共 total」；⑧【低】already_imported 文案缺「侧边栏可直接打开」引导 → batch-renderer 补；⑨ u1 验收「分批让出」测试缺失未声明 → batch-runtime 补用例（7be007a02）；⑩ P-scan-perf 无实测记录 → Gate B 阶段实测（残留风险登记）
+- 2026-09-02 阶段 4 修复循环：batch-renderer（d631e358c，5 项缺陷修，42/42）、batch-runtime（7be007a02，u1 分批让出用例，10/10）、u7-polish（六项 M3 打磨，55/55 + 254 全回归）全部 committed；主 agent 同步修订设计文档（7 条 doc_errors + 主目录措辞）与 demo（删方案 A「N 条消息/已压缩」两项无契约支撑展示；方案 C out-of-scope 部分保留原样）。设计文档修订要点：错误规格表补表外兜底码两行、D3 缓存失效因果修正、already_imported 统一内联、V6 改 stale 竞态构造、M3 阶段空档消除（toast 提前）、V1 删消息数
+- 2026-09-02 P-scan-perf 与 M1 ws-client 直调验证：登记残留，Gate B 执行（见残留风险）

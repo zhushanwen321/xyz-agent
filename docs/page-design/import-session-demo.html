@@ -1022,7 +1022,7 @@ class ModalVariant {
       bar.hidden = false;
       $('[data-path-p]', bar).textContent = q.trim();
       if (hit) {
-        $('[data-path-meta]', bar).textContent = `${hit.size} · ${hit.msgs} 条消息 · ${hit.grp} ${hit.time}`;
+        $('[data-path-meta]', bar).textContent = `${hit.size} · ${hit.grp} ${hit.time}`;
     $('[data-path-import]', bar).disabled = hit.imported;
         this.pathSession = hit;
       } else {
@@ -1073,14 +1073,11 @@ class ModalVariant {
             <span class="id">${s.short}</span>
             <span class="sep-dot"></span>
             <span>${esc(s.dirLabel)}</span>
-            <span class="sep-dot"></span>
-            <span>${s.msgs} 条消息</span>
             ${s.untitled ? '<span class="badge badge-dim">无标题</span>' : ''}
           </div>
         </div>
         <div class="r-side">
           ${s.imported ? '<span class="badge badge-dim">已导入</span>' : ''}
-          ${s.compacted ? '<span class="badge badge-info">已压缩</span>' : ''}
           <span>${s.time}</span>
         </div>
       </div>`;

@@ -107,10 +107,12 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
        或粘贴 .jsonl 绝对路径）；目录 chip「全部目录 ▾」+「选择其他目录」按钮；
        列表按日期分组（今天/昨天/本周/更早），每条目两行：
          行1 = 会话名称（session_info.name，无标题回退目录名）
-         行2 = 短 ID（mono）· 原工作目录 · N 条消息 · 大小
+         行2 = 短 ID（mono）· 原工作目录 · 大小
+         （2026-09-02 一致性审查裁决：删「N 条消息」——scanSessionMeta 无此字段，
+          补字段需全文件读与 P-scan-perf 性能约束冲突；消息数非导入决策必需）
        底部：导入到 [project 下拉，默认当前激活]  [取消] [导入]
 [用户] 在搜索框输入 "01a020"（uuid 前 6 位）
-[系统] 列表实时过滤出 1 条：「日线数据管道迁移到 clickhouse」01a020 · ~/Stock · 214 条消息 · 8.1 MB
+[系统] 列表实时过滤出 1 条：「日线数据管道迁移到 clickhouse」01a020 · ~/Stock · 8.1 MB
 [用户] 点选该条目，project 下拉确认是「Stock」，点「导入」
 [系统] 按钮短暂 loading → 对话框关闭 → toast「已导入「日线数据管道迁移到 clickhouse」到 Stock · 可继续对话」
        → 侧边栏 Stock 分组顶部出现该会话（带「导入」fresh 徽标，数秒后淡出）
@@ -153,13 +155,13 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
     （此后新消息全部写入太极副本，源文件不再被触碰）
 ```
 
-**成功路径变体（原目录不存在，MF-2）**：若所选会话的原工作目录已删除（候选条目会带「原目录不存在，续聊将在 ~ 执行」标注），导入 toast 追加同款预警；打开续聊时 runtime 既有 F3 兜底把 cwd 改写到 `~` 后附着——用户知情，无静默语义漂移（V9 验收）。
+**成功路径变体（原目录不存在，MF-2）**：若所选会话的原工作目录已删除（候选条目会带「原目录不存在，续聊将在主目录执行」标注），导入 toast 追加同款预警；打开续聊时 runtime 既有 F3 兜底把 cwd 改写到 `~` 后附着——用户知情，无静默语义漂移（V9 验收）。
 
-**失败路径**（每个错误配恢复指引，详见 §3.3 错误规格）：
+**失败路径**（每个错误配恢复指引，详见 §3.3 错误规格；`import_invalid_session` 的 UI 可达路径 = stale 竞态——非 session 文件不进候选（scanner 按首行 header 识别）、路径模式 no-hit 时导入按钮禁用，见 V6 修正）：
 
 ```
-[用户] 在搜索框粘贴 /Users/x/notes.txt（非 session jsonl）→ 切换到路径模式 → 点「导入此文件」
-[系统] 路径行显示错误态：不是有效的 pi session 文件（首行缺少 session header）：/Users/x/notes.txt
+[用户] 候选列表 stale 后源文件被替换为非 session 内容 → 路径模式粘贴该文件 → 点「导入此文件」
+[系统] 路径行显示错误态：不是有效的 pi session 文件（首行缺少合法 session header）：<path>
        👉 确认选择的是 pi 产生的 .jsonl 会话文件；可用「选择其他目录」定位 sessions 目录
 ```
 
@@ -198,7 +200,7 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 - **效果**：导入体与太极自产 session 在文件系统层面不可区分，§3.1 续聊步骤（pi 写回同文件）自然成立。
 
 **D3：候选列表与搜索走 runtime RPC（B1），外部扫描异步分批 + 独立 TTL 缓存（r2 修订：显式执行模型）**
-- **采用**：新增 `session.importCandidates`（契约见 D5）。执行模型（MF-3）：外部目录遍历用 `fs/promises.readdir`，每文件 meta 提取**复用 `scanSessionMeta`（sync，单文件 header+尾读通常 <1ms）但分批执行**——每批 N=100 文件后 `await setImmediate` 让出事件循环，4,615 文件首扫被切为数十个短批，WS 消息与流式广播在批间照常处理。缓存：外部根扫描结果独立 TTL 缓存（1s，对齐惯例；`scanDirCache` 为单条目缓存、dir 作等值校验字段，故独立存放）；`sessionMetaCache` 按 filePath+mtime+size 天然跨根复用（同文件二次扫描零 IO）。导入成功后失效外部根缓存（alreadyImported 翻转）。扫描深度 = 顶层 + 一层子目录（与太极根同构；更深层静默跳过，UI 目录 chip tooltip 声明此假设）。候选列表同样**不收录文件名含 `.tmp-migrate-` / `.tmp-import-` 标记的文件**（isScannableSessionFile 同一规则；此类文件是迁移残留的概率远高于合法 session，路径模式导入会得到 `import_marker_filename` 明确错误而非 limbo——r2-S1）。
+- **采用**：新增 `session.importCandidates`（契约见 D5）。执行模型（MF-3）：外部目录遍历用 `fs/promises.readdir`，每文件 meta 提取**复用 `scanSessionMeta`（sync，单文件 header+尾读通常 <1ms）但分批执行**——每批 N=100 文件后 `await setImmediate` 让出事件循环，4,615 文件首扫被切为数十个短批，WS 消息与流式广播在批间照常处理。缓存：外部根扫描结果独立 TTL 缓存（1s，对齐惯例；`scanDirCache` 为单条目缓存、dir 作等值校验字段，故独立存放）；`sessionMetaCache` 按 filePath+mtime+size 天然跨根复用（同文件二次扫描零 IO）。导入成功后失效太极根扫描缓存（`invalidateScanDirCache`——alreadyImported 标记由 listCandidates 每次对太极根扫描重算，翻转由此生效；外部根缓存只含源文件元数据、复制不动源，无需失效。2026-09-02 一致性审查修正因果表述）。扫描深度 = 顶层 + 一层子目录（与太极根同构；更深层静默跳过，UI 目录 chip tooltip 声明此假设）。候选列表同样**不收录文件名含 `.tmp-migrate-` / `.tmp-import-` 标记的文件**（isScannableSessionFile 同一规则；此类文件是迁移残留的概率远高于合法 session，路径模式导入会得到 `import_marker_filename` 明确错误而非 limbo——r2-S1）。
 - **被否**：renderer 全量过滤（B2）；每次查询强制全扫（无缓存不可接受）；纯 sync 一把梭（万级阻塞操作殃及多面板其他会话，「渐进返回」降级在 sync 模型下不可实现——审查 MF-3 反例）；worker thread 隔离（进程开销与复杂度，分批让出已够用，减法优先）。
 - **证据**：`session-file-utils.ts` 全 sync IO 现状（import 列表 L8）；`scanPiSessions` 缓存分层（:956-1045）；`scanSessionMeta` 单文件成本（header 首读+尾读）；message-broker.ts:92 大 payload 敏感性。
 - **效果**：§1 目标 1 成立且数据量增长不退化；P-scan-perf 探针补「事件循环单次连续阻塞 <100ms」指标后可真实验证。
@@ -266,12 +268,16 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 | `import_source_missing` | 源文件不存在/不可读 | 「文件不存在或不可读：<path>」 | 「检查路径是否正确，或用『选择其他目录』重新定位 sessions 目录」 |
 | `import_invalid_session` | 首行无 session header，或 header 字段清单不合法（`type !== 'session'` / `id` 非非空字符串 / `cwd` 非非空字符串，见 D1 清单） | 「不是有效的 pi session 文件（首行缺少合法 session header）：<path>」 | 「确认选择的是 pi 产生的 .jsonl 会话文件」 |
 | `import_dir_unreadable` | rootDir readdir EACCES 等 | 「无法读取该目录：<dir>」 | 「检查目录权限后重试，或『选择其他目录』重新指定」 |
-| `import_already_imported` | sessionId 已在太极扫描集 | 列表条目「已导入」徽标（导入按钮禁用）；stale 列表点导入时 toast 提示 | 「该会话已在太极中，侧边栏可直接打开」（标记文件名的 limbo 场景已被 `import_marker_filename` 前置拦截，此文案不会再指向不可见条目） |
+| `import_already_imported` | sessionId 已在太极扫描集 | 列表条目「已导入」徽标（导入按钮禁用）；stale 列表点导入时对话框内联展示同款引导文案（2026-09-02 一致性审查统一：与全部其他码同走内联通道，不单设 toast 分支） | 「该会话已在太极中，侧边栏可直接打开」（标记文件名的 limbo 场景已被 `import_marker_filename` 前置拦截，此文案不会再指向不可见条目） |
 | `import_marker_filename` | 源文件名含 `.tmp-migrate-` / `.tmp-import-` 标记（r2-S1：疑似迁移残留副本；导入落地后会被自家扫描过滤器永久挡在侧边栏外形成 limbo） | 「文件名包含临时标记，疑似迁移残留副本：<name>」 | 「请使用原始文件名（无标记）的 session 文件导入」 |
 | `import_sidecar_failed` | rename 落地后 sidecar 写失败（readback 不符；`persistBindingSidecar` 吞错语义） | **warning 通道、非 error envelope（r4-INFO）**：RPC 成功但带 `warning: 'sidecar_failed'`；toast「已导入，但未能自动归入项目」 | 「会话已出现在默认分组；在侧边栏右键『归入项目』手动归类（setProject）」——文件不回滚 |
 | `import_target_conflict` | existsSync(targetPath) 命中但 sessionId 不在 force 集合（同目标路径已被另一会话占用，如源文件被手工改过名；r4 新增） | 「目标路径已被另一个会话占用：<targetPath>」 | 「检查源文件是否被手工改名/复制过；请改用原始文件名的 session 文件导入」 |
 | `import_copy_failed` | 磁盘满/目标权限（**mkdir**/copy/rename 抛错，r4-INFO） | 「导入失败（写入目标目录出错）：<原因>」 | 「检查磁盘空间与 ~/.xyz-agent 写权限后重试」。**原子性（r2）：临时名写入 + rename 原子替换；失败自动清理临时文件，正式名从未落地，重试不会被去重拦截；进程 crash 残留由启动清扫（`.tmp-import-` 家族）回收** |
 | `import_project_invalid` | projectId 不存在或为空串（空串会使 readback 假阳性——`persistProjectBinding` 空串语义是「删 sidecar 归默认」，导入流程不容忍，r3-INFO） | 「目标项目不存在」 | 刷新 project 列表后重选（下拉数据实时来自 project store） |
+| `import_unsupported` | 导入服务未装配（组合根遗漏注入；handler 可选服务缺席兜底惯例，理论不可达） | 「导入功能不可用」 | 「重启应用后重试」 |
+| `import_failed` | runtime 意外内部错误（非 ImportServiceError 的无 code 异常兜底） | 「导入失败（内部错误）」 | 「重试；若持续复现请重启应用」 |
+
+> 表外兜底码说明（2026-09-02 一致性审查补登，实现既有）：上两行为 handler 层兜底码，不在 `ImportErrorCode` 联合内；renderer 错误分支实现须含 default 兜底，勿按表穷举 switch。
 
 ### 3.4 运行时断言探针清单
 
@@ -296,15 +302,15 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 
 | # | 场景（回溯 §1 目标） | 步骤 | 通过标准 |
 |---|---|---|---|
-| V1 找到+导入+归组（目标 1/2） | 在真实机器上：打开导入对话框 → 搜索框输入真实短 ID（取自 `~/.pi/agent/sessions` 某文件的 uuid 前 6 位）→ 选中 → project 选「Stock」→ 导入 | 候选列表过滤出唯一条目且名称/目录/消息数与文件内容一致；导入后 toast 正确；**侧边栏 Stock 分组顶部出现该会话**；`~/.pi/agent/sessions` 源文件 mtime 与内容不变（P-isolation） |
+| V1 找到+导入+归组（目标 1/2） | 在真实机器上：打开导入对话框 → 搜索框输入真实短 ID（取自 `~/.pi/agent/sessions` 某文件的 uuid 前 6 位）→ 选中 → project 选「Stock」→ 导入 | 候选列表过滤出唯一条目且名称/目录/大小与文件内容一致；导入后 toast 正确；**侧边栏 Stock 分组顶部出现该会话**；`~/.pi/agent/sessions` 源文件 mtime 与内容不变（P-isolation） |
 | V2 续聊（目标 3） | V1 后点击该会话 → 等历史加载 → 发送「接着上次的结论，用一句话总结」 | 完整历史渲染（含工具调用块）；收到模型回复；新消息写入 `~/.xyz-agent/pi/sessions` 副本而非源文件 |
 | V3 重启持久（目标 2/3） | V1 后重启 `pnpm dev` → 看 Stock 分组 | 导入的会话仍在 Stock 分组，点击可再续聊（P-reload） |
 | V4 三通道搜索（目标 1） | 分别用：①会话名称关键词 ②完整 uuid ③`.jsonl` 绝对路径粘贴 | 前两者列表过滤命中目标条目；路径输入切换路径模式，展示文件元信息，导入成功 |
-| V5 去重与冲突（目标 4，负面） | V1 导入后再次打开对话框搜索同一 session；用 stale 前端绕过（直发 RPC）；**再取另一 session 文件手工改名为已占用目标名后直发 RPC（r4-S3）** | 列表条目显示「已导入」且禁用；直发 RPC 返回 `import_already_imported`，UI toast 引导而非报错弹窗；改名 fixture 返回 `import_target_conflict` 且含恢复指引文案 |
-| V6 错误恢复（目标 4） | 粘贴一个非 session 的 `.jsonl`（如手写两行普通 JSON）路径导入；把 rootDir 指向无权限目录 | 分别得到 `import_invalid_session` / `import_dir_unreadable` 的内联错误 + 对应恢复指引文案；对话框不崩、可继续操作 |
+| V5 去重与冲突（目标 4，负面） | V1 导入后再次打开对话框搜索同一 session；用 stale 前端绕过（直发 RPC）；**再取另一 session 文件手工改名为已占用目标名后直发 RPC（r4-S3）** | 列表条目显示「已导入」且禁用；直发 RPC 返回 `import_already_imported`，UI 对话框内联引导而非报错弹窗（2026-09-02 一致性审查统一：与全部其他码同走内联）；改名 fixture 返回 `import_target_conflict` 且含恢复指引文案 |
+| V6 错误恢复（目标 4） | `import_invalid_session` 用 stale 竞态构造（2026-09-02 一致性审查修正可达性——非 session 文件不进候选、路径模式 no-hit 按钮禁用，直接粘贴非 session 路径不可达）：先让合法 session 进入候选，再把该文件内容替换为手写两行普通 JSON，随后路径粘贴该文件导入；`import_dir_unreadable` 把 rootDir 指向无权限目录 | 分别得到 `import_invalid_session` / `import_dir_unreadable` 的内联错误 + 对应恢复指引文案；对话框不崩、可继续操作 |
 | V7 custom entries 兼容（目标 3） | 挑一个含 `unified-hooks:*` custom entry 的真实 CLI session（本机存在）导入并打开 | 对话流渲染正常；重开（reload）后与实时视图一致（P-custom） |
 | V8 目录切换 | 点「选择其他目录」选一个只有少量 session 的目录 | 目录 chip 更新、列表/ dirs 重新加载、计数正确 |
-| V9 死 cwd 续聊（目标 3 降级类，MF-2 补入；r2-S3 改确定性构造） | **确定性 fixture**：`mktemp -d` 建临时目录 → 在其中真实跑 pi（`pi --mode rpc` 发一条消息，产生 header.cwd 指向该临时目录的 session 文件）→ `rm -rf` 该目录 → 该 session 即为真实死 cwd 会话。用「选择其他目录」指向其所属 sessions 根（或路径粘贴该文件）→ 搜索 → 确认条目有「原目录不存在，续聊将在 ~ 执行」标注 → 导入（toast 含预警）→ 打开发消息 | 续聊在 `~` 执行且成功收到回复（F3 兜底生效）；用户全程可见知情提示，无静默语义漂移；新消息写入太极副本。**注：不可用「拷贝 session 到临时 rootDir」构造——复制不改变 header.cwd，cwd 是否失效与该操作无因果关系** |
+| V9 死 cwd 续聊（目标 3 降级类，MF-2 补入；r2-S3 改确定性构造） | **确定性 fixture**：`mktemp -d` 建临时目录 → 在其中真实跑 pi（`pi --mode rpc` 发一条消息，产生 header.cwd 指向该临时目录的 session 文件）→ `rm -rf` 该目录 → 该 session 即为真实死 cwd 会话。用「选择其他目录」指向其所属 sessions 根（或路径粘贴该文件）→ 搜索 → 确认条目有「原目录不存在，续聊将在主目录执行」标注 → 导入（toast 含预警）→ 打开发消息 | 续聊在 `~` 执行且成功收到回复（F3 兜底生效）；用户全程可见知情提示，无静默语义漂移；新消息写入太极副本。**注：不可用「拷贝 session 到临时 rootDir」构造——复制不改变 header.cwd，cwd 是否失效与该操作无因果关系** |
 
 依赖说明：V1-V8 全部真实环境（本机 `~/.pi/agent/sessions` 4,615 文件即真实数据集），无 mock。pi attach 为真实子进程。
 
@@ -316,7 +322,7 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 
 1. **M1 runtime 层**：`scanExternalSessions` 异步分批导出（含 `.tmp-import-` 过滤扩展）+ ImportService（candidates/import + 全局导入互斥 + 互斥区内 header/标记/双检 + mkdir + tmp+rename 原子复制 + sidecar readback）+ 2 个 RPC case + 单测 → 可用 ws-client 脚本直调验证（对应 V4/V5/V6/V9 的 RPC 面）
 2. **M2 renderer 层**：api domain + ImportSessionDialog 组件 + 侧边栏入口/⌘I/i18n → 真实场景验收全量跑（V1-V8 + 探针 P-*）
-3. **M3 打磨**：fresh 徽标淡出、toast、空态/骨架、demo 对齐走查（视觉与 `import-session-demo.html` 方案 A 对照）
+3. **M3 打磨**：fresh 徽标淡出、空态/骨架、demo 对齐走查（视觉与 `import-session-demo.html` 方案 A 对照）。成功 toast 为 V1/V9 验收依赖，不属打磨，已随补入的 u7-polish 单元提前至 M2 交付面（2026-09-02 一致性审查裁决：消除「M2 验收含 toast 但 toast 列在 M3」的阶段空档）
 
 **单元拆分清单**：
 
