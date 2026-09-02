@@ -120,9 +120,15 @@ export interface ChatRoundTicket {
  * 方法面，防 Service 内部演进（增删私有方法）连锁影响引擎适配层。
  *
  * chat 域轮次面（takeChatRound/runChatRound/resumeChatRound/reportRecordTransition）
- * 是可选项：仅 chat 绑定的引擎实例（编排层经适配器构造）提供；SAR 直绑 Service 的
- * workflow 实例不提供——run 恒走 executeAndAwait、interact 的 message 分支不被 SAR
- * 调用，可选面缺失不构成缺陷。
+ * 声明为可选项（u-2c 聚合后形态）：两处生产绑定（registration.ts / SAR）均绑
+ * subagentService.asEngineService（= piEngineServiceAdapter），可选面实际恒被提供——
+ * 并非「仅 chat 绑定的实例提供、SAR 的实例不提供」。两域分支改由 taskId 空间区分：
+ * chat ticket 的 key 是 record.id（编排层预建时 set），SAR 的 taskId 是独立铸造的
+ * `sa-<uuid>`（subprocess-agent-runner.ts），恒不在 ticket map 中 → run 的
+ * takeChatRound 探测恒 miss → 恒走 executeAndAwait 分支。可选面保留 optional 的意义
+ * 是测试可注入仅含 workflow 面的 fake；requireResumeFace / runChatTicket 的 throw
+ * 分支在生产绑定（asEngineService 全量提供）下不可达，仅防 fake 绑定漏面时静默
+ * 丢消息/丢轮次。
  */
 export interface PiEngineService {
   executeAndAwait(

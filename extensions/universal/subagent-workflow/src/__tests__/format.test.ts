@@ -3,6 +3,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 
 import {
+  formatElapsed,
   formatElapsedSeconds,
   formatTokens,
   padToVisible,
@@ -58,6 +59,37 @@ describe("formatElapsedSeconds", () => {
     expect(formatElapsedSeconds(3600)).toBe("1h0m");
     expect(formatElapsedSeconds(3661)).toBe("1h1m");
     expect(formatElapsedSeconds(7325)).toBe("2h2m");
+  });
+});
+
+// ============================================================
+// formatElapsed
+// ============================================================
+describe("formatElapsed", () => {
+  // 固定基准时间注入 now，避免依赖墙钟
+  const NOW = 1_700_000_000_000;
+  const startedAt = (secsAgo: number) => new Date(NOW - secsAgo * 1000).toISOString();
+
+  it("returns '-' when startedAt is missing", () => {
+    expect(formatElapsed(undefined, NOW)).toBe("-");
+  });
+
+  it("shows 0s below 1s and Xs below 60s", () => {
+    expect(formatElapsed(startedAt(0.5), NOW)).toBe("0s");
+    expect(formatElapsed(startedAt(12), NOW)).toBe("12s");
+    expect(formatElapsed(startedAt(59), NOW)).toBe("59s");
+  });
+
+  it("shows XmYs below 1h（<1h 行为不变，U-1 修复断言）", () => {
+    expect(formatElapsed(startedAt(60), NOW)).toBe("1m0s");
+    expect(formatElapsed(startedAt(2730), NOW)).toBe("45m30s");
+    expect(formatElapsed(startedAt(3599), NOW)).toBe("59m59s");
+  });
+
+  it("shows XhYm at 3600+（与 formatElapsedSeconds 同形态，U-1 修复断言）", () => {
+    expect(formatElapsed(startedAt(3600), NOW)).toBe("1h0m");
+    expect(formatElapsed(startedAt(4500), NOW)).toBe("1h15m");
+    expect(formatElapsed(startedAt(7325), NOW)).toBe("2h2m");
   });
 });
 

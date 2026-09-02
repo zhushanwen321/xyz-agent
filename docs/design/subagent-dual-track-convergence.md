@@ -132,13 +132,13 @@ journal 文件：<dataRoot>/engines/<engineId>/<poolKey>/journal-<taskId>.jsonl
 
 **终态一：GUI 历史详情有守护且语义 engine-generic。** 用户打开任何引擎子代理的历史详情：内容语义与 core 守护实现一致——对现役 zcode 为内容 parity（其生产流本就无可观察差异），message_end 携带 error 的记账语义随守护实现就位，未来 parser 演进或新引擎接入产出该形态时正确生效；读取通路 = core 单一实现（runtime 薄调用）。runtime 侧不再存在「引擎 id 硬编码分支」——接入第三个引擎时 runtime 零改动。
 
-**终态二：每个概念一个写点。** 开发者改杀链：只改 `engine/common/kill-chain.ts`，pi/zcode/未来引擎同时生效（grace 窗口作为参数，pi 传 30s 保持现状行为，zcode 传 5s）；改 TUI 时间格式：只改 `interface/format.ts`；改资源清单注入策略：只改 injector 工厂。
+**终态二：每个概念一个写点。** 开发者改杀链：只改 `engine/common/kill-chain.ts`，pi/zcode/未来引擎同时生效（grace 窗口作为参数，pi 传 30s 保持现状行为，zcode 传 5s；timer unref 语义与 SIGKILL 升级 warn 留痕也随 grace 一并按引擎参数化——**一致性审查 r1 补充：A1 零回归要求的两个设计未点名维度**）；改 TUI 时间格式：只改 `interface/format.ts`；改资源清单注入策略：只改 injector 工厂。
 
 **终态三：pi 与 zcode 同形。** 新开发者理解任意引擎执行：`engines/<id>/` 四件套 + capabilities 声明就是全部入口。`SubagentService` 只剩编排核（execute / record 生命周期 / cancel），interface 从 27 个 public 方法收窄到 ~10 个。
 
 **终态四：缺省路径一次映射。** workflow 派 pi 子代理：`AgentCallOpts`（与 AgentTaskSpec 合流后的中立形状）→ pi 边界一次映射为 spawn 参数。两个 mapper 文件与其往返保真测试被删除。
 
-**终态五：机制无假兑现。** pool-manager 要么接线（池目录有界），要么删除且设计文档 §3.3.9 同步修订为「preparer 幂等重建即清理语义」；`formatSubagentStatusSnapshot` 死代码删除；EnginePort.read 获得生产调用方（经终态一的 runtime 薄调用）。
+**终态五：机制无假兑现。** pool-manager 要么接线（池目录有界），要么删除且设计文档 §3.3.9 同步修订为「preparer 幂等重建即清理语义」；`formatSubagentStatusSnapshot` 死代码删除；EnginePort.read 的实现获得生产复用——复用形态为 module 级（runtime 薄调用复用同一 reader/journal-replay module），port 面由 conformance 守护（「经 port 面生产调用」被 D1 被否②自己封死：runtime 跨进程不可达 pi 进程内 EnginePort，module 级复用是唯一可行路径——**一致性审查 r1 修正，2026-09-03**）。
 
 **失败路径（均带恢复指引）**：
 
@@ -169,7 +169,7 @@ journal 文件：<dataRoot>/engines/<engineId>/<poolKey>/journal-<taskId>.jsonl
 
 **D2（组 2 / C2）：pi 执行轨物理下沉 engines/pi/，Service 收敛单轨——重开 P1「不物理移动」决策（选定）**
 
-- **采用**：`session-runner.ts` / `pi-invocation.ts` / `stdin-writer.ts` / `spawn-event-adapter.ts` / `get-state-handshake.ts` / `output-collector.ts` / `temp-prompt.ts` / `argv-mirror.ts` / `turn-limiter.ts` 九件物理移入 `execution/engine/engines/pi/`（rename 级成本）；`PiEngine` 持有四件套并原生实现 `interact`（吸收 `deliverMessage`/`resumeRound` 的 pi 协议知识）；`SubagentService` 删除 `kickOffBackground` 旧轨，chat 域与 workflow 域统一走 `executeViaEngine → EnginePort`。迁移形态：**单 commit 机械 rename + 同 commit 全量更新 import（含 40+ 测试文件），不留 re-export shim**——shim 即新双轨，违反本设计根因。
+- **采用**：`session-runner.ts` / `pi-invocation.ts` / `stdin-writer.ts` / `spawn-event-adapter.ts` / `get-state-handshake.ts` / `output-collector.ts` / `temp-prompt.ts` / `argv-mirror.ts` / `turn-limiter.ts` 九件物理移入 `execution/engine/engines/pi/`（rename 级成本）；`PiEngine` 持有四件套并原生实现 `interact`（吸收 `deliverMessage`/`resumeRound` 的 pi 协议知识）；`SubagentService` 删除 `kickOffBackground` 旧轨，chat 域与 workflow 域统一经 EnginePort——chat 域入口 `executeViaEngine`、workflow 域入口 SAR（两入口见 §3.5 终态图；**一致性审查 r1 措辞修正：原文「统一走 executeViaEngine」与 §3.5 及实现矛盾，统一的是「经 EnginePort」而非单一入口函数**）。迁移形态：**单 commit 机械 rename + 同 commit 全量更新 import（含 40+ 测试文件），不留 re-export shim**——shim 即新双轨，违反本设计根因。
 - **重开 P1 决策的论证**：P1「不物理移动」是回填期的回归隔离策略（保测试 import 路径零变化），其代价当时未知、现已实证——§2.2 #2/#5/#6/#7/#10 五对双轨全部是该选择的下游，interact/read 两面因此悬空。触发条件已满足：zcode 引擎已全量落地 + conformance 套件转绿（P4 完成），EnginePort seam 已被一个深 adapter 验证；继续保留旧轨的每日成本（双写点漂移）已超过一次性迁移成本。
 - **被否**：①维持双轨 + 文档声明「旧轨冻龄」——冻龄无机器约束，§2.3 根因一已证明人工纪律守不住；②只删 PiEngine 壳、让 Service 旧轨合法化——放弃多引擎对 chat 域的覆盖，EnginePort 退化为 workflow 专用接口，与 engine-abstraction §3.3.1 的终态图矛盾；③渐进迁移（先移文件留 shim 分两 PR）——中间态即双轨，本设计的根因就是中间态无退出机制。
 - **证据**：§2.2 #2（双轨证据与九件合计 ≈3079 / PiEngine 415 行数对比）；pi-engine.ts 文件头自认「不物理移动」；⛔ 实施期门：①迁移对 pi builtin staged 打包的影响核对——extension 经 esbuild bundle 为单文件 staged，预期零影响，实施期跑 `bash scripts/validate-runtime-bundle.sh` + 打包产物探针实证；②`engines/pi/reader.ts` 仅被 PiEngine.read 消费（pi-engine.ts:41 import readPiSessionView），而 read 生产零调用（runtime pi 历史走自有 JSONL 链）——迁移时一并裁决：删除或标注保留理由，不新增第三个 SessionView 装配实现。探针失败的降级路径见 §3.1 失败路径第二条。
@@ -191,14 +191,14 @@ journal 文件：<dataRoot>/engines/<engineId>/<poolKey>/journal-<taskId>.jsonl
 
 **D5（组 3 / C7）：workflow 运行收尾单点化 + 错误分诊结构化（选定）**
 
-- **采用**：①`orchestration/error-recovery.ts` 更名/拆分为 `worker-message-pump.ts`（名实相符：它承载消息路由 + IPC 序列化防御 + retry/重建 + 终态化四类职责，「error-recovery」名下找消息路由必漏）；②「transition → save → pending:unregister → onRunDone」四步终态 coda（8 处逐字复制：error-recovery ×6、lifecycle ×2）收敛为 `finalizeRun(run, deps, {notifyDone?})` 单写点——`terminateRunningRuns` 不发 onRunDone 的真差异用参数承载；③跨层错误分诊结构化：`AgentResult` 增加 `failureKind` 字段（`stale_context` / `schema_deterministic` / `unknown`），产出侧（execution/output-collector）识别 pi 错误文案后写字段，消费侧（execute-agent-call）读字段分诊，删除 execute-agent-call 侧的子串分诊表（:60-74）与 `DETERMINISTIC_SCHEMA_FAILURE_PREFIX` 字面量消费。**语义守恒**：`unknown`（含缺省）= 可重试——保持现行默认重试语义（execute-agent-call:240「可重试失败：退避后递归」），仅 stale_context（不重试、换参重发）与 schema_deterministic 维持特判。**词表归属声明**：`STALE_CONTEXT_PATTERNS` 表本身保留在产出侧 output-collector（其 :96 neutralizeStalePatterns 服务用户可见错误文本的中和，与分诊无关）——文案词表依存并未消除，而是从「跨模块消费 seam」收窄为「产出侧包内单点识别」；词表漂移的失效模式是 `failureKind=unknown` → 保守重试（安全默认），不再是静默漏诊。
+- **采用**：①`orchestration/error-recovery.ts` 更名/拆分为 `worker-message-pump.ts`（名实相符：它承载消息路由 + IPC 序列化防御 + retry/重建 + 终态化四类职责，「error-recovery」名下找消息路由必漏）；②「transition → save → pending:unregister → onRunDone」四步终态 coda（8 处逐字复制：error-recovery ×6、lifecycle ×2）收敛为 `finalizeRun(run, deps, {notifyDone?})` 单写点——`terminateRunningRuns` 不发 onRunDone 的真差异用参数承载；③跨层错误分诊结构化：`AgentResult` 增加 `failureKind` 字段（`stale_context` / `schema_deterministic` / `unknown`），产出侧（`execution/engine/engines/pi/output-collector.ts`，u-2a 下沉后位置）识别 pi 错误文案后写字段，消费侧（execute-agent-call）读字段分诊，删除 execute-agent-call 侧的子串分诊表（:60-74）与 `DETERMINISTIC_SCHEMA_FAILURE_PREFIX` 字面量消费。**语义守恒**：`unknown`（含缺省）= 可重试——保持现行默认重试语义（execute-agent-call:240「可重试失败：退避后递归」），仅 stale_context（不重试、换参重发）与 schema_deterministic 维持特判。**词表归属声明**：`STALE_CONTEXT_PATTERNS` 表本身保留在产出侧 output-collector（其 :96 neutralizeStalePatterns 服务用户可见错误文本的中和，与分诊无关）——文案词表依存并未消除，而是从「跨模块消费 seam」收窄为「产出侧包内单点识别」；词表漂移的失效模式是 `failureKind=unknown` → 保守重试（安全默认），不再是静默漏诊。
 - **被否**：①保留文案匹配 + 加固交叉锁定测试——把脆弱性锁进测试不等于消除脆弱性，pi 升级时红的是测试、断的是生产分诊；structured-output 方案 A 的教训（校验权威唯一）同构适用于分诊权威——分诊依据必须是结构化数据不是文案；②「缺省/未知 failureKind = 不重试（保守处理）」——击穿反例：现行语义是默认重试（:240），反转后瞬态 provider 错误、spawn 失败等一切未标注路径将静默丢失重试（被否谱系：审查 r1 击穿，MF4）；正确机制是 unknown = 可重试。
 - **证据**：§2.2 表外走查发现（error-recovery.ts L240-251/L573-595/L807-815/L864-872/L912-918/L973-980 六处 + lifecycle.ts L337-345/L388-391 两处）；execute-agent-call.ts:59-64/:97。
 - **效果**：新增终态路径不再靠人工复制第 9 份；pi 升级敏感面消除一处。
 
 **D6（组 3 / C3）：任务形状合流，缺省路径一次映射（选定）**
 
-- **采用**：`AgentCallOpts`（orchestration，18 字段）与 `AgentTaskSpec`（engine 中立）合流——orchestration 直产 TaskSpec，删 `execute-options-mapper.ts`；pi 边界内 `taskSpecToExecuteOptions`（pi-engine.ts:203）替换为「TaskSpec → pi spawn 参数」一次性直出映射（不还原 ExecuteOptions 中间态），删 `engines/pi/task-spec-mapper.ts` 与往返保真测试。`ExecuteOptions` 类型本身保留——它是 SubagentService 内部编排形状（record 投影/轮次结算消费），本决策消除的是 SAR 链路上的中间态，不是类型本身。
+- **采用**：`AgentCallOpts`（orchestration，18 字段）与 `AgentTaskSpec`（engine 中立）合流——orchestration 直产 TaskSpec，删 `execute-options-mapper.ts`；pi 边界内 `taskSpecToExecuteOptions`（pi-engine.ts:203）替换为 `agentCallToExecuteOptions`——合流形状 `AgentCallOpts` → `ExecuteOptions`（spawn 编排参数集）一次性直出映射，消除 AgentTaskSpec 中间态与第二次映射（**一致性审查 r1 措辞修正：原「TaskSpec → pi spawn 参数（不还原 ExecuteOptions 中间态）」易误读为 pi 边界不再出现 ExecuteOptions；实际消除的是 AgentTaskSpec 往返与第二次映射，ExecuteOptions 按 D6 被否①保留为 Service 内部编排形状**），删 `engines/pi/task-spec-mapper.ts` 与往返保真测试。`ExecuteOptions` 类型本身保留——它是 SubagentService 内部编排形状（record 投影/轮次结算消费），本决策消除的是 SAR 链路上的中间态，不是类型本身。
 - **被否**：①彻底删除 ExecuteOptions（Service 内部也改吃 TaskSpec）——Service 的 record 投影/chatMode 编排深度耦合 ExecuteOptions 字段，改动面从「删两个 mapper」膨胀为「重写 Service 编排」，ROI 不成立（准则 8：先做减法里最小的）；②维持往返 + 文档化——税照付，字段演进仍三点同步。
 - **证据**：§2.1 例三（三形态四映射链）；⛔ 实施期门：字段完整性清单——从两个 mapper 现有测试提取字段全集作对照表，新单映射按表逐字段核对。
 - **效果**：目标 4 成立；删除 2 个 mapper module + 1 套保真测试。
@@ -258,7 +258,7 @@ journal / 引擎原生存储
 |---|------|------|---------|------|
 | V1 | journal 读取收敛：生产路径切换 + 守护对称（组1/D1） | ①迁移前采集基线：dev 下真实 zcode 引擎跑一个完整子代理任务，保存 GUI 历史详情渲染对照（截图/DOM）；②迁移后重跑同任务并打开详情页；③确定性故障注入（定位为回归校验项，非生产可达路径——该形态 zcode 生产不产出，见 D1 收益口径）：构造 message_end 含 error 字段的 journal 样本（golden fixture 注入——仅构造数据形态，读取链全真）经 core 守护链读取；④代码断言 | ②与基线渲染等价（内容 parity——目标 1 的主验收证据）；③core 守护链对该样本正确记账 error（守护实现的回归校验）；④runtime 手写 reducer 文件删除、`subagent-engine-history.ts` 无 `ZCODE_ENGINE_ID` 硬编码分支（原 :130）、core `session-view-service` 闭包复核无 pi 包 | 目标 1/2 |
 | V2 | 壳内合并后 TUI 行为正确（组1/D7） | ①dev 下跑一个 workflow（或注入伪造时长的 record——仅构造数据形态，渲染链全真）使 WorkflowsView 显示 >1h 时长；②触发 before_agent_start，检查注入的 agent 清单与 workflow 清单 | ①显示 `1h15m` 形态而非 `75m30s`；②两份清单内容完整、缓存生效（二次触发无重复扫描日志）；views/format.ts 文件不存在 | 目标 2 |
-| V3 | 池生命周期接线生效——chat 域（组1/D8） | dev 下 chat 域派一个 zcode 子代理 → 检查 `<dataRoot>/engines/zcode/<poolKey>/`；删除该子代理 record | 任务启动后 refs.json 含该 taskId（chat 域 taskId=record.id）；record 删除后引用归零、池内引擎原生状态删除、journal 文件按规则处置（随 record 删除）；workflow 域按 D8 分域口径验收（接线或显式声明 TTL 回收） | 目标 5 |
+| V3 | 池生命周期接线生效——chat 域（组1/D8） | dev 下 chat 域派一个 zcode 子代理 → 检查 `<dataRoot>/engines/zcode/<poolKey>/`；删除该子代理 record | 任务启动后 refs.json 含该 taskId（chat 域 taskId=record.id，acquire 即时）；record 删除后引用与 journal 的回收走兜底路径——idle-GC 30 天归档或 pool TTL（`cleanupExpiredPoolRefs`），手动/关闭类删除属 archive 保留语义不即时释放（依据 D8 门①裁决：disposeAllRecords/user-close 归并 archive 保留类，真删除锚点 ≤2 未触发即时接线）；workflow 域按 D8 分域口径验收（门②判深，显式维持 TTL 回收——**一致性审查 r1 同步：原「引用归零/journal 随 record 删除」的即时回收口径与 u-1c 固化裁决不一致**） | 目标 5 |
 | V4 | pi 零回归 + 单轨化（组2/D2/D3） | ①采集基线后迁移：chat 域派 pi 子代理（带 schema 任务）+ 一个多步 workflow，record entry JSON 快照与基线 diff（volatile 字段白名单归一：timestamps / record id / sessionFile 路径 / runId 允许不同，其余字段级一致）；②GUI 四视图（对话流/工具面板/record 详情/WorkflowsView）与基线一致；③`pnpm run build` 打包 + `validate-runtime-bundle.sh`；④workflow 域派 zcode 子代理带 worktree + chat 域派 zcode 子代理带 worktree + 任一域派 zcode 子代理带 maxTurns；⑤chat 域派 pi 子代理带 maxTurns=3 | ①快照 diff 仅白名单字段；②视图一致；③打包双验证 exit 0；④worktree 两域均收到 `engine_capability_unsupported` 且无进程创建（漏拦缺口修复的正向验收），chat 域 `subagent` 工具调用**立即同步返回错误而非 background 模式句柄**（「同步」的观察特征——异步化回归的形态是先 background 成功、稍后 failed record），GUI 子代理列表与 record store 均无该次调用的新增条目（「无孤儿 record」断言落点），zcode+maxTurns 同步拦截（现状行为保持的正向守护，与⑤对称）；⑤正常执行、无拦截（反向验收：pi 既有合法能力无回归）；rg 无 `kickOffBackground` 残留 | 目标 2/3（A1 守护） |
 | V5 | workflow 收尾单点（组3/D5） | dev 下跑真实 workflow：①正常完成路径；②构造 budget_limited 路径（小预算）；③注入 stale-context 错误（mock 模型返回陈旧上下文错误——确定性故障注入，执行链全真）；④注入瞬态错误（模拟 provider 5xx） | ①②两路径的 run 终态四步各执行恰好一次（store 状态 + pending 计数核对）；③execute-agent-call 按 `failureKind=stale_context` 分诊（换参重发、不退避重试）；④按默认语义退避重试（unknown = 可重试，现行语义守恒） | 目标 2 |
 | V6 | 任务形状单映射（组3/D6） | dev 下 workflow 派带 schema + model + maxTurns 的 pi 子代理 | 子代理行为与迁移前一致（record 字段级一致）；两个 mapper 文件与往返保真测试已删除；字段完整性对照表（实施期门产物）逐项核对通过 | 目标 4 |
@@ -286,7 +286,7 @@ journal / 引擎原生存储
 - 组 2a：`execution/session-runner.ts` 等九件 → `execution/engine/engines/pi/`；40+ 测试 import 机械更新；`subagent-service.ts` 删旧轨
 - 组 2b：`engine/common/kill-chain.ts`、`routing.ts`、`subagent-service.ts`、`subprocess-agent-runner.ts`、预检两处
 - 组 2c：`subagent-service.ts` 拆分出 notifier 面/轮次结算/冷路径三 module
-- 组 3a：`orchestration/error-recovery.ts`（更名拆分）、`lifecycle.ts`、`execute-agent-call.ts`（删分诊表、消费 failureKind）、`execution/output-collector.ts`（failureKind 产出 + 词表保留）
+- 组 3a：`orchestration/error-recovery.ts`（更名拆分）、`lifecycle.ts`、`execute-agent-call.ts`（删分诊表、消费 failureKind）、`execution/engine/engines/pi/output-collector.ts`（failureKind 产出 + 词表保留；u-2a 下沉后位置）
 - 组 3b：`execute-options-mapper.ts`（删）、`engines/pi/task-spec-mapper.ts`（删）、`subprocess-agent-runner.ts`、`orchestration/models/types.ts`
 
 **待验证检查点（实施期必须实证，不预设结论）**：①D1 的 core 投影 module 依赖闭包复核（降级路径已备）+ message_end error 样本 golden 库可得性；②D2 迁移对 staged 打包零影响（validate-runtime-bundle.sh + 产物探针）；③D3 pi SIGTERM 退出时序实测确认 grace 参数语义不变；④D8 两道门：record GC 触发点全量盘点 + workflow 域 taskId↔record id 打通影响面评估（改 createRecordForMode 签名 / hook record store 即判深 → workflow 域维持 TTL 回收并显式登记）；⑤D6 字段完整性对照表从现有 mapper 测试提取；⑥走查计数类断言实施期复核（SubagentService public 方法数、整类 mock ×7、40+ 测试 import、coda 全量清单 rg 提取）。

@@ -633,16 +633,30 @@ export function formatStatusBadge(
 
 // ── Workflow 时间 / 统计格式化 ────────────────────────────────
 
-/** Format elapsed time string from startedAt. */
+/**
+ * Format elapsed time string from startedAt. Three tiers, output shape kept
+ * identical to formatElapsedSeconds（U-1 修复：>1h 显示 "1h15m"，消灭 "75m30s" 漂移形态）:
+ *
+ *   < 1s    → "0s"
+ *   < 60s   → "Xs"
+ *   < 3600s → "XmYs" ("45m30s")
+ *   ≥ 3600s → "XhYm" ("1h15m")
+ */
 export function formatElapsed(startedAt?: string, now: number = Date.now()): string {
   if (!startedAt) return "-";
   const ms = now - new Date(startedAt).getTime();
   if (ms < MS_PER_SEC) return "0s";
   const secs = Math.floor(ms / MS_PER_SEC);
   if (secs < SECS_PER_MINUTE) return `${secs}s`;
-  const mins = Math.floor(secs / SECS_PER_MINUTE);
-  const remSecs = secs % SECS_PER_MINUTE;
-  return `${mins}m${remSecs}s`;
+  if (secs < SECS_PER_HOUR) {
+    const mins = Math.floor(secs / SECS_PER_MINUTE);
+    const remSecs = secs % SECS_PER_MINUTE;
+    return `${mins}m${remSecs}s`;
+  }
+  // 小时分支计算形态照抄 formatElapsedSeconds，保证两函数同输入同输出
+  const hours = Math.floor(secs / SECS_PER_HOUR);
+  const mins = Math.floor((secs % SECS_PER_HOUR) / SECS_PER_MINUTE);
+  return `${hours}h${mins}m`;
 }
 
 /**
