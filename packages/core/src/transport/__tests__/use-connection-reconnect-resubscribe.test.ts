@@ -23,13 +23,19 @@
  * - TC-R7: runtime 重启（新 bus，seqCounter 归零）基线收缩——后续 seq=1 消息不被 drop
  * - TC-R8: 无订阅条目时重连 no-op
  *
+ * 构造方式（D9 测试 seam 复位）：ws-client 1 处 vi.mock（use-connection 顶层依赖，
+ * 不可消）+ dispatcher 1 处注入——pending/events/subscribe 三件套经真实
+ * configureRouteInbound 显式传 TransportPorts fake（不再 vi.mock 模块内部），
+ * 断言语义与改写前一致。
+ *
  * 运行：cd packages/core && npx vitest run src/transport/__tests__/use-connection-reconnect-resubscribe.test.ts
  */
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import { ref, nextTick, type Ref } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { ConnectionState } from '../ws-client'
-import { useConnection, setConnectionPorts, type ConnectionPorts } from '../use-connection'
+import { useConnection, setConnectionPorts, ensureDispatcher, type ConnectionPorts } from '../use-connection'
+import { configureRouteInbound, type TransportPorts } from '../../coordination/route-inbound'
 import {
   subscribeSession,
   resetSubscriptionStates,
@@ -39,6 +45,7 @@ import {
 // ── ws-client mock：捕获 onMessage 注册的 dispatcher + 可控连接状态 ref ──
 // mockStateRef 必须是单一 const 实例：use-connection 的 connected 迁移 watch 在 beforeAll
 // init() 时捕获 getState() 返回的 ref，重新赋值变量会让 watch 失联（只允许 .value 变更）。
+// ws-client 是 use-connection 顶层依赖（D9：mock 不可消也不必消）。
 const mockStateRef = ref<ConnectionState>('disconnected')
 let inboundHandler: ((msg: ServerMessage) => void) | null = null
 vi.mock('../ws-client', () => ({
@@ -56,34 +63,35 @@ vi.mock('../ws-client', () => ({
   onQueueDrop: vi.fn(() => () => {}),
 }))
 
-// ── pending mock（routeInbound id 路径需要）─────────────────────────
-// D3 后 configureRouteInbound 缺省直连 transport/api 真实模块（不再经 ConnectionPorts
-// 注入三件套）——mock 须拦截模块本身，dispatcher 的 defaultPorts 解析到下列 mock 对象
-const pendingMock = vi.hoisted(() => ({
+// ── dispatcher 注入（D9）：经真实 configureRouteInbound 显式传 TransportPorts fake ──
+// 消 vi.mock 模块内部（原 pending/events/domains-session 三处）：fake 对象直接传参
+// （TransportPorts 即 core 内部测试 seam），dispatcher 由真实 configureRouteInbound 构造
+// （内部 setSubscriptionPorts 灌入 fake subscribe + replay，重连重订阅链路与生产一致），
+// 经 ensureDispatcher(ports, dispatcher) 注入安装。
+const pendingFake = {
   resolve: vi.fn(),
   reject: vi.fn(),
   rejectAll: vi.fn(),
+  // routeInbound 用 has 判定 msg.id 是否命中 pending；本测试的 live 消息均无 id 命中
   has: vi.fn().mockReturnValue(false),
   resolveEnvelope: vi.fn(),
-}))
+}
 
-vi.mock('../api/pending', () => pendingMock)
-
-// ── events mock：捕获 dispatchSession（消息到达断言）────────────────
-const eventsMock = vi.hoisted(() => ({
+// events fake：捕获 dispatchSession（消息到达断言）
+const eventsFake = {
   dispatchSession: vi.fn(),
   dispatchGlobal: vi.fn(),
   dispatchCrossSession: vi.fn(),
-}))
+}
 
-vi.mock('../api/events', () => eventsMock)
+// subscribe fake：resubscribeAll / subscribeSession 的 RPC 出口
+const subscribeFake = vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 })
 
-// ── subscribe mock：resubscribeAll / subscribeSession 的 RPC 出口 ────
-const subscribeMock = vi.hoisted(() => ({
-  subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
-}))
-
-vi.mock('../api/domains/session', () => ({ subscribe: subscribeMock.subscribe }))
+const portsFake: TransportPorts = {
+  pending: pendingFake,
+  events: eventsFake,
+  subscribe: subscribeFake,
+}
 
 function makePorts(): ConnectionPorts {
   return {
@@ -109,7 +117,11 @@ function makePorts(): ConnectionPorts {
 let pushInbound: (msg: ServerMessage) => void
 
 beforeAll(async () => {
-  setConnectionPorts(makePorts())
+  const ports = makePorts()
+  setConnectionPorts(ports)
+  // D9：注入经真实 configureRouteInbound(portsFake) 构造的 dispatcher——init() 内
+  // ensureDispatcher(ports) 因 dispatcherInstalled 幂等跳过构造路径
+  ensureDispatcher(ports, configureRouteInbound(portsFake))
   const { init } = useConnection()
   await init()
   expect(inboundHandler).not.toBeNull()
@@ -120,7 +132,7 @@ beforeEach(() => {
   resetSubscriptionStates()
   vi.clearAllMocks()
   mockStateRef.value = 'connected'
-  subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 })
+  subscribeFake.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 })
 })
 
 /** 模拟断开 → 重连（触发 use-connection 的 connected 迁移 watch → resubscribeAll） */
@@ -145,7 +157,7 @@ function liveMsg(seq: number, type = 'message.status', sid = 's1'): ServerMessag
 describe('M1: WS 重连后订阅恢复', () => {
   it('TC-R1: 重连对 subscribed 条目发增量重订阅 subscribe(sid, lastSeenSeq)', async () => {
     // 断线前已订阅：基线 5
-    subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
+    subscribeFake.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
     expect(getSubscriptionState('s1')).toEqual({ lastSeenSeq: 5, subscribed: true })
     vi.clearAllMocks()
@@ -154,16 +166,16 @@ describe('M1: WS 重连后订阅恢复', () => {
     await flushAsync()
 
     // 重连 → 增量重订阅（fromSeq=5：回放断线期间 seq>5 的消息）
-    expect(subscribeMock.subscribe).toHaveBeenCalledWith('s1', 5)
+    expect(subscribeFake).toHaveBeenCalledWith('s1', 5)
   })
 
   it('TC-R2: 断线期间 stream 消息经 snapshot 增量回放恢复，无重复 dispatch', async () => {
-    subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
+    subscribeFake.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
     vi.clearAllMocks()
 
     // 断线期间 runtime publish 了 seq 6/7（ring 内，live 推送不可达）
-    subscribeMock.subscribe.mockResolvedValue({
+    subscribeFake.mockResolvedValue({
       snapshot: [liveMsg(6), liveMsg(7)],
       stateSnapshot: [],
       lastSeq: 7,
@@ -172,7 +184,7 @@ describe('M1: WS 重连后订阅恢复', () => {
     await flushAsync()
 
     // seq 6/7 各 dispatch 恰好一次（fromSeq=5 增量过滤，无重复）
-    const seqs = eventsMock.dispatchSession.mock.calls
+    const seqs = eventsFake.dispatchSession.mock.calls
       .filter(([sid]) => sid === 's1')
       .map(([, msg]) => (msg as ServerMessage).seq)
     expect(seqs).toEqual([6, 7])
@@ -181,7 +193,7 @@ describe('M1: WS 重连后订阅恢复', () => {
   })
 
   it('TC-R3: state 类经 stateSnapshot 恢复（last-value，不受 fromSeq 过滤）', async () => {
-    subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
+    subscribeFake.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
     vi.clearAllMocks()
 
@@ -190,7 +202,7 @@ describe('M1: WS 重连后订阅恢复', () => {
       seq: 4,
       payload: { sessionId: 's1', usedPercent: 60 },
     } as ServerMessage
-    subscribeMock.subscribe.mockResolvedValue({
+    subscribeFake.mockResolvedValue({
       snapshot: [],
       stateSnapshot: [contextUpdate],
       lastSeq: 5,
@@ -198,14 +210,14 @@ describe('M1: WS 重连后订阅恢复', () => {
     await simulateReconnect()
     await flushAsync()
 
-    expect(eventsMock.dispatchSession).toHaveBeenCalledWith('s1', contextUpdate)
+    expect(eventsFake.dispatchSession).toHaveBeenCalledWith('s1', contextUpdate)
   })
 
   it('TC-R4: 重连后 transient（无 seq）live 消息正常 dispatch（订阅已重建）', async () => {
-    subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
+    subscribeFake.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
 
-    subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
+    subscribeFake.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await simulateReconnect()
     await flushAsync()
     vi.clearAllMocks()
@@ -218,55 +230,55 @@ describe('M1: WS 重连后订阅恢复', () => {
     } as ServerMessage
     pushInbound(delta)
 
-    expect(eventsMock.dispatchSession).toHaveBeenCalledTimes(1)
-    expect(eventsMock.dispatchSession).toHaveBeenCalledWith('s1', delta)
+    expect(eventsFake.dispatchSession).toHaveBeenCalledTimes(1)
+    expect(eventsFake.dispatchSession).toHaveBeenCalledWith('s1', delta)
   })
 
   it('TC-R5: 重连恢复后 stream 递进消息正常 dispatch，旧 seq 仍被 drop', async () => {
-    subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
+    subscribeFake.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
 
-    subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
+    subscribeFake.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await simulateReconnect()
     await flushAsync()
     vi.clearAllMocks()
 
     // 递进 seq=6 → dispatch + 基线推进
     pushInbound(liveMsg(6))
-    expect(eventsMock.dispatchSession).toHaveBeenCalledTimes(1)
+    expect(eventsFake.dispatchSession).toHaveBeenCalledTimes(1)
     expect(getSubscriptionState('s1')!.lastSeenSeq).toBe(6)
 
     // 旧 seq=5（重放/乱序）→ drop（gap 检测随订阅恢复而恢复）
     pushInbound(liveMsg(5))
-    expect(eventsMock.dispatchSession).toHaveBeenCalledTimes(1)
+    expect(eventsFake.dispatchSession).toHaveBeenCalledTimes(1)
   })
 
   it('TC-R6: 断线期间订阅失败的意图条目重连后重发（无 fromSeq）', async () => {
     // 断线期间 subscribeSession 被调（如 useSessionStreamSync 对新增 session）→ RPC 失败
     // → intent 条目留存 subscribed=false（修复前条目不存在，重连恢复遍历不到）
-    subscribeMock.subscribe.mockRejectedValue(new Error('ws closed'))
+    subscribeFake.mockRejectedValue(new Error('ws closed'))
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     await subscribeSession('s-new')
     expect(getSubscriptionState('s-new')).toEqual({ lastSeenSeq: 0, subscribed: false })
     vi.clearAllMocks()
 
     // 重连 → 意图重发（fromSeq=undefined 走正常订阅路径；subscribeImpl 显式透传 undefined）
-    subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 })
+    subscribeFake.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 })
     await simulateReconnect()
     await flushAsync()
 
-    expect(subscribeMock.subscribe).toHaveBeenCalledWith('s-new', undefined)
+    expect(subscribeFake).toHaveBeenCalledWith('s-new', undefined)
     expect(getSubscriptionState('s-new')).toEqual({ lastSeenSeq: 0, subscribed: true })
   })
 
   it('TC-R7: runtime 重启（新 bus seqCounter 归零）基线收缩，后续 seq=1 不被 drop', async () => {
     // 断线前基线 500（旧 bus）
-    subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 500 })
+    subscribeFake.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 500 })
     await subscribeSession('s1')
     expect(getSubscriptionState('s1')!.lastSeenSeq).toBe(500)
 
     // runtime 重启 → 重连后 subscribe 到新 bus：空 ring，lastSeq=0
-    subscribeMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 })
+    subscribeFake.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 })
     await simulateReconnect()
     await flushAsync()
 
@@ -275,8 +287,8 @@ describe('M1: WS 重连后订阅恢复', () => {
 
     // 新 bus 的首条消息 seq=1 → 正常递进 dispatch
     pushInbound(liveMsg(1))
-    expect(eventsMock.dispatchSession).toHaveBeenCalledTimes(1)
-    expect(eventsMock.dispatchSession).toHaveBeenCalledWith('s1', liveMsg(1))
+    expect(eventsFake.dispatchSession).toHaveBeenCalledTimes(1)
+    expect(eventsFake.dispatchSession).toHaveBeenCalledWith('s1', liveMsg(1))
     expect(getSubscriptionState('s1')!.lastSeenSeq).toBe(1)
   })
 
@@ -286,6 +298,6 @@ describe('M1: WS 重连后订阅恢复', () => {
     await simulateReconnect()
     await flushAsync()
 
-    expect(subscribeMock.subscribe).not.toHaveBeenCalled()
+    expect(subscribeFake).not.toHaveBeenCalled()
   })
 })

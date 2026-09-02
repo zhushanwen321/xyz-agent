@@ -354,6 +354,15 @@ const FALLBACK: RouteTableEntry['handle'] = (msg, { ports, effects, sid }) => {
  * 用 package 子路径还是跨包相对路径均失效；pending/events 无 ws-client 下游链，
  * 静态值使用无害。subscribe 是低频 RPC 路径（首次订阅 + gap reconcile），模块
  * 缓存后动态 import 零成本。
+ *
+ * [HISTORICAL] D9 曾按设计尝试回直静态 import 并回退：即便 use-connection 测试
+ * 已改经 dispatcher 注入（不再依赖 mock 拦截 defaultPorts），P5 探针（renderer
+ * 全量测试）仍红 8 文件 39 用例——renderer api 层测试 mock 的 send 经
+ * core/transport/api（barrel 静态图）解析，与本模块静态拉入的 ws-client 实例
+ * 分属两个模块身份，mock 拦截不到（api/composer-domain、preset-domain、
+ * quota-domain、session-removebycwd、t4-api-layer、usage-forcequit-domains、
+ * extension-upgrade、new-task/session-api）。renderer mock 链收口前，动态
+ * import 是静态依赖图与测试面的唯一兼容形态（设计 D9 附带降级路径）。
  */
 const defaultPorts: TransportPorts = {
   pending: pendingApi,

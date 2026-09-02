@@ -14,13 +14,17 @@
  * useMessageEffects.test.ts 覆盖），本测试断言 core 侧端口行为：
  * onRuntimeUnavailable(reason) 调用 + pending.rejectAll。
  *
+ * 构造方式（D9 测试 seam 复位）：ws-client 1 处 vi.mock（use-connection 顶层依赖，
+ * 不可消）+ dispatcher 1 处注入（no-op，本测试不处理入站消息）；pending 走真实模块
+ * + spyOn 观察 rejectAll 调用（不再 vi.mock 模块内部），断言语义与改写前一致。
+ *
  * 运行：cd packages/core && npx vitest run src/transport/__tests__/use-connection-clear-pending.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { nextTick, ref, type Ref } from 'vue'
-import type { ServerMessage } from '@xyz-agent/shared'
 import type { ConnectionState } from '../ws-client'
-import { useConnection, setConnectionPorts, type ConnectionPorts } from '../use-connection'
+import { useConnection, setConnectionPorts, ensureDispatcher, type ConnectionPorts } from '../use-connection'
+import * as pendingApi from '../api/pending'
 
 // ── ws-client mock：最小占位（init 需要）──────────────────────────────
 const mockConnect = vi.fn()
@@ -42,25 +46,20 @@ vi.mock('../ws-client', () => ({
   onQueueDrop: vi.fn(() => () => {}),
 }))
 
+// ── pending 真实模块 + spyOn（D9 消 vi.mock 模块内部）─────────────────
+// use-connection 的 rejectAll 直连 transport/api/pending（D3），与 dispatcher 构造无关
+// ——用 spyOn 真实模块观察调用（透传原实现，空 pendingMap 时 no-op），断言语义不变；
+// route-inbound defaultPorts 不参与（dispatcher 经下方 ensureDispatcher 注入 no-op，
+// 本测试不处理入站消息）。
+const rejectAllSpy = vi.spyOn(pendingApi, 'rejectAll')
+
 // ── 端口 mock：捕获 onRuntimeRestarting/onRuntimeFailed/onRuntimePort 注册的回调 ──
 // 每个 onRuntime* 返回一个 unregister，同时把传入的 cb 暴露给测试触发。
 let restartingCb: (() => void) | null = null
 let failedCb: (() => void) | null = null
 let portCb: ((port: number) => void) | null = null
-const mockRejectAll = vi.fn()
 const mockRuntimeCleanup = vi.fn()
 const mockT = vi.fn((key: string) => `[${key}]`)
-
-// pending 模块 mock（D3 后 use-connection 的 rejectAll 直连 transport/api/pending，
-// 不再经 ConnectionPorts 注入——mock 须拦截模块本身；闭包转发 mockRejectAll，
-// 工厂执行早于 const 初始化，惰性解引用避开 TDZ）
-vi.mock('../api/pending', () => ({
-  rejectAll: (...args: unknown[]) => mockRejectAll(...args),
-  resolve: vi.fn(),
-  reject: vi.fn(),
-  has: vi.fn(),
-  resolveEnvelope: vi.fn(),
-}))
 
 function makePorts(): ConnectionPorts {
   return {
@@ -106,7 +105,11 @@ describe('T5: runtime 重连清理 ask-user pending（clearAllPending）', () =>
     restartingCb = null
     failedCb = null
     portCb = null
-    setConnectionPorts(makePorts())
+    const ports = makePorts()
+    setConnectionPorts(ports)
+    // D9：注入 no-op dispatcher——init() 内 ensureDispatcher(ports) 幂等跳过，
+    // route-inbound defaultPorts 不参与（本测试只观察 pending 清理端口行为）
+    ensureDispatcher(ports, () => {})
   })
 
   it('onRuntimeRestarting → onRuntimeUnavailable("restart") + rejectAll（pi 死了 ask-user Promise 永挂，必须清）', async () => {
@@ -122,7 +125,7 @@ describe('T5: runtime 重连清理 ask-user pending（clearAllPending）', () =>
     await nextTick()
     expect(mockRuntimeCleanup).toHaveBeenCalledTimes(1)
     expect(mockRuntimeCleanup).toHaveBeenCalledWith('restart')
-    expect(mockRejectAll).toHaveBeenCalledTimes(1)
+    expect(rejectAllSpy).toHaveBeenCalledTimes(1)
     teardown()
   })
 
@@ -137,7 +140,7 @@ describe('T5: runtime 重连清理 ask-user pending（clearAllPending）', () =>
     await nextTick()
     expect(mockRuntimeCleanup).toHaveBeenCalledTimes(1)
     expect(mockRuntimeCleanup).toHaveBeenCalledWith('disconnect')
-    expect(mockRejectAll).toHaveBeenCalledTimes(1)
+    expect(rejectAllSpy).toHaveBeenCalledTimes(1)
     teardown()
   })
 
@@ -165,7 +168,7 @@ describe('T5: runtime 重连清理 ask-user pending（clearAllPending）', () =>
     portCb!(9999)
     // 关键断言：正常端口重连不清 pending、不触发清理（state 未离开 connected）
     expect(mockRuntimeCleanup).not.toHaveBeenCalled()
-    expect(mockRejectAll).not.toHaveBeenCalled()
+    expect(rejectAllSpy).not.toHaveBeenCalled()
     teardown()
   })
 })

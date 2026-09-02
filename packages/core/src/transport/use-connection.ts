@@ -26,6 +26,7 @@
  *   + shared（端口常量）。
  */
 import { watch } from 'vue'
+import type { ServerMessage } from '@xyz-agent/shared'
 import { connect, disconnect, getState, onMessage, onQueueDrop, setFailed, setRestarting } from './ws-client'
 import {
   configureRouteInbound,
@@ -171,14 +172,21 @@ function armDisconnectGrace(): void {
  * 三件套不再经壳注入）+ 注入 effect 回调（session.exited/message.complete/
  * session.subagents/session.workflowUpdate/全局 error），内部 setSubscriptionPorts 把
  * subscribe RPC + replay dispatcher 灌入 core subscription-state（gap 检测副作用依赖）。
+ *
+ * dispatcher 可选注入（D9）——core 内部测试 seam，与 configureRouteInbound 的可选 ports
+ * 同体例，不出现在壳装配面（壳装配仍只调 useConnection().init()）：注入时直接安装
+ * （不调 configureRouteInbound，defaultPorts 不参与），测试可经真实 configureRouteInbound
+ * 的 TransportPorts 显式传参替换三件套，消 vi.mock 模块内部；缺省按现状构造，生产行为不变。
  */
-function ensureDispatcher(ports: ConnectionPorts): void {
+export function ensureDispatcher(
+  ports: ConnectionPorts,
+  dispatcher?: (msg: ServerMessage) => void,
+): void {
   if (dispatcherInstalled) return
   dispatcherInstalled = true
-  const dispatcher = configureRouteInbound(undefined, ports.effects)
   // route-inbound 是消息分发单一真相源（ADR-0060：raw-message-tap 旁路已移除）。
   // ExtensionHost 经 events.onCrossSession/onGlobal 正规通道订阅。
-  removeTransportListener = onMessage(dispatcher)
+  removeTransportListener = onMessage(dispatcher ?? configureRouteInbound(undefined, ports.effects))
 }
 
 /**
