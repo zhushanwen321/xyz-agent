@@ -108,6 +108,8 @@ graph TD
 | 2 | 设计 u5.2 原为单单元（6 测试改指+删除）；v4 修正消费面后为 2 生产+16 测试，超单 subagent 规模 | 计划级拆分（v4 已回写设计） | 拆 u5.2（生产+隔离型 7 测试）/u5.3（mock 型 9 测试+删除） |
 | 3 | u1.3 ③ 动态 import 回直：P5 探针失败（renderer api 层 8 文件 39 用例红——静态图解析绕开 ws-client mock 拦截） | 设计预授权降级（D9 联动条款 + §5 P5 行） | 回退保留动态 import，:358 [HISTORICAL] 注释记录实证与失败清单；u4.1/u4.2 DAG 边原因改为「route-inbound.ts u4.2 在 u1.3 终态（动态 import 保留）基础上动同文件」 |
 | 4 | u1.3 clear-pending 测试的 pending 消 mock 用 vi.spyOn(rejectAll) 而非注入 | 实现级合理偏差：use-connection 对 pendingApi.rejectAll 是顶层直接调用，注入消不掉 | spyOn 透传真实实现，断言语义 100% 保持，vi.mock 计数仍 ≤1 |
+| 5 | u2.1 三处领地机械扩展：useSearchModalDeps.ts（私有 core 实例改共享壳适配，防双实例缓存分桶）、新建 useFileSearchStore.ts（共享壳适配必然产物）、slashIcons.ts 1 行死引用注释 | 达成「切换后同一数据源」目标条款的最小必要动作 | 已随 u2.1 commit；发现 CommandPopover slash 链已在 core 轨（设计例 4 描述部分过时——一致性审查期回写设计） |
+| 6 | u3.1 定性偏离设计预判：send/submit 的 {getSegments} 字段不在权威接口（权威面=context 消费面），Pick 不可行，扩权收编被否（波及 dom-core/ui-mock） | 实证修正设计预期，符合设计「不追求全部合一、消灭无名分复制」精神 | 落实为保留局部声明 + 名分注释；一致性审查期回写设计 D8 措辞 |
 
 ## 6 状态表
 
@@ -116,8 +118,8 @@ graph TD
 | u1.1 | committed | 1 | commit 8fa0ac7d1（u1.1）；core 1280 绿 + renderer 3601 绿；grep b/c/d 全过（自回引残余 1 处为注释文本非 import） |
 | u1.2 | committed | 1 | commit 8795046ba（u1.2）；core 1275 绿 + renderer 3601 绿 + mobile 21 绿；死面 grep 零命中；计划路径笔误修正（shell/useConnection → composables/useConnection）；连带授权：builtin-contributions.ts 注释锚点、mock-ws 第三 ipc 注入点 |
 | u1.3 | committed | 1 | commit 6f5759e19（u1.3）；core 1275 绿 + renderer 3601 绿；vi.mock 各文件 1 处；③ P5 探针失败走设计预授权降级（动态 import 保留 + route-inbound.ts:358 [HISTORICAL] 实证），u4.x 以动态 import 保留形态为基线 |
-| u2.1 | pending | 0 | — |
-| u3.1 | pending | 0 | — |
+| u2.1 | committed | 1 | commit e3c09d834（u2.1）；P1 通过（清单 docs/design/renderer-deepening.p1-parity.md，core 零补齐）；renderer 345 文件/3579 绿（-22 = 删除壳测试 7+4+11，dev 汇报导误报 8 已核正）；grep 零命中 |
+| u3.1 | committed | 1 | commit a3e19bec3（u3.1）；定性：send/submit/context-chips 保留（字段不在权威面，Pick 不可行，扩权被否）+ 名分注释；fork/handoff Pick<'focus'> 化；injection 已被 ADR-0058 前序收敛（仅清注释）；core 1275 绿 + renderer typecheck 绿 |
 | u3.2 | pending | 0 | — |
 | u4.1 | pending | 0 | — |
 | u4.2 | pending | 0 | — |
