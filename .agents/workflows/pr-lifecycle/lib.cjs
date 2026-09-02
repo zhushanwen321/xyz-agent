@@ -85,7 +85,71 @@ const MSG = {
     `base "${base}" 无法解析为 commit（${String(stderr || '').trim()}）；确认 base 分支/ref 名正确`,
   badParam: (name, why) =>
     `参数 ${name} 非法：${why}；对照脚本 @pi-meta 的 parameters 声明修正发起参数`,
+
+  /* ── u2：PR 阶段 steps（§3.7 错误规格表） ── */
+  preflightNoCommits: (base) =>
+    `分支相对 base ${base} 无 commits；确认当前分支正确，或先 commit 后重新发起`,
+  preflightGhAuth: (detail) =>
+    `gh 未认证（${String(detail || '').trim().split('\n')[0] || 'gh auth status 失败'}）；运行 \`gh auth login\` 后重新发起`,
+  preflightFallow: (detail) =>
+    `fallow 不可用（${String(detail || '').trim().split('\n')[0] || 'fallow --version 失败'}）；运行 \`npm i -g fallow\` 后重新发起`,
+  preflightSummary: (items) =>
+    `preflight 前置条件未过：\n${items.map((s) => `- ${s}`).join('\n')}`,
+  gateToolError: (name, out) =>
+    `gate ${name} exit 2（工具错误，不自动重试）：\n${tailLines(out, 15)}\n按脚本输出指引处理（多为配置漂移/记账不闭合，需人看）`,
+  gateExhausted: (name, rounds, out) =>
+    `${name} 经 ${rounds} 轮修复子循环仍未通过。最后一轮输出摘要：\n${tailLines(out, 15)}\n人工修复后经 \`git add <显式路径> && git commit\` 落盘，再用 resumeCommand 续跑（resume 后本 step 重跑，gate 面对已 commit 的改动正常判定）`,
+  gateFixLeftDirty: (list) =>
+    `fix agent 返回后存在未提交改动（第 1 次止损，不烧后续轮次）：\n${list}\n脚本不自动 commit（不判断改动归属）；人工检查后显式路径 commit 或 checkout 还原，再 resume（resume 后本 step 重跑）`,
+  agentFailed: (what, err) =>
+    `${what} 调用失败：${err}；环境问题排除后 resume`,
+  agentInvalidOutput: (what, value) =>
+    `${what} 返回不符合契约：${typeof value === 'string' ? value.slice(0, 200) : JSON.stringify(value).slice(0, 200)}；resume 重跑本 step`,
+  changesetMissingWarn: () =>
+    `changeset 条件输入缺失：static-gate outputs 无 changesetWarn（state 来自旧版本脚本或被篡改）；从头执行请去掉 runId 参数`,
+  skillYamlFail: (out) =>
+    `skill YAML 校验失败（硬校验不修，不自动重试）：\n${tailLines(out, 15)}\n按校验输出修复 SKILL.md 后 resume`,
+  prSubmitPrereq: () =>
+    `pr-submit 前置产物缺失：pr-meta 未 done 或无 bodyFile；resume 会从断点重跑 pr-meta`,
+  prSubmitUrlMissing: (out) =>
+    `pr-submit exit 0 但输出未解析到合法 pr_url（期望 https://github.com/<owner>/<repo>/pull/<n>）。实际输出：\n${tailLines(out, 10)}\n检查 pr-submit.sh 输出形态后 resume`,
+  prSubmitExit2: (detail) =>
+    `pr-submit exit 2（git push 失败）：检查远端连通性/分支保护后 resume（PR 已建时重跑幂等更新）。${tailLines(detail, 10)}`,
+  prSubmitExit3: (detail) =>
+    `pr-submit exit 3（gh 已认证但调用失败）：查 \`gh auth status\` / API 限流后 resume。${tailLines(detail, 10)}`,
+  prSubmitExit5: (detail) =>
+    `pr-submit exit 5（title/body 文件缺失）：pr-meta 产物异常：检查 runId 目录下 pr-title.txt/pr-body.md，resume 重跑。${tailLines(detail, 10)}`,
 };
+
+function tailLines(text, n) {
+  const lines = String(text || '').trimEnd().split('\n');
+  return lines.length <= n ? String(text || '').trimEnd() : lines.slice(-n).join('\n');
+}
+
+// porcelain 输出过滤掉脚本自持目录 .review/（design 假设目标仓 gitignore 含 /.review/；
+// 未 gitignore 的仓里脚本写 state 会自挡工作区干净检查——结构性排除，语义只强不弱）
+function worktreeDirt(porcelainOut) {
+  return String(porcelainOut || '')
+    .split('\n')
+    .map((s) => s.trimEnd())
+    .filter(Boolean)
+    .filter((line) => !line.slice(3).trim().replace(/^"|"$/g, '').startsWith('.review/'))
+    .join('\n');
+}
+
+// gate 修复子循环的 fixPrompt（§3.5：修完自行 commit，message 与 cr-fix 的 fix commit 区分）
+function gateFixPrompt(stepId, round, res) {
+  return [
+    `你是 gate 修复 agent。workflow step "${stepId}" 第 ${round} 轮验证失败，输出摘要（末 60 行）：`,
+    tailLines(`${res.stderr || ''}\n${res.stdout || ''}`, 60),
+    '',
+    '要求：',
+    '1. 修复上述输出的全部问题，只改与失败直接相关的文件。',
+    `2. 修完自行 commit：git add <显式路径> && git commit -m "fix: gate ${stepId} round ${round}"。`,
+    '3. 禁止 git add -A / git add .（会把工作区无关改动一起提交）。',
+    '4. 修不完的部分在回复中明确说明，不要静默跳过。',
+  ].join('\n');
+}
 
 // resumeCommand（§3.4-(1)：失败终态必须含可直接复制执行的恢复命令）
 function resumeCommand(repo, runId) {
@@ -543,12 +607,23 @@ async function walkAndFinish(io, state, stateDir, activeParams) {
     };
 
     try {
-      const outputs = (await step.run(ctx)) || {};
+      const runRes = (await step.run(ctx)) || {};
+      if (runRes.skipped) {
+        // 条件 step run 内判定不满足：落 skipped + reason（resume 只读落盘结果）
+        state.steps[step.id] = {
+          ...state.steps[step.id],
+          status: 'skipped',
+          reason: runRes.reason || 'unspecified',
+          finishedAt: io.now().toISOString(),
+        };
+        saveState(io, state, stateFile);
+        continue;
+      }
       state.steps[step.id] = {
         ...state.steps[step.id],
         status: 'done',
         finishedAt: io.now().toISOString(),
-        outputs,
+        outputs: runRes,
       };
       saveState(io, state, stateFile);
     } catch (e) {
@@ -577,6 +652,284 @@ async function walkAndFinish(io, state, stateDir, activeParams) {
   saveState(io, state, stateFile);
   return state.result;
 }
+
+/* ── PR 阶段 steps（u2：§3.3 注册表前六项） ──────────────────────────── */
+
+const MAX_GATE_ROUNDS = 3;
+
+const PR_URL_RE = /^https:\/\/github\.com\/.+\/pull\/\d+$/;
+
+// agent 纪律（§3.5）：全部经 ctx.io.agent（入口适配层已强制 returnMeta:true +
+// error 观测）；schema 模式下 value 为校验后对象（引擎 parsedOutput），失败时
+// value 回退为 content 字符串——结构校验兜底。
+const CHANGESET_SCHEMA = {
+  type: 'object',
+  properties: {
+    action: { type: 'string', enum: ['draft', 'no-release'] },
+    files: { type: 'array', items: { type: 'string' }, description: '已写入的 .changeset/*.md 路径（action=draft 时必填）' },
+    skipReasons: { type: 'array', items: { type: 'string' }, description: '逐包跳过原因（action=no-release 时必填）' },
+  },
+  required: ['action'],
+};
+
+const PR_META_SCHEMA = {
+  type: 'object',
+  properties: {
+    title: { type: 'string', description: 'PR title，conventional commit 风格，英文' },
+    body: { type: 'string', description: 'PR body 全文 markdown，英文' },
+  },
+  required: ['title', 'body'],
+};
+
+/**
+ * gate 修复子循环统一骨架（§3.5 / D8）：runGate 至多 MAX_GATE_ROUNDS 次；
+ * 失败轮派 fix agent（修完自行 commit）；agent 返回后 porcelain 非空即 step
+ * failed（第 1 次止损，不烧后续轮次 token——脚本不自动 commit，不判断改动归属）。
+ * exit 2 = 工具错误，不自动重试。
+ */
+async function gateFixLoop(ctx, { stepId, gateName, runGate, onPass, extraFixContext }) {
+  let lastRes = null;
+  for (let round = 1; round <= MAX_GATE_ROUNDS; round++) {
+    ctx.saveCheckpoint(); // 子循环每轮落盘
+    lastRes = runGate();
+    if (lastRes.code === 0) return onPass(lastRes);
+    if (lastRes.code === 2) throw new Error(MSG.gateToolError(gateName, `${lastRes.stderr || ''}\n${lastRes.stdout || ''}`));
+    if (round === MAX_GATE_ROUNDS) break;
+    const fixed = await ctx.io.agent({
+      description: `fix-${stepId}`,
+      prompt: gateFixPrompt(stepId, round, lastRes) + (extraFixContext ? `\n\n${extraFixContext}` : ''),
+    });
+    if (fixed.error) throw new Error(MSG.agentFailed(`gate 修复 agent（${stepId} round ${round}）`, fixed.error));
+    const st = ctx.io.sh('git', ['status', '--porcelain']);
+    if (st.code !== 0) throw new Error(MSG.gitFailed(['status', '--porcelain'], st.stderr));
+    const dirt = worktreeDirt(st.stdout);
+    if (dirt !== '') throw new Error(MSG.gateFixLeftDirty(dirt));
+  }
+  throw new Error(MSG.gateExhausted(gateName, MAX_GATE_ROUNDS, `${lastRes.stderr || ''}\n${lastRes.stdout || ''}`));
+}
+
+function changesetAgentPrompt(baseHash, diffStatOut, commitsOut, changesetFiles) {
+  return [
+    '任务：为分支改动补齐 changeset（对齐 Gate-1a.5 自动分类，不弹窗询问）。',
+    '',
+    '背景：检测到部分 extension 包改了 src/ 但没有对应 changeset（WARN changeset-check）。',
+    '请按 diff 逐包分类并处理：',
+    '- 实质行为改动（逻辑/接口/行为变化）→ 直接写入 .changeset/<slug>.md：',
+    '  - frontmatter 声明受影响包，如：',
+    '    ---',
+    "    '@zhushanwen/pi-xxx': minor",
+    '    ---',
+    '  - type 初判按分支 conventional commits：feat→minor / fix→patch / BREAKING→major（type 终判 merge 阶段人工定）',
+    '  - body 英文写用户可感变化（将进 CHANGELOG）',
+    '- 非发布改动（纯注释/类型注解/测试/零行为差重构）→ 不写文件，记入 skipReasons（格式「包名: 原因 + 证据」）',
+    '- 已删除的包跳过（package.json 读不到）',
+    '',
+    `diff --stat（base=${baseHash}..HEAD）：`,
+    tailLines(diffStatOut, 120),
+    '',
+    'commits：',
+    tailLines(commitsOut, 120),
+    '',
+    changesetFiles && changesetFiles.length
+      ? `现有 changeset 文件（勿重复声明）：\n${changesetFiles.join('\n')}`
+      : '现有 changeset 文件：无',
+    '',
+    '完成后以 action=draft + files（写入的文件路径列表）或 action=no-release + skipReasons 返回。',
+  ].filter(Boolean).join('\n');
+}
+
+function prMetaAgentPrompt(baseHash, commitsOut, diffStatOut, changesetFiles) {
+  return [
+    '任务：从分支全部 commit 自动生成 PR title 与 body（英文，无需用户提供）。',
+    '',
+    'title 规则：conventional commit 风格（fix(scope): short summary；多 scope 取最核心的，或省略 scope）。',
+    'body 规则（三节模板）：',
+    '- ## Summary：改动目的',
+    '- ## Changes：逐条列各 commit 关键改动，合并相关条目；有 changeset 文件一并展示',
+    '- ## Test plan：typecheck/test/lint 结果说明',
+    '- breaking changes 必须标明',
+    '',
+    `commits（git log ${baseHash}..HEAD --format="%s%n%b---"）：`,
+    tailLines(commitsOut, 200),
+    '',
+    `diff --stat：`,
+    tailLines(diffStatOut, 120),
+    '',
+    changesetFiles && changesetFiles.length
+      ? `changeset 文件（在 Changes 节展示）：\n${changesetFiles.join('\n')}`
+      : 'changeset 文件：无',
+    '',
+    '以 {title, body} 返回（body 为完整 markdown 全文）。',
+  ].filter(Boolean).join('\n');
+}
+
+/**
+ * PR 阶段六 steps 工厂（§3.3 注册表 preflight → pr-submit）。
+ * scriptPaths 可注入（测试用假脚本路径；缺省从 repoRoot 按仓内真实布局推导）。
+ */
+function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
+  const paths = {
+    preMerge: scriptPaths.preMerge || path.join(repoRoot, 'scripts', 'pr-pre-merge.sh'),
+    prSubmit: scriptPaths.prSubmit || path.join(repoRoot, 'scripts', 'pr-submit.sh'),
+    validateSkillYaml: scriptPaths.validateSkillYaml
+      || path.join(repoRoot, '.agents', 'skills', 'pr-cr-fix', 'scripts', 'validate-skill-yaml.py'),
+  };
+
+  return [
+    {
+      id: 'preflight',
+      run: async (ctx) => {
+        const failures = [];
+        const repo = ctx.io.sh('git', ['rev-parse', '--show-toplevel']);
+        if (repo.code !== 0) failures.push(MSG.gitFailed(['rev-parse', '--show-toplevel'], repo.stderr));
+        const st = ctx.io.sh('git', ['status', '--porcelain']);
+        if (st.code !== 0) failures.push(MSG.gitFailed(['status', '--porcelain'], st.stderr));
+        else if (worktreeDirt(st.stdout) !== '') failures.push(MSG.dirtyWorktree(worktreeDirt(st.stdout)));
+        // baseHash 口径锁定：fresh 创建时已锁（createState），此处只在缺失时补锁
+        // （resume 重跑 preflight 不重算——防 base ref 漂移后 review 口径变化）
+        let baseHash = ctx.state.baseHash;
+        if (!baseHash) {
+          baseHash = resolveBaseHash(ctx.io, ctx.state.base);
+          ctx.state.baseHash = baseHash;
+        }
+        const commits = ctx.io.sh('git', ['log', `${baseHash}..HEAD`, '--oneline']);
+        if (commits.code !== 0) failures.push(MSG.gitFailed(['log', `${baseHash}..HEAD`], commits.stderr));
+        else if (!commits.stdout.trim()) failures.push(MSG.preflightNoCommits(ctx.state.base));
+        const gh = ctx.io.sh('gh', ['auth', 'status']);
+        if (gh.code !== 0) failures.push(MSG.preflightGhAuth(gh.stderr || gh.stdout));
+        const fallow = ctx.io.sh('fallow', ['--version']);
+        if (fallow.code !== 0) failures.push(MSG.preflightFallow(fallow.stderr || fallow.stdout));
+        if (failures.length > 0) throw new Error(MSG.preflightSummary(failures));
+        return { baseHash };
+      },
+    },
+    {
+      id: 'static-gate',
+      run: (ctx) => gateFixLoop(ctx, {
+        stepId: 'static-gate',
+        gateName: 'pr-pre-merge.sh --skip-tests',
+        runGate: () => ctx.io.sh('bash', [paths.preMerge, '--skip-tests', '--quiet']),
+        onPass: (res) => {
+          const changesetWarn = /WARN changeset-check/.test(res.stdout);
+          if (!changesetWarn) {
+            // 条件判定随前置 done 的同一 checkpoint 落盘（§3.4-(2)）：changeset 不触发 →
+            // 预写 skipped，resume walker 只读落盘结果，永不重算条件
+            ctx.state.steps['changeset'] = {
+              ...(ctx.state.steps['changeset'] || {}),
+              status: 'skipped',
+              reason: 'changeset-check 无 WARN：无 extension src/ 发布级改动，条件不满足',
+              finishedAt: ctx.io.now().toISOString(),
+            };
+          }
+          return { result: 'PASS', changesetWarn };
+        },
+      }),
+    },
+    {
+      id: 'changeset',
+      run: async (ctx) => {
+        const sgOutputs = stepOutputs(ctx.state, 'static-gate');
+        if (!sgOutputs || typeof sgOutputs.changesetWarn !== 'boolean') {
+          throw new Error(MSG.changesetMissingWarn());
+        }
+        if (sgOutputs.changesetWarn === false) {
+          // 防御重放：正常路径 false 已由 static-gate 预写 skipped（本 run 不会被执行）；
+          // 条目缺失只可能因 state 被手工篡改——按落盘条件补 skipped，绝不真跑 agent
+          return { skipped: true, reason: 'static-gate changesetWarn=false（落盘条件重放），无发布改动需补 changeset' };
+        }
+        const diffStat = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--stat']);
+        const commits = ctx.io.sh('git', ['log', `${ctx.state.baseHash}..HEAD`, '--format=%s%n%b---']);
+        const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
+        const changesetFiles = names.stdout.split('\n').map((s) => s.trim()).filter((f) => /^\.changeset\/.+\.md$/.test(f));
+        const res = await ctx.io.agent({
+          description: 'changeset-draft',
+          schema: CHANGESET_SCHEMA,
+          prompt: changesetAgentPrompt(ctx.state.baseHash, diffStat.stdout, commits.stdout, changesetFiles),
+        });
+        if (res.error) throw new Error(MSG.agentFailed('changeset agent', res.error));
+        const v = res.value;
+        if (!v || typeof v !== 'object' || (v.action !== 'draft' && v.action !== 'no-release')) {
+          throw new Error(MSG.agentInvalidOutput('changeset agent', v));
+        }
+        const drafted = Array.isArray(v.files) ? v.files : [];
+        return {
+          drafted,
+          note: v.action === 'no-release'
+            ? `非发布改动，跳过起草：${(Array.isArray(v.skipReasons) && v.skipReasons.join('; ')) || '见 agent 报告'}`
+            : `已起草 ${drafted.length} 个 changeset 文件（type 初判，merge 阶段人工终判）`,
+        };
+      },
+    },
+    {
+      id: 'pr-meta',
+      run: async (ctx) => {
+        const commits = ctx.io.sh('git', ['log', `${ctx.state.baseHash}..HEAD`, '--format=%s%n%b---']);
+        if (commits.code !== 0) throw new Error(MSG.gitFailed(['log', `${ctx.state.baseHash}..HEAD`], commits.stderr));
+        const diffStat = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--stat']);
+        const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
+        const changesetFiles = names.stdout.split('\n').map((s) => s.trim()).filter((f) => /^\.changeset\/.+\.md$/.test(f));
+        const res = await ctx.io.agent({
+          description: 'pr-meta',
+          schema: PR_META_SCHEMA,
+          prompt: prMetaAgentPrompt(ctx.state.baseHash, commits.stdout, diffStat.stdout, changesetFiles),
+        });
+        if (res.error) throw new Error(MSG.agentFailed('pr-meta agent', res.error));
+        const v = res.value;
+        if (!v || typeof v !== 'object' || typeof v.title !== 'string' || typeof v.body !== 'string'
+          || !v.title.trim() || !v.body.trim()) {
+          throw new Error(MSG.agentInvalidOutput('pr-meta agent', v));
+        }
+        const titleFile = path.join(ctx.runIdDir, 'pr-title.txt');
+        const bodyFile = path.join(ctx.runIdDir, 'pr-body.md');
+        ctx.io.fs.writeFileSync(titleFile, v.title);
+        ctx.io.fs.writeFileSync(bodyFile, v.body);
+        return { title: v.title, bodyFile };
+      },
+    },
+    {
+      id: 'skill-yaml',
+      run: async (ctx) => {
+        const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
+        if (names.code !== 0) throw new Error(MSG.gitFailed(['diff', '--name-only'], names.stderr));
+        const skillFiles = names.stdout.split('\n').map((s) => s.trim()).filter((f) => f.startsWith('.agents/skills/'));
+        if (skillFiles.length === 0) {
+          return { skipped: true, reason: 'diff 未触及 .agents/skills/，条件不满足' };
+        }
+        // 校验对象 = 改动过的 skill 目录的 SKILL.md（validate-skill-yaml.py 只收 SKILL.md 文件参数）
+        const skillMd = [...new Set(skillFiles.map((f) => {
+          const rest = f.slice('.agents/skills/'.length);
+          return `.agents/skills/${rest.split('/')[0]}/SKILL.md`;
+        }))];
+        const res = ctx.io.sh('python3', [paths.validateSkillYaml, ...skillMd]);
+        if (res.code !== 0) {
+          throw new Error(MSG.skillYamlFail(`${res.stdout || ''}\n${res.stderr || ''}`));
+        }
+        return { validated: skillMd };
+      },
+    },
+    {
+      id: 'pr-submit',
+      run: async (ctx) => {
+        const bodyFile = stepOutputs(ctx.state, 'pr-meta')?.bodyFile;
+        if (!bodyFile) throw new Error(MSG.prSubmitPrereq());
+        const titleFile = path.join(ctx.runIdDir, 'pr-title.txt');
+        const res = ctx.io.sh('bash', [paths.prSubmit, '--title-file', titleFile, '--body-file', bodyFile, '--base', ctx.state.base]);
+        if (res.code === 0) {
+          const urls = res.stdout.split('\n').map((s) => s.trim()).filter((l) => PR_URL_RE.test(l));
+          if (urls.length === 0) throw new Error(MSG.prSubmitUrlMissing(res.stdout));
+          return { prUrl: urls[urls.length - 1] };
+        }
+        const detail = `${res.stderr || ''}\n${res.stdout || ''}`;
+        if (res.code === 2) throw new Error(MSG.prSubmitExit2(detail));
+        if (res.code === 3) throw new Error(MSG.prSubmitExit3(detail));
+        if (res.code === 5) throw new Error(MSG.prSubmitExit5(detail));
+        throw new Error(`pr-submit 失败（exit ${res.code}）：\n${tailLines(detail, 20)}`);
+      },
+    },
+  ];
+}
+
+
 
 /* ── 主入口 ──────────────────────────────────────────────────────────── */
 
@@ -705,11 +1058,12 @@ async function resumeFlow(io, params, engineRunId, stateDir) {
     });
   }
 
-  // 守卫 5：工作区干净
+  // 守卫 5：工作区干净（.review/ 为脚本自持目录，不计入脏）
   const st = io.sh('git', ['status', '--porcelain']);
   if (st.code !== 0) throw new GuardError(MSG.gitFailed(['status', '--porcelain'], st.stderr), { runId });
-  if (st.stdout.trim() !== '') {
-    throw new GuardError(MSG.dirtyWorktree(st.stdout.trimEnd()), { runId });
+  const dirt = worktreeDirt(st.stdout);
+  if (dirt !== '') {
+    throw new GuardError(MSG.dirtyWorktree(dirt), { runId });
   }
 
   // 守卫 6：HEAD 外部变更（status=failed 时外部 commit 是预期恢复动作，直接放行）
@@ -740,6 +1094,8 @@ module.exports = {
   STATE_FIELDS,
   ENGINE_TERMINAL_STATUS,
   SH_MAX_BUFFER_BYTES,
+  MAX_GATE_ROUNDS,
+  PR_URL_RE,
   MSG,
   GuardError,
   normalizeParams,
@@ -749,5 +1105,8 @@ module.exports = {
   saveState,
   createSh,
   resumeCommand,
+  worktreeDirt,
+  gateFixLoop,
+  createPrSteps,
   runPipeline,
 };

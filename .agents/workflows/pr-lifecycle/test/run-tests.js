@@ -48,7 +48,9 @@ const RUN_ID_A = 'prw-20260901-090000-aaaa';
 
 /**
  * 构造 mock io：temp repoRoot + 可编程 git 快照 + 引擎 state 映射 + pid 映射。
- * opts: { args, steps, head, branch, base, baseHash, porcelain, engineMap, pidMap, failBase }
+ * opts: { args, steps, head, branch, base, baseHash, porcelain, engineMap, pidMap,
+ *         failBase, commits, stat, names, scriptMocks: { <脚本路径>: 响应|fn(args) },
+ *         agent: async (params) => ({ value, error }) }
  */
 function makeIo(opts = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prl-u1-'));
@@ -58,9 +60,14 @@ function makeIo(opts = {}) {
     branch: opts.branch || 'feat-x',
     baseHash: opts.baseHash || 'B1',
     porcelain: opts.porcelain || '',
+    commits: opts.commits !== undefined ? opts.commits : 'feat: a commit\n\nbody line\n---\n',
+    stat: opts.stat !== undefined ? opts.stat : ' a.js | 2 +-\n',
+    names: opts.names !== undefined ? opts.names : 'src/a.js\n',
   };
   const engineMap = Object.assign({ 'wf-old': 'done' }, opts.engineMap);
   const pidMap = Object.assign({}, opts.pidMap);
+  const scriptMocks = opts.scriptMocks || {};
+  const agentCalls = [];
   const recorded = { sh: [], logs: [], renames: [], renameContents: [] };
 
   const sh = (cmd, args) => {
@@ -76,6 +83,28 @@ function makeIo(opts = {}) {
     }
     if (cmd === 'git' && args[0] === 'status' && args[1] === '--porcelain') {
       return { code: 0, stdout: git.porcelain };
+    }
+    if (cmd === 'git' && args[0] === 'log' && args[1] === `${git.baseHash}..HEAD`) {
+      return { code: 0, stdout: git.commits };
+    }
+    if (cmd === 'git' && args[0] === 'diff' && args[1] === `${git.baseHash}..HEAD`) {
+      if (args[2] === '--stat') return { code: 0, stdout: git.stat };
+      if (args[2] === '--name-only') return { code: 0, stdout: git.names };
+      return { code: 0, stdout: git.stat };
+    }
+    // gh / fallow 等外部命令按名 mock（preflight 用）
+    if (opts.cmdResults && Object.prototype.hasOwnProperty.call(opts.cmdResults, cmd)) {
+      const m = opts.cmdResults[cmd];
+      return typeof m === 'function' ? m(args) : m;
+    }
+    // u2 脚本 mock 分发（按 argv[0] = 脚本路径；假脚本经此注入，不需要真实文件）
+    if (cmd === 'bash' && Object.prototype.hasOwnProperty.call(scriptMocks, args[0])) {
+      const m = scriptMocks[args[0]];
+      return typeof m === 'function' ? m(args) : m;
+    }
+    if (cmd === 'python3' && Object.prototype.hasOwnProperty.call(scriptMocks, args[0])) {
+      const m = scriptMocks[args[0]];
+      return typeof m === 'function' ? m(args) : m;
     }
     return { code: 0, stdout: '' };
   };
@@ -107,6 +136,13 @@ function makeIo(opts = {}) {
     pid: 4242,
     fs: fsWrap,
     sh,
+    // agent mock：记录调用并按 opts.agent 编程（默认成功返回空对象）
+    agent: async (params) => {
+      agentCalls.push(params);
+      const impl = opts.agent || (async () => ({ value: {}, error: null }));
+      return impl(params);
+    },
+    workflow: async () => ({ content: '', parsedOutput: null }),
     readEngineState: (er) => (er && Object.prototype.hasOwnProperty.call(engineMap, er)
       ? { ok: true, status: engineMap[er] }
       : { ok: false, reason: `engine state file not found: ${er}` }),
@@ -116,8 +152,23 @@ function makeIo(opts = {}) {
     randomToken: () => 'ab12',
     steps: opts.steps || [],
   };
-  return { io, root, recorded, git, engineMap, pidMap };
+  return { io, root, recorded, git, engineMap, pidMap, agentCalls };
 }
+
+// u2：PR 阶段六 steps 注册表（脚本路径全部注入假路径，脚本行为经 scriptMocks 编程）
+const FAKE_PATHS = {
+  preMerge: '/fake/pr-pre-merge.sh',
+  prSubmit: '/fake/pr-submit.sh',
+  validateSkillYaml: '/fake/validate-skill-yaml.py',
+};
+
+function makeSteps(opts = {}) {
+  const root = opts.root;
+  return lib.createPrSteps({ repoRoot: root, scriptPaths: FAKE_PATHS });
+}
+
+const shCallsTo = (recorded, scriptPath) =>
+  recorded.sh.filter((c) => c[0] !== 'git' && c[1] === scriptPath);
 
 /** 手工构造一个 resume 前置 state（绕过 fresh 链路，独立驱动守卫分支） */
 function seedState(root, overrides = {}) {
@@ -715,7 +766,435 @@ async function main() {
     assert.strictEqual(state.pid, 4242);
   });
 
-  /* ── 汇总 ── */
+  /* ── u2：PR 阶段 steps（preflight / static-gate / changeset / pr-meta / skill-yaml / pr-submit） ── */
+
+  // 全链成功 mocks：gate 过（带 WARN 触发 changeset）、两 agent 成功、submit 返回合法 pr_url
+  function allPassMocks() {
+    return {
+      scriptMocks: {
+        [FAKE_PATHS.preMerge]: { code: 0, stdout: '  PASS typecheck:extensions\n  PASS lint\n  WARN changeset-check 0s (2 missing)\n' },
+        [FAKE_PATHS.prSubmit]: { code: 0, stdout: 'branch pushed\nhttps://github.com/acme/widget/pull/42\n' },
+        [FAKE_PATHS.validateSkillYaml]: { code: 0, stdout: 'OK' },
+      },
+      agent: async (params) => {
+        if (params.description === 'pr-meta') return { value: { title: 'feat(core): add x', body: '## Summary\nadd x\n## Test plan\ntypecheck+lint pass\n' }, error: null };
+        if (params.description === 'changeset-draft') return { value: { action: 'draft', files: ['.changeset/widget.md'] }, error: null };
+        return { value: {}, error: null }; // gate fix agent
+      },
+    };
+  }
+
+  const findStep = (steps, id) => {
+    const s = steps.find((x) => x.id === id);
+    assert.ok(s, `注册表中存在 step ${id}`);
+    return s;
+  };
+
+  function mkCtx(t, state, runIdDir) {
+    return {
+      state,
+      params: state.params,
+      runIdDir: runIdDir || path.join(t.root, '.review', 'pr-workflow', state.runId),
+      io: t.io,
+      saveCheckpoint() {},
+    };
+  }
+
+  await test('u2 全链 fresh：六 steps 串行到 awaiting-push，prUrl/skippedSteps/outputs 契约正确', async () => {
+    const m = allPassMocks();
+    const t = makeIo(Object.assign({ args: { _runId: 'wf-u2-full' }, names: 'src/a.js\n' }, m));
+    t.io.steps = makeSteps({ root: t.root });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push');
+    assert.strictEqual(result.prUrl, 'https://github.com/acme/widget/pull/42');
+    assert.deepStrictEqual(result.skippedSteps, [{ step: 'skill-yaml', reason: 'diff 未触及 .agents/skills/，条件不满足' }]);
+    const state = readStateFile(t.root, result.runId);
+    assert.deepStrictEqual(state.steps['static-gate'].outputs, { result: 'PASS', changesetWarn: true });
+    assert.strictEqual(state.steps.changeset.status, 'done');
+    assert.strictEqual(state.steps['pr-submit'].status, 'done');
+    assert.strictEqual(state.steps['skill-yaml'].status, 'skipped');
+    assert.ok(state.steps['pr-submit'].outputs.prUrl.startsWith('https://github.com/acme/widget/pull/'));
+  });
+
+  await test('preflight：state.baseHash 已锁定时不重算 rev-parse base（全程恰 1 次 = fresh 创建时）', async () => {
+    const m = allPassMocks();
+    const t = makeIo(Object.assign({ args: { _runId: 'wf-u2-pf' } }, m));
+    t.io.steps = makeSteps({ root: t.root });
+    await lib.runPipeline(t.io);
+    const baseResolves = t.recorded.sh.filter(
+      (c) => c[0] === 'git' && c[1] === 'rev-parse' && c[2] === 'main^{commit}',
+    );
+    assert.strictEqual(baseResolves.length, 1,
+      'rev-parse base 只应发生在 fresh 创建 state 时；preflight 复用 state.baseHash 不重算');
+  });
+
+  await test('preflight：无 commits + gh 未认证 + fallow 缺失 → 聚合失败文案逐条给修复命令', async () => {
+    const m = allPassMocks();
+    const t = makeIo(Object.assign({
+      args: { _runId: 'wf-u2-pf2' },
+      commits: '',
+      cmdResults: {
+        gh: { code: 1, stderr: 'not logged in' },
+        fallow: { code: 127, stderr: 'command not found' },
+      },
+    }, m));
+    t.io.steps = makeSteps({ root: t.root });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(result.failedStep, 'preflight');
+    assertIncludes(result.error, 'preflight 前置条件未过');
+    assertIncludes(result.error, `分支相对 base main 无 commits`);
+    assertIncludes(result.error, 'gh auth login');
+    assertIncludes(result.error, 'npm i -g fallow');
+  });
+
+  await test('preflight：baseHash 缺失（旧 state）时补锁并落盘', async () => {
+    const m = allPassMocks();
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u2-pf3' } }, m));
+    seedState(t.root, { baseHash: null });
+    t.io.steps = makeSteps({ root: t.root });
+    await lib.runPipeline(t.io);
+    assert.ok(t.recorded.sh.some((c) => c[0] === 'git' && c[1] === 'rev-parse' && c[2] === 'main^{commit}'));
+    assert.strictEqual(readStateFile(t.root, RUN_ID_A).baseHash, 'B1');
+  });
+
+  await test('static-gate：过且无 WARN → outputs 契约 + changeset 预写 skipped（条件随前置 done checkpoint 落盘）', async () => {
+    const m = allPassMocks();
+    m.scriptMocks[FAKE_PATHS.preMerge] = { code: 0, stdout: '  PASS typecheck:extensions\n  PASS lint\n' }; // 无 WARN
+    const t = makeIo(Object.assign({ args: { _runId: 'wf-u2-sg1' } }, m));
+    t.io.steps = makeSteps({ root: t.root });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push');
+    const state = readStateFile(t.root, result.runId);
+    assert.deepStrictEqual(state.steps['static-gate'].outputs, { result: 'PASS', changesetWarn: false });
+    assert.strictEqual(state.steps.changeset.status, 'skipped');
+    assertIncludes(state.steps.changeset.reason, '条件不满足');
+    assert.strictEqual(t.agentCalls.filter((c) => c.description === 'changeset-draft').length, 0);
+  });
+
+  await test('static-gate：fail → fix agent 修 → 第 2 轮过（gate 调 2 次、agent 1 次、prompt 含 commit message 约定）', async () => {
+    let gateRuns = 0;
+    const m = allPassMocks();
+    m.scriptMocks[FAKE_PATHS.preMerge] = () => {
+      gateRuns += 1;
+      return gateRuns === 1 ? { code: 1, stderr: 'lint failed hard' } : { code: 0, stdout: '  PASS lint\n' };
+    };
+    const t = makeIo(Object.assign({ args: { _runId: 'wf-u2-sg2' } }, m));
+    t.io.steps = makeSteps({ root: t.root });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push');
+    assert.strictEqual(gateRuns, 2);
+    const fixCalls = t.agentCalls.filter((c) => c.description === 'fix-static-gate');
+    assert.strictEqual(fixCalls.length, 1);
+    assertIncludes(fixCalls[0].prompt, 'fix: gate static-gate round 1');
+    assertIncludes(fixCalls[0].prompt, 'lint failed hard');
+    assertIncludes(fixCalls[0].prompt, 'git add <显式路径>'); // 禁 add -A 语义
+    const state = readStateFile(t.root, result.runId);
+    assert.strictEqual(state.steps['static-gate'].attempts, 1);
+  });
+
+  await test('static-gate：3 轮子循环上限 → failed（gate 3 次、agent 2 次、文案含人工修复 + resumeCommand 指引）', async () => {
+    let gateRuns = 0;
+    const t = makeIo({
+      args: { _runId: 'wf-u2-sg3' },
+      scriptMocks: {
+        [FAKE_PATHS.preMerge]: () => {
+          gateRuns += 1;
+          return { code: 1, stderr: `still failing round ${gateRuns}` };
+        },
+      },
+    });
+    t.io.steps = makeSteps({ root: t.root });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(result.failedStep, 'static-gate');
+    assert.strictEqual(gateRuns, lib.MAX_GATE_ROUNDS);
+    assert.strictEqual(t.agentCalls.filter((c) => c.description === 'fix-static-gate').length, lib.MAX_GATE_ROUNDS - 1);
+    assertIncludes(result.error, '3 轮修复子循环仍未通过');
+    assertIncludes(result.error, 'git add <显式路径> && git commit');
+    assertIncludes(result.error, 'resumeCommand 续跑');
+  });
+
+  await test('static-gate：fix agent 留脏工作区 → 立即 failed（第 1 次止损，gate 只跑 1 次）', async () => {
+    let gateRuns = 0;
+    const t = makeIo({
+      args: { _runId: 'wf-u2-sg4' },
+      scriptMocks: {
+        [FAKE_PATHS.preMerge]: () => {
+          gateRuns += 1;
+          return { code: 1, stderr: 'lint failed' };
+        },
+      },
+      agent: async () => ({ value: {}, error: null }),
+    });
+    // agent 返回后置脏：借 agent mock 副作用改 git.porcelain（模拟 agent 修完未 commit）
+    const origAgent = t.io.agent;
+    t.io.agent = async (params) => {
+      const res = await origAgent(params);
+      t.git.porcelain = ' M dirty.js\n';
+      return res;
+    };
+    t.io.steps = makeSteps({ root: t.root });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(result.failedStep, 'static-gate');
+    assert.strictEqual(gateRuns, 1); // 第 1 次止损：不烧后续轮次
+    assertIncludes(result.error, '存在未提交改动');
+    assertIncludes(result.error, 'dirty.js');
+    assertIncludes(result.error, '止损');
+  });
+
+  await test('static-gate：exit 2（工具错误）→ failed 不自动重试（gate 1 次、agent 0 次）', async () => {
+    let gateRuns = 0;
+    const t = makeIo({
+      args: { _runId: 'wf-u2-sg5' },
+      scriptMocks: {
+        [FAKE_PATHS.preMerge]: () => {
+          gateRuns += 1;
+          return { code: 2, stderr: 'ERROR: 用法错误' };
+        },
+      },
+    });
+    t.io.steps = makeSteps({ root: t.root });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(gateRuns, 1);
+    assert.strictEqual(t.agentCalls.length, 0);
+    assertIncludes(result.error, '工具错误，不自动重试');
+    assertIncludes(result.error, '需人看');
+  });
+
+  await test('changeset：changesetWarn=false 且条目被篡改删除 → 防御重放落盘条件（不真跑 agent）', async () => {
+    const t = makeIo({ agent: async () => { throw new Error('agent 不应被调用'); } });
+    const steps = makeSteps({ root: t.root });
+    const changesetStep = findStep(steps, 'changeset');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', params: {}, steps: { 'static-gate': { status: 'done', outputs: { result: 'PASS', changesetWarn: false } } } };
+    const res = await changesetStep.run(mkCtx(t, state));
+    assert.strictEqual(res.skipped, true);
+    assertIncludes(res.reason, 'changesetWarn=false');
+  });
+
+  await test('changeset：WARN=true → agent 按 diff 起草（prompt 含 stat/commits，outputs 契约）', async () => {
+    const t = makeIo({
+      agent: async () => ({ value: { action: 'draft', files: ['.changeset/widget.md'] }, error: null }),
+    });
+    const steps = makeSteps({ root: t.root });
+    const changesetStep = findStep(steps, 'changeset');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', params: {}, steps: { 'static-gate': { status: 'done', outputs: { result: 'PASS', changesetWarn: true } } } };
+    const res = await changesetStep.run(mkCtx(t, state));
+    assert.deepStrictEqual(res.drafted, ['.changeset/widget.md']);
+    assertIncludes(res.note, '已起草 1 个 changeset 文件');
+    const prompt = t.agentCalls[0].prompt;
+    assertIncludes(prompt, 'minor'); // 分类规则内嵌
+    assertIncludes(prompt, 'feat: a commit'); // commits 全文作输入
+  });
+
+  await test('changeset：agent 判非发布改动 → note 汇总跳过原因', async () => {
+    const t = makeIo({
+      agent: async () => ({ value: { action: 'no-release', skipReasons: ['pi-goal: 纯注释改动，diff 证据为注释行'] }, error: null }),
+    });
+    const steps = makeSteps({ root: t.root });
+    const changesetStep = findStep(steps, 'changeset');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', params: {}, steps: { 'static-gate': { status: 'done', outputs: { changesetWarn: true } } } };
+    const res = await changesetStep.run(mkCtx(t, state));
+    assert.deepStrictEqual(res.drafted, []);
+    assertIncludes(res.note, '纯注释改动');
+  });
+
+  await test('changeset：agent 调用失败 → failed 文案可操作', async () => {
+    const t = makeIo({ agent: async () => ({ value: null, error: 'model timeout' }) });
+    const steps = makeSteps({ root: t.root });
+    const changesetStep = findStep(steps, 'changeset');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', params: {}, steps: { 'static-gate': { status: 'done', outputs: { changesetWarn: true } } } };
+    await assert.rejects(changesetStep.run(mkCtx(t, state)), /changeset agent 调用失败：model timeout/);
+  });
+
+  await test('changeset：outputs 缺 changesetWarn（旧版本 state）→ fail-fast 不猜条件', async () => {
+    const t = makeIo({});
+    const steps = makeSteps({ root: t.root });
+    const changesetStep = findStep(steps, 'changeset');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', params: {}, steps: { 'static-gate': { status: 'done', outputs: {} } } };
+    await assert.rejects(changesetStep.run(mkCtx(t, state)), /changesetWarn/);
+  });
+
+  await test('pr-meta：schema agent 产物落盘 pr-title.txt / pr-body.md，outputs {title, bodyFile}', async () => {
+    const t = makeIo({
+      agent: async () => ({ value: { title: 'feat(core): add x', body: '## Summary\nadd x\n' }, error: null }),
+    });
+    const steps = makeSteps({ root: t.root });
+    const prMetaStep = findStep(steps, 'pr-meta');
+    const runIdDir = path.join(t.root, 'run-dir');
+    fs.mkdirSync(runIdDir, { recursive: true });
+    const state = { runId: RUN_ID_A, baseHash: 'B1', params: {}, steps: {} };
+    const res = await prMetaStep.run(mkCtx(t, state, runIdDir));
+    assert.strictEqual(res.title, 'feat(core): add x');
+    assert.strictEqual(res.bodyFile, path.join(runIdDir, 'pr-body.md'));
+    assert.strictEqual(fs.readFileSync(path.join(runIdDir, 'pr-title.txt'), 'utf8'), 'feat(core): add x');
+    assertIncludes(fs.readFileSync(path.join(runIdDir, 'pr-body.md'), 'utf8'), '## Summary');
+    const prompt = t.agentCalls[0].prompt;
+    assertIncludes(prompt, 'conventional commit');
+    assertIncludes(prompt, 'feat: a commit');
+    assertIncludes(prompt, 'a.js | 2');
+  });
+
+  await test('pr-meta：agent 返回缺 body → failed 文案（schema 回退 content 兜底）', async () => {
+    const t = makeIo({
+      agent: async () => ({ value: 'raw text fallback（无 schema 输出）', error: null }),
+    });
+    const steps = makeSteps({ root: t.root });
+    const prMetaStep = findStep(steps, 'pr-meta');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', params: {}, steps: {} };
+    await assert.rejects(prMetaStep.run(mkCtx(t, state)), /pr-meta agent 返回不符合契约/);
+  });
+
+  await test('pr-meta：agent 调用失败 → failed 文案', async () => {
+    const t = makeIo({ agent: async () => ({ value: null, error: 'rate limited' }) });
+    const steps = makeSteps({ root: t.root });
+    const prMetaStep = findStep(steps, 'pr-meta');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', params: {}, steps: {} };
+    await assert.rejects(prMetaStep.run(mkCtx(t, state)), /pr-meta agent 调用失败：rate limited/);
+  });
+
+  await test('skill-yaml：diff 未触及 .agents/skills/ → skipped 落盘 reason', async () => {
+    const t = makeIo({ names: 'src/a.js\npackages/runtime/src/x.ts\n' });
+    const steps = makeSteps({ root: t.root });
+    const skillStep = findStep(steps, 'skill-yaml');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', params: {}, steps: {} };
+    const res = await skillStep.run(mkCtx(t, state));
+    assert.strictEqual(res.skipped, true);
+    assertIncludes(res.reason, '.agents/skills/');
+  });
+
+  await test('skill-yaml：改动 skill 目录映射到各自 SKILL.md 传参（去重），成功 outputs', async () => {
+    const t = makeIo({
+      names: '.agents/skills/foo/scripts/x.py\n.agents/skills/bar/SKILL.md\n.agents/skills/foo/SKILL.md\n',
+      scriptMocks: {
+        [FAKE_PATHS.validateSkillYaml]: (args) => {
+          t.validateArgs = args;
+          return { code: 0, stdout: 'OK' };
+        },
+      },
+    });
+    const steps = makeSteps({ root: t.root });
+    const skillStep = findStep(steps, 'skill-yaml');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', params: {}, steps: {} };
+    const res = await skillStep.run(mkCtx(t, state));
+    assert.deepStrictEqual(res.validated, ['.agents/skills/foo/SKILL.md', '.agents/skills/bar/SKILL.md']);
+    assert.deepStrictEqual(t.validateArgs, [FAKE_PATHS.validateSkillYaml, '.agents/skills/foo/SKILL.md', '.agents/skills/bar/SKILL.md']);
+  });
+
+  await test('skill-yaml：校验 fail → failed（硬校验不修，文案带输出）', async () => {
+    const t = makeIo({
+      names: '.agents/skills/foo/SKILL.md\n',
+      scriptMocks: { [FAKE_PATHS.validateSkillYaml]: { code: 1, stdout: 'ERROR: missing field name' } },
+    });
+    const steps = makeSteps({ root: t.root });
+    const skillStep = findStep(steps, 'skill-yaml');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', params: {}, steps: {} };
+    await assert.rejects(skillStep.run(mkCtx(t, state)), (e) => {
+      assertIncludes(e.message, '硬校验不修');
+      assertIncludes(e.message, 'missing field name');
+      return true;
+    });
+  });
+
+  await test('pr-submit：pr-meta 产物缺失 → failed 前置文案', async () => {
+    const t = makeIo({});
+    const steps = makeSteps({ root: t.root });
+    const submitStep = findStep(steps, 'pr-submit');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', base: 'main', params: {}, steps: {} };
+    await assert.rejects(submitStep.run(mkCtx(t, state)), /pr-submit 前置产物缺失/);
+  });
+
+  await test('pr-submit：成功 → 从 stdout 解析 pr_url（多行取合法匹配），参数含 title/body/base', async () => {
+    let submitArgs = null;
+    const t = makeIo({
+      scriptMocks: {
+        [FAKE_PATHS.prSubmit]: (args) => {
+          submitArgs = args;
+          return { code: 0, stdout: 'branch pushed\nhttps://github.com/acme/widget/pull/7\n' };
+        },
+      },
+    });
+    const steps = makeSteps({ root: t.root });
+    const submitStep = findStep(steps, 'pr-submit');
+    const runIdDir = path.join(t.root, 'run-dir');
+    fs.mkdirSync(runIdDir, { recursive: true });
+    fs.writeFileSync(path.join(runIdDir, 'pr-title.txt'), 'feat: x');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', base: 'main', params: {}, steps: { 'pr-meta': { status: 'done', outputs: { title: 'feat: x', bodyFile: '/fake/body.md' } } } };
+    const res = await submitStep.run(mkCtx(t, state, runIdDir));
+    assert.strictEqual(res.prUrl, 'https://github.com/acme/widget/pull/7');
+    assert.deepStrictEqual(submitArgs.slice(1), ['--title-file', path.join(runIdDir, 'pr-title.txt'), '--body-file', '/fake/body.md', '--base', 'main']);
+  });
+
+  await test('pr-submit：stdout 无合法 pr_url（dry-run 形态）→ failed URL 校验文案', async () => {
+    const t = makeIo({
+      scriptMocks: { [FAKE_PATHS.prSubmit]: { code: 0, stdout: 'https://github.com/dry-run/pr/create\n' } },
+    });
+    const steps = makeSteps({ root: t.root });
+    const submitStep = findStep(steps, 'pr-submit');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', base: 'main', params: {}, steps: { 'pr-meta': { status: 'done', outputs: { bodyFile: '/fake/body.md' } } } };
+    await assert.rejects(submitStep.run(mkCtx(t, state)), /未解析到合法 pr_url/);
+  });
+
+  await test('pr-submit：exit 2 / 3 / 5 文案按 §3.7 逐档', async () => {
+    const cases = [
+      { code: 2, re: /git push 失败.*分支保护.*幂等更新/s, detail: 'remote rejected' },
+      { code: 3, re: /gh 已认证但调用失败.*gh auth status/s, detail: 'api error' },
+      { code: 5, re: /title\/body 文件缺失.*pr-title\.txt\/pr-body\.md/s, detail: 'not readable' },
+    ];
+    for (const c of cases) {
+      const t = makeIo({
+        scriptMocks: { [FAKE_PATHS.prSubmit]: { code: c.code, stdout: c.detail } },
+      });
+      const steps = makeSteps({ root: t.root });
+      const submitStep = findStep(steps, 'pr-submit');
+      const state = { runId: RUN_ID_A, baseHash: 'B1', base: 'main', params: {}, steps: { 'pr-meta': { status: 'done', outputs: { bodyFile: '/fake/body.md' } } } };
+      await assert.rejects(submitStep.run(mkCtx(t, state)), (e) => {
+        assert.ok(c.re.test(e.message), `exit ${c.code} 文案不匹配：${e.message}`);
+        assertIncludes(e.message, c.detail);
+        return true;
+      });
+    }
+  });
+
+  await test('pr-submit：exit 1 → 通用失败文案带输出摘要', async () => {
+    const t = makeIo({
+      scriptMocks: { [FAKE_PATHS.prSubmit]: { code: 1, stdout: 'Unknown arg: --bogus' } },
+    });
+    const steps = makeSteps({ root: t.root });
+    const submitStep = findStep(steps, 'pr-submit');
+    const state = { runId: RUN_ID_A, baseHash: 'B1', base: 'main', params: {}, steps: { 'pr-meta': { status: 'done', outputs: { bodyFile: '/fake/body.md' } } } };
+    await assert.rejects(submitStep.run(mkCtx(t, state)), /pr-submit 失败（exit 1）.*Unknown arg/s);
+  });
+
+  await test('walker：step 返回 skipped 协议 → 落盘 skipped+reason 且计入终态 skippedSteps', async () => {
+    const t = makeIo({ args: { _runId: 'wf-u2-skipproto' } });
+    t.io.steps = [
+      { id: 'a', run: async () => ({ v: 1 }) },
+      { id: 'cond', run: async () => ({ skipped: true, reason: '条件不满足（测试）' }) },
+      { id: 'b', run: async () => ({ v: 2 }) },
+    ];
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push');
+    assert.deepStrictEqual(result.skippedSteps, [{ step: 'cond', reason: '条件不满足（测试）' }]);
+    const state = readStateFile(t.root, result.runId);
+    assert.strictEqual(state.steps.cond.status, 'skipped');
+    assert.strictEqual(state.steps.a.status, 'done');
+    assert.strictEqual(state.steps.b.status, 'done');
+  });
+
+  await test('worktreeDirt：.review/ 脚本自持目录不计入工作区脏（冒烟实证防自挡）', () => {
+    const out = '?? .review/\n M src/a.js\n?? .review/pr-workflow/\n?? new-file.txt\n';
+    assert.strictEqual(
+      lib.worktreeDirt(out),
+      ' M src/a.js\n?? new-file.txt',
+    );
+    assert.strictEqual(lib.worktreeDirt('?? .review/\n'), '');
+    assert.strictEqual(lib.worktreeDirt(''), '');
+  });
+
+
 
   console.log(`\n${passed} passed, ${failed.length} failed`);
   if (failed.length > 0) {

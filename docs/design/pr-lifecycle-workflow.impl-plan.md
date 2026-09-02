@@ -65,6 +65,7 @@ graph TD
 | 2 | 探针 P3/P4/P6 降级（dry-run / 实现断言 / 代码读+验收覆盖） | 探针期空跑全量插桩测试（P4）与真实 PR 更新（P3 全量）成本高且验收场景 1/4 天然覆盖 | 已确认 |
 | 3 | `pr-lifecycle/lib.cjs` 单测用 `node test/run-tests.js` 直跑，偏离仓级「vitest 禁 node:test」红线 | 测试对象是 `.agents/workflows/` 下的独立 .cjs 脚本，不在任何 pnpm 子包内、无 vitest 配置可挂载；运行器为自写 node 断言脚本（非 node:test 框架），mock runner 依赖注入即可覆盖，引入子包 vitest 配置反而扩大变更面 | 已确认 |
 | 4 | （预留）u-env 探针发现的引擎契约偏差 | 发现即登记，联动设计文档措辞 | 见变更历史 2026-09-03 探针结论第 6 条 |
+| 5 | `.review/` 自持目录在干净工作区检查中结构性排除（设计假设 `.review/` 已在目标仓 .gitignore） | 冒烟实证：目标仓若无该 gitignore 条目，脚本自建 state 目录会被 porcelain 检出自挡；改为三处统一过滤，语义只强不弱 | 已确认 |
 
 ## 6 状态表
 
@@ -72,7 +73,7 @@ graph TD
 |------|------|------|----------|
 | u-env | committed | 1 | 变更历史 2026-09-03 探针结论（config 清理 + P1/P2/P3/P5 全过；P4/P6 按偏差 2 顺延）；嵌套 loop 产物 `~/.review-fix-loop/Users-zhushanwen-Code-xyz-agent-workspace-dev-0.9.13/wf-1788373060688-ll4ys7/` |
 | u1 | committed | 1 | 38/39 项 lib 测试绿 + lint valid:[] + 真实引擎冒烟（fresh awaiting-push / resume 幂等回放 / engineRunId 刷新）；deviations 5 条见 u1 交付报告（返回 Promise 顶层 return / skipSteps 消费本次参数 / 空注册表直达终态 / agentAdapter 待 u2 联调 / --reviewers 废弃 flag 提示） |
-| u2 | pending | — | — |
+| u2 | committed | 1 | 65 项测试绿（u1 38 回归 + u2 27 新增）+ lint valid + /tmp 仓真实引擎冒烟（假脚本 + 真实 LLM agent，六 step 落盘核验）；deviations 5 条（.review/ 结构性排除 / step skipped 协议 / agent 输出兜底 / 子循环轮次语义 / 真实脚本集成留 Gate B） |
 | u3 | pending | — | — |
 | u4 | pending | — | — |
 | u5 | pending | — | — |
@@ -86,3 +87,4 @@ graph TD
   - 2026-09-03 **u-env 探针结论**：① `~/.zcode/cli/config.json` plugins.dirs 残留项已移除（唯一条目指向已删除的 feat-app-server-refactor worktree，移除后数组为空）。② zsw 1.2.0 CLI 可用：`node <cache>/bin/zsw.js workflow …`；run 恒本地同步、同步面强制 lint；支持 `.js` 绝对路径 / 内置名；废弃 flag 显式报错。③ **P1 通过**：嵌套 `workflow('review-fix-loop', {targetType:'git-diff', target, batch1:<8 个 .md 逗号拼接>, maxRounds, autoCommit, skipCleanAgents})` 真实派发 8 reviewer 并行 + 聚合 + fix，`terminated=max-rounds` 正常返回；嵌套返回 `{content, parsedOutput}`，`parsedOutput` 含 `terminated/batches/totalFixed/runDir/message`；嵌套 run 有独立 engineRunId 与 `~/.review-fix-loop/<slug>/<id>/` 产物目录（待验证③落定）。**D2 降级门不触发**。④ **P2 通过**：CLI 未知 flag 透传 `$ARGS`（`--runId prw-probe-test-1` → `args.runId`）；引擎 runId 注入 `args._runId`；worker 内 `agent()` 可用。⑤ **P3 通过**（dry-run 两跑一致）：已存在 PR 检测 + 仅内容变化时 `gh pr edit` + `pr_url` 解析正常；create 路径留验收场景 1。⑥ **新引擎契约（u1 必遵）**：`@pi-meta` 块缺 `phases` 数组 → `available=false` 拒跑（typecheckMeta 强制）；lint 入口检查要求脚本直接调用 `agent()/parallel()/pipeline()` 至少一处（仅 `workflow()` 不满足）；脚本返回值必须可 structured-clone。⑦ **P5 通过**：引擎 state 文件 `~/.zcode/zsw/workflow-state/<engineRunId>.jsonl`，JSONL 每行 `{v,runId,spec,state,meta}`，活性判定读末行 `state.status`（已实证 `running`/`done`，`reason=completed`）。⑧ P4（maxBuffer）/P6（real-pi skip 标记）按偏差 2 顺延至 u1 实现断言与 Gate B。
   - 2026-09-03 P1 探针 loop 的 fix agent 对本计划的修订（基线 hash 回填 + 偏差 #3 测试运行器说明）随 commit `a9de4b4b4` 入库。
   - 2026-09-03 u1 committed：验收含真实引擎冒烟（主 agent 硬核验复跑）；偏差 1（lib 拆分）状态改「已实施验证」。lint 入口检查被 agentAdapter 内真实 agent() 调用满足，优于计划预期。
+  - 2026-09-03 u2 committed：新增偏差（登记表 #5）——`.review/` 脚本自持目录在 worktreeDirt 检查中结构性排除（不依赖目标仓 gitignore，设计假设在目标仓不成立时防自挡）；walker step 协议扩展 `{skipped, reason}` 返回形态。给 u3 的复用接口：`gateFixLoop` / `MAX_GATE_ROUNDS` / `MSG.gate*` 三档文案。
