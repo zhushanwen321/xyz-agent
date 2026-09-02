@@ -15,7 +15,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { SessionLifecycle, setMigrationGate } from '../session-lifecycle.js'
-import type { ISessionServiceInternal } from '../session-internal.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../session-internal.js'
+import type { IEventAdapter } from '../../../interfaces.js'
 import type { IProcessManager } from '../../ports/pi-engine.js'
 import type { IConfigStore } from '../../ports/config.js'
 import type { ISessionStore } from '../../ports/session.js'
@@ -28,15 +29,19 @@ function makeSummary(id: string): SessionSummary {
 }
 
 function makeEnv() {
-  const svc = {
+  // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转
+  const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => []),
     getSkillPaths: vi.fn(() => []),
     getReplaceSystemPrompt: vi.fn(() => undefined),
     getLaunchPresetOptions: vi.fn(async () => undefined),
-    initializeManagedSession: vi.fn(async (_id: string) => ({ id: _id }) as unknown as IManagedSessionView),
     toSummary: vi.fn((s: IManagedSessionView) => makeSummary(s.id)),
     notifySessionCreated: vi.fn(),
-  } as unknown as ISessionServiceInternal
+    findScannedSession: vi.fn(() => undefined),
+    removeSessionEntry: vi.fn(),
+    fetchAndBroadcastContext: vi.fn(async () => undefined),
+    getActiveSummaries: vi.fn(() => []),
+  }
   const client = {
     getState: vi.fn(async () => ({ sessionId: 'sess-1', sessionFile: undefined })),
     setSessionName: vi.fn(async () => undefined),
@@ -59,7 +64,16 @@ function makeEnv() {
     persistProjectBinding: vi.fn(),
   } as unknown as ISessionStore
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
   return { svc, createSession, lifecycle }
 }
 

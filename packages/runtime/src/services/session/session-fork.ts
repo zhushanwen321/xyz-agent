@@ -6,6 +6,10 @@
  * 本工具在 runtime 层实现截断：读源 session JSONL → 按 entryId 树回溯 → 写新 JSONL，
  * 不调 pi fork RPC，不动源 session 的 pi 进程。
  *
+ * fork 点解析（S6 随 lifecycle fork 编排迁入，原 Facade resolveEntryIdByTimestamp）：
+ * RPC 路径加载的 session 无 piEntryId 时，按前端消息 timestamp + role 在源 JSONL 中
+ * 匹配 fork 点 entryId（纯函数，消费方 session-lifecycle.forkSession）。
+ *
  * entry 树结构（pi 0.80.3 JSONL v3）：
  *   - session（header，root，无 parentId）：{ type:"session", version, id, timestamp, cwd }
  *   - message：{ type:"message", id, parentId, timestamp, message:{role, content:[]} }
@@ -184,4 +188,77 @@ export async function createForkedSessionFile(
   await writeFile(newFilePath, lines.join('\n') + '\n', 'utf-8')
 
   return { filePath: newFilePath, sessionId: newSessionId, sourceFilePath }
+}
+
+/**
+ * fork 点 entryId 按 timestamp 匹配时的容差（W7）。
+ *
+ * 来源：前端 messageTimestamp 是 Unix ms（Date.now()），JSONL 中 pi 写入的 timestamp 是
+ * ISO 字符串（new Date(...).getTime() 还原回 ms）。两者本应完全相等，但：
+ *   - 早期实现/历史 session 的 timestamp 精度可能到秒（无毫秒位）；
+ *   - 时钟在不同阶段读到的瞬时值可能差几毫秒；
+ *   - 序列化舍入（JSONL 写入时 Date.toISOString 的毫秒舍入）。
+ * 旧值 2ms 在历史 session（秒级精度）下会全部漏匹配 → fallback 到最后一条 entry，
+ * 导致 fork 点错位（用户期望 fork 到第 N 条消息，实际 fork 到最后一条）。
+ * 1000ms 容差让「同一秒内」的 entry 视为同一条——fork 点按 timestamp + role 唯一性已足够区分，
+ * 同秒内两条相同 role 的 entry 概率极低，且 fallback warn 仍会触发（兜底可见）。
+ */
+const TIMESTAMP_TOLERANCE_MS = 1000
+
+/**
+ * RPC 路径加载的 session 无 piEntryId，读 JSONL 按 timestamp + role 匹配 entryId（S6 迁入，
+ * 原实现经 Facade → lifecycle 中转后落位 fork 域模块）。
+ * [HISTORICAL] 2026-07-16：历史 session 通过 RPC 加载后 fork 报“缺少 piEntryId”。
+ *
+ * wave:perf-w26（微项 12）：source 由调用方（forkSession）单次扫描解析后传入，
+ * 本函数不自扫（同 handler 的 scanSessions 合并为一次）。
+ */
+export async function resolveEntryIdByTimestamp(
+  sourceFilePath: string,
+  messageTimestamp?: number,
+  messageRole?: string,
+): Promise<string> {
+  // AGENTS.md 规则 #6：所有读取 session 文件必须处理「不存在」（scan 与读间竞态——
+  // 文件可能已被外部删除：pi 异常退出未 flush / 用户手动清理）。模式对齐 getHistoryFromFilePath。
+  let content: string
+  try {
+    content = await readFile(sourceFilePath, 'utf-8')
+  } catch (e) {
+    if (isEnoent(e)) {
+      console.warn(`[session-service] resolveEntryIdByTimestamp: session file missing: ${sourceFilePath}`)
+      throw new Error(`fork: source session file missing for resolve: ${sourceFilePath}`)
+    }
+    throw e
+  }
+  const entries = parseJsonl(content) as Array<Record<string, unknown>>
+  // 只看 message 类型 entry（有 entry.id 和 entry.message.timestamp）
+  const msgEntries = entries.filter((e) =>
+    e.type === 'message'
+    && typeof e.id === 'string'
+    && e.message && typeof e.message === 'object'
+  )
+  if (msgEntries.length === 0) {
+    throw new Error(`fork: source session has no message entries: ${sourceFilePath}`)
+  }
+  // 按 timestamp + role 匹配（JSONL timestamp 是 ISO 字符串，前端是 Unix ms）
+  // ±TIMESTAMP_TOLERANCE_MS（模块顶层常量，W7）容差：历史 session 可能秒级精度，1000ms 容差兜底
+  if (messageTimestamp != null) {
+    for (const e of msgEntries) {
+      const msg = e.message as Record<string, unknown>
+      const entryTs = typeof msg.timestamp === 'string'
+        ? new Date(msg.timestamp).getTime()
+        : typeof e.timestamp === 'string'
+          ? new Date(e.timestamp).getTime()
+          : 0
+      const roleMatch = !messageRole || msg.role === messageRole
+      if (roleMatch && Math.abs(entryTs - messageTimestamp) <= TIMESTAMP_TOLERANCE_MS) {
+        return e.id as string
+      }
+    }
+  }
+  // fallback：取最后一条 message entry（用户最可能 fork 到最近的消息）
+  const last = msgEntries[msgEntries.length - 1]
+  if (!last) throw new Error('msgEntries unexpectedly empty after length check')
+  console.warn(`[session-service] resolveEntryIdByTimestamp: no timestamp match, falling back to last entry: ${last.id}`)
+  return last.id as string
 }

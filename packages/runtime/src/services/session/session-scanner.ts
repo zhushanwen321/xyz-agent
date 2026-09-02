@@ -6,11 +6,12 @@
  * 合并活跃会话(经 Facade 提供的 summaries + filePaths 去重)与
  * 持久化会话(scanPiSessions 读磁盘),按 cwd 分组、按 lastActiveAt 排序。
  *
- * 依赖经构造注入:svc(Facade 内部协议,读取活跃会话数据)。
+ * 依赖经构造注入:svc(scanner 窄接口 IScannerSessionOps,按消费者收窄——
+ * 调用点实测 2 方法,见 session-internal.ts)。
  */
 import { basename } from 'node:path'
 import type { SessionSummary, SessionGroup, SessionStatus } from '@xyz-agent/shared'
-import type { ISessionServiceInternal } from './session-internal.js'
+import type { IScannerSessionOps } from './session-internal.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
 import type { ScannedSession } from './types.js'
@@ -18,7 +19,7 @@ import { detectBareWorkspaceCached, pruneBareCache } from '../worktree/workspace
 
 export class SessionScanner {
   constructor(
-    private readonly svc: ISessionServiceInternal,
+    private readonly svc: IScannerSessionOps,
     private readonly sessionStore: ISessionStore,
     private readonly gitInfoReader: IGitInfoReader,
   ) {}

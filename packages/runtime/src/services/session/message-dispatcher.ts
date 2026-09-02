@@ -8,12 +8,13 @@
  * [HISTORICAL] sendSubagentMessage(marker 拼装分支)已删除(composer 四符号设计 D2)——
  * 定向消息改走 session-service.subagentAction 直发 client.prompt,不经本骨架。
  *
- * 依赖经构造注入:svc(Facade 内部协议,访问 sessions/共享 helper)、
+ * 依赖经构造注入:svc(dispatcher 窄接口 IDispatcherSessionOps,按消费者收窄——
+ * 调用点实测 6 方法,见 session-internal.ts)、
  * pm(getClient / 进程操作)、messageBus(发布,wave:perf-w09 接口收敛——
  * dispatcher 只依赖 publish 抽象,broker 依赖已删除:命令编排消息全部是
  * session 级 push 型,单通道走 bus 定向发布,broadcast 双写腿已收口)。
  */
-import type { ISessionServiceInternal } from './session-internal.js'
+import type { IDispatcherSessionOps } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
 import type { SendMessageHook, PendingBashResultData } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
@@ -37,7 +38,7 @@ export class MessageDispatcher {
   private sendMessageHook: SendMessageHook | null = null
 
   constructor(
-    private readonly svc: ISessionServiceInternal,
+    private readonly svc: IDispatcherSessionOps,
     private readonly pm: IProcessManager,
     private readonly workspaceService: WorkspaceService,
     private messageBus?: IMessageBus,

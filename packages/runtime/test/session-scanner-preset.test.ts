@@ -52,7 +52,7 @@ vi.mock('../src/services/worktree/workspace-detector.js', () => ({
 }))
 
 import { SessionScanner } from '../src/services/session/session-scanner.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { IScannerSessionOps } from '../src/services/session/session-internal.js'
 import type { ISessionStore } from '../src/services/ports/session.js'
 import type { IGitInfoReader } from '../src/services/ports/git-info.js'
 import { scanPiSessions, _resetSessionMetaCacheForTest } from '../src/infra/pi/session-file-utils.js'
@@ -71,11 +71,12 @@ function makeSessionStore(): ISessionStore {
   } as unknown as ISessionStore
 }
 
-function makeSvc(): ISessionServiceInternal {
+/** S2 ISP 化：结构性满足 scanner 窄接口（2 方法 = 实际消费面），无强转。 */
+function makeSvc(): IScannerSessionOps {
   return {
     getActiveSummaries: vi.fn(() => []),
     getActiveFilePaths: vi.fn(() => new Set<string>()),
-  } as unknown as ISessionServiceInternal
+  }
 }
 
 function makeGitReader(): IGitInfoReader {

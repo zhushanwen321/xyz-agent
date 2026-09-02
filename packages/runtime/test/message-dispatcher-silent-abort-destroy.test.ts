@@ -23,7 +23,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MessageDispatcher } from '../src/services/session/message-dispatcher.js'
 import { RpcTimeoutError } from '../src/infra/pi/rpc-client.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { IDispatcherSessionOps } from '../src/services/session/session-internal.js'
 import type { IManagedSessionView } from '../src/services/session/types.js'
 import type { IMessageBus } from '../src/services/message-bus/message-bus.js'
 import type { IPiEngine, IProcessManager } from '../src/services/ports/pi-engine.js'
@@ -66,7 +66,9 @@ function makeMocks(abortError: Error) {
     }),
   } as unknown as IMessageBus
 
-  const svc = {
+  // S2 ISP 化：结构性满足 dispatcher 窄接口（6 方法 = 实际消费面），无强转。
+  // ensureActive/getSession 不在 abort 收敛路径上，空 mock 即可。
+  const svc: IDispatcherSessionOps = {
     getSessionByClient: vi.fn(() => {
       invocationOrder.push('getSessionByClient')
       return session
@@ -74,7 +76,9 @@ function makeMocks(abortError: Error) {
     detachSession: vi.fn(() => { invocationOrder.push('detachSession') }),
     persistSessionOutcome: vi.fn(() => { invocationOrder.push('persistSessionOutcome') }),
     removeSessionEntry: vi.fn(() => { invocationOrder.push('removeSessionEntry') }),
-  } as unknown as ISessionServiceInternal
+    ensureActive: vi.fn(),
+    getSession: vi.fn(),
+  }
 
   const pm = {
     getClient: vi.fn(() => client),
@@ -150,12 +154,14 @@ describe('MessageDispatcher abort 强杀分支（D3a：RpcTimeoutError → 检�
     const client = { abort: vi.fn(async () => { throw new RpcTimeoutError('abort', 60_000) }) } as unknown as IPiEngine
     const broadcasts: Array<{ type: string; payload: Record<string, unknown> }> = []
     const bus = { publish: vi.fn((_sid: string, m: ServerMessage) => { broadcasts.push(m as unknown as { type: string; payload: Record<string, unknown> }) }) } as unknown as IMessageBus
-    const svc = {
+    const svc: IDispatcherSessionOps = {
       getSessionByClient: vi.fn(() => undefined),
       detachSession: vi.fn(),
       persistSessionOutcome: vi.fn(),
       removeSessionEntry: vi.fn(),
-    } as unknown as ISessionServiceInternal
+      ensureActive: vi.fn(),
+      getSession: vi.fn(),
+    }
     const pm = {
       getClient: vi.fn(() => client),
       // destroySession 幂等：processes Map 无条目（已删）时静默跳过

@@ -25,7 +25,8 @@ vi.mock('node:fs', () => ({
 }))
 
 import { SessionLifecycle } from '../src/services/session/session-lifecycle.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../src/services/session/session-internal.js'
+import type { IEventAdapter } from '../src/interfaces.js'
 import type { IManagedSessionView } from '../src/services/session/types.js'
 import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
@@ -48,25 +49,26 @@ function makeMocks() {
     destroySession: vi.fn(async () => {}),
   } as unknown as IProcessManager
 
-  // initializeManagedSession 接收 lifecycle 传入的 sessionCwd（可能已降级），原样存入 session.cwd
-  // 与 toSummary 一并透传，保证 summary.cwd 反映真实降级结果
-  const session = { id: 'pi-s1', cwd: '/repo' } as IManagedSessionView
-
-  const svc = {
+  // S3 迁移：注册走真 registerSession——sessionCwd（可能已降级）原样存入注册记录的 cwd；
+  // toSummary 透传记录 cwd，保证 summary.cwd 反映真实降级结果（原 stub initializeManagedSession
+  // 回写 session.cwd 的等价观察链）。
+  const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => []),
     getSkillPaths: vi.fn(() => []),
     getReplaceSystemPrompt: vi.fn(() => undefined),
-    initializeManagedSession: vi.fn(async (_id: string, _client: unknown, cwd: string) => {
-      session.cwd = cwd
-      return session
-    }),
-    toSummary: vi.fn((): SessionSummary => ({
-      id: session.id, cwd: session.cwd, label: 'repo', status: 'idle', lastActiveAt: 1,
+    toSummary: vi.fn((s: IManagedSessionView): SessionSummary => ({
+      id: s.id, cwd: s.cwd, label: 'repo', status: 'idle', lastActiveAt: 1,
       modelId: 'test-model', tokenCount: 0,
     })),
     // S3-W2：创建入口收敛点（lifecycle 三处 return 前调用）
     notifySessionCreated: vi.fn(),
-  } as unknown as ISessionServiceInternal
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转
+    getLaunchPresetOptions: vi.fn(async () => undefined),
+    findScannedSession: vi.fn(() => undefined),
+    removeSessionEntry: vi.fn(),
+    fetchAndBroadcastContext: vi.fn(async () => undefined),
+    getActiveSummaries: vi.fn(() => []),
+  }
 
   const configStore = {
     getDefaultModel: vi.fn(() => ({ provider: 'p', modelId: 'm' })),
@@ -74,8 +76,17 @@ function makeMocks() {
 
   const sessionStore = { refreshAll: vi.fn() } as unknown as ISessionStore
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspace)
-  return { lifecycle, recordFn, pm, session }
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspace, registerDeps)
+  return { lifecycle, recordFn, pm }
 }
 
 describe('W5: session-lifecycle create record 调用（homedir 过滤归位 service 层）', () => {

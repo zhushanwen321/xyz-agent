@@ -36,7 +36,7 @@ import type {
 } from '@xyz-agent/shared'
 import type { SubagentEngineConfigView } from '@xyz-agent/extension-protocol'
 import type { DirScopes } from './services/skill-dir-config.js'
-import type { SessionTraceSnapshot } from './services/session/session-trace.js'
+import type { SessionTraceSnapshot } from './services/session/trace-sync.js'
 import type { Credential } from './services/auth/auth-storage.js'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 import type { IManagedSessionView } from './services/session/types.js'
@@ -195,7 +195,8 @@ export interface ISessionService {
    */
   getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]>
   /**
-   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 _findAgentCallFile）。
+   * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 record 查找路径
+   * ——subagentId → record.sessionFile，见 session-records.ts）。
    * 找不到返回空串（展示型功能，不 throw）。
    */
   getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string>
@@ -337,12 +338,14 @@ export interface ISessionService {
   migrateImage(fromPath: string, sessionId: string, fileName: string): Promise<{ path: string }>
   /** 追加/覆盖 segments.json sidecar（atomic 写，同 clientUuid 覆盖） */
   writeSegmentsMetadata(sessionId: string, entry: SegmentsMetadataEntry): Promise<void>
-}
 
-// ── ISessionServiceInternal ───────────────────────────────────────
-// R5：已迁移到 services/session/session-internal.ts（session 域内部契约收归 session 目录）。
-// 此处 re-export 保持向后兼容，新代码请从 services/session/session-internal.js 导入。
-export type { ISessionServiceInternal } from './services/session/session-internal.js'
+  /**
+   * M3：标记源 session 已交接给新 session（内存写 handedOffTo + 磁盘写 handoff_marker）。
+   * HandoffService 消费（绑具体类）。仅 active session 生效；非 active 源 session 按
+   * no-op 处理（见具体类 docstring）。S2 自内部协议迁入（迁移非新增，设计 D2①）。
+   */
+  markHandedOff(srcSessionId: string, newSessionId: string): void
+}
 
 // ── IConfigService ────────────────────────────────────────────────
 

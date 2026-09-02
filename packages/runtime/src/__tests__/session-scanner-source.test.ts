@@ -22,7 +22,7 @@ import type { SessionSummary } from '@xyz-agent/shared'
 import { SessionScanner } from '../services/session/session-scanner.js'
 import { PiSessionStore } from '../infra/pi/session-store.js'
 import { invalidateScanDirCache } from '../infra/pi/session-file-utils.js'
-import type { ISessionServiceInternal } from '../services/session/session-internal.js'
+import type { IScannerSessionOps } from '../services/session/session-internal.js'
 import type { IGitInfoReader } from '../services/ports/git-info.js'
 
 /** 写一个合法 session JSONL（首行 session header），返回文件绝对路径。 */
@@ -56,12 +56,12 @@ describe('SessionScanner W15 磁盘占位值来源标记', () => {
     rmSync(dataDir, { recursive: true, force: true })
   })
 
-  /** 窄 mock：scanner 只消费 getActiveSummaries / getActiveFilePaths 两个方法。 */
+  /** 窄 mock：结构性满足 scanner 窄接口（2 方法 = 实际消费面，S2 ISP 化无强转）。 */
   function makeScanner(active: SessionSummary[], activeFilePaths: Set<string>): SessionScanner {
-    const svc = {
+    const svc: IScannerSessionOps = {
       getActiveSummaries: () => active,
       getActiveFilePaths: () => activeFilePaths,
-    } as unknown as ISessionServiceInternal
+    }
     const gitInfoReader = {
       readGitInfo: () => undefined,
       pruneStaleCache: () => {},
