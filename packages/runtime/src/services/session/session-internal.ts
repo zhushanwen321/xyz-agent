@@ -13,39 +13,85 @@
  * （event-interpreter 经组合根回调注入消费，回调类型为内联函数签名，不走本文件接口）、
  * markHandedOff（已迁 ISessionService，handoff-service 绑具体类）。
  *
+ * S3 写点归位（设计 D2②）：initializeManagedSession 从 ILifecycleSessionOps 移除
+ * （迁入 SessionLifecycle 内部 registerSession，不再经 svc 回调）；sessions Map
+ * 所有权迁 SessionLifecycle，本文件新增 ISessionRegistry（只读查询面，供 Facade
+ * 残余域读点改道）与 ISessionRegisterDeps（registerSession 的装配依赖窄注入）。
+ *
  * 打断模块级循环：子模块 `import type { I*SessionOps } from './session-internal.js'`，
  * Facade `implements` 这些接口 —— 子模块 → 接口 → Facade 单向，无 import 环。
  * （运行期 Facade 调子模块、子模块经接口回调 Facade 是调用环，非依赖环。）
  *
- * sessions Map 单写者：Facade 唯一持有，子模块只经窄接口拿到元素引用做字段更新，
- * 不直接 new / 持有 Map。
+ * sessions Map 单写者：SessionLifecycle 唯一持有（S3 起所有者从 Facade 迁入），
+ * 写点 3 处全在 lifecycle（registerSession.set / removeEntry.delete / clear）；
+ * Facade 与其余子模块只经 ISessionRegistry 只读查询 + 窄接口拿到元素引用做字段更新。
  *
  * 叶子模块：仅 `import type`，不引入项目内运行时依赖。
  */
 import type { IPiEngine } from '../ports/pi-engine.js'
-import type { SessionSummary } from '@xyz-agent/shared'
+import type { SessionSummary, ServerMessage } from '@xyz-agent/shared'
 import type { SessionOutcome } from '../ports/session.js'
+import type { IEventAdapter } from '../../interfaces.js'
+import type { IMessageBus } from '../message-bus/message-bus.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
 import type { PresetResolution } from '../preset-service.js'
 
 /**
- * lifecycle 消费的窄接口（SessionLifecycle.svc，13 方法，调用点实测）。
+ * sessions Map 元素类型（原 Facade 私有 ManagedSession 的运行时句柄半段，S3 随 Map
+ * 所有权迁 lifecycle 落入共享契约）。binding 扩展字段（launchPresetId / projectId /
+ * spawnSource / parentAgentSessionId）由 hydrateBindingMeta 动态 patch，类型面经
+ * as 转换读写（lifecycle fork / Facade toSummary 的既有模式），不入本形状。
+ */
+export interface IManagedSessionRecord extends IManagedSessionView {
+  /** EventAdapter 运行时句柄（pi 事件订阅唯一持有者，detach 即收口）。 */
+  adapter: IEventAdapter
+}
+
+/**
+ * sessions Map 只读查询面（设计 D2②：Map 所有权迁 SessionLifecycle 后，Facade 残余域
+ * ~30 处读点的统一通道）。**Map 结构只读**——无 set/delete/clear（写点 3 处全在
+ * lifecycle 所有者）；元素视图沿用现状可变语义：调用方拿到记录引用可直接读写字段
+ * （ADR-0049 per-session Map 分区范式的既有约定），不包不可变壳。
+ */
+export interface ISessionRegistry {
+  /** 只读查 Map（active 判定 + 元素字段读改；含 adapter 句柄）。 */
+  get(sessionId: string): IManagedSessionRecord | undefined
+  /** Map 是否含此 id（销毁后防 publish 守卫 / hasSession）。 */
+  has(sessionId: string): boolean
+  /** 全部 session id 迭代（getActiveSessionIds）。 */
+  keys(): IterableIterator<string>
+  /** 全部 session 记录迭代（getActiveSummaries / getActiveFilePaths / destroyAll detach 扇出）。 */
+  values(): IterableIterator<IManagedSessionRecord>
+}
+
+/**
+ * registerSession（原 Facade.initializeManagedSession，S3/D2② 迁入 lifecycle）的装配
+ * 依赖。adapterFactory 与 send 闭包随迁，但 send 对 Facade 晚期注入状态（messageBus /
+ * onMessageComplete）与 broker 的依赖经本窄接口收敛：Facade 每次调用动态读自身当前值，
+ * 与原内联闭包捕获 this 引用的语义逐字等价（setter 注入前后行为一致）。
+ */
+export interface ISessionRegisterDeps {
+  /** EventAdapter 工厂（Facade 构造参数原样透传）。 */
+  adapterFactory: (sessionId: string, send: (msg: ServerMessage) => void, cwd?: string) => IEventAdapter
+  /** MessageBus 当前值（setter 晚期注入，未注入时 null）。 */
+  getMessageBus(): IMessageBus | null
+  /** 全局消息盲广播（broker.broadcast：无 sessionId payload 消息的防御兜底通道）。 */
+  broadcastGlobal(msg: ServerMessage): void
+  /** message.complete 广播后通知 reload-orchestrator（未注入时 no-op）。 */
+  notifyMessageComplete(sessionId: string): void
+}
+
+/**
+ * lifecycle 消费的窄接口（SessionLifecycle.svc，12 方法，调用点实测）。
+ *
+ * S3 写点归位（设计 D2②）：initializeManagedSession 移出本接口——注册逻辑迁入
+ * SessionLifecycle.registerSession（sessions Map 所有者内部直调），lifecycle 不再
+ * 经 svc 回调 Facade 完成注册（「回调 hub」引力以新形式残留的被否形态）。
  *
  * 含跨消费者共享方法（重复声明、单一实现）：detachSession / getSession /
  * removeSessionEntry（dispatcher 共用）、getActiveSummaries（scanner 共用）。
  */
 export interface ILifecycleSessionOps {
-  /**
-   * 初始化 ManagedSession 并写入 sessions Map，返回子模块可见视图。hidden 标记隐藏 session。
-   * parentSession/forkEntryId 透传 fork 血缘（FR-2 active 路径回传），存入 session 对象后
-   * 经 toSummary 输出到 SessionSummary。
-   *
-   * modelOverride：新 session 实际启动模型（"provider/modelId" 格式，已含 C-RL-6 优先级解析）。
-   * 传入时写入 session.modelId 元数据，让前端 composer chip 正确显示（Staging Mode ADR-0056）；
-   * 不传时 fallback configStore.getDefaultModel()。注意 pi 进程的模型在 createSession 时已由
-   * pi client options 的 model 字段设定，此参数只补齐 session 元数据层的缺口。
-   */
-  initializeManagedSession(id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean, parentSession?: string, forkEntryId?: string, modelOverride?: string): Promise<IManagedSessionView>
   /** Detach adapter（按 id 查 Map）。pi 事件订阅经 EventAdapter 唯一持有，detach 即收口。 */
   detachSession(sessionId: string): void
   /** 将 ManagedSession 转为对外 SessionSummary（含 git 信息）。 */

@@ -39,7 +39,8 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
 
 import { SessionLifecycle, setMigrationGate } from '../src/services/session/session-lifecycle.js'
 import { parseSessionHeader } from '../src/infra/pi/session-file-utils.js'
-import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../src/services/session/session-internal.js'
+import type { IEventAdapter } from '../src/interfaces.js'
 import type { IProcessManager } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
 import type { ISessionStore } from '../src/services/ports/session.js'
@@ -72,7 +73,6 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
     getSkillPaths: vi.fn(() => [] as string[]),
     getReplaceSystemPrompt: vi.fn(() => undefined),
     getLaunchPresetOptions: vi.fn(async () => undefined),
-    initializeManagedSession: vi.fn(async (id: string) => ({ id } as unknown as IManagedSessionView)),
     toSummary: vi.fn(() => makeSummary('s-x')),
     // restore/fork 共用：target 从文件真实解析（模拟 scanner 重扫）
     findScannedSession: vi.fn((id: string): ScannedSession | undefined => {
@@ -110,7 +110,16 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
   } as unknown as ISessionStore
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
   return { lifecycle, svc, pm, client, switchCalls, sessionStore }
 }
 

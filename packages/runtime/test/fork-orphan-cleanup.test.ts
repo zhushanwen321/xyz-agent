@@ -49,7 +49,8 @@ vi.mock('../src/services/session/session-fork.js', () => ({
 }))
 
 import { SessionLifecycle } from '../src/services/session/session-lifecycle.js'
-import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../src/services/session/session-internal.js'
+import type { IEventAdapter } from '../src/interfaces.js'
 import type { IManagedSessionView } from '../src/services/session/types.js'
 import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
@@ -76,7 +77,7 @@ function makeClient(overrides: Partial<IPiEngine> = {}): IPiEngine {
 interface MakeOpts {
   /** switchSession 抛错（触发第一个 catch 块） */
   switchFails?: boolean
-  /** initializeManagedSession 抛错（触发第二个 catch 块） */
+  /** registerSession 抛错（触发第二个 catch 块；S3 迁移后经 adapterFactory 抛错注入） */
   initFails?: boolean
 }
 
@@ -114,9 +115,6 @@ function makeLifecycle(opts: MakeOpts = {}) {
     // FR-20: forkSession 读源 active session 的 sessionFilePath 判断 parentSession fallback。
     // mock 返回 undefined（源未活跃 / 已落盘），走 source.filePath 主路径。
     getSession: vi.fn(() => undefined),
-    initializeManagedSession: opts.initFails
-      ? vi.fn(async () => { throw new Error('init failed') })
-      : vi.fn(async () => session),
     toSummary: vi.fn((): SessionSummary => ({
       id: session.id, cwd: session.cwd, label: session.label, status: 'idle',
       lastActiveAt: 1, tokenCount: 0, modelId: 'p/m',
@@ -143,7 +141,20 @@ function makeLifecycle(opts: MakeOpts = {}) {
   } as unknown as ISessionStore
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory；initFails 语义 = adapterFactory 抛错（原 stub
+  // initializeManagedSession reject 的等价注入点，触发 registerSession reject → 第二个 catch 块）。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => {
+      if (opts.initFails) throw new Error('init failed')
+      return { attach: vi.fn(), detach: vi.fn() } as unknown as IEventAdapter
+    },
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
   return { lifecycle, pm, svc }
 }
 
@@ -166,7 +177,7 @@ describe('W1/L5: forkSession 失败后清理孤儿 fork 文件', () => {
     expect(fsPromisesMock.unlink).toHaveBeenCalledWith(forkMock.forkedFilePath)
   })
 
-  it('initializeManagedSession 失败 → unlink forkedFilePath（清孤儿文件）', async () => {
+  it('registerSession 失败 → unlink forkedFilePath（清孤儿文件）', async () => {
     const { lifecycle } = makeLifecycle({ initFails: true })
     await expect(
       lifecycle.forkSession('src', 'entry1', true, 'fork'),

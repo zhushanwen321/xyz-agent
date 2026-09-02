@@ -73,7 +73,8 @@ import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import { createAgentAPI } from '../src/services/plugin-service/plugin-bootstrap.js'
 import { SessionLifecycle, setMigrationGate } from '../src/services/session/session-lifecycle.js'
 import { SessionService } from '../src/services/session/session-service.js'
-import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../src/services/session/session-internal.js'
+import type { IEventAdapter } from '../src/interfaces.js'
 import type { IProcessManager } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
 import type { ISessionStore } from '../src/services/ports/session.js'
@@ -118,7 +119,6 @@ function makeLifecycleEnv() {
     getSkillPaths: vi.fn(() => [] as string[]),
     getReplaceSystemPrompt: vi.fn(() => undefined),
     getLaunchPresetOptions: vi.fn(async () => undefined),
-    initializeManagedSession: vi.fn(async (id: string) => ({ id }) as unknown as IManagedSessionView),
     toSummary: vi.fn((s: IManagedSessionView): SessionSummary => ({
       id: s.id, label: `label-${s.id}`, cwd: '/tmp', status: 'active',
       lastActiveAt: Date.now(), modelId: 'p/m', tokenCount: 0,
@@ -153,7 +153,16 @@ function makeLifecycleEnv() {
   } as unknown as ISessionStore
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
   return { svc, pm, configStore, sessionStore, workspaceService, client, lifecycle }
 }
 

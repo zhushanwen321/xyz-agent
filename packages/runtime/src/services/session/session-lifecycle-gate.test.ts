@@ -18,30 +18,30 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { SessionLifecycle, setMigrationGate, getMigrationGate } from './session-lifecycle.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
-import type { ILifecycleSessionOps } from './session-internal.js'
-import type { IProcessManager } from '../ports/pi-engine.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from './session-internal.js'
+import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
+import type { IEventAdapter } from '../../interfaces.js'
 import type { SessionSummary } from '@xyz-agent/shared'
 
 function makeSummary(id: string): SessionSummary {
   return { id, label: 'test', cwd: '/tmp', status: 'idle', lastActiveAt: Date.now(), modelId: 'p/m', tokenCount: 0 }
 }
 
-function makeSessionView(id: string): IManagedSessionView {
-  return {
-    id, cwd: '/tmp', label: 'test', modelId: 'p/m',
-    createdAt: 1, lastActiveAt: 1, tokenCount: 0, inputTokens: 0,
-    isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
-  }
+/** fake EventAdapter（S3 迁移后 registerSession 真实现经 registerDeps.adapterFactory 装配 adapter）。 */
+function makeFakeAdapter(): IEventAdapter {
+  return { attach: vi.fn(), detach: vi.fn() } as unknown as IEventAdapter
 }
 
 /**
  * 构造最小 lifecycle 环境：svc/pm/configStore/sessionStore/workspaceService 全 mock。
- * S2 ISP 化（设计 §4.2 场景 B 主验收点）：svc 结构性满足 lifecycle 窄接口
- * （13 方法 = 实际消费面，≤13 达标），svc stub 强转彻底消失。
+ * S2 ISP 化（设计 §4.2 场景 B 主验收点）：svc 结构性满足 lifecycle 窄接口，svc stub 强转彻底消失。
+ * S3 写点归位：initializeManagedSession 从 svc stub 移除（接口已删）——注册走真
+ * registerSession（sessions Map 所有权在 lifecycle），装配依赖经 registerDeps 注入
+ * fake adapterFactory；svc stub 面收窄为 12 方法 = 现接口实际消费面。
  */
 function makeEnv() {
   const svc: ILifecycleSessionOps = {
@@ -49,7 +49,6 @@ function makeEnv() {
     getSkillPaths: vi.fn(() => []),
     getReplaceSystemPrompt: vi.fn(() => undefined),
     getLaunchPresetOptions: vi.fn(async () => undefined),
-    initializeManagedSession: vi.fn(async (_id: string, _c: unknown, _cwd: string, _label: string) => makeSessionView(_id)),
     toSummary: vi.fn((s: IManagedSessionView) => makeSummary(s.id)),
     // S3-W2：创建入口收敛点（lifecycle 三处 return 前调用）
     notifySessionCreated: vi.fn(),
@@ -79,9 +78,15 @@ function makeEnv() {
     persistProjectBinding: vi.fn(),
   } as unknown as ISessionStore
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => makeFakeAdapter(),
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
-  return { svc, pm, configStore, sessionStore, workspaceService, client, lifecycle }
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
+  return { svc, pm, configStore, sessionStore, workspaceService, client, lifecycle, registerDeps }
 }
 
 /** 让当前微任务/宏任务队列排空（gate pending 断言前用）。 */
@@ -144,8 +149,8 @@ describe('SessionLifecycle × migration gate（D8-3）', () => {
       ].map((l) => JSON.stringify(l)).join('\n') + '\n')
       const target: ScannedSession = { id: 's-restore', cwd: dir, filePath, name: 'restored', launchPresetId: undefined } as ScannedSession
       svc.findScannedSession = vi.fn(() => target) as never
-      svc.initializeManagedSession = vi.fn(async (_id: string) => makeSessionView('s-restore')) as never
-      svc.toSummary = vi.fn(() => makeSummary('s-restore')) as never
+      // S3 迁移：注册走真 registerSession（id = sessionId），makeEnv 的透传 toSummary
+      // stub 保留 summary.id = 真 session.id 的行为绑定。
 
       let resolveGate!: (v: unknown) => void
       setMigrationGate(new Promise((res) => { resolveGate = res }))
@@ -176,8 +181,6 @@ describe('SessionLifecycle × migration gate（D8-3）', () => {
       ].map((l) => JSON.stringify(l)).join('\n') + '\n')
       const source: ScannedSession = { id: 's-fork-src', cwd: dir, filePath: sourceFile, launchPresetId: undefined } as ScannedSession
       svc.findScannedSession = vi.fn(() => source) as never
-      svc.initializeManagedSession = vi.fn(async (_id: string) => makeSessionView('s-fork-new')) as never
-      svc.toSummary = vi.fn(() => makeSummary('s-fork-new')) as never
 
       let resolveGate!: (v: unknown) => void
       setMigrationGate(new Promise((res) => { resolveGate = res }))
@@ -189,7 +192,10 @@ describe('SessionLifecycle × migration gate（D8-3）', () => {
       resolveGate(undefined)
       const summary = await pending
       expect(pm.createSession).toHaveBeenCalledTimes(1)
-      expect(summary.id).toBe('s-fork-new')
+      // S3 迁移：fork 新 session 由真 registerSession 注册（id = createForkedSessionFile
+      // 生成的 forkedId，非固定值）——断言 summary 对应已入 Map 的新 session。
+      expect(summary.id).not.toBe('s-fork-src')
+      expect(lifecycle.has(summary.id)).toBe(true)
       rmSync(dir, { recursive: true, force: true })
     })
   })
@@ -218,10 +224,12 @@ describe('SessionLifecycle.delete（W19：sidecar 四后缀全家族清理，W11
     svc.findScannedSession = vi.fn(() => ({ id: 's1', filePath: scanned })) as never
     await lifecycle.delete('s1')
     suffixes.forEach((s) => expect(existsSync(scanned + s)).toBe(false))
+    // S3 迁移：active 分支判定改读 lifecycle 自持 Map——真 registerSession 注册 s2
+    // （delete 内 detachSession 走所有者自查 + fake adapter；removeSessionEntry 仍经
+    // svc 编排 stub），不再 stub svc.getSession。
     const active = setup('active')
-    svc.getSession = vi.fn(() => ({ id: 's2', sessionFilePath: active })) as never
-    svc.detachSession = vi.fn() as never
     svc.removeSessionEntry = vi.fn() as never
+    await lifecycle.registerSession('s2', {} as unknown as IPiEngine, tmpdir(), 'active', active)
     await lifecycle.delete('s2')
     suffixes.forEach((s) => expect(existsSync(active + s)).toBe(false))
   })

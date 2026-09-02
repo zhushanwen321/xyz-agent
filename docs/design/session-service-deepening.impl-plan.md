@@ -100,6 +100,7 @@ graph TD
 | 1 | 设计 §4.1 要求「每 slice 真实 app 双分支比对」；本计划落为每 slice P3 机器门（runtime 全量 vitest + typecheck）+ 阶段 5 Gate B 统一执行 §4.1/§4.2 全部真实场景（含 S1 附件 landing 降级专项） | 每 slice 一次 Electron 双分支比对 = 12 次全量 app 实跑；slice 均独立 commit，Gate B 场景 fail 可 revert 精确定位到 slice，回滚粒度不变。风险：slice 间交互引入的偏移到 Gate B 才暴露——由全量套件 + 独立 commit 兜底（用户已确认接受） | 计划期 |
 | 2 | 设计 §2.1/D1 预估附件域「约 310 行 / 12%」、计划验收条款 ⑤ 据此写「2603 → 约 2250」；u-s1 实测三方法合计约 148 行 + formatTimestamp 辅助 8 行，2603 → 2467（净 -136，含委托/接线 +18） | 原预估系 2292→EOF 区域口径，含 history 域读侧 readSegmentsMetadataFile（被 :982/:1017 消费，不属附件域不可迁）与尾部辅助代码。三方法全迁事实成立（方法体逐字随迁、一行委托、契约不变），S6 ≤500 行目标不受影响。设计文档 §2.1/D1 已同步修正（doc_error 处理） | u-s1 交付 |
 | 3 | u-s2 领地最初只枚举 src/ 下 10 个 stub 文件；批 2 后全量 grep 发现 packages/runtime/test/ 目录另有 14 个 stub 文件（contract-hardening / dispatcher-bus / fork-orphan-cleanup / message-dispatcher-precheck / message-dispatcher-silent-abort-destroy / runtime-wiring / session-lifecycle-attach / session-lifecycle-deletebycwd / session-lifecycle-preset / session-lifecycle-rename / session-lifecycle-w11 / session-lifecycle-w5 / session-lifecycle / session-scanner-preset） | 计划期 grep 范围漏扫 test/ 目录（枚举错误，非范围变更）——验收条款②「grep -r ISessionServiceInternal packages/ 为空」本就隐含要求这批文件清零；dev 按领地锁定上报后由主 agent 扩充领地。u-s2 领地已同步补全 | u-s2 批 2 后 |
+| 4 | u-s3 波及 4 个领地外文件最小改动（13-25 行/文件）：test/contract-hardening（stub 删 initializeManagedSession + 构造第 6 参）、test/fork-orphan-cleanup（同前 + initFails 注入点迁 adapterFactory throw）、test/workspace-message-handler（2 处构造第 6 参）、__tests__/fetch-current-prompt（busy 注入原戳私有 sessions Map 强转路径，改真注册 + isGenerating 置位） | SessionLifecycle 构造器加 registerDeps 参 + ILifecycleSessionOps 移除 initializeManagedSession 的语言级波及，编译期必然；fetch-current-prompt 的「测试戳私有字段」路径不在计划期 grep（this.sessions 源码读点清单）覆盖面内——领地枚举缺口非范围变更。dev 上报 blockers 后主 agent 裁决批准，diff 逐文件核验为最小 | u-s3 交付 |
 
 ## 6 状态表
 
@@ -107,7 +108,7 @@ graph TD
 |---|---|---|---|
 | u-s1 | committed | 1 | 全量 vitest 383 files / 4103 tests passed exit 0（/tmp/u-s1-vitest-r2.log）+ typecheck 0；条款④实测通过（测试 import 无 session-service）；首次全量跑 pi-settings-store「busy-waits real subprocess」用例 1 次 fail，单跑 3/3 绿 + 文件零改动，判定环境 flake 非回归 |
 | u-s2 | committed | 1 | 六批交付：源侧收窄（调用点矩阵实测 13/6/2 + 共享 4 对账 = 21）→ stub 迁移 24 测试文件（src/__tests__ 6 + test/ 14 + session 域 4）→ 宽接口删除 + markHandedOff 迁 ISessionService。单元门：全量 vitest 383/4103 绿 exit 0 + typecheck 0；条款②③ grep 全库归零（主 agent 独立复核）；gate 测试 stub 面 = 13 强转消失；handoff-service 零改动。消强转暴露并修复 6 处被掩盖的 stub 形状缺陷（均无行为断言消费） |
-| u-s3 | pending | 0 | — |
+| u-s3 | committed | 1 | registerSession 迁入 lifecycle（含 sessions Map 所有权 3 写点 + onSessionRegistered 同步直发）+ ISessionRegistry 4 只读方法（get/has/keys/values）+ Facade 30 读点全改道（映射表落档，4 形态全覆盖无缺口）+ removeSessionEntry 9 步 wrapper（第②步委托 lifecycle 纯删）+ destroyAll 不引入 dispose。单元门：全量 384/4113 绿 exit 0 + typecheck 0；registerSession 直接测试 10 用例（含扇出异常传播/clear 无 dispose）；P4 自验全过、§3.4 降级未触发；偏差 #4（4 波及文件）批准 |
 | u-s4 | pending | 0 | — |
 | u-s5 | pending | 0 | — |
 | u-s6 | pending | 0 | — |
@@ -117,6 +118,7 @@ graph TD
 - 2026-09-02 计划建立（预检：设计结构四节齐全；对抗式审查第 4 轮 0 must-fix，报告 `docs/design/session-service-deepening.review.md`；两条 suggestion 经核对已在提交版落文）。用户评审确认：切分/隔离/验收条款 + 偏差 #1。
 - 2026-09-02 u-s1 committed：附件三方法 + formatTimestamp 迁 attachment-store.ts（187 行）+ 新测试 13 用例（含大小上限/路径穿越边界）；Facade 一行委托；2603 → 2467。偏差 #2 登记，设计 §2.1/D1 行数口径同步修正。
 - 2026-09-02 u-s2 committed（六批）：ISessionServiceInternal 21 方法拆 ILifecycleSessionOps 13 / IDispatcherSessionOps 6 / IScannerSessionOps 2（共享 4 重复声明单一实现；fetchAndBroadcastContext 按调用点实测归 lifecycle，与设计被否谱系预言一致）；markHandedOff 迁 ISessionService（迁移非新增）；24 个 stub 测试文件迁移、`as unknown as ISessionServiceInternal` 全库清零、gate 测试强转消失（stub 面 13）。偏差 #3（test/ 目录领地缺口）批 2 后补登。消强转连带暴露 6 处 stub 形状缺陷（async 签名/必填字段），typecheck 修复、无行为断言消费。
+- 2026-09-02 u-s3 committed：写点归位落地（设计 §3.4 半深化降级未触发）。registerSession 自 Facade 逐字迁入 lifecycle + sessions Map 所有权（3 写点）；onSessionRegistered 同步直发（Facade 订阅接线，体内顺序与现状逐一等价，扇出不设异常隔离）；ISessionRegistry 只读 4 方法，Facade 30 读点全改道（检查点 2 回填：get 20 / has 6 / keys 1 / values 3，无缺口）；removeSessionEntry 9 步 wrapper 保持（第②步委托 lifecycle 纯删，clearSession 垫底）；destroyAll 不引入 dispose。ILifecycleSessionOps 13→12（initializeManagedSession 迁入后 lifecycle 内部直调）；Facade 保留 initializeManagedSession 一行委托（D3 形态，10+ 测试调用点零修改）。registerSession 直接测试新建 10 用例；4 处断言观察点随迁（语义等价，dev 逐条登记）。偏差 #4：4 个波及文件批准扩领地。session-service.ts 2467→2454。
 - 残留风险追加：pi-settings-store.test.ts「busy-waits and acquires after a cross-process holder releases (real subprocess)」在全量并发下偶发 flake（u-s1 验收期观测 1 次；单跑 3/3 稳定绿、文件零改动、域无关）——后续单元门遇到同名失败按 flake 判定流程处理（单跑复验 + 文件零改动核对），不阻塞但计数。
 - 风险预登记：
   - **u-s3 是设计认定风险最高一刀**（写点迁移 + 汇聚拆分 + 读点改道三位一体）。失败降级 = 设计 §3.4 末行半深化降级（写点留 Facade、窄接口成果保留）；若触发，u-s5 形态按设计 §3.4 降级分支调整并在此登记。

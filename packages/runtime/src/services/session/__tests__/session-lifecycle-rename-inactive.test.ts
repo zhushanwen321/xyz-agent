@@ -18,7 +18,8 @@ import { mkdtempSync, writeFileSync, rmSync, readdirSync, readFileSync, statSync
 import { join } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { SessionLifecycle } from '../session-lifecycle.js'
-import type { ILifecycleSessionOps } from '../session-internal.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../session-internal.js'
+import type { IEventAdapter } from '../../../interfaces.js'
 import type { IProcessManager } from '../../ports/pi-engine.js'
 import type { IConfigStore } from '../../ports/config.js'
 import type { ISessionStore } from '../../ports/session.js'
@@ -35,7 +36,6 @@ function makeEnv(scanned?: ScannedSession) {
   const svc: ILifecycleSessionOps = {
     findScannedSession: vi.fn(() => scanned ?? undefined),
     getSession: vi.fn(() => undefined),
-    initializeManagedSession: vi.fn(),
     detachSession: vi.fn(),
     toSummary: vi.fn(),
     getSkillPaths: vi.fn(),
@@ -62,7 +62,16 @@ function makeEnv(scanned?: ScannedSession) {
   } as unknown as ISessionStore
   const workspaceService = {} as unknown as WorkspaceService
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
   return { svc, lifecycle, withEphemeralPi, setSessionName, getAttachedContent: () => attachedContent }
 }
 

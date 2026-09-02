@@ -22,8 +22,8 @@ import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { SessionLifecycle } from '../session-lifecycle.js'
-import type { ILifecycleSessionOps } from '../session-internal.js'
-import type { IManagedSessionView } from '../types.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../session-internal.js'
+import type { IEventAdapter } from '../../../interfaces.js'
 import type { IProcessManager } from '../../ports/pi-engine.js'
 import type { IConfigStore } from '../../ports/config.js'
 import type { ISessionStore } from '../../ports/session.js'
@@ -43,20 +43,13 @@ function makeCreateEnv() {
     getClient: vi.fn(() => client),
   } as unknown as IProcessManager
 
-  const initializedView: IManagedSessionView = {
-    id: 'pi-sid-1', label: '', cwd: '/w', modelId: 'prov/model',
-    createdAt: 1, lastActiveAt: 1, tokenCount: 0, inputTokens: 0,
-    isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
-    sessionFilePath: '/tmp/s.jsonl',
-  }
-  const initializeManagedSession = vi.fn(async () => initializedView)
-  // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转；
-  // getExtensionPaths 改 async / toSummary 补必填字段系消强转后暴露的形状修复
+  // S2 ISP 化：结构性满足 lifecycle 窄接口，无强转；getExtensionPaths 改 async /
+  // toSummary 补必填字段系消强转后暴露的形状修复。S3 写点归位：注册走真
+  // registerSession（svc.initializeManagedSession 已从接口移除）。
   const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => []),
     getSkillPaths: vi.fn(() => []),
     getReplaceSystemPrompt: vi.fn(() => undefined),
-    initializeManagedSession,
     toSummary: vi.fn(() => ({
       id: 'pi-sid-1', label: 'L', cwd: '/w', status: 'active' as const,
       lastActiveAt: 1, modelId: 'prov/model', tokenCount: 0,
@@ -81,8 +74,17 @@ function makeCreateEnv() {
   } as unknown as ISessionStore
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
-  return { lifecycle, setSessionName, initializeManagedSession }
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
+  return { lifecycle, setSessionName }
 }
 
 beforeEach(() => {
@@ -91,18 +93,20 @@ beforeEach(() => {
 
 describe('SessionLifecycle.create label 持久化分流（A\'）', () => {
   it('A\' 核心：默认（前端派生预览名）不调 setSessionName，预览名只进内存 label（display-only）', async () => {
-    const { lifecycle, setSessionName, initializeManagedSession } = makeCreateEnv()
+    const { lifecycle, setSessionName } = makeCreateEnv()
     const cwd = mkdtempSync(join(tmpdir(), 'aprime-create-'))
 
     await lifecycle.create(cwd, '修复登录bu…')
 
     // 持久化零调用——pi 内存 sessionName 保持空，auto-rename 防覆盖守卫照常通过
     expect(setSessionName).not.toHaveBeenCalled()
-    // display 不回归：内存 session.label 仍是预览名（侧栏当前会话显示不变）
-    expect(initializeManagedSession).toHaveBeenCalledWith(
-      'pi-sid-1', expect.anything(), cwd, '修复登录bu…', '/tmp/s.jsonl', undefined,
-      undefined, undefined, undefined,
-    )
+    // display 不回归：内存 session.label 仍是预览名（侧栏当前会话显示不变）。
+    // S3 迁移：断言观察点从 svc.initializeManagedSession 传参随迁为真 registerSession
+    // 的注册结果（Map 记录字段），断言语义不变。
+    const session = lifecycle.get('pi-sid-1')
+    expect(session?.label).toBe('修复登录bu…')
+    expect(session?.cwd).toBe(cwd)
+    expect(session?.sessionFilePath).toBe('/tmp/s.jsonl')
   })
 
   it('persistLabel=true（handoff/agent-managed 语义名）→ setSessionName(label) 恰调一次', async () => {

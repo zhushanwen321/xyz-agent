@@ -39,7 +39,8 @@ vi.mock('../src/infra/pi/pi-paths.js', () => ({
 }))
 
 import { SessionLifecycle } from '../src/services/session/session-lifecycle.js'
-import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../src/services/session/session-internal.js'
+import type { IEventAdapter } from '../src/interfaces.js'
 import type { IManagedSessionView } from '../src/services/session/types.js'
 import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
@@ -97,7 +98,6 @@ function makeMocks(opts: {
     getSkillPaths: vi.fn(() => ['/default/skill']),
     getReplaceSystemPrompt: vi.fn(() => undefined),
     getLaunchPresetOptions: vi.fn(defaultLaunchImpl),
-    initializeManagedSession: vi.fn(async () => session),
     toSummary: vi.fn((): SessionSummary => ({
       id: session.id, cwd: session.cwd, label: 'repo', status: 'idle', lastActiveAt: 1,
       modelId: 'test-model', tokenCount: 0,
@@ -127,7 +127,16 @@ function makeMocks(opts: {
     invalidateMetaCache: vi.fn(),
   } as unknown as ISessionStore
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspace)
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspace, registerDeps)
   return { lifecycle, recordFn, createSessionMock, session, svc, persistPresetBindingFn, sessionStore }
 }
 
@@ -276,18 +285,23 @@ describe('session-lifecycle preset integration', () => {
     const unlinkMock = (await import('node:fs')).unlinkSync as unknown as ReturnType<typeof vi.fn>
     unlinkMock.mockClear()
 
-    // active 路径：session 存在
+    // active 路径：session 存在（S3 迁移：delete 判定读 lifecycle 自持 Map——真
+    // registerSession 注册 s1，不再 stub svc.getSession）
     const { svc } = makeMocks()
-    ;(svc.getSession as ReturnType<typeof vi.fn>).mockReturnValue({
-      id: 's1', sessionFilePath: '/tmp/s1.jsonl', cwd: '/repo',
-    })
     const lifecycle2 = new SessionLifecycle(
       svc,
       { destroySession: vi.fn(async () => {}) } as unknown as IProcessManager,
       { getDefaultModel: vi.fn(() => ({ provider: 'p', modelId: 'm' })) } as unknown as IConfigStore,
       sessionStore,
       { record: vi.fn() } as unknown as WorkspaceService,
+      {
+        adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+        getMessageBus: () => null,
+        broadcastGlobal: () => {},
+        notifyMessageComplete: () => {},
+      },
     )
+    await lifecycle2.registerSession('s1', {} as unknown as IPiEngine, '/repo', 's1', '/tmp/s1.jsonl')
 
     await lifecycle2.delete('s1')
 

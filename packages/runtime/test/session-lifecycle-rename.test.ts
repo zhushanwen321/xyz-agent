@@ -32,7 +32,8 @@ vi.mock('../src/services/session/session-fork.js', () => ({
 }))
 
 import { SessionLifecycle, setMigrationGate } from '../src/services/session/session-lifecycle.js'
-import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../src/services/session/session-internal.js'
+import type { IEventAdapter } from '../src/interfaces.js'
 import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
 import type { ISessionStore } from '../src/services/ports/session.js'
@@ -91,8 +92,6 @@ function makeEnv() {
     getSkillPaths: vi.fn(() => [] as string[]),
     getReplaceSystemPrompt: vi.fn(() => undefined),
     getLaunchPresetOptions: vi.fn(async () => undefined),
-    initializeManagedSession: vi.fn(async (id: string, _client: IPiEngine, _cwd: string, label: string) =>
-      makeSessionView({ id, label })),
     toSummary: vi.fn((s: IManagedSessionView): SessionSummary => ({
       id: s.id, label: s.label, cwd: s.cwd, status: 'active',
       lastActiveAt: 1, modelId: 'p/m', tokenCount: 0,
@@ -141,14 +140,27 @@ function makeEnv() {
 
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
 
   return {
     lifecycle, svc, pm, sessionStore, clientMap, sessionMap, ephemeralClient,
-    /** 手动挂载活跃 session + client（rename 用例直入活跃分支）。 */
-    mountActive: (id: string, client: MockClient, session?: IManagedSessionView) => {
+    /**
+     * 手动挂载活跃 session + client（rename 用例直入活跃分支）。
+     * S3 迁移：挂载从 svc.getSession stub 数据源随迁为真 registerSession（Map 所有者），
+     * 返回注册记录供用例持有——renameSession 的内存 label 写发生在该对象上。
+     */
+    mountActive: async (id: string, client: MockClient, label = '旧名') => {
       clientMap.set(id, client)
-      sessionMap.set(id, session ?? makeSessionView({ id }))
+      return lifecycle.registerSession(id, client as unknown as IPiEngine, '/repo', label)
     },
   }
 }
@@ -180,9 +192,8 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
   // ── 断言组 1：活跃 rename 走 RPC ─────────────────────────────────
   describe('断言组 1：活跃 session rename → set_session_name RPC（不直写）', () => {
     it('活跃 rename 调 client.setSessionName(newName)，不再调 persistSessionName', async () => {
-      const session = makeSessionView({ id: 'sid-1', label: '旧名' })
       const client = makeClient()
-      env.mountActive('sid-1', client, session)
+      const session = await env.mountActive('sid-1', client, '旧名')
 
       await env.lifecycle.renameSession('sid-1', '重构计划')
 
@@ -197,9 +208,8 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
     })
 
     it('pi client 不可用（崩溃窗口）→ throw，不静默丢写、内存保留旧名', async () => {
-      const session = makeSessionView({ id: 'sid-2', label: '旧名' })
-      env.sessionMap.set('sid-2', session)
-      // 不挂 client：pm.getClient 返回 undefined
+      // S3 迁移：真 registerSession 注册（不挂 client：pm.getClient 返回 undefined）
+      const session = await env.lifecycle.registerSession('sid-2', {} as unknown as IPiEngine, '/repo', '旧名')
 
       await expect(env.lifecycle.renameSession('sid-2', '新名')).rejects.toThrow('pi process is not available')
 
@@ -208,12 +218,11 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
     })
 
     it('RPC 失败（success:false / 超时 reject）→ throw 给上层 toast，内存保留旧名', async () => {
-      const session = makeSessionView({ id: 'sid-3', label: '旧名' })
       const client = makeClient({
         setSessionName: vi.fn<(name: string) => Promise<unknown>>()
           .mockRejectedValue(new Error('RPC command "set_session_name" failed')),
       })
-      env.mountActive('sid-3', client, session)
+      const session = await env.mountActive('sid-3', client, '旧名')
 
       await expect(env.lifecycle.renameSession('sid-3', '新名')).rejects.toThrow('set_session_name')
 
@@ -302,11 +311,13 @@ describe('SessionLifecycle · W1 label 链路切 pi set_session_name RPC', () =>
 
       await env.lifecycle.create(tmpDir)
 
-      // 派生值仅作显示（initializeManagedSession 收到 basename），不进任何持久化路径
-      expect(env.svc.initializeManagedSession).toHaveBeenCalledWith(
-        'pi-3', client, tmpDir, basename(tmpDir), join(tmpDir, 'pi-3.jsonl'), undefined,
-        undefined, undefined, undefined,
-      )
+      // 派生值仅作显示（registerSession 把 basename 落进内存 session.label），不进任何持久化路径。
+      // S3 迁移：断言观察点从 svc.initializeManagedSession 传参随迁为真 registerSession 的
+      // 注册结果（Map 记录字段），断言语义不变。
+      const session = env.lifecycle.get('pi-3')
+      expect(session?.cwd).toBe(tmpDir)
+      expect(session?.label).toBe(basename(tmpDir))
+      expect(session?.sessionFilePath).toBe(join(tmpDir, 'pi-3.jsonl'))
       expect(client.setSessionName).not.toHaveBeenCalled()
     })
 

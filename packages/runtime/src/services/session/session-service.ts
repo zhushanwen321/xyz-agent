@@ -1,14 +1,20 @@
 /**
  * SessionService — Facade(门面)。
  *
- * 持有 sessions Map(单写者)+ 依赖,组合 lifecycle/dispatcher/scanner 三子模块,
- * 实现 ISessionService(对外)与三窄接口 ILifecycleSessionOps/IDispatcherSessionOps/
- * IScannerSessionOps(对内,按消费者收窄——见 session-internal.ts;单一实现即
- * 编译期防签名漂移守卫)。
+ * 组合 lifecycle/dispatcher/scanner 三子模块,实现 ISessionService(对外)与三窄接口
+ * ILifecycleSessionOps/IDispatcherSessionOps/IScannerSessionOps(对内,按消费者收窄——
+ * 见 session-internal.ts;单一实现即编译期防签名漂移守卫)。
  *
- * 共享 helper(initializeManagedSession/detachSession/toSummary/findScannedSession/
- * getSkillPaths/getExtensionPaths)留 Facade,子模块经各自窄接口调用 ——
- * 既保 sessions Map 单写者,又打断模块环(子模块 → 窄接口 → Facade implements,单向)。
+ * sessions Map 所有权在 SessionLifecycle(S3 写点归位,设计 D2②:Map 连同写点 3 处
+ * registerSession.set/removeEntry.delete/clear 迁入 lifecycle);本 Facade 残余域的
+ * Map 读点统一经 lifecycle 的 ISessionRegistry 只读查询面(get/has/keys/values),
+ * 对外查询方法退化为一行委托。写/删操作(removeSessionEntry 级)不经 Registry,由
+ * Facade 委托 lifecycle(Map 所有者)。
+ *
+ * 共享 helper(toSummary/findScannedSession/getSkillPaths/getExtensionPaths)留 Facade,
+ * 子模块经各自窄接口调用 —— 打断模块环(子模块 → 窄接口 → Facade implements,单向)。
+ * onSessionRegistered 订阅接线在构造器(组装根):S3 期订阅者是 Facade 自身,按迁移前
+ * initializeManagedSession 体内顺序执行各域注册。
  *
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
@@ -28,7 +34,7 @@ import type {
   ISessionService, IMessageBroker, SessionCreateOptions,
   IEventAdapter, IExtensionService, IConfigService,
 } from '../../interfaces.js'
-import type { ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps } from './session-internal.js'
+import type { ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps, ISessionRegisterDeps, IManagedSessionRecord } from './session-internal.js'
 import type { IProcessManager, IPiEngine, PiCommandInfo, PiMessage } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
@@ -76,8 +82,8 @@ import { PresetService, type PresetResolution } from '../preset-service.js'
 //（MessageBus 不反向依赖 SessionService）。
 import type { IMessageBus } from '../message-bus/message-bus.js'
 
-/** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
-interface ManagedSession extends IManagedSessionView {
+/** Facade 内部完整 session:Registry 记录(adapter 句柄)+ binding 扩展字段(hydrateBindingMeta 动态 patch)。 */
+interface ManagedSession extends IManagedSessionRecord {
   adapter: IEventAdapter
   /**
    * launch preset id 的内存态持有（W-RT-4，设计文档 §4.2）。
@@ -86,9 +92,10 @@ interface ManagedSession extends IManagedSessionView {
    *（persistPresetBinding 的 existsSync 守卫跳过），此时内存态兜底持有 presetId，
    * 供 forkSession 在 active 期读源 session preset（W-RT-5）。
    *
-   * 不放 IManagedSessionView（types.ts 非 slice 范围）：session-lifecycle 经
-   * svc.getSession(id) 拿到 ManagedSession 实例后，as 转换读写此字段（patch 模式，
-   * 见 lifecycle W-RT-4/5 实现注释）。toSummary 一并透传到 SessionSummary.launchPresetId。
+   * 不放 IManagedSessionView（types.ts 非 slice 范围）也不入 IManagedSessionRecord
+   * （binding 扩展字段归 Facade 域）：session-lifecycle 经 Registry get(id) 拿到
+   * 记录后，as 转换读写此字段（patch 模式，见 lifecycle W-RT-4/5 实现注释）。
+   * toSummary 一并透传到 SessionSummary.launchPresetId。
    */
   launchPresetId?: string
   /**
@@ -210,7 +217,6 @@ interface RecordEntriesCache {
 }
 
 export class SessionService implements ISessionService, ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps {
-  private readonly sessions = new Map<string, ManagedSession>()
   private readonly restoringSessions = new Set<string>()
   private readonly lifecycle: SessionLifecycle
   private readonly dispatcher: MessageDispatcher
@@ -332,14 +338,45 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     private readonly workspaceService: WorkspaceService,
     messageBus?: IMessageBus,
   ) {
-    // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)
-    this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService)
+    // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)。
+    // registerDeps(S3/D2②):registerSession 装配依赖窄注入——send 闭包对晚期注入状态
+    // (messageBus/onMessageComplete)经 getter 每次调用动态读,与原 Facade 内联闭包捕获
+    // this 的语义逐字等价。
+    const registerDeps: ISessionRegisterDeps = {
+      adapterFactory: this.adapterFactory,
+      getMessageBus: () => this.messageBus,
+      broadcastGlobal: (msg) => this.broker.broadcast(msg),
+      notifyMessageComplete: (sessionId) => this.onMessageComplete?.(sessionId),
+    }
+    this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService, registerDeps)
+    // 创建侧订阅接线(组装根,S3 seam):onSessionRegistered 同步直发的订阅者 = Facade 自身,
+    // 按迁移前 initializeManagedSession 体内顺序执行——registerReplicatedStates(W7 播种)→
+    // ensureRecordEntriesCache(W18)→ reconciler 对账(U6,fire-and-forget .catch 降级——现状如此)。
+    // 订阅扇出不设异常隔离、异常直接传播(与迁移前体内顺序调用等价);S5/S6 后订阅者换成
+    // projection/record 模块自身(见设计 D2②)。
+    this.lifecycle.onSessionRegistered((sessionId) => {
+      // W7：注册 per-session 标量实例并播种首份快照（create/restore/fork 三入口的汇聚点）。
+      // 播种走 refetch 立即拉取——session 激活后 renderer 要消费的 session 级状态必须主动拉取
+      //（Runtime broadcast 时序竞争 [HISTORICAL]，架构约定）。
+      // W12：session.commands 的激活发布不再单独直连 RPC（旧 fetchAndBroadcastCommands 已删），
+      // 播种 fetch 经 fetchCommandsSnapshot 的快照应用后挂钩发布（publishCommandsSnapshot）。
+      this.registerReplicatedStates(sessionId)
+      // W18：注册 record entry 派生缓存（不播种——首个 entry_appended 失效时全量拉取；
+      // 激活后 renderer 的初始列表由 getSubagents/getWorkflows RPC 磁盘扫描承接，同 scan 函数）。
+      this.ensureRecordEntriesCache(sessionId)
+      // U6（D2②）：session 附着触发能力对账（getAvailableModels vs 配置聚合，drift 经
+      // setCapabilityDriftSink 上报 + runtime 日志）。一次调用，fire-and-forget——对账是
+      // 纯旁路诊断，失败绝不阻断附着（内部已降级，catch 双保险）。
+      if (this.modelCapabilityReconciler) {
+        this.modelCapabilityReconciler(sessionId).catch(() => { /* 降级吞错：附着主链路优先 */ })
+      }
+    })
     this.dispatcher = new MessageDispatcher(this, this.pm, this.workspaceService, messageBus)
     this.scanner = new SessionScanner(this, this.sessionStore, this.gitInfoReader)
 
     // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / session.exited 广播
     this.pm.onSessionExit((sessionId, code, stderr) => {
-      const session = this.sessions.get(sessionId)
+      const session = this.lifecycle.get(sessionId)
       if (!session) return
       session.adapter.detach()
 
@@ -360,8 +397,8 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       // 统一经 removeSessionEntry（触发 onSessionDelete 清 pendingReload 等残留）
       this.removeSessionEntry(sessionId)
 
-      // W4：进程异常退出写 stopped 终态（在 sessions.delete 后，直接用已取的 session 对象，
-      // 不走 persistSessionOutcome 的内部 get——delete 后 get 返回 undefined）
+      // W4：进程异常退出写 stopped 终态（在 Map 条目删除后，直接用已取的 session 对象，
+      // 不走 persistSessionOutcome 的内部 get——删除后 get 返回 undefined）
       if (session.sessionFilePath) {
         // W2-5/W8：已有任意终态（done/error/stopped）则不覆盖。
         // 正常 turn 完成时 handleTurnEndSideEffects 已写 'done'；随后 pi 进程正常退出触发本回调，
@@ -429,9 +466,10 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
 
   /**
    * U6（D2② 在线对账）：注入能力对账回调（组合根绑 modelService.reconcileModelCapabilities）。
-   * session 附着路径（initializeManagedSession）fire-and-forget 调用——失败不阻断附着
-   *（内部降级：引擎不可用 / RPC 失败一律返回空）。窄回调签名避免 SessionService 反向
-   * 持有 ModelService 引用（modelService 依赖 sessionService，构造注入会成环）。
+   * session 附着路径（registerSession 的 onSessionRegistered 订阅,S3 前为 initializeManagedSession
+   * 体内调用）fire-and-forget 调用——失败不阻断附着（内部降级：引擎不可用 / RPC 失败一律
+   * 返回空）。窄回调签名避免 SessionService 反向持有 ModelService 引用（modelService 依赖
+   * sessionService，构造注入会成环）。
    */
   setModelCapabilityReconciler(reconciler: (sessionId: string) => Promise<unknown>): void {
     this.modelCapabilityReconciler = reconciler
@@ -601,7 +639,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * pi 权威值（pi 侧 setModel 后 getContextUsage 天然按新模型窗口），结构自愈。
    */
   async switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<string> {
-    const session = this.sessions.get(sessionId)
+    const session = this.lifecycle.get(sessionId)
     if (!session) throw new Error('session not active')
     const newModelId = `${provider}/${modelId}`
     const client = this.pm.getClient(sessionId)
@@ -668,7 +706,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     const client = this.pm.getClient(sessionId)
     if (!client) {
       // 无活跃进程（理论不可达：调用方都在活跃 session 语境）——请求值兜底，行为同旧版
-      const session = this.sessions.get(sessionId)
+      const session = this.lifecycle.get(sessionId)
       if (session) session.thinkingLevel = level
       return level
     }
@@ -687,7 +725,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       effective,
       clamped: effective !== level,
     })
-    const session = this.sessions.get(sessionId)
+    const session = this.lifecycle.get(sessionId)
     // PR #185 S2 裁决的永久双写形态：effective 来自 pi get_state（权威值），直写让
     // toSummary 与 state_changed fallback 在实例防抖重拉窗口内即读准值（modelId 同理，
     // 见 switchModel）。值未变时 pi 不发事件、不写 entry（PS-04），此直写是唯一同步点；
@@ -706,7 +744,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * RPC，见 SessionReplicatedStates 注释 [HISTORICAL] 段）。
    */
   setLabelCache(sessionId: string, label: string): void {
-    const session = this.sessions.get(sessionId)
+    const session = this.lifecycle.get(sessionId)
     if (session) session.label = label
   }
 
@@ -714,12 +752,12 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
 
   /** 活跃 session id 列表（含公共 session，供 SkillRegistry 计算 skill 变更广播范围）。 */
   getActiveSessionIds(): string[] {
-    return Array.from(this.sessions.keys())
+    return Array.from(this.lifecycle.keys())
   }
 
   /** 取 session cwd（未激活/不存在返回 undefined，供 SkillRegistry 按项目 skill 变更定位受影响 session）。 */
   getSessionCwd(sessionId: string): string | undefined {
-    return this.sessions.get(sessionId)?.cwd
+    return this.lifecycle.get(sessionId)?.cwd
   }
 
   /**
@@ -867,7 +905,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       cache.workflows.set(record.runId, record)
     }
 
-    if (!this.sessions.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
+    if (!this.lifecycle.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
     if (subagentsChanged) {
       this.messageBus?.publish(sessionId, {
         type: 'session.subagents',
@@ -1301,7 +1339,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
 
   /** trace 文件路径解析：活跃 session 内存 sessionFilePath 优先，否则扫描（force 旁路 TTL）。 */
   private resolveTraceFilePath(sessionId: string): string | null {
-    const active = this.sessions.get(sessionId)
+    const active = this.lifecycle.get(sessionId)
     if (active?.sessionFilePath) return active.sessionFilePath
     const target = this.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
     return target?.filePath ?? null
@@ -1341,7 +1379,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     }
     // busy 预检只看明确的 busy 信号（生成/压缩中命令会排队导致超时）；sessions Map 无条目
     //（恢复窗口/测试简化态）不拒——能否执行由 pi 决定
-    const active = this.sessions.get(sessionId)
+    const active = this.lifecycle.get(sessionId)
     if (active?.isGenerating || active?.isCompacting) {
       throw Object.assign(new Error(`Session ${sessionId} is busy`), { code: 'session_busy' })
     }
@@ -1512,7 +1550,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * 供 ReloadOrchestrator 判断 skill 变更时是立即 reload 还是排队。
    */
   isSessionIdle(sessionId: string): boolean {
-    const session = this.sessions.get(sessionId)
+    const session = this.lifecycle.get(sessionId)
     return !!session && !session.isGenerating
   }
 
@@ -1521,7 +1559,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * 供 ReloadOrchestrator 检测排队期 session 删除，避免对已死 session 发 reload。
    */
   hasSession(sessionId: string): boolean {
-    return this.sessions.has(sessionId)
+    return this.lifecycle.has(sessionId)
   }
 
   /**
@@ -1553,7 +1591,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   }
 
   getSummary(sessionId: string): SessionSummary | undefined {
-    const session = this.sessions.get(sessionId)
+    const session = this.lifecycle.get(sessionId)
     return session ? this.toSummary(session) : undefined
   }
 
@@ -1597,7 +1635,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    *（W1 数据源治理：活跃 label 唯一写入口 = renameSession/create/fork 的 set_session_name RPC）。
    */
   handleTurnUsageSideEffects(sessionId: string): void {
-    const session = this.sessions.get(sessionId)
+    const session = this.lifecycle.get(sessionId)
     if (!session) return
     // D14 语义修正：turn_end 时 pi 已完成 flush（文件存在）→ 兜底补写归属 project sidecar
     //（create 时文件未落盘被 existsSync 守卫跳过，内存态 projectId 在此落盘）。
@@ -1620,7 +1658,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    *   agent_end{stopReason:'aborted'}，此处也写 stopped，两条 session_end 一致不冲突）。
    */
   handleTurnEndSideEffects(sessionId: string, stopReason?: string): void {
-    const session = this.sessions.get(sessionId)
+    const session = this.lifecycle.get(sessionId)
     if (!session) return
     session.isGenerating = false
     // D14 语义修正：agent_end 兜底补写归属（turn_end 时仍未落盘则在此补写）。
@@ -1638,7 +1676,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * sessionFilePath 不存在时静默跳过（首 turn 前崩溃 / pi 延迟写入窗口）。
    */
   persistSessionOutcome(sessionId: string, outcome: SessionOutcome, reason?: string): void {
-    const session = this.sessions.get(sessionId)
+    const session = this.lifecycle.get(sessionId)
     if (!session?.sessionFilePath) return
     this.sessionStore.persistSessionEnd(session.sessionFilePath, outcome, reason)
   }
@@ -1654,11 +1692,13 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   }
 
   async destroyAll(): Promise<void> {
-    for (const session of this.sessions.values()) {
+    for (const session of this.lifecycle.values()) {
       session.adapter.detach()
     }
     await this.pm.destroyAll()
-    this.sessions.clear()
+    // shutdown 路径：只清 sessions Map（Map 所有者执行），刻意不触发 dispose/销毁通知
+    // ——进程将亡，缓存随进程同灭（迁移前行为保持，设计 D2②）。
+    this.lifecycle.clear()
   }
 
   // ── 内部协议（lifecycle/dispatcher/scanner 窄接口 + 过渡宽接口）:子模块经此访问 sessions / 共享 helper ──
@@ -1748,7 +1788,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * session 不存在/文件未落盘（延迟写入窗口）→ 静默跳过（不阻断归类流程，下次 create 兑底）。
    */
   async setProject(sessionId: string, projectId: string): Promise<void> {
-    const active = this.sessions.get(sessionId) as (IManagedSessionView & { projectId?: string }) | undefined
+    const active = this.lifecycle.get(sessionId) as (IManagedSessionView & { projectId?: string }) | undefined
     if (active) {
       active.projectId = projectId || undefined
       if (active.sessionFilePath) {
@@ -1795,7 +1835,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     }
   }
 
-  getSession(sessionId: string): IManagedSessionView | undefined { return this.sessions.get(sessionId) }
+  getSession(sessionId: string): IManagedSessionView | undefined { return this.lifecycle.get(sessionId) }
 
   /**
    * M3：标记源 session 已交接给新 session。
@@ -1813,7 +1853,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * 此处应通过 findScannedSession(srcSessionId)?.filePath 解析路径后补写磁盘。
    */
   markHandedOff(srcSessionId: string, newSessionId: string): void {
-    const session = this.sessions.get(srcSessionId)
+    const session = this.lifecycle.get(srcSessionId)
     if (session) {
       session.handedOffTo = newSessionId
     }
@@ -1839,11 +1879,13 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   removeSessionEntry(sessionId: string): void {
     // S3-W2：删除前缓存 summary（插件 didDestroy 通知需要 SessionInfo；删除后 Map 查不到）。
     // Map 无条目（防御路径）时构造最小形状——id 之外的字段无从得知，宁发少知不发错。
-    const session = this.sessions.get(sessionId)
+    const session = this.lifecycle.get(sessionId)
     const destroyedSummary: SessionSummary = session
       ? this.toSummary(session)
       : { id: sessionId, label: sessionId, cwd: '', status: 'dead', lastActiveAt: 0, modelId: '', tokenCount: 0 }
-    this.sessions.delete(sessionId)
+    // 销毁 9 步的第 ② 步（设计 D2②）：委托 lifecycle 删 Map 条目——所有者执行，纯删除
+    // 不发事件（其余步骤编排权留本 wrapper，体内顺序 = 迁移前行为等价的一部分）。
+    this.lifecycle.removeEntry(sessionId)
     // R3：所有删除路径（lifecycle.delete 主动删 + onSessionExit 进程异常退）汇聚于此，
     // 触发 onSessionDelete 清 ReloadOrchestrator.pendingReload 残留。
     this.onSessionDelete?.(sessionId)
@@ -1893,95 +1935,38 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
 
   getSessionByClient(client: IPiEngine): IManagedSessionView | undefined {
     const id = this.pm.getSessionIdByClient(client)
-    return id ? this.sessions.get(id) : undefined
+    return id ? this.lifecycle.get(id) : undefined
   }
 
   detachSession(sessionId: string): void {
-    const session = this.sessions.get(sessionId)
+    const session = this.lifecycle.get(sessionId)
     if (!session) return
     session.adapter.detach()
   }
 
   getActiveSummaries(): SessionSummary[] {
-    return Array.from(this.sessions.values()).map(s => this.toSummary(s))
+    return Array.from(this.lifecycle.values()).map(s => this.toSummary(s))
   }
 
   getActiveFilePaths(): Set<string> {
     const filePaths = new Set<string>()
-    for (const s of this.sessions.values()) {
+    for (const s of this.lifecycle.values()) {
       if (s.sessionFilePath) filePaths.add(s.sessionFilePath)
     }
     return filePaths
   }
 
-  /** 初始化 ManagedSession:建 adapter、注册监听、入 Map、查 commands。 */
+  /**
+   * 初始化 ManagedSession（S3/D2② 迁入 lifecycle.registerSession 后的兼容委托——
+   * 生产注册路径 = lifecycle create/restore/fork 内部直调 this.registerSession；
+   * 本方法保留给测试/历史调用点，行为与迁移前等价：session 构造 + sessions Map 写入 +
+   * onSessionRegistered 同步直发（订阅者 = 本 Facade 构造器接线的各域注册）。
+   */
   async initializeManagedSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
     parentSession?: string, forkEntryId?: string, modelOverride?: string,
   ): Promise<IManagedSessionView> {
-    const send = (msg: ServerMessage) => {
-      // wave:perf-w09（02 文档 D1-2）：session 级消息单通道——payload 带 sessionId 的消息
-      // 只走 bus.publish（per-session 单调 seq + ring/snapshot + 定向推给订阅该 sid 的 ws），
-      // 盲广播腿已删除。broker.broadcast 退化为纯全局通道：只承接无 sessionId 的消息
-      // （理论上 pi 事件流转发的消息恒带 sid，此分支是防御兜底，丢了比静默好）。
-      // R8 验证结论（W09）：subagent.stream_delta 的 payload.sessionId 实为主 session id
-      // （EventAdapter 以主 session 绑定翻译，extension setWidget 从主进程上报），
-      // publish 目标即主 session，renderer 全量订阅（useSessionStreamSync）覆盖，无需 R-04。
-      const sid = (msg.payload as { sessionId?: string } | null)?.sessionId
-      // PR #185 MF2：queue_update 帧不再对 queue 实例 markDirty（实例已撤销——.get() 生产
-      // 零消费，防抖重拉 get_state 属无效 RPC）。深度真值 = 帧内 pendingMessageCount
-      //（pi 队列深度的推送投影，与 get_state 快照同公式同源），renderer 对账直读帧值。
-      if (sid) {
-        this.messageBus?.publish(sid, msg)
-      } else {
-        this.broker.broadcast(msg)
-      }
-      // W5：message.complete 广播后通知 reload-orchestrator（消费 pendingReload 队）。
-      // 覆盖所有 message.complete 路径（event-interpreter turn-end 主路径 + dispatcher abort
-      // 手动广播）。onMessageComplete 未注入时为 no-op。
-      if (msg.type === 'message.complete' && sid) {
-        this.onMessageComplete?.(sid)
-      }
-    }
-    // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
-    const adapter = this.adapterFactory(id, send, cwd)
-    adapter.attach(client)
-    // Staging Mode（ADR-0056）：modelOverride 优先写入 session 元数据，让前端 composer chip
-    // 正确显示用户选定的模型（create/fork/handoff 路径透传 effectiveModel）。pi 进程的模型
-    // 已由 createSession 时 client options.model 设定，此处只补齐元数据层缺口。
-    // 无 override 时 fallback 全局默认（与原行为一致）。
-    const defaultModelRef = this.configStore.getDefaultModel()
-    const fallbackModelId = defaultModelRef ? `${defaultModelRef.provider}/${defaultModelRef.modelId}` : ''
-    const session: ManagedSession = {
-      id, cwd, label,
-      modelId: modelOverride ?? fallbackModelId,
-      createdAt: Date.now(), lastActiveAt: Date.now(),
-      // W10：inputTokens/tokenCount 退化为恒 0 派生基线（types 必填字段保留）——真值由
-      // usage 实例快照持有，读点（getInputTokens / toSummary.tokenCount）从实例派生，
-      // 任何路径不再直写这两个字段（旧外部 setter / applyContextUpdate 直写已删）。
-      tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
-      adapter, sessionFilePath,
-      hidden,
-      parentSession,
-      forkEntryId,
-    }
-    this.sessions.set(id, session)
-    // W7：注册 per-session 标量实例并播种首份快照（create/restore/fork 三入口的汇聚点）。
-    // 播种走 refetch 立即拉取——session 激活后 renderer 要消费的 session 级状态必须主动拉取
-    //（Runtime broadcast 时序竞争 [HISTORICAL]，架构约定）。
-    // W12：session.commands 的激活发布不再单独直连 RPC（旧 fetchAndBroadcastCommands 已删），
-    // 播种 fetch 经 fetchCommandsSnapshot 的快照应用后挂钩发布（publishCommandsSnapshot）。
-    this.registerReplicatedStates(id)
-    // W18：注册 record entry 派生缓存（不播种——首个 entry_appended 失效时全量拉取；
-    // 激活后 renderer 的初始列表由 getSubagents/getWorkflows RPC 磁盘扫描承接，同 scan 函数）。
-    this.ensureRecordEntriesCache(id)
-    // U6（D2②）：session 附着触发能力对账（getAvailableModels vs 配置聚合，drift 经
-    // setCapabilityDriftSink 上报 + runtime 日志）。一次调用，fire-and-forget——对账是
-    // 纯旁路诊断，失败绝不阻断附着（内部已降级，catch 双保险）。
-    if (this.modelCapabilityReconciler) {
-      this.modelCapabilityReconciler(id).catch(() => { /* 降级吞错：附着主链路优先 */ })
-    }
-    return session
+    return this.lifecycle.registerSession(id, client, cwd, label, sessionFilePath, hidden, parentSession, forkEntryId, modelOverride)
   }
 
   // ── 私有协作者 ────────────────────────────────────────────────
@@ -2072,7 +2057,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * publishContextNoValuePlaceholder 占位帧，见 fetchSessionStatsSnapshot D1 注释）。
    */
   private publishContextFromSnapshot(sessionId: string): void {
-    if (!this.sessions.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
+    if (!this.lifecycle.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
     const snapshot = this.replicatedStates.get(sessionId)?.usage.get()
     if (
       snapshot?.inputTokens === undefined
@@ -2094,7 +2079,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * session 无值」与「从未收到帧」。协议层语义：字段缺失 = 无值（0 基线帧已随 D1 消失）。
    */
   private publishContextNoValuePlaceholder(sessionId: string): void {
-    if (!this.sessions.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
+    if (!this.lifecycle.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
     const msg: ServerMessage = {
       type: 'context.update',
       id: `ctx_${Date.now()}`,
@@ -2125,7 +2110,7 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
 
   /** W12：读 commands 实例快照发布 session.commands（state topic，last-value == owner 快照）。 */
   private publishCommandsSnapshot(sessionId: string): void {
-    if (!this.sessions.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
+    if (!this.lifecycle.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
     const commands = this.replicatedStates.get(sessionId)?.commands.get()?.commands
     if (commands === undefined) return // 快照未就绪（首拉失败窗口）：不发（对齐旧路径失败不发）
     const msg: ServerMessage = { type: 'session.commands', payload: { sessionId, commands } }
@@ -2148,8 +2133,8 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * diff 抑制：thinkingLevel 的 30s 周期兜底重拉会高频触发挂钩，同值组合不重复发帧。
    */
   private publishStateChangedFromSnapshot(sessionId: string): void {
-    if (!this.sessions.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
-    const session = this.sessions.get(sessionId)
+    if (!this.lifecycle.has(sessionId)) return // session 已销毁：不 publish（防 bus 重建已 clearSession 的 entry）
+    const session = this.lifecycle.get(sessionId)
     const states = this.replicatedStates.get(sessionId)
     if (!session || !states) return
     const payload = buildStateChangedPayload(sessionId, session, states)
