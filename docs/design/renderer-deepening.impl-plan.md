@@ -111,6 +111,9 @@ graph TD
 | 5 | u2.1 三处领地机械扩展：useSearchModalDeps.ts（私有 core 实例改共享壳适配，防双实例缓存分桶）、新建 useFileSearchStore.ts（共享壳适配必然产物）、slashIcons.ts 1 行死引用注释 | 达成「切换后同一数据源」目标条款的最小必要动作 | 已随 u2.1 commit；发现 CommandPopover slash 链已在 core 轨（设计例 4 描述部分过时——一致性审查期回写设计） |
 | 6 | u3.1 定性偏离设计预判：send/submit 的 {getSegments} 字段不在权威接口（权威面=context 消费面），Pick 不可行，扩权收编被否（波及 dom-core/ui-mock） | 实证修正设计预期，符合设计「不追求全部合一、消灭无名分复制」精神 | 落实为保留局部声明 + 名分注释；一致性审查期回写设计 D8 措辞 |
 | 7 | u3.2 净行数 +108 vs 设计 D8 效果条款「消约 300 行」：镜像重复归零（结构目标）达成，差额为类型契约 + 决策记录注释 | 设计效果估计失准，非实现偏离 | 一致性审查期回写设计 D8 效果措辞（结构目标口径替代绝对行数） |
+| 8 | coordination 测试路径：计划领地写 coordination/__tests__/，实际该目录测试平铺于 coordination/ 下（u4.1/u4.2 两单元一致确认） | 计划路径笔误 | 后续单元领地按平铺约定理解；一致性审查期统一修正计划文本 |
+| 9 | u4.2 ROUTE_TABLE/RouteTableEntry 导出为内部测试 seam（探针注入验证 prologue 分支与 D2-b 组合契约） | 生产无消费、有 resetSubscriptionStates 先例；不导出则组合契约不可测 | 保留导出 + 注释现状；一致性审查期评估是否登记设计 D2 附注 |
+| 10 | 概念性注释漂移（行为零影响）：transport/api/events.ts:125 仍提 FALLBACK 有 sid 分支、renderer 三处 + subscription-replay.test.ts:224 仍用 CROSS_SESSION_TYPES 措辞——符号已删概念仍成立 | 历史锚点未随结构改名刷新 | 一致性审查期统一刷新（约 5 处） |
 
 ## 6 状态表
 
@@ -123,7 +126,7 @@ graph TD
 | u3.1 | committed | 1 | commit a3e19bec3（u3.1）；定性：send/submit/context-chips 保留（字段不在权威面，Pick 不可行，扩权被否）+ 名分注释；fork/handoff Pick<'focus'> 化；injection 已被 ADR-0058 前序收敛（仅清注释）；core 1275 绿 + renderer typecheck 绿 |
 | u3.2 | committed | 1 | commit 69cdb61f1（u3.2）；P2 过门完全泛化（20 段 diff：13 段同构骨架 + 7 类差异全部可配置，未触发降级）；staging-mode.ts 287 行 + 25 等价用例；fork 239→150 / handoff 278→192；导出面逐符号不变；core 1300 绿；净行数 +108（设计「消约 300 行」估计失准，结构目标达成） |
 | u4.1 | committed | 1 | commit 855216946（u4.1）；判定表逐字内嵌（diff 核验）；seqGate 持判定+簿记+基线；applySeqGap 缩为 gate 调用+reconcile 触发；MF-3 接口级 3 用例；core 1303 绿 + runtime 4090 绿（注释残渣修正连带授权） |
-| u4.2 | pending | 0 | — |
+| u4.2 | committed | 2 | 阶段 A commit 076e31ffe（骨架：声明式 schema + 8 条 crossSession + dispatcher 唯一 prologue + 守卫两类分置）+ 阶段 B commit 84398af0b（error 单条目合并 + 默认路径纯兜底）；route-inbound 34 用例（原 28 断言零弱化 + 新 6）；core 1309 绿；ROUTE_TABLE 导出保留为内部测试 seam（D2-b 组合契约探针必需） |
 | u5.1 | pending | 0 | — |
 | u5.2 | pending | 0 | — |
 | u5.3 | pending | 0 | — |
