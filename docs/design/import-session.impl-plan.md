@@ -83,7 +83,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u0-foundation | pending | 0 | — |
+| u0-foundation | committed | 1 | shared typecheck 绿（tsc --noEmit exit 0）+ runtime/renderer 消费方 typecheck 绿；commit 5a6e4d729 |
 | u1-scan-utils | pending | 0 | — |
 | u2-import-service | pending | 0 | — |
 | u3-rpc-wiring | pending | 0 | — |
