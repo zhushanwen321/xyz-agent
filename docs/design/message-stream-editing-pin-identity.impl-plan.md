@@ -82,12 +82,17 @@ graph TD
 | U1 | committed | 1 | 6ce11cfc2（与 U3 合并 commit，见偏差登记表第 1 条）；vitest 21 绿（主 agent 复验） |
 | U2 | committed | 1 | eccfd2bb1；vitest 40 绿（UserBubble 13 + Turn 27）+ ui typecheck 0 错（主 agent 复验）；C2 结论：onUnmounted 可达（test-utils unmount 先清 emitted 记录再卸载，探针实证），无需降级 |
 | U3 | committed | 1 | 6ce11cfc2；kind 测试 8 绿（U0 转绿 + A2 白盒，P5 用例含非断路取证：编辑中 keepMounted 含编辑索引）+ renderer/ui typecheck 0 错（主 agent 复验）；D3/D8 消融实验各自单独充分 |
-| U4 | pending | 0 | — |
+| U4 | committed | 1 | Gate A（subagent 全量验收，2026-09-02）：renderer vitest 350 files / 3617 passed / 3 skipped（存量 it.skip，基线前已存在，与本次无关）/ exit 0；ui vitest 57 files / 551 passed / exit 0；renderer+ui vue-tsc --noEmit 与 typecheck:test 真实退出码 0；eslint 两包范围（根 config + --max-warnings 0）0；覆盖矩阵无 uncovered。Gate B（主 agent Playwright 黑盒，dev app localhost:9222，真实 runtime/pi/GLM-5.3）：A1 编辑末回合切空会话 + 5 次往返全程 0 TypeError（截图 /tmp/gateb-a1-empty-session.png）；A2 编辑中 `!echo hi` 入流，编辑框与草稿保留、0 错误（/tmp/gateb-a2-edit-during-bash.png），白盒判据由 U3 单测（keepMounted [2]→[3] 跟随）覆盖；A3 流式期间上滚两屏再滚回，150 字回复完整无断流、0 错误（/tmp/gateb-a3-stream-complete.png）。A4 打包版冒烟按设计标注随下一 beta（可选，未执行）。C2 检查点已回填：onUnmounted 可达（见 U2 行）；parentElement 连锁错误断言由 A1 全程 console 监听兜底验证（未出现） |
 
 ## 7 残留风险与变更历史
 
-- 残留风险：C2 若 `onUnmounted` emit 不可达，U2 按 C2 降级 onBeforeUnmount（设计 §5 已授权，语义不变）；E4 双条件窄窗口残留为已接受设计决策（设计 §3.4）。
-- virtua 上游 issue：随 U4 附带评估是否提交（out-of-scope，不阻塞验收）。
+- 残留风险（Gate A 验收转入）：
+  1. `MessageStream-bash.test.ts:89/129/209` 三处存量 `it.skip`（基线前已存在，其中 W5T1 streaming+bash 共存钉扎场景当前无活跃测试守护，注释仍引用旧 pinStreaming API）——历史技术债，与本次改动无关，未修。
+  2. `Turn.vue` 的 edit-state-change 运行时透传无直接单测（本轮仅类型声明改动，vue-tsc 覆盖）；后续若改透传逻辑需补用例。
+- 残留风险（设计转入）：E4 双条件窄窗口（emit 两级不可达 + 同 session 数据换血恢复）为已接受设计决策；编辑中切 session 草稿丢失为 out-of-scope 既有行为。
+- virtua 上游 issue：未提交（out-of-scope，后续可选项）。
+- Gate B 环境说明：验收会话「确认收到」（2 回合 + 1 条流式）留在 dev 数据目录（真实链路产物，未清理）；种子 JSONL 注入路线因侧栏 project 归属机制未采纳，A1 的「长→短」用「2 回合 → 空会话」构成（空会话为最严格短侧，任意索引必越界）。
 - 变更历史：
   - 2026-09-02 计划创建。
   - 2026-09-02 阶段 3 一致性审查（1 轮收敛）：unreasonable 清零（1 条 low 流程项=状态回写随本次 commit 解决）；doc_errors 3 条主 agent 已修——设计 §5 U0「解除 Turn/UserBubble stub」改为「升级 Turn stub（其模板不含 UserBubble，事件链断于此）」、文件地图「三处断言」订正「两处」、UserBubble.vue C2 注释版本号 2.4.6→2.4.11；reasonable 5 条中 2 条落偏差登记表（P5 双通道取证、mock keyed 扁平）。
+  - 2026-09-02 阶段 5 双级验收双绿，流水线交付。
