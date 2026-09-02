@@ -15,7 +15,7 @@ import { homedir } from 'node:os'
 // deleteByCwd 内部不调 node:fs（delete 才调 existsSync），但真实 delete 走 trash/unlink，
 // 这里 spyOn delete 覆盖整段路径，node:fs 不会被触及——不需要 vi.mock。
 import { SessionLifecycle } from '../src/services/session/session-lifecycle.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
 import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
 import type { ISessionStore, ScannedSessionMeta } from '../src/services/ports/session.js'
@@ -34,9 +34,23 @@ function makeHarness(deleteImpl?: (id: string) => Promise<void>) {
     scanSessions: vi.fn((): ScannedSessionMeta[] => []),
     refreshAll: vi.fn(),
   } as unknown as ISessionStore
-  const svc = {
+  // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法），无强转；deleteByCwd 只真实消费
+  // getActiveSummaries（delete 被下方 spy 覆盖，不走其余成员），空 vi.fn 仅为满足接口面
+  const svc: ILifecycleSessionOps = {
     getActiveSummaries: vi.fn((): SessionSummary[] => []),
-  } as unknown as ISessionServiceInternal
+    initializeManagedSession: vi.fn(),
+    detachSession: vi.fn(),
+    toSummary: vi.fn(),
+    findScannedSession: vi.fn(),
+    getSkillPaths: vi.fn(),
+    getExtensionPaths: vi.fn(),
+    getReplaceSystemPrompt: vi.fn(),
+    getLaunchPresetOptions: vi.fn(),
+    fetchAndBroadcastContext: vi.fn(),
+    getSession: vi.fn(),
+    removeSessionEntry: vi.fn(),
+    notifySessionCreated: vi.fn(),
+  }
 
   const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspace)
   // spyOn 实例方法 delete，覆盖真实文件/trash/unlink 路径，专注 deleteByCwd 聚合逻辑。

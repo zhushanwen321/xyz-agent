@@ -22,7 +22,8 @@ import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { SessionLifecycle } from '../session-lifecycle.js'
-import type { ISessionServiceInternal } from '../session-internal.js'
+import type { ILifecycleSessionOps } from '../session-internal.js'
+import type { IManagedSessionView } from '../types.js'
 import type { IProcessManager } from '../../ports/pi-engine.js'
 import type { IConfigStore } from '../../ports/config.js'
 import type { ISessionStore } from '../../ports/session.js'
@@ -42,18 +43,33 @@ function makeCreateEnv() {
     getClient: vi.fn(() => client),
   } as unknown as IProcessManager
 
-  const initializedView = { id: 'pi-sid-1', label: '', cwd: '/w', sessionFilePath: '/tmp/s.jsonl' }
+  const initializedView: IManagedSessionView = {
+    id: 'pi-sid-1', label: '', cwd: '/w', modelId: 'prov/model',
+    createdAt: 1, lastActiveAt: 1, tokenCount: 0, inputTokens: 0,
+    isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
+    sessionFilePath: '/tmp/s.jsonl',
+  }
   const initializeManagedSession = vi.fn(async () => initializedView)
-  const svc = {
-    getExtensionPaths: vi.fn(() => []),
+  // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转；
+  // getExtensionPaths 改 async / toSummary 补必填字段系消强转后暴露的形状修复
+  const svc: ILifecycleSessionOps = {
+    getExtensionPaths: vi.fn(async () => []),
     getSkillPaths: vi.fn(() => []),
     getReplaceSystemPrompt: vi.fn(() => undefined),
     initializeManagedSession,
-    toSummary: vi.fn(() => ({ id: 'pi-sid-1', label: 'L', cwd: '/w' })),
+    toSummary: vi.fn(() => ({
+      id: 'pi-sid-1', label: 'L', cwd: '/w', status: 'active' as const,
+      lastActiveAt: 1, modelId: 'prov/model', tokenCount: 0,
+    })),
     notifySessionCreated: vi.fn(),
     findScannedSession: vi.fn(() => undefined),
     getSession: vi.fn(() => undefined),
-  } as unknown as ISessionServiceInternal
+    getLaunchPresetOptions: vi.fn(async () => undefined),
+    fetchAndBroadcastContext: vi.fn(async () => undefined),
+    detachSession: vi.fn(),
+    removeSessionEntry: vi.fn(),
+    getActiveSummaries: vi.fn(() => []),
+  }
 
   const configStore = { getDefaultModel: vi.fn(() => 'prov/model') } as unknown as IConfigStore
   const sessionStore = {

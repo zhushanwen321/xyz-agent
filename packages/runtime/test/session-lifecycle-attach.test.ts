@@ -39,7 +39,7 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
 
 import { SessionLifecycle, setMigrationGate } from '../src/services/session/session-lifecycle.js'
 import { parseSessionHeader } from '../src/infra/pi/session-file-utils.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
 import type { IProcessManager } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
 import type { ISessionStore } from '../src/services/ports/session.js'
@@ -67,7 +67,7 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
     }),
     setSessionName: vi.fn(async () => undefined),
   }
-  const svc = {
+  const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => [] as string[]),
     getSkillPaths: vi.fn(() => [] as string[]),
     getReplaceSystemPrompt: vi.fn(() => undefined),
@@ -87,9 +87,11 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
     getSession: vi.fn(() => undefined),
     detachSession: vi.fn(),
     removeSessionEntry: vi.fn(),
-    fetchAndBroadcastContext: vi.fn(() => undefined),
+    fetchAndBroadcastContext: vi.fn(async () => undefined),
     notifySessionCreated: vi.fn(),
-  } as unknown as ISessionServiceInternal
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
+    getActiveSummaries: vi.fn(() => []),
+  }
   const pm = {
     createSession: vi.fn(async () => client),
     destroySession: vi.fn(async () => undefined),

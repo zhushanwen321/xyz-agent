@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { SessionLifecycle, setMigrationGate, getMigrationGate } from './session-lifecycle.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
-import type { ISessionServiceInternal } from './session-internal.js'
+import type { ILifecycleSessionOps } from './session-internal.js'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
@@ -31,15 +31,20 @@ function makeSummary(id: string): SessionSummary {
 }
 
 function makeSessionView(id: string): IManagedSessionView {
-  return { id } as unknown as IManagedSessionView
+  return {
+    id, cwd: '/tmp', label: 'test', modelId: 'p/m',
+    createdAt: 1, lastActiveAt: 1, tokenCount: 0, inputTokens: 0,
+    isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
+  }
 }
 
 /**
  * 构造最小 lifecycle 环境：svc/pm/configStore/sessionStore/workspaceService 全 mock。
- * 只 mock 被测路径用到的成员，其余 cast 通过。
+ * S2 ISP 化（设计 §4.2 场景 B 主验收点）：svc 结构性满足 lifecycle 窄接口
+ * （13 方法 = 实际消费面，≤13 达标），svc stub 强转彻底消失。
  */
 function makeEnv() {
-  const svc = {
+  const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => []),
     getSkillPaths: vi.fn(() => []),
     getReplaceSystemPrompt: vi.fn(() => undefined),
@@ -50,8 +55,11 @@ function makeEnv() {
     notifySessionCreated: vi.fn(),
     findScannedSession: vi.fn(() => undefined),
     getSession: vi.fn(() => undefined),
-    fetchAndBroadcastContext: vi.fn(() => undefined),
-  } as unknown as ISessionServiceInternal
+    fetchAndBroadcastContext: vi.fn(async () => undefined),
+    detachSession: vi.fn(),
+    removeSessionEntry: vi.fn(),
+    getActiveSummaries: vi.fn(() => []),
+  }
   const client = {
     getState: vi.fn(async () => ({ sessionId: 'sess-1', sessionFile: undefined })),
     switchSession: vi.fn(async () => undefined),

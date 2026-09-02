@@ -49,7 +49,7 @@ vi.mock('../src/services/session/session-fork.js', () => ({
 }))
 
 import { SessionLifecycle } from '../src/services/session/session-lifecycle.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
 import type { IManagedSessionView } from '../src/services/session/types.js'
 import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
@@ -100,7 +100,7 @@ function makeLifecycle(opts: MakeOpts = {}) {
     createdAt: 1, lastActiveAt: 1, tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
   }
 
-  const svc = {
+  const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => []),
     getSkillPaths: vi.fn(() => []),
     getReplaceSystemPrompt: vi.fn(() => undefined),
@@ -109,7 +109,7 @@ function makeLifecycle(opts: MakeOpts = {}) {
     getLaunchPresetOptions: vi.fn(async () => undefined),
     findScannedSession: vi.fn(() => ({
       id: 'src', filePath: '/fake/src.jsonl', cwd: tmpdir(), name: 'src',
-      lastModified: 1, timestamp: '', size: 0,
+      lastModified: 1, timestamp: '', size: 0, outcome: null,
     })),
     // FR-20: forkSession 读源 active session 的 sessionFilePath 判断 parentSession fallback。
     // mock 返回 undefined（源未活跃 / 已落盘），走 source.filePath 主路径。
@@ -122,7 +122,12 @@ function makeLifecycle(opts: MakeOpts = {}) {
       lastActiveAt: 1, tokenCount: 0, modelId: 'p/m',
     })),
     fetchAndBroadcastContext: vi.fn(async () => {}),
-  } as unknown as ISessionServiceInternal
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
+    detachSession: vi.fn(),
+    removeSessionEntry: vi.fn(),
+    notifySessionCreated: vi.fn(),
+    getActiveSummaries: vi.fn(() => []),
+  }
 
   const configStore = {
     getDefaultModel: vi.fn(() => ({ provider: 'p', modelId: 'm' })),

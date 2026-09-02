@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { SessionSummary } from '@xyz-agent/shared'
 
 // 模拟 session-lifecycle 的 create 行为
-// 由于 session-lifecycle 依赖复杂（IProcessManager, ISessionServiceInternal 等），
+// 由于 session-lifecycle 依赖复杂（IProcessManager, ILifecycleSessionOps 等），
 // 此处测试 spawnSource/parentAgentSessionId 的透传逻辑
 
 describe('session-lifecycle create options 扩展（U4-A8）', () => {

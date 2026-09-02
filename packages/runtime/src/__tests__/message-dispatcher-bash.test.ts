@@ -22,7 +22,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MessageDispatcher } from '../services/session/message-dispatcher.js'
-import type { ISessionServiceInternal } from '../services/session/session-internal.js'
+import type { IDispatcherSessionOps } from '../services/session/session-internal.js'
 import type { IManagedSessionView } from '../services/session/types.js'
 import type { IMessageBus } from '../services/message-bus/message-bus.js'
 import type { IPiEngine, IProcessManager, PiBashResult } from '../services/ports/pi-engine.js'
@@ -99,11 +99,15 @@ function makeMocks(opts: MockOpts = {}) {
   const broadcasts: ServerMessage[] = []
   const bus = { publish: vi.fn((_sid: string, m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBus
 
-  const svc = {
+  // S2 ISP 化：结构性满足 dispatcher 窄接口（6 方法 = 实际消费面），无强转
+  const svc: IDispatcherSessionOps = {
     ensureActive: vi.fn(async () => client),
     getSessionByClient: vi.fn(() => session),
     getSession: vi.fn(() => session),
-  } as unknown as ISessionServiceInternal
+    persistSessionOutcome: vi.fn(),
+    removeSessionEntry: vi.fn(),
+    detachSession: vi.fn(),
+  }
 
   const pm = {
     getClient: vi.fn(() => client),

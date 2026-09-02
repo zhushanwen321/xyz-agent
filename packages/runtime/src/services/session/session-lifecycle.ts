@@ -3,11 +3,12 @@
  *
  * 负责:create / delete / renameSession / restoreSession。
  *
- * sessions Map 单写者:本模块不持有 Map,经 ISessionServiceInternal 接口
+ * sessions Map 单写者:本模块不持有 Map,经 ILifecycleSessionOps 窄接口
  * 查(getSession)/ 删(removeSessionEntry)/ 初始化(initializeManagedSession)/
- * detach(detachSession)/ 查持久化(findScannedSession)。
+ * detach(detachSession)/ 查持久化(findScannedSession)。窄接口按消费者收窄
+ * (调用点实测 13 方法,见 session-internal.ts)。
  *
- * 依赖经构造注入:svc(Facade 内部协议)、pm(进程创建/销毁/rekey)。
+ * 依赖经构造注入:svc(lifecycle 窄接口)、pm(进程创建/销毁/rekey)。
  */
 import { basename } from 'node:path'
 import { existsSync, unlinkSync, readFileSync } from 'node:fs'
@@ -17,7 +18,7 @@ import type { SessionSummary, BatchDeleteResult, ThinkingLevel } from '@xyz-agen
 import { BUILTIN_PRESET_IDS, PI_THINKING_LEVELS } from '@xyz-agent/shared'
 import type { PiThinkingLevel } from '../../infra/pi/pi-protocol.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
-import type { ISessionServiceInternal } from './session-internal.js'
+import type { ILifecycleSessionOps } from './session-internal.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
 import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
@@ -163,7 +164,7 @@ export function getMigrationGate(): Promise<unknown> {
 
 export class SessionLifecycle {
   constructor(
-    private readonly svc: ISessionServiceInternal,
+    private readonly svc: ILifecycleSessionOps,
     private readonly pm: IProcessManager,
     private readonly configStore: IConfigStore,
     private readonly sessionStore: ISessionStore,

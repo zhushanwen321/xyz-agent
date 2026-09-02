@@ -32,7 +32,7 @@ vi.mock('../src/services/session/session-fork.js', () => ({
 }))
 
 import { SessionLifecycle, setMigrationGate } from '../src/services/session/session-lifecycle.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
 import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
 import type { ISessionStore } from '../src/services/ports/session.js'
@@ -86,7 +86,7 @@ function makeEnv() {
   // svc.getSession 的数据源（活跃 session 视图）
   const sessionMap = new Map<string, IManagedSessionView>()
 
-  const svc = {
+  const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => [] as string[]),
     getSkillPaths: vi.fn(() => [] as string[]),
     getReplaceSystemPrompt: vi.fn(() => undefined),
@@ -101,7 +101,11 @@ function makeEnv() {
     getSession: vi.fn((id: string) => sessionMap.get(id)),
     fetchAndBroadcastContext: vi.fn(async () => {}),
     notifySessionCreated: vi.fn(),
-  } as unknown as ISessionServiceInternal
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
+    detachSession: vi.fn(),
+    removeSessionEntry: vi.fn(),
+    getActiveSummaries: vi.fn(() => []),
+  }
 
   const pm = {
     createSession: vi.fn(async (id: string) => {

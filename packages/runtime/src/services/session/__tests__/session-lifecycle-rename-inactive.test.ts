@@ -18,7 +18,7 @@ import { mkdtempSync, writeFileSync, rmSync, readdirSync, readFileSync, statSync
 import { join } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { SessionLifecycle } from '../session-lifecycle.js'
-import type { ISessionServiceInternal } from '../session-internal.js'
+import type { ILifecycleSessionOps } from '../session-internal.js'
 import type { IProcessManager } from '../../ports/pi-engine.js'
 import type { IConfigStore } from '../../ports/config.js'
 import type { ISessionStore } from '../../ports/session.js'
@@ -30,10 +30,23 @@ import type { ScannedSession } from '../types.js'
  * findScannedSession/getSession；pm 只需 withEphemeralPi（附着瞬间读文件供断言）。
  */
 function makeEnv(scanned?: ScannedSession) {
-  const svc = {
+  // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转。
+  // 本测试路径只真实消费 findScannedSession/getSession，其余空 vi.fn 仅为满足接口面
+  const svc: ILifecycleSessionOps = {
     findScannedSession: vi.fn(() => scanned ?? undefined),
     getSession: vi.fn(() => undefined),
-  } as unknown as ISessionServiceInternal
+    initializeManagedSession: vi.fn(),
+    detachSession: vi.fn(),
+    toSummary: vi.fn(),
+    getSkillPaths: vi.fn(),
+    getExtensionPaths: vi.fn(),
+    getReplaceSystemPrompt: vi.fn(),
+    getLaunchPresetOptions: vi.fn(),
+    fetchAndBroadcastContext: vi.fn(),
+    removeSessionEntry: vi.fn(),
+    notifySessionCreated: vi.fn(),
+    getActiveSummaries: vi.fn(),
+  }
   const setSessionName = vi.fn(async (_name: string) => ({ success: true }))
   let attachedContent: string | null = null
   const withEphemeralPi = vi.fn(async (sessionFile: string, fn: (client: unknown) => Promise<unknown>) => {

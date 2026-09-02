@@ -1,17 +1,26 @@
 /**
  * Facade 暴露给 session/ 子模块（lifecycle / dispatcher / scanner）的内部协议。
  *
- * 本文件从 interfaces.ts 迁出（R5 重构），目的：
- * - 把 session 域的内部契约收归 session 目录，避免散落在顶层 interfaces.ts
- * - 打断模块级循环：子模块 `import type { ISessionServiceInternal } from './session-internal.js'`，
- *   Facade `implements` 此接口 —— 子模块 → 接口 → Facade 单向，无 import 环。
- *   （运行期 Facade 调子模块、子模块经接口回调 Facade 是调用环，非依赖环。）
+ * ISP 化终态（session-service-deepening 设计 D2①/S2）：按逐文件去重调用点实测
+ * （grep 'this.svc.'）拆三个窄接口——lifecycle 13 / dispatcher 6 / scanner 2 方法。
+ * 跨消费者共享 4 方法（detachSession / getSession / removeSessionEntry 为
+ * lifecycle+dispatcher 共用，getActiveSummaries 为 lifecycle+scanner 共用）按消费者
+ * 在多个窄接口**重复声明、单一实现**——SessionService implements 三窄接口即编译期
+ * 防签名漂移守卫（真 ISP：每个消费者可见面 = 实际消费面）。
  *
- * sessions Map 单写者：Facade 唯一持有，子模块只经此接口拿到元素引用做字段更新，
+ * 原宽接口 21 方法中 4 个不进任何窄接口：applyContextUpdate（声明于 ISessionService，
+ * 组合根以具体类接线）、handleTurnUsageSideEffects / handleTurnEndSideEffects
+ * （event-interpreter 经组合根回调注入消费，回调类型为内联函数签名，不走本文件接口）、
+ * markHandedOff（已迁 ISessionService，handoff-service 绑具体类）。
+ *
+ * 打断模块级循环：子模块 `import type { I*SessionOps } from './session-internal.js'`，
+ * Facade `implements` 这些接口 —— 子模块 → 接口 → Facade 单向，无 import 环。
+ * （运行期 Facade 调子模块、子模块经接口回调 Facade 是调用环，非依赖环。）
+ *
+ * sessions Map 单写者：Facade 唯一持有，子模块只经窄接口拿到元素引用做字段更新，
  * 不直接 new / 持有 Map。
  *
- * 叶子模块：仅 `import type`，不引入项目内运行时依赖，
- * 因此 interfaces.ts 反向 import 此类型不会形成模块环（session-internal.ts ← interfaces.ts 单向）。
+ * 叶子模块：仅 `import type`，不引入项目内运行时依赖。
  */
 import type { IPiEngine } from '../ports/pi-engine.js'
 import type { SessionSummary } from '@xyz-agent/shared'
@@ -19,8 +28,13 @@ import type { SessionOutcome } from '../ports/session.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
 import type { PresetResolution } from '../preset-service.js'
 
-export interface ISessionServiceInternal {
-  // ── lifecycle 使用的共享 helper ──
+/**
+ * lifecycle 消费的窄接口（SessionLifecycle.svc，13 方法，调用点实测）。
+ *
+ * 含跨消费者共享方法（重复声明、单一实现）：detachSession / getSession /
+ * removeSessionEntry（dispatcher 共用）、getActiveSummaries（scanner 共用）。
+ */
+export interface ILifecycleSessionOps {
   /**
    * 初始化 ManagedSession 并写入 sessions Map，返回子模块可见视图。hidden 标记隐藏 session。
    * parentSession/forkEntryId 透传 fork 血缘（FR-2 active 路径回传），存入 session 对象后
@@ -50,40 +64,11 @@ export interface ISessionServiceInternal {
    * 见 SessionService.getLaunchPresetOptions 实现注释 + pi-launch-presets 设计文档 §8.1。
    */
   getLaunchPresetOptions(presetId: string, cwd: string): Promise<PresetResolution | undefined>
-
-  // ── dispatcher 使用 ──
-  /** 确保会话活跃，必要时自动 restore。 */
-  ensureActive(sessionId: string): Promise<IPiEngine>
-  /** 按 RPC client 反查 managed session（更新 lastActiveAt / isGenerating 用）。 */
-  getSessionByClient(client: IPiEngine): IManagedSessionView | undefined
   /**
-   * 失效 usage 实例 + 即时广播 context.update（W10 五写点收编：事件参数不直写缓存，
-   * usage 实例快照是 inputTokens/tokenCount 唯一数据源；compact 后用 estimatedTokensAfter
-   * 触发同样的失效刷新）。
-   */
-  applyContextUpdate(sessionId: string, inputTokens: number, totalTokens?: number): void
-  /**
-   * turn_end 单 turn 副作用（W3）：project sidecar 兜底补写（label 持久化 W1 起移交 pi RPC）。
-   * 经 EventInterpreter.onTurnUsage 回调注入。
-   */
-  handleTurnUsageSideEffects(sessionId: string): void
-  /**
-   * agent_end 副作用（W3 + W4）：复位 isGenerating=false + project sidecar 兜底 + session_end 终态写入。
-   * 经 EventInterpreter.onTurnFinalize 回调注入。
-   * @param stopReason pi agent_end 的 stopReason（W4：决定 outcome=error|done）
-   */
-  handleTurnEndSideEffects(sessionId: string, stopReason?: string): void
-  /**
-   * 写 session_end 终态 entry（W4，ADR 0042）。3 个终态点复用。
-   */
-  persistSessionOutcome(sessionId: string, outcome: SessionOutcome, reason?: string): void
-  /**
-   * 拉取上下文用量并广播 context.update（restoreSession 兜底用）。
+   * 拉取上下文用量并广播 context.update（restoreSession/forkSession 兜底用）。
    * fire-and-forget 语义：失败不阻塞 session 恢复（前端主动拉是主路径）。
    */
   fetchAndBroadcastContext(sessionId: string): Promise<void>
-
-  // ── lifecycle 使用（Map 单写者：查/删经 Facade）──
   /** 只读查 Map，返回 managed session 视图（active 判定 + 字段读改）。 */
   getSession(sessionId: string): IManagedSessionView | undefined
   /** 从 Map 删除条目（仅删条目，不 detach adapter / 不 destroy 进程）。 */
@@ -94,14 +79,39 @@ export interface ISessionServiceInternal {
    * onSessionCreated → PluginService session 事件注册表定向投递。
    */
   notifySessionCreated(summary: SessionSummary): void
-  /**
-   * M3：标记源 session 已交接给新 session（内存写 handedOffTo + 磁盘写 handoff_marker）。
-   * HandoffService 经此接口写交接态，而非直接改具体类内部对象（依赖倒置 + 所有权收口）。
-   * 仅 active session 生效；非 active 源 session 按 no-op 处理（见具体类 docstring）。
-   */
-  markHandedOff(srcSessionId: string, newSessionId: string): void
+  /** 当前活跃会话的 summary 列表（已含 git 信息）。 */
+  getActiveSummaries(): SessionSummary[]
+}
 
-  // ── scanner 使用 ──
+/**
+ * dispatcher 消费的窄接口（MessageDispatcher.svc，6 方法，调用点实测）。
+ *
+ * 含跨消费者共享方法（重复声明、单一实现）：detachSession / getSession /
+ * removeSessionEntry（lifecycle 共用）。
+ */
+export interface IDispatcherSessionOps {
+  /** 确保会话活跃，必要时自动 restore。 */
+  ensureActive(sessionId: string): Promise<IPiEngine>
+  /** 按 RPC client 反查 managed session（更新 lastActiveAt / isGenerating 用）。 */
+  getSessionByClient(client: IPiEngine): IManagedSessionView | undefined
+  /**
+   * 写 session_end 终态 entry（W4，ADR 0042）。3 个终态点复用。
+   */
+  persistSessionOutcome(sessionId: string, outcome: SessionOutcome, reason?: string): void
+  /** 只读查 Map，返回 managed session 视图（active 判定 + 字段读改）。 */
+  getSession(sessionId: string): IManagedSessionView | undefined
+  /** 从 Map 删除条目（仅删条目，不 detach adapter / 不 destroy 进程）。 */
+  removeSessionEntry(sessionId: string): void
+  /** Detach adapter（按 id 查 Map）。pi 事件订阅经 EventAdapter 唯一持有，detach 即收口。 */
+  detachSession(sessionId: string): void
+}
+
+/**
+ * scanner 消费的窄接口（SessionScanner.svc，2 方法，调用点实测）。
+ *
+ * getActiveSummaries 与 lifecycle 共用（重复声明、单一实现）。
+ */
+export interface IScannerSessionOps {
   /** 当前活跃会话的 summary 列表（已含 git 信息）。 */
   getActiveSummaries(): SessionSummary[]
   /** 当前活跃会话占用的 session 文件路径集合（去重用）。 */

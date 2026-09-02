@@ -25,7 +25,7 @@ vi.mock('node:fs', () => ({
 }))
 
 import { SessionLifecycle } from '../src/services/session/session-lifecycle.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
 import type { IManagedSessionView } from '../src/services/session/types.js'
 import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
@@ -52,7 +52,7 @@ function makeMocks() {
   // 与 toSummary 一并透传，保证 summary.cwd 反映真实降级结果
   const session = { id: 'pi-s1', cwd: '/repo' } as IManagedSessionView
 
-  const svc = {
+  const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => []),
     getSkillPaths: vi.fn(() => []),
     getReplaceSystemPrompt: vi.fn(() => undefined),
@@ -66,7 +66,15 @@ function makeMocks() {
     })),
     // S3-W2：创建入口收敛点（lifecycle 三处 return 前调用）
     notifySessionCreated: vi.fn(),
-  } as unknown as ISessionServiceInternal
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
+    getLaunchPresetOptions: vi.fn(async () => undefined),
+    findScannedSession: vi.fn(() => undefined),
+    getSession: vi.fn(() => undefined),
+    detachSession: vi.fn(),
+    removeSessionEntry: vi.fn(),
+    fetchAndBroadcastContext: vi.fn(async () => undefined),
+    getActiveSummaries: vi.fn(() => []),
+  }
 
   const configStore = {
     getDefaultModel: vi.fn(() => ({ provider: 'p', modelId: 'm' })),

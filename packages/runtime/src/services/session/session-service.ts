@@ -2,11 +2,13 @@
  * SessionService — Facade(门面)。
  *
  * 持有 sessions Map(单写者)+ 依赖,组合 lifecycle/dispatcher/scanner 三子模块,
- * 实现 ISessionService(对外)与 ISessionServiceInternal(对内)。
+ * 实现 ISessionService(对外)与三窄接口 ILifecycleSessionOps/IDispatcherSessionOps/
+ * IScannerSessionOps(对内,按消费者收窄——见 session-internal.ts;单一实现即
+ * 编译期防签名漂移守卫)。
  *
  * 共享 helper(initializeManagedSession/detachSession/toSummary/findScannedSession/
- * getSkillPaths/getExtensionPaths)留 Facade,子模块经 ISessionServiceInternal 调用 ——
- * 既保 sessions Map 单写者,又打断模块环(子模块 → interfaces.ts 接口 → Facade implements,单向)。
+ * getSkillPaths/getExtensionPaths)留 Facade,子模块经各自窄接口调用 ——
+ * 既保 sessions Map 单写者,又打断模块环(子模块 → 窄接口 → Facade implements,单向)。
  *
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
@@ -26,7 +28,7 @@ import type {
   ISessionService, IMessageBroker, SessionCreateOptions,
   IEventAdapter, IExtensionService, IConfigService,
 } from '../../interfaces.js'
-import type { ISessionServiceInternal } from './session-internal.js'
+import type { ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps } from './session-internal.js'
 import type { IProcessManager, IPiEngine, PiCommandInfo, PiMessage } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
@@ -207,7 +209,7 @@ interface RecordEntriesCache {
   inflight: Promise<void> | null
 }
 
-export class SessionService implements ISessionService, ISessionServiceInternal {
+export class SessionService implements ISessionService, ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps {
   private readonly sessions = new Map<string, ManagedSession>()
   private readonly restoringSessions = new Set<string>()
   private readonly lifecycle: SessionLifecycle
@@ -1659,7 +1661,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.sessions.clear()
   }
 
-  // ── ISessionServiceInternal:子模块经此访问 sessions / 共享 helper ──
+  // ── 内部协议（lifecycle/dispatcher/scanner 窄接口 + 过渡宽接口）:子模块经此访问 sessions / 共享 helper ──
 
   getSkillPaths(cwd: string): string[] {
     // FR-1（cw-2026-07-21-scan-project-agents-skills）：相对路径按 session cwd resolve 成绝对路径再 existsSync filter。

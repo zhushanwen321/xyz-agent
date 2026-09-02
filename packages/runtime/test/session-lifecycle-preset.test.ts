@@ -39,7 +39,7 @@ vi.mock('../src/infra/pi/pi-paths.js', () => ({
 }))
 
 import { SessionLifecycle } from '../src/services/session/session-lifecycle.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
 import type { IManagedSessionView } from '../src/services/session/types.js'
 import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
@@ -92,7 +92,7 @@ function makeMocks(opts: {
     return opts.resolution
   })
 
-  const svc = {
+  const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => ['/default/ext']),
     getSkillPaths: vi.fn(() => ['/default/skill']),
     getReplaceSystemPrompt: vi.fn(() => undefined),
@@ -109,7 +109,9 @@ function makeMocks(opts: {
     detachSession: vi.fn(),
     removeSessionEntry: vi.fn(),
     getSession: vi.fn(() => undefined),
-  } as unknown as ISessionServiceInternal
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
+    getActiveSummaries: vi.fn(() => []),
+  }
 
   const configStore = {
     getDefaultModel: vi.fn(() => ({ provider: 'p', modelId: 'm' })),

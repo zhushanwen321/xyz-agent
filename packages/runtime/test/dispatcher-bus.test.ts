@@ -28,7 +28,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MessageDispatcher } from '../src/services/session/message-dispatcher.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { IDispatcherSessionOps } from '../src/services/session/session-internal.js'
 import type { IManagedSessionView } from '../src/services/session/types.js'
 import type { IMessageBus } from '../src/services/message-bus/message-bus.js'
 import type { IPiEngine, IProcessManager } from '../src/services/ports/pi-engine.js'
@@ -85,12 +85,16 @@ function makeMocks(opts: {
     compact: compactFn,
   } as unknown as IPiEngine
 
-  const svc = {
+  // S2 ISP 化：结构性满足 dispatcher 窄接口（6 方法 = 实际消费面），无强转；
+  // applyContextUpdate 不在窄接口（event-interpreter 组合根回调消费），随迁移移除
+  const svc: IDispatcherSessionOps = {
     ensureActive: vi.fn(async () => client),
     getSessionByClient: vi.fn(() => session),
     persistSessionOutcome: vi.fn(),
-    applyContextUpdate: vi.fn(),
-  } as unknown as ISessionServiceInternal
+    getSession: vi.fn(),
+    removeSessionEntry: vi.fn(),
+    detachSession: vi.fn(),
+  }
 
   const pm = {
     getClient: vi.fn(() => client),
@@ -291,10 +295,14 @@ describe('message-dispatcher bus integration', () => {
     const session = makeMockSession()
     const promptFn = vi.fn(async () => ({}) as unknown as Awaited<ReturnType<IPiEngine['prompt']>>)
     const client = { prompt: promptFn } as unknown as IPiEngine
-    const svc = {
+    const svc: IDispatcherSessionOps = {
       ensureActive: vi.fn(async () => client),
       getSessionByClient: vi.fn(() => session),
-    } as unknown as ISessionServiceInternal
+      persistSessionOutcome: vi.fn(),
+      getSession: vi.fn(),
+      removeSessionEntry: vi.fn(),
+      detachSession: vi.fn(),
+    }
     const pm = {} as unknown as IProcessManager
     const workspace = { record: vi.fn() } as unknown as WorkspaceService
     const dispatcher = new MessageDispatcher(svc, pm, workspace)
@@ -306,10 +314,14 @@ describe('message-dispatcher bus integration', () => {
   it('messageBus undefined → no crash on abort', async () => {
     const session = makeMockSession()
     const client = { abort: vi.fn(async () => {}) } as unknown as IPiEngine
-    const svc = {
+    const svc: IDispatcherSessionOps = {
       getSessionByClient: vi.fn(() => session),
       persistSessionOutcome: vi.fn(),
-    } as unknown as ISessionServiceInternal
+      ensureActive: vi.fn(),
+      getSession: vi.fn(),
+      removeSessionEntry: vi.fn(),
+      detachSession: vi.fn(),
+    }
     const pm = { getClient: vi.fn(() => client) } as unknown as IProcessManager
     const workspace = { record: vi.fn() } as unknown as WorkspaceService
     const dispatcher = new MessageDispatcher(svc, pm, workspace)
@@ -323,9 +335,14 @@ describe('message-dispatcher bus integration', () => {
     const compactFn = vi.fn(async () => ({ summary: 'done', tokensBefore: 100, estimatedTokensAfter: 50 }))
     const client = { compact: compactFn } as unknown as IPiEngine
     const messageBus = { publish: vi.fn() }
-    const svc = {
+    const svc: IDispatcherSessionOps = {
       getSessionByClient: vi.fn(() => session),
-    } as unknown as ISessionServiceInternal
+      ensureActive: vi.fn(),
+      persistSessionOutcome: vi.fn(),
+      getSession: vi.fn(),
+      removeSessionEntry: vi.fn(),
+      detachSession: vi.fn(),
+    }
     const pm = { getClient: vi.fn(() => client) } as unknown as IProcessManager
     const workspace = { record: vi.fn() } as unknown as WorkspaceService
     const dispatcher = new MessageDispatcher(svc, pm, workspace, messageBus as unknown as IMessageBus)

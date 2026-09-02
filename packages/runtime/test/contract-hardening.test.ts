@@ -73,7 +73,7 @@ import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import { createAgentAPI } from '../src/services/plugin-service/plugin-bootstrap.js'
 import { SessionLifecycle, setMigrationGate } from '../src/services/session/session-lifecycle.js'
 import { SessionService } from '../src/services/session/session-service.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps } from '../src/services/session/session-internal.js'
 import type { IProcessManager } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
 import type { ISessionStore } from '../src/services/ports/session.js'
@@ -113,7 +113,7 @@ function notificationsOf(port: { messages: Array<Record<string, unknown>> }): Ar
 
 /** 构造最小 lifecycle 环境（session-lifecycle-gate.test.ts 同款模式） */
 function makeLifecycleEnv() {
-  const svc = {
+  const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => [] as string[]),
     getSkillPaths: vi.fn(() => [] as string[]),
     getReplaceSystemPrompt: vi.fn(() => undefined),
@@ -125,10 +125,14 @@ function makeLifecycleEnv() {
     })),
     findScannedSession: vi.fn((): ScannedSession | undefined => undefined),
     getSession: vi.fn(() => undefined),
-    fetchAndBroadcastContext: vi.fn(() => undefined),
+    fetchAndBroadcastContext: vi.fn(async () => undefined),
     // S3-W2 被测收敛点
     notifySessionCreated: vi.fn(),
-  } as unknown as ISessionServiceInternal
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（13 方法 = 实际消费面），无强转
+    detachSession: vi.fn(),
+    removeSessionEntry: vi.fn(),
+    getActiveSummaries: vi.fn(() => []),
+  }
   const client = {
     getState: vi.fn(async () => ({ sessionId: 'sess-1', sessionFile: undefined })),
     switchSession: vi.fn(async () => undefined),
