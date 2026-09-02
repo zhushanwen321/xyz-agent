@@ -263,7 +263,7 @@ describe('useChat pendingSend 合并态（空窗期）', () => {
     const chat = useChatStore()
     // 创建 streaming entity + arm 超时 timer（取代 setStreaming 二合一）
     chat.applyMessageEvent('s-stream-timeout', { type: 'message.message_start', payload: { sessionId: 's-stream-timeout', messageId: 'a1' } })
-    chat.armStreamingTimer('s-stream-timeout')
+    chat.testInternals.armStreamingTimer('s-stream-timeout')
     expect(chat.isGenerating('s-stream-timeout')).toBe(true)
     // 阈值 DEFAULT_STREAMING_TIMEOUT_MS=10min（600_000ms）：10min-1s 未超时，仍 streaming
     vi.advanceTimersByTime(599_000)

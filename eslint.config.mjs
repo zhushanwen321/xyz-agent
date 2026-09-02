@@ -194,10 +194,14 @@ export default [
   // max-lines-per-function 规则不适用（项目已裁定该场景为误报，对齐 renderer chat.ts 同款 override）。
   // B6 *Impl 消除（FR2 内联）后函数体 345 行；深模块化已由 streaming-state-machine 承担（FR1），
   // 不再为绕行数拆分模块级函数（B6 反模式）。
+  // [u6.1] D6 facet 收口：testInternals 命名空间 + ChatStoreReaders/ChatStoreOps 类型及
+  // 编译期完备性/互斥断言就地挂本文件（facet 与 return 面同文件才能锚定 Pick 键集），
+  // 文件总行数超 500——对齐 renderer stores/chat.ts 同款「唯一聚合中心」总行数豁免。
   {
     files: ['packages/core/src/domain/chat/store.ts'],
     rules: {
       'max-lines-per-function': 'off',
+      'max-lines': 'off',
     },
   },
   // [HISTORICAL] buildWorkerScript 是 worker 源码生成器——返回单一字符串数组的纯模板函数，
