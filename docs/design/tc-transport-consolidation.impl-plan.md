@@ -103,6 +103,9 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 | 1 | u1 | 三桥统一指向 `@xyz-agent/core/transport/api`（barrel）而非模块级子路径——模块级四段子路径无 exports 条目不可解析；`'@/api/pending'` 等入口暂为三模块导出超集（无同名冲突），u5 桥删除后消失 | 设计 §7 壳目标结构（终态无桥，不受影响） | 已批准 |
 | 2 | u1 | 6 个测试 mock 说明符改锚：ws-client 类用 `@xyz-agent/core/transport/ws-client`（exports 第四行支撑）；pending 类用跨包相对路径直指 `core/src/transport/api/pending.ts`——vi.mock 按解析后模块 ID 拦截，barrel 说明符与 core 内部 `'./pending'` 是不同模块 ID 无法拦截。断言与 factory 零改动 | 设计 §11-2（拦截链路实证，结论反哺 u4：pending 类目标必须直指模块文件） | 已批准 |
 | 3 | u1 | request.ts 内 `transport.send` 改为 ws-client 具名 `send` 直连（含 request.test vi.mock 目标连带 + extension-upgrade namespace import 连带） | 设计 §4 After 图「request → ws-client.send」直连即终态 | 已批准 |
+| 4 | u2 | 领地外 3 测试文件追认（chat-bash / chat-send-images / session-removebycwd）：vi.mock('@/api/request') 同族失拦截（桥不转发 mock），与 v4 裁决 B1 同根因同模式，说明符改锚 core request 跨包相对路径，断言与 factory 零改动 | 计划 v4 B1 裁决先例（设计 §11-2） | 已追认（v5） |
+| 5 | u2 | usage-forcequit 改锚形态：command 级断言（commandMock）直指 core request 模块文件（preset 的 send 级改法不适用——断言层级不同）；「断言零改动优先」裁决 | u1 偏差 #2「直指模块文件」模式 | 已批准 |
+| 6 | u2 | extension.ts transport.send 实际 1 处（:190；v3/v4 计划文字「6 处」为 grep -o 计数把非调用行计入的沿袭错误）；ws-client 相对深度 '../../'（domains/ 比 api/ 深一层）；core settings.ts 两处历史注释随 IPC 剔除同步修正 | 事实修正，无设计冲突 | 已批准 |
 
 预登记两条口径差异（非偏差，数字校准）：设计「测试 62 处/50 文件」实测 **58 处/48 文件**（子路径口径，另 barrel 12 处不动）；设计「3 个测试改路径」（lib shim）实测 **5 个测试文件**（useExtensionHostBridge.test / ws-client-send-boolean / session-workflow-update-fallback / session-exited / session-subagents-fallback）。以实测为准执行，不回改设计文档（±4 处属设计期统计与 HEAD 漂移）。
 
@@ -111,7 +114,7 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u1 | committed | 2（首轮 core 侧 + 续轮 6 测试 mock 改锚，计划 v2 修订） | core test 1276 passed/6 todo + frontend test 348 文件 3601 passed/3 skipped + 双包 typecheck 绿；commit 见 git log `refactor(core)` u1 条目 |
-| u2 | pending | 0 | — |
+| u2 | committed | 2（首轮零改动 blocker 上报三处派发事实失实 + v4 裁决续作全绿） | 同 u1 基线全绿不回归；22 领地文件 + 3 追认测试（v5）；commit 见 git log `refactor(core)` u2 条目 |
 | u3 | pending | 0 | — |
 | u4 | pending | 0 | — |
 | u5 | pending | 0 | — |
@@ -136,3 +139,4 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 - v2：2026-09-02 u1 首轮 dev 后计划修订：① u1 领地扩入 6 个测试文件（t4-api-layer / quota-domain / preset-domain / composer-domain / session-api / extension-upgrade）的 mock 改锚 + core exports 补 `./transport/ws-client` 行——根因：桥不转发 mock（§7 风险 2 实证），这 6 个测试断言「request→transport.send 被 mock 调用」，桥化后 request 在 core 内直连 ws-client 失拦截，33 用例红；原计划把 mock 改写全放 u4 导致 u1-u4 波次间 frontend test 红，违反「每单元测试绿」纪律；② u4 对应缩减（9 个 vi.mock 测试中 6 个前移）；③ 桥形态 deviation 登记（指向 barrel `@xyz-agent/core/transport/api` 而非模块级子路径——四段子路径无 exports 条目，'@/api/pending' 等入口暂为三模块导出超集，u5 桥删除后消失）。
 - v3：2026-09-02 u2 派发前修正：① extension.ts 的 `'../transport'` 依赖改锚 ws-client（6 处 send）；② usage-forcequit-domains.test.ts 留壳不随迁（依赖 u3 未迁的 mock 数据）；③ u2 领地补 `domains/index.ts` barrel 创建；④ W2 并行改波内串行（u2 → u3）——同工作区并行开发时全量 typecheck/test 相互看到对方中间态，保守正确优先。
 - v4：2026-09-02 u2 首轮零改动 blocker 上报后裁决（三处派发事实失实，dev 证据行号级核实）：① **B2 桥形态**——10 个同名导出冲突（preset/session 的 list/create/remove；settings re-export config/extension 的 onProviders/onSkills/onAgents/onDefaults/onExtensions/listProviders/setProvider）使「barrel + 单行桥 + 消费者零改动」不可同构，且 `'@/api/domains'` 目录 barrel 本不存在（17 文件外无 index.ts）——裁决：不建 barrel，core exports 增 `"./transport/api/domains/*"` 通配一条覆盖 17 域（即 u5 codemod 终态锚点，消费者改锚纯前缀替换），删 u1 预置的 `./transport/api/domains` barrel 条目，壳桥直指单域子路径；② **B1**——usage-forcequit-domains.test.ts:15-18 的 vi.mock('@/api/request') 桥化后失拦截（同 u1 v2 根因），mock 改锚前移进 u2 领地；③ **B3**——settings.ts:15-21 的 5 个 Electron IPC 函数（'@/lib/ipc'）属壳平台门面（settings.ts 注释自述「不走 runtime WS」），core 仅迁 WS 部分、壳保留 IPC 5 函数与桥合并导出。次要校准：barrel facade 消费 57 处（v1 口径 45，HEAD 漂移）。
+- v5：2026-09-02 u2 完成后追认：① 3 个领地外测试文件（chat-bash / chat-send-images / session-removebycwd）的 vi.mock('@/api/request') 同族失拦截改锚——v4 裁决意图覆盖此类，dev 按先例处理正确，追认入账（教训：派发前应全量 grep vi.mock 同族消费者一次盘清，避免逐波发现）；② extension.ts transport.send 实际 1 处（:190），v3「6 处」为 grep -o 计数错误；③ usage-forcequit 为 command 级断言，改锚直指 core request 模块（preset 的 send 级改法不适用）。

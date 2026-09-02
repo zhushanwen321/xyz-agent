@@ -86,9 +86,9 @@
    "types": "./src/transport/api/index.ts",
    "import": "./src/transport/api/index.ts"
   },
-  "./transport/api/domains": {
-   "types": "./src/transport/api/domains/index.ts",
-   "import": "./src/transport/api/domains/index.ts"
+  "./transport/api/domains/*": {
+   "types": "./src/transport/api/domains/*.ts",
+   "import": "./src/transport/api/domains/*.ts"
   },
   "./transport/mock": {
    "types": "./src/transport/mock/index.ts",

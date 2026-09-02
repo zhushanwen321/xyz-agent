@@ -5,14 +5,15 @@
  * - TC5 send 不传 images → message.send payload 不含 images 键（既有行为不变）
  * - TC6 send 传 images → payload 含 images 数组（对齐 protocol.ts:199）
  *
- * mock 策略：vi.mock('@/api/request') 捕获 command 调用（chat.ts 经 command 发 message.send）。
+ * mock 策略：vi.mock core request 模块捕获 command 调用（chat.ts 经 command 发 message.send；
+ * domains 已迁 core，桥不转发 mock——说明符直指 core 模块文件，跨包相对路径）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/api/chat-send-images.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const commandMock = vi.fn()
-vi.mock('@/api/request', () => ({
+vi.mock('../../../../core/src/transport/api/request', () => ({
   command: (...args: unknown[]) => commandMock(...args),
 }))
 

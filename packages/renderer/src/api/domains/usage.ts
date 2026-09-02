@@ -1,15 +1,2 @@
-/**
- * Usage 域 —— 用量统计数据 RPC 封装。
- *
- * 设计文档：docs/todo/usage-stats-design.md §3.4 W2
- */
-import type { UsageStatsResult } from '@xyz-agent/shared'
-import { command } from '../request'
-
-/**
- * 拉取用量统计数据（session JSONL 扫描聚合）。
- * 返回 UsageStatsResult（rows / scannedAt / sessionCount / skippedLines）。
- */
-export function getUsageStats(): Promise<UsageStatsResult> {
-  return command('usage.getStats', {})
-}
+// [tc-transport-consolidation u2 桥] usage 域实现已下沉 @xyz-agent/core/transport/api/domains/usage；本桥为迁移中间态，u5 codemod 改写全部消费者（import 前缀替换）后删除。
+export * from '@xyz-agent/core/transport/api/domains/usage'
