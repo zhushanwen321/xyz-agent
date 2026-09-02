@@ -82,3 +82,43 @@ export interface PanelOrchestrationPort {
   /** 打开 drawer panel 并绑定 sid（side drawer 统一入口） */
   openPanel(sid: string): void
 }
+
+/**
+ * sessionEntry 端口束（renderer-deepening D3）——selectSession 完整 12 步切入链的跨域
+ * 步骤注入口。链本体在 use-session.selectSession 单点编排（唯一载体：改时序只改那一处），
+ * 跨域动作（chat 订阅/LRU、new-task flow、壳未读标记/文件树）经本端口注入，core 零跨域
+ * import（不开 domain 间直接 import 的先例，包拓扑铁律）。
+ *
+ * 全部成员可选、缺省 no-op：headless/mobile 等未接线环境零新增步骤执行完整链（时序仍按
+ * D4 统一链）。时序不变量由链本体承载（见 selectSession 步骤注释），实现侧无需关心顺序。
+ * 壳侧适配映射（u5.2 接线）：cancelActiveFlow←useNewTaskFlow / clearUnread←useSessionMarkers /
+ * ensureStreamSubscription / touchRecency / evictLru←chat store（useChat） / preloadFileTree←useFileTree。
+ */
+export interface SessionEntryPort {
+  /**
+   * 取消活跃的新建任务流（AC-3.10：flow 活跃（landing/overlay）时切 session → flow 转
+   * cancelled，防 overlay 卡死 + landing 残留）。无活跃流时实现侧 no-op。
+   */
+  cancelActiveFlow?(): void
+  /** 清除未读标记（用户主动查看该 session，未读 badge 即消） */
+  clearUnread?(sessionId: string): void
+  /**
+   * 建立 session 流订阅（同步注册 events handler + fire-and-forget subscribeSession）。
+   * [C-W3-4 / 2026-07-29 handoff 回复丢失事故] 链保证本步先于 syncSessionToPanel——
+   * panel 载入后 MessageStream 挂载，订阅必须先就绪否则 snapshot 回放事件被丢。
+   */
+  ensureStreamSubscription?(sessionId: string): void
+  /** 刷新 LRU recency（切入的 session 在 panel 载入前刷新，确保不被本链末尾的驱逐逐出） */
+  touchRecency?(sessionId: string): void
+  /**
+   * 文件树预加载（切 session 即拉取，侧栏「文件」tab 计数立即更新）。fire-and-forget：
+   * 实现可返回 Promise（TS 允许赋给 void 返回签名），链不 await、失败不阻断。
+   */
+  preloadFileTree?(sessionId: string): void
+  /**
+   * LRU 驱逐（按 recency 驱逐最久未访问的 chat 分区）。panelSessionId = 当前焦点 panel
+   * 绑定的 session（链在调用前已完成其 recency 刷新——[lru-panel-exempt-fix] 前半；
+   * 透传仅作实现侧上下文，实现执行驱逐本体即可）。
+   */
+  evictLru?(panelSessionId: string | null): void
+}
