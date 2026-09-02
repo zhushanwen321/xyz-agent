@@ -28,7 +28,8 @@
          virtua 用 container.parentElement（即本 scrollEl）作滚动容器（design §4.1）。
          - :data 全量 renderItems（turn + system 穿插）
          - :shift 顶部插入（load-more-history）时 true（virta 原生 reverse scroll adjustment，design §2.4）
-         - :keepMounted streaming/editing turn idx 恒挂载（design §4.3，virta 仍挂 RO 不致测量断）
+         - :keepMounted streaming/editing turn 恒挂载（design §4.3，virta 仍挂 RO 不致测量断；
+           [pin-identity D1] editing 项由 useStreamingPin 按 turnKey 反查当前 items 得出）
          - :startMargin load-more 占位高度（virta getItemOffset 已含 startMargin，design §4.11）
          - :key=session 强制重建 Virtualizer，跨 session 测量缓存隔离（design §4.5）
          slot 内 item.kind 分支与原 visibleItems 循环一致（kind 全集三态：turn/systemNotice/bashExecution）。 -->
@@ -57,7 +58,7 @@
           :can-edit="!!item.turn.user && index === lastUserTurnIdx"
           :is-session-active="isSessionActive"
           :is-last-turn="item.turn === lastRenderTurn"
-          @edit-state-change="onEditStateChange(index, $event.editing)"
+          @edit-state-change="onEditStateChange($event)"
         />
         <BashOutputBlock
           v-else-if="item.kind === 'bashExecution'"
@@ -355,11 +356,19 @@ const lastUserTurnIdx = computed(() => {
 /**
  * editing 钉扎（SR5，B9）：编辑中的 turn 滚出视口会卸载丢失 Turn.vue 的 draftText。
  * [cw wave w3] 切到 virta：钉扎改由 <Virtualizer :keepMounted> 消费 pinnedIndexes（design §4.3），
- * editingTurnIdx 注入 useStreamingPin，不再调旧手写虚拟滚动的 pinEditing。
+ * 不再调旧手写虚拟滚动的 pinEditing。
+ * [pin-identity D2] 编辑态改持身份（turnStableId）非位置：数组下标快照在切 session / 消息增删后
+ * 过期（E-now-1 越界崩溃 / E-now-2 错钉），身份不过期——索引由 useStreamingPin.pinnedIndexes
+ * 每次从当前 items 反查（D1），本层只持有并传递身份。
  */
-const editingTurnIdx = ref(-1)
-function onEditStateChange(idx: number, editing: boolean): void {
-  editingTurnIdx.value = editing ? idx : -1
+const editingTurnKey = ref<string | null>(null)
+/**
+ * [pin-identity D2/D8] handler 显式按 editing 分支：false 恒置 null，禁止无分支
+ * `= payload.turnKey`——否则切 session 时序「D8 清 null → 卸载 emit 迟到置回 turnKey →
+ * 回合复现时复活钉扎」，把 E4 从窄窗口扩大为每次切 session 必现，恰好击穿 D8。
+ */
+function onEditStateChange(payload: { editing: boolean; turnKey: string }): void {
+  editingTurnKey.value = payload.editing ? payload.turnKey : null
 }
 
 /** streaming + editing 钉扎（design §4.3）：输出 pinnedIndexes 喂给 <Virtualizer :keepMounted>。
@@ -368,7 +377,7 @@ function onEditStateChange(idx: number, editing: boolean): void {
 const { pinnedIndexes } = useStreamingPin({
   items: renderItems,
   sessionId: () => props.sessionId,
-  editingTurnIdx,
+  editingTurnKey,
 })
 
 /** [cw wave w3] auto-scroll follow 状态机（重写自旧滚动 composable，design §4.2）。
@@ -437,6 +446,11 @@ useMessageStreamScroll({
 watch(
   () => props.sessionId,
   () => {
+    // [pin-identity D8] 消费侧防线：切 session 同步清编辑身份（本 watch flush:'pre'，先于本次
+    // 重渲染执行，不进 nextTick）。与 D3 卸载 emit(false) 到达顺序无关——handler 按 editing
+    // 分支恒置 null，二者幂等。把「session 切换路径的 key 残留」从依赖卸载 emit 可达性变为
+    // 结构性不可能（E4 的 session 路径被消除；旧 editingTurnIdx 索引在此残留即越界崩溃 E-now-1）。
+    editingTurnKey.value = null
     nextTick(() => followToBottom(true))
   },
 )

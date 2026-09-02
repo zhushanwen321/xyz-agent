@@ -1,5 +1,5 @@
 # MessageStream 编辑钉扎身份锚定 实施计划
-基线: <待填> | 来源设计: docs/design/message-stream-editing-pin-identity.md | 日期: 2026-09-02
+基线: 30dfa5d6c | 来源设计: docs/design/message-stream-editing-pin-identity.md | 日期: 2026-09-02
 
 ## 0 章节映射
 | 内容 | 本文实际位置 |
@@ -74,7 +74,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| U0 | pending | 0 | — |
+| U0 | committed | 1 | c08334b8b：新用例红（`reading 'kind'` 复现）+ 既有 6 用例绿 + 生产代码零改动（vitest 输出与 git diff 已核验） |
 | U1 | pending | 0 | — |
 | U2 | pending | 0 | — |
 | U3 | pending | 0 | — |
