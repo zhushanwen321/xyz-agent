@@ -147,7 +147,7 @@ export function migrateToPiSubdir(): void {
  * 还随机器变化）。从 getPiAgentDir() 同源推导后，泄漏路径 ../../../.pi/agent/x 的 ../../../
  *（向上 3 层）与本函数的向上 3 层天然对齐，depth-structural 一致，任意 dataDir 位置均成立。
  */
-function getPiGlobalAgentDir(): string {
+export function getPiGlobalAgentDir(): string {
   return pathResolve(getPiAgentDir(), '..', '..', '..', '.pi', 'agent')
 }
 
