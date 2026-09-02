@@ -285,7 +285,8 @@ export class ImportService {
 
     // 7. 缓存失效：太极根列表 TTL 显式失效（D1，broadcast 立即可见）；alreadyImported 的
     //    stale 消除由本行保证（listCandidates 每次调 scanPiSessions() 重算，与外部根缓存
-    //    无关）。外部根（u1 未导出失效函数）force 重扫只是保守刷新外部根视图。
+    //    无关）。外部根（u1 未导出失效函数）force 重扫是保守动作，无消费者依赖其效果——
+    //    且会把单条目缓存键换成源文件所在子目录、下次根查询 miss（见设计 D3 实现层注记）。
     invalidateScanDirCache()
     await scanExternalSessions(dirname(sourcePath), { force: true })
 

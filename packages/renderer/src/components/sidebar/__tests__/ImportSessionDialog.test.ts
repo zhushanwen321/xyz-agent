@@ -10,7 +10,7 @@
  *  6. 导入成功 emit('imported') + 结果 toast（u7：info 成功 / warning 预警合并——
  *     sidecar_failed 与死 cwd 追加同一条消息；显示名回退短 ID）
  *  7. 错误内联恢复指引：error envelope code → i18n 文案（含恢复动作）可见，不弹系统对话框
- *  8. cwdExists=false 标注：「原目录已不存在…」降级提示可见
+ *  8. cwdExists=false 标注：「原目录不存在…」降级提示可见
  *  9. 目录切换（V8）：「选择其他目录」→ pickDirectory 选中根 → RPC 带新 rootDir
  *     重载列表/dirs/计数；取消无操作；搜索词跨根保留；重开回默认根
  * 10. 候选加载失败内联恢复指引（阶段 3 batch-renderer d631e358c——修 unreasonable
@@ -21,7 +21,7 @@
  * 12. 计数「可见 N / 共 total」（阶段 3 batch-renderer d631e358c——修 unreasonable
  *     「total 存而不用」）：items 截断时自然呈现截断提示
  * 13. 日期分组四档（阶段 3 batch-renderer d631e358c——补 unreasonable「日期分组缺
- *     本周档」）：今天/昨天/本周/更早，日历周（周一起始）分桶，昨天优先于本周
+ *     本周档」；断言并入验收 1 首用例：groupBuckets 四档 + 昨天优先）：今天/昨天/本周/更早，日历周（周一起始）分桶，昨天优先于本周
  * 14. u7 demo 对齐走查：标题「导入 pi 会话」/ 搜索框 icon + Esc kbd / 骨架屏（非转圈
  *     纯文本）/ 空态两条出路引导
  *
@@ -648,7 +648,7 @@ describe('ImportSessionDialog（U5 验收）', () => {
       expect(openEvents?.[openEvents.length - 1]).toEqual([false])
     })
 
-    it('死 cwd（cwdExists=false，V9）：toast 追加「原目录已不存在」预警（warning 通道）', async () => {
+    it('死 cwd（cwdExists=false，V9）：toast 追加「原目录不存在」预警（warning 通道）', async () => {
       await mountDialog()
 
       // fixture[2] cwdExists=false（原目录不存在的降级场景）
@@ -754,7 +754,7 @@ describe('ImportSessionDialog（U5 验收）', () => {
   })
 
   describe('验收8：cwdExists=false 标注（原目录不存在的降级提示）', () => {
-    it('原目录不存在的条目：「原目录已不存在」标注可见；正常条目无标注', async () => {
+    it('原目录不存在的条目：「原目录不存在」标注可见；正常条目无标注', async () => {
       await mountDialog()
 
       const missingRow = allByTestId('import-item').find((r) => r.text().includes(XYZ_DIR))

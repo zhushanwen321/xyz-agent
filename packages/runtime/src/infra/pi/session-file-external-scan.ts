@@ -106,7 +106,7 @@ const externalMetaCache = new Map<string, CachedExternalMeta>()
  * 跨根复用，同文件二次扫描零读）。TTL 锚定在扫描完成时刻：锚定开始时刻会使耗时超过
  * TTL 的首扫产出一个「出生即过期」的缓存条目（大目录下 TTL 永不命中），完成时刻锚定
  * 让 1s 重查窗口（D5 的 250ms debounce 搜索）真正命中。opts.force 绕过 TTL 缓存强制
- * 重扫（导入成功后刷新外部根视图即传 force，D3）。
+ * 重扫（导入成功后传 force——保守动作，无消费者依赖其效果，D3 实现层注记）。
  *
  * @param rootDir 外部根目录（不存在/不可读 → items 为空数组，不抛错，与太极根同容错）
  * @param opts.force true 绕过 TTL 缓存强制重扫

@@ -20,7 +20,7 @@ export default {
     earlier: '更早',
   },
   importedBadge: '已导入',
-  cwdMissing: '原目录已不存在，续聊将在主目录执行',
+  cwdMissing: '原目录不存在，续聊将在主目录执行',
   importTo: '导入到',
   cancel: '取消',
   importBtn: '导入',
