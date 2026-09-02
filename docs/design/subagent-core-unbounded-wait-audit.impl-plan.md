@@ -121,6 +121,11 @@ graph TD
 | settled watchdog 终态 closedReason:'watchdog' 未落：ClosedReason 枚举封闭（OR-8 同款契约），裁决**不扩枚举**——终态原因经 AgentResult.error 携带 'settled watchdog' 标记 + 恢复指引承接；S-B 判据相应理解为「error 含 watchdog 标记与恢复指引」 | u-t2a（主 agent 裁决） | design-code-sync 阶段回写 §6.2/S-B | 待回写 |
 | 包级全量首跑 1 例未复现 flake（随后连续 4 次 2915 全绿） | u-t2a | Gate A 复跑留意捕获 | 已登记 |
 | PS-9 同源性观察（计划 §7 待办闭环）：marker 与 sessionFile 非同生同灭（marker 写点以 sessionFile 回填为前提，但 record 序列化/跨进程重建窗口可丢失 sessionFile 而 marker 留存磁盘）→ 反查增益成立，不降优先级 | u-t1 | 设计 §11-5 的答案：不适用同源降级条款 | 已闭环 |
+| **S-B-1 判据粒度补全**：设计判据「runSpawn 以错误返回」实测不足——runSpawn 确实以错误返回（错误含标记与恢复指引），但 chatMode 首轮收尾链路（collectResult 恒带 getFullText 正文 + doFinalizeRoundToIdle text 优先）把错误覆盖成轮内旧正文，宿主可见面（通知/record.result）呈成功形态。Gate B 实测抓出，修复 = 失败轮 error 优先（commit 915324b4c），修复后首轮与热路径通知形态一致 | Gate B 验收 | 用户可感知面（通知/record 投影）才是错误送达的判据面；S-B 判据表述待 design-code-sync 校准 | 已修复待重验 |
+| S-B 注入落地方式：设计「PATH wrapper（`node filter.js -- pi --mode rpc`）」实测 PATH shim 不生效——getPiInvocation 分支 1 复现的是宿主 pi 自身 argv（npm bin shebang），core spawn 的子进程直连真 pi 绕过 wrapper；改用 core 自带 relay 通道（XYZ_SUBAGENT_RELAY_SOCKET/NODE/SCRIPT 三 env，getPiInvocation 优先级最高的分支 0）挂 wrapper，kill 守卫对 wrapper cmdline 校验通过（looksLikePiRpcProcess 宽松正则） | Gate B 验收（故障注入组实测） | relay 通道是已核实的可注入路径；设计 §8 S-B 注入方式描述待 design-code-sync 校准 | 已处置 |
+| S-F② session_shutdown 执行形态：pi RPC 32 命令无此客户端命令（rpc-mode.js 全量 case 清单核实），以 SIGTERM 宿主进程等价模拟（rpc-mode signals handler → shutdown 编排 + extension 收割），重启用 `pi --session <同一文件>` 续写 | Gate B 验收（真实会话组实测） | 等价路径，时序如实记录 | 已处置 |
+| S-C/S-F 进程观测手段：ZCode bash sandbox pid namespace 隔离（ps 对新 spawn 进程不可见、kill -0 对 .alive 内 pid 误报 DEAD），改用 relay wrapper SIGTERM 转发日志 + 任务产物缺失 + extension 级联 warn 三重证据判定进程生命周期 | Gate B 验收（执行环境事实） | 验收执行环境限制，非代码问题 | 已登记 |
+| **S-E 破坏手段不可达（blocked）**：场景表「让回执 entry 不可匹配（模拟 compaction 清除）」实测两法均不可行——①物理文件编辑法：回执匹配权威源是内存全量 entries（extensions/universal/subagent-workflow/src/index.ts:413 `ctx.sessionManager.getEntries()`），文件编辑不影响内存权威；②compaction 法：pi compaction 是 append-only 不移除 entries（keepRecentTokens=100 实测 compaction 成功后 ledger/ack/custom_message 全保留）。「重投永远匹配不上」的触发前提在当前实现中不存在，与设计 §11-3 预言一致（触发率实测为零） | Gate B 验收 | 止损路径（5 次重投→abandoned+warn）仅 Gate A 单测背书；按设计 §8 OR-3 先例（注入手段成本高于收益→集成测试覆盖+如实标注）处理，不加生产测试钩子；解锁路径（env 注入旋钮 / readSessionEntries 改 getBranch 语义变更）留用户裁决；§11-3 验证结果待 design-code-sync 回写 | blocked 如实登记 |
 
 ## 6 状态表
 
@@ -146,10 +151,15 @@ graph TD
 ## 7 残留风险与变更历史
 
 - S-A 生产复跑依赖 carbon 环境窗口（本会话 defer，随生产节奏执行；600s 守卫观测预检随 S-A 执行）
+- **S-E 通知止损真实场景验收 blocked**：回执匹配权威源为内存全量 entries + pi compaction append-only，重投永不匹配的外部触发面实测不存在（设计 §11-3 预言证实，触发率零）；止损路径（NOTIFY_REDELIVERY_MAX_ATTEMPTS=5 → abandoned entry + warn）仅单测背书。解锁二选一（留用户裁决）：①测试 env 注入旋钮（如 XYZ_SUBAGENT_NOTIFY_DELIVERY_FAIL=1，P-SD 同款手法）；②readSessionEntries 改 compaction 感知 getBranch()（语义变更需设计裁决，同时影响恢复扫描）
 - P-RC1（握手失败根因：负载 vs 协议）按设计 §11-1 不阻塞 T1，修复验收时补
-- §11-5 PS-9 同源性（marker 缺失与 sessionFile 缺失是否同生同灭）在 u-t1 实施时观察，若同源则反查增益有限按设计降优先级（登记偏差）
 - zsw vendor 侧同步随 core 发版节奏（设计 §11-6，Out-of-scope）
+- Gate A 零容忍回流 1 项：新增 eslint-disable（no-await-in-loop）违反项目纪律，已收敛为共享递归辅助 flushMicrotasks（commit fc751e109），三处同型写法统一
+- Gate B 抓出集成缺口 1 项：S-B-1 首轮 settled watchdog 错误被 text 优先级覆盖（doFinalizeRoundToIdle），已修复（commit 915324b4c）+ 重验
 
 ### 变更历史
 - 2026-09-01 计划创建（基线 8e0bb4e0b）
 - 2026-09-01 并行化重组（用户要求最大化并行，Wave4 起生效）：原 8 波串行中 subagent-service 三环链（u-t2b→u-t4→u-t5）合并为单单元 u-svc；无领地冲突的切片（dialog 三件套 u-t2b-d、ledger/notifier u-t4-n、worktree/run-store u-t6-s）与 u-t2a 并行（4 路并发）；T6 剩余项收尾为 u-t6-c。原则不变：同文件单元不并行（commit 粒度干净），不同文件单元最大化并行
+- 2026-09-01 一致性审查 3 分区（3 reviewer）：11 unreasonable + 9 doc_errors + 若干 reasonable，全部闭环（11 修复批次 committed + 定向复审 11/11 fixed；doc_errors 主 agent 亲改；reasonable 入 §5 偏差表）；+1 心跳补修（重挂分支随行 touchAliveMarkerForHeartbeat，84eff1544）
+- 2026-09-01 Gate A 全绿：core 3011 passed（9 skipped 存量 .live 基线）+ extensions 20 包全绿 + 双 typecheck + lint 0 errors；覆盖矩阵 19/19 无缺口；零容忍 1 违规修复（fc751e109）
+- 2026-09-01 Gate B（真实 pi 0.84.2 + mimo-v2.5-pro + workspace extension + 重建 dist，两组并行）：S-B-2 / S-D-1 / S-D-2 / S-C / S-F-1 / S-F-2 pass；S-B-1 fail → 修复 915324b4c → 重验；S-E blocked（触发面实测为零，OR-3 先例处理）；S-A defer
