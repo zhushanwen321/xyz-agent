@@ -86,7 +86,7 @@ graph TD
 |------|------|------|---------|
 | u0-foundation | committed | 1 | shared typecheck 绿（tsc --noEmit exit 0）+ runtime/renderer 消费方 typecheck 绿；commit 5a6e4d729 |
 | u0b-protocol-reg | protocol.ts 协议 Map 登记两命令（5 处：ClientMessageType/ClientMessageMap/ServerMessageType/ServerMessageBase/ReplyPayloadMap） | `packages/shared/src/protocol.ts` | u0 | plain | shared + renderer typecheck 绿（u4 methods 依赖此登记） |
-| u1-scan-utils | pending | 0 | — |
+| u1-scan-utils | committed | 1 | scan-external 9/9 + tmp-migrate 5/5 + tsc 绿；commit 80d7657bb |
 | u2-import-service | pending | 0 | — |
 | u3-rpc-wiring | pending | 0 | — |
 | u4-renderer-api | committed | 1 | renderer vue-tsc 绿；commit 702d9cbd0 |
