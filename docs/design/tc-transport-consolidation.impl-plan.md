@@ -109,6 +109,9 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 | 7 | u3 | isE2E 参数化用 `let isE2E + setMockE2E()` setter 而非全量工厂——mock/index.ts 持模块级单例状态（streamHandlers/mockQueues 等），工厂形态会令 facade/useSearch/fg 测试各自实例化隔离副本破坏共享状态可见性；setter 保单例语义 + 全部消费者导出签名零改动 | 设计 D4「工厂参数由壳注入」的等价机制（注入语义达成，形态适配单例约束） | 已批准 |
 | 8 | u3 | 6 个测试文件单行 import/vi.mock 说明符改锚（fg1/fg5/fg6/usage-forcequit → core mock；useExtensionHostBridge.test/useSettingsShell.test → core mock/mock-ws）——删目录与源码改锚后消费方必须同步，派发事实漏盘 | u2 偏差 #4 同款先例（v5 追认） | 已追认（v7） |
 | 9 | u3 | 残留上报：vitest.config.ts:32 coverage exclude 'src/mock/**' 指向已删目录（零行为影响，留 u5 清理）；lib/ws-client.ts:8 等注释提旧 mock 路径（u4 删该文件自然消亡） | 待 u4/u5 收尾 | 已登记 |
+| 10 | u4 | core 测试适配范围超领地清单：4 文件 → 实际 8 文件（transport/__tests__/ 下 7 个 use-connection 系列测试均构造三字段须改 vi.mock 模块级拦截，断言不动；coordination 3 测试 + ws-client.invariants 零改动） | ConnectionPorts 删字段的必然连带（同 u2 #4 先例） | 已追认（v9） |
+| 11 | u4 | route-inbound defaultPorts.subscribe 用动态 import 惰性解析（非顶层静态值使用）——静态使用会拉进 ws-client 静态链破坏 renderer 测试 mock 拦截（bisect 五轮实证，回填 §7 风险 2）；pending/events 静态使用无害 | 设计 D3「生产直连」语义不变，仅 subscribe 解析时机惰性化（运行时仍 core 真源） | 已批准 |
+| 12 | u4 | use-connection-seq-gap.test TC4 断言包 vi.waitFor()（flush 机制适配，断言语义逐字不动，route-inbound.test:199 先例）；check_no_direct_ws_send.py 排除规则修正目录段匹配（修误报，AGENTS.md 规则本体修正原则）；route-inbound.test 新增 1 个默认路径用例（core 1276→1277） | 预期内最小适配 | 已批准 |
 
 预登记两条口径差异（非偏差，数字校准）：设计「测试 62 处/50 文件」实测 **58 处/48 文件**（子路径口径，另 barrel 12 处不动）；设计「3 个测试改路径」（lib shim）实测 **5 个测试文件**（useExtensionHostBridge.test / ws-client-send-boolean / session-workflow-update-fallback / session-exited / session-subagents-fallback）。以实测为准执行，不回改设计文档（±4 处属设计期统计与 HEAD 漂移）。
 
@@ -119,6 +122,7 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 | u1 | committed | 2（首轮 core 侧 + 续轮 6 测试 mock 改锚，计划 v2 修订） | core test 1276 passed/6 todo + frontend test 348 文件 3601 passed/3 skipped + 双包 typecheck 绿；commit 见 git log `refactor(core)` u1 条目 |
 | u2 | committed | 2（首轮零改动 blocker 上报三处派发事实失实 + v4 裁决续作全绿） | 同 u1 基线全绿不回归；22 领地文件 + 3 追认测试（v5）；commit 见 git log `refactor(core)` u2 条目 |
 | u3 | committed | 1（一次通过） | 双包基线一致（core 1276 / frontend 3601）+ 探针门③ build 后产物 grep 10 个 mock 标识串零命中（**优于基线**：迁移前 HEAD 实测存在 fixture 泄漏）+ E2E 注入跨包验证；6 追认测试（v7）；commit 见 git log u3 条目 |
+| u4 | committed | 1（一次通过，5 deviations 全批/追认） | core 93 文件 1277 passed（+1 默认路径用例）/ 6 todo + frontend 348 文件 3601 | 3 skipped 基线一致；TransportPorts 壳层非注释行零命中；transport.ts/lib shim 已删；白名单守卫 exit 0；commit 见 git log u4 条目 |
 | u3 | pending | 0 | — |
 | u4 | pending | 0 | — |
 | u5 | pending | 0 | — |
@@ -129,7 +133,7 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 **残留风险**（继承设计 §11 全部 5 条 + 本计划新增 2 条）：
 
 1. 跨包静态分支 DCE（§11-1）：u3 探针门③实证，失败 fallback 动态 import。
-2. vi.mock 拦截链路（§11-2）：~~u4 预改 1 个 t4-api-layer 类测试验证后批量~~ **u1 已实证**（v2）：① core 内相对 import 的 vi.mock 拦截**有效**（core request.test.ts 3 用例绿，mock 说明符按测试文件位置解析 `'../../ws-client'`）；② **桥不转发 mock**——vi.mock('@/api/transport') 拦截壳模块，core 内部 import 不受影响（先例坑 session-workflow-update-fallback.test.ts:31 在 u1 提前引爆而非 u4）；③ mock「request→send」链路的测试须改锚 core ws-client（需 exports `./transport/ws-client` 条目）。
+2. vi.mock 拦截链路（§11-2）：~~u4 预改 1 个 t4-api-layer 类测试验证后批量~~ **u1 已实证**（v2）：① core 内相对 import 的 vi.mock 拦截**有效**（core request.test.ts 3 用例绿，mock 说明符按测试文件位置解析 `'../../ws-client'`）；② **桥不转发 mock**——vi.mock('@/api/transport') 拦截壳模块，core 内部 import 不受影响（先例坑 session-workflow-update-fallback.test.ts:31 在 u1 提前引爆而非 u4）；③ mock「request→send」链路的测试须改锚 core ws-client（需 exports `./transport/ws-client` 条目）；④ **u4 补充实证**（v9）：route-inbound 若顶层静态值使用 domains/session 的 subscribe，会把 session→request→ws-client 链拉进静态模块图，导致 renderer 侧 ws-client 的 vi.mock 全部失效（bisect 五轮验证）——subscribe 用动态 import 惰性解析规避（低频路径零成本）；pending/events 无 ws-client 下游链，静态使用无害。
 3. core vitest 对随迁测试兼容性（§11-3）：u1 即首个实证点（fake timers / domains mock 数据）。
 4. core 子路径 exports 在 renderer vite 构建下解析（§11-4）：现状 `.` 入口 166 文件消费风险低，u1 typecheck 即验证。
 5. 挂载点/贡献注册触发时序（§11-5）：u6 探针；fallback 自带裁定标准（订阅注册先于 sendInitialState 首推，[HISTORICAL] 竞态不得重开）。
@@ -147,3 +151,4 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 - v6：2026-09-02 u3 派发前领地修订（依赖事实派发前全量盘清）：① main.ts:7 / useSettingsShell.ts:43 的 mock-ws import 改锚（各一行）入 u3 领地（mock-ws 并入 core 后原文件删除，消费方必须同步改锚；useSettingsShell :65-70 兜底注入段仍归 u6）；② core exports 追加 `"./transport/mock/*"` 通配（u1 预置的 `./transport/mock` 条目保留，facade 引用）；③ facade real 侧 `'./domains/xxx'` 桥引用留给 u5 codemod（u2 后经桥已解析 core，u3 只动 mock 侧一行）；④ searchMock 测试口径修正——grep renderer 测试零命中，「3 测试类型适配」为设计期保守预估，以实测为准；⑤ mock/index.ts:40 `'@/lib/ws-client'` 改锚 `'../ws-client'`（:67 getState 用法）写入领地。
 - v7：2026-09-02 u3 完成后追认与记录：① 6 个测试文件单行改锚（fg1/fg5/fg6/usage-forcequit → core mock；useExtensionHostBridge.test/useSettingsShell.test → core mock/mock-ws）追认——同 u2 v5 先例，派发事实两处漏盘（mock-ws 测试消费方 + '@/api/mock' 测试消费方）；② setMockE2E setter 形态批准（等价机制：保模块级单例语义，工厂形态会隔离 fg 测试与 facade 的共享状态）；③ 探针门③实测**优于基线**——迁移前 HEAD 生产包存在 search-data fixture 泄漏（useSearchModalDeps:57 无条件引用，设计 D4 诊断确认），迁移后 10 个标识串零命中，G4 单一真源目标超额达成；④ E2E 注入链路跨包验证通过（vite define 作用于 core 模块 + setMockE2E）；⑤ 残留：vitest.config.ts:32 coverage exclude 指向已删目录留 u5 清理。
 - v8：2026-09-02 u4 派发前领地细化（事实全量盘清）：① **`.githooks/check_no_direct_ws_send.py` WS_WHITELIST 更新入 u4 领地**——bridge 改锚 `from '@xyz-agent/core/transport/ws-client'` 命中白名单正则（说明符以 ws-client 结尾），须移除已删除的 api/transport.ts、加入两 bridge 文件（设计 D5 批准形态）；② use-connection 内部用法定位（:176-177 透传 + :277/:290/:312 ports.pending 直调）；③ useConnection 装配瘦身定位（:32-34 import + :69-71 三字段）；④ 剩余 vi.mock transport 实测 2 文件（extension-host-dialog.test / useExtensionHostBridge.test，非 3）；⑤ TransportPorts 验收口径修正为「非注释行零命中」（u1 桥注释提及该词，桥 u5 删）。
+- v9：2026-09-02 u4 完成后追认与回填：① core 测试适配 4→8 文件追认（7 个 use-connection 系列测试构造三字段的必然连带）；② **subscribe 动态 import 惰性解析批准**——静态值使用拉进 ws-client 静态链破坏 renderer 测试 mock 拦截（bisect 五轮实证），结论回填 §7 风险 2 第 ④ 点；③ seq-gap TC4 waitFor flush 适配 + 白名单排除规则目录段匹配修正（规则本体修误报）+ 新增默认路径用例（core 1276→1277）批准。

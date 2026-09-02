@@ -14,7 +14,7 @@ import { InternalEventBus } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
 import { dispatchCrossSession } from '@/api/events'
 
-vi.mock('@/api/transport', () => ({
+vi.mock('@xyz-agent/core/transport/ws-client', () => ({
   send: vi.fn(),
 }))
 
@@ -22,7 +22,7 @@ vi.mock('@/api/domains/extension', () => ({
   sendExtensionUIResponse: vi.fn(),
 }))
 
-import { send } from '@/api/transport'
+import { send } from '@xyz-agent/core/transport/ws-client'
 import { sendExtensionUIResponse } from '@/api/domains/extension'
 import {
   convertToDialogRequest,

@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { configureRouteInbound } from './route-inbound'
 import type { TransportPorts, InboundEffects } from './route-inbound'
 import { resetSubscriptionStates, subscribeSession, getSubscriptionState } from './subscription-state'
+import * as realPending from '../transport/api/pending'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 function makePorts(overrides?: Partial<TransportPorts>): TransportPorts {
@@ -493,5 +494,26 @@ describe('configureRouteInbound — crossSession 通道（ADR-0060）', () => {
         expect.objectContaining({ type }),
       )
     }
+  })
+})
+
+describe('configureRouteInbound — 缺省真实模块直连（D3）', () => {
+  beforeEach(() => {
+    resetSubscriptionStates()
+  })
+
+  it('不传 ports：pending 分流用真实 transport/api/pending（register 的 reply 被 resolve）', async () => {
+    // 生产路径：configureRouteInbound() 缺省 defaultPorts（直连 core transport/api 模块级
+    // 单例）——真实 pending 注册表收到 reply id 后经 resolveEnvelope 结算 Promise
+    const dispatcher = configureRouteInbound()
+    const replyPromise = realPending.register('default-ports-reply-1', 60_000)
+    dispatcher({
+      type: 'session.getCommands',
+      id: 'default-ports-reply-1',
+      payload: { commands: [] },
+    } as unknown as ServerMessage)
+    await expect(replyPromise).resolves.toEqual({ commands: [] })
+    // 清理模块级 pendingMap（真实单例状态，防泄漏到其他用例）
+    realPending.rejectAll(new Error('test cleanup'))
   })
 })

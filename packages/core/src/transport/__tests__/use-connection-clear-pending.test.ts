@@ -51,6 +51,17 @@ const mockRejectAll = vi.fn()
 const mockRuntimeCleanup = vi.fn()
 const mockT = vi.fn((key: string) => `[${key}]`)
 
+// pending 模块 mock（D3 后 use-connection 的 rejectAll 直连 transport/api/pending，
+// 不再经 ConnectionPorts 注入——mock 须拦截模块本身；闭包转发 mockRejectAll，
+// 工厂执行早于 const 初始化，惰性解引用避开 TDZ）
+vi.mock('../api/pending', () => ({
+  rejectAll: (...args: unknown[]) => mockRejectAll(...args),
+  resolve: vi.fn(),
+  reject: vi.fn(),
+  has: vi.fn(),
+  resolveEnvelope: vi.fn(),
+}))
+
 function makePorts(): ConnectionPorts {
   return {
     ipc: {
@@ -82,18 +93,6 @@ function makePorts(): ConnectionPorts {
     },
     // 非 mock 路径：init 才注册 onRuntimePort/onRuntimeRestarting/onRuntimeFailed 监听
     env: { isMock: false, isDev: false },
-    pending: {
-      rejectAll: (...args: unknown[]) => mockRejectAll(...args),
-      resolve: vi.fn(),
-      reject: vi.fn(),
-      has: vi.fn().mockReturnValue(true),
-    },
-    events: {
-      dispatchSession: vi.fn(),
-      dispatchGlobal: vi.fn(),
-      dispatchCrossSession: vi.fn(),
-    },
-    subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
     effects: {},
     toast: { error: vi.fn() },
     t: mockT,

@@ -30,17 +30,21 @@ import {
   type StatusBarSource,
   type PluginViewsSource,
 } from '@xyz-agent/ui/extension-host'
-import { connect, disconnect } from '@/lib/ws-client'
+import { connect, disconnect } from '@xyz-agent/core/transport/ws-client'
 import { createMockPlatform } from '@xyz-agent/core/transport/mock/mock-ws'
 
-// mock transport：MF-4 断言 mountPoints.sync 发送（真实 transport.send 在单测环境不可观测、
-// 且会裸调 ws-client）。模式对齐 usePermissionRequest.test.ts（顶层 vi.fn + 工厂转发）。
+// mock ws-client.send：MF-4 断言 mountPoints.sync 发送（真实 send 在单测环境不可观测）。
+// D5 后 bridge 直连 core ws-client——mock 须拦截该模块本身；importOriginal 保留真实
+// connect/disconnect/getState（TC11/TC12 建连 + watch connected 依赖真实状态机）。
+// 模式对齐 usePermissionRequest.test.ts（顶层 vi.fn + 工厂转发）。
 const transportSendSpy = vi.fn()
-vi.mock('@/api/transport', () => ({
-  send: (...args: unknown[]) => transportSendSpy(...args),
-  connect: vi.fn(),
-  on: vi.fn(),
-}))
+vi.mock('@xyz-agent/core/transport/ws-client', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    send: (...args: unknown[]) => transportSendSpy(...args),
+  }
+})
 
 function makeBridge() {
   const bus = new InternalEventBus()

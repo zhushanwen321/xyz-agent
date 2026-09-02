@@ -22,7 +22,7 @@ import type {
 } from '@xyz-agent/ui/extension-host'
 import type { ExtensionInteractMethod } from '@xyz-agent/shared'
 import { onCrossSession } from '@/api/events'
-import * as transport from '@/api/transport'
+import { send } from '@xyz-agent/core/transport/ws-client'
 import { sendExtensionUIResponse } from '@/api/domains/extension'
 
 type UiRequestEvent = Extract<InternalEvent, { kind: 'ui-request' }>
@@ -148,7 +148,7 @@ export function createUiResponseTransport(): UiResponseTransport {
       sendExtensionUIResponse(sessionId, requestId, toInteractMethod(method), result)
     },
     sendPluginResponse(requestId, result) {
-      transport.send({ type: 'plugin.uiResponse', payload: { requestId, result } })
+      send({ type: 'plugin.uiResponse', payload: { requestId, result } })
     },
   }
 }

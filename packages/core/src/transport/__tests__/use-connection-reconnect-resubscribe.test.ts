@@ -57,25 +57,33 @@ vi.mock('../ws-client', () => ({
 }))
 
 // ── pending mock（routeInbound id 路径需要）─────────────────────────
-const pendingMock = {
+// D3 后 configureRouteInbound 缺省直连 transport/api 真实模块（不再经 ConnectionPorts
+// 注入三件套）——mock 须拦截模块本身，dispatcher 的 defaultPorts 解析到下列 mock 对象
+const pendingMock = vi.hoisted(() => ({
   resolve: vi.fn(),
   reject: vi.fn(),
   rejectAll: vi.fn(),
   has: vi.fn().mockReturnValue(false),
   resolveEnvelope: vi.fn(),
-}
+}))
+
+vi.mock('../api/pending', () => pendingMock)
 
 // ── events mock：捕获 dispatchSession（消息到达断言）────────────────
-const eventsMock = {
+const eventsMock = vi.hoisted(() => ({
   dispatchSession: vi.fn(),
   dispatchGlobal: vi.fn(),
   dispatchCrossSession: vi.fn(),
-}
+}))
+
+vi.mock('../api/events', () => eventsMock)
 
 // ── subscribe mock：resubscribeAll / subscribeSession 的 RPC 出口 ────
-const subscribeMock = {
+const subscribeMock = vi.hoisted(() => ({
   subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
-}
+}))
+
+vi.mock('../api/domains/session', () => ({ subscribe: subscribeMock.subscribe }))
 
 function makePorts(): ConnectionPorts {
   return {
@@ -92,9 +100,6 @@ function makePorts(): ConnectionPorts {
       onVisibilityChange: () => () => {},
     },
     env: { isMock: true, isDev: false },
-    pending: pendingMock,
-    events: eventsMock,
-    subscribe: subscribeMock.subscribe,
     effects: {},
     toast: { error: vi.fn() },
     t: vi.fn((key: string) => `[${key}]`),

@@ -48,7 +48,7 @@ import {
   type ViewCacheEntry,
   type StatusBarSessionState,
 } from '@xyz-agent/core'
-import { getState as getWsState } from '@/lib/ws-client'
+import { getState as getWsState, send } from '@xyz-agent/core/transport/ws-client'
 import {
   DIALOG_REQUEST_SOURCE_KEY,
   PluginSettingsDataSourceKey,
@@ -64,7 +64,6 @@ import { createDialogRequestSource, createUiResponseTransport } from './extensio
 import type { ServerMessage } from '@xyz-agent/shared'
 import { onCrossSession, onGlobal } from '@/api/events'
 import { onPlugins } from '@/api/domains/plugin'
-import * as transport from '@/api/transport'
 import { createNotifyToastHandler } from './notify-toast'
 import type { ContributionRecord } from '@xyz-agent/core'
 
@@ -190,7 +189,7 @@ function ensureMountPointsSync(mountPoints: MountPointRegistry): void {
   if (mountPointsSyncWatchRegistered) return
   mountPointsSyncWatchRegistered = true
   const sendSync = (): void => {
-    transport.send({ type: 'plugin.mountPoints.sync', payload: { mountPoints: mountPoints.list() } })
+    send({ type: 'plugin.mountPoints.sync', payload: { mountPoints: mountPoints.list() } })
   }
   // immediate：init 时若已 connected（防御）立即发送；否则等待首次建连 / 重连进入 connected
   watch(getWsState(), (s) => {
@@ -275,7 +274,7 @@ export function initExtensionHostBridge(app: App): {
     execute: async (id, args) => {
       const cmd = commandRegistry.get(id)
       if (!cmd) return
-      transport.send({
+      send({
         type: 'plugin.executeCommand',
         payload: { pluginId: cmd.pluginId, commandId: id, args: args as Record<string, unknown> | undefined },
       })

@@ -41,21 +41,9 @@ vi.mock('../ws-client', () => ({
 }))
 
 // ── 其余端口 mock（use-connection-reconnect-resubscribe.test.ts 同款）──
-const pendingMock = {
-  resolve: vi.fn(),
-  reject: vi.fn(),
-  rejectAll: vi.fn(),
-  has: vi.fn().mockReturnValue(false),
-  resolveEnvelope: vi.fn(),
-}
-const eventsMock = {
-  dispatchSession: vi.fn(),
-  dispatchGlobal: vi.fn(),
-  dispatchCrossSession: vi.fn(),
-}
-const subscribeMock = {
-  subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
-}
+// D3 后 pending/events/subscribe 三件套不再经 ConnectionPorts 注入（dispatcher 缺省
+// 直连 transport/api 真实模块）；本文件只断言 token 编排，三件套零断言依赖——
+// 真实模块链加载即无副作用（ws-client 已 mock，domains/session→request 顶层零调用）。
 
 /** 被测 IPC 桩：token 拉取可编程返回值；onRuntimePort 回调被捕获供测试触发 */
 const getRuntimeToken = vi.fn<() => Promise<string | null | undefined>>()
@@ -82,9 +70,6 @@ function makePorts(): ConnectionPorts {
       onVisibilityChange: () => () => {},
     },
     env: { isMock: false, isDev: false },
-    pending: pendingMock,
-    events: eventsMock,
-    subscribe: subscribeMock.subscribe,
     effects: {},
     toast: { error: vi.fn() },
     t: vi.fn((key: string) => `[${key}]`),

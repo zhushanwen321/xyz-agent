@@ -24,11 +24,11 @@
  * 未 subscribe 的 session（useChat.ensureStreamSubscription 旧路径未走 subscribeSession）不做
  * gap 检测，正常 dispatch。统一在 remove-bandaids wave 完成。
  *
- * 依赖方向：subscription-state → 注入端口（TransportPorts.subscribe + replay 回放 dispatcher，
+ * 依赖方向：subscription-state → 注入端口（subscribe RPC + replay 回放 dispatcher，
  * 均由 configureRouteInbound 注入）。不依赖任何 store / renderer 模块。
  */
 import type { ServerMessage } from '@xyz-agent/shared'
-import type { TransportPorts } from './route-inbound'
+import type * as sessionDomain from '../transport/api/domains/session'
 
 /**
  * per-session 订阅状态。
@@ -84,6 +84,12 @@ function subscribeKey(sessionId: string, fromSeq?: number): string {
 // ── 端口注入（C1：内部注入点，非公共 API） ─────────────────────────
 
 /**
+ * subscribe RPC 签名类型（D3 连带①）：直引 core transport/api/domains/session 的
+ * subscribe（不再从 TransportPorts 派生——后者已降级为 route-inbound 的内部测试 seam）。
+ */
+export type SubscribeRpc = typeof sessionDomain.subscribe
+
+/**
  * route-inbound 侧需要的最小端口面（subscribe RPC + 回放 dispatcher）。
  *
  * replay 是回放消息的完整分发入口（PR #175 review R1 MUST_FIX）：由 configureRouteInbound
@@ -91,7 +97,8 @@ function subscribeKey(sessionId: string, fromSeq?: number): string {
  * crossSession 分发），sid 固定为 subscribe 目标 session。回放与 live 共享同一语义，
  * 不再裸调 events.dispatchSession（那会绕过去重与全部 effect 兜底）。
  */
-export type SubscriptionPorts = Pick<TransportPorts, 'subscribe'> & {
+export type SubscriptionPorts = {
+  subscribe: SubscribeRpc
   /** 回放分发：snapshot/stateSnapshot 内消息经此进入与 live 相同的路由管线。 */
   replay(sessionId: string, msg: ServerMessage): void
 }
@@ -106,7 +113,7 @@ export type SubscriptionPorts = Pick<TransportPorts, 'subscribe'> & {
  *
  * 未注入时 subscribeSession 调用会 console.warn 并 return（防御性，与 ES2 一致，不抛不挂起）。
  */
-let subscribeImpl: TransportPorts['subscribe'] | undefined
+let subscribeImpl: SubscribeRpc | undefined
 let replayImpl: SubscriptionPorts['replay'] | undefined
 
 export function setSubscriptionPorts(ports: SubscriptionPorts): void {

@@ -23,8 +23,10 @@
  * （渐进迁移，remove-bandaids wave 统一）。pending 路径（msg.id 分支）不受 seq 影响——
  * id/seq 来源互斥（D7）。
  *
- * core 零 import renderer：renderer 的 WS 能力（pending/events/subscribe）经 TransportPorts
- * 注入（TC2/TC3 一次性注入三件套），effect 兜底经 InboundEffects 注入（undefined 跳过）。
+ * core 零 import renderer（D3 降级后形态）：pending/events/subscribe 三件套已下沉
+ * core/transport/api，生产路径由 configureRouteInbound 缺省直连真实模块（defaultPorts）；
+ * TransportPorts 仅作 core 内部测试 seam（测试注入 fake，不出现在壳装配面）。
+ * effect 兜底经 InboundEffects 注入（undefined 跳过）。
  */
 import type { PiEntry, PiToolCallEntryForm, ServerMessage, ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
 import { evalSeqGap } from './seq-gap'
@@ -35,18 +37,20 @@ import {
   setSubscriptionPorts,
   recordGapDispatchedSeq,
 } from './subscription-state'
+import * as pendingApi from '../transport/api/pending'
+import * as eventsApi from '../transport/api/events'
 
 // ── 端口契约（IF1） ────────────────────────────────────────────────
 
 /**
- * core 与 renderer 的 WS 能力边界（IF1）。
+ * 入站分发依赖的 WS 能力面（IF1）——D3 后为 **core 内部测试 seam**。
  *
- * renderer 注入实现：
- * - pending → renderer api/pending 的 resolve/reject/rejectAll
- * - events → renderer api/events 的 dispatchSession/dispatchGlobal
- * - subscribe → renderer api/domains/session.subscribe（签名对齐
- *   ReplyPayloadMap['session.subscribe'] 的 reply 形状）
+ * 生产路径不经本接口：configureRouteInbound 缺省用 defaultPorts（真实模块直连）：
+ * - pending → transport/api/pending 的 resolve/reject/rejectAll/has/resolveEnvelope
+ * - events → transport/api/events 的 dispatchSession/dispatchGlobal/dispatchCrossSession
+ * - subscribe → transport/api/domains/session.subscribe
  *
+ * 仅 core 测试注入 fake 实现替换以上三件套（vi.mock 模块或显式传参均可）。
  * 所有字段必填（subscribe 必须提供，gap 检测副作用依赖它）。
  */
 export interface TransportPorts {
@@ -341,11 +345,30 @@ const FALLBACK: RouteTableEntry['handle'] = (msg, { ports, effects, sid }) => {
 // ── configureRouteInbound（IF4） ───────────────────────────────────
 
 /**
+ * 生产默认端口（D3）：直连 core transport/api 真实模块（模块级单例，与 request 层 /
+ * renderer 壳桥解析到同一实例）。configureRouteInbound 不传 ports 时使用。
+ *
+ * subscribe 经动态 import 惰性解析：顶层静态值使用 domains/session 会把
+ * session→request→ws-client 链拉进本模块静态图，破坏外部测试（renderer api 层
+ * mock send 的 8 个用例）对 ws-client 的 vi.mock 拦截——u4 实证无论 mock 说明符
+ * 用 package 子路径还是跨包相对路径均失效；pending/events 无 ws-client 下游链，
+ * 静态值使用无害。subscribe 是低频 RPC 路径（首次订阅 + gap reconcile），模块
+ * 缓存后动态 import 零成本。
+ */
+const defaultPorts: TransportPorts = {
+  pending: pendingApi,
+  events: eventsApi,
+  subscribe: (sessionId, fromSeq) =>
+    import('../transport/api/domains/session').then((m) => m.subscribe(sessionId, fromSeq)),
+}
+
+/**
  * 构造并返回入站 dispatcher（IF4）。
  *
- * 一次性注入三件套（pending/events/subscribe）+ 可选 effects（TC2/TC3）：
+ * ports 缺省 = 真实模块直连（生产路径，D3）；显式传入仅供 core 测试替换三件套。
+ * 可选 effects（TC2/TC3）：
  * - setSubscriptionPorts 注入 subscribe RPC + replay 回放 dispatcher（C1，PR #175 review R1）
- * - 幂等由调用方 ensureDispatcher 保证（renderer 侧只安装一次）
+ * - 幂等由调用方 ensureDispatcher 保证（use-connection 侧只安装一次）
  *
  * 处理顺序（live dispatcher）：
  *   1. msg.id 命中 pending → resolveEnvelope 委托 pending 层（error envelope 展开 code+details
@@ -360,15 +383,16 @@ const FALLBACK: RouteTableEntry['handle'] = (msg, { ports, effects, sid }) => {
  * effects + crossSession 语义。此前回放裸调 events.dispatchSession 绕过全部三样，导致
  * gap 触发消息重复实体 + 回放帧不触发 subagent 终态兜底（PR #175 review R1 MUST_FIX）。
  *
- * @param ports renderer 注入的 WS 能力（必填三件套）
+ * @param ports 可选 WS 能力注入（缺省 = 真实模块；测试 seam）
  * @param effects 可选 effect 回调集（undefined 跳过）
  * @returns 入站消息 dispatcher：dispatcher(msg: ServerMessage)
  */
 export function configureRouteInbound(
-  ports: TransportPorts,
+  ports?: TransportPorts,
   effects?: InboundEffects,
 ): (msg: ServerMessage) => void {
-  const ctx: RouteContext = { ports, effects: effects ?? {} }
+  const resolved: TransportPorts = ports ?? defaultPorts
+  const ctx: RouteContext = { ports: resolved, effects: effects ?? {} }
 
   // 共享路由核心（步骤 2+3）：live 与回放同一条路径，行为差异只在 sid 来源与 pending 分流。
   function dispatchRouted(msg: ServerMessage, sid: string | undefined): void {
@@ -391,7 +415,7 @@ export function configureRouteInbound(
   // 与 live dispatcher 的差异仅两点（见上方注释），其余（seq gap 去重 + ROUTE_TABLE
   // effects + crossSession 分发）完全共享。
   setSubscriptionPorts({
-    subscribe: ports.subscribe,
+    subscribe: resolved.subscribe,
     replay: (sid, msg) => dispatchRouted(msg, sid),
   })
 
@@ -404,10 +428,10 @@ export function configureRouteInbound(
     // 静默 no-op），消息不进 ROUTE_TABLE/FALLBACK → dispatchGlobal 永不调用 → 靠广播推送的
     // settingsStore.skills/agents（无 refresh RPC 兜底，区别于有 refresh 的 providers/models）
     // 永空。2026-08 审查报告 R5 问题 9 根因。
-    if (msg.id && ports.pending.has(msg.id)) {
+    if (msg.id && resolved.pending.has(msg.id)) {
       // envelope 展开（code 提取 + details.detail → Error）委托 pending 层（收尾 6，R2/ES1），
-      // 实现见 renderer api/pending.ts resolveEnvelope。行为与内联版零差异。
-      ports.pending.resolveEnvelope(msg)
+      // 实现见 transport/api/pending.ts resolveEnvelope。行为与内联版零差异。
+      resolved.pending.resolveEnvelope(msg)
       return // D7：pending 分流后不再进路由表
     }
 
