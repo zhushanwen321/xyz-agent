@@ -3,16 +3,17 @@
  *
  * 对每条入站 ServerMessage：
  *   1. 若 msg.id 命中 pending → resolveEnvelope 委托 pending 层（envelope 展开，ES1）→ return（D7）
- *   2. 查 ROUTE_TABLE 精确 type 条目——条目为声明式 schema（D2 阶段 A）：
+ *   2. 查 ROUTE_TABLE 精确 type 条目——条目为声明式 schema（D2，error 单条目已合并）：
  *      { sessionEffect?, globalEffect?, crossSession?, payloadGuard? }，dispatchRouted
  *      持有唯一路由序言（prologue）：
  *      - 有 sid → seqGate（subscription-state.seqGate）→ dispatchSession → crossSession?
  *        → payloadGuard 过 → sessionEffect?.()
  *      - 无 sid → dispatchGlobal → globalEffect?.() → L9 前缀 warn（session./message.）
- *   3. 未命中条目走 dispatcher 默认路径（语义 = 原 FALLBACK 恒真兜底）：有 sid 只做
- *      seqGate + dispatchSession；无 sid → dispatchGlobal + L9 warn + error 无 id →
- *      effects.onGlobalError（无 sid 的 error 兜底暂留默认路径，阶段 B 并入 'error'
- *      条目 globalEffect）
+ *   3. 未命中条目走 dispatcher 默认路径（语义 = 原 FALLBACK 恒真兜底，纯兜底零特判）：
+ *      有 sid 只做 seqGate + dispatchSession；无 sid → dispatchGlobal + L9 warn。
+ *      'error' 的完整生命周期收敛在单条目内：sessionEffect=onSessionError（有 sid）、
+ *      globalEffect=无 sid + 无 id 的 onGlobalError 兜底（阶段 B 合并，原默认路径
+ *      特判删除）
  *
  * session 隔离规则不变（CLAUDE.md line 98）：session 级消息按 sessionId 路由到 session 通道，
  * 无 sessionId 走 global 通道（config.* 及 model.list 等广播）。两通道互不串扰。
@@ -145,8 +146,7 @@ export interface RouteTableEntry {
   sessionEffect?(sid: string, payload: ServerMessage['payload'], effects: InboundEffects): void
   /**
    * 无 sid 分支的 effect 回调（dispatcher 在 dispatchGlobal 之后、L9 warn 之前调用）。
-   * 阶段 A 生产表无使用方——'error' 无 sid 支暂留 dispatcher 默认路径，阶段 B 并入
-   * 该条目（globalEffect 内含 `!msg.id` 守卫）。
+   * 生产使用方：'error' 条目（无 sid + 无 id 的 onGlobalError 兜底，守卫语义内迁条目）。
    */
   globalEffect?(msg: ServerMessage, effects: InboundEffects): void
   /** 带 sid 但需同时分发到全局消费者（原 CROSS_SESSION_TYPES 白名单的声明式形态，ADR-0060 决策1）。 */
@@ -202,9 +202,11 @@ function applySeqGap(sid: string, msg: ServerMessage): boolean {
  * （runtime event-adapter.ts 实发 'extension.ui_request'，ADR-0060 文档里的冒号为笔误，
  * 以 protocol.ts + MessageBusBridge EXTENSION_HANDLERS 为准）。
  *
- * 导出面说明：导出供 route-inbound.test.ts 注册探针条目（globalEffect / payloadGuard
- * 声明语义的接口级验证——阶段 A 生产表无 globalEffect 条目）与声明形状锁定；生产
- * 消费方只读，不 mutate（与 subscription-state 的 resetSubscriptionStates 同类测试支撑导出）。
+ * 导出面说明：导出供 route-inbound.test.ts 注册探针条目（payloadGuard「不门控分发」
+ * 契约的接口级验证——生产 payloadGuard 条目均无 crossSession 声明，需注入探针才可
+ * 组合验证）与声明形状锁定；生产消费方只读，不 mutate（与 subscription-state 的
+ * resetSubscriptionStates 同类测试支撑导出）。globalEffect 自阶段 B 起有生产条目
+ *（'error'），其行为直接经 dispatcher 断言，无需注入。
  */
 export const ROUTE_TABLE: Record<string, RouteTableEntry> = {
   'session.exited': {
@@ -257,13 +259,21 @@ export const ROUTE_TABLE: Record<string, RouteTableEntry> = {
     // 整形型守卫留 sessionEffect 参数构造处（D2 守卫两类分置）：payload.message 缺失时
     // 兜底通用文案，防御运行时坏形状。error envelope 无 seq（broker.send 直发，非
     // bus.publish live 帧）→ seqGate 无 seq 分支正常放行，不触发 gap reconcile。
-    // 无 sid 支暂留 dispatcher 默认路径（onGlobalError 兜底），阶段 B 并入本条目 globalEffect。
     sessionEffect(sid, payload, effects) {
       const p = payload as { code?: string; message?: string }
       effects.onSessionError?.(sid, {
         code: p.code,
         message: typeof p.message === 'string' ? p.message : 'Unknown error',
       })
+    },
+    // 无 sid 兜底（阶段 B 自 dispatcher 默认路径特判 `msg.type === 'error' && !msg.id`
+    // 逐字迁入）：!msg.id 守卫保留——带 id 的 error 若未命中 pending（如 reply 超时后
+    // 迟到），只 dispatchGlobal 不 toast；无 id 的 server-push 全局 error（如 config
+    // 加载失败）才 toast（renderer 注册 onGlobalError 实现 toast）。
+    globalEffect(msg, effects) {
+      if (msg.id) return
+      const p = msg.payload as { message?: string }
+      effects.onGlobalError?.(typeof p.message === 'string' ? p.message : 'Unknown error')
     },
   },
 
@@ -324,9 +334,8 @@ const defaultPorts: TransportPorts = {
  *   2. dispatchRouted 唯一序言消费 ROUTE_TABLE 声明式条目：有 sid → seqGate →
  *      dispatchSession → crossSession? → payloadGuard 过 → sessionEffect?.()；无 sid →
  *      dispatchGlobal → globalEffect?.() → L9 warn
- *   3. 未命中条目走同一序言的默认行为（语义 = 原 FALLBACK 恒真兜底）：有 sid 只做
- *      seqGate + dispatchSession；无 sid → dispatchGlobal + L9 warn + error 无 id →
- *      onGlobalError（无 sid 的 error 兜底暂留默认路径，阶段 B 并入条目）
+ *   3. 未命中条目走同一序言的默认行为（语义 = 原 FALLBACK 恒真兜底，纯兜底零特判）：
+ *      有 sid 只做 seqGate + dispatchSession；无 sid → dispatchGlobal + L9 warn
  *
  * 步骤 2+3 抽成共享核心 dispatchRouted——subscription-state 的 snapshot/stateSnapshot
  * 回放经注入的 replay 走同一条路径（sid 固定为 subscribe 目标，跳过步骤 1 的 pending
@@ -346,9 +355,9 @@ export function configureRouteInbound(
   const effectsCtx: InboundEffects = effects ?? {}
 
   // 共享路由核心（步骤 2+3）：live 与回放同一条路径，行为差异只在 sid 来源与 pending 分流。
-  // D2 阶段 A：dispatchRouted 是唯一路由序言，条目只声明副作用——
+  // D2：dispatchRouted 是唯一路由序言，条目只声明副作用（error 单条目阶段 B 已合并）——
   //   有 sid → seqGate → dispatchSession → crossSession? → payloadGuard 过 → sessionEffect?.()
-  //   无 sid → dispatchGlobal → globalEffect?.() → L9 前缀 warn → 默认路径 error 兜底
+  //   无 sid → dispatchGlobal → globalEffect?.() → L9 前缀 warn（默认路径纯兜底，零特判）
   function dispatchRouted(msg: ServerMessage, sid: string | undefined): void {
     // [Q1-4] Record 直查（O(1)）。hasOwnProperty.call 守卫原型成员名（'constructor' 等），
     // 语义与旧数组 .find 严格等价（只匹配自有 type 键）。不用 Object.hasOwn：renderer
@@ -381,14 +390,8 @@ export function configureRouteInbound(
     if (msg.type.startsWith('session.') || msg.type.startsWith('message.')) {
       console.warn('[core/coordination] session-level message missing sessionId, routed to global:', msg.type)
     }
-    // 全局 error 兜底（D2 阶段 A 暂留默认路径）：无 sessionId、无 id 的 server-push error
-    // 此前静默丢弃。现 toast 提示（如 config 加载失败等全局错误）——renderer 注册
-    // onGlobalError 实现 toast。阶段 B 并入 'error' 条目 globalEffect（!msg.id 守卫内迁）。
-    if (msg.type === 'error' && !msg.id) {
-      const payload = msg.payload as { message?: string }
-      const message = typeof payload.message === 'string' ? payload.message : 'Unknown error'
-      effectsCtx.onGlobalError?.(message)
-    }
+    // 默认路径为纯兜底（阶段 B 后零 type 特判）：'error' 的无 sid 兜底已并入条目
+    // globalEffect（含 !msg.id 守卫），未命中条目的消息只做通道分发 + L9 warn。
   }
 
   // 回放 dispatcher：subscription-state 的 subscribeSession 回放入口（C1 注入）。

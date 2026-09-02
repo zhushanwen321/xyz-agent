@@ -15,7 +15,11 @@
  * D2 阶段 A（声明式条目 schema）：
  * D2-a crossSession 声明条目（骨架形态）双通道分发且零 effect 回调 + 声明形状锁定
  * D2-b payloadGuard 坏形状 → 跳过 sessionEffect、dispatchSession/crossSession 分发照常
- * D2-c 无 sid 条目走 globalEffect（探针条目注入——阶段 A 生产表无 globalEffect 条目）
+ * D2-c 无 sid 条目走 globalEffect（阶段 B 起直接断言 'error' 条目，探针注入已退化删除）
+ * D2 阶段 B（error 单条目合并）：
+ * B-1 'error' 条目两支锁定：有 sid → sessionEffect、无 sid → globalEffect，互不串扰不叠加
+ * B-2 globalEffect 内 !msg.id 守卫：带 id 未命中 pending → dispatchGlobal 照常、不 toast
+ * B-3 默认路径纯兜底：未命中条目无 sid → dispatchGlobal + L9 warn，零 type 特判副作用
  *
  * 全部注入驱动：vi.fn 注入 TransportPorts（pending/events/subscribe）+ InboundEffects 5 回调 spy。
  */
@@ -319,7 +323,7 @@ describe('configureRouteInbound — global 通道 + L9 + effects（⑤/⑦）', 
     expect(effects.onWorkflowUpdate).toHaveBeenCalledWith('s1', { runId: 'wf-1', status: 'running' })
   })
 
-  it('⑦ error 无 id 无 sid → onGlobalError 回调（fallback 分支）', () => {
+  it('⑦ error 无 id 无 sid → onGlobalError 回调（error 条目 globalEffect，阶段 B 自默认路径特判并入）', () => {
     const ports = makePorts()
     const effects = makeEffects()
     const dispatcher = configureRouteInbound(ports, effects)
@@ -555,28 +559,84 @@ describe('configureRouteInbound — 声明式条目 schema（D2 阶段 A）', ()
     }
   })
 
-  it('D2-c 无 sid 条目走 globalEffect（探针条目注入；阶段 A 生产表无 globalEffect 条目，error 无 sid 支暂留默认路径）', () => {
-    const probeType = 'test.d2.globalEffectProbe'
-    const globalEffect = vi.fn()
-    ROUTE_TABLE[probeType] = { globalEffect }
-    try {
-      const ports = makePorts()
-      const effects = makeEffects()
-      const dispatcher = configureRouteInbound(ports, effects)
-      dispatcher({ type: probeType, payload: { note: 'n' } } as unknown as ServerMessage)
-      expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
-      // globalEffect 收到原始 msg + effects（阶段 B 'error' 条目 globalEffect 的 !msg.id 守卫依赖此签名）
-      expect(globalEffect).toHaveBeenCalledTimes(1)
-      expect(globalEffect).toHaveBeenCalledWith(expect.objectContaining({ type: probeType }), effects)
-      // 无 sid 不触发 session 通道与 crossSession
-      expect(ports.events.dispatchSession).not.toHaveBeenCalled()
-      expect(ports.events.dispatchCrossSession).not.toHaveBeenCalled()
-      // 默认路径 error 兜底不受探针影响（阶段 A 保留形态）
-      dispatcher({ type: 'error', payload: { message: 'boom' } } as unknown as ServerMessage)
-      expect(effects.onGlobalError).toHaveBeenCalledWith('boom')
-    } finally {
-      delete ROUTE_TABLE[probeType]
-    }
+  it('D2-c 无 sid 条目走 globalEffect（阶段 B 直接断言 error 条目：无 sid + 无 id → onGlobalError 兜底）', () => {
+    const ports = makePorts()
+    const effects = makeEffects()
+    const dispatcher = configureRouteInbound(ports, effects)
+    dispatcher({ type: 'error', payload: { message: 'boom' } } as unknown as ServerMessage)
+    expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
+    // 单条消息恰好一次——默认路径特判已删，不与条目 globalEffect 叠加
+    expect(effects.onGlobalError).toHaveBeenCalledTimes(1)
+    expect(effects.onGlobalError).toHaveBeenCalledWith('boom')
+    // 无 sid 不触发 session 通道与 crossSession
+    expect(ports.events.dispatchSession).not.toHaveBeenCalled()
+    expect(ports.events.dispatchCrossSession).not.toHaveBeenCalled()
+    // 声明形状锁定：'error' 单条目双字段齐（sessionEffect + globalEffect）
+    expect(ROUTE_TABLE['error']).toEqual({
+      sessionEffect: expect.any(Function),
+      globalEffect: expect.any(Function),
+    })
+  })
+})
+
+describe('configureRouteInbound — error 单条目合并（D2 阶段 B）', () => {
+  beforeEach(() => {
+    resetSubscriptionStates()
+  })
+
+  it('B-1 error 条目两支锁定：有 sid → sessionEffect（onSessionError）、无 sid → globalEffect（onGlobalError），互不串扰不叠加', () => {
+    const ports = makePorts()
+    const effects = makeEffects()
+    const dispatcher = configureRouteInbound(ports, effects)
+    // 有 sid 支：dispatchSession + onSessionError，不触发 global 通道/回调
+    dispatcher(sessionMsg('error', { code: 'c1', message: 'm1' }))
+    expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1)
+    expect(effects.onSessionError).toHaveBeenCalledTimes(1)
+    expect(effects.onSessionError).toHaveBeenCalledWith('s1', { code: 'c1', message: 'm1' })
+    expect(ports.events.dispatchGlobal).not.toHaveBeenCalled()
+    expect(effects.onGlobalError).not.toHaveBeenCalled()
+    // 无 sid 支：dispatchGlobal + onGlobalError，不触发 session 通道/回调
+    dispatcher({ type: 'error', payload: { message: 'global boom' } } as unknown as ServerMessage)
+    expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
+    expect(effects.onGlobalError).toHaveBeenCalledTimes(1) // 特判已删不叠加，恰好一次
+    expect(effects.onGlobalError).toHaveBeenCalledWith('global boom')
+    expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1) // 仍只有有 sid 那条
+    expect(effects.onSessionError).toHaveBeenCalledTimes(1)
+  })
+
+  it('B-2 globalEffect 内 !msg.id 守卫：error 无 sid 但带 id 未命中 pending（如迟到 reply 广播形态）→ dispatchGlobal 照常、不 onGlobalError', () => {
+    const ports = makePorts({
+      pending: {
+        resolve: vi.fn(),
+        reject: vi.fn(),
+        rejectAll: vi.fn(),
+        has: vi.fn().mockReturnValue(false), // id 未命中 pending：不进 pending 分流
+        resolveEnvelope: vi.fn(),
+      },
+    })
+    const effects = makeEffects()
+    const dispatcher = configureRouteInbound(ports, effects)
+    dispatcher({ type: 'error', id: 'late-1', payload: { message: 'late' } } as unknown as ServerMessage)
+    expect(ports.pending.resolveEnvelope).not.toHaveBeenCalled()
+    expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
+    expect(effects.onGlobalError).not.toHaveBeenCalled() // 守卫拒绝：带 id 不 toast
+  })
+
+  it('B-3 默认路径纯兜底（对 error 不再特判）：未命中条目无 sid 消息只 dispatchGlobal + L9 warn，零 effect 副作用', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const ports = makePorts()
+    const effects = makeEffects()
+    const dispatcher = configureRouteInbound(ports, effects)
+    // 未注册 type（session.* 前缀触发 L9 warn）无 sid → 默认路径只做通道分发 + warn
+    dispatcher({ type: 'session.unregisteredProbe', payload: {} } as unknown as ServerMessage)
+    expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('session-level message missing sessionId'),
+      'session.unregisteredProbe',
+    )
+    expect(effects.onGlobalError).not.toHaveBeenCalled()
+    expect(effects.onSessionError).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 })
 
