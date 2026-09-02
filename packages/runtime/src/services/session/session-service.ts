@@ -10,14 +10,12 @@
  *
  * onSessionExit 回调留构造函数:协调 lifecycle/scanner/broker 多方,不归属任一子模块。
  */
-import { existsSync, readdirSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, isAbsolute, resolve, sep } from 'node:path'
-import { tmpdir } from 'node:os'
-import { randomUUID } from 'node:crypto'
 import { expandHome, isStrictlyUnder } from '../../utils/path-utils.js'
 import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, ServerMessageMap, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataFile, SegmentsMetadataEntry, ProviderId } from '@xyz-agent/shared'
-import { BUILTIN_PRESET_IDS, IMAGE_LIMITS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
+import { BUILTIN_PRESET_IDS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 import type { SubagentEngineConfigView, SubagentEnginesFile } from '@xyz-agent/extension-protocol'
 import { SUBAGENTS_ENGINES_FILENAME } from '@xyz-agent/extension-protocol'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
@@ -32,7 +30,6 @@ import type { ISessionServiceInternal } from './session-internal.js'
 import type { IProcessManager, IPiEngine, PiCommandInfo, PiMessage } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
-import { quarantineCorruptFile } from '../../utils/json-store.js'
 import { extractSubagentsFromSessionFile, scanSubagentEntries } from './subagent-extractor.js'
 import {
   extractRecordEngine,
@@ -52,6 +49,7 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
 import { SessionScanner } from './session-scanner.js'
+import { AttachmentStore } from './attachment-store.js'
 import { ReplicatedState } from './replicated-state.js'
 import {
   createThinkingLevelStateConfig,
@@ -215,6 +213,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   private readonly lifecycle: SessionLifecycle
   private readonly dispatcher: MessageDispatcher
   private readonly scanner: SessionScanner
+  /** 附件存储域（S1 迁出，零耦合子模块——无 Facade 状态依赖，故不注入 this） */
+  private readonly attachmentStore = new AttachmentStore()
   /**
    * ConfigService 引用（组合根注入）。getReplaceSystemPrompt 委托用——
    * spawn pi 时透传用户配置的替换系统提示词。经 setter 注入而非构造参数，与
@@ -2277,163 +2277,27 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     }
   }
 
-  // ── wave:runtime-patch ipc-converge-a3 W2：业务持久化写（从 main privileged-handlers 原样搬，安全校验 TC3 零削弱）──
-  /**
-   * 写入粘贴截图（base64 → attachments 文件）。
-   *
-   * sessionId 非空 → <dataDir>/attachments/<sessionId>/（持久化，persisted=true）；
-   * 空 → OS tmpdir（landing 降级，session 创建后需 migrateImage，persisted=false）。
-   *
-   * 安全校验（原样搬自 main privileged-handlers，TC3 零削弱）：
-   * - mimeType 必须以 image/ 开头（防借道写任意文件）
-   * - base64 解码后 <= IMAGE_LIMITS.SINGLE_MAX_BYTES（20MB，防超大输入撑爆内存/磁盘）
-   * - name sanitize 剥离路径分隔符 + 控制字符（防目录穿越），uuid 前缀保证唯一性
-   */
+  // ── 附件存储（S1 迁出至 attachment-store.ts；安全校验语义 TC3 零削弱，回归见该模块头注释）──
   async writeImage(
     sessionId: string,
     base64: string,
     mimeType: string,
     name: string,
   ): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }> {
-    if (!mimeType.startsWith('image/')) {
-      throw new Error('mimeType must start with image/')
-    }
-    // 解码前按 base64 长度估算解码字节数（3/4 比例），超 SINGLE_MAX_BYTES 拒绝。
-    // eslint-disable-next-line no-magic-numbers
-    const decodedBytes = Math.ceil((base64.length * 3) / 4)
-    if (decodedBytes > IMAGE_LIMITS.SINGLE_MAX_BYTES) {
-      // eslint-disable-next-line no-magic-numbers
-      const sizeMB = Math.round(decodedBytes / 1024 / 1024)
-      throw new Error(`图片过大（${sizeMB}MB），上限 20MB`)
-    }
-    const extByMime: Record<string, string> = {
-      'image/png': 'png',
-      'image/jpeg': 'jpg',
-      'image/jpg': 'jpg',
-      'image/gif': 'gif',
-      'image/webp': 'webp',
-    }
-    const ext = extByMime[mimeType] ?? 'png'
-    // sanitize name：剥离路径分隔符（/ \ :）和控制字符防目录穿越，trim 首尾空白。
-    const extRegExp = new RegExp(`\\.${ext}$`, 'i')
-    const sanitized = name.replace(/[/\\:\x00-\x1f]/g, '').trim().replace(extRegExp, '') || 'image'
-    try {
-      const dir = sessionId ? getAttachmentsDir(sessionId) : tmpdir()
-      if (sessionId) mkdirSync(dir, { recursive: true })
-      const filename = `${randomUUID()}-${sanitized}.${ext}`
-      const fullPath = join(dir, filename)
-      writeFileSync(fullPath, Buffer.from(base64, 'base64'))
-      const isPlaceholder = sanitized === 'image'
-      const displayName = isPlaceholder
-        ? `截图-${formatTimestamp()}.${ext}`
-        : `${sanitized}.${ext}`
-      return { path: fullPath, fileName: filename, displayName, id: randomUUID(), persisted: !!sessionId }
-    } catch (err) {
-      console.error('[session-service] writeImage failed:', err)
-      throw new Error('write-session-image failed')
-    }
+    return this.attachmentStore.writeImage(sessionId, base64, mimeType, name)
   }
 
-  /**
-   * 迁移 landing 态 tmpdir 图片到 attachments 持久化目录。
-   *
-   * 安全校验（原样搬自 main，TC3 零削弱）：
-   * - sessionId 非空 + fromPath 存在
-   * - fileName sanitize 剥离路径分隔符 + 控制字符（防逃逸 attachments 目录）
-   * - fromPath 白名单：只允许从 OS tmpdir 或目标 session attachments 目录迁移（防 XSS move 敏感文件外泄）
-   *   复用 runtime isStrictlyUnder（比 main isUnderPrefix 多一道 !isAbsolute 跨盘符防线，R1 增强非削弱）
-   */
   async migrateImage(
     fromPath: string,
     sessionId: string,
     fileName: string,
   ): Promise<{ path: string }> {
-    if (!sessionId) throw new Error('migrate-session-image requires non-empty sessionId')
-    if (!existsSync(fromPath)) {
-      throw new Error(`source file not found: ${fromPath}`)
-    }
-    try {
-      // getAttachmentsDir 内已校验 sessionId 字符集（防路径穿越）
-      const dir = getAttachmentsDir(sessionId)
-      mkdirSync(dir, { recursive: true })
-      const sanitized = fileName.replace(/[/\\:\x00-\x1f]/g, '').trim() || 'image'
-      const newPath = join(dir, sanitized)
-      // fromPath 白名单：只允许从 OS tmpdir 或目标 session attachments 迁移。
-      const allowedSources = [tmpdir(), dir]
-      const resolvedFrom = resolve(fromPath)
-      if (!allowedSources.some((prefix) => isStrictlyUnder(prefix, resolvedFrom))) {
-        throw new Error(`migrate-session-image fromPath outside allowed sources: ${fromPath}`)
-      }
-      renameSync(fromPath, newPath)
-      return { path: newPath }
-    } catch (err) {
-      console.error('[session-service] migrateImage failed:', err)
-      throw new Error('migrate-session-image failed')
-    }
+    return this.attachmentStore.migrateImage(fromPath, sessionId, fileName)
   }
 
-  /**
-   * 追加/覆盖一条 segments 元数据到 sidecar（segments.json）。
-   *
-   * 同 clientUuid 重发（editAndResend）→ 后者覆盖前者（按 clientUuid 去重）。
-   * atomic 写（tmp + rename），Windows EPERM/ENOTEMPTY 兜底 unlink+retry（原样搬自 main，TC3 零削弱）。
-   */
   async writeSegmentsMetadata(sessionId: string, entry: SegmentsMetadataEntry): Promise<void> {
-    if (!sessionId) throw new Error('write-segments-metadata requires non-empty sessionId')
-    try {
-      const dir = getAttachmentsDir(sessionId)
-      mkdirSync(dir, { recursive: true })
-      const filePath = join(dir, 'segments.json')
-      // 读已有（文件不存在 → 空；损坏 → 隔离现场后降级为空，best-effort 不阻断写入）
-      let file: SegmentsMetadataFile = { version: 1, entries: [] }
-      if (existsSync(filePath)) {
-        try {
-          const raw = readFileSync(filePath, 'utf-8')
-          const parsed = JSON.parse(raw) as SegmentsMetadataFile
-          if (parsed && Array.isArray(parsed.entries)) file = parsed
-        } catch (e) {
-          // D1c 损坏隔离（integrity-hardening.md §3.1）：半截文件先 rename .corrupt-<ts>
-          // 保留取证再降级为空——否则下方写入把「半截」合法化成「全空」，历史 segments
-          // 永久丢失且不可恢复（与 JsonStore 共用同一 quarantine 实现，避免行为漂移）
-          quarantineCorruptFile(filePath, { tag: 'session-service', reason: 'segments.json malformed', cause: e })
-        }
-      }
-      // 按 clientUuid 去重：同 uuid 覆盖，新 uuid 追加
-      const idx = file.entries.findIndex((e) => e.clientUuid === entry.clientUuid)
-      if (idx >= 0) file.entries[idx] = entry
-      else file.entries.push(entry)
-      // atomic 写：临时文件 + rename。POSIX 同文件系统 rename 原子；
-      // Windows 目标已存在时 renameSync 抛 EPERM/ENOTEMPTY → unlink 后重试。
-      const JSON_INDENT = 2
-      const tmpPath = filePath + '.tmp'
-      writeFileSync(tmpPath, JSON.stringify(file, null, JSON_INDENT), 'utf-8')
-      try {
-        renameSync(tmpPath, filePath)
-      } catch {
-        // eslint-disable-next-line taste/no-silent-catch -- 目标不存在属预期（首次写入）；非 enoent 也无法恢复（后续 rename 会抛）
-        try { unlinkSync(filePath) } catch { /* 目标不存在，忽略 */ }
-        try {
-          renameSync(tmpPath, filePath)
-        } catch (retryErr) {
-          // eslint-disable-next-line taste/no-silent-catch -- tmpPath 可能已被 rename 消费（并发竞争）；retryErr 才是要抛的真错误
-          try { unlinkSync(tmpPath) } catch { /* tmpPath 可能已被 rename 消费，忽略 */ }
-          throw retryErr
-        }
-      }
-    } catch (err) {
-      console.error('[session-service] writeSegmentsMetadata failed:', err)
-      throw new Error('write-segments-metadata failed')
-    }
+    return this.attachmentStore.writeSegmentsMetadata(sessionId, entry)
   }
-}
-
-/** 生成 YYYYMMDD-HHMM 时间戳（displayName 用，本地时区；原样搬自 main privileged-handlers） */
-function formatTimestamp(): string {
-  const d = new Date()
-  const PAD_WIDTH = 2
-  const JANUARY_OFFSET = 1
-  const pad = (n: number) => String(n).padStart(PAD_WIDTH, '0')
-  return `${d.getFullYear()}${pad(d.getMonth() + JANUARY_OFFSET)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
 }
 
 /**

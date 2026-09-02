@@ -1,6 +1,6 @@
 # SessionService 深化重构 实施计划
 
-基线: <基线 commit 后回填> | 来源设计: docs/design/session-service-deepening.md | 日期: 2026-09-02
+基线: 4589d0262 | 来源设计: docs/design/session-service-deepening.md | 日期: 2026-09-02
 
 ## 0 章节映射
 
@@ -97,13 +97,14 @@ graph TD
 
 | # | 偏差 | 理由 | 登记时间 |
 |---|---|---|---|
-| 1 | 设计 §4.1 要求「每 slice 真实 app 双分支比对」；本计划落为每 slice P3 机器门（runtime 全量 vitest + typecheck）+ 阶段 5 Gate B 统一执行 §4.1/§4.2 全部真实场景（含 S1 附件 landing 降级专项） | 每 slice 一次 Electron 双分支比对 = 12 次全量 app 实跑；slice 均独立 commit，Gate B 场景 fail 可 revert 精确定位到 slice，回滚粒度不变。风险：slice 间交互引入的偏移到 Gate B 才暴露——由全量套件 + 独立 commit 兜底 | 计划期 |
+| 1 | 设计 §4.1 要求「每 slice 真实 app 双分支比对」；本计划落为每 slice P3 机器门（runtime 全量 vitest + typecheck）+ 阶段 5 Gate B 统一执行 §4.1/§4.2 全部真实场景（含 S1 附件 landing 降级专项） | 每 slice 一次 Electron 双分支比对 = 12 次全量 app 实跑；slice 均独立 commit，Gate B 场景 fail 可 revert 精确定位到 slice，回滚粒度不变。风险：slice 间交互引入的偏移到 Gate B 才暴露——由全量套件 + 独立 commit 兜底（用户已确认接受） | 计划期 |
+| 2 | 设计 §2.1/D1 预估附件域「约 310 行 / 12%」、计划验收条款 ⑤ 据此写「2603 → 约 2250」；u-s1 实测三方法合计约 148 行 + formatTimestamp 辅助 8 行，2603 → 2467（净 -136，含委托/接线 +18） | 原预估系 2292→EOF 区域口径，含 history 域读侧 readSegmentsMetadataFile（被 :982/:1017 消费，不属附件域不可迁）与尾部辅助代码。三方法全迁事实成立（方法体逐字随迁、一行委托、契约不变），S6 ≤500 行目标不受影响。设计文档 §2.1/D1 已同步修正（doc_error 处理） | u-s1 交付 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u-s1 | pending | 0 | — |
+| u-s1 | committed | 1 | 全量 vitest 383 files / 4103 tests passed exit 0（/tmp/u-s1-vitest-r2.log）+ typecheck 0；条款④实测通过（测试 import 无 session-service）；首次全量跑 pi-settings-store「busy-waits real subprocess」用例 1 次 fail，单跑 3/3 绿 + 文件零改动，判定环境 flake 非回归 |
 | u-s2 | pending | 0 | — |
 | u-s3 | pending | 0 | — |
 | u-s4 | pending | 0 | — |
@@ -112,7 +113,9 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- 2026-09-02 计划建立（预检：设计结构四节齐全；对抗式审查第 4 轮 0 must-fix，报告 `docs/design/session-service-deepening.review.md`；两条 suggestion 经核对已在提交版落文）。
+- 2026-09-02 计划建立（预检：设计结构四节齐全；对抗式审查第 4 轮 0 must-fix，报告 `docs/design/session-service-deepening.review.md`；两条 suggestion 经核对已在提交版落文）。用户评审确认：切分/隔离/验收条款 + 偏差 #1。
+- 2026-09-02 u-s1 committed：附件三方法 + formatTimestamp 迁 attachment-store.ts（187 行）+ 新测试 13 用例（含大小上限/路径穿越边界）；Facade 一行委托；2603 → 2467。偏差 #2 登记，设计 §2.1/D1 行数口径同步修正。
+- 残留风险追加：pi-settings-store.test.ts「busy-waits and acquires after a cross-process holder releases (real subprocess)」在全量并发下偶发 flake（u-s1 验收期观测 1 次；单跑 3/3 稳定绿、文件零改动、域无关）——后续单元门遇到同名失败按 flake 判定流程处理（单跑复验 + 文件零改动核对），不阻塞但计数。
 - 风险预登记：
   - **u-s3 是设计认定风险最高一刀**（写点迁移 + 汇聚拆分 + 读点改道三位一体）。失败降级 = 设计 §3.4 末行半深化降级（写点留 Facade、窄接口成果保留）；若触发，u-s5 形态按设计 §3.4 降级分支调整并在此登记。
   - **u-s5 组合根接线点位置**实施首步核验（预期 Facade 内接线，event-interpreter 本体不动；动到即上报偏差）。
