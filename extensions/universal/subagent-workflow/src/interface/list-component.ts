@@ -145,7 +145,7 @@ export class SubagentsListComponent implements Component {
     if (this.frameRecords !== undefined && Date.now() - this.frameAt <= FRAME_TTL_MS) {
       return this.frameRecords;
     }
-    const records = this.service.collectRecords(LIST_LIMIT);
+    const records = this.service.queries.collectRecords(LIST_LIMIT);
     this.frameRecords = records;
     this.frameAt = Date.now();
     return records;
@@ -153,7 +153,7 @@ export class SubagentsListComponent implements Component {
 
   /** [perf] 选中项详情数据：优先全量（懒加载 + per-file 缓存），拿不到回退 light。 */
   private fullRecordOf(r: SubagentRecord): SubagentRecord {
-    return this.service.getFullRecord(r.id) ?? r;
+    return this.service.queries.getFullRecord(r.id) ?? r;
   }
 
   invalidate(): void {

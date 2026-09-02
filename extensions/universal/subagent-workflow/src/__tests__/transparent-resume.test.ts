@@ -228,7 +228,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
     it("closed(disconnected) 记录 message → 内部状态翻 running + resume 触达 + 原 sessionFile 作为续写目标", async () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-d-happy", rootSessionId: "root-session-cur" });
       writeFinalized(file, "disconnected");
-      expect(service.findRecord("sa-d-happy")).toBeUndefined(); // 前置：内存无
+      expect(service.queries.findRecord("sa-d-happy")).toBeUndefined(); // 前置：内存无
 
       const result = await messageHandler(service, { subagentId: "sa-d-happy", text: "continue the work" });
       expect(result.response.delivered).toBe(true);
@@ -239,11 +239,11 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
 
       // 内部状态翻 running（resurrect 回边生效；轮次收尾链走完后为 running-resumable，round=1）
       await vi.waitFor(() => {
-        const snap = service.findRecord("sa-d-happy");
+        const snap = service.queries.findRecord("sa-d-happy");
         expect(snap?.status).toBe("running");
         expect(snap?.sessionFile).toBe(file); // 身份字段复原：原 session 文件
       });
-      const snap = service.findRecord("sa-d-happy");
+      const snap = service.queries.findRecord("sa-d-happy");
       expect(snap?.chatMode).toBe(true);
 
       // 收链：本轮 detached runAndFinalize 在用例内结算（防跨用例竞态）
@@ -311,7 +311,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
       await expect(messageHandler(service, { subagentId: "sa-d-cancel", text: "hi" })).rejects.toThrow(
         /deliberately closed by user \(closedReason: cancelled\)/,
       );
-      expect(service.findRecord("sa-d-cancel")).toBeUndefined();
+      expect(service.queries.findRecord("sa-d-cancel")).toBeUndefined();
       expect(rafCapture.length).toBe(0);
     });
 
@@ -322,7 +322,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
       await expect(messageHandler(service, { subagentId: "sa-d-uclose", text: "hi" })).rejects.toThrow(
         /deliberately closed by user \(closedReason: user-close\)[\s\S]*nothing can reattach/,
       );
-      expect(service.findRecord("sa-d-uclose")).toBeUndefined();
+      expect(service.queries.findRecord("sa-d-uclose")).toBeUndefined();
       expect(rafCapture.length).toBe(0);
     });
 
@@ -338,7 +338,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
       const msg = (err as Error).message;
       expect(msg).toMatch(/worktree isolation/);
       expect(msg).toMatch(/cannot be transparently resumed/);
-      expect(service.findRecord("sa-d-wt")).toBeUndefined();
+      expect(service.queries.findRecord("sa-d-wt")).toBeUndefined();
       expect(rafCapture.length).toBe(0);
     });
 
@@ -351,7 +351,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
       await expect(messageHandler(service, { subagentId: "sa-d-alive", text: "hi" })).rejects.toThrow(
         /transparently resumable[\s\S]*previous instance still finishing/,
       );
-      expect(service.findRecord("sa-d-alive")).toBeUndefined();
+      expect(service.queries.findRecord("sa-d-alive")).toBeUndefined();
       expect(rafCapture.length).toBe(0);
     });
 
@@ -373,7 +373,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
       await expect(messageHandler(service, { subagentId: "sa-d-gc", text: "follow up" })).rejects.toThrow(
         /reconnectable[\s\S]*fork-from/,
       );
-      expect(service.findRecord("sa-d-gc")).toBeUndefined();
+      expect(service.queries.findRecord("sa-d-gc")).toBeUndefined();
       expect(rafCapture.length).toBe(0);
     });
   });
@@ -387,7 +387,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
     writeFinalized(file); // 无 reason 参数 → 空内容文件
 
     // A 档兼容读：磁盘层 closedReason=disconnected
-    const diskRec = service.collectRecords(50, "all").find((r) => r.id === "sa-d-legacy");
+    const diskRec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-d-legacy");
     expect(diskRec?.status).toBe("closed");
     expect(diskRec?.closedReason).toBe("disconnected");
 
@@ -451,7 +451,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
       await expect(closeHandler(service, { subagentId: "sa-d-closestrict" })).rejects.toThrow(
         /not found or not owned/,
       );
-      expect(service.findRecord("sa-d-closestrict")).toBeUndefined();
+      expect(service.queries.findRecord("sa-d-closestrict")).toBeUndefined();
       expect(rafCapture.length).toBe(0);
     });
 

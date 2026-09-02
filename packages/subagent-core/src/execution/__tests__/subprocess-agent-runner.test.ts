@@ -46,17 +46,22 @@ function makeMockResult(overrides: Partial<AgentResult> = {}): AgentResult {
   };
 }
 
-/** 创建 mock SubagentService（只实现 executeAndAwait） */
+/** 创建 mock SubagentService（只实现 executeAndAwait）。
+ *  [D4 聚合连带] SAR 构造器经 asEngineService 显式视图取 PiEngineService——fake 的
+ *  face 即自身，getter 直接返回 self。 */
 function createMockService(impl?: typeof vi.fn) {
   const executeAndAwait = impl ?? vi.fn().mockResolvedValue(makeMockResult());
-  return { executeAndAwait } as unknown as {
+  const service = { executeAndAwait } as unknown as {
     executeAndAwait: (
       opts: Record<string, unknown>,
       signal?: AbortSignal,
       onEvent?: (e: Record<string, unknown>) => void,
       stream?: unknown,
     ) => Promise<AgentResult>;
+    asEngineService: unknown;
   };
+  service.asEngineService = service;
+  return service;
 }
 
 function makeBaseOpts(): AgentCallOpts {

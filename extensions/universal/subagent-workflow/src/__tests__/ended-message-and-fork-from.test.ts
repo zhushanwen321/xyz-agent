@@ -209,7 +209,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-userclose", rootSessionId: "root-session-cur" });
       writeFinalized(file, "user-close");
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-userclose");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-userclose");
       expect(rec?.status).toBe("closed");
       expect(rec?.closedReason).toBe("user-close");
     });
@@ -218,7 +218,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-shutdown", rootSessionId: "root-session-cur" });
       writeFinalized(file, "parent-shutdown");
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-shutdown");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-shutdown");
       expect(rec?.closedReason).toBe("parent-shutdown");
     });
 
@@ -226,7 +226,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-gc", rootSessionId: "root-session-cur" });
       writeFinalized(file, "gc");
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-gc");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-gc");
       expect(rec?.closedReason).toBe("gc");
     });
 
@@ -234,7 +234,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-legacy", rootSessionId: "root-session-cur" });
       writeFinalized(file); // v8.5 前：空文件
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-legacy");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-legacy");
       expect(rec?.status).toBe("closed");
       expect(rec?.closedReason).toBe("disconnected");
 
@@ -250,7 +250,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-junk", rootSessionId: "root-session-cur" });
       fs.writeFileSync(`${file}.finalized`, "some random junk", "utf-8");
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-junk");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-junk");
       expect(rec?.closedReason).toBe("disconnected");
     });
 
@@ -258,7 +258,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-a2-tomb", rootSessionId: "root-session-cur" });
       writeTombstone(file, "sa-a2-tomb");
 
-      const rec = service.collectRecords(50, "all").find((r) => r.id === "sa-a2-tomb");
+      const rec = service.queries.collectRecords(50, "all").find((r) => r.id === "sa-a2-tomb");
       expect(rec?.status).toBe("closed");
       expect(rec?.closedReason).toBe("cancelled");
     });
@@ -351,8 +351,8 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       // forkSource 透传 RunOptions（下游 buildSpawnArgs 的 --fork 映射有专项直测覆盖）
       expect(rafCapture[0].forkSource).toBe(sourceFile);
 
-      expect((service.findRecord(result.response.newSubagentId))?.status).toBe("running");
-      expect((service.findRecord(result.response.newSubagentId))?.slug).toBe("src-resumed");
+      expect((service.queries.findRecord(result.response.newSubagentId))?.status).toBe("running");
+      expect((service.queries.findRecord(result.response.newSubagentId))?.slug).toBe("src-resumed");
     });
 
     it("无 prompt → 注入默认接管框架（reconstruct state 引导语）", async () => {
@@ -390,7 +390,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
     it("本进程 running 记录拒绝（还在跑应走 message，防双写）", async () => {
       writeSessionJsonl(sessionsDir, { id: "sa-live", rootSessionId: "root-session-cur" });
       // 冷路径重建进内存（running）→ findRecord 命中
-      service.getRecordForAction("sa-live");
+      service.chatActions.getRecordForAction("sa-live");
 
       await expect(forkFromHandler(service, { sourceSubagentId: "sa-live" })).rejects.toThrow(
         /still active in this process[\s\S]*action:'message'/,

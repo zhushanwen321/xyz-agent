@@ -85,7 +85,10 @@ function makeMockPiService() {
     executeOpts.push(opts);
     return { content: "from-pi", durationMs: 1, toolCalls: [] };
   });
-  const service = { executeAndAwait } as unknown as SubagentService;
+  // [D4 聚合连带] SAR 构造器经 asEngineService 显式视图取 PiEngineService——fake 的
+  // face 即自身，getter 直接返回 self。
+  const service = { executeAndAwait } as unknown as SubagentService & { asEngineService: unknown };
+  (service as { asEngineService: unknown }).asEngineService = service;
   return { service, executeOpts, executeAndAwait };
 }
 

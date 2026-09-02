@@ -112,11 +112,12 @@ function makeRecord(chatMode: boolean, id = "sa-test"): ExecutionRecord {
   });
 }
 
-/** 暴露 runAndFinalize / store / buildSessionRunnerContext / notifyComplete 私有访问。 */
+/** 暴露 runAndFinalize / store / buildSessionRunnerContext / notifyHost 私有访问。
+ *  [D4-①] notifyComplete 已随通知簇搬至 notify-host——经 notifyHost 面访问（行为等价）。 */
 interface ServiceInternals {
   store: RecordStore;
   buildSessionRunnerContext(): SessionRunnerContext;
-  notifyComplete(record: ExecutionRecord): void;
+  notifyHost: { notifyComplete(record: ExecutionRecord): void };
   runAndFinalize: (
     record: ExecutionRecord,
     opts: ExecuteOptions,
@@ -158,7 +159,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
     expect(typeof ctx.onRoundSettled).toBe("function");
 
     const record = makeRecord(true); // chatMode, status=running, round=undefined
-    const spy = vi.spyOn(internals, "notifyComplete");
+    const spy = vi.spyOn(internals.notifyHost, "notifyComplete");
 
     ctx.onRoundSettled!(record);
 
@@ -174,7 +175,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
     const ctx = internals.buildSessionRunnerContext();
     const record = makeRecord(true);
     record.round = 1; // 第一轮已完成
-    vi.spyOn(internals, "notifyComplete");
+    vi.spyOn(internals.notifyHost, "notifyComplete");
 
     ctx.onRoundSettled!(record);
 
@@ -280,7 +281,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
 
       // double-notify 防护（原用例语义保留）：onRoundSettled notify + kickOffChatRound.then
       // notifyComplete 同 id:round → notifier dedup key=`${id}:${round}` 60s 内吞第二次。
-      internals.notifyComplete(record);
+      internals.notifyHost.notifyComplete(record);
       expect(pi.sendMessage).toHaveBeenCalledTimes(1);
     } finally {
       disarmIdleTimer(record.id);
@@ -294,7 +295,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
     const done = makeRecord(false, "sa-done");
     done.status = "closed"; // 终态 notify（toNotifyRecord 放行 closed）
     try {
-      internals.notifyComplete(done);
+      internals.notifyHost.notifyComplete(done);
       expect(pi.sendMessage).toHaveBeenCalledTimes(1); // 未新增——busy 挂起合并窗口
     } finally {
       // busy/done 无 timer，无需 disarm；record 由 afterEach dispose 清理

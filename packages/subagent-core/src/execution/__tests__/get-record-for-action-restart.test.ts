@@ -167,7 +167,7 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
     const file = writeSessionJsonl(sessionsDir, { id: "sa-restart-1", rootSessionId: "root-session" });
     expect(store.getMutable("sa-restart-1")).toBeUndefined(); // 前置：内存确无
 
-    const record = service.getRecordForAction("sa-restart-1");
+    const record = service.chatActions.getRecordForAction("sa-restart-1");
 
     // [v4 A-3] 无条件 chatMode=true（跨重启恢复入口）
     expect(record.chatMode).toBe(true);
@@ -184,7 +184,7 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
     expect(record.status).toBe("running");
     // register 生效：进内存，二次调用走内存命中（同一引用）
     expect(store.getMutable("sa-restart-1")).toBe(record);
-    expect(service.getRecordForAction("sa-restart-1")).toBe(record);
+    expect(service.chatActions.getRecordForAction("sa-restart-1")).toBe(record);
   });
 
   it("rootSessionId 校验仍生效：异树 record（other-session）→ throw not found or not owned", () => {
@@ -192,7 +192,7 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
     // 但后置校验 record.rootSessionId !== this.sessionRootId 必须拦截
     writeSessionJsonl(sessionsDir, { id: "sa-foreign", rootSessionId: "other-session" });
 
-    expect(() => service.getRecordForAction("sa-foreign")).toThrow(/not found or not owned/);
+    expect(() => service.chatActions.getRecordForAction("sa-foreign")).toThrow(/not found or not owned/);
   });
 
   it("直接父校验仍生效：孙级 record（parentRecordId=sa-parent）→ 主进程 throw direct parent", () => {
@@ -204,14 +204,14 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
     });
 
     // 重建后 parentRecordId=sa-parent ≠ 主进程 baseline(undefined) → cross-layer 守卫拦截
-    expect(() => service.getRecordForAction("sa-grand")).toThrow(/direct parent/);
+    expect(() => service.chatActions.getRecordForAction("sa-grand")).toThrow(/direct parent/);
   });
 
   it(".finalized sidecar（closed 终态）不重建 → throw not found or not owned", () => {
     const file = writeSessionJsonl(sessionsDir, { id: "sa-fin", rootSessionId: "root-session" });
     writeFinalized(file); // sidecar 矩阵分支 2 → status=closed → find(status==="running") miss
 
-    expect(() => service.getRecordForAction("sa-fin")).toThrow(/not found or not owned/);
+    expect(() => service.chatActions.getRecordForAction("sa-fin")).toThrow(/not found or not owned/);
     expect(store.getMutable("sa-fin")).toBeUndefined(); // 未重建注册
   });
 
@@ -228,14 +228,14 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
       worktree: true,
     });
 
-    const record = service.getRecordForAction("sa-wt");
+    const record = service.chatActions.getRecordForAction("sa-wt");
     // hadWorktree 从磁盘 identity entry 的 worktree 标志恢复
     expect(record.hadWorktree).toBe(true);
     // handle 无法恢复（不可序列化）
     expect(record.worktreeHandle).toBeUndefined();
 
     // 冷路径续聊（无活进程）→ 续轮守卫拒绝，不 spawn 回落主 repo
-    await expect(service.deliverChatMessage(record, "resume after restart", false)).rejects.toThrow(
+    await expect(service.chatActions.deliverChatMessage(record, "resume after restart", false)).rejects.toThrow(
       /worktree isolation.*lost when the parent process restarted/,
     );
   });
@@ -244,11 +244,11 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
     // identity entry 无 worktree 字段（旧文件）→ found.worktree undefined → hadWorktree false
     writeSessionJsonl(sessionsDir, { id: "sa-nowt", rootSessionId: "root-session" });
 
-    const record = service.getRecordForAction("sa-nowt");
+    const record = service.chatActions.getRecordForAction("sa-nowt");
     expect(record.hadWorktree).toBe(false);
 
     // 冷路径续聊不被 worktree 守卫拦截（resume 正常发起；后续 spawn 编排
     // 超出本用例关注点——runSpawn 在本文件是 no-op mock）
-    await expect(service.deliverChatMessage(record, "resume normal", false)).resolves.toBeUndefined();
+    await expect(service.chatActions.deliverChatMessage(record, "resume normal", false)).resolves.toBeUndefined();
   });
 });

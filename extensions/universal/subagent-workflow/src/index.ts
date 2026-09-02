@@ -443,8 +443,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     const channelRegistry = getOrCreateChannelRegistry();
     const dialogQueue = getOrCreateDialogQueue();
     const uiRequestHandler = createUiRequestHandlerForMode(ctx, channelRegistry, dialogQueue);
-    // SR-3: 无论 new 还是 existing（/resume /fork 复用），session_start 都必须注入 handler
-    service.setUiRequestHandler(uiRequestHandler);
 
     // 主 session 文件：按 sessionId 解析（getSessionFile() 在 attach 场景会返回前一
     // session 的文件，E2E 实测），未 flush 的新 session 回退 getSessionFile()。
@@ -468,10 +466,12 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       streamSink: ctx.mode === "rpc"
         ? { setWidget: (key, lines) => ctx.ui.setWidget(key, lines) }
         : undefined,
-      // [#24] uiRequestHandler 单一注入入口：上方 setUiRequestHandler 已注入（SR-3 语义，
-      // new/existing service 均覆盖）。此处不再重复传 initSession.uiRequestHandler，避免
-      // 同一 handler 双路径注入造成的语义混淆与“哪一个是 source of truth”歧义。
-      // mode 仍需 session 级注入（uiObservability.setMode 依赖它，与 handler 无关）。
+      // [#24][D4-④] uiRequestHandler 单一注入入口 = initSession 参数（原
+      // setUiRequestHandler 方法已随 D4 拆分删除）。SR-3 语义保留：无论 new 还是
+      // existing（/resume /fork 复用），session_start 都注入 handler 覆盖旧值；
+      // headless 下工厂返回 undefined → 传 null（显式清空语义，防上一个 session 的
+      // handler 残留——与原 setUiRequestHandler(undefined) 行为等价）。
+      uiRequestHandler: uiRequestHandler ?? null,
       mode: ctx.mode,
       // SR-4：注入 L2 dialog 队列——session-runner child close 时调 rejectChildDialogs
       // 清理该 child 在 L2 的 pending dialog，防全局死锁（C1 修复：清理路径接通）。

@@ -203,9 +203,12 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
   it("message 正常（非 streaming）→ messageHandler 接线 + 留痕 entry 立即落盘", async () => {
     const record = makeRecord();
     const deliverChatMessage = vi.fn();
+    // [D4 聚合跟随] message/close 生产消费面 = service.chatActions
     mockedGetService.mockReturnValue({
-      getRecordForAction: vi.fn(() => record),
-      deliverChatMessage,
+      chatActions: {
+        getRecordForAction: vi.fn(() => record),
+        deliverChatMessage,
+      },
     } as never);
 
     // 转义协议：字面 \n 传输，解析侧还原（P3）
@@ -235,9 +238,12 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
   it("message 正常（streaming）→ 留痕走 deliverAs:nextTurn，不 steer 主 agent 当前 turn", async () => {
     const record = makeRecord();
     const deliverChatMessage = vi.fn();
+    // [D4 聚合跟随] message/close 生产消费面 = service.chatActions
     mockedGetService.mockReturnValue({
-      getRecordForAction: vi.fn(() => record),
-      deliverChatMessage,
+      chatActions: {
+        getRecordForAction: vi.fn(() => record),
+        deliverChatMessage,
+      },
     } as never);
     // 主 agent turn 进行中（ctx.isIdle()=false）
     ctx.isIdle = vi.fn(() => false);
@@ -263,11 +269,14 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
   });
 
   it("message 目标不存在（getRecordForAction throw）→ warning 文案，不留痕", async () => {
+    // [D4 聚合跟随] message/close 生产消费面 = service.chatActions
     mockedGetService.mockReturnValue({
-      getRecordForAction: vi.fn(() => {
-        throw new Error('No subagent record with id "sa-x"');
-      }),
-      deliverChatMessage: vi.fn(),
+      chatActions: {
+        getRecordForAction: vi.fn(() => {
+          throw new Error('No subagent record with id "sa-x"');
+        }),
+        deliverChatMessage: vi.fn(),
+      },
     } as never);
 
     await runHandler("message sa-x hi");

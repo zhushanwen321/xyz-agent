@@ -88,7 +88,7 @@ let activeView: { close: () => void } | null = null;
  *   ╔══════════════════════════════════════════════════════════════════╗
  *   ║  1. G-017 防叠加：activeView?.close()                              ║
  *   ║  2. ctx.ui.custom((tui, theme, kb, done) => {                      ║
- *   ║       unsubscribe = service.onChange(() => tui.requestRender())  ║
+ *   ║       unsubscribe = service.queries.onChange(() => tui.requestRender())  ║
  *   ║       activeView = { close: wrappedDone }                          ║
  *   ║       return new SubagentsListComponent(...)                       ║
  *   ║     }, { overlay:true, overlayOptions:{margin:0, width:"100%"}})   ║
@@ -112,7 +112,7 @@ export async function createSubagentsView(
 
   // directId 提示
   if (directId) {
-    const all = service.collectRecords(LIST_LIMIT);
+    const all = service.queries.collectRecords(LIST_LIMIT);
     if (!all.some((r) => r.id === directId)) {
       notify(`No record found for id "${directId}", showing all`, "warning");
     }
@@ -143,7 +143,7 @@ export async function createSubagentsView(
       // 易产生 cell 残留（视觉重影）。节流到 ONCHANGE_DEBOUNCE_MS，animTimer（250ms）
       // 兜底刷新。终态变化（record 完成）延迟可接受。
       let renderDebounce: ReturnType<typeof setTimeout> | undefined;
-      const unsubscribe = service.onChange(() => {
+      const unsubscribe = service.queries.onChange(() => {
         if (state.disposed) return;
         if (renderDebounce) clearTimeout(renderDebounce);
         renderDebounce = setTimeout(() => {
@@ -156,7 +156,7 @@ export async function createSubagentsView(
 
       // directId 命中 → 进详情模式（右侧就地展开，底部对齐）
       if (directId) {
-        const records = service.collectRecords(LIST_LIMIT);
+        const records = service.queries.collectRecords(LIST_LIMIT);
         const idx = records.findIndex((r) => r.id === directId);
         if (idx >= 0) {
           state.selectedIdx = idx;

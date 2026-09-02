@@ -56,7 +56,7 @@ function makeSnapshot(over: Partial<RecordSnapshot> = {}): RecordSnapshot {
 }
 
 function makeService(over: Partial<SubagentService> = {}): SubagentService {
-  return {
+  const service = {
     execute: vi.fn(),
     findRecord: vi.fn(() => undefined),
     cancel: vi.fn(() => false),
@@ -65,6 +65,17 @@ function makeService(over: Partial<SubagentService> = {}): SubagentService {
     getFullRecord: vi.fn(() => undefined as SubagentRecord | undefined),
     ...over,
   } as SubagentService;
+  // [D4 聚合跟随] 读面经 service.queries——视图成员取 over 覆盖后的平铺键（同引用，
+  // 外部 spy 断言不受影响）。
+  const flat = service as unknown as Record<string, unknown>;
+  (service as unknown as { queries: Record<string, unknown> }).queries = {
+    findRecord: flat.findRecord,
+    collectRecords: flat.collectRecords,
+    getFullRecord: flat.getFullRecord,
+    lookupRecordAnyState: vi.fn(() => undefined),
+    onChange: vi.fn(() => () => {}),
+  };
+  return service;
 }
 
 // ============================================================

@@ -89,7 +89,8 @@ export class SubprocessAgentRunner implements AgentRunner {
   constructor(deps: SubprocessAgentRunnerDeps) {
     this.subagentService = deps.subagentService;
     this.ctxModel = deps.ctxModel;
-    this.piEngine = createPiEngine(() => this.subagentService);
+    // [D4 聚合连带] 经 asEngineService 显式视图适配（原结构化直绑依赖查询面 public）。
+    this.piEngine = createPiEngine(() => this.subagentService.asEngineService);
   }
 
   /**

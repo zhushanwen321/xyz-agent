@@ -139,7 +139,7 @@ describe("冷路径续轮（M2-B1 idle 投递；D2 后经 deliverChatMessage 无
     mockRunSpawn.mockResolvedValueOnce(makeResult(true));
     const beforeRound = record.round;
 
-    await service.deliverChatMessage(record, "next round msg", false);
+    await service.chatActions.deliverChatMessage(record, "next round msg", false);
 
     // 冷路径守卫通过后：status 已手动设回 running（M2-A 边界，绕过 tryTransition）
     expect(record.status).toBe("running");
@@ -164,19 +164,19 @@ describe("冷路径续轮（M2-B1 idle 投递；D2 后经 deliverChatMessage 无
   it("终态 closed record → throw 行动语言（MF-4，仅 running 可续聊），不触发 kickOff", async () => {
     record.status = "closed";
     // MF-4：行动语言（spec §3.1），不暴露 resume/controller 内部词汇
-    await expect(service.deliverChatMessage(record, "msg", false)).rejects.toThrow(/not ready for a new message/);
+    await expect(service.chatActions.deliverChatMessage(record, "msg", false)).rejects.toThrow(/not ready for a new message/);
     expect(mockRunSpawn).not.toHaveBeenCalled();
   });
 
   it("record 无 sessionFile → throw 行动语言（MF-4 canonical session unavailable），不触发 kickOff", async () => {
     record.sessionFile = undefined;
-    await expect(service.deliverChatMessage(record, "msg", false)).rejects.toThrow(/session unavailable/);
+    await expect(service.chatActions.deliverChatMessage(record, "msg", false)).rejects.toThrow(/session unavailable/);
     expect(mockRunSpawn).not.toHaveBeenCalled();
   });
 
   it("record 无 controller → throw 行动语言（MF-4），不触发 kickOff", async () => {
     record.controller = undefined;
-    await expect(service.deliverChatMessage(record, "msg", false)).rejects.toThrow(/not ready for a new message/);
+    await expect(service.chatActions.deliverChatMessage(record, "msg", false)).rejects.toThrow(/not ready for a new message/);
     expect(mockRunSpawn).not.toHaveBeenCalled();
   });
 });
@@ -215,7 +215,7 @@ describe("deliverChatMessage (V2 决策 3 chatMode 统一投递)", () => {
     Object.assign(child, { pid: 12345 });
     spawnedChildren.set(record.id, child);
 
-    await service.deliverChatMessage(record, "after you finish", false);
+    await service.chatActions.deliverChatMessage(record, "after you finish", false);
 
     const lines = readStdinLines(child);
     expect(lines).toHaveLength(1);
@@ -229,7 +229,7 @@ describe("deliverChatMessage (V2 决策 3 chatMode 统一投递)", () => {
     const child = makeStreamChild();
     spawnedChildren.set(record.id, child);
 
-    await service.deliverChatMessage(record, "stop now", true);
+    await service.chatActions.deliverChatMessage(record, "stop now", true);
 
     const lines = readStdinLines(child);
     expect(lines[0]).toMatchObject({ type: "prompt", message: "stop now", streamingBehavior: "steer" });
@@ -245,7 +245,7 @@ describe("deliverChatMessage (V2 决策 3 chatMode 统一投递)", () => {
     Object.assign(child, { signalCode: "SIGTERM" });
     spawnedChildren.set(record.id, child);
 
-    await expect(service.deliverChatMessage(record, "lost msg", true)).resolves.toBeUndefined();
+    await expect(service.chatActions.deliverChatMessage(record, "lost msg", true)).resolves.toBeUndefined();
 
     // 写入照常发生（热路径语义不变，不做二次分发）
     const lines = readStdinLines(child);
@@ -263,7 +263,7 @@ describe("deliverChatMessage (V2 决策 3 chatMode 统一投递)", () => {
     const child = makeStreamChild();
     spawnedChildren.set(record.id, child);
 
-    await service.deliverChatMessage(record, "normal", false);
+    await service.chatActions.deliverChatMessage(record, "normal", false);
 
     expect(loggerMock.warn).not.toHaveBeenCalledWith(
       expect.stringContaining("died around stdin write"),
@@ -278,7 +278,7 @@ describe("deliverChatMessage (V2 决策 3 chatMode 统一投递)", () => {
     lifecycle.armIdleTimer(record.id, () => {}, 10000);
     expect(lifecycle.hasIdleTimer(record.id)).toBe(true);
 
-    await service.deliverChatMessage(record, "msg", false);
+    await service.chatActions.deliverChatMessage(record, "msg", false);
 
     // disarmIdleTimer 被调 → timer 清除（新 turn 不被 idle timer 误杀）
     expect(lifecycle.hasIdleTimer(record.id)).toBe(false);
@@ -288,7 +288,7 @@ describe("deliverChatMessage (V2 决策 3 chatMode 统一投递)", () => {
     mockRunSpawn.mockResolvedValueOnce(makeResult(true));
     // spawnedChildren 无该 record → getChildByRecord 返回 undefined → 冷路径
 
-    await service.deliverChatMessage(record, "resume msg", false);
+    await service.chatActions.deliverChatMessage(record, "resume msg", false);
 
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
     const call = mockRunSpawn.mock.calls[0]!;
@@ -306,7 +306,7 @@ describe("deliverChatMessage (V2 决策 3 chatMode 统一投递)", () => {
     Object.assign(child, { killed: true }); // 进程已 kill
     spawnedChildren.set(record.id, child);
 
-    await service.deliverChatMessage(record, "after kill", false);
+    await service.chatActions.deliverChatMessage(record, "after kill", false);
 
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
   });
@@ -369,13 +369,13 @@ describe("deliverChatMessage 冷路径并发守卫（review round2 MF1）", () =
     );
 
     // 第一条：正常冷路径 resume
-    await expect(service.deliverChatMessage(record, "first msg", false)).resolves.toBeUndefined();
+    await expect(service.chatActions.deliverChatMessage(record, "first msg", false)).resolves.toBeUndefined();
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
 
     // 第二条：spawn 仍在途（getChildByRecord undefined）→ 再走冷路径。
     // 修复前：续轮守卫恒放行 → 第二次 kickOff → runSpawn 2 次（双 spawn 双写 session）。
     // 修复后：in-flight 守卫 throw 行动语言（MF-4）。
-    await expect(service.deliverChatMessage(record, "second msg", false)).rejects.toThrow(
+    await expect(service.chatActions.deliverChatMessage(record, "second msg", false)).rejects.toThrow(
       /already starting a new round/,
     );
     expect(mockRunSpawn).toHaveBeenCalledTimes(1);
@@ -386,7 +386,7 @@ describe("deliverChatMessage 冷路径并发守卫（review round2 MF1）", () =
       expect((service as unknown as { resumesInFlight: Set<string> }).resumesInFlight.has(record.id)).toBe(false),
     );
     mockRunSpawn.mockResolvedValueOnce(makeResult(true));
-    await expect(service.deliverChatMessage(record, "third msg", false)).resolves.toBeUndefined();
+    await expect(service.chatActions.deliverChatMessage(record, "third msg", false)).resolves.toBeUndefined();
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(2));
     expect(mockRunSpawn.mock.calls[1]![1]).toBe("third msg");
   });
@@ -399,11 +399,11 @@ describe("deliverChatMessage 冷路径并发守卫（review round2 MF1）", () =
       () => new Promise<AgentResult>((res) => { releaseA = res; }),
     );
 
-    await service.deliverChatMessage(record, "A msg", false);
+    await service.chatActions.deliverChatMessage(record, "A msg", false);
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
 
     // B 的冷路径不受 A 在途影响
-    await expect(service.deliverChatMessage(recordB, "B msg", false)).resolves.toBeUndefined();
+    await expect(service.chatActions.deliverChatMessage(recordB, "B msg", false)).resolves.toBeUndefined();
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(2));
     expect(mockRunSpawn.mock.calls[1]![0]).toBe(recordB);
 
@@ -417,7 +417,7 @@ describe("deliverChatMessage 冷路径并发守卫（review round2 MF1）", () =
     let release!: (r: AgentResult) => void;
     mockRunSpawn.mockImplementationOnce(() => new Promise<AgentResult>((res) => { release = res; }));
     // 第一条：冷路径（无 child）→ 续轮在途
-    await expect(service.deliverChatMessage(record, "first", false)).resolves.toBeUndefined();
+    await expect(service.chatActions.deliverChatMessage(record, "first", false)).resolves.toBeUndefined();
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
 
     // 第二条：EPIPE 兜底（child 活但 stdin 断）→ 兜底转冷路径 → 在途守卫 throw 行动语言
@@ -425,7 +425,7 @@ describe("deliverChatMessage 冷路径并发守卫（review round2 MF1）", () =
     epipe.code = "EPIPE"; // writeStdinLine 的 R3 判据：err.code === 'EPIPE' 才转 throw
     const child = { stdin: { destroyed: false, write: () => { throw epipe; } }, exitCode: null, signalCode: null, killed: false } as unknown as ChildProcess;
     spawnedChildren.set(record.id, child);
-    await expect(service.deliverChatMessage(record, "second", false)).rejects.toThrow(/already starting a new round/);
+    await expect(service.chatActions.deliverChatMessage(record, "second", false)).rejects.toThrow(/already starting a new round/);
     expect(mockRunSpawn).toHaveBeenCalledTimes(1);
 
     release(makeResult(true));

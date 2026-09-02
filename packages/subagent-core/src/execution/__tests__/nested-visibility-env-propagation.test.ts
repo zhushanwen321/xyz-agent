@@ -277,7 +277,7 @@ describe("TC-3: PI_SUBAGENT_ROOT_SESSION_ID env 贯穿正确", () => {
     store.register(recordC);
 
     // collectRecords（不带 filter）用 this.sessionRootId 过滤
-    const viaService = service.collectRecords(100);
+    const viaService = service.queries.collectRecords(100);
     const ids = viaService.map((r) => r.id);
 
     // C 的 record 归 ROOT（rootSessionId=root-main-session），能被子进程查到

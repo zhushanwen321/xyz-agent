@@ -143,7 +143,7 @@ describe("deliverChatMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径�
     spawnedChildren.set(record.id, makeEpipeChild());
 
     // 投递不 throw（首次 EPIPE 走续轮兜底）
-    await expect(service.deliverChatMessage(record, "msg after epipe", false)).resolves.toBeUndefined();
+    await expect(service.chatActions.deliverChatMessage(record, "msg after epipe", false)).resolves.toBeUndefined();
 
     // spawnedChildren 中的死进程条目已清理（EPIPE catch 块 delete）
     expect(spawnedChildren.has(record.id)).toBe(false);
@@ -173,7 +173,7 @@ describe("deliverChatMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径�
     spawnedChildren.set(record.id, makeEpipeChild());
 
     // 第 1 次：EPIPE → resume（不 throw）
-    await service.deliverChatMessage(record, "first epipe", false);
+    await service.chatActions.deliverChatMessage(record, "first epipe", false);
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
 
     // resume 完成后 record 回 running（v4 B-1：finalizeRoundToIdle 设 running，旧 idle 折入）
@@ -186,7 +186,7 @@ describe("deliverChatMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径�
     // 注意：第二 EPIPE 时 count 已为 2，catch 块立即 throw（不经过续轮）。
     let thrown: unknown;
     try {
-      await service.deliverChatMessage(record, "second epipe", false);
+      await service.chatActions.deliverChatMessage(record, "second epipe", false);
     } catch (err) {
       thrown = err;
     }
@@ -202,13 +202,13 @@ describe("deliverChatMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径�
 
     // 第 1 轮：EPIPE → resume
     spawnedChildren.set(record.id, makeEpipeChild());
-    await service.deliverChatMessage(record, "epipe msg", false);
+    await service.chatActions.deliverChatMessage(record, "epipe msg", false);
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(record.status).toBe("running"));
 
     // 第 2 轮：正常 child，成功写入（清零 EPIPE 计数）
     spawnedChildren.set(record.id, makeNormalChild());
-    await service.deliverChatMessage(record, "normal msg", true);
+    await service.chatActions.deliverChatMessage(record, "normal msg", true);
     // 不 throw，status=running（热路径成功）
     expect(record.status).toBe("running");
 
@@ -216,7 +216,7 @@ describe("deliverChatMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径�
     // 需要先让 record 回 running（等待续聊态）
     record.status = "running";
     spawnedChildren.set(record.id, makeEpipeChild());
-    await expect(service.deliverChatMessage(record, "after reset", false)).resolves.toBeUndefined();
+    await expect(service.chatActions.deliverChatMessage(record, "after reset", false)).resolves.toBeUndefined();
   });
 
   it("EPIPE 兜底与冷路径共用 in-flight 守卫：resume 在途时 EPIPE 兜底不再二次 spawn（review round2 MF1）", async () => {
@@ -225,14 +225,14 @@ describe("deliverChatMessage EPIPE 兜底（热路径 stdin EPIPE → 冷路径�
     mockRunSpawn.mockImplementationOnce(
       () => new Promise<AgentResult>((res) => { releaseFirst = res; }),
     );
-    await service.deliverChatMessage(record, "cold path first", false);
+    await service.chatActions.deliverChatMessage(record, "cold path first", false);
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
 
     // 注册 EPIPE child → 投递走热路径 → stdin EPIPE → 兜底调冷路径续轮
     // → in-flight 命中 → throw（不再走第二次 spawn。EPIPE 计数仍 +1 但未达阈值 2，
     // exhaustion 分支不触发；throw 由兜底路径的 resumeRound 守卫抛出）
     spawnedChildren.set(record.id, makeEpipeChild());
-    await expect(service.deliverChatMessage(record, "epipe during resume", false)).rejects.toThrow(
+    await expect(service.chatActions.deliverChatMessage(record, "epipe during resume", false)).rejects.toThrow(
       /already starting a new round/,
     );
     expect(mockRunSpawn).toHaveBeenCalledTimes(1);

@@ -116,7 +116,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
     store.register(recordB);
     internals.execNesting.setBaseline(PARENT_A);
 
-    expect(service.getRecordForAction("sa-B")).toBe(recordB);
+    expect(service.chatActions.getRecordForAction("sa-B")).toBe(recordB);
   });
 
   // ---------- 身份 undefined（主进程）：拒绝孙级，放行根层 ----------
@@ -126,8 +126,8 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
     store.register(recordB);
     internals.execNesting.setBaseline(MAIN_PROCESS);
 
-    expect(() => service.getRecordForAction("sa-B")).toThrow(/direct parent/);
-    expect(() => service.getRecordForAction("sa-B")).toThrow(/see \/subagents list, parent=sa-A/);
+    expect(() => service.chatActions.getRecordForAction("sa-B")).toThrow(/direct parent/);
+    expect(() => service.chatActions.getRecordForAction("sa-B")).toThrow(/see \/subagents list, parent=sa-A/);
   });
 
   it("身份=undefined（主进程）放行顶层 record（parentRecordId=undefined 视为根层）", () => {
@@ -135,7 +135,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
     store.register(topRecord);
     internals.execNesting.setBaseline(MAIN_PROCESS);
 
-    expect(service.getRecordForAction("sa-top")).toBe(topRecord);
+    expect(service.chatActions.getRecordForAction("sa-top")).toBe(topRecord);
   });
 
   // ---------- 身份 sa-B（兄弟进程）：拒绝孙级 ----------
@@ -145,8 +145,8 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
     store.register(recordB);
     internals.execNesting.setBaseline(SIBLING_B);
 
-    expect(() => service.getRecordForAction("sa-B")).toThrow(/direct parent/);
-    expect(() => service.getRecordForAction("sa-B")).toThrow(/see \/subagents list, parent=sa-A/);
+    expect(() => service.chatActions.getRecordForAction("sa-B")).toThrow(/direct parent/);
+    expect(() => service.chatActions.getRecordForAction("sa-B")).toThrow(/see \/subagents list, parent=sa-A/);
   });
 
   // ---------- 身份缺省语义 + 更深递归 ----------
@@ -156,7 +156,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
     store.register(topRecord);
     internals.execNesting.setBaseline(PARENT_A);
 
-    expect(() => service.getRecordForAction("sa-top")).toThrow(/direct parent/);
+    expect(() => service.chatActions.getRecordForAction("sa-top")).toThrow(/direct parent/);
   });
 
   it("P7 场景：主进程拒绝曾孙 record C（parentRecordId=sa-B），错误含 baseline=root + parent=sa-B", () => {
@@ -164,7 +164,7 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
     store.register(recordC);
     internals.execNesting.setBaseline(MAIN_PROCESS);
 
-    const fn = () => service.getRecordForAction("sa-C");
+    const fn = () => service.chatActions.getRecordForAction("sa-C");
     expect(fn).toThrow(/direct parent/);
     expect(fn).toThrow(/see \/subagents list, parent=sa-B/);
     expect(fn).toThrow(/baseline=\(root\)/);
@@ -176,6 +176,6 @@ describe("[v4 A-5 / P7] getRecordForAction 直接父校验", () => {
     store.register(foreignRecord);
     internals.execNesting.setBaseline(PARENT_A);
 
-    expect(() => service.getRecordForAction("sa-foreign")).toThrow(/not found or not owned/);
+    expect(() => service.chatActions.getRecordForAction("sa-foreign")).toThrow(/not found or not owned/);
   });
 });

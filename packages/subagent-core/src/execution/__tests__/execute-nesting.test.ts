@@ -293,7 +293,7 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
     ).rejects.toThrow(/nesting depth/);
 
     // 无副作用：guard 在 createRecordForMode 之前，record 未创建
-    expect(service.collectRecords(10)).toHaveLength(0);
+    expect(service.queries.collectRecords(10)).toHaveLength(0);
     // guard 在 spawn 之前——不应 spawn 任何子进程
     expect(mockSpawn).not.toHaveBeenCalled();
   });

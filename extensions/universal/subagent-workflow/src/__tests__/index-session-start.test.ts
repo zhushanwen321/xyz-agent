@@ -4,18 +4,20 @@
 //
 // 测试目标：验证 `subagentsWorkflowExtension(pi)` 的 session_start handler
 // 是否正确注入 uiRequestHandler，特别是 **SR-3**：
-//   无论 new 还是 existing SubagentService，session_start 都必须调
-//   setUiRequestHandler——/resume /fork 复用 existingService 时旧 handler 可能失效。
+//   无论 new 还是 existing SubagentService，session_start 都必须注入 handler
+//   （[D4-④] 注入通道 = initSession.uiRequestHandler 参数，原 setUiRequestHandler
+//   方法已随 D4 Service 收窄删除）——/resume /fork 复用 existingService 时旧
+//   handler 可能失效。
 //
 // 4 个 case：
-//   1. new 路径（existingService=null）：setUiRequestHandler 被调，参数是函数（tui mode）
-//   2. existing 路径（existingService=mockService）：setUiRequestHandler 仍被调（SR-3 关键）
-//   3. headless mode（json）：createUiRequestHandlerForMode 返回 undefined，
-//      setUiRequestHandler(undefined) 被调（不注入但仍有调用，SR-3 形式不破）
-//   4. rpc mode：setUiRequestHandler 被调，参数是函数
+//   1. new 路径（existingService=null）：initSession 收到 uiRequestHandler=函数（tui mode）
+//   2. existing 路径（existingService=mockService）：initSession 仍收到 handler（SR-3 关键）
+//   3. headless mode（json）：createUiRequestHandlerForMode 返回 undefined →
+//      initSession 收到 null（显式清空语义，防旧 session handler 残留）
+//   4. rpc mode：initSession 收到 uiRequestHandler=函数
 //
 // 既有 crash-recovery.test.ts / session-start-reaper.test.ts mock 了 SubagentService
-// 但**没有断言 setUiRequestHandler 被调用**——本测试补这个断言，且覆盖 existing 路径
+// 但**没有断言 handler 注入**——本测试补这个断言，且覆盖 existing 路径
 // （既有测试 fixed getSubagentService() => null，只能走 new 分支）。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -66,17 +68,15 @@ vi.mock("typebox", () => ({
   },
 }));
 
-// ── hoisted mock 实例：捕获 setUiRequestHandler 调用 + 可控行为 ──
+// ── hoisted mock 实例：捕获 initSession 调用（handler 注入参数在内）+ 可控行为 ──
 
 const {
-  mockSetUiRequestHandler,
   mockInitSession,
   mockLoadAll,
   mockRecoverManifestTmpFiles,
   /** existing service 引用——测试可改写以模拟 /resume /fork 复用。 */
   existingServiceRef,
 } = vi.hoisted(() => ({
-  mockSetUiRequestHandler: vi.fn(),
   mockInitSession: vi.fn(),
   mockLoadAll: vi.fn(async () => []),
   // ADR-035 启动恢复接线守护：session_start 必须调 service.recoverManifestTmpFiles
@@ -84,12 +84,13 @@ const {
   existingServiceRef: { current: null as unknown },
 }));
 
-// SubagentService mock：每次构造都返回同一组 spy，setUiRequestHandler 可观察。
+// SubagentService mock：每次构造都返回同一组 spy，initSession 参数可观察。
+// [D4-④] setUiRequestHandler 已从 Service 删除（initSession.uiRequestHandler 是唯一
+// 注入入口），mock 形态跟随。
 // getSubagentService 返回 existingServiceRef.current（null=走 new；非 null=走 existing）。
 vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
   SubagentService: class {
     initSession = mockInitSession;
-    setUiRequestHandler = mockSetUiRequestHandler;
     recoverManifestTmpFiles = mockRecoverManifestTmpFiles;
     startGcTimer = vi.fn();
     getStreamSink = () => null;
@@ -276,7 +277,7 @@ beforeEach(() => {
 // ── tests ──
 
 describe("session_start UI handler 注入链路（SR-3）", () => {
-  it("new 路径（existingService=null）：setUiRequestHandler 被调，参数是函数（tui mode）", async () => {
+  it("new 路径（existingService=null）：initSession 收到 uiRequestHandler=函数（tui mode）", async () => {
     const { pi, getSessionStartHandler } = createMockPi();
     subagentsExtension(pi);
 
@@ -284,19 +285,18 @@ describe("session_start UI handler 注入链路（SR-3）", () => {
     expect(handler).toBeDefined();
     await handler!({ type: "session_start" }, createMockCtx("tui"));
 
-    // SR-3 核心：setUiRequestHandler 必须被调
-    expect(mockSetUiRequestHandler).toHaveBeenCalledTimes(1);
-    // 非 headless mode → 注入的是函数（UiRequestHandler），非 undefined
-    const injected = mockSetUiRequestHandler.mock.calls[0]?.[0];
-    expect(typeof injected).toBe("function");
+    // SR-3 核心：initSession 必须收到 handler（[D4-④] 唯一注入入口）
+    expect(mockInitSession).toHaveBeenCalledTimes(1);
+    // 非 headless mode → 注入的是函数（UiRequestHandler），非 null/undefined
+    const initArg = mockInitSession.mock.calls[0]?.[0] as { uiRequestHandler?: unknown };
+    expect(typeof initArg?.uiRequestHandler).toBe("function");
   });
 
-  it("existing 路径（existingService=mockService）：setUiRequestHandler 仍被调（SR-3 关键）", async () => {
+  it("existing 路径（existingService=mockService）：initSession 仍收到 handler（SR-3 关键）", async () => {
     // 模拟 /resume /fork：getSubagentService() 返回已存在的 service
-    //（同一 mock 类的实例——spy 仍是 mockSetUiRequestHandler，断言可观察到调用）
+    //（同一 mock 类形状——spy 仍是 mockInitSession，断言可观察到调用）
     existingServiceRef.current = {
       initSession: mockInitSession,
-      setUiRequestHandler: mockSetUiRequestHandler,
       // ADR-035：与 SubagentService mock class 形状一致——session_start
       // 会调 service.recoverManifestTmpFiles()，缺方法会抛 TypeError 被吞为 console.warn
       recoverManifestTmpFiles: mockRecoverManifestTmpFiles,
@@ -312,52 +312,54 @@ describe("session_start UI handler 注入链路（SR-3）", () => {
     expect(handler).toBeDefined();
     await handler!({ type: "session_start" }, createMockCtx("tui"));
 
-    // SR-3 关键断言：existing 路径下 setUiRequestHandler 仍被调
-    //（旧 handler 可能已失效，session_start 必须重新注入）
-    expect(mockSetUiRequestHandler).toHaveBeenCalledTimes(1);
-    const injected = mockSetUiRequestHandler.mock.calls[0]?.[0];
-    expect(typeof injected).toBe("function");
+    // SR-3 关键断言：existing 路径下 initSession 仍收到 handler
+    //（旧 handler 可能已失效，session_start 必须重新注入覆盖）
+    expect(mockInitSession).toHaveBeenCalledTimes(1);
+    const initArg = mockInitSession.mock.calls[0]?.[0] as { uiRequestHandler?: unknown };
+    expect(typeof initArg?.uiRequestHandler).toBe("function");
 
     // ADR-035 existing 路径守护：/resume /fork 复用 service 时 session_start
     // 也必须调 recoverManifestTmpFiles。守护 case 走 new 路径抓不到 existing 误删，
-    // 此处对称断言（与 setUiRequestHandler 在本 case 的独立断言同模式）。
+    // 此处对称断言（与 handler 注入在本 case 的独立断言同模式）。
     expect(mockRecoverManifestTmpFiles).toHaveBeenCalledTimes(1);
   });
 
-  it("headless mode（json）：createUiRequestHandlerForMode 返回 undefined → setUiRequestHandler(undefined)", async () => {
+  it("headless mode（json）：createUiRequestHandlerForMode 返回 undefined → initSession 收到 null（显式清空）", async () => {
     const { pi, getSessionStartHandler } = createMockPi();
     subagentsExtension(pi);
 
     const handler = getSessionStartHandler();
     await handler!({ type: "session_start" }, createMockCtx("json"));
 
-    // SR-3 形式不破：仍调 setUiRequestHandler（参数是 undefined，表示不注入）
-    expect(mockSetUiRequestHandler).toHaveBeenCalledTimes(1);
-    expect(mockSetUiRequestHandler.mock.calls[0]?.[0]).toBeUndefined();
+    // SR-3 语义保留：headless 不注入 handler，且显式传 null（清空旧 session 残留，
+    // 非 undefined——undefined 是「不动」语义，会保留上一个 session 的 handler）
+    expect(mockInitSession).toHaveBeenCalledTimes(1);
+    const initArg = mockInitSession.mock.calls[0]?.[0] as { uiRequestHandler?: unknown };
+    expect(initArg?.uiRequestHandler).toBeNull();
   });
 
-  it("rpc mode：setUiRequestHandler 被调，参数是函数", async () => {
+  it("rpc mode：initSession 收到 uiRequestHandler=函数", async () => {
     const { pi, getSessionStartHandler } = createMockPi();
     subagentsExtension(pi);
 
     const handler = getSessionStartHandler();
     await handler!({ type: "session_start" }, createMockCtx("rpc"));
 
-    expect(mockSetUiRequestHandler).toHaveBeenCalledTimes(1);
-    const injected = mockSetUiRequestHandler.mock.calls[0]?.[0];
-    expect(typeof injected).toBe("function");
+    expect(mockInitSession).toHaveBeenCalledTimes(1);
+    const initArg = mockInitSession.mock.calls[0]?.[0] as { uiRequestHandler?: unknown };
+    expect(typeof initArg?.uiRequestHandler).toBe("function");
   });
 
-  it("initSession 不再收 uiRequestHandler（#24 单一注入入口：setUiRequestHandler 唯一通道）", async () => {
+  it("initSession 是 uiRequestHandler 单一注入入口（[#24][D4-④]，防双路径注入回退）", async () => {
     const { pi, getSessionStartHandler } = createMockPi();
     subagentsExtension(pi);
 
     const handler = getSessionStartHandler();
     await handler!({ type: "session_start" }, createMockCtx("tui"));
 
-    // [#24] uiRequestHandler 单一注入入口：index.ts 只调 service.setUiRequestHandler(h)，
-    // 不再重复传 initSession.uiRequestHandler——避免同一 handler 双路径注入造成
-    // "哪一个是 source of truth" 歧义。此处断言该契约不被回退。
+    // [#24][D4-④] 单一注入入口：index.ts 经 initSession.uiRequestHandler 注入 handler
+    //（原 setUiRequestHandler 方法已删，双路径注入在 Service 面上不可达）。
+    // mode 仍需 session 级注入（uiObservability.setMode 依赖它）。
     expect(mockInitSession).toHaveBeenCalledTimes(1);
     const initArg = mockInitSession.mock.calls[0]?.[0] as {
       uiRequestHandler?: unknown;
@@ -365,14 +367,11 @@ describe("session_start UI handler 注入链路（SR-3）", () => {
       dialogQueue?: unknown;
     } | undefined;
     expect(initArg).toBeDefined();
-    // uiRequestHandler 不再走 initSession（已被 #24 移除）
-    expect(initArg?.uiRequestHandler).toBeUndefined();
+    expect(typeof initArg?.uiRequestHandler).toBe("function");
     // mode 仍需 session 级注入（uiObservability.setMode 依赖它）
     expect(initArg?.mode).toBe("tui");
     // dialogQueue 仍注入（SR-4 清理路径接通）
     expect(initArg).toHaveProperty("dialogQueue");
-    // handler 经 setUiRequestHandler 注入（单一入口）——前面 case 已断言，此处复断不再赘述。
-    expect(mockSetUiRequestHandler).toHaveBeenCalledTimes(1);
   });
 
   it("session_start 调用 recoverManifestTmpFiles（接线守护，防 ADR-035 启动恢复再次断线）", async () => {

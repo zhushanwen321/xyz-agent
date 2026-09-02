@@ -75,7 +75,7 @@ describe("SubagentService", () => {
 
     it("未 initSession 时 findRecord/cancel 抛 'pi not injected'", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
-      expect(() => service.findRecord("any")).toThrow(/pi not injected/);
+      expect(() => service.queries.findRecord("any")).toThrow(/pi not injected/);
       expect(() => service.cancel("any")).toThrow(/pi not injected/);
     });
 
@@ -83,7 +83,7 @@ describe("SubagentService", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
       // findRecord 现在能过 assertReady,但 record 不存在 → 返回 undefined
-      expect(service.findRecord("missing")).toBeUndefined();
+      expect(service.queries.findRecord("missing")).toBeUndefined();
     });
 
     it("dispose 后 findRecord 抛含 'disposed' 且带恢复指引", () => {
@@ -92,8 +92,8 @@ describe("SubagentService", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
       service.dispose();
-      expect(() => service.findRecord("any")).toThrow(/disposed/);
-      expect(() => service.findRecord("any")).toThrow(/session ended|session_start|new session/i);
+      expect(() => service.queries.findRecord("any")).toThrow(/disposed/);
+      expect(() => service.queries.findRecord("any")).toThrow(/session ended|session_start|new session/i);
     });
 
     it("dispose 幂等(多次调用不抛)", () => {
@@ -113,7 +113,7 @@ describe("SubagentService", () => {
       // revive
       service.initSession({ pi: makePi(), sessionId: "s2" });
       // 现在 assertReady 又通过(findRecord 返回 undefined 而非 disposed)
-      expect(service.findRecord("any")).toBeUndefined();
+      expect(service.queries.findRecord("any")).toBeUndefined();
     });
   });
 
@@ -125,7 +125,7 @@ describe("SubagentService", () => {
     it("findRecord 不存在的 id 返回 undefined", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
-      expect(service.findRecord("nonexistent-id")).toBeUndefined();
+      expect(service.queries.findRecord("nonexistent-id")).toBeUndefined();
     });
 
     it("cancel 不存在的 id 返回 false(不抛错,boolean 契约不变)", () => {
@@ -140,16 +140,13 @@ describe("SubagentService", () => {
   // ============================================================
 
   describe("状态查询", () => {
-    it("listRunning 初始为空数组", () => {
-      const service = new SubagentService({ cwd: agentDir, modelService });
-      service.initSession({ pi: makePi(), sessionId: "s1" });
-      expect(service.listRunning()).toEqual([]);
-    });
+    // [D4] listRunning 已从 Service 删除（零生产调用方）——初始空态语义由
+    // collectRecords 用例与 store 层 listRunning 测试覆盖。
 
     it("collectRecords 返回数组(空 sessions 目录时为空)", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
-      const records = service.collectRecords(100);
+      const records = service.queries.collectRecords(100);
       expect(Array.isArray(records)).toBe(true);
     });
 
@@ -157,7 +154,7 @@ describe("SubagentService", () => {
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
       const listener = vi.fn();
-      const unsubscribe = service.onChange(listener);
+      const unsubscribe = service.queries.onChange(listener);
       expect(typeof unsubscribe).toBe("function");
       expect(() => unsubscribe()).not.toThrow();
     });
@@ -362,7 +359,8 @@ describe("SubagentService", () => {
 
       const service = new SubagentService({ cwd: agentDir, modelService });
       service.initSession({ pi: makePi(), sessionId: "s1" });
-      service.setUiRequestHandler(staleHandler);
+      // [D4-④] setUiRequestHandler 已删——handler 注入走 initSession 参数（唯一入口）
+      service.initSession({ pi: makePi(), sessionId: "s1", uiRequestHandler: staleHandler });
 
       service.dispose();
 

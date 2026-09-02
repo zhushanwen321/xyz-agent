@@ -30,13 +30,21 @@ function makeRecord(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
   return r;
 }
 
-/** mock SubagentService 的 message/close 相关方法子集。 */
+/** mock SubagentService 的 message/close 相关方法子集。
+ *  [D4 聚合跟随] message/close 生产消费面 = service.chatActions（平铺键保留供既有
+ *  断言引用）。 */
 function makeMockService(): SubagentService {
-  return {
+  const chatActions = {
     getRecordForAction: vi.fn(),
-    resumeRound: vi.fn(),
     deliverChatMessage: vi.fn(),
     closeSubagent: vi.fn(),
+  };
+  return {
+    getRecordForAction: chatActions.getRecordForAction,
+    deliverChatMessage: chatActions.deliverChatMessage,
+    closeSubagent: chatActions.closeSubagent,
+    resumeRound: vi.fn(),
+    chatActions,
   } as unknown as SubagentService;
 }
 

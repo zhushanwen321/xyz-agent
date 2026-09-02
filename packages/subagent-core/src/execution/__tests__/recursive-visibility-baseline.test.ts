@@ -239,7 +239,7 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
     // 旧实现传 this.sessionId（子进程自己的 session id ≠ ROOT）→ 子进程内列表恒空。
     // 子进程的本进程 sessionId 是 "baseline-it"（initSession 注入），而 record 归属
     // root-main（env 贯穿的真 ROOT）——能查到即证明过滤用的是 sessionRootId。
-    const viaService = service.collectRecords(10);
+    const viaService = service.queries.collectRecords(10);
     expect(viaService.map((r) => r.id)).toContain(handle.subagentId);
     expect(viaService[0]!.rootSessionId).toBe("root-main");
   });

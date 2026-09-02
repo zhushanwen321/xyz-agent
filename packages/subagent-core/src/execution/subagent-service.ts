@@ -1,32 +1,31 @@
-// 执行编排 + 记录 + 通知领域 Service。
-// 上游：subagent-tool（execute/query/cancel）、TUI（onChange/listRunning/collectRecords）。
+// 执行编排 + 记录领域 Service（D4 按变化轴拆分后的编排核：execute/executeAndAwait 入口、
+// record 生命周期、cancel）。通知簇 → notify-host.ts；轮次结算闭包 → round-settlement.ts；
+// 冷路径复活 → cold-resurrect.ts。
+// 上游：subagent-tool（execute/query/cancel）、TUI（onChange/collectRecords）。
 // session_start 时经 initSession 注入 pi；modelRegistry/entries 归 ModelConfigService.initModel。
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import * as fs from "node:fs";
 
 import { getLogger } from "../core/logger.ts";
 
 import type { ExtensionMode } from "./host-mode.ts";
 
 import type { AgentResult as WorkflowAgentResult } from "../orchestration/models/types.ts";
-import { displayAgentName } from "../shared/agent-ref.ts";
 // D-A10: workflow 侧 AgentResult 映射（executeAndAwait 出口）
 import { mapToWorkflowAgentResult } from "./agent-result-mapper.ts";
-import { removeAliveMarker, findForeignLiveInstance, writeAliveMarker } from "./alive-store.ts";
+import { removeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
 // [V2 决策 3] lifecycle-manager idle timer：chatMode 统一投递新 turn disarm（防误杀活进程）。
-// [M3] hasIdleTimer：piAdapter.hasRunningBackground 排除等待续聊（timer armed）的 record。
-import { disarmIdleTimer, hasIdleTimer } from "./lifecycle-manager.ts";
+// [M3] hasIdleTimer：notify-host 的 piAdapter.hasRunningBackground 排除等待续聊（timer armed）
+// 的 record（D4-① 随通知簇搬移）。
+import { disarmIdleTimer } from "./lifecycle-manager.ts";
 import { type ConcurrencyPool,DefaultConcurrencyPool } from "./concurrency-pool.ts";
 import type { DialogGlobalQueue, UiRequestHandler } from "./dialog-queue.ts";
+import { COLD_LOOKUP_SCAN_LIMIT, coldLookupForAction, type ColdResurrectDeps } from "./cold-resurrect.ts";
 import {
   completeRecord,
   createRecord,
-  getFullTextFrom,
-  nextRoundBaseTurnIndex,
   project,
-  resurrectClosed,
   snapshot,
   tryTransition,
 } from "./execution-record.ts";
@@ -45,14 +44,14 @@ import type { AgentOutcome } from "./engine/types.ts";
 import { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import type { AgentConfig, ModelInfo, ResolvedModel } from "./model-resolver.ts";
-import type { BgNotifyRecord, BgNotifier, NotifierHost } from "./notifier.ts";
-import { createNotifier } from "./notifier.ts";
+import { type NotifyHost, type PiLike, createNotifyHost } from "./notify-host.ts";
 import { getSubagentRecordsDir, getSubagentSessionDir } from "./path-encoding.ts";
+import { createRoundSettler } from "./round-settlement.ts";
 import type { StatusFilter } from "./record-store.ts";
 import { RecordStore } from "./record-store.ts";
 import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
 import { getChildByRecord, killAllSpawnedChildren, registerSpawnedChildForRecord, runSpawn, type SessionRunnerContext, type SpawnResumeOpts } from "./engine/engines/pi/session-runner.ts";
-import { isIdle, isResumable, hasLiveProcessHandle } from "./lifecycle-predicates.ts";
+import { isIdle, isResumable } from "./lifecycle-predicates.ts";
 import { startIdleGc } from "./idle-gc.ts";
 import { resetAllEpipeFailures } from "./engine/engines/pi/stdin-writer.ts";
 import type { StreamSink, SubagentStream } from "./stream-sink.ts";
@@ -71,15 +70,40 @@ import type {
   SubagentRecord,
 } from "./types.ts";
 import { ForkDepthExceededError } from "./types.ts";
-import { isReconnectableFinalReason, ResurrectDeniedError } from "./types.ts";
 import { DEFAULT_AGENT_NAME } from "./types.ts";
 import { registerGlobalObservability, UiRequestObservability } from "./ui-request-observability.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 
 const logger = getLogger("subagents");
 
-/** SP-2 冷路径按 id 查 record 的 collectRecords 扫描上限（全扫兜底的容量 cap）。 */
-const COLD_LOOKUP_SCAN_LIMIT = 1000;
+/** [D4 查询面聚合] 读模型轴（record 快照读取 + store 订阅）——Service 上的
+ *  `service.queries` 消费面。变化轴：改查询投影 / 过滤 / 订阅语义，只动 queries 组；
+ *  Service 本体保留编排核（execute/executeAndAwait/cancel）与生命周期面。 */
+export interface SubagentQueries {
+  /** 按 id 查内存 running record 的只读快照（G3-002 修复）。不存在返回 undefined。 */
+  findRecord(id: string): RecordSnapshot | undefined;
+  /** [v8.5 A1/B] 全态查找：任意状态 × 任意归属的 record 快照（message 拒绝文案分流
+   *  与 fork-from 源解析共用）。id 在内存与磁盘均不存在返回 undefined。 */
+  lookupRecordAnyState(id: string): SubagentRecord | undefined;
+  /** 合并内存 + 磁盘 record（/subagents list + tool list 消费，按 rootSessionId 过滤）。 */
+  collectRecords(limit: number, statusFilter?: StatusFilter): SubagentRecord[];
+  /** [perf] 单 record 详情懒加载（全量：eventLog/displayItems/result/turns/tokens）。 */
+  getFullRecord(id: string): SubagentRecord | undefined;
+  /** 订阅 store 变更（widget/list requestRender）。返回取消订阅。 */
+  onChange(listener: () => void): () => void;
+}
+
+/** [D4 对话 action 面聚合] chat 域 message/close action 轴（M2-B3，原 Service 同节三方法）
+ *  ——Service 上的 `service.chatActions` 消费面。变化轴：改对话域归属校验 / close 分流 /
+   投递编排，只动 chatActions 组。 */
+export interface SubagentChatActions {
+  /** 按 id 查 record 并做归属校验（message/close action 的统一入口）。 */
+  getRecordForAction(id: string, opts?: { allowReconnect?: boolean }): ExecutionRecord;
+  /** close action 的统一行为分流（running 子态 × force）。 */
+  closeSubagent(record: ExecutionRecord, force: boolean): Promise<void>;
+  /** chatMode 统一投递入口（message action，经引擎交互面执行）。 */
+  deliverChatMessage(record: ExecutionRecord, text: string, interrupt: boolean): Promise<void>;
+}
 
 // [v4 A-1] EPIPE 连续失败计数器在 stdin-writer.ts（stdin 错误域，避免 session-runner
 // 反向 import 本文件 helper 产生循环依赖）。同步路径（PiEngine 热路径投递，D2 协议知识
@@ -102,48 +126,10 @@ const COLD_LOOKUP_SCAN_LIMIT = 1000;
  * 没真正解决。 */
 const disposedUiRequestStub: UiRequestHandler = () => Promise.resolve({ cancelled: true });
 
-/** Pi ExtensionAPI 的最小接口（duck-typed）。
- *  subagent-service 直接调 pi.sendMessage 发 background 完成通知（BgNotifier 滑动窗口合并），
- *  不委托 pending-notifications EventBus 中继——后者只管 registry 不参与通知发送。 */
-interface PiLike {
-  appendEntry(customType: string, data?: unknown): void;
-  events: { emit(channel: string, data: unknown): void };
-  sendMessage(
-    message: { customType: string; content: string; display: boolean; details?: unknown },
-    options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" }, // g4-allow: 类型注解——PiLike 接口形状（pi.sendMessage 签面子集），非投递调用
-  ): void;
-  /** 订阅 pi 事件（D8：notifier 的 settled 边沿订阅用 'agent_settled'）。
-   *  pi 0.84.1 的 on 返回 void 且无 off——退订语义由调用侧 disposed 标志包装兑现。
-   *  可选：旧测试 mock pi 可能未实现 on，缺省时 notifier 退化为内核退避路径。 */
-  on?(event: "agent_settled", handler: () => void): void;
-}
-
 /** UI streaming sink 的最小接口（ctx.ui.setWidget 的 duck-typed 子集）。
  *  session_start 时从 ctx.ui 注入，background 执行期间用于把合并后的 text_delta
  *  通过 setWidget 通道转发到 RPC stdout（不经 sendMessage 的持久化路径）。 */
 export type { StreamSink } from "./stream-sink.ts";
-
-/** pending-notifications 注册/注销 helper（避免重复代码）。
- *  name 是 GUI pending 通知的显示名——取 basename 短名（displayAgentName），
- *  完整路径仍走 record.agent（env 注入 / 持久化）。 */
-function emitPendingRegister(pi: PiLike | null, id: string, name?: string): void {
-  pi?.events.emit("pending:register", {
-    id,
-    type: "subagent",
-    name: name ? displayAgentName(name) : id,
-  });
-}
-
-function emitPendingUnregister(
-  pi: PiLike | null,
-  id: string,
-  reason: string,
-): void {
-  pi?.events.emit("pending:unregister", {
-    id,
-    reason,
-  });
-}
 
 /** Service 构造参数（进程级）。 */
 export interface SubagentServiceInit {
@@ -172,8 +158,12 @@ export interface SubagentServiceSessionInit {
    *  initSession 读取后存入 this.sessionMode，buildSessionRunnerContext 透传给 session-runner。 */
   mode?: ExtensionMode;
   /** UI 请求 handler（session 级覆盖进程级）。
-   *  initSession 读取后覆盖 this.uiRequestHandler（setUiRequestHandler 的 session 级等价入口）。 */
-  uiRequestHandler?: UiRequestHandler;
+   *  [D4-④ UI 接线外提] 本字段是 handler 的唯一注入入口（原 setUiRequestHandler 方法已删）。
+   *  三态语义：undefined = 不动（保留进程级构造/上次值，供不注入 handler 的调用方）；
+   *  null = 显式清空（承载原 setUiRequestHandler(undefined) 语义——headless 的
+   *  createUiRequestHandlerForMode 返回 undefined 时壳侧传 null）；值 = 注入并重置
+   *  缺失告警去重。 */
+  uiRequestHandler?: UiRequestHandler | null;
   /** L2 跨子进程全局 dialog 串行队列（进程单例）。透传给 session-runner，
    *  child close 时调 rejectChildDialogs 清理 pending（SR-4 防全局死锁）。 */
   dialogQueue?: DialogGlobalQueue;
@@ -263,8 +253,15 @@ export class SubagentService {
   getStreamSink(): StreamSink | null { return this.streamSink; }
   private _disposed = false;
   private _seq = 0;
-  /** background 完成通知器（滑动窗口合并 + 去重）。session_start revive，shutdown dispose。 */
-  private readonly notifier: BgNotifier;
+  /** [D4-①] 通知簇 host 面（notifyComplete/notifyClosed/pending 注册注销 + notifier
+   *  实例封装，原私有通知簇四方法与模块函数的搬移落点——notify-host.ts）。
+   *  deps 惰性求值（pi/session 级状态运行时可变），行为与原 constructor 内
+   *  createNotifier(this.piAdapter()) 逐字节等价。session_start revive，shutdown dispose。 */
+  private readonly notifyHost: NotifyHost = createNotifyHost({
+    getPi: () => this.pi,
+    listRunning: () => this.store.listRunning(),
+    getIsIdle: () => this.isIdleFn,
+  });
   /** [MF#4][MF#2] fork 深度按 async 调用链传递（AsyncLocalStorage），替代共享可变计数器。
    *  主 session=0；fork 进入子 session 期间推进为子深度，供嵌套 fork 经 ALS 读到自身深度作为
    *  parentForkDepth。并发 background fork 各自独立调用链，不再互相压低深度值。
@@ -295,6 +292,44 @@ export class SubagentService {
   /** chat 域轮次交接包（executeViaEngine / 冷路径续轮挂载 → PiEngine.run 经 taskId 消费）。 */
   private readonly chatRoundTickets = new Map<string, ChatRoundTicket>();
 
+  /** [D4-②] 轮次结算回调（原 buildSessionRunnerContext 内的 onRoundSettled 业务闭包
+   *  搬移至 round-settlement.ts；deps 回调闭包惰性求值，session-runner agent_settled 时消费）。 */
+  private readonly settleRound = createRoundSettler({
+    notifyComplete: (record) => this.notifyHost.notifyComplete(record),
+    reportRecordTransition: (record) => this.store.reportRecordTransition(record),
+    closeAfterRoundSettled: (record) => this.closeAfterRoundSettled(record),
+  });
+
+  /** [D4-③] 冷路径复活依赖（原四件 private 方法的搬移落点——cold-resurrect.ts；
+   *  deps 闭包惰性求值：sessionRootId / execNesting 基线运行时可变）。 */
+  private readonly coldResurrectDeps: ColdResurrectDeps = {
+    findLightById: (id) => this.store.findLightById(id),
+    collectRecords: (limit, statusFilter, rootFilter) =>
+      this.store.collectRecords(limit, statusFilter, rootFilter),
+    register: (record) => this.store.register(record),
+    reportRecordTransition: (record) => this.store.reportRecordTransition(record),
+    getSessionRootId: () => this.sessionRootId,
+    getBaselineRecordId: () => this.execNesting.baseline()?.recordId ?? undefined,
+  };
+
+  /** [D4 查询面聚合] 读模型消费面（壳 interface/ 视图与 tool 查询经此访问；
+   *  纯委托——方法本体保留 private 实现不重写，行为逐字节等价）。 */
+  readonly queries: SubagentQueries = {
+    findRecord: (id) => this.findRecord(id),
+    lookupRecordAnyState: (id) => this.lookupRecordAnyState(id),
+    collectRecords: (limit, statusFilter) => this.collectRecords(limit, statusFilter),
+    getFullRecord: (id) => this.getFullRecord(id),
+    onChange: (listener) => this.onChange(listener),
+  };
+
+  /** [D4 对话 action 面聚合] chat 域 message/close 消费面（壳 subagent-actions 经此访问；
+   *  纯委托同上。PiEngineService 适配器不经此——引擎边界走 piEngineServiceAdapter）。 */
+  readonly chatActions: SubagentChatActions = {
+    getRecordForAction: (id, opts) => this.getRecordForAction(id, opts),
+    closeSubagent: (record, force) => this.closeSubagent(record, force),
+    deliverChatMessage: (record, text, interrupt) => this.deliverChatMessage(record, text, interrupt),
+  };
+
   private readonly manifestStore: ManifestStore;
 
   constructor(init: SubagentServiceInit) {
@@ -315,7 +350,6 @@ export class SubagentService {
     const recordsDir = getSubagentRecordsDir(this.modelService.getAgentDir(), this.rootCwd);
     this.manifestStore = new ManifestStore(recordsDir);
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined);
-    this.notifier = createNotifier(this.piAdapter());
     // #11：注册进程级 observability 单例——ui-request-queue.handleUiRequest 经
     // globalThis 桥接（notifyMissingHandlerGlobal）调到同一实例，共享
     // warnedMissingHandlerSessions 去重集合。未注册时 queue 走 fallback warn（不去重）。
@@ -323,20 +357,6 @@ export class SubagentService {
   }
 
   // ── 生命周期（index.ts 调）──────────────────────────────
-
-  /** 覆盖 UI 请求 handler（W3: index.ts session_start 时按 mode 注入 handler 后调）。
-   *  委托 uiObservability 重置缺失告警去重——新 handler 就位后允许重新 warn。 */
-  setUiRequestHandler(handler: UiRequestHandler | undefined): void {
-    this.uiRequestHandler = handler;
-    this.uiObservability.resetMissingHandlerWarnings();
-  }
-
-  /** session-runner handleUiRequest 在 handler 缺失时调用（FR-9 可观测性）。
-   *  委托 uiObservability：按 session 去重，同一 session 的多次 UI 请求只 warn 一次。
-   *  W2: console.warn 兜底。W3 接入 pi.appendEntry("subagent:ui-request-missing-handler", ...)。 */
-  notifyMissingHandler(sessionId: string): void {
-    this.uiObservability.notifyMissingHandler(sessionId);
-  }
 
   /** session_start 注入 pi + revive（modelRegistry/entries 归 ModelConfigService.initModel）。 */
   initSession(init: SubagentServiceSessionInit): void {
@@ -350,10 +370,12 @@ export class SubagentService {
     this.mainSessionFile = init.mainSessionFile;
     this.streamSink = init.streamSink ?? null;
     this.isIdleFn = init.isIdle;
-    // 读取 mode（W4 守卫透传给 session-runner）+ session 级 handler 覆盖。
+    // 读取 mode（W4 守卫透传给 session-runner）+ session 级 handler 覆盖
+    //（[D4-④] initSession.uiRequestHandler 是唯一注入入口；三态语义见接口注释——
+    //null = 显式清空，承载原 setUiRequestHandler(undefined) 语义）。
     this.uiObservability.setMode(init.mode);
     if (init.uiRequestHandler !== undefined) {
-      this.uiRequestHandler = init.uiRequestHandler;
+      this.uiRequestHandler = init.uiRequestHandler ?? undefined;
       this.uiObservability.resetMissingHandlerWarnings();
     }
     // SR-4：注入 L2 dialog 队列（child close 清理路径）。undefined 时 buildSessionRunnerContext
@@ -402,7 +424,7 @@ export class SubagentService {
     // revive（dispose 的逆操作：/resume /fork /new 后复活）
     this._disposed = false;
     this.store.revive();
-    this.notifier.revive();
+    this.notifyHost.revive();
     // 孤儿终态恢复（residual-fixes）：session_start 主动触发一次——父扩展死后再无人写
     // 终态 entry 的 record 在此判定落盘（否则侧栏永久 running）。放 initSession 末尾：
     // setPi 已注入（appendEntry 可用），sessionRootId 已建立（过滤当前根的 record）。
@@ -410,11 +432,12 @@ export class SubagentService {
     this.recoverOrphanRecords();
   }
 
-  /** 孤儿终态恢复委托（RecordStore.recoverOrphanRecords 的唯一公开入口，维持 store
-   *  private 封装——与 recoverManifestTmpFiles 同模式）。判定语义见 store 侧注释。
+  /** 孤儿终态恢复委托（RecordStore.recoverOrphanRecords 的唯一调用入口，维持 store
+   *  private 封装——与 recoverManifestTmpFiles 同模式；[D4] public 面收窄：唯一调用方
+   *  是 initSession，转 private）。判定语义见 store 侧注释。
    *  随后跑 entry-born 孤儿恢复（无子文件锚的 register-only record，spawn 窗口期死亡，
    *  E2E 实测缺口）——主 session 文件经 getMainSessionFile 注入（构造期可空）。 */
-  recoverOrphanRecords(): void {
+  private recoverOrphanRecords(): void {
     try {
       this.store.recoverOrphanRecords(this.sessionRootId ?? undefined);
     } catch (err) {
@@ -483,7 +506,7 @@ export class SubagentService {
         });
       }
       // pending-notifications 注销
-      emitPendingUnregister(this.pi, record.id, "closed");
+      this.notifyHost.emitPendingUnregister(record.id, "closed");
       count++;
     }
     return count;
@@ -530,7 +553,10 @@ export class SubagentService {
     // [dispose stub] 第一时间换 stub，防 trailing ui_request 调到 stale handler 闭包
     // （仍持有 disposed session 的 ctx）产生误导性 console.error。stub 干净降级为 cancelled。
     // 必须在 emit/abort 之前——这些步骤可能同步触发 trailing pump。
-    this.setUiRequestHandler(disposedUiRequestStub);
+    // [D4-④] 原 setUiRequestHandler 方法已删（initSession 参数为唯一注入入口），
+    // 此处内联其方法体（赋值 + 缺失告警去重重置）。
+    this.uiRequestHandler = disposedUiRequestStub;
+    this.uiObservability.resetMissingHandlerWarnings();
     // [R0/C1 孤儿进程修复] 先 abort running controllers + kill spawned children，再 dispose 资源。
     // abortRunningControllers 需要在 disposeAllRecords archive 之前执行（archive 后 store 找不到 record）。
     this.store.abortRunningControllers();
@@ -546,115 +572,16 @@ export class SubagentService {
     // chat 轮次交接包清空（正常由 PiEngine.run 消费；此处兜底 kill 后仍挂着的条目）
     this.chatRoundTickets.clear();
     // flush 待发通知后 dispose（防丢失）
-    this.notifier.flushPendingNotifications();
-    this.notifier.dispose();
+    this.notifyHost.flushPendingNotifications();
+    this.notifyHost.dispose();
     this.store.dispose();
   }
 
   // ── 执行（subagent-tool 调）────────────────────────────
 
-  /** background 完成回注（record → BgNotifyRecord 映射 + notifier.notify）。
-   *  正在执行（running + 活进程 + 非 timer-armed）静默跳过——notify 只对 closed（终态）、
-   *  isIdle（chatMode 轮次完成）或 isResumable（SP-5 one-shot 成功完成 / MF-6 失败轮回退）有意义。
-   *  SP-1: closed 统一终态（done/failed/crashed 合并），closedReason 携带 L2 原因。 */
-  private notifyComplete(record: ExecutionRecord): void {
-    const notify = this.toNotifyRecord(record);
-    if (notify) this.notifier.notify(notify);
-  }
-
-  /** [C-1] chatMode close 终态通知（设计 D2：正文空/本轮增量 + sessionFile 指针行）。
-   *
-   *  与 notifyComplete 的差异只在 dedup 身份与轮次统计：终态通知必须与最后一轮的轮次通知
-   *  区分（轮次通知 key=`id:round`），否则同 key 被 60s dedup 吞——close 后父 agent 永远
-   *  收不到带指针行的终态通知（审查 C-1）。故 round 置 undefined（key 回退为裸 id），
-   *  轮数改经 totalRounds 进文案 "completed after N rounds."（C-2）。
-   *
-   *  仅 chatMode close 语义调用（closeChatIdle / closeAfterRoundSettled 终态化成功后）。
-   *  one-shot 显式拒绝（G4：one-shot close 路径现状无终态通知，字节不变）；cancel 走
-   *  cancelBackground 自己的 notifyComplete，不经本方法。幂等性：两条 close 路径均由
-   *  closeSubagent 的 status 分流守卫（closed 后幂等 no-op）/ CAS 抢锁保证只执行一次，
-   *  本方法自身不重复发送；迟到的轮次收尾 .then 通知与轮次通知同 key=`id:round`，
-   *  60s 窗内仍被吞，不构成第三条。 */
-  /** @param emptyBody true = 终态通知正文置空串（D2 路径②）。W16 P-1 修复后
-   *  closeChatIdle 的 doneResult.text 改用 record.result 保真（close 终态
-   *  subagent-record entry 的 result 不抹空轮终真实值），「正文空」不再由合成空
-   *  text 的副作用承载，改为显式参数——持久化 result 与通知正文两个关注点解耦。 */
-  private notifyClosed(record: ExecutionRecord, emptyBody = false): void {
-    if (!record.chatMode) return;
-    const notify = this.toNotifyRecord(record);
-    if (!notify) return;
-    notify.round = undefined;
-    if (emptyBody) notify.result = "";
-    if (record.round != null) notify.totalRounds = record.round;
-    this.notifier.notify(notify);
-  }
-
-  /** notifier 的 NotifierHost 适配器（绑定到 pi.sendMessage + store 查询）。 */
-  private piAdapter(): NotifierHost {
-    return {
-      sendMessage: (message, options) => {
-        this.pi?.sendMessage(message, options);
-      },
-      hasRunningBackground: () => {
-        // [M3] 「在跑的 background 工作」= 有活进程且非等待续聊（idle timer armed）。
-        // v4 B-1 把旧 idle 折入 running 且 record 留 store：轮次完成的 chatMode record
-        // （timer armed、无在跑轮）与 one-shot 完成后等待 message 升级的 record 都不再计入。
-        // 旧判定 `mode === "background"` 对这两类恒 true → 轮次完成通知恒挂 60s 合并窗口
-        // （notifier MERGE_WINDOW_MS），主 agent 的续聊回复固定延迟 60s 送达，持续对话（G1）失效。
-        return this.store.listRunning().some(
-          (r) => r.mode === "background" && hasLiveProcessHandle(r.id) && !hasIdleTimer(r.id),
-        );
-      },
-      isIdle: () => this.isIdleFn?.() ?? true,
-      // [must-fix #4 / D8] settled 边沿订阅，与 isIdle 同源（session_start 注入的 pi）。
-      // 只注入原生订阅能力；disposed 标志包装（退订语义）在 notifier 的 port 装配完成。
-      onAgentSettled: (handler) => { this.pi?.on?.("agent_settled", handler); },
-    };
-  }
-
-  /** record → BgNotifyRecord（notifier.notify 入参映射，内部不外露）。
-   *  v4 B-1：守卫放行 closed（终态，含 cancelled）、isIdle（对话模式轮次完成，notify 主 agent G1）
-   *  或 isResumable（running + 无活进程——SP-5 one-shot 成功完成 / MF-6 失败轮回退）。
-   *  正在执行（running + 活进程 + 非 timer-armed）返回 undefined（调用方 notifyComplete 跳过）。
-   *  SP-1: closed 统一终态，closedReason 由 BgNotifyRecord 携带。 */
-  private toNotifyRecord(record: ExecutionRecord): BgNotifyRecord | undefined {
-    const snap = snapshot(record);
-    const s = snap.status;
-    // [N1] isResumable 放行：SP-5 one-shot 成功完成后 finalizeRoundToIdle 把 record 回退
-    // running-resumable——进程已死且永不 arm idle timer（armIdleTimer 只在 agent_settled 的
-    // chatMode 分支调用），旧守卫（closed / isIdle only）对其恒拒绝 → 完成通知静默丢失，
-    // 而 one-shot 失败走 finalizeRecord 保持 closed 反而通知——与 tool 契约「runs once,
-    // notifies on completion」完全倒置。isResumable = running + 无活进程，恰为该完成态；
-    // 在跑轮的 record 有活进程，不会被误放行。
-    if (s !== "closed" && !isIdle(record) && !isResumable(record)) return undefined;
-    // closed → BgNotifyRecord.closed（cancelled 区分靠 closedReason）；chatMode 的 isIdle/
-    // isResumable（轮次完成或 MF-6 失败轮回退，对话可续）→ running（轮次完成）。
-    // isResumable 且非 chatMode（SP-5 one-shot 成功完成）→ closed：对主 agent 的语义是
-    // completed（非对话轮次），且只有 closed 分支文案携带 worktree patchFile 的 git apply
-    // 提示——one-shot worktree 模式的改动回收依赖该提示（running 分支文案不含 patchFile）。
-    const notifyStatus: BgNotifyRecord["status"] =
-      s === "closed" || !record.chatMode ? "closed" : "running";
-    return {
-      id: snap.id,
-      status: notifyStatus,
-      agent: snap.agent,
-      model: snap.model,
-      result: snap.result,
-      error: snap.error,
-      startedAt: snap.startedAt,
-      endedAt: snap.endedAt,
-      patchFile: record.patchFile,
-      // round 透传给 notifier 的 dedup key（对话模式按轮次去重，G1 决策 9）。
-      round: record.round,
-      // SP-1: closedReason 透传给 notifier（L2 原因，供通知文案按需展示）。
-      closedReason: record.closedReason,
-      // [wave2] chatMode 条件透传 sessionFile：通知末尾追加 Full transcript 指针行
-      //（增量语义的全文恢复通道，见 notifier.buildLlmContent）。one-shot（chatMode
-      // falsy）不透传——通知输出逐字节不变（G4），该条件由 message-close 测试的
-      // 必选用例锁死（漏加条件时 notifier 单测不红——notifier 层只见最终字段）。
-      sessionFile: record.chatMode ? record.sessionFile : undefined,
-    };
-  }
+  // [D4-①] 通知簇四方法（notifyComplete / notifyClosed / piAdapter / toNotifyRecord）
+  // 与 emitPendingRegister / emitPendingUnregister 模块函数已整体搬移至 notify-host.ts
+  //（本类经 this.notifyHost 消费；行为逐字节等价，搬移 + 依赖注入）。
 
   /**
    * 预解析 model（renderCall 标题行用，同步）。代理 modelService.resolveModel。
@@ -729,7 +656,7 @@ export class SubagentService {
    * 供 tool 层 cancelHandler 翻译 throw 用（id 不存在 / mode / 终态三种错误）。
    * 不存在返回 undefined。
    */
-  findRecord(id: string): RecordSnapshot | undefined {
+  private findRecord(id: string): RecordSnapshot | undefined {
     this.assertReady();
     const record = this.store.getMutable(id);
     return record ? snapshot(record) : undefined;
@@ -754,7 +681,7 @@ export class SubagentService {
    *
    * 返回 undefined：id 在内存与磁盘均不存在。
    */
-  lookupRecordAnyState(id: string): SubagentRecord | undefined {
+  private lookupRecordAnyState(id: string): SubagentRecord | undefined {
     try {
       this.assertReady();
     } catch {
@@ -793,7 +720,7 @@ export class SubagentService {
    * @param text 消息正文
    * @param interrupt true=steer（抢占）/ false=followUp（排队），仅热路径 streamingBehavior 用
    */
-  async deliverChatMessage(record: ExecutionRecord, text: string, interrupt: boolean): Promise<void> {
+  private async deliverChatMessage(record: ExecutionRecord, text: string, interrupt: boolean): Promise<void> {
     this.assertReady();
     // interactRecord：interact 的 record 锚定形态（调用方已持归属校验过的同一 record
     // 对象——port face interact 的 handle 解析在此冗余且会做二次 store 查找）
@@ -953,14 +880,15 @@ export class SubagentService {
    * @throws Error record 不存在 / 非本 session 所有（含恢复指引）
    * @throws ResurrectDeniedError 命中可重连集但被 worktree/异进程活实例守卫拦截（自带完整行动语言）
    */
-  getRecordForAction(id: string, opts?: { allowReconnect?: boolean }): ExecutionRecord {
+  private getRecordForAction(id: string, opts?: { allowReconnect?: boolean }): ExecutionRecord {
     this.assertReady();
     let record = this.store.getMutable(id);
     // SP-2 跨重启恢复：内存未命中时，从磁盘 collectRecords 重建 idle record。
     // reconstructAll 已将跨重启 record（无 sidecar + pid 死）标记为 running（v4 B-1 可续聊语义，非 crashed），
     // 直接转为可变 ExecutionRecord register 进内存，供 message/close action 续操作。
     if (!record) {
-      record = this.coldLookupForAction(id, opts?.allowReconnect === true);
+      // [D4-③] 冷查/复活链整体搬移至 cold-resurrect.ts（行为逐字节等价）。
+      record = coldLookupForAction(this.coldResurrectDeps, id, opts?.allowReconnect === true);
     }
     if (!record || record.rootSessionId !== this.sessionRootId) {
       throw new Error(
@@ -987,136 +915,10 @@ export class SubagentService {
     return record;
   }
 
-  /** SP-2 冷路径（getRecordForAction 内存未命中分支的提取）：从磁盘重建可变 ExecutionRecord
-   *  并 register 进内存。[perf] 先走 idToFile 索引直查（单文件 stat 校验），未命中（进程重启后
-   *  尚未扫描、索引未热）才全目录 collectRecords 兜底建索引——跨重启后每条 message 从
-   *  「readdir + N×4 stat 全扫」降为单文件校验。
-   *  @returns 重建的 record；磁盘也无则 undefined
-   *  @throws ResurrectDeniedError 可重连候选被 worktree/异进程活实例守卫拦截 */
-  /** 冷查候选定位（coldLookupForAction 步骤 1）：idToFile 索引直查 running 命中，
-   *  未命中再全目录 collectRecords 兜底（running，或 allowReconnect 且可重连 closed）。 */
-  private findColdLookupCandidate(id: string, allowReconnect: boolean): SubagentRecord | undefined {
-    const direct = this.store.findLightById(id);
-    return (
-      (direct?.status === "running" ? direct : undefined) ??
-      this.store
-        .collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined)
-        .find((r) => r.id === id && (r.status === "running" || (allowReconnect && this.isReconnectableClosed(r))))
-    );
-  }
-
-  /** 可重连守卫（coldLookupForAction 步骤 2，[v8.5 D]）：先于任何状态突变与注册。
-   *  worktree 绑定丢失 / 异进程活实例以 ResurrectDeniedError 抛出（endedMessageGuard
-   *  必须原样透传，不得改写为 fork-from 指引误导 agent 走已被判死的通道）；拒绝时
-   *  内存不得残留该记录（findRecord 契约）。 */
-  private assertReconnectAllowed(found: SubagentRecord, id: string): void {
-    if (found.status !== "closed") return;
-    if (found.worktree === true) {
-      throw new ResurrectDeniedError(
-        `subagent ${id} cannot be transparently resumed: it was created with worktree isolation, ` +
-        `and its worktree checkout no longer exists after restart (resuming in place would make spawn cwd fall back to the main repo). ` +
-        `Recovery: action:'start' a fresh subagent (with a new worktree if isolation is still needed); ` +
-        `its conversation history remains intact at ${found.sessionFile}.`,
-      );
-    }
-    const foreign = found.sessionFile ? findForeignLiveInstance(found.sessionFile) : undefined;
-    if (foreign) {
-      throw new ResurrectDeniedError(
-        `subagent ${id} is not transparently resumable: its previous instance still finishing in another process ` +
-        `(pid ${foreign.pid}, startedAt=${new Date(foreign.startedAt).toISOString()}). ` +
-        `Resuming in place would double-write ${found.sessionFile}. ` +
-        `Recovery: retry once that process exits; if it never exits, action:'start' a fresh subagent and treat the history at ${found.sessionFile} as read-only reference.`,
-      );
-    }
-  }
-
-  /** 磁盘候选重建为可变 record 并 register + 上报（coldLookupForAction 步骤 4）。 */
-  private resurrectColdRecord(found: SubagentRecord, id: string): ExecutionRecord {
-    const record = createRecord(id, {
-      agent: found.agent,
-      model: found.model,
-      thinkingLevel: found.thinkingLevel,
-      mode: found.mode,
-      task: found.task,
-      slug: found.slug,
-      startedAt: found.startedAt,
-      rootSessionId: found.rootSessionId,
-      parentRecordId: found.parentRecordId,
-      depth: found.depth,
-      // [v4 A-3] 跨重启恢复入口——message 路径磁盘重建无条件置 chatMode=true（现状机制，
-      // V3 方案 A 方向兑现）。改动此处必须带 S3 回归场景（跨重启 message 续聊验证）。
-      // V3 SP-5 探针定案：机制已存在，本注释即定案，不再悬置。
-      chatMode: true,
-      controller: new AbortController(),
-    });
-    record.sessionFile = found.sessionFile;
-    record.round = found.round;
-    // [review round2] 跨重启 worktree 绑定丢失防护：原 record 创建时启用了 worktree 隔离
-    //（session entry 的 worktree 标志），但 WorktreeHandle 不可序列化、重建后恒缺失。
-    // 标记 hadWorktree，冷路径续轮守卫据此拒绝续聊（防 spawn cwd 静默回落主 repo 破坏
-    // 隔离——正是 worktree 要防的并发写冲突场景）。close 不受影响（closeChatIdle 走
-    // doFinalizeRecord，泄漏的 worktree 由 reaper 兜底回收）。
-    record.hadWorktree = found.worktree === true;
-    // [v8.5 D] 透明重生回边：独立函数不走 tryTransition 单向语义（closed 单向性对正常
-    // 执行流完整保留）；准入唯一依据 = A 档 sidecar 真实死因 ∈ 可重连集。死亡语义位由
-    // resurrectClosed 清除；register 后立刻上报 transition entry，live/reload 视图同步
-    // 翻回 running（等价性由 applyEntry reducer 保证，对齐 SP-2 重建即报告先例）。
-    if (found.status !== "running") {
-      // [review MF-8] 磁盘终态位同步翻转：record-store buildRecord 分支 2（.finalized
-      // 存在 → closed）优先级高于 .alive 活态分支 3，重生若不删 sidecar，任何磁盘扫描
-      // （异进程 / reload / session-reader）都会把本进程内存里 running 的 record 报成
-      // closed/disconnected——破坏 live ≡ reload，且为跨进程二次 resurrect 开门。
-      // best-effort 对齐 BC-4 语义；.alive 刷新为当前进程（后续 resume spawn 会覆盖写）。
-      if (record.sessionFile) {
-        try {
-          fs.rmSync(`${record.sessionFile}.finalized`, { force: true });
-          writeAliveMarker(record.sessionFile, { pid: process.pid, id, startedAt: Date.now() });
-        } catch (_e) {
-          void _e; // best-effort：sidecar 翻转失败不阻断重生主流程
-        }
-      }
-      resurrectClosed(record);
-    }
-    this.store.register(record);
-    if (found.status !== "running") {
-      this.store.reportRecordTransition(record);
-    }
-    return record;
-  }
-
-  private coldLookupForAction(id: string, allowReconnect: boolean): ExecutionRecord | undefined {
-    const found = this.findColdLookupCandidate(id, allowReconnect);
-    if (!found) return undefined;
-    // [v8.5 D] 可重连候选的守卫先于任何状态突变与注册（细节见 assertReconnectAllowed）
-    this.assertReconnectAllowed(found, id);
-    // [review MF-9] 归属校验先于任何持久化副作用：coldLookup 是 getRecordForAction 的
-    // 内存未命中分支，若先 resurrect/register/report 再由调用方抛归属错误，会在磁盘/
-    // 内存留下幽灵 running record + running transition entry（跨进程双 resurrect 窗口）。
-    // rootSessionId 不匹配 → 返回 undefined，由 getRecordForAction 抛统一「not found or
-    // not owned」（不区分失败形态，防跨 session 探测）；parentRecordId 跨层不匹配 →
-    // 原样抛 direct parent 错误（与外层校验同文案，保留跨层导航指引）。
-    if (found.rootSessionId !== this.sessionRootId) {
-      return undefined;
-    }
-    const baselineRecordId = this.execNesting.baseline()?.recordId ?? undefined;
-    if (found.parentRecordId !== baselineRecordId) {
-      throw new Error(
-        `subagent ${id} is owned by its direct parent; message it through that parent ` +
-        `(see /subagents list, parent=${found.parentRecordId ?? "(root layer)"}). [v4 A-5] cross-layer ` +
-        `ownership guard: this process's baseline=${baselineRecordId ?? "(root)"} is not the direct parent of ${id}; ` +
-        `operating here would race the owning child process's handle and double-write the session file.`,
-      );
-    }
-    return this.resurrectColdRecord(found, id);
-  }
-
-  /** [v8.5 D] 冷查候选过滤：closed 且死因落在可重连集。判定源 = closedReason（buildRecord
-   *  归一化后的对外字段：A 档真实死因直通、旧空 sidecar 兑底 disconnected——SubagentRecord
-   *  不暴露 raw finalizedReason）；cancelled/user-close/gc 等主动关闭与自然完成死因天然不在集合内。
-   *  防线在集合本身而非调用点。 */
-  private isReconnectableClosed(r: SubagentRecord): boolean {
-    return isReconnectableFinalReason(r.closedReason);
-  }
+  // [D4-③] 冷路径复活链（findColdLookupCandidate / assertReconnectAllowed /
+  // resurrectColdRecord / coldLookupForAction + isReconnectableClosed 判定）已整体
+  // 搬移至 cold-resurrect.ts（本类经 coldResurrectDeps 注入，行为逐字节等价）。
+  // SP-2 冷路径 [perf] 语义不变：idToFile 索引直查 → collectRecords 全扫兜底。
 
   /**
    * close action 的统一行为分流（running 子态 × force）。
@@ -1133,7 +935,7 @@ export class SubagentService {
    * @param record 目标 record（getRecordForAction 已校验归属）
    * @param force true=立即终止（running 时 SIGTERM）/ false=优雅关闭（running 时等轮完）
    */
-  async closeSubagent(record: ExecutionRecord, force: boolean): Promise<void> {
+  private async closeSubagent(record: ExecutionRecord, force: boolean): Promise<void> {
     this.assertReady();
     if (record.status === "running") {
       if (force) {
@@ -1196,7 +998,7 @@ export class SubagentService {
         store: this.store,
         modelService: this.modelService,
         pi: this.pi,
-        emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
+        emitUnregister: (id, st) => this.notifyHost.emitPendingUnregister(id, st),
       },
       record,
       doneResult,
@@ -1208,7 +1010,7 @@ export class SubagentService {
     // （P-1 修复），正文空由 notifyClosed 的 emptyBody 参数显式表达。
     // dedup 身份独立于轮次通知（notifyClosed 置 round=undefined），60s 窗内不被吞。
     // 防重入：closeSubagent 对 closed record 幂等 no-op，本路径不会被二次进入。
-    this.notifyClosed(record, true);
+    this.notifyHost.notifyClosed(record, true);
   }
 
   /**
@@ -1244,7 +1046,7 @@ export class SubagentService {
     await this.finalizeRecord(record, doneResult, "closed", "user-close");
     // [C-1] 终态通知（设计 D2 路径①）：与前置轮次通知（key=`id:round`）dedup 身份区分，
     // 「最后一轮轮次通知 + 终态通知」两条都送达父 agent。
-    this.notifyClosed(record);
+    this.notifyHost.notifyClosed(record);
   }
 
   // ── 编排层专用接口（workflow 消费）──────────────────────
@@ -1282,7 +1084,7 @@ export class SubagentService {
 
     // ── 步骤 2: RECORD 创建（mode="background" 进池）──
     const record = this.createRecordForMode(identity, opts, "background");
-    emitPendingRegister(this.pi, record.id, record.agent);
+    this.notifyHost.emitPendingRegister(record.id, record.agent);
 
     // ── 步骤 2.5: worktree creation (only worktree===true; handle injection is execute()'s path) ──
     // Workflow path receives boolean only (AgentCallOpts.worktree: boolean) — WorktreeHandle is a
@@ -1365,28 +1167,26 @@ export class SubagentService {
   // ── 状态查询（TUI 调）──────────────────────────────────
 
   /** 订阅 store 变更（widget/list requestRender）。返回取消订阅。 */
-  onChange(listener: () => void): () => void {
+  private onChange(listener: () => void): () => void {
     return this.store.onChange(listener);
   }
 
-  /** 列出 running record 快照（widget 计数用）。 */
-  listRunning(): RecordSnapshot[] {
-    return this.store.listRunning();
-  }
+  // [D4] listRunning 已删除：零生产调用方（TUI 计数经 collectRecords / notify-host 的
+  // piAdapter 直调 store.listRunning 覆盖），唯一消费是初始空态单测——保留 store 层方法。
 
   /** 合并内存(running) + 磁盘(session.jsonl 重建) record（/subagents list + tool list 消费）。
    *  按 rootSessionId 过滤：根进程=本 session（sessionRootId===sessionId）；
    *  子进程=env 贯穿的真 ROOT（sessionRootId≠sessionId）→ 看到整棵 ROOT 树（决策 3）。
    *  [perf] 磁盘源为 light（头部 identity + 状态，无 eventLog/result/turns 等重数据）
    *  ——列表/补全/hasRunning 够用；详情场景调 getFullRecord(id) 懒加载补齐。 */
-  collectRecords(limit: number, statusFilter: StatusFilter = "all"): SubagentRecord[] {
+  private collectRecords(limit: number, statusFilter: StatusFilter = "all"): SubagentRecord[] {
     return this.store.collectRecords(limit, statusFilter, this.sessionRootId ?? this.sessionId ?? undefined);
   }
 
   /** [perf] 单 record 详情懒加载（全量：eventLog/displayItems/result/turns/tokens）。
    *  内存 running record 直接投影；磁盘 record 全量重建（per-file 缓存，stat 戳校验）。
    *  返回 undefined：id 不存在于内存与磁盘。 */
-  getFullRecord(id: string): SubagentRecord | undefined {
+  private getFullRecord(id: string): SubagentRecord | undefined {
     return this.store.getFullRecord(id);
   }
 
@@ -1509,7 +1309,7 @@ export class SubagentService {
           ...(route.engineFallback !== undefined ? { engineFallback: route.engineFallback } : {}),
         };
     const record = this.createRecordForMode(identity, recordOpts, mode);
-    emitPendingRegister(this.pi, record.id, record.agent);
+    this.notifyHost.emitPendingRegister(record.id, record.agent);
 
     // ── worktree 创建（仅 worktree===true 或已传入 handle 时）──
     // record 先创建，worktree 失败时可 finalizeFailed（record 已在 store 中）。
@@ -1589,7 +1389,7 @@ export class SubagentService {
         await this.runEngineTask(record, opts, engine, signal);
         // cancel 抢先（closedReason='cancelled'）时 cancelBackground 自己 notify，跳过
         if (record.closedReason !== "cancelled") {
-          this.notifyComplete(record);
+          this.notifyHost.notifyComplete(record);
         }
       } finally {
         this.pool.release();
@@ -1880,7 +1680,7 @@ export class SubagentService {
         // background 回注：仅当本路径抢到 CAS（closedReason 非 cancelled）才 notify。
         // cancel 抢先时 closedReason='cancelled'，cancelBackground 自己 notify，此处跳过。
         if (record.closedReason !== "cancelled") {
-          this.notifyComplete(record);
+          this.notifyHost.notifyComplete(record);
         }
       })
       .catch((err: unknown) => {
@@ -1914,9 +1714,18 @@ export class SubagentService {
     };
   }
 
+  /** [D4 聚合连带] PiEngineService 的显式结构视图（registration / SAR 直绑消费）。
+   *  原两绑定点把 SubagentService 整体结构化兼容为 PiEngineService——依赖查询/交互
+   *  方法 public；聚合收窄后改经本视图显式适配（成员集合与原直绑等价，行为零差异）。
+   *  getter 形态：face 视图（惰性构造的适配对象）而非动作方法。 */
+  get asEngineService(): PiEngineService {
+    return this.piEngineServiceAdapter();
+  }
+
   /** chat 域轮次交接的消费侧（PiEngine.run 回调）：一次性取走，防重复消费。私有名与
-   *  PiEngineService 可选面成员不同名——TS 结构化兼容规则下私有同名成员会阻断
-   *  SubagentService 直绑 SAR 引擎实例（registration.ts / SAR 的 getService 绑定）。 */
+   *  PiEngineService 可选面成员不同名（历史约束：D4 聚合前的结构化直绑时代，私有同名
+   *  成员会阻断 SubagentService 直绑；聚合后经 asEngineService 显式视图，约束已消失，
+   *  不同名保留为与 adapter 显式映射一致的命名纪律）。 */
   private takeChatTicket(taskId: string): ChatRoundTicket | undefined {
     const ticket = this.chatRoundTickets.get(taskId);
     if (ticket !== undefined) this.chatRoundTickets.delete(taskId);
@@ -1987,9 +1796,9 @@ export class SubagentService {
       }
     }
     // pending-notifications：cancel 注销（只记 registry 状态）
-    emitPendingUnregister(this.pi, record.id, "closed");
+    this.notifyHost.emitPendingUnregister(record.id, "closed");
     // cancel 完成通知（与轮次收尾 .then 对称——cancel 抢先时 .then 跳过 notify）
-    this.notifyComplete(record);
+    this.notifyHost.notifyComplete(record);
     return true;
   }
 
@@ -2009,7 +1818,7 @@ export class SubagentService {
         store: this.store,
         modelService: this.modelService,
         pi: this.pi,
-        emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
+        emitUnregister: (id, st) => this.notifyHost.emitPendingUnregister(id, st),
       },
       record,
       result,
@@ -2033,7 +1842,7 @@ export class SubagentService {
         store: this.store,
         modelService: this.modelService,
         pi: this.pi,
-        emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
+        emitUnregister: (id, st) => this.notifyHost.emitPendingUnregister(id, st),
       },
       record,
       result,
@@ -2119,74 +1928,11 @@ export class SubagentService {
       // 落盘统一用 rootCwd 编码，ROOT 磁盘重建才扫得到深层 record（与 sessionRootId 同构）。
       rootCwd: this.rootCwd,
       // [V2 决策 2] chatMode 首轮闭环：agent_settled 时 session-runner 调本回调。
-      // 轻量 idle 化（选项 1）：设 record.status=idle + round+=1 让 notify 守卫放行 + notify
-      // 主 agent，但**不调 doFinalizeRoundToIdle**（不 emitUnregister /
-      // 不 redeliver——V2 要删的副作用都不做）。runAndFinalize 检测到 status=idle 后 early return，
-      // 不进现有 chatMode 分流。Step 5 删 idle 状态机时统一清理这个过渡 idle。
-      // 防箭头函数 this 丢失：用箭头函数捕获 SubagentService 实例 this。
-      onRoundSettled: (record) => {
-        // v4 B-1：status 保持 running（旧 idle 折入 running）；session-runner 已 arm idle timer，
-        // isIdle=true 让 notify 守卫放行（时序：armIdleTimer → onRoundSettled，见 session-runner.ts:670）。
-        // round 可能初始 undefined（与 notifier.ts `record.round ?? 0` 兜底一致），
-        // 首轮 0+1=1。round 是 notifier dedup key 的组成部分，递增后同 id 下一轮不被 60s dedup 吞。
-        record.round = (record.round ?? 0) + 1;
-        // [N2][增量] 轮次回复写点（增量语义）：roundText 自 roundBaseTurnIndex 起派生本轮增量
-        //（undefined 视为 0——首轮增量 = 全量，与改造前首轮逐字节一致）。成功轮次的 MF-2 原写点
-        //（doFinalizeRoundToIdle）不可达——agent_settled 恒 arm idle timer → runAndFinalize 恒
-        // early return。写入 record.result 后再 notify；本轮无非空增量且无 lastError（纯工具轮 /
-        // interrupt 抢占轮 / 模型空回复）时固定占位 "(no output this round)"（D5：增量语义下沿用
-        // 旧 record.result = 上一轮增量 → 本轮通知正文 = 上一轮内容，父 agent 误读为原样重复回复；
-        // lastError 兜底保留让失败轮通知可读）。后续 closeAfterRoundSettled 的合成 result 读
-        // record.result，同样携带本轮增量。
-        const roundText = getFullTextFrom(record, record.roundBaseTurnIndex ?? 0);
-        record.result = roundText ||
-          (record.lastError ? `round did not complete: ${record.lastError}` : "(no output this round)");
-        // 先送达本轮增量（notify），再推进 base / 消费 closeAfterRound——终态通知由
-        // closeAfterRoundSettled / closeChatIdle 的 notifyClosed 显式发出（dedup 身份为裸 id，
-        // 与本次 round notify 的 id:round key 区分），保证「本轮增量 + 终态通知」都送达；
-        // 轮次收尾 .then 的冷路径 notifyComplete 仍与本次 round notify 同 key 被 60s
-        // dedup 吞（不构成第三条）。
-        //
-        // 幂等性（覆盖面如实限定）：同步路径 at-least-once——notifyComplete（同步 void）抛错时
-        // 推进/消费被跳过 → base 不推进 → 增量未消费，下轮 roundText 必含本轮文本（重发载体为
-        // 后续轮次增量拼接）。轮次收尾 .then 的冷路径 notifyComplete 不构成重发通道
-        // （notifier dedup.set 与 pending.splice 均先于 sendMessage，同 key `${id}:${round}`——
-        // round 已递增——60s 窗内重入被吞）。异步 flush 窗口不保证：合并 timer armed（其他 busy
-        // background 在场）或 isIdle 退避期间 notify 的『成功』只是入队，实际 sendMessage 发生在
-        // base 推进之后的异步时机；该窗口进程崩溃或 sendMessage 失败 → 丢失不可重发（现状全量
-        // 重发的次轮自愈在增量语义下消失），wave1 期恢复通道仅父 agent 经 /subagents 详情读取
-        // record.result，wave2 指针行落地后补全。反序（先推进后 notify）在同步路径 notify 失败时
-        // 静默丢增量且无任何重算机会，故 notify 后推进是定案。重复发送由 notifier dedup key
-        // 60s 窗界定。
-        this.notifyComplete(record);
-        // R1 观测哨（不变式违反形态）：推进前检查末 turn 未闭合且 text 非空——pi 现序下不可达
-        //（带 usage 的 message_end 恒先于 turn_end，settle 时 turn 全闭合，见 types.ts
-        // roundBaseTurnIndex 注释的行号锚定），ES1 单测自造事件序列锁不住 pi 层变化；pi 升级若
-        // 改变 turn_end/agent_end 时序，此哨兵留痕（该形态下公式仍把文本计入本轮，不丢数据）。
-        const lastTurn = record.turns[record.turns.length - 1];
-        if (lastTurn !== undefined && !lastTurn.closed && lastTurn.text.length > 0) {
-          logger.warn(
-            `[subagents] round settle with unclosed non-empty turn (record=${record.id}, turnIndex=${record.turns.length - 1}) — pi turn_end/agent_end ordering may have changed`,
-          );
-        }
-        // [增量] base 推进（notify 之后）：下一轮增量从本轮边界起。滞后空 turn 不计入边界
-        //（防御分支，留在下一轮增量内防丢文本——nextRoundBaseTurnIndex 注释）。
-        record.roundBaseTurnIndex = nextRoundBaseTurnIndex(record);
-        // 轮终迁移持久化（residual-fixes U3 补全）：热路径轮终不经 doFinalizeRoundToIdle
-        //（agent_settled 恒 arm idle timer → runAndFinalize 恒 early return，MF-2 原写点
-        // 不可达）——不 appendEntry 则 runtime/W18 派生缓存不失效，renderer 停留在
-        // register 快照（无 result），chat 等续聊的 waiting 形态显示不出来、spinner
-        // 卡死。显式上报：entry 携带本轮 result/round/chatMode（§5.4：result 有值 +
-        // chatMode=true → waiting）。closeAfterRound 的终态 entry 在此后追加，序不变。
-        this.store.reportRecordTransition(record);
-        // [M5] closeAfterRound 消费点：chatMode 每轮完成的统一汇聚点（热路径轮不经
-        // runAndFinalize CAS 分支——agent_settled 恒 arm idle timer → runAndFinalize 恒
-        // early return，旧消费点对 chatMode 不可达，标志置了无人消费、tool 谎报 closed:true）。
-        if (record.closeAfterRound) {
-          record.closeAfterRound = undefined;
-          void this.closeAfterRoundSettled(record);
-        }
-      },
+      // [D4-②] 业务闭包已拆至 round-settlement.ts（this.settleRound 字段工厂构造，
+      // deps 回调注入 notifyComplete / reportRecordTransition / closeAfterRoundSettled，
+      // 行为逐字节等价）——轻量 idle 化语义（round+=1 + notify 主 agent，不调
+      // doFinalizeRoundToIdle）与增量派生/base 推进/哨兵的机制注释见该文件。
+      onRoundSettled: this.settleRound,
     };
   }
 }

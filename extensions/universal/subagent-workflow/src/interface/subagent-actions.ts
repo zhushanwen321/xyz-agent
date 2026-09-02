@@ -152,7 +152,7 @@ export function endedMessageGuard(service: SubagentService, id: string, original
   if (original instanceof ResurrectDeniedError) return original;
   let snap: SubagentRecord | undefined;
   try {
-    snap = service.lookupRecordAnyState(id);
+    snap = service.queries.lookupRecordAnyState(id);
   } catch {
     snap = undefined;
   }
@@ -368,12 +368,12 @@ export function listHandler(
   // collectRecords 是 service 核心能力：statusFilter 决定 running-only 还是全部。
   // 防截断（先多取再过滤）已下沉到 store 层——这里直接传 limit + filter。
   const filter = includeFinished ? "all" : "running";
-  const all = service.collectRecords(limit, filter);
+  const all = service.queries.collectRecords(limit, filter);
   // [perf] collectRecords 磁盘源是 light（无 totalTokens/model 等）：SubagentListItem 对
   // LLM 消费方暴露 totalTokens/model，逐项 getFullRecord 补全（per-file 缓存，仅首次
   // 全量解析；显式 tool 调用非渲染热路径，成本可接受）。
   const items: SubagentListItem[] = all.map((r) =>
-    recordToListItem(service.getFullRecord(r.id) ?? r),
+    recordToListItem(service.queries.getFullRecord(r.id) ?? r),
   );
   const running = items.filter((i) => i.status === "running").length;
 
@@ -392,13 +392,13 @@ export async function cancelHandler(
   if (!id) throw new Error("cancelParam.subagentId is required for action:'cancel'");
 
   // step 1: id 不存在（findRecord 只查内存 running record，不从 session.jsonl 重建）
-  const rec = service.findRecord(id);
+  const rec = service.queries.findRecord(id);
   if (!rec) {
     // [S-19] MF-1 全树可见后，list/completion 可能列出其他进程（父/兄弟）的 running record
     //（collectRecords 扫共享 sessionsDir 按 rootSessionId 过滤，跨进程互相可见），而 cancel
     // 只作用于本进程内存 record。区分两种失败，避免「may have finished」误导（该 record 正
     // 被列出且未 finished，只是不属于本进程内存）。仅文案区分，不改 cancel 作用域。
-    const treeRec = service.collectRecords(DEFAULT_LIST_LIMIT, "all").find((r) => r.id === id);
+    const treeRec = service.queries.collectRecords(DEFAULT_LIST_LIMIT, "all").find((r) => r.id === id);
     if (treeRec && treeRec.status === "running") {
       throw new Error(
         `Subagent record "${id}" is running but owned by another process in the tree ` +
@@ -416,8 +416,8 @@ export async function cancelHandler(
   // 走 close 行为路径（idle 终态化 done；running 立即 SIGTERM cancelled），
   // 返回 cancel 响应（向后兼容 cancel action 的返回类型）。非 chatMode 保持现有 cancel 行为。
   if (rec.chatMode) {
-    const chatRecord = service.getRecordForAction(id);
-    await service.closeSubagent(chatRecord, true);
+    const chatRecord = service.chatActions.getRecordForAction(id);
+    await service.chatActions.closeSubagent(chatRecord, true);
     return { subagentId: id, response: { cancelled: true } };
   }
   // step 3: service.cancel boolean（list-view 契约不变）；false = 已终态（CAS 抢锁失败）。
@@ -427,7 +427,7 @@ export async function cancelHandler(
     // CAS 失败 = record 在 cancel 期间被 detached 路径 finalize（done/failed）。
     // re-query 查当前真实状态。终态 record 被 archive 立即移出内存，
     // 诚实报告 "unknown (evicted from memory)" 而非回落到可能过期的 rec.status（BL-3）。
-    const now = service.findRecord(id);
+    const now = service.queries.findRecord(id);
     const statusDesc = now ? now.status : "unknown (evicted from memory)";
     throw new Error(`Subagent ${id} could not be cancelled (it likely just finished; status: ${statusDesc})`);
   }
@@ -488,7 +488,7 @@ export async function messageHandler(
   // 升级文案——close/cancel 维持原语义（它们不需要恢复通道）。
   let record: ExecutionRecord;
   try {
-    record = service.getRecordForAction(id, { allowReconnect: true });
+    record = service.chatActions.getRecordForAction(id, { allowReconnect: true });
   } catch (err) {
     throw endedMessageGuard(service, id, err);
   }
@@ -511,7 +511,7 @@ export async function messageHandler(
   // 不按 record.status（V2 进程长驻，idle 态进程仍活，续聊走热路径 prompt 而非重开 session）。
   // SP-5：upgrade 后 record.chatMode 已为 true，统一进此分支。
   if (record.chatMode) {
-    await service.deliverChatMessage(record, text, interrupt);
+    await service.chatActions.deliverChatMessage(record, text, interrupt);
   } else {
     // 终态（closed/cancelled）：防御性兜底（终态 record 已 archive，正常走 not found）
     throw new Error(
@@ -560,8 +560,8 @@ export async function closeHandler(
   const force = input?.force === true;
 
   // 归属守卫（决策 3）+ 行为分流（service.closeSubagent）
-  const record = service.getRecordForAction(id);
-  await service.closeSubagent(record, force);
+  const record = service.chatActions.getRecordForAction(id);
+  await service.chatActions.closeSubagent(record, force);
 
   return { kind: "close", subagentId: id, response: { closed: true } };
 }
@@ -636,7 +636,7 @@ export async function forkFromHandler(
  *  （守卫 6 已保证 sessionFile 非空，返回类型随之收窄）。 */
 function assertAndLookupForkFromSource(service: SubagentService, id: string): SubagentRecord & { sessionFile: string } {
   // 守卫 1：本进程内存 running —— 直接 message 即可，fork-from 会双写其 session 文件。
-  if (service.findRecord(id)) {
+  if (service.queries.findRecord(id)) {
     throw new Error(
       `subagent ${id} is still active in this process — use action:'message' to continue it directly. ` +
       `If you want a parallel branch from its history, close it first (action:'close'), then fork-from.`,
@@ -644,7 +644,7 @@ function assertAndLookupForkFromSource(service: SubagentService, id: string): Su
   }
 
   // 守卫 2：全态查找（内存 archived + 磁盘重建）。
-  const source = service.lookupRecordAnyState(id);
+  const source = service.queries.lookupRecordAnyState(id);
   if (!source) {
     throw new Error(
       `No subagent record with id "${id}". It may never have existed or been garbage-collected — ` +
