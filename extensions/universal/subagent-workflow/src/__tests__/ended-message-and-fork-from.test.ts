@@ -30,12 +30,13 @@ const { loggerMock, rafCapture } = vi.hoisted(() => ({
 }));
 vi.mock("@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-// mock session-runner：fork-from 的 execute 链经 kickOffBackground → runAndFinalize →
+// mock session-runner：fork-from 的 execute 链经 kickOffChatRound（EnginePort 交接）→ runAndFinalize →
 // runSpawn。runSpawn 返回最小成功 AgentResult，后台收尾链可完整走完（archive + notify）。
-// [v8.5 D 修正] 路径必须是 ../execution/session-runner.ts——原 "../session-runner.ts"
-// 指向不存在的文件，mock 从未生效（探针实证 identity=REAL），是历史上全量套件
-// 偶发挂起的真根源之一：真实 detached 链泄漏句柄让 worker 无法收敛。
-vi.mock("@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
+// [v8.5 D 修正][u-2a 迁移] 路径必须指向真实模块文件——现为
+// @zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts（原
+// "../session-runner.ts" 指向不存在的文件，mock 从未生效，探针实证 identity=REAL，
+// 是历史上全量套件偶发挂起的真根源之一：真实 detached 链泄漏句柄让 worker 无法收敛）。
+vi.mock("@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(async () => ({
     text: "",
     turns: 1,
@@ -343,7 +344,7 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       expect(result.subagentId).toBe(result.response.newSubagentId);
 
       // prompt 注入：task = 用户指令在前 + 接续框架在后（--fork 上下文重建要求）。
-      // kickOffBackground 是 detached 编排——等后台链穿过 runAndFinalize 边界再断言。
+      // kickOffChatRound 是 detached 编排——等后台链穿过 runAndFinalize 边界再断言。
       await vi.waitFor(() => expect(rafCapture.length).toBe(1));
       expect(rafCapture[0].task).toContain("verify test results first");
       expect(rafCapture[0].task).toMatch(/inherited conversation via --fork/);

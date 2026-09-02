@@ -26,7 +26,7 @@ const { loggerMock } = vi.hoisted(() => ({
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner（import 链需要 runSpawn/killAllSpawnedChildren/getChildByRecord 存在）
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),

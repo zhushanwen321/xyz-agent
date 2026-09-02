@@ -1,12 +1,16 @@
 // src/execution/engine/engines/pi/__tests__/pi-engine.test.ts
 //
-// PiEngine 适配层测试（P1 回填）：capabilities 链路接通口径（D3）、run 委托与
-// 中立声明→ExecuteOptions 映射、interact 三 action 直通、read 三级降级、probe 形状
-// （C1：ok=false 时 error.recovery 非空）。fake PiEngineService 注入，不 spawn 真进程。
+// PiEngine 引擎边界测试（D2 后形态）：capabilities 链路接通口径（D3）、run 双分支
+//（chat ticket 交接 / workflow executeAndAwait 委托）与中立声明→ExecuteOptions 映射、
+// interact message 原生协议（stdin 直写 + 冷路径续轮回调；D2 协议知识下沉）、close/cancel
+// 直通、read 三级降级、probe 形状（C1）。fake PiEngineService 注入，不 spawn 真进程。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
+import type { ChildProcess } from "node:child_process";
+import { PassThrough } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,10 +20,13 @@ import { IDENTITY_CUSTOM_TYPE } from "../../../../session-reconstructor.ts";
 import { SubagentStream } from "../../../../stream-sink.ts";
 import type { RunContext } from "../../../port.ts";
 import type { AgentTaskSpec, EngineHandle } from "../../../types.ts";
+import { spawnedChildren } from "../session-runner.ts";
+import { resetAllEpipeFailures } from "../stdin-writer.ts";
 import {
   PI_ADAPTER_VERSION,
   PI_ENGINE_ID,
   PiEngine,
+  type ChatRoundTicket,
   type PiEngineService,
 } from "../pi-engine.ts";
 
@@ -30,10 +37,11 @@ interface ServiceCalls {
   signal?: AbortSignal;
   onEvent?: (event: unknown) => void;
   stream?: unknown;
-  deliverMessage?: { recordId: string; text: string; interrupt: boolean };
+  resumeChatRound?: { recordId: string; text: string };
   close?: { recordId: string; force: boolean };
   cancelId?: string;
   getRecordId?: string;
+  reportedTransitionIds?: string[];
 }
 
 /** 构造最小完整 SubagentRecord（collectRecords 返回项——resolveRecordId 只读 id/sessionFile）。 */
@@ -66,9 +74,9 @@ function makeFakeService(overrides?: {
   recordsById?: Map<string, ReturnType<typeof createRecord>>;
   listed?: Array<{ id: string; sessionFile?: string }>;
   cancelResult?: boolean;
-  deliverReject?: Error;
+  resumeReject?: Error;
 }): { service: PiEngineService; calls: ServiceCalls } {
-  const calls: ServiceCalls = {};
+  const calls: ServiceCalls = { reportedTransitionIds: [] };
   const record = createRecord("sa-fake", {
     agent: "reviewer",
     model: "p/m",
@@ -106,9 +114,12 @@ function makeFakeService(overrides?: {
       }
       return record;
     },
-    deliverMessage: async (rec, text, interrupt) => {
-      calls.deliverMessage = { recordId: rec.id, text, interrupt };
-      if (overrides?.deliverReject) throw overrides.deliverReject;
+    resumeChatRound: (rec, text) => {
+      calls.resumeChatRound = { recordId: rec.id, text };
+      if (overrides?.resumeReject) throw overrides.resumeReject;
+    },
+    reportRecordTransition: (rec) => {
+      calls.reportedTransitionIds?.push(rec.id);
     },
     closeSubagent: async (rec, force) => {
       calls.close = { recordId: rec.id, force };
@@ -247,6 +258,47 @@ describe("PiEngine.run", () => {
     expect(r2.handle.data.poolKey).toBe("shared");
   });
 
+  it("[D2 chat 分支] ctx.taskId 命中交接包 → runChatRound 执行 + handle/outcome 形态（chat 编排不消费，形态完备）", async () => {
+    const ticketCalls: string[] = [];
+    const record = createRecord("sa-chat-ticket", {
+      agent: "reviewer", model: "p/m", thinkingLevel: "high", mode: "background",
+      task: "t", slug: "s", startedAt: 1, controller: new AbortController(),
+    });
+    const chatTicket: ChatRoundTicket = {
+      record,
+      opts: { task: "chat task", slug: "s" },
+      identity: { agent: "reviewer", agentConfig: undefined, resolved: { model: { id: "m", name: "M", provider: "p", reasoning: false }, thinkingLevel: "high" } },
+      ctx: { cwd: "/w" } as ChatRoundTicket["ctx"],
+      signal: undefined,
+      priority: 1000,
+    };
+    const service: PiEngineService = {
+      executeAndAwait: async () => { throw new Error("workflow branch must not run"); },
+      getRecordForAction: () => { throw new Error("unused"); },
+      closeSubagent: async () => {},
+      cancel: () => true,
+      collectRecords: () => [],
+      takeChatRound: (taskId) => {
+        ticketCalls.push(taskId);
+        return taskId === "sa-chat-ticket" ? chatTicket : undefined;
+      },
+      runChatRound: async (t) => ({
+        text: "chat done", turns: 2, durationMs: 7, success: true,
+        sessionId: t.record.id, toolCalls: [],
+      }),
+    };
+    const engine = new PiEngine({ getService: () => service });
+    const { handle, outcome } = await engine.run({ task: "t", slug: "s" }, makeRunCtx({ taskId: "sa-chat-ticket" }));
+    expect(ticketCalls).toEqual(["sa-chat-ticket"]);
+    expect(handle.data.sessionRef).toEqual({ recordId: "sa-chat-ticket" });
+    expect(handle.data.poolKey).toBe("shared");
+    expect(outcome).toMatchObject({ content: "chat done", engineId: "pi", sessionId: "sa-chat-ticket" });
+    // 非 chat taskId（workflow 域）→ 交接 miss → executeAndAwait 分支（此处 throw 证明未误入）
+    await expect(engine.run({ task: "t", slug: "s" }, makeRunCtx({ taskId: "sa-workflow" }))).rejects.toThrow(
+      "workflow branch must not run",
+    );
+  });
+
   it("服务不可用（prepare 期）→ reject 且不产生 handle", async () => {
     const engine = new PiEngine({ getService: () => null });
     await expect(engine.run({ task: "t", slug: "s" }, makeRunCtx())).rejects.toThrow(/SubagentService unavailable/);
@@ -261,13 +313,65 @@ describe("PiEngine.run", () => {
 
 // ── interact ──
 
-describe("PiEngine.interact（chatMode 交互面直通）", () => {
-  it("message → deliverMessage(record, text, false)（interrupt 中立 action 未携带，P1 恒 followUp）", async () => {
+describe("PiEngine.interact（chatMode 交互面：message 原生协议 + close/cancel 直通）", () => {
+  // [D2] message 分支原生实现（PiEngine.deliverPrompt）：热路径经真实 session-runner
+  // spawnedChildren Map + 真实 stdin-writer（不 mock——端到端验证协议字节）。
+  let hotChildren: Map<string, unknown>;
+  beforeEach(() => {
+    hotChildren = spawnedChildren as unknown as Map<string, unknown>;
+    hotChildren.clear();
+  });
+  afterEach(() => {
+    hotChildren.clear();
+    resetAllEpipeFailures();
+  });
+
+  function makeHotChild(): { child: ChildProcess; stdin: PassThrough } {
+    // exitCode/signalCode 缺省 null（[race-F5] 写后死检测的判据，undefined 会被误判已死）
+    const stdin = new PassThrough();
+    const child = { stdin, pid: 4242, exitCode: null, signalCode: null, killed: false } as unknown as ChildProcess;
+    return { child, stdin };
+  }
+
+  function readStdinLines(stdin: PassThrough): Array<Record<string, unknown>> {
+    stdin.pause();
+    const text = stdin.read()?.toString() ?? "";
+    return text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  }
+
+  it("message 热路径（进程活）：sendPromptCommand 直写 stdin，interrupt → streamingBehavior（steer/followUp）+ record 迁移上报", async () => {
     const { service, calls } = makeFakeService();
     const engine = new PiEngine({ getService: () => service });
-    const res = await engine.interact(makeHandle({ recordId: "sa-fake" }), { kind: "message", payload: "next round" });
+    const { child, stdin } = makeHotChild();
+    hotChildren.set("sa-fake", child);
+
+    const res = await engine.interact(makeHandle({ recordId: "sa-fake" }), { kind: "message", payload: "next round", interrupt: true });
     expect(res).toEqual({ ok: true, delivered: true });
-    expect(calls.deliverMessage).toEqual({ recordId: "sa-fake", text: "next round", interrupt: false });
+
+    const lines = readStdinLines(stdin);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ type: "prompt", message: "next round", streamingBehavior: "steer" });
+
+    // 无 interrupt → followUp；record 迁移经 reportRecordTransition 上报（轮始信号清除后）
+    const { stdin: stdin2 } = makeHotChild();
+    hotChildren.set("sa-fake", { stdin: stdin2, pid: 4243, exitCode: null, signalCode: null, killed: false } as unknown as ChildProcess);
+    await engine.interact(makeHandle({ recordId: "sa-fake" }), { kind: "message", payload: "queued" });
+    const lines2 = readStdinLines(stdin2);
+    expect(lines2[0]).toMatchObject({ type: "prompt", message: "queued", streamingBehavior: "followUp" });
+    expect(calls.reportedTransitionIds).toEqual(["sa-fake", "sa-fake"]);
+  });
+
+  it("message 冷路径（进程死）：resumeChatRound 编排回调（重开 session 续聊）", async () => {
+    const { service, calls } = makeFakeService();
+    const engine = new PiEngine({ getService: () => service });
+    // spawnedChildren 无该 record → getChildByRecord undefined → 冷路径
+    const res = await engine.interact(makeHandle({ recordId: "sa-fake" }), { kind: "message", payload: "resume msg" });
+    expect(res).toEqual({ ok: true, delivered: true });
+    expect(calls.resumeChatRound).toEqual({ recordId: "sa-fake", text: "resume msg" });
   });
 
   it("close → closeSubagent(record, force)；payload 缺省 force=false", async () => {
@@ -318,7 +422,7 @@ describe("PiEngine.interact（chatMode 交互面直通）", () => {
 
   it("交互面 throw → engine_interact_failed（message 文案透传行动语言）", async () => {
     const { service } = makeFakeService({
-      deliverReject: new Error("subagent sa-fake is not ready for a new message"),
+      resumeReject: new Error("subagent sa-fake is not ready for a new message"),
     });
     const engine = new PiEngine({ getService: () => service });
     const res = await engine.interact(makeHandle({ recordId: "sa-fake" }), { kind: "message", payload: "hi" });

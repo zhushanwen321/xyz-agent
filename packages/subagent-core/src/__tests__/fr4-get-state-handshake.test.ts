@@ -1,7 +1,7 @@
 import { describe, expect,it } from "vitest";
 
-import { parseSpawnLine } from "../execution/spawn-event-adapter";
-import { sendGetStateCommand } from "../execution/stdin-writer";
+import { parseSpawnLine } from "../execution/engine/engines/pi/spawn-event-adapter";
+import { sendGetStateCommand } from "../execution/engine/engines/pi/stdin-writer";
 
 describe("FR-4: get_state RPC handshake", () => {
   describe("sendGetStateCommand", () => {

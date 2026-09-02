@@ -52,7 +52,7 @@ vi.mock("./pi-invocation.ts", () => ({
 
 import { WorktreeManager } from "../worktree-manager.ts";
 import { WorktreeRegistry, SPAWN_GRACE_MS } from "../worktree-registry.ts";
-import { runSpawn } from "../session-runner.ts";
+import { runSpawn } from "../engine/engines/pi/session-runner.ts";
 import type { WorktreeHandle } from "../types.ts";
 import { makeCtx, makeOpts, makeRecord } from "./helpers/spawn-mock.ts";
 

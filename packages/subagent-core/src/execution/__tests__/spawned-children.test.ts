@@ -18,7 +18,7 @@ const { loggerMock } = vi.hoisted(() => ({
 }));
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-import { getChildByRecord, killAllSpawnedChildren, spawnedChildren } from "../session-runner.ts";
+import { getChildByRecord, killAllSpawnedChildren, spawnedChildren } from "../engine/engines/pi/session-runner.ts";
 
 /** 假 child：只关心 killed 标记 + kill 调用（killAllSpawnedChildren 遍历用）。 */
 function makeFakeChild(killed = false): ChildProcess & { kill: ReturnType<typeof vi.fn> } {

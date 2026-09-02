@@ -1,14 +1,14 @@
 // src/execution/__tests__/delivery-methods.test.ts
 //
-// resumeRound + deliverMessage 单元测试（M2-B1 投递基础设施）。
+// 冷路径续轮 + chatMode 统一投递单元测试（M2-B1 投递基础设施；D2 单轨后口径）。
 //
 // mock session-runner（runSpawn 受控 + killAllSpawnedChildren 空实现 + getChildByRecord/spawnedChildren
-// 真实 Map 语义），走 SubagentService 真实的 resumeRound/deliverMessage 逻辑：
-//   - resumeRound：idle→running→detached kickOff runSpawn 收到 resume 参数；chatMode+done 回 idle/round+1；
-//     非 idle / 无 sessionFile / 无 controller throw
-//   - deliverMessage：按进程死活分流（热路径 prompt+streamingBehavior / 冷路径 resume）
+// 真实 Map 语义），走 SubagentService.deliverChatMessage → PiEngine.deliverPrompt 真实逻辑：
+//   - 冷路径（进程死）：续轮 resume spawn（runSpawn 收到 resume 参数）；chatMode+done 回 running/round+1；
+//     终态 / 无 sessionFile / 无 controller throw 行动语言
+//   - 热路径（进程活）：prompt + streamingBehavior（interrupt → steer/followUp）
 //
-// stdin-writer 不 mock（端到端验证 deliverMessage→sendPromptCommand→child.stdin 字节）。
+// stdin-writer 不 mock（端到端验证 PiEngine.deliverPrompt→sendPromptCommand→child.stdin 字节）。
 // [review 修复] 已删除 deliverToRunning describe（busy follow_up/steer 投递）——随
 // deliverToRunning 方法一并移除（无生产调用方，pendingMessages 消费确认制死机制）。
 
@@ -29,7 +29,7 @@ vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：runSpawn 受控 + killAllSpawnedChildren 空实现；
 // getChildByRecord/spawnedChildren 提供真实 Map 语义（deliverToRunning 注册 mock child 用）。
-vi.mock("../session-runner.ts", () => {
+vi.mock("../engine/engines/pi/session-runner.ts", () => {
   const spawnedChildren = new Map<string, unknown>();
   return {
     runSpawn: vi.fn(),
@@ -39,7 +39,7 @@ vi.mock("../session-runner.ts", () => {
   };
 });
 
-import { runSpawn, spawnedChildren, type SessionRunnerContext } from "../session-runner.ts";
+import { runSpawn, spawnedChildren, type SessionRunnerContext } from "../engine/engines/pi/session-runner.ts";
 import * as lifecycle from "../lifecycle-manager.ts";
 import { createRecord } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";
@@ -98,7 +98,7 @@ function makeIdleRecord(id = "sa-chat"): ExecutionRecord {
 
 /** PassThrough child（可读出 stdin 字节验证 deliverToRunning 写入）。 */
 function makeStreamChild(): ChildProcess {
-  // exitCode/signalCode：真 ChildProcess 未退出时均为 null（deliverMessage [race-F5]
+  // exitCode/signalCode：真 ChildProcess 未退出时均为 null（热路径投递 [race-F5]
   // 写后死进程检测读这两个字段，缺省 undefined 会被误判为已死触发 warn）。
   return { stdin: new PassThrough(), exitCode: null, signalCode: null } as unknown as ChildProcess;
 }
@@ -114,7 +114,7 @@ function readStdinLines(child: ChildProcess): unknown[] {
     .map((l) => JSON.parse(l));
 }
 
-describe("resumeRound (M2-B1 idle 投递)", () => {
+describe("冷路径续轮（M2-B1 idle 投递；D2 后经 deliverChatMessage 无活进程到达）", () => {
   let agentDir: string;
   let service: SubagentService;
   let record: ExecutionRecord;
@@ -135,13 +135,13 @@ describe("resumeRound (M2-B1 idle 投递)", () => {
     fs.rmSync(agentDir, { recursive: true, force: true });
   });
 
-  it("resumeRound(running) → kickOff runSpawn 收到 resume 参数；chatMode+done 回 running/round+1", async () => {
+  it("冷路径续轮(running) → kickOff runSpawn 收到 resume 参数；chatMode+done 回 running/round+1", async () => {
     mockRunSpawn.mockResolvedValueOnce(makeResult(true));
     const beforeRound = record.round;
 
-    service.resumeRound(record, "next round msg");
+    await service.deliverChatMessage(record, "next round msg", false);
 
-    // 同步：status 已手动设回 running（M2-A 边界，绕过 tryTransition）
+    // 冷路径守卫通过后：status 已手动设回 running（M2-A 边界，绕过 tryTransition）
     expect(record.status).toBe("running");
 
     // detached：等 runSpawn 被调
@@ -161,31 +161,31 @@ describe("resumeRound (M2-B1 idle 投递)", () => {
     expect(record.round).toBe(beforeRound! + 1);
   });
 
-  it("终态 closed record → throw 行动语言（MF-4，仅 running 可续聊），不触发 kickOff", () => {
+  it("终态 closed record → throw 行动语言（MF-4，仅 running 可续聊），不触发 kickOff", async () => {
     record.status = "closed";
     // MF-4：行动语言（spec §3.1），不暴露 resume/controller 内部词汇
-    expect(() => service.resumeRound(record, "msg")).toThrow(/not ready for a new message/);
+    await expect(service.deliverChatMessage(record, "msg", false)).rejects.toThrow(/not ready for a new message/);
     expect(mockRunSpawn).not.toHaveBeenCalled();
   });
 
-  it("record 无 sessionFile → throw 行动语言（MF-4 canonical session unavailable），不触发 kickOff", () => {
+  it("record 无 sessionFile → throw 行动语言（MF-4 canonical session unavailable），不触发 kickOff", async () => {
     record.sessionFile = undefined;
-    expect(() => service.resumeRound(record, "msg")).toThrow(/session unavailable/);
+    await expect(service.deliverChatMessage(record, "msg", false)).rejects.toThrow(/session unavailable/);
     expect(mockRunSpawn).not.toHaveBeenCalled();
   });
 
-  it("record 无 controller → throw 行动语言（MF-4），不触发 kickOff", () => {
+  it("record 无 controller → throw 行动语言（MF-4），不触发 kickOff", async () => {
     record.controller = undefined;
-    expect(() => service.resumeRound(record, "msg")).toThrow(/not ready for a new message/);
+    await expect(service.deliverChatMessage(record, "msg", false)).rejects.toThrow(/not ready for a new message/);
     expect(mockRunSpawn).not.toHaveBeenCalled();
   });
 });
 
 // ============================================================
-// deliverMessage（V2 决策 3 chatMode 统一投递：按进程死活分流）
+// deliverChatMessage（V2 决策 3 chatMode 统一投递：按进程死活分流；D2 后经 engine.interactRecord）
 // ============================================================
 
-describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
+describe("deliverChatMessage (V2 决策 3 chatMode 统一投递)", () => {
   let agentDir: string;
   let service: SubagentService;
   let record: ExecutionRecord;
@@ -196,7 +196,7 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session" });
     record = makeIdleRecord(); // chatMode:true, idle, round=1
-    // sessionFile：冷路径 resumeRound 需要（热路径不用，设了无害）
+    // sessionFile：冷路径续轮需要（热路径不用，设了无害）
     record.sessionFile = path.join(agentDir, "fake-session.jsonl");
     spawnedChildren.clear();
     mockRunSpawn.mockReset();
@@ -210,12 +210,12 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
     fs.rmSync(agentDir, { recursive: true, force: true });
   });
 
-  it("热路径 interrupt=false：进程活 → prompt streamingBehavior:followUp + status=running + pid 记录", () => {
+  it("热路径 interrupt=false：进程活 → prompt streamingBehavior:followUp + status=running + pid 记录", async () => {
     const child = makeStreamChild();
     Object.assign(child, { pid: 12345 });
     spawnedChildren.set(record.id, child);
 
-    service.deliverMessage(record, "after you finish", false);
+    await service.deliverChatMessage(record, "after you finish", false);
 
     const lines = readStdinLines(child);
     expect(lines).toHaveLength(1);
@@ -225,11 +225,11 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
     expect(record.pid).toBe(12345);
   });
 
-  it("热路径 interrupt=true：进程活 → prompt streamingBehavior:steer", () => {
+  it("热路径 interrupt=true：进程活 → prompt streamingBehavior:steer", async () => {
     const child = makeStreamChild();
     spawnedChildren.set(record.id, child);
 
-    service.deliverMessage(record, "stop now", true);
+    await service.deliverChatMessage(record, "stop now", true);
 
     const lines = readStdinLines(child);
     expect(lines[0]).toMatchObject({ type: "prompt", message: "stop now", streamingBehavior: "steer" });
@@ -239,13 +239,13 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
   // [race-F5] 写后死进程检测：热路径 write 同步成功（数据进内核缓冲）但子进程在读取前
   // 已死（gate/idle kill 竞速）→ 消息将随缓冲静默丢弃。修复：写后检查 exitCode/signalCode，
   // 已死则 warn 留证（含 runId 与消息类型），不抛错不重试（终态已由 kill 路径保证）。
-  it("[race-F5] 热路径写后子进程已死 → logger.warn 被记录（含 runId 与消息类型），不抛错", () => {
+  it("[race-F5] 热路径写后子进程已死 → logger.warn 被记录（含 runId 与消息类型），不抛错", async () => {
     const child = makeStreamChild();
     // 模拟 gate/idle kill 竞速：写 stdin 成功但子进程已死（SIGTERM 终止形态）
     Object.assign(child, { signalCode: "SIGTERM" });
     spawnedChildren.set(record.id, child);
 
-    expect(() => service.deliverMessage(record, "lost msg", true)).not.toThrow();
+    await expect(service.deliverChatMessage(record, "lost msg", true)).resolves.toBeUndefined();
 
     // 写入照常发生（热路径语义不变，不做二次分发）
     const lines = readStdinLines(child);
@@ -257,13 +257,13 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
     );
   });
 
-  it("[race-F5] 活进程正常投递不触发死进程 warn（守卫不误报）", () => {
+  it("[race-F5] 活进程正常投递不触发死进程 warn（守卫不误报）", async () => {
     // loggerMock 是模块级共享 mock：清历史调用后再断言（防前一用例的 warn 干扰）
     loggerMock.warn.mockClear();
     const child = makeStreamChild();
     spawnedChildren.set(record.id, child);
 
-    service.deliverMessage(record, "normal", false);
+    await service.deliverChatMessage(record, "normal", false);
 
     expect(loggerMock.warn).not.toHaveBeenCalledWith(
       expect.stringContaining("died around stdin write"),
@@ -271,24 +271,24 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
     );
   });
 
-  it("热路径 disarm idle timer：arm 后 deliverMessage → timer 清除（防 turn 期间误杀）", () => {
+  it("热路径 disarm idle timer：arm 后投递 → timer 清除（防 turn 期间误杀）", async () => {
     const child = makeStreamChild();
     spawnedChildren.set(record.id, child);
     // 先 arm idle timer（模拟 Step 4a agent_settled 后 armed）
     lifecycle.armIdleTimer(record.id, () => {}, 10000);
     expect(lifecycle.hasIdleTimer(record.id)).toBe(true);
 
-    service.deliverMessage(record, "msg", false);
+    await service.deliverChatMessage(record, "msg", false);
 
     // disarmIdleTimer 被调 → timer 清除（新 turn 不被 idle timer 误杀）
     expect(lifecycle.hasIdleTimer(record.id)).toBe(false);
   });
 
-  it("冷路径：进程死（无 child）→ resumeRound spawn（runSpawn 收到 resume 参数）", async () => {
+  it("冷路径：进程死（无 child）→ 续轮 resume spawn（runSpawn 收到 resume 参数）", async () => {
     mockRunSpawn.mockResolvedValueOnce(makeResult(true));
     // spawnedChildren 无该 record → getChildByRecord 返回 undefined → 冷路径
 
-    service.deliverMessage(record, "resume msg", false);
+    await service.deliverChatMessage(record, "resume msg", false);
 
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
     const call = mockRunSpawn.mock.calls[0]!;
@@ -306,7 +306,7 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
     Object.assign(child, { killed: true }); // 进程已 kill
     spawnedChildren.set(record.id, child);
 
-    service.deliverMessage(record, "after kill", false);
+    await service.deliverChatMessage(record, "after kill", false);
 
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
   });
@@ -314,7 +314,7 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
   it("续聊后 agent_settled → onRoundSettled 设 running + round+1（v4 B-1 idle 折入 running，复用 Step 4a 链路）", () => {
     // buildSessionRunnerContext 是 private，类型断言访问（测试专用）
     const ctx = (service as unknown as { buildSessionRunnerContext(): SessionRunnerContext }).buildSessionRunnerContext();
-    record.status = "running"; // 模拟 deliverMessage 热路径设的新 turn 状态
+    record.status = "running"; // 模拟热路径投递设的新 turn 状态
     const beforeRound = record.round;
 
     // 模拟 session-runner 在 agent_settled 时调本回调（Step 4a 接入点）
@@ -329,14 +329,14 @@ describe("deliverMessage (V2 决策 3 chatMode 统一投递)", () => {
 // 冷路径并发守卫（review round2 MF1：同 turn 批量两条 message 双冷路径双 spawn）
 // ============================================================
 // 复现链（reviewer 探针实证）：pi 对同一条 assistant message 的 tool calls 顺序执行
-// （subagent tool sequential），tool1 的 deliverMessage 在冷路径 resumeRound 返回即
+// （subagent tool sequential），tool1 的投递在冷路径续轮返回即
 // resolve——早于 runSpawn 完成 spawn 注册（session-runner spawnedChildren.set 前有
 // pool.acquire await / writePromptToTempFile 等多个异步点）；tool2 立即执行 →
-// getChildByRecord 仍 undefined → 再次冷路径。v4 两态收敛后 resumeRound 的
+// getChildByRecord 仍 undefined → 再次冷路径。v4 两态收敛后续轮的
 // `status !== "running"` 守卫对 idle-resumable record 恒放行（idle 本来就是 running）、
 // `status = "running"` 是幂等写 → 两次 kickOff → runSpawn 被调 2 次 → 两个 pi 子进程
 // 以 --session 同一 JSONL 双写 + 第一个进程脱离 kill 记账成孤儿。
-describe("deliverMessage 冷路径并发守卫（review round2 MF1）", () => {
+describe("deliverChatMessage 冷路径并发守卫（review round2 MF1）", () => {
   let agentDir: string;
   let service: SubagentService;
   let record: ExecutionRecord;
@@ -369,13 +369,13 @@ describe("deliverMessage 冷路径并发守卫（review round2 MF1）", () => {
     );
 
     // 第一条：正常冷路径 resume
-    await expect(service.deliverMessage(record, "first msg", false)).resolves.toBeUndefined();
+    await expect(service.deliverChatMessage(record, "first msg", false)).resolves.toBeUndefined();
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
 
     // 第二条：spawn 仍在途（getChildByRecord undefined）→ 再走冷路径。
-    // 修复前：resumeRound 守卫恒放行 → 第二次 kickOff → runSpawn 2 次（双 spawn 双写 session）。
+    // 修复前：续轮守卫恒放行 → 第二次 kickOff → runSpawn 2 次（双 spawn 双写 session）。
     // 修复后：in-flight 守卫 throw 行动语言（MF-4）。
-    await expect(service.deliverMessage(record, "second msg", false)).rejects.toThrow(
+    await expect(service.deliverChatMessage(record, "second msg", false)).rejects.toThrow(
       /already starting a new round/,
     );
     expect(mockRunSpawn).toHaveBeenCalledTimes(1);
@@ -386,7 +386,7 @@ describe("deliverMessage 冷路径并发守卫（review round2 MF1）", () => {
       expect((service as unknown as { resumesInFlight: Set<string> }).resumesInFlight.has(record.id)).toBe(false),
     );
     mockRunSpawn.mockResolvedValueOnce(makeResult(true));
-    await expect(service.deliverMessage(record, "third msg", false)).resolves.toBeUndefined();
+    await expect(service.deliverChatMessage(record, "third msg", false)).resolves.toBeUndefined();
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(2));
     expect(mockRunSpawn.mock.calls[1]![1]).toBe("third msg");
   });
@@ -399,25 +399,34 @@ describe("deliverMessage 冷路径并发守卫（review round2 MF1）", () => {
       () => new Promise<AgentResult>((res) => { releaseA = res; }),
     );
 
-    await service.deliverMessage(record, "A msg", false);
+    await service.deliverChatMessage(record, "A msg", false);
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
 
     // B 的冷路径不受 A 在途影响
-    await expect(service.deliverMessage(recordB, "B msg", false)).resolves.toBeUndefined();
+    await expect(service.deliverChatMessage(recordB, "B msg", false)).resolves.toBeUndefined();
     await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(2));
     expect(mockRunSpawn.mock.calls[1]![0]).toBe(recordB);
 
     releaseA(makeResult(true));
   });
 
-  it("resume 在途时直接调 resumeRound（不经 deliverMessage）同样被守卫拦截", () => {
-    // promise 同步创建：release 立即可用（runSpawn 在 pool.acquire 微任务后才被调）
+  it("冷路径续轮在途时 EPIPE 兜底重入同样被守卫拦截（不持锁路径，review round2 MF1）", async () => {
+    // D2 后续轮本体是编排层私有，不持锁的重入形态只剩 EPIPE 兜底（PiEngine.deliverPrompt
+    // catch 分支直调续轮）——此处经热路径 EPIPE 复现：活 child 的 stdin 已销毁 → 写入
+    // EPIPE → 兜底转冷路径。首条消息已占在途守卫时，第二条的 EPIPE 兜底被拒。
     let release!: (r: AgentResult) => void;
-    const gate = new Promise<AgentResult>((res) => { release = res; });
-    mockRunSpawn.mockImplementationOnce(() => gate);
+    mockRunSpawn.mockImplementationOnce(() => new Promise<AgentResult>((res) => { release = res; }));
+    // 第一条：冷路径（无 child）→ 续轮在途
+    await expect(service.deliverChatMessage(record, "first", false)).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(mockRunSpawn).toHaveBeenCalledTimes(1));
 
-    service.resumeRound(record, "first");
-    expect(() => service.resumeRound(record, "second")).toThrow(/already starting a new round/);
+    // 第二条：EPIPE 兜底（child 活但 stdin 断）→ 兜底转冷路径 → 在途守卫 throw 行动语言
+    const epipe = new Error("write EPIPE") as NodeJS.ErrnoException;
+    epipe.code = "EPIPE"; // writeStdinLine 的 R3 判据：err.code === 'EPIPE' 才转 throw
+    const child = { stdin: { destroyed: false, write: () => { throw epipe; } }, exitCode: null, signalCode: null, killed: false } as unknown as ChildProcess;
+    spawnedChildren.set(record.id, child);
+    await expect(service.deliverChatMessage(record, "second", false)).rejects.toThrow(/already starting a new round/);
+    expect(mockRunSpawn).toHaveBeenCalledTimes(1);
 
     release(makeResult(true));
   });

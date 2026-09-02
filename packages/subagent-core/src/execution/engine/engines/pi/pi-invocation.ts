@@ -1,4 +1,4 @@
-// src/execution/pi-invocation.ts
+// src/execution/engine/engines/pi/pi-invocation.ts
 //
 // 定位 pi 二进制并组装 spawn 调用。Core 叶子原语（仅依赖 node 内置）。
 //
@@ -16,7 +16,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { isRelayActive, RELAY_ENV_NODE, RELAY_ENV_SCRIPT } from "./relay-env.ts";
+import { isRelayActive, RELAY_ENV_NODE, RELAY_ENV_SCRIPT } from "../../../relay-env.ts";
 
 /** spawn 调用描述符：command + args（透传给 child_process.spawn）。 */
 export interface PiInvocation {

@@ -1,4 +1,4 @@
-// src/core/turn-limiter.ts
+// src/execution/engine/engines/pi/turn-limiter.ts
 //
 // soft/hard turn 限制器。maxTurns 到达 → steer 提醒收尾；
 // graceTurns 后仍不结束 → abort。

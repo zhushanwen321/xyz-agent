@@ -458,12 +458,12 @@ export type MessageHandlerResult = {
  * message action handler：向对话模式 subagent 续聊/插入消息。
  *
  * 状态 × interrupt 自动映射（agent 只表达意图）：
- *   running → deliverMessage 热路径（进程活：prompt + streamingBehavior，interrupt=true
+ *   running → deliverChatMessage 热路径（进程活：prompt + streamingBehavior，interrupt=true
  *             抢占 / false 排队，pi 权威裁决 busy/idle）
- *   进程死  → deliverMessage 冷路径（resumeRound 重开 session + prompt，interrupt 自动
+ *   进程死  → deliverChatMessage 冷路径（resumeRound 重开 session + prompt，interrupt 自动
  *             退化，agent 无感）
  *   终态    → throw ended（正常路径不命中——终态 record 已 archive，getRecordForAction 先 throw not found）
- * （旧 deliverToRunning busy 投递已删除——SP-5 upgrade 后 running 恒走 deliverMessage）
+ * （旧 deliverToRunning busy 投递已删除——SP-5 upgrade 后 running 恒走 deliverChatMessage）
  *
  * 归属守卫（决策 3）：getRecordForAction 内部校验 rootSessionId。
  *
@@ -494,7 +494,7 @@ export async function messageHandler(
   }
 
   // SP-5 one-shot upgrade：非 chatMode 的 active record（running/idle）收到 message 时
-  // 自动升级为 chatMode，后续走 deliverMessage 统一投递路径（热路径或冷路径 resume）。
+  // 自动升级为 chatMode，后续走 deliverChatMessage 统一投递路径（热路径或冷路径 resume）。
   // closed/cancelled 终态 record 不可 upgrade（getRecordForAction 已抛 not found）。
   // chatMode 是 ExecutionRecord 的 readonly 字段，用 Mutable<T> 显式断言绕过 readonly 约束（upgrade 语义）。
   // Object.assign 隐式绕过 readonly 不可追踪，改为单字段显式赋值。
@@ -511,7 +511,7 @@ export async function messageHandler(
   // 不按 record.status（V2 进程长驻，idle 态进程仍活，续聊走热路径 prompt 而非重开 session）。
   // SP-5：upgrade 后 record.chatMode 已为 true，统一进此分支。
   if (record.chatMode) {
-    await service.deliverMessage(record, text, interrupt);
+    await service.deliverChatMessage(record, text, interrupt);
   } else {
     // 终态（closed/cancelled）：防御性兜底（终态 record 已 archive，正常走 not found）
     throw new Error(
@@ -599,7 +599,7 @@ export type ForkFromHandlerResult = {
  *      （同 id 双写风险；等待其结束或在其所属会话内操作）
  *   4. tombstone/cancelled → 用户主动取消，真没了（不提供接续通道）
  *   5. worktree 记录     → checkout 不可复用，fork 子进程 cwd 会回落主仓破坏隔离
- *      （对齐 deliverMessage 的 hadWorktree 守卫语义）
+ *      （对齐 deliverChatMessage 的 hadWorktree 守卫语义）
  *   6. 无子 session 文件  → 无历史可继承（entry-only 孤儿：spawn 窗口期中断）
  *
  * @throws Error 各守卫命中 / service.execute 失败（引擎不支持等）
@@ -667,7 +667,7 @@ function assertAndLookupForkFromSource(service: SubagentService, id: string): Su
 
   // 守卫 4：主动告别（cancelled tombstone / user-close 正式关闭）——close 语义无旁路：
   // fork-from 与 message 一致拒绝（guard 一致性规格），文案升级为统一「主动关闭」形态
-  // （含 closedReason 显式列入），与 deliverMessage 的 X 分支同语系不同落地（此处强调不可 branch）。
+  // （含 closedReason 显式列入），与 deliverChatMessage 的 X 分支同语系不同落地（此处强调不可 branch）。
   if (source.status === "closed" && (source.closedReason === "cancelled" || source.closedReason === "user-close")) {
     throw new Error(
       `subagent ${id} was deliberately closed by user (closedReason: ${source.closedReason}) — ` +
@@ -677,7 +677,7 @@ function assertAndLookupForkFromSource(service: SubagentService, id: string): Su
   }
 
   // 守卫 5：worktree 记录 —— WorktreeHandle 不可序列化，checkout 已被 reaper/cleanup
-  // 回收；fork 子进程若复用旧路径会回落主 repo（破坏文件隔离）。与 deliverMessage 的
+  // 回收；fork 子进程若复用旧路径会回落主 repo（破坏文件隔离）。与 deliverChatMessage 的
   // hadWorktree 守卫同一判据同一理由。
   if (source.worktree === true) {
     throw new Error(

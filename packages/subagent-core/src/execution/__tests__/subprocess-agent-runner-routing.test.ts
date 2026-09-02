@@ -19,7 +19,7 @@ import type { RunContext } from "../engine/port.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
 import type { EnginePort, ProbeReport } from "../engine/types.ts";
 import { ModelConfigService, setModelConfigService } from "../model-config-service.ts";
-import { getChildByRecord } from "../session-runner.ts";
+import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
 import { SubprocessAgentRunner } from "../subprocess-agent-runner.ts";
 import type { SubagentService } from "../subagent-service.ts";
 import type { ExecuteOptions } from "../types.ts";

@@ -26,14 +26,14 @@ vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：runSpawn/killAllSpawnedChildren 占位（import 链需要），
 // getChildByRecord 默认返回 undefined（无活进程 → isResumable=true），用例内按需覆盖。
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),
   spawnedChildren: new Map(),
 }));
 
-import { getChildByRecord } from "../session-runner.ts";
+import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
 import { createRecord } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import { RecordStore } from "../record-store.ts";

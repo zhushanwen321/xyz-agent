@@ -103,6 +103,12 @@ graph TD
 | 2026-09-02 | u-1a | runtime 删除量 ~430 行 > 设计估计 ~150 行 | 设计只计 reducer switch 本体，实际同文件投影/降级读取/白名单函数随迁 core 一并消灭——超额是收敛更彻底，非范围蔓延 | 已固化 |
 | 2026-09-02 | u-1b | views 版 formatEventLine 改名 formatTraceEventLine 迁入（同名不同实现的真差异，设计 D7-① 未显式裁决） | 两版语义不同（subagent 对话流风格 vs workflow trace 风格），同文件无法双同名导出；唯一消费点 detail-content.ts:235 同步改名 | 已固化 |
 | 2026-09-02 | u-1b | 「~150 行同构消失」实际净 -70（三文件口径） | 逐字同构骨架一份副本（~115-130 行）整体消除，但工厂新增 ~30 行参数化接口 + 两份重复机制文档合并保留一份；含 index.ts 接线 -26 行后整单元 diff +186/-426 | 已固化 |
+| 2026-09-02 | u-2a | import 更新面 74 文件 >> 计划期宽口径 18（相对路径形态未覆盖） | 计划期 rg 只测深路径字符串形态，execution/__tests__ 大批 `../session-runner.ts` 相对引用未入计；实施期全量提取（残留风险 2 已预告），单元边界不受影响 | 已固化 |
+| 2026-09-02 | u-2a | chat 轮次经 EnginePort 的形态 = ChatRoundTicket 交接（非 AgentTaskSpec 直载） | run(task, ctx) 的 task 形参对 chat 分支仅满足 port 签名；lossless host 件（ResolvedIdentity/SessionRunnerContext/forkFromSessionFile/resume/priority）由 ticket 携带——spec 往返会丢 forkFromSessionFile 造成 chat pi fork-from 回归；u-3b（D6 合流）消除双形态，pi-engine.ts 与 ticket 类型已登记 | 已固化（u-3b 消化） |
+| 2026-09-02 | u-2a | interact 生产调用方为 interactRecord（record 锚定形态）而非 port face interact | 编排层已持归属校验过的同一 record 对象，port face 的 handle→recordId→store 二次查找会引入「record 未注册即投递失败」新失败模式；port face 保留完整实现且被 conformance 覆盖，协议知识在引擎边界的 D2 主张不受影响 | 已固化 |
+| 2026-09-02 | u-2a | reader.ts 裁决 = 保留 + 文件头标注（实施期门②） | EnginePort.read 是非可选能力面（capabilities.sessionRead='full'、conformance read 降级契约①级实现）；删除使 pi read 面空心化并与终态图四件套矛盾；不构成第三个 SessionView 装配（u-1a session-view-service 对 pi 分支防御性空返回，零交叠） | 已固化 |
+| 2026-09-02 | u-2a | 领地外追认 2 处：engine/types.ts InteractAction +interrupt?: boolean（加性）；subagent-actions.ts deliverMessage→deliverChatMessage 重命名清扫（8 处，1 代码 + 7 注释） | 前者不加则 chat 域 interrupt:true 语义经 engine.interact 后丢失 = 回归（D1 §3.3.5 预留扩展位的兑现）；后者为 Service 方法删除后的编译强制 + 零逻辑变化 | 主 agent 追认 |
+| 2026-09-02 | u-2a | chat 域 pi 轮次不接 event journal | 迁移前基线无 journal 产物（A1 一致性要求）；journal 接线保留给非 pi 引擎 chat 路径与 workflow 域 SAR | 已固化 |
 
 ## 6 状态表
 
@@ -111,7 +117,7 @@ graph TD
 | u-1a | committed | 1 | core 2346 passed（干净 TMPDIR）/ runtime 4095 passed / runtime typecheck exit 0（tsconfig +allowImportingTsExtensions 一行，授权项）/ tsup build success / V1④ 代码断言：runtime 手写 reducer 符号 rg 零命中、ZCODE_ENGINE_ID 硬编码删除；实施期门①闭包复核过（7 文件零 pi 包）、门② golden 样本补录 3 个（JournalWriter 真实落盘） |
 | u-1b | committed | 1 | extensions 三连全绿（typecheck/lint EXIT=0 + subagent-workflow 69 files/902 tests）；rg formatSubagentStatusSnapshot 零命中；views/format.ts 不存在；injector 骨架符号仅存工厂文件；model-list-injector 零 diff；两段派发（全局文件数约束），偏差登记表 2 条 |
 | u-1c | pending | 0 | — |
-| u-2a | pending | 0 | — |
+| u-2a | committed | 1 | 两段派发（段 1 机械迁移 74 文件 import / 段 2 删旧轨 + interact 下沉）；core 2348 passed（+2 新用例）/ runtime 4095 passed / extensions 三连全绿（902）/ tsc + tsup exit 0 / validate-runtime-bundle exit 0 / staged 产物符号探针（kickOffBackground=0、新符号齐）；rg kickOffBackground 与 Service 协议符号（deliverMessage/resumeRound/sendPromptCommand）代码零命中；假兑现 B 解除（interactRecord 生产调用 subagent-service.ts:820）；A1 终验：迁移后 chat 域重采基线 diff——record 机器字段形态逐字段一致（字段集/status/agentName/model/task），差异全部归因模型非确定性（slug 为模型自填参数、调用次数差异），rootSessionId 属 volatile 白名单；偏差登记表 +5 条（ChatRoundTicket / interactRecord 形态 / reader 保留 / 追认 2 项 / journal 不接） |
 | u-2b | pending | 0 | — |
 | u-2c | pending | 0 | — |
 | u-3a | pending | 0 | — |

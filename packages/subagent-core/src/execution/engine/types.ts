@@ -296,7 +296,12 @@ export interface ProbeReport {
  * 声明 conversation unsupported 的引擎调用前拒绝（engine_capability_unsupported）。
  */
 export type InteractAction =
-  | { kind: "message"; payload: string }
+  /**
+   * interrupt：true = steer（抢占）/ false|缺省 = followUp（排队）——pi streamingBehavior
+   * 语义的中立承载（D1 §3.3.5「后续 wave 如需抢占语义再扩展 InteractAction」的兑现，
+   * chat 域投递经 engine.interact 接通时落地；不支持抢占的引擎忽略）。
+   */
+  | { kind: "message"; payload: string; interrupt?: boolean }
   | { kind: "close"; payload?: { force: boolean } }
   | { kind: "cancel" };
 

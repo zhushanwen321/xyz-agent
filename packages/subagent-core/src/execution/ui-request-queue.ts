@@ -19,9 +19,9 @@ import type { UiRequest } from "./dialog-queue.ts";
 // 类型再导出：dialog-queue.ts 是 UiRequest/UiResponse/UiRequestHandler 的规范来源，
 // 本模块再导出供测试 import（避免测试直接依赖 dialog-queue 内部实现）。
 export type { UiRequest, UiRequestHandler, UiResponse } from "./dialog-queue.ts";
-import type { SessionRunnerContext } from "./session-runner.ts";
-import type { ExtensionUiRequest } from "./spawn-event-adapter.ts";
-import { respond } from "./stdin-writer.ts";
+import type { SessionRunnerContext } from "./engine/engines/pi/session-runner.ts";
+import type { ExtensionUiRequest } from "./engine/engines/pi/spawn-event-adapter.ts";
+import { respond } from "./engine/engines/pi/stdin-writer.ts";
 import { parseChannel } from "./ui-channels.ts";
 import { notifyMissingHandlerGlobal } from "./ui-request-observability.ts";
 

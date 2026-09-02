@@ -7,7 +7,7 @@
 //   round+=1 + notifyComplete（轻量 idle 化，不调 doFinalizeRoundToIdle）。
 // 改动 3：runAndFinalize 检测 chatMode + status===idle（onRoundSettled 已设）→ early return，
 //   不进现有 chatMode 分流（那是 close 后 done/failed/cancelled 终态化的）。
-// double-notify 防护：onRoundSettled notify + kickOffBackground.then notify 同 id:round，
+// double-notify 防护：onRoundSettled notify + kickOffChatRound.then notify 同 id:round，
 //   notifier dedup（id:round key，60s TTL）吞第二次——notifier.ts L122 是天然防线。
 //
 // mock 结构与 run-and-finalize-chatmode.test.ts 一致（mock session-runner + logger，
@@ -28,14 +28,14 @@ vi.mock( "@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => l
 // mock session-runner：runSpawn 受控返回 result，killAllSpawnedChildren 空实现。
 // [M3] getChildByRecord 返回活进程假句柄：让 piAdapter.hasRunningBackground 的判定只能靠
 // 「!hasIdleTimer 排除等待续聊 record」通过（还原生产 Path A：轮次完成、进程保活）。
-vi.mock( "@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
+vi.mock( "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => ({ killed: false, kill: () => true })),
 }));
 
-import { runSpawn, getChildByRecord } from "@zhushanwen/subagent-core/execution/session-runner.ts";
-import type { SessionRunnerContext } from "@zhushanwen/subagent-core/execution/session-runner.ts";
+import { runSpawn, getChildByRecord } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
+import type { SessionRunnerContext } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
 import { armIdleTimer, disarmIdleTimer } from "@zhushanwen/subagent-core/execution/lifecycle-manager.ts";
 import { createRecord, updateFromEvent } from "@zhushanwen/subagent-core/execution/execution-record.ts";
 import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
@@ -278,7 +278,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：onRoundSettled 注入 + early 
       expect(sentMsg.content).toContain("finished a round");
       expect(sentMsg.content).toContain("first-round-done");
 
-      // double-notify 防护（原用例语义保留）：onRoundSettled notify + kickOffBackground.then
+      // double-notify 防护（原用例语义保留）：onRoundSettled notify + kickOffChatRound.then
       // notifyComplete 同 id:round → notifier dedup key=`${id}:${round}` 60s 内吞第二次。
       internals.notifyComplete(record);
       expect(pi.sendMessage).toHaveBeenCalledTimes(1);
@@ -327,7 +327,7 @@ describe("[N1] one-shot 成功完成通知：SP-5 回退 resumable 后仍送达"
   });
 
   it("真实 execute + mock runSpawn(success) → 恰 1 条 subagent-bg-notify（status=closed、正文含真实结果），record 保持可升级", async () => {
-    // 真实链路：execute → kickOffBackground → runAndFinalize（SP-5 分支 → finalizeRoundToIdle
+    // 真实链路：execute → kickOffChatRound → runAndFinalize（SP-5 分支 → finalizeRoundToIdle
     // 回退 running-resumable）→ .then notifyComplete → BgNotifier → pi.sendMessage。
     // round2 审查实证：旧守卫（closed/isIdle only）对 SP-5 完成态恒拒绝 → 发送数 0。
     modelService.initModel({

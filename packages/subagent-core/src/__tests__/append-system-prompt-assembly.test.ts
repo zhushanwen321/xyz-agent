@@ -66,7 +66,7 @@ vi.mock("../execution/alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
 }));
 
-vi.mock("../execution/temp-prompt.ts", () => ({
+vi.mock("../execution/engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string, content: string) => {
     captured.calls++;
     captured.content = content;
@@ -79,7 +79,7 @@ vi.mock("../execution/temp-prompt.ts", () => ({
 import { spawn } from "node:child_process";
 
 import { createRecord } from "../execution/execution-record.ts";
-import { runSpawn, type RunOptions, type SessionRunnerContext } from "../execution/session-runner.ts";
+import { runSpawn, type RunOptions, type SessionRunnerContext } from "../execution/engine/engines/pi/session-runner.ts";
 
 const mockSpawn = vi.mocked(spawn);
 

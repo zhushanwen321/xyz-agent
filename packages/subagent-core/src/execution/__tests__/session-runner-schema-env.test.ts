@@ -77,7 +77,7 @@ vi.mock("../alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -96,7 +96,7 @@ import {
   runSpawn,
   SCHEMA_ENV_MAX_BYTES,
   type SessionRunnerContext,
-} from "../session-runner.ts";
+} from "../engine/engines/pi/session-runner.ts";
 import { schemaEnvByteLength } from "../../shared/schema-env.ts";
 
 const mockSpawn = vi.mocked(spawn);

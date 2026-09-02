@@ -4,10 +4,10 @@
 //
 // 场景：one-shot subagent（conversation=false）完成首轮后 record 仍在内存（running/idle），
 // LLM 调 message 续聊 → messageHandler 检测非 chatMode + active → 置 chatMode=true（upgrade）→
-// 走 deliverMessage 统一路径（热路径或冷路径 resume）。
+// 走 deliverChatMessage 统一路径（热路径或冷路径续轮）。
 //
 // mock 策略：真实 SubagentService + mock runSpawn（受控），getChildByRecord/spawnedChildren
-// 提供真实 Map 语义（deliverMessage 热路径需要 child 存在）。
+// 提供真实 Map 语义（热路径投递需要 child 存在）。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -23,7 +23,7 @@ vi.mock( "@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => l
 
 // mock session-runner：runSpawn 受控 + killAllSpawnedChildren 空实现；
 // getChildByRecord/spawnedChildren 提供真实 Map 语义。
-vi.mock( "@zhushanwen/subagent-core/execution/session-runner.ts", () => {
+vi.mock( "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => {
   const spawnedChildren = new Map<string, unknown>();
   return {
     runSpawn: vi.fn(),
@@ -33,8 +33,8 @@ vi.mock( "@zhushanwen/subagent-core/execution/session-runner.ts", () => {
   };
 });
 
-import { runSpawn, spawnedChildren } from "@zhushanwen/subagent-core/execution/session-runner.ts";
-import type { SessionRunnerContext } from "@zhushanwen/subagent-core/execution/session-runner.ts";
+import { runSpawn, spawnedChildren } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
+import type { SessionRunnerContext } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
 import { createRecord } from "@zhushanwen/subagent-core/execution/execution-record.ts";
 import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
 import type { ModelInfo } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
@@ -129,12 +129,12 @@ describe("SP-5 one-shot upgrade（message → chatMode + 冷 resume）", () => {
   });
 
   // TC-1: one-shot done 后 message 触发 upgrade（chatMode=true）
-  // 场景：one-shot running record → message → chatMode 被置 true → deliverMessage 热路径（child 存在）
+  // 场景：one-shot running record → message → chatMode 被置 true → 热路径投递（child 存在）
   it("TC-1: one-shot running record 收到 message → chatMode 升级为 true", async () => {
     const record = makeOneShotRecord(sessionRootId, "running");
     store.register(record);
 
-    // 注册 mock child 让 deliverMessage 走热路径
+    // 注册 mock child 让投递走热路径
     const mockChild = { killed: false, pid: 12345, stdin: { write: vi.fn(() => true) } };
     spawnedChildren.set(record.id, mockChild as unknown);
 
@@ -145,7 +145,7 @@ describe("SP-5 one-shot upgrade（message → chatMode + 冷 resume）", () => {
 
     // 验证 chatMode 被升级
     expect(record.chatMode).toBe(true);
-    // 验证 record 仍为 running（deliverMessage 热路径设 running）
+    // 验证 record 仍为 running（热路径投递设 running）
     expect(record.status).toBe("running");
     // 验证 record 在内存中（非终态，未被 archive）
     expect(store.getMutable(record.id)).toBeDefined();
@@ -155,7 +155,7 @@ describe("SP-5 one-shot upgrade（message → chatMode + 冷 resume）", () => {
   });
 
   // TC-2: upgrade 后走冷路径 resume
-  // 场景：one-shot idle record（进程已死）→ message → chatMode=true → deliverMessage 冷路径 → resumeRound
+  // 场景：one-shot idle record（进程已死）→ message → chatMode=true → 冷路径续轮（resume spawn）
   it("TC-2: one-shot idle record 收到 message → chatMode 升级 + 冷路径 resume", async () => {
     // one-shot 完成态 record（running + isResumable）需要 sessionFile（resumeRound 冷路径校验）
     fs.writeFileSync("/tmp/fake-session.jsonl", "");

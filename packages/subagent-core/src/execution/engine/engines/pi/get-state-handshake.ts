@@ -1,4 +1,4 @@
-// src/execution/get-state-handshake.ts
+// src/execution/engine/engines/pi/get-state-handshake.ts
 //
 // FR-4: get_state RPC 握手逻辑。
 //

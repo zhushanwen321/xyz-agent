@@ -77,7 +77,7 @@ vi.mock( "@zhushanwen/subagent-core/execution/session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 0 })),
 }));
 
-vi.mock( "@zhushanwen/subagent-core/execution/temp-prompt.ts", () => ({
+vi.mock( "@zhushanwen/subagent-core/execution/engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -165,7 +165,7 @@ describe("[N2] chatMode 轮次通知正文：真实 session-runner 链路", () =
   it("真实 execute(conversation:true) + FakeChild 驱动 text_delta/agent_settled → 通知正文含本轮真实回复（非 (empty)）", async () => {
     const ROUND_REPLY = "THE ROUND REPLY";
 
-    // 真实链路：execute → kickOffBackground → runAndFinalize → 真实 runSpawn → FakeChild。
+    // 真实链路：execute → kickOffChatRound → runAndFinalize → 真实 runSpawn → FakeChild。
     // ctx.onRoundSettled 由 buildSessionRunnerContext 注入（真实回调，非 mock）。
     const handle = await service.execute({
       task: "tell me something",

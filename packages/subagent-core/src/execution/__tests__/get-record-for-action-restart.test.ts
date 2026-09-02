@@ -27,7 +27,7 @@ vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner：import 链需要（getRecordForAction 本身不调 spawn，仅守卫读
 // hasLiveProcessHandle——默认无活进程，与跨重启场景一致）。
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),
@@ -234,8 +234,8 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
     // handle 无法恢复（不可序列化）
     expect(record.worktreeHandle).toBeUndefined();
 
-    // 冷路径续聊（无活进程）→ resumeRound 守卫拒绝，不 spawn 回落主 repo
-    await expect(service.deliverMessage(record, "resume after restart", false)).rejects.toThrow(
+    // 冷路径续聊（无活进程）→ 续轮守卫拒绝，不 spawn 回落主 repo
+    await expect(service.deliverChatMessage(record, "resume after restart", false)).rejects.toThrow(
       /worktree isolation.*lost when the parent process restarted/,
     );
   });
@@ -247,8 +247,8 @@ describe("[M10] getRecordForAction 跨重启磁盘重建（S3 回归场景）", 
     const record = service.getRecordForAction("sa-nowt");
     expect(record.hadWorktree).toBe(false);
 
-    // deliverMessage 冷路径不被 worktree 守卫拦截（resume 正常发起；后续 spawn 编排
+    // 冷路径续聊不被 worktree 守卫拦截（resume 正常发起；后续 spawn 编排
     // 超出本用例关注点——runSpawn 在本文件是 no-op mock）
-    await expect(service.deliverMessage(record, "resume normal", false)).resolves.toBeUndefined();
+    await expect(service.deliverChatMessage(record, "resume normal", false)).resolves.toBeUndefined();
   });
 });

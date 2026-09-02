@@ -202,17 +202,17 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
 
   it("message 正常（非 streaming）→ messageHandler 接线 + 留痕 entry 立即落盘", async () => {
     const record = makeRecord();
-    const deliverMessage = vi.fn();
+    const deliverChatMessage = vi.fn();
     mockedGetService.mockReturnValue({
       getRecordForAction: vi.fn(() => record),
-      deliverMessage,
+      deliverChatMessage,
     } as never);
 
     // 转义协议：字面 \n 传输，解析侧还原（P3）
     await runHandler("message sa-1 第一条消息\\n带换行");
 
-    // 真实 messageHandler 跑通：deliverMessage(record, 还原后文本, interrupt=false)
-    expect(deliverMessage).toHaveBeenCalledWith(record, "第一条消息\n带换行", false);
+    // 真实 messageHandler 跑通：deliverChatMessage(record, 还原后文本, interrupt=false)
+    expect(deliverChatMessage).toHaveBeenCalledWith(record, "第一条消息\n带换行", false);
     // 留痕：subagent-directive custom_message（§3.3.3——customType/content/details 契约）
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
     const [msg, options] = sendMessageMock.mock.calls[0] as [
@@ -234,10 +234,10 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
 
   it("message 正常（streaming）→ 留痕走 deliverAs:nextTurn，不 steer 主 agent 当前 turn", async () => {
     const record = makeRecord();
-    const deliverMessage = vi.fn();
+    const deliverChatMessage = vi.fn();
     mockedGetService.mockReturnValue({
       getRecordForAction: vi.fn(() => record),
-      deliverMessage,
+      deliverChatMessage,
     } as never);
     // 主 agent turn 进行中（ctx.isIdle()=false）
     ctx.isIdle = vi.fn(() => false);
@@ -255,7 +255,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
     expect(msg.customType).toBe("subagent-directive");
     expect(options).toEqual({ deliverAs: "nextTurn" });
     // 派发与通知不受 streaming 状态影响
-    expect(deliverMessage).toHaveBeenCalledWith(record, "turn 进行中的定向消息", false);
+    expect(deliverChatMessage).toHaveBeenCalledWith(record, "turn 进行中的定向消息", false);
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       "Message delivered to subagent build-api (sa-1)",
       "info",
@@ -267,7 +267,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
       getRecordForAction: vi.fn(() => {
         throw new Error('No subagent record with id "sa-x"');
       }),
-      deliverMessage: vi.fn(),
+      deliverChatMessage: vi.fn(),
     } as never);
 
     await runHandler("message sa-x hi");
@@ -281,12 +281,12 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
   });
 
   it("message 缺 recordId → Usage warning 指明缺什么，不触 service", async () => {
-    const deliverMessage = vi.fn();
-    mockedGetService.mockReturnValue({ deliverMessage } as never);
+    const deliverChatMessage = vi.fn();
+    mockedGetService.mockReturnValue({ deliverChatMessage } as never);
 
     await runHandler("message");
 
-    expect(deliverMessage).not.toHaveBeenCalled();
+    expect(deliverChatMessage).not.toHaveBeenCalled();
     expect(sendMessageMock).not.toHaveBeenCalled();
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       "Usage: /subagents message <recordId> <text> — recordId is missing",

@@ -1,4 +1,4 @@
-// src/core/output-collector.ts
+// src/execution/engine/engines/pi/output-collector.ts
 //
 // 结果收集器（Record + CollectResultArgs → AgentResult）。
 //
@@ -14,12 +14,12 @@ import type {
   AgentResult,
   ExecutionRecord,
   ToolCall,
-} from "./types.ts";
+} from "../../../types.ts";
 import {
   getAllToolCalls,
   getFullText,
   getTotalUsage,
-} from "./execution-record.ts";
+} from "../../../execution-record.ts";
 // [F-R1] 值引用 stale-context 分诊 pattern 表（SSOT 在 execute-agent-call，消费点
 // isStaleContextErrorMsg 同源）。execution → orchestration 值引用有先例
 // （agent-registry.ts → script-lint.ts），且 execute-agent-call 对 execution 仅剩
@@ -28,7 +28,7 @@ import {
 import {
   DETERMINISTIC_SCHEMA_FAILURE_PREFIX,
   STALE_CONTEXT_PATTERNS,
-} from "../orchestration/execute-agent-call.ts";
+} from "../../../../orchestration/execute-agent-call.ts";
 
 // ============================================================
 // Result 收集

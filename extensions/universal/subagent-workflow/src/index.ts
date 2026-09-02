@@ -51,7 +51,7 @@ import {
   setSubagentService,
   SubagentService,
 } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import { killAllSpawnedChildren } from "@zhushanwen/subagent-core/execution/session-runner.ts";
+import { killAllSpawnedChildren } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
 import { SubprocessAgentRunner } from "@zhushanwen/subagent-core/execution/subprocess-agent-runner.ts";
 import { WorktreeManager } from "@zhushanwen/subagent-core/execution/worktree-manager.ts";
 // [engine-awareness U3/D7-④] per-turn 引擎检测编排 + before_agent_start 链尾接线

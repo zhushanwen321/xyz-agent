@@ -3,7 +3,7 @@
 // widget 私货通道退役步骤 2（E 方案 §6.3）测试，两层：
 //   判定层：createBackgroundStream 真实函数（vi.importActual 绕过文件级 mock）——
 //   gui+relay 激活不创建；tui / relay 未激活 / headless 原样创建；sink=null 恒降级。
-//   接线层：SubagentService.execute（background → kickOffBackground 同步段）透传
+//   接线层：SubagentService.execute（background → kickOffChatRound 同步段）透传
 //   mode/streamSink 给工厂——mode 传错 = 判定失效，故接线面必须锁定。
 //
 // spawn 层 mock（FakeChild），与 nested-visibility-env-propagation.test.ts 同模式。
@@ -103,7 +103,7 @@ vi.mock("../manifest-store.ts", () => {
   return { ManifestStore: vi.fn(function (_recordsDir: string) { return new FakeManifestStore(); }) };
 });
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -176,7 +176,7 @@ function setupService(mode: ExtensionMode | undefined, sessionId = "retire-it"):
   return service;
 }
 
-/** 等 kickOffBackground 的 detached runAndFinalize 走到 spawn（stream 创建先于此）。 */
+/** 等 kickOffChatRound 的 detached 轮次执行走到 spawn（stream 创建先于此）。 */
 async function waitForSpawnCall(): Promise<void> {
   const baseline = mockSpawn.mock.calls.length;
   const deadline = Date.now() + 2000;
@@ -234,7 +234,7 @@ describe("退役步骤 2 判定层：createBackgroundStream", () => {
 
 // ── 接线层：service → 工厂的参数透传（mode 传错 = 判定失效）──
 
-describe("退役步骤 2 接线层：kickOffBackground 透传 mode/sink 给工厂", () => {
+describe("退役步骤 2 接线层：kickOffChatRound 透传 mode/sink 给工厂", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     for (const key of RELAY_ENV_KEYS) delete process.env[key];

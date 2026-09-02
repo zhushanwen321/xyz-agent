@@ -132,7 +132,7 @@ vi.mock("../manifest-store.ts", () => {
 
 // temp-prompt：mock 掉真实 fs.promises I/O，消除 fake-timers 下的 flaky 竞态
 // （详见 run-spawn-integration.test.ts 同名 mock 的注释）。
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -267,7 +267,7 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
     await waitForSpawn(mockSpawn);
     await driveChildToCompletion(lastSpawnedChild());
 
-    // 等 detached promise 链跑完（kickOffBackground 的 .then notify）
+    // 等 detached promise 链跑完（kickOffChatRound 的 .then notify）
     await new Promise<void>((r) => setTimeout(r, 10));
 
     expect(acquireSpy).toHaveBeenCalled();

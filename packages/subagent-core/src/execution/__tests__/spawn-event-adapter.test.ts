@@ -9,7 +9,7 @@ import {
   deriveSessionFilePath,
   findSessionFileByHeaderId,
   parseSpawnLine,
-} from "../spawn-event-adapter.ts";
+} from "../engine/engines/pi/spawn-event-adapter.ts";
 
 describe("parseSpawnLine", () => {
   describe("空白行", () => {

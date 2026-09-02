@@ -19,7 +19,7 @@ const { loggerMock } = vi.hoisted(() => ({
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
 // mock session-runner（import 链需要 runSpawn/killAllSpawnedChildren/getChildByRecord 存在）
-vi.mock("../session-runner.ts", () => ({
+vi.mock("../engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),
@@ -31,7 +31,7 @@ import { RecordStore } from "../record-store.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { PiLike } from "../subagent-service.ts";
 import type { ExecutionRecord } from "../types.ts";
-import { getChildByRecord } from "../session-runner.ts";
+import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
 import {
   armIdleTimer,
   disarmIdleTimer,

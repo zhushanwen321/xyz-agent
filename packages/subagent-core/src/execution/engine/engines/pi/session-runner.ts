@@ -1,4 +1,4 @@
-// src/core/session-runner.ts
+// src/execution/engine/engines/pi/session-runner.ts
 //
 // spawn pi --mode rpc 子进程执行 session 的编排器。零 mode 感知。
 //
@@ -8,32 +8,32 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 
-import { getLogger } from "../core/logger.ts";
-import { bestEffort } from "./best-effort.ts";
-import { armIdleTimer } from "./lifecycle-manager.ts";
-import { readActivePendingFromSessionFile } from "./session-pending.ts";
+import { getLogger } from "../../../../core/logger.ts";
+import { bestEffort } from "../../../best-effort.ts";
+import { armIdleTimer } from "../../../lifecycle-manager.ts";
+import { readActivePendingFromSessionFile } from "../../../session-pending.ts";
 
-import type { ExtensionMode } from "./host-mode.ts";
+import type { ExtensionMode } from "../../../host-mode.ts";
 
 import { type MirrorFlags, mirrorMainProcessFlags } from "./argv-mirror.ts";
-import { writeAliveMarker } from "./alive-store.ts";
-import { type DialogGlobalQueue, type UiRequestHandler } from "./dialog-queue.ts";
-import { updateFromEvent } from "./execution-record.ts";
+import { writeAliveMarker } from "../../../alive-store.ts";
+import { type DialogGlobalQueue, type UiRequestHandler } from "../../../dialog-queue.ts";
+import { updateFromEvent } from "../../../execution-record.ts";
 import { type GetStateResult, performGetStateHandshake } from "./get-state-handshake.ts";
-import { willRespondToAskUser } from "./host-mode.ts";
-import type { AgentConfig, ResolvedModel } from "./model-resolver.ts";
+import { willRespondToAskUser } from "../../../host-mode.ts";
+import type { AgentConfig, ResolvedModel } from "../../../model-resolver.ts";
 import { collectResult } from "./output-collector.ts";
-import { getSubagentSessionDir } from "./path-encoding.ts";
+import { getSubagentSessionDir } from "../../../path-encoding.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
-import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "./relay-env.ts";
-import { assertThinkingLevel, type ThinkingLevel } from "../shared/model-ref";
+import { isRelayActive, RELAY_ENV_RECORD_ID, RELAY_ENV_SESSION_ID } from "../../../relay-env.ts";
+import { assertThinkingLevel, type ThinkingLevel } from "../../../../shared/model-ref";
 import {
   SCHEMA_ENV_MAX_BYTES,
   SCHEMA_ENV_VAR,
   schemaEnvByteLength,
-} from "../shared/schema-env.ts";
-import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
-import { MAX_FORK_DEPTH } from "./session-context-resolver.ts";
+} from "../../../../shared/schema-env.ts";
+import { assertSafeTimerDelay } from "../../../../shared/timer-delay.ts";
+import { MAX_FORK_DEPTH } from "../../../session-context-resolver.ts";
 import { EPIPE_FAILURE_THRESHOLD, recordEpipeFailure, sendPromptCommand } from "./stdin-writer.ts";
 import {
   deriveSessionFilePath,
@@ -41,7 +41,7 @@ import {
   parseSpawnLine,
   type SpawnSessionHeader,
 } from "./spawn-event-adapter.ts";
-import type { SubagentStream } from "./stream-sink.ts";
+import type { SubagentStream } from "../../../stream-sink.ts";
 import {
   cleanupTempPrompt,
   writePromptToTempFile,
@@ -52,9 +52,9 @@ import type {
   ExecutionRecord,
   SdkEvent,
   WorktreeHandle,
-} from "./types.ts";
+} from "../../../types.ts";
 import { createTurnLimiter, WRAP_UP_HINT } from "./turn-limiter.ts";
-import { createUiRequestQueue } from "./ui-request-queue.ts";
+import { createUiRequestQueue } from "../../../ui-request-queue.ts";
 
 const logger = getLogger("subagents");
 
@@ -395,8 +395,8 @@ export function getChildByRecord(recordId: string): ChildProcess | undefined {
  * 背景：spawnedChildren 是 Map<recordId, ChildProcess>，resume spawn 会 set 覆盖旧句柄。
  * 旧 child 的 close/error 事件异步到达（kill 后 close 回调可能晚数 tick），若 close/error
  * handler 无条件 delete(record.id)，会误删 resume spawn 刚注册的**新** child——
- * 时序：idle timer 对旧 child SIGTERM（killed=true 但 close 未到）→ deliverMessage 判
- * child.killed 走冷路径 resumeRound → spawn 新 child set 覆盖 → 旧 child close 此刻到达 →
+ * 时序：idle timer 对旧 child SIGTERM（killed=true 但 close 未到）→ 投递方（PiEngine
+ * deliverPrompt）判 child.killed 走冷路径续轮 → spawn 新 child set 覆盖 → 旧 child close 此刻到达 →
  * 误删新注册。后果：新活进程脱离记账（killAllSpawnedChildren 漏杀孤儿 + getChildByRecord
  * undefined → busy 投递再走冷路径二次 resume → 两进程写同一 session 文件，v4 A-5 注释
  * 自述的 P7 双写者事故模式）。按句相等守卫：set 覆盖后旧句柄 ≠ Map 当前值，天然跳过。
@@ -1629,8 +1629,8 @@ export async function runSpawn(
     // ②recordEpipeFailure 合并同步/异步计数；③logger.warn 记录一次。
     // [v4 A-1 裁决] handler 内**不 throw**——stream 'error' listener 内 throw 会经 Node 内部
     // emit() 传播为 uncaughtException 崩主进程，违背 A-1 防崩核心目标。达阈值的 throw 留给
-    // 同步路径（deliverMessage catch 合并计数达 EPIPE_FAILURE_THRESHOLD 时同步 throw，不崩）。
-    // async handler 只移句柄 + 计数 + warn；进程已 dead（移句柄），下次 deliverMessage 检测
+    // 同步路径（PiEngine.deliverPrompt 的 catch 合并计数达 EPIPE_FAILURE_THRESHOLD 时同步 throw，不崩）。
+    // async handler 只移句柄 + 计数 + warn；进程已 dead（移句柄），下次投递检测
     // dead 走冷路径，冷路径 write EPIPE 同步计数达阈值同步 throw——防死循环且不崩。
     child.stdin.on("error", (err: Error) => {
       // [M4] 按值守卫：resume spawn 已覆盖注册时不误删新 child（见 removeChildRegistration）

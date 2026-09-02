@@ -44,7 +44,7 @@ const { loggerMock, rafCapture, chainPromises } = vi.hoisted(() => ({
 }));
 vi.mock("@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-vi.mock("@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(async () => ({
     text: "",
     turns: 1,

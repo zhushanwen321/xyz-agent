@@ -1,4 +1,4 @@
-// src/core/spawn-event-adapter.ts
+// src/execution/engine/engines/pi/spawn-event-adapter.ts
 //
 // pi 子进程 stdout JSON 事件流的解析器。Core 叶子原语（仅依赖 types.ts）。
 //
@@ -20,7 +20,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type { SdkEvent } from "./types.ts";
+import type { SdkEvent } from "../../../types.ts";
 
 /** pi stdout header 行（session 元信息）。type 固定为 "session"。 */
 export interface SpawnSessionHeader {

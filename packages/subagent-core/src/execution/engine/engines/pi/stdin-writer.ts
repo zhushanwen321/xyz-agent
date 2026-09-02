@@ -1,4 +1,4 @@
-// src/execution/stdin-writer.ts
+// src/execution/engine/engines/pi/stdin-writer.ts
 //
 // 向 rpc 子进程 stdin 写入命令的 helper 集合。
 //
@@ -10,9 +10,9 @@
 import type { ChildProcess } from "node:child_process";
 import * as crypto from "node:crypto";
 
-import { getLogger } from "../core/logger.ts";
+import { getLogger } from "../../../../core/logger.ts";
 
-import type { UiResponse } from "./dialog-queue.ts";
+import type { UiResponse } from "../../../dialog-queue.ts";
 
 const logger = getLogger("subagents");
 
@@ -25,7 +25,7 @@ const logger = getLogger("subagents");
  * 是 stdin 域中立模块，epipe 计数属 stdin 错误域，职责合理。
  *
  * 错误处理两半面共用本计数器（合并计数，防 spawn→EPIPE→resume 死循环）：
- *   ① 同步 write 抛错（writeStdinLine throw → deliverMessage catch 递增）
+ *   ① 同步 write 抛错（writeStdinLine throw → PiEngine.deliverPrompt catch 递增）
  *   ② 异步 stream 'error' event（session-runner.ts child.stdin.on('error') 递增）
  */
 const epipeConsecutiveFailures = new Map<string, number>();
@@ -158,7 +158,7 @@ export function sendGetStateCommand(child: ChildProcess): string {
  *
  * [R1] write 返回 false 时记 warn（不阻塞，内核缓冲会随后排空）。
  * [R3] write 抛 EPIPE / ERR_STREAM_DESTROYED 时 throw 含 EPIPE 关键词的 Error，
- *      让上层（deliverMessage）能捕获并自动转冷路径 resume。
+ *      让上层（PiEngine.deliverPrompt）能捕获并自动转冷路径 resume。
  * stdin 已关闭/销毁时跳过——respond 已检查 signal，sendPromptCommand 已检查 destroyed。
  *
  * @param child 子进程
@@ -173,11 +173,11 @@ function writeStdinLine(child: ChildProcess, line: string, warnTag: string): voi
     if (!ok) logger.warn(`[subagents] stdin backpressure on ${warnTag}`);
   } catch (err) {
     // [R3] EPIPE / ERR_STREAM_DESTROYED：stdin 管道已断，子进程已退出或 stdin 被销毁。
-    // [v4 A-1] 错误处理两半面：① 同步 write 抛错（本 catch）——上层 deliverMessage 捕获后
+    // [v4 A-1] 错误处理两半面：① 同步 write 抛错（本 catch）——上层（PiEngine.deliverPrompt）捕获后
     //   调 recordEpipeFailure 递增计数；② 异步 stream 'error' event（session-runner.ts 的
     //   child.stdin.on('error') listener）。两者共用本模块 export 的 recordEpipeFailure
     //   helper 合并计数（防 spawn→EPIPE→resume 死循环）。
-    // throw 让上层（deliverMessage）捕获并自动转冷路径 resume + 消息重放。
+    // throw 让上层（PiEngine.deliverPrompt）捕获并自动转冷路径 resume + 消息重放。
     if (
       err !== null &&
       typeof err === "object" &&

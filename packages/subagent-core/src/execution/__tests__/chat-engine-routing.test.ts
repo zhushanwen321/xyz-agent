@@ -76,7 +76,7 @@ import type {
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
 import { toSubagentRecordEntry } from "../record-entry.ts";
-import { getChildByRecord } from "../session-runner.ts";
+import { getChildByRecord } from "../engine/engines/pi/session-runner.ts";
 import { SubagentService } from "../subagent-service.ts";
 import type { ExecuteOptions } from "../types.ts";
 
@@ -320,8 +320,8 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
     expect(zcode.runs.length).toBe(0);
-    // piEngine 只是注册表占位——pi 缺省路径不查注册表（上一用例已验证零注册场景），
-    // 此处断言 piEngine 也未被消费（pi 原路径不走 EnginePort）
+    // piEngine 只是注册表占位——D2 单轨后 pi chat 走 Service 内部 DI 的 PiEngine 实例
+    //（chatPiEngine，经 EnginePort 交接轮次），registry 占位实例仍未被 chat 域消费
     expect(piEngine.runs.length).toBe(0);
     const rec = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
     expect(rec?.engine).toBeUndefined();

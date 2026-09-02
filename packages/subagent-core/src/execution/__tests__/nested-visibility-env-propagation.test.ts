@@ -92,7 +92,7 @@ vi.mock("../manifest-store.ts", () => {
   return { ManifestStore: vi.fn(function (_recordsDir: string) { return new FakeManifestStore(); }) };
 });
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };

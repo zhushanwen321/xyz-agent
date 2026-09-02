@@ -28,7 +28,7 @@ import { createPiEngine } from "../../engines/pi/registration.ts";
 import type { RunContext } from "../../port.ts";
 import type { AgentEvent } from "../../../types.ts";
 import type { AgentTaskSpec } from "../../types.ts";
-import { getPiInvocation } from "../../../pi-invocation.ts";
+import { getPiInvocation } from "../../engines/pi/pi-invocation.ts";
 import {
   RELAY_ENV_NODE,
   RELAY_ENV_RECORD_ID,

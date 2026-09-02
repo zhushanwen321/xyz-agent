@@ -473,7 +473,7 @@ describe("SubagentService", () => {
     // ============================================================
     // create-await 竞态守卫（Phase 2）：create 的 await 窗口内 dispose/cancel
     // 可把 record CAS 成 closed——守卫须主动 cleanup + early-failed 返回，不 kickOff。
-    // 实现约束固化：「赋值 record.worktreeHandle → 终态检查 → kickOffBackground」
+    // 实现约束固化：「赋值 record.worktreeHandle → 终态检查 → 轮次 kick-off」
     // 必须同一同步段（中间禁止 await），本用例即该不变量的回归锚点。
     // ============================================================
     it("守卫：create await 窗口内 dispose 抢先 → cleanup 被调 + early-failed 返回（不 kickOff）", async () => {
@@ -593,7 +593,7 @@ describe("SubagentService", () => {
         ctxModel,
       });
 
-      // worktree create 抛错在 kickOffBackground 之前（execute 同步 catch），返回 background 形状
+      // worktree create 抛错在轮次 kick-off 之前（executeViaEngine 同步 catch），返回 background 形状
       expect(handle.mode).toBe("background");
 
       // createRecordForMode 生成的 subagentId 带 sa- 前缀（sa-<uuid>）

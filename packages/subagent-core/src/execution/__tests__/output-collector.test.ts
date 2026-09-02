@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { isStaleContextErrorMsg, DETERMINISTIC_SCHEMA_FAILURE_PREFIX, isDeterministicSchemaFailureMsg, STALE_CONTEXT_PATTERNS } from "../../orchestration/execute-agent-call.ts";
-import { collectResult, describeMissingParsedOutput, extractParsedOutput, neutralizeStalePatterns } from "../output-collector.ts";
+import { collectResult, describeMissingParsedOutput, extractParsedOutput, neutralizeStalePatterns } from "../engine/engines/pi/output-collector.ts";
 import type { ExecutionRecord, ToolCall } from "../types.ts";
 
 // ============================================================

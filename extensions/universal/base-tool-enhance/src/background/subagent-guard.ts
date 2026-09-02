@@ -1,7 +1,7 @@
 /**
  * subagent 进程识别（D14 降级判据，探针 P5）。
  *
- * subagent-workflow 的 buildChildEnv（execution/session-runner.ts）对每个子 agent
+ * subagent-workflow 的 buildChildEnv（execution/engine/engines/pi/session-runner.ts）对每个子 agent
  * 进程**无条件**注入身份贯穿 env（PI_SUBAGENT_ROOT_SESSION_ID / SELF_RECORD_ID /
  * DEPTH / ROOT_CWD，见其源码注释「无条件注入每个 subagent」）。任一存在 = 当前
  * pi 进程是 subagent 子进程 → 本扩展降级：background:true 被忽略走前台同步语义。

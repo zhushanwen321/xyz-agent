@@ -32,7 +32,7 @@ import { mapToExecuteOptions, mergeTimeoutSignal } from "./execute-options-mappe
 import { getModelConfigService } from "./model-config-service.ts";
 import type { ModelInfo } from "./model-resolver.ts";
 import { modelRefFromVerified } from "../shared/model-ref";
-import { registerSpawnedChildForRecord } from "./session-runner.ts";
+import { registerSpawnedChildForRecord } from "./engine/engines/pi/session-runner.ts";
 import type { SubagentStream } from "./stream-sink.ts";
 import type { SubagentService } from "./subagent-service.ts";
 import type { ExecuteOptions } from "./types.ts";

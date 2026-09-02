@@ -62,7 +62,7 @@ vi.mock("../session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 0 })),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -70,8 +70,8 @@ vi.mock("../temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { runSpawn } from "../session-runner.ts";
-import type { SessionRunnerContext } from "../session-runner.ts";
+import { runSpawn } from "../engine/engines/pi/session-runner.ts";
+import type { SessionRunnerContext } from "../engine/engines/pi/session-runner.ts";
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
   hasIdleTimer,

@@ -43,7 +43,7 @@ vi.mock("@zhushanwen/subagent-core/core/logger.ts", () => ({
 const { killAllSpawnedChildrenMock } = vi.hoisted(() => ({
   killAllSpawnedChildrenMock: vi.fn(),
 }));
-vi.mock("@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
+vi.mock("@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: killAllSpawnedChildrenMock,
   getChildByRecord: vi.fn(() => undefined),

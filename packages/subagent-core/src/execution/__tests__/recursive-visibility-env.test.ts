@@ -73,7 +73,7 @@ vi.mock("../alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
 }));
 
-vi.mock("../temp-prompt.ts", () => ({
+vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
     return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
@@ -86,7 +86,7 @@ import * as fs from "node:fs";
 
 import { waitForSpawn } from "./helpers/spawn-mock.ts";
 import { createRecord } from "../execution-record.ts";
-import { type RunOptions, runSpawn, type SessionRunnerContext } from "../session-runner.ts";
+import { type RunOptions, runSpawn, type SessionRunnerContext } from "../engine/engines/pi/session-runner.ts";
 
 const mockSpawn = vi.mocked(spawn);
 const mockExistsSync = vi.mocked(fs.existsSync);

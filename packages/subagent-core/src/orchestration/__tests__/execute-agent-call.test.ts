@@ -15,7 +15,7 @@ import {
 import { AgentCall } from "../models/agent-call.ts";
 import { Budget } from "../models/budget.ts";
 import type { AgentRunner } from "../models/ports.ts";
-import { describeMissingParsedOutput } from "../../execution/output-collector.ts";
+import { describeMissingParsedOutput } from "../../execution/engine/engines/pi/output-collector.ts";
 import type { ToolCall } from "../../execution/types.ts";
 import { Trace } from "../models/trace.ts";
 import type { ExecutionTraceNode } from "../models/types.ts";
