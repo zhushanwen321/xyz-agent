@@ -494,6 +494,17 @@ export const session = {
   async writeSegments(_payload: { sessionId: string; entry: import('@xyz-agent/shared').SegmentsMetadataEntry }): Promise<void> {
     await sleep(TIMING.ack)
   },
+  // ── 导入 pi 会话（import-session U5；与 real domain 同接口，门面三元要求两侧同构）──
+  /** Mock importCandidates：恒返回空候选集（mock 轨道无外部 pi sessions 目录可扫）。 */
+  async importCandidates(_payload: { rootDir?: string; query?: string; limit?: number }): Promise<import('@xyz-agent/shared').ImportCandidatesReply> {
+    await sleep(TIMING.ack)
+    return { total: 0, items: [], dirs: [] }
+  },
+  /** Mock importSession：恒 reject（空候选集下不可达；与 fetchCurrentSystemPrompt 同形，供 UI 错误态演示）。 */
+  async importSession(_payload: { sourcePath: string; projectId: string }): Promise<import('@xyz-agent/shared').ImportReply> {
+    await sleep(TIMING.ack)
+    throw Object.assign(new Error('No external sessions available in mock mode'), { code: 'import_source_missing' })
+  },
 }
 
 /**

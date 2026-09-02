@@ -189,19 +189,20 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
     console.warn('[runtime] extension startup config ensure failed:', e)
   }
 
-  // ⑧ sessions 目录 `.tmp-migrate-*.jsonl` 崩溃残留清扫（W3 残留清理）：目录级兜底，
-  // 补 cleanupMigrateResidues 只在附着前/delete 链触发的覆盖缺口（不再被 restore 的
-  // session 其残留会永久留存）。同步 readdir/unlink 扫一个本地目录（毫秒级）且在
-  // listen 后的后台序列里执行，不阻塞启动路径；函数内部对过期阈值（1h）内的文件不删
-  //（防并发误删进行中的归一化临时文件），失败逐文件 warn 不上抛。
+  // ⑧ sessions 目录 `.tmp-migrate-*.jsonl` / `.tmp-import-*.jsonl` 标记家族崩溃残留清扫
+  // （W3 残留清理 + import-session D1 扩展）：目录级兜底，补 cleanupMigrateResidues 只在
+  // 附着前/delete 链触发的覆盖缺口（不再被 restore 的 session 其残留会永久留存）。
+  // 同步 readdir/unlink 扫一个本地目录（毫秒级）且在 listen 后的后台序列里执行，不阻塞
+  // 启动路径；函数内部对过期阈值（1h）内的文件不删（防并发误删进行中的归一化临时文件），
+  // 失败逐文件 warn 不上抛。
   try {
     const removed = cleanupTmpMigrateResidue(getSessionsDir())
     if (removed > 0) {
-      console.log(`[runtime] cleaned ${removed} stale .tmp-migrate-*.jsonl residue file(s) from sessions dir`)
+      console.log(`[runtime] cleaned ${removed} stale .tmp-migrate-/.tmp-import- residue file(s) from sessions dir`)
     }
   } catch (e) {
     // best-effort：清扫失败不影响主流程（残留仅是磁盘垃圾，下次启动重试）
-    console.warn('[runtime] tmp-migrate residue cleanup failed:', e)
+    console.warn('[runtime] tmp-migrate/tmp-import residue cleanup failed:', e)
   }
 
   // 后台初始化耗时分解探针（06 §5 m-7）：listen 后各段（改造前这些段全部堆在 listen 前）。
