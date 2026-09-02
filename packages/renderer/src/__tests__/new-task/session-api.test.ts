@@ -6,8 +6,10 @@
  * - create() 无参 → payload 不含 cwd 字段（runtime 回退 process.cwd()，AC-1.2 回归）
  * - create(cwd, label) → label 透传
  *
- * mock 策略：mock transport（捕获 send payload）+ pending（返回可控 id/Promise），
- * 验证 session.create 消息 payload 形状。不 mock @/api（直接测 domains/session 真实实现）。
+ * mock 策略：mock core ws-client（捕获 send payload）+ core pending 源文件相对路径
+ * （返回可控 id/Promise），验证 session.create 消息 payload 形状。不 mock @/api
+ * （直接测 domains/session 真实实现）。request 已下沉 core（tc u1），mock 目标须与
+ * core 内相对 import 同一模块 ID 才能拦截。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/new-task/session-api.test.ts
  */
@@ -28,8 +30,8 @@ const transportMock = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/api/transport', () => ({ send: transportMock.send }))
-vi.mock('@/api/pending', () => ({
+vi.mock('@xyz-agent/core/transport/ws-client', () => ({ send: transportMock.send }))
+vi.mock('../../../../core/src/transport/api/pending', () => ({
   createCommandId: vi.fn(() => 'pid-1'),
   register: vi.fn(() =>
     Promise.resolve({ session: { id: 's1', cwd: '/x', status: 'idle' } as SessionSummary }),

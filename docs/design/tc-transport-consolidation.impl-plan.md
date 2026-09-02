@@ -100,7 +100,9 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 
 | # | 单元 | 偏差内容 | 设计锚点 | 状态 |
 |---|------|----------|----------|------|
-| （空——执行期登记） | | | | |
+| 1 | u1 | 三桥统一指向 `@xyz-agent/core/transport/api`（barrel）而非模块级子路径——模块级四段子路径无 exports 条目不可解析；`'@/api/pending'` 等入口暂为三模块导出超集（无同名冲突），u5 桥删除后消失 | 设计 §7 壳目标结构（终态无桥，不受影响） | 已批准 |
+| 2 | u1 | 6 个测试 mock 说明符改锚：ws-client 类用 `@xyz-agent/core/transport/ws-client`（exports 第四行支撑）；pending 类用跨包相对路径直指 `core/src/transport/api/pending.ts`——vi.mock 按解析后模块 ID 拦截，barrel 说明符与 core 内部 `'./pending'` 是不同模块 ID 无法拦截。断言与 factory 零改动 | 设计 §11-2（拦截链路实证，结论反哺 u4：pending 类目标必须直指模块文件） | 已批准 |
+| 3 | u1 | request.ts 内 `transport.send` 改为 ws-client 具名 `send` 直连（含 request.test vi.mock 目标连带 + extension-upgrade namespace import 连带） | 设计 §4 After 图「request → ws-client.send」直连即终态 | 已批准 |
 
 预登记两条口径差异（非偏差，数字校准）：设计「测试 62 处/50 文件」实测 **58 处/48 文件**（子路径口径，另 barrel 12 处不动）；设计「3 个测试改路径」（lib shim）实测 **5 个测试文件**（useExtensionHostBridge.test / ws-client-send-boolean / session-workflow-update-fallback / session-exited / session-subagents-fallback）。以实测为准执行，不回改设计文档（±4 处属设计期统计与 HEAD 漂移）。
 
@@ -108,7 +110,7 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1 | pending | 0 | — |
+| u1 | committed | 2（首轮 core 侧 + 续轮 6 测试 mock 改锚，计划 v2 修订） | core test 1276 passed/6 todo + frontend test 348 文件 3601 passed/3 skipped + 双包 typecheck 绿；commit 见 git log `refactor(core)` u1 条目 |
 | u2 | pending | 0 | — |
 | u3 | pending | 0 | — |
 | u4 | pending | 0 | — |

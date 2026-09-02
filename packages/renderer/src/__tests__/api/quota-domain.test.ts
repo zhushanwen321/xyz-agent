@@ -7,8 +7,9 @@
  *   失败态渲染（CodingPlanSection failMessage）依赖它
  * - configure 的 payload 携带（providerId/enabled/cookie/fetcher/apiKey）
  *
- * mock 策略：对齐 preset-domain.test.ts——mock transport（捕获 send payload）+
- * pending（返回可控 reply），测 domains/quota 真实实现（不 mock @/api）。
+ * mock 策略：对齐 preset-domain.test.ts——mock core ws-client（捕获 send payload）+
+ * core pending 源文件相对路径（返回可控 reply），测 domains/quota 真实实现（不 mock @/api）。
+ * request 已下沉 core（tc u1），mock 目标须与 core 内相对 import 同一模块 ID 才能拦截。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/api/quota-domain.test.ts
  */
@@ -31,8 +32,8 @@ const pendingMock = vi.hoisted(() => ({
   register: vi.fn(),
 }))
 
-vi.mock('@/api/transport', () => ({ send: transportMock.send }))
-vi.mock('@/api/pending', () => ({
+vi.mock('@xyz-agent/core/transport/ws-client', () => ({ send: transportMock.send }))
+vi.mock('../../../../core/src/transport/api/pending', () => ({
   createCommandId: vi.fn(() => 'qid-1'),
   register: pendingMock.register,
   reject: vi.fn(),

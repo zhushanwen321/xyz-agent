@@ -11,22 +11,25 @@
  * - settings.setSetupScript：发 config.setSetupScript，payload {script}
  * - settings.getSetupScript：发 config.getSetupScript，空 payload
  *
- * mock 策略：vi.mock('@/api/transport') 捕获 send + vi.mock('@/api/pending') 控制 create/register。
+ * mock 策略：vi.mock('@xyz-agent/core/transport/ws-client') 捕获 send +
+ * vi.mock(core pending 源文件相对路径) 控制 create/register——request 已下沉 core
+ * （tc u1），出站链路 domains → core request → core ws-client/pending，mock 目标
+ * 须与 core 内相对 import 解析到同一模块 ID 才能拦截（barrel 说明符拦不到内部 './pending'）。
  *
  * 运行：npx vitest run src/__tests__/api/t4-api-layer.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// 捕获 transport.send 的调用（返回 true = 消息已送出；request.command 对 send false
-// 会走 fast-fail reject，mock 须符合 transport.send 的真实 boolean 契约）
+// 捕获 ws-client.send 的调用（返回 true = 消息已送出；request.command 对 send false
+// 会走 fast-fail reject，mock 须符合 ws-client.send 的真实 boolean 契约）
 const sendMock = vi.fn((): boolean => true)
-vi.mock('@/api/transport', () => ({
+vi.mock('@xyz-agent/core/transport/ws-client', () => ({
   send: (...args: unknown[]) => sendMock(...args),
 }))
 
 // mock pending：register 返回可控 Promise，create 返回固定 id
 const registerMock = vi.fn()
-vi.mock('@/api/pending', () => ({
+vi.mock('../../../../core/src/transport/api/pending', () => ({
   createCommandId: () => 'test-id',
   register: (id: string) => registerMock(id),
   reject: vi.fn(),

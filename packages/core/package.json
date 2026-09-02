@@ -81,6 +81,22 @@
   "./domain/composer/thinking-levels": {
    "types": "./src/domain/composer/thinking-levels.ts",
    "import": "./src/domain/composer/thinking-levels.ts"
+  },
+  "./transport/api": {
+   "types": "./src/transport/api/index.ts",
+   "import": "./src/transport/api/index.ts"
+  },
+  "./transport/api/domains": {
+   "types": "./src/transport/api/domains/index.ts",
+   "import": "./src/transport/api/domains/index.ts"
+  },
+  "./transport/mock": {
+   "types": "./src/transport/mock/index.ts",
+   "import": "./src/transport/mock/index.ts"
+  },
+  "./transport/ws-client": {
+   "types": "./src/transport/ws-client.ts",
+   "import": "./src/transport/ws-client.ts"
   }
  },
  "scripts": {
