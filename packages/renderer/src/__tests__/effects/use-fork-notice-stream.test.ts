@@ -14,7 +14,7 @@
  * FORK_NOTICE_HEIGHT=40（useForkNoticeStream.ts:22 私有常量，未导出）。通过 forkNoticeTop(idx)
  * 的垂直堆叠步进断言：forkNoticeTop(idx) = forkNoticeBaseTop + idx * 40。
  *
- * mock 策略：mock useForkNoticeFeed（notices 返回 []，dismissNotice vi.fn）+ useSidebar。
+ * mock 策略：mock useForkNoticeFeed（notices 返回 []，dismissNotice vi.fn）+ useSidebarNew。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/effects/use-fork-notice-stream.test.ts
  */
@@ -31,9 +31,9 @@ vi.mock('@/composables/effects/useForkNoticeEffect', () => ({
   }),
 }))
 
-// mock useSidebar：selectSession 不做真实跳转
-vi.mock('@/composables/features/sidebar/useSidebar', () => ({
-  useSidebar: () => ({ selectSession: vi.fn() }),
+// mock useSidebarNew：selectSession 不做真实跳转
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
+  useSidebarNew: () => ({ selectSession: vi.fn() }),
 }))
 
 beforeEach(() => {

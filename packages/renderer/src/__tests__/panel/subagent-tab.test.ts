@@ -92,8 +92,8 @@ vi.mock('@/composables/features/chat/useChat', () => ({
   }),
   resetChatModuleState: vi.fn(),
 }))
-vi.mock('@/composables/features/sidebar/useSidebar', () => ({
-  useSidebar: () => ({ forkSession: vi.fn(), abortHandoff: vi.fn() }),
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
+  useSidebarNew: () => ({ forkSession: vi.fn(), abortHandoff: vi.fn() }),
 }))
 
 // sessionApi mock：fetchAndInject 内部调 getSubagentHistory（快照腿）

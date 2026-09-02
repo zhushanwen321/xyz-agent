@@ -33,7 +33,7 @@ vi.mock('@/composables/features/drawer/useSideDrawer', () => ({
 }))
 
 // [w6 chat-ui-and-shell T7] ui 包 Turn/TurnSummary 经 ChatViewDeps inject 消费 fork 回调
-// （原 useTurnActions/useChat store 依赖失效）。U8/U9 测 useSidebar composable 层真实行为，保留；
+// （原 useTurnActions/useChat store 依赖失效）。U8/U9 测 useSidebarNew composable 层真实行为，保留；
 // U7/盲区2 改为 deps 回调契约断言（toast 反馈已迁 renderer 壳 useChatViewDeps.onFork catch）。
 import { Turn } from '@xyz-agent/ui'
 import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
@@ -134,9 +134,9 @@ describe('U7 首屏冒烟：fork 按钮恒渲染（门控已放宽）', () => {
 // v2 移除 split 后退化：openInStandby 选项保留为契约但行为恒为「不切焦点」（useForkActions.ts）。
 describe('U8：forkSession 后台 fork 不切焦点（不切 activeId）', () => {
   it('fork 后台后焦点留在原 session（不切焦点）', async () => {
-    // 直接对真实 useSidebar 行为做断言：forkSession 后 activeId 应保持不变。
-    const { useSidebar } = await import('@/composables/features/sidebar/useSidebar')
-    const sidebar = useSidebar()
+    // 直接对真实 useSidebarNew 行为做断言：forkSession 后 activeId 应保持不变。
+    const { useSidebarNew } = await import('@/composables/features/sidebar/useSidebarNew')
+    const sidebar = useSidebarNew()
 
     const sessionStore = (await import('@/stores/session')).useSessionStore()
     const sessionApi = (await import('@/api')).session
@@ -167,8 +167,8 @@ describe('U8：forkSession 后台 fork 不切焦点（不切 activeId）', () =>
 // ── U9：forkSessionAsk send 失败自动回滚 ─────────────────────────────────
 describe('U9：forkSessionAsk send 失败自动回滚（disposeSession + sessionApi.remove + removeFromList）', () => {
   it('fork 提问发送失败后不留空白分支（回滚清理）', async () => {
-    const { useSidebar } = await import('@/composables/features/sidebar/useSidebar')
-    const sidebar = useSidebar()
+    const { useSidebarNew } = await import('@/composables/features/sidebar/useSidebarNew')
+    const sidebar = useSidebarNew()
 
     const sessionApi = (await import('@/api')).session
     const sessionStore = (await import('@/stores/session')).useSessionStore()

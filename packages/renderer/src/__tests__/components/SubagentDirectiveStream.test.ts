@@ -4,7 +4,7 @@
  * 全链路（真实段）：core createUseChat 的会话级订阅 handler（subagent.directive 分支）→
  * renderer pinia chatStore（appendSubagentDirective）→ MessageStream 渲染 → SystemNotice
  * 定向气泡 DOM。唯一 mock：chatApi RPC 层（streamSubscribe 捕获 handler 供测试 emit 广播）
- * 与 MessageStream 的外围壳依赖（virtua / useChatViewDeps / useChat / useSidebar，
+ * 与 MessageStream 的外围壳依赖（virtua / useChatViewDeps / useChat / useSidebarNew，
  * 对齐 MessageStream-kind.test.ts 模式）——数据与渲染链路全部真实。
  *
  * 覆盖：
@@ -91,8 +91,8 @@ vi.mock('@/composables/features/chat/useChat', () => ({
   }),
   resetChatModuleState: vi.fn(),
 }))
-vi.mock('@/composables/features/sidebar/useSidebar', () => ({
-  useSidebar: () => ({ forkSession: vi.fn(), abortHandoff: vi.fn() }),
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
+  useSidebarNew: () => ({ forkSession: vi.fn(), abortHandoff: vi.fn() }),
 }))
 
 class NoopResizeObserver {

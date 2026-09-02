@@ -10,7 +10,7 @@
  * - TC-w4-3b/4/6：useMessageStreamRail composable 单元测试（验事件路由 handler → useTurnExpansion，
  *   rail 下标→MessageTurn.index 映射）
  * - TC-w4-9：mount MessageStream.vue 首屏冒烟（验 MessageStream 模板真的引用 TurnRail + emit 接线）。
- *   真实 mount：仅 mock useChat/useSidebar（store 副作用隔离），用 chat store setMessages 注入
+ *   真实 mount：仅 mock useChat/useSidebarNew（store 副作用隔离），用 chat store setMessages 注入
  *   消息让 renderItems/railTurns 非空，TurnRail v-if turns.length>0 命中渲染。
  *
  * 运行：cd packages/renderer && npx vitest run src/components/panel/message-stream/__tests__/MessageStream.wire.test.ts
@@ -42,8 +42,8 @@ vi.mock('@/composables/features/chat/useChat', () => ({
   }),
   resetChatModuleState: vi.fn(),
 }))
-vi.mock('@/composables/features/sidebar/useSidebar', () => ({
-  useSidebar: () => ({ forkSession: vi.fn(), abortHandoff: vi.fn() }),
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
+  useSidebarNew: () => ({ forkSession: vi.fn(), abortHandoff: vi.fn() }),
 }))
 
 // [w6] MessageStream 壳装配 useChatViewDeps（TC-w4-9/9b mount 真组件）→ mock 装配器，壳内 ui 组件经 deps inject 消费
