@@ -57,10 +57,14 @@ const SCAN_EXTERNAL_BATCH_SIZE = 100
 const HEADER_CHUNK_BYTES = 4096
 
 /**
- * name 定位的块预算（尾块 / 头块各 64KB，D3 二次修订）。pi 的 session_info 只在创建期与
- * rename 时落盘：rename append 的在尾部（尾块覆盖），创建期写的在头部（头块覆盖），
- * 两块覆盖绝大多数真实分布；中段（头尾块之间）出现 session_info 的分布接受 name=null
- * 降级（显示用字段，UI 有目录名回退）。
+ * name 定位的块预算（尾块 / 头块各 64KB，D3 二次修订）。pi 侧 session_info 只经
+ * `appendSessionInfo` 写入且恒为尾部 append（锚点：@earendil-works/pi-coding-agent 0.84.4
+ * dist/core/session-manager.js appendSessionInfo → _appendEntry；全部调用点 main.js:555 /
+ * core/agent-session.js:2445 / modes/interactive/interactive-mode.js:4479 均为 rename 语义，
+ * 不存在「创建期写头部」的写入路径）——故尾块覆盖 rename 后再未增长的 session；头块命中的
+ * 真实成因是「session 早期即被 rename、其后文件增长超 64KB」的分布现象（数据集实测，非
+ * pi 写入行为断言）。中段（头尾块之间）出现 session_info 的分布接受 name=null 降级
+ * （显示用字段，UI 有目录名回退）。
  */
 const NAME_BLOCK_KB = 64
 const BYTES_PER_KB = 1024
@@ -72,6 +76,7 @@ interface ScanExternalCacheEntry {
   items: ExternalSessionMeta[]
   expiresAt: number
 }
+/** @data-owner #22（纯派生可重建读缓存，失效语义见登记表主表 #22） */
 let scanExternalCache: ScanExternalCacheEntry | null = null
 /** 上次 scanExternalSessions 观测的 Date.now()（时钟回拨检测，与 scanPiSessions 同防护）。 */
 let scanExternalLastNow = 0
@@ -87,6 +92,7 @@ interface CachedExternalMeta {
   size: number
   meta: ExternalSessionMeta
 }
+/** @data-owner #22（纯派生可重建读缓存，失效语义见登记表主表 #22） */
 const externalMetaCache = new Map<string, CachedExternalMeta>()
 
 /**
