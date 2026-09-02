@@ -6,6 +6,7 @@
  */
 
 import { existsSync, readFileSync, statSync, openSync, readSync, closeSync, readdirSync, unlinkSync, writeFileSync, renameSync } from 'node:fs'
+import { readdir as readdirAsync, stat as statAsync } from 'node:fs/promises'
 import { atomicWrite } from '../../utils/fs-utils.js'
 import { parseJsonl, readTailEntries } from '../../utils/jsonl.js'
 import { join, dirname, basename } from 'node:path'
@@ -357,9 +358,11 @@ export function persistProjectBinding(filePath: string, projectId: string): void
  *
  * @returns projectId 字符串；sidecar 不存在/损坏/projectId 非字符串 → undefined
  */
-// 非 export：仅 scanSessionMeta（本文件）消费，无外部调用方（PR #189 metrics-gate
-// unused_exports 清理——保留函数本体，去 export 防误用为公共 API）。
-function readProjectBinding(filePath: string): string | undefined {
+// export（import-session r3-S5 连带改动）：导入管线的 readback 步骤消费——
+// persistProjectBinding 对写失败是吞错 best-effort，导入后 readback 校验
+// sidecar 实际落盘内容，不符则 RPC 返回 warning 降级（D1；此前去 export 是
+// 防误用为公共 API，现有了明确的外部调用方，恢复导出）。
+export function readProjectBinding(filePath: string): string | undefined {
   return readBindingSidecar(projectSidecarPath(filePath), (binding) => {
     // 类型守卫：projectId 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
     const b = binding as Record<string, unknown> | undefined
@@ -727,7 +730,16 @@ export function cleanupMigrateResidues(filePath: string): void {
 const TMP_MIGRATE_RESIDUE_MAX_AGE_MS = 3_600_000
 
 /**
- * 启动期清扫 sessions 目录下的 `.tmp-migrate-*.jsonl` 崩溃残留（W3 残留清理）。
+ * 崩溃残留标记家族（import-session D1/r2-S1）：`.tmp-migrate-`（restore 归一化）与
+ * `.tmp-import-`（导入 tmp+rename 复制）同规则——两类临时文件的 lifecycle 同为毫秒级
+ * （写临时名后立即 rename），崩溃残留的形态与风险同构，清扫与扫描过滤按家族扩展。
+ * isScannableSessionFile 的文件名过滤消费同一集合（候选侧与清扫侧同规则）。
+ */
+const TMP_RESIDUE_MARKERS = ['.tmp-migrate-', '.tmp-import-'] as const
+
+/**
+ * 启动期清扫 sessions 目录下的 `.tmp-migrate-*.jsonl` / `.tmp-import-*.jsonl` 崩溃残留
+ * （W3 残留清理；import-session D1 扩展 `.tmp-import-` 家族）。
  *
  * cleanupMigrateResidues 只在「附着前 / delete 链」两个 session 级时机触发——若某
  * session 从此不再被 restore/删除，其残留永久留存（磁盘垃圾 + 排查困惑源）。本函数在
@@ -739,12 +751,12 @@ const TMP_MIGRATE_RESIDUE_MAX_AGE_MS = 3_600_000
  * 不删可防并发误删扩大 S3 交错窗口。1 小时 ≫ 归一化的毫秒级生命周期，即使时钟精度
  * /调度延迟极端放大也留足余量。
  *
- * 只删「`.tmp-migrate-` 命名 + `.jsonl` 后缀」的文件，其余零触碰；目录不存在 no-op。
- * 单个删除失败（权限等）跳过不中断（调用方接线在启动链，失败不得阻断启动）。
+ * 只删「标记家族（TMP_RESIDUE_MARKERS）任一命中 + `.jsonl` 后缀」的文件，其余零触碰；
+ * 目录不存在 no-op。单个删除失败（权限等）跳过不中断（调用方接线在启动链，失败不得阻断启动）。
  *
  * @param sessionsDir sessions 根目录（getSessionsDir() 产出）
  * @param maxAgeMs    残留被认为是 stale 的最小年龄（ms）
- * @returns 实际删除的文件数（诊断用）
+ * @returns 实际删除的文件数，两前缀合计（诊断用）
  */
 export function cleanupTmpMigrateResidue(sessionsDir: string, maxAgeMs = TMP_MIGRATE_RESIDUE_MAX_AGE_MS): number {
   if (!existsSync(sessionsDir)) return 0
@@ -779,8 +791,9 @@ function collectResidueScanDirs(sessionsDir: string): string[] | null {
   return dirs
 }
 
-/** 清扫单目录内过期的 `.tmp-migrate-*.jsonl` 残留（mtime 早于 cutoff 才删），返回删除数。
- * 目录不可读返回 0；单文件 stat/unlink 失败跳过不中断（启动链兜底语义）。 */
+/** 清扫单目录内过期的标记家族残留（`.tmp-migrate-` / `.tmp-import-` 命名 + `.jsonl` 后缀，
+ * mtime 早于 cutoff 才删），返回删除数（两前缀合计）。目录不可读返回 0；
+ * 单文件 stat/unlink 失败跳过不中断（启动链兜底语义）。 */
 function removeStaleResiduesInDir(dir: string, cutoff: number): number {
   let names: string[]
   try {
@@ -790,7 +803,7 @@ function removeStaleResiduesInDir(dir: string, cutoff: number): number {
   }
   let removed = 0
   for (const name of names) {
-    if (!name.includes('.tmp-migrate-') || !name.endsWith('.jsonl')) continue
+    if (!TMP_RESIDUE_MARKERS.some((marker) => name.includes(marker)) || !name.endsWith('.jsonl')) continue
     const filePath = join(dir, name)
     try {
       if (statSync(filePath).mtimeMs < cutoff) {
@@ -1033,15 +1046,17 @@ export function scanPiSessions(opts?: ScanSessionsOptions): ScannedSessionMeta[]
 /**
  * 判断目录项文件名是否为 scan 应收录的 session JSONL。
  *
- * 除 `.jsonl` 后缀外，显式排除 `.tmp-migrate-` 命名（W1 F1 修复）：restore-time 归一化
- * （normalizeSessionFileInPlace）在写临时名与 rename 之间崩溃时会残留
- * `<原名>.tmp-migrate-<ts>.jsonl` 于 sessions 目录。scanner 按内容（首行 session header）
+ * 除 `.jsonl` 后缀外，显式排除崩溃残留标记家族（W1 F1 修复 + import-session D1/r2-S1
+ * 扩展）：restore-time 归一化（normalizeSessionFileInPlace）在写临时名与 rename 之间
+ * 崩溃时会残留 `<原名>.tmp-migrate-<ts>.jsonl`；导入复制（tmp+rename，D1）同形态残留
+ * `<原名>.tmp-import-<ts>.jsonl` 于 sessions 目录。scanner 按内容（首行 session header）
  * 识别 session、不按文件名——残留文件内容是合法 session（同 sessionId），不过滤会产生
  * 同 id 双条目，且残留 mtime 更新、排序在前，findScannedSession 会命中残留路径 →
- * restore 附着错位文件。文件名过滤把「残留无害」从声明变成机制保证。
+ * restore 附着错位文件。文件名过滤把「残留无害」从声明变成机制保证（候选侧与清扫侧
+ * 同规则，TMP_RESIDUE_MARKERS）。
  */
 function isScannableSessionFile(name: string): boolean {
-  return name.endsWith('.jsonl') && !name.includes('.tmp-migrate-')
+  return name.endsWith('.jsonl') && !TMP_RESIDUE_MARKERS.some((marker) => name.includes(marker))
 }
 
 function scanPiSessionsFromDisk(sessionsDir: string): ScannedSessionMeta[] {
@@ -1099,4 +1114,124 @@ function scanPiSessionsFromDisk(sessionsDir: string): ScannedSessionMeta[] {
 
   results.sort((a, b) => b.lastModified - a.lastModified)
   return results
+}
+
+// ── 外部目录扫描（import-session D3 / U1）────────────────────
+
+/** 外部根扫描 TTL 缓存有效期：对齐太极根 SCAN_DIR_TTL_MS 惯例（1s），独立常量以容各自演化。 */
+const SCAN_EXTERNAL_TTL_MS = SCAN_DIR_TTL_MS
+
+/** 分批让出事件循环的批大小（D3/MF-3：每批 100 个文件后 setImmediate 让出）。 */
+const SCAN_EXTERNAL_BATCH_SIZE = 100
+
+/** 外部根扫描缓存条目。rootDir 作等值校验字段：外部根可变，切根即整体失效。 */
+interface ScanExternalCacheEntry {
+  rootDir: string
+  items: ScannedSessionMeta[]
+  expiresAt: number
+}
+let scanExternalCache: ScanExternalCacheEntry | null = null
+/** 上次 scanExternalSessions 观测的 Date.now()（时钟回拨检测，与 scanPiSessions 同防护）。 */
+let scanExternalLastNow = 0
+
+/**
+ * 扫描外部目录下的 pi session 文件（导入候选扫描原语，import-session D3 / U1）。
+ *
+ * 与太极根扫描（scanPiSessions → scanPiSessionsFromDisk）同构的收录语义：顶层 +
+ * 一层子目录、isScannableSessionFile 过滤（含 `.tmp-migrate-` / `.tmp-import-` 残留
+ * 家族）、scanSessionMeta 逐文件元数据提取——sessionMetaCache 键为
+ * filePath+(mtimeMs,size)，跨根天然复用，同文件二次扫描零 IO。
+ *
+ * 执行模型（D3/MF-3）：目录遍历用 fs/promises 异步 API；逐文件 meta 提取沿用 sync 的
+ * scanSessionMeta（单文件 header 首读 + 尾读通常 <1ms）但分批执行——每批
+ * SCAN_EXTERNAL_BATCH_SIZE 个文件后 await setImmediate 让出事件循环，万级目录首扫被
+ * 切成数十个短批，批间 WS 消息与流式广播照常处理。
+ *
+ * 缓存：独立于太极根 scanDirCache 的单条目 TTL 缓存（1s）——scanDirCache 无参取
+ * getSessionsDir() 且为单条目缓存，不能承载可变 rootDir，故独立存放。
+ * opts.force 绕过缓存强制重扫（导入成功后刷新外部根视图即传 force，D3）。
+ *
+ * @param rootDir 外部根目录（不存在/不可读 → items 为空数组，不抛错，与太极根同容错）
+ * @param opts.force true 绕过 TTL 缓存强制重扫
+ * @returns items 按 lastModified 降序（与 scanPiSessions 一致）+ 回显 rootDir
+ */
+export async function scanExternalSessions(
+  rootDir: string,
+  opts?: ScanSessionsOptions,
+): Promise<{ items: ScannedSessionMeta[]; rootDir: string }> {
+  const now = Date.now()
+  const clockWentBackwards = now < scanExternalLastNow
+  scanExternalLastNow = now
+  if (
+    !opts?.force &&
+    !clockWentBackwards &&
+    scanExternalCache &&
+    scanExternalCache.rootDir === rootDir &&
+    now < scanExternalCache.expiresAt
+  ) {
+    // 浅拷贝数组：消费者可安全 sort/splice，不污染缓存本体（与 scanPiSessions 同契约）
+    return { items: [...scanExternalCache.items], rootDir }
+  }
+
+  // 阶段 1（异步）：枚举候选文件路径。目录遍历结果不缓存——readdir/stat 开销小，
+  // 缓存只收 meta 提取结果，重扫时 sessionMetaCache 兜底零 IO。
+  const files = await listExternalSessionFiles(rootDir)
+
+  // 阶段 2（分批 sync）：逐文件 scanSessionMeta，每批后让出事件循环。
+  const items: ScannedSessionMeta[] = []
+  for (let i = 0; i < files.length; i++) {
+    if (i > 0 && i % SCAN_EXTERNAL_BATCH_SIZE === 0) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    }
+    try {
+      const meta = scanSessionMeta(files[i])
+      if (meta) items.push(meta)
+    } catch {
+      // skip：单文件扫描失败不中断（与 scanPiSessionsFromDisk 同容错语义）
+    }
+  }
+
+  items.sort((a, b) => b.lastModified - a.lastModified)
+  // force 刷新同样写缓存：随后 1s 内的候选列表消费方零 IO 读到最新视图（与 scanPiSessions 同策略）。
+  scanExternalCache = { rootDir, items, expiresAt: now + SCAN_EXTERNAL_TTL_MS }
+  return { items: [...items], rootDir }
+}
+
+/**
+ * 枚举外部根下的候选 session 文件路径：顶层文件 + 一层子目录内文件（与
+ * scanPiSessionsFromDisk 同深度假设，更深层静默跳过——D3/S8，UI tooltip 声明）。
+ * isScannableSessionFile 过滤在此应用：候选列表从机制上看不到任何非 final 名文件。
+ * 根目录不存在/不可读 → 空数组（不抛错）；子目录 readdir 失败跳过不影响其余。
+ */
+async function listExternalSessionFiles(rootDir: string): Promise<string[]> {
+  let topEntries: string[]
+  try {
+    topEntries = await readdirAsync(rootDir)
+  } catch {
+    return []
+  }
+  const files: string[] = []
+  for (const entry of topEntries) {
+    const entryPath = join(rootDir, entry)
+    let entryStat
+    try {
+      entryStat = await statAsync(entryPath)
+    } catch {
+      continue
+    }
+    if (entryStat.isDirectory()) {
+      let subEntries: string[]
+      try {
+        subEntries = await readdirAsync(entryPath)
+      } catch {
+        continue // skip unreadable dir
+      }
+      for (const name of subEntries) {
+        if (isScannableSessionFile(name)) files.push(join(entryPath, name))
+      }
+    } else if (isScannableSessionFile(entry)) {
+      files.push(entryPath)
+    }
+  }
+  return files
 }
