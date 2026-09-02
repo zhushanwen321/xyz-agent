@@ -127,7 +127,7 @@ graph TD
 | u3.2 | committed | 1 | commit 69cdb61f1（u3.2）；P2 过门完全泛化（20 段 diff：13 段同构骨架 + 7 类差异全部可配置，未触发降级）；staging-mode.ts 287 行 + 25 等价用例；fork 239→150 / handoff 278→192；导出面逐符号不变；core 1300 绿；净行数 +108（设计「消约 300 行」估计失准，结构目标达成） |
 | u4.1 | committed | 1 | commit 855216946（u4.1）；判定表逐字内嵌（diff 核验）；seqGate 持判定+簿记+基线；applySeqGap 缩为 gate 调用+reconcile 触发；MF-3 接口级 3 用例；core 1303 绿 + runtime 4090 绿（注释残渣修正连带授权） |
 | u4.2 | committed | 2 | 阶段 A commit 076e31ffe（骨架：声明式 schema + 8 条 crossSession + dispatcher 唯一 prologue + 守卫两类分置）+ 阶段 B commit 84398af0b（error 单条目合并 + 默认路径纯兜底）；route-inbound 34 用例（原 28 断言零弱化 + 新 6）；core 1309 绿；ROUTE_TABLE 导出保留为内部测试 seam（D2-b 组合契约探针必需） |
-| u5.1 | pending | 0 | — |
+| u5.1 | committed | 1 | commit 93945c2fd（u5.1）；sessionEntry 六端口全可选（?? noop）；12 步链 = 壳版时序（D4 行为变化即时生效于 core 三消费路径）；新增 6 接口级用例（精确全序/短路/失败尾部）；core 1315 绿 + renderer typecheck 绿；结构裁量：selectSession(1-3) + runEntryChain(4-12) 镜像壳分段 |
 | u5.2 | pending | 0 | — |
 | u5.3 | pending | 0 | — |
 | u6.1 | pending | 0 | — |
