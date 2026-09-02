@@ -4,7 +4,7 @@
  * 对每条入站 ServerMessage：
  *   1. 若 msg.id 命中 pending → resolveEnvelope 委托 pending 层（envelope 展开，ES1）→ return（D7）
  *   2. 查 ROUTE_TABLE 精确 type 条目（session.exited/message.complete/session.subagents/
- *      session.workflowUpdate）：seq gap 中间件（evalSeqGap + 副作用）→ dispatchSession →
+ *      session.workflowUpdate）：seq gate（subscription-state.seqGate）→ dispatchSession →
  *      effect 回调
  *   3. 恒真 FALLBACK 兜底：有 sessionId → seq gap 中间件 + dispatchSession（未注册 type 落
  *      现状语义）；无 sessionId → dispatchGlobal + L9 warn（session./message. 前缀）+
@@ -13,8 +13,11 @@
  * session 隔离规则不变（CLAUDE.md line 98）：session 级消息按 sessionId 路由到 session 通道，
  * 无 sessionId 走 global 通道（config.* 及 model.list 等广播）。两通道互不串扰。
  *
- * seq gap 检测（D7 id/seq 互斥）：msg.seq 是 server-push live 事件的序号（per-session，
- * bus.publish 分配）。对已 subscribe 的 session（SubscriptionState.subscribed=true）：
+ * seq gap 检测（D7 id/seq 互斥；D1 后协议归 subscription-state）：msg.seq 是 server-push
+ * live 事件的序号（per-session，bus.publish 分配）。判定 + gap 簿记写入 + 基线推进收在
+ * subscription-state.seqGate（状态所有者持有协议，MF-3/PR#175 时序论证在其注释内）；
+ * 本模块 applySeqGap 只做 gate 调用 + reconcile 的 fire-and-forget 触发（subscribeSession
+ * 持 RPC 端口）。对已 subscribe 的 session（SubscriptionState.subscribed=true）：
  *   - seq <= lastSeenSeq → 丢弃（reconcile 回放的重复或乱序）
  *   - seq > lastSeenSeq+1 → 触发 subscribeSession(sid, lastSeenSeq) reconcile（ES2 失败兜底），
  *     当前 msg 仍 dispatch（基线不在此推进，MF-3：reconcile 成功后才推进）
@@ -29,13 +32,10 @@
  * effect 兜底经 InboundEffects 注入（undefined 跳过）。
  */
 import type { PiEntry, PiToolCallEntryForm, ServerMessage, ServerMessageMap, SubagentRecord } from '@xyz-agent/shared'
-import { evalSeqGap } from './seq-gap'
 import {
-  getSubscriptionState,
+  seqGate,
   subscribeSession,
-  updateLastSeenSeq,
   setSubscriptionPorts,
-  recordGapDispatchedSeq,
 } from './subscription-state'
 import * as pendingApi from '../transport/api/pending'
 import * as eventsApi from '../transport/api/events'
@@ -140,45 +140,25 @@ interface RouteContext {
 }
 
 /**
- * seq gap 中间件（IF3 副作用执行点）。
+ * seq gate 调用 + reconcile 触发（IF3 副作用编排点，D1 后形态）。
  *
- * evalSeqGap 是纯函数（不碰状态），副作用在此执行：
- * - drop → 返回 false（不 dispatch 不更新基线不触发兜底）
- * - pass 带 reconcileFromSeq → void fire-and-forget subscribeSession(sid, lastSeenSeq) 回拉缺失段
- *   （失败由 subscribeSession 内部 console.warn 消化，ES2；基线不在此推进，见下）
- * - 已 subscribe 且 msg.seq 为 number → updateLastSeenSeq（仅正常递进路径；gap 路径不推进基线，MF-3）
- * - 未 subscribe（state 不存在或 subscribed=false）→ 不更新基线（兼容路径）
+ * 判定、gap 簿记写入（recordGapDispatchedSeq）、基线推进（updateLastSeenSeq）全部收在
+ * subscription-state.seqGate——状态所有者持有协议，MF-3 / PR #175 的时序论证见其 gap
+ * 分支注释。本函数只追加 reconcile 的 fire-and-forget 触发：subscribeSession 持 RPC
+ * 端口（subscribeImpl，由 configureRouteInbound 经 setSubscriptionPorts 注入），失败由
+ * 其内部 console.warn 消化（ES2），基线推进时机由其 max() 收敛负责。
  *
  * @returns 是否继续 dispatch（false = drop，调用方直接 return）
  */
 function applySeqGap(sid: string, msg: ServerMessage): boolean {
-  const state = getSubscriptionState(sid)
-  const decision = evalSeqGap(msg, state)
-  if (decision.action === 'drop') {
+  const gate = seqGate(sid, msg)
+  if (gate.action === 'drop') {
     return false
   }
-  if (decision.reconcileFromSeq !== undefined) {
-    // gap detected：中间 seq 缺失 → 回拉缺失段（fromSeq = lastSeenSeq，排他下界覆盖全部缺失段）。
-    // 不 return：当前消息仍 dispatch（gap 期间尽量不丢，reconcile 负责补齐缺失段）。
-    // [MF-3] 基线不在此推进：若 reconcile 成功前把基线推进到 msg.seq，subscribe RPC 失败
-    // （网络抖动/重连窗口）后缺失段永久不可恢复。推进时机由 subscribeSession 内部负责——
-    // 成功后其 max() 收敛把基线推进到 max(reply.lastSeq, snapshot seqs)（>= msg.seq，不回退）；
-    // 失败则基线保持原位，后续 live 消息再次触发 reconcile 形成自愈重试（无无限循环：
-    // 每次新消息至多 1 次 RPC，in-flight 去重收敛并发）。
-    //
-    // [PR #175 review R1] gap 触发消息去重簿记：本消息即将 dispatch 但基线不推进，而
-    // reconcile 的 subscribe(fromSeq=排他下界) 返回的 snapshot 必含本消息本身 → 回放时
-    // 靠 gapDispatchedSeqs drop（见 seq-gap.ts 分支 4b），否则 message_start 双实体 /
-    // customStart 双 system notice。
-    if (typeof msg.seq === 'number') {
-      recordGapDispatchedSeq(sid, msg.seq)
-    }
-    void subscribeSession(sid, decision.reconcileFromSeq)
-    return true
-  }
-  if (state && state.subscribed && typeof msg.seq === 'number') {
-    // 正常递进（seq === lastSeenSeq+1）：更新基线 + 继续 dispatch。
-    updateLastSeenSeq(sid, msg.seq)
+  if (gate.reconcileFromSeq !== undefined) {
+    // gap detected：回拉缺失段（fromSeq = reconcileFromSeq，排他下界覆盖全部缺失段）。
+    // 当前消息仍 dispatch（gate 已返回 dispatch + 写入去重簿记）。
+    void subscribeSession(sid, gate.reconcileFromSeq)
   }
   return true
 }
