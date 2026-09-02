@@ -258,8 +258,9 @@ packages/core/src/transport/
   ws-client.ts            （不动）
   use-connection.ts       （收窄 ConnectionPorts；pending/events/subscribe 改内部 import）
   api/                    ★ 新增：自 renderer/src/api 原样迁入
+    index.ts（barrel，10 行——'./transport/api' 子路径的入口，u1 桥与 codemod 消费锚点）
     pending.ts (212)  events.ts (133)  request.ts (62)
-    domains/ (17 文件, 1,891)
+    domains/ (17 文件, 1,857——settings 域剔除 Electron IPC 5 函数后行数，见下方壳树说明；无域目录 barrel)
   mock/                   ★ 新增：自 renderer/src/api/mock 迁入 + mock-ws 并入
 coordination/route-inbound.ts  （TransportPorts 降级内部 seam：生产直连 transport/api，
                                  configureRouteInbound(ports?) 可选参数保留测试注入）
@@ -270,21 +271,25 @@ bootstrap.ts             （initConnection 真实现 + restoreSessions 保持 co
 
 ```
 packages/renderer/src/api/index.ts        （留壳 facade：VITE_MOCK 三元 → core real/mock）
+packages/renderer/src/api/domains/settings.ts （保留：纯 Electron IPC 平台门面——代理/升级设置
+                                             5 函数经 @/lib/ipc 直连 main 进程不走 WS，属壳
+                                             平台装配；WS 部分已迁 core。实施期修订见 D1 拆分声明）
 packages/renderer/src/api/               （其余文件删除，含 transport.ts）
-packages/renderer/src/lib/ws-client.ts   （deprecated shim 随 M3 消亡：api/transport.ts 随 M3 删、
-                                            api/mock/index.ts 迁 core 时改锚、
-                                            useExtensionHostBridge.ts:51 getState 改锚 core、
-                                            3 个测试改路径）
+packages/renderer/src/platform/resolve-platform.ts （platform 装配分叉单点：memoized，main.ts
+                                             早期注入与 App.vue bootstrap 共用）
 composables/features/search/useSearch.ts + useSearchModalDeps.ts（search 轨条件化，D4-②）
 composables/useConnection.ts             （装配瘦身：去 pending/events/subscribe 字段）
 composables/shell/useExtensionHostBridge.ts + extension-host-dialog.ts （transport.send → core；桥侧删
                                              :260-261 两行 void registerMountPoints()/scanContributions()（:259 注释随删，
                                              :258 setExtensionRegistries 注入保留）——注册收敛 bootstrap 第 4/5 步唯一触发点，M5 交付物）
-App.vue                                   （onMounted → bootstrap(...)，connected 驱动初始化保持）
+App.vue                                   （onMounted → bootstrap(...)，connected 驱动初始化保持；
+                                             ES1 catch 内 setFailed → failed 态降级 UI + 重试入口，§5.2）
 main.ts                                   （platform 装配分叉 resolvePlatform() + 早期注入保留）
 composables/shell/useSettingsShell.ts      （bootstrapSettingsCore 内 platform 兜底注入删除——
                                              分叉真收敛 main.ts 一处，M5 交付物）
 ```
+
+**对 D1 的实施期修订声明（settings 域拆分）**：settings.ts 的 5 个 Electron IPC 函数（getProxyConfig/setProxyConfig/testProxy/getUpdateSettings/setUpdateSettings，经 `@/lib/ipc` 直连 main 进程，不走 runtime WS）是壳平台门面，**留壳不迁**（`api/domains/settings.ts` 终态为纯 IPC 门面文件，消费方 UpdatePage.vue 的 import 留壳路径）；WS 部分（config/extension 订阅转发 + worktree 等 RPC）迁 core。「原样迁移」在 settings 域的准确含义 = WS 部分原样、IPC 部分留壳——与 D5 对上游 SSOT §10.1 的修订声明同构。
 
 **core `package.json` exports 增量**：`.` barrel 已含 transport 导出（index.ts:9-10 模式延续）；如需子路径（`@xyz-agent/core/transport/api`）按 `./bootstrap` 先例追加。**mock 的 exports 策略**：mock 代码进 core 但仅在构建期常量分支（facade 三元 + search 轨 D4-②）被引用；生产包排除由 A7 bundle 探针门实证（fallback 动态 import，见 D4/§11-1）。
 
@@ -364,3 +369,4 @@ composables/shell/useSettingsShell.ts      （bootstrapSettingsCore 内 platform
 - v3：2026-09-02 吸收 R2 对抗式审查（2 must-fix + 5 suggestion 全修）：① restoreSessions 诚实改写为 no-op 占位 + future 扩展点标注（R2 实证数据源与注入机制现状均不存在：subscription-state 内存态、auth payload 仅 token）；② platform 注入点全景修正（useSettingsShell.ts:65-70 是第二分叉注入点——收敛决策为删其兜底注入 + main.ts 保留理由修正 + A5 实验链条修复为先删兜底再挪注入）；③ D4-② 机制描述改正（块内静态 import 非法 ESM → 顶层 import + 引用点条件化 + core 声明 sideEffects:false）；④ §11 编号漂移修正（D4 §11.2→§11-1、A6 §11-6→§11-2）；⑤ §6.1 三处 53→62 处/50 文件；⑥ §7 route-inbound 行与 D3「降级内部 seam」对齐；⑦ G4 分叉表述与 D4 同步、D2 五步之首称谓统一。
 - v4：2026-09-02 吸收 R3 对抗式审查（kimi k3-256k，1 must-fix + 3 suggestion 全修 + INFO①实证）：① D4-② 补契约前置决策——SearchPorts.searchMock 必填（search-ports.ts:106）与「real 模式省字段」冲突，裁决改可选 + search.ts:123 守卫（stub 方案掩盖装配错误，被否）；② restoreSessions 减法修正为 core 内 no-op 占位（删壳注入钩子形态——未来实现归 core coordination，壳无物可注；BootstrapOptions 不加 hooks，消除 warn 二义）；③ A5 违反态标准改写为实际可观察结果（settings init fail-fast + 偏好未加载 + 连接仍成功，R3 实证 bootstrap 首步幂等复注使降级 UI 尾句不可复现）；④ D2 main.ts 保留理由对齐实装（桥初始化无 platform 触点，承重消费点是 settings-lifecycle.ts:88）；⑤ INFO①实证桥侧 :260-261 已自行触发注册（:258 为注入行保留）——M5/u6/§7 补注册触发收敛去重决策 + §11 新增第 5 条注册时序检查点。
 - v5：2026-09-02 吸收 R4 聚焦复审（0 must-fix，3 suggestion + 2 行号旧账全修后收尾）：① 桥删行范围五处校正 :258-261→:260-261（:258 是 setExtensionRegistries 注入行，删则 4/5 步永久 warn 降级）；② SearchPorts 可选化交付物联动补入 M2/u3（含 3 测试类型适配）；③ §11-5 fallback 补竞态裁定标准（[HISTORICAL] 订阅晚于首推不得重开）+ 窄形态备选；④ 行号旧账（App.vue:70 解构/:96 调用、bootstrap.ts:28 TODO）。R4 判定：v4 可进入实施。
+- v6：2026-09-02 实施后一致性审查回写（四区审查 doc_errors 清零）：① §7 core 树——domains 行数 1,891→1,857（settings 剔除 IPC 段后实测）+ 补 api/index.ts barrel 行 + 补 coordination/route-inbound 与 bootstrap 行落定；② §7 壳树——补 domains/settings.ts 保留条目（纯 Electron IPC 平台门面）+ resolve-platform.ts 分叉单点 + App.vue ES1 setFailed + 删已消亡的 lib/ws-client shim 行（随 M3 已删）；③ 新增「对 D1 的实施期修订声明（settings 域拆分）」——与 D5 对 SSOT §10.1 修订声明同构的设计层记录。

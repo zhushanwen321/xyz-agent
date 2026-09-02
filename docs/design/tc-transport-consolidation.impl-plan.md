@@ -132,8 +132,15 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 | u2 | committed | 2（首轮零改动 blocker 上报三处派发事实失实 + v4 裁决续作全绿） | 同 u1 基线全绿不回归；22 领地文件 + 3 追认测试（v5）；commit 见 git log `refactor(core)` u2 条目 |
 | u3 | committed | 1（一次通过） | 双包基线一致（core 1276 / frontend 3601）+ 探针门③ build 后产物 grep 10 个 mock 标识串零命中（**优于基线**：迁移前 HEAD 实测存在 fixture 泄漏）+ E2E 注入跨包验证；6 追认测试（v7）；commit 见 git log u3 条目 |
 | u4 | committed | 1（一次通过，5 deviations 全批/追认） | core 93 文件 1277 passed（+1 默认路径用例）/ 6 todo + frontend 348 文件 3601 | 3 skipped 基线一致；TransportPorts 壳层非注释行零命中；transport.ts/lib shim 已删；白名单守卫 exit 0；commit 见 git log u4 条目 |
-| u5 | committed | 1（一次通过，8 deviations 全批/追认） | A6 回归门全绿（双包 typecheck 三连 + core 1277 / frontend 3601 基线 + 根 lint 零告警，主 agent 独立复跑确认）；131 项改动（110 M + 20 D + 1 挪位）；api/ 终态 index.ts + domains/settings.ts（IPC 门面）；commit 见 git log u5 条目 |
+| u5 | committed | 1（一次通过，8 deviations 全批/追认） | A6 回归门全绿（双包 typecheck 三连 + core 1277 / frontend 3601 基线 + 根 lint 零告警，主 agent 独立复跑确认）；131 项改动（111 M + 19 D + 1 R091 挪位，v14 审查修正口径）；api/ 终态 index.ts + domains/settings.ts（IPC 门面）；commit 见 git log u5 条目 |
 | u6 | committed | 1（一次通过，5 deviations 全批/追认，含 §11-5 时序自查结论） | 双包基线一致（core 1277 / frontend 3601）；bootstrap 生产调用成立（App.vue onMounted）；connectionMode 零残留；探针①可观察性交付（step N/5 日志）；commit 见 git log u6 条目 |
+
+**阶段 3 一致性审查记录**（2026-09-02，四区 reviewer 并行，diff 区间 04de5cbf1..HEAD）：
+
+- R1 core api+domains / R2 mock+search / R3 接口收口 / R4 codemod+bootstrap 各自独立完成，合计 unreasonable **1 条**、doc_errors 5 条（去重）。
+- **U1（unreasonable，已修复）**：App.vue ES1 catch 仅 console.error 未落地设计 §5.2「降级 UI + 重试入口」，且计划 v12 ④ 软化要求未走偏差程序——根因是计划层失误。修复：catch 内 `setFailed()` 置 failed 终止态 → App.vue 现有 failed 分支（错误展示 + onRetry → retryRuntime）自动渲染，即落地设计要求（setFailed 无参签名经 ws-client.ts:151 核实）。
+- **doc_errors 5 条处置**：设计 §7 core 树（domains 行数 1,857 + index.ts barrel）与壳树（settings 门面保留 + resolve-platform + setFailed + shim 行删除）+ D1 settings 拆分修订声明 → 设计文档 v6 回写（主 agent 亲为）；pending.ts:9 注释漂移 + ws-send 白名单 useConnection.ts 僵尸条目 → 修复批次一并处理；计划状态表 u5 统计口径修正（v14）。
+- 修复批次验收：frontend typecheck 绿 + 348 文件 3601 测试基线 + 守卫脚本 exit 0（主 agent 复跑）。
 | u3 | pending | 0 | — |
 | u4 | pending | 0 | — |
 | u5 | pending | 0 | — |
@@ -167,3 +174,4 @@ pnpm lint          # 根脚本：eslint . --max-warnings 0
 - v11：2026-09-02 u5 完成后追认与记录（8 deviations 全批，见偏差登记 13-16）：① settings 实测无混合行（UpdatePage 纯 IPC 留壳、三文件纯 WS 改 core），useAppUpdate 直连 lib/ipc 不涉桥——派发预判失实按 grep 实测处理；② 3 处相对路径补漏 + rpc-type-pairing 扫描守卫跟随 + eslint 豁免 glob 跟随（A6 门暴露的 u3 遗留正面修复）；③ .vue 实测 10 个（派发清单 8）；④ 15 处散文注释与 2 例 flaky 登记不改（记录在案）；⑤ A6 门含根 lint（--max-warnings 0）首次全绿。
 - v12：2026-09-02 u6 派发前领地细化（现状全量盘清）：① initConnection 真实现形态——core bootstrap.ts 直 import use-connection（`useConnection().init()`，resolve 即编排提交）；② core `__tests__/bootstrap.test.ts` 入领地（makeOptions:20 删 connectionMode + spy 适配，ES1 断言不动）；③ 探针①（dev 实跑）**移至阶段 5 Gate B 统一执行**——dev 环境跑 Electron 受限，本单元交付日志顺序编号可观察性；④ App.vue ES1 catch 最小形态（接现有 connection error 展示路径）；⑤ bridge 删行号更新 :259-260（u4 改锚后行号偏移）。
 - v13：2026-09-02 u6 完成后追认（5 deviations 全批，见偏差登记 17-21）：① resolvePlatform 独立模块（platform/resolve-platform.ts）批准——App.vue 反向 import main.ts 会拉启动副作用进测试并成环；② 领地外 useExtensionHostBridge.test.ts 适配追认（同族先例）；③ commandRegistry 改 ensureCommandDeclarationsSync 重放范式批准——§11-5 自查发现的真实缺陷（builtin slash 声明会随注册收敛丢失）；④ §11-5 时序结论采纳：维持 onMounted，step4/5 微任务结构性先于 connected 宏任务，fallback 不需要。**状态表全 committed，进入阶段 3 一致性审查。**
+- v14：2026-09-02 一致性审查与修复循环记录（四区并行：unreasonable 1 + doc_errors 5，全部清零）：① U1（App.vue ES1 catch 未落地 §5.2 降级 UI——计划 v12 ④ 软化失误）已修复：catch 内 setFailed() → 现有 failed 态 UI + 重试入口自动渲染；② pending.ts:9 注释漂移与 ws-send 白名单僵尸条目一并修正；③ 设计文档 v6 回写（§7 双树修订 + D1 settings 拆分修订声明）；④ 状态表 u5 统计口径修正（111 M + 19 D + 1 R091）。修复批次验收：frontend typecheck + 348 文件 3601 基线 + 守卫 exit 0。**审查清零，进入阶段 5 双级验收。**

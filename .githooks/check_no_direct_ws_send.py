@@ -10,13 +10,14 @@ pre-commit 检查，防止 store/composable/组件回退到直调底层通道。
 白名单（合法直调点）：
   ws-client（tc-transport-consolidation D5 后形态：api/transport.ts 死代码已删，
   extension-host 出站直连 core ws-client send——合法直调点 = 两 bridge 文件 +
-  useConnection 装配点）：
+  单例装配）：
     - composables/shell/useExtensionHostBridge.ts  bridge 直连（mountPoints.sync /
       executeCommand 出站，D5 批准形态）
     - composables/shell/extension-host-dialog.ts   bridge 直连（plugin.uiResponse 出站，
       D5 批准形态）
     - api/singleton.ts             单例装配（防御性放行 send）
-    - composables/useConnection.ts 传输层装配（connect/disconnect/getState）
+  （u4 后 composables/useConnection.ts 已不 import 任何 ws-client 说明符——连接编排
+  经 core use-connection 直连真实模块，白名单成员资格失效，条目已删。）
   electronAPI：
     - api/ipc-transport.ts         IPC 封装层（electronAPI 的唯一真实消费者）
     - api/singleton.ts             单例装配（createIpcTransport(window.electronAPI)）

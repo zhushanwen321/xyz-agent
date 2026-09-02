@@ -6,7 +6,8 @@
  * 注：将 ServerMessage(id) 路由到 pending.resolve 的 dispatcher 由 features 层
  * （useChat/useSidebar）在订阅 transport.on 时串联，本层只提供注册表。
  * resolveEnvelope 例外：它是 core route-inbound 委托的 pending 分流出口（R2/ES1），
- * 由 useConnection 装配的 TransportPorts.pending.resolveEnvelope 调用。
+ * u4 后生产路径经 route-inbound defaultPorts 静态直连本模块（不经壳装配）；
+ * TransportPorts.pending 仅作 core 内部测试注入 seam（见 route-inbound.ts）。
  */
 import type { ServerMessage } from '@xyz-agent/shared'
 

@@ -47,7 +47,7 @@ import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { bootstrapSettingsCore } from '@/composables/shell/useSettingsShell'
 import { usePermissionRequest } from '@/composables/shell/usePermissionRequest'
 import { PermissionRequestDialog } from '@xyz-agent/ui/extension-host'
-import { useSettings, isDevMode } from '@xyz-agent/core'
+import { useSettings, isDevMode, setFailed } from '@xyz-agent/core'
 import { bootstrap } from '@xyz-agent/core/bootstrap'
 import { resolvePlatform } from '@/platform/resolve-platform'
 import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
@@ -100,9 +100,13 @@ const perm = usePermissionRequest()
 // 五步启动编排（core bootstrap：providePlatform → initConnection → restoreSessions →
 // registerMountPoints → scanContributions）。ES1 最小 catch：任一步 reject 上抛在此可见
 // （错误不静默），connected 驱动的视图初始化走下方 watch（bootstrap 不等待 connected）。
+// tc 设计 §5.2 第三条（bootstrap 步骤失败）：catch 内 setFailed 置 failed 终止态 →
+// 上方 failed 分支渲染降级 UI（错误提示 + 重试按钮）。不置则 connectionState 停在
+// connecting，UI 永卡「连接中…」且无重试入口。
 onMounted(() => {
   void bootstrap({ platform: resolvePlatform() }).catch((err) => {
     console.error('[App] bootstrap failed', err)
+    setFailed()
   })
 })
 // [W8] onConnected 内部用模块级 hasConnectedBefore 区分首次 vs 重连：
