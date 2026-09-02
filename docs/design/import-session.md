@@ -235,7 +235,7 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
       dirLabel: string;                                            // 所属子目录名（目录 chip 分组用）
       alreadyImported: boolean;
       cwdExists: boolean;                                          // existsSync(header.cwd)；false 时 UI 条目标注
-                                                                   // 「原目录不存在，续聊将在 ~ 执行」（MF-2）
+                                                                   // 「原目录不存在，续聊将在主目录执行」（MF-2）
     }>
     dirs: Array<{ label: string; count: number }>                  // 该根下全部一层子目录（chip 下拉）；
                                                                    // 扫描深度 = 顶层 + 一层子目录（与太极根同构，
@@ -307,7 +307,7 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 | V3 重启持久（目标 2/3） | V1 后重启 `pnpm dev` → 看 Stock 分组 | 导入的会话仍在 Stock 分组，点击可再续聊（P-reload） |
 | V4 三通道搜索（目标 1） | 分别用：①会话名称关键词 ②完整 uuid ③`.jsonl` 绝对路径粘贴 | 前两者列表过滤命中目标条目；路径输入切换路径模式，展示文件元信息，导入成功 |
 | V5 去重与冲突（目标 4，负面） | V1 导入后再次打开对话框搜索同一 session；用 stale 前端绕过（直发 RPC）；**再取另一 session 文件手工改名为已占用目标名后直发 RPC（r4-S3）** | 列表条目显示「已导入」且禁用；直发 RPC 返回 `import_already_imported`，UI 对话框内联引导而非报错弹窗（2026-09-02 一致性审查统一：与全部其他码同走内联）；改名 fixture 返回 `import_target_conflict` 且含恢复指引文案 |
-| V6 错误恢复（目标 4） | `import_invalid_session` 用 stale 竞态构造（2026-09-02 一致性审查修正可达性——非 session 文件不进候选、路径模式 no-hit 按钮禁用，直接粘贴非 session 路径不可达）：先让合法 session 进入候选，再把该文件内容替换为手写两行普通 JSON，随后路径粘贴该文件导入；`import_dir_unreadable` 把 rootDir 指向无权限目录 | 分别得到 `import_invalid_session` / `import_dir_unreadable` 的内联错误 + 对应恢复指引文案；对话框不崩、可继续操作 |
+| V6 错误恢复（目标 4） | `import_invalid_session` 用 stale 竞态构造（2026-09-02 一致性审查修正可达性——非 session 文件不进候选、路径模式 no-hit 按钮禁用，直接粘贴非 session 路径不可达）：先让合法 session 进入候选，再把该文件内容替换为手写两行普通 JSON，随后路径粘贴该文件导入；`import_dir_unreadable` 把 rootDir 指向无权限目录 | 分别得到 `import_invalid_session` / `import_dir_unreadable` 的内联错误 + 对应恢复指引文案；对话框不崩、可继续操作。**稳健序列提示（复审补）**：按字面顺序（先替换内容后粘贴）受外部根缓存 1s TTL 约束，人工操作窗口约 0.75s；更稳等价序列 = 先粘贴路径（pathHit 命中内存 items、按钮可用）→ 再替换文件内容 → 点击导入（点击不重读候选） |
 | V7 custom entries 兼容（目标 3） | 挑一个含 `unified-hooks:*` custom entry 的真实 CLI session（本机存在）导入并打开 | 对话流渲染正常；重开（reload）后与实时视图一致（P-custom） |
 | V8 目录切换 | 点「选择其他目录」选一个只有少量 session 的目录 | 目录 chip 更新、列表/ dirs 重新加载、计数正确 |
 | V9 死 cwd 续聊（目标 3 降级类，MF-2 补入；r2-S3 改确定性构造） | **确定性 fixture**：`mktemp -d` 建临时目录 → 在其中真实跑 pi（`pi --mode rpc` 发一条消息，产生 header.cwd 指向该临时目录的 session 文件）→ `rm -rf` 该目录 → 该 session 即为真实死 cwd 会话。用「选择其他目录」指向其所属 sessions 根（或路径粘贴该文件）→ 搜索 → 确认条目有「原目录不存在，续聊将在主目录执行」标注 → 导入（toast 含预警）→ 打开发消息 | 续聊在 `~` 执行且成功收到回复（F3 兜底生效）；用户全程可见知情提示，无静默语义漂移；新消息写入太极副本。**注：不可用「拷贝 session 到临时 rootDir」构造——复制不改变 header.cwd，cwd 是否失效与该操作无因果关系** |
@@ -322,7 +322,7 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 
 1. **M1 runtime 层**：`scanExternalSessions` 异步分批导出（含 `.tmp-import-` 过滤扩展）+ ImportService（candidates/import + 全局导入互斥 + 互斥区内 header/标记/双检 + mkdir + tmp+rename 原子复制 + sidecar readback）+ 2 个 RPC case + 单测 → 可用 ws-client 脚本直调验证（对应 V4/V5/V6/V9 的 RPC 面）
 2. **M2 renderer 层**：api domain + ImportSessionDialog 组件 + 侧边栏入口/⌘I/i18n → 真实场景验收全量跑（V1-V8 + 探针 P-*）
-3. **M3 打磨**：fresh 徽标淡出、空态/骨架、demo 对齐走查（视觉与 `import-session-demo.html` 方案 A 对照）。成功 toast 为 V1/V9 验收依赖，不属打磨，已随补入的 u7-polish 单元提前至 M2 交付面（2026-09-02 一致性审查裁决：消除「M2 验收含 toast 但 toast 列在 M3」的阶段空档）
+3. **M3 打磨**：fresh 徽标淡出、空态/骨架、demo 对齐走查（视觉与 `import-session-demo.html` 方案 A 对照）。成功 toast 为 V1/V9 验收依赖，不属打磨，已随补入的 u7-polish 单元提前至 M2 交付面（2026-09-02 一致性审查裁决：消除「M2 验收含 toast 但 toast 列在 M3」的阶段空档）。**注：M3 全部内容（含 fresh 徽标/空态引导/骨架屏/chip 下拉形态/demo 走查）已随 u7-polish 于 2026-09-02 阶段 4 一并交付，M3 状态 = 完成（impl-plan §6 u7 行）**
 
 **单元拆分清单**：
 

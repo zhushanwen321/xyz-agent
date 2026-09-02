@@ -27,7 +27,7 @@
  * + vi.mock('@/lib/ipc')（pickDirectory 目录选择器，useCommandPopoverTrigger 先例）。
  * vue-i18n 由 vitest-i18n-setup.ts 全局 mock（zh-CN 取值）。Dialog 经 reka DialogPortal
  * teleport 到 body：DOM 断言统一走 document.body（project-switcher.test.ts 先例）。
- * 时间基准冻结在 2026-09-02（周三）午间：日历周分桶（本周 = 周一 8-30 起）对 fixture
+ * 时间基准冻结在 2026-09-02（周三）午间：日历周分桶（本周 = 周一 8-31 起）对 fixture
  * 相对偏移恒定——昨天（9-01 周二）跨在本周内但归「昨天」，本周条目取 8-31（周一）。
  *
  * 测试框架：vitest + @vue/test-utils（fake timers 控 250ms debounce）。
