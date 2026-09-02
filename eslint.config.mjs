@@ -374,7 +374,7 @@ export default [
       'packages/subagent-core/src/execution/execution-record.ts',
       'packages/subagent-core/src/execution/record-store.ts',
       'packages/subagent-core/src/execution/session-runner.ts',
-      'packages/subagent-core/src/orchestration/error-recovery.ts',
+      'packages/subagent-core/src/orchestration/worker-message-pump.ts',
       'packages/subagent-core/src/shared/resource-discovery.ts',
     ],
     rules: {
