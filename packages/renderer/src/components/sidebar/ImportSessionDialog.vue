@@ -61,8 +61,8 @@
           class="max-w-[140px] shrink-0 truncate font-mono text-[length:var(--text-3xs)] text-neutral-dim"
           :title="rootDir"
         >{{ rootDir }}</span>
-        <span class="shrink-0 text-xs text-neutral-dim">
-          {{ t('importSession.sessionCount', { count: filteredItems.length }) }}
+        <span data-testid="import-count" class="shrink-0 text-xs text-neutral-dim">
+          {{ t('importSession.sessionCount', { visible: filteredItems.length, total }) }}
         </span>
       </div>
 
@@ -93,7 +93,7 @@
         </Button>
       </div>
 
-      <!-- 候选列表：按 今天/昨天/更早 分组（分组头 + 条目行） -->
+      <!-- 候选列表：按 今天/昨天/本周/更早 分组（分组头 + 条目行） -->
       <ScrollArea v-else class="h-[320px]">
         <div class="pr-2">
           <div
@@ -104,7 +104,10 @@
             {{ t('importSession.loading') }}
           </div>
           <div v-else-if="loadFailed" class="flex flex-col items-center gap-2 px-2 py-8">
-            <p class="text-sm text-neutral-mid">{{ t('importSession.loadFailed') }}</p>
+            <!-- 识别码按码展示恢复指引（V6 dir_unreadable 可达）；表外/未识别码走通用失败 + 重试 -->
+            <p data-testid="import-load-error" class="px-4 text-center text-sm text-neutral-mid">
+              {{ loadErrorCode ? t(`importSession.errors.${loadErrorCode}`) : t('importSession.loadFailed') }}
+            </p>
             <Button variant="ghost" size="sm" data-testid="import-retry-btn" @click="fetchCandidates">
               {{ t('importSession.retry') }}
             </Button>
@@ -117,11 +120,14 @@
             {{ t('importSession.emptyResult') }}
           </div>
           <template v-else v-for="group in groups" :key="group.key">
-            <div class="px-1 pb-1 pt-3 text-xs font-medium text-neutral-dim">{{ group.label }}</div>
+            <div data-testid="import-group" class="px-1 pb-1 pt-3 text-xs font-medium text-neutral-dim">
+              {{ group.label }}
+            </div>
             <div
               v-for="item in group.items"
               :key="item.sessionId"
               data-testid="import-item"
+              :title="item.sourcePath"
               class="mb-1 cursor-pointer rounded-md border px-3 py-2 transition-colors"
               :class="[
                 selectedId === item.sessionId
@@ -158,8 +164,9 @@
                 </Button>
               </div>
               <div class="mt-1 flex min-w-0 items-center gap-2">
+                <!-- 行2 = 原工作目录（设计 §3.1）；全路径 sourcePath 降级为行 title tooltip -->
                 <span class="min-w-0 flex-1 truncate font-mono text-[length:var(--text-3xs)] text-neutral-dim">
-                  {{ item.sourcePath }}
+                  {{ item.cwd }}
                 </span>
                 <span
                   v-if="!item.cwdExists"
@@ -258,8 +265,10 @@ const {
   open: dialogOpen,
   query,
   dirs,
+  total,
   loading,
   loadFailed,
+  loadErrorCode,
   selectedDir,
   rootDir,
   chooseRootDir,
@@ -314,29 +323,35 @@ function onConfirm(): void {
 }
 
 interface ImportGroup {
-  key: 'today' | 'yesterday' | 'earlier'
+  key: 'today' | 'yesterday' | 'thisWeek' | 'earlier'
   label: string
   items: ImportCandidate[]
 }
 
-const GROUP_KEYS = ['today', 'yesterday', 'earlier'] as const
+const GROUP_KEYS = ['today', 'yesterday', 'thisWeek', 'earlier'] as const
 
-/** 目录过滤后的可见候选按 lastModified 归入 今天/昨天/更早 三组（空组不渲染） */
+/**
+ * 目录过滤后的可见候选按 lastModified 归入 今天/昨天/本周/更早 四组（空组不渲染）。
+ * 判定顺序即优先级：昨天先于本周——当昨天落在日历周内（如周三视角的周二）仍归昨天。
+ */
 const groups = computed<ImportGroup[]>(() => {
   const now = new Date()
   const today = now.toDateString()
   const yesterdayDate = new Date(now)
   yesterdayDate.setDate(now.getDate() - 1)
   const yesterday = yesterdayDate.toDateString()
+  const weekStart = startOfWeekMillis(now)
   const buckets: Record<(typeof GROUP_KEYS)[number], ImportCandidate[]> = {
     today: [],
     yesterday: [],
+    thisWeek: [],
     earlier: [],
   }
   for (const item of filteredItems.value) {
     const dateKey = new Date(item.lastModified).toDateString()
     if (dateKey === today) buckets.today.push(item)
     else if (dateKey === yesterday) buckets.yesterday.push(item)
+    else if (item.lastModified >= weekStart) buckets.thisWeek.push(item)
     else buckets.earlier.push(item)
   }
   return GROUP_KEYS.map((key) => ({
@@ -345,6 +360,17 @@ const groups = computed<ImportGroup[]>(() => {
     items: buckets[key],
   })).filter((group) => group.items.length > 0)
 })
+
+/** 周日（getDay()=0）回退到本周周一所需的天数 */
+const SUNDAY_BACK_TO_MONDAY_DAYS = 6
+
+/** 本周 = 含 now 的日历周（周一起始），返回周一 00:00（本地时区）的时间戳 */
+function startOfWeekMillis(now: Date): number {
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const dow = d.getDay() // 0 = 周日
+  d.setDate(d.getDate() - (dow === 0 ? SUNDAY_BACK_TO_MONDAY_DAYS : dow - 1))
+  return d.getTime()
+}
 
 /** 短 ID = uuid 前 6 位（等宽展示，D5 匹配语义同款截断） */
 const SHORT_ID_LENGTH = 6

@@ -1,23 +1,31 @@
 /**
- * ImportSessionDialog 组件测试（import-session U5 验收 8 项，三视角）。
+ * ImportSessionDialog 组件测试（import-session U5 验收 8 项 + 阶段 3 修复批，三视角）。
  *
  * 覆盖（impl-plan u5 验收条款；每条至少一个用户可见 DOM 断言）：
  *  1. 默认列表：打开即拉候选 + 日期分组渲染 + 目录 chip 分组过滤
  *  2. 搜索过滤三通道：名称 / 完整+短 Session ID / .jsonl 绝对路径前缀
  *  3. 路径模式切换：query 以 '/' '~' 开头时列表隐藏、路径行展示命中元信息（demo 方案 A path-bar）
  *  4. 已导入候选项禁用：徽标 + 行按钮 disabled + 选中后底部导入仍不可用
- *  5. 选目标 project：下拉默认当前激活 project、可改、导入 payload 跟随
+ *  5. 选目标 project：下拉默认当前活跃 project、可改、导入 payload 跟随
  *  6. 导入成功 emit('imported') + sidecar_failed 走 toast warning 通道（非 error）
  *  7. 错误内联恢复指引：error envelope code → i18n 文案（含恢复动作）可见，不弹系统对话框
  *  8. cwdExists=false 标注：「原目录已不存在…」降级提示可见
  *  9. 目录切换（V8）：「选择其他目录」→ pickDirectory 选中根 → RPC 带新 rootDir
  *     重载列表/dirs/计数；取消无操作；搜索词跨根保留；重开回默认根
+ * 10. 候选加载失败内联恢复指引（阶段 3 修复①）：candidates RPC 错误码按码展示，
+ *     表外/未识别码走通用失败 + 重试（default 分支）；重试可恢复
+ * 11. 行2 显示原工作目录 cwd（阶段 3 修复②）：sourcePath 降级为行 title tooltip
+ * 12. 计数「可见 N / 共 total」（阶段 3 修复③）：items 截断时自然呈现截断提示
+ * 13. 日期分组四档（阶段 3 修复④）：今天/昨天/本周/更早，日历周（周一起始）分桶，
+ *     昨天优先于本周
  *
  * mock 策略：vi.mock('@/api')（session 两方法模拟 runtime D5 S7 匹配语义 + project save
  * 供 store 持久化 watch）+ vi.mock('@/composables/useToast')（捕获 warning 通道）
  * + vi.mock('@/lib/ipc')（pickDirectory 目录选择器，useCommandPopoverTrigger 先例）。
  * vue-i18n 由 vitest-i18n-setup.ts 全局 mock（zh-CN 取值）。Dialog 经 reka DialogPortal
  * teleport 到 body：DOM 断言统一走 document.body（project-switcher.test.ts 先例）。
+ * 时间基准冻结在 2026-09-02（周三）午间：日历周分桶（本周 = 周一 8-30 起）对 fixture
+ * 相对偏移恒定——昨天（9-01 周二）跨在本周内但归「昨天」，本周条目取 8-31（周一）。
  *
  * 测试框架：vitest + @vue/test-utils（fake timers 控 250ms debounce）。
  * 运行：cd packages/renderer && npx vitest run src/components/sidebar/__tests__/ImportSessionDialog.test.ts
@@ -83,7 +91,10 @@ function makeCandidate(overrides: Partial<ImportCandidate> = {}): ImportCandidat
   }
 }
 
-/** fixture（时间以用例内冻结的 fake Date 为基准，保证分组稳定） */
+/**
+ * fixture（时间以 beforeEach 冻结的 2026-09-02 周三午间为基准，保证日历周分桶稳定）：
+ * now-1s/2s → 今天；now-1d（9-01 周二）→ 昨天；now-2d（8-31 周一）→ 本周；now-8d → 更早。
+ */
 function makeFixture(): ImportCandidate[] {
   return [
     makeCandidate({ name: 'clickhouse 日线迁移', lastModified: Date.now() - 1_000 }),
@@ -97,11 +108,17 @@ function makeFixture(): ImportCandidate[] {
     makeCandidate({
       name: null,
       sessionId: 'bb22cc33-4444-5555-6666-777777777777',
-      sourcePath: `/Users/test/.pi/agent/sessions/${XYZ_DIR}/2026-08-25T08-00-00Z_bb22cc33-4444-5555-6666-777777777777.jsonl`,
+      sourcePath: `/Users/test/.pi/agent/sessions/${XYZ_DIR}/2026-09-01T08-00-00Z_bb22cc33-4444-5555-6666-777777777777.jsonl`,
       cwd: '/Users/test/gone-dir',
       lastModified: Date.now() - ONE_DAY,
       dirLabel: XYZ_DIR,
       cwdExists: false,
+    }),
+    makeCandidate({
+      name: '本周的调优会话',
+      sessionId: 'ee44ff55-6666-7777-8888-999999999999',
+      sourcePath: `/Users/test/.pi/agent/sessions/${STOCK_DIR}/2026-08-31T09-00-00Z_ee44ff55-6666-7777-8888-999999999999.jsonl`,
+      lastModified: Date.now() - ONE_DAY * 2,
     }),
     makeCandidate({
       name: '更早的 agent 会话',
@@ -171,6 +188,22 @@ function bodyText(): string {
   return document.body.textContent ?? ''
 }
 
+/** DOM 分组结构：按渲染顺序取分组头与其后的条目行文本（分桶归属断言用） */
+function groupBuckets(): Array<{ label: string; items: string[] }> {
+  const els = Array.from(
+    document.body.querySelectorAll('[data-testid="import-group"], [data-testid="import-item"]'),
+  )
+  const result: Array<{ label: string; items: string[] }> = []
+  for (const el of els) {
+    if (el.getAttribute('data-testid') === 'import-group') {
+      result.push({ label: el.textContent?.trim() ?? '', items: [] })
+    } else if (result.length > 0) {
+      result[result.length - 1].items.push(el.textContent ?? '')
+    }
+  }
+  return result
+}
+
 /** 搜索输入：setValue 触发 query watch → 推进 250ms debounce → 排空 RPC 微任务 */
 async function typeSearch(text: string): Promise<void> {
   const input = byTestId('import-search-input')
@@ -203,6 +236,9 @@ function importErrorWithCode(code: string): Error {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  // 冻结时间基准：2026-09-02（周三）午间——日历周分桶对 fixture 相对偏移恒定
+  // （本周 = 周一 8-30 起；离午夜 ±12h，秒级偏移不跨日历日）
+  vi.setSystemTime(new Date('2026-09-02T12:00:00'))
   setActivePinia(createPinia())
   document.body.innerHTML = ''
   vi.clearAllMocks()
@@ -257,22 +293,32 @@ describe('ImportSessionDialog（U5 验收）', () => {
   })
 
   describe('验收1：默认列表（打开即拉候选 + 目录分组渲染）', () => {
-    it('打开即发全量候选 RPC（无 query），日期分组 + 目录 chip + 计数可见', async () => {
+    it('打开即发全量候选 RPC（无 query），日期四档分组 + 目录 chip + 计数可见', async () => {
       await mountDialog()
 
       // 构建者：打开即拉，payload 无 query（全量）
       expect(apiMocks.importCandidates).toHaveBeenCalledTimes(1)
       expect(apiMocks.importCandidates).toHaveBeenCalledWith({})
-      // 使用者：4 条候选渲染；目录 chip = 全部目录 + 2 个子目录
-      expect(allByTestId('import-item')).toHaveLength(4)
+      // 使用者：5 条候选渲染；目录 chip = 全部目录 + 2 个子目录
+      expect(allByTestId('import-item')).toHaveLength(5)
       expect(allByTestId('import-dir-chip')).toHaveLength(3)
       expect(bodyText()).toContain(zhCN.allDirs)
       expect(bodyText()).toContain(STOCK_DIR)
-      // 观察者：日期分组头（今天 / 更早；昨天条目在 fixture 中为空组不渲染）
-      expect(bodyText()).toContain(zhCN.group.today)
-      expect(bodyText()).toContain(zhCN.group.earlier)
-      // 计数 = 可见候选数
-      expect(bodyText()).toContain('4 个 session')
+      // 观察者：四档分组按序渲染且归属正确——9-01（周二）在本周内但归「昨天」（昨天优先）；
+      // 8-31（周一）归「本周」；8-25 归「更早」
+      const buckets = groupBuckets()
+      expect(buckets.map((b) => b.label)).toEqual([
+        zhCN.group.today,
+        zhCN.group.yesterday,
+        zhCN.group.thisWeek,
+        zhCN.group.earlier,
+      ])
+      expect(buckets[0].items.join(' ')).toContain('clickhouse 日线迁移')
+      expect(buckets[1].items.join(' ')).toContain(XYZ_DIR)
+      expect(buckets[2].items.join(' ')).toContain('本周的调优会话')
+      expect(buckets[3].items.join(' ')).toContain('更早的 agent 会话')
+      // 计数 = 可见 / 总数（全可见时两数相等）
+      expect(byTestId('import-count')!.text()).toBe('可见 5 / 共 5')
     })
 
     it('目录 chip 点击 → 客户端按 dirLabel 过滤（不发新 RPC），再点切回全部', async () => {
@@ -282,9 +328,9 @@ describe('ImportSessionDialog（U5 验收）', () => {
       await chip!.trigger('click')
       await flushPromises()
 
-      // 使用者：只剩 XYZ 目录的 2 条 + 计数联动
+      // 使用者：只剩 XYZ 目录的 2 条 + 计数联动（可见数随过滤变化，total 保持全量）
       expect(allByTestId('import-item')).toHaveLength(2)
-      expect(bodyText()).toContain('2 个 session')
+      expect(byTestId('import-count')!.text()).toBe('可见 2 / 共 5')
       expect(bodyText()).not.toContain('clickhouse 日线迁移')
       // 构建者：目录过滤纯客户端，不重复发 RPC
       expect(apiMocks.importCandidates).toHaveBeenCalledTimes(1)
@@ -311,12 +357,12 @@ describe('ImportSessionDialog（U5 验收）', () => {
       })
       expect(allByTestId('import-item')).toHaveLength(1)
 
-      // 短 ID（uuid 前 6 位，pi TUI 式标识；name 为 null 的条目回退目录名显示）
+      // 短 ID（uuid 前 6 位，pi TUI 式标识）；命中唯一条目，其原工作目录（行2）可见
       await typeSearch('01a044')
       expect(apiMocks.importCandidates).toHaveBeenLastCalledWith({ query: '01a044' })
       const items = allByTestId('import-item')
       expect(items).toHaveLength(1)
-      expect(items[0].text()).toContain(STOCK_DIR)
+      expect(items[0].text()).toContain('/Users/test/Stock')
     })
 
     it('通道三 .jsonl 绝对路径前缀：RPC 收到路径 query（形态切路径模式，见验收3）', async () => {
@@ -336,7 +382,7 @@ describe('ImportSessionDialog（U5 验收）', () => {
       await input.setValue('')
       await flushPromises()
 
-      expect(allByTestId('import-item')).toHaveLength(4)
+      expect(allByTestId('import-item')).toHaveLength(5)
     })
   })
 
@@ -395,7 +441,7 @@ describe('ImportSessionDialog（U5 验收）', () => {
       await input.setValue('')
       await flushPromises()
       expect(byTestId('import-path-bar')).toBeNull()
-      expect(allByTestId('import-item')).toHaveLength(4)
+      expect(allByTestId('import-item')).toHaveLength(5)
     })
   })
 
@@ -597,6 +643,10 @@ describe('ImportSessionDialog（U5 验收）', () => {
       expect(byTestId('import-error')!.text()).toBe(zhCN.errors.unknown)
     })
 
+    it('import_already_imported 文案含「侧边栏可直接打开」引导（错误规格表恢复指引列）', () => {
+      expect(zhCN.errors.import_already_imported).toContain('侧边栏可直接打开')
+    })
+
     it('错误后可重试导入（按钮恢复可用）', async () => {
       await mountDialog()
       apiMocks.importSession.mockRejectedValueOnce(importErrorWithCode('import_copy_failed'))
@@ -676,7 +726,7 @@ describe('ImportSessionDialog（U5 验收）', () => {
       expect(bodyText()).toContain('其他目录的会话')
       expect(allByTestId('import-dir-chip')).toHaveLength(2)
       expect(bodyText()).toContain(CUSTOM_DIR)
-      expect(bodyText()).toContain('1 个 session')
+      expect(byTestId('import-count')!.text()).toBe('可见 1 / 共 1')
     })
 
     it('取消选择：无重载（RPC 次数不变），扫描根保持默认', async () => {
@@ -716,6 +766,76 @@ describe('ImportSessionDialog（U5 验收）', () => {
 
       expect(byTestId('import-root-dir')).toBeNull()
       expect(apiMocks.importCandidates).toHaveBeenLastCalledWith({})
+    })
+  })
+
+  describe('验收10：候选加载失败内联恢复指引（candidates RPC 错误码不再被吞）', () => {
+    it('import_dir_unreadable：按码展示目录权限恢复指引 + 重试按钮（V6 场景可达内联指引）', async () => {
+      apiMocks.importCandidates.mockImplementationOnce(() =>
+        Promise.reject(importErrorWithCode('import_dir_unreadable')),
+      )
+      await mountDialog()
+
+      // 使用者：失败态展示码专属恢复指引（含「选择其他目录」出路），非通用失败文案
+      const errorEl = byTestId('import-load-error')
+      expect(errorEl, 'import-load-error 元素应存在').not.toBeNull()
+      expect(errorEl!.text()).toBe(zhCN.errors.import_dir_unreadable)
+      expect(errorEl!.text()).not.toBe(zhCN.loadFailed)
+      expect(byTestId('import-retry-btn')).not.toBeNull()
+    })
+
+    it('表外兜底码（import_failed）：default 分支走通用失败文案 + 重试', async () => {
+      apiMocks.importCandidates.mockImplementationOnce(() =>
+        Promise.reject(importErrorWithCode('import_failed')),
+      )
+      await mountDialog()
+
+      expect(byTestId('import-load-error')!.text()).toBe(zhCN.loadFailed)
+      expect(byTestId('import-retry-btn')).not.toBeNull()
+    })
+
+    it('加载失败后点重试：恢复列表展示（错误态可恢复）', async () => {
+      apiMocks.importCandidates.mockImplementationOnce(() =>
+        Promise.reject(importErrorWithCode('import_dir_unreadable')),
+      )
+      await mountDialog()
+      expect(byTestId('import-load-error')).not.toBeNull()
+
+      await byTestId('import-retry-btn')!.trigger('click')
+      await flushPromises()
+
+      expect(byTestId('import-load-error')).toBeNull()
+      expect(allByTestId('import-item')).toHaveLength(5)
+    })
+  })
+
+  describe('验收11：条目行2 显示原工作目录（cwd）', () => {
+    it('行2 展示 cwd；sourcePath 降级为行 title tooltip（悬停可看全路径）', async () => {
+      await mountDialog()
+
+      const row = allByTestId('import-item').find((r) =>
+        r.text().includes('clickhouse 日线迁移'),
+      )!
+      expect(row, '目标条目应渲染').toBeTruthy()
+      // 使用者：行2 可见原工作目录
+      expect(row.text()).toContain('/Users/test/Stock')
+      // 观察者：源文件全路径不再占行2 文本位，转由 title 提供
+      expect(row.text()).not.toContain('.pi/agent/sessions')
+      expect(row.attributes('title')).toBe(fixture[0].sourcePath)
+    })
+  })
+
+  describe('验收12：计数「可见 N / 共 total」（截断提示）', () => {
+    it('items 被截断（可见 < total）：计数自然呈现截断事实', async () => {
+      apiMocks.importCandidates.mockImplementationOnce(async () => ({
+        total: 4615,
+        items: fixture.slice(0, 3),
+        dirs: [],
+      }))
+      await mountDialog()
+
+      expect(allByTestId('import-item')).toHaveLength(3)
+      expect(byTestId('import-count')!.text()).toBe('可见 3 / 共 4615')
     })
   })
 

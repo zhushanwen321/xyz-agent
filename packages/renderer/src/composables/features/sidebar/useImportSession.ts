@@ -32,7 +32,10 @@ export const IMPORT_SEARCH_DEBOUNCE_MS = 250
 /**
  * error envelope 透传到 Error.code 的合法值集合：ImportErrorCode 全集（不含
  * `import_sidecar_failed`——它走成功 reply 的 warning 通道，r4-INFO）+
- * transport 层唯一透传 code `timeout`（pending.ts）。集合外一律归 `unknown`。
+ * transport 层唯一透传 code `timeout`（pending.ts）。
+ * 归一化规则因通道而异：导入动作集合外归 `unknown`；候选加载集合外（含表外
+ * 兜底码 import_unsupported/import_failed）归 null → 通用失败文案 + 重试
+ * （设计 §3.3 表外兜底码说明：勿按表穷举，须有 default 分支）。
  */
 const FAILURE_CODES: ReadonlySet<string> = new Set([
   'import_source_missing',
@@ -79,6 +82,11 @@ export function useImportSession(options: UseImportSessionOptions = {}) {
   const total = ref(0)
   const loading = ref(false)
   const loadFailed = ref(false)
+  /**
+   * 候选加载失败码（与导入失败 importErrorCode 同套 FAILURE_CODES 归一化）：
+   * null = 无专属恢复指引（表外兜底码 / 未识别码），组件层显示通用失败文案。
+   */
+  const loadErrorCode = ref<ImportFailureCode | null>(null)
   /** 目录 chip 过滤（'' = 全部目录；客户端过滤，RPC query 不含目录维度） */
   const selectedDir = ref('')
   /**
@@ -150,6 +158,7 @@ export function useImportSession(options: UseImportSessionOptions = {}) {
     const seq = ++requestSeq
     loading.value = true
     loadFailed.value = false
+    loadErrorCode.value = null
     try {
       const trimmed = query.value.trim()
       const payload: { rootDir?: string; query?: string } = {}
@@ -160,8 +169,13 @@ export function useImportSession(options: UseImportSessionOptions = {}) {
       items.value = reply.items
       dirs.value = reply.dirs
       total.value = reply.total
-    } catch {
+    } catch (e) {
       if (seq !== requestSeq) return
+      // 与导入动作同套归一化：识别码按码展示恢复指引（V6 dir_unreadable 可达），
+      // 表外/未识别码归 null → 通用失败 + 重试（default 分支）
+      const code = (e as { code?: unknown }).code
+      loadErrorCode.value =
+        typeof code === 'string' && FAILURE_CODES.has(code) ? (code as ImportFailureCode) : null
       loadFailed.value = true
       items.value = []
       dirs.value = []
@@ -207,6 +221,7 @@ export function useImportSession(options: UseImportSessionOptions = {}) {
     importing.value = false
     importErrorCode.value = null
     loadFailed.value = false
+    loadErrorCode.value = null
     items.value = []
     dirs.value = []
     total.value = 0
@@ -277,6 +292,7 @@ export function useImportSession(options: UseImportSessionOptions = {}) {
     total,
     loading,
     loadFailed,
+    loadErrorCode,
     selectedDir,
     rootDir,
     selectedProjectId,
