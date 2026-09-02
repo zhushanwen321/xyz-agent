@@ -443,7 +443,7 @@
   <p class="lede">
     在侧边栏「新建任务」下方新增<b>「导入会话」</b>入口：浏览或搜索磁盘上的 pi session（<code>~/.pi/agent/sessions/&lt;目录&gt;/&lt;ISO 时间戳&gt;_&lt;uuid&gt;.jsonl</code>，
     列表<b>优先展示 session 名称</b>，其次短 ID；选中后选择目标 project 导入，导入的会话出现在侧边栏该 project 分组下且<b>可继续对话</b>。
-    搜索同时接受名称、完整/短 Session ID、短文件名（如 <code>72cd03.jsonl</code>）与 <code>.jsonl</code> 绝对路径。
+    搜索同时接受名称、完整/短 Session ID（uuid 前 6 位，即 pi TUI 里 <code>72cd03</code> 式短标识，前缀匹配真实文件名 <code>&lt;时间戳&gt;_&lt;uuid&gt;.jsonl</code>）与 <code>.jsonl</code> 绝对路径。
     已存在于太极的 session 显示「已导入」不可重复导入。三个方案共享同一套扫描与导入 RPC，仅界面形态不同。
   </p>
 </header>
@@ -512,7 +512,7 @@
         <div class="modal-search">
           <div class="searchbox">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-            <input data-q type="text" placeholder="搜索名称、Session ID 或文件名（如 72cd03.jsonl），或粘贴 .jsonl 绝对路径" spellcheck="false">
+            <input data-q type="text" placeholder="搜索名称或 Session ID（支持 01a044 式短 ID），或粘贴 .jsonl 绝对路径" spellcheck="false">
             <kbd>Esc</kbd>
           </div>
         </div>
@@ -575,7 +575,7 @@
       <div class="palette" role="dialog" aria-label="导入 pi 会话">
         <div class="searchbox">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-          <input data-q type="text" placeholder="导入 pi 会话：搜索名称 / Session ID / 文件名，或粘贴路径" spellcheck="false">
+          <input data-q type="text" placeholder="导入 pi 会话：搜索名称 / Session ID（支持短 ID），或粘贴路径" spellcheck="false">
           <kbd>Esc</kbd>
         </div>
         <div class="pal-list" data-list></div>
@@ -1143,7 +1143,7 @@ class PaletteVariant {
         <div class="empty">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           <div class="t">没有匹配的 session</div>
-          <div class="h">换个关键词，或粘贴 .jsonl 绝对路径后按 Tab 直达导入</div>
+          <div class="h">换个关键词，或直接粘贴 .jsonl 绝对路径</div>
         </div>`;
       return;
     }
@@ -1207,7 +1207,7 @@ class SubviewVariant {
         <div class="imp-search">
           <div class="searchbox">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-            <input data-imp-q type="text" placeholder="搜索名称 / ID / 文件名，或粘贴路径" spellcheck="false">
+            <input data-imp-q type="text" placeholder="搜索名称 / Session ID（支持短 ID），或粘贴路径" spellcheck="false">
           </div>
         </div>
         <div style="display:flex;gap:6px;padding:0 2px;align-items:center;">
@@ -1305,7 +1305,7 @@ class SubviewVariant {
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
               ${s.imported ? '<span class="badge badge-dim">已导入</span>' : '<span class="badge badge-ok">可导入</span>'}
               ${s.compacted ? '<span class="badge badge-info">历史压缩 1 次</span>' : ''}
-              ${s.untitled ? '<span class="badge badge-dim">无标题（取首条消息）</span>' : ''}
+              ${s.untitled ? '<span class="badge badge-dim">无标题（回退目录名）</span>' : ''}
             </div>
           </div>
         </div>
@@ -1315,8 +1315,8 @@ class SubviewVariant {
             <span title="${s.full}">${s.full}</span>
             <button class="copy" data-copy="${s.full}" type="button" aria-label="复制 ID">${ICONS.copy}</button>
           </span>
-          <span class="k">短文件名</span>
-          <span class="v mono"><span>${s.short}.jsonl</span></span>
+          <span class="k">短 ID</span>
+          <span class="v mono"><span>${s.short}（uuid 前 6 位）</span></span>
           <span class="k">来源文件</span>
           <span class="v mono"><span title="~/.pi/agent/sessions/${dirMeta.n}/…_${s.full}.jsonl">…/sessions/${esc(dirMeta.n)}/…_${s.short}….jsonl</span></span>
           <span class="k">归属目录</span>
