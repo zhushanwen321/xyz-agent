@@ -6,9 +6,10 @@
  * 形态（demo 3A）：单行 pill 卡（26px）= 项目名（截断 + title 全名兜底）+ 会话数徽章；
  * 网格尾部「新建」卡（点击展开内联 Input，Enter/blur 提交、Esc 取消）。
  *
- * 排序（D7）：卡片顺序 = store.recentProjects 两段式（用户序段 userOrder 升序在前 +
- * 自动序段 active 置顶/lastUsedAt 降序在后）；drop 与方向键（←→↑↓，focus 后）调用
- * store.reorderProject 同一入口，提交时对用户序段密集重编号 0..n-1。
+ * 排序（D7，2026-09-02 语义修正）：卡片顺序完全由用户控制——有 userOrder 升序在前，
+ * 无 userOrder 按创建/持久化序稳定在后；点击切换不改顺序（active/lastUsedAt 不参与
+ * 排序）。drop 与方向键（←→↑↓，focus 后）调用 store.reorderProject 同一入口，
+ * 提交时对整个列表密集重编号 0..n-1。
  *
  * 拖拽（D8）：原生 HTML5 DnD（draggable + dragstart/dragover/drop）——全仓零 dnd 库依赖
  * （@dnd-kit 是 React 库，Vue 不可用，设计已裁决）。

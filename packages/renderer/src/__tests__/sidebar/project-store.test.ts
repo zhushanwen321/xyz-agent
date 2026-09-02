@@ -163,15 +163,15 @@ describe('Project store: CRUD + 持久化', () => {
     expect(store.projects).toHaveLength(2)
   })
 
-  it('setActiveProject：切换 + lastUsedAt 更新（驱动 recentProjects 排序）', () => {
+  it('setActiveProject：切换 + lastUsedAt 更新；recentProjects 顺序不变（点击不改顺序）', () => {
     const store = useProjectStore()
     const a = store.addProject('A')
     const b = store.addProject('B')
     store.setActiveProject(a)
 
     expect(store.activeProjectId).toBe(a)
-    expect(store.recentProjects[0]!.id).toBe(a)
-    expect(store.recentProjects[1]!.id).toBe(b)
+    // 全员无 userOrder：显示序 = 数组序 [DEFAULT, A, B]，active a 不置顶
+    expect(store.recentProjects.map((p) => p.id)).toEqual([DEFAULT_PROJECT_ID, a, b])
   })
 
   it('setActiveProject 更新目标 lastUsedAt，不动其他项；addProject 新建时 lastUsedAt = 当前时间', () => {

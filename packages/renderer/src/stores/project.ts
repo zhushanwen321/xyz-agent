@@ -68,36 +68,27 @@ export const useProjectStore = defineStore('project', () => {
   const isDefaultProject = computed(() => !activeProject.value.name)
 
   /**
-   * 按「用户序 > 自动序」两段式排序的 project 列表（供 ProjectSwitcher 网格渲染，D7）。
+   * Project 列表渲染序（供 ProjectSwitcher 网格渲染，D7；名字沿用历史——曾按最近使用
+   * 排序，2026-09-02 起语义修正为「顺序完全由用户控制」）。
    *
-   * 排序规则（2026-08-29 ProjectSwitcher 3A）：
-   *  1. 用户序段（有 userOrder）：按 userOrder 升序排前段——拖拽意图跨重启稳定，
-   *     setActiveProject 更新 lastUsedAt 不影响此段顺序（切换 ≠ 排序意图）；
-   *  2. 自动序段（无 userOrder）：activeProject 置顶 + lastUsedAt 降序（沿用旧规则，
-   *     仅作用于本段内部）；lastUsedAt 相同时保持原数组顺序（稳定兜底）。
-   *  3. 默认项目（isDefault）同卡同权参与两段排序，无特殊待遇。
+   * 排序规则（任何自动因素不参与，active 置顶 / lastUsedAt 均已移除）：
+   *  1. 有 userOrder：按 userOrder 升序排前段——拖拽意图跨重启稳定；
+   *  2. 无 userOrder：按原数组顺序（projects.json 持久化序 / 创建序）稳定排后段——
+   *     新建项目 push 数组尾自然落在末尾。
+   * setActiveProject 只更新 lastUsedAt 留痕，不改变列表顺序（切换 ≠ 排序意图，点击
+   * 任何项目顺序均不变）；首次拖拽后 reorderProject 全量重编号，整表顺序固化。
+   * 默认项目（isDefault）同卡同权参与排序，无特殊待遇。
    */
   const recentProjects = computed<Project[]>(() => {
-    const activeId = activeProjectId.value
-    // 用户序段：userOrder 升序；同值（外部脏数据）用原数组 index 做稳定 tiebreaker
-    const orderedIndexed = projects.value
-      .map((p, i) => ({ p, i }))
-      .filter((x) => x.p.userOrder != null)
-    orderedIndexed.sort((a, b) => {
-      const diff = a.p.userOrder! - b.p.userOrder!
-      return diff !== 0 ? diff : a.i - b.i
+    // userOrder 升序；未排序项视为 +∞ 殿后；同值（外部脏数据 / 同为 ∞）用原数组
+    // index 做稳定 tiebreaker
+    const indexed = projects.value.map((p, i) => ({ p, i }))
+    indexed.sort((a, b) => {
+      const ao = a.p.userOrder ?? Number.MAX_SAFE_INTEGER
+      const bo = b.p.userOrder ?? Number.MAX_SAFE_INTEGER
+      return ao !== bo ? ao - bo : a.i - b.i
     })
-    // 自动序段：active 置顶 + lastUsedAt 降序（旧 recentProjects 规则收拢进本段）
-    const rest = projects.value.filter((p) => p.userOrder == null && p.id !== activeId)
-    const restIndexed = rest.map((p, i) => ({ p, i }))
-    restIndexed.sort((a, b) => {
-      const diff = b.p.lastUsedAt - a.p.lastUsedAt
-      return diff !== 0 ? diff : a.i - b.i
-    })
-    const active = projects.value.find((p) => p.id === activeId && p.userOrder == null)
-    const ordered = orderedIndexed.map((x) => x.p)
-    const autoSeg = active ? [active, ...restIndexed.map((x) => x.p)] : restIndexed.map((x) => x.p)
-    return [...ordered, ...autoSeg]
+    return indexed.map((x) => x.p)
   })
 
   /**
@@ -184,7 +175,8 @@ export const useProjectStore = defineStore('project', () => {
   function setActiveProject(id: string): void {
     const target = projects.value.find((p) => p.id === id)
     if (target) {
-      // 切换即「最近使用」：更新时间戳，驱动 recentProjects 排序 + 持久化（deep watch）
+      // 切换即「最近使用」：lastUsedAt 仅作持久化留痕，不驱动列表排序（点击不改顺序，
+      // deep watch 照常触发 save）
       target.lastUsedAt = Date.now()
       activeProjectId.value = id
     }
@@ -206,14 +198,14 @@ export const useProjectStore = defineStore('project', () => {
    * 共用此单一入口）。
    *
    * 算法：以 recentProjects 当前显示顺序为基准执行 splice（dragId 移到 targetId 位置），
-   * 然后「旧用户序段 ∪ 被拖卡」的成员按新顺序密集重编号 0..n-1 后整体写回——不做 midpoint
-   * 稀疏编号，删除项目留下的空洞由下次 drop 自然消除。未被拖动的自动序项目保持无 userOrder。
+   * 然后把 splice 后的完整显示序全量密集重编号 0..n-1 写回（review MF-12）——不做 midpoint
+   * 稀疏编号，删除项目留下的空洞由下次 drop 自然消除。首次拖拽后整表顺序固化；
+   * 后续新增项目（无 userOrder）按创建序落在末尾，直到再次拖拽。
    *
    * 推演（覆盖验收关键场景）：
-   *  - 用户序段内拖动：段内换位后整段重编 0..n-1；
-   *  - 自动序卡首次拖到用户序段（含首位）：插入落点、连同用户序段一起密集编号（拖到首位即首位）；
-   *  - 用户序卡拖向自动序区：它仍是用户序成员，按新显示顺序落在用户序段末位（自动序区位置
-   *    不稳定，不作为排序锚点）。
+   *  - 有序卡之间拖动：换位后整段重编 0..n-1；
+   *  - 无序卡拖到任意位置（含首位/中间）：落点即位次，连同其余卡一起全量编号；
+   *  - 全量定序保证显示序 ≡ splice 结果，无序卡被拖不再瞬移到网格边缘。
    * 持久化：deep watch 感知 userOrder 原地写 → 全量 RPC save，无需额外调用。
    */
   function reorderProject(dragId: string, targetId: string): void {
@@ -230,10 +222,10 @@ export const useProjectStore = defineStore('project', () => {
     // 尾插致错序，见 review MF-12 回归）。
     next.splice(to, 0, dragged!)
     // 全量定序（review MF-12）：把 splice 后的完整显示序固化为用户序（0..n-1）。
-    // 旧实现只 pin「旧有序段 ∪ 被拖卡」，auto 段卡片被拖时仅其自身获得 userOrder=0
+    // 旧实现只 pin「旧有序段 ∪ 被拖卡」，无序卡片被拖时仅其自身获得 userOrder=0
     // → 渲染时瞬移到用户序段头部（[A,B,C,D,E] 上移 D 实际显示 [D,A,B,C,E]），
     // 且该错序被持久化。全量 pin 后显示序 ≡ splice 结果；后续新增项目（userOrder
-    // null）仍落入 auto 段排在末尾，语义不变。
+    // null）按创建序排在末尾，语义不变。
     let order = 0
     for (const p of next) {
       projects.value.find((q) => q.id === p.id)!.userOrder = order
