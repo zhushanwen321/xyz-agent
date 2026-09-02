@@ -95,6 +95,8 @@ bash scripts/validate-runtime-bundle.sh    # runtime bundle 深度验证
 
 **先读 [TEST-STRATEGY.md](TEST-STRATEGY.md)（分层/mock/回归基线 SSOT）+ [docs/testing/](docs/testing/) 对应功能文档**，复用已有 testid/调用链/踩坑经验。红线：vitest（禁 `node:test` / `tsx --test`，配置在子包 vitest.config.ts，从子包目录运行）；timer 测试用 fake timers；派编码 subagent 时 task 写明测试框架。**三视角缺一不可 [HISTORICAL]**（构建者白盒 + 使用者黑盒 + 观察者形态；每条用例至少一个用户可见 DOM 断言；spec 结构条目 = 渲染断言清单）——细则见 TEST-STRATEGY.md §3。
 
+**测试禁止触碰真实数据目录 [HISTORICAL]**（2026-09-02 会话丢失事故：测试在 env 带 `XYZ_AGENT_DATA_DIR=~/.xyz-agent` 时运行，`rmSync(getSessionsDir())` 删光全部活跃会话，三个 pi 进程追加写入 ENOENT 崩溃——appendFileSync flags `'a'` 本可自建文件，ENOENT 根因是父目录被 recursive 删除）。双层防线已固化在 runtime vitest：① `test/global-setup.ts` 对「注入的 `XYZ_AGENT_DATA_DIR` 指向真实 `~/.xyz-agent`」fail-fast 拒跑；② `test/fs-guard.ts`（setupFiles 切面）拦截全部破坏性 fs 操作（写/删/移动），**白名单 = `os.tmpdir()` + `$XYZ_AGENT_DATA_DIR`（≠ 真实目录）+ `~/.xyz-agent-dev`（homedir 动态推导），其余目录一律抛错**。约束：新测试的写删目标必须 `mkdtempSync(join(tmpdir(), ...))` 自建自删，禁止删除 `getSessionsDir()` 等共享推导路径；禁止绕过 guard（restore 原始 fs / 子进程删真实目录）；renderer/core 等其他包新增或改造 vitest 配置时必须挂同款 setupFiles。
+
 ## 前端编码规范
 
 权威标准：`~/Code/xyz-ui/CONVENTIONS.md`。核心：

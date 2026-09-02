@@ -1757,8 +1757,12 @@ describe('SessionService · 业务持久化写安全守卫（W2 ipc-converge-a3 
 
     it('B1: fromPath 在白名单外（home 目录）→ throw，不 move 文件（防任意文件移动）', async () => {
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-      // 在 home 下造一个文件，尝试迁移（不应被允许——home 既非 tmpdir 也非 attachments）
-      const evilFile = join(homedir(), '.xyz-agent-test-evil-' + Date.now() + '.txt')
+      // 白名单外 fixture：需同时满足「vitest fs-guard 可写区」与「migrateImage 白名单
+      // （tmpdir ∪ attachments）之外」——差集 = dev 数据目录 ~/.xyz-agent-dev（fs-guard
+      // 白名单成员，不在 tmpdir 前缀内）。原 home 路径在 fs-guard 下不可写。
+      const guardWritableDir = join(homedir(), '.xyz-agent-dev')
+      mkdirSync(guardWritableDir, { recursive: true })
+      const evilFile = join(guardWritableDir, '.xyz-agent-test-evil-' + Date.now() + '.txt')
       writeFileSync(evilFile, 'secret')
       writtenPaths.push(evilFile)
       expect(existsSync(evilFile)).toBe(true)
