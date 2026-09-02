@@ -17,7 +17,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { cleanupTmpMigrateResidue, scanExternalSessions } from '../infra/pi/session-file-utils.js'
+import { scanExternalSessions } from '../infra/pi/session-file-external-scan.js'
+import { cleanupTmpMigrateResidue } from '../infra/pi/session-file-utils.js'
 
 let rootDir: string
 

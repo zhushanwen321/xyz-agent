@@ -30,11 +30,11 @@ import type {
 } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import { encodeCwd, getSessionsDir } from '../../infra/pi/pi-paths.js'
+import { scanExternalSessions } from '../../infra/pi/session-file-external-scan.js'
 import {
   invalidateScanDirCache,
   persistProjectBinding,
   readProjectBinding,
-  scanExternalSessions,
   scanPiSessions,
   type ScannedSessionMeta,
 } from '../../infra/pi/session-file-utils.js'
