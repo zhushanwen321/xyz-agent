@@ -31,6 +31,11 @@
  * 边界（有意为之）：
  * - 只拦写/删/移动，不拦读——vitest 模块加载与源码 import 本身就是海量读 IO，拦读会
  *   破坏测试运行时；读操作对用户数据不可造成不可逆损害。
+ * - fd 消费点（writeSync / ftruncate(Sync) / fs.ftruncate）不逐点拦：fd 是 number，
+ *   参数层无 path 可校验，逐点拦是恒放行的假防线。防线落在写句柄入口——openSync /
+ *   callback open / createWriteStream / promises.open 的写 flags 校验 path（写 fd 只能
+ *   经这些入口产生，O_RDONLY fd 上 ftruncate/write 系统调用必败 EINVAL/EBADF，实测；
+ *   fs/promises 无 ftruncate 导出，实测）。论证链见 fs-guard-impl.ts FS_OPEN_FNS 注释。
  * - mock 只覆盖走 vitest 模块 runner 的 import（测试文件 + 其依赖链）；CJS require
  *   消费者与测试 spawn 出去的子进程（真实 pi 等）不在拦截范围——后者的写删目标由
  *   各自 fixture 的 tmp sessionDir 隔离。
@@ -43,11 +48,13 @@ import { vi } from 'vitest'
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
   const impl = await import('./fs-guard-impl.js')
-  return impl.wrapModule(actual as unknown as Record<string, unknown>, impl.FS_SYNC_FNS)
+  const wrapped = impl.wrapModule(actual as unknown as Record<string, unknown>, impl.FS_SYNC_FNS)
+  return impl.wrapOpenFns(wrapped, actual as unknown as Record<string, unknown>, impl.FS_OPEN_FNS)
 })
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   const impl = await import('./fs-guard-impl.js')
-  return impl.wrapModule(actual as unknown as Record<string, unknown>, impl.FS_ASYNC_FNS)
+  const wrapped = impl.wrapModule(actual as unknown as Record<string, unknown>, impl.FS_ASYNC_FNS)
+  return impl.wrapOpenFns(wrapped, actual as unknown as Record<string, unknown>, impl.FS_PROMISES_OPEN_FNS)
 })

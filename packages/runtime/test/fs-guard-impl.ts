@@ -107,6 +107,20 @@ export const FS_ASYNC_FNS = [
 ] as const
 
 /**
+ * 写句柄入口函数名（fd/流写路径防线）：破坏名单只拦「直接路径」操作，fd/流形态可绕过
+ * ——openSync(path,'w')+writeSync(fd)、callback 版 open(path,'w')、createWriteStream(path)。
+ * 写 fd 只能经这些入口产生（Node 无「无 path 造写 fd」的暴露 API），入口校验写 flags
+ * 即闭合 writeSync / ftruncate(Sync) 等全部 fd 消费点：fd 是 number，参数层无 path 可
+ * 校验，逐点拦只会得到恒放行的假防线；且 O_RDONLY fd 上 ftruncate/write 系统调用必败
+ * EINVAL/EBADF（实测），只读句柄无绕过价值。fs/promises 无 ftruncate 导出（实测），
+ * FileHandle 写句柄唯一产生点 = promises.open。
+ */
+export const FS_OPEN_FNS = ['openSync', 'open', 'createWriteStream'] as const
+
+/** promises 侧写句柄入口（open 返回 FileHandle，实例方法不经模块层，入口校验即闭合）。 */
+export const FS_PROMISES_OPEN_FNS = ['open'] as const
+
+/**
  * 各 API 的校验参数位：
  * - rename（src 被移走 = 破坏性）：src + dest 双端校验
  * - cp / copyFile（src 只读不破坏）：只校验 dest——src 从包内 fixtures 复制到 tmp 是
@@ -127,6 +141,49 @@ export function wrapModule(actual: Record<string, unknown>, names: readonly stri
     const argSlice = RENAME_FNS.has(name) ? [0, TWO_ARGS] : DEST_ONLY_FNS.has(name) ? [1, TWO_ARGS] : [0, 1]
     wrapped[name] = function (this: unknown, ...args: unknown[]) {
       guardPaths(name, args.slice(argSlice[0], argSlice[1]))
+      return (orig as (...a: unknown[]) => unknown).apply(this, args)
+    }
+  }
+  return wrapped
+}
+
+/** O_ACCMODE 掩码（O_RDONLY=0 / O_WRONLY=1 / O_RDWR=2）——数字 flags 的写位判定。 */
+const O_ACCMODE_MASK = 0o3
+
+/**
+ * open 系第二参的写位判定：string flags（'r'/'rs'/'sr' 只读；含 a/w/x/+ 任一为写）、
+ * number flags（O_ACCMODE 位非零为写）、object options（取 .flags 同判定）。缺省按
+ * 调用方默认——open 系 'r'（只读零开销放行）、createWriteStream 'w'（默认即写，必拦）。
+ */
+function isWriteOpenArg(arg: unknown, defaultFlags: string): boolean {
+  let flags: string | number = defaultFlags
+  if (typeof arg === 'string' || typeof arg === 'number') {
+    flags = arg
+  } else if (arg && typeof arg === 'object') {
+    const f = (arg as { flags?: unknown }).flags
+    if (typeof f === 'string' || typeof f === 'number') flags = f
+  }
+  return typeof flags === 'number' ? (flags & O_ACCMODE_MASK) !== 0 : /[awx+]/.test(flags)
+}
+
+/**
+ * 写句柄入口 wrapper（在 wrapModule 结果上叠加）：写 flags 时校验 path 后透传，读
+ * flags 放行。createWriteStream 的打开发生在构造时（fs 层同步 open），先校验再返回
+ * 原流即闭合。首参为 fd / FileHandle（number / 对象）时 pathOf 返回 null 跳过——该
+ * 句柄必来自已校验的入口。orig 取自 actual 而非已 wrap 的 target（避免叠加误拦）。
+ */
+export function wrapOpenFns(
+  target: Record<string, unknown>,
+  actual: Record<string, unknown>,
+  names: readonly string[],
+): Record<string, unknown> {
+  const wrapped = { ...target }
+  for (const name of names) {
+    const orig = actual[name]
+    if (typeof orig !== 'function') continue
+    const defaultFlags = name === 'createWriteStream' ? 'w' : 'r'
+    wrapped[name] = function (this: unknown, ...args: unknown[]) {
+      if (isWriteOpenArg(args[1], defaultFlags)) guardPaths(name, [args[0]])
       return (orig as (...a: unknown[]) => unknown).apply(this, args)
     }
   }

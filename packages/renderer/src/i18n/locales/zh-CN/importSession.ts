@@ -41,7 +41,7 @@ export default {
     import_marker_filename: '文件名含迁移临时标记（.tmp-migrate- / .tmp-import-），疑似迁移残留：请选择原始会话文件',
     import_dir_unreadable: '目录不可读（权限不足）：请检查目录权限后重试，或用「选择其他目录」重新指定',
     import_already_imported: '该会话已导入过：侧边栏可直接打开',
-    import_target_conflict: '目标位置已被另一会话占用：请处理冲突文件后重试',
+    import_target_conflict: '目标位置已被另一会话占用：请检查源文件是否被手工改名或复制过，改用原始文件名的 session 文件导入',
     import_copy_failed: '复制会话文件失败（磁盘空间或权限问题）：请清理磁盘或检查权限后重试',
     import_project_invalid: '目标项目无效：请重新选择项目后重试',
     timeout: '请求超时：请重试',

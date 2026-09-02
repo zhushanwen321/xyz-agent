@@ -59,7 +59,7 @@ export interface ImportCandidate {
   dirLabel: string
   /** 已在太极扫描集（默认 TTL 读，允许秒级 stale；导入校验另走 force 双检） */
   alreadyImported: boolean
-  /** existsSync(header.cwd)；false 时 UI 标注「原目录不存在，续聊将在 ~ 执行」（MF-2） */
+  /** existsSync(header.cwd)；false 时 UI 标注「原目录不存在，续聊将在主目录执行」（MF-2） */
   cwdExists: boolean
 }
 

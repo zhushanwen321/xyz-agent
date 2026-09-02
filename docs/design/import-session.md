@@ -71,10 +71,10 @@ $ cd ~/Stock && pi
 | 事实 | 位置 |
 |---|---|
 | 太极 session 目录独立 | `packages/runtime/src/infra/pi/pi-paths.ts:105`（`getSessionsDir()` = `~/.xyz-agent/pi/sessions`） |
-| 目录扫描已参数化（未导出） | `session-file-utils.ts:1047` `scanPiSessionsFromDisk(sessionsDir)`：顶层 `.jsonl` + 一层子目录，按内容（首行 header）识别，不依赖目录名 |
+| 目录扫描已参数化（未导出） | `session-file-utils.ts` `scanPiSessionsFromDisk(sessionsDir)`：顶层 `.jsonl` + 一层子目录，按内容（首行 header）识别，不依赖目录名 |
 | 每文件元信息提取（含缓存） | `session-file-utils.ts` `scanSessionMeta`（W3 三读合一，缓存键 filePath+mtime+size） |
-| project 归属 sidecar | `session-file-utils.ts:325` `persistProjectBinding(filePath, projectId)`（写 `<file>.project.json`，含双缓存失效；空 projectId = 删 sidecar） |
-| 归组生效链路 | `transport/session-message-handler.ts:459` `session.setProject` → sidecar + `broadcastSessionList()`（现有 RPC，手动归类已在用） |
+| project 归属 sidecar | `session-file-utils.ts` `persistProjectBinding(filePath, projectId)`（写 `<file>.project.json`，含双缓存失效；空 projectId = 删 sidecar） |
+| 归组生效链路 | `transport/session-message-handler.ts` `session.setProject` → sidecar + `broadcastSessionList()`（现有 RPC，手动归类已在用） |
 | 恢复续聊 | `services/session/session-lifecycle.ts` `restoreSession(sessionId)` → `switchSession(sessionPath)`；attach 断言 `infra/pi/session-attach-assert.ts`（期望文件须为磁盘真实文件） |
 | pi 目录编码规则 | pi 实装 `node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js:240-246`：`--${cwd.replace(/^[/\\]/,"").replace(/[/\\:]/g,"-")}--` |
 | RPC 添加模式 | renderer `api/domains/session.ts`（sendCommand）↔ runtime `transport/session-message-handler.ts`（case 分发 → service 方法 → reply + broadcast） |
@@ -91,7 +91,7 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 
 1. **custom entries**：CLI 侧装了太极没有的 extension（如旧 `unified-hooks`），会写入 `{"type":"custom","customType":"unified-hooks:loaded",...}` 等 entry。太极的 entry→UI reducer 已做全类型支持（不丢弃任何 pi entry 类型，live ≡ reload 等价性由 `apply-entry-equivalence` 测试守卫），未知 custom 类型按现有约定跳过渲染不崩。**这是运行时断言，需真实文件探针**（见 §3.4 P-custom）。
 2. **模型配置**：CLI 侧用的 provider/model 在太极 `models.json` 里可能未配置。恢复后发消息时模型解析失败应有可切换出口（太极本来就有模型切换 UI）。**运行时断言，探针验证**（P-model）。
-3. **原工作目录死路径（最强续聊攻击面，审查 MF-2 补入）**：pi 0.84.1 的 `switchSession` 内部 `assertSessionCwdExists` 对不存在的 header.cwd **硬拒绝**（`MissingSessionCwdError`），且现有 RPC 不透传 cwdOverride；runtime 既有 F3 兑底管线（`session-lifecycle.ts:459-461`、`applyHeaderCwdFallback`）会把 header.cwd **静默改写为 homedir() 落盘再附着**。触发场景全是真实高频：已删项目目录、worktree 清理（codebase 注释明示常见）、外接盘、「选择其他目录」指向他机拷贝树（in-scope 功能，cwd 几乎必然不存在）。后果：导入成功、点击续聊表面正常，但 pi 实际在 `~` 执行工具，仅 console.warn 无用户可见提示——语义漂移。本设计必须在候选列表就暴露 `cwdExists=false` 并标注，而非依赖静默兑底。
+3. **原工作目录死路径（最强续聊攻击面，审查 MF-2 补入）**：pi 0.84.4 的 `switchSession` 内部 `assertSessionCwdExists` 对不存在的 header.cwd **硬拒绝**（`MissingSessionCwdError`），且现有 RPC 不透传 cwdOverride；runtime 既有 F3 兑底管线（`session-lifecycle.ts:459-461`、`applyHeaderCwdFallback`）会把 header.cwd **静默改写为 homedir() 落盘再附着**。触发场景全是真实高频：已删项目目录、worktree 清理（codebase 注释明示常见）、外接盘、「选择其他目录」指向他机拷贝树（in-scope 功能，cwd 几乎必然不存在）。后果：导入成功、点击续聊表面正常，但 pi 实际在 `~` 执行工具，仅 console.warn 无用户可见提示——语义漂移。本设计必须在候选列表就暴露 `cwdExists=false` 并标注，而非依赖静默兑底。
 
 ## §3 解决方案
 
@@ -105,10 +105,12 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 [用户] 点击侧边栏「新建任务」下方的「导入会话」（或按 ⌘I）
 [系统] 弹出居中对话框：顶部搜索框（placeholder：搜索名称或 Session ID（支持 01a044 式短 ID），
        或粘贴 .jsonl 绝对路径）；目录 chip「全部目录 ▾」+「选择其他目录」按钮；
-       列表按日期分组（今天/昨天/本周/更早），每条目两行：
-         行1 = 会话名称（session_info.name，无标题回退目录名）
-         行2 = 短 ID（mono）· 原工作目录 · 大小
-         （2026-09-02 一致性审查裁决：删「N 条消息」——scanSessionMeta 无此字段，
+       列表按日期分组（今天/昨天/本周/更早），每条目两行（终态实现形态，2026-09-02 阶段 3 修订后）：
+         行1 = 短 ID（mono）+ 会话名称（session_info.name，无标题回退目录名）+ 已导入徽标
+               + 大小·时间 + 行内导入按钮（合理 UI 增项，impl-plan §5 偏差表登记）
+         行2 = 原工作目录（header.cwd）+ 死 cwd 标注（cwdExists=false 时「原目录不存在，
+               续聊将在主目录执行」）
+         （2026-09-02 一致性审查裁决：删「N 条消息」——提取管线无此字段，
           补字段需全文件读与 P-scan-perf 性能约束冲突；消息数非导入决策必需）
        底部：导入到 [project 下拉，默认当前激活]  [取消] [导入]
 [用户] 在搜索框输入 "01a020"（uuid 前 6 位）
@@ -127,8 +129,9 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 [源磁盘] ~/.pi/agent/sessions/<--cwd-->/<ts>_<uuid>.jsonl（4,615 文件）
     │ ① session.importCandidates { rootDir?, query, limit }（打开/搜索/切目录时，renderer debounce 250ms）
     ▼
-[runtime U1+U2] 扫描外部目录（readdir 一层子目录 + scanSessionMeta 每文件 header/尾读，
-    sessionMetaCache 按 filePath+mtime+size 复用；外部根独立 TTL 缓存）
+[runtime U1+U2] 扫描外部目录（readdir 一层子目录 + 每文件外部侧轻量提取 stat+header 首行+name
+    三级定位（D3 二次修订，不复用 scanSessionMeta），externalMetaCache 按 filePath+mtime+size 复用；
+    外部根独立 TTL 缓存）
     → 标记 alreadyImported（对比太极 scanPiSessions() 的 id 集合）
     │ ② WS reply：items[] + dirs[]（不传全量，limit 截断）
     ▼
@@ -187,22 +190,22 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 ### 3.3 关键决策（四件套）
 
 **D1：导入 = 原子复制 + 写 project sidecar（选定，r2 修订：tmp+rename 原子化 + 异步执行模型）**
-- **采用**：校验源文件（存在 + 首行 header 字段清单合法【header 读取用 `fs/promises` 异步读，不沿用 scanSessionMeta 系 sync 原语——NFS 源的 sync 读会阻塞事件循环（r4-S2）】+ 源文件名不含 `.tmp-migrate-` / `.tmp-import-` 标记【r2-S1：含标记 → `import_marker_filename`，防导入管线自己的过滤器吞掉自己的产物】+ 去重校验见 D4）→ **确保目标子目录存在**（`mkdir(recursive)`，r2-S5：外部 cwd 对应的 encodeCwd 子目录在太极 sessions 下几乎必然不存在，主路径必经）→ **异步** `fs/promises.copyFile` 先写同目录**临时名** `<targetPath>.tmp-import-<ts>.jsonl` → 成功后 `rename` **原子替换**到正式名 `<getSessionsDir()>/<encodeCwd(resolve(header.cwd))>/<原文件名>` → `persistProjectBinding(targetPath, projectId)` → **readback 校验**（`readProjectBinding(targetPath) === projectId`，该函数 :362 模块私有需连带导出（U1）；r2-S2：`persistBindingSidecar` 对写失败是吞错不抛的 best-effort 语义，不校验会假成功 + 静默误归组到默认项目。校验不符 → RPC 返回 `warning: 'sidecar_failed'`，renderer 降级 toast——文件已落地不回滚，引导手动归类）→ `invalidateScanDirCache()` + `broadcastSessionList()`。失败路径（copy/rename 抛错）主动 `unlink` 临时名；进程中途 crash 残留的 `.tmp-import-` 由启动清扫覆盖（`cleanupTmpMigrateResidue` 家族扩展同一过滤规则，`isScannableSessionFile` 同步扩展 `.tmp-import-` 前缀过滤——扫描器从机制上看不到任何非 final 名文件）。
+- **采用**：校验源文件（存在 + 首行 header 字段清单合法【header 读取用 `fs/promises` 异步读，不沿用 scanSessionMeta 系 sync 原语——NFS 源的 sync 读会阻塞事件循环（r4-S2）】+ 源文件名不含 `.tmp-migrate-` / `.tmp-import-` 标记【r2-S1：含标记 → `import_marker_filename`，防导入管线自己的过滤器吞掉自己的产物】+ 去重校验见 D4）→ **确保目标子目录存在**（`mkdir(recursive)`，r2-S5：外部 cwd 对应的 encodeCwd 子目录在太极 sessions 下几乎必然不存在，主路径必经）→ **异步** `fs/promises.copyFile` 先写同目录**临时名** `<targetPath>.tmp-import-<ts>.jsonl` → 成功后 `rename` **原子替换**到正式名 `<getSessionsDir()>/<encodeCwd(resolve(header.cwd))>/<原文件名>` → `persistProjectBinding(targetPath, projectId)` → **readback 校验**（`readProjectBinding(targetPath) === projectId`，该函数模块私有需连带导出（U1）；r2-S2：`persistBindingSidecar` 对写失败是吞错不抛的 best-effort 语义，不校验会假成功 + 静默误归组到默认项目。校验不符 → RPC 返回 `warning: 'sidecar_failed'`，renderer 降级 toast——文件已落地不回滚，引导手动归类）→ `invalidateScanDirCache()` + `broadcastSessionList()`。失败路径（copy/rename 抛错）主动 `unlink` 临时名；进程中途 crash 残留的 `.tmp-import-` 由启动清扫覆盖（`cleanupTmpMigrateResidue` 家族扩展同一过滤规则，`isScannableSessionFile` 同步扩展 `.tmp-import-` 前缀过滤——扫描器从机制上看不到任何非 final 名文件）。
 - **header 合法性字段清单（MF-1/S6）**：`type === 'session'` 且 `id` 为非空字符串且 `cwd` 为非空字符串；任一不满足 → `import_invalid_session`（缺 cwd 不容忍——`encodeCwd(undefined)` 会 TypeError 且空 cwd 编码为病态目录名）。
 - **被否**：直接 `copyFile` 到正式名（审查 MF-1 反例：header 最先落盘 → 半成品被 scanner 收录 → 用户按恢复指引重试反被去重拦下，恢复指引与去重自相矛盾；tmp+rename 后重演：失败 → 临时名被清理/被过滤 → 正式名从未落地 → 重试去重校验通过 → 成功，反例消灭）；原地引用（A2）；移动（A3）；同步 `copyFileSync`（50MB 级文件阻塞 WS 事件循环数百 ms~秒级，殃及多面板其他会话）。
-- **证据**：`normalizeSessionFileInPlace` 的 tmp+rename 先例 + `isScannableSessionFile` 的 `.tmp-migrate-` 文件名过滤先例（session-file-utils.ts:1038-1045，同一模式扩展）；`pi-paths.ts:105`（目录隔离）；attach 断言（session-attach-assert.ts）；`persistProjectBinding` 自带缓存失效。
+- **证据**：`normalizeSessionFileInPlace` 的 tmp+rename 先例 + `isScannableSessionFile` 的 `.tmp-migrate-` 文件名过滤先例（均 session-file-utils.ts，同一模式扩展）；`pi-paths.ts:105`（目录隔离）；attach 断言（session-attach-assert.ts）；`persistProjectBinding` 自带缓存失效。
 - **效果**：§1 目标 2/3 成立；错误规格表 `import_copy_failed` 的「重试」指引真正可达（与 D4 去重不再互斥）。
 
 **D2：目标子目录按 resolve 后的 header.cwd 用 pi 同款编码生成，文件名保留原名（r2 修订：补 resolvePath 归一步）**
 - **采用**：`<sessionsDir>/<encodeCwd(path.resolve(header.cwd))>/<原文件名>`，其中 `encodeCwd` 复用 `pi-paths.ts:122` 既有导出（不重抄公式）。pi 实装的 `getDefaultSessionDirPath`（session-manager.js:242-246）是**先 `resolvePath(cwd)` 再 replace**——漏掉 resolve 会使尾斜杠 cwd 产出 `--Users-x-proj---` 与 pi 自生 `--Users-x-proj--` 分叉，恰违背本决策「不产生分叉视图」的目标。scanner 按内容识别不依赖目录名，但保持结构一致让 pi 原生行为（同 cwd 新会话落同目录）不分叉。
 - **被否**：平铺到 sessions 根（顶层 `.jsonl` 虽能被扫到，但破坏「按 cwd 分组」组织约定，后续 `session.deleteByCwd` 等按目录语义的既有能力错位）；直接 replace 不 resolve（尾斜杠/相对形态分叉，审查 S5）。
-- **证据**：`scanPiSessionsFromDisk` 顶层+一层子目录双路径（session-file-utils.ts:1047-1098）；`encodeCwd` 存在于 pi-paths.ts:122（r2 核正：:119 为轻微行号偏移）；pi resolvePath 前置步（session-manager.js:242）。
+- **证据**：`scanPiSessionsFromDisk` 顶层+一层子目录双路径（session-file-utils.ts）；`encodeCwd` 存在于 pi-paths.ts:122（r2 核正：:119 为轻微行号偏移）；pi resolvePath 前置步（session-manager.js:242）。
 - **效果**：导入体与太极自产 session 在文件系统层面不可区分，§3.1 续聊步骤（pi 写回同文件）自然成立。
 
 **D3：候选列表与搜索走 runtime RPC（B1），外部扫描异步分批 + 独立 TTL 缓存（r2 修订：显式执行模型；2026-09-02 Gate B 实测后二次修订：提取管线换外部侧专用轻量版）**
-- **采用**：新增 `session.importCandidates`（契约见 D5）。执行模型（MF-3）：外部目录遍历用 `fs/promises.readdir`，每文件 meta 提取**不复用 `scanSessionMeta`，走外部侧专用轻量提取**（async：stat + header 首行 + name 三级定位）——**分批执行**，每批 N=100 文件后 `await setImmediate` 让出事件循环，4,616 文件首扫被切为数十个短批，WS 消息与流式广播在批间照常处理。**为何不复用 scanSessionMeta（Gate B P-scan-perf 实测回填，2026-09-02）**：scanSessionMeta 六读合一（header/name/outcome/handoff/preset/project sidecar），外部候选仅消费 header+name+stat 三项，其余四读零消费；且 `findLastEntryField` 尾读未命中即 fallback 全量 `readFileSync`——未 rename 的 session 其 session_info 在文件头部，触发整文件读（本机实测 4,616 文件/2.1GB：23.3s 首扫 + maxBlock 1,947ms 双超标，设计原假设「单文件 <1ms」不成立于平均 0.5MB 的真实数据集）。**name 三级定位**：尾块找最后 session_info（覆盖 rename append 尾部）→ 头块找第一个 session_info（覆盖创建期写入）→ 均未命中返回 null（UI 回退目录名显示；两块各 64KB 预算，覆盖绝大多数真实分布）。缓存：外部根扫描结果独立 TTL 缓存（1s，对齐惯例；`scanDirCache` 为单条目缓存、dir 作等值校验字段，故独立存放）；`sessionMetaCache` 按 filePath+mtime+size 天然跨根复用（同文件二次扫描零 IO）。导入成功后失效太极根扫描缓存（`invalidateScanDirCache`——alreadyImported 标记由 listCandidates 每次对太极根扫描重算，翻转由此生效；外部根缓存只含源文件元数据、复制不动源，无需失效。2026-09-02 一致性审查修正因果表述）。扫描深度 = 顶层 + 一层子目录（与太极根同构；更深层静默跳过，UI 目录 chip tooltip 声明此假设）。候选列表同样**不收录文件名含 `.tmp-migrate-` / `.tmp-import-` 标记的文件**（isScannableSessionFile 同一规则；此类文件是迁移残留的概率远高于合法 session，路径模式导入会得到 `import_marker_filename` 明确错误而非 limbo——r2-S1）。
+- **采用**：新增 `session.importCandidates`（契约见 D5）。执行模型（MF-3）：外部目录遍历用 `fs/promises.readdir`，每文件 meta 提取**不复用 `scanSessionMeta`，走外部侧专用轻量提取**（async：stat + header 首行 + name 三级定位）——**分批执行**，每批 N=100 文件后 `await setImmediate` 让出事件循环，4,616 文件首扫被切为数十个短批，WS 消息与流式广播在批间照常处理。**为何不复用 scanSessionMeta（Gate B P-scan-perf 实测回填，2026-09-02）**：scanSessionMeta 六读合一（header/name/outcome/handoff/preset/project sidecar），外部候选仅消费 header+name+stat 三项，其余四读零消费；且 `findLastEntryField` 尾读未命中即 fallback 全量 `readFileSync`——未 rename 的 session 其 session_info 在文件头部，触发整文件读（本机实测 4,616 文件/2.1GB：23.3s 首扫 + maxBlock 1,947ms 双超标，设计原假设「单文件 <1ms」不成立于平均 0.5MB 的真实数据集）。**name 三级定位**：尾块找最后 session_info（覆盖 rename append 尾部）→ 头块找第一个 session_info（覆盖创建期写入）→ 均未命中返回 null（UI 回退目录名显示；两块各 64KB 预算，覆盖绝大多数真实分布）。缓存：外部根扫描结果独立 TTL 缓存（1s，对齐惯例；`scanDirCache` 为单条目缓存、dir 作等值校验字段，故独立存放）；文件级缓存为 `externalMetaCache`（session-file-external-scan.ts 模块私有，键 filePath+(mtimeMs,size) 与 sessionMetaCache 同键语义——轻量提取形态不共用六读合一的 sessionMetaCache，混存会污染太极根扫描路径），天然跨根复用（同文件二次扫描零 IO）。导入成功后失效太极根扫描缓存（`invalidateScanDirCache`——alreadyImported 标记由 listCandidates 每次对太极根扫描重算，翻转由此生效；外部根缓存只含源文件元数据、复制不动源，无需失效。2026-09-02 一致性审查修正因果表述）。**实现层注记（2026-09-02 Gate B 后补登）**：实现（import-service）导入成功后另对源文件所在外部根 force 重扫——保守做法，消除单槽缓存换键/TTL 过期窗口导致的下次 miss 成本；冗余 IO 无害，impl-plan 阶段 4 复审登记为不修项。扫描深度 = 顶层 + 一层子目录（与太极根同构；更深层静默跳过，UI 目录 chip tooltip 声明此假设）。候选列表同样**不收录文件名含 `.tmp-migrate-` / `.tmp-import-` 标记的文件**（isScannableSessionFile 同一规则；此类文件是迁移残留的概率远高于合法 session，路径模式导入会得到 `import_marker_filename` 明确错误而非 limbo——r2-S1）。
 - **被否**：renderer 全量过滤（B2）；每次查询强制全扫（无缓存不可接受）；纯 sync 一把梭（万级阻塞操作殃及多面板其他会话，「渐进返回」降级在 sync 模型下不可实现——审查 MF-3 反例）；worker thread 隔离（进程开销与复杂度，分批让出已够用，减法优先）。
-- **证据**：`session-file-utils.ts` 全 sync IO 现状（import 列表 L8）；`scanPiSessions` 缓存分层（:956-1045）；`scanSessionMeta` 单文件成本（header 首读+尾读）；message-broker.ts:92 大 payload 敏感性。
+- **证据**：`session-file-utils.ts` 全 sync IO 现状（同步原语集中 import）；`scanPiSessions` 缓存分层；`scanSessionMeta` 单文件成本（header 首读+尾读）；message-broker.ts:92 大 payload 敏感性。
 - **效果**：§1 目标 1 成立且数据量增长不退化；P-scan-perf 探针补「事件循环单次连续阻塞 <100ms」指标后可真实验证。
 
 **D4：去重 = sessionId 集合比对（force 读）+ 全局单条导入互斥，导入幂等且并发安全（r4 修订：全局互斥取代键式队列）**
@@ -221,7 +224,7 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 'session.importCandidates': {
   payload: { rootDir?: string; query?: string; limit?: number }
   // rootDir 缺省 = 外部 pi 全局 agent 目录下的 sessions（~/.pi/agent/sessions），
-  //   动态推导复用/导出 pi-maintenance.ts:151 getPiGlobalAgentDir() 同款逻辑（从 getPiAgentDir()
+  //   动态推导复用/导出 pi-maintenance.ts getPiGlobalAgentDir() 同款逻辑（从 getPiAgentDir()
   //   向上三层推导）——禁止硬编码字面量（pre-commit check_path_whitelist 会拦，S9）
   // query 匹配语义（S7，runtime 与 renderer 共同遵守，防止两端裁量漂移）：
   //   字段集 = name ∪ full sessionId ∪ uuid 前 6 位短 ID ∪ sourcePath ∪ dirLabel，全部
@@ -237,7 +240,8 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
       cwdExists: boolean;                                          // existsSync(header.cwd)；false 时 UI 条目标注
                                                                    // 「原目录不存在，续聊将在主目录执行」（MF-2）
     }>
-    dirs: Array<{ label: string; count: number }>                  // 该根下全部一层子目录（chip 下拉）；
+    dirs: Array<{ label: string; count: number }>                  // 含候选文件的一层子目录（chip 下拉；
+                                                                   // 空目录/无候选子目录不出现）；
                                                                    // 扫描深度 = 顶层 + 一层子目录（与太极根同构，
                                                                    // 更深层静默跳过，S8——UI tooltip 声明此假设）
   }
@@ -283,14 +287,14 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 
 | ID | 验证的行为 | 探针 | 状态 | 失败时的降级路径 |
 |---|---|---|---|---|
-| P-isolation | 太极 session 目录与外部目录隔离（导入不改源） | 实现后 `ls ~/.pi/agent/sessions` 前后对比 + 源文件 mtime 不变 | ⛔ M2 | —（结构保证，copyFile 不触源） |
-| P-custom | 含 CLI 侧 custom entries（`unified-hooks:*` 等）的真实 session 导入后打开，对话流渲染无异常、reload 后一致（live ≡ reload 不被破坏）；附带验证：正被 pi CLI 活跃写入的文件复制（末行半写）副本可解析（INFO-2） | 用本机真实含 custom entry 的 jsonl 走完整导入→打开→reload；另取一个 pi CLI 正在写的 session 复制导入 | ⛔ M2 | 若崩：entry reducer 补该 customType 的跳过规则（仍守「不丢弃」约定，只是不渲染）；末行残缺若 parseJsonl 不容忍：导入校验放宽为「首行 header 合法即接受」，尾部半行由现有 parse 容忍语义兜底；文档同步更新兼容性声明 |
-| P-cwd-fallback | header.cwd 不存在的会话：候选列表条目带「原目录不存在」标注（cwdExists=false）；导入 toast 有预警；打开后续聊发生 F3 兜底（cwd 改写 homedir）且无静默漂移 | fixture 同 V9 确定性构造（临时目录真实跑 pi 后删目录；机器上恰有的已删 worktree 会话可作补充样本但非必需）走：查询→看标注→导入→打开→发消息，核对 console.warn 的 cwdFellBack 与 UI 标注同时存在 | ⛔ M2 | 若 UI 标注缺失：candidates 响应补字段即为修复点（结构已定）；若续聊直接报错无兜底：确认 F3 管线对导入体同样生效（restoreSession 走同一入口，预期不动） |
-| P-model | 源 session 的 model 在太极未配置时，恢复后发消息的行为可接受（可切换出口存在） | 构造/挑选 model 未配置的 session：导入→打开→发消息 | ⛔ M2 | 若直接报错无出口：导入成功 toast 追加「原模型不可用，已切换默认模型」或打开时预检提示切换——以实测行为为准回填本表 |
+| P-isolation | 太极 session 目录与外部目录隔离（导入不改源） | 实现后 `ls ~/.pi/agent/sessions` 前后对比 + 源文件 mtime 不变 | ✅ 2026-09-02 Gate B（V1：源文件 md5/mtime 不变，副本+sidecar 落盘） | —（结构保证，copyFile 不触源） |
+| P-custom | 含 CLI 侧 custom entries（`unified-hooks:*` 等）的真实 session 导入后打开，对话流渲染无异常、reload 后一致（live ≡ reload 不被破坏）；附带验证：正被 pi CLI 活跃写入的文件复制（末行半写）副本可解析（INFO-2） | 用本机真实含 custom entry 的 jsonl 走完整导入→打开→reload；另取一个 pi CLI 正在写的 session 复制导入 | ✅ 可验面 2026-09-02 Gate B（unified-hooks custom entry 导入成功、副本 entry 完整保留）；对话流渲染段 blocked 于 pi attach 环境崩（V2 同因，独立环境 bug 见 impl-plan 残留风险①） | 若崩：entry reducer 补该 customType 的跳过规则（仍守「不丢弃」约定，只是不渲染）；末行残缺若 parseJsonl 不容忍：导入校验放宽为「首行 header 合法即接受」，尾部半行由现有 parse 容忍语义兜底；文档同步更新兼容性声明 |
+| P-cwd-fallback | header.cwd 不存在的会话：候选列表条目带「原目录不存在」标注（cwdExists=false）；导入 toast 有预警；打开后续聊发生 F3 兜底（cwd 改写 homedir）且无静默漂移 | fixture 同 V9 确定性构造（临时目录真实跑 pi 后删目录；机器上恰有的已删 worktree 会话可作补充样本但非必需）走：查询→看标注→导入→打开→发消息，核对 console.warn 的 cwdFellBack 与 UI 标注同时存在 | ✅ 标注/预警/落地 2026-09-02 Gate B（V9）；续聊 F3 兜底段 blocked 于 pi attach 环境崩（V2 同因，待环境修复后补测） | 若 UI 标注缺失：candidates 响应补字段即为修复点（结构已定）；若续聊直接报错无兜底：确认 F3 管线对导入体同样生效（restoreSession 走同一入口，预期不动） |
+| P-model | 源 session 的 model 在太极未配置时，恢复后发消息的行为可接受（可切换出口存在） | 构造/挑选 model 未配置的 session：导入→打开→发消息 | ⛔ 未验——blocked 于 pi attach 环境崩（独立环境 bug，见 impl-plan 残留风险①），待修复后实测回填 | 若直接报错无出口：导入成功 toast 追加「原模型不可用，已切换默认模型」或打开时预检提示切换——以实测行为为准回填本表 |
 | P-scan-perf | 4,615 文件外部目录首次扫描（全 miss）：端到端延迟 <5s **且事件循环单次连续阻塞 <100ms**（分批让出生效）；二次查询（全 hit）<50ms | 实现 M1 后对真实 `~/.pi/agent/sessions` 计时 + `monitorEventLoopDelay` 采样 | ✅ 2026-09-02 Gate B 实测（轻量提取修复后）：首扫 1,624ms / maxBlock 37ms / 二次（TTL 命中）<1ms，items 3,689 与修复前一致零回退；修复前基线 23,284ms/1,947ms 双超标——根因 findLastEntryField 全量 fallback + 无消费四读，D3 已二次修订 | 阻塞超标：减小批 N 或改 worker thread 隔离；端到端 >5s：candidates 加 `scanPending` 渐进返回（分批模型下天然可做：每批 append）+ limit 截断提示精确搜索 |
-| P-dedup | 同 sessionId 二次导入被拒（幂等） | 导入→再次查询候选→断言 alreadyImported；绕过 UI 直发 import RPC→断言 `import_already_imported` | ⛔ M1（单测）+ M2（真实） | —（纯逻辑，结构保证） |
-| P-reload | 导入的会话重启 runtime 后仍在目标 project 分组（持久化闭环） | 导入→重启 dev app→侧边栏断言 | ⛔ M2 | 若丢：sidecar 写入点/缓存失效链排查（persistProjectBinding 已有失效逻辑，预期不动） |
-| P-broadcast | 导入成功后侧边栏**立即**出现新会话（broadcastSessionList 触达，不等 1s TTL） | 导入后即时断言 renderer 收到 session.list 广播且含新条目 | ⛔ M1 | 若靠 TTL 兜底：import RPC 内显式 `invalidateScanDirCache()`（D1 已含）再 broadcast，实测确认顺序 |
+| P-dedup | 同 sessionId 二次导入被拒（幂等） | 导入→再次查询候选→断言 alreadyImported；绕过 UI 直发 import RPC→断言 `import_already_imported` | ✅ M1 单测（u2 12/12）+ 2026-09-02 Gate B 真实（V5 直发 RPC + P-dedup 随场景过） | —（纯逻辑，结构保证） |
+| P-reload | 导入的会话重启 runtime 后仍在目标 project 分组（持久化闭环） | 导入→重启 dev app→侧边栏断言 | ✅ 2026-09-02 Gate B（V3：重启 dev 后导入会话仍在侧边栏） | 若丢：sidecar 写入点/缓存失效链排查（persistProjectBinding 已有失效逻辑，预期不动） |
+| P-broadcast | 导入成功后侧边栏**立即**出现新会话（broadcastSessionList 触达，不等 1s TTL） | 导入后即时断言 renderer 收到 session.list 广播且含新条目 | ✅ M1 单测（u3 broadcast 时序 10/10：reply 先广播后）+ 2026-09-02 Gate B 随场景过（V1：导入后侧边栏分组即时出现） | 若靠 TTL 兜底：import RPC 内显式 `invalidateScanDirCache()`（D1 已含）再 broadcast，实测确认顺序 |
 
 已实证事实（✅，代码锚点见 §2.2 表）：目录隔离、扫描参数化、sidecar 工具、attach 断言、RPC 模式、pi 目录编码规则。
 
@@ -328,7 +332,7 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 
 | 单元 | 内容 | justification（为什么这么拆） | 验证挂钩 |
 |---|---|---|---|
-| U1 `session-file-utils.ts` | export `scanExternalSessions(dir)`（异步分批包装：`fs/promises.readdir` + 复用 `scanSessionMeta` 每批 100 文件后 setImmediate 让出）；外部根独立 TTL 缓存；`isScannableSessionFile`/`cleanupTmpMigrateResidue` 扩展 `.tmp-import-` 家族（候选侧与清扫侧同规则，D3 声明）；**export `readProjectBinding`（:362 模块私有 → 导出，readback 步骤的连带改动，r3-S5）** | 扫描原语已存在，异步分批是执行模型要求（D3）；`.tmp-import-` 过滤是 D1 原子性的机制一半，必须与 tmp 写入同批落地 | 单测：外部目录结构样本 + tmp/标记文件不可见性；P-scan-perf |
+| U1 `session-file-utils.ts`（外部扫描已拆出） | export `scanExternalSessions(dir)`（异步分批包装：`fs/promises.readdir` + 每文件外部侧轻量提取（Gate B 二次修订，不复用 `scanSessionMeta`）每批 100 文件后 setImmediate 让出；**落点自 6edc0a665 起为 `session-file-external-scan.ts`**——gate-a max-lines 拆分，合理偏差见 impl-plan §5）；外部根独立 TTL 缓存；`isScannableSessionFile`/`cleanupTmpMigrateResidue` 扩展 `.tmp-import-` 家族（候选侧与清扫侧同规则，D3 声明）；**export `readProjectBinding`（模块私有 → 导出，readback 步骤的连带改动，r3-S5）** | 扫描原语已存在，异步分批是执行模型要求（D3）；`.tmp-import-` 过滤是 D1 原子性的机制一半，必须与 tmp 写入同批落地 | 单测：外部目录结构样本 + tmp/标记文件不可见性；P-scan-perf |
 | U2 `ImportService`（runtime 新 service） | `listCandidates`（query 语义按 D5 注释、cwdExists 标记）+ `importSession`：**进入全局导入互斥（r3-MF）→ 互斥区内依次：header 字段校验 + 文件名标记校验（r2-S1）→ D4 双检（force id 集合 ∪ existsSync；id 命中→already_imported，仅 target 命中→target_conflict）→ mkdir(recursive)（r2-S5）→ 异步 tmp+rename 复制（D1）→ persistProjectBinding + readback（r2-S2，不符→warning 降级）→ 失效双缓存 → 触发广播** | 导入是独立领域动作，不塞进 session-service（其 2k+ 行已是主干）；原子性/幂等/缓存失效集中在一点，探针全部挂此单元 | 单测：幂等（含同 id 异名并发双写竞争、双击连点、**同 targetPath 异 sessionId（并发与顺序两型）→ import_target_conflict（r4-S3）**）/原子性（模拟 copy 中途失败无残留；**copy_failed 后紧接一次导入成功执行——链异常安全第二跳用例（r4-S1）**）/错误码矩阵含 marker 与 sidecar warning（P-dedup、P-cwd-fallback 的字段面） |
 | U3 `session-message-handler.ts` | 两个 case（D5 契约），import 成功走既有 `broadcastSessionList()` | RPC 分发已有模式，纯增量 | P-broadcast |
 | U4 renderer `api/domains/session.ts` | `importCandidates` / `importSession` 两个方法 | domain 层薄封装惯例 | — |
@@ -338,8 +342,8 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 
 **文件改动地图**：
 
-- 改：`packages/runtime/src/infra/pi/session-file-utils.ts`（U1）、`packages/runtime/src/transport/session-message-handler.ts`（U3）、`packages/renderer/src/api/domains/session.ts`（U4）、`packages/renderer/src/components/sidebar/Sidebar.vue`（U6）、`packages/renderer/src/composables/shell/useGlobalShortcuts.ts`（U6）、`packages/renderer/src/i18n/locales/zh-CN|en-US/*`（U6）
-- 新：`packages/runtime/src/services/session/import-service.ts`（U2）、`packages/renderer/src/components/sidebar/ImportSessionDialog.vue` + `packages/renderer/src/composables/features/sidebar/useImportSession.ts`（U5）、对应 `__tests__`
+- 改：`packages/runtime/src/infra/pi/session-file-utils.ts`（U1；外部扫描域 6edc0a665 拆出至 session-file-external-scan.ts，见 U1 行）、`packages/runtime/src/transport/session-message-handler.ts`（U3）、`packages/renderer/src/api/domains/session.ts`（U4）、`packages/renderer/src/components/sidebar/Sidebar.vue`（U6）、`packages/renderer/src/composables/shell/useGlobalShortcuts.ts`（U6）、`packages/renderer/src/i18n/locales/zh-CN|en-US/*`（U6）
+- 新：`packages/runtime/src/infra/pi/session-file-external-scan.ts`（U1，6edc0a665 gate-a max-lines 拆分产物）、`packages/runtime/src/services/session/import-service.ts`（U2）、`packages/renderer/src/components/sidebar/ImportSessionDialog.vue` + `packages/renderer/src/composables/features/sidebar/useImportSession.ts`（U5）、对应 `__tests__`
 - 不动：scanner 主干、restore/attach 链路、session-service、project-store（D1 的核心收益）
 
 **待验证检查点**（设计阶段无法确定，诚实留给实施期）：
@@ -351,6 +355,8 @@ pi CLI 与太极跑的是同一个 pi 引擎，JSONL 格式同源（version 3 he
 ---
 
 ## 附录：审查与修订历史
+
+> 注：文中 `.review/design-review-import-session-r{1..4}.md` 为 cw 运行时产物，按 .gitignore 不入库；如需追溯，按仓库约定归档至 `.xyz-harness/`。
 
 - v1（2026-09-02）：初稿。
 - v2（2026-09-02）：对抗式审查 r1（4 must-fix / 6 suggestion / 3 info，报告 `.review/design-review-import-session-r1.md`）后全量修复：

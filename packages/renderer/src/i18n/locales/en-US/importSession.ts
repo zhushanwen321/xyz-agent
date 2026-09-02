@@ -42,7 +42,7 @@ export default {
     import_marker_filename: 'Filename contains a migration temp marker (.tmp-migrate- / .tmp-import-), likely a migration leftover: pick the original session file',
     import_dir_unreadable: 'Directory is unreadable (insufficient permissions): check directory permissions and retry, or use "Choose other directory" to pick another',
     import_already_imported: 'This session has already been imported: open it directly from the sidebar',
-    import_target_conflict: 'The target location is occupied by another session: resolve the conflicting file and retry',
+    import_target_conflict: 'The target location is occupied by another session: check whether the source file was renamed or duplicated; import the session file with its original filename instead',
     import_copy_failed: 'Failed to copy the session file (disk space or permission issue): free up disk space or check permissions and retry',
     import_project_invalid: 'Target project is invalid: choose a project again and retry',
     timeout: 'Request timed out: please retry',

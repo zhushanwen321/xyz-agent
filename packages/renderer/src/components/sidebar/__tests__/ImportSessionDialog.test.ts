@@ -13,12 +13,15 @@
  *  8. cwdExists=false 标注：「原目录已不存在…」降级提示可见
  *  9. 目录切换（V8）：「选择其他目录」→ pickDirectory 选中根 → RPC 带新 rootDir
  *     重载列表/dirs/计数；取消无操作；搜索词跨根保留；重开回默认根
- * 10. 候选加载失败内联恢复指引（阶段 3 修复①）：candidates RPC 错误码按码展示，
+ * 10. 候选加载失败内联恢复指引（阶段 3 batch-renderer d631e358c——修 unreasonable
+ *     「candidates RPC 失败错误码被吞」）：candidates RPC 错误码按码展示，
  *     表外/未识别码走通用失败 + 重试（default 分支）；重试可恢复
- * 11. 行2 显示原工作目录 cwd（阶段 3 修复②）：sourcePath 降级为行 title tooltip
- * 12. 计数「可见 N / 共 total」（阶段 3 修复③）：items 截断时自然呈现截断提示
- * 13. 日期分组四档（阶段 3 修复④）：今天/昨天/本周/更早，日历周（周一起始）分桶，
- *     昨天优先于本周
+ * 11. 行2 显示原工作目录 cwd（阶段 3 batch-renderer d631e358c——修 unreasonable
+ *     「行2 误显 sourcePath、cwd 字段零引用」）：sourcePath 降级为行 title tooltip
+ * 12. 计数「可见 N / 共 total」（阶段 3 batch-renderer d631e358c——修 unreasonable
+ *     「total 存而不用」）：items 截断时自然呈现截断提示
+ * 13. 日期分组四档（阶段 3 batch-renderer d631e358c——补 unreasonable「日期分组缺
+ *     本周档」）：今天/昨天/本周/更早，日历周（周一起始）分桶，昨天优先于本周
  * 14. u7 demo 对齐走查：标题「导入 pi 会话」/ 搜索框 icon + Esc kbd / 骨架屏（非转圈
  *     纯文本）/ 空态两条出路引导
  *
@@ -240,7 +243,7 @@ function importErrorWithCode(code: string): Error {
 beforeEach(() => {
   vi.useFakeTimers()
   // 冻结时间基准：2026-09-02（周三）午间——日历周分桶对 fixture 相对偏移恒定
-  // （本周 = 周一 8-30 起；离午夜 ±12h，秒级偏移不跨日历日）
+  // （本周 = 周一 8-31 起；离午夜 ±12h，秒级偏移不跨日历日）
   vi.setSystemTime(new Date('2026-09-02T12:00:00'))
   setActivePinia(createPinia())
   document.body.innerHTML = ''

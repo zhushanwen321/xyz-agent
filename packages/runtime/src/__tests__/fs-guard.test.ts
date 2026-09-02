@@ -7,11 +7,27 @@
  * - 使用者黑盒：端到端——本文件运行于已挂 fs-guard 的 worker，直接调 node:fs 的
  *   rmSync/writeFileSync 验证拦截真实生效（白名单内放行、真实目录抛错）
  * - 观察者形态：拦截错误信息必须可操作（含白名单与恢复指引）
+ *
+ * 写句柄入口（fd/流写路径防线）：openSync 写 flags / callback open / createWriteStream /
+ * promises.open 的写 flags 校验 path——写 fd 只能经此产生，闭合 writeSync/ftruncate 等
+ * fd 消费点（详见 test/fs-guard.ts「边界」注释）。
  */
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  createWriteStream,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs'
+import { open as fspOpen } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { isDestructiveAllowed, isRealDataDir } from '../../test/fs-guard-impl.js'
 
 describe('fs-guard 判定（纯函数）', () => {
@@ -66,5 +82,41 @@ describe('fs-guard 切面端到端（本文件 import 的 fs 已是 wrapper）',
     // 观察者视角：错误必须指向恢复动作（全局规则：错误信息可操作）
     expect(caught.message).toContain('~/.xyz-agent-dev')
     expect(caught.message).toContain('mkdtempSync')
+  })
+})
+
+describe('fs-guard 写句柄入口（fd/流写路径防线）', () => {
+  it('白名单内 openSync 写文件成功，fd 写入生效（tmp fixture 标准形态不误伤）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fs-guard-fdwrite-'))
+    const file = join(dir, 'w.txt')
+    const fd = openSync(file, 'w')
+    writeSync(fd, 'x')
+    closeSync(fd)
+    expect(readFileSync(file, 'utf8')).toBe('x')
+    rmSync(dir, { recursive: true })
+  })
+
+  it('真实数据目录 openSync("w") 被拦（绕道 fd 写不可达）', () => {
+    expect(() =>
+      openSync(join(homedir(), '.xyz-agent', 'pi', 'sessions', 'probe-fd.txt'), 'w'),
+    ).toThrow(/vitest-fs-guard/)
+  })
+
+  it('真实数据目录 createWriteStream 被拦（打开发生在流构造时，wrapper 先校验）', () => {
+    expect(() =>
+      createWriteStream(join(homedir(), '.xyz-agent', 'pi', 'sessions', 'probe-stream.txt')),
+    ).toThrow(/vitest-fs-guard/)
+  })
+
+  it('fs/promises open 写真实数据目录被拦（FileHandle 写句柄唯一入口）', () => {
+    expect(() =>
+      fspOpen(join(homedir(), '.xyz-agent', 'pi', 'sessions', 'probe-fh.txt'), 'w'),
+    ).toThrow(/vitest-fs-guard/)
+  })
+
+  it('只读 openSync("r") 对任意路径不拦（读不在防护范围，含本仓库文件）', () => {
+    const repoPkg = fileURLToPath(new URL('../../../../package.json', import.meta.url))
+    const fd = openSync(repoPkg, 'r')
+    closeSync(fd)
   })
 })

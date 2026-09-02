@@ -283,9 +283,9 @@ export class ImportService {
     persistProjectBinding(targetPath, projectId)
     const sidecarVerified = readProjectBinding(targetPath) === projectId
 
-    // 7. 缓存失效：太极根列表 TTL 显式失效（D1，alreadyImported/broadcast 立即可见）；
-    //    外部根缓存（u1 未导出失效函数）——单条目槽位语义下，任一 root 的 force 重扫要么
-    //    刷新槽内数据、要么换键迫使下一次查询 miss 重扫，两条路径都消除 stale alreadyImported。
+    // 7. 缓存失效：太极根列表 TTL 显式失效（D1，broadcast 立即可见）；alreadyImported 的
+    //    stale 消除由本行保证（listCandidates 每次调 scanPiSessions() 重算，与外部根缓存
+    //    无关）。外部根（u1 未导出失效函数）force 重扫只是保守刷新外部根视图。
     invalidateScanDirCache()
     await scanExternalSessions(dirname(sourcePath), { force: true })
 
