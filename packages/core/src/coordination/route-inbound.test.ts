@@ -12,11 +12,15 @@
  * ⑦ effects 回调：session.exited / message.complete / session.subagents /
  *    session.workflowUpdate / error 无 id → onGlobalError
  * ⑧ configureRouteInbound 注入三件套 + dispatcher 可调用
+ * D2 阶段 A（声明式条目 schema）：
+ * D2-a crossSession 声明条目（骨架形态）双通道分发且零 effect 回调 + 声明形状锁定
+ * D2-b payloadGuard 坏形状 → 跳过 sessionEffect、dispatchSession/crossSession 分发照常
+ * D2-c 无 sid 条目走 globalEffect（探针条目注入——阶段 A 生产表无 globalEffect 条目）
  *
  * 全部注入驱动：vi.fn 注入 TransportPorts（pending/events/subscribe）+ InboundEffects 5 回调 spy。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { configureRouteInbound } from './route-inbound'
+import { configureRouteInbound, ROUTE_TABLE } from './route-inbound'
 import type { TransportPorts, InboundEffects } from './route-inbound'
 import { resetSubscriptionStates, subscribeSession, getSubscriptionState } from './subscription-state'
 import * as realPending from '../transport/api/pending'
@@ -493,6 +497,85 @@ describe('configureRouteInbound — crossSession 通道（ADR-0060）', () => {
       expect(ports.events.dispatchCrossSession).toHaveBeenCalledWith(
         expect.objectContaining({ type }),
       )
+    }
+  })
+})
+
+describe('configureRouteInbound — 声明式条目 schema（D2 阶段 A）', () => {
+  beforeEach(() => {
+    resetSubscriptionStates()
+  })
+
+  it('D2-a crossSession 声明条目（骨架形态）：双通道分发且零 effect 回调 + 声明形状锁定', () => {
+    const ports = makePorts()
+    const effects = makeEffects()
+    const dispatcher = configureRouteInbound(ports, effects)
+    dispatcher(sessionMsg('extension:status', { lines: ['l1'] }))
+    expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1)
+    expect(ports.events.dispatchCrossSession).toHaveBeenCalledTimes(1)
+    // 骨架条目只声明 crossSession（无 sessionEffect/payloadGuard）：任何 effect 不触发
+    expect(effects.onSessionExited).not.toHaveBeenCalled()
+    expect(effects.onSubagents).not.toHaveBeenCalled()
+    expect(effects.onSessionError).not.toHaveBeenCalled()
+    expect(effects.onGlobalError).not.toHaveBeenCalled()
+    // 声明形状锁定：条目是纯声明式数据（crossSession 布尔 + 跳过型守卫函数），无 handle 函数体
+    expect(ROUTE_TABLE['extension:status']).toEqual({ crossSession: true })
+    expect(ROUTE_TABLE['session.subagents']).toEqual({
+      payloadGuard: expect.any(Function),
+      sessionEffect: expect.any(Function),
+    })
+  })
+
+  it('D2-b payloadGuard 坏形状 → 跳过 sessionEffect，dispatchSession/crossSession 分发照常（守卫只门控 effect）', () => {
+    // 探针条目经导出面注册（用后清理）：同时声明 crossSession + payloadGuard，
+    // 验证守卫失败时分发不受门控（D2「payloadGuard 不门控分发」显式条款）
+    const probeType = 'test.d2.payloadGuardProbe'
+    const sessionEffect = vi.fn()
+    ROUTE_TABLE[probeType] = {
+      crossSession: true,
+      payloadGuard: (payload) => (payload as { ok?: unknown }).ok === true,
+      sessionEffect,
+    }
+    try {
+      const ports = makePorts()
+      const effects = makeEffects()
+      const dispatcher = configureRouteInbound(ports, effects)
+      // 坏形状：ok !== true → guard 拒绝
+      dispatcher(sessionMsg(probeType, { ok: false }))
+      expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1) // dispatch 照常
+      expect(ports.events.dispatchCrossSession).toHaveBeenCalledTimes(1) // crossSession 分发不被守卫门控
+      expect(sessionEffect).not.toHaveBeenCalled() // 只跳过 effect
+      // 好形状：guard 通过 → effect 以（sid, payload, effects）调用
+      dispatcher(sessionMsg(probeType, { ok: true }))
+      expect(ports.events.dispatchSession).toHaveBeenCalledTimes(2)
+      expect(sessionEffect).toHaveBeenCalledTimes(1)
+      expect(sessionEffect).toHaveBeenCalledWith('s1', expect.objectContaining({ ok: true }), effects)
+    } finally {
+      delete ROUTE_TABLE[probeType]
+    }
+  })
+
+  it('D2-c 无 sid 条目走 globalEffect（探针条目注入；阶段 A 生产表无 globalEffect 条目，error 无 sid 支暂留默认路径）', () => {
+    const probeType = 'test.d2.globalEffectProbe'
+    const globalEffect = vi.fn()
+    ROUTE_TABLE[probeType] = { globalEffect }
+    try {
+      const ports = makePorts()
+      const effects = makeEffects()
+      const dispatcher = configureRouteInbound(ports, effects)
+      dispatcher({ type: probeType, payload: { note: 'n' } } as unknown as ServerMessage)
+      expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
+      // globalEffect 收到原始 msg + effects（阶段 B 'error' 条目 globalEffect 的 !msg.id 守卫依赖此签名）
+      expect(globalEffect).toHaveBeenCalledTimes(1)
+      expect(globalEffect).toHaveBeenCalledWith(expect.objectContaining({ type: probeType }), effects)
+      // 无 sid 不触发 session 通道与 crossSession
+      expect(ports.events.dispatchSession).not.toHaveBeenCalled()
+      expect(ports.events.dispatchCrossSession).not.toHaveBeenCalled()
+      // 默认路径 error 兜底不受探针影响（阶段 A 保留形态）
+      dispatcher({ type: 'error', payload: { message: 'boom' } } as unknown as ServerMessage)
+      expect(effects.onGlobalError).toHaveBeenCalledWith('boom')
+    } finally {
+      delete ROUTE_TABLE[probeType]
     }
   })
 })

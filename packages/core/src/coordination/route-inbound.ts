@@ -3,12 +3,16 @@
  *
  * 对每条入站 ServerMessage：
  *   1. 若 msg.id 命中 pending → resolveEnvelope 委托 pending 层（envelope 展开，ES1）→ return（D7）
- *   2. 查 ROUTE_TABLE 精确 type 条目（session.exited/message.complete/session.subagents/
- *      session.workflowUpdate）：seq gate（subscription-state.seqGate）→ dispatchSession →
- *      effect 回调
- *   3. 恒真 FALLBACK 兜底：有 sessionId → seq gap 中间件 + dispatchSession（未注册 type 落
- *      现状语义）；无 sessionId → dispatchGlobal + L9 warn（session./message. 前缀）+
- *      error 无 id → effects.onGlobalError
+ *   2. 查 ROUTE_TABLE 精确 type 条目——条目为声明式 schema（D2 阶段 A）：
+ *      { sessionEffect?, globalEffect?, crossSession?, payloadGuard? }，dispatchRouted
+ *      持有唯一路由序言（prologue）：
+ *      - 有 sid → seqGate（subscription-state.seqGate）→ dispatchSession → crossSession?
+ *        → payloadGuard 过 → sessionEffect?.()
+ *      - 无 sid → dispatchGlobal → globalEffect?.() → L9 前缀 warn（session./message.）
+ *   3. 未命中条目走 dispatcher 默认路径（语义 = 原 FALLBACK 恒真兜底）：有 sid 只做
+ *      seqGate + dispatchSession；无 sid → dispatchGlobal + L9 warn + error 无 id →
+ *      effects.onGlobalError（无 sid 的 error 兜底暂留默认路径，阶段 B 并入 'error'
+ *      条目 globalEffect）
  *
  * session 隔离规则不变（CLAUDE.md line 98）：session 级消息按 sessionId 路由到 session 通道，
  * 无 sessionId 走 global 通道（config.* 及 model.list 等广播）。两通道互不串扰。
@@ -120,23 +124,35 @@ export interface InboundEffects {
   onSessionError?(sessionId: string, payload: { code?: string; message?: string }): void
 }
 
-// ── ROUTE_TABLE（DM3） ─────────────────────────────────────────────
+// ── ROUTE_TABLE（DM3，D2 阶段 A 声明式） ────────────────────────────
 
 /**
- * 路由表条目：精确 type 字符串匹配（TC1）。
+ * 声明式路由表条目（D2 阶段 A）——条目只声明「分发之后发生什么」，路由序言
+ * （seqGate → dispatchSession/crossSession → 守卫 → effect）由 dispatchRouted 统一执行，
+ * 条目不再各持 handle 函数体：「type ∧ 有 sid」合取在 dispatcher 判定，条目无
+ * `if (!sid) return` 防御（sessionEffect 只在有 sid 分支被消费）。
  *
- * handle 内部：seq gap 中间件（session 通道）→ dispatchSession → effect 回调。
- * type 即 Record key（type 互斥，精确匹配同一消息只命中一条）。
+ * 守卫归宿（两类语义不同，分置）：
+ * - **跳过型**（payloadGuard）：坏形状 → 不调 effect、dispatchSession/crossSession 分发
+ *   照常（per-session 订阅者可能自带消费逻辑）——布尔门，由 dispatcher 在分发之后、
+ *   effect 之前统一执行，只门控 effect 调用、不门控分发。
+ * - **整形型**（'error' 的 `typeof payload.message === 'string' ? … : 'Unknown error'`）：
+ *   message 非法时**仍调** effect 传兜底值，非跳过——布尔门承载不了参数兜底，留在
+ *   sessionEffect 的参数构造处，不入 payloadGuard。
  */
-type RouteTableEntry = {
-  handle: (msg: ServerMessage, ctx: RouteContext) => void
-}
-
-/** 路由执行上下文：注入端口 + effects + 从 payload 提取的 sessionId（可选）。 */
-interface RouteContext {
-  ports: TransportPorts
-  effects: InboundEffects
-  sid?: string
+export interface RouteTableEntry {
+  /** 有 sid 分支的 effect 回调（dispatcher 在 dispatchSession/crossSession 与 payloadGuard 之后调用）。 */
+  sessionEffect?(sid: string, payload: ServerMessage['payload'], effects: InboundEffects): void
+  /**
+   * 无 sid 分支的 effect 回调（dispatcher 在 dispatchGlobal 之后、L9 warn 之前调用）。
+   * 阶段 A 生产表无使用方——'error' 无 sid 支暂留 dispatcher 默认路径，阶段 B 并入
+   * 该条目（globalEffect 内含 `!msg.id` 守卫）。
+   */
+  globalEffect?(msg: ServerMessage, effects: InboundEffects): void
+  /** 带 sid 但需同时分发到全局消费者（原 CROSS_SESSION_TYPES 白名单的声明式形态，ADR-0060 决策1）。 */
+  crossSession?: boolean
+  /** 跳过型守卫：返回 false → 只跳过 effect 调用，dispatchSession/crossSession 分发照常。 */
+  payloadGuard?(payload: ServerMessage['payload']): boolean
 }
 
 /**
@@ -164,162 +180,105 @@ function applySeqGap(sid: string, msg: ServerMessage): boolean {
 }
 
 /**
- * ROUTE_TABLE —— 精确 type 匹配条目表（DM3，TC1；Q1-4：Record 直查 O(1)）。
+ * ROUTE_TABLE —— 精确 type 匹配的声明式条目表（DM3，TC1；Q1-4：Record 直查 O(1)）。
+ *
+ * type 即 Record key（type 互斥，精确匹配同一消息只命中一条）。查表必须经
+ * hasOwnProperty.call 判定自有键（见 dispatchRouted 内 [Q1-4] 注释）。
  *
  * 收编 effect 类 type（session.exited / message.complete / session.subagents /
  * session.workflowUpdate / error-with-sid）：
  * remote-use 的 busy/idle/presence/deleting/deleted 分支未迁入（feat-remote-use 未合并），
  * 由 connection-lifecycle slice 承接（届时作为新条目追加，不修改路由核心）。
  *
- * [Q1-4] 从数组 `.find(e => e.type === msg.type)` 线性扫描改为 Record 下标直查。
- * 行为等价性守卫：查表必须经 hasOwnProperty.call 判定自有键——裸 `ROUTE_TABLE[msg.type]`
- * 在 type 为 'constructor'/'toString' 等原型成员名时会命中 Object 原型（truthy 但
- * .handle 为 undefined → TypeError），原 .find 语义只匹配自有 type 字段。
- */
-const ROUTE_TABLE: Record<string, RouteTableEntry> = {
-  'session.exited': {
-    handle(msg, { ports, effects, sid }) {
-      if (!sid) return // 无 sid 由 FALLBACK 处理（不会走到这里，防御）
-      if (!applySeqGap(sid, msg)) return
-      ports.events.dispatchSession(sid, msg)
-      // session.exited 兜底：进程退出必须标记 dead + toast，不能只依赖惰性的 session
-      // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。
-      effects.onSessionExited?.(sid, msg.payload as { code: number | null; reason: string })
-    },
-  },
-  'message.complete': {
-    handle(msg, { ports, effects, sid }) {
-      if (!sid) return
-      if (!applySeqGap(sid, msg)) return
-      ports.events.dispatchSession(sid, msg)
-      // message.complete：后台完成时提示音 + 未读标记（renderer 注册回调内实现）。
-      effects.onMessageComplete?.(sid, msg.payload as { sessionId?: string; stopReason?: string })
-    },
-  },
-  'session.subagents': {
-    handle(msg, { ports, effects, sid }) {
-      if (!sid) return
-      if (!applySeqGap(sid, msg)) return
-      ports.events.dispatchSession(sid, msg)
-      // session.subagents 兜底：subagent 终态推送必须在所有 session 生效（含非活跃），
-      // 不能只依赖 per-focus 订阅（切走即退订 → 终态丢弃 → 侧栏卡 running）。
-      const payload = msg.payload as { subagents?: SubagentRecord[] }
-      if (Array.isArray(payload.subagents)) {
-        effects.onSubagents?.(sid, payload.subagents)
-      }
-    },
-  },
-  'session.subagentEntriesAppended': {
-    handle(msg, { ports, effects, sid }) {
-      if (!sid) return
-      if (!applySeqGap(sid, msg)) return
-      ports.events.dispatchSession(sid, msg)
-      // [E-4] subagent entry 帧兜底：写 chatStore 虚拟分区必须在所有 session 生效
-      //（帧先于 drawer 打开——分区惰性创建不依赖订阅，§6.1）。payload 守卫对齐
-      // session.subagents 条目（subagentId 非空 + entries 数组，坏形状跳过 effect 但
-      // dispatch 照常——per-session 订阅者可能自带消费逻辑）。
-      const payload = msg.payload as { subagentId?: unknown; entries?: unknown }
-      if (typeof payload.subagentId !== 'string' || payload.subagentId === '') return
-      if (!Array.isArray(payload.entries)) return
-      effects.onSubagentEntries?.(
-        sid,
-        payload.subagentId,
-        payload.entries as Array<PiEntry | PiToolCallEntryForm>,
-      )
-    },
-  },
-  'session.workflowUpdate': {
-    handle(msg, { ports, effects, sid }) {
-      if (!sid) return
-      if (!applySeqGap(sid, msg)) return
-      ports.events.dispatchSession(sid, msg)
-      // session.workflowUpdate 兜底：workflow 增量信号触发 loadWorkflows + running 延迟重试，
-      // 同样在所有 session（含非活跃）生效，不依赖 per-focus 订阅。
-      // payload 锚定 protocol SSOT（ServerMessageMap['session.workflowUpdate']，MF-4）：
-      // update.status/runId 必填，runtime 改形状时此处编译报错，不再静默收 undefined。
-      const payload = msg.payload as ServerMessageMap['session.workflowUpdate']
-      effects.onWorkflowUpdate?.(sid, payload.update)
-    },
-  },
-  'error': {
-    handle(msg, { ports, effects, sid }) {
-      if (!sid) return // 无 sid 的 error 由 FALLBACK 的全局兜底处理（onGlobalError → toast）
-      // error envelope 无 seq（broker.send 直发，非 bus.publish live 帧）→ evalSeqGap 分支 3
-      // 正常放行，不触发 gap reconcile
-      if (!applySeqGap(sid, msg)) return
-      ports.events.dispatchSession(sid, msg)
-      // D6b：带 sid 的 error envelope 兜底（见 InboundEffects.onSessionError 注释）。
-      // payload.message 缺失时兜底通用文案，防御运行时坏形状。
-      const payload = msg.payload as { code?: string; message?: string }
-      effects.onSessionError?.(sid, {
-        code: payload.code,
-        message: typeof payload.message === 'string' ? payload.message : 'Unknown error',
-      })
-    },
-  },
-}
-
-/**
- * CROSS_SESSION_TYPES —— 带 sid 但需同时分发到全局消费者的消息 type 白名单（ADR-0060 决策1）。
- *
- * 这些 type 虽带 sessionId（走 session 通道），但 ExtensionHost 是全局单例消费者
- * （ViewHostStore 按 per-session Map 分区，需收所有 session 的下行，不随 session 切换退订），
- * 故 FALLBACK 有 sid 分支在 dispatchSession 后额外 dispatchCrossSession。
+ * crossSession-only 骨架条目（原 CROSS_SESSION_TYPES 白名单 8 type）：这些 type 虽带
+ * sessionId（走 session 通道），但 ExtensionHost 是全局单例消费者（ViewHostStore 按
+ * per-session Map 分区，需收所有 session 的下行，不随 session 切换退订），故 dispatcher
+ * 在 dispatchSession 后额外 dispatchCrossSession。声明式形态下无需 effect 回调，
+ * 只含 crossSession 字段的骨架条目即可表达（原「不进 ROUTE_TABLE……硬塞会产出雷同
+ * handle 函数」的表达力缺陷由此消除）。
  *
  * type 分隔符与 runtime wire 实际格式一致（shared/protocol.ts ServerMessageType）：
  * extension:widget/widgetGui/status/notify 用冒号；extension.ui_request 用**点号**
  * （runtime event-adapter.ts 实发 'extension.ui_request'，ADR-0060 文档里的冒号为笔误，
  * 以 protocol.ts + MessageBusBridge EXTENSION_HANDLERS 为准）。
  *
- * 不进 ROUTE_TABLE：它们不需 InboundEffects 兜底（无 effect 回调），与现有条目结构不同
- * （只需 dispatchSession + dispatchCrossSession），硬塞会产出雷同 handle 函数。
+ * 导出面说明：导出供 route-inbound.test.ts 注册探针条目（globalEffect / payloadGuard
+ * 声明语义的接口级验证——阶段 A 生产表无 globalEffect 条目）与声明形状锁定；生产
+ * 消费方只读，不 mutate（与 subscription-state 的 resetSubscriptionStates 同类测试支撑导出）。
  */
-const CROSS_SESSION_TYPES = new Set([
-  'extension:widget',
-  'extension:widgetGui',
-  'extension:status',
-  'extension:notify',
-  'extension.ui_request', // 点号：runtime wire 实际格式（见上方注释）
-  'extension.ui_timeout', // 带 sid 的 ui 超时广播：DialogRequestQueue onUiTimeout 经 crossSession 通道订阅（MF-6）
+export const ROUTE_TABLE: Record<string, RouteTableEntry> = {
+  'session.exited': {
+    // session.exited 兜底：进程退出必须标记 dead + toast，不能只依赖惰性的 session
+    // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。
+    sessionEffect(sid, payload, effects) {
+      effects.onSessionExited?.(sid, payload as { code: number | null; reason: string })
+    },
+  },
+  'message.complete': {
+    // message.complete 兜底：后台完成时提示音 + 未读标记（renderer 注册回调内实现）。
+    sessionEffect(sid, payload, effects) {
+      effects.onMessageComplete?.(sid, payload as { sessionId?: string; stopReason?: string })
+    },
+  },
+  'session.subagents': {
+    // session.subagents 兜底：subagent 终态推送必须在所有 session 生效（含非活跃），
+    // 不能只依赖 per-focus 订阅（切走即退订 → 终态丢弃 → 侧栏卡 running）。
+    // 跳过型守卫（D2）：subagents 非数组 → 跳过 effect、dispatch 照常。
+    payloadGuard: (payload) => Array.isArray((payload as { subagents?: unknown }).subagents),
+    sessionEffect(sid, payload, effects) {
+      effects.onSubagents?.(sid, (payload as { subagents: SubagentRecord[] }).subagents)
+    },
+  },
+  'session.subagentEntriesAppended': {
+    // [E-4] subagent entry 帧兜底：写 chatStore 虚拟分区必须在所有 session 生效
+    //（帧先于 drawer 打开——分区惰性创建不依赖订阅，§6.1）。跳过型守卫对齐
+    // session.subagents 条目（subagentId 非空 + entries 数组，坏形状跳过 effect 但
+    // dispatch 照常——per-session 订阅者可能自带消费逻辑）。
+    payloadGuard: (payload) => {
+      const p = payload as { subagentId?: unknown; entries?: unknown }
+      return typeof p.subagentId === 'string' && p.subagentId !== '' && Array.isArray(p.entries)
+    },
+    sessionEffect(sid, payload, effects) {
+      const p = payload as { subagentId: string; entries: Array<PiEntry | PiToolCallEntryForm> }
+      effects.onSubagentEntries?.(sid, p.subagentId, p.entries)
+    },
+  },
+  'session.workflowUpdate': {
+    // session.workflowUpdate 兜底：workflow 增量信号触发 loadWorkflows + running 延迟重试，
+    // 同样在所有 session（含非活跃）生效，不依赖 per-focus 订阅。
+    // payload 锚定 protocol SSOT（ServerMessageMap['session.workflowUpdate']，MF-4）：
+    // update.status/runId 必填，runtime 改形状时此处编译报错，不再静默收 undefined。
+    sessionEffect(sid, payload, effects) {
+      effects.onWorkflowUpdate?.(sid, (payload as ServerMessageMap['session.workflowUpdate']).update)
+    },
+  },
+  'error': {
+    // D6b：带 sid 的 error envelope 兜底（见 InboundEffects.onSessionError 注释）。
+    // 整形型守卫留 sessionEffect 参数构造处（D2 守卫两类分置）：payload.message 缺失时
+    // 兜底通用文案，防御运行时坏形状。error envelope 无 seq（broker.send 直发，非
+    // bus.publish live 帧）→ seqGate 无 seq 分支正常放行，不触发 gap reconcile。
+    // 无 sid 支暂留 dispatcher 默认路径（onGlobalError 兜底），阶段 B 并入本条目 globalEffect。
+    sessionEffect(sid, payload, effects) {
+      const p = payload as { code?: string; message?: string }
+      effects.onSessionError?.(sid, {
+        code: p.code,
+        message: typeof p.message === 'string' ? p.message : 'Unknown error',
+      })
+    },
+  },
+
+  // ── crossSession-only 骨架条目（原 CROSS_SESSION_TYPES 白名单 8 type，ADR-0060 决策1）──
+  'extension:widget': { crossSession: true },
+  'extension:widgetGui': { crossSession: true },
+  'extension:status': { crossSession: true },
+  'extension:notify': { crossSession: true },
+  'extension.ui_request': { crossSession: true }, // 点号：runtime wire 实际格式（见 ROUTE_TABLE 注释）
+  // 带 sid 的 ui 超时广播：DialogRequestQueue onUiTimeout 经 crossSession 通道订阅（MF-6）
+  'extension.ui_timeout': { crossSession: true },
   // plugin:* 带 sid 下行（runtime 广播注入 sessionId）：ExtensionHost 全局单例消费者需同时收
   // session 通道 + crossSession 通道（ViewHostStore / DialogRequestQueue 按 per-session 分区）
-  'plugin:uiRequest',
-  'plugin:viewUpdate',
-])
-
-/**
- * FALLBACK —— 恒真兜底条目（DM3，TC1）。
- *
- * 等价现状行为：有 sid → seq gap + dispatchSession；无 sid → dispatchGlobal + L9 warn +
- * onGlobalError。未注册的新 type 自动落入现状语义，零行为回归。
- *
- * ADR-0060 增量：有 sid 且 type ∈ CROSS_SESSION_TYPES 时，dispatchSession 后额外
- * dispatchCrossSession（在 applySeqGap 之后——seq gap drop 的重复消息 crossSession 也不发，
- * 防 ExtensionHost 重复处理，与 session 通道 drop 语义一致）。
- */
-const FALLBACK: RouteTableEntry['handle'] = (msg, { ports, effects, sid }) => {
-  if (typeof sid === 'string' && sid) {
-    if (!applySeqGap(sid, msg)) return
-    ports.events.dispatchSession(sid, msg)
-    // ADR-0060：带 sid 的 extension:* 下行同时分发到全局消费者（ExtensionHost 单例）。
-    if (CROSS_SESSION_TYPES.has(msg.type)) {
-      ports.events.dispatchCrossSession(msg)
-    }
-    return
-  }
-  ports.events.dispatchGlobal(msg)
-  // L9：session 级消息（type 以 session./message. 开头）缺失 sessionId 时 warn，
-  // 让 runtime bug 可见（违反隔离要求应有 fail-fast 信号，而非静默降级到 global 丢弃）
-  if (msg.type.startsWith('session.') || msg.type.startsWith('message.')) {
-    console.warn('[core/coordination] session-level message missing sessionId, routed to global:', msg.type)
-  }
-  // 全局 error 兜底：无 sessionId、无 id 的 server-push error 此前静默丢弃。
-  // 现 toast 提示（如 config 加载失败等全局错误）——renderer 注册 onGlobalError 实现 toast。
-  if (msg.type === 'error' && !msg.id) {
-    const payload = msg.payload as { message?: string }
-    const message = typeof payload.message === 'string' ? payload.message : 'Unknown error'
-    effects.onGlobalError?.(message)
-  }
+  'plugin:uiRequest': { crossSession: true },
+  'plugin:viewUpdate': { crossSession: true },
 }
 
 // ── configureRouteInbound（IF4） ───────────────────────────────────
@@ -362,9 +321,12 @@ const defaultPorts: TransportPorts = {
  * 处理顺序（live dispatcher）：
  *   1. msg.id 命中 pending → resolveEnvelope 委托 pending 层（error envelope 展开 code+details
  *      到 Error，收尾 6 R2/ES1），return 不再进路由表（id/seq 来源互斥 D7）
- *   2. 查 ROUTE_TABLE 精确 type 条目 → seq gap 中间件 + dispatchSession + effect 回调
- *   3. 恒真 FALLBACK：有 sessionId → seq gap + dispatchSession；无 → dispatchGlobal + L9 warn
- *      + error 无 id → onGlobalError
+ *   2. dispatchRouted 唯一序言消费 ROUTE_TABLE 声明式条目：有 sid → seqGate →
+ *      dispatchSession → crossSession? → payloadGuard 过 → sessionEffect?.()；无 sid →
+ *      dispatchGlobal → globalEffect?.() → L9 warn
+ *   3. 未命中条目走同一序言的默认行为（语义 = 原 FALLBACK 恒真兜底）：有 sid 只做
+ *      seqGate + dispatchSession；无 sid → dispatchGlobal + L9 warn + error 无 id →
+ *      onGlobalError（无 sid 的 error 兜底暂留默认路径，阶段 B 并入条目）
  *
  * 步骤 2+3 抽成共享核心 dispatchRouted——subscription-state 的 snapshot/stateSnapshot
  * 回放经注入的 replay 走同一条路径（sid 固定为 subscribe 目标，跳过步骤 1 的 pending
@@ -381,23 +343,52 @@ export function configureRouteInbound(
   effects?: InboundEffects,
 ): (msg: ServerMessage) => void {
   const resolved: TransportPorts = ports ?? defaultPorts
-  const ctx: RouteContext = { ports: resolved, effects: effects ?? {} }
+  const effectsCtx: InboundEffects = effects ?? {}
 
   // 共享路由核心（步骤 2+3）：live 与回放同一条路径，行为差异只在 sid 来源与 pending 分流。
+  // D2 阶段 A：dispatchRouted 是唯一路由序言，条目只声明副作用——
+  //   有 sid → seqGate → dispatchSession → crossSession? → payloadGuard 过 → sessionEffect?.()
+  //   无 sid → dispatchGlobal → globalEffect?.() → L9 前缀 warn → 默认路径 error 兜底
   function dispatchRouted(msg: ServerMessage, sid: string | undefined): void {
+    // [Q1-4] Record 直查（O(1)）。hasOwnProperty.call 守卫原型成员名（'constructor' 等），
+    // 语义与旧数组 .find 严格等价（只匹配自有 type 键）。不用 Object.hasOwn：renderer
+    // vue-tsc 的 lib 不含 ES2022（TS2550）。「type ∧ 有 sid」合取在此判定——条目查表
+    // 与 sid 分支持有，条目声明无需各自 `if (!sid) return` 防御。
+    const entry = Object.prototype.hasOwnProperty.call(ROUTE_TABLE, msg.type)
+      ? ROUTE_TABLE[msg.type]
+      : undefined
+
     if (typeof sid === 'string' && sid) {
-      // [Q1-4] Record 直查（O(1)）。hasOwnProperty.call 守卫原型成员名（'constructor' 等），
-      // 语义与旧数组 .find 严格等价（只匹配自有 type 键）。不用 Object.hasOwn：renderer
-      // vue-tsc 的 lib 不含 ES2022（TS2550）。
-      const entry = Object.prototype.hasOwnProperty.call(ROUTE_TABLE, msg.type)
-        ? ROUTE_TABLE[msg.type]
-        : undefined
-      if (entry) {
-        entry.handle(msg, { ...ctx, sid })
-        return
+      if (!applySeqGap(sid, msg)) return
+      resolved.events.dispatchSession(sid, msg)
+      // ADR-0060：crossSession 声明条目（原白名单）在 seqGate 之后、dispatchSession 之后
+      // 额外分发到全局消费者——gate drop 的重复消息 crossSession 也不发（防 ExtensionHost
+      // 重复处理，与 session 通道 drop 语义一致）。
+      if (entry?.crossSession) {
+        resolved.events.dispatchCrossSession(msg)
       }
+      // 跳过型守卫（D2 守卫两类分置）：只门控 effect 调用，不门控 dispatchSession/
+      // crossSession 分发（per-session 订阅者可能自带消费逻辑）。
+      if (entry?.payloadGuard && !entry.payloadGuard(msg.payload)) return
+      entry?.sessionEffect?.(sid, msg.payload, effectsCtx)
+      return
     }
-    FALLBACK(msg, { ...ctx, sid })
+
+    resolved.events.dispatchGlobal(msg)
+    entry?.globalEffect?.(msg, effectsCtx)
+    // L9：session 级消息（type 以 session./message. 开头）缺失 sessionId 时 warn，
+    // 让 runtime bug 可见（违反隔离要求应有 fail-fast 信号，而非静默降级到 global 丢弃）
+    if (msg.type.startsWith('session.') || msg.type.startsWith('message.')) {
+      console.warn('[core/coordination] session-level message missing sessionId, routed to global:', msg.type)
+    }
+    // 全局 error 兜底（D2 阶段 A 暂留默认路径）：无 sessionId、无 id 的 server-push error
+    // 此前静默丢弃。现 toast 提示（如 config 加载失败等全局错误）——renderer 注册
+    // onGlobalError 实现 toast。阶段 B 并入 'error' 条目 globalEffect（!msg.id 守卫内迁）。
+    if (msg.type === 'error' && !msg.id) {
+      const payload = msg.payload as { message?: string }
+      const message = typeof payload.message === 'string' ? payload.message : 'Unknown error'
+      effectsCtx.onGlobalError?.(message)
+    }
   }
 
   // 回放 dispatcher：subscription-state 的 subscribeSession 回放入口（C1 注入）。
