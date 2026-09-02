@@ -122,7 +122,7 @@ graph TD
 | u2.1 | committed | 1 | commit e3c09d834（u2.1）；P1 通过（清单 docs/design/renderer-deepening.p1-parity.md，core 零补齐）；renderer 345 文件/3579 绿（-22 = 删除壳测试 7+4+11，dev 汇报导误报 8 已核正）；grep 零命中 |
 | u3.1 | committed | 1 | commit a3e19bec3（u3.1）；定性：send/submit/context-chips 保留（字段不在权威面，Pick 不可行，扩权被否）+ 名分注释；fork/handoff Pick<'focus'> 化；injection 已被 ADR-0058 前序收敛（仅清注释）；core 1275 绿 + renderer typecheck 绿 |
 | u3.2 | committed | 1 | commit 69cdb61f1（u3.2）；P2 过门完全泛化（20 段 diff：13 段同构骨架 + 7 类差异全部可配置，未触发降级）；staging-mode.ts 287 行 + 25 等价用例；fork 239→150 / handoff 278→192；导出面逐符号不变；core 1300 绿；净行数 +108（设计「消约 300 行」估计失准，结构目标达成） |
-| u4.1 | pending | 0 | — |
+| u4.1 | committed | 1 | commit 855216946（u4.1）；判定表逐字内嵌（diff 核验）；seqGate 持判定+簿记+基线；applySeqGap 缩为 gate 调用+reconcile 触发；MF-3 接口级 3 用例；core 1303 绿 + runtime 4090 绿（注释残渣修正连带授权） |
 | u4.2 | pending | 0 | — |
 | u5.1 | pending | 0 | — |
 | u5.2 | pending | 0 | — |
