@@ -41,8 +41,9 @@ import type { Message } from '@xyz-agent/shared'
 // [U0 keepMounted 渲染语义]（设计 message-stream-editing-pin-identity §2.4 P5 / §5 U0-C3）：
 //   本 mock 同时消费 :keep-mounted（Array）并复刻 virtua 0.50.0 实装的渲染循环——
 //   `new Set(keepMounted)` 并入可视范围后逐索引调 slot({ item: data[idx], index: idx })，
-//   全程无 index < data.length 检查（依据 node_modules/virtua/lib/vue/index.js 483-486
-//   slot 调用 / 506-513 keepMounted 循环）：idx 越界时 item=undefined 直传 slot。这不是
+//   全程无 index < data.length 检查（依据 node_modules/virtua/lib/vue/index.js：slot
+//   调用 wrapper 起于 483（f.default 调用 484-487）/ keepMounted 并入循环在 505-511，
+//   new Set 在 506）：idx 越界时 item=undefined 直传 slot。这不是
 //   mock 的疏漏而是被测崩溃机理本身——生产代码编辑钉扎残留越界索引时，模板
 //   `item.kind` 读 undefined.kind 抛 TypeError。U3 身份锚定（反查 + clamp + D8 清零）落地后用例转绿。
 const slotKeyCollector = vi.hoisted(() => ({ keys: [] as (string | number | symbol | null | undefined)[][] }))
@@ -83,7 +84,7 @@ vi.mock('virtua/vue', async () => {
         // 记录本渲染收到的 :keep-mounted prop 原值（组件传入的 pinnedIndexes，不含下方
         // 并入的可视范围索引）供断言（[U3] keepMountedCollector）。
         keepMountedCollector.entries.push([...((ctx.keepMounted as number[]) ?? [])])
-        // Set 迭代序 = 插入序：keepMounted 先入、可视范围后入（与 virtua 实装 i([...e]) 一致）。
+        // Set 迭代序 = 插入序：keepMounted 先入、可视范围后入（与 virtua 实装 m([...e]) 一致）。
         // 既有用例不产生钉扎（pinnedIndexes=[]）→ 集合退化为 0..n-1，与旧 map 行为逐字节等价。
         const indexes = new Set<number>((ctx.keepMounted as number[]) ?? [])
         for (let i = 0; i < data.length; i += 1) indexes.add(i)
