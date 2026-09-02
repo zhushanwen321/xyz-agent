@@ -125,6 +125,8 @@ graph TD
 2. D2 的「40+ 测试 import」为设计走查口径，计划期宽口径 rg 仅 18 文件——import 更新面以实施期 rg 全量提取为准（含 vi.mock / 相对路径形态），不影响单元边界。
 3. 走查计数类断言（Service 27 public 方法 / 整类 mock ×7 / coda 8 处）均为实施期复核项（设计待验证检查点⑥）。
 4. u-2a 为最高风险单元（物理迁移 + 删旧轨 + 全量 import）——V4 基线快照 diff 是其行为零回归的唯一机器证据，采集必须在迁移前完成。
+5. **V4 基线采集记录（2026-09-02，u-2a 派发前）**：chat 域基线已采（`/tmp/v4-baseline/before-u2a/chat/`：真实 pi CLI + subagent-workflow 源码 extension + 真实模型，5 工具调用、record store 8 文件含 sa-*.json / 子代理 session / sessions-index / engines.json + 事件流）。宿主形态从 xyz-agent GUI 调整为 pi CLI 直测（合理偏差：同一宿主形态前后对照等价隔离 core 执行链变化 + AGENTS.md 钦定实测路径；GUI 四视图对照留阶段 5）。**workflow 域基线采集受阻降级**：pi CLI 隔离环境（PI_CODING_AGENT_DIR + /tmp cwd）下 project workflow 发现返回 (none)（independent node 探针用同一 workspaceRoot 能发现 `/…/.agents/workflows/v4-baseline-workflow.js`，pi 进程内 registry.loadAll() 为空——根因未定位，疑似 AGENT_DIR 隔离/cwd 推导在 pi 进程内的组合行为）——workflow 域行为对照降级为 conformance 套件 + core 全量测试 + 阶段 5 桌面形态 V4 全场景；发现链问题登记待独立排查（若桌面形态同样 (none) 则为产品缺陷）。u-2a 段 2 后在等价环境重采 chat 域对照快照做 diff。
+6. **基线采集环境坑**：session 目录不可放在家目录子树下（findWorkspaceRoot 向上找到家目录 marker → project 源错位），须放 /tmp 直下；core 测试 resource-discovery 用例对 TMPDIR 父链 marker 敏感（/tmp 干净目录下 40/40 过）；runtime 全量测试须默认 TMPDIR（自定义 TMPDIR 会击穿 migrate-skills-discovery 的路径断言）；并行跑多套测试会引发 relay-registry socket 冲突——一律串行。
 
 **变更历史**：
 
