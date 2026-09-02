@@ -36,7 +36,7 @@ import type {
 } from '@xyz-agent/shared'
 import type { SubagentEngineConfigView } from '@xyz-agent/extension-protocol'
 import type { DirScopes } from './services/skill-dir-config.js'
-import type { SessionTraceSnapshot } from './services/session/session-trace.js'
+import type { SessionTraceSnapshot } from './services/session/trace-sync.js'
 import type { Credential } from './services/auth/auth-storage.js'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 import type { IManagedSessionView } from './services/session/types.js'

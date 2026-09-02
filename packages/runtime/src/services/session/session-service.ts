@@ -35,7 +35,7 @@ import type {
   IEventAdapter, IExtensionService, IConfigService,
 } from '../../interfaces.js'
 import type { ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps, ISessionRegisterDeps, IManagedSessionRecord } from './session-internal.js'
-import type { IProcessManager, IPiEngine, PiCommandInfo, PiMessage } from '../ports/pi-engine.js'
+import type { IProcessManager, IPiEngine, PiCommandInfo } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile, scanSubagentEntries } from './subagent-extractor.js'
@@ -45,8 +45,8 @@ import {
   DEFAULT_SUBAGENT_ENGINE,
 } from './subagent-engine-history.js'
 import { extractWorkflowsFromSessionFile, scanWorkflowEntries } from './workflow-extractor.js'
-import { buildTraceSnapshotFromFile, parseTraceHeaderLine, nextTracePushId, collectMalformedLines, CURRENT_SYSTEM_PROMPT_CUSTOM_TYPE } from './session-trace.js'
-import type { SessionTraceSnapshot } from './session-trace.js'
+import { TraceSync, isEntryNotFoundError } from './trace-sync.js'
+import type { SessionTraceSnapshot } from './trace-sync.js'
 import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import { applyOrphanToolResults } from '../../infra/pi/message-converter.js'
 import type { IConfigStore } from '../ports/config.js'
@@ -150,11 +150,6 @@ export interface SessionReplicatedStates {
   commands: ReplicatedState<CommandsSnapshot>
 }
 
-/** 现取 system prompt 轮询参数：命令 handler 毫秒级完成，250ms 间隔 1-2 轮命中；
- * 8s 超时上限覆盖慢盘/慢命令（超时地 fetch_current_prompt_timeout，前端可重试）。 */
-const FETCH_CURRENT_PROMPT_POLL_MS = 250
-const FETCH_CURRENT_PROMPT_TIMEOUT_MS = 8000
-
 /** JSON 落盘缩进（全仓 JSON_INDENT = 2 约定）。 */
 const JSON_INDENT = 2
 
@@ -223,6 +218,8 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   private readonly scanner: SessionScanner
   /** 附件存储域（S1 迁出，零耦合子模块——无 Facade 状态依赖，故不注入 this） */
   private readonly attachmentStore = new AttachmentStore()
+  /** trace/system-prompt 同步域（S4 迁出，构造器内组装 deps——见构造器注释） */
+  private readonly traceSync: TraceSync
   /**
    * ConfigService 引用（组合根注入）。getReplaceSystemPrompt 委托用——
    * spawn pi 时透传用户配置的替换系统提示词。经 setter 注入而非构造参数，与
@@ -297,22 +294,6 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    */
   private readonly inflightGetHistory = new Map<string, Promise<{ messages: Message[]; truncated: boolean }>>()
   /**
-   * session-trace 增量腿基线（A33）：per-session 上次全量拉取的 leafId（since 基准）。
-   * getTraceEntries 活跃路径写入；syncTraceEntries 读取后 get_entries(since) 拉 delta 并
-   * 滚动更新。无基线（trace 视图未打开过）→ 增量腿 no-op（前端打开时会全量拉取建立基线）。
-   * 哨兵 ''（review round1 MUST_FIX）：空 session（pi leafId=null）也要建立基线，语义 =
-   * 「基线已建立但当前无叶子」——后续 sync 经 getEntriesSince 无参全量拉（'' 不是合法
-   * entry id，不可下传 pi 当 since），拉到真实 leaf 后推进；否则空 session 台账冻结空态
-   * 且无恢复出口。removeSessionEntry 清除（与 historyCache 同汇聚点，见下）。
-   */
-  private readonly traceLeafCache = new Map<string, string>()
-  /**
-   * session-trace 增量腿串行链（A33）：per-session promise 链，同 session 触发事件按到达序
-   * 串行拉取（message_end + agent_settled 几乎同时到达 → 链式串行后第二次 since 已是新
-   * leaf，空 delta 不广播；burst 天然合并）。每段 catch 兑底，链永不 reject（diffChain 同款）。
-   */
-  private readonly traceSyncChains = new Map<string, Promise<void>>()
-  /**
    * W7/W8：per-session ReplicatedState 实例组（四实例：thinkingLevel / modelId /
    * usage / commands）。Map 分区（ADR-0049）：注册点 initializeManagedSession
    * （create/restore/fork 三入口汇聚），销毁点 removeSessionEntry（主动删 + 进程退出汇聚，
@@ -349,6 +330,15 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       notifyMessageComplete: (sessionId) => this.onMessageComplete?.(sessionId),
     }
     this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService, registerDeps)
+    // trace/system-prompt 同步域（S4 迁出至 trace-sync.ts）：deps 窄注入——session 查询经
+    // lifecycle（Map 所有者）只读面，messageBus 经 getter 每次调用动态读（setter 晚期注入
+    // 语义与原 Facade 字段直读逐字等价，未注入时广播 no-op）。
+    this.traceSync = new TraceSync({
+      pm: this.pm,
+      sessionStore: this.sessionStore,
+      getSession: (sessionId) => this.lifecycle.get(sessionId),
+      getMessageBus: () => this.messageBus,
+    })
     // 创建侧订阅接线(组装根,S3 seam):onSessionRegistered 同步直发的订阅者 = Facade 自身,
     // 按迁移前 initializeManagedSession 体内顺序执行——registerReplicatedStates(W7 播种)→
     // ensureRecordEntriesCache(W18)→ reconciler 对账(U6,fire-and-forget .catch 降级——现状如此)。
@@ -1231,227 +1221,27 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   }
 
   /**
-   * session-trace 台账全量拉取（design D4 数据通路 A1，A31/A32）。
-   *
-   * 路由：① 活跃（pm 有 client）→ RPC get_entries（pi 权威解析）+ 文件首行补 header
-   * （getEntries() 不含 header）+ 文件解析补 malformed（pi 静默跳坏行，G1 占位可见）
-   * + sidecar session_end；成功后写 traceLeafCache（增量腿
-   * since 基线）。② RPC 失败（pi 进程异常）或无 client → 路径 B 文件直读（core parse-jsonl
-   * 坏行容错 + sidecar 合并；design §3.1 降级路径：前端 banner「来自磁盘文件」）。
-   * ③ 未落盘（pi 延迟写入窗口）→ source='empty' 空态标记。
-   *
-   * 文件路径解析：活跃 session 优先内存 sessionFilePath（pi spawn 后回填，免扫描），
-   * 否则 scanSessions({force:true})（路径解析消费方旁路 TTL，plan M-3 同 getFullHistory）。
+   * session-trace 台账全量拉取（RPC 混合路由 → 文件降级 → empty 空态）。
+   * 实现在 trace-sync.ts（S4 迁出），路由与失败路径详见该模块。
    */
   async getTraceEntries(sessionId: string): Promise<SessionTraceSnapshot> {
-    const client = this.pm.getClient(sessionId)
-    if (client) {
-      try {
-        const result = await client.getEntries() as { data?: { entries?: unknown[]; leafId?: string | null } }
-        const entries = result.data?.entries ?? []
-        const leafId = result.data?.leafId ?? null
-        // 空 session（仅 header，pi _buildIndex 置 leafId=null）也必须建立基线（哨兵 ''），
-        // 否则 doSyncTraceEntries 恒 no-op——台账冻结空态且无恢复出口（review round1 MUST_FIX）
-        this.traceLeafCache.set(sessionId, leafId ?? '')
-        const filePath = this.resolveTraceFilePath(sessionId)
-        const header = parseTraceHeaderLine(filePath !== null ? this.sessionStore.readSessionHeaderLine(filePath) : null)
-        // G1 坏行可见性：pi get_entries 静默跳坏行，RPC 路径必须补文件解析占位（否则活跃
-        // session 的坏行对 Trace 视图彻底不可见）；读失败（未落盘窗口）→ 恒空数组降级
-        const malformed = collectMalformedLines(
-          filePath !== null ? this.sessionStore.readSessionJsonlText(filePath) : null,
-        )
-        const sessionEnd = filePath !== null ? (this.sessionStore.readSessionEndMeta(filePath) ?? undefined) : undefined
-        return {
-          sessionId,
-          source: 'rpc',
-          filePath,
-          ...(header !== undefined ? { header } : {}),
-          entries,
-          malformed,
-          ...(sessionEnd !== undefined ? { sessionEnd } : {}),
-          leafId,
-        }
-      } catch (e) {
-        // design §3.1 失败路径：RPC 失败（pi 进程异常）降级路径 B 文件直读
-        console.warn(`[session-trace] getTraceEntries via RPC failed (sid=${sessionId}), falling back to file read: ${toErrorMessage(e)}`)
-      }
-    }
-    return buildTraceSnapshotFromFile(sessionId, this.resolveTraceFilePath(sessionId), this.sessionStore)
+    return this.traceSync.getTraceEntries(sessionId)
   }
 
   /**
-   * session-trace 增量腿补拉（A33）：触发事件（message_end/compaction_end/agent_settled/
-   * entry_appended，经 event-interpreter onTraceSync）或 lifecycle RPC（set_model/
-   * set_thinking_level 成功后未方法内直调）到达后调用。
-   *
-   * 流程：查 traceLeafCache 基线（无 → no-op，trace 未打开过）→ get_entries(since=基线)
-   * → 滚动更新基线 → delta 非空时 bus.publish session.traceEntryAppended（含 sessionId，
-   * 规则 7）。“Entry not found”（基线跨进程失效，如 pi 重启）→ 清基线 + warn（下次
-   * getTraceEntries 重建，不广播错序数据）。串行链防 burst 重复拉取（见 traceSyncChains）。
+   * session-trace 增量腿补拉（触发事件/lifecycle RPC 成功后 since 拉取 + 广播）。
+   * 实现在 trace-sync.ts（S4 迁出）：无基线 no-op、串行链防 burst，详见该模块。
    */
   syncTraceEntries(sessionId: string, trigger: string): void {
-    const prev = this.traceSyncChains.get(sessionId) ?? Promise.resolve()
-    const next = prev.then(() => this.doSyncTraceEntries(sessionId, trigger)).catch((e: unknown) => {
-      // 链段兑底：单次同步失败不断链（diffChain 同款）；错误已在 doSync 内分类处理，
-      // 此处仅防 unhandledRejection 逃逸。
-      console.warn(`[session-trace] sync chain segment failed (sid=${sessionId}, trigger=${trigger}):`, e)
-    })
-    this.traceSyncChains.set(sessionId, next)
-    void next.then(() => {
-      // 链尾自清理：settled 且仍是链尾时释放 Map 槽位（burst 期间新段已接管，不误删）
-      if (this.traceSyncChains.get(sessionId) === next) this.traceSyncChains.delete(sessionId)
-    })
-  }
-
-  private async doSyncTraceEntries(sessionId: string, trigger: string): Promise<void> {
-    const baseline = this.traceLeafCache.get(sessionId)
-    if (baseline === undefined) return // 无基线（trace 视图未打开过）→ 增量腿 no-op
-    const client = this.pm.getClient(sessionId)
-    if (!client) return // 无活跃 client → 无 RPC 增量源（文件路径无 leaf 概念）
-    let delta: unknown[] = []
-    let newLeafId: string | null = null
-    try {
-      // 哨兵 ''（空 session 基线）→ 无参全量拉：空 session delta 空 = 正常稳态；有新 entry
-      // 后全量 delta 即全部 entry（消费端按 entry.id 去重），拉到真实 leaf 后基线推进
-      const result = await this.getEntriesSince(client, baseline) as { data?: { entries?: unknown[]; leafId?: string | null } }
-      delta = result.data?.entries ?? []
-      newLeafId = result.data?.leafId ?? null
-    } catch (e) {
-      if (isEntryNotFoundError(e)) {
-        // 基线失效（缓存跨 pi 进程存活 / session 文件被外部改写）：清基线，下次全量重建。
-        // 恢复动作：前端重新打开 Trace 视图调 session.getTraceEntries（或下次触发前无增量）。
-        console.warn(`[session-trace] since baseline invalid (sid=${sessionId}), dropping leaf cache; re-open trace view to rebuild`)
-        this.traceLeafCache.delete(sessionId)
-      } else {
-        console.warn(`[session-trace] getEntries(since) failed (sid=${sessionId}, trigger=${trigger}): ${toErrorMessage(e)}`)
-      }
-      return
-    }
-    if (newLeafId) this.traceLeafCache.set(sessionId, newLeafId)
-    if (delta.length === 0) return // 触发事件到达但无新 entry（追赶式拉取的正常稳态）
-    // 规则 7：session 级消息必带 sessionId（bus.publish 定向推给订阅该 sid 的 ws）
-    this.messageBus?.publish(sessionId, {
-      type: 'session.traceEntryAppended',
-      id: nextTracePushId(),
-      payload: { sessionId, entries: delta, leafId: newLeafId },
-    })
-  }
-
-  /** trace 文件路径解析：活跃 session 内存 sessionFilePath 优先，否则扫描（force 旁路 TTL）。 */
-  private resolveTraceFilePath(sessionId: string): string | null {
-    const active = this.lifecycle.get(sessionId)
-    if (active?.sessionFilePath) return active.sessionFilePath
-    const target = this.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
-    return target?.filePath ?? null
+    this.traceSync.syncTraceEntries(sessionId, trigger)
   }
 
   /**
-   * 哨兵感知 get_entries 调用：baseline === ''（空 session 基线——已建立但当时无叶子）时
-   * 无参全量拉取（'' 不是合法 entry id，下传 pi 当 since 用会 Entry not found / 空结果，
-   * `?? undefined` 只处理 null/undefined 挡不住 ''）；真实 leafId / undefined 原样透传 since。
-   */
-  private getEntriesSince(client: IPiEngine, baseline: string | undefined): Promise<PiMessage> {
-    return baseline === '' ? client.getEntries() : client.getEntries(baseline)
-  }
-
-  /**
-   * 现取当前 system prompt（session-trace design §3.1 失败路径 / D2）。
-   *
-   * 通道：pi RPC 无 get_system_prompt 命令、getSystemPrompt() 只在 extension API，且现取
-   * 不能依赖可禁的留痕包（system-prompt-trace 是 feature tier）——链路固定为：
-   *   client.prompt('/__xyz_get_system_prompt__')（builtin agent-ext 包注册，不可禁，
-   *   /__ 内部命令不经 LLM；RPC prompt 在 preflight 后即返回，不等 handler 完成）
-   *   → handler 写 xyz:current-system-prompt custom entry
-   *   → 本方法轮询 get_entries(since=基线) 拉到该 entry 后提取返回。
-   *
-   * 副作用：命中后滚动 traceLeafCache 基线 + 广播 session.traceEntryAppended（现取 entry
-   * 作为 DATA 行同步出现在 trace 台账，留下取值痕迹；custom 不进 LLM context，零模型影响——
-   * pi sessionEntryToContextMessages 对 type=custom 落入末尾 return []，session-manager.ts:383-413）。
-   *
-   * @throws code=session_not_active（无活跃 pi 进程——非活跃 session 无现取源）/
-   *   session_busy（生成/压缩中，命令会排队导致超时，预检拒绝更诚实）/
-   *   fetch_current_prompt_timeout（轮询超时，命令未产出 entry）
+   * 现取当前 system prompt（常驻扩展通道：prompt 命令 → 轮询 get_entries 命中 custom entry）。
+   * 实现在 trace-sync.ts（S4 迁出），busy 预检与轮询时序详见该模块。
    */
   async fetchCurrentSystemPrompt(sessionId: string): Promise<ServerMessageMap['session.currentSystemPrompt']> {
-    const client = this.pm.getClient(sessionId)
-    if (!client) {
-      throw Object.assign(new Error(`Session ${sessionId} not active`), { code: 'session_not_active' })
-    }
-    // busy 预检只看明确的 busy 信号（生成/压缩中命令会排队导致超时）；sessions Map 无条目
-    //（恢复窗口/测试简化态）不拒——能否执行由 pi 决定
-    const active = this.lifecycle.get(sessionId)
-    if (active?.isGenerating || active?.isCompacting) {
-      throw Object.assign(new Error(`Session ${sessionId} is busy`), { code: 'session_busy' })
-    }
-    let baseline = await this.ensurePromptBaseline(sessionId, client)
-    await client.prompt('/__xyz_get_system_prompt__')
-    // 轮询：命令 handler 毫秒级完成，RPC 往返 1-2 轮命中；超时上限覆盖慢盘/慢命令
-    const deadline = Date.now() + FETCH_CURRENT_PROMPT_TIMEOUT_MS
-    while (Date.now() < deadline) {
-      const step = await this.pollOnceForPromptEntry(sessionId, client, baseline)
-      if (step === 'retry') {
-        baseline = undefined
-        continue
-      }
-      if (!step.hit) continue
-      // 增量同步给 trace 台账（DATA 行留取值痕迹；消费端按 entry.id 去重）
-      if (step.delta.length > 0 && this.messageBus) {
-        this.messageBus.publish(sessionId, {
-          type: 'session.traceEntryAppended',
-          id: nextTracePushId(),
-          payload: { sessionId, entries: step.delta, leafId: step.newLeafId },
-        })
-      }
-      return extractCurrentPromptHit(sessionId, step.hit)
-    }
-    throw Object.assign(new Error(`Timed out fetching current system prompt for session ${sessionId}`), { code: 'fetch_current_prompt_timeout' })
-  }
-
-  /**
-   * 现取轮询的 since 基线初始化：trace 打开过则用缓存；否则 getEntries() 全量拉一次建立
-   *（全量拉是接受的一次性开销——现取是用户显式动作）。
-   */
-  private async ensurePromptBaseline(sessionId: string, client: IPiEngine): Promise<string | undefined> {
-    const cached = this.traceLeafCache.get(sessionId)
-    if (cached !== undefined) return cached
-    const initial = await client.getEntries() as { data?: { leafId?: string | null } }
-    const baseline = initial.data?.leafId ?? undefined
-    if (baseline) this.traceLeafCache.set(sessionId, baseline)
-    return baseline
-  }
-
-  /**
-   * 现取轮询单步：sleep → getEntries(since=baseline) → 倒序找 xyz:current-system-prompt
-   * custom entry。未命中也滚动 traceLeafCache 基线（增量无遗漏）。
-   * 基线跨 pi 进程失效（Entry not found）时清缓存基线并返回 'retry'——调用方置
-   * baseline=undefined 全量重建后继续轮询（命令可能已产出 entry）。
-   */
-  private async pollOnceForPromptEntry(
-    sessionId: string,
-    client: IPiEngine,
-    baseline: string | undefined,
-  ): Promise<PromptPollStep> {
-    await new Promise((resolve) => setTimeout(resolve, FETCH_CURRENT_PROMPT_POLL_MS))
-    let delta: unknown[] = []
-    let newLeafId: string | null = null
-    try {
-      // 哨兵感知（getEntriesSince）：'' 基线无参全量拉，undefined 同样全量（?? 挡不住 ''）
-      const result = await this.getEntriesSince(client, baseline) as { data?: { entries?: unknown[]; leafId?: string | null } }
-      delta = result.data?.entries ?? []
-      newLeafId = result.data?.leafId ?? null
-    } catch (e) {
-      if (isEntryNotFoundError(e)) {
-        this.traceLeafCache.delete(sessionId)
-        return 'retry'
-      }
-      throw e
-    }
-    const hit = [...delta].reverse().find(
-      (e) => (e as { type?: unknown; customType?: unknown })?.type === 'custom'
-        && (e as { customType?: unknown })?.customType === CURRENT_SYSTEM_PROMPT_CUSTOM_TYPE,
-    )
-    if (newLeafId) this.traceLeafCache.set(sessionId, newLeafId)
-    return { hit: hit ?? null, delta, newLeafId }
+    return this.traceSync.fetchCurrentSystemPrompt(sessionId)
   }
 
   /**
@@ -1904,9 +1694,9 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     // 走 "Entry not found" fallback（防御兜底存在，但清理是正路径）。
     this.historyCache.delete(sessionId)
     // session-trace（A33）：同汇聚点清 trace 增量腿基线与串行链（与 historyCache 同因——
-    // 基线跨进程存活无意义；链已 settled，删 Map 条目只释放槽位）。
-    this.traceLeafCache.delete(sessionId)
-    this.traceSyncChains.delete(sessionId)
+    // 基线跨进程存活无意义；链已 settled，删 Map 条目只释放槽位）。S4：清理随域迁入
+    // TraceSync（各域 onSessionDisposed 直调形态）。
+    this.traceSync.onSessionDisposed(sessionId)
     // W7/W8：销毁 per-session 实例组（与 historyCache.delete 同汇聚点——主动删 + 进程退出）。
     // dispose 停防抖/退避/周期兜底全部定时器（thinkingLevel 的 30s poll 不清会泄漏定时器）。
     const replicated = this.replicatedStates.get(sessionId)
@@ -2308,33 +2098,6 @@ async function readSegmentsMetadataFile(sessionId: string): Promise<SegmentsMeta
   } catch {
     return null
   }
-}
-
-/**
- * 判定 getEntries(since) 的 "Entry not found" 错误（wave:perf-w20 D6-4 fallback 触发条件）。
- *
- * pi 实测文案（2026-08-16，pi 0.84.0）：`Entry not found: <since-id>`——E 大写 not 小写
- * （pi rpc-mode.ts:615 模板字符串）。rpc-client 对 success:false 的响应 reject
- * `new Error(msg.error)`，错误原文进 Error.message。匹配用大小写宽容的 includes
- * （防御 pi 上游微调文案大小写）+ 前缀锚定（避免误吞其他含 "entry" 字样的错误）。
- */
-function isEntryNotFoundError(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e)
-  return /^entry not found/i.test(msg)
-}
-
-/** fetchCurrentSystemPrompt 单轮轮询产物；'retry' = 基线跨 pi 进程失效，需全量重建后再轮。 */
-type PromptPollStep =
-  | 'retry'
-  | { hit: unknown; delta: unknown[]; newLeafId: string | null }
-
-/** 从命中的 xyz:current-system-prompt custom entry 提取响应载荷（缺字段降级为空值）。 */
-function extractCurrentPromptHit(sessionId: string, hit: unknown): ServerMessageMap['session.currentSystemPrompt'] {
-  const data = (hit as { data?: Record<string, unknown> }).data
-  const fullText = typeof data?.fullText === 'string' ? data.fullText : ''
-  const charCount = typeof data?.charCount === 'number' ? data.charCount : fullText.length
-  const fetchedAt = typeof data?.fetchedAt === 'string' ? data.fetchedAt : ''
-  return { sessionId, fullText, charCount, fetchedAt }
 }
 
 /**
