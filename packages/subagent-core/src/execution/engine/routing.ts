@@ -150,7 +150,8 @@ export async function routeEngine(opts: EngineRouteOptions): Promise<EngineRoute
   }
   // 守卫 a/b（首期合流）：显式指定（调用参数或 step 级）= 能力依赖声明，静默换引擎
   // 违反意图——沙箱类任务被静默卸除安全能力正是要防的形态（D9① 原文）。守卫 b 的
-  // 独立载体（AgentTaskSpec.requires）下钻后在本分支前独立判定，首期显式 engine 即声明。
+  // 独立载体（合流形状 AgentCallOpts 上的能力依赖声明字段，requires 已随 D6 裁撤）
+  // 下钻后在本分支前独立判定，首期显式 engine 即声明。
   if (routing.source === "call") {
     throw probeFailedError(routing.engineId, report, "engine 来自调用参数显式指定（能力依赖声明）——不兜底");
   }

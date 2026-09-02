@@ -3,7 +3,8 @@
 // PiEngine：pi 执行链的引擎边界（dual-track-convergence D2 后形态）。设计权威源：
 // docs/architecture/subagent-engine-abstraction.md §3.3.1 / D1（四面 + handle 契约 +
 // abort 分级）、D3（capabilities 链路接通口径）、docs/design/subagent-dual-track-convergence.md
-// §3.3 D2（pi 执行轨物理下沉 + Service 旧轨收敛）。
+// §3.3 D2（pi 执行轨物理下沉 + Service 旧轨收敛）+ D6（任务形状合流：run 入参 =
+// AgentCallOpts 单一形状，本文件内一次直出为 spawn 编排参数，无中间态还原）。
 //
 // 四件套物理归属 engines/pi/（launcher=session-runner / parser=spawn-event-adapter /
 // preparer=temp-prompt+argv-mirror / reader=reader.ts），本文件是引擎边界：
@@ -14,8 +15,8 @@
 //     冷路径 resume 交接），编排层经 engine.interact 调用；
 //   - read：第①级委托共享 reader readPiSessionView（engines/pi/reader.ts）。
 //
-// pi 专有语义的隔离点在 task-spec-mapper.ts（effort↔thinkingLevel、persona↔skillPath、
-// schemaEnv 派生）——本文件不出现第二个 pi 语义翻译点。
+// pi 专有语义的隔离点在 agentCallToExecuteOptions（本文件的直出映射：prompt→task、
+// description→slug 截断、schemaEnv 派生）——本文件不出现第二个 pi 语义翻译点。
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
@@ -23,10 +24,12 @@ import * as path from "node:path";
 
 import { getLogger } from "../../../../core/logger.ts";
 
-import type { AgentResult as WorkflowAgentResult } from "../../../../orchestration/models/types.ts";
+import type { AgentCallOpts, AgentResult as WorkflowAgentResult } from "../../../../orchestration/models/types.ts";
+import { SLUG_MAX_LENGTH } from "../../../../orchestration/models/types.ts";
+import { stringifySchemaCached } from "../../../../shared/schema-jsonify.ts";
 import type { PiInvocation } from "./pi-invocation.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
-import type { AgentConfig, ResolvedModel } from "../../../model-resolver.ts";
+import type { AgentConfig, ModelInfo, ResolvedModel } from "../../../model-resolver.ts";
 import type { StatusFilter } from "../../../record-store.ts";
 import type { SubagentStream } from "../../../stream-sink.ts";
 import type { AgentEvent, AgentResult, ExecutionRecord, ExecuteOptions, SubagentRecord } from "../../../types.ts";
@@ -34,7 +37,6 @@ import type { EnginePort, EngineRunResult, RunContext } from "../../port.ts";
 import { replayJournalToSessionView } from "../../common/journal-replay.ts";
 import type {
   AgentOutcome,
-  AgentTaskSpec,
   EngineCapabilities,
   EngineHandle,
   InteractAction,
@@ -42,7 +44,6 @@ import type {
   ProbeReport,
   SessionView,
 } from "../../types.ts";
-import { taskSpecToExecuteOptions } from "./task-spec-mapper.ts";
 import { readPiSessionView } from "./reader.ts";
 import type { SessionRunnerContext, SpawnResumeOpts } from "./session-runner.ts";
 import { getChildByRecord, spawnedChildren } from "./session-runner.ts";
@@ -72,7 +73,7 @@ const PROBE_VERSION_TIMEOUT_MS = 10_000;
 const INTERACT_SCAN_LIMIT = 1000;
 
 /** chat 域轮次的身份快照（编排层 resolveIdentity 的产物形态——引擎侧透传给 launcher；
- *  u-3b D6 任务形状合流后并入 AgentTaskSpec 直出）。 */
+ *  身份解析产物是 host 编排件，不并入任务声明 AgentCallOpts，见 ChatRoundTicket 注释）。 */
 export interface ChatRoundIdentity {
   agent: string;
   agentConfig: AgentConfig | undefined;
@@ -81,10 +82,24 @@ export interface ChatRoundIdentity {
 
 /**
  * chat 域预备轮次交接包（D2 单轨）：编排层（executeViaEngine / 冷路径续轮）预建的
- * record/opts/identity/host 上下文经 run 的 ctx.taskId 交接给引擎。存在理由：chat 域
- * 有若干 lossless host 件（identity 解析产物、SessionRunnerContext 回调簇、
- * forkFromSessionFile、resume 选项）不在中立声明 AgentTaskSpec 的字段表内，经本包
- * 透传避免有损往返——u-3b（D6 任务形状合流）后消除双形态。
+ * record/opts/identity/host 上下文经 run 的 ctx.taskId 交接给引擎。
+ *
+ * [u-3b D6 双形态消化评估结论：双形态保留（结构性裁决，非过渡态）]
+ * run 的 task 形参（AgentCallOpts，任务声明）与 ticket 是两个变化轴的载体，不可合一：
+ *   - task 形参 = 纯数据任务声明（跨引擎持久化语义，workflow 域由 SAR 直传）；
+ *   - ticket = chat 域 host 编排交接件，主体是运行期对象与 Service 内部形态——
+ *     ① ctx: SessionRunnerContext 回调簇 / signal / priority / stream 是运行期句柄
+ *        （port 设计 §3.3.5 删字段去向：运行期对象不入任务声明）；
+ *     ② record: ExecutionRecord 是 Service 内部 record 生命周期对象；
+ *     ③ resume: SpawnResumeOpts 是 session-runner 私有 spawn 选项；
+ *     ④ opts: ExecuteOptions 是 Service 内部编排形状（D6 明确保留的类型），且是
+ *        forkFromSessionFile 的唯一 lossless 载体（该字段仅 pi chat 域消费，不入
+ *        合流形状——chat pi fork-from 链路 = 壳 fork-from action → ExecuteOptions
+ *        .forkFromSessionFile → 本 ticket → runChatRound → runAndFinalize → runSpawn，
+ *        全程不经任务声明，由 pi-engine 测试锁定零回归）。
+ * 把任一类塞进 AgentCallOpts 会让 engine 契约反向耦合 execution 内部类型。故 chat
+ * 分支 ticket 优先消费（task 形参仅满足 port 签名），workflow 分支消费 task 形参——
+ * 这是「编排交接」与「任务声明」的职责分界，不是待消除的中间态。
  */
 export interface ChatRoundTicket {
   record: ExecutionRecord;
@@ -252,22 +267,19 @@ export class PiEngine implements EnginePort {
     return report;
   }
 
-  /** D1 主语义：映射中立声明 → ExecuteOptions，委托 executeAndAwait（行为零变化）。 */
-  async run(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
+  /** D1 主语义：合流任务声明（AgentCallOpts）一次直出 spawn 编排参数，委托
+   *  executeAndAwait（行为零变化——D6 后无 spec 往返中间态）。 */
+  async run(task: AgentCallOpts, ctx: RunContext): Promise<EngineRunResult> {
     const service = this.requireService();
     // [D2 单轨] chat 域轮次：编排层（executeViaEngine / 冷路径续轮）预建的
     // record/identity/host 上下文经 ctx.taskId 交接（ChatRoundTicket）。chat 域任务
-    // 声明由 ticket lossless 携带（identity / SessionRunnerContext /
-    // forkFromSessionFile / resume 不在 AgentTaskSpec 字段表内，task 形参仅满足
-    // port 签名）——workflow 域（SAR）无 ticket，走下方 executeAndAwait 分支；
-    // u-3b（D6 任务形状合流）消除双形态。
+    // 由 ticket lossless 携带（record/identity/SessionRunnerContext/
+    // forkFromSessionFile/resume 是 host 编排件，不入任务声明——双形态保留的结构性
+    // 裁决见 ChatRoundTicket 注释），task 形参仅满足 port 签名；workflow 域（SAR）
+    // 无 ticket，走下方 executeAndAwait 分支。
     const ticket = service.takeChatRound?.(ctx.taskId);
     if (ticket) return this.runChatTicket(service, ticket);
-    const opts = taskSpecToExecuteOptions(task, {
-      ctxModel: ctx.ctxModel,
-      // 解耦形态兜底（schema 缺失时才生效，派生优先——见 mapper 注释）
-      ...(ctx.schemaEnv !== undefined ? { schemaEnvFallback: ctx.schemaEnv } : {}),
-    });
+    const opts = agentCallToExecuteOptions(task, ctx.ctxModel);
     // P4 引擎留痕（D9①）：record 侧投影——实际执行引擎 id 恒 pi（本引擎身份）；
     // engineFallback 由路由层经 RunContext 透传（无 fallback 缺省，record 字段零噪声）
     opts.engine = PI_ENGINE_ID;
@@ -575,6 +587,68 @@ export class PiEngine implements EnginePort {
 }
 
 // ── 模块级纯函数（可单测）──
+
+/**
+ * [D6 一次直出] 合流任务声明 AgentCallOpts → ExecuteOptions（pi spawn 编排参数）。
+ *
+ * 这是 pi 边界的唯一任务形状映射点，取代已删除的两级链路
+ * （execute-options-mapper.mapToExecuteOptions → task-spec-mapper.taskSpecToExecuteOptions
+ * ——原链路 AgentCallOpts→ExecuteOptions→AgentTaskSpec→ExecuteOptions 三态两映射，
+ * 缺省路径付双份多引擎税）。逐字段等值性（合流前 ↔ 合流后）：
+ *   task           ← prompt（原 prompt→ExecuteOptions.task→spec.task 恒等往返）
+ *   slug           ← description ?? agent ?? "workflow-agent"，超 SLUG_MAX_LENGTH(35) 截断
+ *                    （原 mapToExecuteOptions 的派生规则原样内联；截断常量迁至
+ *                    orchestration/models/types.ts 与 description 字段同文件）
+ *   agent          ← agent（原 spec.agent ?? persona.agentRef——agentRef 无生产写入方，
+ *                    恒 undefined，随 PersonaSpec 裁撤）
+ *   model          ← model（显式 override 透传，ctxModel 不压扁填底）
+ *   thinkingLevel  ← thinkingLevel（原 effort 恒等映射层删除）
+ *   skillPath / appendSystemPrompt ← 同名平铺（原 persona 收拢/还原层删除——往返恒等）
+ *   schema         ← schema
+ *   schemaEnv      ← schema 派生优先（stringifySchemaCached compact，与
+ *                    agent-opts-resolver 同函数同缓存，逐字节等值）；无 schema 时
+ *                    schemaEnv 兜底（原 RunContext.schemaEnv 兜底通道的合流形态等价
+ *                    ——SAR 填 ctx.schemaEnv 的源即 opts.schemaEnv）；均无 → undefined
+ *                    （BC-6：childEnv 不注入）
+ *   maxTurns / graceTurns / fork / worktree / cwd / conversation / idleTimeoutMs ← 同名
+ *   ctxModel       ← runCtx.ctxModel（运行期字段，D-008 兼底链路）
+ *   engine / engineFallback 由 run 调用方追加（P4 引擎留痕，D9①）
+ * 调用方扩展字段（scene/timeoutMs/skill/schemaEnv 已述/engine/returnMeta）中引擎
+ * 不消费的：timeoutMs 由 SAR mergeTimeoutSignal 合并进 signal、engine 由 SAR 路由层
+ * 消费、scene/returnMeta 为 worker 层字段——均不入 spawn 参数。
+ *
+ * 字段完整性对照表（实施期门⑤产物）固化在 __tests__/spawn-opts-direct.test.ts，
+ * 逐字段断言覆盖。
+ */
+export function agentCallToExecuteOptions(
+  task: AgentCallOpts,
+  ctxModel?: ModelInfo,
+): ExecuteOptions {
+  // slug：优先 description，缺失回落 agent 名（保证非空）。超长截断。
+  const rawSlug = task.description ?? task.agent ?? "workflow-agent";
+  return {
+    task: task.prompt,
+    slug: rawSlug.length > SLUG_MAX_LENGTH ? rawSlug.slice(0, SLUG_MAX_LENGTH) : rawSlug,
+    agent: task.agent,
+    model: task.model,
+    thinkingLevel: task.thinkingLevel,
+    skillPath: task.skillPath,
+    appendSystemPrompt: task.appendSystemPrompt,
+    schema: task.schema,
+    // schemaEnv 派生优先（等值依据见函数注释）；无 schema 且调用方持有预编码值时兜底
+    schemaEnv: task.schema !== undefined
+      ? stringifySchemaCached(task.schema, "compact")
+      : task.schemaEnv,
+    maxTurns: task.maxTurns,
+    graceTurns: task.graceTurns,
+    ctxModel,
+    fork: task.fork,
+    worktree: task.worktree,
+    cwd: task.cwd,
+    conversation: task.conversation,
+    idleTimeoutMs: task.idleTimeoutMs,
+  };
+}
 
 /** sessionRef 取 string 值的运行时 guard（Record 索引读经 typeof 收窄，非裸取）。 */
 function refString(ref: Record<string, string>, key: string): string | undefined {

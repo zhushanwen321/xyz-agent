@@ -37,11 +37,11 @@ import {
 import { HOST_TIMEOUT_ABORT_REASON, synthesizeTimeoutOutcome } from "../../common/kill-chain.ts";
 import { engineTimeoutDetail } from "../../common/errors.ts";
 import { replayJournalToSessionView } from "../../common/journal-replay.ts";
+import type { AgentCallOpts } from "../../../../orchestration/models/types.ts";
 import type { EnginePort, EngineRunResult, RunContext } from "../../port.ts";
 import type {
   AgentEvent,
   AgentOutcome,
-  AgentTaskSpec,
   EngineCapabilities,
   EngineHandle,
   InteractAction,
@@ -227,7 +227,7 @@ export class ZcodeEngine implements EnginePort {
   }
 
   /** D1 主语义：preparer → launcher → parser →（schema 仿真校验 + 一次重试）→ outcome/handle。 */
-  async run(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult> {
+  async run(task: AgentCallOpts, ctx: RunContext): Promise<EngineRunResult> {
     const startedAt = Date.now();
     // [D3-④] fork/conversation/maxTurns 的能力拒绝已上提到宿主调用前预检
     //（common/capability-gate，capabilities.maxTurns 扩位承载）——引擎内不再做
@@ -294,7 +294,7 @@ export class ZcodeEngine implements EnginePort {
 
   /** 终态合成（extension-conventions 函数 80 行上限，从 run 提取）：aborted / run-failed / parsed 三分支。 */
   private finalizeOutcome(
-    task: AgentTaskSpec,
+    task: AgentCallOpts,
     ctx: RunContext,
     final: AttemptResult,
     usageAcc: { input: number; output: number; cacheRead: number; cacheWrite: number; has: boolean },
@@ -326,7 +326,7 @@ export class ZcodeEngine implements EnginePort {
   /** abort 合成终态：exitCode=null（record 正常收尾，不留僵尸）。 */
   private applyAbortedOutcome(
     outcome: AgentOutcome,
-    task: AgentTaskSpec,
+    task: AgentCallOpts,
     ctx: RunContext,
     final: Extract<AttemptResult, { kind: "aborted" }>,
     emit: (event: AgentEvent) => void,
@@ -401,7 +401,7 @@ export class ZcodeEngine implements EnginePort {
    * aborted（我方杀链）/ run-failed（非零退出或解析失败）/ parsed（含 schema 校验结果）。
    */
   private async attemptOnce(
-    task: AgentTaskSpec,
+    task: AgentCallOpts,
     ctx: RunContext,
     prepared: ReturnType<typeof prepareZcodeHome>,
     cwd: string,
@@ -547,9 +547,9 @@ export class ZcodeEngine implements EnginePort {
    * appendSystemPrompt 段在前（人设/约束语境），task 正文居中，schema 仿真段尾置
    * （common/schema-emulation 公共层产出，D4 emulated 侧——zcode 无 native schema 通道）。
    */
-  private buildPrompt(task: AgentTaskSpec, schema: object | undefined): string {
-    const segments: string[] = [...(task.persona?.appendSystemPrompt ?? [])];
-    segments.push(task.task);
+  private buildPrompt(task: AgentCallOpts, schema: object | undefined): string {
+    const segments: string[] = [...(task.appendSystemPrompt ?? [])];
+    segments.push(task.prompt);
     if (schema !== undefined) segments.push(buildSchemaEmulationSegment(schema));
     return segments.join("\n\n");
   }

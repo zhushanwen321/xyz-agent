@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import type { EnginePort, RunContext } from "../port.ts";
 import { DEFAULT_ENGINE_ID, EngineNotFoundError } from "../registry.ts";
 import { EngineError } from "../common/errors.ts";
-import type { AgentTaskSpec, ProbeReport, SessionView } from "../types.ts";
+import type { ProbeReport, SessionView } from "../types.ts";
+import type { AgentCallOpts } from "../../../orchestration/models/types.ts";
 import { resolveEngineRouting, routeEngine, routeEngineForHost, type EngineRouteOptions, type HostRouteOptions } from "../routing.ts";
 import type { EngineRouteResult } from "../routing.ts";
 
@@ -38,7 +39,7 @@ function makeFakeEngine(id: string, probeOk: boolean): EnginePort {
               error: { code: "engine_probe_failed", recovery: "reinstall the engine binary and retry the probe" },
             } satisfies ProbeReport,
       ),
-    run: (_t: AgentTaskSpec, _c: RunContext) => Promise.reject(new Error("fake: run not implemented")),
+    run: (_t: AgentCallOpts, _c: RunContext) => Promise.reject(new Error("fake: run not implemented")),
     interact: () => Promise.resolve({ ok: false, code: "engine_capability_unsupported", message: "stub" }),
     read: (_h: Parameters<EnginePort["read"]>[0]): Promise<SessionView> =>
       Promise.resolve({ engineId: id, turns: [], source: "outcome-only" }),
@@ -164,9 +165,10 @@ describe("routeEngine：路由 + 探针 + 守卫编排（验收 1/2）", () => {
     expect((err as EngineError).recovery).toContain("retry the probe");
   });
 
-  it("守卫 b（首期与 a 合流）：AgentTaskSpec.requires 形状预留存在且不参与首期判定", async () => {
-    // 形状预留的类型面由 typecheck 守护；行为面：frontmatter 指定（非 call）+ 无 model
-    // → 仍走 fallback（守卫 b 独立生效留给 requires 下钻，见 types.ts 注释）
+  it("守卫 b（首期与 a 合流）：能力依赖声明无独立载体，frontmatter 指定（非 call）不阻断 fallback", async () => {
+    // [D6 合流] 原 AgentTaskSpec.requires 形状预留已随任务形状合流裁撤（无生产写入方，
+    // 见 AgentCallOpts 类型注释）；行为面保持：frontmatter 指定（非 call）+ 无 model
+    // → 仍走 fallback（能力依赖声明的独立载体留给将来下钻）
     const { opts } = makeRoute({ zcodeProbeOk: false, routing: { agentEngine: "zcode" } });
     const result = await routeEngine(opts);
     expect(result.engineFallback).toBeDefined();

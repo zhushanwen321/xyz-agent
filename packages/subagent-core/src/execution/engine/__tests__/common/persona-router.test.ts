@@ -22,8 +22,9 @@ const CAPS_FILE: EngineCapabilities = {
 const CAPS_FLAG: EngineCapabilities = { ...CAPS_FILE, personaInjection: "flag" };
 const CAPS_PROMPT: EngineCapabilities = { ...CAPS_FILE, personaInjection: "prompt" };
 
+// [D6 合流] PersonaSpec 收拢层删除后，路由入参是 PersonaContent（结构子集：
+// appendSystemPrompt 正文 + skillPath 引用行；agentRef 已裁撤）
 const persona = {
-  agentRef: "reviewer",
   skillPath: "/skills/review.md",
   appendSystemPrompt: ["You are a careful code reviewer.", "Be terse."],
 };
@@ -34,7 +35,6 @@ describe("applyPersona 三策略路由", () => {
     expect(routing.promptSegment).toBe("");
     expect(routing.fileCandidate).toBeDefined();
     expect(routing.fileCandidate?.suggestedPath).toBe("persona.md");
-    expect(routing.fileCandidate?.content).toContain("# Agent: reviewer");
     expect(routing.fileCandidate?.content).toContain("/skills/review.md");
     expect(routing.fileCandidate?.content).toContain("You are a careful code reviewer.");
   });
@@ -51,7 +51,6 @@ describe("applyPersona 三策略路由", () => {
   it("prompt 策略：promptSegment 为带结构头的人设段（拼进最终 prompt）", () => {
     const routing = applyPersona(persona, CAPS_PROMPT);
     expect(routing.promptSegment.startsWith("## Persona")).toBe(true);
-    expect(routing.promptSegment).toContain("# Agent: reviewer");
     expect(routing.promptSegment).toContain("You are a careful code reviewer.");
   });
 
@@ -61,7 +60,7 @@ describe("applyPersona 三策略路由", () => {
     expect(applyPersona({}, CAPS_PROMPT)).toEqual({ promptSegment: "" });
   });
 
-  it("仅 appendSystemPrompt：file 通道照常落文件（agentRef/skillPath 头部行缺省）", () => {
+  it("仅 appendSystemPrompt：file 通道照常落文件（skillPath 头部行缺省）", () => {
     const routing = applyPersona({ appendSystemPrompt: ["only body"] }, CAPS_FILE);
     expect(routing.fileCandidate?.content).toBe("only body");
   });

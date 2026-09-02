@@ -19,7 +19,8 @@ import type { ExecuteOptions, SubagentRecord } from "../../../../types.ts";
 import { IDENTITY_CUSTOM_TYPE } from "../../../../session-reconstructor.ts";
 import { SubagentStream } from "../../../../stream-sink.ts";
 import type { RunContext } from "../../../port.ts";
-import type { AgentTaskSpec, EngineHandle } from "../../../types.ts";
+import type { EngineHandle } from "../../../types.ts";
+import type { AgentCallOpts } from "../../../../../orchestration/models/types.ts";
 import { spawnedChildren } from "../session-runner.ts";
 import { resetAllEpipeFailures } from "../stdin-writer.ts";
 import {
@@ -134,15 +135,16 @@ function makeFakeService(overrides?: {
   return { service, calls };
 }
 
-/** 全字段任务声明（覆盖全部泛化点）。 */
-function makeSpec(): AgentTaskSpec {
+/** 全字段任务声明（D6 合流形状 AgentCallOpts，覆盖全部直出映射点）。 */
+function makeSpec(): AgentCallOpts {
   return {
-    task: "do the thing",
-    slug: "do-thing",
+    prompt: "do the thing",
+    description: "do-thing",
     agent: "reviewer",
     model: "zai-coding-cn/glm-5.2",
-    effort: "high",
-    persona: { skillPath: "/skills/r/SKILL.md", appendSystemPrompt: ["extra"] },
+    thinkingLevel: "high",
+    skillPath: "/skills/r/SKILL.md",
+    appendSystemPrompt: ["extra"],
     schema: { type: "object", properties: { ok: { type: "boolean" } } },
     maxTurns: 5,
     graceTurns: 2,
@@ -187,7 +189,7 @@ describe("PiEngine.capabilities（D3 链路接通口径）", () => {
 // ── run ──
 
 describe("PiEngine.run", () => {
-  it("中立声明 → ExecuteOptions 映射 + signal/onEvent/stream/ctxModel 直通（行为零变化）", async () => {
+  it("[D6 一次直出] 合流声明 AgentCallOpts → ExecuteOptions + signal/onEvent/stream/ctxModel 直通（行为零变化）", async () => {
     const { service, calls } = makeFakeService();
     const engine = new PiEngine({ getService: () => service });
     const spec = makeSpec();
@@ -251,11 +253,11 @@ describe("PiEngine.run", () => {
       executeResult: { content: "x", sessionFile: "/tmp/s.jsonl", sessionId: "sess-1", toolCalls: [] },
     });
     const engine = new PiEngine({ getService: () => service });
-    const r1 = await engine.run({ task: "t", slug: "s" }, makeRunCtx({ poolKey: "agent-reviewer" }));
+    const r1 = await engine.run({ prompt: "t" }, makeRunCtx({ poolKey: "agent-reviewer" }));
     expect(r1.handle.data.sessionRef).toEqual({ sessionFile: "/tmp/s.jsonl" });
     expect(r1.handle.data.poolKey).toBe("agent-reviewer");
     expect(r1.outcome.sessionId).toBe("sess-1");
-    const r2 = await engine.run({ task: "t", slug: "s" }, makeRunCtx({ poolKey: "" }));
+    const r2 = await engine.run({ prompt: "t" }, makeRunCtx({ poolKey: "" }));
     expect(r2.handle.data.poolKey).toBe("shared");
   });
 
@@ -289,26 +291,64 @@ describe("PiEngine.run", () => {
       }),
     };
     const engine = new PiEngine({ getService: () => service });
-    const { handle, outcome } = await engine.run({ task: "t", slug: "s" }, makeRunCtx({ taskId: "sa-chat-ticket" }));
+    const { handle, outcome } = await engine.run({ prompt: "t" }, makeRunCtx({ taskId: "sa-chat-ticket" }));
     expect(ticketCalls).toEqual(["sa-chat-ticket"]);
     expect(handle.data.sessionRef).toEqual({ recordId: "sa-chat-ticket" });
     expect(handle.data.poolKey).toBe("shared");
     expect(outcome).toMatchObject({ content: "chat done", engineId: "pi", sessionId: "sa-chat-ticket" });
     // 非 chat taskId（workflow 域）→ 交接 miss → executeAndAwait 分支（此处 throw 证明未误入）
-    await expect(engine.run({ task: "t", slug: "s" }, makeRunCtx({ taskId: "sa-workflow" }))).rejects.toThrow(
+    await expect(engine.run({ prompt: "t" }, makeRunCtx({ taskId: "sa-workflow" }))).rejects.toThrow(
       "workflow branch must not run",
     );
   });
 
+  it("[D6/u-3b 硬验收] chat pi fork-from 零回归：ticket.opts.forkFromSessionFile 经 run chat 分支 lossless 送达 runChatRound", async () => {
+    // 链路（合流前后均不经任务声明）：壳 fork-from action → ExecuteOptions.forkFromSessionFile
+    // → kickOffChatRound 挂 ticket → 本分支 → runChatRound(ticket) → runAndFinalize →
+    // runSpawn（fork-from 源优先于 fork 推导）。本用例锁定合流后 ticket 交接不丢该字段。
+    const record = createRecord("sa-forkfrom", {
+      agent: "reviewer", model: "p/m", thinkingLevel: "high", mode: "background",
+      task: "t", slug: "s", startedAt: 1, controller: new AbortController(),
+    });
+    const ticketOpts: ExecuteOptions = { task: "continue", slug: "s", forkFromSessionFile: "/sessions/parent.jsonl" };
+    const chatTicket: ChatRoundTicket = {
+      record,
+      opts: ticketOpts,
+      identity: { agent: "reviewer", agentConfig: undefined, resolved: { model: { id: "m", name: "M", provider: "p", reasoning: false }, thinkingLevel: "high" } },
+      ctx: { cwd: "/w" } as ChatRoundTicket["ctx"],
+      signal: undefined,
+      priority: 1000,
+    };
+    let received: ChatRoundTicket | undefined;
+    const service: PiEngineService = {
+      executeAndAwait: async () => { throw new Error("workflow branch must not run"); },
+      getRecordForAction: () => { throw new Error("unused"); },
+      closeSubagent: async () => {},
+      cancel: () => true,
+      collectRecords: () => [],
+      takeChatRound: (taskId) => (taskId === "sa-forkfrom" ? chatTicket : undefined),
+      runChatRound: async (t) => {
+        received = t;
+        return { text: "ok", turns: 1, durationMs: 1, success: true, toolCalls: [] };
+      },
+    };
+    const engine = new PiEngine({ getService: () => service });
+    await engine.run({ prompt: "t" }, makeRunCtx({ taskId: "sa-forkfrom" }));
+    // lossless 断言：runChatRound 收到同一 ticket 对象，opts 引用与 forkFromSessionFile 原值逐字节保持
+    expect(received).toBe(chatTicket);
+    expect(received?.opts).toBe(ticketOpts);
+    expect(received?.opts.forkFromSessionFile).toBe("/sessions/parent.jsonl");
+  });
+
   it("服务不可用（prepare 期）→ reject 且不产生 handle", async () => {
     const engine = new PiEngine({ getService: () => null });
-    await expect(engine.run({ task: "t", slug: "s" }, makeRunCtx())).rejects.toThrow(/SubagentService unavailable/);
+    await expect(engine.run({ prompt: "t" }, makeRunCtx())).rejects.toThrow(/SubagentService unavailable/);
   });
 
   it("executeAndAwait throw（嵌套超限等创建期异常）→ 向上传播（SAR catch 兜底不变）", async () => {
     const { service } = makeFakeService({ executeReject: new Error("nesting depth exceeded") });
     const engine = new PiEngine({ getService: () => service });
-    await expect(engine.run({ task: "t", slug: "s" }, makeRunCtx())).rejects.toThrow("nesting depth exceeded");
+    await expect(engine.run({ prompt: "t" }, makeRunCtx())).rejects.toThrow("nesting depth exceeded");
   });
 });
 

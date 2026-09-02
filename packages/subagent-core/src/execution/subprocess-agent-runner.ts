@@ -5,9 +5,14 @@
 // 从"自己 spawn pi"改为"委托 SubagentService.executeAndAwait"。
 // MF-3: 从 orchestration/infra 迁入 execution，同层委托 SubagentService。
 //
+// [D6 任务形状合流] AgentCallOpts 已是 EnginePort.run 的单一任务形状——本类直传 opts
+// 给 engine.run（无 ExecuteOptions/AgentTaskSpec 中间态映射）；pi 边界的一次直出在
+// PiEngine.agentCallToExecuteOptions。mergeTimeoutSignal（原 execute-options-mapper
+// 的运行期件，D-A9）随 mapper 删除迁入本文件（唯一消费点）。
+//
 // 接线层级：
 //   [跨模块 port] implements AgentRunner（orchestration/models/ports.ts）
-//   [模块内直调] mapToExecuteOptions + mergeTimeoutSignal（execute-options-mapper）
+//   [模块内直调] mergeTimeoutSignal（本文件，D-A9）
 //   [P4 路由层]  engine/routing.ts routeEngineForHost（D3-② 路由单点：三层优先级 +
 //                pi 同步短路 + probe + fallback 三守卫，D9）
 //   [公共预检]   engine/common/capability-gate（D3-④：capabilities 驱动的调用前拒绝）
@@ -16,28 +21,26 @@
 //   [模块内直调] this.subagentService.executeAndAwait（PiEngine 内部委托目标）
 //
 // 设计基线：
-//   D-A2（映射归 adapter）/ D-A8（onEvent 桥接）/ D-A9（timeoutMs 合并 signal）/
+//   D-A8（onEvent 桥接）/ D-A9（timeoutMs 合并 signal）/
 //   D-008（model 填底，不调 resolveModel）/ BC-9（timeoutMs 行为）/ BC-10（live-record 进度）
 
 import type { AgentRunner } from "../orchestration/models/ports.ts";
 import type { AgentCallOpts, AgentResult } from "../orchestration/models/types.ts";
 import type { AgentEvent } from "../shared/agent-event.ts";
 import { assertTaskShapeSupported } from "./engine/common/capability-gate.ts";
+import { HOST_TIMEOUT_ABORT_REASON } from "./engine/common/kill-chain.ts";
 import { JOURNAL_INITIAL_POOL_KEY, wireEventJournal } from "./engine/common/journal-wiring.ts";
 import { createPiEngine } from "./engine/engines/pi/registration.ts";
-import { executeOptionsToTaskSpec } from "./engine/engines/pi/task-spec-mapper.ts";
 import type { EnginePort, RunContext } from "./engine/port.ts";
 import { routeEngineForHost, type EngineRouteResult, type EngineRoutingInput } from "./engine/routing.ts";
 import { getEngine } from "./engine/registry.ts";
 import type { AgentOutcome } from "./engine/types.ts";
-import { mapToExecuteOptions, mergeTimeoutSignal } from "./execute-options-mapper.ts";
 import { getModelConfigService } from "./model-config-service.ts";
 import type { ModelInfo } from "./model-resolver.ts";
 import { modelRefFromVerified } from "../shared/model-ref";
 import { registerSpawnedChildForRecord } from "./engine/engines/pi/session-runner.ts";
 import type { SubagentStream } from "./stream-sink.ts";
 import type { SubagentService } from "./subagent-service.ts";
-import type { ExecuteOptions } from "./types.ts";
 
 // ── 构造依赖（per-session 注入）──
 
@@ -110,8 +113,9 @@ export class SubprocessAgentRunner implements AgentRunner {
    * 接线链路：
    *   routeEngineForHost（D3-② 路由单点：三层 + pi 同步短路 + probe + 守卫）→
    *   assertTaskShapeSupported（D3-④ 预检 capabilities 化）→ mergeTimeoutSignal →
-   *   mapToExecuteOptions → AgentTaskSpec → engine.run（PiEngine：spec → ExecuteOptions
-   *   还原 + engine 留痕）→ executeAndAwait → AgentOutcome → AgentResult
+   *   engine.run(opts 直传——D6 合流：AgentCallOpts 即 EnginePort 任务形状，零映射；
+   *   PiEngine 内一次直出 ExecuteOptions + engine 留痕) → executeAndAwait →
+   *   AgentOutcome → AgentResult
    *
    * 错误处理：不 reject。
    *   - 路由失败（未注册 id / probe 失败 + 守卫或 strict）→ AgentResult.error（错误码前缀）
@@ -137,7 +141,6 @@ export class SubprocessAgentRunner implements AgentRunner {
     // id / probe 失败 + strict/守卫）与预检命中（capabilities 驱动，含 worktree——
     // workflow 域漏拦缺口修复）一并按「不 reject」契约转 result.error。
     let route: EngineRouteResult;
-    let mappedOpts: ExecuteOptions;
     try {
       const routed = routeEngineForHost({
         routing: this.buildRoutingInput(opts),
@@ -149,8 +152,9 @@ export class SubprocessAgentRunner implements AgentRunner {
       route = routed instanceof Promise ? await routed : routed;
       // [D3-④] SAR 路径预检调用点（run 前同模块调用；唯一实现 = common/capability-gate）。
       // pi 全参数放行（V4⑤ 反向守护）；zcode 拦 fork/conversation/maxTurns/worktree。
-      mappedOpts = mapToExecuteOptions(opts, this.ctxModel);
-      assertTaskShapeSupported(route.engineId, route.engine.capabilities(), mappedOpts);
+      // [D6 合流] opts（AgentCallOpts）直传预检——TaskShapeForGate 是结构子集，
+      // conversation/fork/worktree/maxTurns 均在合流形状字段表内。
+      assertTaskShapeSupported(route.engineId, route.engine.capabilities(), opts);
     } catch (err) {
       // buildRoutingInput 的 agent 解析期校验（未注册 frontmatter engine）、路由失败
       //（probe + strict/守卫）与预检拒绝（engine_capability_unsupported）一并在此
@@ -203,14 +207,16 @@ export class SubprocessAgentRunner implements AgentRunner {
         // taskId（'sa-' 前缀）即记账 key，与 chat 域 kickOffEngineRun 的 record.id 同构
         onChildSpawned: (child) => registerSpawnedChildForRecord(taskId, child),
         ...(stream !== undefined ? { stream } : {}),
-        // 解耦形态（有 schemaEnv 无 schema）的兜底通道——耦合形态下引擎从 task.schema
-        // 派生等值，此值被忽略（见 RunContext.schemaEnv 注释）
-        ...(mappedOpts.schemaEnv !== undefined ? { schemaEnv: mappedOpts.schemaEnv } : {}),
+        // [D6 合流] 解耦形态（有 schemaEnv 无 schema）不再经 RunContext.schemaEnv
+        // 兜底通道——schemaEnv 已在合流形状 AgentCallOpts.schemaEnv 内，pi 直出
+        // （agentCallToExecuteOptions）以「schema 派生优先、schemaEnv 兜底」取值，
+        // 与原 ctx 兜底链路逐字节等值。
       };
       const { handle, outcome } = await route.engine.run(
-        // 泛化为中立声明（PiEngine 内部再还原回 ExecuteOptions——往返保真，
-        // 由 engines/pi/__tests__/task-spec-mapper.test.ts 逐字段锁定）
-        executeOptionsToTaskSpec(mappedOpts),
+        // [D6 合流] opts 直传——AgentCallOpts 即 EnginePort 任务形状（缺省路径零映射；
+        // pi 边界一次直出由 PiEngine.agentCallToExecuteOptions 承担，逐字段等值由
+        // engines/pi/__tests__/spawn-opts-direct.test.ts 对照表锁定）
+        opts,
         runCtx,
       );
       // handle.journalPath 回填（§3.3.6：read ②级的自描述定位符——运行期落盘路径
@@ -298,4 +304,49 @@ function outcomeToRunnerResult(outcome: AgentOutcome): AgentResult {
     worktreePath: outcome.worktreePath,
     toolCalls: outcome.toolCalls,
   };
+}
+
+/**
+ * D-A9: per-call timeoutMs 合并进 AbortSignal（[D6 合流迁入]——原定义在已删除的
+ * execution/execute-options-mapper.ts，本类是唯一消费点，运行期件随消费方落位）。
+ *
+ * 墙钟 timeoutMs（per-call）+ 外部 signal（run 级 abort）都生效。
+ * 缺此合并则 agent({timeoutMs:5000}) 静默无效（BC-9）。
+ *
+ * @param signal    外部 signal（workflow run 级 controller.signal）
+ * @param timeoutMs per-call 墙钟超时；undefined/<=0 → 不设超时，原样返回 signal
+ * @returns 合并后的 signal（timeoutMs 或外部 signal 任一 abort 都触发）
+ */
+export function mergeTimeoutSignal(
+  signal: AbortSignal,
+  timeoutMs?: number,
+): AbortSignal {
+  if (!timeoutMs || timeoutMs <= 0) {
+    return signal;
+  }
+
+  const controller = new AbortController();
+  // 超时 abort 带 reason 标记（对齐点④）：引擎合成终态时判别「宿主超时」
+  // （engine_timeout 公共合成）vs「外部 cancel」（中止标记）——pi 链路不读 reason，
+  // 行为不变。外部 signal abort 不带标记（用户/编排层 cancel 语义）。
+  const timer = setTimeout(() => controller.abort(HOST_TIMEOUT_ABORT_REASON), timeoutMs);
+  timer.unref();
+
+  const onExternalAbort = (): void => controller.abort();
+  if (signal.aborted) {
+    controller.abort();
+  } else {
+    signal.addEventListener("abort", onExternalAbort, { once: true });
+  }
+
+  controller.signal.addEventListener(
+    "abort",
+    () => {
+      clearTimeout(timer);
+      if (!signal.aborted) signal.removeEventListener("abort", onExternalAbort);
+    },
+    { once: true },
+  );
+
+  return controller.signal;
 }

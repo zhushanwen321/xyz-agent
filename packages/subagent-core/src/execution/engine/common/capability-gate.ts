@@ -26,8 +26,8 @@ import { EngineError } from "./errors.ts";
 import type { EngineCapabilities } from "../types.ts";
 
 /**
- * 预检输入的任务形状子集——ExecuteOptions（chat 域）与 AgentTaskSpec（workflow 域
- * 经 SAR 映射后的 ExecuteOptions）共有的能力相关字段面。结构子集而非具体类型：
+ * 预检输入的任务形状子集——ExecuteOptions（chat 域）与 AgentCallOpts（D6 合流后的
+ * 单一任务形状，workflow 域 SAR 直传）共有的能力相关字段面。结构子集而非具体类型：
  * 两域的 opts 类型都能直接传入。
  */
 export interface TaskShapeForGate {

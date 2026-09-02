@@ -14,12 +14,12 @@
 
 import type { ChildProcess } from "node:child_process";
 
+import type { AgentCallOpts } from "../../orchestration/models/types.ts";
 import type { ModelInfo } from "../model-resolver.ts";
 import type { SubagentStream } from "../stream-sink.ts";
 import type { AgentEvent } from "../types.ts";
 import type {
   AgentOutcome,
-  AgentTaskSpec,
   EngineCapabilities,
   EngineHandle,
   InteractAction,
@@ -33,9 +33,9 @@ import type {
 // ============================================================
 
 /**
- * run 的运行期上下文。任务声明（AgentTaskSpec）与运行期句柄分离——signal/ctxModel/
- * onComplete 从 ExecuteOptions 移出（设计 §3.3.5 删字段去向），因为它们是宿主注入的
- * 运行期对象，不属于跨引擎持久化的任务声明。
+ * run 的运行期上下文。任务声明（AgentCallOpts，D6 合流后的单一形状）与运行期句柄
+ * 分离——signal/ctxModel/onComplete 从 ExecuteOptions 移出（设计 §3.3.5 删字段去向），
+ * 因为它们是宿主注入的运行期对象，不属于跨引擎持久化的任务声明。
  *
  * 常驻进程友好（D1）：onEvent 回调式（而非迭代器式）+ AbortSignal——引擎内部换常驻
  * server 实现（未来 driver host）时接口不动。
@@ -129,8 +129,9 @@ export interface EnginePort {
   /** D7（factory 初始化 + 版本变化检测触发；opts.force 跳过缓存强探）。 */
   probe(opts?: { force?: boolean }): Promise<ProbeReport>;
 
-  /** D1 主语义：fire-to-completion。 */
-  run(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult>;
+  /** D1 主语义：fire-to-completion。[D6 合流] task = AgentCallOpts（单一任务形状，
+   *  原 AgentTaskSpec 已并入——字段裁定见 orchestration/models/types.ts）。 */
+  run(task: AgentCallOpts, ctx: RunContext): Promise<EngineRunResult>;
 
   /**
    * D1 可选面：交互控制面。pi 首期原生实现（现有 chatMode 行为直通）；不支持

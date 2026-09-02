@@ -49,13 +49,11 @@ export type {
 export type {
   AgentEvent,
   AgentOutcome,
-  AgentTaskSpec,
   EngineCapabilities,
   EngineHandle,
   EngineHandleData,
   InteractAction,
   InteractResult,
-  PersonaSpec,
   ProbeReport,
   ReplayedTurn,
   SessionView,

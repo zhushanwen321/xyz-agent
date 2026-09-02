@@ -68,7 +68,7 @@ import { clearEngines, registerEngine } from "../engine/registry.ts";
 import type {
   AgentEvent,
   AgentOutcome,
-  AgentTaskSpec,
+  AgentCallOpts,
   EngineCapabilities,
   EngineHandle,
   ProbeReport,
@@ -102,7 +102,7 @@ const ZCODE_LIKE_CAPS: EngineCapabilities = {
 };
 
 interface CapturedRun {
-  task: AgentTaskSpec;
+  task: AgentCallOpts;
   ctx: RunContext;
 }
 
@@ -112,7 +112,7 @@ class FakeEngine implements EnginePort {
   /** U2：probe 结果注入（路由期 routeEngine 消费；缺省 ok——probe 通过的常态）。 */
   probeFailed = false;
   /** run 实现注入（缺省：挂起不 resolve——record 保持 running 便于内存断言）。 */
-  runImpl: (task: AgentTaskSpec, ctx: RunContext) => Promise<{ handle: EngineHandle; outcome: AgentOutcome }>;
+  runImpl: (task: AgentCallOpts, ctx: RunContext) => Promise<{ handle: EngineHandle; outcome: AgentOutcome }>;
 
   constructor(id: string) {
     this.id = id;
@@ -133,7 +133,7 @@ class FakeEngine implements EnginePort {
         }
       : { ok: true, engineVersion: "fake", checks: [{ name: "bin", ok: true }] };
   }
-  async run(task: AgentTaskSpec, ctx: RunContext): Promise<{ handle: EngineHandle; outcome: AgentOutcome }> {
+  async run(task: AgentCallOpts, ctx: RunContext): Promise<{ handle: EngineHandle; outcome: AgentOutcome }> {
     this.runs.push({ task, ctx });
     return this.runImpl(task, ctx);
   }
@@ -407,7 +407,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
   // 5. 引擎分支骨架（D10 终止链 + 终态迁移）
   // ============================================================
 
-  it("[骨架] taskSpec 字段正确（task/cwd/model/effort/schema/persona）", async () => {
+  it("[骨架] 合流任务形状字段正确（prompt/cwd/model/thinkingLevel/schema/skillPath/appendSystemPrompt——D6 直传）", async () => {
     const { service, zcode } = setup(agentDir);
     await service.execute(
       baseOpts(agentDir, {
@@ -421,12 +421,14 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     );
     await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
     const { task, ctx } = zcode.runs[0];
-    expect(task.task).toBe("do work");
-    expect(task.slug).toBe("routing-test");
+    // [D6 合流] task = AgentCallOpts（host-task-spec 从 ExecuteOptions 直译）
+    expect(task.prompt).toBe("do work");
+    expect(task.description).toBe("routing-test");
     expect(task.model).toBe("zcode/glm");
-    expect(task.effort).toBe("high");
+    expect(task.thinkingLevel).toBe("high");
     expect(task.schema).toEqual({ type: "object" });
-    expect(task.persona).toEqual({ skillPath: "/tmp/skill.md", appendSystemPrompt: ["extra"] });
+    expect(task.skillPath).toBe("/tmp/skill.md");
+    expect(task.appendSystemPrompt).toEqual(["extra"]);
     expect(ctx.poolKey).toBe("shared");
   });
 

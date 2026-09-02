@@ -27,7 +27,7 @@ import { ZcodeEngine } from "../../engines/zcode/zcode-engine.ts";
 import { createPiEngine } from "../../engines/pi/registration.ts";
 import type { RunContext } from "../../port.ts";
 import type { AgentEvent } from "../../../types.ts";
-import type { AgentTaskSpec } from "../../types.ts";
+import type { AgentCallOpts } from "../../../../orchestration/models/types.ts";
 import { getPiInvocation } from "../../engines/pi/pi-invocation.ts";
 import {
   RELAY_ENV_NODE,
@@ -52,7 +52,7 @@ describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () =
       return;
     }
     const engine = createPiEngine(() => service);
-    const task: AgentTaskSpec = { task: "Reply with the single word: ok", slug: "live-c2" };
+    const task: AgentCallOpts = { prompt: "Reply with the single word: ok", description: "live-c2" };
     const ctx: RunContext = { taskId: "sa-live-pi-c2", poolKey: "shared" };
     const { outcome } = await engine.run(task, ctx);
     expect(outcome.error).toBeUndefined();
@@ -176,7 +176,7 @@ describe.skipIf(!LIVE)("conformance relay 变体（经代理 spawn 全链，手�
     try {
       const engine = createPiEngine(() => service);
       const events: AgentEvent[] = [];
-      const task: AgentTaskSpec = { task: "Reply with the single word: ok", slug: "live-relay-c2" };
+      const task: AgentCallOpts = { prompt: "Reply with the single word: ok", description: "live-relay-c2" };
       const ctx: RunContext = {
         taskId: "sa-live-pi-relay",
         poolKey: "shared",

@@ -10,7 +10,8 @@
 import { getLogger } from "../../../core/logger.ts";
 
 import { engineTimeoutDetail } from "./errors.ts";
-import type { AgentOutcome, AgentTaskSpec } from "../types.ts";
+import type { AgentCallOpts } from "../../../orchestration/models/types.ts";
+import type { AgentOutcome } from "../types.ts";
 import { DEFAULT_ENGINE_ID } from "../registry.ts";
 
 const logger = getLogger("subagents");
@@ -122,14 +123,14 @@ function safeKill(child: KillableChild, signal: NodeJS.Signals): void {
  * exitCode: null = 被信号杀死（AgentOutcome 的杀链判据，§3.3.5）。
  */
 export function synthesizeTimeoutOutcome(
-  task: AgentTaskSpec,
+  task: AgentCallOpts,
   stdoutTail: string,
   engineId: string = DEFAULT_ENGINE_ID,
 ): AgentOutcome {
   return {
     content: "",
     // slug 进错误信息：单看 outcome（record 之外）也能定位是哪个任务超时
-    error: `engine_timeout: [slug=${task.slug}] ${engineTimeoutDetail(stdoutTail)}`,
+    error: `engine_timeout: [slug=${task.description ?? "unknown"}] ${engineTimeoutDetail(stdoutTail)}`,
     // 被信号杀死：退出码语义为 null（§3.3.5 AgentOutcome.exitCode 注释）
     exitCode: null,
     engineId,

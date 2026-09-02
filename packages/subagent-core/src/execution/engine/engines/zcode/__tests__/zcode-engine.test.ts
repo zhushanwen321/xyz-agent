@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RunContext } from "../../../port.ts";
-import type { AgentEvent, AgentTaskSpec, EngineHandle } from "../../../types.ts";
+import type { AgentEvent, EngineHandle } from "../../../types.ts";
+import type { AgentCallOpts } from "../../../../../orchestration/models/types.ts";
 import { HOST_TIMEOUT_ABORT_REASON } from "../../../common/kill-chain.ts";
 import { ZCODE_GOLDEN_STDOUT } from "../golden-sample.ts";
 import type { ZcodeLaunchedProcess } from "../launcher.ts";
@@ -89,8 +90,8 @@ function makeEngine(overrides?: Partial<ZcodeEngineDeps>): ZcodeEngine {
   });
 }
 
-function makeTask(overrides?: Partial<AgentTaskSpec>): AgentTaskSpec {
-  return { task: "Reply with the single word: ok", slug: "s", model: `${PROVIDER}/m1`, ...overrides };
+function makeTask(overrides?: Partial<AgentCallOpts>): AgentCallOpts {
+  return { prompt: "Reply with the single word: ok", description: "s", model: `${PROVIDER}/m1`, ...overrides };
 }
 
 function makeCtx(overrides?: Partial<RunContext>): RunContext {
@@ -180,7 +181,7 @@ describe("run ① prepare 期错误：进程创建前 reject、不产生 handle"
   it("argv 超限 → prompt_too_large（不调 launch）", async () => {
     const fake = makeFakeLaunch({ stdout: ZCODE_GOLDEN_STDOUT });
     const engine = makeEngine({ launch: fake.launch });
-    await expect(engine.run(makeTask({ task: "x".repeat(200 * 1024) }), makeCtx())).rejects.toThrowError(
+    await expect(engine.run(makeTask({ prompt: "x".repeat(200 * 1024) }), makeCtx())).rejects.toThrowError(
       /prompt_too_large/,
     );
     expect(fake.calls).toHaveLength(0);
@@ -244,8 +245,8 @@ describe("run ② 成功路径：golden stdout → outcome/handle/事件合成",
     const engine = makeEngine({ launch: fake.launch });
     await engine.run(
       makeTask({
-        task: "TASK BODY",
-        persona: { appendSystemPrompt: ["PERSONA A", "PERSONA B"] },
+        prompt: "TASK BODY",
+        appendSystemPrompt: ["PERSONA A", "PERSONA B"],
         denyTools: ["bash"],
         cwd: "/work/dir",
       }),

@@ -31,7 +31,7 @@ import {
 } from "@xyz-agent/extension-protocol";
 import { type Static, Type } from "typebox";
 
-import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
+import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
 import { THINKING_ORDER } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
 import type { LauncherDeps } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
 import { abortRun, runWorkflow } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";

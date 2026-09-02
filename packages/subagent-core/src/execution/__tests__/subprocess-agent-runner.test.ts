@@ -11,7 +11,8 @@
 //   T3.7  (正常): onEvent 桥接 AgentEvent 透传
 //   T3.17 (NFR): mergeTimeoutSignal listener 清理
 //   T3.18 (NFR): dispose 兜底覆盖（delegate 后子进程进 spawnedChildren）
-//   T3.19 (NFR): AgentCallOpts→ExecuteOptions 映射保真
+//   T3.19 (NFR): AgentCallOpts→ExecuteOptions 直出保真（D6 合流后映射在 PiEngine 边界，
+//                本组用例经真实 PiEngine 链路锁定 spawn 参数形态）
 
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -496,8 +497,8 @@ describe("SubprocessAgentRunner (wave-4 delegate)", () => {
   // ────────────────────────────────────────────────
   // T3.19: AgentCallOpts → ExecuteOptions 映射保真
   // ────────────────────────────────────────────────
-  describe("T3.19 映射保真", () => {
-    it("prompt → task, agent → agent, schemaEnv 透传", async () => {
+  describe("T3.19 直出保真（D6：映射点在 PiEngine.agentCallToExecuteOptions，SAR 直传零映射）", () => {
+    it("prompt → task, agent → agent, schemaEnv 透传（经 pi 边界直出）", async () => {
       let capturedOpts: Record<string, unknown> | undefined;
       const mockService = createMockService(
         vi.fn().mockImplementation((opts: Record<string, unknown>) => {

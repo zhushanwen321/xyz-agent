@@ -16,7 +16,7 @@ import {
   isGuiCapable,
 } from "@xyz-agent/extension-protocol";
 
-import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/execution/execute-options-mapper.ts";
+import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
 import { computeElapsedSeconds, projectOutcome } from "@zhushanwen/subagent-core/execution/execution-record.ts";
 import { isResumable } from "@zhushanwen/subagent-core/execution/lifecycle-predicates.ts";
 import type { ExecutionRecord } from "@zhushanwen/subagent-core/execution/types.ts";

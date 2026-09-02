@@ -1670,9 +1670,9 @@ export class SubagentService {
     this.chatRoundTickets.set(record.id, { record, opts, identity, ctx, signal, priority, stream, resume });
     void this.chatPiEngine
       .run(
-        // task 形参仅满足 port 签名——chat 轮次的任务声明由 ticket lossless 携带
-        //（identity/forkFromSessionFile/host ctx 不在 AgentTaskSpec 字段表内，见
-        // ChatRoundTicket 注释；u-3b 合流后消除双形态）
+        // task 形参仅满足 port 签名——chat 轮次由 ticket lossless 携带
+        //（identity/forkFromSessionFile/host ctx 是 host 编排件，不入任务声明
+        // AgentCallOpts——[u-3b D6] 双形态保留的结构性裁决见 ChatRoundTicket 注释）
         executeOptionsToEngineTaskSpec(opts),
         { taskId: record.id, poolKey: PI_POOL_KEY, signal, stream },
       )

@@ -33,7 +33,7 @@
 
 import { getLogger } from "../core/logger.ts";
 
-import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
+import { SLUG_MAX_LENGTH } from "./models/types.ts";
 import { createRecord, updateFromEvent } from "../execution/execution-record.ts";
 import { SubagentStream } from "../execution/stream-sink.ts";
 import type { AgentEvent } from "../shared/agent-event.ts";

@@ -11,7 +11,8 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { RunContext } from "../../port.ts";
-import type { AgentEvent, AgentTaskSpec } from "../../types.ts";
+import type { AgentEvent } from "../../types.ts";
+import type { AgentCallOpts } from "../../../../orchestration/models/types.ts";
 import { ZcodeEngine, type ZcodeEngineDeps } from "../../engines/zcode/zcode-engine.ts";
 import type { ZcodeLaunchedProcess } from "../../engines/zcode/launcher.ts";
 
@@ -91,7 +92,7 @@ describe("conformance C4：abort 行为（运行中 cancel → 合成终态、�
       signal: controller.signal,
       onEvent: (ev) => events.push(ev),
     };
-    const task: AgentTaskSpec = { task: "hang", slug: "abort", model: `${PROVIDER}/m1` };
+    const task: AgentCallOpts = { prompt: "hang", description: "abort", model: `${PROVIDER}/m1` };
 
     const runP = engine.run(task, ctx);
     // run 进行中触发 abort（等待 spawn 完成——微任务两拍让 launch 已执行）

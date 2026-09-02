@@ -118,7 +118,7 @@ describe("killChain grace 参数化（D3-① 杀链合一：pi=30s / zcode=5s，
 describe("synthesizeTimeoutOutcome", () => {
   it("合成 engine_timeout 终态：error 含 slug + stdout 尾部 + engine: pi 重跑建议；exitCode=null", () => {
     const outcome = synthesizeTimeoutOutcome(
-      { task: "review files", slug: "review-files" },
+      { prompt: "review files", description: "review-files" },
       "last stdout lines...",
     );
     expect(outcome.error).toContain("engine_timeout");
@@ -132,7 +132,7 @@ describe("synthesizeTimeoutOutcome", () => {
 
   it("stdout 尾部超 2000 字截断；engineId 可指定", () => {
     const outcome = synthesizeTimeoutOutcome(
-      { task: "t", slug: "s" },
+      { prompt: "t", description: "s" },
       "y".repeat(3_000),
       "zcode",
     );
