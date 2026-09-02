@@ -101,7 +101,7 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- 残留风险：P-model 行为待 M2 实测回填（设计 §3.4/§5 待验证检查点）；P-scan-perf（4,615 文件 <5s + 事件循环阻塞 <100ms）待 Gate B 实测回填（阶段 3 审查 U2 登记：M1 已 committed 但无实测记录）；M1 的「ws-client 脚本直调验证」并入 Gate B 执行
+- 残留风险：**① pi attach 环境崩**（pi 0.84.4 Bun v1.3.14 × proper-lockfile 4.1.2 Proxy invariant，base-tool-enhance reaper 依赖链）——所有会话打开失败（含既有会话），独立环境 bug 待修，V2/V7 渲染/V9 续聊/P-cwd-fallback 续聊段/P-model 五处 blocked 于它；**② renderer 存量 3 个 it.skip**（MessageStream-bash.test.ts T10/gap3/W5T1，历史 feature）待用户签认处置；P-model 行为待 attach 环境修复后实测回填（设计 §3.4/§5 待验证检查点）
 - 2026-09-02 计划创建（基线 f47e00b05）
 - 2026-09-02 中断恢复校准：前序会话在 W3 中断，u2/u3/u5 半成品留在工作区（无 commit 证据）。主 agent 核验：runtime tsc 绿 + renderer vue-tsc 绿；u2 vitest 11/12（target 冲突双检失败）；u3 case 分发缺失；u5 组件测试缺失。按接替程序补派 dev 续作。另：u0b 状态行此前误贴单元表格式（未标 committed），本次一并修正
 - 2026-09-02 文档笔误登记：§2/§4 中 `pnpm --filter @xyz-agent/renderer` 实际包名为 `@xyz-agent/frontend`（u4 committed 时已用正确名验证）
@@ -112,3 +112,19 @@ graph TD
 - 2026-09-02 阶段 4 修复循环：batch-renderer（d631e358c，5 项缺陷修，42/42）、batch-runtime（7be007a02，u1 分批让出用例，10/10）、u7-polish（六项 M3 打磨，55/55 + 254 全回归）全部 committed；主 agent 同步修订设计文档（7 条 doc_errors + 主目录措辞）与 demo（删方案 A「N 条消息/已压缩」两项无契约支撑展示；方案 C out-of-scope 部分保留原样）。设计文档修订要点：错误规格表补表外兜底码两行、D3 缓存失效因果修正、already_imported 统一内联、V6 改 stale 竞态构造、M3 阶段空档消除（toast 提前）、V1 删消息数
 - 2026-09-02 P-scan-perf 与 M1 ws-client 直调验证：登记残留，Gate B 执行（见残留风险）
 - 2026-09-02 定向复审（阶段 4 收口）：10 条 unreasonable 修复 + 7 条 doc_errors 修订实质全部验证成立（端到端链路核到行级，runtime 10/10 + renderer 55/55 实跑复现），无代码级新引入问题。残余 2 条低严重度文档问题当场清零：R1 D5 契约注释 cwdExists「~ 执行」漏改主目录（第 3 处）；R2 设计 M3 行未反映 u7 已整体交付（补完成注记）。顺带：V6 补稳健序列提示（先粘贴命中后替换内容再导入，规避 1s TTL 窗口）、测试注释日期笔误（8-30 周日→8-31 周一）。复审 notes 登记不修项：path-bar icon 无 DOM 断言（纯装饰）、already_imported 文案措辞差（语义等价）、import-service 源根 force 重扫冗余 IO（无害，u1 未导出失效函数下的保守刷新）。阶段 4 清零，转入阶段 5 验收
+- 2026-09-02 阶段 5 双级验收：
+  - **Gate A 绿**：runtime 全量 385 files exit=0、renderer 全量 3666 passed / 3 skipped（存量 MessageStream-bash.test.ts 的 it.skip×3，历史 feature 遗留，与本功能无关，登记待用户签认）、shared/runtime/frontend typecheck 绿、根 lint exit=0（修复后——session-file-utils 超 taste max-lines 拆出 session-file-external-scan.ts + 空 catch 对齐先例，6edc0a665）
+  - **Gate B 签收**（真实 ~/.pi/agent/sessions 4,616 文件 + CDP 9222 + WS 直发探针）：
+    - V1 pass：短 ID 过滤唯一条目（名称/目录/大小与文件一致）、导入后侧边栏分组即时出现、P-isolation（源文件 md5/mtime 不变）、副本+sidecar 落盘 dev 数据目录
+    - V2 **blocked（环境，非本功能）**：pi 0.84.4 二进制 Bun v1.3.14 × proper-lockfile 4.1.2（base-tool-enhance reaper 依赖）Proxy invariant 崩溃 → 所有 pi attach 失败；**对照实验：既有会话「确认收到」同样失败**，与导入功能无关，独立环境事项待修
+    - V3 pass：重启 dev 后导入会话仍在侧边栏（P-reload）
+    - V4 pass：三通道（名称/完整 uuid/路径粘贴切路径模式）
+    - V5 pass：列表已导入徽标+双处禁用、直发 RPC already_imported（文案含「侧边栏可直接打开」）、改名 fixture target_conflict（错误规格表文案逐字一致）
+    - V6 pass：invalid_session 走稳健 stale 竞态真机端到端（pathHit 内存命中→内容替换→RPC 拦截→内联+恢复指引、对话框不崩）；dir_unreadable RPC 面（EACCES 实测）+ 组件面已覆盖；原生文件对话框选中无权限目录的交互 partial（自动化工具限制，组件测试 4 用例覆盖逻辑）
+    - V7 pass（可验面）：含 unified-hooks custom entry session 导入成功、副本 entry 完整保留；对话流渲染部分 blocked 随 V2
+    - V8 pass：切根（AppleScript 真实选择）、chip/根标注/列表重载、计数 0/0 与实际合法 session 数一致
+    - V9 pass：死 cwd 候选标注「原目录已不存在，续聊将在主目录执行」+ 导入 toast 预警合并一条 + 副本落地；续聊 F3 兜底实测 blocked 随 V2（P-cwd-fallback 部分）
+    - P-scan-perf pass（修复后 1,624ms / maxBlock 37ms / 二次 <1ms，bc25decf3）；P-broadcast/P-dedup/P-custom/P-isolation 随场景过；P-model 未验（依赖 attach，blocked 前置）
+    - M1 ws-client 直调 pass（auth 握手 + 两命令 reply/error envelope 实测）
+  - 验收 fixture 全部清理（dev 数据目录测试副本 0 残留、/tmp fixture 0 残留、外部源 ~/.pi 全程未动）
+  - **结论：Gate A 绿 + Gate B 8 pass / 1 blocked（环境）+ 2 partial 子项，双绿交付成立；blocked 项为独立环境 bug（pi Bun×proper-lockfile），不属本功能范围**
