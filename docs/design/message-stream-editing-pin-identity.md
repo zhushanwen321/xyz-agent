@@ -47,6 +47,8 @@ SCQA：
 
 代码链路（编辑钉扎五跳，文件均为当前 dev-0.9.13 分支实况）：
 
+（本节行号为设计基线 30dfa5d6c 时点，当前代码行号随修复实现有漂移）
+
 1. `packages/ui/src/features/chat/UserBubble.vue`：实例内部 `editingUserId` ref 记录「正在编辑本气泡的消息 id」；`watch(isEditingThisUser)` 状态翻转时 emit `edit-state-change {editing: boolean}`。清理仅发生在 `cancelEdit()` / `submitEdit()` 两个显式动作，**组件无任何卸载清理**。
 2. `packages/renderer/src/components/panel/MessageStream.vue:361`：`onEditStateChange(index, editing)` 把 **slot 闭包捕获的数组索引**写进裸 ref `editingTurnIdx`（初值 -1）。
 3. `packages/renderer/src/composables/panel/useStreamingPin.ts`：`pinnedIndexes` computed 聚合 `streamingTurnIdx`（末 turn isStreaming 时的位置）+ `editingTurnIdx`。
@@ -90,7 +92,7 @@ SCQA：
 
 | # | 断言 | 状态 | 依据 |
 |---|---|---|---|
-| P1 | virtua 0.50.0 keepMounted 渲染循环无越界钳制 | ✅已测 | 实读 `node_modules/virtua/lib/vue/index.cjs`：slot 调用在 483-486（`l.default({ item: t.data[r], index: r })`，越界时 item=undefined 直传 slot）、keepMounted 并入循环在 506-513（`new Set(t.keepMounted)` 并入可视范围后 forEach 渲染），全程无 index < data.length 检查 |
+| P1 | virtua 0.50.0 keepMounted 渲染循环无越界钳制 | ✅已测 | 实读 `node_modules/virtua/lib/vue/index.js`：slot 调用在 483-486（`f.default({ item: r.data[e], index: e })`，越界时 item=undefined 直传 slot）、keepMounted 并入循环在 506-513（`new Set(r.keepMounted)` 并入可视范围后 forEach 渲染），全程无 index < data.length 检查 |
 | P2 | 升级 virtua 0.51.0 不解决 | ✅已测 | npm 下载 0.51.0 比对，该渲染循环逐字相同 |
 | P3 | UserBubble 无卸载清理 | ✅已测 | grep 全文件无 `onUnmounted`/`onBeforeUnmount` |
 | P4 | `streamingTurnIdx` 同一渲染周期内不越界 | ✅已测（代码事实） | 它是 computed、同步派生自当前 `items`，值恒 ≤ length-1；崩溃索引只能来自 `editingTurnIdx` |

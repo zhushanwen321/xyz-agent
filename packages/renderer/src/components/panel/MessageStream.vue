@@ -354,7 +354,7 @@ const lastUserTurnIdx = computed(() => {
 })
 
 /**
- * editing 钉扎（SR5，B9）：编辑中的 turn 滚出视口会卸载丢失 Turn.vue 的 draftText。
+ * editing 钉扎（SR5，B9）：编辑中的 turn 滚出视口会卸载丢失 UserBubble 的 draftText。
  * [cw wave w3] 切到 virta：钉扎改由 <Virtualizer :keepMounted> 消费 pinnedIndexes（design §4.3），
  * 不再调旧手写虚拟滚动的 pinEditing。
  * [pin-identity D2] 编辑态改持身份（turnStableId）非位置：数组下标快照在切 session / 消息增删后

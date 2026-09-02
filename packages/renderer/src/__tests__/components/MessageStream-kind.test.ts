@@ -16,6 +16,7 @@
  * viewportSize=0 → 不窗口化渲染任何项（MessageStream-bash.test.ts T10/gap3 因同因 skip）。
  * 本测把 Virtualizer mock 成全量渲染 scoped slot 的 stub，让模板 v-if/v-else-if/v-else
  * 链对每项真实执行——这正是「查表分发」的断言对象（组件选中逻辑在模板，不在 virta）。
+ * [U0] 起另消费 :keep-mounted 并复刻越界直传 slot 语义（见下方 [U0] 注释）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/components/MessageStream-kind.test.ts
  */
@@ -40,7 +41,7 @@ import type { Message } from '@xyz-agent/shared'
 // [U0 keepMounted 渲染语义]（设计 message-stream-editing-pin-identity §2.4 P5 / §5 U0-C3）：
 //   本 mock 同时消费 :keep-mounted（Array）并复刻 virtua 0.50.0 实装的渲染循环——
 //   `new Set(keepMounted)` 并入可视范围后逐索引调 slot({ item: data[idx], index: idx })，
-//   全程无 index < data.length 检查（依据 node_modules/virtua/lib/vue/index.cjs 483-486
+//   全程无 index < data.length 检查（依据 node_modules/virtua/lib/vue/index.js 483-486
 //   slot 调用 / 506-513 keepMounted 循环）：idx 越界时 item=undefined 直传 slot。这不是
 //   mock 的疏漏而是被测崩溃机理本身——生产代码编辑钉扎残留越界索引时，模板
 //   `item.kind` 读 undefined.kind 抛 TypeError。U3 身份锚定（反查 + clamp + D8 清零）落地后用例转绿。
@@ -90,7 +91,7 @@ vi.mock('virtua/vue', async () => {
           'div',
           { class: 'mock-virtualizer' },
           // flatMap 扁平拼接 slot vnode（各自带 renderKey 稳定 key）——真实 virtua 把每项包进
-          // 带 key 的 item wrapper 后扁平 push（index.cjs c.push(v(e))），keyed patch 按键移动
+          // 带 key 的 item wrapper 后扁平 push（index.js l.push(c(e))），keyed patch 按键移动
           // 复用实例；若此处保留嵌套数组 children，keepMounted 顺序变化会退化成逐位置 diff
           // → 全量重建（编辑态等实例状态丢失，与生产行为不符，P5 用例已实测踩过）。
           [...indexes].flatMap((idx) => {

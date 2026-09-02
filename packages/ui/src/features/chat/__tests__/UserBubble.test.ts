@@ -3,8 +3,9 @@
  *
  * 覆盖：
  * - W4TC3: UserBubble 拆分后渲染一致（展示态/编辑态 + badge + hover actions）
+ * - [pin-identity U2] D2 turnKey 负载断言 + D3 卸载清理（编辑态 unmount → emit {editing:false, turnKey}）
  *
- * 运行：cd packages/renderer && npx vitest run src/components/panel/message-stream/__tests__/UserBubble.test.ts
+ * 运行：cd packages/ui && npx vitest run src/features/chat/__tests__/UserBubble.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'

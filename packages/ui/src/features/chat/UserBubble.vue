@@ -1,7 +1,7 @@
 <template>
   <!--
     UserBubble：用户气泡（展示态/编辑态 + skill/file/image badge + hover actions）。
-    从 Turn.vue 拆出。emit edit-state-change 通知父组件 pinEditing。
+    从 Turn.vue 拆出。emit edit-state-change 通知父组件（MessageStream.onEditStateChange 按 turnKey 身份持有钉扎状态）。
   -->
   <!-- user 区：编辑态切 textarea，展示态气泡 + hover actions -->
   <div class="group/user flex flex-col items-end gap-1">
