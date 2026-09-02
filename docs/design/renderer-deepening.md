@@ -224,10 +224,10 @@ runtime 进程（WS push）
 - **联动**：G5 声明的行为等价条款中本条为显式例外。
 
 **D5：legacy useSidebar 删除与迁移面（组 5a，选定）**
-- **采用**：useChatViewDeps.ts:63 的 `{ forkSession, handoff }` 切换 useSidebarNew（New 已有同名透传，:395-396/:424-425）；6 个测试文件改指 New（测试隔离入口改名适配：legacy 的 `resetAppBootstrap` → New 的 `resetSidebarNewForTest`，:67-71，语义等价 = 守卫重置 + 订阅计数重置）；随后删除 legacy 文件（567 行）及其双份链拷贝。
+- **采用**：2 处生产消费方切换 useSidebarNew——useChatViewDeps.ts:63 的 `{ forkSession, handoff }`（New 已有同名透传，:395-396/:424-425）与 trace/useTraceJump.ts:78 的动态 import（改指 New 同名导出）；16 个测试文件改指 New（mock / 动态 import / 隔离入口三类适配：legacy 的 `resetAppBootstrap` → New 的 `resetSidebarNewForTest`，:67-71，语义等价 = 守卫重置 + 订阅计数重置）；全部改指完成后删除 legacy 文件（567 行）及其双份链拷贝。
 - **被接管路径副作用枚举**（准则：接管 ≠ 全程复用）：legacy 的 deleteSession/deleteFolder 失败兜底走内部 `enterEmptyChatState()`（navigation.push + **startFlow 进新建任务流**，:334-337）；core 版兜底只做 `navigation.push({view:'chat'})`（use-session.ts:377,380），不启动 flow。该差异**已是线上现状**——useSidebarNew 的 deleteSession 早已代理 core（:307-308），46 个消费方走的就是 core 语义；legacy 版仅剩测试触达。删 legacy = 消除分叉而非引入变化，设计显式声明放弃 startFlow 兜底（删最后一个 session 后停留空 chat 态，用户点新建进 landing——与 New 路径现状一致）。
 - **被否**：保留双轨至 P3 session 域波次——双轨每滞留一天，例 1 的漂移就多一天复利。
-- **证据**：消费面 grep 实证 = 1 生产 + 6 测试（useChatViewDeps.ts:34 + fg6-overview / useSidebar-delete-empty-state / focused-session-id / app-bootstrap / list-load-error / initapp-default-cwd-session）；initApp/onConnected/goOverview/toggleCollapse 在 New 已存在（:322-376）；enterEmptyChatState 零外部消费方（grep 实证，仅 legacy 内部自调）。
+- **证据**：消费面 grep 实证（静态 import + 动态 import + vi.mock 三口径，2026-09-03 实施前复核修正——初版只扫静态口径漏了 1 生产 + 10 测试）= 2 生产 + 16 测试。生产：useChatViewDeps.ts:34,63（静态）、trace/useTraceJump.ts:78（动态）；测试含隔离入口型 6（fg6-overview / useSidebar-delete-empty-state / focused-session-id / app-bootstrap / list-load-error / initapp-default-cwd-session）与 mock/动态型 10（MessageStream.wire / MessageStream-kind / MessageStream-subagent-force-working / SubagentDirectiveStream / use-fork-notice-stream / useHandoffEffect / use-chat-view-deps / fork-entry-behavior / subagent-tab / useTraceJump）。initApp/onConnected/goOverview/toggleCollapse 在 New 已存在（:322-376）；enterEmptyChatState 零外部消费方（grep 实证，仅 legacy 内部自调）。
 - **效果**：G2——sidebar 编排一个 SSOT。
 
 **D6：chat store 类型级 facet + 剪枝（组 5b，选定）**
@@ -321,7 +321,8 @@ runtime 进程（WS push）
 | W4 组4 | u4.1 | seq 协议归位 subscription-state（D1，行为等价） | 先做机械归位再做结构归一，同一文件两次手术风险分层 | A3 + A7 |
 | W4 组4 | u4.2 | route-inbound 声明式归一（D2，两 commit：骨架 → error 条目合并） | error 双支合并是语义最复杂的一步，独立 commit 可单独回滚 | A3 + A4 + A7 |
 | W5 组5a | u5.1 | sessionEntry 端口束 + core 切入链全链化 + restoreSession 入 core + 时序纠正（D3/D4） | core 侧先行，壳代理化前 core 路径自洽（deleteSession 回退即时受益） | A2 + A7 |
-| W5 组5a | u5.2 | useSidebarNew 代理化 + legacy useSidebar 删除 + 6 测试改指 + useChatViewDeps 切换 + context.md 登记「Session 切入链」（D5） | 依赖 u5.1 的 core 全链；删除与改指原子完成 | A1 + A1-负向 + A2 + A7 |
+| W5 组5a | u5.2 | useSidebarNew 代理化 + 2 处生产消费方切换（useChatViewDeps 静态 / useTraceJump 动态）+ 隔离入口型 6 测试改指 + context.md 登记「Session 切入链」（D5） | 依赖 u5.1 的 core 全链；生产切换与配套测试先行 | A1 + A1-负向 + A2 + A7 |
+| W5 组5a | u5.3 | mock/动态型 10 测试改指 + legacy useSidebar.ts 删除（原子收尾）（D5） | 删除必须等全部消费方改指完成 | A1 + A2 + A7 |
 | W6 组5b | u6.1 | chat store 剪枝（timer 三件套入 testInternals + 2 个测试文件连带改指 + 逃生舱并入）+ facet 类型 + taste-lint 规则（D6） | 依赖组 5a 吸收 LRU 后再分层 | A7 + A8 |
 | W6 组5b | u6.2 | branchSummary entry 化 + effects 骨架 helper + apply-entry builder（D13） | 域内机械收敛同波；D13 是行为变化，独立 commit | A4(branch) + A7 |
 
@@ -331,7 +332,7 @@ runtime 进程（WS push）
 - **W2**：`renderer/composables/features/search/{useSearch,useSearchJump,useFileSearch}.ts`、`stores/command.ts`（删）、`stores/fileSearch.ts`（删）、对应壳测试、`core/domain/new-task-search/`（按需补齐差集）。
 - **W3**：`core/domain/composer/dispatch/{fork-mode,handoff-mode}.ts`、`dispatch/types.ts`（新）、`submit.ts`、`context/injection.ts`、`context/context-chips.ts`。
 - **W4**：`core/coordination/subscription-state.ts`、`seq-gap.ts`（并入后删）、`route-inbound.ts`、两者测试文件。
-- **W5**：`core/domain/session/use-session.ts`（+ api-port 类型）、`renderer/composables/features/sidebar/{useSidebarNew,useSidebar}.ts`（一代理一删除）、`renderer/composables/panel/useChatViewDeps.ts`、6 个测试文件、`docs/architecture/context.md`（术语登记）。
+- **W5**：`core/domain/session/use-session.ts`（+ api-port 类型）、`renderer/composables/features/sidebar/{useSidebarNew,useSidebar}.ts`（一代理一删除）、`renderer/composables/panel/useChatViewDeps.ts`、`renderer/composables/features/trace/useTraceJump.ts`、16 个测试文件（静态+动态+mock 三口径 grep 全集）、`docs/architecture/context.md`（术语登记）。
 - **W6**：`core/domain/chat/store.ts`、`index.ts`（facet 导出）、`effects/registry.ts`、`bash-effects.ts`、`apply-entry.ts`、taste-lint 规则（eslint 插件）、`renderer/src/__tests__/useChat.test.ts` + `renderer/src/__tests__/stores/chat-dispose-session.test.ts`（timer 消费改指 testInternals）。
 
 ### 待验证检查点（探针清单，准则 7）
@@ -372,3 +373,4 @@ runtime 进程（WS push）
 - v1：2026-09-02 初版。来源：架构评审（三路 Explore 走查，9 候选 + 8 小项）→ 分组裁决（5 组）→ 组 4/5 grilling（设计树走完）→ 本文档覆盖全 5 组。
 - v2：2026-09-02 R1 对抗式审查修订（1 must-fix + 7 suggestion 全修）：① D6 timer 实证修正——生产零消费 + 2 个测试文件经公共面消费连带改指 testInternals（P0-a 重扫、u6.1/W6 改动面补齐）；② D2 补守卫归宿——条目 schema 增 `payloadGuard`，dispatcher 在 dispatch 与 effect 之间统一执行；③ D3/D4 内部矛盾修正——「零变化」改「零新增步骤、时序按 D4 纠正」，core.selectSession 消费面三处 grep 实证补入 D4；④ 新增 A8 facet lint 负面拦截验收（组 5b / u6.1 联动）；⑤ D9 表述去满——下限为 ws-client 1 处 mock + dispatcher 1 处注入；⑥ 例 5 重述——权威接口 types.ts:173 已在，5 处为有意窄契约，u3.1 改定性收敛（P2 探针扩围）；⑦ A6 补触发手段（新建 session 触发 runtime commands 推送）；⑧ 附录 A 补评审候选映射（自包含）。
 - v3：2026-09-02 R2 聚焦复审修订（0 must-fix + 2 suggestion + 1 info 全修）：① D2 守卫分两类——跳过型（:227/:241-243）入 payloadGuard，整形型（:276 的 'Unknown error' 参数兜底）留 sessionEffect 参数构造处，并显式「payloadGuard 只门控 effect、不门控分发」；② 例 5/D8/P2/W3 补第 6 处窄契约 context-chips.ts:29-32（已带意图注释的达标样例，P2 定性预期保留）；③ D6① 补 testInternals 选择理由（store 闭包绑定的 timer 无法经独立 initTimers 复现，走 chat-bash-effects.test.ts:84 先例会改变测试语义）。审查记录：.review/renderer-deepening-review-r1.md（R1 全文 + R2 聚焦复审）。
+- v4：2026-09-03 实施前复核修正（doc_error）：D5 消费面初版 grep 只扫静态 import 口径，漏动态 import 与 vi.mock——真实消费面 = 2 生产（useChatViewDeps 静态 + useTraceJump:78 动态）+ 16 测试（隔离入口型 6 + mock/动态型 10）；u5.2 相应拆为 u5.2（生产切换 + 隔离入口型）与 u5.3（mock/动态型 + 删除收尾），删除仍原子收尾。
