@@ -102,16 +102,29 @@ export interface NotifyDomainPorts {
   createDelivery?(port: DeliveryPort, options?: DeliveryConfig): DeliveryHandle;
 }
 
-// 模块级配置态（与 host-services 同款覆盖式语义——重复注入以后者覆盖）。
-let configuredPorts: NotifyDomainPorts | undefined;
+// 配置态持有：globalThis[Symbol.for] slot（与 host-services 同款覆盖式语义——重复
+// 注入以后者覆盖；post-convergence D9 根治，dist 双形态下免模块副本分裂，范式与
+// execution/subagent-service.ts 进程单例 slot 同型，docs/standards.md §7.5）。
+const NOTIFY_PORTS_SLOT_KEY = Symbol.for("@zhushanwen/subagent-core.notify-ports");
+
+type NotifyPortsSlot = { current: NotifyDomainPorts | undefined };
+
+function getNotifyPortsSlot(): NotifyPortsSlot {
+  let slot = Reflect.get(globalThis, NOTIFY_PORTS_SLOT_KEY) as NotifyPortsSlot | undefined;
+  if (!slot) {
+    slot = { current: undefined };
+    Reflect.set(globalThis, NOTIFY_PORTS_SLOT_KEY, slot);
+  }
+  return slot;
+}
 
 export function configureNotifyDomain(ports: NotifyDomainPorts): void {
-  configuredPorts = ports;
+  getNotifyPortsSlot().current = ports;
 }
 
 /** 测试隔离专用：清空注入态（生产禁用——注入点在宿主壳初始化，生命周期与进程一致）。 */
 export function resetNotifyDomainForTests(): void {
-  configuredPorts = undefined;
+  getNotifyPortsSlot().current = undefined;
 }
 
 const DEFAULT_NOTIFY_PORTS: NotifyDomainPorts = {
@@ -122,5 +135,5 @@ const DEFAULT_NOTIFY_PORTS: NotifyDomainPorts = {
 };
 
 export function getNotifyDomainPorts(): NotifyDomainPorts {
-  return configuredPorts ?? DEFAULT_NOTIFY_PORTS;
+  return getNotifyPortsSlot().current ?? DEFAULT_NOTIFY_PORTS;
 }
