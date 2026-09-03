@@ -28,7 +28,8 @@ vi.mock('node:fs', async (importOriginal) => {
 })
 
 import { SessionLifecycle, setMigrationGate } from '../src/services/session/session-lifecycle.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../src/services/session/session-internal.js'
+import type { IEventAdapter } from '../src/interfaces.js'
 import type { IProcessManager, IPiEngine } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
 import type { ISessionStore } from '../src/services/ports/session.js'
@@ -79,20 +80,22 @@ function makeEnv() {
   const clientMap = new Map<string, MockClient>()
   const sessionMap = new Map<string, IManagedSessionView>()
 
-  const svc = {
+  const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => [] as string[]),
     getSkillPaths: vi.fn(() => [] as string[]),
     getReplaceSystemPrompt: vi.fn(() => undefined),
     getLaunchPresetOptions: vi.fn(async () => undefined),
-    initializeManagedSession: vi.fn(async (id: string, _client: IPiEngine, cwd: string, label: string) =>
-      makeSessionView({ id, label, cwd })),
     toSummary: vi.fn((s: IManagedSessionView): SessionSummary => ({
       id: s.id, label: s.label, cwd: s.cwd, status: 'active',
       lastActiveAt: 1, modelId: 'p/m', tokenCount: 0,
     })),
     findScannedSession: vi.fn(() => undefined),
     notifySessionCreated: vi.fn(),
-  } as unknown as ISessionServiceInternal
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转
+    fetchAndBroadcastContext: vi.fn(async () => undefined),
+    removeSessionEntry: vi.fn(),
+    getActiveSummaries: vi.fn(() => []),
+  }
 
   const pm = {
     createSession: vi.fn(async (id: string) => {
@@ -127,7 +130,16 @@ function makeEnv() {
 
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
 
   return {
     lifecycle, svc, pm, sessionStore, clientMap, sessionMap,
@@ -203,7 +215,7 @@ describe('SessionLifecycle · F1/F2 失败路径', () => {
       )
     })
 
-    it('cwd 不存在时 svc.initializeManagedSession 收到降级后的 cwd', async () => {
+    it('cwd 不存在时注册进 Map 的 session.cwd 为降级后的 cwd', async () => {
       const nonExistentCwd = '/tmp/non-existent-dir-xyz-agent-test-3'
       existsSyncMock.mockImplementation((path: string) => {
         if (path === nonExistentCwd) return false
@@ -212,10 +224,11 @@ describe('SessionLifecycle · F1/F2 失败路径', () => {
 
       await env.lifecycle.create(nonExistentCwd, 'test-session')
 
-      // svc.initializeManagedSession 应被调用，且 cwd 为 homedir
-      const calls = vi.mocked(env.svc.initializeManagedSession).mock.calls
-      expect(calls.length).toBe(1)
-      expect(calls[0][2]).toBe(homedir()) // cwd 参数
+      // S3 迁移：断言观察点从 svc.initializeManagedSession 传参（cwd 第 3 参）随迁为真
+      // registerSession 的注册结果（Map 记录字段），断言语义不变——cwd 降级后进入 session。
+      const ids = Array.from(env.lifecycle.keys())
+      expect(ids.length).toBe(1)
+      expect(env.lifecycle.get(ids[0]!)?.cwd).toBe(homedir())
     })
   })
 

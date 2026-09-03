@@ -67,6 +67,7 @@ function makeEnv(opts: { active?: boolean; busy?: boolean } = {}) {
   const client = {
     getCommands: vi.fn(async () => []),
     getState: vi.fn(async () => ({ thinkingLevel: 'low' })),
+    getSessionStats: vi.fn(async () => ({})),
     getEntries: vi.fn(async (since?: string) => {
       if (since === undefined) {
         // 全量（建基线）：一个旧 entry，leafId=leaf0
@@ -100,14 +101,17 @@ function makeEnv(opts: { active?: boolean; busy?: boolean } = {}) {
     bus,
   )
   svc.setMessageBus(bus)
+  let busyReady: Promise<void> | undefined
   if (opts.busy) {
-    // 直接注入 busy ManagedSession（isGenerating=true → busy 预检拒绝）
-    ;(svc as unknown as { sessions: Map<string, { isGenerating: boolean; isCompacting: boolean }> }).sessions.set(SID, {
-      isGenerating: true,
-      isCompacting: false,
+    // S3 写点归位：sessions Map 所有权迁 lifecycle（svc.sessions 直戳不再可用）——经
+    // initializeManagedSession 委托真注册（构造订阅接线会真跑 registerReplicatedStates
+    // 播种，mock client 已覆盖 getState/getCommands/getSessionStats），注册后置 busy 标记
+    // （isGenerating=true → busy 预检拒绝）。busy 用例须 await busyReady 后再断言。
+    busyReady = svc.initializeManagedSession(SID, client as unknown as IPiEngine, '/tmp', 't').then((session) => {
+      session.isGenerating = true
     })
   }
-  return { svc, bus, publishSpy, broadcasts, client, pm, promptCalls, sinceBaselineRef: () => sinceBaseline }
+  return { svc, bus, publishSpy, broadcasts, client, pm, promptCalls, sinceBaselineRef: () => sinceBaseline, busyReady }
 }
 
 beforeEach(() => {
@@ -125,7 +129,8 @@ describe('fetchCurrentSystemPrompt（常驻扩展现取通道）', () => {
   })
 
   it('busy 预检：isGenerating → throw code=session_busy（命令会排队，预检拒绝更诚实）', async () => {
-    const { svc } = makeEnv({ busy: true })
+    const { svc, busyReady } = makeEnv({ busy: true })
+    await busyReady
     await expect(svc.fetchCurrentSystemPrompt(SID)).rejects.toMatchObject({ code: 'session_busy' })
   })
 

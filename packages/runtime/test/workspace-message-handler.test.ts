@@ -173,12 +173,19 @@ describe('SessionLifecycle — 写入时机 record', () => {
     // 当前 SessionLifecycle 只有 4 个构造参数，workspaceService 是本次 W2 新增的第 5 个。
     // 如果测试因"too many arguments"编译失败，说明实现尚未加参数——这是预期的 TDD 失败。
     // 实现后此行应正常编译。
+    // S3 写点归位：新增第 6 参 registerDeps（真 registerSession 的装配依赖，fake adapterFactory）。
     const lifecycle = new SessionLifecycle(
       svc as unknown as ConstructorParameters<typeof SessionLifecycle>[0],
       pm as unknown as ConstructorParameters<typeof SessionLifecycle>[1],
       configStore as unknown as ConstructorParameters<typeof SessionLifecycle>[2],
       sessionStore as unknown as ConstructorParameters<typeof SessionLifecycle>[3],
       workspaceService as unknown as ConstructorParameters<typeof SessionLifecycle>[4],
+      {
+        adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }),
+        getMessageBus: () => null,
+        broadcastGlobal: () => {},
+        notifyMessageComplete: () => {},
+      } as ConstructorParameters<typeof SessionLifecycle>[5],
     )
 
     await lifecycle.create(tmpdir(), 'test')
@@ -212,6 +219,12 @@ describe('SessionLifecycle — 写入时机 record', () => {
       configStore as unknown as ConstructorParameters<typeof SessionLifecycle>[2],
       sessionStore as unknown as ConstructorParameters<typeof SessionLifecycle>[3],
       workspaceService as unknown as ConstructorParameters<typeof SessionLifecycle>[4],
+      {
+        adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }),
+        getMessageBus: () => null,
+        broadcastGlobal: () => {},
+        notifyMessageComplete: () => {},
+      } as ConstructorParameters<typeof SessionLifecycle>[5],
     )
 
     await expect(lifecycle.create('/test')).rejects.toThrow('pi spawn failed')

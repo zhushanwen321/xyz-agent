@@ -52,15 +52,22 @@ describe('skill-dir-config buildDirConfigs', () => {
   })
 
   it('~ 路径展开后存在则保留为 enabled（确定性，不依赖测试机环境）', () => {
-    const tmpHomeSubdir = mkdtempSync(join(homedir(), '.skill-test-'))
+    // fs-guard：家目录在白名单外不可写。HOME 临时指向 tmp——expandHome 经 os.homedir()
+    // 动态读 $HOME，`~` 展开语义原样保留（展开结果落在 fakeHome 下）。
+    const realHome = process.env.HOME
+    const fakeHome = mkdtempSync(join(tmpdir(), 'skill-home-'))
+    process.env.HOME = fakeHome
     try {
+      const tmpHomeSubdir = mkdtempSync(join(fakeHome, '.skill-test-'))
       const tildePath = '~/' + basename(tmpHomeSubdir)
       const configs = buildDirConfigs([], { projectPaths: [], globalPaths: [tildePath, '/path/a'] })
       const enabled = configs.filter(c => c.enabled)
       expect(enabled.map(c => c.path)).toContain(tildePath)
       expect(enabled.map(c => c.path)).not.toContain('/path/a')
     } finally {
-      rmSync(tmpHomeSubdir, { recursive: true, force: true })
+      process.env.HOME = realHome
+      // fakeHome 递归删除已覆盖其下 fixture，无需单独清理 tmpHomeSubdir
+      rmSync(fakeHome, { recursive: true, force: true })
     }
   })
 
@@ -167,13 +174,19 @@ describe('discovery-store setSkillDirs 脏数据写入过滤（v2 SkillDirConfig
   })
 
   it('~ 展开后存在的路径保留（确定性，不依赖测试机）', () => {
-    const tmpHomeSubdir = mkdtempSync(join(homedir(), '.skill-settest-'))
+    // 同上：HOME 临时指向 tmp（fs-guard 白名单），~ 展开语义保留
+    const realHome = process.env.HOME
+    const fakeHome = mkdtempSync(join(tmpdir(), 'skill-home-set-'))
+    process.env.HOME = fakeHome
     try {
+      const tmpHomeSubdir = mkdtempSync(join(fakeHome, '.skill-settest-'))
       const tildePath = '~/' + basename(tmpHomeSubdir)
       setSkillDirs([glob(tildePath), glob('/path/a')])
       expect(getSkillDirs()).toEqual([tildePath])
     } finally {
-      rmSync(tmpHomeSubdir, { recursive: true, force: true })
+      process.env.HOME = realHome
+      // fakeHome 递归删除已覆盖其下 fixture，无需单独清理 tmpHomeSubdir
+      rmSync(fakeHome, { recursive: true, force: true })
     }
   })
 

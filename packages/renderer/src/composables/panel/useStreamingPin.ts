@@ -15,23 +15,33 @@
  * [PR#116 review M3] 跨 session 重钉由 computed pinnedIndexes 自动承接：pinnedIndexes 依赖
  * streamingTurnIdx（派生自 items / sessionId），session 切换导致 items 重建时 computed 自动重算，
  * 无需 watch 副作用驱动（旧的空 watch 已删）。
+ *
+ * [pin-identity U1] 编辑钉扎从「数组索引快照」改为「turn 稳定身份反查」（设计
+ * docs/design/message-stream-editing-pin-identity.md §3.3 D1）：裸索引快照在 session 切换 /
+ * 消息增删后过期（E-now-1 越界崩溃刷屏 / E-now-2 错钉他回合），身份（turnStableId）不过期——
+ * 索引只在 pinnedIndexes 求值那一刻从当前 items 反查得出，钉扎始终指向「正在编辑的那一回合」
+ * 本身。streamingTurnIdx 维持位置派生不身份化（D5：「末回合在流式」本身即位置语义，computed
+ * 同步派生恒 ≤ length-1，探针 P4）。输出前 clamp 过滤越界索引（D4 纵深防御：反查已结构性
+ * 消除本 bug，此过滤兜未来新增钉扎来源的同类错误——virtua 对 keepMounted 越界无任何防御，
+ * data[idx]=undefined 直传 slot 读 item.kind 即崩）。
  */
 import { computed, type ComputedRef, type Ref } from 'vue'
-import type { RenderItem } from '@/composables/logic/messageTurns'
+import { renderKey, type RenderItem } from '@/composables/logic/messageTurns'
 
 export interface UseStreamingPinOptions {
   /** 渲染项列表 getter（turn + system 穿插），用于定位最后一个 turn 的数组下标 */
   items: ComputedRef<RenderItem[]>
   /** 当前 session id getter（捕获跨 session 切换，streaming→streaming 时强制重钉，M3） */
   sessionId: () => string
-  /** 编辑中的 turn 下标（-1 表示无编辑），用于 virtua 多项钉扎（pinnedIndexes 输出）。 */
-  editingTurnIdx?: ComputedRef<number> | Ref<number>
+  /** 编辑中的 turn 身份（turnStableId，null 表示无编辑），用于 virtua 多项钉扎。
+   *  不持久持有位置快照：索引由 pinnedIndexes 每次从当前 items 反查（[pin-identity D1]）。 */
+  editingTurnKey?: ComputedRef<string | null> | Ref<string | null>
 }
 
 /**
  * @param items 渲染项列表（含末尾可能排着的 bash system item）
  * @param sessionId 当前 session id getter
- * @param editingTurnIdx 编辑中的 turn 下标（可选，virtua 多项钉扎用）
+ * @param editingTurnKey 编辑中的 turn 身份 turnStableId（可选，null 表示无编辑，virtua 多项钉扎用）
  *
  * watch 最后一个 turn 的 isStreaming：true 时该 turn idx 进入 pinnedIndexes，false 时移除。
  * （当前钉扎由 computed pinnedIndexes 派生，无 watch 副作用。）
@@ -39,10 +49,12 @@ export interface UseStreamingPinOptions {
  * 钉扎逻辑作用于 startIndex（startIndex 不超过 lastTurnIdx），保证 streaming turn 不滚出视口顶部。
  *
  * [cw wave w4] 返回 pinnedIndexes（virtua 多项钉扎输出）：聚合「streaming turn idx」+
- * 「editing turn idx」去重过滤，喂 virtua <Virtualizer :keepMounted>（旧 pinStreaming 入参已于 w4 删除）。
+ * 「editing turn 身份反查 idx」去重 + clamp 越界，喂 virtua <Virtualizer :keepMounted>
+ * （旧 pinStreaming 入参已于 w4 删除；[pin-identity U1] editing 从裸下标改身份反查）。
  */
 export function useStreamingPin(options: UseStreamingPinOptions): {
-  /** 需要钉扎在窗口内的项下标数组（streaming turn idx + editing turn idx，去重过滤 < 0）。
+  /** 需要钉扎在窗口内的项下标数组（streaming turn idx + editing turn 身份反查 idx，去重、
+   *  clamp 过滤 < 0 与 >= items.length——virtua 越界即崩，输出必须全部有界）。
    *  virtua 路径消费（<Virtualizer :keepMounted>）。 */
   pinnedIndexes: ComputedRef<number[]>
 } {
@@ -75,16 +87,33 @@ export function useStreamingPin(options: UseStreamingPinOptions): {
   /**
    * virtua 多项钉扎：聚合需恒在窗口内的项下标。
    * - streaming turn idx（streamingTurnIdx，末 turn isStreaming 时有值，否则 -1）
-   * - editing turn idx（editingTurnIdx，可选；-1 表示无编辑）
-   * 去重 + 过滤 < 0。virtua 路径消费（<Virtualizer :keepMounted>）。
+   * - editing turn 身份反查 idx（editingTurnKey 为 turnStableId，非 null 时对当前 items 反查）
+   * 去重 + clamp。virtua 路径消费（<Virtualizer :keepMounted>）。
    */
   const pinnedIndexes = computed<number[]>(() => {
     const idxs: number[] = []
     const streamIdx = streamingTurnIdx.value
     if (streamIdx >= 0) idxs.push(streamIdx)
-    const editIdx = options.editingTurnIdx?.value ?? -1
-    if (editIdx >= 0 && !idxs.includes(editIdx)) idxs.push(editIdx)
-    return idxs
+
+    // 编辑钉扎按身份反查（[pin-identity D1]）：editingTurnKey 与 renderKey 同一身份空间
+    // （`t-${turnStableId}`）。显式 null guard：null/undefined 即无编辑，直接不反查——
+    // 禁止依赖 `t-${null}` 字符串拼接的巧合路径。反查 miss（-1）= 回合不在场（E2），
+    // 语义即「无钉可钉」，不入 pinnedIndexes（fail-safe：宁可不钉不崩溃）。
+    const turnKey = options.editingTurnKey?.value ?? null
+    if (turnKey != null) {
+      const target = `t-${turnKey}`
+      // 只反查 turn 项：target 属 `t-` 空间，显式 kind 判定不依赖「s-/t- 前缀空间不碰撞」的隐含知识
+      const found = items.value.findIndex(
+        (item) => item.kind === 'turn' && renderKey(item) === target,
+      )
+      if (found >= 0 && !idxs.includes(found)) idxs.push(found)
+    }
+
+    // clamp 纵深防御（[pin-identity D4]）：身份反查已结构性消除越界（反查自当前 items，命中
+    // 即有界），此过滤兜未来新增钉扎来源违反纪律的同类错误（含 streamingTurnIdx 路径的理论
+    // 越界）——virtua 对越界索引无防御，越界/负值一律不出门（E3：极端时序最多少钉一项，防崩不治病）。
+    const len = items.value.length
+    return idxs.filter((idx) => idx >= 0 && idx < len)
   })
 
   return { pinnedIndexes }

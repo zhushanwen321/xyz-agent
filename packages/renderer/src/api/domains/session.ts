@@ -7,7 +7,7 @@
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（Wave 3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, BatchDeleteResult, ServerMessage, ThinkingLevel } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, BatchDeleteResult, ServerMessage, ThinkingLevel, ImportCandidatesRequest, ImportCandidatesReply, ImportRequest, ImportReply } from '@xyz-agent/shared'
 import { command } from '../request'
 
 /**
@@ -374,4 +374,32 @@ export function fetchCurrentSystemPrompt(
   sessionId: string,
 ): Promise<import('@xyz-agent/shared').ServerMessageMap['session.currentSystemPrompt']> {
   return command('session.fetchCurrentSystemPrompt', { sessionId })
+}
+
+// ── 导入 pi 会话（import-session u4，来源设计 docs/design/import-session.md §3.3 D5）──
+/**
+ * 拉取外部 pi 会话候选列表（打开对话框 / 搜索 / 切目录时调用，renderer 侧 debounce 250ms）。
+ *
+ * query 匹配字段集（runtime 与 renderer 共同遵守，防止两端裁量漂移）：name ∪ 完整
+ * sessionId ∪ uuid 前 6 位短 ID ∪ sourcePath ∪ dirLabel，全部 case-insensitive
+ * includes；query.trim() 以 '/' 或 '~' 开头时 UI 切「路径模式」（runtime 无特殊分支，
+ * sourcePath 的 includes 匹配天然覆盖）。
+ *
+ * 「已导入」（alreadyImported）去重由 runtime 保证（D4，默认 TTL 读打标，允许秒级
+ * stale）；renderer 只展示标记并禁用导入按钮，不做本地二次判断。
+ */
+export function importCandidates(request: ImportCandidatesRequest): Promise<ImportCandidatesReply> {
+  return command('session.importCandidates', request)
+}
+
+/**
+ * 执行导入：复制外部 pi 会话文件到太极 sessions 并写 project sidecar（点「导入」）。
+ *
+ * 去重/幂等由 runtime 在全局导入互斥区内 force 读双检保证（D4）；失败走 error
+ * envelope（码见 shared ImportErrorCode，renderer 在对话框内联展示恢复指引）。
+ * 成功 reply 的 warning='sidecar_failed' 表示文件已落地但 project 归属未写入，
+ * renderer 降级 toast 引导手动归类（不回滚）。
+ */
+export function importSession(request: ImportRequest): Promise<ImportReply> {
+  return command('session.import', request)
 }

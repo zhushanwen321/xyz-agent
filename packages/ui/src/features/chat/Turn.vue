@@ -170,9 +170,12 @@ const { t } = useI18n()
 
 /**
  * B9：编辑状态变化通知父组件。
+ * [pin-identity D2/D7] 负载扩展为 {editing, turnKey}（turnKey = turnStableId(turn)，身份由
+ * 事件源 UserBubble 携带，父组件不再持数组位置快照）；Turn 只透传不解读（模板
+ * `emit('edit-state-change', $event)` 原样不动），仅 emits 类型声明随负载扩展——编排器不解析领域语义。
  */
 const emit = defineEmits<{
-  'edit-state-change': [{ editing: boolean }]
+  'edit-state-change': [{ editing: boolean; turnKey: string }]
 }>()
 
 const deps = useChatViewDeps()

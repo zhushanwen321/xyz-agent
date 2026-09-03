@@ -15,7 +15,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildTraceSnapshotFromFile } from '../session-trace.js'
+import { buildTraceSnapshotFromFile } from '../trace-sync.js'
 import { readFirstJsonlLine, readSessionEndMeta } from '../../../infra/pi/session-file-utils.js'
 import type { ISessionStore } from '../../ports/session.js'
 

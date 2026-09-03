@@ -20,6 +20,8 @@
  * 本文件是 pi 协议的真契约（ADR-0037）。PiEvent 联合覆盖 AgentSessionEvent 全部事件类型，
  * pi 升级时需同步维护（编译器 exhaustive check 会提示）。
  */
+// ThinkingLevel 值域双向防漂移锁的比对对象（import type：类型位置消费，保持本文件零运行时依赖）。
+import type { PI_THINKING_LEVELS } from '@xyz-agent/shared'
 
 // ── Base types ─────────────────────────────────────────────────────
 
@@ -430,6 +432,25 @@ export interface PiAutoRetryEndEvent extends PiBaseMessage {
 
 /** Thinking level 取值（pi thinking 配置）。 */
 export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/**
+ * ThinkingLevel 值域双向防漂移锁（S6 自 services/session/session-lifecycle.ts 迁入——比对双方
+ * 是本文件的 Pi 侧类型与 shared 常量，概念自然家在 Pi 边界镜像文件；launch-params.ts
+ * 从未承载此锁）。锁定的两个漂移方向：
+ * - 方向①（Expect<typeof PI_THINKING_LEVELS extends readonly PiThinkingLevel[]>）：
+ *   shared 常量出现 pi-protocol 之外的值（shared 手改常量与本手写 union 漂移）→ 违
+ *   Expect 的 true 约束 → 编译错；
+ * - 方向②（ExpectNever<Exclude<...>>）：pi 升级加档位、本镜像 union 更新而 shared 常量
+ *   未跟 → Exclude 产物非 never → 违 ExpectNever 的 never 约束 → 编译错
+ *  （C-proc-08 版本门禁不含 ThinkingLevel 值域比对，此锁补位）。
+ * 导出仅为编译期断言锚定（防 unused），非消费 API——运行时零存在（纯类型）。
+ */
+type Expect<T extends true> = T
+type ExpectNever<T extends never> = T
+export type ThinkingLevelDriftGuard = [
+  Expect<typeof PI_THINKING_LEVELS extends readonly PiThinkingLevel[] ? true : false>,
+  ExpectNever<Exclude<PiThinkingLevel, (typeof PI_THINKING_LEVELS)[number]>>,
+]
 
 /** Thinking level 变更事件。 */
 export interface PiThinkingLevelChangedEvent extends PiBaseMessage {

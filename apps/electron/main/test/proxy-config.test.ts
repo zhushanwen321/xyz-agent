@@ -11,8 +11,9 @@
  * 凭证往返的核心不变量。
  *
  * safeStorage mock 策略：proxy-config.ts 内部 `require('electron')` 读 safeStorage。
- * 测试环境无 electron runtime，`require('electron')` 返回路径字符串桩（无 safeStorage），
- * 故 getSafeStorage() 自然返回 null → 明文 base64 路径无需 mock 即可测。
+ * 「safeStorage 不可用」（明文 base64）路径显式注入 undefined 态——不依赖环境
+ * require('electron') 的安装态（本地返回路径字符串桩、CI skip-binary-download 走
+ * throw 分支，两形态不同），所有分支统一经 mock 自包含。
  * 「safeStorage 可用」与「B-1 跨状态迁移」路径需控制 decryptString 行为：
  * vi.mock('electron') 无法拦截 require（ESM/CJS 边界），改用 Module._load 拦截
  * `require('electron')` 注入可控的 safeStorage 桩（beforeEach 设、afterEach 还原，不污染其他文件）。
@@ -60,10 +61,16 @@ interface FakeSafeStorage {
  * 拦截 `require('electron')` 注入伪造 safeStorage。
  * getSafeStorage() 每次调用都重新 require，故拦截在 require 调用前设好即可对所有
  * 后续 encryptCredential/decryptCredential 生效。
+ * 传 undefined 注入「无 safeStorage」显式不可用态：明文 base64 用例必须自包含，
+ * 不依赖环境 require('electron') 的安装态（本地装了二进制返回路径字符串桩，
+ * CI ELECTRON_SKIP_BINARY_DOWNLOAD 下 path.txt 缺失走 throw 分支，两形态不同）。
+ * 可重复调用（同一测试内切换状态）：originalLoad 仅首次拦截时保存，避免还原成中间态。
  */
-function interceptElectronSafeStorage(safeStorage: FakeSafeStorage): void {
-  const realLoad = nodeModule._load
-  originalLoad = realLoad
+function interceptElectronSafeStorage(safeStorage: FakeSafeStorage | undefined): void {
+  if (originalLoad === null) {
+    originalLoad = nodeModule._load
+  }
+  const realLoad = originalLoad
   nodeModule._load = ((request: string, ...args: unknown[]) => {
     if (request === 'electron') {
       return { safeStorage }
@@ -125,8 +132,10 @@ describe('A: encryptCredential / decryptCredential roundtrip', () => {
   })
 
   it('safeStorage 不可用时的往返（明文 base64）', () => {
-    // 不拦截 electron：require('electron') 返回路径字符串桩，getSafeStorage 返回 null
-    // → encrypt/decrypt 走明文 base64
+    // 显式注入无 safeStorage 态：getSafeStorage 返回 null → encrypt/decrypt 走明文 base64。
+    // 不依赖环境 require('electron') 的安装态（本地路径桩 / CI skip-binary-download
+    // 下 throw，两形态不同），保证测试自包含
+    interceptElectronSafeStorage(undefined)
     const plain = 'user:s3cret-token'
     const enc = encryptCredential(plain)
 
@@ -138,7 +147,8 @@ describe('A: encryptCredential / decryptCredential roundtrip', () => {
   })
 
   it('[B-1 回归防护] 写入时 safeStorage 不可用（明文 base64），读取时 safeStorage 变可用且 decryptString 抛错 → 降级明文 base64 仍还原', () => {
-    // Phase 1：safeStorage 不可用（不拦截）→ 写出明文 base64 凭证
+    // Phase 1：safeStorage 显式不可用（注入 undefined，不赌环境安装态）→ 写出明文 base64 凭证
+    interceptElectronSafeStorage(undefined)
     const plain = 'user:migrated-secret'
     const enc = encryptCredential(plain)
     expect(enc).toBe(Buffer.from(plain, 'utf-8').toString('base64'))
@@ -174,6 +184,10 @@ describe('A: encryptCredential / decryptCredential roundtrip', () => {
 
 // ── B. stripCredential / withCredential ─────────────────────────────────
 describe('B: stripCredential / withCredential', () => {
+  // 本 describe 各用例经 encryptCredential 触达 getSafeStorage 的 require('electron')，
+  // 默认显式注入无 safeStorage 态：不拦截时该 require 依赖环境安装态（本地路径桩 /
+  // CI skip-binary-download 下 throw 分支），曾致 CI 间歇 5s 超时；afterEach 统一还原
+  beforeEach(() => interceptElectronSafeStorage(undefined))
   it('有凭证的 URL：stripCredential 剥离凭证，withCredential 还原', () => {
     const url = 'http://user:pass@host:8080'
     const { safeUrl, credential } = stripCredential(url)
@@ -246,6 +260,9 @@ describe('B: stripCredential / withCredential', () => {
 
 // ── C. readProxyConfig / writeProxyConfig 文件往返 ───────────────────────
 describe('C: readProxyConfig / writeProxyConfig', () => {
+  // 含凭证的写入/读取经 encrypt/decryptCredential 触达 require('electron')，
+  // 同 B describe：默认显式注入无 safeStorage 态，不赌环境安装态
+  beforeEach(() => interceptElectronSafeStorage(undefined))
   it('含凭证的配置写入后读取，凭证还原，功能等价', () => {
     writeProxyConfig({
       mode: 'manual',

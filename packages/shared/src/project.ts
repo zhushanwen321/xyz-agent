@@ -33,12 +33,12 @@ export interface Project {
    *
    * setActiveProject(id) 切换 / addProject(name) 新建时更新为 Date.now()。
    * loadFromStorage 用 `p.lastUsedAt ?? 0` 兼容旧持久化数据（无该字段视为未用过）。
-   * 用于 recentProjects 排序（降序，最新在前）。 */
+   * 仅作持久化留痕，不驱动 project 列表排序（2026-09-02 语义修正：点击不改顺序）。 */
   lastUsedAt: number
   /** 用户手动排序位（可选，2026-08-29 ProjectSwitcher 3A 拖拽排序，D7）。
    *
-   * undefined = 未被手动排序（落自动段：active 置顶 + lastUsedAt 降序）；
-   * 有值 = 用户序段（按 userOrder 升序排前段）。drop 时对用户序段密集重编号 0..n-1，
+   * undefined = 未被手动排序（按创建/持久化序稳定排在已排序项目之后）；
+   * 有值 = 按升序参与排列。reorderProject 提交时对整个列表密集重编号 0..n-1，
    * 不做稀疏编号——删除项目后留下的空洞由下次 drop 自然重编消除。
    * 持久化随 projects.json 全量替换零转换兼容（WriteBackCache 不感知该字段）。 */
   userOrder?: number

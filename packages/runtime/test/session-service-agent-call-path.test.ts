@@ -36,6 +36,7 @@ vi.mock('../src/infra/system/trash.js', () => ({ trash: vi.fn() }))
 vi.mock('../src/infra/pi/message-converter.js', () => ({ convertPiHistory: vi.fn((r) => r) }))
 
 import { SessionService } from '../src/services/session/session-service.js'
+import type { SessionRecords } from '../src/services/session/session-records.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
 
@@ -67,12 +68,17 @@ function createService(): SessionService {
   )
 }
 
+/** S6 迁移：getSubagents 实现落位 session-records，观察点随迁到 records 实例。 */
+function recordsRef(service: SessionService): SessionRecords {
+  return (service as unknown as { records: SessionRecords }).records
+}
+
 describe('SessionService.getAgentCallFilePath', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('record 有 sessionFile（在 piAgentDir 下）→ 返回路径', async () => {
     const service = createService()
-    vi.spyOn(service, 'getSubagents').mockResolvedValue([
+    vi.spyOn(recordsRef(service), 'getSubagents').mockResolvedValue([
       { subagentId: 'sa-001', sessionFile: '/tmp/pi-agent/subagents/enc/sa-001.jsonl' } as SubagentRecord,
     ])
     const result = await service.getAgentCallFilePath('main-sess', 'sa-001')
@@ -81,13 +87,13 @@ describe('SessionService.getAgentCallFilePath', () => {
 
   it('找不到 record → 空串', async () => {
     const service = createService()
-    vi.spyOn(service, 'getSubagents').mockResolvedValue([])
+    vi.spyOn(recordsRef(service), 'getSubagents').mockResolvedValue([])
     expect(await service.getAgentCallFilePath('main-sess', 'sa-missing')).toBe('')
   })
 
   it('record 无 sessionFile（null）→ 空串', async () => {
     const service = createService()
-    vi.spyOn(service, 'getSubagents').mockResolvedValue([
+    vi.spyOn(recordsRef(service), 'getSubagents').mockResolvedValue([
       { subagentId: 'sa-001', sessionFile: null } as SubagentRecord,
     ])
     expect(await service.getAgentCallFilePath('main-sess', 'sa-001')).toBe('')
@@ -95,7 +101,7 @@ describe('SessionService.getAgentCallFilePath', () => {
 
   it('sessionFile 路径穿越（不在 piAgentDir 下）→ 空串（isStrictlyUnder 安全校验）', async () => {
     const service = createService()
-    vi.spyOn(service, 'getSubagents').mockResolvedValue([
+    vi.spyOn(recordsRef(service), 'getSubagents').mockResolvedValue([
       { subagentId: 'sa-001', sessionFile: '/etc/passwd' } as SubagentRecord,
     ])
     expect(await service.getAgentCallFilePath('main-sess', 'sa-001')).toBe('')

@@ -6,6 +6,7 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
 import type { HandoffService } from '../services/handoff-service.js'
+import type { ImportService } from '../services/session/import-service.js'
 import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND, RESTORE_FAILED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 // MessageBus（wave:runtime-wiring）：session.subscribe/unsubscribe RPC handler 用它注册订阅。
@@ -20,6 +21,11 @@ export interface SessionHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
   /** fast-handoff 编排层（session.handoff 路由用）。可选：未注入时该 case 报 unsupported。 */
   handoffService?: HandoffService
+  /**
+   * 导入 pi 会话服务（import-session D5/U2）：session.importCandidates / session.import 用。
+   * 可选：未注入时该 case 报 unsupported（组合根保证注入；case 分发由 u3-rpc-wiring 落地）。
+   */
+  importService?: ImportService
   /**
    * MessageBus 单例（wave:runtime-wiring）：session.subscribe/unsubscribe RPC 用它注册/取消订阅。
    * 可选：未注入时 subscribe/unsubscribe case 报 unsupported（组合根保证注入）。
@@ -37,6 +43,8 @@ export class SessionMessageHandler {
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
     'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.restore', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork', 'session.setProject',
+    // 导入 pi 会话（import-session D5/U2）：候选列表 + 执行导入（case 分发由 u3-rpc-wiring 落地）。
+    'session.importCandidates', 'session.import',
     'session.handoff', 'session.abortHandoff',
     // 强制退出（sidebar 右键）：杀 pi 进程 + stopped 收敛，区别于协作式 message.abort。
     'session.forceQuit',
@@ -463,6 +471,53 @@ export class SessionMessageHandler {
           projectId: msg.payload.projectId,
         })
         return this.ctx.broadcastSessionList()
+      }
+      case 'session.importCandidates': {
+        // 导入 pi 会话（import-session D5/u3）：候选列表（对话框打开/搜索/切目录，renderer
+        // debounce 250ms）。reply 与 request 同名（u0b protocol 登记），payload/reply 类型
+        // SSOT = shared import-session.ts，此处只透传不做字段裁剪。
+        const candidatesSvc = this.ctx.importService
+        if (!candidatesSvc) {
+          // importService 未注入（理论不可达——组合根必传），防御性报错（对齐 handoffService 惯例）。
+          return this.ctx.sendError(ws, 'import_unsupported', 'import service not available', msg.id)
+        }
+        try {
+          const result = await candidatesSvc.listCandidates(msg.payload)
+          return this.ctx.reply(ws, msg.id, 'session.importCandidates', result)
+        } catch (e) {
+          // ImportServiceError.code 透传（错误规格表权威清单）；非预期错误归 import_failed
+          //（对齐 worktree handler 的「无 code 兜底」模式）。守卫式读取：先判型再收窄，
+          // 非 string code 一律 undefined 走兜底。
+          const rawCode = (e as { code?: unknown }).code
+          const code = typeof rawCode === 'string' ? rawCode : undefined
+          const errMsg = toErrorMessage(e)
+          console.error(`[runtime] session.importCandidates failed (code=${code ?? 'unknown'}):`, errMsg)
+          return this.ctx.sendError(ws, code ?? 'import_failed', errMsg, msg.id)
+        }
+      }
+      case 'session.import': {
+        // 执行导入（D5）：互斥/校验/原子复制/sidecar/缓存失效全在 service（U2），handler 只
+        // 负责 reply 与广播。warning（sidecar_failed）是成功 reply 的可选字段（r4-INFO，
+        // 非 error envelope），随 result 原样透传。
+        const importSvc = this.ctx.importService
+        if (!importSvc) {
+          return this.ctx.sendError(ws, 'import_unsupported', 'import service not available', msg.id)
+        }
+        try {
+          const result = await importSvc.importSession(msg.payload)
+          this.ctx.reply(ws, msg.id, 'session.import', result)
+          // P-broadcast：导入成功后立即广播 session 列表（service 已 invalidateScanDirCache，
+          // 不等 1s TTL），侧边栏目标 project 分组即刻出现新会话；reply 先于广播
+          //（对齐 session.create / session.setProject 惯例）。
+          return this.ctx.broadcastSessionList()
+        } catch (e) {
+          // 守卫式读取（同 importCandidates 分支）：非 string code 一律 undefined 走兜底
+          const rawCode = (e as { code?: unknown }).code
+          const code = typeof rawCode === 'string' ? rawCode : undefined
+          const errMsg = toErrorMessage(e)
+          console.error(`[runtime] session.import failed (code=${code ?? 'unknown'}):`, errMsg)
+          return this.ctx.sendError(ws, code ?? 'import_failed', errMsg, msg.id)
+        }
       }
       case 'message.send': {
         // 纯主 agent 通道：marker 半成品转发（subagent 字段 → sendSubagentMessage 拼 base64

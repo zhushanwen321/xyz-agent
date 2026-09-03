@@ -7,7 +7,8 @@
  *
  * Facade 内部用完整 ManagedSession(extends IManagedSessionView,
  * 额外持有 adapter 等运行时句柄)。
- * 子模块经 ISessionServiceInternal 只看到 IManagedSessionView,
+ * 子模块经内部协议窄接口(ILifecycleSessionOps 等,见 session-internal.ts)
+ * 只看到 IManagedSessionView,
  * 但拿到的是 ManagedSession 实例,可读写字段(lastActiveAt / isGenerating)。
  */
 import type { ServerMessage, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'

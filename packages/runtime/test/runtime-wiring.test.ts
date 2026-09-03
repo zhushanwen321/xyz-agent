@@ -356,7 +356,7 @@ describe('wave:runtime-wiring · TC7 removeSessionEntry → bus.clearSession', (
       { readGitInfo: () => undefined, pruneStaleCache: () => {} } as never, {} as never,
     )
     service.setMessageBus(messageBus)
-    // removeSessionEntry 是 ISessionServiceInternal 公开方法
+    // removeSessionEntry 是内部协议公开方法（lifecycle/dispatcher 窄接口共享声明）
     service.removeSessionEntry('s-destroy')
     expect(messageBus.clearSession).toHaveBeenCalledTimes(1)
     expect(messageBus.clearSession).toHaveBeenCalledWith('s-destroy')

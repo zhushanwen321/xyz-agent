@@ -16,6 +16,7 @@ import { initLogger, closeLogger } from './infra/logger.js'
 import { ProcessManager } from './infra/pi/process-manager.js'
 import { migrateToPiSubdir, getProviderConfig, upsertProvider, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir, getProviderExtrasPath } from './infra/pi/pi-paths.js'
+import { getPiGlobalAgentDir } from './infra/pi/pi-maintenance.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
@@ -59,6 +60,7 @@ import { getAppVersion } from './services/plugin-service/plugin-version-checker.
 import { FsExecutor } from './infra/fs-executor.js'
 import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-store.js'
 import { ProjectStore } from './services/project/project-store.js'
+import { ImportService } from './services/session/import-service.js'
 import { WorkspaceService } from './services/workspace/workspace-service.js'
 import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 // D8-1（perf W29）：后台初始化序列（listen 后执行）——独立模块承载使「migrateBuiltin →
@@ -264,6 +266,14 @@ async function main(): Promise<void> {
   // ProjectStore：project 列表持久化（D14，2026-08-04 迁 runtime projects.json，
   // 与 recent-workspaces 同模式；前端 localStorage 仅首启迁移源）。
   const projectStore = new ProjectStore(configDir)
+  // ImportService：外部 pi 会话导入（import-session U2）。projects 仅用于 importSession 的
+  // projectId 存在性校验（D5 import_project_invalid），结构化最小依赖面；getRootDir 供
+  // listCandidates 的 rootDir 缺省（D5：pi 全局 sessions 经 getPiGlobalAgentDir 动态推导，
+  // 组合根合法 import infra 装配——services 层禁止 value import pi-maintenance，C-comm-03）。
+  const importService = new ImportService({
+    projects: projectStore,
+    getRootDir: () => join(getPiGlobalAgentDir(), 'sessions'),
+  })
   // S1-W4（D3）：built-in 插件目录显式注入（主进程 spawn 时传 --builtin-plugins-dir）。
   // 提供时 registry 只扫该目录、不做 cwd 探测（防用户 repo 预置目录冒充 built-in）；
   // 缺失（dev 直跑/测试）时 registry 回退探测链并落 warning。
@@ -654,6 +664,8 @@ async function main(): Promise<void> {
     // sd-u5：sessionId 单例注册表（上方 createSessionDeliveryRegistry 装配）。
     // 缺席时 server 构造退化实例并 warn（违反单例约束，仅测试装配遗漏场景）。
     delivery: sessionDelivery,
+    // 导入 pi 会话（import-session D5/U2）：session.importCandidates / session.import 路由。
+    importService,
   })
 
   // Graceful shutdown on signals

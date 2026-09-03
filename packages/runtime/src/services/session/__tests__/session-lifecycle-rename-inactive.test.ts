@@ -18,7 +18,8 @@ import { mkdtempSync, writeFileSync, rmSync, readdirSync, readFileSync, statSync
 import { join } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { SessionLifecycle } from '../session-lifecycle.js'
-import type { ISessionServiceInternal } from '../session-internal.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../session-internal.js'
+import type { IEventAdapter } from '../../../interfaces.js'
 import type { IProcessManager } from '../../ports/pi-engine.js'
 import type { IConfigStore } from '../../ports/config.js'
 import type { ISessionStore } from '../../ports/session.js'
@@ -27,13 +28,23 @@ import type { ScannedSession } from '../types.js'
 
 /**
  * 构造最小 lifecycle 环境（renameSession 非活跃分支路径）：svc 只需
- * findScannedSession/getSession；pm 只需 withEphemeralPi（附着瞬间读文件供断言）。
+ * findScannedSession；pm 只需 withEphemeralPi（附着瞬间读文件供断言）。
  */
 function makeEnv(scanned?: ScannedSession) {
-  const svc = {
+  // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转。
+  // 本测试路径只真实消费 findScannedSession，其余空 vi.fn 仅为满足接口面
+  const svc: ILifecycleSessionOps = {
     findScannedSession: vi.fn(() => scanned ?? undefined),
-    getSession: vi.fn(() => undefined),
-  } as unknown as ISessionServiceInternal
+    toSummary: vi.fn(),
+    getSkillPaths: vi.fn(),
+    getExtensionPaths: vi.fn(),
+    getReplaceSystemPrompt: vi.fn(),
+    getLaunchPresetOptions: vi.fn(),
+    fetchAndBroadcastContext: vi.fn(),
+    removeSessionEntry: vi.fn(),
+    notifySessionCreated: vi.fn(),
+    getActiveSummaries: vi.fn(),
+  }
   const setSessionName = vi.fn(async (_name: string) => ({ success: true }))
   let attachedContent: string | null = null
   const withEphemeralPi = vi.fn(async (sessionFile: string, fn: (client: unknown) => Promise<unknown>) => {
@@ -49,7 +60,16 @@ function makeEnv(scanned?: ScannedSession) {
   } as unknown as ISessionStore
   const workspaceService = {} as unknown as WorkspaceService
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
   return { svc, lifecycle, withEphemeralPi, setSessionName, getAttachedContent: () => attachedContent }
 }
 

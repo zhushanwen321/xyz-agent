@@ -39,7 +39,8 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
 
 import { SessionLifecycle, setMigrationGate } from '../src/services/session/session-lifecycle.js'
 import { parseSessionHeader } from '../src/infra/pi/session-file-utils.js'
-import type { ISessionServiceInternal } from '../src/services/session/session-internal.js'
+import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../src/services/session/session-internal.js'
+import type { IEventAdapter } from '../src/interfaces.js'
 import type { IProcessManager } from '../src/services/ports/pi-engine.js'
 import type { IConfigStore } from '../src/services/ports/config.js'
 import type { ISessionStore } from '../src/services/ports/session.js'
@@ -67,12 +68,11 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
     }),
     setSessionName: vi.fn(async () => undefined),
   }
-  const svc = {
+  const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => [] as string[]),
     getSkillPaths: vi.fn(() => [] as string[]),
     getReplaceSystemPrompt: vi.fn(() => undefined),
     getLaunchPresetOptions: vi.fn(async () => undefined),
-    initializeManagedSession: vi.fn(async (id: string) => ({ id } as unknown as IManagedSessionView)),
     toSummary: vi.fn(() => makeSummary('s-x')),
     // restore/fork 共用：target 从文件真实解析（模拟 scanner 重扫）
     findScannedSession: vi.fn((id: string): ScannedSession | undefined => {
@@ -84,12 +84,12 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
         lastModified: Date.now(), timestamp: header.timestamp, size: 0,
       } as ScannedSession
     }),
-    getSession: vi.fn(() => undefined),
-    detachSession: vi.fn(),
     removeSessionEntry: vi.fn(),
-    fetchAndBroadcastContext: vi.fn(() => undefined),
+    fetchAndBroadcastContext: vi.fn(async () => undefined),
     notifySessionCreated: vi.fn(),
-  } as unknown as ISessionServiceInternal
+    // S2 ISP 化：结构性满足 lifecycle 窄接口（10 方法 = 实际消费面），无强转
+    getActiveSummaries: vi.fn(() => []),
+  }
   const pm = {
     createSession: vi.fn(async () => client),
     destroySession: vi.fn(async () => undefined),
@@ -108,7 +108,16 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
   } as unknown as ISessionStore
   const workspaceService = { record: vi.fn() } as unknown as WorkspaceService
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService)
+  // S3 写点归位：注册走真 registerSession（svc.initializeManagedSession 已从接口移除），
+  // 装配依赖注入 fake adapterFactory。
+  const registerDeps: ISessionRegisterDeps = {
+    adapterFactory: () => ({ attach: vi.fn(), detach: vi.fn() }) as unknown as IEventAdapter,
+    getMessageBus: () => null,
+    broadcastGlobal: () => {},
+    notifyMessageComplete: () => {},
+  }
+
+  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
   return { lifecycle, svc, pm, client, switchCalls, sessionStore }
 }
 

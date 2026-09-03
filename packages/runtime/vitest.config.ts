@@ -51,6 +51,13 @@ export default defineConfig({
     // projects 模式下 root 级 globalSetup 经 getRootProject() 仍在所有项目前执行一次（vitest 源码
     // initializeGlobalSetup 强制纳入 core project）。
     globalSetup: ['./test/global-setup.ts'],
+    // [HISTORICAL] 2026-09-02 会话丢失事故第二层防线：worker 级 fs-guard 切面——破坏性
+    // fs 操作（写/删/移动）只允许落在白名单（os.tmpdir() / $XYZ_AGENT_DATA_DIR /
+    // ~/.xyz-agent-dev），真实 ~/.xyz-agent 无条件拒绝。注意：vitest projects 模式下
+    // root 级 setupFiles **不**被 project 继承（与 globalSetup 不同——后者经 getRootProject
+    // 对所有项目生效，前者实测 setup 0ms 完全不执行），必须逐 project 显式挂载；
+    // 幂等 patch，同 worker 多文件重复执行 setupFiles 无副作用。
+    setupFiles: ['./test/fs-guard.ts'],
     projects: [
       {
         // 主组：除真实 pi 用例外的全部测试，保持默认满并行（与分池前行为一致）
@@ -58,6 +65,7 @@ export default defineConfig({
           name: 'main',
           include: ['test/**/*.test.ts', 'src/**/*.test.ts', 'scripts/**/*.test.ts'],
           exclude: [...defaultExclude, ...REAL_PI_TESTS],
+          setupFiles: ['./test/fs-guard.ts'],
         },
       },
       {
@@ -66,6 +74,7 @@ export default defineConfig({
           name: 'real-pi',
           include: [...REAL_PI_TESTS],
           fileParallelism: false,
+          setupFiles: ['./test/fs-guard.ts'],
         },
       },
     ],
