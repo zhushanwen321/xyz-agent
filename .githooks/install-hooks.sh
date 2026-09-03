@@ -85,6 +85,16 @@ FRONTEND_FILES=$(echo "$STAGED_FILES" | grep "^packages/renderer/src/" || true)
 EXTENSION_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/.*\.ts$" | grep -vE "__tests__|\.test\.|/workflows/|/examples/|\.d\.ts$" || true)
 
 # ============================================================================
+# 0. pnpm store 布局守卫（翻转地雷：zsw 引擎 HOME 覆盖 × pnpm HOME 相对 store）
+#    后续 validate-runtime-bundle → verify-* e2e 的自含 install 撞上翻转布局会以
+#    ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY 硬崩，先拦下给出指引。
+# ============================================================================
+if ! bash .githooks/check_pnpm_store_layout.sh; then
+    echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+    exit 1
+fi
+
+# ============================================================================
 # 1. 前端 ESLint 检查
 # ============================================================================
 

@@ -224,6 +224,27 @@ mv /Applications/太极.app.new /Applications/太极.app
 
 补充：`.old` 或 `.new` 单独残留（`太极.app` 在位且可启动）属良性残留，下次启动自动清理，无需手动处理；从 DMG 只读卷运行时升级会被拒绝（update-result 写 `read-only volume`），请先将 `太极.app` 拖入「应用程序」文件夹再触发升级。
 
+### 11. pnpm install 报 ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY（间歇，单跑却成功）
+
+**现象**：commit / e2e 脚本里 `pnpm install` 间歇失败：`Aborted removal of modules directory due to no TTY`；同一命令单独重跑有时成功（假象：管道里 `| tail` 后 `$?` 是 tail 的退出码，`--silent` 还会吞掉真实报错）。pre-commit 的插件端到端验收随机红，`CI=true` 可"治愈"但会复发。
+
+**根因**（2026-09-03 PR #196 实战定位）：pnpm store 路径默认随 **HOME** 解析。zsw 引擎 worker 覆写 HOME（`~/.zcode/zsw/engines/*/home-appserver`）→ 引擎侧 pre-commit 内 verify-*.sh 自含 install 把**引擎侧 store** 写进 `node_modules/.modules.yaml` 的 `storeDir`；本地（正常 HOME）install 发现 storeDir 与自身解析不一致 → 判定 node_modules 布局过期 → 要求删除重建 → 非 TTY abort。**双向翻转**：谁最后 install 谁的 storeDir 生效，另一侧下次 install 就崩。
+
+排障口诀：
+
+```bash
+grep storeDir node_modules/.modules.yaml
+# ~/.pnpm-store/v10 = 本地布局（健康）；~/.zcode/zsw/... = 被引擎侧翻转（先恢复再 commit）
+```
+
+恢复：
+
+```bash
+CI=true ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install   # 约 6-7s 重建本地布局，然后重试 commit
+```
+
+**防护与根治**：护栏 `.githooks/check_pnpm_store_layout.sh` 挂在 pre-commit 第 0 段（install-hooks.sh 生成）与 validate-runtime-bundle.sh Gate 0，翻转即红并输出 [FIX] 指引——同时也兼作引擎侧「不覆写 HOME」修复的验收探针（修复落地后护栏应恒绿，红 = 回退信号）。根治在引擎侧不覆写 HOME（2026-09-03 开发中）；备选方案 `.npmrc` pin `store-dir` 评估结论：`~` 展开仍 HOME 相对（无效）、相对路径解析基准未验证（有 per-package store 撕裂风险）、写死绝对路径不可移植——均不采用。
+
 ## 环境变量速查
 
 | 变量 | 用途 | 生产默认值 | 开发默认值 |
