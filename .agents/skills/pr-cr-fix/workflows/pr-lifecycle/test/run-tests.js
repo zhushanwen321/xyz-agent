@@ -2,7 +2,7 @@
 /*
  * pr-lifecycle lib.cjs 单测 runner（自写断言，非 node:test 框架）。
  *
- * 运行：node .agents/workflows/pr-lifecycle/test/run-tests.js（exit 非 0 = 失败）。
+ * 运行：node .agents/skills/pr-cr-fix/workflows/pr-lifecycle/test/run-tests.js（exit 非 0 = 失败）。
  * 依据 impl-plan 偏差 3：测试对象是 .agents/workflows/ 下独立 .cjs，不在任何
  * pnpm 子包内、无 vitest 配置可挂载，故用 mock io 依赖注入直跑。
  * 全部读写只发生在 os.tmpdir() 下 mkdtemp 自建目录，测试结束删除，不触真实数据目录。
@@ -347,14 +347,14 @@ async function main() {
   await test('resumeCommand 生成：zsw CLI 真形态（--workflow 绝对路径 / --runId），cli 解析失败降级占位', () => {
     const t = makeIo({}); // homedir 指向无 zsw 的 fake-home → 占位降级
     const withRun = lib.resumeCommand(t.io, '/abs/repo', 'prw-20260903-100000-ab12');
-    assert.ok(withRun.includes(`--workflow /abs/repo/.agents/workflows/pr-lifecycle.js`), withRun);
+    assert.ok(withRun.includes(`--workflow /abs/repo/.agents/skills/pr-cr-fix/workflows/pr-lifecycle.js`), withRun);
     assert.ok(withRun.includes('--workdir /abs/repo'), withRun);
     assert.ok(withRun.includes('--repo /abs/repo'), `workdir 是保留键，恢复命令必须带 --repo：${withRun}`);
     assert.ok(withRun.includes('--runId prw-20260903-100000-ab12'), withRun);
     assert.ok(withRun.startsWith('node '), withRun);
     assert.ok(withRun.includes('<zsw-cli>（占位'), `cli 缺失应降级占位：${withRun}`);
     const fresh = lib.resumeCommand(t.io, '/abs/repo', null);
-    assert.ok(fresh.includes('--workflow /abs/repo/.agents/workflows/pr-lifecycle.js') && !fresh.includes('--runId'), fresh);
+    assert.ok(fresh.includes('--workflow /abs/repo/.agents/skills/pr-cr-fix/workflows/pr-lifecycle.js') && !fresh.includes('--runId'), fresh);
     assert.ok(fresh.includes('--repo /abs/repo'), fresh);
   });
 
@@ -422,7 +422,7 @@ async function main() {
     assert.strictEqual(fs.existsSync(path.join(stateDirOf(root), 'lock')), false);
     // log 首行含 runId 与 resumeCommand（获取通道 3）
     assertIncludes(recorded.logs[0], `runId=${result.runId}`);
-    assertIncludes(recorded.logs[0], `--workflow ${root}/.agents/workflows/pr-lifecycle.js`);
+    assertIncludes(recorded.logs[0], `--workflow ${root}/.agents/skills/pr-cr-fix/workflows/pr-lifecycle.js`);
     assertIncludes(recorded.logs[0], `--runId ${result.runId}`);
   });
 
@@ -537,7 +537,7 @@ async function main() {
     assert.strictEqual(result.runId, 'prw-20260901-000000-zzzz');
     assertIncludes(result.error, '无效');
     assertIncludes(result.error, '去掉 runId');
-    assert.ok(result.resumeCommand.includes(`--workflow ${root}/.agents/workflows/pr-lifecycle.js`), result.resumeCommand);
+    assert.ok(result.resumeCommand.includes(`--workflow ${root}/.agents/skills/pr-cr-fix/workflows/pr-lifecycle.js`), result.resumeCommand);
     assert.ok(!result.resumeCommand.includes(`--runId`), 'fresh 形态不带 runId');
   });
 
@@ -770,7 +770,7 @@ async function main() {
     assert.strictEqual(result.status, 'failed');
     assert.strictEqual(result.failedStep, 'b');
     assert.strictEqual(result.error, 'boom-b');
-    assert.ok(result.resumeCommand.includes(`--workflow ${root}/.agents/workflows/pr-lifecycle.js`), result.resumeCommand);
+    assert.ok(result.resumeCommand.includes(`--workflow ${root}/.agents/skills/pr-cr-fix/workflows/pr-lifecycle.js`), result.resumeCommand);
     assert.ok(result.resumeCommand.includes(`--runId ${RUN_ID_A}`), result.resumeCommand);
     assert.deepStrictEqual(runs, ['b']); // c 未执行
     const state = readStateFile(root, RUN_ID_A);
@@ -844,7 +844,7 @@ async function main() {
       assertIncludes(result.error, '请不传 runId 起新 run');
       assertIncludes(result.error, 'allowExternalChanges 在此场景无效');
       assertIncludes(result.error, `新 run 命令：node `);
-      assertIncludes(result.error, `--workflow ${root}/.agents/workflows/pr-lifecycle.js`);
+      assertIncludes(result.error, `--workflow ${root}/.agents/skills/pr-cr-fix/workflows/pr-lifecycle.js`);
       assert.strictEqual(result.resumeCommand, null); // 防指引链兜圈
       assert.deepStrictEqual(runs, []);
     }

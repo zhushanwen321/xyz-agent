@@ -1,6 +1,6 @@
 # PR 全生命周期 workflow（pr-lifecycle）设计
 
-> **一句话结论**：新建单一 workflow 脚本 `.agents/workflows/pr-lifecycle.js`（core 引擎契约），把 pr-cr-fix skill 的「开 PR → 门禁 → review-fix 循环 → code-simplify → 终局门禁」全链路编排进脚本：确定性步骤由脚本直接 `child_process` 跑，LLM 步骤收敛为 `agent()` 调用，cr-fix 循环嵌套复用引擎内置 `review-fix-loop`；脚本自维护 `.review/pr-workflow/<runId>/state.json` 检查点文件实现断点恢复——不传 `runId` 从头跑，传 `runId` 从未完成的第一个 step 续跑。终局 push 留在脚本外，由主 agent 获用户授权后执行。
+> **一句话结论**：新建单一 workflow 脚本 `.agents/skills/pr-cr-fix/workflows/pr-lifecycle.js`（core 引擎契约；u6 用户裁决移入 skill 目录自包含），把 pr-cr-fix skill 的「开 PR → 门禁 → review-fix 循环 → code-simplify → 终局门禁」全链路编排进脚本：确定性步骤由脚本直接 `child_process` 跑，LLM 步骤收敛为 `agent()` 调用，cr-fix 循环嵌套复用引擎内置 `review-fix-loop`；脚本自维护 `.review/pr-workflow/<runId>/state.json` 检查点文件实现断点恢复——不传 `runId` 从头跑，传 `runId` 从未完成的第一个 step 续跑。终局 push 留在脚本外，由主 agent 获用户授权后执行。
 
 **层声明**：本设计当前层 = 技术方案（脚本架构 / 状态机 / 契约），下一层 = 实现（脚本代码 + SKILL.md 路径 2 重写）。
 
@@ -359,4 +359,4 @@ pr-lifecycle.js（zsw worker 线程内，CJS，无沙箱）
 
 **实施期待验证清单**（设计阶段无法确定，诚实标注）：① pi 环境是否可直接跑同一脚本（路径 1/2 统一的预期收益，验收场景 8）；② 1.2.0 异步 run 的完成通知通道（mailbox 通知线已退役，主 agent 侧的等待方式以实装为准：daemon socket status / CLI `run_in_background` + 输出文件）；③ nested loop 的产物路径（aggregated.md 在其自带 runDir 下，error 指引需回传绝对路径）。
 
-**文件改动地图**：新增 `.agents/workflows/pr-lifecycle.js`；新增 `.agents/skills/pr-cr-fix/agents/simplify-apply.md`；删除 `.agents/workflows/pr-review-fix.js`；修改 `.agents/skills/pr-cr-fix/SKILL.md`（路径 2 整节 + 前置条件 + 反模式表 + 目录结构节）；修改 `scripts/pr-pre-merge.sh`（新增可选 `--base <ref>` 参数，默认 main 向后兼容——final-gates ③ 必须传 `--base <base>` 与 ① coverage 同口径，见 §3.3 final-gates 行与实施计划偏差 #11；Gate B S1 实证 stacked PR 场景下硬编码 main 必 exit 2）。其余脚本（pr-submit.sh / coverage-gate.py / metrics-gate.py / validate-skill-yaml.py 等）零改动——本设计全部复用现有确定性资产。
+**文件改动地图**：新增 `.agents/skills/pr-cr-fix/workflows/pr-lifecycle.js`（含 `lib.cjs`/`test/run-tests.js`，随 skill 自包含分发——u6 用户裁决移入技能目录）；新增 `.agents/skills/pr-cr-fix/agents/simplify-apply.md`；删除 `.agents/workflows/pr-review-fix.js`；修改 `.agents/skills/pr-cr-fix/SKILL.md`（路径 2 整节 + 前置条件 + 反模式表 + 目录结构节）；修改 `scripts/pr-pre-merge.sh`（新增可选 `--base <ref>` 参数，默认 main 向后兼容——final-gates ③ 必须传 `--base <base>` 与 ① coverage 同口径，见 §3.3 final-gates 行与实施计划偏差 #11；Gate B S1 实证 stacked PR 场景下硬编码 main 必 exit 2）。其余脚本（pr-submit.sh / coverage-gate.py / metrics-gate.py / validate-skill-yaml.py 等）零改动——本设计全部复用现有确定性资产。

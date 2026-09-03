@@ -149,7 +149,7 @@ const MSG = {
   /* ── Gate B S1：repoRoot 仓库根校验 ── */
   repoRootInvalid: (repoRoot, stderr) =>
     `repoRoot "${repoRoot}" 不是有效 git 仓库（git rev-parse --show-toplevel 失败：${tailLines(stderr, 3) || '无 stderr'}）。` +
-    `恢复：--repo 传仓库根绝对路径（即 .agents/workflows/pr-lifecycle.js 所在仓的根）后重新发起`,
+    `恢复：--repo 传仓库根绝对路径（即 .agents/skills/pr-cr-fix/workflows/pr-lifecycle.js 所在仓的根）后重新发起`,
   repoRootNotToplevel: (repoRoot, top) =>
     `repoRoot "${repoRoot}" 不是仓库根（git toplevel = "${top}"）。恢复：--repo 传仓库根绝对路径后重新发起`,
 
@@ -244,7 +244,7 @@ function resumeCommand(io, repo, runId) {
   const cli = resolveZswCli(io) || ZSW_CLI_PLACEHOLDER;
   // workdir 是引擎 RUN_ENVELOPE_KEYS 保留键不进 $ARGS——脚本读仓库根必须走 --repo（Gate B S1）；
   // resume 时 repo = state.repo，一致性由守卫 2 校验
-  const base = `node ${cli} workflow --workflow ${repo}/.agents/workflows/pr-lifecycle.js --workdir ${repo} --repo ${repo}`;
+  const base = `node ${cli} workflow --workflow ${repo}/.agents/skills/pr-cr-fix/workflows/pr-lifecycle.js --workdir ${repo} --repo ${repo}`;
   return runId ? `${base} --runId ${runId}` : base;
 }
 

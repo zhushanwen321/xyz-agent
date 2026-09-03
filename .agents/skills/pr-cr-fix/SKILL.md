@@ -18,7 +18,7 @@ description: >-
 - xyz-agent git worktree 中，当前分支相对 main 有 commits（`git log main..HEAD` 非空）
 - 有 GitHub CLI（`gh`）认证
 - 全局安装 fallow（`npm i -g fallow`，实测 2.88.2）——阶段 1.5 度量门禁依赖
-- zcode 环境走路径 2 需 z-subagent-workflow **≥ 1.2.0**（zsw CLI `~/.zcode/cli/plugins/cache/zcode-plugin-workspace/z-subagent-workflow/<版本>/bin/zsw.js`，或 zflow MCP 工具）；workflow 脚本 `.agents/workflows/pr-lifecycle.js` 本仓自带（随 git 分发）。**用户脚本不被引擎自动发现，按 .js 绝对路径调用是唯一项目脚本通路**（`script:` 前缀已废弃拒收）；发起前可校验：`node <zsw-cli> workflow --action lint --file <脚本绝对路径>`
+- zcode 环境走路径 2 需 z-subagent-workflow **≥ 1.2.0**（zsw CLI `~/.zcode/cli/plugins/cache/zcode-plugin-workspace/z-subagent-workflow/<版本>/bin/zsw.js`，或 zflow MCP 工具）；workflow 脚本 `.agents/skills/pr-cr-fix/workflows/pr-lifecycle.js` 本仓自带（随 git 分发）。**用户脚本不被引擎自动发现，按 .js 绝对路径调用是唯一项目脚本通路**（`script:` 前缀已废弃拒收）；发起前可校验：`node <zsw-cli> workflow --action lint --file <脚本绝对路径>`
 
 ## 调用约定
 
@@ -210,7 +210,7 @@ pr-lifecycle 把本 skill 的阶段 1（static gate / changeset / pr-meta / skil
 **发起（fresh）**：
 
 ```bash
-node <zsw-cli> workflow --workflow <repo>/.agents/workflows/pr-lifecycle.js \
+node <zsw-cli> workflow --workflow <repo>/.agents/skills/pr-cr-fix/workflows/pr-lifecycle.js \
   --task "<PR 背景：分支目的+主要改动面+gates 结果，自包含>" \
   --workdir <repo 绝对路径> --repo <repo 绝对路径> --timeout-ms 21600000
 ```
@@ -434,13 +434,13 @@ push 了发布 tag（`v*`/`npm-*`）时必须等 CI 构建完成并验证产物�
 ├── references/           # 触发场景才 read：coverage-industry-research.md（覆盖率调研）/ cot-leakage.md（CoT Leakage）/ mutation-testing.md（Mutation 深检）
 └── scripts/              # metrics-gate.py / coverage-gate.py（含 --extra-packages）/ validate-skill-yaml.py
 
-.agents/workflows/
-├── pr-lifecycle.js       # 路径 2（zcode）PR 全生命周期单 workflow 入口（@pi-meta 块 + io 适配层；.js 绝对路径调用）
-├── pr-lifecycle/
-│   ├── lib.cjs           # 状态核心：state/守卫/walker/lockfile + 全部 12 step 实现（依赖注入 io，node 直测）
-│   └── test/run-tests.js # lib 单测 runner（mock io 注入；node 直跑，exit 非 0 = 失败）
-└── package.json          # 标记 CJS：仓库根 type:module 下保障上述 .js/.cjs 走 CommonJS（require 可用）
-（旧 pr-review-fix.js 已删除——被 pr-lifecycle 取代，git 历史保留；改动 pr-lifecycle 后校验：node <zsw-cli> workflow --action lint --file <绝对路径>）
+├── workflows/            # 路径 2（zcode）workflow 脚本（自包含随 skill 分发；.js 绝对路径调用）
+│   ├── pr-lifecycle.js   # PR 全生命周期单 workflow 入口（@pi-meta 块 + io 适配层）
+│   ├── pr-lifecycle/
+│   │   ├── lib.cjs       # 状态核心：state/守卫/walker/lockfile + 全部 12 step 实现（依赖注入 io，node 直测）
+│   │   └── test/run-tests.js # lib 单测 runner（mock io 注入；node 直跑，exit 非 0 = 失败）
+│   └── package.json      # 标记 CJS：仓库根 type:module 下保障上述 .js/.cjs 走 CommonJS（require 可用）
+（旧 .agents/workflows/pr-review-fix.js 已删除——被 pr-lifecycle 取代，git 历史保留；改动 pr-lifecycle 后校验：node <zsw-cli> workflow --action lint --file <绝对路径>）
 ```
 
 ---
