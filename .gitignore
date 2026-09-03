@@ -49,6 +49,8 @@ resources/plugins/*/index.js
 # Playwright E2E artifacts (test results / reports / cache)
 /test-results/
 /playwright-report/
+# Vitest junit timing reports (per-package, written by reporters.outputFile)
+packages/*/test-results/
 
 # Vitest coverage report (S3-W1 coverage gate 产物，不进 git)
 coverage/
