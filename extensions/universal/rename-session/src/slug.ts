@@ -21,7 +21,9 @@ function fingerprint(input: string): string {
  * 把会话名折叠为 `[a-z0-9\u4e00-\u9fa5-]` 组成的短 slug。
  * 空白/全特殊字符输入回落 `"untitled"`；超长按 maxLen 截断。
  */
-export function toSlug(input: string, maxLen = 24): string {
+const DEFAULT_MAX_LEN = 24;
+
+export function toSlug(input: string, maxLen = DEFAULT_MAX_LEN): string {
 	const trimmed = input.trim();
 	if (trimmed.length === 0) {
 		return "untitled";
