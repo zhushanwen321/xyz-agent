@@ -163,7 +163,7 @@ r1 方案（编排五方法 + runAndFinalize + ChatRoundMachineDeps 整体随迁
 
 | 方案 | 长期合理性 | 短期成本 | 风险 |
 |------|-----------|---------|------|
-| ✅ 壳 `src/session-lifecycle.ts` 单入口函数 | 恢复逻辑吃 pi SDK + 壳 RunStore 实现，与 jsonl-run-store 同理只能住壳；一个 seam 两个 adapter（pi 全家桶 prod / typed fake test）= real seam | 原样搬移 ~350 行 + deps 工厂化，1 个单元 | 搬移引入行为漂移 → 靠 V1 实测门 + 搬移前后 rg 行为锚点 diff 守护 |
+| ✅ 壳 `src/session-lifecycle.ts` 单入口函数 | 恢复逻辑吃 pi SDK + 壳 RunStore 实现，与 jsonl-run-store 同理只能住壳；一个 seam 两个 adapter（pi 全家桶 prod / typed fake test）= real seam | 原样搬移 ~350 行（设计期估算，实测 309，见 §4 A-V4）+ deps 工厂化，1 个单元 | 搬移引入行为漂移 → 靠 V1 实测门 + 搬移前后 rg 行为锚点 diff 守护 |
 | ❌ core orchestration 定义 SessionRecoveryPort 后壳实现 | 当下仅一个 adapter——one adapter = hypothetical seam，违反本架构审查第一原则 | 多一步端口抽象 + 双层间接 | 端口形状凭空设计，第三宿主接入时大概率重改 |
 | ❌ 不抽，仅给 index.ts 补导出测试 hook | 测试仍需挂载整个 index.ts，12-mock 打桩面不降 | 最低 | C6 的整类 mock 问题原样留存 |
 
