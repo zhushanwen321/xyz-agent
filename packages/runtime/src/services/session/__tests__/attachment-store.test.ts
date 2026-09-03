@@ -9,14 +9,15 @@
  *
  * 真实文件 I/O：writeImage/migrateImage/writeSegmentsMetadata 写真实 attachments/tmpdir
  * 文件，读回校验后清理。dataDir 由 vitest globalSetup 的 XYZ_AGENT_DATA_DIR 指向 tmp
- * 目录，getAttachmentsDir 落盘天然隔离，不污染用户数据。白名单外文件用 homedir 下
- * 临时文件（home 既非 tmpdir 也非 attachments，与既有安全守卫测试同模式）。
+ * 目录，getAttachmentsDir 落盘天然隔离，不污染用户数据。白名单外来源用本测试文件自身
+ * （仓库内路径，既非 tmpdir 也非 attachments，且无需在白名单外写任何文件——fs-guard 兼容）。
  *
  * 运行：cd packages/runtime && pnpm vitest run src/services/session/__tests__/attachment-store.test.ts
  */
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { join, relative } from 'node:path'
 import { AttachmentStore } from '../attachment-store.js'
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
@@ -112,11 +113,11 @@ describe('AttachmentStore · migrateImage', () => {
     expect(existsSync(fromPath)).toBe(false)
   })
 
-  it('边界：fromPath 白名单外（homedir）→ 拒绝，源文件不动（场景 B 路径穿越）', async () => {
+  it('边界：fromPath 白名单外（仓库内文件）→ 拒绝，源文件不动（场景 B 路径穿越）', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const evilFile = join(homedir(), `.xyz-agent-att-store-evil-${Date.now()}.txt`)
-    writeFileSync(evilFile, 'secret')
-    writtenPaths.push(evilFile)
+    // fs-guard（2026-09-02 防线）禁止在白名单外写文件，改用已存在的仓库内文件作白名单外
+    // 来源（既非 tmpdir 也非 attachments 目录），语义与原 homedir 临时文件等价
+    const evilFile = fileURLToPath(import.meta.url)
     await expect(store.migrateImage(evilFile, 'att-store-evil-1', 'leaked.txt')).rejects.toThrow(
       'migrate-session-image failed',
     )

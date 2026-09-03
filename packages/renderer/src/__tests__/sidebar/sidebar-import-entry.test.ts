@@ -59,7 +59,7 @@ vi.mock('@/stores/sidebar', () => ({
   useSidebarStore: () => ({ collapsed: false, activeTab: 'sessions', toggleCollapsed: vi.fn() }),
 }))
 vi.mock('@/stores/session', () => ({
-  useSessionStore: () => ({ groups: [], list: [], activeId: null, applySnapshot: vi.fn(), listLoadError: null }),
+  useSessionStore: () => ({ groups: [], list: [], activeId: null, applySnapshot: vi.fn(), listLoadError: null, setListLoadError: vi.fn() }),
 }))
 vi.mock('@/stores/fileTree', () => ({
   useFileTreeStore: () => ({ fileCount: 0, getTree: () => null }),
