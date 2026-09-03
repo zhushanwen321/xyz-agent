@@ -26,7 +26,9 @@
 // 旧用例「new 路径（existingService=null）」的形态适配（deviation 已登记）：initSession
 // 参数接线仅在 existing 分支可观察（fake service 经访问器槽注入；new 分支构造真实
 // SubagentService 副作用不可桩化），而 new/existing 两分支共用同一行接线代码（D8
-// init 无条件语义），new 分支的构造语义由 session-lifecycle.test.ts 默认路径覆盖。
+// init 无条件语义），new 分支的构造语义由 session-lifecycle.test.ts 组 1 用例『默认
+// createServices（访问器槽为 null）→ new 分支：双 Service 构造 + 双 set 各恰一次
+// + init 无条件执行（D8）』断言锁定。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

@@ -80,7 +80,7 @@ function writeFile(dir: string, name: string, content: string): string {
   return filePath;
 }
 
-function writePackageJson(pkgDir: string, pi: Record<string, unknown>): void {
+function writePackageJson(pkgDir: string, pi: Record<string, unknown> | undefined): void {
   fs.mkdirSync(pkgDir, { recursive: true });
   fs.writeFileSync(
     path.join(pkgDir, "package.json"),
@@ -91,6 +91,7 @@ function writePackageJson(pkgDir: string, pi: Record<string, unknown>): void {
 
 /** 定值 mtime（整数 ms，消除浮点 mtime 与 utimesSync 恢复的精度差）。 */
 const T1 = new Date("2026-01-01T00:00:00Z");
+const T2 = new Date("2026-01-01T00:00:10Z");
 
 function setMtime(filePath: string, t: Date): void {
   fs.utimesSync(filePath, t, t);
@@ -659,5 +660,132 @@ describe("manifestCache（async readPackageManifest）", () => {
     expect(ext2).toHaveLength(1);
     expect(path.basename(ext2[0]?.path ?? "")).toBe("gone.md");
     expect(ext2[0]?.available).toBe(false);
+  });
+
+  // ── 失败/边缘路径（原 resource-discovery-manifest-cache.test.ts 迁编，impl-plan
+  //    偏差 #9：缺则将对应用例改写为 async 形态并入，不丢缓存行为覆盖）。原版直接
+  //    断言 readPackageManifestSync 返回值；async 形态观察面 = readFile 计数 +
+  //    user-extension-paths 结果（manifest undefined → processPackage 约定目录
+  //    fallback，pkgDir 无 {kind}/ 目录 → 零资源即 undefined 的行为面）。 ──
+
+  it("坏 JSON → undefined 且不缓存：mtime 未变二次 discover 仍重读（计数递增）", async () => {
+    // 起点即坏 JSON（无缓存条目）——若坏结果被缓存，二次调用不会重新 readFile。
+    // （good→bad 且 mtime 未变的场景由「命中」用例路径覆盖：mtime 相等直接命中原好条目）
+    writeFile(pkgDir, "package.json", "{ broken json");
+    setMtime(path.join(pkgDir, "package.json"), T1);
+    process.env.XYZ_EXTENSION_PATHS = pkgDir;
+
+    const r1 = await discoverResources(extConfig("agents"));
+    // 坏 JSON → manifest undefined（约定目录 fallback 零资源），不抛
+    expect(r1.filter((r) => r.source === "user-extension-paths")).toHaveLength(0);
+    const first = asyncReadCount();
+    expect(first).toBeGreaterThanOrEqual(1); // 首读确实发生
+
+    const r2 = await discoverResources(extConfig("agents"));
+    expect(r2.filter((r) => r.source === "user-extension-paths")).toHaveLength(0);
+    // 二次调用仍重新 readFile = 坏结果未入缓存（毒条目永不入缓存）
+    expect(asyncReadCount()).toBe(first + 1);
+  });
+
+  it("坏 JSON 不驱逐已有好条目：恢复原内容 + 原 mtime → 命中原条目（readFile 不增）", async () => {
+    writePackageJson(pkgDir, { agents: ["./agents"] });
+    writeFile(path.join(pkgDir, "agents"), "a.md", "body");
+    const pkgJson = path.join(pkgDir, "package.json");
+    setMtime(pkgJson, T1);
+    process.env.XYZ_EXTENSION_PATHS = pkgDir;
+    await discoverResources(extConfig("agents"));
+    const first = asyncReadCount();
+    expect(first).toBeGreaterThanOrEqual(1);
+
+    // 改坏且 mtime 变（T2）→ undefined（坏 JSON 路径：不缓存、不驱逐 {T1, pi} 好条目）
+    writeFile(pkgDir, "package.json", "{ broken");
+    setMtime(pkgJson, T2);
+    await discoverResources(extConfig("agents"));
+    expect(asyncReadCount()).toBe(first + 1);
+
+    // 恢复原内容 + utimesSync 恢复原 mtime → 若好条目仍在则命中（无第 3 次 read）
+    writePackageJson(pkgDir, { agents: ["./agents"] });
+    setMtime(pkgJson, T1);
+    const r3 = await discoverResources(extConfig("agents"));
+    expect(
+      r3.filter((r) => r.source === "user-extension-paths").map((r) => path.basename(r.path)),
+    ).toEqual(["a.md"]);
+    expect(asyncReadCount()).toBe(first + 1); // 无第 3 次 read = 命中保留的原条目
+  });
+
+  it("stat 失败（package.json 删除）→ 驱逐条目：重建同内容同 mtime 必重读", async () => {
+    writePackageJson(pkgDir, { agents: ["./agents"] });
+    writeFile(path.join(pkgDir, "agents"), "a.md", "body");
+    const pkgJson = path.join(pkgDir, "package.json");
+    setMtime(pkgJson, T1);
+    process.env.XYZ_EXTENSION_PATHS = pkgDir;
+    await discoverResources(extConfig("agents"));
+    const first = asyncReadCount();
+    expect(first).toBeGreaterThanOrEqual(1);
+
+    fs.rmSync(pkgJson);
+    await discoverResources(extConfig("agents"));
+    expect(asyncReadCount()).toBe(first); // stat 失败路径不触发 readFile
+
+    // 重建同内容 + 恢复同 mtime：条目已被驱逐 → 必重 readFile（计数 +1）
+    writePackageJson(pkgDir, { agents: ["./agents"] });
+    setMtime(pkgJson, T1);
+    const r3 = await discoverResources(extConfig("agents"));
+    expect(
+      r3.filter((r) => r.source === "user-extension-paths").map((r) => path.basename(r.path)),
+    ).toEqual(["a.md"]);
+    expect(asyncReadCount()).toBe(first + 1);
+  });
+
+  it("无 pi 字段（合法解析结果）也缓存：二次 discover 不重读", async () => {
+    writePackageJson(pkgDir, undefined);
+    setMtime(path.join(pkgDir, "package.json"), T1);
+    process.env.XYZ_EXTENSION_PATHS = pkgDir;
+
+    const r1 = await discoverResources(extConfig("agents"));
+    expect(r1.filter((r) => r.source === "user-extension-paths")).toHaveLength(0);
+    const first = asyncReadCount();
+    expect(first).toBeGreaterThanOrEqual(1);
+
+    const r2 = await discoverResources(extConfig("agents"));
+    expect(r2.filter((r) => r.source === "user-extension-paths")).toHaveLength(0);
+    expect(asyncReadCount()).toBe(first); // 合法解析 + 无 manifest → undefined 条目入缓存
+  });
+
+  // [review 修复] 非对象 JSON 结构守卫：JSON.parse 对 "42" / '"str"' / "null" 等
+  // 合法 JSON 产出非对象值，parsePiField 显式守卫归 undefined（「无 manifest」语义），
+  // 不依赖 primitive 装箱 / null 抛 TypeError 落 catch 的巧合。
+  it("非对象 JSON（42 / null / string / pi 字段非对象或数组）→ undefined 不抛，按合法解析结果缓存", async () => {
+    const cases: Array<{ raw: string; label: string }> = [
+      { raw: "42", label: "number" },
+      { raw: "null", label: "null" },
+      { raw: '"just-a-string"', label: "string" },
+      { raw: '{"name":"p","pi":42}', label: "pi-field-not-object" },
+      // 数组能骗过 typeof "object" 守卫（装箱对象）——非合法 pi 容器，显式归 undefined
+      { raw: '{"name":"p","pi":[]}', label: "pi-field-array" },
+    ];
+    // 每 case 独立子目录（缓存 key = package.json 绝对路径），互不命中；
+    // asyncReadCount 是跨 case 累积计数，断言用本 case 增量
+    for (const { raw, label } of cases) {
+      const caseDir = path.join(ws, label);
+      writeFile(caseDir, "package.json", raw);
+      setMtime(path.join(caseDir, "package.json"), T1);
+      process.env.XYZ_EXTENSION_PATHS = caseDir;
+
+      const caseStart = asyncReadCount();
+      const rAgents = await discoverResources(extConfig("agents"));
+      expect(
+        rAgents.filter((r) => r.source === "user-extension-paths"),
+        `case ${label}`,
+      ).toHaveLength(0);
+      expect(asyncReadCount() - caseStart, `case ${label}`).toBe(1); // 首读恰一次
+      const rWorkflows = await discoverResources(extConfig("workflows"));
+      expect(
+        rWorkflows.filter((r) => r.source === "user-extension-paths"),
+        `case ${label}`,
+      ).toHaveLength(0);
+      // 合法解析 + 无 manifest → 缓存 undefined 条目（两 kind 共享，零重读）
+      expect(asyncReadCount() - caseStart, `case ${label}`).toBe(1);
+    }
   });
 });

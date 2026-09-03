@@ -100,14 +100,14 @@ pi.on("session_start", async (_e, ctx) => {
 
 | 随迁块 | 原位置 | deps 形态 |
 |--------|--------|----------|
-| identity env→appendEntry 重建（13 字段） | :351-393 | 经 pi（fake 可断言 appendEntry 调用） |
-| notify ledger host 装配（8 方法） | :395-426 | 经 pi/ctx |
+| identity env→appendEntry 重建（类型 13 字段含 1 个 @deprecated parentSessionId，写入 12） | :351-393 | 经 pi（fake 可断言 appendEntry 调用） |
+| notify ledger host 装配（5 方法） | :395-426 | 经 pi/ctx |
 | 双 Service 装配 + initSession | :428-490 | deps 注入工厂（见下方「单例语义保持」） |
 | GC / manifest / worktree 恢复 | :492-520 | deps.worktreeManager 等 |
 | kill-9 恢复循环 + evict | :536-586 | deps.runStoreFactory |
 | SAR + engine 基线 + sessionState.set | :588-612 | 返回 SessionLifecycleResult（store/runs/runner 等），index.ts 写入 sessionState |
 
-**单例语义保持（关键不变量）**：现状装配是 `getSubagentService() ?? new` + 仅 `!existing` 时 `setSubagentService(service)`（index.ts:429-487）——jiti 多实例分裂靠 globalThis Symbol 单例防护，`/resume` `/fork` 复用既有实例（SR-3/SR-4 语义）。随迁工厂封装为 `createOrReuseServices(ctx): { service, modelService, reused: boolean }`，**完整保留 existing-??-new + 条件 set 整段**——deps 默认实现即调它，测试传 fake 覆盖；裸 `new` 禁止出现在 deps 默认实现里（否则每个 session_start 新建实例，GC timer 翻倍、record store 状态分裂）。**init 无条件语义钉死**：initModel(:434)/initSession(:457) 对 new 与 reused **均无条件执行**（SR-3：/resume /fork 复用实例时注入 handler 覆盖旧值、更新 sessionId；SR-4：dialogQueue 注入）——`reused` 返回标志仅供测试断言与日志，禁止任何「reused=true 跳过 init」的分支（否则上一 session 的 uiRequestHandler/sessionId 残留）。单例访问器（getSubagentService/setSubagentService/getModelConfigService/setModelConfigService，4 个符号、壳 3 文件生产消费：index.ts / interface/subagent-tool.ts / interface/subagents.ts）随 B-2 进 barrel——semver 承诺可接受（形态自抽包起未变）。
+**单例语义保持（关键不变量）**：现状装配是 `getSubagentService() ?? new` + 仅 `!existing` 时 `setSubagentService(service)`（index.ts:429-487）——jiti 多实例分裂靠 globalThis Symbol 单例防护，`/resume` `/fork` 复用既有实例（SR-3/SR-4 语义）。随迁工厂封装为 `createOrReuseServices(pi, ctx): { service, modelService, reused: boolean }`，**完整保留 existing-??-new + 条件 set 整段**——deps 默认实现即调它，测试传 fake 覆盖；裸 `new` 禁止出现在 deps 默认实现里（否则每个 session_start 新建实例，GC timer 翻倍、record store 状态分裂）。**init 无条件语义钉死**：initModel(:434)/initSession(:457) 对 new 与 reused **均无条件执行**（SR-3：/resume /fork 复用实例时注入 handler 覆盖旧值、更新 sessionId；SR-4：dialogQueue 注入）——`reused` 返回标志仅供测试断言与日志，禁止任何「reused=true 跳过 init」的分支（否则上一 session 的 uiRequestHandler/sessionId 残留）。单例访问器（getSubagentService/setSubagentService/getModelConfigService/setModelConfigService，4 个符号、壳 3 文件生产消费：index.ts / interface/subagent-tool.ts / interface/subagents.ts）随 B-2 进 barrel——semver 承诺可接受（形态自抽包起未变）。
 
 `resolveMainSessionFileById`（:200）/`resolveSessionDir`（:273）两个 fs 探测函数随迁为 module 私有（唯一消费方就是随迁块）。`lazyDeps`/`getDeps` 的 storeHealthy 守卫双份（:813-898）合并为单一 `getWorkflowDeps(sessionId)`（返回 `{ ok: true, deps } | { ok: false, reason }`，两个 tool 注册点各自决定 throw 还是返回错误对象）；8 个 getter 转发 + 2 处直传删除，改传 `() => LauncherDeps` 惰性回调。
 
@@ -120,7 +120,7 @@ pi.on("session_start", async (_e, ctx) => {
 **B-2（C2）barrel 扩面 + 壳 import 归一**：
 
 - **与 D5 纪律的调和**：D5「无宿主触点证据不放宽」的判据是「有没有真实消费者」。壳（~114 处）就是最大宿主触点证据——扩面不违反 D5，是 D5 判据首次被执行。extraction 设计的 D5 段落由本设计补注「壳侧收口完成，深路径豁免终止」。
-- **扩面清单**（进 barrel 的判定标准：壳非测试代码实际消费 ≥1 处）：`execution/types.ts` 的领域类型族（ExecutionRecord/ExecutionMode/SubagentIdentityData 等 ×14 消费）、SubagentService/SubagentQueries/SubagentChatActions 与单例访问器四件、record-store 消费面、`orchestration/models/*` 类型族（WorkflowRun/AgentCallOpts/RunStore 等 ×8）、`shared/` 消费符号（agent-ref/xml-injection/meta-parser/resource-discovery 的 `discoverResources`/model-ref）。逐名列出（维持 D5「diff 可审」纪律），预计 35 → ~100 符号。
+- **扩面清单**（进 barrel 的判定标准：壳非测试代码实际消费 ≥1 处）：`execution/types.ts` 的领域类型族（ExecutionRecord/ExecutionMode/SubagentIdentityData 等 ×14 消费）、SubagentService/SubagentQueries/SubagentChatActions 与单例访问器四件、record-store 消费面、`orchestration/models/*` 类型族（WorkflowRun/AgentCallOpts/RunStore 等 ×8）、`shared/` 消费符号（agent-ref/xml-injection/meta-parser/resource-discovery 的 `discoverResources`/model-ref）。逐名列出（维持 D5「diff 可审」纪律），设计时预估 35 → ~100 符号，实施终态 137（消费面实测大于估算，以 barrel 逐名清单为准）。
 - **壳 import 归一**：114 处深路径（含 bench/ 6 处）机械替换为 barrel 顶层；**保留** package.json 现有 4 条语义子入口与 `./workflows/*`（引擎集成点与资产入口，非本范围）；`./*` 开发态通配**删除**（收口的牙齿：今后壳再写深路径即 tsc 编译失败，不再是风格问题）。
 - **runtime 2 处生产深路径处置（删通配的前置条件）**：`subagent-extractor.ts:44`（`execution/engine/common/session-view-types.js`）与 `subagent-engine-history.ts:26`（`.../session-view-service.js`）是 u-1a 引入的 module 级复用点——**符号进 barrel，runtime import 归一顶层**（r2 曾裁决补 2 条子入口，r3 改归一 barrel，理由见 D9：每新增一条子入口 bundle 就多一份 host-services 副本，而 barrel 单入口形态天然无分裂）。runtime 代码仅改 import 行。
 - **跨包测试助手处置（随 u-2 本体）**：壳测试引 core `__tests__` helpers 的 7 文件，与删通配物理冲突。处置：**壳 vitest alias**——`vitest.config.ts` 加 alias（`@zhushanwen/subagent-core/testing/*` → core `src/__tests__/*` 物理路径），7 个壳测试 import 改走 alias specifier。选型对比：❌ `./testing` 发布子入口（r1 方案，被 r2 否决）：进 publishConfig = 测试基建进 semver 公共面（与「测试基建不属发布契约面」原则矛盾）；helper 迁出 `__tests__/` 即离开 `check-subagent-core-closure.mjs` 的豁免面（:24），`mock-extension-api.ts` 的 pi type import 命中 BANNED_PREFIXES、`test-mocks.ts` 的 vitest 运行时值 import 进 dist 即缺依赖。✅ alias：helpers 物理零移动（闭包守卫豁免面不变）、零契约面变化、壳 vitest.config.ts 已有 alias 机制先例；vite resolve.alias 前置重写为绝对路径后不再走 exports（r3 核验），不受删通配影响，且壳 typecheck 的 extensions/tsconfig.json exclude 含 `**/__tests__`，测试文件不在 tsc 面内。
@@ -203,10 +203,10 @@ r1 方案（编排五方法 + runAndFinalize + ChatRoundMachineDeps 整体随迁
 
 ### 组 A（回溯目标 1「纯装配」/ 6「打桩面收窄」）
 
-- **A-V1（session_start 链路零回归，实测）**：隔离 pi CLI（/tmp session 目录，避开 workspace-root 探测坑）spawn 一个 background subagent → 断言：identity custom entry 落 session JSONL（字段 13 项与基线 diff 零差异）、notify ledger revive 日志形态不变、worktree reaper scan 执行（debug 日志锚点）。对照基线：搬移前同环境采集（沿用 dual-track V4 方法）。通过标准 = 行为锚点逐项一致。
+- **A-V1（session_start 链路零回归，实测）**：隔离 pi CLI（/tmp session 目录，避开 workspace-root 探测坑）spawn 一个 background subagent → 断言：identity custom entry 落 session JSONL（写入字段 12 项与基线 diff 零差异；类型 13 项含 1 个 @deprecated parentSessionId 不写入）、notify ledger revive 日志形态不变、worktree reaper scan 执行（debug 日志锚点）。对照基线：搬移前同环境采集（沿用 dual-track V4 方法）。通过标准 = 行为锚点逐项一致。
 - **A-V1b（reused=true 路径，实测——同进程二次 session_start）**：pi CLI TUI 形态下 `/new`（skill-discovery.ts 注释自证同进程多 session；/resume 为 TUI 命令、rpc 模式可达性未验证，故选 /new）触发第二次 session_start → 断言（锚点 `XYZ_AGENT_DEBUG=1` 扩展日志）：无第二个 SubagentService 实例（getSubagentService 引用同一）、initSession 覆盖生效（sessionId 更新、uiRequestHandler 换新）、GC timer 不翻倍（单 timer 锚点）。守护 D8 的 init 无条件语义。
 - **A-V2（kill-9 恢复实测）**：构造 running 态 state 文件 + kill 主进程 → 重启 session_start → 断言 run 转 done/failed、pending:unregister 事件、state 落盘。通过标准 = 与搬移前行为一致（幂等重试语义保留）。
-- **A-V3（测试打桩面，机器可验）**：改写整类 mock SubagentService 的 **7 个测试文件**（session-start-reaper / index-session-start / index-session-start-identity / crash-recovery / stream-sink-guard / command-handlers / subagent-tool-path-guard）为 seam 注入或访问器 mock 形态后，`rg 'vi.mock' 壳/src/__tests__` 计数：单文件 vi.mock ≤3 且不含 SubagentService/pi-ai/typebox 整类桩。通过标准 = 7 文件全覆盖 + 计数达标 + 全量测试绿。
+- **A-V3（测试打桩面，机器可验）**：改写整类 mock SubagentService 的 **7 个测试文件**（session-start-reaper / index-session-start / index-session-start-identity / crash-recovery / stream-sink-guard / command-handlers / subagent-tool-path-guard）为 seam 注入或访问器 mock 形态后，`rg 'vi.mock' 壳/src/__tests__` 计数：单文件 vi.mock ≤3 且不含 SubagentService/pi-ai/typebox 手写整类桩（共享桩转发的 vi.mock 不在此列）。通过标准 = 7 文件全覆盖 + 计数达标 + 全量测试绿。
 - **A-V4（组合根纯度，机器可验）**：index.ts 行数 ≤650（实施期校准 2026-09-03：初稿 ≤350 与 §3.1 随迁表算术不相容——随迁范围物理减量上限 ~408 行，945−408 ≈ 600+，实测终态 627；达到 350 须扩大搬移随迁表之外 ~250 行，违反 D2 原样搬移纪律，故修订行数线而非扩大随迁范围）且 `rg 'new (SubagentService|ModelConfigService|WorktreeManager|JsonlRunStore)' src/index.ts` 零命中（构造全部进 deps 工厂 / session-lifecycle）。
 - **A-V5（C6 负面行为反向验证，机器可验）**：`rg 'vi\.mock\("\.\./commands|vi\.mock\("\.\./tools|vi\.mock\("\.\./tui' 壳/src/__tests__` 零命中（死路径 mock 清零）；同文件同模块重复 vi.mock 注册 = 0（lint 级检查随 u-5 写入共享桩 module 的使用约定）。
 
@@ -215,13 +215,13 @@ r1 方案（编排五方法 + runAndFinalize + ChatRoundMachineDeps 整体随迁
 - **B-V1（import 收口，机器可验）**：`rg "from '@zhushanwen/subagent-core/" 壳/src 壳/bench packages/runtime/src` 生产代码命中仅为显式子入口（现有 4 条）与 `./workflows/*`——runtime 2 处已归一 barrel；壳测试另允许 vitest alias specifier（`@zhushanwen/subagent-core/testing/*`，7 文件）——与 §3.2 B-2 保留声明逐条对齐；tsc 全绿即通配删除后无残留深路径。
 - **B-V2（发布面 + dist 静态门，实测）**：`npm pack --dry-run` 输出面包含全部新增 barrel 导出（无新增子入口）；CORE_PACKAGE_VERSION bump minor（新增导出走 minor，D5 纪律）；dist 静态门（D9：主 bundle × 4 现有子入口重复 module 比对 + 导出面白名单 + smoke-core-dist.mjs require smoke + zsw vendor 双入口消费核对）通过。
 - **B-V3（chat 域零回归，实测）**：pi CLI 实测 chat 模式 subagent（fork-from-session 场景含）→ record 机器字段形态与 u-2a 基线 diff 归因模型非确定性（沿用 A1 判定方法）——B 组未动轮次机（C5 撤销），此项为 barrel 收口对 execution 面的回归守护。
-- **B-V4（sync 删除，机器可验）**：`rg 'discoverResourcesSync|scanNpmDirSync' 全仓` 零命中；resource-discovery 测试全绿（async 单侧契约）。
+- **B-V4（sync 删除，机器可验）**：`rg 'discoverResourcesSync|scanNpmDirSync' 全仓` 代码与测试零命中（docs/历史文档引用除外——设计文档与 ADR 记录被删函数名属正常）；resource-discovery 测试全绿（async 单侧契约）。
 - **B-V5（workflow 域冒烟，实测）**：pi CLI 跑一个两步 workflow 脚本（agent() ×2）成功完成——B-2 动了 execution/orchestration 消费面，冒烟确认编排无回归。
 
 ### 组 C（回溯目标 5「零件单点」）
 
 - **C-V1（视觉对照，实测）**：pi CLI TUI 打开 subagents 全屏列表与 workflows 视图各截图，与改动前对照：边框/分页/长任务耗时显示（>1h 显示 `1h15m` 形态）逐项一致。通过标准 = 双视图零视觉回归。
-- **C-V2（单点，机器可验）**：`rg 'TERM_ROWS_FALLBACK|PAGE_SCROLL_DEFAULT' 壳/src` 各 1 处；`rg 'titleBorder' 壳/src/interface` 仅 tui-kit 与两消费方。
+- **C-V2（单点，机器可验）**：`rg 'TERM_ROWS_FALLBACK|PAGE_SCROLL_DEFAULT' 壳/src` 各 1 处；`rg 'titleBorder' 壳/src/interface` 仅 tui-kit 与实际消费方（list-component；WorkflowsView 无标题框形态不消费 titleBorder，其边框族消费 b/dashes/plainBorder/walled/termRows）。
 
 ### 收尾门（三组共享）
 

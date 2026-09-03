@@ -588,12 +588,26 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       if (!resolved.ok) throw new Error(resolved.reason);
       return resolved.deps.runner;
     },
+    // scheduleTimeBudget / onWorkflowCall 不可缺席（ports.ts D-12 regression fix）：
+    // rebuildRuntime 重排 run 级墙钟预算计时器、worker 脚本嵌套 workflow() 调用都经
+    // 这两个成员消费——lazyDeps 缺席会让消费点拿到 undefined（可选属性静默放行），
+    // 带时间预算的 run 命中一次错误重试后计时器静默失效。转发形态与其余成员一致。
+    get scheduleTimeBudget() {
+      const resolved = getWorkflowDeps(lsRef.lastSessionId);
+      if (!resolved.ok) throw new Error(resolved.reason);
+      return resolved.deps.scheduleTimeBudget;
+    },
+    get onWorkflowCall() {
+      const resolved = getWorkflowDeps(lsRef.lastSessionId);
+      if (!resolved.ok) throw new Error(resolved.reason);
+      return resolved.deps.onWorkflowCall;
+    },
     get log() {
       const resolved = getWorkflowDeps(lsRef.lastSessionId);
       if (!resolved.ok) throw new Error(resolved.reason);
       return resolved.deps.log;
     },
-  } as LauncherDeps;
+  };
 
   registerWorkflowTool(pi, lazyDeps, guard);
   registerWorkflowScriptTool(pi, registry, isScriptRunning);

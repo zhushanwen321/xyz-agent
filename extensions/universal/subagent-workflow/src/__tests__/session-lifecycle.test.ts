@@ -100,6 +100,10 @@ import type { WorkflowRun as WorkflowRunType } from "@zhushanwen/subagent-core/o
 import { WorkflowRun } from "@zhushanwen/subagent-core";
 import { Budget } from "@zhushanwen/subagent-core";
 import { Trace } from "@zhushanwen/subagent-core";
+// D8 new 分支断言目标：与被测代码消费同一 mock 实例（vi.mock 子路径解析归一到
+// barrel re-export 的同一模块，组 2 挂载 index.ts 用例已验证此拦截链路）。
+import { ModelConfigService, setModelConfigService } from "@zhushanwen/subagent-core";
+import { setSubagentService, SubagentService } from "@zhushanwen/subagent-core";
 import subagentsExtension from "../index.ts";
 import {
   setupSessionLifecycle,
@@ -231,6 +235,32 @@ describe("setupSessionLifecycle — bootstrap seam（设计 §3.1）", () => {
     expect(result.sessionId).toBe("session-svc-1");
     expect(result.storeHealthy).toBe(true);
     expect(result.lastEngine).toBe("pi");
+  });
+
+  it("默认 createServices（访问器槽为 null）→ new 分支：双 Service 构造 + 双 set 各恰一次 + init 无条件执行（D8）", async () => {
+    // module mock 的访问器槽恒 null（getSubagentService/getModelConfigService），
+    // deps 不注入 createServices → 走默认 createOrReuseServices 的 new 半边
+    // （existing-??-new）。设计 §3.1「单例语义保持」+ §3.6 D8：仅 !existing 时
+    // set；initModel/initSession 无条件执行——existingService === null ⟹
+    // reused === false（createOrReuseServices 的 reused 仅由 existing 派生，无
+    // 任何「跳过 init」分支），故构造 + 双 set 即 reused=false 的构造性证据。
+    const { pi } = createFakePi();
+
+    await setupSessionLifecycle(pi, createFakeCtx("session-new-1"), {});
+
+    // 双 set 各恰一次，写入的是新构造实例（mock 类被实例化 = new 分支发生）
+    const setSubagentCalls = vi.mocked(setSubagentService).mock.calls;
+    const setModelCalls = vi.mocked(setModelConfigService).mock.calls;
+    expect(setSubagentCalls).toHaveLength(1);
+    expect(setModelCalls).toHaveLength(1);
+    const svc = setSubagentCalls[0]?.[0];
+    const modelSvc = setModelCalls[0]?.[0];
+    expect(svc).toBeInstanceOf(SubagentService);
+    expect(modelSvc).toBeInstanceOf(ModelConfigService);
+    // init 无条件执行（D8）：new 实例的 initModel/initSession 仍被调（与
+    // existing 分支共用同一行接线代码）
+    expect(svc?.initSession).toHaveBeenCalledTimes(1);
+    expect(modelSvc?.initModel).toHaveBeenCalledTimes(1);
   });
 
   it("deps.createRunStore 注入 fake：loadAll 成功 → storeHealthy=true，runs 重水合", async () => {

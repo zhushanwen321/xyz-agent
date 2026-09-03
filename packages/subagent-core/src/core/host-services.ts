@@ -49,7 +49,7 @@ export const DEFAULT_DATA_ROOT: string = join(homedir(), ".subagent-core");
 // 在 dist 双形态（主 bundle × 子入口 bundle 各持模块副本）下会被分裂——configureCore
 // 只写主 bundle 副本，子入口侧恒 undefined。slot 对象形态（非直接存值）规避
 // 「undefined 值与无 key 不可区分」；范式与 execution/subagent-service.ts 进程单例
-// slot 同型（docs/standards.md §7.5）。读写语义不变：configureCore 覆盖式写入
+// slot 同型。读写语义不变：configureCore 覆盖式写入
 // （重复调用以后者覆盖——测试切宿主依赖此语义）。
 const HOST_SLOT_KEY = Symbol.for("@zhushanwen/subagent-core.host-services");
 

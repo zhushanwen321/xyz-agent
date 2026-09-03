@@ -104,7 +104,7 @@ export interface NotifyDomainPorts {
 
 // 配置态持有：globalThis[Symbol.for] slot（与 host-services 同款覆盖式语义——重复
 // 注入以后者覆盖；post-convergence D9 根治，dist 双形态下免模块副本分裂，范式与
-// execution/subagent-service.ts 进程单例 slot 同型，docs/standards.md §7.5）。
+// execution/subagent-service.ts 进程单例 slot 同型）。
 const NOTIFY_PORTS_SLOT_KEY = Symbol.for("@zhushanwen/subagent-core.notify-ports");
 
 type NotifyPortsSlot = { current: NotifyDomainPorts | undefined };

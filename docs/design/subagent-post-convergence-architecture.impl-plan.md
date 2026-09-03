@@ -120,6 +120,11 @@ graph TD
 | 13 | u-6 领地外机械触点：views/detail-content.ts（仅 import 块 + 相邻过时注释） | 领地扩展 | 消费 PAGE_SCROLL_DEFAULT 与 5 个下沉常量，常量离开 format.ts 则 import 必随动；零逻辑变更 |
 | 14 | u-6 C-V2「各恰 1 处」按定义口径达成；PAGE_SCROLL_DEFAULT 消费方 import/使用 6 处为「改消费 kit」目标必然形态 | 口径校准 | 字面总计数与「两视图族改消费 kit」不可同时满足，取定义口径 |
 | 15 | u-6 elapsed 合并保留两个导出名（formatElapsedSeconds 秒输入 / formatElapsed 时间戳输入），formatElapsed 单向委托 formatElapsedSeconds | 形态校准 | 两消费方群各在用不可删任一；「参数化前缀单函数」读作委托构造，同输出由委托保证（format.test.ts 52/52 + 12 档秒值交叉等价扫描） |
+| 19 | 阶段3审查 reasonable 固化：dialog queue 单定义点随 createOrReuseServices 域搬至 session-lifecycle.ts 并 export（旧 index.ts module 级私有） | 合理演化 | D2「唯一消费方随迁」自然延伸，Symbol key 单份无双定义；设计 §3.1 随迁表已随 doc-fix 补注 |
+| 20 | 阶段3审查 reasonable 固化：session-lifecycle.test.ts 自身 12 vi.mock（含 subagent-service 整类）为 seam 直测的 module mock 底座约定 | 合理演化 | 组 2（守卫合一）必须挂载 index.ts（闭包内符号）；组 1 默认装配走 new 需 mock 类防真实构造；设计 §3.1 样例描述的是注入形态而非文件级 mock 归零承诺；该文件不在 A-V3 名单 |
+| 21 | 阶段3审查 reasonable 固化：barrel 2 符号（RecordStore/INDEX_FILENAME）仅 bench 消费 | 合理演化 | 设计 §3.2 明文把 bench 计入壳触点证据；若未来 bench 迁移/删除，两符号走 semver 收窄流程评估 |
+| 22 | 阶段3审查 reasonable 固化：notify-ledger 迁 core 后与真实 session-delivery 内核的集成路径失去唯一测试覆盖（改为内联契约切片桩） | 取舍登记 | core 闭包红线（禁 xyz-agent 系包）使然；内核全量语义由 session-delivery 包自有测试守卫；follow-up：壳套件补一条轻量「真实 createDelivery × ledger bind」集成用例 |
+| 23 | 阶段3审查 reasonable 固化：测试侧深路径经 vite alias 解析对删通配免疫且 tsconfig exclude __tests__——测试侧无编译期牙齿，深路径回流只能靠收口 rg 门一次性拦截 | 守卫空缺登记 | 方案固有（偏差 #17 的代价面）；design-code-sync 阶段在设计文档补注此守卫空缺 |
 | 16 | u-2b 扩领地 core/src/index.ts 补 2 符号：UiChannelRegistry / ChannelHandler（u-2a D3 统计漏了 re-export 形态消费） | 领地扩展 + 事实校准 | 壳 index.ts:633-636 跨扩展 re-export surface 是非测试生产消费，满足 D3 判定标准；barrel 135→137 |
 | 17 | 测试深路径处置改 vite 正则 alias 旁路：vitest.config.ts 加 `/^@zhushanwen\/subagent-core\/(.+\.ts)$/` → core src 物理路径；62 个仅测试消费符号不进 barrel，71 条 from + ~50 处 vi.mock + 5 处动态 import 深路径零改写 | 方案补全 | 设计 D3 前置清单（runtime 2 处 + 7 helpers alias）实测不完整——测试面深路径未纳入；正则 alias 只命中带 .ts 后缀的深路径（生产 barrel import 无路径段、4 条子入口无 .ts 后缀，均不命中），生产走 exports / 测试走 alias 的双轨解析对删通配免疫；mock 语义不变（解析后同一物理模块 ID）；比「126 处测试改写」零 churn、比「62 符号进 barrel」不污染 semver 面。设计 §3.2 B-2 D3 前置条件由 design-code-sync 阶段回写补注 |
 | 18 | B-V1 rg 门 pattern 需扩展才能抓全删通配击穿面：原 pattern 只查 `from '...'` 形态，漏 vi.mock("...") 与动态 import() 形态 | 验收校准 | u-2c 收口门用扩展 pattern：`rg "@zhushanwen/subagent-core/" <dirs> -g '!**/__tests__/**'`（生产全形态）+ 测试面验证依赖 alias 旁路（偏差 #17） |
