@@ -9,11 +9,12 @@
 //   - **删除 CLI spawn 降级链**（原 XYZ_ZCODE_MODE=spawn 定向 / probe 冒烟门控 /
 //     protocol-drift 首败降级）：zcode 无公开契约，协议漂移不再降级保底，直接报
 //     可操作错误（提示核对版本 / 重启 / 改用 engine: pi）。
-//   - **删除 HOME 池化，共享宿主 HOME**：spawn env 不覆写 HOME，app-server 直接
-//     消费宿主 ~/.zcode/ 的凭据、模型配置与会话 db（与 GUI 共写同一 SQLite，
-//     WAL 并发安全；已接受代价：GUI 会话列表可见 headless 会话、登录态轮换后
-//     常驻连接需引擎进程重启才用新凭据）。HOME 依赖副作用（如 pnpm store 路径
-//     随 HOME 翻转）随之消失。
+//   - **删除 HOME 池化，共享宿主 HOME**：spawn env 不覆写 HOME，app-server 共享
+//     宿主 ~/.zcode/（会话 db 与 GUI 共写同一 SQLite，WAL 并发安全；凭据经
+//     appserver-launcher fs 拦截注入——cli config 读取重定向为「真实文件 + v2
+//     provider」合并，同 id 时 v2 优先，机制与漂移面见该文件头注；已接受代价：
+//     GUI 会话列表可见 headless 会话、登录态轮换后常驻连接需引擎进程重启才用
+//     新凭据）。HOME 依赖副作用（如 pnpm store 路径随 HOME 翻转）随之消失。
 //   - journal 分组 key 固定 'shared'（与 pi 引擎 PI_POOL_KEY 同构）：journal 落
 //     engineDataDir/engines/zcode/shared/journal-<taskId>.jsonl；handle.dbPath
 //     为绝对路径（宿主 ~/.zcode/cli/db/db.sqlite）。
@@ -658,19 +659,20 @@ export class ZcodeEngine implements EnginePort {
     };
   }
 
-  /**
-   * D6 read 三级降级：①sqlite 原生读取 → ②宿主 event journal 重放（对齐点①接线：
-   * replayJournalToSessionView 复用 live reducer，重放等价性见 §3.3.6）→ ③outcome-only。
-   * sessionId 缺失（解析失败的 run 无法定位 session）跳过①级；②级依赖
-   * handle.journalPath（宿主 run 后回填）。dbPath：新 handle 恒绝对路径（宿主
-   * ~/.zcode/cli/db/db.sqlite）；旧 records（池时代）的相对路径仍按 poolKey 锚定
-   * 解析（read 兼容旧数据，池目录不存在时自然落②级 journal 降级）。
-   */
   /** [U7] 模型可发现性：v2 桌面登录态聚合（带凭据 provider × models），失败安全返回清单本身可能为空。 */
   listModels(): Array<{ id: string; name?: string }> {
     return listZcodeModels(this.deps.sources);
   }
 
+  /**
+   * D6 read 三级降级：①sqlite 原生读取 → ②宿主 event journal 重放（对齐点①接线：
+   * replayJournalToSessionView 复用 live reducer，重放等价性见 §3.3.6）→ ③outcome-only。
+   * sessionId 缺失（解析失败的 run 无法定位 session）跳过①级；②级依赖
+   * handle.journalPath（宿主 run 后回填）。dbPath：新 handle 恒绝对路径（宿主
+   * ~/.zcode/cli/db/db.sqlite，tier1 精确匹配白名单见方法体）；旧 records（池时代）
+   * 的相对路径仍按 poolKey 锚定解析（read 兼容旧数据，池目录不存在时自然落②级
+   * journal 降级）。
+   */
   async read(handle: EngineHandle): Promise<SessionView> {
     if (handle.data.engineId !== ZCODE_ENGINE_ID) {
       return { engineId: ZCODE_ENGINE_ID, turns: [], source: "outcome-only" };
@@ -678,17 +680,33 @@ export class ZcodeEngine implements EnginePort {
     const sessionId = handle.data.sessionRef["sessionId"];
     const dbPathRaw = handle.data.sessionRef["dbPath"];
     if (typeof sessionId === "string" && typeof dbPathRaw === "string") {
-      const dbPath = path.isAbsolute(dbPathRaw)
-        ? dbPathRaw
-        : path.join(resolvePoolDir(this.deps.engineDataDir(), ZCODE_ENGINE_ID, handle.data.poolKey), dbPathRaw);
-      try {
-        return await readZcodeSessionView(dbPath, sessionId);
-      } catch (err) {
-        logger.warn("[zcode-engine] native session read failed, degrade to journal replay", {
-          dbPath,
-          sessionId,
-          reason: err instanceof Error ? err.message : String(err),
-        });
+      // 绝对路径 tier1 白名单（与 runtime subagent-engine-history 同判）：handle/
+      // record 来自 append-only JSONL（不可信面），仅放行宿主真实 db 的精确匹配，
+      // 其余绝对路径拒绝 ①级 sqlite 读取、降 journal 重放——防任意文件读
+      let dbPath: string | undefined;
+      if (path.isAbsolute(dbPathRaw)) {
+        if (dbPathRaw === hostZcodeDbPath()) dbPath = dbPathRaw;
+        else {
+          logger.warn("[zcode-engine] record dbPath 非宿主 db 绝对路径，拒绝 ①级读取降 journal", {
+            dbPath: dbPathRaw,
+          });
+        }
+      } else {
+        dbPath = path.join(
+          resolvePoolDir(this.deps.engineDataDir(), ZCODE_ENGINE_ID, handle.data.poolKey),
+          dbPathRaw,
+        );
+      }
+      if (dbPath !== undefined) {
+        try {
+          return await readZcodeSessionView(dbPath, sessionId);
+        } catch (err) {
+          logger.warn("[zcode-engine] native session read failed, degrade to journal replay", {
+            dbPath,
+            sessionId,
+            reason: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     }
     // ②级：journal 重放（journalPath 缺省 / 文件不存在 / 无事件 → undefined 落③级）

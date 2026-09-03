@@ -68,9 +68,9 @@ describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () =
   }, 60_000);
 
   // [R6] 常驻通道的 conformance run 层（RA8「C1-C8 适配后全绿」的 live 面）：
-  // XYZ_ZCODE_MODE=appserver 定向（不探不降）跑最小任务——C2 outcome + C3 stream
-  // 不变量（app-server 设计 §3.4 不变量 1）。更深断言（schema/abort/进程锚定）由
-  // engines/zcode/__tests__/zcode-engine.live.test.ts 的 [R6] app-server 段承载。
+  // 跑最小任务——C2 outcome + C3 stream 不变量（app-server 设计 §3.4 不变量 1）。
+  // 2026-09 起单一 app-server 形态即缺省路径（无模式钉扎 env）；更深断言（schema/
+  // abort/进程锚定）由 engines/zcode/__tests__/zcode-engine.live.test.ts 承载。
   it("zcode：app-server 常驻通道 run 全链（C2 outcome 无 error + C3 stream 事件不变量）", async (testCtx) => {
     const model = process.env["ZCODE_E2E_MODEL"];
     if (model === undefined || model === "") {
@@ -79,7 +79,6 @@ describe.skipIf(!LIVE)("conformance run 层（真实 spawn，手动门）", () =
     }
     const engine = new ZcodeEngine({
       engineDataDir: () => "/tmp/zcode-conformance-live-appserver",
-      processEnv: { ...process.env, XYZ_ZCODE_MODE: "appserver" },
     });
     const events: AgentEvent[] = [];
     const { outcome } = await engine.run(

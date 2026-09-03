@@ -118,9 +118,12 @@ function errMessage(err: unknown): string {
 /**
  * 组装 app-server 子进程 env：嵌套防护经公共 nesting-guard（注入统一
  * XYZ_AGENT_SUBAGENT=1 + 剥离引擎原生嵌套标记），遥测关闭（旧实现实证）。
- * 2026-09 起共享宿主 HOME——不再覆写 HOME：app-server 直接消费宿主 ~/.zcode/
- * 的凭据、模型配置与会话 db（用户拍板；引擎会话与 GUI 共写同一 SQLite，WAL
- * 并发安全），HOME 依赖副作用（如 pnpm store 路径翻转）随之消失。
+ * 2026-09 起共享宿主 HOME——不再覆写 HOME：db/plugins/MCP 继承宿主 ~/.zcode/
+ * （引擎会话与 GUI 共写同一 SQLite，WAL 并发安全），HOME 依赖副作用（如 pnpm
+ * store 路径翻转）随之消失。凭据不在此层注入：CLI 形态 app-server 只从
+ * ~/.zcode/cli/config.json 读 provider（GUI 登录态在 v2/config.json），由
+ * launcherScript 指向的 fs 拦截 wrapper 把该读取重定向为「真实文件 + v2
+ * provider 注入」内存合并（同 id 时 v2 整条优先——见 appserver-launcher.ts）。
  */
 export function buildAppServerEnv(baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return {
@@ -160,9 +163,10 @@ export interface AppServerConnectionOptions {
   /** 反向请求 handler 表（缺省 D9 常量表；测试注入故障 handler 用）。 */
   reverseHandlers?: Readonly<Record<string, (params: unknown) => unknown>>;
   /**
-   * [R4] 每代进程 spawn 成功后的同步回调（engine 写 pidfile / 采集 pid 的唯一时点）。
-   * 与 RunContext.onChildSpawned 无关：常驻进程不进宿主 spawnedChildren（D6——
-   * 其生命周期归引擎 dispose）。不抛保证：回调异常吞掉记 warn，不影响帧泵。
+   * [R4] 每代进程 spawn 成功后的同步回调。pidfile 机制删除后引擎侧不再传——现为
+   * 测试专有的代级观测面（采集 spawn 时序 / 子进程句柄）。与 RunContext.onChildSpawned
+   * 无关：常驻进程不进宿主 spawnedChildren（D6——其生命周期归引擎 dispose）。
+   * 不抛保证：回调异常吞掉记 warn，不影响帧泵。
    */
   onSpawned?: (child: ChildProcess) => void;
 }

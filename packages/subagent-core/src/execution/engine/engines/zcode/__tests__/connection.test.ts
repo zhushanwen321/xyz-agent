@@ -90,6 +90,7 @@ function makeConnection(opts: FakeOpts = {}): FakeHandle {
   const cwd = join(TMP, `cwd-${connSeq}`);
   const base: NodeJS.ProcessEnv = {
     PATH: process.env.PATH ?? "",
+    HOME: "/fake-host-home",
     FAKE_STATE_FILE: stateFile,
     ...(opts.stderrLines ? { FAKE_STDERR: "1" } : {}),
     ...(opts.extraKeys ? { FAKE_EXTRA_KEYS: "1" } : {}),
@@ -384,7 +385,7 @@ describe("stderr tee 落盘", () => {
 // ------------------------------------------- env 惯例（构造注入面）
 
 describe("env 惯例（共享宿主 HOME 形态）", () => {
-  it("buildAppServerEnv：HOME 不覆写（共享宿主）+ 遥测关闭 + nesting guard 剥离/注入（fake 侧 env 快照）", async () => {
+  it("buildAppServerEnv：HOME 正向透传（共享宿主）+ 遥测关闭 + nesting guard 剥离/注入（fake 侧 env 快照）", async () => {
     const { conn, stateFile } = makeConnection({ polluteNested: true });
     await conn.request("test/echo", {});
     const envEvents = readState(stateFile).filter((e) => e.ev === "env");
@@ -395,8 +396,9 @@ describe("env 惯例（共享宿主 HOME 形态）", () => {
       nested?: string;
       unifiedNested?: string;
     };
-    // 2026-09 起共享宿主 HOME：不覆写（fake 未注入 HOME 键 → 子进程继承真实 HOME 语义）
-    expect(snap.home).toBeUndefined();
+    // 共享宿主 HOME 契约（2026-09 起）：base env 携带的宿主 HOME 值原样透传到子进程
+    // env（不覆写、不剥离——db/plugins/MCP 全继承宿主 HOME）
+    expect(snap.home).toBe("/fake-host-home");
     expect(snap.telemetry).toBe("false");
     expect(snap.nested).toBeUndefined();
     expect(snap.unifiedNested).toBe("1");

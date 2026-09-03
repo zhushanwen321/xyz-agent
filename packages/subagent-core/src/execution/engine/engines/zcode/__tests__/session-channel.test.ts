@@ -140,7 +140,7 @@ function makeChannel(overrides: ScenarioOverrides = {}): ChannelHandle {
   const conn = new AppServerConnection({
     cliPath: FAKE_CLI,
     cwd: workspacePath,
-    env: buildAppServerEnv(join(TMP, `home-${connSeq}`), {
+    env: buildAppServerEnv({
       PATH: process.env.PATH ?? "",
       FAKE_STATE_FILE: stateFile,
       FAKE_SESSION_SCENARIO: scenarioFile,

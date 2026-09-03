@@ -1,8 +1,9 @@
 // src/execution/engine/engines/zcode/preparer.ts
 //
 // ZcodeEngine prepare 期模型解析件（P3 起源，2026-09 收缩）：隔离 HOME 池化与
-// 池内 config 引导随 CLI spawn 链删除（共享宿主 HOME——app-server 直接消费
-// ~/.zcode/ 的凭据与模型配置），本文件只剩 v2 单源的模型引用解析/校验/清单：
+// 池内 config 引导随 CLI spawn 链删除（共享宿主 HOME——app-server 的凭据经
+// appserver-launcher fs 拦截注入 v2 provider，本文件只剩 v2 单源的模型引用
+// 解析/校验/清单：
 //   - **凭据源 = v2 config 单源（2026-08-25 用户拍板）**：只读 `~/.zcode/v2/config.json`
 //     （ZCode 桌面登录态落点，GUI 管理面）。曾泛化过「v2 + cli config 双源合并」，
 //     但 `~/.zcode/cli/config.json` 不在 GUI 管理面、可能残留历史验证配置
@@ -50,8 +51,6 @@ export interface ZcodeProviderEntry {
 interface SourceConfig {
   /** provider 注册表（来自 v2 config，逐条运行时 guard）。 */
   providers: Map<string, ZcodeProviderEntry>;
-  /** 源文件 mtime（池 config 免重写的比对基准；不可读 = 0）。 */
-  mtimeMs: number;
 }
 
 /** unknown 的 Record 窄化 guard（替代 as 全可选断言——taste/no-unsafe-cast）。 */
@@ -65,7 +64,7 @@ export function isProviderEntry(v: unknown): v is ZcodeProviderEntry {
 }
 
 export function readSourceConfig(absPath: string): SourceConfig {
-  const empty: SourceConfig = { providers: new Map(), mtimeMs: 0 };
+  const empty: SourceConfig = { providers: new Map() };
   let raw: string;
   try {
     raw = fs.readFileSync(absPath, "utf8");
@@ -79,18 +78,12 @@ export function readSourceConfig(absPath: string): SourceConfig {
     return empty;
   }
   if (!isRecord(parsed)) return empty;
-  const conf: SourceConfig = { providers: new Map(), mtimeMs: 0 };
+  const conf: SourceConfig = { providers: new Map() };
   const provider = parsed["provider"];
   if (isRecord(provider)) {
     for (const [id, entry] of Object.entries(provider)) {
       if (isProviderEntry(entry)) conf.providers.set(id, entry);
     }
-  }
-  try {
-    conf.mtimeMs = fs.statSync(absPath).mtimeMs;
-  } catch {
-    // 源被并发删除等场景：mtime 取 0（比对恒不触发重写，池内完好配置继续用）
-    conf.mtimeMs = 0;
   }
   return conf;
 }

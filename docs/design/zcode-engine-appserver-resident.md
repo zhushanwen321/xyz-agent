@@ -4,12 +4,17 @@
 > ① **删除 CLI spawn 降级链**——`XYZ_ZCODE_MODE` 钉扎、probe 冒烟门控（appserver-probe.ts）、
 > protocol-drift 首败降级全部移除；launcher.ts / appserver-home.ts / appserver-probe.ts 整文件删除。
 > 协议漂移不再降级保底，直接报可操作错误。本文 D2（降级链）章节随之**作废**。
-> ② **删除 HOME 池化，共享宿主 HOME**——spawn env 不再覆写 HOME，app-server 直接消费
-> 宿主 `~/.zcode/` 的凭据/模型配置/会话 db（与 GUI 共写同一 SQLite，WAL 并发安全）。
+> ② **删除 HOME 池化，共享宿主 HOME**——spawn env 不再覆写 HOME（db/plugins/MCP 继承
+> 宿主 HOME，会话与 GUI 共写同一 SQLite，WAL 并发安全）；**凭据经 fs 拦截 launcher 注入**
+> （appserver-launcher.ts 落盘 wrapper 进程：CLI 形态 app-server 只从 `~/.zcode/cli/config.json`
+> 读凭据而 GUI 登录态落在 `~/.zcode/v2/config.json`，wrapper patch fs 把对前者的读取重定向为
+> 「真实文件 + v2 provider 注入」内存合并，同 id 时 v2 整条优先——v2 是权威凭据源）。
 > D7（常驻 HOME）章节随之**作废**。已接受代价：GUI 会话列表可见 headless 会话；登录态
 > 轮换后常驻连接需引擎进程重启才用新凭据（凭据内容 hash 刷新机制删除）；zcode 升级
-> schema migration 竞争无契约担保。收益：HOME 依赖副作用（pnpm store 随 HOME 翻转等）
-> 根治；锁/pidfile/孤儿回收/派生目录整章复杂度删除。poolKey 固定 `'shared'`（与 pi 引擎
+> schema migration 竞争无契约担保。新漂移面：zcode 升级若改变配置读取路径/方式，失败信号
+> 为 missing baseURL / Model config is missing 明确报错（不静默坏）。收益：HOME 依赖副作用
+> （pnpm store 随 HOME 翻转等）根治；锁/pidfile/孤儿回收/派生目录整章复杂度删除。poolKey
+> 固定 `'shared'`（与 pi 引擎
 > PI_POOL_KEY 同构，journal 落 `engines/zcode/shared/`）；handle.sessionRef.dbPath 为
 > 绝对路径（`~/.zcode/cli/db/db.sqlite`，`ZCODE_HOST_DB_SUFFIX` SSOT）。
 > 未作废章节（D1 连接/D3 abort/D4 会话自包含/D5 capabilities/D6 停机面）仍然有效。
