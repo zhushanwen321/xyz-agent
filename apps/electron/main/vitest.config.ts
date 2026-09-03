@@ -5,6 +5,8 @@ import { defineConfig } from 'vitest/config'
 // @xyz-agent/shared 经 workspace symlink 解析。仅测无 electron 运行时依赖的纯函数。
 export default defineConfig({
   test: {
+    reporters: ['default', 'junit'],
+    outputFile: { junit: './test-results/vitest-junit.xml' },
     include: ['test/**/*.test.ts', '**/__tests__/**/*.test.ts'],
   },
 })
