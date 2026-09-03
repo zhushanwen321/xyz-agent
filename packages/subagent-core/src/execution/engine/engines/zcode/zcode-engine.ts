@@ -79,11 +79,13 @@ import {
   type ZcodeTerminalPayload,
 } from "./parser.ts";
 import {
+  defaultV2ConfigPath,
   listZcodeModels,
   resolveZcodeModelRef,
   splitZcodeModelRef,
   type ZcodeSourcePaths,
 } from "./preparer.ts";
+import { ensureAppServerLauncher } from "./appserver-launcher.ts";
 import { readZcodeSessionView } from "./reader.ts";
 import { AppServerConnection, buildAppServerEnv, isAppServerRpcError } from "./connection.ts";
 import { SessionChannel, type SessionCreateParams, type SessionTurnResult } from "./session-channel.ts";
@@ -453,14 +455,24 @@ export class ZcodeEngine implements EnginePort {
    * spawnedChildren、不调 onChildSpawned（D6——生命周期归 dispose）。进程级 --cwd
    * 用引擎数据目录（连接跨任务共享的中性位置，工作区由 create 的
    * workspace.workspacePath 按任务传递——D10 基线不预设任务级进程 cwd）。
+   * spawn 经 fs 拦截 wrapper（appserver-launcher：cli config 读取重定向为
+   * 「真实文件 + v2 provider 注入」——CLI 形态 app-server 在共享宿主 HOME 下的
+   * 唯一凭据供数通路，机制与漂移面见该文件头注）。
    */
   private ensureAppServerRuntime(): AppServerRuntime {
     if (this.appserverRuntime !== undefined) return this.appserverRuntime;
+    const cliPath = this.deps.cliPath ?? ZCODE_CLI_DEFAULT_PATH;
+    const engineDataDir = this.deps.engineDataDir();
+    const launcherScript = ensureAppServerLauncher(engineDataDir);
+    const env = buildAppServerEnv(this.deps.processEnv ?? process.env);
+    env.ZCODE_ENG_CLI_PATH = cliPath;
+    env.ZCODE_ENG_V2_CONFIG = this.deps.sources?.v2ConfigPath ?? defaultV2ConfigPath();
     const conn = new AppServerConnection({
-      cliPath: this.deps.cliPath ?? ZCODE_CLI_DEFAULT_PATH,
-      cwd: this.deps.engineDataDir(),
-      env: buildAppServerEnv(this.deps.processEnv ?? process.env),
-      stderrLogPath: path.join(this.deps.engineDataDir(), "logs", "zcode-appserver-stderr.log"),
+      cliPath,
+      cwd: engineDataDir,
+      env,
+      launcherScript,
+      stderrLogPath: path.join(engineDataDir, "logs", "zcode-appserver-stderr.log"),
     });
     const rt: AppServerRuntime = {
       conn,

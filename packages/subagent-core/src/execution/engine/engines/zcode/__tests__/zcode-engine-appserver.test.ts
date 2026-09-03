@@ -269,8 +269,10 @@ describe("事件流与回调时点（缺省 appserver 路径）", () => {
     expect(env["unifiedNested"]).toBe("1");
     const boot = readState(stateFile).find((e) => e.ev === "boot");
     expect(boot?.["argv"]).toEqual(["app-server", "--cwd", dataDir]);
-    // 池化时代的产物全部不存在：engineDataDir 下无 zcode 池目录（config/lockfile/pidfile）
-    expect(fs.existsSync(path.join(dataDir, "engines", "zcode"))).toBe(false);
+    // 池化时代的产物全部不存在：engines/zcode/ 只含 fs 拦截 launcher，无池
+    // config/lockfile/pidfile/journal 目录
+    const engineDir = fs.readdirSync(path.join(dataDir, "engines", "zcode"));
+    expect(engineDir).toEqual(["appserver-launcher.cjs"]);
   }, 15_000);
 
   it("per-session model：create 帧 model={providerId,modelId}（task.model 拆分）+ toolDenylist 透传", async () => {

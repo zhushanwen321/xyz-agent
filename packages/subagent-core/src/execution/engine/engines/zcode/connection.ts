@@ -142,6 +142,12 @@ export interface AppServerConnectionOptions {
   /** 完整子进程 env（buildAppServerEnv 产物或调用方自行组装）。 */
   env: NodeJS.ProcessEnv;
   /**
+   * fs 拦截 wrapper 脚本路径（appserver-launcher.ts 落盘产物）。设置时 spawn 的
+   * script 换为本路径（cliPath 经 env ZCODE_ENG_CLI_PATH 传给 wrapper）——共享宿主
+   * HOME 形态的凭据供数机制；缺省 undefined = 直接 spawn cliPath（测试 fake 直连）。
+   */
+  launcherScript?: string;
+  /**
    * stderr tee 落盘路径（append；引擎数据目录由 R4 注入，测试用 tmp 目录）。
    * 懒打开：首条 stderr 才建文件，无 stderr 的短命连接零文件；写失败静默降级
    * （取证面不能拖垮主通道）。
@@ -191,6 +197,7 @@ export class AppServerConnection {
   private readonly requestTimeoutMs: number;
   private readonly reverseHandlers: Readonly<Record<string, (params: unknown) => unknown>>;
   private readonly onSpawned: ((child: ChildProcess) => void) | undefined;
+  private readonly launcherScript: string | undefined;
 
   /** 当前代子进程；null = 无活进程（未启动或已死，下次使用重建）。 */
   private child: ChildProcess | null = null;
@@ -216,6 +223,7 @@ export class AppServerConnection {
 
   constructor(opts: AppServerConnectionOptions) {
     this.cliPath = opts.cliPath;
+    this.launcherScript = opts.launcherScript;
     this.cwd = opts.cwd;
     this.env = opts.env;
     this.stderrLogPath = opts.stderrLogPath;
@@ -362,7 +370,8 @@ export class AppServerConnection {
     this.generation += 1;
     const gen = this.generation;
 
-    const child = spawn(this.nodeBin, [this.cliPath, "app-server", "--cwd", this.cwd], {
+    const script = this.launcherScript ?? this.cliPath;
+    const child = spawn(this.nodeBin, [script, "app-server", "--cwd", this.cwd], {
       env: this.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
