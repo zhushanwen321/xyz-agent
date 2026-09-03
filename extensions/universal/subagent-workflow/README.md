@@ -4,7 +4,7 @@ Pi 的 subagent + workflow 合并包：任务委派 + 多 agent 编排（chain /
 
 ## 内置 Agents
 
-按「读/写 × 视角」正交切分，9 个角色零重叠：
+按「读/写 × 视角」正交切分，10 个角色零重叠（C1 起随 `@zhushanwen/subagent-core` 的 `agents/` 资产分发，`<available_subagents>` 的 `<location>` 指向 core 包目录）：
 
 | Agent | 角色 | 读/写 |
 |-------|------|-------|
@@ -12,6 +12,7 @@ Pi 的 subagent + workflow 合并包：任务委派 + 多 agent 编排（chain /
 | `planner` | 复杂任务拆解为有序实施计划（合并需求澄清） | 只读产文档 |
 | `coder` | 代码实现、修改、测试（唯一改代码的角色） | 可改 |
 | `reviewer` | 代码审查与需求验收（含 git diff） | 只读 |
+| `doc-reviewer` | 文档审查（四遍方法论，事实锚点核实；spec / 设计文档） | 只读 |
 | `debugger` | 运行时故障诊断，钉根因 | 只读* |
 | `analyst` | 深度项目分析，产出给人读的报告 | 只读 |
 | `researcher` | 外部资料调研（依赖 tavily skill） | 只读 |
@@ -30,19 +31,12 @@ Pi 的 subagent + workflow 合并包：任务委派 + 多 agent 编排（chain /
 
 ## Orchestrator 协调器模式
 
-主 agent 禁用 bash / read / write / edit 等执行工具，只保留协调类工具，被迫作为纯协调器：拆解任务 → 委派 subagent → 汇总结果。orchestrator agent 自身也可递归委派子 orchestrator，实现分层任务拆解（深度受 `Depth: N/10` 护栏保护）。
+orchestrator 是纯协调器角色：拆解任务 → 委派 subagent → 汇总结果，自身不做执行类工作。orchestrator agent 自身也可递归委派子 orchestrator，实现分层任务拆解（深度受 `Depth: N/10` 护栏保护）。
 
-可用工具 5 个：`todo`、`goal_control`、`workflow`、`subagent`、`ask_user`（`ask_user` 由 `@zhushanwen/pi-ask-user` 提供，未安装时 orchestrator 遇歧义会明示停止而非猜测）。
-
-### 启动命令
+**工具约束变化（C1/D-5）**：内置模板不再携带 `tools:` frontmatter 白名单，subagent 不再以 `--tools` 白名单启动——工具约束回归宿主默认工具面，orchestrator 靠角色职责（职责边界段）约束自身只做协调。想要白名单的用户在 `<workspace>/.agents/agents/` 放同名 `.md` 覆写（project 级源稳定遮蔽内置，是唯一逃生门），或沿用 pi CLI 的 `--tools` 白名单（临时验证）：
 
 ```bash
-# 方式一：CLI 工具白名单（临时验证最快）
 pi --tools todo,goal_control,workflow,subagent,ask_user
-
-# 方式二：白名单 + 注入 orchestrator 的 system prompt（推荐，主进程也具备协调器视角）
-pi --tools todo,goal_control,workflow,subagent,ask_user \
-   --append-system-prompt "$(cat ~/.pi/agent/npm/node_modules/@zhushanwen/pi-subagent-workflow/agents/orchestrator.md)"
 ```
 
 > **依赖**：需先安装本包及相关扩展
@@ -59,7 +53,7 @@ pi --tools todo,goal_control,workflow,subagent,ask_user \
 
 ## Workflow 生命周期（one-shot）
 
-Workflow run 是一次性执行，状态机两态：`running → done`（`done` 唯一终态，reason 区分 completed / aborted / failed / budget_limited / time_limited）。`workflow` tool 仅 3 个 action：`run` / `status` / `abort`。
+Workflow run 是一次性执行，状态机两态：`running → done`（`done` 唯一终态，reason 区分 completed / aborted / failed / budget_limited / time_limited）。`workflow` tool 仅 3 个 action：`run` / `status` / `abort`。run 的 `name` 接受 `<available_workflows>` 列出的 workflow 名（内置 chain / parallel / map-reduce / scatter-gather / review-fix-loop 或已保存脚本）或 `.js` 绝对路径。
 
 Runs are one-shot: there is no pause/resume — to stop a run early use abort; for a fresh result start a new run.
 

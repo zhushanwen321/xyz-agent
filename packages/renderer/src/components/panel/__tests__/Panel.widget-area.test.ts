@@ -45,8 +45,8 @@ vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
 }))
 
 /** sidebar mock：Panel setup 内解构 restoreSession/retryHistory/deleteSession */
-vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
-  useSidebarNew: () => ({
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
+  useSidebar: () => ({
     restoreSession: vi.fn(async () => {}),
     retryHistory: vi.fn(async () => {}),
     deleteSession: vi.fn(async () => {}),

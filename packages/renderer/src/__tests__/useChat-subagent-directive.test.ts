@@ -75,7 +75,9 @@ describe('useChat subagent 定向消息转发', () => {
     expect(subagentActionMock).toHaveBeenCalledTimes(1)
     expect(subagentActionMock).toHaveBeenCalledWith('s-directive', 'message', {
       subagentId: 'rec-1',
-      text: '展开讲讲',
+      // 前导空格 = subagent(chip)→text 边界补格（segmentsToText :85-93，chip 产出空串后
+      // 补格残留）——8f93d7feb 已裁决该形态「保真随行发出」并同步其测试期望，此处对齐。
+      text: ' 展开讲讲',
     })
     // 无主 agent turn（§3.3.8：不经 message.send 通道）
     expect(sendMock).not.toHaveBeenCalled()
@@ -91,7 +93,8 @@ describe('useChat subagent 定向消息转发', () => {
 
     expect(subagentActionMock).toHaveBeenCalledWith('s-start-action', 'start', {
       slug: expect.stringMatching(/^chat-/),
-      task: '帮我修 bug',
+      // 同上：chip→text 边界补格的前导空格，保真透传（8f93d7feb 口径）
+      task: ' 帮我修 bug',
     })
     expect(sendMock).not.toHaveBeenCalled()
   })

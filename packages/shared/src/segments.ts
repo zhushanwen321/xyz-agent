@@ -163,11 +163,15 @@ export function textToSegments(text: string): Segment[] {
  * Segment[] → pi prompt 字符串（pi 边界序列化）。
  *
  * 删除 file inline 后，所有 segment 序列化逻辑收敛到 segmentsToText 一处，
- * 本函数只是 trim 包装：pi prompt 不需要首尾空白（尾随换行/空格）。
- * 语义分离：segmentsToText 保留原始格式（含末尾换行），segmentsToPrompt 做发送归一化。
+ * 本函数是「pi 边界序列化」的语义锚点（与展示用 segmentsToText 同实现、不同意图）。
+ *
+ * [HISTORICAL] 曾内置 .trim()（「pi prompt 不需要首尾空白」）——用户输入首尾空白被
+ * 静默剥除，pi 落盘文本 ≠ 提交原文（2026-08 Gate B AC-4 实测；pi 本身不 trim，剥除
+ * 纯粹由本层引入）。去 trim 后提交原文 → pi 入队帧 → message_end(user) → 基线落盘
+ * 全链同文本。空白拦截职责归调用方（useChat send/steer/followUp 各自 !text.trim() 守卫）。
  */
 export function segmentsToPrompt(segments: Segment[]): string {
-  return segmentsToText(segments).trim()
+  return segmentsToText(segments)
 }
 
 /**

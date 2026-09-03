@@ -73,8 +73,11 @@ vi.mock( "@zhushanwen/subagent-core/execution/alive-store.ts", () => ({
 }));
 
 // chatMode agent_end 早返回不读后代判定；统一 count=0（对齐 harness）。
+// prunePendingCursor：真实 session-runner 在 FakeChild close/error 路径会调，
+// mock 缺失曾是 unhandled rejection（No "prunePendingCursor" export）根源。
 vi.mock( "@zhushanwen/subagent-core/execution/session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 0 })),
+  prunePendingCursor: vi.fn(),
 }));
 
 vi.mock( "@zhushanwen/subagent-core/execution/temp-prompt.ts", () => ({

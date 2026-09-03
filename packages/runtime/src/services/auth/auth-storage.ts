@@ -2,7 +2,8 @@
  * auth.json 凭据存储（OAuth 路径 B 自实现）。
  *
  * 镜像 pi FileAuthStorageBackend 的 RMW 语义（写前重读最新文件，防丢更新），
- * 跨进程锁用 proper-lockfile（与 pi 同一把锁、同一路径语义：<auth.json>.lock）——
+ * 跨进程锁用统一 mkdir 锁 @zhushanwen/pi-file-lock/core（磁盘协议与 pi 内嵌锁兼容，
+ * 同一把锁、同一路径语义：<auth.json>.lock）——
  * pi 侧 resolveStoredOAuth 在 token 过期时持锁刷新并写回 auth.json，与 xyz-agent
  * login 写入是真实跨进程并发写场景；进程内 mutex 只能串行化本进程写入，无跨进程锁时
  * RMW 后写者基于陈旧读覆盖先写者，轮换后的 refresh_token 会丢失（anthropic 等
@@ -53,17 +54,19 @@ export interface CredentialWriter {
 }
 
 /**
- * 跨进程写锁：锁协议（proper-lockfile 参数 + compromised 语义）单点在
+ * 跨进程写锁：锁协议（统一 mkdir 锁参数 + 指数退避重试）单点在
  * utils/file-lock.ts 的 withFileLockAsync，与 pi FileAuthStorageBackend.withLockAsync
- * 互斥同一把锁（<auth.json>.lock）。
- * proper-lockfile realpath 默认 true，目标文件不存在时 realpath ENOENT 拿不到锁——
- * 先按 pi 同款 ensureFileExists 建空文件（0600）再锁。
+ * 互斥同一把锁（<auth.json>.lock）；旧版锁的 onCompromised 保活检测已随锁统一移除
+ * （无 compromise 检测，行为变化声明见 file-lock.ts 模块头）。
+ * ensure 钩子按 pi 同款 ensureFileExists 惯例在建锁前物化空文件（0600）——统一锁
+ * realpath:false、锁的是 <auth.json>.lock 目录，加锁不依赖目标文件存在，此处为
+ * 对齐 pi 侧惯例而非加锁前置条件。
  */
 async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
   return withFileLockAsync(filePath, { ensure: () => ensureFileExists(filePath), logTag: 'auth-storage' }, fn)
 }
 
-/** 与 pi FileAuthStorageBackend.ensureFileExists 同款：锁前保证文件存在（proper-lockfile realpath 需要） */
+/** 与 pi FileAuthStorageBackend.ensureFileExists 同款：锁前保证文件存在（对齐 pi 侧惯例，见 withFileLock 注释） */
 function ensureFileExists(filePath: string): void {
   if (!existsSync(filePath)) {
     writeFileSync(filePath, '{}', { encoding: 'utf-8', mode: OWNER_READ_WRITE_MODE })
@@ -141,7 +144,8 @@ export class AuthStorage {
   /** 幂等：provider 不存在时跳过写（避免无谓的磁盘 IO）。文件不存在时直接返回——
    * 没有可读可删的内容，且避免 withFileLock 的 ensureFileExists 在 remove 路径物化空
    * auth.json（从未使用过 OAuth 的用户目录每次保存 API Key 都会走 remove，不该产生文件）。
-   * 注意：set()/getAll() 等其余路径仍需 ensureFileExists（proper-lockfile realpath 需要文件存在）。 */
+   * 注意：set() 等其余走锁路径仍会经 ensureFileExists 物化文件（对齐 pi 侧惯例，
+   * get/getAll 纯读不持锁不经 ensure）。 */
   async remove(providerId: string): Promise<void> {
     if (!existsSync(this.filePath)) return
     await withFileLock(this.filePath, async () => {

@@ -1,11 +1,18 @@
 // src/__tests__/kill-tree.test.ts —— 进程树 kill 真实进程验证（POSIX 进程组语义）
+// + pid 身份判据（getProcessStartTimeSec / pidStartMatchesRegistered——原 reaper.test.ts
+// 覆盖平移：收殓下沉 runtime 后 helper 移入本文件，kill 侧自防御仍消费）
 import { spawn } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 20000 });
 
-import { isPidAlive, killProcessTree } from "../kill-tree.ts";
+import {
+	getProcessStartTimeSec,
+	isPidAlive,
+	killProcessTree,
+	pidStartMatchesRegistered,
+} from "../kill-tree.ts";
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -72,5 +79,46 @@ describe("killProcessTree (process group semantics)", () => {
 		if (pid === undefined) throw new Error("no pid");
 		await sleep(300);
 		expect(() => killProcessTree(pid)).not.toThrow();
+	});
+});
+
+describe("getProcessStartTimeSec (platform probe sanity)", () => {
+	it("returns a sane epoch-seconds value for a live process", () => {
+		const sec = getProcessStartTimeSec(process.pid);
+		expect(sec).toBeDefined();
+		const nowSec = Math.floor(Date.now() / 1000);
+		// 本进程必然启动于 [now - 10min, now + 5s]（时钟容差）
+		expect(sec!).toBeGreaterThan(nowSec - 600);
+		expect(sec!).toBeLessThan(nowSec + 5);
+	});
+
+	it("returns undefined for a dead pid", async () => {
+		const child = spawnDetached("sleep 0.1");
+		const pid = child.pid;
+		if (pid === undefined) throw new Error("no pid");
+		await sleep(500); // 等退出 + libuv reap
+		expect(getProcessStartTimeSec(pid)).toBeUndefined();
+	});
+});
+
+describe("pidStartMatchesRegistered (pid identity predicate, §3.6)", () => {
+	it("exact match on registered pidStartTime authorizes (precise path)", () => {
+		expect(pidStartMatchesRegistered(1000, 1000, 1_700_000_000_000)).toBe(true);
+	});
+
+	it("registered mismatch (pid reuse suspicion) rejects", () => {
+		expect(pidStartMatchesRegistered(2000, 1000, 1_700_000_000_000)).toBe(false);
+	});
+
+	it("missing registration degrades to startedAt-seconds bound: original process authorizes", () => {
+		// 登记发生在 spawn 之后 → 原进程 start time 必然 ≤ floor(startedAt/1000)
+		const startedAtMs = 1_700_000_123_456; // floor = 1_700_000_123
+		expect(pidStartMatchesRegistered(1_700_000_123, undefined, startedAtMs)).toBe(true);
+		expect(pidStartMatchesRegistered(1_700_000_122, undefined, startedAtMs)).toBe(true);
+	});
+
+	it("missing registration degrades: newer-than-registration start time rejects (reuse)", () => {
+		const startedAtMs = 1_700_000_123_456;
+		expect(pidStartMatchesRegistered(1_700_000_124, undefined, startedAtMs)).toBe(false);
 	});
 });

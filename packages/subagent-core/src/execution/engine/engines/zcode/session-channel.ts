@@ -1,0 +1,656 @@
+// src/execution/engine/engines/zcode/session-channel.ts
+//
+// ZcodeEngine app-server 会话层（R3）。设计权威源：
+// docs/design/zcode-engine-appserver-resident.md §3.3 D4（会话生命周期：每任务自包含
+// create→run→close，不做热会话复用）/ §2.4 目标数据流 ①-⑦ / §3.4 不变量 1
+// （text_delta 拼接 == read 全文、终态唯一 turn.terminal 权威、收尾帧 usage 完整）
+// 与 2（resolve 严格晚于全部事件回调）/ 附录 A.2（任务生命周期帧序列——协议权威，
+// 本文件帧字段逐字来源）。旧实现参照：zsw 仓 84b63a0^ lib/runner-appserver.js 的
+// _createTurn/_fetchFinalResponse 同等层（终态判定 / read 兜底链为真机已验证形态，
+// TS 重写收窄到 D4 单任务自包含面——-32004 四步恢复序 / resume / 热会话复用整体
+// out of scope，见设计 D4 连带声明）。
+//
+// 分层边界（与 R4 的接线面）：
+//   - 本层只做「单任务会话通道」：create/subscribe/send/终态/read/close + runTurn
+//     组合入口。AgentEvent 合成（text_delta→事件流、message_end.usage 映射走
+//     parser.mapZcodeUsage 同源）与 abort 链（session/stop→杀链）归 R4 编排层；
+//   - 连接生命周期（惰性启动/重建/dispose）归 AppServerConnection（R2）与 R4；
+//   - 错误透传纪律：RPC error 应答（AppServerRpcError，含 code/message/data）原样
+//     上抛不吞不包装——R5 降级链按 code（-32601/-32602 漂移类）归类（§3.3 错误规格表）。
+//
+// 终态判定（D4 + 不变量 1）双保险：
+//   1. turn.terminal 权威：v4/telemetry/event {kind:"turn.terminal"} 到达即终态
+//      （success/error 均 算终态——旧实现实证：不归类会挂到超时）；
+//   2. 宽松匹配防洪堤：turn.terminal 缺失/迟到时，收尾帧（session/event
+//      payload.response 非空）即终态——防协议小漂移把任务挂死到超时预算。
+//   终态判定后：收尾帧数据（response/usage）仍吸收（它属终态数据不是增量回调，
+//   且与 turn.terminal 常在同一 stdout 批次到达）；迟到 delta 不再触发回调
+//   （不变量 2 的另一半：resolve 后不再发事件）。
+//
+// 连接崩溃的 turn 收割（R4 已补齐）：SessionChannel 在构造时订阅 AppServerConnection
+// 的 onClose 面——进程死亡（崩溃/我方杀链）时立即 fail 全部在途 turn（错误即连接层
+// 的崩溃 reason，含 stderr 尾部），不再依赖 turnTimeoutMs 兜底挂满预算才收割。
+// （onClose 由连接层保证在全部在途 request reject 之后触发。）
+
+import { createHash } from "node:crypto";
+
+import { getLogger } from "../../../../core/logger.ts";
+
+import type { AppServerConnection } from "./connection.ts";
+import {
+  ZCODE_APPSERVER_TURN_CLOSE_TIMEOUT_MS,
+  ZCODE_APPSERVER_TURN_DEFAULT_TIMEOUT_MS,
+  ZCODE_APPSERVER_TURN_READ_TIMEOUT_MS,
+} from "./constants.ts";
+
+const logger = getLogger("subagents");
+
+/** session/subscribe 的 deliveryKind 必填值（A.2 ②——缺失则终态事件不达、会话假死，旧实测）。 */
+export const SUBSCRIBE_DELIVERY_KIND = "desktop-continuous";
+
+/** workspaceKey 取 sha256 hex 的前导字符数（旧实现实测形态 'ws-' + 16 hex 短 hash）。 */
+const WORKSPACE_KEY_HASH_CHARS = 16;
+
+/** create 应答异常时的摘要截断长度（够定位形态、不刷屏——与旧实现同值）。 */
+const CREATE_REPLY_LOG_CHARS = 300;
+
+/** 推送帧文本进日志的截断长度（诊断够用即可）。 */
+const DELTA_LOG_CHARS = 120;
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// ============================================================
+// 协议形态提取（纯函数，conformance/golden 回放层可复用）
+// ============================================================
+
+/**
+ * workspacePath → 稳定短 hash（A.2 ①：workspaceKey 算法不限；取旧实现实测形态
+ * 'ws-' + sha256 前 16 hex）。
+ */
+export function stableWorkspaceKey(workspacePath: string): string {
+  return (
+    "ws-" +
+    createHash("sha256")
+      .update(workspacePath)
+      .digest("hex")
+      .slice(0, WORKSPACE_KEY_HASH_CHARS)
+  );
+}
+
+/**
+ * 从 session/create 应答提取 sessionId。A.2 ①：权威位置 result.session.sessionId
+ * （**projection.sessionId 恒 "unknown"，勿用**）；session.id / 顶层 sessionId 为
+ * 历史/未来形态的宽松兜底（旧实现实测提取链）。
+ */
+export function extractCreatedSessionId(created: unknown): string | undefined {
+  if (!isRecord(created)) return undefined;
+  const session = isRecord(created.session) ? created.session : undefined;
+  if (
+    session !== undefined &&
+    typeof session.sessionId === "string" &&
+    session.sessionId !== ""
+  ) {
+    return session.sessionId;
+  }
+  if (
+    session !== undefined &&
+    typeof session.id === "string" &&
+    session.id !== ""
+  ) {
+    return session.id;
+  }
+  if (typeof created.sessionId === "string" && created.sessionId !== "") {
+    return created.sessionId;
+  }
+  return undefined;
+}
+
+/** 推送帧的会话归属（A.2：session/event 帧带 params.sessionId；telemetry 帧未标——
+ * 无 sid 时由 lookupTurn 按唯一在途兜底归因，多在途宁丢勿错，旧实现同策略）。 */
+function extractPushSessionId(params: unknown): string | undefined {
+  if (!isRecord(params)) return undefined;
+  if (typeof params.sessionId === "string" && params.sessionId !== "")
+    return params.sessionId;
+  if (
+    isRecord(params.session) &&
+    typeof params.session.id === "string" &&
+    params.session.id !== ""
+  ) {
+    return params.session.id;
+  }
+  return undefined;
+}
+
+/** read 应答消息条目的 role（实测主形态在 m.info.role，旧形态在 m.role）。 */
+function messageRole(m: Record<string, unknown>): string | undefined {
+  if (typeof m.role === "string") return m.role;
+  if (isRecord(m.info) && typeof m.info.role === "string") return m.info.role;
+  return undefined;
+}
+
+/** parts[] 中 type:'text' 部件的 text 拼接（A.2 ⑥ 主形态；无 text 部件 → undefined）。 */
+function partsToText(parts: unknown): string | undefined {
+  if (!Array.isArray(parts)) return undefined;
+  const texts: string[] = [];
+  for (const p of parts) {
+    if (isRecord(p) && p.type === "text" && typeof p.text === "string")
+      texts.push(p.text);
+  }
+  return texts.length > 0 ? texts.join("") : undefined;
+}
+
+/** content 三形态（字符串 / {text} / 块数组）的旧形态兼容提取。 */
+function contentToText(content: unknown): string | undefined {
+  if (typeof content === "string") return content;
+  if (isRecord(content) && typeof content.text === "string")
+    return content.text;
+  if (Array.isArray(content)) {
+    const texts = content.map((b) => {
+      if (typeof b === "string") return b;
+      return isRecord(b) && typeof b.text === "string" ? b.text : "";
+    });
+    const joined = texts.join("");
+    return joined !== "" ? joined : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * 从 session/read 应答提取最后一条 assistant 全文（A.2 ⑥：messages[].parts[] 中
+ * type:'text' 的 text 拼接；role 在 m.info.role 实测主形态，m.role/m.content 旧形态
+ * 兼容——旧实现已验证宽容链）。提取不到返回 undefined（调用方走收尾帧→delta 聚合）。
+ */
+export function extractAssistantText(readResult: unknown): string | undefined {
+  if (typeof readResult === "string") return readResult;
+  if (!isRecord(readResult)) return undefined;
+  if (Array.isArray(readResult.messages)) {
+    const last = [...readResult.messages]
+      .reverse()
+      .find(
+        (m): m is Record<string, unknown> =>
+          isRecord(m) &&
+          (messageRole(m) === "assistant" || messageRole(m) === undefined)
+      );
+    if (last !== undefined) {
+      const viaContent = contentToText(last.content);
+      if (viaContent !== undefined) return viaContent;
+      const viaParts = partsToText(last.parts);
+      if (viaParts !== undefined) return viaParts;
+    }
+  }
+  for (const k of ["text", "response", "content", "message"] as const) {
+    if (typeof readResult[k] === "string") return readResult[k] as string;
+  }
+  return undefined;
+}
+
+/**
+ * 从 session/read 应答提取 usage。tokens 在最后一条 assistant 消息 parts 的
+ * step-finish 部件 tokens 字段——结构属 A.5 未确认项（未真机复核），宽容解析：
+ * tokens 是对象即收、字段缺席不抛；顶层 usage 旧假设形态兜底。
+ */
+export function extractReadUsage(
+  readResult: unknown
+): SessionTurnUsage | undefined {
+  if (!isRecord(readResult)) return undefined;
+  const messages = Array.isArray(readResult.messages)
+    ? readResult.messages
+    : [];
+  for (const m of [...messages].reverse()) {
+    if (
+      !isRecord(m) ||
+      messageRole(m) !== "assistant" ||
+      !Array.isArray(m.parts)
+    )
+      continue;
+    const finish = [...m.parts]
+      .reverse()
+      .find(
+        (p) => isRecord(p) && p.type === "step-finish" && isRecord(p.tokens)
+      );
+    if (finish !== undefined && isRecord(finish.tokens)) return finish.tokens;
+  }
+  return isRecord(readResult.usage) ? readResult.usage : undefined;
+}
+
+// ============================================================
+// 类型（R4 引擎 run 的消费面）
+// ============================================================
+
+/** session/create 的 per-session 模型（A.2 ①：strict 对象——字符串会被 -32602 拒收）。 */
+export interface SessionModelSpec {
+  providerId: string;
+  modelId: string;
+  variant?: string;
+}
+
+/** session/create 参数（A.2 ① 键集逐字；workspaceKey 由 workspacePath 派生，不手传）。 */
+export interface SessionCreateParams {
+  workspacePath: string;
+  /** 权限模式（如 "yolo"）——值语义不限（A.2），由调用方（R4）决定。 */
+  mode: string;
+  model?: SessionModelSpec;
+  thoughtLevel?: string;
+  toolAllowlist?: string[];
+  toolDenylist?: string[];
+}
+
+/**
+ * 一轮 usage（宽容形态）：主形态收尾帧 {inputTokens, outputTokens}（A.2 ⑤ 权威）；
+ * 兜底形态 read step-finish tokens {input,...}（A.5 未确认项）。字段名到 AgentUsage
+ * 的映射归 R4（与 parser.mapZcodeUsage 同源），本层不做字段转换。
+ */
+export interface SessionTurnUsage {
+  inputTokens?: unknown;
+  outputTokens?: unknown;
+  [key: string]: unknown;
+}
+
+/** runTurn 的流式回调（R4 映射为 AgentEvent {type:"text_delta", delta}）。 */
+export interface SessionTurnCallbacks {
+  /** payload.delta 实时文本增量（A.2 ④：文本在 session/event，stream.chunk 无文本）。 */
+  onTextDelta?: (delta: string) => void;
+  /**
+   * [R4] create 应答后立即回调（sessionId 已知、早于 subscribe/send/终态）。引擎
+   * 编排层的 onHandleReady 回填（§3.4 不变量 3）与 abort 链的 session/stop 目标
+   * 都挂在这个时点——runTurn 的 resolve 形态在终态前拿不到 sessionId。
+   */
+  onSessionCreated?: (sessionId: string) => void;
+}
+
+export interface SessionTurnOptions extends SessionTurnCallbacks {
+  /** 一轮终态等待预算（缺省 ZCODE_APPSERVER_TURN_DEFAULT_TIMEOUT_MS）。 */
+  turnTimeoutMs?: number;
+}
+
+/** 终态信号来源（D4：turn.terminal 权威；final-frame = 宽松判定防洪堤）。 */
+export type TerminalSource = "turn.terminal" | "final-frame";
+
+export interface SessionTurnResult {
+  sessionId: string;
+  /** 全文优先级：read 兜底（权威）→ 收尾帧 response → delta 聚合。 */
+  response: string;
+  /** usage 优先级：收尾帧（A.2 权威）→ read step-finish tokens（宽容）→ 缺席。 */
+  usage?: SessionTurnUsage;
+  terminal: { status: string; source: TerminalSource };
+}
+
+// ============================================================
+// 会话通道
+// ============================================================
+
+/** 终态信息（turn.terminal 的 status 原样透传——错误语义由 R4 结果层处理）。 */
+interface TerminalInfo {
+  status: string;
+  source: TerminalSource;
+}
+
+/**
+ * 一个在途 turn 的全部状态（推送泵的归因目标）。settle/fail 由 openTurn 装配
+ * （互斥守卫 + timer 清理 + done promise 落定），泵内只调用不感知装配细节。
+ */
+interface ActiveTurn {
+  readonly sessionId: string;
+  readonly callbacks: SessionTurnCallbacks;
+  /** 终态判定是否已落定（settle/fail 任一先行即 true——后续重复终态不再受理）。 */
+  settled: boolean;
+  deltas: string[];
+  finalText: string | undefined;
+  finalUsage: SessionTurnUsage | undefined;
+  terminal: TerminalInfo | undefined;
+  settle: (t: TerminalInfo) => void;
+  fail: (err: Error) => void;
+}
+
+/**
+ * 单任务会话通道（D4）：在一条共享 AppServerConnection 上实现
+ * create→subscribe→send→（事件流）→终态→read 兜底→resolve→close 的自包含生命周期。
+ * 多 session 可在同一条连接上并发（sessionId 归因防串线；无 sid 的推送帧仅归因到
+ * 唯一在途 turn，多在途宁丢勿错）。
+ */
+export class SessionChannel {
+  private readonly conn: AppServerConnection;
+  /** sessionId → 在途 turn（终态落定后仍保留到 runTurn 收尾——收尾帧数据吸收窗口）。 */
+  private readonly activeTurns = new Map<string, ActiveTurn>();
+  private readonly offHandlers: Array<() => void>;
+
+  constructor(conn: AppServerConnection) {
+    this.conn = conn;
+    this.offHandlers = [
+      conn.onNotification("session/event", (params) =>
+        this.handleSessionEvent(params)
+      ),
+      conn.onNotification("v4/telemetry/event", (params) =>
+        this.handleTelemetry(params)
+      ),
+      // 连接崩溃收割：进程死亡（崩溃/我方杀链）立即 fail 全部在途 turn——
+      // onClose 契约保证触发时连接层在途 request 已全部 reject，此处补齐
+      // 「无在途 request 的 turn」的收割（否则挂到 turnTimeoutMs 预算耗尽）
+      conn.onClose((reason) => this.failAllTurns(`app-server ${reason}`)),
+    ];
+  }
+
+  /** 退订连接推送（R4 引擎 dispose 面的配套；不影响连接自身生命周期）。 */
+  dispose(): void {
+    for (const off of this.offHandlers.splice(0)) off();
+  }
+
+  /** 连接死亡收割：全部在途 turn 立即 reject（reason 即连接层崩溃错误）。 */
+  private failAllTurns(reason: string): void {
+    const err = new Error(reason);
+    for (const turn of [...this.activeTurns.values()]) {
+      turn.fail(err);
+      this.activeTurns.delete(turn.sessionId);
+    }
+  }
+
+  /**
+   * session/create（A.2 ① 键集逐字：对面 zod strict 拒未知键，出站必须精确）。
+   * persistence:"immediate" 固定携带（D4：SQLite 持久化，上游不可覆盖）；空工具
+   * 清单不设键（防上游带空数组）。sessionId 从 result.session.sessionId 提取
+   * （projection.sessionId 恒 "unknown" 勿用）。
+   */
+  async createSession(params: SessionCreateParams): Promise<string> {
+    const frame: Record<string, unknown> = {
+      workspace: {
+        workspacePath: params.workspacePath,
+        workspaceKey: stableWorkspaceKey(params.workspacePath),
+      },
+      mode: params.mode,
+      ...(params.model !== undefined ? { model: params.model } : {}),
+      ...(params.thoughtLevel !== undefined
+        ? { thoughtLevel: params.thoughtLevel }
+        : {}),
+      ...(params.toolAllowlist !== undefined && params.toolAllowlist.length > 0
+        ? { toolAllowlist: params.toolAllowlist }
+        : {}),
+      ...(params.toolDenylist !== undefined && params.toolDenylist.length > 0
+        ? { toolDenylist: params.toolDenylist }
+        : {}),
+      persistence: "immediate",
+    };
+    const created = await this.conn.request("session/create", frame);
+    const sessionId = extractCreatedSessionId(created);
+    if (sessionId === undefined) {
+      throw new Error(
+        `session/create 未返回 sessionId: ${JSON.stringify(created).slice(
+          0,
+          CREATE_REPLY_LOG_CHARS
+        )}`
+      );
+    }
+    return sessionId;
+  }
+
+  /** session/subscribe（A.2 ②：deliveryKind 必填——缺失则终态事件不达、会话假死）。 */
+  async subscribe(sessionId: string): Promise<void> {
+    await this.conn.request("session/subscribe", {
+      sessionId,
+      deliveryKind: SUBSCRIBE_DELIVERY_KIND,
+    });
+  }
+
+  /** session/send（A.2 ③：字段是 content 不是 text）→ {accepted:true}。 */
+  async send(sessionId: string, content: string): Promise<void> {
+    const r = await this.conn.request("session/send", { sessionId, content });
+    if (isRecord(r) && r.accepted === false) {
+      throw new Error(
+        "session/send 返回 accepted:false（投递未被接受——会话可能已失效或拒绝投递）"
+      );
+    }
+  }
+
+  /**
+   * session/close（A.2 ⑦，D4 用后即毁——回收引擎驻留内存，SQLite 持久化保留）。
+   * best-effort：失败只 warn 不抛（会话已终态，close 失败只泄漏一个驻留会话，
+   * 不应炸掉已成功/已失败的任务结论）。连接已死时跳过——close 是 request 语义，
+   * 对死连接发请求会触发惰性重建（凭空 spawn 一代无人使用的进程）。
+   */
+  async closeSession(sessionId: string): Promise<void> {
+    if (!this.conn.alive) return;
+    try {
+      await this.conn.request(
+        "session/close",
+        { sessionId },
+        { timeoutMs: ZCODE_APPSERVER_TURN_CLOSE_TIMEOUT_MS }
+      );
+    } catch (err) {
+      logger.warn(
+        `session/close 失败（会话 ${sessionId}，best-effort 忽略）: ${errMessage(
+          err
+        )}`
+      );
+    }
+  }
+
+  /**
+   * 单任务自包含入口（§2.4 ①-⑦）：create → subscribe → send → 事件流
+   * （onTextDelta）→ 终态 → read 兜底 → resolve {response, usage, sessionId}
+   * → close。resolve 严格晚于全部事件回调（不变量 2）；close 走 finally——成功/
+   * 失败路径都回收会话（D4）。RPC 错误（含 -32601/-32602 漂移类）原样透传（R5 消费）。
+   */
+  async runTurn(
+    params: SessionCreateParams,
+    content: string,
+    opts: SessionTurnOptions = {}
+  ): Promise<SessionTurnResult> {
+    if (content === "")
+      throw new Error("runTurn: content 必填（session/send 空投递无意义）");
+    const sessionId = await this.createSession(params);
+    // create 应答后立即回调（§3.4 不变量 3 的 sessionRef 时点；引擎的
+    // onHandleReady 回填与 abort 链 stop 目标都从这里取 sessionId）
+    opts.onSessionCreated?.(sessionId);
+    const opened = this.openTurn(sessionId, opts);
+    try {
+      await this.subscribe(sessionId);
+      try {
+        await this.send(sessionId, content);
+      } catch (err) {
+        // send 未送达（-32010 busy / -32602 漂移 / 连接死）：turn 无从等待终态
+        opened.turn.fail(err instanceof Error ? err : new Error(String(err)));
+        void opened.done.catch(() => {}); // done 已无 await 方，防 dangling rejection
+        throw err;
+      }
+      const terminal = await opened.done;
+      // 终态后 read 兜底（D4：read 是全文权威来源——不变量 1 双来源之二；
+      // 失败/提取不到走收尾帧→delta 聚合降级链，不抛）
+      const readResult = await this.readBestEffort(sessionId);
+      const readText = extractAssistantText(readResult);
+      const response =
+        readText ?? opened.turn.finalText ?? opened.turn.deltas.join("");
+      const usage = opened.turn.finalUsage ?? extractReadUsage(readResult);
+      return {
+        sessionId,
+        response,
+        ...(usage !== undefined ? { usage } : {}),
+        terminal,
+      };
+    } finally {
+      clearTimeout(opened.timer);
+      this.activeTurns.delete(sessionId);
+      await this.closeSession(sessionId);
+    }
+  }
+
+  // ============================================================
+  // 内部：turn 生命周期与推送泵
+  // ============================================================
+
+  private openTurn(
+    sessionId: string,
+    opts: SessionTurnOptions
+  ): { turn: ActiveTurn; done: Promise<TerminalInfo>; timer: NodeJS.Timeout } {
+    let resolveDone!: (t: TerminalInfo) => void;
+    let rejectDone!: (err: Error) => void;
+    const done = new Promise<TerminalInfo>((res, rej) => {
+      resolveDone = res;
+      rejectDone = rej;
+    });
+    const turn: ActiveTurn = {
+      sessionId,
+      callbacks: { onTextDelta: opts.onTextDelta },
+      settled: false,
+      deltas: [],
+      finalText: undefined,
+      finalUsage: undefined,
+      terminal: undefined,
+      // 装配占位：下方 timer 创建后重绑（settle/fail 需要 clearTimeout）
+      settle: () => {},
+      fail: () => {},
+    };
+    const timeoutMs =
+      opts.turnTimeoutMs ?? ZCODE_APPSERVER_TURN_DEFAULT_TIMEOUT_MS;
+    const timer = setTimeout(() => {
+      turn.settled = true;
+      this.activeTurns.delete(sessionId);
+      rejectDone(
+        new Error(
+          `一轮未在 ${timeoutMs}ms 内观察到终态（turn.terminal 与收尾帧均未到达）。` +
+            "恢复指引：跑 app-server 探针冒烟核对协议漂移后重试；或经 abort 链（session/stop）清场后重跑任务。"
+        )
+      );
+    }, timeoutMs);
+    if (typeof timer.unref === "function") timer.unref();
+    turn.settle = (t: TerminalInfo): void => {
+      if (turn.settled) return;
+      turn.settled = true;
+      turn.terminal = t;
+      clearTimeout(timer);
+      resolveDone(t);
+    };
+    turn.fail = (err: Error): void => {
+      if (turn.settled) return;
+      turn.settled = true;
+      clearTimeout(timer);
+      rejectDone(err);
+    };
+    this.activeTurns.set(sessionId, turn);
+    return { turn, done, timer };
+  }
+
+  private lookupTurn(sessionId: string | undefined): ActiveTurn | undefined {
+    if (sessionId !== undefined) return this.activeTurns.get(sessionId);
+    // 无 sid（A.2 telemetry 帧未标会话归属）：仅敢归因到唯一未落定 turn，
+    // 多在途宁丢勿错（旧实现同策略——防串线）
+    const pending: ActiveTurn[] = [];
+    for (const t of this.activeTurns.values()) if (!t.settled) pending.push(t);
+    return pending.length === 1 ? pending[0] : undefined;
+  }
+
+  private handleSessionEvent(params: unknown): void {
+    const turn = this.lookupTurn(extractPushSessionId(params));
+    if (turn === undefined) return;
+    const payload =
+      isRecord(params) && isRecord(params.payload) ? params.payload : undefined;
+    if (payload === undefined) return;
+    if (this.applyFinalFrame(turn, payload)) return;
+    this.applyStreamDelta(turn, payload);
+  }
+
+  /**
+   * 收尾帧判定与吸收（A.2 ⑤ 两种形态：payload.response / stopReason+content 变体）。
+   * 命中任一形态则落 finalText/finalUsage 并以 final-frame 宽松终态收口，返回 true。
+   */
+  private applyFinalFrame(
+    turn: ActiveTurn,
+    payload: Record<string, unknown>
+  ): boolean {
+    if (typeof payload.response === "string" && payload.response !== "") {
+      // 收尾帧（A.2 ⑤）：全文 + usage。终态落定后到达仍吸收数据（它常与
+      // turn.terminal 同批次、且是 usage 权威来源——属终态数据不是增量回调）
+      turn.finalText = payload.response;
+      if (isRecord(payload.usage)) turn.finalUsage = payload.usage;
+      turn.settle({ status: "success", source: "final-frame" });
+      return true;
+    }
+    if (
+      payload.stopReason === "stop" &&
+      typeof payload.content === "string" &&
+      payload.content !== ""
+    ) {
+      // 收尾的 content 形态变体（旧实测与 response 同值，携带 usage）
+      turn.finalText = payload.content;
+      if (isRecord(payload.usage)) turn.finalUsage = payload.usage;
+      turn.settle({ status: "success", source: "final-frame" });
+      return true;
+    }
+    return false;
+  }
+
+  /** 增量 delta 分发：非空 delta 入账 + 回调；终态后迟到丢弃（不变量 2）。 */
+  private applyStreamDelta(
+    turn: ActiveTurn,
+    payload: Record<string, unknown>
+  ): void {
+    if (typeof payload.delta !== "string" || payload.delta === "") return;
+    if (turn.settled) {
+      logger.warn(
+        `终态后迟到的 delta 丢弃（会话 ${
+          turn.sessionId
+        }，不变量 2：resolve 后不再发事件）: ${payload.delta.slice(
+          0,
+          DELTA_LOG_CHARS
+        )}`
+      );
+      return;
+    }
+    turn.deltas.push(payload.delta);
+    turn.callbacks.onTextDelta?.(payload.delta);
+  }
+
+  private handleTelemetry(params: unknown): void {
+    if (!isRecord(params)) return;
+    if (params.kind === "turn.terminal") {
+      // 终态权威（A.2 ⑤）：status success/error 均算终态（旧实证：不归类挂到超时）
+      const turn = this.lookupTurn(extractPushSessionId(params));
+      if (turn === undefined) return;
+      turn.settle({
+        status: typeof params.status === "string" ? params.status : "unknown",
+        source: "turn.terminal",
+      });
+      return;
+    }
+    if (params.kind === "stream.chunk") {
+      // A.2 ④：stream.chunk 无文本（chunkLength 遥测）。A.5 未确认项：是否偶发
+      // 携带文本字段——保留旧实现的形态漂移兜底：带文本则当 delta 收（不变量 1）
+      const turn = this.lookupTurn(extractPushSessionId(params));
+      if (turn === undefined || turn.settled) return;
+      for (const key of ["chunk", "text", "content"] as const) {
+        const v = params[key];
+        if (typeof v === "string" && v !== "") {
+          turn.deltas.push(v);
+          turn.callbacks.onTextDelta?.(v);
+          return;
+        }
+      }
+    }
+  }
+
+  /** 终态后 read（A.2 ⑥）。失败/超时不抛——降级链由 runTurn 收口（read 只兜底不致命）。
+   *  连接已死时跳过（与 closeSession 同判——对死连接发请求会凭空重建进程）。 */
+  private async readBestEffort(sessionId: string): Promise<unknown> {
+    if (!this.conn.alive) return undefined;
+    try {
+      return await this.conn.request(
+        "session/read",
+        { sessionId },
+        {
+          timeoutMs: ZCODE_APPSERVER_TURN_READ_TIMEOUT_MS,
+        }
+      );
+    } catch (err) {
+      logger.warn(
+        `session/read 兜底失败（会话 ${sessionId}，降级收尾帧/delta 聚合）: ${errMessage(
+          err
+        )}`
+      );
+      return undefined;
+    }
+  }
+}

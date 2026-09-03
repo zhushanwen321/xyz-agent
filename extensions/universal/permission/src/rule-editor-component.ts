@@ -8,7 +8,7 @@
  * G8：build 不生成 id。
  * G9：tool 只列 bash。
  * G13：sessionIdCounter 立即赋值真实 id。
- * WR8：focusIndex 模 5（Custom form 5 项 Tab 循环）。
+ * WR8：focusIndex 以 customChildren.length 为模（New 模式 5 项、Edit 模式 6 项 Tab 循环）。
  */
 
 import { type Component, Container, Input, isFocusable, type SelectItem, SelectList, type SelectListTheme, truncateToWidth } from "@earendil-works/pi-tui";
@@ -23,16 +23,7 @@ import {
 	type TemplateSelections,
 } from "./rule-templates.js";
 import type { PermissionAction, Rule } from "./types.js";
-
-// ──────────────────────── DEFAULT_SELECT_THEME ────────────────────────
-
-const THEME: SelectListTheme = {
-	selectedPrefix: (t: string): string => "\u25B6 " + t,
-	selectedText: (t: string): string => t,
-	description: (t: string): string => t,
-	scrollInfo: (t: string): string => t,
-	noMatch: (t: string): string => t,
-};
+import { DEFAULT_SELECT_THEME } from "./select-theme.js";
 
 const MAX_VISIBLE = 12;
 
@@ -111,7 +102,7 @@ export class RuleEditorComponent extends Container {
 	/** deny-family 子阶段：'cmd' = 选命令，'subcmd' = 选子命令。 */
 	private denySubStage: "cmd" | "subcmd" = "cmd";
 
-	/** Custom form：5 项焦点索引（WR8：focusIndex 模 5）。 */
+	/** Custom form 焦点索引（WR8：Tab 循环以 customChildren.length 为模）。 */
 	private customFocusIndex = 0;
 	private customChildren: Component[] = [];
 
@@ -124,7 +115,7 @@ export class RuleEditorComponent extends Container {
 		initialRules: readonly Rule[],
 		sessionIdCounter: () => string,
 		done: (ops: RuleOp[]) => void,
-		theme: SelectListTheme = THEME,
+		theme: SelectListTheme = DEFAULT_SELECT_THEME,
 	) {
 		super();
 		this.initialRules = initialRules;

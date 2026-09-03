@@ -1,5 +1,5 @@
 /**
- * W8: Rule templates + preset commands + applyOps + classifyRuleTemplate.
+ * W8: Rule templates + preset commands + applyOps.
  *
  * G4：pattern 用 wildcard（`npm *`），不用正则（`\bnpm\b`）。
  * W3 matcher 对 user 规则走 `wildcardToRegExp(pattern)`，末尾 ` *` 匹配无参 + 有参。
@@ -84,20 +84,6 @@ export const PRESET_COMMANDS: readonly PresetCommand[] = [
 	{ cmd: "env", label: "env (environment variables)", category: "System & Info" },
 	{ cmd: "date", label: "date (system date)", category: "System & Info" },
 ] as const;
-
-/** PRESET_COMMANDS 按 category 分组（UI 展示用）。 */
-export function presetCommandsByCategory(): Map<string, PresetCommand[]> {
-	const map = new Map<string, PresetCommand[]>();
-	for (const cmd of PRESET_COMMANDS) {
-		const list = map.get(cmd.category);
-		if (list) {
-			list.push(cmd);
-		} else {
-			map.set(cmd.category, [cmd]);
-		}
-	}
-	return map;
-}
 
 // ──────────────────────── RuleTemplate ────────────────────────
 
@@ -233,43 +219,6 @@ export const ALL_TEMPLATES: readonly RuleTemplate[] = [
 	allowSubcmdTemplate,
 	customTemplate,
 ] as const;
-
-// ──────────────────────── classifyRuleTemplate ────────────────────────
-
-/**
- * FAMILY_RE：`<cmd> *` 形式（allow-family / deny-family any / ask-before）。
- * SUBCMD_RE：`<cmd> <subcmd> *` 形式（deny-family specific / allow-subcmd）。
- */
-const FAMILY_RE = /^([^ *?]+) \*$/;
-const SUBCMD_RE = /^([^ *?]+) ([^ *?]+) \*$/;
-
-/**
- * 根据 rule 的 pattern + action 推断其模板 id。
- * 无法推断时返回 undefined（如 Custom 规则）。
- */
-export function classifyRuleTemplate(rule: Rule): string | undefined {
-	const { pattern, action } = rule;
-
-	const subMatch = SUBCMD_RE.exec(pattern);
-	if (subMatch !== null) {
-		// `<cmd> <subcmd> *`
-		if (action === "deny") return "deny-family";
-		if (action === "allow") return "allow-subcmd";
-		return undefined;
-	}
-
-	const famMatch = FAMILY_RE.exec(pattern);
-	if (famMatch !== null) {
-		// `<cmd> *`
-		if (action === "allow") return "allow-family";
-		if (action === "deny") return "deny-family";
-		if (action === "ask") return "ask-before";
-		return undefined;
-	}
-
-	// 不匹配任何已知 pattern 格式 → custom
-	return "custom";
-}
 
 // ──────────────────────── applyOps ────────────────────────
 

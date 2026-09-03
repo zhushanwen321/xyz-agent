@@ -12,7 +12,7 @@
  * Mock 策略（沿用 sidebar-layout / session-status-icons 既有模式，避免全局副作用）：
  *  - useSettingsShell 置空（AppShell 壳副作用，非拓扑被测面）
  *  - SettingsModal / Workspace / Overview / Sidebar stub（重组件依赖树，非拓扑被测面）
- *  - useSidebarNew stub（AppShell 仅消费 syncSessionToPanel）
+ *  - useSidebar stub（AppShell 仅消费 syncSessionToPanel）
  *  - 其余（AsideRegion / AppNavControls / TrafficLight / MainPanel + stores）走真实实现
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/shell/app-shell-topology.test.ts
@@ -37,8 +37,8 @@ vi.mock('@/components/overview/Overview.vue', () => ({
 vi.mock('@/components/sidebar/Sidebar.vue', () => ({
   default: { name: 'Sidebar', template: '<div data-testid="sidebar-stub" />' },
 }))
-vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
-  useSidebarNew: () => ({ syncSessionToPanel: vi.fn() }),
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
+  useSidebar: () => ({ syncSessionToPanel: vi.fn() }),
 }))
 
 /** usePlatformChrome mock：可控 isFullscreen ref（全屏态 TrafficLight 成对类断言）。

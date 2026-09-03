@@ -23,6 +23,10 @@ import { type Component, Container, type SelectItem, SelectList, type SelectList
 import type { Api, Model } from "@earendil-works/pi-ai";
 
 import type { ResolvedModelEntry } from "./classifier/model-resolver.js";
+import { DEFAULT_SELECT_THEME } from "./select-theme.js";
+
+// 保持既有 public 名（model-picker.test.ts MPT7 直接消费此路径）。
+export { DEFAULT_SELECT_THEME };
 
 // ──────────────────────── 类型 ────────────────────────
 
@@ -30,22 +34,6 @@ import type { ResolvedModelEntry } from "./classifier/model-resolver.js";
 export type SelectionResult =
 	| { kind: "auto" }
 	| { kind: "specific"; provider: string; modelId: string };
-
-// ──────────────────────── DEFAULT_SELECT_THEME（G2 修正） ────────────────────────
-
-/**
- * SelectList 默认主题。
- *
- * G2/WR2 修正：selectedPrefix 实现为 `(t) => '▶ ' + t`（非 identity），
- * 选中行有视觉区分（▶ 前缀）。
- */
-export const DEFAULT_SELECT_THEME: SelectListTheme = {
-	selectedPrefix: (t: string): string => "\u25B6 " + t,
-	selectedText: (t: string): string => t,
-	description: (t: string): string => t,
-	scrollInfo: (t: string): string => t,
-	noMatch: (t: string): string => t,
-};
 
 /** provider stage 的 'auto' 项 value（用特殊标记区分真实 provider 名）。 */
 const AUTO_VALUE = "__auto__";
@@ -189,7 +177,7 @@ export class ProviderModelSelectorComponent extends Container {
 	/** provider stage items：'Auto' + 各 provider（含 model 数量）。 */
 	private buildProviderItems(): SelectItem[] {
 		const items: SelectItem[] = [
-			{ value: AUTO_VALUE, label: "Auto", description: "auto-select cheapest available model" },
+			{ value: AUTO_VALUE, label: "Auto", description: "select first available model" },
 		];
 		for (const provider of this.providers) {
 			const models = this.modelsByProvider.get(provider) ?? [];
@@ -297,7 +285,6 @@ export interface ModelPickerContext {
 /** listAvailableModels 注入签名（E2 改走 ctx.modelRegistry，签名带 ctx；便于测试 mock）。 */
 export type ListAvailableModelsFn = (
 	ctx: ModelPickerContext,
-	onWarning?: (msg: string) => void,
 ) => Map<string, ResolvedModelEntry[]>;
 
 /**

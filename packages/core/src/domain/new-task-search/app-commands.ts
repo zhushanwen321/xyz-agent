@@ -23,7 +23,7 @@ import type { TranslatePort } from './ports'
 
 export interface RegisterAppCommandsDeps {
   commandStore: ReturnType<typeof createCommandStore>
-  /** 应用命令 actions（C-W3-5 全注入，壳适配 useSidebarNew/useSidebarStore/usePresetStore） */
+  /** 应用命令 actions（C-W3-5 全注入，壳适配 useSidebar/useSidebarStore/usePresetStore） */
   actions: AppCommandActionsPort
   /** macOS 平台标志（壳适配 navigator.platform.includes('Mac')；D8 收编） */
   isMac: boolean

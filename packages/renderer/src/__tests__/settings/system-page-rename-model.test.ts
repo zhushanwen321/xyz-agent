@@ -38,6 +38,10 @@ vi.mock('@/composables/useToast', () => toastModule())
 vi.mock('@/composables/features/command/useCommandStore', () => commandStoreModule())
 vi.mock('@/lib/ipc', () => ipcModule())
 
+// SystemPage 集成 mount 本身重（单跑首例 ~1.1s）；全量并发 CPU 争抢下默认 5s 超时偶发击穿
+//（Gate A R4②）。mount 慢是集成测试固有成本而非挂起，放宽本文件超时作资源竞争容差。
+vi.setConfig({ testTimeout: 20_000 })
+
 // 工厂引用 helper 单例（mock 模块与断言共享同一 mock fn 实例）
 const settingsMock = settingsApiMocks
 

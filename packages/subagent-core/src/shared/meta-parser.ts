@@ -88,7 +88,11 @@ function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
 
   if (kind === "workflow") {
     // minor-2：agent 专属字段不可出现在 workflow（串类 reject）
-    if (o.examples !== undefined || o.tools !== undefined || o.model !== undefined || o.engine !== undefined) {
+    if (
+      o.examples !== undefined || o.tools !== undefined || o.model !== undefined
+      || o.engine !== undefined || o.maxTurns !== undefined
+      || o.disallowedTools !== undefined || o.skills !== undefined
+    ) {
       return null;
     }
     // phases 必填数组，元素为 string | {title:string, detail?:string}
@@ -159,6 +163,18 @@ function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
   }
   const model = isString(o.model) ? o.model : undefined;
   const engine = isString(o.engine) ? o.engine : undefined;
+  // D3 可选执行字段（maxTurns/disallowedTools/skills）：与 tools 同风格投影
+  // （空数组 [] 同 tools 保留键——列表字段族空列表语义一致）。严格层对非法类型
+  // reject（minor-2..5 既有精神：不静默丢弃非法字段）——宽容降级是
+  // parseAgentProfile（agent-registry）的职责，不在本严格层。
+  if (o.maxTurns !== undefined && (typeof o.maxTurns !== "number" || !Number.isFinite(o.maxTurns))) {
+    return null;
+  }
+  const maxTurns = typeof o.maxTurns === "number" ? o.maxTurns : undefined;
+  const disallowedTools = parseStringListField(o.disallowedTools);
+  if (disallowedTools === null) return null;
+  const skills = parseStringListField(o.skills);
+  if (skills === null) return null;
 
   const meta: AgentMeta = {
     kind: "agent",
@@ -168,10 +184,34 @@ function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
     ...(tools !== undefined ? { tools } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(engine !== undefined ? { engine } : {}),
+    ...(maxTurns !== undefined ? { maxTurns } : {}),
+    ...(disallowedTools !== undefined ? { disallowedTools } : {}),
+    ...(skills !== undefined ? { skills } : {}),
     ...(when !== undefined ? { when } : {}),
     ...(notFor !== undefined ? { notFor } : {}),
   };
   return meta;
+}
+
+/**
+ * 字符串列表字段解析（tools 先例的泛化）：数组形态逐元素校验 string，空数组保留
+ * 为 []（键进 meta——与 tools 数组形态 `tools: []` 语义一致，列表字段族同语义）；
+ * 逗号分隔字符串按 `tools: read, bash` 约定拆分 trim，全空串（`skills: ,`）视同
+ * 缺席；字段缺席 → undefined（不进 meta）；非法形态（数字/对象/数组含非字符串）
+ * → null（调用方 reject——minor-2..5 既有精神：非法字段显式拒绝，不静默丢弃）。
+ * 三态返回是为区分「缺席」与「非法」。
+ */
+function parseStringListField(raw: unknown): string[] | null | undefined {
+  if (raw === undefined) return undefined;
+  if (Array.isArray(raw)) {
+    if (!raw.every(isString)) return null;
+    return raw as string[];
+  }
+  if (isString(raw)) {
+    const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    return parts.length > 0 ? parts : undefined;
+  }
+  return null;
 }
 
 // ── IF1: parseResourceMeta（discovery，fail-safe null）─────────────────

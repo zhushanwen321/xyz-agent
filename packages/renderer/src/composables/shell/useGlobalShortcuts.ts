@@ -6,10 +6,10 @@
  *
  * #10.1 AC-10.1：消除硬编码 if/else，改 keymap 数组遍历匹配。
  *
- * 依赖注入说明：onNewSession / fork / handoff 方法由调用方注入——useSidebarNew 非单例
+ * 依赖注入说明：onNewSession / fork / handoff 方法由调用方注入——useSidebar 非单例
  * （每次调用 createSessionStore + createUseSession 新建实例 + onScopeDispose），不能在本
  * composable 内重复调用，否则产生独立 sessionStore 导致状态分裂。故 Sidebar.vue 调一次
- * useSidebarNew 后注入此处。useSearchModal/useSidebarStore/useCommandStore/usePresetStore
+ * useSidebar 后注入此处。useSearchModal/useSidebarStore/useCommandStore/usePresetStore
  * 均为模块级单例，内部安全调用。
  */
 import { useEventListener } from '@vueuse/core'
@@ -19,7 +19,7 @@ import { usePresetStore } from '@/stores/preset'
 import { useSearchModal } from '@xyz-agent/core'
 import { useSidebarStore } from '@/stores/sidebar'
 
-/** 全局快捷键派发所需的注入方法（来自 useSidebarNew / session actions composable） */
+/** 全局快捷键派发所需的注入方法（来自 useSidebar / session actions composable） */
 export interface UseGlobalShortcutsOptions {
   /** ⌘N 新建 session（来自 session actions composable 的 onNewSession） */
   onNewSession: () => void
@@ -30,9 +30,9 @@ export interface UseGlobalShortcutsOptions {
   onOpenImportSession?: () => void
   /** ⌘G 从末条 assistant 后台 fork（来自 useSidebarNew） */
   forkFromLastAssistant: () => void | Promise<void>
-  /** ⌘⇧G 进 composer fork 模式（来自 useSidebarNew） */
+  /** ⌘⇧G 进 composer fork 模式（来自 useSidebar） */
   enterForkModeFromLastAssistant: () => void | Promise<void>
-  /** ⌘J 从末条 assistant 打包文档到新 session（来自 useSidebarNew） */
+  /** ⌘J 从末条 assistant 打包文档到新 session（来自 useSidebar） */
   handoffFromLastAssistant: () => void | Promise<void>
   /** ⌘[ ⌘] 导航历史（来自 useNavigationStore，Sidebar.vue 注入） */
   navigation: ReturnType<typeof useNavigationStore>

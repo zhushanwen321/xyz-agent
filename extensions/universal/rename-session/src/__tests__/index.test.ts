@@ -36,7 +36,7 @@ import { callLLM, resolveModel } from "@zhushanwen/pi-llm-shared";
 import renameSessionExtension from "../index";
 import { type RenameSessionConfig, loadRenameConfig } from "../pure.js";
 
-// 每用例收尾统一还原：console spy 恢复 + stub 的 XYZ_AGENT_DEBUG 还原，
+// 每用例收尾统一还原：logger mock 恢复 + stub 的 XYZ_AGENT_DEBUG 还原，
 // 防泄漏到后续用例（debug 开关 live 读 process.env，依赖 stubEnv/unstubAllEnvs 成对）
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -247,13 +247,13 @@ describe("renameSessionExtension", () => {
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		// ok:false 即可满足断言需要（callLLM 被调 + 不落库），聚焦触发判定本身
-		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "by-design", recoverable: true });
+		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "by-design" });
 
 		const FINAL_TEXT = "最终回复：已修复登录超时";
 		const stopMessage = { stopReason: "stop", content: [{ type: "text", text: FINAL_TEXT }] };
 
-		// 组1（区分性数据）：旧 countAssistantReplies=2 不触发 vs 新成功计数=1 触发——
-		// index 若仍用旧计数函数（忘接线 wave-1 纯函数），本组红（接线回归防护）
+		// 组1（区分性数据）：旧判定（数全部 assistant 回复）=2 不触发 vs 新成功计数（只数 stop）=1 触发——
+		// index 若仍用旧计数逻辑（不看 stopReason，忘接线 wave-1 纯函数），本组红（接线回归防护）
 		const toolUseRound = [
 			{ type: "message", message: { role: "user", content: "帮我修复登录超时" } },
 			{ type: "message", message: { role: "assistant", stopReason: "toolUse", content: [] } },
@@ -322,7 +322,7 @@ describe("renameSessionExtension", () => {
 	it("LTC8: callLLM 返回 {ok:false} → callRenameLLM 返回 null，不调 setSessionName", async () => {
 		vi.mocked(loadRenameConfig).mockReturnValue(ENABLED_CONFIG);
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
-		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom", recoverable: true });
+		vi.mocked(callLLM).mockResolvedValue({ ok: false, error: "boom" });
 
 		await fire(setup, createMockCtx());
 		// handler 内 callRenameLLM 是 detached promise（fire-and-forget），等其 settle 后断言

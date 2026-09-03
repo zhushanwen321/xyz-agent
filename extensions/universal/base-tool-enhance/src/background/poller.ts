@@ -50,10 +50,6 @@ export function stopPoller(): void {
 	}
 }
 
-export function isPollerRunning(): boolean {
-	return pollTimer !== undefined;
-}
-
 function pollTick(): void {
 	const active = getActiveTasks();
 	if (active.length === 0) {

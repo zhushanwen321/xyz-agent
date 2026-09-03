@@ -401,22 +401,42 @@ describe('extractWorkflowsFromSessionFile', () => {
   })
 
   // 三源一致性护栏：wf-run-v* 快照版本字面量分布在 3 个包（跨包依赖方向不允许互相
-  // import 源码），extension bump 格式版本时任何一处漏改都会静默丢数据：
-  // - 源 1（权威）：extension jsonl-run-store.ts 的 SNAPSHOT_VERSION——漏改不会（它是生产方）
+  // import 源码），bump 格式版本时任何一处漏改都会静默丢数据：
+  // - 源 1（权威）：packages/subagent-core run-snapshot.ts 的 SNAPSHOT_VERSION——
+  //   漏改不会（它是生产方）。[u1-move] 权威定义随 core 切面从 extension
+  //   jsonl-run-store.ts 抽至 subagent-core，extension 侧留壳改 import 绑定
+  //   （编译期跟随权威源，无字面量可漂移），故守卫字面量处跟随迁移至 core 定义点，
+  //   另以留壳断言防版本字面量在 extension 侧重新本地化分叉
   // - 源 2（副本）：runtime workflow-extractor.ts 的本地副本——漏改则版本守卫把新快照
   //   全部判为不匹配跳过（renderer WorkflowList 全空）
   // - 源 3（消费方）：session-reader（独立发 npm 的 sibling 扩展）两处版本判定——
   //   discovery/workflows.ts isNew + core/workflow.ts NEW 分支。漏改则 family/workflows
   //   腿对新 run 静默丢全部 calls sessionFile、workflow overview 对新 run 返 null
-  it('三源一致性：runtime SNAPSHOT_VERSION 副本 + session-reader 两处版本判定与 extension jsonl-run-store.ts 同步', () => {
-    const extSrc = readFileSync(
-      // u1-move（subagent-core 抽包）后 jsonl-run-store.ts 留壳迁至 src/ 顶层（原 orchestration/）
+  it('三源一致性：runtime SNAPSHOT_VERSION 副本 + session-reader 两处版本判定与 subagent-core run-snapshot.ts 权威源同步', () => {
+    // 源 1（权威）：[u1-move] SNAPSHOT_VERSION 定义迁至 packages/subagent-core
+    // （正则捕获到闭引号即止，不受声明尾部 ` as const` 影响）
+    const coreSrc = readFileSync(
+      join(__dirname, '..', '..', 'subagent-core', 'src', 'orchestration', 'run-snapshot.ts'),
+      'utf-8',
+    )
+    const coreMatch = coreSrc.match(/export const SNAPSHOT_VERSION = "([^"]+)"/)
+    expect(coreMatch, 'subagent-core 侧 SNAPSHOT_VERSION 导出字面量未找到——导出形式是否变了？').not.toBeNull()
+    const current = coreMatch![1]
+
+    // 源 1 留壳防分叉：extension jsonl-run-store.ts 必须仍以 import 绑定消费 core 权威源，
+    // 且不得出现本地字面量定义（否则该副本脱离三源守卫覆盖，版本可静默分叉）
+    const extShellSrc = readFileSync(
       join(__dirname, '..', '..', '..', 'extensions', 'universal', 'subagent-workflow', 'src', 'jsonl-run-store.ts'),
       'utf-8',
     )
-    const extMatch = extSrc.match(/export const SNAPSHOT_VERSION = "([^"]+)"/)
-    expect(extMatch, 'extension 侧 SNAPSHOT_VERSION 导出字面量未找到——导出形式是否变了？').not.toBeNull()
-    const current = extMatch![1]
+    expect(
+      extShellSrc.match(/import\s*\{[\s\S]*?\bSNAPSHOT_VERSION\b[\s\S]*?\}\s*from\s*"@zhushanwen\/subagent-core\/orchestration\/run-snapshot\.ts"/),
+      'extension jsonl-run-store.ts 不再从 subagent-core run-snapshot.ts import SNAPSHOT_VERSION——留壳消费形态是否变了？',
+    ).not.toBeNull()
+    expect(
+      extShellSrc.match(/const\s+SNAPSHOT_VERSION\s*=/),
+      'extension jsonl-run-store.ts 出现本地 SNAPSHOT_VERSION 定义——应消费 subagent-core 权威源，禁止在留壳重新分叉版本字面量',
+    ).toBeNull()
 
     // 源 2：runtime 副本与权威源字面量相等
     const rtSrc = readFileSync(

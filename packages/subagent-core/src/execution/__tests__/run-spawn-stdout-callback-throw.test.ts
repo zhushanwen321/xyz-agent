@@ -61,11 +61,15 @@ vi.mock("node:fs", async () => {
 
 vi.mock("../alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
+  // [T5②] keep-alive 心跳刷新读取现有 marker id（缺失兜底 record.id）
+  readAliveMarker: vi.fn(() => undefined),
+  isProcessAlive: vi.fn(() => false),
 }));
 
 // 场景 ① 依赖 keep-alive 分支命中：count=1（有活跃后代 → 不 kill → 重挂 watchdog）
 vi.mock("../session-pending.ts", () => ({
   readActivePendingFromSessionFile: vi.fn(() => ({ count: 1 })),
+  prunePendingCursor: vi.fn(),
 }));
 
 vi.mock("../temp-prompt.ts", () => ({
@@ -163,7 +167,7 @@ describe("[F-R2] stdout 回调链内 fail-fast throw 不逃逸", () => {
     }
   });
 
-  it("② chatMode agent_settled armIdleTimer throw → 降级不挂 idle timer，onRoundSettled 照常、提前 resolve", async () => {
+  it("② chatMode agent_settled armIdleTimer throw → 降级挂 DEFAULT idle timer + warn，onRoundSettled 照常、提前 resolve", async () => {
     const record = makeChatModeRecord("sa-f2-idle");
     const onRoundSettled = vi.fn();
     const ctx: Partial<SessionRunnerContext> = { onRoundSettled };
@@ -176,17 +180,21 @@ describe("[F-R2] stdout 回调链内 fail-fast throw 不逃逸", () => {
     emitStdoutLine(child, { type: "agent_settled" });
     await new Promise((r) => setTimeout(r, 20));
 
-    // 降级语义：idle timer 未挂（throw 发生在 arm 入口校验，先于 setTimeout）
-    expect(hasIdleTimer(record.id)).toBe(false);
+    // [T4② / PS-4] 降级语义修正：旧「不挂」（丢通知放行门 + 进程回收）改为
+    // 「挂 DEFAULT_IDLE_TIMEOUT_MS + warn」——防御性兜底保住两个不变量且可见
+    expect(hasIdleTimer(record.id)).toBe(true);
     expect(child.killed).toBe(false);
 
     // catch 后续语句照常执行：本轮完成通知不因 GC timer 故障丢失
     expect(onRoundSettled).toHaveBeenCalledTimes(1);
 
-    // 错误可见
+    // 错误可见（原失败留痕）+ 降级动作可见（T4②）
     expect(loggerMock.error).toHaveBeenCalledWith(
       expect.stringContaining("armIdleTimer"),
       expect.objectContaining({ detail: expect.stringContaining("exceeds the Node setTimeout limit") }),
+    );
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.stringContaining("fell back to DEFAULT_IDLE_TIMEOUT_MS"),
     );
 
     // 收尾：chatMode 首轮 agent_settled 已 resolveRun(0)，close 后 runSpawn 正常返回

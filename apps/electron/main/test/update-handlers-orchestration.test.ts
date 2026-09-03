@@ -541,7 +541,8 @@ describe('T4 update-handlers: update:download / update:install / update:getPrelo
     const handler = handlers.get('update:install')!
     const result = await handler({}, {})
 
-    expect(result).toEqual({ triggerRestart: true })
+    // u6（update-network-resilience D2）：install 响应增加实装 version 字段（preloaded release.version）
+    expect(result).toEqual({ triggerRestart: true, version: '0.9.0' })
     // installUpdate 收到 preloaded 的 release + filePath（不是前端传入）
     expect(orch.installUpdate).toHaveBeenCalledTimes(1)
     expect(orch.installUpdate).toHaveBeenCalledWith(FIXTURE, '/tmp/pre.zip', expect.any(Function))

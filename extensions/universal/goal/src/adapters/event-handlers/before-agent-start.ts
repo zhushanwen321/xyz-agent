@@ -66,7 +66,7 @@ export async function handleBeforeAgentStart(
 	return {
 		message: {
 			customType: "goal-context",
-			content: contextInjectionPrompt(session.state, session.state.timeUsedSeconds),
+			content: contextInjectionPrompt(session.state),
 			display: false,
 		},
 	};

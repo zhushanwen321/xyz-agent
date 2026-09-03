@@ -82,7 +82,7 @@ async function getCroner(): Promise<typeof import('croner') | null> {
  * 规范化 cron 表达式：5 字段自动补秒字段。
  * 返回 undefined 表示无效。
  */
-export function normalizeCronExpression(input: string): { expression: string; note?: string } | undefined {
+export function normalizeCronExpression(input: string): string | undefined {
   const trimmed = input.trim()
   if (!trimmed) return undefined
 
@@ -90,15 +90,12 @@ export function normalizeCronExpression(input: string): { expression: string; no
 
   // 6 字段原样返回
   if (parts.length === CRON_FIELD_COUNT_WITH_SECONDS) {
-    return { expression: trimmed }
+    return trimmed
   }
 
   // 5 字段补秒字段
   if (parts.length === CRON_FIELD_COUNT) {
-    return {
-      expression: `0 ${trimmed}`,
-      note: 'Auto-prepended seconds field (0)',
-    }
+    return `0 ${trimmed}`
   }
 
   return undefined
@@ -119,7 +116,7 @@ export async function computeNextCronRunAt(
     const normalized = normalizeCronExpression(expression)
     if (!normalized) return undefined
 
-    const job = new croner.Cron(normalized.expression, { startAt: from ? new Date(from) : undefined })
+    const job = new croner.Cron(normalized, { startAt: from ? new Date(from) : undefined })
     const next = job.nextRun()
     return next ? next.getTime() : undefined
   } catch {
@@ -143,7 +140,7 @@ export async function computeNextCronRuns(
     const normalized = normalizeCronExpression(expression)
     if (!normalized) return []
 
-    const job = new croner.Cron(normalized.expression, { startAt: from ? new Date(from) : undefined })
+    const job = new croner.Cron(normalized, { startAt: from ? new Date(from) : undefined })
     const runs: number[] = []
     let current = from ? new Date(from) : new Date()
 
@@ -192,7 +189,7 @@ export async function parseSchedule(
     const nextRun = await computeNextCronRunAt(trimmed)
     if (nextRun !== undefined) {
       return {
-        spec: { mode: 'cron', cronExpression: normalized.expression },
+        spec: { mode: 'cron', cronExpression: normalized },
       }
     }
   }

@@ -32,9 +32,17 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     armStreamingTimer: vi.fn(),
     armBashTimer: vi.fn(),
     clearBashTimer: vi.fn(),
-    // m2：queue_update drain 接线 drainPending + appendUser（对齐 core __tests__/effects.test.ts 形态）
-    drainPending: vi.fn(),
+    // m2→W14：queue_update drain 接线 drainN（计数 FIFO）+ appendUser + 深度对账 reconcilePending
+    //（对齐 core __tests__/effects.test.ts 形态；本套用例不触发 queue_update，返回空数组即可）
+    drainN: vi.fn(() => []),
+    reconcilePending: vi.fn(),
     appendUser: vi.fn(),
+    // steer-bubble u1/D2：inflight 确认计数读写（message_start/abort 分支消费，store 注入；
+    // 本套用例无计数断言，getInflight 恒 0 + 其余 no-op）
+    getInflight: vi.fn(() => 0),
+    incrementInflight: vi.fn(),
+    decrementInflight: vi.fn(),
+    clearInflight: vi.fn(),
     // w21：entry 载体帧喂 reducer 的接入点
     applyEntryFrame: vi.fn(),
   }

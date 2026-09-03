@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-permission",
-  "version": "1.3.4",
+  "version": "1.4.0",
   "description": "Pi permission extension — four permission modes (yolo/auto/approve/strict) with three-layer pipeline (AST + rules + AI classifier).",
   "type": "module",
   "main": "src/index.ts",
@@ -53,6 +53,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@zhushanwen/pi-ext-guards": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*",
     "@zhushanwen/pi-llm-shared": "workspace:*",
     "tree-sitter-bash": "^0.25.1",

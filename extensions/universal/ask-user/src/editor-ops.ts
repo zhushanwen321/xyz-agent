@@ -10,8 +10,6 @@ import { isHighSurrogate, SURROGATE_PAIR_LEN, type QuestionState } from "./types
 
 // ── 编辑器纯操作 ──
 
-// ── 编辑器纯操作 ──
-
 /** 在光标处插入文本，光标前移 text.length。 */
 export function insertAtCursor(state: QuestionState, text: string): void {
 	state.draftText = state.draftText.slice(0, state.cursorIndex) + text + state.draftText.slice(state.cursorIndex);

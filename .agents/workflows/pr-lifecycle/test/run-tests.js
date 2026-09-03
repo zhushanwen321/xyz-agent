@@ -14,6 +14,9 @@ const os = require('node:os');
 const path = require('node:path');
 const lib = require(path.join(__dirname, '..', 'lib.cjs'));
 
+// 统一清理登记：所有 mkdtemp root 在 main 末尾 rmSync（对齐头注释「测试结束删除」）
+const tempRoots = [];
+
 /* ── runner 骨架 ─────────────────────────────────────────────────────── */
 
 let passed = 0;
@@ -58,6 +61,7 @@ const RUN_ID_A = 'prw-20260901-090000-aaaa';
  */
 function makeIo(opts = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prl-u1-'));
+  tempRoots.push(root);
   const base = opts.base || 'main';
   const git = {
     head: opts.head || 'H1',
@@ -78,7 +82,10 @@ function makeIo(opts = {}) {
   const sh = (cmd, args) => {
     recorded.sh.push([cmd, ...args]);
     if (cmd === 'git' && args[0] === 'rev-parse') {
-      if (args[1] === '--show-toplevel') return { code: 0, stdout: `${root}\n` };
+      if (args[1] === '--show-toplevel') {
+        if (opts.failToplevel) return { code: 128, stdout: '', stderr: 'fatal: not a git repository' };
+        return { code: 0, stdout: `${opts.toplevelOverride || root}\n` };
+      }
       if (args[1] === '--abbrev-ref' && args[2] === 'HEAD') return { code: 0, stdout: `${git.branch}\n` };
       if (args[1] === 'HEAD') return { code: 0, stdout: `${git.head}\n` };
       if (args[1] === `${base}^{commit}`) {
@@ -124,6 +131,7 @@ function makeIo(opts = {}) {
     writeSync: fs.writeSync.bind(fs),
     closeSync: fs.closeSync.bind(fs),
     readdirSync: fs.readdirSync.bind(fs),
+    realpathSync: fs.realpathSync.bind(fs),
     renameSync: (a, b) => {
       recorded.renames.push([String(a), String(b)]);
       try {
@@ -287,9 +295,10 @@ async function main() {
       allowExternalChanges: 'true', simplifyMode: 'report', reviewers: 'x.md,y.md',
     });
     assert.deepStrictEqual(p, {
-      runId: null, base: 'dev', reviewers: ['x.md', 'y.md'], maxRounds: 5,
+      runId: null, repo: null, aggregatorModel: null, base: 'dev', reviewers: ['x.md', 'y.md'], maxRounds: 5,
       simplifyMode: 'report', skipSteps: ['a', 'b'], allowExternalChanges: true,
     });
+    assert.strictEqual(lib.normalizeParams({ repo: '/abs/repo' }).repo, '/abs/repo');
     const dflt = lib.normalizeParams({});
     assert.strictEqual(dflt.base, 'main');
     assert.strictEqual(dflt.maxRounds, 10);
@@ -335,15 +344,55 @@ async function main() {
     assert.strictEqual(captured[3].opts.cwd, '/other');
   });
 
-  await test('resumeCommand 生成：带 runId 与 fresh 形态', () => {
+  await test('resumeCommand 生成：zsw CLI 真形态（--workflow 绝对路径 / --runId），cli 解析失败降级占位', () => {
+    const t = makeIo({}); // homedir 指向无 zsw 的 fake-home → 占位降级
+    const withRun = lib.resumeCommand(t.io, '/abs/repo', 'prw-20260903-100000-ab12');
+    assert.ok(withRun.includes(`--workflow /abs/repo/.agents/workflows/pr-lifecycle.js`), withRun);
+    assert.ok(withRun.includes('--workdir /abs/repo'), withRun);
+    assert.ok(withRun.includes('--repo /abs/repo'), `workdir 是保留键，恢复命令必须带 --repo：${withRun}`);
+    assert.ok(withRun.includes('--runId prw-20260903-100000-ab12'), withRun);
+    assert.ok(withRun.startsWith('node '), withRun);
+    assert.ok(withRun.includes('<zsw-cli>（占位'), `cli 缺失应降级占位：${withRun}`);
+    const fresh = lib.resumeCommand(t.io, '/abs/repo', null);
+    assert.ok(fresh.includes('--workflow /abs/repo/.agents/workflows/pr-lifecycle.js') && !fresh.includes('--runId'), fresh);
+    assert.ok(fresh.includes('--repo /abs/repo'), fresh);
+  });
+
+  await test('resolveZswCli：main worktree 候选优先；cache 多版本取数值最高且过滤 <1.2.0（1.0.0 旧契约跑不了 core 脚本）', () => {
+    const t = makeIo({
+      presetFiles: {
+        'Code/zcode-plugin-workspace/main/z-subagent-workflow/bin/zsw.js': '// main\n',
+        '.zcode/cli/plugins/cache/zcode-plugin-workspace/z-subagent-workflow/1.2.0/bin/zsw.js': '// old\n',
+        '.zcode/cli/plugins/cache/zcode-plugin-workspace/z-subagent-workflow/1.10.0/bin/zsw.js': '// new\n',
+        '.zcode/cli/plugins/cache/zcode-plugin-workspace/z-subagent-workflow/2.0.0-no-bin/placeholder': 'x',
+      },
+    });
+    Object.defineProperty(t.io, 'homedir', { value: () => t.root });
+    const resolved = lib.resolveZswCli(t.io);
+    assert.strictEqual(resolved, path.join(t.root, 'Code', 'zcode-plugin-workspace', 'main', 'z-subagent-workflow', 'bin', 'zsw.js'));
+    // 无 main 候选 → cache 数值最高且 ≥1.2.0
+    const t1 = makeIo({
+      presetFiles: {
+        '.zcode/cli/plugins/cache/zcode-plugin-workspace/z-subagent-workflow/1.2.0/bin/zsw.js': '// old\n',
+        '.zcode/cli/plugins/cache/zcode-plugin-workspace/z-subagent-workflow/1.10.0/bin/zsw.js': '// new\n',
+        '.zcode/cli/plugins/cache/zcode-plugin-workspace/z-subagent-workflow/2.0.0-no-bin/placeholder': 'x',
+      },
+    });
+    Object.defineProperty(t1.io, 'homedir', { value: () => t1.root });
     assert.strictEqual(
-      lib.resumeCommand('/abs/repo', 'prw-20260903-100000-ab12'),
-      'zflow run pr-lifecycle workdir=/abs/repo runId=prw-20260903-100000-ab12',
+      lib.resolveZswCli(t1.io),
+      path.join(t1.root, '.zcode', 'cli', 'plugins', 'cache', 'zcode-plugin-workspace', 'z-subagent-workflow', '1.10.0', 'bin', 'zsw.js'),
     );
-    assert.strictEqual(
-      lib.resumeCommand('/abs/repo', null),
-      'zflow run pr-lifecycle workdir=/abs/repo',
-    );
+    // cache 只有 1.0.0（旧契约，跑 core 脚本必失败）→ 过滤 → null（降级占位）
+    const t2 = makeIo({
+      presetFiles: { '.zcode/cli/plugins/cache/zcode-plugin-workspace/z-subagent-workflow/1.0.0/bin/zsw.js': '// legacy\n' },
+    });
+    Object.defineProperty(t2.io, 'homedir', { value: () => t2.root });
+    assert.strictEqual(lib.resolveZswCli(t2.io), null);
+    // 全空 → null
+    const t3 = makeIo({});
+    Object.defineProperty(t3.io, 'homedir', { value: () => path.join(t3.root, 'empty-home') });
+    assert.strictEqual(lib.resolveZswCli(t3.io), null);
   });
 
   /* ── fresh 流程 ── */
@@ -373,11 +422,12 @@ async function main() {
     assert.strictEqual(fs.existsSync(path.join(stateDirOf(root), 'lock')), false);
     // log 首行含 runId 与 resumeCommand（获取通道 3）
     assertIncludes(recorded.logs[0], `runId=${result.runId}`);
-    assertIncludes(recorded.logs[0], `resumeCommand=zflow run pr-lifecycle workdir=${root} runId=${result.runId}`);
+    assertIncludes(recorded.logs[0], `--workflow ${root}/.agents/workflows/pr-lifecycle.js`);
+    assertIncludes(recorded.logs[0], `--runId ${result.runId}`);
   });
 
-  await test('fresh 并发防护：latest 指向进行中 run → fail-fast「已有进行中的 run」', async () => {
-    const { io, root } = makeIo({ args: {}, engineMap: { 'wf-live': 'running' } });
+  await test('fresh 并发防护：latest 指向进行中 run 且记录 pid 存活 → fail-fast「已有进行中的 run」', async () => {
+    const { io, root } = makeIo({ args: {}, engineMap: { 'wf-live': 'running' }, pidMap: { 999: 'alive' } });
     seedState(root, { runId: RUN_ID_A, engineRunId: 'wf-live', pid: 999, status: 'running' });
     fs.writeFileSync(path.join(stateDirOf(root), 'latest'), `${RUN_ID_A}\n`);
     const result = await lib.runPipeline(io);
@@ -409,7 +459,7 @@ async function main() {
   /* ── 互斥锁 ── */
 
   await test('lockfile：EEXIST 且持锁 run 进行中 → fail-fast（活性复查拦截）', async () => {
-    const { io, root } = makeIo({ args: {}, engineMap: { 'wf-live': 'running' } });
+    const { io, root } = makeIo({ args: {}, engineMap: { 'wf-live': 'running' }, pidMap: { 999: 'alive' } });
     fs.mkdirSync(stateDirOf(root), { recursive: true });
     fs.writeFileSync(path.join(stateDirOf(root), 'lock'), JSON.stringify({ runId: RUN_ID_A, pid: 999, engineRunId: 'wf-live' }));
     const result = await lib.runPipeline(io);
@@ -441,16 +491,39 @@ async function main() {
     assert.strictEqual(fs.existsSync(path.join(stateDirOf(root), 'lock')), true);
   });
 
-  await test('lockfile：锁内容含 runId/pid/engineRunId（fresh 期间可观测）', async () => {
+  await test('lockfile：锁写入内容经捕获断言（初写 runId=null + updateLockContent 回填 runId/pid/engineRunId）', async () => {
     const { io, root } = makeIo({ args: { _runId: 'wf-lock-check' } });
-    // 拦截 rename 前的流程不可行，改为：跑完后验证接管场景留下的日志链；此处直接验证
-    // acquireLock 写入内容——借一次「持锁 run 终态」接管后旧锁内容被覆盖为新 engineRunId。
     const lockPath = path.join(stateDirOf(root), 'lock');
-    fs.mkdirSync(stateDirOf(root), { recursive: true });
-    fs.writeFileSync(lockPath, JSON.stringify({ runId: null, pid: 111, engineRunId: 'wf-old' }));
+    // 经注入 fs 捕获 openSync/writeSync（acquireLock 用 'wx' 创建 + writeSync(fd) 写内容）
+    const fdToPath = new Map();
+    const lockWrites = [];
+    const origOpen = io.fs.openSync;
+    const origWrite = io.fs.writeSync;
+    const origWriteFile = io.fs.writeFileSync;
+    io.fs.openSync = (p, flags) => {
+      const fd = origOpen(p, flags);
+      fdToPath.set(fd, String(p));
+      return fd;
+    };
+    io.fs.writeSync = (fd, content) => {
+      if (fdToPath.get(fd) === lockPath) lockWrites.push(String(content));
+      return origWrite(fd, content);
+    };
+    io.fs.writeFileSync = (p, content, ...rest) => {
+      if (String(p) === lockPath) lockWrites.push(String(content)); // updateLockContent 回填走 writeFileSync
+      return origWriteFile(p, content, ...rest);
+    };
     const result = await lib.runPipeline(io);
     assert.strictEqual(result.status, 'awaiting-push');
-    // （锁终态已删；内容正确性由 EEXIST 接管测试路径覆盖：wf-old=done 才会放行）
+    assert.strictEqual(lockWrites.length, 2, `初写 + 回填共两次：${JSON.stringify(lockWrites)}`);
+    const first = JSON.parse(lockWrites[0]);
+    assert.strictEqual(first.runId, null); // acquireLock 时 fresh runId 未生成
+    assert.strictEqual(first.pid, 4242);
+    assert.strictEqual(first.engineRunId, 'wf-lock-check');
+    const second = JSON.parse(lockWrites[1]);
+    assert.strictEqual(second.runId, result.runId); // updateLockContent 回填真 runId
+    assert.strictEqual(second.pid, 4242);
+    assert.strictEqual(second.engineRunId, 'wf-lock-check');
   });
 
   /* ── resume 守卫（§3.4-(4) 顺序） ── */
@@ -464,7 +537,8 @@ async function main() {
     assert.strictEqual(result.runId, 'prw-20260901-000000-zzzz');
     assertIncludes(result.error, '无效');
     assertIncludes(result.error, '去掉 runId');
-    assert.strictEqual(result.resumeCommand, `zflow run pr-lifecycle workdir=${root}`);
+    assert.ok(result.resumeCommand.includes(`--workflow ${root}/.agents/workflows/pr-lifecycle.js`), result.resumeCommand);
+    assert.ok(!result.resumeCommand.includes(`--runId`), 'fresh 形态不带 runId');
   });
 
   await test('守卫 1 反：stateVersion 非 1（版本不兼容）→ 同文案 fail-fast', async () => {
@@ -495,8 +569,8 @@ async function main() {
     assertIncludes(result.error, '不传 runId 起新 run');
   });
 
-  await test('守卫 4 主通道：引擎 status=running → fail-fast「仍在进行」+ abort 指引', async () => {
-    const { io, root } = makeIo({ args: resumeArgs(), engineMap: { 'wf-live': 'running' } });
+  await test('守卫 4 主通道：引擎 status=running 且记录 pid 存活 → fail-fast「仍在进行」+ abort 指引', async () => {
+    const { io, root } = makeIo({ args: resumeArgs(), engineMap: { 'wf-live': 'running' }, pidMap: { 111: 'alive' } });
     seedState(root, { engineRunId: 'wf-live' });
     const result = await lib.runPipeline(io);
     assert.strictEqual(result.status, 'failed');
@@ -505,8 +579,8 @@ async function main() {
     assertIncludes(result.error, 'abort');
   });
 
-  await test('守卫 4 fail-closed：引擎 status 为未知值 → 一律视为进行中拦截', async () => {
-    const { io, root } = makeIo({ args: resumeArgs(), engineMap: { 'wf-weird': 'frobnicated' } });
+  await test('守卫 4 fail-closed：引擎 status 为未知值且记录 pid 存活 → 一律视为进行中拦截', async () => {
+    const { io, root } = makeIo({ args: resumeArgs(), engineMap: { 'wf-weird': 'frobnicated' }, pidMap: { 111: 'alive' } });
     seedState(root, { engineRunId: 'wf-weird' });
     const result = await lib.runPipeline(io);
     assert.strictEqual(result.status, 'failed');
@@ -696,7 +770,8 @@ async function main() {
     assert.strictEqual(result.status, 'failed');
     assert.strictEqual(result.failedStep, 'b');
     assert.strictEqual(result.error, 'boom-b');
-    assert.strictEqual(result.resumeCommand, `zflow run pr-lifecycle workdir=${root} runId=${RUN_ID_A}`);
+    assert.ok(result.resumeCommand.includes(`--workflow ${root}/.agents/workflows/pr-lifecycle.js`), result.resumeCommand);
+    assert.ok(result.resumeCommand.includes(`--runId ${RUN_ID_A}`), result.resumeCommand);
     assert.deepStrictEqual(runs, ['b']); // c 未执行
     const state = readStateFile(root, RUN_ID_A);
     assert.strictEqual(state.status, 'failed');
@@ -768,7 +843,8 @@ async function main() {
       assertIncludes(result.error, `本 run ${RUN_ID_A} 已完成`);
       assertIncludes(result.error, '请不传 runId 起新 run');
       assertIncludes(result.error, 'allowExternalChanges 在此场景无效');
-      assertIncludes(result.error, `新 run 命令：zflow run pr-lifecycle workdir=${root}`);
+      assertIncludes(result.error, `新 run 命令：node `);
+      assertIncludes(result.error, `--workflow ${root}/.agents/workflows/pr-lifecycle.js`);
       assert.strictEqual(result.resumeCommand, null); // 防指引链兜圈
       assert.deepStrictEqual(runs, []);
     }
@@ -1230,7 +1306,7 @@ async function main() {
     assert.strictEqual(lib.worktreeDirt(''), '');
   });
 
-  /* ── u3：门禁 steps（constraints / coverage-1 / metrics-1 / final-gates + 占位） ── */
+  /* ── u3：门禁 steps（constraints / coverage-1 / metrics-1 / final-gates + simplify mock） ── */
 
   const PASS_COVERAGE_JSON = {
     verdict: 'pass', base: 'main', min_incremental: 80,
@@ -1283,8 +1359,9 @@ async function main() {
 
   const shArgsOf = (t, scriptPath) => t.recorded.sh.filter((c) => c[1] === scriptPath);
 
-  // 门禁段注册表：cr-fix/simplify 占位以 mock 实现替换（占位本体是 u4/u5 领地；
-  // 本段测试驱动 walker 顺序语义，等价「cr-fix/simplify 已交付且成功」）
+  // 门禁段注册表：simplify 以 mock 实现替换（隔离真实 agent；本段测试驱动 walker
+  // 顺序语义，等价「cr-fix/simplify 成功收敛」）；cr-fix 走真实现，nested loop
+  // 经 io.workflow mock 注入
   // cr-fix batch1 扫描源：门禁段测试的默认 reviewer agent（真文件，readdirSync 真实扫描）
   function seedReviewerAgent(root) {
     const dir = path.join(root, '.agents', 'skills', 'pr-cr-fix', 'agents');
@@ -1294,7 +1371,7 @@ async function main() {
 
   function gatesSteps(root) {
     return makeSteps({ root, range: STEP_RANGE.gates }).map((s) => {
-      if (s.id === 'simplify') return { id: 'simplify', run: async () => ({ applied: 0, proposals: 0 }) }; // u5 占位 mock（cr-fix 已是 u4 真实现，nested 经 io.workflow mock 注入）
+      if (s.id === 'simplify') return { id: 'simplify', run: async () => ({ applied: 0, proposals: 0 }) }; // simplify mock（cr-fix 走真实现，nested 经 io.workflow mock 注入）
       return s;
     });
   }
@@ -1600,7 +1677,7 @@ async function main() {
     assert.strictEqual(result.status, 'awaiting-push', `error=${result.error}`);
     const withInject = shArgsOf(t, FAKE_PATHS.preMerge).filter((c) => c.includes('--test-result'));
     assert.ok(withInject.length >= 1, '③ 应以 --test-result 注入值执行');
-    assert.deepStrictEqual(withInject[0], ['bash', FAKE_PATHS.preMerge, '--test-result', 'PASS']);
+    assert.deepStrictEqual(withInject[0], ['bash', FAKE_PATHS.preMerge, '--test-result', 'PASS', '--base', 'main']);
     assert.strictEqual(readStateFile(t.root, RUN_ID_A).steps['final-gates'].outputs.premergeResult, 'PASS');
   });
 
@@ -1727,7 +1804,7 @@ async function main() {
     const steps = makeSteps({ root: '/fake-root-placeholder' });
     assert.strictEqual(steps.length, 12);
     for (const s of steps) assert.ok(!s.id.startsWith('placeholder'), s.id);
-    // 集成：前九步 done → walker 走到 cr-fix 占位 → failed
+    // 集成：前九步 done → walker 走到 cr-fix → failed
     const m = allGatesMocks({});
     const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-ph' } }, m));
     seedState(t.root, {
@@ -1744,7 +1821,7 @@ async function main() {
         'metrics-1': { status: 'done', attempts: 1, outputs: { metricsVerdict: 'pass' } },
       },
     });
-    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.gates }); // 真注册表（含真占位）
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.gates }); // 真注册表
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'failed');
     assert.strictEqual(result.failedStep, 'cr-fix');
@@ -1818,7 +1895,7 @@ async function main() {
     assert.strictEqual(p.maxRounds, 10);
     assert.strictEqual(p.autoCommit, true);
     assert.strictEqual(p.skipCleanAgents, true);
-    assert.strictEqual(p.aggregatorModel, 'zai-coding-cn/glm-5.3-flash');
+    assert.ok(!('aggregatorModel' in p), `缺省不传 = loop 跟随 run 模型（Gate B S1）：${JSON.stringify(p)}`);
   });
 
   await test('cr-fix：reviewers 白名单交集裁剪（substring 匹配）；全不匹配 → batch1 组装失败文案', async () => {
@@ -1859,7 +1936,7 @@ async function main() {
     const t = t0({ workflow: async () => rflResult('max-rounds', runDir) });
     fs.mkdirSync(runDir, { recursive: true });
     await assert.rejects(driveCrFix(t), (e) => {
-      assert.ok(!e.message.includes('aggregated.md（存在）'));
+      assert.ok(!e.message.includes('aggregated.md'), `无报告场景不应出现文件路径：${e.message}`);
       assert.ok(e.message.includes(runDir), `降级 runDir：${e.message}`);
       return true;
     });
@@ -2156,6 +2233,196 @@ async function main() {
   });
 
 
+  await test('修复批：final-gates marker result="FAIL" → premergeResult 判 FAIL（行解析防御分支可达）', async () => {
+    const m = allGatesMocks({
+      presetFiles: { '.review/premerge-result': 'timestamp="smoke"\nresult="FAIL"\n' },
+    });
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-fix-marker' } }, m));
+    seedState(t.root, {
+      status: 'running',
+      steps: {
+        constraints: { status: 'done', attempts: 1, outputs: { constraintsFile: 'c.md' } },
+        'coverage-1': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3 } },
+        'metrics-1': { status: 'done', attempts: 1, outputs: { metricsVerdict: 'pass' } },
+        'cr-fix': { status: 'done', attempts: 1, outputs: { nestedRunId: ['wf-x'], terminated: 'clean', aggregatedFile: null } },
+      },
+    });
+    seedReviewerAgent(t.root);
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(result.failedStep, 'final-gates');
+    assertIncludes(result.error, 'marker result=FAIL');
+    assert.strictEqual(lib.readPremergeMarker(t.io, t.root), 'FAIL');
+  });
+
+  await test('修复批：findAggregatedFile 数值序取最大（round-10 > round-2，防字典序）', () => {
+    const t = t0();
+    const runDir = path.join(t.root, '.rfl', 'wf-rounds');
+    for (const r of ['round-2', 'round-10']) {
+      fs.mkdirSync(path.join(runDir, 'batch-1', r), { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'batch-1', r, 'aggregated.md'), `# ${r}\n`);
+    }
+    assert.strictEqual(
+      lib.findAggregatedFile(t.io, runDir),
+      path.join(runDir, 'batch-1', 'round-10', 'aggregated.md'),
+    );
+  });
+
+
+  /* ── Gate B S1：repoRoot 仓库根守卫 + repo 参数解析 ── */
+
+  await test('S1：repoRoot 非 git 根 → fail-fast（不落锁/latest/state），文案指引 --repo', async () => {
+    const t = makeIo({ args: { _runId: 'wf-s1' }, failToplevel: true });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(result.runId, null); // 守卫先于 runId 消费，未建任何 run
+    assertIncludes(result.error, '不是有效 git 仓库');
+    assertIncludes(result.error, '--repo');
+    assertIncludes(result.error, '仓库根绝对路径');
+    // fail-fast 先于任何落盘：stateDir 未创建
+    assert.strictEqual(fs.existsSync(path.join(t.root, '.review', 'pr-workflow')), false);
+    assert.ok(result.resumeCommand.includes('--repo'), result.resumeCommand);
+  });
+
+  await test('S1：repoRoot 是仓库子目录（toplevel ≠ repoRoot）→ fail-fast 带 toplevel 对照', async () => {
+    const t = makeIo({ args: { _runId: 'wf-s1b' }, toplevelOverride: '/real/repo/root' });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assertIncludes(result.error, '不是仓库根');
+    assertIncludes(result.error, '/real/repo/root');
+    assertIncludes(result.error, '--repo');
+  });
+
+  await test('S1：repoRoot 合法（toplevel === repoRoot）→ 守卫通过走全链（既有 mock 形态）', async () => {
+    const m = allPassMocks();
+    const t = makeIo(Object.assign({ args: { _runId: 'wf-s1-ok' } }, m));
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.prOnly });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push', `error=${result.error}`);
+  });
+
+  await test('S1：resolveRepoRoot 三态——repo 参数 > workspace 回落 > 双缺省 resolve(".")', () => {
+    assert.strictEqual(lib.resolveRepoRoot({ repo: '/abs/repo' }, '/host/cwd'), path.resolve('/abs/repo'));
+    assert.strictEqual(lib.resolveRepoRoot({}, '/host/cwd'), path.resolve('/host/cwd'));
+    assert.strictEqual(lib.resolveRepoRoot({ repo: '' }, ''), path.resolve('.')); // 双缺省 → 进程 cwd
+    assert.strictEqual(lib.resolveRepoRoot({ repo: '   ' }, null), path.resolve('.')); // 空白串视同缺省
+  });
+
+
+  await test('修复批：cr-fix aggregatorModel——显式传入透传 nested，缺省不传键（pi 侧无 zai-coding-cn）', async () => {
+    const t = t0({ workflow: async () => rflResult('clean', path.join(t.root, '.rfl', 'wf-am')) });
+    const step = findStep(makeSteps({ root: t.root }), 'cr-fix');
+    const ctx = crFixCtx(t);
+    ctx.state.params.aggregatorModel = 'builtin:bigmodel-coding-plan/GLM-5.3-Flash';
+    ctx.params.aggregatorModel = 'builtin:bigmodel-coding-plan/GLM-5.3-Flash';
+    await step.run(ctx);
+    assert.strictEqual(t.workflowCalls[0].params.aggregatorModel, 'builtin:bigmodel-coding-plan/GLM-5.3-Flash');
+    // 缺省：normalizeParams 归一为 null，nested 参数无该键
+    assert.strictEqual(lib.normalizeParams({}).aggregatorModel, null);
+    const t2 = t0({ workflow: async () => rflResult('clean', path.join(t2.root, '.rfl', 'wf-d')) });
+    const ctx2 = crFixCtx(t2);
+    await findStep(makeSteps({ root: t2.root }), 'cr-fix').run(ctx2);
+    assert.ok(!('aggregatorModel' in t2.workflowCalls[0].params));
+  });
+
+
+  await test('Gate B：stacked PR（base≠main）→ ③ 携带 --base dev-0.9.13 与注入值（S1 现场回归）', async () => {
+    const t = makeIo({
+      args: { runId: RUN_ID_A, _runId: 'wf-gb-s1', base: 'dev-0.9.13' },
+      env: { XIAOMI_TOKEN_PLAN_CN_API_KEY: 'k' },
+      presetFiles: {
+        '.review/constraints.md': '# c\n',
+        '.review/coverage.json': JSON.stringify({ verdict: 'pass', base: 'dev-0.9.13', packages: { p: { status: 'OK', covered_executable_added_lines: 90, executable_added_lines: 100 } }, files: {} }),
+        '.review/metrics.json': JSON.stringify({ verdict: 'pass', base: 'dev-0.9.13', fail: [] }),
+        '.review/premerge-result': 'result="PASS"\n',
+      },
+      scriptMocks: {
+        [FAKE_PATHS.selectConstraints]: { code: 0, stdout: 'ok' },
+        [FAKE_PATHS.coverageGate]: (args) => {
+          t.covArgs = args;
+          return { code: 0, stdout: 'Gate-1.6 verdict=pass' };
+        },
+        [FAKE_PATHS.metricsGate]: { code: 0, stdout: 'Gate-1.5 verdict=pass' },
+        [FAKE_PATHS.preMerge]: (args) => {
+          t.preArgs = args;
+          return { code: 0, stdout: '[pr-pre-merge] all checks passed ✓' };
+        },
+      },
+    });
+    seedState(t.root, {
+      status: 'running',
+      base: 'dev-0.9.13',
+      steps: {
+        preflight: { status: 'done', attempts: 1 },
+        'static-gate': { status: 'done', attempts: 1, outputs: { result: 'PASS', changesetWarn: false } },
+        changeset: { status: 'skipped', reason: 'c' },
+        'pr-meta': { status: 'done', attempts: 1, outputs: { title: 't', bodyFile: 'b.md' } },
+        'skill-yaml': { status: 'skipped', reason: 'c' },
+        'pr-submit': { status: 'done', attempts: 1, outputs: { prUrl: 'https://github.com/a/b/pull/1' } },
+        constraints: { status: 'done', attempts: 1, outputs: { constraintsFile: 'c.md' } },
+        'coverage-1': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 90.0 } },
+        'metrics-1': { status: 'done', attempts: 1, outputs: { metricsVerdict: 'pass' } },
+        'cr-fix': { status: 'done', attempts: 1, outputs: { nestedRunId: ['wf-x'], terminated: 'clean', aggregatedFile: null } },
+        simplify: { status: 'skipped', reason: 'c' },
+      },
+    });
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push', `error=${result.error}`);
+    assert.ok(t.covArgs.includes('--base') && t.covArgs.includes('dev-0.9.13'), JSON.stringify(t.covArgs)); // ① 同 base
+    assert.deepStrictEqual(t.preArgs, [FAKE_PATHS.preMerge, '--test-result', 'PASS', '--base', 'dev-0.9.13']); // ③ 注入值 + --base 同值
+  });
+
+
+  /* ── Gate B S2：活性守卫主通道 pid 裁决（CLI 本地 kill -9 → 引擎 state 必然 stale） ── */
+
+  await test('S2：主通道 running + 记录 pid 已死 → 接管放行（含判定 log），resume 续跑', async () => {
+    const runs = [];
+    const t = makeIo({
+      args: { runId: RUN_ID_A, _runId: 'wf-s2-dead' },
+      engineMap: { 'wf-stale': 'running' }, // 主通道读到 running
+      pidMap: {}, // state.pid=222 默认 probePid → dead
+      steps: [mkStep('s1', runs)],
+    });
+    seedState(t.root, { engineRunId: 'wf-stale', pid: 222, steps: { s1: { status: 'failed', attempts: 1, error: 'killed mid-run' } } });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push', `error=${result.error}`); // 接管放行并续跑
+    assert.deepStrictEqual(runs, ['s1']);
+    assertIncludes(t.recorded.logs.join('\n'), '判定原 run 已死，接管放行');
+    assertIncludes(t.recorded.logs.join('\n'), 'CLI 本地 kill 的典型形态');
+    const state = readStateFile(t.root, RUN_ID_A);
+    assert.strictEqual(state.steps.s1.status, 'done'); // 断点 step 重跑完成
+  });
+
+  await test('S2：主通道 running + 记录 pid 存活 → 维持 fail-closed 拦截（daemon 活着且 run 在跑）', async () => {
+    const t = makeIo({
+      args: { runId: RUN_ID_A, _runId: 'wf-s2-alive' },
+      engineMap: { 'wf-live': 'running' },
+      pidMap: { 333: 'alive' },
+    });
+    seedState(t.root, { engineRunId: 'wf-live', pid: 333 });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assertIncludes(result.error, '仍在进行');
+    assertIncludes(result.error, 'engineRunId=wf-live');
+    assertIncludes(result.error, 'abort'); // 恢复出口指引（daemon 可达时有效）
+    // fail-closed 未改写任何产物
+    assert.strictEqual(fs.existsSync(path.join(stateDirOf(t.root), 'lock')), false);
+  });
+
+  await test('S2：主通道未知 status + pid 死 → 同样放行（running/未知同组裁决）', async () => {
+    const t = makeIo({
+      args: { runId: RUN_ID_A, _runId: 'wf-s2-weird' },
+      engineMap: { 'wf-weird': 'frobnicated' },
+    });
+    seedState(t.root, { engineRunId: 'wf-weird', pid: 444 });
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push', `error=${result.error}`);
+    assertIncludes(t.recorded.logs.join('\n'), 'status=frobnicated');
+  });
+
+
   console.log(`\n${passed} passed, ${failed.length} failed`);
   if (failed.length > 0) {
     console.error('\n失败清单：');
@@ -2164,7 +2431,16 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error('runner 自身异常：', e);
-  process.exitCode = 1;
-});
+// 单次执行：finally 链挂清理、catch 链挂 runner 自身异常（两次独立调用 main()
+// 会把全部用例跑两遍——修复批 F2 曾因此产生 222=111×2 假数字）
+main()
+  .finally(() => {
+    // 统一清理（对齐头注释「测试结束删除」）：全部 mkdtemp root 登记于 tempRoots
+    for (const root of tempRoots) {
+      try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* 已清理 */ }
+    }
+  })
+  .catch((e) => {
+    console.error('runner 自身异常：', e);
+    process.exitCode = 1;
+  });

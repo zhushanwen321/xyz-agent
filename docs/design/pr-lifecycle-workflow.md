@@ -71,8 +71,10 @@ pr-cr-fix skill 当前的工作方式：主 agent 读 SKILL.md，依次手工执
 **成功路径**：
 
 ```text
-# 主 agent 发起（不传 runId = 从头执行）
-zflow run pr-lifecycle  workdir=<repo 绝对路径>  timeoutMs=21600000
+# 主 agent 发起（不传 runId = 从头执行；--repo 必传——workdir 是引擎保留键不进脚本参数）
+node <zsw-cli> workflow --workflow <repo>/.agents/workflows/pr-lifecycle.js \
+  --task "<PR 背景>" --workdir <repo 绝对路径> --repo <repo 绝对路径> \
+  --base <base> --timeout-ms 21600000
 → 返回引擎 runId（wf-...），后台/异步执行
 
 # 脚本第一个动作：创建 runId 并落盘
@@ -83,12 +85,12 @@ zflow run pr-lifecycle  workdir=<repo 绝对路径>  timeoutMs=21600000
 scriptResult.json = {
   status: "awaiting-push",
   runId: "prw-20260903-221430-k7m2",
-  prUrl: "https://github.com/zhushanwen321/xyz-agent/pull/1234",
-  terminated: "clean", simplify: "applied:3/proposals:1",
-  gates: {coverage: "pass 84%", metrics: "pass", premerge: "PASS"},
+  prUrl: "https://github.com/zhushanwen321/xyz-agent/pull/197",
+  terminated: "clean", simplify: "applied:3/proposals:4",
+  gates: {coverage: "pass", metrics: "pass", premerge: "PASS"},
   skippedSteps: []          # 被人工/条件跳过的 step 及原因，汇报时必须逐项披露
 }
-# 主 agent → 用户：「PR #1234 全流程绿，待授权 push」（有 skippedSteps 时逐项披露）
+# 主 agent → 用户：「PR #197 全流程绿，待授权 push」（有 skippedSteps 时逐项披露）
 # 用户授权 → 主 agent 在脚本外执行 git push github HEAD:<branch> --force-with-lease
 # （3b 恒 --force-with-lease，与 pr-submit.sh 同构：lease 在快进场景无副作用、
 #   在远端有新提交时安全拒绝——SKILL 关键约束 4 的 force_push 判定链退化为常量）
@@ -101,7 +103,7 @@ scriptResult.json = {
   status: "failed", runId: "prw-20260903-221430-k7m2",
   failedStep: "coverage-1",
   error: "增量覆盖率 62% < 80%（已重试 3 轮），缺口见 .review/coverage.json uncovered_files",
-  resumeCommand: "zflow run pr-lifecycle workdir=<repo> runId=prw-20260903-221430-k7m2"
+  resumeCommand: "node <zsw-cli> workflow --workflow <repo>/.agents/workflows/pr-lifecycle.js --workdir <repo> --repo <repo> --runId prw-20260903-221430-k7m2"
 }
 # 主 agent 派 worker 补测试并 commit → 按 resumeCommand 带 runId 再发起
 # → preflight 校验通过 → 自动跳过 static-gate/pr-meta/pr-submit（已 done）
@@ -159,9 +161,9 @@ step 与 SKILL.md 阶段的对应（门禁语义映射，G5）：
 | `constraints` | 阶段 2 前置 | `node scripts/select-constraints.mjs --base <base>` | 产出 `.review/constraints.md` 供 review agent 消费 |
 | `coverage-1` | 1.6 + Gate-1.6 | `coverage-gate.py --base <base>`（diff 含 `packages/shared/**/src/**` 时自动加 `--extra-packages packages/runtime,packages/renderer`） | exit 1 → 派测试 agent 按 `uncovered_files` 补测试 → 重跑 ≤3 轮；exit 2 → failed（工具错误不自动重试） |
 | `metrics-1` | 1.5 + Gate-1.5 | `metrics-gate.py --base <base>` | fail → agent 修 → 重跑 ≤3 轮；exit 2 → failed。顺序固定在 coverage-1 之后（coverage.json 的 files 节供其分流） |
-| `cr-fix` | 阶段 2 + Gate-2 | `workflow("review-fix-loop", {targetType:"git-diff", target:<base>, batch1:<8 个 agent .md 绝对路径>, maxRounds:10, autoCommit:true, skipCleanAgents:true, aggregatorModel:"zai-coding-cn/glm-5.3-flash"})` 嵌套调用 | terminated 映射：clean/converged → 继续；review-failure/aggregator-failure/fix-failure → 脚本内自动重试 1 次，再败 failed；stuck/max-rounds/needs-redesign → failed（error 带 aggregated.md 路径 + 人工处置指引，见 §3.7）。fix commit message 采用内置版格式 `fix: review batch 1 round N — M must-fix + K suggestion`（与 SKILL 路径 2 旧约定不同，SKILL 重写时同步） |
+| `cr-fix` | 阶段 2 + Gate-2 | `workflow("review-fix-loop", {targetType:"git-diff", target:<base>, batch1:<8 个 agent .md 绝对路径>, maxRounds:10, autoCommit:true, skipCleanAgents:true, aggregatorModel:<仅当参数显式传入时才带此键，缺省跟随 run 模型>})` 嵌套调用 | terminated 映射：clean/converged → 继续；review-failure/aggregator-failure/fix-failure → 脚本内自动重试 1 次，再败 failed；stuck/max-rounds/needs-redesign → failed（error 带 aggregated.md 路径 + 人工处置指引，见 §3.7）。fix commit message 采用内置版格式 `fix: review batch 1 round N — M must-fix + K suggestion`（与 SKILL 路径 2 旧约定不同，SKILL 重写时同步）。**aggregatorModel 不可写死**（Gate B S1 实证：硬编码 `zai-coding-cn/glm-5.3-flash` 在 pi 侧为未知 provider → aggregator-failure；设计原文的该默认值作废，改为透传参数） |
 | `simplify` | （新增，G4） | 1 个 `agent()` | 仅 cr-fix 为 clean/converged 才执行，否则 skipped；详见 §3.6 D6 |
-| `final-gates` | 3a + Gate-3a | 顺序跑 `coverage-gate.py` → `metrics-gate.py` → `pr-pre-merge.sh --test-result <注入值>` | 三个动作合并为**一个 step**：任一失败按 SKILL 语义「从 ① 头部重跑」，故对外只暴露一个 checkpoint。`--test-result` 注入值 = 本 step 内 coverage-gate 的测试判定。有界修复子循环 ≤3 轮。**内含 real-pi 检测**（SKILL 阶段 3a [MANDATORY]）：③ 执行前按 `pi-fixture.ts` 的 `REAL_PI_READY` 三源探测预检凭证，缺失即 failed；③ 输出解析 real-pi skip 标记（⛔实施期确定精确标记格式，探针 P6），检出即按失败处置——不得凭 skip 输出宣布 PASS。**收尾防线**：step 完成前最后一次 `git status --porcelain`，非空即 failed（防「修复改动未 commit → 读数假绿 → push 后修复静默丢失」，与本仓 structured-output 历史事故同型） |
+| `final-gates` | 3a + Gate-3a | 顺序跑 `coverage-gate.py --base <base>` → `metrics-gate.py --base <base>` → `pr-pre-merge.sh --test-result <注入值> --base <base>` | 三个动作合并为**一个 step**：任一失败按 SKILL 语义「从 ① 头部重跑」，故对外只暴露一个 checkpoint。`--test-result` 注入值 = 本 step 内 coverage-gate 的测试判定；**③ 必须传 `--base <base>`**（与 ① coverage.json 同值——Gate B S1 实证：脚本默认 main，stacked PR（base≠main）必然 exit 2；已给 pr-pre-merge.sh 增加可选 `--base` 参数，默认 main 向后兼容）。有界修复子循环 ≤3 轮。**内含 real-pi 检测**（SKILL 阶段 3a [MANDATORY]）：③ 执行前按 `pi-fixture.ts` 的 `REAL_PI_READY` 三源探测预检凭证，缺失即 failed；③ 输出解析 real-pi skip 标记（⛔实施期确定精确标记格式，探针 P6），检出即按失败处置——不得凭 skip 输出宣布 PASS。**收尾防线**：step 完成前最后一次 `git status --porcelain`，非空即 failed（防「修复改动未 commit → 读数假绿 → push 后修复静默丢失」，与本仓 structured-output 历史事故同型） |
 
 **G5 语义映射的显式声明**（四处收紧/承接，均非降级）：
 
@@ -179,7 +181,7 @@ step 与 SKILL.md 阶段的对应（门禁语义映射，G5）：
 - **创建**：fresh run（未传 `runId` 参数）的**第一个动作**，先于任何副作用。格式 `prw-<yyyymmdd-HHMMSS>-<rand4>`（如 `prw-20260903-221430-k7m2`），脚本自生成，不依赖引擎注入的 `$ARGS._runId`（那是引擎 runId，每次 run 都变，不能当恢复键；仅记录进 state 便于排查）。
 - **落盘**：创建后立刻原子写 `state.json` + 更新 `.review/pr-workflow/latest` 指针文件（内容 = runId 单行文本）。
 - **主 agent 拿到 runId 的三条通道**（按可靠性排序）：
-  1. **终态 scriptResult.json 必含 `runId`**——成功与失败终态都有；失败终态另含 `failedStep` + 可直接复制执行的 `resumeCommand` 字符串。这是正常路径。
+  1. **终态 scriptResult.json 必含 `runId`**——成功与失败终态都有；失败终态另含 `failedStep` + 可直接复制执行的 `resumeCommand` 字符串（形态 = zsw CLI 真命令：`node <zsw-cli> workflow --workflow <repoRoot>/.agents/workflows/pr-lifecycle.js --workdir <repoRoot> --repo <repoRoot> --runId <runId>`——`--repo` 必带：workdir 是引擎保留键不进脚本参数，脚本读仓库根只能走此参数，repo 一致性由守卫 2 复核）。`<zsw-cli>` 由脚本按序解析（lib.resolveZswCli）：候选① zsw 插件 main worktree bin（`~/Code/zcode-plugin-workspace/main/z-subagent-workflow/bin/zsw.js`）优先；候选② 插件 cache 目录中版本数值最高且 ≥1.2.0 的条目（1.0.0 是旧 `run(ctx)` 契约，执行 core 契约脚本必失败，须过滤）；两候选皆缺失时降级占位符并注明获取方式。发起/通知形态的探针②定案见 §5 待验证②。这是正常路径。
   2. **`.review/pr-workflow/latest` 指针文件**——脚本暴毙（kill -9、宿主崩溃）无任何通知时的兜底通道。主 agent 或用户 `cat` 一下即可。
   3. **脚本 log 首行**——`log("runId=prw-... resumeCommand=...")`，运行中即可见。
 - **fresh / resume 判定**：`$ARGS.runId` 缺失 → fresh（新建 runId）；存在 → resume（读 `<stateDir>/<runId>/state.json`，不存在则 fail-fast：「runId 不存在，若要从头执行请去掉 runId 参数」，绝不悄悄新建）。
@@ -237,7 +239,7 @@ step 与 SKILL.md 阶段的对应（门禁语义映射，G5）：
 3. `failed`/`in_progress`（= 上次死在中途）的 step **整体重跑该 step**——step 是恢复的最小单位。各 step 重跑安全性见下面的幂等表。
 4. 通用逃生舱参数 `skipSteps: string[]`：walker 遇到列名中的未完成 step 标 `skipped(reason: "user-ack")` 并跳过。用途：人工判定 reviewer 误报卡住（cr-fix stuck）、用户已手工建过 PR（pr-submit）等接管场景。这是 resume 的必要人工接口，不是推测性功能。**所有 skipped 条目必须带 reason 并透传进终态 scriptResult.skippedSteps，主 agent 汇报 awaiting-push 时逐项披露**（授权链完整性：用户必须知道哪些门禁被跳过了）。
 5. `cr-fix` 的恢复粒度说明：嵌套 loop 是黑盒（其内部 state.json 被刻意设计成跨 run 不续跑），故该 step 重跑 = loop 从头跑。可接受性论证：loop 的 fix 已逐轮 commit 进 git 历史，重跑时 review 面对的是**当前真实 diff**，已修复问题不会再被报出，通常 1-2 轮收敛；丢的是 stagnation 计数等易变态，由 maxRounds 兜底。这是方案 A 相对「copy 移植版加轮次级 checkpoint」的已知代价，已在 §3.2 计入。
-6. **空转防护**：resume 时若所有 step 均已 done/skipped 且 HEAD == state.lastHead → 幂等返回旧终态（不重跑任何步骤）；若全 done 但 HEAD ≠ lastHead → **fail-fast**，指引「本 run 已完成；新产生的 commit 未经任何门禁，请不传 runId 起新 run」——不允许带着旧绿标空转放行新改动。
+6. **空转防护**：resume 时若所有 step 均已 done/skipped 且 HEAD == state.lastHead → 幂等返回旧终态（不重跑任何步骤）——**回放前提 = state.status 与 result.status 双双 awaiting-push**，不满足（如终态组装期崩溃残留的 failed result 快照）则从现存 steps outputs 重建 result 快照后返回，error 清空；若全 done 但 HEAD ≠ lastHead → **fail-fast**，指引「本 run 已完成；新产生的 commit 未经任何门禁，请不传 runId 起新 run」——不允许带着旧绿标空转放行新改动。
 
 **(4) 守卫（resume 入口依次执行，任一不过即 fail-fast + 恢复指引）**
 
@@ -246,8 +248,8 @@ step 与 SKILL.md 阶段的对应（门禁语义映射，G5）：
 | state 存在性 | state.json 可读且 stateVersion=1 | 「runId 不存在或版本不兼容；从头执行请去掉 runId」 |
 | repo 一致 | 当前脚本解析出的 repoRoot == state.repo | 「该 runId 属于另一仓库/worktree」 |
 | 分支一致 | 当前分支 == state.branch | 「runId 属于分支 X；如需对当前分支跑全流程请不传 runId 起新 run」 |
-| 活性（双通道，fail-closed） | **主通道**：读引擎 state 文件 `~/.zcode/zsw/workflow-state/<state.engineRunId>.jsonl` 的最后状态——`running` 即原 run 仍活 → fail-fast；明确终态（done/failed/aborted 等已知值）→ 放行；**未知/缺失状态值一律视为 running**（fail-closed，防格式演进导致旧 run 存活仍放行、双 run 并发互写）。**降级通道**：文件不存在/解析失败时 `process.kill(state.pid, 0)`，ESRCH → 放行并 log 标注降级；存活 → fail-fast，error 指引带人工出口（「`ps -p <pid> -o command=` 核实非本 run 进程（pid 复用）后，终止之或手工编辑 state 清除 pid 字段重试」） | 「原 run 仍在进行（engineRunId / pid）；如需接管请先 abort 原 run」。⛔实施期探针 P5：验证引擎 state 文件路径与终态字段格式（引擎内部契约，版本耦合，fail-closed + 降级通道保底）。**被否谱系**：单一 pid 守卫——被 daemon 形态击穿（daemon 常驻进程 pid 在 run 结束后仍存活，resume 被系统性误挡死锁；pid 只在 CLI 一次性进程形态下语义正确） |
-| 工作区干净 | `git status --porcelain` 为空（`.review/` 已 gitignore 不干扰）。本守卫是 resume 入口防线；run 内另有三个结构性时点：preflight（§3.3）、gate 修复子循环每轮 agent 返回后（§3.5）、final-gates 收尾前（§3.3） | 非空 → fail-fast：「存在未提交改动。若为中断残留（cr-fix/simplify 的半成品），人工检查后经 `git add <显式路径> && git commit` 落盘或 `git checkout --` 还原后 resume」。依据：coverage-gate 要求干净工作区（SKILL 明文），脏工作区会污染插桩口径；simplify/fix 的中断窗口是分钟级，守卫是主防线 |
+| 活性（双通道，主通道裁决以记录进程存活为前提） | **主通道**：读引擎 state 文件 `~/.zcode/zsw/workflow-state/<state.engineRunId>.jsonl` 的最后状态——明确终态（done/failed/aborted 等已知值）→ 放行；**非终态（running/未知/缺失，fail-closed）时先 probe pid 裁决**：pid 存活 → fail-fast（daemon 活着且 run 在跑，abort 出口可达）；**pid 已死 → 判定原 run 已死，接管放行**（Gate B S2 实证：CLI 本地 kill -9 时宿主与引擎同死，state 文件必然 stale 在 running，且 daemon 未运行时 abort 出口 ENOENT 死锁——进程死亡使 state 必然过期）。**降级通道**：引擎 state 文件不存在/解析失败时 `process.kill(state.pid, 0)`，ESRCH → 放行并 log 标注降级；存活 → fail-fast，error 指引带人工出口（「`ps -p <pid> -o command=` 核实非本 run 进程（pid 复用）后，终止之或手工编辑 state 清除 pid 字段重试」） | 「原 run 仍在进行（engineRunId / pid）；如需接管请先 abort 原 run」。⛔实施期探针 P5：验证引擎 state 文件路径与终态字段格式（引擎内部契约，版本耦合）。**被否谱系**：①单一 pid 守卫——被 daemon 形态击穿（daemon 常驻 pid 在 run 结束后仍存活，resume 被系统性误挡死锁）；②主通道 running 即无条件拦截——被 CLI 本地 kill -9 场景击穿（stale running + abort 不可达死锁），收敛为上述 pid 裁决语义 |
+| 工作区干净 | `git status --porcelain` 为空（脚本自持 `.review/` 目录结构性排除，不依赖目标仓 gitignore）。本守卫是 resume 入口防线；run 内另有三个结构性时点：preflight（§3.3）、gate 修复子循环每轮 agent 返回后（§3.5）、final-gates 收尾前（§3.3）。**全 done 幂等回放场景不适用本守卫**（walker 第 6 条分流先于本守卫，回放零 git 副作用，脏工作区不进 commit/push） | 非空 → fail-fast：「存在未提交改动。若为中断残留（cr-fix/simplify 的半成品），人工检查后经 `git add <显式路径> && git commit` 落盘或 `git checkout --` 还原后 resume」。依据：coverage-gate 要求干净工作区（SKILL 明文），脏工作区会污染插桩口径；simplify/fix 的中断窗口是分钟级，守卫是主防线 |
 | HEAD 外部变更 | 当前 HEAD ≠ state.lastHead 且 state.status ≠ "failed" | 需显式 `allowExternalChanges:true` 放行（walker 会从断点 step 重跑，新 commit 自然进入检查范围）；不加参数则 fail-fast。status=failed 时外部 commit 是**预期恢复动作**（用户手工修完再 resume），直接放行。**全 done 场景不适用本守卫**，走 walker 第 6 条空转防护——此时加参数也会被拦，报错文案直接预告「请起新 run」避免指引链兜圈。**被否谱系**：「allowExternalChanges 无条件放行」——被「全 done + 外部 commit 秒回旧绿标」反例击穿（新 commit 未过任何 gate 却被误认为已复验） |
 
 **(5) step 幂等性设计表**（恢复安全性的依据，逐条落实为实现要求）
@@ -286,8 +288,8 @@ pr-lifecycle.js（zsw worker 线程内，CJS，无沙箱）
 - **agent() 调用纪律**：全部带 `returnMeta: true` 并检查 `error`（core 引擎 agent 失败不 reject，只能经 meta 观测）；review/fix 类 agent 的 `timeoutMs` 对齐内置 loop 实践（review 1h；fix 不设超时）；**agent() 调用顺序必须确定**（walker 顺序固定），保证引擎崩溃重试的 callId 回放安全。
 - **pr-meta 的 schema**：`{title: string, body: string}`，prompt 内嵌 conventional commit 规则与 PR body 三节模板（Summary/Changes/Test plan），输入为 `git log <baseHash>..HEAD --format="%s%n%b---"` + `git diff <baseHash>..HEAD --stat` 全文。
 - **gate 修复子循环统一骨架**：`for attempt in 1..3 { verdict = run_gate(); if pass break; agent(fixPrompt(verdict 详情)); } 仍败 → step failed`。fixPrompt 要求 agent 修完自行 commit（确定性步骤的修复 commit 与 cr-fix 的 fix commit 区分 message：`fix: gate <step-id> round N`）。**脚本侧结构性验证**：每轮子循环 agent 返回后立即 `git status --porcelain`，**非空即 step failed**（第 1 次止损，不烧后续轮次 token）——脚本不自动 commit（不判断改动归属，对齐全局「认知外改动不擅自处理」），failed 指引「人工检查改动 → 显式路径 commit → resume」（resume 后该 step 重跑，gate 面对已 commit 的改动正常判定）。被否谱系：「脏则下轮 fixPrompt 提醒 commit」——被两个洞击穿：gate 提前 pass 路径上提醒丢失（脏状态穿透到 final-gates 才被拦，期间插桩读数违反 Gate-1.6 干净工作区前提）；agent 连续不 commit 时 3 轮全在脏状态空烧。
-- **参数合并语义**：`@pi-meta parameters` 声明全部脚本级可覆盖项（`runId` / `base` / `reviewers` / `maxRounds` / `simplifyMode` / `skipSteps` / `allowExternalChanges`），发起值覆盖脚本默认值；未声明参数被 AJV 拒绝（fail-fast 含修正指引，引擎原生行为）。注意两层参数分界：`timeoutMs` / `workdir` / `model` / `wait` 是引擎级参数（RUN_ENVELOPE_KEYS，不进 `$ARGS`），脚本内不重复声明。
-- **cr-fix 的 batch1 组装**：默认扫 `.agents/skills/pr-cr-fix/agents/review-*.md` 排序得 8 个绝对路径，逗号拼接；参数 `reviewers`（数组）可裁剪维度，裁剪规则沿用 SKILL 的路径匹配排除表（electron-build / extension-api 两维的条件排除由 walker 在组装前按 `git diff --name-only` 判定，宁可多派不漏派）。
+- **参数合并语义**：`@pi-meta parameters` 声明全部脚本级可覆盖项（`runId` / `repo` / `base` / `reviewers` / `maxRounds` / `aggregatorModel` / `simplifyMode` / `skipSteps` / `allowExternalChanges`，共 9 项）+ `task`（zsw CLI 必填 flag，引擎存入 run spec 供通知与查询展示，脚本不消费其语义）；发起值覆盖脚本默认值。schema 声明 `additionalProperties: false`，未声明参数被 AJV 拒绝（fail-fast 含修正指引）——**该拒绝由 schema 显式声明实现**（引擎 AJV 原生仅编译 schema，无此声明时未声明参数被静默忽略）；脚本消费面另由 normalizeParams 白名单二次收口（九项之外不进 state.params）。注意两层参数分界：`timeoutMs` / `workdir` / `model` / `wait` 是引擎级参数（RUN_ENVELOPE_KEYS，不进 `$ARGS`），脚本内不重复声明。
+- **cr-fix 的 batch1 组装**：默认扫 `.agents/skills/pr-cr-fix/agents/review-*.md` 排序得 8 个绝对路径，逗号拼接；参数 `reviewers`（数组或逗号串）为白名单交集裁剪。**维度排除判定归主 agent 发起时决定**（按 SKILL 路径匹配排除表裁剪 `reviewers` 后传入，宁可多派不漏派），脚本内不做 diff 语义判断——与 SKILL「默认全集、显式裁剪」现行语义一致，避免脚本内隐式裁剪不可审计。
 
 ### 3.6 关键决策与权衡
 
@@ -357,4 +359,4 @@ pr-lifecycle.js（zsw worker 线程内，CJS，无沙箱）
 
 **实施期待验证清单**（设计阶段无法确定，诚实标注）：① pi 环境是否可直接跑同一脚本（路径 1/2 统一的预期收益，验收场景 8）；② 1.2.0 异步 run 的完成通知通道（mailbox 通知线已退役，主 agent 侧的等待方式以实装为准：daemon socket status / CLI `run_in_background` + 输出文件）；③ nested loop 的产物路径（aggregated.md 在其自带 runDir 下，error 指引需回传绝对路径）。
 
-**文件改动地图**：新增 `.agents/workflows/pr-lifecycle.js`；新增 `.agents/skills/pr-cr-fix/agents/simplify-apply.md`；删除 `.agents/workflows/pr-review-fix.js`；修改 `.agents/skills/pr-cr-fix/SKILL.md`（路径 2 整节 + 前置条件 + 反模式表 + 目录结构节）。其余脚本（pr-submit.sh / gates）零改动——本设计全部复用现有确定性资产。
+**文件改动地图**：新增 `.agents/workflows/pr-lifecycle.js`；新增 `.agents/skills/pr-cr-fix/agents/simplify-apply.md`；删除 `.agents/workflows/pr-review-fix.js`；修改 `.agents/skills/pr-cr-fix/SKILL.md`（路径 2 整节 + 前置条件 + 反模式表 + 目录结构节）；修改 `scripts/pr-pre-merge.sh`（新增可选 `--base <ref>` 参数，默认 main 向后兼容——final-gates ③ 必须传 `--base <base>` 与 ① coverage 同口径，见 §3.3 final-gates 行与实施计划偏差 #11；Gate B S1 实证 stacked PR 场景下硬编码 main 必 exit 2）。其余脚本（pr-submit.sh / coverage-gate.py / metrics-gate.py / validate-skill-yaml.py 等）零改动——本设计全部复用现有确定性资产。

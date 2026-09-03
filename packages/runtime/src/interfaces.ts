@@ -33,6 +33,7 @@ import type {
   SegmentsMetadataEntry,
   SkillDirConfig,
   ProviderId,
+  LlmRetryConfig,
 } from '@xyz-agent/shared'
 import type { SubagentEngineConfigView } from '@xyz-agent/extension-protocol'
 import type { DirScopes } from './services/skill-dir-config.js'
@@ -471,6 +472,11 @@ export interface IConfigService {
   getTerminalConfig(): { config: TerminalConfig; corrupted: boolean }
   /** 写入 terminal.json。校验失败返回 ok:false + error，不写盘。 */
   setTerminalConfig(config: TerminalConfig): { ok: boolean; error?: string }
+  // ── LLM retry config（llm-retry-settings 设计，经 ILlmRetrySettings port）──
+  /** 读 pi settings.json retry 域：缺省键合并为 pi 默认值 + configured 标记（D7）。 */
+  getRetryConfig(): { config: LlmRetryConfig; configured: boolean }
+  /** 写 retry 域：D8 全量校验失败返回 ok:false + error 不落盘；成功 D3 嵌套键级 merge。 */
+  setRetryConfig(config: LlmRetryConfig): { ok: boolean; error?: string }
   // ── Worktree config（git-cwt-anywhere）──
   /** 读取 worktree 根目录（config.json.worktreeRootDir），默认 '~/worktrees'。 */
   getWorktreeRootDir(): string

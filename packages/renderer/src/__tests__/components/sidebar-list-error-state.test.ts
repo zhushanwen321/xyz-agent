@@ -24,8 +24,8 @@ const sidebarMocks = vi.hoisted(() => ({
   loadSessions: loadSessionsMock,
   syncSessionToPanel: vi.fn(),
 }))
-vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
-  useSidebarNew: () => sidebarMocks,
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
+  useSidebar: () => sidebarMocks,
   deriveStatus: () => ({ value: 'done' }),
 }))
 

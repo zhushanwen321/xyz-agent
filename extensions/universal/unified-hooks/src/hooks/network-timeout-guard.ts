@@ -3,7 +3,7 @@
  *
  * Intercepts bash tool calls that involve network operations.
  * Blocks execution if no timeout is set and the command appears to be network-bound,
- * prompting the AI to add timeout or use async mode.
+ * prompting the AI to add a timeout (or enable a proxy for overseas access).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

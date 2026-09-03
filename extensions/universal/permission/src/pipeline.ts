@@ -203,95 +203,140 @@ export function applyAutoApproveOverrides(
 
 // ──────────────────────── runLayer3WithRacing（G3 abort 时序） ────────────────────────
 
-/**
- * 层 3：AI Classifier + 用户审批竞速（移植 pi-permission-system classifier-racing.ts）。
- *
- * 竞速语义：
- *  - 启动 AI 分类（aiPromise）+ 用户审批（userPromise）。
- *  - 用户先返回 → controller.abort() 取消 AI（已无用的 AI 计算尽早终止）。
- *  - AI 先返回：
- *      - AI outcome='allow' → resolveUser({approved:false}) 关闭用户对话框，返回 allow。
- *      - AI outcome='deny'  → resolveUser({approved:false}) 关闭用户对话框，返回 deny。
- *      - AI outcome='ask'   → 不 resolveUser，等用户最终决策（AI 不确定时转人工）。
- *
- * G3 修正：requestUserApproval（TUI 分支）在调 ctx.ui.custom 前先检查 signal.aborted，
- * 避免 AI 先于 UI factory 执行时 controller.abort() 触发但 comp 尚未创建导致 cancel 落空。
- * 此处再叠一层：AI 赢且 outcome 是 allow/deny 时，先 abort 再 resolveUser，
- * 保证 UI factory 看到 aborted 状态短路。
- *
- * @param deps 注入依赖（classifier + requestUserApproval）
- * @param ctx 工具调用上下文
- * @param config classifier 配置
- * @param outerSignal 外层 signal（session abort 时传播）
- * @param trigger 审批触发原因（m2：AST 检测到的具体危险结构等；默认通用文案）
- * @returns PermissionDecision（source='ai' 或 'user'）
- */
-export async function runLayer3WithRacing(
-	deps: CheckPermissionDeps,
-	ctx: ToolInvocationContext,
-	config: ClassifierConfig,
-	outerSignal: AbortSignal | undefined,
-	trigger: string = "awaiting approval (auto mode: AI classifier racing with user prompt)",
-): Promise<PermissionDecision> {
-	const controller = new AbortController();
-	// 外层 abort 传播到内层
+/** 外层 abort 传播到内层 controller（session abort 时级联取消 AI + 用户审批）。 */
+function linkOuterSignal(controller: AbortController, outerSignal: AbortSignal | undefined): void {
 	if (outerSignal) {
 		if (outerSignal.aborted) controller.abort();
 		else outerSignal.addEventListener("abort", () => controller.abort(), { once: true });
 	}
+}
 
-	// M4：aiPromise 挂 .catch 转 fallback（确保永不 reject）。
-	// classifier 内部有 try/catch，但 resolveModel/buildModel/buildContext 在 try 外，
-	// 用户先返回 abort 后 classifier 晚 reject → race 已 settle → unhandledRejection。
-	const aiPromise = deps.classifier
-		.classifyRisk(ctx, config, controller.signal)
-		.catch((err: unknown) => {
-			const msg = err instanceof Error ? err.message : String(err);
-			return {
-				outcome: "ask" as const,
-				risk_level: "medium" as const,
-				reasoning: `classifier error: ${msg}`,
-				confidence: 0,
-			};
-		});
-
-	// M1：headless 模式（json/print）下纯等 AI，不启动 user promise。
-	// 否则 requestHeadless 立即 deny 会抢占 race → AI 永远没机会赢 → auto 退化为 strict。
-	// AI 返回 allow/deny → 按结果返回；AI 返回 ask/超时/fail → fail-closed deny。
-	if (deps.isHeadless()) {
-		const aiResult = await aiPromise;
-		const overridden = applyAutoApproveOverrides(aiResult, config);
-		if (overridden.outcome === "allow") {
-			controller.abort();
-			return {
-				action: "allow",
-				reason: overridden.reasoning,
-				source: "ai",
-				riskLevel: overridden.risk_level,
-				confidence: overridden.confidence,
-			};
-		}
-		if (overridden.outcome === "deny") {
-			controller.abort();
-			return {
-				action: "deny",
-				reason: overridden.reasoning,
-				source: "ai",
-				riskLevel: overridden.risk_level,
-				confidence: overridden.confidence,
-			};
-		}
-		// AI ask → headless 无 UI 可问 → fail-closed deny
-		controller.abort();
+/**
+ * 启动 AI 分类 promise。
+ * M4：aiPromise 挂 .catch 转 fallback（确保永不 reject）。
+ * classifier 内部有 try/catch，但 resolveModel/buildModel/buildContext 在 try 外，
+ * 用户先返回 abort 后 classifier 晚 reject → race 已 settle → unhandledRejection。
+ */
+function startAiClassification(
+	deps: CheckPermissionDeps,
+	ctx: ToolInvocationContext,
+	config: ClassifierConfig,
+	signal: AbortSignal,
+): Promise<ClassifierResult> {
+	return deps.classifier.classifyRisk(ctx, config, signal).catch((err: unknown) => {
+		const msg = err instanceof Error ? err.message : String(err);
 		return {
-			action: "deny",
-			reason: "headless mode: AI inconclusive (ask), fail-closed deny",
-			source: "ai",
-			riskLevel: overridden.risk_level,
-			confidence: overridden.confidence,
+			outcome: "ask" as const,
+			risk_level: "medium" as const,
+			reasoning: `classifier error: ${msg}`,
+			confidence: 0,
 		};
-	}
+	});
+}
 
+/** AI 判定 → PermissionDecision 信封（source='ai'，透传 overridden 的 reasoning/风险/置信度）。 */
+function aiDecision(action: PermissionAction, overridden: ClassifierResult): PermissionDecision {
+	return {
+		action,
+		reason: overridden.reasoning,
+		source: "ai",
+		riskLevel: overridden.risk_level,
+		confidence: overridden.confidence,
+	};
+}
+
+/**
+ * M1：headless 模式（json/print）下纯等 AI，不启动 user promise。
+ * 否则 requestHeadless 立即 deny 会抢占 race → AI 永远没机会赢 → auto 退化为 strict。
+ * AI 返回 allow/deny → 按结果返回；AI 返回 ask/超时/fail → fail-closed deny。
+ */
+async function settleHeadlessAi(
+	aiPromise: Promise<ClassifierResult>,
+	controller: AbortController,
+	config: ClassifierConfig,
+): Promise<PermissionDecision> {
+	const aiResult = await aiPromise;
+	const overridden = applyAutoApproveOverrides(aiResult, config);
+	if (overridden.outcome === "allow") {
+		controller.abort();
+		return aiDecision("allow", overridden);
+	}
+	if (overridden.outcome === "deny") {
+		controller.abort();
+		return aiDecision("deny", overridden);
+	}
+	// AI ask → headless 无 UI 可问 → fail-closed deny
+	controller.abort();
+	return {
+		action: "deny",
+		reason: "headless mode: AI inconclusive (ask), fail-closed deny",
+		source: "ai",
+		riskLevel: overridden.risk_level,
+		confidence: overridden.confidence,
+	};
+}
+
+/**
+ * AI 赢（非 ask）分支：先 abort 再 resolveUser 关闭用户对话框，返回 AI 决策
+ * （G3：先 abort 再 resolveUser，保证 UI factory 看到 aborted 状态短路）。
+ * 返回 null = AI ask → 转人工（不 resolveUser，等用户最终决策）。
+ */
+function settleAiWin(
+	overridden: ClassifierResult,
+	controller: AbortController,
+	resolveUser: (d: UserDecision) => void,
+): PermissionDecision | null {
+	if (overridden.outcome === "allow") {
+		// AI 放行 → 关闭用户对话框（若已弹出），返回 allow
+		controller.abort();
+		resolveUser({ approved: false, reason: "AI classifier allowed; dialog dismissed" });
+		return aiDecision("allow", overridden);
+	}
+	if (overridden.outcome === "deny") {
+		controller.abort();
+		resolveUser({ approved: false, reason: "AI classifier denied; dialog dismissed" });
+		return aiDecision("deny", overridden);
+	}
+	return null;
+}
+
+/**
+ * AI ask → 转 human（等用户最终决策，不关闭对话框）。
+ * M3：超时兜底防止永久挂起。若 AI 返回 ask 后用户恰好与 AI 在同一 tick 操作，
+ * comp.cancel() 因 _resolved 守卫不调 done → requestUserApproval promise 永不
+ * resolve → realUserPromise pending → 永久挂起（G5 串行化放大为全链卡死）。
+ * 5 分钟超时后 fail-closed 拒绝（不静默放行）。
+ */
+async function awaitUserAfterAiAsk(
+	realUserPromise: Promise<UserDecision>,
+): Promise<PermissionDecision> {
+	const APPROVAL_TIMEOUT_MS = 300_000;
+	const userFinal = await Promise.race<UserDecision>([
+		realUserPromise,
+		new Promise<UserDecision>((resolve) =>
+			setTimeout(
+				() => resolve({ approved: false, reason: "approval dialog timeout (fail-closed)" }),
+				APPROVAL_TIMEOUT_MS,
+			),
+		),
+	]);
+	const action: PermissionAction = userFinal.approved ? "allow" : "deny";
+	return {
+		action,
+		reason: userFinal.reason ?? (userFinal.approved ? "approved by user (after AI ask)" : "denied by user (after AI ask)"),
+		source: "user",
+	};
+}
+
+/** 竞速主体（TUI 形态）：AI vs 用户并行，race 后按先 settle 的一侧出决策。 */
+async function raceAiWithUser(
+	deps: CheckPermissionDeps,
+	ctx: ToolInvocationContext,
+	config: ClassifierConfig,
+	aiPromise: Promise<ClassifierResult>,
+	controller: AbortController,
+	trigger: string,
+): Promise<PermissionDecision> {
 	// 用户审批 promise：可被 resolveUser 外部 resolve（AI 赢时关闭对话框）
 	let resolveUser: (d: UserDecision) => void = () => {
 		/* 占位，下方立即覆写 */
@@ -339,50 +384,60 @@ export async function runLayer3WithRacing(
 
 	// AI 赢
 	const overridden = applyAutoApproveOverrides(aiSettled.result, config);
-	if (overridden.outcome === "allow") {
-		// AI 放行 → 关闭用户对话框（若已弹出），返回 allow
-		controller.abort();
-		resolveUser({ approved: false, reason: "AI classifier allowed; dialog dismissed" });
-		return {
-			action: "allow",
-			reason: overridden.reasoning,
-			source: "ai",
-			riskLevel: overridden.risk_level,
-			confidence: overridden.confidence,
-		};
+	const decided = settleAiWin(overridden, controller, resolveUser);
+	if (decided !== null) return decided;
+	return await awaitUserAfterAiAsk(realUserPromise);
+}
+
+/**
+ * 层 3：AI Classifier + 用户审批竞速（移植 pi-permission-system classifier-racing.ts）。
+ *
+ * 竞速语义：
+ *  - 启动 AI 分类（aiPromise）+ 用户审批（userPromise）。
+ *  - 用户先返回 → controller.abort() 取消 AI（已无用的 AI 计算尽早终止）。
+ *  - AI 先返回：
+ *      - AI outcome='allow' → resolveUser({approved:false}) 关闭用户对话框，返回 allow。
+ *      - AI outcome='deny'  → resolveUser({approved:false}) 关闭用户对话框，返回 deny。
+ *      - AI outcome='ask'   → 不 resolveUser，等用户最终决策（AI 不确定时转人工）。
+ *
+ * G3 修正：requestUserApproval（TUI 分支）在调 ctx.ui.custom 前先检查 signal.aborted，
+ * 避免 AI 先于 UI factory 执行时 controller.abort() 触发但 comp 尚未创建导致 cancel 落空。
+ * 此处再叠一层：AI 赢且 outcome 是 allow/deny 时，先 abort 再 resolveUser，
+ * 保证 UI factory 看到 aborted 状态短路。
+ *
+ * classifier.enabled=false：AI 层被用户显式关闭 → 跳过 classifier 与 racing，直接人工审批
+ * （复用 askUser 路径）。headless 下 requestUserApproval 走 requestHeadless 立即 fail-closed
+ * deny，与 AI 判定 ask 时的短路 deny 语义一致。
+ *
+ * @param deps 注入依赖（classifier + requestUserApproval）
+ * @param ctx 工具调用上下文
+ * @param config classifier 配置
+ * @param outerSignal 外层 signal（session abort 时传播）
+ * @param trigger 审批触发原因（m2：AST 检测到的具体危险结构等；默认通用文案）
+ * @returns PermissionDecision（source='ai' 或 'user'）
+ */
+export async function runLayer3WithRacing(
+	deps: CheckPermissionDeps,
+	ctx: ToolInvocationContext,
+	config: ClassifierConfig,
+	outerSignal: AbortSignal | undefined,
+	trigger: string = "awaiting approval (auto mode: AI classifier racing with user prompt)",
+): Promise<PermissionDecision> {
+	// classifier.enabled=false → AI 层关闭，直接人工审批（不启动 AI promise，不进入 racing）
+	if (config.enabled === false) {
+		return await askUser(deps, ctx, "AI classifier disabled (classifier.enabled=false)", outerSignal);
 	}
-	if (overridden.outcome === "deny") {
-		controller.abort();
-		resolveUser({ approved: false, reason: "AI classifier denied; dialog dismissed" });
-		return {
-			action: "deny",
-			reason: overridden.reasoning,
-			source: "ai",
-			riskLevel: overridden.risk_level,
-			confidence: overridden.confidence,
-		};
+	const controller = new AbortController();
+	// 外层 abort 传播到内层
+	linkOuterSignal(controller, outerSignal);
+
+	const aiPromise = startAiClassification(deps, ctx, config, controller.signal);
+
+	// M1：headless 模式下纯等 AI（不启动 user promise）
+	if (deps.isHeadless()) {
+		return await settleHeadlessAi(aiPromise, controller, config);
 	}
-	// AI ask → 转 human（等用户最终决策，不关闭对话框）
-	// M3：超时兜底防止永久挂起。若 AI 返回 ask 后用户恰好与 AI 在同一 tick 操作，
-	// comp.cancel() 因 _resolved 守卫不调 done → requestUserApproval promise 永不
-	// resolve → realUserPromise pending → 永久挂起（G5 串行化放大为全链卡死）。
-	// 5 分钟超时后 fail-closed 拒绝（不静默放行）。
-	const APPROVAL_TIMEOUT_MS = 300_000;
-	const userFinal = await Promise.race<UserDecision>([
-		realUserPromise,
-		new Promise<UserDecision>((resolve) =>
-			setTimeout(
-				() => resolve({ approved: false, reason: "approval dialog timeout (fail-closed)" }),
-				APPROVAL_TIMEOUT_MS,
-			),
-		),
-	]);
-	const action: PermissionAction = userFinal.approved ? "allow" : "deny";
-	return {
-		action,
-		reason: userFinal.reason ?? (userFinal.approved ? "approved by user (after AI ask)" : "denied by user (after AI ask)"),
-		source: "user",
-	};
+	return await raceAiWithUser(deps, ctx, config, aiPromise, controller, trigger);
 }
 
 // ──────────────────────── checkPermission（纯函数主入口） ────────────────────────
@@ -392,7 +447,8 @@ export async function runLayer3WithRacing(
  *
  * 四档模式分支：
  *  - yolo：完全放行（return allow，source='mode'）。不跑任何层。
- *  - auto：AST → 规则（allow 通过 / deny 拒绝 / ask → 层 3 Racing AI+用户）。
+ *  - auto：AST → 规则（allow 通过 / deny 拒绝 / ask → 层 3 Racing AI+用户；
+ *    classifier.enabled=false 时 ask → 直接人工审批，无 AI）。
  *  - approve：AST → 规则（allow 通过 / deny+ask → 人工审批，无 AI）。
  *  - strict：全部人工审批（不跑 AST/规则/AI）。
  *

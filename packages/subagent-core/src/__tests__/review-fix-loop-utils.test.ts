@@ -1140,6 +1140,27 @@ describe("findIssueKey — 归一化键空间查找", () => {
     expect(findIssueKey(issues, "MF-1")).toBe("MF-1 (fixed)");
     expect(findIssueKey(issues, "mf-1 (by design)")).toBe("MF-1 (fixed)");
   });
+
+  it("原型链键（__proto__/toString/constructor）→ 不命中（Object.hasOwn 首查，zsw 侧同款修复上收）", () => {
+    // 旧 truthy 查表（issues[issueId]）会让 Object.prototype 上的成员误命中：
+    // issues["__proto__"] 取到原型对象（truthy）→ 返回 "__proto__" 当台账键 →
+    // 调用方读 issues["__proto__"].severity 得 undefined/函数污染 fix 对账。
+    // ID 来自 LLM 产出，原型链键是真实攻击面而非理论边界。
+    const issues = { "MF-1": { severity: "major" } };
+    expect(findIssueKey(issues, "__proto__")).toBeUndefined();
+    expect(findIssueKey(issues, "toString")).toBeUndefined();
+    expect(findIssueKey(issues, "constructor")).toBeUndefined();
+    expect(findIssueKey(issues, "hasOwnProperty")).toBeUndefined();
+  });
+
+  it("own 键且值 falsy（null）→ 仍命中该键（hasOwn 与 truthy 查表的等价性由归一化回退段兜底）", () => {
+    // 旧 truthy 查表在值 falsy 时不直接命中，但归一化回退段（Object.keys 只枚举
+    // own 键）会命中同一键——两形态最终返回一致，hasOwn 只是路径更短、且对原型链
+    // 键正确拒绝。断言钉住该等价性，防未来有人「顺手」改回 truthy 形态。
+    const issues = { "MF-1": null };
+    expect(findIssueKey(issues, "MF-1")).toBe("MF-1");
+    expect(findIssueKey(issues, "mf-1")).toBe("MF-1");
+  });
 });
 
 describe("T-2 端到端：normIssueId/findIssueKey 在 validateFixResult 的真实消费", () => {

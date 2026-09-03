@@ -3,17 +3,18 @@
  *
  * 复用 system-prompt-trace index-wiring.test.ts 的 Proxy 假体模式：
  * - pi 用 Proxy 假体：捕获 registerCommand 注册的命令定义 + appendEntry 落点
- * - ctx 只需 index.ts 实际消费的字段（reload / navigateTree / getSystemPrompt），
+ * - ctx 只需 index.ts 实际消费的字段（reload / getSystemPrompt），
  *   以 ExtensionCommandContext 最小形状驱动 handler（SDK 双参契约 (args, ctx)）
  * - index.ts 对 @earendil-works/pi-coding-agent 是 type-only import（运行时擦除），
  *   无需 vi.mock SDK 模块
  *
- * 锚定三命令注册面 + handler 行为：
+ * 锚定两命令注册面 + handler 行为：
  * - __xyz_reload__（host 触发的 skill/extension 重载内部命令）→ ctx.reload()
- * - xyz-navigate（session tree 导航）→ 空 entryId 早退；有效 entryId →
- *   ctx.navigateTree(entryId, { summarize: false })
  * - __xyz_get_system_prompt__（Trace 视图「现取当前值」通道）→ pi.appendEntry
  *   写 xyz:current-system-prompt custom entry（fullText/charCount/fetchedAt 形状）
+ *
+ * [HISTORICAL] xyz-navigate（session tree 导航）命令及其测试随命令删除一并移除
+ * （2026-08-31，桥接对端 runtime 消费端已在 monorepo 时代删除）。
  *
  * 运行：cd extensions/taiji/agent-ext && npx vitest run
  */
@@ -62,23 +63,20 @@ function createWiringHarness(): WiringHarness {
   return { pi, commands, entries };
 }
 
-/** ctx 假体（index.ts 实际消费：reload / navigateTree / getSystemPrompt；vi.fn 捕获调用）。 */
+/** ctx 假体（index.ts 实际消费：reload / getSystemPrompt；vi.fn 捕获调用）。 */
 function createCtx(prompt = "current system prompt"): {
   ctx: ExtensionCommandContext;
   reload: ReturnType<typeof vi.fn>;
-  navigateTree: ReturnType<typeof vi.fn>;
   getSystemPrompt: ReturnType<typeof vi.fn>;
 } {
   const reload = vi.fn();
-  const navigateTree = vi.fn();
   const getSystemPrompt = vi.fn(() => prompt);
   const ctx = {
     cwd: "/home/user/project",
     reload,
-    navigateTree,
     getSystemPrompt,
   } as unknown as ExtensionCommandContext;
-  return { ctx, reload, navigateTree, getSystemPrompt };
+  return { ctx, reload, getSystemPrompt };
 }
 
 /** 以 SDK 双参契约 (args, ctx) 驱动已注册命令 handler。 */
@@ -100,14 +98,13 @@ async function loadExtension(): Promise<(pi: ExtensionAPI) => void> {
 }
 
 describe("index.ts wiring SDK 契约", () => {
-  it("注册恰好三个命令（__xyz_reload__ / xyz-navigate / __xyz_get_system_prompt__），各带非空 description", async () => {
+  it("注册恰好两个命令（__xyz_reload__ / __xyz_get_system_prompt__），各带非空 description", async () => {
     const ext = await loadExtension();
     const h = createWiringHarness();
     ext(h.pi);
     expect([...h.commands.keys()].sort()).toEqual([
       "__xyz_get_system_prompt__",
       "__xyz_reload__",
-      "xyz-navigate",
     ]);
     for (const def of h.commands.values()) {
       expect(typeof def.description).toBe("string");
@@ -124,26 +121,6 @@ describe("index.ts wiring SDK 契约", () => {
     await runCommand(h, "__xyz_reload__", "", ctx);
     expect(reload).toHaveBeenCalledTimes(1);
     expect(reload).toHaveBeenCalledWith();
-  });
-
-  it("xyz-navigate 空 entryId（空串/纯空白）→ 早退，不调 ctx.navigateTree", async () => {
-    const ext = await loadExtension();
-    const h = createWiringHarness();
-    ext(h.pi);
-    const { ctx, navigateTree } = createCtx();
-    await runCommand(h, "xyz-navigate", "", ctx);
-    await runCommand(h, "xyz-navigate", "   ", ctx);
-    expect(navigateTree).not.toHaveBeenCalled();
-  });
-
-  it("xyz-navigate 有效 entryId → ctx.navigateTree(entryId, { summarize: false })（args 去首尾空白）", async () => {
-    const ext = await loadExtension();
-    const h = createWiringHarness();
-    ext(h.pi);
-    const { ctx, navigateTree } = createCtx();
-    await runCommand(h, "xyz-navigate", " 0198f-entry-1  ", ctx);
-    expect(navigateTree).toHaveBeenCalledTimes(1);
-    expect(navigateTree).toHaveBeenCalledWith("0198f-entry-1", { summarize: false });
   });
 
   it("__xyz_get_system_prompt__ → appendEntry 写 xyz:current-system-prompt（fullText/charCount/fetchedAt 形状，不写其他 customType）", async () => {

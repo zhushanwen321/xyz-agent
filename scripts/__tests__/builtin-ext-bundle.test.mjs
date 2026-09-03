@@ -64,27 +64,27 @@ describe("builtin-ext-bundle (wave:builtin-ext-bundle)", () => {
 		expect(exitCode, "缺 wasm 时 verify-staged exit 非 0").not.toBe(0);
 	});
 
-	it("TC8: bundle 拷贝 pi.{agents,skills,workflows} 资源目录（M6a-04，manifest 资源拷贝分支）", () => {
-		// pi-subagent-workflow 源码 package.json 声明 pi.agents=["./agents"] + pi.skills=["./skills"]，
+	it("TC8: bundle 拷贝 pi.skills 资源目录（M6a-04，manifest 资源拷贝分支）", () => {
+		// pi-subagent-workflow 源码 package.json 声明 pi.skills=["./skills"]，
 		// bundle-extensions.mjs 的 MANIFEST_RESOURCE_FIELDS 循环必须把这些目录随 bundle 拷到 staged。
-		// 回归后果：拷贝循环被删 → 新装用户内置 agents/skills 整体消失（staged 非 discovery 扫描源）。
+		// 回归后果：拷贝循环被删 → 新装用户内置 skills 整体消失（staged 非 discovery 扫描源）。
+		// [C1 convergence 86b700f67] 10 个 agent 模板迁至 packages/subagent-core/agents/（随
+		// npm 包 files 分发），本包 pi.agents 声明与 agents/ 目录已删——agents 断言改为「不存在」，
+		// 防止迁移回潮；manifest 资源拷贝分支的回归面由 skills 单独承载（workflows 走 C 包
+		// 专线拷贝，不经 manifest 字段，见 bundle-extensions.mjs 常量注释）。
 		const swDir = join(STAGED, "pi-subagent-workflow");
 		expect(existsSync(swDir), "staged pi-subagent-workflow 存在").toBe(true);
 
-		// staged package.json：pi.extensions 改指 ./index.js，pi.agents/skills 保留源声明
+		// staged package.json：pi.extensions 改指 ./index.js，pi.skills 保留源声明
 		const pkg = JSON.parse(readFileSync(join(swDir, "package.json"), "utf8"));
 		expect(pkg.pi.extensions, "pi.extensions 改指 ./index.js").toEqual(["./index.js"]);
-		expect(Array.isArray(pkg.pi.agents) && pkg.pi.agents.includes("./agents"), "pi.agents 声明保留").toBe(true);
+		expect(pkg.pi.agents, "pi.agents 声明已随 C1 迁移移除").toBeUndefined();
 		expect(Array.isArray(pkg.pi.skills) && pkg.pi.skills.includes("./skills"), "pi.skills 声明保留").toBe(true);
 
 		// 资源目录已拷贝且非空（证明 MANIFEST_RESOURCE_FIELDS 拷贝分支执行，非空目录创建）
-		const agentsDir = join(swDir, "agents");
 		const skillsDir = join(swDir, "skills");
-		expect(existsSync(agentsDir), "staged agents/ 目录已拷贝").toBe(true);
 		expect(existsSync(skillsDir), "staged skills/ 目录已拷贝").toBe(true);
-		// agents 含 .md 文件（agent 定义），skills 含子目录（skill 包）—— 拷贝了内容而非空壳
-		const agentFiles = existsSync(agentsDir) ? readdirSync(agentsDir).filter((f) => f.endsWith(".md")) : [];
-		expect(agentFiles.length, "agents/ 含 agent .md 文件（拷贝了内容）").toBeGreaterThan(0);
+		// skills 含子目录（skill 包）—— 拷贝了内容而非空壳
 		const skillEntries = existsSync(skillsDir) ? readdirSync(skillsDir, { withFileTypes: true }).filter((e) => e.isDirectory()) : [];
 		expect(skillEntries.length, "skills/ 含 skill 子目录（拷贝了内容）").toBeGreaterThan(0);
 

@@ -17,7 +17,7 @@
 // 反向 import 壳侧 interface，常量随之内化）——此处 re-export 保持既有 import 路径。
 
 import { StringEnum } from "@earendil-works/pi-ai";
-import { type Static, Type } from "typebox";
+import { Type } from "typebox";
 
 import { THINKING_ORDER } from "@zhushanwen/subagent-core/shared/model-ref.ts";
 
@@ -158,6 +158,3 @@ export const SubagentParams = Type.Object({
     })),
   })),
 });
-
-/** Params schema 的 Static 投影（消费方经 `Static<typeof SubagentParams>` 使用，见 subagent-tool.ts）。 */
-export type SubagentParamsStatic = Static<typeof SubagentParams>;

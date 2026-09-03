@@ -12,6 +12,7 @@ import type { ProjectStoreState } from './project'
 import type { GitStatusResult } from './git'
 import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
+import type { LlmRetryConfig } from './llm-retry'
 import type { SubagentRecord } from './subagent'
 import type { WorkflowRunRecord } from './workflow'
 import type { PiLaunchPreset, PresetUsageEntry, ThinkingLevel } from './pi-preset'
@@ -116,6 +117,7 @@ export type ClientMessageType =
   | 'worktree.create' | 'worktree.listBranches' | 'worktree.list'
   | 'terminal.spawn' | 'terminal.write' | 'terminal.resize' | 'terminal.kill' | 'terminal.attach'
   | 'config.getTerminalConfig' | 'config.setTerminalConfig'
+  | 'config.getRetryConfig' | 'config.setRetryConfig'
   | 'quota.fetch' | 'quota.getCached' | 'quota.configure' | 'quota.refresh'
   | 'usage.getStats'
   | 'config.setWorktreeRootDir' | 'config.getWorktreeRootDir'
@@ -531,6 +533,8 @@ export interface ClientMessageMap {
   'terminal.attach': { sessionId: string }
   'config.getTerminalConfig': Record<string, never>
   'config.setTerminalConfig': { config: TerminalConfig }
+  'config.getRetryConfig': Record<string, never>
+  'config.setRetryConfig': { config: LlmRetryConfig }
   // Coding Plan 额度查询
   'quota.fetch': { providerId: string }
   'quota.getCached': { providerId: string }
@@ -764,6 +768,7 @@ export type ServerMessageType =
   | 'worktree.created'
   | 'terminal.data' | 'terminal.exit' | 'terminal.alive' | 'terminal.ack'
   | 'config.terminalConfig'
+  | 'config.retryConfig'
   | 'quota.fetch:result' | 'quota.getCached:result' | 'quota.configure:result' | 'quota.refresh:result'
   | 'usage.getStats:result'
   | 'worktree.branches'
@@ -1183,6 +1188,8 @@ export interface ServerMessageMapBase {
   'terminal.ack': Record<string, never>
   // config.terminalConfig：reply + broadcast + sendInitialState 三用（复刻 config.systemPrompt 范式）。
   'config.terminalConfig': { config: TerminalConfig; corrupted?: boolean }
+  // config.retryConfig：reply + broadcast 多窗口同步（同 terminal 范式）；configured 区分「显式配置」与「未配置（显示默认）」。
+  'config.retryConfig': { config: LlmRetryConfig; configured: boolean }
   // Coding Plan 额度查询（payload 见 QuotaFetchResultPayload）。
   'quota.fetch:result': QuotaFetchResultPayload
   'quota.getCached:result': QuotaFetchResultPayload
@@ -1616,6 +1623,8 @@ export interface ReplyPayloadMap {
   'worktree.create': ServerMessageMap['worktree.created']
   'config.getTerminalConfig': ServerMessageMap['config.terminalConfig']
   'config.setTerminalConfig': ServerMessageMap['config.terminalConfig']
+  'config.getRetryConfig': ServerMessageMap['config.retryConfig']
+  'config.setRetryConfig': ServerMessageMap['config.retryConfig']
   'quota.fetch': ServerMessageMap['quota.fetch:result']
   'quota.getCached': ServerMessageMap['quota.getCached:result']
   'quota.configure': ServerMessageMap['quota.configure:result']

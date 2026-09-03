@@ -36,6 +36,10 @@ import { SessionRecords } from './session-records.js'
 import { SessionModelControl } from './session-model-control.js'
 import { SessionHistoryReader } from './history-rebuild-cache.js'
 import { resolveSkillPaths, resolveExtensionPaths, resolveReplaceSystemPrompt, resolveLaunchPresetOptions } from './launch-params.js'
+// main（file-lock-unification reaper 下沉，D2 触发面 A）：removeSessionEntry 汇聚点收殓
+// 孤儿后台任务——重构仅迁域，触发面挂点语义不变，import 随调用点留 Facade。
+import { reapSessionBackgroundTasks } from './background-task-reaper.js'
+import { getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore, SessionOutcome } from '../ports/session.js'
 import type { IGitInfoReader } from '../ports/git-info.js'
@@ -833,6 +837,15 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
         console.error(`[session-service] onSessionDestroyed listener error (sessionId=${sessionId}):`, e)
       }
     }
+    // 收殓下沉触发面 A（D2，设计 docs/design/file-lock-unification-and-reaper-sink.md
+    // §3.3 挂点论证）：本汇聚点是「该 session 的 pi 确认死亡」的精确时点（主动删 /
+    // onSessionExit 进程退出 / forceQuit 编排 / restore 清场全部经此），覆盖面大于
+    // pm.onSessionExit（后者只覆盖进程退出）。fire-and-forget：void + catch warn，
+    // 入口内部 setImmediate 延后同步处置（含 spawnSync ps），不阻塞销毁收敛链。
+    // registry 不存在（该 session 从未跑过后台任务）时为静默 no-op。
+    void reapSessionBackgroundTasks(getPiAgentDir(), sessionId).catch((e: unknown) => {
+      console.warn(`[session-service] background task reap failed (sessionId=${sessionId}):`, e)
+    })
     // wave:perf-w20（D6-1）：session 删除 / pi 进程退出时清历史重建缓存 + lastLeafId。
     // pi 进程退出后缓存基线（lastLeafId）不再与新进程的 entry 集合对应，保留只会
     // 走 "Entry not found" fallback（防御兜底存在，但清理是正路径）。S6 起清理随域迁入

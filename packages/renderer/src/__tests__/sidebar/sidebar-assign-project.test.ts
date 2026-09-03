@@ -2,11 +2,11 @@
  * D14「归入项目」handler 链测试（review MF-1：emit 之后的链零覆盖补测）。
  *
  * 链：SessionItem 菜单 emit setProject → SessionList 透传 → Sidebar.vue @set-project →
- *     useSidebarSessionActions.onAssignProject（失败 toast）→ useSidebarNew.assignSessionToProject
+ *     useSidebarSessionActions.onAssignProject（失败 toast）→ useSidebar.assignSessionToProject
  *     （await sessionApi.setProject RPC → sessionStore.updateProjectId 乐观更新）。
  *
  * 本文件覆盖链的下游两环（Sidebar 接线 + toast 在 sidebar-assign-project-wiring.test.ts）：
- *  - useSidebarNew.assignSessionToProject：RPC 参数透传、乐观更新同步（SessionList 聚合数据源
+ *  - useSidebar.assignSessionToProject：RPC 参数透传、乐观更新同步（SessionList 聚合数据源
  *    store.groups 实时变化，无需等 config.sessions 广播）、顺序（RPC await resolve 前不做乐观更新，
  *    防 UI/磁盘分叉）、reject 不乐观更新且错误向上传播、projectId 空串 = 归回默认项目
  *  - SessionList 透传接线（L67 @set-project → emit('setProject')，同 payload 原样透传）
@@ -40,7 +40,7 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { useSessionStore } from '@/stores/session'
 import { useProjectStore, DEFAULT_PROJECT_ID } from '@/stores/project'
 import SessionList from '@/components/sidebar/SessionList.vue'
@@ -64,14 +64,14 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('useSidebarNew.assignSessionToProject（RPC + 乐观更新）', () => {
+describe('useSidebar.assignSessionToProject（RPC + 乐观更新）', () => {
   it('成功：setProject RPC 调用（sessionId, projectId 透传）+ 乐观更新同步（聚合数据源实时变化）', async () => {
     apiMocks.setProject.mockResolvedValue(undefined)
     const store = useSessionStore()
     store.applySnapshot({ groups: [{ cwd: '/proj', sessions: [makeSummary('s1', 'p0')] }] })
 
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebarNew())!
+    const sidebar = scope.run(() => useSidebar())!
     await sidebar.assignSessionToProject('s1', 'p1')
 
     expect(apiMocks.setProject).toHaveBeenCalledWith('s1', 'p1')
@@ -90,7 +90,7 @@ describe('useSidebarNew.assignSessionToProject（RPC + 乐观更新）', () => {
     store.applySnapshot({ groups: [{ cwd: '/proj', sessions: [makeSummary('s1', 'p0')] }] })
 
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebarNew())!
+    const sidebar = scope.run(() => useSidebar())!
     const pending = sidebar.assignSessionToProject('s1', 'p1')
 
     // RPC 未 resolve：store 保持原归属（乐观更新被 await 挡在 RPC 之后）
@@ -107,7 +107,7 @@ describe('useSidebarNew.assignSessionToProject（RPC + 乐观更新）', () => {
     store.applySnapshot({ groups: [{ cwd: '/proj', sessions: [makeSummary('s1', 'p0')] }] })
 
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebarNew())!
+    const sidebar = scope.run(() => useSidebar())!
     await expect(sidebar.assignSessionToProject('s1', 'p1')).rejects.toThrow('rpc-fail')
 
     expect(apiMocks.setProject).toHaveBeenCalledWith('s1', 'p1')
@@ -122,7 +122,7 @@ describe('useSidebarNew.assignSessionToProject（RPC + 乐观更新）', () => {
     store.applySnapshot({ groups: [{ cwd: '/proj', sessions: [makeSummary('s1', 'p1')] }] })
 
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebarNew())!
+    const sidebar = scope.run(() => useSidebar())!
     await sidebar.assignSessionToProject('s1', '')
 
     expect(apiMocks.setProject).toHaveBeenCalledWith('s1', '')

@@ -10,13 +10,15 @@
  * setup 模式复用 pi-provider-store.test.ts：setModelsPath/setSettingsPath 指向临时目录 +
  * writeModels 落盘 + refreshModels 刷缓存。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, rm, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
+import type { LlmRetryConfig } from '@xyz-agent/shared'
 import { ConfigService } from '../src/services/config-service.js'
+import type { ILlmRetrySettings, LlmRetryConfigSnapshot } from '../src/services/ports/llm-retry-settings.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { XyzProviderStore } from '../src/services/provider-extras-store.js'
 import {
@@ -488,5 +490,37 @@ describe('ConfigService.loadAgents · sourceType 随来源推断（W1，修复 t
     // undefined → 兜底 pi
     expect(agents[0]!.sourceType).toBe('pi')
     expect(agents[0]!.source).toBe('pi')
+  })
+})
+
+// ── LLM retry 域委托（llm-retry-settings 设计 §3.4：单行委托注入 port）──────────
+
+describe('ConfigService · LLM retry 域（llmRetrySettings port）', () => {
+  it('未注入 port：getRetryConfig / setRetryConfig 抛错（可选注入防御，生产恒注入）', () => {
+    // beforeEach 构造的 configService 只传 2 个参数（未注入 llmRetrySettings）
+    expect(() => configService.getRetryConfig()).toThrow('[config-service] llmRetrySettings not available (getRetryConfig)')
+    expect(() => configService.setRetryConfig({ enabled: true, maxRetries: 1, baseDelayMs: 1000 })).toThrow(
+      '[config-service] llmRetrySettings not available (setRetryConfig)',
+    )
+  })
+
+  it('注入 port：读写单行委托（参数与返回值透传，ConfigService 不做 retry 域业务）', () => {
+    const snapshot: LlmRetryConfigSnapshot = {
+      configured: false,
+      config: { enabled: true, maxRetries: 3, baseDelayMs: 2000 },
+    }
+    const getRetryConfig = vi.fn(() => snapshot)
+    const setRetryConfig = vi.fn((): { ok: boolean; error?: string } => ({ ok: true }))
+    const svc = new ConfigService(tmpDir, configStore, undefined, undefined, {
+      getRetryConfig,
+      setRetryConfig,
+    } as unknown as ILlmRetrySettings)
+
+    expect(svc.getRetryConfig()).toBe(snapshot)
+    expect(getRetryConfig).toHaveBeenCalledTimes(1)
+
+    const arg: LlmRetryConfig = { enabled: true, maxRetries: 1, baseDelayMs: 1000 }
+    expect(svc.setRetryConfig(arg)).toEqual({ ok: true })
+    expect(setRetryConfig).toHaveBeenCalledWith(arg)
   })
 })

@@ -83,7 +83,6 @@ describe("requestUserApproval: rpc 模式", () => {
 		});
 		const decision = await requestUserApproval(req, ctx, undefined, approvalCtx);
 		expect(decision.approved).toBe(true);
-		expect(decision.scope).toBe("once");
 	});
 
 	it("用户选 Deny → approved=false", async () => {
@@ -180,7 +179,7 @@ describe("requestUserApproval: tui 模式", () => {
 			ui: {
 				notify: vi.fn(),
 				select: vi.fn(),
-				custom: vi.fn((_factory) => Promise.resolve({ approved: true, reason: "tui-ok", scope: "once" } as UserDecision)),
+				custom: vi.fn((_factory) => Promise.resolve({ approved: true, reason: "tui-ok" } as UserDecision)),
 			},
 		});
 		const decision = await requestUserApproval(req, ctx, undefined, approvalCtx);

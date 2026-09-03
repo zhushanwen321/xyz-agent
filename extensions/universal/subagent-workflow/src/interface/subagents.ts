@@ -1,4 +1,4 @@
-// src/commands/subagents.ts
+// src/interface/subagents.ts
 //
 // /subagents 命令。薄壳——打开 list overlay（等同原 /subagents list [<id>]）。
 //

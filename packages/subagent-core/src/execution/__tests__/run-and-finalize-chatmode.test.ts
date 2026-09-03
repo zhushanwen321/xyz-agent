@@ -28,6 +28,10 @@ vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 vi.mock("../session-runner.ts", () => ({
   runSpawn: vi.fn(),
   killAllSpawnedChildren: vi.fn(),
+  getChildByRecord: vi.fn(() => undefined),
+  registerSpawnedChildForRecord: vi.fn(),
+  killRecordChildWithEscalation: vi.fn(),
+  spawnedChildren: new Map(),
 }));
 
 import { runSpawn } from "../session-runner.ts";

@@ -24,7 +24,12 @@
 // 设计参考：session-runner 的 MF-3/MF-4 setTimeout→SIGTERM 骨架（复用 timer 形态，
 // 触发条件重构）；spawnedChildren Map 的模块级单例模式。
 
+import { getLogger } from "../core/logger.ts";
 import { assertSafeTimerDelay } from "../shared/timer-delay.ts";
+
+// core/logger 无本地状态依赖（不 import execution/orchestration 层），与本模块
+// 「可独立编译 + 单测」约束兼容；不 import session-runner / subagent-service（循环依赖）。
+const logger = getLogger("subagents");
 
 // ============================================================
 // 默认常量
@@ -48,6 +53,10 @@ export const DEFAULT_IDLE_TIMEOUT_MS = IDLE_TIMEOUT_MINUTES * SECONDS_PER_MINUTE
  * 从环境变量 XYZ_SUBAGENT_IDLE_TIMEOUT_MS 读取全局默认超时。
  * 返回 undefined 表示 env 未设置或非法（调用方回落 DEFAULT_IDLE_TIMEOUT_MS）。
  *
+ * [LC-7/T7①] env 已设但非法（非数字/<=0）回落默认值时必须 warn 留痕——「以为设了
+ * 极长保活、实际回落 5min」的静默语义漂移不可见（设计 §4.3 LC-7），生效行为必须
+ * 可见。禁用语义不认 env（禁用只能显式传参 <=0，见 armIdleTimer 注释）。
+ *
  * [review 修复] 原 PI_ 前缀（PI_SUBAGENT_IDLE_TIMEOUT_MS）不在 ENV_WHITELIST_PREFIXES
  * 白名单（packages/shared/src/constants.ts 只有 XYZ_ 等，无 PI_），xyz-agent 桌面
  * spawn 链（safe-env 过滤）会丢弃该 env，配置口在桌面场景静默失效——已改名 XYZ_
@@ -59,7 +68,12 @@ function getEnvIdleTimeoutMs(): number | undefined {
   const raw = process.env.XYZ_SUBAGENT_IDLE_TIMEOUT_MS;
   if (!raw) return undefined;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    logger.warn(
+      `[lifecycle-manager] XYZ_SUBAGENT_IDLE_TIMEOUT_MS="${raw}" is invalid (expected a positive millisecond number) — falling back to DEFAULT_IDLE_TIMEOUT_MS (${DEFAULT_IDLE_TIMEOUT_MS}ms); set a plain ms value (e.g. 1800000) to override`,
+    );
+    return undefined;
+  }
   return parsed;
 }
 
@@ -134,8 +148,18 @@ export function armIdleTimer(
   // 刷新：先清旧 timer，避免同一 record 叠加多个 armed timer。
   disarmIdleTimer(recordId);
 
-  const timer = setTimeout(() => {
-    idleTimers.delete(recordId);
+  // [LC-5/T6①] 超时回调按值守卫（对齐同包 session-runner.ts removeChildRegistration
+  // 的按句守卫先例）：clearTimeout 对「已到期、回调已入 macrotask 队列」的 timer 无效
+  //（Node 语义：fire 后不可撤销），若此刻同 recordId 发生 disarm + re-arm（agent_settled
+  // 刷新与旧 timer 到点同轮交错），旧回调无条件 delete(recordId) 会误删**新** timer 条目
+  // ——新 timer 脱管，后续 disarm 失效 → turn 中途被 idle GC 误杀。回调捕获自己的 timer
+  // 引用，仅当 Map 当前条目仍是自己（未被 re-arm 覆盖）才删除。设计 §11-2：fake-timer
+  // 模型内无法复现「旧回调迟到于 re-arm」的精确交错（sinon clock 同步 tick 消除了该
+  // 中间态），身份比对按防御性守卫保留（成本一行）。
+  const timer: NodeJS.Timeout = setTimeout(() => {
+    if (idleTimers.get(recordId)?.timer === timer) {
+      idleTimers.delete(recordId);
+    }
     onTimeout();
   }, resolved);
   // node 默认 setTimeout 返回的 timer 会被事件循环 keep-alive；unref 让它不阻塞

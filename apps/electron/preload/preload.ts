@@ -1,6 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -116,9 +116,11 @@ export interface ElectronAPI {
   /**
    * 拆分升级流程的安装阶段：从预下载产物读取 release + filePath，执行替换 + 触发重启。
    * install 权威源是预下载产物（不信任前端传入的 release，堵装错版本漏洞）。
-   * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
+   * @returns UpdateInstallResult：triggerRestart=true 表示升级已触发、app 即将退出重启；
+   *   version 为实装版本（手动认领与后台预下载并发覆写时可能与 UI 确认版本不一致，
+   *   renderer 进入 restarting 态前据此对齐 state.latestRelease——update-network-resilience D2）
    */
-  updateInstall(): Promise<{ triggerRestart: boolean }>
+  updateInstall(): Promise<UpdateInstallResult>
   /**
    * 读取预下载产物信息（供前端判断是否已下载完成）。
    * @returns 有效的 { release, filePath }，无预下载产物/损坏返回 null
@@ -135,6 +137,12 @@ export interface ElectronAPI {
   onUpdateError(callback: (payload: UpdateErrorPayload) => void): () => void
   /** 不支持当前平台时，打开备用下载页（release 页面） */
   openUpdateFallbackUrl(url: string): Promise<void>
+  /**
+   * 打开手动升级产物目录（update-network-resilience D9 设置页手动通道）。
+   * main 侧先幂等建目录（用户无需手动创建）再 shell.openPath 打开；打开失败时 reject
+   * （Error.message 含 openPath 返回的错误字符串）。
+   */
+  openUpdateManualDir(): Promise<{ success: boolean }>
   // ── 代理配置 ────────────────────────────────────────────────────
   /** 获取当前代理配置 */
   /**
@@ -292,6 +300,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('update:error', handler)
   },
   openUpdateFallbackUrl: (url: string) => ipcRenderer.invoke('open-external', url),
+  openUpdateManualDir: () => ipcRenderer.invoke('update:openManualDir'),
   // ── 代理配置 ────────────────────────────────────────────────────
   getDataDir: () => ipcRenderer.invoke('get-data-dir'),
   // v2 §3：chooseDirectory 薄包装 pick-directory handler，返回 path（canceled→null），对齐 ui ChooseDirectoryFn 契约

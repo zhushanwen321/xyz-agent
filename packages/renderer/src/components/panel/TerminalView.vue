@@ -209,8 +209,8 @@ function initXterm(): FitAddon | null {
 
   // Phase 4 联动 1：选区变化 → 更新浮动按钮显隐 + 定位
   term.onSelectionChange(() => {
-    const sel = term.getSelection()
-    if (sel && sel.trim().length > 0) {
+    // hasSelection() 布尔判定替代 getSelection() 全文拷贝（拖选每帧触发）；行为差异（已确认）：纯空白选区也显示按钮，点击后空文本早退
+    if (term.hasSelection()) {
       const pos = term.getSelectionPosition()
       hasSelection.value = true
       // 估算浮动按钮位置（选区末行下方）。xterm 的 cell 尺寸约 fontSize * 0.6（宽）/ 1.2（高）

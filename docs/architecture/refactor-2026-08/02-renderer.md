@@ -100,6 +100,8 @@
 
 **推荐**：方案 A。
 
+**✅ 执行记录（2026-08-31 双轨收尾，与本节推荐不同，以实际为准）**：实际执行为「一次性切换收尾」——① 先清 C-W5-1 回退债务（core createUseSession 增加 `selectSessionFallback` 可选端口，壳注入含 ensureStreamSubscription 的 selectSession；空态承接 [D7] 由 core enterEmptyChatState 经 flow 端口承接 startFlow）；② useChatViewDeps / useTraceJump 两处运行时消费方切换；③ 测试全量迁移守护同语义行为；④ 删旧壳 + useSidebarNew.ts 重命名接管 useSidebar.ts（上文方案 C 的「切断 git blame」顾虑由 git follow/重命名检测与本执行记录对冲）。选择一次性收尾而非本节推荐的仅换注入：双轨期 selectSession 12 步编排两处各一份，修 bug 须双打（实证 266754c09），绞杀残留期越长漂移面越大。本节其余内容保留作当时评估记录。
+
 **测试影响**：useSidebar 旧壳的测试随实现删除；useSidebarNew 若缺少 forkSession/handoff 的针对性测试，在 useChatViewDeps 切换注入后补 1 条冒烟用例（调用 forkSession/handoff 断言副作用发生）。其余 sidecar 测试不受影响。
 
 **改动点**：

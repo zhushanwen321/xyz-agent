@@ -6,7 +6,6 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
-	getDisplayStatus,
 	type Todo,
 	type TodoDetails,
 } from "./model";
@@ -42,7 +41,7 @@ function fixedWidth(text: string, width: number): string {
 export function renderStatusText(todoList: Todo[], th: Theme): string {
 	if (todoList.length === 0) return "";
 
-	const completed = todoList.filter((t) => getDisplayStatus(t) === "completed").length;
+	const completed = todoList.filter((t) => t.status === "completed").length;
 	const total = todoList.length;
 
 	if (completed === total) {
@@ -113,7 +112,7 @@ export function renderWidgetLines(
 
 	const width = termWidth ?? (process.stdout.columns || FALLBACK_TERM_WIDTH);
 	const lines: string[] = [];
-	const completed = todoList.filter((t) => getDisplayStatus(t) === "completed").length;
+	const completed = todoList.filter((t) => t.status === "completed").length;
 	const total = todoList.length;
 
 	lines.push(th.fg("accent", "\u2611") + th.fg("muted", ` ${completed}/${total}`));
@@ -142,7 +141,7 @@ function buildTodoListText(todoList: Todo[], options: { expanded: boolean }, the
 	let listText = theme.fg("muted", `${todoList.length} todos:`);
 	const display = options.expanded ? todoList : todoList.slice(0, MAX_COLLAPSED_ITEMS);
 	for (const t of display) {
-		const status = getDisplayStatus(t);
+		const status = t.status;
 		const mark =
 			status === "completed"
 				? theme.fg("success", "\u2713")

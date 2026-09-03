@@ -649,7 +649,7 @@ describe("runSpawn", () => {
     it("watchdog 超时（>30min）→ child.kill(SIGTERM) 被调用", async () => {
       const record = makeRecord();
       // 不 await——runSpawn 内部 await 子进程 close，watchdog 触发 kill 后还需 emit close 才 resolve
-      // [M-1] maxTurns=6 使 computeWatchdogMs 返回下限 30min（max(30min, 6*5min) = 30min）
+      // [M-1] maxTurns=6 使 maxTurnsToWatchdogMs 返回下限 30min（max(30min, 6*5min) = 30min）
       const promise = runSpawn(record, "Task: hang", makeOpts({ maxTurns: 6 }), makeCtx());
 
       const child = await waitForSpawnFake();

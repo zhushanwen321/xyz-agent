@@ -10,6 +10,8 @@ import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { setPiHandle } from "@zhushanwen/pi-extension-logger";
+
 import {
 	BASELINE_FILENAME,
 	readLastPromptFromSessionFile,
@@ -53,6 +55,12 @@ function toTraceContext(pi: ExtensionAPI, ctx: ExtensionContext): TraceContext {
 }
 
 export default function systemPromptTraceExtension(pi: ExtensionAPI): void {
+	// 日志通道注入（extension-logger 两阶段初始化：工厂拿 pi → setPiHandle）。缺此注入时
+	// trace/baseline 中 logger.error 的 appendEntry 通道是 no-op，生产默认完全静默——
+	// 此前全包从未注入（文本-实现漂移审查 D3 补接线，恢复注释声称的持久化语义）。
+	// 测试环境无真实 globalPi 消费方时调用本身安全（存引用，不触发 appendEntry）。
+	setPiHandle(pi);
+
 	const baselineFilePath = join(getAgentDir(), BASELINE_FILENAME);
 
 	const env: TraceEnv = {

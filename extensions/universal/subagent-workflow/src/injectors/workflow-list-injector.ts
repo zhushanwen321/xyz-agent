@@ -1,5 +1,5 @@
 /**
- * Workflow List Injector（B2 / P1）
+ * Workflow List Injector（B2 / P1；C5① 渲染改接 core）
  *
  * 发现所有可用 workflow（.js/.mjs）并通过 before_agent_start 每 turn 注入
  * `<available_workflows>` 段（name + description），与 subagent 注入段对称。
@@ -10,9 +10,13 @@
  * 实现要点：
  * - 发现走同包 ADR-031 统一发现 discoverResources({kind:"workflows", includeTmp:true})
  *   （includeTmp 覆盖 .pi/workflows/.tmp/，即 workflow-script generate 的产物）
- * - 解析每个 workflow 的 `const meta = {name, description, ...}` 提取 name+description
+ * - 解析每个 workflow 的 meta 提取 name+description（IF1 parseResourceMeta）
  * - description 截断为 prompt 友好的摘要（builtin 的 review-fix-loop 描述超长，全量
- *   注入每 turn 会膨胀 prompt）
+ *   注入每 turn 会膨胀 prompt）——summarizeDescription C5① 起改用 core barrel
+ *   （算法逐字同本地旧实现）
+ * - C5①（convergence D-3）：formatWorkflowList 下沉 core，本文件改调 core barrel
+ *   （渲染骨架与条目模板逐字节同 pi 旧本地实现——CA2 快照验收前提）；guide 文案
+ *   是 pi 宿主注入（core 不内嵌平台文案）
  */
 
 
@@ -28,14 +32,24 @@ import type {
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { getHostServices } from "@zhushanwen/subagent-core/core/host-services.ts";
-
+// C5①/C5⑦/C5b：发现与渲染统一走 core barrel——发现链辅助
+// （resource-discovery/meta-parser 面：findWorkspaceRoot/getCachedParsed/
+// parseResourceMeta）深路径 import 已归零。上方 getHostServices 深路径刻意
+// 保留：core 服务定位器（core 内模块统一经它取用宿主端口），barrel 刻意不
+// 导出（D5 exports 面即 semver 契约、逐名列出，未列名的内部件不经 barrel——
+// 见 subagent-core src/index.ts 头注），壳侧深路径消费经包 `./*` -> src 通配豁免。
 import {
 	discoverResources,
 	findWorkspaceRoot,
+	formatWorkflowList,
 	getCachedParsed,
-} from "@zhushanwen/subagent-core/shared/resource-discovery.ts";
-import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
-import { escapeXml, renderXmlSection } from "@zhushanwen/subagent-core/shared/xml-injection.ts";
+	parseResourceMeta,
+	summarizeDescription,
+	type WorkflowEntry,
+} from "@zhushanwen/subagent-core";
+// U11（sink 设计）：注入清单排序码点序单源——深路径消费 core sortByCodepoint
+// （与 barrel 版同一实现，深路径遵循任务指定消费形态；`./*` -> src 通配豁免）。
+import { sortByCodepoint } from "@zhushanwen/subagent-core/shared/injection-render.ts";
 
 const logger = getLogger("injector");
 
@@ -54,44 +68,19 @@ let workflowInjectionCache: string | null = null;
 /** workflowCache 唯一写点：数据与渲染缓存同步更新（null 清空两者）。 */
 function setWorkflowCache(entries: WorkflowEntry[] | null): void {
 	workflowCache = entries;
-	workflowInjectionCache = entries !== null ? formatWorkflowList(entries) : null;
-}
-
-/** 注入段中单个 workflow 的最大描述长度（控制每 turn prompt 体积） */
-const MAX_DESC_LEN = 160;
-
-/** 断句阈值比例：句末标点位置须 >= maxLen 的 40% 才采用，否则硬截断保留更多信息 */
-const DESC_BOUNDARY_MIN_RATIO = 0.4;
-
-/** 解析后的 workflow 条目（name + 截断后的 description + agentRef 路径） */
-export interface WorkflowEntry {
-	name: string;
-	description: string;
-	/** workflowRef：脚本 .js 文件的绝对路径（注入段 <location>，模型直接引用） */
-	path: string;
+	workflowInjectionCache =
+		entries !== null ? formatWorkflowList(entries, { guide: WORKFLOW_LIST_GUIDE }) : null;
 }
 
 /**
- * 将 workflow description 截断为 prompt 友好的摘要。
- * 优先在 limit 内的最后一个句末标点处断句；无合适断点则硬截断 + 省略号。
+ * pi 版注入引导文案（C5① guide 参数化——core 渲染函数不内嵌平台文案，宿主注入；
+ * 文案与改造前本地实现逐字一致——workflow 段 guide 无过期问题）。
+ *
+ * 引导语与具体 workflow 解耦：不写死内置名（列表本身已含全部 workflow，名字/描述
+ * 每 turn 由 @pi-meta 动态注入），只给通用路由指引 + read location 参数指针。
  */
-export function summarizeDescription(
-	desc: string,
-	maxLen = MAX_DESC_LEN,
-): string {
-	const trimmed = desc.trim();
-	if (trimmed.length <= maxLen) return trimmed;
-	const slice = trimmed.slice(0, maxLen);
-	const boundary = Math.max(
-		slice.lastIndexOf("。"),
-		slice.lastIndexOf("；"),
-		slice.lastIndexOf(";"),
-		slice.lastIndexOf(". "),
-	);
-	// 断点过靠前（< 阈值比例）时不采用，改硬截断保留更多信息
-	if (boundary > maxLen * DESC_BOUNDARY_MIN_RATIO) return slice.slice(0, boundary + 1);
-	return `${slice}…`;
-}
+export const WORKFLOW_LIST_GUIDE =
+	"The following workflows are available. Do NOT call list to discover available workflows — they are listed below; use list only for running state. All listed workflows run directly via action:run — do NOT use workflow-script generate for any listed workflow. For parameter details, read the <location> script file (script header has @pi-meta parameters + usage).";
 
 /**
  * 解析 workflow .js 文件的 meta（name + description），经 IF1 parseResourceMeta。
@@ -138,31 +127,9 @@ export async function discoverAllWorkflows(
 			);
 		}
 	}
-	return [...map.values()].sort((a, b) =>
-		a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
-	);
-}
-
-/**
- * 将 workflow 列表格式化为 XML 注入段。
- *
- * 引导语对齐 subagent injector：workflow 已在下方列出，模型应直接 run；
- * list 仅用于查询运行态。builtin workflow 点名「run directly」。
- * 空列表返回空串（不注入）。
- */
-export function formatWorkflowList(workflows: WorkflowEntry[]): string {
-	if (workflows.length === 0) return "";
-
-	const items = workflows.map((wf) =>
-		`  <workflow><name>${escapeXml(wf.name)}</name><description>${escapeXml(wf.description)}</description><location>${escapeXml(wf.path)}</location></workflow>`,
-	);
-	return renderXmlSection({
-		tag: "available_workflows",
-		// 引导语与具体 workflow 解耦：不写死内置名（列表本身已含全部 workflow，
-		// 名字/描述每 turn 由 @pi-meta 动态注入），只给通用路由指引 + read location 参数指针。
-		guide: "The following workflows are available. Do NOT call list to discover available workflows — they are listed below; use list only for running state. All listed workflows run directly via action:run — do NOT use workflow-script generate for any listed workflow. For parameter details, read the <location> script file (script header has @pi-meta parameters + usage).",
-		items,
-	});
+	// U11：内联码点序 sort 折叠为 core sortByCodepoint（实现逐字等价——同比较器
+	// 语义：ka < kb ? -1 : ka > kb ? 1 : 0，非变异副本排序）
+	return sortByCodepoint([...map.values()], (a) => a.name);
 }
 
 /**

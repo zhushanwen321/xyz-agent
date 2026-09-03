@@ -2,7 +2,7 @@
  * session.ts 测试 — reconstructGoalState
  *
  * 覆盖：
- * - MF-7: reconstructGoalState 3 条 FR（G-006 entry GC / G-015 强制激活 / G-024 throw→null）
+ * - MF-7: reconstructGoalState 3 条 FR（G-006 append-only 不 splice / G-015 崩溃后非 active 保持原状 / G-024 throw→null）
  *
  * [REMOVED W4] isStaleContextError + STALE_CONTEXT_PATTERNS 测试随实现删除——
  * 双重废（无生产调用方 + patterns 与 pi 0.84.1 真实 stale 文案零匹配），见

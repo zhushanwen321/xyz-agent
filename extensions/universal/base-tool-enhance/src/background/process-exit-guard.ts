@@ -18,12 +18,13 @@
  *    挂起进程，pi 的 ignore 语义完全失效
  *  - rpc/print 模式 Ctrl+C：pi 无 SIGINT listener（dist 全量 grep 唯一注册点在 TUI
  *    挂起态）→ 默认处置进程即死。探针实测：无 listener 的信号默认终止**不触发
- *    exit 事件**，同步收殓在该路径本就不可达；孤儿由 M5 reaper 属主判定收殓
- *    （与 SIGKILL 强杀同类，设计内兜底）
+ *    exit 事件**，同步收殓在该路径本就不可达；孤儿由 xyz-agent runtime 收殓器按
+ *    属主判定收殓（u-bte-remove 下沉后；与 SIGKILL 强杀同类，设计内兜底）
  *  - cleanup-only listener 更不可取：注册即抑制默认终止，rpc 前台 Ctrl+C 后 pi 变
  *    成杀不死的僵尸进程
  *
- * 子进程死后 registry 目录无人再扫（reaper 是 M5）——本单元不管。
+ * 子进程死后 registry 目录由 xyz-agent runtime 启动期兜底扫描覆盖（收殓下沉）——
+ * 本单元不管。
  */
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
@@ -56,7 +57,7 @@ export function installProcessExitGuard(): void {
 	// SIGTERM：只收殓不 exit——pi rpc-mode 的 SIGTERM handler（先注册先跑）走自己的
 	// shutdown 流程，最终 process.exit 触发下方 exit 兜底（幂等跳过）。
 	// SIGINT 刻意不挂 handler——会破坏 pi TUI 挂起态的 ignoreSigint 语义，且 rpc
-	// 默认终止路径 exit 事件本就不触发、孤儿归 M5 reaper 兜底（完整论证见文件头
+	// 默认终止路径 exit 事件本就不触发、孤儿归 runtime 收殓兜底（完整论证见文件头
 	// 「不挂 SIGINT handler」专段）
 	process.once("SIGTERM", cleanup);
 	// 同步兜底：exit handler 里只能做同步收殓（kill-tree 同步 + registry 同步原子写）
@@ -77,7 +78,7 @@ export function reapBackgroundTasksNow(): void {
 		try {
 			killProcessTree(task.pid);
 		} catch (err) {
-			// 单条 kill 失败不阻断其余条目收殓；进程将退出，残余由 M5 reaper 兜底
+			// 单条 kill 失败不阻断其余条目收殓；进程将退出，残余由 runtime 收殓兜底
 			logger.warn("kill-tree failed during process-exit reap", {
 				detail: { taskId: task.taskId, pid: task.pid, err: err instanceof Error ? err.message : String(err) },
 			});

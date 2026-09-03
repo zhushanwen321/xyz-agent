@@ -40,13 +40,13 @@ describe("formatBudget — 2 styles (FR-3.4)", () => {
 			budget: { tokenBudget: 1000 },
 			tokensUsed: 500,
 		});
-		const out = formatBudget(state, 300, "percent");
+		const out = formatBudget(state, "percent");
 		expect(out).toContain("Token: 50%");
 	});
 
 	it("percent: 无预算 → 空字符串", () => {
 		const state = makeState();
-		expect(formatBudget(state, 0, "percent")).toBe("");
+		expect(formatBudget(state, "percent")).toBe("");
 	});
 
 	it("line: 剩余/总量格式", () => {
@@ -54,7 +54,7 @@ describe("formatBudget — 2 styles (FR-3.4)", () => {
 			budget: { tokenBudget: 1000 },
 			tokensUsed: 300,
 		});
-		const out = formatBudget(state, 120, "line");
+		const out = formatBudget(state, "line");
 		expect(out).toContain("Tokens: 700/1000");
 	});
 });
@@ -64,7 +64,7 @@ describe("formatBudget — 2 styles (FR-3.4)", () => {
 describe("XML escaping in prompts", () => {
 	it("objective 中的 <>& 被转义（continuationPrompt）", () => {
 		const state = makeState({ objective: "<script>alert('x')</script> & data" });
-		const out = continuationPrompt(state, 0);
+		const out = continuationPrompt(state);
 		expect(out).toContain("&lt;script&gt;");
 		expect(out).toContain("&amp; data");
 		expect(out).not.toContain("<script>");
@@ -90,7 +90,7 @@ describe("XML escaping in prompts", () => {
 describe("continuationPrompt", () => {
 	it("含 objective + Turn + Completion audit 段落", () => {
 		const state = makeState({ currentTurnIndex: 3 });
-		const out = continuationPrompt(state, 0);
+		const out = continuationPrompt(state);
 		expect(out).toContain("Turn 3");
 		expect(out).toContain("test objective");
 		expect(out).toContain("Completion audit");
@@ -98,7 +98,7 @@ describe("continuationPrompt", () => {
 
 	it("对标 Codex 三约束：Completion audit / Fidelity / Blocked 完整", () => {
 		const state = makeState();
-		const out = continuationPrompt(state, 0);
+		const out = continuationPrompt(state);
 		// Completion audit: 逐项证据验证
 		expect(out).toContain("Completion audit");
 		expect(out).toContain("Evidence must prove completion");
@@ -115,14 +115,14 @@ describe("continuationPrompt", () => {
 
 	it("软建议 complete 前完成所有 todo（FR-6，全解耦后非强制）", () => {
 		const state = makeState();
-		const out = continuationPrompt(state, 0);
+		const out = continuationPrompt(state);
 		expect(out).toContain("Recommend finishing all todos");
 		expect(out).toContain("verification todos");
 	});
 
 	it("含 plan audit 软提醒（FR-7/D27 prompt 驱动）", () => {
 		const state = makeState();
-		const out = continuationPrompt(state, 0);
+		const out = continuationPrompt(state);
 		expect(out).toContain("plan.md step was executed");
 	});
 });
@@ -165,7 +165,7 @@ describe("contextInjectionPrompt", () => {
 			budget: { tokenBudget: 1000 },
 			tokensUsed: 200,
 		});
-		const out = contextInjectionPrompt(state, 60);
+		const out = contextInjectionPrompt(state);
 		expect(out).toContain("GOAL mode activated");
 		expect(out).toContain("Status: active");
 		expect(out).toContain("Turn: 2");
@@ -186,13 +186,13 @@ describe("contextInjectionPrompt", () => {
 			budget: { tokenBudget: 1000 },
 			tokensUsed: 200,
 		});
-		const out = contextInjectionPrompt(state, 60);
+		const out = contextInjectionPrompt(state);
 		expect(out.length).toBeLessThanOrEqual(600);
 	});
 
 	it("删除冗余段（TC3）：不含 todo 引导/plan 提示/Fidelity/Audit", () => {
 		const state = makeState();
-		const out = contextInjectionPrompt(state, 0);
+		const out = contextInjectionPrompt(state);
 		// todo 引导段已删（收敛到 continuation 软建议）
 		expect(out).not.toContain("Track work with todos");
 		expect(out).not.toContain("todo tool");
@@ -206,17 +206,17 @@ describe("contextInjectionPrompt", () => {
 
 	it("无 goal_manager 引用（#1 清理后）", () => {
 		const state = makeState();
-		const out = contextInjectionPrompt(state, 0);
+		const out = contextInjectionPrompt(state);
 		expect(out).not.toContain("goal_manager");
 		expect(out).not.toContain("create_tasks");
 		expect(out).not.toContain("add_subtasks");
 	});
 
-	it("无 planAvailable 参数（TC4 签名精简：仅 state + timeUsedSeconds）", () => {
-		// planAvailable 恒 true 死分支已删；签名仅 (state, timeUsedSeconds)
+	it("无 planAvailable 参数（TC4 签名精简：仅 state）", () => {
+		// planAvailable 恒 true 死分支已删；签名仅 (state)
 		const state = makeState();
-		expect(() => contextInjectionPrompt(state, 0)).not.toThrow();
-		const out = contextInjectionPrompt(state, 0);
+		expect(() => contextInjectionPrompt(state)).not.toThrow();
+		const out = contextInjectionPrompt(state);
 		expect(out).toContain("[GOAL mode activated]");
 	});
 });
@@ -226,7 +226,7 @@ describe("contextInjectionPrompt", () => {
 describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () => {
 	it("continuationPrompt：有 successCriteria → 含 <successCriteria> 段 + 条件文案", () => {
 		const state = makeState({ successCriteria: ["pnpm test passes", "tsc clean"] });
-		const out = continuationPrompt(state, 0);
+		const out = continuationPrompt(state);
 		expect(out).toContain("<successCriteria>");
 		expect(out).toContain("</successCriteria>");
 		expect(out).toContain("1. pnpm test passes");
@@ -249,7 +249,7 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 
 	it("contextInjectionPrompt：有 successCriteria → 含 <successCriteria> 段 + 条件文案", () => {
 		const state = makeState({ successCriteria: ["file X exists"] });
-		const out = contextInjectionPrompt(state, 0);
+		const out = contextInjectionPrompt(state);
 		expect(out).toContain("<successCriteria>");
 		expect(out).toContain("file X exists");
 		// 条件文案（contextInjectionPrompt 专属）
@@ -266,24 +266,24 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 
 	it("无 successCriteria → 不含 <successCriteria> 段（锁定 fallback）", () => {
 		const state = makeState(); // createGoalState 不带 successCriteria
-		const out = continuationPrompt(state, 0);
+		const out = continuationPrompt(state);
 		expect(out).not.toContain("<successCriteria>");
 		expect(out).not.toContain("every condition there must be met");
 	});
 
 	it("U17: successCriteria 空数组 → 与 undefined 同为空态，prompt 不增 <successCriteria> 段", () => {
 		const state = makeState({ successCriteria: [] });
-		expect(continuationPrompt(state, 0)).not.toContain("<successCriteria>");
+		expect(continuationPrompt(state)).not.toContain("<successCriteria>");
 		expect(budgetLimitPrompt(state)).not.toContain("<successCriteria>");
 		expect(objectiveUpdatedPrompt(state, "old obj")).not.toContain("<successCriteria>");
-		expect(contextInjectionPrompt(state, 0)).not.toContain("<successCriteria>");
+		expect(contextInjectionPrompt(state)).not.toContain("<successCriteria>");
 		// 条件文案同样不出现（continuationPrompt 专属分支）
-		expect(continuationPrompt(state, 0)).not.toContain("every condition there must be met");
+		expect(continuationPrompt(state)).not.toContain("every condition there must be met");
 	});
 
 	it("successCriteria 中的 <>& 被转义（防注入）", () => {
 		const state = makeState({ successCriteria: ["<x> & y"] });
-		const out = continuationPrompt(state, 0);
+		const out = continuationPrompt(state);
 		expect(out).toContain("&lt;x&gt;");
 		expect(out).toContain("&amp; y");
 		expect(out).not.toContain("<x>");

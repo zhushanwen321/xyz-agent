@@ -3,12 +3,12 @@
  *
  * 链下游：SessionList emit setProject → Sidebar.vue `@set-project="onAssignProject"`（L85）→
  * useSidebarSessionActions.onAssignProject（真实，注入的 assignSessionToProject mock）→
- * 失败 toastError(sidebar.assignProjectFailed)。useSidebarNew 的 RPC + 乐观更新内部在
- * sidebar-assign-project.test.ts 直测（本文件 mock useSidebarNew）。
+ * 失败 toastError(sidebar.assignProjectFailed)。useSidebar 的 RPC + 乐观更新内部在
+ * sidebar-assign-project.test.ts 直测（本文件 mock useSidebar）。
  *
  * 降级说明：Sidebar.vue 整体 mount 依赖 10+ store/composable（同 sidebar-ondeletefolder.test.ts
  * 范式），完整真实 mount 成本过高且偏离本测试目标（验证 @set-project 接线 + toast 分支）。
- * 参照该范式：mock useSidebarNew（注入可控 assignSessionToProject）+ useToast（捕获 error）
+ * 参照该范式：mock useSidebar（注入可控 assignSessionToProject）+ useToast（捕获 error）
  * + 各 store，shallowMount Sidebar 后经 SessionList 子组件 emit setProject 触发 onAssignProject，
  * 覆盖真实模板绑定 + 事件编排路径。
  *
@@ -26,7 +26,7 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ error: toastErrorMock }),
 }))
 
-// ── mock useSidebarNew：注入可控 assignSessionToProject ──
+// ── mock useSidebar：注入可控 assignSessionToProject ──
 // focusedSessionId / focusedSession 必须是真实 Vue ref（非裸 { value } 对象），
 // 否则 Sidebar 模板 `:active-id="focusedSessionId"` 传对象给 String|Null 子组件触发
 // "Invalid prop" 警告。真实 ref 模板自动解包为 null（同 sidebar-ondeletefolder 注释）。
@@ -41,10 +41,10 @@ const sidebarMocks = vi.hoisted(() => ({
   syncSessionToPanel: vi.fn(),
   assignSessionToProject: vi.fn(),
 }))
-vi.mock('@/composables/features/sidebar/useSidebarNew', async () => {
+vi.mock('@/composables/features/sidebar/useSidebar', async () => {
   const { ref } = await import('vue')
   return {
-    useSidebarNew: () => ({
+    useSidebar: () => ({
       ...sidebarMocks,
       focusedSessionId: ref<string | null>(null),
       focusedSession: ref(null),

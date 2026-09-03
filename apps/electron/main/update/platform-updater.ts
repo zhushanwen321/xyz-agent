@@ -24,14 +24,15 @@ import path from 'node:path'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 import { buildOutboundChildEnv } from '@xyz-agent/shared'
 import {
-  LINUX_UPDATER_SCRIPT_PATH,
-  LINUX_UPDATER_LOG_PATH,
-  UPDATE_DIR,
-  UPDATER_LOG_PATH,
-  UPDATER_PID_FILE,
-  UPDATER_SCRIPT_PATH,
-  WIN_UPDATER_LOG_PATH,
-  WIN_UPDATER_SCRIPT_PATH,
+  getLinuxUpdaterLogPath,
+  getLinuxUpdaterScriptPath,
+  getUpdateDir,
+  getUpdateResultFile,
+  getUpdaterLogPath,
+  getUpdaterPidFile,
+  getUpdaterScriptPath,
+  getWinUpdaterLogPath,
+  getWinUpdaterScriptPath,
 } from './constants.js'
 import { buildLinuxUpdaterScript, buildUpdaterScript } from './updater-script.js'
 import { buildWinUpdaterCmd } from './win-updater-cmd.js'
@@ -59,7 +60,7 @@ const UPDATER_SCRIPT_MODE = 0o755
 function writeUpdaterPid(pid: number | undefined): void {
   if (pid === undefined) return
   try {
-    writeFileSync(UPDATER_PID_FILE, String(pid))
+    writeFileSync(getUpdaterPidFile(), String(pid))
   } catch (err) {
     // 降级策略：pid 文件是互斥辅助信号，写失败退回 u5a 之前的现状（无互斥探测），
     // 远优于因为一个辅助文件而让整次升级失败——故只告警不重抛。
@@ -106,33 +107,33 @@ export class MacUpdater implements PlatformUpdater {
       appBundle,
       zipPath: downloadedFilePath,
       sha256,
-      logPath: UPDATER_LOG_PATH,
-      resultPath: path.join(UPDATE_DIR, 'update-result.json'),
+      logPath: getUpdaterLogPath(),
+      resultPath: getUpdateResultFile(),
       appName: 'TaiJi',
       targetVersion: release.version,
       // u1a 模板契约：脚本用 kill -0 等待本进程退出（PID 制，上限 60s）；
       // 缺失时 buildUpdaterScript 直接 throw，不静默跳过等待。
       parentPid: String(process.pid),
     })
-    mkdirSync(UPDATE_DIR, { recursive: true })
-    writeFileSync(UPDATER_SCRIPT_PATH, script, { mode: UPDATER_SCRIPT_MODE })
-    chmodSync(UPDATER_SCRIPT_PATH, UPDATER_SCRIPT_MODE)
-    spawn('bash', [UPDATER_SCRIPT_PATH], {
+    mkdirSync(getUpdateDir(), { recursive: true })
+    writeFileSync(getUpdaterScriptPath(), script, { mode: UPDATER_SCRIPT_MODE })
+    chmodSync(getUpdaterScriptPath(), UPDATER_SCRIPT_MODE)
+    spawn('bash', [getUpdaterScriptPath()], {
       detached: true,
       stdio: 'ignore',
       // C-proc-09：出站契约构建器组装 env（与 win NSIS 路径对齐），deny 兜底剥
       // XYZ_AGENT_PACKAGED 等 dev-shell 残留标志，防拉起的新 app 实例被污染判定
       env: buildOutboundChildEnv({ parentEnv: process.env }),
     }).unref()
-    return { kind: 'detached-script', scriptPath: UPDATER_SCRIPT_PATH }
+    return { kind: 'detached-script', scriptPath: getUpdaterScriptPath() }
   }
 }
 
 /**
  * win NSIS 升级器（cmd wrapper，设计 §3.4 批次 2）。
  *
- * 与 mac/linux 同构：prepareUpdate 内生成 updater.cmd 写盘 UPDATE_DIR 并
- * detached spawn（cmd /c，detached + ignore stdio），返回 detached-script。
+ * 与 mac/linux 同构：prepareUpdate 内生成 updater.cmd 写盘升级工作目录
+ * （getUpdateDir()）并 detached spawn（cmd /c，detached + ignore stdio），返回 detached-script。
  * sha256 强制（RM4/m5）：win 侧缺 sha256 直接 throw（对齐 mac/linux 语义），
  * 关闭「size-only 内容错的 exe 被执行」窗口——download 降级 size-only 仍可能发生，
  * 但 install 侧强制拒绝；wrapper 内 certutil 二次复验（见 win-updater-cmd.ts）。
@@ -149,14 +150,14 @@ export class WinUpdater implements PlatformUpdater {
       installDir,
       // 重启目标：当前可执行文件同名落位（NSIS /D= 同目录覆盖安装，exe 名不变）
       targetExePath: process.execPath,
-      resultPath: path.join(UPDATE_DIR, 'update-result.json'),
-      logPath: WIN_UPDATER_LOG_PATH,
+      resultPath: getUpdateResultFile(),
+      logPath: getWinUpdaterLogPath(),
       parentPid: String(process.pid),
       sha256,
       targetVersion: release.version,
     })
-    const scriptPath = WIN_UPDATER_SCRIPT_PATH
-    mkdirSync(UPDATE_DIR, { recursive: true })
+    const scriptPath = getWinUpdaterScriptPath()
+    mkdirSync(getUpdateDir(), { recursive: true })
     writeFileSync(scriptPath, script)
     // cmd /c detached + ignore stdio：与 app.quit 解耦（Node 侧定时器随进程消亡，
     // 等待逻辑全部前移进 wrapper，不可信 Node 延迟 spawn）
@@ -191,22 +192,22 @@ export class LinuxAppImageUpdater implements PlatformUpdater {
       appImagePath: appImage,
       newFilePath: downloadedFilePath,
       sha256,
-      logPath: LINUX_UPDATER_LOG_PATH,
-      resultPath: path.join(UPDATE_DIR, 'update-result.json'),
+      logPath: getLinuxUpdaterLogPath(),
+      resultPath: getUpdateResultFile(),
       targetVersion: release.version,
       // 与 mac 同契约：脚本 kill -0 等待本进程退出
       parentPid: String(process.pid),
     })
-    mkdirSync(UPDATE_DIR, { recursive: true })
-    writeFileSync(LINUX_UPDATER_SCRIPT_PATH, script, { mode: UPDATER_SCRIPT_MODE })
-    chmodSync(LINUX_UPDATER_SCRIPT_PATH, UPDATER_SCRIPT_MODE)
-    spawn('bash', [LINUX_UPDATER_SCRIPT_PATH], {
+    mkdirSync(getUpdateDir(), { recursive: true })
+    writeFileSync(getLinuxUpdaterScriptPath(), script, { mode: UPDATER_SCRIPT_MODE })
+    chmodSync(getLinuxUpdaterScriptPath(), UPDATER_SCRIPT_MODE)
+    spawn('bash', [getLinuxUpdaterScriptPath()], {
       detached: true,
       stdio: 'ignore',
       // C-proc-09：同 mac 路径，出站契约构建器组装 env + deny 兜底
       env: buildOutboundChildEnv({ parentEnv: process.env }),
     }).unref()
-    return { kind: 'detached-script', scriptPath: LINUX_UPDATER_SCRIPT_PATH }
+    return { kind: 'detached-script', scriptPath: getLinuxUpdaterScriptPath() }
   }
 }
 

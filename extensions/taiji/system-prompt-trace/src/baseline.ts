@@ -1,10 +1,11 @@
 /**
- * 跨重启基线的文件系统侧实现（设计 D2 三路径中的路径 1/2 的读与路径 2 的写）。
+ * 跨重启基线的文件系统侧实现（四路径口径，见 trace.ts onSessionStart 解析优先级：
+ * 路径 1 stash 直读 / 路径 2 fork prev 直读的读，与路径 3 自持久化小文件的读和写）。
  *
  * - readLastPromptFromSessionFile：直读 session JSONL（进程内 resume 的 targetSessionFile、
  *   fork 暂定的 previousSessionFile），倒序找最后一条 xyz:system-prompt 留痕 entry。
- * - readPersistedBaseline / writePersistedBaseline：dataDir 自持久化小文件
- *   （app 重启直 spawn resume 时唯一可用的基线来源），原子写入。
+ * - readPersistedBaseline / writePersistedBaseline：agentDir 自持久化小文件
+ *   （app 重启直 spawn resume / reload 等无 switch 事件链路的唯一基线来源），原子写入。
  *
  * 所有函数不抛错：读失败返回 null、写失败 logger.error 后静默——基线丢失的代价只是
  * 下次 resume 多写一条留痕（设计 D2 已接受），不允许影响 agent 主流程。

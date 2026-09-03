@@ -50,6 +50,15 @@ const WORKTREE_TMP_ROOT = "pi-subagents";
 const BRANCH_PREFIX = "pi-sub-";
 
 /**
+ * 对账「歧义跳过」的老化升级阈值（PS-12 措施⑤）：同一物理残留连续 N 轮 scan
+ * 仍无法建立 branch↔pid 对应 → 升级为含磁盘路径与人工清理指引的强 warn，
+ * 终结「仅周期性低信息 warn、有界资源永无终局」的滞留形态。导出供测试与
+ * 运维文档对齐阈值。N 是周期数不是绝对时长——scan 由 session_start 触发，
+ * 频率随使用节奏，按周期计数避免与时钟假设耦合。
+ */
+export const RECONCILE_SKIP_ESCALATION_CYCLES = 4;
+
+/**
  * 物理面发现的 worktree（tmpdir checkout 目录存在，无论注册表是否登记）。
  * repo 从 checkout/.git 指针文件推导（普通 repo 与 bare+worktree 均覆盖）；
  * 推导失败（.git 文件缺失/损坏）时 undefined——checkout 视为无主残留。
@@ -132,6 +141,12 @@ export class WorktreeManager {
   // 不继承前驱错误（否则 1 个 worktree add 失败会传染同 repo 后续全部写命令，
   // 替代旧同步版单线程天然全局串行的「各命令独立失败」语义）。
   private readonly writeQueues = new Map<string, Promise<void>>();
+  // [PS-12 措施⑤] 对账歧义跳过的 per-checkout 连续计数（老化判据）。
+  // key = checkout 绝对路径；每轮 reconcileWithPhysical 末尾收敛为「本轮实际
+  // 进入歧义分支」的路径集（自愈/判死清理/注册表收编/物理消失的一律清零，
+  // 见该方法尾部），条目数 ≤ 单轮歧义残留数，无泄漏面。内存态：进程重启后
+  // 重新起数——老化是人工介入的提醒信号，不值得为此引入持久化状态。
+  private readonly ambiguousSkipCycles = new Map<string, number>();
 
   constructor(agentDir: string) {
     this.agentDir = agentDir;
@@ -373,7 +388,14 @@ export class WorktreeManager {
 
     // ── 方向二：物理有 → 注册无 ──
     const orphans = physical.filter((pt) => !registeredBranches.has(pt.branch));
-    await this.reconcileUnregisteredWorktrees(orphans);
+    const ambiguousNow = await this.reconcileUnregisteredWorktrees(orphans);
+
+    // [PS-12 措施⑤] 老化计数收敛（「出现对应后清零」）：本轮未进入歧义跳过的
+    // 路径——自愈补写 / 判死清理 / 注册表收编 / 物理消失——计数删除，重现时
+    // 重新起数；升级 warn 因此只在「连续无对应」时出现，不因历史陈账误触发。
+    for (const checkout of [...this.ambiguousSkipCycles.keys()]) {
+      if (!ambiguousNow.has(checkout)) this.ambiguousSkipCycles.delete(checkout);
+    }
   }
 
   /** 对账方向一（注册有 → 物理无）：条目的分支与 checkout 目录都已不存在 → 条目指向
@@ -408,9 +430,13 @@ export class WorktreeManager {
    *      并发覆盖丢条目场景，补写后回归标准 pid 判据路径）；
    *    - 多活 pid 或多残留无法建立 branch↔pid 对应：跳过 + warn——宁延迟勿误删；
    *      活体自身 cleanup 路径正常（registry.remove 幂等），死体等活 pid 全灭后
-   *      下一周期收敛。 */
-  private async reconcileUnregisteredWorktrees(orphans: PhysicalWorktree[]): Promise<void> {
+   *      下一周期收敛。
+   *
+   *  返回本轮实际进入「歧义跳过」的 checkout 路径集（PS-12 老化计数收敛依据，
+   *  见 reconcileWithPhysical 尾部）。 */
+  private async reconcileUnregisteredWorktrees(orphans: PhysicalWorktree[]): Promise<Set<string>> {
     // 按 enc 段聚合处理（活信号以 enc 段为粒度——.alive 在 <enc>/sessions/ 下）
+    const ambiguous = new Set<string>();
     const orphansByEnc = new Map<string, PhysicalWorktree[]>();
     for (const pt of orphans) {
       const list = orphansByEnc.get(pt.enc) ?? [];
@@ -418,12 +444,17 @@ export class WorktreeManager {
       orphansByEnc.set(pt.enc, list);
     }
     for (const [enc, list] of orphansByEnc) {
-      await this.reconcileEncSegment(enc, list);
+      await this.reconcileEncSegment(enc, list, ambiguous);
     }
+    return ambiguous;
   }
 
   /** 单 enc 段的残留处置三分支：无活 pid 判死清理 / 唯一对应自愈补写 / 多对应保守跳过。 */
-  private async reconcileEncSegment(enc: string, list: PhysicalWorktree[]): Promise<void> {
+  private async reconcileEncSegment(
+    enc: string,
+    list: PhysicalWorktree[],
+    ambiguous: Set<string>,
+  ): Promise<void> {
     const alivePids = this.collectAlivePids(enc);
     if (alivePids.length === 0) {
       await this.cleanupDeadSegment(list);
@@ -449,11 +480,42 @@ export class WorktreeManager {
       return;
     }
     // 多活 pid / 多残留：无法建立 branch↔pid 对应，保守跳过待下周期。
-    logger.warn("[worktree] reconcile: unregistered physical worktrees present but alive-pid mapping ambiguous, skipping this cycle", {
-      enc,
-      orphans: list.length,
-      alivePids: alivePids.length,
-    });
+    // [PS-12 措施⑤] 保守跳过加老化：同一 checkout 连续 {@link
+    // RECONCILE_SKIP_ESCALATION_CYCLES} 轮仍无对应 → 升级为含磁盘路径与人工
+    // 清理指引的强 warn（有界资源泄漏不能永远停在低信息周期 warn 上）。计数
+    // 清零由 reconcileWithPhysical 统一编排——凡本轮未进入本分支的路径一律重置。
+    let escalated = 0;
+    for (const pt of list) {
+      const cycles = (this.ambiguousSkipCycles.get(pt.checkout) ?? 0) + 1;
+      this.ambiguousSkipCycles.set(pt.checkout, cycles);
+      ambiguous.add(pt.checkout); // 本轮实际进入歧义跳过（老化收敛依据，见调用方）
+      if (cycles < RECONCILE_SKIP_ESCALATION_CYCLES) continue;
+      escalated++;
+      // repo 未知（无主残留）时指引里用 <main-repo> 占位，data.repo 同步标注
+      const repoHint = pt.repo ?? "<main-repo>";
+      logger.warn(
+        `[worktree] reconcile: unregistered physical worktree skipped for ${cycles} consecutive cycles ` +
+          `(alive-pid mapping still ambiguous) — manual cleanup may be needed. ` +
+          `Inspect: git -C ${repoHint} worktree list. ` +
+          `If no live process owns it: git -C ${repoHint} worktree remove --force ${pt.checkout} && git -C ${repoHint} branch -D ${pt.branch}. ` +
+          `Ownerless checkout (repo unknown, delete the directory directly): rm -rf ${pt.checkout}`,
+        {
+          branch: pt.branch,
+          checkout: pt.checkout,
+          repo: pt.repo,
+          skippedCycles: cycles,
+        },
+      );
+    }
+    // 未达升级阈值的残留维持既有低信息聚合 warn（数量只含本周期未升级部分；
+    // 全部升级时不再发本条，避免每周期双份噪音）
+    if (escalated < list.length) {
+      logger.warn("[worktree] reconcile: unregistered physical worktrees present but alive-pid mapping ambiguous, skipping this cycle", {
+        enc,
+        orphans: list.length - escalated,
+        alivePids: alivePids.length,
+      });
+    }
   }
 
   /** 无活 pid 段：残留判死清理——checkout mtime 超 SPAWN_GRACE_MS 才清（防误清另一

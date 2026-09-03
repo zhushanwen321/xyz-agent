@@ -2,11 +2,13 @@
  * 泛型配置读写：getConfigPath + loadConfig<T> + saveConfig + mtime+size 缓存 + 原子写。
  *
  * 与 permission/config.ts 的区别：本库是泛型版（pkgName 参数化，normalize 由调用方传），
- * 不内置任何 schema —— rename-session / permission / scheduler 等 consumer 各自定义 normalize。
+ * 不内置任何 schema —— rename-session / permission / smart-context / base-tool-enhance
+ * 等 consumer 各自定义 normalize。
  * 范式（mtime+size 双 key 缓存、原子写 tmp+rename、tmp 失败清理）借鉴 permission/config.ts。
  *
  * 路径解析用 pi 导出的 getAgentDir（尊重 PI_CODING_AGENT_DIR 覆盖），禁止自实现 ——
- * permission/config.ts:18-22 有重复自实现待 P3 清理，本库直接用 pi 导出版。
+ * [HISTORICAL] permission/config.ts 曾有重复自实现，P3 已清理（现全部委托本库），
+ * 本库直接用 pi 导出版。
  *
  * ── 热重载契约（consumer 必读） ──
  * 本库的 loadConfig 提供「读时刷新（pull-based）热重载」：每次调用 statSync 文件 mtime+size，
@@ -70,7 +72,7 @@ function clone<T>(value: T): T {
 /**
  * 加载配置，文件未变化时返回缓存（深拷贝，防调用方修改污染缓存）。
  *
- * @param pkgName 包名（决定文件路径 <agentDir>/config/<pkgName>.json）
+ * @param pkgName 包名（决定文件路径 <agentDir>/config/<pkgName>-ext-config.json）
  * @param defaults 文件缺失/坏 JSON/normalize 失败时的默认值
  * @param normalize 把 JSON.parse 的 unknown 归一化成 T（调用方负责校验 + 默认值填充）
  * @param onWarning 非致命问题（解析失败）的警告回调

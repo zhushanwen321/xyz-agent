@@ -15,11 +15,6 @@ export const BUDGET_RATIO_HIGH = 0.9;            // 90% — 触发预警/收尾 
 export const BUDGET_RATIO_LOW = 0.7;             // 70% — 触发提醒
 export const CONTEXT_USAGE_RATIO_LIMIT = 0.85;   // 85% — 上下文空间不足阈值
 
-// ── 预算百分比阈值 (0-100) ──────────────────────────
-
-export const BUDGET_PERCENT_HIGH = 90;   // widget 颜色变红
-export const BUDGET_PERCENT_LOW = 70;    // widget 颜色变黄
-
 // ── 长度/数量上限 ───────────────────────────────────
 
 export const UPDATE_PREFIX_LENGTH = 7;        // "update ".length

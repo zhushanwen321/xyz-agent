@@ -20,7 +20,13 @@
 
 import { getLogger } from "../core/logger.ts";
 
-import { DialogGlobalQueue, type UiRequest, type UiRequestHandler, type UiResponse } from "./dialog-queue.ts";
+import {
+  DialogGlobalQueue,
+  isValidDialogTimeout,
+  type UiRequest,
+  type UiRequestHandler,
+  type UiResponse,
+} from "./dialog-queue.ts";
 import { type HostMode, resolveHostMode } from "./host-mode.ts";
 import type { UiChannelRegistry } from "./ui-channels.ts";
 import { isDialogMethod } from "./ui-interaction-model.ts";
@@ -157,10 +163,27 @@ function coerceUiResponse(raw: unknown, reqId: string): UiResponse {
  *    input(title: string, placeholder?: string, opts?): Promise<string | undefined>
  *    editor(title: string, prefill?: string): Promise<string | undefined>
  *  注意：SDK 是位置参数（非对象参数）；返回 undefined 表示用户取消。
+ *  opts 为 ExtensionUIDialogOptions（signal?/timeout?，timeout 毫秒，SDK auto-dismiss
+ *  带倒计时展示）——LC-3/T2⑦ 协同：请求方显式传 timeout 时透传给 SDK，SDK 层超时
+ *  （正常路径，用户可见倒计时）先于队列级兜底 settle；队列级上界（dialog-queue，
+ *  未传挂 30min 默认）兜住 SDK timeout 未生效的形态（host 实现不完整 / channel handler
+ *  路径不经 SDK）。两层取先到，settle 恰一次由 DialogGlobalQueue 的 settled 标志保证。
+ *  editor 的 SDK 签名无 opts，不透传（其上界只由队列级兜底承担）。
  *
  *  Stage 4 风险点：TUI 下 ask_user channel 未注册时，select 会以普通列表渲染
  *  （title 可能含 marker）。channel 注册后由 createRealHandler 优先走 channel handler，
  *  不进这里。editor 不可用/抛错时降级 cancelled + warn，不卡队列。 */
+/** select/confirm/input 的 SDK 第三参（opts）：请求方传了**合法** timeout（>0 且有限，
+ *  判定源 = dialog-queue 的 isValidDialogTimeout，与队列层上界同一权威）才透传——
+ *  未传或非法（0/负数/NaN/±Infinity）时不加第三参，参数个数与旧调用完全一致（严格
+ *  additive）。非法值透传会让 SDK 收到语义反转的 opts（<=0 可能立即 auto-dismiss），
+ *  且与队列层「非法回落默认上界」的判定不一致（A2-3）；不透传时数组为空，SDK 无界
+ *  由队列层默认上界（30min）兜底。
+ *  返回元组联合以支持 spread 到固定签名（TS2556）。 */
+function sdkTimeoutArg(req: UiRequest): [] | [{ timeout: number }] {
+  return isValidDialogTimeout(req.timeout) ? [{ timeout: req.timeout }] : [];
+}
+
 async function defaultDialogForward(
   req: UiRequest,
   ctx: HostUIContext,
@@ -168,16 +191,16 @@ async function defaultDialogForward(
   const ui = ctx.ui;
   switch (req.method) {
     case "select": {
-      const selected = await ui.select(req.title ?? "", req.options ?? []);
+      const selected = await ui.select(req.title ?? "", req.options ?? [], ...sdkTimeoutArg(req));
       return selected === undefined ? { cancelled: true } : { value: selected };
     }
     case "confirm": {
       // SDK confirm 必传 message（req.message 缺失时降级空串，不报错阻塞）
-      const confirmed = await ui.confirm(req.title ?? "", req.message ?? "");
+      const confirmed = await ui.confirm(req.title ?? "", req.message ?? "", ...sdkTimeoutArg(req));
       return { confirmed };
     }
     case "input": {
-      const text = await ui.input(req.title ?? "", req.placeholder);
+      const text = await ui.input(req.title ?? "", req.placeholder, ...sdkTimeoutArg(req));
       return text === undefined ? { cancelled: true } : { value: text };
     }
     case "editor": {

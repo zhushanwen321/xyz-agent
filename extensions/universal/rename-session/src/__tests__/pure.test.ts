@@ -9,56 +9,12 @@ import { clearConfigCache, getConfigPath } from "@zhushanwen/pi-llm-shared";
 import {
 	DEFAULT_RENAME_CONFIG,
 	cleanTitle,
-	countAssistantReplies,
 	countSuccessfulAssistantReplies,
 	loadRenameConfig,
 	normalizeRenameConfig,
 	saveRenameConfig,
 	setAutoRenameSwitch,
 } from "../pure.js";
-
-// ────────────────────────────────────────────────────
-// countAssistantReplies（保留，不变）
-// ────────────────────────────────────────────────────
-
-describe("countAssistantReplies", () => {
-	it("[user, assistant] → 1", () => {
-		const entries = [
-			{ type: "message", message: { role: "user" } },
-			{ type: "message", message: { role: "assistant" } },
-		];
-		expect(countAssistantReplies(entries)).toBe(1);
-	});
-
-	it("[user, assistant, user, assistant] → 2", () => {
-		const entries = [
-			{ type: "message", message: { role: "user" } },
-			{ type: "message", message: { role: "assistant" } },
-			{ type: "message", message: { role: "user" } },
-			{ type: "message", message: { role: "assistant" } },
-		];
-		expect(countAssistantReplies(entries)).toBe(2);
-	});
-
-	it("过滤非 message（thinkingLevelChange / modelChange）→ 1", () => {
-		const entries = [
-			{ type: "thinkingLevelChange" },
-			{ type: "message", message: { role: "user" } },
-			{ type: "message", message: { role: "assistant" } },
-			{ type: "modelChange" },
-		];
-		expect(countAssistantReplies(entries)).toBe(1);
-	});
-
-	it("[user, assistant, toolResult entry] → 1（非 message entry 不计）", () => {
-		const entries = [
-			{ type: "message", message: { role: "user" } },
-			{ type: "message", message: { role: "assistant" } },
-			{ type: "toolResult" },
-		];
-		expect(countAssistantReplies(entries)).toBe(1);
-	});
-});
 
 // ────────────────────────────────────────────────────
 // countSuccessfulAssistantReplies（D6：触发判定改用的成功-turn 计数）

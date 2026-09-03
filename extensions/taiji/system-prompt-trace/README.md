@@ -35,14 +35,16 @@ appendEntry("xyz:system-prompt", {
 
 存在任一 hash 基线（见下）时，首个 turn 写 `resume`（无论 session_start reason）。
 
-## 跨重启 hash 基线三路径（优先级从高到低）
+## 跨重启 hash 基线四路径（优先级从高到低，权威实现见 `src/trace.ts` onSessionStart）
 
-1. **进程内 resume**：`session_before_switch.targetSessionFile` 直读目标 session 文件，取最后一条留痕 entry 的
-   hash/version/fullText。switch 会 teardown 并重建 extension runtime，该基线经模块级 stash 跨 runtime 传递。
-2. **app 重启直 spawn resume**：`<agentDir>/system-prompt-trace-baseline.json` 自持久化小文件（sessionId →
-   hash/version），原子写入，保留最近 64 个 session。
-3. **兜底**：两路都读不到且 reason=resume → 必写一条（宁可多写不可漏记）。
+1. **进程内 resume（stash）**：`session_before_switch.targetSessionFile` 直读目标 session 文件，取最后一条留痕
+   entry 的 hash/version/fullText。switch 会 teardown 并重建 extension runtime，该基线经模块级 stash 跨 runtime 传递。
+2. **fork**：`session_start.previousSessionFile` 直读源 session 文件（暂定语义，待 P2 探针实测定）。
+3. **自持久化小文件**：`<agentDir>/system-prompt-trace-baseline.json`（sessionId → hash/version），原子写入，
+   保留最近 64 个 session。app 重启直 spawn resume / reload 等没有 switch 事件的链路由此恢复基线。
+4. **兜底必写**：三路都 miss（无任何基线）时，首个 turn 无论 session_start reason 必写一条——
+   startup/new → `initial`，resume/fork/reload → `resume`（宁可多写不可漏记）。
 
 ## 注册状态
 
-本包尚未注册进 `packages/shared/src/mandatory-extensions.json`（后续单元处理；feature tier，可禁不可卸）。
+已注册进 `packages/shared/src/mandatory-extensions.json`（feature tier，可禁不可卸）。

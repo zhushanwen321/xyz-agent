@@ -598,3 +598,37 @@ describe("executeNestedWorkflow", () => {
     });
   });
 });
+
+// ── runAndWait model 透传（host-surface：zsw CLI --model 的同步面入口）──
+// 契约：显式 model → spec.model（Option B：workerData → $MODEL → agent() fallback）；
+// 未传 → undefined（不覆盖脚本内 agent() 显式参数 / agent .md / 引擎默认的解析序）。
+describe("runAndWait model 透传", () => {
+  it("显式 model → spec.model 透传", async () => {
+    const childRun = makeDoneChildRun({ reason: "completed", scriptResult: "ok" });
+    const deps = makeDeps({ script: makeScript(), childRun });
+    setupRunWorkflow(childRun);
+
+    const result = await runAndWait(
+      "child-wf",
+      {},
+      deps,
+      undefined,
+      undefined,
+      "zai-coding-cn/glm-5.3-flash",
+    );
+    expect(result.reason).toBe("completed");
+    expect(vi.mocked(runWorkflow)).toHaveBeenCalledTimes(1);
+    const spec = vi.mocked(runWorkflow).mock.calls[0][0] as RunSpec;
+    expect(spec.model).toBe("zai-coding-cn/glm-5.3-flash");
+  });
+
+  it("未传 model → spec.model 保持 undefined（不覆盖既有解析序）", async () => {
+    const childRun = makeDoneChildRun({ reason: "completed", scriptResult: "ok" });
+    const deps = makeDeps({ script: makeScript(), childRun });
+    setupRunWorkflow(childRun);
+
+    await runAndWait("child-wf", {}, deps);
+    const spec = vi.mocked(runWorkflow).mock.calls[0][0] as RunSpec;
+    expect(spec.model).toBeUndefined();
+  });
+});

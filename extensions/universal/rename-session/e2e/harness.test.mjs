@@ -13,6 +13,7 @@ import {
 	assertTitleGuards,
 	classifyFailure,
 	extractLastStopAssistant,
+	extractRenameLogEntries,
 	parseLogMessages,
 	rebuildPreview,
 } from "./harness.mjs";
@@ -165,6 +166,86 @@ describe("extractLastStopAssistant", () => {
 
 	it("非数组入参抛 TypeError", () => {
 		expect(() => extractLastStopAssistant("not-array")).toThrow(TypeError);
+	});
+});
+
+// ──────────────────────── extractRenameLogEntries（appendEntry 通道 entry 解析） ────────────────────────
+
+/** 造一条 extension-logger appendEntry 落盘的 custom entry 行（形状 = pi appendCustomEntry × createLogger.warn）。 */
+function renameLogLine(message, { timestamp = 1755200000000, level = "warn" } = {}) {
+	return JSON.stringify({
+		type: "custom",
+		customType: "rename-session:log",
+		data: { timestamp, level, message },
+		id: Math.random().toString(36).slice(2),
+		parentId: null,
+		timestamp: new Date(timestamp).toISOString(),
+	});
+}
+
+describe("extractRenameLogEntries", () => {
+	it("解析标准 rename-session:log entry，保文件行序（= append 时序）", () => {
+		const lines = [
+			JSON.stringify({ type: "session", version: 3, id: "x" }),
+			renameLogLine("[rename-session] t=2026-08-15T03:41:33.287Z turnIndex=0 skip: stopReason=toolUse", {
+				timestamp: 1755200000001,
+			}),
+			renameLogLine('[rename-session] t=2026-08-15T03:41:35.100Z renamed to "修复登录超时"', {
+				timestamp: 1755200000002,
+			}),
+		];
+		const entries = extractRenameLogEntries(lines);
+		expect(entries).toHaveLength(2);
+		expect(entries[0].t).toBe(1755200000001);
+		expect(entries[0].level).toBe("warn");
+		expect(entries[0].message).toContain("skip: stopReason=toolUse");
+		expect(entries[1].message).toContain('renamed to "');
+	});
+
+	it("非 rename-session:log entry（message/custom 类型、他扩展 customType）过滤", () => {
+		const lines = [
+			JSON.stringify({ type: "message", id: "m1", message: { role: "assistant" } }),
+			JSON.stringify({ type: "custom", customType: "other-ext:log", data: { message: "x" }, timestamp: new Date().toISOString() }),
+			renameLogLine("[rename-session] t=... renamed to \"标题\""),
+		];
+		const entries = extractRenameLogEntries(lines);
+		expect(entries).toHaveLength(1);
+		expect(entries[0].message).toContain("renamed to");
+	});
+
+	it("data.message 缺失的畸形 entry 跳过；data.timestamp 缺失回落 entry.timestamp（ISO 解析）", () => {
+		const ts = 1755200000003;
+		const noMessage = JSON.stringify({
+			type: "custom",
+			customType: "rename-session:log",
+			data: { level: "warn" },
+			id: "bad",
+			parentId: null,
+			timestamp: new Date(ts).toISOString(),
+		});
+		// data 无 timestamp 字段（JSON.stringify 丢 undefined）→ 回落 entry.timestamp
+		const noDataTs = JSON.stringify({
+			type: "custom",
+			customType: "rename-session:log",
+			data: { level: "warn", message: "[rename-session] t=... skip: count=2" },
+			id: "ok",
+			parentId: null,
+			timestamp: new Date(ts).toISOString(),
+		});
+		const entries = extractRenameLogEntries([noMessage, noDataTs]);
+		expect(entries).toHaveLength(1);
+		expect(entries[0].message).toContain("skip: count=2");
+		expect(entries[0].t).toBe(ts);
+	});
+
+	it("坏 JSON 行跳过不整体失败", () => {
+		const lines = ["{broken", renameLogLine("[rename-session] t=... renamed to \"x\"")];
+		expect(extractRenameLogEntries(lines)).toHaveLength(1);
+	});
+
+	it("非数组入参抛 TypeError", () => {
+		expect(() => extractRenameLogEntries("not-array")).toThrow(TypeError);
+		expect(() => extractRenameLogEntries(null)).toThrow(TypeError);
 	});
 });
 

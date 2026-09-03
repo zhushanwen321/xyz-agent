@@ -21,7 +21,7 @@ Pi permission 扩展 — 四档权限模式（yolo / auto / approve / strict）+
 pi install npm:@zhushanwen/pi-permission
 
 # 本地开发（symlink；globalExtDir 平铺布局，目标不带分组层）
-ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensions/universal/permission \
+ln -s /path/to/xyz-agent/extensions/universal/permission \
       ~/.pi/agent/extensions/permission
 ```
 
@@ -42,7 +42,8 @@ ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensi
     "model": "auto",
     "timeout": 90,
     "autoApproveLowRisk": true,
-    "autoDenyHighRisk": true
+    "autoDenyHighRisk": true,
+    "thinkingLevel": "off"
   },
   "userRules": []
 }
@@ -52,11 +53,12 @@ ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensi
 |------|--------|------|
 | `mode` | `"yolo"` | 当前权限模式（yolo/auto/approve/strict） |
 | `enabled` | `true` | 扩展是否启用（false=完全放行，等同 yolo 但保留配置） |
-| `classifier.enabled` | `true` | 是否启用 AI 层（auto 模式自动 true） |
-| `classifier.model` | `"auto"` | AI 模型（`auto` = scoped：取 settings.json enabledModels 首个可用，或 `provider/model-id`） |
+| `classifier.enabled` | `true` | 是否启用 AI 层（false 时 auto 模式跳过 AI，ask 直接转人工审批） |
+| `classifier.model` | `"auto"` | AI 模型（`auto` = 取 modelRegistry.getAvailable() 首个可用，或精确 `provider/model-id`） |
 | `classifier.timeout` | `90` | AI 分类超时秒数 |
 | `classifier.autoApproveLowRisk` | `true` | 低风险是否自动放行（false=转人工） |
 | `classifier.autoDenyHighRisk` | `true` | 高风险是否自动拦截（true=强制 deny） |
+| `classifier.thinkingLevel` | `"off"` | classifier LLM 的 thinking 级别（pi `ModelThinkingLevel`；`"off"`=不传 reasoning，`"minimal"`~`"max"` 透传） |
 | `userRules` | `[]` | 用户自定义规则数组 |
 
 ## 四档模式
@@ -93,6 +95,7 @@ ln -s /path/to/xyz-pi-extensions-workspace/feat-permission-and-auto-mode/extensi
 /permission approve      切换到 approve 模式
 /permission strict       切换到 strict 模式
 /permission status       显示详细配置
+/permission rule         overlay 编辑用户规则（增/删）
 /permission model        overlay 选择 AI classifier 模型（W7）
 ```
 
@@ -160,8 +163,8 @@ wc / whereis / who / whoami / which
 | `git` | 子命令属于 `status`/`log`/`diff`/`show`/`branch` 且只读 | 见下文 git 子表 |
 | `sed` | 仅 `sed -n {N\|M,N}p [file]`（argv 长度 ≤ 4） | 其余形式不放行 |
 | `sort` | 不含写文件 flag | 禁 `-o` / `--output` / `--output=*` / `-o*`（合并 flag） |
-| `iconv` | 不含写文件 flag | 禁 `-o` / `--output` / `--output=*` |
-| `shuf` | 不含写文件 flag | 禁 `-o` / `--output` / `--output=*` |
+| `iconv` | 不含写文件 flag | 禁 `-o` / `--output` / `--output=*` / `-o*`（合并 flag 如 `-fo`） |
+| `shuf` | 不含写文件 flag | 禁 `-o` / `--output` / `--output=*` / `-o*`（合并 flag 如 `-fo`） |
 | `date` | 不含设置时间 flag | 禁 `-s` / `--set` / `--set=*`（`-s` 设置系统时间需 root） |
 
 **git 子命令安全判定细则**：
@@ -181,14 +184,14 @@ wc / whereis / who / whoami / which
 
 | id | pattern（正则字面量）| description | 匹配示例 |
 |----|----------------------|-------------|----------|
-| bd-001 | `\brm\s+(-[^\s]*r\|--recursive)` | recursive delete | `rm -rf /`、`rm -fr x`、`rm --recursive y` |
+| bd-001 | `\brm\b.*(\s-(?:[a-zA-Z]*r)\|--recursive)` | recursive delete | `rm -rf /`、`rm -f -r /`（分离 flag）、`rm --recursive y` |
 | bd-002 | `\bsudo\b` | sudo | `sudo`、`sudo -E apt update` |
-| bd-003 | `\bchmod\b.*777` | world-writable permissions | `chmod 777 /tmp`、`chmod 0777 file` |
-| bd-004 | `>\s*/dev/[sh]d[a-z]` | raw device redirect | `dd ... > /dev/sda` |
+| bd-003 | `\bchmod\b.*(777\|a\+rwx\|ugo\+rwx\|ugo=rwx)` | world-writable permissions | `chmod 777 /tmp`、`chmod a+rwx file`、`chmod ugo=rwx file` |
+| bd-004 | `(>\s*/dev/(sd\|hd\|nvme\|mmcblk\|vd\|xvd)[a-z0-9]+\|of=/dev/(sd\|hd\|nvme\|mmcblk\|vd\|xvd)[a-z0-9]+)` | raw device write | `dd ... > /dev/sda`、`dd of=/dev/nvme0n1`、`> /dev/mmcblk0` |
 | bd-005 | `\bgit\s+push\s+.*(-f\b\|--force\b)` | force push | `git push --force`、`git push -f` |
 | bd-006 | `\bgit\s+reset\s+--hard\b` | hard reset | `git reset --hard HEAD~1` |
-| bd-007 | `\bgit\s+clean\s+-[^\s]*f` | git clean | `git clean -fd`、`git clean -dfx` |
-| bd-008 | `\bgit\s+checkout\s+\.\s*($\|[;&\|])` | git checkout (discard all) | `git checkout .` |
+| bd-007 | `\bgit\s+clean\b.*(\s-(?:[a-zA-Z]*f)\|--force)` | git clean --force | `git clean -fd`、`git clean -d -f`（分离 flag）、`git clean -fx` |
+| bd-008 | `\bgit\s+checkout\s+(--\s+)?\.\s*($\|[;&\|])` | git checkout . (discard all) | `git checkout .`、`git checkout -- .` |
 | bd-009 | `\bgit\s+restore\b` | git restore | `git restore file.txt` |
 | bd-010 | `\b(curl\|wget)\b.*\|\s*(ba)?sh\b` | pipe to shell | `curl http://x \| sh`、`wget x \| bash` |
 | bd-011 | `\bgh\s+repo\s+(create\|delete\|rename\|archive)\b` | modify GitHub repo | `gh repo delete foo` |
@@ -223,7 +226,7 @@ wc / whereis / who / whoami / which
 |------|------|------|------|
 | `id` | string | 是 | 唯一 id，用户规则建议 `user-<n>`（缺失会自动分配） |
 | `tool` | string | 是 | 工具名匹配，wildcard 语法。`bash` 精确匹配 bash 工具；`*` 匹配所有工具（含 Read/Write/Edit）；也可写具体工具名如 `read`、`write` |
-| `pattern` | string | 是 | 命令/目标匹配，wildcard 语法。bash 工具对 `argv.join(' ')` 匹配；非 bash 工具对 `toolName` 匹配 |
+| `pattern` | string | 是 | 命令/目标匹配，wildcard 语法。bash 工具对 `argv.join(' ')` 匹配；非 bash 工具对文件路径匹配（path 缺省时对工具名） |
 | `action` | `"allow"` \| `"deny"` \| `"ask"` | 是 | 决策动作，详见第 8 节 |
 | `source` | `"user"` | 是 | 规则来源，用户规则固定 `user`（写成其他值也会被归一化回 `user`） |
 | `description` | string | 否 | 人类可读描述，在 matchedRule 与拒绝理由中展示 |
@@ -344,22 +347,22 @@ publish 规则在后，last-match-wins 时 deny 胜出。
 - **路径**：`<agentDir>/config/permission-ext-config.json`（`<agentDir>` 可用 `PI_CODING_AGENT_DIR` 环境变量覆盖，默认 `~/.pi/agent`）
 - **首次创建**：扩展启动时若文件不存在，自动写入默认配置（`mode: "yolo"`、空 `userRules`）
 - **权限**：`0o600`（原子写：先写 `.tmp` 再 rename，避免半写状态）
-- **编辑方式**：目前需手动编辑 JSON 文件（未来计划提供 `/permission add-rule` 命令辅助编辑）
+- **编辑方式**：`/permission rule` 打开 overlay 编辑器（TUI 支持列表查看/模板新增/自定义表单；RPC 模式仅支持删除已有规则）；也可直接手动编辑 JSON 文件
 - **热重载**：每次 tool_call 都重读配置，用 `mtimeMs + size` 双 key 缓存检测变化（防 APFS 等 mtime 精度截断）。编辑保存后下一次命令即生效，无需重启
 
 ### 11. 调试技巧
 
 - `/permission status`：查看当前配置摘要（含 `userRules` 数量）
-- 查看决策来源：`PermissionDecision.source`（`mode` / `ast` / `rule` / `ai` / `user`），区分是模式直接放行、AST 拦截、规则命中、AI 分类还是人工审批
+- 查看决策来源：`PermissionDecision.source`（`mode` / `rule` / `ai` / `user`），区分是模式直接放行、规则命中、AI 分类还是人工审批（AST 分析不直接产生决策，只改变后续评估路径）
 - 查看命中规则：`PermissionDecision.matchedRule`（命中时携带 Rule 对象），从 `id` 可判断是 `builtin-safe`（白名单虚拟规则）、`bd-<n>`（内置危险）还是 `user-<n>`（用户规则）
 - 故意写一条 `deny` + 带 `description` 的用户规则触发拦截，从 tool_result 的 block reason 文案反查命中的是哪条规则
-- 规则 pattern 编译失败会被静默跳过（regex 构造异常不阻塞管道），怀疑某条规则没生效时先用 `/^(\d+,)?\d+p$/` 这类标准语法自测
+- 规则 pattern 编译失败不会静默跳过：`resolvePattern` 无容错，非法 pattern 抛出的异常由 tool_call handler 兜底 fail-closed block（该次调用被拦）。实际触发面极窄——用户规则加载时 source 归一化为 `user`，走 wildcard 编译（特殊字符自动转义，几乎不会失败）；只有手写配置写出非法正则且恰好命中 `builtin-danger` 分支才会抛异常。怀疑某条规则没生效时先检查 JSON 语法与 wildcard 写法
 
 ## AI Classifier
 
 auto 模式下层 3 用 LLM 评估未知命令风险：
 
-- **模型**：`classifier.model`（`auto` = scoped：取 enabledModels 首个可用（空则 fallback available），或指定 `provider/model-id`）
+- **模型**：`classifier.model`（`auto` = 取 `modelRegistry.getAvailable()` 首个可用，或指定精确 `provider/model-id`）
 - **输出**：`risk_level`（low/medium/high）+ `outcome`（allow/deny/ask）+ `reasoning` + `confidence`
 - **override**（WT7 偏差补丁）：
   - `low + allow + autoApproveLowRisk=false` → 强制 `ask`（转人工）
@@ -370,14 +373,15 @@ auto 模式下层 3 用 LLM 评估未知命令风险：
 
 `/permission model` 弹出 overlay 选择 AI classifier 使用的模型，写回 `classifier.model`：
 
-- **第一级 provider 选择**：列出 `Auto`（自动：scoped 取 enabledModels 首个可用）+ 所有可用 provider（来自 `~/.pi/agent/models.json`，按字母序）。当前 `classifier.model` 预选高亮。
-- **第二级 model 选择**：选中具体 provider 后，列出该 provider 下所有可用 model（按 `cost.input` 升序，并列按 id 字母序）。`Esc` 回退到 provider 列表。
+- **数据源**：`ctx.modelRegistry.getAll()` + `hasConfiguredAuth()` 过滤（`pi auth login` 配置的内置/OAuth provider 同样可见，不读 `models.json`），整体按 provider + id 字典序排序。
+- **第一级 provider 选择**：列出 `Auto`（自动：取 `modelRegistry.getAvailable()` 首个可用）+ 所有可用 provider。当前 `classifier.model` 预选高亮。
+- **第二级 model 选择**：选中具体 provider 后，列出该 provider 下所有可用 model（provider + id 字典序）。`Esc` 回退到 provider 列表。
 - **键位**：`↑/↓` 导航、`Enter` 确认、`Esc` 取消（provider stage）或回退（model stage）。
 - **三模式分发**：
   - **TUI**：`ctx.ui.custom` 渲染 overlay（`ProviderModelSelectorComponent`，两级 `SelectList` 状态机）。
   - **RPC**：两次 `ctx.ui.select`（先 provider 含 `Auto`，再 model）。
   - **headless**（json/print）：无交互 UI，返回降级提示。
-- **无可用模型**：`models.json` 不存在 / 无 provider 配 `apiKey` / 解析失败时，`listAvailableModels` 返回空 Map，命令降级为提示 `No available models. Configure ~/.pi/agent/models.json first.`（不阻塞，不修改配置）。
+- **无可用模型**：`modelRegistry` 无模型或全部未配置 auth 时，`listAvailableModels` 返回空 Map，命令降级为提示 `No available models. Run `pi auth login` or configure provider API keys, then retry.`（不阻塞，不修改配置）。
 - **结果写回**：选中后 `classifier.model` 更新为 `auto` 或 `provider/model-id`，其余字段（mode/enabled/timeout/userRules）保留。
 
 ## 已知限制
@@ -422,7 +426,7 @@ bash? ──yes──→ AST 结构分析
 - **fail-closed**：任何异常 → block（绝不静默放行）
 - **checkPermission 永不 throw**：caller（tool_call handler）依赖此契约
 - **deps 注入**：所有外部依赖（AST/规则/AI/UI）通过 CheckPermissionDeps 注入，便于测试 mock
-- **session 隔离**：config 在 session_start 重建的闭包，每 session 独立
+- **配置读时刷新**：config 不持有跨调用缓存，每次需要时直接 `loadAndWatchConfig()` 读最新（llm-shared `mtimeMs + size` 去重，文件未变只 statSync），改文件即生效
 - **纯函数核心**：checkPermission / runLayer2 / applyAutoApproveOverrides 都是纯函数
 
 ## 开发

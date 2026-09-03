@@ -124,7 +124,10 @@ vi.mock("../interface/commands.ts", () => ({
 // ── import 被测工厂 ──
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import subagentsExtension from "../index.ts";
+// session_start 的 recoverCrashedRuns（loadAll 淘汰接线 W3TC9 依赖）经 oncePerProcess
+// 守卫（u-audit-fix），守卫 Map 是模块级状态：beforeEach resetModules + 动态 import
+// 每用例取新鲜模块实例，否则首用例消费 key 后 W3TC9 的裁剪链静默不执行。
+let subagentsExtension: typeof import("../index.ts").default;
 import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
 import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
 import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
@@ -212,10 +215,12 @@ function createMockCtx(): Record<string, unknown> {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  vi.resetModules();
   vi.clearAllMocks();
   mockLoadAll.mockResolvedValue([]);
   clearIdentityEnv();
+  subagentsExtension = (await import("../index.ts")).default;
 });
 
 afterEach(() => {

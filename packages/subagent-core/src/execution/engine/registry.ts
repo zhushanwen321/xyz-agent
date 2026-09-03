@@ -10,8 +10,14 @@
 //
 // 依赖方向（设计 §3.3.1 贯穿纪律④）：registry 只依赖 port.ts 的类型，不 import 任何
 // 具体引擎——注册由组合根（index.ts）或引擎自己的 registration 模块完成，防循环依赖。
+// （core/logger 是 facade 基础设施非引擎，dispose best-effort 记日志需要它，不违反本纪律。）
+
+import { getLogger } from "../../core/logger.ts";
 
 import type { EnginePort } from "./port.ts";
+
+// core log facade（execution 层统一 "subagents" component，模块顶层缓存惯例）。
+const logger = getLogger("subagents");
 
 /** 引擎工厂：惰性创建引擎实例（getEngine 首次取用时执行）。 */
 export type EngineFactory = () => EnginePort;
@@ -88,14 +94,61 @@ function getRegistrySlot(): EngineRegistrySlot {
 }
 
 /**
+ * [R1 D6] 触发引擎 dispose：同步调用拿 Promise 不 await（「触发不等待」，D6①——
+ * dispose 的同步面〔fire close 帧 + 同步 SIGTERM〕由引擎实现保证在返回 Promise 前
+ * 完成，registry 不等待异步段）。同步 throw 与异步 reject 均记日志吞掉，绝不外溢
+ * 阻断调用方——重注册替换（D6②）与宿主收割（D6③）都是 best-effort 面，且 reject
+ * 无人接会成为 unhandledRejection 崩宿主。两条 dispose 路径共用本函数。
+ */
+function triggerEngineDispose(engine: EnginePort, source: string): void {
+  if (typeof engine.dispose !== "function") return;
+  try {
+    engine.dispose().then(undefined, (err: unknown) => {
+      logger.warn(
+        `[engine-registry] engine '${engine.id}' dispose rejected (${source}, best-effort continue): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
+  } catch (err) {
+    logger.warn(
+      `[engine-registry] engine '${engine.id}' dispose threw synchronously (${source}, best-effort continue): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
+/**
  * 登记引擎工厂。重复注册同一 id = 覆盖（组合根可能多次执行，如每次 session_start 重跑
  * registerPiEngine——幂等覆盖保证不炸也不堆积），覆盖时丢弃缓存的旧单例，让下一次
  * getEngine 用新工厂重建。
+ *
+ * [R1 D6②] 覆盖前对已实例化的旧单例触发 dispose（防泄漏——旧实例可能持有常驻进程/
+ * 长连接）；触发不等待 + 失败不阻断（见 triggerEngineDispose），幂等覆盖语义不变。
  */
 export function registerEngine(id: string, factory: EngineFactory): void {
   const slot = getRegistrySlot();
+  const previous = slot.singletons.get(id);
+  if (previous) triggerEngineDispose(previous, `registerEngine('${id}') overwrite`);
   slot.factories.set(id, factory);
   slot.singletons.delete(id);
+}
+
+/**
+ * [R1 D6③] 对已实例化的引擎单例触发 dispose（触发不等待）。宿主唯一收割入口
+ * （session-runner killAllSpawnedChildren）在杀 per-record children 之前调用——
+ * 常驻进程的回收归引擎 dispose，本函数只负责按序触发。
+ *
+ * 只遍历 singletons：已实例化才可能持有常驻资源，绝不经 getEngine 实例化未用
+ * 引擎（停机路径反向创建资源违背停机语义）。dispose 后不删单例——幂等与
+ * 「dispose 后首个 run 自动重建」由引擎实现承诺（§3.4 不变量 4），registry
+ * 不越权管理引擎内部生命周期。
+ */
+export function disposeEngines(): void {
+  for (const engine of getRegistrySlot().singletons.values()) {
+    triggerEngineDispose(engine, "disposeEngines()");
+  }
 }
 
 /** 未注册 id 抛 EngineNotFoundError（含已注册清单与配置指引）。 */

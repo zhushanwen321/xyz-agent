@@ -21,6 +21,7 @@ import {
 	assertLogTitleMatches,
 	assertTitleGuards,
 	LLM_REQUEST_MARKER,
+	extractRenameLogEntries,
 	parseJsonlEntries,
 	runScenario,
 	runStandalone,
@@ -69,15 +70,16 @@ export async function runA4() {
 				await settled1P; // settled 不代表成功（探针 4：error 轮照常 settled）
 				log(`阶段1 turn_end stopReason=${errEnd.message?.stopReason} errorMessage=${errEnd.message?.errorMessage}`);
 
-				const skipErr = await h1.rpc.waitForStderr(/skip: stopReason=/);
-				assert(skipErr.line.includes("skip: stopReason=error"), `阶段1 期望 skip: stopReason=error，实际: ${skipErr.line}`);
+				const skipErr = await h1.rpc.waitForSessionLog(/skip: stopReason=/);
+				assert(skipErr.message.includes("skip: stopReason=error"), `阶段1 期望 skip: stopReason=error，实际: ${skipErr.message}`);
 
-				const llmCount = h1.timeline
-					.all()
-					.filter((e) => e.stream === "err" && e.line.includes(LLM_REQUEST_MARKER)).length;
+				// 无 LLM request 日志 + 无自动 session_info（同一份 session 行数组两用）
+				const lines1 = await h1.readSessionLines();
+				const llmCount = extractRenameLogEntries(lines1 ?? []).filter((e) =>
+					e.message.includes(LLM_REQUEST_MARKER),
+				).length;
 				assert(llmCount === 0, `阶段1 出现 ${llmCount} 条 LLM request（error 轮不应触发 rename LLM 调用）`);
 
-				const lines1 = await h1.readSessionLines();
 				assert(!hasAutoSessionInfo(lines1), "阶段1 出现自动 session_info（error 轮不应命名）");
 
 				// pi 存活 + 取 session 文件路径（阶段 2 续跑前提）
@@ -96,14 +98,14 @@ export async function runA4() {
 				const settled2P = h2.rpc.waitAgentSettled(180_000);
 				await h2.rpc.prompt("现在把刚才目录里的 ts 文件数一下");
 				await settled2P;
-				await h2.rpc.waitForStderr(LLM_REQUEST_MARKER, { timeoutMs: 120_000 });
-				const rename2 = await h2.rpc.waitForStderr('renamed to "', { timeoutMs: 45_000 });
+				await h2.rpc.waitForSessionLog(LLM_REQUEST_MARKER, { timeoutMs: 120_000 });
+				const rename2 = await h2.rpc.waitForSessionLog('renamed to "', { timeoutMs: 45_000 });
 				const st2 = await h2.rpc.getState();
 				assert(st2.data?.sessionFile === sessionFile, `阶段2 sessionFile 不一致: ${st2.data?.sessionFile} vs ${sessionFile}`);
 				// 轮询等落盘（pi append→flush 有延迟）
 				const lastInfo = await h2.waitSessionInfoEntry(10_000);
 				assert(lastInfo && typeof lastInfo.name === "string" && lastInfo.name.length > 0, "阶段2 session_info 无标题");
-				assertLogTitleMatches(rename2.line, lastInfo.name);
+				assertLogTitleMatches(rename2.message, lastInfo.name);
 				// 落库标题须为 slug 形态（与 A2 同款两层断言：kebab 遵从是模型问题只记录，
 				// 其余（代词开头/时态结尾/超长/句尾标点）是 cleanTitle 契约回归，硬失败）
 				const guards = assertTitleGuards(lastInfo.name);

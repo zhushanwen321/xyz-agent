@@ -2,7 +2,8 @@
  * Segment 归一化函数单测（ADR-0043）。
  *
  * 覆盖 segmentsToText / segmentsToPrompt / textToSegments / normalizeContent。
- * 重点：segmentsToText 不 trim（保留末尾换行），segmentsToPrompt trim（pi 边界）。
+ * 重点：segmentsToText 与 segmentsToPrompt（pi 边界序列化）均不 trim——原文保真
+ * （[HISTORICAL] segmentsToPrompt 曾 trim 首尾空白，2026-08 去除，见 segments.ts）。
  */
 import { describe, it, expect } from 'vitest'
 import {
@@ -139,12 +140,13 @@ describe('segmentsToText', () => {
 })
 
 describe('segmentsToPrompt', () => {
-  it('与 segmentsToText 相同内容但 trim 首尾空白', () => {
+  it('原文保真：首尾空白不剥除（[HISTORICAL] 曾 trim，Gate B 观测①修复后保真）', () => {
     const segs: Segment[] = [
       { type: 'skill', name: 'cw-cli' },
       { type: 'text', text: '想要都修复\n' },
     ]
-    expect(segmentsToPrompt(segs)).toBe('/skill:cw-cli 想要都修复')
+    // skill chip 与 text 间补一个空格；text 尾换行保留——pi 不 trim（P2 探针），落盘同文
+    expect(segmentsToPrompt(segs)).toBe('/skill:cw-cli 想要都修复\n')
   })
 
   it('空数组返回空字符串', () => {
@@ -240,10 +242,11 @@ describe('session / subagent segment（composer 四符号 U1）', () => {
       { type: 'subagent', subagentId: 'sub-1', slug: 'build-api' },
       { type: 'text', text: '汇报当前进度' },
     ]
-    // subagent 是 chip 类（DOM 中占位可见），text 分支按 chip→text 规则补空格，
-    // prompt trim 后为「汇报当前进度」——@slug 不残留（「不经主 agent LLM」的结构性保证）
+    // subagent 是 chip 类（DOM 中占位可见），text 分支按 chip→text 规则补空格——
+    // @slug 不残留（「不经主 agent LLM」的结构性保证）。前导空格随原文保真发出
+    // （segmentsToPrompt 已不 trim），空白拦截归 useChat sendSubagentDirective 空挡。
     expect(segmentsToText(segs)).toBe(' 汇报当前进度')
-    expect(segmentsToPrompt(segs)).toBe('汇报当前进度')
+    expect(segmentsToPrompt(segs)).toBe(' 汇报当前进度')
   })
 
   it('session 与 file chip 边界补空格（chip→chip 规则不变）', () => {

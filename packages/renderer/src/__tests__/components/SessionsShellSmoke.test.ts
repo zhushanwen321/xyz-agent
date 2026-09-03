@@ -1,5 +1,5 @@
 /**
- * TC-6：首屏冒烟（渲染 gate）—— mount 临时壳组件包 useSidebarNew，断言 session-list DOM 存在
+ * TC-6：首屏冒烟（渲染 gate）—— mount 临时壳组件包 useSidebar，断言 session-list DOM 存在
  * + 切换 session 后 focusedSessionId 变化（AC6 语义 / AGENTS.md 测试规范 §8 渲染 gate）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/components/SessionsShellSmoke.test.ts
@@ -74,7 +74,7 @@ vi.mock('@/composables/features/fork-handoff/useHandoffActions', () => ({
 }))
 
 import SessionsShellSm from './SessionsShellSm.vue'
-import { resetSidebarNewForTest } from '@/composables/features/sidebar/useSidebarNew'
+import { resetAppBootstrap } from '@/composables/features/sidebar/useSidebar'
 import { useSessionStore } from '@/stores/session'
 
 function summary(id: string, label: string, cwd = '/a'): SessionSummary {
@@ -84,7 +84,7 @@ function summary(id: string, label: string, cwd = '/a'): SessionSummary {
 describe('SessionsShellSm 首屏冒烟（TC-6 / 渲染 gate）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    resetSidebarNewForTest()
+    resetAppBootstrap()
     vi.clearAllMocks()
   })
 

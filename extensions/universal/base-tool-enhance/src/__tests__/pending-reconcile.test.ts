@@ -135,7 +135,7 @@ describe("reconcile scenario ①: graceful-exit leftover (registry exited, entry
 	});
 });
 
-describe("reconcile scenario ②: reaper-only orphan (registry orphaned, session file untouched)", () => {
+describe("reconcile scenario ②: collector-only orphan (registry orphaned, session file untouched)", () => {
 	it("appends unregister with cancelled for orphaned entries", () => {
 		const entry = makeRegistryEntry({ state: "orphaned" });
 		writeRegistryEntry(getRegistryPath(DATA_DIR, SESSION_ID), entry);

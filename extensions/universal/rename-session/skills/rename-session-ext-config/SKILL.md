@@ -114,11 +114,12 @@ subagent 子进程 session 不重命名（`isSubagentSession` 判定 session 目
 
 ## 开关优先级（重要）
 
-`enabled` 有三层来源，优先级从高到低：
+`enabled` 有四层来源，优先级从高到低（`src/pure.ts` `loadRenameConfig`）：
 
-1. **环境变量 `PI_RENAME_ENABLED`**（最高优先级）：适用于容器化部署、CI/CD 等场景。`true`/`false` 字符串，live 读取。覆盖 flag 文件和配置文件。
-2. **`<agentDir>/auto-rename-enabled` flag 文件**（存在 = 开）：这是 xyz-agent runtime 的开关契约（SystemPage 开关 / 首启默认开启都写这个文件，live 检查每次 turn_end 生效）。**xyz-agent 用户不要手改 JSON 里的 enabled**——桌面端的开关状态存在 flag 文件里，手改 JSON 会被 flag 覆盖（flag 存在时永远视为开）。
-3. **config 的 `enabled` 字段**（默认 false）：flag 不存在时生效，是原生 pi CLI 用户的开关（手改 JSON 或 `/auto-rename on|off` 命令）。
+1. **环境变量 `PI_RENAME_ENABLED`**（最高优先级）：适用于容器化部署、CI/CD 等场景。`true`/`false` 字符串，live 读取。显式设置时覆盖 flag 文件和配置文件（`PI_RENAME_ENABLED=false` 即使 flag 存在也禁用重命名）。
+2. **`<agentDir>/auto-rename-enabled` flag 文件**（存在 = 开）：这是 xyz-agent runtime 的开关契约（SystemPage 开关 / 首启默认开启都写这个文件，live 检查每次 turn_end 生效）。**xyz-agent 用户不要手改 JSON 里的 enabled**——桌面端的开关状态存在 flag 文件里，手改 JSON 会被 flag 覆盖（环境变量未显式设置 `PI_RENAME_ENABLED` 时，flag 存在即视为开）。
+3. **config 的 `enabled` 字段**（默认 false）：环境变量未设置且 flag 不存在时生效，是原生 pi CLI 用户的开关（手改 JSON 或 `/auto-rename on|off` 命令）。
+4. **默认值**（false）：以上三层均未设置时。
 
 `/auto-rename on` 只创建 flag；`/auto-rename off` 写 config.enabled=false + 删 flag（双写同步）。旧版升级用户：旧 flag 文件保留不动，仍作为开关生效，无需任何迁移操作。
 

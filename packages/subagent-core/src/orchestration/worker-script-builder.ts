@@ -30,12 +30,28 @@
  * { type: "return", runId: string, result: unknown }
  * { type: "error", runId: string, error: string }
  * { type: "log", phase: string, message: string }
+ *   —— log() 的唯一通路：主线程 handleWorkerMessage 的 log case 即时消费（push 进
+ *   run.state.errorLogs + debug 留痕，error-recovery.ts）。[B-3] 旧实现同时把内容
+ *   记入 _workerLogs 随 return/error 消息再带回一份——同一日志在 errorLogs 占两格、
+ *   TUI 双份，已退役。崩溃场景（return/error 消息未发出）丢 log 条目可接受：
+ *   log 是 T7 补充可观测，非持久化权威。
  *
  * Main → Worker (parentPort.on("message")):
  * { type: "agent-result", callId: number, result: AgentResult, cached: boolean }
  * { type: "workflow-result", callId: number, result: unknown }
  * { type: "budget-update", budget: unknown }
  * { type: "abort", reason: string }
+ *   —— [OR-3] 主线程在 abortRun/terminateRunningRuns 终止 run 时、worker.terminate
+ *   之前广播本消息；worker 侧 _pendingCalls 全部 reject（WorkflowAbortedError）并
+ *   清理，脚本 catch 后自然收尾退出（P-T3：广播与 worker 自然退出交错不产
+ *   unhandledRejection）。
+ *
+ * [OR-3] per-call 超时：agent() 的 pending 在 opts.timeoutMs > 0 时接线消息层自己的
+ * 超时——主线程对 agent-call 永不回话（畸形消息丢弃 / postMessage 双重失败 / runner
+ * 不 settle）时 pending 以错误 resolve（对齐 agent-result 失败容错策略：不 reject、
+ * 不放大成脚本 error → rebuild）。缺省（未传 timeoutMs）= 不限，与 runner 侧
+ * per-call timeout 语义一致。workflow() 无 timeout 协议字段，不接线（其 pending
+ * 由 abort 广播与嵌套 run 自身上界兜底）。
  */
 
 // ── Build worker source ─────────────────────────────────────
@@ -142,6 +158,8 @@ const WORKER_TEMPLATE_PRE = [
   '      const pending = _pendingCalls.get(msg.callId);',
   '      if (pending) {',
   '        _pendingCalls.delete(msg.callId);',
+  '        // [OR-3] 结果已到，清除 per-call 超时 timer（有 timer 才清，防御旧 pending 无该字段）',
+  '        if (pending.timer) { clearTimeout(pending.timer); }',
   '        if (typeof msg.result !== "undefined") {',
   '          _callCache.set(msg.callId, msg.result);',
   '        }',
@@ -178,11 +196,16 @@ const WORKER_TEMPLATE_PRE = [
   '      const pending = _pendingCalls.get(msg.callId);',
   '      if (pending) {',
   '        _pendingCalls.delete(msg.callId);',
+  '        // [OR-3] 结果已到，清除 per-call 超时 timer（workflow() 当前不挂 timer，防御性对称清理）',
+  '        if (pending.timer) { clearTimeout(pending.timer); }',
   '        pending.resolve(msg.result);',
   '      }',
   '    } else if (msg.type === "abort") {',
+  '      // [OR-3] 主线程 abortRun/terminateRunningRuns 的优雅解阻广播：全部 pending',
+  '      // reject（脚本 catch WorkflowAbortedError 可感知取消）+ 清理 timer + 清 Map。',
+  '      // 后续迟到结果命中空 Map（no-op），不产主线程 unhandledRejection。',
   '      const err = new WorkflowAbortedError(msg.reason);',
-  '      _pendingCalls.forEach((p) => { p.reject(err); });',
+  '      _pendingCalls.forEach((p) => { if (p.timer) { clearTimeout(p.timer); } p.reject(err); });',
   '      _pendingCalls.clear();',
   '    } else if (msg.type === "budget-update" && msg.budget) {',
   '      _budgetData._spentTokens = msg.budget.usedTokens ?? _budgetData._spentTokens;',
@@ -197,7 +220,11 @@ const WORKER_TEMPLATE_PRE = [
   '',
   // ── log global ──
   '  function log(msg) {',
-  '    try { parentPort.postMessage({ type: "log", phase: _currentPhase, message: String(msg) }); } catch(e) { /* swallow */ }',
+  '    var _logText = String(msg);',
+  '    // [B-3] 单通路：只发独立 {type:"log"} 消息，主线程 handleWorkerLog 即时消费',
+  '    //（push 进 errorLogs）。不再同时记入 _workerLogs——旧双通路让同一日志随',
+  '    // return/error 的 workerLogs 再带回一份，errorLogs 占两格、TUI 双份。',
+  '    try { parentPort.postMessage({ type: "log", phase: _currentPhase, message: _logText }); } catch(e) { /* swallow */ }',
   '  }',
   '',
   // ── agent global — CC-compatible multi-signature ──
@@ -215,6 +242,9 @@ const WORKER_TEMPLATE_PRE = [
   '        // step 级 turn 上限（turn limiter；显式 0/负 = 显式不限，压过 spawn watchdog env 兑底，SP-6）\n' +
       '        // ?? 语义保真：仅 null/undefined 归 undefined（走 env 兑底），显式 0 保留（U5 参数 > env）',
   '        maxTurns: (secondArg && typeof secondArg === "object" ? secondArg.maxTurns : undefined) ?? undefined,',
+  '        // [OR-3] per-call timeoutMs 透传（string 分支此前丢弃该字段——对象分支已有；',
+  '        // worker pending 消息层超时依赖它流到 agent-call 消息）',
+  '        timeoutMs: (secondArg && typeof secondArg === "object" ? secondArg.timeoutMs : undefined),',
   '        // P4 D9③：step 级 engine 显式指定（仅限必须某引擎独有能力的场景）',
   '        engine: (secondArg && typeof secondArg === "object" && secondArg.engine) || undefined,',
   '      };',
@@ -290,7 +320,32 @@ const WORKER_TEMPLATE_PRE = [
   '      return Promise.reject(new Error("postMessage failed for agent-call (callId=" + callId + "): see workerLogs"));',
   '    }',
   '    return new Promise((resolve, reject) => {',
-  '      _pendingCalls.set(callId, { resolve, reject, returnMeta: opts.returnMeta === true });',
+  '      const _pending = { resolve: resolve, reject: reject, returnMeta: opts.returnMeta === true, timer: undefined };',
+  '      // [OR-3] per-call timeoutMs：消息层自己的超时——主线程对 agent-call 永不回话',
+  '      //（畸形消息丢弃 / postMessage 双重失败 / runner 不 settle）时 pending 不再永挂',
+  '      //（旧实现零超时 → agent() 永挂 → worker 不退出 → run 永久 running）。',
+  '      // 超时以错误 resolve（对齐 agent-result 失败容错策略：不 reject、不把单点超时',
+  '      // 放大成脚本 error → rebuild），并记入 _workerLogs 留诊断。仅显式 timeoutMs > 0',
+  '      // 启用（缺省不限，与 runner 侧 per-call timeout 语义一致）。timer unref：脚本',
+  '      // 已 return 时残留 timer 不延迟 worker 自然退出。',
+  '      if (typeof opts.timeoutMs === "number" && opts.timeoutMs > 0) {',
+  '        _pending.timer = setTimeout(() => {',
+  '          if (!_pendingCalls.delete(callId)) { return; }',
+  '          const _timeoutMsg = "agent call timed out after " + opts.timeoutMs + "ms (callId=" + callId + ") — no agent-result received from main thread";',
+  '          _pushWorkerLog("warn", ["[workflow] " + _timeoutMsg]);',
+  '          if (opts.returnMeta === true) {',
+  '            _pending.resolve({ value: "", error: _timeoutMsg });',
+  '          } else {',
+  '            // [B-5] 非 returnMeta 超时 resolve 单值错误消息字符串（对齐 agent-result',
+  '            // 失败路径 resolve 单值 _value = parsedOutput ?? content 的形态）——',
+  '            // 旧实现 resolve {content:"", error} 对象，字符串消费型脚本（r.trim() 类）',
+  '            // 在超时路径 TypeError。',
+  '            _pending.resolve(_timeoutMsg);',
+  '          }',
+  '        }, opts.timeoutMs);',
+  '        if (_pending.timer && typeof _pending.timer.unref === "function") { _pending.timer.unref(); }',
+  '      }',
+  '      _pendingCalls.set(callId, _pending);',
   '    });',
   '  }',
   '',

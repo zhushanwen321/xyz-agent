@@ -12,7 +12,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DiscoveredResource } from "@zhushanwen/subagent-core/shared/resource-discovery.ts";
 // 共享 mock 基建（vi.mock 工厂 / mock pi / mock ctx）：helpers/injector-test-mocks.ts
+// ——必须先于 barrel import 初始化：barrel 的 re-export 链会触发深路径 mock 工厂，
+// 工厂闭包引用本 helpers 的绑定（helpers 文件头「惰性求值」约束）
 import { createDiscoveryModuleMock, createLoggerModuleMock, createMockCtx, createMockPi, type CapturedHandlers } from "./helpers/injector-test-mocks.ts";
+// C5①：formatWorkflowList/summarizeDescription 下沉 core barrel——测试改从 barrel 取实现
+import { formatWorkflowList, summarizeDescription } from "@zhushanwen/subagent-core";
 
 // ── 稳定 spy（vi.hoisted 保证 resetModules 后引用不变，见 subagent 测试同款注释） ──
 const spies = vi.hoisted(() => ({ discoverResources: vi.fn(), getCachedFileContent: vi.fn() }));
@@ -23,11 +27,7 @@ vi.mock("@zhushanwen/subagent-core/shared/resource-discovery.ts", () => createDi
 vi.mock("@zhushanwen/pi-extension-logger", () => createLoggerModuleMock());
 
 // ── 纯函数测试：静态 import（模块级缓存状态不影响纯函数） ──
-import {
-	formatWorkflowList,
-	parseWorkflowMeta,
-	summarizeDescription,
-} from "../workflow-list-injector";
+import { parseWorkflowMeta, WORKFLOW_LIST_GUIDE } from "../workflow-list-injector";
 
 describe("summarizeDescription", () => {
 	it("短描述原样返回", () => {
@@ -113,14 +113,14 @@ phases: [Review, Fix]
 
 describe("formatWorkflowList", () => {
 	it("空列表返回空串（不注入）", () => {
-		expect(formatWorkflowList([])).toBe("");
+		expect(formatWorkflowList([], { guide: WORKFLOW_LIST_GUIDE })).toBe("");
 	});
 
 	it("用 <available_workflows> 标签包裹并列出每个 workflow", () => {
 		const out = formatWorkflowList([
 			{ name: "chain", description: "三步链", path: "/workflows/chain.js" },
 			{ name: "parallel", description: "并行分析", path: "/workflows/parallel.js" },
-		]);
+		], { guide: WORKFLOW_LIST_GUIDE });
 		expect(out).toContain("<available_workflows>");
 		expect(out).toContain("</available_workflows>");
 		expect(out).toContain("<name>chain</name>");
@@ -131,14 +131,26 @@ describe("formatWorkflowList", () => {
 		expect(out).toContain("<location>/workflows/parallel.js</location>");
 	});
 
+	it("CA2 快照等价锚定：骨架 + 条目段逐字节等于 pi 旧本地实现模板（workflow 段 guide 未变）", () => {
+		// 条目模板逐字复制自 C5① 前的本地 formatWorkflowList 实现——锚定 core 下沉
+		// 未改变渲染字节（workflow 段无 location 变化面，全段逐字节等价）
+		const out = formatWorkflowList(
+			[{ name: "chain", description: "三步链", path: "/workflows/chain.js" }],
+			{ guide: WORKFLOW_LIST_GUIDE },
+		);
+		expect(out).toBe(
+			`\n\n<available_workflows>\n${WORKFLOW_LIST_GUIDE}\n  <workflow><name>chain</name><description>三步链</description><location>/workflows/chain.js</location></workflow>\n</available_workflows>`,
+		);
+	});
+
 	it("包含 'Do NOT call list to discover available workflows' 引导语", () => {
-		const out = formatWorkflowList([{ name: "chain", description: "d", path: "/workflows/chain.js" }]);
+		const out = formatWorkflowList([{ name: "chain", description: "d", path: "/workflows/chain.js" }], { guide: WORKFLOW_LIST_GUIDE });
 		expect(out).toContain("Do NOT call list to discover available workflows");
 		expect(out).toContain("use list only for running state");
 	});
 
 	it("引导语通用化：不写死内置 workflow 名，含 info 回收指引", () => {
-		const out = formatWorkflowList([{ name: "chain", description: "d", path: "/workflows/chain.js" }]);
+		const out = formatWorkflowList([{ name: "chain", description: "d", path: "/workflows/chain.js" }], { guide: WORKFLOW_LIST_GUIDE });
 		expect(out).toContain("All listed workflows run directly via action:run");
 		expect(out).toContain("read the <location> script file");
 		// 通用化约束：引导语不点名具体 workflow（名字由 @pi-meta 动态注入，
@@ -147,7 +159,7 @@ describe("formatWorkflowList", () => {
 	});
 
 	it("转义 XML 特殊字符", () => {
-		const out = formatWorkflowList([{ name: "a&b", description: "<x>", path: "/workflows/a&b.js" }]);
+		const out = formatWorkflowList([{ name: "a&b", description: "<x>", path: "/workflows/a&b.js" }], { guide: WORKFLOW_LIST_GUIDE });
 		expect(out).toContain("<name>a&amp;b</name>");
 		expect(out).toContain("&lt;x&gt;");
 	});
@@ -313,10 +325,12 @@ describe("discoverAllWorkflows 顺序契约（KV-cache）", () => {
 			]);
 		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
 
-		const { discoverAllWorkflows, formatWorkflowList } = await import("../workflow-list-injector");
+		const { discoverAllWorkflows } = await import("../workflow-list-injector");
 		const first = await discoverAllWorkflows("/ws");
 		const second = await discoverAllWorkflows("/ws");
 		expect(second).toEqual(first);
-		expect(formatWorkflowList(second)).toBe(formatWorkflowList(first));
+		expect(formatWorkflowList(second, { guide: WORKFLOW_LIST_GUIDE })).toBe(
+			formatWorkflowList(first, { guide: WORKFLOW_LIST_GUIDE }),
+		);
 	});
 });

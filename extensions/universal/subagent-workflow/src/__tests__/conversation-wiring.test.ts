@@ -29,6 +29,7 @@ vi.mock( "@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => l
 vi.mock( "@zhushanwen/subagent-core/execution/session-runner.ts", () => ({
   runSpawn: vi.fn(() => new Promise(() => {})),
   killAllSpawnedChildren: vi.fn(),
+  killRecordChildWithEscalation: vi.fn(),
   getChildByRecord: vi.fn(() => undefined),
   spawnedChildren: new Map(),
 }));

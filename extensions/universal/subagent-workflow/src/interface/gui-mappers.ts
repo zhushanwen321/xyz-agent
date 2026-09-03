@@ -29,6 +29,22 @@ export function toGuiCtx(ctx: { mode: GuiContext["mode"]; hasUI: boolean } | und
 type TreeStatus = NonNullable<TreeItem["status"]>;
 
 /**
+ * 状态字符串是否为失败态（mapRunStatus/mapRunIcon 共享谓词——两映射仅返回值形态不同，
+ * 关键词表必须同步演化，抽单点防双写漂移）。入参须已 toLowerCase。
+ */
+function isFailedStatus(s: string): boolean {
+  return (
+    s.includes("failed") ||
+    s.includes("abort") ||
+    s.includes("cancel") ||
+    s.includes("crash") ||
+    s.includes("error") ||
+    s.includes("budget") ||
+    s.includes("time_limited")
+  );
+}
+
+/**
  * 把 workflow/subagent 状态字符串映射到 list-tree 的三态 status。
  *
  * 输入可能是纯 RunStatus（running/done）、RunStatus+reason 组合
@@ -42,17 +58,7 @@ type TreeStatus = NonNullable<TreeItem["status"]>;
 export function mapRunStatus(status: string): TreeStatus {
   const s = status.toLowerCase();
   if (s.includes("running")) return "running";
-  if (
-    s.includes("failed") ||
-    s.includes("abort") ||
-    s.includes("cancel") ||
-    s.includes("crash") ||
-    s.includes("error") ||
-    s.includes("budget") ||
-    s.includes("time_limited")
-  ) {
-    return "failed";
-  }
+  if (isFailedStatus(s)) return "failed";
   return "done";
 }
 
@@ -66,16 +72,6 @@ export function mapRunStatus(status: string): TreeStatus {
 export function mapRunIcon(status: string): TreeItemIcon {
   const s = status.toLowerCase();
   if (s.includes("running")) return "circle";
-  if (
-    s.includes("failed") ||
-    s.includes("abort") ||
-    s.includes("cancel") ||
-    s.includes("crash") ||
-    s.includes("error") ||
-    s.includes("budget") ||
-    s.includes("time_limited")
-  ) {
-    return "cross";
-  }
+  if (isFailedStatus(s)) return "cross";
   return "check";
 }

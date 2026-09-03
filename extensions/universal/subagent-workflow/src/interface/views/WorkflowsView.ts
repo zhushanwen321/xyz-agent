@@ -57,16 +57,8 @@ import {
   visibleLen,
 } from "./format.ts";
 
-// L2 详情内容构建 + 滚动按键（纯函数）抽到 detail-content.ts；此处 re-export 保持
-// view 的对外 API 不变（测试仍从 WorkflowsView 导入）。
-export {
-  buildDetailContent,
-  detailContentLength,
-  type DetailKeyResult,
-  type DetailScrollContext,
-  processDetailKey,
-} from "./detail-content.ts";
-import { buildDetailContent, detailContentLength, type DetailScrollContext,processDetailKey } from "./detail-content.ts";
+// L2 详情内容构建 + 滚动按键（纯函数）抽到 detail-content.ts（view 与其测试直接 import）。
+import { buildDetailContent, detailContentLength, type DetailScrollContext, processDetailKey } from "./detail-content.ts";
 
 // ── TUI layout constants ──────────────────────────────────────
 
@@ -93,7 +85,7 @@ const PRINTABLE_CHAR_MIN = 32;
 function b(theme: ThemeLike, s: string): string {
   return theme.fg("borderMuted", s);
 }
-/** 着色单字符填充用的 ─（供 segFillColored 的 fillStyled）。 */
+/** 着色单字符填充用的 ─（本文件 dashes() 满宽填充复用）。 */
 function dash(theme: ThemeLike): string {
   return theme.fg("borderMuted", "─");
 }

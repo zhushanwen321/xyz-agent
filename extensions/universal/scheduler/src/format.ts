@@ -82,14 +82,10 @@ export function generateTaskId(): string {
 
 /** autoName 任务名最大长度。 */
 const AUTO_NAME_MAX_LENGTH = 30
-/** 截断后保留的长度（预留省略号宽度）。 */
-const AUTO_NAME_KEEP_LENGTH = AUTO_NAME_MAX_LENGTH - ELLIPSIS_LENGTH
 
 /**
  * 从 prompt 自动生成任务名称：取前 30 字。
  */
 export function autoName(prompt: string): string {
-  const trimmed = prompt.trim()
-  if (trimmed.length <= AUTO_NAME_MAX_LENGTH) return trimmed
-  return trimmed.slice(0, AUTO_NAME_KEEP_LENGTH) + '...'
+  return truncate(prompt.trim(), AUTO_NAME_MAX_LENGTH)
 }

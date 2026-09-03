@@ -1,7 +1,7 @@
 /**
  * Todo Extension — 轻量三态任务清单（pending / in_progress / completed）。
  *
- * 设计定位：刻意不做状态机约束（与 goal 扩展的 7 态对立），状态自由流转；
+ * 设计定位：刻意不做状态机约束（与 goal 扩展的 6 态状态机对立），状态自由流转；
  * 状态持久化复用 Pi 自动记录的 toolResult entry（非 appendEntry）；
  * 通过 agent_end → before_agent_start 的延迟 steer 驱动任务推进。
  *

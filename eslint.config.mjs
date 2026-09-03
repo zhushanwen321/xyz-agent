@@ -19,6 +19,8 @@ export default [
       'apps/electron/renderer/dist/**',
       'apps/electron/renderer/dist-new/**',
       'packages/*/dist/**',
+      // subagent-core 本地 bundle 产物（untracked、gitignored，构建后不重排 lint 代码风格）
+      'packages/*/dist.bundle/**',
       'apps/electron/preload/preload.js',
       'apps/electron/resources/pi/**',
       'apps/electron/resources/extensions/**',
@@ -197,6 +199,9 @@ export default [
     files: ['packages/core/src/domain/chat/store.ts'],
     rules: {
       'max-lines-per-function': 'off',
+      // chat store 聚合中心（packages 域上限 500 下 580 行，live/reload 双通路共用
+      // reducer 的等价性设计要求单一 applyEntry 归属地）。拆分属独立重构，短期 override。
+      'max-lines': ['warn', { max: 650, skipBlankLines: true, skipComments: true }],
     },
   },
   // [HISTORICAL] buildWorkerScript 是 worker 源码生成器——返回单一字符串数组的纯模板函数，
@@ -374,7 +379,6 @@ export default [
     files: [
       'packages/subagent-core/src/execution/execution-record.ts',
       'packages/subagent-core/src/execution/record-store.ts',
-      'packages/subagent-core/src/execution/session-runner.ts',
       'packages/subagent-core/src/orchestration/error-recovery.ts',
       'packages/subagent-core/src/shared/resource-discovery.ts',
     ],
@@ -382,13 +386,32 @@ export default [
       'max-lines': ['warn', { max: 1000, skipBlankLines: true, skipComments: true }],
     },
   },
+  // session-runner.ts 单列：迁移后 844 行；无界等待修复（OR-3 收殓 + per-call 超时
+  // 透传 + SIGKILL 升级链）后 1266 行。拆分方向（runner 编排 / 进程收割 / 恢复扫描）
+  // 属独立重构任务，短期 override 至 1400 避免阻塞。
+  {
+    files: ['packages/subagent-core/src/execution/session-runner.ts'],
+    rules: {
+      'max-lines': ['warn', { max: 1400, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  // zcode-engine.ts：zcode app-server 常驻引擎的唯一聚合中心（连接池 + 会话生命周期 +
+  // 降级链 + 错误归类，packages 域上限 500 下 1038 行）。拆分方向（连接层 / 会话层 /
+  // 归类层）属独立重构任务，短期 override 至 1150 避免阻塞。
+  {
+    files: ['packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts'],
+    rules: {
+      'max-lines': ['warn', { max: 1150, skipBlankLines: true, skipComments: true }],
+    },
+  },
   // subagent-service.ts 单列：旧位 2141 行即超 extensions 域 1000 上限（基线存量，
-  // 迁移前已在告警），抽离后 1245 行。短期 override 至 1300 避免阻塞，长期拆分
-  // （service 门面 / record 子图 / spawn 编排三段）待独立重构。
+  // 迁移前已在告警），抽离后 1245 行；无界等待修复（OR-3 消息层超时 + 收殓下沉）
+  // 后 1415 行。短期 override 至 1450 避免阻塞，长期拆分（service 门面 / record
+  // 子图 / spawn 编排三段）待独立重构。
   {
     files: ['packages/subagent-core/src/execution/subagent-service.ts'],
     rules: {
-      'max-lines': ['warn', { max: 1300, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 1450, skipBlankLines: true, skipComments: true }],
     },
   },
   // session-reader tool-handler：聚合工具处理中枢（多工具入口 + 渲染调度），
@@ -400,12 +423,12 @@ export default [
       'max-lines': ['warn', { max: 1200, skipBlankLines: true, skipComments: true }],
     },
   },
-  // download-asset：下载状态机 + 断点续传 + 分片校验的单主题模块（apps 域上限 500
-  // 下 513 行）。状态机段拆分（resume-state 读写组）待独立重构，短期 override。
+  // download-asset：下载状态机 + 断点续传 + 双引擎降级链（curl/undici 编排 D4/D5/D10）
+  // 的单主题模块（apps 域上限 500 下 736 行）。引擎编排段拆分待独立重构，短期 override。
   {
     files: ['apps/electron/main/update/download-asset.ts'],
     rules: {
-      'max-lines': ['warn', { max: 600, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 800, skipBlankLines: true, skipComments: true }],
     },
   },
   // provider-config-helper：provider 配置读改/清洗/凭据应用聚合中心（505 行）。

@@ -25,6 +25,7 @@ import { configureCore } from "@zhushanwen/subagent-core/core/host-services.ts";
 import { configureNotifyDomain } from "@zhushanwen/subagent-core/core/notify-ports.ts";
 import { createPiHostServices, createPiNotifyDomainPorts } from "./host/pi-host.ts";
 
+import { oncePerProcess } from "@zhushanwen/pi-ext-guards";
 import { bestEffort } from "@zhushanwen/subagent-core/execution/best-effort.ts";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
 import { getOrCreateChannelRegistry } from "@zhushanwen/subagent-core/execution/channel-registry-access.ts";
@@ -49,7 +50,7 @@ import {
 } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
 import { bindNotifyLedgerHost, getBoundNotifyLedger, type NotifyLedgerHost } from "@zhushanwen/subagent-core/execution/notify-ledger.ts";
 import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "@zhushanwen/subagent-core/execution/session-reconstructor.ts";
-import type { ExecutionMode, SubagentRecord } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { ExecutionMode } from "@zhushanwen/subagent-core/execution/types.ts";
 import { maybeCleanupExpiredSessionFiles } from "@zhushanwen/subagent-core/execution/session-file-gc.ts";
 import {
   getSubagentService,
@@ -59,8 +60,10 @@ import {
 import { killAllSpawnedChildren } from "@zhushanwen/subagent-core/execution/session-runner.ts";
 import { SubprocessAgentRunner } from "@zhushanwen/subagent-core/execution/subprocess-agent-runner.ts";
 import { WorktreeManager } from "@zhushanwen/subagent-core/execution/worktree-manager.ts";
-// [engine-awareness U3] per-turn 引擎检测编排（D1/D1b/D2/D3/D5）
-import { normalizeEngineId, runEngineAwarenessTurn } from "./injectors/engine-awareness.ts";
+// [engine-awareness U3] per-turn 引擎检测编排（D1/D1b/D2/D3/D5）；normalizeEngineId
+// 单一权威源在 core registry（原经 engine-awareness 再导出，导入面已折叠直连）
+import { normalizeEngineId } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
+import { runEngineAwarenessTurn } from "./injectors/engine-awareness.ts";
 import { setupModelListInjector } from "./injectors/model-list-injector.ts";
 import { setupSubagentListInjector } from "./injectors/subagent-list-injector.ts";
 import { setupWorkflowListInjector } from "./injectors/workflow-list-injector.ts";
@@ -81,6 +84,7 @@ import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "@zhus
 import {
   evictDoneRunsBeyondCap,
   MAX_RETAINED_DONE_RUNS,
+  recoverCrashedRuns,
   scheduleTimeBudget,
   terminateRunningRuns,
 } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
@@ -105,42 +109,6 @@ declare module "@earendil-works/pi-coding-agent" {
 
 // 模块级 logger（setPiHandle 注入后自动走 appendEntry）
 const logger = getLogger("subagents");
-
-// ── subagent 状态快照格式化 ──
-//
-// [v4 A-6] before_agent_start 注入 hook 已删（活跃 subagent 清单改由 agent 按需调
-// action:'list' 拉取，消除每 loop 注入的上下文税与盲点）。本函数保留为纯格式化工具：
-// before-agent-start-injection / parent-child-matrix 测试覆盖其正确性，未来 list
-// 视图或其他注入点可复用。
-
-/** 活跃 subagent 数量上限（超过截断显示）。 */
-const MAX_STATUS_INJECTION = 10;
-
-/**
- * 将活跃 subagent record 格式化为一行一条的快照文本。
- *
- * 格式：
- *   [subagent-status] N active subagents:
- *   - sa-xxx (slug): running, rounds 0
- *   - sa-yyy (slug): idle, rounds 3
- *   +2 more, use action:'list'
- *
- * @param records 已筛选的活跃 record（running + idle）
- */
-export function formatSubagentStatusSnapshot(records: SubagentRecord[]): string {
-  const lines = [`[subagent-status] ${records.length} active subagent${records.length === 1 ? "" : "s"}:`];
-  const shown = records.slice(0, MAX_STATUS_INJECTION);
-  for (const r of shown) {
-    const slug = r.slug || r.agent;
-    const roundPart = r.round !== undefined && r.round > 0 ? `, rounds ${r.round}` : "";
-    lines.push(`- ${r.id} (${slug}): ${r.status}${roundPart}`);
-  }
-  const remaining = records.length - MAX_STATUS_INJECTION;
-  if (remaining > 0) {
-    lines.push(`+${remaining} more, use action:'list'`);
-  }
-  return lines.join("\n");
-}
 
 // ═══ [V2 决策 7 防线 i] process 级 shutdown hook ═══
 //
@@ -248,12 +216,10 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     }
   }
 
-  // resources_discover：不再注入额外 skill 目录（ADR-031 废弃 discovery.json）。
-  // pi 核心 auto-discovery 已覆盖 .agents/skills 等标准目录，子 session 的
-  // --skill 由 agent({skill}) 调用方显式传入，无需 extension 额外补充。
-  pi.on("resources_discover", (_event, _ctx: ExtensionContext) => {
-    return {};
-  });
+  // resources_discover：不再注册 handler（v4 决策：不再注入额外 skill 目录，
+  // ADR-031 废弃 discovery.json）。pi 核心 auto-discovery 已覆盖 .agents/skills
+  // 等标准目录，子 session 的 --skill 由 agent({skill}) 调用方显式传入，无需
+  // extension 额外补充。
 
   // ════════════════════════════════════════════════════════════
   //  workflow 域：tools + command + pi.__workflowRun + state
@@ -381,8 +347,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     lsRef.lastSessionId = sessionId;
 
     // [U7] 引擎列表同步 engines.json（幂等零写 + fail-safe；组合根注册已在
-    // extension 工厂体完成，此处 registry 已含全部引擎）
-    syncEnginesFile(agentDir);
+    // extension 工厂体完成，此处 registry 已含全部引擎）。写 agentDir 全局文件属
+    // 跨 session 副作用——oncePerProcess 守卫防 factory 二调/handler 累积双跑（u-audit-fix）。
+    oncePerProcess("subagent-workflow:sync-engines-file", () => syncEnginesFile(agentDir));
 
     // skill 路径两级缓存 session 级失效：pi 同进程可能有多个 session（TUI /new、/fork），
     // 运行中安装的 skill 需对新 session 可见（含曾 miss 缓存的 undefined 条目与 npm 新装
@@ -527,21 +494,27 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       setSubagentService(service);
     }
 
-    // S-2: 启动 idle record GC 定时器（30 天 TTL，每小时检查一次）
-    service.startGcTimer();
+    // S-2: 启动 idle record GC 定时器（30 天 TTL，每小时检查一次）。
+    // 注册 setInterval 属进程级副作用——oncePerProcess 守卫防双跑（u-audit-fix）。
+    oncePerProcess("subagent-workflow:start-gc-timer", () => service.startGcTimer());
 
     try {
-      maybeCleanupExpiredSessionFiles(agentDir, cwd);
+      // 递归扫描 <agentDir>/subagents + unlink 超 TTL 跨 session 文件属进程级维护
+      // ——oncePerProcess 守卫防双跑（u-audit-fix）。
+      oncePerProcess("subagent-workflow:cleanup-expired-session-files", () =>
+        maybeCleanupExpiredSessionFiles(agentDir, cwd));
     } catch (err) {
       logger.warn("[subagents] expired session file cleanup failed", {
         reason: err instanceof Error ? err.message : String(err),
       });
     }
 
-    // ADR-035 启动恢复：扫描 manifest tmp 残留（崩溃打断的 writeManifest 留下），
-    // 每次 session_start 都调（与上方 maybeCleanupExpiredSessionFiles 一致）。
+    // ADR-035 启动恢复：扫描 manifest tmp 残留（崩溃打断的 writeManifest 留下，promote/unlink）。
+    // 扫描属进程级维护——oncePerProcess 守卫防双跑（u-audit-fix）；第二派发重放首次
+    // Promise（结果缓存语义），recovered 计数日志可能重打，无文件副作用。
     try {
-      const recovered = await service.recoverManifestTmpFiles();
+      const recovered = await oncePerProcess("subagent-workflow:recover-manifest-tmp-files", () =>
+        service.recoverManifestTmpFiles());
       if (recovered.recovered > 0 || recovered.deleted > 0) {
         logger.warn(`[subagents] manifest tmp recovery: ${recovered.recovered} promoted, ${recovered.deleted} deleted`);
       }
@@ -552,8 +525,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     }
 
     try {
-      const wtm = new WorktreeManager(agentDir);
-      await wtm.scan();
+      // 孤儿 worktree 清理（git/rm 进程操作 + 注册表/目录扫描）属进程级维护
+      // ——oncePerProcess 守卫防双跑（u-audit-fix）。
+      await oncePerProcess("subagent-workflow:worktree-scan", () => new WorktreeManager(agentDir).scan());
     } catch (err) {
       logger.warn("[subagents] worktree reaper scan failed", {
         reason: err instanceof Error ? err.message : String(err),
@@ -575,49 +549,30 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     // resolveIdentity），无需经 state 透传——modelService 是唯一 registry 源。
 
     // MF-1: store 健康度跟踪。loadAll 失败 → storeHealthy=false，workflow 域启动时 fail-fast。
+    // 崩溃恢复四步（loadAll → failed → save → evict）收口到 core recoverCrashedRuns（D8：
+    // 宿主各写一遍正是 failure-mode-B）；pending:unregister 经 hooks 外置发射（位置在
+    // transition 后、save 前，对齐原内联实现）；save 走 store 冷路径（done 绕过去抖）——
+    // 冷路径语义在 JsonlRunStore.save 内，不随循环归属转移。loadAll 失败的 fail-fast
+    // （storeHealthy=false 停初始化）是宿主职责，core 原样上抛、这里 catch 兜住。
     let storeHealthy = true;
     try {
-      const loaded = await store.loadAll();
-      for (const run of loaded) {
-        if (run.state.status === "running") {
-          run.state.error = "Process killed (kill-9 or crash recovery)";
-          run.transition("done", "failed");
-          pi.events.emit("pending:unregister", {
-            id: run.runId,
-            reason: "failed",
-          });
-          // 恢复终态必须落盘：save 走冷路径（done 绕过去抖）同步写 state 文件 +
-          // append 终态 workflow-record entry——entry_appended 事件驱动 runtime 派生
-          // 缓存失效重拉（无 triggerTurn 副作用）。不 save 则 entry/state 双双停留
-          // running，侧栏永久卡 running。失败仅记日志不阻断其余 run 的恢复（下次
-          // session_start 重开重试，恢复循环天然幂等）。
-          try {
-            await store.save(run);
-          } catch (err) {
-            logger.error("[subagent-workflow] kill-9 recovery store.save failed", {
-              runId: run.runId,
-              reason: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-        runs.set(run.runId, run);
-      }
-      // done run 内存有界性：loadAll 全量重水合后立即裁剪到 K。kill-9 恢复（上方
-      // running → transition("done","failed")）的 run completedAt 为 transition 时刻
-      // （当前时间=全局最新）参与排序且必在保留端；多条恢复 run 同 ms completedAt →
-      // tie 稳定排序。淘汰只 delete runs Map 条目——磁盘 state 文件与
-      // workflow-state-link 指针条目均不动（历史审计保留）；下次 session_start loadAll
-      // 从指针全量重水合后再次裁剪，该循环每次 session 启动重复且可接受：内存峰值只在
-      // 启动期，常驻 O(K + 活跃 run)。消除启动峰值需指针 compaction，属 append+replay
-      // 长期方案问题域，非本范围。
-      const evicted = evictDoneRunsBeyondCap(runs, MAX_RETAINED_DONE_RUNS);
-      if (evicted > 0) {
-        logger.debug("[subagent-workflow] evicted done runs beyond cap after loadAll", {
-          evicted,
-          keep: MAX_RETAINED_DONE_RUNS,
-          sessionId,
-        });
-      }
+      // 崩溃恢复 loadAll 扫 cwd 共享 sessionDir（同 cwd 跨 session 共享）并把 running run
+      // 转 failed 落盘——写非本 session 的 run state 文件属跨 session 副作用，oncePerProcess
+      // 守卫防双跑（u-audit-fix）。第二派发重放首次 Promise：不再落盘、不再 emit。
+      await oncePerProcess(
+        "subagent-workflow:recover-crashed-runs",
+        () =>
+          recoverCrashedRuns(
+            store,
+            runs,
+            "Process killed (kill-9 or crash recovery)",
+            {
+              onRunRecovered: (payload) => {
+                pi.events.emit("pending:unregister", payload);
+              },
+            },
+          ),
+      );
     } catch (err) {
       // QMF-4 fix: store.loadAll 失败是关键路径错误，workflow 域将未初始化
       logger.error("[subagent-workflow] store.loadAll failed, workflow domain uninitialized", {
@@ -997,17 +952,8 @@ function getOrCreateDialogQueue(): DialogGlobalQueue {
   return queue;
 }
 
-// ============================================================
-// Public cross-extension API（channel handler 注册入口）
-// ============================================================
-//
-// 跨扩展消费者（ask-user 等）通过包根 import 注册 channel handler，
-// 让 subagent 子进程的 UI 请求（ask_user 等）透传到主进程渲染。
-// 重新导出 channel-registry-access 的公开 API——稳定 surface，
-// 内部存储实现演进不影响消费者。
-
-export {
-  getOrCreateChannelRegistry,
-  type UiChannelRegistry,
-  type ChannelHandler,
-} from "@zhushanwen/subagent-core/execution/channel-registry-access.ts";
+// 跨扩展 channel handler 注册入口已收口到 core 深路径
+// `@zhushanwen/subagent-core/execution/channel-registry-access.ts`
+// （getOrCreateChannelRegistry / UiChannelRegistry / ChannelHandler）。
+// 历史上的包根 re-export 已删：ask-user 等跨扩展消费者经 globalThis 握手
+// （DIALOG_QUEUE_KEY 同款进程级单例），不再经包根 import 消费本模块。

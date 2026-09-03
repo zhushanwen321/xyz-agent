@@ -2,7 +2,8 @@
  * Unified Hooks Extension
  *
  * Collects scattered hooks in one place for easy maintenance.
- * Each hook is a self-contained module that can be enabled/disabled independently.
+ * Each hook is a self-contained module. All hooks are registered unconditionally;
+ * a hook whose setup throws is marked disabled (reported via session_start).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

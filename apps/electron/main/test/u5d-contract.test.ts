@@ -10,7 +10,8 @@
  *
  * 不 mock download-asset 模块本身——m8 用「fetch 是否被调用」证明有无下载，
  * m9 则需要真实的 downloadAsset 跑完下载+校验+落定全链路。
- * UPDATE_DIR 经 XYZ_AGENT_DATA_DIR 重定向到 tmp（必须在 import constants 前设）。
+ * 升级工作目录（getUpdateDir()）经 XYZ_AGENT_DATA_DIR 重定向到 tmp（路径延迟求值；
+ * env 前置约束已解除，保留先设 env 的做法无害）。
  *
  * 运行：cd apps/electron/main && npx vitest run test/u5d-contract.test.ts
  */
@@ -22,7 +23,7 @@ import path from 'node:path'
 import type { LatestReleaseInfo, ReleaseAsset } from '@xyz-agent/shared'
 import { UPDATE_STALE_RELEASE } from '@xyz-agent/shared'
 
-// ── 必须在 import constants（间接被 orchestrator / platform-updater import）前设 ──
+// ── env 先于一切路径求值设置（延迟求值后「必须在 import constants 前设」约束已解除，做法保留无害）──
 const TMP_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'u5d-'))
 process.env.XYZ_AGENT_DATA_DIR = TMP_DATA_DIR
 

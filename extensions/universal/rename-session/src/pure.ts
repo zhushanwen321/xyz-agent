@@ -269,24 +269,6 @@ interface EntryLike {
 }
 
 /**
- * 数 session 中 assistant 回复数。用于判定首 turn（===1）。
- * 判定条件：entry.type === "message" && entry.message.role === "assistant"
- * （pi 内部 session-manager.ts 同款模式）。
- *
- * 注意：触发判定使用 countSuccessfulAssistantReplies（index.ts 已切换；不看 stopReason
- * 无法区分「iteration 结束」与「轮次结束」，见设计 D6）。本函数仅为兼容保留。
- */
-export function countAssistantReplies(entries: ReadonlyArray<EntryLike>): number {
-	let count = 0;
-	for (const entry of entries) {
-		if (entry.type === "message" && entry.message?.role === "assistant") {
-			count++;
-		}
-	}
-	return count;
-}
-
-/**
  * 数 session 中「成功完成」的 assistant 回复数（stopReason === "stop"），触发判定用（===1 触发 rename）。
  *
  * 只数 stop 的理由（设计 D6）：pi 的 turn_end 每个 iteration 发一次，中间 iteration 的

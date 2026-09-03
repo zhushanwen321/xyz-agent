@@ -5,9 +5,10 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { MAX_TERMINAL_REGISTRY_ENTRIES } from "@xyz-agent/extension-protocol";
+
 import {
 	getRegistryPath,
-	MAX_TERMINAL_REGISTRY_ENTRIES,
 	readRegistry,
 	taskToRegistryEntry,
 	writeRegistryEntry,

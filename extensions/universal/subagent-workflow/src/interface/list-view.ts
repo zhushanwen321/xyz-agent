@@ -1,4 +1,4 @@
-// src/tui/list-view.ts
+// src/interface/list-view.ts
 //
 // /subagents list 全屏带框左右分屏 overlay。
 //   左列：record 列表（状态图标 + agent + mode + 绝对时长）

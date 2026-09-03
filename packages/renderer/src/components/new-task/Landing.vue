@@ -14,7 +14,7 @@ import { computed, onMounted, onUnmounted, provide, watch } from 'vue'
  * [w5 壳接线] 5 个跨端组件 + dirNameOf 从 @xyz-agent/ui import（w4 迁入）；
  * NewTaskDeps（12 字段壳适配）经 useNewTaskDeps() 构造 + provide NewTaskDepsKey，
  * ui 组件经 inject 消费（C-W4-1）；flow = deps.flow（core useNewTaskFlow 单例，
- * 与 useSidebarNew 共享——双状态机断裂防护）。
+ * 与 useSidebar 共享——双状态机断裂防护）。
  */
 
 import { useI18n } from 'vue-i18n'

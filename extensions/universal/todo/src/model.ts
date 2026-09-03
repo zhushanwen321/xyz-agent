@@ -113,10 +113,6 @@ export function buildGui(todos: Todo[]): GuiRenderResult {
 	);
 }
 
-export function getDisplayStatus(t: Todo): string {
-	return migrateTodo(t).status;
-}
-
 // ── Add 逻辑 ─────────────────────────────────────────
 
 export interface AddResult {

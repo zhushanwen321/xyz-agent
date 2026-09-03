@@ -561,9 +561,10 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     }
   });
 
-  it("分级穷举：全部 8 个 ResourceSource 的机器/用户归属与 D3 一致", () => {
+  it("分级穷举：全部 9 个 ResourceSource 的机器/用户归属与 D3 一致", () => {
     // 封闭枚举逐值断言，防止未来新增/修改枚举值时分级边界漂移
-    const machine: ResourceSource[] = ["npm", "npm-dev", "user-extension-paths", "project-pi", "project-pi-tmp", "project-agents"];
+    // （W2② 新增 project-host——项目级宿主注入根，机器源）
+    const machine: ResourceSource[] = ["npm", "npm-dev", "user-extension-paths", "project-pi", "project-pi-tmp", "project-host", "project-agents"];
     const user: ResourceSource[] = ["user-pi", "user-agents"];
     for (const s of machine) expect(isMachineSource(s), `${s} 应为机器源`).toBe(true);
     for (const s of user) expect(isMachineSource(s), `${s} 应为用户源`).toBe(false);

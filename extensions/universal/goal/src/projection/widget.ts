@@ -67,7 +67,7 @@ export function formatTokens(n: number): string {
 /**
  * 返回 widget 标题：优先 slug，无 slug fallback objective 截断（单行）。
  */
-export function getTitle(state: GoalRuntimeState): string {
+function getTitle(state: GoalRuntimeState): string {
 	if (state.slug) return state.slug;
 	const objSingleLine = toSingleLine(state.objective);
 	return objSingleLine.length > OBJECTIVE_DISPLAY_LIMIT

@@ -3,8 +3,9 @@
 // 设计：docs/design/pr-lifecycle-workflow.md；实施计划：docs/design/pr-lifecycle-workflow.impl-plan.md
 // 结构：本入口只做 io 适配层组装（引擎注入 → 纯逻辑库），全部状态机/守卫/walker
 // 在 ./pr-lifecycle/lib.cjs（依赖注入，node 直测：test/run-tests.js）。
-// 单元进度：u1 状态核心与骨架——steps 注册表为空数组（u2-u5 填充 PR 阶段 /
-// 门禁 / cr-fix / simplify steps），空注册表跑完 = 幂等返回 state 现状。
+// lib.createPrSteps 产出 §3.3 完整十二 step 注册表
+// （preflight → static-gate → changeset → pr-meta → skill-yaml → pr-submit →
+//   constraints → coverage-1 → metrics-1 → cr-fix → simplify → final-gates）。
 //
 // 恢复通道：终态 scriptResult 必含 runId；暴毙时 cat .review/pr-workflow/latest。
 
@@ -17,8 +18,11 @@ notFor: 只做最终 push、单跑某道门禁、或 merge 与 release 流程时
 phases: []
 parameters:
   type: object
+  additionalProperties: false
   properties:
+    task: { type: string, description: 任务描述（zsw CLI 必填 flag，引擎存入 run spec 供通知与查询展示；脚本不消费其语义，normalizeParams 白名单不收——值不进 state.params） }
     runId: { type: string, description: 断点恢复键；缺失 = 从头执行，存在 = 从未完成的第一个 step 续跑 }
+    repo: { type: string, minLength: 1, description: 目标仓库根绝对路径（必传——workdir 是引擎保留键不进脚本参数，缺省回落宿主 cwd 并在日志注明回落事实；非仓库根会 fail-fast） }
     base: { type: string, default: main, description: PR 目标基线分支，全流程 review 与 diff 口径锁定为发起时该 ref 指向的 commit }
     reviewers:
       anyOf:
@@ -26,6 +30,7 @@ parameters:
         - { type: string, description: 逗号分隔维度名 }
       description: cr-fix 审查维度裁剪（默认全量 8 维）；值为 agent 名或路径关键词
     maxRounds: { type: integer, default: 10, minimum: 1, description: cr-fix 循环轮次上限透传给嵌套 loop }
+    aggregatorModel: { type: string, description: 聚合阶段模型（provider/model 全名，如 zai-coding-cn/glm-5.3-flash——须为当前引擎侧存在的 provider）；缺省跟随 run 模型，仅当聚合需降档/升档时设置 }
     simplifyMode: { type: string, enum: [apply, report], default: apply, description: apply = 自动落地高置信 A 档简化并独立 commit；report = 只出报告不改码 }
     skipSteps:
       anyOf:
@@ -54,11 +59,12 @@ const { execFileSync } = require('node:child_process');
 const libDir = path.join(path.dirname(workerData.scriptPath), 'pr-lifecycle');
 const lib = require(path.join(libDir, 'lib.cjs'));
 
-// 假设（u2 preflight 验证兜底）：worker 进程 cwd 即发起方传入的 workdir；
-// $WORKSPACE 是宿主 cwd 不是 workdir，不能用作 repoRoot。
-const repoRoot = process.cwd();
+// repoRoot 解析（Gate B S1）：workdir 是引擎 RUN_ENVELOPE_KEYS 保留键，不进 $ARGS——
+// 脚本读不到发起方传的 workdir。优先 --repo 显式传入；缺省回落 $WORKSPACE（宿主 cwd），
+// 回落事实记入日志首行。是否为 git 仓库根由 lib.runPipeline 开头守卫校验（非根 fail-fast）。
+const repoRoot = lib.resolveRepoRoot((typeof $ARGS === 'object' && $ARGS !== null) ? $ARGS : {}, $WORKSPACE); // 直读引擎全局——io 在下方才定义（TDZ）
 
-const engineStateDir = path.join(os.homedir(), '.zcode', 'zsw', 'workflow-state');
+const engineStateDir = path.join(os.homedir(), '.zcode', 'zsw', 'workflow-state'); // 活性守卫主通道：引擎 run state 文件目录
 
 // 活性守卫主通道：读引擎 run state 文件末行 state.status（P5 实证 JSONL 形态）。
 // 未知/缺失状态值返回 ok:false 由 lib 按 fail-closed 处理（降级 pid 探测）。
@@ -88,7 +94,7 @@ function probePid(pid) {
 }
 
 // agent 适配层：强制 returnMeta:true（引擎 agent 失败不 reject，错误只能经 meta
-// 观测）；u1 骨架尚无调用方（u2 引入 steps 后经 ctx.io.agent 使用）。
+// 观测）；steps 执行体的 agent 调用统一经 ctx.io.agent 走此适配层。
 async function agentAdapter(params) {
   const meta = await agent({
     description: params.description || 'pr-lifecycle-agent',
@@ -102,7 +108,7 @@ async function agentAdapter(params) {
   return { value: meta && meta.value, error: err || null, meta: meta || null };
 }
 
-// 嵌套 workflow 适配层（u4 cr-fix 使用；引擎契约：返回 {content, parsedOutput}）
+// 嵌套 workflow 适配层（cr-fix step 使用；引擎契约：返回 {content, parsedOutput}）
 async function workflowAdapter(name, params) {
   return workflow(name, params);
 }
@@ -126,8 +132,12 @@ const io = {
   probePid,
   now: () => new Date(),
   randomToken: () => crypto.randomBytes(2).toString('hex'),
-  steps: lib.createPrSteps({ repoRoot }), // u5：十二 step 完整注册表（§3.3 全序；cr-fix/simplify 已由 u4/u5 交付）
+  steps: lib.createPrSteps({ repoRoot }), // 十二 step 完整注册表（§3.3 全序）
 };
+
+if (!io.args.repo) {
+  log(`repoRoot 回落：$ARGS.repo 未传，取宿主 cwd（$WORKSPACE）=${repoRoot}——目标仓库非宿主 cwd 时必须用 --repo 传仓库根绝对路径`);
+}
 
 // 顶层 return Promise：worker 将本脚本内联进 async IIFE，async 函数的 return
 // 语义自动展开 Promise（等价 await 后 return）；同时保持 node --check（CJS）语法合法。

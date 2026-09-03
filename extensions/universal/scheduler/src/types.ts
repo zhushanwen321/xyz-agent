@@ -32,7 +32,6 @@ export interface ScheduledTask {
 export interface ExecutionRecord {
   at: number
   status: TaskStatus
-  snippet?: string                  // agent 回复前 100 字
 }
 
 // ── CustomEntry event sourcing（append-only 任务存储）──

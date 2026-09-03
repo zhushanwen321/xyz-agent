@@ -35,8 +35,8 @@ const forkFromLastAssistantMock = vi.fn(() => Promise.resolve())
 const enterForkModeFromLastAssistantMock = vi.fn(() => Promise.resolve())
 /** 收尾 9：⌘, 打开 Settings（AppShell provide → Sidebar inject → useGlobalShortcuts 注入） */
 const openSettingsMock = vi.fn()
-vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
-  useSidebarNew: () => ({
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
+  useSidebar: () => ({
     forkFromLastAssistant: forkFromLastAssistantMock,
     enterForkModeFromLastAssistant: enterForkModeFromLastAssistantMock,
     loadSessions: vi.fn(),

@@ -267,7 +267,7 @@ G4 检测器精确口径（实施后修订——原文「分区值 ≠ reply 则
 
 ### A2：合法无值诚实显示（回溯 G2，负面-合法态）
 
-> 构造方式注意：「新建 session 不发言」构不成有效场景——NewTaskFlow 是延迟 create（首发消息才建 session 实体，`useSidebarNew.ts` newSession 的 `if (!created)` 分支），无实体则无 sessionId、无 RPC 可验。合法 no-value 的稳定构造路径是 **compact 后无新 turn**（pi `contextUsage.tokens = null` → fetchContext 返回 null）。
+> 构造方式注意：「新建 session 不发言」构不成有效场景——NewTaskFlow 是延迟 create（首发消息才建 session 实体，`useSidebar.ts` newSession 的 `if (!created)` 分支），无实体则无 sessionId、无 RPC 可验。合法 no-value 的稳定构造路径是 **compact 后无新 turn**（pi `contextUsage.tokens = null` → fetchContext 返回 null）。
 
 1. 选一个有历史的 session C，执行手动 compact（等压缩完成），不发言，进入 C 视图。
 2. **通过标准**：工具条显示 `—`（非「闪旧值后归零」）；devtools Network → WS → Messages 按 `session.getContext` 过滤计数（getContext 是 WS 命令帧，不在 HTTP 列表——原稿「Network 面板」措辞会找错地方），切到 C 时恰好一次（in-flight 去重生效，G4 检测器复用同一次 RPC 不额外发），reply payload 无 usage 字段（仅 sessionId）。

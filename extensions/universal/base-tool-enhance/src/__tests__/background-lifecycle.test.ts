@@ -177,7 +177,7 @@ describe("real spawn lifecycle (poll edge finalization)", () => {
 		expect(seen[0]).toBe(`${spawned.task.taskId}:exited:natural`);
 	});
 
-	it("spawned entry carries pidStartTime for reaper precise comparison (M5→M3)", async () => {
+	it("spawned entry carries pidStartTime for kill-side precise comparison (M5→M3)", async () => {
 		const spawned = spawnBg("sleep 30");
 		if (!spawned.ok) throw new Error(spawned.error);
 		const { task } = spawned;
@@ -232,7 +232,7 @@ describe("bash_output tool", () => {
 
 	it("P0-1: list merges only TERMINAL registry entries — running entries stay invisible (§3.5)", async () => {
 		// 独立 session 目录：单例表空 + registry 含 running 与 exited 两条他进程条目
-		// （模拟 resume 被强杀 session：reaper 转终态前的窗口里 registry 残留 running）
+		// （模拟 resume 被强杀 session：runtime 收殓转终态前的窗口里 registry 残留 running）
 		const sid = "sess-p0-list";
 		writeRegistryEntry(getRegistryPath(DATA_DIR, sid), makeRegistryEntry({ taskId: "bt-xrun", state: "running" }));
 		writeRegistryEntry(
@@ -361,7 +361,8 @@ describe("bash_kill tool (killing intent, single-point finalization)", () => {
 		};
 		expect(result.killed).toBe(false);
 		expect(result.reason).toBe("cross-process running task owned by another pi process");
-		expect(result.hint).toContain("reaper");
+		// 收殓已下沉 runtime（u-bte-remove）：hint 指向 runtime 收殓而非 reaper
+		expect(result.hint).toContain("xyz-agent runtime");
 		expect(killTreeCalls).not.toContain(foreignPid); // 未发 kill 信号
 	});
 

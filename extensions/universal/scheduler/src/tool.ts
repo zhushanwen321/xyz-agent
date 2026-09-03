@@ -11,7 +11,7 @@ export const ScheduleParams = Type.Object({
   schedule: Type.String({ description: 'Schedule spec: duration (5m/2h/1d) for interval, or cron expression (*/10 * * * *).' }),
   kind: Type.Optional(Type.Union([Type.Literal('once'), Type.Literal('recurring')], { description: 'Task kind. Default: recurring.' })),
   name: Type.Optional(Type.String({ description: 'Human-readable task name. Auto-generated from prompt if omitted.' })),
-  expires: Type.Optional(Type.String({ description: 'Expiry duration (30m/2h/7d). Default: 7d. Pass "never" to disable.' })),
+  expires: Type.Optional(Type.String({ description: 'Expiry duration (30m/2h/7d). Default: 7d. Pass "never" to disable. Only applies to recurring tasks (once tasks fire and are removed, expires is ignored).' })),
   force: Type.Optional(Type.Boolean({ description: 'Dispatch even when agent is busy. Default: false.' })),
 })
 
@@ -53,7 +53,7 @@ export const controlGuidelines = [
   'Use action="list" to see all scheduled tasks.',
   'After listing, use the returned id for toggle/delete/run.',
   'Prefer toggle(enabled=false) over delete for temporary pauses.',
-  'action="run" fires the task immediately.',
+  'action="run" dispatches the task now: force tasks are sent directly; non-force tasks are enqueued via the delivery kernel and delivered once the agent is idle (busy messages wait in the queue and are flushed later).',
 ]
 
 export function createScheduleControlHandler(service: SchedulerService) {

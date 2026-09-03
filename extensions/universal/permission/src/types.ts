@@ -40,11 +40,16 @@ export function isValidPermissionMode(value: unknown): value is PermissionMode {
 
 /** 权限规则（层 2 规则匹配用） */
 export interface Rule {
-	/** 唯一 id（用户规则 'user-<n>'，内置安全 'builtin-safe-<n>'，内置危险 'builtin-danger-<n>'） */
+	/**
+	 * 唯一 id。实际格式：
+	 *  - 用户规则 'user-<n>'（缺省时 makeNextIdCounter / normalizeRule 自动分配）
+	 *  - 白名单兜底的虚拟规则固定 'builtin-safe'（无编号，matcher.ts 构造）
+	 *  - 内置危险规则 'bd-<n>'（builtins.ts BUILTIN_DANGER_RULES 硬编码）
+	 */
 	id: string;
 	/** 工具名匹配模式，wildcard（'*' 匹配全部，'bash' 精确匹配） */
 	tool: string;
-	/** 命令匹配模式，wildcard（仅 bash 工具用，其他工具 undefined 或 '*'） */
+	/** 匹配模式，wildcard（bash 工具对命令行匹配；非 bash 工具对文件路径匹配，path 缺省时对工具名） */
 	pattern: string;
 	/** 决策动作 */
 	action: PermissionAction;
@@ -78,8 +83,8 @@ export interface PermissionDecision {
 	confidence?: number;
 }
 
-/** 决策来源 */
-export type DecisionSource = "mode" | "ast" | "rule" | "ai" | "user";
+/** 决策来源（实际产生值：mode/rule/ai/user；AST 分析不直接产生决策，只改变后续路径） */
+export type DecisionSource = "mode" | "rule" | "ai" | "user";
 
 /** AI 风险等级 */
 export type RiskLevel = "low" | "medium" | "high";
@@ -88,15 +93,19 @@ export type RiskLevel = "low" | "medium" | "high";
 
 /** AI Classifier 配置（层 3 用，W4 实现） */
 export interface ClassifierConfig {
-	/** 是否启用 AI 层（auto 模式自动 true，其他模式忽略） */
+	/**
+	 * AI 层开关，默认 true。
+	 * false 时 auto 模式跳过 classifier 与 racing，ask 直接转人工审批（不调 LLM）；
+	 * 其他模式本就不走 AI 层，此字段无效果。
+	 */
 	enabled: boolean;
-	/** 模型：'auto'（=scoped：读 settings.json enabledModels 取首个可用，空则 fallback available）或 'provider/model-id'（如 'zhipu/glm-4-flash'） */
+	/** 模型：'auto'（取 modelRegistry.getAvailable() 首个可用）或精确 'provider/model-id'（如 'zhipu/glm-4-flash'） */
 	model: string;
 	/** 超时秒数 */
 	timeout: number;
 	/** 低风险是否自动放行 */
 	autoApproveLowRisk: boolean;
-	/** 高风险是否自动拦截（转人工审批） */
+	/** 高风险是否强制 deny（不问人：high+allow 时直接拒绝） */
 	autoDenyHighRisk: boolean;
 	/**
 	 * 标题生成 LLM 的 thinking 级别（pi 的 ModelThinkingLevel，THINKING_ORDER SSOT）。
@@ -140,25 +149,6 @@ export const DEFAULT_CONFIG: PermissionConfig = {
 
 // ──────────────────────── 后续 wave 用的类型（W1 声明，W2-W5 import） ────────────────────────
 
-/** 权限检查输入（I1 checkPermission 参数） */
-export interface PermissionCheckInput {
-	toolName: string;
-	command?: string;
-	path?: string;
-	toolInput?: unknown;
-	cwd: string;
-	agentName?: string;
-}
-
-/** 权限上下文（I1 checkPermission 参数，含当前模式 + 规则 + classifier 配置） */
-export interface PermissionContext {
-	mode: PermissionMode;
-	rules: Rule[];
-	classifier: ClassifierConfig;
-	enabled: boolean;
-	signal?: AbortSignal;
-}
-
 /** bash 结构分析结果（I2 analyzeBashStructure 返回，W2 实现） */
 export interface BashAnalysis {
 	/** 是否只有白名单结构（干净 SimpleCommand） */
@@ -198,7 +188,6 @@ export interface ToolInvocationContext {
 export interface UserDecision {
 	approved: boolean;
 	reason?: string;
-	scope?: "once" | "session" | "always";
 }
 
 // ──────────────────────── W6 T8: 从 pipeline.ts 迁移的类型 ────────────────────────

@@ -4,6 +4,7 @@
 
 - 层级声明：当前层 = extension 能力设计 → 下一层 = 可实现的接口 / 数据模型 / 技术方案（层敏感准则全适用）
 - 状态：已评审通过（7 轮对抗式审查收敛，must-fix 归零；审查报告见 `.review/design-review-base-tool-enhance-20260825*.md`）；**已实施**——M1-M6 全部落地（feat-background-bash 分支），探针 P1-P6 全部实测关闭（无一回退路径触发），unified-hooks 已标记废弃；实施后经三路设计-代码一致性对抗审查（42 核对点），全部发现已修复闭环（registry 回落限定终态 + 跨进程 kill 拒绝 + pid 复用防御 + 文档 4 处补登记 + D18 落地 README），验收 S1-S10 场景实测记录齐全（S2/S9 为审查后补录）
+- 机制演变（2026-09-01 事故后）：孤儿收殓 reaper 已下沉 runtime——extension 侧全局扫描实现（`src/reaper.ts`）删除，现行链路见 [file-lock-unification-and-reaper-sink](file-lock-unification-and-reaper-sink.md) 与 §3.5 末「设计演变记录」；registry 契约 SSOT 迁至 `@xyz-agent/extension-protocol`
 - 关联：废弃 [unified-hooks](../../../extensions/universal/unified-hooks/)；接入 [pending-notifications](../../../extensions/universal/pending-notifications/)
 
 ## 1. 背景目标
@@ -304,6 +305,8 @@ pi 被强杀/崩溃 → 任意后续 session 启动时 reaper 扫 <dataDir>/base
   误杀由属主判定防,file-lock 不承担);
   pending 收尾统一由 session_start 对账兜底(接入细则第 4 条)
 ```
+
+> **设计演变记录（2026-09 收殓下沉 runtime）**：上文数据流末段（「pi 被强杀/崩溃 → ……reaper 扫……」）及 §2.3 术语 reaper、§3.3 D8、接入细则第 4 条的「reaper 先、对账后」执行顺序、S5/M5 中的 reaper，均指 **extension 侧全局扫描 reaper 的历史实现**，已于 2026-09-01 事故（pi factory 二调下 reaper 双跑触发 jiti × proper-lockfile 锁崩溃杀死 pi 进程）后随 [file-lock-unification-and-reaper-sink](file-lock-unification-and-reaper-sink.md) 设计落地而删除——收殓职责归位 pi 生命周期的所有者。现行链路：孤儿后台任务收殓由 `packages/runtime/src/services/session/background-task-reaper.ts` 双触发面执行——触发面 A `reapSessionBackgroundTasks(agentDir, sessionId)` 挂 session 销毁汇聚点（精确时点收殓，fire-and-forget 不阻塞销毁链），触发面 B `reapAllSessionsBackgroundTasks(agentDir)` 挂启动期全量兜底扫描（承接跨运行遗留孤儿，硬序在孤儿 pi 收殓完成后）；三分支判定（属主活跳过 / 孤儿补杀 / 终态收尾）自本文 reaper 逐段移植，registry 契约（目录布局 / 终态枚举 / ownerPiPid 语义）SSOT 迁至 `@xyz-agent/extension-protocol`（background-task.ts）。extension 侧保留 `reconcilePendingEntries` 对账（session 级操作，每 session_start 执行，不受下沉影响）；registry 写侧（spawn/exit 后台任务时）仍在本包，写锁与 runtime 收殓侧互斥同一 lockfile。
 
 **进程级任务表与 registry 的两层存储分工**（D8 的 per-session registry 目录与 D12/D17 进程级任务表的粘合规格）：
 

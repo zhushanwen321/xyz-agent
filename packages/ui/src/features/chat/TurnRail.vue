@@ -58,7 +58,7 @@
           <div v-if="turn.user" class="flex min-w-0 items-center gap-1.5">
             <User class="size-3 shrink-0 text-neutral-ico" />
             <span class="flex-1 truncate pr-6 text-[length:var(--text-xs)] leading-tight text-neutral-fg">
-              {{ summarizeTurnForRail(turn) || ' ' }}
+              {{ railMemoFor(turn).userSummary || ' ' }}
             </span>
           </div>
           <!-- agent 行：状态图标（failed=danger 常驻 / active=accent loader-spin / done=neutral-ico）+ agent 摘要。
@@ -74,13 +74,13 @@
               v-else
               data-testid="rail-agent-icon"
               class="size-3 shrink-0 transition-colors"
-              :class="agentIconClass(turn)"
+              :class="railMemoFor(turn).iconClass"
             />
             <span
               class="flex-1 truncate pr-6 text-[length:var(--text-xs)] leading-tight transition-colors"
-              :class="hasFailedTool(turn) ? 'text-neutral-mid hover:text-neutral-fg' : 'text-neutral-mid'"
+              :class="railMemoFor(turn).failed ? 'text-neutral-mid hover:text-neutral-fg' : 'text-neutral-mid'"
             >
-              {{ summarizeAssistantForRail(turn) || t('panel.message.railInProgress') }}
+              {{ railMemoFor(turn).agentSummary || t('panel.message.railInProgress') }}
             </span>
           </div>
           <!-- 折展 toggle 按钮：hover/focus 浮出（渐进披露），active 节点常驻可见（用户决策）。
@@ -108,8 +108,8 @@
 
 <script setup lang="ts">
 /**
- * script：纯 props/emit + 派生 class 计算，无副作用。
- * 用 computed 缓存 style 对象避免每次 render 重算字符串。
+ * script：纯 props/emit + 派生 class 计算，无副作用（模块级 WeakMap memo 除外——
+ * 只读缓存，不产生可观测副作用）。用 computed 缓存 style 对象避免每次 render 重算字符串。
  */
 import { computed } from 'vue'
 import { Bot, ChevronDown, ChevronUp, User } from '@lucide/vue'
@@ -219,5 +219,44 @@ const viewportStyle = computed(() => {
 function agentIconClass(turn: MessageTurn): string {
   if (hasFailedTool(turn)) return 'text-danger'
   return 'text-neutral-ico'
+}
+
+/**
+ * rail 节点摘要 per-turn memo（2026-08 streaming 性能优化）。
+ *
+ * 背景：模板每 render 对全部节点重跑 summarize*（summarizeAssistantForRail → stripMarkdown
+ * 15+ 次全文正则 + truncate 码点展开），streaming 期间每 token 重渲时历史节点被反复重算。
+ * WeakMap 按 turn 引用缓存是正确的：core toRenderItemsIncremental 对签名未变的历史 turn
+ * 逐引用复用（message-turns.ts 增量分支），且消息体不可变替换（ADR-0039）——
+ * 引用同 ⇒ 内容同 ⇒ 摘要同；内容变化必然走不可变替换产生新引用（miss 后重算一次）。
+ * turn 对象被 GC 后 WeakMap 条目自动回收，无泄漏。
+ * 模块级而非组件内：跨 TurnRail 实例共享（MessageStream 与 SubagentTab 内嵌 MessageStream
+ * 多实例并存，同一 turn 引用只算一次）。
+ */
+interface RailTurnMemo {
+  /** user 行摘要（summarizeTurnForRail，无 user turn 为空串——模板 `|| ' '` 兜底不变） */
+  userSummary: string
+  /** agent 行摘要（summarizeAssistantForRail，空串时模板走 i18n「进行中」占位） */
+  agentSummary: string
+  /** hasFailedTool 结果（agent 行文本 hover 升色依据） */
+  failed: boolean
+  /** agent 行 Bot 图标着色 class（agentIconClass 产出，与 failed 同帧同源） */
+  iconClass: string
+}
+const railMemo = new WeakMap<MessageTurn, RailTurnMemo>()
+
+/** 取 turn 的 rail 摘要 memo（首见计算并缓存，命中零重算）。模板每 render 调用。 */
+function railMemoFor(turn: MessageTurn): RailTurnMemo {
+  let memo = railMemo.get(turn)
+  if (memo === undefined) {
+    memo = {
+      userSummary: summarizeTurnForRail(turn),
+      agentSummary: summarizeAssistantForRail(turn),
+      failed: hasFailedTool(turn),
+      iconClass: agentIconClass(turn),
+    }
+    railMemo.set(turn, memo)
+  }
+  return memo
 }
 </script>

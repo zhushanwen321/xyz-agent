@@ -40,7 +40,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useBrowserFocusSync } from '@/composables/features/browser/useBrowserFocusSync'
 import { useCloseShortcut } from '@/composables/features/app/useCloseShortcut'
@@ -49,7 +49,7 @@ import PanelContainer from './PanelContainer.vue'
 import { CompanionBand } from '@xyz-agent/ui/extension-host'
 
 const { t } = useI18n()
-const { newSession, focusedSessionId } = useSidebarNew()
+const { newSession, focusedSessionId } = useSidebar()
 const { formatKbd } = usePlatformShortcut()
 const flow = useNewTaskFlow()
 // Browser drawer view swap：切 session 时通知主进程切换可见 WebContentsView（Wave 4 per-session 隔离）

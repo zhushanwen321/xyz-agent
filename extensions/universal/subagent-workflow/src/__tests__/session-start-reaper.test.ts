@@ -109,7 +109,10 @@ vi.mock("../tui/bg-notify-render.ts", () => ({
 // ── import 被测工厂 ──
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import subagentsExtension from "../index.ts";
+// WorktreeManager.scan 经 oncePerProcess 守卫（u-audit-fix），守卫 Map 是模块级状态：
+// beforeEach resetModules + 动态 import 每用例取新鲜模块实例，否则首用例消费 key 后
+// 「scan 抛错」用例收到的是重放的成功结果，抛错路径静默不测。
+let subagentsExtension: typeof import("../index.ts").default;
 
 // ── helpers ──
 
@@ -168,8 +171,10 @@ function createMockCtx(overrides: Record<string, unknown> = {}): Record<string, 
 // ── tests ──
 
 describe("session_start worktree reaper", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
     vi.clearAllMocks();
+    subagentsExtension = (await import("../index.ts")).default;
   });
 
   it("session_start 触发 WTM.scan 调用", async () => {

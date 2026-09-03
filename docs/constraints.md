@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 84 条（生成于 2026-08-29）。
+共 85 条（生成于 2026-09-03）。
 
 ## pi 关系（外部依赖边界）
 
@@ -122,11 +122,12 @@
 | C-proc-06 | push 发布 tag 后必须轮询验证 CI 产物直到验证脚本 exit 0（verify-ci-release.sh / prerelease-test.sh）；禁「应该没问题」 | global | [AGENTS.md](../AGENTS.md) | — |
 | C-proc-07 | ENV_WHITELIST_PREFIXES 只许定义在 packages/shared/src/constants.ts，main/runtime 只 import（pre-commit 检查） | packages/**、apps/** | [AGENTS.md](../AGENTS.md) | hook: `check_env_whitelist_sync.py` |
 | C-proc-09 | runtime 子进程 env 出站契约：进程创建点的子 env 必须经 buildOutboundChildEnv 构建（deny 清单剥 XYZ_AGENT_PACKAGED / XYZ_RUNTIME_TOKEN）；与 ENV_WHITELIST_PREFIXES 入站准入正交共存——入站白名单管「外部环境哪些准许进来」，出站契约管「自身变量哪些允许跟随 spawn 出去」（设计文档 §3.5 D2）；B2 main→runtime 产品内部边界走 composeChildEnvBase 基座、不出 deny 兜底，deny 由下游对外边界承担 | packages/shared/src/spawn-env-contract.ts、packages/runtime/src/infra/spawn-env.ts、packages/runtime/src/infra/pi/rpc-client.ts、packages/runtime/src/infra/pi/process-manager.ts、apps/electron/main/supervisor/safe-env.ts、packages/runtime/src/infra/shell-runner.ts、packages/runtime/src/infra/git-executor.ts、packages/runtime/src/services/terminal/terminal-service.ts、packages/runtime/src/infra/relay/relay-registry.ts、packages/runtime/src/services/plugin-service/plugin-host-process.ts | [env-propagation-boundary](design/env-propagation-boundary.md) · [AGENTS.md](../AGENTS.md) | hook: `check_spawn_env_boundary.py` |
+| C-proc-10 | 文档-代码符号零漂移：设计文档（docs/design/）反引号内引用的代码符号（蛇形常量 / getXxx() 函数调用形态）必须存在于映射源码模块的符号表中（导出名或模块级声明；env 名 XYZ_*/PI_* 与 errno 字符串族豁免）；符号删除/改名必须同批同步文档。映射登记 SSOT = scripts/check-doc-symbol-drift.mjs 的 DOC_MODULE_MAP，新增设计文档时在该表登记映射 | docs/design/**、apps/electron/main/update/**、scripts/check-doc-symbol-drift.mjs | [check-doc-symbol-drift.mjs](../scripts/check-doc-symbol-drift.mjs) | hook: `check-doc-symbol-drift.mjs` |
 | C-proc-08 | pi 语义依赖机器登记 + 探针 + 版本门禁：docs/pi-semantics.json（PS-xx 条目，probe/observe 分型）是唯一机器登记源，scripts/check-pi-semantics.mjs（pre-commit + CI）守 schema/探针存在性/四包版本一致（pi-coding-agent ≡ pi-ai ≡ pi-agent-core ≡ runtime pin）；pi 升级 PR 必查两项——pi-ai exports 是否移除 ./compat、changelog 是否提及 ModelManager 迁移（PS-15 时间炸弹）；探针族红 = 语义漂移，先复核锚点再更新 verifiedWith | docs/pi-semantics.json、packages/runtime/src/infra/pi/**、package.json、packages/runtime/package.json | [pi-boundary-reliability](design/pi-boundary-reliability.md#d6漂移守卫体系pi-语义依赖的机器登记--探针--版本门禁选定) | hook: `check-pi-semantics.mjs` |
 
 ## subagent-workflow（单写者不变量）
 
 | ID | 约束（摘要） | scope | 权威源 | 执行 |
 |---|---|---|---|---|
-| C-sw-01 | 每 session JSONL 单写进程：子进程写独立 subagent sessionDir，主 session 仅主进程单线程写；pi _persist 首写 wx 无 O_APPEND、compaction 截断重写——引入第二写进程即破坏 appendEntry 原子性 | extensions/universal/subagent-workflow/** | [session-runner.ts](../extensions/universal/subagent-workflow/src/execution/session-runner.ts) | — |
+| C-sw-01 | 每 session JSONL 单写进程：子进程写独立 subagent sessionDir，主 session 仅主进程单线程写；pi _persist 首写 wx 无 O_APPEND、compaction 截断重写——引入第二写进程即破坏 appendEntry 原子性 | extensions/universal/subagent-workflow/** | [session-runner.ts](../packages/subagent-core/src/execution/session-runner.ts) | — |
 

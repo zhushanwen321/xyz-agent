@@ -1,7 +1,7 @@
 // engine-awareness 单测（[engine-awareness U3]）
 //
 // 覆盖（设计 docs/design/subagent-engine-awareness-injection.md 验收挂钩 D1/D1b/D2/D3/D5）：
-// 1. normalizeEngineId：缺省/空白归一到 'pi'（单一权威源 registry.ts，经本模块再导出）
+// 1. normalizeEngineId：缺省/空白归一到 'pi'（单一权威源 registry.ts，直连导入）
 // 2. buildEngineChangeNotice：§3.1 文案骨架、pi/非 pi 指路段分界、不含任何模型清单（D4）
 // 3. runEngineAwarenessTurn 编排：
 //    - 变更触发 apply + 通知（D2 顺序硬约束：提交缓存先于通知先于记账）
@@ -18,11 +18,11 @@ import { describe, expect, it } from "vitest";
 import {
 	buildEngineChangeNotice,
 	ENGINE_CHANGE_CUSTOM_TYPE,
-	normalizeEngineId,
 	runEngineAwarenessTurn,
 	type EngineAwarenessDeps,
 	type EngineAwarenessOutcome,
 } from "../engine-awareness";
+import { normalizeEngineId } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
 import type { GlobalConfigReadResult } from "@zhushanwen/subagent-core/execution/config.ts";
 
 // ── 测试数据 ────────────────────────────────────────────

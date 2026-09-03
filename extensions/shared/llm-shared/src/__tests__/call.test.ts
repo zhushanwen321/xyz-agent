@@ -47,42 +47,42 @@ describe("callLLM", () => {
 		expect(optionsArg).toMatchObject({ apiKey: "k", sessionId: "sess-1" });
 	});
 
-	it("TC12 auth-fail → {ok:false, recoverable:true}，不调 completeSimple（narrow 不取 apiKey）", async () => {
+	it("TC12 auth-fail → {ok:false, error}，不调 completeSimple（narrow 不取 apiKey）", async () => {
 		const ctx = makeCtx({ ok: false, error: "no key" });
 
 		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
 
-		expect(result).toEqual({ ok: false, error: "no key", recoverable: true });
+		expect(result).toEqual({ ok: false, error: "no key" });
 		expect(mockComplete).not.toHaveBeenCalled();
 	});
 
-	it("TC13 completeSimple throw → {ok:false, recoverable:true, error 含错误信息}", async () => {
+	it("TC13 completeSimple throw → {ok:false, error 含错误信息}", async () => {
 		const ctx = makeCtx({ ok: true, apiKey: "k" });
 		mockComplete.mockRejectedValue(new Error("network timeout"));
 
 		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
 
 		expect(result.ok).toBe(false);
-		expect(result).toMatchObject({ recoverable: true, error: expect.stringContaining("network") });
+		expect(result).toMatchObject({ error: expect.stringContaining("network") });
 	});
 
-	it("TC1 stopReason=error → {ok:false, error, recoverable:true, stopReason:'error'}（不再 ok:true 返回错误文本）", async () => {
+	it("TC1 stopReason=error → {ok:false, error, stopReason:'error'}（不再 ok:true 返回错误文本）", async () => {
 		const ctx = makeCtx({ ok: true, apiKey: "k" });
 		// completeSimple 对错误也 resolve（带 stopReason），content 是错误文本
 		mockComplete.mockResolvedValue({ stopReason: "error", content: [{ type: "text", text: "API error: 429 rate limited" }] });
 
 		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
 
-		expect(result).toEqual({ ok: false, error: "API error: 429 rate limited", recoverable: true, stopReason: "error" });
+		expect(result).toEqual({ ok: false, error: "API error: 429 rate limited", stopReason: "error" });
 	});
 
-	it("TC2 stopReason=aborted → {ok:false, error, recoverable:true, stopReason:'aborted'}", async () => {
+	it("TC2 stopReason=aborted → {ok:false, error, stopReason:'aborted'}", async () => {
 		const ctx = makeCtx({ ok: true, apiKey: "k" });
 		mockComplete.mockResolvedValue({ stopReason: "aborted", content: [{ type: "text", text: "user aborted" }] });
 
 		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
 
-		expect(result).toEqual({ ok: false, error: "user aborted", recoverable: true, stopReason: "aborted" });
+		expect(result).toEqual({ ok: false, error: "user aborted", stopReason: "aborted" });
 	});
 
 	it("TC3 stopReason=stop（正常）→ 不受 stopReason 检查影响，ok:true 提取文本", async () => {
@@ -100,7 +100,7 @@ describe("callLLM", () => {
 
 		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
 
-		expect(result).toEqual({ ok: false, error: "unknown error", recoverable: true, stopReason: "error" });
+		expect(result).toEqual({ ok: false, error: "unknown error", stopReason: "error" });
 	});
 
 	it("TC13 catch 路径不设 stopReason（错误原因不可知）", async () => {
@@ -176,13 +176,13 @@ describe("callLLM", () => {
 	});
 
 
-	it("B5: getApiKeyAndHeaders reject（抛异常）→ {ok:false, recoverable:true}（归一入 catch，不向上抛）", async () => {
+	it("B5: getApiKeyAndHeaders reject（抛异常）→ {ok:false, error}（归一入 catch，不向上抛）", async () => {
 		const getApiKeyAndHeaders = vi.fn().mockRejectedValueOnce(new Error("registry exploded"));
 		const ctx = { modelRegistry: { getApiKeyAndHeaders } } as unknown as ExtensionContext;
 
 		const result = await callLLM(ctx, { model: makeModel(), systemPrompt: "s", messages: [] });
 
-		expect(result).toEqual({ ok: false, error: "registry exploded", recoverable: true });
+		expect(result).toEqual({ ok: false, error: "registry exploded" });
 		// 凭证阶段就 reject，completeSimple 未被调用
 		expect(mockComplete).not.toHaveBeenCalled();
 	});

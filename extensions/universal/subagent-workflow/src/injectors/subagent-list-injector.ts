@@ -1,5 +1,5 @@
 /**
- * Subagent List Injector（迁移自 unified-hooks + P3/P4 改造）
+ * Subagent List Injector（迁移自 unified-hooks + P3/P4 改造；C5① 渲染改接 core）
  *
  * 发现所有可用 subagent（builtin + user + project 各源）并通过 before_agent_start
  * 每 turn 注入 `<available_subagents>` 段（name + description），让模型能选对 agent
@@ -7,15 +7,23 @@
  *
  * 改造点：
  * - P4：发现路径由自实现扫 4 目录改为同包 ADR-031 统一发现 discoverResources
- *   （覆盖 7 源：user-pi/user-agents/npm/npm-dev/project-pi/project-agents + manifest
- *   模式 + 优先级合并）。discoverResources 只返回 DiscoveredResource（path/source/
+ *   （P4 时点覆盖 7 源；C2 扩源后为统一发现全源 9 值 ResourceSource，含
+ *   user-extension-paths/project-pi-tmp/project-host——序见 resource-discovery.ts
+ *   模块头注 + 优先级合并）。discoverResources 只返回 DiscoveredResource（path/source/
  *   available），不含 name/description——保留 parseAgentFrontmatter 解析每个 .md 的
  *   frontmatter 提取 name+description。
- * - P3：formatAgentList 开头补正向触发引导（何时该 delegate），保留原有「ONLY use
- *   agent names from this list」名字约束。
+ * - P3：注入段引导语含正向触发引导（何时该 delegate）+ 名字约束（文案见
+ *   SUBAGENT_LIST_GUIDE）。
+ * - C5①（convergence D-3）：formatAgentList/sortByCodepoint 下沉 core，本文件改调
+ *   core barrel（渲染骨架与条目模板逐字节同 pi 旧本地实现——CA2 快照验收前提）；
+ *   guide 文案是 pi 宿主注入（core 不内嵌平台文案）。
+ * - U11（sink 设计）：装配循环（发现→解析→去重→排序 + warn/error 口径）整体改
+ *   消费 core discoverAgents（execution/agents-assembly，U2/A6）——壳侧收缩为
+ *   「宿主注入根现取 + 委托」，语义等值口径见 agents-assembly.ts 头注（⛔1 探针
+ *   对照注入 XML diff 为空验收）。
  *
- * 归位原因：injector 是 subagent-workflow 的内聚功能（让 LLM 知道有哪些 agent 可用），
- * 与同包 resource-discovery 同包后可直接 import，消除跨包依赖。
+ * 归位原因：injector 是 subagent-workflow 的内聚功能壳——事件接线与数据获取留
+ * 在插件层（before_agent_start / modelRegistry），解析/渲染算法消费 core。
  */
 
 
@@ -31,17 +39,34 @@ import type {
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { getHostServices } from "@zhushanwen/subagent-core/core/host-services.ts";
-
+// U11（sink 设计）：agent 装配循环单源 core discoverAgents（U2/A6 装配函数，
+// 深路径消费）；渲染（formatAgentList）与 workspace 根推导（findWorkspaceRoot）
+// 走 barrel，parseResourceMeta 仍服务 parseAgentFrontmatter（严格注入投影语义锚）。
+// 上方 getHostServices 深路径刻意保留：core 服务定位器（core 内模块统一经它取用
+// 宿主端口），barrel 刻意不导出（D5 exports 面即 semver 契约、逐名列出，未列名
+// 的内部件不经 barrel——见 subagent-core src/index.ts 头注），壳侧深路径消费经包
+// `./*` -> src 通配豁免。
 import {
-	discoverResources,
+	type AgentEntry,
 	findWorkspaceRoot,
-	getCachedFileContent,
-	getCachedParsed,
-} from "@zhushanwen/subagent-core/shared/resource-discovery.ts";
-import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
-import { escapeXml, renderXmlSection } from "@zhushanwen/subagent-core/shared/xml-injection.ts";
+	formatAgentList,
+	parseResourceMeta,
+} from "@zhushanwen/subagent-core";
+import { discoverAgents } from "@zhushanwen/subagent-core/execution/agents-assembly.ts";
 
 const logger = getLogger("injector");
+
+/**
+ * pi 版注入引导文案（C5① guide 参数化——core 渲染函数不内嵌平台文案，宿主注入）。
+ *
+ * 2026-08 C5 重写依据（pi 现参数面，src/interface/subagent-tool-schema.ts）：
+ * 旧句「pass systemPrompt alongside the agent name to create a dynamic agent」
+ * 指向的 systemPrompt 参数已不在 subagent tool schema——现 agent 参数 = .md 绝对
+ * 路径（<location>），缺省落 general-purpose（继承主 agent 模型与项目上下文），
+ * 动态指引经 task 文本 / appendSystemPrompt 参数承载。
+ */
+export const SUBAGENT_LIST_GUIDE =
+	"The following subagents are available. PRIORITY: when a task involves reading 3+ files, writing 100+ lines, parallel research, or specialized review, delegate to a matching subagent FIRST instead of doing it yourself — this keeps your context focused on orchestration. Do NOT call list to discover available subagents; use list only for running state. When using the subagent tool, ONLY use agents from this list — pass the <location> path (absolute .md path) as the agent param. If no agent matches your task, omit agent (a general-purpose agent is used) and put all role-specific instructions in the task text.";
 
 /**
  * Session 级 agent 列表缓存（per-process = per-session）。
@@ -64,17 +89,8 @@ let agentInjectionCache: string | null = null;
 /** agentCache 唯一写点：数据与渲染缓存同步更新（null 清空两者）。 */
 function setAgentCache(entries: AgentEntry[] | null): void {
 	agentCache = entries;
-	agentInjectionCache = entries !== null ? formatAgentList(entries) : null;
-}
-
-/** 从 .md frontmatter 提取的最小 agent 信息（m5：+ when/examples 路由样本；S1：+ path） */
-export interface AgentEntry {
-	name: string;
-	description: string;
-	when?: string;
-	examples?: Array<{ match: string; action: string; positive: boolean }>;
-	/** agentRef：agent .md 文件的绝对路径（注入段 <location>，模型直接引用） */
-	path: string;
+	agentInjectionCache =
+		entries !== null ? formatAgentList(entries, { guide: SUBAGENT_LIST_GUIDE }) : null;
 }
 
 /**
@@ -97,103 +113,29 @@ export function parseAgentFrontmatter(content: string): AgentEntry | null {
 }
 
 /**
- * 用统一资源发现（ADR-031）发现所有可用 agent。
+ * 发现所有可用 agent（注入清单装配入口）。
  *
- * discoverResources 返回按文件名 stem 去重、优先级合并后的 DiscoveredResource[]
- * （project > user > builtin，返回顺序低→高优先级——Map 后写覆盖依赖此序，不可在
- * 发现层重排）。此处逐个解析 frontmatter 提取 name+description（经 getCachedParsed
- * mtime 级缓存），再按 agent name 去重（高优先级靠后，Map.set 后者覆盖前者，故最终
- * 保留最高优先级同名 agent）。
+ * U11（sink 设计）：原手写装配循环（discoverResources 逐个 parseAgentFrontmatter
+ * 解析 → agent name 去重（高优先级靠后 Map 后写胜）→ name 码点序排序 + warn/error
+ * 口径）整体改消费 core `discoverAgents`（U2/A6 装配函数）——解析/去重/排序/warn
+ * 口径单源 core，第三宿主免复刻（G3/S5）。等值口径（IF1 严格层可见性、warn 仅限
+ * 「有 frontmatter 但解析失败」、KV-cache 码点序契约：注入段进每 turn system
+ * prompt，顺序与 readdir 枚举序解耦，目录内容不变时任意重建渲染逐字节一致）登记见
+ * core execution/agents-assembly.ts 头注。
  *
- * 输出按 name 码点序排序（KV-cache 契约）：注入段进每 turn system prompt，顺序必须
- * 与文件系统枚举序（readdir 无契约）解耦——目录内容不变时，session_start / fallback /
- * resume 任意重建的渲染结果逐字节一致；仅条目增减时文本才变化。
+ * 壳侧保留职责：签名（workspaceRoot 单参）与宿主注入根现取（pi 壳 discoveryRoots
+ * 每次现取 getAgentDir，实例隔离；agentDir 形参已删——其唯一用途就是喂 ScanConfig，
+ * u0-data-discovery 偏差 #7）。
  *
  * 永不抛错——发现本身 fail-safe，单个文件读失败仅记日志。
  */
 export async function discoverAllAgents(
 	workspaceRoot: string,
 ): Promise<AgentEntry[]> {
-	const resources = await discoverResources({
-		kind: "agents",
+	return discoverAgents(
 		workspaceRoot,
-		// 宿主注入根现取（pi 壳 discoveryRoots 每次现取 getAgentDir，实例隔离）；
-		// agentDir 形参已删——其唯一用途就是喂 ScanConfig（u0-data-discovery 偏差 #7）
-		hostRoots: getHostServices().discoveryRoots?.()?.agents ?? [],
-	});
-
-	const agentMap = new Map<string, AgentEntry>();
-	for (const resource of resources) {
-		if (!resource.available) continue;
-		try {
-			const agent = getCachedParsed(resource.path, parseAgentFrontmatter);
-			if (agent) {
-				agentMap.set(agent.name, { ...agent, path: resource.path });
-			} else if (startsWithFrontmatter(resource.path)) {
-				// m5（评审 M3/F2 + minor-5）：仅「有 frontmatter 但解析失败」才 warn
-				// （缺 name/description/examples 单条非法致整体 reject）——README 等
-				// 无 frontmatter 的 .md 不刷 warn（每 turn 扫描）。
-				logger.warn(
-					`[subagent-list-injector] ${resource.path}: agent frontmatter 解析失败（IF1 校验不通过）——agent 未注入`,
-				);
-			}
-		} catch (err) {
-			// 单个文件读失败不阻断整条 agent 列表注入
-			logger.error(
-				`[subagent-list-injector] skip unreadable agent file ${resource.path}`,
-				{ reason: err instanceof Error ? err.message : String(err) },
-			);
-		}
-	}
-	return sortByCodepoint([...agentMap.values()], (a) => a.name);
-}
-
-/** 码点序排序（显式契约，禁 localeCompare——宿主 locale 差异会破坏跨环境字节一致）。 */
-function sortByCodepoint<T>(items: T[], key: (item: T) => string): T[] {
-	return items.sort((a, b) => {
-		const ka = key(a);
-		const kb = key(b);
-		return ka < kb ? -1 : ka > kb ? 1 : 0;
-	});
-}
-
-/** 内容以 frontmatter 分隔符开头（解析失败才值得 warn 的判据）。 */
-function startsWithFrontmatter(filePath: string): boolean {
-	return (getCachedFileContent(filePath) ?? "").trimStart().startsWith("---");
-}
-
-/**
- * 将 agent 列表格式化为 XML 注入段。
- *
- * P3：引导语开头补正向触发条件（何时该 delegate），再保留原「ONLY use agent names
- * from this list」名字约束。空列表返回空串（不注入）。
- */
-export function formatAgentList(agents: AgentEntry[]): string {
-	if (agents.length === 0) return "";
-
-	const items = agents.map((agent) => {
-		let block = `  <agent><name>${escapeXml(agent.name)}</name><description>${escapeXml(agent.description)}</description>`;
-		// m5：路由样本（when + examples 正反原样渲染——negative 的 action 由作者写
-		// 「不调用（原因）」，渲染器不硬编码；全部内容 escapeXml 防 XML 注入段破坏）
-		if (agent.when) {
-			block += `<when>${escapeXml(agent.when)}</when>`;
-		}
-		if (agent.examples && agent.examples.length > 0) {
-			// 两极性原样渲染——negative 的 action 由作者写「不调用（原因）」，
-			// 渲染器不硬编码后缀（exec-review major-1：曾追加「（不调用）」致双后缀）
-			const exampleLines = agent.examples.map(
-				(e) => `      - "${escapeXml(e.match)}" → ${escapeXml(e.action)}`,
-			);
-			block += `\n    <examples>\n${exampleLines.join("\n")}\n    </examples>`;
-		}
-		block += `<location>${escapeXml(agent.path)}</location></agent>`;
-		return block;
-	});
-	return renderXmlSection({
-		tag: "available_subagents",
-		guide: "The following subagents are available. PRIORITY: when a task involves reading 3+ files, writing 100+ lines, parallel research, or specialized review, delegate to a matching subagent FIRST instead of doing it yourself — this keeps your context focused on orchestration. Do NOT call list to discover available subagents; use list only for running state. When using the subagent tool, ONLY use agent names from this list. If no agent matches your task, pass systemPrompt alongside the agent name to create a dynamic agent.",
-		items,
-	});
+		getHostServices().discoveryRoots?.()?.agents ?? [],
+	);
 }
 
 /**

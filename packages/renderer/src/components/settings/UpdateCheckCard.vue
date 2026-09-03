@@ -142,6 +142,60 @@
       </div>
     </div>
 
+    <!-- 手动升级通道（update-network-resilience D9）：断网/代理故障时的人工逃生通道。
+         默认展开（路径属常驻引导），可折叠。目录路径与 main 侧 MANUAL_ASSET_DIR 同源
+         （<dataDir>/update/manual），「打开目录」经 main 侧 update:openManualDir
+         （幂等建目录 + shell.openPath，见 impl-plan u7b）。 -->
+    <Collapsible
+      v-model:open="manualChannelOpen"
+      class="border-t border-border"
+      data-testid="settings-update-manual-channel"
+    >
+      <div class="flex items-center px-4 py-2">
+        <CollapsibleTrigger as-child>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-auto gap-1.5 px-2 text-[12px] text-muted hover:text-fg"
+            data-testid="settings-update-manual-toggle"
+          >
+            <ChevronDown
+              class="size-3.5 shrink-0 transition-transform duration-150"
+              :class="manualChannelOpen ? 'rotate-180' : ''"
+            />
+            {{ t('settings.system.manualChannelTitle') }}
+          </Button>
+        </CollapsibleTrigger>
+      </div>
+      <CollapsibleContent class="px-4 pb-3">
+        <p class="text-[11px] leading-relaxed text-neutral-mid" data-testid="settings-update-manual-hint">
+          {{ t('settings.system.manualChannelHint') }}
+        </p>
+        <!-- D3 已知边界：sha256 基准只认 app 已知 release，必须向用户言明限定 -->
+        <p class="mt-1 text-[11px] text-muted" data-testid="settings-update-manual-restriction">
+          {{ t('settings.system.manualChannelRestriction') }}
+        </p>
+        <div class="mt-2 flex min-w-0 items-center gap-2">
+          <span class="shrink-0 text-[11px] text-fg">{{ t('settings.system.manualChannelDirLabel') }}</span>
+          <code
+            class="min-w-0 truncate rounded-sm border border-border-strong bg-bg-input px-2 py-0.5 font-mono text-[11px] text-fg"
+            data-testid="settings-update-manual-dir"
+          >{{ manualDir ?? t('settings.system.manualChannelDirUnavailable') }}</code>
+          <!-- D9 u7b：main 侧幂等建目录后打开，路径不可用时按钮仍可用（目录由 main 创建） -->
+          <Button
+            variant="secondary"
+            size="sm"
+            class="h-6 shrink-0 gap-1 px-2 text-[11px]"
+            data-testid="settings-update-manual-open-dir"
+            @click="onOpenManualDir"
+          >
+            <FolderOpen class="size-3.5" />
+            {{ t('settings.system.manualChannelOpenDir') }}
+          </Button>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+
     <!-- 确认重启安装 Dialog -->
     <Dialog :open="showConfirmDialog" @update:open="showConfirmDialog = $event">
       <DialogContent class="sm:max-w-[400px]">
@@ -165,9 +219,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RefreshCw, Download, CheckCircle2, AlertCircle, Loader2 } from '@lucide/vue'
+import { RefreshCw, Download, CheckCircle2, AlertCircle, Loader2, ChevronDown, FolderOpen } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -176,13 +230,40 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { useAppUpdate } from '@/composables/features/settings/useAppUpdate'
+import { useToast } from '@/composables/useToast'
+import { getDataDir, openUpdateManualDir } from '@/lib/ipc'
 
 const { t } = useI18n()
 const { state, checkForUpdate, performDownload, performInstall, openFallbackUrl } = useAppUpdate()
+const { error: toastError } = useToast()
 
 /** 确认重启安装 Dialog 开关 */
 const showConfirmDialog = ref(false)
+
+/** 手动通道折叠区开关（D9：默认展开——路径属常驻引导，用户可收起） */
+const manualChannelOpen = ref(true)
+
+/** 手动升级目录（~ 缩写展示形态；getDataDir 返回失败/无 IPC 环境为 null → 显示占位） */
+const manualDir = ref<string | null>(null)
+
+onMounted(async () => {
+  try {
+    const dir = await getDataDir()
+    // 与 main 侧 MANUAL_ASSET_DIR = path.join(getDataDir(), 'update', 'manual') 同源
+    // （update/constants.ts + update/manual-claim.ts）。getDataDir 为 ~ 缩写展示形态
+    // （bridge-handlers get-data-dir），仅作展示用，不做文件系统操作。
+    if (dir) {
+      const sep = dir.includes('\\') ? '\\' : '/'
+      manualDir.value = `${dir}${sep}update${sep}manual`
+    }
+  } catch (e) {
+    // 展示态降级：IPC reject 时 manualDir 保持 null 走占位态（打开目录不依赖路径展示，
+    // main 侧幂等建目录），onMounted async 不被 await，不 catch 会产生 unhandledRejection
+    console.warn('[UpdateCheckCard] getDataDir failed:', e)
+  }
+})
 
 /** idle：强制检测新版 */
 function onCheck(): void {
@@ -218,5 +299,13 @@ function onRetry(): void {
 /** unsupported：打开备用下载页 */
 function onOpenFallbackUrl(): void {
   void openFallbackUrl()
+}
+
+/** D9 u7b：打开手动产物目录（main 幂等建目录 + shell.openPath）。
+ *  打开失败 toast 提示（错误信息含 main 侧 openPath 返回的具体原因），不打断页面。 */
+function onOpenManualDir(): void {
+  openUpdateManualDir().catch((err: unknown) => {
+    toastError(err instanceof Error ? err.message : String(err))
+  })
 }
 </script>

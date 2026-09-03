@@ -1,5 +1,17 @@
 # @xyz-agent/extension-protocol
 
+## 0.8.0
+
+### Minor Changes
+
+- 7b33e6f00: **Supplemental changesets for five packages that changed src without a declaration (4N.1 scan finding)**
+
+  - `@xyz-agent/extension-protocol`: add the `background-task` protocol module (task registration/reaping contract types consumed by the runtime background-task reaper sunk from base-tool-enhance), plus 183 lines of contract tests and index re-exports.
+  - `@zhushanwen/pi-msg-id-mapper`: comment/test text sync with implementation (stale pi version comment fix, dead test mock dropped).
+  - `@zhushanwen/pi-smart-context`: minor text sync in pure.ts.
+  - `@zhushanwen/pi-system-prompt`: doc-comment sync clarifying the deliberate divergence from pi 0.84.4's `loadContextFileFromDir` (global-dir-only candidate list, no `AGENTS.override.md`); no behavior change.
+  - `@zhushanwen/pi-unified-hooks` (deprecated package): text sync with implementation in the deprecated notice era.
+
 ## 0.7.0
 
 ### Minor Changes

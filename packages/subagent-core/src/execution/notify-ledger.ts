@@ -21,10 +21,16 @@
 //      D5）；同一边沿的多条 pending 合并为一条注入
 //   ③ ack：回执判定成功（主 session 出现 notifyId 匹配的 subagent-bg-notify
 //      custom_message entry）后 appendEntry("subagent-bg-notify-ack")
-//   ④ replay：重启恢复扫描 ledger/ack 两列 entry 差集重放；重放按 notifyId 幂等去重
+//   ④ replay：重启恢复扫描 ledger/ack/abandoned entry 差集重放；重放按 notifyId 幂等去重
 //    （details 携带 notifyId，重复条目可识别）
 //
-// 通道分工（D4）：ledger/ack 用 plain appendEntry（type=custom 不进 LLM 上下文——
+// 止损上半场（T4③/PS-6）：④只保证「送达保证」下半场，回执确认不可达时（如送达
+// entry 被 compaction 清除）attempts 无上限 = 同一条通知每 120s 重复注入并
+// triggerTurn 无限唤醒 LLM。收敛：重投达 NOTIFY_REDELIVERY_MAX_ATTEMPTS 仍无回执 →
+// 写 abandoned 终态 entry 放弃（warn 含 subagent 标识与 subagents action:"list"
+// 手动核对指引），放弃号跨重启不复活（恢复扫描视同已销账）。
+//
+// 通道分工（D4）：ledger/ack/abandoned 用 plain appendEntry（type=custom 不进 LLM 上下文——
 // session-manager sessionEntryToContextMessages 对 custom 返回 []）；送达消息用
 // pi.sendMessage({triggerTurn:true})（custom_message 进上下文）。两通道不得混用。
 //
@@ -49,6 +55,11 @@ const logger = getLogger("subagents");
 export const NOTIFY_LEDGER_CUSTOM_TYPE = "subagent-bg-notify-ledger";
 /** 销账 entry customType（plain custom entry，不进 LLM 上下文）。 */
 export const NOTIFY_ACK_CUSTOM_TYPE = "subagent-bg-notify-ack";
+/**
+ * [T4③/PS-6] 放弃终态 entry customType（plain custom entry，不进 LLM 上下文）。
+ * 与 ack 同形同域：恢复/compaction 扫描把它视同已销账——放弃条目跨重启不复活。
+ */
+export const NOTIFY_ABANDONED_CUSTOM_TYPE = "subagent-bg-notify-abandoned";
 
 /**
  * 送达消息的 customType。notifier.ts / bg-notify-render / index.ts（messageRenderer
@@ -64,6 +75,14 @@ export const NOTIFY_CUSTOM_TYPE = "subagent-bg-notify";
  * at-least-once + notifyId 幂等兜底）。
  */
 export const NOTIFY_WATCHDOG_MS = 120_000;
+
+/**
+ * [T4③/PS-6] 单条通知投递尝试上限（attempts 字段含首次投递）：看门狗把 sent 超期
+ * 条目转回 pending 前，attempts 已达本上限 → 不再重投，转放弃终态（abandoned entry
+ * + warn 恢复指引）。被否语义：「重投无限但幂等」——幂等只防重复入账，不防重复
+ * 投递唤醒 LLM（设计 docs/design/subagent-core-unbounded-wait-audit.md §7.2 T4③）。
+ */
+export const NOTIFY_REDELIVERY_MAX_ATTEMPTS = 5;
 
 /**
  * U4 投递计数分桶（设计 §5 U4：分桶口径与 §2.2 三条丢失路径一一对应，回归时定位到
@@ -103,16 +122,22 @@ export interface NotifyAckEntryData {
   notifyId: string;
 }
 
+/** [T4③/PS-6] abandoned entry 的 data schema（v1，与 ack 同形——终态标记只需身份键）。 */
+export interface NotifyAbandonedEntryData {
+  v: 1;
+  notifyId: string;
+}
+
 /** ledger 依赖的宿主最小接口（index.ts session_start 装配；解耦便于测试）。 */
 export interface NotifyLedgerHost {
-  /** 写 plain custom entry（ledger/ack 通道；pi.appendEntry）。 */
+  /** 写 plain custom entry（ledger/ack/abandoned 通道；pi.appendEntry）。 */
   appendLedgerEntry(customType: string, data: unknown): void;
   /** 读当前 session 全部 entry（回执扫描 + 恢复扫描；ctx.sessionManager.getEntries()）。 */
   readSessionEntries(): readonly unknown[];
   /** 主 agent 是否空闲（发送前二次复查用；ctx.isIdle()）。 */
   isIdle(): boolean;
   /** 订阅 settled 边沿（pi.on("agent_settled")——无退订语义：createExtensionAPI.on
-   *  只 push 进 extension.handlers、无 off（pi 0.84.1 loader.js:209-214），由 ledger
+   *  只 push 进 extension.handlers、无 off（pi 0.84.4 loader.js:209-214），由 ledger
    *  disposed 标志包装）。注意与 ctx.events.on(channel) 消歧：后者走 eventBus、有
    *  trackEventBusSubscription 退订通路（loader.js:174、:338），语义不同。 */
   onAgentSettled(handler: () => void): void;
@@ -128,7 +153,7 @@ interface NotifyLedgerItem {
   recordedAt: number;
   /** 最近一次投递受理时刻；undefined = 尚未投递（pending，等下一边沿）。 */
   sentAt: number | undefined;
-  /** 投递尝试次数（看门狗重投计数，诊断用）。 */
+  /** 投递尝试次数（含首次；达 NOTIFY_REDELIVERY_MAX_ATTEMPTS 后超期即放弃，诊断用）。 */
   attempts: number;
 }
 
@@ -141,16 +166,24 @@ export interface NotifyLedger {
    *  同批 pending 合并单条送达（triggerTurn 直达）。 */
   attemptDeliver(): void;
   /** ③ 回执销账：扫 session entries，出现 notifyId 匹配的送达 custom_message entry
-   *  → appendEntry(ack) + 摘账（内存态不承担销账职责，权威 = 两列 entry 差集）。 */
+   *  → appendEntry(ack) + 摘账（内存态不承担销账职责，权威 = 多列 entry 差集）。 */
   checkReceipts(): void;
-  /** ④ 重启恢复：扫 ledger/ack 两列 entry 差集，未销账号重新入账并投递（已销账零重发）。
+  /** ④ 重启恢复：扫 ledger/ack/abandoned entry 差集，未销账且未放弃号重新入账并投递
+   *  （已销账零重发；已放弃号不复活——[T4③/PS-6] 止损终态跨重启生效）。
    *  @returns 重放条数。 */
   recoverFromSession(): number;
-  /** compaction 降级（P-B4 未验证）：检测 ledger/ack entry 被清除 → 按内存态补写。
+  /** compaction 降级（P-B4 未验证）：检测 ledger/ack/abandoned entry 被清除 → 按内存态补写。
    *  @returns 补写条数。 */
   compactionCheck(): number;
   /** 诊断/测试：pending（已记账未投递）条数。 */
   pendingCount(): number;
+  /**
+   * [T4④/PS-5] pending 只读快照（notifyId/content/record，副本非活引用）：
+   * 供 SubagentService.dispose 在「shutdown flush 被 isIdle 门拦」时把未投递
+   * pending 复写落盘（同一 ledger entry 通道，notifyId 幂等）供重启 replay。
+   * 消费侧配合面仅此只读方法——不改变 attemptDeliver/abandon 既有语义。
+   */
+  pendingEntries(): ReadonlyArray<{ notifyId: string; content: string; record: object }>;
   /** 诊断/测试：已投递待回执条数。 */
   waitingReceiptCount(): number;
   /** U4 诊断：三桶计数快照（副本；增量同时经 extensionLogger 通道落日志）。 */
@@ -166,13 +199,15 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** 扫 ledger/ack 两列 plain custom entry（恢复 / compaction 检查共用）。 */
+/** 扫 ledger/ack/abandoned 三列 plain custom entry（恢复 / compaction 检查共用）。 */
 function scanSessionLedgerEntries(entries: readonly unknown[]): {
   ledger: Map<string, NotifyLedgerEntryData>;
   acked: Set<string>;
+  abandoned: Set<string>;
 } {
   const ledger = new Map<string, NotifyLedgerEntryData>();
   const acked = new Set<string>();
+  const abandoned = new Set<string>();
   for (const entry of entries) {
     if (!isPlainObject(entry) || entry["type"] !== "custom") continue;
     const customType = entry["customType"];
@@ -189,9 +224,11 @@ function scanSessionLedgerEntries(entries: readonly unknown[]): {
       }
     } else if (customType === NOTIFY_ACK_CUSTOM_TYPE) {
       acked.add(notifyId);
+    } else if (customType === NOTIFY_ABANDONED_CUSTOM_TYPE) {
+      abandoned.add(notifyId);
     }
   }
-  return { ledger, acked };
+  return { ledger, acked, abandoned };
 }
 
 /** 收集 wanted 集合中已送达（custom_message entry 出现）的 notifyId。
@@ -232,6 +269,11 @@ export function createNotifyLedger(
   const items = new Map<string, NotifyLedgerItem>();
   /** 已销账内存索引（notifyId 幂等判重 + compaction 补写源；权威 = ack entry 列）。 */
   const ackedIds = new Set<string>();
+  /**
+   * [T4③/PS-6] 已放弃终态内存索引（幂等判重 + compaction 补写源；权威 = abandoned
+   * entry 列）。与 ackedIds 同型：放弃是终态，同 notifyId 绝不再入账/重投/复活。
+   */
+  const abandonedIds = new Set<string>();
   /** U4 投递计数三桶（诊断快照源；增量经 emitBucketLog 落 extensionLogger）。 */
   const buckets: NotifyDeliveryBucketMetrics = {
     settleRejected: 0,
@@ -244,7 +286,8 @@ export function createNotifyLedger(
   const api: NotifyLedger = {
     record(notifyId, content, record): boolean {
       if (disposed) return false;
-      if (items.has(notifyId) || ackedIds.has(notifyId)) return false;
+      // 幂等去重：在账（pending/sent）/ 已销账 / 已放弃（[T4③] 终态绝不重发）→ false
+      if (items.has(notifyId) || ackedIds.has(notifyId) || abandonedIds.has(notifyId)) return false;
       host.appendLedgerEntry(NOTIFY_LEDGER_CUSTOM_TYPE, {
         v: 1,
         notifyId,
@@ -297,9 +340,13 @@ export function createNotifyLedger(
       if (disposed) return 0;
       const state = scanSessionLedgerEntries(host.readSessionEntries());
       for (const notifyId of state.acked) ackedIds.add(notifyId);
+      // [T4③/PS-6] 放弃终态跨重启生效：abandoned entry 视同已销账，下方差集重放跳过
+      // ——放弃号重启后不复活不重投（止损语义不以进程边界失效）。
+      for (const notifyId of state.abandoned) abandonedIds.add(notifyId);
       let replayed = 0;
       for (const entry of state.ledger.values()) {
         if (state.acked.has(entry.notifyId)) continue; // 已销账零重发
+        if (abandonedIds.has(entry.notifyId)) continue; // 已放弃不复活（止损终态）
         if (items.has(entry.notifyId) || ackedIds.has(entry.notifyId)) continue; // 幂等
         items.set(entry.notifyId, {
           ...entry,
@@ -345,6 +392,14 @@ export function createNotifyLedger(
           rewritten += 1;
         }
       }
+      // [T4③/PS-6] 放弃终态同享补写：内存是权威，compaction 清掉 abandoned entry 后
+      // 不补写会让放弃号在下次重启按差集复活（重投重启）。
+      for (const notifyId of abandonedIds) {
+        if (!state.abandoned.has(notifyId)) {
+          host.appendLedgerEntry(NOTIFY_ABANDONED_CUSTOM_TYPE, { v: 1, notifyId } satisfies NotifyAbandonedEntryData);
+          rewritten += 1;
+        }
+      }
       return rewritten;
     },
 
@@ -354,6 +409,16 @@ export function createNotifyLedger(
         if (item.sentAt === undefined) n += 1;
       }
       return n;
+    },
+
+    pendingEntries(): ReadonlyArray<{ notifyId: string; content: string; record: object }> {
+      const out: Array<{ notifyId: string; content: string; record: object }> = [];
+      for (const item of items.values()) {
+        if (item.sentAt !== undefined) continue;
+        // 逐条浅拷贝：消费方（dispose 落盘复写）不得持有内部可变态。
+        out.push({ notifyId: item.notifyId, content: item.content, record: { ...item.record } });
+      }
+      return out;
     },
 
     waitingReceiptCount(): number {
@@ -408,6 +473,35 @@ export function createNotifyLedger(
     };
   }
 
+  /** [T4③/PS-6] 放弃终态：appendEntry(abandoned) 落盘终态标记（重启恢复不复活）+
+   *  warn 恢复指引。放弃后账面摘除（pending/waiting 计数归零、看门狗可停），同
+   *  notifyId 被 record 幂等拒绝——「确认不可达」的止损上半场；通知内容本身仍可
+   *  经 subagents action:"list" 手动核对（账本 entry 与 result 落盘不受影响）。
+   *  放弃不计入 watchdogReplays 桶（该桶口径 = 实际发生重投的条数）。 */
+  function abandonItem(item: NotifyLedgerItem): void {
+    host.appendLedgerEntry(NOTIFY_ABANDONED_CUSTOM_TYPE, { v: 1, notifyId: item.notifyId } satisfies NotifyAbandonedEntryData);
+    items.delete(item.notifyId);
+    abandonedIds.add(item.notifyId);
+    // 消息含 subagent 标识与恢复指引（S-E 验收面）；notifyId/attempts 等动态值按
+    // D4 约定放 data 参数（msg 近固定 key，限流命中面）。
+    logger.warn(
+      `Subagent "${itemLabel(item)}" notification abandoned - no receipt after ` +
+        `${NOTIFY_REDELIVERY_MAX_ATTEMPTS} delivery attempts; verify manually via subagents action:"list"`,
+      { notifyId: item.notifyId, attempts: item.attempts },
+    );
+    maybeStopWatchdog();
+  }
+
+  /** 放弃 warn 的 subagent 标识：优先 record.agent（人可读）；record 形态异常时
+   *  （ledger 对 record 不透明，见 NotifyLedgerEntryData）退回 notifyId（仍可检索）。 */
+  function itemLabel(item: NotifyLedgerItem): string {
+    if (isPlainObject(item.record)) {
+      const agent = item.record["agent"];
+      if (typeof agent === "string" && agent.length > 0) return agent;
+    }
+    return item.notifyId;
+  }
+
   function ensureWatchdog(): void {
     if (watchdogTimer !== undefined || disposed) return;
     // 看门狗（D5 ②兜底触发面）：回执检查 + 超时重投 + pending 补投。
@@ -418,12 +512,19 @@ export function createNotifyLedger(
       // attemptDeliver 即重投——正常时序 settled 边沿早已销账，只有消息真丢失才到这
       const cutoff = Date.now() - NOTIFY_WATCHDOG_MS;
       let timedOut = 0;
+      // [T4③/PS-6] 止损：attempts 已达上限仍超期 = 确认不可达 → 放弃转终态，
+      // 不再重投（同一条完成通知不无限重复注入唤醒 LLM）。
+      const givenUp: NotifyLedgerItem[] = [];
       for (const item of items.values()) {
-        if (item.sentAt !== undefined && item.sentAt <= cutoff) {
-          item.sentAt = undefined;
-          timedOut += 1;
+        if (item.sentAt === undefined || item.sentAt > cutoff) continue;
+        if (item.attempts >= NOTIFY_REDELIVERY_MAX_ATTEMPTS) {
+          givenUp.push(item);
+          continue;
         }
+        item.sentAt = undefined;
+        timedOut += 1;
       }
+      for (const item of givenUp) abandonItem(item);
       if (timedOut > 0) {
         // U4 ①watchdogReplays 桶：busy 窗口滞留兜底的重投条数（同一消息反复超时累计）
         buckets.watchdogReplays += timedOut;
@@ -467,7 +568,7 @@ export function createNotifyLedger(
   // （P-B0 相邻机制已源码级锚定，agent-session.js:327-331，PS-07）。
   // [MF-5] registerSettledListener=false（bind 路径）时跳过注册：pi.on("agent_settled")
   // 无退订语义——createExtensionAPI.on 只 push 进 extension.handlers、无 off
-  //（pi 0.84.1 dist/core/extensions/loader.js:209-214）。注意消歧两类订阅面：此处的
+  //（pi 0.84.4 dist/core/extensions/loader.js:209-214）。注意消歧两类订阅面：此处的
   // pi.on 是生命周期事件订阅（无退订）；ctx.events.on(channel) 走 eventBus、有
   // trackEventBusSubscription 退订通路（loader.js:174、:338）——勿按后者的可退订
   // 语义「修复」此处。per-bind 注册会随 session 切换累积死 handler
@@ -543,7 +644,7 @@ function settledEdgeDispatch(): void {
 /**
  * session_start 装配（index.ts）：构造新 ledger 并绑定为模块级单例（notifier.notify
  * 经 getBoundNotifyLedger 消费）。重复 bind（/resume /fork /new 的 session_start）
- * 替换旧实例——内存态清零符合「内存不承担销账职责」，权威 = entry 两列差集
+ * 替换旧实例——内存态清零符合「内存不承担销账职责」，权威 = entry 多列差集
  * （调用方随后 recoverFromSession 重建）。
  *
  * [MF-5] 监听单例化：首次 bind 经当次 host 注册模块级单例 handler

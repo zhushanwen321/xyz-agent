@@ -23,10 +23,6 @@ const logger = getLogger("subagents");
 /** 引擎变更通知 customType（D3；renderer/测试按此识别引擎变更消息）。 */
 export const ENGINE_CHANGE_CUSTOM_TYPE = "subagent-engine-changed";
 
-// normalizeEngineId 单一权威源在 registry.ts，此处再导出保持既有导入面（index.ts
-// 与测试经本模块导入）不断裂。
-export { normalizeEngineId };
-
 /**
  * 引擎变更通知文案（设计 §3.1 英文基准，三行结构逐字骨架；D4：不含任何模型清单，
  * 清单只活在 system prompt 现值一份）。指路段按目标引擎参数化，与

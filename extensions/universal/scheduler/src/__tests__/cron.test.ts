@@ -58,7 +58,7 @@ describe('computeNextCronRuns', () => {
 })
 
 describe('parseSchedule (cron 分支)', () => {
-  it('5 字段 cron 表达式补秒字段（note 不再透传到 parseSchedule 结果）', async () => {
+  it('5 字段 cron 表达式补秒字段', async () => {
     const result = await parseSchedule('*/10 * * * *')
     expect(result).toEqual({
       spec: { mode: 'cron', cronExpression: '0 */10 * * * *' },
@@ -85,8 +85,7 @@ describe('parseSchedule (cron 分支)', () => {
 
 describe('normalizeCronExpression', () => {
   it('6 字段 cron 原样返回', () => {
-    const result = normalizeCronExpression('0 9 * * 1-5 0')
-    expect(result).toEqual({ expression: '0 9 * * 1-5 0' })
+    expect(normalizeCronExpression('0 9 * * 1-5 0')).toBe('0 9 * * 1-5 0')
   })
 
   it('2 字段返回 undefined', () => {

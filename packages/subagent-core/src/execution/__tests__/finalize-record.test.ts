@@ -181,6 +181,96 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     // 清理 mock 调用记录防污染
     loggerMock.error.mockClear();
   });
+
+  // ── [T1/PS-9] sessionFile 缺失 → sessionDir 反查后 marker/alive 清理仍落地 ──
+  //
+  // PS-9：finalize 的 tombstone/finalized sidecar 与 removeAliveMarker 全部 gated on
+  // record.sessionFile——RC-1（握手失败）+ LC-4（收尾反查未命中）的残余形态下，
+  // 「sessionFile 缺失 → 终态原因丢失 + alive marker 残留」。修复：sessionFile 缺失时
+  // 用 deps.sessionDir 按 identity（record.id）反查真实 session 文件作依据。
+  // 真实 fs + tmp 目录（与文件既有策略一致）：session JSONL 写入 identity custom entry
+  //（子进程 session_start hook 的写入形态），readIdentityHeader/readIdentityTail 真实解析。
+  describe("[T1/PS-9] sessionFile 缺失 sessionDir 反查", () => {
+    let sessionDir: string;
+
+    beforeEach(() => {
+      sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), "finalize-ps9-sessions-"));
+    });
+
+    afterEach(() => {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    });
+
+    /** 在 sessionDir 写入带 identity 的 session 文件（1 行 identity entry，位于头部）。 */
+    function writeSessionFileWithIdentity(fileName: string, recordId: string): string {
+      const sessionFile = path.join(sessionDir, fileName);
+      const identityEntry = JSON.stringify({
+        type: "custom",
+        customType: "subagent-identity",
+        data: { id: recordId, agent: "worker", mode: "background", task: "t", startedAt: 1000 },
+      });
+      fs.writeFileSync(sessionFile, `${identityEntry}\n`, "utf-8");
+      return sessionFile;
+    }
+
+    it("sessionFile 缺失 + 反查命中 → .finalized 落盘 + .alive 清理 + record/manifest 回填", async () => {
+      const sessionFile = writeSessionFileWithIdentity("20260901T12000000_ps9.jsonl", "rec-ps9");
+      // 预写 .alive 残留（模拟 running 期崩溃恢复窗口的 marker）
+      fs.writeFileSync(
+        `${sessionFile}.alive`,
+        `${JSON.stringify({ pid: 99999, id: "rec-ps9", startedAt: 1000 })}\n`,
+        "utf-8",
+      );
+      const record = makeMinimalRecord({ id: "rec-ps9", sessionFile: undefined });
+      const deps = { ...makeDeps(), sessionDir };
+
+      await doFinalizeRecord(deps, record, makeMinimalResult(), "closed", "gc");
+
+      // 反查回填 record.sessionFile
+      expect(record.sessionFile).toBe(sessionFile);
+      // 终态原因持久化不再丢失（closedReason gc 写入 .finalized 内容）
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+      expect(fs.readFileSync(`${sessionFile}.finalized`, "utf-8")).toBe("gc");
+      // alive marker 不再残留
+      expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
+      // manifest 拿到真实 sessionFile（诊断/重建源不再失真）
+      const manifest = await manifestStore.readManifest("rec-ps9");
+      expect(manifest?.sessionFile).toBe(sessionFile);
+    });
+
+    it("cancelled + 反查命中 → tombstone 写到反查路径（cancelled 语义不因 sessionFile 缺失丢失）", async () => {
+      const sessionFile = writeSessionFileWithIdentity("20260901T12000001_ps9c.jsonl", "rec-ps9c");
+      const record = makeMinimalRecord({ id: "rec-ps9c", sessionFile: undefined });
+      const deps = { ...makeDeps(), sessionDir };
+
+      await doFinalizeRecord(deps, record, makeMinimalResult(), "closed", "cancelled");
+
+      expect(record.sessionFile).toBe(sessionFile);
+      expect(fs.existsSync(`${sessionFile}.cancelled`)).toBe(true);
+      const tomb = JSON.parse(
+        fs.readFileSync(`${sessionFile}.cancelled`, "utf-8"),
+      ) as { id: string; status: string };
+      expect(tomb.id).toBe("rec-ps9c");
+      expect(tomb.status).toBe("cancelled");
+    });
+
+    it("反查未命中（目录无 identity 匹配文件）→ 不抛、sessionFile 保持缺失、无 marker（行为退回修复前）", async () => {
+      // sessionDir 存在但内容与 record 不匹配
+      writeSessionFileWithIdentity("20260901T12000000_other.jsonl", "rec-someone-else");
+      const record = makeMinimalRecord({ id: "rec-ps9-miss", sessionFile: undefined });
+      const deps = { ...makeDeps(), sessionDir };
+
+      await expect(
+        doFinalizeRecord(deps, record, makeMinimalResult(), "closed", "gc"),
+      ).resolves.toBeUndefined();
+
+      expect(record.sessionFile).toBeUndefined();
+      // manifest sessionFile 同步保持 undefined
+      const manifest = await manifestStore.readManifest("rec-ps9-miss");
+      expect(manifest?.sessionFile).toBeUndefined();
+      loggerMock.error.mockClear();
+    });
+  });
 });
 
 // ============================================================
@@ -315,6 +405,22 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     await doFinalizeRoundToIdle(makeDeps(), record, result);
     // 失败轮次的 notify 需可读：result.text 空 → 兑底用 error
     expect(record.result).toBe("round did not complete: spawn timeout");
+  });
+
+  it("T2-③/LC-1: 失败轮 text 与 error 并存时 error 优先——collectResult 恒带 getFullText 正文，text 优先会覆盖恢复指引（S-B-1 首轮 settled watchdog 实测）", async () => {
+    const record = makeMinimalRecord({ id: "rec-result-err-text", chatMode: true });
+    record.status = "closed";
+    const result = makeMinimalResult();
+    // runSpawn settledWatchdogFired 分支的 collectResult 形态：正文（T1 回补采集）与
+    // watchdog 错误并存
+    result.text = "DONE";
+    result.success = false;
+    result.error =
+      "subagent did not reach agent_settled within 10 min (settled watchdog); the process was terminated to bound the wait. Recovery: check state with subagents action:'list', then re-send your message to continue.";
+    await doFinalizeRoundToIdle(makeDeps(), record, result);
+    // 失败的 record.result（= 通知正文）必须携带失败原因与恢复指引，不得回显轮内旧正文
+    expect(record.result).toBe(`round did not complete: ${result.error}`);
+    expect(record.result).not.toBe("DONE");
   });
 
   it("C1TC10: chatMode 空增量轮占位——record.result 固定 (no output this round)，不含上一轮文本（D5）", async () => {

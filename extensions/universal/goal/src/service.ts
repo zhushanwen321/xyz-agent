@@ -12,13 +12,7 @@
  * FR-6.5: persist 前调 tick 累计时间
  */
 
-import {
-	accumulateTokens,
-	checkBudgetOnResume,
-	checkBudgetOnTurnEnd,
-	tick,
-} from "./engine/budget";
-import type { BudgetDimension } from "./engine/budget";
+import { accumulateTokens, checkBudgetOnTurnEnd, tick } from "./engine/budget";
 import { createGoalState, isActiveStatus, transitionStatus } from "./engine/goal";
 import type { BudgetConfig, GoalRuntimeState, GoalStatus } from "./engine/types";
 import { makeHistoryEntry, serializeState } from "./persistence";
@@ -276,12 +270,4 @@ export function applyEvent(
 			session.state.currentTurnIndex++;
 			break;
 	}
-}
-
-// ── resume 预算重检（供 command-adapter 调用）─────────
-
-export function checkResumeBudget(
-	state: GoalRuntimeState,
-): { type: "exceeded"; dimension: BudgetDimension } | null {
-	return checkBudgetOnResume(state);
 }

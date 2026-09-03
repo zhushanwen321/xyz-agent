@@ -3,7 +3,7 @@
  *
  * 覆盖：
  * - config.sessions 广播 → session store applySnapshot 整表更新列表（不重载历史）
- * - 多实例 refCount 去重：N 次 useSidebarNew() 只注册 1 个 handler，一次广播只触发 1 次整表快照应用
+ * - 多实例 refCount 去重：N 次 useSidebar() 只注册 1 个 handler，一次广播只触发 1 次整表快照应用
  * - 全部 effect scope 释放后监听取消（onScopeDispose 收尾），广播不再更新
  *
  * 注：WS 消息类型原为 session.list，PR #87 D1 重构重命名为 config.sessions（useSidebar 同步订阅 config.sessions）。
@@ -28,7 +28,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
 }))
 
 import * as events from '@/api/events'
-import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { useSessionStore } from '@/stores/session'
 
 beforeEach(() => {
@@ -51,7 +51,7 @@ function broadcastSessionList(groups: SessionGroup[]): void {
 
 it('config.sessions 广播经 useSidebar 订阅更新 session store', () => {
   const scope = effectScope()
-  scope.run(() => useSidebarNew())
+  scope.run(() => useSidebar())
   // pinia session store（ADR-0059：薄壳 useSessionStore 单例）
   expect(useSessionStore().groups).toEqual([])
 
@@ -61,18 +61,18 @@ it('config.sessions 广播经 useSidebar 订阅更新 session store', () => {
   scope.stop()
 })
 
-it('多实例 refCount 去重：N 次 useSidebarNew() 只注册 1 个 config.sessions handler', () => {
+it('多实例 refCount 去重：N 次 useSidebar() 只注册 1 个 config.sessions handler', () => {
   // 薄壳化后 sessionStore 是 pinia 单例（所有实例共享同一 store），去重的可观测行为变为
   // 「config.sessions handler 只注册 1 次」（core bindSessionListBroadcast 模块级 sessionListSubCount），
   // 而非旧 per-instance raw store 的「不同实例 store 值不同」（ADR-0059 消除双轨）。
   const onGlobalTypeSpy = vi.spyOn(events, 'onGlobalType').mockReturnValue(() => {})
 
   const a = effectScope()
-  a.run(() => useSidebarNew())!
+  a.run(() => useSidebar())!
   const b = effectScope()
   const c = effectScope()
-  b.run(() => useSidebarNew())!
-  c.run(() => useSidebarNew())!
+  b.run(() => useSidebar())!
+  c.run(() => useSidebar())!
 
   // 3 个实例只注册 1 个 config.sessions handler（refCount 去重）
   const sessionHandlerCount = onGlobalTypeSpy.mock.calls.filter(
@@ -87,7 +87,7 @@ it('多实例 refCount 去重：N 次 useSidebarNew() 只注册 1 个 config.ses
 
 it('全部 scope 释放后监听取消：广播不再更新 store', () => {
   const scope = effectScope()
-  scope.run(() => useSidebarNew())
+  scope.run(() => useSidebar())
   // 先填入一组数据，释放后广播应保持不变
   useSessionStore().applySnapshot({ groups: makeGroups() })
   const before = useSessionStore().groups

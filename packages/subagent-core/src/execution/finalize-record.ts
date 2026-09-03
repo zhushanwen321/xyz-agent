@@ -26,6 +26,7 @@ import type { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import type { RecordStore } from "./record-store.ts";
+import { readIdentityHeader, readIdentityTail } from "./session-reconstructor.ts";
 import { writeCancelledTombstone } from "./tombstone-store.ts";
 import type { AgentResult, ClosedReason, ExecutionRecord } from "./types.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
@@ -42,8 +43,46 @@ export interface FinalizeDeps {
   pi: { appendEntry?: (type: string, data: unknown) => void } | null;
   /** pending-notifications 终态注销（绑定 pi.events.emit，由调用方闭包提供）。 */
   emitUnregister(id: string, status: string): void;
+  /**
+   * [T1/PS-9] subagent sessionDir（getSubagentSessionDir(agentDir, rootCwd)，调用方注入）。
+   *
+   * record.sessionFile 缺失（RC-1 握手失败 + LC-4 反查也未命中的残余形态）时用于磁盘
+   * 反查：按 identity（record.id）扫目录找真实 session 文件，作为 tombstone/finalized
+   * sidecar 与 removeAliveMarker 的依据——消除「sessionFile 缺失 → 终态原因丢失 +
+   * alive marker 残留」。undefined = 调用方无法提供（反查跳过，行为退回修复前）。
+   */
+  sessionDir?: string;
   // [review 修复] 已删除 redeliverPending 回调（MF-1 消费确认制补投）：pendingMessages
   // 三段消费链随 deliverToRunning 一并移除（无生产调用方，死机制）。
+}
+
+/**
+ * [T1/PS-9] 按 record 身份在 sessionDir 反查 session 文件（record.sessionFile 缺失时用）。
+ *
+ * 匹配依据：session JSONL 的 identity custom entry 携带 record id（子进程 session_start
+ * hook 写入），探测函数与 RecordStore 列表扫描同源（readIdentityHeader 头部 64KB →
+ * readIdentityTail 尾部 64KB；续聊场景 identity 靠尾）。readIdentityAnywhere 需全文读，
+ * 本反查是收尾路径的 best-effort，不做。
+ *
+ * @returns 匹配到的 session 文件绝对路径；目录不可读 / 无匹配返回 undefined（不抛）。
+ */
+function findSessionFileByRecordIdentity(
+  sessionDir: string,
+  recordId: string,
+): string | undefined {
+  let names: string[];
+  try {
+    names = fs.readdirSync(sessionDir);
+  } catch {
+    return undefined; // 目录缺失/不可读 → 反查跳过，行为退回无反查
+  }
+  for (const name of names) {
+    if (!name.endsWith(".jsonl")) continue;
+    const full = path.join(sessionDir, name);
+    const recon = readIdentityHeader(full) ?? readIdentityTail(full);
+    if (recon?.id === recordId) return full;
+  }
+  return undefined;
 }
 
 /**
@@ -60,6 +99,21 @@ export async function doFinalizeRecord(
   status: "closed",
   closedReason?: ClosedReason,
 ): Promise<void> {
+  // [T1/PS-9] sessionFile 缺失时 sessionDir 反查（放在一切步骤前，让 archive 投影 /
+  // Step 3 marker / Step 4 manifest 统一受益）。RC-1（握手失败）+ LC-4（收尾反查未命中）
+  // 的残余形态下，磁盘上 session 文件仍可能真实存在（identity 携带 record.id）——
+  // 反查命中则 tombstone/finalized sidecar 与 removeAliveMarker 有了依据，终态原因
+  // 不再丢失、alive marker 不再残留；未命中则保持旧行为（best-effort 跳过）。
+  if (!record.sessionFile && deps.sessionDir) {
+    const resolved = findSessionFileByRecordIdentity(deps.sessionDir, record.id);
+    if (resolved) {
+      record.sessionFile = resolved;
+      logger.warn(
+        `[subagent] finalizeRecord: sessionFile was missing, resolved via sessionDir identity lookup: ${resolved}`,
+      );
+    }
+  }
+
   // ── Step 0: collectPatch（best-effort）──
   // [MF#3] patchFile 写到 worktree 之外（sessionsDir/<branch>.patch），避免被 cleanup 删除；
   //        路径回填 record.patchFile，供调用方（tool result / /subagents list）应用。
@@ -179,7 +233,9 @@ export async function doFinalizeRecord(
  *
  * MF-2：设 record.result = result.text（否则 notifier idle 回复正文恒为 "(empty)"，
  *   G1/G2 多轮回复送达不成立）。失败轮次（result.success=false，MF-6 回退 idle 路径）
- *   的 result.text 可能为空，用 result.error 兜底让 notify 可读。
+ *   error 优先于 text：collectResult 恒带 getFullText 全量正文，text 优先会把失败的
+ *   恢复指引覆盖成轮内旧正文（Gate B S-B-1 实测：settled watchdog kill 后宿主收到
+ *   成功形态通知，无从得知挂死与恢复方式）。
  *
  * 状态：record.status = "idle"（覆盖 tryTransition 设的 done/failed），record.round += 1。
  * 各步骤 best-effort 互不阻断（参照 doFinalizeRecord 的 bestEffort 用法）。
@@ -193,7 +249,9 @@ export async function doFinalizeRoundToIdle(
   result: AgentResult,
 ): Promise<void> {
   // MF-2：设 record.result 供 notifier idle 回复正文（否则恒 "(empty)"，G1/G2 不成立）。
-  // MF-6 兜底：失败轮次（success=false）的 result.text 可能为空，用 error 让 notify 可读。
+  // [T2-③ / LC-1] 失败轮 error 优先：collectResult 恒带 getFullText 全量正文（即使
+  // success=false），text 优先会把 watchdog 等失败的恢复指引覆盖成轮内正文（半成品 /
+  // 回补值），宿主无从得知失败与恢复方式（S-B-1 首轮 settled watchdog 实测）。
   // [R2-1] 轮终写点恒写非空：one-shot 空文本成功完成（collectResult getFullText 返回 ""、
   // success=true、真实可达，本写点被 subagent-service runAndFinalize 的成功分支共用）首轮
   // result 前值 undefined，兜底补 "(empty)" 占位——措辞与 notifier buildLlmContent 的
@@ -205,10 +263,10 @@ export async function doFinalizeRoundToIdle(
   // "(no output this round)"（D5：增量语义下沿用旧 record.result = 上一轮增量，本轮通知
   // 正文 = 上一轮内容，父 agent 误读为原样重复回复）。
   let nextResult: string | undefined;
-  if (result.text) {
-    nextResult = result.text;
-  } else if (result.error) {
+  if (result.error && (!result.success || !result.text)) {
     nextResult = `round did not complete: ${result.error}`;
+  } else if (result.text) {
+    nextResult = result.text;
   } else if (record.chatMode) {
     nextResult = "(no output this round)";
   } else {

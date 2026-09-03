@@ -4,7 +4,7 @@
  * 职责：对「session entries 差集显示 active、但任务已终态」的 bt- 任务补写
  * pending:unregister entry。覆盖三类 otherwise 悬空场景（设计原文）：
  *  ① 进程 graceful 退出收殓时 pi API 已不可用，unregister 没写成 entry；
- *  ② 强杀后 reaper 只改 registry（标 orphaned），碰不了 session 文件；
+ *  ② 强杀后收殓侧只改 registry（标 orphaned），碰不了 session 文件；
  *  ③ fork 后任务完成通知写进新 session，旧 session 文件的 register 成僵尸。
  *
  * 收尾写法（权威路径）：直接 pi.appendEntry("pending:unregister", {id, reason,
@@ -17,11 +17,12 @@
  *
  * 终态判据：registry state ∈ {exited, orphaned}，或（state=running/killing 且
  * kill(pid,0) 判死：收殓/写盘失败遗留的 running 条目按事实终态处理）。
- * 不改 registry——终态写入归 reaper/轮询器（单点归属），对账只清 pending 侧。
+ * 不改 registry——终态写入归收殓侧（runtime reaper）/轮询器（单点归属），对账只清
+ * pending 侧。
  *
- * 执行顺序（index.ts session_start 链内）：reaper 先、对账后——先按属主判定处置
- * 孤儿/补写 registry 终态，对账随后读到正确终态；即使颠倒也无静默错误（对账先见
- * running+pid 活则不动作，下一 session_start 兜底）。
+ * 执行链（index.ts session_start 链内）：收殓下沉 runtime 后（u-bte-remove）本链
+ * 仅剩对账——「对账见 running+pid 活则不动作，下一 session_start 兜底」的幂等
+ * 语义覆盖孤儿终态由 runtime 异步写入的时序窗口。
  */
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";

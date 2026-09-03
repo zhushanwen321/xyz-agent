@@ -6,12 +6,12 @@
  *    G3：调 ctx.ui.custom 前先检查 signal.aborted 短路（AI 先于 UI factory 执行时
  *    controller.abort() 触发但 comp 尚未创建，cancel 落空）。
  *  - rpc：ctx.ui.select（GUI 对话框）。M2：接收 signal，abort 短路 + 透传给 ui.select。
- *  - headless（json/print）：无交互 UI。M1：返回永不主动 resolve 的 Promise（让 Racing 中的
- *    AI 有机会赢），仅在 signal abort 时 fail-closed deny（避免 headless 下 auto 退化为 strict）。
+ *  - headless（json/print）：无交互 UI，立即 fail-closed deny（requestHeadless）。auto 模式
+ *    Racing 不走此路径（pipeline runLayer3WithRacing 的 isHeadless 分支纯等 AI 判定）。
  *
  * ApprovalComponent 是简化版 TUI 组件（参考 ask-user AskUserComponent）：
  *  - 显示工具名 + 命令 + 触发原因 + 可选 AI 预分类。
- *  - y/approve、n/deny、Esc/cancel。
+ *  - Enter/approve、Esc/deny。
  *  - signal abort → comp.cancel()（复用 _resolved 守卫，避免二次 done）。
  *
  * W6 T9 G3 Reject-with-Reason：用户拒绝时，若 ctx.ui.input 存在则弹出文本输入框
@@ -123,7 +123,8 @@ async function requestRpc(
 ): Promise<UserDecision> {
 	const title = formatTitle(req);
 	// TODO: spec 未要求 session/always scope，当前仅支持 once。
-	// 未来如需扩展，options 加 "Approve (session)" / "Approve (always)"，UserDecision.scope 透传。
+	// 未来如需扩展，options 加 "Approve (session)" / "Approve (always)"，并在 UserDecision
+	// 上新增 scope 字段承载（当前 UserDecision 只有 approved/reason）。
 	const options = ["Approve (once)", "Deny"];
 	// M2：与 requestTui 一致——调 select 前检查 signal.aborted 短路（AI 先于对话框弹出赢 race 时，
 	// controller.abort() 已触发但 select 尚未发起，这里 fail-closed deny 避免弹出无意义对话框）。
@@ -137,7 +138,7 @@ async function requestRpc(
 		return { approved: false, reason: "user dismissed the prompt" };
 	}
 	if (choice.startsWith("Approve")) {
-		return { approved: true, reason: "approved via rpc", scope: "once" };
+		return { approved: true, reason: "approved via rpc" };
 	}
 	// W6 T9 G3：Reject-with-Reason。用户选 Deny 后，若 ctx.ui.input 存在则采集真实理由。
 	// 「受阻」可观测条件：typeof ctx.ui.input === 'function'。
@@ -226,7 +227,7 @@ interface TuiLike {
  * TUI 审批组件（简化版，参考 ask-user AskUserComponent）。
  *
  * 显示：标题 + 工具名 + 命令 + 原因 + 可选 AI 预分类 + 操作提示。
- * 键位：y/Enter → approve；n/Esc → deny/cancel。
+ * 键位：Enter → approve；Esc → deny/cancel（y/n 快捷键已移除，测试钉住 no-op）。
  *
  * G4：implements Component，补 invalidate()（调 tui.requestRender()）。
  * signal abort → cancel()（复用 _resolved 守卫）。
@@ -292,9 +293,10 @@ export class ApprovalComponent implements Component {
 	private approve(): void {
 		if (this._resolved) return;
 		this._resolved = true;
-		// TODO: spec 未要求 session/always scope，当前硬编码 "once"。未来如需扩展，
-		// 增加 handleInput 对应键位（如 's' → session、'a' → always）并透传 UserDecision.scope。
-		this.done({ approved: true, reason: "approved via tui", scope: "once" });
+	// TODO: spec 未要求 session/always scope，当前硬编码 "once"。未来如需扩展，
+	// 增加 handleInput 对应键位（如 's' → session、'a' → always），并在 UserDecision
+	// 上新增 scope 字段承载（当前 UserDecision 只有 approved/reason）。
+		this.done({ approved: true, reason: "approved via tui" });
 	}
 
 	private deny(): void {

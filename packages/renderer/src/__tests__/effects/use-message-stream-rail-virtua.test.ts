@@ -8,6 +8,9 @@
  * 验证：
  * - W2TC2 传 mock vlistRef → onJump 调 vlist.scrollToIndex(renderIdx, {align:'start'})
  * - W2TC2 传 mock vlistRef → updateActiveTurnIndex 调 vlist.findItemIndex(scrollOffset)
+ * - streaming perf：railTurns 引用恒等（内容未变的重算复用上次数组引用，切断
+ *   expandedTurns / TurnRail props 连带失效）+ updateActiveTurnIndex O(1) 下标索引
+ *   （随 railTurns 重建同步更新，行为与旧 findIndex 实现逐点等价）
  *
  * mock 策略：用 createMockVlist 造满足 VirtualizerHandle 接口的 mock，注入 vlistRef。
  * composable 内 onMounted/onScopeDispose 需 active component instance，用 host 组件包裹
@@ -17,7 +20,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { computed, defineComponent, h, ref, type Ref } from 'vue'
+import { computed, defineComponent, h, ref, shallowRef, type Ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { VirtualizerHandle } from 'virtua/vue'
 import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
@@ -56,9 +59,16 @@ function mountRail(opts: {
   renderItems?: RenderItem[]
   scrollEl?: HTMLElement | null
   vlistRef?: Ref<VirtualizerHandle | null>
-}): { rail: ReturnType<typeof useMessageStreamRail>; wrapper: ReturnType<typeof mount> } {
+}): {
+  rail: ReturnType<typeof useMessageStreamRail>
+  wrapper: ReturnType<typeof mount>
+  /** 暴露 renderItems ref 供 streaming perf 用例替换数组引用（模拟 ADR-0039 不可变替换）。 */
+  renderItemsRef: Ref<RenderItem[]>
+} {
   const sessionId = computed(() => 's-rail-virtua-test')
-  const renderItemsRef = ref<RenderItem[]>(opts.renderItems ?? makeRenderItems())
+  // shallowRef 对齐生产语义：MessageStream 传入的 renderItems 是 computed（产出原始数组，
+  // 无深代理）；deep ref 会把读取侧 item.turn 包成 reactive 代理，引用恒等断言拿不到原始引用。
+  const renderItemsRef = shallowRef<RenderItem[]>(opts.renderItems ?? makeRenderItems())
   const scrollElRef = ref<HTMLElement | null>(opts.scrollEl ?? null)
   const vlistRef = opts.vlistRef ?? ref<VirtualizerHandle | null>(createMockVlist())
   let rail!: ReturnType<typeof useMessageStreamRail>
@@ -74,7 +84,7 @@ function mountRail(opts: {
     },
   })
   const wrapper = mount(Host, { global: { plugins: [createPinia()] } })
-  return { rail, wrapper }
+  return { rail, wrapper, renderItemsRef }
 }
 
 /** 造一个有真实 scrollTop/scrollHeight/clientHeight 的 mock scrollEl（happy-dom 下 div 即可）。 */
@@ -170,5 +180,95 @@ describe('useMessageStreamRail · W2TC2: 传 mock vlistRef（virtua 路径）', 
     expect(() => rail.updateActiveTurnIndex()).not.toThrow()
     // activeTurnIndex 保持初始 0（未调 findItemIndex）
     expect(rail.activeTurnIndex.value).toBe(0)
+  })
+})
+
+// ── streaming perf：railTurns 引用恒等 + updateActiveTurnIndex O(1) 索引 ──────────
+
+describe('useMessageStreamRail · streaming perf（railTurns 引用恒等 + O(1) 下标索引）', () => {
+  it('renderItems 替换数组引用但 turn 成员未变 → railTurns 复用上次数组引用（下游 props 不变即不重渲）', () => {
+    // 模拟 streaming：每条 delta 经 commitMessages 替换 renderItems 数组引用（ADR-0039），
+    // 历史 turn 对象逐引用复用（toRenderItemsIncremental D-4）→ 内容未变的重算必须
+    // 返回同一引用，否则 TurnRail turns prop / expandedTurns 依赖被连带失效。
+    const base = makeRenderItems()
+    const { rail, renderItemsRef, wrapper } = mountRail({ renderItems: base })
+    const first = rail.railTurns.value
+
+    renderItemsRef.value = [...base]
+
+    expect(rail.railTurns.value).toBe(first)
+    wrapper.unmount()
+  })
+
+  it('turn 引用变化（streaming 末位 turn 重建）→ railTurns 产出新数组且未变成员引用逐项保留', () => {
+    // 行为不变反面：任一 turn 引用变化必须照常产出新数组（不能过度缓存吞掉真实变更）。
+    const base = makeRenderItems()
+    const { rail, renderItemsRef, wrapper } = mountRail({ renderItems: base })
+    const first = rail.railTurns.value
+    const rebuiltLast = turnItem(4) // 模拟 toRenderItemsIncremental 只重建末位 turn
+
+    renderItemsRef.value = [base[0]!, base[1]!, rebuiltLast]
+    const second = rail.railTurns.value
+
+    expect(second).not.toBe(first)
+    expect(second[0]).toBe(first[0])
+    expect(second[1]).toBe(first[1])
+    expect(second[2]).toBe(rebuiltLast.turn)
+    wrapper.unmount()
+  })
+
+  it('railTurns 引用恒等连带 expandedTurns 不重算（非空 Set 引用稳定）——依赖链切断的可观测证据', () => {
+    // 必须先展开出非空 Set：空态返回 EMPTY_SET 模块单例，重算与否引用恒同，断言会恒真。
+    // 非空分支每次重算 new Set()：若 railTurns 引用恒等失效导致 expandedTurns 重算，
+    // 这里会拿到新 Set 引用而失败。
+    const base = makeRenderItems()
+    const { rail, renderItemsRef, wrapper } = mountRail({ renderItems: base })
+    rail.onToggle(0)
+    const expanded = rail.expandedTurns.value
+    expect(expanded.size).toBe(1)
+
+    renderItemsRef.value = [...base]
+
+    expect(rail.expandedTurns.value).toBe(expanded)
+    wrapper.unmount()
+  })
+
+  it('O(1) 索引随 railTurns 重建同步更新：同一 turn 引用移动下标后仍定位新下标（守卫索引过期回归）', () => {
+    // 陈旧索引会把复用引用的 turn 定位到旧下标（indicator 高亮错位）——数组引用一变索引必须重建。
+    const moved = turnItem(2)
+    const findItemIndex = vi.fn(() => 1) // renderItems[1] = moved → rail 下标 1
+    const mock = createMockVlist({ scrollOffset: 400, findItemIndex })
+    const vlistRef = ref<VirtualizerHandle | null>(mock)
+    const { rail, renderItemsRef, wrapper } = mountRail({
+      renderItems: [turnItem(1), moved],
+      vlistRef,
+    })
+
+    rail.updateActiveTurnIndex()
+    expect(rail.activeTurnIndex.value).toBe(1)
+
+    // 重排：moved 复用同引用但 rail 下标 1 → 0
+    findItemIndex.mockImplementation(() => 0)
+    renderItemsRef.value = [moved, turnItem(9)]
+    rail.updateActiveTurnIndex()
+    // 若索引未随重建，get(moved) 命中旧值 1，此处失败
+    expect(rail.activeTurnIndex.value).toBe(0)
+    wrapper.unmount()
+  })
+
+  it('updateActiveTurnIndex：可见首项为 system 项 → 保持上次 activeTurnIndex（映射分支行为不变）', () => {
+    const renderItems: RenderItem[] = [
+      turnItem(1),
+      { kind: 'systemNotice', message: { id: 's1', role: 'system', content: 'x' } as never },
+    ]
+    const findItemIndex = vi.fn(() => 1)
+    const mock = createMockVlist({ scrollOffset: 100, findItemIndex })
+    const vlistRef = ref<VirtualizerHandle | null>(mock)
+    const { rail, wrapper } = mountRail({ renderItems, vlistRef })
+
+    rail.updateActiveTurnIndex() // renderItems[1] 是 system 项 → 不写 activeTurnIndex
+
+    expect(rail.activeTurnIndex.value).toBe(0)
+    wrapper.unmount()
   })
 })

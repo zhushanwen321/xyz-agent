@@ -11,7 +11,7 @@
  *   repoRoot          repo/worktree 绝对路径（入口解析；state.repo 与守卫 2 的比对基准）
  *   pid               当前进程 pid
  *   fs                { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync,
- *                       unlinkSync, openSync, writeSync, closeSync, readdirSync }
+ *                       unlinkSync, openSync, writeSync, closeSync, readdirSync, realpathSync }
  *   sh(cmd, args, opts) => { code, stdout, stderr }（lib.createSh 产物；不 throw）
  *   readEngineState(engineRunId) => { ok: true, status } | { ok: false, reason }
  *                                     读引擎 state 文件末行 state.status（P5 实证 JSONL）
@@ -19,7 +19,7 @@
  *   log(...msg)
  *   now() => Date
  *   randomToken() => 4 位随机串（runId 的 rand4 段）
- *   steps             step 注册表 [{ id, run(ctx) }]（u1 为空数组，u2-u5 填充）
+ *   steps             step 注册表 [{ id, run(ctx) }]
  *                       ctx = { state, params, runIdDir, io, saveCheckpoint() }
  */
 
@@ -131,8 +131,6 @@ const MSG = {
     `final-gates：test:runtime 输出检出 real-pi skip 标记（${markers.join(' | ')}）——真实凭证子集未跑，验收不完整；补 pi 凭证后 resume，不得凭 skip 宣布 PASS`,
   finalGatesDirtyTail: (list) =>
     `final-gates 收尾防线：存在未提交改动，修复可能静默丢失（与 structured-output 历史事故同型）：\n${list}\n经 \`git add <显式路径> && git commit\` 落盘后 resume`,
-  placeholderStep: (id, unit) =>
-    `step ${id} 尚未实现（${unit} 单元交付）：当前为注册表占位（walker「从第一个未完成 step 开始」语义要求注册表完整有序）；请等 ${unit} 落地后再发起含该 step 的完整流程`,
 
   /* ── u4：cr-fix step（§3.7 cr-fix 两行 + §3.4-(3)-5 恢复粒度） ── */
   crFixNoBatch1: (dir, reviewers) =>
@@ -147,6 +145,13 @@ const MSG = {
     `cr-fix nested loop 连续 ${attempts} 次 ${terminated}（环境类失败，已自动重试 1 次）：检查 pi 凭证 / 模型配额 / 引擎状态后 resume（cr-fix 整体重跑）`,
   crFixUnknownTerminated: (terminated, reportRef) =>
     `cr-fix 终态未知值 "${terminated}"（引擎契约演进，fail-closed 按 failed 处置）：读 ${reportRef} 人工判定后 resume，或带 skipSteps:["cr-fix"] 接管`,
+
+  /* ── Gate B S1：repoRoot 仓库根校验 ── */
+  repoRootInvalid: (repoRoot, stderr) =>
+    `repoRoot "${repoRoot}" 不是有效 git 仓库（git rev-parse --show-toplevel 失败：${tailLines(stderr, 3) || '无 stderr'}）。` +
+    `恢复：--repo 传仓库根绝对路径（即 .agents/workflows/pr-lifecycle.js 所在仓的根）后重新发起`,
+  repoRootNotToplevel: (repoRoot, top) =>
+    `repoRoot "${repoRoot}" 不是仓库根（git toplevel = "${top}"）。恢复：--repo 传仓库根绝对路径后重新发起`,
 
   /* ── u5：simplify step（§3.6 D6 / §3.7 simplify 行） ── */
   simplifyContractMissing: (p) =>
@@ -192,10 +197,55 @@ function gateFixPrompt(stepId, round, res) {
 }
 
 // resumeCommand（§3.4-(1)：失败终态必须含可直接复制执行的恢复命令）
-function resumeCommand(repo, runId) {
-  return runId
-    ? `zflow run pr-lifecycle workdir=${repo} runId=${runId}`
-    : `zflow run pr-lifecycle workdir=${repo}`;
+function resolveZswCli(io) {
+  // 候选①：zsw main worktree bin（Gate B 实测可用源；core 契约脚本只能被 ≥1.2.0 引擎执行）
+  const mainWorktreeCli = path.join(io.homedir(), 'Code', 'zcode-plugin-workspace', 'main', 'z-subagent-workflow', 'bin', 'zsw.js');
+  try {
+    if (io.fs.existsSync(mainWorktreeCli)) return mainWorktreeCli;
+  } catch { /* 落候选② */ }
+  // 候选②：插件 cache glob，版本数值最高且 ≥1.2.0——cache 里的 1.0.0 是旧 run(ctx) 契约，
+  // 执行/校验 core 契约脚本必失败（workerData 未定义），必须过滤
+  const base = path.join(io.homedir(), '.zcode', 'cli', 'plugins', 'cache', 'zcode-plugin-workspace', 'z-subagent-workflow');
+  let versions = [];
+  try {
+    versions = io.fs.readdirSync(base);
+  } catch {
+    versions = [];
+  }
+  const minParts = [1, 2, 0];
+  const geMin = (parts) => {
+    for (let i = 0; i < minParts.length; i++) {
+      if ((parts[i] || 0) !== minParts[i]) return (parts[i] || 0) > minParts[i];
+    }
+    return true;
+  };
+  const candidates = versions
+    .map((v) => {
+      const cliPath = path.join(base, v, 'bin', 'zsw.js');
+      let ok = false;
+      try { ok = io.fs.existsSync(cliPath); } catch { ok = false; }
+      return { v, cliPath, ok, parts: v.split('.').map((n) => parseInt(n, 10) || 0) };
+    })
+    .filter((c) => c.ok && geMin(c.parts))
+    .sort((a, b) => {
+      for (let i = 0; i < Math.max(a.parts.length, b.parts.length); i++) {
+        const d = (b.parts[i] || 0) - (a.parts[i] || 0);
+        if (d !== 0) return d;
+      }
+      return 0;
+    });
+  return candidates.length > 0 ? candidates[0].cliPath : null;
+}
+
+const ZSW_CLI_PLACEHOLDER = '<zsw-cli>（占位：zsw CLI 路径按 SKILL 路径 2 获取，形如 ~/.zcode/cli/plugins/cache/zcode-plugin-workspace/z-subagent-workflow/<版本>/bin/zsw.js）';
+
+// resumeCommand（§3.4-(1)：失败终态必须含可直接复制执行的恢复命令——zsw CLI 真形态，非伪命令）
+function resumeCommand(io, repo, runId) {
+  const cli = resolveZswCli(io) || ZSW_CLI_PLACEHOLDER;
+  // workdir 是引擎 RUN_ENVELOPE_KEYS 保留键不进 $ARGS——脚本读仓库根必须走 --repo（Gate B S1）；
+  // resume 时 repo = state.repo，一致性由守卫 2 校验
+  const base = `node ${cli} workflow --workflow ${repo}/.agents/workflows/pr-lifecycle.js --workdir ${repo} --repo ${repo}`;
+  return runId ? `${base} --runId ${runId}` : base;
 }
 
 /* ── 守卫失败载体 ────────────────────────────────────────────────────── */
@@ -269,6 +319,8 @@ function normalizeParams(raw) {
   raw = raw && typeof raw === 'object' ? raw : {};
   return {
     runId: asString(raw.runId, 'runId', null) || null,
+    repo: asString(raw.repo, 'repo', null) || null, // Gate B S1：目标仓库根（脚本侧仅透传留存；io.repoRoot 由入口 resolveRepoRoot 解析）
+    aggregatorModel: asString(raw.aggregatorModel, 'aggregatorModel', null) || null, // Gate B S1：缺省不传 = nested loop 跟随 run 模型（zai-coding-cn 在 pi 侧不存在，硬编码已致 aggregator-failure×2）
     base: asString(raw.base, 'base', 'main'),
     reviewers: asStringArray(raw.reviewers, 'reviewers', null),
     maxRounds: asNumber(raw.maxRounds, 'maxRounds', 10),
@@ -396,7 +448,16 @@ function assertNotActive(io, engineRunId, pid, label) {
     const es = io.readEngineState(engineRunId);
     if (es && es.ok) {
       if (!ENGINE_TERMINAL_STATUS.has(es.status)) {
-        // running、未知或缺失状态值：一律视为进行中（fail-closed）
+        // 主通道非终态（running/未知）：running 判定的权威性以「记录进程仍活着」为前提。
+        // Gate B S2：CLI 本地 run 被 kill -9 时宿主与引擎同死，引擎 state 文件必然停留在
+        // running（daemon 未运行时 abort 出口也不可达）——pid 死亡即「state 必然过期」的
+        // 可靠信号，与引擎自身把遗留 running 收编 failed 的崩溃恢复方向一致。
+        const pidAlive = (typeof pid === 'number' && pid > 0) ? io.probePid(pid) === 'alive' : null;
+        if (pidAlive === false) {
+          io.log(`[liveness] 引擎 state 停留在 running（${engineRunId} status=${es.status}）但记录进程已死（pid=${pid}，CLI 本地 kill 的典型形态，daemon 崩溃同理）→ 判定原 run 已死，接管放行（${label}）`);
+          return;
+        }
+        // pid 存活（daemon 活着且 run 在跑）或无有效 pid（无从判定）：维持 fail-closed
         throw new GuardError(MSG.activeEngine(engineRunId, es.status == null ? '<missing>' : es.status));
       }
       return; // 明确终态 → 放行
@@ -530,7 +591,19 @@ function collectSkippedSteps(state) {
   return skipped;
 }
 
-// 终态展示字段聚合（outputs 契约：§3.4-(2)；pr-submit/cr-fix/simplify/final-gates 由 u2-u5 落地）
+// premerge marker 行解析（pr-pre-merge.sh write_result_marker 写 shell 形态 `result="PASS"`，
+// 非 JSON——readJsonFileQuiet 按 JSON 读会恒解析失败使防御分支不可达）
+function readPremergeMarker(io, repoRoot) {
+  try {
+    const raw = io.fs.readFileSync(path.join(repoRoot, '.review', 'premerge-result'), 'utf8');
+    const m = raw.match(/result="([^"]+)"/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+// 终态展示字段聚合（outputs 契约：§3.4-(2)）
 function stepOutputs(state, stepId) {
   const rec = state.steps[stepId];
   return (rec && rec.outputs) || null;
@@ -557,18 +630,18 @@ function buildAwaitingPushResult(state) {
   };
 }
 
-function buildFailedResult(state, failedStep, error) {
+function buildFailedResult(io, state, failedStep, error) {
   return {
     status: 'failed',
     runId: state.runId,
     failedStep: failedStep || null,
     error: error || null,
-    resumeCommand: resumeCommand(state.repo, state.runId),
+    resumeCommand: resumeCommand(io, state.repo, state.runId),
     skippedSteps: collectSkippedSteps(state),
   };
 }
 
-function guardFailResult(guardErr, fallbackRunId, repoRoot) {
+function guardFailResult(io, guardErr, fallbackRunId, repoRoot) {
   const runId = guardErr.runId != null ? guardErr.runId : fallbackRunId;
   return {
     status: 'failed',
@@ -577,7 +650,7 @@ function guardFailResult(guardErr, fallbackRunId, repoRoot) {
     error: guardErr.message,
     resumeCommand: guardErr.resumeCommand !== undefined
       ? guardErr.resumeCommand
-      : resumeCommand(repoRoot, runId),
+      : resumeCommand(io, repoRoot, runId),
     skippedSteps: [],
   };
 }
@@ -642,7 +715,7 @@ async function walkAndFinish(io, state, stateDir, activeParams) {
       runIdDir,
       io,
       saveCheckpoint() {
-        saveState(io, state, stateFile); // 子循环每轮落盘的出口（u3 子循环经此落盘）
+        saveState(io, state, stateFile); // gate 修复子循环每轮落盘的出口
       },
     };
 
@@ -678,7 +751,7 @@ async function walkAndFinish(io, state, stateDir, activeParams) {
       state.status = 'failed';
       state.failedStep = step.id;
       state.error = message;
-      state.result = buildFailedResult(state, step.id, message);
+      state.result = buildFailedResult(io, state, step.id, message);
       saveState(io, state, stateFile);
       return state.result;
     }
@@ -693,6 +766,20 @@ async function walkAndFinish(io, state, stateDir, activeParams) {
   state.result = buildAwaitingPushResult(state);
   saveState(io, state, stateFile);
   return state.result;
+}
+
+/* ── repoRoot 解析（Gate B S1：workdir 是 RUN_ENVELOPE_KEYS 保留键不进 $ARGS，
+   脚本读不到 workdir——仓库根必须显式经 --repo 传入，缺省回落宿主 cwd） ── */
+
+/**
+ * repoRoot 解析优先级：$ARGS.repo（发起方显式传）→ $WORKSPACE（宿主 cwd，引擎注入）
+ * → path.resolve 兜底（进程 cwd）。返回绝对路径；是否为 git 仓库根由 runPipeline 开头的
+ * 守卫校验（非根 fail-fast 带「--repo 传仓库根绝对路径」指引）。
+ */
+function resolveRepoRoot(args, workspace) {
+  const a = args && typeof args.repo === 'string' && args.repo.trim() !== '' ? args.repo : null;
+  const w = typeof workspace === 'string' && workspace.trim() !== '' ? workspace : null;
+  return path.resolve(a || w || '.');
 }
 
 /* ── PR 阶段 steps（u2：§3.3 注册表前六项） ──────────────────────────── */
@@ -972,7 +1059,6 @@ const CR_FIX_PASS_TERMINATED = new Set(['clean', 'converged']);
 const CR_FIX_RETRY_TERMINATED = new Set(['review-failure', 'aggregator-failure', 'fix-failure']);
 const CR_FIX_STUCK_TERMINATED = new Set(['stuck', 'max-rounds', 'needs-redesign']);
 const CR_FIX_MAX_NESTED_ATTEMPTS = 2; // 首次 + 自动重试恰 1 次（D2）
-const CR_FIX_AGGREGATOR_MODEL = 'zai-coding-cn/glm-5.3-flash';
 
 // batch1 组装（§3.5）：扫 <repoRoot>/.agents/skills/pr-cr-fix/agents/review-*.md 排序；
 // reviewers 显式传入时做白名单交集（路径 substring 匹配任一关键词，不语义判断——
@@ -1003,19 +1089,26 @@ function findAggregatedFile(io, runDir) {
   })();
   if (!top) return null;
   if (top.includes('aggregated.md')) return path.join(runDir, 'aggregated.md');
+  // 收集 (batch-N, round-M) 命中，按数值降序取最大（字典序会把 round-10 排在 round-2 前）
   const hits = [];
-  for (const d1 of top.filter((n) => n.startsWith('batch-')).sort()) {
+  for (const d1 of top.filter((n) => /^batch-\d+$/.test(n))) {
+    const b = Number(d1.slice('batch-'.length));
     let level2 = [];
     try { level2 = io.fs.readdirSync(path.join(runDir, d1)) || []; } catch { continue; }
-    for (const d2 of level2.filter((n) => n.startsWith('round-')).sort()) {
+    for (const d2 of level2.filter((n) => /^round-\d+$/.test(n))) {
       let level3 = [];
       try { level3 = io.fs.readdirSync(path.join(runDir, d1, d2)) || []; } catch { continue; }
-      if (level3.includes('aggregated.md')) hits.push(path.join(runDir, d1, d2, 'aggregated.md'));
+      if (level3.includes('aggregated.md')) {
+        hits.push({ b, r: Number(d2.slice('round-'.length)), p: path.join(runDir, d1, d2, 'aggregated.md') });
+      }
     }
-    if (level2.includes('aggregated.md')) hits.push(path.join(runDir, d1, 'aggregated.md'));
+    if (level2.includes('aggregated.md')) {
+      hits.push({ b, r: -1, p: path.join(runDir, d1, 'aggregated.md') }); // batch 级直接报告视为该 batch 最前
+    }
   }
   if (hits.length === 0) return null;
-  return hits.sort()[hits.length - 1];
+  hits.sort((x, y) => (y.b - x.b) || (y.r - x.r));
+  return hits[0].p;
 }
 
 // nested 返回消费（§3.5 agent 纪律对 workflow 的映射）：parsedOutput 优先，
@@ -1087,15 +1180,6 @@ function simplifyPrompt(mode, contractText, baseHash, reportPath) {
           '3. 返回 JSON {"applied": 0, "proposals": M}。',
         ].join('\n'),
   ].join('\n');
-}
-
-function placeholderStep(id, unit) {
-  return {
-    id,
-    run: async () => {
-      throw new Error(MSG.placeholderStep(id, unit));
-    },
-  };
 }
 
 function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
@@ -1324,7 +1408,10 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
         const agentsDir = path.join(repoRoot, '.agents', 'skills', 'pr-cr-fix', 'agents');
         const batch1 = buildBatch1(ctx.io, agentsDir, ctx.params.reviewers);
         if (batch1.length === 0) throw new Error(MSG.crFixNoBatch1(agentsDir, ctx.params.reviewers));
-        // 参数名/类型对齐 review-fix-loop.js @pi-meta parameters（D2：嵌套不 copy）
+        // 参数名/类型对齐 review-fix-loop.js @pi-meta parameters（D2：嵌套不 copy）。
+        // aggregatorModel 仅在发起方显式传入时透传（聚合降档/升档场景）；不传 = loop
+        // 跟随 run 模型——Gate B S1 实证：8 reviewer 用默认 run 模型全成功，而硬编码
+        // zai-coding-cn 在 pi 侧不存在（model_not_available → aggregator-failure×2）
         const nestedArgs = {
           targetType: 'git-diff',
           target: ctx.state.base,
@@ -1332,8 +1419,8 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
           maxRounds: ctx.params.maxRounds,
           autoCommit: true,
           skipCleanAgents: true,
-          aggregatorModel: CR_FIX_AGGREGATOR_MODEL,
         };
+        if (ctx.params.aggregatorModel) nestedArgs.aggregatorModel = ctx.params.aggregatorModel;
         const nestedRunIds = [];
         let last = null;
         for (let attempt = 1; attempt <= CR_FIX_MAX_NESTED_ATTEMPTS; attempt++) {
@@ -1431,9 +1518,11 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
             if (met.code !== 0) {
               return { code: met.code, stdout: `${cov.stdout}\n${met.stdout}`, stderr: met.stderr || '' };
             }
-            // ③ pr-pre-merge --test-result <注入值 = ① 的测试判定>
+            // ③ pr-pre-merge --test-result <注入值 = ① 的测试判定> --base <base ref 名>
+            // （--base 与 ① coverage-gate 同值：脚本对 coverage.json 的 base 做 ref 名文本比对，
+            // 传 baseHash 会比对失败；Gate B S1：stacked PR base≠main 必须显式传）
             const inject = coverageTestInject(cov.code, readCoverageJson(ctx.io));
-            const pre = ctx.io.sh('bash', [paths.preMerge, '--test-result', inject]);
+            const pre = ctx.io.sh('bash', [paths.preMerge, '--test-result', inject, '--base', ctx.state.base]);
             return {
               code: pre.code,
               stdout: `${cov.stdout}\n${met.stdout}\n${pre.stdout}`,
@@ -1450,9 +1539,8 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
             const cov = res.coverageJson;
             const met = res.metricsJson;
             let premergeResult = 'PASS';
-            const marker = readJsonFileQuiet(ctx.io, path.join(ctx.io.repoRoot, '.review', 'premerge-result'));
-            // marker 格式：result="PASS"（pr-pre-merge.sh write_result_marker）
-            if (marker && typeof marker.result === 'string') premergeResult = marker.result.replace(/"/g, '');
+            const marker = readPremergeMarker(ctx.io, ctx.io.repoRoot);
+            if (marker) premergeResult = marker;
             if (premergeResult !== 'PASS') throw new Error(`final-gates：pre-merge marker result=${premergeResult}（非 PASS）`);
             return {
               coverageVerdict: (cov && cov.verdict) || 'pass',
@@ -1492,10 +1580,32 @@ async function runPipeline(io) {
   const engineRunId = io.args && typeof io.args._runId === 'string' ? io.args._runId : null;
   const stateDir = path.join(io.repoRoot, '.review', 'pr-workflow');
 
-  io.fs.mkdirSync(stateDir, { recursive: true });
-
   let lockPath = null;
   try {
+    // repoRoot 守卫（Gate B S1，最前——先于锁/latest/state 任何落盘，含 stateDir 目录本身）：
+    // repoRoot 必须是 git 仓库根本身——workdir 是引擎保留键不进 $ARGS，repoRoot 靠 --repo
+    // 显式传或宿主 cwd 回落，指向错误目录时后续全部检查面向错误仓库（S1 现场：preflight 审了宿主仓）
+    const topRes = io.sh('git', ['rev-parse', '--show-toplevel']);
+    if (topRes.code !== 0) {
+      throw new GuardError(MSG.repoRootInvalid(io.repoRoot, topRes.stderr), {
+        runId: params.runId,
+        resumeCommand: resumeCommand(io, io.repoRoot, params.runId),
+      });
+    }
+    // realpath 归一后比较：git 恒返回真实路径（macOS /tmp → /private/tmp），
+    // 发起方传 symlink 形态路径时 resolve 不解析 symlink 会误判「不是仓库根」
+    const real = (p2) => {
+      try { return io.fs.realpathSync(p2); } catch { return path.resolve(p2); }
+    };
+    const top = topRes.stdout.trim();
+    if (real(top) !== real(io.repoRoot)) {
+      throw new GuardError(MSG.repoRootNotToplevel(io.repoRoot, top), {
+        runId: params.runId,
+        resumeCommand: resumeCommand(io, top, params.runId),
+      });
+    }
+
+    io.fs.mkdirSync(stateDir, { recursive: true });
     lockPath = acquireLock(io, stateDir, engineRunId);
 
     const result = params.runId
@@ -1512,9 +1622,9 @@ async function runPipeline(io) {
         releaseLock(io, lockPath);
         lockPath = null;
       }
-      return guardFailResult(e, params.runId, io.repoRoot);
+      return guardFailResult(io, e, params.runId, io.repoRoot);
     }
-    throw e; // 未预期异常：原样上抛（worker 侧报 error；锁交由残留接管路径）
+    throw e; // 未预期异常：原样上抛（worker 侧报 error）；锁由下方 finally 兜底删除（正常终态已在 try 内先删）
   } finally {
     if (lockPath) releaseLock(io, lockPath);
   }
@@ -1545,7 +1655,7 @@ async function freshFlow(io, params, engineRunId, stateDir, lockPath) {
 
   const stateFile = path.join(stateDir, runId, 'state.json');
   io.fs.mkdirSync(path.dirname(stateFile), { recursive: true });
-  io.log(`runId=${runId} resumeCommand=${resumeCommand(git.repo, runId)}`); // §3.4-(1) 通道 3：log 首行
+  io.log(`runId=${runId} resumeCommand=${resumeCommand(io, git.repo, runId)}`); // §3.4-(1) 通道 3：log 首行
   saveState(io, state, stateFile);
 
   return walkAndFinish(io, state, stateDir, params);
@@ -1560,7 +1670,7 @@ async function resumeFlow(io, params, engineRunId, stateDir) {
   if (!io.fs.existsSync(stateFile)) {
     throw new GuardError(MSG.stateMissing(runId), {
       runId,
-      resumeCommand: resumeCommand(io.repoRoot, null), // 从头跑 = 不带 runId
+      resumeCommand: resumeCommand(io, io.repoRoot, null), // 从头跑 = 不带 runId
     });
   }
   let state;
@@ -1569,11 +1679,11 @@ async function resumeFlow(io, params, engineRunId, stateDir) {
   } catch (e) {
     throw new GuardError(`${MSG.stateMissing(runId)}（state 解析失败：${(e && e.message) || e}）`, {
       runId,
-      resumeCommand: resumeCommand(io.repoRoot, null),
+      resumeCommand: resumeCommand(io, io.repoRoot, null),
     });
   }
   if (!state || typeof state !== 'object' || state.stateVersion !== STATE_VERSION) {
-    throw new GuardError(MSG.stateMissing(runId), { runId, resumeCommand: resumeCommand(io.repoRoot, null) });
+    throw new GuardError(MSG.stateMissing(runId), { runId, resumeCommand: resumeCommand(io, io.repoRoot, null) });
   }
 
   // 守卫 2：repo 一致
@@ -1614,7 +1724,7 @@ async function resumeFlow(io, params, engineRunId, stateDir) {
       io.log(`[resume] run ${runId} 全部 step 完成但终态为 failed/快照缺失（组装期中断残留），已重建 result`);
       return state.result;
     }
-    throw new GuardError(MSG.allDoneHeadMoved(runId, state.lastHead, git.head, resumeCommand(io.repoRoot, null)), {
+    throw new GuardError(MSG.allDoneHeadMoved(runId, state.lastHead, git.head, resumeCommand(io, io.repoRoot, null)), {
       runId,
       resumeCommand: null, // 指向「起新 run」而非 resume，防指引链兜圈
     });
@@ -1667,6 +1777,9 @@ module.exports = {
   saveState,
   createSh,
   resumeCommand,
+  resolveZswCli,
+  readPremergeMarker,
+  resolveRepoRoot,
   worktreeDirt,
   REAL_PI_DEFAULT_MODEL,
   REAL_PI_SKIP_MARKERS,
@@ -1674,7 +1787,6 @@ module.exports = {
   CR_FIX_RETRY_TERMINATED,
   CR_FIX_STUCK_TERMINATED,
   CR_FIX_MAX_NESTED_ATTEMPTS,
-  CR_FIX_AGGREGATOR_MODEL,
   buildBatch1,
   findAggregatedFile,
   consumeNestedResult,

@@ -44,7 +44,11 @@ export default defineConfig({
   // @earendil-works/pi-ai：能力注册表（pi-boundary-reliability U5）pi 同源档位计算——
   // 「根声明、runtime 不可 import」格局的首次反转，声明见 services/model-capability.ts 头注；
   // pin 与根 pin 双副本一致性由 D6 版本门禁机器保证
-  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/subagent-core', '@earendil-works/pi-ai', 'chokidar', '@iarna/toml', 'proper-lockfile'],
+  // @zhushanwen/pi-file-lock：统一锁原语（D1-A，file-lock-unification-and-reaper-sink.md
+  // §3.2）——utils/file-lock.ts 经 ./core 子入口复用自实现 mkdir 锁（纯 TS 源码包，
+  // exports 直指 src，esbuild 直接编译无需 build 前置）。替换原 proper-lockfile
+  //（本地封装已删；package.json 依赖保留仅供测试作对端持锁者，不进 bundle）
+  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/subagent-core', '@zhushanwen/pi-file-lock', '@earendil-works/pi-ai', 'chokidar', '@iarna/toml'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
   // node-pty 是 native module（含 .node 二进制），不能打包进 JS bundle：
   // 其 JS 入口用 node-gyp-build 动态 require prebuilds/<platform>/*.node，

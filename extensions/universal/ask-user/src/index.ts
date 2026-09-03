@@ -211,15 +211,16 @@ export default function (pi: ExtensionAPI): void {
 	// 注册 ask_user channel handler：把 subagent 子进程的 ask_user 请求透传到主进程 UI。
 	//
 	// 跨扩展握手协议（PR #85 #M4）：通过 globalThis Symbol.for 约定 slot 形状
-	//（CHANNEL_HANDSHAKE_KEY，与 subagent-workflow/src/execution/channel-registry-access.ts
+	//（CHANNEL_HANDSHAKE_KEY，与 packages/subagent-core/src/execution/channel-registry-access.ts
 	// 用同一字符串 key），不依赖 dynamic import npm 包名（两个扩展都通过
 	// ~/.pi/agent/extensions/ symlink 加载，互相之间无法用 npm 包名 import）。
 	//
 	// 握手流程（registerAskUserChannelHandler 内部完成）：
 	//   1. 读 slot；不存在或 version 不兼容 → 建 slot（仅 pending，**永不建 registry**）
-	//   2. slot.registry 就绪（subagent-workflow 先到）→ 直接调 registry.register
-	//   3. slot.registry 未就绪 → handler 入 pending，等 subagent-workflow flush
-	// ask-user 永不创建 registry 实例——canonical registry 仅 subagent-workflow 创建。
+	//   2. slot.registry 就绪（承载 packages/subagent-core 的 subagent-workflow 扩展先到）→ 直接调 registry.register
+	//   3. slot.registry 未就绪 → handler 入 pending，等 subagent-core flush
+	// ask-user 永不创建 registry 实例——canonical registry 仅 packages/subagent-core 创建
+	//（execution/ui-channels.ts 的 createUiChannelRegistry）。
 	pi.on("session_start", (_event, ctx) => {
 		registerAskUserChannelHandler(createAskUserChannelHandler(ctx));
 	});
@@ -351,10 +352,8 @@ Don't:
 			theme: ThemeLike,
 		) {
 			const details = result.details;
-			if (details && "error" in details && details.error) {
-				return new Text(theme.fg("error", `✗ ${details.error}`), 0, 0);
-			}
-			// details 现已排除 ErrorDetails 分支，收窄为 Result | undefined
+			// 错误路径已全部改 throw（W4）：pi 置 isError:true 后 details 为空对象，
+			// 不存在 ErrorDetails 形态——这里 details 要么 undefined 要么 Result
 			const d = details as Result | undefined;
 			if (!d || d.cancelled) {
 				return new Text(theme.fg("warning", "Cancelled"), 0, 0);

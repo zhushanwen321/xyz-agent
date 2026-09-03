@@ -23,7 +23,7 @@
  * 依赖方向：lib/ipc（renderer→main 唯一适配点）+ composables/logic/markdown（releaseNotes 渲染）。
  */
 import { onScopeDispose, reactive } from 'vue'
-import type { LatestReleaseInfo, UpdateState } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateState, UpdateErrorPayload } from '@xyz-agent/shared'
 import { UPDATE_STALE_RELEASE } from '@xyz-agent/shared'
 import { compare } from 'compare-versions'
 import {
@@ -69,6 +69,29 @@ const LAUNCH_FAILURE_ERROR_KEYS: Record<string, string> = {
 
 /** win 安装器失败为动态码（'installer exited <code>'），无法精确枚举，前缀匹配 */
 const INSTALLER_EXITED_PREFIX = 'installer exited'
+
+/**
+ * 网络/代理不可达类错误码：suggestion 末尾追加手动下载逃生通道指引
+ * （update-network-resilience D9 双入口之一；目录路径常驻展示在设置页手动通道区）。
+ * 追加逻辑收敛在 renderer（main 文案不动，G3 兼容性约束）。
+ */
+const MANUAL_HINT_ERROR_CODES: ReadonlySet<string> = new Set([
+  'UPDATE_PROXY_UNREACHABLE',
+  'UPDATE_PROXY_ERROR',
+  'UPDATE_NETWORK_FAILED',
+  'UPDATE_NETWORK_TIMEOUT',
+])
+
+/**
+ * 组装 errorSuggestion：main 下发的 suggestion 为基座，网络/代理类错误码末尾追加
+ * 手动下载指引（浏览器/其他机器下载 zip 放入手动目录 → 零 app 网络依赖完成升级）。
+ */
+function resolveErrorSuggestion(payload: UpdateErrorPayload): string {
+  const base = payload.suggestion ?? ''
+  if (!payload.errorCode || !MANUAL_HINT_ERROR_CODES.has(payload.errorCode)) return base
+  const hint = t('sidebar.update.manualDownloadHint')
+  return base ? `${base}\n${hint}` : hint
+}
 
 /** failed toast 文案选择：先精确匹配错误码，再匹配 win 安装器动态码前缀，兜底通用文案 */
 function resolveFailedToastKey(error?: string): string {
@@ -297,7 +320,8 @@ function subscribeProgress(): void {
     } else {
       state.state = 'error'
       state.errorMessage = e.message
-      state.errorSuggestion = e.suggestion ?? ''
+      // D9：网络/代理类错误在 main suggestion 末尾追加手动下载逃生通道指引
+      state.errorSuggestion = resolveErrorSuggestion(e)
       // D4：失败 toast 触发点在 useAppUpdate 单例的 onUpdateError 回调
       // toast 只弹摘要（message），suggestion 太长不进 toast，留在 hover 浮层/设置页
       const { error: toastError } = useToast()
@@ -479,7 +503,8 @@ async function performDownload(): Promise<void> {
 /**
  * 执行安装阶段（替换 + 重启）。依赖已下载产物（performDownload 成功后调用）。
  * 乐观置 replacing（漏洞6修复）：IPC 往返延迟内 state 立即变 replacing，堵二次点击竞态。
- * triggerRestart=true → state='restarting'（main 即将退出重启）。
+ * triggerRestart=true → state='restarting'（main 即将退出重启），且按响应 version
+ * （实装权威）对齐 latestRelease 版本显示（D2 交错缓解，见函数内注释）。
  * catch：!errorHandled 时兜底置 error（onUpdateError 已处理则不覆盖）。
  */
 async function performInstall(): Promise<void> {
@@ -489,6 +514,16 @@ async function performInstall(): Promise<void> {
   try {
     const result = await ipcUpdateInstall()
     if (result.triggerRestart) {
+      // D2 交错缓解：手动认领与后台预下载并发写 preloaded（最后写者胜）时，实装版本
+      // 可能新于 UI 确认版本（认领 0.9.11 → 预下载 0.9.12 覆写）。以 install 响应的
+      // version（实装权威）对齐 latestRelease 版本显示；其他字段保持（app 即将重启，
+      // 旧 release 的 notes/url 残留生命周期以秒计，整体替换无收益反而放大覆盖面）。
+      if (result.version && state.latestRelease && result.version !== state.latestRelease.version) {
+        console.log(
+          `[useAppUpdate] installed version ${result.version} differs from displayed ${state.latestRelease.version}, aligning display`,
+        )
+        state.latestRelease = { ...state.latestRelease, version: result.version }
+      }
       state.state = 'restarting'
     } else if (!errorHandled) {
       // 未触发重启且无错误 → 复位（极少见，install 无 triggerRestart 通常伴随 error 事件）

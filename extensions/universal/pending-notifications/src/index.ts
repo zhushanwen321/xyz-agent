@@ -1,16 +1,18 @@
 /**
  * Pending Notifications Extension — 跨 extension 的异步操作注册/查询机制。
  *
- * 设计定位：解决 workflow/subagent 运行时 goal 持续注入消息的悖论。
- * workflow/subagent 运行时通过 EventBus（pi.events.emit）广播 register/unregister，
- * 本扩展监听这些事件、将状态写入 session entries（pi.appendEntry），
- * 让 goal 的 before_agent_start 从 entries 读取活跃异步操作并注入等待消息。
+ * 设计定位：为长耗时异步操作（workflow/subagent/bash 后台任务）提供跨 extension 的
+ * 活跃操作注册/查询机制。workflow/subagent/bash 运行时通过 EventBus（pi.events.emit）
+ * 广播 register/unregister，本扩展监听这些事件、将状态写入 session entries（pi.appendEntry），
+ * 供 LLM 通过 pending_notifications 工具主动查询当前活跃异步操作
+ * （goal 不在 before_agent_start 注入等待消息——避免双信息源，pending 感知由 LLM 自行查询）。
  *
  * 文件职责：
  * - state.ts:    PendingEntry / PendingRegistry + 纯函数（register/unregister/rebuild）
  * - index.ts（本文件）: 工厂入口（注册 events.on 监听 + session 生命周期 + 查询 tool）
  *
- * 事件契约（与 workflow launcher.ts / subagent-service.ts 对齐）：
+ * 事件契约（emit 端在 packages/subagent-core：orchestration/lifecycle.ts 与
+ * execution/subagent-service.ts）：
  * - emit("pending:register", { id, type, name })
  * - emit("pending:unregister", { id, reason })
  *
@@ -18,6 +20,8 @@
  * - pending:register → { id, type, name, registeredAt, expiresAt?, sessionId }
  *   （expiresAt 仅 session 档写入；process 档（D16）省略该字段）
  * - pending:unregister → { id, reason, status }
+ *   （主路径为事件监听写入的三字段；session_start 补 expired / session_shutdown 补
+ *   cancelled 的 flush 路径只写 { id, status }，省略 reason——消费方只读 id，无行为影响）
  *
  * 监听方式：pi.events.on（Pi 的 EventBus，真实 SDK 为 EventBus.on，非 optional）。
  * workflow 侧通过 deps.eventBus 注入 pi.events（同一总线）。
@@ -301,13 +305,10 @@ function parseRegisterEvent(data: unknown): ParsedRegister | null {
 interface ParsedUnregister {
 	id: string;
 	reason: string;
-	result?: string;
-	error?: string;
-	patchFile?: string;
 }
 
 /** 解析 pending:unregister 事件 data（容错缺失/类型错误字段）。
- *  T2 后 subagent 完成路径携带可选的 result/error/patchFile，供消费侧 sendMessage。 */
+ *  T2 通知由 subagent-workflow 自有通道 bg-notify-render 承担，不经本事件。 */
 function parseUnregisterEvent(data: unknown): ParsedUnregister | null {
 	if (typeof data !== "object" || data === null) return null;
 	const d = data as Record<string, unknown>;
@@ -315,9 +316,6 @@ function parseUnregisterEvent(data: unknown): ParsedUnregister | null {
 	return {
 		id: d.id,
 		reason: typeof d.reason === "string" ? d.reason : "completed",
-		result: typeof d.result === "string" ? d.result : undefined,
-		error: typeof d.error === "string" ? d.error : undefined,
-		patchFile: typeof d.patchFile === "string" ? d.patchFile : undefined,
 	};
 }
 

@@ -453,17 +453,8 @@ describe("renderCall / renderResult (FR-9)", () => {
 		expect(renderText(node)).toContain("Cancelled");
 	});
 
-	it("I-19: renderResult error shows ✗ <error>", () => {
-		const tool = getTool();
-		const node = tool.renderResult(
-			{ details: { error: "something broke" } },
-			{ expanded: false },
-			stubTheme,
-		) as unknown as { render(width: number): string[] };
-		const text = renderText(node);
-		expect(text).toContain("✗");
-		expect(text).toContain("something broke");
-	});
+	// （I-19 已随 ErrorDetails 死类型删除：错误路径全部 throw（W4），pi 置 isError 后
+	// details 为空对象，renderResult 不存在 {error} details 分支可渲染）
 
 	// S-3: options.expanded 展开 —— 显示全部选项 + ●/○ 选中标记（spec FR-9）
 	it("I-20: renderResult expanded shows all options with ●/○ marks", () => {

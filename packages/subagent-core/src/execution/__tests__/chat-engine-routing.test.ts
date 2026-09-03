@@ -561,6 +561,77 @@ describe("chat 引擎分支 U2：probe 兜底 / journal / engineHandle", () => {
     expect(h?.journalPath).toBe(resolveJournalPath(agentDir, "zcode", POOL, handle.subagentId));
   });
 
+  // ============================================================
+  // [R4 §3.4 不变量 3] onHandleReady 运行中回填：create 应答后立即落 entry——
+  // 运行中 GUI 经 entry 重建 record 即得 ①②级读取钥匙（不等 run resolve）
+  // ============================================================
+
+  it("[onHandleReady] create 应答后回调 → record.engineHandle 立即回填 + reportRecordTransition 落 entry（record 仍 running）", async () => {
+    process.env.XYZ_AGENT_DATA_DIR = agentDir;
+    const { service, zcode, pi } = setup(agentDir);
+    const POOL = "zcode-appserver-home";
+    let releaseRun!: (v: { handle: EngineHandle; outcome: AgentOutcome }) => void;
+    zcode.runImpl = (task, ctx) => {
+      ctx.onPoolResolved?.(POOL);
+      // create 应答后的回调时点（app-server 引擎在 session/create 应答后触发）
+      ctx.onHandleReady?.({
+        sessionRef: { dbPath: ".zcode/cli/db/db.sqlite", sessionId: "sess-live-1" },
+        poolKey: POOL,
+      });
+      return new Promise((resolve) => {
+        releaseRun = resolve; // 挂起 run——模拟运行中任务
+      });
+    };
+    const handle = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
+    await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
+
+    // run 尚未 resolve（record 仍 running）：engineHandle 已回填且 entry 已落盘
+    await vi.waitFor(() => {
+      const entries = pi.appendEntry.mock.calls.filter((c) => c[0] === "subagent-record");
+      const withHandle = entries.filter(
+        (c) => (c[1] as Record<string, unknown>).engineHandle !== undefined,
+      );
+      expect(withHandle.length).toBeGreaterThan(0);
+    });
+    const running = service.collectRecords(10, "running").find((r) => r.id === handle.subagentId);
+    expect(running?.engineHandle).toEqual({
+      sessionRef: { dbPath: ".zcode/cli/db/db.sqlite", sessionId: "sess-live-1" },
+      poolKey: POOL,
+      journalPath: resolveJournalPath(agentDir, "zcode", POOL, handle.subagentId),
+    });
+    // 回填 entry 的 journalPath 与 onPoolResolved retarget 后的实际落盘路径一致（同源）
+    expect(fs.existsSync(resolveJournalPath(agentDir, "zcode", POOL, handle.subagentId))).toBe(false);
+
+    // 终态收口（防 dangling）
+    releaseRun({ handle: fakeHandle(), outcome: doneOutcome("ok") });
+    await vi.waitFor(() => expect(service.findRecord(handle.subagentId)).toBeUndefined());
+  }, 10_000);
+
+  it("[onHandleReady] 引擎不回调（spawn 形态）时零回填——终态回填仍兜底（行为不变）", async () => {
+    process.env.XYZ_AGENT_DATA_DIR = agentDir;
+    const { service, zcode, pi } = setup(agentDir);
+    const POOL = "zcode-p-glm";
+    zcode.runImpl = (task, ctx) => {
+      ctx.onPoolResolved?.(POOL); // 只 onPoolResolved——spawn 引擎形态（无 onHandleReady）
+      return Promise.resolve({
+        handle: {
+          data: { v: 1, engineId: "zcode", sessionRef: { dbPath: "sessions.db", sessionId: "sess-1" }, poolKey: POOL, adapterVersion: "test" },
+        },
+        outcome: doneOutcome("ok"),
+      });
+    };
+    const handle = await service.execute(baseOpts(agentDir, { engine: "zcode" }));
+    await vi.waitFor(() => expect(service.findRecord(handle.subagentId)).toBeUndefined());
+    const entries = pi.appendEntry.mock.calls.filter((c) => c[0] === "subagent-record");
+    // 运行中回填 entry 不存在（register 写点无 engineHandle；archive 终态侧才有）
+    const runningEntries = entries.slice(0, -1);
+    for (const c of runningEntries) {
+      expect((c[1] as Record<string, unknown>).engineHandle).toBeUndefined();
+    }
+    const final = entries[entries.length - 1][1] as Record<string, unknown>;
+    expect(final.engineHandle).toMatchObject({ poolKey: POOL });
+  });
+
   it("[D5 回归] pi 纯缺省路径 entry 不含 engine/engineFallback/engineHandle 键", async () => {
     const { service, pi } = setup(agentDir);
     const handle = await service.execute(baseOpts(agentDir));

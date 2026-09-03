@@ -24,6 +24,7 @@ import { NpmGitInstaller } from './infra/installers/npm-git-installer.js'
 import { NpmPluginInstaller } from './infra/installers/plugin-installer-adapter.js'
 import { ExtensionResolver } from './infra/installers/extension-resolver.js'
 import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
+import { PiRetrySettings } from './infra/pi/pi-retry-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
@@ -223,6 +224,8 @@ async function main(): Promise<void> {
   // IExtensionSettings port 的 infra 实现：经 pi-settings-store 统一读写 settings.json（D17）。
   // 构造时对齐 settings 路径到 pi agent 目录，保证 model 域与 extension 域读写同一文件。
   const extensionSettings = new PiExtensionSettings(configStore.getPiAgentDir())
+  // ILlmRetrySettings port 的 infra 实现：settings.json retry 域读写（同 extensionSettings 注装模式）。
+  const llmRetrySettings = new PiRetrySettings(configStore.getPiAgentDir())
   const extensionService = new ExtensionService({
     settingsDir: configStore.getPiAgentDir(),
     projectRoot: effectiveRoot,
@@ -238,7 +241,7 @@ async function main(): Promise<void> {
   // ConfigService 用它做 I9 清理①（setProvider 保存 apiKey 时清 auth.json oauth）+ I8（deleteProvider 清 auth.json）。
   const authStorage = new AuthStorage(join(configStore.getPiAgentDir(), 'auth.json'))
   // providerExtrasStore 注入：setProvider 的 authMethod 改写 providers.json（A1-5 写侧切换）。
-  const configService = new ConfigService(effectiveRoot, configStore, authStorage, providerExtrasStore)
+  const configService = new ConfigService(effectiveRoot, configStore, authStorage, providerExtrasStore, llmRetrySettings)
   // ADR-0021 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
   // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
   // D8-1 位置判断（perf W29，06 §5 m-7 结论）：保持 listen 前同步执行——

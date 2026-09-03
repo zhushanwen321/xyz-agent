@@ -12,7 +12,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DiscoveredResource } from "@zhushanwen/subagent-core/shared/resource-discovery.ts";
 // 共享 mock 基建（vi.mock 工厂 / mock pi / mock ctx）：helpers/injector-test-mocks.ts
+// ——必须先于 barrel import 初始化：barrel 的 re-export 链会触发深路径 mock 工厂，
+// 工厂闭包引用本 helpers 的绑定（helpers 文件头「惰性求值」约束）
 import { createDiscoveryModuleMock, createLoggerModuleMock, createMockCtx, createMockPi, type CapturedHandlers } from "./helpers/injector-test-mocks.ts";
+// C5①：formatAgentList 下沉 core barrel——测试改从 barrel 取实现，guide 用 pi 宿主注入文案
+import { formatAgentList } from "@zhushanwen/subagent-core";
 
 // ── 稳定 spy：vi.hoisted 保证 resetModules 后引用不变（vi.mock 工厂闭包捕获同一 fn，
 //    故 fresh import 的注入器拿到的 discoverResources === spies.discoverResources，跨
@@ -26,7 +30,7 @@ vi.mock("@zhushanwen/subagent-core/shared/resource-discovery.ts", () => createDi
 vi.mock("@zhushanwen/pi-extension-logger", () => createLoggerModuleMock());
 
 // ── 纯函数测试：静态 import（模块级缓存状态不影响纯函数；与下方缓存 describe 隔离） ──
-import { formatAgentList, parseAgentFrontmatter } from "../subagent-list-injector";
+import { parseAgentFrontmatter, SUBAGENT_LIST_GUIDE } from "../subagent-list-injector";
 
 describe("parseAgentFrontmatter", () => {
 	it("解析双引号包裹的 name + description", () => {
@@ -70,7 +74,7 @@ description: '代码审查'
 
 describe("formatAgentList", () => {
 	it("空列表返回空串（不注入）", () => {
-		expect(formatAgentList([])).toBe("");
+		expect(formatAgentList([], { guide: SUBAGENT_LIST_GUIDE })).toBe("");
 	});
 
 	it("TC1: when + examples 注入（原样渲染 + escapeXml + 缺省兼容）", () => {
@@ -86,7 +90,7 @@ describe("formatAgentList", () => {
 				],
 			},
 			{ name: "legacy", description: "未迁移 agent", path: "/agents/legacy.md" },
-		]);
+		], { guide: SUBAGENT_LIST_GUIDE });
 		expect(out).toContain("<when>用户要求 review 代码</when>");
 		// 正反原样渲染——negative action 含原因文本（评审 M5：渲染器不硬编码）
 		expect(out).toContain('"帮我 review 这段代码" → 调用 reviewer 对抗式审查');
@@ -99,29 +103,34 @@ describe("formatAgentList", () => {
 				path: "/agents/x.md",
 				examples: [{ match: "处理 <task> 的 diff", action: "调用 x", positive: true }],
 			},
-		]);
+		], { guide: SUBAGENT_LIST_GUIDE });
 		expect(xmlOut).toContain("&lt;task&gt;");
 		// 缺省兼容：无 when/examples 的 agent 不渲染该段
-		const legacyOut = formatAgentList([{ name: "legacy", description: "未迁移 agent", path: "/agents/legacy.md" }]);
+		const legacyOut = formatAgentList([{ name: "legacy", description: "未迁移 agent", path: "/agents/legacy.md" }], { guide: SUBAGENT_LIST_GUIDE });
 		expect(legacyOut).not.toContain("<when>");
 		expect(legacyOut).not.toContain("<examples>");
 	});
 
 	it("包含 P3 正向触发引导语（何时该 delegate）", () => {
-		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }]);
+		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }], { guide: SUBAGENT_LIST_GUIDE });
 		expect(out).toContain("PRIORITY");
 		expect(out).toContain("3+ files");
 		expect(out).toContain("delegate");
 		expect(out).toContain("FIRST");
 	});
 
-	it("保留原 'ONLY use agent names from this list' 名字约束", () => {
-		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }]);
-		expect(out).toContain("ONLY use agent names from this list");
+	it("C5① guide 更新：agent 引用改为 <location> 路径形态，动态 agent 指引改为缺省 general-purpose（systemPrompt 参数已不在 schema）", () => {
+		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }], { guide: SUBAGENT_LIST_GUIDE });
+		expect(out).toContain("ONLY use agents from this list");
+		expect(out).toContain("pass the <location> path (absolute .md path) as the agent param");
+		expect(out).toContain("omit agent (a general-purpose agent is used)");
+		// 旧句已过期（subagent tool schema 无 systemPrompt 参数，见 subagent-tool-schema.ts）
+		expect(out).not.toContain("systemPrompt");
+		expect(out).not.toContain("ONLY use agent names from this list");
 	});
 
 	it("包含 'Do NOT call list to discover' 引导语", () => {
-		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }]);
+		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }], { guide: SUBAGENT_LIST_GUIDE });
 		expect(out).toContain("Do NOT call list to discover");
 		expect(out).toContain("use list only for running state");
 	});
@@ -130,7 +139,7 @@ describe("formatAgentList", () => {
 		const out = formatAgentList([
 			{ name: "worker", description: "does work", path: "/agents/worker.md" },
 			{ name: "reviewer", description: "reviews code", path: "/agents/reviewer.md" },
-		]);
+		], { guide: SUBAGENT_LIST_GUIDE });
 		expect(out).toContain("<available_subagents>");
 		expect(out).toContain("</available_subagents>");
 		expect(out).toContain("<name>worker</name>");
@@ -143,9 +152,38 @@ describe("formatAgentList", () => {
 	});
 
 	it("转义 XML 特殊字符", () => {
-		const out = formatAgentList([{ name: "a&b<c>", description: "\"q\"", path: "/agents/a&b<c>.md" }]);
+		const out = formatAgentList([{ name: "a&b<c>", description: "\"q\"", path: "/agents/a&b<c>.md" }], { guide: SUBAGENT_LIST_GUIDE });
 		expect(out).toContain("<name>a&amp;b&lt;c&gt;</name>");
 		expect(out).toContain("&quot;q&quot;");
+	});
+
+	it("CA2 快照等价锚定：骨架 + 条目段逐字节等于 pi 旧本地实现模板（除 location 前缀外零变化）", () => {
+		// 条目模板逐字复制自 C5① 前的本地 formatAgentList 实现（escapeXml 同函数），
+		// 锚定 core 下沉未改变渲染字节（红线 8：等价豁免仅 location 前缀 + guide 段）
+		const agents = [
+			{
+				name: "reviewer",
+				description: "代码审查",
+				path: "/OLD-PREFIX/agents/reviewer.md",
+				when: "用户要求 review",
+			},
+			{ name: "worker", description: "does work", path: "/OLD-PREFIX/agents/worker.md" },
+		];
+		const expectedItems = [
+			'  <agent><name>reviewer</name><description>代码审查</description><when>用户要求 review</when><location>/OLD-PREFIX/agents/reviewer.md</location></agent>',
+			'  <agent><name>worker</name><description>does work</description><location>/OLD-PREFIX/agents/worker.md</location></agent>',
+		];
+		const out = formatAgentList(agents, { guide: SUBAGENT_LIST_GUIDE });
+		expect(out).toBe(
+			`\n\n<available_subagents>\n${SUBAGENT_LIST_GUIDE}\n${expectedItems.join("\n")}\n</available_subagents>`,
+		);
+
+		// location 前缀替换（资产来源迁移：pi-sw 安装目录 → core 包）后其余字节零变化
+		const migrated = formatAgentList(
+			agents.map((a) => ({ ...a, path: a.path.replace("/OLD-PREFIX/", "/NEW-CORE-PKG/") })),
+			{ guide: SUBAGENT_LIST_GUIDE },
+		);
+		expect(migrated).toBe(out.replaceAll("/OLD-PREFIX/", "/NEW-CORE-PKG/"));
 	});
 });
 
@@ -327,10 +365,12 @@ describe("discoverAllAgents 顺序契约（KV-cache）", () => {
 			]);
 		spies.getCachedFileContent.mockImplementation((p: string) => byPath[p] ?? null);
 
-		const { discoverAllAgents, formatAgentList } = await import("../subagent-list-injector");
+		const { discoverAllAgents } = await import("../subagent-list-injector");
 		const first = await discoverAllAgents("/ws");
 		const second = await discoverAllAgents("/ws");
 		expect(second).toEqual(first);
-		expect(formatAgentList(second)).toBe(formatAgentList(first));
+		expect(formatAgentList(second, { guide: SUBAGENT_LIST_GUIDE })).toBe(
+			formatAgentList(first, { guide: SUBAGENT_LIST_GUIDE }),
+		);
 	});
 });

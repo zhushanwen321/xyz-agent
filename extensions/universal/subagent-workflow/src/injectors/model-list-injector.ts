@@ -1,5 +1,5 @@
 /**
- * Model List Injector
+ * Model List Injector（C5① 渲染改接 core）
  *
  * 通过 before_agent_start 每 turn 注入 `<available_provider_models>` 段，列出
  * 当前 auth 可用的模型（provider/modelId + 能力 + contextWindow），与
@@ -19,6 +19,11 @@
  *   injector 的码点序契约对齐）。数据真实变化（用户中途配置了新 provider）
  *   时下一 turn 自然反映。
  *
+ * C5①（convergence D-3）：formatModelList + ModelEntry 口径下沉 core 并改调
+ * barrel——pi 投影全字段必给（provider/reasoning:boolean/input[]/contextWindow），
+ * core 的 (provider,id) 码点序 + provider/id 拼接在 pi 投影下与本地旧实现逐字节
+ * 一致（CA2 快照验收前提）；guide 文案是 pi 宿主注入（core 不内嵌平台文案）。
+ *
  * 立场：本注入段只服务「派发时选模型」，明确告知模型不要在会话中切换主模型
  * （KV cache 不友好）；用户明确要求换模型时走 pi 原生 /model 命令（人手动触发）。
  */
@@ -35,19 +40,17 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import { escapeXml, renderXmlSection } from "@zhushanwen/subagent-core/shared/xml-injection.ts";
+// C5①/C5⑦：渲染统一走 core barrel（formatModelList + ModelEntry 类型为 barrel 导出面）
+import { formatModelList, type ModelEntry } from "@zhushanwen/subagent-core";
 
 const logger = getLogger("injector");
 
-/** 注入段的最小模型投影（从 Model<Api> 收窄，测试无需构造完整 Model） */
-export interface ModelEntry {
-	provider: string;
-	id: string;
-	name: string;
-	reasoning: boolean;
-	input: string[];
-	contextWindow: number;
-}
+/**
+ * pi 版注入引导文案（C5① guide 参数化——core 渲染函数不内嵌平台文案，宿主注入；
+ * 文案与改造前本地实现逐字一致——models 段 guide 无过期问题）。
+ */
+export const MODEL_LIST_GUIDE =
+	"The following models are available (auth-configured). Use these ids when delegating via the subagent/workflow `model` param (\"provider/modelId\" format) to match the task (e.g. vision models for screenshots, strong reasoners for architecture). Do NOT switch the main conversation model mid-session — per-call model override on delegates only (switching the main model is cache-hostile); use the /model command only when the user explicitly asks to change it.";
 
 /** Model<Api> → ModelEntry 投影（只留注入段消费的字段；模块内唯一消费方 setupModelListInjector） */
 function toModelEntry(model: Model<Api>): ModelEntry {
@@ -59,53 +62,6 @@ function toModelEntry(model: Model<Api>): ModelEntry {
 		input: [...model.input],
 		contextWindow: model.contextWindow,
 	};
-}
-
-/** 码点序比较（显式契约，禁 localeCompare——宿主 locale 差异会破坏跨环境字节一致）。 */
-function compareByCodepoint(a: string, b: string): number {
-	return a < b ? -1 : a > b ? 1 : 0;
-}
-
-/** 能力标记：reasoning → "reasoning"，input 含 image → "vision"（空则省略 caps 段） */
-function formatCaps(entry: ModelEntry): string {
-	const caps: string[] = [];
-	if (entry.reasoning) caps.push("reasoning");
-	if (entry.input.includes("image")) caps.push("vision");
-	return caps.join(",");
-}
-
-/**
- * 将模型列表格式化为 XML 注入段。
- *
- * 输入按 (provider, id) 码点序排序——registry 返回顺序不作保证，排序后同一
- * 数据集输出字节稳定。码点序是显式契约（禁 localeCompare——宿主 locale 差异
- * 会破坏跨环境字节一致，见 subagent-list-injector.ts sortByCodepoint 注释），
- * 保证注入段进每 turn system prompt 时跨环境逐字节可复现（cache-probe 前缀
- * 指纹归因 / 换机器 resume 场景依赖此性质）。空列表返回空串（不注入）。
- */
-export function formatModelList(models: ModelEntry[]): string {
-	if (models.length === 0) return "";
-
-	const sorted = [...models].sort((a, b) =>
-		a.provider === b.provider
-			? compareByCodepoint(a.id, b.id)
-			: compareByCodepoint(a.provider, b.provider),
-	);
-
-	const items = sorted.map((m) => {
-		const caps = formatCaps(m);
-		return (
-			`  <model><id>${escapeXml(`${m.provider}/${m.id}`)}</id>`
-				+ `<name>${escapeXml(m.name)}</name>`
-				+ (caps ? `<caps>${caps}</caps>` : "")
-				+ `<contextWindow>${m.contextWindow}</contextWindow></model>`
-		);
-	});
-	return renderXmlSection({
-		tag: "available_provider_models",
-		guide: "The following models are available (auth-configured). Use these ids when delegating via the subagent/workflow `model` param (\"provider/modelId\" format) to match the task (e.g. vision models for screenshots, strong reasoners for architecture). Do NOT switch the main conversation model mid-session — per-call model override on delegates only (switching the main model is cache-hostile); use the /model command only when the user explicitly asks to change it.",
-		items,
-	});
 }
 
 /**
@@ -125,6 +81,7 @@ export function setupModelListInjector(pi: ExtensionAPI): void {
 			try {
 				const injection = formatModelList(
 					ctx.modelRegistry.getAvailable().map(toModelEntry),
+					{ guide: MODEL_LIST_GUIDE },
 				);
 				if (!injection) return;
 				return { systemPrompt: event.systemPrompt + injection };

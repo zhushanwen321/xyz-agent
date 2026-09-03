@@ -4,10 +4,10 @@
 // verify the Correct/error STRINGS exist; these exercise the actual throw logic of
 // handleAdd/handleDelete, so a refactor cannot silently drop the dual-form detection.
 //
-// Note: the schema layer (TodoParams, additionalProperties:false) already rejects
-// dual-form payloads before they reach the handler in production. These handler-level
-// tests are defense-in-depth — they ensure the handler ALSO throws clearly if called
-// directly (e.g. by another extension bypassing schema validation).
+// Note: since the schema was flattened to a single Type.Object (OpenAI compat), all
+// fields are Optional at the schema layer — dual-form payloads now REACH the handler
+// in production, and these handler-level checks are the actual enforcement point
+// (schema.test.ts pins that Value.Check passes for dual-form payloads).
 //
 // handleAdd/handleDelete were exported specifically to enable these tests.
 

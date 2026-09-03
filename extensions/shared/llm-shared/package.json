@@ -1,7 +1,7 @@
 {
   "name": "@zhushanwen/pi-llm-shared",
-  "version": "0.4.2",
-  "description": "Shared LLM invocation library for Pi extensions — model resolution (ref exact only), LLM calling (completeSimple), and config read/write with mtime caching. Shared library, not a Pi extension.",
+  "version": "0.5.0",
+  "description": "Shared LLM invocation library for Pi extensions — model resolution (ref exact only), LLM calling (completeSimple), and config read/write with mtime+size caching. Shared library, not a Pi extension.",
   "type": "module",
   "main": "src/index.ts",
   "keywords": [
@@ -14,8 +14,7 @@
   ],
   "license": "MIT",
   "files": [
-    "src/",
-    "index.ts"
+    "src/"
   ],
   "scripts": {
     "typecheck": "npx tsc --noEmit",

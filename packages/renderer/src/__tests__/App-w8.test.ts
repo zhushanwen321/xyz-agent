@@ -34,8 +34,8 @@ vi.mock('@/composables/useConnection', () => ({
   }),
 }))
 
-vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
-  useSidebarNew: () => ({ onConnected: mocks.onConnected }),
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
+  useSidebar: () => ({ onConnected: mocks.onConnected }),
 }))
 
 // stub 掉重组件，避免渲染 AppShell/ToastContainer 的依赖树

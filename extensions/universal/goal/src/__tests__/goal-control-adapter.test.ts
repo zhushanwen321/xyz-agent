@@ -118,7 +118,7 @@ describe("handleComplete — active 守卫 + evidence + finalizeAndPersist", () 
 
 // ── handleCreate ─────────────────────────────────────
 
-describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal", () => {
+describe("handleCreate — objective/successCriteria 必填（handler 运行时校验）+ slug 真 optional + 非终态守卫 + createGoal", () => {
 	it("无旧 goal + slug + objective → status active + slug 写入 + 持久化 + notify", () => {
 		const session = createGoalSession();
 		const ports = makeFakePorts();

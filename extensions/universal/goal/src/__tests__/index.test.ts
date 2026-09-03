@@ -1,8 +1,8 @@
 /**
  * index.ts 测试 — 工厂入口 + 跨扩展 API（pi.__goalInit）
  *
- * 覆盖 T1.8 (NFR-AC-8)：__goalInit 签名 (objective, budget, ctx)，结构上无法接收 tasks
- * （task CRUD 已删除，D-16/FR-4 双轨消除）。active 守卫由 service.test.ts 覆盖。
+ * 覆盖 T1.8 (NFR-AC-8)：__goalInit 签名 (objective, budget, ctx, slug?, successCriteria?)，
+ * 结构上无法接收 tasks（task CRUD 已删除，D-16/FR-4 双轨消除）。active 守卫由 service.test.ts 覆盖。
  *
  * 用最小 fake pi + fake ctx 实例化 goalExtension 工厂，再调 pi.__goalInit。
  */
@@ -247,7 +247,7 @@ describe("E1 全链路集成：goal_control create 数组 → 落盘 → 重载 
 
 			// 5. contextInjectionPrompt → <successCriteria> 段含编号行（plan 需求 3：编号列表）
 			const state = reloaded.state!;
-			const prompt = contextInjectionPrompt(state, state.timeUsedSeconds);
+			const prompt = contextInjectionPrompt(state);
 			expect(prompt).toContain("<successCriteria>");
 			expect(prompt).toContain("1. e2e cond a");
 			expect(prompt).toContain("2. e2e cond b");

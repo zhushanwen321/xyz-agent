@@ -87,7 +87,7 @@ curl -L https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJ
 | `pi-session-reader` | 读取 / 查询 session 历史（树、家族、执行树、搜索、导出） |
 | `pi-rename-session` | 首轮对话后自动生成会话标题 |
 | `pi-pending-notifications` | 跨扩展异步操作注册 / 查询（长任务期间防消息注入） |
-| `pi-agent-ext` | 会话树导航（`/xyz-navigate`）+ 内部 reload（`/__xyz_reload__`） |
+| `pi-agent-ext` | 内部命令（host 触发 reload `/__xyz_reload__` + Trace 视图现取 system prompt `/__xyz_get_system_prompt__`） |
 | `pi-system-prompt` | 系统提示词注入（AGENTS.md / settings 追加段） |
 | `pi-msg-id-mapper` | client UUID ↔ user entry ID 映射 |
 | `pi-system-prompt-trace` | system prompt 建立或变化时写入 xyz:system-prompt 留痕 entry |

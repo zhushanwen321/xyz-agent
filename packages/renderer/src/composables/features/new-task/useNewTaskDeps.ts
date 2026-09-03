@@ -10,7 +10,7 @@
  *   storeToRefs 取 Ref（pinia store 直接访问会解包成值，丢失响应式派生链）。
  * - pickDirectory 适配 path:null → undefined（ui 包 PickDirectoryResult.path 是
  *   string|undefined；lib/ipc 返回 string|null）。
- * - flow = 壳 useNewTaskFlow()（core 实例，与 useSidebarNew 共享）。
+ * - flow = 壳 useNewTaskFlow()（core 实例，与 useSidebar 共享）。
  */
 import { storeToRefs } from 'pinia'
 import type { NewTaskDeps } from '@xyz-agent/ui'

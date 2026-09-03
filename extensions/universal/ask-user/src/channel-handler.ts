@@ -13,7 +13,8 @@
 //     （key=header/question，单选=string，多选=JSON 数组，Other→__other），让子进程 decode 一致。
 //
 // handler 收到的 req.channelPayload = {questions: AskUserQuestion[], allowCancel}（proto 格式，
-// 由子进程 askUserInteract 编码、subagent-workflow parseChannel 解析 options[0] JSON 得到）。
+// 由子进程 askUserInteract 编码、packages/subagent-core 的 parseChannel（execution/ui-channels.ts）
+// 解析 options[0] JSON 得到）。
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
@@ -27,20 +28,20 @@ import { encodeAnswer } from "./answer-codec";
 import { type AnswerValue, type Option, type Question, type Result, type ThemeLike } from "./types";
 
 /**
- * channel handler 签名——与 subagent-workflow 的 UiChannelRegistry.ChannelHandler 一致
- *（(req: unknown) => Promise<unknown>）。本文件不静态 import subagent-workflow（它是可选
- * peerDep，未安装时静态 import 会导致整个 ask-user 加载失败）；注册时通过动态 import 拿
- * registry，handler 签名用本地等价类型，运行时结构兼容。
+ * channel handler 签名——与 packages/subagent-core 的 UiChannelRegistry.ChannelHandler 一致
+ *（execution/ui-channels.ts 定义，(req: unknown) => Promise<unknown>）。本文件不静态 import
+ * packages/subagent-core（host 侧包，非本包依赖——两侧扩展经 globalThis slot 握手协作，
+ * 见 index.ts 工厂注释）；handler 签名用本地等价类型，运行时结构兼容。
  */
 export type ChannelHandler = (req: unknown) => Promise<unknown>;
 
-/** handler 返回给 subagent-workflow 的 UiResponse 形状（dialog-queue.ts 定义）。
+/** handler 返回给 packages/subagent-core 的 UiResponse 形状（execution/dialog-queue.ts 定义）。
  *  - {value}: select 的回传值（子进程 JSON.parse(value) 得 answers）
  *  - {cancelled}: 用户取消 / 子进程 close / handler 抛错 */
 type ChannelResponse = { value: string } | { cancelled: true };
 
 /** handler 收到的 req 形状收窄（ChannelHandler 签名是 unknown，按形状 as 收窄）。
- *  channelPayload 由 subagent-workflow parseChannel 填充。 */
+ *  channelPayload 由 packages/subagent-core 的 parseChannel 填充。 */
 interface ChannelRequest {
 	channelPayload?: { questions?: AskUserQuestion[]; allowCancel?: boolean };
 }
@@ -138,7 +139,7 @@ async function runTuiProtoInteraction(
  */
 export function createAskUserChannelHandler(ctx: ExtensionContext): ChannelHandler {
 	return async (req: unknown): Promise<unknown> => {
-		// req 正常是 subagent-workflow 构造的 UiRequest 对象；防御性收窄 null/undefined/
+		// req 正常是 packages/subagent-core 构造的 UiRequest 对象；防御性收窄 null/undefined/
 		// 非 object（handler 抛错会被 dialog-queue 兜底为 {cancelled:true}，但这里直接返回更干净）
 		if (req === null || typeof req !== "object") {
 			return { cancelled: true } satisfies ChannelResponse;

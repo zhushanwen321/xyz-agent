@@ -6,7 +6,7 @@
  * - ports 7 项：isMock（VITE_MOCK）/ isMac（navigator.platform，D8 收编）/ searchMock
  *   （mockApi.search.query）/ fileRead（api/domains/file.read，AC-6.9 不经吞错层）/
  *   fileCandidates（api/domains/composer.getFileCandidates）/ sessionList（api/domains/session.list）/
- *   selectSession（壳传入 useSidebarNew().selectSession，C-W3-2）/ watchFileChanges
+ *   selectSession（壳传入 useSidebar().selectSession，C-W3-2）/ watchFileChanges
  *   （useFileChangeInvalidation.watchFileChangesForInvalidation，C-W3-3）/ t（i18n）
  * - commandStore：壳单例 useCommandStore()（core createCommandStore 实例，须在
  *   providePlatform 之后——AppShell 时序保证）
@@ -17,7 +17,7 @@
  *   + requestPresetOpen（usePresetStore）（C-W3-5）
  *
  * 参数注入（与 useAppCommands 的 actions 注入破环同模式）：selectSession/newSession/
- * goOverview 是 useSidebarNew 实例方法（Sidebar 已实例化），由调用方传入避免重复实例化。
+ * goOverview 是 useSidebar 实例方法（Sidebar 已实例化），由调用方传入避免重复实例化。
  */
 import { ref } from 'vue'
 import { createFileSearchStore, getPlatform } from '@xyz-agent/core'
@@ -58,7 +58,7 @@ export function useSearchModalDeps(shell: SearchModalShellDeps): SearchDeps {
       fileRead: (path, sessionId) => fileApi.read(path, sessionId).then(() => {}),
       fileCandidates: composerApi.getFileCandidates,
       sessionList: sessionApi.list,
-      // C-W3-2：SessionSelectPort 接收点归实现域（useSidebarNew().selectSession）
+      // C-W3-2：SessionSelectPort 接收点归实现域（useSidebar().selectSession）
       selectSession: shell.selectSession,
       // C-W3-3：FileChangeWatchPort 替代 chatStore.messages watch（stale cache 防护；
       // W19/D-9 后 helper 内部为 ready 帧驱动——ready 清单到达时回调）

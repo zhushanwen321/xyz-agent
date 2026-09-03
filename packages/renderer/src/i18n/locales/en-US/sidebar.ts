@@ -52,6 +52,8 @@ export default {
     // RM2.3: non-intrusive hint while GitHub API rate-limit backoff is active (not an error state)
     rateLimited: 'Update check is rate limited by GitHub; auto-check paused for about 2 hours',
     staleRelease: 'A newer version was detected; update info refreshed',
+    // update-network-resilience D9: manual-download escape hint appended to network/proxy error suggestions
+    manualDownloadHint: 'You can also download the installer from the releases page, put it into the manual update folder, then retry (folder path: Settings → Update → Manual update channel)',
   },
   sessionItem: {
     rename: 'Rename',

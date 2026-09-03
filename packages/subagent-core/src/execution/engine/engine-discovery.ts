@@ -15,6 +15,7 @@ import * as path from "node:path";
 import { SUBAGENTS_ENGINES_FILENAME, type SubagentEnginesFile } from "@xyz-agent/extension-protocol";
 
 import { listEngines } from "./registry.ts";
+import { writeAtomicFileSync } from "../../shared/atomic-write.ts";
 
 /** engines.json 落盘缩进（与 subagent-core 其他 JSON store 的 JSON_INDENT 约定一致）。 */
 const JSON_INDENT = 2;
@@ -28,7 +29,8 @@ export function getEnginesFilePath(agentDir: string): string {
  * 把注册表引擎列表同步到 engines.json（session_start 时调用）。
  *
  * 幂等：内容与现文件一致时零写入（mtime 不动——读侧无谓失效）；写入走 tmp+rename
- * 原子替换（与池 config 同防线）。fail-safe：任何 IO 异常吞掉（可发现性降级不阻塞
+ * 原子替换（shared/atomic-write 统一原语，U6b 迁移——与池 config 同防线）。
+ * fail-safe：任何 IO 异常吞掉（可发现性降级不阻塞
  * session 启动——GUI 兜底显示 ['pi']）。
  */
 export function syncEnginesFile(agentDir: string): void {
@@ -51,19 +53,7 @@ export function syncEnginesFile(agentDir: string): void {
       // 现文件缺失/损坏 → 走写入
       void err;
     }
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-    try {
-      fs.writeFileSync(tmp, serialized, "utf8");
-      fs.renameSync(tmp, filePath);
-    } finally {
-      try {
-        if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-      } catch (err) {
-        // rename 失败路径的残留清理 best-effort
-        void err;
-      }
-    }
+    writeAtomicFileSync(filePath, serialized);
   } catch (err) {
     // 吞掉：见文件头 fail-safe 说明
     void err;

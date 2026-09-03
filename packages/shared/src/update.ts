@@ -72,6 +72,20 @@ export interface UpdateCheckResult {
 }
 
 /**
+ * update:install 的返回形状（update-network-resilience D2 交错缓解）。
+ *
+ * version = 实装版本（install 时从 preloaded 登记读取）：手动认领与后台
+ * 预下载存在并发覆写窗口，UI 确认版本与实装版本可能不一致，renderer 进入
+ * restarting 态前以本字段对齐 state.latestRelease（preload / lib/ipc.ts 签名已同步）。
+ */
+export interface UpdateInstallResult {
+  /** true = 升级已触发、app 即将退出重启 */
+  triggerRestart: boolean
+  /** 实装版本（如 '0.9.12'；读取失败等容错场景为 undefined） */
+  version?: string
+}
+
+/**
  * 升级错误事件 payload（main → preload → renderer 全链路透传，D3）。
  *
  * preload.ts onUpdateError 和 renderer lib/ipc.ts 的类型签名必须与此一致。

@@ -5,8 +5,8 @@
  * 接线（searchDeps/onOpenSearchDrawer，复用 selectSession/newSession/goOverview 注入）的事件处理。
  * 对称于 useSidebarSubagentActions。跨 store 编排（chat abort / subagent / workflow load）在此层完成。
  *
- * 依赖注入说明：useSidebarNew 的方法（selectSession/newSession/goOverview/loadSessions/renameSession/
- * deleteSession/deleteFolder/focusedSessionId）由调用方注入——useSidebarNew 非单例（每次调用
+ * 依赖注入说明：useSidebar 的方法（selectSession/newSession/goOverview/loadSessions/renameSession/
+ * deleteSession/deleteFolder/focusedSessionId）由调用方注入——useSidebar 非单例（每次调用
  * createSessionStore + createUseSession 新建实例），不能在本 composable 内重复调用。
  * renameOpen/targetSessionId 是 RenameSessionDialog 的本地 UI ref，由 Sidebar.vue 创建并注入，
  * onRenameSession 设置这两个 ref 打开 dialog。useChat/useToast/useI18n/useSearchModalDeps/
@@ -23,7 +23,7 @@ import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 
-/** useSidebarSessionActions 所需的注入依赖（来自 useSidebarNew + Sidebar.vue 本地 UI ref） */
+/** useSidebarSessionActions 所需的注入依赖（来自 useSidebar + Sidebar.vue 本地 UI ref） */
 export interface UseSidebarSessionActionsOptions {
   focusedSessionId: Ref<string | null>
   selectSession: (id: string) => Promise<void>
@@ -35,7 +35,7 @@ export interface UseSidebarSessionActionsOptions {
   renameSession: (id: string, label: string) => Promise<void>
   deleteSession: (id: string) => Promise<void>
   deleteFolder: (cwd: string) => Promise<{ failed: Array<{ error?: string }> }>
-  /** 归入项目（D14 语义修正，2026-08-04）：RPC + 乐观更新编排在 useSidebarNew。 */
+  /** 归入项目（D14 语义修正，2026-08-04）：RPC + 乐观更新编排在 useSidebar。 */
   assignSessionToProject: (sessionId: string, projectId: string) => Promise<void>
   /** RenameSessionDialog 开关 ref（Sidebar.vue 本地 UI 状态） */
   renameOpen: Ref<boolean>
@@ -66,7 +66,7 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
 
   async function onSelectSession(id: string): Promise<void> {
     try {
-      // dead session → 显式 restore（重新 spawn pi + revive 统一在 useSidebarNew.restoreSession）；
+      // dead session → 显式 restore（重新 spawn pi + revive 统一在 useSidebar.restoreSession）；
       // 非 dead → 常规切换。useSessionStore 是 pinia store，可在非 setup 上下文调用。
       const isDead = useSessionStore().list.find((s) => s.id === id)?.status === 'dead'
       if (isDead) {

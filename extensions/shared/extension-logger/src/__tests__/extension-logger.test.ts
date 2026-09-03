@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, mkdirSync, chmodSync, mkdtempSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, mkdirSync, chmodSync, mkdtempSync, writeFileSync, utimesSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +8,7 @@ import {
 	getLogger,
 	setPiHandle,
 	clearRateLimiterState,
+	resetExtLogCleanupForTest,
 	type PiLike,
 } from "../index.js";
 
@@ -269,6 +270,148 @@ describe("extension-logger", () => {
 
 			vi.useRealTimers();
 			rmSync(tmpAgentDir, { recursive: true, force: true });
+		});
+	});
+
+	// ============================================================
+	// XYZ_AGENT_EXT_LOG 托管观测档（设计 file-lock-unification-and-reaper-sink §3.2-D4）
+	// ============================================================
+	describe("XYZ_AGENT_EXT_LOG 托管观测档", () => {
+		let tmpAgentDir: string;
+
+		beforeEach(() => {
+			tmpAgentDir = mkdtempSync(join(tmpdir(), "pi-ext-extlog-"));
+			process.env.PI_CODING_AGENT_DIR = tmpAgentDir;
+			delete process.env.XYZ_AGENT_DEBUG;
+			delete process.env.XYZ_AGENT_EXT_LOG;
+			resetExtLogCleanupForTest();
+			vi.useFakeTimers();
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+			resetExtLogCleanupForTest();
+			rmSync(tmpAgentDir, { recursive: true, force: true });
+		});
+
+		it("均未注入时 no-op：debug/warn/error 调用后 logs 目录都不创建（裸 pi 用户零磁盘影响）", () => {
+			const logger = createLogger("bare-ext", pi);
+			logger.debug("d");
+			logger.warn("w");
+			logger.error("e");
+			expect(existsSync(join(tmpAgentDir, "logs"))).toBe(false);
+		});
+
+		it("仅 XYZ_AGENT_EXT_LOG=1：debug 调用以 info 级落盘（含序列化 data），不标 debug", () => {
+			process.env.XYZ_AGENT_EXT_LOG = "1";
+			vi.setSystemTime(new Date("2026-08-01T12:34:56.789Z"));
+
+			const logger = createLogger("extlog-ext", pi);
+			logger.debug("session maintenance ran", { session: "s-1" });
+
+			const logFile = join(tmpAgentDir, "logs", "extlog-ext-2026-08-01.log");
+			expect(existsSync(logFile)).toBe(true);
+			const content = readFileSync(logFile, "utf8");
+			expect(content).toContain("[info]");
+			expect(content).not.toContain("[debug]");
+			expect(content).toContain("session maintenance ran");
+			expect(content).toContain('"session":"s-1"');
+			// debug 仍不走 appendEntry（EXT_LOG 只改落盘档位，不改通道路由）
+			expect(appendSpy).not.toHaveBeenCalled();
+		});
+
+		it("仅 XYZ_AGENT_EXT_LOG=1：warn/error 照常落盘且保持原级标注", () => {
+			process.env.XYZ_AGENT_EXT_LOG = "1";
+			vi.setSystemTime(new Date("2026-08-01T12:34:56.789Z"));
+
+			const logger = createLogger("extlog-err", pi);
+			logger.warn("retry degraded");
+			logger.error("budget abort");
+
+			const logFile = join(tmpAgentDir, "logs", "extlog-err-2026-08-01.log");
+			const content = readFileSync(logFile, "utf8");
+			expect(content).toContain("[warn]");
+			expect(content).toContain("[error]");
+			expect(content).not.toContain("[info]");
+		});
+
+		it("XYZ_AGENT_DEBUG=1 与 EXT_LOG 同注入：按更详细的生效（debug 全量，原级标注）", () => {
+			process.env.XYZ_AGENT_EXT_LOG = "1";
+			process.env.XYZ_AGENT_DEBUG = "1";
+			vi.setSystemTime(new Date("2026-08-01T12:34:56.789Z"));
+
+			const logger = createLogger("both-ext", pi);
+			logger.debug("verbose trace");
+
+			const content = readFileSync(join(tmpAgentDir, "logs", "both-ext-2026-08-01.log"), "utf8");
+			expect(content).toContain("[debug]");
+			expect(content).not.toContain("[info]");
+		});
+
+		it("EXT_LOG 未注入、DEBUG 未设时，debug 不写文件（与 DEBUG 关闭现状一致）", () => {
+			const logger = createLogger("noop-ext", pi);
+			logger.debug("no-op");
+			expect(existsSync(join(tmpAgentDir, "logs"))).toBe(false);
+		});
+
+		it("保留期清理：7 天前的 <ext>-<date>.log 被删，近期与本包 pattern 外文件保留", () => {
+			process.env.XYZ_AGENT_EXT_LOG = "1";
+			// fake timers 冻结 Date 在真实当前时刻：文件 mtime 走真实时钟，utimesSync 把
+			// old 的 mtime 设为 8 天前（> 7 天保留期），recent 与 unrelated 保留。
+			const logDir = join(tmpAgentDir, "logs");
+			mkdirSync(logDir, { recursive: true });
+			const MS_PER_DAY = 24 * 60 * 60 * 1000;
+			const oldTime = new Date(Date.now() - 8 * MS_PER_DAY);
+			const oldFile = join(logDir, "cleanup-ext-2026-01-01.log");
+			const recentFile = join(logDir, `keep-ext-${new Date().toISOString().slice(0, 10)}.log`);
+			const unrelatedFile = join(logDir, "notes.txt");
+			writeFileSync(oldFile, "old");
+			writeFileSync(recentFile, "recent");
+			writeFileSync(unrelatedFile, "keep");
+			utimesSync(oldFile, oldTime, oldTime);
+
+			const logger = createLogger("cleanup-ext", pi);
+			logger.warn("trigger cleanup");
+
+			expect(existsSync(oldFile)).toBe(false);
+			expect(existsSync(recentFile)).toBe(true);
+			expect(existsSync(unrelatedFile)).toBe(true);
+			// 本次写入的文件在场（清理不误伤当前写路径）
+			expect(existsSync(join(logDir, `cleanup-ext-${new Date().toISOString().slice(0, 10)}.log`))).toBe(true);
+		});
+
+		it("清理只认 <ext>-YYYY-MM-DD.log pattern，不动其他 .log 文件", () => {
+			process.env.XYZ_AGENT_EXT_LOG = "1";
+			const logDir = join(tmpAgentDir, "logs");
+			mkdirSync(logDir, { recursive: true });
+			const MS_PER_DAY = 24 * 60 * 60 * 1000;
+			const oldTime = new Date(Date.now() - 30 * MS_PER_DAY);
+			const undated = join(logDir, "plain-old-name.log");
+			writeFileSync(undated, "keep");
+			utimesSync(undated, oldTime, oldTime);
+
+			vi.setSystemTime(new Date("2026-08-01T12:34:56.789Z"));
+			const logger = createLogger("pattern-ext", pi);
+			logger.warn("trigger");
+
+			expect(existsSync(undated)).toBe(true);
+		});
+
+		it("no-op 环境不触发保留期清理（零 fs 副作用覆盖清理路径）", () => {
+			const logDir = join(tmpAgentDir, "logs");
+			mkdirSync(logDir, { recursive: true });
+			const MS_PER_DAY = 24 * 60 * 60 * 1000;
+			const oldTime = new Date(Date.now() - 30 * MS_PER_DAY);
+			const oldFile = join(logDir, "stale-ext-2026-01-01.log");
+			writeFileSync(oldFile, "old");
+			utimesSync(oldFile, oldTime, oldTime);
+
+			const logger = createLogger("noop-clean-ext", pi);
+			logger.debug("no-op");
+			logger.warn("no-op");
+
+			expect(existsSync(oldFile)).toBe(true);
+			expect(readdirSync(logDir)).toContain("stale-ext-2026-01-01.log");
 		});
 	});
 

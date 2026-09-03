@@ -1,11 +1,12 @@
 /**
  * A12 hash 基线跨重启恢复（spec：.cw-specs/trace-ext.json；设计 D2 复审 N2 / plan §2.1）。
  *
- * 三路径（优先级从高到低）：
+ * 四路径（优先级从高到低，口径同 trace.ts onSessionStart）：
  * 1. 进程内 resume：session_before_switch.targetSessionFile 直读目标文件取上一版 hash
  *    （switch 重建 extension runtime，基线经模块级 stash 传递——用「新闭包 + 共享 stash」模拟）
- * 2. app 重启直 spawn resume：agentDir 自持久化小文件（此链路无 switch 事件、reason=startup）
- * 3. 兜底：两路都读不到 → resume 必写一条（宁可多写不可漏记）
+ * 2. fork：previousSessionFile 直读源 session 文件（暂定语义，本文件未覆盖）
+ * 3. app 重启直 spawn resume：agentDir 自持久化小文件（此链路无 switch 事件、reason=startup）
+ * 4. 兜底：三路都读不到 → 任意 reason 必写一条（startup/new→initial，resume/fork/reload→resume）
  *
  * 用真实临时目录 + 真实 fs 函数（非 mock 投影）；appendEntry 同步模拟 pi appendCustomEntry
  * 的落盘形状（session-manager.ts）。
@@ -157,7 +158,7 @@ describe("A12 hash 基线跨重启恢复", () => {
 		expect(h.entries[1]?.parentVersionDiffSummary).toContain("+1 -0 lines");
 	});
 
-	it("路径 2（app 重启直 spawn）：自持久化小文件命中且 hash 未变 → 不写（reason=startup、无 switch 事件）", () => {
+	it("路径 3（app 重启直 spawn）：自持久化小文件命中且 hash 未变 → 不写（reason=startup、无 switch 事件）", () => {
 		const h = makeHarness(P1);
 		h.logic.onSessionStart("startup", undefined, h.ctx);
 		h.logic.onTurnStart(h.ctx); // v1 initial + 基线小文件已写
@@ -174,7 +175,7 @@ describe("A12 hash 基线跨重启恢复", () => {
 		expect(h.entries).toHaveLength(1);
 	});
 
-	it("路径 2（app 重启直 spawn）：基线命中但 prompt 已变 → 写 resume v2（无 parent 全文，diff 摘要缺省）", () => {
+	it("路径 3（app 重启直 spawn）：基线命中但 prompt 已变 → 写 resume v2（无 parent 全文，diff 摘要缺省）", () => {
 		const h = makeHarness(P1);
 		h.logic.onSessionStart("startup", undefined, h.ctx);
 		h.logic.onTurnStart(h.ctx); // v1
@@ -189,7 +190,7 @@ describe("A12 hash 基线跨重启恢复", () => {
 		expect(h.entries[1]?.parentVersionDiffSummary).toBeUndefined();
 	});
 
-	it("路径 3（兜底）：两路基线都读不到且 reason=resume → 必写一条", () => {
+	it("路径 4（兜底）：三路基线都读不到且 reason=resume → 必写一条", () => {
 		const h = makeHarness(P1);
 		h.logic.onSessionStart("resume", undefined, h.ctx); // 无 stash、无小文件
 		h.logic.onTurnStart(h.ctx);

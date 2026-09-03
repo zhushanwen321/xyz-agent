@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import { registerPlanCommand, startPlanMode } from "./command.js";
+import { registerPlanCommand } from "./command.js";
 import { type PlanSessionMap, reconstructPlanState } from "./state.js";
 import { registerPlanTool } from "./tool.js";
 import { updatePlanWidget } from "./widget.js";
@@ -16,13 +16,6 @@ export default function planExtension(pi: ExtensionAPI) {
   registerPlanTool(pi, sessions);
   registerPlanCommand(pi, sessions);
 
-  // External API: __planStart（allow other extensions to start plan mode programmatically, #9）
-  // 交叉类型单步断言（ExtensionAPI 可赋给 ExtensionAPI & { __planStart? }，无需 unknown 中转）
-  const api = pi as ExtensionAPI & { __planStart?: (requirement: string, ctx: ExtensionContext) => boolean };
-  api.__planStart = (requirement: string, ctx: ExtensionContext): boolean => {
-    return startPlanMode(pi, sessions, ctx, requirement);
-  };
-
   // Dynamic import compact handlers — avoids cross-group static import
   import("./compact.js").then(({ registerPlanEventHandlers }) => {
     registerPlanEventHandlers(pi, sessions);
@@ -36,7 +29,7 @@ export default function planExtension(pi: ExtensionAPI) {
     const state = reconstructPlanState(ctx);
     sessions.set(sessionId, state);
     updatePlanWidget(ctx, state);
-    // If plan mode was active, re-restrict tools to read-only set
+    // If plan mode was active, re-restrict tools to the plan-mode set (includes bash — file-write constraints come from the injected plan mode prompt)
     if (state.isActive) {
       pi.setActiveTools(["read", "bash", "grep", "find", "ls", "plan"]);
     }
