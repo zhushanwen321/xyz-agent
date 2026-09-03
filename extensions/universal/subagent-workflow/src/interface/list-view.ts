@@ -48,21 +48,21 @@ import {
   type TuiLike,
   type ViewState,
 } from "./list-shared.ts";
+import { PAGE_SCROLL_DEFAULT } from "./tui-kit.ts";
 
 // ============================================================
 // 常量
 // ============================================================
 
 // 布局/边框常量（LEFT_COL_RATIO、COL_*、BORDER_WIDTH、PAD_*、MIN_*、TITLE_*、
-// SPLIT_FIXED_LINES、TERM_ROWS_FALLBACK、DETAIL_LEN_PROBE_WIDTH、VERT_CENTER_DIVISOR、
-// SPINNER_FRAME_MS、PREVIEW_RECENT_LINES）已随 SubagentsListComponent 移至 list-component.ts。
+// SPLIT_FIXED_LINES、DETAIL_LEN_PROBE_WIDTH、VERT_CENTER_DIVISOR、
+// SPINNER_FRAME_MS、PREVIEW_RECENT_LINES）已随 SubagentsListComponent 移至 list-component.ts；
+// 终端兜底零件（终端行数兜底/termRows/边框家族）单定义在 ./tui-kit.ts（C4）。
 // 共享类型/常量/纯函数（LIST_LIMIT/ViewState/DetailKeyContext/TuiLike/NotifyFn/applyFilter/
 // KeyResult/KeyHandler）已移至 list-shared.ts（消除 list-view ↔ list-component 循环依赖）。
 
 /** 详情区 eventLog 翻屏步长（方向键单步）。 */
 const DETAIL_SCROLL_STEP = 1;
-/** 详情区 PgUp/PgDn 默认步长（无 viewport 信息时）。 */
-const PAGE_SCROLL_DEFAULT = 10;
 
 /** overlay 动画刷新间隔（spinner 换帧 + elapsed 跳动）。同 tool-render.ts SPINNER_INTERVAL_MS。 */
 const OVERLAY_REFRESH_MS = 250;

@@ -39,8 +39,6 @@ import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models
 import { saveWorkflow } from "@zhushanwen/subagent-core/orchestration/workflow-files.ts";
 import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
 import {
-  BOX_BORDER_CHARS,
-  BUDGET_TOKENS_DIVISOR,
   buildPhaseGroups,
   ELLIPSIS,
   formatActivityLine,
@@ -49,12 +47,22 @@ import {
   formatElapsedSeconds,
   formatPhaseLine,
   formatStatusBadge,
-  padToVisible,
-  SIDEBAR_WIDTH,
   statusDotStr,
-  TERM_ROWS_FALLBACK,
   type ThemeLike,
 } from "../format.ts";
+import {
+  b,
+  dashes,
+  padToVisible,
+  plainBorder,
+  termRows,
+  walled,
+} from "../tui-kit.ts";
+import {
+  BOX_BORDER_CHARS,
+  BUDGET_TOKENS_DIVISOR,
+  SIDEBAR_WIDTH,
+} from "./view-constants.ts";
 
 // L2 详情内容构建 + 滚动按键（纯函数）抽到 detail-content.ts；此处 re-export 保持
 // view 的对外 API 不变（测试仍从 WorkflowsView 导入）。
@@ -84,30 +92,10 @@ const TICK_MS = 200;
 /** 可打印 ASCII 字符下限（用于 save overlay 输入过滤）。 */
 const PRINTABLE_CHAR_MIN = 32;
 
-// ── 边框着色 helper（统一 borderMuted，避 ANSI 嵌套失色）──────────
-// 对齐 subagents list-component.ts 的 b/dash/dashes/titleBorder/plainBorder/walled。
-// 所有 ╭╮╰╯├┤┬┴─│ 统一走 borderMuted token，保证边框颜色一致。
-
-/** 着色单个框线字符（borderMuted）。 */
-function b(theme: ThemeLike, s: string): string {
-  return theme.fg("borderMuted", s);
-}
-/** 着色单字符填充用的 ─（供 segFillColored 的 fillStyled）。 */
-function dash(theme: ThemeLike): string {
-  return theme.fg("borderMuted", "─");
-}
-/** 满宽 ─ 填充串（borderMuted）。n 次单字符着色，ANSI 自然延续。 */
-function dashes(theme: ThemeLike, n: number): string {
-  return dash(theme).repeat(Math.max(0, n));
-}
-/** 纯线顶/底框（无标题）：左角 + ─×W + 右角。 */
-function plainBorder(theme: ThemeLike, left: string, right: string, contentWidth: number): string {
-  return b(theme, left) + dashes(theme, contentWidth) + b(theme, right);
-}
-/** 内容行墙：│ + 内容(pad 到 contentWidth) + │，墙字符 borderMuted。 */
-function walled(theme: ThemeLike, content: string, contentWidth: number): string {
-  return `${b(theme, "│")}${padToVisible(content, contentWidth)}${b(theme, "│")}`;
-}
+// ── 边框着色 helper 家族（b/dash/dashes/titleBorder/plainBorder/walled）──
+// 单定义 ../tui-kit.ts（post-convergence C4）：本文件原私有自由函数副本与
+// subagents list-component 的方法形态副本收敛为 kit 一份（本文件形态胜出），
+// 统一 borderMuted token，所有 ╭╮╰╯├┤┬┴─│ 颜色一致。
 
 // ── Minimal TUI duck-types（避免直接 import TUI/KeybindingsManager 类型 ──
 // 共享类型 fallback 不导出 TUI 类，
@@ -298,14 +286,9 @@ export function createWorkflowsView(
     };
 
  // ── L2 详情滚动辅助 ──
-    /** 安全读 terminal.rows（duck-type 失败兜底，对齐 subagents termRows）。 */
-    function termRows(): number {
-      const rows = tui.terminal?.rows;
-      return typeof rows === "number" && rows > 0 ? rows : TERM_ROWS_FALLBACK;
-    }
     /** L2 右侧 detail viewport 高度（与 renderLayout 的 viewH 同源）。 */
     function detailViewportHeight(): number {
-      return Math.max(MIN_BODY_LINES, bodyHeight(termRows()));
+      return Math.max(MIN_BODY_LINES, bodyHeight(termRows(tui)));
     }
     /** 重置 detail 滚动到底部对齐（切 agent / 进 L2 时调用）。 */
     function resetDetailScroll(): void {

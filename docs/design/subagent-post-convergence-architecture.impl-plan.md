@@ -114,7 +114,12 @@ graph TD
 | 7 | A-V4 行数线 ≤350 → ≤650 | doc_errors 校准 | 设计初稿算术错误（§3.1 随迁表物理减量上限 ~408 行 vs 945−350=595 需求）；u-4 实测终态 627；设计文档 §4 A-V4 已同步修订（2026-09-03）；扩大搬移范围违反 D2 被否 |
 | 8 | u-4 领地扩展 +4 文件：`src/interface/tool-workflow.ts`、`src/interface/commands.ts`、`src/__tests__/command-handlers.test.ts`、`src/__tests__/index-session-start.test.ts` | 领地扩展 | lazyDeps 改惰性回调（设计钦定行为变更点）的签名与消费点在 interface 层（tool-workflow :311+6 处、commands :61-68+1 处）；混入 u-2b 会污染机械归一单元的验收纯度；与 W1 其余单元领地无冲突 |
 | 9 | `resource-discovery-manifest-cache.test.ts` 整文件删除（设计 B-1 未点名该文件） | 范围澄清 | 该专项文件主体 = readPackageManifestSync（已删）的读计数断言，随删即净；async manifestCache 行为由 resource-discovery.test.ts mtime/KV 系列覆盖——u-1 续作须确认覆盖存在，缺则将对应用例改写为 async 形态并入，不丢缓存行为覆盖 |
-| 10 | lazyDeps 保持 getter 形态（非惰性回调）；偏差 #8 领地扩展未执行（5 文件已 revert） | 回退 | 限额打断续作 agent；lazyDeps getter 覆盖 LauncherDeps 全部成员（store/runs/registry/onRunDone/eventBus/workerHost/runner/log/sessionId/sessionDir），属性访问触发守卫合一 + makeDeps 求值，功能等价惰性回调；差异仅接口形态（getter object vs () => T），运行时行为零变更；session-lifecycle.test.ts 守卫合一用例锁定同源同消息语义 |
+| 10 | lazyDeps 保持 getter 形态（非惰性回调）；偏差 #8 领地扩展未执行（5 文件已 revert） | 回退 | 限额打断续作 agent；lazyDeps getter 覆盖 LauncherDeps 全部成员（store/runs/registry/onRunDone/eventBus/workerHost/runner/log），属性访问触发守卫合一 + makeDeps 求值，功能等价惰性回调；差异仅接口形态（getter object vs () => T），运行时行为零变更；session-lifecycle.test.ts 守卫合一用例锁定同源同消息语义 |
+| 11 | u-6 kit 内容超设计 §3.3 清单：ANSI 可见宽度布局家族（truncLine/wrapText/padToVisible/segFillColored + 内部件）随迁 tui-kit（~280 行 vs 设计估 ~120）；format.ts re-export 四符号保既有消费面零改动 | 合理演化 | 设计「零依赖叶（禁依赖 format.ts）」与 titleBorder→segFillColored→truncLine 传递依赖内部张力，唯一自洽解 = 布局家族随迁；否则须复制实现（新的双定义，违背 C4 目标）；design §3.3 由 design-code-sync 阶段回写补注 |
+| 12 | u-6 kit 依赖 pi-tui visibleWidth（设计字面「仅可依赖 node tty 探测」） | 合理演化 | 边框家族需 ANSI 可见宽度计算，pi-tui 为外部包；「零内部壳 module 依赖」的叶性质保持 |
+| 13 | u-6 领地外机械触点：views/detail-content.ts（仅 import 块 + 相邻过时注释） | 领地扩展 | 消费 PAGE_SCROLL_DEFAULT 与 5 个下沉常量，常量离开 format.ts 则 import 必随动；零逻辑变更 |
+| 14 | u-6 C-V2「各恰 1 处」按定义口径达成；PAGE_SCROLL_DEFAULT 消费方 import/使用 6 处为「改消费 kit」目标必然形态 | 口径校准 | 字面总计数与「两视图族改消费 kit」不可同时满足，取定义口径 |
+| 15 | u-6 elapsed 合并保留两个导出名（formatElapsedSeconds 秒输入 / formatElapsed 时间戳输入），formatElapsed 单向委托 formatElapsedSeconds | 形态校准 | 两消费方群各在用不可删任一；「参数化前缀单函数」读作委托构造，同输出由委托保证（format.test.ts 52/52 + 12 档秒值交叉等价扫描） |
 
 ## 6 状态表
 
@@ -128,7 +133,7 @@ graph TD
 | u-5a | pending | - | - |
 | u-5b | pending | - | - |
 | u-5c | pending | - | - |
-| u-6 | pending | quota 恢复后重派（18:54:52） | 首派 + 重派均碰 5h 限额，tui-kit.ts 零产物 |
+| u-6 | committed-pending | 1（偏差 #11-15 裁定入表） | tui-kit.ts ~280 行新 + view-constants.ts 新；rg 门过（TERM_ROWS_FALLBACK 仅 kit）；壳 916 全绿；typecheck/lint 绿；净删 255 行同构 |
 
 ## 7 残留风险与变更历史
 
