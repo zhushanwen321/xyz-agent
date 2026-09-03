@@ -64,7 +64,7 @@
 | C2 | 壳 114 处深路径 import 穿透 core 48 个内部文件；barrel（35 符号）使用率 0%，连已导出的 configureCore/abortRun/HostServices 壳都走深路径；另有 **runtime 2 处生产深路径**（`subagent-extractor.ts:44` / `subagent-engine-history.ts:26`，u-1a 引入，仅靠 `./*` 通配解析） | rg 全量实测；根因 = barrel 覆盖面远小于消费面（execution 领域类型/Service 聚合面 barrel 未给） | 收口后复杂度集中到 barrel 一处，48 文件网格消失 |
 | C3 | resource-discovery sync 轨 ~160 行零生产调用；注释仍称「agent-registry 同步路径专用」（租户已迁 async + getCachedFile） | `resource-discovery.ts:676-835`，非测试调用者 = 0 | 删即净（死代码 + 注释谎言） |
 | C5 | subagent-service.ts 1963 行五条变化轴中三条已部分出列（finalize-record / cold-resurrect / round-settlement 已随 dual-track D4 拆为独立 module），但**装配点与执行主体仍混居**：chat 轮次机器的编排方法（kickOffChatRound(:1656)/runTicketRound(:1737)/settleRound(:297)/resumeColdRound(:759)）与执行主体 runAndFinalize(:1485-1643) 及 chatPiEngine(:290) 全部内嵌 | `subagent-service.ts`；runTicketRound 是对 runAndFinalize 的 8 参纯委托；runAndFinalize 实测三调用点（含 executeAndAwait :1130），依赖闭包 ≥15 私有成员 | deletion test **不过**：抽出物删掉后复杂度原样回到 Service——本轮撤销（§3.2 B-3 谱系），登记 follow-up |
-| C4 | TUI 零件四组双定义（见例三）；format.ts 36 导出中 ~10 个仅 views/ 两文件消费 | `format.ts:550-578`（views 专属常量被抬入）、:645-660（两个 elapsed 格式化器靠注释保持同输出） | 抽 tui-kit 叶 module，~120 行同构复制消失 |
+| C4 | TUI 零件四组双定义（见例三）；format.ts 36 导出中 15 个（7 常量 + 8 个 trace/badge 格式化函数）仅 views/ 两文件消费 | `format.ts:550-578`（views 专属常量被抬入）、:645-660（两个 elapsed 格式化器靠注释保持同输出） | 抽 tui-kit 叶 module，~120 行同构复制消失 |
 | C6 | 38 处手写桩与共享 stub 逐字重复（getLogger ×11、pi-ai StringEnum ×11、getAgentDir ×9、typebox ×7）；3 个 mock 静默指向已改名旧路径（`../commands/subagents.ts` 等，no-op）；agent-registry/notify-ledger/session-pending 三个 core module 的唯一测试覆盖落在壳套件 | `session-start-reaper.test.ts:99-107`（死路径）、:12-23（同文件重复注册 pi 两包） | 共享桩 module → 桩更新一处生效 38 处 |
 
 **测试拓扑投影**（C1/C6 的 interface 证据）：壳 vi.mock 总量 126 处（29 文件）；整类 mock SubagentService 的测试 7 文件全部 import 真实 index.ts。对照组样板已存在——`tool-action.test.ts`（487 行，0 mock，typed fake 注入）与 `gui.test.ts`（0 mock）证明 interface 层 seam 已立住，残余问题全部集中在组装根。
@@ -96,7 +96,7 @@ pi.on("session_start", async (_e, ctx) => {
 });
 ```
 
-**seam 形状（D1/D2）**：新文件 `src/session-lifecycle.ts` 导出单一入口 `setupSessionLifecycle(pi: ExtensionAPI, ctx: ExtensionContext, deps: SessionLifecycleDeps): Promise<void>`。随迁内容（从 index.ts:336-613 原样搬移，本设计不改行为）：
+**seam 形状（D1/D2）**：新文件 `src/session-lifecycle.ts` 导出单一入口 `setupSessionLifecycle(pi: ExtensionAPI, ctx: ExtensionContext, deps: SessionLifecycleDeps): Promise<SessionLifecycleResult>`。随迁内容（从 index.ts:336-613 原样搬移，本设计不改行为）：
 
 | 随迁块 | 原位置 | deps 形态 |
 |--------|--------|----------|
@@ -104,12 +104,12 @@ pi.on("session_start", async (_e, ctx) => {
 | notify ledger host 装配（5 方法） | :395-426 | 经 pi/ctx |
 | 双 Service 装配 + initSession | :428-490 | deps 注入工厂（见下方「单例语义保持」） |
 | GC / manifest / worktree 恢复 | :492-520 | deps.worktreeManager 等 |
-| kill-9 恢复循环 + evict | :536-586 | deps.runStoreFactory |
+| kill-9 恢复循环 + evict | :536-586 | deps.createRunStore |
 | SAR + engine 基线 + sessionState.set | :588-612 | 返回 SessionLifecycleResult（store/runs/runner 等），index.ts 写入 sessionState |
 
-**单例语义保持（关键不变量）**：现状装配是 `getSubagentService() ?? new` + 仅 `!existing` 时 `setSubagentService(service)`（index.ts:429-487）——jiti 多实例分裂靠 globalThis Symbol 单例防护，`/resume` `/fork` 复用既有实例（SR-3/SR-4 语义）。随迁工厂封装为 `createOrReuseServices(pi, ctx): { service, modelService, reused: boolean }`，**完整保留 existing-??-new + 条件 set 整段**——deps 默认实现即调它，测试传 fake 覆盖；裸 `new` 禁止出现在 deps 默认实现里（否则每个 session_start 新建实例，GC timer 翻倍、record store 状态分裂）。**init 无条件语义钉死**：initModel(:434)/initSession(:457) 对 new 与 reused **均无条件执行**（SR-3：/resume /fork 复用实例时注入 handler 覆盖旧值、更新 sessionId；SR-4：dialogQueue 注入）——`reused` 返回标志仅供测试断言与日志，禁止任何「reused=true 跳过 init」的分支（否则上一 session 的 uiRequestHandler/sessionId 残留）。单例访问器（getSubagentService/setSubagentService/getModelConfigService/setModelConfigService，4 个符号、壳 3 文件生产消费：index.ts / interface/subagent-tool.ts / interface/subagents.ts）随 B-2 进 barrel——semver 承诺可接受（形态自抽包起未变）。
+**单例语义保持（关键不变量）**：现状装配是 `getSubagentService() ?? new` + 仅 `!existing` 时 `setSubagentService(service)`（index.ts:429-487）——jiti 多实例分裂靠 globalThis Symbol 单例防护，`/resume` `/fork` 复用既有实例（SR-3/SR-4 语义）。随迁工厂封装为 `createOrReuseServices(pi, ctx): { service, modelService, reused: boolean }`，**完整保留 existing-??-new + 条件 set 整段**——deps 默认实现即调它，测试传 fake 覆盖；裸 `new` 禁止出现在 deps 默认实现里（否则每个 session_start 新建实例，GC timer 翻倍、record store 状态分裂）。**init 无条件语义钉死**：initModel(:434)/initSession(:457) 对 new 与 reused **均无条件执行**（SR-3：/resume /fork 复用实例时注入 handler 覆盖旧值、更新 sessionId；SR-4：dialogQueue 注入）——`reused` 返回标志仅供测试断言与日志，禁止任何「reused=true 跳过 init」的分支（否则上一 session 的 uiRequestHandler/sessionId 残留）。单例访问器（getSubagentService/setSubagentService/getModelConfigService/setModelConfigService，4 个符号，设计期壳 3 文件生产消费：index.ts / interface/subagent-tool.ts / interface/subagents.ts；u-4 实施终态 5 文件——随迁出的 src/session-lifecycle.ts 消费全部四件、src/injectors/engine-awareness.ts 消费 getModelConfigService）随 B-2 进 barrel——semver 承诺可接受（形态自抽包起未变）。
 
-`resolveMainSessionFileById`（:200）/`resolveSessionDir`（:273）两个 fs 探测函数随迁为 module 私有（唯一消费方就是随迁块）。`lazyDeps`/`getDeps` 的 storeHealthy 守卫双份（:813-898）合并为单一 `getWorkflowDeps(sessionId)`（返回 `{ ok: true, deps } | { ok: false, reason }`，两个 tool 注册点各自决定 throw 还是返回错误对象）；原 8-getter 转发 + 2 处直传的 lazyDeps 合并为 10 成员 getter 对象（属性访问触发 getWorkflowDeps 守卫 + makeDeps 求值；偏差 #10：功能等价惰性回调设计，阶段 4 修复后成员面完整恢复含 scheduleTimeBudget/onWorkflowCall）。
+`resolveMainSessionFileById`（:200）/`resolveSessionDir`（:273）两个 fs 探测函数随迁为 module 私有（唯一消费方就是随迁块）。`lazyDeps`/`getDeps` 的 storeHealthy 守卫双份（:813-898）合并为单一 `getWorkflowDeps(sessionId)`（返回 `{ ok: true, deps } | { ok: false, reason }`，两个消费点——`pi.__workflowRun`（返回错误对象，D-8 API 面）/ lazyDeps getter（throw）——各自决定 throw 还是返回错误对象，二者被 workflow tool 与 workflows command 共同消费）；原 8-getter 转发 + 2 处直传的 lazyDeps 合并为 10 成员 getter 对象（属性访问触发 getWorkflowDeps 守卫 + makeDeps 求值；偏差 #10：功能等价惰性回调设计，阶段 4 修复后成员面完整恢复含 scheduleTimeBudget/onWorkflowCall）。
 
 **错误处理不变**：identity/ledger/cleanup 各 try-catch 的「失败记日志不阻断」语义原样保留（错误规格见 §3.4 表）。
 
@@ -145,7 +145,7 @@ r1 方案（编排五方法 + runAndFinalize + ChatRoundMachineDeps 整体随迁
 
 ### 3.3 组 C 终态：tui-kit 单点零件
 
-新叶 `src/interface/tui-kit.ts`：`TERM_ROWS_FALLBACK` / `PAGE_SCROLL_DEFAULT` 单定义、边框 helper 家族（b/dash/dashes/titleBorder/plainBorder/walled，统一为自由函数形态——WorkflowsView 形态胜出，类方法绑定无额外价值）、`termRows()` 单份。两视图族（list-component/list-view 与 WorkflowsView）改消费 kit。views 专属常量（SIDEBAR_WIDTH/PROMPT_FOLD_LINES/BOX_BORDER_CHARS 等 ~10 个）从 format.ts 沉回 `views/`；两个 elapsed 格式化器合并为单函数（workflow trace 风格参数化前缀），`formatTraceEventLine` 维持独立（概念域真差异，format.ts:674 注释为证）。list-shared.ts 的 7 参 KeyHandler 本轮**不动**（破循环摆渡车是结构选择产物，tui-kit 不触及按键路由；避免与 C4 主线耦合）。
+新叶 `src/interface/tui-kit.ts`：`TERM_ROWS_FALLBACK` / `PAGE_SCROLL_DEFAULT` 单定义、边框 helper 家族（b/dash/dashes/titleBorder/plainBorder/walled，统一为自由函数形态——WorkflowsView 形态胜出，类方法绑定无额外价值）、`termRows()` 单份。**实施期补记（偏差 #11）**：边框家族的填充/对齐需要 ANSI 可见宽度计算（titleBorder→segFillColored→truncLine、walled→padToVisible），布局家族四函数（truncLine/wrapText/padToVisible/segFillColored）自 format.ts 随迁入 kit——「零依赖 format.ts」与「不复制实现」的唯一自洽解；format.ts 经 re-export 四符号维持既有导入面（bg-notify-render / tool-render / 测试零改动）。两视图族（list-component/list-view 与 WorkflowsView）改消费 kit。views 专属常量 6 个（SIDEBAR_WIDTH/PROMPT_FOLD_LINES/OUTPUT_TRUNCATE_BYTES/BOX_BORDER_CHARS/BUDGET_TOKENS_DIVISOR/MAX_TOOL_CALLS_DISPLAY，实施终态口径，落位 `views/view-constants.ts`）从 format.ts 沉回 `views/`；两个 elapsed 格式化器合并为单函数（workflow trace 风格参数化前缀），`formatTraceEventLine` 维持独立（概念域真差异，format.ts:674 注释为证）。list-shared.ts 的 7 参 KeyHandler 本轮**不动**（破循环摆渡车是结构选择产物，tui-kit 不触及按键路由；避免与 C4 主线耦合）。
 
 ### 3.4 错误规格（本设计不新增错误路径，全部为现状语义的守护声明）
 
@@ -183,7 +183,7 @@ r1 方案（编排五方法 + runAndFinalize + ChatRoundMachineDeps 整体随迁
 | ❌ 本轮做（r1 曾纳入组 B） | runAndFinalize 三轴共享、chatPiEngine 双消费方、deps ≥15 成员——任何切法都是文件搬家 + port 间接 | 一个单元 + 回归验证 | 空壳 module / 回调环 / public 面破裂三重反例（r2 已实证） |
 | ❌ 排后但无触发条件 | 同「撤销」但无边界裁决记录，后续审查重新发现同样反例 | 零 | 重复劳动 |
 
-**C4 tui-kit 形态**：kit 为零依赖叶 module（仅依赖 node/tty 探测），不依赖 format.ts——两个方案中被否的是「并入 format.ts」（format 已 36 导出过宽，再吸收零件加剧三合一问题）。
+**C4 tui-kit 形态**：kit 为零依赖叶 module（零壳内部 module 依赖；唯一外部依赖 = pi-tui 的 `visibleWidth` 纯函数——实施期口径，偏差 #12：边框家族的 ANSI 可见宽度计算需要它，设计期「仅依赖 node/tty 探测」描述作废，kit 无任何 node/tty import），不依赖 format.ts（布局家族随迁后依赖方向为 format.ts → kit 单向 re-export，见 §3.3 偏差 #11 补记）——两个方案中被否的是「并入 format.ts」（format 已 36 导出过宽，再吸收零件加剧三合一问题）。
 
 ### 3.6 关键决策清单
 
@@ -221,7 +221,7 @@ r1 方案（编排五方法 + runAndFinalize + ChatRoundMachineDeps 整体随迁
 ### 组 C（回溯目标 5「零件单点」）
 
 - **C-V1（视觉对照，实测）**：pi CLI TUI 打开 subagents 全屏列表与 workflows 视图各截图，与改动前对照：边框/分页/长任务耗时显示（>1h 显示 `1h15m` 形态）逐项一致。通过标准 = 双视图零视觉回归。
-- **C-V2（单点，机器可验）**：`rg 'TERM_ROWS_FALLBACK|PAGE_SCROLL_DEFAULT' 壳/src` 各 1 处；`rg 'titleBorder' 壳/src/interface` 仅 tui-kit 与实际消费方（list-component；WorkflowsView 无标题框形态不消费 titleBorder，其边框族消费 b/dashes/plainBorder/walled/termRows）。
+- **C-V2（单点，机器可验）**：`rg 'TERM_ROWS_FALLBACK|PAGE_SCROLL_DEFAULT' 壳/src` 各 1 处定义（同文件使用与消费点 import 不计——TERM_ROWS_FALLBACK 定义 1 + tui-kit 同文件使用 1、PAGE_SCROLL_DEFAULT 定义 1 + 消费点 6，偏差 #14 按定义口径）；`rg 'titleBorder' 壳/src/interface` 仅 tui-kit 与实际消费方（list-component；WorkflowsView 无标题框形态不消费 titleBorder，其边框族消费 b/dashes/plainBorder/walled/termRows）。
 
 ### 收尾门（三组共享）
 
@@ -244,15 +244,15 @@ u-6 (C4) tui-kit（与上述全并行）
 |------|------|------------------|----------------------|
 | u-1 | C3：删 sync 五函数 + 注释 + parity 测试改单侧 | core `shared/resource-discovery.ts`（-160）+ 其测试 | 最小风险先行，验证 B 组工作流；前置 rg 门（非测试调用零命中）实施期复跑 |
 | u-2 | C2：barrel 扩面逐名清单（含 session-view 2 符号）+ 壳/bench 114 处归一 + runtime 2 处归一 barrel + **host-services/notify-ports 配置态 globalThis 化（D9 根治）** + 壳 vitest alias（7 测试改引，helpers 物理不动）+ 删 `./*` 通配 + minor bump + dist 静态门 | core `src/index.ts` + `package.json` + `core/host-services.ts` + `core/notify-ports.ts` + 壳 ~40 文件 import 行 + `vitest.config.ts`（alias）+ runtime 2 文件 import 行 | 删通配的击穿面（runtime/测试助手）随本单元一体处置，合入即套件绿；**待验证**：tsc 增量报错清单与 rg 深路径清单（含 runtime）一致（收口完整性门）；dist 重复 module 比对清单 + zsw vendor 双入口消费形态（D9） |
-| u-4 | C1：session-lifecycle 抽出 + deps 工厂（createOrReuseServices 保单例语义，init 无条件）+ 守卫合一 + lazyDeps 改惰性回调 | 壳 `src/session-lifecycle.ts`（新 ~400）+ `index.ts`（945→~300 为设计期估算；实施校准见 §4 A-V4：终态 636/HEAD 650） | 原样搬移纪律（D2），行为变更点独立成条；A-V1/V1b/V2 实测门在段末 |
+| u-4 | C1：session-lifecycle 抽出 + deps 工厂（createOrReuseServices 保单例语义，init 无条件）+ 守卫合一 + lazyDeps 改惰性回调 | 壳 `src/session-lifecycle.ts`（新 ~400，实施终态 488）+ `index.ts`（945→~300 为设计期估算；实施校准见 §4 A-V4：终态 636/HEAD 650） | 原样搬移纪律（D2），行为变更点独立成条；A-V1/V1b/V2 实测门在段末 |
 | u-5 | C6：共享桩 module + 死 mock 清零 + 重复注册清零 + 3 测试迁回 core | 壳 `mocks/runtime-stubs.ts`（新）+ ~15 测试文件改写 + 3 文件迁移 | 依赖 u-4（seam 先立，7 个整类 mock 测试才有改写目标）；D15 决策补注「运行时桩收敛至共享 module」 |
-| u-6 | C4：tui-kit + views 常量下沉 + elapsed 合并 | 壳 `src/interface/tui-kit.ts`（新 ~120）+ format/list-*/WorkflowsView | 全并行；视觉对照门 C-V1 |
+| u-6 | C4：tui-kit + views 常量下沉 + elapsed 合并 | 壳 `src/interface/tui-kit.ts`（新 ~120，实施终态 278——含布局家族随迁，偏差 #11）+ format/list-*/WorkflowsView | 全并行；视觉对照门 C-V1 |
 
 每单元验收独立可跑（对应 §4 场景），impl-plan 按本表展开为逐文件迁移清单 + 测试切换清单（下一层产物）。
 
 ## 6. 与既有决策/ADR 的关系核对
 
-- **extraction D5**：补注而非推翻（§3.5 D5-补注）——豁免终止的依据是 D5 自身判据。
+- **extraction D5**：补注而非推翻（§3.6 D5-补注；extraction 文档 D5 段落已落终止注记，2026-09）——豁免终止的依据是 D5 自身判据。
 - **dual-track D6（ChatRoundTicket 双形态）**：维持，C5 不触碰（u-3b 偏差表已固化理由）。
 - **dual-track D7-①（views/format 并入）**：延续执行（C4 是其未完成半程的收尾，非翻案）。
 - **ADR-0035（worktree 启动恢复）/ ADR-0049（per-session 隔离）**：行为随迁不改语义，A-V1/V2 实测守护。

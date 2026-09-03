@@ -43,7 +43,7 @@
 | u-5a | C6 桩基建+卫生：共享桩 module 新建（getLogger/pi-ai StringEnum/getAgentDir/typebox 桩定型）+ 死 mock 清零（session-start-reaper.test.ts 内 3 处指向 `../commands/subagents.ts` 等旧路径的 no-op mock）+ 同文件重复 vi.mock 注册清零（同文件 :12-23 pi 两包重复注册） | `extensions/universal/subagent-workflow/src/__tests__/mocks/runtime-stubs.ts`（新）<br>`extensions/universal/subagent-workflow/src/__tests__/session-start-reaper.test.ts`（+ rg 复核出的其他重复注册文件，如有） | u-2b | plain | A-V5：`rg 'vi\.mock\("\.\./commands\|vi\.mock\("\.\./tools\|vi\.mock\("\.\./tui'` 壳/src/__tests__ 零命中；同文件同模块重复 vi.mock = 0；extensions:test 绿 |
 | u-5b | C6 整类 mock 改写：7 测试文件（A-V3 名单）改 seam 注入（经 u-4 的 setupSessionLifecycle + SessionLifecycleDeps）或访问器 mock 形态，触达的手写桩顺带换共享桩 | `src/__tests__/{session-start-reaper,index-session-start,index-session-start-identity,crash-recovery,command-handlers}.test.ts` + `src/interface/__tests__/subagent-tool-path-guard.test.ts` + stream-sink-guard 测试文件（开工时 rg 定位）= 7 文件 | u-4, u-5a, u-2b | plain | A-V3：7 文件全覆盖改写；单文件 vi.mock ≤3 且不含 SubagentService/pi-ai/typebox 整类桩；extensions:test 绿；**测试用例总数不降**（改写禁止静默删用例，数量对账写入提交说明） |
 | u-5c | C6 测试迁回 core：agent-registry / notify-ledger / session-pending 3 测试（core module 的唯一覆盖现落壳套件）迁 core 套件，import 改 core 内相对路径 | 迁出：壳 `src/__tests__/{agent-registry,notify-ledger,session-pending}.test.ts`<br>迁入：`packages/subagent-core/src/{execution,shared}/...` 对应 module `__tests__/`（dev 按 module 归属落位） | u-2b | plain | 3 测试在 core 套件绿（core 内相对 import，零跨包 specifier）；壳套件无残留文件；core 测试全绿 + extensions:test 绿 |
-| u-6 | C4：tui-kit 零依赖叶（TERM_ROWS_FALLBACK/PAGE_SCROLL_DEFAULT 单定义 + 边框 helper 家族统一自由函数形态 + termRows() 单份）+ views 专属常量 ~10 个从 format.ts 沉回 views/ + 两个 elapsed 格式化器合并单函数 | `extensions/universal/subagent-workflow/src/interface/tui-kit.ts`（新）<br>`src/interface/format.ts` + `src/interface/list-component.ts` + `src/interface/list-view.ts` + `src/interface/views/WorkflowsView.ts` | 无 | plain | C-V2：`rg 'TERM_ROWS_FALLBACK\|PAGE_SCROLL_DEFAULT'` 壳/src 各 1 处；`rg 'titleBorder'` 仅 tui-kit + 两消费方；extensions:test 绿（list-component/list-fields/WorkflowsView-signature 等相关测试保持绿）；list-shared.ts KeyHandler **不动**（D7） |
+| u-6 | C4：tui-kit 零依赖叶（TERM_ROWS_FALLBACK/PAGE_SCROLL_DEFAULT 单定义 + 边框 helper 家族统一自由函数形态 + termRows() 单份）+ views 专属常量 ~10 个（实施终态 6，见设计 §3.3 实施终态口径）从 format.ts 沉回 views/ + 两个 elapsed 格式化器合并单函数 | `extensions/universal/subagent-workflow/src/interface/tui-kit.ts`（新）<br>`src/interface/format.ts` + `src/interface/list-component.ts` + `src/interface/list-view.ts` + `src/interface/views/WorkflowsView.ts` | 无 | plain | C-V2：`rg 'TERM_ROWS_FALLBACK\|PAGE_SCROLL_DEFAULT'` 壳/src 各 1 处；`rg 'titleBorder'` 仅 tui-kit + 两消费方；extensions:test 绿（list-component/list-fields/WorkflowsView-signature 等相关测试保持绿）；list-shared.ts KeyHandler **不动**（D7） |
 
 **范围裁剪声明（u-5 系）**：设计目标 6 的「38 处桩收敛」以内化方式达成——改写触达的文件（u-5b 的 7 文件）顺带换共享桩；未触达测试文件的存量桩不强制迁移（A-V5 验收 = 死 mock 0 + 重复注册 0，无「38 处全迁」验收条目；避免为迁移而迁移的 churn）。
 
@@ -103,6 +103,8 @@ graph TD
 
 ## 5 合理偏差登记表
 
+注：#19-23 由阶段 4 插入，位于 #16-18 之前系追加时序，编号即定位键。
+
 | # | 偏差 | 类型 | 裁定 |
 |---|------|------|------|
 | 1 | 设计 §5 的 u-2 单单元 → 拆 u-2a/u-2b/u-2c | 粒度细化 | 合理：单 subagent ≤5 文件约束（core 侧 4 文件 / 消费侧机械替换 / 收口 1 文件三段领地互斥）；每段合入即套件绿，终态与设计一致；「一体处置」语义由 u-2b→u-2c 串行边保证 |
@@ -114,12 +116,12 @@ graph TD
 | 7 | A-V4 行数线 ≤350 → ≤650 | doc_errors 校准 | 设计初稿算术错误（§3.1 随迁表物理减量上限 ~408 行 vs 945−350=595 需求）；u-4 commit 实测终态 636（HEAD 650，阶段 4 恢复 lazyDeps 2 成员后压线）；设计文档 §4 A-V4 已同步修订（2026-09-03）；扩大搬移范围违反 D2 被否 |
 | 8 | [已回退，见 #10] u-4 领地扩展 +4 文件：`src/interface/tool-workflow.ts`、`src/interface/commands.ts`、`src/__tests__/command-handlers.test.ts`、`src/__tests__/index-session-start.test.ts` | 领地扩展 | lazyDeps 改惰性回调（设计钦定行为变更点）的签名与消费点在 interface 层（tool-workflow :311+6 处、commands :61-68+1 处）；混入 u-2b 会污染机械归一单元的验收纯度；与 W1 其余单元领地无冲突 |
 | 9 | `resource-discovery-manifest-cache.test.ts` 整文件删除（设计 B-1 未点名该文件） | 范围澄清 | 该专项文件主体 = readPackageManifestSync（已删）的读计数断言，随删即净；async manifestCache 行为由 resource-discovery.test.ts mtime/KV 系列覆盖——u-1 续作须确认覆盖存在，缺则将对应用例改写为 async 形态并入，不丢缓存行为覆盖 |
-| 10 | lazyDeps 保持 getter 形态（非惰性回调）；偏差 #8 领地扩展未执行（5 文件已 revert） | 回退 + 阶段4修正 | 限额打断续作 agent，u-4 落地形态为 8-getter（store/runs/registry/onRunDone/eventBus/workerHost/runner/log），**缺 scheduleTimeBudget/onWorkflowCall 两可选成员**——等价于 LauncherDeps 可选成员被静默丢弃（ports.ts D-12 语义：带时间预算的 run 命中错误重试后计时器静默失效），阶段 3 审查 U2 揭示、355c38ffa 恢复为完整 10 成员 getter 面（index.ts:591-604 注明 D-12 后果）；属性访问触发守卫合一 + makeDeps 求值，功能等价惰性回调；「运行时行为零变更」仅对恢复后的 10 成员形态成立；session-lifecycle.test.ts 守卫合一用例锁定同源同消息语义 |
+| 10 | lazyDeps 保持 getter 形态（非惰性回调）；偏差 #8 领地扩展未执行（偏差 #8 领地 4 文件已随工作区回退，未提交无 git 痕迹） | 回退 + 阶段4修正 | 限额打断续作 agent，u-4 落地形态为 8-getter（store/runs/registry/onRunDone/eventBus/workerHost/runner/log），**缺 scheduleTimeBudget/onWorkflowCall 两可选成员**——等价于 LauncherDeps 可选成员被静默丢弃（ports.ts D-12 语义：带时间预算的 run 命中错误重试后计时器静默失效），阶段 3 审查 U2 揭示、355c38ffa 恢复为完整 10 成员 getter 面（index.ts:591-604 注明 D-12 后果）；属性访问触发守卫合一 + makeDeps 求值，功能等价惰性回调；「运行时行为零变更」仅对恢复后的 10 成员形态成立；session-lifecycle.test.ts 守卫合一用例锁定同源同消息语义 |
 | 11 | u-6 kit 内容超设计 §3.3 清单：ANSI 可见宽度布局家族（truncLine/wrapText/padToVisible/segFillColored + 内部件）随迁 tui-kit（~280 行 vs 设计估 ~120）；format.ts re-export 四符号保既有消费面零改动 | 合理演化 | 设计「零依赖叶（禁依赖 format.ts）」与 titleBorder→segFillColored→truncLine 传递依赖内部张力，唯一自洽解 = 布局家族随迁；否则须复制实现（新的双定义，违背 C4 目标）；design §3.3 由 design-code-sync 阶段回写补注 |
 | 12 | u-6 kit 依赖 pi-tui visibleWidth（设计字面「仅可依赖 node tty 探测」） | 合理演化 | 边框家族需 ANSI 可见宽度计算，pi-tui 为外部包；「零内部壳 module 依赖」的叶性质保持 |
 | 13 | u-6 领地外机械触点：views/detail-content.ts（仅 import 块 + 相邻过时注释） | 领地扩展 | 消费 PAGE_SCROLL_DEFAULT 与 5 个下沉常量，常量离开 format.ts 则 import 必随动；零逻辑变更 |
 | 14 | u-6 C-V2「各恰 1 处」按定义口径达成；PAGE_SCROLL_DEFAULT 消费方 import/使用 6 处为「改消费 kit」目标必然形态 | 口径校准 | 字面总计数与「两视图族改消费 kit」不可同时满足，取定义口径 |
-| 15 | u-6 elapsed 合并保留两个导出名（formatElapsedSeconds 秒输入 / formatElapsed 时间戳输入），formatElapsed 单向委托 formatElapsedSeconds | 形态校准 | 两消费方群各在用不可删任一；「参数化前缀单函数」读作委托构造，同输出由委托保证（format.test.ts 52/52 + 12 档秒值交叉等价扫描） |
+| 15 | u-6 elapsed 合并保留两个导出名（formatElapsedSeconds 秒输入 / formatElapsed 时间戳输入），formatElapsed 单向委托 formatElapsedSeconds | 形态校准 | 两消费方群各在用不可删任一；「参数化前缀单函数」读作委托构造，同输出由委托保证（一次性人工扫描未落盘，等价性由委托构造（formatElapsed 单向调 formatElapsedSeconds）+ format.test.ts 52 用例守卫） |
 | 19 | 阶段3审查 reasonable 固化：dialog queue 单定义点随 createOrReuseServices 域搬至 session-lifecycle.ts 并 export（旧 index.ts module 级私有） | 合理演化 | D2「唯一消费方随迁」自然延伸，Symbol key 单份无双定义；设计 §3.1 随迁表已随 doc-fix 补注 |
 | 20 | 阶段3审查 reasonable 固化：session-lifecycle.test.ts 自身 12 vi.mock（含 subagent-service 整类）为 seam 直测的 module mock 底座约定 | 合理演化 | 组 2（守卫合一）必须挂载 index.ts（闭包内符号）；组 1 默认装配走 new 需 mock 类防真实构造；设计 §3.1 样例描述的是注入形态而非文件级 mock 归零承诺；该文件不在 A-V3 名单 |
 | 21 | 阶段3审查 reasonable 固化：barrel 2 符号（RecordStore/INDEX_FILENAME）仅 bench 消费 | 合理演化 | 设计 §3.2 明文把 bench 计入壳触点证据；若未来 bench 迁移/删除，两符号走 semver 收窄流程评估 |
@@ -133,13 +135,13 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u-1 | committed | 1（裁决点：偏差 #9 处置 + 环境tmp清理） | dev 报告：五函数已删、rg 门过、typecheck 绿；blockers 待续作消解 |
-| u-2a | committed | 1 | dev 报告 done：barrel 135 符号 + globalThis 化 + 0.3.0；core 测试（排除 u-1 领地口径）2352 passed；待主 agent 硬核验 |
+| u-1 | committed | 1（裁决点：偏差 #9 处置 + 环境tmp清理） | dev 报告：五函数已删、rg 门过、typecheck 绿；blockers 已消解（manifestCache 覆盖经 355c38ffa 迁编，见 core resource-discovery.test.ts） |
+| u-2a | committed | 1 | dev 报告 done：barrel 135 符号 + globalThis 化 + 0.3.0；core 测试（排除 u-1 领地口径）2352 passed；Gate A 已核验 |
 | u-2b | committed | 2（裁决 #16/#17/#18 落地） | 67 文件归一（217 barrel + 7 testing alias 文件 + 2 relay-env 子入口）；barrel +2 type；vite 正则 alias 旁路；删通配探针 916 绿；commit d312b7071 |
 | u-2c | committed | 1 | exports 删 ./* 通配 + $comment 豁免终止补注；dist 静态门三项通过（4 重叠 module 纯常量/函数、25 符号零漂移、smoke 26 golden）；zsw vendor 单入口确认；打包门 exit 0；commit 3d01d3132 |
-| u-4 | committed | 1（裁决 #7/#8/#10 落地） | session-lifecycle.ts 488行新 + index.ts 945→636（355c38ffa 恢复 10 成员后 650 压线） + session-lifecycle.test.ts 10用例；守卫合一完成（getWorkflowDeps union）；lazyDeps getter 形态（偏差 #10，功能等价惰性回调）；壳 916 测试全绿 |
+| u-4 | committed | 1（裁决 #7/#8/#10 落地） | session-lifecycle.ts 488行新 + index.ts 945→636（355c38ffa 恢复 10 成员后 650 压线） + session-lifecycle.test.ts 11用例（e3183c157 10 + 355c38ffa D8 new 分支 1）；守卫合一完成（getWorkflowDeps union）；lazyDeps getter 形态（偏差 #10，功能等价惰性回调）；壳 916 测试全绿 |
 | u-5a | committed | 1（领地预授权扩展 +3 文件） | runtime-stubs.ts 四类桩定型；死 mock ×3 清零；重复注册 4 文件清零（crash-recovery 为注释假阳性）；A-V5 门零命中；916 基线保持；commit 6a8b1d3cd |
-| u-5b | committed | 1 | 7 文件改写：vi.mock 计数 0/3/0/1/0/1/2 全 ≤3、零整类桩；56→56 用例对账；853/853 绿（-63 为 u-5c 迁出）；commit 62d6345cc |
+| u-5b | committed | 1 | 7 文件改写：vi.mock 计数（按 u-5b 单元表文件序 reaper/index-session-start/identity/crash-recovery/command-handlers/subagent-tool-path-guard/stream-sink-guard）0/3/0/1/1/2/0 全 ≤3、零整类桩；56→56 用例对账；853/853 绿（-63 为 u-5c 迁出）；commit 62d6345cc |
 | u-5c | committed | 1（资产段留壳 + 等价转写 deviations） | 3 测试迁 core execution __tests__/；66=63+3 用例对账；core 2440 绿（2383+63）；壳 853 绿（916-63）；commit 57a68b360 |
 | u-6 | committed | 1（偏差 #11-15 裁定入表） | tui-kit.ts ~280 行新 + view-constants.ts 新；rg 门过（TERM_ROWS_FALLBACK 仅 kit）；壳 916 全绿；typecheck/lint 绿；净删 255 行同构 |
 
@@ -168,5 +170,6 @@ graph TD
 - 2026-09-03（晚）：W1-W4 全 9 单元开发完成并 committed（u-1 bfcc9d94b / u-2a 720b54235 / u-4 e3183c157 / u-6 aa9ad07a5 / u-2b d312b7071 / u-2c 3d01d3132 / u-5a 6a8b1d3cd / u-5c 57a68b360 / u-5b 62d6345cc）；期间 5h 限额中断一次（u-6 重派、u-4 续作裁决），quota-wait 恢复。
 - 2026-09-03（晚）：阶段 3 三区一致性审查（core / 组合根+测试 / interface+runtime）：4 unreasonable + 10 doc_errors + 25 reasonable；阶段 4 修复批次全清（355c38ffa：D8 new 分支断言锁定、lazyDeps 成员面恢复、manifestCache 5 失败路径用例、check-core-dist-gate.mjs 脚本化、10 doc_errors 修订、偏差 #19-23 登记）。
 - 2026-09-03（晚）：**勘误**——355c38ffa commit message 声称「10 doc_errors」实际完成 8 处：「D3 testing-alias mapping」一处因修订脚本 replace 串未匹配（粗体标记差异）静默失败，由 design-code-sync 本轮 F2 修复落笔；「standards.md §7.5 dead refs x2」措辞易误读——实际修复落点为 host-services.ts/notify-ports.ts 两处死引用注释（355c38ffa 文件清单内），非改 standards.md 本身。
-- 2026-09-03（晚）：阶段 5 双级验收双绿——Gate A 11/11 命令 exit 0（壳 854/core 2445+6/runtime 4095/build/bundle/dist-gate，零绕过，对账精确）；Gate B 六场景全 pass（A-V1 identity 12 字段+ledger revive+reaper scan / A-V1b same-instance+initSession 覆盖（new_session RPC 触发）/ A-V2 kill-9 双变体 / B-V3 chat 23 字段形态 / B-V5 两步 workflow / C-V1 tui-kit 渲染降级验证），零 fail 零 blocked。
+- 2026-09-03（晚）：阶段 5 双级验收双绿——Gate A 11/11 命令 exit 0（壳 854/core 2445+6/runtime 4095/build/bundle/dist-gate，零绕过，对账精确；命令清单未逐条落盘（gate 会话内执行），可复算部分：壳 854=916-63+1、core 2445=2440+5（355c38ffa））；Gate B 六场景全 pass（A-V1 identity 12 字段+ledger revive+reaper scan / A-V1b same-instance+initSession 覆盖（new_session RPC 触发）/ A-V2 kill-9 双变体 / B-V3 chat 23 字段形态 / B-V5 两步 workflow / C-V1 tui-kit 渲染降级验证），零 fail 零 blocked。
+- 2026-09-03（晚）：design-code-sync r1/r2/residue（63597b765/0908f398c/a26f8eafb）：24 findings 全 code-right 修订——偏差 #7/#10/#17 口径校准、残留风险 #1-#5 销案重排、状态表与 Gate B 场景数字对齐。
 

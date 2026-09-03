@@ -46,7 +46,6 @@ vi.mock("@zhushanwen/subagent-core/execution/model-config-service.ts", () => ({
 vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
   SubagentService: class {
     initSession = vi.fn();
-    setUiRequestHandler = vi.fn();
     recoverManifestTmpFiles = vi.fn(async () => ({ deleted: 0, recovered: 0 }));
     startGcTimer = vi.fn();
   },
