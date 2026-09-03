@@ -184,6 +184,10 @@ describe('A: encryptCredential / decryptCredential roundtrip', () => {
 
 // ── B. stripCredential / withCredential ─────────────────────────────────
 describe('B: stripCredential / withCredential', () => {
+  // 本 describe 各用例经 encryptCredential 触达 getSafeStorage 的 require('electron')，
+  // 默认显式注入无 safeStorage 态：不拦截时该 require 依赖环境安装态（本地路径桩 /
+  // CI skip-binary-download 下 throw 分支），曾致 CI 间歇 5s 超时；afterEach 统一还原
+  beforeEach(() => interceptElectronSafeStorage(undefined))
   it('有凭证的 URL：stripCredential 剥离凭证，withCredential 还原', () => {
     const url = 'http://user:pass@host:8080'
     const { safeUrl, credential } = stripCredential(url)
@@ -256,6 +260,9 @@ describe('B: stripCredential / withCredential', () => {
 
 // ── C. readProxyConfig / writeProxyConfig 文件往返 ───────────────────────
 describe('C: readProxyConfig / writeProxyConfig', () => {
+  // 含凭证的写入/读取经 encrypt/decryptCredential 触达 require('electron')，
+  // 同 B describe：默认显式注入无 safeStorage 态，不赌环境安装态
+  beforeEach(() => interceptElectronSafeStorage(undefined))
   it('含凭证的配置写入后读取，凭证还原，功能等价', () => {
     writeProxyConfig({
       mode: 'manual',
