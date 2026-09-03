@@ -137,7 +137,7 @@ async function readFirstLineAsync(filePath: string): Promise<string | null> {
       }
       // 换行先在原始 Buffer 上定位（r5-S4：避免逐块 Buffer.concat 的 O(n²) 复制——超长首行
       // 续读多轮时，每轮 concat 全量重组）；换行前内容才入 chunks，最终一次性 concat 解码。
-      const nl = buffer.subarray(0, bytesRead).indexOf(0x0a)
+      const nl = buffer.subarray(0, bytesRead).indexOf('\n'.charCodeAt(0))
       if (nl >= 0) {
         chunks.push(Buffer.from(buffer.subarray(0, nl)))
         return Buffer.concat(chunks).toString('utf-8')
