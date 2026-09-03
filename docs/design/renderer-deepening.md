@@ -90,7 +90,7 @@ xyz-agent 是 Electron + Vue 3 桌面 AI agent 工作台。前端分两包：**c
 ### 例 4：command / fileSearch 双轨——同一概念两个 SSOT（R2 最重实例）
 
 - `packages/renderer/src/stores/command.ts`（194 行，pinia 全量实现）vs `packages/core/src/domain/new-task-search/command-store.ts`（277 行，factory 全量实现），各自持有 `commandsBySession` + `appCommands` 缓存。core 版文件头注释自述「renderer 旧 store 保留，待消费方迁移完成后删除」（`:6`）。
-- 消费方在同一个 feature 目录内分裂：`features/search/useSearchJump.ts:29`、`useSearch.ts:40,71` 走壳轨；`features/command/useCommandStore.ts:16`、`useSearchModalDeps.ts` 走 core 轨。CommandPopover（壳轨）与 SearchModal（core 轨）数据可发散。
+- 消费方在同一个 feature 目录内分裂：`features/search/useSearchJump.ts:29`、`useSearch.ts:40,71` 走壳轨；`features/command/useCommandStore.ts:16`、`useSearchModalDeps.ts` 走 core 轨。CommandPopover 的 slash 命令链基线已在 core 轨（:91），其 file 候选链（useFileSearch）仍走壳轨——与 SearchModal（core 轨）数据可发散（一致性审查修正：初版「CommandPopover（壳轨）」对 slash 链过时）。
 - fileSearch 同构小一号（`stores/fileSearch.ts` 41 行 vs core file-search-store.ts）。
 
 ### 例 5：composer 镜像重复与类型抄写（R2）
@@ -106,10 +106,10 @@ xyz-agent 是 Electron + Vue 3 桌面 AI agent 工作台。前端分两包：**c
 
 ### 例 7：死面与注释同步的不变量（R1+R2 混合）
 
-- `disconnected` 错误构造 4 处手写 `Object.assign(new Error(...), { code: 'disconnected' })`：`transport/api/request.ts:56-59`、`transport/use-connection.ts:276-281/289-291/309-315`，靠三份注释互相对齐；识别方靠 `error.code === 'disconnected'` 字符串约定，任何一处改字面量即静默失配。
+- `disconnected` 错误构造 4 处手写 `Object.assign(new Error(...), { code: 'disconnected' })`：`transport/api/request.ts:56-59`、`transport/use-connection.ts:276-281/289-291/309-315`，靠三份注释互相对齐；消费方为字符串透传（useFileTree 读 `error.code` 存 reason），生产无等值分支——等值断言在钉住测试，字面量单点的价值在流入 UI 状态与测试锁定（一致性审查修正：初版「任何一处改字面量即静默失配」的耦合强度被夸大）。
 - EXTENSION_BRIDGE_TYPES 白名单双写：壳 `useExtensionHostBridge.ts:76-82` 与 core `message-bus-bridge.ts:324-330`，靠注释保持 5 项一致。
 - core 内部经自身 barrel 回引成环：`domain/chat/lru.ts:25`、`changeset.ts:25`、`timers.ts:13`（+ transport/mock 3 处）import `@xyz-agent/core`——index.ts re-export lru，lru 又 import index，运行期不炸但 ESM 序隐患。
-- 死面：`events.ts:60-62` 的 `dispatch` 兼容别名生产零调用；`use-connection.ts:77` ConnectionPorts.toast 死字段（壳装配被迫提供 useToast()）；`platform/port.ts:55-67` PlatformPort.ipc 双壳注入 null、core 零消费（接口宣告不存在的能力）；`extension-host/builtin/tasks/manifest.ts` 118 行生产零消费且形状已漂移（slashCommands name 前导 `/` 不一致）；`domain/session/effects/panel-orchestration.ts` 是 widget 删除后的纯 interface 残渣；`extension-host/activation-manager.ts`（64 行）生产注入 no-op trigger（useExtensionHostBridge.ts:290-292）、registerActivationEvents 生产零调用——休眠模块未标记，读者会误判为已生效机制。
+- 死面：`events.ts:60-62` 的 `dispatch` 兼容别名生产零调用；`use-connection.ts:77` ConnectionPorts.toast 死字段（壳装配被迫提供 useToast()）；`platform/port.ts:55-67` PlatformPort.ipc 三处注入 null（桌面/移动/mock platform——一致性审查修正，初版漏计 mock 注入点）、core 零消费（接口宣告不存在的能力）；`extension-host/builtin/tasks/manifest.ts` 118 行生产零消费且形状已漂移（slashCommands name 前导 `/` 不一致）；`domain/session/effects/panel-orchestration.ts` 是 widget 删除后的纯 interface 残渣；`extension-host/activation-manager.ts`（64 行）生产注入 no-op trigger（useExtensionHostBridge.ts:290-292）、registerActivationEvents 生产零调用——休眠模块未标记，读者会误判为已生效机制。
 
 ### 例 8：use-connection 测试 seam 退化（R1 的测试面形态）
 
@@ -205,7 +205,7 @@ runtime 进程（WS push）
 - **效果**：G1/G4——协议一处改一处测；MF-3 回归变接口级测试。
 
 **D2：route-inbound 改声明式条目（组 4b，选定）**
-- **采用**：ROUTE_TABLE 条目从 handle 函数改为声明 `{ sessionEffect?, globalEffect?, crossSession?, payloadGuard? }`；dispatcher（现 dispatchRouted）持有唯一 prologue：有 sid → seq gate → dispatchSession → crossSession? → payloadGuard 过 → sessionEffect?.()；无 sid → dispatchGlobal → globalEffect?.() → L9 前缀 warn。**守卫归宿**（两类语义不同，分置）：**跳过型**守卫（`:227` subagents 的 Array.isArray、`:241-243` subagentEntriesAppended 双重守卫——坏形状 → 不调 effect、dispatch 照常）收进条目声明 `payloadGuard`（布尔门），由 dispatcher 在 dispatch 之后、effect 之前统一执行；**整形型**守卫（`:276` error 的 `typeof payload.message === 'string' ? … : 'Unknown error'`——message 非法时**仍调** onSessionError 传兜底值，非跳过）留在 sessionEffect 的参数构造处，不入 payloadGuard（布尔门承载不了参数兜底）。payloadGuard 只门控 effect 调用，不门控 dispatchSession/crossSession 分发。「坏形状跳 effect 保 dispatch」（per-session 订阅者可能自带消费逻辑）语义留在 core 单点。`'error'` 收敛为一个条目（sessionEffect=onSessionError，globalEffect 内含 `!msg.id` 守卫）；CROSS_SESSION_TYPES 的 8 个 type 变 8 条 `crossSession: true` 声明；未命中条目走 dispatcher 默认路径（语义 = 现 FALLBACK）；pending 分流保留在表外（D7 id/seq 互斥不动）；hasOwnProperty 守卫（:403）保留；replay 共享路径（setSubscriptionPorts :417-420）不动。
+- **采用**：ROUTE_TABLE 条目从 handle 函数改为声明 `{ sessionEffect?, globalEffect?, crossSession?, payloadGuard? }`；dispatcher（现 dispatchRouted）持有唯一 prologue：有 sid → seq gate → dispatchSession → crossSession? → payloadGuard 过 → sessionEffect?.()；无 sid → dispatchGlobal → globalEffect?.() → L9 前缀 warn。**守卫归宿**（两类语义不同，分置）：**跳过型**守卫（`:227` subagents 的 Array.isArray、`:241-243` subagentEntriesAppended 双重守卫——坏形状 → 不调 effect、dispatch 照常）收进条目声明 `payloadGuard`（布尔门），由 dispatcher 在 dispatch 之后、effect 之前统一执行；**整形型**守卫（`:276` error 的 `typeof payload.message === 'string' ? … : 'Unknown error'`——message 非法时**仍调** onSessionError 传兜底值，非跳过）留在 sessionEffect 的参数构造处，不入 payloadGuard（布尔门承载不了参数兜底）。payloadGuard 只门控 effect 调用，不门控 dispatchSession/crossSession 分发。「坏形状跳 effect 保 dispatch」（per-session 订阅者可能自带消费逻辑）语义留在 core 单点。`'error'` 收敛为一个条目（sessionEffect=onSessionError，globalEffect 内含 `!msg.id` 守卫）；CROSS_SESSION_TYPES 的 8 个 type 变 8 条 `crossSession: true` 声明；未命中条目走 dispatcher 默认路径（语义 = 现 FALLBACK）；pending 分流保留在表外（D7 id/seq 互斥不动）；hasOwnProperty 守卫（:403）保留；replay 共享路径（setSubscriptionPorts :417-420）不动。（实施注：ROUTE_TABLE 导出为内部测试 seam——payloadGuard×crossSession 组合契约无生产条目只能探针注入验证，先例 resetSubscriptionStates；RouteTableEntry 类型零消费不导出。）
 - **被否**：① handle + 共享 prologue helper——条目仍各持函数体，「type ∧ sid」合取仍不可见；② 守卫移入壳装配的 effect 函数——core 失去防御且多壳重复挂守卫，削弱 G1「知识唯一载体」；③ 维持三结构——例 3 的 error 双处定义与 6 处重复防御永存。
 - **证据**：route-inbound.ts:199-343 三套并存 + :294-296 注释自证表达力不足；两类形状守卫——跳过型 :227/:241-243、整形型 :276（坏形状行为已被 route-inbound.test.ts:293-305 与 :348-351 锁定，P3 探针兜底）。
 - **效果**：G2——新增 server-push = 一行条目；remote-use 未来 busy/idle/presence 分支落地形式即追加条目。
@@ -231,7 +231,7 @@ runtime 进程（WS push）
 - **效果**：G2——sidebar 编排一个 SSOT。
 
 **D6：chat store 类型级 facet + 剪枝（组 5b，选定）**
-- **采用**：① timer 三件套（armStreamingTimer/armBashTimer/clearBashTimer）收进 `testInternals` 命名空间（生产外部零消费已实证——仅 core/domain/chat 内部经 effects ctx 消费，ctx 由 store 闭包构建不受影响；2 个测试文件经公共面消费连带改指：`renderer/src/__tests__/useChat.test.ts:266`、`renderer/src/__tests__/stores/chat-dispose-session.test.ts:41`）。选择收编而非让测试直接 import `chat/timers.ts` 的 initTimers（chat-bash-effects.test.ts:84 先例）：store 内 timer 经 `initTimers(finalizeSession, …)`（store.ts:713）与 store 闭包绑定，外部 initTimers 得到的是不同 finalize 闭包的独立实例，这两处测试测的是 store 行为，走先例会悄悄改变测试语义；② 既有测试逃生舱（`_sessionStreamingFlagsForTest`/`_entryStatesForTest`）并入同一 `testInternals` 命名空间；③ 导出 facet 类型（`ChatStoreReaders` / `ChatStoreOps` = `Pick<ChatStoreInstance, …>`），消费方按类声明；④ 追加 taste-lint 自定义规则「组件只碰 readers 面」（项目已有 taste/no-* 规则基建），负面拦截走验收 A8。**依赖组 5a 先落地**：LRU 四件套被 sessionEntry 端口吸收、壳不再直取后，公共面先自然缩一圈再分层。
+- **采用**：① timer 三件套（armStreamingTimer/armBashTimer/clearBashTimer）收进 `testInternals` 命名空间（生产外部零消费已实证——仅 core/domain/chat 内部经 effects ctx 消费，ctx 由 store 闭包构建不受影响；2 个测试文件经公共面消费连带改指：`renderer/src/__tests__/useChat.test.ts:266`、`renderer/src/__tests__/stores/chat-dispose-session.test.ts:41`）。选择收编而非让测试直接 import `chat/timers.ts` 的 initTimers（chat-bash-effects.test.ts:84 先例）：store 内 timer 经 `initTimers(finalizeSession, …)`（store.ts:713）与 store 闭包绑定，外部 initTimers 得到的是不同 finalize 闭包的独立实例，这两处测试测的是 store 行为，走先例会悄悄改变测试语义；② 既有测试逃生舱（`_sessionStreamingFlagsForTest`/`_entryStatesForTest`）并入同一 `testInternals` 命名空间；③ 导出 facet 类型（`ChatStoreReaders` / `ChatStoreOps` = `Pick<ChatStoreInstance, …>`）——渐进态：当前零消费方按类声明（pinia Store 与 core factory 产物存在解包鸿沟，消费方标注需 pinia 层适配，留后续波次推进）；④ 追加 taste-lint 自定义规则「组件只碰 readers 面」（项目已有 taste/no-* 规则基建），负面拦截走验收 A8（已知权衡：规则内 OPS_FIELDS 为 ChatStoreOps 的手工镜像清单——.mjs 无法 import TS 类型；store 侧有编译期断言强制登记，清单侧靠注释同步义务，建议后续补解析 store.ts 源码比对的守卫测试）。**依赖组 5a 先落地**：LRU 四件套被 sessionEntry 端口吸收、壳不再直取后，公共面先自然缩一圈再分层。
 - **被否**：① 运行时嵌套拆分（return { readers, ops }）——约 100 个调用点 codemod + pinia 嵌套响应式陷阱，只买「物理防呆」，成本收益不成立；② 不动——64 项混装面继续扩大。
 - **证据**：return 面 store.ts:868-931；timer 生产零消费 grep 实证（含测试扫描，2 处测试消费已并入改动面）；ctx 闭包构建 :613/:713。
 - **效果**：G3——消费方只学自己那面；误用面可 lint 拦截。
@@ -243,10 +243,10 @@ runtime 进程（WS push）
 - **效果**：G2——command 概念一个 SSOT，-235 行。
 
 **D8：createStagingMode 泛化（组 3，选定）**
-- **采用**：一个 `createStagingMode(config)` 泛型 module + fork/handoff 两份配置对象。ComposerInputInstance 收敛方向（探针 P2 一并定性）：权威宽接口已在 `composer/types.ts:173`，6 处局部窄契约逐处判定——有意的耦合控制（send/submit 的 `{getSegments}`、handoff 的 `{focus?}`、context-chips 的 `{getSegments; removeImageChip}`——后者已带意图注释，P2 定性预期为保留）改为字段级 import / 从权威接口 `Pick` 派生并注释声明意图，漂移抄写直接删；**不追求全部合一**（窄契约是合法形态，消灭的是无名分复制）。**前置硬门（探针 P2）**：先列 25% 差异清单 + 窄契约定性，全部确认可配置表达才动手；发现行为级差异 → 降级为部分泛化（共享骨架函数 + 各自保留差异段），不硬抽象。
+- **采用**：一个 `createStagingMode(config)` 泛型 module + fork/handoff 两份配置对象。ComposerInputInstance 收敛方向（探针 P2 一并定性）：权威宽接口已在 `composer/types.ts:173`，6 处局部窄契约逐处判定——有意的耦合控制（send/submit 的 `{getSegments}`、handoff 的 `{focus?}`、context-chips 的 `{getSegments; removeImageChip}`——后者已带意图注释，P2 定性预期为保留）改为字段级 import / 从权威接口 `Pick` 派生并注释声明意图，漂移抄写直接删；**不追求全部合一**（窄契约是合法形态，消灭的是无名分复制）。（实施修正：send/submit/context-chips 的字段不在权威接口——权威面 = context 消费面，Pick 不可行且扩权收编被否（必选字段波及 dom-core/ui-mock、可选字段语义降级）；落为保留局部声明 + 名分注释。fork/handoff 的 focus 在权威面，已 Pick 化。）**前置硬门（探针 P2）**：先列 25% 差异清单 + 窄契约定性，全部确认可配置表达才动手；发现行为级差异 → 降级为部分泛化（共享骨架函数 + 各自保留差异段），不硬抽象。
 - **被否**：① 维持镜像——注释自证对称的两份拷贝独立漂移；② 抽象基类继承——引入继承层级换配置就能解决的问题，加机制不减法（准则 8）。
 - **证据**：fork-mode.ts:241 行 × handoff-mode.ts:280 行镜像清单（enter/exit/watch 守卫/handleEsc/handleSend 骨架/modeRef getter）；类型 5 份清单。
-- **效果**：G5 下的 leverage——消约 300 行，新增 staging mode = 一份配置。
+- **效果**：G5 下的 leverage——镜像重复归零、新增 staging mode = 一份配置（一致性审查修正：净行数 +108——类型契约与决策记录注释；fork/handoff 各 -31%/-37%，初版「消约 300 行」绝对行数估计失准，结构目标达成）。
 
 **D9：ensureDispatcher 可选注入——内部测试 seam 复位（组 1，选定）**
 - **采用**：`ensureDispatcher(ports, dispatcher?)` 接可选 dispatcher 参数（与 configureRouteInbound 的可选 ports 同体例——core 内部测试 seam，不出现在壳装配面）；use-connection 测试从 4 处 vi.mock 模块内部减至 **ws-client 1 处 mock + dispatcher 1 处注入**（pending/events/domains-session 三处可消；ws-client 是 use-connection 自身顶层依赖 `:29`，mock 不可消也不必消）；route-inbound 的 subscribe 动态 import（:351-363）回直为静态。
@@ -262,10 +262,10 @@ runtime 进程（WS push）
 - **效果**：G1——约定从注释变代码；包级循环隐患消除。
 
 **D11：死面删除清单（组 1，选定）**
-- **采用**：删除 events.dispatch 兼容别名（events.ts:60-62）、ConnectionPorts.toast 死字段（use-connection.ts:77，连带壳装配 useConnection.ts:70 的 useToast() 注入）、PlatformPort.ipc 空挂字段（port.ts:55-67 + 双壳注入点）、builtin/tasks/manifest.ts 整目录（118 行死声明）、session/effects/panel-orchestration.ts 残渣（并入 api-port）；activation-manager.ts 加 dormant 头注（显式标记「等 runtime 激活 RPC，未生效」）。
+- **采用**：删除 events.dispatch 兼容别名（events.ts:60-62）、ConnectionPorts.toast 死字段（use-connection.ts:77，连带壳装配 useConnection.ts:70 的 useToast() 注入）、PlatformPort.ipc 空挂字段（port.ts:55-67 + 三处注入点：桌面/移动/mock platform）、builtin/tasks/manifest.ts 整目录（118 行死声明）、session/effects/panel-orchestration.ts 残渣（并入 api-port）；activation-manager.ts 加 dormant 头注（显式标记「等 runtime 激活 RPC，未生效」）。
 - **被否**：保留占位「反正无害」——接口宣告不存在的能力比没有更糟（读者按接口学习不存在的行为）。
 - **证据**：§2 例 7 后五条，全部经「生产零消费」grep 实证。
-- **效果**：G3——接口恢复诚实；约 350 行死面删除。
+- **效果**：G3——接口恢复诚实；纯死面约 260-280 行删除（一致性审查修正：初版「约 350 行」高估；commit 口径 300 deletions/62 insertions 含测试改写）。
 
 **D12：波次顺序与依赖（选定）**
 - **采用**：W1 组 1 → W2 组 2 ∥ W3 组 3（互不共享文件）→ W4 组 4（内部串行：seq 归位 commit → 路由归一 commit）→ W5 组 5a → W6 组 5b。
@@ -374,3 +374,4 @@ runtime 进程（WS push）
 - v2：2026-09-02 R1 对抗式审查修订（1 must-fix + 7 suggestion 全修）：① D6 timer 实证修正——生产零消费 + 2 个测试文件经公共面消费连带改指 testInternals（P0-a 重扫、u6.1/W6 改动面补齐）；② D2 补守卫归宿——条目 schema 增 `payloadGuard`，dispatcher 在 dispatch 与 effect 之间统一执行；③ D3/D4 内部矛盾修正——「零变化」改「零新增步骤、时序按 D4 纠正」，core.selectSession 消费面三处 grep 实证补入 D4；④ 新增 A8 facet lint 负面拦截验收（组 5b / u6.1 联动）；⑤ D9 表述去满——下限为 ws-client 1 处 mock + dispatcher 1 处注入；⑥ 例 5 重述——权威接口 types.ts:173 已在，5 处为有意窄契约，u3.1 改定性收敛（P2 探针扩围）；⑦ A6 补触发手段（新建 session 触发 runtime commands 推送）；⑧ 附录 A 补评审候选映射（自包含）。
 - v3：2026-09-02 R2 聚焦复审修订（0 must-fix + 2 suggestion + 1 info 全修）：① D2 守卫分两类——跳过型（:227/:241-243）入 payloadGuard，整形型（:276 的 'Unknown error' 参数兜底）留 sessionEffect 参数构造处，并显式「payloadGuard 只门控 effect、不门控分发」；② 例 5/D8/P2/W3 补第 6 处窄契约 context-chips.ts:29-32（已带意图注释的达标样例，P2 定性预期保留）；③ D6① 补 testInternals 选择理由（store 闭包绑定的 timer 无法经独立 initTimers 复现，走 chat-bash-effects.test.ts:84 先例会改变测试语义）。审查记录：.review/renderer-deepening-review-r1.md（R1 全文 + R2 聚焦复审）。
 - v4：2026-09-03 实施前复核修正（doc_error）：D5 消费面初版 grep 只扫静态 import 口径，漏动态 import 与 vi.mock——真实消费面 = 2 生产（useChatViewDeps 静态 + useTraceJump:78 动态）+ 16 测试（隔离入口型 6 + mock/动态型 10）；u5.2 相应拆为 u5.2（生产切换 + 隔离入口型）与 u5.3（mock/动态型 + 删除收尾），删除仍原子收尾。
+- v5：2026-09-03 一致性审查轮 1 回写（五区对抗式审查的 doc_errors 全修）：例 7 disconnected 识别方表述改透传口径、例 7/D11 ipc 注入点双壳改三处、D11 效果行数改结构口径（260-280）、例 4 CommandPopover slash 链基线已在 core 轨的过时描述修正、D2 补 ROUTE_TABLE 测试 seam 实施注、D8 补窄契约 Pick 不可行的实施修正与效果行数口径、D6 facet 渐进态与 OPS_FIELDS 已知权衡注记。
