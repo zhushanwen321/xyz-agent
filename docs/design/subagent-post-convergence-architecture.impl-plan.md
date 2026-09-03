@@ -14,7 +14,7 @@
 | 终态/机制 | §3 解决方案（§3.1 组A seam / §3.2 组B 契约面+死轨 / §3.3 组C tui-kit / §3.4 错误规格 / §3.6 决策清单 D1-D9） |
 | 验收场景表 | §4 验收（A-V1~V5 / B-V1~V5 / C-V1~V2 + 收尾门） |
 | 下一层拆分 | §5 下一层拆分（u-1/u-2/u-4/u-5/u-6 单元表 + 文件改动地图） |
-| 待验证检查点 | §5 表「justification / 待验证」列（tsc↔rg 清单一致性、dist 重复 module 清单、zsw vendor 双入口形态）；§3.2 B-2 zsw vendor ⛔ |
+| 待验证检查点（全部已消解，见 §7 残留风险 #1-#3 销案与状态表 u-2b/u-2c；zsw vendor 终态句见设计 §3.6 D9） | — |
 
 ## 1 目标快照（逐字摘录设计 §1）
 
@@ -99,7 +99,7 @@ graph TD
 
 **全量（收尾门，阶段 5）**：extensions 三连（`pnpm extensions:typecheck && pnpm extensions:lint && pnpm extensions:test`）+ core 全量 + runtime 全量 + `pnpm run build` + `bash scripts/validate-runtime-bundle.sh` + 壳测试用例总数对账（不降）。
 
-**Gate B 实测场景**（pi CLI，集中阶段 5）：A-V1（session_start 链路零回归 + 基线对照）、A-V1b（TUI `/new` 二次 session_start 验 reused/init 无条件）、A-V2（kill-9 恢复）、B-V3（chat 域冒烟 + record 字段 diff）、B-V5（两步 workflow 冒烟）、C-V1（双视图视觉对照）。
+**Gate B 实测场景**（pi CLI，集中阶段 5）：A-V1（session_start 链路零回归 + 基线对照）、A-V1b（new_session RPC 触发同进程二次 session_start 验 reused/init 无条件——/new 的 RPC 等价物）、A-V2（kill-9 恢复）、B-V3（chat 域冒烟 + record 字段 diff）、B-V5（两步 workflow 冒烟）、C-V1（双视图视觉对照）。
 
 ## 5 合理偏差登记表
 
@@ -111,10 +111,10 @@ graph TD
 | 4 | 38 处桩收敛 → 触达文件内化 | 范围裁剪 | 合理：设计无「38 处全迁」验收条目；A-V5（死 mock 0 + 重复注册 0）达标即收（见 §2 范围裁剪声明） |
 | 5 | 死 mock 实测 1 文件（设计 C6 行表述「3 个 mock」指 3 处调用同文件） | 事实校准 | 合理：rg 实测 `session-start-reaper.test.ts` 单文件，3 处 mock 调用在内；验收条目不变 |
 | 6 | runtime 深路径实测 relay 2 生产文件已是合法子入口形态（`./relay-env`），真实深路径仅 extractor/engine-history 2 文件 | 事实校准 | 合理：与设计 B-V1 验收规则一致（命中仅 4 显式子入口） |
-| 7 | A-V4 行数线 ≤350 → ≤650 | doc_errors 校准 | 设计初稿算术错误（§3.1 随迁表物理减量上限 ~408 行 vs 945−350=595 需求）；u-4 实测终态 627；设计文档 §4 A-V4 已同步修订（2026-09-03）；扩大搬移范围违反 D2 被否 |
+| 7 | A-V4 行数线 ≤350 → ≤650 | doc_errors 校准 | 设计初稿算术错误（§3.1 随迁表物理减量上限 ~408 行 vs 945−350=595 需求）；u-4 commit 实测终态 636（HEAD 650，阶段 4 恢复 lazyDeps 2 成员后压线）；设计文档 §4 A-V4 已同步修订（2026-09-03）；扩大搬移范围违反 D2 被否 |
 | 8 | [已回退，见 #10] u-4 领地扩展 +4 文件：`src/interface/tool-workflow.ts`、`src/interface/commands.ts`、`src/__tests__/command-handlers.test.ts`、`src/__tests__/index-session-start.test.ts` | 领地扩展 | lazyDeps 改惰性回调（设计钦定行为变更点）的签名与消费点在 interface 层（tool-workflow :311+6 处、commands :61-68+1 处）；混入 u-2b 会污染机械归一单元的验收纯度；与 W1 其余单元领地无冲突 |
 | 9 | `resource-discovery-manifest-cache.test.ts` 整文件删除（设计 B-1 未点名该文件） | 范围澄清 | 该专项文件主体 = readPackageManifestSync（已删）的读计数断言，随删即净；async manifestCache 行为由 resource-discovery.test.ts mtime/KV 系列覆盖——u-1 续作须确认覆盖存在，缺则将对应用例改写为 async 形态并入，不丢缓存行为覆盖 |
-| 10 | lazyDeps 保持 getter 形态（非惰性回调）；偏差 #8 领地扩展未执行（5 文件已 revert） | 回退 | 限额打断续作 agent；lazyDeps getter 覆盖 LauncherDeps 全部成员（store/runs/registry/onRunDone/eventBus/workerHost/runner/log），属性访问触发守卫合一 + makeDeps 求值，功能等价惰性回调；差异仅接口形态（getter object vs () => T），运行时行为零变更；session-lifecycle.test.ts 守卫合一用例锁定同源同消息语义 |
+| 10 | lazyDeps 保持 getter 形态（非惰性回调）；偏差 #8 领地扩展未执行（5 文件已 revert） | 回退 + 阶段4修正 | 限额打断续作 agent，u-4 落地形态为 8-getter（store/runs/registry/onRunDone/eventBus/workerHost/runner/log），**缺 scheduleTimeBudget/onWorkflowCall 两可选成员**——等价于 LauncherDeps 可选成员被静默丢弃（ports.ts D-12 语义：带时间预算的 run 命中错误重试后计时器静默失效），阶段 3 审查 U2 揭示、355c38ffa 恢复为完整 10 成员 getter 面（index.ts:591-604 注明 D-12 后果）；属性访问触发守卫合一 + makeDeps 求值，功能等价惰性回调；「运行时行为零变更」仅对恢复后的 10 成员形态成立；session-lifecycle.test.ts 守卫合一用例锁定同源同消息语义 |
 | 11 | u-6 kit 内容超设计 §3.3 清单：ANSI 可见宽度布局家族（truncLine/wrapText/padToVisible/segFillColored + 内部件）随迁 tui-kit（~280 行 vs 设计估 ~120）；format.ts re-export 四符号保既有消费面零改动 | 合理演化 | 设计「零依赖叶（禁依赖 format.ts）」与 titleBorder→segFillColored→truncLine 传递依赖内部张力，唯一自洽解 = 布局家族随迁；否则须复制实现（新的双定义，违背 C4 目标）；design §3.3 由 design-code-sync 阶段回写补注 |
 | 12 | u-6 kit 依赖 pi-tui visibleWidth（设计字面「仅可依赖 node tty 探测」） | 合理演化 | 边框家族需 ANSI 可见宽度计算，pi-tui 为外部包；「零内部壳 module 依赖」的叶性质保持 |
 | 13 | u-6 领地外机械触点：views/detail-content.ts（仅 import 块 + 相邻过时注释） | 领地扩展 | 消费 PAGE_SCROLL_DEFAULT 与 5 个下沉常量，常量离开 format.ts 则 import 必随动；零逻辑变更 |
@@ -161,12 +161,6 @@ graph TD
 7. （阶段3审查登记，偏差 #23）测试侧深路径经 vite alias 解析无编译期牙齿——深路径回流只能靠收口 rg 门一次性拦截；设计文档 B-2 已补注守卫空缺声明（design-code-sync 本轮）。
 8. （Gate B 观察）chat record 的 subagent-record entry 投影 turns 恒 0（one-shot 路径为 2），round 递增正常——属 C5 已撤销域（chat 轮次机），值级排查待 C5 follow-up 触发条件满足时一并处理。
 9. （Gate A 观察）.bare/hooks/pre-commit 共享 hooks「谁最后 install 谁生效」——本 worktree pnpm prepare 会装不含 dev-0.9.13 store_layout section 的版本；跨分支协作既有形态，dev-0.9.13 worktree 下次 commit 前需重跑其 install-hooks。
-
-1. zsw vendor 对 core 现有 4 子入口的双入口消费形态未核对（D9 ⛔）——u-2c dist 静态门内核对；若双入口消费且状态可写，回设计裁决。
-2. tsc 增量报错清单 ↔ rg 深路径清单一致性（设计 §5 u-2 待验证门）——u-2b 验收时对账，不一致即收口不完整，回 u-2b 补归一。
-3. A-V1b 依赖 pi CLI TUI 形态 `/new` 触发同进程二次 session_start；若实测路径不通（/new 不可达或日志锚点缺失），停下回设计（不自行换 /resume——rpc 模式可达性未验证）。
-4. u-4 搬移行为漂移风险——D2 原样搬移纪律 + 搬移 diff 纯移动审查 + Gate B 的 A-V1/A-V2 实测基线对照三重守护。
-5. 壳测试用例总数在 u-5b 改写时可能因 mock 形态变化而波动——数量对账写进 u-5b 提交说明，任何净减少需逐条说明理由。
 
 **变更历史**：
 

@@ -31,7 +31,8 @@ export default defineConfig({
       // 保持在 core src/<域>/__tests__/ 就位，闭包守卫豁免面不变）。
       { find: "@zhushanwen/subagent-core/testing", replacement: path.resolve(__dirname, "../../../packages/subagent-core/src") },
       // [B-2/D3 主 agent 裁决 2026-09-03] 测试残留深路径旁路（长期方案）：
-      // 62 个仅测试消费符号按 D3 标准不进 barrel、71 条测试深路径不改写，统一经
+      // 62 个仅测试消费符号按 D3 标准不进 barrel、百余处测试深路径（from/vi.mock/
+      // 动态 import 三形态，精确数以 rg 实测为准）不改写，统一经
       // 此正则重写到 core src 物理路径——不依赖 package exports 的 `./*` 通配，
       // u-2c 删通配后测试解析不受影响。vi.mock / 动态 import 的 specifier 同走
       // vite 解析命中本条（解析后同一物理模块 ID，mock 语义不变）。
