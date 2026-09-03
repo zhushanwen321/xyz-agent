@@ -258,7 +258,7 @@ await test('resume 无效 runId：守卫 1 fail-fast（绝不悄悄新建）', a
   const res = await lib.runPipeline(io);
   assert.strictEqual(res.status, 'failed');
   assert.ok(res.error.includes('prw-19990101-000000-none'));
-  assert.ok(io.logs.length === 0 || true);
+  assert.strictEqual(io.logs.length, 0);
 });
 
 await test('skipSteps 逃生舱：只标未完成 step，done 不动，终态逐项披露', async () => {
