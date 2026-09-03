@@ -95,6 +95,8 @@ bash scripts/validate-runtime-bundle.sh    # runtime bundle 深度验证
 
 **先读 [TEST-STRATEGY.md](TEST-STRATEGY.md)（分层/mock/回归基线 SSOT）+ [docs/testing/](docs/testing/) 对应功能文档**，复用已有 testid/调用链/踩坑经验。红线：vitest（禁 `node:test` / `tsx --test`，配置在子包 vitest.config.ts，从子包目录运行）；timer 测试用 fake timers；派编码 subagent 时 task 写明测试框架。**三视角缺一不可 [HISTORICAL]**（构建者白盒 + 使用者黑盒 + 观察者形态；每条用例至少一个用户可见 DOM 断言；spec 结构条目 = 渲染断言清单）——细则见 TEST-STRATEGY.md §3。
 
+**用例级耗时报告**：vitest 包的 config 统一配 `reporters: ["default", "junit"]` + `outputFile: { junit: "./test-results/vitest-junit.xml" }`（`test-results/` 已 gitignore），每次 run 自动落盘用例级耗时，慢用例排查用 grep/sort，勿临时加 reporter flag：`grep -o '<testcase classname="[^"]*" name="[^"]*" time="[0-9.]*"' test-results/vitest-junit.xml | sed -E 's/.*classname="([^"]*)" name="([^"]*)" time="([0-9.]+)".*/\3s \1 > \2/' | sort -rn | head -15`。已有自定义 reporters 的包（如 runtime 的 cw-acceptance-markers-reporter）**追加** `junit` 项而非覆盖；v4 json reporter 的文件级 `duration` 恒 null（用例级有值），程序化消费用 junit `time` 属性。示范实现：`packages/subagent-core/vitest.config.ts`；新建 vitest 包默认带上，存量包改动其测试时顺手补。
+
 ## 前端编码规范
 
 权威标准：`~/Code/xyz-ui/CONVENTIONS.md`。核心：
@@ -132,6 +134,7 @@ agent.md / workflow.js 归位：与 extension 强相关（tools 受限某 extens
 - **Runtime/pi 日志必须落盘 + 轮转**（`<getDataDir>/logs/`，date + size 双策略，dev debug / prod info）；pi stdout tee 到 `pi-<date>-<sessionId>.jsonl`（pi 卡死时唯一证据）；新增日志库必须加 tsup `noExternal`
 - **设计文档同步纪律 [HISTORICAL]**（C-proc-10 + dev-flow post-delivery）：修复 impl-plan/设计文档登记过的残留风险时，同 commit 回写登记与变更历史（登记即债务修复即清账）；符号删除/改名/常量改函数须同批清扫 docs 与测试注释中的悬空引用，`node scripts/check-doc-symbol-drift.mjs` 必须跑过（pre-commit 按 docs/design/ 或映射源码路径触发）。起因 2026-08-31：流水线后修复 UPDATE_DIR 烤死 bug 只改代码未回写文档，对抗审查抓出 9 条漂移
 - **包管理器纪律 [HISTORICAL]**：pnpm workspace 单一管理器，`pnpm-lock.yaml` 唯一权威，通用纪律按全局 lock 规则。npm 例外（不要"统一"）：外部消费者安装指引 / `npm publish` / runtime 安装用户 extension / 规则正文描述被禁命令 / `npx`。标准：执行者是本项目开发者/CI/AI → pnpm；外部消费者/终端用户 → npm
+- **zcode 引擎单一 app-server 形态（2026-09 用户拍板）**：subagent-core 的 zcode 引擎**只走 app-server RPC，不走 CLI spawn**（`zcode --json --prompt` 单轮链与 probe 冒烟/protocol-drift 降级已删除——协议漂移直接报错）；**共享宿主 HOME**（spawn env 不覆写 HOME，app-server 直接消费 `~/.zcode/` 凭据/配置/会话 db，与 GUI 共写同一 SQLite——WAL 并发安全；无 HOME 池/锁/pidfile）。poolKey 恒 `'shared'`（journal 落 `engines/zcode/shared/`）；handle.dbPath 为绝对路径（`ZCODE_HOST_DB_SUFFIX` SSOT）。约束登记 C-ext-20；设计修订见 `docs/design/zcode-engine-appserver-resident.md` 头部
 
 ## 发布与 CI 验证 [HISTORICAL]
 

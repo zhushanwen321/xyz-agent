@@ -38,7 +38,7 @@ export interface AppserverHarness {
   dispose(): Promise<void>;
 }
 
-/** 组装连到 fake-appserver 的常驻引擎（XYZ_ZCODE_MODE=appserver 定向——不探不降）。 */
+/** 组装连到 fake-appserver 的常驻引擎（单一 app-server 形态——2026-09 起无模式分派）。 */
 export function makeAppserverHarness(opts: AppserverHarnessOptions = {}): AppserverHarness {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-conformance-appserver-"));
   const dataDir = path.join(tmpRoot, "data");
@@ -78,9 +78,6 @@ export function makeAppserverHarness(opts: AppserverHarnessOptions = {}): Appser
     sources: { v2ConfigPath: v2Path },
     processEnv: {
       PATH: process.env.PATH ?? "",
-      // 定向 appserver（R5 D2①）：不探不降——conformance 测常驻路径本体，缺省路径的
-      // 探针门控/降级链归 zcode-engine-degrade.test.ts
-      XYZ_ZCODE_MODE: "appserver",
       FAKE_STATE_FILE: stateFile,
       FAKE_SESSION_SCENARIO: scenarioFile,
     },

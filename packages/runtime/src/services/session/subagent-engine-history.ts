@@ -20,6 +20,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isStrictlyUnder } from '../../utils/path-utils.js'
@@ -34,7 +35,7 @@ import {
 import {
   readZcodeSessionView,
 } from '@zhushanwen/subagent-core/engines/zcode/reader'
-import { ZCODE_ENGINE_ID } from '@zhushanwen/subagent-core/engines/zcode/constants'
+import { ZCODE_ENGINE_ID, ZCODE_HOST_DB_SUFFIX } from '@zhushanwen/subagent-core/engines/zcode/constants'
 
 /** record 引擎路由段的缺省引擎：存量 record 无 engine 字段 → 按 pi 投影（零迁移）。 */
 export const DEFAULT_SUBAGENT_ENGINE = 'pi'
@@ -159,14 +160,23 @@ async function readZcodeNativeTier(
     )
     return undefined
   }
-  const poolDir = resolvePoolDir(dataDir, ZCODE_ENGINE_ID, handle.poolKey)
-  // 相对路径锚池目录重定位（zcode 写侧自描述形态）；绝对路径 resolve 后原样返回
-  const dbPath = resolve(poolDir, dbPathRaw)
-  // 白名单（与 pi sessionFile 的 isStrictlyUnder(piAgentDir) 同款安全语义）：record 来自
-  // JSONL 文本不可信，dbPath 必须严格落在该引擎自己的池目录内——防 ../ 逃逸与跨池读取
-  if (!isStrictlyUnder(poolDir, dbPath)) {
-    console.warn(`[subagent-engine-history] zcode dbPath escapes pool dir, reject tier1: ${dbPath}`)
-    return undefined
+  let dbPath: string
+  if (dbPathRaw.startsWith('/')) {
+    // 共享宿主 HOME 形态（2026-09 起）：唯一合法绝对路径 = 宿主 zcode 会话 db
+    // （record 来自 JSONL 文本不可信，精确匹配 core SSOT 后缀拼出的路径，防任意读）
+    if (dbPathRaw !== resolve(homedir(), ...ZCODE_HOST_DB_SUFFIX)) {
+      console.warn(`[subagent-engine-history] zcode absolute dbPath not host db, reject tier1: ${dbPathRaw}`)
+      return undefined
+    }
+    dbPath = dbPathRaw
+  } else {
+    // 旧池时代 records（HOME 池化时期）：相对路径锚池目录重定位，白名单防逃逸
+    const poolDir = resolvePoolDir(dataDir, ZCODE_ENGINE_ID, handle.poolKey)
+    dbPath = resolve(poolDir, dbPathRaw)
+    if (!isStrictlyUnder(poolDir, dbPath)) {
+      console.warn(`[subagent-engine-history] zcode dbPath escapes pool dir, reject tier1: ${dbPath}`)
+      return undefined
+    }
   }
   try {
     const view = await readZcodeSessionView(dbPath, sessionId)

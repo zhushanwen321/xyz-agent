@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 85 条（生成于 2026-08-30）。
+共 86 条（生成于 2026-09-03）。
 
 ## pi 关系（外部依赖边界）
 
@@ -97,6 +97,7 @@
 | C-ext-17 | 非 pi 引擎分支终止链三路径全覆盖：spawn 子进程注册 session-runner spawnedChildren 记账（shutdown 收割兜底）、record AbortController 的 signal wire 到 RunContext.signal（用户 cancel 经 kill-chain 两级）、会话级联挂 dispose() 既有编排（abortRunningControllers → killAllSpawnedChildren）——不留孤儿进程 | extensions/universal/subagent-workflow/src/execution/subagent-service.ts、extensions/universal/subagent-workflow/src/execution/session-runner.ts、extensions/universal/subagent-workflow/src/execution/engine/port.ts | [subagent-engine-gui-visibility](architecture/subagent-engine-gui-visibility.md#d1-终态架构--职责分层--协议闭合) | review: review-business-logic |
 | C-ext-18 | 引擎 icon 资产纪律：品牌 icon 复制入仓 packages/renderer/src/assets/icons/engine/（禁外部路径引用/symlink）、统一 currentColor 单色（禁硬编码品牌色）、引擎→icon 映射只经 ENGINE_ICON_REGISTRY 单点扩展（新引擎加一行，未知 id 防御回中性圆点） | packages/renderer/src/assets/icons/engine/**、packages/renderer/src/constants/engine-icons.ts、packages/renderer/src/components/sidebar/SubagentList.vue、packages/renderer/src/components/panel/SubagentTab.vue | [subagent-engine-gui-visibility](architecture/subagent-engine-gui-visibility.md#d1-终态架构--职责分层--协议闭合) | review: review-electron-build |
 | C-ext-19 | 结果语义通知必须走确认式送达（持久账本 + 幂等键，session-delivery/notify-ledger 通道），禁止新建依赖 pi 内存队列（steer/nextTurn/followUp）的 at-most-once 通道；交互式注入仅限非结果语义。生效口径：新代码即禁、存量列迁移切片（subagent-workflow 内存量经 g4-allow 行级豁免定性和迁移去向，scheduler 迁移登记 pi-boundary-reliability 附录 B 待办，G4 扫描面随迁移合入扩面） | extensions/**、packages/session-delivery/** | [pi-boundary-reliability](design/pi-boundary-reliability.md#d5确认式送达通用化at-most-once-内存通道禁止用于结果语义选定) · [extension-conventions](extensions/extension-conventions.md) | hook: `check_subagent_channels.py` |
+| C-ext-20 | zcode 引擎单一 app-server 形态（2026-09 用户拍板）：禁 CLI spawn 链回归（zcode --json 单轮与 probe 冒烟/protocol-drift 降级已删，漂移直接报错）；共享宿主 HOME（禁 HOME 池化回归，spawn env 不覆写 HOME，与 GUI 共写同一 SQLite）；poolKey 恒 'shared'，handle.dbPath 绝对锚定 ZCODE_HOST_DB_SUFFIX（runtime 读侧白名单同源） | packages/subagent-core/src/execution/engine/engines/zcode/**、packages/runtime/src/services/session/** | [zcode-engine-appserver-resident](design/zcode-engine-appserver-resident.md) · [AGENTS.md](../AGENTS.md) | — |
 
 ## 打包与分发
 

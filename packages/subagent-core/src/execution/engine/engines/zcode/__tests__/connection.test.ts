@@ -63,7 +63,6 @@ interface FakeHandle {
   conn: AppServerConnection;
   stateFile: string;
   stderrLog: string;
-  homeDir: string;
   cwd: string;
 }
 
@@ -88,7 +87,6 @@ function makeConnection(opts: FakeOpts = {}): FakeHandle {
   connSeq += 1;
   const stateFile = join(TMP, `state-${connSeq}.jsonl`);
   const stderrLog = join(TMP, `stderr-${connSeq}.log`);
-  const homeDir = join(TMP, `home-${connSeq}`);
   const cwd = join(TMP, `cwd-${connSeq}`);
   const base: NodeJS.ProcessEnv = {
     PATH: process.env.PATH ?? "",
@@ -101,12 +99,12 @@ function makeConnection(opts: FakeOpts = {}): FakeHandle {
   const conn = new AppServerConnection({
     cliPath: FAKE_CLI,
     cwd,
-    env: buildAppServerEnv(homeDir, base),
+    env: buildAppServerEnv(base),
     stderrLogPath: stderrLog,
     ...(opts.reverseHandlers ? { reverseHandlers: opts.reverseHandlers } : {}),
   });
   CONNECTIONS.push(conn);
-  return { conn, stateFile, stderrLog, homeDir, cwd };
+  return { conn, stateFile, stderrLog, cwd };
 }
 
 afterEach(async () => {
@@ -385,9 +383,9 @@ describe("stderr tee 落盘", () => {
 
 // ------------------------------------------- env 惯例（构造注入面）
 
-describe("env 惯例（沿用 launcher 惯例的参数化注入）", () => {
-  it("buildAppServerEnv：HOME 隔离 + 遥测关闭 + nesting guard 剥离/注入（fake 侧 env 快照）", async () => {
-    const { conn, stateFile, homeDir } = makeConnection({ polluteNested: true });
+describe("env 惯例（共享宿主 HOME 形态）", () => {
+  it("buildAppServerEnv：HOME 不覆写（共享宿主）+ 遥测关闭 + nesting guard 剥离/注入（fake 侧 env 快照）", async () => {
+    const { conn, stateFile } = makeConnection({ polluteNested: true });
     await conn.request("test/echo", {});
     const envEvents = readState(stateFile).filter((e) => e.ev === "env");
     expect(envEvents).toHaveLength(1);
@@ -397,7 +395,8 @@ describe("env 惯例（沿用 launcher 惯例的参数化注入）", () => {
       nested?: string;
       unifiedNested?: string;
     };
-    expect(snap.home).toBe(homeDir);
+    // 2026-09 起共享宿主 HOME：不覆写（fake 未注入 HOME 键 → 子进程继承真实 HOME 语义）
+    expect(snap.home).toBeUndefined();
     expect(snap.telemetry).toBe("false");
     expect(snap.nested).toBeUndefined();
     expect(snap.unifiedNested).toBe("1");
