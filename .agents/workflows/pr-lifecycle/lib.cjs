@@ -119,6 +119,20 @@ const MSG = {
     `pr-submit exit 3（gh 已认证但调用失败）：查 \`gh auth status\` / API 限流后 resume。${tailLines(detail, 10)}`,
   prSubmitExit5: (detail) =>
     `pr-submit exit 5（title/body 文件缺失）：pr-meta 产物异常：检查 runId 目录下 pr-title.txt/pr-body.md，resume 重跑。${tailLines(detail, 10)}`,
+
+  /* ── u3：门禁 steps（§3.7） ── */
+  constraintsFail: (out) =>
+    `select-constraints.mjs 失败（exit 非 0）：\n${tailLines(out, 15)}\n检查 docs/constraints.json 与脚本输出后 resume`,
+  constraintsMissing: (p) =>
+    `constraints step exit 0 但未产出 ${p}；检查脚本版本与输出后 resume`,
+  finalGatesRealPiMissing: (reason) =>
+    `real-pi 凭证预检未过：${reason}\n补 pi 凭证（三源：env API key / auth.json / models.json，探测链对齐 packages/runtime/src/__tests__/equivalence/pi-fixture.ts 的 REAL_PI_READY）后 resume；不得凭 skip 宣布 PASS`,
+  finalGatesRealPiSkip: (markers) =>
+    `final-gates：test:runtime 输出检出 real-pi skip 标记（${markers.join(' | ')}）——真实凭证子集未跑，验收不完整；补 pi 凭证后 resume，不得凭 skip 宣布 PASS`,
+  finalGatesDirtyTail: (list) =>
+    `final-gates 收尾防线：存在未提交改动，修复可能静默丢失（与 structured-output 历史事故同型）：\n${list}\n经 \`git add <显式路径> && git commit\` 落盘后 resume`,
+  placeholderStep: (id, unit) =>
+    `step ${id} 尚未实现（${unit} 单元交付）：当前为注册表占位（walker「从第一个未完成 step 开始」语义要求注册表完整有序）；请等 ${unit} 落地后再发起含该 step 的完整流程`,
 };
 
 function tailLines(text, n) {
@@ -697,7 +711,8 @@ async function gateFixLoop(ctx, { stepId, gateName, runGate, onPass, extraFixCon
     if (round === MAX_GATE_ROUNDS) break;
     const fixed = await ctx.io.agent({
       description: `fix-${stepId}`,
-      prompt: gateFixPrompt(stepId, round, lastRes) + (extraFixContext ? `\n\n${extraFixContext}` : ''),
+      prompt: gateFixPrompt(stepId, round, lastRes)
+        + (extraFixContext ? `\n\n${typeof extraFixContext === 'function' ? extraFixContext(round, lastRes) : extraFixContext}` : ''),
     });
     if (fixed.error) throw new Error(MSG.agentFailed(`gate 修复 agent（${stepId} round ${round}）`, fixed.error));
     const st = ctx.io.sh('git', ['status', '--porcelain']);
@@ -767,12 +782,181 @@ function prMetaAgentPrompt(baseHash, commitsOut, diffStatOut, changesetFiles) {
  * PR 阶段六 steps 工厂（§3.3 注册表 preflight → pr-submit）。
  * scriptPaths 可注入（测试用假脚本路径；缺省从 repoRoot 按仓内真实布局推导）。
  */
+/* ── 门禁 steps 辅助（u3：coverage/metrics 产物解析 + real-pi 同源预检） ── */
+
+// pi-fixture.ts 同源常量（packages/runtime/src/__tests__/equivalence/pi-fixture.ts；
+// 漂移防护：该文件变更 DEFAULT_MODEL 或探测链时须核对本节）
+const REAL_PI_DEFAULT_MODEL = 'xiaomi-token-plan-cn/mimo-v2.5-pro';
+
+// final-gates ③ 的 test:runtime 输出中 real-pi skip 的特征标记：
+// ① pi-fixture 模块加载 console.warn：`[equivalence] 真实 pi（LLM turn）用例 skip：<理由>`
+// ② 引用方 describe 名注入：`<suite>（skip：<REAL_PI_SKIP_REASON>）`，理由三种前缀
+const REAL_PI_SKIP_MARKERS = [
+  '[equivalence] 真实 pi（LLM turn）用例 skip：',
+  '（skip：pi binary not found',
+  '（skip：pi 凭证不可用',
+  '（skip：env XYZ_SKIP_REAL_PI',
+];
+
+function coverageInsufficientReasonPrefix() {
+  return '增量覆盖率'; // coverage-gate.py FAIL 条目 reason 固定前缀（覆盖率不足 vs 测试跑红的分流依据）
+}
+
+function readJsonFileQuiet(io, p) {
+  try {
+    return JSON.parse(io.fs.readFileSync(p, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function readCoverageJson(io) {
+  return readJsonFileQuiet(io, path.join(io.repoRoot, '.review', 'coverage.json'));
+}
+
+function readMetricsJson(io) {
+  return readJsonFileQuiet(io, path.join(io.repoRoot, '.review', 'metrics.json'));
+}
+
+function stdoutVerdict(stdout, gateTag) {
+  const m = String(stdout || '').match(new RegExp(`${gateTag} verdict=(\\w+)`));
+  return m ? m[1] : null;
+}
+
+/**
+ * coverage-gate.py exit 1 的两种 verdict 分流（注入值与 fixPrompt 的依据）：
+ * - 'insufficient'：存在 FAIL 条目 reason 以「增量覆盖率」开头（测试全绿、覆盖不足）
+ * - 'test-failure'：存在 FAIL 条目但非该前缀（vitest 实跑失败）；
+ *   coverage.json 不可读时 fail-closed 归为 test-failure
+ */
+function classifyCoverageExit1(coverageJson) {
+  if (!coverageJson || !coverageJson.packages) return 'test-failure';
+  for (const pkg of Object.keys(coverageJson.packages)) {
+    const e = coverageJson.packages[pkg];
+    if (e && e.status === 'FAIL') {
+      if (typeof e.reason === 'string' && e.reason.startsWith(coverageInsufficientReasonPrefix())) {
+        return 'insufficient';
+      }
+      return 'test-failure';
+    }
+  }
+  return 'test-failure';
+}
+
+// 注入值 = coverage-gate 的「测试判定」：pass 或 insufficient（测试全绿）→ PASS；
+// test-failure → FAIL（§3.3 final-gates：--test-result 注入契约）
+function coverageTestInject(exitCode, coverageJson) {
+  if (exitCode === 0) return 'PASS';
+  return classifyCoverageExit1(coverageJson) === 'insufficient' ? 'PASS' : 'FAIL';
+}
+
+// 增量覆盖率展示值：OK 包按可执行新增行加权汇总（coverage-gate 无聚合字段，此处从
+// packages[] 汇总；无 OK 数据返回 null）
+function coveragePctOf(coverageJson) {
+  if (!coverageJson || !coverageJson.packages) return null;
+  let covered = 0;
+  let total = 0;
+  for (const pkg of Object.keys(coverageJson.packages)) {
+    const e = coverageJson.packages[pkg];
+    if (e && e.status === 'OK') {
+      covered += e.covered_executable_added_lines || 0;
+      total += e.executable_added_lines || 0;
+    }
+  }
+  if (total === 0) return null;
+  return Math.round((covered / total) * 1000) / 10;
+}
+
+function coverageFixContext(io) {
+  const cov = readCoverageJson(io);
+  if (!cov) return 'coverage.json 不可读：以失败输出定位失败包。';
+  const lines = [];
+  for (const pkg of Object.keys(cov.packages || {})) {
+    const e = cov.packages[pkg];
+    if (e && e.status === 'FAIL') {
+      lines.push(`- ${pkg}: ${e.reason || 'FAIL'}`);
+      if (Array.isArray(e.uncovered_files) && e.uncovered_files.length > 0) {
+        lines.push(`  未覆盖文件（定点补测试）：\n    ${e.uncovered_files.join('\n    ')}`);
+      }
+      if (Array.isArray(e.files_without_lcov) && e.files_without_lcov.length > 0) {
+        lines.push(`  无 lcov 记录（未被任何测试加载或无可执行行）：\n    ${e.files_without_lcov.join('\n    ')}`);
+      }
+    }
+  }
+  if (lines.length === 0) return 'coverage.json 无 FAIL 包明细：以失败输出定位。';
+  return [
+    `coverage.json 失败明细（${path.join(io.repoRoot, '.review', 'coverage.json')}）：`,
+    ...lines,
+    '要求：为未覆盖文件补单元测试（测试放对应包的测试目录），或修复失败测试；不修改产品逻辑凑覆盖率、不放松阈值。',
+  ].join('\n');
+}
+
+function metricsFixContext(io) {
+  const m = readMetricsJson(io);
+  const fails = (m && Array.isArray(m.fail)) ? m.fail : [];
+  if (fails.length === 0) return 'metrics.json 不可读或无 fail 明细：以失败输出定位。';
+  return [
+    `metrics.json fail 明细（${path.join(io.repoRoot, '.review', 'metrics.json')}，前 10 条）：`,
+    ...fails.slice(0, 10).map((f) => `- [${f.type}] ${f.path || (f.files || []).join(',')} ${f.name || ''} — ${f.reason || ''}`),
+    '要求：按明细修复（降复杂度/解除循环依赖/清理 unresolved import）；不放松 .fallowrc.json 阈值。',
+  ].join('\n');
+}
+
+/**
+ * real-pi 凭证预检（final-gates ③ 执行前的 [MANDATORY] 门禁）。
+ * 探测链与 packages/runtime/src/__tests__/equivalence/pi-fixture.ts 的
+ * detectRealPiSkipReason() 同源：binary → env 强制态 → 凭证三源（env API key /
+ * auth.json provider 条目 key / models.json providers[].apiKey）。
+ * @returns null = 就绪；string = 缺失理由（进 failed 文案）
+ */
+function realPiPreflight(io) {
+  const which = io.sh('which', ['pi']);
+  if (which.code !== 0 || !which.stdout.trim()) {
+    return 'pi binary not found（which pi 未命中）';
+  }
+  const forced = io.env ? io.env.XYZ_SKIP_REAL_PI : undefined;
+  if (forced === '1' || forced === 'true') {
+    return `env XYZ_SKIP_REAL_PI=${forced}（等价性基线双轨强制跳过态，门禁不接受）`;
+  }
+  const provider = REAL_PI_DEFAULT_MODEL.split('/')[0];
+  const envKey = `${provider.toUpperCase().replaceAll('-', '_')}_API_KEY`;
+  const envValue = io.env ? io.env[envKey] : undefined;
+  if (typeof envValue === 'string' && envValue.trim() !== '') return null;
+  const envDir = io.env ? io.env.PI_CODING_AGENT_DIR : undefined;
+  const agentDir = (envDir && envDir.trim() !== '') ? envDir : path.join(io.homedir(), '.pi', 'agent');
+  const auth = readJsonFileQuiet(io, path.join(agentDir, 'auth.json'));
+  if (auth && typeof auth === 'object') {
+    const cred = auth[provider];
+    if (cred && typeof cred === 'object' && typeof cred.key === 'string' && cred.key.trim() !== '') return null;
+  }
+  const models = readJsonFileQuiet(io, path.join(agentDir, 'models.json'));
+  if (models && typeof models === 'object' && models.providers && typeof models.providers === 'object') {
+    const entry = models.providers[provider];
+    if (entry && typeof entry.apiKey === 'string' && entry.apiKey.trim() !== '') return null;
+  }
+  return `pi 凭证不可用：DEFAULT_MODEL "${REAL_PI_DEFAULT_MODEL}" 需要 provider "${provider}" 的 API key，env ${envKey} / auth.json / models.json 三源均未命中`;
+}
+
+function placeholderStep(id, unit) {
+  return {
+    id,
+    run: async () => {
+      throw new Error(MSG.placeholderStep(id, unit));
+    },
+  };
+}
+
 function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
   const paths = {
     preMerge: scriptPaths.preMerge || path.join(repoRoot, 'scripts', 'pr-pre-merge.sh'),
     prSubmit: scriptPaths.prSubmit || path.join(repoRoot, 'scripts', 'pr-submit.sh'),
     validateSkillYaml: scriptPaths.validateSkillYaml
       || path.join(repoRoot, '.agents', 'skills', 'pr-cr-fix', 'scripts', 'validate-skill-yaml.py'),
+    selectConstraints: scriptPaths.selectConstraints || path.join(repoRoot, 'scripts', 'select-constraints.mjs'),
+    coverageGate: scriptPaths.coverageGate
+      || path.join(repoRoot, '.agents', 'skills', 'pr-cr-fix', 'scripts', 'coverage-gate.py'),
+    metricsGate: scriptPaths.metricsGate
+      || path.join(repoRoot, '.agents', 'skills', 'pr-cr-fix', 'scripts', 'metrics-gate.py'),
   };
 
   return [
@@ -924,6 +1108,132 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
         if (res.code === 3) throw new Error(MSG.prSubmitExit3(detail));
         if (res.code === 5) throw new Error(MSG.prSubmitExit5(detail));
         throw new Error(`pr-submit 失败（exit ${res.code}）：\n${tailLines(detail, 20)}`);
+      },
+    },
+
+    /* ── u3：门禁 steps（§3.3：constraints → coverage-1 → metrics-1；顺序固定，
+       metrics-1 消费 coverage.json 的 files 节，walker 注册表顺序即执行保证） ── */
+    {
+      id: 'constraints',
+      run: async (ctx) => {
+        const res = ctx.io.sh('node', [paths.selectConstraints, '--base', ctx.state.base]);
+        if (res.code !== 0) {
+          throw new Error(MSG.constraintsFail(`${res.stderr || ''}\n${res.stdout || ''}`));
+        }
+        const constraintsFile = path.join(ctx.io.repoRoot, '.review', 'constraints.md');
+        if (!ctx.io.fs.existsSync(constraintsFile)) throw new Error(MSG.constraintsMissing(constraintsFile));
+        return { constraintsFile };
+      },
+    },
+    {
+      id: 'coverage-1',
+      run: (ctx) => {
+        const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
+        const args = [paths.coverageGate, '--base', ctx.state.base];
+        // shared 包 src 改动 → 追加下游兜底包（coverage-gate D12：--extra-packages 追加器语义）
+        if (/(?:^|\n)packages\/shared\/(?:.+\/*\/)?src\//.test(`\n${names.stdout}`)) {
+          args.push('--extra-packages', 'packages/runtime,packages/renderer');
+        }
+        return gateFixLoop(ctx, {
+          stepId: 'coverage-1',
+          gateName: `coverage-gate.py --base ${ctx.state.base}`,
+          runGate: () => ctx.io.sh('python3', args),
+          onPass: (res) => {
+            const cov = readCoverageJson(ctx.io);
+            return {
+              coverageVerdict: (cov && cov.verdict) || stdoutVerdict(res.stdout, 'Gate-1.6') || 'pass',
+              coveragePct: coveragePctOf(cov),
+            };
+          },
+          extraFixContext: () => coverageFixContext(ctx.io),
+        });
+      },
+    },
+    {
+      id: 'metrics-1',
+      run: (ctx) => gateFixLoop(ctx, {
+        stepId: 'metrics-1',
+        gateName: `metrics-gate.py --base ${ctx.state.base}`,
+        runGate: () => ctx.io.sh('python3', [paths.metricsGate, '--base', ctx.state.base]),
+        onPass: (res) => {
+          const m = readMetricsJson(ctx.io);
+          return {
+            metricsVerdict: (m && m.verdict) || stdoutVerdict(res.stdout, 'Gate-1.5') || 'pass',
+          };
+        },
+        extraFixContext: () => metricsFixContext(ctx.io),
+      }),
+    },
+    placeholderStep('cr-fix', 'u4'),
+    placeholderStep('simplify', 'u5'),
+    {
+      id: 'final-gates',
+      run: async (ctx) => {
+        const sharedSrcArgs = () => {
+          const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
+          return /(?:^|\n)packages\/shared\/(?:.+\/*\/)?src\//.test(`\n${names.stdout}`)
+            ? ['--extra-packages', 'packages/runtime,packages/renderer']
+            : [];
+        };
+        const outputs = await gateFixLoop(ctx, {
+          stepId: 'final-gates',
+          gateName: 'final-gates（coverage → metrics → pr-pre-merge --test-result，失败从 ① 头部重跑）',
+          runGate: () => {
+            // real-pi 双保险之一：③ 前同源预检（凭证缺失属环境前置，fail-fast 不进修复轮）
+            const piMissing = realPiPreflight(ctx.io);
+            if (piMissing) throw new Error(MSG.finalGatesRealPiMissing(piMissing));
+            // ① coverage-gate（测试判定来源）
+            const cov = ctx.io.sh('python3', [paths.coverageGate, '--base', ctx.state.base, ...sharedSrcArgs()]);
+            if (cov.code !== 0) {
+              return { code: cov.code, stdout: cov.stdout || '', stderr: cov.stderr || '', coverageJson: readCoverageJson(ctx.io) };
+            }
+            // ② metrics-gate
+            const met = ctx.io.sh('python3', [paths.metricsGate, '--base', ctx.state.base]);
+            if (met.code !== 0) {
+              return { code: met.code, stdout: `${cov.stdout}\n${met.stdout}`, stderr: met.stderr || '' };
+            }
+            // ③ pr-pre-merge --test-result <注入值 = ① 的测试判定>
+            const inject = coverageTestInject(cov.code, readCoverageJson(ctx.io));
+            const pre = ctx.io.sh('bash', [paths.preMerge, '--test-result', inject]);
+            return {
+              code: pre.code,
+              stdout: `${cov.stdout}\n${met.stdout}\n${pre.stdout}`,
+              stderr: `${cov.stderr || ''}\n${met.stderr || ''}\n${pre.stderr || ''}`,
+              coverageJson: readCoverageJson(ctx.io),
+              metricsJson: readMetricsJson(ctx.io),
+              inject,
+            };
+          },
+          onPass: (res) => {
+            // real-pi 双保险之二：输出 skip 标记解析（检出即 failed，不得凭 skip 宣布 PASS）
+            const markers = REAL_PI_SKIP_MARKERS.filter((m) => res.stdout.includes(m));
+            if (markers.length > 0) throw new Error(MSG.finalGatesRealPiSkip(markers));
+            const cov = res.coverageJson;
+            const met = res.metricsJson;
+            let premergeResult = 'PASS';
+            const marker = readJsonFileQuiet(ctx.io, path.join(ctx.io.repoRoot, '.review', 'premerge-result'));
+            // marker 格式：result="PASS"（pr-pre-merge.sh write_result_marker）
+            if (marker && typeof marker.result === 'string') premergeResult = marker.result.replace(/"/g, '');
+            if (premergeResult !== 'PASS') throw new Error(`final-gates：pre-merge marker result=${premergeResult}（非 PASS）`);
+            return {
+              coverageVerdict: (cov && cov.verdict) || 'pass',
+              coveragePct: coveragePctOf(cov),
+              metricsVerdict: (met && met.verdict) || 'pass',
+              premergeResult,
+            };
+          },
+          extraFixContext: (round) => [
+            coverageFixContext(ctx.io),
+            `注：本 step 三动作（coverage → metrics → pre-merge --test-result）每轮从 ① 头部重跑；当前第 ${round} 轮。`,
+          ].join('\n\n'),
+        });
+        // 收尾防线（§3.3）：step 完成前最后一次 porcelain（.review/ 自持目录除外）——
+        // 防「修复改动未 commit → 读数假绿 → push 后修复静默丢失」
+        const st = ctx.io.sh('git', ['status', '--porcelain']);
+        if (st.code !== 0) throw new Error(MSG.gitFailed(['status', '--porcelain'], st.stderr));
+        const dirt = worktreeDirt(st.stdout);
+        if (dirt !== '') throw new Error(MSG.finalGatesDirtyTail(dirt));
+        return outputs;
       },
     },
   ];
@@ -1106,6 +1416,12 @@ module.exports = {
   createSh,
   resumeCommand,
   worktreeDirt,
+  REAL_PI_DEFAULT_MODEL,
+  REAL_PI_SKIP_MARKERS,
+  classifyCoverageExit1,
+  coverageTestInject,
+  coveragePctOf,
+  realPiPreflight,
   gateFixLoop,
   createPrSteps,
   runPipeline,

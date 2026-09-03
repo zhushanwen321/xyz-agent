@@ -20,10 +20,19 @@ parameters:
   properties:
     runId: { type: string, description: 断点恢复键；缺失 = 从头执行，存在 = 从未完成的第一个 step 续跑 }
     base: { type: string, default: main, description: PR 目标基线分支，全流程 review 与 diff 口径锁定为发起时该 ref 指向的 commit }
-    reviewers: { type: array, items: { type: string }, description: cr-fix 审查维度裁剪（默认全量 8 维）；值为 agent 名或路径关键词 }
+    reviewers:
+      anyOf:
+        - { type: array, items: { type: string } }
+        - { type: string, description: 逗号分隔维度名 }
+      description: cr-fix 审查维度裁剪（默认全量 8 维）；值为 agent 名或路径关键词
     maxRounds: { type: integer, default: 10, minimum: 1, description: cr-fix 循环轮次上限透传给嵌套 loop }
     simplifyMode: { type: string, enum: [apply, report], default: apply, description: apply = 自动落地高置信 A 档简化并独立 commit；report = 只出报告不改码 }
-    skipSteps: { type: array, items: { type: string }, default: [], description: 人工接管逃生舱——列出未完成 step 标记为用户确认跳过，终态逐项披露 }
+    skipSteps:
+      anyOf:
+        - { type: array, items: { type: string } }
+        - { type: string, description: 逗号分隔 step 名（CLI 直参形态） }
+      default: []
+      description: 人工接管逃生舱——列出未完成 step 标记为用户确认跳过，终态逐项披露
     allowExternalChanges: { type: boolean, default: false, description: resume 时 HEAD 存在非本 run 产生的外部 commit 时显式放行重跑检查 }
 usage: |
   ## 发起（主 agent 一次调用；workdir 传 repo 绝对路径）
@@ -108,6 +117,8 @@ const io = {
   pid: process.pid,
   fs,
   sh: lib.createSh({ execFileSync, defaultCwd: repoRoot }),
+  env: process.env,
+  homedir: () => os.homedir(),
   agent: agentAdapter,
   workflow: workflowAdapter,
   log,
@@ -115,7 +126,7 @@ const io = {
   probePid,
   now: () => new Date(),
   randomToken: () => crypto.randomBytes(2).toString('hex'),
-  steps: lib.createPrSteps({ repoRoot }), // u2：PR 阶段六 steps（u3-u5 追加门禁/cr-fix/simplify）
+  steps: lib.createPrSteps({ repoRoot }), // u3：PR 阶段 + 门禁 steps（cr-fix/simplify 为占位，u4/u5 替换实现）
 };
 
 // 顶层 return Promise：worker 将本脚本内联进 async IIFE，async 函数的 return

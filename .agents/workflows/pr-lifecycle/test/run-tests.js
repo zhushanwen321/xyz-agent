@@ -28,6 +28,10 @@ async function test(name, fn) {
     failed.push({ name, e });
     console.error(`FAIL  ${name}`);
     console.error(`      ${e && e.stack ? e.stack.split('\n').slice(0, 3).join('\n      ') : e}`);
+    if (e && e.actual !== undefined) {
+      console.error(`      actual:   ${JSON.stringify(e.actual)}`);
+      console.error(`      expected: ${JSON.stringify(e.expected)}`);
+    }
   }
 }
 
@@ -97,15 +101,14 @@ function makeIo(opts = {}) {
       const m = opts.cmdResults[cmd];
       return typeof m === 'function' ? m(args) : m;
     }
-    // u2 脚本 mock 分发（按 argv[0] = 脚本路径；假脚本经此注入，不需要真实文件）
-    if (cmd === 'bash' && Object.prototype.hasOwnProperty.call(scriptMocks, args[0])) {
+    // u2/u3 脚本 mock 分发（按 argv[0] = 脚本路径；假脚本经此注入，不需要真实文件）
+    if ((cmd === 'bash' || cmd === 'python3' || cmd === 'node')
+      && Object.prototype.hasOwnProperty.call(scriptMocks, args[0])) {
       const m = scriptMocks[args[0]];
       return typeof m === 'function' ? m(args) : m;
     }
-    if (cmd === 'python3' && Object.prototype.hasOwnProperty.call(scriptMocks, args[0])) {
-      const m = scriptMocks[args[0]];
-      return typeof m === 'function' ? m(args) : m;
-    }
+    // which pi 默认命中（pi-fixture 预检的 binary 探测；cmdResults.which 可覆盖）
+    if (cmd === 'which') return { code: 0, stdout: '/usr/local/bin/pi\n' };
     return { code: 0, stdout: '' };
   };
 
@@ -136,6 +139,8 @@ function makeIo(opts = {}) {
     pid: 4242,
     fs: fsWrap,
     sh,
+    env: opts.env || {},
+    homedir: opts.homedir || (() => '/home/fake-home'),
     // agent mock：记录调用并按 opts.agent 编程（默认成功返回空对象）
     agent: async (params) => {
       agentCalls.push(params);
@@ -152,20 +157,33 @@ function makeIo(opts = {}) {
     randomToken: () => 'ab12',
     steps: opts.steps || [],
   };
+  // 预置产物文件（coverage.json / metrics.json / constraints.md 等 step 读取的落盘产物）
+  for (const [rel, content] of Object.entries(opts.presetFiles || {})) {
+    const p = path.join(root, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, content);
+  }
   return { io, root, recorded, git, engineMap, pidMap, agentCalls };
 }
 
-// u2：PR 阶段六 steps 注册表（脚本路径全部注入假路径，脚本行为经 scriptMocks 编程）
+// u2/u3：steps 注册表（脚本路径全部注入假路径，脚本行为经 scriptMocks 编程）
 const FAKE_PATHS = {
   preMerge: '/fake/pr-pre-merge.sh',
   prSubmit: '/fake/pr-submit.sh',
   validateSkillYaml: '/fake/validate-skill-yaml.py',
+  selectConstraints: '/fake/select-constraints.mjs',
+  coverageGate: '/fake/coverage-gate.py',
+  metricsGate: '/fake/metrics-gate.py',
 };
 
 function makeSteps(opts = {}) {
-  const root = opts.root;
-  return lib.createPrSteps({ repoRoot: root, scriptPaths: FAKE_PATHS });
+  const steps = lib.createPrSteps({ repoRoot: opts.root, scriptPaths: FAKE_PATHS });
+  return opts.range ? steps.slice(opts.range[0], opts.range[1]) : steps;
 }
+
+// 注册表下标（§3.3 顺序）：0 preflight … 5 pr-submit | 6 constraints 7 coverage-1
+// 8 metrics-1 9 cr-fix(占位 u4) 10 simplify(占位 u5) 11 final-gates
+const STEP_RANGE = { prOnly: [0, 6], gates: [6] };
 
 const shCallsTo = (recorded, scriptPath) =>
   recorded.sh.filter((c) => c[0] !== 'git' && c[1] === scriptPath);
@@ -803,7 +821,7 @@ async function main() {
   await test('u2 全链 fresh：六 steps 串行到 awaiting-push，prUrl/skippedSteps/outputs 契约正确', async () => {
     const m = allPassMocks();
     const t = makeIo(Object.assign({ args: { _runId: 'wf-u2-full' }, names: 'src/a.js\n' }, m));
-    t.io.steps = makeSteps({ root: t.root });
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.prOnly });
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'awaiting-push');
     assert.strictEqual(result.prUrl, 'https://github.com/acme/widget/pull/42');
@@ -819,7 +837,7 @@ async function main() {
   await test('preflight：state.baseHash 已锁定时不重算 rev-parse base（全程恰 1 次 = fresh 创建时）', async () => {
     const m = allPassMocks();
     const t = makeIo(Object.assign({ args: { _runId: 'wf-u2-pf' } }, m));
-    t.io.steps = makeSteps({ root: t.root });
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.prOnly });
     await lib.runPipeline(t.io);
     const baseResolves = t.recorded.sh.filter(
       (c) => c[0] === 'git' && c[1] === 'rev-parse' && c[2] === 'main^{commit}',
@@ -838,7 +856,7 @@ async function main() {
         fallow: { code: 127, stderr: 'command not found' },
       },
     }, m));
-    t.io.steps = makeSteps({ root: t.root });
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.prOnly });
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'failed');
     assert.strictEqual(result.failedStep, 'preflight');
@@ -852,7 +870,7 @@ async function main() {
     const m = allPassMocks();
     const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u2-pf3' } }, m));
     seedState(t.root, { baseHash: null });
-    t.io.steps = makeSteps({ root: t.root });
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.prOnly });
     await lib.runPipeline(t.io);
     assert.ok(t.recorded.sh.some((c) => c[0] === 'git' && c[1] === 'rev-parse' && c[2] === 'main^{commit}'));
     assert.strictEqual(readStateFile(t.root, RUN_ID_A).baseHash, 'B1');
@@ -862,7 +880,7 @@ async function main() {
     const m = allPassMocks();
     m.scriptMocks[FAKE_PATHS.preMerge] = { code: 0, stdout: '  PASS typecheck:extensions\n  PASS lint\n' }; // 无 WARN
     const t = makeIo(Object.assign({ args: { _runId: 'wf-u2-sg1' } }, m));
-    t.io.steps = makeSteps({ root: t.root });
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.prOnly });
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'awaiting-push');
     const state = readStateFile(t.root, result.runId);
@@ -880,7 +898,7 @@ async function main() {
       return gateRuns === 1 ? { code: 1, stderr: 'lint failed hard' } : { code: 0, stdout: '  PASS lint\n' };
     };
     const t = makeIo(Object.assign({ args: { _runId: 'wf-u2-sg2' } }, m));
-    t.io.steps = makeSteps({ root: t.root });
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.prOnly });
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'awaiting-push');
     assert.strictEqual(gateRuns, 2);
@@ -904,7 +922,7 @@ async function main() {
         },
       },
     });
-    t.io.steps = makeSteps({ root: t.root });
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.prOnly });
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'failed');
     assert.strictEqual(result.failedStep, 'static-gate');
@@ -934,7 +952,7 @@ async function main() {
       t.git.porcelain = ' M dirty.js\n';
       return res;
     };
-    t.io.steps = makeSteps({ root: t.root });
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.prOnly });
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'failed');
     assert.strictEqual(result.failedStep, 'static-gate');
@@ -955,7 +973,7 @@ async function main() {
         },
       },
     });
-    t.io.steps = makeSteps({ root: t.root });
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.prOnly });
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'failed');
     assert.strictEqual(gateRuns, 1);
@@ -1192,6 +1210,507 @@ async function main() {
     );
     assert.strictEqual(lib.worktreeDirt('?? .review/\n'), '');
     assert.strictEqual(lib.worktreeDirt(''), '');
+  });
+
+  /* ── u3：门禁 steps（constraints / coverage-1 / metrics-1 / final-gates + 占位） ── */
+
+  const PASS_COVERAGE_JSON = {
+    verdict: 'pass', base: 'main', min_incremental: 80,
+    packages: {
+      'packages/runtime': {
+        status: 'OK', incremental_pct: 92.3, covered_executable_added_lines: 120,
+        executable_added_lines: 130, uncovered_files: [], files_without_lcov: [],
+      },
+    },
+    files: {},
+  };
+  const FAIL_INSUFFICIENT_JSON = {
+    verdict: 'fail', base: 'main', min_incremental: 80,
+    packages: {
+      'packages/renderer': {
+        status: 'FAIL', reason: '增量覆盖率 62.0% < 80%', incremental_pct: 62.0,
+        uncovered_files: ['packages/renderer/src/App.vue (3/10)'],
+        files_without_lcov: ['packages/renderer/src/unloaded.ts'],
+      },
+    },
+    files: {},
+  };
+  const FAIL_TEST_FAILURE_JSON = {
+    verdict: 'fail', base: 'main', min_incremental: 80,
+    packages: {
+      'packages/runtime': { status: 'FAIL', reason: 'vtest exited 1: 2 tests failed' },
+    },
+    files: {},
+  };
+
+  // 门禁段全过 mocks（real-pi 凭证就绪 + coverage/metrics/premerge 产物齐备）
+  function allGatesMocks(opts = {}) {
+    return {
+      env: opts.env !== undefined ? opts.env : { XIAOMI_TOKEN_PLAN_CN_API_KEY: 'k-test' },
+      scriptMocks: Object.assign({
+        [FAKE_PATHS.selectConstraints]: { code: 0, stdout: 'constraints written' },
+        [FAKE_PATHS.coverageGate]: { code: 0, stdout: 'Gate-1.6 verdict=pass  min_incremental=80%  (base=main, pkgs=1)' },
+        [FAKE_PATHS.metricsGate]: { code: 0, stdout: 'Gate-1.5 verdict=pass  fail=0 warn=1 covered=0(fallow-static)' },
+        [FAKE_PATHS.preMerge]: { code: 0, stdout: '[pr-pre-merge] all checks passed ✓' },
+      }, opts.scriptMocks),
+      agent: opts.agent,
+      presetFiles: Object.assign({
+        '.review/constraints.md': '# constraints\n',
+        '.review/coverage.json': JSON.stringify(PASS_COVERAGE_JSON),
+        '.review/metrics.json': JSON.stringify({ verdict: 'pass', base: 'main', fail: [], warn: [], stats: {} }),
+        '.review/premerge-result': 'timestamp="x"\nresult="PASS"\n',
+      }, opts.presetFiles),
+    };
+  }
+
+  const shArgsOf = (t, scriptPath) => t.recorded.sh.filter((c) => c[1] === scriptPath);
+
+  // 门禁段注册表：cr-fix/simplify 占位以 mock 实现替换（占位本体是 u4/u5 领地；
+  // 本段测试驱动 walker 顺序语义，等价「cr-fix/simplify 已交付且成功」）
+  function gatesSteps(root) {
+    return makeSteps({ root, range: STEP_RANGE.gates }).map((s) => {
+      if (s.id === 'cr-fix') return { id: 'cr-fix', run: async () => ({ terminated: 'clean' }) };
+      if (s.id === 'simplify') return { id: 'simplify', run: async () => ({ applied: 0, proposals: 0 }) };
+      return s;
+    });
+  }
+
+  await test('coverageTestInject 注入值分流：exit0=PASS；exit1 按覆盖率不足/测试失败分类；产物缺失 fail-closed', () => {
+    assert.strictEqual(lib.coverageTestInject(0, null), 'PASS');
+    assert.strictEqual(lib.coverageTestInject(1, FAIL_INSUFFICIENT_JSON), 'PASS'); // 测试全绿仅覆盖不足
+    assert.strictEqual(lib.coverageTestInject(1, FAIL_TEST_FAILURE_JSON), 'FAIL');
+    assert.strictEqual(lib.coverageTestInject(1, null), 'FAIL'); // fail-closed
+    assert.strictEqual(lib.classifyCoverageExit1(FAIL_INSUFFICIENT_JSON), 'insufficient');
+    assert.strictEqual(lib.classifyCoverageExit1(FAIL_TEST_FAILURE_JSON), 'test-failure');
+    assert.strictEqual(lib.coveragePctOf(PASS_COVERAGE_JSON), 92.3);
+  });
+
+  await test('realPiPreflight（pi-fixture 同源）：env key / auth.json / models.json 三源正反', async () => {
+    const providerKey = 'XIAOMI_TOKEN_PLAN_CN_API_KEY';
+    // env 命中 → null
+    const t1 = makeIo({ env: { [providerKey]: 'k' } });
+    assert.strictEqual(lib.realPiPreflight(t1.io), null);
+    // which pi 失败
+    const t2 = makeIo({ cmdResults: { which: { code: 1, stdout: '' } } });
+    assertIncludes(lib.realPiPreflight(t2.io), 'pi binary not found');
+    // env 强制跳过态
+    const t3 = makeIo({ env: { [providerKey]: 'k', XYZ_SKIP_REAL_PI: '1' } });
+    assertIncludes(lib.realPiPreflight(t3.io), 'XYZ_SKIP_REAL_PI');
+    // auth.json stored 条目命中（homedir mock 指向 temp root）
+    const t4 = makeIo({
+      presetFiles: { '.pi/agent/auth.json': JSON.stringify({ 'xiaomi-token-plan-cn': { key: 'stored-key' } }) },
+    });
+    Object.defineProperty(t4.io, 'homedir', { value: () => t4.root });
+    assert.strictEqual(lib.realPiPreflight(t4.io), null);
+    // models.json providers.apiKey 命中
+    const t5 = makeIo({
+      presetFiles: { '.pi/agent/models.json': JSON.stringify({ providers: { 'xiaomi-token-plan-cn': { apiKey: 'mk' } } }) },
+    });
+    Object.defineProperty(t5.io, 'homedir', { value: () => t5.root });
+    assert.strictEqual(lib.realPiPreflight(t5.io), null);
+    // 全缺 → 三源理由
+    const t6 = makeIo({});
+    assertIncludes(lib.realPiPreflight(t6.io), '三源均未命中');
+  });
+
+  await test('门禁段全链：constraints → coverage-1 → metrics-1 → final-gates 到 awaiting-push（outputs 契约核验）', async () => {
+    const m = allGatesMocks();
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-full' } }, m));
+    seedState(t.root, {
+      status: 'running',
+      steps: {
+        preflight: { status: 'done', attempts: 1 },
+        'static-gate': { status: 'done', attempts: 1, outputs: { result: 'PASS', changesetWarn: false } },
+        changeset: { status: 'skipped', reason: '条件不满足' },
+        'pr-meta': { status: 'done', attempts: 1, outputs: { title: 't', bodyFile: 'b.md' } },
+        'skill-yaml': { status: 'skipped', reason: '条件不满足' },
+        'pr-submit': { status: 'done', attempts: 1, outputs: { prUrl: 'https://github.com/a/b/pull/1' } },
+      },
+    });
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push', `error=${result.error}`);
+    assert.deepStrictEqual(result.gates, { coverage: 'pass', metrics: 'pass', premerge: 'PASS' });
+    const state = readStateFile(t.root, RUN_ID_A);
+    assert.strictEqual(state.steps.constraints.outputs.constraintsFile, path.join(t.root, '.review', 'constraints.md'));
+    assert.strictEqual(state.steps['coverage-1'].outputs.coverageVerdict, 'pass');
+    assert.strictEqual(state.steps['coverage-1'].outputs.coveragePct, 92.3);
+    assert.strictEqual(state.steps['metrics-1'].outputs.metricsVerdict, 'pass');
+    assert.deepStrictEqual(state.steps['final-gates'].outputs, {
+      coverageVerdict: 'pass', coveragePct: 92.3, metricsVerdict: 'pass', premergeResult: 'PASS',
+    });
+  });
+
+  await test('constraints：--base 传参断言 + 脚本失败文案 + exit0 但产物缺失', async () => {
+    const m = allGatesMocks({});
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-c1' } }, m));
+    seedState(t.root, { status: 'running' });
+    t.io.steps = gatesSteps(t.root);
+    await lib.runPipeline(t.io);
+    const calls = shArgsOf(t, FAKE_PATHS.selectConstraints);
+    assert.ok(calls.length >= 1);
+    assert.deepStrictEqual(calls[0], ['node', FAKE_PATHS.selectConstraints, '--base', 'main']);
+    // 脚本失败
+    const m2 = allGatesMocks({ scriptMocks: { [FAKE_PATHS.selectConstraints]: { code: 1, stdout: 'constraints.json unreadable' } } });
+    const t2 = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-c2' } }, m2));
+    seedState(t2.root, { status: 'running' });
+    t2.io.steps = gatesSteps(t2.root);
+    const r2 = await lib.runPipeline(t2.io);
+    assert.strictEqual(r2.failedStep, 'constraints');
+    assertIncludes(r2.error, 'select-constraints.mjs 失败');
+    // exit 0 但产物缺失
+    const t3 = makeIo({
+      args: { runId: RUN_ID_A, _runId: 'wf-u3-c3' },
+      env: { XIAOMI_TOKEN_PLAN_CN_API_KEY: 'k' },
+      scriptMocks: {
+        [FAKE_PATHS.selectConstraints]: { code: 0, stdout: 'ok' },
+        [FAKE_PATHS.coverageGate]: { code: 0, stdout: 'Gate-1.6 verdict=pass' },
+        [FAKE_PATHS.metricsGate]: { code: 0, stdout: 'Gate-1.5 verdict=pass' },
+        [FAKE_PATHS.preMerge]: { code: 0, stdout: 'passed' },
+      },
+      presetFiles: {
+        '.review/coverage.json': JSON.stringify(PASS_COVERAGE_JSON),
+        '.review/metrics.json': JSON.stringify({ verdict: 'pass', base: 'main', fail: [] }),
+        '.review/premerge-result': 'result="PASS"\n',
+        // 注意：无 .review/constraints.md
+      },
+    });
+    seedState(t3.root, { status: 'running' });
+    t3.io.steps = gatesSteps(t3.root);
+    const r3 = await lib.runPipeline(t3.io);
+    assert.strictEqual(r3.failedStep, 'constraints');
+    assertIncludes(r3.error, '未产出');
+  });
+
+  await test('coverage-1：diff 含 packages/shared/**/src → 自动追加 --extra-packages；不含则不追加', async () => {
+    const covArgsList = [];
+    const m = allGatesMocks({
+      scriptMocks: {
+        [FAKE_PATHS.coverageGate]: (args) => {
+          covArgsList.push(args);
+          return { code: 0, stdout: 'Gate-1.6 verdict=pass  min_incremental=80%  (base=main, pkgs=1)' };
+        },
+      },
+    });
+    const t = makeIo(Object.assign({
+      args: { runId: RUN_ID_A, _runId: 'wf-u3-cov1' },
+      names: 'packages/shared/src/util.ts\n', // shared 包 src 改动
+    }, m));
+    seedState(t.root, { status: 'running' });
+    t.io.steps = gatesSteps(t.root);
+    await lib.runPipeline(t.io);
+    assert.ok(covArgsList.length >= 1);
+    assert.ok(covArgsList[0].includes('--extra-packages'), JSON.stringify(covArgsList[0]));
+    assert.deepStrictEqual(
+      covArgsList[0].slice(covArgsList[0].indexOf('--extra-packages')),
+      ['--extra-packages', 'packages/runtime,packages/renderer'],
+    );
+
+    const covArgsList2 = [];
+    const m2 = allGatesMocks({
+      scriptMocks: {
+        [FAKE_PATHS.coverageGate]: (args) => {
+          covArgsList2.push(args);
+          return { code: 0, stdout: 'Gate-1.6 verdict=pass  min_incremental=80%  (base=main, pkgs=1)' };
+        },
+      },
+    });
+    const t2 = makeIo(Object.assign({
+      args: { runId: RUN_ID_A, _runId: 'wf-u3-cov2' },
+      names: 'packages/runtime/src/a.ts\n', // 无 shared src 改动
+    }, m2));
+    seedState(t2.root, { status: 'running' });
+    t2.io.steps = gatesSteps(t2.root);
+    await lib.runPipeline(t2.io);
+    assert.ok(!covArgsList2[0].includes('--extra-packages'), JSON.stringify(covArgsList2[0]));
+  });
+
+  await test('coverage-1：exit 1（覆盖率不足）→ 派测试 agent 定点补（fixPrompt 含 uncovered_files 清单）→ 第 2 轮过', async () => {
+    let covRuns = 0;
+    const t = makeIo({
+      args: { runId: RUN_ID_A, _runId: 'wf-u3-cov3' },
+      env: { XIAOMI_TOKEN_PLAN_CN_API_KEY: 'k' },
+      agent: async () => ({ value: {}, error: null }),
+      presetFiles: {
+        '.review/constraints.md': '# c\n',
+        '.review/coverage.json': JSON.stringify(FAIL_INSUFFICIENT_JSON),
+        '.review/metrics.json': JSON.stringify({ verdict: 'pass', base: 'main', fail: [] }),
+        '.review/premerge-result': 'result="PASS"\n',
+      },
+      scriptMocks: {
+        [FAKE_PATHS.selectConstraints]: { code: 0, stdout: 'ok' },
+        [FAKE_PATHS.coverageGate]: () => {
+          covRuns += 1;
+          if (covRuns === 1) return { code: 1, stdout: 'Gate-1.6 verdict=fail' };
+          // agent「补完测试」后的下一轮：产物写回 pass
+          fs.writeFileSync(path.join(t.root, '.review', 'coverage.json'), JSON.stringify(PASS_COVERAGE_JSON));
+          return { code: 0, stdout: 'Gate-1.6 verdict=pass' };
+        },
+        [FAKE_PATHS.metricsGate]: { code: 0, stdout: 'Gate-1.5 verdict=pass' },
+        [FAKE_PATHS.preMerge]: { code: 0, stdout: '[pr-pre-merge] all checks passed ✓' },
+      },
+    });
+    seedState(t.root, { status: 'running' });
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push', `error=${result.error}`);
+    assert.strictEqual(covRuns, 3); // coverage-1 两轮（fail→pass）+ final-gates ① 复跑 1 次
+    const fixCalls = t.agentCalls.filter((c) => c.description === 'fix-coverage-1');
+    assert.strictEqual(fixCalls.length, 1);
+    assertIncludes(fixCalls[0].prompt, 'fix: gate coverage-1 round 1');
+    assertIncludes(fixCalls[0].prompt, 'packages/renderer/src/App.vue (3/10)'); // uncovered_files 定点
+    assertIncludes(fixCalls[0].prompt, 'packages/renderer/src/unloaded.ts'); // files_without_lcov
+    const state = readStateFile(t.root, RUN_ID_A);
+    assert.strictEqual(state.steps['coverage-1'].outputs.coverageVerdict, 'pass');
+    assert.strictEqual(state.steps['coverage-1'].attempts, 1);
+  });
+
+  await test('coverage-1：exit 2（工具错误）→ failed 不自动重试（gate 1 次、agent 0 次）', async () => {
+    let covRuns = 0;
+    const m = allGatesMocks({
+      scriptMocks: {
+        [FAKE_PATHS.coverageGate]: () => {
+          covRuns += 1;
+          return { code: 2, stderr: 'ERROR: 记账不闭合' };
+        },
+      },
+    });
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-cov4' } }, m));
+    seedState(t.root, { status: 'running' });
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(result.failedStep, 'coverage-1');
+    assert.strictEqual(covRuns, 1);
+    assert.strictEqual(t.agentCalls.length, 0);
+    assertIncludes(result.error, '工具错误，不自动重试');
+  });
+
+  await test('metrics-1：warn 放行原值透传；coverage.json 缺失（fallow 静态降级）不误判；fail→agent 修→过', async () => {
+    // warn verdict 透传
+    const m = allGatesMocks({
+      presetFiles: {
+        '.review/metrics.json': JSON.stringify({ verdict: 'warn', base: 'main', fail: [], warn: [{}], stats: { coverage_basis: 'fallow-static' } }),
+      },
+    });
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-m1' } }, m));
+    seedState(t.root, { status: 'running' });
+    t.io.steps = gatesSteps(t.root);
+    const r1 = await lib.runPipeline(t.io);
+    assert.strictEqual(r1.status, 'awaiting-push');
+    assert.strictEqual(readStateFile(t.root, RUN_ID_A).steps['metrics-1'].outputs.metricsVerdict, 'warn');
+
+    // coverage.json 缺失（metrics-gate 自身降级 fallow-static 后仍 exit 0）→ step 不误判
+    const m2 = allGatesMocks({
+      presetFiles: {
+        '.review/metrics.json': JSON.stringify({ verdict: 'pass', base: 'main', fail: [], stats: { coverage_basis: 'fallow-static' } }),
+      },
+    });
+    delete m2.presetFiles['.review/coverage.json'];
+    const t2 = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-m2' } }, m2));
+    seedState(t2.root, { status: 'running' });
+    t2.io.steps = gatesSteps(t2.root);
+    const r2 = await lib.runPipeline(t2.io);
+    assert.strictEqual(r2.status, 'awaiting-push');
+
+    // fail → agent 修 → 第 2 轮过
+    let metRuns = 0;
+    const t3 = makeIo({
+      args: { runId: RUN_ID_A, _runId: 'wf-u3-m3' },
+      env: { XIAOMI_TOKEN_PLAN_CN_API_KEY: 'k' },
+      presetFiles: {
+        '.review/constraints.md': '# c\n',
+        '.review/coverage.json': JSON.stringify(PASS_COVERAGE_JSON),
+        '.review/premerge-result': 'result="PASS"\n',
+      },
+      scriptMocks: {
+        [FAKE_PATHS.selectConstraints]: { code: 0, stdout: 'ok' },
+        [FAKE_PATHS.coverageGate]: { code: 0, stdout: 'Gate-1.6 verdict=pass' },
+        [FAKE_PATHS.metricsGate]: () => {
+          metRuns += 1;
+          if (metRuns === 1) return { code: 1, stdout: 'Gate-1.5 verdict=fail' };
+          return { code: 0, stdout: 'Gate-1.5 verdict=pass' };
+        },
+        [FAKE_PATHS.preMerge]: { code: 0, stdout: '[pr-pre-merge] all checks passed ✓' },
+      },
+    });
+    seedState(t3.root, { status: 'running' });
+    t3.io.steps = gatesSteps(t3.root);
+    const r3 = await lib.runPipeline(t3.io);
+    assert.strictEqual(r3.status, 'awaiting-push');
+    assert.strictEqual(metRuns, 3); // metrics-1 两轮（fail→pass）+ final-gates ② 复跑 1 次
+    const fixCalls = t3.agentCalls.filter((c) => c.description === 'fix-metrics-1');
+    assert.strictEqual(fixCalls.length, 1);
+    assertIncludes(fixCalls[0].prompt, 'fix: gate metrics-1 round 1');
+  });
+
+  await test('final-gates：③ 收到 ① 的注入值（--test-result PASS 传参断言）+ marker 解析', async () => {
+    const m = allGatesMocks({
+      scriptMocks: {
+        [FAKE_PATHS.preMerge]: (args) => {
+          if (args.includes('--test-result')) {
+            const inject = args[args.indexOf('--test-result') + 1];
+            fs.writeFileSync(path.join(t.root, '.review', 'premerge-result'), `result="${inject}"\n`);
+            return { code: 0, stdout: '[pr-pre-merge] all checks passed ✓' };
+          }
+          return { code: 0, stdout: '?' };
+        },
+      },
+    });
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-fg1' } }, m));
+    seedState(t.root, { status: 'running' });
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push', `error=${result.error}`);
+    const withInject = shArgsOf(t, FAKE_PATHS.preMerge).filter((c) => c.includes('--test-result'));
+    assert.ok(withInject.length >= 1, '③ 应以 --test-result 注入值执行');
+    assert.deepStrictEqual(withInject[0], ['bash', FAKE_PATHS.preMerge, '--test-result', 'PASS']);
+    assert.strictEqual(readStateFile(t.root, RUN_ID_A).steps['final-gates'].outputs.premergeResult, 'PASS');
+  });
+
+  await test('final-gates：real-pi 预检缺失 → failed（fail-fast，三动作零执行）', async () => {
+    const m = allGatesMocks({ env: {} }); // 无凭证
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-fg2' } }, m));
+    seedState(t.root, {
+      status: 'running',
+      steps: {
+        constraints: { status: 'done', attempts: 1, outputs: { constraintsFile: 'c.md' } },
+        'coverage-1': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3 } },
+        'metrics-1': { status: 'done', attempts: 1, outputs: { metricsVerdict: 'pass' } },
+      },
+    });
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(result.failedStep, 'final-gates');
+    assertIncludes(result.error, 'real-pi 凭证预检未过');
+    assertIncludes(result.error, '三源均未命中');
+    assertIncludes(result.error, '不得凭 skip 宣布 PASS');
+    assert.strictEqual(shArgsOf(t, FAKE_PATHS.coverageGate).length, 0); // 预检先于三动作
+    assert.strictEqual(t.agentCalls.length, 0);
+  });
+
+  await test('final-gates：输出检出 real-pi skip 标记（console.warn 与 describe 名两种形态）→ failed', async () => {
+    for (const markerOut of [
+      '[equivalence] 真实 pi（LLM turn）用例 skip：pi 凭证不可用：DEFAULT_MODEL 需要 API key',
+      'completion backflow e2e real pi（skip：pi 凭证不可用：DEFAULT_MODEL 需要 API key）',
+    ]) {
+      const m = allGatesMocks({
+        scriptMocks: { [FAKE_PATHS.preMerge]: { code: 0, stdout: markerOut } },
+      });
+      const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-fg3' } }, m));
+      seedState(t.root, { status: 'running' });
+      t.io.steps = gatesSteps(t.root);
+      const result = await lib.runPipeline(t.io);
+      assert.strictEqual(result.status, 'failed', `marker=${markerOut}`);
+      assert.strictEqual(result.failedStep, 'final-gates');
+      assertIncludes(result.error, 'real-pi skip 标记');
+      assertIncludes(result.error, '不得凭 skip 宣布 PASS');
+    }
+  });
+
+  await test('final-gates：收尾防线——三动作全过但工作区脏（.review/ 除外）→ failed', async () => {
+    const m = allGatesMocks({});
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-fg4' } }, m));
+    seedState(t.root, { status: 'running' });
+    t.io.steps = gatesSteps(t.root);
+    const origSh = t.io.sh;
+    let statusCalls = 0;
+    t.io.sh = (cmd, args) => {
+      if (cmd === 'git' && args[0] === 'status') {
+        statusCalls += 1;
+        if (statusCalls >= 2) return { code: 0, stdout: ' M unfixed.js\n' }; // 第 1 次是守卫 5（干净）；第 2 次是 final-gates 收尾（置脏）
+        return origSh(cmd, args);
+      }
+      return origSh(cmd, args);
+    };
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(result.failedStep, 'final-gates');
+    assertIncludes(result.error, '收尾防线');
+    assertIncludes(result.error, 'unfixed.js');
+    assertIncludes(result.error, 'git add <显式路径> && git commit');
+  });
+
+  await test('final-gates：① 恒败 → 内部子循环 3 轮上限 failed（gate 3 次、agent 2 次）', async () => {
+    let covRuns = 0;
+    const m = allGatesMocks({
+      scriptMocks: {
+        [FAKE_PATHS.coverageGate]: () => {
+          covRuns += 1;
+          return { code: 1, stdout: 'Gate-1.6 verdict=fail' };
+        },
+      },
+      presetFiles: { '.review/coverage.json': JSON.stringify(FAIL_INSUFFICIENT_JSON) },
+    });
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-fg5' } }, m));
+    seedState(t.root, {
+      status: 'running',
+      steps: {
+        constraints: { status: 'done', attempts: 1, outputs: { constraintsFile: 'c.md' } },
+        'coverage-1': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3 } },
+        'metrics-1': { status: 'done', attempts: 1, outputs: { metricsVerdict: 'pass' } },
+      },
+    });
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(result.failedStep, 'final-gates');
+    assert.strictEqual(covRuns, lib.MAX_GATE_ROUNDS);
+    assert.strictEqual(t.agentCalls.filter((c) => c.description === 'fix-final-gates').length, lib.MAX_GATE_ROUNDS - 1);
+    assertIncludes(result.error, '3 轮修复子循环仍未通过');
+  });
+
+  await test('final-gates：③ exit 2（coverage.json base 不一致等注入校验失败）→ failed 不重试', async () => {
+    let preRuns = 0;
+    const m = allGatesMocks({
+      scriptMocks: {
+        [FAKE_PATHS.preMerge]: () => {
+          preRuns += 1;
+          return { code: 2, stderr: 'ERROR: .review/coverage.json 的 base="dev" 与本次 base="main" 不一致' };
+        },
+      },
+    });
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-fg6' } }, m));
+    seedState(t.root, { status: 'running' });
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(result.failedStep, 'final-gates');
+    assert.strictEqual(preRuns, 1); // 工具错误不重试
+    assertIncludes(result.error, '工具错误，不自动重试');
+    assertIncludes(result.error, 'base="dev"');
+  });
+
+  await test('占位 step：cr-fix/simplify run 即 failed 标注交付单元；集成走到 cr-fix failedStep', async () => {
+    const steps = makeSteps({ root: '/fake-root-placeholder' });
+    const crFix = findStep(steps, 'cr-fix');
+    const simplify = findStep(steps, 'simplify');
+    await assert.rejects(crFix.run(mkCtx({ io: makeIo({}).io, root: '/tmp' }, { runId: 'x', params: {}, steps: {} }, '/tmp/run-dir')), /尚未实现（u4 单元交付）/);
+    await assert.rejects(simplify.run(mkCtx({ io: makeIo({}).io, root: '/tmp' }, { runId: 'x', params: {}, steps: {} }, '/tmp/run-dir')), /尚未实现（u5 单元交付）/);
+    // 集成：前九步 done → walker 走到 cr-fix 占位 → failed
+    const m = allGatesMocks({});
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-ph' } }, m));
+    seedState(t.root, {
+      status: 'running',
+      steps: {
+        preflight: { status: 'done', attempts: 1 },
+        'static-gate': { status: 'done', attempts: 1, outputs: { result: 'PASS', changesetWarn: false } },
+        changeset: { status: 'skipped', reason: 'c' },
+        'pr-meta': { status: 'done', attempts: 1, outputs: { title: 't', bodyFile: 'b' } },
+        'skill-yaml': { status: 'skipped', reason: 'c' },
+        'pr-submit': { status: 'done', attempts: 1, outputs: { prUrl: 'https://github.com/a/b/pull/1' } },
+        constraints: { status: 'done', attempts: 1, outputs: { constraintsFile: 'c.md' } },
+        'coverage-1': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3 } },
+        'metrics-1': { status: 'done', attempts: 1, outputs: { metricsVerdict: 'pass' } },
+      },
+    });
+    t.io.steps = makeSteps({ root: t.root, range: STEP_RANGE.gates }); // 真注册表（含真占位）
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'failed');
+    assert.strictEqual(result.failedStep, 'cr-fix');
+    assertIncludes(result.error, '尚未实现');
+    assertIncludes(result.error, 'u4');
   });
 
 
