@@ -29,12 +29,12 @@ vi.mock("@zhushanwen/subagent-core/orchestration/lifecycle.ts", () => ({
 
 // ── 延迟 import 被测模块（取 mock 后的实现）──────────────────
 
-// 被 mock 的模块——import 路径与被测源文件一致，确保 vitest 拦截同一模块实例。
+// 被 mock 的模块——vi.mock 路径与被测源文件解析到同一物理模块，确保 vitest 拦截同一模块实例。
 // 使用 import 副作用顺序：vi.mock 在文件顶部提升，此处 import 拿到的是 mock 版本。
-import { getSubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import { getSubagentService } from "@zhushanwen/subagent-core";
 import { registerWorkflowsCommand } from "../interface/commands.ts";
 import { registerSubagentsCommand } from "../interface/subagents.ts";
-import { abortRun } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
+import { abortRun } from "@zhushanwen/subagent-core";
 
 // ── 类型辅助 ────────────────────────────────────────────────
 

@@ -50,8 +50,8 @@ vi.mock( "@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
 import { registerWorkflowsCommand } from "../interface/commands.ts";
 import { registerSubagentTool } from "../interface/subagent-tool.ts";
 import { registerSubagentsCommand } from "../interface/subagents.ts";
-import type { LauncherDeps } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
-import { mockExtensionApi } from "@zhushanwen/subagent-core/execution/__tests__/helpers/mock-extension-api.ts";
+import type { LauncherDeps } from "@zhushanwen/subagent-core";
+import { mockExtensionApi } from "@zhushanwen/subagent-core/testing/execution/__tests__/helpers/mock-extension-api.ts";
 
 /**
  * 构造最小 LauncherDeps mock（契约测试只捕获 handler，从不调用它，

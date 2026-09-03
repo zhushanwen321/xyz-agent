@@ -123,10 +123,10 @@ vi.mock("../interface/commands.ts", () => ({
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import subagentsExtension from "../index.ts";
-import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
-import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
+import { Budget } from "@zhushanwen/subagent-core";
+import { Trace } from "@zhushanwen/subagent-core";
 import type { WorkflowRun as WorkflowRunType } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { WorkflowRun } from "@zhushanwen/subagent-core";
 
 // ── helpers ──
 

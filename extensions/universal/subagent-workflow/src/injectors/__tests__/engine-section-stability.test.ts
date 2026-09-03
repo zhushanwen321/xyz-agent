@@ -31,12 +31,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { formatModelList, setupModelListInjector, type ModelEntry } from "../model-list-injector.ts";
-import type { EnginePort } from "@zhushanwen/subagent-core/execution/engine/port.ts";
+import type { EnginePort } from "@zhushanwen/subagent-core";
 import { clearEngines, registerEngine } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
 import {
 	buildEngineModelsPromptAppend,
 	buildSubagentEngineSection,
-} from "@zhushanwen/subagent-core/execution/engine/model-prompt.ts";
+} from "@zhushanwen/subagent-core";
 
 // ── 测试数据 ────────────────────────────────────────────
 

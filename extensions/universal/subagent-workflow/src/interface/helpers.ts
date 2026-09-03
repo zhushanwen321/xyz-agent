@@ -10,7 +10,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import type { WorkflowRun } from "@zhushanwen/subagent-core";
 import {
   guiComponent,
   type GuiContext,

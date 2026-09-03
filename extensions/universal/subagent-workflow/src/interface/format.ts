@@ -13,15 +13,15 @@ import os from "node:os";
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
-import type { AgentEventLogEntry, DisplayItem, ExecutionStatus } from "@zhushanwen/subagent-core/execution/types.ts";
-import { DEFAULT_AGENT_NAME } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { AgentEventLogEntry, DisplayItem, ExecutionStatus } from "@zhushanwen/subagent-core";
+import { DEFAULT_AGENT_NAME } from "@zhushanwen/subagent-core";
 import type {
   DoneReason,
   ExecutionTraceNode,
   RunStatus,
   ToolCallEntry,
-} from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
+} from "@zhushanwen/subagent-core";
+import { displayAgentName } from "@zhushanwen/subagent-core";
 
 import { padToVisible, segFillColored, truncLine, wrapText } from "./tui-kit.ts";
 

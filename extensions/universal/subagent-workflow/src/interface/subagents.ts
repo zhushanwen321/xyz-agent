@@ -9,9 +9,9 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { getSubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import type { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
+import { getSubagentService } from "@zhushanwen/subagent-core";
+import type { SubagentService } from "@zhushanwen/subagent-core";
+import { displayAgentName } from "@zhushanwen/subagent-core";
 import { messageHandler, startHandler } from "./subagent-actions.ts";
 import { parseSubagentRpcCommand } from "./command-actions.ts";
 import type { SubagentRpcAction } from "./command-actions.ts";

@@ -10,8 +10,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createRecord } from "@zhushanwen/subagent-core/execution/execution-record.ts";
-import type { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import type { ExecutionRecord } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { SubagentService } from "@zhushanwen/subagent-core";
+import type { ExecutionRecord } from "@zhushanwen/subagent-core";
 import { adapter, closeHandler, mapExternalState, messageHandler } from "../interface/subagent-actions.ts";
 
 /** 构造测试用 record（默认非 chatMode running——chatMode 统一投递测试显式传 chatMode:true）。 */

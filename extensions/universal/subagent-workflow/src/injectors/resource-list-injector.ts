@@ -37,13 +37,13 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import { getHostServices } from "@zhushanwen/subagent-core/core/host-services.ts";
+import { getHostServices } from "@zhushanwen/subagent-core";
 
 import {
 	discoverResources,
 	findWorkspaceRoot,
 	getCachedParsed,
-} from "@zhushanwen/subagent-core/shared/resource-discovery.ts";
+} from "@zhushanwen/subagent-core";
 
 const logger = getLogger("injector");
 

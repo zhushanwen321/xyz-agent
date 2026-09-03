@@ -24,10 +24,10 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import { readGlobalConfig, type GlobalConfigReadResult } from "@zhushanwen/subagent-core/execution/config.ts";
-import { DEFAULT_ENGINE_ID, normalizeEngineId } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
-import { buildEngineModelsPromptAppend, buildSubagentEngineSection } from "@zhushanwen/subagent-core/execution/engine/model-prompt.ts";
-import { getModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
+import { readGlobalConfig, type GlobalConfigReadResult } from "@zhushanwen/subagent-core";
+import { DEFAULT_ENGINE_ID, normalizeEngineId } from "@zhushanwen/subagent-core";
+import { buildEngineModelsPromptAppend, buildSubagentEngineSection } from "@zhushanwen/subagent-core";
+import { getModelConfigService } from "@zhushanwen/subagent-core";
 
 const logger = getLogger("subagents");
 

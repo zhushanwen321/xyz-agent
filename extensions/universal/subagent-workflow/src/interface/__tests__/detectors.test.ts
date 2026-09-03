@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { argKeysFromMeta, findFlattenedArgKeys } from "../tool-workflow";
-import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
+import { parseResourceMeta } from "@zhushanwen/subagent-core";
 
 // 真实参数集（argKeysFromMeta 产物——m6 动态数据源，与 TC2 同源防漂移）
 function rflKeys() {

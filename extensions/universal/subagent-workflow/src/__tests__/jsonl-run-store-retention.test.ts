@@ -31,11 +31,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
-import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
-import type { RunSpec } from "@zhushanwen/subagent-core/orchestration/models/run-spec.ts";
-import type { ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { Budget } from "@zhushanwen/subagent-core";
+import { Trace } from "@zhushanwen/subagent-core";
+import type { RunSpec } from "@zhushanwen/subagent-core";
+import type { ExecutionTraceNode } from "@zhushanwen/subagent-core";
+import { WorkflowRun } from "@zhushanwen/subagent-core";
 import { JsonlRunStore, STATE_MAX_RUNS_ENV } from "../jsonl-run-store.ts";
 
 function makeSpec(): RunSpec {

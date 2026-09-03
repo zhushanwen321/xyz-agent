@@ -21,9 +21,9 @@
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import { getCachedFileContent } from "@zhushanwen/subagent-core/shared/resource-discovery.ts";
-import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
-import { escapeXml, renderXmlSection } from "@zhushanwen/subagent-core/shared/xml-injection.ts";
+import { getCachedFileContent } from "@zhushanwen/subagent-core";
+import { parseResourceMeta } from "@zhushanwen/subagent-core";
+import { escapeXml, renderXmlSection } from "@zhushanwen/subagent-core";
 
 import { createResourceListInjector } from "./resource-list-injector.ts";
 

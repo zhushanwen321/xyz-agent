@@ -30,12 +30,12 @@ import {
   guiResult,
   isGuiCapable,
 } from "@xyz-agent/extension-protocol";
-import type { WorkflowScriptRegistry } from "@zhushanwen/subagent-core/orchestration/models/workflow-script-registry.ts";
-import { lintScript } from "@zhushanwen/subagent-core/orchestration/script-lint.ts";
-import { deleteWorkflow, saveWorkflow } from "@zhushanwen/subagent-core/orchestration/workflow-files.ts";
+import type { WorkflowScriptRegistry } from "@zhushanwen/subagent-core";
+import { lintScript } from "@zhushanwen/subagent-core";
+import { deleteWorkflow, saveWorkflow } from "@zhushanwen/subagent-core";
 import { toGuiCtx } from "./gui-mappers.ts";
 import { renderTextFallback } from "./format.ts";
-import { parseResourceMetaDetailed } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
+import { parseResourceMetaDetailed } from "@zhushanwen/subagent-core";
 
 // ── Parameter schema ─────────────────────────────────────────
 

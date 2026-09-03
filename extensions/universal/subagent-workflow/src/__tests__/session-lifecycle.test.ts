@@ -95,11 +95,11 @@ vi.mock("../interface/commands.ts", () => ({
 // ── import 被测模块 ──
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { IDENTITY_CUSTOM_TYPE } from "@zhushanwen/subagent-core/execution/session-reconstructor.ts";
+import { IDENTITY_CUSTOM_TYPE } from "@zhushanwen/subagent-core";
 import type { WorkflowRun as WorkflowRunType } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
-import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
+import { WorkflowRun } from "@zhushanwen/subagent-core";
+import { Budget } from "@zhushanwen/subagent-core";
+import { Trace } from "@zhushanwen/subagent-core";
 import subagentsExtension from "../index.ts";
 import {
   setupSessionLifecycle,

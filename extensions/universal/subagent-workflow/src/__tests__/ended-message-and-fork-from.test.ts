@@ -53,10 +53,10 @@ vi.mock("@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts
 import { writeFinalized } from "@zhushanwen/subagent-core/execution/finalized-marker.ts";
 import type { ModelRegistryLike } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
 import { getSubagentSessionDir } from "@zhushanwen/subagent-core/execution/path-encoding.ts";
-import type { RecordStore } from "@zhushanwen/subagent-core/execution/record-store.ts";
+import type { RecordStore } from "@zhushanwen/subagent-core";
 import type { ExecuteOptions } from "@zhushanwen/subagent-core/execution/types.ts";
-import { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
+import { SubagentService } from "@zhushanwen/subagent-core";
+import { ModelConfigService } from "@zhushanwen/subagent-core";
 import { forkFromHandler, messageHandler } from "../interface/subagent-actions.ts";
 
 const IDENTITY_ENV_KEYS = [

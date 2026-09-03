@@ -35,10 +35,10 @@ vi.mock( "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.t
 
 import { runSpawn } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
 import { startHandler } from "../interface/subagent-actions.ts";
-import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
+import { ModelConfigService } from "@zhushanwen/subagent-core";
 import type { ModelInfo, ModelRegistryLike } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
-import { RecordStore } from "@zhushanwen/subagent-core/execution/record-store.ts";
-import { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import { RecordStore } from "@zhushanwen/subagent-core";
+import { SubagentService } from "@zhushanwen/subagent-core";
 import type { ExecutionHandle, SubagentToolDetails } from "@zhushanwen/subagent-core/execution/types.ts";
 
 const mockRunSpawn = vi.mocked(runSpawn);

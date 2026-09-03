@@ -18,23 +18,23 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
 // ═══ core 宿主端口接线（subagent-core 包抽离 u0-wire；实现见 src/host/pi-host.ts） ═══
-import { configureCore } from "@zhushanwen/subagent-core/core/host-services.ts";
-import { configureNotifyDomain } from "@zhushanwen/subagent-core/core/notify-ports.ts";
+import { configureCore } from "@zhushanwen/subagent-core";
+import { configureNotifyDomain } from "@zhushanwen/subagent-core";
 import { createPiHostServices, createPiNotifyDomainPorts } from "./host/pi-host.ts";
 
-import { bestEffort } from "@zhushanwen/subagent-core/execution/best-effort.ts";
+import { bestEffort } from "@zhushanwen/subagent-core";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
 // [U7] 引擎列表状态文件（registry → engines.json，GUI 引擎选择器数据源）
-import { syncEnginesFile } from "@zhushanwen/subagent-core/execution/engine/engine-discovery.ts";
+import { syncEnginesFile } from "@zhushanwen/subagent-core";
 // [P1 引擎接线] 组合根登记 'pi' 引擎进 registry（引擎获取统一经 getEngine，缺省 id 'pi'）
-import { registerPiEngine } from "@zhushanwen/subagent-core/execution/engine/engines/pi/registration.ts";
+import { registerPiEngine } from "@zhushanwen/subagent-core";
 // [P3 引擎接线] 组合根登记 'zcode' 引擎（spawn 单轮模式；engineDataDir 默认走
 // common/data-dir SSOT，见 engines/zcode/registration.ts）
-import { registerZcodeEngine } from "@zhushanwen/subagent-core/execution/engine/engines/zcode/registration.ts";
-import { getModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
-import { getBoundNotifyLedger } from "@zhushanwen/subagent-core/execution/notify-ledger.ts";
-import { getSubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import { killAllSpawnedChildren } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
+import { registerZcodeEngine } from "@zhushanwen/subagent-core";
+import { getModelConfigService } from "@zhushanwen/subagent-core";
+import { getBoundNotifyLedger } from "@zhushanwen/subagent-core";
+import { getSubagentService } from "@zhushanwen/subagent-core";
+import { killAllSpawnedChildren } from "@zhushanwen/subagent-core";
 // [engine-awareness U3/D7-④] per-turn 引擎检测编排 + before_agent_start 链尾接线
 import { setupEngineAwarenessInjector } from "./injectors/engine-awareness.ts";
 import { setupModelListInjector } from "./injectors/model-list-injector.ts";
@@ -50,17 +50,17 @@ import { registerSubagentsCommand } from "./interface/subagents.ts";
 import { registerWorkflowTool } from "./interface/tool-workflow.ts";
 import { registerWorkflowScriptTool } from "./interface/tool-workflow-script.ts";
 // ═══ orchestration/ 层（workflow engine + infra） ═══
-import type { LauncherDeps } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
-import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "@zhushanwen/subagent-core/orchestration/launcher.ts";
+import type { LauncherDeps } from "@zhushanwen/subagent-core";
+import { executeNestedWorkflow, runAndWait, type WorkflowRunResult } from "@zhushanwen/subagent-core";
 import {
   evictDoneRunsBeyondCap,
   MAX_RETAINED_DONE_RUNS,
   scheduleTimeBudget,
   terminateRunningRuns,
-} from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
-import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-import { WorkerHostImpl } from "@zhushanwen/subagent-core/orchestration/worker-host.ts";
-import { WorkflowScriptRegistryImpl } from "@zhushanwen/subagent-core/orchestration/workflow-script-registry-impl.ts";
+} from "@zhushanwen/subagent-core";
+import type { WorkflowRun } from "@zhushanwen/subagent-core";
+import { WorkerHostImpl } from "@zhushanwen/subagent-core";
+import { WorkflowScriptRegistryImpl } from "@zhushanwen/subagent-core";
 // ═══ session 生命周期装配 seam（bootstrap seam，设计 §3.1/D1） ═══
 import {
   getOrCreateDialogQueue,
@@ -626,11 +626,11 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
 //
 // 跨扩展消费者（ask-user 等）通过包根 import 注册 channel handler，
 // 让 subagent 子进程的 UI 请求（ask_user 等）透传到主进程渲染。
-// 重新导出 channel-registry-access 的公开 API——稳定 surface，
+// 重新导出 channel-registry-access 的公开 API（经 core barrel 转发）——稳定 surface，
 // 内部存储实现演进不影响消费者。
 
 export {
   getOrCreateChannelRegistry,
   type UiChannelRegistry,
   type ChannelHandler,
-} from "@zhushanwen/subagent-core/execution/channel-registry-access.ts";
+} from "@zhushanwen/subagent-core";

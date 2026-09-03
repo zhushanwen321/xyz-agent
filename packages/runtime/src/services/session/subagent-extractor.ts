@@ -41,7 +41,7 @@ import { parseJsonl } from '../../utils/jsonl.js'
 import { getSubagentSessionDir } from '../../infra/pi/pi-paths.js'
 import { isEnoent } from '../../utils/errors.js'
 import { parseBgNotifyDetails, SUBAGENT_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
-import { parseEngineHandle } from '@zhushanwen/subagent-core/execution/engine/common/session-view-types.js'
+import { parseEngineHandle } from '@zhushanwen/subagent-core'
 import { normalizeSubagentStatus } from './subagent-status.js'
 import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 

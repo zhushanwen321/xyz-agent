@@ -20,9 +20,9 @@ vi.mock("node:os", async (importOriginal) => {
 });
 
 import { lintAgentMeta } from "@zhushanwen/subagent-core/orchestration/script-lint.ts";
-import { parseResourceMeta } from "@zhushanwen/subagent-core/shared/meta-parser.ts";
+import { parseResourceMeta } from "@zhushanwen/subagent-core";
 import { AgentRegistry, parseAgentFrontmatter, parseAgentWithMeta } from "@zhushanwen/subagent-core/execution/agent-registry.ts";
-import type { EnginePort } from "@zhushanwen/subagent-core/execution/engine/port.ts";
+import type { EnginePort } from "@zhushanwen/subagent-core";
 import { clearEngines, registerEngine } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
 
 // ============================================================

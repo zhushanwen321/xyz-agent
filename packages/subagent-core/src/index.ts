@@ -175,7 +175,14 @@ export {
 
 // 执行域外围件（组合根 / interface 层直接消费的独立单点件）。
 export { bestEffort } from "./execution/best-effort.ts";
-export { getOrCreateChannelRegistry } from "./execution/channel-registry-access.ts";
+// channel-registry 类型闭包（UiChannelRegistry / ChannelHandler）随值符号进 barrel
+// （u-2b 主 agent 裁决 2026-09-03）：壳 index.ts 跨扩展 re-export surface 的非测试
+// 生产消费，满足 D3 判定标准；type-only，零运行时面变化。
+export {
+  getOrCreateChannelRegistry,
+  type UiChannelRegistry,
+  type ChannelHandler,
+} from "./execution/channel-registry-access.ts";
 export { DialogGlobalQueue } from "./execution/dialog-queue.ts";
 export {
   readGlobalConfig,

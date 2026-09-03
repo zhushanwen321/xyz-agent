@@ -30,7 +30,7 @@ import {
   RELAY_ENV_SOCKET,
   RELAY_EXIT_CODES,
   RELAY_PROTOCOL_VERSION,
-} from "@zhushanwen/subagent-core/execution/relay-env.ts";
+} from "@zhushanwen/subagent-core/relay-env";
 
 /** 被测脚本：包根 relay/relay.mjs（与 src/ 平行的零依赖脚本，不参与 TS 编译）。 */
 const RELAY_SCRIPT_PATH = path.resolve(

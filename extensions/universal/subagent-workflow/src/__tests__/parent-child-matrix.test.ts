@@ -50,11 +50,11 @@ vi.mock("@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts
 }));
 
 import { createRecord } from "@zhushanwen/subagent-core/execution/execution-record.ts";
-import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
-import { RecordStore } from "@zhushanwen/subagent-core/execution/record-store.ts";
-import { SubagentService, setSubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import { ModelConfigService } from "@zhushanwen/subagent-core";
+import { RecordStore } from "@zhushanwen/subagent-core";
+import { SubagentService, setSubagentService } from "@zhushanwen/subagent-core";
 import type { PiLike } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import type { ExecutionRecord } from "@zhushanwen/subagent-core/execution/types.ts";
+import type { ExecutionRecord } from "@zhushanwen/subagent-core";
 import subagentsExtension from "../index.ts";
 
 // ── helpers ──

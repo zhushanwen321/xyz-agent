@@ -23,7 +23,7 @@ import {
 	type EngineAwarenessDeps,
 	type EngineAwarenessOutcome,
 } from "../engine-awareness";
-import type { GlobalConfigReadResult } from "@zhushanwen/subagent-core/execution/config.ts";
+import type { GlobalConfigReadResult } from "@zhushanwen/subagent-core";
 
 // ── 测试数据 ────────────────────────────────────────────
 

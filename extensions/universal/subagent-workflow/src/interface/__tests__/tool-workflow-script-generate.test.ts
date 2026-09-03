@@ -11,7 +11,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { actionGenerate, type ScriptParams, type TextContent, registerWorkflowScriptTool } from "../tool-workflow-script.ts";
-import { deleteWorkflow, saveWorkflow } from "@zhushanwen/subagent-core/orchestration/workflow-files.ts";
+import { deleteWorkflow, saveWorkflow } from "@zhushanwen/subagent-core";
 
 vi.mock("node:fs", () => ({
   mkdirSync: vi.fn(),

@@ -24,29 +24,29 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 // ═══ core 宿主端口消费（随迁块的依赖；production 默认实现住本文件） ═══
-import { getOrCreateChannelRegistry } from "@zhushanwen/subagent-core/execution/channel-registry-access.ts";
-import { DialogGlobalQueue } from "@zhushanwen/subagent-core/execution/dialog-queue.ts";
-import { syncEnginesFile } from "@zhushanwen/subagent-core/execution/engine/engine-discovery.ts";
-import { createUiRequestHandlerForMode } from "@zhushanwen/subagent-core/execution/ui-request-handler-factory.ts";
+import { getOrCreateChannelRegistry } from "@zhushanwen/subagent-core";
+import { DialogGlobalQueue } from "@zhushanwen/subagent-core";
+import { syncEnginesFile } from "@zhushanwen/subagent-core";
+import { createUiRequestHandlerForMode } from "@zhushanwen/subagent-core";
 import {
   getModelConfigService,
   ModelConfigService,
   setModelConfigService,
-} from "@zhushanwen/subagent-core/execution/model-config-service.ts";
-import { bindNotifyLedgerHost, type NotifyLedgerHost } from "@zhushanwen/subagent-core/execution/notify-ledger.ts";
-import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "@zhushanwen/subagent-core/execution/session-reconstructor.ts";
-import type { ExecutionMode } from "@zhushanwen/subagent-core/execution/types.ts";
-import { maybeCleanupExpiredSessionFiles } from "@zhushanwen/subagent-core/execution/session-file-gc.ts";
+} from "@zhushanwen/subagent-core";
+import { bindNotifyLedgerHost, type NotifyLedgerHost } from "@zhushanwen/subagent-core";
+import { IDENTITY_CUSTOM_TYPE, type SubagentIdentityData } from "@zhushanwen/subagent-core";
+import type { ExecutionMode } from "@zhushanwen/subagent-core";
+import { maybeCleanupExpiredSessionFiles } from "@zhushanwen/subagent-core";
 import {
   getSubagentService,
   setSubagentService,
   SubagentService,
-} from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import { SubprocessAgentRunner } from "@zhushanwen/subagent-core/execution/subprocess-agent-runner.ts";
-import { WorktreeManager } from "@zhushanwen/subagent-core/execution/worktree-manager.ts";
-import { clearSkillPathCache } from "@zhushanwen/subagent-core/orchestration/skill-discovery.ts";
-import { evictDoneRunsBeyondCap, MAX_RETAINED_DONE_RUNS } from "@zhushanwen/subagent-core/orchestration/lifecycle.ts";
-import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+} from "@zhushanwen/subagent-core";
+import { SubprocessAgentRunner } from "@zhushanwen/subagent-core";
+import { WorktreeManager } from "@zhushanwen/subagent-core";
+import { clearSkillPathCache } from "@zhushanwen/subagent-core";
+import { evictDoneRunsBeyondCap, MAX_RETAINED_DONE_RUNS } from "@zhushanwen/subagent-core";
+import type { WorkflowRun } from "@zhushanwen/subagent-core";
 // [engine-awareness D1b] lastEngine 基线归一（随迁块 6 消费）
 import { normalizeEngineId } from "./injectors/engine-awareness.ts";
 import { JsonlRunStore } from "./jsonl-run-store.ts";

@@ -63,8 +63,8 @@ import { resurrectClosed } from "@zhushanwen/subagent-core/execution/execution-r
 import { writeFinalized } from "@zhushanwen/subagent-core/execution/finalized-marker.ts";
 import { getSubagentSessionDir } from "@zhushanwen/subagent-core/execution/path-encoding.ts";
 import type { ExecuteOptions } from "@zhushanwen/subagent-core/execution/types.ts";
-import { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
-import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
+import { SubagentService } from "@zhushanwen/subagent-core";
+import { ModelConfigService } from "@zhushanwen/subagent-core";
 import { forkFromHandler, messageHandler, closeHandler } from "../interface/subagent-actions.ts";
 
 /** SpawnResumeOpts 的观测投影（args[8]，仅需本测试断言的字段）。 */

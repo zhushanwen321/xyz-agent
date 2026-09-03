@@ -20,9 +20,9 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 
-import { THINKING_ORDER } from "@zhushanwen/subagent-core/shared/model-ref.ts";
+import { THINKING_ORDER } from "@zhushanwen/subagent-core";
 
-import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
+import { SLUG_MAX_LENGTH } from "@zhushanwen/subagent-core";
 
 export { SLUG_MAX_LENGTH };
 

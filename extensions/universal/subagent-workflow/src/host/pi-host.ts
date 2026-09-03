@@ -32,9 +32,9 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
 import { createDelivery } from "@xyz-agent/session-delivery";
 
-import type { DiscoveryRoot, HostServices } from "@zhushanwen/subagent-core/core/host-services.ts";
-import type { LogLevel } from "@zhushanwen/subagent-core/core/logger.ts";
-import type { NotifyDomainPorts } from "@zhushanwen/subagent-core/core/notify-ports.ts";
+import type { DiscoveryRoot, HostServices } from "@zhushanwen/subagent-core";
+import type { LogLevel } from "@zhushanwen/subagent-core";
+import type { NotifyDomainPorts } from "@zhushanwen/subagent-core";
 
 /** agents/workflows 共享的 agentDir 派生根（末级目录名由 kind 决定）。
  *  顺序与 source 标签逐项对齐 resource-discovery.ts buildScanTargets 的

@@ -23,7 +23,7 @@
  * 写侧落地前字段缺失 → core 编排层防御式降级（空值防御，不依赖其完成时序）。
  */
 import type { SubagentRecord, Message } from '@xyz-agent/shared'
-import { readSubagentHistoryMessages } from '@zhushanwen/subagent-core/execution/engine/common/session-view-service.js'
+import { readSubagentHistoryMessages } from '@zhushanwen/subagent-core'
 
 /** record 引擎路由段的缺省引擎：存量 record 无 engine 字段 → 按 pi 投影（零迁移）。 */
 export const DEFAULT_SUBAGENT_ENGINE = 'pi'

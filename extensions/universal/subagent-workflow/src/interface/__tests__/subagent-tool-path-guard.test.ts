@@ -44,7 +44,7 @@ vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
 }));
 
 import { registerSubagentTool } from "../../interface/subagent-tool.ts";
-import { mockExtensionApi } from "@zhushanwen/subagent-core/execution/__tests__/helpers/mock-extension-api.ts";
+import { mockExtensionApi } from "@zhushanwen/subagent-core/testing/execution/__tests__/helpers/mock-extension-api.ts";
 
 type ExecuteCb = (...args: unknown[]) => Promise<unknown>;
 

@@ -38,10 +38,10 @@ import { runSpawn, getChildByRecord } from "@zhushanwen/subagent-core/execution/
 import type { SessionRunnerContext } from "@zhushanwen/subagent-core/execution/engine/engines/pi/session-runner.ts";
 import { armIdleTimer, disarmIdleTimer } from "@zhushanwen/subagent-core/execution/lifecycle-manager.ts";
 import { createRecord, updateFromEvent } from "@zhushanwen/subagent-core/execution/execution-record.ts";
-import { ModelConfigService } from "@zhushanwen/subagent-core/execution/model-config-service.ts";
+import { ModelConfigService } from "@zhushanwen/subagent-core";
 import type { ModelInfo, ModelRegistryLike } from "@zhushanwen/subagent-core/execution/model-resolver.ts";
-import { RecordStore } from "@zhushanwen/subagent-core/execution/record-store.ts";
-import { SubagentService } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
+import { RecordStore } from "@zhushanwen/subagent-core";
+import { SubagentService } from "@zhushanwen/subagent-core";
 import type { PiLike } from "@zhushanwen/subagent-core/execution/subagent-service.ts";
 import { createDelivery } from "@xyz-agent/session-delivery";
 import { configureNotifyDomain, resetNotifyDomainForTests } from "@zhushanwen/subagent-core/core/notify-ports.ts";

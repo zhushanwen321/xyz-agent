@@ -125,11 +125,11 @@ vi.mock("../interface/commands.ts", () => ({
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import subagentsExtension from "../index.ts";
-import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
-import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
-import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { Budget } from "@zhushanwen/subagent-core";
+import { Trace } from "@zhushanwen/subagent-core";
+import type { WorkflowRun } from "@zhushanwen/subagent-core";
 import { WorkflowRun as WorkflowRunCtor } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-import { IDENTITY_CUSTOM_TYPE } from "@zhushanwen/subagent-core/execution/session-reconstructor.ts";
+import { IDENTITY_CUSTOM_TYPE } from "@zhushanwen/subagent-core";
 
 // ── helpers ──
 

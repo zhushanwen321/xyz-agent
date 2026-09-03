@@ -33,11 +33,11 @@ import {
   countAllToolCalls,
   getAllToolCalls,
   projectLiveProgress,
-} from "@zhushanwen/subagent-core/execution/execution-record.ts";
-import type { ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import type { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-import { saveWorkflow } from "@zhushanwen/subagent-core/orchestration/workflow-files.ts";
-import { displayAgentName } from "@zhushanwen/subagent-core/shared/agent-ref.ts";
+} from "@zhushanwen/subagent-core";
+import type { ExecutionTraceNode } from "@zhushanwen/subagent-core";
+import type { WorkflowRun } from "@zhushanwen/subagent-core";
+import { saveWorkflow } from "@zhushanwen/subagent-core";
+import { displayAgentName } from "@zhushanwen/subagent-core";
 import {
   buildPhaseGroups,
   ELLIPSIS,

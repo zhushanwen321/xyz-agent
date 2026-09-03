@@ -62,17 +62,17 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import type { CustomEntry, ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { getLogger } from "@zhushanwen/subagent-core/core/logger.ts";
+import { getLogger } from "@zhushanwen/subagent-core";
 
-import { AgentCall } from "@zhushanwen/subagent-core/orchestration/models/agent-call.ts";
-import { Budget } from "@zhushanwen/subagent-core/orchestration/models/budget.ts";
-import type { RunSpec } from "@zhushanwen/subagent-core/orchestration/models/run-spec.ts";
-import type { RunState } from "@zhushanwen/subagent-core/orchestration/models/run-state.ts";
-import { Trace } from "@zhushanwen/subagent-core/orchestration/models/trace.ts";
-import type { DoneReason, RunStatus, WorkerLogEntry } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import type { AgentCallOpts, AgentResult, ExecutionTraceNode } from "@zhushanwen/subagent-core/orchestration/models/types.ts";
-import type { WorkflowRunMeta } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
-import { WorkflowRun } from "@zhushanwen/subagent-core/orchestration/models/workflow-run.ts";
+import { AgentCall } from "@zhushanwen/subagent-core";
+import { Budget } from "@zhushanwen/subagent-core";
+import type { RunSpec } from "@zhushanwen/subagent-core";
+import type { RunState } from "@zhushanwen/subagent-core";
+import { Trace } from "@zhushanwen/subagent-core";
+import type { DoneReason, RunStatus, WorkerLogEntry } from "@zhushanwen/subagent-core";
+import type { AgentCallOpts, AgentResult, ExecutionTraceNode } from "@zhushanwen/subagent-core";
+import type { WorkflowRunMeta } from "@zhushanwen/subagent-core";
+import { WorkflowRun } from "@zhushanwen/subagent-core";
 
 // ── Snapshot format (D-5 version guard) ──────────────────────
 
