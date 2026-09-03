@@ -9,32 +9,20 @@ import { beforeEach,describe, expect, it, vi } from "vitest";
 
 // ── mock modules（在 import 前声明）──
 
-vi.mock("@earendil-works/pi-coding-agent", () => ({
-  getAgentDir: () => "/home/user/.pi/agent",
-}));
-vi.mock("@earendil-works/pi-coding-agent", () => ({
-  getAgentDir: () => "/home/user/.pi/agent",
-}));
-vi.mock("@earendil-works/pi-ai", () => ({
-  StringEnum: (values: string[]) => ({ type: "string", enum: values }),
-}));
-vi.mock("@earendil-works/pi-ai", () => ({
-  StringEnum: (values: string[]) => ({ type: "string", enum: values }),
-}));
-vi.mock("typebox", () => ({
-  Type: {
-    Object: (props: Record<string, unknown>) => ({ type: "object", properties: props }),
-    Optional: (schema: unknown) => ({ ...schema as object, optional: true }),
-    String: () => ({ type: "string" }),
-    Boolean: () => ({ type: "boolean" }),
-    Number: () => ({ type: "number" }),
-    Array: (items: unknown) => ({ type: "array", items }),
-    Record: (key: unknown, value: unknown) => ({ type: "object", additionalProperties: value, key }),
-    Unknown: () => ({ type: "unknown" }),
-    Union: (members: unknown[]) => ({ type: "union", members }),
-    Literal: (value: unknown) => ({ type: "literal", value }),
-  },
-}));
+// 共享桩（./mocks/runtime-stubs.ts）：vi.mock 工厂提升到文件顶部，体内不能引用
+// 普通顶层变量，一律经 async 工厂 + 动态 import 取桩（消费约定见桩 module 头注）。
+vi.mock("@earendil-works/pi-coding-agent", async () => {
+  const { piCodingAgentStub } = await import("./mocks/runtime-stubs.ts");
+  return piCodingAgentStub();
+});
+vi.mock("@earendil-works/pi-ai", async () => {
+  const { piAiStringEnumStub } = await import("./mocks/runtime-stubs.ts");
+  return piAiStringEnumStub();
+});
+vi.mock("typebox", async () => {
+  const { typeboxStub } = await import("./mocks/runtime-stubs.ts");
+  return typeboxStub;
+});
 
 // hoisted mock 实例
 const { mockScan, mockCleanup } = vi.hoisted(() => ({
@@ -93,17 +81,6 @@ vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
   },
   getSubagentService: () => null,
   setSubagentService: mockSetSubagentService,
-}));
-
-// mock commands/tools（避免触发真实注册）
-vi.mock("../commands/subagents.ts", () => ({
-  registerSubagentsCommand: vi.fn(),
-}));
-vi.mock("../tools/subagent-tool.ts", () => ({
-  registerSubagentTool: vi.fn(),
-}));
-vi.mock("../tui/bg-notify-render.ts", () => ({
-  renderBgNotifyMessage: vi.fn(),
 }));
 
 // ── import 被测工厂 ──

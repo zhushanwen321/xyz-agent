@@ -21,9 +21,6 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@earendil-works/pi-ai", () => ({
   StringEnum: (values: string[]) => ({ type: "string", enum: values }),
 }));
-vi.mock("@earendil-works/pi-ai", () => ({
-  StringEnum: (values: string[]) => ({ type: "string", enum: values }),
-}));
 vi.mock("typebox", () => ({
   Type: {
     Object: (props: Record<string, unknown>) => ({ type: "object", properties: props }),
