@@ -243,6 +243,9 @@ export async function resolveEntryIdByTimestamp(
   // 按 timestamp + role 匹配（JSONL timestamp 是 ISO 字符串，前端是 Unix ms）
   // ±TIMESTAMP_TOLERANCE_MS（模块顶层常量，W7）容差：历史 session 可能秒级精度，1000ms 容差兜底
   if (messageTimestamp != null) {
+    // 容差内取 |diff| 最小者（r1-S3）：取首个命中会在「容差内多条同 role entry」时选错
+    // fork 点（timestamp 越接近目标消息越可能是用户所指的那条）
+    let best: { id: string; diff: number } | null = null
     for (const e of msgEntries) {
       const msg = e.message as Record<string, unknown>
       const entryTs = typeof msg.timestamp === 'string'
@@ -251,10 +254,13 @@ export async function resolveEntryIdByTimestamp(
           ? new Date(e.timestamp).getTime()
           : 0
       const roleMatch = !messageRole || msg.role === messageRole
-      if (roleMatch && Math.abs(entryTs - messageTimestamp) <= TIMESTAMP_TOLERANCE_MS) {
-        return e.id as string
+      if (!roleMatch) continue
+      const diff = Math.abs(entryTs - messageTimestamp)
+      if (diff <= TIMESTAMP_TOLERANCE_MS && (best === null || diff < best.diff)) {
+        best = { id: e.id as string, diff }
       }
     }
+    if (best) return best.id
   }
   // fallback：取最后一条 message entry（用户最可能 fork 到最近的消息）
   const last = msgEntries[msgEntries.length - 1]

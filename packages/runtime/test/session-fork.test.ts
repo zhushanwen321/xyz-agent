@@ -366,6 +366,17 @@ describe('resolveEntryIdByTimestamp', () => {
     }
   })
 
+  it('容差内多条同 role：取 |diff| 最小者而非首个命中（r1-S3，fork 点不错位）', async () => {
+    const filePath = await writeMessages(dir, [
+      { id: 'e1', ts: T0, role: 'user' },
+      { id: 'e2', ts: T0, role: 'assistant' },
+      { id: 'e3', ts: T0 + 800, role: 'assistant' },
+    ])
+    // 目标 timestamp 距 e3 仅 100ms、距 e2 900ms——两者均在 1000ms 容差内，
+    // 修复前取首个命中（e2）致 fork 点错位；应取 |diff| 最小的 e3
+    await expect(resolveEntryIdByTimestamp(filePath, T0 + 900, 'assistant')).resolves.toBe('e3')
+  })
+
   it('报错路径：源文件不存在 → throw（带路径，ENOENT 分支）', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {

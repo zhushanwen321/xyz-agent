@@ -262,8 +262,11 @@ export class SessionHistoryReader {
     client: NonNullable<ReturnType<IProcessManager['getClient']>>,
     cached: HistoryRebuildCacheEntry,
   ): Promise<{ messages: Message[]; truncated: boolean } | undefined> {
+    // leafId null 收敛（r1-S18）：调用方已保证非 null，此处守卫消 as 断言——防御性
+    // undefined 使外层 fall-through 全量重建，行为等价
+    if (cached.leafId === null) return undefined
     try {
-      const inc = await client.getEntries(cached.leafId as string) as GetEntriesResult
+      const inc = await client.getEntries(cached.leafId) as GetEntriesResult
       const incEntries = inc.data?.entries ?? []
       if (incEntries.length === 0) {
         // R-12 短路：空增量 = leafId 未变 = 缓存新鲜。零重建直接返回（不走尾读 fallback）。

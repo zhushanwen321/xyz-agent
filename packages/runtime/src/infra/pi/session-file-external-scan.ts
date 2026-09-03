@@ -236,7 +236,15 @@ async function extractExternalMeta(filePath: string): Promise<ExternalSessionMet
     return cached.meta
   }
 
-  const fh = await open(filePath, 'r')
+  // stat 成功但 open 抛错（stat/open 间隙文件被删或权限变化）时同样清 stale 缓存条目
+  //（与 stat 失败路径同语义，防陈旧 meta 留存）。
+  let fh
+  try {
+    fh = await open(filePath, 'r')
+  } catch {
+    externalMetaCache.delete(filePath)
+    return null
+  }
   let meta: ExternalSessionMeta | null = null
   try {
     const firstLine = await readFirstLineViaHandle(fh)
@@ -271,18 +279,30 @@ async function extractExternalMeta(filePath: string): Promise<ExternalSessionMet
  * services 层抽共用；两处语义由 D3 二次修订锁定同步）。块内无换行且未读满（文件本身小于
  * 块）按无首行终止处理；块读满仍无换行（首行超长）继续续读——等价于全量读首行的语义。
  * 空文件返回 null。
+ *
+ * 跨块解码（r1-S2）：块以 Buffer 累积、检测换行时 Buffer.concat 后整体 toString——
+ * 逐块 toString 会在多字节 UTF-8 字符（CJK）跨 4KB 块边界时拆出 U+FFFD。
  */
 async function readFirstLineViaHandle(fh: FileHandle): Promise<string | null> {
   const buffer = Buffer.alloc(HEADER_CHUNK_BYTES)
-  let carry = ''
+  const chunks: Buffer[] = []
   for (;;) {
     const { bytesRead } = await fh.read(buffer, 0, HEADER_CHUNK_BYTES, null)
-    if (bytesRead > 0) {
-      carry += buffer.toString('utf-8', 0, bytesRead)
-      const newlineIdx = carry.indexOf('\n')
-      if (newlineIdx >= 0) return carry.slice(0, newlineIdx)
+    if (bytesRead === 0) {
+      return chunks.length > 0 ? Buffer.concat(chunks).toString('utf-8') : null
     }
-    if (bytesRead < HEADER_CHUNK_BYTES) return carry.length > 0 ? carry : null
+    // 换行先在原始 Buffer 上定位（与 import-service 的 readFirstLineAsync 同步：避免逐块
+    // Buffer.concat 的 O(n²) 复制）；换行前内容才入 chunks，最终一次性 concat 解码
+    //（跨块 CJK 多字节字符仍完整）。
+    const nl = buffer.subarray(0, bytesRead).indexOf(0x0a)
+    if (nl >= 0) {
+      chunks.push(Buffer.from(buffer.subarray(0, nl)))
+      return Buffer.concat(chunks).toString('utf-8')
+    }
+    chunks.push(Buffer.from(buffer.subarray(0, bytesRead)))
+    if (bytesRead < HEADER_CHUNK_BYTES) {
+      return chunks.length > 0 ? Buffer.concat(chunks).toString('utf-8') : null
+    }
   }
 }
 
@@ -295,7 +315,7 @@ async function readFirstLineViaHandle(fh: FileHandle): Promise<string | null> {
  * timestamp 是零消费的对齐保留字段（toCandidate 不取），宽松读出：缺省以 '' 读出。
  * 首行非合法 JSON / 非 object / type 非 session → null（该文件不收录）。
  */
-function parseHeaderFromFirstLine(firstLine: string): { id: string; cwd: string; timestamp: string } | null {
+export function parseHeaderFromFirstLine(firstLine: string): { id: string; cwd: string; timestamp: string } | null {
   let entry: unknown
   try {
     entry = JSON.parse(firstLine)

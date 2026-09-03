@@ -22,7 +22,7 @@ parameters:
   properties:
     task: { type: string, description: 任务描述（zsw CLI 必填 flag，引擎存入 run spec 供通知与查询展示；脚本不消费其语义，normalizeParams 白名单不收——值不进 state.params） }
     runId: { type: string, description: 断点恢复键；缺失 = 从头执行，存在 = 从未完成的第一个 step 续跑 }
-    repo: { type: string, minLength: 1, description: 目标仓库根绝对路径（必传——workdir 是引擎保留键不进脚本参数，缺省回落宿主 cwd 并在日志注明回落事实；非仓库根会 fail-fast） }
+    repo: { type: string, minLength: 1, description: 目标仓库根绝对路径（workdir 是引擎保留键不进脚本参数；缺省回落宿主 cwd 并在日志注明回落事实，目标仓库非宿主 cwd 时必传；非仓库根会 fail-fast） }
     base: { type: string, default: main, description: PR 目标基线分支，全流程 review 与 diff 口径锁定为发起时该 ref 指向的 commit }
     reviewers:
       anyOf:

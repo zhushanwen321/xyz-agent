@@ -227,6 +227,21 @@ describe('SessionMessageHandler session.import', () => {
     expect(ctx.broadcastSessionList).not.toHaveBeenCalled()
   })
 
+  it('非 string code（number 形态）→ 不透传，归 import_failed 兜底', async () => {
+    const svc = mockImportService()
+    svc.importSession.mockRejectedValue(Object.assign(new Error('numeric code'), { code: 123 }))
+    const ctx = mockContext({ importService: svc as unknown as ImportService })
+    const handler = new SessionMessageHandler(ctx)
+    const ws = mockWs()
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await handler.handleSessionMessage(msg('session.import', { sourcePath: '/ext/a.jsonl', projectId: 'p1' }), ws)
+
+    expect(ctx.sendError).toHaveBeenCalledWith(ws, 'import_failed', 'numeric code', 'msg-1')
+    expect(ctx.broadcastSessionList).not.toHaveBeenCalled()
+    expect(errSpy).toHaveBeenCalledOnce()
+  })
+
   it('importService 缺席 → sendError import_unsupported', async () => {
     const ctx = mockContext()
     const handler = new SessionMessageHandler(ctx)

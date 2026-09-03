@@ -9,7 +9,7 @@
  * - entry→Message 转换链（rebuildHistoryFromEntries）由 session-history 域自身测试覆盖，
  *   此处以可编程 mock 替换，断言集中在编排分支选择与缓存状态迁移。
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Message } from '@xyz-agent/shared'
 import type { IProcessManager, IPiEngine } from '../../ports/pi-engine.js'
 import type { ISessionStore } from '../../ports/session.js'
@@ -20,6 +20,13 @@ vi.mock('../../session-history.js', () => ({
   getHistoryFromFilePath: vi.fn(async () => [{ id: 'full-1', role: 'user', content: 'full', status: 'complete', timestamp: 1 } as Message]),
   getHistoryTailFromFile: vi.fn(async () => ({ messages: [{ id: 'tail-1', role: 'user', content: 'tail', status: 'complete', timestamp: 1 } as Message], truncated: true })),
 }))
+
+// session-history 模块级 mock：调用计数跨用例累积，前置清零（r1-S16 尾读用例引入后
+// 「not.toHaveBeenCalled」类断言会被先前用例的历史调用打穿）
+beforeEach(() => {
+  vi.mocked(getHistoryTailFromFile).mockClear()
+  vi.mocked(getHistoryFromFilePath).mockClear()
+})
 
 /** pi entry 最小形态（编排只消费 parentId / 传给 rebuild mock）。 */
 function entry(id: string, parentId: string | null): Record<string, unknown> {
@@ -68,12 +75,33 @@ describe('分支 3：全量重建（无缓存）', () => {
     expect(again.messages.some((m) => m.id === 'intruder')).toBe(false)
   })
 
+  it('边界（r1-S16）：缓存存在但 leafId 为 null → 跳过增量直接全量重建（分支 1/2 与 3 交界）', async () => {
+    const { reader, client, rebuild } = makeReader()
+    // 首轮建缓存：leafId null（pi 未给叶子 id）但 messages 非空 → 缓存条目 leafId=null
+    client.getEntries.mockResolvedValueOnce({ data: { entries: [entry('e1', null)], leafId: null } })
+    await reader.getHistory('s1')
+    // 第二轮：cached 存在但 leafId null → 不走 since 增量，重新全量拉取重建
+    client.getEntries.mockResolvedValueOnce({ data: { entries: [entry('e1', null), entry('e2', 'e1')], leafId: 'e2' } })
+    const result = await reader.getHistory('s1')
+    expect(client.getEntries).toHaveBeenLastCalledWith() // 全量调用（无 since 参数）
+    expect(rebuild).toHaveBeenCalledTimes(2)
+    expect(result.messages.map((m) => m.id)).toEqual(['m-e1', 'm-e2'])
+  })
+
   it('R-12：RPC entries 空 → 短路返回空列表（不走尾读）', async () => {
     const { reader, client } = makeReader()
     client.getEntries.mockResolvedValue({ data: { entries: [], leafId: null } })
     const result = await reader.getHistory('s1')
     expect(result).toEqual({ messages: [], truncated: false })
     expect(getHistoryTailFromFile).not.toHaveBeenCalled()
+  })
+
+  it('全量 getEntries 抛错（分支 3 catch，r1-S16）→ 尾读降级', async () => {
+    const { reader, client } = makeReader()
+    client.getEntries.mockRejectedValue(new Error('pi internal error'))
+    const degraded = await reader.getHistory('s1')
+    expect(degraded.truncated).toBe(true)
+    expect(degraded.messages.map((m) => m.id)).toEqual(['tail-1'])
   })
 })
 

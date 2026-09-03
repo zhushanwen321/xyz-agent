@@ -26,6 +26,26 @@ import type { SegmentsMetadataEntry, SegmentsMetadataFile } from '@xyz-agent/sha
 
 const store = new AttachmentStore()
 
+// renameSync 失败注入开关（r1-S14，vi.hoisted：vi.mock 工厂提升后仍可引用；机制同
+// import-service.test.ts 的 copyFile 失败注入先例）。EPERM retry 分支在 POSIX 上不可
+// 有机触达（rename(file,file) 原子成功，rename(file,dir) 会被 quarantine 前置吞掉），
+// 只能 mock 注入。'once'：首跳抛后自复位（覆盖 unlink+retry 成功路径）；'always'：
+// 双跳均抛（覆盖 retryErr 抛出 + tmp 清理路径）；'off'：透传 actual。
+const renameFailureState = vi.hoisted(() => ({ mode: 'off' as 'off' | 'once' | 'always' }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    renameSync: (...args: Parameters<typeof actual.renameSync>) => {
+      if (renameFailureState.mode === 'off') return actual.renameSync(...args)
+      if (renameFailureState.mode === 'once') renameFailureState.mode = 'off'
+      const err = new Error('simulated EPERM (Windows rename-over-existing)') as Error & { code: string }
+      err.code = 'EPERM'
+      throw err
+    },
+  }
+})
+
 /** 收尾清理清单（写入即登记，afterEach 统一 rm） */
 const writtenPaths: string[] = []
 afterEach(() => {
@@ -187,6 +207,49 @@ describe('AttachmentStore · writeSegmentsMetadata', () => {
     // 损坏现场被隔离保留（.corrupt-<ts> 副本，时间戳动态生成，按前缀扫描）
     const quarantined = readdirSync(dir).some((n) => n.startsWith('segments.json.corrupt-'))
     expect(quarantined).toBe(true)
+    errSpy.mockRestore()
+  })
+
+  it('失败注入（r1-S14）：tmp 写失败（tmpPath 被目录占用）→ reject 且不产生 segments.json', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const dir = getAttachmentsDir('att-store-tmpfail-1')
+    mkdirSync(join(dir, 'segments.json.tmp'), { recursive: true }) // writeFileSync(tmpPath) 必抛 EISDIR
+    writtenPaths.push(join(dir, 'segments.json.tmp'))
+    await expect(store.writeSegmentsMetadata('att-store-tmpfail-1', makeEntry('u-fail'))).rejects.toThrow(
+      'write-segments-metadata failed',
+    )
+    // 失败后无正式 sidecar 落地（外层 catch 收口，不留下半截状态）
+    expect(existsSync(join(dir, 'segments.json'))).toBe(false)
+    expect(errSpy).toHaveBeenCalledWith('[session-service] writeSegmentsMetadata failed:', expect.any(Error))
+    errSpy.mockRestore()
+  })
+
+  it('失败注入（r1-S14）：rename 抛 EPERM 单次 → unlink 清目标后 retry 成功，sidecar 正确落盘', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const sid = 'att-store-eperm-1'
+    await store.writeSegmentsMetadata(sid, makeEntry('u-first', 1000)) // 目标已存在（rename-over 场景前提）
+    renameFailureState.mode = 'once'
+    await store.writeSegmentsMetadata(sid, makeEntry('u-second', 2000))
+    const file = readSidecar(sid)
+    expect(file.entries.map((e) => e.clientUuid)).toEqual(['u-first', 'u-second'])
+    expect(existsSync(join(getAttachmentsDir(sid), 'segments.json.tmp'))).toBe(false)
+    renameFailureState.mode = 'off'
+    errSpy.mockRestore()
+  })
+
+  it('失败注入（r1-S14）：rename 双跳均抛 EPERM → reject retryErr 且 tmp 被清理', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const sid = 'att-store-eperm-2'
+    renameFailureState.mode = 'always'
+    try {
+      await expect(store.writeSegmentsMetadata(sid, makeEntry('u-rf'))).rejects.toThrow(
+        'write-segments-metadata failed',
+      )
+    } finally {
+      renameFailureState.mode = 'off'
+    }
+    // retry 失败分支清理 tmp（无 .tmp 残留）
+    expect(existsSync(join(getAttachmentsDir(sid), 'segments.json.tmp'))).toBe(false)
     errSpy.mockRestore()
   })
 })

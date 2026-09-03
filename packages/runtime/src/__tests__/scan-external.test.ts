@@ -19,7 +19,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { scanExternalSessions } from '../infra/pi/session-file-external-scan.js'
+import { scanExternalSessions, parseHeaderFromFirstLine } from '../infra/pi/session-file-external-scan.js'
 import { cleanupTmpMigrateResidue } from '../infra/pi/session-file-utils.js'
 
 let rootDir: string
@@ -259,6 +259,53 @@ describe('scanExternalSessions name 三级定位（D3 二次修订轻量提取�
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('readFirstLine 跨块多字节解码（r1-S2）', () => {
+  /** header 读块大小与实现一致（4KB）；构造首 CJK 字节跨 4096 边界的首行。 */
+  const CHUNK = 4096
+
+  it('多字节 CJK 字符跨 4KB 块边界：cwd 解码无 U+FFFD 损坏', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'scan-external-cjk-'))
+    try {
+      const prefix = '{"type":"session","version":1,"id":"id-cjk-cross","cwd":"'
+      const tail = '","timestamp":"2026-01-01T00:00:00.000Z"}'
+      const cjk = '极长的中文路径目录名用于跨越块边界测试'
+      // pad 到首 CJK 字节恰在 4095（3 字节字符占 4095-4097，跨 4096 边界）
+      const padLen = CHUNK - 1 - prefix.length
+      const firstLine = prefix + 'a'.repeat(padLen) + cjk + tail
+      writeFileSync(join(dir, 'cjk.jsonl'), firstLine + '\n')
+      const { items } = await scanExternalSessions(dir, { force: true })
+      const meta = items.find((m) => m.id === 'id-cjk-cross')
+      expect(meta).toBeDefined()
+      const expectedCwd = 'a'.repeat(padLen) + cjk
+      expect(meta!.cwd).toBe(expectedCwd)
+      expect(meta!.cwd.includes('\uFFFD')).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('parseHeaderFromFirstLine 直测（r1-S15）', () => {
+  it('合法首行：id/cwd/timestamp 全取', () => {
+    expect(parseHeaderFromFirstLine('{"type":"session","id":"a1","cwd":"/x","timestamp":"2026-01-01T00:00:00.000Z"}'))
+      .toEqual({ id: 'a1', cwd: '/x', timestamp: '2026-01-01T00:00:00.000Z' })
+  })
+
+  it('畸形首行返回 null：非 JSON / 非 object / type 非 session / id 空串 / cwd 空串', () => {
+    expect(parseHeaderFromFirstLine('not json at all')).toBeNull()
+    expect(parseHeaderFromFirstLine('42')).toBeNull()
+    expect(parseHeaderFromFirstLine('null')).toBeNull()
+    expect(parseHeaderFromFirstLine('{"type":"message","id":"a","cwd":"/x"}')).toBeNull()
+    expect(parseHeaderFromFirstLine('{"type":"session","id":"","cwd":"/x"}')).toBeNull()
+    expect(parseHeaderFromFirstLine('{"type":"session","id":"a","cwd":""}')).toBeNull()
+  })
+
+  it('timestamp 非字符串缺省读出为空串（零消费对齐保留字段）', () => {
+    expect(parseHeaderFromFirstLine('{"type":"session","id":"a","cwd":"/x"}'))
+      .toEqual({ id: 'a', cwd: '/x', timestamp: '' })
   })
 })
 

@@ -862,8 +862,12 @@ export class SessionLifecycle implements ISessionRegistry {
     // 【S6 迁入的 Facade 编排半截】wave:perf-w26（微项 12 find 合并）：整个 fork 只扫一次磁盘。
     // 原链路 resolveEntryIdByTimestamp 与本方法各自 scanSessions().find()（同 handler 两次
     // 全量扫描），合并为单次解析后贯穿使用。findScannedSession 内部 force：路径解析消费方
-    // （fork 源文件定位，正确性敏感，plan M-3）。顺序与迁移前 Facade 链路逐一等价
-    // （find → source 守卫 → entry 解析 → model 门禁）。
+    //（fork 源文件定位，正确性敏感，plan M-3）。
+    // model 门禁提前到函数首（r5-S2）：与 create/restore 的错误优先级一致（model 未配置时
+    // 先于 source/entryId 解析失败报出，避免「先修 source 再撞 model 门禁」两段式报错）。
+    if (!this.configStore.getDefaultModel()) {
+      throw errorWithCode('No model configured. Please configure a provider and model in Settings before forking a session.', MODEL_NOT_CONFIGURED)
+    }
     const source = this.svc.findScannedSession(srcSessionId)
     if (!source) {
       throw new Error(`fork: source session not found: ${srcSessionId}`)
@@ -876,10 +880,6 @@ export class SessionLifecycle implements ISessionRegistry {
         options?.fromMessageTimestamp,
         options?.fromMessageRole,
       )
-    }
-
-    if (!this.configStore.getDefaultModel()) {
-      throw errorWithCode('No model configured. Please configure a provider and model in Settings before forking a session.', MODEL_NOT_CONFIGURED)
     }
 
     // FR-20 parentSession fallback：源 session 可能尚未落盘（pi 延迟写入窗口，

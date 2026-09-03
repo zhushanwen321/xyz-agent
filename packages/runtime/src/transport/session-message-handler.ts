@@ -486,8 +486,10 @@ export class SessionMessageHandler {
           return this.ctx.reply(ws, msg.id, 'session.importCandidates', result)
         } catch (e) {
           // ImportServiceError.code 透传（错误规格表权威清单）；非预期错误归 import_failed
-          //（对齐 worktree handler 的「无 code 兜底」模式）。
-          const code = (e as Error & { code?: string }).code
+          //（对齐 worktree handler 的「无 code 兜底」模式）。守卫式读取：先判型再收窄，
+          // 非 string code 一律 undefined 走兜底。
+          const rawCode = (e as { code?: unknown }).code
+          const code = typeof rawCode === 'string' ? rawCode : undefined
           const errMsg = toErrorMessage(e)
           console.error(`[runtime] session.importCandidates failed (code=${code ?? 'unknown'}):`, errMsg)
           return this.ctx.sendError(ws, code ?? 'import_failed', errMsg, msg.id)
@@ -509,7 +511,9 @@ export class SessionMessageHandler {
           //（对齐 session.create / session.setProject 惯例）。
           return this.ctx.broadcastSessionList()
         } catch (e) {
-          const code = (e as Error & { code?: string }).code
+          // 守卫式读取（同 importCandidates 分支）：非 string code 一律 undefined 走兜底
+          const rawCode = (e as { code?: unknown }).code
+          const code = typeof rawCode === 'string' ? rawCode : undefined
           const errMsg = toErrorMessage(e)
           console.error(`[runtime] session.import failed (code=${code ?? 'unknown'}):`, errMsg)
           return this.ctx.sendError(ws, code ?? 'import_failed', errMsg, msg.id)

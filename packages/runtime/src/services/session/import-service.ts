@@ -30,12 +30,13 @@ import type {
 } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import { encodeCwd, getSessionsDir } from '../../infra/pi/pi-paths.js'
-import { scanExternalSessions, type ExternalSessionMeta } from '../../infra/pi/session-file-external-scan.js'
+import { scanExternalSessions, parseHeaderFromFirstLine, type ExternalSessionMeta } from '../../infra/pi/session-file-external-scan.js'
 import {
   invalidateScanDirCache,
   persistProjectBinding,
   readProjectBinding,
   scanPiSessions,
+  TMP_RESIDUE_MARKERS,
 } from '../../infra/pi/session-file-utils.js'
 
 /** 导入领域错误：handler（u3）按 code 转 error envelope（同 GitError 模式）。 */
@@ -76,11 +77,9 @@ const HEADER_CHUNK_BYTES = 4096
 const TMP_IMPORT_MARKER = '.tmp-import-'
 
 /**
- * 文件名标记拒绝家族（r2-S1）。session-file-utils 的 TMP_RESIDUE_MARKERS 未导出（模块私有，
- * U2 领地不触碰该文件），此处为导入侧校验的本地副本——两侧语义由设计 D1/r2-S1 锁定：
- * 扫描器过滤与导入拒绝必须覆盖同一集合。
+ * 文件名标记拒绝家族（r2-S1；r1-S5 收敛）：直接消费 session-file-utils 导出的
+ * TMP_RESIDUE_MARKERS 同一常量（扫描器过滤与导入拒绝覆盖同一集合，双副本漂移面消灭）。
  */
-const MARKER_PATTERNS = ['.tmp-migrate-', TMP_IMPORT_MARKER] as const
 
 /**
  * 全局单条导入互斥（D4/r4 修订）：单条 Promise 链一次只执行一条导入，无键选择无回收问题。
@@ -121,39 +120,42 @@ function matchesQuery(item: ImportCandidate, query: string): boolean {
  * 与 parseSessionHeader 同策略：先读 4KB 块取首行；块内无换行且未读满（文件本身小于块）
  * 按无首行终止处理；块读满仍无换行（首行超长）继续续读——等价于回退全量读首行的语义。
  * 空文件返回 null。
+ *
+ * 跨块解码（r1-S2）：块以 Buffer 累积、检测换行时 Buffer.concat 后整体 toString——
+ * 逐块 toString 会在多字节 UTF-8 字符（CJK）跨 4KB 块边界时拆出 U+FFFD，长中文路径的
+ * header 首行会被静默损坏。
  */
 async function readFirstLineAsync(filePath: string): Promise<string | null> {
   const fh = await open(filePath, 'r')
   try {
     const buffer = Buffer.alloc(HEADER_CHUNK_BYTES)
-    let carry = ''
+    const chunks: Buffer[] = []
     for (;;) {
       const { bytesRead } = await fh.read(buffer, 0, HEADER_CHUNK_BYTES, null)
-      if (bytesRead > 0) {
-        carry += buffer.toString('utf-8', 0, bytesRead)
-        const newlineIdx = carry.indexOf('\n')
-        if (newlineIdx >= 0) return carry.slice(0, newlineIdx)
+      if (bytesRead === 0) {
+        return chunks.length > 0 ? Buffer.concat(chunks).toString('utf-8') : null
       }
-      if (bytesRead < HEADER_CHUNK_BYTES) return carry.length > 0 ? carry : null
+      // 换行先在原始 Buffer 上定位（r5-S4：避免逐块 Buffer.concat 的 O(n²) 复制——超长首行
+      // 续读多轮时，每轮 concat 全量重组）；换行前内容才入 chunks，最终一次性 concat 解码。
+      const nl = buffer.subarray(0, bytesRead).indexOf(0x0a)
+      if (nl >= 0) {
+        chunks.push(Buffer.from(buffer.subarray(0, nl)))
+        return Buffer.concat(chunks).toString('utf-8')
+      }
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)))
+      if (bytesRead < HEADER_CHUNK_BYTES) {
+        return chunks.length > 0 ? Buffer.concat(chunks).toString('utf-8') : null
+      }
     }
   } finally {
     await fh.close()
   }
 }
 
-/** D1 header 合法性字段清单：type==='session' 且 id/cwd 均为非空字符串（缺 cwd 不容忍）。 */
-function parseHeaderFromFirstLine(firstLine: string): { id: string; cwd: string } | null {
-  let entry: Record<string, unknown>
-  try {
-    entry = JSON.parse(firstLine) as Record<string, unknown>
-  } catch {
-    return null
-  }
-  if (entry.type !== 'session') return null
-  if (typeof entry.id !== 'string' || entry.id === '') return null
-  if (typeof entry.cwd !== 'string' || entry.cwd === '') return null
-  return { id: entry.id, cwd: entry.cwd }
-}
+// header 解析（parseHeaderFromFirstLine）直接消费 session-file-external-scan 导出的同一函数
+//（D1 字段清单 SSOT 单副本）：含 null/非 object 运行时守卫，null 首行（TOCTOU 源文件被
+// 替换）与畸形 JSON 一律返回 null → import_invalid_session，不逃逸原始 TypeError。
+// 本服务只消费 id/cwd，timestamp 是外部扫描侧的对齐保留字段。
 
 export class ImportService {
   constructor(private deps: ImportServiceDeps) {}
@@ -242,7 +244,7 @@ export class ImportService {
     }
 
     // 2. 文件名标记校验（r2-S1）：导入落地后会被自家扫描过滤器挡成 limbo，前置拒绝
-    if (MARKER_PATTERNS.some((marker) => sourceName.includes(marker))) {
+    if (TMP_RESIDUE_MARKERS.some((marker) => sourceName.includes(marker))) {
       throw new ImportServiceError('import_marker_filename', `文件名包含临时标记，疑似迁移残留副本：${sourceName}`)
     }
 

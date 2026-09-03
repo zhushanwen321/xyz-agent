@@ -406,5 +406,38 @@ describe('ImportService.importSession', () => {
     writeFileSync(join(root, 'no-cwd.jsonl'), `${JSON.stringify({ type: 'session', version: 1, id: 'invalid-id-0001', timestamp: '2026-01-01T00:00:00.000Z' })}\n`)
     await expect(catchCode(() => svc.importSession({ sourcePath: join(root, 'no-cwd.jsonl'), projectId: 'proj-1' })))
       .resolves.toBe('import_invalid_session')
+
+    // 首行为字面量 null（r5-MF1）：parse 产物非 object 须被运行时守卫拦下转
+    // import_invalid_session，不得逃逸原始 TypeError 被 handler 兜底成 import_failed
+    writeFileSync(join(root, 'null-first.jsonl'), 'null\n')
+    await expect(catchCode(() => svc.importSession({ sourcePath: join(root, 'null-first.jsonl'), projectId: 'proj-1' })))
+      .resolves.toBe('import_invalid_session')
+  })
+
+  it('readFirstLineAsync 跨块多字节解码（r1-S2）：CJK cwd 跨 4KB 块边界无损，targetPath 按真实 cwd 构造', async () => {
+    const root = join(fixturesRoot, 'cjk-import-root')
+    mkdirSync(root, { recursive: true })
+    // 构造首行 > 4KB 且首 CJK 字符（3 字节）恰跨 4096 边界：逐块 toString 会拆出 U+FFFD。
+    // padding 放在 cwd 之外的旁路 JSON 字段——若塞进 cwd，encodeCwd 目标目录名会超
+    // macOS NAME_MAX(255) 抛 ENAMETOOLONG，注入点跑不到断言。
+    const CHUNK = 4096
+    const head = '{"type":"session","version":1,"id":"cjk-import-0001","pad":"'
+    const mid = '","cwd":"/tmp/'
+    const cjk = '极长的中文路径目录名用于跨块解码回归'
+    const tail = '","timestamp":"2026-01-01T00:00:00.000Z"}'
+    // ASCII 前缀字节长 = 字符长；padLen 使 CJK 首字符起于字节 4095、跨 4096 边界
+    const padLen = CHUNK - 1 - head.length - mid.length
+    const cwd = '/tmp/' + cjk
+    const firstLine = head + 'a'.repeat(padLen) + mid + cjk + tail
+    expect(firstLine.length).toBeGreaterThan(CHUNK) // 前提：首行跨块
+    const src = join(root, 'cjk.jsonl')
+    writeFileSync(src, firstLine + '\n')
+
+    const svc = makeImportService()
+    const reply = await svc.importSession({ sourcePath: src, projectId: 'proj-1' })
+    expect(reply.sessionId).toBe('cjk-import-0001')
+    expect(reply.warning).toBeUndefined()
+    // cwd 解码无损 → targetPath 按真实（无 U+FFFD）cwd 构造
+    expect(reply.targetPath).toBe(join(getSessionsDir(), encodeCwd(cwd), 'cjk.jsonl'))
   })
 })

@@ -613,6 +613,25 @@ describe('ImportSessionDialog（U5 验收）', () => {
       expect(toastMocks.warning).not.toHaveBeenCalled()
     })
 
+    it('name/dirLabel 均空（根顶层文件）：emit sessionName 回退短 ID（uuid 前 6 位）', async () => {
+      // 顶层文件 dirLabel=''：sessionName 三级回退（name || dirLabel || 短 ID）落到末级
+      apiMocks.importCandidates.mockImplementationOnce(async () => ({
+        total: 1,
+        items: [makeCandidate({ name: null, dirLabel: '' })],
+        dirs: [],
+      }))
+      await mountDialog()
+
+      await importViaRowButton(0)
+
+      const imported = wrapper!.emitted('imported')
+      expect(imported).toHaveLength(1)
+      expect(imported![0][0]).toMatchObject({
+        sessionId: 'imported-new-session-id',
+        sessionName: '01a044',
+      })
+    })
+
     it('sidecar_failed warning：成功文案 + 降级预警合并单条 warning toast（非 error），emit payload 携带 warning', async () => {
       await mountDialog()
       apiMocks.importSession.mockResolvedValueOnce({

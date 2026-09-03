@@ -52,10 +52,10 @@ export const IMPORT_FRESH_VISIBLE_MS = 3_200
 /** 淡出过渡时长（demo --dur: 200ms；SessionItem transition-opacity duration-200 对应） */
 export const IMPORT_FRESH_FADE_MS = 200
 
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：导入 fresh 徽标状态（sessionId → 生命周期阶段）
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，随登记表 §4 ⑧ 补登落定非草稿）：导入 fresh 徽标状态（sessionId → 生命周期阶段）
 const freshImports = shallowRef(new Map<string, ImportFreshState>())
 
-// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：fresh 徽标计时器句柄表，非 GUI 数据
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，随登记表 §4 ⑧ 补登落定非草稿）：fresh 徽标计时器句柄表，非 GUI 数据
 /** 每 sessionId 两个 timer（实显 → fading / fading → 移除），重复标记时清旧 */
 const freshTimers = new Map<string, ReturnType<typeof setTimeout>[]>()
 
@@ -191,12 +191,13 @@ export function useImportSession(options: UseImportSessionOptions = {}) {
     return items.value.filter((item) => item.dirLabel === selectedDir.value)
   })
 
-  /** 路径模式判定：query 以 '/' 或 '~' 开头（D5 S7 renderer 侧切换；runtime 无分支） */
+  /** 路径模式判定：query 以 '/' 或 '~' 开头（D5 S7 renderer 侧切换；runtime 无分支）。纯 query 派生，数据面登记归 #22 */
   const isPathMode = computed<boolean>(() => /^[~/]/.test(query.value.trim()))
 
   /**
    * 路径模式命中条目：候选中 sourcePath includes query 的首条（items 已按
-   * lastModified 降序）。runtime 的 includes 匹配天然覆盖路径输入，此处只在
+   * lastModified 降序；isPathMode/pathHit 均纯派生投影，数据面登记归 #22）。
+   * runtime 的 includes 匹配天然覆盖路径输入，此处只在
    * renderer 侧收敛到「路径行」单一命中语义（demo 方案 A path-bar）。
    */
   const pathHit = computed<ImportCandidate | null>(() => {
@@ -348,7 +349,8 @@ export function useImportSession(options: UseImportSessionOptions = {}) {
       notifyImportResult(candidate, reply.warning)
       options.onImported?.({
         sessionId: reply.sessionId,
-        sessionName: candidate.name || candidate.dirLabel,
+        // name/dirLabel 均空（顶层文件无目录名）时回退短 ID——与 toast 显示名回退口径一致
+        sessionName: candidate.name || candidate.dirLabel || candidate.sessionId.slice(0, IMPORT_SHORT_ID_LENGTH),
         projectName: selectedProjectName.value,
         targetPath: reply.targetPath,
         warning: reply.warning,

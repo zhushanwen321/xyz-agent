@@ -733,8 +733,9 @@ const TMP_MIGRATE_RESIDUE_MAX_AGE_MS = 3_600_000
  * `.tmp-import-`（导入 tmp+rename 复制）同规则——两类临时文件的 lifecycle 同为毫秒级
  * （写临时名后立即 rename），崩溃残留的形态与风险同构，清扫与扫描过滤按家族扩展。
  * isScannableSessionFile 的文件名过滤消费同一集合（候选侧与清扫侧同规则）。
+ * r1-S5 起导出：import-service 的导入拒绝校验消费同一常量（消灭双副本漂移面）。
  */
-const TMP_RESIDUE_MARKERS = ['.tmp-migrate-', '.tmp-import-'] as const
+export const TMP_RESIDUE_MARKERS = ['.tmp-migrate-', '.tmp-import-'] as const
 
 /**
  * 启动期清扫 sessions 目录下的 `.tmp-migrate-*.jsonl` / `.tmp-import-*.jsonl` 崩溃残留
@@ -911,7 +912,7 @@ export function invalidateSessionMetaCache(filePath: string): void {
  *
  * 文件删除/不可读（INVAR-cache-4）→ 清该 key 返回 null。
  */
-export function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
+function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
   let fstat
   try {
     fstat = statSync(filePath)
