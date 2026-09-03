@@ -114,6 +114,7 @@ graph TD
 | 7 | A-V4 行数线 ≤350 → ≤650 | doc_errors 校准 | 设计初稿算术错误（§3.1 随迁表物理减量上限 ~408 行 vs 945−350=595 需求）；u-4 实测终态 627；设计文档 §4 A-V4 已同步修订（2026-09-03）；扩大搬移范围违反 D2 被否 |
 | 8 | u-4 领地扩展 +4 文件：`src/interface/tool-workflow.ts`、`src/interface/commands.ts`、`src/__tests__/command-handlers.test.ts`、`src/__tests__/index-session-start.test.ts` | 领地扩展 | lazyDeps 改惰性回调（设计钦定行为变更点）的签名与消费点在 interface 层（tool-workflow :311+6 处、commands :61-68+1 处）；混入 u-2b 会污染机械归一单元的验收纯度；与 W1 其余单元领地无冲突 |
 | 9 | `resource-discovery-manifest-cache.test.ts` 整文件删除（设计 B-1 未点名该文件） | 范围澄清 | 该专项文件主体 = readPackageManifestSync（已删）的读计数断言，随删即净；async manifestCache 行为由 resource-discovery.test.ts mtime/KV 系列覆盖——u-1 续作须确认覆盖存在，缺则将对应用例改写为 async 形态并入，不丢缓存行为覆盖 |
+| 10 | lazyDeps 保持 getter 形态（非惰性回调）；偏差 #8 领地扩展未执行（5 文件已 revert） | 回退 | 限额打断续作 agent；lazyDeps getter 覆盖 LauncherDeps 全部成员（store/runs/registry/onRunDone/eventBus/workerHost/runner/log/sessionId/sessionDir），属性访问触发守卫合一 + makeDeps 求值，功能等价惰性回调；差异仅接口形态（getter object vs () => T），运行时行为零变更；session-lifecycle.test.ts 守卫合一用例锁定同源同消息语义 |
 
 ## 6 状态表
 
@@ -123,11 +124,11 @@ graph TD
 | u-2a | in-progress | 1 | dev 报告 done：barrel 135 符号 + globalThis 化 + 0.3.0；core 测试（排除 u-1 领地口径）2352 passed；待主 agent 硬核验 |
 | u-2b | pending | - | - |
 | u-2c | pending | - | - |
-| u-4 | in-progress | 1（裁决点：偏差 #7/#8） | dev 报告：session-lifecycle.ts 488 行抽出、壳测试 916 全绿、typecheck/lint 绿；index.ts 627 行；惰性回调待扩领地续作 |
+| u-4 | committed | 1（裁决 #7/#8/#10 落地） | session-lifecycle.ts 488行新 + index.ts 945→646 + session-lifecycle.test.ts 10用例；守卫合一完成（getWorkflowDeps union）；lazyDeps getter 形态（偏差 #10，功能等价惰性回调）；壳 916 测试全绿 |
 | u-5a | pending | - | - |
 | u-5b | pending | - | - |
 | u-5c | pending | - | - |
-| u-6 | in-progress | 1（超时零产物，重派） | 首派 agent 600s 超时，tui-kit.ts 不存在 |
+| u-6 | pending | quota 恢复后重派（18:54:52） | 首派 + 重派均碰 5h 限额，tui-kit.ts 零产物 |
 
 ## 7 残留风险与变更历史
 
