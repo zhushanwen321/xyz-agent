@@ -147,6 +147,11 @@ graph TD
 
 **残留风险**：
 
+6. （阶段3审查登记，偏差 #22）notify-ledger 迁 core 后与真实 session-delivery 内核的集成路径失去唯一测试覆盖——follow-up：壳套件补轻量集成用例。
+7. （阶段3审查登记，偏差 #23）测试侧深路径经 vite alias 解析无编译期牙齿——深路径回流只能靠收口 rg 门一次性拦截；design-code-sync 补注设计文档。
+8. （Gate B 观察）chat record 的 subagent-record entry 投影 turns 恒 0（one-shot 路径为 2），round 递增正常——属 C5 已撤销域（chat 轮次机），值级排查待 C5 follow-up 触发条件满足时一并处理。
+9. （Gate A 观察）.bare/hooks/pre-commit 共享 hooks「谁最后 install 谁生效」——本 worktree pnpm prepare 会装不含 dev-0.9.13 store_layout section 的版本；跨分支协作既有形态，dev-0.9.13 worktree 下次 commit 前需重跑其 install-hooks。
+
 1. zsw vendor 对 core 现有 4 子入口的双入口消费形态未核对（D9 ⛔）——u-2c dist 静态门内核对；若双入口消费且状态可写，回设计裁决。
 2. tsc 增量报错清单 ↔ rg 深路径清单一致性（设计 §5 u-2 待验证门）——u-2b 验收时对账，不一致即收口不完整，回 u-2b 补归一。
 3. A-V1b 依赖 pi CLI TUI 形态 `/new` 触发同进程二次 session_start；若实测路径不通（/new 不可达或日志锚点缺失），停下回设计（不自行换 /resume——rpc 模式可达性未验证）。
@@ -156,3 +161,7 @@ graph TD
 **变更历史**：
 
 - 2026-09-03：计划建立。用户评审裁定：上一轮交付已向用户展示设计 §5 单元表与实施顺序，用户随后明确指示「开始开发。完成后，执行 design-code-sync」——构成 plan.md 用户评审三件事（切分粒度 = §5 单元表 / worktree = 默认 plain（dag-authoring 决策表无命中条件）/ 验收条款 = §4 已 4 轮审查）的确认，进入执行态。基线 hash 待本文件首次 commit 后回填。
+- 2026-09-03（晚）：W1-W4 全 9 单元开发完成并 committed（u-1 bfcc9d94b / u-2a 720b54235 / u-4 e3183c157 / u-6 aa9ad07a5 / u-2b d312b7071 / u-2c 3d01d3132 / u-5a 6a8b1d3cd / u-5c 57a68b360 / u-5b 62d6345cc）；期间 5h 限额中断一次（u-6 重派、u-4 续作裁决），quota-wait 恢复。
+- 2026-09-03（晚）：阶段 3 三区一致性审查（core / 组合根+测试 / interface+runtime）：4 unreasonable + 10 doc_errors + 25 reasonable；阶段 4 修复批次全清（355c38ffa：D8 new 分支断言锁定、lazyDeps 成员面恢复、manifestCache 5 失败路径用例、check-core-dist-gate.mjs 脚本化、10 doc_errors 修订、偏差 #19-23 登记）。
+- 2026-09-03（晚）：阶段 5 双级验收双绿——Gate A 11/11 命令 exit 0（壳 854/core 2445+6/runtime 4095/build/bundle/dist-gate，零绕过，对账精确）；Gate B 六场景全 pass（A-V1 identity 12 字段+ledger revive+reaper scan / A-V1b same-instance+initSession 覆盖（new_session RPC 触发）/ A-V2 kill-9 双变体 / B-V3 chat 23 字段形态 / B-V5 两步 workflow / C-V1 tui-kit 渲染降级验证），零 fail 零 blocked。
+
