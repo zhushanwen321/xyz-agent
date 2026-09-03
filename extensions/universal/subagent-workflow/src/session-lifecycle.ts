@@ -3,9 +3,9 @@
  *
  * 设计锚点：docs/design/subagent-post-convergence-architecture.md §3.1（D1/D2/D8）。
  * 随迁内容 = 原组合根 index.ts session_start handler（:336-613）的六职责，原样搬移
- * （D2 纪律：本文件不改行为；行为变更点——守卫合一 / lazyDeps 惰性回调——留在
- * index.ts，各自独立成条）：
- *   1. identity env→appendEntry 重建（13 字段）
+ * （D2 纪律：本文件不改行为；行为变更点——守卫合一 / lazyDeps getter 化（10 成员
+ * 守卫触发对象，偏差 #10）——留在 index.ts，各自独立成条）：
+ *   1. identity env→appendEntry 重建（类型 13 字段含 1 个 @deprecated，写入 12）
  *   2. notify ledger host 装配 + 重启恢复
  *   3. 双 Service 装配 + initSession（createOrReuseServices 封装，单例语义 D8）
  *   4. GC / manifest tmp / worktree 恢复
