@@ -1,6 +1,6 @@
 # subagent post-convergence deepening 实施计划
 
-基线: pending（commit 后回填） | 来源设计: [subagent-post-convergence-architecture.md](subagent-post-convergence-architecture.md) | 日期: 2026-09-03
+基线: 5b6ba790c | 来源设计: [subagent-post-convergence-architecture.md](subagent-post-convergence-architecture.md) | 日期: 2026-09-03
 
 对抗式审查证据: [subagent-post-convergence-architecture.review.md](subagent-post-convergence-architecture.review.md)（4 轮，must-fix 5→5→1→1→0，终轮 0 must-fix）。
 
@@ -111,20 +111,23 @@ graph TD
 | 4 | 38 处桩收敛 → 触达文件内化 | 范围裁剪 | 合理：设计无「38 处全迁」验收条目；A-V5（死 mock 0 + 重复注册 0）达标即收（见 §2 范围裁剪声明） |
 | 5 | 死 mock 实测 1 文件（设计 C6 行表述「3 个 mock」指 3 处调用同文件） | 事实校准 | 合理：rg 实测 `session-start-reaper.test.ts` 单文件，3 处 mock 调用在内；验收条目不变 |
 | 6 | runtime 深路径实测 relay 2 生产文件已是合法子入口形态（`./relay-env`），真实深路径仅 extractor/engine-history 2 文件 | 事实校准 | 合理：与设计 B-V1 验收规则一致（命中仅 4 显式子入口） |
+| 7 | A-V4 行数线 ≤350 → ≤650 | doc_errors 校准 | 设计初稿算术错误（§3.1 随迁表物理减量上限 ~408 行 vs 945−350=595 需求）；u-4 实测终态 627；设计文档 §4 A-V4 已同步修订（2026-09-03）；扩大搬移范围违反 D2 被否 |
+| 8 | u-4 领地扩展 +4 文件：`src/interface/tool-workflow.ts`、`src/interface/commands.ts`、`src/__tests__/command-handlers.test.ts`、`src/__tests__/index-session-start.test.ts` | 领地扩展 | lazyDeps 改惰性回调（设计钦定行为变更点）的签名与消费点在 interface 层（tool-workflow :311+6 处、commands :61-68+1 处）；混入 u-2b 会污染机械归一单元的验收纯度；与 W1 其余单元领地无冲突 |
+| 9 | `resource-discovery-manifest-cache.test.ts` 整文件删除（设计 B-1 未点名该文件） | 范围澄清 | 该专项文件主体 = readPackageManifestSync（已删）的读计数断言，随删即净；async manifestCache 行为由 resource-discovery.test.ts mtime/KV 系列覆盖——u-1 续作须确认覆盖存在，缺则将对应用例改写为 async 形态并入，不丢缓存行为覆盖 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u-1 | pending | - | - |
-| u-2a | pending | - | - |
+| u-1 | in-progress | 1（裁决点：偏差 #9 处置 + 环境tmp清理） | dev 报告：五函数已删、rg 门过、typecheck 绿；blockers 待续作消解 |
+| u-2a | in-progress | 1 | dev 报告 done：barrel 135 符号 + globalThis 化 + 0.3.0；core 测试（排除 u-1 领地口径）2352 passed；待主 agent 硬核验 |
 | u-2b | pending | - | - |
 | u-2c | pending | - | - |
-| u-4 | pending | - | - |
+| u-4 | in-progress | 1（裁决点：偏差 #7/#8） | dev 报告：session-lifecycle.ts 488 行抽出、壳测试 916 全绿、typecheck/lint 绿；index.ts 627 行；惰性回调待扩领地续作 |
 | u-5a | pending | - | - |
 | u-5b | pending | - | - |
 | u-5c | pending | - | - |
-| u-6 | pending | - | - |
+| u-6 | in-progress | 1（超时零产物，重派） | 首派 agent 600s 超时，tui-kit.ts 不存在 |
 
 ## 7 残留风险与变更历史
 

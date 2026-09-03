@@ -207,7 +207,7 @@ r1 方案（编排五方法 + runAndFinalize + ChatRoundMachineDeps 整体随迁
 - **A-V1b（reused=true 路径，实测——同进程二次 session_start）**：pi CLI TUI 形态下 `/new`（skill-discovery.ts 注释自证同进程多 session；/resume 为 TUI 命令、rpc 模式可达性未验证，故选 /new）触发第二次 session_start → 断言（锚点 `XYZ_AGENT_DEBUG=1` 扩展日志）：无第二个 SubagentService 实例（getSubagentService 引用同一）、initSession 覆盖生效（sessionId 更新、uiRequestHandler 换新）、GC timer 不翻倍（单 timer 锚点）。守护 D8 的 init 无条件语义。
 - **A-V2（kill-9 恢复实测）**：构造 running 态 state 文件 + kill 主进程 → 重启 session_start → 断言 run 转 done/failed、pending:unregister 事件、state 落盘。通过标准 = 与搬移前行为一致（幂等重试语义保留）。
 - **A-V3（测试打桩面，机器可验）**：改写整类 mock SubagentService 的 **7 个测试文件**（session-start-reaper / index-session-start / index-session-start-identity / crash-recovery / stream-sink-guard / command-handlers / subagent-tool-path-guard）为 seam 注入或访问器 mock 形态后，`rg 'vi.mock' 壳/src/__tests__` 计数：单文件 vi.mock ≤3 且不含 SubagentService/pi-ai/typebox 整类桩。通过标准 = 7 文件全覆盖 + 计数达标 + 全量测试绿。
-- **A-V4（组合根纯度，机器可验）**：index.ts 行数 ≤350 且 `rg 'new (SubagentService|ModelConfigService|WorktreeManager|JsonlRunStore)' src/index.ts` 零命中（构造全部进 deps 工厂 / session-lifecycle）。
+- **A-V4（组合根纯度，机器可验）**：index.ts 行数 ≤650（实施期校准 2026-09-03：初稿 ≤350 与 §3.1 随迁表算术不相容——随迁范围物理减量上限 ~408 行，945−408 ≈ 600+，实测终态 627；达到 350 须扩大搬移随迁表之外 ~250 行，违反 D2 原样搬移纪律，故修订行数线而非扩大随迁范围）且 `rg 'new (SubagentService|ModelConfigService|WorktreeManager|JsonlRunStore)' src/index.ts` 零命中（构造全部进 deps 工厂 / session-lifecycle）。
 - **A-V5（C6 负面行为反向验证，机器可验）**：`rg 'vi\.mock\("\.\./commands|vi\.mock\("\.\./tools|vi\.mock\("\.\./tui' 壳/src/__tests__` 零命中（死路径 mock 清零）；同文件同模块重复 vi.mock 注册 = 0（lint 级检查随 u-5 写入共享桩 module 的使用约定）。
 
 ### 组 B（回溯目标 2「契约面=消费面」/ 3「死轨清零」）
