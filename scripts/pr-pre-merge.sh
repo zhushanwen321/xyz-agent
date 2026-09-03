@@ -56,7 +56,9 @@ while [[ $# -gt 0 ]]; do
         --base)
             [[ -n "${2:-}" ]] || { echo "ERROR: --base 需要一个 ref 名参数" >&2; usage; exit 2; }
             BASE="$2"
-            shift 2
+            # 只 shift 掉 value；flag 本身由循环底部公共 shift 消费（此处 shift 2 会
+            # 在 --base 是末尾参数时多移一次，set -e 下静默 exit 1）
+            shift
             ;;
         --skip-tests|--test-result)
             if [[ "$MODE" != "default" ]]; then
