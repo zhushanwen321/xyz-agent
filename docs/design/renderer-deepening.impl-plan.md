@@ -41,9 +41,9 @@
 | u4.2 | D2 route-inbound 声明式归一（两 commit：骨架 → error 合并） | `core/src/coordination/route-inbound.ts`、`core/src/coordination/route-inbound.test.ts`（平铺，偏差 #8 修正） | u4.1 | plain |① ROUTE_TABLE 条目为声明式 `{sessionEffect?, globalEffect?, crossSession?, payloadGuard?}`；② 'error' 单条目（sessionEffect=onSessionError + globalEffect 含 `!msg.id` 守卫）；③ CROSS_SESSION_TYPES 删（8 条 `crossSession: true` 声明）；④ 守卫两类分置：跳过型入 payloadGuard、整形型（:276 'Unknown error'）留 sessionEffect 参数构造；⑤ 坏形状锁定测试（:293-305/:348-351 等价迁移）绿 |
 | u5.1 | D3/D4 sessionEntry 端口束 + core 切入链全链化 + 时序纠正 | `core/src/domain/session/use-session.ts`、`core/src/domain/session/api-port.ts`（类型）、`core/src/domain/session/__tests__/`（12 步顺序断言新增） | u4.2 | plain | ① UseSessionDeps 含 sessionEntry 端口束（全可选缺省 no-op）；② 统一链 = 壳版时序（sync/navigation 先于 hydrate）；③ 12 步顺序接口级断言（记录型 fake 端口回放调用序）绿；④ core test 绿 |
 | u5.2 | D5 前半：生产切换 + 隔离入口型测试改指 + 术语登记 | `renderer/src/composables/features/sidebar/useSidebarNew.ts`（代理化）、`renderer/src/composables/panel/useChatViewDeps.ts`、`renderer/src/composables/features/trace/useTraceJump.ts`、测试 7 文件（fg6-overview / useSidebar-delete-empty-state / focused-session-id / app-bootstrap / initapp-default-cwd-session / list-load-error / session-trace/useTraceJump）、`docs/architecture/context.md` | u5.1 | plain | ① grep：useChatViewDeps/useTraceJump 无 legacy import；② resetAppBootstrap 引用零命中（改指 resetSidebarNewForTest）；③ context.md 含「Session 切入链」条目；④ renderer test 绿 |
-| u5.3 | D5 后半：mock/动态型 10 测试改指 + legacy 删除 | `renderer/src/composables/features/sidebar/useSidebar.ts`（删）、mock/动态型 9 测试（MessageStream.wire / MessageStream-kind / MessageStream-subagent-force-working / SubagentDirectiveStream / use-fork-notice-stream / useHandoffEffect / use-chat-view-deps / fork-entry-behavior / subagent-tab） | u5.2 | plain | ① useSidebar.ts 文件不存在；② 全仓 grep（静态+动态+mock 三口径）`sidebar/useSidebar'` 零命中；③ renderer test 绿 |
+| u5.3 | D5 后半：mock/动态型 9 测试改指（偏差 #12 后实际 8）+ legacy 删除 | `renderer/src/composables/features/sidebar/useSidebar.ts`（删）、mock/动态型 9 测试（MessageStream.wire / MessageStream-kind / MessageStream-subagent-force-working / SubagentDirectiveStream / use-fork-notice-stream / useHandoffEffect / use-chat-view-deps / fork-entry-behavior / subagent-tab） | u5.2 | plain | ① useSidebar.ts 文件不存在；② 全仓 grep（静态+动态+mock 三口径）`sidebar/useSidebar'` 零命中；③ renderer test 绿 |
 | u6.1 | D6 chat store 剪枝 + facet 类型 + taste-lint 规则（A8） | `core/src/domain/chat/store.ts`、`core/src/domain/chat/index.ts`（facet 导出）、`taste-lint/`（新规则 + 注册）、`renderer/src/__tests__/useChat.test.ts`、`renderer/src/__tests__/stores/chat-dispose-session.test.ts` | u5.3 | plain | ① timer 三件套入 testInternals 命名空间（return 面无顶层导出），2 测试改指；② ChatStoreReaders/ChatStoreOps facet 类型导出；③ A8：临时 fixture 误用 ops 字段 → lint 报错指向 facet 文件，移除后复绿（fixture 不入库）；④ core+renderer test 绿 + `pnpm lint` 绿 |
-| u6.2 | D13 branchSummary entry 化 + effects 骨架 helper + apply-entry builder | `core/src/domain/chat/effects/registry.ts`、`core/src/domain/chat/effects/bash-effects.ts`、`core/src/domain/chat/apply-entry.ts` + 相关测试 | u5.3 | plain | ① branchSummary live 链路 entry 化投影（fallback 与 reducer 收敛一致）；② live ≡ reload 新增等价用例（branch 后两路投影一致）绿；③ applyEntryFrameWithOverlay helper 存在且 ≥3 处消费；④ core test 绿；独立 commit（行为变化） |
+| u6.2 | D13 branchSummary entry 化 + effects 骨架 helper + apply-entry builder | `core/src/domain/chat/effects/registry.ts`、`core/src/domain/chat/bash-effects.ts`（偏差 #14）、`core/src/domain/chat/apply-entry.ts` + 相关测试 | u5.3 | plain | ① branchSummary live 链路 entry 化投影（fallback 与 reducer 收敛一致）；② live ≡ reload 新增等价用例（branch 后两路投影一致）绿；③ applyEntryFrameWithOverlay helper 存在且 ≥3 处消费；④ core test 绿；独立 commit（行为变化） |
 
 **u-foundation 缺席声明**：各单元的契约（payloadGuard schema / sessionEntry 端口 / facet 类型 / staging config）均在其领地内就地定义并被后续单元消费（串行边承载），无并行单元共编的共享契约文件，故不设 u-foundation 根节点。
 
@@ -68,7 +68,7 @@ graph TD
   subgraph W5[Wave5 组5a session 切入链]
     U51["u5.1 端口束+全链+时序纠正<br/>领地: use-session/api-port"]
     U52["u5.2 生产切换+隔离型6+1测试<br/>领地: sidebarNew/2生产/7测试/context.md"]
-    U53["u5.3 mock型9测试+legacy删<br/>领地: useSidebar删/9测试"]
+    U53["u5.3 mock型9测试+legacy删(偏差#12后实际8)<br/>领地: useSidebar删/9测试"]
   end
   subgraph W6[Wave6 组5b chat 接口]
     U61["u6.1 剪枝+facet+taste-lint<br/>领地: store/index/taste-lint/2测试"]
@@ -76,7 +76,7 @@ graph TD
   end
   U11 -->|"use-connection.ts 同文件共改"| U12
   U12 -->|"use-connection.ts 同文件共改（toast 删除后测改写）"| U13
-  U13 -->|"route-inbound 静态 import 依赖 u1.3 回直形态"| U21
+  U13 -->|"按 D12 波次序（u1.3 终态为动态 import 保留，见偏差 #3）"| U21
   U13 -->|"composer 不依赖 u1 但按 D12 波次序（W1 先行清场）"| U31
   U31 -->|"同文件后改（窄契约定性后泛化）"| U32
   U13 -->|"route-inbound.ts u4.2 在 u1.3 终态（动态 import 保留，P5 回退）基础上动同文件"| U41
@@ -112,7 +112,7 @@ graph TD
 | 6 | u3.1 定性偏离设计预判：send/submit 的 {getSegments} 字段不在权威接口（权威面=context 消费面），Pick 不可行，扩权收编被否（波及 dom-core/ui-mock） | 实证修正设计预期，符合设计「不追求全部合一、消灭无名分复制」精神 | 落实为保留局部声明 + 名分注释；一致性审查期回写设计 D8 措辞 |
 | 7 | u3.2 净行数 +108 vs 设计 D8 效果条款「消约 300 行」：镜像重复归零（结构目标）达成，差额为类型契约 + 决策记录注释 | 设计效果估计失准，非实现偏离 | 一致性审查期回写设计 D8 效果措辞（结构目标口径替代绝对行数） |
 | 8 | coordination 测试路径：计划领地写 coordination/__tests__/，实际该目录测试平铺于 coordination/ 下（u4.1/u4.2 两单元一致确认） | 计划路径笔误 | 后续单元领地按平铺约定理解；一致性审查期统一修正计划文本 |
-| 9 | u4.2 ROUTE_TABLE/RouteTableEntry 导出为内部测试 seam（探针注入验证 prologue 分支与 D2-b 组合契约） | 生产无消费、有 resetSubscriptionStates 先例；不导出则组合契约不可测 | 保留导出 + 注释现状；一致性审查期评估是否登记设计 D2 附注 |
+| 9 | u4.2 ROUTE_TABLE/RouteTableEntry 导出为内部测试 seam（探针注入验证 prologue 分支与 D2-b 组合契约） | 生产无消费、有 resetSubscriptionStates 先例；不导出则组合契约不可测 | 保留导出 + 注释现状；一致性审查期评估是否登记设计 D2 附注。RouteTableEntry 部分经轮 1 收编为模块私有（见 #10），ROUTE_TABLE 维持 seam 导出 |
 | 10 | 概念性注释漂移（行为零影响）：符号删除/迁移后的历史锚点未随刷新——一致性审查实测远超初版「约 5 处」（含 events.ts 头注、route-inbound.test ⑩ 系列与 Q1-4b、runtime 两处 seq-gap 锚点、renderer useSidebar 现状指引 8+18 处、useAppCommands stores/command 措辞等） | 审查期统一刷新（预定触发点） | 修复批次已执行（21+ 文件注释改写 + runtime 2 测试 testInternals 改指 + recordGapDispatchedSeq/RouteTableEntry 导出收编），grep 自检零失实残留（[HISTORICAL] 历史叙述豁免） |
 | 15 | u3.2 捎带领地外 new-task-search 3 文件头注修正（commit 69cdb61f1 已披露但未入偏差表）：u2.1 删壳 store 后 core 头注「renderer 旧 store 保留待迁移后删除」成错误陈述，迟至 u3.2 才修 | 跨单元捎带注释修正，行为零影响 | 补登记（B-E3）；u2.1 验收条款未覆盖 core 侧注释同步是根因，后续同类收口单元应把「对侧注释同步」列入验收 |
 | 16 | 汇报口径修正三则：① u2.1 commit「semantics covered by core TC-1..TC-5」承接口径过宽（findCommandByName 为薄包装无独立用例，分组语义承接成立但非 1:1）；② u3.2 行数混用两种基线各差 1（正确口径：基线 a3e19bec3 后 fork 238→150 / handoff 277→192）；③ 偏差 13「SubagentTab 逐字等价」忽略 outcomeFallbackMessages 的 i18n 依赖注入参数化（调用点求值语义等价） | 措辞精度，行为无差异 | commit message 不可追改，此处修正口径；后续批次引用这些数字时按本条口径 |
@@ -130,7 +130,7 @@ graph TD
 | u1.3 | committed | 1 | commit 6f5759e19（u1.3）；core 1275 绿 + renderer 3601 绿；vi.mock 各文件 1 处；③ P5 探针失败走设计预授权降级（动态 import 保留 + route-inbound.ts:358 [HISTORICAL] 实证），u4.x 以动态 import 保留形态为基线 |
 | u2.1 | committed | 1 | commit e3c09d834（u2.1）；P1 通过（清单 docs/design/renderer-deepening.p1-parity.md，core 零补齐）；renderer 345 文件/3579 绿（-22 = 删除壳测试 7+4+11，dev 汇报导误报 8 已核正）；grep 零命中 |
 | u3.1 | committed | 1 | commit a3e19bec3（u3.1）；定性：send/submit/context-chips 保留（字段不在权威面，Pick 不可行，扩权被否）+ 名分注释；fork/handoff Pick<'focus'> 化；injection 已被 ADR-0058 前序收敛（仅清注释）；core 1275 绿 + renderer typecheck 绿 |
-| u3.2 | committed | 1 | commit 69cdb61f1（u3.2）；P2 过门完全泛化（20 段 diff：13 段同构骨架 + 7 类差异全部可配置，未触发降级）；staging-mode.ts 287 行 + 25 等价用例；fork 239→150 / handoff 278→192；导出面逐符号不变；core 1300 绿；净行数 +108（设计「消约 300 行」估计失准，结构目标达成） |
+| u3.2 | committed | 1 | commit 69cdb61f1（u3.2）；P2 过门完全泛化（20 段 diff：13 段同构骨架 + 7 类差异全部可配置，未触发降级）；staging-mode.ts 287 行 + 25 等价用例；fork 238→150 / handoff 277→192（行数口径见偏差 #16②）；导出面逐符号不变；core 1300 绿；净行数 +108（设计「消约 300 行」估计失准，结构目标达成） |
 | u4.1 | committed | 1 | commit 855216946（u4.1）；判定表逐字内嵌（diff 核验）；seqGate 持判定+簿记+基线；applySeqGap 缩为 gate 调用+reconcile 触发；MF-3 接口级 3 用例；core 1303 绿 + runtime 4090 绿（注释残渣修正连带授权） |
 | u4.2 | committed | 2 | 阶段 A commit 076e31ffe（骨架：声明式 schema + 8 条 crossSession + dispatcher 唯一 prologue + 守卫两类分置）+ 阶段 B commit 84398af0b（error 单条目合并 + 默认路径纯兜底）；route-inbound 34 用例（原 28 断言零弱化 + 新 6）；core 1309 绿；ROUTE_TABLE 导出保留为内部测试 seam（D2-b 组合契约探针必需） |
 | u5.1 | committed | 1 | commit 93945c2fd（u5.1）；sessionEntry 六端口全可选（?? noop）；12 步链 = 壳版时序（D4 行为变化即时生效于 core 三消费路径）；新增 6 接口级用例（精确全序/短路/失败尾部）；core 1315 绿 + renderer typecheck 绿；结构裁量：selectSession(1-3) + runEntryChain(4-12) 镜像壳分段 |
@@ -148,12 +148,13 @@ graph TD
 - ~~Gate B 场景（A1-A6）依赖 dev app + 真实 runtime~~——已执行（见变更历史阶段 5 条目）
 - D4/D13 两处行为变化由专项验收（A2/A1 时序观察、A4 branch 段）+ 等价测试兜底——已验
 - **subagent-core resource-discovery 环境性失败**（Gate A 发现）：macOS 系统临时目录残留 `.pi` 目录污染 findWorkspaceRoot Phase 3 上溯——与本流水线 diff 零交集（该包 0 文件在区间），恢复动作 = 清理 `/var/folders/.../T` 下残留 `.pi` 后重跑；Phase 3 无上溯边界属实现层缺口（先存）
-- **pi×Bun proper-lockfile 恢复崩溃**（Gate B A3 发现）：pi 0.84.4 under Bun 1.3.14 在大 session 恢复路径偶发/可稳定复现 `TypeError: Proxy handler's 'get'...`（mtime-precision.js）——先存环境问题（基线日志同签名），本流水线 runtime 改动仅 3 行注释；runtime 侧重试与「重新打开」恢复路径经 A3 验证可用
+- **pi×Bun proper-lockfile 恢复崩溃**（Gate B A3 发现）：pi 0.84.4 under Bun 1.3.14 在大 session 恢复路径偶发/可稳定复现 `TypeError: Proxy handler's 'get'...`（mtime-precision.js）——先存环境问题（基线日志同签名），runtime src 仅 3 处注释改写（共 5 行：message-bus.ts 1 / terminal-service.ts 2 / extension-message-handler.ts 2）；另 2 测试文件 testInternals 改指（偏差 #10），均不触及 pi 恢复路径；runtime 侧重试与「重新打开」恢复路径经 A3 验证可用
 - **OPS_FIELDS 手工镜像清单无机器同步守卫**（E 区审查建议）：解析 store.ts 源码比对的守卫测试成本很低，建议后续补
 - **ChatStoreReaders/ChatStoreOps 零消费方**（渐进态）：pinia 解包鸿沟需后续波次做消费方标注落地
+- **useSidebarNew 临时接缝名重命名未排期**：源码头注原承诺「消费方切换完成后（后续 wave）重命名取代 useSidebar」——u5.2/u5.3 落地后（D5）触发条件已满足，重命名至今未排期，该承诺由本条承载（useSidebarNew.ts 头注互指此处）
 - renderer 包名 @xyz-agent/frontend 与目录名 renderer 不一致（--filter 目录直觉名静默 exit 0）——包结构现状，非本流水线引入
 
 **变更历史**：
 - 2026-09-03 v1：初版计划（13 单元 / 6 波次 / DAG 含边原因）。来源：设计 v4（含实施前复核修正 D5 消费面）。
-- 2026-09-03 轮 1（一致性审查 + 修复）：五区对抗式审查（A transport / B composer+search / C coordination / D session / E chat+lint）结论 = unreasonable 3 条全低危（注释刷新未执行、recordGapDispatchedSeq 死导出、RouteTableEntry 多导半张）+ doc_errors 约 12 条；修复批次清零（注释刷新 21+ 文件、导出收编 2 项、runtime 4 红用例根因为 u6.1 testInternals 收编的跨包消费面漏跑已修）；设计文档同步回写 v5；偏差表 #10 扩围落地、新增 #15/#16、#8 领地路径修正。审查另确认：两处声明行为变化（D4/D5）范围与实现精确吻合、偏差 #11 两处等价声称经源码核实成立、runEntryChain 维持不导出（导出会制造第二编排点违背 G1）。
+- 2026-09-03 轮 1（一致性审查 + 修复）：五区对抗式审查（A transport / B composer+search / C coordination / D session / E chat+lint）结论 = unreasonable 3 条全低危（注释刷新未执行、recordGapDispatchedSeq 死导出、RouteTableEntry 多导半张）+ doc_errors 约 12 条；修复批次清零（注释刷新 21+ 文件、导出收编 2 项、runtime 4 红用例根因为 u6.1 testInternals 收编的跨包消费面漏跑已修）；设计文档同步回写 v5；偏差表 #10 扩围落地、新增 #15/#16、#8 领地路径修正。审查另确认：两处声明行为变化（D4/D13）范围与实现精确吻合、偏差 #11 两处等价声称经源码核实成立、runEntryChain 维持不导出（导出会制造第二编排点违背 G1）。
 - 2026-09-03 阶段 5 双级验收：**Gate A 全量绿**（根 pnpm test 全 workspace 约 16.2k 用例，唯一失败 subagent-core resource-discovery 为环境性——系统临时目录残留 .pi 污染，与 diff 区间零交集，登记残留风险；lint --max-warnings 0 零输出；5 包 typecheck 全过；taste-lint 78 用例绿；零新增 skip/disable）。**Gate B dev 实跑**：A1 过（panel-first 挂载 + 历史回填 + 10 连切零重复订阅 warn；未读 badge 子项无 live 未读环境，由 12 步链级单测覆盖）；A1-负向未 live 跑（断网工具不可用，failedHistory 重试语义由 u5.1 失败用例覆盖）；A2 过（删活跃 session → 回退 + 回退路径流订阅 live 实证——D3 接缝债闭合）；A3 过（kill runtime → tsx-watch supervisor 重启 → 渲染端重连 → 消息路由正常 → pi 恢复崩溃以流内错误 + 降级面板 + 重新打开恢复路径正确呈现；pi×Bun proper-lockfile 崩溃为环境性先存，基线日志同签名）；A4 过（真实模型 GLM-5.3 对话：思考×1 + bash 工具×1 + 流式答案完整渲染；live≡reload 逐字一致仅耗时标签墙钟差；fork/handoff staging 进出双态验证；branchSummary live≡reload 由 u6.2 三套等价测试钉住）；A5 过（mock 流式/思考/工具/变更集 fixture 全渲染，2 条 warn 为先存 mock 轨行为逐字不变）；A6 过（⌘K 与 CommandPopover 同源命令集 live 一致）；A8 过（lint 负面双向）。执行副作用如实记录：3 个真实 session 各被追加 1-3 条测试消息（检查worktree/architecture-review-explor/确认收到），一次性 gate-b session 已删。

@@ -22,7 +22,9 @@
  *
  * 消费状态（C-W5-4）：生产消费方已全量切换（u5.2），legacy useSidebar 仅剩测试触达（u5.3 删除）。
  *
- * 命名说明：useSidebarNew 是临时接缝名，消费方切换完成后（后续 wave）重命名取代 useSidebar。
+ * 命名说明：useSidebarNew 是临时接缝名，原承诺消费方切换完成后（后续 wave）重命名取代 useSidebar——
+ * u5.2/u5.3 已完成切换与 legacy useSidebar 删除，触发条件满足，重命名未排期，
+ * 见 renderer-deepening.impl-plan.md 残留风险。
  */
 import type { ComputedRef } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'

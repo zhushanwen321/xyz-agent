@@ -96,7 +96,7 @@ xyz-agent 是 Electron + Vue 3 桌面 AI agent 工作台。前端分两包：**c
 ### 例 5：composer 镜像重复与类型抄写（R2）
 
 - `packages/core/src/domain/composer/dispatch/fork-mode.ts`（241 行）× `handoff-mode.ts`（280 行）：约 75% 逐字镜像（enter/exit/signal watch 守卫/handleEsc/handleSend 骨架/modeRef getter），注释自证「与 fork handleForkSend 对称」（handoff-mode.ts:205/211）。
-- `ComposerInputInstance` 类型散布：权威宽接口已在 `composer/types.ts:173`（ADR-0058 归位），另有 6 处局部声明——`dispatch/send.ts:32`、`submit.ts:26`（均 `{getSegments}`）、`fork-mode.ts:40`、`handoff-mode.ts:38`（`{focus?}`）、`context/injection.ts`、`context/context-chips.ts:29-32`（`{getSegments; removeImageChip}`，已带意图注释——恰是有意窄契约的已达标样例）。局部声明多为有意的结构子类型窄契约（各模块只声明所需最小面），但与权威接口的关系零注释（context-chips 除外）——读者无法区分「有意窄契约」与「漂移抄写」；要消灭的是无名分的复制，不是窄契约本身。
+- `ComposerInputInstance` 类型散布：权威宽接口已在 `composer/types.ts:173`（ADR-0058 归位），另有 5 处局部声明——`dispatch/send.ts:30`、`submit.ts:26`（均 `{getSegments}`）、`fork-mode.ts:35`、`handoff-mode.ts:37`（`{focus?}`）、`context/context-chips.ts:29-32`（`{getSegments; removeImageChip}`，已带意图注释——恰是有意窄契约的已达标样例）。`context/injection.ts` 曾被列为第 6 处，基线核实（f86f2c1 :47）已是 `import type { ComposerInputInstance } from '../types'`——ADR-0058 前序收敛已归位、直接 import 权威接口的达标样例，不属局部声明。局部声明多为有意的结构子类型窄契约（各模块只声明所需最小面），但与权威接口的关系零注释（context-chips 除外）——读者无法区分「有意窄契约」与「漂移抄写」；要消灭的是无名分的复制，不是窄契约本身。
 
 ### 例 6：chat store 公共面——64 项混装（R2）
 
@@ -107,7 +107,7 @@ xyz-agent 是 Electron + Vue 3 桌面 AI agent 工作台。前端分两包：**c
 ### 例 7：死面与注释同步的不变量（R1+R2 混合）
 
 - `disconnected` 错误构造 4 处手写 `Object.assign(new Error(...), { code: 'disconnected' })`：`transport/api/request.ts:56-59`、`transport/use-connection.ts:276-281/289-291/309-315`，靠三份注释互相对齐；消费方为字符串透传（useFileTree 读 `error.code` 存 reason），生产无等值分支——等值断言在钉住测试，字面量单点的价值在流入 UI 状态与测试锁定（一致性审查修正：初版「任何一处改字面量即静默失配」的耦合强度被夸大）。
-- EXTENSION_BRIDGE_TYPES 白名单双写：壳 `useExtensionHostBridge.ts:76-82` 与 core `message-bus-bridge.ts:324-330`，靠注释保持 5 项一致。
+- EXTENSION 白名单双写：壳 `EXTENSION_BRIDGE_TYPES` 白名单（`useExtensionHostBridge.ts:76-82`）与 core `EXTENSION_HANDLERS` 键集（`message-bus-bridge.ts:324-330`），靠注释保持 5 项一致。
 - core 内部经自身 barrel 回引成环：`domain/chat/lru.ts:25`、`changeset.ts:25`、`timers.ts:13`（+ transport/mock 3 处）import `@xyz-agent/core`——index.ts re-export lru，lru 又 import index，运行期不炸但 ESM 序隐患。
 - 死面：`events.ts:60-62` 的 `dispatch` 兼容别名生产零调用；`use-connection.ts:77` ConnectionPorts.toast 死字段（壳装配被迫提供 useToast()）；`platform/port.ts:55-67` PlatformPort.ipc 三处注入 null（桌面/移动/mock platform——一致性审查修正，初版漏计 mock 注入点）、core 零消费（接口宣告不存在的能力）；`extension-host/builtin/tasks/manifest.ts` 118 行生产零消费且形状已漂移（slashCommands name 前导 `/` 不一致）；`domain/session/effects/panel-orchestration.ts` 是 widget 删除后的纯 interface 残渣；`extension-host/activation-manager.ts`（64 行）生产注入 no-op trigger（useExtensionHostBridge.ts:290-292）、registerActivationEvents 生产零调用——休眠模块未标记，读者会误判为已生效机制。
 
@@ -243,9 +243,9 @@ runtime 进程（WS push）
 - **效果**：G2——command 概念一个 SSOT，-235 行。
 
 **D8：createStagingMode 泛化（组 3，选定）**
-- **采用**：一个 `createStagingMode(config)` 泛型 module + fork/handoff 两份配置对象。ComposerInputInstance 收敛方向（探针 P2 一并定性）：权威宽接口已在 `composer/types.ts:173`，6 处局部窄契约逐处判定——有意的耦合控制（send/submit 的 `{getSegments}`、handoff 的 `{focus?}`、context-chips 的 `{getSegments; removeImageChip}`——后者已带意图注释，P2 定性预期为保留）改为字段级 import / 从权威接口 `Pick` 派生并注释声明意图，漂移抄写直接删；**不追求全部合一**（窄契约是合法形态，消灭的是无名分复制）。（实施修正：send/submit/context-chips 的字段不在权威接口——权威面 = context 消费面，Pick 不可行且扩权收编被否（必选字段波及 dom-core/ui-mock、可选字段语义降级）；落为保留局部声明 + 名分注释。fork/handoff 的 focus 在权威面，已 Pick 化。）**前置硬门（探针 P2）**：先列 25% 差异清单 + 窄契约定性，全部确认可配置表达才动手；发现行为级差异 → 降级为部分泛化（共享骨架函数 + 各自保留差异段），不硬抽象。
+- **采用**：一个 `createStagingMode(config)` 泛型 module + fork/handoff 两份配置对象。ComposerInputInstance 收敛方向（探针 P2 一并定性）：权威宽接口已在 `composer/types.ts:173`，5 处局部窄契约逐处判定——有意的耦合控制（send/submit 的 `{getSegments}`、handoff 的 `{focus?}`、context-chips 的 `{getSegments; removeImageChip}`——后者已带意图注释，P2 定性预期为保留）改为字段级 import / 从权威接口 `Pick` 派生并注释声明意图，漂移抄写直接删；**不追求全部合一**（窄契约是合法形态，消灭的是无名分复制）。（实施修正：send/submit/context-chips 的字段不在权威接口——权威面 = context 消费面，Pick 不可行且扩权收编被否（必选字段波及 dom-core/ui-mock、可选字段语义降级）；落为保留局部声明 + 名分注释。fork/handoff 的 focus 在权威面，已 Pick 化。）**前置硬门（探针 P2）**：先列 25% 差异清单 + 窄契约定性，全部确认可配置表达才动手；发现行为级差异 → 降级为部分泛化（共享骨架函数 + 各自保留差异段），不硬抽象。
 - **被否**：① 维持镜像——注释自证对称的两份拷贝独立漂移；② 抽象基类继承——引入继承层级换配置就能解决的问题，加机制不减法（准则 8）。
-- **证据**：fork-mode.ts:241 行 × handoff-mode.ts:280 行镜像清单（enter/exit/watch 守卫/handleEsc/handleSend 骨架/modeRef getter）；类型 5 份清单。
+- **证据**：fork-mode.ts:241 行 × handoff-mode.ts:280 行镜像清单（enter/exit/watch 守卫/handleEsc/handleSend 骨架/modeRef getter）；类型 5 份局部声明清单（即例 5 的 5 处，injection.ts 已归位不计）。
 - **效果**：G5 下的 leverage——镜像重复归零、新增 staging mode = 一份配置（一致性审查修正：净行数 +108——类型契约与决策记录注释；fork/handoff 各 -31%/-37%，初版「消约 300 行」绝对行数估计失准，结构目标达成）。
 
 **D9：ensureDispatcher 可选注入——内部测试 seam 复位（组 1，选定）**
@@ -297,7 +297,7 @@ runtime 进程（WS push）
 | A4 | 真实对话流 + extension 下行（行为等价总验） | 真实模型跑「列出当前目录文件」（bash 工具 + thinking + 流式）；触发一个产生 widget 的 pi extension 下行（crossSession 类型）；执行一次 fork 与一次 handoff（含 staging 态 Esc/发送）；触发一次 branch（branchSummary 路径） | 全部渲染与改造前一致；widget 在 drawer 正常渲染；staging 文案/Esc/发送行为一致；branch 后 live 显示与关闭重开一致（live ≡ reload，D13） | G5/D8/D13 |
 | A5 | mock 模式 | VITE_MOCK=true 启动，跑一条流式对话 | mock 流式、思考/工具块、变更集 fixture 全部正常（mock 轨不在本次改动范围，行为必须不变） | G5 负向 |
 | A6 | command SSOT（组 2 专项） | 新建一个 session（触发 runtime 推送该 session 的 commands 更新）后：⌘K 搜索跳转 + 打开 CommandPopover + 走 new-task 命令流 | 三处消费同一份数据：新 session 的命令集在 ⌘K 结果、CommandPopover 列表、new-task 流三处同步可见且一致；壳 stores/command.ts 与 fileSearch.ts 已不存在 | G2 |
-| A7 | 回归门 | 根 `pnpm test` + `pnpm lint --max-warnings 0` + 双包 typecheck | 全绿；新增钉住测试清单全绿：切入链 12 步顺序断言 / error 双支单条目 / crossSession 声明式 / MF-3 接口级（reconcile 失败基线不动）/ staging 配置等价 / disconnected 工厂单点 | G4/G5 |
+| A7 | 回归门 | 根 `pnpm test` + `pnpm lint --max-warnings 0` + 三包 typecheck（core / renderer / mobile-renderer） | 全绿；新增钉住测试清单全绿：切入链 12 步顺序断言 / error 双支单条目 / crossSession 声明式 / MF-3 接口级（reconcile 失败基线不动）/ staging 配置等价 / disconnected 工厂单点 | G4/G5 |
 | A8 | facet lint 负面拦截（组 5b 专项） | 临时组件 fixture 误用 ops 面字段（如组件内调 evictIfNeeded）→ 跑 taste-lint → 移除 fixture 复跑 | fixture 存在时 lint 报错且 message 指向 facet 定义文件；移除后复绿（空规则/选择器匹配不到任何代码时 A7 同样全绿，故必须以真实误用样例证明拦截成立） | G3 |
 
 各组验收投入匹配：组 1（机械清扫）= A7 + grep 死面零命中一句话验证；组 2 = A6 + A7；组 3 = A4(fork/handoff 段) + A7；组 4 = A3 + A4 + A7；组 5a = A1 + A1-负向 + A2 + A7；组 5b = A4(branch 段) + A7 + A8。
@@ -342,11 +342,11 @@ runtime 进程（WS push）
 | P0-a | timer 三件套生产外部零消费（含测试扫描：2 处测试经公共面消费需连带改指）、ctx 经闭包构建 | grep 全仓（含 __tests__）+ read store.ts:613/:713 | ✅ 已实证（R1 审查修正：初版漏扫测试文件，2 处测试消费已并入 u6.1 改动面） | 连带改指 testInternals |
 | P0-b | legacy useSidebar 消费面 = 1 生产 + 6 测试；fork/handoff/initApp 在 New 已存在 | grep + read :395-396/:424-425/:63-68 | ✅ 已实证 | — |
 | P0-c | core/壳切入链时序已漂移（hydrate-first vs panel-first） | read use-session.ts:230-255 vs useSidebarNew.ts:214-242 | ✅ 已实证 | — |
-| P1 | command 双轨语义对等（194 vs 277 差集全是 core 新增，无壳独有行为） | u2.1 前置：逐函数差集核对清单 | ⛔ W2 门前 | 壳独有行为先补齐 core 再切换；核对不通过则本波只做 fileSearch |
-| P2 | staging 两 mode 的 25% 差异全部可配置表达；ComposerInputInstance 6 处窄契约均可定性（有意窄契约 vs 漂移抄写） | u3.1/u3.2 前置：差异清单 + 窄契约逐条定性 | ⛔ W3 门前 | 部分泛化（共享骨架 + 差异段各自保留）；定性不清的窄契约保留原样 + 注释标记待查 |
-| P3 | route-inbound 归一后行为等价 | core 路由测试全绿 + dev 实跑消息流（A3/A4） | ⛔ W4 | 拆两 commit 独立回滚；骨架先行、error 合并后置 |
-| P4 | 统一切入链时序正确（panel 先亮、订阅先于回放消费） | dev 实跑 A1/A2 + console/CDP 观察订阅建立顺序 | ⛔ W5 | 回退壳组合（端口束保留、壳继续重编排），时序问题单独排查 |
-| P5 | use-connection 注入化后 renderer 测试的 ws-client mock 链不失效 | 受影响测试全量跑（u1.3 内） | ⛔ W1 | 保留 subscribe 动态 import，其余照做 |
+| P1 | command 双轨语义对等（194 vs 277 差集全是 core 新增，无壳独有行为） | u2.1 前置：逐函数差集核对清单 | ✅ 已执行·通过（P1 清单落盘，core 零补齐） | 壳独有行为先补齐 core 再切换；核对不通过则本波只做 fileSearch |
+| P2 | staging 两 mode 的 25% 差异全部可配置表达；ComposerInputInstance 5 处窄契约均可定性（有意窄契约 vs 漂移抄写） | u3.1/u3.2 前置：差异清单 + 窄契约逐条定性 | ✅ 已执行·通过（完全泛化，未触发降级） | 部分泛化（共享骨架 + 差异段各自保留）；定性不清的窄契约保留原样 + 注释标记待查 |
+| P3 | route-inbound 归一后行为等价 | core 路由测试全绿 + dev 实跑消息流（A3/A4） | ✅ 已执行·通过（route-inbound 34 用例绿 + Gate B A3/A4 实跑） | 拆两 commit 独立回滚；骨架先行、error 合并后置 |
+| P4 | 统一切入链时序正确（panel 先亮、订阅先于回放消费） | dev 实跑 A1/A2 + console/CDP 观察订阅建立顺序 | ✅ 已执行·通过（12 步接口级断言 + Gate B A1/A2 实跑） | 回退壳组合（端口束保留、壳继续重编排），时序问题单独排查 |
+| P5 | use-connection 注入化后 renderer 测试的 ws-client mock 链不失效 | 受影响测试全量跑（u1.3 内） | ✅ 已执行·失败→D9 降级生效（动态 import 保留，见偏差 #3 与 route-inbound.ts [HISTORICAL]） | 保留 subscribe 动态 import，其余照做 |
 
 ---
 
