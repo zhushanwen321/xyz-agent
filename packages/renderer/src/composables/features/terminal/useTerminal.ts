@@ -21,7 +21,7 @@
  * sessionId（appendChunk/flushPending/updatePartition）、buffer 是非响应式数据（markRaw）。
  * 同款先例：core/domain/chat/useChat.ts 的 streamSubscriptions（模块级 Map + 模块级
  * 订阅编排）、core/domain/drawer 的 write-queue factory 单例 Map（terminal-write-queue
- * store 已同款）。cleanup 仍经 registerSessionCleanup 挂载（useSidebar.deleteSession →
+ * store 已同款）。cleanup 仍经 registerSessionCleanup 挂载（useSidebarNew.deleteSession →
  * triggerSessionCleanups → 删分区 + 退订 + 清 flush 监听器），内存语义与工厂一致。
  *
  * 三层生命周期（W27 后）：
@@ -178,7 +178,7 @@ function cleanupPartition(sid: string): void {
   flushListeners.delete(sid)
 }
 // 模块级注册一次（无 setup scope，应用生命周期内不反注册——分区清理点
-// useSidebar.deleteSession 的 triggerSessionCleanups 是唯一入口）。
+// useSidebarNew.deleteSession 的 triggerSessionCleanups 是唯一入口）。
 // HMR 注意（Fix-6）：vite 热重载本模块时旧模块的 cleanupPartition 仍在 registry 中
 // 残留（triggerSessionCleanups 会多调一次，幂等无害），events.on 的旧 handler 同理
 // （只写旧模块的孤儿分区，随 GC 回收）——与 useChat.streamSubscriptions 同类的

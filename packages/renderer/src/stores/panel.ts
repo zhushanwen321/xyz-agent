@@ -47,8 +47,8 @@ export const usePanelStore = defineStore('panel', () => {
   }
 
   /** active panel 绑定的 sessionId（drawer / 文件树等 per-session 状态的分区键）。
-   *  与 useSidebar.focusedSessionId 同源（useSidebar 从本 store 派生），提升到 store 层供
-   *  useSideDrawer 等 composable 直接读，避免经 useSidebar 实例引入循环依赖。*/
+   *  与 useSidebarNew.focusedSessionId 同源（经 core use-session 的 panel 端口从本 store 派生），
+   *  提升到 store 层供 useSideDrawer 等 composable 直接读，避免经 useSidebarNew 实例引入循环依赖。*/
   const focusedSessionId = computed<string | null>(() => layout.value.sessionId)
 
   return {

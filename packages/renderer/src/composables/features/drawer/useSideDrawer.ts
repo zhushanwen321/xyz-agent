@@ -14,7 +14,7 @@
  * 2. re-export + 函数形状兼容：useSideDrawer() 返回形状与旧版逐字段一致（isOpen/activeTab/
  *    docked/selectedCommandName/detailFilePath/browserUrl/consumeBrowserUrl/open/close/
  *    toggle/setTab/toggleDock），~20 处旧调用方（SideDrawer.vue/PanelContainer.vue/
- *    useSidebar/useDetailPane/useMarkdownInteractions/chat.ts 等）import '@/composables/
+ *    useSidebarNew/useDetailPane/useMarkdownInteractions/chat.ts 等）import '@/composables/
  *    features/useSideDrawer' 路径不变、零改动。
  *
  * 旧 SideDrawer 删除后本兼容层可一并移除（core/domain/drawer 已是 SSOT，新代码直接 import core）。

@@ -247,7 +247,7 @@ const session = useSessionStore()
 const chatStore = useChatStore()
 const { derivedStatus } = useSessionDerivations()
 
-// sidebar 选 session → panel 载入的编排在 useSidebar.selectSession（主路径）
+// sidebar 选 session → panel 载入的编排在 useSidebarNew.selectSession（代理 core use-session，主路径）
 // 与 AppShell watch(navigation.pointer)（⌘[/⌘] 同步），不在此组件 watch：
 // 避免空态不渲染→watch 不注册→loadSession 不触发的初始化时序死锁。
 
@@ -278,7 +278,7 @@ function statusOf(l: PanelLeaf) {
  *  focusedSessionId（惰性 computed，首次求值 pinia 已 active）——本容器自持绑定，不依赖
  *  useSideDrawer 兼容层的模块顶层 bind 副作用（C1：兼容层保留仅服务残留消费方，新代码直连 core）。
  *  方法委托 core coordination 公开 API（openDrawerTab 等）。
- *  bindDrawerSessionId 幂等：同语义 computed 重复绑定不报错（useSidebar 兼容层若已绑则覆盖，
+ *  bindDrawerSessionId 幂等：同语义 computed 重复绑定不报错（useSideDrawer 兼容层若已绑则覆盖，
  *  值等价）。 */
 bindDrawerSessionId(computed<string | null>(() => usePanelStore().focusedSessionId))
 const { isOpen: drawerOpen, activeTab: drawerTab, docked: drawerDocked } = useDrawerControl()

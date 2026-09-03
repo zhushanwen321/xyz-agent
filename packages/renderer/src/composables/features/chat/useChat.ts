@@ -10,7 +10,7 @@
  *    useChatStore/useSessionStore/useToast/i18n/useCompactQueue），20 个消费方零 import 改动
  *    （对齐 w4 createChatStore + defineStore wrapper 模式）。
  * 2. ensureStreamSubscription 同名包装：core 版加 deps 参数（TD5），本包装注入 renderer deps，
- *    4 个复用点（useForkActions/useSidebar/useSessionStreamSync）零改动。
+ *    3 个复用点（useForkActions/useSidebarNew/useSessionStreamSync）零改动。
  * 3. re-export resetChatModuleState（as alias core 的 resetChatModuleStateForTest）：
  *    旧测试（useChat.test.ts beforeEach）import 路径兼容。
  *
@@ -79,7 +79,7 @@ function rendererSubDeps(): EnsureStreamSubDeps {
 
 /**
  * useChat —— chat 业务编排（renderer 薄包装）。
- * 20 个消费方（Composer/Panel/Sidebar/useNewTaskFlow/useForkActions/useSidebar 等）零改动。
+ * 20 个消费方（Composer/Panel/Sidebar/useNewTaskFlow/useForkActions/useSidebarNew 等）零改动。
  */
 export function useChat() {
   return createUseChat({
@@ -102,7 +102,7 @@ export function useChat() {
  * ensureStreamSubscription —— renderer 同名包装（TD5）。
  *
  * core 版加 deps 参数（EnsureStreamSubDeps），本包装注入 renderer deps。
- * 4 个复用点（useForkActions/useSidebar/useSessionStreamSync）import 本函数零改动
+ * 3 个复用点（useForkActions/useSidebarNew/useSessionStreamSync）import 本函数零改动
  * （签名保持 (sid, chat, sessionStore)，内部调 core 版 + rendererSubDeps）。
  */
 export function ensureStreamSubscription(

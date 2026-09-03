@@ -891,7 +891,7 @@ export interface ServerMessageMapBase {
   // 用 Record<string, unknown> 保持 shared 依赖最小化（与 extension:widgetGui.gui:unknown 同先例）。
   'plugin:config': { pluginId: string; config: Record<string, unknown> }
   // plugin:viewUpdate：plugin views.update 下行广播（plugin-rpc-setup.ts handleViewUpdate 生产，
-  // 带 sessionId 走 session 通道 + CROSS_SESSION_TYPES crossSession 分发到 ExtensionHost）。
+  // 带 sessionId 走 session 通道 + crossSession 声明条目分发到 ExtensionHost）。
   // guiTree 用 unknown[] 保持 shared 包依赖最小化（与 extension:widgetGui 的 gui:unknown 同先例），
   // 消费端（core MessageBusBridge parseViewUpdate → ViewHostStore）用 isGuiComponent 守卫收窄。
   'plugin:viewUpdate': {

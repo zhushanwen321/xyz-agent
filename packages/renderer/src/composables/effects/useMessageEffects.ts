@@ -46,7 +46,7 @@ function handleSessionExited(sessionId: string, payload: { code: number | null; 
   //（UI 卡「进行中…」）。放 markDead 之后：错误消息/dead 态等 UI 反馈先落地
   invalidateStreamSubscription(sessionId)
   // D6b（integrity-hardening §3.6）：pi 死后清掉该 session 挂起的 ask-user / dialog 分区
-  //（对齐 deleteSession 路径 useSidebar 的 extensionUIStore.clearSession 写法）。
+  //（对齐 deleteSession 路径 core use-session cleanup hooks 的 extensionUIStore.clearSession 写法）。
   // 不清则切走再切回（restore 起新 pi）后旧请求重弹，作答发给新进程被静默丢弃（M8 幽灵弹窗）。
   useExtensionUIStore().clearSession(sessionId)
   // reason 可能含多行 stderr，toast 只取首行（完整内容在聊天流 error 消息里）

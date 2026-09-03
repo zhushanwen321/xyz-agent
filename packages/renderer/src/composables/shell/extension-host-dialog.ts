@@ -117,7 +117,7 @@ export function createDialogRequestSource(bus: InternalEventBus): DialogRequestS
     },
     onUiTimeout(handler) {
       // MF-6：extension.ui_timeout 广播 payload 带 sessionId，route-inbound 落 session 通道 +
-      // CROSS_SESSION_TYPES（crossSession 通道），onGlobal 收不到带 sid 消息——必须订阅
+      // crossSession 声明条目（crossSession 通道），onGlobal 收不到带 sid 消息——必须订阅
       // crossSession 通道（onUiTimeout 自身按 payload.sessionId 校验，双保险）。
       return onCrossSession((msg) => {
         if (msg.type !== 'extension.ui_timeout') return

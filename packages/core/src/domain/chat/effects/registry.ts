@@ -135,9 +135,12 @@ function isLastAssistantStreaming(
  * 3. 更新 + commit：update 返回新 message（copy-on-write）落盘；返回 undefined 表示
  *    本次不落盘（thinking_end 的空 thinking 分支——原实现该处直接 return 不 commit）。
  *
- * 副作用顺序说明：update 闭包内的 payload 读取（readString 等）随骨架后置到 guard /
- * locate 之后，与原各 effect 内联顺序（guard → 定位 → 读 payload → 更新）一致；个别
- * effect 的 entry/callId 检查在调用点（guard 之前）完成——纯读取无观察面差异。
+ * 副作用顺序说明：6 处调用点中 5 处（text_delta / thinking_start / thinking_delta /
+ * tool_call_start / tool_call_update）的 payload 读取与派生构造（含 randomUUID 兜底 id、
+ * Date.now 生成）整体前移到 guard 之前，与原内联顺序（guard → 定位 → 读 payload → 更新）
+ * 相比是顺序前移而非一致——纯读取、无观察面调用，故与基线行为等价；留在 update 闭包内
+ * 的读取仅 tool_call_update 的 readDetail（thinking_end 无 payload 读取）。约束：前移段
+ * 不得加入有观察面的调用（console/log/事件 emit），否则破坏与基线的顺序等价。
  */
 function updateStreamingAssistant(
   ctx: Pick<MessageEffectContext, 'messages'>,

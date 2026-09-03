@@ -92,7 +92,8 @@ export interface PanelOrchestrationPort {
  * 全部成员可选、缺省 no-op：headless/mobile 等未接线环境零新增步骤执行完整链（时序仍按
  * D4 统一链）。时序不变量由链本体承载（见 selectSession 步骤注释），实现侧无需关心顺序。
  * 壳侧适配映射（u5.2 接线）：cancelActiveFlow←useNewTaskFlow / clearUnread←useSessionMarkers /
- * ensureStreamSubscription / touchRecency / evictLru←chat store（useChat） / preloadFileTree←useFileTree。
+ * ensureStreamSubscription←useChat 壳包装 / touchRecency / evictLru←useChatStore()（pinia，
+ * touchLru/evictIfNeeded） / preloadFileTree←useFileTree。
  */
 export interface SessionEntryPort {
   /**

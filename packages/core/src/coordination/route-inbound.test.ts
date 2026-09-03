@@ -143,7 +143,7 @@ describe('configureRouteInbound — pending 分流（①/②/⑧）', () => {
   it('⑨ broadcast 带 id 但未命中 pending（如 config.skills 携带 nextPushId）：不进 pending 分流，无 sessionId → 走 dispatchGlobal（回归 2026-08 R5 问题 9）', () => {
     // 根因：runtime broadcast（config.skills/agents/...）都带 `id: nextPushId()`。
     // 旧实现 `if (msg.id)` 误吞，广播被 pending 静默丢弃，skills/agents store 永空。
-    // 修复后：msg.id 未命中 pending → 继续路由 → FALLBACK → dispatchGlobal。
+    // 修复后：msg.id 未命中 pending → 继续路由 → 默认路径 → dispatchGlobal。
     const ports = makePorts({
       pending: {
         resolve: vi.fn(),
@@ -158,7 +158,7 @@ describe('configureRouteInbound — pending 分流（①/②/⑧）', () => {
     // 未进 pending 分流
     expect(ports.pending.resolve).not.toHaveBeenCalled()
     expect(ports.pending.resolveEnvelope).not.toHaveBeenCalled()
-    // 无 sessionId → FALLBACK → dispatchGlobal（settings store 靠此更新）
+    // 无 sessionId → 默认路径 → dispatchGlobal（settings store 靠此更新）
     expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
     expect(ports.events.dispatchGlobal).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'config.skills', id: 'push_5' }),
@@ -392,7 +392,7 @@ describe('configureRouteInbound — ROUTE_TABLE Record 直查等价（Q1-4）', 
     expect(ports.events.dispatchGlobal).not.toHaveBeenCalled()
   })
 
-  it('Q1-4b 全部 4 个注册 type 逐一命中各自条目（无 sid 时全部落 FALLBACK，不误命中）', () => {
+  it('Q1-4b 全部 5 个 effect 注册 type 逐一命中各自条目（无 sid 时走 dispatchGlobal + globalEffect 默认路径，不误命中）', () => {
     const registeredTypes = ['session.exited', 'message.complete', 'session.subagents', 'session.subagentEntriesAppended', 'session.workflowUpdate'] as const
     for (const type of registeredTypes) {
       const ports = makePorts()
@@ -401,7 +401,8 @@ describe('configureRouteInbound — ROUTE_TABLE Record 直查等价（Q1-4）', 
       // 有 sid → 命中 Record 条目（dispatchSession + 对应 effect 回调）
       dispatcher(sessionMsg(type, type === 'session.subagents' ? { subagents: [] } : type === 'session.subagentEntriesAppended' ? { subagentId: 'rec-1', entries: [] } : {}))
       expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1)
-      // 无 sid → 不命中条目，落 FALLBACK 的 global 分支（行为与 Record 化前一致）
+      // 无 sid → 走 dispatchGlobal + globalEffect 默认路径（这 5 个条目未声明 globalEffect，
+      // 行为与 Record 化前一致）
       dispatcher({ type, payload: {} } as unknown as ServerMessage)
       expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
     }
@@ -420,7 +421,7 @@ describe('configureRouteInbound — ROUTE_TABLE Record 直查等价（Q1-4）', 
     expect(() =>
       dispatcher(sessionMsg('toString', {})),
     ).not.toThrow()
-    // 有 sid → 落 FALLBACK session 分支正常 dispatchSession，effects 无回调
+    // 有 sid → 走默认路径 session 分支正常 dispatchSession，effects 无回调
     expect(ports.events.dispatchSession).toHaveBeenCalledTimes(2)
     expect(effects.onSessionExited).not.toHaveBeenCalled()
     expect(effects.onMessageComplete).not.toHaveBeenCalled()
@@ -432,7 +433,7 @@ describe('configureRouteInbound — crossSession 通道（ADR-0060）', () => {
     resetSubscriptionStates()
   })
 
-  it('⑩a 带 sid + CROSS_SESSION_TYPES type（extension:widget）→ dispatchSession + dispatchCrossSession', () => {
+  it('⑩a 带 sid + crossSession 声明条目 type（extension:widget）→ dispatchSession + dispatchCrossSession', () => {
     const ports = makePorts()
     const dispatcher = configureRouteInbound(ports)
     dispatcher(sessionMsg('extension:widget', { widgetKey: 'w', lines: [] }))
@@ -443,7 +444,7 @@ describe('configureRouteInbound — crossSession 通道（ADR-0060）', () => {
     )
   })
 
-  it('⑩b 带 sid + 非 CROSS_SESSION_TYPES type → 只 dispatchSession，不 dispatchCrossSession', () => {
+  it('⑩b 带 sid + 非 crossSession 声明条目 type → 只 dispatchSession，不 dispatchCrossSession', () => {
     const ports = makePorts()
     const dispatcher = configureRouteInbound(ports)
     dispatcher(sessionMsg('config.providers', { providers: [] }))
@@ -451,7 +452,7 @@ describe('configureRouteInbound — crossSession 通道（ADR-0060）', () => {
     expect(ports.events.dispatchCrossSession).not.toHaveBeenCalled()
   })
 
-  it('⑩c extension.ui_request（点号）命中白名单 → dispatchCrossSession', () => {
+  it('⑩c extension.ui_request（点号）命中 crossSession 声明条目 → dispatchCrossSession', () => {
     // 点号是 runtime wire 实际格式（event-adapter.ts），ADR 文档冒号为笔误
     const ports = makePorts()
     const dispatcher = configureRouteInbound(ports)
@@ -461,7 +462,7 @@ describe('configureRouteInbound — crossSession 通道（ADR-0060）', () => {
     )
   })
 
-  it('⑩d seq gap drop 的 CROSS_SESSION_TYPES 消息 → dispatchSession / dispatchCrossSession 均不调', async () => {
+  it('⑩d seq gap drop 的 crossSession 声明条目消息 → dispatchSession / dispatchCrossSession 均不调', async () => {
     const ports = makePorts()
     const dispatcher = configureRouteInbound(ports)
     ;(ports.subscribe as ReturnType<typeof vi.fn>).mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 10 })
@@ -472,7 +473,7 @@ describe('configureRouteInbound — crossSession 通道（ADR-0060）', () => {
     expect(ports.events.dispatchCrossSession).not.toHaveBeenCalled()
   })
 
-  it('⑩e 无 sid 的 CROSS_SESSION_TYPES type → 走 dispatchGlobal，不 dispatchCrossSession', () => {
+  it('⑩e 无 sid 的 crossSession 声明条目 type → 走 dispatchGlobal，不 dispatchCrossSession', () => {
     // crossSession 只在有 sid 分支触发；无 sid 走 global 通道
     const ports = makePorts()
     const dispatcher = configureRouteInbound(ports)
@@ -481,8 +482,9 @@ describe('configureRouteInbound — crossSession 通道（ADR-0060）', () => {
     expect(ports.events.dispatchCrossSession).not.toHaveBeenCalled()
   })
 
-  it('⑩f 全量 CROSS_SESSION_TYPES 字面量逐项命中（防拼写回归）', () => {
-    // 与 route-inbound.ts CROSS_SESSION_TYPES 集合字面量同步（集合未导出，逐项行为断言代替）。
+  it('⑩f 全量 crossSession 声明条目 type 字面量逐项命中（防拼写回归）', () => {
+    // 逐项锁 route-inbound.ts 的 8 个 crossSession 声明条目 type（ROUTE_TABLE 虽已导出，
+    // 但遍历其键会自我引用，锁不住源码侧拼写漂移——测试内字面量逐项断言才能钉住）。
     // 任一成员拼写漂移（如 extension.ui_request 误写成冒号）→ dispatchCrossSession 不再被调
     const literals = [
       'extension:widget',

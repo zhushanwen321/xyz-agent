@@ -85,7 +85,8 @@ export class ExtensionMessageHandler {
     // wave:perf-w09（02 文档 D1-2）：payload 恒含 sessionId（handleExtensionTimeout 的
     // sessionId 参数）→ bus.publish 定向发布是主通道（extension.ui_timeout 归 stream 类：
     // 分配 seq + 入 ring，重连可回放），不再盲广播——盲广播会推给未订阅该 sid 的连接，
-    // 且已订阅 renderer 靠 seq-gap drop 第二条的兼容负担随之消失。
+    // 且已订阅 renderer 靠 evalSeqGap（core/coordination/subscription-state.ts）drop
+    // 第二条的兼容负担随之消失。
     // bus 未装配 → 回退 broker.broadcast 兜底（W09 review 修正：不能静默丢弃，对齐
     // plugin-service 的「消息不丢」哲学；组合根恒装配 bus，此为防御路径）。
     if (this.ctx.messageBus) {

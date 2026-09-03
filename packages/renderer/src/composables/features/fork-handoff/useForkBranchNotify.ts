@@ -70,7 +70,8 @@ function classifyChange(from: SessionStatus, to: SessionStatus): BranchChangeKin
 /**
  * 后台分支通知编排 composable。
  *
- * @param groupsRef 当前 SessionGroup[] 的 ref（来自 useSidebar 监听 config.sessions 后的 applySnapshot 整表应用）。
+ * @param groupsRef 当前 SessionGroup[] 的 ref（来自 core use-session 监听 config.sessions 后的
+ *   applySnapshot 整表应用，session store groups 分区）。
  *   每次 groups 变化触发 diff——遍历所有 session，对 parentSession 有值（即分支）的项做状态对比。
  * @returns
  *   - trackedBranches：当前追踪的分支 id 集合（响应式，供 UI 展示角标等）

@@ -128,8 +128,9 @@ export function setSubscriptionPorts(ports: SubscriptionPorts): void {
 /**
  * 记录 gap 触发消息的已 dispatch 簿记（seqGate gap 分支调用，见 SubscriptionState 注释）。
  * state 不存在时 no-op（gap 分支前提是 subscribed=true，state 必存在，防御兜底）。
+ * 模块内私有（唯一调用点 = 同模块 seqGate）。
  */
-export function recordGapDispatchedSeq(sessionId: string, seq: number): void {
+function recordGapDispatchedSeq(sessionId: string, seq: number): void {
   const state = subscriptionStates.get(sessionId)
   if (!state) return
   ;(state.gapDispatchedSeqs ??= new Set<number>()).add(seq)

@@ -1,7 +1,7 @@
 /**
  * useSearch（#4 D-026 + #17）—— 搜索编排（聚合 4 源 query() + loadSeq + WS 超时 race + 分组）。
  *
- * [D-026 REVISIT of issues #4] 编排归 composable（非 domain），与 useSidebar/useFileSearch 同层
+ * [D-026 REVISIT of issues #4] 编排归 composable（非 domain），与 useSidebarNew/useFileSearch 同层
  * 跨 store+domain 编排。domain 严格只调 transport+pending 的铁律不变。
  *
  * 接线层级：跨模块（调 matchFilter + commandStore + fileSearchStore + composer/session domain + WS race）。

@@ -11,9 +11,9 @@
  *   全局单例消费者的消息（ADR-0060）。合法消费者仅 ExtensionHost（+ 未来远程化协同态），
  *   per-session 消费用 on(sid, handler)，不要用本通道。
  *
- * 三通道互不串扰。routeInbound（useConnection）按 payload.sessionId 有无 + type 白名单
- * 决定走哪条（有 sid → session 通道；有 sid 且 type ∈ CROSS_SESSION_TYPES → 额外 crossSession；
- * 无 sid → global 通道）。
+ * 三通道互不串扰。route-inbound（coordination/route-inbound.ts）按 payload.sessionId 有无
+ * + ROUTE_TABLE 条目声明决定走哪条（有 sid → session 通道；有 sid 且条目 crossSession 字段
+ * 声明 → 额外 crossSession；无 sid → global 通道）。
  */
 import type { ServerMessage, ServerMessageType } from '@xyz-agent/shared'
 
@@ -122,7 +122,7 @@ export function onCrossSession(handler: MessageHandler): () => void {
   }
 }
 
-/** 分发消息到 crossSession 通道（route-inbound FALLBACK 有 sid 分支调用）。ADR-0060。 */
+/** 分发消息到 crossSession 通道（route-inbound dispatchRouted 有 sid 序言的 crossSession 声明分支调用）。ADR-0060。 */
 export function dispatchCrossSession(msg: ServerMessage): void {
   if (crossSessionHandlers.size > 0) safeForEach(crossSessionHandlers, msg)
 }

@@ -242,7 +242,7 @@ const isSessionActive = useSessionActive(sessionId, forceWorking)
 
 /** [W21 D-4] turn 派生增量缓存：经 useSessionScopedState 工厂按 session 分区持有（ADR-0049——
  *  <MessageStream> 无 :key、组件实例不随 session 销毁，实例级缓存会跨 session 残留上一会话的
- *  Message 引用；工厂随 useSidebar.deleteSession → triggerSessionCleanups 自动释放分区）。
+ *  Message 引用；工厂随 useSidebarNew.deleteSession → triggerSessionCleanups 自动释放分区）。
  *  分区值是 shallowRef 包裹的 mutable 纯派生缓存：toRenderItemsIncremental 原地 mutate 更新，
  *  该 mutate 从不触发下游（renderItems 失效由 currentMessages/forceWorking 驱动），shallowRef
  *  只为满足工厂「init 返回 reactive 容器」契约且避免深代理缓存内的 Message 引用。 */

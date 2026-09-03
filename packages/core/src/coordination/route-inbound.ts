@@ -141,7 +141,7 @@ export interface InboundEffects {
  *   message 非法时**仍调** effect 传兜底值，非跳过——布尔门承载不了参数兜底，留在
  *   sessionEffect 的参数构造处，不入 payloadGuard。
  */
-export interface RouteTableEntry {
+interface RouteTableEntry {
   /** 有 sid 分支的 effect 回调（dispatcher 在 dispatchSession/crossSession 与 payloadGuard 之后调用）。 */
   sessionEffect?(sid: string, payload: ServerMessage['payload'], effects: InboundEffects): void
   /**
@@ -299,7 +299,7 @@ export const ROUTE_TABLE: Record<string, RouteTableEntry> = {
  *
  * subscribe 经动态 import 惰性解析：顶层静态值使用 domains/session 会把
  * session→request→ws-client 链拉进本模块静态图，破坏外部测试（renderer api 层
- * mock send 的 8 个用例）对 ws-client 的 vi.mock 拦截——u4 实证无论 mock 说明符
+ * mock send 的 8 文件 39 用例，清单见下方 [HISTORICAL]）对 ws-client 的 vi.mock 拦截——u4 实证无论 mock 说明符
  * 用 package 子路径还是跨包相对路径均失效；pending/events 无 ws-client 下游链，
  * 静态值使用无害。subscribe 是低频 RPC 路径（首次订阅 + gap reconcile），模块
  * 缓存后动态 import 零成本。

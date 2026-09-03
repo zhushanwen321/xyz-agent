@@ -16,7 +16,8 @@
  *
  * 订阅生命周期：loadTrace 时 ensureIncrementSubscription（Set 去重防重复注册，规则 2）；
  * 不随 TraceView 卸载退订（切回对话视图增量继续收集，切回 Trace 不丢数据）；
- * 分区 cleanup 由 useSidebar.deleteSession 经 triggerSessionCleanups 统一编排
+ * 分区 cleanup 由 useSidebarNew.deleteSession（代理 core use-session，编排本体在
+ * core/domain/session/use-session.ts）经 triggerSessionCleanups 统一编排
  * （ADR-0049；含 events 退订与 loading 缓冲丢弃）。
  */
 import { computed, reactive, ref } from 'vue'
@@ -361,7 +362,7 @@ export function setTraceFilter(
   })
 }
 
-// 分区销毁：session 删除时 useSidebar.deleteSession → triggerSessionCleanups 统一调到这里。
+// 分区销毁：session 删除时 useSidebarNew.deleteSession → triggerSessionCleanups 统一调到这里。
 registerSessionCleanup((sid) => {
   // 退订增量 handler：不退订则 handler 永久滞留 events.sessionHandlers（per 删除 session
   // 一条 Map+Set 泄漏），且迟到推送会经 updateFor 的 getOrCreatePartition 复活已删分区

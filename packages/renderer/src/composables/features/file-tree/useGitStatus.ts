@@ -15,7 +15,7 @@
  *
  * 订阅收口（R2）：message.complete 订阅经 useSessionEvents（与 SideDrawer/CommandPopover/
  * ContextCapacityPopover 同收口），不再直接 import @/api/events。依赖方向：shared 类型 + api(git)
- * + useSessionEvents。与 useChat/useSidebar 同属 features 层，但比它们轻——不触碰 stores，纯 per-session 数据 ref。
+ * + useSessionEvents。与 useChat/useSidebarNew 同属 features 层，但比它们轻——不触碰 stores，纯 per-session 数据 ref。
  *
  * per-session 状态隔离（ADR-0049）：result/commitMsg/error 三个 per-session 状态
  * 收进 useSessionScopedState 分区。切 session 时分区天然隔离（新 sid 读到 init 默认值），

@@ -2,7 +2,7 @@
  * useHandoffModeChannel —— Composer handoff 模式的跨组件触发通道（fast-handoff）。
  *
  * 背景：Composer.vue 持有 handoffMode 状态真源（ref + enterHandoffMode/exitHandoffMode），
- * 但 Sidebar 全局快捷键（⌘H → handoffFromLastAssistant，在 useSidebar）也需要
+ * 但 Sidebar 全局快捷键（⌘H → handoffFromLastAssistant，在 useSidebarNew）也需要
  * 「从末条 assistant 进入 composer handoff 模式」。Sidebar 无法直接拿 Composer 实例，
  * 也不应提升 handoffMode 真源到 store（Composer 的发送/Esc/切 session 逻辑强耦合 handoffMode ref）。
  *

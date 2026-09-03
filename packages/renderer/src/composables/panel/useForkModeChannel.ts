@@ -2,7 +2,7 @@
  * useForkModeChannel —— Composer fork 模式的跨组件触发通道（W3）。
  *
  * 背景：Composer.vue 持有 forkMode 状态真源（ref + enterForkMode/exitForkMode），
- * 但 Sidebar 全局快捷键（⌘⇧G → enterForkModeFromLastAssistant，在 useSidebar）也需要
+ * 但 Sidebar 全局快捷键（⌘⇧G → enterForkModeFromLastAssistant，在 useSidebarNew）也需要
  * 「从末条 assistant 进入 composer fork 模式」。Sidebar 无法直接拿 Composer 实例，
  * 也不应提升 forkMode 真源到 store（Composer 的发送/Esc/切 session 逻辑强耦合 forkMode ref）。
  *

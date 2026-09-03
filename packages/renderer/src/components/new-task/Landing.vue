@@ -5,7 +5,7 @@ import { computed, onMounted, onUnmounted, provide, watch } from 'vue'
  *
  * 渲染条件由 Panel 控制（messageCount===0 && !isGenerating）。本组件是 presentational：
  * 接 props（cwd/branch/error 态）+ emit 动作（open-dir/open-branch/retry），不直接耦合状态机。
- * Panel（容器）把 emit 接到 useNewTaskFlow / useSidebar.retryHistory。
+ * Panel（容器）把 emit 接到 useNewTaskFlow / useSidebarNew.retryHistory。
  *
  * UC-7 守卫（AC-2.2）：gitBranch 为空（非 git 目录）→ branch chip 隐藏。
  * NFR④#2 AC-2.6：historyError=true → 显重试按钮，不永久卡住。
@@ -73,7 +73,7 @@ function onOpenDirDialog(): void {
   })
 }
 // landing 态 session 真源是 NewTaskFlow（selectWorkspace/openDirDialog create 的 session 不经
-// useSidebar，panel leaf.sessionId 滞后）。优先 flow 真源，props 作 fallback（常态新建两者一致）。
+// useSidebarNew，panel leaf.sessionId 滞后）。优先 flow 真源，props 作 fallback（常态新建两者一致）。
 // 前两者都 null（真 landing 态）时 composerSid 为 null——CommandPopover 走 skills fallback
 // （settingsStore 全局 skills + projectSkills），不再依赖公共 session pi 命令（W3 已移除公共 session）。
 const composerSid = computed(() => flow.currentSessionId.value ?? props.sessionId)

@@ -7,6 +7,6 @@
  *
  * 注意：re-export 保证单 registry 实例（sessionCleanupRegistry 在 core 包内单例），
  * 禁止改为复制实现——双份 registry 会导致 triggerSessionCleanups 调不到 renderer
- * 侧注册的 cleanup（useSidebar.deleteSession 编排失效）。
+ * 侧注册的 cleanup（useSidebarNew.deleteSession 编排失效）。
  */
 export * from '@xyz-agent/core/foundation/use-session-scoped-state'

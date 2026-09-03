@@ -12,7 +12,7 @@
  *   分区缓存不降级；
  * - in-flight 去重：模块级表（条目含 Promise 本体），多实例 await 同一 Promise 后各写
  *   各分区；resolve 即清条目（下次切入重拉）；组件 remount 的重复拉取接受（幂等查询）；
- * - cleanup：registerSessionCleanup 挂进 useSidebar.deleteSession 清理编排；
+ * - cleanup：registerSessionCleanup 挂进 useSidebarNew.deleteSession 清理编排；
  * - G4 dev 漂移检测器：XYZ_AGENT_DEBUG=1 时恢复腿 resolve 后对账（口径见 applyReply）。
  *
  * 分区缓存的角色 = RPC 往返期的显示初值 + RPC 失败时的兜底显示（防闪横线），
@@ -253,7 +253,7 @@ export function useContextUsage(sessionIdRef: Ref<string | null | undefined>): U
     { immediate: true },
   )
 
-  // cleanup 编排（D2 第 3 条）：挂进 useSidebar.deleteSession 的 triggerSessionCleanups。
+  // cleanup 编排（D2 第 3 条）：挂进 useSidebarNew.deleteSession 的 triggerSessionCleanups。
   // 分区删除本已由 useSessionScopedState 自身注册（幂等，二次 Map.delete 是 no-op），
   // 这里显式再挂以对齐设计，同时清理本 composable 自有簿记（抑制表登记 + 分区）。
   const unregisterUsageCleanup = registerSessionCleanup((sid) => {

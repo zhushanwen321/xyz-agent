@@ -154,7 +154,7 @@ describe('createDialogRequestSource（C2/C3/C4 分流）', () => {
     const handler = vi.fn()
     const unsub = source.onUiTimeout(handler)
 
-    // MF-6：extension.ui_timeout 广播带 sessionId，route-inbound 落 session 通道 + CROSS_SESSION_TYPES
+    // MF-6：extension.ui_timeout 广播带 sessionId，route-inbound 落 session 通道 + crossSession 声明条目
     // （crossSession 通道）——用 dispatchCrossSession（runtime 真实广播形状，onGlobal 收不到）
     dispatchCrossSession({ type: 'extension.ui_timeout', payload: { sessionId: 's1', requestId: 'r1' } })
     expect(handler).toHaveBeenCalledTimes(1)
