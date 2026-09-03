@@ -202,7 +202,7 @@ describe('SessionLifecycle × migration gate（D8-3）', () => {
     // 与 create/restore 的错误优先级一致（见 session-lifecycle.ts forkSession 头部 r5-S2 注释）。
     it('model 未配置且 source 不存在时报 MODEL_NOT_CONFIGURED（优先于 source not found）', async () => {
       const { lifecycle, configStore, pm, svc } = makeEnv()
-      configStore.getDefaultModel = vi.fn(() => undefined)
+      configStore.getDefaultModel = vi.fn(() => null)
       svc.findScannedSession = vi.fn(() => undefined) as never
 
       await expect(lifecycle.forkSession('no-such-src', 'a1', true, 'forked')).rejects.toMatchObject({
