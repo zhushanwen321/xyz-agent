@@ -28,6 +28,7 @@ parameters:
         - { type: string, description: 逗号分隔维度名 }
       description: cr-fix 审查维度裁剪（默认全量 8 维）；值为 agent 名或路径关键词
     maxRounds: { type: integer, default: 10, minimum: 1, description: cr-fix 循环轮次上限透传给嵌套 loop }
+    aggregatorModel: { type: string, description: 聚合阶段模型（provider/model 全名，如 zai-coding-cn/glm-5.3-flash——须为当前引擎侧存在的 provider）；缺省跟随 run 模型，仅当聚合需降档/升档时设置 }
     simplifyMode: { type: string, enum: [apply, report], default: apply, description: apply = 自动落地高置信 A 档简化并独立 commit；report = 只出报告不改码 }
     skipSteps:
       anyOf:

@@ -322,6 +322,7 @@ function normalizeParams(raw) {
   return {
     runId: asString(raw.runId, 'runId', null) || null,
     repo: asString(raw.repo, 'repo', null) || null, // Gate B S1：目标仓库根（脚本侧仅透传留存；io.repoRoot 由入口 resolveRepoRoot 解析）
+    aggregatorModel: asString(raw.aggregatorModel, 'aggregatorModel', null) || null, // Gate B S1：缺省不传 = nested loop 跟随 run 模型（zai-coding-cn 在 pi 侧不存在，硬编码已致 aggregator-failure×2）
     base: asString(raw.base, 'base', 'main'),
     reviewers: asStringArray(raw.reviewers, 'reviewers', null),
     maxRounds: asNumber(raw.maxRounds, 'maxRounds', 10),
@@ -1051,7 +1052,6 @@ const CR_FIX_PASS_TERMINATED = new Set(['clean', 'converged']);
 const CR_FIX_RETRY_TERMINATED = new Set(['review-failure', 'aggregator-failure', 'fix-failure']);
 const CR_FIX_STUCK_TERMINATED = new Set(['stuck', 'max-rounds', 'needs-redesign']);
 const CR_FIX_MAX_NESTED_ATTEMPTS = 2; // 首次 + 自动重试恰 1 次（D2）
-const CR_FIX_AGGREGATOR_MODEL = 'zai-coding-cn/glm-5.3-flash';
 
 // batch1 组装（§3.5）：扫 <repoRoot>/.agents/skills/pr-cr-fix/agents/review-*.md 排序；
 // reviewers 显式传入时做白名单交集（路径 substring 匹配任一关键词，不语义判断——
@@ -1410,7 +1410,10 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
         const agentsDir = path.join(repoRoot, '.agents', 'skills', 'pr-cr-fix', 'agents');
         const batch1 = buildBatch1(ctx.io, agentsDir, ctx.params.reviewers);
         if (batch1.length === 0) throw new Error(MSG.crFixNoBatch1(agentsDir, ctx.params.reviewers));
-        // 参数名/类型对齐 review-fix-loop.js @pi-meta parameters（D2：嵌套不 copy）
+        // 参数名/类型对齐 review-fix-loop.js @pi-meta parameters（D2：嵌套不 copy）。
+        // aggregatorModel 仅在发起方显式传入时透传（聚合降档/升档场景）；不传 = loop
+        // 跟随 run 模型——Gate B S1 实证：8 reviewer 用默认 run 模型全成功，而硬编码
+        // zai-coding-cn 在 pi 侧不存在（model_not_available → aggregator-failure×2）
         const nestedArgs = {
           targetType: 'git-diff',
           target: ctx.state.base,
@@ -1418,8 +1421,8 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
           maxRounds: ctx.params.maxRounds,
           autoCommit: true,
           skipCleanAgents: true,
-          aggregatorModel: CR_FIX_AGGREGATOR_MODEL,
         };
+        if (ctx.params.aggregatorModel) nestedArgs.aggregatorModel = ctx.params.aggregatorModel;
         const nestedRunIds = [];
         let last = null;
         for (let attempt = 1; attempt <= CR_FIX_MAX_NESTED_ATTEMPTS; attempt++) {
@@ -1784,7 +1787,6 @@ module.exports = {
   CR_FIX_RETRY_TERMINATED,
   CR_FIX_STUCK_TERMINATED,
   CR_FIX_MAX_NESTED_ATTEMPTS,
-  CR_FIX_AGGREGATOR_MODEL,
   buildBatch1,
   findAggregatedFile,
   consumeNestedResult,

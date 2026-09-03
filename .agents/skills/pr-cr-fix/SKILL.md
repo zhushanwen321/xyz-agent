@@ -217,7 +217,7 @@ node <zsw-cli> workflow --workflow <repo>/.agents/workflows/pr-lifecycle.js \
 
 - **`--repo` 必传**：目标仓库根绝对路径——workdir 是引擎保留键（agent cwd 用），脚本读不到它；缺省回落宿主 cwd 并在日志注明回落事实，非仓库根 fail-fast（error 指引补 `--repo`）。resume 时 `--repo` 必须与原 run 一致（守卫 2 校验）
 - CLI run 恒本地同步执行：zcode 下用 Bash `run_in_background` 包裹等待，完成后读输出（scriptResult JSON）
-- 可覆盖参数：`--runId prw-...`（断点恢复）、`--skip-steps "cr-fix,simplify"`（人工接管逃生舱，逗号串）、`--max-rounds N`、`--simplify-mode report`、`--base <ref>`、`--reviewers <逗号串白名单>`、`--allow-external-changes`（HEAD 外部变更显式放行）
+- 可覆盖参数：`--runId prw-...`（断点恢复）、`--skip-steps "cr-fix,simplify"`（人工接管逃生舱，逗号串）、`--max-rounds N`、`--simplify-mode report`、`--base <ref>`、`--reviewers <逗号串白名单>`、`--aggregator-model <provider/model>`（cr-fix 聚合阶段模型；缺省跟随 run 模型，仅当聚合需降档/升档时设置——provider 必须为当前引擎侧存在者）、`--allow-external-changes`（HEAD 外部变更显式放行）
 
 **发起前披露义务 [MANDATORY]**：告知用户 simplifyMode 默认 **apply**——code-simplify 的「先报告、确认后改」确认断点已被该模式显式覆盖（固化契约 `agents/simplify-apply.md`），**A 档（行为不变）高置信简化会在 push 授权之前自动改码并独立 commit**（`refactor: code-simplify — N 项`）；B 档（行为敏感）与低置信项只进报告不落地。用户不接受时传 `--simplify-mode report`（完全不改码，断点语义完整保留）。
 
