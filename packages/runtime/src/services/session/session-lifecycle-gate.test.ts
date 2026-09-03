@@ -17,6 +17,7 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'node:
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { SessionLifecycle, setMigrationGate, getMigrationGate } from './session-lifecycle.js'
+import { MODEL_NOT_CONFIGURED } from '../../utils/errors.js'
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
 import type { ILifecycleSessionOps, ISessionRegisterDeps } from './session-internal.js'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
@@ -195,6 +196,20 @@ describe('SessionLifecycle × migration gate（D8-3）', () => {
       expect(summary.id).not.toBe('s-fork-src')
       expect(lifecycle.has(summary.id)).toBe(true)
       rmSync(dir, { recursive: true, force: true })
+    })
+    // r2-S1：model 门禁优先级——configStore 无默认 model 且源 session 也不存在时，
+    // 错误码必须是 MODEL_NOT_CONFIGURED（先于 source not found 报出），
+    // 与 create/restore 的错误优先级一致（见 session-lifecycle.ts forkSession 头部 r5-S2 注释）。
+    it('model 未配置且 source 不存在时报 MODEL_NOT_CONFIGURED（优先于 source not found）', async () => {
+      const { lifecycle, configStore, pm, svc } = makeEnv()
+      configStore.getDefaultModel = vi.fn(() => undefined)
+      svc.findScannedSession = vi.fn(() => undefined) as never
+
+      await expect(lifecycle.forkSession('no-such-src', 'a1', true, 'forked')).rejects.toMatchObject({
+        code: MODEL_NOT_CONFIGURED,
+      })
+      // 源解析未发生（门禁在其之前）：spawn 更不可达
+      expect(pm.createSession).not.toHaveBeenCalled()
     })
   })
 
