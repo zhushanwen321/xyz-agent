@@ -128,15 +128,15 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u-1 | in-progress | 1（裁决点：偏差 #9 处置 + 环境tmp清理） | dev 报告：五函数已删、rg 门过、typecheck 绿；blockers 待续作消解 |
-| u-2a | in-progress | 1 | dev 报告 done：barrel 135 符号 + globalThis 化 + 0.3.0；core 测试（排除 u-1 领地口径）2352 passed；待主 agent 硬核验 |
-| u-2b | pending | - | - |
-| u-2c | pending | - | - |
+| u-1 | committed | 1（裁决点：偏差 #9 处置 + 环境tmp清理） | dev 报告：五函数已删、rg 门过、typecheck 绿；blockers 待续作消解 |
+| u-2a | committed | 1 | dev 报告 done：barrel 135 符号 + globalThis 化 + 0.3.0；core 测试（排除 u-1 领地口径）2352 passed；待主 agent 硬核验 |
+| u-2b | committed | 2（裁决 #16/#17/#18 落地） | 67 文件归一（217 barrel + 8 testing alias + 2 relay-env 子入口）；barrel +2 type；vite 正则 alias 旁路；删通配探针 916 绿；commit d312b7071 |
+| u-2c | committed | 1 | exports 删 ./* 通配 + $comment 豁免终止补注；dist 静态门三项通过（4 重叠 module 纯常量/函数、25 符号零漂移、smoke 26 golden）；zsw vendor 单入口确认；打包门 exit 0；commit 3d01d3132 |
 | u-4 | committed | 1（裁决 #7/#8/#10 落地） | session-lifecycle.ts 488行新 + index.ts 945→646 + session-lifecycle.test.ts 10用例；守卫合一完成（getWorkflowDeps union）；lazyDeps getter 形态（偏差 #10，功能等价惰性回调）；壳 916 测试全绿 |
-| u-5a | pending | - | - |
-| u-5b | pending | - | - |
-| u-5c | pending | - | - |
-| u-6 | committed-pending | 1（偏差 #11-15 裁定入表） | tui-kit.ts ~280 行新 + view-constants.ts 新；rg 门过（TERM_ROWS_FALLBACK 仅 kit）；壳 916 全绿；typecheck/lint 绿；净删 255 行同构 |
+| u-5a | committed | 1（领地预授权扩展 +3 文件） | runtime-stubs.ts 四类桩定型；死 mock ×3 清零；重复注册 4 文件清零（crash-recovery 为注释假阳性）；A-V5 门零命中；916 基线保持；commit 6a8b1d3cd |
+| u-5b | committed | 1 | 7 文件改写：vi.mock 计数 0/3/0/1/0/1/2 全 ≤3、零整类桩；56→56 用例对账；853/853 绿（-63 为 u-5c 迁出）；commit 62d6345cc |
+| u-5c | committed | 1（资产段留壳 + 等价转写 deviations） | 3 测试迁 core execution __tests__/；66=63+3 用例对账；core 2440 绿（2383+63）；壳 853 绿（916-63）；commit 57a68b360 |
+| u-6 | committed | 1（偏差 #11-15 裁定入表） | tui-kit.ts ~280 行新 + view-constants.ts 新；rg 门过（TERM_ROWS_FALLBACK 仅 kit）；壳 916 全绿；typecheck/lint 绿；净删 255 行同构 |
 
 ## 7 残留风险与变更历史
 
