@@ -68,7 +68,7 @@ graph TD
   subgraph W5[Wave5 组5a session 切入链]
     U51["u5.1 端口束+全链+时序纠正<br/>领地: use-session/api-port"]
     U52["u5.2 生产切换+隔离型6+1测试<br/>领地: sidebarNew/2生产/7测试/context.md"]
-    U53["u5.3 mock型9测试+legacy删(偏差#12后实际8)<br/>领地: useSidebar删/9测试"]
+    U53["u5.3 mock型9测试+legacy删(偏差12后实际8)<br/>领地: useSidebar删/9测试"]
   end
   subgraph W6[Wave6 组5b chat 接口]
     U61["u6.1 剪枝+facet+taste-lint<br/>领地: store/index/taste-lint/2测试"]
@@ -76,7 +76,7 @@ graph TD
   end
   U11 -->|"use-connection.ts 同文件共改"| U12
   U12 -->|"use-connection.ts 同文件共改（toast 删除后测改写）"| U13
-  U13 -->|"按 D12 波次序（u1.3 终态为动态 import 保留，见偏差 #3）"| U21
+  U13 -->|"按 D12 波次序（u1.3 终态为动态 import 保留，见偏差 3）"| U21
   U13 -->|"composer 不依赖 u1 但按 D12 波次序（W1 先行清场）"| U31
   U31 -->|"同文件后改（窄契约定性后泛化）"| U32
   U13 -->|"route-inbound.ts u4.2 在 u1.3 终态（动态 import 保留，P5 回退）基础上动同文件"| U41

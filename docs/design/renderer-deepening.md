@@ -96,7 +96,7 @@ xyz-agent 是 Electron + Vue 3 桌面 AI agent 工作台。前端分两包：**c
 ### 例 5：composer 镜像重复与类型抄写（R2）
 
 - `packages/core/src/domain/composer/dispatch/fork-mode.ts`（241 行）× `handoff-mode.ts`（280 行）：约 75% 逐字镜像（enter/exit/signal watch 守卫/handleEsc/handleSend 骨架/modeRef getter），注释自证「与 fork handleForkSend 对称」（handoff-mode.ts:205/211）。
-- `ComposerInputInstance` 类型散布：权威宽接口已在 `composer/types.ts:173`（ADR-0058 归位），另有 5 处局部声明——`dispatch/send.ts:30`、`submit.ts:26`（均 `{getSegments}`）、`fork-mode.ts:35`、`handoff-mode.ts:37`（`{focus?}`）、`context/context-chips.ts:29-32`（`{getSegments; removeImageChip}`，已带意图注释——恰是有意窄契约的已达标样例）。`context/injection.ts` 曾被列为第 6 处，基线核实（f86f2c1 :47）已是 `import type { ComposerInputInstance } from '../types'`——ADR-0058 前序收敛已归位、直接 import 权威接口的达标样例，不属局部声明。局部声明多为有意的结构子类型窄契约（各模块只声明所需最小面），但与权威接口的关系零注释（context-chips 除外）——读者无法区分「有意窄契约」与「漂移抄写」；要消灭的是无名分的复制，不是窄契约本身。
+- `ComposerInputInstance` 类型散布：权威宽接口已在 `composer/types.ts:173`（ADR-0058 归位），另有 5 处局部声明——`dispatch/send.ts:30`、`submit.ts:26`（均 `{getSegments}`）、`fork-mode.ts:35`、`handoff-mode.ts:37`（`{focus?}`）、`context/context-chips.ts:29-32`（`{getSegments; removeImageChip}`，已带意图注释——恰是有意窄契约的已达标样例）。`context/injection.ts` 曾被列为第 6 处，基线核实（f86f2c1 :48）已是 `import type { ComposerInputInstance } from '../types'`——ADR-0058 前序收敛已归位、直接 import 权威接口的达标样例，不属局部声明。局部声明多为有意的结构子类型窄契约（各模块只声明所需最小面），但与权威接口的关系零注释（context-chips 除外）——读者无法区分「有意窄契约」与「漂移抄写」；要消灭的是无名分的复制，不是窄契约本身。
 
 ### 例 6：chat store 公共面——64 项混装（R2）
 
@@ -346,7 +346,7 @@ runtime 进程（WS push）
 | P2 | staging 两 mode 的 25% 差异全部可配置表达；ComposerInputInstance 5 处窄契约均可定性（有意窄契约 vs 漂移抄写） | u3.1/u3.2 前置：差异清单 + 窄契约逐条定性 | ✅ 已执行·通过（完全泛化，未触发降级） | 部分泛化（共享骨架 + 差异段各自保留）；定性不清的窄契约保留原样 + 注释标记待查 |
 | P3 | route-inbound 归一后行为等价 | core 路由测试全绿 + dev 实跑消息流（A3/A4） | ✅ 已执行·通过（route-inbound 34 用例绿 + Gate B A3/A4 实跑） | 拆两 commit 独立回滚；骨架先行、error 合并后置 |
 | P4 | 统一切入链时序正确（panel 先亮、订阅先于回放消费） | dev 实跑 A1/A2 + console/CDP 观察订阅建立顺序 | ✅ 已执行·通过（12 步接口级断言 + Gate B A1/A2 实跑） | 回退壳组合（端口束保留、壳继续重编排），时序问题单独排查 |
-| P5 | use-connection 注入化后 renderer 测试的 ws-client mock 链不失效 | 受影响测试全量跑（u1.3 内） | ✅ 已执行·失败→D9 降级生效（动态 import 保留，见偏差 #3 与 route-inbound.ts [HISTORICAL]） | 保留 subscribe 动态 import，其余照做 |
+| P5 | use-connection 注入化后 renderer 测试的 ws-client mock 链不失效 | 受影响测试全量跑（u1.3 内） | ✅ 已执行·失败→D9 降级生效（动态 import 保留，见 renderer-deepening.impl-plan.md 偏差 #3 与 route-inbound.ts [HISTORICAL]） | 保留 subscribe 动态 import，其余照做 |
 
 ---
 
