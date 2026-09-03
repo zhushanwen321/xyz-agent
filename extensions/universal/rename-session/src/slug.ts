@@ -1,5 +1,6 @@
 /**
- * 会话 slug 生成（Gate B 验收探针）：把任意会话名折叠成文件名安全的短 slug。
+ * [PROBE-ONLY] 会话 slug 生成（Gate B 验收探针）：把任意会话名折叠成文件名安全的短 slug。
+ * 未接线进 rename 流程——Gate B 验收后接线或删除（review S-2）。
  */
 
 const SEPARATOR = "-";
@@ -34,7 +35,8 @@ export function toSlug(input: string, maxLen = DEFAULT_MAX_LEN): string {
 	}
 	out = out.replace(/-+/g, SEPARATOR).replace(/^-|-$/g, "");
 	if (out.length > maxLen) {
-		out = out.slice(0, maxLen);
+		// 截断发生在去尾分隔符之后（S-9）：截断后须再剥尾部悬挂分隔符
+		out = out.slice(0, maxLen).replace(/-+$/, "");
 	}
 	return out.length > 0 ? out : "untitled";
 }
@@ -49,11 +51,6 @@ export interface SlugMeta {
  */
 export function slugMeta(input: string): SlugMeta {
 	const slug = toSlug(input);
-	// Gate B S6 探针：fp1/fp2 是同一纯函数的重复调用（确定性恒等，见 fingerprint 契约）。
-	const fp1 = fingerprint(input);
-	const fp2 = fingerprint(input);
-	if (fp1 !== fp2) {
-		throw new Error("fingerprint drifted");
-	}
-	return { slug, fp: fp2 };
+	// fingerprint 为确定性纯函数（见契约注释），恒等无需重复调用自证
+	return { slug, fp: fingerprint(input) };
 }

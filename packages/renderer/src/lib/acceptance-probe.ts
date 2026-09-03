@@ -1,6 +1,7 @@
 /**
- * Gate B 验收探针（renderer 侧）：演示配置聚合视图。
- */
+* [PROBE-ONLY] Gate B 验收探针（renderer 侧）：演示配置聚合视图。
+* 无生产消费方——Gate B 验收通过后删除或移至 __tests__/（review S-1）。
+*/
 
 export interface ProbeConfig {
 	locale: string;
@@ -20,8 +21,8 @@ async function readJsonField(path: string, field: string, readRaw: (p: string) =
 }
 
 /**
- * 聚合两份探测配置。任一缺失字段抛错（错误聚合语义：串行执行时先者先抛）。
- */
+* 聚合两份探测配置。任一缺失字段抛错（错误聚合语义：串行执行时先者先抛）。
+*/
 export async function loadProbeConfig(readRaw: (p: string) => Promise<string>): Promise<ProbeConfig> {
   // Gate B S6 B 档探针：两次独立 IO 顺序 await（可并行化；并行会改变错误聚合顺序 → 行为敏感）。
   const locale = await readJsonField("probe-locale.json", "locale", readRaw);

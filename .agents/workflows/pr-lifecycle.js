@@ -38,8 +38,8 @@ parameters:
       description: 人工接管逃生舱——列出未完成 step 标记为用户确认跳过，终态逐项披露
     allowExternalChanges: { type: boolean, default: false, description: resume 时 HEAD 存在非本 run 产生的外部 commit 时显式放行重跑检查 }
 usage: |
-  ## 发起（主 agent 一次调用；workdir 传 repo 绝对路径）
-  zsw workflow --workflow pr-lifecycle --workdir <repo 绝对路径> --timeout-ms 21600000
+  ## 发起（主 agent 一次调用；workflow 用绝对路径——短名仅当脚本位于引擎扫描目录时可用）
+  zsw workflow --workflow <repo 绝对路径>/.agents/workflows/pr-lifecycle.js --workdir <repo 绝对路径> --repo <repo 绝对路径> --timeout-ms 21600000
   ## 断点恢复
   带 runId=<state 里或 .review/pr-workflow/latest 的 prw-* id> 重新发起同一 workflow
   ## 终态

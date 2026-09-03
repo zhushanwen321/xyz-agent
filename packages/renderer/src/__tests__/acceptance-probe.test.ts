@@ -37,4 +37,12 @@ describe("loadProbeConfig", () => {
 		});
 		await expect(loadProbeConfig(readRaw)).rejects.toThrow();
 	});
+
+	it("字段存在但值非 string 抛错（missing field 语义）", async () => {
+		const readRaw = rawReader({
+			"probe-locale.json": JSON.stringify({ locale: 5 }),
+			"probe-theme.json": JSON.stringify({ theme: "dark" }),
+		});
+		await expect(loadProbeConfig(readRaw)).rejects.toThrow("missing field: locale");
+	});
 });

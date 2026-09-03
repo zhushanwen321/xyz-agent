@@ -23,6 +23,16 @@ describe("toSlug", () => {
 		expect(toSlug("abcdefghij", 4)).toBe("abcd");
 		expect(toSlug("abcdefghij")).toHaveLength(10);
 	});
+
+	it("截断后剥尾部悬挂分隔符，空则回落 untitled（S-9）", () => {
+		expect(toSlug("abc-def", 4)).toBe("abc");
+		expect(toSlug("ab-cdef", 3)).toBe("ab");
+	});
+
+	it("astral 字符折叠为分隔符（安全字符集限 BMP，S-12）", () => {
+		// isSafeChar 仅放行 BMP 内的 [a-z0-9 中文]；astral 平面（如 😀）按非安全字符折叠
+		expect(toSlug("😀a")).toBe("a");
+	});
 });
 
 describe("slugMeta", () => {
