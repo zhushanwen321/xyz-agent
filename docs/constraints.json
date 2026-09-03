@@ -1732,6 +1732,26 @@
       ]
     },
     {
+      "id": "C-ext-20",
+      "summary": "zcode 引擎单一 app-server 形态（2026-09 用户拍板）：禁 CLI spawn 链回归（zcode --json 单轮与 probe 冒烟/protocol-drift 降级已删，漂移直接报错）；共享宿主 HOME（禁 HOME 池化回归，spawn env 不覆写 HOME，与 GUI 共写同一 SQLite）；poolKey 恒 'shared'，handle.dbPath 绝对锚定 ZCODE_HOST_DB_SUFFIX（runtime 读侧白名单同源）",
+      "scope": [
+        "packages/subagent-core/src/execution/engine/engines/zcode/**",
+        "packages/runtime/src/services/session/**"
+      ],
+      "authority": [
+        "design/zcode-engine-appserver-resident.md",
+        "../AGENTS.md"
+      ],
+      "dimensions": [
+        "arch-boundary"
+      ],
+      "enforcement": [
+        {
+          "type": "none"
+        }
+      ]
+    },
+    {
       "id": "C-proc-08",
       "summary": "pi 语义依赖机器登记 + 探针 + 版本门禁：docs/pi-semantics.json（PS-xx 条目，probe/observe 分型）是唯一机器登记源，scripts/check-pi-semantics.mjs（pre-commit + CI）守 schema/探针存在性/四包版本一致（pi-coding-agent ≡ pi-ai ≡ pi-agent-core ≡ runtime pin）；pi 升级 PR 必查两项——pi-ai exports 是否移除 ./compat、changelog 是否提及 ModelManager 迁移（PS-15 时间炸弹）；探针族红 = 语义漂移，先复核锚点再更新 verifiedWith",
       "scope": [

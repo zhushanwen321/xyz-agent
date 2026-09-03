@@ -1,20 +1,19 @@
 // contract.agent-events.test.ts —— conformance C3（AgentEvent 不变量）+ 负例自证
 // （A12「套件有牙」：故意破坏一个不变量的样本必须被断言器检出——用「注入坏
-// parser」的形态：wrap 真实 synthesizeCoarseEvents 抽掉 message_end，断言套件转红；
+// parser」的形态：构造抽掉 message_end / usage 半映射的坏样本流，断言套件转红；
 // 若断言器检不出破坏则本元测试失败）。
 //
-// [R6] 双模式口径：zcode 引擎 conformance 覆盖两种通道形态——spawn 钉扎（golden
-// stdout 语料 + coarse 合成，下方原有用例）与 app-server 常驻（fake 常驻引擎全链 +
-// stream 口径，文件末新增 describe；app-server 设计 §3.4 不变量 1：text_delta 拼接 ==
-// read 全文、终态唯一 turn.terminal 权威、message_end.usage 完整、tool 事件不合成
-// ——granularity 声明与实际流出一致）。
+// 2026-09 重构（共享宿主 HOME）：CLI spawn 链删除后引擎只剩 app-server 常驻链，
+// C3 的引擎全链覆盖只走 app-server 形态（fake 常驻引擎 + stream 口径，文件末
+// describe；app-server 设计 §3.4 不变量 1：text_delta 拼接 == read 全文、终态唯一
+// turn.terminal 权威、message_end.usage 完整、tool 事件不合成——granularity 声明
+// 与实际流出一致）。断言器行为正反例与负例自证均为手工构造样本，不依赖引擎实现。
 
 import { describe, expect, it } from "vitest";
 
 import type { AgentEvent } from "../../../types.ts";
-import { ZCODE_APPSERVER_GOLDEN, ZCODE_GOLDEN_STDOUT } from "../../engines/zcode/golden-sample.ts";
-import { ZCODE_APPSERVER_POOL_KEY } from "../../engines/zcode/constants.ts";
-import { parseZcodeTerminal, synthesizeCoarseEvents } from "../../engines/zcode/parser.ts";
+import { ZCODE_APPSERVER_GOLDEN } from "../../engines/zcode/golden-sample.ts";
+import { ZCODE_SHARED_POOL_KEY } from "../../engines/zcode/constants.ts";
 import {
   goldenReadFullText,
   makeAppserverHarness,
@@ -24,18 +23,7 @@ import {
   checkAgentEventInvariants,
 } from "./agent-event-invariants.ts";
 
-/** golden 实录的 coarse 事件流（真实 parser + 真实合成器的产出）。 */
-function goldenCoarseEvents(): AgentEvent[] {
-  const terminal = parseZcodeTerminal(ZCODE_GOLDEN_STDOUT);
-  if (!terminal.ok) throw new Error("golden 样本解析失败");
-  return synthesizeCoarseEvents(terminal.payload.response, terminal.payload.usage);
-}
-
-describe("conformance C3：AgentEvent 不变量（真实 parser 产出全绿）", () => {
-  it("zcode golden 合成事件满足五条不变量（coarse 口径）", () => {
-    assertAgentEventInvariants(goldenCoarseEvents(), { granularity: "coarse" });
-  });
-
+describe("conformance C3：AgentEvent 不变量（断言器正反例，手工构造样本）", () => {
   it("不变量 1：终态唯一——turn_end 后不得再出现非 error 事件", () => {
     const events: AgentEvent[] = [{ type: "message_end" }, { type: "turn_end" }, { type: "text_delta", delta: "x" }];
     const findings = checkAgentEventInvariants(events, { granularity: "coarse" });
@@ -113,8 +101,7 @@ describe("conformance 负例自证（A12：套件有牙）", () => {
 
 // ============================================================
 // [R6] C3 app-server 口径：fake 常驻引擎全链（eventGranularity=stream 形态）
-// —— spawn 钉扎用例见上方 coarse describe，两形态各自覆盖不合并（D2 降级链保留
-// spawn 路径，双通道都是生产可达形态）。
+// —— 2026-09 重构后唯一生产形态（CLI spawn 降级链已删，无钉扎/降级双通道）。
 // ============================================================
 
 describe("conformance C3：zcode app-server 常驻通道（stream 口径，fake 常驻全链）", () => {
@@ -169,14 +156,14 @@ describe("conformance C3：zcode app-server 常驻通道（stream 口径，fake 
     }
   }, 20_000);
 
-  it("handle 锚定常驻 HOME（poolKey=home-appserver，①级读取钥匙随 handle 走）", async () => {
+  it("handle 携带 shared poolKey（共享宿主 HOME 的 journal 分组锚点，①级读取钥匙随 handle 走）", async () => {
     const h = makeAppserverHarness();
     try {
       const { handle, outcome } = await h.engine.run(
         { task: "做点什么", slug: "c3-anchor", model: "conformance-provider/m1", cwd: h.workspace },
         { taskId: "sa-c3-anchor", poolKey: "" },
       );
-      expect(handle.data.poolKey).toBe(ZCODE_APPSERVER_POOL_KEY);
+      expect(handle.data.poolKey).toBe(ZCODE_SHARED_POOL_KEY);
       expect(handle.data.sessionRef["sessionId"]).toBe(outcome.sessionId);
       // golden 锚点：sessionId 来自 session.sessionId（projection.sessionId 恒 "unknown" 勿用）
       expect(JSON.parse(ZCODE_APPSERVER_GOLDEN.createResponse).session.sessionId).toBe("sess_golden_r3_01");

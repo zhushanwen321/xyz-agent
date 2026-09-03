@@ -1,5 +1,19 @@
 # zcode engine app-server 常驻化改造设计（core 侧）
 
+> **2026-09 breaking 修订（用户拍板，`refactor-zcode-engine-shared-home` 分支落地）**：
+> ① **删除 CLI spawn 降级链**——`XYZ_ZCODE_MODE` 钉扎、probe 冒烟门控（appserver-probe.ts）、
+> protocol-drift 首败降级全部移除；launcher.ts / appserver-home.ts / appserver-probe.ts 整文件删除。
+> 协议漂移不再降级保底，直接报可操作错误。本文 D2（降级链）章节随之**作废**。
+> ② **删除 HOME 池化，共享宿主 HOME**——spawn env 不再覆写 HOME，app-server 直接消费
+> 宿主 `~/.zcode/` 的凭据/模型配置/会话 db（与 GUI 共写同一 SQLite，WAL 并发安全）。
+> D7（常驻 HOME）章节随之**作废**。已接受代价：GUI 会话列表可见 headless 会话；登录态
+> 轮换后常驻连接需引擎进程重启才用新凭据（凭据内容 hash 刷新机制删除）；zcode 升级
+> schema migration 竞争无契约担保。收益：HOME 依赖副作用（pnpm store 随 HOME 翻转等）
+> 根治；锁/pidfile/孤儿回收/派生目录整章复杂度删除。poolKey 固定 `'shared'`（与 pi 引擎
+> PI_POOL_KEY 同构，journal 落 `engines/zcode/shared/`）；handle.sessionRef.dbPath 为
+> 绝对路径（`~/.zcode/cli/db/db.sqlite`，`ZCODE_HOST_DB_SUFFIX` SSOT）。
+> 未作废章节（D1 连接/D3 abort/D4 会话自包含/D5 capabilities/D6 停机面）仍然有效。
+
 > 层声明：当前层 = 技术方案设计；下一层 = 可实施代码单元（W1-W6，见 §5）。
 > 决策依据：zsw 仓 `docs/design/zcode-engine-appserver-decision-record.md`（commit e70ca71，用户 2026-08-30 确认终态）。本设计是该决策记录的落地实施设计，方向/位置/接口不变性均以决策记录为准，不重新讨论。
 > 状态：**设计就绪**。审查轨迹：r1（2026-08-30）3 must-fix + 4 suggestion + 1 doc_error → r2 复审 2 must-fix + 4 suggestion + 1 doc_error + 4 info → r3 终审 2 must-fix + 2 suggestion + 1 doc_error + 1 info，三轮全部逐条修复；r3 预登记「MF1/MF2 修完即设计就绪」，终批 6 条已同批修完（收敛轨迹 8→11→6，问题从机制级收敛到一句话级钉死）。

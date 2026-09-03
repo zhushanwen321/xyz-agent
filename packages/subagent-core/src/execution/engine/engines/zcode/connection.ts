@@ -117,16 +117,15 @@ function errMessage(err: unknown): string {
 
 /**
  * 组装 app-server 子进程 env：嵌套防护经公共 nesting-guard（注入统一
- * XYZ_AGENT_SUBAGENT=1 + 剥离引擎原生嵌套标记），HOME 最后落（隔离 HOME 是 provider
- * 配置与 db 的定位锚，基 env 同名键不许覆盖），遥测关闭（旧实现实证：隔离 HOME 内
- * 不写遥测标识）。与 launcher.buildZcodeEnv 同惯例，app-server 形态多一层
- * ZCODE_MODEL_TELEMETRY_ENABLED=false（设计 D10 启动基线）。
+ * XYZ_AGENT_SUBAGENT=1 + 剥离引擎原生嵌套标记），遥测关闭（旧实现实证）。
+ * 2026-09 起共享宿主 HOME——不再覆写 HOME：app-server 直接消费宿主 ~/.zcode/
+ * 的凭据、模型配置与会话 db（用户拍板；引擎会话与 GUI 共写同一 SQLite，WAL
+ * 并发安全），HOME 依赖副作用（如 pnpm store 路径翻转）随之消失。
  */
-export function buildAppServerEnv(homeDir: string, baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function buildAppServerEnv(baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return {
     ...buildNestedSpawnEnv(baseEnv),
     ZCODE_MODEL_TELEMETRY_ENABLED: "false",
-    HOME: homeDir,
   };
 }
 
