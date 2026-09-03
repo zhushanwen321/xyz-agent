@@ -1,7 +1,9 @@
-// src/__tests__/notify-ledger.test.ts（P1 抽包留壳：subject 为 subagent-core 件真链路，注入 pi/session-delivery 真机制，见 impl-plan 偏差 #17）
+// src/execution/__tests__/notify-ledger.test.ts
 //
 // U2 B-ledger 单测族：通知账本与 courier 的四步生命周期
 // （设计 docs/design/subagent-dispatch-reliability.md §3.3 D4/D5）。
+// u-5c 迁自壳套件 src/__tests__/notify-ledger.test.ts（被测 module 是 core 件，
+// 唯一测试覆盖原落壳——设计 §2.2 C6 / §1 目标 6）。
 //
 // 覆盖验收面：
 //   - 写账先于投递（顺序断言：appendEntry ledger entry 先于 sendMessage）
@@ -16,17 +18,31 @@
 //     mock session entries 含 ledger/ack entry → 重放差集）
 //   - notifier 四步接线（createNotifier + bindNotifyLedgerHost：notify → 写账 →
 //     边沿投递 → 回执销账全链路）
+//
+// u-5c 迁移改写（core 依赖闭包禁 pi 系包，验收「零跨包 specifier」）：
+//   - 投递内核由真实 @xyz-agent/session-delivery createDelivery 改为下方内联
+//     内核等价桩（notifier 实际消费的内核行为切片：payload fail-fast / dedupe /
+//     busy gate / 空闲立即投 / 同步 send 失败 warn + 退避重试 / 批量 join 形态），
+//     内核自身全量语义（合批窗口 / checked / watchdog 等）由 session-delivery
+//     包自有测试守卫，此处锚定的是 notifier 对内核契约的消费面。
+//   - 壳侧 pi-extension-logger 的 clearRateLimiterState/setPiHandle 清理调用移除：
+//     core logger 已整体 mock（getLogger → loggerMock），模块图内不存在
+//     pi-extension-logger 状态，该清理在本套件环境下为无操作（断言语义零变化）。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { loggerMock } = vi.hoisted(() => ({
-  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock( "@zhushanwen/subagent-core/core/logger.ts", () => ({ getLogger: () => loggerMock }));
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-import { clearRateLimiterState, setPiHandle } from "@zhushanwen/pi-extension-logger";
-import { createDelivery } from "@xyz-agent/session-delivery";
-import { configureNotifyDomain, resetNotifyDomainForTests } from "@zhushanwen/subagent-core/core/notify-ports.ts";
+import { configureNotifyDomain, resetNotifyDomainForTests } from "../../core/notify-ports.ts";
+import type {
+  DeliveryConfig,
+  DeliveryHandle,
+  DeliveryMessage,
+  DeliveryPort,
+} from "../../core/notify-ports.ts";
 import {
   bindNotifyLedgerHost,
   createNotifyLedger,
@@ -37,12 +53,192 @@ import {
   NOTIFY_WATCHDOG_MS,
   _resetNotifyLedgerForTest,
   type NotifyLedgerHost,
-} from "@zhushanwen/subagent-core/execution/notify-ledger.ts";
-import { createNotifier, type BgNotifyRecord, type NotifierHost } from "@zhushanwen/subagent-core/execution/notifier.ts";
+} from "../notify-ledger.ts";
+import { createNotifier, type BgNotifyRecord, type NotifierHost } from "../notifier.ts";
+
+// ─── 投递内核等价桩（u-5c：替代真实 session-delivery createDelivery） ──────
+//
+// 忠实复刻 notifier 消费面触及的内核行为（对照 packages/session-delivery
+// src/delivery.ts 同名实现）：
+//   - send()：payload 能力 fail-fast → dedupe → 入队 → 无合批依赖时立即
+//     scheduleFlush(0)（mergeHoldActive()=false 路径，notifier 单条通知即时投）
+//   - busy gate：isIdle() + hasPendingMessages() 双条件，busy 时退避轮询
+//     （无 subscribeSettled 装配的形态——notifier 测试 host 均不注入 onAgentSettled）
+//   - attemptSend()：同步 port.send（notifier port 契约返回 void = 受理成功）；
+//     同步抛错 → onSendFail → warn("port.send failed, retrying with backoff")
+//     + 退避重试，达上限终态 warn
+//   - buildBatchPayload()：多条合批 content join "\n\n---\n\n" + batch details
+//     （与 ledger 侧合批形态同构，钉住跨件一致的两处 join 语义）
+function createDelivery(port: DeliveryPort, options?: DeliveryConfig): DeliveryHandle {
+  const cfg = {
+    intent: options?.intent ?? ("interrupt-at-turn-boundary" as const),
+    mergeWindowMs: options?.mergeWindowMs ?? 0,
+    mergeHoldActive: options?.mergeHoldActive,
+    busyPolicy: options?.busyPolicy ?? ("retry-force" as const),
+    backoff: options?.backoff ?? { ms: 100, max: 50 },
+    warn: options?.warn ?? ((msg: string, err?: unknown) => { console.warn(`[session-delivery] ${msg}`, err ?? ""); }),
+  };
+
+  const queue: DeliveryMessage[] = [];
+  let inflightBatch: DeliveryMessage[] = [];
+  let inFlight = false;
+  let sendAttempts = 0;
+  let backoffTimer: ReturnType<typeof setTimeout> | undefined;
+  let mergeTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+  const dedupSet = options?.dedupe ? new Set<string>() : null;
+
+  function buildBatchPayload(batch: DeliveryMessage[]): DeliveryMessage {
+    if (batch.length === 1) return batch[0]!;
+    const first = batch[0]!;
+    const contents = batch.map((m) => m.payload.content);
+    const content = contents.join("\n\n---\n\n");
+    if (first.payload.kind !== "custom") {
+      return { ...first, payload: { kind: "text", content } };
+    }
+    return {
+      ...first,
+      payload: {
+        kind: "custom",
+        customType: first.payload.customType,
+        content,
+        display: first.payload.display,
+        details: {
+          batch: true,
+          items: batch.map((m) =>
+            m.payload.kind === "custom" && m.payload.details !== undefined
+              ? m.payload.details
+              : m.payload,
+          ),
+        },
+      },
+    };
+  }
+
+  function isBusy(): boolean {
+    try {
+      if (!port.isIdle()) return true;
+      return port.hasPendingMessages();
+    } catch {
+      return true;
+    }
+  }
+
+  function attemptSend(): void {
+    const composed = buildBatchPayload(inflightBatch);
+    try {
+      port.send(composed, composed.intent ?? cfg.intent);
+      onSendOk();
+    } catch (err) {
+      onSendFail(composed, err);
+    }
+  }
+
+  function onSendOk(): void {
+    if (disposed) return;
+    inFlight = false;
+    inflightBatch = [];
+    sendAttempts = 0;
+    if (queue.length > 0) scheduleFlush(0);
+  }
+
+  function onSendFail(composed: DeliveryMessage, err: unknown): void {
+    if (disposed) return;
+    void composed;
+    sendAttempts++;
+    if (sendAttempts > cfg.backoff.max) {
+      inFlight = false;
+      inflightBatch = [];
+      sendAttempts = 0;
+      cfg.warn("port.send failed after max retries", err);
+      return;
+    }
+    if (sendAttempts === 1) cfg.warn("port.send failed, retrying with backoff", err);
+    backoffTimer = setTimeout(() => {
+      backoffTimer = undefined;
+      if (disposed || !inFlight) return;
+      attemptSend();
+    }, cfg.backoff.ms);
+  }
+
+  function doSend(): void {
+    if (disposed || queue.length === 0 || inFlight) return;
+    inFlight = true;
+    inflightBatch = queue.splice(0);
+    sendAttempts = 0;
+    attemptSend();
+  }
+
+  function scheduleFlush(attempt: number): void {
+    if (disposed || queue.length === 0 || inFlight) return;
+    if (cfg.busyPolicy === "park" && attempt > 0) return;
+    if (backoffTimer !== undefined) {
+      clearTimeout(backoffTimer);
+      backoffTimer = undefined;
+    }
+    if (isBusy() && attempt < cfg.backoff.max) {
+      backoffTimer = setTimeout(() => {
+        backoffTimer = undefined;
+        scheduleFlush(attempt + 1);
+      }, cfg.backoff.ms);
+      return;
+    }
+    doSend();
+  }
+
+  return {
+    send(msg, opts) {
+      if (disposed) return;
+      if (!port.supportedPayloads.includes(msg.payload.kind)) {
+        cfg.warn(`unsupported payload kind: ${msg.payload.kind}`);
+        return;
+      }
+      if (dedupSet) {
+        if (msg.dedupeKey !== undefined) {
+          if (dedupSet.has(msg.dedupeKey)) return;
+          dedupSet.add(msg.dedupeKey);
+        }
+      }
+      queue.push(msg);
+      const useMerge =
+        opts?.merge ??
+        (cfg.mergeWindowMs > 0 && cfg.mergeHoldActive != null && cfg.mergeHoldActive());
+      if (useMerge) {
+        if (mergeTimer !== undefined) clearTimeout(mergeTimer);
+        mergeTimer = setTimeout(() => {
+          mergeTimer = undefined;
+          scheduleFlush(0);
+        }, cfg.mergeWindowMs);
+        return;
+      }
+      if (mergeTimer !== undefined) {
+        clearTimeout(mergeTimer);
+        mergeTimer = undefined;
+      }
+      scheduleFlush(0);
+    },
+    flush() {
+      if (disposed) return;
+      if (mergeTimer !== undefined) {
+        clearTimeout(mergeTimer);
+        mergeTimer = undefined;
+      }
+      scheduleFlush(0);
+    },
+    dispose() {
+      disposed = true;
+      queue.length = 0;
+      inflightBatch = [];
+      inFlight = false;
+      if (backoffTimer !== undefined) clearTimeout(backoffTimer);
+      if (mergeTimer !== undefined) clearTimeout(mergeTimer);
+    },
+  };
+}
 
 // 投递内核经通知域窄端口注入（notifier 不再直接 import session-delivery）——
-// 「ledger 未 bind 退回内核路径」与「U4 warn 注入」用例依赖真实内核语义
-// （gate / 合批 / onSendFail warn 出口），注入真实 createDelivery 保住回归面；
+// 「ledger 未 bind 退回内核路径」与「U4 warn 注入」用例依赖内核语义
+// （gate / 合批 / onSendFail warn 出口），注入内核等价桩保住回归面；
 // afterEach 重置防注入态泄漏。
 beforeEach(() => {
   configureNotifyDomain({ createDelivery });
@@ -376,12 +572,9 @@ describe("NotifyLedger — 120s 看门狗（D5 ②兜底触发面）", () => {
 describe("NotifyLedger — U4 投递计数分桶", () => {
   beforeEach(() => {
     _resetNotifyLedgerForTest();
-    clearRateLimiterState();
   });
   afterEach(() => {
     _resetNotifyLedgerForTest();
-    setPiHandle(undefined);
-    clearRateLimiterState();
   });
 
   it("初始快照：三桶全 0（无投递异常时零计数）", () => {
@@ -735,6 +928,7 @@ describe("createNotifier — ledger 四步接线（U2）", () => {
     notifier.notify(oneShotRecord("sa-post-dispose"));
     expect(notifierHost.sentMessages).toHaveLength(1); // 内核路径立即投（无 ledger）
   });
+
 });
 
 // ─── MF-5: settled 监听单例化 ──────────────────────────────
@@ -815,7 +1009,7 @@ describe("MF-5: settled 监听单例化（多次 bind 物理监听数不增）",
 
 describe("notify-ledger 常量锚", () => {
   it("NOTIFY_CUSTOM_TYPE 与 notifier 送达 customType / ledger 回执扫描同源", async () => {
-    const notifierModule = await import( "@zhushanwen/subagent-core/execution/notifier.ts");
+    const notifierModule = await import("../notifier.ts");
     // notifier 模块不再自带本地常量（单一常量源 = notify-ledger）；用运行时行为钉住：
     // ledger 回执扫描匹配的 customType === notifier 送达消息的 customType。
     const mock = makeLedgerHost();

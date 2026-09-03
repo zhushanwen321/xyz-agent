@@ -1,6 +1,11 @@
-// src/__tests__/agent-registry.test.ts（P1 抽包留壳：混合 subject——除「builtin agents 数据合规」段扫描壳内 agents/*.md 资产须随壳外，其余 describe 均为 subagent-core 解析行为，见 impl-plan 偏差 #17）
+// src/execution/__tests__/agent-registry.test.ts
 //
-// AgentRegistry 测试（S2 路径统一版）。
+// AgentRegistry 测试（S2 路径统一版）。u-5c 迁自壳套件 src/__tests__/agent-registry.test.ts
+// （被测 module 是 core 件，唯一测试覆盖原落壳——设计 §2.2 C6 / §1 目标 6）。
+//
+// 「builtin agents 数据合规」段不随迁：其 subject 是壳包 agents/*.md 资产（core 无
+// agents 资产，跨包文件系统触达违反 u-5c 验收「零跨包 specifier」），留在壳侧
+// src/__tests__/builtin-agents-assets.test.ts。
 //
 // S2 重构：AgentRegistry 从「按名查找（discoverAll + cache Map<name>）」收敛为
 // 「按绝对路径加载（loadByPath）」——agentRef 唯一形态 = .md 绝对路径（注入段
@@ -19,11 +24,11 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...actual, homedir: () => "/nonexistent-home-for-tests" };
 });
 
-import { lintAgentMeta } from "@zhushanwen/subagent-core/orchestration/script-lint.ts";
-import { parseResourceMeta } from "@zhushanwen/subagent-core";
-import { AgentRegistry, parseAgentFrontmatter, parseAgentWithMeta } from "@zhushanwen/subagent-core/execution/agent-registry.ts";
-import type { EnginePort } from "@zhushanwen/subagent-core";
-import { clearEngines, registerEngine } from "@zhushanwen/subagent-core/execution/engine/registry.ts";
+import { AgentRegistry, parseAgentFrontmatter, parseAgentWithMeta } from "../agent-registry.ts";
+import { clearEngines, registerEngine } from "../engine/registry.ts";
+import type { EnginePort } from "../engine/port.ts";
+import { lintAgentMeta } from "../../orchestration/script-lint.ts";
+import { parseResourceMeta } from "../../shared/meta-parser.ts";
 
 // ============================================================
 // helpers
@@ -199,58 +204,6 @@ You are a worker.`);
     const reg = new AgentRegistry();
     // homedir 被 mock 为 /nonexistent-home-for-tests → 文件必然不存在，验证展开逻辑
     expect(reg.loadByPath("~/agent.md")).toBeUndefined();
-  });
-});
-
-// ============================================================
-// 包内 agents/*.md 数据合规（S2：内置 agent = 包内路径文件）
-// ============================================================
-
-describe("builtin agents 数据合规", () => {
-  const AGENTS_DIR = path.resolve(__dirname, "../../agents");
-  const CORE = ["explorer", "coder", "reviewer", "debugger", "analyst", "planner", "researcher", "orchestrator", "general-purpose", "doc-reviewer"];
-
-  it("agents/*.md 全部 IF1 解析成功", () => {
-    for (const f of fs.readdirSync(AGENTS_DIR).filter((x) => x.endsWith(".md"))) {
-      const meta = parseResourceMeta(fs.readFileSync(path.join(AGENTS_DIR, f), "utf-8"), "agent");
-      expect(meta?.kind, `${f} parse 失败`).toBe("agent");
-    }
-  });
-
-  it("核心 agent 均含 when/notFor/examples 且正反各一（lintAgentMeta 无 finding）", () => {
-    for (const name of CORE) {
-      const meta = parseResourceMeta(fs.readFileSync(path.join(AGENTS_DIR, `${name}.md`), "utf-8"), "agent");
-      expect(meta, `${name} 解析失败`).not.toBeNull();
-      if (meta?.kind !== "agent") continue;
-      expect(meta.when, `${name} 缺 when`).toBeDefined();
-      expect(meta.notFor, `${name} 缺 notFor`).toBeDefined();
-      expect(meta.examples?.length, `${name} 缺 examples`).toBeGreaterThanOrEqual(2);
-      expect(meta.examples?.some((e) => e.positive), `${name} 缺正向样本`).toBe(true);
-      expect(meta.examples?.some((e) => !e.positive), `${name} 缺反向样本`).toBe(true);
-      expect(lintAgentMeta(meta), `${name} examples 不合规`).toEqual([]);
-    }
-  });
-
-  it("loadByPath 直接加载包内 agent（内置 = 路径文件，无名字查找）", () => {
-    const reg = new AgentRegistry();
-    const coder = reg.loadByPath(path.join(AGENTS_DIR, "coder.md"));
-    expect(coder?.name).toBe("coder");
-    expect(coder?.systemPrompt.length).toBeGreaterThan(0);
-    // tools 字段精确匹配：未声明的为 undefined，声明的为具体数组。
-    // 改 frontmatter 时这里会立即报错，拦住拼写错误或字段遗漏。
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "explorer.md"))?.tools).toEqual(
-      ["read", "bash", "grep", "find", "structured-output"],
-    );
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "researcher.md"))?.tools).toEqual(["read", "bash"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "orchestrator.md"))?.tools).toEqual([
-      "todo", "goal_control", "workflow", "subagent", "ask_user",
-    ]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "reviewer.md"))?.tools).toEqual(["read", "bash", "grep", "find", "structured-output"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "planner.md"))?.tools).toEqual(["read", "bash", "grep", "find", "structured-output"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "coder.md"))?.tools).toEqual(["read", "write", "edit", "bash", "grep", "find", "structured-output"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "debugger.md"))?.tools).toEqual(["read", "write", "edit", "bash", "grep", "find", "structured-output"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "analyst.md"))?.tools).toEqual(["read", "bash", "grep", "find", "structured-output"]);
-    expect(reg.loadByPath(path.join(AGENTS_DIR, "doc-reviewer.md"))?.tools).toEqual(["read", "grep", "structured-output"]);
   });
 });
 

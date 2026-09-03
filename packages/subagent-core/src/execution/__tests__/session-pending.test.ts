@@ -1,22 +1,67 @@
-// src/__tests__/session-pending.test.ts（P1 抽包留壳：注入 pi 真计数器锚定差集语义，见 impl-plan 偏差 #17）
+// src/execution/__tests__/session-pending.test.ts
 //
 // readActivePendingFromSessionFile：读 session 文件算活跃后代（pending 差集）。
 // 覆盖：差集、快速路径过滤、文件不存在/坏行/未回填 sessionFile。
+// u-5c 迁自壳套件 src/__tests__/session-pending.test.ts（被测 module 是 core 件，
+// 唯一测试覆盖原落壳——设计 §2.2 C6 / §1 目标 6）。
+//
+// 迁移改写：原壳版注入真实 @zhushanwen/pi-pending-notifications 计数器锚定差集
+// 语义；core 依赖闭包禁 pi 系包（u-5c 验收「零跨包 specifier」），改为下方
+// countActiveFromEntries 等价转写（逐字对照 extensions/universal/
+// pending-notifications/src/state.ts 同名实现的两遍差集算法：先收 unregister id
+// 集，再计 register 差集按 id 去重）——pi 侧算法自身由该包自有测试守卫。
 
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { configureNotifyDomain, resetNotifyDomainForTests } from "@zhushanwen/subagent-core/core/notify-ports.ts";
+import { configureNotifyDomain, resetNotifyDomainForTests } from "../../core/notify-ports.ts";
 
-import { readActivePendingFromSessionFile, clearPendingCursors } from "@zhushanwen/subagent-core/execution/session-pending.ts";
+import { readActivePendingFromSessionFile, clearPendingCursors } from "../session-pending.ts";
+
+/** pi pending entries 的最小可识别形状（与 pi state.ts EntryLike 同构，运行时守卫）。 */
+interface PendingEntryLike {
+  customType?: unknown;
+  data?: { id?: unknown } | null;
+}
+
+/**
+ * countActiveFromEntries 等价转写（u-5c：core 闭包禁 pi 包 import）。
+ * 算法逐字对照 @zhushanwen/pi-pending-notifications src/state.ts：
+ * 两遍扫描——第一遍收 pending:unregister 的 id 集，第二遍计 pending:register
+ * 中未被注销且未见过的 id（按 id 去重）。返回 { count }（端口契约拆 .count
+ * 的上游形态）。
+ */
+function countActiveFromEntries(entries: unknown[]): { count: number } {
+  const unregistered = new Set<string>();
+  for (const raw of entries) {
+    // S-10：entries 元素可能是 null/undefined（坏数据），断言前先守卫
+    if (!raw || typeof raw !== "object") continue;
+    const entry = raw as PendingEntryLike;
+    if (entry.customType !== "pending:unregister") continue;
+    const data = (entry.data ?? {}) as { id?: unknown };
+    if (typeof data.id === "string") unregistered.add(data.id);
+  }
+
+  const seen = new Set<string>();
+  let count = 0;
+  for (const raw of entries) {
+    if (!raw || typeof raw !== "object") continue;
+    const entry = raw as PendingEntryLike;
+    if (entry.customType !== "pending:register") continue;
+    const data = (entry.data ?? {}) as { id?: unknown };
+    if (typeof data.id !== "string" || unregistered.has(data.id) || seen.has(data.id)) continue;
+    seen.add(data.id);
+    count += 1;
+  }
+  return { count };
+}
 
 // 计数器经通知域窄端口注入（session-pending 不再直接 import pi-pending-notifications）
-// ——注入 pi 真函数保住差集语义回归面；真函数返回 CountActiveResult，端口契约是
-// number（拆 .count，与 pi 壳 createPiNotifyDomainPorts 适配同构）；afterEach 重置
-// 防注入态泄漏。
+// ——注入差集计数等价实现保住差集语义回归面（真函数返回 CountActiveResult，端口
+// 契约是 number（拆 .count，与 pi 壳 createPiNotifyDomainPorts 适配同构）；
+// afterEach 重置防注入态泄漏。
 beforeEach(() => {
   configureNotifyDomain({
     countActiveFromEntries: (entries) => countActiveFromEntries(entries).count,
