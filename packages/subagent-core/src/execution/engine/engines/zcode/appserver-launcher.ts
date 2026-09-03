@@ -45,11 +45,14 @@ const FALLBACK_MODEL_MAIN = 'builtin:bigmodel-coding-plan/GLM-5.3';
 // 合并形态：真实 cli config 原样（model/plugins/mcp/subagents 等 worker 继承面不变）
 // + v2 的 provider 字典注入（真实文件已有同名条目时以真实文件优先——尊重用户手写）。
 // 返回 null = 无可注入凭据（v2 无 provider 条目）——不 patch，让原生报错透出。
+// 读源经 readOrig 间接取：patch 前首调 = fs.readFileSync 本体；patch 后 = 原函数
+// （防 patch 后的递归自调用）。
 function injectedConfigText() {
+  const readOrig = fs.__origReadFileSync || fs.readFileSync;
   let real = {};
-  try { real = JSON.parse(fs.__origReadFileSync(CONFIG_PATH, 'utf8')); } catch { /* 无/损坏 → 空 */ }
+  try { real = JSON.parse(readOrig(CONFIG_PATH, 'utf8')); } catch { /* 无/损坏 → 空 */ }
   let v2 = {};
-  try { v2 = JSON.parse(fs.__origReadFileSync(V2_PATH, 'utf8')); } catch { return null; }
+  try { v2 = JSON.parse(readOrig(V2_PATH, 'utf8')); } catch { return null; }
   const v2Providers = v2.provider && typeof v2.provider === 'object' ? v2.provider : {};
   const hasKey = (entry) => entry && typeof entry === 'object'
     && entry.options && typeof entry.options.apiKey === 'string' && entry.options.apiKey !== '';
