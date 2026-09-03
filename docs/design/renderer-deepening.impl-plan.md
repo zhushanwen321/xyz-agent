@@ -142,12 +142,18 @@ graph TD
 ## 7 残留风险与变更历史
 
 **残留风险**：
-- P1（command 语义对等）：核对不通过 → 本波只做 fileSearch，command 部分挂起升级（设计已备降级）
-- P2（staging 差异可配置性）：不可配 → 部分泛化（共享骨架 + 差异段保留）
-- P5（renderer ws-client mock 链）：失败 → 保留动态 import 其余照做
-- Gate B 场景（A1-A6）依赖 dev app + 真实 runtime，阶段 5 集中执行；单元期只跑命令级验收
-- D4/D13 两处行为变化由专项验收（A2/A1 时序观察、A4 branch 段）兜底
+- P1（command 语义对等）：核对不通过 → 本波只做 fileSearch，command 部分挂起升级（设计已备降级）——已过门（P1 清单落盘，core 零补齐）
+- P2（staging 差异可配置性）：不可配 → 部分泛化（共享骨架 + 差异段保留）——已过门（完全泛化）
+- P5（renderer ws-client mock 链）：失败 → 保留动态 import 其余照做——已触发降级（动态 import 保留 + [HISTORICAL]）
+- ~~Gate B 场景（A1-A6）依赖 dev app + 真实 runtime~~——已执行（见变更历史阶段 5 条目）
+- D4/D13 两处行为变化由专项验收（A2/A1 时序观察、A4 branch 段）+ 等价测试兜底——已验
+- **subagent-core resource-discovery 环境性失败**（Gate A 发现）：macOS 系统临时目录残留 `.pi` 目录污染 findWorkspaceRoot Phase 3 上溯——与本流水线 diff 零交集（该包 0 文件在区间），恢复动作 = 清理 `/var/folders/.../T` 下残留 `.pi` 后重跑；Phase 3 无上溯边界属实现层缺口（先存）
+- **pi×Bun proper-lockfile 恢复崩溃**（Gate B A3 发现）：pi 0.84.4 under Bun 1.3.14 在大 session 恢复路径偶发/可稳定复现 `TypeError: Proxy handler's 'get'...`（mtime-precision.js）——先存环境问题（基线日志同签名），本流水线 runtime 改动仅 3 行注释；runtime 侧重试与「重新打开」恢复路径经 A3 验证可用
+- **OPS_FIELDS 手工镜像清单无机器同步守卫**（E 区审查建议）：解析 store.ts 源码比对的守卫测试成本很低，建议后续补
+- **ChatStoreReaders/ChatStoreOps 零消费方**（渐进态）：pinia 解包鸿沟需后续波次做消费方标注落地
+- renderer 包名 @xyz-agent/frontend 与目录名 renderer 不一致（--filter 目录直觉名静默 exit 0）——包结构现状，非本流水线引入
 
 **变更历史**：
 - 2026-09-03 v1：初版计划（13 单元 / 6 波次 / DAG 含边原因）。来源：设计 v4（含实施前复核修正 D5 消费面）。
 - 2026-09-03 轮 1（一致性审查 + 修复）：五区对抗式审查（A transport / B composer+search / C coordination / D session / E chat+lint）结论 = unreasonable 3 条全低危（注释刷新未执行、recordGapDispatchedSeq 死导出、RouteTableEntry 多导半张）+ doc_errors 约 12 条；修复批次清零（注释刷新 21+ 文件、导出收编 2 项、runtime 4 红用例根因为 u6.1 testInternals 收编的跨包消费面漏跑已修）；设计文档同步回写 v5；偏差表 #10 扩围落地、新增 #15/#16、#8 领地路径修正。审查另确认：两处声明行为变化（D4/D5）范围与实现精确吻合、偏差 #11 两处等价声称经源码核实成立、runEntryChain 维持不导出（导出会制造第二编排点违背 G1）。
+- 2026-09-03 阶段 5 双级验收：**Gate A 全量绿**（根 pnpm test 全 workspace 约 16.2k 用例，唯一失败 subagent-core resource-discovery 为环境性——系统临时目录残留 .pi 污染，与 diff 区间零交集，登记残留风险；lint --max-warnings 0 零输出；5 包 typecheck 全过；taste-lint 78 用例绿；零新增 skip/disable）。**Gate B dev 实跑**：A1 过（panel-first 挂载 + 历史回填 + 10 连切零重复订阅 warn；未读 badge 子项无 live 未读环境，由 12 步链级单测覆盖）；A1-负向未 live 跑（断网工具不可用，failedHistory 重试语义由 u5.1 失败用例覆盖）；A2 过（删活跃 session → 回退 + 回退路径流订阅 live 实证——D3 接缝债闭合）；A3 过（kill runtime → tsx-watch supervisor 重启 → 渲染端重连 → 消息路由正常 → pi 恢复崩溃以流内错误 + 降级面板 + 重新打开恢复路径正确呈现；pi×Bun proper-lockfile 崩溃为环境性先存，基线日志同签名）；A4 过（真实模型 GLM-5.3 对话：思考×1 + bash 工具×1 + 流式答案完整渲染；live≡reload 逐字一致仅耗时标签墙钟差；fork/handoff staging 进出双态验证；branchSummary live≡reload 由 u6.2 三套等价测试钉住）；A5 过（mock 流式/思考/工具/变更集 fixture 全渲染，2 条 warn 为先存 mock 轨行为逐字不变）；A6 过（⌘K 与 CommandPopover 同源命令集 live 一致）；A8 过（lint 负面双向）。执行副作用如实记录：3 个真实 session 各被追加 1-3 条测试消息（检查worktree/architecture-review-explor/确认收到），一次性 gate-b session 已删。
