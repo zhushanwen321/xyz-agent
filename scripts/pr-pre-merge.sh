@@ -39,16 +39,24 @@ usage() {
   bash scripts/pr-pre-merge.sh --test-result PASS|FAIL  # 终局 gate：typecheck 三处 + lint + test:runtime 实跑，
                                                         # 其余测试线以注入值计入 result
 通用参数: --quiet（只输出最终结果，等价 PR_PRE_MERGE_QUIET=1）
+          --base <ref>（注入值产物的 base 口径，默认 main；stacked PR（base≠main）必须传与
+          coverage-gate.py 相同的 --base，否则 --test-result 校验 base 不一致 exit 2）
 USAGE
 }
 
 # ── 参数解析：模式（default / skip-tests / test-result）+ --quiet ──
 MODE="default"
 TEST_RESULT_INJECT=""
+BASE="main"  # 注入值产物的 base 口径（与 coverage-gate.py --base 同一 ref 名文本比对）
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --quiet)
             QUIET=1
+            ;;
+        --base)
+            [[ -n "${2:-}" ]] || { echo "ERROR: --base 需要一个 ref 名参数" >&2; usage; exit 2; }
+            BASE="$2"
+            shift 2
             ;;
         --skip-tests|--test-result)
             if [[ "$MODE" != "default" ]]; then
@@ -90,24 +98,24 @@ cd "$GIT_ROOT"
 #    注入值来源是 coverage-gate 的测试判定，产物必须存在且针对同一 base，
 #    否则注入的是过期读数。不一致 → exit 2（工具错误），错误信息指向恢复动作。
 if [[ "$MODE" == "test-result" ]]; then
-    EXPECTED_BASE="main"  # 本脚本无 --base 参数；base 概念与 check_changeset 同源（main）
+    EXPECTED_BASE="$BASE"  # --base 可选参数（默认 main）；须与 coverage-gate.py 的 --base 同值
     if [[ ! -f .review/coverage.json ]]; then
         echo "ERROR: --test-result 需要 .review/coverage.json（未找到，注入值缺少来源产物）。" >&2
-        echo "恢复：先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main，" >&2
+        echo "恢复：先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base ${EXPECTED_BASE}，" >&2
         echo "再执行 bash scripts/pr-pre-merge.sh --test-result PASS|FAIL" >&2
         exit 2
     fi
     COV_BASE="$(node -e 'try{const c=require("./.review/coverage.json");process.stdout.write(typeof c.base==="string"?c.base:"")}catch(e){}' 2>/dev/null || true)"
     if [[ -z "$COV_BASE" ]]; then
         echo "ERROR: .review/coverage.json 缺少 base 字段（或 JSON 无效）——无法确认产物针对的 base，注入判定不可信。" >&2
-        echo "恢复：先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main，" >&2
+        echo "恢复：先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base ${EXPECTED_BASE}，" >&2
         echo "再执行 bash scripts/pr-pre-merge.sh --test-result PASS|FAIL" >&2
         exit 2
     fi
     if [[ "$COV_BASE" != "$EXPECTED_BASE" ]]; then
         echo "ERROR: .review/coverage.json 的 base=\"$COV_BASE\" 与本次 base=\"$EXPECTED_BASE\" 不一致——产物过期（来自其他 base），注入判定不可信。" >&2
-        echo "恢复：先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base main，" >&2
-        echo "再执行 bash scripts/pr-pre-merge.sh --test-result PASS|FAIL" >&2
+        echo "恢复二选一：① 产物过期 → 先运行 python3 .agents/skills/pr-cr-fix/scripts/coverage-gate.py --base ${EXPECTED_BASE}，再执行 bash scripts/pr-pre-merge.sh --test-result PASS|FAIL；" >&2
+        echo "          ② \"$COV_BASE\" 才是本次正确口径（stacked PR）→ 改用 bash scripts/pr-pre-merge.sh --test-result PASS|FAIL --base ${COV_BASE} 重跑" >&2
         exit 2
     fi
 fi

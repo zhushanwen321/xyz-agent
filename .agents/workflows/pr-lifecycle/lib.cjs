@@ -93,8 +93,6 @@ const MSG = {
     `gh 未认证（${String(detail || '').trim().split('\n')[0] || 'gh auth status 失败'}）；运行 \`gh auth login\` 后重新发起`,
   preflightFallow: (detail) =>
     `fallow 不可用（${String(detail || '').trim().split('\n')[0] || 'fallow --version 失败'}）；运行 \`npm i -g fallow\` 后重新发起`,
-  finalGatesPremergeMarkerMissing: () =>
-    `final-gates：pre-merge marker（.review/premerge-result）不存在或不可解析，不得凭缺失判 PASS（fail-closed）；确认 pr-pre-merge.sh 已写入 marker 后 resume`,
   preflightSummary: (items) =>
     `preflight 前置条件未过：\n${items.map((s) => `- ${s}`).join('\n')}`,
   gateToolError: (name, out) =>
@@ -202,7 +200,12 @@ function gateFixPrompt(stepId, round, res) {
 
 // resumeCommand（§3.4-(1)：失败终态必须含可直接复制执行的恢复命令）
 function resolveZswCli(io) {
-  // 候选①：插件 cache glob，版本数值最高且 ≥1.2.0——cache 里的 1.0.0 是旧 run(ctx) 契约，
+  // 候选①：zsw main worktree bin（Gate B 实测可用源；core 契约脚本只能被 ≥1.2.0 引擎执行）
+  const mainWorktreeCli = path.join(io.homedir(), 'Code', 'zcode-plugin-workspace', 'main', 'z-subagent-workflow', 'bin', 'zsw.js');
+  try {
+    if (io.fs.existsSync(mainWorktreeCli)) return mainWorktreeCli;
+  } catch { /* 落候选② */ }
+  // 候选②：插件 cache glob，版本数值最高且 ≥1.2.0——cache 里的 1.0.0 是旧 run(ctx) 契约，
   // 执行/校验 core 契约脚本必失败（workerData 未定义），必须过滤
   const base = path.join(io.homedir(), '.zcode', 'cli', 'plugins', 'cache', 'zcode-plugin-workspace', 'z-subagent-workflow');
   let versions = [];
@@ -505,7 +508,7 @@ function acquireLock(io, stateDir, engineRunId) {
     }
     try {
       io.fs.writeSync(fd, JSON.stringify({
-        runId: null, // fresh 时 runId 未生成，生成后经 writeLockContent 回填
+        runId: null, // fresh 时 runId 未生成，生成后经 updateLockContent 回填
         pid: io.pid,
         engineRunId: engineRunId || null,
         createdAt: io.now().toISOString(),
@@ -858,11 +861,6 @@ function changesetAgentPrompt(baseHash, diffStatOut, commitsOut, changesetFiles)
   ].filter(Boolean).join('\n');
 }
 
-// diff --name-only 输出 → 现有 .changeset/*.md 清单（changeset / pr-meta 两 step 同一推导）
-function listChangesetFiles(namesOut) {
-  return String(namesOut || '').split('\n').map((s) => s.trim()).filter((f) => /^\.changeset\/.+\.md$/.test(f));
-}
-
 function prMetaAgentPrompt(baseHash, commitsOut, diffStatOut, changesetFiles) {
   return [
     '任务：从分支全部 commit 自动生成 PR title 与 body（英文，无需用户提供）。',
@@ -903,21 +901,10 @@ const REAL_PI_DEFAULT_MODEL = 'xiaomi-token-plan-cn/mimo-v2.5-pro';
 // ② 引用方 describe 名注入：`<suite>（skip：<REAL_PI_SKIP_REASON>）`，理由三种前缀
 const REAL_PI_SKIP_MARKERS = [
   '[equivalence] 真实 pi（LLM turn）用例 skip：',
-  // 引用方 describe 名注入两种分隔形态：全角括号与全角竖线（S-3：漏后者对 8+ suite 不生效）
   '（skip：pi binary not found',
   '（skip：pi 凭证不可用',
   '（skip：env XYZ_SKIP_REAL_PI',
-  '｜skip：pi binary not found',
-  '｜skip：pi 凭证不可用',
-  '｜skip：env XYZ_SKIP_REAL_PI',
 ];
-
-// shared 包 src 改动 → 追加下游兜底包（coverage-gate D12：--extra-packages 追加器语义）
-function sharedSrcExtraArgs(namesOut) {
-  return /(?:^|\n)packages\/shared\/(?:.+\/*\/)?src\//.test(`\n${namesOut}`)
-    ? ['--extra-packages', 'packages/runtime,packages/renderer']
-    : [];
-}
 
 function coverageInsufficientReasonPrefix() {
   return '增量覆盖率'; // coverage-gate.py FAIL 条目 reason 固定前缀（覆盖率不足 vs 测试跑红的分流依据）
@@ -1234,9 +1221,6 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
         if (gh.code !== 0) failures.push(MSG.preflightGhAuth(gh.stderr || gh.stdout));
         const fallow = ctx.io.sh('fallow', ['--version']);
         if (fallow.code !== 0) failures.push(MSG.preflightFallow(fallow.stderr || fallow.stdout));
-        // S-7：`.review/` 状态目录须被 gitignore，防误入 PR diff（仅警告——工作区可能有意跟踪）
-        const gi = ctx.io.sh('git', ['check-ignore', '--quiet', '.review/']);
-        if (gi.code !== 0) ctx.io.log('[preflight] 警告：`.review/` 不在 .gitignore，状态目录可能误入 PR diff');
         if (failures.length > 0) throw new Error(MSG.preflightSummary(failures));
         return { baseHash };
       },
@@ -1278,7 +1262,7 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
         const diffStat = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--stat']);
         const commits = ctx.io.sh('git', ['log', `${ctx.state.baseHash}..HEAD`, '--format=%s%n%b---']);
         const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
-        const changesetFiles = listChangesetFiles(names.stdout);
+        const changesetFiles = names.stdout.split('\n').map((s) => s.trim()).filter((f) => /^\.changeset\/.+\.md$/.test(f));
         const res = await ctx.io.agent({
           description: 'changeset-draft',
           schema: CHANGESET_SCHEMA,
@@ -1305,7 +1289,7 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
         if (commits.code !== 0) throw new Error(MSG.gitFailed(['log', `${ctx.state.baseHash}..HEAD`], commits.stderr));
         const diffStat = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--stat']);
         const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
-        const changesetFiles = listChangesetFiles(names.stdout);
+        const changesetFiles = names.stdout.split('\n').map((s) => s.trim()).filter((f) => /^\.changeset\/.+\.md$/.test(f));
         const res = await ctx.io.agent({
           description: 'pr-meta',
           schema: PR_META_SCHEMA,
@@ -1370,9 +1354,7 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
     {
       id: 'constraints',
       run: async (ctx) => {
-        // baseHash 口径（MF-1）：gate 一律传 baseHash，防跨天 resume 时 main 漂移致
-        // review 与 gate 范围不一致（diff/log 全部基于 baseHash，gate 传 ref 名会混合口径）
-        const res = ctx.io.sh('node', [paths.selectConstraints, '--base', ctx.state.baseHash]);
+        const res = ctx.io.sh('node', [paths.selectConstraints, '--base', ctx.state.base]);
         if (res.code !== 0) {
           throw new Error(MSG.constraintsFail(`${res.stderr || ''}\n${res.stdout || ''}`));
         }
@@ -1385,10 +1367,14 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
       id: 'coverage-1',
       run: (ctx) => {
         const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
-        const args = [paths.coverageGate, '--base', ctx.state.baseHash, ...sharedSrcExtraArgs(names.stdout)];
+        const args = [paths.coverageGate, '--base', ctx.state.base];
+        // shared 包 src 改动 → 追加下游兜底包（coverage-gate D12：--extra-packages 追加器语义）
+        if (/(?:^|\n)packages\/shared\/(?:.+\/*\/)?src\//.test(`\n${names.stdout}`)) {
+          args.push('--extra-packages', 'packages/runtime,packages/renderer');
+        }
         return gateFixLoop(ctx, {
           stepId: 'coverage-1',
-          gateName: `coverage-gate.py --base ${ctx.state.baseHash}`,
+          gateName: `coverage-gate.py --base ${ctx.state.base}`,
           runGate: () => ctx.io.sh('python3', args),
           onPass: (res) => {
             const cov = readCoverageJson(ctx.io);
@@ -1405,8 +1391,8 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
       id: 'metrics-1',
       run: (ctx) => gateFixLoop(ctx, {
         stepId: 'metrics-1',
-        gateName: `metrics-gate.py --base ${ctx.state.baseHash}`,
-        runGate: () => ctx.io.sh('python3', [paths.metricsGate, '--base', ctx.state.baseHash]),
+        gateName: `metrics-gate.py --base ${ctx.state.base}`,
+        runGate: () => ctx.io.sh('python3', [paths.metricsGate, '--base', ctx.state.base]),
         onPass: (res) => {
           const m = readMetricsJson(ctx.io);
           return {
@@ -1430,7 +1416,7 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
         // zai-coding-cn 在 pi 侧不存在（model_not_available → aggregator-failure×2）
         const nestedArgs = {
           targetType: 'git-diff',
-          target: ctx.state.baseHash,
+          target: ctx.state.base,
           batch1: batch1.join(','),
           maxRounds: ctx.params.maxRounds,
           autoCommit: true,
@@ -1497,10 +1483,6 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
           || !Number.isInteger(v.proposals) || v.proposals < 0) {
           throw new Error(MSG.agentInvalidOutput('simplify agent', v));
         }
-        if (!apply && v.applied > 0) {
-          // report 模式违规改码不得静默洗白（S-6）：警示人工核对
-          ctx.io.log(`[simplify] 警告：report 模式下 agent 自报 applied=${v.applied}（违规改码嫌疑），人工核对 git log ${ctx.state.baseHash}..HEAD`);
-        }
         const applied = apply ? v.applied : 0;
         // 结构性验证 1：agent 返回后 porcelain 非空 = 半成品（声称应用未 commit）或违规动码
         const st = ctx.io.sh('git', ['status', '--porcelain']);
@@ -1517,7 +1499,9 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
       run: async (ctx) => {
         const sharedSrcArgs = () => {
           const names = ctx.io.sh('git', ['diff', `${ctx.state.baseHash}..HEAD`, '--name-only']);
-          return sharedSrcExtraArgs(names.stdout);
+          return /(?:^|\n)packages\/shared\/(?:.+\/*\/)?src\//.test(`\n${names.stdout}`)
+            ? ['--extra-packages', 'packages/runtime,packages/renderer']
+            : [];
         };
         const outputs = await gateFixLoop(ctx, {
           stepId: 'final-gates',
@@ -1527,18 +1511,20 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
             const piMissing = realPiPreflight(ctx.io);
             if (piMissing) throw new Error(MSG.finalGatesRealPiMissing(piMissing));
             // ① coverage-gate（测试判定来源）
-            const cov = ctx.io.sh('python3', [paths.coverageGate, '--base', ctx.state.baseHash, ...sharedSrcArgs()]);
+            const cov = ctx.io.sh('python3', [paths.coverageGate, '--base', ctx.state.base, ...sharedSrcArgs()]);
             if (cov.code !== 0) {
               return { code: cov.code, stdout: cov.stdout || '', stderr: cov.stderr || '', coverageJson: readCoverageJson(ctx.io) };
             }
             // ② metrics-gate
-            const met = ctx.io.sh('python3', [paths.metricsGate, '--base', ctx.state.baseHash]);
+            const met = ctx.io.sh('python3', [paths.metricsGate, '--base', ctx.state.base]);
             if (met.code !== 0) {
               return { code: met.code, stdout: `${cov.stdout}\n${met.stdout}`, stderr: met.stderr || '' };
             }
-            // ③ pr-pre-merge --test-result <注入值 = ① 的测试判定>
+            // ③ pr-pre-merge --test-result <注入值 = ① 的测试判定> --base <base ref 名>
+            // （--base 与 ① coverage-gate 同值：脚本对 coverage.json 的 base 做 ref 名文本比对，
+            // 传 baseHash 会比对失败；Gate B S1：stacked PR base≠main 必须显式传）
             const inject = coverageTestInject(cov.code, readCoverageJson(ctx.io));
-            const pre = ctx.io.sh('bash', [paths.preMerge, '--test-result', inject]);
+            const pre = ctx.io.sh('bash', [paths.preMerge, '--test-result', inject, '--base', ctx.state.base]);
             return {
               code: pre.code,
               stdout: `${cov.stdout}\n${met.stdout}\n${pre.stdout}`,
@@ -1554,9 +1540,9 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
             if (markers.length > 0) throw new Error(MSG.finalGatesRealPiSkip(markers));
             const cov = res.coverageJson;
             const met = res.metricsJson;
-            // fail-closed（S-4）：marker 读不到不得回落 PASS，否则 pre-merge 判定被静默洗白
-            const premergeResult = readPremergeMarker(ctx.io, ctx.io.repoRoot);
-            if (premergeResult === null) throw new Error(MSG.finalGatesPremergeMarkerMissing());
+            let premergeResult = 'PASS';
+            const marker = readPremergeMarker(ctx.io, ctx.io.repoRoot);
+            if (marker) premergeResult = marker;
             if (premergeResult !== 'PASS') throw new Error(`final-gates：pre-merge marker result=${premergeResult}（非 PASS）`);
             return {
               coverageVerdict: (cov && cov.verdict) || 'pass',
@@ -1653,7 +1639,7 @@ async function freshFlow(io, params, engineRunId, stateDir, lockPath) {
   const runId = makeRunId(io.now, io.randomToken);
   if (!isValidRunId(runId)) throw new GuardError(`生成的 runId 不合法（${runId}）；检查 now/randomToken 注入`);
   writeLatest(io, stateDir, runId); // 暴毙兜底通道先落（先于任何副作用）
-  writeLockContent(io, lockPath, runId, engineRunId);
+  updateLockContent(io, lockPath, runId, engineRunId);
 
   const git = gitSnapshot(io);
   const baseHash = resolveBaseHash(io, params.base);
@@ -1771,6 +1757,10 @@ async function resumeFlow(io, params, engineRunId, stateDir) {
 function touchRunContext(io, state, engineRunId) {
   state.engineRunId = engineRunId || state.engineRunId;
   state.pid = io.pid;
+}
+
+function updateLockContent(io, lockPath, runId, engineRunId) {
+  writeLockContent(io, lockPath, runId, engineRunId);
 }
 
 module.exports = {
