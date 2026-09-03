@@ -11,7 +11,7 @@
  *   repoRoot          repo/worktree 绝对路径（入口解析；state.repo 与守卫 2 的比对基准）
  *   pid               当前进程 pid
  *   fs                { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync,
- *                       unlinkSync, openSync, writeSync, closeSync }
+ *                       unlinkSync, openSync, writeSync, closeSync, readdirSync }
  *   sh(cmd, args, opts) => { code, stdout, stderr }（lib.createSh 产物；不 throw）
  *   readEngineState(engineRunId) => { ok: true, status } | { ok: false, reason }
  *                                     读引擎 state 文件末行 state.status（P5 实证 JSONL）
@@ -133,6 +133,20 @@ const MSG = {
     `final-gates 收尾防线：存在未提交改动，修复可能静默丢失（与 structured-output 历史事故同型）：\n${list}\n经 \`git add <显式路径> && git commit\` 落盘后 resume`,
   placeholderStep: (id, unit) =>
     `step ${id} 尚未实现（${unit} 单元交付）：当前为注册表占位（walker「从第一个未完成 step 开始」语义要求注册表完整有序）；请等 ${unit} 落地后再发起含该 step 的完整流程`,
+
+  /* ── u4：cr-fix step（§3.7 cr-fix 两行 + §3.4-(3)-5 恢复粒度） ── */
+  crFixNoBatch1: (dir, reviewers) =>
+    `cr-fix batch1 组装失败：${dir} 下无匹配的 review-*.md${reviewers ? `（reviewers 裁剪词：${reviewers.join(',')}）` : ''}。` +
+    `确认当前 worktree 存在 .agents/skills/pr-cr-fix/agents/review-*.md，或修正 reviewers 裁剪词后 resume`,
+  crFixStuck: (terminated, reportRef, message) =>
+    `cr-fix nested loop 终态 ${terminated}：读 ${reportRef}\n` +
+    `处置分支：① 判定为 reviewer 误报 → resume 并带 skipSteps:["cr-fix"]（人工接管，终态 scriptResult 逐项披露）；` +
+    `② 真问题 → 修复 commit 后 resume（cr-fix 整体重跑，已 fix 的问题不会再被报出，通常 1-2 轮收敛）。\n` +
+    `nested message：${message || '（无）'}`,
+  crFixRetryExhausted: (terminated, attempts) =>
+    `cr-fix nested loop 连续 ${attempts} 次 ${terminated}（环境类失败，已自动重试 1 次）：检查 pi 凭证 / 模型配额 / 引擎状态后 resume（cr-fix 整体重跑）`,
+  crFixUnknownTerminated: (terminated, reportRef) =>
+    `cr-fix 终态未知值 "${terminated}"（引擎契约演进，fail-closed 按 failed 处置）：读 ${reportRef} 人工判定后 resume，或带 skipSteps:["cr-fix"] 接管`,
 };
 
 function tailLines(text, n) {
@@ -658,11 +672,13 @@ async function walkAndFinish(io, state, stateDir, activeParams) {
     }
   }
 
-  // 全部完成 → 唯一成功终态 awaiting-push；result 快照落盘（幂等重跑直接回放）
+  // 全部完成 → 唯一成功终态 awaiting-push。result 恒重建（不保留旧值）：
+  // 旧 failed 快照若穿透（如上轮组装失败残留），CLI 终态会与 state.status 矛盾——
+  // 组装的全部输入都在 state.steps 里，重建是幂等的（u4 冒烟实证）
   state.status = 'awaiting-push';
   state.failedStep = null;
   state.error = null;
-  if (!state.result) state.result = buildAwaitingPushResult(state);
+  state.result = buildAwaitingPushResult(state);
   saveState(io, state, stateFile);
   return state.result;
 }
@@ -937,6 +953,77 @@ function realPiPreflight(io) {
   return `pi 凭证不可用：DEFAULT_MODEL "${REAL_PI_DEFAULT_MODEL}" 需要 provider "${provider}" 的 API key，env ${envKey} / auth.json / models.json 三源均未命中`;
 }
 
+/* ── cr-fix step 辅助（u4：§3.6 D2 嵌套内置 loop；§3.4-(3)-5 恢复粒度 = step 整体重跑） ── */
+
+// terminated 全集（review-fix-loop.js 实测赋值，八种；未知值 fail-closed 按 failed）
+const CR_FIX_PASS_TERMINATED = new Set(['clean', 'converged']);
+const CR_FIX_RETRY_TERMINATED = new Set(['review-failure', 'aggregator-failure', 'fix-failure']);
+const CR_FIX_STUCK_TERMINATED = new Set(['stuck', 'max-rounds', 'needs-redesign']);
+const CR_FIX_MAX_NESTED_ATTEMPTS = 2; // 首次 + 自动重试恰 1 次（D2）
+const CR_FIX_AGGREGATOR_MODEL = 'zai-coding-cn/glm-5.3-flash';
+
+// batch1 组装（§3.5）：扫 <repoRoot>/.agents/skills/pr-cr-fix/agents/review-*.md 排序；
+// reviewers 显式传入时做白名单交集（路径 substring 匹配任一关键词，不语义判断——
+// SKILL 路径匹配排除表归主 agent 发起时自行决定）
+function buildBatch1(io, agentsDir, reviewers) {
+  let files = [];
+  try {
+    files = (io.fs.readdirSync(agentsDir) || [])
+      .filter((f) => /^review-.*\.md$/.test(f))
+      .sort()
+      .map((f) => path.join(agentsDir, f));
+  } catch {
+    files = [];
+  }
+  if (Array.isArray(reviewers) && reviewers.length > 0) {
+    files = files.filter((f) => reviewers.some((kw) => String(kw) !== '' && f.includes(String(kw))));
+  }
+  return files;
+}
+
+// runDir 下定位 aggregated.md（真实布局：runDir/batch-N/round-M/aggregated.md，
+// all-clean 轮可能无任何报告）。浅扫描两层取排序最后一个（= 最大 batch/round）；
+// 找不到返回 null（文案降级为 runDir）。
+function findAggregatedFile(io, runDir) {
+  if (!runDir) return null;
+  const top = (() => {
+    try { return io.fs.readdirSync(runDir) || []; } catch { return null; }
+  })();
+  if (!top) return null;
+  if (top.includes('aggregated.md')) return path.join(runDir, 'aggregated.md');
+  const hits = [];
+  for (const d1 of top.filter((n) => n.startsWith('batch-')).sort()) {
+    let level2 = [];
+    try { level2 = io.fs.readdirSync(path.join(runDir, d1)) || []; } catch { continue; }
+    for (const d2 of level2.filter((n) => n.startsWith('round-')).sort()) {
+      let level3 = [];
+      try { level3 = io.fs.readdirSync(path.join(runDir, d1, d2)) || []; } catch { continue; }
+      if (level3.includes('aggregated.md')) hits.push(path.join(runDir, d1, d2, 'aggregated.md'));
+    }
+    if (level2.includes('aggregated.md')) hits.push(path.join(runDir, d1, 'aggregated.md'));
+  }
+  if (hits.length === 0) return null;
+  return hits.sort()[hits.length - 1];
+}
+
+// nested 返回消费（§3.5 agent 纪律对 workflow 的映射）：parsedOutput 优先，
+// 缺省解析 content JSON 兜底；nestedRunId = runDir basename（嵌套 run 独立 id）
+function consumeNestedResult(io, res) {
+  let parsed = res && typeof res.parsedOutput === 'object' && res.parsedOutput !== null ? res.parsedOutput : null;
+  if (!parsed && typeof (res && res.content) === 'string') {
+    try { parsed = JSON.parse(res.content); } catch { parsed = null; }
+  }
+  const terminated = parsed && typeof parsed.terminated === 'string' ? parsed.terminated : null;
+  const runDir = parsed && typeof parsed.runDir === 'string' && parsed.runDir.trim() !== '' ? parsed.runDir : null;
+  return {
+    terminated,
+    runDir,
+    nestedRunId: runDir ? path.basename(runDir) : null,
+    aggregatedFile: findAggregatedFile(io, runDir),
+    message: parsed && typeof parsed.message === 'string' ? parsed.message : null,
+  };
+}
+
 function placeholderStep(id, unit) {
   return {
     id,
@@ -1164,7 +1251,51 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
         extraFixContext: () => metricsFixContext(ctx.io),
       }),
     },
-    placeholderStep('cr-fix', 'u4'),
+    {
+      // u4：cr-fix（§3.3 + D2）。断点恢复语义：step 重跑 = loop 整体重跑
+      // （§3.4-(3)-5：fix commit 已进 git 历史，重跑面向当前 diff，通常 1-2 轮收敛）
+      id: 'cr-fix',
+      run: async (ctx) => {
+        const agentsDir = path.join(repoRoot, '.agents', 'skills', 'pr-cr-fix', 'agents');
+        const batch1 = buildBatch1(ctx.io, agentsDir, ctx.params.reviewers);
+        if (batch1.length === 0) throw new Error(MSG.crFixNoBatch1(agentsDir, ctx.params.reviewers));
+        // 参数名/类型对齐 review-fix-loop.js @pi-meta parameters（D2：嵌套不 copy）
+        const nestedArgs = {
+          targetType: 'git-diff',
+          target: ctx.state.base,
+          batch1: batch1.join(','),
+          maxRounds: ctx.params.maxRounds,
+          autoCommit: true,
+          skipCleanAgents: true,
+          aggregatorModel: CR_FIX_AGGREGATOR_MODEL,
+        };
+        const nestedRunIds = [];
+        let last = null;
+        for (let attempt = 1; attempt <= CR_FIX_MAX_NESTED_ATTEMPTS; attempt++) {
+          ctx.saveCheckpoint(); // 每次 nested 发起前落盘（含 nestedRunId 的进度可追溯）
+          last = consumeNestedResult(ctx.io, await ctx.io.workflow('review-fix-loop', nestedArgs));
+          nestedRunIds.push(last.nestedRunId);
+          const reportRef = last.aggregatedFile || last.runDir || `（runDir 未知，terminated=${last.terminated}）`;
+          if (last.terminated && CR_FIX_PASS_TERMINATED.has(last.terminated)) {
+            return { nestedRunId: nestedRunIds, terminated: last.terminated, aggregatedFile: last.aggregatedFile };
+          }
+          if (last.terminated && CR_FIX_RETRY_TERMINATED.has(last.terminated)) {
+            if (attempt < CR_FIX_MAX_NESTED_ATTEMPTS) {
+              ctx.io.log(`[cr-fix] nested loop ${last.terminated}（第 ${attempt} 次发起），自动重试 1 次`);
+              continue;
+            }
+            throw new Error(MSG.crFixRetryExhausted(last.terminated, CR_FIX_MAX_NESTED_ATTEMPTS));
+          }
+          if (last.terminated && CR_FIX_STUCK_TERMINATED.has(last.terminated)) {
+            // stuck / max-rounds / needs-redesign：人工接管双分支（§3.7）
+            throw new Error(MSG.crFixStuck(last.terminated, reportRef, last.message));
+          }
+          // terminated 缺失（解析失败）或未知值：引擎契约演进，fail-closed
+          throw new Error(MSG.crFixUnknownTerminated(last.terminated, reportRef));
+        }
+        throw new Error(MSG.crFixRetryExhausted(last && last.terminated, CR_FIX_MAX_NESTED_ATTEMPTS)); // 防御：循环不可达出口
+      },
+    },
     placeholderStep('simplify', 'u5'),
     {
       id: 'final-gates',
@@ -1357,10 +1488,23 @@ async function resumeFlow(io, params, engineRunId, stateDir) {
   if (allStepsFinished(state, registry)) {
     if (git.head === state.lastHead) {
       touchRunContext(io, state, engineRunId);
-      saveState(io, state, stateFile); // 幂等回放：仅刷新 engineRunId/pid，result 原样
-      io.log(`[resume] run ${runId} 已全部完成且 HEAD 未变，回放既有终态`);
-      // 正常路径全 done 必有 result 快照；null 只出自被手工篡改/旧版本 state，兜底重建防返回 null
-      return state.result || buildAwaitingPushResult(state);
+      // 回放前提：state 与 result 快照双双是 awaiting-push 终态（result.status 才是
+      // 快照内容的权威——旧 failed 残留快照不得借 status 蒙混回放，u4 冒烟实证）
+      if (state.status === 'awaiting-push' && state.result && state.result.status === 'awaiting-push') {
+        saveState(io, state, stateFile); // 幂等回放：仅刷新 engineRunId/pid，result 原样
+        io.log(`[resume] run ${runId} 已全部完成且 HEAD 未变，回放既有终态`);
+        return state.result;
+      }
+      // 组装期中断残留：全 step done 但终态仍是 failed / 快照缺失——若照旧回放，
+      // 旧 error 快照会被永续（恢复指引死循环）。从现存 steps outputs 重建 awaiting-push
+      // 快照（error 清空）重写 state 后返回。
+      state.status = 'awaiting-push';
+      state.failedStep = null;
+      state.error = null;
+      state.result = buildAwaitingPushResult(state);
+      saveState(io, state, stateFile);
+      io.log(`[resume] run ${runId} 全部 step 完成但终态为 failed/快照缺失（组装期中断残留），已重建 result`);
+      return state.result;
     }
     throw new GuardError(MSG.allDoneHeadMoved(runId, state.lastHead, git.head, resumeCommand(io.repoRoot, null)), {
       runId,
@@ -1418,6 +1562,14 @@ module.exports = {
   worktreeDirt,
   REAL_PI_DEFAULT_MODEL,
   REAL_PI_SKIP_MARKERS,
+  CR_FIX_PASS_TERMINATED,
+  CR_FIX_RETRY_TERMINATED,
+  CR_FIX_STUCK_TERMINATED,
+  CR_FIX_MAX_NESTED_ATTEMPTS,
+  CR_FIX_AGGREGATOR_MODEL,
+  buildBatch1,
+  findAggregatedFile,
+  consumeNestedResult,
   classifyCoverageExit1,
   coverageTestInject,
   coveragePctOf,

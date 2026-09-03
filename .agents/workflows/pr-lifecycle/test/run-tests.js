@@ -72,6 +72,7 @@ function makeIo(opts = {}) {
   const pidMap = Object.assign({}, opts.pidMap);
   const scriptMocks = opts.scriptMocks || {};
   const agentCalls = [];
+  const workflowCalls = [];
   const recorded = { sh: [], logs: [], renames: [], renameContents: [] };
 
   const sh = (cmd, args) => {
@@ -122,6 +123,7 @@ function makeIo(opts = {}) {
     openSync: fs.openSync.bind(fs),
     writeSync: fs.writeSync.bind(fs),
     closeSync: fs.closeSync.bind(fs),
+    readdirSync: fs.readdirSync.bind(fs),
     renameSync: (a, b) => {
       recorded.renames.push([String(a), String(b)]);
       try {
@@ -147,7 +149,15 @@ function makeIo(opts = {}) {
       const impl = opts.agent || (async () => ({ value: {}, error: null }));
       return impl(params);
     },
-    workflow: async () => ({ content: '', parsedOutput: null }),
+    // nested workflow mock（u4 cr-fix 经此注入点；默认返回 clean 终态，runDir 为不存在路径）
+    workflow: async (name, params) => {
+      workflowCalls.push({ name, params });
+      const impl = opts.workflow || (async () => ({
+        content: '',
+        parsedOutput: { terminated: 'clean', runDir: path.join(root, '.review-fix-loop', 'wf-mock'), batches: 1, totalFixed: 2, message: 'ok' },
+      }));
+      return impl(name, params);
+    },
     readEngineState: (er) => (er && Object.prototype.hasOwnProperty.call(engineMap, er)
       ? { ok: true, status: engineMap[er] }
       : { ok: false, reason: `engine state file not found: ${er}` }),
@@ -163,7 +173,7 @@ function makeIo(opts = {}) {
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, content);
   }
-  return { io, root, recorded, git, engineMap, pidMap, agentCalls };
+  return { io, root, recorded, git, engineMap, pidMap, agentCalls, workflowCalls };
 }
 
 // u2/u3：steps 注册表（脚本路径全部注入假路径，脚本行为经 scriptMocks 编程）
@@ -1267,10 +1277,16 @@ async function main() {
 
   // 门禁段注册表：cr-fix/simplify 占位以 mock 实现替换（占位本体是 u4/u5 领地；
   // 本段测试驱动 walker 顺序语义，等价「cr-fix/simplify 已交付且成功」）
+  // cr-fix batch1 扫描源：门禁段测试的默认 reviewer agent（真文件，readdirSync 真实扫描）
+  function seedReviewerAgent(root) {
+    const dir = path.join(root, '.agents', 'skills', 'pr-cr-fix', 'agents');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'review-generic.md'), '# generic reviewer\n');
+  }
+
   function gatesSteps(root) {
     return makeSteps({ root, range: STEP_RANGE.gates }).map((s) => {
-      if (s.id === 'cr-fix') return { id: 'cr-fix', run: async () => ({ terminated: 'clean' }) };
-      if (s.id === 'simplify') return { id: 'simplify', run: async () => ({ applied: 0, proposals: 0 }) };
+      if (s.id === 'simplify') return { id: 'simplify', run: async () => ({ applied: 0, proposals: 0 }) }; // u5 占位 mock（cr-fix 已是 u4 真实现，nested 经 io.workflow mock 注入）
       return s;
     });
   }
@@ -1327,6 +1343,7 @@ async function main() {
         'pr-submit': { status: 'done', attempts: 1, outputs: { prUrl: 'https://github.com/a/b/pull/1' } },
       },
     });
+    seedReviewerAgent(t.root);
     t.io.steps = gatesSteps(t.root);
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'awaiting-push', `error=${result.error}`);
@@ -1345,6 +1362,7 @@ async function main() {
     const m = allGatesMocks({});
     const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-c1' } }, m));
     seedState(t.root, { status: 'running' });
+    seedReviewerAgent(t.root);
     t.io.steps = gatesSteps(t.root);
     await lib.runPipeline(t.io);
     const calls = shArgsOf(t, FAKE_PATHS.selectConstraints);
@@ -1354,6 +1372,7 @@ async function main() {
     const m2 = allGatesMocks({ scriptMocks: { [FAKE_PATHS.selectConstraints]: { code: 1, stdout: 'constraints.json unreadable' } } });
     const t2 = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-c2' } }, m2));
     seedState(t2.root, { status: 'running' });
+    seedReviewerAgent(t2.root);
     t2.io.steps = gatesSteps(t2.root);
     const r2 = await lib.runPipeline(t2.io);
     assert.strictEqual(r2.failedStep, 'constraints');
@@ -1376,6 +1395,7 @@ async function main() {
       },
     });
     seedState(t3.root, { status: 'running' });
+    seedReviewerAgent(t3.root);
     t3.io.steps = gatesSteps(t3.root);
     const r3 = await lib.runPipeline(t3.io);
     assert.strictEqual(r3.failedStep, 'constraints');
@@ -1397,6 +1417,7 @@ async function main() {
       names: 'packages/shared/src/util.ts\n', // shared 包 src 改动
     }, m));
     seedState(t.root, { status: 'running' });
+    seedReviewerAgent(t.root);
     t.io.steps = gatesSteps(t.root);
     await lib.runPipeline(t.io);
     assert.ok(covArgsList.length >= 1);
@@ -1420,6 +1441,7 @@ async function main() {
       names: 'packages/runtime/src/a.ts\n', // 无 shared src 改动
     }, m2));
     seedState(t2.root, { status: 'running' });
+    seedReviewerAgent(t2.root);
     t2.io.steps = gatesSteps(t2.root);
     await lib.runPipeline(t2.io);
     assert.ok(!covArgsList2[0].includes('--extra-packages'), JSON.stringify(covArgsList2[0]));
@@ -1451,6 +1473,7 @@ async function main() {
       },
     });
     seedState(t.root, { status: 'running' });
+    seedReviewerAgent(t.root);
     t.io.steps = gatesSteps(t.root);
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'awaiting-push', `error=${result.error}`);
@@ -1477,6 +1500,7 @@ async function main() {
     });
     const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-cov4' } }, m));
     seedState(t.root, { status: 'running' });
+    seedReviewerAgent(t.root);
     t.io.steps = gatesSteps(t.root);
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'failed');
@@ -1495,6 +1519,7 @@ async function main() {
     });
     const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-m1' } }, m));
     seedState(t.root, { status: 'running' });
+    seedReviewerAgent(t.root);
     t.io.steps = gatesSteps(t.root);
     const r1 = await lib.runPipeline(t.io);
     assert.strictEqual(r1.status, 'awaiting-push');
@@ -1509,6 +1534,7 @@ async function main() {
     delete m2.presetFiles['.review/coverage.json'];
     const t2 = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-m2' } }, m2));
     seedState(t2.root, { status: 'running' });
+    seedReviewerAgent(t2.root);
     t2.io.steps = gatesSteps(t2.root);
     const r2 = await lib.runPipeline(t2.io);
     assert.strictEqual(r2.status, 'awaiting-push');
@@ -1535,6 +1561,7 @@ async function main() {
       },
     });
     seedState(t3.root, { status: 'running' });
+    seedReviewerAgent(t3.root);
     t3.io.steps = gatesSteps(t3.root);
     const r3 = await lib.runPipeline(t3.io);
     assert.strictEqual(r3.status, 'awaiting-push');
@@ -1559,6 +1586,7 @@ async function main() {
     });
     const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-fg1' } }, m));
     seedState(t.root, { status: 'running' });
+    seedReviewerAgent(t.root);
     t.io.steps = gatesSteps(t.root);
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'awaiting-push', `error=${result.error}`);
@@ -1577,6 +1605,7 @@ async function main() {
         constraints: { status: 'done', attempts: 1, outputs: { constraintsFile: 'c.md' } },
         'coverage-1': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3 } },
         'metrics-1': { status: 'done', attempts: 1, outputs: { metricsVerdict: 'pass' } },
+        'cr-fix': { status: 'done', attempts: 1, outputs: { nestedRunId: ['wf-x'], terminated: 'clean', aggregatedFile: null } },
       },
     });
     t.io.steps = gatesSteps(t.root);
@@ -1600,6 +1629,7 @@ async function main() {
       });
       const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-fg3' } }, m));
       seedState(t.root, { status: 'running' });
+    seedReviewerAgent(t.root);
       t.io.steps = gatesSteps(t.root);
       const result = await lib.runPipeline(t.io);
       assert.strictEqual(result.status, 'failed', `marker=${markerOut}`);
@@ -1613,6 +1643,7 @@ async function main() {
     const m = allGatesMocks({});
     const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-fg4' } }, m));
     seedState(t.root, { status: 'running' });
+    seedReviewerAgent(t.root);
     t.io.steps = gatesSteps(t.root);
     const origSh = t.io.sh;
     let statusCalls = 0;
@@ -1650,6 +1681,7 @@ async function main() {
         constraints: { status: 'done', attempts: 1, outputs: { constraintsFile: 'c.md' } },
         'coverage-1': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3 } },
         'metrics-1': { status: 'done', attempts: 1, outputs: { metricsVerdict: 'pass' } },
+        'cr-fix': { status: 'done', attempts: 1, outputs: { nestedRunId: ['wf-x'], terminated: 'clean', aggregatedFile: null } },
       },
     });
     t.io.steps = gatesSteps(t.root);
@@ -1673,6 +1705,7 @@ async function main() {
     });
     const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-fg6' } }, m));
     seedState(t.root, { status: 'running' });
+    seedReviewerAgent(t.root);
     t.io.steps = gatesSteps(t.root);
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'failed');
@@ -1682,11 +1715,9 @@ async function main() {
     assertIncludes(result.error, 'base="dev"');
   });
 
-  await test('占位 step：cr-fix/simplify run 即 failed 标注交付单元；集成走到 cr-fix failedStep', async () => {
+  await test('占位 step：simplify run 即 failed 标注交付单元；集成走到 cr-fix（batch1 组装失败链）', async () => {
     const steps = makeSteps({ root: '/fake-root-placeholder' });
-    const crFix = findStep(steps, 'cr-fix');
     const simplify = findStep(steps, 'simplify');
-    await assert.rejects(crFix.run(mkCtx({ io: makeIo({}).io, root: '/tmp' }, { runId: 'x', params: {}, steps: {} }, '/tmp/run-dir')), /尚未实现（u4 单元交付）/);
     await assert.rejects(simplify.run(mkCtx({ io: makeIo({}).io, root: '/tmp' }, { runId: 'x', params: {}, steps: {} }, '/tmp/run-dir')), /尚未实现（u5 单元交付）/);
     // 集成：前九步 done → walker 走到 cr-fix 占位 → failed
     const m = allGatesMocks({});
@@ -1709,10 +1740,282 @@ async function main() {
     const result = await lib.runPipeline(t.io);
     assert.strictEqual(result.status, 'failed');
     assert.strictEqual(result.failedStep, 'cr-fix');
-    assertIncludes(result.error, '尚未实现');
-    assertIncludes(result.error, 'u4');
+    assertIncludes(result.error, 'batch1 组装失败'); // u4：cr-fix 真实现——agents 目录为空 → 组装 fail-fast
   });
 
+
+
+  /* ── u4：cr-fix step（terminated 映射 / 重试恰 1 次 / batch1 组装 / aggregatedFile） ── */
+
+  function rflResult(terminated, runDir, extra = {}) {
+    return {
+      content: '',
+      parsedOutput: Object.assign({ terminated, runDir, batches: 1, totalFixed: 2, message: `nested ${terminated}` }, extra),
+    };
+  }
+
+  function crFixCtx(t, reviewers) {
+    return {
+      state: { runId: RUN_ID_A, base: 'main', baseHash: 'B1', params: { reviewers: reviewers || null, maxRounds: 10, skipSteps: [], allowExternalChanges: false } },
+      params: { reviewers: reviewers || null, maxRounds: 10, skipSteps: [], allowExternalChanges: false },
+      runIdDir: path.join(t.root, 'run-dir'),
+      io: t.io,
+      saveCheckpoint() {},
+    };
+  }
+
+  async function driveCrFix(t, reviewers) {
+    const step = findStep(makeSteps({ root: t.root }), 'cr-fix');
+    return step.run(crFixCtx(t, reviewers));
+  }
+
+  function seedRflRunDir(root, runId, withAggregated) {
+    const runDir = path.join(root, '.review-fix-loop', 'demo', runId);
+    if (withAggregated) {
+      fs.mkdirSync(path.join(runDir, 'batch-1', 'round-2'), { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'batch-1', 'round-2', 'aggregated.md'), '# aggregated\n');
+    } else {
+      fs.mkdirSync(runDir, { recursive: true });
+    }
+    return runDir;
+  }
+
+  await test('cr-fix：clean → outputs 契约（nestedRunId=runDir basename，aggregatedFile 定位 batch/round 深层）', async () => {
+    const t = t0({
+      workflow: async () => rflResult('clean', seedRflRunDir(t.root, 'wf-clean-1', true)),
+    });
+    const res = await driveCrFix(t);
+    assert.strictEqual(res.terminated, 'clean');
+    assert.deepStrictEqual(res.nestedRunId, ['wf-clean-1']); // runDir basename
+    assert.strictEqual(res.aggregatedFile, path.join(t.root, '.review-fix-loop', 'demo', 'wf-clean-1', 'batch-1', 'round-2', 'aggregated.md')); // 深层定位
+  });
+
+  await test('cr-fix：nested 参数逐项断言（targetType/target/batch1/maxRounds/autoCommit/skipCleanAgents/aggregatorModel）', async () => {
+    const t = t0();
+    t.io.fs.mkdirSync(path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents', 'review-b.md'), '# b\n');
+    fs.writeFileSync(path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents', 'review-a.md'), '# a\n');
+    await driveCrFix(t);
+    assert.strictEqual(t.workflowCalls.length, 1);
+    assert.strictEqual(t.workflowCalls[0].name, 'review-fix-loop');
+    const p = t.workflowCalls[0].params;
+    assert.strictEqual(p.targetType, 'git-diff');
+    assert.strictEqual(p.target, 'main');
+    const batchFiles = p.batch1.split(',');
+    assert.deepStrictEqual(batchFiles, [
+      path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents', 'review-a.md'),
+      path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents', 'review-b.md'),
+      path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents', 'review-generic.md'),
+    ]); // 排序后绝对路径逗号拼接（含 t0 默认 generic reviewer）
+    assert.strictEqual(p.maxRounds, 10);
+    assert.strictEqual(p.autoCommit, true);
+    assert.strictEqual(p.skipCleanAgents, true);
+    assert.strictEqual(p.aggregatorModel, 'zai-coding-cn/glm-5.3-flash');
+  });
+
+  await test('cr-fix：reviewers 白名单交集裁剪（substring 匹配）；全不匹配 → batch1 组装失败文案', async () => {
+    const t = t0();
+    const dir = path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents');
+    t.io.fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'review-electron-build.md'), '# e\n');
+    fs.writeFileSync(path.join(dir, 'review-extension-api.md'), '# x\n');
+    fs.writeFileSync(path.join(dir, 'review-renderer-ui.md'), '# r\n');
+    await driveCrFix(t, ['electron-build', 'renderer-ui']);
+    const got = t.workflowCalls[0].params.batch1.split(',');
+    assert.deepStrictEqual(got, [path.join(dir, 'review-electron-build.md'), path.join(dir, 'review-renderer-ui.md')]);
+    // 全不匹配 → 空批次 fail-fast
+    const t2 = t0();
+    t2.io.fs.mkdirSync(path.join(t2.root, '.agents', 'skills', 'pr-cr-fix', 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(t2.root, '.agents', 'skills', 'pr-cr-fix', 'agents', 'review-a.md'), '# a\n');
+    await assert.rejects(driveCrFix(t2, ['nope']), /batch1 组装失败/);
+  });
+
+  await test('cr-fix：stuck → failed 不重试（nested 1 次），error 含 aggregated 绝对路径与两条处置分支', async () => {
+    const runDir = path.join(t0().root, '.rfl', 'wf-stuck');
+    const t = t0({ workflow: async () => rflResult('stuck', runDir) });
+    fs.mkdirSync(path.join(runDir, 'batch-1', 'round-2'), { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'batch-1', 'round-2', 'aggregated.md'), '# aggregated\n');
+    await assert.rejects(driveCrFix(t), (e) => {
+      assertIncludes(e.message, '终态 stuck');
+      assertIncludes(e.message, path.join(runDir, 'batch-1', 'round-2', 'aggregated.md')); // 存在性核验后的绝对路径
+      assertIncludes(e.message, 'skipSteps:["cr-fix"]'); // 分支①
+      assertIncludes(e.message, '修复 commit 后 resume'); // 分支②
+      assertIncludes(e.message, 'nested stuck'); // message 透传
+      return true;
+    });
+    assert.strictEqual(t.workflowCalls.length, 1); // stuck 不重试
+  });
+
+  await test('cr-fix：max-rounds 且 runDir 无 aggregated.md → 文案降级为 runDir；needs-redesign 同组 failed', async () => {
+    const runDir = path.join(t0().root, '.rfl', 'wf-max');
+    const t = t0({ workflow: async () => rflResult('max-rounds', runDir) });
+    fs.mkdirSync(runDir, { recursive: true });
+    await assert.rejects(driveCrFix(t), (e) => {
+      assert.ok(!e.message.includes('aggregated.md（存在）'));
+      assert.ok(e.message.includes(runDir), `降级 runDir：${e.message}`);
+      return true;
+    });
+    const t2 = t0({ workflow: async () => rflResult('needs-redesign', path.join(t2.root, '.rfl', 'wf-nr')) });
+    await assert.rejects(driveCrFix(t2), /终态 needs-redesign/);
+  });
+
+  await test('cr-fix：review-failure → 自动重试恰 1 次后 clean（nested 2 次、nestedRunId 数组 2 项）', async () => {
+    let calls = 0;
+    const t = t0({
+      workflow: async () => {
+        calls += 1;
+        return calls === 1 ? rflResult('review-failure', path.join(t.root, '.rfl', 'wf-r1')) : rflResult('clean', path.join(t.root, '.rfl', 'wf-r2'));
+      },
+    });
+    const res = await driveCrFix(t);
+    assert.strictEqual(res.terminated, 'clean');
+    assert.strictEqual(calls, 2); // 恰 1 次重试
+    assert.deepStrictEqual(res.nestedRunId, ['wf-r1', 'wf-r2']);
+  });
+
+  await test('cr-fix：aggregator-failure / fix-failure 重试后再败 → failed（各 2 次）', async () => {
+    for (const term of ['aggregator-failure', 'fix-failure']) {
+      let calls = 0;
+      const t = t0({
+        workflow: async () => {
+          calls += 1;
+          return rflResult(term, path.join(t.root, '.rfl', `wf-${calls}`));
+        },
+      });
+      await assert.rejects(driveCrFix(t), (e) => {
+        assertIncludes(e.message, `连续 2 次 ${term}`);
+        assertIncludes(e.message, 'resume');
+        return true;
+      });
+      assert.strictEqual(calls, 2);
+    }
+  });
+
+  await test('cr-fix：parsedOutput 缺省 → content JSON 兜底解析；未知 terminated → fail-closed failed', async () => {
+    const t = t0({
+      workflow: async () => ({ parsedOutput: null, content: JSON.stringify({ terminated: 'converged', runDir: path.join(t.root, '.rfl', 'wf-c') }) }),
+    });
+    fs.mkdirSync(path.join(t.root, '.rfl', 'wf-c'), { recursive: true });
+    const res = await driveCrFix(t);
+    assert.strictEqual(res.terminated, 'converged');
+    // 未知值
+    const t2 = t0({ workflow: async () => rflResult('frobnicated', path.join(t2.root, '.rfl', 'wf-u')) });
+    await assert.rejects(driveCrFix(t2), (e) => {
+      assertIncludes(e.message, '未知值 "frobnicated"');
+      assertIncludes(e.message, 'fail-closed');
+      return true;
+    });
+  });
+
+  await test('A 项修复：全 done + status=failed（组装期残留）→ resume 重建 awaiting-push 快照而非回放旧 error', async () => {
+    const m = allGatesMocks({});
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u4-rebuild' } }, m));
+    const staleResult = { status: 'failed', runId: RUN_ID_A, failedStep: 'final-gates', error: 'io.homedir is not a function（历史残留）', resumeCommand: 'zflow ...', skippedSteps: [] };
+    seedState(t.root, {
+      status: 'failed',
+      failedStep: null,
+      error: null,
+      lastHead: 'H1',
+      result: staleResult,
+      steps: {
+        preflight: { status: 'done', attempts: 1 },
+        'static-gate': { status: 'done', attempts: 1, outputs: { result: 'PASS', changesetWarn: false } },
+        changeset: { status: 'skipped', reason: 'c' },
+        'pr-meta': { status: 'done', attempts: 1, outputs: { title: 't', bodyFile: 'b.md' } },
+        'skill-yaml': { status: 'skipped', reason: 'c' },
+        'pr-submit': { status: 'done', attempts: 1, outputs: { prUrl: 'https://github.com/a/b/pull/3' } },
+        constraints: { status: 'done', attempts: 1, outputs: { constraintsFile: 'c.md' } },
+        'coverage-1': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3 } },
+        'metrics-1': { status: 'done', attempts: 1, outputs: { metricsVerdict: 'pass' } },
+        'cr-fix': { status: 'done', attempts: 1, outputs: { nestedRunId: ['wf-x'], terminated: 'clean', aggregatedFile: null } },
+        simplify: { status: 'skipped', reason: 'c' },
+        'final-gates': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3, metricsVerdict: 'pass', premergeResult: 'PASS' } },
+      },
+    });
+    seedReviewerAgent(t.root);
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push'); // 不再回放旧 failed 快照
+    assert.strictEqual(result.prUrl, 'https://github.com/a/b/pull/3'); // 从 steps outputs 重建
+    assert.strictEqual(result.terminated, 'clean');
+    assert.deepStrictEqual(result.gates, { coverage: 'pass', metrics: 'pass', premerge: 'PASS' });
+    const state = readStateFile(t.root, RUN_ID_A);
+    assert.strictEqual(state.status, 'awaiting-push'); // state 被重写
+    assert.strictEqual(state.error, null); // error 清空
+    assert.strictEqual(state.failedStep, null);
+    assert.deepStrictEqual(state.result, result);
+  });
+
+  await test('A 项反面：全 done + status=awaiting-push → 维持幂等回放（result 原样引用）', async () => {
+    const snapshot = { status: 'awaiting-push', runId: RUN_ID_A, prUrl: 'https://github.com/a/b/pull/5', terminated: 'clean', simplify: null, gates: { coverage: 'pass', metrics: 'pass', premerge: 'PASS' }, skippedSteps: [] };
+    const m = allGatesMocks({});
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u4-replay' } }, m));
+    seedState(t.root, {
+      status: 'awaiting-push',
+      lastHead: 'H1',
+      result: snapshot,
+      steps: {
+        preflight: { status: 'done', attempts: 1 },
+        'static-gate': { status: 'done', attempts: 1, outputs: { result: 'PASS', changesetWarn: false } },
+        changeset: { status: 'skipped', reason: 'c' },
+        'pr-meta': { status: 'done', attempts: 1, outputs: { title: 't', bodyFile: 'b.md' } },
+        'skill-yaml': { status: 'skipped', reason: 'c' },
+        'pr-submit': { status: 'done', attempts: 1, outputs: { prUrl: snapshot.prUrl } },
+        constraints: { status: 'done', attempts: 1, outputs: { constraintsFile: 'c.md' } },
+        'coverage-1': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3 } },
+        'metrics-1': { status: 'done', attempts: 1, outputs: { metricsVerdict: 'pass' } },
+        'cr-fix': { status: 'done', attempts: 1, outputs: { nestedRunId: ['wf-x'], terminated: 'clean', aggregatedFile: null } },
+        simplify: { status: 'skipped', reason: 'c' },
+        'final-gates': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3, metricsVerdict: 'pass', premergeResult: 'PASS' } },
+      },
+    });
+    seedReviewerAgent(t.root);
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.deepStrictEqual(result, snapshot); // 原样回放
+    assert.strictEqual(readStateFile(t.root, RUN_ID_A).status, 'awaiting-push'); // 状态不变
+  });
+
+
+  // u4 辅助：惰性 io 容器（默认建 batch1 扫描源；测试体内 mock 闭包可引用 t 本体）
+  function t0(opts) {
+    const t = makeIo(Object.assign({ args: { _runId: 'wf-u4' } }, opts));
+    seedReviewerAgent(t.root);
+    return t;
+  }
+
+  await test('A 项补强（u4 冒烟实证形态）：status=awaiting-push 但 result.status=failed 残留 → 重建而非回放', async () => {
+    const staleFailed = { status: 'failed', runId: RUN_ID_A, failedStep: 'cr-fix', error: 'cr-fix batch1 组装失败（历史残留）', resumeCommand: 'zflow ...', skippedSteps: [] };
+    const m = allGatesMocks({});
+    const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u4-rebuild2' } }, m));
+    seedState(t.root, {
+      status: 'awaiting-push', // status 已被上轮修复，但 result 快照仍是旧 failed
+      lastHead: 'H1',
+      result: staleFailed,
+      steps: {
+        preflight: { status: 'done', attempts: 1 },
+        'static-gate': { status: 'done', attempts: 1, outputs: { result: 'PASS', changesetWarn: false } },
+        changeset: { status: 'skipped', reason: 'c' },
+        'pr-meta': { status: 'done', attempts: 1, outputs: { title: 't', bodyFile: 'b.md' } },
+        'skill-yaml': { status: 'skipped', reason: 'c' },
+        'pr-submit': { status: 'done', attempts: 1, outputs: { prUrl: 'https://github.com/a/b/pull/7' } },
+        constraints: { status: 'done', attempts: 1, outputs: { constraintsFile: 'c.md' } },
+        'coverage-1': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3 } },
+        'metrics-1': { status: 'done', attempts: 1, outputs: { metricsVerdict: 'pass' } },
+        'cr-fix': { status: 'done', attempts: 2, outputs: { nestedRunId: ['wf-real'], terminated: 'clean', aggregatedFile: null } },
+        simplify: { status: 'skipped', reason: 'c' },
+        'final-gates': { status: 'done', attempts: 1, outputs: { coverageVerdict: 'pass', coveragePct: 92.3, metricsVerdict: 'pass', premergeResult: 'PASS' } },
+      },
+    });
+    seedReviewerAgent(t.root);
+    t.io.steps = gatesSteps(t.root);
+    const result = await lib.runPipeline(t.io);
+    assert.strictEqual(result.status, 'awaiting-push'); // 旧 failed 快照不得借 status 蒙混回放
+    assert.strictEqual(result.terminated, 'clean'); // 从真实 outputs 重建
+    assert.deepStrictEqual(result.gates, { coverage: 'pass', metrics: 'pass', premerge: 'PASS' });
+    const state = readStateFile(t.root, RUN_ID_A);
+    assert.strictEqual(state.result.status, 'awaiting-push');
+  });
 
 
   console.log(`\n${passed} passed, ${failed.length} failed`);

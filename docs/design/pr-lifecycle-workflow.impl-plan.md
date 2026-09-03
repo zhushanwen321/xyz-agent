@@ -75,7 +75,7 @@ graph TD
 | u1 | committed | 1 | 38/39 项 lib 测试绿 + lint valid:[] + 真实引擎冒烟（fresh awaiting-push / resume 幂等回放 / engineRunId 刷新）；deviations 5 条见 u1 交付报告（返回 Promise 顶层 return / skipSteps 消费本次参数 / 空注册表直达终态 / agentAdapter 待 u2 联调 / --reviewers 废弃 flag 提示） |
 | u2 | committed | 1 | 65 项测试绿（u1 38 回归 + u2 27 新增）+ lint valid + /tmp 仓真实引擎冒烟（假脚本 + 真实 LLM agent，六 step 落盘核验）；deviations 5 条（.review/ 结构性排除 / step skipped 协议 / agent 输出兜底 / 子循环轮次语义 / 真实脚本集成留 Gate B） |
 | u3 | committed | 2（限额中断续作） | 80 项测试绿 + lint valid + /tmp 仓真实引擎冒烟正反两跑（real-pi 检测反向 failed 文案实证）；deviations 5 条（anyOf 字符串兼容 / final-gates extra-packages 一致性外推 / coveragePct 加权口径 / extraFixContext 按轮函数 / 入口 io 漏 env-homedir 冒烟修复）；附带实证幂等回放与断点续跑 |
-| u4 | pending | — | — |
+| u4 | committed | 1 | 91 项测试绿（u3 80 回归 + 11 新增，七种 terminated 分支全覆盖）+ lint valid + 真实引擎冒烟 nested loop 全链 clean（真 LLM agent 13s）；deviations 3 条（冒烟超裁剪范围 / aggregatedFile 适配 batch-N/round-M 真实布局 / 未知 terminated fail-closed）；A 项回放语义修复含两处冒烟暴露遗漏（无条件重建 + result.status 回放条件） |
 | u5 | pending | — | — |
 | u6 | pending | — | — |
 
