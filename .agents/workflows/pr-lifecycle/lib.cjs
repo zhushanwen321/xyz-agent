@@ -147,6 +147,18 @@ const MSG = {
     `cr-fix nested loop 连续 ${attempts} 次 ${terminated}（环境类失败，已自动重试 1 次）：检查 pi 凭证 / 模型配额 / 引擎状态后 resume（cr-fix 整体重跑）`,
   crFixUnknownTerminated: (terminated, reportRef) =>
     `cr-fix 终态未知值 "${terminated}"（引擎契约演进，fail-closed 按 failed 处置）：读 ${reportRef} 人工判定后 resume，或带 skipSteps:["cr-fix"] 接管`,
+
+  /* ── u5：simplify step（§3.6 D6 / §3.7 simplify 行） ── */
+  simplifyContractMissing: (p) =>
+    `simplify 契约文件缺失：${p}。该文件是 simplify step 的固化契约（摘录 code-simplify 铁律与覆盖声明），缺失时 step 拒绝执行；恢复：确认 .agents/skills/pr-cr-fix/agents/simplify-apply.md 存在于当前 worktree 后 resume`,
+  simplifyLeftDirty: (list, applied) =>
+    `simplify agent 返回后存在未提交改动（agent 声称 applied=${applied}）：\n${list}\n` +
+    `${applied > 0 ? 'agent 声称已应用但未 commit = 半成品' : 'agent 违规改动代码（无应用授权却留下改动）'}；` +
+    `查看 runId 目录 simplify-report.md 后人工处置（显式路径 commit 或还原），再 resume 或带 skipSteps:["simplify"] 接管`,
+  simplifyReportMissing: (p) =>
+    `simplify agent 未产出报告文件（${p}）；无法支撑 skippedSteps 披露与事后审阅，查看 agent 输出后 resume`,
+  simplifyInvalidApplied: (v) =>
+    `simplify agent 返回 applied 非法（${v}）：applied 必须为非负整数且不超过 proposals 总数；resume 重跑本 step`,
 };
 
 function tailLines(text, n) {
@@ -1024,6 +1036,59 @@ function consumeNestedResult(io, res) {
   };
 }
 
+/* ── simplify step 辅助（u5：§3.6 D6 覆盖声明 / report 模式；§3.5 agent 纪律） ── */
+
+const SIMPLIFY_SCHEMA = {
+  type: 'object',
+  properties: {
+    applied: { type: 'integer', description: '已应用（A 档落地并 commit）的简化项数；report 模式恒 0' },
+    proposals: { type: 'integer', description: '仅进报告未落地的提案数（B 档/低置信/无测量手段）' },
+  },
+  required: ['applied', 'proposals'],
+};
+
+// 契约全文内嵌（agent 纪律：必读 simplify-apply.md 原文全文进 prompt，不靠 agent 自行 read）
+function simplifyPrompt(mode, contractText, baseHash, reportPath) {
+  const modeHeader = mode === 'apply'
+    ? [
+        '【覆盖声明——本 task 的最高裁决条款】',
+        '本 agent 由 pr-lifecycle workflow 以 simplifyMode=apply 发起，code-simplify skill 的「先报告、用户确认后改」确认断点在本上下文视为已获用户授权，授权范围仅 A 档（行为不变）高置信项；B 档（行为敏感）与低置信项只产报告不落地。',
+        '',
+      ]
+    : [
+        '【模式声明】',
+        '本 run 以 simplifyMode=report 发起，code-simplify 的确认断点完整保留：只产报告，不改任何代码、不 commit。下方契约中「覆盖声明」与本模式冲突，以本声明为准。',
+        '',
+      ];
+  return [
+    ...modeHeader,
+    '【固化契约（simplify-apply.md 原文全文——铁律 / 范围收敛 / A-B 档 / 报告格式 / 审查信号锚点均在此）】',
+    contractText,
+    '',
+    '【本次执行上下文】',
+    `baseHash = ${baseHash}`,
+    `范围命令（写死）：git diff ${baseHash}...HEAD（--name-only 取文件清单）`,
+    `报告输出路径 = ${reportPath}`,
+    mode === 'apply'
+      ? [
+          '',
+          '【apply 模式执行要求】',
+          '1. 一次只做一个简化；每项改动后跑相关测试（无对应测试时跑该包 typecheck），失败即回滚这一步。',
+          '2. 仅 A 档高置信项落地；B 档/低置信/无测量手段的性能候选只写报告。',
+          '3. 全部完成后独立 commit：git add <显式路径列表> && git commit -m "refactor: code-simplify — N 项"（N = 已应用数）。禁止 git add -A / git add .。',
+          '4. 报告写到「报告输出路径」（已应用 / 仅报告两区，按契约的报告格式）。',
+          '5. 返回 JSON {"applied": N, "proposals": M}（report 模式 applied 恒 0）。不设墙钟超时：写操作不被中断，做完为止。',
+        ].join('\n')
+      : [
+          '',
+          '【report 模式执行要求】',
+          '1. 只扫描与写报告，不改代码、不 commit、不写 reportPath 以外的文件。',
+          '2. 报告按契约的报告格式：全部发现为提案，含 A/B 档标注与置信度。',
+          '3. 返回 JSON {"applied": 0, "proposals": M}。',
+        ].join('\n'),
+  ].join('\n');
+}
+
 function placeholderStep(id, unit) {
   return {
     id,
@@ -1296,7 +1361,50 @@ function createPrSteps({ repoRoot, scriptPaths = {} } = {}) {
         throw new Error(MSG.crFixRetryExhausted(last && last.terminated, CR_FIX_MAX_NESTED_ATTEMPTS)); // 防御：循环不可达出口
       },
     },
-    placeholderStep('simplify', 'u5'),
+    {
+      // u5：simplify（§3.3 + D6）。仅 cr-fix clean/converged 才执行（防御重放只读落盘
+      // outputs，不重算 nested）；恢复语义 = step 整体重跑（agent 面对当前 diff 重新评估，
+      // 已应用的简化不会再被报出）；apply 模式不设墙钟超时（写操作不被打断，对齐内置 loop）
+      id: 'simplify',
+      run: async (ctx) => {
+        const crFixOut = stepOutputs(ctx.state, 'cr-fix');
+        const terminated = crFixOut && crFixOut.terminated;
+        if (!terminated || !CR_FIX_PASS_TERMINATED.has(terminated)) {
+          // 条件不满足落 skipped+reason：resume 只读落盘结果，永不重算 nested（§3.4-(2)）
+          return { skipped: true, reason: `cr-fix 未 clean/converged（${terminated || '未执行或被跳过'}），简化缺位（G4 仅在 review 收敛后执行）` };
+        }
+        const apply = ctx.params.simplifyMode !== 'report';
+        const contractPath = path.join(repoRoot, '.agents', 'skills', 'pr-cr-fix', 'agents', 'simplify-apply.md');
+        let contract;
+        try {
+          contract = ctx.io.fs.readFileSync(contractPath, 'utf8');
+        } catch (e) {
+          throw new Error(MSG.simplifyContractMissing(`${contractPath}（${(e && e.message) || e}）`));
+        }
+        const reportPath = path.join(ctx.runIdDir, 'simplify-report.md');
+        const res = await ctx.io.agent({
+          description: 'simplify-apply',
+          schema: SIMPLIFY_SCHEMA,
+          prompt: simplifyPrompt(apply ? 'apply' : 'report', contract, ctx.state.baseHash, reportPath), // mode 以字符串形态进 prompt 构造（函数内按 mode === 'apply' 分支）
+          // 不传 timeoutMs：apply 模式含写操作与 commit，不被墙钟打断（对齐内置 loop 的 fix 实践）
+        });
+        if (res.error) throw new Error(MSG.agentFailed('simplify agent', res.error));
+        const v = res.value;
+        if (!v || typeof v !== 'object' || !Number.isInteger(v.applied) || v.applied < 0
+          || !Number.isInteger(v.proposals) || v.proposals < 0) {
+          throw new Error(MSG.agentInvalidOutput('simplify agent', v));
+        }
+        const applied = apply ? v.applied : 0;
+        // 结构性验证 1：agent 返回后 porcelain 非空 = 半成品（声称应用未 commit）或违规动码
+        const st = ctx.io.sh('git', ['status', '--porcelain']);
+        if (st.code !== 0) throw new Error(MSG.gitFailed(['status', '--porcelain'], st.stderr));
+        const dirt = worktreeDirt(st.stdout);
+        if (dirt !== '') throw new Error(MSG.simplifyLeftDirty(dirt, applied));
+        // 结构性验证 2：报告必须落盘（skippedSteps 披露与事后审阅的载体）
+        if (!ctx.io.fs.existsSync(reportPath)) throw new Error(MSG.simplifyReportMissing(reportPath));
+        return { applied, proposals: v.proposals, reportFile: reportPath };
+      },
+    },
     {
       id: 'final-gates',
       run: async (ctx) => {

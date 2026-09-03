@@ -126,7 +126,7 @@ const io = {
   probePid,
   now: () => new Date(),
   randomToken: () => crypto.randomBytes(2).toString('hex'),
-  steps: lib.createPrSteps({ repoRoot }), // u3：PR 阶段 + 门禁 steps（cr-fix/simplify 为占位，u4/u5 替换实现）
+  steps: lib.createPrSteps({ repoRoot }), // u5：十二 step 完整注册表（§3.3 全序；cr-fix/simplify 已由 u4/u5 交付）
 };
 
 // 顶层 return Promise：worker 将本脚本内联进 async IIFE，async 函数的 return

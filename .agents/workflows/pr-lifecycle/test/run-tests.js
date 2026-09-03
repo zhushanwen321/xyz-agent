@@ -143,10 +143,18 @@ function makeIo(opts = {}) {
     sh,
     env: opts.env || {},
     homedir: opts.homedir || (() => '/home/fake-home'),
-    // agent mock：记录调用并按 opts.agent 编程（默认成功返回空对象）
+    // agent mock：记录调用并按 opts.agent 编程；默认成功——simplify 调用会写报告文件并返回计数
     agent: async (params) => {
       agentCalls.push(params);
-      const impl = opts.agent || (async () => ({ value: {}, error: null }));
+      const impl = opts.agent || (async (p2) => {
+        const m = String(p2 && p2.prompt).match(/报告输出路径 = (\S+)/);
+        if (m) {
+          fs.mkdirSync(path.dirname(m[1]), { recursive: true });
+          fs.writeFileSync(m[1], '# simplify report\n');
+          return { value: { applied: 0, proposals: 1 }, error: null };
+        }
+        return { value: {}, error: null };
+      });
       return impl(params);
     },
     // nested workflow mock（u4 cr-fix 经此注入点；默认返回 clean 终态，runDir 为不存在路径）
@@ -192,7 +200,7 @@ function makeSteps(opts = {}) {
 }
 
 // 注册表下标（§3.3 顺序）：0 preflight … 5 pr-submit | 6 constraints 7 coverage-1
-// 8 metrics-1 9 cr-fix(占位 u4) 10 simplify(占位 u5) 11 final-gates
+// 8 metrics-1 9 cr-fix(u4) 10 simplify(u5) 11 final-gates
 const STEP_RANGE = { prOnly: [0, 6], gates: [6] };
 
 const shCallsTo = (recorded, scriptPath) =>
@@ -1715,10 +1723,10 @@ async function main() {
     assertIncludes(result.error, 'base="dev"');
   });
 
-  await test('占位 step：simplify run 即 failed 标注交付单元；集成走到 cr-fix（batch1 组装失败链）', async () => {
+  await test('注册表占位清零：u5 后十二 step 全为真实现', async () => {
     const steps = makeSteps({ root: '/fake-root-placeholder' });
-    const simplify = findStep(steps, 'simplify');
-    await assert.rejects(simplify.run(mkCtx({ io: makeIo({}).io, root: '/tmp' }, { runId: 'x', params: {}, steps: {} }, '/tmp/run-dir')), /尚未实现（u5 单元交付）/);
+    assert.strictEqual(steps.length, 12);
+    for (const s of steps) assert.ok(!s.id.startsWith('placeholder'), s.id);
     // 集成：前九步 done → walker 走到 cr-fix 占位 → failed
     const m = allGatesMocks({});
     const t = makeIo(Object.assign({ args: { runId: RUN_ID_A, _runId: 'wf-u3-ph' } }, m));
@@ -2015,6 +2023,136 @@ async function main() {
     assert.deepStrictEqual(result.gates, { coverage: 'pass', metrics: 'pass', premerge: 'PASS' });
     const state = readStateFile(t.root, RUN_ID_A);
     assert.strictEqual(state.result.status, 'awaiting-push');
+  });
+
+
+  /* ── u5：simplify step（前置判定 / apply-report 两模式 / 工作区与报告校验） ── */
+
+  function crFixDoneCtx(t, { terminated = 'clean', simplifyMode, applied = 2, proposals = 3, dirty = false } = {}) {
+    if (!t.io.fs.existsSync(path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents', 'simplify-apply.md'))) {
+      fs.mkdirSync(path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents'), { recursive: true });
+      fs.writeFileSync(path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents', 'simplify-apply.md'), '# 契约（测试桩）\n覆盖声明\n先理解再改\nA 档（行为不变）\n禁止 git add -A\n');
+    }
+    if (dirty) t.git.porcelain = ' M half-done.js\n';
+    const runIdDir = path.join(t.root, 'run-dir');
+    const state = {
+      runId: RUN_ID_A, base: 'main', baseHash: 'B1',
+      params: { simplifyMode: simplifyMode || 'apply', reviewers: null, maxRounds: 10, skipSteps: [], allowExternalChanges: false },
+      steps: { 'cr-fix': { status: 'done', attempts: 1, outputs: { nestedRunId: ['wf-1'], terminated, aggregatedFile: null } } },
+    };
+    return mkCtx(t, state, runIdDir);
+  }
+
+  function simplifyStepOf(root) {
+    return findStep(makeSteps({ root }), 'simplify');
+  }
+
+  // simplify agent mock：写报告文件 + 返回计数（或按 opts 注入异常形态）
+  function mockSimplify(t, { applied = 2, proposals = 3 } = {}) {
+    t.io.agent = async (params) => {
+      t.agentCalls.push(params);
+      const m = String(params.prompt).match(/报告输出路径 = (\S+)/);
+      if (m) {
+        fs.mkdirSync(path.dirname(m[1]), { recursive: true });
+        fs.writeFileSync(m[1], '# simplify report\n');
+      }
+      return { value: { applied, proposals }, error: null };
+    };
+  }
+
+  await test('simplify：cr-fix clean（apply 默认）→ agent 执行，outputs {applied, proposals, reportFile} 契约', async () => {
+    const t = t0();
+    mockSimplify(t, { applied: 2, proposals: 3 });
+    const res = await simplifyStepOf(t.root).run(crFixDoneCtx(t, { applied: 2, proposals: 3 }));
+    assert.deepStrictEqual(res, { applied: 2, proposals: 3, reportFile: path.join(t.root, 'run-dir', 'simplify-report.md') });
+    assert.strictEqual(t.agentCalls[0].description, 'simplify-apply');
+    assert.strictEqual(t.agentCalls[0].timeoutMs, undefined); // apply 写操作不设墙钟超时
+  });
+
+  await test('simplify：converged 同样执行；prompt 含覆盖声明、契约全文片段、baseHash、禁 add -A、commit 模板、无超时说明', async () => {
+    const t = t0();
+    mockSimplify(t);
+    await simplifyStepOf(t.root).run(crFixDoneCtx(t, { terminated: 'converged' }));
+    const prompt = t.agentCalls[0].prompt;
+    assertIncludes(prompt, 'simplifyMode=apply 发起');
+    assertIncludes(prompt, '仅 A 档（行为不变）高置信项');
+    assertIncludes(prompt, '先理解再改'); // 铁律摘录
+    assertIncludes(prompt, 'A 档（行为不变）'); // 档位定义
+    assertIncludes(prompt, '禁止 git add -A');
+    assertIncludes(prompt, 'refactor: code-simplify — N 项');
+    assertIncludes(prompt, 'baseHash = B1');
+    assertIncludes(prompt, 'git diff B1...HEAD');
+    assertIncludes(prompt, '不设墙钟超时');
+    assert.ok(t.agentCalls[0].prompt.includes(path.join(t.root, 'run-dir', 'simplify-report.md')));
+  });
+
+  await test('simplify：非 clean（stuck/max-rounds）与 cr-fix 无记录 → skipped+reason（不派 agent 不重算 nested）', async () => {
+    for (const terminated of ['stuck', 'max-rounds']) {
+      const t = t0();
+      mockSimplify(t);
+      const res = await simplifyStepOf(t.root).run(crFixDoneCtx(t, { terminated }));
+      assert.strictEqual(res.skipped, true, `terminated=${terminated}`);
+      assertIncludes(res.reason, 'cr-fix 未 clean/converged');
+      assert.strictEqual(t.agentCalls.length, 0); // 不派 agent
+    }
+    // cr-fix 无记录（被 skipSteps 或旧版本 state）
+    const t2 = t0();
+    mockSimplify(t2);
+    const ctx2 = crFixDoneCtx(t2);
+    delete ctx2.state.steps['cr-fix'];
+    const res2 = await simplifyStepOf(t2.root).run(ctx2);
+    assert.strictEqual(res2.skipped, true);
+    assertIncludes(res2.reason, '未执行或被跳过');
+    assert.strictEqual(t2.agentCalls.length, 0);
+  });
+
+  await test('simplify：report 模式 → prompt 含断点保留声明，outputs.applied=0，报告仍强制落盘', async () => {
+    const t = t0();
+    mockSimplify(t, { applied: 2, proposals: 5 }); // 即使 agent 谎报 applied，report 模式强制归 0
+    const res = await simplifyStepOf(t.root).run(crFixDoneCtx(t, { simplifyMode: 'report', applied: 2, proposals: 5 }));
+    assert.strictEqual(res.applied, 0);
+    assert.strictEqual(res.proposals, 5);
+    const prompt = t.agentCalls[0].prompt;
+    assertIncludes(prompt, 'simplifyMode=report 发起');
+    assertIncludes(prompt, '确认断点完整保留');
+    assert.ok(fs.existsSync(path.join(t.root, 'run-dir', 'simplify-report.md')));
+  });
+
+  await test('simplify：结构校验失败（value 空）/ agent error → failed 可操作文案', async () => {
+    const t = t0({ agent: async () => ({ value: {}, error: null }) });
+    await assert.rejects(simplifyStepOf(t.root).run(crFixDoneCtx(t)), /simplify agent 返回不符合契约/);
+    const t2 = t0({ agent: async () => ({ value: null, error: 'quota exceeded' }) });
+    await assert.rejects(simplifyStepOf(t2.root).run(crFixDoneCtx(t2)), /simplify agent 调用失败：quota exceeded/);
+  });
+
+  await test('simplify：声称 applied>0 但工作区脏（未 commit 半成品）→ failed 指引查看报告', async () => {
+    const t = t0();
+    mockSimplify(t, { applied: 2, proposals: 3 });
+    const ctx = crFixDoneCtx(t, { applied: 2, proposals: 3, dirty: true });
+    await assert.rejects(simplifyStepOf(t.root).run(ctx), (e) => {
+      assertIncludes(e.message, '未提交改动');
+      assertIncludes(e.message, 'applied=2');
+      assertIncludes(e.message, '半成品');
+      assertIncludes(e.message, 'simplify-report.md');
+      return true;
+    });
+  });
+
+  await test('simplify：applied=0 却留脏（违规动码）→ failed；报告缺失 → failed', async () => {
+    const t = t0();
+    mockSimplify(t, { applied: 0, proposals: 2 });
+    const ctx = crFixDoneCtx(t, { applied: 0, proposals: 2, dirty: true });
+    await assert.rejects(simplifyStepOf(t.root).run(ctx), /违规改动代码/);
+    // 报告缺失（mock agent 未写报告）
+    const t2 = t0({ agent: async () => ({ value: { applied: 0, proposals: 1 }, error: null }) });
+    await assert.rejects(simplifyStepOf(t2.root).run(crFixDoneCtx(t2)), /未产出报告/);
+  });
+
+  await test('simplify：契约文件缺失 → failed 指向 simplify-apply.md', async () => {
+    const t = t0();
+    const ctx = crFixDoneCtx(t); // 先经 helper 建桩
+    fs.rmSync(path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents', 'simplify-apply.md'), { force: true });
+    await assert.rejects(simplifyStepOf(t.root).run(ctx), /simplify-apply\.md/);
   });
 
 

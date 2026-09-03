@@ -76,7 +76,7 @@ graph TD
 | u2 | committed | 1 | 65 项测试绿（u1 38 回归 + u2 27 新增）+ lint valid + /tmp 仓真实引擎冒烟（假脚本 + 真实 LLM agent，六 step 落盘核验）；deviations 5 条（.review/ 结构性排除 / step skipped 协议 / agent 输出兜底 / 子循环轮次语义 / 真实脚本集成留 Gate B） |
 | u3 | committed | 2（限额中断续作） | 80 项测试绿 + lint valid + /tmp 仓真实引擎冒烟正反两跑（real-pi 检测反向 failed 文案实证）；deviations 5 条（anyOf 字符串兼容 / final-gates extra-packages 一致性外推 / coveragePct 加权口径 / extraFixContext 按轮函数 / 入口 io 漏 env-homedir 冒烟修复）；附带实证幂等回放与断点续跑 |
 | u4 | committed | 1 | 91 项测试绿（u3 80 回归 + 11 新增，七种 terminated 分支全覆盖）+ lint valid + 真实引擎冒烟 nested loop 全链 clean（真 LLM agent 13s）；deviations 3 条（冒烟超裁剪范围 / aggregatedFile 适配 batch-N/round-M 真实布局 / 未知 terminated fail-closed）；A 项回放语义修复含两处冒烟暴露遗漏（无条件重建 + result.status 回放条件） |
-| u5 | pending | — | — |
+| u5 | committed | 1 | 99 项测试绿（u4 91 回归 + 8 新增）+ lint valid + 真实 agent 冒烟（契约内嵌 → A 档简化应用 + 独立 commit + 报告落盘全链）；simplify-apply.md 七锚点逐一核对源文真实节名；deviations 4 条（模式传参缺陷单测抓获 / 报告存在性追加防线 / mock 基座随 step 演进 / 冒烟用真 agent） |
 | u6 | pending | — | — |
 
 ## 7 残留风险与变更历史
