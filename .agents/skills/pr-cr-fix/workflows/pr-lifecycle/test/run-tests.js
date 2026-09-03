@@ -211,9 +211,6 @@ function makeSteps(opts = {}) {
 // 8 metrics-1 9 cr-fix(u4) 10 simplify(u5) 11 final-gates
 const STEP_RANGE = { prOnly: [0, 6], gates: [6] };
 
-const shCallsTo = (recorded, scriptPath) =>
-  recorded.sh.filter((c) => c[0] !== 'git' && c[1] === scriptPath);
-
 /** 手工构造一个 resume 前置 state（绕过 fresh 链路，独立驱动守卫分支） */
 function seedState(root, overrides = {}) {
   const state = Object.assign({
@@ -2105,7 +2102,7 @@ async function main() {
 
   /* ── u5：simplify step（前置判定 / apply-report 两模式 / 工作区与报告校验） ── */
 
-  function crFixDoneCtx(t, { terminated = 'clean', simplifyMode, applied = 2, proposals = 3, dirty = false } = {}) {
+  function crFixDoneCtx(t, { terminated = 'clean', simplifyMode, dirty = false } = {}) {
     if (!t.io.fs.existsSync(path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents', 'simplify-apply.md'))) {
       fs.mkdirSync(path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents'), { recursive: true });
       fs.writeFileSync(path.join(t.root, '.agents', 'skills', 'pr-cr-fix', 'agents', 'simplify-apply.md'), '# 契约（测试桩）\n覆盖声明\n先理解再改\nA 档（行为不变）\n禁止 git add -A\n');
@@ -2140,7 +2137,7 @@ async function main() {
   await test('simplify：cr-fix clean（apply 默认）→ agent 执行，outputs {applied, proposals, reportFile} 契约', async () => {
     const t = t0();
     mockSimplify(t, { applied: 2, proposals: 3 });
-    const res = await simplifyStepOf(t.root).run(crFixDoneCtx(t, { applied: 2, proposals: 3 }));
+    const res = await simplifyStepOf(t.root).run(crFixDoneCtx(t));
     assert.deepStrictEqual(res, { applied: 2, proposals: 3, reportFile: path.join(t.root, 'run-dir', 'simplify-report.md') });
     assert.strictEqual(t.agentCalls[0].description, 'simplify-apply');
     assert.strictEqual(t.agentCalls[0].timeoutMs, undefined); // apply 写操作不设墙钟超时
@@ -2186,7 +2183,7 @@ async function main() {
   await test('simplify：report 模式 → prompt 含断点保留声明，outputs.applied=0，报告仍强制落盘', async () => {
     const t = t0();
     mockSimplify(t, { applied: 2, proposals: 5 }); // 即使 agent 谎报 applied，report 模式强制归 0
-    const res = await simplifyStepOf(t.root).run(crFixDoneCtx(t, { simplifyMode: 'report', applied: 2, proposals: 5 }));
+    const res = await simplifyStepOf(t.root).run(crFixDoneCtx(t, { simplifyMode: 'report' }));
     assert.strictEqual(res.applied, 0);
     assert.strictEqual(res.proposals, 5);
     const prompt = t.agentCalls[0].prompt;
@@ -2205,7 +2202,7 @@ async function main() {
   await test('simplify：声称 applied>0 但工作区脏（未 commit 半成品）→ failed 指引查看报告', async () => {
     const t = t0();
     mockSimplify(t, { applied: 2, proposals: 3 });
-    const ctx = crFixDoneCtx(t, { applied: 2, proposals: 3, dirty: true });
+    const ctx = crFixDoneCtx(t, { dirty: true });
     await assert.rejects(simplifyStepOf(t.root).run(ctx), (e) => {
       assertIncludes(e.message, '未提交改动');
       assertIncludes(e.message, 'applied=2');
@@ -2218,7 +2215,7 @@ async function main() {
   await test('simplify：applied=0 却留脏（违规动码）→ failed；报告缺失 → failed', async () => {
     const t = t0();
     mockSimplify(t, { applied: 0, proposals: 2 });
-    const ctx = crFixDoneCtx(t, { applied: 0, proposals: 2, dirty: true });
+    const ctx = crFixDoneCtx(t, { dirty: true });
     await assert.rejects(simplifyStepOf(t.root).run(ctx), /违规改动代码/);
     // 报告缺失（mock agent 未写报告）
     const t2 = t0({ agent: async () => ({ value: { applied: 0, proposals: 1 }, error: null }) });

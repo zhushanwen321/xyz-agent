@@ -47,6 +47,9 @@ export default [
       // type:module 的冲突由同目录 package.json {"type":"commonjs"} 解决；
       // no-require-imports 对其是误报（同 extensions/**/workflows/** 先例）
       '.agents/workflows/**',
+      // skill 内置 workflow 脚本（pr-lifecycle 入口 + lib.cjs + node 直测 run-tests.js）：
+      // CJS 是 workflow 加载器契约（同上），no-require-imports 对其是误报
+      '.agents/skills/**/workflows/**',
     ],
   },
   // [HISTORICAL] mock 门面文件是所有 domain 的聚合中心（session/chat/config/model/extension/plugin/
