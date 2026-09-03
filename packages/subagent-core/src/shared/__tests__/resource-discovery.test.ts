@@ -3,6 +3,7 @@
 // 统一资源发现模块测试（ADR-031）。
 // 验证：扫描源覆盖、优先级合并、manifest 校验、约定目录 fallback。
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -25,11 +26,22 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...actual, homedir: () => mockHomeDir };
 });
 
+// manifestCache 计数（原 resource-discovery-manifest-cache.test.ts 手法迁编）：
+// 透传 actual 实现 + vi.fn 计数，行为零变化——async readPackageManifest 的
+// readFile 计数断言依赖此包装（ESM 下 node:fs/promises 不可直接 spyOn）。
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    readFile: vi.fn(
+      (...args: Parameters<typeof actual.readFile>) => actual.readFile(...args),
+    ),
+  };
+});
+
 import {
   discoverResources,
-  discoverResourcesSync,
   findWorkspaceRoot,
-  processPackageSync,
   getCachedFile,
   getCachedFileContent,
   __testResetShadowDedup,
@@ -77,6 +89,18 @@ function writePackageJson(pkgDir: string, pi: Record<string, unknown>): void {
   );
 }
 
+/** 定值 mtime（整数 ms，消除浮点 mtime 与 utimesSync 恢复的精度差）。 */
+const T1 = new Date("2026-01-01T00:00:00Z");
+
+function setMtime(filePath: string, t: Date): void {
+  fs.utimesSync(filePath, t, t);
+}
+
+/** node:fs/promises readFile 包装计数（async manifestCache 读者）。 */
+function asyncReadCount(): number {
+  return vi.mocked(fsp.readFile).mock.calls.length;
+}
+
 // ============================================================
 // findWorkspaceRoot
 // ============================================================
@@ -95,139 +119,6 @@ describe("findWorkspaceRoot", () => {
     fs.mkdirSync(sub, { recursive: true });
     expect(findWorkspaceRoot(sub)).toBe(ws);
     fs.rmSync(ws, { recursive: true, force: true });
-  });
-});
-
-// ============================================================
-// discoverResourcesSync — 扫描源覆盖 + 优先级
-// ============================================================
-
-describe("discoverResourcesSync", () => {
-  let ws: string;
-  let agentDir: string;
-
-  beforeEach(() => {
-    ws = tmpWorkspace();
-    agentDir = path.join(ws, ".fake-agent");
-  });
-  afterEach(() => {
-    fs.rmSync(ws, { recursive: true, force: true });
-  });
-
-  it("discovers agents from project .pi/agents/", () => {
-    writeFile(path.join(ws, ".pi", "agents"), "worker.md", "body");
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
-    // 按 source 过滤断言——用户全局目录（~/.agents/agents/）可能有真实 agent 文件，
-    // 测试不假设环境为空（2026-08：环境新增 tech-design-review.md 暴露此脆弱性）
-    const project = result.filter((r) => r.source === "project-pi");
-    expect(project.map((r) => path.basename(r.path))).toEqual(["worker.md"]);
-    expect(project[0]?.available).toBe(true);
-  });
-
-  it("discovers workflows from project .pi/workflows/", () => {
-    writeFile(path.join(ws, ".pi", "workflows"), "build.js", "const meta={name:'build'};");
-    const result = discoverResourcesSync({ kind: "workflows", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "workflows") });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["build.js"]);
-  });
-
-  it("project .agents overrides project .pi on name clash (priority)", () => {
-    writeFile(path.join(ws, ".pi", "agents"), "worker.md", "pi-body");
-    writeFile(path.join(ws, ".agents", "agents"), "worker.md", "agents-body");
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
-    const project = result.filter((r) => r.source === "project-agents");
-    expect(project).toHaveLength(1);
-    expect(project[0]?.source).toBe("project-agents");
-  });
-
-  it("includes tmp source for workflows when includeTmp=true", () => {
-    writeFile(path.join(ws, ".pi", "workflows", ".tmp"), "temp.js", "const meta={name:'temp'};");
-    const result = discoverResourcesSync({
-      kind: "workflows",
-      workspaceRoot: ws,
-      hostRoots: hostRootsFor(agentDir, "workflows"),
-      includeTmp: true,
-    });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["temp.js"]);
-    expect(result[0]?.source).toBe("project-pi-tmp");
-  });
-
-  it("excludes tmp source when includeTmp omitted", () => {
-    writeFile(path.join(ws, ".pi", "workflows", ".tmp"), "temp.js", "x");
-    const result = discoverResourcesSync({ kind: "workflows", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "workflows") });
-    expect(result).toEqual([]);
-  });
-
-  it("ignores _ prefix and .chain.md files", () => {
-    const dir = path.join(ws, ".pi", "agents");
-    writeFile(dir, "real.md", "body");
-    writeFile(dir, "_skip.md", "ignored");
-    writeFile(dir, "trace.chain.md", "ignored");
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
-    const project = result.filter((r) => r.source === "project-pi");
-    expect(project.map((r) => path.basename(r.path))).toEqual(["real.md"]);
-  });
-
-  it("nonexistent directories are silently skipped", () => {
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
-    // 用户全局目录可能有真实文件——只断言 project 源为空
-    expect(result.filter((r) => r.source === "project-pi" || r.source === "project-agents")).toEqual([]);
-  });
-});
-
-// ============================================================
-// processPackageSync — manifest 校验
-// ============================================================
-
-describe("processPackageSync", () => {
-  let pkgDir: string;
-
-  beforeEach(() => {
-    pkgDir = tmpWorkspace();
-  });
-  afterEach(() => {
-    fs.rmSync(pkgDir, { recursive: true, force: true });
-  });
-
-  it("loads from manifest directory declaration", () => {
-    writeFile(path.join(pkgDir, "agents"), "worker.md", "body");
-    writePackageJson(pkgDir, { agents: ["./agents"] });
-    const result = processPackageSync(pkgDir, "agents");
-    expect(result).toHaveLength(1);
-    expect(result[0]?.available).toBe(true);
-  });
-
-  it("loads from manifest file declaration", () => {
-    writeFile(pkgDir, "worker.md", "body");
-    writePackageJson(pkgDir, { agents: ["./worker.md"] });
-    const result = processPackageSync(pkgDir, "agents");
-    expect(result).toHaveLength(1);
-    expect(result[0]?.available).toBe(true);
-  });
-
-  it("manifest path not exists → available=false, no fallback", () => {
-    writePackageJson(pkgDir, { agents: ["./nonexistent"] });
-    const result = processPackageSync(pkgDir, "agents");
-    expect(result).toHaveLength(1);
-    expect(result[0]?.available).toBe(false);
-    // 不 fallback 到约定目录
-    writeFile(path.join(pkgDir, "agents"), "hidden.md", "body");
-    const result2 = processPackageSync(pkgDir, "agents");
-    expect(result2).toHaveLength(1);
-    expect(result2[0]?.available).toBe(false);
-  });
-
-  it("no manifest → fallback to convention dir", () => {
-    writeFile(path.join(pkgDir, "agents"), "worker.md", "body");
-    // 无 package.json 或无 pi.agents
-    const result = processPackageSync(pkgDir, "agents");
-    expect(result).toHaveLength(1);
-    expect(result[0]?.available).toBe(true);
-  });
-
-  it("no manifest and no convention dir → empty", () => {
-    writePackageJson(pkgDir, { extensions: ["./index.ts"] });
-    const result = processPackageSync(pkgDir, "agents");
-    expect(result).toEqual([]);
   });
 });
 
@@ -291,68 +182,6 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     __testResetShadowDedup();
   });
 
-  it("discovers agents from XYZ_EXTENSION_PATHS via pi.agents manifest", () => {
-    const pkgDir = path.join(ws, "my-ext");
-    writePackageJson(pkgDir, { agents: ["./agents"] });
-    writeFile(path.join(pkgDir, "agents"), "custom.md", "body");
-    process.env.XYZ_EXTENSION_PATHS = pkgDir;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
-    const ext = result.filter((r) => r.source === "user-extension-paths");
-    expect(ext.map((r) => path.basename(r.path))).toEqual(["custom.md"]);
-    expect(ext[0]?.source).toBe("user-extension-paths");
-  });
-
-  it("discovers agents via convention dir (no manifest)", () => {
-    const pkgDir = path.join(ws, "my-ext");
-    writeFile(path.join(pkgDir, "agents"), "conv.md", "body");
-    process.env.XYZ_EXTENSION_PATHS = pkgDir;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
-    const ext = result.filter((r) => r.source === "user-extension-paths");
-    expect(ext.map((r) => path.basename(r.path))).toEqual(["conv.md"]);
-    expect(ext[0]?.source).toBe("user-extension-paths");
-  });
-
-  it("multiple paths separated by delimiter", () => {
-    const pkg1 = path.join(ws, "ext1");
-    const pkg2 = path.join(ws, "ext2");
-    writeFile(path.join(pkg1, "agents"), "a1.md", "body");
-    writeFile(path.join(pkg2, "agents"), "a2.md", "body");
-    process.env.XYZ_EXTENSION_PATHS = `${pkg1}${path.delimiter}${pkg2}`;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
-    const ext = result.filter((r) => r.source === "user-extension-paths");
-    expect(ext.map((r) => path.basename(r.path)).sort()).toEqual(["a1.md", "a2.md"]);
-  });
-
-  it("overrides npm on name clash (priority: user-extension-paths > npm)", () => {
-    const npmPkg = path.join(agentDir, "npm", "node_modules", "test-pkg");
-    writePackageJson(npmPkg, { agents: ["./agents"] });
-    writeFile(path.join(npmPkg, "agents"), "shared.md", "npm-body");
-    const devPkg = path.join(ws, "dev-ext");
-    writePackageJson(devPkg, { agents: ["./agents"] });
-    writeFile(path.join(devPkg, "agents"), "shared.md", "dev-body");
-    process.env.XYZ_EXTENSION_PATHS = devPkg;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
-    const shared = result.find((r) => path.basename(r.path) === "shared.md");
-    expect(shared?.source).toBe("user-extension-paths");
-  });
-
-  it("project-agents overrides user-extension-paths (project wins)", () => {
-    const devPkg = path.join(ws, "dev-ext");
-    writePackageJson(devPkg, { agents: ["./agents"] });
-    writeFile(path.join(devPkg, "agents"), "x.md", "dev-body");
-    writeFile(path.join(ws, ".agents", "agents"), "x.md", "project-body");
-    process.env.XYZ_EXTENSION_PATHS = devPkg;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
-    const x = result.find((r) => path.basename(r.path) === "x.md");
-    expect(x?.source).toBe("project-agents");
-  });
-
-  it("empty/unset env → no user-extension-paths source", () => {
-    delete process.env.XYZ_EXTENSION_PATHS;
-    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, hostRoots: hostRootsFor(agentDir, "agents") });
-    expect(result.filter((r) => r.source === "user-extension-paths")).toEqual([]);
-  });
-
   it("async discoverResources also scans user-extension-paths", async () => {
     const pkgDir = path.join(ws, "my-ext");
     writePackageJson(pkgDir, { agents: ["./agents"] });
@@ -388,7 +217,7 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     expect(x?.source).toBe("project-agents");
   });
 
-  it("async: 4 源混合 fixture——输出序 + 优先级 + 与串行版快照等价", async () => {
+  it("async: 4 源混合 fixture——输出序 + 优先级", async () => {
     // 源优先级低→高：npm < user-extension-paths < project-pi < project-agents
     const npmPkg = path.join(agentDir, "npm", "node_modules", "test-pkg");
     writePackageJson(npmPkg, { agents: ["./agents"] });
@@ -415,8 +244,6 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     expect(asyncResult.find((r) => path.basename(r.path) === "shared.md")?.source).toBe(
       "project-agents",
     );
-    // 快照等价：源级并行 async 版与串行 sync 版输出逐项一致（含序与 source 标签）
-    expect(asyncResult).toEqual(discoverResourcesSync(config));
   });
 
   it("async: 同名遮蔽时机器源×机器源降 debug 不产生 warn（D8d 分级）", async () => {
@@ -745,5 +572,92 @@ describe("getCachedParsed（mtime 级解析缓存）", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ── manifestCache（async readPackageManifest）缓存语义 ──
+// 原 resource-discovery-manifest-cache.test.ts 的 async 侧语义迁编（C3 sync 轨删除：
+// sync 读者消亡，双读者共享用例随之前提失效；读计数断言改走 node:fs/promises 包装）。
+// readPackageManifest 是 module 私有，经 XYZ_EXTENSION_PATHS → discoverResources 路径驱动；
+// 其余源（user-agents / npm / project）无 package.json 可读，asyncReadCount 即
+// pkgDir/package.json 的精确读计数。
+
+describe("manifestCache（async readPackageManifest）", () => {
+  let ws: string;
+  let pkgDir: string;
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    clearFileCache();
+    vi.mocked(fsp.readFile).mockClear();
+    ws = tmpWorkspace();
+    pkgDir = path.join(ws, "my-ext");
+    savedEnv = process.env.XYZ_EXTENSION_PATHS;
+  });
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.XYZ_EXTENSION_PATHS;
+    else process.env.XYZ_EXTENSION_PATHS = savedEnv;
+    fs.rmSync(ws, { recursive: true, force: true });
+  });
+
+  function extConfig(kind: "agents" | "workflows") {
+    return { kind, workspaceRoot: ws, hostRoots: hostRootsFor(path.join(ws, ".fake-agent"), kind) };
+  }
+
+  it("命中：同 mtime 二次 discoverResources 不重读（async readFile 计数不增）", async () => {
+    writePackageJson(pkgDir, { agents: ["./agents"] });
+    writeFile(path.join(pkgDir, "agents"), "a.md", "body");
+    setMtime(path.join(pkgDir, "package.json"), T1);
+    process.env.XYZ_EXTENSION_PATHS = pkgDir;
+
+    const r1 = await discoverResources(extConfig("agents"));
+    const ext1 = r1.filter((r) => r.source === "user-extension-paths");
+    expect(ext1.map((r) => path.basename(r.path))).toEqual(["a.md"]);
+    const first = asyncReadCount();
+    expect(first).toBeGreaterThanOrEqual(1); // manifest 首读确实发生
+
+    const r2 = await discoverResources(extConfig("agents"));
+    // 同 mtime：manifestCache 命中，readFile 计数不增
+    expect(asyncReadCount()).toBe(first);
+    expect(r2.filter((r) => r.source === "user-extension-paths")).toHaveLength(1);
+  });
+
+  it("kind 共享一次 parse：同 package.json 的 agents/workflows 两 kind 只读一次", async () => {
+    writePackageJson(pkgDir, { agents: ["./agents"], workflows: ["./w.js"] });
+    writeFile(path.join(pkgDir, "agents"), "a.md", "body");
+    writeFile(pkgDir, "w.js", "const meta={name:'w'};");
+    setMtime(path.join(pkgDir, "package.json"), T1);
+    process.env.XYZ_EXTENSION_PATHS = pkgDir;
+
+    const rAgents = await discoverResources(extConfig("agents"));
+    expect(rAgents.filter((r) => r.source === "user-extension-paths").map((r) => path.basename(r.path)))
+      .toEqual(["a.md"]);
+    const afterFirst = asyncReadCount();
+    expect(afterFirst).toBeGreaterThanOrEqual(1);
+
+    const rWorkflows = await discoverResources(extConfig("workflows"));
+    expect(rWorkflows.filter((r) => r.source === "user-extension-paths").map((r) => path.basename(r.path)))
+      .toEqual(["w.js"]);
+    // 两 kind 共享同一条目：第二次调用命中缓存，不重 read
+    expect(asyncReadCount()).toBe(afterFirst);
+  });
+
+  it("失效：package.json 重写（mtime 变）→ 重读新 manifest（计数递增 + 新内容生效）", async () => {
+    writePackageJson(pkgDir, { agents: ["./agents"] });
+    writeFile(path.join(pkgDir, "agents"), "a.md", "body");
+    setMtime(path.join(pkgDir, "package.json"), T1);
+    process.env.XYZ_EXTENSION_PATHS = pkgDir;
+    await discoverResources(extConfig("agents"));
+    const first = asyncReadCount();
+
+    // 重写 manifest 声明不存在的路径：不需显式设 mtime（新写入 mtime 必 ≠ 定值 T1）
+    writePackageJson(pkgDir, { agents: ["./gone.md"] });
+    const r2 = await discoverResources(extConfig("agents"));
+    // mtime 变 → 重读（计数 +1）→ 新声明生效：路径不存在 → available=false 占位
+    expect(asyncReadCount()).toBe(first + 1);
+    const ext2 = r2.filter((r) => r.source === "user-extension-paths");
+    expect(ext2).toHaveLength(1);
+    expect(path.basename(ext2[0]?.path ?? "")).toBe("gone.md");
+    expect(ext2[0]?.available).toBe(false);
   });
 });
